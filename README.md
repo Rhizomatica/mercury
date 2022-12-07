@@ -1,6 +1,6 @@
 # Mercury
 
-Mercury is a configurable open-source software-defined modem: https://rhizomatica.org/mercury .
+Mercury is a configurable open-source software-defined modem: (https://github.com/Rhizomatica/mercury).
 
 
 # System Components and Configuration
