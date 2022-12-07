@@ -79,8 +79,7 @@ To install ALSA Sound run the following command as root: 'apt-get install libaso
 
 To compile the Mercury code, run the following:
 
-* g++ ./source/*.cc -I ./include -lasound -o mercury.o
-
+* make
 
 
 
