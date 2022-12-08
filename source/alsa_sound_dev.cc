@@ -272,6 +272,7 @@ snd_pcm_sframes_t cl_alsa_sound_device::_transfere(double* buffer, unsigned int 
 			do
 			{
 				frames_avail=snd_pcm_avail(_dev_ptr);
+				usleep(1000);
 			}
 			while(frames_avail<_buffer_size-frames_to_leave_transmit_fct);
 		}
