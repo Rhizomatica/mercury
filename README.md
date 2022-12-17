@@ -65,7 +65,7 @@ Mercury operates in one of six different modes:
 
 In case of switching  telecom_system.plot.plot_active to YES, the gnuplot is required to be installed on the machine.
 
-To install GNU plot run the following command as root: 'apt-get install gnuplot'.
+To install GNU plot run the following command as root: 'apt-get install gnuplot-x11'.
 
 * ALSA Sound
 
