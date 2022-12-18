@@ -1,6 +1,6 @@
 CPP=g++
 LDFLAGS=-lasound
-CPPFLAGS=-O2 -Wall -Wno-format -std=gnu++14 -I./include
+CPPFLAGS=-O3 -g0 -Wall -Wno-format -std=gnu++14 -I./include
 CPP_SOURCES=$(wildcard source/*.cc)
 
 mercury: $(CPP_SOURCES)
