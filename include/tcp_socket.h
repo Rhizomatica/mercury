@@ -34,6 +34,7 @@
 #include <arpa/inet.h>
 #include <unistd.h>
 #include <sys/types.h>
+#include "timer.h"
 
 #define SUCCESS 0
 #define ERROR -1
@@ -59,7 +60,10 @@
 #define TCP_STATUS_LISTENING_ERROR -3
 #define TCP_STATUS_CONNECTING_ERROR -4
 #define TCP_STATUS_ACCEPTING_ERROR -5
-#define TCP_STATUS_OTHER_ERROR -6
+#define TCP_STATUS_REUSEADDR_ERROR -6
+#define TCP_STATUS_REUSEPORT_ERROR -7
+#define TCP_STATUS_OTHER_ERROR -8
+
 
 #define MESSAGE_STATUS_FREE 0
 #define MESSAGE_STATUS_CAPTURED 1
@@ -90,6 +94,8 @@ public:
 	long unsigned int server_received_packets;
 	long unsigned int client_sent_packets;
 	long unsigned int client_received_packets;
+
+	cl_timer timer;
 	long int timeout_ms;
 
 	cl_tcp_socket();

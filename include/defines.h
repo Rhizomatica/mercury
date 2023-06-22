@@ -50,6 +50,15 @@
 #define RX_TEST 3
 #define TX_TCP 4
 #define RX_TCP 5
+#define ARQ_MODE 6
+
+#define CONFIG_0 0
+#define CONFIG_1 1
+#define CONFIG_2 2
+#define CONFIG_3 3
+#define CONFIG_4 4
+#define CONFIG_5 5
+#define CONFIG_6 6
 
 
 #endif

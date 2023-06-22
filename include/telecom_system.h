@@ -32,11 +32,9 @@
 #include "alsa_sound_dev.h"
 #include "interleaver.h"
 #include "tcp_socket.h"
+#include "configurations.h"
+#include <iomanip>
 
-#define RECTANGULAR 0
-#define HANNING 1
-#define HAMMING 2
-#define BLACKMAN 3
 
 struct st_receive_stats{
 	int iterations_done;
@@ -78,15 +76,10 @@ public:
 	int time_sync_trials_max;
 	int lock_time_sync;
 	st_receive_stats receive_stats;
-	cl_tcp_socket tcp_socket;
+	cl_tcp_socket tcp_socket_test;
 
 	double output_power_Watt;
 
-	int filter_window;
-	int filter_nTaps;
-	double filter_transition_bandwidth;
-	double filter_cut_frequency;
-	void FIR_designer();
 	void transmit(const int* data, double* out);
 	st_receive_stats receive(const double* data, int* out);
 	int operation_mode;
@@ -102,14 +95,30 @@ public:
 	double rbc;
 	double Shannon_limit;
 
-	double* filter_coefficients;
-
 	int bit_interleaver_block_size;
 
 	void calculate_parameters();
 
 	void init();
+	void deinit();
 	cl_plot plot;
+
+	void TX_TEST_process_main();
+	void RX_TEST_process_main();
+	void TX_TCP_process_main();
+	void RX_TCP_process_main();
+	void BER_PLOT_baseband_process_main();
+	void BER_PLOT_passband_process_main();
+
+	void load_configuration();
+	void load_configuration(int configuration);
+	int last_configuration;
+	int current_configuration;
+	void return_to_last_configuration();
+	char get_configuration(double SNR);
+
+	cl_configuration_telecom_system default_configurations_telecom_system;
+
 };
 
 

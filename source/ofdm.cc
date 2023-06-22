@@ -28,8 +28,6 @@ cl_ofdm::cl_ofdm()
 	this->Nfft=0;
 	this->Nsymb=0;
 	this->gi=0;
-	this->Npilots=0;
-	this->Nzeros=0;
 	Ngi=0;
 	ofdm_frame =0;
 	zero_padded_data=0;
@@ -44,30 +42,7 @@ cl_ofdm::cl_ofdm()
 
 cl_ofdm::~cl_ofdm()
 {
-	if(ofdm_frame!=NULL)
-	{
-		delete ofdm_frame;
-	}
-	if(zero_padded_data!=NULL)
-	{
-		delete zero_padded_data;
-	}
-	if(iffted_data!=NULL)
-	{
-		delete iffted_data;
-	}
-	if(gi_removed_data!=NULL)
-	{
-		delete gi_removed_data;
-	}
-	if(ffted_data!=NULL)
-	{
-		delete ffted_data;
-	}
-	if(estimated_channel!=NULL)
-	{
-		delete estimated_channel;
-	}
+	this->deinit();
 }
 
 void cl_ofdm::init(int Nfft, int Nc, int Nsymb, float gi)
@@ -90,8 +65,7 @@ void cl_ofdm::init()
 	ffted_data=new std::complex <double>[Nfft];
 	estimated_channel=new struct channel[this->Nsymb*this->Nc];
 
-	pilot_configurator.init(this->Nfft, this->Nc,this->Nsymb,this->ofdm_frame,&this->Npilots,&this->Nzeros);
-	pilot_configurator.pilot_sequence = new std::complex <double>[pilot_configurator.nPilots];
+	pilot_configurator.init(this->Nfft, this->Nc,this->Nsymb,this->ofdm_frame);
 
 	srand(0);
 
@@ -116,6 +90,61 @@ void cl_ofdm::init()
 	}
 
 	srand(time(0));
+
+}
+
+void cl_ofdm::deinit()
+{
+	this->Ngi=0;
+	this->Nc=0;
+	this->Nfft=0;
+	this->Nsymb=0;
+	this->gi=0;
+
+	pilot_configurator.Dx=0;
+	pilot_configurator.Dy=0;
+	pilot_configurator.first_row=0;
+	pilot_configurator.last_row=0;
+	pilot_configurator.first_col=0;
+	pilot_configurator.second_col=0;
+	pilot_configurator.last_col=0;
+	pilot_configurator.pilot_boost=0;
+	pilot_configurator.first_row_zeros=NO;
+
+
+	if(ofdm_frame!=NULL)
+	{
+		delete[] ofdm_frame;
+		ofdm_frame=NULL;
+	}
+	if(zero_padded_data!=NULL)
+	{
+		delete[] zero_padded_data;
+		zero_padded_data=NULL;
+	}
+	if(iffted_data!=NULL)
+	{
+		delete[] iffted_data;
+		iffted_data=NULL;
+	}
+	if(gi_removed_data!=NULL)
+	{
+		delete[] gi_removed_data;
+		gi_removed_data=NULL;
+	}
+	if(ffted_data!=NULL)
+	{
+		delete[] ffted_data;
+		ffted_data=NULL;
+	}
+	if(estimated_channel!=NULL)
+	{
+		delete[] estimated_channel;
+		estimated_channel=NULL;
+	}
+
+	pilot_configurator.deinit();
+	pilot_configurator.pilot_sequence = new std::complex <double>[pilot_configurator.nPilots];
 
 }
 
@@ -402,6 +431,7 @@ cl_pilot_configurator::cl_pilot_configurator()
 	pilot_boost=1.0;
 	first_row_zeros=NO;
 	Nfft=0;
+	nZeros=0;
 }
 
 cl_pilot_configurator::~cl_pilot_configurator()
@@ -412,7 +442,7 @@ cl_pilot_configurator::~cl_pilot_configurator()
 	}
 }
 
-void cl_pilot_configurator::init(int Nfft, int Nc, int Nsymb,struct carrier* _carrier, int *ofdm_nPilots,int *ofdm_nZeros)
+void cl_pilot_configurator::init(int Nfft, int Nc, int Nsymb,struct carrier* _carrier)
 {
 	this->carrier=_carrier;
 	this->Nc=Nc;
@@ -437,11 +467,37 @@ void cl_pilot_configurator::init(int Nfft, int Nc, int Nsymb,struct carrier* _ca
 		}
 
 	}
-	this->configure(ofdm_nPilots,ofdm_nZeros);
+
+	this->configure();
+
+	pilot_sequence = new std::complex <double>[nPilots];
+
 	this->print();
 }
 
-void cl_pilot_configurator::configure(int *ofdm_nPilots,int *ofdm_nZeros)
+void cl_pilot_configurator::deinit()
+{
+	this->carrier=NULL;
+	this->Nc=0;
+	this->Nsymb=0;
+	this->Nfft=0;
+	this->Nc_max=0;
+	this->nData=0;
+
+	if(virtual_carrier!=NULL)
+	{
+		delete[] virtual_carrier;
+		virtual_carrier=NULL;
+	}
+	if(pilot_sequence!=NULL)
+	{
+		delete[] pilot_sequence;
+		pilot_sequence=NULL;
+	}
+
+}
+
+void cl_pilot_configurator::configure()
 {
 	int x=0;
 	int y=0;
@@ -544,6 +600,9 @@ void cl_pilot_configurator::configure(int *ofdm_nPilots,int *ofdm_nZeros)
 		}
 	}
 
+	nZeros=0;
+	nPilots=0;
+	nConfig=0;
 	for(int j=0;j<Nsymb;j++)
 	{
 		for(int i=0;i<Nc;i++)
@@ -554,22 +613,20 @@ void cl_pilot_configurator::configure(int *ofdm_nPilots,int *ofdm_nZeros)
 			if((virtual_carrier+j*Nc_max+i)->type==PILOT)
 			{
 				nPilots++;
+				nData--;
 			}
 			if((virtual_carrier+j*Nc_max+i)->type==CONFIG)
 			{
 				nConfig++;
+				nData--;
 			}
 			if((virtual_carrier+j*Nc_max+i)->type==ZERO)
 			{
 				nZeros++;
+				nData--;
 			}
-
 		}
-
 	}
-	*ofdm_nPilots=nPilots;
-	*ofdm_nZeros=nZeros;
-	nData-=nPilots+nConfig+nZeros;
 }
 
 void cl_pilot_configurator::print()
@@ -782,7 +839,7 @@ void cl_ofdm::channel_estimator_frame_time_frequency(std::complex <double>*in)
 	{
 		for(int j=0;j<Nc;j++)
 		{
-			if((pilot_configurator.carrier+i*Nc+j)->type==PILOT)
+			if((ofdm_frame+i*Nc+j)->type==PILOT)
 			{
 				(estimated_channel+i*Nc+j)->status=MEASURED;
 				(estimated_channel+i*Nc+j)->value=*(in+i*Nc+j)/pilot_configurator.pilot_sequence[pilot_index];
@@ -830,7 +887,7 @@ double cl_ofdm::measure_variance(std::complex <double>*in)
 	{
 		for(int j=0;j<Nc;j++)
 		{
-			if((pilot_configurator.carrier+i*Nc+j)->type==PILOT)
+			if((ofdm_frame+i*Nc+j)->type==PILOT)
 			{
 				diff=*(in+i*Nc+j) -pilot_configurator.pilot_sequence[pilot_index];
 				pilot_index++;
@@ -1086,12 +1143,12 @@ void cl_ofdm::baseband_to_passband(std::complex <double>* in, int in_size, doubl
 	delete data_interpolated;
 	}
 }
-void cl_ofdm::passband_to_baseband(double* in, int in_size, std::complex <double>* out, double sampling_frequency, double carrier_frequency, double carrier_amplitude, int decimation_rate, double* filter_coefficients, int filter_nTaps)
+void cl_ofdm::passband_to_baseband(double* in, int in_size, std::complex <double>* out, double sampling_frequency, double carrier_frequency, double carrier_amplitude, int decimation_rate)
 {
 	double sampling_interval=1.0/sampling_frequency;
 
 	std::complex <double> *l_data= new std::complex <double>[in_size];
-	std::complex <double> *data_filtered= new std::complex <double>[in_size+filter_nTaps-1];
+	std::complex <double> *data_filtered= new std::complex <double>[in_size];
 
 	for(int i=0;i<in_size;i++)
 	{
@@ -1099,24 +1156,9 @@ void cl_ofdm::passband_to_baseband(double* in, int in_size, std::complex <double
 		l_data[i].imag(in[i]*carrier_amplitude*sin(2*M_PI*carrier_frequency*(double)i * sampling_interval));
 	}
 
-	double acc_r,acc_im;
-	for(int i=0;i<(in_size+filter_nTaps-1);i++)
-	{
-		acc_r=0;
-		acc_im=0;
-		for(int j=0;j<filter_nTaps;j++)
-		{
-			if((i-j)>=0 && (i-j)<in_size)
-			{
-				acc_r+=l_data[i-j].real()*filter_coefficients[j];
-				acc_im+=l_data[i-j].imag()*filter_coefficients[j];
-			}
-		}
-			data_filtered[i].real(acc_r);
-			data_filtered[i].imag(acc_im);
-	}
+	FIR.apply(l_data,data_filtered,in_size);
 
-	rational_resampler(&data_filtered[(int)(filter_nTaps-1)/2], in_size, out, decimation_rate, DECIMATION);
+	rational_resampler(data_filtered, in_size, out, decimation_rate, DECIMATION);
 	if(l_data!=NULL)
 	{
 	delete l_data;

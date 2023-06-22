@@ -56,6 +56,8 @@ class cl_data_container
 	volatile int data_ready;
 	int buffer_Nsymb;
 
+	void deinit();
+
 
 	double *data_pb_rec;
 };

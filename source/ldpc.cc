@@ -23,10 +23,32 @@
 
 cl_ldpc::cl_ldpc()
 {
+	standard_val=0;
+	N=0;
+	K=0;
+	P=0;
+	decoding_algorithm_val=0;
+	eta_val=0;
+	nIteration_max_val=0;
+	print_nIteration_val=0;
+	Cwidth=0;
+	r=0;
+	decoding_algorithm=0;
+	rate=0;
+	framesize=0;
+	standard=0;
+	nIteration_max=0;
+	GBF_eta=0;
+	print_nIteration=NO;
+
+	Cwidth=0;
+	QCmatrixC=NULL;
+	QCmatrixEnc=NULL;
 }
 
 cl_ldpc::~cl_ldpc()
 {
+	deinit();
 }
 
 void cl_ldpc::init()
@@ -41,6 +63,24 @@ void cl_ldpc::init()
 	print_nIteration_val= print_nIteration;
 	Cwidth=0;
 	update_code_parameters();
+}
+
+void cl_ldpc::deinit()
+{
+	standard_val=0;
+	N=0;
+	K=0;
+	P=0;
+	decoding_algorithm_val=0;
+	eta_val=0;
+	nIteration_max_val=0;
+	print_nIteration_val=0;
+	Cwidth=0;
+
+	Cwidth=0;
+	QCmatrixC=NULL;
+	QCmatrixEnc=NULL;
+
 }
 
 

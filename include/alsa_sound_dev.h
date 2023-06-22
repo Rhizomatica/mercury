@@ -58,6 +58,7 @@ public:
 
 
 	int init();
+	void deinit();
 	std::string get_erro_message();
 	snd_pcm_sframes_t transfere(double* buffer, unsigned int size);
 	snd_pcm_sframes_t _transfere(double* buffer, unsigned int size);

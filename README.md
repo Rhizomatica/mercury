@@ -2,13 +2,126 @@
 
 Mercury is a configurable open-source software-defined modem: (https://github.com/Rhizomatica/mercury).
 
-
 # System Components and Configuration
 
-The software-defined modem features an Orthogonal Frequency-Division Multiplexing (OFDM) modulator/demodulator with a Low-Density Parity-Check (LDPC) error correction code encoder/decoder with an embedded Additive white Gaussian noise (AWGN) channel simulator. 
+The mercury software-defined modem is composed of two main layers, the physical layer, and the data link layer.
 
- The general system has the following parameters to be configured (more fine-tuning parameters are in telecom_system.cc/telecom_system.h):
+The physical layer is the part responsible for data protection via the use of Low-Density Parity-Check (LDPC) codes and information mapping on the electromagnetic spectrum via modulation using Orthogonal Frequency-Division Multiplexing (OFDM) and other digital signal processing methods.
 
+The physical layer provides a connection-less transmission. In other words, the transmitter doesn't have any information regarding the receiver status, the channel status, or packets received/lost. This task is left to the data link layer.
+
+ The physical layer can be interfaced from the upper end and the lower end.  The lower end interfaces with the hardware via the sound card using the Alsa driver. The speaker and microphone can be connected to an off-the-shelf radio transceiver to transmit the signal over an electromagnetic channel.
+
+The upper and the physical layer interface with the datalink layer via three main connection points, send(), receive(), and load_configuration(). In addition, function load_config(SNR) allows the physical layer to inform the data link layer of the appropriate configuration for a specific Signal to Noise Ratio (SNR).
+
+ARQ
+
+The data link can be in one of two roles, a commander or a responder. The commander is the side responsible for controlling the message flux.
+The data link layer provides a connection based using automatic repeat requests (ARQ) via retransmission and acknowledgment mechanisms. This is to guarantee the reception of the information even in cases of message loss. In the case of an ack message lost, a request to resend the last ack message can be sent.
+
+The data link layer packs the messages in batches to avoid a fast TX/RX switch. Nevertheless, the batch size is configurable and can be set to one. Several batches form a block. Writing to the TX data buffer and reading from the RX data buffer are done in blocks. The block size is configurable as well.
+
+Gearshift
+
+The data link later exchange channel state information to negotiate the highest data rate possible for the downlink channel, and in case of a change, adapt to the new channel condition. This "Gearshift" is done via a set_config command that a commander can send at any time and a recovery mechanism in case of a worsening channel condition. The channel evaluation and gearshift operations are done at the beginning of each data block.
+
+The data link layer connects to a possible application layer via two TCP/IP connections, a data dump buffer, and a control connection with an application-level interface (API).
+
+API
+
+A base API was implemented to provide the basic functionality in a way that would be familiar to users of commercially available modems.
+The API can easily be updated and new commands can be added to provide further control to the application layer.
+
+The base API is composed of the following commands:
+
+1. MYCALL mycall\r
+
+Sets the AQR call sign to the value of the string "my_call".
+
+Reply: OK
+
+2. LISTEN ON\r
+
+Sets the ARQ to a responder role and waits for an incoming connection.
+
+Reply: OK
+
+3. CONNECT my_call destination_call\r
+
+Sets the ARQ to a commander role and initiates the connection sequence to "destination_call".
+
+Reply: OK
+
+4. DISCONNECT\r
+
+Terminates the current connection.
+
+Reply: OK
+
+5. BW2300\r
+
+Sets the bandwidth to 2300 Hz.
+
+Reply: OK
+
+6. BW2500\r
+
+Sets the bandwidth to 2500 Hz.
+
+Reply: OK
+
+7. BUFFER TX\r
+
+Reads the number of data bytes in the TX buffer yet to be sent.
+
+Reply: BUFFER bytes
+
+In the case of an unrecognized command, a reply: NOK is provided.
+
+
+
+The physical layer features an OFDM modulator/demodulator with an LDPC error correction code encoder/decoder with an embedded Additive white Gaussian noise (AWGN) channel simulator. 
+
+
+# Configuration
+
+Both the physical layer and the data link layer parameters can be defined in configurations.cc
+
+The data link layer has the following parameters to be configured:
+
+- fifo_buffer_tx_size: The first-in-first-out transmission buffer size (data to be transmitted).
+- fifo_buffer_rx_size: The FIFO reception buffer size.
+- fifo_buffer_backup_size: Backup FIFO buffer for configuration switch.
+- link_timeout: Maximum time without any activity on the link (TX or RX) before link drops (ms).
+- tcp_socket_control_port: Control TCP/IP port.
+- tcp_socket_control_timeout_ms: Control TCP/IP timeout (ms).
+- tcp_socket_data_port: Data TCP/IP port.
+- tcp_socket_data_timeout_ms: Data TCP/IP timeout (ms).
+- gear_shift_on: Gearshit setting (Yes, No).
+- current_configuration: The configuration used if Gearshit was disabled.
+- batch_size: Number of messages per data batch.
+- nMessages: Number of messages per block.
+- nBytes_header: Size of messages header (byte).
+- nResends: Number of trials for each data/control message.
+- ack_batch_size:  Number of messages per acknolegment batch.
+- control_batch_size: Number of messages per control batch.
+
+The physical layer has the following parameters to be configured (more fine-tuning parameters are in telecom_system.cc/telecom_system.h):
+
+- test_tx_AWGN_EsN0_calibration: Calibration value (dB) to compinsate for cable losses (and other losses).
+- test_tx_AWGN_EsN0: AWGN noise level to be transmitted with the test signal.
+- tcp_socket_test_port: Test TCP/IP port.
+- tcp_socket_test_timeout_ms: Test TCP/IP timeout (ms).
+- current_configuration: Current congiration to be used for transmission (Modulation, code rate, etc.)
+- plot_folder: Folder to be used as a temporary for the plot function.
+- plot_plot_active: Plot function activation (Yes, No).
+- microphone_dev_name: Alsa capture device name ("plughw:1,0" for example).
+- speaker_dev_name:  Alsa play device name ("plughw:1,0" for example).
+- microphone_type: Capture channel type (Mono, Stereo).
+- microphone_channels: Number of capture channels.
+- speaker_type: Play channel type (Mono, Stereo).
+- speaker_channels: Number of play channels.
+- speaker_frames_to_leave_transmit_fct: Number of frames to be played before leaving the Alsa transmission function, to avoid Alsa underrun.
 - M: the used modulation (BPSK, QPSK, 8QAM, 16QAM, 32QAM, 64QAM).
 - bit_interleaver_block_size: the interleaving block size to combat pulse noise.
 - bandwidth: the used bandwidth for TX and RX.
@@ -17,9 +130,9 @@ The software-defined modem features an Orthogonal Frequency-Division Multiplexin
 - frequency_interpolation_rate: sampling frequency interpolation rate to match the sound card sampling rate.
 - carrier_frequency: the OFDM signal carrier frequency in TX and RX.
 - output_power_Watt: the output signal power at TX.
-- filter_window: the Finite Impulse Response (FIR) window at RX.
-- filter_transition_bandwidth: the FIR transition width at RX.
-- filter_cut_frequency the FIR cut frequency at RX.
+- FIR_filter_window: the Finite Impulse Response (FIR) window at RX.
+- FIR_filter_transition_bandwidth: the FIR transition width at RX.
+- FIR_filter_cut_frequency the FIR cut frequency at RX.
 
 The OFDM has the following main parameters (more fine-tuning parameters are in ofdm.cc/ofdm.h):
 
@@ -41,16 +154,10 @@ The LDPC has the following main parameters:
 - GBF_eta: the Gradient Bit-Flipping (GBF) LDPC decoder correction rate.
 - nIteration_max: the number of maximum decoding iterations.
 
-Others:
-
-Further components of the system have their configuration such as the ALSA sound library and the TCP/IP socket.
-
-
-
 # Operation Mode
 
 Mercury operates in one of six different modes:
-
+- ARQ_MODE: Data-link layer and Automatic repeat request active.
 - BER_PLOT_baseband: Baseband Bit Erro Rate (BER) simulation mode over an AWGN channel with/without plotting.
 - BER_PLOT_passband: Passeband BER simulation mode over an AWGN channel with/without plotting.
 - TX_TEST: random data transmission test
@@ -73,6 +180,15 @@ To use the sound card via ALSA Sound library, the library should be installed an
 
 To install ALSA Sound run the following command as root: 'apt-get install libasound2-dev'.
 
+* Documentation
+
+To generate the documentation, the Doxygen and GraphViz packets should be installed.
+
+To install Doxygen run the following command as root: 'apt-get install doxygen'.
+
+To install GraphViz run the following command as root: 'apt-get install graphviz'.
+
+
 
 
 # Compile And Install
@@ -80,6 +196,10 @@ To install ALSA Sound run the following command as root: 'apt-get install libaso
 To compile the Mercury code, run the following:
 
 * make
+
+To generate the Mercury documentation, run the following:
+
+* make doc
 
 
 

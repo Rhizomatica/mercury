@@ -42,19 +42,7 @@ cl_alsa_sound_device::cl_alsa_sound_device()
 
 cl_alsa_sound_device::~cl_alsa_sound_device()
 {
-	if(_dev_ptr!=NULL)
-	{
-		if(type==PLAY)
-		{
-			snd_pcm_drain(_dev_ptr);
-		}
-		snd_pcm_close (_dev_ptr);
-	}
-
-	if(_buffer_ptr!=NULL)
-	{
-		delete _buffer_ptr;
-	}
+	this->deinit();
 }
 
 
@@ -98,6 +86,23 @@ int cl_alsa_sound_device::init()
 	}
 
 	return _success;
+}
+
+
+void cl_alsa_sound_device::deinit()
+{
+	if(_dev_ptr!=NULL)
+	{
+		if(type==PLAY)
+		{
+			snd_pcm_drain(_dev_ptr);
+		}
+		snd_pcm_close (_dev_ptr);
+
+		delete[] _buffer_ptr;
+		_buffer_ptr=NULL;
+		_dev_ptr=NULL;
+	}
 }
 
 snd_pcm_uframes_t cl_alsa_sound_device::get_buffer_size()
@@ -397,6 +402,12 @@ void interrupt_handler(snd_async_handler_t *callback_ptr)
 	cl_alsa_sound_device * sound_device_ptr= (cl_alsa_sound_device*) data_container_ptr->sound_device_ptr;
 
 	int location_of_last_frame=data_container_ptr->Nofdm*data_container_ptr->interpolation_rate*(data_container_ptr->buffer_Nsymb)-data_container_ptr->Nofdm*data_container_ptr->interpolation_rate-1;
+
+	if(data_container_ptr->data_ready==1)
+	{
+		shift_left(data_container_ptr->passband_delayed_data, data_container_ptr->Nofdm*data_container_ptr->interpolation_rate*data_container_ptr->buffer_Nsymb, data_container_ptr->Nofdm*data_container_ptr->interpolation_rate);
+		//std::cout<<"under_processing"<<std::endl;
+	}
 
 	sound_device_ptr->transfere(&data_container_ptr->passband_delayed_data[location_of_last_frame],data_container_ptr->Nofdm*data_container_ptr->interpolation_rate);
 	data_container_ptr->frames_to_read--;

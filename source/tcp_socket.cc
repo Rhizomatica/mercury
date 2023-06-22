@@ -73,6 +73,19 @@ int cl_tcp_socket::init()
 				status=TCP_STATUS_SOCKET_CREATED;
 				std::cout<<"Server socket is created"<<std::endl;
 			}
+			const int enable = 1;
+			if (setsockopt(socket_fd, SOL_SOCKET, SO_REUSEADDR, &enable, sizeof(int)) != 0)
+			{
+				status=TCP_STATUS_REUSEADDR_ERROR;
+				std::cout<<"Error-Server address reuse can't be set."<<std::endl;
+				return_val=ERROR;
+			}
+			if (setsockopt(socket_fd, SOL_SOCKET, SO_REUSEPORT, &enable, sizeof(int)) != 0)
+			{
+				status=TCP_STATUS_REUSEPORT_ERROR;
+				std::cout<<"Error-Server port reuse can't be set."<<std::endl;
+				return_val=ERROR;
+			}
 			if ((bind(socket_fd, (struct sockaddr*)&server, sizeof(server))) != 0)
 			{
 				status=TCP_STATUS_BINDING_ERROR;

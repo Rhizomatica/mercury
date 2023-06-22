@@ -53,16 +53,31 @@ private:
 public:
 	cl_ldpc();
 	~cl_ldpc();
-	int N,P,K;
+	int N,P,K; //!< N: the message size, P: the parity bit size, K: the information bit size (N=P+K).
 	int standard;
 	int framesize;
 	float rate;
 	int decoding_algorithm;
-	float GBF_eta;
-	int nIteration_max;
+	float GBF_eta; //!< The GBF algorithms correction rate.
+	int nIteration_max; //!< The maximum number of LDPC decoding iterations allowed.
 	int print_nIteration;
 	void init();
+	void deinit();
+
+	//! The LDPC encoding function, calculates and annex the parity bits to the original data.
+	    /*!
+	      \param data is the data to be protected by the LDPC code.
+	      \param encoded_data is the concatenation of the original data with the LDPC parity bits.
+	      \return None
+	   */
 	void encode(const int* data, int*  encoded_data);
+
+	//! The LDPC decoding function, validates the message integrity and attempts to correct bit errors.
+	    /*!
+	      \param data is the received message.
+	      \param encoded_data is the corrected data without the LDPC parity bits.
+	      \return number of iterations used to decode the message, the message maybe corrupt if this reaches the max number of iterations allowed.
+	   */
 	int decode(const float* data,  int*  decoded_data);
 
 

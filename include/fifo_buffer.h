@@ -1,6 +1,6 @@
 /*
  * Mercury: A configurable open-source software-defined modem.
- * Copyright (C) 2022 Fadi Jerji
+ * Copyright (C) 2023 Fadi Jerji
  * Author: Fadi Jerji
  * Email: fadi.jerji@  <gmail.com, rhizomatica.org, caisresearch.com, ieee.org>
  * ORCID: 0000-0002-2076-5831
@@ -19,12 +19,39 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  *
  */
-#ifndef INC_INTERLEAVER_H_
-#define INC_INTERLEAVER_H_
+
+#ifndef INC_FIFO_BUFFER_H_
+#define INC_FIFO_BUFFER_H_
+
+#include <unistd.h>
+
+#define ERROR -1
+#define SUCCESSFUL 0
+
+class cl_fifo_buffer
+{
+
+public:
+	cl_fifo_buffer();
+  ~cl_fifo_buffer();
+
+  void flush();
+  int set_size(int size);
+  int get_free_size();
+  int get_size();
 
 
-void bit_interleaver(int* in, int* out, int nItems, int block_size);
-void bit_deinterleaver(int* in, int* out, int nItems, int block_size);
-void bit_deinterleaver(float* in, float* out, int nItems, int block_size);
+  int push(char* data, int length);
+  int pop(char* data, int length);
+
+private:
+  char* data;
+  int size;
+  int read_location;
+  int write_location;
+
+
+};
+
 
 #endif

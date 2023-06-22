@@ -152,13 +152,13 @@ void cl_plot::plot_constellation(float* data, int nPoints)
 		fclose(constellation_data);
 
 		fprintf(gnuplotPipe, "reset\n");
-		fprintf(gnuplotPipe, "set terminal wxt\n");
+		fprintf(gnuplotPipe, "set terminal x11\n");
 		fprintf(gnuplotPipe, "set title \"Constellation\"\n");
 		fprintf(gnuplotPipe, "set xrange [-2:2]\n");
 		fprintf(gnuplotPipe, "set yrange [-2:2]\n");
 		fprintf(gnuplotPipe, "set xzeroaxis\n");
 		fprintf(gnuplotPipe, "set yzeroaxis\n");
-		fprintf(gnuplotPipe, ("plot '"+folder+"constellation_data.temp' using 1:2 pt 7 ps 0.5 \n").c_str());
+		fprintf(gnuplotPipe, ("plot '"+folder+"constellation_data.temp' using 1:2 pt 7 ps 1.0 \n").c_str());
 		fflush(gnuplotPipe);
 	}
 }

@@ -27,6 +27,7 @@
 #include <iostream>
 #include "misc.h"
 #include "defines.h"
+#include "fir_filter.h"
 
 #define DATA 0
 #define PILOT 1
@@ -65,8 +66,9 @@ class cl_pilot_configurator
 public:
 	cl_pilot_configurator();
 	~cl_pilot_configurator();
-	void configure(int *ofdm_nPilots,int *ofdm_nZeros);
-	void init(int Nfft, int Nc, int Nsymb, struct carrier* _carrier, int *ofdm_nPilots,int *ofdm_nZeros);
+	void configure();
+	void init(int Nfft, int Nc, int Nsymb, struct carrier* _carrier);
+	void deinit();
 	void print();
 
 	int Dx,Dy;
@@ -114,6 +116,7 @@ public:
 	~cl_ofdm();
 	void init();
 	void init(int Nfft, int Nc, int Nsymb, float gi);
+	void deinit();
 	void symbol_mod(std::complex <double>*in, std::complex <double>*out);
 	void symbol_demod(std::complex <double>*in, std::complex <double>*out);
 	void framer(std::complex <double>* in, std::complex <double>* out);
@@ -129,9 +132,9 @@ public:
 	int symbol_sync(std::complex <double>*, int size, int interpolation_rate, int location_to_return);
 	void rational_resampler(std::complex <double>* in, int in_size , std::complex <double>* out, int rate, int interpolation_decimation);
 	void baseband_to_passband(std::complex <double>* in, int in_size, double* out, double sampling_frequency, double carrier_frequency, double carrier_amplitude, int interpolation_rate);
-	void passband_to_baseband(double* in, int in_size, std::complex <double>* out, double sampling_frequency, double carrier_frequency, double carrier_amplitude, int decimation_rate, double* filter_coefficients, int filter_nTaps);
+	void passband_to_baseband(double* in, int in_size, std::complex <double>* out, double sampling_frequency, double carrier_frequency, double carrier_amplitude, int decimation_rate);
 	struct channel * estimated_channel;
-	int Nfft,Nc,Nsymb,Npilots,Nzeros;
+	int Nfft,Nc,Nsymb;
 	float gi;
 	struct carrier* ofdm_frame;
 	cl_pilot_configurator pilot_configurator;
@@ -139,6 +142,7 @@ public:
 	int time_sync_Nsymb;
 	double freq_offset_ignore_limit;
 	int print_time_sync_status;
+	cl_FIR FIR;
 };
 
 
