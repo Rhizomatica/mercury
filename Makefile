@@ -1,7 +1,7 @@
 CPP=g++
 LDFLAGS=-lasound
-CPPFLAGS=-O3 -g0 -Wall -Wno-format -std=gnu++14 -I./inc
-CPP_SOURCES=$(wildcard src/*.cc)
+CPPFLAGS=-O3 -g0 -Wall -Wno-format -std=gnu++14 -I./include
+CPP_SOURCES=$(wildcard source/*.cc)
 DOCS=index.html
 
 all: $(CPP_SOURCES)
