@@ -5,7 +5,7 @@ CPP_SOURCES=$(wildcard source/*.cc)
 DOCS=index.html
 
 all: $(CPP_SOURCES)
-	$(CPP) $(CPP_SOURCES) $(LDFLAGS) $(CPPFLAGS) -o $@
+	$(CPP) $(CPP_SOURCES) $(LDFLAGS) $(CPPFLAGS) -o mercury
 	@doxygen ./mercury.doxyfile
 	cp ./docs_FSM/*.png html
 	
