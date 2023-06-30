@@ -4,11 +4,11 @@ CPPFLAGS=-O3 -g0 -Wall -Wno-format -std=gnu++14 -I./include
 CPP_SOURCES=$(wildcard source/*.cc)
 DOCS=index.html
 
-all: $(CPP_SOURCES)
+all: mercury doc
 	$(CPP) $(CPP_SOURCES) $(LDFLAGS) $(CPPFLAGS) -o mercury
 	@doxygen ./mercury.doxyfile
 	cp ./docs_FSM/*.png html
-	
+
 mercury: $(CPP_SOURCES)
 	$(CPP) $(CPP_SOURCES) $(LDFLAGS) $(CPPFLAGS) -o $@
 
@@ -19,7 +19,7 @@ doc: $(CPP_SOURCES)
 
 .PHONY: clean install
 
-install:
+install: mercury
 	install -D mercury /usr/bin/mercury
 
 clean:
