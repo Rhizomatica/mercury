@@ -98,10 +98,10 @@ void cl_FIR::apply(std::complex <double>* in, std::complex <double>* out, int nI
 			}
 		}
 
-		if(i>(int)(filter_nTaps-1)/2 && i<nItems)
+		if(i>=((int)(filter_nTaps-1)/2) && i<(nItems+(int)(filter_nTaps-1)/2))
 		{
-			out[i].real(acc_r);
-			out[i].imag(acc_im);
+			out[i-(int)(filter_nTaps-1)/2].real(acc_r);
+			out[i-(int)(filter_nTaps-1)/2].imag(acc_im);
 		}
 	}
 }
