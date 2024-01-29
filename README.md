@@ -23,7 +23,7 @@ The data link layer packs the messages in batches to avoid a fast TX/RX switch. 
 
 Gearshift
 
-The data link later exchange channel state information to negotiate the highest data rate possible for the downlink channel, and in case of a change, adapt to the new channel condition. This "Gearshift" is done via a set_config command that a commander can send at any time and a recovery mechanism in case of a worsening channel condition. The channel evaluation and gearshift operations are done at the beginning of each data block.
+The data link later exchanges channel state information to negotiate the highest data rate possible for the downlink channel, and in case of a change, adapt to the new channel condition. This "Gearshift" is done via a set_config command that a commander can send at any time and a recovery mechanism in case of a worsening channel condition. The channel evaluation and gearshift operations are done at the beginning of each data block.
 
 The data link layer connects to a possible application layer via two TCP/IP connections, a data dump buffer, and a control connection with an application-level interface (API).
 
@@ -85,7 +85,8 @@ The physical layer features an OFDM modulator/demodulator with an LDPC error cor
 
 # Configuration
 
-Both the physical layer and the data link layer parameters can be defined in configurations.cc
+
+The data link layer parameters can be defined in data_link_layer/datalink_config.cc
 
 The data link layer has the following parameters to be configured:
 
@@ -103,16 +104,19 @@ The data link layer has the following parameters to be configured:
 - nMessages: Number of messages per block.
 - nBytes_header: Size of messages header (byte).
 - nResends: Number of trials for each data/control message.
-- ack_batch_size:  Number of messages per acknolegment batch.
+- ack_batch_size:  Number of messages per acknowledgment batch.
 - control_batch_size: Number of messages per control batch.
+- ptt_on_delay_ms: time in milliseconds to wait after switching the push to talk (ptt) before sending data.
+
+The physical layer parameters can be defined in physical_layer/physical_config.cc
 
 The physical layer has the following parameters to be configured (more fine-tuning parameters are in telecom_system.cc/telecom_system.h):
 
-- test_tx_AWGN_EsN0_calibration: Calibration value (dB) to compinsate for cable losses (and other losses).
+- test_tx_AWGN_EsN0_calibration: Calibration value (dB) to compensate for cable losses (and other losses).
 - test_tx_AWGN_EsN0: AWGN noise level to be transmitted with the test signal.
 - tcp_socket_test_port: Test TCP/IP port.
 - tcp_socket_test_timeout_ms: Test TCP/IP timeout (ms).
-- current_configuration: Current congiration to be used for transmission (Modulation, code rate, etc.)
+- current_configuration: Current configuration to be used for transmission (Modulation, code rate, etc.)
 - plot_folder: Folder to be used as a temporary for the plot function.
 - plot_plot_active: Plot function activation (Yes, No).
 - microphone_dev_name: Alsa capture device name ("plughw:1,0" for example).
@@ -130,9 +134,22 @@ The physical layer has the following parameters to be configured (more fine-tuni
 - frequency_interpolation_rate: sampling frequency interpolation rate to match the sound card sampling rate.
 - carrier_frequency: the OFDM signal carrier frequency in TX and RX.
 - output_power_Watt: the output signal power at TX.
-- FIR_filter_window: the Finite Impulse Response (FIR) window at RX.
-- FIR_filter_transition_bandwidth: the FIR transition width at RX.
-- FIR_filter_cut_frequency the FIR cut frequency at RX.
+- RX FIR_filter_window: the Finite Impulse Response (FIR) window at RX.
+- RX FIR_filter_transition_bandwidth: the FIR transition width at RX.
+- RX FIR_filter_cut_frequency the FIR cut frequency at RX.
+- TX 1 FIR_filter_window: the Finite Impulse Response (FIR) window at TX.
+- TX 1 FIR_filter_transition_bandwidth: the FIR transition width at TX.
+- TX 1 FIR_filter_cut_frequency the FIR cut frequency at TX.
+- TX 2 FIR_filter_window: the Finite Impulse Response (FIR) window at TX.
+- TX 2 FIR_filter_transition_bandwidth: the FIR transition width at TX.
+- TX 2 FIR_filter_cut_frequency the FIR cut frequency at TX.
+- ofdm_preamble_configurator_Nsymb: number of preamble symbols.
+- ofdm_preamble_configurator_nIdentical_sections: number of identical parts per preamble symbol.
+- ofdm_preamble_configurator_modulation: preamble modulation;
+- ofdm_preamble_configurator_boost: preamble boost.
+- ofdm_preamble_configurator_seed: preamble pseudo-random bits seed.
+- ofdm_preamble_papr_cut: preamble Peak to Average Power Ratio (PAPR) cut limit (before filtering)
+- ofdm_data_papr_cut: data Peak to Average Power Ratio (PAPR) cut limit (before filtering)
 
 The OFDM has the following main parameters (more fine-tuning parameters are in ofdm.cc/ofdm.h):
 
@@ -145,13 +162,14 @@ The OFDM has the following main parameters (more fine-tuning parameters are in o
 - pilot_boost: to define pilot carriers' power in relation to data carriers' power.
 - time_sync_Nsymb: to define the number of symbols to be used in time synchronization.
 - freq_offset_ignore_limit: the minimum value of frequency offset to be compensated.
+- channel estimation method
 
 
 The LDPC has the following main parameters:
-
+- decoding algorithm: the decoding algorithm can be either the Sum-Product algorithm (SPA) or the Gradient Bit-Flipping (GBF)
 - standard and framesize: the LDPC code deploys specially designed LDPC matrices of the size 1600 bits with three different code rates
 - rate: the code rate that defines the protection level vs data rate (2/16, 8/16, 14/16).
-- GBF_eta: the Gradient Bit-Flipping (GBF) LDPC decoder correction rate.
+- GBF_eta: the GBF LDPC decoder correction rate.
 - nIteration_max: the number of maximum decoding iterations.
 
 # Operation Mode
@@ -162,8 +180,6 @@ Mercury operates in one of six different modes:
 - BER_PLOT_passband: Passeband BER simulation mode over an AWGN channel with/without plotting.
 - TX_TEST: random data transmission test
 - RX_TEST: random data reception test with/without plotting.
-- TX_TCP: TCP/IP data transmission
-- RX_TCP: TCP/IP data reception with/without plotting.
 
 
 # Prerequisite
@@ -208,8 +224,12 @@ To generate the Mercury documentation, run the following:
 
 Contains the header files of Mercury.
 
+## final notes:
+
+The current version of Mercury was sucessfuly tested using Sbitx radios using Raspberry pi 4 microcomputers.
+Tx power= 20 Watts, distance 70 km, Rx SNR= -3 dB using TX_test, Rx_test Config0.
+
 
 ### Authors
 
 The code was written by Fadi Jerji fadi.jerji@ <gmail.com, rhizomatica.org, caisresearch.com, ieee.org>
-

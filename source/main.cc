@@ -1,6 +1,6 @@
 /*
  * Mercury: A configurable open-source software-defined modem.
- * Copyright (C) 2022 Fadi Jerji
+ * Copyright (C) 2022-2024 Fadi Jerji
  * Author: Fadi Jerji
  * Email: fadi.jerji@  <gmail.com, rhizomatica.org, caisresearch.com, ieee.org>
  * ORCID: 0000-0002-2076-5831
@@ -26,24 +26,22 @@
 #include <math.h>
 #include <iostream>
 #include <complex>
-#include "telecom_system.h"
-#include "arq.h"
-
-
+#include "physical_layer/telecom_system.h"
+#include "datalink_layer/arq.h"
 
 int main(int argc, char *argv[])
 {
 	srand(time(0));
 
 	cl_telecom_system telecom_system;
-	cl_arq_controller ARQ;
 
 	telecom_system.operation_mode=ARQ_MODE;
 	telecom_system.load_configuration();
-	ARQ.telecom_system=&telecom_system;
 
 	if(telecom_system.operation_mode==ARQ_MODE)
 	{
+		cl_arq_controller ARQ;
+		ARQ.telecom_system=&telecom_system;
 		ARQ.init();
 		ARQ.print_stats();
 		while(1)
@@ -53,24 +51,14 @@ int main(int argc, char *argv[])
 	}
 	else if(telecom_system.operation_mode==RX_TEST)
 	{
-		telecom_system.plot.open("PLOT");
-		telecom_system.plot.reset("PLOT");
+		telecom_system.constellation_plot.open("PLOT");
+		telecom_system.constellation_plot.reset("PLOT");
 
 		while(1)
 		{
 			telecom_system.RX_TEST_process_main();
 		}
-		telecom_system.plot.close();
-	}
-	else if(telecom_system.operation_mode==RX_TCP)
-	{
-		if(telecom_system.tcp_socket_test.init()==SUCCESS)
-		{
-			while(1)
-			{
-				telecom_system.RX_TCP_process_main();
-			}
-		}
+		telecom_system.constellation_plot.close();
 	}
 	else if (telecom_system.operation_mode==TX_TEST)
 	{
@@ -79,23 +67,19 @@ int main(int argc, char *argv[])
 			telecom_system.TX_TEST_process_main();
 		}
 	}
-	else if (telecom_system.operation_mode==TX_TCP)
-	{
-		if(telecom_system.tcp_socket_test.init()==SUCCESS)
-		{
-			while(1)
-			{
-				telecom_system.TX_TCP_process_main();
-			}
-		}
-	}
 	else if (telecom_system.operation_mode==BER_PLOT_baseband)
 	{
+		telecom_system.constellation_plot.open("PLOT");
+		telecom_system.constellation_plot.reset("PLOT");
 		telecom_system.BER_PLOT_baseband_process_main();
+		telecom_system.constellation_plot.close();
 	}
 	else if(telecom_system.operation_mode==BER_PLOT_passband)
 	{
+		telecom_system.constellation_plot.open("PLOT");
+		telecom_system.constellation_plot.reset("PLOT");
 		telecom_system.BER_PLOT_passband_process_main();
+		telecom_system.constellation_plot.close();
 	}
 
 	return 0;

@@ -1,11 +1,11 @@
 CPP=g++
 LDFLAGS=-lasound
 CPPFLAGS=-O3 -g0 -Wall -Wno-format -std=gnu++14 -I./include
-CPP_SOURCES=$(wildcard source/*.cc)
+CPP_SOURCES=$(wildcard source/*.cc source/datalink_layer/*.cc source/physical_layer/*.cc)
 DOCS=index.html
 
 all: mercury doc
-	$(CPP) $(CPP_SOURCES) $(LDFLAGS) $(CPPFLAGS) -o mercury
+	$(CPP) $(CPP_SOURCES) $(LDFLAGS) $(CPPFLAGS) -o $@
 	@doxygen ./mercury.doxyfile
 	cp ./docs_FSM/*.png html
 
