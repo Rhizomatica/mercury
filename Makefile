@@ -26,7 +26,7 @@ ifeq (${uname_p},aarch64)
 # Raspberry Pi 4 compiler flags:
 	CPPFLAGS+=-march=armv8-a+crc
 # Raspberry Pi 5 compiler flags (comment above and uncomment below):
-#	CPPFLAGS=-march=armv8.2-a+crypto+fp16+rcpc+dotprod
+#	CPPFLAGS+=-march=armv8.2-a+crypto+fp16+rcpc+dotprod
 endif
 
 
