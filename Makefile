@@ -14,7 +14,6 @@
 #    along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #
 #
-uname_p := $(shell uname -m)
 
 CPP=g++
 LDFLAGS=-lasound
@@ -22,12 +21,14 @@ CPPFLAGS=-Ofast -g0 -Wall -Wno-format -std=gnu++14 -I./include
 CPP_SOURCES=$(wildcard source/*.cc source/datalink_layer/*.cc source/physical_layer/*.cc)
 DOCS=index.html
 
+uname_p := $(shell uname -m)
 ifeq (${uname_p},aarch64)
 # Raspberry Pi 4 compiler flags:
 	CPPFLAGS+=-march=armv8-a+crc
 # Raspberry Pi 5 compiler flags:
 #	CFLAGS=-march=armv8.2-a+crypto+fp16+rcpc+dotprod
 endif
+
 
 all: mercury doc
 	$(CPP) $(CPP_SOURCES) $(LDFLAGS) $(CPPFLAGS) -o $@
@@ -49,6 +50,4 @@ install: mercury
 
 clean:
 	rm -rf mercury
-	rm -rf html/*
-	rmdir html
-
+	rm -rf html/
