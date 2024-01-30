@@ -36,7 +36,7 @@ cl_psk::~cl_psk()
 {
 	if(constellation!=NULL)
 	{
-		delete constellation;
+		delete[] constellation;
 	}
 }
 
@@ -288,11 +288,11 @@ void cl_psk::demod(const std::complex <double> *in,int nItems,float *out,float v
 
 	if(D!=NULL)
 	{
-		delete D;
+		delete[] D;
 	}
 	if(LLR!=NULL)
 	{
-		delete LLR;
+		delete[] LLR;
 	}
 
 }

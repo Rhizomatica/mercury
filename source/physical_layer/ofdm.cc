@@ -255,7 +255,7 @@ void cl_ofdm::_fft(std::complex <double> *v, int n)
 		}
 		if(tmp!=NULL)
 		{
-			delete tmp;
+			delete[] tmp;
 		}
 	}
 	//Ref:Wickerhauser, Mladen Victor,Mathematics for Multimedia, Birkhäuser Boston, January 2010, DOI: 10.1007/978-0-8176-4880-0, ISBNs 978-0-8176-4880-0, 978-0-8176-4879-4
@@ -304,7 +304,7 @@ void cl_ofdm::_ifft(std::complex <double>* v,int n)
 		}
 		if(tmp!=NULL)
 		{
-			delete tmp;
+			delete[] tmp;
 		}
 	}
 	//Ref:Wickerhauser, Mladen Victor,Mathematics for Multimedia, Birkhäuser Boston, January 2010, DOI: 10.1007/978-0-8176-4880-0, ISBNs 978-0-8176-4880-0, 978-0-8176-4879-4
@@ -447,7 +447,7 @@ cl_pilot_configurator::~cl_pilot_configurator()
 {
 	if(virtual_carrier!=NULL)
 	{
-		delete virtual_carrier;
+		delete[] virtual_carrier;
 	}
 }
 
@@ -1094,11 +1094,11 @@ int cl_ofdm::time_sync(std::complex <double>*in, int size, int interpolation_rat
 	return_val=corss_corr_loc[location_to_return];
 	if(corss_corr_loc!=NULL)
 	{
-		delete corss_corr_loc;
+		delete[] corss_corr_loc;
 	}
 	if(corss_corr_vals!=NULL)
 	{
-		delete corss_corr_vals;
+		delete[] corss_corr_vals;
 	}
 	return return_val;
 }
@@ -1183,15 +1183,15 @@ int cl_ofdm::time_sync_preamble(std::complex <double>*in, int size, int interpol
 	return_val=corss_corr_loc[location_to_return*0];
 	if(corss_corr_loc!=NULL)
 	{
-		delete corss_corr_loc;
+		delete[] corss_corr_loc;
 	}
 	if(corss_corr_vals!=NULL)
 	{
-		delete corss_corr_vals;
+		delete[] corss_corr_vals;
 	}
 	if(data!=NULL)
 	{
-		delete data;
+		delete[] data;
 	}
 	return return_val;
 	/*
@@ -1270,11 +1270,11 @@ int cl_ofdm::symbol_sync(std::complex <double>*in, int size, int interpolation_r
 	return_val=corss_corr_loc[location_to_return];
 	if(corss_corr_loc!=NULL)
 	{
-		delete corss_corr_loc;
+		delete[] corss_corr_loc;
 	}
 	if(corss_corr_vals!=NULL)
 	{
-		delete corss_corr_vals;
+		delete[] corss_corr_vals;
 	}
 	return return_val;
 }
@@ -1319,7 +1319,7 @@ void cl_ofdm::baseband_to_passband(std::complex <double>* in, int in_size, doubl
 	}
 	if(data_interpolated!=NULL)
 	{
-		delete data_interpolated;
+		delete[] data_interpolated;
 	}
 }
 void cl_ofdm::passband_to_baseband(double* in, int in_size, std::complex <double>* out, double sampling_frequency, double carrier_frequency, double carrier_amplitude, int decimation_rate)
@@ -1340,10 +1340,10 @@ void cl_ofdm::passband_to_baseband(double* in, int in_size, std::complex <double
 	rational_resampler(data_filtered, in_size, out, decimation_rate, DECIMATION);
 	if(l_data!=NULL)
 	{
-		delete l_data;
+		delete[] l_data;
 	}
 	if(data_filtered!=NULL)
 	{
-		delete data_filtered;
+		delete[] data_filtered;
 	}
 }
