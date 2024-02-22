@@ -19,6 +19,8 @@ CPP=g++
 LDFLAGS=-lasound
 CPPFLAGS=-Ofast -g0 -Wall -Wno-format -std=gnu++14 -I./include
 CPP_SOURCES=$(wildcard source/*.cc source/datalink_layer/*.cc source/physical_layer/*.cc)
+OBJECT_FILES=$(patsubst %.cc,%.o,$(CPP_SOURCES))
+
 DOCS=index.html
 
 uname_p := $(shell uname -m)
@@ -33,8 +35,11 @@ endif
 all: mercury
 
 
-mercury: $(CPP_SOURCES)
-	$(CPP) $(CPP_SOURCES) $(LDFLAGS) $(CPPFLAGS) -o $@
+mercury: $(OBJECT_FILES)
+	$(CPP) -o $@ $(OBJECT_FILES) $(LDFLAGS)
+
+%.o : %.cc %.h
+	$(CPP) -c $(CPPFLAGS) $< -o $@
 
 doc: $(CPP_SOURCES)
 	@doxygen ./mercury.doxyfile
@@ -46,5 +51,5 @@ install: mercury
 	install -D mercury /usr/bin/mercury
 
 clean:
-	rm -rf mercury
+	rm -rf mercury $(OBJECT_FILES)
 	rm -rf html/
