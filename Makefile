@@ -30,14 +30,11 @@ ifeq (${uname_p},aarch64)
 endif
 
 
-all: mercury doc
-	$(CPP) $(CPP_SOURCES) $(LDFLAGS) $(CPPFLAGS) -o $@
-	@doxygen ./mercury.doxyfile
-	cp ./docs_FSM/*.png html
+all: mercury
+
 
 mercury: $(CPP_SOURCES)
 	$(CPP) $(CPP_SOURCES) $(LDFLAGS) $(CPPFLAGS) -o $@
-
 
 doc: $(CPP_SOURCES)
 	@doxygen ./mercury.doxyfile
