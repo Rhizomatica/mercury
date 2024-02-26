@@ -1014,9 +1014,11 @@ void cl_arq_controller::process_user_command(std::string command)
 	{
 		telecom_system->bandwidth=2300;
 		load_configuration(current_configuration);
+
 		tcp_socket_control.message->buffer[0]='O';
 		tcp_socket_control.message->buffer[1]='K';
-		tcp_socket_control.message->length=2;
+		tcp_socket_control.message->buffer[2]='\r';
+		tcp_socket_control.message->length=3;
 	}
 	else if(command=="BW2500")
 	{
