@@ -1034,6 +1034,7 @@ void cl_arq_controller::process_user_command(std::string command)
 	{
 		std::string reply="BUFFER ";
 		reply+=std::to_string(fifo_buffer_tx.get_size()-fifo_buffer_tx.get_free_size());
+		reply+='\r';
 		for(long unsigned int i=0;i<reply.length();i++)
 		{
 			tcp_socket_control.message->buffer[i]=reply[i];
