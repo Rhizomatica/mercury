@@ -117,6 +117,7 @@ cl_arq_controller::cl_arq_controller()
 	ack_batch_size=1;
 	my_call_sign="";
 	destination_call_sign="";
+	user_command_buffer="";
 	telecom_system=NULL;
 
 	print_stats_frequency_hz=2;
@@ -888,13 +889,11 @@ void cl_arq_controller::process_main()
 		if(tcp_socket_control.receive()>0)
 		{
 			tcp_socket_control.timer.start();
-			command="";
+
 			for(int i=0;i<tcp_socket_control.message->length;i++)
 			{
-				command+=tcp_socket_control.message->buffer[i];
+				user_command_buffer+=tcp_socket_control.message->buffer[i];
 			}
-
-			process_user_command(command);
 		}
 		else
 		{
@@ -907,6 +906,17 @@ void cl_arq_controller::process_main()
 				}
 			}
 		}
+		size_t pos=std::string::npos;
+		do
+		{
+			size_t pos=user_command_buffer.find('\r');
+			if(pos!=std::string::npos)
+			{
+				command=user_command_buffer.substr(0, pos);
+				process_user_command(command);
+				user_command_buffer=user_command_buffer.substr(pos+1,std::string::npos);
+			}
+		}while(pos!=std::string::npos);
 
 	}
 	else
@@ -966,7 +976,8 @@ void cl_arq_controller::process_user_command(std::string command)
 
 		tcp_socket_control.message->buffer[0]='O';
 		tcp_socket_control.message->buffer[1]='K';
-		tcp_socket_control.message->length=2;
+		tcp_socket_control.message->buffer[2]='\r';
+		tcp_socket_control.message->length=3;
 	}
 	else if(command.substr(0,8)=="CONNECT " && command.substr(8,my_call_sign.length())==my_call_sign)
 	{
@@ -976,23 +987,28 @@ void cl_arq_controller::process_user_command(std::string command)
 
 		tcp_socket_control.message->buffer[0]='O';
 		tcp_socket_control.message->buffer[1]='K';
-		tcp_socket_control.message->length=2;
+		tcp_socket_control.message->buffer[2]='\r';
+		tcp_socket_control.message->length=3;
 	}
 	else if(command=="DISCONNECT")
 	{
 		link_status=DISCONNECTING;
+
 		tcp_socket_control.message->buffer[0]='O';
 		tcp_socket_control.message->buffer[1]='K';
-		tcp_socket_control.message->length=2;
+		tcp_socket_control.message->buffer[2]='\r';
+		tcp_socket_control.message->length=3;
 	}
 	else if(command=="LISTEN ON")
 	{
 		set_role(RESPONDER);
 		link_status=LISTENING;
 		connection_status=RECEIVING;
+
 		tcp_socket_control.message->buffer[0]='O';
 		tcp_socket_control.message->buffer[1]='K';
-		tcp_socket_control.message->length=2;
+		tcp_socket_control.message->buffer[2]='\r';
+		tcp_socket_control.message->length=3;
 	}
 	else if(command=="BW2300")
 	{
@@ -1006,9 +1022,11 @@ void cl_arq_controller::process_user_command(std::string command)
 	{
 		telecom_system->bandwidth=2500;
 		load_configuration(current_configuration);
+
 		tcp_socket_control.message->buffer[0]='O';
 		tcp_socket_control.message->buffer[1]='K';
-		tcp_socket_control.message->length=2;
+		tcp_socket_control.message->buffer[2]='\r';
+		tcp_socket_control.message->length=3;
 	}
 	else if(command=="BUFFER TX")
 	{
@@ -1022,9 +1040,9 @@ void cl_arq_controller::process_user_command(std::string command)
 	}
 	else
 	{
-		tcp_socket_control.message->buffer[0]='N';
-		tcp_socket_control.message->buffer[1]='O';
-		tcp_socket_control.message->buffer[2]='K';
+		tcp_socket_control.message->buffer[0]='O';
+		tcp_socket_control.message->buffer[1]='K';
+		tcp_socket_control.message->buffer[2]='\r';
 		tcp_socket_control.message->length=3;
 	}
 
@@ -1040,7 +1058,7 @@ void cl_arq_controller::ptt_on()
 	delay.start();
 	while(delay.get_elapsed_time_ms()<ptt_on_delay_ms);
 
-	std::string str="PTT ON";
+	std::string str="PTT ON\r";
 	tcp_socket_control.message->length=str.length();
 
 	for(int i=0;i<tcp_socket_control.message->length;i++)
@@ -1051,7 +1069,7 @@ void cl_arq_controller::ptt_on()
 }
 void cl_arq_controller::ptt_off()
 {
-	std::string str="PTT OFF";
+	std::string str="PTT OFF\r";
 	tcp_socket_control.message->length=str.length();
 
 	for(int i=0;i<tcp_socket_control.message->length;i++)

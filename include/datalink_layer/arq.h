@@ -286,6 +286,7 @@ private:
 
 
   std::string my_call_sign;
+  std::string user_command_buffer;
 
 
   st_stats stats;
