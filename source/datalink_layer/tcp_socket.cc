@@ -143,7 +143,7 @@ int cl_tcp_socket::init()
 				status=TCP_STATUS_CONNECTED;
 				std::cout<<"Client is connected to "<<inet_ntoa(server.sin_addr)<<std::endl;
 			}
-
+			fcntl(socket_fd, F_SETFL, O_NONBLOCK);
 		}
 	}
 	return return_val;
@@ -153,8 +153,8 @@ int cl_tcp_socket::check_incomming_connection()
 {
 	int return_val=SUCCESS;
 	unsigned int len = sizeof(client);
-	fcntl(socket_fd, F_SETFL, O_NONBLOCK);
 	connection_fd = accept(socket_fd, (struct sockaddr*)&client, &len);
+	fcntl(connection_fd, F_SETFL, O_NONBLOCK);
 
 	if(connection_fd < 0 || (client.sin_addr.s_addr==htonl(INADDR_ANY)))
 	{
@@ -189,14 +189,12 @@ int cl_tcp_socket::transmit()
 	int n=0;
 	if (type==TYPE_SERVER)
 	{
-		fcntl(connection_fd, F_SETFL, O_NONBLOCK);
 		n= send(connection_fd,message->buffer, message->length,0);
 		server_sent_packets++;
 
 	}
 	else if(type==TYPE_CLIENT)
 	{
-		fcntl(socket_fd, F_SETFL, O_NONBLOCK);
 		n= send(socket_fd,message->buffer, message->length,0);
 		client_sent_packets++;
 	}
@@ -209,7 +207,6 @@ int cl_tcp_socket::receive()
 	int n=0;
 	if (type==TYPE_SERVER)
 	{
-		fcntl(connection_fd, F_SETFL, O_NONBLOCK);
 		n= recv (connection_fd,message->buffer, MAX_BUFFER_SIZE,0);
 		if(n>0)
 		{
@@ -220,7 +217,6 @@ int cl_tcp_socket::receive()
 	}
 	else if(type==TYPE_CLIENT)
 	{
-		fcntl(socket_fd, F_SETFL, O_NONBLOCK);
 		n= recv (socket_fd,message->buffer, MAX_BUFFER_SIZE,0);
 		if(n>0)
 		{

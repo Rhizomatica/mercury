@@ -886,7 +886,8 @@ void cl_arq_controller::process_main()
 		{
 			tcp_socket_control.timer.start();
 		}
-		if(tcp_socket_control.receive()>0)
+		int nBytes_received=tcp_socket_control.receive();
+		if(nBytes_received>0)
 		{
 			tcp_socket_control.timer.start();
 
@@ -895,16 +896,14 @@ void cl_arq_controller::process_main()
 				user_command_buffer+=tcp_socket_control.message->buffer[i];
 			}
 		}
-		else
+		else if(nBytes_received==0 || (tcp_socket_control.timer.get_elapsed_time_ms()>=tcp_socket_control.timeout_ms && tcp_socket_control.timeout_ms!=INFINIT))
 		{
-			if(tcp_socket_control.timer.get_elapsed_time_ms()>=tcp_socket_control.timeout_ms)
+			tcp_socket_control.check_incomming_connection();
+			if (tcp_socket_control.get_status()==TCP_STATUS_ACCEPTED)
 			{
-				tcp_socket_control.check_incomming_connection();
-				if (tcp_socket_control.get_status()==TCP_STATUS_ACCEPTED)
-				{
-					tcp_socket_control.timer.start();
-				}
+				tcp_socket_control.timer.start();
 			}
+
 		}
 		size_t pos=std::string::npos;
 		do
@@ -935,20 +934,19 @@ void cl_arq_controller::process_main()
 		{
 			tcp_socket_data.timer.start();
 		}
-		if(tcp_socket_data.receive()>0)
+		int nBytes_received=tcp_socket_data.receive();
+		if(nBytes_received>0)
 		{
 			tcp_socket_data.timer.start();
 			fifo_buffer_tx.push(tcp_socket_data.message->buffer, tcp_socket_data.message->length);
 		}
-		else
+		else if(nBytes_received==0 || (tcp_socket_data.timer.get_elapsed_time_ms()>=tcp_socket_data.timeout_ms && tcp_socket_data.timeout_ms!=INFINIT))
 		{
-			if(tcp_socket_data.timer.get_elapsed_time_ms()>=tcp_socket_data.timeout_ms)
+			tcp_socket_data.check_incomming_connection();
+
+			if (tcp_socket_data.get_status()==TCP_STATUS_ACCEPTED)
 			{
-				tcp_socket_data.check_incomming_connection();
-				if (tcp_socket_data.get_status()==TCP_STATUS_ACCEPTED)
-				{
-					tcp_socket_data.timer.start();
-				}
+				tcp_socket_data.timer.start();
 			}
 		}
 
