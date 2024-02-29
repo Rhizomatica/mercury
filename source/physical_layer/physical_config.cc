@@ -34,7 +34,7 @@ cl_configuration_telecom_system::cl_configuration_telecom_system()
 	current_configuration=CONFIG_0;
 
 	ofdm_Nc=AUTO_SELLECT;
-	ofdm_Nfft=512;
+	ofdm_Nfft=256;
 	ofdm_gi=1.0/16.0;
 	ofdm_Nsymb=AUTO_SELLECT;
 	ofdm_pilot_configurator_Dx=AUTO_SELLECT;
@@ -69,28 +69,28 @@ cl_configuration_telecom_system::cl_configuration_telecom_system()
 	ldpc_nIteration_max=50;
 	ldpc_print_nIteration=NO;
 
-	frequency_interpolation_rate=2;
+	frequency_interpolation_rate=4;
 
 	bandwidth=48000.0*50.0/ofdm_Nfft/frequency_interpolation_rate;
 	double max_bandwidth=2500*1.2;
 	time_sync_trials_max=2;
 	use_last_good_time_sync=YES;
 	use_last_good_freq_offset=YES;
-	carrier_frequency=6000;
-	output_power_Watt=0.1;
+	carrier_frequency=15000;
+	output_power_Watt=1.0;
 	ofdm_FIR_rx_filter_window=HAMMING;
 	ofdm_FIR_rx_filter_transition_bandwidth=3000;
-	ofdm_FIR_rx_lpf_filter_cut_frequency=4*bandwidth/2;
+	ofdm_FIR_rx_lpf_filter_cut_frequency=0.9*bandwidth/2;
 	ofdm_FIR_rx_filter_type=LPF;
 
 	ofdm_FIR_tx1_filter_window=HAMMING;
-	ofdm_FIR_tx1_filter_transition_bandwidth=300;
+	ofdm_FIR_tx1_filter_transition_bandwidth=1000;
 	ofdm_FIR_tx1_lpf_filter_cut_frequency=carrier_frequency+max_bandwidth/2;
 	ofdm_FIR_tx1_hpf_filter_cut_frequency=carrier_frequency-max_bandwidth/2;
 	ofdm_FIR_tx1_filter_type=HPF;
 
 	ofdm_FIR_tx2_filter_window=BLACKMAN;
-	ofdm_FIR_tx2_filter_transition_bandwidth=300;
+	ofdm_FIR_tx2_filter_transition_bandwidth=1000;
 	ofdm_FIR_tx2_lpf_filter_cut_frequency=carrier_frequency+max_bandwidth/2;
 	ofdm_FIR_tx2_hpf_filter_cut_frequency=carrier_frequency-max_bandwidth/2;
 	ofdm_FIR_tx2_filter_type=LPF;
@@ -102,8 +102,8 @@ cl_configuration_telecom_system::cl_configuration_telecom_system()
 	plot_folder="/mnt/ramDisk/";
 	plot_plot_active=YES;
 
-	microphone_dev_name="plughw:1,0";
-	speaker_dev_name="plughw:1,0";
+	microphone_dev_name="plughw:0,0";
+	speaker_dev_name="plughw:0,0";
 
 
 	microphone_type=CAPTURE;
@@ -111,7 +111,7 @@ cl_configuration_telecom_system::cl_configuration_telecom_system()
 
 
 	speaker_type=PLAY;
-	speaker_channels=MONO;
+	speaker_channels=RIGHT;
 	speaker_frames_to_leave_transmit_fct=20000;
 }
 
