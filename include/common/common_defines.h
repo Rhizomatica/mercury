@@ -46,7 +46,7 @@
 
 #define YES 1
 #define NO 0
-#define INFINIT -1
+
 
 
 #endif

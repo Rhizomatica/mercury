@@ -24,6 +24,7 @@
 #define INC_DATALINK_CONFIG_H_
 
 #include "common/common_defines.h"
+#include "datalink_defines.h"
 
 class cl_configuration_arq
 {

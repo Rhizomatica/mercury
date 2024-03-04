@@ -347,7 +347,7 @@ void cl_arq_controller::process_control_responder()
 		connection_timer.reset();
 		link_timer.start();
 
-		std::string str="CONNECTED " + this->destination_call_sign + " " + this->my_call_sign + " " + std::to_string(telecom_system->bandwidth)+"\r";
+		std::string str="CONNECTED "+this->destination_call_sign+" "+this->my_call_sign+" "+ std::to_string(telecom_system->bandwidth)+"\r";
 		tcp_socket_control.message->length=str.length();
 
 		for(int i=0;i<tcp_socket_control.message->length;i++)
@@ -360,7 +360,6 @@ void cl_arq_controller::process_control_responder()
 	{
 		if(code==CLOSE_CONNECTION)
 		{
-			//SEND TO USER
 			assigned_connection_id=0;
 			link_status=LISTENING;
 			connection_status=RECEIVING;

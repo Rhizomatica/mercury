@@ -32,10 +32,10 @@ cl_configuration_arq::cl_configuration_arq()
 	link_timeout=200000;
 
 	tcp_socket_control_port=7002;
-	tcp_socket_control_timeout_ms=INFINIT;
+	tcp_socket_control_timeout_ms=INFINITE;
 
 	tcp_socket_data_port=7003;
-	tcp_socket_data_timeout_ms=INFINIT;
+	tcp_socket_data_timeout_ms=INFINITE;
 
 	gear_shift_on=NO;
 	current_configuration=CONFIG_0;
@@ -44,7 +44,7 @@ cl_configuration_arq::cl_configuration_arq()
 	nMessages=50; //MAX 255
 	nBytes_header=5;
 
-	nResends=10;
+	nResends=20;
 	ack_batch_size=2;
 	control_batch_size=2;
 	
