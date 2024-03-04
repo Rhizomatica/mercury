@@ -1407,7 +1407,7 @@ void cl_arq_controller::print_stats()
 		}
 		else if (this->link_status==DISCONNECTING)
 		{
-			std::cout<<"link_status:Disconing";
+			std::cout<<"link_status:Disconnecting";
 		}
 		else if (this->link_status==LISTENING)
 		{
@@ -1704,7 +1704,7 @@ void cl_arq_controller::print_stats()
 		}
 		else if (this->link_status==DISCONNECTING)
 		{
-			std::cout<<", link_status:Disconing";
+			std::cout<<", link_status:Disconnecting";
 		}
 		else if (this->link_status==LISTENING)
 		{
