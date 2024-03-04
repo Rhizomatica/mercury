@@ -346,6 +346,15 @@ void cl_arq_controller::process_control_responder()
 		connection_timer.reset();
 		connection_timer.reset();
 		link_timer.start();
+
+		std::string str="CONNECTED " + this->destination_call_sign + " " + this->my_call_sign + " " + std::to_string(telecom_system->bandwidth)+"\r";
+		tcp_socket_control.message->length=str.length();
+
+		for(int i=0;i<tcp_socket_control.message->length;i++)
+		{
+			tcp_socket_control.message->buffer[i]=str[i];
+		}
+		tcp_socket_control.transmit();
 	}
 	else if(link_status==CONNECTED)
 	{
@@ -362,6 +371,15 @@ void cl_arq_controller::process_control_responder()
 			load_configuration(CONFIG_0);
 			gear_shift_timer.stop();
 			gear_shift_timer.reset();
+
+			std::string str="DISCONNECTED\r";
+			tcp_socket_control.message->length=str.length();
+
+			for(int i=0;i<tcp_socket_control.message->length;i++)
+			{
+				tcp_socket_control.message->buffer[i]=str[i];
+			}
+			tcp_socket_control.transmit();
 		}
 		else if(code==SET_CONFIG)
 		{

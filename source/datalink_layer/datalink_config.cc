@@ -29,7 +29,7 @@ cl_configuration_arq::cl_configuration_arq()
 	fifo_buffer_rx_size=128000;
 	fifo_buffer_backup_size=128000;
 
-	link_timeout=100000;
+	link_timeout=200000;
 
 	tcp_socket_control_port=7002;
 	tcp_socket_control_timeout_ms=INFINIT;
@@ -48,7 +48,7 @@ cl_configuration_arq::cl_configuration_arq()
 	ack_batch_size=2;
 	control_batch_size=2;
 	
-	ptt_on_delay_ms=500;
+	ptt_on_delay_ms=100;
 }
 
 cl_configuration_arq::~cl_configuration_arq()

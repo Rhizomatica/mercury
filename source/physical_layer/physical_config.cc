@@ -59,7 +59,7 @@ cl_configuration_telecom_system::cl_configuration_telecom_system()
 	ofdm_freq_offset_ignore_limit=0.1;
 	ofdm_start_shift=1;
 
-	ofdm_channel_estimator=ZERO_FORCE;
+	ofdm_channel_estimator=AMP_RESTORATED_ZERO_FORCE;
 
 	ldpc_standard=HERMES;
 	ldpc_framesize=HERMES_NORMAL;
@@ -100,7 +100,7 @@ cl_configuration_telecom_system::cl_configuration_telecom_system()
 
 	//create the folder as RAM "sudo mount -t tmpfs -o size=128M tmpfs /mnt/ramDisk"
 	plot_folder="/mnt/ramDisk/";
-	plot_plot_active=YES;
+	plot_plot_active=NO;
 
 	microphone_dev_name="plughw:0,0";
 	speaker_dev_name="plughw:0,0";
