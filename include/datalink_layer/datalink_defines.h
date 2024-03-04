@@ -94,5 +94,8 @@
 #define GEAR_SHIFT 255
 
 
+#define INFINITE -1
+
+
 
 #endif
