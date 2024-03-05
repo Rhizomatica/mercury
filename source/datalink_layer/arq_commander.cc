@@ -79,7 +79,7 @@ int cl_arq_controller::add_message_control(char code)
 	{
 		messages_control.type=CONTROL;
 		messages_control.nResends=this->nResends;
-		messages_control.ack_timeout=this->ack_timeout;
+		messages_control.ack_timeout=this->ack_timeout_control;
 		messages_control.status=ADDED_TO_LIST;
 
 		if(code==START_CONNECTION)
@@ -125,6 +125,9 @@ int cl_arq_controller::add_message_control(char code)
 		}
 		else if(code==REPEAT_LAST_ACK)
 		{
+			messages_control.length=1;
+			messages_control.data[0]=code;
+			messages_control.id=0;
 			messages_control.nResends=1;
 		}
 		else
@@ -193,6 +196,13 @@ void cl_arq_controller::process_messages_tx_control()
 
 		if(messages_control.data[0]==REPEAT_LAST_ACK)
 		{
+			messages_control.ack_timeout=0;
+			messages_control.id=0;
+			messages_control.length=0;
+			messages_control.nResends=0;
+			messages_control.status=FREE;
+			messages_control.type=NONE;
+
 			connection_status=RECEIVING_ACKS_DATA;
 			receiving_timer.start();
 			link_timer.start();
@@ -221,7 +231,7 @@ int cl_arq_controller::add_message_tx_data(char type, int length, char* data)
 				}
 				messages_tx[i].id=i;
 				messages_tx[i].nResends=this->nResends;
-				messages_tx[i].ack_timeout=this->ack_timeout;
+				messages_tx[i].ack_timeout=this->ack_timeout_data;
 				messages_tx[i].status=ADDED_TO_LIST;
 				success=SUCCESSFUL;
 				break;
@@ -351,17 +361,26 @@ void cl_arq_controller::process_messages_rx_acks_data()
 
 			if(messages_control.data[0]==REPEAT_LAST_ACK && messages_control.status==PENDING_ACK)
 			{
-				messages_control.status=ACKED;
+				this->messages_control.ack_timeout=0;
+				this->messages_control.id=0;
+				this->messages_control.length=0;
+				this->messages_control.nResends=0;
+				this->messages_control.status=FREE;
+				this->messages_control.type=NONE;
 				stats.nAcked_control++;
 			}
 		}
 	}
-	else if (data_ack_received==NO)
+	else if (data_ack_received==NO && !(last_message_sent_type==CONTROL && last_message_sent_code==REPEAT_LAST_ACK))
 	{
 		add_message_control(REPEAT_LAST_ACK);
 	}
 	else
 	{
+		if (last_message_sent_type==CONTROL && last_message_sent_code==REPEAT_LAST_ACK)
+		{
+			stats.nNAcked_control++;
+		}
 		this->cleanup();
 		connection_status=TRANSMITTING_DATA;
 	}

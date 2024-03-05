@@ -80,7 +80,8 @@ cl_arq_controller::cl_arq_controller()
 	message_TxRx_byte_buffer=NULL;
 
 	message_batch_counter_tx=0;
-	ack_timeout=1000;
+	ack_timeout_data=1000;
+	ack_timeout_control=1000;
 	link_timeout=10000;
 	receiving_timeout=10000;
 	nResends=3;
@@ -171,11 +172,19 @@ void cl_arq_controller::set_nResends(int nResends)
 }
 
 
-void cl_arq_controller::set_ack_timeout(int ack_timeout)
+void cl_arq_controller::set_ack_timeout_control(int ack_timeout_control)
 {
-	if(ack_timeout>0)
+	if(ack_timeout_control>0)
 	{
-		this->ack_timeout=ack_timeout;
+		this->ack_timeout_control=ack_timeout_control;
+	}
+}
+
+void cl_arq_controller::set_ack_timeout_data(int ack_timeout_data)
+{
+	if(ack_timeout_data>0)
+	{
+		this->ack_timeout_data=ack_timeout_data;
 	}
 }
 
@@ -482,8 +491,9 @@ void cl_arq_controller::load_configuration(int configuration)
 	
 	message_transmission_time_ms=ceil((1000.0*(telecom_system->data_container.Nsymb+telecom_system->data_container.preamble_nSymb)*telecom_system->data_container.Nofdm*telecom_system->frequency_interpolation_rate)/(float)(telecom_system->frequency_interpolation_rate*(telecom_system->bandwidth/telecom_system->ofdm.Nc)*telecom_system->ofdm.Nfft));
 	time_left_to_send_last_frame=(float)telecom_system->speaker.frames_to_leave_transmit_fct/(float)(telecom_system->frequency_interpolation_rate*(telecom_system->bandwidth/telecom_system->ofdm.Nc)*telecom_system->ofdm.Nfft);
-	set_ack_timeout((2*(data_batch_size+1+ack_batch_size+1))*message_transmission_time_ms+time_left_to_send_last_frame+2*ptt_on_delay_ms);
-	
+	set_ack_timeout_data((1.2*(data_batch_size+1+ack_batch_size+1))*message_transmission_time_ms+time_left_to_send_last_frame+2*ptt_on_delay_ms);
+	set_ack_timeout_control(((control_batch_size+1+ack_batch_size+1))*message_transmission_time_ms+time_left_to_send_last_frame+2*ptt_on_delay_ms);
+
 	ptt_on_delay_ms=default_configuration_ARQ.ptt_on_delay_ms;
 
 	this->init_messages_buffers();

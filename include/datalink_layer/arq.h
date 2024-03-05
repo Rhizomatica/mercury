@@ -92,7 +92,8 @@ public:
 
 
   void set_nResends(int nResends);
-  void set_ack_timeout(int ack_timeout);
+  void set_ack_timeout_control(int ack_timeout_control);
+  void set_ack_timeout_data(int ack_timeout_data);
   void set_receiving_timeout(int receiving_timeout);
   void set_link_timeout(int link_timeout);
   void set_nMessages(int nMessages);
@@ -256,7 +257,8 @@ public:
   struct st_message messages_control;
   struct st_message* messages_batch_tx;
 
-  int ack_timeout;
+  int ack_timeout_control;
+  int ack_timeout_data;
   int link_timeout;
   int receiving_timeout;
 
