@@ -1080,6 +1080,7 @@ void cl_arq_controller::ptt_on()
 }
 void cl_arq_controller::ptt_off()
 {
+	usleep((__useconds_t)(time_left_to_send_last_frame*1000.0));
 	std::string str="PTT OFF\r";
 	tcp_socket_control.message->length=str.length();
 
