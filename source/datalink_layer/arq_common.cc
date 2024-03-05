@@ -994,6 +994,7 @@ void cl_arq_controller::process_user_command(std::string command)
 		this->destination_call_sign=command.substr(9+my_call_sign.length());
 		set_role(COMMANDER);
 		link_status=CONNECTING;
+		reset_all_timers();
 
 		tcp_socket_control.message->buffer[0]='O';
 		tcp_socket_control.message->buffer[1]='K';
@@ -1014,6 +1015,19 @@ void cl_arq_controller::process_user_command(std::string command)
 		set_role(RESPONDER);
 		link_status=LISTENING;
 		connection_status=RECEIVING;
+		reset_all_timers();
+
+		tcp_socket_control.message->buffer[0]='O';
+		tcp_socket_control.message->buffer[1]='K';
+		tcp_socket_control.message->buffer[2]='\r';
+		tcp_socket_control.message->length=3;
+	}
+	else if(command=="LISTEN OFF")
+	{
+		set_role(RESPONDER);
+		link_status=IDLE;
+		connection_status=IDLE;
+		reset_all_timers();
 
 		tcp_socket_control.message->buffer[0]='O';
 		tcp_socket_control.message->buffer[1]='K';
@@ -1108,6 +1122,20 @@ void cl_arq_controller::process_messages()
 		process_messages_responder();
 		process_buffer_data_responder();
 	}
+}
+
+void cl_arq_controller::reset_all_timers()
+{
+	link_timer.stop();
+	link_timer.reset();
+	connection_timer.stop();
+	connection_timer.reset();
+	gear_shift_timer.stop();
+	gear_shift_timer.reset();
+	receiving_timer.stop();
+	receiving_timer.reset();
+	switch_role_timer.stop();
+	switch_role_timer.reset();
 }
 
 

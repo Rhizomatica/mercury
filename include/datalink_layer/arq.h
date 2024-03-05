@@ -215,6 +215,8 @@ public:
 	   */
   void print_stats();
 
+  void reset_all_timers();
+
   cl_configuration_arq default_configuration_ARQ;
 
 
