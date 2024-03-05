@@ -989,9 +989,11 @@ void cl_arq_controller::process_user_command(std::string command)
 		tcp_socket_control.message->buffer[2]='\r';
 		tcp_socket_control.message->length=3;
 	}
-	else if(command.substr(0,8)=="CONNECT " && command.substr(8,my_call_sign.length())==my_call_sign)
+	else if(command.substr(0,8)=="CONNECT ")
 	{
-		this->destination_call_sign=command.substr(9+my_call_sign.length());
+		command=command.substr(8,std::string::npos);
+		this->my_call_sign=command.substr(0,command.find(" "));
+		this->destination_call_sign=command.substr(my_call_sign.length()+1);
 		set_role(COMMANDER);
 		link_status=CONNECTING;
 		reset_all_timers();
