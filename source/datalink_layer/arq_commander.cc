@@ -547,7 +547,17 @@ void cl_arq_controller::process_buffer_data_commander()
 		}
 		else if(block_under_tx==NO && message_batch_counter_tx==0 && get_nOccupied_messages()==0 && messages_control.status==FREE)
 		{
-			add_message_control(SWITCH_ROLE);
+			if(switch_role_timer.counting==NO)
+			{
+				switch_role_timer.reset();
+				switch_role_timer.start();
+			}
+			else if(switch_role_timer.get_elapsed_time_ms()>switch_role_timeout)
+			{
+				switch_role_timer.stop();
+				switch_role_timer.reset();
+				add_message_control(SWITCH_ROLE);
+			}
 		}
 	}
 }

@@ -84,6 +84,7 @@ cl_arq_controller::cl_arq_controller()
 	ack_timeout_control=1000;
 	link_timeout=10000;
 	receiving_timeout=10000;
+	switch_role_timeout=1000;
 	nResends=3;
 	stats.nSent_data=0;
 	stats.nAcked_data=0;
@@ -495,6 +496,7 @@ void cl_arq_controller::load_configuration(int configuration)
 	set_ack_timeout_control(((control_batch_size+1+ack_batch_size+1))*message_transmission_time_ms+time_left_to_send_last_frame+2*ptt_on_delay_ms);
 
 	ptt_on_delay_ms=default_configuration_ARQ.ptt_on_delay_ms;
+	switch_role_timeout=default_configuration_ARQ.switch_role_timeout_ms;
 
 	this->init_messages_buffers();
 }

@@ -244,6 +244,7 @@ public:
   cl_timer receiving_timer;
   cl_timer print_stats_timer;
   cl_timer gear_shift_timer;
+  cl_timer switch_role_timer;
 
   float print_stats_frequency_hz;
 
@@ -261,6 +262,7 @@ public:
   int ack_timeout_data;
   int link_timeout;
   int receiving_timeout;
+  int switch_role_timeout;
 
   std::string destination_call_sign;
 

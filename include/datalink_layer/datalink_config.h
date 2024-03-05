@@ -56,6 +56,7 @@ public:
 	int ack_batch_size;
 	int control_batch_size;
 	int ptt_on_delay_ms;
+	int switch_role_timeout_ms;
 
 };
 
