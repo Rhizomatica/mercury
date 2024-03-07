@@ -147,11 +147,13 @@ void cl_arq_controller::process_messages_acknowledging_control()
 		{
 			set_role(COMMANDER);
 			this->link_status=CONNECTED;
-			this->connection_status=TRANSMITTING_DATA;
-			set_receiving_timeout((ack_batch_size+1.5)*message_transmission_time_ms);
+			add_message_control(TEST_CONNECTION);
+			this->connection_status=TRANSMITTING_CONTROL;
 			connection_timer.stop();
 			connection_timer.reset();
 			link_timer.start();
+			switch_role_test_timer.reset();
+			switch_role_test_timer.start();
 			last_message_received_type=NONE;
 			last_message_sent_type=NONE;
 			last_received_message_sequence=-1;

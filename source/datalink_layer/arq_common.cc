@@ -85,6 +85,7 @@ cl_arq_controller::cl_arq_controller()
 	link_timeout=10000;
 	receiving_timeout=10000;
 	switch_role_timeout=1000;
+	switch_role_test_timeout=1000;
 	nResends=3;
 	stats.nSent_data=0;
 	stats.nAcked_data=0;
@@ -449,16 +450,16 @@ int cl_arq_controller::init()
 //		process_user_command("MYCALL rx001");
 //		process_user_command("LISTEN ON");
 //
-//		process_user_command("MYCALL tx001");
-//		process_user_command("CONNECT tx001 rx001");
-//
-//		char data;
-//		srand(5);
-//		for(int i=0;i<5000;i++)
-//		{
-//			data=(char)(rand()%0xff);
-//			fifo_buffer_tx.push(&data, 1);
-//		}
+		process_user_command("MYCALL tx001");
+		process_user_command("CONNECT tx001 rx001");
+
+		char data;
+		srand(5);
+		for(int i=0;i<20;i++)
+		{
+			data=(char)(rand()%0xff);
+			fifo_buffer_tx.push(&data, 1);
+		}
 
 	return success;
 }
@@ -497,6 +498,7 @@ void cl_arq_controller::load_configuration(int configuration)
 
 	ptt_on_delay_ms=default_configuration_ARQ.ptt_on_delay_ms;
 	switch_role_timeout=default_configuration_ARQ.switch_role_timeout_ms;
+	switch_role_test_timeout=(this->nResends/3)*this->ack_timeout_control;
 
 	this->init_messages_buffers();
 }
@@ -816,6 +818,25 @@ void cl_arq_controller::update_status()
 			connection_status=RECEIVING;
 		}
 	}
+
+	if(switch_role_test_timer.get_elapsed_time_ms()>switch_role_test_timeout)
+	{
+		switch_role_test_timer.stop();
+		switch_role_test_timer.reset();
+
+		set_role(RESPONDER);
+		this->link_status=CONNECTED;
+		this->connection_status=RECEIVING;
+
+		this->messages_control.ack_timeout=0;
+		this->messages_control.id=0;
+		this->messages_control.length=0;
+		this->messages_control.nResends=0;
+		this->messages_control.status=FREE;
+		this->messages_control.type=NONE;
+
+	}
+
 
 	if(print_stats_timer.get_elapsed_time_ms()>(int)(1000.0/print_stats_frequency_hz))
 	{

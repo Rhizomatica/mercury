@@ -408,6 +408,8 @@ void cl_arq_controller::process_control_commander()
 			}
 			measurements.SNR_downlink=tmp_SNR.f_SNR;
 
+			switch_role_test_timer.stop();
+			switch_role_test_timer.reset();
 
 			if(gear_shift_on==YES)
 			{
