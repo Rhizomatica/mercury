@@ -518,6 +518,10 @@ void cl_arq_controller::process_control_commander()
 			gear_shift_timer.stop();
 			gear_shift_timer.reset();
 
+			fifo_buffer_tx.flush();
+			fifo_buffer_backup.flush();
+			fifo_buffer_rx.flush();
+
 			std::string str="DISCONNECTED\r";
 			tcp_socket_control.message->length=str.length();
 
