@@ -951,6 +951,16 @@ void cl_arq_controller::process_main()
 		{
 			tcp_socket_data.timer.start();
 			fifo_buffer_tx.push(tcp_socket_data.message->buffer, tcp_socket_data.message->length);
+
+			std::string str="BUFFER ";
+			str+=std::to_string(fifo_buffer_tx.get_size()-fifo_buffer_tx.get_free_size());
+			str+='\r';
+			for(long unsigned int i=0;i<str.length();i++)
+			{
+				tcp_socket_control.message->buffer[i]=str[i];
+			}
+			tcp_socket_control.message->length=str.length();
+			tcp_socket_control.transmit();
 		}
 		else if(nBytes_received==0 || (tcp_socket_data.timer.get_elapsed_time_ms()>=tcp_socket_data.timeout_ms && tcp_socket_data.timeout_ms!=INFINITE))
 		{

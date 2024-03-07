@@ -473,9 +473,26 @@ void cl_arq_controller::process_control_commander()
 				}
 				block_under_tx=NO;
 				fifo_buffer_backup.flush();
-				this->connection_status=TRANSMITTING_DATA;
-				add_message_control(TEST_CONNECTION);
-				std::cout<<"end of block acked"<<std::endl;
+
+				std::string str="BUFFER ";
+				str+=std::to_string(fifo_buffer_tx.get_size()-fifo_buffer_tx.get_free_size());
+				str+='\r';
+				for(long unsigned int i=0;i<str.length();i++)
+				{
+					tcp_socket_control.message->buffer[i]=str[i];
+				}
+				tcp_socket_control.message->length=str.length();
+				tcp_socket_control.transmit();
+
+				if(gear_shift_on==YES)
+				{
+					add_message_control(TEST_CONNECTION);
+				}
+				else
+				{
+					this->connection_status=TRANSMITTING_DATA;
+				}
+
 			}
 			else if (messages_control.data[0]==SWITCH_ROLE)
 			{
