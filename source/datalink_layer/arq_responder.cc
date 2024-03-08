@@ -343,7 +343,7 @@ void cl_arq_controller::process_control_responder()
 		}
 		messages_control.length=5;
 
-		if(this->link_status==CONNECTION_ACCEPTED)
+		if(this->link_status==CONNECTION_RECEIVED)
 		{
 			std::string str="CONNECTED "+this->destination_call_sign+" "+this->my_call_sign+" "+ std::to_string(telecom_system->bandwidth)+"\r";
 			tcp_socket_control.message->length=str.length();
