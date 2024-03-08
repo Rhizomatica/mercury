@@ -422,20 +422,23 @@ void cl_arq_controller::process_control_commander()
 			}
 			else
 			{
+				if(this->link_status==CONNECTION_ACCEPTED)
+				{
+					std::string str="CONNECTED "+this->my_call_sign+" "+this->destination_call_sign+" "+ std::to_string(telecom_system->bandwidth)+"\r";
+					tcp_socket_control.message->length=str.length();
+
+					for(int i=0;i<tcp_socket_control.message->length;i++)
+					{
+						tcp_socket_control.message->buffer[i]=str[i];
+					}
+					tcp_socket_control.transmit();
+				}
+
 				this->link_status=CONNECTED;
 				this->connection_status=TRANSMITTING_DATA;
 				connection_timer.stop();
 				connection_timer.reset();
 				link_timer.start();
-
-				std::string str="CONNECTED "+this->my_call_sign+" "+this->destination_call_sign+" "+ std::to_string(telecom_system->bandwidth)+"\r";
-				tcp_socket_control.message->length=str.length();
-
-				for(int i=0;i<tcp_socket_control.message->length;i++)
-				{
-					tcp_socket_control.message->buffer[i]=str[i];
-				}
-				tcp_socket_control.transmit();
 			}
 
 		}
@@ -501,7 +504,6 @@ void cl_arq_controller::process_control_commander()
 				set_role(RESPONDER);
 				this->link_status=CONNECTED;
 				this->connection_status=RECEIVING;
-				set_receiving_timeout((data_batch_size+1.5)*message_transmission_time_ms);
 				connection_timer.stop();
 				connection_timer.reset();
 				link_timer.start();

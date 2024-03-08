@@ -450,16 +450,18 @@ int cl_arq_controller::init()
 //		process_user_command("MYCALL rx001");
 //		process_user_command("LISTEN ON");
 //
-		process_user_command("MYCALL tx001");
-		process_user_command("CONNECT tx001 rx001");
+//		process_user_command("MYCALL tx001");
+//		process_user_command("CONNECT tx001 rx001");
 
-		char data;
-		srand(5);
-		for(int i=0;i<20;i++)
-		{
-			data=(char)(rand()%0xff);
-			fifo_buffer_tx.push(&data, 1);
-		}
+
+//		std::string str="sent_quest1234";
+//		char data;
+//
+//		for(int i=0;i<str.length();i++)
+//		{
+//			data=(char)str[i];
+//			fifo_buffer_tx.push(&data,1);
+//		}
 
 	return success;
 }

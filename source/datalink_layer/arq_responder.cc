@@ -342,6 +342,19 @@ void cl_arq_controller::process_control_responder()
 			messages_control.data[i+1]=tmp_SNR.char4_SNR[i];;
 		}
 		messages_control.length=5;
+
+		if(this->link_status==CONNECTION_ACCEPTED)
+		{
+			std::string str="CONNECTED "+this->destination_call_sign+" "+this->my_call_sign+" "+ std::to_string(telecom_system->bandwidth)+"\r";
+			tcp_socket_control.message->length=str.length();
+
+			for(int i=0;i<tcp_socket_control.message->length;i++)
+			{
+				tcp_socket_control.message->buffer[i]=str[i];
+			}
+			tcp_socket_control.transmit();
+		}
+
 		link_status=CONNECTED;
 		connection_status=ACKNOWLEDGING_CONTROL;
 		connection_timer.stop();
@@ -349,14 +362,7 @@ void cl_arq_controller::process_control_responder()
 		connection_timer.reset();
 		link_timer.start();
 
-		std::string str="CONNECTED "+this->destination_call_sign+" "+this->my_call_sign+" "+ std::to_string(telecom_system->bandwidth)+"\r";
-		tcp_socket_control.message->length=str.length();
 
-		for(int i=0;i<tcp_socket_control.message->length;i++)
-		{
-			tcp_socket_control.message->buffer[i]=str[i];
-		}
-		tcp_socket_control.transmit();
 	}
 	else if(link_status==CONNECTED)
 	{
