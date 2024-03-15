@@ -147,11 +147,13 @@ void cl_arq_controller::process_messages_acknowledging_control()
 		{
 			set_role(COMMANDER);
 			this->link_status=CONNECTED;
-			this->connection_status=TRANSMITTING_DATA;
-			set_receiving_timeout((ack_batch_size+1.5)*message_transmission_time_ms);
+			add_message_control(TEST_CONNECTION);
+			this->connection_status=TRANSMITTING_CONTROL;
 			connection_timer.stop();
 			connection_timer.reset();
 			link_timer.start();
+			switch_role_test_timer.reset();
+			switch_role_test_timer.start();
 			last_message_received_type=NONE;
 			last_message_sent_type=NONE;
 			last_received_message_sequence=-1;
@@ -340,6 +342,19 @@ void cl_arq_controller::process_control_responder()
 			messages_control.data[i+1]=tmp_SNR.char4_SNR[i];;
 		}
 		messages_control.length=5;
+
+		if(this->link_status==CONNECTION_RECEIVED)
+		{
+			std::string str="CONNECTED "+this->destination_call_sign+" "+this->my_call_sign+" "+ std::to_string(telecom_system->bandwidth)+"\r";
+			tcp_socket_control.message->length=str.length();
+
+			for(int i=0;i<tcp_socket_control.message->length;i++)
+			{
+				tcp_socket_control.message->buffer[i]=str[i];
+			}
+			tcp_socket_control.transmit();
+		}
+
 		link_status=CONNECTED;
 		connection_status=ACKNOWLEDGING_CONTROL;
 		connection_timer.stop();
@@ -347,14 +362,7 @@ void cl_arq_controller::process_control_responder()
 		connection_timer.reset();
 		link_timer.start();
 
-		std::string str="CONNECTED "+this->destination_call_sign+" "+this->my_call_sign+" "+ std::to_string(telecom_system->bandwidth)+"\r";
-		tcp_socket_control.message->length=str.length();
 
-		for(int i=0;i<tcp_socket_control.message->length;i++)
-		{
-			tcp_socket_control.message->buffer[i]=str[i];
-		}
-		tcp_socket_control.transmit();
 	}
 	else if(link_status==CONNECTED)
 	{
@@ -370,6 +378,10 @@ void cl_arq_controller::process_control_responder()
 			load_configuration(CONFIG_0);
 			gear_shift_timer.stop();
 			gear_shift_timer.reset();
+
+			fifo_buffer_tx.flush();
+			fifo_buffer_backup.flush();
+			fifo_buffer_rx.flush();
 
 			std::string str="DISCONNECTED\r";
 			tcp_socket_control.message->length=str.length();

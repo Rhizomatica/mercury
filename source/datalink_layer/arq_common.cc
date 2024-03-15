@@ -85,6 +85,7 @@ cl_arq_controller::cl_arq_controller()
 	link_timeout=10000;
 	receiving_timeout=10000;
 	switch_role_timeout=1000;
+	switch_role_test_timeout=1000;
 	nResends=3;
 	stats.nSent_data=0;
 	stats.nAcked_data=0;
@@ -451,13 +452,15 @@ int cl_arq_controller::init()
 //
 //		process_user_command("MYCALL tx001");
 //		process_user_command("CONNECT tx001 rx001");
-//
+
+
+//		std::string str="sent_quest1234";
 //		char data;
-//		srand(5);
-//		for(int i=0;i<5000;i++)
+//
+//		for(int i=0;i<str.length();i++)
 //		{
-//			data=(char)(rand()%0xff);
-//			fifo_buffer_tx.push(&data, 1);
+//			data=(char)str[i];
+//			fifo_buffer_tx.push(&data,1);
 //		}
 
 	return success;
@@ -497,6 +500,7 @@ void cl_arq_controller::load_configuration(int configuration)
 
 	ptt_on_delay_ms=default_configuration_ARQ.ptt_on_delay_ms;
 	switch_role_timeout=default_configuration_ARQ.switch_role_timeout_ms;
+	switch_role_test_timeout=(this->nResends/3)*this->ack_timeout_control;
 
 	this->init_messages_buffers();
 }
@@ -737,6 +741,10 @@ void cl_arq_controller::update_status()
 		gear_shift_timer.stop();
 		gear_shift_timer.reset();
 
+		fifo_buffer_tx.flush();
+		fifo_buffer_backup.flush();
+		fifo_buffer_rx.flush();
+
 		if(this->role==COMMANDER)
 		{
 			set_role(RESPONDER);
@@ -764,6 +772,10 @@ void cl_arq_controller::update_status()
 		connection_timer.reset();
 		gear_shift_timer.stop();
 		gear_shift_timer.reset();
+
+		fifo_buffer_tx.flush();
+		fifo_buffer_backup.flush();
+		fifo_buffer_rx.flush();
 
 		if(this->role==COMMANDER)
 		{
@@ -808,6 +820,25 @@ void cl_arq_controller::update_status()
 			connection_status=RECEIVING;
 		}
 	}
+
+	if(switch_role_test_timer.get_elapsed_time_ms()>switch_role_test_timeout)
+	{
+		switch_role_test_timer.stop();
+		switch_role_test_timer.reset();
+
+		set_role(RESPONDER);
+		this->link_status=CONNECTED;
+		this->connection_status=RECEIVING;
+
+		this->messages_control.ack_timeout=0;
+		this->messages_control.id=0;
+		this->messages_control.length=0;
+		this->messages_control.nResends=0;
+		this->messages_control.status=FREE;
+		this->messages_control.type=NONE;
+
+	}
+
 
 	if(print_stats_timer.get_elapsed_time_ms()>(int)(1000.0/print_stats_frequency_hz))
 	{
@@ -910,6 +941,11 @@ void cl_arq_controller::process_main()
 		}
 		else if(nBytes_received==0 || (tcp_socket_control.timer.get_elapsed_time_ms()>=tcp_socket_control.timeout_ms && tcp_socket_control.timeout_ms!=INFINITE))
 		{
+
+			fifo_buffer_tx.flush();
+			fifo_buffer_backup.flush();
+			fifo_buffer_rx.flush();
+
 			tcp_socket_control.check_incomming_connection();
 			if (tcp_socket_control.get_status()==TCP_STATUS_ACCEPTED)
 			{
@@ -951,9 +987,24 @@ void cl_arq_controller::process_main()
 		{
 			tcp_socket_data.timer.start();
 			fifo_buffer_tx.push(tcp_socket_data.message->buffer, tcp_socket_data.message->length);
+
+			std::string str="BUFFER ";
+			str+=std::to_string(fifo_buffer_tx.get_size()-fifo_buffer_tx.get_free_size());
+			str+='\r';
+			for(long unsigned int i=0;i<str.length();i++)
+			{
+				tcp_socket_control.message->buffer[i]=str[i];
+			}
+			tcp_socket_control.message->length=str.length();
+			tcp_socket_control.transmit();
 		}
 		else if(nBytes_received==0 || (tcp_socket_data.timer.get_elapsed_time_ms()>=tcp_socket_data.timeout_ms && tcp_socket_data.timeout_ms!=INFINITE))
 		{
+
+			fifo_buffer_tx.flush();
+			fifo_buffer_backup.flush();
+			fifo_buffer_rx.flush();
+
 			tcp_socket_data.check_incomming_connection();
 
 			if (tcp_socket_data.get_status()==TCP_STATUS_ACCEPTED)
@@ -1375,456 +1426,338 @@ void cl_arq_controller::restore_backup_buffer_data()
 
 void cl_arq_controller::print_stats()
 {
-	int plot_terminal=1;
-
 	std::cout << std::fixed;
 	std::cout << std::setprecision(2);
+	printf ("\e[2J");// clean screen
+	printf ("\e[H"); // go to upper left corner
 
-	if(plot_terminal==1)
+	if(this->current_configuration==CONFIG_0)
 	{
-		printf ("\e[2J");// clean screen
-		printf ("\e[H"); // go to upper left corner
-
-		if(this->current_configuration==CONFIG_0)
-		{
-			std::cout<<"configuration:CONFIG_0";
-		}
-		else if (this->current_configuration==CONFIG_1)
-		{
-			std::cout<<"configuration:CONFIG_1";
-		}
-		else if (this->current_configuration==CONFIG_2)
-		{
-			std::cout<<"configuration:CONFIG_2";
-		}
-		else if (this->current_configuration==CONFIG_3)
-		{
-			std::cout<<"configuration:CONFIG_3";
-		}
-		else if (this->current_configuration==CONFIG_4)
-		{
-			std::cout<<"configuration:CONFIG_4";
-		}
-		else if (this->current_configuration==CONFIG_5)
-		{
-			std::cout<<"configuration:CONFIG_5";
-		}
-		else if (this->current_configuration==CONFIG_6)
-		{
-			std::cout<<"configuration:CONFIG_6";
-		}
-
-		std::cout<<std::endl;
-
-		if(this->role==COMMANDER)
-		{
-			std::cout<<"Role:COM call sign= ";
-			std::cout<<this->my_call_sign;
-		}
-		else if (this->role==RESPONDER)
-		{
-			std::cout<<"Role:Res call sign= ";
-			std::cout<<this->my_call_sign;
-		}
-		std::cout<<std::endl;
-
-		if(this->link_status==DROPPED)
-		{
-			std::cout<<"link_status:Dropd";
-		}
-		else if(this->link_status==IDLE)
-		{
-			std::cout<<"link_status:Idle";
-		}
-		else if (this->link_status==CONNECTING)
-		{
-			std::cout<<"link_status:Conecting to ";
-			std::cout<<this->destination_call_sign;
-		}
-		else if (this->link_status==CONNECTED)
-		{
-			std::cout<<"link_status:conntd to ";
-			std::cout<<this->destination_call_sign;
-			std::cout<<" ID= ";
-			std::cout<<(int)this->connection_id;
-		}
-		else if (this->link_status==DISCONNECTING)
-		{
-			std::cout<<"link_status:Disconnecting";
-		}
-		else if (this->link_status==LISTENING)
-		{
-			std::cout<<"link_status:List";
-		}
-		else if (this->link_status==CONNECTION_RECEIVED)
-		{
-			std::cout<<"link_status:Conn_Rxd from ";
-			std::cout<<this->destination_call_sign;
-		}
-		else if (this->link_status==CONNECTION_ACCEPTED)
-		{
-			std::cout<<"link_status:Conn_Acptd by ";
-			std::cout<<this->destination_call_sign;
-		}
-		else if (link_status==NEGOTIATING)
-		{
-			std::cout<<"link_status:negotiating with ";
-			std::cout<<this->destination_call_sign;
-		}
-		std::cout<<std::endl;
-
-		if (this->connection_status==TRANSMITTING_DATA)
-		{
-			std::cout<<"connection_status:TXing_D";
-		}
-		else if (this->connection_status==RECEIVING)
-		{
-			std::cout<<"connection_status:RXing";
-		}
-		else if (this->connection_status==RECEIVING_ACKS_DATA)
-		{
-			std::cout<<"connection_status:RXingAck_D";
-		}
-		if(this->connection_status==ACKNOWLEDGING_DATA)
-		{
-			std::cout<<"connection_status:Acking_D";
-		}
-		else if (this->connection_status==TRANSMITTING_CONTROL)
-		{
-			std::cout<<"connection_status:TXing_C";
-		}
-		else if (this->connection_status==RECEIVING_ACKS_CONTROL)
-		{
-			std::cout<<"connection_status:RXingAck_C";
-		}
-		else if (this->connection_status==ACKNOWLEDGING_CONTROL)
-		{
-			std::cout<<"connection_status:Acking_C";
-		}
-		else if(this->connection_status==IDLE)
-		{
-			std::cout<<"connection_status:Idle";
-		}
-		std::cout<<std::endl;
-
-		std::cout<<"measurements.SNR_uplink= "<<measurements.SNR_uplink<<std::endl;
-		std::cout<<"measurements.SNR_downlink= "<<measurements.SNR_downlink<<std::endl;
-		std::cout<<"measurements.signal_stregth_dbm= "<<measurements.signal_stregth_dbm<<std::endl;
-		std::cout<<"measurements.frequency_offset= "<<measurements.frequency_offset<<std::endl;
-
-		std::cout<<std::endl;
-
-		std::cout<<"stats.nSent_data= "<<stats.nSent_data<<std::endl;
-		std::cout<<"stats.nAcked_data= "<<stats.nAcked_data<<std::endl;
-		std::cout<<"stats.nReceived_data= "<<stats.nReceived_data<<std::endl;
-		std::cout<<"stats.nLost_data= "<<stats.nLost_data<<std::endl;
-		std::cout<<"stats.nReSent_data= "<<stats.nReSent_data<<std::endl;
-		std::cout<<"stats.nAcks_sent_data= "<<stats.nAcks_sent_data<<std::endl;
-		std::cout<<"stats.nNAcked_data= "<<stats.nNAcked_data<<std::endl;
-		std::cout<<"stats.ToSend_data:"<<this->get_nToSend_messages()<<std::endl;
-
-		std::cout<<std::endl;
-
-		std::cout<<"stats.nSent_control= "<<stats.nSent_control<<std::endl;
-		std::cout<<"stats.nAcked_control= "<<stats.nAcked_control<<std::endl;
-		std::cout<<"stats.nReceived_control= "<<stats.nReceived_control<<std::endl;
-		std::cout<<"stats.nLost_control= "<<stats.nLost_control<<std::endl;
-		std::cout<<"stats.nReSent_control= "<<stats.nReSent_control<<std::endl;
-		std::cout<<"stats.nAcks_sent_control= "<<stats.nAcks_sent_control<<std::endl;
-		std::cout<<"stats.nNAcked_control= "<<stats.nNAcked_control<<std::endl;
-
-		std::cout<<std::endl;
-		std::cout<<"link_timer= "<<link_timer.get_elapsed_time_ms()<<std::endl;
-		std::cout<<"connection_timer= "<<connection_timer.get_elapsed_time_ms()<<std::endl;
-		std::cout<<"gear_shift_timer= "<<gear_shift_timer.get_elapsed_time_ms()<<std::endl;
-		std::cout<<"receiving_timer= "<<receiving_timer.get_elapsed_time_ms()<<std::endl;
-
-		std::cout<<std::endl;
-		std::cout<<"last_received_message_sequence= "<<(int)last_received_message_sequence<<std::endl;
-
-
-		std::cout<<std::endl;
-		if (this->last_message_sent_type==NONE)
-		{
-			std::cout<<"last_message_sent:";
-		}
-		else if (this->last_message_sent_type==DATA_LONG)
-		{
-			std::cout<<"last_message_sent:DATA:DATA_LONG";
-		}
-		else if (this->last_message_sent_type==DATA_SHORT)
-		{
-			std::cout<<"last_message_sent:DATA:DATA_SHORT";
-		}
-		else if (this->last_message_sent_type==ACK_MULTI)
-		{
-			std::cout<<"last_message_sent:DATA:ACK_MULTI";
-		}
-		else if (this->last_message_sent_type==ACK_RANGE)
-		{
-			std::cout<<"last_message_sent:DATA:ACK_RANGE";
-		}
-		else if (this->last_message_sent_type==CONTROL)
-		{
-			std::cout<<"last_message_sent:CONTROL:";
-		}
-		else if (this->last_message_sent_type==ACK_CONTROL)
-		{
-			std::cout<<"last_message_sent:ACK_CONTROL:";
-		}
-
-		if(this->last_message_sent_type==CONTROL || this->last_message_sent_type==ACK_CONTROL)
-		{
-			if (this->last_message_sent_code==START_CONNECTION)
-			{
-				std::cout<<"START_CONNECTION";
-			}
-			else if (this->last_message_sent_code==TEST_CONNECTION)
-			{
-				std::cout<<"TEST_CONNECTION";
-			}
-			else if (this->last_message_sent_code==CLOSE_CONNECTION)
-			{
-				std::cout<<"CLOSE_CONNECTION";
-			}
-			else if (this->last_message_sent_code==KEEP_ALIVE)
-			{
-				std::cout<<"KEEP_ALIVE";
-			}
-			else if (this->last_message_sent_code==FILE_START)
-			{
-				std::cout<<"FILE_START";
-			}
-			else if (this->last_message_sent_code==FILE_END)
-			{
-				std::cout<<"FILE_END";
-			}
-			else if (this->last_message_sent_code==PIPE_OPEN)
-			{
-				std::cout<<"PIPE_OPEN";
-			}
-			else if (this->last_message_sent_code==PIPE_CLOSE)
-			{
-				std::cout<<"PIPE_CLOSE";
-			}
-			else if (this->last_message_sent_code==SWITCH_ROLE)
-			{
-				std::cout<<"SWITCH_ROLE";
-			}
-			else if (this->last_message_sent_code==BLOCK_END)
-			{
-				std::cout<<"BLOCK_END";
-			}
-			else if (this->last_message_sent_code==SET_CONFIG)
-			{
-				std::cout<<"SET_CONFIG";
-			}
-			else if (this->last_message_sent_code==REPEAT_LAST_ACK)
-			{
-				std::cout<<"REPEAT_LAST_ACK";
-			}
-		}
-		std::cout<<std::endl;
-
-		if (this->last_message_received_type==NONE)
-		{
-			std::cout<<"last_message_received:";
-		}
-		else if (this->last_message_received_type==DATA_LONG)
-		{
-			std::cout<<"last_message_received:DATA:DATA_LONG";
-		}
-		else if (this->last_message_received_type==DATA_SHORT)
-		{
-			std::cout<<"last_message_received:DATA:DATA_SHORT";
-		}
-		else if (this->last_message_received_type==ACK_MULTI)
-		{
-			std::cout<<"last_message_received:DATA:ACK_MULTI";
-		}
-		else if (this->last_message_received_type==ACK_RANGE)
-		{
-			std::cout<<"last_message_received:DATA:ACK_RANGE";
-		}
-		else if (this->last_message_received_type==CONTROL)
-		{
-			std::cout<<"last_message_received:CONTROL:";
-		}
-		else if (this->last_message_received_type==ACK_CONTROL)
-		{
-			std::cout<<"last_message_received:ACK_CONTROL:";
-		}
-
-		if(this->last_message_received_type==CONTROL || this->last_message_received_type==ACK_CONTROL)
-		{
-			if (this->last_message_received_code==START_CONNECTION)
-			{
-				std::cout<<"START_CONNECTION";
-			}
-			else if (this->last_message_received_code==TEST_CONNECTION)
-			{
-				std::cout<<"TEST_CONNECTION";
-			}
-			else if (this->last_message_received_code==CLOSE_CONNECTION)
-			{
-				std::cout<<"CLOSE_CONNECTION";
-			}
-			else if (this->last_message_received_code==KEEP_ALIVE)
-			{
-				std::cout<<"KEEP_ALIVE";
-			}
-			else if (this->last_message_received_code==FILE_START)
-			{
-				std::cout<<"FILE_START";
-			}
-			else if (this->last_message_received_code==FILE_END)
-			{
-				std::cout<<"FILE_END";
-			}
-			else if (this->last_message_received_code==PIPE_OPEN)
-			{
-				std::cout<<"PIPE_OPEN";
-			}
-			else if (this->last_message_received_code==PIPE_CLOSE)
-			{
-				std::cout<<"PIPE_CLOSE";
-			}
-			else if (this->last_message_received_code==SWITCH_ROLE)
-			{
-				std::cout<<"SWITCH_ROLE";
-			}
-			else if (this->last_message_received_code==BLOCK_END)
-			{
-				std::cout<<"BLOCK_END";
-			}
-			else if (this->last_message_received_code==SET_CONFIG)
-			{
-				std::cout<<"SET_CONFIG";
-			}
-			else if (this->last_message_received_code==REPEAT_LAST_ACK)
-			{
-				std::cout<<"REPEAT_LAST_ACK";
-			}
-		}
-		std::cout<<std::endl;
-
-		std::cout<<std::endl;
-		std::cout<<"TX buffer occupancy= "<<(float)(fifo_buffer_tx.get_size()-fifo_buffer_tx.get_free_size())*100.0/(float)fifo_buffer_tx.get_size()<<" %"<<std::endl;
-		std::cout<<"RX buffer occupancy= "<<(float)(fifo_buffer_rx.get_size()-fifo_buffer_rx.get_free_size())*100.0/(float)fifo_buffer_rx.get_size()<<" %"<<std::endl;
-		std::cout<<"Backup buffer occupancy= "<<(float)(fifo_buffer_backup.get_size()-fifo_buffer_backup.get_free_size())*100.0/(float)fifo_buffer_backup.get_size()<<" %"<<std::endl;
-
-
+		std::cout<<"configuration:CONFIG_0";
 	}
-	else
+	else if (this->current_configuration==CONFIG_1)
 	{
-
-		std::cout<<"configuration= "<<current_configuration;
-
-		if(this->role==COMMANDER)
-		{
-			std::cout<<", Role:COM";
-		}
-		else if (this->role==RESPONDER)
-		{
-			std::cout<<", Role:Res";
-		}
-
-		if(this->link_status==DROPPED)
-		{
-			std::cout<<", link_status:Dropd";
-		}
-		else if(this->link_status==IDLE)
-		{
-			std::cout<<", link_status:Idle";
-		}
-		else if (this->link_status==CONNECTING)
-		{
-			std::cout<<", link_status:Conecting";
-		}
-		else if (this->link_status==CONNECTED)
-		{
-			std::cout<<", link_status:conntd";
-		}
-		else if (this->link_status==DISCONNECTING)
-		{
-			std::cout<<", link_status:Disconnecting";
-		}
-		else if (this->link_status==LISTENING)
-		{
-			std::cout<<", link_status:List";
-		}
-		else if (this->link_status==CONNECTION_RECEIVED)
-		{
-			std::cout<<", link_status:Conn_Rxd";
-		}
-		else if (this->link_status==CONNECTION_ACCEPTED)
-		{
-			std::cout<<", link_status:Conn_Acptd";
-		}
-		else if (link_status==NEGOTIATING)
-		{
-			std::cout<<", link_status:negotiating";
-		}
-
-		if (this->connection_status==TRANSMITTING_DATA)
-		{
-			std::cout<<", connection_status:TXing_D";
-		}
-		else if (this->connection_status==RECEIVING)
-		{
-			std::cout<<", connection_status:RXing";
-		}
-		else if (this->connection_status==RECEIVING_ACKS_DATA)
-		{
-			std::cout<<", connection_status:RXingAck_D";
-		}
-		if(this->connection_status==ACKNOWLEDGING_DATA)
-		{
-			std::cout<<", connection_status:Acking_D";
-		}
-		else if (this->connection_status==TRANSMITTING_CONTROL)
-		{
-			std::cout<<", connection_status:TXing_C";
-		}
-		else if (this->connection_status==RECEIVING_ACKS_CONTROL)
-		{
-			std::cout<<", connection_status:RXingAck_C";
-		}
-		else if (this->connection_status==ACKNOWLEDGING_CONTROL)
-		{
-			std::cout<<", connection_status:Acking_C";
-		}
-		else if(this->connection_status==IDLE)
-		{
-			std::cout<<", connection_status:Idle";
-		}
-
-		std::cout<<", SNR_uplink= "<<measurements.SNR_uplink<<std::endl;
-		std::cout<<", SNR_downlink= "<<measurements.SNR_downlink<<std::endl;
-		std::cout<<", measurements.signal_stregth_dbm= "<<measurements.signal_stregth_dbm;
-		std::cout<<", measurements.frequency_offset= "<<measurements.frequency_offset;
-
-		std::cout<<", ";
-
-		std::cout<<"nSent_data= "<<stats.nSent_data<<", ";
-		std::cout<<"nAcked_data= "<<stats.nAcked_data<<", ";
-		std::cout<<"nReceived_data= "<<stats.nReceived_data<<", ";
-		std::cout<<"nLost_data= "<<stats.nLost_data<<", ";
-		std::cout<<"nReSent_data= "<<stats.nReSent_data<<", ";
-		std::cout<<"nAcks_sent_data= "<<stats.nAcks_sent_data<<", ";
-		std::cout<<"nNAcked_data= "<<stats.nNAcked_data<<", ";
-		std::cout<<"ToSend_data:"<<this->get_nToSend_messages()<<", ";
-
-		std::cout<<"nSent_control= "<<stats.nSent_control<<", ";
-		std::cout<<"nAcked_control= "<<stats.nAcked_control<<", ";
-		std::cout<<"nReceived_control= "<<stats.nReceived_control<<", ";
-		std::cout<<"nLost_control= "<<stats.nLost_control<<", ";
-		std::cout<<"nReSent_control= "<<stats.nReSent_control<<", ";
-		std::cout<<"nAcks_sent_control= "<<stats.nAcks_sent_control<<", ";
-		std::cout<<"nNAcked_control= "<<stats.nNAcked_control;
-
-		std::cout<<std::endl;
+		std::cout<<"configuration:CONFIG_1";
 	}
+	else if (this->current_configuration==CONFIG_2)
+	{
+		std::cout<<"configuration:CONFIG_2";
+	}
+	else if (this->current_configuration==CONFIG_3)
+	{
+		std::cout<<"configuration:CONFIG_3";
+	}
+	else if (this->current_configuration==CONFIG_4)
+	{
+		std::cout<<"configuration:CONFIG_4";
+	}
+	else if (this->current_configuration==CONFIG_5)
+	{
+		std::cout<<"configuration:CONFIG_5";
+	}
+	else if (this->current_configuration==CONFIG_6)
+	{
+		std::cout<<"configuration:CONFIG_6";
+	}
+
+	std::cout<<std::endl;
+
+	if(this->role==COMMANDER)
+	{
+		std::cout<<"Role:COM call sign= ";
+		std::cout<<this->my_call_sign;
+	}
+	else if (this->role==RESPONDER)
+	{
+		std::cout<<"Role:Res call sign= ";
+		std::cout<<this->my_call_sign;
+	}
+	std::cout<<std::endl;
+
+	if(this->link_status==DROPPED)
+	{
+		std::cout<<"link_status:Dropped";
+	}
+	else if(this->link_status==IDLE)
+	{
+		std::cout<<"link_status:Idle";
+	}
+	else if (this->link_status==CONNECTING)
+	{
+		std::cout<<"link_status:Connecting to ";
+		std::cout<<this->destination_call_sign;
+	}
+	else if (this->link_status==CONNECTED)
+	{
+		std::cout<<"link_status:Connected to ";
+		std::cout<<this->destination_call_sign;
+		std::cout<<" ID= ";
+		std::cout<<(int)this->connection_id;
+	}
+	else if (this->link_status==DISCONNECTING)
+	{
+		std::cout<<"link_status:Disconnecting";
+	}
+	else if (this->link_status==LISTENING)
+	{
+		std::cout<<"link_status:Listening";
+	}
+	else if (this->link_status==CONNECTION_RECEIVED)
+	{
+		std::cout<<"link_status:Connection Received from ";
+		std::cout<<this->destination_call_sign;
+	}
+	else if (this->link_status==CONNECTION_ACCEPTED)
+	{
+		std::cout<<"link_status:Connection Accepted by ";
+		std::cout<<this->destination_call_sign;
+	}
+	else if (link_status==NEGOTIATING)
+	{
+		std::cout<<"link_status:Negotiating with ";
+		std::cout<<this->destination_call_sign;
+	}
+	std::cout<<std::endl;
+
+	if (this->connection_status==TRANSMITTING_DATA)
+	{
+		std::cout<<"connection_status:Transmitting data";
+	}
+	else if (this->connection_status==RECEIVING)
+	{
+		std::cout<<"connection_status:Receiving";
+	}
+	else if (this->connection_status==RECEIVING_ACKS_DATA)
+	{
+		std::cout<<"connection_status:Receiving data Ack";
+	}
+	if(this->connection_status==ACKNOWLEDGING_DATA)
+	{
+		std::cout<<"connection_status:Receiving data";
+	}
+	else if (this->connection_status==TRANSMITTING_CONTROL)
+	{
+		std::cout<<"connection_status:Transmitting control";
+	}
+	else if (this->connection_status==RECEIVING_ACKS_CONTROL)
+	{
+		std::cout<<"connection_status:Receiving control Ack";
+	}
+	else if (this->connection_status==ACKNOWLEDGING_CONTROL)
+	{
+		std::cout<<"connection_status:Acknowledging control";
+	}
+	else if(this->connection_status==IDLE)
+	{
+		std::cout<<"connection_status:Idle";
+	}
+	std::cout<<std::endl;
+
+	std::cout<<"measurements.SNR_uplink= "<<measurements.SNR_uplink<<std::endl;
+	std::cout<<"measurements.SNR_downlink= "<<measurements.SNR_downlink<<std::endl;
+	std::cout<<"measurements.signal_stregth_dbm= "<<measurements.signal_stregth_dbm<<std::endl;
+	std::cout<<"measurements.frequency_offset= "<<measurements.frequency_offset<<std::endl;
+
+	std::cout<<std::endl;
+
+	std::cout<<"stats.nSent_data= "<<stats.nSent_data<<std::endl;
+	std::cout<<"stats.nAcked_data= "<<stats.nAcked_data<<std::endl;
+	std::cout<<"stats.nReceived_data= "<<stats.nReceived_data<<std::endl;
+	std::cout<<"stats.nLost_data= "<<stats.nLost_data<<std::endl;
+	std::cout<<"stats.nReSent_data= "<<stats.nReSent_data<<std::endl;
+	std::cout<<"stats.nAcks_sent_data= "<<stats.nAcks_sent_data<<std::endl;
+	std::cout<<"stats.nNAcked_data= "<<stats.nNAcked_data<<std::endl;
+	std::cout<<"stats.ToSend_data:"<<this->get_nToSend_messages()<<std::endl;
+
+	std::cout<<std::endl;
+
+	std::cout<<"stats.nSent_control= "<<stats.nSent_control<<std::endl;
+	std::cout<<"stats.nAcked_control= "<<stats.nAcked_control<<std::endl;
+	std::cout<<"stats.nReceived_control= "<<stats.nReceived_control<<std::endl;
+	std::cout<<"stats.nLost_control= "<<stats.nLost_control<<std::endl;
+	std::cout<<"stats.nReSent_control= "<<stats.nReSent_control<<std::endl;
+	std::cout<<"stats.nAcks_sent_control= "<<stats.nAcks_sent_control<<std::endl;
+	std::cout<<"stats.nNAcked_control= "<<stats.nNAcked_control<<std::endl;
+
+	std::cout<<std::endl;
+	std::cout<<"link_timer= "<<link_timer.get_elapsed_time_ms()<<std::endl;
+	std::cout<<"connection_timer= "<<connection_timer.get_elapsed_time_ms()<<std::endl;
+	std::cout<<"gear_shift_timer= "<<gear_shift_timer.get_elapsed_time_ms()<<std::endl;
+	std::cout<<"receiving_timer= "<<receiving_timer.get_elapsed_time_ms()<<std::endl;
+
+	std::cout<<std::endl;
+	std::cout<<"last_received_message_sequence= "<<(int)last_received_message_sequence<<std::endl;
+
+
+	std::cout<<std::endl;
+	if (this->last_message_sent_type==NONE)
+	{
+		std::cout<<"last_message_sent:";
+	}
+	else if (this->last_message_sent_type==DATA_LONG)
+	{
+		std::cout<<"last_message_sent:DATA:DATA_LONG";
+	}
+	else if (this->last_message_sent_type==DATA_SHORT)
+	{
+		std::cout<<"last_message_sent:DATA:DATA_SHORT";
+	}
+	else if (this->last_message_sent_type==ACK_MULTI)
+	{
+		std::cout<<"last_message_sent:DATA:ACK_MULTI";
+	}
+	else if (this->last_message_sent_type==ACK_RANGE)
+	{
+		std::cout<<"last_message_sent:DATA:ACK_RANGE";
+	}
+	else if (this->last_message_sent_type==CONTROL)
+	{
+		std::cout<<"last_message_sent:CONTROL:";
+	}
+	else if (this->last_message_sent_type==ACK_CONTROL)
+	{
+		std::cout<<"last_message_sent:ACK_CONTROL:";
+	}
+
+	if(this->last_message_sent_type==CONTROL || this->last_message_sent_type==ACK_CONTROL)
+	{
+		if (this->last_message_sent_code==START_CONNECTION)
+		{
+			std::cout<<"START_CONNECTION";
+		}
+		else if (this->last_message_sent_code==TEST_CONNECTION)
+		{
+			std::cout<<"TEST_CONNECTION";
+		}
+		else if (this->last_message_sent_code==CLOSE_CONNECTION)
+		{
+			std::cout<<"CLOSE_CONNECTION";
+		}
+		else if (this->last_message_sent_code==KEEP_ALIVE)
+		{
+			std::cout<<"KEEP_ALIVE";
+		}
+		else if (this->last_message_sent_code==FILE_START)
+		{
+			std::cout<<"FILE_START";
+		}
+		else if (this->last_message_sent_code==FILE_END)
+		{
+			std::cout<<"FILE_END";
+		}
+		else if (this->last_message_sent_code==PIPE_OPEN)
+		{
+			std::cout<<"PIPE_OPEN";
+		}
+		else if (this->last_message_sent_code==PIPE_CLOSE)
+		{
+			std::cout<<"PIPE_CLOSE";
+		}
+		else if (this->last_message_sent_code==SWITCH_ROLE)
+		{
+			std::cout<<"SWITCH_ROLE";
+		}
+		else if (this->last_message_sent_code==BLOCK_END)
+		{
+			std::cout<<"BLOCK_END";
+		}
+		else if (this->last_message_sent_code==SET_CONFIG)
+		{
+			std::cout<<"SET_CONFIG";
+		}
+		else if (this->last_message_sent_code==REPEAT_LAST_ACK)
+		{
+			std::cout<<"REPEAT_LAST_ACK";
+		}
+	}
+	std::cout<<std::endl;
+
+	if (this->last_message_received_type==NONE)
+	{
+		std::cout<<"last_message_received:";
+	}
+	else if (this->last_message_received_type==DATA_LONG)
+	{
+		std::cout<<"last_message_received:DATA:DATA_LONG";
+	}
+	else if (this->last_message_received_type==DATA_SHORT)
+	{
+		std::cout<<"last_message_received:DATA:DATA_SHORT";
+	}
+	else if (this->last_message_received_type==ACK_MULTI)
+	{
+		std::cout<<"last_message_received:DATA:ACK_MULTI";
+	}
+	else if (this->last_message_received_type==ACK_RANGE)
+	{
+		std::cout<<"last_message_received:DATA:ACK_RANGE";
+	}
+	else if (this->last_message_received_type==CONTROL)
+	{
+		std::cout<<"last_message_received:CONTROL:";
+	}
+	else if (this->last_message_received_type==ACK_CONTROL)
+	{
+		std::cout<<"last_message_received:ACK_CONTROL:";
+	}
+
+	if(this->last_message_received_type==CONTROL || this->last_message_received_type==ACK_CONTROL)
+	{
+		if (this->last_message_received_code==START_CONNECTION)
+		{
+			std::cout<<"START_CONNECTION";
+		}
+		else if (this->last_message_received_code==TEST_CONNECTION)
+		{
+			std::cout<<"TEST_CONNECTION";
+		}
+		else if (this->last_message_received_code==CLOSE_CONNECTION)
+		{
+			std::cout<<"CLOSE_CONNECTION";
+		}
+		else if (this->last_message_received_code==KEEP_ALIVE)
+		{
+			std::cout<<"KEEP_ALIVE";
+		}
+		else if (this->last_message_received_code==FILE_START)
+		{
+			std::cout<<"FILE_START";
+		}
+		else if (this->last_message_received_code==FILE_END)
+		{
+			std::cout<<"FILE_END";
+		}
+		else if (this->last_message_received_code==PIPE_OPEN)
+		{
+			std::cout<<"PIPE_OPEN";
+		}
+		else if (this->last_message_received_code==PIPE_CLOSE)
+		{
+			std::cout<<"PIPE_CLOSE";
+		}
+		else if (this->last_message_received_code==SWITCH_ROLE)
+		{
+			std::cout<<"SWITCH_ROLE";
+		}
+		else if (this->last_message_received_code==BLOCK_END)
+		{
+			std::cout<<"BLOCK_END";
+		}
+		else if (this->last_message_received_code==SET_CONFIG)
+		{
+			std::cout<<"SET_CONFIG";
+		}
+		else if (this->last_message_received_code==REPEAT_LAST_ACK)
+		{
+			std::cout<<"REPEAT_LAST_ACK";
+		}
+	}
+	std::cout<<std::endl;
+
+	std::cout<<std::endl;
+	std::cout<<"TX buffer occupancy= "<<(float)(fifo_buffer_tx.get_size()-fifo_buffer_tx.get_free_size())*100.0/(float)fifo_buffer_tx.get_size()<<" %"<<std::endl;
+	std::cout<<"RX buffer occupancy= "<<(float)(fifo_buffer_rx.get_size()-fifo_buffer_rx.get_free_size())*100.0/(float)fifo_buffer_rx.get_size()<<" %"<<std::endl;
+	std::cout<<"Backup buffer occupancy= "<<(float)(fifo_buffer_backup.get_size()-fifo_buffer_backup.get_free_size())*100.0/(float)fifo_buffer_backup.get_size()<<" %"<<std::endl;
 }
 
 

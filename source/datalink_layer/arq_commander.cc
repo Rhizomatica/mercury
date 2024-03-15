@@ -408,6 +408,8 @@ void cl_arq_controller::process_control_commander()
 			}
 			measurements.SNR_downlink=tmp_SNR.f_SNR;
 
+			switch_role_test_timer.stop();
+			switch_role_test_timer.reset();
 
 			if(gear_shift_on==YES)
 			{
@@ -420,20 +422,23 @@ void cl_arq_controller::process_control_commander()
 			}
 			else
 			{
+				if(this->link_status==CONNECTION_ACCEPTED)
+				{
+					std::string str="CONNECTED "+this->my_call_sign+" "+this->destination_call_sign+" "+ std::to_string(telecom_system->bandwidth)+"\r";
+					tcp_socket_control.message->length=str.length();
+
+					for(int i=0;i<tcp_socket_control.message->length;i++)
+					{
+						tcp_socket_control.message->buffer[i]=str[i];
+					}
+					tcp_socket_control.transmit();
+				}
+
 				this->link_status=CONNECTED;
 				this->connection_status=TRANSMITTING_DATA;
 				connection_timer.stop();
 				connection_timer.reset();
 				link_timer.start();
-
-				std::string str="CONNECTED "+this->my_call_sign+" "+this->destination_call_sign+" "+ std::to_string(telecom_system->bandwidth)+"\r";
-				tcp_socket_control.message->length=str.length();
-
-				for(int i=0;i<tcp_socket_control.message->length;i++)
-				{
-					tcp_socket_control.message->buffer[i]=str[i];
-				}
-				tcp_socket_control.transmit();
 			}
 		}
 		else if(this->link_status==NEGOTIATING && messages_control.data[0]==SET_CONFIG)
@@ -472,16 +477,32 @@ void cl_arq_controller::process_control_commander()
 				}
 				block_under_tx=NO;
 				fifo_buffer_backup.flush();
-				this->connection_status=TRANSMITTING_DATA;
-				add_message_control(TEST_CONNECTION);
-				std::cout<<"end of block acked"<<std::endl;
+
+				std::string str="BUFFER ";
+				str+=std::to_string(fifo_buffer_tx.get_size()-fifo_buffer_tx.get_free_size());
+				str+='\r';
+				for(long unsigned int i=0;i<str.length();i++)
+				{
+					tcp_socket_control.message->buffer[i]=str[i];
+				}
+				tcp_socket_control.message->length=str.length();
+				tcp_socket_control.transmit();
+
+				if(gear_shift_on==YES)
+				{
+					add_message_control(TEST_CONNECTION);
+				}
+				else
+				{
+					this->connection_status=TRANSMITTING_DATA;
+				}
+
 			}
 			else if (messages_control.data[0]==SWITCH_ROLE)
 			{
 				set_role(RESPONDER);
 				this->link_status=CONNECTED;
 				this->connection_status=RECEIVING;
-				set_receiving_timeout((data_batch_size+1.5)*message_transmission_time_ms);
 				connection_timer.stop();
 				connection_timer.reset();
 				link_timer.start();
@@ -499,6 +520,10 @@ void cl_arq_controller::process_control_commander()
 			link_timer.reset();
 			gear_shift_timer.stop();
 			gear_shift_timer.reset();
+
+			fifo_buffer_tx.flush();
+			fifo_buffer_backup.flush();
+			fifo_buffer_rx.flush();
 
 			std::string str="DISCONNECTED\r";
 			tcp_socket_control.message->length=str.length();
