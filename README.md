@@ -137,7 +137,7 @@ The data link layer has the following parameters to be configured:
 - ack_batch_size:  Number of messages per acknowledgment batch.
 - control_batch_size: Number of messages per control batch.
 - ptt_on_delay_ms: time in milliseconds to wait after switching on the push to talk (ptt) before sending data.
-- ptt_on_delay_ms: time in milliseconds to wait after switching off the push to talk (ptt) after sending data.
+- ptt_off_delay_ms: time in milliseconds to wait after switching off the push to talk (ptt) after sending data.
 - switch_role_timeout_ms: time in milliseconds to wait before switching role with the responder in case of an empty data buffer.
 
 The physical layer parameters can be defined in physical_layer/physical_config.cc
