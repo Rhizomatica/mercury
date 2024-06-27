@@ -2,7 +2,7 @@
  * Mercury: A configurable open-source software-defined modem.
  * Copyright (C) 2022-2024 Fadi Jerji
  * Author: Fadi Jerji
- * Email: fadi.jerji@  <gmail.com, rhizomatica.org, caisresearch.com, ieee.org>
+ * Email: fadi.jerji@  <gmail.com, caisresearch.com, ieee.org>
  * ORCID: 0000-0002-2076-5831
  *
  * This program is free software: you can redistribute it and/or modify
@@ -30,13 +30,14 @@ cl_ofdm::cl_ofdm()
 	this->Nsymb=0;
 	this->gi=0;
 	Ngi=0;
-	ofdm_frame =0;
-	ofdm_preamble=0;
-	zero_padded_data=0;
-	iffted_data=0;
-	gi_removed_data=0;
-	ffted_data=0;
-	estimated_channel=0;
+	ofdm_frame =NULL;
+	ofdm_preamble=NULL;
+	zero_padded_data=NULL;
+	iffted_data=NULL;
+	gi_removed_data=NULL;
+	ffted_data=NULL;
+	estimated_channel=NULL;
+	estimated_channel_without_amplitude_restoration=NULL;
 	time_sync_Nsymb=1;
 	freq_offset_ignore_limit=0.1;
 	start_shift=1;
@@ -44,6 +45,9 @@ cl_ofdm::cl_ofdm()
 	preamble_papr_cut=99;
 	data_papr_cut=99;
 	channel_estimator=ZERO_FORCE;
+	LS_window_width=0;
+	LS_window_hight=0;
+	channel_estimator_amplitude_restoration=NO;
 }
 
 cl_ofdm::~cl_ofdm()
@@ -57,6 +61,14 @@ void cl_ofdm::init(int Nfft, int Nc, int Nsymb, float gi)
 	this->Nfft=Nfft;
 	this->Nsymb=Nsymb;
 	this->gi=gi;
+	if(LS_window_width==0)
+	{
+		LS_window_width=Nc;
+	}
+	if(LS_window_hight==0)
+	{
+		LS_window_hight=Nsymb;
+	}
 
 	this->init();
 }
@@ -70,6 +82,7 @@ void cl_ofdm::init()
 	gi_removed_data=new std::complex <double>[Nfft];
 	ffted_data=new std::complex <double>[Nfft];
 	estimated_channel=new struct st_channel_complex[this->Nsymb*this->Nc];
+	estimated_channel_without_amplitude_restoration=new struct st_channel_complex[this->Nsymb*this->Nc];
 	ofdm_preamble = new struct st_carrier[this->preamble_configurator.Nsymb*this->Nc];
 	passband_start_sample=0;
 
@@ -144,6 +157,12 @@ void cl_ofdm::deinit()
 	{
 		delete[] estimated_channel;
 		estimated_channel=NULL;
+	}
+
+	if(estimated_channel_without_amplitude_restoration!=NULL)
+	{
+		delete[] estimated_channel_without_amplitude_restoration;
+		estimated_channel_without_amplitude_restoration=NULL;
 	}
 
 	pilot_configurator.deinit();
@@ -311,7 +330,7 @@ void cl_ofdm::_ifft(std::complex <double>* v,int n)
 	//https://www.math.wustl.edu/~victor/mfmm/
 }
 
-double cl_ofdm::frequency_sync(std::complex <double>*in, double carrier_freq_width, int preamble_nSymb)
+double cl_ofdm::carrier_sampling_frequency_sync(std::complex <double>*in, double carrier_freq_width, int preamble_nSymb, double sampling_frequency)
 {
 	double frequency_offset_prec=0;
 
@@ -356,11 +375,13 @@ double cl_ofdm::frequency_sync(std::complex <double>*in, double carrier_freq_wid
 		}
 	}
 	frequency_offset_prec=2.0*(1.0/(2*M_PI))*atan(mul.imag()/mul.real());
+	float sampling_frequency_offset= -frequency_offset_prec*carrier_freq_width /sampling_frequency;
 
 	return (frequency_offset_prec*carrier_freq_width);
 
 	//Ref1: P. H. Moose, "A technique for orthogonal frequency division multiplexing frequency offset correction," in IEEE Transactions on Communications, vol. 42, no. 10, pp. 2908-2914, Oct. 1994, doi: 10.1109/26.328961.
 	//Ref2: T. M. Schmidl and D. C. Cox, "Robust frequency and timing synchronization for OFDM," in IEEE Transactions on Communications, vol. 45, no. 12, pp. 1613-1621, Dec. 1997, doi: 10.1109/26.650240.
+	//Ref3: M. Speth, S. Fechtel, G. Fock and H. Meyr, "Optimum receiver design for OFDM-based broadband transmission .II. A case study," in IEEE Transactions on Communications, vol. 49, no. 4, pp. 571-578, April 2001, doi: 10.1109/26.917759.
 }
 
 void cl_ofdm::framer(std::complex <double>* in, std::complex <double>* out)
@@ -441,6 +462,8 @@ cl_pilot_configurator::cl_pilot_configurator()
 	Nfft=0;
 	start_shift=0;
 	seed=0;
+	print_on=YES;
+	pilot_density=HIGH_DENSITY;
 }
 
 cl_pilot_configurator::~cl_pilot_configurator()
@@ -482,7 +505,10 @@ void cl_pilot_configurator::init(int Nfft, int Nc, int Nsymb,struct st_carrier* 
 
 	sequence = new std::complex <double>[nPilots];
 
-	this->print();
+	if(print_on==YES)
+	{
+		this->print();
+	}
 
 	srand(seed);
 
@@ -667,6 +693,7 @@ cl_preamble_configurator::cl_preamble_configurator()
 	nZeros=0;
 	start_shift=0;
 	seed=0;
+	print_on=YES;
 }
 
 cl_preamble_configurator::~cl_preamble_configurator()
@@ -684,7 +711,10 @@ void cl_preamble_configurator::init(int Nfft, int Nc, struct st_carrier* _carrie
 
 	sequence = new std::complex <double>[this->Nsymb*this->Nc];
 
-	this->print();
+	if(print_on==YES)
+	{
+		this->print();
+	}
 
 	srand(seed);
 
@@ -812,7 +842,7 @@ void cl_preamble_configurator::print()
 	}
 }
 
-void cl_ofdm::channel_estimator_frame_time_frequency(std::complex <double>*in)
+void cl_ofdm::ZF_channel_estimator(std::complex <double>*in)
 {
 	int pilot_index=0;
 	for(int i=0;i<Nsymb;i++)
@@ -856,21 +886,154 @@ void cl_ofdm::channel_estimator_frame_time_frequency(std::complex <double>*in)
 			interpolate_bilinear_matrix(estimated_channel,Nc,Nsymb,j,Nc-1,0,Nsymb-1);
 		}
 	}
-	if(channel_estimator==AMP_RESTORATED_ZERO_FORCE)
-	{
-		for(int i=0;i<Nsymb;i++)
-		{
-			for(int j=0;j<Nc;j++)
-			{
-				(estimated_channel+i*Nc+j)->value=set_complex(1, get_angle((estimated_channel+i*Nc+j)->value));
-			}
-		}
-	}
 /*
  * Ref: R. Lucky, “The adaptive equalizer,” IEEE Signal Processing Magazine, vol. 23, no. 3, pp. 104–107, 2006.
  */
 }
 
+void cl_ofdm::LS_channel_estimator(std::complex <double>*in)
+{
+	std::complex <double> pilot_data[Nsymb*Nc]={std::complex <double> (0,0)};
+
+	int pilot_index=0;
+	for(int i=0;i<Nsymb;i++)
+	{
+		for(int j=0;j<Nc;j++)
+		{
+			if((ofdm_frame+i*Nc+j)->type==PILOT)
+			{
+				*(pilot_data+i*Nc+j)=pilot_configurator.sequence[pilot_index];
+				pilot_index++;
+			}
+			else
+			{
+				(estimated_channel+i*Nc+j)->status=UNKNOWN;
+				(estimated_channel+i*Nc+j)->value=0;
+			}
+
+		}
+	}
+
+	int nPilots=0;
+	std::complex <double> ch_tmp;
+
+	for(int j=0;j<Nc;j++)
+	{
+		for(int i=0;i<Nsymb;i++)
+		{
+			if((ofdm_frame+i*Nc+j)->type!=PILOT)
+			{
+				continue;
+			}
+
+			int window_vertical_start=i-LS_window_hight/2;
+			int window_vertical_end=i+LS_window_hight/2;
+
+			int window_horizontal_start=j-LS_window_width/2;
+			int window_horizontal_end=j+LS_window_width/2;
+
+			nPilots=0;
+			for(int k=window_vertical_start;k<=window_vertical_end;k++)
+			{
+				if(k<0 || k>=Nsymb)
+				{
+					continue;
+				}
+				for(int l=window_horizontal_start;l<=window_horizontal_end;l++)
+				{
+					if(l<0 || l>=Nc)
+					{
+						continue;
+					}
+
+					if((ofdm_frame+k*Nc+l)->type==PILOT)
+					{
+						nPilots++;
+					}
+				}
+			}
+
+			std::complex <double> x[nPilots], y[nPilots];
+
+			int x_y_index=0;
+			for(int k=window_vertical_start;k<=window_vertical_end;k++)
+			{
+				if(k<0 || k>=Nsymb)
+				{
+					continue;
+				}
+				for(int l=window_horizontal_start;l<=window_horizontal_end;l++)
+				{
+
+					if(l<0 || l>=Nc)
+					{
+						continue;
+					}
+					if((ofdm_frame+k*Nc+l)->type==PILOT)
+					{
+						x[x_y_index]=*(pilot_data+k*Nc+l);
+						y[x_y_index]=*(in+k*Nc+l);
+						x_y_index++;
+					}
+				}
+			}
+			//ch_tmp=(x.transpose *x).inverse * x.transpose * y
+			matrix_multiplication(x,nPilots,1,x,1,nPilots,&ch_tmp);
+			ch_tmp=1.0/ch_tmp;
+			for(int m=0;m<nPilots;m++)
+			{
+				x[m]*=ch_tmp;
+			}
+			matrix_multiplication(x,nPilots,1,y,1,nPilots,&ch_tmp);
+
+			(estimated_channel+i*Nc+j)->status=MEASURED;
+			(estimated_channel+i*Nc+j)->value=ch_tmp;
+		}
+	}
+
+
+	for(int j=0;j<Nc;j++)
+	{
+		if(j%this->pilot_configurator.Dx==0)
+		{
+			interpolate_linear_col(estimated_channel,Nc,Nsymb,j);
+		}
+		else if(j==Nc-1)
+		{
+			interpolate_linear_col(estimated_channel,Nc,Nsymb,j);
+		}
+	}
+
+	for(int j=0;j<Nc;j+=this->pilot_configurator.Dx)
+	{
+		if(j+this->pilot_configurator.Dx<Nc)
+		{
+			interpolate_bilinear_matrix(estimated_channel,Nc,Nsymb,j,j+this->pilot_configurator.Dx,0,Nsymb-1);
+		}
+		else if(j!=Nc-1)
+		{
+			interpolate_bilinear_matrix(estimated_channel,Nc,Nsymb,j,Nc-1,0,Nsymb-1);
+		}
+	}
+/*
+ * Ref J. . -J. van de Beek, O. Edfors, M. Sandell, S. K. Wilson and P. O. Borjesson, "On channel estimation in OFDM systems," 1995 IEEE 45th Vehicular Technology Conference. Countdown to the Wireless Twenty-First Century, Chicago, IL, USA, 1995, pp. 815-819 vol.2, doi: 10.1109/VETEC.1995.504981.
+ */
+}
+
+void cl_ofdm::restore_channel_amplitude()
+{
+	for(int i=0;i<Nsymb;i++)
+	{
+		for(int j=0;j<Nc;j++)
+		{
+			*(estimated_channel_without_amplitude_restoration+i*Nc+j)=*(estimated_channel+i*Nc+j);
+			(estimated_channel+i*Nc+j)->value=set_complex(1, get_angle((estimated_channel+i*Nc+j)->value));
+		}
+	}
+/*
+ * Ref: F. Jerji and C. Akamine, "Enhanced ZF and LS channel estimators for OFDM with MPSK modulation," 2024 IEEE International Symposium on Broadband Multimedia Systems and Broadcasting (BMSB).
+ */
+}
 void cl_ofdm::automatic_gain_control(std::complex <double>*in)
 {
 	int pilot_index=0;
@@ -941,6 +1104,29 @@ double cl_ofdm::measure_signal_stregth(std::complex <double>*in, int nItems)
 	return signal_stregth_dbm;
 }
 
+st_power_measurment cl_ofdm::measure_signal_power_avg_papr(double*in, int nItems)
+{
+	st_power_measurment power_measurment;
+	power_measurment.avg=0;
+	power_measurment.max=0;
+	power_measurment.papr_db=0;
+	double power_tmp;
+
+	for(int i=0;i<nItems;i++)
+	{
+		power_tmp=pow(*(in+i),2);
+		power_measurment.avg+=power_tmp;
+		if(power_tmp>power_measurment.max)
+		{
+			power_measurment.max=power_tmp;
+		}
+	}
+	power_measurment.avg/=nItems;
+
+	power_measurment.papr_db=10.0*log10(power_measurment.max/power_measurment.avg);
+
+	return power_measurment;
+}
 
 void cl_ofdm::peak_clip(double *in, int nItems, double papr)
 {
@@ -1024,7 +1210,16 @@ void cl_ofdm::channel_equalizer(std::complex <double>* in, std::complex <double>
 			(estimated_channel+i*Nc+j)->status=UNKNOWN;
 		}
 	}
-
+}
+void cl_ofdm::channel_equalizer_without_amplitude_restoration(std::complex <double>* in,std::complex <double>* out)
+{
+	for(int i=0;i<Nsymb;i++)
+	{
+		for(int j=0;j<Nc;j++)
+		{
+			*(out+i*Nc+j)=*(in+i*Nc+j) / (estimated_channel_without_amplitude_restoration+i*Nc+j)->value;
+		}
+	}
 }
 
 int cl_ofdm::time_sync(std::complex <double>*in, int size, int interpolation_rate, int location_to_return)
@@ -1103,7 +1298,7 @@ int cl_ofdm::time_sync(std::complex <double>*in, int size, int interpolation_rat
 	return return_val;
 }
 
-int cl_ofdm::time_sync_preamble(std::complex <double>*in, int size, int interpolation_rate, int location_to_return, int step)
+int cl_ofdm::time_sync_preamble(std::complex <double>*in, int size, int interpolation_rate, int location_to_return, int step, int nTrials_max)
 {
 	double corss_corr=0;
 	double norm_a=0;
@@ -1170,17 +1365,20 @@ int cl_ofdm::time_sync_preamble(std::complex <double>*in, int size, int interpol
 		corss_corr_loc[i]=i;
 	}
 
-	corss_corr_loc[0]=0;
-	for(int i=1;i<size;i++)
+	for(int j=0;j<nTrials_max;j++)
 	{
-		if (corss_corr_vals[i]>corss_corr_vals[0])
+		corss_corr_loc[j]=j;
+		for(int i=j+1;i<size;i++)
 		{
-			corss_corr_vals[0]=corss_corr_vals[i];
-			corss_corr_loc[0]=i;
+			if (corss_corr_vals[i]>corss_corr_vals[j])
+			{
+				corss_corr_vals[j]=corss_corr_vals[i];
+				corss_corr_loc[j]=i;
+			}
 		}
 	}
 
-	return_val=corss_corr_loc[location_to_return*0];
+	return_val=corss_corr_loc[location_to_return];
 	if(corss_corr_loc!=NULL)
 	{
 		delete[] corss_corr_loc;
@@ -1194,10 +1392,10 @@ int cl_ofdm::time_sync_preamble(std::complex <double>*in, int size, int interpol
 		delete[] data;
 	}
 	return return_val;
-	/*
-	 * 	Ref: T. M. Schmidl and D. C. Cox, "Robust frequency and timing synchronization for OFDM," in IEEE Transactions on Communications, vol. 45, no. 12, pp. 1613-1621, Dec. 1997, doi: 10.1109/26.650240.
-	 *
-	 */
+/*
+ * 	Ref: T. M. Schmidl and D. C. Cox, "Robust frequency and timing synchronization for OFDM," in IEEE Transactions on Communications, vol. 45, no. 12, pp. 1613-1621, Dec. 1997, doi: 10.1109/26.650240.
+ *
+ */
 }
 
 int cl_ofdm::symbol_sync(std::complex <double>*in, int size, int interpolation_rate, int location_to_return)
@@ -1322,7 +1520,7 @@ void cl_ofdm::baseband_to_passband(std::complex <double>* in, int in_size, doubl
 		delete[] data_interpolated;
 	}
 }
-void cl_ofdm::passband_to_baseband(double* in, int in_size, std::complex <double>* out, double sampling_frequency, double carrier_frequency, double carrier_amplitude, int decimation_rate)
+void cl_ofdm::passband_to_baseband(double* in, int in_size, std::complex <double>* out, double sampling_frequency, double carrier_frequency, double carrier_amplitude, int decimation_rate, cl_FIR* filter)
 {
 	double sampling_interval=1.0/sampling_frequency;
 
@@ -1335,7 +1533,7 @@ void cl_ofdm::passband_to_baseband(double* in, int in_size, std::complex <double
 		l_data[i].imag(in[i]*carrier_amplitude*sin(2*M_PI*carrier_frequency*(double)i * sampling_interval));
 	}
 
-	FIR_rx.apply(l_data,data_filtered,in_size);
+	filter->apply(l_data,data_filtered,in_size);
 
 	rational_resampler(data_filtered, in_size, out, decimation_rate, DECIMATION);
 	if(l_data!=NULL)

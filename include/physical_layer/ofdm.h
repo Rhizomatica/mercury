@@ -2,7 +2,7 @@
  * Mercury: A configurable open-source software-defined modem.
  * Copyright (C) 2022-2024 Fadi Jerji
  * Author: Fadi Jerji
- * Email: fadi.jerji@  <gmail.com, rhizomatica.org, caisresearch.com, ieee.org>
+ * Email: fadi.jerji@  <gmail.com, caisresearch.com, ieee.org>
  * ORCID: 0000-0002-2076-5831
  *
  * This program is free software: you can redistribute it and/or modify
@@ -54,6 +54,8 @@ public:
 	std::complex <double> *sequence;
 	double boost;
 	struct st_carrier* carrier;
+	int print_on;
+	int pilot_density;
 
 private:
 	struct st_carrier* virtual_carrier;
@@ -80,6 +82,7 @@ public:
 	std::complex <double> *sequence;
 	double boost;
 	struct st_carrier* carrier;
+	int print_on;
 
 private:
 	int start_shift;
@@ -115,23 +118,27 @@ public:
 	void symbol_demod(std::complex <double>*in, std::complex <double>*out);
 	void framer(std::complex <double>* in, std::complex <double>* out);
 	void deframer(std::complex <double>* in, std::complex <double>* out);
-	void channel_estimator_frame(std::complex <double>*in);
-	void channel_estimator_frame_time_frequency(std::complex <double>*in);
-	double frequency_sync(std::complex <double>*in, double carrier_freq_width, int preamble_nSymb);
+	void ZF_channel_estimator(std::complex <double>*in);
+	void LS_channel_estimator(std::complex <double>*in);
+	void restore_channel_amplitude();
+	double carrier_sampling_frequency_sync(std::complex <double>*in, double carrier_freq_width, int preamble_nSymb, double sampling_frequency);
 	void channel_equalizer(std::complex <double>* in, std::complex <double>* out);
+	void channel_equalizer_without_amplitude_restoration(std::complex <double>* in,std::complex <double>* out);
+
 	void automatic_gain_control(std::complex <double>*in);
 	double measure_variance(std::complex <double>*in);
 	double measure_signal_stregth(std::complex <double> *in, int nItems);
+	st_power_measurment measure_signal_power_avg_papr(double *in, int nItems);
 	void peak_clip(double *in, int nItems, double papr);
 	void peak_clip(std::complex <double> *in, int nItems, double papr);
 	double measure_SNR(std::complex <double>*in_s, std::complex <double>*in_n, int nItems);
 	int time_sync(std::complex <double>*in, int size, int interpolation_rate, int location_to_return);
-	int time_sync_preamble(std::complex <double>*in, int size, int interpolation_rate, int location_to_return, int step);
+	int time_sync_preamble(std::complex <double>*in, int size, int interpolation_rate, int location_to_return, int step, int nTrials_max);
 	int symbol_sync(std::complex <double>*, int size, int interpolation_rate, int location_to_return);
 	void rational_resampler(std::complex <double>* in, int in_size , std::complex <double>* out, int rate, int interpolation_decimation);
 	void baseband_to_passband(std::complex <double>* in, int in_size, double* out, double sampling_frequency, double carrier_frequency, double carrier_amplitude, int interpolation_rate);
-	void passband_to_baseband(double* in, int in_size, std::complex <double>* out, double sampling_frequency, double carrier_frequency, double carrier_amplitude, int decimation_rate);
-	struct st_channel_complex * estimated_channel;
+	void passband_to_baseband(double* in, int in_size, std::complex <double>* out, double sampling_frequency, double carrier_frequency, double carrier_amplitude, int decimation_rate, cl_FIR* filter);
+	struct st_channel_complex * estimated_channel, *estimated_channel_without_amplitude_restoration;
 	int Nfft,Nc,Nsymb;
 	float gi;
 	struct st_carrier* ofdm_frame;
@@ -141,7 +148,7 @@ public:
 	void fft(std::complex <double>* in, std::complex <double>* out, int _Nfft);
 	int time_sync_Nsymb;
 	double freq_offset_ignore_limit;
-	cl_FIR FIR_rx;
+	cl_FIR FIR_rx_data,FIR_rx_time_sync;
 	cl_FIR FIR_tx1, FIR_tx2;
 	int start_shift;
 	long unsigned passband_start_sample;
@@ -150,6 +157,9 @@ public:
 	double data_papr_cut;
 
 	int channel_estimator;
+	int channel_estimator_amplitude_restoration;
+	int LS_window_width;
+	int LS_window_hight;
 };
 
 

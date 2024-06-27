@@ -2,7 +2,7 @@
  * Mercury: A configurable open-source software-defined modem.
  * Copyright (C) 2022-2024 Fadi Jerji
  * Author: Fadi Jerji
- * Email: fadi.jerji@  <gmail.com, rhizomatica.org, caisresearch.com, ieee.org>
+ * Email: fadi.jerji@  <gmail.com, caisresearch.com, ieee.org>
  * ORCID: 0000-0002-2076-5831
  *
  * This program is free software: you can redistribute it and/or modify

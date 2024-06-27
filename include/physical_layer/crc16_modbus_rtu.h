@@ -20,28 +20,15 @@
  *
  */
 
-#ifndef INC_AWGN_H_
-#define INC_AWGN_H_
 
-#include <complex>
-#include <stdlib.h>
+#ifndef INC_CRC16_MODBUS_RTU_H_
+#define INC_CRC16_MODBUS_RTU_H_
+
 #include <cmath>
 
+#define POLY_CRC16_MODBUS_RTU 0xA001 // POLY = (constant)calculation polynomial of the CRC 16 = 1010 0000 0000 0001 (Generating polynomial = 1 + x2 + x 15 + x 16)
 
-class cl_awgn
-{
-
-public:
-	cl_awgn();
-	~cl_awgn();
-
-	void set_seed(long seed);
-	void apply(std::complex <double> *in,std::complex <double> *out,float ampl,int nItems);
-	void apply_with_delay(std::complex <double> *in,std::complex <double> *out,float ampl,int nItems, int delay);
-	void apply_with_delay(double *in,double *out,float ampl,int nItems, int delay);
-	double  awgn_value_generator();
-
-};
+int CRC16_MODBUS_RTU_calc(int* data_byte, int nItems);
 
 
 #endif

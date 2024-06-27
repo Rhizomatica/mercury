@@ -2,7 +2,7 @@
  * Mercury: A configurable open-source software-defined modem.
  * Copyright (C) 2022-2024 Fadi Jerji
  * Author: Fadi Jerji
- * Email: fadi.jerji@  <gmail.com, rhizomatica.org, caisresearch.com, ieee.org>
+ * Email: fadi.jerji@  <gmail.com, caisresearch.com, ieee.org>
  * ORCID: 0000-0002-2076-5831
  *
  * This program is free software: you can redistribute it and/or modify
@@ -20,12 +20,16 @@
  *
  */
 
-#include "physical_layer/hermes_normal_8_16.h"
-int hermes_normal_Cwidth_8_16=12;
-int hermes_normal_Vwidth_8_16=8;
-int hermes_normal_dwidth_8_16=30;
-int hermes_normal_QCmatrixd_8_16[30]={50,3,50,7,50,6,50,5,100,4,150,7,50,5,50,7,50,6,50,5,50,3,50,5,50,8,799,2,1,1};
-int hermes_normal_QCmatrixC_8_16[800][12]={
+// Low Density Parity Check (LDPC) irregular repeat accumulate (IRA) matrix.
+// Ref: F. Jerji and C. Akamine, "Advanced ISDB-T and ATSC 3.0 LDPC Codes Performance and Complexity Comparison," in IEEE Transactions on Broadcasting, vol. 68, no. 1, pp. 254-262, March 2022, doi: 10.1109/TBC.2021.3136763. keywords: {Codes;Parity check codes;Digital multimedia broadcasting;Complexity theory;Multiplexing;Data communication;Communication standards;Advanced ISDB-T;ATSC 3.0;channel coding;LDPC codes;complexity analysis;AWGN;Rayleigh},
+// Ref: https://www.mathworks.com/help/comm/ref/dvbs2ldpc.html (Try This Example >> dvbs2ldpc.m)
+
+#include "physical_layer/mercury_normal_8_16.h"
+int mercury_normal_Cwidth_8_16=12;
+int mercury_normal_Vwidth_8_16=8;
+int mercury_normal_dwidth_8_16=30;
+int mercury_normal_QCmatrixd_8_16[30]={50,3,50,7,50,6,50,5,100,4,150,7,50,5,50,7,50,6,50,5,50,3,50,5,50,8,799,2,1,1};
+int mercury_normal_QCmatrixC_8_16[800][12]={
 {131,388,581,800,-1,-1,-1,-1,-1,-1,-1,-1},
 {173,219,542,582,772,800,801,-1,-1,-1,-1,-1},
 {150,322,615,753,801,802,-1,-1,-1,-1,-1,-1},
@@ -826,7 +830,7 @@ int hermes_normal_QCmatrixC_8_16[800][12]={
 {68,122,209,547,697,1596,1597,-1,-1,-1,-1,-1},
 {17,49,234,380,1597,1598,-1,-1,-1,-1,-1,-1},
 {65,369,432,791,1598,1599,-1,-1,-1,-1,-1,-1}};
-int hermes_normal_QCmatrixEnc_8_16[800][11]={
+int mercury_normal_QCmatrixEnc_8_16[800][11]={
 {131,388,581,-1,-1,-1,-1,-1,-1,-1,-1},
 {173,219,542,582,772,800,-1,-1,-1,-1,-1},
 {150,322,615,753,801,-1,-1,-1,-1,-1,-1},
@@ -1627,7 +1631,7 @@ int hermes_normal_QCmatrixEnc_8_16[800][11]={
 {68,122,209,547,697,1596,-1,-1,-1,-1,-1},
 {17,49,234,380,1597,-1,-1,-1,-1,-1,-1},
 {65,369,432,791,1598,-1,-1,-1,-1,-1,-1}};
-int hermes_normal_QCmatrixV_8_16[1600][8]={
+int mercury_normal_QCmatrixV_8_16[1600][8]={
 {41,504,696,-1,-1,-1,-1,-1},
 {47,510,702,-1,-1,-1,-1,-1},
 {53,516,708,-1,-1,-1,-1,-1},

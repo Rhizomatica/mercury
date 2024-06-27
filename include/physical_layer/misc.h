@@ -2,7 +2,7 @@
  * Mercury: A configurable open-source software-defined modem.
  * Copyright (C) 2022-2024 Fadi Jerji
  * Author: Fadi Jerji
- * Email: fadi.jerji@  <gmail.com, rhizomatica.org, caisresearch.com, ieee.org>
+ * Email: fadi.jerji@  <gmail.com, caisresearch.com, ieee.org>
  * ORCID: 0000-0002-2076-5831
  *
  * This program is free software: you can redistribute it and/or modify
@@ -30,5 +30,9 @@ void shift_left(double* matrix, int size, int nShift);
 double get_angle(std::complex <double> value);
 double get_amplitude(std::complex <double> value);
 std::complex <double> set_complex(double amplitude, double theta);
+void matrix_multiplication(std::complex <double>* a, int a_width, int a_hight, std::complex <double>* b, int b_width, int b_hight, std::complex <double>* c);
+
+void byte_to_bit(int* data_byte, int* data_bit, int nBytes);
+void bit_to_byte(int* data_bit, int* data_byte, int nBits);
 
 #endif

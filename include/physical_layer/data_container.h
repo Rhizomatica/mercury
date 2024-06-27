@@ -2,7 +2,7 @@
  * Mercury: A configurable open-source software-defined modem.
  * Copyright (C) 2022-2024 Fadi Jerji
  * Author: Fadi Jerji
- * Email: fadi.jerji@  <gmail.com, rhizomatica.org, caisresearch.com, ieee.org>
+ * Email: fadi.jerji@  <gmail.com, caisresearch.com, ieee.org>
  * ORCID: 0000-0002-2076-5831
  *
  * This program is free software: you can redistribute it and/or modify
@@ -33,7 +33,9 @@ class cl_data_container
 	public:
 	cl_data_container();
 	~cl_data_container();
-	int* data;
+	int* data_bit;
+	int* data_bit_energy_dispersal;
+	int* data_byte;
 	int* encoded_data;
 	int* bit_interleaved_data;
 	std::complex <double>* modulated_data;
@@ -43,7 +45,9 @@ class cl_data_container
 	std::complex <double>* ofdm_time_freq_interleaved_data;
 	std::complex <double>* ofdm_time_freq_deinterleaved_data;
 	std::complex <double>* ofdm_deframed_data;
+	std::complex <double>* ofdm_deframed_data_without_amplitude_restoration;
 	std::complex <double>* equalized_data;
+	std::complex <double>* equalized_data_without_amplitude_restoration;
 	std::complex <double>* preamble_symbol_modulated_data;
 	std::complex <double>* preamble_data;
 	double* passband_data;
@@ -53,7 +57,8 @@ class cl_data_container
 	std::complex <double>* baseband_data_interpolated;
 	float* demodulated_data;
 	float* deinterleaved_data;
-	int* hd_decoded_data;
+	int* hd_decoded_data_bit;
+	int* hd_decoded_data_byte;
 	int nData,Nc,M,Nfft,Nofdm,Nsymb,preamble_nSymb,nBits,Ngi,interpolation_rate;
 	void set_size(int nData, int Nc,int M,int Nfft, int Nofdm, int Nsymb, int preamble_nSymb, int interpolation_rate);
 	void *sound_device_ptr;
@@ -69,6 +74,8 @@ class cl_data_container
 	double* passband_data_tx_filtered_fir_1;
 	double* passband_data_tx_filtered_fir_2;
 	double* ready_to_transmit_passband_data_tx;
+
+	int *bit_energy_dispersal_sequence;
 
 	void deinit();
 

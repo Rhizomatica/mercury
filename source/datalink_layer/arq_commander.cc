@@ -2,7 +2,7 @@
  * Mercury: A configurable open-source software-defined modem.
  * Copyright (C) 2022-2024 Fadi Jerji
  * Author: Fadi Jerji
- * Email: fadi.jerji@  <gmail.com, rhizomatica.org, caisresearch.com, ieee.org>
+ * Email: fadi.jerji@  <gmail.com, caisresearch.com, ieee.org>
  * ORCID: 0000-0002-2076-5831
  *
  * This program is free software: you can redistribute it and/or modify
@@ -46,9 +46,44 @@ void cl_arq_controller::process_messages_commander()
 	{
 		add_message_control(SET_CONFIG);
 	}
-	else if(this->link_status==DISCONNECTING)
+
+	if(disconnect_requested==YES)
 	{
-		add_message_control(CLOSE_CONNECTION);
+		if(this->link_status==CONNECTED)
+		{
+			disconnect_requested=NO;
+			this->link_status=DISCONNECTING;
+			messages_control.status=FREE;
+			add_message_control(CLOSE_CONNECTION);
+		}
+		else
+		{
+			disconnect_requested=NO;
+			load_configuration(init_configuration,FULL,YES);
+			this->link_status=LISTENING;
+			this->connection_status=RECEIVING;
+			watchdog_timer.stop();
+			watchdog_timer.reset();
+			link_timer.stop();
+			link_timer.reset();
+			gear_shift_timer.stop();
+			gear_shift_timer.reset();
+			receiving_timer.stop();
+			receiving_timer.reset();
+
+			fifo_buffer_tx.flush();
+			fifo_buffer_backup.flush();
+			fifo_buffer_rx.flush();
+
+			std::string str="DISCONNECTED\r";
+			tcp_socket_control.message->length=str.length();
+
+			for(int i=0;i<tcp_socket_control.message->length;i++)
+			{
+				tcp_socket_control.message->buffer[i]=str[i];
+			}
+			tcp_socket_control.transmit();
+		}
 	}
 
 
@@ -84,22 +119,23 @@ int cl_arq_controller::add_message_control(char code)
 
 		if(code==START_CONNECTION)
 		{
-			messages_control.length=my_call_sign.length()+destination_call_sign.length()+3;
-
 			messages_control.data[0]=code;
-			messages_control.data[1]=my_call_sign.length();
-			messages_control.data[2]=destination_call_sign.length();
+			messages_control.data[1]=CRC8_calc((char*)destination_call_sign.c_str(), destination_call_sign.length());
+			int my_call_sign_sent_chars=0;
 
 			for(int j=0;j<(int)my_call_sign.length();j++)
 			{
 				messages_control.data[j+3]=my_call_sign[j];
+				my_call_sign_sent_chars++;
+				if(my_call_sign_sent_chars+3>=(max_data_length+max_header_length-CONTROL_ACK_CONTROL_HEADER_LENGTH))
+				{
+					break;
+				}
 			}
-			for(int j=0;j<(int)destination_call_sign.length();j++)
-			{
-				messages_control.data[j+my_call_sign.length()+3]=destination_call_sign[j];
-			}
+			messages_control.data[2]=my_call_sign_sent_chars;
+			messages_control.length=my_call_sign_sent_chars+3;
 			messages_control.id=0;
-			connection_timer.start();
+			connection_id=BROADCAST_ID;
 		}
 		else if(code==TEST_CONNECTION)
 		{
@@ -120,7 +156,10 @@ int cl_arq_controller::add_message_control(char code)
 			messages_control.data[0]=code;
 			messages_control.id=0;
 
-			negotiated_configuration= get_configuration(measurements.SNR_downlink);
+			if(gear_shift_algorithm==SNR_BASED)
+			{
+				negotiated_configuration= get_configuration(measurements.SNR_downlink);
+			}
 			messages_control.data[1]=negotiated_configuration;
 		}
 		else if(code==REPEAT_LAST_ACK)
@@ -173,20 +212,21 @@ void cl_arq_controller::process_messages_tx_control()
 
 	if(messages_control.status==ADDED_TO_BATCH_BUFFER)
 	{
-		pad_messages_batch_tx(ack_batch_size);
+
+		pad_messages_batch_tx(control_batch_size);
 		send_batch();
 		connection_status=RECEIVING_ACKS_CONTROL;
-		receiving_timer.start();
-		link_timer.start();
 
+		load_configuration(ack_configuration, PHYSICAL_LAYER_ONLY,NO);
+
+		receiving_timer.start();
 
 		if(messages_control.data[0]==SET_CONFIG)
 		{
 			if(negotiated_configuration!= current_configuration)
 			{
-				messages_control_backup();
-				load_configuration(negotiated_configuration);
-				messages_control_restore();
+				data_configuration=negotiated_configuration;
+				gear_shift_timer.start();
 			}
 			else
 			{
@@ -204,8 +244,6 @@ void cl_arq_controller::process_messages_tx_control()
 			messages_control.type=NONE;
 
 			connection_status=RECEIVING_ACKS_DATA;
-			receiving_timer.start();
-			link_timer.start();
 		}
 	}
 }
@@ -213,29 +251,41 @@ void cl_arq_controller::process_messages_tx_control()
 int cl_arq_controller::add_message_tx_data(char type, int length, char* data)
 {
 	int success=ERROR;
-	if(length<0 || length>max_data_length)
+	if(length<0)
 	{
 		success=MESSAGE_LENGTH_ERROR;
+		return success;
 	}
-	else
+
+	if(type==DATA_LONG && length>(max_data_length+max_header_length-DATA_LONG_HEADER_LENGTH))
 	{
-		for(int i=0;i<nMessages;i++)
+		success=MESSAGE_LENGTH_ERROR;
+		return success;
+	}
+
+	if(type==DATA_SHORT && length>(max_data_length+max_header_length-DATA_SHORT_HEADER_LENGTH))
+	{
+		success=MESSAGE_LENGTH_ERROR;
+		return success;
+	}
+
+
+	for(int i=0;i<nMessages;i++)
+	{
+		if (messages_tx[i].status==FREE)
 		{
-			if (messages_tx[i].status==FREE)
+			messages_tx[i].type=type;
+			messages_tx[i].length=length;
+			for(int j=0;j<messages_tx[i].length;j++)
 			{
-				messages_tx[i].type=type;
-				messages_tx[i].length=length;
-				for(int j=0;j<messages_tx[i].length;j++)
-				{
-					messages_tx[i].data[j]=data[j];
-				}
-				messages_tx[i].id=i;
-				messages_tx[i].nResends=this->nResends;
-				messages_tx[i].ack_timeout=this->ack_timeout_data;
-				messages_tx[i].status=ADDED_TO_LIST;
-				success=SUCCESSFUL;
-				break;
+				messages_tx[i].data[j]=data[j];
 			}
+			messages_tx[i].id=i;
+			messages_tx[i].nResends=this->nResends;
+			messages_tx[i].ack_timeout=this->ack_timeout_data;
+			messages_tx[i].status=ADDED_TO_LIST;
+			success=SUCCESSFUL;
+			break;
 		}
 	}
 	return success;
@@ -253,6 +303,7 @@ void cl_arq_controller::process_messages_tx_data()
 				message_batch_counter_tx++;
 				messages_tx[i].status=ADDED_TO_BATCH_BUFFER;
 				stats.nSent_data++;
+				last_transmission_block_stats.nSent_data++;
 			}
 		}
 		else if(messages_tx[i].status==ACK_TIMED_OUT)
@@ -265,6 +316,7 @@ void cl_arq_controller::process_messages_tx_data()
 					message_batch_counter_tx++;
 					messages_tx[i].status=ADDED_TO_BATCH_BUFFER;
 					stats.nReSent_data++;
+					last_transmission_block_stats.nReSent_data++;
 				}
 			}
 			else
@@ -286,8 +338,8 @@ void cl_arq_controller::process_messages_tx_data()
 		send_batch();
 		data_ack_received=NO;
 		connection_status=RECEIVING_ACKS_DATA;
+		load_configuration(ack_configuration, PHYSICAL_LAYER_ONLY,NO);
 		receiving_timer.start();
-		link_timer.start();
 	}
 }
 
@@ -300,12 +352,14 @@ void cl_arq_controller::process_messages_rx_acks_control()
 		{
 			if(messages_rx_buffer.data[0]==messages_control.data[0] && messages_control.status==PENDING_ACK)
 			{
-				for(int j=0;j<max_data_length;j++)
+				for(int j=0;j<(max_data_length+max_header_length-CONTROL_ACK_CONTROL_HEADER_LENGTH);j++)
 				{
 					messages_control.data[j]=messages_rx_buffer.data[j];
 				}
 				link_timer.start();
-				gear_shift_timer.start();
+				watchdog_timer.start();
+				gear_shift_timer.stop();
+				gear_shift_timer.reset();
 				messages_control.status=ACKED;
 				stats.nAcked_control++;
 			}
@@ -314,6 +368,7 @@ void cl_arq_controller::process_messages_rx_acks_control()
 	}
 	else
 	{
+		load_configuration(data_configuration, PHYSICAL_LAYER_ONLY,YES);
 		if(messages_control.status==ACKED)
 		{
 			process_control_commander();
@@ -337,7 +392,9 @@ void cl_arq_controller::process_messages_rx_acks_data()
 		if(messages_rx_buffer.status==RECEIVED)
 		{
 			link_timer.start();
-			gear_shift_timer.start();
+			watchdog_timer.start();
+			gear_shift_timer.stop();
+			gear_shift_timer.reset();
 			if(messages_rx_buffer.type==ACK_RANGE)
 			{
 				data_ack_received=YES;
@@ -373,10 +430,12 @@ void cl_arq_controller::process_messages_rx_acks_data()
 	}
 	else if (data_ack_received==NO && !(last_message_sent_type==CONTROL && last_message_sent_code==REPEAT_LAST_ACK))
 	{
+		load_configuration(data_configuration, PHYSICAL_LAYER_ONLY,YES);
 		add_message_control(REPEAT_LAST_ACK);
 	}
 	else
 	{
+		load_configuration(data_configuration, PHYSICAL_LAYER_ONLY,YES);
 		if (last_message_sent_type==CONTROL && last_message_sent_code==REPEAT_LAST_ACK)
 		{
 			stats.nNAcked_control++;
@@ -392,7 +451,7 @@ void cl_arq_controller::process_control_commander()
 	{
 		if(this->link_status==CONNECTING && messages_control.data[0]==START_CONNECTION)
 		{
-			connection_timer.start();
+			watchdog_timer.start();
 			this->link_status=CONNECTION_ACCEPTED;
 			connection_status=TRANSMITTING_CONTROL;
 			this->connection_id=messages_control.data[1];
@@ -413,12 +472,14 @@ void cl_arq_controller::process_control_commander()
 
 			if(gear_shift_on==YES)
 			{
-				this->link_status=NEGOTIATING;
-				connection_status=TRANSMITTING_CONTROL;
-				connection_timer.stop();
-				connection_timer.reset();
-				link_timer.start();
-				gear_shift_timer.start();
+				if(gear_shift_algorithm==SNR_BASED)
+				{
+					this->link_status=NEGOTIATING;
+					connection_status=TRANSMITTING_CONTROL;
+					link_timer.start();
+					watchdog_timer.start();
+					gear_shift_timer.start();
+				}
 			}
 			else
 			{
@@ -436,8 +497,7 @@ void cl_arq_controller::process_control_commander()
 
 				this->link_status=CONNECTED;
 				this->connection_status=TRANSMITTING_DATA;
-				connection_timer.stop();
-				connection_timer.reset();
+				watchdog_timer.start();
 				link_timer.start();
 			}
 
@@ -447,7 +507,9 @@ void cl_arq_controller::process_control_commander()
 			this->link_status=CONNECTED;
 			this->connection_status=TRANSMITTING_DATA;
 			link_timer.start();
-			gear_shift_timer.start();
+			watchdog_timer.start();
+			gear_shift_timer.stop();
+			gear_shift_timer.reset();
 
 			std::string str="CONNECTED "+this->my_call_sign+" "+this->destination_call_sign+" "+ std::to_string(telecom_system->bandwidth)+"\r";
 			tcp_socket_control.message->length=str.length();
@@ -479,6 +541,9 @@ void cl_arq_controller::process_control_commander()
 				block_under_tx=NO;
 				fifo_buffer_backup.flush();
 
+				last_transmission_block_stats.success_rate_data=100*(1-((float)last_transmission_block_stats.nReSent_data/(float)last_transmission_block_stats.nSent_data));
+				last_transmission_block_stats.nReSent_data=0;
+				last_transmission_block_stats.nSent_data=0;
 				std::string str="BUFFER ";
 				str+=std::to_string(fifo_buffer_tx.get_size()-fifo_buffer_tx.get_free_size());
 				str+='\r';
@@ -491,7 +556,38 @@ void cl_arq_controller::process_control_commander()
 
 				if(gear_shift_on==YES)
 				{
-					add_message_control(TEST_CONNECTION);
+					if(gear_shift_algorithm==SNR_BASED)
+					{
+						cleanup();
+						add_message_control(TEST_CONNECTION);
+					}
+					else if(gear_shift_algorithm==SUCCESS_BASED_LADDER)
+					{
+						gear_shift_blocked_for_nBlocks++;
+						if(last_transmission_block_stats.success_rate_data>gear_shift_up_success_rate_precentage && gear_shift_blocked_for_nBlocks>= gear_shift_block_for_nBlocks_total)
+						{
+							if(current_configuration!=(NUMBER_OF_CONFIGS-1))
+							{
+								negotiated_configuration=current_configuration+1;
+								cleanup();
+								add_message_control(SET_CONFIG);
+							}
+						}
+						else if(last_transmission_block_stats.success_rate_data<gear_shift_down_success_rate_precentage)
+						{
+							if(current_configuration!=0)
+							{
+								negotiated_configuration=current_configuration-1;
+								cleanup();
+								add_message_control(SET_CONFIG);
+							}
+							gear_shift_blocked_for_nBlocks=0;
+						}
+						else
+						{
+							this->connection_status=TRANSMITTING_DATA;
+						}
+					}
 				}
 				else
 				{
@@ -504,23 +600,32 @@ void cl_arq_controller::process_control_commander()
 				set_role(RESPONDER);
 				this->link_status=CONNECTED;
 				this->connection_status=RECEIVING;
-				connection_timer.stop();
-				connection_timer.reset();
+				watchdog_timer.start();
 				link_timer.start();
 				last_message_received_type=NONE;
 				last_message_sent_type=NONE;
 				last_received_message_sequence=-1;
 			}
+			else if (messages_control.data[0]==SET_CONFIG)
+			{
+				this->connection_status=TRANSMITTING_DATA;
+				watchdog_timer.start();
+				link_timer.start();
+			}
 		}
 		else if(this->link_status==DISCONNECTING && messages_control.data[0]==CLOSE_CONNECTION)
 		{
-			this->link_status=IDLE;
-			connection_timer.stop();
-			connection_timer.reset();
+			load_configuration(init_configuration,FULL,YES);
+			this->link_status=LISTENING;
+			this->connection_status=RECEIVING;
+			watchdog_timer.stop();
+			watchdog_timer.reset();
 			link_timer.stop();
 			link_timer.reset();
 			gear_shift_timer.stop();
 			gear_shift_timer.reset();
+			receiving_timer.stop();
+			receiving_timer.reset();
 
 			fifo_buffer_tx.flush();
 			fifo_buffer_backup.flush();
@@ -541,18 +646,20 @@ void cl_arq_controller::process_control_commander()
 void cl_arq_controller::process_buffer_data_commander()
 {
 	int data_read_size;
-	if(role==COMMANDER && link_status==CONNECTED )
+	if(role==COMMANDER && link_status==CONNECTED && connection_status==TRANSMITTING_DATA)
 	{
 		if( fifo_buffer_tx.get_size()!=fifo_buffer_tx.get_free_size() && block_under_tx==NO)
 		{
 			for(int i=0;i<get_nTotal_messages();i++)
 			{
-				data_read_size=fifo_buffer_tx.pop(message_TxRx_byte_buffer,max_data_length);
+				data_read_size=fifo_buffer_tx.pop(message_TxRx_byte_buffer,max_data_length+max_header_length-DATA_LONG_HEADER_LENGTH);
 				if(data_read_size==0)
 				{
+					last_transmission_block_stats.nSent_data=0;
+					last_transmission_block_stats.nReSent_data=0;
 					break;
 				}
-				else if(data_read_size==max_data_length)
+				else if(data_read_size==max_data_length+max_header_length-DATA_LONG_HEADER_LENGTH)
 				{
 					block_under_tx=YES;
 					add_message_tx_data(DATA_LONG, data_read_size, message_TxRx_byte_buffer);

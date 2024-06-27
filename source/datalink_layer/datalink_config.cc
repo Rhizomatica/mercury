@@ -2,7 +2,7 @@
  * Mercury: A configurable open-source software-defined modem.
  * Copyright (C) 2022-2024 Fadi Jerji
  * Author: Fadi Jerji
- * Email: fadi.jerji@  <gmail.com, rhizomatica.org, caisresearch.com, ieee.org>
+ * Email: fadi.jerji@  <gmail.com, caisresearch.com, ieee.org>
  * ORCID: 0000-0002-2076-5831
  *
  * This program is free software: you can redistribute it and/or modify
@@ -37,18 +37,27 @@ cl_configuration_arq::cl_configuration_arq()
 	tcp_socket_data_port=7003;
 	tcp_socket_data_timeout_ms=INFINITE;
 
-	gear_shift_on=NO;
-	current_configuration=CONFIG_0;
 
-	batch_size=10; //MAX Max_data_length-5 bytes
-	nMessages=50; //MAX 255
-	nBytes_header=5;
+	init_configuration=CONFIG_1;
+	ack_configuration=CONFIG_0;
+
+	gear_shift_on=NO;
+	gear_shift_algorithm=SUCCESS_BASED_LADDER;
+
+	gear_shift_up_success_rate_limit_precentage=70;
+	gear_shift_down_success_rate_limit_precentage=45;
+
+	gear_shift_block_for_nBlocks_total=2;
+
+	batch_size=5; //MAX Max_data_length-3 (ack header) bytes
+	nMessages=20; //MAX 255
 
 	nResends=20;
 	ack_batch_size=2;
 	control_batch_size=2;
 	
 	ptt_on_delay_ms=100;
+	ptt_off_delay_ms=500;
 	switch_role_timeout_ms=1500;
 }
 

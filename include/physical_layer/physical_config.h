@@ -2,7 +2,7 @@
  * Mercury: A configurable open-source software-defined modem.
  * Copyright (C) 2022-2024 Fadi Jerji
  * Author: Fadi Jerji
- * Email: fadi.jerji@  <gmail.com, rhizomatica.org, caisresearch.com, ieee.org>
+ * Email: fadi.jerji@  <gmail.com, caisresearch.com, ieee.org>
  * ORCID: 0000-0002-2076-5831
  *
  * This program is free software: you can redistribute it and/or modify
@@ -29,6 +29,7 @@
 #include "fir_filter.h"
 #include "alsa_sound_dev.h"
 #include "psk.h"
+#include "crc16_modbus_rtu.h"
 
 struct cl_configuration_telecom_system
 {
@@ -37,13 +38,7 @@ public:
 	cl_configuration_telecom_system();
 	~cl_configuration_telecom_system();
 
-	float test_tx_AWGN_EsN0_calibration;
-	float test_tx_AWGN_EsN0;
-
-	int tcp_socket_test_port;
-	long int tcp_socket_test_timeout_ms;
-
-	char current_configuration;
+	char init_configuration;
 
 	int ofdm_Nc;
 	int ofdm_Nfft;
@@ -58,6 +53,7 @@ public:
 	int ofdm_pilot_configurator_last_col;
 	float ofdm_pilot_configurator_pilot_boost;
 	int ofdm_pilot_configurator_seed;
+	int ofdm_pilot_density;
 
 	int ofdm_preamble_configurator_Nsymb;
 	int ofdm_preamble_configurator_nIdentical_sections;
@@ -69,6 +65,9 @@ public:
 	double ofdm_data_papr_cut;
 
 	int ofdm_channel_estimator;
+	int ofdm_channel_estimator_amplitude_restoration;
+	int ofdm_LS_window_width;
+	int ofdm_LS_window_hight;
 
 	float ofdm_freq_offset_ignore_limit;
 	int ofdm_start_shift;
@@ -81,6 +80,8 @@ public:
 	int ldpc_nIteration_max;
 	int ldpc_print_nIteration;
 
+	int outer_code;
+
 	double bandwidth;
 	int time_sync_trials_max;
 	int use_last_good_time_sync;
@@ -88,10 +89,16 @@ public:
 	int frequency_interpolation_rate;
 	double carrier_frequency;
 	double output_power_Watt;
-	int ofdm_FIR_rx_filter_window;
-	double ofdm_FIR_rx_filter_transition_bandwidth;
-	double ofdm_FIR_rx_lpf_filter_cut_frequency;
-	int ofdm_FIR_rx_filter_type;
+
+	int ofdm_FIR_rx_data_filter_window;
+	double ofdm_FIR_rx_data_filter_transition_bandwidth;
+	double ofdm_FIR_rx_data_lpf_filter_cut_frequency;
+	int ofdm_FIR_rx_data_filter_type;
+
+	int ofdm_FIR_rx_time_sync_filter_window;
+	double ofdm_FIR_rx_time_sync_filter_transition_bandwidth;
+	double ofdm_FIR_rx_time_sync_lpf_filter_cut_frequency;
+	int ofdm_FIR_rx_time_sync_filter_type;
 
 	int ofdm_FIR_tx1_filter_window;
 	double ofdm_FIR_tx1_filter_transition_bandwidth;
@@ -106,6 +113,8 @@ public:
 	int ofdm_FIR_tx2_filter_type;
 
 	int ofdm_time_sync_Nsymb;
+
+	int bit_energy_dispersal_seed;
 
 
 

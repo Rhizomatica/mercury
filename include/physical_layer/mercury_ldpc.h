@@ -20,28 +20,19 @@
  *
  */
 
-#ifndef INC_AWGN_H_
-#define INC_AWGN_H_
+#ifndef INC_MERCURY_LDPC_H_
+#define INC_MERCURY_LDPC_H_
 
-#include <complex>
-#include <stdlib.h>
-#include <cmath>
+#include "physical_defines.h"
+#include "mercury_normal_1_16.h"
+#include "mercury_normal_14_16.h"
+#include "mercury_normal_2_16.h"
+#include "mercury_normal_3_16.h"
+#include "mercury_normal_4_16.h"
+#include "mercury_normal_5_16.h"
+#include "mercury_normal_6_16.h"
+#include "mercury_normal_8_16.h"
 
-
-class cl_awgn
-{
-
-public:
-	cl_awgn();
-	~cl_awgn();
-
-	void set_seed(long seed);
-	void apply(std::complex <double> *in,std::complex <double> *out,float ampl,int nItems);
-	void apply_with_delay(std::complex <double> *in,std::complex <double> *out,float ampl,int nItems, int delay);
-	void apply_with_delay(double *in,double *out,float ampl,int nItems, int delay);
-	double  awgn_value_generator();
-
-};
-
+#define MERCURY_NORMAL 1600
 
 #endif

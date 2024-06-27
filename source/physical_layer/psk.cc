@@ -2,7 +2,7 @@
  * Mercury: A configurable open-source software-defined modem.
  * Copyright (C) 2022-2024 Fadi Jerji
  * Author: Fadi Jerji
- * Email: fadi.jerji@  <gmail.com, rhizomatica.org, caisresearch.com, ieee.org>
+ * Email: fadi.jerji@  <gmail.com, caisresearch.com, ieee.org>
  * ORCID: 0000-0002-2076-5831
  *
  * This program is free software: you can redistribute it and/or modify
@@ -25,14 +25,21 @@
 
 
 cl_psk::cl_psk()
-
 {
-	constellation=0;
+	constellation=NULL;
 	nBits=0;
 	nSymbols=0;
 }
 
 cl_psk::~cl_psk()
+{
+	deinit();
+	constellation=NULL;
+	nBits=0;
+	nSymbols=0;
+}
+
+void cl_psk::deinit()
 {
 	if(constellation!=NULL)
 	{
@@ -42,155 +49,166 @@ cl_psk::~cl_psk()
 
 void cl_psk::set_predefined_constellation(int M)
 {
-	std::complex <double>* constellation =new std::complex <double>[M];
+	std::complex <double>* _constellation =new std::complex <double>[M];
 	if(M==MOD_BPSK)
 	{
-		constellation[0]=std::complex <double> ( 1 , 0 );
-		constellation[1]=std::complex <double> ( -1 , 0 );
+		_constellation[0]=std::complex <double> ( 1 , 0 );
+		_constellation[1]=std::complex <double> ( -1 , 0 );
 	}
 	else if(M==MOD_QPSK)
 	{
-		constellation[0]=std::complex <double> ( -1,1);
-		constellation[1]=std::complex <double> ( -1,-1);
-		constellation[2]=std::complex <double> ( 1,1);
-		constellation[3]=std::complex <double> ( 1,-1);
+		_constellation[0]=std::complex <double> ( -1,1);
+		_constellation[1]=std::complex <double> ( -1,-1);
+		_constellation[2]=std::complex <double> ( 1,1);
+		_constellation[3]=std::complex <double> ( 1,-1);
 
 	}
-	else if(M==MOD_8QAM)
+	else if(M==MOD_8PSK)
 	{
-		constellation[0]=std::complex <double> ( -3,1);
-		constellation[1]=std::complex <double> ( -3,-1);
-		constellation[2]=std::complex <double> ( -1,1);
-		constellation[3]=std::complex <double> ( -1,-1);
-		constellation[4]=std::complex <double> ( 3,1);
-		constellation[5]=std::complex <double> ( 3,-1);
-		constellation[6]=std::complex <double> ( 1,1);
-		constellation[7]=std::complex <double> ( 1,-1);
+		_constellation[0]=std::complex <double> ( -1,-1) * sqrt(2.0)/2.0;
+		_constellation[1]=std::complex <double> ( -1,0);
+		_constellation[2]=std::complex <double> ( 0,1);
+		_constellation[3]=std::complex <double> ( -1,1) * sqrt(2.0)/2.0;
+		_constellation[4]=std::complex <double> ( 0,-1);
+		_constellation[5]=std::complex <double> ( 1,-1) * sqrt(2.0)/2.0;
+		_constellation[6]=std::complex <double> ( 1,1) * sqrt(2.0)/2.0;
+		_constellation[7]=std::complex <double> ( 1,0);
 	}
+//	else if(M==MOD_8QAM)
+//	{
+//		_constellation[0]=std::complex <double> ( -3,1);
+//		_constellation[1]=std::complex <double> ( -3,-1);
+//		_constellation[2]=std::complex <double> ( -1,1);
+//		_constellation[3]=std::complex <double> ( -1,-1);
+//		_constellation[4]=std::complex <double> ( 3,1);
+//		_constellation[5]=std::complex <double> ( 3,-1);
+//		_constellation[6]=std::complex <double> ( 1,1);
+//		_constellation[7]=std::complex <double> ( 1,-1);
+//	}
 	else if(M==MOD_16QAM)
 	{
-		constellation[0]=std::complex <double> ( -3,3);
-		constellation[1]=std::complex <double> ( -3,1);
-		constellation[2]=std::complex <double> ( -3,-3);
-		constellation[3]=std::complex <double> ( -3,-1);
-		constellation[4]=std::complex <double> ( -1,3);
-		constellation[5]=std::complex <double> ( -1,1);
-		constellation[6]=std::complex <double> ( -1,-3);
-		constellation[7]=std::complex <double> ( -1,-1);
-		constellation[8]=std::complex <double> ( 3,3);
-		constellation[9]=std::complex <double> ( 3,1);
-		constellation[10]=std::complex <double> ( 3,-3);
-		constellation[11]=std::complex <double> ( 3,-1);
-		constellation[12]=std::complex <double> ( 1,3);
-		constellation[13]=std::complex <double> ( 1,1);
-		constellation[14]=std::complex <double> ( 1,-3);
-		constellation[15]=std::complex <double> ( 1,-1);
+		_constellation[0]=std::complex <double> ( -3,3);
+		_constellation[1]=std::complex <double> ( -3,1);
+		_constellation[2]=std::complex <double> ( -3,-3);
+		_constellation[3]=std::complex <double> ( -3,-1);
+		_constellation[4]=std::complex <double> ( -1,3);
+		_constellation[5]=std::complex <double> ( -1,1);
+		_constellation[6]=std::complex <double> ( -1,-3);
+		_constellation[7]=std::complex <double> ( -1,-1);
+		_constellation[8]=std::complex <double> ( 3,3);
+		_constellation[9]=std::complex <double> ( 3,1);
+		_constellation[10]=std::complex <double> ( 3,-3);
+		_constellation[11]=std::complex <double> ( 3,-1);
+		_constellation[12]=std::complex <double> ( 1,3);
+		_constellation[13]=std::complex <double> ( 1,1);
+		_constellation[14]=std::complex <double> ( 1,-3);
+		_constellation[15]=std::complex <double> ( 1,-1);
 	}
 	else if(M==MOD_32QAM)
 	{
-		constellation[0]=std::complex <double> ( -3,5);
-		constellation[1]=std::complex <double> ( -1,5);
-		constellation[2]=std::complex <double> ( -3,-5);
-		constellation[3]=std::complex <double> ( -1,-5);
-		constellation[4]=std::complex <double> ( -5,3);
-		constellation[5]=std::complex <double> ( -5,1);
-		constellation[6]=std::complex <double> ( -5,-3);
-		constellation[7]=std::complex <double> ( -5,-1);
-		constellation[8]=std::complex <double> ( -1,3);
-		constellation[9]=std::complex <double> ( -1,1);
-		constellation[10]=std::complex <double> ( -1,-3);
-		constellation[11]=std::complex <double> ( -1,-1);
-		constellation[12]=std::complex <double> ( -3,3);
-		constellation[13]=std::complex <double> ( -3,1);
-		constellation[14]=std::complex <double> ( -3,-3);
-		constellation[15]=std::complex <double> ( -3,-1);
-		constellation[16]=std::complex <double> ( 3,5);
-		constellation[17]=std::complex <double> ( 1,5);
-		constellation[18]=std::complex <double> ( 3,-5);
-		constellation[19]=std::complex <double> ( 1,-5);
-		constellation[20]=std::complex <double> ( 5,3);
-		constellation[21]=std::complex <double> ( 5,1);
-		constellation[22]=std::complex <double> ( 5,-3);
-		constellation[23]=std::complex <double> ( 5,-1);
-		constellation[24]=std::complex <double> ( 1,3);
-		constellation[25]=std::complex <double> ( 1,1);
-		constellation[26]=std::complex <double> ( 1,-3);
-		constellation[27]=std::complex <double> ( 1,-1);
-		constellation[28]=std::complex <double> ( 3,3);
-		constellation[29]=std::complex <double> ( 3,1);
-		constellation[30]=std::complex <double> ( 3,-3);
-		constellation[31]=std::complex <double> ( 3,-1);
+		_constellation[0]=std::complex <double> ( -3,5);
+		_constellation[1]=std::complex <double> ( -1,5);
+		_constellation[2]=std::complex <double> ( -3,-5);
+		_constellation[3]=std::complex <double> ( -1,-5);
+		_constellation[4]=std::complex <double> ( -5,3);
+		_constellation[5]=std::complex <double> ( -5,1);
+		_constellation[6]=std::complex <double> ( -5,-3);
+		_constellation[7]=std::complex <double> ( -5,-1);
+		_constellation[8]=std::complex <double> ( -1,3);
+		_constellation[9]=std::complex <double> ( -1,1);
+		_constellation[10]=std::complex <double> ( -1,-3);
+		_constellation[11]=std::complex <double> ( -1,-1);
+		_constellation[12]=std::complex <double> ( -3,3);
+		_constellation[13]=std::complex <double> ( -3,1);
+		_constellation[14]=std::complex <double> ( -3,-3);
+		_constellation[15]=std::complex <double> ( -3,-1);
+		_constellation[16]=std::complex <double> ( 3,5);
+		_constellation[17]=std::complex <double> ( 1,5);
+		_constellation[18]=std::complex <double> ( 3,-5);
+		_constellation[19]=std::complex <double> ( 1,-5);
+		_constellation[20]=std::complex <double> ( 5,3);
+		_constellation[21]=std::complex <double> ( 5,1);
+		_constellation[22]=std::complex <double> ( 5,-3);
+		_constellation[23]=std::complex <double> ( 5,-1);
+		_constellation[24]=std::complex <double> ( 1,3);
+		_constellation[25]=std::complex <double> ( 1,1);
+		_constellation[26]=std::complex <double> ( 1,-3);
+		_constellation[27]=std::complex <double> ( 1,-1);
+		_constellation[28]=std::complex <double> ( 3,3);
+		_constellation[29]=std::complex <double> ( 3,1);
+		_constellation[30]=std::complex <double> ( 3,-3);
+		_constellation[31]=std::complex <double> ( 3,-1);
 
 	}
 	else if(M==MOD_64QAM)
 	{
-		constellation[0]=std::complex <double> ( -7,7);
-		constellation[1]=std::complex <double> ( -7,5);
-		constellation[2]=std::complex <double> ( -7,1);
-		constellation[3]=std::complex <double> ( -7,3);
-		constellation[4]=std::complex <double> ( -7,-7);
-		constellation[5]=std::complex <double> ( -7,-5);
-		constellation[6]=std::complex <double> ( -7,-1);
-		constellation[7]=std::complex <double> ( -7,-3);
-		constellation[8]=std::complex <double> ( -5,7);
-		constellation[9]=std::complex <double> ( -5,5);
-		constellation[10]=std::complex <double> ( -5,1);
-		constellation[11]=std::complex <double> ( -5,3);
-		constellation[12]=std::complex <double> ( -5,-7);
-		constellation[13]=std::complex <double> ( -5,-5);
-		constellation[14]=std::complex <double> ( -5,-1);
-		constellation[15]=std::complex <double> ( -5,-3);
-		constellation[16]=std::complex <double> ( -1,7);
-		constellation[17]=std::complex <double> ( -1,5);
-		constellation[18]=std::complex <double> ( -1,1);
-		constellation[19]=std::complex <double> ( -1,3);
-		constellation[20]=std::complex <double> ( -1,-7);
-		constellation[21]=std::complex <double> ( -1,-5);
-		constellation[22]=std::complex <double> ( -1,-1);
-		constellation[23]=std::complex <double> ( -1,-3);
-		constellation[24]=std::complex <double> ( -3,7);
-		constellation[25]=std::complex <double> ( -3,5);
-		constellation[26]=std::complex <double> ( -3,1);
-		constellation[27]=std::complex <double> ( -3,3);
-		constellation[28]=std::complex <double> ( -3,-7);
-		constellation[29]=std::complex <double> ( -3,-5);
-		constellation[30]=std::complex <double> ( -3,-1);
-		constellation[31]=std::complex <double> ( -3,-3);
-		constellation[32]=std::complex <double> ( 7,7);
-		constellation[33]=std::complex <double> ( 7,5);
-		constellation[34]=std::complex <double> ( 7,1);
-		constellation[35]=std::complex <double> ( 7,3);
-		constellation[36]=std::complex <double> ( 7,-7);
-		constellation[37]=std::complex <double> ( 7,-5);
-		constellation[38]=std::complex <double> ( 7,-1);
-		constellation[39]=std::complex <double> ( 7,-3);
-		constellation[40]=std::complex <double> ( 5,7);
-		constellation[41]=std::complex <double> ( 5,5);
-		constellation[42]=std::complex <double> ( 5,1);
-		constellation[43]=std::complex <double> ( 5,3);
-		constellation[44]=std::complex <double> ( 5,-7);
-		constellation[45]=std::complex <double> ( 5,-5);
-		constellation[46]=std::complex <double> ( 5,-1);
-		constellation[47]=std::complex <double> ( 5,-3);
-		constellation[48]=std::complex <double> ( 1,7);
-		constellation[49]=std::complex <double> ( 1,5);
-		constellation[50]=std::complex <double> ( 1,1);
-		constellation[51]=std::complex <double> ( 1,3);
-		constellation[52]=std::complex <double> ( 1,-7);
-		constellation[53]=std::complex <double> ( 1,-5);
-		constellation[54]=std::complex <double> ( 1,-1);
-		constellation[55]=std::complex <double> ( 1,-3);
-		constellation[56]=std::complex <double> ( 3,7);
-		constellation[57]=std::complex <double> ( 3,5);
-		constellation[58]=std::complex <double> ( 3,1);
-		constellation[59]=std::complex <double> ( 3,3);
-		constellation[60]=std::complex <double> ( 3,-7);
-		constellation[61]=std::complex <double> ( 3,-5);
-		constellation[62]=std::complex <double> ( 3,-1);
-		constellation[63]=std::complex <double> ( 3,-3);
+		_constellation[0]=std::complex <double> ( -7,7);
+		_constellation[1]=std::complex <double> ( -7,5);
+		_constellation[2]=std::complex <double> ( -7,1);
+		_constellation[3]=std::complex <double> ( -7,3);
+		_constellation[4]=std::complex <double> ( -7,-7);
+		_constellation[5]=std::complex <double> ( -7,-5);
+		_constellation[6]=std::complex <double> ( -7,-1);
+		_constellation[7]=std::complex <double> ( -7,-3);
+		_constellation[8]=std::complex <double> ( -5,7);
+		_constellation[9]=std::complex <double> ( -5,5);
+		_constellation[10]=std::complex <double> ( -5,1);
+		_constellation[11]=std::complex <double> ( -5,3);
+		_constellation[12]=std::complex <double> ( -5,-7);
+		_constellation[13]=std::complex <double> ( -5,-5);
+		_constellation[14]=std::complex <double> ( -5,-1);
+		_constellation[15]=std::complex <double> ( -5,-3);
+		_constellation[16]=std::complex <double> ( -1,7);
+		_constellation[17]=std::complex <double> ( -1,5);
+		_constellation[18]=std::complex <double> ( -1,1);
+		_constellation[19]=std::complex <double> ( -1,3);
+		_constellation[20]=std::complex <double> ( -1,-7);
+		_constellation[21]=std::complex <double> ( -1,-5);
+		_constellation[22]=std::complex <double> ( -1,-1);
+		_constellation[23]=std::complex <double> ( -1,-3);
+		_constellation[24]=std::complex <double> ( -3,7);
+		_constellation[25]=std::complex <double> ( -3,5);
+		_constellation[26]=std::complex <double> ( -3,1);
+		_constellation[27]=std::complex <double> ( -3,3);
+		_constellation[28]=std::complex <double> ( -3,-7);
+		_constellation[29]=std::complex <double> ( -3,-5);
+		_constellation[30]=std::complex <double> ( -3,-1);
+		_constellation[31]=std::complex <double> ( -3,-3);
+		_constellation[32]=std::complex <double> ( 7,7);
+		_constellation[33]=std::complex <double> ( 7,5);
+		_constellation[34]=std::complex <double> ( 7,1);
+		_constellation[35]=std::complex <double> ( 7,3);
+		_constellation[36]=std::complex <double> ( 7,-7);
+		_constellation[37]=std::complex <double> ( 7,-5);
+		_constellation[38]=std::complex <double> ( 7,-1);
+		_constellation[39]=std::complex <double> ( 7,-3);
+		_constellation[40]=std::complex <double> ( 5,7);
+		_constellation[41]=std::complex <double> ( 5,5);
+		_constellation[42]=std::complex <double> ( 5,1);
+		_constellation[43]=std::complex <double> ( 5,3);
+		_constellation[44]=std::complex <double> ( 5,-7);
+		_constellation[45]=std::complex <double> ( 5,-5);
+		_constellation[46]=std::complex <double> ( 5,-1);
+		_constellation[47]=std::complex <double> ( 5,-3);
+		_constellation[48]=std::complex <double> ( 1,7);
+		_constellation[49]=std::complex <double> ( 1,5);
+		_constellation[50]=std::complex <double> ( 1,1);
+		_constellation[51]=std::complex <double> ( 1,3);
+		_constellation[52]=std::complex <double> ( 1,-7);
+		_constellation[53]=std::complex <double> ( 1,-5);
+		_constellation[54]=std::complex <double> ( 1,-1);
+		_constellation[55]=std::complex <double> ( 1,-3);
+		_constellation[56]=std::complex <double> ( 3,7);
+		_constellation[57]=std::complex <double> ( 3,5);
+		_constellation[58]=std::complex <double> ( 3,1);
+		_constellation[59]=std::complex <double> ( 3,3);
+		_constellation[60]=std::complex <double> ( 3,-7);
+		_constellation[61]=std::complex <double> ( 3,-5);
+		_constellation[62]=std::complex <double> ( 3,-1);
+		_constellation[63]=std::complex <double> ( 3,-3);
 	}
-	set_constellation(constellation,M);
-
+	set_constellation(_constellation,M);
+	delete[] _constellation;
 }
 
 void cl_psk::set_constellation(std::complex <double> *_constellation, int size)

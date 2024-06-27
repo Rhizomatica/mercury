@@ -2,7 +2,7 @@
  * Mercury: A configurable open-source software-defined modem.
  * Copyright (C) 2022-2024 Fadi Jerji
  * Author: Fadi Jerji
- * Email: fadi.jerji@  <gmail.com, rhizomatica.org, caisresearch.com, ieee.org>
+ * Email: fadi.jerji@  <gmail.com, caisresearch.com, ieee.org>
  * ORCID: 0000-0002-2076-5831
  *
  * This program is free software: you can redistribute it and/or modify
@@ -20,15 +20,13 @@
  *
  */
 
-#ifndef INC_HERMES_LDPC_H_
-#define INC_HERMES_LDPC_H_
-
-
-#include "physical_defines.h"
-#include "hermes_normal_2_16.h"
-#include "hermes_normal_8_16.h"
-#include "hermes_normal_14_16.h"
-
-#define HERMES_NORMAL 1600
-
+#ifndef INCLUDED_MERCURY_NORMAL_8_16_H
+#define INCLUDED_MERCURY_NORMAL_8_16_H
+extern int mercury_normal_Cwidth_8_16;
+extern int mercury_normal_Vwidth_8_16;
+extern int mercury_normal_dwidth_8_16;
+extern int mercury_normal_QCmatrixC_8_16[800][12];
+extern int mercury_normal_QCmatrixV_8_16[1600][8];
+extern int mercury_normal_QCmatrixd_8_16[30];
+extern int mercury_normal_QCmatrixEnc_8_16[800][11];
 #endif

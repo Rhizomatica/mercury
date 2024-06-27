@@ -2,7 +2,7 @@
  * Mercury: A configurable open-source software-defined modem.
  * Copyright (C) 2022-2024 Fadi Jerji
  * Author: Fadi Jerji
- * Email: fadi.jerji@  <gmail.com, rhizomatica.org, caisresearch.com, ieee.org>
+ * Email: fadi.jerji@  <gmail.com, caisresearch.com, ieee.org>
  * ORCID: 0000-0002-2076-5831
  *
  * This program is free software: you can redistribute it and/or modify
@@ -205,23 +205,16 @@ snd_pcm_sframes_t cl_alsa_sound_device::transfere(double* buffer, unsigned int s
 	}
 	else
 	{
-		if((size%(nbuffer_Samples/2))==0)
+		nChunks=size/(nbuffer_Samples/2);
+		for(int i=0;i<nChunks;i++)
 		{
-			nChunks=size/(nbuffer_Samples/2);
-			for(int i=0;i<nChunks;i++)
-			{
-				frames_transfered+=_transfere(&buffer[i*(nbuffer_Samples/2)],nbuffer_Samples/2);
-			}
+			frames_transfered+=_transfere(&buffer[i*(nbuffer_Samples/2)],nbuffer_Samples/2);
 		}
-		else
-		{
-			nChunks=size/(nbuffer_Samples/2)-1;
-			for(int i=0;i<nChunks;i++)
-			{
-				frames_transfered+=_transfere(&buffer[i*(nbuffer_Samples/2)],nbuffer_Samples/2);
-			}
 
-			frames_transfered+=_transfere(&buffer[nChunks*(nbuffer_Samples/2)],nbuffer_Samples/2+(size%(nbuffer_Samples/2)));
+		if((size%(nbuffer_Samples/2))!=0)
+		{
+			frames_transfered+=_transfere(&buffer[nChunks*(nbuffer_Samples/2)],(size%(nbuffer_Samples/2)));
+
 		}
 	}
 	return frames_transfered;
@@ -405,18 +398,15 @@ void interrupt_handler(snd_async_handler_t *callback_ptr)
 
 	if(data_container_ptr->data_ready==1)
 	{
-		shift_left(data_container_ptr->passband_delayed_data, data_container_ptr->Nofdm*data_container_ptr->interpolation_rate*data_container_ptr->buffer_Nsymb, data_container_ptr->Nofdm*data_container_ptr->interpolation_rate);
 		data_container_ptr->nUnder_processing_events++;
-//		std::cout<<"under_processing"<<std::endl;
+		//std::cout<<"under_processing No= "<<data_container_ptr->nUnder_processing_events<<std::endl;
 	}
 
+	shift_left(data_container_ptr->passband_delayed_data, data_container_ptr->Nofdm*data_container_ptr->interpolation_rate*data_container_ptr->buffer_Nsymb, data_container_ptr->Nofdm*data_container_ptr->interpolation_rate);
 	sound_device_ptr->transfere(&data_container_ptr->passband_delayed_data[location_of_last_frame],data_container_ptr->Nofdm*data_container_ptr->interpolation_rate);
+
 	data_container_ptr->frames_to_read--;
-	if(data_container_ptr->frames_to_read>0)
-	{
-		shift_left(data_container_ptr->passband_delayed_data, data_container_ptr->Nofdm*data_container_ptr->interpolation_rate*data_container_ptr->buffer_Nsymb, data_container_ptr->Nofdm*data_container_ptr->interpolation_rate);
-	}
-	else
+	if(data_container_ptr->frames_to_read<0)
 	{
 		data_container_ptr->frames_to_read=0;
 	}

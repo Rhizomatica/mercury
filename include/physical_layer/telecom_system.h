@@ -2,7 +2,7 @@
  * Mercury: A configurable open-source software-defined modem.
  * Copyright (C) 2022-2024 Fadi Jerji
  * Author: Fadi Jerji
- * Email: fadi.jerji@  <gmail.com, rhizomatica.org, caisresearch.com, ieee.org>
+ * Email: fadi.jerji@  <gmail.com, caisresearch.com, ieee.org>
  * ORCID: 0000-0002-2076-5831
  *
  * This program is free software: you can redistribute it and/or modify
@@ -34,9 +34,23 @@
 #include "interleaver.h"
 #include "physical_config.h"
 #include "physical_defines.h"
-#include "datalink_layer/tcp_socket.h"
+#include "misc.h"
 #include <iomanip>
 
+struct st_reinit_subsystems{
+	int microphone=YES;
+	int speaker=YES;
+	int telecom_system=YES;
+	int data_container=YES;
+	int ofdm_FIR_rx_data=YES;
+	int ofdm_FIR_rx_time_sync=YES;
+	int ofdm_FIR_tx1=YES;
+	int ofdm_FIR_tx2=YES;
+	int ofdm=YES;
+	int ldpc=YES;
+	int psk=YES;
+	int pre_equalization_channel=YES;
+};
 
 struct st_receive_stats{
 	int iterations_done;
@@ -51,6 +65,9 @@ struct st_receive_stats{
 	int message_decoded;
 	double SNR;
 	double signal_stregth_dbm;
+	st_power_measurment power_measurment;
+	int crc;
+	int all_zeros;
 };
 
 
@@ -80,14 +97,16 @@ public:
 	int use_last_good_time_sync;
 	int use_last_good_freq_offset;
 	st_receive_stats receive_stats;
-	cl_tcp_socket tcp_socket_test;
 
 	double output_power_Watt;
 
-	void transmit(const int* data, double* out, int message_location);
-	st_receive_stats receive(const double* data, int* out);
+	void transmit_bit(const int* data, double* out, int message_location);
+	st_receive_stats receive_bit(const double* data, int* out);
+
+	void transmit_byte(const int* data, int nBytes, double* out, int message_location);
+	st_receive_stats receive_byte(const double* data, int* out);
+
 	int operation_mode;
-	float test_tx_AWGN_EsN0,test_tx_AWGN_EsN0_calibration;
 
 	double M;
 	double bandwidth;
@@ -120,7 +139,17 @@ public:
 	void return_to_last_configuration();
 	char get_configuration(double SNR);
 
+	struct st_channel_complex *pre_equalization_channel;
+	void get_pre_equalization_channel();
+
 	cl_configuration_telecom_system default_configurations_telecom_system;
+
+	int outer_code;
+	int outer_code_reserved_bits;
+
+	int bit_energy_dispersal_seed;
+
+	st_reinit_subsystems reinit_subsystems;
 
 };
 

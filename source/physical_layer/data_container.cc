@@ -2,7 +2,7 @@
  * Mercury: A configurable open-source software-defined modem.
  * Copyright (C) 2022-2024 Fadi Jerji
  * Author: Fadi Jerji
- * Email: fadi.jerji@  <gmail.com, rhizomatica.org, caisresearch.com, ieee.org>
+ * Email: fadi.jerji@  <gmail.com, caisresearch.com, ieee.org>
  * ORCID: 0000-0002-2076-5831
  *
  * This program is free software: you can redistribute it and/or modify
@@ -33,7 +33,9 @@ cl_data_container::cl_data_container()
 	this->Nfft=0;
 	this->Ngi=0;
 	this->Nsymb=0;
-	this->data=NULL;
+	this->data_bit=NULL;
+	this->data_bit_energy_dispersal=NULL;
+	this->data_byte=NULL;
 	this->encoded_data=NULL;
 	this->bit_interleaved_data=NULL;
 	this->ofdm_time_freq_interleaved_data=NULL;
@@ -45,10 +47,13 @@ cl_data_container::cl_data_container()
 	this->preamble_data=NULL;
 	this->ofdm_symbol_demodulated_data=NULL;
 	this->ofdm_deframed_data=NULL;
+	this->ofdm_deframed_data_without_amplitude_restoration=NULL;
 	this->equalized_data= NULL;
+	this->equalized_data_without_amplitude_restoration= NULL;
 	this->demodulated_data=NULL;
 	this->deinterleaved_data=NULL;
-	this->hd_decoded_data=NULL;
+	this->hd_decoded_data_bit=NULL;
+	this->hd_decoded_data_byte=NULL;
 
 	this->buffer_Nsymb=0;
 	this->preamble_nSymb=0;
@@ -73,6 +78,8 @@ cl_data_container::cl_data_container()
 	this->passband_data_tx_filtered_fir_1=NULL;
 	this->passband_data_tx_filtered_fir_2=NULL;
 	this->ready_to_transmit_passband_data_tx=NULL;
+
+	this->bit_energy_dispersal_sequence=NULL;
 }
 
 cl_data_container::~cl_data_container()
@@ -91,7 +98,9 @@ void cl_data_container::set_size(int nData, int Nc, int M, int Nfft , int Nofdm,
 	this->Ngi=Nofdm-Nfft;
 	this->Nsymb=Nsymb;
 	this->preamble_nSymb=preamble_nSymb;
-	this->data=new int[N_MAX];
+	this->data_bit=new int[N_MAX];
+	this->data_bit_energy_dispersal=new int[N_MAX];
+	this->data_byte=new int[N_MAX];
 	this->encoded_data=new int[N_MAX];
 	this->bit_interleaved_data=new int[N_MAX];
 	this->modulated_data=new std::complex <double>[nData];
@@ -101,12 +110,17 @@ void cl_data_container::set_size(int nData, int Nc, int M, int Nfft , int Nofdm,
 	this->ofdm_symbol_modulated_data=new std::complex <double>[Nofdm*Nsymb];
 	this->ofdm_symbol_demodulated_data=new std::complex <double>[Nsymb*Nc];
 	this->ofdm_deframed_data=new std::complex <double>[Nsymb*Nc];
+	this->ofdm_deframed_data_without_amplitude_restoration=new std::complex <double>[Nsymb*Nc];
 	this->equalized_data= new std::complex <double>[Nsymb*Nc];
+	this->equalized_data_without_amplitude_restoration= new std::complex <double>[Nsymb*Nc];
 	this->preamble_symbol_modulated_data= new std::complex <double>[preamble_nSymb*Nofdm];
 	this->preamble_data= new std::complex <double>[preamble_nSymb*Nc];
 	this->demodulated_data=new float[N_MAX];
 	this->deinterleaved_data=new float[N_MAX];
-	this->hd_decoded_data=new int[N_MAX];
+	this->hd_decoded_data_bit=new int[N_MAX];
+	this->hd_decoded_data_byte=new int[N_MAX];
+
+	this->bit_energy_dispersal_sequence=new int[N_MAX];
 
 	this->buffer_Nsymb=(preamble_nSymb+Nsymb)*2;
 
@@ -128,6 +142,11 @@ void cl_data_container::set_size(int nData, int Nc, int M, int Nfft , int Nofdm,
 	this->passband_data_tx_filtered_fir_1=new double[2*total_frame_size];
 	this->passband_data_tx_filtered_fir_2=new double[2*total_frame_size];
 	this->ready_to_transmit_passband_data_tx=new double[total_frame_size];
+
+	for(int i=0;i<2*Nofdm*buffer_Nsymb*frequency_interpolation_rate;i++)
+	{
+		this->passband_delayed_data[i]=(double)(rand()%1000 -500)/1000.0;
+	}
 }
 
 void cl_data_container::deinit()
@@ -141,10 +160,21 @@ void cl_data_container::deinit()
 	this->Ngi=0;
 	this->Nsymb=0;
 	this->total_frame_size=0;
-	if(this->data!=NULL)
+	if(this->data_bit!=NULL)
 	{
-		delete[] this->data;
-		this->data=NULL;
+		delete[] this->data_bit;
+		this->data_bit=NULL;
+	}
+	if(this->data_bit_energy_dispersal!=NULL)
+	{
+		delete[] this->data_bit_energy_dispersal;
+		this->data_bit_energy_dispersal=NULL;
+	}
+
+	if(this->data_byte!=NULL)
+	{
+		delete[] this->data_byte;
+		this->data_byte=NULL;
 	}
 	if(this->encoded_data!=NULL)
 	{
@@ -191,10 +221,20 @@ void cl_data_container::deinit()
 		delete[] this->ofdm_deframed_data;
 		this->ofdm_deframed_data=NULL;
 	}
+	if(this->ofdm_deframed_data_without_amplitude_restoration!=NULL)
+	{
+		delete[] this->ofdm_deframed_data_without_amplitude_restoration;
+		this->ofdm_deframed_data_without_amplitude_restoration=NULL;
+	}
 	if(this->equalized_data!=NULL)
 	{
 		delete[] this->equalized_data;
 		this->equalized_data=NULL;
+	}
+	if(this->equalized_data_without_amplitude_restoration!=NULL)
+	{
+		delete[] this->equalized_data_without_amplitude_restoration;
+		this->equalized_data_without_amplitude_restoration=NULL;
 	}
 	if(this->preamble_symbol_modulated_data!=NULL)
 	{
@@ -216,10 +256,21 @@ void cl_data_container::deinit()
 		delete[] this->deinterleaved_data;
 		this->deinterleaved_data=NULL;
 	}
-	if(this->hd_decoded_data!=NULL)
+	if(this->hd_decoded_data_bit!=NULL)
 	{
-		delete[] this->hd_decoded_data;
-		this->hd_decoded_data=NULL;
+		delete[] this->hd_decoded_data_bit;
+		this->hd_decoded_data_bit=NULL;
+	}
+	if(this->hd_decoded_data_byte!=NULL)
+	{
+		delete[] this->hd_decoded_data_byte;
+		this->hd_decoded_data_byte=NULL;
+	}
+
+	if(this->bit_energy_dispersal_sequence!=NULL)
+	{
+		delete[] this->bit_energy_dispersal_sequence;
+		this->bit_energy_dispersal_sequence=NULL;
 	}
 
 	this->buffer_Nsymb=0;

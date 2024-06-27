@@ -2,7 +2,7 @@
  * Mercury: A configurable open-source software-defined modem.
  * Copyright (C) 2022-2024 Fadi Jerji
  * Author: Fadi Jerji
- * Email: fadi.jerji@  <gmail.com, rhizomatica.org, caisresearch.com, ieee.org>
+ * Email: fadi.jerji@  <gmail.com, caisresearch.com, ieee.org>
  * ORCID: 0000-0002-2076-5831
  *
  * This program is free software: you can redistribute it and/or modify
@@ -55,6 +55,8 @@
 #define RECEIVING_ACKS_CONTROL 6
 #define ACKNOWLEDGING_CONTROL 7
 
+//Connection ID
+#define BROADCAST_ID 0x00
 
 //Message type
 #define NONE 0x00
@@ -81,6 +83,7 @@
 #define REPEAT_LAST_ACK 0x3C
 
 //Error control
+#define MESSAGE_ID_ERROR -4
 #define MEMORY_ERROR -3
 #define MESSAGE_LENGTH_ERROR -2
 #define ERROR -1
@@ -93,9 +96,22 @@
 //Gear shift
 #define GEAR_SHIFT 255
 
+//Gear shift algorithms
+#define SNR_BASED 0
+#define SUCCESS_BASED_LADDER 1
+
+//Header length
+#define ACK_MULTI_ACK_RANGE_HEADER_LENGTH 3
+#define CONTROL_ACK_CONTROL_HEADER_LENGTH 3
+#define DATA_LONG_HEADER_LENGTH 4
+#define DATA_SHORT_HEADER_LENGTH 5
+
+//Load config level
+#define FULL 0
+#define PHYSICAL_LAYER_ONLY 1
 
 #define INFINITE -1
 
-
+#define POLY_CRC8 0xF4
 
 #endif

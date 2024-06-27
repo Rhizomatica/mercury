@@ -2,7 +2,7 @@
  * Mercury: A configurable open-source software-defined modem.
  * Copyright (C) 2022-2024 Fadi Jerji
  * Author: Fadi Jerji
- * Email: fadi.jerji@  <gmail.com, rhizomatica.org, caisresearch.com, ieee.org>
+ * Email: fadi.jerji@  <gmail.com, caisresearch.com, ieee.org>
  * ORCID: 0000-0002-2076-5831
  *
  * This program is free software: you can redistribute it and/or modify
@@ -47,9 +47,9 @@ cl_ldpc::cl_ldpc()
 	QCmatrixEnc=NULL;
 	QCmatrixV=NULL;
 	QCmatrixd=NULL;
-	Q=0;
+	Q=NULL;
 	Vwidth=0;
-	R=0;
+	R=NULL;
 	dwidth=0;
 }
 
@@ -88,6 +88,15 @@ void cl_ldpc::deinit()
 	QCmatrixC=NULL;
 	QCmatrixEnc=NULL;
 
+	if(R!=NULL)
+	{
+		delete[] R;
+	}
+	if(Q!=NULL)
+	{
+		delete[] Q;
+	}
+
 }
 
 
@@ -118,43 +127,103 @@ void cl_ldpc::encode(const int* data, int*  encoded_data)
  int cl_ldpc::update_code_parameters()
   {
   	int success=0;
-  	if(standard_val==HERMES)
+  	if(standard_val==MERCURY)
   	{
-  		if(N==HERMES_NORMAL)
+  		if(N==MERCURY_NORMAL)
   		{
-  			if(K==200)//rate == 2/16
+  			if(K==100)//rate == 1/16
   			{
-  				Cwidth=hermes_normal_Cwidth_2_16;
-  				Vwidth=hermes_normal_Vwidth_2_16;
-  				dwidth=hermes_normal_dwidth_2_16;
-  				QCmatrixC=&hermes_normal_QCmatrixC_2_16[0][0];
-  				QCmatrixEnc=&hermes_normal_QCmatrixEnc_2_16[0][0];
-  				QCmatrixV=&hermes_normal_QCmatrixV_2_16[0][0];
-  				QCmatrixd=&hermes_normal_QCmatrixd_2_16[0];
+  				Cwidth=mercury_normal_Cwidth_1_16;
+  				Vwidth=mercury_normal_Vwidth_1_16;
+  				dwidth=mercury_normal_dwidth_1_16;
+  				QCmatrixC=&mercury_normal_QCmatrixC_1_16[0][0];
+  				QCmatrixEnc=&mercury_normal_QCmatrixEnc_1_16[0][0];
+  				QCmatrixV=&mercury_normal_QCmatrixV_1_16[0][0];
+  				QCmatrixd=&mercury_normal_QCmatrixd_1_16[0];
+  				R=new double [N*Vwidth];
+  				Q=new double [N*Vwidth];
+  			}
+  			else if(K==200)//rate == 2/16
+  			{
+  				Cwidth=mercury_normal_Cwidth_2_16;
+  				Vwidth=mercury_normal_Vwidth_2_16;
+  				dwidth=mercury_normal_dwidth_2_16;
+  				QCmatrixC=&mercury_normal_QCmatrixC_2_16[0][0];
+  				QCmatrixEnc=&mercury_normal_QCmatrixEnc_2_16[0][0];
+  				QCmatrixV=&mercury_normal_QCmatrixV_2_16[0][0];
+  				QCmatrixd=&mercury_normal_QCmatrixd_2_16[0];
+  				R=new double [N*Vwidth];
+  				Q=new double [N*Vwidth];
+  			}
+  			else if(K==300)//rate == 3/16
+  			{
+  				Cwidth=mercury_normal_Cwidth_3_16;
+  				Vwidth=mercury_normal_Vwidth_3_16;
+  				dwidth=mercury_normal_dwidth_3_16;
+  				QCmatrixC=&mercury_normal_QCmatrixC_3_16[0][0];
+  				QCmatrixEnc=&mercury_normal_QCmatrixEnc_3_16[0][0];
+  				QCmatrixV=&mercury_normal_QCmatrixV_3_16[0][0];
+  				QCmatrixd=&mercury_normal_QCmatrixd_3_16[0];
+  				R=new double [N*Vwidth];
+  				Q=new double [N*Vwidth];
+  			}
+  			else if(K==400)//rate == 4/16
+  			{
+  				Cwidth=mercury_normal_Cwidth_4_16;
+  				Vwidth=mercury_normal_Vwidth_4_16;
+  				dwidth=mercury_normal_dwidth_4_16;
+  				QCmatrixC=&mercury_normal_QCmatrixC_4_16[0][0];
+  				QCmatrixEnc=&mercury_normal_QCmatrixEnc_4_16[0][0];
+  				QCmatrixV=&mercury_normal_QCmatrixV_4_16[0][0];
+  				QCmatrixd=&mercury_normal_QCmatrixd_4_16[0];
+  				R=new double [N*Vwidth];
+  				Q=new double [N*Vwidth];
+  			}
+  			else if(K==500)//rate == 5/16
+  			{
+  				Cwidth=mercury_normal_Cwidth_5_16;
+  				Vwidth=mercury_normal_Vwidth_5_16;
+  				dwidth=mercury_normal_dwidth_5_16;
+  				QCmatrixC=&mercury_normal_QCmatrixC_5_16[0][0];
+  				QCmatrixEnc=&mercury_normal_QCmatrixEnc_5_16[0][0];
+  				QCmatrixV=&mercury_normal_QCmatrixV_5_16[0][0];
+  				QCmatrixd=&mercury_normal_QCmatrixd_5_16[0];
+  				R=new double [N*Vwidth];
+  				Q=new double [N*Vwidth];
+  			}
+  			else if(K==600)//rate == 6/16
+  			{
+  				Cwidth=mercury_normal_Cwidth_6_16;
+  				Vwidth=mercury_normal_Vwidth_6_16;
+  				dwidth=mercury_normal_dwidth_6_16;
+  				QCmatrixC=&mercury_normal_QCmatrixC_6_16[0][0];
+  				QCmatrixEnc=&mercury_normal_QCmatrixEnc_6_16[0][0];
+  				QCmatrixV=&mercury_normal_QCmatrixV_6_16[0][0];
+  				QCmatrixd=&mercury_normal_QCmatrixd_6_16[0];
   				R=new double [N*Vwidth];
   				Q=new double [N*Vwidth];
   			}
   			else if(K==800)//rate == 8/16
   			{
-  				Cwidth=hermes_normal_Cwidth_8_16;
-  				Vwidth=hermes_normal_Vwidth_8_16;
-  				dwidth=hermes_normal_dwidth_8_16;
-  				QCmatrixC=&hermes_normal_QCmatrixC_8_16[0][0];
-  				QCmatrixEnc=&hermes_normal_QCmatrixEnc_8_16[0][0];
-  				QCmatrixV=&hermes_normal_QCmatrixV_8_16[0][0];
-  				QCmatrixd=&hermes_normal_QCmatrixd_8_16[0];
+  				Cwidth=mercury_normal_Cwidth_8_16;
+  				Vwidth=mercury_normal_Vwidth_8_16;
+  				dwidth=mercury_normal_dwidth_8_16;
+  				QCmatrixC=&mercury_normal_QCmatrixC_8_16[0][0];
+  				QCmatrixEnc=&mercury_normal_QCmatrixEnc_8_16[0][0];
+  				QCmatrixV=&mercury_normal_QCmatrixV_8_16[0][0];
+  				QCmatrixd=&mercury_normal_QCmatrixd_8_16[0];
   				R=new double [N*Vwidth];
   				Q=new double [N*Vwidth];
   			}
   			else if(K==1400)//rate == 14/16
   			{
-  				Cwidth=hermes_normal_Cwidth_14_16;
-  				Vwidth=hermes_normal_Vwidth_14_16;
-  				dwidth=hermes_normal_dwidth_14_16;
-  				QCmatrixC=&hermes_normal_QCmatrixC_14_16[0][0];
-  				QCmatrixEnc=&hermes_normal_QCmatrixEnc_14_16[0][0];
-  				QCmatrixV=&hermes_normal_QCmatrixV_14_16[0][0];
-  				QCmatrixd=&hermes_normal_QCmatrixd_14_16[0];
+  				Cwidth=mercury_normal_Cwidth_14_16;
+  				Vwidth=mercury_normal_Vwidth_14_16;
+  				dwidth=mercury_normal_dwidth_14_16;
+  				QCmatrixC=&mercury_normal_QCmatrixC_14_16[0][0];
+  				QCmatrixEnc=&mercury_normal_QCmatrixEnc_14_16[0][0];
+  				QCmatrixV=&mercury_normal_QCmatrixV_14_16[0][0];
+  				QCmatrixd=&mercury_normal_QCmatrixd_14_16[0];
   				R=new double [N*Vwidth];
   				Q=new double [N*Vwidth];
   			}
@@ -164,7 +233,11 @@ void cl_ldpc::encode(const int* data, int*  encoded_data)
   				success=-1;
   				exit(1);
   			}
-
+  			if(R==NULL || Q==NULL)
+  			{
+  				std::cout<<"Memory allocation error"<<std::endl;
+  				exit(2);
+  			}
   		}
 
   	}

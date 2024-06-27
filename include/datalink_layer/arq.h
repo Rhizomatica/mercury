@@ -2,7 +2,7 @@
  * Mercury: A configurable open-source software-defined modem.
  * Copyright (C) 2022-2024 Fadi Jerji
  * Author: Fadi Jerji
- * Email: fadi.jerji@  <gmail.com, rhizomatica.org, caisresearch.com, ieee.org>
+ * Email: fadi.jerji@  <gmail.com, caisresearch.com, ieee.org>
  * ORCID: 0000-0002-2076-5831
  *
  * This program is free software: you can redistribute it and/or modify
@@ -32,10 +32,6 @@
 #include "datalink_defines.h"
 #include "common/common_defines.h"
 #include <iomanip>
-
-
-void byte_to_bit(char* data_byte, char* data_bit, int nBytes);
-void bit_to_byte(char* data_bit, char* data_byte, int nBits);
 
 union u_SNR {
   float f_SNR;
@@ -72,6 +68,8 @@ struct st_stats
 	  int nReSent_control;
 	  int nAcks_sent_control;
 	  int nNAcked_control;
+
+	  float success_rate_data;
 };
 
 struct st_measurements
@@ -102,6 +100,7 @@ public:
   void set_data_batch_size(int data_batch_size);
   void set_control_batch_size(int control_batch_size);
   void set_role(int role);
+  void calculate_receiving_timeout();
   void set_call_sign(std::string call_sign);
 
   int get_nOccupied_messages();
@@ -117,6 +116,7 @@ public:
 
   int init();
 
+  char CRC8_calc(char* data_byte, int nItems);
 
 	//! Updates timers values and check for timeouts.
 	    /*!
@@ -233,6 +233,7 @@ public:
   int connection_status;
   int link_status;
   int role;
+  int original_role;
   char connection_id;
   char assigned_connection_id;
 
@@ -241,7 +242,7 @@ public:
   cl_tcp_socket tcp_socket_data;
 
 
-  cl_timer connection_timer;
+  cl_timer watchdog_timer;
   cl_timer link_timer;
   cl_timer receiving_timer;
   cl_timer print_stats_timer;
@@ -264,9 +265,11 @@ public:
   int ack_timeout_control;
   int ack_timeout_data;
   int link_timeout;
+  int watchdog_timeout;
   int receiving_timeout;
   int switch_role_timeout;
   int switch_role_test_timeout;
+  int gearshift_timeout;
 
   std::string destination_call_sign;
 
@@ -276,13 +279,26 @@ public:
 
   cl_telecom_system* telecom_system;
 
-  char last_configuration;
+  char data_configuration;
+  char init_configuration;
+  char last_data_configuration;
   char current_configuration;
+  char ack_configuration;
   char negotiated_configuration;
 
   int gear_shift_on;
+  int gear_shift_algorithm;
+  double gear_shift_up_success_rate_precentage;
+  double gear_shift_down_success_rate_precentage;
+  int gear_shift_block_for_nBlocks_total;
+  int gear_shift_blocked_for_nBlocks;
+
   int ptt_on_delay_ms;
+  int ptt_off_delay_ms;
   double time_left_to_send_last_frame;
+
+  int disconnect_requested;
+
 
 private:
   int nMessages;
@@ -297,13 +313,13 @@ private:
   std::string user_command_buffer;
 
 
-  st_stats stats;
+  st_stats stats, last_transmission_block_stats;
   st_measurements measurements;
 
   int nResends;
 
   char get_configuration(double SNR);
-  void load_configuration(int configuration);
+  void load_configuration(int configuration, int level, int backup_configuration);
   void return_to_last_configuration();
   int init_messages_buffers();
   int deinit_messages_buffers();

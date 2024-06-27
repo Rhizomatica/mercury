@@ -20,28 +20,13 @@
  *
  */
 
-#ifndef INC_AWGN_H_
-#define INC_AWGN_H_
-
-#include <complex>
-#include <stdlib.h>
-#include <cmath>
-
-
-class cl_awgn
-{
-
-public:
-	cl_awgn();
-	~cl_awgn();
-
-	void set_seed(long seed);
-	void apply(std::complex <double> *in,std::complex <double> *out,float ampl,int nItems);
-	void apply_with_delay(std::complex <double> *in,std::complex <double> *out,float ampl,int nItems, int delay);
-	void apply_with_delay(double *in,double *out,float ampl,int nItems, int delay);
-	double  awgn_value_generator();
-
-};
-
-
+#ifndef INCLUDED_MERCURY_NORMAL_1_16_H
+#define INCLUDED_MERCURY_NORMAL_1_16_H
+extern int mercury_normal_Cwidth_1_16;
+extern int mercury_normal_Vwidth_1_16;
+extern int mercury_normal_dwidth_1_16;
+extern int mercury_normal_QCmatrixC_1_16[1500][4];
+extern int mercury_normal_QCmatrixV_1_16[1600][8];
+extern int mercury_normal_QCmatrixd_1_16[12];
+extern int mercury_normal_QCmatrixEnc_1_16[1500][3];
 #endif

@@ -2,7 +2,7 @@
  * Mercury: A configurable open-source software-defined modem.
  * Copyright (C) 2022-2024 Fadi Jerji
  * Author: Fadi Jerji
- * Email: fadi.jerji@  <gmail.com, rhizomatica.org, caisresearch.com, ieee.org>
+ * Email: fadi.jerji@  <gmail.com, caisresearch.com, ieee.org>
  * ORCID: 0000-0002-2076-5831
  *
  * This program is free software: you can redistribute it and/or modify
@@ -35,7 +35,7 @@
 #define IRA 0
 
 
-#define HERMES 0
+#define MERCURY 0
 
 #define GBF 0
 #define SPA 1
@@ -64,7 +64,14 @@
 #define DECIMATION 1
 
 #define ZERO_FORCE 0
-#define AMP_RESTORATED_ZERO_FORCE 1
+#define LEAST_SQUARE 1
+
+#define NO_OUTER_CODE 0
+#define CRC16_MODBUS_RTU 1
+
+#define HIGH_DENSITY 0
+#define LOW_DENSITY 1
+
 
 
 struct st_carrier

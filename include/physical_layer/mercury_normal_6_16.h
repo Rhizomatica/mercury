@@ -2,7 +2,7 @@
  * Mercury: A configurable open-source software-defined modem.
  * Copyright (C) 2022-2024 Fadi Jerji
  * Author: Fadi Jerji
- * Email: fadi.jerji@  <gmail.com, rhizomatica.org, caisresearch.com, ieee.org>
+ * Email: fadi.jerji@  <gmail.com, caisresearch.com, ieee.org>
  * ORCID: 0000-0002-2076-5831
  *
  * This program is free software: you can redistribute it and/or modify
@@ -20,13 +20,13 @@
  *
  */
 
-#ifndef INCLUDED_HERMES_NORMAL_2_16_H
-#define INCLUDED_HERMES_NORMAL_2_16_H
-extern int hermes_normal_Cwidth_2_16;
-extern int hermes_normal_Vwidth_2_16;
-extern int hermes_normal_dwidth_2_16;
-extern int hermes_normal_QCmatrixC_2_16[1400][6];
-extern int hermes_normal_QCmatrixV_2_16[1600][9];
-extern int hermes_normal_QCmatrixd_2_16[14];
-extern int hermes_normal_QCmatrixEnc_2_16[1400][5];
+#ifndef INCLUDED_MERCURY_NORMAL_6_16_H
+#define INCLUDED_MERCURY_NORMAL_6_16_H
+extern int mercury_normal_Cwidth_6_16;
+extern int mercury_normal_Vwidth_6_16;
+extern int mercury_normal_dwidth_6_16;
+extern int mercury_normal_QCmatrixC_6_16[1000][13];
+extern int mercury_normal_QCmatrixV_6_16[1600][9];
+extern int mercury_normal_QCmatrixd_6_16[1048];
+extern int mercury_normal_QCmatrixEnc_6_16[1000][12];
 #endif

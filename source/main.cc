@@ -2,7 +2,7 @@
  * Mercury: A configurable open-source software-defined modem.
  * Copyright (C) 2022-2024 Fadi Jerji
  * Author: Fadi Jerji
- * Email: fadi.jerji@  <gmail.com, rhizomatica.org, caisresearch.com, ieee.org>
+ * Email: fadi.jerji@  <gmail.com, caisresearch.com, ieee.org>
  * ORCID: 0000-0002-2076-5831
  *
  * This program is free software: you can redistribute it and/or modify
@@ -36,7 +36,6 @@ int main(int argc, char *argv[])
 	cl_telecom_system telecom_system;
 
 	telecom_system.operation_mode=ARQ_MODE;
-	telecom_system.load_configuration();
 
 	if(telecom_system.operation_mode==ARQ_MODE)
 	{
@@ -51,6 +50,7 @@ int main(int argc, char *argv[])
 	}
 	else if(telecom_system.operation_mode==RX_TEST)
 	{
+		telecom_system.load_configuration();
 		telecom_system.constellation_plot.open("PLOT");
 		telecom_system.constellation_plot.reset("PLOT");
 
@@ -62,6 +62,7 @@ int main(int argc, char *argv[])
 	}
 	else if (telecom_system.operation_mode==TX_TEST)
 	{
+		telecom_system.load_configuration();
 		while(1)
 		{
 			telecom_system.TX_TEST_process_main();
@@ -69,6 +70,7 @@ int main(int argc, char *argv[])
 	}
 	else if (telecom_system.operation_mode==BER_PLOT_baseband)
 	{
+		telecom_system.load_configuration();
 		telecom_system.constellation_plot.open("PLOT");
 		telecom_system.constellation_plot.reset("PLOT");
 		telecom_system.BER_PLOT_baseband_process_main();
@@ -76,6 +78,7 @@ int main(int argc, char *argv[])
 	}
 	else if(telecom_system.operation_mode==BER_PLOT_passband)
 	{
+		telecom_system.load_configuration();
 		telecom_system.constellation_plot.open("PLOT");
 		telecom_system.constellation_plot.reset("PLOT");
 		telecom_system.BER_PLOT_passband_process_main();

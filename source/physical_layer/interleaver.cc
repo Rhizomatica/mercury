@@ -2,7 +2,7 @@
  * Mercury: A configurable open-source software-defined modem.
  * Copyright (C) 2022-2024 Fadi Jerji
  * Author: Fadi Jerji
- * Email: fadi.jerji@  <gmail.com, rhizomatica.org, caisresearch.com, ieee.org>
+ * Email: fadi.jerji@  <gmail.com, caisresearch.com, ieee.org>
  * ORCID: 0000-0002-2076-5831
  *
  * This program is free software: you can redistribute it and/or modify
@@ -105,6 +105,14 @@ void deinterleaver(std::complex<double>* in, std::complex<double>* out, int nIte
 	for(int i=nBlocks*block_size;i<nItems;i++)
 	{
 		out[i]=in[i];
+	}
+}
+
+void bit_energy_dispersal(int* in, int* sequence, int* out, int nItems)
+{
+	for(int i=0;i<nItems;i++)
+	{
+		out[i]=in[i] ^ sequence[i];
 	}
 }
 
