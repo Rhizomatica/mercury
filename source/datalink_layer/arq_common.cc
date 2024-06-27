@@ -457,14 +457,14 @@ int cl_arq_controller::init()
 	data_configuration=default_configuration_ARQ.init_configuration;
 	ack_configuration=default_configuration_ARQ.ack_configuration;
 
-	std::cout << std::fixed;
-	std::cout << std::setprecision(1);
-	for(int i=0;i<NUMBER_OF_CONFIGS;i++)
-	{
-		load_configuration(i, PHYSICAL_LAYER_ONLY, NO);
-		std::cout<<"CONFIG_"<<i<<" ("<<telecom_system->rbc<<" bps)."<<std::endl;
-	}
-	exit(0);
+//	std::cout << std::fixed;
+//	std::cout << std::setprecision(1);
+//	for(int i=0;i<NUMBER_OF_CONFIGS;i++)
+//	{
+//		load_configuration(i, PHYSICAL_LAYER_ONLY, NO);
+//		std::cout<<"CONFIG_"<<i<<" ("<<telecom_system->rbc<<" bps)."<<std::endl;
+//	}
+//	exit(0);
 
 	if(tcp_socket_data.init()!=SUCCESS || tcp_socket_control.init()!=SUCCESS )
 	{
