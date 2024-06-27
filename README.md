@@ -4,7 +4,7 @@ Mercury is a configurable open-source software-defined modem.
 
 #What's new in Mercury 0.2:
 
-- New Lease Square channel estimator with a configurable estimation window.
+- New Least Square channel estimator with a configurable estimation window.
 - Enhanced Time and Frequency synchronization for low SNR values.
 - Enhanced TX and RX filtering with separate filters for time synchronization and data messages.
 - Enhanced TX and RX mechanisms for higher robustness and computing efficiency.
