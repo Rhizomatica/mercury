@@ -265,25 +265,22 @@ To install GraphViz run the following command as root: 'apt-get install graphviz
 
 # Compile And Install
 
-To compile the Mercury code, run the following:
+To compile Mercury code:
 
 * make
+
+To install:
+
+* make install
 
 To generate the Mercury documentation, run the following:
 
 * make doc
 
 
-
-
 ## include
 
 Contains the header files of Mercury.
-
-## final notes:
-
-The version 0.1.5 of Mercury was sucessfuly tested using Sbitx radios using Raspberry pi 4 microcomputers.
-Tx power= 20 Watts, distance 70 km, Rx SNR= -3 dB using TX_test, Rx_test Config0.
 
 
 ### Authors
