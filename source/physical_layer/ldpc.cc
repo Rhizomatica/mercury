@@ -145,6 +145,14 @@ void cl_ldpc::encode(const int* data, int*  encoded_data)
   			}
   			else if(K==200)//rate == 2/16
   			{
+//  				Cwidth=mercury_met_Cwidth_2_16;
+//  				Vwidth=mercury_met_Vwidth_2_16;
+//  				dwidth=mercury_met_dwidth_2_16;
+//  				QCmatrixC=&mercury_met_QCmatrixC_2_16[0][0];
+//  				QCmatrixEnc=&mercury_met_QCmatrixEnc_2_16[0][0];
+//  				QCmatrixV=&mercury_met_QCmatrixV_2_16[0][0];
+//  				QCmatrixd=&mercury_met_QCmatrixd_2_16[0];
+
   				Cwidth=mercury_normal_Cwidth_2_16;
   				Vwidth=mercury_normal_Vwidth_2_16;
   				dwidth=mercury_normal_dwidth_2_16;

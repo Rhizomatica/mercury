@@ -20,21 +20,13 @@
  *
  */
 
-#ifndef INC_MERCURY_LDPC_H_
-#define INC_MERCURY_LDPC_H_
-
-#include "physical_defines.h"
-#include "mercury_normal_1_16.h"
-#include "mercury_normal_14_16.h"
-#include "mercury_normal_2_16.h"
-#include "mercury_normal_3_16.h"
-#include "mercury_normal_4_16.h"
-#include "mercury_normal_5_16.h"
-#include "mercury_normal_6_16.h"
-#include "mercury_normal_8_16.h"
-
-#include "mercury_met_2_16.h"
-
-#define MERCURY_NORMAL 1600
-
+#ifndef INCLUDED_MERCURY_MET_2_16_H
+#define INCLUDED_MERCURY_MET_2_16_H
+extern int mercury_met_Cwidth_2_16;
+extern int mercury_met_Vwidth_2_16;
+extern int mercury_met_dwidth_2_16;
+extern int mercury_met_QCmatrixC_2_16[1400][9];
+extern int mercury_met_QCmatrixV_2_16[1600][15];
+extern int mercury_met_QCmatrixd_2_16[14];
+extern int mercury_met_QCmatrixEnc_2_16[1400][8];
 #endif
