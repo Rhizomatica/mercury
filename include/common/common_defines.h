@@ -29,6 +29,8 @@
 #define TX_TEST 2
 #define RX_TEST 3
 #define ARQ_MODE 4
+#define TX_BROADCAST 5
+#define RX_BROADCAST 6
 
 #define NUMBER_OF_CONFIGS 17
 #define CONFIG_NONE -1

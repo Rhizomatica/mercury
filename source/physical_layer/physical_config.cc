@@ -107,9 +107,9 @@ cl_configuration_telecom_system::cl_configuration_telecom_system()
 	ofdm_preamble_papr_cut=7;
 	ofdm_data_papr_cut=10;
 
-	//create the folder as RAM "sudo mount -t tmpfs -o size=128M tmpfs /mnt/ramDisk"
-	plot_folder="/mnt/ramDisk/";
-	plot_plot_active=YES;
+	// This folder could be in a ramdisk (eg: mount -t tmpfs -o size=128M tmpfs /mnt/ramDisk)
+	plot_folder="./";
+	plot_plot_active=NO;
 
 	microphone_dev_name="plughw:0,0";
 	speaker_dev_name="plughw:0,0";

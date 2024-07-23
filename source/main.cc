@@ -24,6 +24,7 @@
 #include <complex>
 #include <fstream>
 #include <math.h>
+#include <unistd.h>
 #include <iostream>
 #include <complex>
 #include "physical_layer/telecom_system.h"
@@ -31,60 +32,122 @@
 
 int main(int argc, char *argv[])
 {
-	srand(time(0));
+    // defaults to CPU 3
+    int cpu_nr = 3;
+    cl_telecom_system telecom_system;
 
-	cl_telecom_system telecom_system;
+    // seed the random number generator
+    srand(time(0));
 
-	telecom_system.operation_mode=ARQ_MODE;
+    // default mode
+    telecom_system.operation_mode=ARQ_MODE;
 
-	if(telecom_system.operation_mode==ARQ_MODE)
-	{
-		cl_arq_controller ARQ;
-		ARQ.telecom_system=&telecom_system;
-		ARQ.init();
-		ARQ.print_stats();
-		while(1)
-		{
-			ARQ.process_main();
-		}
-	}
-	else if(telecom_system.operation_mode==RX_TEST)
-	{
-		telecom_system.load_configuration();
-		telecom_system.constellation_plot.open("PLOT");
-		telecom_system.constellation_plot.reset("PLOT");
+    if (argc < 3)
+    {
+    manual:
+        printf("Usage modes: \n%s\n%s -c [cpu_nr] -m [mode]\n", argv[0], argv[0]);
+        printf("%s -h\n", argv[0]);
+        printf("\nOptions:\n");
+        printf(" -c [cpu_nr]                Run on CPU [cpu_br]. Defaults to CPU 3. Use -1 to disable CPU selection\n");
+        // printf(" -m [mode]                  Available modes are: ARQ, TX, RX, TX_TEST, RX_TEST, PLOT_BASEBAND, PLOT_PASSBAND\n");
+        printf(" -m [mode]                  Available modes are: ARQ, TX_TEST, RX_TEST, PLOT_BASEBAND, PLOT_PASSBAND\n");
+        printf(" -h                         Prints this help.\n");
+        return EXIT_FAILURE;
+    }
 
-		while(1)
-		{
-			telecom_system.RX_TEST_process_main();
-		}
-		telecom_system.constellation_plot.close();
-	}
-	else if (telecom_system.operation_mode==TX_TEST)
-	{
-		telecom_system.load_configuration();
-		while(1)
-		{
-			telecom_system.TX_TEST_process_main();
-		}
-	}
-	else if (telecom_system.operation_mode==BER_PLOT_baseband)
-	{
-		telecom_system.load_configuration();
-		telecom_system.constellation_plot.open("PLOT");
-		telecom_system.constellation_plot.reset("PLOT");
-		telecom_system.BER_PLOT_baseband_process_main();
-		telecom_system.constellation_plot.close();
-	}
-	else if(telecom_system.operation_mode==BER_PLOT_passband)
-	{
-		telecom_system.load_configuration();
-		telecom_system.constellation_plot.open("PLOT");
-		telecom_system.constellation_plot.reset("PLOT");
-		telecom_system.BER_PLOT_passband_process_main();
-		telecom_system.constellation_plot.close();
-	}
+    int opt;
+    while ((opt = getopt(argc, argv, "hc:m:")) != -1)
+    {
+        switch (opt)
+        {
+        case 'c':
+            if(optarg)
+                cpu_nr = atoi(optarg);
+            break;
+        case 'm':
+            if (!strcmp(optarg, "ARQ"))
+                telecom_system.operation_mode=ARQ_MODE;
+            if (!strcmp(optarg, "TX_TEST"))
+                telecom_system.operation_mode=TX_TEST;
+            if (!strcmp(optarg, "RX_TEST"))
+                telecom_system.operation_mode=RX_TEST;
+            if (!strcmp(optarg, "PLOT_BASEBAND"))
+                telecom_system.operation_mode=BER_PLOT_baseband;
+            if (!strcmp(optarg, "PLOT_PASSBAND"))
+                telecom_system.operation_mode=BER_PLOT_passband;
+            break;
+        case 'h':
+        default:
+            goto manual;
+        }
+    }
 
-	return 0;
+   if (cpu_nr != -1)
+   {
+       cpu_set_t mask;
+       CPU_ZERO(&mask);
+       CPU_SET(cpu_nr, &mask);
+       sched_setaffinity(0, sizeof(mask), &mask);
+       printf("RUNNING ON CPU Nr %d\n", sched_getcpu());
+   }
+
+   if(telecom_system.operation_mode==ARQ_MODE)
+   {
+       printf("Mode selected: ARQ\n");
+       cl_arq_controller ARQ;
+       ARQ.telecom_system=&telecom_system;
+       ARQ.init();
+       ARQ.print_stats();
+       while(1)
+       {
+           ARQ.process_main();
+       }
+   }
+
+    if(telecom_system.operation_mode==RX_TEST)
+    {
+        printf("Mode selected: RX_TEST\n");
+        telecom_system.load_configuration();
+        telecom_system.constellation_plot.open("PLOT");
+        telecom_system.constellation_plot.reset("PLOT");
+
+        while(1)
+        {
+            telecom_system.RX_TEST_process_main();
+        }
+        telecom_system.constellation_plot.close();
+    }
+
+    if (telecom_system.operation_mode==TX_TEST)
+    {
+        printf("Mode selected: TX_TEST\n");
+        telecom_system.load_configuration();
+        while(1)
+        {
+            telecom_system.TX_TEST_process_main();
+        }
+    }
+
+    if (telecom_system.operation_mode==BER_PLOT_baseband)
+    {
+        printf("Mode selected: PLOT_BASEBAND\n");
+        telecom_system.load_configuration();
+        telecom_system.constellation_plot.open("PLOT");
+        telecom_system.constellation_plot.reset("PLOT");
+        telecom_system.BER_PLOT_baseband_process_main();
+        telecom_system.constellation_plot.close();
+    }
+
+    if(telecom_system.operation_mode==BER_PLOT_passband)
+    {
+        printf("Mode selected: PLOT_PASSBAND\n");
+        telecom_system.load_configuration();
+        telecom_system.constellation_plot.open("PLOT");
+        telecom_system.constellation_plot.reset("PLOT");
+        telecom_system.BER_PLOT_passband_process_main();
+        telecom_system.constellation_plot.close();
+    }
+
+    return 0;
 }
 
