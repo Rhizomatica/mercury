@@ -1,0 +1,76 @@
+<?xml version="1.0"?>
+<block>
+  <name>deframer</name>
+  <key>hermes_ofdm_deframer</key>
+  <category>[HERMES_OFDM]</category>
+  <import>import hermes_ofdm</import>
+  <make>hermes_ofdm.deframer($Nc, $Nsymb, $Ndata, $Dx, $Dy, $pilot_mod, $edge_pilots)</make>
+ 
+  <param>
+    <name>Nc</name>
+    <key>Nc</key>
+    <type>int</type>
+  </param>
+  
+  <param>
+    <name>Nsymb</name>
+    <key>Nsymb</key>
+    <type>int</type>
+  </param>
+  
+  <param>
+    <name>Ndata</name>
+    <key>Ndata</key>
+    <type>int</type>
+  </param>
+  
+  <param>
+    <name>Dx</name>
+    <key>Dx</key>
+    <type>int</type>
+  </param>
+  
+  <param>
+    <name>Dy</name>
+    <key>Dy</key>
+    <type>int</type>
+  </param>
+  
+  <param>
+    <name>pilot_mod</name>
+    <key>pilot_mod</key>
+        <value>0</value>
+    <type>enum</type>
+    <option>
+	    <name>DBPSK</name>
+	    <key>0</key>
+	 </option> 
+  </param>
+  
+  <param>
+    <name>edge_pilots</name>
+    <key>edge_pilots</key>
+    <value>0</value>
+    <type>enum</type>
+    <option>
+	    <name>No</name>
+	    <key>0</key>
+	 </option>   
+	 <option>
+	    <name>Yes</name>
+	    <key>1</key>
+	 </option>    
+  </param>
+  
+  <sink>
+    <name>in</name>
+    <type>complex</type>
+    <vlen>$Nc * $Nsymb</vlen>
+  </sink>
+  
+    <source>
+    <name>out</name>
+    <type>complex</type>
+    <vlen>$Ndata</vlen>
+  </source>
+</block>

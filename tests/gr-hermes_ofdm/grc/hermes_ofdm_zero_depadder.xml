@@ -1,0 +1,32 @@
+<?xml version="1.0"?>
+<block>
+  <name>zero_depadder</name>
+  <key>hermes_ofdm_zero_depadder</key>
+  <category>[HERMES_OFDM]</category>
+  <import>import hermes_ofdm</import>
+  <make>hermes_ofdm.zero_depadder($Nc, $Nfft)</make>
+
+  <param>
+    <name>Nc</name>
+    <key>Nc</key>
+    <type>int</type>
+  </param>
+
+  <param>
+    <name>Nfft</name>
+    <key>Nfft</key>
+    <type>int</type>
+  </param>
+
+  <sink>
+    <name>in</name>
+    <type>complex</type>
+    <vlen>$Nfft</vlen>
+  </sink>
+
+  <source>
+    <name>out</name>
+    <type>complex</type>
+    <vlen>$Nc</vlen>
+  </source>
+</block>

@@ -1,0 +1,32 @@
+<?xml version="1.0"?>
+<block>
+  <name>gi_adder</name>
+  <key>hermes_ofdm_gi_adder</key>
+  <category>[HERMES_OFDM]</category>
+  <import>import hermes_ofdm</import>
+  <make>hermes_ofdm.gi_adder($Nfft, $Ngi)</make>
+
+  <param>
+    <name>Nfft</name>
+    <key>Nfft</key>
+    <type>int</type>
+  </param>
+
+  <param>
+    <name>Ngi</name>
+    <key>Ngi</key>
+    <type>int</type>
+  </param>
+
+   <sink>
+    <name>in</name>
+    <type>complex</type>
+    <vlen>$Nfft</vlen>
+  </sink>
+
+    <source>
+    <name>out</name>
+    <type>complex</type>
+    <vlen>$Nfft+$Ngi</vlen>
+  </source>
+</block>
