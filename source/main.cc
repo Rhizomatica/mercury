@@ -45,7 +45,7 @@ int main(int argc, char *argv[])
     if (argc < 3)
     {
     manual:
-        printf("Usage modes: \n%s\n%s -c [cpu_nr] -m [mode]\n", argv[0], argv[0]);
+        printf("Usage modes: \n%s -c [cpu_nr] -m [mode]\n", argv[0], argv[0]);
         printf("%s -h\n", argv[0]);
         printf("\nOptions:\n");
         printf(" -c [cpu_nr]                Run on CPU [cpu_br]. Defaults to CPU 3. Use -1 to disable CPU selection\n");
