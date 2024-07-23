@@ -25,7 +25,7 @@
 
 cl_configuration_telecom_system::cl_configuration_telecom_system()
 {
-
+    // TODO: parametrize most important parameters here
 	init_configuration=CONFIG_0;
 
 	ofdm_Nc=AUTO_SELLECT;
@@ -121,7 +121,7 @@ cl_configuration_telecom_system::cl_configuration_telecom_system()
 
 	speaker_type=PLAY;
 	speaker_channels=RIGHT;
-	speaker_frames_to_leave_transmit_fct=20000;
+	speaker_frames_to_leave_transmit_fct=20000; // TODO: REMOVE-ME
 }
 
 cl_configuration_telecom_system::~cl_configuration_telecom_system()

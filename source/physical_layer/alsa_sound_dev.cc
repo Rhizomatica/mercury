@@ -25,7 +25,7 @@
 cl_alsa_sound_device::cl_alsa_sound_device()
 {
 	dev_name="default";
-	baudrate=44100;
+	baudrate=44100;   // TODO: FIXME, should be 96000
 	channels=STEREO;
 	_dev_ptr=NULL;
 	_buffer_ptr=NULL;
@@ -34,7 +34,7 @@ cl_alsa_sound_device::cl_alsa_sound_device()
 	nbuffer_Samples=baudrate*2;
 	_buffer_size=NOT_DEFINED;
 	frames_per_period=NOT_DEFINED;
-	frames_to_leave_transmit_fct=600;
+	frames_to_leave_transmit_fct=600; // TODO: REMOVE-ME
 	callback_ptr=NULL;
 	type=PLAY;
 }
@@ -52,7 +52,7 @@ int cl_alsa_sound_device::init()
 
 	if(frames_per_period==NOT_DEFINED)
 	{
-		frames_per_period=baudrate;
+		frames_per_period=baudrate; // TODO: FIXME
 	}
 	if(this->_init()<0)
 	{
@@ -272,7 +272,7 @@ snd_pcm_sframes_t cl_alsa_sound_device::_transfere(double* buffer, unsigned int 
 				frames_avail=snd_pcm_avail(_dev_ptr);
 				usleep(1000);
 			}
-			while(frames_avail<_buffer_size-frames_to_leave_transmit_fct);
+			while(frames_avail<_buffer_size-frames_to_leave_transmit_fct); // TODO: FIXME
 		}
 	}
 	else if (type==CAPTURE)
