@@ -285,4 +285,4 @@ Contains the header files of Mercury.
 
 ### Authors
 
-The code was written by Fadi Jerji fadi.jerji@ <gmail.com, caisresearch.com, ieee.org>
+The code was written by Fadi Jerji at Rhizomatica.
