@@ -1,9 +1,7 @@
 /*
  * Mercury: A configurable open-source software-defined modem.
  * Copyright (C) 2022-2024 Fadi Jerji
- * Author: Fadi Jerji
- * Email: fadi.jerji@  <gmail.com, caisresearch.com, ieee.org>
- * ORCID: 0000-0002-2076-5831
+ * Copyright (C) 2024 Rafael Diniz
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as
@@ -21,6 +19,98 @@
  */
 
 #include "physical_layer/alsa_sound_dev.h"
+
+void show_alsa(snd_pcm_t *handle, snd_pcm_hw_params_t *params)
+{
+    unsigned int val, val2;
+    int dir = 0;
+    snd_pcm_uframes_t frames;
+
+    /* Display information about the PCM interface */
+
+    printf("PCM handle name = '%s'\n", snd_pcm_name(handle));
+
+    printf("PCM state = %s\n", snd_pcm_state_name(snd_pcm_state(handle)));
+
+    snd_pcm_hw_params_get_access(params, (snd_pcm_access_t *) &val);
+    printf("access type = %s\n",snd_pcm_access_name((snd_pcm_access_t)val));
+
+    snd_pcm_hw_params_get_format(params, (snd_pcm_format_t *)&val);
+    printf("format = '%s' (%s)\n",
+           snd_pcm_format_name((snd_pcm_format_t)val),
+           snd_pcm_format_description(
+               (snd_pcm_format_t)val));
+
+    snd_pcm_hw_params_get_subformat(params, (snd_pcm_subformat_t *)&val);
+    printf("subformat = '%s' (%s)\n",
+           snd_pcm_subformat_name((snd_pcm_subformat_t)val),
+           snd_pcm_subformat_description(
+               (snd_pcm_subformat_t)val));
+
+    snd_pcm_hw_params_get_channels(params, &val);
+    printf("channels = %d\n", val);
+
+    snd_pcm_hw_params_get_rate(params, &val, &dir);
+    printf("rate = %d Hz\n", val);
+
+    snd_pcm_hw_params_get_periods(params, &val, &dir);
+    printf("periods per buffer = %d frames\n", val);
+
+    snd_pcm_hw_params_get_period_size(params, &frames, &dir);
+    printf("period size = %d frames\n", (int)frames);
+
+    snd_pcm_hw_params_get_buffer_size(params, (snd_pcm_uframes_t *) &val);
+    printf("buffer size = %d frames\n", val);
+
+    snd_pcm_hw_params_get_period_time(params, &val, &dir);
+    printf("period time = %d us\n", val);
+
+    snd_pcm_hw_params_get_buffer_time(params, &val, &dir);
+    printf("buffer time = %d us\n", val);
+
+    snd_pcm_hw_params_get_rate_numden(params, &val, &val2);
+    printf("exact rate = %d/%d Hz\n", val, val2);
+
+    val = snd_pcm_hw_params_get_sbits(params);
+    printf("significant bits = %d\n", val);
+
+    val = snd_pcm_hw_params_is_batch(params);
+    printf("is batch double buffering = %d\n", val);
+
+    val = snd_pcm_hw_params_is_block_transfer(params);
+    printf("is block transfer = %d\n", val);
+
+    val = snd_pcm_hw_params_is_double(params);
+    printf("is double buffered = %d\n", val);
+
+    val = snd_pcm_hw_params_is_half_duplex(params);
+    printf("is half duplex = %d\n", val);
+
+    val = snd_pcm_hw_params_is_joint_duplex(params);
+    printf("is joint duplex = %d\n", val);
+
+    val = snd_pcm_hw_params_can_overrange(params);
+    printf("can overrange = %d\n", val);
+
+    val = snd_pcm_hw_params_can_mmap_sample_resolution(params);
+    printf("can mmap = %d\n", val);
+
+    val = snd_pcm_hw_params_can_pause(params);
+    printf("can pause = %d\n", val);
+
+    val = snd_pcm_hw_params_can_resume(params);
+    printf("can resume = %d\n", val);
+
+    val = snd_pcm_hw_params_can_sync_start(params);
+    printf("can sync start = %d\n", val);
+
+    val = snd_pcm_hw_params_get_fifo_size(params);
+    printf("fifo size = %d\n", val);
+
+    val = snd_pcm_hw_params_is_monotonic(params);
+    printf("is monotonic = %d\n", val);
+}
+
 
 cl_alsa_sound_device::cl_alsa_sound_device()
 {
@@ -185,6 +275,8 @@ int cl_alsa_sound_device::_init()
 		snd_async_add_pcm_handler(&callback_ptr, _dev_ptr, interrupt_handler, data_container_ptr);
 	}
 
+	show_alsa(_dev_ptr, configuration_parameters);
+
 	snd_pcm_hw_params_free (configuration_parameters);
 
 	_error = snd_pcm_prepare (_dev_ptr);
@@ -192,6 +284,7 @@ int cl_alsa_sound_device::_init()
 	{
 		return NOT_SUCCESS;
 	}
+
 	return _success;
 }
 
