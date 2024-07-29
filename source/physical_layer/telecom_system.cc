@@ -891,22 +891,20 @@ void cl_telecom_system::TX_TEST_process_main()
 
 void cl_telecom_system::TX_BROADCAST_process_main()
 {
-	static int is_first_message=YES;
-    printf("Frame size (%d - %d): %d\n", data_container.nBits, ldpc.P, data_container.nBits - ldpc.P);
+    int nReal_data = data_container.nBits-ldpc.P;
+    int frame_size = (nReal_data - outer_code_reserved_bits) / 8;
+    printf("Frame size %d\n", frame_size);
 
-    for(int i=0;i<data_container.nBits-ldpc.P;i++)
-	{
-		data_container.data_bit[i]=1;
-	}
-	if(is_first_message==YES)
-	{
-		transmit_bit(data_container.data_bit,data_container.passband_data,FIRST_MESSAGE);
-		is_first_message=NO;
-	}
-	else
-	{
-		transmit_bit(data_container.data_bit,data_container.passband_data,MIDDLE_MESSAGE);
-	}
+    static int counter = 0;
+    for (int i = 0; i < frame_size; i++)
+    {
+        data_container.data_byte[i] = 0;
+    }
+    data_container.data_byte[counter % frame_size] = 1;
+    counter++;
+
+    transmit_byte(data_container.data_byte,(nReal_data-outer_code_reserved_bits)/8,data_container.passband_data,SINGLE_MESSAGE);
+
 	speaker.transfere(data_container.passband_data,data_container.Nofdm*data_container.interpolation_rate*(ofdm.Nsymb+ofdm.preamble_configurator.Nsymb));
 }
 
@@ -1028,6 +1026,10 @@ void cl_telecom_system::RX_BROADCAST_process_main()
 	int constellation_plot_counter=0;
 	int constellation_plot_nFrames=1;
 	float contellation[ofdm.pilot_configurator.nData*constellation_plot_nFrames][2]={0};
+	int nReal_data = data_container.nBits-ldpc.P;
+    int frame_size = (nReal_data - outer_code_reserved_bits) / 8;
+    printf("Frame size %d\n", frame_size);
+
 
 	std::cout << std::fixed;
 	std::cout << std::setprecision(1);
@@ -1040,7 +1042,7 @@ void cl_telecom_system::RX_BROADCAST_process_main()
 			{
 				data_container.ready_to_process_passband_delayed_data[i]=data_container.passband_delayed_data[i];
 			}
-			st_receive_stats received_message_stats=receive_byte((const double*)data_container.ready_to_process_passband_delayed_data,tmp);
+			st_receive_stats received_message_stats=receive_byte((const double*)data_container.ready_to_process_passband_delayed_data, tmp);
 
 			if(ofdm.channel_estimator_amplitude_restoration==YES)
 			{
@@ -1061,7 +1063,8 @@ void cl_telecom_system::RX_BROADCAST_process_main()
 			{
 				std::cout<<"decoded in "<<received_message_stats.iterations_done<<" data=";
 				std::cout<<std::hex;
-				for(int i=0;i<5;i++)
+
+				for(int i = 0; i < frame_size; i++)
 				{
 					std::cout<<"0x"<<tmp[i]<<",";
 				}
