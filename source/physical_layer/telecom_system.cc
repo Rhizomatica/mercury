@@ -893,7 +893,6 @@ void cl_telecom_system::TX_BROADCAST_process_main()
 {
     int nReal_data = data_container.nBits-ldpc.P;
     int frame_size = (nReal_data - outer_code_reserved_bits) / 8;
-    printf("Frame size %d\n", frame_size);
 
     static int counter = 0;
     for (int i = 0; i < frame_size; i++)
