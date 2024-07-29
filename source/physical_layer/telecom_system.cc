@@ -801,12 +801,12 @@ void cl_telecom_system::init()
 		reinit_subsystems.pre_equalization_channel=NO;
 	}
 
-	srand(bit_energy_dispersal_seed);
+	srand(bit_energy_dispersal_seed); // this sequence always the same (fixed seed). why?
 	for(int i=0;i<ldpc.N;i++)
 	{
 		data_container.bit_energy_dispersal_sequence[i]=rand()%2;
 	}
-	srand(time(0)); // 2 consecutive srand()?
+	srand(time(0)); // and then we reset the seed?
 
 	receive_stats.iterations_done=-1;
 	receive_stats.delay=0;
@@ -825,7 +825,7 @@ void cl_telecom_system::init()
 	{
 		std::cout<<"nBits="<<data_container.nBits<<std::endl;
 		std::cout<<"Shannon_limit="<<Shannon_limit<<" dB"<<std::endl;
-		std::cout<<"rbc="<<rbc/1000.0<<" kbps"<<std::endl;
+		std::cout << "rbc=" << rbc << " bps" << std::endl;
 		std::cout<<"sampling_frequency="<<sampling_frequency<<" Sps"<<std::endl;
 	}
 }
@@ -891,7 +891,7 @@ void cl_telecom_system::TX_TEST_process_main()
 
 void cl_telecom_system::TX_BROADCAST_process_main()
 {
-    int nReal_data = data_container.nBits-ldpc.P;
+    int nReal_data = data_container.nBits - ldpc.P;
     int frame_size = (nReal_data - outer_code_reserved_bits) / 8;
 
     static int counter = 0;
@@ -902,9 +902,9 @@ void cl_telecom_system::TX_BROADCAST_process_main()
     data_container.data_byte[counter % frame_size] = 1;
     counter++;
 
-    transmit_byte(data_container.data_byte,(nReal_data-outer_code_reserved_bits)/8,data_container.passband_data,SINGLE_MESSAGE);
+    transmit_byte(data_container.data_byte, (nReal_data - outer_code_reserved_bits) / 8, data_container.passband_data, SINGLE_MESSAGE);
 
-	speaker.transfere(data_container.passband_data,data_container.Nofdm*data_container.interpolation_rate*(ofdm.Nsymb+ofdm.preamble_configurator.Nsymb));
+    speaker.transfere(data_container.passband_data, data_container.Nofdm * data_container.interpolation_rate * (ofdm.Nsymb + ofdm.preamble_configurator.Nsymb));
 }
 
 void cl_telecom_system::RX_TEST_process_main()
@@ -1020,84 +1020,65 @@ void cl_telecom_system::RX_TEST_process_main()
 
 void cl_telecom_system::RX_BROADCAST_process_main()
 {
-	std::complex <double> data_fft[ofdm.pilot_configurator.nData];
-	int tmp[N_MAX];
-	int constellation_plot_counter=0;
-	int constellation_plot_nFrames=1;
-	float contellation[ofdm.pilot_configurator.nData*constellation_plot_nFrames][2]={0};
-	int nReal_data = data_container.nBits-ldpc.P;
+    int tmp[N_MAX];
+    int nReal_data = data_container.nBits - ldpc.P;
     int frame_size = (nReal_data - outer_code_reserved_bits) / 8;
 
-	std::cout << std::fixed;
-	std::cout << std::setprecision(1);
+    if(data_container.data_ready == 1)
+    {
+        if(data_container.frames_to_read == 0)
+        {
+            for(int i=0; i < data_container.Nofdm * data_container.buffer_Nsymb * data_container.interpolation_rate; i++)
+            {
+                data_container.ready_to_process_passband_delayed_data[i] = data_container.passband_delayed_data[i];
+            }
+            st_receive_stats received_message_stats = receive_byte((const double*)data_container.ready_to_process_passband_delayed_data, tmp);
 
-	if(data_container.data_ready==1)
-	{
-		if(data_container.frames_to_read==0)
-		{
-			for(int i=0;i<data_container.Nofdm*data_container.buffer_Nsymb*data_container.interpolation_rate;i++)
-			{
-				data_container.ready_to_process_passband_delayed_data[i]=data_container.passband_delayed_data[i];
-			}
-			st_receive_stats received_message_stats=receive_byte((const double*)data_container.ready_to_process_passband_delayed_data, tmp);
-
-			if(ofdm.channel_estimator_amplitude_restoration==YES)
-			{
-				for(int i=0;i<ofdm.pilot_configurator.nData;i++)
-				{
-					data_fft[i]=data_container.ofdm_deframed_data_without_amplitude_restoration[i];
-				}
-			}
-			else
-			{
-				for(int i=0;i<ofdm.pilot_configurator.nData;i++)
-				{
-					data_fft[i]=data_container.ofdm_deframed_data[i];
-				}
-			}
-
-			if (received_message_stats.message_decoded==YES)
-			{
-				std::cout<<"decoded in "<<received_message_stats.iterations_done<<" data=";
-				std::cout<<std::hex;
+            if(received_message_stats.message_decoded == YES)
+            {
+				std::cout << "decoded in " << received_message_stats.iterations_done << " data=";
+				std::cout << std::endl;
+				std::cout << std::hex;
 
 				for(int i = 0; i < frame_size; i++)
 				{
-					std::cout<<"0x"<<tmp[i]<<",";
+					std::cout << "0x" << tmp[i] << ",";
 				}
-				std::cout<<std::dec;
-				std::cout<<" sync_trial="<<receive_stats.sync_trials;
-				std::cout<<" time_peak_subsymb_location="<<received_message_stats.delay%(data_container.Nofdm*data_container.interpolation_rate);
-				std::cout<<" time_peak_symb_location="<<received_message_stats.delay/(data_container.Nofdm*data_container.interpolation_rate);
-				std::cout<<" freq_offset="<<receive_stats.freq_offset;
-				std::cout<<" SNR="<<receive_stats.SNR<<" dB";
-				std::cout<<" Signal Strength="<<receive_stats.signal_stregth_dbm<<" dBm ";
-				std::cout<<std::endl;
+				std::cout << std::endl;
+				std::cout << std::dec;
+				std::cout << " sync_trial=" << receive_stats.sync_trials;
+				std::cout << " time_peak_subsymb_location=" << received_message_stats.delay % (data_container.Nofdm * data_container.interpolation_rate);
+				std::cout << " time_peak_symb_location=" << received_message_stats.delay / (data_container.Nofdm * data_container.interpolation_rate);
+				std::cout << " freq_offset=" << receive_stats.freq_offset;
+				std::cout << " SNR=" << receive_stats.SNR << " dB";
+				std::cout << " Signal Strength=" << receive_stats.signal_stregth_dbm << " dBm ";
+				std::cout << std::endl;
 
-				int end_of_current_message=received_message_stats.delay/(data_container.Nofdm*data_container.interpolation_rate)+data_container.Nsymb+data_container.preamble_nSymb;
-				int frames_left_in_buffer=data_container.buffer_Nsymb-end_of_current_message;
-				if(frames_left_in_buffer<0) {frames_left_in_buffer=0;}
+				int end_of_current_message = received_message_stats.delay / (data_container.Nofdm * data_container.interpolation_rate) + data_container.Nsymb + data_container.preamble_nSymb;
+				int frames_left_in_buffer = data_container.buffer_Nsymb - end_of_current_message;
+				if(frames_left_in_buffer < 0)
+                {
+                    frames_left_in_buffer = 0;
+                }
+				data_container.frames_to_read = data_container.Nsymb + data_container.preamble_nSymb - frames_left_in_buffer - data_container.nUnder_processing_events;
 
-				data_container.frames_to_read=data_container.Nsymb+data_container.preamble_nSymb-frames_left_in_buffer-data_container.nUnder_processing_events;
-
-				if(data_container.frames_to_read>(data_container.Nsymb+data_container.preamble_nSymb) || data_container.frames_to_read<0)
+				if(data_container.frames_to_read > (data_container.Nsymb + data_container.preamble_nSymb) || data_container.frames_to_read < 0)
 				{
-					data_container.frames_to_read=data_container.Nsymb+data_container.preamble_nSymb-frames_left_in_buffer;
+					data_container.frames_to_read = data_container.Nsymb + data_container.preamble_nSymb - frames_left_in_buffer;
 				}
 
-				receive_stats.delay_of_last_decoded_message+=(data_container.Nsymb+data_container.preamble_nSymb-(data_container.frames_to_read+data_container.nUnder_processing_events))*data_container.Nofdm*data_container.interpolation_rate;
+				receive_stats.delay_of_last_decoded_message += (data_container.Nsymb + data_container.preamble_nSymb - (data_container.frames_to_read + data_container.nUnder_processing_events)) * data_container.Nofdm * data_container.interpolation_rate;
 
-				data_container.nUnder_processing_events=0;
-
+				data_container.nUnder_processing_events = 0;
 			}
 			else
 			{
-				if(data_container.data_ready==1 && data_container.frames_to_read==0 && receive_stats.delay_of_last_decoded_message!=-1)
+				if(data_container.data_ready == 1 && data_container.frames_to_read == 0 && receive_stats.delay_of_last_decoded_message != -1)
 				{
-					receive_stats.delay_of_last_decoded_message-=data_container.Nofdm*data_container.interpolation_rate;
-					if(receive_stats.delay_of_last_decoded_message<0)
+					receive_stats.delay_of_last_decoded_message -= data_container.Nofdm * data_container.interpolation_rate;
+					if(receive_stats.delay_of_last_decoded_message < 0)
 					{
-						receive_stats.delay_of_last_decoded_message=-1;
+						receive_stats.delay_of_last_decoded_message = -1;
 					}
 				}
 				//				std::cout<<"Syncing.. ";
@@ -1109,21 +1090,8 @@ void cl_telecom_system::RX_BROADCAST_process_main()
 				//				std::cout<<std::endl;
 			}
 
-			for(int i=0;i<ofdm.pilot_configurator.nData;i++)
-			{
-				contellation[constellation_plot_counter*ofdm.pilot_configurator.nData+i][0]=data_fft[i].real();
-				contellation[constellation_plot_counter*ofdm.pilot_configurator.nData+i][1]=data_fft[i].imag();
-			}
-
-			constellation_plot_counter++;
-
-			if(constellation_plot_counter==constellation_plot_nFrames)
-			{
-				constellation_plot_counter=0;
-				constellation_plot.plot_constellation(&contellation[0][0],ofdm.pilot_configurator.nData*constellation_plot_nFrames);
-			}
 		}
-		data_container.data_ready=0;
+		data_container.data_ready = 0;
 
 	}
 	else
