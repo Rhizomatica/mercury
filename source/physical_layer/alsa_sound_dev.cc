@@ -275,7 +275,7 @@ int cl_alsa_sound_device::_init()
 		snd_async_add_pcm_handler(&callback_ptr, _dev_ptr, interrupt_handler, data_container_ptr);
 	}
 
-	show_alsa(_dev_ptr, configuration_parameters);
+	// show_alsa(_dev_ptr, configuration_parameters);
 
 	snd_pcm_hw_params_free (configuration_parameters);
 

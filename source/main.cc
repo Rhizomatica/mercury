@@ -42,7 +42,7 @@ int main(int argc, char *argv[])
     // default mode
     telecom_system.operation_mode=ARQ_MODE;
 
-    if (argc < 3)
+    if (argc < 2)
     {
     manual:
         printf("Usage modes: \n%s -c [cpu_nr] -m [mode]\n", argv[0], argv[0]);
@@ -50,12 +50,13 @@ int main(int argc, char *argv[])
         printf("\nOptions:\n");
         printf(" -c [cpu_nr]                Run on CPU [cpu_br]. Defaults to CPU 3. Use -1 to disable CPU selection\n");
         printf(" -m [mode]                  Available modes are: ARQ, TX, RX, TX_TEST, RX_TEST, PLOT_BASEBAND, PLOT_PASSBAND\n");
+        printf(" -l                         List all modulator/coding modes\n");
         printf(" -h                         Prints this help.\n");
         return EXIT_FAILURE;
     }
 
     int opt;
-    while ((opt = getopt(argc, argv, "hc:m:")) != -1)
+    while ((opt = getopt(argc, argv, "hc:m:l")) != -1)
     {
         switch (opt)
         {
@@ -79,6 +80,15 @@ int main(int argc, char *argv[])
             if (!strcmp(optarg, "PLOT_PASSBAND"))
                 telecom_system.operation_mode=BER_PLOT_passband;
             break;
+        case 'l':
+            for (int i = 0; i < NUMBER_OF_CONFIGS; i++)
+            {
+                telecom_system.load_configuration(i);
+                printf("CONFIG_%d (%f bps)\n", i, telecom_system.rbc);
+            }
+            exit(EXIT_SUCCESS);
+            break;
+
         case 'h':
         default:
             goto manual;
@@ -154,15 +164,28 @@ int main(int argc, char *argv[])
     if(telecom_system.operation_mode == RX_BROADCAST)
     {
         printf("Mode selected: RX_BROADCAST\n");
-        // TODO
-        printf("NOT IMPLEMENTED YET!\n");
+        telecom_system.load_configuration();
+        telecom_system.constellation_plot.open("PLOT");
+        telecom_system.constellation_plot.reset("PLOT");
+
+        while(1)
+        {
+            telecom_system.RX_BROADCAST_process_main();
+        }
+        telecom_system.constellation_plot.close();
+
     }
 
     if(telecom_system.operation_mode == TX_BROADCAST)
     {
         printf("Mode selected: TX_BROADCAST\n");
-        // TODO
-        printf("NOT IMPLEMENTED YET!\n");
+        telecom_system.load_configuration();
+
+        while(1)
+        {
+            telecom_system.TX_BROADCAST_process_main();
+        }
+
     }
 
     return 0;

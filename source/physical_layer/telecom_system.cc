@@ -888,7 +888,140 @@ void cl_telecom_system::TX_TEST_process_main()
 	}
 	speaker.transfere(data_container.passband_data,data_container.Nofdm*data_container.interpolation_rate*(ofdm.Nsymb+ofdm.preamble_configurator.Nsymb));
 }
+
+void cl_telecom_system::TX_BROADCAST_process_main()
+{
+	static int is_first_message=YES;
+    printf("Frame size (%d - %d): %d\n", data_container.nBits, ldpc.P, data_container.nBits - ldpc.P);
+
+    for(int i=0;i<data_container.nBits-ldpc.P;i++)
+	{
+		data_container.data_bit[i]=1;
+	}
+	if(is_first_message==YES)
+	{
+		transmit_bit(data_container.data_bit,data_container.passband_data,FIRST_MESSAGE);
+		is_first_message=NO;
+	}
+	else
+	{
+		transmit_bit(data_container.data_bit,data_container.passband_data,MIDDLE_MESSAGE);
+	}
+	speaker.transfere(data_container.passband_data,data_container.Nofdm*data_container.interpolation_rate*(ofdm.Nsymb+ofdm.preamble_configurator.Nsymb));
+}
+
 void cl_telecom_system::RX_TEST_process_main()
+{
+	std::complex <double> data_fft[ofdm.pilot_configurator.nData];
+	int tmp[N_MAX];
+	int constellation_plot_counter=0;
+	int constellation_plot_nFrames=1;
+	float contellation[ofdm.pilot_configurator.nData*constellation_plot_nFrames][2]={0};
+
+	std::cout << std::fixed;
+	std::cout << std::setprecision(1);
+
+	if(data_container.data_ready==1)
+	{
+		if(data_container.frames_to_read==0)
+		{
+			for(int i=0;i<data_container.Nofdm*data_container.buffer_Nsymb*data_container.interpolation_rate;i++)
+			{
+				data_container.ready_to_process_passband_delayed_data[i]=data_container.passband_delayed_data[i];
+			}
+			st_receive_stats received_message_stats=receive_byte((const double*)data_container.ready_to_process_passband_delayed_data,tmp);
+
+			if(ofdm.channel_estimator_amplitude_restoration==YES)
+			{
+				for(int i=0;i<ofdm.pilot_configurator.nData;i++)
+				{
+					data_fft[i]=data_container.ofdm_deframed_data_without_amplitude_restoration[i];
+				}
+			}
+			else
+			{
+				for(int i=0;i<ofdm.pilot_configurator.nData;i++)
+				{
+					data_fft[i]=data_container.ofdm_deframed_data[i];
+				}
+			}
+
+			if (received_message_stats.message_decoded==YES)
+			{
+				std::cout<<"decoded in "<<received_message_stats.iterations_done<<" data=";
+				std::cout<<std::hex;
+				for(int i=0;i<5;i++)
+				{
+					std::cout<<"0x"<<tmp[i]<<",";
+				}
+				std::cout<<std::dec;
+				std::cout<<" sync_trial="<<receive_stats.sync_trials;
+				std::cout<<" time_peak_subsymb_location="<<received_message_stats.delay%(data_container.Nofdm*data_container.interpolation_rate);
+				std::cout<<" time_peak_symb_location="<<received_message_stats.delay/(data_container.Nofdm*data_container.interpolation_rate);
+				std::cout<<" freq_offset="<<receive_stats.freq_offset;
+				std::cout<<" SNR="<<receive_stats.SNR<<" dB";
+				std::cout<<" Signal Strength="<<receive_stats.signal_stregth_dbm<<" dBm ";
+				std::cout<<std::endl;
+
+				int end_of_current_message=received_message_stats.delay/(data_container.Nofdm*data_container.interpolation_rate)+data_container.Nsymb+data_container.preamble_nSymb;
+				int frames_left_in_buffer=data_container.buffer_Nsymb-end_of_current_message;
+				if(frames_left_in_buffer<0) {frames_left_in_buffer=0;}
+
+				data_container.frames_to_read=data_container.Nsymb+data_container.preamble_nSymb-frames_left_in_buffer-data_container.nUnder_processing_events;
+
+				if(data_container.frames_to_read>(data_container.Nsymb+data_container.preamble_nSymb) || data_container.frames_to_read<0)
+				{
+					data_container.frames_to_read=data_container.Nsymb+data_container.preamble_nSymb-frames_left_in_buffer;
+				}
+
+				receive_stats.delay_of_last_decoded_message+=(data_container.Nsymb+data_container.preamble_nSymb-(data_container.frames_to_read+data_container.nUnder_processing_events))*data_container.Nofdm*data_container.interpolation_rate;
+
+				data_container.nUnder_processing_events=0;
+
+			}
+			else
+			{
+				if(data_container.data_ready==1 && data_container.frames_to_read==0 && receive_stats.delay_of_last_decoded_message!=-1)
+				{
+					receive_stats.delay_of_last_decoded_message-=data_container.Nofdm*data_container.interpolation_rate;
+					if(receive_stats.delay_of_last_decoded_message<0)
+					{
+						receive_stats.delay_of_last_decoded_message=-1;
+					}
+				}
+				//				std::cout<<"Syncing.. ";
+				//				std::cout<<" delay="<<received_message_stats.delay;
+				//				std::cout<<" time_peak_subsymb_location="<<received_message_stats.delay%(data_container.Nofdm*data_container.interpolation_rate);
+				//				std::cout<<" time_peak_symb_location="<<received_message_stats.delay/(data_container.Nofdm*data_container.interpolation_rate);
+				//				std::cout<<" freq_offset="<<receive_stats.freq_offset;
+				//				std::cout<<" Signal Strength="<<receive_stats.signal_stregth_dbm<<" dBm ";
+				//				std::cout<<std::endl;
+			}
+
+			for(int i=0;i<ofdm.pilot_configurator.nData;i++)
+			{
+				contellation[constellation_plot_counter*ofdm.pilot_configurator.nData+i][0]=data_fft[i].real();
+				contellation[constellation_plot_counter*ofdm.pilot_configurator.nData+i][1]=data_fft[i].imag();
+			}
+
+			constellation_plot_counter++;
+
+			if(constellation_plot_counter==constellation_plot_nFrames)
+			{
+				constellation_plot_counter=0;
+				constellation_plot.plot_constellation(&contellation[0][0],ofdm.pilot_configurator.nData*constellation_plot_nFrames);
+			}
+		}
+		data_container.data_ready=0;
+
+	}
+	else
+	{
+		usleep(1000);
+	}
+}
+
+void cl_telecom_system::RX_BROADCAST_process_main()
 {
 	std::complex <double> data_fft[ofdm.pilot_configurator.nData];
 	int tmp[N_MAX];
