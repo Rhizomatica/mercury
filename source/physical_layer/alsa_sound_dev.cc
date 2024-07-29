@@ -115,7 +115,7 @@ void show_alsa(snd_pcm_t *handle, snd_pcm_hw_params_t *params)
 cl_alsa_sound_device::cl_alsa_sound_device()
 {
 	dev_name="default";
-	baudrate=44100;   // TODO: FIXME, should be 96000
+	baudrate=48000;   // TODO: FIXME, should be 96000
 	channels=STEREO;
 	_dev_ptr=NULL;
 	_buffer_ptr=NULL;
