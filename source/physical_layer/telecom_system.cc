@@ -1024,6 +1024,9 @@ void cl_telecom_system::RX_BROADCAST_process_main()
     int nReal_data = data_container.nBits - ldpc.P;
     int frame_size = (nReal_data - outer_code_reserved_bits) / 8;
 
+	std::cout << std::fixed;
+	std::cout << std::setprecision(1);
+
     if(data_container.data_ready == 1)
     {
         if(data_container.frames_to_read == 0)
@@ -1036,7 +1039,8 @@ void cl_telecom_system::RX_BROADCAST_process_main()
 
             if(received_message_stats.message_decoded == YES)
             {
-				std::cout << "decoded in " << received_message_stats.iterations_done << " data=";
+				std::cout << std::endl;
+				std::cout << "decoded in " << received_message_stats.iterations_done << " iterations. Data:";
 				std::cout << std::endl;
 				std::cout << std::hex;
 
