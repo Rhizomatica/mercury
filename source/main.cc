@@ -49,8 +49,7 @@ int main(int argc, char *argv[])
         printf("%s -h\n", argv[0]);
         printf("\nOptions:\n");
         printf(" -c [cpu_nr]                Run on CPU [cpu_br]. Defaults to CPU 3. Use -1 to disable CPU selection\n");
-        // printf(" -m [mode]                  Available modes are: ARQ, TX, RX, TX_TEST, RX_TEST, PLOT_BASEBAND, PLOT_PASSBAND\n");
-        printf(" -m [mode]                  Available modes are: ARQ, TX_TEST, RX_TEST, PLOT_BASEBAND, PLOT_PASSBAND\n");
+        printf(" -m [mode]                  Available modes are: ARQ, TX, RX, TX_TEST, RX_TEST, PLOT_BASEBAND, PLOT_PASSBAND\n");
         printf(" -h                         Prints this help.\n");
         return EXIT_FAILURE;
     }
@@ -71,6 +70,10 @@ int main(int argc, char *argv[])
                 telecom_system.operation_mode=TX_TEST;
             if (!strcmp(optarg, "RX_TEST"))
                 telecom_system.operation_mode=RX_TEST;
+            if (!strcmp(optarg, "TX"))
+                telecom_system.operation_mode=TX_BROADCAST;
+            if (!strcmp(optarg, "RX"))
+                telecom_system.operation_mode=RX_BROADCAST;
             if (!strcmp(optarg, "PLOT_BASEBAND"))
                 telecom_system.operation_mode=BER_PLOT_baseband;
             if (!strcmp(optarg, "PLOT_PASSBAND"))
@@ -91,7 +94,7 @@ int main(int argc, char *argv[])
        printf("RUNNING ON CPU Nr %d\n", sched_getcpu());
    }
 
-   if(telecom_system.operation_mode==ARQ_MODE)
+   if(telecom_system.operation_mode == ARQ_MODE)
    {
        printf("Mode selected: ARQ\n");
        cl_arq_controller ARQ;
@@ -104,7 +107,7 @@ int main(int argc, char *argv[])
        }
    }
 
-    if(telecom_system.operation_mode==RX_TEST)
+    if(telecom_system.operation_mode == RX_TEST)
     {
         printf("Mode selected: RX_TEST\n");
         telecom_system.load_configuration();
@@ -118,7 +121,7 @@ int main(int argc, char *argv[])
         telecom_system.constellation_plot.close();
     }
 
-    if (telecom_system.operation_mode==TX_TEST)
+    if (telecom_system.operation_mode == TX_TEST)
     {
         printf("Mode selected: TX_TEST\n");
         telecom_system.load_configuration();
@@ -128,7 +131,7 @@ int main(int argc, char *argv[])
         }
     }
 
-    if (telecom_system.operation_mode==BER_PLOT_baseband)
+    if (telecom_system.operation_mode == BER_PLOT_baseband)
     {
         printf("Mode selected: PLOT_BASEBAND\n");
         telecom_system.load_configuration();
@@ -138,7 +141,7 @@ int main(int argc, char *argv[])
         telecom_system.constellation_plot.close();
     }
 
-    if(telecom_system.operation_mode==BER_PLOT_passband)
+    if(telecom_system.operation_mode == BER_PLOT_passband)
     {
         printf("Mode selected: PLOT_PASSBAND\n");
         telecom_system.load_configuration();
@@ -146,6 +149,20 @@ int main(int argc, char *argv[])
         telecom_system.constellation_plot.reset("PLOT");
         telecom_system.BER_PLOT_passband_process_main();
         telecom_system.constellation_plot.close();
+    }
+
+    if(telecom_system.operation_mode == RX_BROADCAST)
+    {
+        printf("Mode selected: RX_BROADCAST\n");
+        // TODO
+        printf("NOT IMPLEMENTED YET!\n");
+    }
+
+    if(telecom_system.operation_mode == TX_BROADCAST)
+    {
+        printf("Mode selected: TX_BROADCAST\n");
+        // TODO
+        printf("NOT IMPLEMENTED YET!\n");
     }
 
     return 0;

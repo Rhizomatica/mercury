@@ -806,7 +806,7 @@ void cl_telecom_system::init()
 	{
 		data_container.bit_energy_dispersal_sequence[i]=rand()%2;
 	}
-	srand(time(0));
+	srand(time(0)); // 2 consecutive srand()?
 
 	receive_stats.iterations_done=-1;
 	receive_stats.delay=0;
