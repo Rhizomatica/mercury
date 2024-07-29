@@ -1028,8 +1028,6 @@ void cl_telecom_system::RX_BROADCAST_process_main()
 	float contellation[ofdm.pilot_configurator.nData*constellation_plot_nFrames][2]={0};
 	int nReal_data = data_container.nBits-ldpc.P;
     int frame_size = (nReal_data - outer_code_reserved_bits) / 8;
-    printf("Frame size %d\n", frame_size);
-
 
 	std::cout << std::fixed;
 	std::cout << std::setprecision(1);
