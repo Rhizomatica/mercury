@@ -58,7 +58,7 @@ int main(int argc, char *argv[])
     }
 
     int opt;
-    while ((opt = getopt(argc, argv, "hc:m:l")) != -1)
+    while ((opt = getopt(argc, argv, "hc:m:s:l")) != -1)
     {
         switch (opt)
         {
