@@ -70,6 +70,7 @@ cl_telecom_system::~cl_telecom_system()
 {
 
 }
+
 cl_error_rate cl_telecom_system::baseband_test_EsN0(float EsN0,int max_frame_no)
 {
 	cl_error_rate lerror_rate;
@@ -265,6 +266,16 @@ cl_error_rate cl_telecom_system::passband_test_EsN0(float EsN0,int max_frame_no)
 		lerror_rate.check(data_container.data_bit,data_container.hd_decoded_data_bit,nReal_data-outer_code_reserved_bits);
 	}
 	return lerror_rate;
+}
+
+int cl_telecom_system::get_frame_size_bytes()
+{
+    return (data_container.nBits - ldpc.P - outer_code_reserved_bits) / 8;
+}
+
+int cl_telecom_system::get_frame_size_bits()
+{
+    return data_container.nBits - ldpc.P - outer_code_reserved_bits;
 }
 
 void cl_telecom_system::transmit_byte(const int* data, int nBytes, double* out, int message_location)

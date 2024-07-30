@@ -141,6 +141,9 @@ public:
 	void return_to_last_configuration();
 	char get_configuration(double SNR);
 
+	int get_frame_size_bytes();
+	int get_frame_size_bits();
+
 	struct st_channel_complex *pre_equalization_channel;
 	void get_pre_equalization_channel();
 

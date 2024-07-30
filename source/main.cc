@@ -90,7 +90,7 @@ int main(int argc, char *argv[])
             for (int i = 0; i < NUMBER_OF_CONFIGS; i++)
             {
                 telecom_system.load_configuration(i);
-                printf("CONFIG_%d (%f bps)\n", i, telecom_system.rbc);
+                printf("CONFIG_%d (%f bps), frame_size: %d Bytes / %d bits\n", i, telecom_system.rbc, telecom_system.get_frame_size_bytes(), telecom_system.get_frame_size_bits());
             }
             exit(EXIT_SUCCESS);
             break;
