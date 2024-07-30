@@ -41,11 +41,11 @@ int main(int argc, char *argv[])
     srand(time(0));
 
     // default mode
-    telecom_system.operation_mode=ARQ_MODE;
+    telecom_system.operation_mode = ARQ_MODE;
 
     if (argc < 2)
     {
-    manual:
+ manual:
         printf("Usage modes: \n%s -c [cpu_nr] -m [mode]\n", argv[0], argv[0]);
         printf("%s -h\n", argv[0]);
         printf("\nOptions:\n");
@@ -63,34 +63,36 @@ int main(int argc, char *argv[])
         switch (opt)
         {
         case 'c':
-            if(optarg)
+            if (optarg)
                 cpu_nr = atoi(optarg);
             break;
         case 'm':
             if (!strcmp(optarg, "ARQ"))
-                telecom_system.operation_mode=ARQ_MODE;
+                telecom_system.operation_mode = ARQ_MODE;
             if (!strcmp(optarg, "TX_TEST"))
-                telecom_system.operation_mode=TX_TEST;
+                telecom_system.operation_mode = TX_TEST;
             if (!strcmp(optarg, "RX_TEST"))
-                telecom_system.operation_mode=RX_TEST;
+                telecom_system.operation_mode = RX_TEST;
             if (!strcmp(optarg, "TX"))
-                telecom_system.operation_mode=TX_BROADCAST;
+                telecom_system.operation_mode = TX_BROADCAST;
             if (!strcmp(optarg, "RX"))
-                telecom_system.operation_mode=RX_BROADCAST;
+                telecom_system.operation_mode = RX_BROADCAST;
             if (!strcmp(optarg, "PLOT_BASEBAND"))
-                telecom_system.operation_mode=BER_PLOT_baseband;
+                telecom_system.operation_mode = BER_PLOT_baseband;
             if (!strcmp(optarg, "PLOT_PASSBAND"))
-                telecom_system.operation_mode=BER_PLOT_passband;
+                telecom_system.operation_mode = BER_PLOT_passband;
             break;
         case 's':
-            if(optarg)
+            if (optarg)
                 mod_config = atoi(optarg);
             break;
         case 'l':
             for (int i = 0; i < NUMBER_OF_CONFIGS; i++)
             {
                 telecom_system.load_configuration(i);
-                printf("CONFIG_%d (%f bps), frame_size: %d Bytes / %d bits\n", i, telecom_system.rbc, telecom_system.get_frame_size_bytes(), telecom_system.get_frame_size_bits());
+                printf("CONFIG_%d (%f bps), frame_size: %d Bytes / %d bits\n", i,
+                       telecom_system.rbc, telecom_system.get_frame_size_bytes(),
+                       telecom_system.get_frame_size_bits());
             }
             exit(EXIT_SUCCESS);
             break;
@@ -101,35 +103,35 @@ int main(int argc, char *argv[])
         }
     }
 
-   if (cpu_nr != -1)
-   {
-       cpu_set_t mask;
-       CPU_ZERO(&mask);
-       CPU_SET(cpu_nr, &mask);
-       sched_setaffinity(0, sizeof(mask), &mask);
-       printf("RUNNING ON CPU Nr %d\n", sched_getcpu());
-   }
+    if (cpu_nr != -1)
+    {
+        cpu_set_t mask;
+        CPU_ZERO(&mask);
+        CPU_SET(cpu_nr, &mask);
+        sched_setaffinity(0, sizeof(mask), &mask);
+        printf("RUNNING ON CPU Nr %d\n", sched_getcpu());
+    }
 
-   if ((mod_config >= NUMBER_OF_CONFIGS) || (mod_config < 0))
-   {
-       printf("Wrong modulation config %d\n", mod_config);
-       exit(EXIT_FAILURE);
-   }
+    if ((mod_config >= NUMBER_OF_CONFIGS) || (mod_config < 0))
+    {
+        printf("Wrong modulation config %d\n", mod_config);
+        exit(EXIT_FAILURE);
+    }
 
-   if(telecom_system.operation_mode == ARQ_MODE)
-   {
-       printf("Mode selected: ARQ\n");
-       cl_arq_controller ARQ;
-       ARQ.telecom_system=&telecom_system;
-       ARQ.init();
-       ARQ.print_stats();
-       while(1)
-       {
-           ARQ.process_main();
-       }
-   }
+    if (telecom_system.operation_mode == ARQ_MODE)
+    {
+        printf("Mode selected: ARQ\n");
+        cl_arq_controller ARQ;
+        ARQ.telecom_system = &telecom_system;
+        ARQ.init();
+        ARQ.print_stats();
+        while (1)
+        {
+            ARQ.process_main();
+        }
+    }
 
-    if(telecom_system.operation_mode == RX_TEST)
+    if (telecom_system.operation_mode == RX_TEST)
     {
         printf("Mode selected: RX_TEST\n");
         telecom_system.load_configuration(mod_config);
@@ -137,7 +139,7 @@ int main(int argc, char *argv[])
         telecom_system.constellation_plot.open("PLOT");
         telecom_system.constellation_plot.reset("PLOT");
 
-        while(1)
+        while (1)
         {
             telecom_system.RX_TEST_process_main();
         }
@@ -150,7 +152,7 @@ int main(int argc, char *argv[])
         telecom_system.load_configuration(mod_config);
         printf("CONFIG_%d (%f bps)\n", mod_config, telecom_system.rbc);
 
-        while(1)
+        while (1)
         {
             telecom_system.TX_TEST_process_main();
         }
@@ -169,7 +171,7 @@ int main(int argc, char *argv[])
         telecom_system.constellation_plot.close();
     }
 
-    if(telecom_system.operation_mode == BER_PLOT_passband)
+    if (telecom_system.operation_mode == BER_PLOT_passband)
     {
         printf("Mode selected: PLOT_PASSBAND\n");
         telecom_system.load_configuration(mod_config);
@@ -182,7 +184,7 @@ int main(int argc, char *argv[])
         telecom_system.constellation_plot.close();
     }
 
-    if(telecom_system.operation_mode == RX_BROADCAST)
+    if (telecom_system.operation_mode == RX_BROADCAST)
     {
         printf("Mode selected: RX_BROADCAST\n");
         telecom_system.load_configuration(mod_config);
@@ -190,27 +192,27 @@ int main(int argc, char *argv[])
         telecom_system.constellation_plot.open("PLOT");
         telecom_system.constellation_plot.reset("PLOT");
 
-        while(1)
+        while (1)
         {
             telecom_system.RX_BROADCAST_process_main();
         }
 
-        telecom_system.constellation_plot.close(); // uff...
+        telecom_system.constellation_plot.close();      // uff...
 
     }
 
-    if(telecom_system.operation_mode == TX_BROADCAST)
+    if (telecom_system.operation_mode == TX_BROADCAST)
     {
         printf("Mode selected: TX_BROADCAST\n");
         telecom_system.load_configuration(mod_config);
         printf("CONFIG_%d (%f bps)\n", mod_config, telecom_system.rbc);
 
-        while(1)
+        while (1)
         {
             telecom_system.TX_BROADCAST_process_main();
         }
 
     }
 
-    return 0;
+    return EXIT_SUCCESS;
 }
