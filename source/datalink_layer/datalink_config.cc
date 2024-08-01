@@ -38,7 +38,7 @@ cl_configuration_arq::cl_configuration_arq()
 	tcp_socket_data_timeout_ms=INFINITE;
 
 
-	init_configuration=CONFIG_1;
+	init_configuration=CONFIG_1; // TODO: can we init with CONFIG_0?
 	ack_configuration=CONFIG_0;
 
 	gear_shift_on=NO;

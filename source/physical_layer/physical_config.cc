@@ -72,15 +72,19 @@ cl_configuration_telecom_system::cl_configuration_telecom_system()
 
 	outer_code=CRC16_MODBUS_RTU;
 
-	frequency_interpolation_rate=4;
+	frequency_interpolation_rate=4; // should we change to 8 when samplerate is 96 kHz?
 
 	bandwidth=48000.0*50.0/ofdm_Nfft/frequency_interpolation_rate;
+
+    printf("Bandwidth: %f\n", bandwidth);
 
 	time_sync_trials_max=2;
 	use_last_good_time_sync=YES;
 	use_last_good_freq_offset=YES;
 	carrier_frequency=15000;
 	output_power_Watt=0.1;
+
+    printf("carrier_frequency: %f start: %f end: %f\n", carrier_frequency, carrier_frequency - bandwidth/2, carrier_frequency + bandwidth/2);
 
 	ofdm_FIR_rx_time_sync_filter_window=HAMMING;
 	ofdm_FIR_rx_time_sync_filter_transition_bandwidth=3000;
@@ -107,7 +111,7 @@ cl_configuration_telecom_system::cl_configuration_telecom_system()
 	ofdm_preamble_papr_cut=7;
 	ofdm_data_papr_cut=10;
 
-	// This folder could be in a ramdisk (eg: mount -t tmpfs -o size=128M tmpfs /mnt/ramDisk)
+	// This folder can be in a ramdisk (eg: mount -t tmpfs -o size=128M tmpfs /mnt/ramDisk)
 	plot_folder="./";
 	plot_plot_active=NO;
 
