@@ -81,7 +81,7 @@ cl_configuration_telecom_system::cl_configuration_telecom_system()
 	time_sync_trials_max=2;
 	use_last_good_time_sync=YES;
 	use_last_good_freq_offset=YES;
-	carrier_frequency=15000;
+	carrier_frequency = 15000 + (bandwidth / 2 + 300); // TODO: parametrize carrier_frequency offset. In the sBitx case, 15k, in stock HF trx, 0.
 	output_power_Watt=0.1;
 
     printf("carrier_frequency: %f start: %f end: %f\n", carrier_frequency, carrier_frequency - bandwidth/2, carrier_frequency + bandwidth/2);
