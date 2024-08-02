@@ -134,10 +134,10 @@ cl_configuration_telecom_system::cl_configuration_telecom_system()
     if (radio_type == RADIO_STOCKHF)
     {
         microphone_type=CAPTURE;
-        microphone_channels=STEREO;
+        microphone_channels=MONO;
 
         speaker_type=PLAY;
-        speaker_channels=STEREO;
+        speaker_channels=MONO;
     }
 
 	speaker_frames_to_leave_transmit_fct=20000; // TODO: REMOVE-ME
