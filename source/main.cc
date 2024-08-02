@@ -30,18 +30,20 @@
 #include "physical_layer/telecom_system.h"
 #include "datalink_layer/arq.h"
 
+// some globals to workaround C++ hell
+double carrier_frequency_offset; // set 0 to stock HF, or to the radio passband, eg., 15k for sBitx
+int radio_type;
+
 int main(int argc, char *argv[])
 {
     // defaults to CPU 3
     int cpu_nr = 3;
+    bool list_modes = false;
     int mod_config = 0;
-    cl_telecom_system telecom_system;
+    int operation_mode = ARQ_MODE;
 
     // seed the random number generator
     srand(time(0));
-
-    // default mode
-    telecom_system.operation_mode = ARQ_MODE;
 
     if (argc < 2)
     {
@@ -52,56 +54,70 @@ int main(int argc, char *argv[])
         printf(" -c [cpu_nr]                Run on CPU [cpu_br]. Defaults to CPU 3. Use -1 to disable CPU selection\n");
         printf(" -m [mode]                  Available operating modes are: ARQ, TX, RX, TX_TEST, RX_TEST, PLOT_BASEBAND, PLOT_PASSBAND\n");
         printf(" -s [modulation_config]     Sets modulation configuration for non-ARQ setups (0 to 16). Use \"-l\" for listing all available modulations\n");
+        printf(" -r [radio_type]            Available radio types are: stockhf, sbitx");
         printf(" -l                         List all modulator/coding modes\n");
         printf(" -h                         Prints this help.\n");
         return EXIT_FAILURE;
     }
 
     int opt;
-    while ((opt = getopt(argc, argv, "hc:m:s:l")) != -1)
+    while ((opt = getopt(argc, argv, "hc:m:s:lr:")) != -1)
     {
         switch (opt)
         {
+        case 'r':
+            if (!strcmp(optarg, "stockhf"))
+            {
+                printf("Stock HF Radio Selected.\n");
+                carrier_frequency_offset = 0;
+                radio_type = RADIO_STOCKHF;
+            }
+            if (!strcmp(optarg, "sbitx"))
+            {
+                printf("sBitx HF Radio Selected.\n");
+                carrier_frequency_offset = 15000.0;
+                radio_type = RADIO_SBITX;
+            }
+            if (strcmp(optarg, "sbitx") && strcmp(optarg, "stockhf"))
+            {
+                printf("Wrong radio.\n");
+                goto manual;
+            }
+            break;
         case 'c':
             if (optarg)
                 cpu_nr = atoi(optarg);
             break;
         case 'm':
             if (!strcmp(optarg, "ARQ"))
-                telecom_system.operation_mode = ARQ_MODE;
+                operation_mode = ARQ_MODE;
             if (!strcmp(optarg, "TX_TEST"))
-                telecom_system.operation_mode = TX_TEST;
+                operation_mode = TX_TEST;
             if (!strcmp(optarg, "RX_TEST"))
-                telecom_system.operation_mode = RX_TEST;
+                operation_mode = RX_TEST;
             if (!strcmp(optarg, "TX"))
-                telecom_system.operation_mode = TX_BROADCAST;
+                operation_mode = TX_BROADCAST;
             if (!strcmp(optarg, "RX"))
-                telecom_system.operation_mode = RX_BROADCAST;
+                operation_mode = RX_BROADCAST;
             if (!strcmp(optarg, "PLOT_BASEBAND"))
-                telecom_system.operation_mode = BER_PLOT_baseband;
+                operation_mode = BER_PLOT_baseband;
             if (!strcmp(optarg, "PLOT_PASSBAND"))
-                telecom_system.operation_mode = BER_PLOT_passband;
+                operation_mode = BER_PLOT_passband;
             break;
         case 's':
             if (optarg)
                 mod_config = atoi(optarg);
             break;
         case 'l':
-            for (int i = 0; i < NUMBER_OF_CONFIGS; i++)
-            {
-                telecom_system.load_configuration(i);
-                printf("CONFIG_%d (%f bps), frame_size: %d Bytes / %d bits\n", i,
-                       telecom_system.rbc, telecom_system.get_frame_size_bytes(),
-                       telecom_system.get_frame_size_bits());
-            }
-            exit(EXIT_SUCCESS);
+            list_modes = true;
             break;
-
         case 'h':
+
         default:
             goto manual;
         }
     }
+
 
     if (cpu_nr != -1)
     {
@@ -111,6 +127,22 @@ int main(int argc, char *argv[])
         sched_setaffinity(0, sizeof(mask), &mask);
         printf("RUNNING ON CPU Nr %d\n", sched_getcpu());
     }
+
+    cl_telecom_system telecom_system;
+    telecom_system.operation_mode = operation_mode;
+
+    if (list_modes)
+    {
+        for (int i = 0; i < NUMBER_OF_CONFIGS; i++)
+        {
+            telecom_system.load_configuration(i);
+            printf("CONFIG_%d (%f bps), frame_size: %d Bytes / %d bits\n", i,
+                   telecom_system.rbc, telecom_system.get_frame_size_bytes(),
+                   telecom_system.get_frame_size_bits());
+        }
+        return EXIT_SUCCESS;
+    }
+
 
     if ((mod_config >= NUMBER_OF_CONFIGS) || (mod_config < 0))
     {

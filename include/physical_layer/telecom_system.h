@@ -98,6 +98,8 @@ public:
 	int use_last_good_freq_offset;
 	st_receive_stats receive_stats;
 
+	int operation_mode;
+
 	double output_power_Watt;
 
 	void transmit_bit(const int* data, double* out, int message_location);
@@ -106,7 +108,6 @@ public:
 	void transmit_byte(const int* data, int nBytes, double* out, int message_location);
 	st_receive_stats receive_byte(const double* data, int* out);
 
-	int operation_mode;
 
 	double M;
 	double bandwidth;

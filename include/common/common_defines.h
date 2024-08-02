@@ -125,6 +125,9 @@ CONFIG_16 (5664.7 bps).
 #define SINGLE_MESSAGE 3
 #define NO_FILTER_MESSAGE 4
 
+#define RADIO_SBITX 0
+#define RADIO_STOCKHF 1
+
 #define YES 1
 #define NO 0
 

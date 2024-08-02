@@ -22,6 +22,9 @@
 
 #include "physical_layer/physical_config.h"
 
+extern double carrier_frequency_offset;
+extern int radio_type;
+
 
 cl_configuration_telecom_system::cl_configuration_telecom_system()
 {
@@ -81,7 +84,7 @@ cl_configuration_telecom_system::cl_configuration_telecom_system()
 	time_sync_trials_max=2;
 	use_last_good_time_sync=YES;
 	use_last_good_freq_offset=YES;
-	carrier_frequency = 15000 + (bandwidth / 2 + 300); // TODO: parametrize carrier_frequency offset. In the sBitx case, 15k, in stock HF trx, 0.
+	carrier_frequency = carrier_frequency_offset + (bandwidth / 2 + 300);
 	output_power_Watt=0.1;
 
     printf("carrier_frequency: %f start: %f end: %f\n", carrier_frequency, carrier_frequency - bandwidth/2, carrier_frequency + bandwidth/2);
@@ -115,16 +118,28 @@ cl_configuration_telecom_system::cl_configuration_telecom_system()
 	plot_folder="./";
 	plot_plot_active=NO;
 
+    // TODO: parametrize the audio device...
 	microphone_dev_name="plughw:0,0";
 	speaker_dev_name="plughw:0,0";
 
+    if (radio_type == RADIO_SBITX)
+    {
+        microphone_type=CAPTURE;
+        microphone_channels=LEFT;
 
-	microphone_type=CAPTURE;
-	microphone_channels=LEFT;
+        speaker_type=PLAY;
+        speaker_channels=RIGHT;
+    }
 
+    if (radio_type == RADIO_STOCKHF)
+    {
+        microphone_type=CAPTURE;
+        microphone_channels=STEREO;
 
-	speaker_type=PLAY;
-	speaker_channels=RIGHT;
+        speaker_type=PLAY;
+        speaker_channels=STEREO;
+    }
+
 	speaker_frames_to_leave_transmit_fct=20000; // TODO: REMOVE-ME
 }
 
