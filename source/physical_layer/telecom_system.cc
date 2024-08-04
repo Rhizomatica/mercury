@@ -612,13 +612,17 @@ st_receive_stats cl_telecom_system::receive_byte(const double* data, int* out)
 			{
 				*(out+i)=data_container.hd_decoded_data_byte[i];
 			}
+
 			receive_stats.crc=0xff;
-			if(outer_code==CRC16_MODBUS_RTU && receive_stats.iterations_done>(ldpc.nIteration_max-1) && receive_stats.all_zeros==NO)
+			if(outer_code==CRC16_MODBUS_RTU && receive_stats.iterations_done > (ldpc.nIteration_max-1) && receive_stats.all_zeros == NO)
 			{
+				// the CRC should be calculated on ((nReal_data - outer_code_reserved_bits) / 8) no??
 				receive_stats.crc=CRC16_MODBUS_RTU_calc(data_container.hd_decoded_data_byte, nReal_data/8);
+				// should we compare the CRC (and for every frame?)
 			}
 
-			if((receive_stats.iterations_done>(ldpc.nIteration_max-1) && receive_stats.crc!=0) || receive_stats.all_zeros==YES)
+			// TODO: this seems wrong - receive_stats.crc is the crc itself, not the comparisson...
+			if((receive_stats.iterations_done > (ldpc.nIteration_max-1) && receive_stats.crc != 0 ) || receive_stats.all_zeros==YES)
 			{
 				receive_stats.SNR=-99.9;
 				receive_stats.message_decoded=NO;

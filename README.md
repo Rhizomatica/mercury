@@ -226,7 +226,7 @@ The LDPC has the following main parameters:
 - nIteration_max: the number of maximum decoding iterations.
 
 The outer code has the following options:
-- outer_code: (CRC16_MODBUS_RTU or NONE)
+- outer_code: (CRC16_MODBUS_RTU or NO_OUTER_CODE)
 
 # Operation Mode
 
