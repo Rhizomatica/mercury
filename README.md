@@ -74,13 +74,19 @@ For transmitting broadcast data, for example, in stock HF radio (like an ICOM IC
 ./mercury -m TX -s 0 -r stockhf -i "plughw:0,0" -o "plughw:0,0"
 ```
 
-For enabling tx in an ICOM IC-7100, for example, use:
+For enabling tx (keying the radio) in an ICOM IC-7100, for example, use:
 
-``` 
+```
 rigctl -r /dev/ttyUSB0 -m 3070 T 1
 ```
 
-ARQ mode is under active development and can be used as:
+For unkeying:
+
+```
+rigctl -r /dev/ttyUSB0 -m 3070 T 0
+```
+
+ARQ mode is under active development and can be used, for example, in a stock HF radio, as:
 
 ```
 ./mercury -m ARQ -r stockhf -i "plughw:0,0" -o "plughw:0,0"
@@ -89,7 +95,7 @@ ARQ mode is under active development and can be used as:
 
 # Supported Modulation Modes
 
-The modulation modes can be listed with "./mercury -l", and are:
+The modulation modes can be listed with "./mercury -l", and are (without outer-code overhead):
 
 ```
 CONFIG_0 (84.841629 bps)
