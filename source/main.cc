@@ -1,9 +1,9 @@
 /*
  * Mercury: A configurable open-source software-defined modem.
  * Copyright (C) 2022-2024 Fadi Jerji
- * Author: Fadi Jerji
- * Email: fadi.jerji@  <gmail.com, caisresearch.com, ieee.org>
- * ORCID: 0000-0002-2076-5831
+ *               2024 Rhizomatica
+ * Authors: Fadi Jerji
+ *          Rafael Diniz
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Affero General Public License as
@@ -53,15 +53,15 @@ int main(int argc, char *argv[])
     if (argc < 2)
     {
  manual:
-        printf("Usage modes: \n%s -c [cpu_nr] -m [mode]\n", argv[0], argv[0]);
+        printf("Usage modes: \n%s -c [cpu_nr] -m [mode] -i [device] -o [device] -r [radio_type]\n", argv[0], argv[0]);
         printf("%s -h\n", argv[0]);
         printf("\nOptions:\n");
         printf(" -c [cpu_nr]                Run on CPU [cpu_br]. Defaults to CPU 3. Use -1 to disable CPU selection\n");
         printf(" -m [mode]                  Available operating modes are: ARQ, TX, RX, TX_TEST, RX_TEST, PLOT_BASEBAND, PLOT_PASSBAND\n");
         printf(" -s [modulation_config]     Sets modulation configuration for non-ARQ setups (0 to 16). Use \"-l\" for listing all available modulations\n");
-        printf(" -r [radio_type]            Available radio types are: stockhf, sbitx");
-        printf(" -i [device]                Radio INPUT (capture) ALSA device (default: \"plughw:0,0\")");
-        printf(" -o [device]                Radio OUPUT (playback) ALSA device (default: \"plughw:0,0\")");
+        printf(" -r [radio_type]            Available radio types are: stockhf, sbitx\n");
+        printf(" -i [device]                Radio INPUT (capture) ALSA device (default: \"plughw:0,0\")\n");
+        printf(" -o [device]                Radio OUPUT (playback) ALSA device (default: \"plughw:0,0\")\n");
         printf(" -l                         List all modulator/coding modes\n");
         printf(" -h                         Prints this help.\n");
         return EXIT_FAILURE;

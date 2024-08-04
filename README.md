@@ -1,8 +1,112 @@
-# Mercury (Ver 0.2 June 2024)
+# Mercury
 
-Mercury is a configurable open-source software-defined modem.
+Mercury is a free software software define modem solution for the High-Frequency (HF) band.
 
-#What's new in Mercury 0.2:
+# Compilation And Installation
+
+Mercury can be compiled with any C++14 compiler. Compilation is tested with GCC
+under Linux. At least ALSA development headers must be installed. Other optional depencies
+are GNUPlot (for ploting constellations), GraphViz and Doxygen (for documentation). On
+a Debian based system, the dependencies can be installed with:
+
+```
+apt-get install libasound2-dev gnuplot-x11 graphviz
+```
+To compile, use:
+
+* make
+
+To install:
+
+* make install
+
+To generate the Mercury documentation, run the following:
+
+* make doc
+
+
+# Running
+
+Mercury have some basic operating modes and test modes.
+
+```
+Usage modes: 
+./mercury -c [cpu_nr] -m [mode] -i [device] -o [device] -r [radio_type]
+./mercury -h
+
+Options:
+ -c [cpu_nr]                Run on CPU [cpu_br]. Defaults to CPU 3. Use -1 to disable CPU selection
+ -m [mode]                  Available operating modes are: ARQ, TX, RX, TX_TEST, RX_TEST, PLOT_BASEBAND, PLOT_PASSBAND
+ -s [modulation_config]     Sets modulation configuration for non-ARQ setups (0 to 16). Use "-l" for listing all available modulations
+ -r [radio_type]            Available radio types are: stockhf, sbitx
+ -i [device]                Radio INPUT (capture) ALSA device (default: "plughw:0,0")
+ -o [device]                Radio OUPUT (playback) ALSA device (default: "plughw:0,0")
+ -l                         List all modulator/coding modes
+ -h                         Prints this help.
+
+```
+
+Mercury operating modes are:
+- ARQ: Data-link layer and Automatic repeat request mode (under development).
+- PLOT_BASEBAND: Baseband Bit Error Rate (BER) simulation mode over an AWGN channel with/without plotting.
+- PLOT_PASSBAND: Passeband BER simulation mode over an AWGN channel with/without plotting.
+- TX_TEST: random data transmission test
+- RX_TEST: random data reception test with/without plotting.
+- TX: Broadcast data transmission (under development).
+- RX: Broadcast data reception (under development).
+
+For receiving broadcat data, for example, in a sBit radio, using mode 0, use:
+
+```
+./mercury -m RX -s 0 -r sbitx -i "plughw:0,0" -o "plughw:0,0"
+```
+
+For transmitting broadcast data, for example, in stock HF radio (like an ICOM IC-7100), using mode 0, use (and key the radio using rigctl):
+
+```
+./mercury -m TX -s 0 -r stockhf -i "plughw:0,0" -o "plughw:0,0"
+```
+
+For enabling tx in an ICOM IC-7100, for example, use:
+
+``` 
+rigctl -r /dev/ttyUSB0 -m 3070 T 1
+```
+
+ARQ mode is under active development and can be used as:
+
+```
+./mercury -m ARQ -r stockhf -i "plughw:0,0" -o "plughw:0,0"
+```
+
+
+# Supported Modulation Modes
+
+The modulation modes can be listed with "./mercury -l", and are:
+
+```
+CONFIG_0 (84.841629 bps)
+CONFIG_1 (169.683258 bps)
+CONFIG_2 (254.524887 bps)
+CONFIG_3 (339.366516 bps)
+CONFIG_4 (424.208145 bps)
+CONFIG_5 (509.049774 bps)
+CONFIG_6 (678.733032 bps)
+CONFIG_7 (787.815126 bps)
+CONFIG_8 (945.378151 bps)
+CONFIG_9 (1260.504202 bps)
+CONFIG_10 (1390.866873 bps)
+CONFIG_11 (1855.263158 bps)
+CONFIG_12 (2287.581699 bps)
+CONFIG_13 (2521.008403 bps)
+CONFIG_14 (3428.921569 bps)
+CONFIG_15 (4411.764706 bps)
+CONFIG_16 (5735.294118 bps)
+```
+
+# Features
+
+What's new in Mercury 0.2:
 
 - New Least Square channel estimator with a configurable estimation window.
 - Enhanced Time and Frequency synchronization for low SNR values.
@@ -33,14 +137,14 @@ The physical layer can be interfaced from the upper end and the lower end.  The 
 
 The upper and the physical layer interface with the datalink layer via three main connection points, send(), receive(), and load_configuration(). In addition, function load_config(SNR) allows the physical layer to inform the data link layer of the appropriate configuration for a specific Signal to Noise Ratio (SNR).
 
-ARQ
+## ARQ
 
 The data link can be in one of two roles, a commander or a responder. The commander is the side responsible for controlling the message flux.
 The data link layer provides a connection based using automatic repeat requests (ARQ) via retransmission and acknowledgment mechanisms. This is to guarantee the reception of the information even in cases of message loss. In the case of an ack message lost, a request to resend the last ack message can be sent.
 
 The data link layer packs the messages in batches to avoid a fast TX/RX switch. Nevertheless, the batch size is configurable and can be set to one. Several batches form a block. Writing to the TX data buffer and reading from the RX data buffer are done in blocks. The block size is configurable as well.
 
-Gearshift
+## Gearshift
 
 The data link later exchanges channel state information to negotiate the highest data rate possible for the downlink channel, and in case of a change, adapt to the new channel condition. 
 This "Gearshift" is done via a set_config command that a commander can send at any time and a recovery mechanism in case of a worsening channel condition. The channel evaluation and gearshift operations are done at the beginning of each data block.
@@ -53,10 +157,10 @@ The robustness configurations are numbered (0 to 16) where CONFIG_0 is the most 
 
 The data link layer connects to a possible application layer via two TCP/IP connections, a data dump buffer, and a control connection with an application-level interface (API).
 
-API
+## Clients TCP/IP API
 
 A base API was implemented to provide the basic functionality in a way that would be familiar to users of commercially available modems.
-The API can easily be updated and new commands can be added to provide further control to the application layer.
+The API can easily be updated and new commands can be added to provide further control to the application layer. Default control port is 7002 and default data port is 7003.
 
 The base API is composed of the following commands:
 
@@ -108,7 +212,7 @@ In the case of an unrecognized command, a reply: NOK is provided.
 The physical layer features an OFDM modulator/demodulator with an LDPC error correction code encoder/decoder with an embedded Additive white Gaussian noise (AWGN) channel simulator.
 
 
-# Configuration
+# Mercury internals
 
 
 The data link layer parameters can be defined in data_link_layer/datalink_config.cc
@@ -228,61 +332,8 @@ The LDPC has the following main parameters:
 The outer code has the following options:
 - outer_code: (CRC16_MODBUS_RTU or NO_OUTER_CODE)
 
-# Operation Mode
+### About
 
-Mercury operates in one of six different modes:
-- ARQ_MODE: Data-link layer and Automatic repeat request active.
-- BER_PLOT_baseband: Baseband Bit Erro Rate (BER) simulation mode over an AWGN channel with/without plotting.
-- BER_PLOT_passband: Passeband BER simulation mode over an AWGN channel with/without plotting.
-- TX_TEST: random data transmission test
-- RX_TEST: random data reception test with/without plotting.
+The code was originally written by Fadi Jerji for Rhizomatica's HERMES project. Currently the project is maintained by Rafael Diniz.
 
-
-# Prerequisite
-
-* GNU PLOT
-
-In case of switching  telecom_system.plot.plot_active to YES, the gnuplot is required to be installed on the machine.
-
-To install GNU plot run the following command as root: 'apt-get install gnuplot-x11'.
-
-* ALSA Sound
-
-To use the sound card via ALSA Sound library, the library should be installed and linked to the code at compilation.
-
-To install ALSA Sound run the following command as root: 'apt-get install libasound2-dev'.
-
-* Documentation
-
-To generate the documentation, the Doxygen and GraphViz packets should be installed.
-
-To install Doxygen run the following command as root: 'apt-get install doxygen'.
-
-To install GraphViz run the following command as root: 'apt-get install graphviz'.
-
-
-
-
-# Compile And Install
-
-To compile Mercury code:
-
-* make
-
-To install:
-
-* make install
-
-To generate the Mercury documentation, run the following:
-
-* make doc
-
-
-## include
-
-Contains the header files of Mercury.
-
-
-### Authors
-
-The code was written by Fadi Jerji at Rhizomatica.
+This project is sponsored by ARDC.
