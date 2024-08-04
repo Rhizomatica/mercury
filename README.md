@@ -1,6 +1,6 @@
 # Mercury
 
-Mercury is a free software software define modem solution for the High-Frequency (HF) band.
+Mercury is a free software software-defined modem solution for the High-Frequency (HF) band.
 
 # Compilation And Installation
 
@@ -14,16 +14,23 @@ apt-get install libasound2-dev gnuplot-x11 graphviz
 ```
 To compile, use:
 
-* make
+```
+make
+```
 
 To install:
 
-* make install
+```
+make install
+```
 
 To generate the Mercury documentation, run the following:
 
-* make doc
+```
+make doc
+```
 
+Mercury is currently only compatible with Linux. It should also run in Windows Subsystem for Linux (WSL) under Windows.
 
 # Running
 
