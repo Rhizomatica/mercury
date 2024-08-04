@@ -26,6 +26,8 @@
 #include <complex>
 #include "common/common_defines.h"
 
+#define ALSA_MAX_PATH 128
+
 #define N_MAX 1600
 #define C_WIDTH_MAX 200
 #define V_WIDTH_MAX 50

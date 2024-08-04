@@ -33,6 +33,8 @@
 // some globals to workaround C++ hell
 double carrier_frequency_offset; // set 0 to stock HF, or to the radio passband, eg., 15k for sBitx
 int radio_type;
+char alsa_input_dev[ALSA_MAX_PATH];
+char alsa_output_dev[ALSA_MAX_PATH];
 
 int main(int argc, char *argv[])
 {
@@ -41,6 +43,9 @@ int main(int argc, char *argv[])
     bool list_modes = false;
     int mod_config = 0;
     int operation_mode = ARQ_MODE;
+
+    strcpy(alsa_input_dev, "plughw:0,0");
+    strcpy(alsa_output_dev, "plughw:0,0");
 
     // seed the random number generator
     srand(time(0));
@@ -55,16 +60,26 @@ int main(int argc, char *argv[])
         printf(" -m [mode]                  Available operating modes are: ARQ, TX, RX, TX_TEST, RX_TEST, PLOT_BASEBAND, PLOT_PASSBAND\n");
         printf(" -s [modulation_config]     Sets modulation configuration for non-ARQ setups (0 to 16). Use \"-l\" for listing all available modulations\n");
         printf(" -r [radio_type]            Available radio types are: stockhf, sbitx");
+        printf(" -i [device]                Radio INPUT (capture) ALSA device (default: \"plughw:0,0\")");
+        printf(" -o [device]                Radio OUPUT (playback) ALSA device (default: \"plughw:0,0\")");
         printf(" -l                         List all modulator/coding modes\n");
         printf(" -h                         Prints this help.\n");
         return EXIT_FAILURE;
     }
 
     int opt;
-    while ((opt = getopt(argc, argv, "hc:m:s:lr:")) != -1)
+    while ((opt = getopt(argc, argv, "hc:m:s:lr:i:o:")) != -1)
     {
         switch (opt)
         {
+        case 'i':
+            if (optarg)
+                strncpy(alsa_input_dev, optarg, ALSA_MAX_PATH-1);
+            break;
+        case 'o':
+            if (optarg)
+                strncpy(alsa_output_dev, optarg, ALSA_MAX_PATH-1);
+            break;
         case 'r':
             if (!strcmp(optarg, "stockhf"))
             {

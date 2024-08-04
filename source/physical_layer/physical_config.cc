@@ -24,7 +24,8 @@
 
 extern double carrier_frequency_offset;
 extern int radio_type;
-
+extern char alsa_input_dev[ALSA_MAX_PATH];
+extern char alsa_output_dev[ALSA_MAX_PATH];
 
 cl_configuration_telecom_system::cl_configuration_telecom_system()
 {
@@ -79,7 +80,7 @@ cl_configuration_telecom_system::cl_configuration_telecom_system()
 
 	bandwidth=48000.0*50.0/ofdm_Nfft/frequency_interpolation_rate;
 
-    printf("Bandwidth: %f\n", bandwidth);
+	printf("Bandwidth: %f\n", bandwidth);
 
 	time_sync_trials_max=2;
 	use_last_good_time_sync=YES;
@@ -87,7 +88,7 @@ cl_configuration_telecom_system::cl_configuration_telecom_system()
 	carrier_frequency = carrier_frequency_offset + (bandwidth / 2 + 300);
 	output_power_Watt=0.1;
 
-    printf("carrier_frequency: %f start: %f end: %f\n", carrier_frequency, carrier_frequency - bandwidth/2, carrier_frequency + bandwidth/2);
+	printf("Carrier_frequency: %f start: %f end: %f\n", carrier_frequency, carrier_frequency - bandwidth/2, carrier_frequency + bandwidth/2);
 
 	ofdm_FIR_rx_time_sync_filter_window=HAMMING;
 	ofdm_FIR_rx_time_sync_filter_transition_bandwidth=3000;
@@ -119,8 +120,10 @@ cl_configuration_telecom_system::cl_configuration_telecom_system()
 	plot_plot_active=NO;
 
     // TODO: parametrize the audio device...
-	microphone_dev_name="plughw:0,0";
-	speaker_dev_name="plughw:0,0";
+	microphone_dev_name.assign(alsa_input_dev);
+	speaker_dev_name.assign(alsa_output_dev);
+
+	printf("Alsa INPUT: %s\nAlsa OUTPUT: %s\n", microphone_dev_name.c_str(), speaker_dev_name.c_str());
 
     if (radio_type == RADIO_SBITX)
     {
