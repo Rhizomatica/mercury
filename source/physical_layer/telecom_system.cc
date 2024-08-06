@@ -278,22 +278,23 @@ int cl_telecom_system::get_frame_size_bits()
     return data_container.nBits - ldpc.P - outer_code_reserved_bits;
 }
 
-void cl_telecom_system::transmit_byte(const int* data, int nBytes, double* out, int message_location)
+void cl_telecom_system::transmit_byte(int *data, int nBytes, double* out, int message_location)
 {
-	int nReal_data=data_container.nBits-ldpc.P;
-	int msB=0,lsB=0;
+	int nReal_data = data_container.nBits - ldpc.P;
+	int msB = 0, lsB = 0; // TODO: type mismatch here.. we should covert this to uint8_t
 
-	if(nBytes>(nReal_data-outer_code_reserved_bits)/8)
+	if(nBytes > (nReal_data-outer_code_reserved_bits) / 8)
 	{
 		std::cout<<"message too long.. not sent."<<std::endl;
 		return;
 	}
 
-	byte_to_bit((int*)data, data_container.data_bit, nBytes);
+	byte_to_bit(data, data_container.data_bit, nBytes);
 
+    // TODO: outer_code is byte aligned... no reason why. Fix-me.
 	if(outer_code==CRC16_MODBUS_RTU)
 	{
-		int crc=CRC16_MODBUS_RTU_calc((int*)data, nBytes);
+		uint16_t crc = CRC16_MODBUS_RTU_calc((int*)data, nBytes);
 		msB=(crc & 0xff00)>>8;
 		lsB=crc & 0x00ff;
 		byte_to_bit(&lsB, &data_container.data_bit[nBytes*8], 1);
@@ -308,7 +309,7 @@ void cl_telecom_system::transmit_byte(const int* data, int nBytes, double* out, 
 	transmit_bit(data_container.data_bit,out,message_location);
 }
 
-void cl_telecom_system::transmit_bit(const int* data, double* out, int message_location)
+void cl_telecom_system::transmit_bit(int* data, double* out, int message_location)
 {
 	int nVirtual_data=ldpc.N-data_container.nBits;
 	int nReal_data=data_container.nBits-ldpc.P;
@@ -488,7 +489,7 @@ void cl_telecom_system::transmit_bit(const int* data, double* out, int message_l
 
 }
 
-st_receive_stats cl_telecom_system::receive_bit(const double* data, int* out)
+st_receive_stats cl_telecom_system::receive_bit(double *data, int* out)
 {
 	int nReal_data=data_container.nBits-ldpc.P;
 
@@ -498,7 +499,7 @@ st_receive_stats cl_telecom_system::receive_bit(const double* data, int* out)
 	return tmp;
 }
 
-st_receive_stats cl_telecom_system::receive_byte(const double* data, int* out)
+st_receive_stats cl_telecom_system::receive_byte(double *data, int* out)
 {
 	float variance;
 	int nVirtual_data=ldpc.N-data_container.nBits;
@@ -941,7 +942,7 @@ void cl_telecom_system::RX_TEST_process_main()
 			{
 				data_container.ready_to_process_passband_delayed_data[i]=data_container.passband_delayed_data[i];
 			}
-			st_receive_stats received_message_stats=receive_byte((const double*)data_container.ready_to_process_passband_delayed_data,tmp);
+			st_receive_stats received_message_stats=receive_byte(data_container.ready_to_process_passband_delayed_data,tmp);
 
 			if(ofdm.channel_estimator_amplitude_restoration==YES)
 			{
@@ -1050,7 +1051,7 @@ void cl_telecom_system::RX_BROADCAST_process_main()
             {
                 data_container.ready_to_process_passband_delayed_data[i] = data_container.passband_delayed_data[i];
             }
-            st_receive_stats received_message_stats = receive_byte((const double*)data_container.ready_to_process_passband_delayed_data, tmp);
+            st_receive_stats received_message_stats = receive_byte(data_container.ready_to_process_passband_delayed_data, tmp);
 
             if(received_message_stats.message_decoded == YES)
             {

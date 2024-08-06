@@ -116,7 +116,7 @@ public:
 
   int init();
 
-  char CRC8_calc(char* data_byte, int nItems);
+  uint8_t CRC8_calc(char* data_byte, int nItems);
 
 	//! Updates timers values and check for timeouts.
 	    /*!

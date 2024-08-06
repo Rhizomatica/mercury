@@ -102,11 +102,11 @@ public:
 
 	double output_power_Watt;
 
-	void transmit_bit(const int* data, double* out, int message_location);
-	st_receive_stats receive_bit(const double* data, int* out);
+	void transmit_bit(int *data, double *out, int message_location);
+	st_receive_stats receive_bit(double *data, int *out);
 
-	void transmit_byte(const int* data, int nBytes, double* out, int message_location);
-	st_receive_stats receive_byte(const double* data, int* out);
+	void transmit_byte(int* data, int nBytes, double *out, int message_location);
+	st_receive_stats receive_byte(double *data, int* out);
 
 
 	double M;

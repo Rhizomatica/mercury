@@ -25,10 +25,11 @@
 #define INC_CRC16_MODBUS_RTU_H_
 
 #include <cmath>
+#include <cstdint>
 
 #define POLY_CRC16_MODBUS_RTU 0xA001 // POLY = (constant)calculation polynomial of the CRC 16 = 1010 0000 0000 0001 (Generating polynomial = 1 + x2 + x 15 + x 16)
 
-int CRC16_MODBUS_RTU_calc(int* data_byte, int nItems);
+uint16_t CRC16_MODBUS_RTU_calc(int* data_byte, int nItems);
 
 
 #endif

@@ -22,27 +22,25 @@
 
 #include "physical_layer/crc16_modbus_rtu.h"
 
-int CRC16_MODBUS_RTU_calc(int* data_byte, int nItems)
+uint16_t CRC16_MODBUS_RTU_calc(int* data_byte, int nItems)
 {
-	int crc = 0xffff;
-	for(int j=0;j<nItems;j++)
+	uint16_t crc = 0xffff;
+	for(int j=0; j < nItems; j++)
 	{
 		crc ^= data_byte[j];
 		for (int i = 0; i < 8; i++)
 		{
 			if ((crc & 0x0001) == 0x0001)
 			{
-				crc=crc>>1;
-				crc^=POLY_CRC16_MODBUS_RTU;
+				crc = crc >> 1;
+				crc ^= POLY_CRC16_MODBUS_RTU;
 			}
 			else
 			{
-				crc=crc>>1;
+				crc = crc >> 1;
 			}
 		}
 	}
 	return crc;
 	//Ref: MODBUS over serial line specification and implementation guide V1.02, Dec 20,2006, available at https://modbus.org/docs/Modbus_over_serial_line_V1_02.pdf
 }
-
-

@@ -172,6 +172,7 @@ int main(int argc, char *argv[])
         ARQ.telecom_system = &telecom_system;
         ARQ.init();
         ARQ.print_stats();
+
         while (1)
         {
             ARQ.process_main();

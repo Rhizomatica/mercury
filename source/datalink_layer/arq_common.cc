@@ -457,22 +457,11 @@ int cl_arq_controller::init()
 	data_configuration=default_configuration_ARQ.init_configuration;
 	ack_configuration=default_configuration_ARQ.ack_configuration;
 
-//	std::cout << std::fixed;
-//	std::cout << std::setprecision(1);
-//	for(int i=0;i<NUMBER_OF_CONFIGS;i++)
-//	{
-//		load_configuration(i, PHYSICAL_LAYER_ONLY, NO);
-//		std::cout<<"CONFIG_"<<i<<" ("<<telecom_system->rbc<<" bps)."<<std::endl;
-//	}
-//	exit(0);
-
 	if(tcp_socket_data.init()!=SUCCESS || tcp_socket_control.init()!=SUCCESS )
 	{
 		std::cout<<"Erro initializing the TCP sockets. Exiting.."<<std::endl;
 		exit(-1);
 	}
-
-
 
 	load_configuration(ack_configuration,FULL,NO);
 	load_configuration(data_configuration,PHYSICAL_LAYER_ONLY,YES);
@@ -1611,7 +1600,7 @@ void cl_arq_controller::receive()
 			{
 				telecom_system->data_container.ready_to_process_passband_delayed_data[i]=telecom_system->data_container.passband_delayed_data[i];
 			}
-			received_message_stats=telecom_system->receive_byte((const double*)telecom_system->data_container.ready_to_process_passband_delayed_data,telecom_system->data_container.data_byte);
+			received_message_stats=telecom_system->receive_byte(telecom_system->data_container.ready_to_process_passband_delayed_data,telecom_system->data_container.data_byte);
 
 			measurements.signal_stregth_dbm=received_message_stats.signal_stregth_dbm;
 
@@ -2066,22 +2055,22 @@ void cl_arq_controller::print_stats()
 	std::cout<<"Backup buffer occupancy= "<<(float)(fifo_buffer_backup.get_size()-fifo_buffer_backup.get_free_size())*100.0/(float)fifo_buffer_backup.get_size()<<" %"<<std::endl;
 }
 
-char cl_arq_controller::CRC8_calc(char* data_byte, int nItems)
+uint8_t cl_arq_controller::CRC8_calc(char* data_byte, int nItems)
 {
-	char crc = 0xff;
-	for(int j=0;j<nItems;j++)
+	uint8_t crc = 0xff;
+	for(int j=0; j < nItems; j++)
 	{
 		crc ^= data_byte[j];
 		for (int i = 0; i < 8; i++)
 		{
 			if ((crc & 0x01) == 0x01)
 			{
-				crc=crc>>1;
-				crc^=POLY_CRC8;
+				crc = crc >> 1;
+				crc ^= POLY_CRC8;
 			}
 			else
 			{
-				crc=crc>>1;
+				crc = crc >> 1;
 			}
 		}
 	}
