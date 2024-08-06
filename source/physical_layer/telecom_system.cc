@@ -291,7 +291,7 @@ void cl_telecom_system::transmit_byte(int *data, int nBytes, double* out, int me
 
 	byte_to_bit(data, data_container.data_bit, nBytes);
 
-    // TODO: outer_code is byte aligned... no reason why. Fix-me.
+    // TODO: outer_code is byte aligned... better move this to transmit_bit not to waste bits
 	if(outer_code==CRC16_MODBUS_RTU)
 	{
 		uint16_t crc = CRC16_MODBUS_RTU_calc((int*)data, nBytes);
