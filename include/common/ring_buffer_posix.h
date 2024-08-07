@@ -1,7 +1,8 @@
 /* Buffer code for use in IPC via shared memory
- * Copyright (C) 2020-2024 by Rafael Diniz <rafael@rhizomatica.org>
- * All Rights Reserved
  *
+ * Copyright (C) 2020-2024 Rhizomatica
+ * Author: Rafael Diniz <rafael@rhizomatica.org>
+  *
  * SPDX-License-Identifier: GPL-3.0-or-later
  *
  */
@@ -34,13 +35,10 @@ struct circular_buf_t {
     uint8_t *buffer;
 };
 
-/// Opaque circular buffer structure
-//typedef struct circular_buf_t circular_buf_t;
-
 /// Handle type, the way users interact with the API
 typedef struct circular_buf_t* cbuf_handle_t;
 
-// Shared memory init function: 2 shared memory objects are created: base_name-1 and basename-2.
+// Shared memory init function: 2 shared memory objects are created: base_name-1 and base_name-2.
 cbuf_handle_t circular_buf_init_shm(size_t size, char *base_name);
 
 // function to connect to an already created shared memory area

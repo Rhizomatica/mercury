@@ -1,6 +1,6 @@
 /* Shared memory routines
  *
- * Copyright (C) 2019-2024 Rafael Diniz
+ * Copyright (C) 2019-2024 Rhizomatica
  * Author: Rafael Diniz <rafael@riseup.net>
  *
  * SPDX-License-Identifier: GPL-3.0-or-later

@@ -1,6 +1,7 @@
 /* Buffer code for use in IPC via shared memory
- * Copyright (C) 2020-2024 by Rafael Diniz <rafael@rhizomatica.org>
- * All Rights Reserved
+ *
+ * Copyright (C) 2020-2024 Rhizomatica
+ * Author: Rafael Diniz <rafael@rhizomatica.org>
  *
  * SPDX-License-Identifier: GPL-3.0-or-later
  *
