@@ -26,11 +26,13 @@
 
 #define BER_PLOT_baseband 0
 #define BER_PLOT_passband 1
-#define TX_TEST 2
-#define RX_TEST 3
-#define ARQ_MODE 4
-#define TX_BROADCAST 5
-#define RX_BROADCAST 6
+#define TX_RAND 2
+#define RX_RAND 3
+#define TX_TEST 4
+#define RX_TEST 5
+#define TX_SHM 6
+#define RX_SHM 7
+#define ARQ_MODE 8
 
 #define NUMBER_OF_CONFIGS 17
 #define CONFIG_NONE -1

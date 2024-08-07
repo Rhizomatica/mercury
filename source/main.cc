@@ -54,10 +54,11 @@ int main(int argc, char *argv[])
     {
  manual:
         printf("Usage modes: \n%s -c [cpu_nr] -m [mode] -i [device] -o [device] -r [radio_type]\n", argv[0], argv[0]);
+        printf("%s -c [cpu_nr] -m ARQ -i [device] -o [device] -r [radio_type]\n", argv[0], argv[0]);
         printf("%s -h\n", argv[0]);
         printf("\nOptions:\n");
         printf(" -c [cpu_nr]                Run on CPU [cpu_br]. Defaults to CPU 3. Use -1 to disable CPU selection\n");
-        printf(" -m [mode]                  Available operating modes are: ARQ, TX, RX, TX_TEST, RX_TEST, PLOT_BASEBAND, PLOT_PASSBAND\n");
+        printf(" -m [mode]                  Available operating modes are: ARQ, TX_SHM, RX_SHM, TX_TEST, RX_TEST, TX_RAND, RX_RAND, PLOT_BASEBAND, PLOT_PASSBAND\n");
         printf(" -s [modulation_config]     Sets modulation configuration for non-ARQ setups (0 to 16). Use \"-l\" for listing all available modulations\n");
         printf(" -r [radio_type]            Available radio types are: stockhf, sbitx\n");
         printf(" -i [device]                Radio INPUT (capture) ALSA device (default: \"plughw:0,0\")\n");
@@ -106,14 +107,18 @@ int main(int argc, char *argv[])
         case 'm':
             if (!strcmp(optarg, "ARQ"))
                 operation_mode = ARQ_MODE;
+            if (!strcmp(optarg, "TX_RAND"))
+                operation_mode = TX_RAND;
+            if (!strcmp(optarg, "RX_RAND"))
+                operation_mode = RX_RAND;
             if (!strcmp(optarg, "TX_TEST"))
                 operation_mode = TX_TEST;
             if (!strcmp(optarg, "RX_TEST"))
                 operation_mode = RX_TEST;
-            if (!strcmp(optarg, "TX"))
-                operation_mode = TX_BROADCAST;
-            if (!strcmp(optarg, "RX"))
-                operation_mode = RX_BROADCAST;
+            if (!strcmp(optarg, "TX_SHM"))
+                operation_mode = TX_SHM;
+            if (!strcmp(optarg, "RX_SHM"))
+                operation_mode = RX_SHM;
             if (!strcmp(optarg, "PLOT_BASEBAND"))
                 operation_mode = BER_PLOT_baseband;
             if (!strcmp(optarg, "PLOT_PASSBAND"))
@@ -179,9 +184,9 @@ int main(int argc, char *argv[])
         }
     }
 
-    if (telecom_system.operation_mode == RX_TEST)
+    if (telecom_system.operation_mode == RX_RAND)
     {
-        printf("Mode selected: RX_TEST\n");
+        printf("Mode selected: RX_RAND\n");
         telecom_system.load_configuration(mod_config);
         printf("CONFIG_%d (%f bps)\n", mod_config, telecom_system.rbc);
         telecom_system.constellation_plot.open("PLOT");
@@ -189,20 +194,20 @@ int main(int argc, char *argv[])
 
         while (1)
         {
-            telecom_system.RX_TEST_process_main();
+            telecom_system.RX_RAND_process_main();
         }
-        telecom_system.constellation_plot.close();
+        telecom_system.constellation_plot.close(); // o_O
     }
 
-    if (telecom_system.operation_mode == TX_TEST)
+    if (telecom_system.operation_mode == TX_RAND)
     {
-        printf("Mode selected: TX_TEST\n");
+        printf("Mode selected: TX_RAND\n");
         telecom_system.load_configuration(mod_config);
         printf("CONFIG_%d (%f bps)\n", mod_config, telecom_system.rbc);
 
         while (1)
         {
-            telecom_system.TX_TEST_process_main();
+            telecom_system.TX_RAND_process_main();
         }
     }
 
@@ -232,35 +237,59 @@ int main(int argc, char *argv[])
         telecom_system.constellation_plot.close();
     }
 
-    if (telecom_system.operation_mode == RX_BROADCAST)
+    if (telecom_system.operation_mode == RX_TEST)
     {
-        printf("Mode selected: RX_BROADCAST\n");
-        telecom_system.load_configuration(mod_config);
-        printf("CONFIG_%d (%f bps)\n", mod_config, telecom_system.rbc);
-        telecom_system.constellation_plot.open("PLOT");
-        telecom_system.constellation_plot.reset("PLOT");
-
-        while (1)
-        {
-            telecom_system.RX_BROADCAST_process_main();
-        }
-
-        telecom_system.constellation_plot.close();      // uff...
-
-    }
-
-    if (telecom_system.operation_mode == TX_BROADCAST)
-    {
-        printf("Mode selected: TX_BROADCAST\n");
+        printf("Mode selected: RX_TEST\n");
         telecom_system.load_configuration(mod_config);
         printf("CONFIG_%d (%f bps)\n", mod_config, telecom_system.rbc);
 
         while (1)
         {
-            telecom_system.TX_BROADCAST_process_main();
+            telecom_system.RX_TEST_process_main();
         }
 
     }
+
+    if (telecom_system.operation_mode == TX_TEST)
+    {
+        printf("Mode selected: TX_TEST\n");
+        telecom_system.load_configuration(mod_config);
+        printf("CONFIG_%d (%f bps)\n", mod_config, telecom_system.rbc);
+
+        while (1)
+        {
+            telecom_system.TX_TEST_process_main();
+        }
+
+    }
+
+
+    if (telecom_system.operation_mode == RX_SHM)
+    {
+        printf("Mode selected: RX_SHM\n");
+        telecom_system.load_configuration(mod_config);
+        printf("CONFIG_%d (%f bps)\n", mod_config, telecom_system.rbc);
+
+        while (1)
+        {
+            telecom_system.RX_SHM_process_main();
+        }
+
+    }
+
+    if (telecom_system.operation_mode == TX_SHM)
+    {
+        printf("Mode selected: TX_SHM\n");
+        telecom_system.load_configuration(mod_config);
+        printf("CONFIG_%d (%f bps)\n", mod_config, telecom_system.rbc);
+
+        while (1)
+        {
+            telecom_system.TX_SHM_process_main();
+        }
+
+    }
+
 
     return EXIT_SUCCESS;
 }

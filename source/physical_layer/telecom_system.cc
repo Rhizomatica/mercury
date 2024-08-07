@@ -614,15 +614,16 @@ st_receive_stats cl_telecom_system::receive_byte(double *data, int* out)
 				*(out+i)=data_container.hd_decoded_data_byte[i];
 			}
 
+            // TODO: FIX-ME
 			receive_stats.crc=0xff;
-			if(outer_code==CRC16_MODBUS_RTU && receive_stats.iterations_done > (ldpc.nIteration_max-1) && receive_stats.all_zeros == NO)
+			if(outer_code == CRC16_MODBUS_RTU && receive_stats.iterations_done > (ldpc.nIteration_max-1) && receive_stats.all_zeros == NO)
 			{
 				// the CRC should be calculated on ((nReal_data - outer_code_reserved_bits) / 8) no??
 				receive_stats.crc=CRC16_MODBUS_RTU_calc(data_container.hd_decoded_data_byte, nReal_data/8);
 				// should we compare the CRC (and for every frame?)
 			}
 
-			// TODO: this seems wrong - receive_stats.crc is the crc itself, not the comparisson...
+			// TODO: FIX-ME receive_stats.crc is the crc itself, not the comparisson...
 			if((receive_stats.iterations_done > (ldpc.nIteration_max-1) && receive_stats.crc != 0 ) || receive_stats.all_zeros==YES)
 			{
 				receive_stats.SNR=-99.9;
@@ -886,7 +887,7 @@ void cl_telecom_system::deinit()
 	}
 }
 
-void cl_telecom_system::TX_TEST_process_main()
+void cl_telecom_system::TX_RAND_process_main()
 {
 	static int is_first_message=YES;
 	for(int i=0;i<data_container.nBits-ldpc.P;i++)
@@ -905,7 +906,7 @@ void cl_telecom_system::TX_TEST_process_main()
 	speaker.transfere(data_container.passband_data,data_container.Nofdm*data_container.interpolation_rate*(ofdm.Nsymb+ofdm.preamble_configurator.Nsymb));
 }
 
-void cl_telecom_system::TX_BROADCAST_process_main()
+void cl_telecom_system::TX_TEST_process_main()
 {
     int nReal_data = data_container.nBits - ldpc.P;
     int frame_size = (nReal_data - outer_code_reserved_bits) / 8;
@@ -923,7 +924,31 @@ void cl_telecom_system::TX_BROADCAST_process_main()
     speaker.transfere(data_container.passband_data, data_container.Nofdm * data_container.interpolation_rate * (ofdm.Nsymb + ofdm.preamble_configurator.Nsymb));
 }
 
-void cl_telecom_system::RX_TEST_process_main()
+void cl_telecom_system::TX_SHM_process_main()
+{
+    int nReal_data = data_container.nBits - ldpc.P;
+    int frame_size = (nReal_data - outer_code_reserved_bits) / 8;
+
+    static int counter = 0;
+
+    // TODO: read from shared memory buffer...
+#if 0
+    for (int i = 0; i < frame_size; i++)
+    {
+        data_container.data_byte[i] = 0;
+    }
+    data_container.data_byte[counter % frame_size] = 1;
+#endif
+
+    counter++;
+
+    transmit_byte(data_container.data_byte, (nReal_data - outer_code_reserved_bits) / 8, data_container.passband_data, SINGLE_MESSAGE);
+
+    speaker.transfere(data_container.passband_data, data_container.Nofdm * data_container.interpolation_rate * (ofdm.Nsymb + ofdm.preamble_configurator.Nsymb));
+}
+
+
+void cl_telecom_system::RX_RAND_process_main()
 {
 	std::complex <double> data_fft[ofdm.pilot_configurator.nData];
 	int tmp[N_MAX];
@@ -1034,7 +1059,7 @@ void cl_telecom_system::RX_TEST_process_main()
 	}
 }
 
-void cl_telecom_system::RX_BROADCAST_process_main()
+void cl_telecom_system::RX_TEST_process_main()
 {
     int tmp[N_MAX];
     int nReal_data = data_container.nBits - ldpc.P;
@@ -1119,6 +1144,94 @@ void cl_telecom_system::RX_BROADCAST_process_main()
 		usleep(1000);
 	}
 }
+
+void cl_telecom_system::RX_SHM_process_main()
+{
+    int tmp[N_MAX];
+    int nReal_data = data_container.nBits - ldpc.P;
+    int frame_size = (nReal_data - outer_code_reserved_bits) / 8;
+
+	std::cout << std::fixed;
+	std::cout << std::setprecision(1);
+
+    if(data_container.data_ready == 1)
+    {
+        if(data_container.frames_to_read == 0)
+        {
+            for(int i=0; i < data_container.Nofdm * data_container.buffer_Nsymb * data_container.interpolation_rate; i++)
+            {
+                data_container.ready_to_process_passband_delayed_data[i] = data_container.passband_delayed_data[i];
+            }
+            st_receive_stats received_message_stats = receive_byte(data_container.ready_to_process_passband_delayed_data, tmp);
+
+            if(received_message_stats.message_decoded == YES)
+            {
+				std::cout << std::endl;
+				std::cout << "decoded in " << received_message_stats.iterations_done << " iterations. Data:";
+				std::cout << std::endl;
+				std::cout << std::hex;
+
+                // TODO: copy the data to the shared buffer
+				for(int i = 0; i < frame_size; i++)
+				{
+					std::cout << "0x" << tmp[i] << ",";
+				}
+				std::cout << std::endl;
+				std::cout << std::dec;
+				std::cout << " sync_trial=" << receive_stats.sync_trials;
+				std::cout << " time_peak_subsymb_location=" << received_message_stats.delay % (data_container.Nofdm * data_container.interpolation_rate);
+				std::cout << " time_peak_symb_location=" << received_message_stats.delay / (data_container.Nofdm * data_container.interpolation_rate);
+				std::cout << " freq_offset=" << receive_stats.freq_offset;
+				std::cout << " SNR=" << receive_stats.SNR << " dB";
+				std::cout << " Signal Strength=" << receive_stats.signal_stregth_dbm << " dBm ";
+				std::cout << std::endl;
+
+				int end_of_current_message = received_message_stats.delay / (data_container.Nofdm * data_container.interpolation_rate) + data_container.Nsymb + data_container.preamble_nSymb;
+				int frames_left_in_buffer = data_container.buffer_Nsymb - end_of_current_message;
+				if(frames_left_in_buffer < 0)
+                {
+                    frames_left_in_buffer = 0;
+                }
+				data_container.frames_to_read = data_container.Nsymb + data_container.preamble_nSymb - frames_left_in_buffer - data_container.nUnder_processing_events;
+
+				if(data_container.frames_to_read > (data_container.Nsymb + data_container.preamble_nSymb) || data_container.frames_to_read < 0)
+				{
+					data_container.frames_to_read = data_container.Nsymb + data_container.preamble_nSymb - frames_left_in_buffer;
+				}
+
+				receive_stats.delay_of_last_decoded_message += (data_container.Nsymb + data_container.preamble_nSymb - (data_container.frames_to_read + data_container.nUnder_processing_events)) * data_container.Nofdm * data_container.interpolation_rate;
+
+				data_container.nUnder_processing_events = 0;
+			}
+			else
+			{
+				if(data_container.data_ready == 1 && data_container.frames_to_read == 0 && receive_stats.delay_of_last_decoded_message != -1)
+				{
+					receive_stats.delay_of_last_decoded_message -= data_container.Nofdm * data_container.interpolation_rate;
+					if(receive_stats.delay_of_last_decoded_message < 0)
+					{
+						receive_stats.delay_of_last_decoded_message = -1;
+					}
+				}
+				//				std::cout<<"Syncing.. ";
+				//				std::cout<<" delay="<<received_message_stats.delay;
+				//				std::cout<<" time_peak_subsymb_location="<<received_message_stats.delay%(data_container.Nofdm*data_container.interpolation_rate);
+				//				std::cout<<" time_peak_symb_location="<<received_message_stats.delay/(data_container.Nofdm*data_container.interpolation_rate);
+				//				std::cout<<" freq_offset="<<receive_stats.freq_offset;
+				//				std::cout<<" Signal Strength="<<receive_stats.signal_stregth_dbm<<" dBm ";
+				//				std::cout<<std::endl;
+			}
+
+		}
+		data_container.data_ready = 0;
+
+	}
+	else
+	{
+		usleep(1000);
+	}
+}
+
 
 void cl_telecom_system::BER_PLOT_baseband_process_main()
 {

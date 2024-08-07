@@ -128,10 +128,12 @@ public:
 	void deinit();
 	cl_plot BER_plot, constellation_plot;
 
+	void TX_RAND_process_main();
+	void RX_RAND_process_main();
 	void TX_TEST_process_main();
 	void RX_TEST_process_main();
-	void TX_BROADCAST_process_main();
-	void RX_BROADCAST_process_main();
+	void TX_SHM_process_main();
+	void RX_SHM_process_main();
 	void BER_PLOT_baseband_process_main();
 	void BER_PLOT_passband_process_main();
 
