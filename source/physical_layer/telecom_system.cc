@@ -940,7 +940,7 @@ void cl_telecom_system::TX_SHM_process_main(cbuf_handle_t buffer)
     {
         // note: for now we are padding with zero at end of input buffer
         memset(data, 0, frame_size);
-        read_buffer(buffer, data, input_buffer_size);
+        read_buffer(buffer, data, (input_buffer_size < frame_size)? input_buffer_size : frame_size);
 
         for (int i = 0; i < frame_size; i++)
         {
