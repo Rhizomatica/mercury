@@ -44,14 +44,14 @@ int main(int argc, char *argv[])
     else
         output = stdout;
 
-    char spinner[] = "┤┘┴└├┌┬┐";
+    char spinner[] = "|\\-/";
     int counter = 0;
     while(true)
     {
         int size = read_buffer_all(buffer, data);
         fwrite(data, size, 1, output);
         fflush(output);
-        fprintf(stderr, "%c\r", spinner[counter++ % 8]);
+        fprintf(stderr, "%c\r", spinner[counter++ % 4]);
     }
 
     circular_buf_free_shm(buffer);
