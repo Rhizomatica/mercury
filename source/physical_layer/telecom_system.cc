@@ -927,7 +927,11 @@ void cl_telecom_system::TX_TEST_process_main()
 void cl_telecom_system::TX_SHM_process_main(cbuf_handle_t buffer)
 {
     int nReal_data = data_container.nBits - ldpc.P;
+    int frame_size_bits = nReal_data - outer_code_reserved_bits;
     int frame_size = (nReal_data - outer_code_reserved_bits) / 8;
+
+    std::cout<<"Extra unused bits: "<< frame_size_bits - (frame_size * 8)<<",";
+    std::cout<<std::endl;
 
     uint8_t data[frame_size];
 
