@@ -1184,13 +1184,12 @@ void cl_telecom_system::RX_SHM_process_main(cbuf_handle_t buffer)
 				std::cout << std::endl;
 				std::cout << std::hex;
 
-
                 uint8_t data[frame_size];
 
                 // TODO: copy the data to the shared buffer
 				for(int i = 0; i < frame_size; i++)
 				{
-                    data[i] = tmp[i];
+                    data[i] = (uint8_t) tmp[i];
 					std::cout << "0x" << tmp[i] << ",";
 				}
 
