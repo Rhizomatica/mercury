@@ -25,6 +25,7 @@ int main(int argc, char *argv[])
     uint8_t data[SHM_PAYLOAD_BUFFER_SIZE];
     cbuf_handle_t buffer = circular_buf_connect_shm(SHM_PAYLOAD_BUFFER_SIZE, SHM_PAYLOAD_NAME);
 
+
     if (argc > 1 && !strcmp(argv[1], "-h"))
     {
         fprintf(stderr, "Usage: %s [output_file]\n", argv[0]);
@@ -43,12 +44,14 @@ int main(int argc, char *argv[])
     else
         output = stdout;
 
+    char spinner[] = "┤┘┴└├┌┬┐";
+    int counter = 0;
     while(true)
     {
         int size = read_buffer_all(buffer, data);
         fwrite(data, size, 1, output);
         fflush(output);
-        fprintf(stderr, "frame of size %d received\n", size);
+        fprintf(stderr, "%c\r", spinner[counter++ % 8]);
     }
 
     circular_buf_free_shm(buffer);

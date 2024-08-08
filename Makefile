@@ -32,9 +32,12 @@ ifeq (${uname_p},aarch64)
 #	CPPFLAGS+=-march=armv8.2-a+crypto+fp16+rcpc+dotprod
 endif
 
+.PHONY: clean install examples
 
-all: mercury
+all: mercury examples
 
+examples:
+	$(MAKE) -C examples
 
 mercury: $(OBJECT_FILES)
 	$(CPP) -o $@ $(OBJECT_FILES) $(LDFLAGS)
@@ -46,7 +49,7 @@ doc: $(CPP_SOURCES)
 	@doxygen ./mercury.doxyfile
 	cp ./docs_FSM/*.png html
 
-.PHONY: clean install
+
 
 install: mercury
 	install -D mercury /usr/bin/mercury
@@ -54,3 +57,4 @@ install: mercury
 clean:
 	rm -rf mercury $(OBJECT_FILES)
 	rm -rf html/
+	$(MAKE) -C examples clean

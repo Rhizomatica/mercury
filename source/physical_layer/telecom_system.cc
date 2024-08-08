@@ -929,16 +929,18 @@ void cl_telecom_system::TX_SHM_process_main(cbuf_handle_t buffer)
     int nReal_data = data_container.nBits - ldpc.P;
     int frame_size_bits = nReal_data - outer_code_reserved_bits;
     int frame_size = (nReal_data - outer_code_reserved_bits) / 8;
-
-    std::cout<<"Extra unused bits: "<< frame_size_bits - (frame_size * 8)<<",";
-    std::cout<<std::endl;
+    int input_buffer_size = 0;
+    // std::cout<<"Extra unused bits: "<< frame_size_bits - (frame_size * 8)<<",";
+    // std::cout<<std::endl;
 
     uint8_t data[frame_size];
 
     // check the data in the buffer, if smaller than frame size, transmits 0
-    if (size_buffer(buffer) != 0)
+    if ((input_buffer_size = size_buffer(buffer)) != 0)
     {
-        read_buffer(buffer, data, frame_size);
+        // note: for now we are padding with zero at end of input buffer
+        memset(data, 0, frame_size);
+        read_buffer(buffer, data, input_buffer_size);
 
         for (int i = 0; i < frame_size; i++)
         {
