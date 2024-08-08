@@ -19,7 +19,7 @@ CPP=g++
 LDFLAGS=-lasound
 CPPFLAGS=-Ofast -g0 -Wall -Wno-format -std=gnu++14 -I./include
 #CPPFLAGS=-Ofast -g0 -Wall -fstack-protector -D_FORTIFY_SOURCE=2 -Wno-format -std=gnu++14 -I./include
-CPP_SOURCES=$(wildcard source/*.cc source/datalink_layer/*.cc source/physical_layer/*.cc)
+CPP_SOURCES=$(wildcard source/*.cc source/datalink_layer/*.cc source/physical_layer/*.cc source/common/*.cc)
 OBJECT_FILES=$(patsubst %.cc,%.o,$(CPP_SOURCES))
 
 DOCS=index.html

@@ -9,7 +9,7 @@
 
 #define _DEFAULT_SOURCE
 
-#include "shm_posix.h"
+#include "common/shm_posix.h"
 
 #include <stdio.h>
 #include <string.h>

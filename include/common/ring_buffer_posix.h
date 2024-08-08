@@ -2,7 +2,7 @@
  *
  * Copyright (C) 2020-2024 Rhizomatica
  * Author: Rafael Diniz <rafael@rhizomatica.org>
-  *
+ *
  * SPDX-License-Identifier: GPL-3.0-or-later
  *
  */
@@ -38,14 +38,19 @@ struct circular_buf_t {
 /// Handle type, the way users interact with the API
 typedef struct circular_buf_t* cbuf_handle_t;
 
-// Shared memory init function: 2 shared memory objects are created: base_name-1 and base_name-2.
+// +++ The next 7 functions should be enough to do everything +++
+
+// Shared memory init (create) function: 2 shared memory objects are created: base_name-1 and basename-2.
 cbuf_handle_t circular_buf_init_shm(size_t size, char *base_name);
 
 // function to connect to an already created shared memory area
 cbuf_handle_t circular_buf_connect_shm(size_t size, char *base_name);
 
-// free function, to be called only when communication is to be finished
-void circular_buf_free_shm(cbuf_handle_t cbuf, size_t size, char *base_name);
+// unmaps and unlink (destroy) the shared memory (destroys the shared memory space)
+void circular_buf_destroy_shm(cbuf_handle_t cbuf, size_t size, char *base_name);
+
+//  free the process local cbuf_handle_t
+void circular_buf_free_shm(cbuf_handle_t cbuf);
 
 // returns 0 on success, -1 on error (locking version)
 int read_buffer(cbuf_handle_t cbuf, uint8_t *data, size_t len);
@@ -53,10 +58,11 @@ int read_buffer(cbuf_handle_t cbuf, uint8_t *data, size_t len);
 // returns 0 on success, -1 on error (locking version)
 int write_buffer(cbuf_handle_t cbuf, uint8_t * data, size_t len);
 
-/// Check the number of elements stored in the buffer
+/// Returns the number of elements stored in the buffer
 /// Requires: cbuf is valid and created by circular_buf_init
 /// Returns the current number of elements in the buffer
 size_t size_buffer(cbuf_handle_t cbuf);
+
 
 /// Reset the circular buffer to empty, head == tail. Data not cleared
 /// Requires: cbuf is valid and created by circular_buf_init
