@@ -23,7 +23,6 @@
 #ifndef INC_COMMON_DEFINES_H_
 #define INC_COMMON_DEFINES_H_
 
-
 #define BER_PLOT_baseband 0
 #define BER_PLOT_passband 1
 #define TX_RAND 2
@@ -130,9 +129,11 @@ CONFIG_16 (5664.7 bps).
 #define RADIO_SBITX 0
 #define RADIO_STOCKHF 1
 
+#define SHM_PAYLOAD_BUFFER_SIZE 131072
+#define SHM_PAYLOAD_NAME "/mercury-comm"
+
+
 #define YES 1
 #define NO 0
 
-
-
-#endif
+#endif // INC_COMMON_DEFINES_H_

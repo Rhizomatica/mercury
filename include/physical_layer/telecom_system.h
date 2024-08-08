@@ -35,6 +35,7 @@
 #include "physical_config.h"
 #include "physical_defines.h"
 #include "misc.h"
+#include "common/ring_buffer_posix.h"
 #include <iomanip>
 
 struct st_reinit_subsystems{
@@ -132,8 +133,8 @@ public:
 	void RX_RAND_process_main();
 	void TX_TEST_process_main();
 	void RX_TEST_process_main();
-	void TX_SHM_process_main();
-	void RX_SHM_process_main();
+	void TX_SHM_process_main(cbuf_handle_t buffer);
+	void RX_SHM_process_main(cbuf_handle_t buffer);
 	void BER_PLOT_baseband_process_main();
 	void BER_PLOT_passband_process_main();
 

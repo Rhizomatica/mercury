@@ -38,7 +38,7 @@ struct circular_buf_t {
 /// Handle type, the way users interact with the API
 typedef struct circular_buf_t* cbuf_handle_t;
 
-// +++ The next 7 functions should be enough to do everything +++
+// +++ The next 8 functions should be enough to do everything +++
 
 // Shared memory init (create) function: 2 shared memory objects are created: base_name-1 and basename-2.
 cbuf_handle_t circular_buf_init_shm(size_t size, char *base_name);
@@ -52,10 +52,13 @@ void circular_buf_destroy_shm(cbuf_handle_t cbuf, size_t size, char *base_name);
 //  free the process local cbuf_handle_t
 void circular_buf_free_shm(cbuf_handle_t cbuf);
 
-// returns 0 on success, -1 on error (locking version)
+// returns 0 on success, -1 on error (blocking version)
 int read_buffer(cbuf_handle_t cbuf, uint8_t *data, size_t len);
 
-// returns 0 on success, -1 on error (locking version)
+// returns the number of bytes read on success, -1 on error (blocking version)
+int read_buffer_all(cbuf_handle_t cbuf, uint8_t *data);
+
+// returns 0 on success, -1 on error (blocking version)
 int write_buffer(cbuf_handle_t cbuf, uint8_t * data, size_t len);
 
 /// Returns the number of elements stored in the buffer

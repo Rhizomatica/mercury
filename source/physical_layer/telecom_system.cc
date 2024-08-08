@@ -924,24 +924,31 @@ void cl_telecom_system::TX_TEST_process_main()
     speaker.transfere(data_container.passband_data, data_container.Nofdm * data_container.interpolation_rate * (ofdm.Nsymb + ofdm.preamble_configurator.Nsymb));
 }
 
-void cl_telecom_system::TX_SHM_process_main()
+void cl_telecom_system::TX_SHM_process_main(cbuf_handle_t buffer)
 {
     int nReal_data = data_container.nBits - ldpc.P;
     int frame_size = (nReal_data - outer_code_reserved_bits) / 8;
 
-    static int counter = 0;
+    uint8_t data[frame_size];
 
-    // TODO: read from shared memory buffer...
-#if 0
-    for (int i = 0; i < frame_size; i++)
+    // check the data in the buffer, if smaller than frame size, transmits 0
+    if (size_buffer(buffer) != 0)
     {
-        data_container.data_byte[i] = 0;
+        read_buffer(buffer, data, frame_size);
+
+        for (int i = 0; i < frame_size; i++)
+        {
+            data_container.data_byte[i] = data[i];
+        }
     }
-    data_container.data_byte[counter % frame_size] = 1;
-#endif
-
-    counter++;
-
+    // if there is no data in the buffer, just transmit zeroes
+    else
+    {
+        for (int i = 0; i < frame_size; i++)
+        {
+            data_container.data_byte[i] = 0;
+        }
+    }
     transmit_byte(data_container.data_byte, (nReal_data - outer_code_reserved_bits) / 8, data_container.passband_data, SINGLE_MESSAGE);
 
     speaker.transfere(data_container.passband_data, data_container.Nofdm * data_container.interpolation_rate * (ofdm.Nsymb + ofdm.preamble_configurator.Nsymb));
@@ -1145,7 +1152,7 @@ void cl_telecom_system::RX_TEST_process_main()
 	}
 }
 
-void cl_telecom_system::RX_SHM_process_main()
+void cl_telecom_system::RX_SHM_process_main(cbuf_handle_t buffer)
 {
     int tmp[N_MAX];
     int nReal_data = data_container.nBits - ldpc.P;
@@ -1171,11 +1178,18 @@ void cl_telecom_system::RX_SHM_process_main()
 				std::cout << std::endl;
 				std::cout << std::hex;
 
+
+                uint8_t data[frame_size];
+
                 // TODO: copy the data to the shared buffer
 				for(int i = 0; i < frame_size; i++)
 				{
+                    data[i] = tmp[i];
 					std::cout << "0x" << tmp[i] << ",";
 				}
+
+                write_buffer(buffer, data, frame_size);
+
 				std::cout << std::endl;
 				std::cout << std::dec;
 				std::cout << " sync_trial=" << receive_stats.sync_trials;
