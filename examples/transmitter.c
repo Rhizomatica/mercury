@@ -49,7 +49,7 @@ int main(int argc, char *argv[])
     {
         size_t size = fread(data, 1, READ_LEN, input);
         write_buffer(buffer, data, size);
-        fprintf(stderr, "frame of size %lu sent to modem\n", size);
+        // fprintf(stderr, "frame of size %lu sent to modem\n", size);
     }
 
     fprintf(stderr, "End of file.\n");
