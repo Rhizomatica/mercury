@@ -5,7 +5,7 @@ Mercury is a free software software-defined modem solution for the High-Frequenc
 # Compilation And Installation
 
 Mercury can be compiled with any C++14 compiler. Compilation is tested with GCC
-under Linux. At least ALSA development headers must be installed. Other optional depencies
+under Linux. ALSA library and development headers must be installed. Other optional depencies
 are GNUPlot (for ploting constellations), GraphViz and Doxygen (for documentation). On
 a Debian based system, the dependencies can be installed with:
 
@@ -39,11 +39,12 @@ Mercury have some basic operating modes and test modes.
 ```
 Usage modes: 
 ./mercury -c [cpu_nr] -m [mode] -i [device] -o [device] -r [radio_type]
+./mercury -c [cpu_nr] -m ARQ -i [device] -o [device] -r [radio_type]
 ./mercury -h
 
 Options:
  -c [cpu_nr]                Run on CPU [cpu_br]. Defaults to CPU 3. Use -1 to disable CPU selection
- -m [mode]                  Available operating modes are: ARQ, TX, RX, TX_TEST, RX_TEST, PLOT_BASEBAND, PLOT_PASSBAND
+ -m [mode]                  Available operating modes are: ARQ, TX_SHM, RX_SHM, TX_TEST, RX_TEST, TX_RAND, RX_RAND, PLOT_BASEBAND, PLOT_PASSBAND
  -s [modulation_config]     Sets modulation configuration for non-ARQ setups (0 to 16). Use "-l" for listing all available modulations
  -r [radio_type]            Available radio types are: stockhf, sbitx
  -i [device]                Radio INPUT (capture) ALSA device (default: "plughw:0,0")
@@ -55,23 +56,45 @@ Options:
 
 Mercury operating modes are:
 - ARQ: Data-link layer and Automatic repeat request mode (under development).
+- TX_SHM: Transmits data read from shared memory interface (check folder examples).
+- RX_SHM: Receives data written to shared memory interface.
+
+Mercury also has some modes for development / channel analysis:
 - PLOT_BASEBAND: Baseband Bit Error Rate (BER) simulation mode over an AWGN channel with/without plotting.
 - PLOT_PASSBAND: Passeband BER simulation mode over an AWGN channel with/without plotting.
-- TX_TEST: random data transmission test
-- RX_TEST: random data reception test with/without plotting.
-- TX: Broadcast data transmission (under development).
-- RX: Broadcast data reception (under development).
+- TX_RAND: Transmission test using random data as source
+- RX_RAND: Data reception test (supports plotting constelation)
+- TX_TEST: Data transmission test (a moving byte set to 1, all the rest zeros)
+- RX_TEST: Data reception test
 
-For receiving broadcat data, for example, in a sBit radio, using mode 0, use:
+For using the shared memory interface, Mercury should be started in mode RX_SHM in receive side, and TX_SHM at transmit site. 
+
+Example (stock hf radio, like an ICOM IC-7100) for transmitter side:
+```
+./mercury -m TX_SHM -s 1 -r stockhf -i "plughw:0,0" -o "plughw:0,0"
+```
+
+Example of Mercury in the receive side (sBitx v3 radio):
+```
+./mercury -m RX_SHM -s 1 -r sbitx -i "plughw:0,0" -o "plughw:0,0"
+```
+
+ARQ mode is under active development and can be used, for example, in a stock HF radio, as:
 
 ```
-./mercury -m RX -s 0 -r sbitx -i "plughw:0,0" -o "plughw:0,0"
+./mercury -m ARQ -r stockhf -i "plughw:0,0" -o "plughw:0,0"
 ```
 
-For transmitting broadcast data, for example, in stock HF radio (like an ICOM IC-7100), using mode 0, use (and key the radio using rigctl):
+For receiving broadcat data in test mode, for example, in a sBitx radio, using mode 0, use:
 
 ```
-./mercury -m TX -s 0 -r stockhf -i "plughw:0,0" -o "plughw:0,0"
+./mercury -m RX_TEST -s 0 -r sbitx -i "plughw:0,0" -o "plughw:0,0"
+```
+
+For transmitting such test data broadcast data, in stock HF radio (like an ICOM IC-7100), using mode 0, use (and key the radio using rigctl):
+
+```
+./mercury -m TX_TEST -s 0 -r stockhf -i "plughw:0,0" -o "plughw:0,0"
 ```
 
 For enabling tx (keying the radio) in an ICOM IC-7100, for example, use:
@@ -86,12 +109,7 @@ For unkeying:
 rigctl -r /dev/ttyUSB0 -m 3070 T 0
 ```
 
-ARQ mode is under active development and can be used, for example, in a stock HF radio, as:
-
-```
-./mercury -m ARQ -r stockhf -i "plughw:0,0" -o "plughw:0,0"
-```
-
+For the sBitx radio, use the HERMES software stack, available at https://github.com/Rhizomatica/hermes-net (use trx_v2-userland implementation).
 
 # Supported Modulation Modes
 
@@ -128,7 +146,7 @@ What's new in Mercury 0.2:
 - New Time and Frequency interleavers.
 - New LDPC codes (1/16 to 14/16) optimized for multipath channel and outer CRC code.
 - New energy dispersal for power amplification efficiency.
-- Pre-equalization to combat filters and DSP imperfections.
+- Pre-equalization to compensate filters and DSP imperfections.
 - Peak to average power ratio (PAPR) and modulation error rate (MER) measurements.
 - Two pilot distribution modes for different channels and bitrate requirements with further optimized parameters such as number of symbols, number of carriers, and synchronization symbols.
 - Dynamic partial configuration of the physical layer for computing performance enhancement.
@@ -170,7 +188,7 @@ The robustness configurations are numbered (0 to 16) where CONFIG_0 is the most 
 
 The data link layer connects to a possible application layer via two TCP/IP connections, a data dump buffer, and a control connection with an application-level interface (API).
 
-## Clients TCP/IP API
+## ARQ mode TCP/IP API
 
 A base API was implemented to provide the basic functionality in a way that would be familiar to users of commercially available modems.
 The API can easily be updated and new commands can be added to provide further control to the application layer. Default control port is 7002 and default data port is 7003.
