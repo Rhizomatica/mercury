@@ -17,7 +17,6 @@
 #include <stddef.h>
 #include <assert.h>
 #include <stdbool.h>
-#include <stdatomic.h>
 #include <sys/resource.h>
 #include <sys/shm.h>
 #include <string.h>
