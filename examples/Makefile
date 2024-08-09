@@ -14,11 +14,11 @@ shm_posix.o: ../source/common/shm_posix.cc ../include/common/shm_posix.h
 
 
 transmitter: transmitter.o ring_buffer_posix.o shm_posix.o
-	$(CC) $(LDFLAGS) -o transmitter transmitter.o ring_buffer_posix.o shm_posix.o
+	$(CC) -o transmitter transmitter.o ring_buffer_posix.o shm_posix.o $(LDFLAGS)
 
 
 receiver: receiver.o ring_buffer_posix.o shm_posix.o
-	$(CC) $(LDFLAGS) -o receiver receiver.o ring_buffer_posix.o shm_posix.o
+	$(CC) -o receiver receiver.o ring_buffer_posix.o shm_posix.o $(LDFLAGS)
 
 
 .PHONY: clean
