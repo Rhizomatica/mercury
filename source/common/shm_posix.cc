@@ -25,7 +25,7 @@ int shm_open_and_get_fd(char *name)
 {
     int fd = -1;
 
-    fprintf(stderr, "shm_open_and_get_fd() called with %s\n", name);
+    // fprintf(stderr, "shm_open_and_get_fd() called with %s\n", name);
 
     if (strlen(name) >= MAX_POSIX_SHM_NAME)
     {
@@ -44,11 +44,11 @@ int shm_create_and_get_fd(char *name, size_t size)
 {
     int fd = -1;
 
-    fprintf(stderr, "shm_create_and_get_fd() called with %s and %ld\n", name, size);
+    // fprintf(stderr, "shm_create_and_get_fd() called with %s and %ld\n", name, size);
 
     if (shm_open(name, O_RDWR, 0644) >= 0)
     {
-        fprintf(stderr, "POSIX shared memory already created\nRe-creating it.\n");
+        fprintf(stderr, "POSIX shared memory already created. Re-creating it.\n");
         shm_unlink(name);
     }
 
