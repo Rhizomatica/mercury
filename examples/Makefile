@@ -1,6 +1,6 @@
 CC=gcc
-CFLAGS=-Wall -pedantic -std=c17 -xc -I../include
-LDFLAGS=
+CFLAGS=-Wall -pedantic -pthread -std=c17 -xc -I../include
+LDFLAGS=-lpthread -lrt
 
 .PHONY: all
 
