@@ -51,7 +51,8 @@ int main(int argc, char *argv[])
         int size = read_buffer_all(buffer, data);
         fwrite(data, size, 1, output);
         fflush(output);
-        fprintf(stderr, "%c\r", spinner[counter++ % 4]);
+        fprintf(stderr, "RX Frames: %c (%04d)\r", spinner[counter % 4], counter);
+        counter++;
     }
 
     circular_buf_free_shm(buffer);
