@@ -44,7 +44,7 @@ int main(int argc, char *argv[])
     else
         output = stdout;
 
-    char spinner[] = "|\\-/";
+    char spinner[] = ".oOo";
     int counter = 0;
     while(true)
     {
