@@ -51,7 +51,7 @@ int main(int argc, char *argv[])
         int size = read_buffer_all(buffer, data);
         fwrite(data, size, 1, output);
         fflush(output);
-        fprintf(stderr, "RX Frames: %c (%04d)\r", spinner[counter % 4], counter);
+        fprintf(stderr, "\rRX Frames: %c (%04d)", spinner[counter % 4], counter);
         counter++;
     }
 
