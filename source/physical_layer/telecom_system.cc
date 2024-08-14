@@ -1193,7 +1193,10 @@ void cl_telecom_system::RX_SHM_process_main(cbuf_handle_t buffer)
 					std::cout << "0x" << tmp[i] << ",";
 				}
 
-                write_buffer(buffer, data, frame_size);
+                if ( frame_size >= circular_buf_free_size(buffer) )
+                    write_buffer(buffer, data, frame_size);
+                else
+                    std::cout << "decoded frame lost because of full buffer!" <<  std::endl;
 
 				std::cout << std::endl;
 				std::cout << std::dec;
