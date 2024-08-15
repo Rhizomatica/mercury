@@ -292,7 +292,7 @@ int main(int argc, char *argv[])
     {
         printf("Mode: TX_SHM  Modulation config: %d\n", mod_config);
         telecom_system.load_configuration(mod_config);
-        printf("Bitrate: %.2f bps  Shannon_limit: %.2f db TX: ",  mod_config, telecom_system.rbc, telecom_system.Shannon_limit);
+        printf("Bitrate: %.2f bps  Shannon lim.: %.2f db  TX: ",  mod_config, telecom_system.rbc, telecom_system.Shannon_limit);
 
         cbuf_handle_t buffer;
 
