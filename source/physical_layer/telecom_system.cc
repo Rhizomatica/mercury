@@ -1158,7 +1158,7 @@ void cl_telecom_system::RX_TEST_process_main()
 
 void cl_telecom_system::RX_SHM_process_main(cbuf_handle_t buffer)
 {
-    char spinner[] = ".oOo"; uint32_t spinner_anim = 0;
+    static uint32_t spinner_anim = 0; char spinner[] = ".oOo";
     int tmp[N_MAX];
     int nReal_data = data_container.nBits - ldpc.P;
     int frame_size = (nReal_data - outer_code_reserved_bits) / 8;
@@ -1205,7 +1205,8 @@ void cl_telecom_system::RX_SHM_process_main(cbuf_handle_t buffer)
 				//std::cout << " freq_offset=" << receive_stats.freq_offset;
 
 
-                printf("\rSNR: %05.2f Level: %03.1f %c", receive_stats.SNR, receive_stats.signal_stregth_dbm, spinner[spinner_anim++ % 4]);
+                printf("\rSNR: %6.2f Level: %5.1f dbm %c", receive_stats.SNR, receive_stats.signal_stregth_dbm, spinner[spinner_anim % 4]);
+                spinner_anim++;
                 fflush(stdout);
 
 				int end_of_current_message = received_message_stats.delay / (data_container.Nofdm * data_container.interpolation_rate) + data_container.Nsymb + data_container.preamble_nSymb;
