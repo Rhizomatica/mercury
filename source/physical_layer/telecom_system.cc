@@ -1205,7 +1205,7 @@ void cl_telecom_system::RX_SHM_process_main(cbuf_handle_t buffer)
 				//std::cout << " freq_offset=" << receive_stats.freq_offset;
 
 
-                printf("\rSNR: %6.2f Level: %5.1f dbm %c", receive_stats.SNR, receive_stats.signal_stregth_dbm, spinner[spinner_anim % 4]);
+                printf("\rSNR: %5.1f db Level: %5.1f dbm %c", receive_stats.SNR, receive_stats.signal_stregth_dbm, spinner[spinner_anim % 4]);
                 spinner_anim++;
                 fflush(stdout);
 
