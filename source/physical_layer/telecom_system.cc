@@ -1205,7 +1205,7 @@ void cl_telecom_system::RX_SHM_process_main(cbuf_handle_t buffer)
 				//std::cout << " freq_offset=" << receive_stats.freq_offset;
 
 
-                printf("\rSNR: %3.2f Level: %3.1f %c", receive_stats.SNR, receive_stats.signal_stregth_dbm, spinner[spinner_anim++ % 4]);
+                printf("\rSNR: %05.2f Level: %03.1f %c", receive_stats.SNR, receive_stats.signal_stregth_dbm, spinner[spinner_anim++ % 4]);
                 fflush(stdout);
 
 				int end_of_current_message = received_message_stats.delay / (data_container.Nofdm * data_container.interpolation_rate) + data_container.Nsymb + data_container.preamble_nSymb;
