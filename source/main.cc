@@ -30,7 +30,7 @@
 #include "physical_layer/telecom_system.h"
 #include "datalink_layer/arq.h"
 
-// some globals to workaround C++ hell
+// some globals
 double carrier_frequency_offset; // set 0 to stock HF, or to the radio passband, eg., 15k for sBitx
 int radio_type;
 char alsa_input_dev[ALSA_MAX_PATH];
