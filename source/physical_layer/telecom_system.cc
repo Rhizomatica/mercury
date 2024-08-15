@@ -927,20 +927,19 @@ void cl_telecom_system::TX_TEST_process_main()
 void cl_telecom_system::TX_SHM_process_main(cbuf_handle_t buffer)
 {
     int nReal_data = data_container.nBits - ldpc.P;
-    int frame_size_bits = nReal_data - outer_code_reserved_bits;
+    // int frame_size_bits = nReal_data - outer_code_reserved_bits;
     int frame_size = (nReal_data - outer_code_reserved_bits) / 8;
-    int input_buffer_size = 0;
+    // int input_buffer_size = 0;
     // std::cout<<"Extra unused bits: "<< frame_size_bits - (frame_size * 8)<<",";
     // std::cout<<std::endl;
 
     uint8_t data[frame_size];
 
     // check the data in the buffer, if smaller than frame size, transmits 0
-    if ((input_buffer_size = size_buffer(buffer)) != 0)
+    if ((int) size_buffer(buffer) >= frame_size)
     {
-        // note: for now we are padding with zero at end of input buffer
         memset(data, 0, frame_size);
-        read_buffer(buffer, data, (input_buffer_size < frame_size)? input_buffer_size : frame_size);
+        read_buffer(buffer, data, frame_size);
 
         for (int i = 0; i < frame_size; i++)
         {
@@ -1186,24 +1185,24 @@ void cl_telecom_system::RX_SHM_process_main(cbuf_handle_t buffer)
 
                 uint8_t data[frame_size];
 
-                // TODO: copy the data to the shared buffer
 				for(int i = 0; i < frame_size; i++)
-				{
+                {
+				//{
                     data[i] = (uint8_t) tmp[i];
-					std::cout << "0x" << tmp[i] << ",";
+                //    std::cout << "0x" << tmp[i] << ",";
 				}
 
-                if ( frame_size >= circular_buf_free_size(buffer) )
+                if ( frame_size <= (int) circular_buf_free_size(buffer) )
                     write_buffer(buffer, data, frame_size);
                 else
                     std::cout << "decoded frame lost because of full buffer!" <<  std::endl;
 
 				std::cout << std::endl;
 				std::cout << std::dec;
-				std::cout << " sync_trial=" << receive_stats.sync_trials;
-				std::cout << " time_peak_subsymb_location=" << received_message_stats.delay % (data_container.Nofdm * data_container.interpolation_rate);
-				std::cout << " time_peak_symb_location=" << received_message_stats.delay / (data_container.Nofdm * data_container.interpolation_rate);
-				std::cout << " freq_offset=" << receive_stats.freq_offset;
+				//std::cout << " sync_trial=" << receive_stats.sync_trials;
+				//std::cout << " time_peak_subsymb_location=" << received_message_stats.delay % (data_container.Nofdm * data_container.interpolation_rate);
+				//std::cout << " time_peak_symb_location=" << received_message_stats.delay / (data_container.Nofdm * data_container.interpolation_rate);
+				//std::cout << " freq_offset=" << receive_stats.freq_offset;
 				std::cout << " SNR=" << receive_stats.SNR << " dB";
 				std::cout << " Signal Strength=" << receive_stats.signal_stregth_dbm << " dBm ";
 				std::cout << std::endl;
