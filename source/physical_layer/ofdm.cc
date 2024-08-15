@@ -462,7 +462,7 @@ cl_pilot_configurator::cl_pilot_configurator()
 	Nfft=0;
 	start_shift=0;
 	seed=0;
-	print_on=YES;
+	print_on=NO;
 	pilot_density=HIGH_DENSITY;
 }
 
@@ -693,7 +693,7 @@ cl_preamble_configurator::cl_preamble_configurator()
 	nZeros=0;
 	start_shift=0;
 	seed=0;
-	print_on=YES;
+	print_on=NO;
 }
 
 cl_preamble_configurator::~cl_preamble_configurator()
@@ -818,8 +818,8 @@ void cl_preamble_configurator::configure()
 
 void cl_preamble_configurator::print()
 {
-	std::cout<<"nZeros="<<this->nZeros<<std::endl;
-	std::cout<<"nPreamble="<<this->nPreamble<<std::endl;
+    std::cout<<"nZeros="<<this->nZeros<<std::endl;
+    std::cout<<"nPreamble="<<this->nPreamble<<std::endl;
 
 	for(int j=0;j<Nsymb;j++)
 	{

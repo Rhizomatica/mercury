@@ -48,7 +48,7 @@ int shm_create_and_get_fd(char *name, size_t size)
 
     if (shm_open(name, O_RDWR, 0644) >= 0)
     {
-        fprintf(stderr, "POSIX shared memory already created. Re-creating it.\n");
+        // fprintf(stderr, "POSIX shared memory already created. Re-creating it.\n");
         shm_unlink(name);
     }
 

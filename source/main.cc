@@ -188,7 +188,8 @@ int main(int argc, char *argv[])
     {
         printf("Mode selected: RX_RAND\n");
         telecom_system.load_configuration(mod_config);
-        printf("CONFIG_%d (%f bps)\n", mod_config, telecom_system.rbc);
+        printf("CONFIG_%d (%f bps) Shannon_limit: %f\n", mod_config, telecom_system.rbc, telecom_system.Shannon_limit);
+
         telecom_system.constellation_plot.open("PLOT");
         telecom_system.constellation_plot.reset("PLOT");
 
@@ -203,7 +204,7 @@ int main(int argc, char *argv[])
     {
         printf("Mode selected: TX_RAND\n");
         telecom_system.load_configuration(mod_config);
-        printf("CONFIG_%d (%f bps)\n", mod_config, telecom_system.rbc);
+        printf("CONFIG_%d (%f bps) Shannon_limit: %f\n", mod_config, telecom_system.rbc, telecom_system.Shannon_limit);
 
         while (1)
         {
@@ -215,7 +216,8 @@ int main(int argc, char *argv[])
     {
         printf("Mode selected: PLOT_BASEBAND\n");
         telecom_system.load_configuration(mod_config);
-        printf("CONFIG_%d (%f bps)\n", mod_config, telecom_system.rbc);
+        printf("CONFIG_%d (%f bps) Shannon_limit: %f\n", mod_config, telecom_system.rbc, telecom_system.Shannon_limit);
+
         telecom_system.constellation_plot.open("PLOT");
         telecom_system.constellation_plot.reset("PLOT");
 
@@ -228,7 +230,8 @@ int main(int argc, char *argv[])
     {
         printf("Mode selected: PLOT_PASSBAND\n");
         telecom_system.load_configuration(mod_config);
-        printf("CONFIG_%d (%f bps)\n", mod_config, telecom_system.rbc);
+        printf("CONFIG_%d (%f bps) Shannon_limit: %f\n", mod_config, telecom_system.rbc, telecom_system.Shannon_limit);
+
         telecom_system.constellation_plot.open("PLOT");
         telecom_system.constellation_plot.reset("PLOT");
 
@@ -241,7 +244,7 @@ int main(int argc, char *argv[])
     {
         printf("Mode selected: RX_TEST\n");
         telecom_system.load_configuration(mod_config);
-        printf("CONFIG_%d (%f bps)\n", mod_config, telecom_system.rbc);
+        printf("CONFIG_%d (%f bps) Shannon_limit: %f\n", mod_config, telecom_system.rbc, telecom_system.Shannon_limit);
 
         while (1)
         {
@@ -254,7 +257,7 @@ int main(int argc, char *argv[])
     {
         printf("Mode selected: TX_TEST\n");
         telecom_system.load_configuration(mod_config);
-        printf("CONFIG_%d (%f bps)\n", mod_config, telecom_system.rbc);
+        printf("CONFIG_%d (%f bps) Shannon_limit: %.2f db\n", mod_config, telecom_system.rbc, telecom_system.Shannon_limit);
 
         while (1)
         {
@@ -268,7 +271,7 @@ int main(int argc, char *argv[])
     {
         printf("Mode selected: RX_SHM\n");
         telecom_system.load_configuration(mod_config);
-        printf("CONFIG_%d (%f bps)\n", mod_config, telecom_system.rbc);
+        printf("CONFIG_%d (%f bps) Shannon_limit: %.2f db RX: \n", mod_config, telecom_system.rbc, telecom_system.Shannon_limit);
 
         cbuf_handle_t buffer;
 
@@ -288,7 +291,7 @@ int main(int argc, char *argv[])
     {
         printf("Mode selected: TX_SHM\n");
         telecom_system.load_configuration(mod_config);
-        printf("CONFIG_%d (%f bps)\n", mod_config, telecom_system.rbc);
+        printf("CONFIG_%d (%f bps) Shannon_limit: %.2f db TX: ", mod_config, telecom_system.rbc, telecom_system.Shannon_limit);
 
         cbuf_handle_t buffer;
 
