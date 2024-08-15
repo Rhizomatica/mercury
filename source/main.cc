@@ -290,10 +290,9 @@ int main(int argc, char *argv[])
 
     if (telecom_system.operation_mode == TX_SHM)
     {
-        printf("Mode selected: TX_SHM\n");
+        printf("Mode: TX_SHM  Modulation config: %d\n", mod_config);
         telecom_system.load_configuration(mod_config);
-        printf("Modulation: %d  Bitrate: %.2f bps  Shannon_limit: %.2f db\n",  mod_config, telecom_system.rbc, telecom_system.Shannon_limit);
-        printf("TX: ");
+        printf("Bitrate: %.2f bps  Shannon_limit: %.2f db TX: ",  mod_config, telecom_system.rbc, telecom_system.Shannon_limit);
 
         cbuf_handle_t buffer;
 
