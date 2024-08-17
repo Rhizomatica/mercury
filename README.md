@@ -4,7 +4,8 @@ Mercury is a free software software-defined modem solution for the High-Frequenc
 
 # Compilation And Installation
 
-Mercury can be compiled with any C++14 compiler. Compilation is tested with GCC
+Mercury is implemented in C++14 C++ language and needs a compliant POSIX implementation. Currently tested on Linux. There issues with the audio interface on Windows Subsystem for Linux unders Windows which are being addressed. compiler. 
+Compilation is tested with GCC
 under Linux. ALSA library and development headers must be installed. Other optional depencies
 are GNUPlot (for ploting constellations), GraphViz and Doxygen (for documentation). On
 a Debian based system, the dependencies can be installed with:
