@@ -57,7 +57,7 @@ Options:
 Mercury operating modes are:
 - ARQ: Data-link layer and Automatic repeat request mode (under development).
 - TX_SHM: Transmits data read from shared memory interface (check folder examples).
-- RX_SHM: Receives data written to shared memory interface.
+- RX_SHM: Received data is written to shared memory interface.
 
 Mercury also has some modes for development / channel analysis:
 - PLOT_BASEBAND: Baseband Bit Error Rate (BER) simulation mode over an AWGN channel with/without plotting.
