@@ -298,7 +298,10 @@ snd_pcm_sframes_t cl_alsa_sound_device::transfere(double* buffer, unsigned int s
 	}
 	else
 	{
-		nChunks=size/(nbuffer_Samples/2);
+        if (nbuffer_Samples)
+            nChunks=size/(nbuffer_Samples/2);
+        else
+            return 0;
 		for(int i=0;i<nChunks;i++)
 		{
 			frames_transfered+=_transfere(&buffer[i*(nbuffer_Samples/2)],nbuffer_Samples/2);
