@@ -10,7 +10,6 @@
 #pragma once
 
 #include <stdbool.h>
-#include <stdatomic.h>
 #include <stdint.h>
 #include <stddef.h>
 #include <sys/shm.h>
