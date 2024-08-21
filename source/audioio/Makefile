@@ -1,29 +1,30 @@
 
 
-## Set this for Windows
-#FFAUDIO_LINKFLAGS += -lole32
-#OBJS += ffaudio/ffaudio/wasapi.o
-#
-#FFAUDIO_LINKFLAGS += -ldsound -ldxguid
-#OBJS += ffaudio/ffaudio/dsound.o
-#
-## For Darwin / MacOS X (unsupported)
-#FFAUDIO_LINKFLAGS := -framework CoreFoundation -framework CoreAudio
-#OBJS=ffaudio/ffaudio/coreaudio.o
-#
-## For Linux
-FFAUDIO_LINKFLAGS += -lpulse
-OBJS += ffaudio/ffaudio/pulse.o
-#
-FFAUDIO_LINKFLAGS += -lasound -lpthread -lrt
-OBJS += ffaudio/ffaudio/alsa.o
-
-# On linux we need...
-FFAUDIO_LINKFLAGS +=
+ifeq ($(OS),Windows_NT)
+	FFAUDIO_LINKFLAGS += -lole32
+	OBJS += ffaudio/ffaudio/wasapi.o
+	FFAUDIO_LINKFLAGS += -ldsound -ldxguid
+	OBJS += ffaudio/ffaudio/dsound.o
+else
+    UNAME_S := $(shell uname -s)
+    ifeq ($(UNAME_S),Linux)
+		FFAUDIO_LINKFLAGS += -lpulse
+		OBJS += ffaudio/ffaudio/pulse.o
+		FFAUDIO_LINKFLAGS += -lasound -lpthread -lrt
+		OBJS += ffaudio/ffaudio/alsa.o
+    endif
+    ifeq ($(UNAME_S),Darwin)
+		FFAUDIO_LINKFLAGS := -framework CoreFoundation -framework CoreAudio
+		OBJS=ffaudio/ffaudio/coreaudio.o
+    endif
+    ifeq ($(UNAME_S),FreeBSD)
+		FFAUDIO_LINKFLAGS := -lm
+		OBJS=ffaudio/ffaudio/oss.o
+    endif
+endif
 
 CC=gcc
 CFLAGS=-Wall -pthread -std=gnu99 -I./ffbase/ -I./ffaudio/
-# CFLAGS99=-Wall -pedantic -std=c99
 LDFLAGS=$(FFAUDIO_LINKFLAGS)
 
 .PHONY: all
@@ -52,11 +53,6 @@ audioio.o: audioio.c std.h $(OBJS)
 # test code
 audioio: audioio.o $(OBJS)
 	$(CC) audioio.o $(OBJS) -o audioio $(LDFLAGS)
-
-#test-ring_buffer2: test-ring_buffer2.o ring_buffer2.o
-#	$(CC) $(LDFLAGS) -o test-ring_buffer2 test-ring_buffer2.o ring_buffer2.o
-
-
 
 
 .PHONY: clean
