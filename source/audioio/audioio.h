@@ -9,7 +9,14 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 
+#define AUDIO_SUBSYSTEM_ALSA 0
+#define AUDIO_SUBSYSTEM_PULSE 1
+#define AUDIO_SUBSYSTEM_WASAPI 2
+#define AUDIO_SUBSYSTEM_DSOUND 3
+#define AUDIO_SUBSYSTEM_COREAUDIO 4
+#define AUDIO_SUBSYSTEM_OSS 5
 
+#if 1
 static inline void test_check(int ok, const char *expr, const char *file, ffuint line, const char *func)
 {
 	if (ok) {
@@ -173,3 +180,4 @@ static inline void xlogv(const char *fmt, va_list va)
 	test_stdout_fmtv(fmt, va);
 	test_stdout_write("\n", 1);
 }
+#endif

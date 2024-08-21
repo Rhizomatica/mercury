@@ -1,30 +1,28 @@
 
 
 ## Set this for Windows
-#FFAUDIO_API := wasapi
-#FFAUDIO_LINKFLAGS := -lole32
-#OBJS=ffaudio/ffaudio/wasapi.o
+#FFAUDIO_LINKFLAGS += -lole32
+#OBJS += ffaudio/ffaudio/wasapi.o
 #
-#FFAUDIO_API=dsound
-#FFAUDIO_LINKFLAGS := -ldsound -ldxguid
-#OBJS=ffaudio/ffaudio/dsound.o
+#FFAUDIO_LINKFLAGS += -ldsound -ldxguid
+#OBJS += ffaudio/ffaudio/dsound.o
 #
-## For Darwin / MacOS X
-#FFAUDIO_API := coreaudio
+## For Darwin / MacOS X (unsupported)
 #FFAUDIO_LINKFLAGS := -framework CoreFoundation -framework CoreAudio
 #OBJS=ffaudio/ffaudio/coreaudio.o
 #
 ## For Linux
-#FFAUDIO_API := pulse
-#FFAUDIO_LINKFLAGS := -lpulse -lpthread
-#OBJS=ffaudio/ffaudio/pulse.o
+FFAUDIO_LINKFLAGS += -lpulse
+OBJS += ffaudio/ffaudio/pulse.o
 #
-FFAUDIO_API := alsa
-FFAUDIO_LINKFLAGS := -lasound
-OBJS := ffaudio/ffaudio/alsa.o
+FFAUDIO_LINKFLAGS += -lasound -lpthread -lrt
+OBJS += ffaudio/ffaudio/alsa.o
+
+# On linux we need...
+FFAUDIO_LINKFLAGS +=
 
 CC=gcc
-CFLAGS=-Wall -std=gnu99 -I./ffbase/ -I./ffaudio/  -DFFAUDIO_INTERFACE_DEFAULT_PTR="&ff$(FFAUDIO_API)"
+CFLAGS=-Wall -pthread -std=gnu99 -I./ffbase/ -I./ffaudio/
 # CFLAGS99=-Wall -pedantic -std=c99
 LDFLAGS=$(FFAUDIO_LINKFLAGS)
 
