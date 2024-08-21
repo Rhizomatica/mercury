@@ -63,4 +63,4 @@ audioio: audioio.o $(OBJS)
 
 .PHONY: clean
 clean:
-	rm -f *.o ffaudio/ffaudio/alsa.o audioio
+	rm -f *.o ffaudio/ffaudio/*.o audioio
