@@ -284,9 +284,9 @@ static void wf_from_ff(WAVEFORMATEX *wf, const ffaudio_conf *conf)
 	wf->wFormatTag = 1;
 	switch (conf->format) {
 	case FFAUDIO_F_FLOAT32:
-		wf->wFormatTag = 3;
+		wf->wFormatTag = WAVE_FORMAT_IEEE_FLOAT;
 	case FFAUDIO_F_FLOAT64:
-		wf->wFormatTag = WAVE_FORMAT_IEEE_FLOAT; // 3;
+		wf->wFormatTag = WAVE_FORMAT_IEEE_FLOAT;
 		break;
 	}
 
