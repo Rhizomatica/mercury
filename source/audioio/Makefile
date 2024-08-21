@@ -48,7 +48,7 @@ ffaudio/ffaudio/alsa.o: ffaudio/ffaudio/alsa.c
 	$(CC) $(CFLAGS) -c ffaudio/ffaudio/alsa.c -o ffaudio/ffaudio/alsa.o
 
 
-audioio.o: audioio.c std.h
+audioio.o: audioio.c std.h $(OBJS)
 	$(CC) $(CFLAGS) -c audioio.c -o audioio.o
 
 # test code
