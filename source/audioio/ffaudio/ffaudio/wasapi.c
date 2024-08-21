@@ -286,7 +286,7 @@ static void wf_from_ff(WAVEFORMATEX *wf, const ffaudio_conf *conf)
 	case FFAUDIO_F_FLOAT32:
 		wf->wFormatTag = 3;
 	case FFAUDIO_F_FLOAT64:
-		wf->wFormatTag = 3;
+		wf->wFormatTag = WAVE_FORMAT_IEEE_FLOAT; // 3;
 		break;
 	}
 
@@ -449,7 +449,7 @@ static int wasapi_find_fmt(IAudioClient *client, IMMDevice *dev, ffaudio_conf *c
 		return 0;
 
 	static const ffushort fmts[] = {
-		FFAUDIO_F_FLOAT64,
+//		FFAUDIO_F_FLOAT64, // TODO: test me
 		FFAUDIO_F_FLOAT32,
 		FFAUDIO_F_INT32,
 		FFAUDIO_F_INT24,
