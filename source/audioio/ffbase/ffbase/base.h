@@ -124,6 +124,10 @@ ffmem_copy ffmem_move
 	#ifndef _POSIX_C_SOURCE
 		#define _POSIX_C_SOURCE  200112L // for posix_memalign()
 	#endif
+	#ifndef __USE_XOPEN2K
+		#define __USE_XOPEN2K
+	#endif
+	#include <alloca.h>
 	#include <stdlib.h>
 	#include <string.h>
 	#include <unistd.h>

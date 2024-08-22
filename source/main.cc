@@ -42,8 +42,7 @@ extern "C" {
 
 int main(int argc, char *argv[])
 {
-    // defaults to CPU 3
-    int cpu_nr = 3;
+    int cpu_nr = -1;
     bool list_modes = false;
     bool list_sndcards = false;
 
