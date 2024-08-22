@@ -429,6 +429,59 @@ int read_buffer_all(cbuf_handle_t cbuf, uint8_t *data)
     return len;
 }
 
+#if 0
+int buffer_retreat_and_unlock(cbuf_handle_t cbuf, size_t len)
+{
+    assert(cbuf && len);
+
+    size_t size = cbuf->internal->max;
+
+    retreat_pointer_n(cbuf, len);
+
+    pthread_cond_signal( &cbuf->internal->cond );
+    pthread_mutex_unlock( &cbuf->internal->mutex );
+
+    return 0;
+}
+
+int read_buffer_no_retreat_and_lock(cbuf_handle_t cbuf, uint8_t *data, size_t len)
+{
+    assert(cbuf && data && cbuf->internal && cbuf->buffer);
+
+    int r = -1;
+
+ try_again_read:
+    pthread_mutex_lock( &cbuf->internal->mutex );
+
+    size_t size = cbuf->internal->max;
+
+    if(circular_buf_size_internal(cbuf) >= len)
+    {
+        if ( ((cbuf->internal->tail + len) % size) > cbuf->internal->tail)
+        {
+            memcpy(data, cbuf->buffer + cbuf->internal->tail, len);
+        }
+        else
+        {
+            memcpy(data, cbuf->buffer + cbuf->internal->tail, size - cbuf->internal->tail);
+            memcpy(data + (size - cbuf->internal->tail), cbuf->buffer, len - (size - cbuf->internal->tail));
+        }
+        r = 0;
+
+        // pthread_cond_signal( &cbuf->internal->cond );
+        // pthread_mutex_unlock( &cbuf->internal->mutex );
+    }
+    else
+    {
+        pthread_cond_wait( &cbuf->internal->cond, &cbuf->internal->mutex );
+        pthread_mutex_unlock( &cbuf->internal->mutex );
+        goto try_again_read;
+    }
+
+    return r;
+}
+#endif
+
 int read_buffer(cbuf_handle_t cbuf, uint8_t *data, size_t len)
 {
     assert(cbuf && data && cbuf->internal && cbuf->buffer);

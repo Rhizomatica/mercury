@@ -24,8 +24,8 @@
 
 extern double carrier_frequency_offset;
 extern int radio_type;
-extern char alsa_input_dev[ALSA_MAX_PATH];
-extern char alsa_output_dev[ALSA_MAX_PATH];
+extern char *input_dev;
+extern char *output_dev;
 
 cl_configuration_telecom_system::cl_configuration_telecom_system()
 {
@@ -120,8 +120,8 @@ cl_configuration_telecom_system::cl_configuration_telecom_system()
 	plot_plot_active=NO;
 
     // TODO: parametrize the audio device...
-	microphone_dev_name.assign(alsa_input_dev);
-	speaker_dev_name.assign(alsa_output_dev);
+	microphone_dev_name.assign(input_dev);
+	speaker_dev_name.assign(output_dev);
 
 	printf("Alsa I/O. In: %s  Out: %s\n", microphone_dev_name.c_str(), speaker_dev_name.c_str());
 

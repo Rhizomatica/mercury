@@ -15,32 +15,53 @@
 #
 #
 
+ifeq ($(OS),Windows_NT)
+	FFAUDIO_LINKFLAGS += -lole32
+	FFAUDIO_LINKFLAGS += -ldsound -ldxguid
+else
+	UNAME_S := $(shell uname -s)
+    ifeq ($(UNAME_S),Linux)
+		FFAUDIO_LINKFLAGS += -lpulse
+		FFAUDIO_LINKFLAGS += -lasound -lpthread -lrt
+    endif
+    ifeq ($(UNAME_S),Darwin)
+		FFAUDIO_LINKFLAGS := -framework CoreFoundation -framework CoreAudio
+    endif
+    ifeq ($(UNAME_S),FreeBSD)
+		FFAUDIO_LINKFLAGS := -lm
+    endif
+endif
+
+
 CPP=g++
-LDFLAGS=-lasound -lpthread -lrt
-CPPFLAGS=-Ofast -g0 -Wall -Wno-format -std=gnu++14 -I./include -pthread
+LDFLAGS=$(FFAUDIO_LINKFLAGS)
+CPPFLAGS=-Ofast -g0 -Wall -Wno-format -std=gnu++14 -I./include -I./source/audioio/ffaudio -pthread
 #CPPFLAGS=-Ofast -g0 -Wall -fstack-protector -D_FORTIFY_SOURCE=2 -Wno-format -std=gnu++14 -I./include
 CPP_SOURCES=$(wildcard source/*.cc source/datalink_layer/*.cc source/physical_layer/*.cc source/common/*.cc)
 OBJECT_FILES=$(patsubst %.cc,%.o,$(CPP_SOURCES))
 
 DOCS=index.html
 
-uname_p := $(shell uname -m)
-ifeq (${uname_p},aarch64)
+uname_m := $(shell uname -m)
+ifeq (${uname_m},aarch64)
 # Raspberry Pi 4 compiler flags:
 	CPPFLAGS+=-march=armv8-a+crc
 # Raspberry Pi 5 compiler flags (comment above and uncomment below):
 #	CPPFLAGS+=-march=armv8.2-a+crypto+fp16+rcpc+dotprod
 endif
 
-.PHONY: clean install examples
+.PHONY: clean install examples audioio
 
-all: mercury examples
+all: mercury examples audioio
 
 examples:
 	$(MAKE) -C examples
 
-mercury: $(OBJECT_FILES)
-	$(CPP) -o $@ $(OBJECT_FILES) $(LDFLAGS)
+audioio: source/audioio/audioio.c
+	$(MAKE) -C source/audioio
+
+mercury: $(OBJECT_FILES) audioio
+	$(CPP) -o $@ $(OBJECT_FILES) source/audioio/audioio.a $(LDFLAGS)
 
 %.o : %.cc %.h
 	$(CPP) -c $(CPPFLAGS) $< -o $@
@@ -58,3 +79,4 @@ clean:
 	rm -rf mercury $(OBJECT_FILES)
 	rm -rf html/
 	$(MAKE) -C examples clean
+	$(MAKE) -C source/audioio clean
