@@ -118,6 +118,8 @@ int shm_create_and_get_fd(char *name, size_t size)
         abort();
     }
 
+    if (lseek(fd, size - 1, SEEK_SET) == -1)
+
     // fprintf(stderr, "shm_create_and_get_fd() called with %s and %ld\n", name, size);
 #else
     if (shm_open(name, O_RDWR, 0644) >= 0)
@@ -131,13 +133,13 @@ int shm_create_and_get_fd(char *name, size_t size)
         fprintf(stderr, "ERROR: This should never happen! SHM creation error!\n");
         abort();
     }
-#endif
 
     if (ftruncate (fd, size) == -1)
     {
         fprintf(stderr, "ERROR: This should never happen! Error in ftruncate!\n");
         abort();
     }
+#endif
 
     return fd;
 }
@@ -153,9 +155,9 @@ void *shm_map(int fd, size_t size)
         abort();
 
     return (void *)MapViewOfFile(fmap, FILE_MAP_WRITE, 0, 0, size);
-#endif
-
+#else
     return mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+#endif
 }
 
 // returns 0 on success, -1 on error
@@ -177,7 +179,5 @@ int shm_unmap(void *addr, size_t size)
 #else
      return munmap(addr, size);
 #endif
-
-
 
 }
