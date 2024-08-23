@@ -175,7 +175,7 @@ int shm_unmap(void *addr, size_t size)
         CloseHandle(fmap);
     }
 #endif
-
+    return 0;
 #else
      return munmap(addr, size);
 #endif

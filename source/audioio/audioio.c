@@ -155,7 +155,7 @@ void *radio_playback_thread(void *device_ptr)
             total_written += r;
             n -= r;
         }
-        printf("n = %ld total written = %u\n", n, total_written);
+        // printf("n = %lld total written = %u\n", n, total_written);
     }
 
 
