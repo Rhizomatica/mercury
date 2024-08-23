@@ -13,18 +13,30 @@
 
 #include <stdio.h>
 #include <string.h>
-#include <fcntl.h>           /* For O_* constants */
+#include <fcntl.h>
 #include <errno.h>
 #include <stdlib.h>
 
 #if defined(_WIN32)
 
-#include <io.h> // _lseek, etc
+#include <io.h>
 #define open _open
 #define close _close
 #define unlink _unlink
 #define lseek _lseek
 #define write _write
+
+int get_temp_path(char* pathBuffer, int pathBufferSize, const char* pathPart) {
+	const char* temp = getenv(TMP_ENV_NAME);
+	if(strlen(temp) >= pathBufferSize - strlen(pathPart)) {
+		return 0;
+	}
+
+	/* We've done the size check above so we don't need to use the string safe methods */
+	strcpy(pathBuffer, temp);
+	strcat(pathBuffer, pathPart);
+	return 1;
+}
 
 #else
 
