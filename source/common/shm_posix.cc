@@ -13,12 +13,15 @@
 
 #include <stdio.h>
 #include <string.h>
-#include <sys/mman.h>
-#include <sys/stat.h>        /* For mode constants */
 #include <fcntl.h>           /* For O_* constants */
 #include <errno.h>
 #include <stdlib.h>
+
+#if !defined(_WIN32)
+#include <sys/mman.h>
+#include <sys/stat.h>        /* For mode constants */
 #include <unistd.h>
+#endif
 
 // returns non-negative integer or negative if shm not created
 int shm_open_and_get_fd(char *name)

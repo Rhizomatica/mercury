@@ -9,10 +9,13 @@
 
 #pragma once
 
-#if !defined(_WIN32)
+#if defined(_WIN32)
+#include <windows.h>
+#else
 #include <sys/ipc.h>
 #include <sys/shm.h>
 #endif
+
 #include <stdbool.h>
 
 #ifdef __cplusplus

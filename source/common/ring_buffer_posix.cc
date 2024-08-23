@@ -227,7 +227,11 @@ cbuf_handle_t circular_buf_init_shm(size_t size, char *base_name)
     char tmp[MAX_POSIX_SHM_NAME];
     int fd1, fd2;
 
+#if !defined(_WIN32)
     cbuf_handle_t cbuf = (cbuf_handle_t) memalign(SHMLBA, sizeof(struct circular_buf_t));
+#else
+    cbuf_handle_t cbuf = (cbuf_handle_t) malloc(sizeof(struct circular_buf_t));
+#endif
     assert(cbuf);
 
     strcpy(tmp, base_name);
@@ -271,12 +275,18 @@ cbuf_handle_t circular_buf_connect_shm(size_t size, char *base_name)
     char tmp[MAX_POSIX_SHM_NAME];
     int fd1, fd2;
 
+#if !defined(_WIN32)
     cbuf_handle_t cbuf = (cbuf_handle_t) memalign(SHMLBA, sizeof(struct circular_buf_t));
+#else
+    cbuf_handle_t cbuf = (cbuf_handle_t) malloc(sizeof(struct circular_buf_t));
+#endif
     assert(cbuf);
 
     strcpy(tmp, base_name);
     strcat(tmp, "-1");
+
     fd1 = shm_open_and_get_fd(tmp);
+
     if (fd1 < 0)
         return NULL;
     cbuf->buffer = (uint8_t *) shm_map(fd1, size);
