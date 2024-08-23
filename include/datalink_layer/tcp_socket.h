@@ -30,6 +30,7 @@
 #include <fcntl.h>
 #include <string>
 #include <cstring>
+#include <cstdint>
 #include <sys/types.h>
 
 #if defined (_WIN32)
