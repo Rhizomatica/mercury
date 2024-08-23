@@ -26,6 +26,7 @@
 #define lseek _lseek
 #define write _write
 
+#define TMP_ENV_NAME "TEMP"
 int get_temp_path(char* pathBuffer, int pathBufferSize, const char* pathPart) {
 	const char* temp = getenv(TMP_ENV_NAME);
 	if(strlen(temp) >= pathBufferSize - strlen(pathPart)) {
