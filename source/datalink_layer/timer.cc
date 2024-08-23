@@ -24,7 +24,9 @@
 
 
 // clock_gettime implementation for WIN32
+// https://stackoverflow.com/questions/5404277/porting-clock-gettime-to-windows
 #if defined(_WIN32)
+#include <windows.h>
 #define MS_PER_SEC      1000ULL     // MS = milliseconds
 #define US_PER_MS       1000ULL     // US = microseconds
 #define HNS_PER_US      10ULL       // HNS = hundred-nanoseconds (e.g., 1 hns = 100 ns)
