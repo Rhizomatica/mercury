@@ -32,10 +32,10 @@ cl_configuration_arq::cl_configuration_arq()
 	link_timeout=10000000;
 
 	tcp_socket_control_port=7002;
-	tcp_socket_control_timeout_ms=INFINITE;
+	tcp_socket_control_timeout_ms=INFINITE_;
 
 	tcp_socket_data_port=7003;
-	tcp_socket_data_timeout_ms=INFINITE;
+	tcp_socket_data_timeout_ms=INFINITE_;
 
 
 	init_configuration=CONFIG_1; // TODO: can we init with CONFIG_0?

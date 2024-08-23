@@ -25,7 +25,7 @@
 
 
 //Message status
-#define FAILED -2
+#define FAILED_ -2
 #define ACK_TIMED_OUT -1
 #define FREE 0
 #define ADDED_TO_LIST 1
@@ -110,7 +110,7 @@
 #define FULL 0
 #define PHYSICAL_LAYER_ONLY 1
 
-#define INFINITE -1
+#define INFINITE_ -1
 
 #define POLY_CRC8 0xF4
 

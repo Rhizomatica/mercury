@@ -1038,7 +1038,7 @@ void cl_arq_controller::cleanup()
 		this->messages_control.status=FREE;
 		this->messages_control.type=NONE;
 	}
-	else if(messages_control.status==FAILED)
+	else if(messages_control.status==FAILED_)
 	{
 		// SEND FAILED TO USER
 		this->messages_control.ack_timeout=0;
@@ -1062,7 +1062,7 @@ void cl_arq_controller::cleanup()
 			this->messages_tx[i].status=FREE;
 			this->messages_tx[i].type=NONE;
 		}
-		else if(messages_tx[i].status==FAILED)
+		else if(messages_tx[i].status==FAILED_)
 		{
 			// SEND FAILED TO USER
 			this->messages_tx[i].ack_timeout=0;
@@ -1116,7 +1116,7 @@ void cl_arq_controller::process_main()
 				user_command_buffer+=tcp_socket_control.message->buffer[i];
 			}
 		}
-		else if(nBytes_received==0 || (tcp_socket_control.timer.get_elapsed_time_ms()>=tcp_socket_control.timeout_ms && tcp_socket_control.timeout_ms!=INFINITE))
+		else if(nBytes_received==0 || (tcp_socket_control.timer.get_elapsed_time_ms()>=tcp_socket_control.timeout_ms && tcp_socket_control.timeout_ms!=INFINITE_))
 		{
 
 			fifo_buffer_tx.flush();
@@ -1175,7 +1175,7 @@ void cl_arq_controller::process_main()
 			tcp_socket_control.message->length=str.length();
 			tcp_socket_control.transmit();
 		}
-		else if(nBytes_received==0 || (tcp_socket_data.timer.get_elapsed_time_ms()>=tcp_socket_data.timeout_ms && tcp_socket_data.timeout_ms!=INFINITE))
+		else if(nBytes_received==0 || (tcp_socket_data.timer.get_elapsed_time_ms()>=tcp_socket_data.timeout_ms && tcp_socket_data.timeout_ms!=INFINITE_))
 		{
 
 			fifo_buffer_tx.flush();

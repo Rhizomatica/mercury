@@ -206,7 +206,7 @@ void cl_arq_controller::process_messages_tx_control()
 		else
 		{
 			stats.nLost_control++;
-			messages_control.status=FAILED;
+			messages_control.status=FAILED_;
 		}
 	}
 
@@ -322,7 +322,7 @@ void cl_arq_controller::process_messages_tx_data()
 			else
 			{
 				stats.nLost_data++;
-				messages_tx[i].status=FAILED;
+				messages_tx[i].status=FAILED_;
 			}
 
 		}
