@@ -36,6 +36,10 @@
 #define NS_PER_HNS      (100ULL)    // NS = nanoseconds
 #define NS_PER_SEC      (MS_PER_SEC * US_PER_MS * NS_PER_US)
 
+#define CLOCK_REALTIME             0
+#define CLOCK_MONOTONIC            1
+#define CLOCK_MONOTONIC_RAW        4
+
 int clock_gettime_monotonic(struct timespec *tv)
 {
     static LARGE_INTEGER ticksPerSec;
@@ -79,7 +83,7 @@ int clock_gettime_realtime(struct timespec *tv)
 
 int clock_gettime(clockid_t type, struct timespec *tp)
 {
-    if (type == CLOCK_MONOTONIC)
+    if (type == CLOCK_MONOTONIC || type == CLOCK_MONOTONIC_RAW)
     {
         return clock_gettime_monotonic(tp);
     }
