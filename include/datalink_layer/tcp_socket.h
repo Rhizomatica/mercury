@@ -26,14 +26,21 @@
 #include <iostream>
 #include <fstream>
 #include <stdlib.h>
-#include <sys/socket.h>
+
 #include <fcntl.h>
 #include <string>
 #include <cstring>
+#include <sys/types.h>
+
+#if defined (_WIN32)
+#include <winsock2.h>
+#else
+#include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <unistd.h>
-#include <sys/types.h>
+#endif
+
 #include "timer.h"
 
 #define SUCCESS 0

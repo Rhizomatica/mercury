@@ -56,7 +56,17 @@ cl_tcp_socket::~cl_tcp_socket()
 
 int cl_tcp_socket::init()
 {
-	int return_val=SUCCESS;
+#if defined WIN32_
+	WSADATA wsaData;
+	int iResult = WSAStartup(MAKEWORD(2 ,2), &wsaData);
+	if (iResult != 0)
+    {
+		printf("error at WSASturtup\n");
+		return ERROR;
+	}
+#endif
+
+    int return_val=SUCCESS;
 	if(status==TCP_STATUS_CLOSED)
 	{
 		if(type==TYPE_SERVER)
@@ -146,7 +156,9 @@ int cl_tcp_socket::init()
 			fcntl(socket_fd, F_SETFL, O_NONBLOCK);
 		}
 	}
-	return return_val;
+
+
+    return return_val;
 }
 
 int cl_tcp_socket::check_incomming_connection()
