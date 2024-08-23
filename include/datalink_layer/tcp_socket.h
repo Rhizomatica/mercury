@@ -44,7 +44,7 @@
 #include "timer.h"
 
 #define SUCCESS 0
-#define ERROR -1
+#define ERROR_ -1
 
 
 

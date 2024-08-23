@@ -25,7 +25,7 @@
 
 #include <unistd.h>
 
-#define ERROR -1
+#define ERROR_ -1
 #define SUCCESSFUL 0
 
 class cl_fifo_buffer

@@ -49,20 +49,25 @@ cl_tcp_socket::~cl_tcp_socket()
 {
 	if(socket_fd>0)
 	{
+#if defined(WIN32_)
+        closesocket(Csocket);
+        WSACleanup();
+#else
 		close(socket_fd);
+#endif
 	}
 }
 
 
 int cl_tcp_socket::init()
 {
-#if defined WIN32_
+#if defined(WIN32_)
 	WSADATA wsaData;
 	int iResult = WSAStartup(MAKEWORD(2 ,2), &wsaData);
 	if (iResult != 0)
     {
 		printf("error at WSASturtup\n");
-		return ERROR;
+		return ERROR_;
 	}
 #endif
 
@@ -72,11 +77,11 @@ int cl_tcp_socket::init()
 		if(type==TYPE_SERVER)
 		{
 			socket_fd = socket(AF_INET, SOCK_STREAM, 0);
-			if (socket_fd == ERROR)
+			if (socket_fd == ERROR_)
 			{
 				status=TCP_STATUS_SOCKET_CREATION_ERROR;
 				std::cout<<"Error-Server socket can't be created"<<std::endl;
-				return_val=ERROR;
+				return_val=ERROR_;
 			}
 			else
 			{
@@ -91,19 +96,19 @@ int cl_tcp_socket::init()
 			{
 				status=TCP_STATUS_REUSEADDR_ERROR;
 				std::cout<<"Error-Server address reuse can't be set."<<std::endl;
-				return_val=ERROR;
+				return_val=ERROR_;
 			}
 			if (setsockopt(socket_fd, SOL_SOCKET, SO_REUSEPORT, &enable, sizeof(int)) != 0)
 			{
 				status=TCP_STATUS_REUSEPORT_ERROR;
 				std::cout<<"Error-Server port reuse can't be set."<<std::endl;
-				return_val=ERROR;
+				return_val=ERROR_;
 			}
 			if ((bind(socket_fd, (struct sockaddr*)&server, sizeof(server))) != 0)
 			{
 				status=TCP_STATUS_BINDING_ERROR;
 				std::cout<<"Error-Server socket can't be binded"<<std::endl;
-				return_val=ERROR;
+				return_val=ERROR_;
 			}
 			else
 			{
@@ -114,25 +119,28 @@ int cl_tcp_socket::init()
 			{
 				status=TCP_STATUS_LISTENING_ERROR;
 				std::cout<<"Error-Server socket can't listen"<<std::endl;
-				return_val=ERROR;
+				return_val=ERROR_;
 			}
 			else
 			{
 				status=TCP_STATUS_LISTENING;
 				std::cout<<"Server socket is listening"<<std::endl;
 			}
+#if defined(WIN32_)
+            u_long mode = 1;  // 1 to enable non-blocking socket
+            ioctlsocket(socket_fd, FIONBIO, &mode);
+#else
 			fcntl(socket_fd, F_SETFL, O_NONBLOCK);
-
-
+#endif
 		}
 		if(type==TYPE_CLIENT)
 		{
 			socket_fd = socket(AF_INET, SOCK_STREAM, 0);
-			if (socket_fd == ERROR)
+			if (socket_fd == ERROR_)
 			{
 				status=TCP_STATUS_SOCKET_CREATION_ERROR;
 				std::cout<<"Error-Client socket can't be created"<<std::endl;
-				return_val=ERROR;
+				return_val=ERROR_;
 			}
 			else
 			{
@@ -146,14 +154,19 @@ int cl_tcp_socket::init()
 			if (connect(socket_fd, (struct sockaddr*)&server, sizeof(server)) != 0) {
 				status=TCP_STATUS_CONNECTING_ERROR;
 				std::cout<<"Error-Client can't initial the connection"<<std::endl;
-				return_val=ERROR;
+				return_val=ERROR_;
 			}
 			else
 			{
 				status=TCP_STATUS_CONNECTED;
 				std::cout<<"Client is connected to "<<inet_ntoa(server.sin_addr)<<std::endl;
 			}
+#if defined(WIN32_)
+            u_long mode = 1;  // 1 to enable non-blocking socket
+            ioctlsocket(socket_fd, FIONBIO, &mode);
+#else
 			fcntl(socket_fd, F_SETFL, O_NONBLOCK);
+#endif
 		}
 	}
 
@@ -166,25 +179,32 @@ int cl_tcp_socket::check_incomming_connection()
 	int return_val=SUCCESS;
 	unsigned int len = sizeof(client);
 	connection_fd = accept(socket_fd, (struct sockaddr*)&client, &len);
-	fcntl(connection_fd, F_SETFL, O_NONBLOCK);
+
+#if defined(WIN32_)
+    u_long mode = 1;  // 1 to enable non-blocking socket
+    ioctlsocket(connection_fd, FIONBIO, &mode);
+#else
+    fcntl(connection_fd, F_SETFL, O_NONBLOCK);
+#endif
+
 
 	if(connection_fd < 0 || (client.sin_addr.s_addr==htonl(INADDR_ANY)))
 	{
 		if(connection_fd < 0 && get_status()!=TCP_STATUS_LISTENING)
 		{
-			return_val=ERROR;
+			return_val=ERROR_;
 			status=TCP_STATUS_LISTENING;
 			std::cout<<"Client connection dropped"<<std::endl;
 			std::cout<<"Server socket is listening"<<std::endl;
 		}
-		return_val=ERROR;
+		return_val=ERROR_;
 	}
 	else
 	{
 		if (connection_fd < 0) {
 			status=TCP_STATUS_ACCEPTING_ERROR;
 			std::cout<<"Error-Server can't accept the connection"<<std::endl;
-			return_val=ERROR;
+			return_val=ERROR_;
 		}
 		else
 		{
@@ -259,7 +279,7 @@ void cl_tcp_socket::set_type(int _type)
 	else
 	{
 		std::cout<< "wrong type"<<std::endl;
-		exit(ERROR);
+		exit(ERROR_);
 	}
 }
 
