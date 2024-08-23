@@ -49,7 +49,7 @@ cl_tcp_socket::~cl_tcp_socket()
 {
 	if(socket_fd>0)
 	{
-#if defined(WIN32_)
+#if defined(_WIN32)
         closesocket(Csocket);
         WSACleanup();
 #else
@@ -61,7 +61,7 @@ cl_tcp_socket::~cl_tcp_socket()
 
 int cl_tcp_socket::init()
 {
-#if defined(WIN32_)
+#if defined(_WIN32)
 	WSADATA wsaData;
 	int iResult = WSAStartup(MAKEWORD(2 ,2), &wsaData);
 	if (iResult != 0)
@@ -126,7 +126,7 @@ int cl_tcp_socket::init()
 				status=TCP_STATUS_LISTENING;
 				std::cout<<"Server socket is listening"<<std::endl;
 			}
-#if defined(WIN32_)
+#if defined(_WIN32)
             u_long mode = 1;  // 1 to enable non-blocking socket
             ioctlsocket(socket_fd, FIONBIO, &mode);
 #else
@@ -161,7 +161,7 @@ int cl_tcp_socket::init()
 				status=TCP_STATUS_CONNECTED;
 				std::cout<<"Client is connected to "<<inet_ntoa(server.sin_addr)<<std::endl;
 			}
-#if defined(WIN32_)
+#if defined(_WIN32)
             u_long mode = 1;  // 1 to enable non-blocking socket
             ioctlsocket(socket_fd, FIONBIO, &mode);
 #else
@@ -180,7 +180,7 @@ int cl_tcp_socket::check_incomming_connection()
 	unsigned int len = sizeof(client);
 	connection_fd = accept(socket_fd, (struct sockaddr*)&client, &len);
 
-#if defined(WIN32_)
+#if defined(_WIN32)
     u_long mode = 1;  // 1 to enable non-blocking socket
     ioctlsocket(connection_fd, FIONBIO, &mode);
 #else
