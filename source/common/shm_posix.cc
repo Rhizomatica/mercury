@@ -37,6 +37,7 @@ int get_temp_path(char* pathBuffer, int pathBufferSize, const char* pathPart)
 
 	/* We've done the size check above so we don't need to use the string safe methods */
 	strcpy(pathBuffer, temp);
+    strcat(pathBuffer, "\\");
 	strcat(pathBuffer, pathPart+1);
 	return 1;
 }
