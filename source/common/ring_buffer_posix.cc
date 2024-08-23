@@ -31,8 +31,8 @@
 #endif
 
 
-// From: https://github.com/marklakata/mqueue-w32
-#ifdef WIN32
+// Reference from: https://github.com/marklakata/mqueue-w32
+#if defined(_WIN32)
 int MUTEX_LOCK(HANDLE *mqh_lock)
 {
 	DWORD dwWaitResult = WaitForSingleObject(
