@@ -98,12 +98,14 @@ int cl_tcp_socket::init()
 				std::cout<<"Error-Server address reuse can't be set."<<std::endl;
 				return_val=ERROR_;
 			}
+#if !defined(_WIN32)
 			if (setsockopt(socket_fd, SOL_SOCKET, SO_REUSEPORT, &enable, sizeof(int)) != 0)
 			{
 				status=TCP_STATUS_REUSEPORT_ERROR;
 				std::cout<<"Error-Server port reuse can't be set."<<std::endl;
 				return_val=ERROR_;
 			}
+#endif
 			if ((bind(socket_fd, (struct sockaddr*)&server, sizeof(server))) != 0)
 			{
 				status=TCP_STATUS_BINDING_ERROR;
