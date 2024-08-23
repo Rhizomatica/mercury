@@ -22,12 +22,23 @@
 #include <time.h>
 #include <malloc.h>
 
-#if !defined(_WIN32)
+#if defined(_WIN32)
+
+#include <io.h>
+#define open _open
+#define close _close
+#define unlink _unlink
+#define lseek _lseek
+#define write _write
+
+#else
+
 #include <pthread.h>
 #include <sys/resource.h>
 #include <sys/shm.h>
 #include <sys/mman.h>
 #include <unistd.h>
+
 #endif
 
 
@@ -48,9 +59,9 @@ int MUTEX_LOCK(HANDLE *mqh_lock)
         // The thread got ownership of an abandoned mutex
         // The database is in an indeterminate state
         case WAIT_ABANDONED:
-            return ECANCELED ;
-		default:
-			return EINVAL;
+	  return ECANCELED ;
+    default:
+		  return EINVAL;
     }
 }
 
@@ -255,34 +266,34 @@ cbuf_handle_t circular_buf_init_shm(size_t size, char *base_name)
     cbuf->internal->max = size;
 
 #if defined(_WIN32)
-    wchar_t nameBuffer[128];
+    //    wchar_t nameBuffer[128];
+    char nameBuffer[MAX_POSIX_SHM_NAME];
     size_t len;
 
     len = strlen(tmp);
-    if (len >= 64)
+    if (len >= MAX_POSIX_SHM_NAME)
     {
         errno = EINVAL;
         printf("path name too long\n");
         return NULL;
     }
-    lstrcpyW(nameBuffer,TEXT("Global\\Mercury_Mtx_"));
-    len = lstrlenW(nameBuffer);
-    mbstowcs(nameBuffer+len, tmp+1, 128-len);
+
+    sprintf(nameBuffer, "Global\\HERMES_Mtx%s", tmp+1);
+
     cbuf->internal->mutex = CreateMutex(
 					NULL,              // default security attributes
 					FALSE,             // initially not owned
 					nameBuffer);       // named mutex
 
-    lstrcpyW(nameBuffer,TEXT("Global\\Mercury_Cond_"));
-    len = lstrlenW(nameBuffer);
-    mbstowcs(nameBuffer+len, tmp+1, 128-len);
+    sprintf(nameBuffer, "Global\\HERMES_Cond%s", tmp+1);
+
     cbuf->internal->cond = CreateEvent(
-        NULL,
-        FALSE,
-        FALSE,
-        nameBuffer
-        );
-}
+				       NULL,
+				       FALSE,
+				       FALSE,
+				       nameBuffer
+				       );
+
 #else
 
     pthread_mutexattr_t mutex_attr;
@@ -359,6 +370,8 @@ void circular_buf_destroy_shm(cbuf_handle_t cbuf, size_t size, char *base_name)
     assert(cbuf && cbuf->internal && cbuf->buffer);
     char tmp[MAX_POSIX_SHM_NAME];
 
+    // TODO: wire up the shutdown for windows stuff...
+#if !defined(_WIN32)
     shm_unmap(cbuf->buffer, size);
     shm_unmap(cbuf->internal, sizeof(struct circular_buf_t_aux));
 
@@ -369,6 +382,7 @@ void circular_buf_destroy_shm(cbuf_handle_t cbuf, size_t size, char *base_name)
     strcpy(tmp, base_name);
     strcat(tmp, "-2");
     shm_unlink(tmp);
+#endif
 }
 
 void circular_buf_reset(cbuf_handle_t cbuf)
@@ -711,20 +725,41 @@ cbuf_handle_t circular_buf_init(uint8_t* buffer, size_t size)
 {
     assert(buffer && size);
 
+#if defined(_WIN32)
+    cbuf_handle_t cbuf = (cbuf_handle_t) malloc(sizeof(struct circular_buf_t));
+    assert(cbuf);
+    cbuf->internal = (struct circular_buf_t_aux *) malloc(sizeof(struct circular_buf_t_aux));
+    assert(cbuf->internal);
+#else
     cbuf_handle_t cbuf = (cbuf_handle_t) memalign(SHMLBA, sizeof(struct circular_buf_t));
     assert(cbuf);
-
     cbuf->internal = (struct circular_buf_t_aux *) memalign(SHMLBA, sizeof(struct circular_buf_t_aux));
     assert(cbuf->internal);
+#endif
 
     cbuf->buffer = buffer;
     cbuf->internal->max = size;
     circular_buf_reset(cbuf);
+    assert(circular_buf_empty(cbuf));
 
+#if defined(_WIN32)
+    cbuf->internal->mutex = CreateMutex(
+					NULL,              // default security attributes
+					FALSE,             // initially not owned
+					NULL);       // named mutex
+
+    cbuf->internal->cond = CreateEvent(
+				       NULL,
+				       FALSE,
+				       FALSE,
+				       NULL
+				       );
+#else
     pthread_mutex_init( &cbuf->internal->mutex, NULL );
     pthread_cond_init( &cbuf->internal->cond, NULL );
-
-    assert(circular_buf_empty(cbuf));
+#endif
+    
+    
 
     return cbuf;
 }
