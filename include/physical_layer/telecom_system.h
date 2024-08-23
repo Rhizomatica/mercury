@@ -37,6 +37,13 @@
 #include "common/ring_buffer_posix.h"
 #include <iomanip>
 
+
+#if defined(_WIN32)
+#define msleep(a) Sleep(a)
+#else
+#define msleep(a) usleep(a * 1000)
+#endif
+
 struct st_reinit_subsystems{
 	int microphone=YES;
 	int speaker=YES;

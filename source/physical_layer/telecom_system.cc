@@ -1067,7 +1067,7 @@ void cl_telecom_system::RX_RAND_process_main()
 	}
 	else
 	{
-		usleep(1000);
+		msleep(1);
 	}
 }
 
@@ -1153,7 +1153,7 @@ void cl_telecom_system::RX_TEST_process_main()
 	}
 	else
 	{
-		usleep(1000);
+		msleep(1);
 	}
 }
 
@@ -1252,7 +1252,7 @@ void cl_telecom_system::RX_SHM_process_main(cbuf_handle_t buffer)
 	}
 	else
 	{
-		usleep(1000);
+		msleep(1);
 	}
 }
 
