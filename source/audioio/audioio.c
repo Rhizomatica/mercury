@@ -25,6 +25,7 @@
 
 // bool shutdown_;
 extern bool shutdown_;
+extern int radio_type;
 
 cbuf_handle_t capture_buffer;
 cbuf_handle_t playback_buffer;
@@ -62,7 +63,7 @@ void *radio_playback_thread(void *device_ptr)
     ffaudio_interface *audio;
 	struct conf conf = {};
 	conf.buf.app_name = "mercury_playback";
-	conf.buf.format = FFAUDIO_F_INT16;
+	conf.buf.format = FFAUDIO_F_INT32;
 	conf.buf.sample_rate = 48000;
 	conf.buf.channels = 2;
 	conf.buf.device_id = device_ptr;
@@ -95,7 +96,7 @@ void *radio_playback_thread(void *device_ptr)
 	if ( audio->init(&aconf) != 0)
     {
         printf("Error in audio->init()\n");
-        return NULL;
+        goto finish_play;
     }
 
     // playback code...
@@ -106,7 +107,7 @@ void *radio_playback_thread(void *device_ptr)
 	if (b == NULL)
     {
         printf("Error in audio->alloc()\n");
-        return NULL;
+        goto finish_play;
     }
 
     ffaudio_conf *cfg = &conf.buf;
@@ -116,7 +117,7 @@ void *radio_playback_thread(void *device_ptr)
 	if (r != 0)
     {
         printf("error in audio->open(): %d: %s\n", r, audio->error(b));
-        return NULL;
+        goto cleanup_play;
     }
 
 	printf(" %d/%d/%d %dms\n", cfg->format, cfg->sample_rate, cfg->channels, cfg->buffer_length_msec);
@@ -171,12 +172,19 @@ void *radio_playback_thread(void *device_ptr)
     if (r != 0)
         printf("ffaudio.clear: %s", audio->error(b));
 
+    free(buffer);
+
+cleanup_play:
+
     audio->free(b);
 
-    free(buffer);
 	audio->uninit();
 
+finish_play:
+
 	printf("radio_playback_thread exit\n");
+
+    shutdown_ = true;
 
     return NULL;
 }
@@ -186,7 +194,7 @@ void *radio_capture_thread(void *device_ptr)
     ffaudio_interface *audio;
 	struct conf conf = {};
 	conf.buf.app_name = "mercury_capture";
-	conf.buf.format = FFAUDIO_F_INT16;
+	conf.buf.format = FFAUDIO_F_INT32;
 	conf.buf.sample_rate = 48000;
 	conf.buf.channels = 2;
 	conf.buf.device_id = device_ptr;
@@ -219,7 +227,7 @@ void *radio_capture_thread(void *device_ptr)
 	if ( audio->init(&aconf) != 0)
     {
         printf("Error in audio->init()\n");
-        return NULL;
+        goto finish_cap;
     }
 
     // capture code
@@ -230,7 +238,7 @@ void *radio_capture_thread(void *device_ptr)
 	if (b == NULL)
     {
         printf("Error in audio->alloc()\n");
-        return NULL;
+        goto finish_cap;
     }
 
     ffaudio_conf *cfg = &conf.buf;
@@ -240,7 +248,7 @@ void *radio_capture_thread(void *device_ptr)
 	if (r != 0)
     {
         printf("error in audio->open(): %d: %s\n", r, audio->error(b));
-        return NULL;
+        goto cleanup_cap;
     }
 
 	printf(" %d/%d/%d %dms\n", cfg->format, cfg->sample_rate, cfg->channels, cfg->buffer_length_msec);
@@ -261,7 +269,7 @@ void *radio_capture_thread(void *device_ptr)
         }
         else
         {
-            printf(" %dms", r / msec_bytes);
+            printf(" %dms\n", r / msec_bytes);
         }
 
         write_buffer(capture_buffer, buffer, r);
@@ -277,11 +285,16 @@ void *radio_capture_thread(void *device_ptr)
 	if (r != 0)
 		printf("ffaudio.clear: %s", audio->error(b));
 
+cleanup_cap:
+
 	audio->free(b);
 
     audio->uninit();
 
+finish_cap:
 	printf("radio_capture_thread exit\n");
+
+    shutdown_ = true;
 
     return NULL;
 }
