@@ -12,8 +12,37 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <stddef.h>
-#include <sys/shm.h>
+
+#if defined(WIN32)
+//#include <winsock2.h>
+#include <windows.h>
+
+#ifndef EMSGSIZE
+#define EMSGSIZE    4200
+#endif
+
+#define O_NONBLOCK  0200000
+
+union sigval {
+    int           sival_int;     /* integer value */
+    void          *sival_ptr;    /* pointer value */
+};
+struct sigevent {
+    int           sigev_notify;  /* notification type */
+    int           sigev_signo;   /* signal number */
+    union sigval  sigev_value;   /* signal value */
+};
+typedef int pid_t;
+typedef int ssize_t;
+
+#else
+
 #include <pthread.h>
+#include <sys/shm.h>
+
+#endif
+
+
 
 #ifdef __cplusplus
 extern "C" {
@@ -25,8 +54,13 @@ struct circular_buf_t_aux {
     size_t max; //of the buffer
     bool full;
 
-    pthread_mutex_t    mutex;
-    pthread_cond_t     cond;
+#if defined(_WIN32)
+    HANDLE            mutex;  /* mutex lock */
+    HANDLE            cond;  /* and condition event */
+#else
+    pthread_mutex_t   mutex;  /* mutex lock */
+    pthread_cond_t    cond;  /* and condition variable */
+#endif
 };
 
 struct circular_buf_t {
