@@ -134,6 +134,8 @@ void *radio_playback_thread(void *device_ptr)
         ffssize n = read_buffer_all(playback_buffer, buffer);
         total_written = 0;
 
+        // TODO: pre-process the buffers for (radio_type == RADIO_SBITX) and (radio_type == RADIO_STOCKHF)
+
         while (n >= frame_size)
         {
             r = audio->write(b, buffer + total_written, n);
@@ -357,25 +359,7 @@ void list_soundcards(int audio_system)
 int tx_transfer(double *buffer, size_t len)
 {
     // TODO: write to playback buffer
-#if 0
-    if (radio_type == RADIO_SBITX)
-    {
-        microphone_type=CAPTURE;
-        microphone_channels=LEFT;
-
-        speaker_type=PLAY;
-        speaker_channels=RIGHT;
-    }
-
-    if (radio_type == RADIO_STOCKHF)
-    {
-        microphone_type=CAPTURE;
-        microphone_channels=MONO;
-
-        speaker_type=PLAY;
-        speaker_channels=MONO;
-    }
-#endif
+    // write_buffer(...);
 
     return 0;
 }
@@ -383,7 +367,33 @@ int tx_transfer(double *buffer, size_t len)
 
 int rx_transfer(double *buffer, size_t len)
 {
-    // TODO: write to playback buffer
+    // TODO: write to capture buffer
+#if 0
+	int location_of_last_frame = data_container_ptr->Nofdm * data_container_ptr->interpolation_rate *
+        (data_container_ptr->buffer_Nsymb) - data_container_ptr->Nofdm *
+        data_container_ptr->interpolation_rate - 1;
+
+	if(data_container_ptr->data_ready==1)
+	{
+		data_container_ptr->nUnder_processing_events++;
+		//std::cout<<"under_processing No= "<<data_container_ptr->nUnder_processing_events<<std::endl;
+	}
+
+	shift_left(data_container_ptr->passband_delayed_data,
+               data_container_ptr->Nofdm * data_container_ptr->interpolation_rate *
+               data_container_ptr->buffer_Nsymb,
+               data_container_ptr->Nofdm * data_container_ptr->interpolation_rate);
+
+	sound_device_ptr->transfere(&data_container_ptr->passband_delayed_data[location_of_last_frame],
+                                data_container_ptr->Nofdm*data_container_ptr->interpolation_rate);
+
+	data_container_ptr->frames_to_read--;
+	if(data_container_ptr->frames_to_read<0)
+	{
+		data_container_ptr->frames_to_read=0;
+	}
+	data_container_ptr->data_ready=1;
+#endif
 
     return 0;
 }
