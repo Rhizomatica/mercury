@@ -28,15 +28,16 @@
 
 #define S_IXUSR  0000100
 #define TMP_ENV_NAME "TEMP"
-int get_temp_path(char* pathBuffer, int pathBufferSize, const char* pathPart) {
+int get_temp_path(char* pathBuffer, int pathBufferSize, const char* pathPart)
+{
 	const char* temp = getenv(TMP_ENV_NAME);
-	if(strlen(temp) >= pathBufferSize - strlen(pathPart)) {
+	if(strlen(temp) >= pathBufferSize - strlen(pathPart+1)) {
 		return 0;
 	}
 
 	/* We've done the size check above so we don't need to use the string safe methods */
 	strcpy(pathBuffer, temp);
-	strcat(pathBuffer, pathPart);
+	strcat(pathBuffer, pathPart+1);
 	return 1;
 }
 
