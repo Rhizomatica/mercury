@@ -26,6 +26,7 @@
 #define lseek _lseek
 #define write _write
 
+#define S_IXUSR  0000100
 #define TMP_ENV_NAME "TEMP"
 int get_temp_path(char* pathBuffer, int pathBufferSize, const char* pathPart) {
 	const char* temp = getenv(TMP_ENV_NAME);
@@ -103,14 +104,14 @@ int shm_create_and_get_fd(char *name, size_t size)
     }
     printf("Windows shm name: %s\n", pathBuffer);
 
-    if (fd = open(pathBuffer, O_RDWR, S_IRWXU | S_IRWXG) >= 0)
+    if (fd = open(pathBuffer, O_RDWR, 0644 | S_IXUSR) >= 0)
     {
         fprintf(stderr, "Windows shared memory already created. Re-creating it.\n");
         close(fd);
         unlink(pathBuffer);
     }
 
-    fd = open(pathBuffer, O_CREATE | O_EXCL | O_RDWR, S_IRWXU | S_IRWXG | S_IRWXO);
+    fd = open(pathBuffer, O_CREAT | O_EXCL | O_RDWR, 0664 | S_IXUSR);
     if (fd < 0)
     {
         fprintf(stderr, "ERROR: This should never happen! SHM creation error!\n");
