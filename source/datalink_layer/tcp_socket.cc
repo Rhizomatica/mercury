@@ -178,9 +178,13 @@ int cl_tcp_socket::init()
 
 int cl_tcp_socket::check_incomming_connection()
 {
-	int return_val=SUCCESS;
-	unsigned int len = sizeof(client);
-	connection_fd = accept(socket_fd, (struct sockaddr*)&client, &len);
+    int return_val=SUCCESS;
+#if defined(_WIN32)
+    int len = sizeof(client);
+#else
+    unsigned int len = sizeof(client);
+#endif
+    connection_fd = accept(socket_fd, (struct sockaddr*)&client, &len);
 
 #if defined(_WIN32)
     u_long mode = 1;  // 1 to enable non-blocking socket
