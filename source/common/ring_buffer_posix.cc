@@ -17,13 +17,17 @@
 #include <stddef.h>
 #include <assert.h>
 #include <stdbool.h>
+#include <string.h>
+
+#include <malloc.h>
+
+#if !defined(_WIN32)
+#include <pthread.h>
 #include <sys/resource.h>
 #include <sys/shm.h>
-#include <string.h>
 #include <sys/mman.h>
-#include <malloc.h>
-#include <pthread.h>
 #include <unistd.h>
+#endif
 
 // Private functions
 
