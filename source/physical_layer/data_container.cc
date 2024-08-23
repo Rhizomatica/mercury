@@ -69,8 +69,6 @@ cl_data_container::cl_data_container()
 	this->nUnder_processing_events=0;
 	this->interpolation_rate=0;
 
-	this->sound_device_ptr=NULL;
-
 	this->total_frame_size=0;
 
 	this->passband_data_tx=NULL;
@@ -335,5 +333,4 @@ void cl_data_container::deinit()
 	this->nUnder_processing_events=0;
 	this->interpolation_rate=0;
 
-	this->sound_device_ptr=NULL;
 }

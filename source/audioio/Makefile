@@ -46,7 +46,7 @@ endif
 AR=ar
 CC=gcc
 #CFLAGS += -Wall -O0 -g -std=gnu99 -I./ffbase/ -I./ffaudio/ -I../../include
-CFLAGS += -Wall -O2 -std=c17 -I./ffbase/ -I./ffaudio/ -I../../include
+CFLAGS += -Wall -O2 -g -std=c17 -I./ffbase/ -I./ffaudio/ -I../../include
 LDFLAGS=$(FFAUDIO_LINKFLAGS)
 
 .PHONY: all

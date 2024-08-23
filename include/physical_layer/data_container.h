@@ -25,7 +25,6 @@
 
 #include <complex>
 #include "physical_defines.h"
-#include "alsa_sound_dev.h"
 #include "misc.h"
 
 class cl_data_container
@@ -61,7 +60,8 @@ class cl_data_container
 	int* hd_decoded_data_byte;
 	int nData,Nc,M,Nfft,Nofdm,Nsymb,preamble_nSymb,nBits,Ngi,interpolation_rate;
 	void set_size(int nData, int Nc,int M,int Nfft, int Nofdm, int Nsymb, int preamble_nSymb, int interpolation_rate);
-	void *sound_device_ptr;
+
+    // TODO: these should go away...
 	volatile int frames_to_read;
 	volatile int data_ready;
 	volatile int nUnder_processing_events;

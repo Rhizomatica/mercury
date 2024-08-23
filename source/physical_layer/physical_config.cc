@@ -119,31 +119,6 @@ cl_configuration_telecom_system::cl_configuration_telecom_system()
 	plot_folder="./";
 	plot_plot_active=NO;
 
-    // TODO: parametrize the audio device...
-	microphone_dev_name.assign(input_dev);
-	speaker_dev_name.assign(output_dev);
-
-	printf("Alsa I/O. In: %s  Out: %s\n", microphone_dev_name.c_str(), speaker_dev_name.c_str());
-
-    if (radio_type == RADIO_SBITX)
-    {
-        microphone_type=CAPTURE;
-        microphone_channels=LEFT;
-
-        speaker_type=PLAY;
-        speaker_channels=RIGHT;
-    }
-
-    if (radio_type == RADIO_STOCKHF)
-    {
-        microphone_type=CAPTURE;
-        microphone_channels=MONO;
-
-        speaker_type=PLAY;
-        speaker_channels=MONO;
-    }
-
-	speaker_frames_to_leave_transmit_fct=20000; // TODO: REMOVE-ME
 }
 
 cl_configuration_telecom_system::~cl_configuration_telecom_system()

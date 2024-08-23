@@ -557,7 +557,9 @@ void cl_arq_controller::load_configuration(int configuration, int level, int bac
 	gear_shift_blocked_for_nBlocks=default_configuration_ARQ.gear_shift_block_for_nBlocks_total;
 
 	message_transmission_time_ms=ceil((1000.0*(telecom_system->data_container.Nsymb+telecom_system->data_container.preamble_nSymb)*telecom_system->data_container.Nofdm*telecom_system->frequency_interpolation_rate)/(float)(telecom_system->frequency_interpolation_rate*(telecom_system->bandwidth/telecom_system->ofdm.Nc)*telecom_system->ofdm.Nfft));
-	time_left_to_send_last_frame=(float)telecom_system->speaker.frames_to_leave_transmit_fct/(float)(telecom_system->frequency_interpolation_rate*(telecom_system->bandwidth/telecom_system->ofdm.Nc)*telecom_system->ofdm.Nfft);
+    // TODO: audio migration
+	// time_left_to_send_last_frame=(float)telecom_system->speaker.frames_to_leave_transmit_fct/(float)(telecom_system->frequency_interpolation_rate*(telecom_system->bandwidth/telecom_system->ofdm.Nc)*telecom_system->ofdm.Nfft);
+    time_left_to_send_last_frame=0;
 
 	set_ack_timeout_data((data_batch_size+1+control_batch_size+2*ack_batch_size)*message_transmission_time_ms+time_left_to_send_last_frame+4*ptt_on_delay_ms+4*ptt_off_delay_ms);
 	set_ack_timeout_control((control_batch_size+ack_batch_size)*message_transmission_time_ms+time_left_to_send_last_frame+2*ptt_on_delay_ms+2*ptt_off_delay_ms);
@@ -1418,7 +1420,11 @@ void cl_arq_controller::send(st_message* message, int message_location)
 
 	telecom_system->transmit_byte(telecom_system->data_container.data_byte,header_length+message->length,telecom_system->data_container.ready_to_transmit_passband_data_tx,message_location);
 
-	telecom_system->speaker.transfere(telecom_system->data_container.ready_to_transmit_passband_data_tx,telecom_system->data_container.Nofdm*telecom_system->data_container.interpolation_rate*(telecom_system->data_container.Nsymb+telecom_system->data_container.preamble_nSymb));
+    // TODO: write to tx buffer
+	tx_transfer(telecom_system->data_container.ready_to_transmit_passband_data_tx,
+                telecom_system->data_container.Nofdm * telecom_system->data_container.interpolation_rate *
+                (telecom_system->data_container.Nsymb + telecom_system->data_container.preamble_nSymb));
+	// telecom_system->speaker.transfere(telecom_system->data_container.ready_to_transmit_passband_data_tx,telecom_system->data_container.Nofdm*telecom_system->data_container.interpolation_rate*(telecom_system->data_container.Nsymb+telecom_system->data_container.preamble_nSymb));
 
 	last_message_sent_type=message->type;
 	if(message->type==CONTROL || message->type==ACK_CONTROL)
@@ -1538,11 +1544,12 @@ void cl_arq_controller::send_batch()
 
 	if(messages_batch_tx[0].type==DATA_LONG || messages_batch_tx[0].type==DATA_SHORT)
 	{
-		telecom_system->speaker.transfere(&batch_frames_output_data_filtered2[(0+1)*frame_output_size],frame_output_size);
+		tx_transfer(&batch_frames_output_data_filtered2[(0+1)*frame_output_size], frame_output_size);
 	}
+
 	for(int i=0;i<message_batch_counter_tx;i++)
 	{
-		telecom_system->speaker.transfere(&batch_frames_output_data_filtered2[(i+1)*frame_output_size],frame_output_size);
+		tx_transfer(&batch_frames_output_data_filtered2[(i+1)*frame_output_size], frame_output_size);
 	}
 
 	ptt_off_delay.start();

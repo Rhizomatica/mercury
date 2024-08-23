@@ -26,13 +26,18 @@ extern "C" {
 #define AUDIO_SUBSYSTEM_DSOUND 3
 #define AUDIO_SUBSYSTEM_COREAUDIO 4
 #define AUDIO_SUBSYSTEM_OSS 5
+#define AUDIO_SUBSYSTEM_AAUDIO 6
 
 #define AUDIO_CAPT_PAYLOAD_NAME "/audio-capt"
 #define AUDIO_PLAY_PAYLOAD_NAME "/audio-play"
 
 #define AUDIO_PAYLOAD_BUFFER_SIZE 1536000
 
-int audioio_init(char *capture_dev, char *playback_dev, int audio_subsys);
+int audioio_init(char *capture_dev, char *playback_dev, int audio_subsys, pthread_t *radio_capture, pthread_t *radio_playback);
+
+int audioio_deinit(pthread_t *radio_capture, pthread_t *radio_playback);
+
+int tx_transfer(double *buffer, size_t len);
 
 void list_soundcards(int audio_system);
 

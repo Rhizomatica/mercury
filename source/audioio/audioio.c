@@ -305,6 +305,9 @@ void list_soundcards(int audio_system)
 #elif defined(__APPLE__)
     if (audio_subsystem == AUDIO_SUBSYSTEM_COREAUDIO)
         audio = (ffaudio_interface *) &ffcoreaudio;
+#elif defined(__ANDROID__)
+    if (audio_subsystem == AUDIO_SUBSYSTEM_AAUDIO)
+        audio = (ffaudio_interface *) &ffaaudio;
 #endif
 
 	ffaudio_init_conf aconf = {};
@@ -351,20 +354,58 @@ void list_soundcards(int audio_system)
 	}
 }
 
-int audioio_init(char *capture_dev, char *playback_dev, int audio_subsys)
+int tx_transfer(double *buffer, size_t len)
 {
-    pthread_t radio_capture, radio_playback;
+    // TODO: write to playback buffer
+#if 0
+    if (radio_type == RADIO_SBITX)
+    {
+        microphone_type=CAPTURE;
+        microphone_channels=LEFT;
+
+        speaker_type=PLAY;
+        speaker_channels=RIGHT;
+    }
+
+    if (radio_type == RADIO_STOCKHF)
+    {
+        microphone_type=CAPTURE;
+        microphone_channels=MONO;
+
+        speaker_type=PLAY;
+        speaker_channels=MONO;
+    }
+#endif
+
+    return 0;
+}
+
+
+int rx_transfer(double *buffer, size_t len)
+{
+    // TODO: write to playback buffer
+
+    return 0;
+}
+
+
+int audioio_init(char *capture_dev, char *playback_dev, int audio_subsys, pthread_t *radio_capture, pthread_t *radio_playback)
+{
+    audio_subsystem = audio_subsys;
 
     capture_buffer = circular_buf_init_shm(AUDIO_PAYLOAD_BUFFER_SIZE, (char *) AUDIO_CAPT_PAYLOAD_NAME);
     playback_buffer = circular_buf_init_shm(AUDIO_PAYLOAD_BUFFER_SIZE, (char *) AUDIO_PLAY_PAYLOAD_NAME);
 
-    audio_subsystem = audio_subsys;
+    pthread_create(radio_capture, NULL, radio_capture_thread, (void*)capture_dev);
+    pthread_create(radio_playback, NULL, radio_playback_thread, (void*)playback_dev);
 
-    pthread_create(&radio_capture, NULL, radio_capture_thread, (void*)capture_dev);
-    pthread_create(&radio_playback, NULL, radio_playback_thread, (void*)playback_dev);
+	return 0;
+}
 
-    pthread_join(radio_capture, NULL);
-    pthread_join(radio_playback, NULL);
+int audioio_deinit(pthread_t *radio_capture, pthread_t *radio_playback)
+{
+    pthread_join(*radio_capture, NULL);
+    pthread_join(*radio_playback, NULL);
 
     circular_buf_destroy_shm(capture_buffer, AUDIO_PAYLOAD_BUFFER_SIZE, (char *) AUDIO_CAPT_PAYLOAD_NAME);
     circular_buf_free_shm(capture_buffer);
@@ -372,9 +413,8 @@ int audioio_init(char *capture_dev, char *playback_dev, int audio_subsys)
     circular_buf_destroy_shm(playback_buffer, AUDIO_PAYLOAD_BUFFER_SIZE, (char *) AUDIO_PLAY_PAYLOAD_NAME);
     circular_buf_free_shm(playback_buffer);
 
-	return 0;
+    return 0;
 }
-
 
 // #define TESTING
 #ifdef TESTING

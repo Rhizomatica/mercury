@@ -261,6 +261,10 @@ int main(int argc, char *argv[])
         exit(EXIT_FAILURE);
     }
 
+    // initializing audio system
+    pthread_t radio_capture, radio_playback;
+    audioio_init(input_dev, output_dev, audio_system, &radio_capture, &radio_playback);
+
     if (telecom_system.operation_mode == ARQ_MODE)
     {
         printf("Mode selected: ARQ\n");
@@ -269,7 +273,7 @@ int main(int argc, char *argv[])
         ARQ.init();
         ARQ.print_stats();
 
-        while (1)
+        while (!shutdown_)
         {
             ARQ.process_main();
         }
@@ -284,11 +288,11 @@ int main(int argc, char *argv[])
         telecom_system.constellation_plot.open("PLOT");
         telecom_system.constellation_plot.reset("PLOT");
 
-        while (1)
+        while (!shutdown_)
         {
             telecom_system.RX_RAND_process_main();
         }
-        telecom_system.constellation_plot.close(); // o_O
+        telecom_system.constellation_plot.close();
     }
 
     if (telecom_system.operation_mode == TX_RAND)
@@ -297,7 +301,7 @@ int main(int argc, char *argv[])
         telecom_system.load_configuration(mod_config);
         printf("CONFIG_%d (%f bps) Shannon_limit: %f\n", mod_config, telecom_system.rbc, telecom_system.Shannon_limit);
 
-        while (1)
+        while (!shutdown_)
         {
             telecom_system.TX_RAND_process_main();
         }
@@ -337,7 +341,7 @@ int main(int argc, char *argv[])
         telecom_system.load_configuration(mod_config);
         printf("CONFIG_%d (%f bps) Shannon_limit: %f\n", mod_config, telecom_system.rbc, telecom_system.Shannon_limit);
 
-        while (1)
+        while (!shutdown_)
         {
             telecom_system.RX_TEST_process_main();
         }
@@ -350,7 +354,7 @@ int main(int argc, char *argv[])
         telecom_system.load_configuration(mod_config);
         printf("CONFIG_%d (%f bps) Shannon_limit: %.2f db\n", mod_config, telecom_system.rbc, telecom_system.Shannon_limit);
 
-        while (1)
+        while (!shutdown_)
         {
             telecom_system.TX_TEST_process_main();
         }
@@ -369,7 +373,7 @@ int main(int argc, char *argv[])
 
         buffer = circular_buf_init_shm(SHM_PAYLOAD_BUFFER_SIZE, (char *) SHM_PAYLOAD_NAME);
 
-        while (1)
+        while (!shutdown_)
         {
             telecom_system.RX_SHM_process_main(buffer);
         }
@@ -389,7 +393,7 @@ int main(int argc, char *argv[])
 
         buffer = circular_buf_init_shm(SHM_PAYLOAD_BUFFER_SIZE, (char *) SHM_PAYLOAD_NAME);
 
-        while (1)
+        while (!shutdown_)
         {
             telecom_system.TX_SHM_process_main(buffer);
         }
@@ -403,6 +407,9 @@ int main(int argc, char *argv[])
         free(input_dev);
     if (output_dev)
         free(output_dev);
+
+    audioio_deinit(&radio_capture, &radio_playback);
+
 
     return EXIT_SUCCESS;
 }

@@ -21,6 +21,7 @@
  */
 
 #include "physical_layer/telecom_system.h"
+#include "audioio/audioio.h"
 
 cl_telecom_system::cl_telecom_system()
 {
@@ -896,7 +897,7 @@ void cl_telecom_system::TX_RAND_process_main()
 	{
 		transmit_bit(data_container.data_bit,data_container.passband_data,MIDDLE_MESSAGE);
 	}
-	speaker.transfere(data_container.passband_data,data_container.Nofdm*data_container.interpolation_rate*(ofdm.Nsymb+ofdm.preamble_configurator.Nsymb));
+	tx_transfer(data_container.passband_data,data_container.Nofdm*data_container.interpolation_rate*(ofdm.Nsymb+ofdm.preamble_configurator.Nsymb));
 }
 
 void cl_telecom_system::TX_TEST_process_main()
@@ -914,7 +915,7 @@ void cl_telecom_system::TX_TEST_process_main()
 
     transmit_byte(data_container.data_byte, (nReal_data - outer_code_reserved_bits) / 8, data_container.passband_data, SINGLE_MESSAGE);
 
-    speaker.transfere(data_container.passband_data, data_container.Nofdm * data_container.interpolation_rate * (ofdm.Nsymb + ofdm.preamble_configurator.Nsymb));
+    tx_transfer(data_container.passband_data, data_container.Nofdm * data_container.interpolation_rate * (ofdm.Nsymb + ofdm.preamble_configurator.Nsymb));
 }
 
 void cl_telecom_system::TX_SHM_process_main(cbuf_handle_t buffer)
@@ -950,7 +951,7 @@ void cl_telecom_system::TX_SHM_process_main(cbuf_handle_t buffer)
     }
     transmit_byte(data_container.data_byte, (nReal_data - outer_code_reserved_bits) / 8, data_container.passband_data, SINGLE_MESSAGE);
 
-    speaker.transfere(data_container.passband_data, data_container.Nofdm * data_container.interpolation_rate * (ofdm.Nsymb + ofdm.preamble_configurator.Nsymb));
+    tx_transfer(data_container.passband_data, data_container.Nofdm * data_container.interpolation_rate * (ofdm.Nsymb + ofdm.preamble_configurator.Nsymb));
 
 
     printf("%c", spinner[spinner_anim % 4]); spinner_anim++;
@@ -1522,11 +1523,13 @@ void cl_telecom_system::load_configuration(int configuration)
 
 	if(reinit_subsystems.microphone==YES)
 	{
-		microphone.deinit();
+        // why do we need this?
+		// microphone.deinit();
 	}
 	if(reinit_subsystems.speaker==YES)
 	{
-		speaker.deinit();
+        // why do we need this?
+		// speaker.deinit();
 	}
 	if(reinit_subsystems.psk==YES)
 	{
@@ -1642,20 +1645,6 @@ void cl_telecom_system::load_configuration(int configuration)
 	BER_plot.plot_active=default_configurations_telecom_system.plot_plot_active;
 
 
-	microphone.dev_name=default_configurations_telecom_system.microphone_dev_name;
-	speaker.dev_name=default_configurations_telecom_system.speaker_dev_name;
-
-
-	data_container.sound_device_ptr=(void*)&microphone;
-	microphone.type=default_configurations_telecom_system.microphone_type;
-	microphone.channels=default_configurations_telecom_system.microphone_channels;
-	microphone.data_container_ptr=&data_container;
-
-
-	speaker.type=default_configurations_telecom_system.speaker_type;
-	speaker.channels=default_configurations_telecom_system.speaker_channels;
-	speaker.frames_to_leave_transmit_fct=default_configurations_telecom_system.speaker_frames_to_leave_transmit_fct;
-
 	if(reinit_subsystems.psk==YES)
 	{
 		psk.set_predefined_constellation(M);
@@ -1677,26 +1666,36 @@ void cl_telecom_system::load_configuration(int configuration)
 
 	if(reinit_subsystems.microphone==YES)
 	{
-		microphone.baudrate=sampling_frequency;
-		microphone.nbuffer_Samples=2 * ofdm.Nfft*(1+ofdm.gi)*frequency_interpolation_rate*(ofdm.Nsymb+ofdm.preamble_configurator.Nsymb);
-		microphone.frames_per_period=ofdm.Nfft*(1+ofdm.gi)*frequency_interpolation_rate;
-		if(operation_mode!=BER_PLOT_baseband && operation_mode!=BER_PLOT_passband && operation_mode!=TX_TEST)
+        // TODO: Do we need this?
+#if 0
+		microphone.baudrate = sampling_frequency;
+		microphone.nbuffer_Samples = 2 * ofdm.Nfft*(1+ofdm.gi)*frequency_interpolation_rate*(ofdm.Nsymb+ofdm.preamble_configurator.Nsymb);
+		microphone.frames_per_period = ofdm.Nfft*(1+ofdm.gi)*frequency_interpolation_rate;
+		if(operation_mode != BER_PLOT_baseband &&
+           operation_mode != BER_PLOT_passband &&
+           operation_mode != TX_TEST)
 		{
 			microphone.init();
 		}
 		reinit_subsystems.microphone=NO;
+#endif
 	}
 
 	if(reinit_subsystems.speaker==YES)
 	{
-		speaker.baudrate=sampling_frequency;
-		speaker.nbuffer_Samples=2 * ofdm.Nfft*(1+ofdm.gi)*frequency_interpolation_rate*(ofdm.Nsymb+ofdm.preamble_configurator.Nsymb);
-		speaker.frames_per_period=ofdm.Nfft*(1+ofdm.gi)*frequency_interpolation_rate;
-		if(operation_mode!=BER_PLOT_baseband && operation_mode!=BER_PLOT_passband && operation_mode!=RX_TEST)
+        // TODO: Do we need this?
+#if 0
+		speaker.baudrate = sampling_frequency;
+		speaker.nbuffer_Samples = 2 * ofdm.Nfft*(1+ofdm.gi)*frequency_interpolation_rate*(ofdm.Nsymb+ofdm.preamble_configurator.Nsymb);
+		speaker.frames_per_period = ofdm.Nfft*(1+ofdm.gi)*frequency_interpolation_rate;
+		if(operation_mode != BER_PLOT_baseband &&
+           operation_mode != BER_PLOT_passband &&
+           operation_mode != RX_TEST)
 		{
 			speaker.init();
 		}
 		reinit_subsystems.speaker=NO;
+#endif
 	}
 }
 
