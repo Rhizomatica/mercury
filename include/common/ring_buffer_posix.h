@@ -32,8 +32,8 @@ struct sigevent {
     int           sigev_signo;   /* signal number */
     union sigval  sigev_value;   /* signal value */
 };
-typedef int pid_t;
-typedef int ssize_t;
+//typedef int pid_t;
+//typedef int ssize_t;
 
 #else
 
