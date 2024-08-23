@@ -19,6 +19,7 @@
 #include <stdbool.h>
 #include <string.h>
 
+#include <time.h>
 #include <malloc.h>
 
 #if !defined(_WIN32)
