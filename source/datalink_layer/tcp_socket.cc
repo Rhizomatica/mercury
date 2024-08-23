@@ -91,7 +91,7 @@ int cl_tcp_socket::init()
 				status=TCP_STATUS_SOCKET_CREATED;
 				std::cout<<"Server socket is created"<<std::endl;
 			}
-			const int enable = 1;
+			const char enable = 1;
 			if (setsockopt(socket_fd, SOL_SOCKET, SO_REUSEADDR, &enable, sizeof(int)) != 0)
 			{
 				status=TCP_STATUS_REUSEADDR_ERROR;
