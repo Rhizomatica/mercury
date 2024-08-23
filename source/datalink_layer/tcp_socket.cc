@@ -35,8 +35,8 @@ cl_tcp_socket::cl_tcp_socket()
 	server_received_packets=0;
 	client_sent_packets=0;
 	client_received_packets=0;
-	bzero(&server, sizeof(server));
-	bzero(&client, sizeof(client));
+	memset(&server, 0, sizeof(server));
+	memset(&client, 0, sizeof(client));
 	allow_out_of_order_release=0;
 	message= new st_tcp_message;
 	timeout_ms=1000;
