@@ -62,8 +62,8 @@ int main(int argc, char *argv[])
     if (argc < 2)
     {
  manual:
-        printf("Usage modes: \n%s -c [cpu_nr] -m [mode] -i [device] -o [device] -r [radio_type]\n", argv[0], argv[0]);
-        printf("%s -c [cpu_nr] -m ARQ -i [device] -o [device] -r [radio_type]\n", argv[0], argv[0]);
+        printf("Usage modes: \n%s -m [mode] -i [device] -o [device] -r [radio_type] -x [sound_system]\n", argv[0], argv[0]);
+        printf("%s -m ARQ -i [device] -o [device] -r [radio_type] -x [sound_system]\n", argv[0], argv[0]);
         printf("%s -h\n", argv[0]);
         printf("\nOptions:\n");
         printf(" -c [cpu_nr]                Run on CPU [cpu_br]. Defaults to CPU 3. Use -1 to disable CPU selection\n");
@@ -170,11 +170,15 @@ int main(int argc, char *argv[])
 
     if (cpu_nr != -1)
     {
+#if defined(__linux__)
         cpu_set_t mask;
         CPU_ZERO(&mask);
         CPU_SET(cpu_nr, &mask);
         sched_setaffinity(0, sizeof(mask), &mask);
         printf("RUNNING ON CPU Nr %d\n", sched_getcpu());
+#else
+        cpu_nr = -1;
+#endif
     }
 
     // set some defaults... in case the user did not select
