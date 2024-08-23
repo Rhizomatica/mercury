@@ -29,6 +29,98 @@
 #include <unistd.h>
 #endif
 
+
+// From: https://github.com/marklakata/mqueue-w32
+#ifdef WIN32
+int MUTEX_LOCK(HANDLE *mqh_lock)
+{
+	DWORD dwWaitResult = WaitForSingleObject(
+		mqh_lock,    // handle to mutex
+		INFINITE);  // no time-out interval
+
+    switch (dwWaitResult)
+    {
+        // The thread got ownership of the mutex
+        case WAIT_OBJECT_0:
+			return 0;
+
+        // The thread got ownership of an abandoned mutex
+        // The database is in an indeterminate state
+        case WAIT_ABANDONED:
+            return ECANCELED ;
+		default:
+			return EINVAL;
+    }
+}
+
+/* Returns 0 on success */
+int COND_WAIT(HANDLE *mqh_wait, HANDLE *mqh_lock)
+{
+	DWORD dwWaitResult;
+
+	ReleaseMutex(mqh_lock);
+	dwWaitResult = WaitForSingleObject(mqh_wait, INFINITE);
+	if(dwWaitResult != WAIT_OBJECT_0) {
+		return EINVAL;
+	}
+
+	return MUTEX_LOCK(mqh_lock);
+}
+
+/* Returns 0 on success */
+int COND_TIMED_WAIT(HANDLE *mqh_wait, HANDLE *mqh_lock, const struct timespec* abstime)
+{
+	DWORD dwWaitResult;
+
+	ReleaseMutex(mqh_lock);
+	dwWaitResult = WaitForSingleObject(mqh_wait, (DWORD) abstime->tv_sec);
+	switch(dwWaitResult) {
+	    case WAIT_OBJECT_0:
+	        break
+	    case WAIT_TIMEOUT:
+	        return ETIMEDOUT;
+	    default:
+	        return EINVAL;
+	}
+
+	dwWaitResult = WaitForSingleObject(mqh_lock,(DWORD) abstime->tv_sec);
+	if(dwWaitResult == WAIT_OBJECT_0) {
+	    return 0;
+	}
+
+    if(dwWaitResult == WAIT_TIMEOUT) {
+        return ETIMEDOUT;
+    }
+
+    return EINVAL;
+}
+
+/* Returns 0 on success */
+int COND_SIGNAL(HANDLE *mqh_wait)
+{
+	BOOL result = SetEvent(mqh_wait);
+	return result == 0;
+}
+void MUTEX_UNLOCK(HANDLE *mqh_lock)
+{
+	ReleaseMutex(mqh_lock);
+}
+
+// #define open _open
+// #define close _close
+// #define unlink _unlink
+// #define lseek _lseek
+// #define write _write
+#else
+// #define INFINITE_ -1
+#define MUTEX_LOCK(x)   pthread_mutex_lock(x)
+#define MUTEX_UNLOCK(x) pthread_mutex_unlock(x)
+#define COND_WAIT(x, y)  pthread_cond_wait(x, y)
+#define COND_TIMED_WAIT(x, y, z) pthread_cond_timedwait(x, y, z)
+#define COND_SIGNAL(x)  pthread_cond_signal(x)
+#endif
+
+
 // Private functions
 
 static void advance_pointer_n(cbuf_handle_t cbuf, size_t len)
@@ -233,20 +325,20 @@ void circular_buf_reset(cbuf_handle_t cbuf)
 {
     assert(cbuf && cbuf->internal);
 
-    pthread_mutex_lock( &cbuf->internal->mutex );
+    MUTEX_LOCK( &cbuf->internal->mutex );
 
     cbuf->internal->head = 0;
     cbuf->internal->tail = 0;
     cbuf->internal->full = false;
 
-    pthread_mutex_unlock( &cbuf->internal->mutex );
+    MUTEX_UNLOCK( &cbuf->internal->mutex );
 }
 
 size_t size_buffer(cbuf_handle_t cbuf)
 {
     assert(cbuf && cbuf->internal);
 
-    pthread_mutex_lock( &cbuf->internal->mutex );
+    MUTEX_LOCK( &cbuf->internal->mutex );
 
     size_t size = cbuf->internal->max;
     bool is_full = cbuf->internal->full;
@@ -263,7 +355,7 @@ size_t size_buffer(cbuf_handle_t cbuf)
         }
     }
 
-    pthread_mutex_unlock( &cbuf->internal->mutex );
+    MUTEX_UNLOCK( &cbuf->internal->mutex );
 
     // fprintf(stderr, "size = %ld\n", size);
     return size;
@@ -275,7 +367,7 @@ size_t circular_buf_free_size(cbuf_handle_t cbuf)
 
     size_t size = 0;
 
-    pthread_mutex_lock( &cbuf->internal->mutex );
+    MUTEX_LOCK( &cbuf->internal->mutex );
 
     if(!cbuf->internal->full)
     {
@@ -290,7 +382,7 @@ size_t circular_buf_free_size(cbuf_handle_t cbuf)
 
     }
 
-    pthread_mutex_unlock( &cbuf->internal->mutex );
+    MUTEX_UNLOCK( &cbuf->internal->mutex );
 
     return size;
 }
@@ -299,11 +391,11 @@ size_t circular_buf_capacity(cbuf_handle_t cbuf)
 {
     assert(cbuf->internal);
 
-    pthread_mutex_lock( &cbuf->internal->mutex );
+    MUTEX_LOCK( &cbuf->internal->mutex );
 
     size_t capacity = cbuf->internal->max;
 
-    pthread_mutex_unlock( &cbuf->internal->mutex );
+    MUTEX_UNLOCK( &cbuf->internal->mutex );
 
     return capacity;
 }
@@ -315,7 +407,7 @@ int circular_buf_put(cbuf_handle_t cbuf, uint8_t data)
     int r = -1;
 
 try_again_put:
-    pthread_mutex_lock( &cbuf->internal->mutex );
+    MUTEX_LOCK( &cbuf->internal->mutex );
 
     bool is_full = cbuf->internal->full;
 
@@ -325,13 +417,13 @@ try_again_put:
         advance_pointer(cbuf);
         r = 0;
 
-        pthread_cond_signal( &cbuf->internal->cond );
-        pthread_mutex_unlock( &cbuf->internal->mutex );
+        COND_SIGNAL( &cbuf->internal->cond );
+        MUTEX_UNLOCK( &cbuf->internal->mutex );
     }
     else
     {
-        pthread_cond_wait( &cbuf->internal->cond, &cbuf->internal->mutex );
-        pthread_mutex_unlock( &cbuf->internal->mutex );
+        COND_WAIT( &cbuf->internal->cond, &cbuf->internal->mutex );
+        MUTEX_UNLOCK( &cbuf->internal->mutex );
         goto try_again_put;
     }
 
@@ -345,7 +437,7 @@ int circular_buf_get(cbuf_handle_t cbuf, uint8_t * data)
     int r = -1;
 
 try_again_get:
-    pthread_mutex_lock( &cbuf->internal->mutex );
+    MUTEX_LOCK( &cbuf->internal->mutex );
 
     bool is_empty = !cbuf->internal->full && (cbuf->internal->head == cbuf->internal->tail);
 
@@ -355,13 +447,13 @@ try_again_get:
         retreat_pointer(cbuf);
         r = 0;
 
-        pthread_cond_signal( &cbuf->internal->cond );
-        pthread_mutex_unlock( &cbuf->internal->mutex );
+        COND_SIGNAL( &cbuf->internal->cond );
+        MUTEX_UNLOCK( &cbuf->internal->mutex );
     }
     else
     {
-        pthread_cond_wait( &cbuf->internal->cond, &cbuf->internal->mutex );
-        pthread_mutex_unlock( &cbuf->internal->mutex );
+        COND_WAIT( &cbuf->internal->cond, &cbuf->internal->mutex );
+        MUTEX_UNLOCK( &cbuf->internal->mutex );
         goto try_again_get;
     }
 
@@ -372,11 +464,11 @@ bool circular_buf_empty(cbuf_handle_t cbuf)
 {
     assert(cbuf && cbuf->internal);
 
-    pthread_mutex_lock( &cbuf->internal->mutex );
+    MUTEX_LOCK( &cbuf->internal->mutex );
 
     bool is_empty = !cbuf->internal->full && (cbuf->internal->head == cbuf->internal->tail);
 
-    pthread_mutex_unlock( &cbuf->internal->mutex );
+    MUTEX_UNLOCK( &cbuf->internal->mutex );
 
     return is_empty;
 }
@@ -385,11 +477,11 @@ bool circular_buf_full(cbuf_handle_t cbuf)
 {
     assert(cbuf && cbuf->internal);
 
-    pthread_mutex_lock( &cbuf->internal->mutex );
+    MUTEX_LOCK( &cbuf->internal->mutex );
 
     bool is_full = cbuf->internal->full;
 
-    pthread_mutex_unlock( &cbuf->internal->mutex );
+    MUTEX_UNLOCK( &cbuf->internal->mutex );
 
     return is_full;
 }
@@ -402,7 +494,7 @@ int read_buffer_all(cbuf_handle_t cbuf, uint8_t *data)
     size_t len = 0;
 
  try_again_read:
-    pthread_mutex_lock( &cbuf->internal->mutex );
+    MUTEX_LOCK( &cbuf->internal->mutex );
 
     size = cbuf->internal->max;
     len = circular_buf_size_internal(cbuf);
@@ -420,13 +512,13 @@ int read_buffer_all(cbuf_handle_t cbuf, uint8_t *data)
         }
         retreat_pointer_n(cbuf, len);
 
-        pthread_cond_signal( &cbuf->internal->cond );
-        pthread_mutex_unlock( &cbuf->internal->mutex );
+        COND_SIGNAL( &cbuf->internal->cond );
+        MUTEX_UNLOCK( &cbuf->internal->mutex );
     }
     else
     {
-        pthread_cond_wait( &cbuf->internal->cond, &cbuf->internal->mutex );
-        pthread_mutex_unlock( &cbuf->internal->mutex );
+        COND_WAIT( &cbuf->internal->cond, &cbuf->internal->mutex );
+        MUTEX_UNLOCK( &cbuf->internal->mutex );
         goto try_again_read;
     }
 
@@ -442,8 +534,8 @@ int buffer_retreat_and_unlock(cbuf_handle_t cbuf, size_t len)
 
     retreat_pointer_n(cbuf, len);
 
-    pthread_cond_signal( &cbuf->internal->cond );
-    pthread_mutex_unlock( &cbuf->internal->mutex );
+    COND_SIGNAL( &cbuf->internal->cond );
+    MUTEX_UNLOCK( &cbuf->internal->mutex );
 
     return 0;
 }
@@ -455,7 +547,7 @@ int read_buffer_no_retreat_and_lock(cbuf_handle_t cbuf, uint8_t *data, size_t le
     int r = -1;
 
  try_again_read:
-    pthread_mutex_lock( &cbuf->internal->mutex );
+    MUTEX_LOCK( &cbuf->internal->mutex );
 
     size_t size = cbuf->internal->max;
 
@@ -472,13 +564,13 @@ int read_buffer_no_retreat_and_lock(cbuf_handle_t cbuf, uint8_t *data, size_t le
         }
         r = 0;
 
-        // pthread_cond_signal( &cbuf->internal->cond );
-        // pthread_mutex_unlock( &cbuf->internal->mutex );
+        // COND_SIGNAL( &cbuf->internal->cond );
+        // MUTEX_UNLOCK( &cbuf->internal->mutex );
     }
     else
     {
-        pthread_cond_wait( &cbuf->internal->cond, &cbuf->internal->mutex );
-        pthread_mutex_unlock( &cbuf->internal->mutex );
+        COND_WAIT( &cbuf->internal->cond, &cbuf->internal->mutex );
+        MUTEX_UNLOCK( &cbuf->internal->mutex );
         goto try_again_read;
     }
 
@@ -493,7 +585,7 @@ int read_buffer(cbuf_handle_t cbuf, uint8_t *data, size_t len)
     int r = -1;
 
  try_again_read:
-    pthread_mutex_lock( &cbuf->internal->mutex );
+    MUTEX_LOCK( &cbuf->internal->mutex );
 
     size_t size = cbuf->internal->max;
 
@@ -511,13 +603,13 @@ int read_buffer(cbuf_handle_t cbuf, uint8_t *data, size_t len)
         retreat_pointer_n(cbuf, len);
         r = 0;
 
-        pthread_cond_signal( &cbuf->internal->cond );
-        pthread_mutex_unlock( &cbuf->internal->mutex );
+        COND_SIGNAL( &cbuf->internal->cond );
+        MUTEX_UNLOCK( &cbuf->internal->mutex );
     }
     else
     {
-        pthread_cond_wait( &cbuf->internal->cond, &cbuf->internal->mutex );
-        pthread_mutex_unlock( &cbuf->internal->mutex );
+        COND_WAIT( &cbuf->internal->cond, &cbuf->internal->mutex );
+        MUTEX_UNLOCK( &cbuf->internal->mutex );
         goto try_again_read;
     }
 
@@ -531,7 +623,7 @@ int write_buffer(cbuf_handle_t cbuf, uint8_t * data, size_t len)
     int r = -1;
 
 try_again_write:
-    pthread_mutex_lock( &cbuf->internal->mutex );
+    MUTEX_LOCK( &cbuf->internal->mutex );
 
     size_t size = cbuf->internal->max;
 
@@ -549,13 +641,13 @@ try_again_write:
         advance_pointer_n(cbuf, len);
         r = 0;
 
-        pthread_cond_signal( &cbuf->internal->cond );
-        pthread_mutex_unlock( &cbuf->internal->mutex );
+        COND_SIGNAL( &cbuf->internal->cond );
+        MUTEX_UNLOCK( &cbuf->internal->mutex );
     }
     else
     {
-        pthread_cond_wait( &cbuf->internal->cond, &cbuf->internal->mutex );
-        pthread_mutex_unlock( &cbuf->internal->mutex );
+        COND_WAIT( &cbuf->internal->cond, &cbuf->internal->mutex );
+        MUTEX_UNLOCK( &cbuf->internal->mutex );
         goto try_again_write;
     }
 
