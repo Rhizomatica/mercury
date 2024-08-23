@@ -254,14 +254,53 @@ cbuf_handle_t circular_buf_init_shm(size_t size, char *base_name)
 
     cbuf->internal->max = size;
 
+#if defined(_WIN32)
+    wchar_t nameBuffer[128];
+    size_t len;
+
+    len = strlen(tmp);
+    if (len >= 64)
+    {
+        errno = EINVAL;
+        printf("path name too long\n");
+        return NULL;
+    }
+    lstrcpyW(nameBuffer,TEXT("Global\\Mercury_Mtx_"));
+    len = lstrlenW(nameBuffer);
+    mbstowcs(nameBuffer+len, tmp+1, 128-len);
+    cbuf->internal->mutex = CreateMutex(
+					NULL,              // default security attributes
+					FALSE,             // initially not owned
+					nameBuffer);       // named mutex
+
+    lstrcpyW(nameBuffer,TEXT("Global\\Mercury_Cond_"));
+    len = lstrlenW(nameBuffer);
+    mbstowcs(nameBuffer+len, pathname1+1, 128-len);
+    cbuf->internal->cond = CreateEvent(
+        NULL,
+        FALSE,
+        FALSE,
+        nameBuffer
+        );
+}
+#else
+
+
     pthread_mutexattr_t mutex_attr;
     pthread_mutexattr_init(&mutex_attr);
     pthread_mutexattr_setpshared(&mutex_attr, PTHREAD_PROCESS_SHARED);
+
     pthread_condattr_t cond_attr;
     pthread_condattr_init(&cond_attr);
     pthread_condattr_setpshared(&cond_attr, PTHREAD_PROCESS_SHARED);
+
     pthread_mutex_init( &cbuf->internal->mutex, &mutex_attr);
     pthread_cond_init( &cbuf->internal->cond, &cond_attr);
+
+    pthread_mutexattr_destroy(&mutex_attr);
+    pthread_condattr_destroy(&cond_attr);
+
+#endif
 
     circular_buf_reset(cbuf);
 
