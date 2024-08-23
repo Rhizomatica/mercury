@@ -27,6 +27,10 @@
 #include <complex>
 #include <iostream>
 
+#ifndef M_PI
+#define M_PI          3.14159265358979323846  /* pi */
+#endif
+
 #define RECTANGULAR 0
 #define HANNING 1
 #define HAMMING 2
