@@ -107,11 +107,6 @@ void MUTEX_UNLOCK(HANDLE *mqh_lock)
 	ReleaseMutex(mqh_lock);
 }
 
-// #define open _open
-// #define close _close
-// #define unlink _unlink
-// #define lseek _lseek
-// #define write _write
 #else
 // #define INFINITE_ -1
 #define MUTEX_LOCK(x)   pthread_mutex_lock(x)
@@ -238,7 +233,11 @@ cbuf_handle_t circular_buf_init_shm(size_t size, char *base_name)
     strcat(tmp, "-1");
     fd1 = shm_create_and_get_fd(tmp, size);
     cbuf->buffer = (uint8_t *) shm_map(fd1, size);
+
+    // TODO: should we close it on Windows?
+#if !defined(_WIN32)
     close(fd1);
+#endif
 
     assert(cbuf->buffer);
 
@@ -247,7 +246,9 @@ cbuf_handle_t circular_buf_init_shm(size_t size, char *base_name)
     strcat(tmp, "-2");
     fd2 = shm_create_and_get_fd(tmp, sizeof(struct circular_buf_t_aux));
     cbuf->internal = (struct circular_buf_t_aux *) shm_map(fd2, sizeof(struct circular_buf_t_aux));
+#if !defined(_WIN32)
     close(fd2);
+#endif
 
     assert(cbuf->internal);
 

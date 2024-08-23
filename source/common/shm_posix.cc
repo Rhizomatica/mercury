@@ -17,10 +17,21 @@
 #include <errno.h>
 #include <stdlib.h>
 
-#if !defined(_WIN32)
+#if defined(_WIN32)
+
+#include <io.h> // _lseek, etc
+#define open _open
+#define close _close
+#define unlink _unlink
+#define lseek _lseek
+#define write _write
+
+#else
+
 #include <sys/mman.h>
 #include <sys/stat.h>        /* For mode constants */
 #include <unistd.h>
+
 #endif
 
 // returns non-negative integer or negative if shm not created
@@ -28,15 +39,32 @@ int shm_open_and_get_fd(char *name)
 {
     int fd = -1;
 
-    // fprintf(stderr, "shm_open_and_get_fd() called with %s\n", name);
-
     if (strlen(name) >= MAX_POSIX_SHM_NAME)
     {
         fprintf(stderr, "ERROR: This should never happen! Name length bigger than allowed!\n");
         abort();
     }
 
+#if defined(_WIN32)    /* open the file then memory map */
+    // create pathBuffer
+    char pathBuffer[PATH_MAX];
+    if(!get_temp_path(pathBuffer, sizeof(pathBuffer), name))
+    {
+        printf("Error in get_temp_path()");
+        return fd;
+    }
+    printf("Windows shm name: %s\n", pathBuffer);
+
+    fd = open(pathBuffer, O_RDWR);
+    if (fd < 0)
+    {
+        fprintf(stderr, "Shared memory not created. Aborting.\n");
+        abort();
+    }
+#else
+    // fprintf(stderr, "shm_open_and_get_fd() called with %s\n", name);
     fd = shm_open(name, O_RDWR, 0644);
+#endif
 
     return fd;
 }
@@ -47,8 +75,37 @@ int shm_create_and_get_fd(char *name, size_t size)
 {
     int fd = -1;
 
-    // fprintf(stderr, "shm_create_and_get_fd() called with %s and %ld\n", name, size);
+    if (strlen(name) >= MAX_POSIX_SHM_NAME)
+    {
+        fprintf(stderr, "ERROR: This should never happen! Name length bigger than allowed!\n");
+        abort();
+    }
 
+#if defined(_WIN32)
+    char pathBuffer[PATH_MAX];
+    if(!get_temp_path(pathBuffer, sizeof(pathBuffer), name))
+    {
+        printf("Error in get_temp_path()");
+        return fd;
+    }
+    printf("Windows shm name: %s\n", pathBuffer);
+
+    if (fd = open(pathBuffer, O_RDWR, S_IRWXU | S_IRWXG) >= 0)
+    {
+        fprintf(stderr, "Windows shared memory already created. Re-creating it.\n");
+        close(fd);
+        unlink(pathBuffer);
+    }
+
+    fd = open(pathBuffer, O_CREATE | O_EXCL | O_RDWR, S_IRWXU | S_IRWXG | S_IRWXO);
+    if (fd < 0)
+    {
+        fprintf(stderr, "ERROR: This should never happen! SHM creation error!\n");
+        abort();
+    }
+
+    // fprintf(stderr, "shm_create_and_get_fd() called with %s and %ld\n", name, size);
+#else
     if (shm_open(name, O_RDWR, 0644) >= 0)
     {
         // fprintf(stderr, "POSIX shared memory already created. Re-creating it.\n");
@@ -60,6 +117,7 @@ int shm_create_and_get_fd(char *name, size_t size)
         fprintf(stderr, "ERROR: This should never happen! SHM creation error!\n");
         abort();
     }
+#endif
 
     if (ftruncate (fd, size) == -1)
     {
@@ -74,12 +132,38 @@ int shm_create_and_get_fd(char *name, size_t size)
 // returns the pointer to the region, or (void *) -1 in case of error
 void *shm_map(int fd, size_t size)
 {
+#if defined(_WIN32)
+    HANDLE fmap = CreateFileMapping((HANDLE)_get_osfhandle(fd), NULL,
+                             PAGE_READWRITE, 0, 0, NULL);
+    if (fmap == NULL)
+        abort();
+
+    return (void *)MapViewOfFile(fmap, FILE_MAP_WRITE, 0, 0, size);
+#endif
+
     return mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
 }
 
 // returns 0 on success, -1 on error
 int shm_unmap(void *addr, size_t size)
 {
-    return munmap(addr, size);
-}
+#if defined(WIN32)
 
+#if 0  // TODO: we need to have access to these variables...
+    if (fmap != NULL)
+    {
+        if (mptr != NULL)
+        {
+            UnmapViewOfFile(mptr);
+        }
+        CloseHandle(fmap);
+    }
+#endif
+
+#else
+     return munmap(addr, size);
+#endif
+
+
+
+}
