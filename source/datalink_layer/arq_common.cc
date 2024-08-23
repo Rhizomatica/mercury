@@ -1943,7 +1943,7 @@ void cl_arq_controller::print_stats()
 		{
 			std::cout<<"FILE_START";
 		}
-		else if (this->last_message_sent_code==FILE_END)
+		else if (this->last_message_sent_code==FILE_END_)
 		{
 			std::cout<<"FILE_END";
 		}
@@ -2025,7 +2025,7 @@ void cl_arq_controller::print_stats()
 		{
 			std::cout<<"FILE_START";
 		}
-		else if (this->last_message_received_code==FILE_END)
+		else if (this->last_message_received_code==FILE_END_)
 		{
 			std::cout<<"FILE_END";
 		}

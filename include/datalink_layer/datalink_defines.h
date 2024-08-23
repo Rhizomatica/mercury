@@ -74,7 +74,7 @@
 #define CLOSE_CONNECTION 0x33
 #define KEEP_ALIVE 0x34
 #define FILE_START 0x35
-#define FILE_END 0x36
+#define FILE_END_ 0x36
 #define PIPE_OPEN 0x37
 #define PIPE_CLOSE 0x38
 #define SWITCH_ROLE 0x39
@@ -86,7 +86,7 @@
 #define MESSAGE_ID_ERROR -4
 #define MEMORY_ERROR -3
 #define MESSAGE_LENGTH_ERROR -2
-#define ERROR -1
+#define ERROR_ -1
 #define SUCCESSFUL 0
 
 //Node role
