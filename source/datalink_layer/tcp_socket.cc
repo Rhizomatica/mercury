@@ -50,7 +50,7 @@ cl_tcp_socket::~cl_tcp_socket()
 	if(socket_fd>0)
 	{
 #if defined(_WIN32)
-        closesocket(Csocket);
+        closesocket(socket_fd);
         WSACleanup();
 #else
 		close(socket_fd);
