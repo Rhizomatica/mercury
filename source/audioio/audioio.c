@@ -22,6 +22,7 @@
 
 #include "common/ring_buffer_posix.h"
 #include "common/shm_posix.h"
+#include "common/common_defines.h"
 
 // bool shutdown_;
 extern bool shutdown_;
@@ -134,8 +135,6 @@ void *radio_playback_thread(void *device_ptr)
 
         ffssize n = read_buffer_all(playback_buffer, buffer);
         total_written = 0;
-
-        // TODO: pre-process the buffers for (radio_type == RADIO_SBITX) and (radio_type == RADIO_STOCKHF)
 
         while (n >= frame_size)
         {
@@ -371,6 +370,22 @@ void list_soundcards(int audio_system)
 
 int tx_transfer(double *buffer, size_t len)
 {
+    int ch_layout = STEREO;
+
+    if (radio_type == RADIO_SBITX)
+    {
+        ch_layout = RIGHT;
+    }
+    if (radio_type == RADIO_STOCKHF)
+    {
+        ch_layout = STEREO;
+    }
+
+
+    // TODO: pre-process the buffers for (radio_type == RADIO_SBITX) and (radio_type == RADIO_STOCKHF)
+
+
+
     // TODO: write to playback buffer
     // write_buffer(...);
 
@@ -380,6 +395,19 @@ int tx_transfer(double *buffer, size_t len)
 
 int rx_transfer(double *buffer, size_t len)
 {
+    int ch_layout = STEREO;
+
+    if (radio_type == RADIO_SBITX)
+    {
+        ch_layout = LEFT;
+    }
+    if (radio_type == RADIO_STOCKHF)
+    {
+        ch_layout = STEREO;
+    }
+
+
+
     // TODO: write to capture buffer
 #if 0
 	int location_of_last_frame = data_container_ptr->Nofdm * data_container_ptr->interpolation_rate *

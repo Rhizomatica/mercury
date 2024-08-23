@@ -22,7 +22,6 @@
 
 #ifndef INC_TCP_SOCKET_H_
 #define INC_TCP_SOCKET_H_
-#include <netdb.h>
 #include <stdio.h>
 #include <iostream>
 #include <fstream>

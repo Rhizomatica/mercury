@@ -33,6 +33,10 @@ extern "C" {
 
 #define AUDIO_PAYLOAD_BUFFER_SIZE 1536000
 
+#define STEREO 0
+#define LEFT 1
+#define RIGHT 2
+
 int audioio_init(char *capture_dev, char *playback_dev, int audio_subsys, pthread_t *radio_capture, pthread_t *radio_playback);
 
 int audioio_deinit(pthread_t *radio_capture, pthread_t *radio_playback);
