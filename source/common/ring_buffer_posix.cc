@@ -77,7 +77,7 @@ int COND_TIMED_WAIT(HANDLE *mqh_wait, HANDLE *mqh_lock, const struct timespec* a
 	dwWaitResult = WaitForSingleObject(mqh_wait, (DWORD) abstime->tv_sec);
 	switch(dwWaitResult) {
 	    case WAIT_OBJECT_0:
-	        break
+	        break;
 	    case WAIT_TIMEOUT:
 	        return ETIMEDOUT;
 	    default:
