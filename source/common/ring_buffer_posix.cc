@@ -275,7 +275,7 @@ cbuf_handle_t circular_buf_init_shm(size_t size, char *base_name)
 
     lstrcpyW(nameBuffer,TEXT("Global\\Mercury_Cond_"));
     len = lstrlenW(nameBuffer);
-    mbstowcs(nameBuffer+len, pathname1+1, 128-len);
+    mbstowcs(nameBuffer+len, tmp+1, 128-len);
     cbuf->internal->cond = CreateEvent(
         NULL,
         FALSE,
@@ -284,7 +284,6 @@ cbuf_handle_t circular_buf_init_shm(size_t size, char *base_name)
         );
 }
 #else
-
 
     pthread_mutexattr_t mutex_attr;
     pthread_mutexattr_init(&mutex_attr);
