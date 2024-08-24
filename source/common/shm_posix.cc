@@ -126,7 +126,7 @@ int shm_create_and_get_fd(char *name, size_t size)
         abort();
     }
 
-    for (i = 0; i < size; i++)
+    for (int i = 0; i < size; i++)
     {
         if (write(fd, "", 1) == -1)
         {
@@ -171,12 +171,12 @@ void *shm_map(int fd, size_t size)
                                     PAGE_READWRITE, 0, 0, NULL);
     if (fmap == NULL)
     {
-        printf("couldn't map %s\n", name);
+        printf("couldn't map fd %d\n", fd);
         abort();
     }
     printf("after CreateFileMapping\n");
 
-    void *data = (void *) MapViewOfFile(mapping, FILE_MAP_WRITE, 0, 0, size);
+    void *data = (void *) MapViewOfFile(fmap, FILE_MAP_WRITE, 0, 0, size);
 
     printf("after fmap == NULL test\n");
 
