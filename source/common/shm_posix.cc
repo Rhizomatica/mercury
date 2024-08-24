@@ -106,7 +106,7 @@ int shm_create_and_get_fd(char *name, size_t size)
     }
     printf("Windows shm name: %s\n", pathBuffer);
 
-    if (fd = open(pathBuffer, O_RDWR, 0644 | S_IXUSR) >= 0)
+    if ((fd = open(pathBuffer, O_RDWR, 0644 | S_IXUSR)) >= 0)
     {
         fprintf(stderr, "Windows shared memory already created. Re-creating it.\n");
         close(fd);
