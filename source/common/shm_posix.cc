@@ -173,7 +173,7 @@ void *shm_map(int fd, size_t size)
     printf("after CreateFileMapping\n");
     if(mapping == 0) { printf("couldn't map %s\n", name); return NULL; }
 
-    void* data = (const void*) MapViewOfFile(mapping, FILE_MAP_WRITE, 0, 0, len);
+    void *data = (void *) MapViewOfFile(mapping, FILE_MAP_WRITE, 0, 0, len);
 
     printf("after fmap == NULL test\n");
 
