@@ -106,14 +106,14 @@ int shm_create_and_get_fd(char *name, size_t size)
     }
     printf("Windows shm name: %s\n", pathBuffer);
 
-    if ((fd = open(pathBuffer, O_RDWR, 0644 | S_IXUSR)) >= 0)
+    if ((fd = open(pathBuffer, O_RDWR, 0660 | S_IXUSR)) >= 0)
     {
         fprintf(stderr, "Windows shared memory already created. Re-creating it.\n");
         close(fd);
         unlink(pathBuffer);
     }
 
-    fd = open(pathBuffer, O_CREAT | O_EXCL | O_RDWR, 0664 | S_IXUSR);
+    fd = open(pathBuffer, O_CREAT | O_EXCL | O_RDWR, 0660 | S_IXUSR);
     if (fd < 0)
     {
         fprintf(stderr, "ERROR: This should never happen! SHM creation error in open!\n");
@@ -157,17 +157,26 @@ void *shm_map(int fd, size_t size)
 {
 #if defined(_WIN32)
     printf("fd = %d\n", fd);
-    HANDLE fmap = CreateFileMapping((HANDLE)_get_osfhandle(fd), NULL,
-                             PAGE_READWRITE, 0, 0, NULL);
 
+    HANDLE file = CreateFile("C:\msys64\tmp\audio-capt-1", GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, 0, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, 0);
+    if(file == INVALID_HANDLE_VALUE) { printf("couldn't open %s\n", name); return; };
+
+    unsigned int len  = GetFileSize(file, 0);
+
+    // HANDLE fmap = CreateFileMapping((HANDLE)_get_osfhandle(fd), NULL,
+    //                             PAGE_READWRITE, 0, 0, NULL);
+    //if (fmap == NULL)
+    //    abort();
+
+    HANDLE mapping  = CreateFileMapping(file, NULL, PAGE_READWRITE, 0, 0, NULL);
     printf("after CreateFileMapping\n");
+    if(mapping == 0) { printf("couldn't map %s\n", name); return; }
 
-    if (fmap == NULL)
-        abort();
+    const void* data = (const void*) MapViewOfFile(mapping, FILE_MAP_WRITE, 0, 0, len);
 
     printf("after fmap == NULL test\n");
 
-    return (void *)MapViewOfFile(fmap, FILE_MAP_WRITE, 0, 0, size);
+    return data;
 #else
     return mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
 #endif
