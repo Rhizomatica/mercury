@@ -116,11 +116,16 @@ int shm_create_and_get_fd(char *name, size_t size)
     fd = open(pathBuffer, O_CREAT | O_EXCL | O_RDWR, 0664 | S_IXUSR);
     if (fd < 0)
     {
-        fprintf(stderr, "ERROR: This should never happen! SHM creation error!\n");
+        fprintf(stderr, "ERROR: This should never happen! SHM creation error in open!\n");
         abort();
     }
 
     if (lseek(fd, size - 1, SEEK_SET) == -1)
+    {
+        fprintf(stderr, "ERROR: This should never happen! SHM creation error in lseek\n");
+        abort();
+    }
+
 
     // fprintf(stderr, "shm_create_and_get_fd() called with %s and %ld\n", name, size);
 #else
