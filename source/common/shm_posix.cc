@@ -126,6 +126,15 @@ int shm_create_and_get_fd(char *name, size_t size)
         abort();
     }
 
+    for (i = 0; i < size; i++)
+    {
+        if (write(fd, "", 1) == -1)
+        {
+            fprintf(stderr, "ERROR: This should never happen! SHM creation error in lseek\n");
+            abort();
+        }
+    }
+
 
     // fprintf(stderr, "shm_create_and_get_fd() called with %s and %ld\n", name, size);
 #else
@@ -158,22 +167,16 @@ void *shm_map(int fd, size_t size)
 #if defined(_WIN32)
     printf("fd = %d\n", fd);
 
-    char name[128] = "C:\\msys64\\tmp\\audio-capt-1";
-    HANDLE file = CreateFile(name, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, 0, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, 0);
-    if(file == INVALID_HANDLE_VALUE) { printf("couldn't open %s\n", name); return NULL; };
-
-    unsigned int len  = GetFileSize(file, 0);
-
-    // HANDLE fmap = CreateFileMapping((HANDLE)_get_osfhandle(fd), NULL,
-    //                             PAGE_READWRITE, 0, 0, NULL);
-    //if (fmap == NULL)
-    //    abort();
-
-    HANDLE mapping  = CreateFileMapping(file, NULL, PAGE_READWRITE, 0, 0, NULL);
+    HANDLE fmap = CreateFileMapping((HANDLE)_get_osfhandle(fd), NULL,
+                                    PAGE_READWRITE, 0, 0, NULL);
+    if (fmap == NULL)
+    {
+        printf("couldn't map %s\n", name);
+        abort();
+    }
     printf("after CreateFileMapping\n");
-    if(mapping == 0) { printf("couldn't map %s\n", name); return NULL; }
 
-    void *data = (void *) MapViewOfFile(mapping, FILE_MAP_WRITE, 0, 0, len);
+    void *data = (void *) MapViewOfFile(mapping, FILE_MAP_WRITE, 0, 0, size);
 
     printf("after fmap == NULL test\n");
 
