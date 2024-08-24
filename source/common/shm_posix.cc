@@ -158,8 +158,9 @@ void *shm_map(int fd, size_t size)
 #if defined(_WIN32)
     printf("fd = %d\n", fd);
 
-    HANDLE file = CreateFile("C:\msys64\tmp\audio-capt-1", GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, 0, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, 0);
-    if(file == INVALID_HANDLE_VALUE) { printf("couldn't open %s\n", name); return; };
+    char name[128] = "C:\\msys64\\tmp\\audio-capt-1";
+    HANDLE file = CreateFile(name, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, 0, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, 0);
+    if(file == INVALID_HANDLE_VALUE) { printf("couldn't open %s\n", name); return NULL; };
 
     unsigned int len  = GetFileSize(file, 0);
 
@@ -170,9 +171,9 @@ void *shm_map(int fd, size_t size)
 
     HANDLE mapping  = CreateFileMapping(file, NULL, PAGE_READWRITE, 0, 0, NULL);
     printf("after CreateFileMapping\n");
-    if(mapping == 0) { printf("couldn't map %s\n", name); return; }
+    if(mapping == 0) { printf("couldn't map %s\n", name); return NULL; }
 
-    const void* data = (const void*) MapViewOfFile(mapping, FILE_MAP_WRITE, 0, 0, len);
+    void* data = (const void*) MapViewOfFile(mapping, FILE_MAP_WRITE, 0, 0, len);
 
     printf("after fmap == NULL test\n");
 
