@@ -156,10 +156,16 @@ int shm_create_and_get_fd(char *name, size_t size)
 void *shm_map(int fd, size_t size)
 {
 #if defined(_WIN32)
+    printf("fd = %d\n", fd);
     HANDLE fmap = CreateFileMapping((HANDLE)_get_osfhandle(fd), NULL,
                              PAGE_READWRITE, 0, 0, NULL);
+
+    printf("after CreateFileMapping\n");
+
     if (fmap == NULL)
         abort();
+
+    printf("after fmap == NULL test\n");
 
     return (void *)MapViewOfFile(fmap, FILE_MAP_WRITE, 0, 0, size);
 #else
