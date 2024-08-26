@@ -23,6 +23,7 @@
 #include "physical_layer/telecom_system.h"
 #include "audioio/audioio.h"
 
+
 cl_telecom_system::cl_telecom_system()
 {
 	receive_stats.iterations_done=-1;
@@ -952,6 +953,9 @@ void cl_telecom_system::TX_SHM_process_main(cbuf_handle_t buffer)
     transmit_byte(data_container.data_byte, (nReal_data - outer_code_reserved_bits) / 8, data_container.passband_data, SINGLE_MESSAGE);
 
     tx_transfer(data_container.passband_data, data_container.Nofdm * data_container.interpolation_rate * (ofdm.Nsymb + ofdm.preamble_configurator.Nsymb));
+
+	// clean receive buffer
+	clear_buffer(capture_buffer);
 
 
     printf("%c", spinner[spinner_anim % 4]); spinner_anim++;

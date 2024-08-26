@@ -20,6 +20,8 @@ extern "C" {
 #include <sys/stat.h>
 #include <fcntl.h>
 
+#include "common/ring_buffer_posix.h"
+
 #define AUDIO_SUBSYSTEM_ALSA 0
 #define AUDIO_SUBSYSTEM_PULSE 1
 #define AUDIO_SUBSYSTEM_WASAPI 2
@@ -33,9 +35,12 @@ extern "C" {
 
 #define AUDIO_PAYLOAD_BUFFER_SIZE 1536000
 
-#define STEREO 0
-#define LEFT 1
-#define RIGHT 2
+#define LEFT 0
+#define RIGHT 1
+#define STEREO 2
+
+extern cbuf_handle_t capture_buffer;
+extern cbuf_handle_t playback_buffer;
 
 int audioio_init(char *capture_dev, char *playback_dev, int audio_subsys, pthread_t *radio_capture, pthread_t *radio_playback);
 

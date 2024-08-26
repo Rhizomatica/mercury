@@ -99,6 +99,8 @@ int write_buffer(cbuf_handle_t cbuf, uint8_t * data, size_t len);
 /// Returns the current number of elements in the buffer
 size_t size_buffer(cbuf_handle_t cbuf);
 
+// clear the buffer
+void clear_buffer(cbuf_handle_t cbuf);
 
 /// Reset the circular buffer to empty, head == tail. Data not cleared
 /// Requires: cbuf is valid and created by circular_buf_init

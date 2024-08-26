@@ -13,7 +13,6 @@
 // #define SHM_PAYLOAD_BUFFER_SIZE 131072
 // #define SHM_PAYLOAD_NAME "/mercury-comm"
 
-#include <threads.h>
 #include <stdbool.h>
 #include <unistd.h>
 #include <stdio.h>
