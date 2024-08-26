@@ -1,4 +1,4 @@
-# Mercury
+# Mercury - Free Software Modem
 
 Mercury is a free software software-defined modem solution for the High-Frequency (HF) band.
 
@@ -364,7 +364,14 @@ The LDPC has the following main parameters:
 The outer code has the following options:
 - outer_code: (CRC16_MODBUS_RTU or NO_OUTER_CODE)
 
-### About
+
+## Discussion
+
+Join HERMES mailing list:
+https://lists.riseup.net/www/info/hermes-general
+
+
+## About
 
 The code was originally written by Fadi Jerji for Rhizomatica's HERMES project. Currently the project is maintained by Rafael Diniz.
 
