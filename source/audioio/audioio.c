@@ -11,6 +11,7 @@
 #include <stdint.h>
 #include <pthread.h>
 #include <stdbool.h>
+#include <limits.h>
 #include <ffaudio/audio.h>
 #include <ffbase/args.h>
 #include <ffbase/stringz.h>
@@ -106,35 +107,72 @@ void *radio_playback_thread(void *device_ptr)
 
 	b = audio->alloc();
 	if (b == NULL)
-    {
-        printf("Error in audio->alloc()\n");
-        goto finish_play;
-    }
+	{
+		printf("Error in audio->alloc()\n");
+		goto finish_play;
+	}
 
-    ffaudio_conf *cfg = &conf.buf;
+	ffaudio_conf *cfg = &conf.buf;
 	r = audio->open(b, cfg, conf.flags);
 	if (r == FFAUDIO_EFORMAT)
 		r = audio->open(b, cfg, conf.flags);
 	if (r != 0)
-    {
-        printf("error in audio->open(): %d: %s\n", r, audio->error(b));
-        goto cleanup_play;
-    }
+	{
+		printf("error in audio->open(): %d: %s\n", r, audio->error(b));
+		goto cleanup_play;
+	}
 
 	printf(" %d/%d/%d %dms\n", cfg->format, cfg->sample_rate, cfg->channels, cfg->buffer_length_msec);
 
 
 	ffuint frame_size = cfg->channels * (cfg->format & 0xff) / 8;
-    ffuint msec_bytes = cfg->sample_rate * frame_size / 1000;
+	ffuint msec_bytes = cfg->sample_rate * frame_size / 1000;
 
 	uint8_t *buffer =  malloc(AUDIO_PAYLOAD_BUFFER_SIZE);
-    ffuint total_written = 0;
+	double *buffer_double =  (double *) buffer;
+
+	ffuint total_written = 0;
+
+	int ch_layout = STEREO;
+
+    if (radio_type == RADIO_SBITX)
+        ch_layout = RIGHT;
+    if (radio_type == RADIO_STOCKHF)
+        ch_layout = STEREO;
 
     while (!shutdown_)
     {
 
         ffssize n = read_buffer_all(playback_buffer, buffer);
         total_written = 0;
+
+		int samples_read = n / sizeof(double);
+
+		int32_t buffer_internal_stereo[samples_read];
+
+		// convert from double to int32
+		for (int i = 0; i < samples_read; i++)
+		{
+			if (ch_layout == LEFT)
+			{
+				buffer_internal_stereo[i*2] = buffer_double[i] * INT_MAX;
+				buffer_internal_stereo[i*2 + 1] = 0;
+			}
+
+			if (ch_layout == RIGHT)
+			{
+				buffer_internal_stereo[i*2] = 0;
+				buffer_internal_stereo[i*2 + 1] = buffer_double[i] * INT_MAX;
+			}
+
+
+			if (ch_layout == STEREO)
+			{
+				buffer_internal_stereo[i*2] = buffer_double[i] * INT_MAX;
+				buffer_internal_stereo[i*2 + 1] = buffer_internal_stereo[i*2];
+			}
+		}
+
 
         while (n >= frame_size)
         {
@@ -255,11 +293,17 @@ void *radio_capture_thread(void *device_ptr)
     ffuint frame_size = cfg->channels * (cfg->format & 0xff) / 8;
     ffuint msec_bytes = cfg->sample_rate * frame_size / 1000;
 
-    uint8_t *buffer = NULL;
+	int32_t *buffer = NULL;
+
+	int ch_layout = STEREO;
+
+	if (radio_type == RADIO_SBITX)
+		ch_layout = LEFT;
+	if (radio_type == RADIO_STOCKHF)
+		ch_layout = STEREO;
 
 	while (!shutdown_)
     {
-		printf("ffaudio.read...");
 		r = audio->read(b, (const void **)&buffer);
 		if (r < 0)
         {
@@ -271,7 +315,32 @@ void *radio_capture_thread(void *device_ptr)
             printf(" %dms\n", r / msec_bytes);
         }
 
-        write_buffer(capture_buffer, buffer, r);
+		int frames_read = r / frame_size;
+		int frames_to_write = frames_read / cfg->channels;
+
+		double buffer_internal[frames_to_write];
+
+		for (int i = 0; i < frames_to_write; i++)
+		{
+			if (ch_layout == LEFT)
+			{
+				buffer_internal[i] = (double) buffer[i*2] / (double) INT_MAX;
+			}
+
+			if (ch_layout == RIGHT)
+			{
+				buffer_internal[i] = (double) buffer[i*2 + 1] / (double) INT_MAX;
+			}
+
+			if (ch_layout == STEREO)
+			{
+				buffer_internal[i] = (double) ((buffer[i*2] + buffer[i*2 + 1]) / 2.0) / (double) INT_MAX;
+			}
+
+		}
+
+
+        write_buffer(capture_buffer, (uint8_t *)buffer_internal, frames_to_write * sizeof(double));
 		// ffstderr_write(data.ptr, data.len);
 
 	}
@@ -370,24 +439,10 @@ void list_soundcards(int audio_system)
 
 int tx_transfer(double *buffer, size_t len)
 {
-    int ch_layout = STEREO;
+	uint8_t *buffer_internal = (uint8_t *) buffer;
+	int buffer_size_bytes = len * sizeof(double);
 
-    if (radio_type == RADIO_SBITX)
-    {
-        ch_layout = RIGHT;
-    }
-    if (radio_type == RADIO_STOCKHF)
-    {
-        ch_layout = STEREO;
-    }
-
-
-    // TODO: pre-process the buffers for (radio_type == RADIO_SBITX) and (radio_type == RADIO_STOCKHF)
-
-
-
-    // TODO: write to playback buffer
-    // write_buffer(...);
+	write_buffer(playback_buffer, buffer_internal, buffer_size_bytes);
 
     return 0;
 }
@@ -395,16 +450,6 @@ int tx_transfer(double *buffer, size_t len)
 
 int rx_transfer(double *buffer, size_t len)
 {
-    int ch_layout = STEREO;
-
-    if (radio_type == RADIO_SBITX)
-    {
-        ch_layout = LEFT;
-    }
-    if (radio_type == RADIO_STOCKHF)
-    {
-        ch_layout = STEREO;
-    }
 
 
 
