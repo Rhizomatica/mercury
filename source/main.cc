@@ -202,7 +202,6 @@ int main(int argc, char *argv[])
         printf("Advanced Linux Sound Architecture (ALSA)\n");
         break;
     case AUDIO_SUBSYSTEM_PULSE:
-        // force device names to be null
         if (input_dev[0] == 0)
         {
             free(input_dev);
@@ -223,10 +222,16 @@ int main(int argc, char *argv[])
         printf("Windows Audio Session API (WASAPI)\n");
         break;
     case AUDIO_SUBSYSTEM_DSOUND:
-        if(input_dev[0] == 0)
-            strcpy(input_dev, "");
-        if(output_dev[0] == 0)
-            strcpy(output_dev, "");
+        if (input_dev[0] == 0)
+        {
+            free(input_dev);
+            input_dev = NULL;
+        }
+        if (output_dev[0] == 0)
+        {
+            free(output_dev);
+            output_dev = NULL;
+        }
         printf("Microsoft DirectSound (DSOUND)\n");
         break;
     default:
