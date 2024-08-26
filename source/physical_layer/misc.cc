@@ -37,7 +37,7 @@ double get_angle(std::complex <double> value)
 
 	if(value.real() == 0) // check for divide by zero
 	{
-		theta = 0;
+		theta = M_PI / 2;
 	}
 	else if(value.real() > 0)
 	{
