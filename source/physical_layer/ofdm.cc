@@ -374,8 +374,12 @@ double cl_ofdm::carrier_sampling_frequency_sync(std::complex <double>*in, double
 			mul+=conj(frame_depadded2[i])*frame_depadded1[i];
 		}
 	}
-	frequency_offset_prec=2.0*(1.0/(2*M_PI))*atan(mul.imag()/mul.real());
-	float sampling_frequency_offset= -frequency_offset_prec*carrier_freq_width /sampling_frequency;
+	if (mul.real() == 0) // avoid divide by zero
+		frequency_offset_prec = 2.0 * (1.0 / (2*M_PI)) * (M_PI / 2);
+	else
+		frequency_offset_prec = 2.0 * (1.0 / (2*M_PI)) * atan(mul.imag() / mul.real());
+
+	// float sampling_frequency_offset= -frequency_offset_prec*carrier_freq_width /sampling_frequency;
 
 	return (frequency_offset_prec*carrier_freq_width);
 

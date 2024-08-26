@@ -35,15 +35,19 @@ double get_angle(std::complex <double> value)
 {
 	double theta=0;
 
-	if(value.real() >=0)
+	if(value.real() == 0) // check for divide by zero
+	{
+		theta = 0;
+	}
+	else if(value.real() > 0)
 	{
 		theta=atan(value.imag()/value.real());
 	}
-	else if (value.real() <0 && value.imag() >=0)
+	else if (value.real() < 0 && value.imag() >= 0)
 	{
 		theta=atan(value.imag()/value.real()) +  M_PI;
 	}
-	else if (value.real() <0 && value.imag() <0)
+	else if (value.real() < 0 && value.imag() < 0)
 	{
 		theta=atan(value.imag()/value.real()) -  M_PI;
 	}
