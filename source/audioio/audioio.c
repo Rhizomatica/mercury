@@ -450,36 +450,10 @@ int tx_transfer(double *buffer, size_t len)
 
 int rx_transfer(double *buffer, size_t len)
 {
+	uint8_t *buffer_internal = (uint8_t *) buffer;
+	int buffer_size_bytes = len * sizeof(double);
 
-
-
-    // TODO: write to capture buffer
-#if 0
-	int location_of_last_frame = data_container_ptr->Nofdm * data_container_ptr->interpolation_rate *
-        (data_container_ptr->buffer_Nsymb) - data_container_ptr->Nofdm *
-        data_container_ptr->interpolation_rate - 1;
-
-	if(data_container_ptr->data_ready==1)
-	{
-		data_container_ptr->nUnder_processing_events++;
-		//std::cout<<"under_processing No= "<<data_container_ptr->nUnder_processing_events<<std::endl;
-	}
-
-	shift_left(data_container_ptr->passband_delayed_data,
-               data_container_ptr->Nofdm * data_container_ptr->interpolation_rate *
-               data_container_ptr->buffer_Nsymb,
-               data_container_ptr->Nofdm * data_container_ptr->interpolation_rate);
-
-	sound_device_ptr->transfere(&data_container_ptr->passband_delayed_data[location_of_last_frame],
-                                data_container_ptr->Nofdm*data_container_ptr->interpolation_rate);
-
-	data_container_ptr->frames_to_read--;
-	if(data_container_ptr->frames_to_read<0)
-	{
-		data_container_ptr->frames_to_read=0;
-	}
-	data_container_ptr->data_ready=1;
-#endif
+	read_buffer(capture_buffer, buffer_internal, buffer_size_bytes);
 
     return 0;
 }
