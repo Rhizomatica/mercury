@@ -187,7 +187,7 @@ int main(int argc, char *argv[])
 #if defined(__linux__)
         audio_system = AUDIO_SUBSYSTEM_ALSA;
 #elif defined(_WIN32)
-        audio_system = AUDIO_SUBSYSTEM_WASAPI;
+        audio_system = AUDIO_SUBSYSTEM_DSOUND;
 #endif
     }
 
