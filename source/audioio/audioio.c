@@ -314,10 +314,12 @@ void *radio_capture_thread(void *device_ptr)
 			printf("ffaudio.read: %s", audio->error(b));
             continue;
         }
+#if 0
         else
         {
             printf(" %dms\n", r / msec_bytes);
         }
+#endif
 
 		int frames_read = r / frame_size;
 		int frames_to_write = frames_read / cfg->channels;
