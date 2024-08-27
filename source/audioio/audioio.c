@@ -188,10 +188,12 @@ void *radio_playback_thread(void *device_ptr)
             {
                 printf("ffaudio.write: %s", audio->error(b));
             }
+#if 0 // print time measurement
             else
             {
                 printf(" %dms\n", r / msec_bytes);
             }
+#endif
             total_written += r;
             n -= r;
         }
