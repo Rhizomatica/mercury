@@ -899,6 +899,7 @@ void cl_telecom_system::TX_RAND_process_main()
 		transmit_bit(data_container.data_bit,data_container.passband_data,MIDDLE_MESSAGE);
 	}
 	tx_transfer(data_container.passband_data,data_container.Nofdm*data_container.interpolation_rate*(ofdm.Nsymb+ofdm.preamble_configurator.Nsymb));
+	clear_buffer(capture_buffer);
 }
 
 void cl_telecom_system::TX_TEST_process_main()
@@ -917,6 +918,8 @@ void cl_telecom_system::TX_TEST_process_main()
     transmit_byte(data_container.data_byte, (nReal_data - outer_code_reserved_bits) / 8, data_container.passband_data, SINGLE_MESSAGE);
 
     tx_transfer(data_container.passband_data, data_container.Nofdm * data_container.interpolation_rate * (ofdm.Nsymb + ofdm.preamble_configurator.Nsymb));
+
+	clear_buffer(capture_buffer);
 }
 
 void cl_telecom_system::TX_SHM_process_main(cbuf_handle_t buffer)
@@ -954,9 +957,7 @@ void cl_telecom_system::TX_SHM_process_main(cbuf_handle_t buffer)
 
     tx_transfer(data_container.passband_data, data_container.Nofdm * data_container.interpolation_rate * (ofdm.Nsymb + ofdm.preamble_configurator.Nsymb));
 
-	// clean receive buffer
 	clear_buffer(capture_buffer);
-
 
     printf("%c", spinner[spinner_anim % 4]); spinner_anim++;
     printf("\033[D");
