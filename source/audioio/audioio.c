@@ -148,28 +148,29 @@ void *radio_playback_thread(void *device_ptr)
 
 		int samples_read = n / sizeof(double);
 
-		int32_t buffer_internal_stereo[samples_read];
+		int32_t buffer_internal_stereo[samples_read * cfg->channels];
 
 		// convert from double to int32
 		for (int i = 0; i < samples_read; i++)
 		{
+			int idx = i * cfg->channels;
 			if (ch_layout == LEFT)
 			{
-				buffer_internal_stereo[i*2] = buffer_double[i] * INT_MAX;
-				buffer_internal_stereo[i*2 + 1] = 0;
+				buffer_internal_stereo[idx] = buffer_double[i] * INT_MAX;
+				buffer_internal_stereo[idx + 1] = 0;
 			}
 
 			if (ch_layout == RIGHT)
 			{
-				buffer_internal_stereo[i*2] = 0;
-				buffer_internal_stereo[i*2 + 1] = buffer_double[i] * INT_MAX;
+				buffer_internal_stereo[idx] = 0;
+				buffer_internal_stereo[idx + 1] = buffer_double[i] * INT_MAX;
 			}
 
 
 			if (ch_layout == STEREO)
 			{
-				buffer_internal_stereo[i*2] = buffer_double[i] * INT_MAX;
-				buffer_internal_stereo[i*2 + 1] = buffer_internal_stereo[i*2];
+				buffer_internal_stereo[idx] = buffer_double[i] * INT_MAX;
+				buffer_internal_stereo[idx + 1] = buffer_internal_stereo[idx];
 			}
 		}
 

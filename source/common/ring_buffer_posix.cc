@@ -368,10 +368,10 @@ void circular_buf_free_shm(cbuf_handle_t cbuf)
 void circular_buf_destroy_shm(cbuf_handle_t cbuf, size_t size, char *base_name)
 {
     assert(cbuf && cbuf->internal && cbuf->buffer);
-    char tmp[MAX_POSIX_SHM_NAME];
 
     // TODO: wire up the shutdown for windows stuff...
 #if !defined(_WIN32)
+    char tmp[MAX_POSIX_SHM_NAME];
     shm_unmap(cbuf->buffer, size);
     shm_unmap(cbuf->internal, sizeof(struct circular_buf_t_aux));
 
