@@ -122,7 +122,7 @@ void *radio_playback_thread(void *device_ptr)
 		goto cleanup_play;
 	}
 
-	printf(" %d/%d/%d %dms\n", cfg->format, cfg->sample_rate, cfg->channels, cfg->buffer_length_msec);
+	printf("(%s) %d bits per sample / %d / %d %dms buffer\n", conf.buf.device_id ? conf.buf.device_id:"null", cfg->format, cfg->sample_rate, cfg->channels, cfg->buffer_length_msec);
 
 
 	ffuint frame_size = cfg->channels * (cfg->format & 0xff) / 8;
@@ -292,7 +292,7 @@ void *radio_capture_thread(void *device_ptr)
         goto cleanup_cap;
     }
 
-	printf(" %d/%d/%d %dms\n", cfg->format, cfg->sample_rate, cfg->channels, cfg->buffer_length_msec);
+	printf("(%s) %d bits per sample / %d / %d %dms buffer\n", conf.buf.device_id ? conf.buf.device_id:"null", cfg->format, cfg->sample_rate, cfg->channels, cfg->buffer_length_msec);
 
     ffuint frame_size = cfg->channels * (cfg->format & 0xff) / 8;
     ffuint msec_bytes = cfg->sample_rate * frame_size / 1000;

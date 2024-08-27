@@ -959,8 +959,7 @@ void cl_telecom_system::TX_SHM_process_main(cbuf_handle_t buffer)
 
 	clear_buffer(capture_buffer);
 
-    printf("%c", spinner[spinner_anim % 4]); spinner_anim++;
-    printf("\033[D");
+    printf("\r%c", spinner[spinner_anim % 4]); spinner_anim++;
     fflush(stdout);
 }
 
