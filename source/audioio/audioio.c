@@ -174,10 +174,11 @@ void *radio_playback_thread(void *device_ptr)
 			}
 		}
 
+		n = samples_read * frame_size;
 
         while (n >= frame_size)
         {
-            r = audio->write(b, buffer + total_written, n);
+            r = audio->write(b, buffer_internal_stereo + total_written, n);
 
             if (r == -FFAUDIO_ESYNC) {
                 printf("detected underrun");
