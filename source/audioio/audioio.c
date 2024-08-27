@@ -122,7 +122,7 @@ void *radio_playback_thread(void *device_ptr)
 		goto cleanup_play;
 	}
 
-	printf("(%s) %d bits per sample / %d / %d %dms buffer\n", conf.buf.device_id ? conf.buf.device_id:"null", cfg->format, cfg->sample_rate, cfg->channels, cfg->buffer_length_msec);
+	printf("(%s) %d bits per sample / %d / %d %dms buffer\n", conf.buf.device_id ? conf.buf.device_id : "default", cfg->format, cfg->sample_rate, cfg->channels, cfg->buffer_length_msec);
 
 
 	ffuint frame_size = cfg->channels * (cfg->format & 0xff) / 8;
@@ -292,7 +292,7 @@ void *radio_capture_thread(void *device_ptr)
         goto cleanup_cap;
     }
 
-	printf("(%s) %d bits per sample / %d / %d / %dms buffer\n", conf.buf.device_id ? conf.buf.device_id:"null", cfg->format, cfg->sample_rate, cfg->channels, cfg->buffer_length_msec);
+	printf("(%s) %d bits per sample / %d / %d / %dms buffer\n", conf.buf.device_id ? conf.buf.device_id : "default", cfg->format, cfg->sample_rate, cfg->channels, cfg->buffer_length_msec);
 
     ffuint frame_size = cfg->channels * (cfg->format & 0xff) / 8;
     ffuint msec_bytes = cfg->sample_rate * frame_size / 1000;
@@ -491,21 +491,3 @@ int audioio_deinit(pthread_t *radio_capture, pthread_t *radio_playback)
 
     return 0;
 }
-
-// #define TESTING
-#ifdef TESTING
-int main()
-{
-    // for alsa
-    char *radio_capture_dev = "plughw:0,0";
-    char *radio_playback_dev = "plughw:0,0";
-    //char *radio_capture_dev = "default";
-    //char *radio_playback_dev = "default";
-
-    // for pulse
-    //char *radio_capture_dev = NULL;
-    //char *radio_playback_dev = NULL;
-    return audioio_init(radio_capture_dev, radio_playback_dev, AUDIO_SUBSYSTEM_ALSA);
-
-}
-#endif
