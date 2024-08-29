@@ -1171,92 +1171,46 @@ void cl_telecom_system::RX_SHM_process_main(cbuf_handle_t buffer)
 	std::cout << std::fixed;
 	std::cout << std::setprecision(1);
 
-    if(data_container.data_ready == 1)
-    {
-        if(data_container.frames_to_read == 0)
-        {
-            for(int i=0; i < data_container.Nofdm * data_container.buffer_Nsymb * data_container.interpolation_rate; i++)
-            {
-                data_container.ready_to_process_passband_delayed_data[i] = data_container.passband_delayed_data[i];
-            }
-            st_receive_stats received_message_stats = receive_byte(data_container.ready_to_process_passband_delayed_data, tmp);
 
-            if(received_message_stats.message_decoded == YES)
-            {
-				//std::cout << std::endl;
-				//std::cout << "decoded in " << received_message_stats.iterations_done << " iterations. Data:";
-				//std::cout << std::endl;
-				//std::cout << std::hex;
+	size_t n_samples = data_container.Nofdm * data_container.buffer_Nsymb * data_container.interpolation_rate;
+	// which is the size of the sample?
+	rx_transfer(data_container.ready_to_process_passband_delayed_data, n_samples);
 
-                uint8_t data[frame_size];
+	st_receive_stats received_message_stats = receive_byte(data_container.ready_to_process_passband_delayed_data, tmp);
 
-				for(int i = 0; i < frame_size; i++)
-                {
-				//{
-                    data[i] = (uint8_t) tmp[i];
-                //    std::cout << "0x" << tmp[i] << ",";
-				}
-
-                if ( frame_size <= (int) circular_buf_free_size(buffer) )
-                    write_buffer(buffer, data, frame_size);
-                else
-                    std::cout << "Decoded frame lost because of full buffer!" <<  std::endl;
-
-				//std::cout << std::endl;
-				//std::cout << std::dec;
-				//std::cout << " sync_trial=" << receive_stats.sync_trials;
-				//std::cout << " time_peak_subsymb_location=" << received_message_stats.delay % (data_container.Nofdm * data_container.interpolation_rate);
-				//std::cout << " time_peak_symb_location=" << received_message_stats.delay / (data_container.Nofdm * data_container.interpolation_rate);
-				//std::cout << " freq_offset=" << receive_stats.freq_offset;
-
-
-                printf("\rSNR: %5.1f db  Level: %5.1f dBm  RX: %c", receive_stats.SNR, receive_stats.signal_stregth_dbm, spinner[spinner_anim % 4]);
-                spinner_anim++;
-                fflush(stdout);
-
-				int end_of_current_message = received_message_stats.delay / (data_container.Nofdm * data_container.interpolation_rate) + data_container.Nsymb + data_container.preamble_nSymb;
-				int frames_left_in_buffer = data_container.buffer_Nsymb - end_of_current_message;
-				if(frames_left_in_buffer < 0)
-                {
-                    frames_left_in_buffer = 0;
-                }
-				data_container.frames_to_read = data_container.Nsymb + data_container.preamble_nSymb - frames_left_in_buffer - data_container.nUnder_processing_events;
-
-				if(data_container.frames_to_read > (data_container.Nsymb + data_container.preamble_nSymb) || data_container.frames_to_read < 0)
-				{
-					data_container.frames_to_read = data_container.Nsymb + data_container.preamble_nSymb - frames_left_in_buffer;
-				}
-
-				receive_stats.delay_of_last_decoded_message += (data_container.Nsymb + data_container.preamble_nSymb - (data_container.frames_to_read + data_container.nUnder_processing_events)) * data_container.Nofdm * data_container.interpolation_rate;
-
-				data_container.nUnder_processing_events = 0;
-			}
-			else
-			{
-				if(data_container.data_ready == 1 && data_container.frames_to_read == 0 && receive_stats.delay_of_last_decoded_message != -1)
-				{
-					receive_stats.delay_of_last_decoded_message -= data_container.Nofdm * data_container.interpolation_rate;
-					if(receive_stats.delay_of_last_decoded_message < 0)
-					{
-						receive_stats.delay_of_last_decoded_message = -1;
-					}
-				}
-				//				std::cout<<"Syncing.. ";
-				//				std::cout<<" delay="<<received_message_stats.delay;
-				//				std::cout<<" time_peak_subsymb_location="<<received_message_stats.delay%(data_container.Nofdm*data_container.interpolation_rate);
-				//				std::cout<<" time_peak_symb_location="<<received_message_stats.delay/(data_container.Nofdm*data_container.interpolation_rate);
-				//				std::cout<<" freq_offset="<<receive_stats.freq_offset;
-				//				std::cout<<" Signal Strength="<<receive_stats.signal_stregth_dbm<<" dBm ";
-				//				std::cout<<std::endl;
-			}
-
-		}
-		data_container.data_ready = 0;
-
-	}
-	else
+	if(received_message_stats.message_decoded == YES)
 	{
-		msleep(1);
+		//std::cout << std::endl;
+		//std::cout << "decoded in " << received_message_stats.iterations_done << " iterations. Data:";
+		//std::cout << std::endl;
+		//std::cout << std::hex;
+
+		uint8_t data[frame_size];
+
+		for(int i = 0; i < frame_size; i++)
+		{
+			//{
+			data[i] = (uint8_t) tmp[i];
+			//    std::cout << "0x" << tmp[i] << ",";
+		}
+
+		if ( frame_size <= (int) circular_buf_free_size(buffer) )
+			write_buffer(buffer, data, frame_size);
+		else
+			std::cout << "Decoded frame lost because of full buffer!" <<  std::endl;
+
+		//std::cout << std::endl;
+		//std::cout << std::dec;
+		//std::cout << " sync_trial=" << receive_stats.sync_trials;
+		//std::cout << " time_peak_subsymb_location=" << received_message_stats.delay % (data_container.Nofdm * data_container.interpolation_rate);
+		//std::cout << " time_peak_symb_location=" << received_message_stats.delay / (data_container.Nofdm * data_container.interpolation_rate);
+		//std::cout << " freq_offset=" << receive_stats.freq_offset;
+
+
+		printf("\rSNR: %5.1f db  Level: %5.1f dBm  RX: %c", receive_stats.SNR, receive_stats.signal_stregth_dbm, spinner[spinner_anim % 4]);
+		spinner_anim++;
+		fflush(stdout);
+
 	}
 }
 

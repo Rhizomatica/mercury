@@ -47,6 +47,8 @@ int audioio_init(char *capture_dev, char *playback_dev, int audio_subsys, pthrea
 int audioio_deinit(pthread_t *radio_capture, pthread_t *radio_playback);
 
 int tx_transfer(double *buffer, size_t len);
+int rx_transfer(double *buffer, size_t len);
+
 
 void list_soundcards(int audio_system);
 
