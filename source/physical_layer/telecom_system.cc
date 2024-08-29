@@ -1091,7 +1091,8 @@ void cl_telecom_system::RX_TEST_process_main()
         (data_container.buffer_Nsymb) - data_container.Nofdm *
         data_container.interpolation_rate - 1;
 
-	data_container.nUnder_processing_events++;
+	if(data_container.data_ready==1)
+		data_container.nUnder_processing_events++;
 
 	shift_left(data_container.passband_delayed_data,
                data_container.Nofdm * data_container.interpolation_rate *
@@ -1102,9 +1103,9 @@ void cl_telecom_system::RX_TEST_process_main()
 
 	data_container.frames_to_read--;
 	if(data_container.frames_to_read<0)
-	{
 		data_container.frames_to_read=0;
-	}
+
+	data_container.data_ready=1;
 
 	if(data_container.frames_to_read == 0)
 	{
@@ -1171,7 +1172,9 @@ void cl_telecom_system::RX_TEST_process_main()
 			//				std::cout<<std::endl;
 		}
 
+		data_container.data_ready = 0;
 	}
+
 
 	clear_buffer(playback_buffer);
 }
