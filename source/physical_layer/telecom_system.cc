@@ -1086,28 +1086,8 @@ void cl_telecom_system::RX_TEST_process_main()
 	std::cout << std::fixed;
 	std::cout << std::setprecision(1);
 
-	// secret sauce
-	int location_of_last_frame = data_container.Nofdm * data_container.interpolation_rate *
-        (data_container.buffer_Nsymb) - data_container.Nofdm *
-        data_container.interpolation_rate - 1;
 
-	if(data_container.data_ready==1)
-		data_container.nUnder_processing_events++;
-
-	shift_left(data_container.passband_delayed_data,
-               data_container.Nofdm * data_container.interpolation_rate *
-               data_container.buffer_Nsymb,
-               data_container.Nofdm * data_container.interpolation_rate);
-
-	rx_transfer(&data_container.passband_delayed_data[location_of_last_frame], data_container.Nofdm * data_container.interpolation_rate);
-
-	data_container.frames_to_read--;
-	if(data_container.frames_to_read<0)
-		data_container.frames_to_read=0;
-
-	data_container.data_ready=1;
-
-	if(data_container.frames_to_read == 0)
+	if(data_container.data_ready == 1 && data_container.frames_to_read == 0)
 	{
 		for(int i=0; i < data_container.Nofdm * data_container.buffer_Nsymb * data_container.interpolation_rate; i++)
 		{
@@ -1175,6 +1155,26 @@ void cl_telecom_system::RX_TEST_process_main()
 		data_container.data_ready = 0;
 	}
 
+	// secret sauce
+	int location_of_last_frame = data_container.Nofdm * data_container.interpolation_rate *
+        (data_container.buffer_Nsymb) - data_container.Nofdm *
+        data_container.interpolation_rate - 1;
+
+	if(data_container.data_ready == 1)
+		data_container.nUnder_processing_events++;
+
+	shift_left(data_container.passband_delayed_data,
+               data_container.Nofdm * data_container.interpolation_rate *
+               data_container.buffer_Nsymb,
+               data_container.Nofdm * data_container.interpolation_rate);
+
+	rx_transfer(&data_container.passband_delayed_data[location_of_last_frame], data_container.Nofdm * data_container.interpolation_rate);
+
+	data_container.frames_to_read--;
+	if(data_container.frames_to_read < 0)
+		data_container.frames_to_read = 0;
+
+	data_container.data_ready = 1;
 
 	clear_buffer(playback_buffer);
 }
