@@ -1091,6 +1091,8 @@ void cl_telecom_system::RX_TEST_process_main()
         (data_container.buffer_Nsymb) - data_container.Nofdm *
         data_container.interpolation_rate - 1;
 
+	data_container.nUnder_processing_events++;
+
 	shift_left(data_container.passband_delayed_data,
                data_container.Nofdm * data_container.interpolation_rate *
                data_container.buffer_Nsymb,
@@ -1139,14 +1141,16 @@ void cl_telecom_system::RX_TEST_process_main()
 			{
 				frames_left_in_buffer = 0;
 			}
-			data_container.frames_to_read = data_container.Nsymb + data_container.preamble_nSymb - frames_left_in_buffer;
+			data_container.frames_to_read = data_container.Nsymb + data_container.preamble_nSymb - frames_left_in_buffer - data_container.nUnder_processing_events;
 
 			if(data_container.frames_to_read > (data_container.Nsymb + data_container.preamble_nSymb) || data_container.frames_to_read < 0)
 			{
 				data_container.frames_to_read = data_container.Nsymb + data_container.preamble_nSymb - frames_left_in_buffer;
 			}
 
-			receive_stats.delay_of_last_decoded_message += (data_container.Nsymb + data_container.preamble_nSymb - data_container.frames_to_read) * data_container.Nofdm * data_container.interpolation_rate;
+			receive_stats.delay_of_last_decoded_message += (data_container.Nsymb + data_container.preamble_nSymb - (data_container.frames_to_read + data_container.nUnder_processing_events)) * data_container.Nofdm * data_container.interpolation_rate;
+
+			data_container.nUnder_processing_events = 0;
 		}
 		else
 		{
