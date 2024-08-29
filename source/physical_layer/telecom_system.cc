@@ -1116,8 +1116,6 @@ void cl_telecom_system::RX_TEST_process_main()
 		}
 		st_receive_stats received_message_stats = receive_byte(data_container.ready_to_process_passband_delayed_data, tmp);
 
-		std::cout << " Signal Strength=" << receive_stats.signal_stregth_dbm << " dBm ";
-
 		if(received_message_stats.message_decoded == YES)
 		{
 			std::cout << std::endl;
