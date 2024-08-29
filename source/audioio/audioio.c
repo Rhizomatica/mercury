@@ -345,7 +345,6 @@ void *radio_capture_thread(void *device_ptr)
 
 		}
 
-
         write_buffer(capture_buffer, (uint8_t *)buffer_internal, frames_to_write * sizeof(double));
 		// ffstderr_write(data.ptr, data.len);
 
