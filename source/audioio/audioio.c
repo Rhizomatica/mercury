@@ -443,7 +443,7 @@ void list_soundcards(int audio_system)
 	}
 }
 
-// size in double samples!
+// size in "double" samples
 int tx_transfer(double *buffer, size_t len)
 {
 	uint8_t *buffer_internal = (uint8_t *) buffer;
@@ -454,7 +454,7 @@ int tx_transfer(double *buffer, size_t len)
     return 0;
 }
 
-
+// size in "double" samples
 int rx_transfer(double *buffer, size_t len)
 {
 	uint8_t *buffer_internal = (uint8_t *) buffer;
