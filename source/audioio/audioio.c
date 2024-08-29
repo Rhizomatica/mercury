@@ -322,7 +322,7 @@ void *radio_capture_thread(void *device_ptr)
 #endif
 
 		int frames_read = r / frame_size;
-		int frames_to_write = frames_read / cfg->channels;
+		int frames_to_write = frames_read;
 
 		double buffer_internal[frames_to_write];
 
