@@ -1106,7 +1106,9 @@ void cl_telecom_system::RX_TEST_process_main()
 	if(data_container.frames_to_read < 0)
 		data_container.frames_to_read = 0;
 
-	if(data_container.data_ready == 1 && data_container.frames_to_read == 0)
+	data_container.data_ready = 1;
+
+	if(data_container.frames_to_read == 0)
 	{
 		for(int i=0; i < data_container.Nofdm * data_container.buffer_Nsymb * data_container.interpolation_rate; i++)
 		{
@@ -1172,7 +1174,7 @@ void cl_telecom_system::RX_TEST_process_main()
 			//				std::cout<<" Signal Strength="<<receive_stats.signal_stregth_dbm<<" dBm ";
 			//				std::cout<<std::endl;
 		}
-
+		data_container.data_ready = 0;
 	}
 
 	clear_buffer(playback_buffer);
