@@ -1073,6 +1073,8 @@ void cl_telecom_system::RX_RAND_process_main()
 	{
 		msleep(1);
 	}
+
+	clear_buffer(playback_buffer);
 }
 
 void cl_telecom_system::RX_TEST_process_main()
@@ -1166,6 +1168,8 @@ void cl_telecom_system::RX_TEST_process_main()
 		}
 
 	}
+
+	clear_buffer(playback_buffer);
 }
 
 void cl_telecom_system::RX_SHM_process_main(cbuf_handle_t buffer)
@@ -1218,6 +1222,8 @@ void cl_telecom_system::RX_SHM_process_main(cbuf_handle_t buffer)
 		fflush(stdout);
 
 	}
+
+	clear_buffer(playback_buffer);
 }
 
 
