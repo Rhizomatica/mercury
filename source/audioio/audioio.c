@@ -178,7 +178,7 @@ void *radio_playback_thread(void *device_ptr)
 
         while (n >= frame_size)
         {
-			printf("tx 6\n");
+			// printf("tx 6\n");
             r = audio->write(b, ((uint8_t *)buffer_internal_stereo) + total_written, n);
 
             if (r == -FFAUDIO_ESYNC) {
@@ -189,7 +189,7 @@ void *radio_playback_thread(void *device_ptr)
             {
                 printf("ffaudio.write: %s", audio->error(b));
             }
-#if 0 // print time measurement
+#if 1 // print time measurement
             else
             {
                 printf(" %dms\n", r / msec_bytes);
