@@ -142,7 +142,7 @@ void *radio_playback_thread(void *device_ptr)
 
     while (!shutdown_)
     {
-
+		printf("tx 5\n");
         ffssize n = read_buffer_all(playback_buffer, buffer);
         total_written = 0;
 
@@ -178,6 +178,7 @@ void *radio_playback_thread(void *device_ptr)
 
         while (n >= frame_size)
         {
+			printf("tx 6\n");
             r = audio->write(b, ((uint8_t *)buffer_internal_stereo) + total_written, n);
 
             if (r == -FFAUDIO_ESYNC) {
