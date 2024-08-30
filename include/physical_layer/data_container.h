@@ -61,10 +61,9 @@ class cl_data_container
 	int nData,Nc,M,Nfft,Nofdm,Nsymb,preamble_nSymb,nBits,Ngi,interpolation_rate;
 	void set_size(int nData, int Nc,int M,int Nfft, int Nofdm, int Nsymb, int preamble_nSymb, int interpolation_rate);
 
-    // TODO: these should go away...
-	volatile int frames_to_read;
-	volatile int data_ready;
-	volatile int nUnder_processing_events;
+	int frames_to_read;
+	int data_ready;
+	int nUnder_processing_events;
 	int buffer_Nsymb;
 
 	int total_frame_size;

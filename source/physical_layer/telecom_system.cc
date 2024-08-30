@@ -950,12 +950,6 @@ void cl_telecom_system::TX_SHM_process_main(cbuf_handle_t buffer)
     {
 		msleep(10);
 		goto do_nothing;
-#if 0
-        for (int i = 0; i < frame_size; i++)
-        {
-            data_container.data_byte[i] = 0;
-        }
-#endif
     }
 
     transmit_byte(data_container.data_byte, (nReal_data - outer_code_reserved_bits) / 8, data_container.passband_data, SINGLE_MESSAGE);
