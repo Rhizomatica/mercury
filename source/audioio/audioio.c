@@ -240,23 +240,23 @@ void *radio_capture_thread(void *device_ptr)
 	conf.buf.device_id = device_ptr;
 
 #if defined(_WIN32)
-    conf.buf.buffer_length_msec = 20;
+    conf.buf.buffer_length_msec = 40;
     if (audio_subsystem == AUDIO_SUBSYSTEM_WASAPI)
         audio = (ffaudio_interface *) &ffwasapi;
     if (audio_subsystem == AUDIO_SUBSYSTEM_DSOUND)
         audio = (ffaudio_interface *) &ffdsound;
 #elif defined(__linux__)
-    conf.buf.buffer_length_msec = 15;
+    conf.buf.buffer_length_msec = 30;
     if (audio_subsystem == AUDIO_SUBSYSTEM_ALSA)
         audio = (ffaudio_interface *) &ffalsa;
     if (audio_subsystem == AUDIO_SUBSYSTEM_PULSE)
         audio = (ffaudio_interface *) &ffpulse;
 #elif defined(__FREEBSD__)
-    conf.buf.buffer_length_msec = 20;
+    conf.buf.buffer_length_msec = 40;
     if (audio_subsystem == AUDIO_SUBSYSTEM_OSS)
         audio = (ffaudio_interface *) &ffoss;
 #elif defined(__APPLE__)
-    conf.buf.buffer_length_msec = 20;
+    conf.buf.buffer_length_msec = 40;
     if (audio_subsystem == AUDIO_SUBSYSTEM_COREAUDIO)
         audio = (ffaudio_interface *) &ffcoreaudio;
 #endif
