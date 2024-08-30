@@ -1224,11 +1224,6 @@ void cl_telecom_system::RX_SHM_process_main(cbuf_handle_t buffer)
 
 		if(received_message_stats.message_decoded == YES)
 		{
-			std::cout << std::endl;
-			std::cout << "decoded in " << received_message_stats.iterations_done << " iterations. Data:";
-			std::cout << std::endl;
-			std::cout << std::hex;
-
 			uint8_t data[frame_size];
 
 			for(int i = 0; i < frame_size; i++)
