@@ -1083,6 +1083,7 @@ void cl_telecom_system::RX_TEST_process_main()
     {
         if(data_container.frames_to_read == 0)
         {
+			printf("chunk size: %d\n", data_container.Nofdm * data_container.buffer_Nsymb * data_container.interpolation_rate);
             for(int i=0; i < data_container.Nofdm * data_container.buffer_Nsymb * data_container.interpolation_rate; i++)
             {
                 data_container.ready_to_process_passband_delayed_data[i] = data_container.passband_delayed_data[i];

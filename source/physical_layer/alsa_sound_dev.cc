@@ -495,8 +495,10 @@ void interrupt_handler(snd_async_handler_t *callback_ptr)
 	if(data_container_ptr->data_ready==1)
 	{
 		data_container_ptr->nUnder_processing_events++;
-		//std::cout<<"under_processing No= "<<data_container_ptr->nUnder_processing_events<<std::endl;
+		std::cout<<"under_processing No= "<<data_container_ptr->nUnder_processing_events<<std::endl;
 	}
+
+	printf("location_of_last_frame: %d\n", location_of_last_frame);
 
 	shift_left(data_container_ptr->passband_delayed_data, data_container_ptr->Nofdm*data_container_ptr->interpolation_rate*data_container_ptr->buffer_Nsymb, data_container_ptr->Nofdm*data_container_ptr->interpolation_rate);
 	sound_device_ptr->transfere(&data_container_ptr->passband_delayed_data[location_of_last_frame],data_container_ptr->Nofdm*data_container_ptr->interpolation_rate);
