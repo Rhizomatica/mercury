@@ -953,14 +953,12 @@ void cl_telecom_system::TX_SHM_process_main(cbuf_handle_t buffer)
             data_container.data_byte[i] = 0;
         }
     }
-	printf("tx 1\n");
+
     transmit_byte(data_container.data_byte, (nReal_data - outer_code_reserved_bits) / 8, data_container.passband_data, SINGLE_MESSAGE);
-	printf("tx 2\n");
+
     tx_transfer(data_container.passband_data, data_container.Nofdm * data_container.interpolation_rate * (ofdm.Nsymb + ofdm.preamble_configurator.Nsymb));
-	printf("tx 3\n");
 
 	clear_buffer(capture_buffer);
-	printf("tx 4\n");
 
     printf("%c\033[1D", spinner[spinner_anim % 4]); spinner_anim++;
     fflush(stdout);

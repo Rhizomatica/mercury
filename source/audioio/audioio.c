@@ -71,23 +71,23 @@ void *radio_playback_thread(void *device_ptr)
 	conf.buf.device_id = device_ptr;
 
 #if defined(_WIN32)
-    conf.buf.buffer_length_msec = 20;
+    conf.buf.buffer_length_msec = 40;
     if (audio_subsystem == AUDIO_SUBSYSTEM_WASAPI)
         audio = (ffaudio_interface *) &ffwasapi;
     if (audio_subsystem == AUDIO_SUBSYSTEM_DSOUND)
         audio = (ffaudio_interface *) &ffdsound;
 #elif defined(__linux__)
-    conf.buf.buffer_length_msec = 15;
+    conf.buf.buffer_length_msec = 30;
     if (audio_subsystem == AUDIO_SUBSYSTEM_ALSA)
         audio = (ffaudio_interface *) &ffalsa;
     if (audio_subsystem == AUDIO_SUBSYSTEM_PULSE)
         audio = (ffaudio_interface *) &ffpulse;
 #elif defined(__FREEBSD__)
-    conf.buf.buffer_length_msec = 20;
+    conf.buf.buffer_length_msec = 40;
     if (audio_subsystem == AUDIO_SUBSYSTEM_OSS)
         audio = (ffaudio_interface *) &ffoss;
 #elif defined(__APPLE__)
-    conf.buf.buffer_length_msec = 20;
+    conf.buf.buffer_length_msec = 40;
     if (audio_subsystem == AUDIO_SUBSYSTEM_COREAUDIO)
         audio = (ffaudio_interface *) &ffcoreaudio;
 #endif
@@ -142,7 +142,6 @@ void *radio_playback_thread(void *device_ptr)
 
     while (!shutdown_)
     {
-		printf("tx 5\n");
         ffssize n = read_buffer_all(playback_buffer, buffer);
         total_written = 0;
 
@@ -178,7 +177,6 @@ void *radio_playback_thread(void *device_ptr)
 
         while (n >= frame_size)
         {
-			// printf("tx 6\n");
             r = audio->write(b, ((uint8_t *)buffer_internal_stereo) + total_written, n);
 
             if (r == -FFAUDIO_ESYNC) {
@@ -189,7 +187,7 @@ void *radio_playback_thread(void *device_ptr)
             {
                 printf("ffaudio.write: %s", audio->error(b));
             }
-#if 1 // print time measurement
+#if 0 // print time measurement
             else
             {
                 printf(" %dms\n", r / msec_bytes);
