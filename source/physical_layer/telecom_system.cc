@@ -1077,8 +1077,8 @@ void cl_telecom_system::RX_RAND_process_main()
 				constellation_plot.plot_constellation(&contellation[0][0],ofdm.pilot_configurator.nData*constellation_plot_nFrames);
 			}
 		}
+		data_container.data_ready = 0;
 	}
-	data_container.data_ready = 0;
 
 	clear_buffer(playback_buffer);
 
@@ -1171,16 +1171,12 @@ void cl_telecom_system::RX_TEST_process_main()
 					receive_stats.delay_of_last_decoded_message = -1;
 				}
 			}
-			//				std::cout<<"Syncing.. ";
-			//				std::cout<<" delay="<<received_message_stats.delay;
-			//				std::cout<<" time_peak_subsymb_location="<<received_message_stats.delay%(data_container.Nofdm*data_container.interpolation_rate);
-			//				std::cout<<" time_peak_symb_location="<<received_message_stats.delay/(data_container.Nofdm*data_container.interpolation_rate);
-			//				std::cout<<" freq_offset="<<receive_stats.freq_offset;
 			//				std::cout<<" Signal Strength="<<receive_stats.signal_stregth_dbm<<" dBm ";
 			//				std::cout<<std::endl;
 		}
+		data_container.data_ready = 0;
 	}
-	data_container.data_ready = 0;
+
 
 	clear_buffer(playback_buffer);
 }
@@ -1270,8 +1266,9 @@ void cl_telecom_system::RX_SHM_process_main(cbuf_handle_t buffer)
 				}
 			}
 		}
+		data_container.data_ready = 0;
 	}
-	data_container.data_ready = 0;
+
 
 	clear_buffer(playback_buffer);
 }

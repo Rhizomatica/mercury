@@ -303,6 +303,8 @@ int main(int argc, char *argv[])
         telecom_system.constellation_plot.open("PLOT");
         telecom_system.constellation_plot.reset("PLOT");
 
+		clear_buffer(capture_buffer);
+
         while (!shutdown_)
         {
             telecom_system.RX_RAND_process_main();
@@ -356,6 +358,8 @@ int main(int argc, char *argv[])
         telecom_system.load_configuration(mod_config);
         printf("CONFIG_%d (%f bps) Shannon_limit: %f\n", mod_config, telecom_system.rbc, telecom_system.Shannon_limit);
 
+		clear_buffer(capture_buffer);
+
         while (!shutdown_)
         {
             telecom_system.RX_TEST_process_main();
@@ -387,6 +391,8 @@ int main(int argc, char *argv[])
         cbuf_handle_t buffer;
 
         buffer = circular_buf_init_shm(SHM_PAYLOAD_BUFFER_SIZE, (char *) SHM_PAYLOAD_NAME);
+
+		clear_buffer(capture_buffer);
 
         while (!shutdown_)
         {
