@@ -1077,8 +1077,8 @@ void cl_telecom_system::RX_RAND_process_main()
 				constellation_plot.plot_constellation(&contellation[0][0],ofdm.pilot_configurator.nData*constellation_plot_nFrames);
 			}
 		}
-		data_container.data_ready = 0;
 	}
+	data_container.data_ready = 0;
 
 	clear_buffer(playback_buffer);
 
@@ -1179,8 +1179,8 @@ void cl_telecom_system::RX_TEST_process_main()
 			//				std::cout<<" Signal Strength="<<receive_stats.signal_stregth_dbm<<" dBm ";
 			//				std::cout<<std::endl;
 		}
-		data_container.data_ready = 0;
 	}
+	data_container.data_ready = 0;
 
 	clear_buffer(playback_buffer);
 }
@@ -1270,8 +1270,8 @@ void cl_telecom_system::RX_SHM_process_main(cbuf_handle_t buffer)
 				}
 			}
 		}
-		data_container.data_ready = 0;
 	}
+	data_container.data_ready = 0;
 
 	clear_buffer(playback_buffer);
 }
