@@ -1179,7 +1179,7 @@ void cl_telecom_system::RX_SHM_process_main(cbuf_handle_t buffer)
     int frame_size = (nReal_data - outer_code_reserved_bits) / 8;
 
 	int signal_period = data_container.Nofdm * data_container.buffer_Nsymb * data_container.interpolation_rate; // in samples
-	int symbol_period = data_container. Nofdm * data_container.interpolation_rate;
+	int symbol_period = data_container.Nofdm * data_container.interpolation_rate;
 
 	int location_of_last_frame = signal_period - symbol_period - 1; // TODO: do we need this "-1"?
 

@@ -21,6 +21,10 @@
  */
 
 #include "datalink_layer/arq.h"
+#include "audioio/audioio.h"
+
+extern cbuf_handle_t capture_buffer;
+extern cbuf_handle_t playback_buffer;
 
 cl_arq_controller::cl_arq_controller()
 {
@@ -1420,11 +1424,9 @@ void cl_arq_controller::send(st_message* message, int message_location)
 
 	telecom_system->transmit_byte(telecom_system->data_container.data_byte,header_length+message->length,telecom_system->data_container.ready_to_transmit_passband_data_tx,message_location);
 
-    // TODO: write to tx buffer
 	tx_transfer(telecom_system->data_container.ready_to_transmit_passband_data_tx,
                 telecom_system->data_container.Nofdm * telecom_system->data_container.interpolation_rate *
                 (telecom_system->data_container.Nsymb + telecom_system->data_container.preamble_nSymb));
-	// telecom_system->speaker.transfere(telecom_system->data_container.ready_to_transmit_passband_data_tx,telecom_system->data_container.Nofdm*telecom_system->data_container.interpolation_rate*(telecom_system->data_container.Nsymb+telecom_system->data_container.preamble_nSymb));
 
 	last_message_sent_type=message->type;
 	if(message->type==CONTROL || message->type==ACK_CONTROL)
@@ -1432,6 +1434,8 @@ void cl_arq_controller::send(st_message* message, int message_location)
 		last_message_sent_code=message->data[0];
 	}
 	last_received_message_sequence=-1;
+
+	clear_buffer(capture_buffer);
 }
 
 void cl_arq_controller::send_batch()
@@ -1594,10 +1598,42 @@ void cl_arq_controller::send_batch()
 	}
 	message_batch_counter_tx=0;
 	ptt_off();
+	clear_buffer(capture_buffer);
 }
 
 void cl_arq_controller::receive()
 {
+	int signal_period = telecom_system->data_container.Nofdm * telecom_system->data_container.buffer_Nsymb * telecom_system->data_container.interpolation_rate; // in samples
+	int symbol_period = telecom_system->data_container.Nofdm * telecom_system->data_container.interpolation_rate;
+
+	int location_of_last_frame = signal_period - symbol_period - 1; // TODO: do we need this "-1"?
+
+	// TODO: port to the new audioio subsystem
+	if (size_buffer(capture_buffer) >= symbol_period * sizeof(double))
+	{
+
+		if(telecom_system->data_container.data_ready == 1)
+			telecom_system->data_container.nUnder_processing_events++;
+
+		shift_left(telecom_system->data_container.passband_delayed_data, signal_period, symbol_period);
+
+		rx_transfer(&telecom_system->data_container.passband_delayed_data[location_of_last_frame], symbol_period);
+
+		telecom_system->data_container.frames_to_read--;
+		if(telecom_system->data_container.frames_to_read < 0)
+			telecom_system->data_container.frames_to_read = 0;
+
+		telecom_system->data_container.data_ready = 1;
+	}
+
+#if 0
+	if(telecom_system->data_container.data_ready == 0)
+	{
+		msleep(1);
+		return;
+	}
+#endif
+
 	st_receive_stats received_message_stats;
 	if(telecom_system->data_container.data_ready==1)
 	{
@@ -1703,6 +1739,7 @@ void cl_arq_controller::receive()
 		}
 		telecom_system->data_container.data_ready=0;
 	}
+	clear_buffer(playback_buffer);
 }
 
 
