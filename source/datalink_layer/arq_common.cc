@@ -1318,8 +1318,6 @@ void cl_arq_controller::process_user_command(std::string command)
 
 void cl_arq_controller::ptt_on()
 {
-	clear_buffer(playback_buffer);
-
 	std::string str="PTT ON\r";
 	tcp_socket_control.message->length=str.length();
 
@@ -1331,6 +1329,7 @@ void cl_arq_controller::ptt_on()
 }
 void cl_arq_controller::ptt_off()
 {
+	clear_buffer(playback_buffer);
 	clear_buffer(capture_buffer);
 
 	std::string str="PTT OFF\r";
