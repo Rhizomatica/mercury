@@ -1097,6 +1097,8 @@ void cl_telecom_system::RX_TEST_process_main()
 
 	int location_of_last_frame = signal_period - symbol_period - 1; // TODO: do we need this "-1"?
 
+	data_container.nUnder_processing_events++;
+
 	shift_left(data_container.passband_delayed_data, signal_period, symbol_period);
 
 	rx_transfer(&data_container.passband_delayed_data[location_of_last_frame], symbol_period);
@@ -1137,16 +1139,20 @@ void cl_telecom_system::RX_TEST_process_main()
 		if(frames_left_in_buffer < 0)
 			frames_left_in_buffer = 0;
 
-		data_container.frames_to_read = data_container.Nsymb + data_container.preamble_nSymb - frames_left_in_buffer;
+		data_container.frames_to_read = data_container.Nsymb + data_container.preamble_nSymb - frames_left_in_buffer - data_container.nUnder_processing_events;
 
-		// memmove(data_container.passband_delayed_data, &data_container.passband_delayed_data[needle], frames_left_in_buffer * sizeof(double));
+		if(data_container.frames_to_read > (data_container.Nsymb + data_container.preamble_nSymb) || data_container.frames_to_read < 0)
+			data_container.frames_to_read = data_container.Nsymb + data_container.preamble_nSymb - frames_left_in_buffer;
+
 		receive_stats.delay_of_last_decoded_message += (data_container.Nsymb + data_container.preamble_nSymb - data_container.frames_to_read) * symbol_period;
+
+		data_container.nUnder_processing_events = 0;
 	}
 	else
 	{
 		if(data_container.frames_to_read == 0 && receive_stats.delay_of_last_decoded_message != -1)
 		{
-			receive_stats.delay_of_last_decoded_message -= data_container.Nofdm * data_container.interpolation_rate;
+			receive_stats.delay_of_last_decoded_message -= symbol_period;
 			if(receive_stats.delay_of_last_decoded_message < 0)
 			{
 				receive_stats.delay_of_last_decoded_message = -1;
