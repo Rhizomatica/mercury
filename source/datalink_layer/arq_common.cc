@@ -1318,6 +1318,8 @@ void cl_arq_controller::process_user_command(std::string command)
 
 void cl_arq_controller::ptt_on()
 {
+	clear_buffer(playback_buffer);
+
 	std::string str="PTT ON\r";
 	tcp_socket_control.message->length=str.length();
 
@@ -1329,6 +1331,8 @@ void cl_arq_controller::ptt_on()
 }
 void cl_arq_controller::ptt_off()
 {
+	clear_buffer(capture_buffer);
+
 	std::string str="PTT OFF\r";
 	tcp_socket_control.message->length=str.length();
 
@@ -1434,8 +1438,6 @@ void cl_arq_controller::send(st_message* message, int message_location)
 		last_message_sent_code=message->data[0];
 	}
 	last_received_message_sequence=-1;
-
-	clear_buffer(capture_buffer);
 }
 
 void cl_arq_controller::send_batch()
@@ -1598,7 +1600,6 @@ void cl_arq_controller::send_batch()
 	}
 	message_batch_counter_tx=0;
 	ptt_off();
-	clear_buffer(capture_buffer);
 }
 
 void cl_arq_controller::receive()
@@ -1739,7 +1740,6 @@ void cl_arq_controller::receive()
 		}
 		telecom_system->data_container.data_ready=0;
 	}
-	clear_buffer(playback_buffer);
 }
 
 

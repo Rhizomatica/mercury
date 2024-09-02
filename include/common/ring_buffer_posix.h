@@ -131,8 +131,6 @@ bool circular_buf_full(cbuf_handle_t cbuf);
 /// Returns the maximum capacity of the buffer
 size_t circular_buf_capacity(cbuf_handle_t cbuf);
 
-size_t circular_buf_free_size(cbuf_handle_t cbuf);
-
 /// Check the number of free elements in the buffer
 /// Requires: cbuf is valid and created by circular_buf_init
 /// Returns the current number of free elements in the buffer
