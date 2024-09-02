@@ -23,6 +23,9 @@
 #include "physical_layer/telecom_system.h"
 #include "audioio/audioio.h"
 
+extern cbuf_handle_t capture_buffer;
+extern cbuf_handle_t playback_buffer;
+
 
 cl_telecom_system::cl_telecom_system()
 {
@@ -1097,19 +1100,32 @@ void cl_telecom_system::RX_TEST_process_main()
 
 	int location_of_last_frame = signal_period - symbol_period - 1; // TODO: do we need this "-1"?
 
-	data_container.nUnder_processing_events++;
-
-	shift_left(data_container.passband_delayed_data, signal_period, symbol_period);
-
-	rx_transfer(&data_container.passband_delayed_data[location_of_last_frame], symbol_period);
-
-	data_container.frames_to_read--;
-	if(data_container.frames_to_read<0)
+	if (size_buffer(capture_buffer) >= symbol_period * sizeof(double))
 	{
-		data_container.frames_to_read=0;
+
+		if(data_container.data_ready == 1)
+			data_container.nUnder_processing_events++;
+
+		shift_left(data_container.passband_delayed_data, signal_period, symbol_period);
+
+		rx_transfer(&data_container.passband_delayed_data[location_of_last_frame], symbol_period);
+
+		data_container.frames_to_read--;
+		if(data_container.frames_to_read < 0)
+			data_container.frames_to_read = 0;
+
+		data_container.data_ready = 1;
 	}
 
-    if(data_container.frames_to_read == 0)
+
+	if(data_container.data_ready == 0)
+	{
+		msleep(1);
+		return;
+	}
+
+
+	if (data_container.frames_to_read == 0)
 	{
 
 		memcpy(data_container.ready_to_process_passband_delayed_data, data_container.passband_delayed_data, signal_period * sizeof(double));
@@ -1162,6 +1178,7 @@ void cl_telecom_system::RX_TEST_process_main()
 		}
 
 	}
+	data_container.data_ready = 0;
 }
 #endif
 
