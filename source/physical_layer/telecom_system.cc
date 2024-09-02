@@ -1084,6 +1084,82 @@ void cl_telecom_system::RX_RAND_process_main()
 
 }
 
+#if 1
+void cl_telecom_system::RX_TEST_process_main()
+{
+    int out_data[N_MAX];
+    int nReal_data = data_container.nBits - ldpc.P;
+    int frame_size = (nReal_data - outer_code_reserved_bits) / 8;
+	// int buff_size = data_container.Nofdm * data_container.buffer_Nsymb * data_container.interpolation_rate * 2;
+
+	int signal_period = data_container.Nofdm * data_container.buffer_Nsymb * data_container.interpolation_rate; // in samples
+	int symbol_period = data_container. Nofdm * data_container.interpolation_rate;
+
+	int location_of_last_frame = signal_period - symbol_period - 1; // TODO: do we need this "-1"?
+
+	shift_left(data_container.passband_delayed_data, signal_period, symbol_period);
+
+	rx_transfer(&data_container.passband_delayed_data[location_of_last_frame], symbol_period);
+
+	data_container.frames_to_read--;
+	if(data_container.frames_to_read<0)
+	{
+		data_container.frames_to_read=0;
+	}
+
+	memcpy(data_container.ready_to_process_passband_delayed_data, data_container.passband_delayed_data, signal_period * sizeof(double));
+
+	st_receive_stats received_message_stats = receive_byte(data_container.ready_to_process_passband_delayed_data, out_data);
+
+	if(received_message_stats.message_decoded == YES)
+	{
+		std::cout << std::endl;
+		std::cout << "decoded in " << received_message_stats.iterations_done << " iterations. Data:";
+		std::cout << std::endl;
+		std::cout << std::hex;
+
+		for(int i = 0; i < frame_size; i++)
+		{
+			std::cout << "0x" << out_data[i] << ",";
+		}
+		std::cout << std::endl;
+		std::cout << std::dec;
+		std::cout << " sync_trial=" << receive_stats.sync_trials;
+		std::cout << " time_peak_subsymb_location=" << received_message_stats.delay % (data_container.Nofdm * data_container.interpolation_rate);
+		std::cout << " time_peak_symb_location=" << received_message_stats.delay / (data_container.Nofdm * data_container.interpolation_rate);
+		std::cout << " freq_offset=" << receive_stats.freq_offset;
+		std::cout << " SNR=" << receive_stats.SNR << " dB";
+		std::cout << " Signal Strength=" << receive_stats.signal_stregth_dbm << " dBm ";
+		std::cout << std::endl;
+
+		int end_of_current_message = received_message_stats.delay / symbol_period + data_container.Nsymb + data_container.preamble_nSymb;
+		int frames_left_in_buffer = data_container.buffer_Nsymb - end_of_current_message;
+		if(frames_left_in_buffer < 0)
+			frames_left_in_buffer = 0;
+
+		data_container.frames_to_read = data_container.Nsymb + data_container.preamble_nSymb - frames_left_in_buffer;
+
+		// memmove(data_container.passband_delayed_data, &data_container.passband_delayed_data[needle], frames_left_in_buffer * sizeof(double));
+		receive_stats.delay_of_last_decoded_message += (data_container.Nsymb + data_container.preamble_nSymb - data_container.frames_to_read) * symbol_period;
+	}
+	else
+	{
+		if(data_container.frames_to_read == 0 && receive_stats.delay_of_last_decoded_message != -1)
+		{
+			receive_stats.delay_of_last_decoded_message -= data_container.Nofdm * data_container.interpolation_rate;
+			if(receive_stats.delay_of_last_decoded_message < 0)
+			{
+				receive_stats.delay_of_last_decoded_message = -1;
+			}
+		}
+		//				std::cout<<" Signal Strength="<<receive_stats.signal_stregth_dbm<<" dBm ";
+			//				std::cout<<std::endl;
+	}
+
+}
+#endif
+
+#if 0
 void cl_telecom_system::RX_TEST_process_main()
 {
     int tmp[N_MAX];
@@ -1180,7 +1256,7 @@ void cl_telecom_system::RX_TEST_process_main()
 
 	clear_buffer(playback_buffer);
 }
-
+#endif
 void cl_telecom_system::RX_SHM_process_main(cbuf_handle_t buffer)
 {
     static uint32_t spinner_anim = 0; char spinner[] = ".oOo";
