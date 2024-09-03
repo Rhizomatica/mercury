@@ -1621,6 +1621,7 @@ void cl_arq_controller::send_batch()
 
 void cl_arq_controller::receive()
 {
+	printf("receive()\n");
 	int signal_period = telecom_system->data_container.Nofdm * telecom_system->data_container.buffer_Nsymb * telecom_system->data_container.interpolation_rate; // in samples
 	int symbol_period = telecom_system->data_container.Nofdm * telecom_system->data_container.interpolation_rate;
 
@@ -1643,7 +1644,7 @@ void cl_arq_controller::receive()
 		telecom_system->data_container.data_ready = 1;
 	}
 
-#if 0
+#if 1
 	if(telecom_system->data_container.data_ready == 0)
 	{
 		msleep(1);
