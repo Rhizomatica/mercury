@@ -57,8 +57,9 @@ cl_configuration_arq::cl_configuration_arq()
 	control_batch_size=2;
 	
 	ptt_on_delay_ms=0;
-	ptt_off_delay_ms=60;
-	switch_role_timeout_ms=1500;
+	ptt_off_delay_ms=20;
+//	switch_role_timeout_ms=1500;
+	switch_role_timeout_ms=2000;
 }
 
 cl_configuration_arq::~cl_configuration_arq()
