@@ -1373,6 +1373,8 @@ void cl_arq_controller::reset_all_timers()
 
 void cl_arq_controller::send(st_message* message, int message_location)
 {
+	printf("send()\n");
+
 	int header_length=0;
 	if(message->type==DATA_LONG)
 	{
@@ -1445,7 +1447,7 @@ void cl_arq_controller::send(st_message* message, int message_location)
 
 void cl_arq_controller::send_batch()
 {
-	ptt_on();
+	printf("send_batch()\n");
 
 	cl_timer ptt_on_delay, ptt_off_delay;
 	ptt_on_delay.start();
@@ -1549,6 +1551,8 @@ void cl_arq_controller::send_batch()
 	telecom_system->ofdm.FIR_tx1.apply(batch_frames_output_data,batch_frames_output_data_filtered1,(message_batch_counter_tx+2)*frame_output_size);
 	telecom_system->ofdm.FIR_tx2.apply(batch_frames_output_data_filtered1,batch_frames_output_data_filtered2,(message_batch_counter_tx+2)*frame_output_size);
 
+	ptt_on();
+
 	while(ptt_on_delay.get_elapsed_time_ms() < ptt_on_delay_ms)
 		msleep(1);
 
@@ -1567,8 +1571,6 @@ void cl_arq_controller::send_batch()
 	// wait buffer to be played
 	while (size_buffer(playback_buffer) > 0)
 		msleep(1);
-
-	clear_buffer(capture_buffer);
 
 	ptt_off_delay.start();
 	while(ptt_off_delay.get_elapsed_time_ms() < ptt_off_delay_ms)
@@ -1615,6 +1617,7 @@ void cl_arq_controller::send_batch()
 	}
 	message_batch_counter_tx=0;
 	ptt_off();
+	clear_buffer(capture_buffer);
 }
 
 void cl_arq_controller::receive()
