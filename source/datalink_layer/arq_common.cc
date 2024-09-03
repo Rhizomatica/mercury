@@ -1329,8 +1329,6 @@ void cl_arq_controller::ptt_on()
 }
 void cl_arq_controller::ptt_off()
 {
-	clear_buffer(capture_buffer);
-
 	std::string str="PTT OFF\r";
 	tcp_socket_control.message->length=str.length();
 
@@ -1436,6 +1434,10 @@ void cl_arq_controller::send(st_message* message, int message_location)
 		last_message_sent_code=message->data[0];
 	}
 	last_received_message_sequence=-1;
+
+	clear_buffer(capture_buffer);
+	// TODO: port to the new audioio subsystem
+
 }
 
 void cl_arq_controller::send_batch()
@@ -1556,6 +1558,7 @@ void cl_arq_controller::send_batch()
 		tx_transfer(&batch_frames_output_data_filtered2[(i+1)*frame_output_size], frame_output_size);
 	}
 
+	// TODO: remove busy wait
 	ptt_off_delay.start();
 	while(ptt_off_delay.get_elapsed_time_ms()<ptt_off_delay_ms);
 
@@ -1607,7 +1610,6 @@ void cl_arq_controller::receive()
 
 	int location_of_last_frame = signal_period - symbol_period - 1; // TODO: do we need this "-1"?
 
-	// TODO: port to the new audioio subsystem
 	if (size_buffer(capture_buffer) >= symbol_period * sizeof(double))
 	{
 
@@ -1625,7 +1627,7 @@ void cl_arq_controller::receive()
 		telecom_system->data_container.data_ready = 1;
 	}
 
-#if 0
+#if 1
 	if(telecom_system->data_container.data_ready == 0)
 	{
 		msleep(1);

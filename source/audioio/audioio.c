@@ -69,30 +69,42 @@ void *radio_playback_thread(void *device_ptr)
 	conf.buf.sample_rate = 48000;
 	conf.buf.channels = 2;
 	conf.buf.device_id = device_ptr;
+	uint32_t period_ms;
+	uint32_t period_bytes;
+
 
 #if defined(_WIN32)
     conf.buf.buffer_length_msec = 40;
+	period_ms = conf.buf.buffer_length_msec / 4;
     if (audio_subsystem == AUDIO_SUBSYSTEM_WASAPI)
         audio = (ffaudio_interface *) &ffwasapi;
     if (audio_subsystem == AUDIO_SUBSYSTEM_DSOUND)
         audio = (ffaudio_interface *) &ffdsound;
 #elif defined(__linux__)
     conf.buf.buffer_length_msec = 30;
+	period_ms = conf.buf.buffer_length_msec / 3;
     if (audio_subsystem == AUDIO_SUBSYSTEM_ALSA)
         audio = (ffaudio_interface *) &ffalsa;
     if (audio_subsystem == AUDIO_SUBSYSTEM_PULSE)
         audio = (ffaudio_interface *) &ffpulse;
 #elif defined(__FREEBSD__)
     conf.buf.buffer_length_msec = 40;
+	period_ms = conf.buf.buffer_length_msec / 4;
     if (audio_subsystem == AUDIO_SUBSYSTEM_OSS)
         audio = (ffaudio_interface *) &ffoss;
 #elif defined(__APPLE__)
     conf.buf.buffer_length_msec = 40;
+	period_ms = conf.buf.buffer_length_msec / 4;
     if (audio_subsystem == AUDIO_SUBSYSTEM_COREAUDIO)
         audio = (ffaudio_interface *) &ffcoreaudio;
 #endif
 
-    conf.flags = FFAUDIO_PLAYBACK;
+	period_bytes = conf.buf.sample_rate * (conf.buf.format & 0xff) / 8 * conf.buf.channels * period_ms / 1000;
+
+	printf("period_ms: %u\n", period_ms);
+	printf("period_size: %u\n", period_bytes);
+
+	conf.flags = FFAUDIO_PLAYBACK;
 	ffaudio_init_conf aconf = {};
 	aconf.app_name = "mercury_playback";
 	if ( audio->init(&aconf) != 0)
@@ -128,26 +140,27 @@ void *radio_playback_thread(void *device_ptr)
 	ffuint frame_size = cfg->channels * (cfg->format & 0xff) / 8;
 	ffuint msec_bytes = cfg->sample_rate * frame_size / 1000;
 
-	uint8_t *buffer =  malloc(AUDIO_PAYLOAD_BUFFER_SIZE);
+	uint8_t buffer[AUDIO_PAYLOAD_BUFFER_SIZE];
 	double *buffer_double =  (double *) buffer;
+	int32_t buffer_internal_stereo[AUDIO_PAYLOAD_BUFFER_SIZE]; // a big enough buffer
 
 	ffuint total_written = 0;
 
 	int ch_layout = STEREO;
 
-    if (radio_type == RADIO_SBITX)
-        ch_layout = RIGHT;
-    if (radio_type == RADIO_STOCKHF)
-        ch_layout = STEREO;
+	if (radio_type == RADIO_SBITX)
+		ch_layout = RIGHT;
+	if (radio_type == RADIO_STOCKHF)
+		ch_layout = STEREO;
 
     while (!shutdown_)
     {
+		// lets read block sizes?? period size writes?
         ffssize n = read_buffer_all(playback_buffer, buffer);
         total_written = 0;
 
 		int samples_read = n / sizeof(double);
 
-		int32_t buffer_internal_stereo[samples_read * cfg->channels];
 
 		// convert from double to int32
 		for (int i = 0; i < samples_read; i++)
@@ -211,8 +224,6 @@ void *radio_playback_thread(void *device_ptr)
     r = audio->clear(b);
     if (r != 0)
         printf("ffaudio.clear: %s", audio->error(b));
-
-    free(buffer);
 
 cleanup_play:
 
