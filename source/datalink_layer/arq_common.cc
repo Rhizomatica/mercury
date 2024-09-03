@@ -1424,9 +1424,16 @@ void cl_arq_controller::send(st_message* message, int message_location)
 
 	telecom_system->transmit_byte(telecom_system->data_container.data_byte,header_length+message->length,telecom_system->data_container.ready_to_transmit_passband_data_tx,message_location);
 
+	clear_buffer(playback_buffer);
+
 	tx_transfer(telecom_system->data_container.ready_to_transmit_passband_data_tx,
                 telecom_system->data_container.Nofdm * telecom_system->data_container.interpolation_rate *
                 (telecom_system->data_container.Nsymb + telecom_system->data_container.preamble_nSymb));
+
+	while (size_buffer(playback_buffer) > 0)
+		msleep(1);
+
+	clear_buffer(capture_buffer);
 
 	last_message_sent_type=message->type;
 	if(message->type==CONTROL || message->type==ACK_CONTROL)
@@ -1436,8 +1443,6 @@ void cl_arq_controller::send(st_message* message, int message_location)
 	last_received_message_sequence=-1;
 
 	clear_buffer(capture_buffer);
-	// TODO: port to the new audioio subsystem
-
 }
 
 void cl_arq_controller::send_batch()
@@ -1447,7 +1452,7 @@ void cl_arq_controller::send_batch()
 	cl_timer ptt_on_delay, ptt_off_delay;
 	ptt_on_delay.start();
 
-	int frame_output_size=telecom_system->data_container.Nofdm*telecom_system->data_container.interpolation_rate*(telecom_system->data_container.Nsymb+telecom_system->data_container.preamble_nSymb);
+	int frame_output_size = telecom_system->data_container.Nofdm*telecom_system->data_container.interpolation_rate*(telecom_system->data_container.Nsymb+telecom_system->data_container.preamble_nSymb);
 
 	double *batch_frames_output_data=NULL;
 	double *batch_frames_output_data_filtered1=NULL;
@@ -1546,11 +1551,14 @@ void cl_arq_controller::send_batch()
 	telecom_system->ofdm.FIR_tx1.apply(batch_frames_output_data,batch_frames_output_data_filtered1,(message_batch_counter_tx+2)*frame_output_size);
 	telecom_system->ofdm.FIR_tx2.apply(batch_frames_output_data_filtered1,batch_frames_output_data_filtered2,(message_batch_counter_tx+2)*frame_output_size);
 
-	while(ptt_on_delay.get_elapsed_time_ms()<ptt_on_delay_ms);
+	while(ptt_on_delay.get_elapsed_time_ms()<ptt_on_delay_ms)
+		msleep(1);
+
+	clear_buffer(playback_buffer);
 
 	if(messages_batch_tx[0].type==DATA_LONG || messages_batch_tx[0].type==DATA_SHORT)
 	{
-		tx_transfer(&batch_frames_output_data_filtered2[(0+1)*frame_output_size], frame_output_size);
+		tx_transfer(&batch_frames_output_data_filtered2[(0+1)*frame_output_size], frame_output_size); // TODO: aren't we transmitting this message twice?
 	}
 
 	for(int i=0;i<message_batch_counter_tx;i++)
@@ -1558,9 +1566,15 @@ void cl_arq_controller::send_batch()
 		tx_transfer(&batch_frames_output_data_filtered2[(i+1)*frame_output_size], frame_output_size);
 	}
 
-	// TODO: remove busy wait
+	// wait buffer to be played
+	while (size_buffer(playback_buffer) > 0)
+		msleep(1);
+
+	clear_buffer(capture_buffer);
+
 	ptt_off_delay.start();
-	while(ptt_off_delay.get_elapsed_time_ms()<ptt_off_delay_ms);
+	while(ptt_off_delay.get_elapsed_time_ms()<ptt_off_delay_ms)
+		msleep(1);
 
 	if (batch_frames_output_data!=NULL)
 	{
