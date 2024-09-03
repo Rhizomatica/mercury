@@ -101,8 +101,8 @@ void *radio_playback_thread(void *device_ptr)
 
 	period_bytes = conf.buf.sample_rate * (conf.buf.format & 0xff) / 8 * conf.buf.channels * period_ms / 1000;
 
-	printf("period_ms: %u\n", period_ms);
-	printf("period_size: %u\n", period_bytes);
+	//printf("period_ms: %u\n", period_ms);
+	//printf("period_size: %u\n", period_bytes);
 
 	conf.flags = FFAUDIO_PLAYBACK;
 	ffaudio_init_conf aconf = {};
@@ -155,8 +155,19 @@ void *radio_playback_thread(void *device_ptr)
 
     while (!shutdown_)
     {
-		// lets read block sizes?? period size writes?
-        ffssize n = read_buffer_all(playback_buffer, buffer);
+		ffssize n;
+		size_t buffer_size = size_buffer(playback_buffer);
+		if (buffer_size >= period_bytes || buffer_size == 0) // if buffer_size == 0, we just block here... should we transmitt zeros?
+		{
+			read_buffer(playback_buffer, buffer, period_bytes);
+			n = period_bytes;
+		}
+		else
+		{
+			read_buffer(playback_buffer, buffer, buffer_size);
+			n = buffer_size;
+		}
+
         total_written = 0;
 
 		int samples_read = n / sizeof(double);
