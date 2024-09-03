@@ -1641,7 +1641,7 @@ void cl_arq_controller::receive()
 		telecom_system->data_container.data_ready = 1;
 	}
 
-#if 1
+#if 0
 	if(telecom_system->data_container.data_ready == 0)
 	{
 		msleep(1);
