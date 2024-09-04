@@ -99,7 +99,7 @@ void *radio_playback_thread(void *device_ptr)
         audio = (ffaudio_interface *) &ffcoreaudio;
 #endif
 
-	period_bytes = conf.buf.sample_rate * (conf.buf.format & 0xff) / 8 * conf.buf.channels * period_ms / 1000;
+	period_bytes = conf.buf.sample_rate * sizeof(double) * period_ms / 1000;
 
 	//printf("period_ms: %u\n", period_ms);
 	//printf("period_size: %u\n", period_bytes);
@@ -161,21 +161,23 @@ void *radio_playback_thread(void *device_ptr)
     {
 		ffssize n;
 		size_t buffer_size = size_buffer(playback_buffer);
-		if (buffer_size >= period_bytes || buffer_size == 0) // if buffer_size == 0, we just block here... should we transmitt zeros?
+		if (buffer_size >= period_bytes)
 		{
 			read_buffer(playback_buffer, buffer, period_bytes);
 			n = period_bytes;
 		}
 		else
 		{
-			read_buffer(playback_buffer, buffer, buffer_size);
-			n = buffer_size;
+			// we just play zeros if there is nothing to play
+			memset(buffer, 0, period_bytes);
+			if (buffer_size > frame_size)
+				read_buffer(playback_buffer, buffer, buffer_size);
+			n = period_bytes;
 		}
 
         total_written = 0;
 
 		int samples_read = n / sizeof(double);
-
 
 		// convert from double to int32
 		for (int i = 0; i < samples_read; i++)
