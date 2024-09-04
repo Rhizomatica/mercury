@@ -577,9 +577,9 @@ int audioio_deinit(pthread_t *radio_capture, pthread_t *radio_playback, pthread_
 
 #if defined(_WIN32)
 	free(capture_buffer->buffer);
-	circular_buf_free(capture_buffer)
+	circular_buf_free(capture_buffer);
 	free(playback_buffer->buffer);
-	circular_buf_free(playback_buffer)
+	circular_buf_free(playback_buffer);
 #else
     circular_buf_destroy_shm(capture_buffer, AUDIO_PAYLOAD_BUFFER_SIZE, (char *) AUDIO_CAPT_PAYLOAD_NAME);
     circular_buf_free_shm(capture_buffer);
