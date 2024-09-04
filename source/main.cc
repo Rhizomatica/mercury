@@ -278,8 +278,6 @@ int main(int argc, char *argv[])
 
     // initializing audio system
     pthread_t radio_capture, radio_playback, radio_capture_prep;
-    audioio_init_internal(input_dev, output_dev, audio_system, &radio_capture,
-						  &radio_playback, &radio_capture_prep, &telecom_system);
 
     if (telecom_system.operation_mode == ARQ_MODE)
     {
@@ -288,6 +286,9 @@ int main(int argc, char *argv[])
         ARQ.telecom_system = &telecom_system;
         ARQ.init();
         ARQ.print_stats();
+
+		audioio_init_internal(input_dev, output_dev, audio_system, &radio_capture,
+							  &radio_playback, &radio_capture_prep, &telecom_system);
 
         while (!shutdown_)
         {
@@ -304,7 +305,8 @@ int main(int argc, char *argv[])
         telecom_system.constellation_plot.open("PLOT");
         telecom_system.constellation_plot.reset("PLOT");
 
-		clear_buffer(capture_buffer);
+		audioio_init_internal(input_dev, output_dev, audio_system, &radio_capture,
+							  &radio_playback, &radio_capture_prep, &telecom_system);
 
         while (!shutdown_)
         {
@@ -318,6 +320,9 @@ int main(int argc, char *argv[])
         printf("Mode selected: TX_RAND\n");
         telecom_system.load_configuration(mod_config);
         printf("CONFIG_%d (%f bps) Shannon_limit: %f\n", mod_config, telecom_system.rbc, telecom_system.Shannon_limit);
+
+		audioio_init_internal(input_dev, output_dev, audio_system, &radio_capture,
+							  &radio_playback, &radio_capture_prep, &telecom_system);
 
         while (!shutdown_)
         {
@@ -359,7 +364,8 @@ int main(int argc, char *argv[])
         telecom_system.load_configuration(mod_config);
         printf("CONFIG_%d (%f bps) Shannon_limit: %f\n", mod_config, telecom_system.rbc, telecom_system.Shannon_limit);
 
-		clear_buffer(capture_buffer);
+		audioio_init_internal(input_dev, output_dev, audio_system, &radio_capture,
+							  &radio_playback, &radio_capture_prep, &telecom_system);
 
         while (!shutdown_)
         {
@@ -373,6 +379,9 @@ int main(int argc, char *argv[])
         printf("Mode selected: TX_TEST\n");
         telecom_system.load_configuration(mod_config);
         printf("CONFIG_%d (%f bps) Shannon_limit: %.2f db\n", mod_config, telecom_system.rbc, telecom_system.Shannon_limit);
+
+		audioio_init_internal(input_dev, output_dev, audio_system, &radio_capture,
+							  &radio_playback, &radio_capture_prep, &telecom_system);
 
         while (!shutdown_)
         {
@@ -393,14 +402,14 @@ int main(int argc, char *argv[])
 
         buffer = circular_buf_init_shm(SHM_PAYLOAD_BUFFER_SIZE, (char *) SHM_PAYLOAD_NAME);
 
-		clear_buffer(capture_buffer);
+		audioio_init_internal(input_dev, output_dev, audio_system, &radio_capture,
+							  &radio_playback, &radio_capture_prep, &telecom_system);
 
         while (!shutdown_)
         {
             telecom_system.RX_SHM_process_main(buffer);
         }
 
-        // for the future...
         circular_buf_destroy_shm(buffer, SHM_PAYLOAD_BUFFER_SIZE, (char *) SHM_PAYLOAD_NAME);
         circular_buf_free_shm(buffer);
     }
@@ -414,6 +423,9 @@ int main(int argc, char *argv[])
         cbuf_handle_t buffer;
 
         buffer = circular_buf_init_shm(SHM_PAYLOAD_BUFFER_SIZE, (char *) SHM_PAYLOAD_NAME);
+
+		audioio_init_internal(input_dev, output_dev, audio_system, &radio_capture,
+							  &radio_playback, &radio_capture_prep, &telecom_system);
 
         while (!shutdown_)
         {
