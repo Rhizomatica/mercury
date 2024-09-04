@@ -34,6 +34,9 @@ cbuf_handle_t playback_buffer;
 
 int audio_subsystem;
 
+// tap to file
+#define ENABLE_FLOAT64_TAP 0
+
 struct conf {
 	const char *cmd;
 	ffaudio_conf buf;
@@ -103,7 +106,6 @@ void *radio_playback_thread(void *device_ptr)
 
 	//printf("period_ms: %u\n", period_ms);
 	//printf("period_size: %u\n", period_bytes);
-
 	conf.flags = FFAUDIO_PLAYBACK;
 	ffaudio_init_conf aconf = {};
 	aconf.app_name = "mercury_playback";
@@ -121,6 +123,10 @@ void *radio_playback_thread(void *device_ptr)
 
 	ffuint total_written = 0;
 	int ch_layout = STEREO;
+
+#if ENABLE_FLOAT64_TAP == 1
+	FILE *tap = fopen("tap-playback.f64", "w");
+#endif
 
 	if ( audio->init(&aconf) != 0)
     {
@@ -174,6 +180,10 @@ void *radio_playback_thread(void *device_ptr)
 				read_buffer(playback_buffer, buffer, buffer_size);
 			n = period_bytes;
 		}
+
+#if ENABLE_FLOAT64_TAP == 1
+		fwrite(buffer, 1, n, tap);
+#endif
 
         total_written = 0;
 
@@ -229,6 +239,9 @@ void *radio_playback_thread(void *device_ptr)
         // printf("n = %lld total written = %u\n", n, total_written);
     }
 
+#if ENABLE_FLOAT64_TAP == 1
+	fclose(tap);
+#endif
 
     r = audio->drain(b);
     if (r < 0)
@@ -308,6 +321,11 @@ void *radio_capture_thread(void *device_ptr)
 
 	int ch_layout = STEREO;
 
+	double *buffer_internal = NULL;
+
+#if ENABLE_FLOAT64_TAP == 1
+	FILE *tap = fopen("tap-capture.f64", "w");
+#endif
 
 	if ( audio->init(&aconf) != 0)
     {
@@ -338,6 +356,8 @@ void *radio_capture_thread(void *device_ptr)
     frame_size = cfg->channels * (cfg->format & 0xff) / 8;
     msec_bytes = cfg->sample_rate * frame_size / 1000;
 
+	buffer_internal = (double *) malloc(AUDIO_PAYLOAD_BUFFER_SIZE * sizeof(double) * 2);
+
 	if (radio_type == RADIO_SBITX)
 		ch_layout = LEFT;
 	if (radio_type == RADIO_STOCKHF)
@@ -361,8 +381,6 @@ void *radio_capture_thread(void *device_ptr)
 		int frames_read = r / frame_size;
 		int frames_to_write = frames_read;
 
-		double buffer_internal[frames_to_write];
-
 		for (int i = 0; i < frames_to_write; i++)
 		{
 			if (ch_layout == LEFT)
@@ -382,10 +400,14 @@ void *radio_capture_thread(void *device_ptr)
 
 		}
 
+#if ENABLE_FLOAT64_TAP == 1
+		fwrite(buffer_internal, 1, frames_to_write * sizeof(double), tap);
+#endif
+
 		if (circular_buf_free_size(capture_buffer) >= frames_to_write * sizeof(double))
 			write_buffer(capture_buffer, (uint8_t *)buffer_internal, frames_to_write * sizeof(double));
-		// else
-		// BUFFER FULL!!
+		else
+			printf("Buffer full in capture buffer!\n");
 	}
 
 	r = audio->stop(b);
@@ -395,6 +417,13 @@ void *radio_capture_thread(void *device_ptr)
 	r = audio->clear(b);
 	if (r != 0)
 		printf("ffaudio.clear: %s", audio->error(b));
+
+	free(buffer_internal);
+
+#if ENABLE_FLOAT64_TAP == 1
+	fclose(tap);
+#endif
+
 
 cleanup_cap:
 
