@@ -9,10 +9,6 @@
 
 #pragma once
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
 #include <ffbase/string.h>
 
 #include <stdio.h>
@@ -20,6 +16,7 @@ extern "C" {
 #include <sys/stat.h>
 #include <fcntl.h>
 
+#include "physical_layer/telecom_system.h"
 #include "common/ring_buffer_posix.h"
 
 #define AUDIO_SUBSYSTEM_ALSA 0
@@ -42,17 +39,13 @@ extern "C" {
 extern cbuf_handle_t capture_buffer;
 extern cbuf_handle_t playback_buffer;
 
-int audioio_init(char *capture_dev, char *playback_dev, int audio_subsys, pthread_t *radio_capture, pthread_t *radio_playback);
+int audioio_init_internal(char *capture_dev, char *playback_dev, int audio_subsys, pthread_t *radio_capture,
+						  pthread_t *radio_playback, pthread_t *radio_capture_prep, cl_telecom_system *telecom_system);
 
-int audioio_deinit(pthread_t *radio_capture, pthread_t *radio_playback);
+int audioio_deinit(pthread_t *radio_capture, pthread_t *radio_playback, pthread_t *radio_capture_prep);
 
 int tx_transfer(double *buffer, size_t len);
 int rx_transfer(double *buffer, size_t len);
 
 
 void list_soundcards(int audio_system);
-
-
-#ifdef __cplusplus
-}
-#endif

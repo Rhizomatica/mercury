@@ -68,7 +68,7 @@ void *radio_playback_thread(void *device_ptr)
 	conf.buf.format = FFAUDIO_F_INT32;
 	conf.buf.sample_rate = 48000;
 	conf.buf.channels = 2;
-	conf.buf.device_id = device_ptr;
+	conf.buf.device_id = (const char *) device_ptr;
 	uint32_t period_ms;
 	uint32_t period_bytes;
 
@@ -107,6 +107,21 @@ void *radio_playback_thread(void *device_ptr)
 	conf.flags = FFAUDIO_PLAYBACK;
 	ffaudio_init_conf aconf = {};
 	aconf.app_name = "mercury_playback";
+
+	int r;
+	ffaudio_buf *b;
+	ffaudio_conf *cfg;
+
+	ffuint frame_size;
+	ffuint msec_bytes;
+
+	uint8_t buffer[AUDIO_PAYLOAD_BUFFER_SIZE];
+	double *buffer_double =  (double *) buffer;
+	int32_t buffer_internal_stereo[AUDIO_PAYLOAD_BUFFER_SIZE]; // a big enough buffer
+
+	ffuint total_written = 0;
+	int ch_layout = STEREO;
+
 	if ( audio->init(&aconf) != 0)
     {
         printf("Error in audio->init()\n");
@@ -114,9 +129,6 @@ void *radio_playback_thread(void *device_ptr)
     }
 
     // playback code...
-	int r;
-	ffaudio_buf *b;
-
 	b = audio->alloc();
 	if (b == NULL)
 	{
@@ -124,7 +136,7 @@ void *radio_playback_thread(void *device_ptr)
 		goto finish_play;
 	}
 
-	ffaudio_conf *cfg = &conf.buf;
+	cfg = &conf.buf;
 	r = audio->open(b, cfg, conf.flags);
 	if (r == FFAUDIO_EFORMAT)
 		r = audio->open(b, cfg, conf.flags);
@@ -137,16 +149,8 @@ void *radio_playback_thread(void *device_ptr)
 	printf("(%s) %d bits per sample / %d / %d / %dms buffer\n", conf.buf.device_id ? conf.buf.device_id : "default", cfg->format, cfg->sample_rate, cfg->channels, cfg->buffer_length_msec);
 
 
-	ffuint frame_size = cfg->channels * (cfg->format & 0xff) / 8;
-	ffuint msec_bytes = cfg->sample_rate * frame_size / 1000;
-
-	uint8_t buffer[AUDIO_PAYLOAD_BUFFER_SIZE];
-	double *buffer_double =  (double *) buffer;
-	int32_t buffer_internal_stereo[AUDIO_PAYLOAD_BUFFER_SIZE]; // a big enough buffer
-
-	ffuint total_written = 0;
-
-	int ch_layout = STEREO;
+	frame_size = cfg->channels * (cfg->format & 0xff) / 8;
+	msec_bytes = cfg->sample_rate * frame_size / 1000;
 
 	if (radio_type == RADIO_SBITX)
 		ch_layout = RIGHT;
@@ -251,6 +255,8 @@ finish_play:
     return NULL;
 }
 
+
+
 void *radio_capture_thread(void *device_ptr)
 {
     ffaudio_interface *audio;
@@ -259,7 +265,7 @@ void *radio_capture_thread(void *device_ptr)
 	conf.buf.format = FFAUDIO_F_INT32;
 	conf.buf.sample_rate = 48000;
 	conf.buf.channels = 2;
-	conf.buf.device_id = device_ptr;
+	conf.buf.device_id = (const char *) device_ptr;
 
 #if defined(_WIN32)
     conf.buf.buffer_length_msec = 40;
@@ -286,6 +292,19 @@ void *radio_capture_thread(void *device_ptr)
     conf.flags = FFAUDIO_CAPTURE;
 	ffaudio_init_conf aconf = {};
 	aconf.app_name = "mercury_capture";
+
+	int r;
+	ffaudio_buf *b;
+    ffaudio_conf *cfg;
+
+    ffuint frame_size;
+    ffuint msec_bytes;
+
+	int32_t *buffer = NULL;
+
+	int ch_layout = STEREO;
+
+
 	if ( audio->init(&aconf) != 0)
     {
         printf("Error in audio->init()\n");
@@ -293,9 +312,6 @@ void *radio_capture_thread(void *device_ptr)
     }
 
     // capture code
-	int r;
-	ffaudio_buf *b;
-
 	b = audio->alloc();
 	if (b == NULL)
     {
@@ -303,7 +319,7 @@ void *radio_capture_thread(void *device_ptr)
         goto finish_cap;
     }
 
-    ffaudio_conf *cfg = &conf.buf;
+    cfg = &conf.buf;
 	r = audio->open(b, cfg, conf.flags);
 	if (r == FFAUDIO_EFORMAT)
 		r = audio->open(b, cfg, conf.flags);
@@ -315,12 +331,8 @@ void *radio_capture_thread(void *device_ptr)
 
 	printf("(%s) %d bits per sample / %d / %d / %dms buffer\n", conf.buf.device_id ? conf.buf.device_id : "default", cfg->format, cfg->sample_rate, cfg->channels, cfg->buffer_length_msec);
 
-    ffuint frame_size = cfg->channels * (cfg->format & 0xff) / 8;
-    ffuint msec_bytes = cfg->sample_rate * frame_size / 1000;
-
-	int32_t *buffer = NULL;
-
-	int ch_layout = STEREO;
+    frame_size = cfg->channels * (cfg->format & 0xff) / 8;
+    msec_bytes = cfg->sample_rate * frame_size / 1000;
 
 	if (radio_type == RADIO_SBITX)
 		ch_layout = LEFT;
@@ -393,6 +405,48 @@ finish_cap:
 
     return NULL;
 }
+
+void *radio_capture_prep_thread(void *telecom_ptr_void)
+{
+	cl_telecom_system *telecom_ptr = (cl_telecom_system *) telecom_ptr_void;
+	cl_data_container *data_container_ptr = &telecom_ptr->data_container;
+
+	int signal_period = data_container_ptr->Nofdm * data_container_ptr->buffer_Nsymb * data_container_ptr->interpolation_rate; // in samples
+	int symbol_period = data_container_ptr->Nofdm * data_container_ptr->interpolation_rate;
+
+	int location_of_last_frame = signal_period - symbol_period - 1; // TODO: do we need this "-1"?
+
+	double buffer_temp[symbol_period];
+
+	while (!shutdown_)
+    {
+		rx_transfer(buffer_temp, symbol_period);
+
+		// lock
+
+		if(data_container_ptr->data_ready == 1)
+			data_container_ptr->nUnder_processing_events++;
+
+		// TODO: race condition here with "passband_delayed_data" !!! WTF!!!
+		shift_left(data_container_ptr->passband_delayed_data, signal_period, symbol_period);
+
+		memcpy(&data_container_ptr->passband_delayed_data[location_of_last_frame], buffer_temp, symbol_period * sizeof(double));
+
+		data_container_ptr->frames_to_read--;
+		if(data_container_ptr->frames_to_read < 0)
+			data_container_ptr->frames_to_read = 0;
+
+		data_container_ptr->data_ready = 1;
+
+		// unlock
+	}
+
+
+	shutdown_ = true;
+
+    return NULL;
+}
+
 
 void list_soundcards(int audio_system)
 {
@@ -487,23 +541,27 @@ int rx_transfer(double *buffer, size_t len)
 }
 
 
-int audioio_init(char *capture_dev, char *playback_dev, int audio_subsys, pthread_t *radio_capture, pthread_t *radio_playback)
+int audioio_init_internal(char *capture_dev, char *playback_dev, int audio_subsys, pthread_t *radio_capture,
+						  pthread_t *radio_playback, pthread_t *radio_capture_prep, cl_telecom_system *telecom_system)
 {
     audio_subsystem = audio_subsys;
 
     capture_buffer = circular_buf_init_shm(AUDIO_PAYLOAD_BUFFER_SIZE, (char *) AUDIO_CAPT_PAYLOAD_NAME);
     playback_buffer = circular_buf_init_shm(AUDIO_PAYLOAD_BUFFER_SIZE, (char *) AUDIO_PLAY_PAYLOAD_NAME);
 
-    pthread_create(radio_capture, NULL, radio_capture_thread, (void*)capture_dev);
-    pthread_create(radio_playback, NULL, radio_playback_thread, (void*)playback_dev);
+    pthread_create(radio_capture, NULL, radio_capture_thread, (void *) capture_dev);
+    pthread_create(radio_playback, NULL, radio_playback_thread, (void *) playback_dev);
+	pthread_create(radio_capture_prep, NULL, radio_capture_prep_thread, (void *) telecom_system);
 
 	return 0;
 }
 
-int audioio_deinit(pthread_t *radio_capture, pthread_t *radio_playback)
+int audioio_deinit(pthread_t *radio_capture, pthread_t *radio_playback, pthread_t *radio_capture_prep)
 {
+    pthread_join(*radio_capture_prep, NULL);
     pthread_join(*radio_capture, NULL);
     pthread_join(*radio_playback, NULL);
+
 
     circular_buf_destroy_shm(capture_buffer, AUDIO_PAYLOAD_BUFFER_SIZE, (char *) AUDIO_CAPT_PAYLOAD_NAME);
     circular_buf_free_shm(capture_buffer);

@@ -948,7 +948,7 @@ void cl_telecom_system::TX_SHM_process_main(cbuf_handle_t buffer)
             data_container.data_byte[i] = data[i];
         }
     }
-    // if there is no data in the buffer, just transmit zeroes
+    // if there is no data in the buffer, just do nothing
     else
     {
 		msleep(10);
@@ -980,32 +980,13 @@ void cl_telecom_system::RX_RAND_process_main()
 	int signal_period = data_container.Nofdm * data_container.buffer_Nsymb * data_container.interpolation_rate; // in samples
 	int symbol_period = data_container. Nofdm * data_container.interpolation_rate;
 
-	int location_of_last_frame = signal_period - symbol_period - 1; // TODO: do we need this "-1"?
-
-	if (size_buffer(capture_buffer) >= symbol_period * sizeof(double))
-	{
-
-		if(data_container.data_ready == 1)
-			data_container.nUnder_processing_events++;
-
-		shift_left(data_container.passband_delayed_data, signal_period, symbol_period);
-
-		rx_transfer(&data_container.passband_delayed_data[location_of_last_frame], symbol_period);
-
-		data_container.frames_to_read--;
-		if(data_container.frames_to_read < 0)
-			data_container.frames_to_read = 0;
-
-		data_container.data_ready = 1;
-	}
-
+	// lock
 
 	if(data_container.data_ready == 0)
 	{
 		msleep(1);
 		return;
 	}
-
 
 	if (data_container.frames_to_read == 0)
 	{
@@ -1073,6 +1054,8 @@ void cl_telecom_system::RX_RAND_process_main()
 		}
 	}
 	data_container.data_ready = 0;
+
+	//unlock
 }
 
 void cl_telecom_system::RX_TEST_process_main()
@@ -1084,26 +1067,6 @@ void cl_telecom_system::RX_TEST_process_main()
 
 	int signal_period = data_container.Nofdm * data_container.buffer_Nsymb * data_container.interpolation_rate; // in samples
 	int symbol_period = data_container. Nofdm * data_container.interpolation_rate;
-
-	int location_of_last_frame = signal_period - symbol_period - 1; // TODO: do we need this "-1"?
-
-	if (size_buffer(capture_buffer) >= symbol_period * sizeof(double))
-	{
-
-		if(data_container.data_ready == 1)
-			data_container.nUnder_processing_events++;
-
-		shift_left(data_container.passband_delayed_data, signal_period, symbol_period);
-
-		rx_transfer(&data_container.passband_delayed_data[location_of_last_frame], symbol_period);
-
-		data_container.frames_to_read--;
-		if(data_container.frames_to_read < 0)
-			data_container.frames_to_read = 0;
-
-		data_container.data_ready = 1;
-	}
-
 
 	if(data_container.data_ready == 0)
 	{
@@ -1179,32 +1142,12 @@ void cl_telecom_system::RX_SHM_process_main(cbuf_handle_t buffer)
 	int signal_period = data_container.Nofdm * data_container.buffer_Nsymb * data_container.interpolation_rate; // in samples
 	int symbol_period = data_container.Nofdm * data_container.interpolation_rate;
 
-	int location_of_last_frame = signal_period - symbol_period - 1; // TODO: do we need this "-1"?
-
-	if (size_buffer(capture_buffer) >= symbol_period * sizeof(double))
-	{
-
-		if(data_container.data_ready == 1)
-			data_container.nUnder_processing_events++;
-
-		shift_left(data_container.passband_delayed_data, signal_period, symbol_period);
-
-		rx_transfer(&data_container.passband_delayed_data[location_of_last_frame], symbol_period);
-
-		data_container.frames_to_read--;
-		if(data_container.frames_to_read < 0)
-			data_container.frames_to_read = 0;
-
-		data_container.data_ready = 1;
-	}
-
-
+	// lock
 	if(data_container.data_ready == 0)
 	{
 		msleep(1);
 		return;
 	}
-
 
 	if (data_container.frames_to_read == 0)
 	{
@@ -1262,6 +1205,8 @@ void cl_telecom_system::RX_SHM_process_main(cbuf_handle_t buffer)
 
 	}
 	data_container.data_ready = 0;
+
+	// unlock
 }
 
 

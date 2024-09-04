@@ -277,8 +277,9 @@ int main(int argc, char *argv[])
     }
 
     // initializing audio system
-    pthread_t radio_capture, radio_playback;
-    audioio_init(input_dev, output_dev, audio_system, &radio_capture, &radio_playback);
+    pthread_t radio_capture, radio_playback, radio_capture_prep;
+    audioio_init_internal(input_dev, output_dev, audio_system, &radio_capture,
+						  &radio_playback, &radio_capture_prep, &telecom_system);
 
     if (telecom_system.operation_mode == ARQ_MODE)
     {
@@ -429,7 +430,7 @@ int main(int argc, char *argv[])
     if (output_dev)
         free(output_dev);
 
-    audioio_deinit(&radio_capture, &radio_playback);
+    audioio_deinit(&radio_capture, &radio_playback, &radio_capture_prep);
 
 
     return EXIT_SUCCESS;
