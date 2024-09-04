@@ -20,14 +20,11 @@
 #if defined(_WIN32)
 
 #include <io.h>
-
-#if 1
 #define open _open
 #define close _close
 #define unlink _unlink
 #define lseek _lseek
 #define write _write
-#endif
 
 #define S_IXUSR  0000100
 #define TMP_ENV_NAME "TEMP"
@@ -129,12 +126,17 @@ int shm_create_and_get_fd(char *name, size_t size)
         abort();
     }
 
-	lseek(fd, 0, SEEK_SET);
-	if (write(fd, 0, size) == -1)
+	if (_chsize_s(fd, size) != 0)
 	{
 		fprintf(stderr, "ERROR: This should never happen! SHM creation error in write\n");
 		abort();
 	}
+//	lseek(fd, 0, SEEK_SET);
+//	if (write(fd, 0, size) == -1)
+//	{
+//		fprintf(stderr, "ERROR: This should never happen! SHM creation error in write\n");
+//		abort();
+//	}
 
     // fprintf(stderr, "shm_create_and_get_fd() called with %s and %ld\n", name, size);
 #else
