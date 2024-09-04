@@ -27,11 +27,6 @@
 #define AUDIO_SUBSYSTEM_OSS 5
 #define AUDIO_SUBSYSTEM_AAUDIO 6
 
-#define AUDIO_CAPT_PAYLOAD_NAME "/audio-capt"
-#define AUDIO_PLAY_PAYLOAD_NAME "/audio-play"
-
-#define AUDIO_PAYLOAD_BUFFER_SIZE 1536000
-
 #define LEFT 0
 #define RIGHT 1
 #define STEREO 2

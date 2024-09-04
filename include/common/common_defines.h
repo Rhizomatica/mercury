@@ -132,6 +132,10 @@ CONFIG_16 (5664.7 bps).
 #define SHM_PAYLOAD_BUFFER_SIZE 131072
 #define SHM_PAYLOAD_NAME "/mercury-comm"
 
+#define AUDIO_PAYLOAD_BUFFER_SIZE 1536000
+#define AUDIO_CAPT_PAYLOAD_NAME "/audio-capt"
+#define AUDIO_PLAY_PAYLOAD_NAME "/audio-play"
+
 
 #define YES 1
 #define NO 0
