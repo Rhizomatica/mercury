@@ -77,7 +77,7 @@ void *radio_playback_thread(void *device_ptr)
 
 
 #if defined(_WIN32)
-    conf.buf.buffer_length_msec = 100;
+    conf.buf.buffer_length_msec = 40;
 	period_ms = conf.buf.buffer_length_msec / 4;
     if (audio_subsystem == AUDIO_SUBSYSTEM_WASAPI)
         audio = (ffaudio_interface *) &ffwasapi;
@@ -285,7 +285,7 @@ void *radio_capture_thread(void *device_ptr)
 	conf.buf.device_id = (const char *) device_ptr;
 
 #if defined(_WIN32)
-    conf.buf.buffer_length_msec = 100;
+    conf.buf.buffer_length_msec = 40;
     if (audio_subsystem == AUDIO_SUBSYSTEM_WASAPI)
         audio = (ffaudio_interface *) &ffwasapi;
     if (audio_subsystem == AUDIO_SUBSYSTEM_DSOUND)
