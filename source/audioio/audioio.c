@@ -549,8 +549,15 @@ int audioio_init_internal(char *capture_dev, char *playback_dev, int audio_subsy
 {
     audio_subsystem = audio_subsys;
 
+#if defined(_WIN32)
+	uint8_t *buffer_cap = (uint8_t *)malloc(AUDIO_PAYLOAD_BUFFER_SIZE);
+	uint8_t *buffer_play = (uint8_t *)malloc(AUDIO_PAYLOAD_BUFFER_SIZE);
+    capture_buffer = circular_buf_init(buffer_cap, AUDIO_PAYLOAD_BUFFER_SIZE);
+    playback_buffer = circular_buf_init(buffer_play, AUDIO_PAYLOAD_BUFFER_SIZE);
+#else
     capture_buffer = circular_buf_init_shm(AUDIO_PAYLOAD_BUFFER_SIZE, (char *) AUDIO_CAPT_PAYLOAD_NAME);
     playback_buffer = circular_buf_init_shm(AUDIO_PAYLOAD_BUFFER_SIZE, (char *) AUDIO_PLAY_PAYLOAD_NAME);
+#endif
 
 	clear_buffer(capture_buffer);
 	clear_buffer(playback_buffer);
@@ -568,12 +575,17 @@ int audioio_deinit(pthread_t *radio_capture, pthread_t *radio_playback, pthread_
     pthread_join(*radio_capture, NULL);
     pthread_join(*radio_playback, NULL);
 
-
+#if defined(_WIN32)
+	free(capture_buffer->buffer);
+	circular_buf_free(capture_buffer)
+	free(playback_buffer->buffer);
+	circular_buf_free(playback_buffer)
+#else
     circular_buf_destroy_shm(capture_buffer, AUDIO_PAYLOAD_BUFFER_SIZE, (char *) AUDIO_CAPT_PAYLOAD_NAME);
     circular_buf_free_shm(capture_buffer);
 
     circular_buf_destroy_shm(playback_buffer, AUDIO_PAYLOAD_BUFFER_SIZE, (char *) AUDIO_PLAY_PAYLOAD_NAME);
     circular_buf_free_shm(playback_buffer);
-
+#endif
     return 0;
 }
