@@ -55,15 +55,15 @@ endif
 
 .PHONY: clean install examples audioio
 
-all: mercury examples audioio
+all: mercury examples
 
 examples:
 	$(MAKE) -C examples
 
-audioio: source/audioio/audioio.c
+source/audioio/audioio.a: source/audioio/audioio.c
 	$(MAKE) -C source/audioio
 
-mercury: $(OBJECT_FILES) audioio
+mercury: $(OBJECT_FILES) source/audioio/audioio.a
 	$(CPP) -o $@ $(OBJECT_FILES) source/audioio/audioio.a $(LDFLAGS)
 
 %.o : %.cc %.h
