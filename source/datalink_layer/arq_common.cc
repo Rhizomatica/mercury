@@ -1444,7 +1444,6 @@ void cl_arq_controller::send(st_message* message, int message_location)
 
 void cl_arq_controller::send_batch()
 {
-	printf("send_batch()\n");
 	ptt_on();
 
 	cl_timer ptt_on_delay, ptt_off_delay;
