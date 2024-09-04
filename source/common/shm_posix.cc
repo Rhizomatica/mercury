@@ -126,15 +126,12 @@ int shm_create_and_get_fd(char *name, size_t size)
         abort();
     }
 
-    for (int i = 0; i < size; i++)
-    {
-        if (write(fd, "", 1) == -1)
-        {
-            fprintf(stderr, "ERROR: This should never happen! SHM creation error in write\n");
-            abort();
-        }
-    }
-
+	lseek(fd, 0, SEEK_SET);
+	if (write(fd, 0, size) == -1)
+	{
+		fprintf(stderr, "ERROR: This should never happen! SHM creation error in write\n");
+		abort();
+	}
 
     // fprintf(stderr, "shm_create_and_get_fd() called with %s and %ld\n", name, size);
 #else
