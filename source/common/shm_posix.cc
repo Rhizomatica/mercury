@@ -130,7 +130,7 @@ int shm_create_and_get_fd(char *name, size_t size)
     {
         if (write(fd, "", 1) == -1)
         {
-            fprintf(stderr, "ERROR: This should never happen! SHM creation error in lseek\n");
+            fprintf(stderr, "ERROR: This should never happen! SHM creation error in write\n");
             abort();
         }
     }
@@ -165,8 +165,6 @@ int shm_create_and_get_fd(char *name, size_t size)
 void *shm_map(int fd, size_t size)
 {
 #if defined(_WIN32)
-    printf("fd = %d\n", fd);
-
     HANDLE fmap = CreateFileMapping((HANDLE)_get_osfhandle(fd), NULL,
                                     PAGE_READWRITE, 0, 0, NULL);
     if (fmap == NULL)
