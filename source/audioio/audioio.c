@@ -115,9 +115,9 @@ void *radio_playback_thread(void *device_ptr)
 	ffuint frame_size;
 	ffuint msec_bytes;
 
-	uint8_t *buffer = (uint8_t *) malloc(AUDIO_PAYLOAD_BUFFER_SIZE * sizeof(double));
+	uint8_t *buffer = (uint8_t *) malloc(AUDIO_PAYLOAD_BUFFER_SIZE * sizeof(double) * 2);
 	double *buffer_double =  (double *) buffer;
-	int32_t *buffer_internal_stereo = (int32_t *) malloc(AUDIO_PAYLOAD_BUFFER_SIZE * sizeof(int32_t)); // a big enough buffer
+	int32_t *buffer_internal_stereo = (int32_t *) malloc(AUDIO_PAYLOAD_BUFFER_SIZE * sizeof(int32_t) * 2); // a big enough buffer
 
 	ffuint total_written = 0;
 	int ch_layout = STEREO;
@@ -413,7 +413,7 @@ void *radio_capture_prep_thread(void *telecom_ptr_void)
 {
 	cl_telecom_system *telecom_ptr = (cl_telecom_system *) telecom_ptr_void;
 
-	double *buffer_temp = (double *) malloc(AUDIO_PAYLOAD_BUFFER_SIZE * sizeof(double));
+	double *buffer_temp = (double *) malloc(AUDIO_PAYLOAD_BUFFER_SIZE * sizeof(double) * 2);
 
 	while (!shutdown_)
     {
@@ -431,7 +431,6 @@ void *radio_capture_prep_thread(void *telecom_ptr_void)
 		if(data_container_ptr->data_ready == 1)
 			data_container_ptr->nUnder_processing_events++;
 
-		// TODO: race condition here with "passband_delayed_data" !!! WTF!!!
 		shift_left(data_container_ptr->passband_delayed_data, signal_period, symbol_period);
 
 		memcpy(&data_container_ptr->passband_delayed_data[location_of_last_frame], buffer_temp, symbol_period * sizeof(double));
