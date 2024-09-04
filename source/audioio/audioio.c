@@ -259,6 +259,205 @@ cleanup_play:
 }
 
 
+void *radio_playback_thread16(void *device_ptr)
+{
+    ffaudio_interface *audio;
+	struct conf conf = {};
+	conf.buf.app_name = "mercury_playback";
+	conf.buf.format = FFAUDIO_F_INT16;
+	conf.buf.sample_rate = 48000;
+	conf.buf.channels = 2;
+	conf.buf.device_id = (const char *) device_ptr;
+	uint32_t period_ms;
+	uint32_t period_bytes;
+
+
+#if defined(_WIN32)
+    conf.buf.buffer_length_msec = 40;
+	period_ms = conf.buf.buffer_length_msec / 4;
+    if (audio_subsystem == AUDIO_SUBSYSTEM_WASAPI)
+        audio = (ffaudio_interface *) &ffwasapi;
+    if (audio_subsystem == AUDIO_SUBSYSTEM_DSOUND)
+        audio = (ffaudio_interface *) &ffdsound;
+#elif defined(__linux__)
+    conf.buf.buffer_length_msec = 30;
+	period_ms = conf.buf.buffer_length_msec / 3;
+    if (audio_subsystem == AUDIO_SUBSYSTEM_ALSA)
+        audio = (ffaudio_interface *) &ffalsa;
+    if (audio_subsystem == AUDIO_SUBSYSTEM_PULSE)
+        audio = (ffaudio_interface *) &ffpulse;
+#elif defined(__FREEBSD__)
+    conf.buf.buffer_length_msec = 40;
+	period_ms = conf.buf.buffer_length_msec / 4;
+    if (audio_subsystem == AUDIO_SUBSYSTEM_OSS)
+        audio = (ffaudio_interface *) &ffoss;
+#elif defined(__APPLE__)
+    conf.buf.buffer_length_msec = 40;
+	period_ms = conf.buf.buffer_length_msec / 4;
+    if (audio_subsystem == AUDIO_SUBSYSTEM_COREAUDIO)
+        audio = (ffaudio_interface *) &ffcoreaudio;
+#endif
+
+	period_bytes = conf.buf.sample_rate * (conf.buf.format & 0xff) / 8 * conf.buf.channels * period_ms / 1000;
+
+	//printf("period_ms: %u\n", period_ms);
+	//printf("period_size: %u\n", period_bytes);
+
+	conf.flags = FFAUDIO_PLAYBACK;
+	ffaudio_init_conf aconf = {};
+	aconf.app_name = "mercury_playback";
+
+	int r;
+	ffaudio_buf *b;
+	ffaudio_conf *cfg;
+
+	ffuint frame_size;
+	ffuint msec_bytes;
+
+	uint8_t *buffer = (uint8_t *) malloc(AUDIO_PAYLOAD_BUFFER_SIZE * sizeof(double) * 2);
+	double *buffer_double =  (double *) buffer;
+	int16_t *buffer_internal_stereo = (int16_t *) malloc(AUDIO_PAYLOAD_BUFFER_SIZE * sizeof(int16_t) * 2); // a big enough buffer
+
+	ffuint total_written = 0;
+	int ch_layout = STEREO;
+
+	if ( audio->init(&aconf) != 0)
+    {
+        printf("Error in audio->init()\n");
+        goto finish_play;
+    }
+
+    // playback code...
+	b = audio->alloc();
+	if (b == NULL)
+	{
+		printf("Error in audio->alloc()\n");
+		goto finish_play;
+	}
+
+	cfg = &conf.buf;
+	r = audio->open(b, cfg, conf.flags);
+	if (r == FFAUDIO_EFORMAT)
+		r = audio->open(b, cfg, conf.flags);
+	if (r != 0)
+	{
+		printf("error in audio->open(): %d: %s\n", r, audio->error(b));
+		goto cleanup_play;
+	}
+
+	printf("playback (%s) %d bits per sample / %dHz / %dch / %dms buffer\n", conf.buf.device_id ? conf.buf.device_id : "default", cfg->format, cfg->sample_rate, cfg->channels, cfg->buffer_length_msec);
+
+
+	frame_size = cfg->channels * (cfg->format & 0xff) / 8;
+	msec_bytes = cfg->sample_rate * frame_size / 1000;
+
+	if (radio_type == RADIO_SBITX)
+		ch_layout = RIGHT;
+	if (radio_type == RADIO_STOCKHF)
+		ch_layout = STEREO;
+
+    while (!shutdown_)
+    {
+		ffssize n;
+		size_t buffer_size = size_buffer(playback_buffer);
+		if (buffer_size >= period_bytes || buffer_size == 0) // if buffer_size == 0, we just block here... should we transmitt zeros?
+		{
+			read_buffer(playback_buffer, buffer, period_bytes);
+			n = period_bytes;
+		}
+		else
+		{
+			read_buffer(playback_buffer, buffer, buffer_size);
+			n = buffer_size;
+		}
+
+        total_written = 0;
+
+		int samples_read = n / sizeof(double);
+
+
+		// convert from double to int32
+		for (int i = 0; i < samples_read; i++)
+		{
+			int idx = i * cfg->channels;
+			if (ch_layout == LEFT)
+			{
+				buffer_internal_stereo[idx] = buffer_double[i] * 32767;
+				buffer_internal_stereo[idx + 1] = 0;
+			}
+
+			if (ch_layout == RIGHT)
+			{
+				buffer_internal_stereo[idx] = 0;
+				buffer_internal_stereo[idx + 1] = buffer_double[i] * 32767;
+			}
+
+
+			if (ch_layout == STEREO)
+			{
+				buffer_internal_stereo[idx] = buffer_double[i] * 32767;
+				buffer_internal_stereo[idx + 1] = buffer_internal_stereo[idx];
+			}
+		}
+
+		n = samples_read * frame_size;
+
+        while (n >= frame_size)
+        {
+            r = audio->write(b, ((uint8_t *)buffer_internal_stereo) + total_written, n);
+
+            if (r == -FFAUDIO_ESYNC) {
+                printf("detected underrun");
+                continue;
+            }
+            if (r < 0)
+            {
+                printf("ffaudio.write: %s", audio->error(b));
+            }
+#if 0 // print time measurement
+            else
+            {
+                printf(" %dms\n", r / msec_bytes);
+            }
+#endif
+            total_written += r;
+            n -= r;
+        }
+        // printf("n = %lld total written = %u\n", n, total_written);
+    }
+
+
+    r = audio->drain(b);
+    if (r < 0)
+        printf("ffaudio.drain: %s", audio->error(b));
+
+    r = audio->stop(b);
+    if (r != 0)
+        printf("ffaudio.stop: %s", audio->error(b));
+
+    r = audio->clear(b);
+    if (r != 0)
+        printf("ffaudio.clear: %s", audio->error(b));
+
+cleanup_play:
+
+    audio->free(b);
+
+	audio->uninit();
+
+	finish_play:
+
+	free(buffer);
+	free(buffer_internal_stereo);
+
+	printf("radio_playback_thread exit\n");
+
+    shutdown_ = true;
+
+    return NULL;
+}
+
+
 
 void *radio_capture_thread(void *device_ptr)
 {
@@ -554,7 +753,11 @@ int audioio_init_internal(char *capture_dev, char *playback_dev, int audio_subsy
     playback_buffer = circular_buf_init_shm(AUDIO_PAYLOAD_BUFFER_SIZE, (char *) AUDIO_PLAY_PAYLOAD_NAME);
 
     pthread_create(radio_capture, NULL, radio_capture_thread, (void *) capture_dev);
-    pthread_create(radio_playback, NULL, radio_playback_thread, (void *) playback_dev);
+#if defined(_WIN32)
+	pthread_create(radio_playback, NULL, radio_playback_thread16, (void *) playback_dev);
+#else
+	pthread_create(radio_playback, NULL, radio_playback_thread, (void *) playback_dev);
+#endif
 	pthread_create(radio_capture_prep, NULL, radio_capture_prep_thread, (void *) telecom_system);
 
 	return 0;
