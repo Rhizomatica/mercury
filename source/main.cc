@@ -432,7 +432,6 @@ int main(int argc, char *argv[])
             telecom_system.TX_SHM_process_main(buffer);
         }
 
-        // for the future...
         circular_buf_destroy_shm(buffer, SHM_PAYLOAD_BUFFER_SIZE, (char *) SHM_PAYLOAD_NAME);
         circular_buf_free_shm(buffer);
     }

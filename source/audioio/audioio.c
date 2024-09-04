@@ -409,21 +409,22 @@ finish_cap:
 void *radio_capture_prep_thread(void *telecom_ptr_void)
 {
 	cl_telecom_system *telecom_ptr = (cl_telecom_system *) telecom_ptr_void;
-	cl_data_container *data_container_ptr = &telecom_ptr->data_container;
 
-	double buffer_temp[AUDIO_PAYLOAD_BUFFER_SIZE];
+	double *buffer_temp = (double *) malloc(AUDIO_PAYLOAD_BUFFER_SIZE * sizeof(double));
 
 	while (!shutdown_)
     {
-
+		cl_data_container *data_container_ptr = &telecom_ptr->data_container;
 		int signal_period = data_container_ptr->Nofdm * data_container_ptr->buffer_Nsymb * data_container_ptr->interpolation_rate; // in samples
 		int symbol_period = data_container_ptr->Nofdm * data_container_ptr->interpolation_rate;
 		int location_of_last_frame = signal_period - symbol_period - 1; // TODO: do we need this "-1"?
 
+		if (symbol_period == 0)
+			continue;
+
 		rx_transfer(buffer_temp, symbol_period);
 
 		// TODO: lock
-
 		if(data_container_ptr->data_ready == 1)
 			data_container_ptr->nUnder_processing_events++;
 
@@ -437,12 +438,13 @@ void *radio_capture_prep_thread(void *telecom_ptr_void)
 			data_container_ptr->frames_to_read = 0;
 
 		data_container_ptr->data_ready = 1;
-
 		// TODO: unlock
 	}
 
 
 	shutdown_ = true;
+
+	free(buffer_temp);
 
     return NULL;
 }
