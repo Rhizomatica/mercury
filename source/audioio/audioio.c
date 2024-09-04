@@ -115,9 +115,9 @@ void *radio_playback_thread(void *device_ptr)
 	ffuint frame_size;
 	ffuint msec_bytes;
 
-	uint8_t buffer[AUDIO_PAYLOAD_BUFFER_SIZE];
+	uint8_t *buffer = (uint8_t *) malloc(AUDIO_PAYLOAD_BUFFER_SIZE * sizeof(double));
 	double *buffer_double =  (double *) buffer;
-	int32_t buffer_internal_stereo[AUDIO_PAYLOAD_BUFFER_SIZE]; // a big enough buffer
+	int32_t *buffer_internal_stereo = (int32_t *) malloc(AUDIO_PAYLOAD_BUFFER_SIZE * sizeof(int32_t)); // a big enough buffer
 
 	ffuint total_written = 0;
 	int ch_layout = STEREO;
@@ -246,7 +246,10 @@ cleanup_play:
 
 	audio->uninit();
 
-finish_play:
+	finish_play:
+
+	free(buffer);
+	free(buffer_internal_stereo);
 
 	printf("radio_playback_thread exit\n");
 
