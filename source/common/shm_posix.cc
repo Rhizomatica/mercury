@@ -20,11 +20,14 @@
 #if defined(_WIN32)
 
 #include <io.h>
+
+#if 1
 #define open _open
 #define close _close
 #define unlink _unlink
 #define lseek _lseek
 #define write _write
+#endif
 
 #define S_IXUSR  0000100
 #define TMP_ENV_NAME "TEMP"
