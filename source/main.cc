@@ -59,6 +59,8 @@ int main(int argc, char *argv[])
     // seed the random number generator
     srand(time(0));
 
+    printf("\e[0;31mMercury Version %s\e[0m\n", VERSION__);
+
     if (argc < 2)
     {
  manual:

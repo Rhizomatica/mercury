@@ -136,6 +136,10 @@ For the sBitx radio, use the HERMES software stack, available at https://github.
 Mercury alone is not very useful. A client is needed to receive and transmit information using Mercury. The folder "examples" has a transmitter and receiver example
 to use with the TX_SHM and RX_SHM modes. A more complete client called HERMES-BROADCAST to be used for data broadcast which uses RaptorQ codes is available here: https://github.com/Rhizomatica/hermes-broadcast .
 
+For a simple ARQ client which supports hamlib, take a look at: https://github.com/Rhizomatica/mercury-connector
+
+For a more complete ARQ client which integrates Mercury to UUCP, look at: https://github.com/Rhizomatica/hermes-net/tree/main/uucpd
+
 
 ## Supported Modulation Modes
 

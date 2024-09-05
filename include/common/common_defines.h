@@ -23,6 +23,8 @@
 #ifndef INC_COMMON_DEFINES_H_
 #define INC_COMMON_DEFINES_H_
 
+#define VERSION__ "0.3"
+
 #define BER_PLOT_baseband 0
 #define BER_PLOT_passband 1
 #define TX_RAND 2
