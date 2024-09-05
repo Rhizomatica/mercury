@@ -100,14 +100,6 @@ int shm_create_and_get_fd(char *name, size_t size)
 		fprintf(stderr, "ERROR: This should never happen! SHM creation error in write\n");
 		abort();
 	}
-//	lseek(fd, 0, SEEK_SET);
-//	if (write(fd, 0, size) == -1)
-//	{
-//		fprintf(stderr, "ERROR: This should never happen! SHM creation error in write\n");
-//		abort();
-//	}
-
-    // fprintf(stderr, "shm_create_and_get_fd() called with %s and %ld\n", name, size);
 #else
     if (shm_open(name, O_RDWR, 0644) >= 0)
     {
@@ -143,11 +135,8 @@ void *shm_map(int fd, size_t size)
         printf("couldn't map fd %d\n", fd);
         abort();
     }
-    printf("after CreateFileMapping\n");
 
     void *data = (void *) MapViewOfFile(fmap, FILE_MAP_WRITE, 0, 0, size);
-
-    printf("after fmap == NULL test\n");
 
     return data;
 #else
