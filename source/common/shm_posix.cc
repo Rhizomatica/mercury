@@ -10,6 +10,7 @@
 #define _DEFAULT_SOURCE
 
 #include "common/shm_posix.h"
+#include "common/os_interop.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -17,38 +18,6 @@
 #include <errno.h>
 #include <stdlib.h>
 
-#if defined(_WIN32)
-
-#include <io.h>
-#define open _open
-#define close _close
-#define unlink _unlink
-#define lseek _lseek
-#define write _write
-
-#define S_IXUSR  0000100
-#define TMP_ENV_NAME "TEMP"
-int get_temp_path(char* pathBuffer, int pathBufferSize, const char* pathPart)
-{
-	const char* temp = getenv(TMP_ENV_NAME);
-	if(strlen(temp) >= pathBufferSize - strlen(pathPart+1)) {
-		return 0;
-	}
-
-	/* We've done the size check above so we don't need to use the string safe methods */
-	strcpy(pathBuffer, temp);
-    strcat(pathBuffer, "\\");
-	strcat(pathBuffer, pathPart+1);
-	return 1;
-}
-
-#else
-
-#include <sys/mman.h>
-#include <sys/stat.h>        /* For mode constants */
-#include <unistd.h>
-
-#endif
 
 // returns non-negative integer or negative if shm not created
 int shm_open_and_get_fd(char *name)

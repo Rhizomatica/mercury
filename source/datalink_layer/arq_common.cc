@@ -1623,12 +1623,15 @@ void cl_arq_controller::receive()
 		return;
 	}
 #endif
-
+	MUTEX_LOCK(&capture_prep_mutex);
 	st_receive_stats received_message_stats;
 	if(telecom_system->data_container.frames_to_read==0)
 	{
 
+
 		memcpy(telecom_system->data_container.ready_to_process_passband_delayed_data, telecom_system->data_container.passband_delayed_data, signal_period * sizeof(double));
+
+		MUTEX_UNLOCK(&capture_prep_mutex);
 
 		received_message_stats = telecom_system->receive_byte(telecom_system->data_container.ready_to_process_passband_delayed_data,telecom_system->data_container.data_byte);
 
@@ -1724,6 +1727,7 @@ void cl_arq_controller::receive()
 		}
 	}
 	telecom_system->data_container.data_ready = 0;
+	MUTEX_UNLOCK(&capture_prep_mutex);
 }
 
 

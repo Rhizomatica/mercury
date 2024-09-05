@@ -902,7 +902,6 @@ void cl_telecom_system::TX_RAND_process_main()
 		transmit_bit(data_container.data_bit,data_container.passband_data,MIDDLE_MESSAGE);
 	}
 	tx_transfer(data_container.passband_data,data_container.Nofdm*data_container.interpolation_rate*(ofdm.Nsymb+ofdm.preamble_configurator.Nsymb));
-	clear_buffer(capture_buffer);
 }
 
 void cl_telecom_system::TX_TEST_process_main()
@@ -911,9 +910,10 @@ void cl_telecom_system::TX_TEST_process_main()
     int frame_size = (nReal_data - outer_code_reserved_bits) / 8;
 
     static int counter = 0;
+
     for (int i = 0; i < frame_size; i++)
     {
-        data_container.data_byte[i] = 0;
+        data_container.data_byte[i] = 0; // data_byte is an integer
     }
     data_container.data_byte[counter % frame_size] = 1;
     counter++;
@@ -922,7 +922,6 @@ void cl_telecom_system::TX_TEST_process_main()
 
     tx_transfer(data_container.passband_data, data_container.Nofdm * data_container.interpolation_rate * (ofdm.Nsymb + ofdm.preamble_configurator.Nsymb));
 
-	clear_buffer(capture_buffer);
 }
 
 void cl_telecom_system::TX_SHM_process_main(cbuf_handle_t buffer)
@@ -952,7 +951,7 @@ void cl_telecom_system::TX_SHM_process_main(cbuf_handle_t buffer)
     else
     {
 		msleep(10);
-		goto do_nothing;
+		return;
     }
 
     transmit_byte(data_container.data_byte, (nReal_data - outer_code_reserved_bits) / 8, data_container.passband_data, SINGLE_MESSAGE);
@@ -961,9 +960,6 @@ void cl_telecom_system::TX_SHM_process_main(cbuf_handle_t buffer)
 
     printf("%c\033[1D", spinner[spinner_anim % 4]); spinner_anim++;
     fflush(stdout);
-
-do_nothing:
-	clear_buffer(capture_buffer);
 }
 
 
@@ -980,14 +976,13 @@ void cl_telecom_system::RX_RAND_process_main()
 	int signal_period = data_container.Nofdm * data_container.buffer_Nsymb * data_container.interpolation_rate; // in samples
 	int symbol_period = data_container. Nofdm * data_container.interpolation_rate;
 
-	// lock
-
 	if(data_container.data_ready == 0)
 	{
 		msleep(1);
 		return;
 	}
 
+	MUTEX_LOCK(&capture_prep_mutex);
 	if (data_container.frames_to_read == 0)
 	{
 
@@ -1054,8 +1049,7 @@ void cl_telecom_system::RX_RAND_process_main()
 		}
 	}
 	data_container.data_ready = 0;
-
-	//unlock
+	MUTEX_UNLOCK(&capture_prep_mutex);
 }
 
 void cl_telecom_system::RX_TEST_process_main()
@@ -1074,7 +1068,7 @@ void cl_telecom_system::RX_TEST_process_main()
 		return;
 	}
 
-
+	MUTEX_LOCK(&capture_prep_mutex);
 	if (data_container.frames_to_read == 0)
 	{
 
@@ -1129,6 +1123,7 @@ void cl_telecom_system::RX_TEST_process_main()
 
 	}
 	data_container.data_ready = 0;
+	MUTEX_UNLOCK(&capture_prep_mutex);
 }
 
 
@@ -1149,6 +1144,7 @@ void cl_telecom_system::RX_SHM_process_main(cbuf_handle_t buffer)
 		return;
 	}
 
+	MUTEX_LOCK(&capture_prep_mutex);
 	if (data_container.frames_to_read == 0)
 	{
 
@@ -1205,8 +1201,7 @@ void cl_telecom_system::RX_SHM_process_main(cbuf_handle_t buffer)
 
 	}
 	data_container.data_ready = 0;
-
-	// unlock
+	MUTEX_UNLOCK(&capture_prep_mutex);
 }
 
 

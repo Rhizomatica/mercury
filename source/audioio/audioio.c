@@ -9,12 +9,9 @@
 
 
 #include <stdint.h>
-#include <pthread.h>
 #include <stdbool.h>
 #include <limits.h>
 #include <ffaudio/audio.h>
-#include <ffbase/args.h>
-#include <ffbase/stringz.h>
 #include "std.h"
 #include "../../include/audioio/audioio.h"
 #ifdef FF_LINUX
@@ -24,6 +21,7 @@
 #include "common/ring_buffer_posix.h"
 #include "common/shm_posix.h"
 #include "common/common_defines.h"
+#include "common/os_interop.h"
 
 // bool shutdown_;
 extern bool shutdown_;
@@ -34,8 +32,21 @@ cbuf_handle_t playback_buffer;
 
 int audio_subsystem;
 
-// tap to file
+#if defined(_WIN32)
+    HANDLE            capture_prep_mutex;
+#else
+    pthread_mutex_t   capture_prep_mutex;
+#endif
+
+
+// tap to file FOR DEBUGGING PURPOSES //
 #define ENABLE_FLOAT64_TAP 0
+#define ENABLE_FLOAT64_TAP_BEFORE 0
+#if ENABLE_FLOAT64_TAP_BEFORE == 1
+	FILE *tap_play;
+#endif
+// FOR DEBUGGING PURPOSES //
+
 
 struct conf {
 	const char *cmd;
@@ -125,7 +136,7 @@ void *radio_playback_thread(void *device_ptr)
 	int ch_layout = STEREO;
 
 #if ENABLE_FLOAT64_TAP == 1
-	FILE *tap = fopen("tap-playback.f64", "w");
+	FILE *tap_pay = fopen("tap-playback.f64", "w");
 #endif
 
 	if ( audio->init(&aconf) != 0)
@@ -457,11 +468,12 @@ void *radio_capture_prep_thread(void *telecom_ptr_void)
 
 		rx_transfer(buffer_temp, symbol_period);
 
-		// TODO: lock
+		MUTEX_LOCK(&capture_prep_mutex);
 		if(data_container_ptr->data_ready == 1)
 			data_container_ptr->nUnder_processing_events++;
 
 		shift_left(data_container_ptr->passband_delayed_data, signal_period, symbol_period);
+
 
 		memcpy(&data_container_ptr->passband_delayed_data[location_of_last_frame], buffer_temp, symbol_period * sizeof(double));
 
@@ -470,7 +482,7 @@ void *radio_capture_prep_thread(void *telecom_ptr_void)
 			data_container_ptr->frames_to_read = 0;
 
 		data_container_ptr->data_ready = 1;
-		// TODO: unlock
+		MUTEX_UNLOCK(&capture_prep_mutex);
 	}
 
 
@@ -558,7 +570,13 @@ int tx_transfer(double *buffer, size_t len)
 	uint8_t *buffer_internal = (uint8_t *) buffer;
 	int buffer_size_bytes = len * sizeof(double);
 
+#if ENABLE_FLOAT64_TAP_BEFORE == 1
+	fwrite(buffer_internal, 1, buffer_size_bytes, tap_play);
+#endif
+
 	write_buffer(playback_buffer, buffer_internal, buffer_size_bytes);
+
+	// printf("size %llu free %llu\n", size_buffer(playback_buffer), circular_buf_free_size(playback_buffer));
 
     return 0;
 }
@@ -579,6 +597,10 @@ int audioio_init_internal(char *capture_dev, char *playback_dev, int audio_subsy
 						  pthread_t *radio_playback, pthread_t *radio_capture_prep, cl_telecom_system *telecom_system)
 {
     audio_subsystem = audio_subsys;
+
+#if ENABLE_FLOAT64_TAP_BEFORE == 1
+	tap_play = fopen("tap-playback-b.f64", "w");
+#endif
 
 #if defined(_WIN32)
 	uint8_t *buffer_cap = (uint8_t *)malloc(AUDIO_PAYLOAD_BUFFER_SIZE);
@@ -605,6 +627,10 @@ int audioio_deinit(pthread_t *radio_capture, pthread_t *radio_playback, pthread_
     pthread_join(*radio_capture_prep, NULL);
     pthread_join(*radio_capture, NULL);
     pthread_join(*radio_playback, NULL);
+
+#if ENABLE_FLOAT64_TAP_BEFORE == 1
+	fclose(tap_play);
+#endif
 
 #if defined(_WIN32)
 	free(capture_buffer->buffer);

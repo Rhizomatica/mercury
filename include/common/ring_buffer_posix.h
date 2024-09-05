@@ -13,36 +13,8 @@
 #include <stdint.h>
 #include <stddef.h>
 
-#if defined(_WIN32)
-#include <winsock2.h>
-#include <windows.h>
-
-#ifndef EMSGSIZE
-#define EMSGSIZE    4200
-#endif
-
-#define O_NONBLOCK  0200000
-
-union sigval {
-    int           sival_int;     /* integer value */
-    void          *sival_ptr;    /* pointer value */
-};
-struct sigevent {
-    int           sigev_notify;  /* notification type */
-    int           sigev_signo;   /* signal number */
-    union sigval  sigev_value;   /* signal value */
-};
-//typedef int pid_t;
-//typedef int ssize_t;
-
-#else
-
-#include <pthread.h>
-#include <sys/shm.h>
-
-#endif
-
-
+// this includes pthreads
+#include "os_interop.h"
 
 #ifdef __cplusplus
 extern "C" {
