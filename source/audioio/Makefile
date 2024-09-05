@@ -19,37 +19,30 @@
 # Boston, MA 02110-1301, USA.
 #
 
-ifeq ($(OS),Windows_NT)
-	FFAUDIO_LINKFLAGS += -lole32
-	OBJS += ffaudio/ffaudio/wasapi.o
-	FFAUDIO_LINKFLAGS += -ldsound -ldxguid
-	OBJS += ffaudio/ffaudio/dsound.o
-else
-    UNAME_S := $(shell uname -s)
-    ifeq ($(UNAME_S),Linux)
-		FFAUDIO_LINKFLAGS += -lpulse
-		OBJS += ffaudio/ffaudio/pulse.o
-		FFAUDIO_LINKFLAGS += -lasound -lpthread -lrt
-		OBJS += ffaudio/ffaudio/alsa.o
-		CFLAGS += -pthread
-    endif
-    ifeq ($(UNAME_S),Darwin)
-		FFAUDIO_LINKFLAGS := -framework CoreFoundation -framework CoreAudio
-		OBJS=ffaudio/ffaudio/coreaudio.o
-    endif
-    ifeq ($(UNAME_S),FreeBSD)
-		FFAUDIO_LINKFLAGS := -lm
-		OBJS=ffaudio/ffaudio/oss.o
-    endif
-endif
-
 AR=ar
 CC=gcc
 CXX=g++
-CXXFLAGS = $(CFLAGS) -Wall -O2 -g0 -std=c++14 I./ffbase/ -I./ffaudio/ -I../../include
 
-#CFLAGS += -Wall -O0 -g -std=gnu99 -I./ffbase/ -I./ffaudio/ -I../../include
-CFLAGS += -Wall -O2 -g0 -I./ffbase/ -I./ffaudio/ -I../../include
+ifeq ($(OS),Windows_NT)
+       OBJS += ffaudio/ffaudio/wasapi.o
+       OBJS += ffaudio/ffaudio/dsound.o
+else
+    UNAME_S := $(shell uname -s)
+    ifeq ($(UNAME_S),Linux)
+               OBJS += ffaudio/ffaudio/pulse.o
+               OBJS += ffaudio/ffaudio/alsa.o
+    endif
+    ifeq ($(UNAME_S),Darwin)
+               OBJS=ffaudio/ffaudio/coreaudio.o
+    endif
+    ifeq ($(UNAME_S),FreeBSD)
+               OBJS=ffaudio/ffaudio/oss.o
+    endif
+endif
+
+
+#CFLAGS += -Wall -Og -g -std=gnu99 -I./ffbase/ -I./ffaudio/ -I../../include
+CFLAGS = -Wall -O3 -g0 -I./ffbase/ -I./ffaudio/ -I../../include -pthread
 
 LDFLAGS=$(FFAUDIO_LINKFLAGS)
 
@@ -72,17 +65,11 @@ ffaudio/ffaudio/wasapi.o: ffaudio/ffaudio/wasapi.c
 ffaudio/ffaudio/alsa.o: ffaudio/ffaudio/alsa.c
 	$(CC) $(CFLAGS) -std=c17 -c ffaudio/ffaudio/alsa.c -o ffaudio/ffaudio/alsa.o
 
-../common/ring_buffer_posix.o: ../common/ring_buffer_posix.cc
-	$(CC) $(CFLAGS) -std=c17 -xc -c ../common/ring_buffer_posix.cc -o ../common/ring_buffer_posix.o
-
-../common/shm_posix.o: ../common/shm_posix.cc
-	$(CC) $(CFLAGS) -std=c17 -xc -c ../common/shm_posix.cc -o ../common/shm_posix.o
-
 audioio.o: audioio.c std.h $(OBJS)
 	$(CXX) $(CFLAGS) -std=c++14 -xc++ -c audioio.c -o audioio.o
 
-audioio.a: audioio.o ../common/ring_buffer_posix.o ../common/shm_posix.o $(OBJS)
-	$(AR) rc audioio.a audioio.o ../common/ring_buffer_posix.o ../common/shm_posix.o $(OBJS)
+audioio.a: audioio.o $(OBJS)
+	$(AR) rc audioio.a audioio.o $(OBJS)
 
 .PHONY: clean
 clean:

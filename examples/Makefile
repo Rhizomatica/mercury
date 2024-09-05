@@ -19,14 +19,14 @@
 CC=gcc
 CFLAGS=-Wall -pedantic -pthread -std=c17 -xc -I../include
 ifeq ($(OS),Windows_NT)
-	LDFLAGS=-lpthread
+	LDFLAGS += -static-libgcc -static-libstdc++ -static -l:libwinpthread.a
 else
 	LDFLAGS=-lpthread -lrt
 endif
 
 .PHONY: all
 
-all: ring_buffer_posix.o shm_posix.o transmitter receiver
+all: ring_buffer_posix.o shm_posix.o os_interop.o transmitter receiver
 
 ring_buffer_posix.o: ../source/common/ring_buffer_posix.cc ../include/common/ring_buffer_posix.h
 	$(CC) $(CFLAGS) -c ../source/common/ring_buffer_posix.cc -o ring_buffer_posix.o
@@ -34,13 +34,16 @@ ring_buffer_posix.o: ../source/common/ring_buffer_posix.cc ../include/common/rin
 shm_posix.o: ../source/common/shm_posix.cc ../include/common/shm_posix.h
 	$(CC) $(CFLAGS) -c ../source/common/shm_posix.cc -o shm_posix.o
 
+os_interop.o: ../source/common/os_interop.cc ../include/common/os_interop.h
+	$(CC) $(CFLAGS) -c ../source/common/os_interop.cc -o os_interop.o
 
-transmitter: transmitter.o ring_buffer_posix.o shm_posix.o
-	$(CC) -o transmitter transmitter.o ring_buffer_posix.o shm_posix.o $(LDFLAGS)
+
+transmitter: transmitter.o ring_buffer_posix.o shm_posix.o os_interop.o
+	$(CC) -o transmitter transmitter.o ring_buffer_posix.o shm_posix.o os_interop.o $(LDFLAGS)
 
 
-receiver: receiver.o ring_buffer_posix.o shm_posix.o
-	$(CC) -o receiver receiver.o ring_buffer_posix.o shm_posix.o $(LDFLAGS)
+receiver: receiver.o ring_buffer_posix.o shm_posix.o os_interop.o
+	$(CC) -o receiver receiver.o ring_buffer_posix.o shm_posix.o os_interop.o $(LDFLAGS)
 
 
 .PHONY: clean

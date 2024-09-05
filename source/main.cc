@@ -31,7 +31,7 @@
 #include "datalink_layer/arq.h"
 #include "audioio/audioio.h"
 
-// some globals
+// some globals TODO: wrap this up into some class
 extern "C" {
     double carrier_frequency_offset; // set 0 to stock HF, or to the radio passband, eg., 15k for sBitx
     int radio_type;
@@ -362,7 +362,7 @@ int main(int argc, char *argv[])
     {
         printf("Mode selected: RX_TEST\n");
         telecom_system.load_configuration(mod_config);
-        printf("CONFIG_%d (%f bps) Shannon_limit: %f\n", mod_config, telecom_system.rbc, telecom_system.Shannon_limit);
+        printf("CONFIG_%d (%.2f bps) Shannon_limit: %.2f db\n", mod_config, telecom_system.rbc, telecom_system.Shannon_limit);
 
 		audioio_init_internal(input_dev, output_dev, audio_system, &radio_capture,
 							  &radio_playback, &radio_capture_prep, &telecom_system);

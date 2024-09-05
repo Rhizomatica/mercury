@@ -39,7 +39,7 @@ endif
 
 CPP=g++
 LDFLAGS=$(FFAUDIO_LINKFLAGS)
-CPPFLAGS=-Ofast -g0 -Wall -Wextra -Wno-format -std=c++14 -I./include -I./source/audioio/ffaudio -pthread
+CPPFLAGS=-O3 -g0 -Wall -Wextra -Wno-format -Wno-unused -std=c++14 -I./include -I./source/audioio/ffaudio -pthread
 #CPPFLAGS=-Ofast -g0 -Wall -fstack-protector -D_FORTIFY_SOURCE=2 -Wno-format -std=gnu++14 -I./include
 CPP_SOURCES=$(wildcard source/*.cc source/datalink_layer/*.cc source/physical_layer/*.cc source/common/*.cc)
 OBJECT_FILES=$(patsubst %.cc,%.o,$(CPP_SOURCES))
@@ -73,7 +73,6 @@ mercury: $(OBJECT_FILES) source/audioio/audioio.a
 doc: $(CPP_SOURCES)
 	@doxygen ./mercury.doxyfile
 	cp ./docs_FSM/*.png html
-
 
 
 install: mercury
