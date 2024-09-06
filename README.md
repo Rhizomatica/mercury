@@ -73,7 +73,7 @@ Options:
 ```
 
 Mercury operating modes are:
-- ARQ: Data-link layer and Automatic repeat request mode (under development).
+- ARQ: Data-link layer and Automatic repeat request mode. Default control port is 7002 and default data port is 7003.
 - TX_SHM: Transmits data read from shared memory interface (check folder examples).
 - RX_SHM: Received data is written to shared memory interface.
 
@@ -142,6 +142,9 @@ to use with the TX_SHM and RX_SHM modes. A more complete client called HERMES-BR
 
 For a simple ARQ client which supports hamlib, take a look at: https://github.com/Rhizomatica/mercury-connector
 
+Any VARA client should be compatible with Mercury. Compatibility support is not complete. If you
+find a VARA client which does not communicate, please report. Base TCP port is 7002 (7002 control and 7003 data).
+
 For a more complete ARQ client which integrates Mercury to UUCP, look at: https://github.com/Rhizomatica/hermes-net/tree/main/uucpd
 
 
@@ -168,6 +171,12 @@ CONFIG_14 (3428.921569 bps)
 CONFIG_15 (4411.764706 bps)
 CONFIG_16 (5735.294118 bps)
 ```
+
+## Discussion
+
+Join HERMES mailing list:
+https://lists.riseup.net/www/info/hermes-general
+
 
 ## About
 
