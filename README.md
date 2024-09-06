@@ -23,8 +23,8 @@ Mercury is a free software software-defined modem solution for the High-Frequenc
 
 ## Compilation And Installation
 
-Mercury is implemented mainly in C++. Currently tested on Linux and Windows (Windows port still beta quality).
-Compilation is tested with GCC (version 9 or greater) under Linux and Windows. ALSA and PulseAudio libraries and development headers must be installed on Linux. 
+Mercury is implemented mainly in C++ (compiles in C++14 mode). Currently runs on Linux and Windows.
+Compilation is tested on Linux (gcc / glibc toolchain) and Windows (Mingw64 posix toolchain). ALSA and PulseAudio libraries and development headers must be installed on Linux. On Windows, DirectSound and WASAPI are supported.
 Other optional depencies are GNUPlot (for ploting constellations), GraphViz and Doxygen (for documentation). On
 a Debian based system (eg. Debian, Ubuntu), the dependencies can be installed with:
 
@@ -48,8 +48,6 @@ To generate the Mercury documentation, run the following:
 ```
 make doc
 ```
-
-Mercury main platform is Linux. Windows port is beta quality and some bugs might exist.
 
 ## Running
 
@@ -115,6 +113,12 @@ For transmitting such test data broadcast data, in stock HF radio (like an ICOM 
 
 ```
 ./mercury -m TX_TEST -s 0 -r stockhf -i "plughw:0,0" -o "plughw:0,0"
+```
+
+On Windows it is recommended to use the default device, by not setting explicitly. Example using the DirectSound driver (other option is wasapi):
+
+```
+./mercury -m TX_TEST -s 0 -r stockhf -x dshow
 ```
 
 For enabling tx (keying the radio) in an ICOM IC-7100, for example, use:
