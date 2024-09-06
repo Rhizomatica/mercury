@@ -1,4 +1,4 @@
-# Mercury - Free Software Modem
+# Mercury
 
 Mercury is a free software software-defined modem solution for the High-Frequency (HF) band.
 
@@ -118,7 +118,7 @@ For transmitting such test data broadcast data, in stock HF radio (like an ICOM 
 On Windows it is recommended to use the default device, by not setting explicitly. Example using the DirectSound driver (other option is wasapi):
 
 ```
-./mercury -m TX_TEST -s 0 -r stockhf -x dshow
+./mercury -m TX_TEST -s 0 -r stockhf -x dsound
 ```
 
 For enabling tx (keying the radio) in an ICOM IC-7100, for example, use:
