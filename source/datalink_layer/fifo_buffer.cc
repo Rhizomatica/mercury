@@ -49,7 +49,7 @@ void cl_fifo_buffer::flush()
 
 int cl_fifo_buffer::set_size(int size)
 {
-	int success=ERROR;
+	int success=ERROR_;
 	data= new char[size];
 	if(data!=NULL)
 	{

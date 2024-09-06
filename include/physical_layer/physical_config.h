@@ -27,7 +27,6 @@
 #include "ofdm.h"
 #include "ldpc.h"
 #include "fir_filter.h"
-#include "alsa_sound_dev.h"
 #include "psk.h"
 #include "crc16_modbus_rtu.h"
 
@@ -117,23 +116,8 @@ public:
 	int bit_energy_dispersal_seed;
 
 
-
 	std::string plot_folder;
 	int plot_plot_active;
-
-
-	std::string microphone_dev_name;
-	std::string speaker_dev_name;
-
-
-	int microphone_type;
-	unsigned int microphone_channels;
-
-
-	int speaker_type;
-	unsigned int speaker_channels;
-	snd_pcm_uframes_t speaker_frames_to_leave_transmit_fct;
-
 };
 
 

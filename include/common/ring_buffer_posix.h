@@ -12,8 +12,9 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <stddef.h>
-#include <sys/shm.h>
-#include <pthread.h>
+
+// this includes pthreads
+#include "os_interop.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -25,8 +26,13 @@ struct circular_buf_t_aux {
     size_t max; //of the buffer
     bool full;
 
-    pthread_mutex_t    mutex;
-    pthread_cond_t     cond;
+#if defined(_WIN32)
+    HANDLE            mutex;  /* mutex lock */
+    HANDLE            cond;  /* and condition event */
+#else
+    pthread_mutex_t   mutex;  /* mutex lock */
+    pthread_cond_t    cond;  /* and condition variable */
+#endif
 };
 
 struct circular_buf_t {
@@ -65,6 +71,8 @@ int write_buffer(cbuf_handle_t cbuf, uint8_t * data, size_t len);
 /// Returns the current number of elements in the buffer
 size_t size_buffer(cbuf_handle_t cbuf);
 
+// clear the buffer
+void clear_buffer(cbuf_handle_t cbuf);
 
 /// Reset the circular buffer to empty, head == tail. Data not cleared
 /// Requires: cbuf is valid and created by circular_buf_init
@@ -94,8 +102,6 @@ bool circular_buf_full(cbuf_handle_t cbuf);
 /// Requires: cbuf is valid and created by circular_buf_init
 /// Returns the maximum capacity of the buffer
 size_t circular_buf_capacity(cbuf_handle_t cbuf);
-
-size_t circular_buf_free_size(cbuf_handle_t cbuf);
 
 /// Check the number of free elements in the buffer
 /// Requires: cbuf is valid and created by circular_buf_init

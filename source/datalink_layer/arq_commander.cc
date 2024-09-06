@@ -109,7 +109,7 @@ void cl_arq_controller::process_messages_commander()
 
 int cl_arq_controller::add_message_control(char code)
 {
-	int success=ERROR;
+	int success=ERROR_;
 	if (messages_control.status==FREE)
 	{
 		messages_control.type=CONTROL;
@@ -206,7 +206,7 @@ void cl_arq_controller::process_messages_tx_control()
 		else
 		{
 			stats.nLost_control++;
-			messages_control.status=FAILED;
+			messages_control.status=FAILED_;
 		}
 	}
 
@@ -250,7 +250,7 @@ void cl_arq_controller::process_messages_tx_control()
 
 int cl_arq_controller::add_message_tx_data(char type, int length, char* data)
 {
-	int success=ERROR;
+	int success=ERROR_;
 	if(length<0)
 	{
 		success=MESSAGE_LENGTH_ERROR;
@@ -322,7 +322,7 @@ void cl_arq_controller::process_messages_tx_data()
 			else
 			{
 				stats.nLost_data++;
-				messages_tx[i].status=FAILED;
+				messages_tx[i].status=FAILED_;
 			}
 
 		}
@@ -522,7 +522,7 @@ void cl_arq_controller::process_control_commander()
 		}
 		else if(this->link_status==CONNECTED)
 		{
-			if (messages_control.data[0]==FILE_END)
+			if (messages_control.data[0]==FILE_END_)
 			{
 				this->connection_status=TRANSMITTING_DATA;
 				std::cout<<"end of file acked"<<std::endl;

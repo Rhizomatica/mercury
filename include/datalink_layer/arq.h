@@ -31,6 +31,7 @@
 #include "datalink_config.h"
 #include "datalink_defines.h"
 #include "common/common_defines.h"
+#include "audioio/audioio.h"
 #include <iomanip>
 
 union u_SNR {

@@ -22,23 +22,31 @@
 
 #ifndef INC_TCP_SOCKET_H_
 #define INC_TCP_SOCKET_H_
-#include <netdb.h>
 #include <stdio.h>
 #include <iostream>
 #include <fstream>
 #include <stdlib.h>
-#include <sys/socket.h>
+
 #include <fcntl.h>
 #include <string>
 #include <cstring>
+#include <cstdint>
+#include <sys/types.h>
+
+#if defined (_WIN32)
+#include <winsock2.h>
+#include <windows.h>
+#else
+#include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <unistd.h>
-#include <sys/types.h>
+#endif
+
 #include "timer.h"
 
 #define SUCCESS 0
-#define ERROR -1
+#define ERROR_ -1
 
 
 

@@ -32,10 +32,10 @@ cl_configuration_arq::cl_configuration_arq()
 	link_timeout=10000000;
 
 	tcp_socket_control_port=7002;
-	tcp_socket_control_timeout_ms=INFINITE;
+	tcp_socket_control_timeout_ms=INFINITE_;
 
 	tcp_socket_data_port=7003;
-	tcp_socket_data_timeout_ms=INFINITE;
+	tcp_socket_data_timeout_ms=INFINITE_;
 
 
 	init_configuration=CONFIG_1; // TODO: can we init with CONFIG_0?
@@ -56,17 +56,12 @@ cl_configuration_arq::cl_configuration_arq()
 	ack_batch_size=2;
 	control_batch_size=2;
 	
-	ptt_on_delay_ms=100;
-	ptt_off_delay_ms=500;
+	ptt_on_delay_ms=10;
+	ptt_off_delay_ms=200;
 	switch_role_timeout_ms=1500;
 }
 
 cl_configuration_arq::~cl_configuration_arq()
 {
 }
-
-
-
-
-
 

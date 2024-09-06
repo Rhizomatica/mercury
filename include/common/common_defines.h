@@ -23,6 +23,8 @@
 #ifndef INC_COMMON_DEFINES_H_
 #define INC_COMMON_DEFINES_H_
 
+#define VERSION__ "0.3"
+
 #define BER_PLOT_baseband 0
 #define BER_PLOT_passband 1
 #define TX_RAND 2
@@ -131,6 +133,11 @@ CONFIG_16 (5664.7 bps).
 
 #define SHM_PAYLOAD_BUFFER_SIZE 131072
 #define SHM_PAYLOAD_NAME "/mercury-comm"
+
+// 1536000 * 8
+#define AUDIO_PAYLOAD_BUFFER_SIZE 12288000
+#define AUDIO_CAPT_PAYLOAD_NAME "/audio-capt"
+#define AUDIO_PLAY_PAYLOAD_NAME "/audio-play"
 
 
 #define YES 1

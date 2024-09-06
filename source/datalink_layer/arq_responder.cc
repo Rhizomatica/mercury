@@ -44,7 +44,7 @@ void cl_arq_controller::process_messages_responder()
 
 int cl_arq_controller::add_message_rx_data(char type, char id, int length, char* data)
 {
-	int success=ERROR;
+	int success=ERROR_;
 	int loc=(int)((unsigned char)id);
 	if(loc>nMessages || loc<0)
 	{
@@ -393,7 +393,7 @@ void cl_arq_controller::process_control_responder()
 
 
 	}
-	else if(link_status==CONNECTED && (code==SET_CONFIG || code==BLOCK_END || code==FILE_END || code==SWITCH_ROLE || code==REPEAT_LAST_ACK))
+	else if(link_status==CONNECTED && (code==SET_CONFIG || code==BLOCK_END || code==FILE_END_ || code==SWITCH_ROLE || code==REPEAT_LAST_ACK))
 	{
 		if(code==SET_CONFIG)
 		{
@@ -419,7 +419,7 @@ void cl_arq_controller::process_control_responder()
 			link_timer.start();
 			watchdog_timer.start();
 		}
-		else if(code==FILE_END)
+		else if(code==FILE_END_)
 		{
 			connection_status=ACKNOWLEDGING_CONTROL;
 			std::cout<<"end of file"<<std::endl;

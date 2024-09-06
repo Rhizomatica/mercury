@@ -30,13 +30,19 @@
 #include "plot.h"
 #include "ofdm.h"
 #include "ldpc.h"
-#include "alsa_sound_dev.h"
 #include "interleaver.h"
 #include "physical_config.h"
 #include "physical_defines.h"
 #include "misc.h"
 #include "common/ring_buffer_posix.h"
 #include <iomanip>
+
+
+#if defined(_WIN32)
+#define msleep(a) Sleep(a)
+#else
+#define msleep(a) usleep(a * 1000)
+#endif
 
 struct st_reinit_subsystems{
 	int microphone=YES;
@@ -88,8 +94,6 @@ public:
 	cl_error_rate passband_test_EsN0(float EsN0,int max_frame_no);
 	cl_error_rate baseband_test_EsN0(float EsN0,int max_frame_no);
 	cl_ldpc ldpc;
-	cl_alsa_sound_device microphone;
-	cl_alsa_sound_device speaker;
 	double sampling_frequency;
 	double carrier_frequency;
 	double carrier_amplitude;

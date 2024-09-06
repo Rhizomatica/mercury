@@ -17,13 +17,12 @@
 #include <stddef.h>
 #include <assert.h>
 #include <stdbool.h>
-#include <sys/resource.h>
-#include <sys/shm.h>
 #include <string.h>
-#include <sys/mman.h>
+
+#include <time.h>
 #include <malloc.h>
-#include <pthread.h>
-#include <unistd.h>
+
+#include "common/os_interop.h"
 
 // Private functions
 
@@ -130,14 +129,22 @@ cbuf_handle_t circular_buf_init_shm(size_t size, char *base_name)
     char tmp[MAX_POSIX_SHM_NAME];
     int fd1, fd2;
 
+#if !defined(_WIN32)
     cbuf_handle_t cbuf = (cbuf_handle_t) memalign(SHMLBA, sizeof(struct circular_buf_t));
+#else
+    cbuf_handle_t cbuf = (cbuf_handle_t) malloc(sizeof(struct circular_buf_t));
+#endif
     assert(cbuf);
 
     strcpy(tmp, base_name);
     strcat(tmp, "-1");
     fd1 = shm_create_and_get_fd(tmp, size);
     cbuf->buffer = (uint8_t *) shm_map(fd1, size);
+
+    // TODO: should we close it on Windows?
+#if !defined(_WIN32)
     close(fd1);
+#endif
 
     assert(cbuf->buffer);
 
@@ -146,20 +153,60 @@ cbuf_handle_t circular_buf_init_shm(size_t size, char *base_name)
     strcat(tmp, "-2");
     fd2 = shm_create_and_get_fd(tmp, sizeof(struct circular_buf_t_aux));
     cbuf->internal = (struct circular_buf_t_aux *) shm_map(fd2, sizeof(struct circular_buf_t_aux));
+#if !defined(_WIN32)
     close(fd2);
+#endif
 
     assert(cbuf->internal);
 
     cbuf->internal->max = size;
 
+#if defined(_WIN32)
+    //    wchar_t nameBuffer[128];
+    char nameBuffer[MAX_POSIX_SHM_NAME];
+    size_t len;
+
+    len = strlen(tmp);
+    if (len >= MAX_POSIX_SHM_NAME)
+    {
+        errno = EINVAL;
+        printf("path name too long\n");
+        return NULL;
+    }
+
+    sprintf(nameBuffer, "Global\\HERMES_Mtx%s", tmp+1);
+
+    cbuf->internal->mutex = CreateMutex(
+					NULL,              // default security attributes
+					FALSE,             // initially not owned
+					nameBuffer);       // named mutex
+
+    sprintf(nameBuffer, "Global\\HERMES_Cond%s", tmp+1);
+
+    cbuf->internal->cond = CreateEvent(
+				       NULL,
+				       FALSE,
+				       FALSE,
+				       nameBuffer
+				       );
+
+#else
+
     pthread_mutexattr_t mutex_attr;
     pthread_mutexattr_init(&mutex_attr);
     pthread_mutexattr_setpshared(&mutex_attr, PTHREAD_PROCESS_SHARED);
+
     pthread_condattr_t cond_attr;
     pthread_condattr_init(&cond_attr);
     pthread_condattr_setpshared(&cond_attr, PTHREAD_PROCESS_SHARED);
+
     pthread_mutex_init( &cbuf->internal->mutex, &mutex_attr);
     pthread_cond_init( &cbuf->internal->cond, &cond_attr);
+
+    pthread_mutexattr_destroy(&mutex_attr);
+    pthread_condattr_destroy(&cond_attr);
+
+#endif
 
     circular_buf_reset(cbuf);
 
@@ -174,12 +221,18 @@ cbuf_handle_t circular_buf_connect_shm(size_t size, char *base_name)
     char tmp[MAX_POSIX_SHM_NAME];
     int fd1, fd2;
 
+#if !defined(_WIN32)
     cbuf_handle_t cbuf = (cbuf_handle_t) memalign(SHMLBA, sizeof(struct circular_buf_t));
+#else
+    cbuf_handle_t cbuf = (cbuf_handle_t) malloc(sizeof(struct circular_buf_t));
+#endif
     assert(cbuf);
 
     strcpy(tmp, base_name);
     strcat(tmp, "-1");
+
     fd1 = shm_open_and_get_fd(tmp);
+
     if (fd1 < 0)
         return NULL;
     cbuf->buffer = (uint8_t *) shm_map(fd1, size);
@@ -211,8 +264,10 @@ void circular_buf_free_shm(cbuf_handle_t cbuf)
 void circular_buf_destroy_shm(cbuf_handle_t cbuf, size_t size, char *base_name)
 {
     assert(cbuf && cbuf->internal && cbuf->buffer);
-    char tmp[MAX_POSIX_SHM_NAME];
 
+    // TODO: wire up the shutdown for windows stuff...
+#if !defined(_WIN32)
+    char tmp[MAX_POSIX_SHM_NAME];
     shm_unmap(cbuf->buffer, size);
     shm_unmap(cbuf->internal, sizeof(struct circular_buf_t_aux));
 
@@ -223,26 +278,27 @@ void circular_buf_destroy_shm(cbuf_handle_t cbuf, size_t size, char *base_name)
     strcpy(tmp, base_name);
     strcat(tmp, "-2");
     shm_unlink(tmp);
+#endif
 }
 
 void circular_buf_reset(cbuf_handle_t cbuf)
 {
     assert(cbuf && cbuf->internal);
 
-    pthread_mutex_lock( &cbuf->internal->mutex );
+    MUTEX_LOCK( &cbuf->internal->mutex );
 
     cbuf->internal->head = 0;
     cbuf->internal->tail = 0;
     cbuf->internal->full = false;
 
-    pthread_mutex_unlock( &cbuf->internal->mutex );
+    MUTEX_UNLOCK( &cbuf->internal->mutex );
 }
 
 size_t size_buffer(cbuf_handle_t cbuf)
 {
     assert(cbuf && cbuf->internal);
 
-    pthread_mutex_lock( &cbuf->internal->mutex );
+    MUTEX_LOCK( &cbuf->internal->mutex );
 
     size_t size = cbuf->internal->max;
     bool is_full = cbuf->internal->full;
@@ -259,10 +315,23 @@ size_t size_buffer(cbuf_handle_t cbuf)
         }
     }
 
-    pthread_mutex_unlock( &cbuf->internal->mutex );
+    MUTEX_UNLOCK( &cbuf->internal->mutex );
 
     // fprintf(stderr, "size = %ld\n", size);
     return size;
+}
+
+void clear_buffer(cbuf_handle_t cbuf)
+{
+    assert(cbuf->internal);
+
+	MUTEX_LOCK( &cbuf->internal->mutex );
+
+    cbuf->internal->full = 0;
+	cbuf->internal->head = 0;
+	cbuf->internal->tail = 0;
+
+	MUTEX_UNLOCK( &cbuf->internal->mutex );
 }
 
 size_t circular_buf_free_size(cbuf_handle_t cbuf)
@@ -271,7 +340,7 @@ size_t circular_buf_free_size(cbuf_handle_t cbuf)
 
     size_t size = 0;
 
-    pthread_mutex_lock( &cbuf->internal->mutex );
+    MUTEX_LOCK( &cbuf->internal->mutex );
 
     if(!cbuf->internal->full)
     {
@@ -286,7 +355,7 @@ size_t circular_buf_free_size(cbuf_handle_t cbuf)
 
     }
 
-    pthread_mutex_unlock( &cbuf->internal->mutex );
+    MUTEX_UNLOCK( &cbuf->internal->mutex );
 
     return size;
 }
@@ -295,11 +364,11 @@ size_t circular_buf_capacity(cbuf_handle_t cbuf)
 {
     assert(cbuf->internal);
 
-    pthread_mutex_lock( &cbuf->internal->mutex );
+    MUTEX_LOCK( &cbuf->internal->mutex );
 
     size_t capacity = cbuf->internal->max;
 
-    pthread_mutex_unlock( &cbuf->internal->mutex );
+    MUTEX_UNLOCK( &cbuf->internal->mutex );
 
     return capacity;
 }
@@ -311,7 +380,7 @@ int circular_buf_put(cbuf_handle_t cbuf, uint8_t data)
     int r = -1;
 
 try_again_put:
-    pthread_mutex_lock( &cbuf->internal->mutex );
+    MUTEX_LOCK( &cbuf->internal->mutex );
 
     bool is_full = cbuf->internal->full;
 
@@ -321,13 +390,13 @@ try_again_put:
         advance_pointer(cbuf);
         r = 0;
 
-        pthread_cond_signal( &cbuf->internal->cond );
-        pthread_mutex_unlock( &cbuf->internal->mutex );
+        COND_SIGNAL( &cbuf->internal->cond );
+        MUTEX_UNLOCK( &cbuf->internal->mutex );
     }
     else
     {
-        pthread_cond_wait( &cbuf->internal->cond, &cbuf->internal->mutex );
-        pthread_mutex_unlock( &cbuf->internal->mutex );
+        COND_WAIT( &cbuf->internal->cond, &cbuf->internal->mutex );
+        MUTEX_UNLOCK( &cbuf->internal->mutex );
         goto try_again_put;
     }
 
@@ -341,7 +410,7 @@ int circular_buf_get(cbuf_handle_t cbuf, uint8_t * data)
     int r = -1;
 
 try_again_get:
-    pthread_mutex_lock( &cbuf->internal->mutex );
+    MUTEX_LOCK( &cbuf->internal->mutex );
 
     bool is_empty = !cbuf->internal->full && (cbuf->internal->head == cbuf->internal->tail);
 
@@ -351,13 +420,13 @@ try_again_get:
         retreat_pointer(cbuf);
         r = 0;
 
-        pthread_cond_signal( &cbuf->internal->cond );
-        pthread_mutex_unlock( &cbuf->internal->mutex );
+        COND_SIGNAL( &cbuf->internal->cond );
+        MUTEX_UNLOCK( &cbuf->internal->mutex );
     }
     else
     {
-        pthread_cond_wait( &cbuf->internal->cond, &cbuf->internal->mutex );
-        pthread_mutex_unlock( &cbuf->internal->mutex );
+        COND_WAIT( &cbuf->internal->cond, &cbuf->internal->mutex );
+        MUTEX_UNLOCK( &cbuf->internal->mutex );
         goto try_again_get;
     }
 
@@ -368,11 +437,11 @@ bool circular_buf_empty(cbuf_handle_t cbuf)
 {
     assert(cbuf && cbuf->internal);
 
-    pthread_mutex_lock( &cbuf->internal->mutex );
+    MUTEX_LOCK( &cbuf->internal->mutex );
 
     bool is_empty = !cbuf->internal->full && (cbuf->internal->head == cbuf->internal->tail);
 
-    pthread_mutex_unlock( &cbuf->internal->mutex );
+    MUTEX_UNLOCK( &cbuf->internal->mutex );
 
     return is_empty;
 }
@@ -381,11 +450,11 @@ bool circular_buf_full(cbuf_handle_t cbuf)
 {
     assert(cbuf && cbuf->internal);
 
-    pthread_mutex_lock( &cbuf->internal->mutex );
+    MUTEX_LOCK( &cbuf->internal->mutex );
 
     bool is_full = cbuf->internal->full;
 
-    pthread_mutex_unlock( &cbuf->internal->mutex );
+    MUTEX_UNLOCK( &cbuf->internal->mutex );
 
     return is_full;
 }
@@ -398,7 +467,7 @@ int read_buffer_all(cbuf_handle_t cbuf, uint8_t *data)
     size_t len = 0;
 
  try_again_read:
-    pthread_mutex_lock( &cbuf->internal->mutex );
+    MUTEX_LOCK( &cbuf->internal->mutex );
 
     size = cbuf->internal->max;
     len = circular_buf_size_internal(cbuf);
@@ -416,18 +485,71 @@ int read_buffer_all(cbuf_handle_t cbuf, uint8_t *data)
         }
         retreat_pointer_n(cbuf, len);
 
-        pthread_cond_signal( &cbuf->internal->cond );
-        pthread_mutex_unlock( &cbuf->internal->mutex );
+        COND_SIGNAL( &cbuf->internal->cond );
+        MUTEX_UNLOCK( &cbuf->internal->mutex );
     }
     else
     {
-        pthread_cond_wait( &cbuf->internal->cond, &cbuf->internal->mutex );
-        pthread_mutex_unlock( &cbuf->internal->mutex );
+        COND_WAIT( &cbuf->internal->cond, &cbuf->internal->mutex );
+        MUTEX_UNLOCK( &cbuf->internal->mutex );
         goto try_again_read;
     }
 
     return len;
 }
+
+#if 0
+int buffer_retreat_and_unlock(cbuf_handle_t cbuf, size_t len)
+{
+    assert(cbuf && len);
+
+    size_t size = cbuf->internal->max;
+
+    retreat_pointer_n(cbuf, len);
+
+    COND_SIGNAL( &cbuf->internal->cond );
+    MUTEX_UNLOCK( &cbuf->internal->mutex );
+
+    return 0;
+}
+
+int read_buffer_no_retreat_and_lock(cbuf_handle_t cbuf, uint8_t *data, size_t len)
+{
+    assert(cbuf && data && cbuf->internal && cbuf->buffer);
+
+    int r = -1;
+
+ try_again_read:
+    MUTEX_LOCK( &cbuf->internal->mutex );
+
+    size_t size = cbuf->internal->max;
+
+    if(circular_buf_size_internal(cbuf) >= len)
+    {
+        if ( ((cbuf->internal->tail + len) % size) > cbuf->internal->tail)
+        {
+            memcpy(data, cbuf->buffer + cbuf->internal->tail, len);
+        }
+        else
+        {
+            memcpy(data, cbuf->buffer + cbuf->internal->tail, size - cbuf->internal->tail);
+            memcpy(data + (size - cbuf->internal->tail), cbuf->buffer, len - (size - cbuf->internal->tail));
+        }
+        r = 0;
+
+        // COND_SIGNAL( &cbuf->internal->cond );
+        // MUTEX_UNLOCK( &cbuf->internal->mutex );
+    }
+    else
+    {
+        COND_WAIT( &cbuf->internal->cond, &cbuf->internal->mutex );
+        MUTEX_UNLOCK( &cbuf->internal->mutex );
+        goto try_again_read;
+    }
+
+    return r;
+}
+#endif
 
 int read_buffer(cbuf_handle_t cbuf, uint8_t *data, size_t len)
 {
@@ -436,7 +558,7 @@ int read_buffer(cbuf_handle_t cbuf, uint8_t *data, size_t len)
     int r = -1;
 
  try_again_read:
-    pthread_mutex_lock( &cbuf->internal->mutex );
+    MUTEX_LOCK( &cbuf->internal->mutex );
 
     size_t size = cbuf->internal->max;
 
@@ -454,13 +576,13 @@ int read_buffer(cbuf_handle_t cbuf, uint8_t *data, size_t len)
         retreat_pointer_n(cbuf, len);
         r = 0;
 
-        pthread_cond_signal( &cbuf->internal->cond );
-        pthread_mutex_unlock( &cbuf->internal->mutex );
+        COND_SIGNAL( &cbuf->internal->cond );
+        MUTEX_UNLOCK( &cbuf->internal->mutex );
     }
     else
     {
-        pthread_cond_wait( &cbuf->internal->cond, &cbuf->internal->mutex );
-        pthread_mutex_unlock( &cbuf->internal->mutex );
+        COND_WAIT( &cbuf->internal->cond, &cbuf->internal->mutex );
+        MUTEX_UNLOCK( &cbuf->internal->mutex );
         goto try_again_read;
     }
 
@@ -474,7 +596,7 @@ int write_buffer(cbuf_handle_t cbuf, uint8_t * data, size_t len)
     int r = -1;
 
 try_again_write:
-    pthread_mutex_lock( &cbuf->internal->mutex );
+    MUTEX_LOCK( &cbuf->internal->mutex );
 
     size_t size = cbuf->internal->max;
 
@@ -492,13 +614,13 @@ try_again_write:
         advance_pointer_n(cbuf, len);
         r = 0;
 
-        pthread_cond_signal( &cbuf->internal->cond );
-        pthread_mutex_unlock( &cbuf->internal->mutex );
+        COND_SIGNAL( &cbuf->internal->cond );
+        MUTEX_UNLOCK( &cbuf->internal->mutex );
     }
     else
     {
-        pthread_cond_wait( &cbuf->internal->cond, &cbuf->internal->mutex );
-        pthread_mutex_unlock( &cbuf->internal->mutex );
+        COND_WAIT( &cbuf->internal->cond, &cbuf->internal->mutex );
+        MUTEX_UNLOCK( &cbuf->internal->mutex );
         goto try_again_write;
     }
 
@@ -512,20 +634,41 @@ cbuf_handle_t circular_buf_init(uint8_t* buffer, size_t size)
 {
     assert(buffer && size);
 
+#if defined(_WIN32)
+    cbuf_handle_t cbuf = (cbuf_handle_t) malloc(sizeof(struct circular_buf_t));
+    assert(cbuf);
+    cbuf->internal = (struct circular_buf_t_aux *) malloc(sizeof(struct circular_buf_t_aux));
+    assert(cbuf->internal);
+#else
     cbuf_handle_t cbuf = (cbuf_handle_t) memalign(SHMLBA, sizeof(struct circular_buf_t));
     assert(cbuf);
-
     cbuf->internal = (struct circular_buf_t_aux *) memalign(SHMLBA, sizeof(struct circular_buf_t_aux));
     assert(cbuf->internal);
+#endif
 
     cbuf->buffer = buffer;
     cbuf->internal->max = size;
     circular_buf_reset(cbuf);
+    assert(circular_buf_empty(cbuf));
 
+#if defined(_WIN32)
+    cbuf->internal->mutex = CreateMutex(
+					NULL,              // default security attributes
+					FALSE,             // initially not owned
+					NULL);       // named mutex
+
+    cbuf->internal->cond = CreateEvent(
+				       NULL,
+				       FALSE,
+				       FALSE,
+				       NULL
+				       );
+#else
     pthread_mutex_init( &cbuf->internal->mutex, NULL );
     pthread_cond_init( &cbuf->internal->cond, NULL );
-
-    assert(circular_buf_empty(cbuf));
+#endif
+    
+    
 
     return cbuf;
 }

@@ -21,6 +21,10 @@
  */
 
 #include "datalink_layer/arq.h"
+#include "audioio/audioio.h"
+
+extern cbuf_handle_t capture_buffer;
+extern cbuf_handle_t playback_buffer;
 
 cl_arq_controller::cl_arq_controller()
 {
@@ -557,7 +561,9 @@ void cl_arq_controller::load_configuration(int configuration, int level, int bac
 	gear_shift_blocked_for_nBlocks=default_configuration_ARQ.gear_shift_block_for_nBlocks_total;
 
 	message_transmission_time_ms=ceil((1000.0*(telecom_system->data_container.Nsymb+telecom_system->data_container.preamble_nSymb)*telecom_system->data_container.Nofdm*telecom_system->frequency_interpolation_rate)/(float)(telecom_system->frequency_interpolation_rate*(telecom_system->bandwidth/telecom_system->ofdm.Nc)*telecom_system->ofdm.Nfft));
-	time_left_to_send_last_frame=(float)telecom_system->speaker.frames_to_leave_transmit_fct/(float)(telecom_system->frequency_interpolation_rate*(telecom_system->bandwidth/telecom_system->ofdm.Nc)*telecom_system->ofdm.Nfft);
+    // TODO: audio migration
+	// time_left_to_send_last_frame=(float)telecom_system->speaker.frames_to_leave_transmit_fct/(float)(telecom_system->frequency_interpolation_rate*(telecom_system->bandwidth/telecom_system->ofdm.Nc)*telecom_system->ofdm.Nfft);
+    time_left_to_send_last_frame=0;
 
 	set_ack_timeout_data((data_batch_size+1+control_batch_size+2*ack_batch_size)*message_transmission_time_ms+time_left_to_send_last_frame+4*ptt_on_delay_ms+4*ptt_off_delay_ms);
 	set_ack_timeout_control((control_batch_size+ack_batch_size)*message_transmission_time_ms+time_left_to_send_last_frame+2*ptt_on_delay_ms+2*ptt_off_delay_ms);
@@ -1036,7 +1042,7 @@ void cl_arq_controller::cleanup()
 		this->messages_control.status=FREE;
 		this->messages_control.type=NONE;
 	}
-	else if(messages_control.status==FAILED)
+	else if(messages_control.status==FAILED_)
 	{
 		// SEND FAILED TO USER
 		this->messages_control.ack_timeout=0;
@@ -1060,7 +1066,7 @@ void cl_arq_controller::cleanup()
 			this->messages_tx[i].status=FREE;
 			this->messages_tx[i].type=NONE;
 		}
-		else if(messages_tx[i].status==FAILED)
+		else if(messages_tx[i].status==FAILED_)
 		{
 			// SEND FAILED TO USER
 			this->messages_tx[i].ack_timeout=0;
@@ -1114,7 +1120,7 @@ void cl_arq_controller::process_main()
 				user_command_buffer+=tcp_socket_control.message->buffer[i];
 			}
 		}
-		else if(nBytes_received==0 || (tcp_socket_control.timer.get_elapsed_time_ms()>=tcp_socket_control.timeout_ms && tcp_socket_control.timeout_ms!=INFINITE))
+		else if(nBytes_received==0 || (tcp_socket_control.timer.get_elapsed_time_ms()>=tcp_socket_control.timeout_ms && tcp_socket_control.timeout_ms!=INFINITE_))
 		{
 
 			fifo_buffer_tx.flush();
@@ -1173,7 +1179,7 @@ void cl_arq_controller::process_main()
 			tcp_socket_control.message->length=str.length();
 			tcp_socket_control.transmit();
 		}
-		else if(nBytes_received==0 || (tcp_socket_data.timer.get_elapsed_time_ms()>=tcp_socket_data.timeout_ms && tcp_socket_data.timeout_ms!=INFINITE))
+		else if(nBytes_received==0 || (tcp_socket_data.timer.get_elapsed_time_ms()>=tcp_socket_data.timeout_ms && tcp_socket_data.timeout_ms!=INFINITE_))
 		{
 
 			fifo_buffer_tx.flush();
@@ -1367,6 +1373,8 @@ void cl_arq_controller::reset_all_timers()
 
 void cl_arq_controller::send(st_message* message, int message_location)
 {
+	printf("send()\n");
+
 	int header_length=0;
 	if(message->type==DATA_LONG)
 	{
@@ -1418,7 +1426,12 @@ void cl_arq_controller::send(st_message* message, int message_location)
 
 	telecom_system->transmit_byte(telecom_system->data_container.data_byte,header_length+message->length,telecom_system->data_container.ready_to_transmit_passband_data_tx,message_location);
 
-	telecom_system->speaker.transfere(telecom_system->data_container.ready_to_transmit_passband_data_tx,telecom_system->data_container.Nofdm*telecom_system->data_container.interpolation_rate*(telecom_system->data_container.Nsymb+telecom_system->data_container.preamble_nSymb));
+	tx_transfer(telecom_system->data_container.ready_to_transmit_passband_data_tx,
+                telecom_system->data_container.Nofdm * telecom_system->data_container.interpolation_rate *
+                (telecom_system->data_container.Nsymb + telecom_system->data_container.preamble_nSymb));
+
+	while (size_buffer(playback_buffer) > 0)
+		msleep(1);
 
 	last_message_sent_type=message->type;
 	if(message->type==CONTROL || message->type==ACK_CONTROL)
@@ -1426,6 +1439,7 @@ void cl_arq_controller::send(st_message* message, int message_location)
 		last_message_sent_code=message->data[0];
 	}
 	last_received_message_sequence=-1;
+
 }
 
 void cl_arq_controller::send_batch()
@@ -1435,7 +1449,7 @@ void cl_arq_controller::send_batch()
 	cl_timer ptt_on_delay, ptt_off_delay;
 	ptt_on_delay.start();
 
-	int frame_output_size=telecom_system->data_container.Nofdm*telecom_system->data_container.interpolation_rate*(telecom_system->data_container.Nsymb+telecom_system->data_container.preamble_nSymb);
+	int frame_output_size = telecom_system->data_container.Nofdm*telecom_system->data_container.interpolation_rate*(telecom_system->data_container.Nsymb+telecom_system->data_container.preamble_nSymb);
 
 	double *batch_frames_output_data=NULL;
 	double *batch_frames_output_data_filtered1=NULL;
@@ -1534,19 +1548,28 @@ void cl_arq_controller::send_batch()
 	telecom_system->ofdm.FIR_tx1.apply(batch_frames_output_data,batch_frames_output_data_filtered1,(message_batch_counter_tx+2)*frame_output_size);
 	telecom_system->ofdm.FIR_tx2.apply(batch_frames_output_data_filtered1,batch_frames_output_data_filtered2,(message_batch_counter_tx+2)*frame_output_size);
 
-	while(ptt_on_delay.get_elapsed_time_ms()<ptt_on_delay_ms);
+	while(ptt_on_delay.get_elapsed_time_ms() < ptt_on_delay_ms)
+		msleep(1);
 
 	if(messages_batch_tx[0].type==DATA_LONG || messages_batch_tx[0].type==DATA_SHORT)
 	{
-		telecom_system->speaker.transfere(&batch_frames_output_data_filtered2[(0+1)*frame_output_size],frame_output_size);
-	}
-	for(int i=0;i<message_batch_counter_tx;i++)
-	{
-		telecom_system->speaker.transfere(&batch_frames_output_data_filtered2[(i+1)*frame_output_size],frame_output_size);
+		tx_transfer(&batch_frames_output_data_filtered2[(0+1)*frame_output_size], frame_output_size); // TODO: aren't we transmitting this message twice?
 	}
 
+	for(int i=0;i<message_batch_counter_tx;i++)
+	{
+		tx_transfer(&batch_frames_output_data_filtered2[(i+1)*frame_output_size], frame_output_size);
+	}
+
+	// wait buffer to be played
+	while (size_buffer(playback_buffer) > 0)
+		msleep(1);
+
 	ptt_off_delay.start();
-	while(ptt_off_delay.get_elapsed_time_ms()<ptt_off_delay_ms);
+	while(ptt_off_delay.get_elapsed_time_ms() < ptt_off_delay_ms)
+		msleep(1);
+
+	ptt_off();
 
 	if (batch_frames_output_data!=NULL)
 	{
@@ -1586,116 +1609,125 @@ void cl_arq_controller::send_batch()
 
 	}
 	message_batch_counter_tx=0;
-	ptt_off();
 }
 
 void cl_arq_controller::receive()
 {
-	st_receive_stats received_message_stats;
-	if(telecom_system->data_container.data_ready==1)
+	int signal_period = telecom_system->data_container.Nofdm * telecom_system->data_container.buffer_Nsymb * telecom_system->data_container.interpolation_rate; // in samples
+	int symbol_period = telecom_system->data_container.Nofdm * telecom_system->data_container.interpolation_rate;
+
+#if 0 // TODO:  do we need this?
+	if(telecom_system->data_container.data_ready == 0)
 	{
-		if(telecom_system->data_container.frames_to_read==0)
+		msleep(1);
+		return;
+	}
+#endif
+	MUTEX_LOCK(&capture_prep_mutex);
+	st_receive_stats received_message_stats;
+	if(telecom_system->data_container.frames_to_read==0)
+	{
+
+
+		memcpy(telecom_system->data_container.ready_to_process_passband_delayed_data, telecom_system->data_container.passband_delayed_data, signal_period * sizeof(double));
+
+		MUTEX_UNLOCK(&capture_prep_mutex);
+
+		received_message_stats = telecom_system->receive_byte(telecom_system->data_container.ready_to_process_passband_delayed_data,telecom_system->data_container.data_byte);
+
+		measurements.signal_stregth_dbm = received_message_stats.signal_stregth_dbm;
+
+		if (received_message_stats.message_decoded==YES)
 		{
-			for(int i=0;i<telecom_system->data_container.Nofdm*telecom_system->data_container.buffer_Nsymb*telecom_system->data_container.interpolation_rate;i++)
+			int end_of_current_message = received_message_stats.delay / symbol_period  + telecom_system->data_container.Nsymb + telecom_system->data_container.preamble_nSymb;
+			int frames_left_in_buffer = telecom_system->data_container.buffer_Nsymb - end_of_current_message;
+			if(frames_left_in_buffer<0)
+				frames_left_in_buffer=0;
+
+			telecom_system->data_container.frames_to_read=telecom_system->data_container.Nsymb+telecom_system->data_container.preamble_nSymb-frames_left_in_buffer-telecom_system->data_container.nUnder_processing_events;
+
+			if(telecom_system->data_container.frames_to_read > (telecom_system->data_container.Nsymb+telecom_system->data_container.preamble_nSymb) || telecom_system->data_container.frames_to_read<0)
+				telecom_system->data_container.frames_to_read = telecom_system->data_container.Nsymb+telecom_system->data_container.preamble_nSymb-frames_left_in_buffer;
+
+			telecom_system->receive_stats.delay_of_last_decoded_message += (telecom_system->data_container.Nsymb + telecom_system->data_container.preamble_nSymb - (telecom_system->data_container.frames_to_read + telecom_system->data_container.nUnder_processing_events)) * symbol_period;
+
+			telecom_system->data_container.nUnder_processing_events = 0;
+
+			measurements.frequency_offset = received_message_stats.freq_offset;
+			if(this->role == COMMANDER)
 			{
-				telecom_system->data_container.ready_to_process_passband_delayed_data[i]=telecom_system->data_container.passband_delayed_data[i];
-			}
-			received_message_stats=telecom_system->receive_byte(telecom_system->data_container.ready_to_process_passband_delayed_data,telecom_system->data_container.data_byte);
-
-			measurements.signal_stregth_dbm=received_message_stats.signal_stregth_dbm;
-
-			if (received_message_stats.message_decoded==YES)
-			{
-				int end_of_current_message=received_message_stats.delay/(telecom_system->data_container.Nofdm*telecom_system->data_container.interpolation_rate)+telecom_system->data_container.Nsymb+telecom_system->data_container.preamble_nSymb;
-				int frames_left_in_buffer=telecom_system->data_container.buffer_Nsymb-end_of_current_message;
-				if(frames_left_in_buffer<0) {frames_left_in_buffer=0;}
-
-				telecom_system->data_container.frames_to_read=telecom_system->data_container.Nsymb+telecom_system->data_container.preamble_nSymb-frames_left_in_buffer-telecom_system->data_container.nUnder_processing_events;
-
-				if(telecom_system->data_container.frames_to_read>(telecom_system->data_container.Nsymb+telecom_system->data_container.preamble_nSymb) || telecom_system->data_container.frames_to_read<0)
-				{
-					telecom_system->data_container.frames_to_read=telecom_system->data_container.Nsymb+telecom_system->data_container.preamble_nSymb-frames_left_in_buffer;
-				}
-
-				telecom_system->receive_stats.delay_of_last_decoded_message+=(telecom_system->data_container.Nsymb+telecom_system->data_container.preamble_nSymb-(telecom_system->data_container.frames_to_read+telecom_system->data_container.nUnder_processing_events))*telecom_system->data_container.Nofdm*telecom_system->data_container.interpolation_rate;
-
-				telecom_system->data_container.nUnder_processing_events=0;
-
-				measurements.frequency_offset=received_message_stats.freq_offset;
-				if(this->role==COMMANDER)
-				{
-					measurements.SNR_uplink=received_message_stats.SNR;
-				}
-				else
-				{
-					measurements.SNR_downlink=received_message_stats.SNR;
-				}
-
-				for(int i=0;i<this->max_data_length+this->max_header_length;i++)
-				{
-					message_TxRx_byte_buffer[i]=(char)telecom_system->data_container.data_byte[i];
-				}
-
-				if(message_TxRx_byte_buffer[1]==this->connection_id || message_TxRx_byte_buffer[1]==BROADCAST_ID)
-				{
-					messages_rx_buffer.status=RECEIVED;
-					messages_rx_buffer.type=message_TxRx_byte_buffer[0];
-					messages_rx_buffer.sequence_number=message_TxRx_byte_buffer[2];
-					last_received_message_sequence=messages_rx_buffer.sequence_number;
-					if(messages_rx_buffer.type==ACK_CONTROL  ||  messages_rx_buffer.type==CONTROL)
-					{
-						for(int j=0;j<max_data_length+max_header_length-CONTROL_ACK_CONTROL_HEADER_LENGTH;j++)
-						{
-							messages_rx_buffer.data[j]=message_TxRx_byte_buffer[j+CONTROL_ACK_CONTROL_HEADER_LENGTH];
-						}
-					}
-					if( messages_rx_buffer.type==ACK_MULTI || messages_rx_buffer.type==ACK_RANGE)
-					{
-						for(int j=0;j<max_data_length+max_header_length-ACK_MULTI_ACK_RANGE_HEADER_LENGTH;j++)
-						{
-							messages_rx_buffer.data[j]=message_TxRx_byte_buffer[j+ACK_MULTI_ACK_RANGE_HEADER_LENGTH];
-						}
-					}
-					else if(messages_rx_buffer.type==DATA_LONG)
-					{
-						messages_rx_buffer.id=message_TxRx_byte_buffer[3];
-						messages_rx_buffer.length=max_data_length+max_header_length-DATA_LONG_HEADER_LENGTH;
-						for(int j=0;j<max_data_length+max_header_length-DATA_LONG_HEADER_LENGTH;j++)
-						{
-							messages_rx_buffer.data[j]=message_TxRx_byte_buffer[j+DATA_LONG_HEADER_LENGTH];
-						}
-					}
-					else if(messages_rx_buffer.type==DATA_SHORT)
-					{
-						messages_rx_buffer.id=message_TxRx_byte_buffer[3];
-						messages_rx_buffer.length=(unsigned char)message_TxRx_byte_buffer[4];
-						for(int j=0;j<messages_rx_buffer.length;j++)
-						{
-							messages_rx_buffer.data[j]=message_TxRx_byte_buffer[j+DATA_SHORT_HEADER_LENGTH];
-						}
-					}
-
-					last_message_received_type=messages_rx_buffer.type;
-					if(messages_rx_buffer.type==CONTROL || messages_rx_buffer.type==ACK_CONTROL)
-					{
-						last_message_received_code=messages_rx_buffer.data[0];
-					}
-				}
+				measurements.SNR_uplink = received_message_stats.SNR;
 			}
 			else
 			{
-				if(telecom_system->data_container.data_ready==1 && telecom_system->data_container.frames_to_read==0 && telecom_system->receive_stats.delay_of_last_decoded_message!=-1)
+				measurements.SNR_downlink = received_message_stats.SNR;
+			}
+
+			for(int i=0; i < this->max_data_length + this->max_header_length; i++)
+			{
+				message_TxRx_byte_buffer[i] = (char)telecom_system->data_container.data_byte[i];
+			}
+
+			if(message_TxRx_byte_buffer[1] == this->connection_id || message_TxRx_byte_buffer[1] == BROADCAST_ID)
+			{
+				messages_rx_buffer.status=RECEIVED;
+				messages_rx_buffer.type=message_TxRx_byte_buffer[0];
+				messages_rx_buffer.sequence_number=message_TxRx_byte_buffer[2];
+				last_received_message_sequence=messages_rx_buffer.sequence_number;
+				if(messages_rx_buffer.type==ACK_CONTROL  ||  messages_rx_buffer.type==CONTROL)
 				{
-					telecom_system->receive_stats.delay_of_last_decoded_message-=telecom_system->data_container.Nofdm*telecom_system->data_container.interpolation_rate;
-					if(telecom_system->receive_stats.delay_of_last_decoded_message<0)
+					for(int j=0;j<max_data_length+max_header_length-CONTROL_ACK_CONTROL_HEADER_LENGTH;j++)
 					{
-						telecom_system->receive_stats.delay_of_last_decoded_message=-1;
+						messages_rx_buffer.data[j]=message_TxRx_byte_buffer[j+CONTROL_ACK_CONTROL_HEADER_LENGTH];
 					}
+				}
+				if( messages_rx_buffer.type==ACK_MULTI || messages_rx_buffer.type==ACK_RANGE)
+				{
+					for(int j=0;j<max_data_length+max_header_length-ACK_MULTI_ACK_RANGE_HEADER_LENGTH;j++)
+					{
+						messages_rx_buffer.data[j]=message_TxRx_byte_buffer[j+ACK_MULTI_ACK_RANGE_HEADER_LENGTH];
+					}
+				}
+				else if(messages_rx_buffer.type==DATA_LONG)
+				{
+					messages_rx_buffer.id=message_TxRx_byte_buffer[3];
+					messages_rx_buffer.length=max_data_length+max_header_length-DATA_LONG_HEADER_LENGTH;
+					for(int j=0;j<max_data_length+max_header_length-DATA_LONG_HEADER_LENGTH;j++)
+					{
+						messages_rx_buffer.data[j]=message_TxRx_byte_buffer[j+DATA_LONG_HEADER_LENGTH];
+					}
+				}
+				else if(messages_rx_buffer.type==DATA_SHORT)
+				{
+					messages_rx_buffer.id=message_TxRx_byte_buffer[3];
+					messages_rx_buffer.length=(unsigned char)message_TxRx_byte_buffer[4];
+					for(int j=0;j<messages_rx_buffer.length;j++)
+					{
+						messages_rx_buffer.data[j]=message_TxRx_byte_buffer[j+DATA_SHORT_HEADER_LENGTH];
+					}
+				}
+
+				last_message_received_type=messages_rx_buffer.type;
+				if(messages_rx_buffer.type==CONTROL || messages_rx_buffer.type==ACK_CONTROL)
+				{
+					last_message_received_code=messages_rx_buffer.data[0];
 				}
 			}
 		}
-		telecom_system->data_container.data_ready=0;
+		else
+		{
+			if(telecom_system->data_container.frames_to_read==0 && telecom_system->receive_stats.delay_of_last_decoded_message!=-1)
+			{
+				telecom_system->receive_stats.delay_of_last_decoded_message -= telecom_system->data_container.Nofdm*telecom_system->data_container.interpolation_rate;
+				if(telecom_system->receive_stats.delay_of_last_decoded_message < 0)
+				{
+					telecom_system->receive_stats.delay_of_last_decoded_message = -1;
+				}
+			}
+		}
 	}
+	telecom_system->data_container.data_ready = 0;
+	MUTEX_UNLOCK(&capture_prep_mutex);
 }
 
 
@@ -1936,7 +1968,7 @@ void cl_arq_controller::print_stats()
 		{
 			std::cout<<"FILE_START";
 		}
-		else if (this->last_message_sent_code==FILE_END)
+		else if (this->last_message_sent_code==FILE_END_)
 		{
 			std::cout<<"FILE_END";
 		}
@@ -2018,7 +2050,7 @@ void cl_arq_controller::print_stats()
 		{
 			std::cout<<"FILE_START";
 		}
-		else if (this->last_message_received_code==FILE_END)
+		else if (this->last_message_received_code==FILE_END_)
 		{
 			std::cout<<"FILE_END";
 		}

@@ -26,6 +26,10 @@
 #include <complex>
 #include <cmath>
 
+#ifndef M_PI
+#define M_PI          3.14159265358979323846  /* pi */
+#endif
+
 void shift_left(double* matrix, int size, int nShift);
 double get_angle(std::complex <double> value);
 double get_amplitude(std::complex <double> value);

@@ -20,6 +20,7 @@
  *
  */
 
+#include "common/os_interop.h"
 #include "physical_layer/ofdm.h"
 
 
@@ -513,20 +514,18 @@ void cl_pilot_configurator::init(int Nfft, int Nc, int Nsymb,struct st_carrier* 
 		this->print();
 	}
 
-	srand(seed);
-
+	__srandom(seed);
 	int last_pilot=0;
 	int pilot_value;
 	if(this->modulation==DBPSK)
 	{
 		for(int i=0;i<nPilots;i++)
 		{
-			pilot_value=rand()%2 ^ last_pilot;
+			pilot_value=__random()%2 ^ last_pilot;
 			sequence[i]=std::complex <double>(2*pilot_value-1,0)*boost;
 			last_pilot=pilot_value;
 		}
 	}
-	srand(time(0));
 }
 
 void cl_pilot_configurator::deinit()
@@ -719,21 +718,18 @@ void cl_preamble_configurator::init(int Nfft, int Nc, struct st_carrier* _carrie
 		this->print();
 	}
 
-	srand(seed);
-
+	__srandom(seed);
 	for(int i=0;i<this->Nsymb*this->Nc;i++)
 	{
 		if(modulation==MOD_BPSK)
 		{
-			sequence[i]=std::complex <double>(2*(rand()%2)-1,0);
+			sequence[i]=std::complex <double>(2*(__random()%2)-1,0);
 		}
 		else if(modulation==MOD_QPSK)
 		{
-			sequence[i]=std::complex <double>(2*(rand()%2)-1,2*(rand()%2)-1)/sqrt(2);
+			sequence[i]=std::complex <double>(2*(__random()%2)-1,2*(__random()%2)-1)/sqrt(2);
 		}
 	}
-
-
 
 	int preamble_index=0;
 	for(int j=0;j<this->Nsymb;j++)
@@ -752,7 +748,6 @@ void cl_preamble_configurator::init(int Nfft, int Nc, struct st_carrier* _carrie
 		}
 	}
 
-	srand(time(0));
 }
 
 void cl_preamble_configurator::deinit()

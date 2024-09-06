@@ -1,0 +1,17 @@
+Version 0.3:
+
+- New audio subsystem with support to PulseAudio, ALSA, DirectSound and WASAPI
+- New shared memory-based simplex modes (RX_SHM, TX_SHM)
+- New command line interface with many parameters
+
+Version 0.2.5:
+
+- Implemented more robust modes
+
+Version 0.2:
+
+- Implemented datalink layer - ARQ and Gear-shifting
+
+Version 0.1:
+
+- Implemented physical layer - channel estimation, time sync, filters, OFDM, LDPC
