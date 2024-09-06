@@ -118,6 +118,7 @@ ffmem_copy ffmem_move
 #endif
 
 #if defined FF_WIN
+	#include <winsock2.h>
 	#include <windows.h>
 	#include <stdlib.h>
 #else

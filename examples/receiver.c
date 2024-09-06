@@ -10,8 +10,7 @@
 #include "common/shm_posix.h"
 #include "common/ring_buffer_posix.h"
 #include "common/common_defines.h"
-// #define SHM_PAYLOAD_BUFFER_SIZE 131072
-// #define SHM_PAYLOAD_NAME "/mercury-comm"
+#include "common/os_interop.h"
 
 #include <stdbool.h>
 #include <unistd.h>

@@ -96,7 +96,7 @@ cl_error_rate cl_telecom_system::baseband_test_EsN0(float EsN0,int max_frame_no)
 	{
 		for(int i=0;i<nReal_data;i++)
 		{
-			data_container.data_bit[i]=rand()%2;
+			data_container.data_bit[i]=__random()%2;
 		}
 		for(int i=0;i<nVirtual_data;i++)
 		{
@@ -235,7 +235,7 @@ cl_error_rate cl_telecom_system::passband_test_EsN0(float EsN0,int max_frame_no)
 	{
 		for(int i=0;i<nReal_data-outer_code_reserved_bits;i++)
 		{
-			data_container.data_bit[i]=rand()%2;
+			data_container.data_bit[i]=__random()%2;
 		}
 		bit_to_byte(data_container.data_bit,data_container.data_byte,nReal_data-outer_code_reserved_bits);
 		this->transmit_byte(data_container.data_byte,(nReal_data-outer_code_reserved_bits)/8,data_container.passband_data,SINGLE_MESSAGE);
@@ -822,13 +822,12 @@ void cl_telecom_system::init()
 		get_pre_equalization_channel();
 		reinit_subsystems.pre_equalization_channel=NO;
 	}
-
-	srand(bit_energy_dispersal_seed); // this sequence always the same (fixed seed). why?
+	__srandom (bit_energy_dispersal_seed);
+	bit_energy_dispersal_seed = default_configurations_telecom_system.bit_energy_dispersal_seed;
 	for(int i=0;i<ldpc.N;i++)
 	{
-		data_container.bit_energy_dispersal_sequence[i]=rand()%2;
+		data_container.bit_energy_dispersal_sequence[i]=__random()%2;
 	}
-	srand(time(0)); // and then we reset the seed?
 
 	receive_stats.iterations_done=-1;
 	receive_stats.delay=0;
@@ -1744,7 +1743,7 @@ void cl_telecom_system::get_pre_equalization_channel()
 	{
 		for(int i=0;i<data_container.Nc*log2(data_container.M);i++)
 		{
-			data_container.bit_interleaved_data[i]=rand()%2;
+			data_container.bit_interleaved_data[i]=__random()%2;
 		}
 		psk.mod(data_container.bit_interleaved_data,data_container.Nc*log2(data_container.M),data_container.modulated_data);
 

@@ -99,3 +99,15 @@ int COND_SIGNAL(HANDLE *mqh_wait);
 
 
 #endif
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+// portable glibc-based srand/rand
+long int __random (void);
+void __srandom (unsigned int x);
+
+#ifdef __cplusplus
+};
+#endif

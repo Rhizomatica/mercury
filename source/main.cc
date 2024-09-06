@@ -56,10 +56,12 @@ int main(int argc, char *argv[])
     input_dev[0] = 0;
     output_dev[0] = 0;
 
-    // seed the random number generator
-    srand(time(0));
+#if defined(__linux__)
+	printf("\e[0;31mMercury Version %s\e[0m\n", VERSION__);
+#elif defined(_WIN32)
+	printf("Mercury Version %s\n", VERSION__);
+#endif
 
-    printf("\e[0;31mMercury Version %s\e[0m\n", VERSION__);
 
     if (argc < 2)
     {
