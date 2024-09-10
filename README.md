@@ -51,25 +51,27 @@ make doc
 
 ## Running
 
-Mercury have some basic operating modes and test modes.
+Mercury has different operating modes and parameters. Usage parameters:
 
 ```
+Usage modes: 
 ./mercury -m [mode] -i [device] -o [device] -r [radio_type] -x [sound_system]
-./mercury -m ARQ -i [device] -o [device] -r [radio_type] -x [sound_system]
+./mercury -m ARQ -i [device] -o [device] -r [radio_type] -x [sound_system] -p [arq_tcp_base_port]
 ./mercury -h
 
 Options:
- -c [cpu_nr]                Run on CPU [cpu_br]. Defaults to CPU 3. Use -1 to disable CPU selection
- -m [mode]                  Available operating modes are: ARQ, TX_SHM, RX_SHM, TX_TEST, RX_TEST, TX_RAND, RX_RAND, PLOT_BASEBAND, PLOT_PASSBAND
- -s [modulation_config]     Sets modulation configuration for non-ARQ setups (0 to 16). Use "-l" for listing all available modulations
- -r [radio_type]            Available radio types are: stockhf, sbitx
- -i [device]                Radio Capture device id (eg: "plughw:0,0")
- -o [device]                Radio Playback device id (eg: "plughw:0,0")
- -x [sound_system]          Sets the sound system API to use: alsa, pulse, dsound or wasapi
- -l                         Lists all modulator/coding modes
- -z                         Lists all available sound cards
+ -c [cpu_nr]                Run on CPU [cpu_br]. Defaults to CPU 3. Use -1 to disable CPU selection.
+ -m [mode]                  Available operating modes are: ARQ, TX_SHM, RX_SHM, TX_TEST, RX_TEST, TX_RAND, RX_RAND, PLOT_BASEBAND, PLOT_PASSBAND.
+ -s [modulation_config]     Sets modulation configuration for non-ARQ setups (0 to 16). Use "-l" for listing all available modulations.
+ -r [radio_type]            Available radio types are: stockhf, sbitx.
+ -i [device]                Radio Capture device id (eg: "plughw:0,0").
+ -o [device]                Radio Playback device id (eg: "plughw:0,0").
+ -x [sound_system]          Sets the sound system API to use: alsa, pulse, dsound or wasapi.
+ -p [arq_tcp_base_port]     Sets the ARQ TCP base port (control is base_port, data is base_port + 1). Default is 7002.
+ -g                         Enables the adaptive modulation/robustness selection (gear-shifting). Experimental.
+ -l                         Lists all modulator/coding modes.
+ -z                         Lists all available sound cards.
  -h                         Prints this help.
-
 ```
 
 Mercury operating modes are:
