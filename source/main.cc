@@ -31,7 +31,7 @@
 #include "datalink_layer/arq.h"
 #include "audioio/audioio.h"
 
-// some globals TODO: wrap this up into some class
+// some globals TODO: wrap this up into some struct
 extern "C" {
     double carrier_frequency_offset; // set 0 to stock HF, or to the radio passband, eg., 15k for sBitx
     int radio_type;
@@ -48,6 +48,8 @@ int main(int argc, char *argv[])
 
     int mod_config = 0;
     int operation_mode = ARQ_MODE;
+    int gear_shift_mode = NO_GEAR_SHIFT;
+    int base_tcp_port = 0;
 
     int audio_system = -1;
 
@@ -67,24 +69,26 @@ int main(int argc, char *argv[])
     {
  manual:
         printf("Usage modes: \n%s -m [mode] -i [device] -o [device] -r [radio_type] -x [sound_system]\n", argv[0], argv[0]);
-        printf("%s -m ARQ -i [device] -o [device] -r [radio_type] -x [sound_system]\n", argv[0], argv[0]);
+        printf("%s -m ARQ -i [device] -o [device] -r [radio_type] -x [sound_system] -p [arq_tcp_base_port]\n", argv[0], argv[0]);
         printf("%s -h\n", argv[0]);
         printf("\nOptions:\n");
-        printf(" -c [cpu_nr]                Run on CPU [cpu_br]. Defaults to CPU 3. Use -1 to disable CPU selection\n");
-        printf(" -m [mode]                  Available operating modes are: ARQ, TX_SHM, RX_SHM, TX_TEST, RX_TEST, TX_RAND, RX_RAND, PLOT_BASEBAND, PLOT_PASSBAND\n");
-        printf(" -s [modulation_config]     Sets modulation configuration for non-ARQ setups (0 to 16). Use \"-l\" for listing all available modulations\n");
-        printf(" -r [radio_type]            Available radio types are: stockhf, sbitx\n");
-        printf(" -i [device]                Radio Capture device id (eg: \"plughw:0,0\")\n");
-        printf(" -o [device]                Radio Playback device id (eg: \"plughw:0,0\")\n");
-        printf(" -x [sound_system]          Sets the sound system API to use: alsa, pulse, dsound or wasapi\n");
-        printf(" -l                         Lists all modulator/coding modes\n");
-        printf(" -z                         Lists all available sound cards\n");
+        printf(" -c [cpu_nr]                Run on CPU [cpu_br]. Defaults to CPU 3. Use -1 to disable CPU selection.\n");
+        printf(" -m [mode]                  Available operating modes are: ARQ, TX_SHM, RX_SHM, TX_TEST, RX_TEST, TX_RAND, RX_RAND, PLOT_BASEBAND, PLOT_PASSBAND.\n");
+        printf(" -s [modulation_config]     Sets modulation configuration for non-ARQ setups (0 to 16). Use \"-l\" for listing all available modulations.\n");
+        printf(" -r [radio_type]            Available radio types are: stockhf, sbitx.\n");
+        printf(" -i [device]                Radio Capture device id (eg: \"plughw:0,0\").\n");
+        printf(" -o [device]                Radio Playback device id (eg: \"plughw:0,0\").\n");
+        printf(" -x [sound_system]          Sets the sound system API to use: alsa, pulse, dsound or wasapi.\n");
+		printf(" -p [arq_tcp_base_port]     Sets the ARQ TCP base port (control is base_port, data is base_port + 1). Default is 7002.\n");
+        printf(" -g                         Enables the adaptive modulation/robustness selection (gear-shifting). Experimental.\n");
+        printf(" -l                         Lists all modulator/coding modes.\n");
+        printf(" -z                         Lists all available sound cards.\n");
         printf(" -h                         Prints this help.\n");
         return EXIT_FAILURE;
     }
 
     int opt;
-    while ((opt = getopt(argc, argv, "hc:m:s:lr:i:o:x:z")) != -1)
+    while ((opt = getopt(argc, argv, "hc:m:s:lr:i:o:x:p:zg")) != -1)
     {
         switch (opt)
         {
@@ -118,6 +122,10 @@ int main(int argc, char *argv[])
         case 'c':
             if (optarg)
                 cpu_nr = atoi(optarg);
+            break;
+        case 'p':
+            if (optarg)
+				base_tcp_port = atoi(optarg);
             break;
         case 'm':
             if (!strcmp(optarg, "ARQ"))
@@ -153,7 +161,9 @@ int main(int argc, char *argv[])
             if (!strcmp(optarg, "coreaudio"))
                 audio_system = AUDIO_SUBSYSTEM_COREAUDIO;
             break;
-
+        case 'g':
+            gear_shift_mode = GEAR_SHIFT_ENABLED;
+            break;
         case 'z':
             list_sndcards = true;
             break;
@@ -289,6 +299,12 @@ int main(int argc, char *argv[])
         cl_arq_controller ARQ;
         ARQ.telecom_system = &telecom_system;
         ARQ.init();
+		ARQ.gear_shift_on = (gear_shift_mode == NO_GEAR_SHIFT)? NO : YES;
+		if (base_tcp_port)
+		{
+			ARQ.tcp_socket_control.port = base_tcp_port;
+			ARQ.tcp_socket_data.port = base_tcp_port + 1;
+		}
         ARQ.print_stats();
 
 		audioio_init_internal(input_dev, output_dev, audio_system, &radio_capture,
@@ -304,7 +320,7 @@ int main(int argc, char *argv[])
     {
         printf("Mode selected: RX_RAND\n");
         telecom_system.load_configuration(mod_config);
-        printf("CONFIG_%d (%f bps) Shannon_limit: %f\n", mod_config, telecom_system.rbc, telecom_system.Shannon_limit);
+        printf("Modulation: %d  Bitrate: %.2f bps  Shannon_limit: %.2f db\n",  mod_config, telecom_system.rbc, telecom_system.Shannon_limit);
 
         telecom_system.constellation_plot.open("PLOT");
         telecom_system.constellation_plot.reset("PLOT");
@@ -323,7 +339,7 @@ int main(int argc, char *argv[])
     {
         printf("Mode selected: TX_RAND\n");
         telecom_system.load_configuration(mod_config);
-        printf("CONFIG_%d (%f bps) Shannon_limit: %f\n", mod_config, telecom_system.rbc, telecom_system.Shannon_limit);
+        printf("Modulation: %d  Bitrate: %.2f bps  Shannon_limit: %.2f db\n",  mod_config, telecom_system.rbc, telecom_system.Shannon_limit);
 
 		audioio_init_internal(input_dev, output_dev, audio_system, &radio_capture,
 							  &radio_playback, &radio_capture_prep, &telecom_system);
@@ -338,7 +354,7 @@ int main(int argc, char *argv[])
     {
         printf("Mode selected: PLOT_BASEBAND\n");
         telecom_system.load_configuration(mod_config);
-        printf("CONFIG_%d (%f bps) Shannon_limit: %f\n", mod_config, telecom_system.rbc, telecom_system.Shannon_limit);
+        printf("Modulation: %d  Bitrate: %.2f bps  Shannon_limit: %.2f db\n",  mod_config, telecom_system.rbc, telecom_system.Shannon_limit);
 
         telecom_system.constellation_plot.open("PLOT");
         telecom_system.constellation_plot.reset("PLOT");
@@ -352,7 +368,7 @@ int main(int argc, char *argv[])
     {
         printf("Mode selected: PLOT_PASSBAND\n");
         telecom_system.load_configuration(mod_config);
-        printf("CONFIG_%d (%f bps) Shannon_limit: %f\n", mod_config, telecom_system.rbc, telecom_system.Shannon_limit);
+        printf("Modulation: %d  Bitrate: %.2f bps  Shannon_limit: %.2f db\n",  mod_config, telecom_system.rbc, telecom_system.Shannon_limit);
 
         telecom_system.constellation_plot.open("PLOT");
         telecom_system.constellation_plot.reset("PLOT");
@@ -366,7 +382,7 @@ int main(int argc, char *argv[])
     {
         printf("Mode selected: RX_TEST\n");
         telecom_system.load_configuration(mod_config);
-        printf("CONFIG_%d (%.2f bps) Shannon_limit: %.2f db\n", mod_config, telecom_system.rbc, telecom_system.Shannon_limit);
+        printf("Modulation: %d  Bitrate: %.2f bps  Shannon_limit: %.2f db\n",  mod_config, telecom_system.rbc, telecom_system.Shannon_limit);
 
 		audioio_init_internal(input_dev, output_dev, audio_system, &radio_capture,
 							  &radio_playback, &radio_capture_prep, &telecom_system);
@@ -382,7 +398,7 @@ int main(int argc, char *argv[])
     {
         printf("Mode selected: TX_TEST\n");
         telecom_system.load_configuration(mod_config);
-        printf("CONFIG_%d (%f bps) Shannon_limit: %.2f db\n", mod_config, telecom_system.rbc, telecom_system.Shannon_limit);
+        printf("Modulation: %d  Bitrate: %.2f bps  Shannon_limit: %.2f db\n",  mod_config, telecom_system.rbc, telecom_system.Shannon_limit);
 
 		audioio_init_internal(input_dev, output_dev, audio_system, &radio_capture,
 							  &radio_playback, &radio_capture_prep, &telecom_system);
@@ -397,9 +413,8 @@ int main(int argc, char *argv[])
 
     if (telecom_system.operation_mode == RX_SHM)
     {
-
-        telecom_system.load_configuration(mod_config);
         printf("Mode selected: RX_SHM\n");
+        telecom_system.load_configuration(mod_config);
         printf("Modulation: %d  Bitrate: %.2f bps  Shannon_limit: %.2f db\n",  mod_config, telecom_system.rbc, telecom_system.Shannon_limit);
 
         cbuf_handle_t buffer;

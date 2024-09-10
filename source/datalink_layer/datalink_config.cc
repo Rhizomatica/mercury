@@ -41,6 +41,7 @@ cl_configuration_arq::cl_configuration_arq()
 	init_configuration=CONFIG_1; // TODO: can we init with CONFIG_0?
 	ack_configuration=CONFIG_0;
 
+
 	gear_shift_on=NO;
 	gear_shift_algorithm=SUCCESS_BASED_LADDER;
 

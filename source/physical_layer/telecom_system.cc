@@ -822,6 +822,7 @@ void cl_telecom_system::init()
 		get_pre_equalization_channel();
 		reinit_subsystems.pre_equalization_channel=NO;
 	}
+
 	__srandom (bit_energy_dispersal_seed);
 	bit_energy_dispersal_seed = default_configurations_telecom_system.bit_energy_dispersal_seed;
 	for(int i=0;i<ldpc.N;i++)

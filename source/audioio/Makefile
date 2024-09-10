@@ -42,7 +42,7 @@ endif
 
 
 #CFLAGS += -Wall -Og -g -std=gnu99 -I./ffbase/ -I./ffaudio/ -I../../include
-CFLAGS = -Wall -O3 -g0 -I./ffbase/ -I./ffaudio/ -I../../include -pthread
+CFLAGS = -Wall -Wno-unused -O3 -g0 -I./ffbase/ -I./ffaudio/ -I../../include -pthread
 
 LDFLAGS=$(FFAUDIO_LINKFLAGS)
 

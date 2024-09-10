@@ -23,7 +23,7 @@
 #ifndef INC_COMMON_DEFINES_H_
 #define INC_COMMON_DEFINES_H_
 
-#define VERSION__ "0.3"
+#define VERSION__ "0.3.1"
 
 #define BER_PLOT_baseband 0
 #define BER_PLOT_passband 1
@@ -122,23 +122,33 @@ CONFIG_16 (5664.7 bps).
  */
 
 
+// messages definition
 #define FIRST_MESSAGE 0
 #define MIDDLE_MESSAGE 1
 #define FLUSH_MESSAGE 2
 #define SINGLE_MESSAGE 3
 #define NO_FILTER_MESSAGE 4
 
+// supported radios
 #define RADIO_SBITX 0
 #define RADIO_STOCKHF 1
 
+// {TX,RX}_SHM shared memory interface
 #define SHM_PAYLOAD_BUFFER_SIZE 131072
 #define SHM_PAYLOAD_NAME "/mercury-comm"
 
+// audio buffers shared memory interface
 // 1536000 * 8
 #define AUDIO_PAYLOAD_BUFFER_SIZE 12288000
 #define AUDIO_CAPT_PAYLOAD_NAME "/audio-capt"
 #define AUDIO_PLAY_PAYLOAD_NAME "/audio-play"
 
+
+// Gear shifting modes
+#define NO_GEAR_SHIFT 0
+#define GEAR_SHIFT_ENABLED 1
+// #define NO_GEAR_SHIFT_LADDER 2
+// #define NO_GEAR_SHIFT_SNR 3
 
 #define YES 1
 #define NO 0
