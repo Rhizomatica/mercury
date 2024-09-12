@@ -60,7 +60,7 @@ Usage modes:
 ./mercury -h
 
 Options:
- -c [cpu_nr]                Run on CPU [cpu_br]. Defaults to CPU 3. Use -1 to disable CPU selection.
+ -c [cpu_nr]                Run on CPU cpu_nr. Defaults to CPU 3. Use -1 to disable CPU selection.
  -m [mode]                  Available operating modes are: ARQ, TX_SHM, RX_SHM, TX_TEST, RX_TEST, TX_RAND, RX_RAND, PLOT_BASEBAND, PLOT_PASSBAND.
  -s [modulation_config]     Sets modulation configuration for non-ARQ setups (0 to 16). Use "-l" for listing all available modulations.
  -r [radio_type]            Available radio types are: stockhf, sbitx.
