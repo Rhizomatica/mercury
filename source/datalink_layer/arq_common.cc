@@ -438,7 +438,7 @@ void cl_arq_controller::messages_control_restore()
 }
 
 
-int cl_arq_controller::init(int tcp_base_port, int gear_shift_on)
+int cl_arq_controller::init(int tcp_base_port, int gear_shift_on, int initial_mode)
 {
 	int success=SUCCESSFUL;
 
@@ -465,8 +465,8 @@ int cl_arq_controller::init(int tcp_base_port, int gear_shift_on)
 	gear_shift_on = gear_shift_on;
 	gear_shift_algorithm=default_configuration_ARQ.gear_shift_algorithm;
 	current_configuration=CONFIG_NONE;
-	init_configuration=default_configuration_ARQ.init_configuration;
-	data_configuration=default_configuration_ARQ.init_configuration;
+	init_configuration = initial_mode;
+	data_configuration = initial_mode;
 	ack_configuration=default_configuration_ARQ.ack_configuration;
 
 	if(tcp_socket_data.init()!=SUCCESS || tcp_socket_control.init()!=SUCCESS )

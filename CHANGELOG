@@ -2,6 +2,7 @@ Version 0.3.1:
 
 - ARQ TCP port parametrized
 - Add switch to enable gear-shifting (WIP)
+- Modulation mode parameter is also used in ARQ mode (when gear-shift is disabled)
 
 Version 0.3:
 

@@ -115,7 +115,7 @@ public:
   void messages_control_backup();
   void messages_control_restore();
 
-  int init(int tcp_base_port, int gear_shift_on);
+  int init(int tcp_base_port, int gear_shift_on, int initial_mode);
 
   uint8_t CRC8_calc(char* data_byte, int nItems);
 

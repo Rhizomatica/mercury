@@ -46,7 +46,7 @@ int main(int argc, char *argv[])
     bool list_modes = false;
     bool list_sndcards = false;
 
-    int mod_config = 0;
+    int mod_config = CONFIG_1;
     int operation_mode = ARQ_MODE;
     int gear_shift_mode = NO_GEAR_SHIFT;
     int base_tcp_port = 0;
@@ -298,7 +298,7 @@ int main(int argc, char *argv[])
         printf("Mode selected: ARQ\n");
         cl_arq_controller ARQ;
         ARQ.telecom_system = &telecom_system;
-        ARQ.init(base_tcp_port, (gear_shift_mode == NO_GEAR_SHIFT)? NO : YES);
+        ARQ.init(base_tcp_port, (gear_shift_mode == NO_GEAR_SHIFT)? NO : YES, mod_config);
         ARQ.print_stats();
 
 		audioio_init_internal(input_dev, output_dev, audio_system, &radio_capture,
