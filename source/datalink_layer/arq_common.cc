@@ -438,7 +438,7 @@ void cl_arq_controller::messages_control_restore()
 }
 
 
-int cl_arq_controller::init()
+int cl_arq_controller::init(int tcp_base_port, int gear_shift_on)
 {
 	int success=SUCCESSFUL;
 
@@ -448,13 +448,21 @@ int cl_arq_controller::init()
 
 	set_link_timeout(default_configuration_ARQ.link_timeout);
 
-	tcp_socket_control.port=default_configuration_ARQ.tcp_socket_control_port;
-	tcp_socket_control.timeout_ms=default_configuration_ARQ.tcp_socket_control_timeout_ms;
+	if (tcp_base_port)
+	{
+		tcp_socket_control.port = tcp_base_port;
+		tcp_socket_data.port = tcp_base_port + 1;
+	}
+	else
+	{
+		tcp_socket_control.port = default_configuration_ARQ.tcp_socket_control_port;
+		tcp_socket_data.port = default_configuration_ARQ.tcp_socket_data_port;
+	}
 
-	tcp_socket_data.port=default_configuration_ARQ.tcp_socket_data_port;
+	tcp_socket_control.timeout_ms=default_configuration_ARQ.tcp_socket_control_timeout_ms;
 	tcp_socket_data.timeout_ms=default_configuration_ARQ.tcp_socket_data_timeout_ms;
 
-	gear_shift_on=default_configuration_ARQ.gear_shift_on;
+	gear_shift_on = gear_shift_on;
 	gear_shift_algorithm=default_configuration_ARQ.gear_shift_algorithm;
 	current_configuration=CONFIG_NONE;
 	init_configuration=default_configuration_ARQ.init_configuration;

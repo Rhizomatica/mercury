@@ -1,3 +1,8 @@
+Version 0.3.1:
+
+- ARQ TCP port parametrized
+- Add switch to enable gear-shifting (WIP)
+
 Version 0.3:
 
 - New audio subsystem with support to PulseAudio, ALSA, DirectSound and WASAPI

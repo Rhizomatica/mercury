@@ -80,7 +80,7 @@ int main(int argc, char *argv[])
         printf(" -o [device]                Radio Playback device id (eg: \"plughw:0,0\").\n");
         printf(" -x [sound_system]          Sets the sound system API to use: alsa, pulse, dsound or wasapi.\n");
 		printf(" -p [arq_tcp_base_port]     Sets the ARQ TCP base port (control is base_port, data is base_port + 1). Default is 7002.\n");
-        printf(" -g                         Enables the adaptive modulation/robustness selection (gear-shifting). Experimental.\n");
+        printf(" -g                         Enables the adaptive modulation selection (gear-shifting). Experimental.\n");
         printf(" -l                         Lists all modulator/coding modes.\n");
         printf(" -z                         Lists all available sound cards.\n");
         printf(" -h                         Prints this help.\n");
@@ -298,13 +298,7 @@ int main(int argc, char *argv[])
         printf("Mode selected: ARQ\n");
         cl_arq_controller ARQ;
         ARQ.telecom_system = &telecom_system;
-        ARQ.init();
-		ARQ.gear_shift_on = (gear_shift_mode == NO_GEAR_SHIFT)? NO : YES;
-		if (base_tcp_port)
-		{
-			ARQ.tcp_socket_control.port = base_tcp_port;
-			ARQ.tcp_socket_data.port = base_tcp_port + 1;
-		}
+        ARQ.init(base_tcp_port, (gear_shift_mode == NO_GEAR_SHIFT)? NO : YES);
         ARQ.print_stats();
 
 		audioio_init_internal(input_dev, output_dev, audio_system, &radio_capture,

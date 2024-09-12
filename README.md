@@ -68,7 +68,7 @@ Options:
  -o [device]                Radio Playback device id (eg: "plughw:0,0").
  -x [sound_system]          Sets the sound system API to use: alsa, pulse, dsound or wasapi.
  -p [arq_tcp_base_port]     Sets the ARQ TCP base port (control is base_port, data is base_port + 1). Default is 7002.
- -g                         Enables the adaptive modulation/robustness selection (gear-shifting). Experimental.
+ -g                         Enables the adaptive modulation/robustness selection (gear-shifting). Experimental!
  -l                         Lists all modulator/coding modes.
  -z                         Lists all available sound cards.
  -h                         Prints this help.
