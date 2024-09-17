@@ -68,19 +68,19 @@ int main(int argc, char *argv[])
     if (argc < 2)
     {
  manual:
-        printf("Usage modes: \n%s -m [mode] -i [device] -o [device] -r [radio_type] -x [sound_system]\n", argv[0], argv[0]);
-        printf("%s -m ARQ -i [device] -o [device] -r [radio_type] -x [sound_system] -p [arq_tcp_base_port]\n", argv[0], argv[0]);
+        printf("Usage modes: \n%s -m [mode] -s [modulation_config] -i [device] -o [device] -r [radio_type] -x [sound_system]\n", argv[0], argv[0]);
+        printf("%s -m ARQ -s [modulation_config] -i [device] -o [device] -r [radio_type] -x [sound_system] -p [arq_tcp_base_port]\n", argv[0], argv[0]);
         printf("%s -h\n", argv[0]);
         printf("\nOptions:\n");
         printf(" -c [cpu_nr]                Run on CPU [cpu_br]. Defaults to CPU 3. Use -1 to disable CPU selection.\n");
         printf(" -m [mode]                  Available operating modes are: ARQ, TX_SHM, RX_SHM, TX_TEST, RX_TEST, TX_RAND, RX_RAND, PLOT_BASEBAND, PLOT_PASSBAND.\n");
-        printf(" -s [modulation_config]     Sets modulation configuration for non-ARQ setups (0 to 16). Use \"-l\" for listing all available modulations.\n");
+        printf(" -s [modulation_config]     Sets modulation configuration for all modes including ARQ, except when gear-shift is enabled. Modes: 0 to 16. Use \"-l\" for listing all available modulations.\n");
         printf(" -r [radio_type]            Available radio types are: stockhf, sbitx.\n");
         printf(" -i [device]                Radio Capture device id (eg: \"plughw:0,0\").\n");
         printf(" -o [device]                Radio Playback device id (eg: \"plughw:0,0\").\n");
-        printf(" -x [sound_system]          Sets the sound system API to use: alsa, pulse, dsound or wasapi.\n");
+        printf(" -x [sound_system]          Sets the sound system API to use: alsa, pulse, dsound or wasapi. Default is alsa on Linux and dsound on Windows.\n");
 		printf(" -p [arq_tcp_base_port]     Sets the ARQ TCP base port (control is base_port, data is base_port + 1). Default is 7002.\n");
-        printf(" -g                         Enables the adaptive modulation selection (gear-shifting). Experimental.\n");
+        printf(" -g                         Enables the adaptive modulation selection (gear-shifting). Not working yet!.\n");
         printf(" -l                         Lists all modulator/coding modes.\n");
         printf(" -z                         Lists all available sound cards.\n");
         printf(" -h                         Prints this help.\n");
