@@ -648,8 +648,6 @@ cbuf_handle_t circular_buf_init(uint8_t* buffer, size_t size)
 
     cbuf->buffer = buffer;
     cbuf->internal->max = size;
-    circular_buf_reset(cbuf);
-    assert(circular_buf_empty(cbuf));
 
 #if defined(_WIN32)
     cbuf->internal->mutex = CreateMutex(
@@ -668,7 +666,9 @@ cbuf_handle_t circular_buf_init(uint8_t* buffer, size_t size)
     pthread_cond_init( &cbuf->internal->cond, NULL );
 #endif
     
-    
+    circular_buf_reset(cbuf);
+    assert(circular_buf_empty(cbuf));
+
 
     return cbuf;
 }
