@@ -72,7 +72,7 @@ int main(int argc, char *argv[])
         printf("%s -m ARQ -s [modulation_config] -i [device] -o [device] -r [radio_type] -x [sound_system] -p [arq_tcp_base_port]\n", argv[0], argv[0]);
         printf("%s -h\n", argv[0]);
         printf("\nOptions:\n");
-        printf(" -c [cpu_nr]                Run on CPU [cpu_br]. Defaults to CPU 3. Use -1 to disable CPU selection.\n");
+        printf(" -c [cpu_nr]                Run on CPU [cpu_br]. Use -1 to disable CPU selection, which is the default.\n");
         printf(" -m [mode]                  Available operating modes are: ARQ, TX_SHM, RX_SHM, TX_TEST, RX_TEST, TX_RAND, RX_RAND, PLOT_BASEBAND, PLOT_PASSBAND.\n");
         printf(" -s [modulation_config]     Sets modulation configuration for all modes including ARQ, except when gear-shift is enabled. Modes: 0 to 16. Use \"-l\" for listing all available modulations.\n");
         printf(" -r [radio_type]            Available radio types are: stockhf, sbitx.\n");
@@ -415,8 +415,7 @@ int main(int argc, char *argv[])
 
         buffer = circular_buf_init_shm(SHM_PAYLOAD_BUFFER_SIZE, (char *) SHM_PAYLOAD_NAME);
 
-		audioio_init_internal(input_dev, output_dev, audio_system, &radio_capture,
-							  &radio_playback, &radio_capture_prep, &telecom_system);
+        audioio_init_internal(input_dev, output_dev, audio_system, &radio_capture, &radio_playback, &radio_capture_prep, &telecom_system);
 
         while (!shutdown_)
         {
