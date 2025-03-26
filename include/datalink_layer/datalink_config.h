@@ -40,11 +40,8 @@ public:
 	int link_timeout;
 
 	int tcp_socket_control_port;
-	long int tcp_socket_control_timeout_ms;
 
 	int tcp_socket_data_port;
-	long int tcp_socket_data_timeout_ms;
-
 
 	char init_configuration;
 	char ack_configuration;

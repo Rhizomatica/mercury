@@ -459,9 +459,6 @@ int cl_arq_controller::init(int tcp_base_port, int gear_shift_on, int initial_mo
 		tcp_socket_data.port = default_configuration_ARQ.tcp_socket_data_port;
 	}
 
-	tcp_socket_control.timeout_ms=default_configuration_ARQ.tcp_socket_control_timeout_ms;
-	tcp_socket_data.timeout_ms=default_configuration_ARQ.tcp_socket_data_timeout_ms;
-
 	gear_shift_on = gear_shift_on;
 	gear_shift_algorithm=default_configuration_ARQ.gear_shift_algorithm;
 	current_configuration=CONFIG_NONE;
@@ -1110,111 +1107,77 @@ void cl_arq_controller::pad_messages_batch_tx(int size)
 
 void cl_arq_controller::process_main()
 {
-	std::string command="";
+    std::string command="";
 
-	if (tcp_socket_control.get_status()==TCP_STATUS_ACCEPTED)
-	{
-		if(tcp_socket_control.timer.counting==0)
-		{
-			tcp_socket_control.timer.start();
-		}
-		int nBytes_received=tcp_socket_control.receive();
-		if(nBytes_received>0)
-		{
-			tcp_socket_control.timer.start();
-
-			for(int i=0;i<tcp_socket_control.message->length;i++)
-			{
-				user_command_buffer+=tcp_socket_control.message->buffer[i];
-			}
-		}
-		else if(nBytes_received==0 || (tcp_socket_control.timer.get_elapsed_time_ms()>=tcp_socket_control.timeout_ms && tcp_socket_control.timeout_ms!=INFINITE_))
-		{
-
-			fifo_buffer_tx.flush();
-			fifo_buffer_backup.flush();
-			fifo_buffer_rx.flush();
-
-			tcp_socket_control.check_incomming_connection();
-			if (tcp_socket_control.get_status()==TCP_STATUS_ACCEPTED)
-			{
-				tcp_socket_control.timer.start();
-			}
-
-		}
-		size_t pos=std::string::npos;
-		do
-		{
-			size_t pos=user_command_buffer.find('\r');
-			if(pos!=std::string::npos)
-			{
-				command=user_command_buffer.substr(0, pos);
-				process_user_command(command);
-				user_command_buffer=user_command_buffer.substr(pos+1,std::string::npos);
-			}
-		}while(pos!=std::string::npos);
-
-	}
-	else
-	{
-		tcp_socket_control.check_incomming_connection();
-		if (tcp_socket_control.get_status()==TCP_STATUS_ACCEPTED)
-		{
-			tcp_socket_control.timer.start();
-		}
-	}
+    if (tcp_socket_control.get_status() == TCP_STATUS_ACCEPTED)
+    {
+        int nBytes_received = tcp_socket_control.receive();
+        if(nBytes_received > 0)
+        {
+            for(int i=0;i<tcp_socket_control.message->length;i++)
+            {
+                user_command_buffer += tcp_socket_control.message->buffer[i];
+            }
+        }
+        else if(nBytes_received == 0)
+        {
+            
+            fifo_buffer_tx.flush();
+            fifo_buffer_backup.flush();
+            fifo_buffer_rx.flush();
+        }
+        size_t pos=std::string::npos;
+        do
+        {
+            size_t pos=user_command_buffer.find('\r');
+            if(pos!=std::string::npos)
+            {
+                command=user_command_buffer.substr(0, pos);
+                process_user_command(command);
+                user_command_buffer=user_command_buffer.substr(pos+1,std::string::npos);
+            }
+        }while(pos!=std::string::npos);
+        
+    }
+    else
+    {
+        tcp_socket_control.check_incomming_connection();
+    }
 
 
-	if (tcp_socket_data.get_status()==TCP_STATUS_ACCEPTED)
-	{
-		if(tcp_socket_data.timer.counting==0)
-		{
-			tcp_socket_data.timer.start();
-		}
-		int nBytes_received=tcp_socket_data.receive();
-		if(nBytes_received>0)
-		{
-			tcp_socket_data.timer.start();
-			fifo_buffer_tx.push(tcp_socket_data.message->buffer, tcp_socket_data.message->length);
-
-			std::string str="BUFFER ";
-			str+=std::to_string(fifo_buffer_tx.get_size()-fifo_buffer_tx.get_free_size());
-			str+='\r';
-			for(long unsigned int i=0;i<str.length();i++)
-			{
-				tcp_socket_control.message->buffer[i]=str[i];
-			}
-			tcp_socket_control.message->length=str.length();
-			tcp_socket_control.transmit();
-		}
-		else if(nBytes_received==0 || (tcp_socket_data.timer.get_elapsed_time_ms()>=tcp_socket_data.timeout_ms && tcp_socket_data.timeout_ms!=INFINITE_))
-		{
-
-			fifo_buffer_tx.flush();
-			fifo_buffer_backup.flush();
-			fifo_buffer_rx.flush();
-
-			tcp_socket_data.check_incomming_connection();
-
-			if (tcp_socket_data.get_status()==TCP_STATUS_ACCEPTED)
-			{
-				tcp_socket_data.timer.start();
-			}
-		}
-
-	}
-	else
-	{
-		tcp_socket_data.check_incomming_connection();
-		if (tcp_socket_data.get_status()==TCP_STATUS_ACCEPTED)
-		{
-			tcp_socket_data.timer.start();
-		}
-	}
+    if (tcp_socket_data.get_status() == TCP_STATUS_ACCEPTED)
+    {
+        int nBytes_received=tcp_socket_data.receive();
+        if(nBytes_received>0)
+        {
+            fifo_buffer_tx.push(tcp_socket_data.message->buffer, tcp_socket_data.message->length);
+            
+            std::string str="BUFFER ";
+            str+=std::to_string(fifo_buffer_tx.get_size()-fifo_buffer_tx.get_free_size());
+            str+='\r';
+            for(long unsigned int i=0;i<str.length();i++)
+            {
+                tcp_socket_control.message->buffer[i]=str[i];
+            }
+            tcp_socket_control.message->length=str.length();
+            tcp_socket_control.transmit();
+        }
+        else if(nBytes_received==0)
+        {
+            
+            fifo_buffer_tx.flush();
+            fifo_buffer_backup.flush();
+            fifo_buffer_rx.flush();
+        }
+    }
+    else
+    {
+        tcp_socket_data.check_incomming_connection();
+    }
 
 
-	process_messages();
-	usleep(2000);
+    process_messages();
+    usleep(2000); // TODO: sleep no...
 }
 
 void cl_arq_controller::process_user_command(std::string command)
@@ -1386,11 +1349,11 @@ void cl_arq_controller::send(st_message* message, int message_location)
 	int header_length=0;
 	if(message->type==DATA_LONG)
 	{
-		message_TxRx_byte_buffer[0]=message->type;
-		message_TxRx_byte_buffer[1]=connection_id;
-		message_TxRx_byte_buffer[2]=message->sequence_number;
-		message_TxRx_byte_buffer[3]=message->id;
-		header_length=DATA_LONG_HEADER_LENGTH;
+            message_TxRx_byte_buffer[0]=message->type;
+            message_TxRx_byte_buffer[1]=connection_id;
+            message_TxRx_byte_buffer[2]=message->sequence_number;
+            message_TxRx_byte_buffer[3]=message->id;
+            header_length=DATA_LONG_HEADER_LENGTH;
 	}
 	else if (message->type==DATA_SHORT)
 	{
