@@ -1,0 +1,12 @@
+[Unit]
+Description=Mercury modem
+
+[Service]
+Type=exec
+ExecStart=/usr/bin/mercury -c 3 -m ARQ -s 3 -r sbitx -i default -o default -x alsa -p 8000
+KillSignal=SIGTERM
+IgnoreSIGPIPE=no
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
