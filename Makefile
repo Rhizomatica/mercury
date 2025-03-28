@@ -76,7 +76,8 @@ doc: $(CPP_SOURCES)
 
 
 install: mercury
-	install -D mercury /usr/bin/mercury
+	install -D mercury $(DESTDIR)/usr/bin/mercury
+	install -m 644 -D systemd/modem.service $(DESTDIR)/etc/systemd/system/modem.service
 
 clean:
 	rm -rf mercury $(OBJECT_FILES)
