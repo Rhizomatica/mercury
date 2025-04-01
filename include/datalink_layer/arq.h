@@ -23,6 +23,9 @@
 
 #include "physical_layer/telecom_system.h"
 
+#define TCP_BLOCK_SIZE 128
+#define CALLSIGN_MAX_SIZE 16 
+
 class cl_arq_controller
 {
 
@@ -39,7 +42,19 @@ public:
 
     void print_stats();
     cl_telecom_system* telecom_system;
+
+    int ctl_socket;
+    int data_socket;
+
 };
+
+
+void *data_worker_thread_tx(void *conn);
+void *data_worker_thread_rx(void *conn);
+void *control_worker_thread_tx(void *conn);
+void *control_worker_thread_rx(void *conn);
+void *server_worker_thread_ctl(void *port);
+void *server_worker_thread_data(void *port);
 
 
 #endif

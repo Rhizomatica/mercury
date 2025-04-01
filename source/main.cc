@@ -301,7 +301,7 @@ int main(int argc, char *argv[])
         ARQ.init(base_tcp_port, (gear_shift_mode == NO_GEAR_SHIFT)? NO : YES, mod_config);
         ARQ.print_stats();
 
-		audioio_init_internal(input_dev, output_dev, audio_system, &radio_capture,
+        audioio_init_internal(input_dev, output_dev, audio_system, &radio_capture,
 							  &radio_playback, &radio_capture_prep, &telecom_system);
 
         while (!shutdown_)
