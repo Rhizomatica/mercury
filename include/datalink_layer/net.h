@@ -45,9 +45,11 @@
 #define NET_RESTART 2
 #define NET_CONNECTED 3
 
-extern int status_ctl, status_data;
+#include <atomic>
 
 extern int cli_ctl_sockfd, cli_data_sockfd;
+
+extern std::atomic_int status_ctl, status_data;
 
 int listen4connection(int port_type);
 

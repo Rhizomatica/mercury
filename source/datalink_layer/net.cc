@@ -20,7 +20,7 @@
  * Network related functions
  */
 
-#include "net.h"
+#include "datalink_layer/net.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -30,10 +30,11 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 
+
 static int ctl_sockfd, data_sockfd;
 
 int cli_ctl_sockfd, cli_data_sockfd;
-int status_ctl, status_data;
+std::atomic_int status_ctl, status_data;
 
 int listen4connection(int port_type)
 {

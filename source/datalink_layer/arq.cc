@@ -20,7 +20,7 @@
 
 #include "datalink_layer/arq.h"
 #include "audioio/audioio.h"
-#include "net.h"
+#include "datalink_layer/net.h"
 
 extern cbuf_handle_t capture_buffer;
 extern cbuf_handle_t playback_buffer;
@@ -253,6 +253,8 @@ void *control_worker_thread_rx(void *conn)
         {
             continue;
         }        
+
+        fprintf(stderr, "Unknown command\n");
 
     }
 
