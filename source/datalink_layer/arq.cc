@@ -25,6 +25,8 @@
 extern cbuf_handle_t capture_buffer;
 extern cbuf_handle_t playback_buffer;
 
+// TODO add the data buffers here, one for tx, other for rx
+
 extern bool shutdown_;
 
 #define DEBUG
@@ -34,13 +36,14 @@ cl_arq_controller::cl_arq_controller()
 }
 
 
-
 cl_arq_controller::~cl_arq_controller()
 {
 }
 
 int cl_arq_controller::init(int tcp_base_port, int gear_shift_on, int initial_mode)
 {
+    status_ctl = NET_NONE;
+    status_data = NET_NONE;
 
     // here is the thread that runs the accept(), each per port, and mantains the
     // state of the connection
@@ -123,7 +126,19 @@ void *data_worker_thread_tx(void *conn)
 
     while(!shutdown_)
     {
+        if (status_ctl != NET_CONNECTED)
+        {
+            sleep(1);
+            continue;
+        }
         
+
+        
+        // send IMALIVE's
+        // send OK's
+        // and ERROR
+        // TODO: implement-me        
+        sleep(1);        
     }
     
     return NULL;
@@ -134,7 +149,14 @@ void *data_worker_thread_rx(void *conn)
 
     while(!shutdown_)
     {
-        
+        if (status_ctl != NET_CONNECTED)
+        {
+            sleep(1);
+            continue;
+        }
+
+        // TODO: implement-me        
+        sleep(1);
     }
 
     return NULL;
@@ -145,6 +167,15 @@ void *control_worker_thread_tx(void *conn)
 
     while(!shutdown_)
     {
+        if (status_ctl != NET_CONNECTED)
+        {
+            sleep(1);
+            continue;
+        }
+
+
+        // TODO: implement-me
+        sleep(1);
         
     }
     
@@ -166,7 +197,7 @@ void *control_worker_thread_rx(void *conn)
 
     while(!shutdown_)
     {
-        if (status_ctl != NET_LISTENING)
+        if (status_ctl != NET_CONNECTED)
         {
             sleep(1);
             continue;
