@@ -300,6 +300,8 @@ int main(int argc, char *argv[])
         arq_telecom_system = &telecom_system;
         arq_init(base_tcp_port, (gear_shift_mode == NO_GEAR_SHIFT)? NO : YES, mod_config);
 
+
+        arq_shutdown(); // temporary hack to test the tcp interface
         audioio_init_internal(input_dev, output_dev, audio_system, &radio_capture,
 							  &radio_playback, &radio_capture_prep, &telecom_system);
 
@@ -375,14 +377,13 @@ int main(int argc, char *argv[])
         telecom_system.load_configuration(mod_config);
         printf("Modulation: %d  Bitrate: %.2f bps  Shannon_limit: %.2f db\n",  mod_config, telecom_system.rbc, telecom_system.Shannon_limit);
 
-		audioio_init_internal(input_dev, output_dev, audio_system, &radio_capture,
-							  &radio_playback, &radio_capture_prep, &telecom_system);
+        audioio_init_internal(input_dev, output_dev, audio_system, &radio_capture,
+                              &radio_playback, &radio_capture_prep, &telecom_system);
 
         while (!shutdown_)
         {
             telecom_system.RX_TEST_process_main();
         }
-
     }
 
     if (telecom_system.operation_mode == TX_TEST)
@@ -391,7 +392,7 @@ int main(int argc, char *argv[])
         telecom_system.load_configuration(mod_config);
         printf("Modulation: %d  Bitrate: %.2f bps  Shannon_limit: %.2f db\n",  mod_config, telecom_system.rbc, telecom_system.Shannon_limit);
 
-		audioio_init_internal(input_dev, output_dev, audio_system, &radio_capture,
+        audioio_init_internal(input_dev, output_dev, audio_system, &radio_capture,
 							  &radio_playback, &radio_capture_prep, &telecom_system);
 
         while (!shutdown_)

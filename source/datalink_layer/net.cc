@@ -132,7 +132,7 @@ ssize_t tcp_read(int port_type, uint8_t *buffer, size_t rx_size)
     pthread_mutex_unlock(&read_mutex);
 
     if (n <= 0)
-        fprintf(stderr, "ERROR reading from socket");
+        fprintf(stderr, "ERROR reading from socket\n");
     
     return n;
 }
@@ -157,7 +157,7 @@ ssize_t tcp_write(int port_type, uint8_t *buffer, size_t tx_size)
     pthread_mutex_unlock(&write_mutex);
     
     if (n != (ssize_t) tx_size)
-        fprintf(stderr, "ERROR writing to socket");
+        fprintf(stderr, "ERROR writing to socket\n");
 
     return n;
 }

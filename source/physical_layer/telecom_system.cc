@@ -1130,7 +1130,7 @@ void cl_telecom_system::RX_TEST_process_main()
 void cl_telecom_system::RX_SHM_process_main(cbuf_handle_t buffer)
 {
     static uint32_t spinner_anim = 0; char spinner[] = ".oOo";
-	int out_data[N_MAX];
+    int out_data[N_MAX];
     int nReal_data = data_container.nBits - ldpc.P;
     int frame_size = (nReal_data - outer_code_reserved_bits) / 8;
 

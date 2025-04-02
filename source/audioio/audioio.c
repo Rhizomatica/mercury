@@ -599,12 +599,12 @@ int audioio_init_internal(char *capture_dev, char *playback_dev, int audio_subsy
     audio_subsystem = audio_subsys;
 
 #if ENABLE_FLOAT64_TAP_BEFORE == 1
-	tap_play = fopen("tap-playback-b.f64", "w");
+    tap_play = fopen("tap-playback-b.f64", "w");
 #endif
 
 #if defined(_WIN32)
-	uint8_t *buffer_cap = (uint8_t *)malloc(AUDIO_PAYLOAD_BUFFER_SIZE);
-	uint8_t *buffer_play = (uint8_t *)malloc(AUDIO_PAYLOAD_BUFFER_SIZE);
+    uint8_t *buffer_cap = (uint8_t *)malloc(AUDIO_PAYLOAD_BUFFER_SIZE);
+    uint8_t *buffer_play = (uint8_t *)malloc(AUDIO_PAYLOAD_BUFFER_SIZE);
     capture_buffer = circular_buf_init(buffer_cap, AUDIO_PAYLOAD_BUFFER_SIZE);
     playback_buffer = circular_buf_init(buffer_play, AUDIO_PAYLOAD_BUFFER_SIZE);
 #else
@@ -612,14 +612,14 @@ int audioio_init_internal(char *capture_dev, char *playback_dev, int audio_subsy
     playback_buffer = circular_buf_init_shm(AUDIO_PAYLOAD_BUFFER_SIZE, (char *) AUDIO_PLAY_PAYLOAD_NAME);
 #endif
 
-	clear_buffer(capture_buffer);
-	clear_buffer(playback_buffer);
+    clear_buffer(capture_buffer);
+    clear_buffer(playback_buffer);
 
     pthread_create(radio_capture, NULL, radio_capture_thread, (void *) capture_dev);
-	pthread_create(radio_playback, NULL, radio_playback_thread, (void *) playback_dev);
-	pthread_create(radio_capture_prep, NULL, radio_capture_prep_thread, (void *) telecom_system);
+    pthread_create(radio_playback, NULL, radio_playback_thread, (void *) playback_dev);
+    pthread_create(radio_capture_prep, NULL, radio_capture_prep_thread, (void *) telecom_system);
 
-	return 0;
+    return 0;
 }
 
 int audioio_deinit(pthread_t *radio_capture, pthread_t *radio_playback, pthread_t *radio_capture_prep)

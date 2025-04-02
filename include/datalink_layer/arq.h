@@ -26,6 +26,10 @@
 #define TCP_BLOCK_SIZE 128
 #define CALLSIGN_MAX_SIZE 16 
 
+#define DATA_TX_BUFFER_SIZE 8192
+#define DATA_RX_BUFFER_SIZE 8192
+
+
 int arq_init(int tcp_base_port, int gear_shift_on, int initial_mode);
 void arq_shutdown();
 
@@ -41,6 +45,7 @@ void *control_worker_thread_tx(void *conn);
 void *control_worker_thread_rx(void *conn);
 void *server_worker_thread_ctl(void *port);
 void *server_worker_thread_data(void *port);
-
+void *dsp_thread_tx(void *conn);
+void *dsp_thread_rx(void *conn);
 
 #endif
