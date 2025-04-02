@@ -26,28 +26,14 @@
 #define TCP_BLOCK_SIZE 128
 #define CALLSIGN_MAX_SIZE 16 
 
-class cl_arq_controller
-{
+int arq_init(int tcp_base_port, int gear_shift_on, int initial_mode);
+void arq_shutdown();
 
-public:
-    cl_arq_controller();
-    ~cl_arq_controller();
+void ptt_on();
+void ptt_off();
 
-    int init(int tcp_base_port, int gear_shift_on, int initial_mode);
-
-    void process_main();
-
-    void ptt_on();
-    void ptt_off();
-
-    void print_stats();
-    cl_telecom_system* telecom_system;
-
-    int ctl_socket;
-    int data_socket;
-
-};
-
+void print_arq_stats();
+extern cl_telecom_system *arq_telecom_system;
 
 void *data_worker_thread_tx(void *conn);
 void *data_worker_thread_rx(void *conn);

@@ -29,6 +29,7 @@
 #include <complex>
 #include "physical_layer/telecom_system.h"
 #include "datalink_layer/arq.h"
+#include "datalink_layer/fsm.h"
 #include "audioio/audioio.h"
 
 // some globals TODO: wrap this up into some struct
@@ -296,18 +297,14 @@ int main(int argc, char *argv[])
     if (telecom_system.operation_mode == ARQ_MODE)
     {
         printf("Mode selected: ARQ\n");
-        cl_arq_controller ARQ;
-        ARQ.telecom_system = &telecom_system;
-        ARQ.init(base_tcp_port, (gear_shift_mode == NO_GEAR_SHIFT)? NO : YES, mod_config);
-        ARQ.print_stats();
+        arq_telecom_system = &telecom_system;
+        arq_init(base_tcp_port, (gear_shift_mode == NO_GEAR_SHIFT)? NO : YES, mod_config);
 
         audioio_init_internal(input_dev, output_dev, audio_system, &radio_capture,
 							  &radio_playback, &radio_capture_prep, &telecom_system);
 
-        while (!shutdown_)
-        {
-            ARQ.process_main();
-        }
+        // and we block here in pthread_join()
+        arq_shutdown();
     }
 
     if (telecom_system.operation_mode == RX_RAND)
@@ -436,7 +433,7 @@ int main(int argc, char *argv[])
 
         buffer = circular_buf_init_shm(SHM_PAYLOAD_BUFFER_SIZE, (char *) SHM_PAYLOAD_NAME);
 
-		audioio_init_internal(input_dev, output_dev, audio_system, &radio_capture,
+        audioio_init_internal(input_dev, output_dev, audio_system, &radio_capture,
 							  &radio_playback, &radio_capture_prep, &telecom_system);
 
         while (!shutdown_)

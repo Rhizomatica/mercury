@@ -29,96 +29,56 @@ extern cbuf_handle_t playback_buffer;
 
 extern bool shutdown_;
 
+cl_telecom_system *arq_telecom_system;
+
 #define DEBUG
 
-cl_arq_controller::cl_arq_controller()
-{
-}
+static pthread_t tid[6];
 
-
-cl_arq_controller::~cl_arq_controller()
-{
-}
-
-int cl_arq_controller::init(int tcp_base_port, int gear_shift_on, int initial_mode)
+int arq_init(int tcp_base_port, int gear_shift_on, int initial_mode)
 {
     status_ctl = NET_NONE;
     status_data = NET_NONE;
 
     // here is the thread that runs the accept(), each per port, and mantains the
     // state of the connection
-    pthread_t tid0;
-    pthread_create(&tid0, NULL, server_worker_thread_ctl, (void *) &tcp_base_port);
-    pthread_t tid1;
-    pthread_create(&tid1, NULL, server_worker_thread_data, (void *) &tcp_base_port);
-    
-    // we start our control thread
-    pthread_t tid2;
-    pthread_create(&tid2, NULL, control_worker_thread_rx, (void *) NULL);
+    pthread_create(&tid[0], NULL, server_worker_thread_ctl, (void *) &tcp_base_port);
+    pthread_create(&tid[1], NULL, server_worker_thread_data, (void *) &tcp_base_port);
 
-    // we start our control tx thread
-    pthread_t tid3;
-    pthread_create(&tid3, NULL, control_worker_thread_tx, (void *) NULL);
+    // control channel threads
+    pthread_create(&tid[2], NULL, control_worker_thread_rx, (void *) NULL);
+    pthread_create(&tid[3], NULL, control_worker_thread_tx, (void *) NULL);
 
-    pthread_t tid4;
-    pthread_create(&tid4, NULL, data_worker_thread_tx, (void *) NULL);
-
-    pthread_t tid5;
-    pthread_create(&tid5, NULL, data_worker_thread_rx, (void *) NULL);
-
-
-    pthread_join(tid0, NULL);
-    pthread_join(tid1, NULL);
-    pthread_join(tid2, NULL);
-    pthread_join(tid3, NULL);
-    pthread_join(tid4, NULL);
-    pthread_join(tid5, NULL);
-    
+    // data channel threads
+    pthread_create(&tid[4], NULL, data_worker_thread_tx, (void *) NULL);
+    pthread_create(&tid[5], NULL, data_worker_thread_rx, (void *) NULL);
+   
     return EXIT_SUCCESS;
 }
 
 
-void cl_arq_controller::process_main()
+void arq_shutdown()
 {
-
+    pthread_join(tid[0], NULL);
+    pthread_join(tid[1], NULL);
+    pthread_join(tid[2], NULL);
+    pthread_join(tid[3], NULL);
+    pthread_join(tid[4], NULL);
+    pthread_join(tid[5], NULL);
 }
 
 
-void cl_arq_controller::print_stats()
-{
-
-}
-
-void cl_arq_controller::ptt_on()
+void ptt_on()
 {
     char buffer[] = "PTT ON\r";
 
 //    tcp_write();
-
-    
-#if 0
-    std::string str="PTT ON\r";
-    tcp_socket_control.message->length=str.length();
-
-    for(int i=0;i<tcp_socket_control.message->length;i++)
-    {
-        tcp_socket_control.message->buffer[i]=str[i];
-    }
-    tcp_socket_control.transmit();
-#endif
 }
-void cl_arq_controller::ptt_off()
+void ptt_off()
 {
-#if 0
-    std::string str="PTT OFF\r";
-    tcp_socket_control.message->length=str.length();
+    char buffer[] = "PTT OFF\r";
+//    tcp_write();
 
-    for(int i=0;i<tcp_socket_control.message->length;i++)
-    {
-        tcp_socket_control.message->buffer[i]=str[i];
-    }
-    tcp_socket_control.transmit();
-#endif
 }
 
 void *data_worker_thread_tx(void *conn)
