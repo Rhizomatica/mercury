@@ -32,6 +32,8 @@
 
 #include <pthread.h>
 
+#include <sys/ioctl.h>
+
 static int ctl_sockfd, data_sockfd;
 
 int cli_ctl_sockfd, cli_data_sockfd;
@@ -116,14 +118,23 @@ ssize_t tcp_read(int port_type, uint8_t *buffer, size_t rx_size)
     ssize_t n = 0;
 
     pthread_mutex_lock(&read_mutex);
+
+    size_t count = 0;
+
     if (port_type == CTL_TCP_PORT && status_ctl == NET_CONNECTED)
     {
+        ioctl(cli_ctl_sockfd, FIONREAD, &count);
+        if (count < rx_size)
+            rx_size = count;
         n = recv(cli_ctl_sockfd, buffer, rx_size, MSG_NOSIGNAL);
 
         if (n <= 0) status_ctl = NET_RESTART;        
     }
     if (port_type == DATA_TCP_PORT && status_data == NET_CONNECTED)
     {
+        ioctl(cli_data_sockfd, FIONREAD, &count);
+        if (count < rx_size)
+            rx_size = count;
         n = recv(cli_data_sockfd, buffer, rx_size, MSG_NOSIGNAL);
 
         if (n <= 0) status_data = NET_RESTART;        

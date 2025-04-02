@@ -28,8 +28,6 @@ extern cbuf_handle_t playback_buffer;
 cbuf_handle_t data_tx_buffer;
 cbuf_handle_t data_rx_buffer;
 
-// TODO add the data buffers here, one for tx, other for rx
-
 extern bool shutdown_;
 
 cl_telecom_system *arq_telecom_system;
@@ -102,43 +100,53 @@ void ptt_off()
 
 }
 
+// tx to tcp socket the received data from the modem
 void *data_worker_thread_tx(void *conn)
 {
-
+    uint8_t *buffer = (uint8_t *) malloc(DATA_TX_BUFFER_SIZE);
+    
     while(!shutdown_)
     {
-        if (status_ctl != NET_CONNECTED)
+        if (status_data != NET_CONNECTED)
         {
             sleep(1);
             continue;
         }
 
+        size_t n = read_buffer_all(data_rx_buffer, buffer);
+
+        ssize_t i = tcp_write(DATA_TCP_PORT, buffer, n);
+
+        if (i < (ssize_t) n)
+            fprintf(stderr, "Problems in data_worker_thread_tx!\n");
         
-        // send IMALIVE's
-        // send OK's
-        // and ERROR
-        // TODO: implement-me        
-        sleep(1);        
     }
+
+    free(buffer);
     
     return NULL;
 }
 
+// rx from tcp socket and send to trasmit by the modem
 void *data_worker_thread_rx(void *conn)
 {
+    uint8_t *buffer = (uint8_t *) malloc(TCP_BLOCK_SIZE);
 
     while(!shutdown_)
     {
-        if (status_ctl != NET_CONNECTED)
+        if (status_data != NET_CONNECTED)
         {
             sleep(1);
             continue;
         }
 
-        // TODO: implement-me        
-        sleep(1);
+        int n = tcp_read(DATA_TCP_PORT, buffer, TCP_BLOCK_SIZE);
+
+        write_buffer(data_tx_buffer, buffer, n);
+
     }
 
+    free(buffer);
     return NULL;
 }
 
@@ -153,6 +161,9 @@ void *control_worker_thread_tx(void *conn)
             continue;
         }
 
+        // send IMALIVE's
+        // send OK's
+        // and ERROR
 
         // TODO: implement-me
         sleep(1);
@@ -183,11 +194,6 @@ void *control_worker_thread_rx(void *conn)
             continue;
         }
 
-#if 0 // we can do the slow way...
-        // get number of bytes in the socket
-        ioctl(cli_ctl_sockfd, FIONREAD, &count);           
-#endif
-        
         int n = tcp_read(CTL_TCP_PORT, (uint8_t *)buffer + count, 1);
 
         if (n <= 0)
@@ -429,6 +435,9 @@ void *dsp_thread_rx(void *conn)
 
             st_receive_stats received_message_stats = arq_telecom_system->receive_byte(arq_telecom_system->data_container.ready_to_process_passband_delayed_data, out_data);
 
+            arq_telecom_system->data_container.data_ready = 0;
+            MUTEX_UNLOCK(&capture_prep_mutex);
+            
             if(received_message_stats.message_decoded == YES)
             {
                 // printf("Frame decoded in %d iterations. Data: \n", received_message_stats.iterations_done);
@@ -477,8 +486,11 @@ void *dsp_thread_rx(void *conn)
             }
         
         }
-        arq_telecom_system->data_container.data_ready = 0;
-        MUTEX_UNLOCK(&capture_prep_mutex);
+        else
+        {
+            arq_telecom_system->data_container.data_ready = 0;
+            MUTEX_UNLOCK(&capture_prep_mutex);
+        }
     }
 
     return NULL;

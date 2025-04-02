@@ -459,7 +459,7 @@ bool circular_buf_full(cbuf_handle_t cbuf)
     return is_full;
 }
 
-int read_buffer_all(cbuf_handle_t cbuf, uint8_t *data)
+size_t read_buffer_all(cbuf_handle_t cbuf, uint8_t *data)
 {
     assert(cbuf && data && cbuf->internal && cbuf->buffer);
 

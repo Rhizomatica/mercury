@@ -49,27 +49,27 @@ int audio_subsystem;
 
 
 struct conf {
-	const char *cmd;
-	ffaudio_conf buf;
-	uint8_t flags;
-	uint8_t exclusive;
-	uint8_t hwdev;
-	uint8_t loopback;
-	uint8_t nonblock;
-	uint8_t wav;
+    const char *cmd;
+    ffaudio_conf buf;
+    uint8_t flags;
+    uint8_t exclusive;
+    uint8_t hwdev;
+    uint8_t loopback;
+    uint8_t nonblock;
+    uint8_t wav;
 };
 
 
 static inline void ffthread_sleep(ffuint msec)
 {
 #ifdef FF_WIN
-	Sleep(msec);
+    Sleep(msec);
 #else
-	struct timespec ts = {
-		.tv_sec = msec / 1000,
-		.tv_nsec = (msec % 1000) * 1000000,
-	};
-	nanosleep(&ts, NULL);
+    struct timespec ts = {
+        .tv_sec = msec / 1000,
+        .tv_nsec = (msec % 1000) * 1000000,
+    };
+    nanosleep(&ts, NULL);
 #endif
 }
 
@@ -77,154 +77,154 @@ static inline void ffthread_sleep(ffuint msec)
 void *radio_playback_thread(void *device_ptr)
 {
     ffaudio_interface *audio;
-	struct conf conf = {};
-	conf.buf.app_name = "mercury_playback";
-	conf.buf.format = FFAUDIO_F_INT32;
-	conf.buf.sample_rate = 48000;
-	conf.buf.channels = 2;
-	conf.buf.device_id = (const char *) device_ptr;
-	uint32_t period_ms;
-	uint32_t period_bytes;
+    struct conf conf = {};
+    conf.buf.app_name = "mercury_playback";
+    conf.buf.format = FFAUDIO_F_INT32;
+    conf.buf.sample_rate = 48000;
+    conf.buf.channels = 2;
+    conf.buf.device_id = (const char *) device_ptr;
+    uint32_t period_ms;
+    uint32_t period_bytes;
 
 
 #if defined(_WIN32)
     conf.buf.buffer_length_msec = 40;
-	period_ms = conf.buf.buffer_length_msec / 4;
+    period_ms = conf.buf.buffer_length_msec / 4;
     if (audio_subsystem == AUDIO_SUBSYSTEM_WASAPI)
         audio = (ffaudio_interface *) &ffwasapi;
     if (audio_subsystem == AUDIO_SUBSYSTEM_DSOUND)
         audio = (ffaudio_interface *) &ffdsound;
 #elif defined(__linux__)
     conf.buf.buffer_length_msec = 30;
-	period_ms = conf.buf.buffer_length_msec / 3;
+    period_ms = conf.buf.buffer_length_msec / 3;
     if (audio_subsystem == AUDIO_SUBSYSTEM_ALSA)
         audio = (ffaudio_interface *) &ffalsa;
     if (audio_subsystem == AUDIO_SUBSYSTEM_PULSE)
         audio = (ffaudio_interface *) &ffpulse;
 #elif defined(__FREEBSD__)
     conf.buf.buffer_length_msec = 40;
-	period_ms = conf.buf.buffer_length_msec / 4;
+    period_ms = conf.buf.buffer_length_msec / 4;
     if (audio_subsystem == AUDIO_SUBSYSTEM_OSS)
         audio = (ffaudio_interface *) &ffoss;
 #elif defined(__APPLE__)
     conf.buf.buffer_length_msec = 40;
-	period_ms = conf.buf.buffer_length_msec / 4;
+    period_ms = conf.buf.buffer_length_msec / 4;
     if (audio_subsystem == AUDIO_SUBSYSTEM_COREAUDIO)
         audio = (ffaudio_interface *) &ffcoreaudio;
 #endif
 
-	period_bytes = conf.buf.sample_rate * sizeof(double) * period_ms / 1000;
+    period_bytes = conf.buf.sample_rate * sizeof(double) * period_ms / 1000;
 
-	//printf("period_ms: %u\n", period_ms);
-	//printf("period_size: %u\n", period_bytes);
-	conf.flags = FFAUDIO_PLAYBACK;
-	ffaudio_init_conf aconf = {};
-	aconf.app_name = "mercury_playback";
+    //printf("period_ms: %u\n", period_ms);
+    //printf("period_size: %u\n", period_bytes);
+    conf.flags = FFAUDIO_PLAYBACK;
+    ffaudio_init_conf aconf = {};
+    aconf.app_name = "mercury_playback";
 
-	int r;
-	ffaudio_buf *b;
-	ffaudio_conf *cfg;
+    int r;
+    ffaudio_buf *b;
+    ffaudio_conf *cfg;
 
-	ffuint frame_size;
-	ffuint msec_bytes;
+    ffuint frame_size;
+    ffuint msec_bytes;
 
-	uint8_t *buffer = (uint8_t *) malloc(AUDIO_PAYLOAD_BUFFER_SIZE * sizeof(double) * 2);
-	double *buffer_double =  (double *) buffer;
-	int32_t *buffer_internal_stereo = (int32_t *) malloc(AUDIO_PAYLOAD_BUFFER_SIZE * sizeof(int32_t) * 2); // a big enough buffer
+    uint8_t *buffer = (uint8_t *) malloc(AUDIO_PAYLOAD_BUFFER_SIZE * sizeof(double) * 2);
+    double *buffer_double =  (double *) buffer;
+    int32_t *buffer_internal_stereo = (int32_t *) malloc(AUDIO_PAYLOAD_BUFFER_SIZE * sizeof(int32_t) * 2); // a big enough buffer
 
-	ffuint total_written = 0;
-	int ch_layout = STEREO;
+    ffuint total_written = 0;
+    int ch_layout = STEREO;
 
 #if ENABLE_FLOAT64_TAP == 1
-	FILE *tap_pay = fopen("tap-playback.f64", "w");
+    FILE *tap_pay = fopen("tap-playback.f64", "w");
 #endif
 
-	if ( audio->init(&aconf) != 0)
+    if ( audio->init(&aconf) != 0)
     {
         printf("Error in audio->init()\n");
         goto finish_play;
     }
 
     // playback code...
-	b = audio->alloc();
-	if (b == NULL)
-	{
-		printf("Error in audio->alloc()\n");
-		goto finish_play;
-	}
+    b = audio->alloc();
+    if (b == NULL)
+    {
+        printf("Error in audio->alloc()\n");
+        goto finish_play;
+    }
 
-	cfg = &conf.buf;
-	r = audio->open(b, cfg, conf.flags);
-	if (r == FFAUDIO_EFORMAT)
-		r = audio->open(b, cfg, conf.flags);
-	if (r != 0)
-	{
-		printf("error in audio->open(): %d: %s\n", r, audio->error(b));
-		goto cleanup_play;
-	}
+    cfg = &conf.buf;
+    r = audio->open(b, cfg, conf.flags);
+    if (r == FFAUDIO_EFORMAT)
+        r = audio->open(b, cfg, conf.flags);
+    if (r != 0)
+    {
+        printf("error in audio->open(): %d: %s\n", r, audio->error(b));
+        goto cleanup_play;
+    }
 
-	printf("I/O playback (%s) %d bits per sample / %dHz / %dch / %dms buffer\n", conf.buf.device_id ? conf.buf.device_id : "default", cfg->format, cfg->sample_rate, cfg->channels, cfg->buffer_length_msec);
+    printf("I/O playback (%s) %d bits per sample / %dHz / %dch / %dms buffer\n", conf.buf.device_id ? conf.buf.device_id : "default", cfg->format, cfg->sample_rate, cfg->channels, cfg->buffer_length_msec);
 
 
-	frame_size = cfg->channels * (cfg->format & 0xff) / 8;
-	msec_bytes = cfg->sample_rate * frame_size / 1000;
+    frame_size = cfg->channels * (cfg->format & 0xff) / 8;
+    msec_bytes = cfg->sample_rate * frame_size / 1000;
 
-	if (radio_type == RADIO_SBITX)
-		ch_layout = RIGHT;
-	if (radio_type == RADIO_STOCKHF)
-		ch_layout = STEREO;
+    if (radio_type == RADIO_SBITX)
+        ch_layout = RIGHT;
+    if (radio_type == RADIO_STOCKHF)
+        ch_layout = STEREO;
 
     while (!shutdown_)
     {
-		ffssize n;
-		size_t buffer_size = size_buffer(playback_buffer);
-		if (buffer_size >= period_bytes)
-		{
-			read_buffer(playback_buffer, buffer, period_bytes);
-			n = period_bytes;
-		}
-		else
-		{
-			// we just play zeros if there is nothing to play
-			memset(buffer, 0, period_bytes);
-			if (buffer_size > frame_size)
-				read_buffer(playback_buffer, buffer, buffer_size);
-			n = period_bytes;
-		}
+        ffssize n;
+        size_t buffer_size = size_buffer(playback_buffer);
+        if (buffer_size >= period_bytes)
+        {
+            read_buffer(playback_buffer, buffer, period_bytes);
+            n = period_bytes;
+        }
+        else
+        {
+            // we just play zeros if there is nothing to play
+            memset(buffer, 0, period_bytes);
+            if (buffer_size > frame_size)
+                read_buffer(playback_buffer, buffer, buffer_size);
+            n = period_bytes;
+        }
 
 #if ENABLE_FLOAT64_TAP == 1
-		fwrite(buffer, 1, n, tap);
+        fwrite(buffer, 1, n, tap);
 #endif
 
         total_written = 0;
 
-		int samples_read = n / sizeof(double);
+        int samples_read = n / sizeof(double);
 
-		// convert from double to int32
-		for (int i = 0; i < samples_read; i++)
-		{
-			int idx = i * cfg->channels;
-			if (ch_layout == LEFT)
-			{
-				buffer_internal_stereo[idx] = buffer_double[i] * INT_MAX;
-				buffer_internal_stereo[idx + 1] = 0;
-			}
+        // convert from double to int32
+        for (int i = 0; i < samples_read; i++)
+        {
+            int idx = i * cfg->channels;
+            if (ch_layout == LEFT)
+            {
+                buffer_internal_stereo[idx] = buffer_double[i] * INT_MAX;
+                buffer_internal_stereo[idx + 1] = 0;
+            }
 
-			if (ch_layout == RIGHT)
-			{
-				buffer_internal_stereo[idx] = 0;
-				buffer_internal_stereo[idx + 1] = buffer_double[i] * INT_MAX;
-			}
+            if (ch_layout == RIGHT)
+            {
+                buffer_internal_stereo[idx] = 0;
+                buffer_internal_stereo[idx + 1] = buffer_double[i] * INT_MAX;
+            }
 
 
-			if (ch_layout == STEREO)
-			{
-				buffer_internal_stereo[idx] = buffer_double[i] * INT_MAX;
-				buffer_internal_stereo[idx + 1] = buffer_internal_stereo[idx];
-			}
-		}
+            if (ch_layout == STEREO)
+            {
+                buffer_internal_stereo[idx] = buffer_double[i] * INT_MAX;
+                buffer_internal_stereo[idx + 1] = buffer_internal_stereo[idx];
+            }
+        }
 
-		n = samples_read * frame_size;
+        n = samples_read * frame_size;
 
         while (n >= frame_size)
         {
@@ -251,7 +251,7 @@ void *radio_playback_thread(void *device_ptr)
     }
 
 #if ENABLE_FLOAT64_TAP == 1
-	fclose(tap);
+    fclose(tap);
 #endif
 
     r = audio->drain(b);
@@ -270,14 +270,14 @@ cleanup_play:
 
     audio->free(b);
 
-	audio->uninit();
+    audio->uninit();
 
-	finish_play:
+finish_play:
 
-	free(buffer);
-	free(buffer_internal_stereo);
+    free(buffer);
+    free(buffer_internal_stereo);
 
-	printf("radio_playback_thread exit\n");
+    printf("radio_playback_thread exit\n");
 
     shutdown_ = true;
 
@@ -288,12 +288,12 @@ cleanup_play:
 void *radio_capture_thread(void *device_ptr)
 {
     ffaudio_interface *audio;
-	struct conf conf = {};
-	conf.buf.app_name = "mercury_capture";
-	conf.buf.format = FFAUDIO_F_INT32;
-	conf.buf.sample_rate = 48000;
-	conf.buf.channels = 2;
-	conf.buf.device_id = (const char *) device_ptr;
+    struct conf conf = {};
+    conf.buf.app_name = "mercury_capture";
+    conf.buf.format = FFAUDIO_F_INT32;
+    conf.buf.sample_rate = 48000;
+    conf.buf.channels = 2;
+    conf.buf.device_id = (const char *) device_ptr;
 
 #if defined(_WIN32)
     conf.buf.buffer_length_msec = 40;
@@ -318,68 +318,68 @@ void *radio_capture_thread(void *device_ptr)
 #endif
 
     conf.flags = FFAUDIO_CAPTURE;
-	ffaudio_init_conf aconf = {};
-	aconf.app_name = "mercury_capture";
+    ffaudio_init_conf aconf = {};
+    aconf.app_name = "mercury_capture";
 
-	int r;
-	ffaudio_buf *b;
+    int r;
+    ffaudio_buf *b;
     ffaudio_conf *cfg;
 
     ffuint frame_size;
     ffuint msec_bytes;
 
-	int32_t *buffer = NULL;
+    int32_t *buffer = NULL;
 
-	int ch_layout = STEREO;
+    int ch_layout = STEREO;
 
-	double *buffer_internal = NULL;
+    double *buffer_internal = NULL;
 
 #if ENABLE_FLOAT64_TAP == 1
-	FILE *tap = fopen("tap-capture.f64", "w");
+    FILE *tap = fopen("tap-capture.f64", "w");
 #endif
 
-	if ( audio->init(&aconf) != 0)
+    if ( audio->init(&aconf) != 0)
     {
         printf("Error in audio->init()\n");
         goto finish_cap;
     }
 
     // capture code
-	b = audio->alloc();
-	if (b == NULL)
+    b = audio->alloc();
+    if (b == NULL)
     {
         printf("Error in audio->alloc()\n");
         goto finish_cap;
     }
 
     cfg = &conf.buf;
-	r = audio->open(b, cfg, conf.flags);
-	if (r == FFAUDIO_EFORMAT)
-		r = audio->open(b, cfg, conf.flags);
-	if (r != 0)
+    r = audio->open(b, cfg, conf.flags);
+    if (r == FFAUDIO_EFORMAT)
+        r = audio->open(b, cfg, conf.flags);
+    if (r != 0)
     {
         printf("error in audio->open(): %d: %s\n", r, audio->error(b));
         goto cleanup_cap;
     }
 
-	printf("I/O capture (%s) %d bits per sample / %dHz / %dch / %dms buffer\n", conf.buf.device_id ? conf.buf.device_id : "default", cfg->format, cfg->sample_rate, cfg->channels, cfg->buffer_length_msec);
+    printf("I/O capture (%s) %d bits per sample / %dHz / %dch / %dms buffer\n", conf.buf.device_id ? conf.buf.device_id : "default", cfg->format, cfg->sample_rate, cfg->channels, cfg->buffer_length_msec);
 
     frame_size = cfg->channels * (cfg->format & 0xff) / 8;
     msec_bytes = cfg->sample_rate * frame_size / 1000;
 
-	buffer_internal = (double *) malloc(AUDIO_PAYLOAD_BUFFER_SIZE * sizeof(double) * 2);
+    buffer_internal = (double *) malloc(AUDIO_PAYLOAD_BUFFER_SIZE * sizeof(double) * 2);
 
-	if (radio_type == RADIO_SBITX)
-		ch_layout = LEFT;
-	if (radio_type == RADIO_STOCKHF)
-		ch_layout = STEREO;
+    if (radio_type == RADIO_SBITX)
+        ch_layout = LEFT;
+    if (radio_type == RADIO_STOCKHF)
+        ch_layout = STEREO;
 
-	while (!shutdown_)
+    while (!shutdown_)
     {
-		r = audio->read(b, (const void **)&buffer);
-		if (r < 0)
+        r = audio->read(b, (const void **)&buffer);
+        if (r < 0)
         {
-			printf("ffaudio.read: %s", audio->error(b));
+            printf("ffaudio.read: %s", audio->error(b));
             continue;
         }
 #if 0
@@ -389,61 +389,61 @@ void *radio_capture_thread(void *device_ptr)
         }
 #endif
 
-		int frames_read = r / frame_size;
-		int frames_to_write = frames_read;
+        int frames_read = r / frame_size;
+        int frames_to_write = frames_read;
 
-		for (int i = 0; i < frames_to_write; i++)
-		{
-			if (ch_layout == LEFT)
-			{
-				buffer_internal[i] = (double) buffer[i*2] / (double) INT_MAX;
-			}
+        for (int i = 0; i < frames_to_write; i++)
+        {
+            if (ch_layout == LEFT)
+            {
+                buffer_internal[i] = (double) buffer[i*2] / (double) INT_MAX;
+            }
 
-			if (ch_layout == RIGHT)
-			{
-				buffer_internal[i] = (double) buffer[i*2 + 1] / (double) INT_MAX;
-			}
+            if (ch_layout == RIGHT)
+            {
+                buffer_internal[i] = (double) buffer[i*2 + 1] / (double) INT_MAX;
+            }
 
-			if (ch_layout == STEREO)
-			{
-				buffer_internal[i] = (double) ((buffer[i*2] + buffer[i*2 + 1]) / 2.0) / (double) INT_MAX;
-			}
+            if (ch_layout == STEREO)
+            {
+                buffer_internal[i] = (double) ((buffer[i*2] + buffer[i*2 + 1]) / 2.0) / (double) INT_MAX;
+            }
 
-		}
+        }
 
 #if ENABLE_FLOAT64_TAP == 1
-		fwrite(buffer_internal, 1, frames_to_write * sizeof(double), tap);
+        fwrite(buffer_internal, 1, frames_to_write * sizeof(double), tap);
 #endif
 
-		if (circular_buf_free_size(capture_buffer) >= frames_to_write * sizeof(double))
-			write_buffer(capture_buffer, (uint8_t *)buffer_internal, frames_to_write * sizeof(double));
-		else
-			printf("Buffer full in capture buffer!\n");
-	}
+        if (circular_buf_free_size(capture_buffer) >= frames_to_write * sizeof(double))
+            write_buffer(capture_buffer, (uint8_t *)buffer_internal, frames_to_write * sizeof(double));
+        else
+            printf("Buffer full in capture buffer!\n");
+    }
 
-	r = audio->stop(b);
-	if (r != 0)
-		printf("ffaudio.stop: %s", audio->error(b));
+    r = audio->stop(b);
+    if (r != 0)
+        printf("ffaudio.stop: %s", audio->error(b));
 
-	r = audio->clear(b);
-	if (r != 0)
-		printf("ffaudio.clear: %s", audio->error(b));
+    r = audio->clear(b);
+    if (r != 0)
+        printf("ffaudio.clear: %s", audio->error(b));
 
-	free(buffer_internal);
+    free(buffer_internal);
 
 #if ENABLE_FLOAT64_TAP == 1
-	fclose(tap);
+    fclose(tap);
 #endif
 
 
 cleanup_cap:
 
-	audio->free(b);
+    audio->free(b);
 
     audio->uninit();
 
 finish_cap:
-	printf("radio_capture_thread exit\n");
+    printf("radio_capture_thread exit\n");
 
     shutdown_ = true;
 
@@ -452,43 +452,43 @@ finish_cap:
 
 void *radio_capture_prep_thread(void *telecom_ptr_void)
 {
-	cl_telecom_system *telecom_ptr = (cl_telecom_system *) telecom_ptr_void;
+    cl_telecom_system *telecom_ptr = (cl_telecom_system *) telecom_ptr_void;
 
-	double *buffer_temp = (double *) malloc(AUDIO_PAYLOAD_BUFFER_SIZE * sizeof(double) * 2);
+    double *buffer_temp = (double *) malloc(AUDIO_PAYLOAD_BUFFER_SIZE * sizeof(double) * 2);
 
-	while (!shutdown_)
+    while (!shutdown_)
     {
-		cl_data_container *data_container_ptr = &telecom_ptr->data_container;
-		int signal_period = data_container_ptr->Nofdm * data_container_ptr->buffer_Nsymb * data_container_ptr->interpolation_rate; // in samples
-		int symbol_period = data_container_ptr->Nofdm * data_container_ptr->interpolation_rate;
-		int location_of_last_frame = signal_period - symbol_period - 1; // TODO: do we need this "-1"?
+        cl_data_container *data_container_ptr = &telecom_ptr->data_container;
+        int signal_period = data_container_ptr->Nofdm * data_container_ptr->buffer_Nsymb * data_container_ptr->interpolation_rate; // in samples
+        int symbol_period = data_container_ptr->Nofdm * data_container_ptr->interpolation_rate;
+        int location_of_last_frame = signal_period - symbol_period - 1; // TODO: do we need this "-1"?
 
-		if (symbol_period == 0)
-			continue;
+        if (symbol_period == 0)
+            continue;
 
-		rx_transfer(buffer_temp, symbol_period);
+        rx_transfer(buffer_temp, symbol_period);
 
-		MUTEX_LOCK(&capture_prep_mutex);
-		if(data_container_ptr->data_ready == 1)
-			data_container_ptr->nUnder_processing_events++;
+        MUTEX_LOCK(&capture_prep_mutex);
+        if(data_container_ptr->data_ready == 1)
+            data_container_ptr->nUnder_processing_events++;
 
-		shift_left(data_container_ptr->passband_delayed_data, signal_period, symbol_period);
-
-
-		memcpy(&data_container_ptr->passband_delayed_data[location_of_last_frame], buffer_temp, symbol_period * sizeof(double));
-
-		data_container_ptr->frames_to_read--;
-		if(data_container_ptr->frames_to_read < 0)
-			data_container_ptr->frames_to_read = 0;
-
-		data_container_ptr->data_ready = 1;
-		MUTEX_UNLOCK(&capture_prep_mutex);
-	}
+        shift_left(data_container_ptr->passband_delayed_data, signal_period, symbol_period);
 
 
-	shutdown_ = true;
+        memcpy(&data_container_ptr->passband_delayed_data[location_of_last_frame], buffer_temp, symbol_period * sizeof(double));
 
-	free(buffer_temp);
+        data_container_ptr->frames_to_read--;
+        if(data_container_ptr->frames_to_read < 0)
+            data_container_ptr->frames_to_read = 0;
+
+        data_container_ptr->data_ready = 1;
+        MUTEX_UNLOCK(&capture_prep_mutex);
+    }
+
+
+    shutdown_ = true;
+
+    free(buffer_temp);
 
     return NULL;
 }
@@ -520,63 +520,63 @@ void list_soundcards(int audio_system)
         audio = (ffaudio_interface *) &ffaaudio;
 #endif
 
-	ffaudio_init_conf aconf = {};
-	if ( audio->init(&aconf) != 0)
+    ffaudio_init_conf aconf = {};
+    if ( audio->init(&aconf) != 0)
     {
         printf("Error in audio->init()\n");
         return;
     }
 
-	ffaudio_dev *d;
+    ffaudio_dev *d;
 
-	// FFAUDIO_DEV_PLAYBACK, FFAUDIO_DEV_CAPTURE
-	static const char* const mode[] = { "playback", "capture" };
-	for (ffuint i = 0;  i != 2;  i++)
+    // FFAUDIO_DEV_PLAYBACK, FFAUDIO_DEV_CAPTURE
+    static const char* const mode[] = { "playback", "capture" };
+    for (ffuint i = 0;  i != 2;  i++)
     {
-		printf("%s devices:\n", mode[i]);
-		d = audio->dev_alloc(i);
+        printf("%s devices:\n", mode[i]);
+        d = audio->dev_alloc(i);
         if (d == NULL)
         {
             printf("Error in audio->dev_alloc\n");
             return;
         }
 
-		for (;;)
+        for (;;)
         {
-			int r = audio->dev_next(d);
-			if (r > 0)
-				break;
-			else
+            int r = audio->dev_next(d);
+            if (r > 0)
+                break;
+            else
                 if (r < 0)
                 {
                     printf("error: %s", audio->dev_error(d));
                     break;
                 }
 
-			printf("device: name: '%s'  id: '%s'  default: %s\n"
-				, audio->dev_info(d, FFAUDIO_DEV_NAME)
-				, audio->dev_info(d, FFAUDIO_DEV_ID)
-				, audio->dev_info(d, FFAUDIO_DEV_IS_DEFAULT)
-				);
-		}
+            printf("device: name: '%s'  id: '%s'  default: %s\n"
+                   , audio->dev_info(d, FFAUDIO_DEV_NAME)
+                   , audio->dev_info(d, FFAUDIO_DEV_ID)
+                   , audio->dev_info(d, FFAUDIO_DEV_IS_DEFAULT)
+                );
+        }
 
-		audio->dev_free(d);
-	}
+        audio->dev_free(d);
+    }
 }
 
 // size in "double" samples
 int tx_transfer(double *buffer, size_t len)
 {
-	uint8_t *buffer_internal = (uint8_t *) buffer;
-	int buffer_size_bytes = len * sizeof(double);
+    uint8_t *buffer_internal = (uint8_t *) buffer;
+    int buffer_size_bytes = len * sizeof(double);
 
 #if ENABLE_FLOAT64_TAP_BEFORE == 1
-	fwrite(buffer_internal, 1, buffer_size_bytes, tap_play);
+    fwrite(buffer_internal, 1, buffer_size_bytes, tap_play);
 #endif
 
-	write_buffer(playback_buffer, buffer_internal, buffer_size_bytes);
+    write_buffer(playback_buffer, buffer_internal, buffer_size_bytes);
 
-	// printf("size %llu free %llu\n", size_buffer(playback_buffer), circular_buf_free_size(playback_buffer));
+    // printf("size %llu free %llu\n", size_buffer(playback_buffer), circular_buf_free_size(playback_buffer));
 
     return 0;
 }
@@ -584,17 +584,17 @@ int tx_transfer(double *buffer, size_t len)
 // size in "double" samples
 int rx_transfer(double *buffer, size_t len)
 {
-	uint8_t *buffer_internal = (uint8_t *) buffer;
-	int buffer_size_bytes = len * sizeof(double);
+    uint8_t *buffer_internal = (uint8_t *) buffer;
+    int buffer_size_bytes = len * sizeof(double);
 
-	read_buffer(capture_buffer, buffer_internal, buffer_size_bytes);
+    read_buffer(capture_buffer, buffer_internal, buffer_size_bytes);
 
     return 0;
 }
 
 
 int audioio_init_internal(char *capture_dev, char *playback_dev, int audio_subsys, pthread_t *radio_capture,
-						  pthread_t *radio_playback, pthread_t *radio_capture_prep, cl_telecom_system *telecom_system)
+                          pthread_t *radio_playback, pthread_t *radio_capture_prep, cl_telecom_system *telecom_system)
 {
     audio_subsystem = audio_subsys;
 
@@ -629,14 +629,14 @@ int audioio_deinit(pthread_t *radio_capture, pthread_t *radio_playback, pthread_
     pthread_join(*radio_playback, NULL);
 
 #if ENABLE_FLOAT64_TAP_BEFORE == 1
-	fclose(tap_play);
+    fclose(tap_play);
 #endif
 
 #if defined(_WIN32)
-	free(capture_buffer->buffer);
-	circular_buf_free(capture_buffer);
-	free(playback_buffer->buffer);
-	circular_buf_free(playback_buffer);
+    free(capture_buffer->buffer);
+    circular_buf_free(capture_buffer);
+    free(playback_buffer->buffer);
+    circular_buf_free(playback_buffer);
 #else
     circular_buf_destroy_shm(capture_buffer, AUDIO_PAYLOAD_BUFFER_SIZE, (char *) AUDIO_CAPT_PAYLOAD_NAME);
     circular_buf_free_shm(capture_buffer);

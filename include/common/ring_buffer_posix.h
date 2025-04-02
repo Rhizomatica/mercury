@@ -61,7 +61,7 @@ void circular_buf_free_shm(cbuf_handle_t cbuf);
 int read_buffer(cbuf_handle_t cbuf, uint8_t *data, size_t len);
 
 // returns the number of bytes read on success, -1 on error (blocking version)
-int read_buffer_all(cbuf_handle_t cbuf, uint8_t *data);
+size_t read_buffer_all(cbuf_handle_t cbuf, uint8_t *data);
 
 // returns 0 on success, -1 on error (blocking version)
 int write_buffer(cbuf_handle_t cbuf, uint8_t * data, size_t len);
