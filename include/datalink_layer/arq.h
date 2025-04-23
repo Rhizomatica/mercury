@@ -23,15 +23,35 @@
 
 #include "physical_layer/telecom_system.h"
 
+#define DEFAULT_TCP_PORT 8300
+
 #define TCP_BLOCK_SIZE 128
 #define CALLSIGN_MAX_SIZE 16 
 
 #define DATA_TX_BUFFER_SIZE 8192
 #define DATA_RX_BUFFER_SIZE 8192
 
+#define RX 0
+#define TX 1
 
+typedef struct {
+    int TRX; // RX (0) or TX (1)
+    char my_call_sign[CALLSIGN_MAX_SIZE];
+    char src_addr[CALLSIGN_MAX_SIZE], dst_addr[CALLSIGN_MAX_SIZE];
+    bool encryption;
+    int bw; // in Hz
+
+} arq_info;
+
+// FSM states
+void state_listen(int event);
+void state_idle(int event);
+
+
+// ARQ core functions
 int arq_init(int tcp_base_port, int gear_shift_on, int initial_mode);
 void arq_shutdown();
+
 
 void ptt_on();
 void ptt_off();

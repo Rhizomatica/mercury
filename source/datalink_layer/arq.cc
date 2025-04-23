@@ -19,6 +19,7 @@
  */
 
 #include "datalink_layer/arq.h"
+#include "datalink_layer/fsm.h"
 #include "audioio/audioio.h"
 #include "datalink_layer/net.h"
 
@@ -30,11 +31,73 @@ cbuf_handle_t data_rx_buffer;
 
 extern bool shutdown_;
 
+// the physical layer class
 cl_telecom_system *arq_telecom_system;
+
+// ARQ definitions
+arq_info arq_conn;
 
 #define DEBUG
 
 static pthread_t tid[8];
+
+
+/* ---- The FSM definitions ---- */
+
+// our simple fsm struct
+fsm_handle arq_fsm;
+
+// FSM Events
+#define EV_START_LISTEN 0
+#define EV_STOP_LISTEN 1
+
+// FSM States
+void state_listen(int event)
+{
+    switch(event)
+    {
+    case EV_START_LISTEN:
+        // already listening... do dothing.
+        break;
+    case EV_STOP_LISTEN:
+        // stop_listen();
+        arq_fsm.current = state_idle;
+        break;
+    default:
+        printf("Event: %d ignored from state_listen\n");   
+    }
+
+    return;
+}
+
+void state_idle(int event)
+{
+    switch(event)
+    {
+    case EV_START_LISTEN:
+        arq_fsm.current = state_listen;
+        break;
+    case EV_STOP_LISTEN:
+        // already in idle... do dothing.
+        break;
+    default:
+        printf("Event: %d ignored from state_idle\n");   
+    }
+    
+    return;
+}
+
+void state_connecting_caller()
+{
+// "CONNECTED "+this->my_call_sign+" "+this->destination_call_sign+" "+ std::to_string(telecom_system->bandwidth)+"\r";
+}
+
+void state_connecting_callee()
+{
+// "CONNECTED "+this->my_call_sign+" "+this->destination_call_sign+" "+ std::to_string(telecom_system->bandwidth)+"\r";
+}
+
+
 
 int arq_init(int tcp_base_port, int gear_shift_on, int initial_mode)
 {
@@ -47,7 +110,12 @@ int arq_init(int tcp_base_port, int gear_shift_on, int initial_mode)
     data_rx_buffer = circular_buf_init(buffer_rx, DATA_RX_BUFFER_SIZE);
 
     arq_telecom_system->load_configuration(initial_mode);
-
+    arq_conn.TRX = RX;
+    arq_conn.bw = 0; // auto
+    arq_conn.encryption = false;
+    arq_conn.my_call_sign[0] = 0;
+    arq_conn.src_addr[0] = 0;
+    arq_conn.dst_addr[0] = 0;
     
     // here is the thread that runs the accept(), each per port, and mantains the
     // state of the connection
@@ -65,6 +133,9 @@ int arq_init(int tcp_base_port, int gear_shift_on, int initial_mode)
     // dsp threads
     pthread_create(&tid[6], NULL, dsp_thread_tx, (void *) NULL);
     pthread_create(&tid[7], NULL, dsp_thread_rx, (void *) NULL);
+
+    
+    fsm_init(&arq_fsm, state_idle);
     
     
     return EXIT_SUCCESS;
@@ -90,14 +161,14 @@ void arq_shutdown()
 void ptt_on()
 {
     char buffer[] = "PTT ON\r";
-
-//    tcp_write();
+    arq_conn.TRX = TX;
+    ssize_t i = tcp_write(CTL_TCP_PORT, (uint8_t *)buffer, strlen(buffer));
 }
 void ptt_off()
 {
     char buffer[] = "PTT OFF\r";
-//    tcp_write();
-
+    arq_conn.TRX = RX;
+    ssize_t i = tcp_write(CTL_TCP_PORT, (uint8_t *)buffer, strlen(buffer));
 }
 
 // tx to tcp socket the received data from the modem
@@ -236,9 +307,15 @@ void *control_worker_thread_rx(void *conn)
         {
             sscanf(buffer,"LISTEN %s", temp);
             if (temp[1] == 'N') // ON
+            {
                 listen = true;
+                fsm_dispatch(&arq_fsm, EV_START_LISTEN);
+            }
             if (temp[1] == 'F') // OFF
+            {
                 listen = false;
+                fsm_dispatch(&arq_fsm, EV_STOP_LISTEN);
+            }
             
             continue;
         }
@@ -263,11 +340,12 @@ void *control_worker_thread_rx(void *conn)
         if (!memcmp(buffer, "CONNECT", strlen("CONNECT")))
         {
             sscanf(buffer,"CONNECT %s %s", src_addr, dst_addr);
+            
             continue;
         }
 
         if (!memcmp(buffer, "DISCONNECT", strlen("DISCONNECT")))
-        {
+        {   
             continue;
         }        
 
@@ -367,7 +445,8 @@ void *dsp_thread_tx(void *conn)
         // uint8_t data[frame_size];
 
         // check the data in the buffer, if smaller than frame size, transmits 0
-        if ((int) size_buffer(data_tx_buffer) >= frame_size)
+        if ((int) size_buffer(data_tx_buffer) >= frame_size &&
+            arq_fsm.current != state_idle)
         {
             read_buffer(data_tx_buffer, data, frame_size);
 
@@ -376,7 +455,7 @@ void *dsp_thread_tx(void *conn)
                 arq_telecom_system->data_container.data_byte[i] = data[i];
             }
         }
-        // if there is no data in the buffer, just do nothing
+        // if there is no data in the buffer or we are in idle, just do nothing
         else
         {
             msleep(50);
@@ -388,15 +467,26 @@ void *dsp_thread_tx(void *conn)
                                       arq_telecom_system->data_container.ready_to_transmit_passband_data_tx,
                                       SINGLE_MESSAGE);
 
+        
+        ptt_on();
+        msleep(10); // TODO: tune me!
+        
 	tx_transfer(arq_telecom_system->data_container.ready_to_transmit_passband_data_tx,
                     arq_telecom_system->data_container.Nofdm * arq_telecom_system->data_container.interpolation_rate *
                     (arq_telecom_system->data_container.Nsymb + arq_telecom_system->data_container.preamble_nSymb));
 
+        // TODO: signal when stream is finished playing via pthread_cond_wait() here
+        while (size_buffer(playback_buffer) != 0)
+            msleep(10);
 
-        // wait if we have already enogh data...
+        msleep(40); // TODO: tune me!
+        ptt_off();
+
+#if 0
+        // wait if we have already enogh data in playback buffer?...
 	while (size_buffer(playback_buffer) > 768000) // (48000 * 2 * 8)
             msleep(50);
-        
+#endif   
         printf("%c\033[1D", spinner[spinner_anim % 4]); spinner_anim++;
         fflush(stdout);
         
@@ -423,18 +513,24 @@ void *dsp_thread_rx(void *conn)
         if(arq_telecom_system->data_container.data_ready == 0)
         {
             // TODO: use some locking primitive here
-            msleep(2);
+            msleep(3);
             continue;
         }
 
         MUTEX_LOCK(&capture_prep_mutex);
         if (arq_telecom_system->data_container.frames_to_read == 0)
         {
+            st_receive_stats received_message_stats;
+            if (arq_conn.TRX == RX && arq_fsm.current != state_idle)
+            {
+                memcpy(arq_telecom_system->data_container.ready_to_process_passband_delayed_data, arq_telecom_system->data_container.passband_delayed_data, signal_period * sizeof(double));
 
-            memcpy(arq_telecom_system->data_container.ready_to_process_passband_delayed_data, arq_telecom_system->data_container.passband_delayed_data, signal_period * sizeof(double));
-
-            st_receive_stats received_message_stats = arq_telecom_system->receive_byte(arq_telecom_system->data_container.ready_to_process_passband_delayed_data, out_data);
-
+                received_message_stats = arq_telecom_system->receive_byte(arq_telecom_system->data_container.ready_to_process_passband_delayed_data, out_data);
+            }
+            else
+            {
+                received_message_stats.message_decoded = NO;
+            }
             arq_telecom_system->data_container.data_ready = 0;
             MUTEX_UNLOCK(&capture_prep_mutex);
             

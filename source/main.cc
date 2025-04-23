@@ -50,7 +50,7 @@ int main(int argc, char *argv[])
     int mod_config = CONFIG_1;
     int operation_mode = ARQ_MODE;
     int gear_shift_mode = NO_GEAR_SHIFT;
-    int base_tcp_port = 0;
+    int base_tcp_port = DEFAULT_TCP_PORT;
 
     int audio_system = -1;
 
@@ -298,12 +298,12 @@ int main(int argc, char *argv[])
     {
         printf("Mode selected: ARQ\n");
         arq_telecom_system = &telecom_system;
+        printf("TNC TCP Ports: %d (CTRL) %d (DATA)\n", base_tcp_port, base_tcp_port+1); 
         arq_init(base_tcp_port, (gear_shift_mode == NO_GEAR_SHIFT)? NO : YES, mod_config);
-
 
         arq_shutdown(); // temporary hack to test the tcp interface
         audioio_init_internal(input_dev, output_dev, audio_system, &radio_capture,
-							  &radio_playback, &radio_capture_prep, &telecom_system);
+                              &radio_playback, &radio_capture_prep, &telecom_system);
 
         // and we block here in pthread_join()
         arq_shutdown();

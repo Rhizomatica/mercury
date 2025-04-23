@@ -187,9 +187,9 @@ void *radio_playback_thread(void *device_ptr)
         {
             // we just play zeros if there is nothing to play
             memset(buffer, 0, period_bytes);
-            if (buffer_size > frame_size)
+            if (buffer_size > 0)
                 read_buffer(playback_buffer, buffer, buffer_size);
-            n = period_bytes;
+            n = buffer_size;
         }
 
 #if ENABLE_FLOAT64_TAP == 1
