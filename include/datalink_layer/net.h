@@ -37,8 +37,8 @@
 #include <stdint.h>
 #include <unistd.h>
 
-#define CTL_TCP_PORT 1
-#define DATA_TCP_PORT 2
+#define CTL_TCP_PORT 0
+#define DATA_TCP_PORT 1
 
 #define NET_NONE 0
 #define NET_LISTENING 1

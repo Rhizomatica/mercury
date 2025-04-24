@@ -42,7 +42,7 @@ arq_info arq_conn;
 static pthread_t tid[8];
 
 
-/* ---- The FSM definitions ---- */
+/* ---- FSM Definitions ---- */
 
 // our simple fsm struct
 fsm_handle arq_fsm;
@@ -51,20 +51,53 @@ fsm_handle arq_fsm;
 #define EV_START_LISTEN 0
 #define EV_STOP_LISTEN 1
 
+#define EV_START_CONNECTION 2
+#define EV_STOP_CONNECTION 3
+
+
+#define EV_CLIENT_CONNECT 4
+#define EV_CLIENT_DISCONNECT 5
+
+
 // FSM States
+void state_disconnected(int event)
+{
+    switch(event)
+    {
+    case EV_CLIENT_CONNECT:
+        clear_connection_data();
+        arq_fsm.current = state_idle;
+        break;
+    default:
+        printf("Event: %d ignored in state_disconnected().\n");   
+    }
+    return;
+}
+
 void state_listen(int event)
 {
     switch(event)
     {
     case EV_START_LISTEN:
-        // already listening... do dothing.
+        printf("EV_START_LISTEN ignored in state_listen() - already listening.\n");   
         break;
     case EV_STOP_LISTEN:
-        // stop_listen();
+        arq_conn.listen = false;
         arq_fsm.current = state_idle;
         break;
+    case EV_START_CONNECTION:
+        call_remote();
+        arq_fsm.current = state_connecting_caller;
+        break;
+    case EV_STOP_CONNECTION:
+        printf("EV_STOP_CONNECTION ignored in state_listen() - not connected.\n");   
+        break;
+    case EV_CLIENT_DISCONNECT:
+        clear_connection_data();
+        arq_fsm.current = state_disconnected;
+        break;
     default:
-        printf("Event: %d ignored from state_listen\n");   
+        printf("Event: %d ignored in state_listen().\n");   
     }
 
     return;
@@ -75,10 +108,23 @@ void state_idle(int event)
     switch(event)
     {
     case EV_START_LISTEN:
+        arq_conn.listen = true;
         arq_fsm.current = state_listen;
         break;
     case EV_STOP_LISTEN:
-        // already in idle... do dothing.
+        arq_conn.listen = false;
+        printf("EV_STOP_LISTEN ignored in state_idle() - already stopped.\n");   
+        break;
+    case EV_START_CONNECTION:
+        call_remote();
+        arq_fsm.current = state_connecting_caller;
+        break;
+    case EV_STOP_CONNECTION:
+        printf("EV_STOP_CONNECTION ignored in state_idle() - not connected.\n");   
+        break;
+    case EV_CLIENT_DISCONNECT:
+        clear_connection_data();
+        arq_fsm.current = state_disconnected;
         break;
     default:
         printf("Event: %d ignored from state_idle\n");   
@@ -87,16 +133,75 @@ void state_idle(int event)
     return;
 }
 
-void state_connecting_caller()
+void state_connecting_caller(int event)
 {
+    switch(event)
+    {
+    case EV_START_LISTEN:
+        arq_conn.listen = true;
+        break;
+    case EV_STOP_LISTEN:
+        arq_conn.listen = false;
+        break;
+    case EV_START_CONNECTION:
+        printf("EV_START_CONNECTION ignored in state_connecting_caller() - already connecting.\n");           
+        break;
+    case EV_STOP_CONNECTION:
+        if (arq_conn.listen)
+            arq_fsm.current = state_listen;
+        else
+            arq_fsm.current = state_idle;
+        printf("EV_STOP_CONNECTION ignored in state_idle() - not connected.\n");   
+        break;
+    case EV_CLIENT_DISCONNECT:
+        clear_connection_data();
+        arq_fsm.current = state_disconnected;
+        break;
+    default:
+        printf("Event: %d ignored from state_idle\n");   
+    }
+
+
+    
+// prepare connection package
 // "CONNECTED "+this->my_call_sign+" "+this->destination_call_sign+" "+ std::to_string(telecom_system->bandwidth)+"\r";
+    return;
 }
 
-void state_connecting_callee()
+void state_connecting_callee(int event)
 {
 // "CONNECTED "+this->my_call_sign+" "+this->destination_call_sign+" "+ std::to_string(telecom_system->bandwidth)+"\r";
+
+    return;
 }
 
+
+void call_remote()
+{
+    // prepare header and send to tx buffer
+    return;
+}
+
+/* ---- END OF FSM Definitions ---- */
+
+
+void clear_connection_data()
+{
+    clear_buffer(data_tx_buffer);
+    clear_buffer(data_rx_buffer);
+    reset_arq_info(&arq_conn);
+}
+
+void reset_arq_info(arq_info *arq_conn)
+{
+    arq_conn->TRX = RX;
+    arq_conn->bw = 0; // 0 = auto
+    arq_conn->encryption = false;
+    arq_conn->listen = false;
+    arq_conn->my_call_sign[0] = 0;
+    arq_conn->src_addr[0] = 0;
+    arq_conn->dst_addr[0] = 0;
+}
 
 
 int arq_init(int tcp_base_port, int gear_shift_on, int initial_mode)
@@ -110,13 +215,8 @@ int arq_init(int tcp_base_port, int gear_shift_on, int initial_mode)
     data_rx_buffer = circular_buf_init(buffer_rx, DATA_RX_BUFFER_SIZE);
 
     arq_telecom_system->load_configuration(initial_mode);
-    arq_conn.TRX = RX;
-    arq_conn.bw = 0; // auto
-    arq_conn.encryption = false;
-    arq_conn.my_call_sign[0] = 0;
-    arq_conn.src_addr[0] = 0;
-    arq_conn.dst_addr[0] = 0;
-    
+    reset_arq_info(&arq_conn);
+
     // here is the thread that runs the accept(), each per port, and mantains the
     // state of the connection
     pthread_create(&tid[0], NULL, server_worker_thread_ctl, (void *) &tcp_base_port);
@@ -135,8 +235,7 @@ int arq_init(int tcp_base_port, int gear_shift_on, int initial_mode)
     pthread_create(&tid[7], NULL, dsp_thread_rx, (void *) NULL);
 
     
-    fsm_init(&arq_fsm, state_idle);
-    
+    fsm_init(&arq_fsm, state_disconnected);
     
     return EXIT_SUCCESS;
 }
@@ -223,6 +322,8 @@ void *data_worker_thread_rx(void *conn)
 
 void *control_worker_thread_tx(void *conn)
 {
+    int counter = 0;
+    char imalive[] = "IAMALIVE\r";
 
     while(!shutdown_)
     {
@@ -232,13 +333,15 @@ void *control_worker_thread_tx(void *conn)
             continue;
         }
 
-        // send IMALIVE's
-        // send OK's
-        // and ERROR
+        if (counter == 60)
+        {
+            counter = 0;
+            ssize_t i = tcp_write(CTL_TCP_PORT, (uint8_t *)imalive, strlen(imalive));
 
-        // TODO: implement-me
+        }
+
         sleep(1);
-        
+        counter++;
     }
     
     return NULL;
@@ -247,11 +350,6 @@ void *control_worker_thread_tx(void *conn)
 void *control_worker_thread_rx(void *conn)
 {
     char *buffer = (char *) malloc(TCP_BLOCK_SIZE+1);
-    char my_call_sign[CALLSIGN_MAX_SIZE];
-    char src_addr[CALLSIGN_MAX_SIZE], dst_addr[CALLSIGN_MAX_SIZE];
-    bool listen = false;
-    bool encryption = false;
-    int bw = 0; // in Hz
     char temp[16];
     int count = 0;
 
@@ -299,8 +397,8 @@ void *control_worker_thread_rx(void *conn)
         // now we parse the commands
         if (!memcmp(buffer, "MYCALL", strlen("MYCALL")))
         {
-            sscanf(buffer,"MYCALL %s", my_call_sign);
-            continue;
+            sscanf(buffer,"MYCALL %s", arq_conn.my_call_sign);
+            goto send_ok;
         }
         
         if (!memcmp(buffer, "LISTEN", strlen("LISTEN")))
@@ -308,48 +406,52 @@ void *control_worker_thread_rx(void *conn)
             sscanf(buffer,"LISTEN %s", temp);
             if (temp[1] == 'N') // ON
             {
-                listen = true;
                 fsm_dispatch(&arq_fsm, EV_START_LISTEN);
             }
             if (temp[1] == 'F') // OFF
             {
-                listen = false;
                 fsm_dispatch(&arq_fsm, EV_STOP_LISTEN);
             }
-            
-            continue;
+
+            goto send_ok;
         }
 
         if (!memcmp(buffer, "PUBLIC", strlen("PUBLIC")))
         {
             sscanf(buffer,"PUBLIC %s", temp);
             if (temp[1] == 'N') // ON
-                encryption = false;
+                arq_conn.encryption = false;
             if (temp[1] == 'F') // OFF
-               encryption = true;
+               arq_conn.encryption = true;
             
-            continue;
+            goto send_ok;
         }
 
         if (!memcmp(buffer, "BW", strlen("BW")))
         {
-            sscanf(buffer,"BW%d", &bw);
-            continue;
+            sscanf(buffer,"BW%d", &arq_conn.bw);
+            goto send_ok;
         }
 
         if (!memcmp(buffer, "CONNECT", strlen("CONNECT")))
         {
-            sscanf(buffer,"CONNECT %s %s", src_addr, dst_addr);
-            
-            continue;
+            sscanf(buffer,"CONNECT %s %s", arq_conn.src_addr, arq_conn.dst_addr);
+            fsm_dispatch(&arq_fsm, EV_START_CONNECTION);
+            goto send_ok;
         }
 
         if (!memcmp(buffer, "DISCONNECT", strlen("DISCONNECT")))
         {   
-            continue;
-        }        
+            fsm_dispatch(&arq_fsm, EV_STOP_CONNECTION);
+            goto send_ok;
+        }
 
         fprintf(stderr, "Unknown command\n");
+        tcp_write(CTL_TCP_PORT, (uint8_t *) "WRONG\r", 6);
+        continue;
+        
+    send_ok:
+        tcp_write(CTL_TCP_PORT, (uint8_t *) "OK\r", 3);
 
     }
 
@@ -382,13 +484,17 @@ void *server_worker_thread_ctl(void *port)
             continue;
         }
 
-        // pthread wait here?
+        fsm_dispatch(&arq_fsm, EV_CLIENT_CONNECT);
+        
+        // TODO: pthread wait here?
         while (status_ctl == NET_CONNECTED)
             sleep(1);
 
         // inform the data thread
         if (status_data == NET_CONNECTED)
             status_data = NET_RESTART;
+
+        fsm_dispatch(&arq_fsm, EV_CLIENT_DISCONNECT);
         
         tcp_close(CTL_TCP_PORT);
     }
@@ -435,7 +541,8 @@ void *dsp_thread_tx(void *conn)
 {
     static uint32_t spinner_anim = 0; char spinner[] = ".oOo";
     uint8_t data[N_MAX];
-    
+
+    // TODO: may be we need another function to queue the already prepared packets?
     while(!shutdown_)
     {
         // TODO: cope with mode changes...      
@@ -444,9 +551,11 @@ void *dsp_thread_tx(void *conn)
 
         // uint8_t data[frame_size];
 
-        // check the data in the buffer, if smaller than frame size, transmits 0
+        // check if there is data in the buffer
+        // should we add a header already here, to know the size of each package? (size need to match frame_size
         if ((int) size_buffer(data_tx_buffer) >= frame_size &&
-            arq_fsm.current != state_idle)
+            arq_fsm.current != state_idle &&
+            arq_fsm.current != state_disconnected)
         {
             read_buffer(data_tx_buffer, data, frame_size);
 
@@ -467,7 +576,6 @@ void *dsp_thread_tx(void *conn)
                                       arq_telecom_system->data_container.ready_to_transmit_passband_data_tx,
                                       SINGLE_MESSAGE);
 
-        
         ptt_on();
         msleep(10); // TODO: tune me!
         
@@ -486,7 +594,7 @@ void *dsp_thread_tx(void *conn)
         // wait if we have already enogh data in playback buffer?...
 	while (size_buffer(playback_buffer) > 768000) // (48000 * 2 * 8)
             msleep(50);
-#endif   
+#endif
         printf("%c\033[1D", spinner[spinner_anim % 4]); spinner_anim++;
         fflush(stdout);
         
@@ -521,7 +629,9 @@ void *dsp_thread_rx(void *conn)
         if (arq_telecom_system->data_container.frames_to_read == 0)
         {
             st_receive_stats received_message_stats;
-            if (arq_conn.TRX == RX && arq_fsm.current != state_idle)
+            if (arq_conn.TRX == RX &&
+                arq_fsm.current != state_idle &&
+                arq_fsm.current != state_disconnected)
             {
                 memcpy(arq_telecom_system->data_container.ready_to_process_passband_delayed_data, arq_telecom_system->data_container.passband_delayed_data, signal_period * sizeof(double));
 

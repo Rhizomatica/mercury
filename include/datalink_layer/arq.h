@@ -39,18 +39,23 @@ typedef struct {
     char my_call_sign[CALLSIGN_MAX_SIZE];
     char src_addr[CALLSIGN_MAX_SIZE], dst_addr[CALLSIGN_MAX_SIZE];
     bool encryption;
+    bool listen;
     int bw; // in Hz
-
 } arq_info;
 
 // FSM states
 void state_listen(int event);
 void state_idle(int event);
-
+void state_connecting_caller(int event);
+void state_connecting_callee(int event);
 
 // ARQ core functions
 int arq_init(int tcp_base_port, int gear_shift_on, int initial_mode);
 void arq_shutdown();
+
+void clear_connection_data();
+void reset_arq_info(arq_info *arq_conn);
+void call_remote();
 
 
 void ptt_on();

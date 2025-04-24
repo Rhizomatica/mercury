@@ -325,13 +325,13 @@ void clear_buffer(cbuf_handle_t cbuf)
 {
     assert(cbuf->internal);
 
-	MUTEX_LOCK( &cbuf->internal->mutex );
+    MUTEX_LOCK( &cbuf->internal->mutex );
 
     cbuf->internal->full = 0;
-	cbuf->internal->head = 0;
-	cbuf->internal->tail = 0;
+    cbuf->internal->head = 0;
+    cbuf->internal->tail = 0;
 
-	MUTEX_UNLOCK( &cbuf->internal->mutex );
+    MUTEX_UNLOCK( &cbuf->internal->mutex );
 }
 
 size_t circular_buf_free_size(cbuf_handle_t cbuf)

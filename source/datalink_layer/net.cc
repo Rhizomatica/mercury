@@ -39,8 +39,8 @@ static int ctl_sockfd, data_sockfd;
 int cli_ctl_sockfd, cli_data_sockfd;
 std::atomic_int status_ctl, status_data;
 
-static pthread_mutex_t read_mutex = PTHREAD_MUTEX_INITIALIZER;
-static pthread_mutex_t write_mutex = PTHREAD_MUTEX_INITIALIZER;
+static pthread_mutex_t read_mutex[2] = { PTHREAD_MUTEX_INITIALIZER, PTHREAD_MUTEX_INITIALIZER };
+static pthread_mutex_t write_mutex[2] = { PTHREAD_MUTEX_INITIALIZER, PTHREAD_MUTEX_INITIALIZER };
 
 
 int listen4connection(int port_type)
@@ -84,17 +84,25 @@ int tcp_open(int portno, int port_type)
 
     sockfd = socket(AF_INET, SOCK_STREAM, 0);
     if (sockfd < 0){
-        fprintf(stderr, "ERROR opening socket");
+        fprintf(stderr, "ERROR opening socket\n");
         return -1;
     }
-    
+
+    int opt = 1;  
+    if (setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0)
+    {
+        fprintf(stderr, "setsockopt(SO_REUSEADDR) failed\n");
+        close(sockfd);
+        return -1;
+    }
+      
     memset((char *) &serv_addr, 0,  sizeof(serv_addr));
     serv_addr.sin_family = AF_INET;
     serv_addr.sin_addr.s_addr = INADDR_ANY;
     serv_addr.sin_port = htons(portno);
     if (bind(sockfd, (struct sockaddr *) &serv_addr, sizeof(serv_addr)) < 0) 
     {
-        fprintf(stderr, "ERROR on binding");
+        fprintf(stderr, "ERROR on binding\n");
         return -1;
     }
 
@@ -117,7 +125,7 @@ ssize_t tcp_read(int port_type, uint8_t *buffer, size_t rx_size)
 {
     ssize_t n = 0;
 
-    pthread_mutex_lock(&read_mutex);
+    pthread_mutex_lock(&read_mutex[port_type]);
 
     size_t count = 0;
 
@@ -139,8 +147,8 @@ ssize_t tcp_read(int port_type, uint8_t *buffer, size_t rx_size)
 
         if (n <= 0) status_data = NET_RESTART;        
     }
-
-    pthread_mutex_unlock(&read_mutex);
+    
+    pthread_mutex_unlock(&read_mutex[port_type]);
 
     if (n <= 0)
         fprintf(stderr, "ERROR reading from socket\n");
@@ -152,20 +160,25 @@ ssize_t tcp_write(int port_type, uint8_t *buffer, size_t tx_size)
 {
     ssize_t n = 0;
 
-    pthread_mutex_lock(&write_mutex);
+    pthread_mutex_lock(&write_mutex[port_type]);
+
     if (port_type == CTL_TCP_PORT && status_ctl == NET_CONNECTED)
     {
         n = send(cli_ctl_sockfd, buffer, tx_size, MSG_NOSIGNAL);
 
-        if (n != (ssize_t) tx_size) status_ctl = NET_RESTART;
+        if (n != (ssize_t) tx_size)
+            status_ctl = NET_RESTART;
     }
+
     if (port_type == DATA_TCP_PORT && status_data == NET_CONNECTED)
     {
         n = send(cli_data_sockfd, buffer, tx_size, MSG_NOSIGNAL);
-        if (n != (ssize_t) tx_size) status_data = NET_RESTART;
+
+        if (n != (ssize_t) tx_size)
+            status_data = NET_RESTART;
     }
 
-    pthread_mutex_unlock(&write_mutex);
+    pthread_mutex_unlock(&write_mutex[port_type]);
     
     if (n != (ssize_t) tx_size)
         fprintf(stderr, "ERROR writing to socket\n");
