@@ -43,6 +43,17 @@ typedef struct {
     int bw; // in Hz
 } arq_info;
 
+#define HEADER_SIZE 1
+
+#define PACKET_ARQ_CONTROL 0x00
+#define PACKET_ARQ_DATA 0x01
+#define PACKET_BROADCAST_CONTROL 0x02
+#define PACKET_BROADCAST_PAYLOAD 0x03
+
+// frame sizes, no CRC enabled, modes 0 to 16.
+uint32_t mercury_frame_size[17] = { 12, 25, 37, 50, 62, 75, 100, 62, 75, 100, 74, 99, 175, 100, 174, 175, 162};
+
+
 // FSM states
 void state_listen(int event);
 void state_idle(int event);
@@ -52,14 +63,6 @@ void state_connecting_callee(int event);
 // ARQ core functions
 int arq_init(int tcp_base_port, int gear_shift_on, int initial_mode);
 void arq_shutdown();
-
-void clear_connection_data();
-void reset_arq_info(arq_info *arq_conn);
-void call_remote();
-
-
-void ptt_on();
-void ptt_off();
 
 void print_arq_stats();
 extern cl_telecom_system *arq_telecom_system;
@@ -75,5 +78,23 @@ void *control_worker_thread_rx(void *conn);
 // DSP threads
 void *dsp_thread_tx(void *conn);
 void *dsp_thread_rx(void *conn);
+
+// auxiliary functions
+void clear_connection_data();
+void reset_arq_info(arq_info *arq_conn);
+void call_remote();
+
+// radio functions
+void ptt_on();
+void ptt_off();
+
+// file crc6.cc
+uint16_t crc6_0X6F(uint16_t crc, const uint8_t *data, int data_len);
+
+// from arith.cc
+void init_model();
+int arithmetic_encode(const char* msg, uint8_t* output);
+int arithmetic_decode(uint8_t* input, int len, char* output);
+
 
 #endif

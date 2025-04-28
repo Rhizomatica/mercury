@@ -54,7 +54,6 @@ fsm_handle arq_fsm;
 #define EV_START_CONNECTION 2
 #define EV_STOP_CONNECTION 3
 
-
 #define EV_CLIENT_CONNECT 4
 #define EV_CLIENT_DISCONNECT 5
 
@@ -179,6 +178,8 @@ void state_connecting_callee(int event)
 void call_remote()
 {
     // prepare header and send to tx buffer
+    
+
     return;
 }
 
@@ -541,7 +542,9 @@ void *dsp_thread_tx(void *conn)
 {
     static uint32_t spinner_anim = 0; char spinner[] = ".oOo";
     uint8_t data[N_MAX];
-
+    uint8_t encoded_callsign[CALLSIGN_MAX_SIZE];
+    init_model();
+    
     // TODO: may be we need another function to queue the already prepared packets?
     while(!shutdown_)
     {
@@ -553,22 +556,56 @@ void *dsp_thread_tx(void *conn)
 
         // check if there is data in the buffer
         // should we add a header already here, to know the size of each package? (size need to match frame_size
-        if ((int) size_buffer(data_tx_buffer) >= frame_size &&
-            arq_fsm.current != state_idle &&
-            arq_fsm.current != state_disconnected)
-        {
-            read_buffer(data_tx_buffer, data, frame_size);
-
-            for (int i = 0; i < frame_size; i++)
-            {
-                arq_telecom_system->data_container.data_byte[i] = data[i];
-            }
-        }
-        // if there is no data in the buffer or we are in idle, just do nothing
-        else
+        if ((int) size_buffer(data_tx_buffer) < frame_size ||
+            arq_fsm.current == state_idle ||
+            arq_fsm.current == state_disconnected)
         {
             msleep(50);
             continue;
+        }
+
+        if (arq_fsm.current == state_connecting_caller)
+        {
+            memset(data, 0, frame_size);
+            // 1 byte header, 4 bits packet type, 6 bits crc
+            data[0] = (PACKET_ARQ_CONTROL << 6) & 0xff; // set packet type
+
+            // encode the destination callsign
+            int enc_len = arithmetic_encode(arq_conn.dst_addr, encoded_callsign);
+            if (enc_len > frame_size - HEADER_SIZE)
+            {
+                printf("Trucating destination callsign! Bad! (%d out of %d encoded)\n", frame_size - HEADER_SIZE, enc_len);
+                enc_len = frame_size - HEADER_SIZE;
+            }
+            memcpy(data + HEADER_SIZE, encoded_callsign, enc_len);
+
+            // encode the source callsign
+            if (enc_len < frame_size - HEADER_SIZE)
+            {
+                int available_bytes = frame_size - HEADER_SIZE - enc_len;
+// we encode the source destination use the rest of the space
+                int enc_len_d = arithmetic_encode(arq_conn.src_addr, encoded_callsign);
+                if (enc_len_d > available_bytes)
+                {
+                    printf("Trucating source callsign! OK. (%d out of %d encoded)\n", available_bytes, enc_len_d);
+                    enc_len_d = available_bytes;
+                }
+                memcpy(data + HEADER_SIZE + enc_len, encoded_callsign, enc_len_d);
+            }
+
+            data[0] |= crc6_0X6F(1, data + HEADER_SIZE, frame_size - HEADER_SIZE);
+        }
+
+#if 0 // TODO: after connected, we read from from user TNC data port
+        if(arq_fsm.current == state_connected)
+        {
+            read_buffer(data_tx_buffer, data, frame_size);
+        }
+#endif
+        
+        for (int i = 0; i < frame_size; i++)
+        {
+            arq_telecom_system->data_container.data_byte[i] = data[i];
         }
 
         arq_telecom_system->transmit_byte(arq_telecom_system->data_container.data_byte,

@@ -23,7 +23,7 @@
 #ifndef INC_COMMON_DEFINES_H_
 #define INC_COMMON_DEFINES_H_
 
-#define VERSION__ "0.3.1"
+#define VERSION__ "0.4.0"
 
 #define BER_PLOT_baseband 0
 #define BER_PLOT_passband 1
@@ -54,6 +54,7 @@
 #define CONFIG_14 14
 #define CONFIG_15 15
 #define CONFIG_16 16
+
 
 /*
  * Config	CODE	Mode	EsN0(FER<0,1)
