@@ -34,15 +34,6 @@
 #define RX 0
 #define TX 1
 
-typedef struct {
-    int TRX; // RX (0) or TX (1)
-    char my_call_sign[CALLSIGN_MAX_SIZE];
-    char src_addr[CALLSIGN_MAX_SIZE], dst_addr[CALLSIGN_MAX_SIZE];
-    bool encryption;
-    bool listen;
-    int bw; // in Hz
-} arq_info;
-
 #define HEADER_SIZE 1
 
 #define PACKET_ARQ_CONTROL 0x00
@@ -50,9 +41,22 @@ typedef struct {
 #define PACKET_BROADCAST_CONTROL 0x02
 #define PACKET_BROADCAST_PAYLOAD 0x03
 
-// frame sizes, no CRC enabled, modes 0 to 16.
-uint32_t mercury_frame_size[17] = { 12, 25, 37, 50, 62, 75, 100, 62, 75, 100, 74, 99, 175, 100, 174, 175, 162};
+#define CALL_BURST_SIZE 3 // 3 frames
 
+typedef struct
+{
+    int TRX; // RX (0) or TX (1)
+    char my_call_sign[CALLSIGN_MAX_SIZE];
+    char src_addr[CALLSIGN_MAX_SIZE], dst_addr[CALLSIGN_MAX_SIZE];
+    bool encryption;
+    bool call_burst_size;
+    bool listen;
+    int bw; // in Hz
+} arq_info;
+
+
+// frame sizes, no CRC enabled, modes 0 to 16.
+// extern uint32_t mercury_frame_size[];
 
 // FSM states
 void state_listen(int event);
@@ -94,7 +98,6 @@ uint16_t crc6_0X6F(uint16_t crc, const uint8_t *data, int data_len);
 // from arith.cc
 void init_model();
 int arithmetic_encode(const char* msg, uint8_t* output);
-int arithmetic_decode(uint8_t* input, int len, char* output);
-
+int arithmetic_decode(uint8_t* input, int max_len, char* output);
 
 #endif

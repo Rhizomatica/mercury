@@ -41,6 +41,8 @@ extern "C" {
     bool shutdown_;
 }
 
+uint32_t mercury_frame_size[] = { 12, 25, 37, 50, 62, 75, 100, 62, 75, 100, 74, 99, 175, 100, 174, 175, 162};
+
 int main(int argc, char *argv[])
 {
     int cpu_nr = -1;
@@ -256,7 +258,7 @@ int main(int argc, char *argv[])
         printf("Microsoft DirectSound (DSOUND)\n");
         break;
     default:
-        printf("No supported audio system selected. Trying to continue.\n");
+        printf("Selected audio system not supported. Trying to continue.\n");
     }
 
     if (list_sndcards)
@@ -318,8 +320,8 @@ int main(int argc, char *argv[])
         telecom_system.constellation_plot.open("PLOT");
         telecom_system.constellation_plot.reset("PLOT");
 
-		audioio_init_internal(input_dev, output_dev, audio_system, &radio_capture,
-							  &radio_playback, &radio_capture_prep, &telecom_system);
+        audioio_init_internal(input_dev, output_dev, audio_system, &radio_capture,
+                              &radio_playback, &radio_capture_prep, &telecom_system);
 
         while (!shutdown_)
         {
@@ -334,8 +336,8 @@ int main(int argc, char *argv[])
         telecom_system.load_configuration(mod_config);
         printf("Modulation: %d  Bitrate: %.2f bps  Shannon_limit: %.2f db\n",  mod_config, telecom_system.rbc, telecom_system.Shannon_limit);
 
-		audioio_init_internal(input_dev, output_dev, audio_system, &radio_capture,
-							  &radio_playback, &radio_capture_prep, &telecom_system);
+        audioio_init_internal(input_dev, output_dev, audio_system, &radio_capture,
+                              &radio_playback, &radio_capture_prep, &telecom_system);
 
         while (!shutdown_)
         {
@@ -393,7 +395,7 @@ int main(int argc, char *argv[])
         printf("Modulation: %d  Bitrate: %.2f bps  Shannon_limit: %.2f db\n",  mod_config, telecom_system.rbc, telecom_system.Shannon_limit);
 
         audioio_init_internal(input_dev, output_dev, audio_system, &radio_capture,
-							  &radio_playback, &radio_capture_prep, &telecom_system);
+                              &radio_playback, &radio_capture_prep, &telecom_system);
 
         while (!shutdown_)
         {

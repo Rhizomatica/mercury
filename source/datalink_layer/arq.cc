@@ -57,7 +57,9 @@ fsm_handle arq_fsm;
 #define EV_CLIENT_CONNECT 4
 #define EV_CLIENT_DISCONNECT 5
 
-#define EV_LINK_ESTABLISHED 6
+#define EV_LINK_INCOMING_CALL 6
+
+#define EV_LINK_ESTABLISHED 7
 
 
 // FSM States
@@ -99,6 +101,7 @@ void state_listen(int event)
         arq_fsm.current = state_idle;
         break;
     case EV_START_CONNECTION:
+        call_remote();
         arq_fsm.current = state_connecting_caller;
         break;
     case EV_STOP_CONNECTION:
@@ -128,6 +131,7 @@ void state_idle(int event)
         printf("EV_STOP_LISTEN ignored in state_idle() - already stopped.\n");   
         break;
     case EV_START_CONNECTION:
+        call_remote();
         arq_fsm.current = state_connecting_caller;
         break;
     case EV_STOP_CONNECTION:
@@ -190,11 +194,95 @@ void state_connecting_callee(int event)
     return;
 }
 
+bool check_crc(uint8_t *data)
+{
+    int nReal_data = arq_telecom_system->data_container.nBits - arq_telecom_system->ldpc.P;
+    int frame_size = (nReal_data - arq_telecom_system->outer_code_reserved_bits) / 8;    
+
+    uint16_t crc = (uint16_t) (data[0] & 0x3f);
+    uint16_t calculated_crc = crc6_0X6F(1, data + HEADER_SIZE, frame_size - HEADER_SIZE);
+
+    if (crc == calculated_crc)
+        return true;
+
+    return false;
+    
+}
+
+int check_for_incoming_connection(uint8_t *data)
+{
+    char callsigns[CALLSIGN_MAX_SIZE * 2];
+    char dst_callsign[CALLSIGN_MAX_SIZE] = { 0 };
+    char src_callsign[CALLSIGN_MAX_SIZE] = { 0 };
+
+    int nReal_data = arq_telecom_system->data_container.nBits - arq_telecom_system->ldpc.P;
+    int frame_size = (nReal_data - arq_telecom_system->outer_code_reserved_bits) / 8;    
+
+    uint8_t pack_type = (data[0] >> 6) & 0xff;
+
+    if (check_crc(data) == false)
+    {
+        printf("Bad crc for packet type %u.\n", pack_type);
+        return -1;
+    }
+
+    if (pack_type != PACKET_ARQ_CONTROL)
+    {
+        return 1;
+    }
+
+    if (arithmetic_decode(data + HEADER_SIZE, frame_size - HEADER_SIZE, callsigns) < 0)
+    {
+        printf("Truncated callsigns.\n");
+    }
+    printf("Decoded callsigns: %s\n", callsigns);
+
+    char *needle;
+    if ( (needle = strstr(callsigns,"|")) )
+    {
+        int i = 0;
+        while (callsigns[i] != '|')
+        {
+            dst_callsign[i] = callsigns[i];
+            i++;
+        }
+        i++;
+        dst_callsign[i] = 0;
+
+        i = 0;
+        needle++;
+        while (callsigns[i] != 0)
+        {
+            src_callsign[i] = needle[i];
+            i++;
+        }
+        src_callsign[i] = 0;
+    }
+    else
+    {
+        strcpy(dst_callsign, callsigns);
+    }    
+
+    if (!strcmp(dst_callsign, arq_conn.my_call_sign))
+    {
+        fsm_dispatch(&arq_fsm, EV_LINK_INCOMING_CALL);
+        // Now we need to create the packets to transmit back...
+    }
+    else
+    {
+        printf("Caller call sign does not match my callsign.\n");
+    }
+    
+    return 0;
+}
+
 
 void call_remote()
 {
     uint8_t data[N_MAX];
-    uint8_t encoded_callsign[CALLSIGN_MAX_SIZE];
+    char joint_callsigns[CALLSIGN_MAX_SIZE * 2];
+    uint8_t encoded_callsigns[CALLSIGN_MAX_SIZE * 2];
+    
     static bool first_call = true;
 
     if (first_call == true)
@@ -210,30 +298,20 @@ void call_remote()
     // 1 byte header, 4 bits packet type, 6 bits crc
     data[0] = (PACKET_ARQ_CONTROL << 6) & 0xff; // set packet type
 
-    // encode the destination callsign
-    int enc_dst_len = arithmetic_encode(arq_conn.dst_addr, encoded_callsign);
-    if (enc_dst_len > frame_size - HEADER_SIZE)
-    {
-        printf("Trucating destination callsign! Source callsign not transmitted. Bad! (%d bytes out of %d transmitted)\n", frame_size - HEADER_SIZE, enc_dst_len);
-        enc_dst_len = frame_size - HEADER_SIZE;
-    }
-    memcpy(data + HEADER_SIZE, encoded_callsign, enc_dst_len);
+    // encode the destination callsign first, then the source, separated by "|"
+    sprintf(joint_callsigns,"%s|%s", arq_conn.dst_addr, arq_conn.src_addr);
+    int enc_len = arithmetic_encode(joint_callsigns, encoded_callsigns);
 
-    // encode the source callsign
-    if (enc_dst_len < frame_size - HEADER_SIZE)
+    if (enc_len > frame_size - HEADER_SIZE)
     {
-        // we encode the source destination use the rest of the space in the frame
-        int available_bytes = frame_size - HEADER_SIZE - enc_dst_len;
-        int enc_src_len = arithmetic_encode(arq_conn.src_addr, encoded_callsign);
-        if (enc_src_len > available_bytes)
-        {
-            printf("Trucating source callsign! OK. (%d bytes out of %d bytes transmitted)\n", available_bytes, enc_src_len);
-            enc_src_len = available_bytes;
-        }
-        memcpy(data + HEADER_SIZE + enc_dst_len, encoded_callsign, enc_src_len);
+        printf("Trucating joint destination + source callsigns. This is ok (%d bytes out of %d transmitted)\n", frame_size - HEADER_SIZE, enc_len);
+        enc_len = frame_size - HEADER_SIZE;
     }
-    
-    data[0] |= crc6_0X6F(1, data + HEADER_SIZE, frame_size - HEADER_SIZE);
+    memcpy(data + HEADER_SIZE, encoded_callsigns, enc_len);
+
+    data[0] |= (uint8_t) crc6_0X6F(1, data + HEADER_SIZE, frame_size - HEADER_SIZE);
+
+    write_buffer(data_tx_buffer, data, frame_size);
     
     return;
 }
@@ -248,15 +326,15 @@ void clear_connection_data()
     reset_arq_info(&arq_conn);
 }
 
-void reset_arq_info(arq_info *arq_conn)
+void reset_arq_info(arq_info *arq_conn_i)
 {
-    arq_conn->TRX = RX;
-    arq_conn->bw = 0; // 0 = auto
-    arq_conn->encryption = false;
-    arq_conn->listen = false;
-    arq_conn->my_call_sign[0] = 0;
-    arq_conn->src_addr[0] = 0;
-    arq_conn->dst_addr[0] = 0;
+    arq_conn_i->TRX = RX;
+    arq_conn_i->bw = 0; // 0 = auto
+    arq_conn_i->encryption = false;
+    arq_conn_i->listen = false;
+    arq_conn_i->my_call_sign[0] = 0;
+    arq_conn_i->src_addr[0] = 0;
+    arq_conn_i->dst_addr[0] = 0;
 }
 
 
@@ -264,6 +342,8 @@ int arq_init(int tcp_base_port, int gear_shift_on, int initial_mode)
 {
     status_ctl = NET_NONE;
     status_data = NET_NONE;
+
+    arq_conn.call_burst_size = CALL_BURST_SIZE;
 
     uint8_t *buffer_tx = (uint8_t *) malloc(DATA_TX_BUFFER_SIZE);
     uint8_t *buffer_rx = (uint8_t *) malloc(DATA_RX_BUFFER_SIZE);
@@ -325,6 +405,8 @@ void ptt_off()
     arq_conn.TRX = RX;
     ssize_t i = tcp_write(CTL_TCP_PORT, (uint8_t *)buffer, strlen(buffer));
 }
+
+
 
 // tx to tcp socket the received data from the modem
 void *data_worker_thread_tx(void *conn)
@@ -633,14 +715,15 @@ void *dsp_thread_tx(void *conn)
             continue;
         }
 
-        if (arq_fsm.current == state_connecting_caller)
-        {
-            call_remote();
-        }
-
+            
         if(arq_fsm.current != state_idle && arq_fsm.current != state_listen)
         {
             read_buffer(data_tx_buffer, data, frame_size);
+        }
+        else
+        {
+            msleep(50);
+            continue;
         }
         
         for (int i = 0; i < frame_size; i++)
@@ -648,25 +731,41 @@ void *dsp_thread_tx(void *conn)
             arq_telecom_system->data_container.data_byte[i] = data[i];
         }
 
+
         arq_telecom_system->transmit_byte(arq_telecom_system->data_container.data_byte,
-                                      frame_size,
-                                      arq_telecom_system->data_container.ready_to_transmit_passband_data_tx,
-                                      SINGLE_MESSAGE);
+                                          frame_size,
+                                          arq_telecom_system->data_container.ready_to_transmit_passband_data_tx,
+                                          SINGLE_MESSAGE);
+
 
         ptt_on();
         msleep(10); // TODO: tune me!
-        
-	tx_transfer(arq_telecom_system->data_container.ready_to_transmit_passband_data_tx,
-                    arq_telecom_system->data_container.Nofdm * arq_telecom_system->data_container.interpolation_rate *
-                    (arq_telecom_system->data_container.Nsymb + arq_telecom_system->data_container.preamble_nSymb));
 
+        // our connection request
+        if (arq_fsm.current == state_connecting_caller)
+        {
+            for(int i = 0; i < arq_conn.call_burst_size; i++)
+            {
+                tx_transfer(arq_telecom_system->data_container.ready_to_transmit_passband_data_tx,
+                            arq_telecom_system->data_container.Nofdm * arq_telecom_system->data_container.interpolation_rate *
+                            (arq_telecom_system->data_container.Nsymb + arq_telecom_system->data_container.preamble_nSymb));
+            }
+        }
+
+        if (arq_fsm.current == state_connected)
+        {
+            tx_transfer(arq_telecom_system->data_container.ready_to_transmit_passband_data_tx,
+                        arq_telecom_system->data_container.Nofdm * arq_telecom_system->data_container.interpolation_rate *
+                        (arq_telecom_system->data_container.Nsymb + arq_telecom_system->data_container.preamble_nSymb));
+        }
+        
         // TODO: signal when stream is finished playing via pthread_cond_wait() here
         while (size_buffer(playback_buffer) != 0)
             msleep(10);
 
         msleep(40); // TODO: tune me!
         ptt_off();
-
+        
 #if 0
         // wait if we have already enogh data in playback buffer?...
 	while (size_buffer(playback_buffer) > 768000) // (48000 * 2 * 8)
@@ -720,7 +819,8 @@ void *dsp_thread_rx(void *conn)
             }
             arq_telecom_system->data_container.data_ready = 0;
             MUTEX_UNLOCK(&capture_prep_mutex);
-            
+
+
             if(received_message_stats.message_decoded == YES)
             {
                 // printf("Frame decoded in %d iterations. Data: \n", received_message_stats.iterations_done);
@@ -729,6 +829,11 @@ void *dsp_thread_rx(void *conn)
                     data[i] = (uint8_t) out_data[i];
                 }
 
+                if(arq_fsm.current == state_listen)
+                {
+                    check_for_incoming_connection(data);
+                }
+                
                 if ( frame_size <= (int) circular_buf_free_size(data_rx_buffer) )
                     write_buffer(data_rx_buffer, data, frame_size);
                 else

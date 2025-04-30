@@ -3,7 +3,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define NUM_SYMBOLS 38  // 37 symbols + 1 EOF
+#define NUM_SYMBOLS 39  // 37 symbols + 1 EOF + separator
 #define CODE_BITS 32
 #define MAX_CODE ((1ULL << CODE_BITS) - 1)
 #define HALF (1ULL << (CODE_BITS - 1))
@@ -16,7 +16,7 @@
 char symbols[NUM_SYMBOLS] = {
     'A','B','C','D','E','F','G','H','I','J','K','L','M',
     'N','O','P','Q','R','S','T','U','V','W','X','Y','Z',
-    '0','1','2','3','4','5','6','7','8','9','-',
+    '0','1','2','3','4','5','6','7','8','9','-', '|',
     '\0'  // EOF symbol
 };
 
@@ -64,14 +64,16 @@ void bw_write_bit(BitWriter* bw, int bit) {
 }
 
 int bw_bytes(BitWriter* bw) {
-    return bw->bytepos + (bw->bitpos != 0);
+    return bw->bytepos + ((bw->bitpos != 0)?1:0);
 }
 
+#if 0
 typedef struct {
     uint8_t* buffer;
     int bitpos;
     int bytepos;
     int length;
+    int total_bits_read; // NEW: track total bits consumed
 } BitReader;
 
 void br_init(BitReader* br, uint8_t* buf, int len) {
@@ -79,10 +81,53 @@ void br_init(BitReader* br, uint8_t* buf, int len) {
     br->bitpos = 0;
     br->bytepos = 0;
     br->length = len;
+    br->total_bits_read = 0;
 }
 
 int br_read_bit(BitReader* br) {
-    if (br->bytepos >= br->length) return 0;
+    if (br->bytepos >= br->length)
+        return -1; // signal bitstream exhausted
+
+    int bit = (br->buffer[br->bytepos] >> (7 - br->bitpos)) & 1;
+    br->total_bits_read++;
+
+    if (++br->bitpos == 8) {
+        br->bitpos = 0;
+        br->bytepos++;
+    }
+    return bit;
+}
+#endif
+
+#if 1
+typedef struct {
+    uint8_t* buffer;
+    int bitpos;
+    int bytepos;
+    int length;
+    int max_read_ahead;
+} BitReader;
+
+
+void br_init(BitReader* br, uint8_t* buf, int len) {
+    br->buffer = buf;
+    br->bitpos = 0;
+    br->bytepos = 0;
+    br->length = len;
+    br->max_read_ahead = 24;
+}
+
+int br_read_bit(BitReader* br)
+{
+    // limit how far we go...
+    if (br->bytepos >= br->length)
+    {
+        br->max_read_ahead--;
+        if (br->max_read_ahead == 0)
+            return -1;
+        else
+            return 0;
+    }
     int bit = (br->buffer[br->bytepos] >> (7 - br->bitpos)) & 1;
     if (++br->bitpos == 8) {
         br->bitpos = 0;
@@ -90,6 +135,7 @@ int br_read_bit(BitReader* br) {
     }
     return bit;
 }
+#endif
 
 int arithmetic_encode(const char* msg, uint8_t* output) {
     BitWriter bw;
@@ -163,19 +209,31 @@ int arithmetic_encode(const char* msg, uint8_t* output) {
     return bw_bytes(&bw);
 }
 
-int arithmetic_decode(uint8_t* input, int len, char* output) {
+#if 1
+int arithmetic_decode(uint8_t* input, int max_len, char* output) {
     BitReader br;
-    br_init(&br, input, len);
+    br_init(&br, input, max_len);
 
     uint64_t low = 0, high = MAX_CODE;
     uint64_t value = 0;
     uint64_t total = cum_freq[NUM_SYMBOLS];
 
-    for (int i = 0; i < CODE_BITS; i++)
-        value = (value << 1) | br_read_bit(&br);
-
     int outpos = 0;
+    //printf("br.total_bits_read %d\n", br.total_bits_read);
+    // Initialize value
+    for (int i = 0; i < CODE_BITS; i++) {
+        int b = br_read_bit(&br);
+        if (b < 0) {
+            fprintf(stderr, "Decode error: bitstream ended too early (init)\n");
+            return -1;
+        }
+        value = (value << 1) | b;
+    }
+
+
     while (1) {
+        //printf("br.total_bits_read %d\n", br.total_bits_read);
+
         uint64_t range = high - low + 1;
         uint64_t scaled = ((value - low + 1) * total - 1) / range;
 
@@ -183,12 +241,86 @@ int arithmetic_decode(uint8_t* input, int len, char* output) {
         while (!(scaled >= cum_freq[sym] && scaled < cum_freq[sym + 1])) {
             sym++;
             if (sym >= NUM_SYMBOLS) {
-                fprintf(stderr, "Decode error: no matching symbol for scaled=%llu\n", scaled);
+                fprintf(stderr, "Decode error: no matching symbol for scaled=%lu\n", scaled);
                 return -1;
             }
         }
 
-        if (symbols[sym] == '\0') break;  // EOF reached
+        if (symbols[sym] == '\0') {
+            break;  // EOF reached
+        }
+        output[outpos++] = symbols[sym];
+
+        high = low + (range * cum_freq[sym + 1]) / total - 1;
+        low  = low + (range * cum_freq[sym]) / total;
+
+        while (1) {
+            if (high < HALF) {
+                // no renormalization needed
+            } else if (low >= HALF) {
+                value -= HALF;
+                low   -= HALF;
+                high  -= HALF;
+            } else if (low >= QUARTER && high < THREE_QUARTERS) {
+                value -= QUARTER;
+                low   -= QUARTER;
+                high  -= QUARTER;
+            } else {
+                break;
+            }
+
+            low <<= 1;
+            high = (high << 1) | 1;
+            int b = br_read_bit(&br);
+            if (b < 0) {
+                fprintf(stderr, "Decode error: bitstream ended too early (loop)\n");
+                goto finish;
+            }
+            value = (value << 1) | b;
+        }
+    }
+
+    //printf("br.total_bits_read %d\n", br.total_bits_read);
+finish:
+    output[outpos] = '\0';
+    return 0;
+    
+}
+#endif
+
+#if 0
+int arithmetic_decode(uint8_t* input, int max_len, char* output) {
+    BitReader br;
+    br_init(&br, input, max_len);
+
+    uint64_t low = 0, high = MAX_CODE;
+    uint64_t value = 0;
+    uint64_t total = cum_freq[NUM_SYMBOLS];
+
+    // printf("br.bytepos %d br.bitpos %d\n", br.bytepos, br.bitpos);
+    
+    for (int i = 0; i < CODE_BITS; i++)
+        value = (value << 1) | br_read_bit(&br);
+
+    int outpos = 0;
+    while (1) {
+        // printf("br.bytepos %d br.bitpos %d\n", br.bytepos, br.bitpos);
+        uint64_t range = high - low + 1;
+        uint64_t scaled = ((value - low + 1) * total - 1) / range;
+
+        int sym = 0;
+        while (!(scaled >= cum_freq[sym] && scaled < cum_freq[sym + 1])) {
+            sym++;
+            if (sym >= NUM_SYMBOLS) {
+                fprintf(stderr, "Decode error: no matching symbol for scaled=%lu\n", scaled);
+                return -1;
+            }
+        }
+
+        if (symbols[sym] == '\0')
+        {
+            break;  // EOF reached
+        }
         output[outpos++] = symbols[sym];
 
         high = low + (range * cum_freq[sym + 1]) / total - 1;
@@ -217,20 +349,33 @@ int arithmetic_decode(uint8_t* input, int len, char* output) {
 
     return 0;
 }
+#endif
+
 #if 0
 int main() {
     init_model();
-    const char* msg = "BRA31LA-15";
-    printf("Input:   %s\n", msg);
+    const char* msg1 = "PU2UIT-15|PU4GNU-15";
+    printf("Inputs:   %s \n", msg1);
 
     uint8_t encoded[BUFFER_SIZE];
-    int enc_len = arithmetic_encode(msg, encoded);
-    printf("Encoded length: %d bytes\n", enc_len);
+    int enc_len1 = arithmetic_encode(msg1, encoded);
+    printf("Encoded length 1: %d bytes\n", enc_len1);
 
-    // init_model();
+//    int enc_len2 = arithmetic_encode(msg2, encoded + enc_len1);
+//    printf("Encoded length 2: %d bytes\n", enc_len2);
+
+    
+    init_model();
     char decoded[100];
-    arithmetic_decode(encoded, enc_len, decoded);
-    printf("Decoded: %s\n", decoded);
+    int dec_len1;
+
+    if (arithmetic_decode(encoded, 11, decoded) == 0)
+        printf("Decoded: %s\n", decoded);
+
+
+//    int dec_len2;
+//    if (arithmetic_decode(encoded + dec_len1, 16 - dec_len1, &dec_len2, decoded) == 0)
+//        printf("Decoded: %s encoded length: %d\n", decoded, dec_len2);
 
     return 0;
 }
