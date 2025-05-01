@@ -87,6 +87,8 @@ void *dsp_thread_rx(void *conn);
 void clear_connection_data();
 void reset_arq_info(arq_info *arq_conn);
 void call_remote();
+void callee_accept_connection();
+int check_for_incoming_connection(uint8_t *data);
 
 // radio functions
 void ptt_on();
