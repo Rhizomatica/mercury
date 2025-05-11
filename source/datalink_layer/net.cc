@@ -150,7 +150,7 @@ ssize_t tcp_read(int port_type, uint8_t *buffer, size_t rx_size)
     
     pthread_mutex_unlock(&read_mutex[port_type]);
 
-    if (n <= 0)
+    if (n < 0)
         fprintf(stderr, "ERROR reading from socket\n");
     
     return n;
