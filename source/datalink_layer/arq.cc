@@ -859,7 +859,7 @@ void *dsp_thread_tx(void *conn)
 
         arq_telecom_system->transmit_byte(arq_telecom_system->data_container.data_byte,
                                           frame_size,
-                                          arq_telecom_system->data_container.ready_to_transmit_passband_data_tx,
+                                          arq_telecom_system->data_container.passband_data,
                                           SINGLE_MESSAGE);
 
         
@@ -871,7 +871,7 @@ void *dsp_thread_tx(void *conn)
         {
             for(int i = 0; i < arq_conn.call_burst_size; i++)
             {
-                tx_transfer(arq_telecom_system->data_container.ready_to_transmit_passband_data_tx,
+                tx_transfer(arq_telecom_system->data_container.passband_data,
                             arq_telecom_system->data_container.Nofdm * arq_telecom_system->data_container.interpolation_rate *
                             (arq_telecom_system->data_container.Nsymb + arq_telecom_system->data_container.preamble_nSymb));
             }
@@ -879,7 +879,7 @@ void *dsp_thread_tx(void *conn)
 
         if (arq_fsm.current == state_link_connected)
         {
-            tx_transfer(arq_telecom_system->data_container.ready_to_transmit_passband_data_tx,
+            tx_transfer(arq_telecom_system->data_container.passband_data,
                         arq_telecom_system->data_container.Nofdm * arq_telecom_system->data_container.interpolation_rate *
                         (arq_telecom_system->data_container.Nsymb + arq_telecom_system->data_container.preamble_nSymb));
         }
