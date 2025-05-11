@@ -18,6 +18,9 @@
  *
  */
 
+#include <sys/time.h>
+
+
 #include "datalink_layer/arq.h"
 #include "datalink_layer/fsm.h"
 #include "audioio/audioio.h"
@@ -45,29 +48,11 @@ static pthread_t tid[8];
 // our simple fsm struct
 fsm_handle arq_fsm;
 
-
-/* ---- FSM Definitions ---- */
-
-/* FSM Events */
-// TNC TCP client event
-#define EV_CLIENT_CONNECT 0
-#define EV_CLIENT_DISCONNECT 1
-
-#define EV_START_LISTEN 2
-#define EV_STOP_LISTEN 3
-
-#define EV_LINK_CALL_REMOTE 4
-#define EV_LINK_INCOMING_CALL 5
-#define EV_LINK_DISCONNECT 6
-
-#define EV_LINK_ESTABLISHMENT_TIMEOUT 7
-
-#define EV_LINK_ESTABLISHED 8
-
-
 /* FSM States */
 void state_no_connected_client(int event)
-{
+{   
+    printf("FSM State: no_connected_client\n");
+
     switch(event)
     {
     case EV_CLIENT_CONNECT:
@@ -82,6 +67,8 @@ void state_no_connected_client(int event)
 
 void state_link_connected(int event)
 {
+    printf("FSM State: link_connected\n");
+
     switch(event)
     {
     case EV_CLIENT_DISCONNECT:
@@ -100,6 +87,8 @@ void state_link_connected(int event)
 
 void state_listen(int event)
 {
+    printf("FSM State: listen\n");
+    
     switch(event)
     {
     case EV_START_LISTEN:
@@ -121,6 +110,7 @@ void state_listen(int event)
         arq_fsm.current = state_no_connected_client;
         break;
     case EV_LINK_INCOMING_CALL:
+        callee_accept_connection(); //packets created to anwser in case of incoming call with correct callsign
         arq_fsm.current = state_connecting_callee;
         break;
     default:
@@ -132,6 +122,8 @@ void state_listen(int event)
 
 void state_idle(int event)
 {
+    printf("FSM State: idle\n");
+    
     switch(event)
     {
     case EV_START_LISTEN:
@@ -162,6 +154,8 @@ void state_idle(int event)
 
 void state_connecting_caller(int event)
 {
+    printf("FSM State: connecting_caller\n");
+    
     switch(event)
     {
     case EV_START_LISTEN:
@@ -182,7 +176,7 @@ void state_connecting_caller(int event)
         arq_fsm.current = state_no_connected_client;
         break;
     case EV_LINK_ESTABLISHED:
-        // TODO: do some house cleeping here?
+        tnc_send_connected();
         arq_fsm.current = state_link_connected;
         break;
     default:
@@ -194,6 +188,8 @@ void state_connecting_caller(int event)
 
 void state_connecting_callee(int event)
 {
+    printf("FSM State: connecting_callee\n");
+    
     switch(event)
     {
         break;
@@ -217,6 +213,7 @@ void state_connecting_callee(int event)
         break;
     case EV_LINK_ESTABLISHED:
         // TODO: do some house cleeping here?
+        tnc_send_connected();
         arq_fsm.current = state_link_connected;
         break;
     default:
@@ -230,6 +227,13 @@ void tnc_send_connected()
 {
     char buffer[128];
     sprintf(buffer, "CONNECTED %s %s %d\r", arq_conn.my_call_sign, arq_conn.dst_addr, arq_telecom_system->bandwidth);
+    ssize_t i = tcp_write(CTL_TCP_PORT, (uint8_t *)buffer, strlen(buffer));
+}
+
+void tnc_send_disconnected()
+{
+    char buffer[128];
+    sprintf(buffer, "DISCONNECTED\r");
     ssize_t i = tcp_write(CTL_TCP_PORT, (uint8_t *)buffer, strlen(buffer));
 }
 
@@ -304,15 +308,53 @@ int check_for_incoming_connection(uint8_t *data)
 
     if (!strncmp(dst_callsign, arq_conn.my_call_sign, strlen(dst_callsign)))
     {
-        callee_accept_connection();
         fsm_dispatch(&arq_fsm, EV_LINK_INCOMING_CALL);
-        // Now we need to create the packets to transmit back...
     }
     else
     {
+        // TODO: or we just wait for timeout, or drop a EV_LINK_ESTABLISHMENT_FAILURE
+        fsm_dispatch(&arq_fsm, EV_LINK_ESTABLISHMENT_TIMEOUT);
         printf("Called call %s sign does not match my callsign. Doing nothing.\n", dst_callsign, arq_conn.my_call_sign);
     }
     
+    return 0;
+}
+
+int check_for_connection_acceptance_caller(uint8_t *data)
+{
+    char callsign[CALLSIGN_MAX_SIZE];
+    int nReal_data = arq_telecom_system->data_container.nBits - arq_telecom_system->ldpc.P;
+    int frame_size = (nReal_data - arq_telecom_system->outer_code_reserved_bits) / 8;    
+
+    uint8_t pack_type = (data[0] >> 6) & 0xff;
+    
+    if (check_crc(data) == false)
+    {
+        printf("Bad crc for packet type %u.\n", pack_type);
+        return -1;
+    }
+    
+    if (pack_type != PACKET_ARQ_CONTROL)
+    {
+        return 1;
+    }
+    
+    if (arithmetic_decode(data + HEADER_SIZE, frame_size - HEADER_SIZE, callsign) < 0)
+    {
+        printf("Truncated callsigns.\n");
+    }
+    printf("Decoded callsign: %s\n", callsign);
+
+    if (!strncmp(callsign, arq_conn.dst_addr, strlen(callsign)))
+    {
+        fsm_dispatch(&arq_fsm, EV_LINK_ESTABLISHED);
+    }
+    else
+    {
+        // TODO:
+        // fsm_dispatch(&arq_fsm, EV_LINK_ESTABLISHED_FAILURE);
+        printf("Responded callsign %s does not match called. Doing nothing.\n", callsign, arq_conn.dst_addr);
+    }
     return 0;
 }
 
@@ -352,19 +394,25 @@ void call_remote()
 {
     uint8_t data[N_MAX];
     char joint_callsigns[CALLSIGN_MAX_SIZE * 2];
-    uint8_t encoded_callsigns[CALLSIGN_MAX_SIZE * 2];
+    uint8_t encoded_callsigns[4096];
     
     int nReal_data = arq_telecom_system->data_container.nBits - arq_telecom_system->ldpc.P;
     int frame_size = (nReal_data - arq_telecom_system->outer_code_reserved_bits) / 8;    
 
+    printf("Calling remote %s, frame_size: %d\n", arq_conn.dst_addr, frame_size);
+    
     memset(data, 0, frame_size);
     // 1 byte header, 4 bits packet type, 6 bits crc
     data[0] = (PACKET_ARQ_CONTROL << 6) & 0xff; // set packet type
 
     // encode the destination callsign first, then the source, separated by "|"
     sprintf(joint_callsigns,"%s|%s", arq_conn.dst_addr, arq_conn.src_addr);
+    printf("Joint callsigns: %s\n", joint_callsigns);
+
     int enc_len = arithmetic_encode(joint_callsigns, encoded_callsigns);
 
+    printf("Encoded callsigns: %s, length: %d\n", joint_callsigns, enc_len);
+    
     if (enc_len > frame_size - HEADER_SIZE)
     {
         printf("Trucating joint destination + source callsigns. This is ok (%d bytes out of %d transmitted)\n", frame_size - HEADER_SIZE, enc_len);
@@ -416,6 +464,9 @@ int arq_init(int tcp_base_port, int gear_shift_on, int initial_mode)
     arq_telecom_system->load_configuration(initial_mode);
     reset_arq_info(&arq_conn);
 
+    init_model(); // the arithmetic encoder init function
+    fsm_init(&arq_fsm, state_no_connected_client);
+    
     // here is the thread that runs the accept(), each per port, and mantains the
     // state of the connection
     pthread_create(&tid[0], NULL, server_worker_thread_ctl, (void *) &tcp_base_port);
@@ -432,11 +483,6 @@ int arq_init(int tcp_base_port, int gear_shift_on, int initial_mode)
     // dsp threads
     pthread_create(&tid[6], NULL, dsp_thread_tx, (void *) NULL);
     pthread_create(&tid[7], NULL, dsp_thread_rx, (void *) NULL);
-
-    
-    fsm_init(&arq_fsm, state_no_connected_client);
-
-    init_model(); // the arithmetic encoder init function
     
     return EXIT_SUCCESS;
 }
@@ -457,21 +503,36 @@ void arq_shutdown()
     free(data_rx_buffer->buffer);
 }
 
+char *get_timestamp()
+{
+    static char buffer[32];
+    struct timeval tv;
+    gettimeofday(&tv, NULL);
+    struct tm *tm = localtime(&tv.tv_sec);
+    snprintf(buffer, sizeof(buffer), "%02d:%02d:%02d.%03ld\n", tm->tm_hour, tm->tm_min, tm->tm_sec, tv.tv_usec / 1000);
+    return buffer;
+}
 
 void ptt_on()
 {
     char buffer[] = "PTT ON\r";
     arq_conn.TRX = TX;
     ssize_t i = tcp_write(CTL_TCP_PORT, (uint8_t *)buffer, strlen(buffer));
+    // print timestamp with miliseconds precision
+#ifdef DEBUG
+    printf("PTT ON %s", get_timestamp());
+#endif
 }
 void ptt_off()
 {
     char buffer[] = "PTT OFF\r";
     arq_conn.TRX = RX;
     ssize_t i = tcp_write(CTL_TCP_PORT, (uint8_t *)buffer, strlen(buffer));
+    // print timestamp with miliseconds precision
+#ifdef DEBUG
+    printf("PTT OFF %s", get_timestamp());
+#endif
 }
-
-
 
 // tx to tcp socket the received data from the modem
 void *data_worker_thread_tx(void *conn)
@@ -582,7 +643,7 @@ void *control_worker_thread_rx(void *conn)
 
         int n = tcp_read(CTL_TCP_PORT, (uint8_t *)buffer + count, 1);
 
-        if (n <= 0)
+        if (n < 0)
         {
             count = 0;
             fprintf(stderr, "ERROR ctl socket reading\n");            
@@ -598,7 +659,6 @@ void *control_worker_thread_rx(void *conn)
 
         // we found the '\r'
         buffer[count] = 0;
-        count = 0;
 
         if (count >= TCP_BLOCK_SIZE)
         {
@@ -606,7 +666,8 @@ void *control_worker_thread_rx(void *conn)
             fprintf(stderr, "ERROR in command parsing\n");
             continue;
         }
-        
+
+        count = 0;
 #ifdef DEBUG
         fprintf(stderr,"Command received: %s\n", buffer);  
 #endif
@@ -759,7 +820,6 @@ void *dsp_thread_tx(void *conn)
     static uint32_t spinner_anim = 0; char spinner[] = ".oOo";
     uint8_t data[N_MAX];
 
-
     
     // TODO: may be we need another function to queue the already prepared packets?
     while(!shutdown_)
@@ -803,11 +863,17 @@ void *dsp_thread_tx(void *conn)
                                           SINGLE_MESSAGE);
 
 
+        if (arq_fsm.current == state_connecting_callee)
+        {
+            // give some time for the caller to transmit all connection requests
+            msleep(1500); // 1.5 seconds
+        }
+        
         ptt_on();
         msleep(10); // TODO: tune me!
 
         // our connection request
-        if (arq_fsm.current == state_connecting_caller)
+        if (arq_fsm.current == state_connecting_caller || arq_fsm.current == state_connecting_callee)
         {
             for(int i = 0; i < arq_conn.call_burst_size; i++)
             {
@@ -826,19 +892,21 @@ void *dsp_thread_tx(void *conn)
         
         // TODO: signal when stream is finished playing via pthread_cond_wait() here
         while (size_buffer(playback_buffer) != 0)
+        {
+            printf("%c\033[1D", spinner[spinner_anim % 4]); spinner_anim++;
+            fflush(stdout);
             msleep(10);
+        }
+
+        printf("%c\033[1D", spinner[spinner_anim % 4]); spinner_anim++;
+        fflush(stdout);
 
         msleep(40); // TODO: tune me!
         ptt_off();
-        
-#if 0
-        // wait if we have already enogh data in playback buffer?...
-	while (size_buffer(playback_buffer) > 768000) // (48000 * 2 * 8)
-            msleep(50);
-#endif
+
         printf("%c\033[1D", spinner[spinner_anim % 4]); spinner_anim++;
         fflush(stdout);
-        
+
     }
     
     return NULL;
@@ -888,7 +956,8 @@ void *dsp_thread_rx(void *conn)
 
             if(received_message_stats.message_decoded == YES)
             {
-                // printf("Frame decoded in %d iterations. Data: \n", received_message_stats.iterations_done);
+                printf("Frame decoded in %d iterations. Data: \n", received_message_stats.iterations_done);
+                
                 for(int i = 0; i < frame_size; i++)
                 {
                     data[i] = (uint8_t) out_data[i];
@@ -898,8 +967,15 @@ void *dsp_thread_rx(void *conn)
                 {
                     check_for_incoming_connection(data);
                 }
-                
-                if ( frame_size <= (int) circular_buf_free_size(data_rx_buffer) )
+                else if (arq_fsm.current == state_connecting_callee)
+                {
+                    // check_for_connection_acceptance(data);
+                }
+                else if (arq_fsm.current == state_connecting_caller)
+                {
+                    check_for_connection_acceptance_caller(data);
+                }
+                else if (arq_fsm.current == state_link_connected && frame_size <= (int) circular_buf_free_size(data_rx_buffer) )
                     write_buffer(data_rx_buffer, data, frame_size);
                 else
                     printf("Decoded frame lost because of full buffer!\n");

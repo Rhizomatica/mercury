@@ -89,10 +89,14 @@ void reset_arq_info(arq_info *arq_conn);
 void call_remote();
 void callee_accept_connection();
 int check_for_incoming_connection(uint8_t *data);
+int check_for_connection_acceptance_caller(uint8_t *data);
+char *get_timestamp();
 
-// radio functions
+// TNC / radio functions
 void ptt_on();
 void ptt_off();
+void tnc_send_connected();
+void tnc_send_disconnected();
 
 // file crc6.cc
 uint16_t crc6_0X6F(uint16_t crc, const uint8_t *data, int data_len);

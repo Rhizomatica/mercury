@@ -20,10 +20,26 @@
 
 #include "datalink_layer/fsm.h"
 #include <stdlib.h>
+#include <stdio.h>
+#include <pthread.h>
+
+const char *fsm_event_names[] = {
+    "EV_CLIENT_CONNECT",
+    "EV_CLIENT_DISCONNECT",
+    "EV_START_LISTEN",
+    "EV_STOP_LISTEN",
+    "EV_LINK_CALL_REMOTE",
+    "EV_LINK_INCOMING_CALL",
+    "EV_LINK_DISCONNECT",
+    "EV_LINK_ESTABLISHMENT_TIMEOUT",
+    "EV_LINK_ESTABLISHED"
+};
 
 // Initialize the FSM
 void fsm_init(fsm_handle* fsm, fsm_state initial_state)
 {
+    printf("Initializing FSM\n");
+    
     if (!fsm)
         return;
 
@@ -37,6 +53,8 @@ void fsm_dispatch(fsm_handle* fsm, int event)
     if (!fsm)
         return;
 
+    printf("Dispatching event %s\n", fsm_event_names[event]);
+    
     pthread_mutex_lock(&fsm->lock);
     if (fsm->current)
         fsm->current(event);  // Execute current state
@@ -49,6 +67,8 @@ void fsm_destroy(fsm_handle* fsm)
 {
     if (!fsm)
         return;
+
+    printf("Destroying FSM\n");
     
     pthread_mutex_destroy(&fsm->lock);
     fsm->current = NULL;

@@ -23,6 +23,35 @@
 
 #include <pthread.h>
 
+/* ---- FSM Definitions ---- */
+
+/* FSM Events */
+// TNC TCP client event
+#define EV_CLIENT_CONNECT 0
+#define EV_CLIENT_DISCONNECT 1
+
+#define EV_START_LISTEN 2
+#define EV_STOP_LISTEN 3
+
+#define EV_LINK_CALL_REMOTE 4
+#define EV_LINK_INCOMING_CALL 5
+#define EV_LINK_DISCONNECT 6
+
+#define EV_LINK_ESTABLISHMENT_TIMEOUT 7
+
+#define EV_LINK_ESTABLISHED 8
+
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+    
+extern const char* fsm_event_names[];
+
+#ifdef __cplusplus
+}
+#endif
+
 // State function pointer type
 typedef void (*fsm_state)(int event);
 

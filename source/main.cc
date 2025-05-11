@@ -49,7 +49,7 @@ int main(int argc, char *argv[])
     bool list_modes = false;
     bool list_sndcards = false;
 
-    int mod_config = CONFIG_1;
+    int mod_config = CONFIG_0;
     int operation_mode = ARQ_MODE;
     int gear_shift_mode = NO_GEAR_SHIFT;
     int base_tcp_port = DEFAULT_TCP_PORT;
@@ -299,11 +299,16 @@ int main(int argc, char *argv[])
     if (telecom_system.operation_mode == ARQ_MODE)
     {
         printf("Mode selected: ARQ\n");
+
         arq_telecom_system = &telecom_system;
         printf("TNC TCP Ports: %d (CTRL) %d (DATA)\n", base_tcp_port, base_tcp_port+1); 
         arq_init(base_tcp_port, (gear_shift_mode == NO_GEAR_SHIFT)? NO : YES, mod_config);
 
-        arq_shutdown(); // temporary hack to test the tcp interface
+        printf("INITIAL CONFIG_%d (%f bps), frame_size: %d Bytes / %d bits / %d non-byte-aligned bits\n", mod_config,
+                   telecom_system.rbc, telecom_system.get_frame_size_bytes(),
+                   telecom_system.get_frame_size_bits(), telecom_system.get_frame_size_bits() - (telecom_system.get_frame_size_bytes() * 8));
+
+        
         audioio_init_internal(input_dev, output_dev, audio_system, &radio_capture,
                               &radio_playback, &radio_capture_prep, &telecom_system);
 
