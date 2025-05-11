@@ -862,12 +862,6 @@ void *dsp_thread_tx(void *conn)
                                           arq_telecom_system->data_container.ready_to_transmit_passband_data_tx,
                                           SINGLE_MESSAGE);
 
-
-        if (arq_fsm.current == state_connecting_callee)
-        {
-            // give some time for the caller to transmit all connection requests
-            msleep(1500); // 1.5 seconds
-        }
         
         ptt_on();
         msleep(10); // TODO: tune me!
@@ -1010,8 +1004,7 @@ void *dsp_thread_rx(void *conn)
                         arq_telecom_system->receive_stats.delay_of_last_decoded_message = -1;
                     }
                 }
-                std::cout<<" Signal Strength="<<arq_telecom_system->receive_stats.signal_stregth_dbm<<" dBm ";
-                std::cout<<std::endl;
+                printf("Signal Strength= %f dBm\r", arq_telecom_system->receive_stats.signal_stregth_dbm);
             }
         
         }
