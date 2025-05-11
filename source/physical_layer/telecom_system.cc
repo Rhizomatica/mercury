@@ -1117,8 +1117,8 @@ void cl_telecom_system::RX_TEST_process_main()
 					receive_stats.delay_of_last_decoded_message = -1;
 				}
 			}
-			//				std::cout<<" Signal Strength="<<receive_stats.signal_stregth_dbm<<" dBm ";
-			//				std::cout<<std::endl;
+                        std::cout<<" Signal Strength="<<receive_stats.signal_stregth_dbm<<" dBm ";
+                        std::cout<<std::endl;
 		}
 
 	}
