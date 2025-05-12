@@ -856,12 +856,6 @@ void *dsp_thread_tx(void *conn)
             arq_telecom_system->data_container.data_byte[i] = data[i];
         }
 
-
-        arq_telecom_system->transmit_byte(arq_telecom_system->data_container.data_byte,
-                                          frame_size,
-                                          arq_telecom_system->data_container.passband_data,
-                                          SINGLE_MESSAGE);
-
         
         ptt_on();
         msleep(10); // TODO: tune me!
@@ -871,6 +865,12 @@ void *dsp_thread_tx(void *conn)
         {
             for(int i = 0; i < arq_conn.call_burst_size; i++)
             {
+
+                arq_telecom_system->transmit_byte(arq_telecom_system->data_container.data_byte,
+                                                  frame_size,
+                                                  arq_telecom_system->data_container.passband_data,
+                                                  SINGLE_MESSAGE);
+
                 tx_transfer(arq_telecom_system->data_container.passband_data,
                             arq_telecom_system->data_container.Nofdm * arq_telecom_system->data_container.interpolation_rate *
                             (arq_telecom_system->data_container.Nsymb + arq_telecom_system->data_container.preamble_nSymb));
@@ -879,6 +879,11 @@ void *dsp_thread_tx(void *conn)
 
         if (arq_fsm.current == state_link_connected)
         {
+            arq_telecom_system->transmit_byte(arq_telecom_system->data_container.data_byte,
+                                              frame_size,
+                                              arq_telecom_system->data_container.passband_data,
+                                              SINGLE_MESSAGE);
+
             tx_transfer(arq_telecom_system->data_container.passband_data,
                         arq_telecom_system->data_container.Nofdm * arq_telecom_system->data_container.interpolation_rate *
                         (arq_telecom_system->data_container.Nsymb + arq_telecom_system->data_container.preamble_nSymb));
@@ -892,10 +897,7 @@ void *dsp_thread_tx(void *conn)
             msleep(10);
         }
 
-        printf("%c\033[1D", spinner[spinner_anim % 4]); spinner_anim++;
-        fflush(stdout);
-
-        msleep(40); // TODO: tune me!
+        msleep(40); // TODO: parametrize-me!
         ptt_off();
 
         printf("%c\033[1D", spinner[spinner_anim % 4]); spinner_anim++;
@@ -1004,7 +1006,8 @@ void *dsp_thread_rx(void *conn)
                         arq_telecom_system->receive_stats.delay_of_last_decoded_message = -1;
                     }
                 }
-                printf("Signal Strength= %f dBm\r", arq_telecom_system->receive_stats.signal_stregth_dbm);
+                // the signal strength is printed inline, and updates using ansi escape codes
+                printf("\rSignal Strength= %f dBm", arq_telecom_system->receive_stats.signal_stregth_dbm);
             }
         
         }
