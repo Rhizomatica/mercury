@@ -948,9 +948,6 @@ void *dsp_thread_rx(void *conn)
             {
                 received_message_stats.message_decoded = NO;
             }
-            arq_telecom_system->data_container.data_ready = 0;
-            MUTEX_UNLOCK(&capture_prep_mutex);
-
 
             if(received_message_stats.message_decoded == YES)
             {
@@ -1013,11 +1010,9 @@ void *dsp_thread_rx(void *conn)
             }
         
         }
-        else
-        {
-            arq_telecom_system->data_container.data_ready = 0;
-            MUTEX_UNLOCK(&capture_prep_mutex);
-        }
+        arq_telecom_system->data_container.data_ready = 0;
+        MUTEX_UNLOCK(&capture_prep_mutex);
+
     }
 
     return NULL;

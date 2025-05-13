@@ -1117,10 +1117,8 @@ void cl_telecom_system::RX_TEST_process_main()
 					receive_stats.delay_of_last_decoded_message = -1;
 				}
 			}
-                        std::cout<<" Signal Strength="<<receive_stats.signal_stregth_dbm<<" dBm ";
-                        std::cout<<std::endl;
+                        printf("\rSignal Strength= %f dBm", receive_stats.signal_stregth_dbm);
 		}
-
 	}
 	data_container.data_ready = 0;
 	MUTEX_UNLOCK(&capture_prep_mutex);
