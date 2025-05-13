@@ -917,6 +917,13 @@ void *dsp_thread_rx(void *conn)
 
     while(!shutdown_)
     {
+        if(arq_telecom_system->data_container.data_ready == 0)
+        {
+            // TODO: use some locking primitive here
+            msleep(3);
+            continue;
+        }
+        
         // TODO: cope with mode changes...      
         int nReal_data = arq_telecom_system->data_container.nBits - arq_telecom_system->ldpc.P;
         int frame_size = (nReal_data - arq_telecom_system->outer_code_reserved_bits) / 8;
@@ -924,12 +931,6 @@ void *dsp_thread_rx(void *conn)
         int signal_period = arq_telecom_system->data_container.Nofdm * arq_telecom_system->data_container.buffer_Nsymb * arq_telecom_system->data_container.interpolation_rate; // in samples
         int symbol_period = arq_telecom_system->data_container.Nofdm * arq_telecom_system->data_container.interpolation_rate;
 
-        if(arq_telecom_system->data_container.data_ready == 0)
-        {
-            // TODO: use some locking primitive here
-            msleep(3);
-            continue;
-        }
 
         MUTEX_LOCK(&capture_prep_mutex);
         if (arq_telecom_system->data_container.frames_to_read == 0)
