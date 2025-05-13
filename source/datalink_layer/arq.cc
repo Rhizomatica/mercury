@@ -854,6 +854,7 @@ void *dsp_thread_tx(void *conn)
         for (int i = 0; i < frame_size; i++)
         {
             arq_telecom_system->data_container.data_byte[i] = data[i];
+            printf("%02x ", arq_telecom_system->data_container.data_byte[i]);
         }
 
         
