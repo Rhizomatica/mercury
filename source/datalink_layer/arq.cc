@@ -65,22 +65,84 @@ void state_no_connected_client(int event)
     return;
 }
 
+// void state_link_connected(int event)
+// {
+//     printf("FSM State: link_connected\n");
+
+//     switch(event)
+//     {
+//     case EV_CLIENT_DISCONNECT:
+//         arq_fsm.current = state_no_connected_client;
+//         break;
+
+//     case EV_LINK_DISCONNECT:
+//         arq_fsm.current = (arq_conn.listen == true)? state_listen : state_idle;
+//         break;
+//     default:
+//         printf("Event: %d ignored in state_disconnected().\n");
+//     }
+//     return;
+// }
+
+
+/**
+ * @brief Função que representa o estado "link_connected" no FSM (Finite State Machine) de conexão.
+ * 
+ * Este estado indica que o link de comunicação está ativo e conectado.
+ * A função trata eventos específicos
+ * para decidir qual será o próximo estado da máquina de estados.
+ *
+ * @param event - O evento recebido que pode disparar uma mudança de estado.
+ * 
+ */
+/**
+ * Function that represents the “link_connected” state in the connection FSM (Finite State Machine).
+ * 
+ * This state indicates that the communication link is active and connected.
+ * The function handles specific events
+ * to decide what the next state of the state machine will be.
+ *
+ * @param event - The event received that can trigger a state change.
+ */
 void state_link_connected(int event)
 {
+    // Log para indicar que estamos neste estado
+    // Log to indicate that we are in this state
     printf("FSM State: link_connected\n");
 
+    // Avalia o evento recebido
+    // Evaluates the event received
     switch(event)
     {
-    case EV_CLIENT_DISCONNECT:
-        arq_fsm.current = state_no_connected_client;
-        break;
+        // Caso o cliente se desconecte
+        // In case the client disconnects
+        case EV_CLIENT_DISCONNECT:
+            // Transição para o estado 'no_connected_client'
+            // Transition to 'no_connected_client' state
+            // Isso significa que o link ainda está ativo, mas não há mais cliente conectado
+            // This means that the link is still active, but there is no more client connected
+            arq_fsm.current = state_no_connected_client;
+            break;
 
-    case EV_LINK_DISCONNECT:
-        arq_fsm.current = (arq_conn.listen == true)? state_listen : state_idle;
-        break;
-    default:
-        printf("Event: %d ignored in state_disconnected().\n");
+        // Caso o link de conexão seja desconectado
+        // If the connection link is disconnected
+        case EV_LINK_DISCONNECT:
+            // Se o servidor estiver no modo escuta (listen == true),
+            // If the server is in listen mode (listen == true),
+            // volta ao estado 'listen'; caso contrário, vai para 'idle'
+            // returns to 'listen' state; otherwise goes to 'idle'
+            arq_fsm.current = (arq_conn.listen == true) ? state_listen : state_idle;
+            break;
+
+        // Para qualquer outro evento não tratado
+        // For any other untreated event
+        default:
+            // Exibe mensagem informando que o evento foi ignorado nesse estado
+            // Displays message informing that the event was ignored in this state
+            printf("Event: %d ignored in state_disconnected().\n");
+            break;
     }
+
     return;
 }
 
