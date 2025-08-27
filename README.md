@@ -46,6 +46,7 @@ make install
 To generate the Mercury documentation, run the following:
 
 ```
+apt-get install doxygen
 make doc
 ```
 
