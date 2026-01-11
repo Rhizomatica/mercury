@@ -30,6 +30,7 @@
 #include "physical_layer/telecom_system.h"
 #include "datalink_layer/arq.h"
 #include "audioio/audioio.h"
+#include "common/config_parser.h"
 
 // some globals TODO: wrap this up into some struct
 extern "C" {
@@ -298,7 +299,43 @@ int main(int argc, char *argv[])
         printf("Mode selected: ARQ\n");
         cl_arq_controller ARQ;
         ARQ.telecom_system = &telecom_system;
+
+        // Load configuration file
+        SimpleConfigParser config;
+        bool config_loaded = false;
+
+        // Try loading mercury.conf from multiple locations
+        if (config.load("mercury.conf")) {
+            printf("Loaded config from mercury.conf\n");
+            config_loaded = true;
+        }
+#if defined(_WIN32)
+        else if (config.load("C:\\Program Files\\Mercury\\config\\mercury.conf")) {
+            printf("Loaded config from C:\\Program Files\\Mercury\\config\\mercury.conf\n");
+            config_loaded = true;
+        }
+#else
+        else if (config.load("/etc/mercury/mercury.conf")) {
+            printf("Loaded config from /etc/mercury/mercury.conf\n");
+            config_loaded = true;
+        }
+        else if (config.load(std::string(getenv("HOME")) + "/.config/mercury/mercury.conf")) {
+            printf("Loaded config from ~/.config/mercury/mercury.conf\n");
+            config_loaded = true;
+        }
+#endif
+
         ARQ.init(base_tcp_port, (gear_shift_mode == NO_GEAR_SHIFT)? NO : YES, mod_config);
+
+        // Apply config file settings if loaded
+        if (config_loaded) {
+            ARQ.connection_timeout = config.getInt("Connection.ConnectionTimeoutMs", 15000);
+            ARQ.link_timeout = config.getInt("Connection.LinkTimeoutMs", 30000);
+            ARQ.max_connection_attempts = config.getInt("Connection.MaxConnectionAttempts", 15);
+            printf("Applied config: timeout=%dms, max_attempts=%d\n",
+                   ARQ.connection_timeout, ARQ.max_connection_attempts);
+        }
+
         ARQ.print_stats();
 
 		audioio_init_internal(input_dev, output_dev, audio_system, &radio_capture,

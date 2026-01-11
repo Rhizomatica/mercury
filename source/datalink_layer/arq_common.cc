@@ -53,6 +53,7 @@ cl_arq_controller::cl_arq_controller()
 	switch_role_timeout=1000;
 	switch_role_test_timeout=1000;
 	gearshift_timeout=1000;
+	connection_timeout=15000;
 	nResends=3;
 	stats.nSent_data=0;
 	stats.nAcked_data=0;
@@ -141,6 +142,8 @@ cl_arq_controller::cl_arq_controller()
 	data_ack_received=NO;
 	repeating_last_ack=NO;
 	disconnect_requested=NO;
+	connection_attempts=0;
+	max_connection_attempts=15;
 
 	this->messages_control_bu.status=FREE;
 	this->messages_control_bu.data=NULL;
@@ -820,6 +823,63 @@ void cl_arq_controller::update_status()
 		stats.nNAcked_control++;
 	}
 
+	// Check connection attempt timeout - separate from link_timer which gets restarted on every message
+	if((link_status==CONNECTING || link_status==NEGOTIATING || link_status==CONNECTION_ACCEPTED) &&
+	   connection_attempt_timer.counting==1 &&
+	   connection_attempt_timer.get_elapsed_time_ms()>=connection_timeout)
+	{
+		std::cout<<"Connection attempt timeout after "<<connection_timeout<<" ms"<<std::endl;
+		this->link_status=DROPPED;
+		connection_id=0;
+		assigned_connection_id=0;
+		connection_attempt_timer.stop();
+		connection_attempt_timer.reset();
+		connection_attempts=0;
+
+		fifo_buffer_tx.flush();
+		fifo_buffer_backup.flush();
+		fifo_buffer_rx.flush();
+
+		if(original_role==RESPONDER)
+		{
+			link_status=LISTENING;
+			connection_status=RECEIVING;
+		}
+		else
+		{
+			link_status=IDLE;
+			connection_status=IDLE;
+		}
+	}
+
+	// Check for max connection attempts
+	if((link_status==CONNECTING || link_status==NEGOTIATING || link_status==CONNECTION_ACCEPTED) &&
+	   connection_attempts >= max_connection_attempts)
+	{
+		std::cout<<"Maximum connection attempts ("<<max_connection_attempts<<") reached"<<std::endl;
+		this->link_status=DROPPED;
+		connection_id=0;
+		assigned_connection_id=0;
+		connection_attempt_timer.stop();
+		connection_attempt_timer.reset();
+		connection_attempts=0;
+
+		fifo_buffer_tx.flush();
+		fifo_buffer_backup.flush();
+		fifo_buffer_rx.flush();
+
+		if(original_role==RESPONDER)
+		{
+			link_status=LISTENING;
+			connection_status=RECEIVING;
+		}
+		else
+		{
+			link_status=IDLE;
+			connection_status=IDLE;
+		}
+	}
+
 	if(link_timer.get_elapsed_time_ms()>=link_timeout)
 	{
 		this->link_status=DROPPED;
@@ -1239,6 +1299,11 @@ void cl_arq_controller::process_user_command(std::string command)
 		link_status=CONNECTING;
 		reset_all_timers();
 
+		// Start connection attempt timer and reset counter
+		connection_attempts=0;
+		connection_attempt_timer.reset();
+		connection_attempt_timer.start();
+
 		tcp_socket_control.message->buffer[0]='O';
 		tcp_socket_control.message->buffer[1]='K';
 		tcp_socket_control.message->buffer[2]='\r';
@@ -1247,6 +1312,37 @@ void cl_arq_controller::process_user_command(std::string command)
 	else if(command=="DISCONNECT")
 	{
 		disconnect_requested=YES;
+
+		tcp_socket_control.message->buffer[0]='O';
+		tcp_socket_control.message->buffer[1]='K';
+		tcp_socket_control.message->buffer[2]='\r';
+		tcp_socket_control.message->length=3;
+	}
+	else if(command=="ABORT")
+	{
+		// Abort connection attempt - stop trying to connect
+		if(link_status==CONNECTING || link_status==NEGOTIATING || link_status==CONNECTION_ACCEPTED)
+		{
+			// Reset to listening mode
+			if(original_role==RESPONDER)
+			{
+				link_status=LISTENING;
+				connection_status=RECEIVING;
+			}
+			else
+			{
+				link_status=IDLE;
+				connection_status=IDLE;
+			}
+
+			// Clear buffers and reset timers
+			fifo_buffer_tx.flush();
+			fifo_buffer_backup.flush();
+			reset_all_timers();
+
+			// Reset connection attempts counter
+			connection_attempts=0;
+		}
 
 		tcp_socket_control.message->buffer[0]='O';
 		tcp_socket_control.message->buffer[1]='K';

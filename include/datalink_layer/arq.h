@@ -250,6 +250,7 @@ public:
   cl_timer gear_shift_timer;
   cl_timer switch_role_timer;
   cl_timer switch_role_test_timer;
+  cl_timer connection_attempt_timer;
 
   float print_stats_frequency_hz;
 
@@ -271,6 +272,7 @@ public:
   int switch_role_timeout;
   int switch_role_test_timeout;
   int gearshift_timeout;
+  int connection_timeout;
 
   std::string destination_call_sign;
 
@@ -300,6 +302,8 @@ public:
 
   int disconnect_requested;
 
+  int connection_attempts;
+  int max_connection_attempts;
 
 private:
   int nMessages;

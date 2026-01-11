@@ -198,6 +198,14 @@ void cl_arq_controller::process_messages_tx_control()
 	{
 		if(--messages_control.nResends>0&&message_batch_counter_tx<control_batch_size)
 		{
+			// Increment connection attempts counter if trying to connect
+			if((link_status==CONNECTING || link_status==NEGOTIATING || link_status==CONNECTION_ACCEPTED) &&
+			   messages_control.data[0]==START_CONNECTION)
+			{
+				connection_attempts++;
+				std::cout<<"Connection attempt "<<connection_attempts<<" of "<<max_connection_attempts<<std::endl;
+			}
+
 			messages_batch_tx[message_batch_counter_tx]=messages_control;
 			message_batch_counter_tx++;
 			messages_control.status=ADDED_TO_BATCH_BUFFER;
