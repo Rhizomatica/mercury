@@ -37,20 +37,22 @@ if "%MERCURY_EXE%"=="" (
     exit /b 1
 )
 
-REM Find config file location
+REM Find config file location (mercury_config.ini for Winlink setup)
 set "CONFIG_FILE="
-if exist "mercury.conf" (
-    set "CONFIG_FILE=mercury.conf"
-) else if exist "%ProgramFiles%\Mercury\config\mercury.conf" (
-    set "CONFIG_FILE=%ProgramFiles%\Mercury\config\mercury.conf"
-) else if exist "mercury.conf.example" (
-    echo Creating mercury.conf from example...
-    copy /Y "mercury.conf.example" "mercury.conf" >nul
-    set "CONFIG_FILE=mercury.conf"
-) else (
+if exist "%ProgramFiles%\Mercury\config\mercury_config.ini" (
+    set "CONFIG_FILE=%ProgramFiles%\Mercury\config\mercury_config.ini"
+) else if exist "..\winlink-setup\mercury_config.ini" (
+    set "CONFIG_FILE=..\winlink-setup\mercury_config.ini"
+) else if exist "winlink-setup\mercury_config.ini" (
+    set "CONFIG_FILE=winlink-setup\mercury_config.ini"
+)
+
+if "%CONFIG_FILE%"=="" (
     echo.
-    echo ERROR: mercury.conf not found!
-    echo Please create mercury.conf from mercury.conf.example
+    echo ERROR: mercury_config.ini not found!
+    echo Expected locations:
+    echo   - %ProgramFiles%\Mercury\config\mercury_config.ini
+    echo   - ..\winlink-setup\mercury_config.ini
     echo.
     pause
     exit /b 1
@@ -70,26 +72,9 @@ set "TEMP_DEVICES=%TEMP%\mercury_audio_devices.txt"
 "%MERCURY_EXE%" -z > "%TEMP_DEVICES%" 2>&1
 
 echo.
-echo Available PLAYBACK devices:
+echo Available devices:
 echo.
-findstr /I /C:"playback devices:" /C:"device: name:" "%TEMP_DEVICES%" | findstr /V "capture"
-echo.
-echo ========================================================================
-echo.
-
-REM Extract playback device names
-set /a DEVICE_COUNT=0
-for /f "tokens=2* delims='" %%a in ('findstr /I /C:"device: name: '" "%TEMP_DEVICES%"') do (
-    set LINE=%%a
-    if not "!LINE!"=="!LINE:playback=!" (
-        set /a DEVICE_COUNT+=1
-    )
-)
-
-echo.
-echo Available CAPTURE devices:
-echo.
-findstr /I /C:"capture devices:" /C:"device: name:" "%TEMP_DEVICES%" | findstr /V "playback"
+type "%TEMP_DEVICES%"
 echo.
 echo ========================================================================
 echo.
@@ -156,7 +141,7 @@ echo Config File: %CONFIG_FILE%
 echo.
 echo ========================================================================
 echo.
-echo This configuration will be written to mercury.conf
+echo This configuration will be written to mercury_config.ini
 echo.
 set /p "CONFIRM=Is this correct? (Y/N): "
 if /i not "%CONFIRM%"=="Y" (
@@ -166,24 +151,32 @@ if /i not "%CONFIRM%"=="Y" (
     exit /b 0
 )
 
-REM Update config file
+REM Update config file - handle INI format with [RADIO] section
 echo.
 echo Updating configuration...
 
-REM Create updated config
 set "TEMP_CONFIG=%TEMP%\mercury_config_temp.txt"
-set "FOUND_CAPTURE=0"
-set "FOUND_PLAYBACK=0"
+set "IN_RADIO_SECTION=0"
 
 (
     for /f "usebackq delims=" %%a in ("%CONFIG_FILE%") do (
         set "LINE=%%a"
-        if "!LINE:~0,14!"=="CaptureDevice=" (
-            echo CaptureDevice=%CAPTURE_DEVICE%
-            set "FOUND_CAPTURE=1"
-        ) else if "!LINE:~0,15!"=="PlaybackDevice=" (
-            echo PlaybackDevice=%PLAYBACK_DEVICE%
-            set "FOUND_PLAYBACK=1"
+
+        REM Check if entering [RADIO] section
+        if "!LINE!"=="[RADIO]" set "IN_RADIO_SECTION=1"
+
+        REM Check if leaving [RADIO] section (new section starts)
+        if "!LINE:~0,1!"=="[" if not "!LINE!"=="[RADIO]" set "IN_RADIO_SECTION=0"
+
+        REM Replace device lines in [RADIO] section
+        if "!IN_RADIO_SECTION!"=="1" (
+            if not "!LINE:CaptureDevice=!"=="!LINE!" (
+                echo CaptureDevice=!CAPTURE_DEVICE!
+            ) else if not "!LINE:PlaybackDevice=!"=="!LINE!" (
+                echo PlaybackDevice=!PLAYBACK_DEVICE!
+            ) else (
+                echo !LINE!
+            )
         ) else (
             echo !LINE!
         )
@@ -198,7 +191,7 @@ echo ========================================================================
 echo   CONFIGURATION COMPLETE!
 echo ========================================================================
 echo.
-echo Audio devices have been configured in mercury.conf
+echo Audio devices have been configured in mercury_config.ini
 echo.
 echo Capture:  %CAPTURE_DEVICE%
 echo Playback: %PLAYBACK_DEVICE%

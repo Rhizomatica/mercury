@@ -30,7 +30,6 @@
 #include "physical_layer/telecom_system.h"
 #include "datalink_layer/arq.h"
 #include "audioio/audioio.h"
-#include "common/config_parser.h"
 
 // some globals TODO: wrap this up into some struct
 extern "C" {
@@ -82,14 +81,21 @@ int main(int argc, char *argv[])
         printf(" -x [sound_system]          Sets the sound system API to use: alsa, pulse, dsound or wasapi. Default is alsa on Linux and dsound on Windows.\n");
 		printf(" -p [arq_tcp_base_port]     Sets the ARQ TCP base port (control is base_port, data is base_port + 1). Default is 7002.\n");
         printf(" -g                         Enables the adaptive modulation selection (gear-shifting). Not working yet!.\n");
+        printf(" -t [timeout_ms]            Connection timeout in milliseconds (ARQ mode only). Default is 15000.\n");
+        printf(" -a [max_attempts]          Maximum connection attempts before giving up (ARQ mode only). Default is 15.\n");
+        printf(" -k [link_timeout_ms]       Link timeout in milliseconds (ARQ mode only). Default is 30000.\n");
         printf(" -l                         Lists all modulator/coding modes.\n");
         printf(" -z                         Lists all available sound cards.\n");
         printf(" -h                         Prints this help.\n");
         return EXIT_FAILURE;
     }
 
+    int connection_timeout_ms = 15000;
+    int max_connection_attempts = 15;
+    int link_timeout_ms = 30000;
+
     int opt;
-    while ((opt = getopt(argc, argv, "hc:m:s:lr:i:o:x:p:zg")) != -1)
+    while ((opt = getopt(argc, argv, "hc:m:s:lr:i:o:x:p:zgt:a:k:")) != -1)
     {
         switch (opt)
         {
@@ -174,6 +180,18 @@ int main(int argc, char *argv[])
             break;
         case 'l':
             list_modes = true;
+            break;
+        case 't':
+            if (optarg)
+                connection_timeout_ms = atoi(optarg);
+            break;
+        case 'a':
+            if (optarg)
+                max_connection_attempts = atoi(optarg);
+            break;
+        case 'k':
+            if (optarg)
+                link_timeout_ms = atoi(optarg);
             break;
         case 'h':
 
@@ -299,41 +317,16 @@ int main(int argc, char *argv[])
         printf("Mode selected: ARQ\n");
         cl_arq_controller ARQ;
         ARQ.telecom_system = &telecom_system;
-
-        // Load configuration file
-        SimpleConfigParser config;
-        bool config_loaded = false;
-
-        // Try loading mercury.conf from multiple locations
-        if (config.load("mercury.conf")) {
-            printf("Loaded config from mercury.conf\n");
-            config_loaded = true;
-        }
-#if defined(_WIN32)
-        else if (config.load("C:\\Program Files\\Mercury\\config\\mercury.conf")) {
-            printf("Loaded config from C:\\Program Files\\Mercury\\config\\mercury.conf\n");
-            config_loaded = true;
-        }
-#else
-        else if (config.load("/etc/mercury/mercury.conf")) {
-            printf("Loaded config from /etc/mercury/mercury.conf\n");
-            config_loaded = true;
-        }
-        else if (config.load(std::string(getenv("HOME")) + "/.config/mercury/mercury.conf")) {
-            printf("Loaded config from ~/.config/mercury/mercury.conf\n");
-            config_loaded = true;
-        }
-#endif
-
         ARQ.init(base_tcp_port, (gear_shift_mode == NO_GEAR_SHIFT)? NO : YES, mod_config);
 
-        // Apply config file settings if loaded
-        if (config_loaded) {
-            ARQ.connection_timeout = config.getInt("Connection.ConnectionTimeoutMs", 15000);
-            ARQ.link_timeout = config.getInt("Connection.LinkTimeoutMs", 30000);
-            ARQ.max_connection_attempts = config.getInt("Connection.MaxConnectionAttempts", 15);
-            printf("Applied config: timeout=%dms, max_attempts=%d\n",
-                   ARQ.connection_timeout, ARQ.max_connection_attempts);
+        // Apply command-line arguments
+        ARQ.connection_timeout = connection_timeout_ms;
+        ARQ.link_timeout = link_timeout_ms;
+        ARQ.max_connection_attempts = max_connection_attempts;
+
+        if (connection_timeout_ms != 15000 || max_connection_attempts != 15 || link_timeout_ms != 30000) {
+            printf("ARQ config: connection_timeout=%dms, link_timeout=%dms, max_attempts=%d\n",
+                   connection_timeout_ms, link_timeout_ms, max_connection_attempts);
         }
 
         ARQ.print_stats();
