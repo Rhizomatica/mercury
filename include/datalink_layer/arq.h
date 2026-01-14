@@ -305,6 +305,9 @@ public:
   int connection_attempts;
   int max_connection_attempts;
 
+  int exit_on_disconnect;
+  int had_control_connection;
+
 private:
   int nMessages;
   struct st_message* messages_tx;

@@ -45,6 +45,7 @@ int main(int argc, char *argv[])
     int cpu_nr = -1;
     bool list_modes = false;
     bool list_sndcards = false;
+    bool check_audio = false;
 
     int mod_config = CONFIG_1;
     int operation_mode = ARQ_MODE;
@@ -78,13 +79,15 @@ int main(int argc, char *argv[])
         printf(" -r [radio_type]            Available radio types are: stockhf, sbitx.\n");
         printf(" -i [device]                Radio Capture device id (eg: \"plughw:0,0\").\n");
         printf(" -o [device]                Radio Playback device id (eg: \"plughw:0,0\").\n");
-        printf(" -x [sound_system]          Sets the sound system API to use: alsa, pulse, dsound or wasapi. Default is alsa on Linux and dsound on Windows.\n");
+        printf(" -x [sound_system]          Sets the sound system API to use: alsa, pulse, dsound or wasapi. Default is alsa on Linux and wasapi on Windows.\n");
 		printf(" -p [arq_tcp_base_port]     Sets the ARQ TCP base port (control is base_port, data is base_port + 1). Default is 7002.\n");
         printf(" -g                         Enables the adaptive modulation selection (gear-shifting). Not working yet!.\n");
         printf(" -t [timeout_ms]            Connection timeout in milliseconds (ARQ mode only). Default is 15000.\n");
         printf(" -a [max_attempts]          Maximum connection attempts before giving up (ARQ mode only). Default is 15.\n");
         printf(" -k [link_timeout_ms]       Link timeout in milliseconds (ARQ mode only). Default is 30000.\n");
+        printf(" -e                         Exit when client disconnects from control port (ARQ mode only).\n");
         printf(" -l                         Lists all modulator/coding modes.\n");
+        printf(" -C                         Check audio configuration (stereo, sample rate) before starting.\n");
         printf(" -z                         Lists all available sound cards.\n");
         printf(" -h                         Prints this help.\n");
         return EXIT_FAILURE;
@@ -93,9 +96,10 @@ int main(int argc, char *argv[])
     int connection_timeout_ms = 15000;
     int max_connection_attempts = 15;
     int link_timeout_ms = 30000;
+    int exit_on_disconnect = 0;
 
     int opt;
-    while ((opt = getopt(argc, argv, "hc:m:s:lr:i:o:x:p:zgt:a:k:")) != -1)
+    while ((opt = getopt(argc, argv, "hc:m:s:lr:i:o:x:p:zgt:a:k:eC")) != -1)
     {
         switch (opt)
         {
@@ -193,6 +197,12 @@ int main(int argc, char *argv[])
             if (optarg)
                 link_timeout_ms = atoi(optarg);
             break;
+        case 'e':
+            exit_on_disconnect = 1;
+            break;
+        case 'C':
+            check_audio = true;
+            break;
         case 'h':
 
         default:
@@ -220,7 +230,7 @@ int main(int argc, char *argv[])
 #if defined(__linux__)
         audio_system = AUDIO_SUBSYSTEM_ALSA;
 #elif defined(_WIN32)
-        audio_system = AUDIO_SUBSYSTEM_DSOUND;
+        audio_system = AUDIO_SUBSYSTEM_WASAPI;
 #endif
     }
 
@@ -287,6 +297,19 @@ int main(int argc, char *argv[])
         return EXIT_SUCCESS;
     }
 
+#if defined(_WIN32)
+    if (check_audio)
+    {
+        int result = validate_audio_config(input_dev, output_dev, audio_system);
+        if (input_dev)
+            free(input_dev);
+        if (output_dev)
+            free(output_dev);
+        return (result == 0) ? EXIT_SUCCESS : EXIT_FAILURE;
+    }
+#endif
+
+
     cl_telecom_system telecom_system;
     telecom_system.operation_mode = operation_mode;
 
@@ -323,10 +346,11 @@ int main(int argc, char *argv[])
         ARQ.connection_timeout = connection_timeout_ms;
         ARQ.link_timeout = link_timeout_ms;
         ARQ.max_connection_attempts = max_connection_attempts;
+        ARQ.exit_on_disconnect = exit_on_disconnect;
 
-        if (connection_timeout_ms != 15000 || max_connection_attempts != 15 || link_timeout_ms != 30000) {
-            printf("ARQ config: connection_timeout=%dms, link_timeout=%dms, max_attempts=%d\n",
-                   connection_timeout_ms, link_timeout_ms, max_connection_attempts);
+        if (connection_timeout_ms != 15000 || max_connection_attempts != 15 || link_timeout_ms != 30000 || exit_on_disconnect) {
+            printf("ARQ config: connection_timeout=%dms, link_timeout=%dms, max_attempts=%d, exit_on_disconnect=%s\n",
+                   connection_timeout_ms, link_timeout_ms, max_connection_attempts, exit_on_disconnect ? "yes" : "no");
         }
 
         ARQ.print_stats();

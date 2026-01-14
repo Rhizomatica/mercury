@@ -53,7 +53,7 @@ cl_arq_controller::cl_arq_controller()
 	switch_role_timeout=1000;
 	switch_role_test_timeout=1000;
 	gearshift_timeout=1000;
-	connection_timeout=15000;
+	connection_timeout=30000;
 	nResends=3;
 	stats.nSent_data=0;
 	stats.nAcked_data=0;
@@ -144,6 +144,8 @@ cl_arq_controller::cl_arq_controller()
 	disconnect_requested=NO;
 	connection_attempts=0;
 	max_connection_attempts=15;
+	exit_on_disconnect=NO;
+	had_control_connection=NO;
 
 	this->messages_control_bu.status=FREE;
 	this->messages_control_bu.data=NULL;
@@ -829,6 +831,27 @@ void cl_arq_controller::update_status()
 	   connection_attempt_timer.get_elapsed_time_ms()>=connection_timeout)
 	{
 		std::cout<<"Connection attempt timeout after "<<connection_timeout<<" ms"<<std::endl;
+
+		// Send CANCELPENDING and DISCONNECTED to Winlink (connection attempt timed out)
+		if(role==COMMANDER && tcp_socket_control.get_status()==TCP_STATUS_ACCEPTED)
+		{
+			std::string str="CANCELPENDING\r";
+			tcp_socket_control.message->length=str.length();
+			for(int i=0;i<tcp_socket_control.message->length;i++)
+			{
+				tcp_socket_control.message->buffer[i]=str[i];
+			}
+			tcp_socket_control.transmit();
+
+			str="DISCONNECTED\r";
+			tcp_socket_control.message->length=str.length();
+			for(int i=0;i<tcp_socket_control.message->length;i++)
+			{
+				tcp_socket_control.message->buffer[i]=str[i];
+			}
+			tcp_socket_control.transmit();
+		}
+
 		this->link_status=DROPPED;
 		connection_id=0;
 		assigned_connection_id=0;
@@ -839,6 +862,12 @@ void cl_arq_controller::update_status()
 		fifo_buffer_tx.flush();
 		fifo_buffer_backup.flush();
 		fifo_buffer_rx.flush();
+
+		// Reset messages_control so new CONNECT commands can work
+		messages_control.status=FREE;
+
+		// Reset role back to original role
+		set_role(original_role);
 
 		if(original_role==RESPONDER)
 		{
@@ -857,6 +886,27 @@ void cl_arq_controller::update_status()
 	   connection_attempts >= max_connection_attempts)
 	{
 		std::cout<<"Maximum connection attempts ("<<max_connection_attempts<<") reached"<<std::endl;
+
+		// Send CANCELPENDING and DISCONNECTED to Winlink (max connection attempts reached)
+		if(role==COMMANDER && tcp_socket_control.get_status()==TCP_STATUS_ACCEPTED)
+		{
+			std::string str="CANCELPENDING\r";
+			tcp_socket_control.message->length=str.length();
+			for(int i=0;i<tcp_socket_control.message->length;i++)
+			{
+				tcp_socket_control.message->buffer[i]=str[i];
+			}
+			tcp_socket_control.transmit();
+
+			str="DISCONNECTED\r";
+			tcp_socket_control.message->length=str.length();
+			for(int i=0;i<tcp_socket_control.message->length;i++)
+			{
+				tcp_socket_control.message->buffer[i]=str[i];
+			}
+			tcp_socket_control.transmit();
+		}
+
 		this->link_status=DROPPED;
 		connection_id=0;
 		assigned_connection_id=0;
@@ -867,6 +917,12 @@ void cl_arq_controller::update_status()
 		fifo_buffer_tx.flush();
 		fifo_buffer_backup.flush();
 		fifo_buffer_rx.flush();
+
+		// Reset messages_control so new CONNECT commands can work
+		messages_control.status=FREE;
+
+		// Reset role back to original role
+		set_role(original_role);
 
 		if(original_role==RESPONDER)
 		{
@@ -1174,6 +1230,9 @@ void cl_arq_controller::process_main()
 
 	if (tcp_socket_control.get_status()==TCP_STATUS_ACCEPTED)
 	{
+		// Mark that we had a control connection
+		had_control_connection=YES;
+
 		if(tcp_socket_control.timer.counting==0)
 		{
 			tcp_socket_control.timer.start();
@@ -1190,6 +1249,13 @@ void cl_arq_controller::process_main()
 		}
 		else if(nBytes_received==0 || (tcp_socket_control.timer.get_elapsed_time_ms()>=tcp_socket_control.timeout_ms && tcp_socket_control.timeout_ms!=INFINITE_))
 		{
+			// Check if client disconnected cleanly (nBytes_received==0)
+			if(nBytes_received==0 && exit_on_disconnect==YES && had_control_connection==YES)
+			{
+				std::cout<<std::endl;
+				std::cout<<"Control connection closed by client - exiting as requested"<<std::endl;
+				exit(0);
+			}
 
 			fifo_buffer_tx.flush();
 			fifo_buffer_backup.flush();
@@ -1304,10 +1370,21 @@ void cl_arq_controller::process_user_command(std::string command)
 		connection_attempt_timer.reset();
 		connection_attempt_timer.start();
 
+		// Send OK acknowledgement
 		tcp_socket_control.message->buffer[0]='O';
 		tcp_socket_control.message->buffer[1]='K';
 		tcp_socket_control.message->buffer[2]='\r';
 		tcp_socket_control.message->length=3;
+		tcp_socket_control.transmit();
+
+		// Send PENDING status to indicate connection attempt is starting
+		std::string str="PENDING\r";
+		tcp_socket_control.message->length=str.length();
+		for(int i=0;i<tcp_socket_control.message->length;i++)
+		{
+			tcp_socket_control.message->buffer[i]=str[i];
+		}
+		// Note: transmit() will be called in process_main after all commands are processed
 	}
 	else if(command=="DISCONNECT")
 	{
@@ -1323,6 +1400,9 @@ void cl_arq_controller::process_user_command(std::string command)
 		// Abort connection attempt - stop trying to connect
 		if(link_status==CONNECTING || link_status==NEGOTIATING || link_status==CONNECTION_ACCEPTED)
 		{
+			// Reset role back to original role
+			set_role(original_role);
+
 			// Reset to listening mode
 			if(original_role==RESPONDER)
 			{
@@ -1342,8 +1422,30 @@ void cl_arq_controller::process_user_command(std::string command)
 
 			// Reset connection attempts counter
 			connection_attempts=0;
+
+			// Reset messages_control so new CONNECT commands can work
+			messages_control.status=FREE;
+
+			// Send CANCELPENDING to cancel the connection attempt
+			std::string str="CANCELPENDING\r";
+			tcp_socket_control.message->length=str.length();
+			for(int i=0;i<tcp_socket_control.message->length;i++)
+			{
+				tcp_socket_control.message->buffer[i]=str[i];
+			}
+			tcp_socket_control.transmit();
+
+			// Send DISCONNECTED to fully clear Winlink's state and show we're free
+			str="DISCONNECTED\r";
+			tcp_socket_control.message->length=str.length();
+			for(int i=0;i<tcp_socket_control.message->length;i++)
+			{
+				tcp_socket_control.message->buffer[i]=str[i];
+			}
+			tcp_socket_control.transmit();
 		}
 
+		// Send OK acknowledgement
 		tcp_socket_control.message->buffer[0]='O';
 		tcp_socket_control.message->buffer[1]='K';
 		tcp_socket_control.message->buffer[2]='\r';
@@ -1880,6 +1982,14 @@ void cl_arq_controller::print_stats()
 		std::cout<<"configuration: ERROR..( 0 bps)";
 	}
 	std::cout << std::setprecision(2);
+
+	std::cout<<std::endl;
+
+	// Display audio devices
+	extern char *input_dev;
+	extern char *output_dev;
+	std::cout<<"Audio_IN: "<<(input_dev ? input_dev : "default")<<std::endl;
+	std::cout<<"Audio_OUT: "<<(output_dev ? output_dev : "default")<<std::endl;
 
 	std::cout<<std::endl;
 

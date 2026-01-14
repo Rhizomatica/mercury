@@ -204,6 +204,9 @@ void cl_arq_controller::process_messages_tx_control()
 			{
 				connection_attempts++;
 				std::cout<<"Connection attempt "<<connection_attempts<<" of "<<max_connection_attempts<<std::endl;
+				// Reset timer for this new attempt (making connection_timeout a per-attempt timeout)
+				connection_attempt_timer.reset();
+				connection_attempt_timer.start();
 			}
 
 			messages_batch_tx[message_batch_counter_tx]=messages_control;

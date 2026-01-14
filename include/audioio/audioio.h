@@ -51,3 +51,9 @@ int rx_transfer(double *buffer, size_t len);
 
 
 void list_soundcards(int audio_system);
+
+#if defined(_WIN32)
+// Validate audio device configuration (stereo, sample rate)
+// Returns 0 if OK, non-zero bitmask if errors found
+int validate_audio_config(const char *capture_dev, const char *playback_dev, int audio_system);
+#endif
