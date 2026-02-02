@@ -33,6 +33,12 @@
 #include "psk.h"
 #include "interpolator.h"
 
+// Result structure for time sync that includes correlation quality
+struct TimeSyncResult {
+	int delay;           // Sample delay to preamble start
+	double correlation;  // Normalized correlation (0.0 to 1.0)
+};
+
 
 class cl_pilot_configurator
 {
@@ -122,6 +128,7 @@ public:
 	void LS_channel_estimator(std::complex <double>*in);
 	void restore_channel_amplitude();
 	double carrier_sampling_frequency_sync(std::complex <double>*in, double carrier_freq_width, int preamble_nSymb, double sampling_frequency);
+	double frequency_sync_coarse(std::complex<double>* in, double subcarrier_spacing, int search_range_subcarriers = 0, int interpolation_rate = 1);
 	void channel_equalizer(std::complex <double>* in, std::complex <double>* out);
 	void channel_equalizer_without_amplitude_restoration(std::complex <double>* in,std::complex <double>* out);
 
@@ -134,6 +141,7 @@ public:
 	double measure_SNR(std::complex <double>*in_s, std::complex <double>*in_n, int nItems);
 	int time_sync(std::complex <double>*in, int size, int interpolation_rate, int location_to_return);
 	int time_sync_preamble(std::complex <double>*in, int size, int interpolation_rate, int location_to_return, int step, int nTrials_max);
+	TimeSyncResult time_sync_preamble_with_metric(std::complex <double>*in, int size, int interpolation_rate, int location_to_return, int step, int nTrials_max);
 	int symbol_sync(std::complex <double>*, int size, int interpolation_rate, int location_to_return);
 	void rational_resampler(std::complex <double>* in, int in_size , std::complex <double>* out, int rate, int interpolation_decimation);
 	void baseband_to_passband(std::complex <double>* in, int in_size, double* out, double sampling_frequency, double carrier_frequency, double carrier_amplitude, int interpolation_rate);

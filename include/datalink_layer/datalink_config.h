@@ -63,6 +63,8 @@ public:
 	int control_batch_size;
 	int ptt_on_delay_ms;
 	int ptt_off_delay_ms;
+	int pilot_tone_ms;   // Duration of pilot tone before OFDM (0=disabled)
+	int pilot_tone_hz;   // Frequency of pilot tone (250=out of band, 1500=in band)
 	int switch_role_timeout_ms;
 
 };

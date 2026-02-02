@@ -50,6 +50,26 @@ apt-get install doxygen
 make doc
 ```
 
+### Windows Build with GUI
+
+On Windows, Mercury can be built with a graphical user interface. The GUI requires Dear ImGui (included in `third_party/imgui/`).
+
+**Important**: Use a consistent compiler toolchain. Mixing object files from different GCC versions causes ABI incompatibility crashes (typically segfaults in `std::locale` during stream operations).
+
+Using Strawberry Perl's MinGW (recommended):
+```
+mingw32-make clean
+mingw32-make -j4 GUI_ENABLED=1 CXX=g++ CC=gcc
+```
+
+To build without GUI (headless mode only):
+```
+mingw32-make clean
+mingw32-make -j4 GUI_ENABLED=0 CXX=g++ CC=gcc
+```
+
+**Troubleshooting**: If Mercury crashes immediately after printing the version, this usually indicates a compiler mismatch. Run `mingw32-make clean` and rebuild with explicit `CXX=g++ CC=gcc` flags to ensure the system compiler is used.
+
 ## Running
 
 Mercury has different operating modes and parameters. Usage parameters:
@@ -76,7 +96,7 @@ Options:
 ```
 
 Mercury operating modes are:
-- ARQ: Data-link layer and Automatic repeat request mode. Default control port is 7002 and default data port is 7003.
+- ARQ: Data-link layer and Automatic repeat request mode. Default control port is 7001 and default data port is 7002.
 - TX_SHM: Transmits data read from shared memory interface (check folder examples).
 - RX_SHM: Received data is written to shared memory interface.
 
@@ -146,7 +166,7 @@ to use with the TX_SHM and RX_SHM modes. A more complete client called HERMES-BR
 For a simple ARQ client which supports hamlib, take a look at: https://github.com/Rhizomatica/mercury-connector
 
 Any VARA client should be compatible with Mercury. Compatibility support is not complete. If you
-find a VARA client which does not communicate, please report. Base TCP port is 7002 (7002 control and 7003 data).
+find a VARA client which does not communicate, please report. Base TCP port is 7001 (7001 control and 7002 data).
 
 For a more complete ARQ client which integrates Mercury to UUCP, look at: https://github.com/Rhizomatica/hermes-net/tree/main/uucpd
 

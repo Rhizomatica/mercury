@@ -113,6 +113,9 @@ public:
 	void transmit_byte(int* data, int nBytes, double *out, int message_location);
 	st_receive_stats receive_byte(double *data, int* out);
 
+	// Lightweight signal measurement only (no decoding)
+	double measure_signal_only(double *data);
+
 
 	double M;
 	double bandwidth;

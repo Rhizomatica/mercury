@@ -27,9 +27,25 @@
 #include "common/common_defines.h"
 #include "common/os_interop.h"
 
+#ifdef MERCURY_GUI_ENABLED
+#ifdef __cplusplus
+extern "C++" {
+#include "gui/gui_state.h"
+}
+#endif
+#endif
+
 // bool shutdown_;
 extern bool shutdown_;
 extern int radio_type;
+
+// Audio channel configuration (set from main.cc / GUI settings)
+// 0=LEFT, 1=RIGHT, 2=STEREO (L+R)
+int configured_input_channel = 0;   // Default: LEFT (matches pre-GUI CLI default)
+int configured_output_channel = 2;  // Default: STEREO
+
+// Tune tone state (for GUI tune button)
+static long tune_sample_index = 0;
 
 cbuf_handle_t capture_buffer;
 cbuf_handle_t playback_buffer;
@@ -407,6 +423,7 @@ int validate_audio_config(const char *capture_dev, const char *playback_dev, int
 void *radio_playback_thread(void *device_ptr)
 {
     ffaudio_interface *audio;
+	int device_is_mono = 0;  // Will be set after device opens
 	struct conf conf = {};
 	conf.buf.app_name = "mercury_playback";
 	conf.buf.format = FFAUDIO_F_INT32;
@@ -431,7 +448,6 @@ void *radio_playback_thread(void *device_ptr)
 			wasapi_id = wasapi_device_name_to_id((const char*)device_ptr, FFAUDIO_DEV_PLAYBACK);
 			if (wasapi_id != NULL) {
 				conf.buf.device_id = (const char*)wasapi_id;
-				printf("[WASAPI] Found playback device: %s\n", (const char*)device_ptr);
 			} else {
 				printf("Warning: WASAPI device '%s' not found, using default\n", (const char*)device_ptr);
 				conf.buf.device_id = NULL;  // Use default device
@@ -533,10 +549,15 @@ void *radio_playback_thread(void *device_ptr)
 	frame_size = cfg->channels * (cfg->format & 0xff) / 8;
 	msec_bytes = cfg->sample_rate * frame_size / 1000;
 
-	if (radio_type == RADIO_SBITX)
+	// Use configured output channel from settings
+	if (configured_output_channel == 0)
+		ch_layout = LEFT;
+	else if (configured_output_channel == 1)
 		ch_layout = RIGHT;
-	if (radio_type == RADIO_STOCKHF)
+	else
 		ch_layout = STEREO;
+	// Set mono flag based on actual device channels
+	device_is_mono = (cfg->channels == 1);
 
     while (!shutdown_)
     {
@@ -564,6 +585,18 @@ void *radio_playback_thread(void *device_ptr)
 
 		int samples_read = n / sizeof(double);
 
+#ifdef MERCURY_GUI_ENABLED
+		// Check if tune mode is active - generate 1500 Hz sine wave
+		if (g_gui_state.tune_active.load()) {
+			for (int i = 0; i < samples_read; i++) {
+				buffer_double[i] = gui_generate_tune_tone(48000, tune_sample_index);
+			}
+		}
+
+		// Apply TX gain from GUI
+		gui_apply_tx_gain(buffer_double, samples_read);
+#endif
+
 		// convert from double to format-specific output
 		// Check if format is FLOAT32 (WASAPI), INT32 (DirectSound/ALSA), or INT16 (DirectSound 16-bit)
 		int is_float32 = (cfg->format == FFAUDIO_F_FLOAT32);
@@ -579,21 +612,32 @@ void *radio_playback_thread(void *device_ptr)
 			if (clamped < -1.0) clamped = -1.0;
 
 			int idx = i * cfg->channels;
-			if (ch_layout == LEFT)
+
+			// Handle mono device - just write single channel
+			if (device_is_mono)
 			{
 				if (is_float32) {
-					buffer_float_out[idx] = (float)clamped;  // Already normalized
+					buffer_float_out[i] = (float)clamped;
+				} else if (is_int16) {
+					buffer_int16_out[i] = (int16_t)(clamped * 32767.0);
+				} else {
+					buffer_internal_stereo[i] = clamped * INT_MAX;
+				}
+			}
+			else if (ch_layout == LEFT)
+			{
+				if (is_float32) {
+					buffer_float_out[idx] = (float)clamped;
 					buffer_float_out[idx + 1] = 0.0f;
 				} else if (is_int16) {
-					buffer_int16_out[idx] = (int16_t)(clamped * 32767.0);  // INT16 max = 32767
+					buffer_int16_out[idx] = (int16_t)(clamped * 32767.0);
 					buffer_int16_out[idx + 1] = 0;
 				} else {
 					buffer_internal_stereo[idx] = clamped * INT_MAX;
 					buffer_internal_stereo[idx + 1] = 0;
 				}
 			}
-
-			if (ch_layout == RIGHT)
+			else if (ch_layout == RIGHT)
 			{
 				if (is_float32) {
 					buffer_float_out[idx] = 0.0f;
@@ -606,9 +650,7 @@ void *radio_playback_thread(void *device_ptr)
 					buffer_internal_stereo[idx + 1] = clamped * INT_MAX;
 				}
 			}
-
-
-			if (ch_layout == STEREO)
+			else // STEREO
 			{
 				if (is_float32) {
 					buffer_float_out[idx] = (float)clamped;
@@ -695,10 +737,8 @@ cleanup_play:
 
 void *radio_capture_thread(void *device_ptr)
 {
-	printf("[CAPTURE THREAD] Starting, device_ptr=%s\n", device_ptr ? (const char*)device_ptr : "(null)");
-	fflush(stdout);
-
     ffaudio_interface *audio;
+	int device_is_mono = 0;  // Will be set after device opens
 	struct conf conf = {};
 	conf.buf.app_name = "mercury_capture";
 	conf.buf.format = FFAUDIO_F_INT32;
@@ -720,7 +760,6 @@ void *radio_capture_thread(void *device_ptr)
 			wasapi_id = wasapi_device_name_to_id((const char*)device_ptr, FFAUDIO_DEV_CAPTURE);
 			if (wasapi_id != NULL) {
 				conf.buf.device_id = (const char*)wasapi_id;
-				printf("[WASAPI] Found capture device: %s\n", (const char*)device_ptr);
 			} else {
 				printf("Warning: WASAPI device '%s' not found, using default\n", (const char*)device_ptr);
 				conf.buf.device_id = NULL;  // Use default device
@@ -732,8 +771,6 @@ void *radio_capture_thread(void *device_ptr)
         audio = (ffaudio_interface *) &ffdsound;
 		// DirectSound: Keep INT32 format (DirectSound handles conversion to device format)
 		// conf.buf.format = FFAUDIO_F_INT16;  // Disabled - using INT32 default
-		printf("[CAPTURE INIT] Looking for DirectSound capture device: '%s'\n", device_ptr ? (const char*)device_ptr : "(default)");
-		fflush(stdout);
 		// Convert device name to GUID for DirectSound
 		if (device_ptr != NULL) {
 			dsound_guid = dsound_device_name_to_guid((const char*)device_ptr, FFAUDIO_DEV_CAPTURE);
@@ -822,30 +859,21 @@ void *radio_capture_thread(void *device_ptr)
 
 	buffer_internal = (double *) malloc(AUDIO_PAYLOAD_BUFFER_SIZE * sizeof(double) * 2);
 
-	if (radio_type == RADIO_SBITX)
+	// Use configured input channel from settings
+	if (configured_input_channel == 0)
 		ch_layout = LEFT;
-	if (radio_type == RADIO_STOCKHF)
+	else if (configured_input_channel == 1)
+		ch_layout = RIGHT;
+	else
 		ch_layout = STEREO;
 
-	printf("[CAPTURE INIT] Starting capture loop, ch_layout=%d (STEREO=%d)\n", ch_layout, STEREO);
-	fflush(stdout);
+	// Detect if device is mono - override ch_layout to work with single channel
+	device_is_mono = (cfg->channels == 1);
 
 	static int read_loop_counter = 0;
 	while (!shutdown_)
     {
-		// Debug BEFORE read
-		if (read_loop_counter % 50 == 0) {
-			printf("[CAPTURE] About to call read #%d\n", read_loop_counter);
-			fflush(stdout);
-		}
-
 		r = audio->read(b, (const void **)&buffer);
-
-		// Debug AFTER read
-		if (read_loop_counter++ % 50 == 0) {
-			printf("[CAPTURE READ] r=%d bytes, buffer=%p\n", r, (void*)buffer);
-			fflush(stdout);
-		}
 
 		if (r < 0)
         {
@@ -870,17 +898,26 @@ void *radio_capture_thread(void *device_ptr)
 
 		for (int i = 0; i < frames_to_write; i++)
 		{
-			if (ch_layout == LEFT)
+			// Handle mono device - just read single channel directly
+			if (device_is_mono)
 			{
 				if (is_float32)
-					buffer_internal[i] = (double) buffer_float[i*2];  // Already normalized
+					buffer_internal[i] = (double) buffer_float[i];
 				else if (is_int16)
-					buffer_internal[i] = (double) buffer_int16[i*2] / 32768.0;  // INT16 max = 32767
+					buffer_internal[i] = (double) buffer_int16[i] / 32768.0;
+				else
+					buffer_internal[i] = (double) buffer[i] / (double) INT_MAX;
+			}
+			else if (ch_layout == LEFT)
+			{
+				if (is_float32)
+					buffer_internal[i] = (double) buffer_float[i*2];
+				else if (is_int16)
+					buffer_internal[i] = (double) buffer_int16[i*2] / 32768.0;
 				else
 					buffer_internal[i] = (double) buffer[i*2] / (double) INT_MAX;
 			}
-
-			if (ch_layout == RIGHT)
+			else if (ch_layout == RIGHT)
 			{
 				if (is_float32)
 					buffer_internal[i] = (double) buffer_float[i*2 + 1];
@@ -889,8 +926,7 @@ void *radio_capture_thread(void *device_ptr)
 				else
 					buffer_internal[i] = (double) buffer[i*2 + 1] / (double) INT_MAX;
 			}
-
-			if (ch_layout == STEREO)
+			else // STEREO - average both channels
 			{
 				if (is_float32)
 					buffer_internal[i] = (double) ((buffer_float[i*2] + buffer_float[i*2 + 1]) / 2.0);
@@ -902,10 +938,19 @@ void *radio_capture_thread(void *device_ptr)
 
 		}
 
+#ifdef MERCURY_GUI_ENABLED
+		// Apply RX gain as preprocessing step (affects Mercury's core too)
+		gui_apply_rx_gain_for_display(buffer_internal, frames_to_write);
+
+		// Push to VU meter and waterfall
+		gui_push_audio_samples(buffer_internal, frames_to_write);
+#endif
+
 #if ENABLE_FLOAT64_TAP == 1
 		fwrite(buffer_internal, 1, frames_to_write * sizeof(double), tap);
 #endif
 
+		// Write (possibly gained) samples to capture_buffer for Mercury's core
 		if (circular_buf_free_size(capture_buffer) >= frames_to_write * sizeof(double))
 			write_buffer(capture_buffer, (uint8_t *)buffer_internal, frames_to_write * sizeof(double));
 		else
@@ -964,8 +1009,9 @@ void *radio_capture_prep_thread(void *telecom_ptr_void)
 		int symbol_period = data_container_ptr->Nofdm * data_container_ptr->interpolation_rate;
 		int location_of_last_frame = signal_period - symbol_period - 1; // TODO: do we need this "-1"?
 
-		if (symbol_period == 0)
+		if (symbol_period == 0) {
 			continue;
+		}
 
 		rx_transfer(buffer_temp, symbol_period);
 

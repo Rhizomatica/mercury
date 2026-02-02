@@ -99,6 +99,9 @@ void cl_arq_controller::process_messages_rx_data_control()
 		{
 			if(messages_rx_buffer.type==CONTROL)
 			{
+				printf("[RX] CONTROL message received on CONFIG_%d, code=%d seq=%d/%d\n",
+					current_configuration, (int)messages_rx_buffer.data[0],
+					messages_rx_buffer.sequence_number, control_batch_size);
 				if(messages_control.status==FREE)
 				{
 					messages_control.type=messages_rx_buffer.type;
@@ -112,8 +115,25 @@ void cl_arq_controller::process_messages_rx_data_control()
 					}
 					stats.nReceived_control++;
 				}
-				set_receiving_timeout((control_batch_size-messages_rx_buffer.sequence_number-1)*message_transmission_time_ms+time_left_to_send_last_frame+ptt_on_delay_ms);
-				receiving_timer.start();
+				// BUG FIX: Process control message immediately when batch is complete
+				// instead of waiting for timer (which kept getting reset by retransmissions)
+				if(messages_rx_buffer.sequence_number >= control_batch_size - 1)
+				{
+					// Last frame in batch received - process immediately
+					printf("[RX] Batch complete, processing control message immediately\n");
+					receiving_timer.stop();
+					receiving_timer.reset();
+					if(messages_control.status==RECEIVED)
+					{
+						process_control_responder();
+					}
+				}
+				else
+				{
+					// More frames expected in this batch - wait for them
+					set_receiving_timeout((control_batch_size-messages_rx_buffer.sequence_number-1)*message_transmission_time_ms+time_left_to_send_last_frame+ptt_on_delay_ms);
+					receiving_timer.start();
+				}
 			}
 			else if(messages_rx_buffer.type==DATA_LONG || messages_rx_buffer.type==DATA_SHORT)
 			{
@@ -188,6 +208,10 @@ void cl_arq_controller::process_messages_acknowledging_control()
 			load_configuration(init_configuration,FULL,YES);
 			this->link_status=LISTENING;
 			this->connection_status=RECEIVING;
+			// Reset RX state machine - wait for fresh data (prevents decode of self-received TX audio)
+			telecom_system->data_container.frames_to_read =
+				telecom_system->data_container.preamble_nSymb + telecom_system->data_container.Nsymb;
+			telecom_system->data_container.nUnder_processing_events = 0;
 		}
 	}
 }
@@ -336,15 +360,31 @@ void cl_arq_controller::process_messages_acknowledging_data()
 void cl_arq_controller::process_control_responder()
 {
 	char code=messages_control.data[0];
+	printf("[RX-CTRL] Processing control message: code=%d (0=START, 1=TEST, 2=SET_CFG, 3=BLOCK_END, 4=FILE_END, 5=SWITCH, 6=CLOSE, 7=REPEAT)\n", (int)code);
 	if((link_status==LISTENING || link_status==CONNECTION_RECEIVED) && code==START_CONNECTION)
 	{
-		if(messages_control.data[1]==CRC8_calc((char*)my_call_sign.c_str(), my_call_sign.length()))
+		unsigned char received_crc = (unsigned char)messages_control.data[1];
+		unsigned char my_crc = CRC8_calc((char*)my_call_sign.c_str(), my_call_sign.length());
+		printf("[RX-CTRL] START_CONNECTION received. CRC check: received=0x%02X, my_call='%s' (len=%d), my_crc=0x%02X\n",
+			received_crc, my_call_sign.c_str(), (int)my_call_sign.length(), my_crc);
+
+		if(received_crc == my_crc)
 		{
 			destination_call_sign="";
 			for(int i=0;i<messages_control.data[2];i++)
 			{
 				destination_call_sign+=messages_control.data[3+i];
 			}
+
+			// Send PENDING to Winlink to notify incoming connection
+			// This allows Winlink to stop scanning and prepare PTT
+			std::string pending_str="PENDING "+destination_call_sign+"\r";
+			tcp_socket_control.message->length=pending_str.length();
+			for(int i=0;i<(int)pending_str.length();i++)
+			{
+				tcp_socket_control.message->buffer[i]=pending_str[i];
+			}
+			tcp_socket_control.transmit();
 
 			link_status=CONNECTION_RECEIVED;
 			connection_status=ACKNOWLEDGING_CONTROL;
@@ -355,6 +395,7 @@ void cl_arq_controller::process_control_responder()
 		}
 		else
 		{
+			printf("[RX-CTRL] START_CONNECTION REJECTED - callsign CRC mismatch! Is MYCALL set correctly?\n");
 			messages_control.status=FREE;
 		}
 	}
@@ -413,7 +454,7 @@ void cl_arq_controller::process_control_responder()
 		else if(code==BLOCK_END)
 		{
 			connection_status=ACKNOWLEDGING_CONTROL;
-			std::cout<<"end of block"<<std::endl;
+			printf("end of block\n");
 			copy_data_to_buffer();
 			messages_last_ack_bu.type=NONE;
 			link_timer.start();
@@ -422,7 +463,7 @@ void cl_arq_controller::process_control_responder()
 		else if(code==FILE_END_)
 		{
 			connection_status=ACKNOWLEDGING_CONTROL;
-			std::cout<<"end of file"<<std::endl;
+			printf("end of file\n");
 			copy_data_to_buffer();
 			messages_last_ack_bu.type=NONE;
 			link_timer.start();
@@ -431,7 +472,7 @@ void cl_arq_controller::process_control_responder()
 		else if(code==SWITCH_ROLE)
 		{
 			connection_status=ACKNOWLEDGING_CONTROL;
-			std::cout<<"switch role"<<std::endl;
+			printf("switch role\n");
 			copy_data_to_buffer();
 			link_timer.start();
 			watchdog_timer.start();

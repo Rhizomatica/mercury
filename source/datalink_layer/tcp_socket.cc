@@ -80,7 +80,6 @@ int cl_tcp_socket::init()
 			if (socket_fd == ERROR_)
 			{
 				status=TCP_STATUS_SOCKET_CREATION_ERROR;
-				std::cout<<"Error-Server socket can't be created"<<std::endl;
 				return_val=ERROR_;
 			}
 			else
@@ -89,44 +88,40 @@ int cl_tcp_socket::init()
 				server.sin_addr.s_addr = htonl(INADDR_ANY);
 				server.sin_port = htons((uint16_t)port);
 				status=TCP_STATUS_SOCKET_CREATED;
-				std::cout<<"Server socket is created"<<std::endl;
 			}
-			const char enable = 1;
-			if (setsockopt(socket_fd, SOL_SOCKET, SO_REUSEADDR, &enable, sizeof(int)) != 0)
+			int enable = 1;  // Must be int, not char, for Windows setsockopt
+			int sso_result = setsockopt(socket_fd, SOL_SOCKET, SO_REUSEADDR, (const char*)&enable, sizeof(int));
+			if (sso_result != 0)
 			{
 				status=TCP_STATUS_REUSEADDR_ERROR;
-				std::cout<<"Error-Server address reuse can't be set."<<std::endl;
 				return_val=ERROR_;
 			}
 #if !defined(_WIN32)
 			if (setsockopt(socket_fd, SOL_SOCKET, SO_REUSEPORT, &enable, sizeof(int)) != 0)
 			{
 				status=TCP_STATUS_REUSEPORT_ERROR;
-				std::cout<<"Error-Server port reuse can't be set."<<std::endl;
 				return_val=ERROR_;
 			}
 #endif
-			if ((bind(socket_fd, (struct sockaddr*)&server, sizeof(server))) != 0)
+			int bind_result = bind(socket_fd, (struct sockaddr*)&server, sizeof(server));
+			if (bind_result != 0)
 			{
 				status=TCP_STATUS_BINDING_ERROR;
-				std::cout<<"Error-Server socket can't be binded"<<std::endl;
 				return_val=ERROR_;
 			}
 			else
 			{
 				status=TCP_STATUS_BINDED;
-				std::cout<<"Server socket is binded"<<std::endl;
 			}
-			if ((listen(socket_fd, 5)) != 0)
+			int listen_result = listen(socket_fd, 5);
+			if (listen_result != 0)
 			{
 				status=TCP_STATUS_LISTENING_ERROR;
-				std::cout<<"Error-Server socket can't listen"<<std::endl;
 				return_val=ERROR_;
 			}
 			else
 			{
 				status=TCP_STATUS_LISTENING;
-				std::cout<<"Server socket is listening"<<std::endl;
 			}
 #if defined(_WIN32)
             u_long mode = 1;  // 1 to enable non-blocking socket

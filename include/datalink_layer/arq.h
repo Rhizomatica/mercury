@@ -298,6 +298,8 @@ public:
 
   int ptt_on_delay_ms;
   int ptt_off_delay_ms;
+  int pilot_tone_ms;   // Duration of pilot tone before OFDM (0=disabled)
+  int pilot_tone_hz;   // Frequency of pilot tone (250=out of band, 1500=in band)
   double time_left_to_send_last_frame;
 
   int disconnect_requested;
@@ -307,6 +309,10 @@ public:
 
   int exit_on_disconnect;
   int had_control_connection;
+
+  // GUI measurement getters
+  double get_snr_uplink() const { return measurements.SNR_uplink; }
+  double get_snr_downlink() const { return measurements.SNR_downlink; }
 
 private:
   int nMessages;

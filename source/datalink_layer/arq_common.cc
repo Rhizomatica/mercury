@@ -22,6 +22,7 @@
 
 #include "datalink_layer/arq.h"
 #include "audioio/audioio.h"
+#include <cmath>
 
 extern cbuf_handle_t capture_buffer;
 extern cbuf_handle_t playback_buffer;
@@ -476,7 +477,7 @@ int cl_arq_controller::init(int tcp_base_port, int gear_shift_on, int initial_mo
 
 	if(tcp_socket_data.init()!=SUCCESS || tcp_socket_control.init()!=SUCCESS )
 	{
-		std::cout<<"Erro initializing the TCP sockets. Exiting.."<<std::endl;
+		printf("Error initializing the TCP sockets. Exiting..\n");
 		exit(-1);
 	}
 
@@ -515,8 +516,13 @@ char cl_arq_controller::get_configuration(double SNR)
 
 void cl_arq_controller::load_configuration(int configuration, int level, int backup_configuration)
 {
+	printf("[CFG] load_configuration(%d) current=%d level=%s backup=%s\n",
+		configuration, this->current_configuration,
+		level == FULL ? "FULL" : "PHYS_ONLY",
+		backup_configuration == YES ? "YES" : "NO");
 	if(configuration==this->current_configuration)
 	{
+		printf("[CFG] Already on config %d, skipping\n", configuration);
 		return;
 	}
 	if(current_configuration!=CONFIG_NONE)
@@ -583,6 +589,8 @@ void cl_arq_controller::load_configuration(int configuration, int level, int bac
 
 	ptt_on_delay_ms=default_configuration_ARQ.ptt_on_delay_ms;
 	ptt_off_delay_ms=default_configuration_ARQ.ptt_off_delay_ms;
+	pilot_tone_ms=default_configuration_ARQ.pilot_tone_ms;
+	pilot_tone_hz=default_configuration_ARQ.pilot_tone_hz;
 	switch_role_timeout=default_configuration_ARQ.switch_role_timeout_ms;
 
 	switch_role_test_timeout=(nResends/3)*ack_timeout_control;
@@ -866,19 +874,13 @@ void cl_arq_controller::update_status()
 		// Reset messages_control so new CONNECT commands can work
 		messages_control.status=FREE;
 
-		// Reset role back to original role
-		set_role(original_role);
-
-		if(original_role==RESPONDER)
-		{
-			link_status=LISTENING;
-			connection_status=RECEIVING;
-		}
-		else
-		{
-			link_status=IDLE;
-			connection_status=IDLE;
-		}
+		// After failed connection attempt, always switch to RESPONDER/LISTENING
+		// so we can receive incoming connections from the other side
+		set_role(RESPONDER);
+		link_status=LISTENING;
+		connection_status=RECEIVING;
+		load_configuration(init_configuration, FULL, YES);
+		printf("Switching to RESPONDER mode after connection timeout\n");
 	}
 
 	// Check for max connection attempts
@@ -921,19 +923,13 @@ void cl_arq_controller::update_status()
 		// Reset messages_control so new CONNECT commands can work
 		messages_control.status=FREE;
 
-		// Reset role back to original role
-		set_role(original_role);
-
-		if(original_role==RESPONDER)
-		{
-			link_status=LISTENING;
-			connection_status=RECEIVING;
-		}
-		else
-		{
-			link_status=IDLE;
-			connection_status=IDLE;
-		}
+		// After failed connection attempts, always switch to RESPONDER/LISTENING
+		// so we can receive incoming connections from the other side
+		set_role(RESPONDER);
+		link_status=LISTENING;
+		connection_status=RECEIVING;
+		load_configuration(init_configuration, FULL, YES);
+		printf("Switching to RESPONDER mode after max connection attempts\n");
 	}
 
 	if(link_timer.get_elapsed_time_ms()>=link_timeout)
@@ -959,13 +955,13 @@ void cl_arq_controller::update_status()
 			set_role(RESPONDER);
 			link_status=LISTENING;
 			connection_status=RECEIVING;
-			// SEND TO USER
+			load_configuration(init_configuration, FULL, YES);
 		}
 		else if(this->role==RESPONDER)
 		{
 			link_status=LISTENING;
 			connection_status=RECEIVING;
-			// SEND TO USER
+			load_configuration(init_configuration, FULL, YES);
 		}
 	}
 
@@ -1023,6 +1019,33 @@ void cl_arq_controller::update_status()
 		receiving_timer.stop();
 		receiving_timer.reset();
 
+	}
+
+	// Fallback: if we're in COMMANDER mode and haven't received anything for 60+ seconds
+	// while supposedly connected, force switch to RESPONDER mode to break infinite loops
+	const int FORCED_ROLE_SWITCH_TIMEOUT = 60000;  // 60 seconds
+	if(role==COMMANDER && link_status==CONNECTED &&
+	   receiving_timer.get_elapsed_time_ms() >= FORCED_ROLE_SWITCH_TIMEOUT)
+	{
+		printf("Forced role switch: no RX for %d seconds, switching to RESPONDER\n", FORCED_ROLE_SWITCH_TIMEOUT/1000);
+
+		set_role(RESPONDER);
+		link_status=LISTENING;
+		connection_status=RECEIVING;
+		load_configuration(init_configuration, FULL, YES);
+
+		// Reset timers
+		watchdog_timer.stop();
+		watchdog_timer.reset();
+		link_timer.stop();
+		link_timer.reset();
+		receiving_timer.stop();
+		receiving_timer.reset();
+
+		// Flush buffers
+		fifo_buffer_tx.flush();
+		fifo_buffer_backup.flush();
+		fifo_buffer_rx.flush();
 	}
 
 	if(gear_shift_on==YES && gear_shift_timer.get_elapsed_time_ms()>=gearshift_timeout)
@@ -1271,6 +1294,12 @@ void cl_arq_controller::process_main()
 		size_t pos=std::string::npos;
 		do
 		{
+			// Strip any leading \n characters (from Windows \r\n line endings)
+			while(!user_command_buffer.empty() && user_command_buffer[0]=='\n')
+			{
+				user_command_buffer=user_command_buffer.substr(1);
+			}
+
 			size_t pos=user_command_buffer.find('\r');
 			if(pos!=std::string::npos)
 			{
@@ -1338,6 +1367,29 @@ void cl_arq_controller::process_main()
 		}
 	}
 
+	// Continuous signal measurement (even when not actively receiving)
+	// This ensures signal strength is always updated for display
+	MUTEX_LOCK(&capture_prep_mutex);
+	if(telecom_system->data_container.frames_to_read == 0)
+	{
+		int signal_period = telecom_system->data_container.Nofdm *
+			telecom_system->data_container.buffer_Nsymb *
+			telecom_system->data_container.interpolation_rate;
+
+		memcpy(telecom_system->data_container.ready_to_process_passband_delayed_data,
+			telecom_system->data_container.passband_delayed_data,
+			signal_period * sizeof(double));
+
+		MUTEX_UNLOCK(&capture_prep_mutex);
+
+		// Measure signal strength (lightweight, no decoding)
+		measurements.signal_stregth_dbm = telecom_system->measure_signal_only(
+			telecom_system->data_container.ready_to_process_passband_delayed_data);
+	}
+	else
+	{
+		MUTEX_UNLOCK(&capture_prep_mutex);
+	}
 
 	process_messages();
 	usleep(2000);
@@ -1364,6 +1416,9 @@ void cl_arq_controller::process_user_command(std::string command)
 		set_role(COMMANDER);
 		link_status=CONNECTING;
 		reset_all_timers();
+
+		// Reset messages_control so new connection can add START_CONNECTION
+		messages_control.status=FREE;
 
 		// Start connection attempt timer and reset counter
 		connection_attempts=0;
@@ -1400,20 +1455,11 @@ void cl_arq_controller::process_user_command(std::string command)
 		// Abort connection attempt - stop trying to connect
 		if(link_status==CONNECTING || link_status==NEGOTIATING || link_status==CONNECTION_ACCEPTED)
 		{
-			// Reset role back to original role
-			set_role(original_role);
-
-			// Reset to listening mode
-			if(original_role==RESPONDER)
-			{
-				link_status=LISTENING;
-				connection_status=RECEIVING;
-			}
-			else
-			{
-				link_status=IDLE;
-				connection_status=IDLE;
-			}
+			// Always switch to RESPONDER/LISTENING after abort so we can receive incoming connections
+			set_role(RESPONDER);
+			link_status=LISTENING;
+			connection_status=RECEIVING;
+			load_configuration(init_configuration, FULL, YES);
 
 			// Clear buffers and reset timers
 			fifo_buffer_tx.flush();
@@ -1458,6 +1504,9 @@ void cl_arq_controller::process_user_command(std::string command)
 		link_status=LISTENING;
 		connection_status=RECEIVING;
 		reset_all_timers();
+
+		// Load init_configuration so we can hear incoming START_CONNECTION messages
+		load_configuration(init_configuration, FULL, YES);
 
 		tcp_socket_control.message->buffer[0]='O';
 		tcp_socket_control.message->buffer[1]='K';
@@ -1650,6 +1699,9 @@ void cl_arq_controller::send(st_message* message, int message_location)
 
 void cl_arq_controller::send_batch()
 {
+	printf("[TX] send_batch() on CONFIG_%d, %d messages, first type=%d\n",
+		current_configuration, message_batch_counter_tx,
+		message_batch_counter_tx > 0 ? messages_batch_tx[0].type : -1);
 	ptt_on();
 
 	cl_timer ptt_on_delay, ptt_off_delay;
@@ -1757,6 +1809,33 @@ void cl_arq_controller::send_batch()
 	while(ptt_on_delay.get_elapsed_time_ms() < ptt_on_delay_ms)
 		msleep(1);
 
+	// Generate pilot tone if enabled (configurable frequency to warm up TX/amp)
+	if(pilot_tone_ms > 0 && pilot_tone_hz > 0)
+	{
+		const double SAMPLE_RATE = 48000.0;
+		const double PILOT_FREQ = (double)pilot_tone_hz;
+		const double PI = 3.14159265358979323846;
+		int pilot_samples = (int)(pilot_tone_ms * SAMPLE_RATE / 1000.0);
+		double* pilot_buffer = new double[pilot_samples];
+
+		for(int i = 0; i < pilot_samples; i++)
+		{
+			// Generate sine wave with soft ramp up/down to avoid clicks
+			double t = (double)i / SAMPLE_RATE;
+			double envelope = 1.0;
+			int ramp_samples = (int)(SAMPLE_RATE * 0.005); // 5ms ramp
+			if(i < ramp_samples)
+				envelope = (double)i / ramp_samples;
+			else if(i > pilot_samples - ramp_samples)
+				envelope = (double)(pilot_samples - i) / ramp_samples;
+
+			pilot_buffer[i] = envelope * 0.5 * sin(2.0 * PI * PILOT_FREQ * t);
+		}
+
+		tx_transfer(pilot_buffer, pilot_samples);
+		delete[] pilot_buffer;
+	}
+
 	if(messages_batch_tx[0].type==DATA_LONG || messages_batch_tx[0].type==DATA_SHORT)
 	{
 		tx_transfer(&batch_frames_output_data_filtered2[(0+1)*frame_output_size], frame_output_size); // TODO: aren't we transmitting this message twice?
@@ -1815,6 +1894,17 @@ void cl_arq_controller::send_batch()
 
 	}
 	message_batch_counter_tx=0;
+
+	// CRITICAL: Reset RX state machine after TX completes
+	// Set frames_to_read to full buffer size so receiver waits for fresh data,
+	// preventing decode of self-received TX audio (some radios play back TX audio)
+	telecom_system->data_container.frames_to_read =
+		telecom_system->data_container.preamble_nSymb + telecom_system->data_container.Nsymb;
+	telecom_system->data_container.nUnder_processing_events = 0;
+	printf("[TX-END] Reset frames_to_read=%d (preamble=%d + Nsymb=%d)\n",
+		telecom_system->data_container.frames_to_read.load(),
+		telecom_system->data_container.preamble_nSymb,
+		telecom_system->data_container.Nsymb);
 }
 
 void cl_arq_controller::receive()
@@ -1831,11 +1921,25 @@ void cl_arq_controller::receive()
 #endif
 	MUTEX_LOCK(&capture_prep_mutex);
 	st_receive_stats received_message_stats;
+
+	// Debug: track RX state (disabled for performance)
+	// static int rx_debug_count = 0;
+	// if(rx_debug_count++ % 50 == 0) {
+	// 	printf("[RX-DBG] frames_to_read=%d nUnder=%d data_ready=%d interp_rate=%d\n",
+	// 		telecom_system->data_container.frames_to_read.load(),
+	// 		telecom_system->data_container.nUnder_processing_events.load(),
+	// 		telecom_system->data_container.data_ready.load(),
+	// 		telecom_system->data_container.interpolation_rate);
+	// }
+
 	if(telecom_system->data_container.frames_to_read==0)
 	{
 
 
 		memcpy(telecom_system->data_container.ready_to_process_passband_delayed_data, telecom_system->data_container.passband_delayed_data, signal_period * sizeof(double));
+
+		// Clear data_ready while we have the lock, before unlocking
+		telecom_system->data_container.data_ready = 0;
 
 		MUTEX_UNLOCK(&capture_prep_mutex);
 
@@ -1931,7 +2035,11 @@ void cl_arq_controller::receive()
 				}
 			}
 		}
+		// Return here - we already unlocked the mutex at line 1929 and cleared data_ready
+		return;
 	}
+
+	// frames_to_read != 0: just clear data_ready and unlock
 	telecom_system->data_container.data_ready = 0;
 	MUTEX_UNLOCK(&capture_prep_mutex);
 }
@@ -1968,337 +2076,253 @@ void cl_arq_controller::restore_backup_buffer_data()
 
 void cl_arq_controller::print_stats()
 {
-	std::cout << std::fixed;
+	printf("\033[2J");  // clean screen
+	printf("\033[H");   // go to upper left corner
 
-	printf ("\e[2J");// clean screen
-	printf ("\e[H"); // go to upper left corner
-	std::cout << std::setprecision(1);
 	if(this->current_configuration!=CONFIG_NONE)
 	{
-		std::cout<<"configuration:CONFIG_"<<(int)this->current_configuration<<" ("<<telecom_system->rbc<<" bps)";
+		printf("configuration:CONFIG_%d (%.1f bps)\n", (int)this->current_configuration, telecom_system->rbc);
 	}
 	else
 	{
-		std::cout<<"configuration: ERROR..( 0 bps)";
+		printf("configuration: ERROR..( 0 bps)\n");
 	}
-	std::cout << std::setprecision(2);
-
-	std::cout<<std::endl;
 
 	// Display audio devices
 	extern char *input_dev;
 	extern char *output_dev;
-	std::cout<<"Audio_IN: "<<(input_dev ? input_dev : "default")<<std::endl;
-	std::cout<<"Audio_OUT: "<<(output_dev ? output_dev : "default")<<std::endl;
+	printf("Audio_IN: %s\n", (input_dev ? input_dev : "default"));
+	printf("Audio_OUT: %s\n", (output_dev ? output_dev : "default"));
 
-	std::cout<<std::endl;
+	printf("\n");
 
 	if(this->role==COMMANDER)
 	{
-		std::cout<<"Role:COM call sign= ";
-		std::cout<<this->my_call_sign;
+		printf("Role:COM call sign= %s\n", this->my_call_sign.c_str());
 	}
 	else if (this->role==RESPONDER)
 	{
-		std::cout<<"Role:Res call sign= ";
-		std::cout<<this->my_call_sign;
+		printf("Role:Res call sign= %s\n", this->my_call_sign.c_str());
 	}
-	std::cout<<std::endl;
 
 	if(this->link_status==DROPPED)
 	{
-		std::cout<<"link_status:Dropped";
+		printf("link_status:Dropped\n");
 	}
 	else if(this->link_status==IDLE)
 	{
-		std::cout<<"link_status:Idle";
+		printf("link_status:Idle\n");
 	}
 	else if (this->link_status==CONNECTING)
 	{
-		std::cout<<"link_status:Connecting to ";
-		std::cout<<this->destination_call_sign;
+		printf("link_status:Connecting to %s\n", this->destination_call_sign.c_str());
 	}
 	else if (this->link_status==CONNECTED)
 	{
-		std::cout<<"link_status:Connected to ";
-		std::cout<<this->destination_call_sign;
-		std::cout<<" ID= ";
-		std::cout<<(int)this->connection_id;
+		printf("link_status:Connected to %s ID= %d\n", this->destination_call_sign, (int)this->connection_id);
 	}
 	else if (this->link_status==DISCONNECTING)
 	{
-		std::cout<<"link_status:Disconnecting";
+		printf("link_status:Disconnecting\n");
 	}
 	else if (this->link_status==LISTENING)
 	{
-		std::cout<<"link_status:Listening";
+		printf("link_status:Listening\n");
 	}
 	else if (this->link_status==CONNECTION_RECEIVED)
 	{
-		std::cout<<"link_status:Connection Received from ";
-		std::cout<<this->destination_call_sign;
+		printf("link_status:Connection Received from %s\n", this->destination_call_sign.c_str());
 	}
 	else if (this->link_status==CONNECTION_ACCEPTED)
 	{
-		std::cout<<"link_status:Connection Accepted by ";
-		std::cout<<this->destination_call_sign;
+		printf("link_status:Connection Accepted by %s\n", this->destination_call_sign.c_str());
 	}
 	else if (link_status==NEGOTIATING)
 	{
-		std::cout<<"link_status:Negotiating with ";
-		std::cout<<this->destination_call_sign;
+		printf("link_status:Negotiating with %s\n", this->destination_call_sign.c_str());
 	}
-	std::cout<<std::endl;
 
 	if (this->connection_status==TRANSMITTING_DATA)
 	{
-		std::cout<<"connection_status:Transmitting data";
+		printf("connection_status:Transmitting data\n");
 	}
 	else if (this->connection_status==RECEIVING)
 	{
-		std::cout<<"connection_status:Receiving";
+		printf("connection_status:Receiving\n");
 	}
 	else if (this->connection_status==RECEIVING_ACKS_DATA)
 	{
-		std::cout<<"connection_status:Receiving data Ack";
+		printf("connection_status:Receiving data Ack\n");
 	}
-	if(this->connection_status==ACKNOWLEDGING_DATA)
+	else if(this->connection_status==ACKNOWLEDGING_DATA)
 	{
-		std::cout<<"connection_status:Acknowledging data";
+		printf("connection_status:Acknowledging data\n");
 	}
 	else if (this->connection_status==TRANSMITTING_CONTROL)
 	{
-		std::cout<<"connection_status:Transmitting control";
+		printf("connection_status:Transmitting control\n");
 	}
 	else if (this->connection_status==RECEIVING_ACKS_CONTROL)
 	{
-		std::cout<<"connection_status:Receiving control Ack";
+		printf("connection_status:Receiving control Ack\n");
 	}
 	else if (this->connection_status==ACKNOWLEDGING_CONTROL)
 	{
-		std::cout<<"connection_status:Acknowledging control";
+		printf("connection_status:Acknowledging control\n");
 	}
 	else if(this->connection_status==IDLE)
 	{
-		std::cout<<"connection_status:Idle";
+		printf("connection_status:Idle\n");
 	}
-	std::cout<<std::endl;
 
-	std::cout<<"measurements.SNR_uplink= "<<measurements.SNR_uplink<<std::endl;
-	std::cout<<"measurements.SNR_downlink= "<<measurements.SNR_downlink<<std::endl;
-	std::cout<<"measurements.signal_stregth_dbm= "<<measurements.signal_stregth_dbm<<std::endl;
-	std::cout<<"measurements.frequency_offset= "<<measurements.frequency_offset<<std::endl;
+	printf("measurements.SNR_uplink= %.2f\n", measurements.SNR_uplink);
+	printf("measurements.SNR_downlink= %.2f\n", measurements.SNR_downlink);
+	printf("measurements.signal_stregth_dbm= %.2f\n", measurements.signal_stregth_dbm);
+	printf("measurements.frequency_offset= %.2f\n", measurements.frequency_offset);
 
-	std::cout<<std::endl;
+	printf("\n");
 
-	std::cout<<"stats.nSent_data= "<<stats.nSent_data<<std::endl;
-	std::cout<<"stats.nAcked_data= "<<stats.nAcked_data<<std::endl;
-	std::cout<<"stats.nReceived_data= "<<stats.nReceived_data<<std::endl;
-	std::cout<<"stats.nLost_data= "<<stats.nLost_data<<std::endl;
-	std::cout<<"stats.nReSent_data= "<<stats.nReSent_data<<std::endl;
-	std::cout<<"stats.nAcks_sent_data= "<<stats.nAcks_sent_data<<std::endl;
-	std::cout<<"stats.nNAcked_data= "<<stats.nNAcked_data<<std::endl;
-	std::cout<<"stats.ToSend_data:"<<this->get_nToSend_messages()<<std::endl;
+	printf("stats.nSent_data= %d\n", stats.nSent_data);
+	printf("stats.nAcked_data= %d\n", stats.nAcked_data);
+	printf("stats.nReceived_data= %d\n", stats.nReceived_data);
+	printf("stats.nLost_data= %d\n", stats.nLost_data);
+	printf("stats.nReSent_data= %d\n", stats.nReSent_data);
+	printf("stats.nAcks_sent_data= %d\n", stats.nAcks_sent_data);
+	printf("stats.nNAcked_data= %d\n", stats.nNAcked_data);
+	printf("stats.ToSend_data:%d\n", this->get_nToSend_messages());
 
-	std::cout<<std::endl;
+	printf("\n");
 
-	std::cout<<"stats.nSent_control= "<<stats.nSent_control<<std::endl;
-	std::cout<<"stats.nAcked_control= "<<stats.nAcked_control<<std::endl;
-	std::cout<<"stats.nReceived_control= "<<stats.nReceived_control<<std::endl;
-	std::cout<<"stats.nLost_control= "<<stats.nLost_control<<std::endl;
-	std::cout<<"stats.nReSent_control= "<<stats.nReSent_control<<std::endl;
-	std::cout<<"stats.nAcks_sent_control= "<<stats.nAcks_sent_control<<std::endl;
-	std::cout<<"stats.nNAcked_control= "<<stats.nNAcked_control<<std::endl;
+	printf("stats.nSent_control= %d\n", stats.nSent_control);
+	printf("stats.nAcked_control= %d\n", stats.nAcked_control);
+	printf("stats.nReceived_control= %d\n", stats.nReceived_control);
+	printf("stats.nLost_control= %d\n", stats.nLost_control);
+	printf("stats.nReSent_control= %d\n", stats.nReSent_control);
+	printf("stats.nAcks_sent_control= %d\n", stats.nAcks_sent_control);
+	printf("stats.nNAcked_control= %d\n", stats.nNAcked_control);
 
-	std::cout<<std::endl;
-	std::cout<<"link_timer= "<<link_timer.get_elapsed_time_ms()<<std::endl;
-	std::cout<<"watchdog_timer= "<<watchdog_timer.get_elapsed_time_ms()<<std::endl;
-	std::cout<<"gear_shift_timer= "<<gear_shift_timer.get_elapsed_time_ms()<<std::endl;
-	std::cout<<"receiving_timer= "<<receiving_timer.get_elapsed_time_ms()<<std::endl;
+	printf("\n");
+	printf("link_timer= %ld\n", link_timer.get_elapsed_time_ms());
+	printf("watchdog_timer= %ld\n", watchdog_timer.get_elapsed_time_ms());
+	printf("gear_shift_timer= %ld\n", gear_shift_timer.get_elapsed_time_ms());
+	printf("receiving_timer= %ld\n", receiving_timer.get_elapsed_time_ms());
 
-	std::cout<<std::endl;
-	std::cout<<"last_received_message_sequence= "<<(int)last_received_message_sequence<<std::endl;
+	printf("\n");
+	printf("last_received_message_sequence= %d\n", (int)last_received_message_sequence);
 
-	std::cout<<"last_transmission_block_success_rate= "<<(int)last_transmission_block_stats.success_rate_data <<" %"<<std::endl;
+	printf("last_transmission_block_success_rate= %d %%\n", (int)last_transmission_block_stats.success_rate_data);
 	if(gear_shift_blocked_for_nBlocks<gear_shift_block_for_nBlocks_total)
 	{
-		std::cout<<"gear_shift_blocked_for_nBlocks= "<<(int)gear_shift_blocked_for_nBlocks <<std::endl;
+		printf("gear_shift_blocked_for_nBlocks= %d\n", (int)gear_shift_blocked_for_nBlocks);
 	}
 	else
 	{
-		std::cout<<"gear_shift_blocked_for_nBlocks= "<<std::endl;
+		printf("gear_shift_blocked_for_nBlocks=\n");
 	}
 
+	printf("\n");
 
-	std::cout<<std::endl;
+	const char* msg_sent_str = "";
 	if (this->last_message_sent_type==NONE)
 	{
-		std::cout<<"last_message_sent:";
+		msg_sent_str = "last_message_sent:";
 	}
 	else if (this->last_message_sent_type==DATA_LONG)
 	{
-		std::cout<<"last_message_sent:DATA:DATA_LONG";
+		msg_sent_str = "last_message_sent:DATA:DATA_LONG";
 	}
 	else if (this->last_message_sent_type==DATA_SHORT)
 	{
-		std::cout<<"last_message_sent:DATA:DATA_SHORT";
+		msg_sent_str = "last_message_sent:DATA:DATA_SHORT";
 	}
 	else if (this->last_message_sent_type==ACK_MULTI)
 	{
-		std::cout<<"last_message_sent:DATA:ACK_MULTI";
+		msg_sent_str = "last_message_sent:DATA:ACK_MULTI";
 	}
 	else if (this->last_message_sent_type==ACK_RANGE)
 	{
-		std::cout<<"last_message_sent:DATA:ACK_RANGE";
+		msg_sent_str = "last_message_sent:DATA:ACK_RANGE";
 	}
 	else if (this->last_message_sent_type==CONTROL)
 	{
-		std::cout<<"last_message_sent:CONTROL:";
+		msg_sent_str = "last_message_sent:CONTROL:";
 	}
 	else if (this->last_message_sent_type==ACK_CONTROL)
 	{
-		std::cout<<"last_message_sent:ACK_CONTROL:";
+		msg_sent_str = "last_message_sent:ACK_CONTROL:";
 	}
 
+	const char* msg_sent_code_str = "";
 	if(this->last_message_sent_type==CONTROL || this->last_message_sent_type==ACK_CONTROL)
 	{
-		if (this->last_message_sent_code==START_CONNECTION)
-		{
-			std::cout<<"START_CONNECTION";
-		}
-		else if (this->last_message_sent_code==TEST_CONNECTION)
-		{
-			std::cout<<"TEST_CONNECTION";
-		}
-		else if (this->last_message_sent_code==CLOSE_CONNECTION)
-		{
-			std::cout<<"CLOSE_CONNECTION";
-		}
-		else if (this->last_message_sent_code==KEEP_ALIVE)
-		{
-			std::cout<<"KEEP_ALIVE";
-		}
-		else if (this->last_message_sent_code==FILE_START)
-		{
-			std::cout<<"FILE_START";
-		}
-		else if (this->last_message_sent_code==FILE_END_)
-		{
-			std::cout<<"FILE_END";
-		}
-		else if (this->last_message_sent_code==PIPE_OPEN)
-		{
-			std::cout<<"PIPE_OPEN";
-		}
-		else if (this->last_message_sent_code==PIPE_CLOSE)
-		{
-			std::cout<<"PIPE_CLOSE";
-		}
-		else if (this->last_message_sent_code==SWITCH_ROLE)
-		{
-			std::cout<<"SWITCH_ROLE";
-		}
-		else if (this->last_message_sent_code==BLOCK_END)
-		{
-			std::cout<<"BLOCK_END";
-		}
-		else if (this->last_message_sent_code==SET_CONFIG)
-		{
-			std::cout<<"SET_CONFIG";
-		}
-		else if (this->last_message_sent_code==REPEAT_LAST_ACK)
-		{
-			std::cout<<"REPEAT_LAST_ACK";
-		}
+		if (this->last_message_sent_code==START_CONNECTION) msg_sent_code_str = "START_CONNECTION";
+		else if (this->last_message_sent_code==TEST_CONNECTION) msg_sent_code_str = "TEST_CONNECTION";
+		else if (this->last_message_sent_code==CLOSE_CONNECTION) msg_sent_code_str = "CLOSE_CONNECTION";
+		else if (this->last_message_sent_code==KEEP_ALIVE) msg_sent_code_str = "KEEP_ALIVE";
+		else if (this->last_message_sent_code==FILE_START) msg_sent_code_str = "FILE_START";
+		else if (this->last_message_sent_code==FILE_END_) msg_sent_code_str = "FILE_END";
+		else if (this->last_message_sent_code==PIPE_OPEN) msg_sent_code_str = "PIPE_OPEN";
+		else if (this->last_message_sent_code==PIPE_CLOSE) msg_sent_code_str = "PIPE_CLOSE";
+		else if (this->last_message_sent_code==SWITCH_ROLE) msg_sent_code_str = "SWITCH_ROLE";
+		else if (this->last_message_sent_code==BLOCK_END) msg_sent_code_str = "BLOCK_END";
+		else if (this->last_message_sent_code==SET_CONFIG) msg_sent_code_str = "SET_CONFIG";
+		else if (this->last_message_sent_code==REPEAT_LAST_ACK) msg_sent_code_str = "REPEAT_LAST_ACK";
 	}
-	std::cout<<std::endl;
+	printf("%s%s\n", msg_sent_str, msg_sent_code_str);
 
+	const char* msg_recv_str = "";
 	if (this->last_message_received_type==NONE)
 	{
-		std::cout<<"last_message_received:";
+		msg_recv_str = "last_message_received:";
 	}
 	else if (this->last_message_received_type==DATA_LONG)
 	{
-		std::cout<<"last_message_received:DATA:DATA_LONG";
+		msg_recv_str = "last_message_received:DATA:DATA_LONG";
 	}
 	else if (this->last_message_received_type==DATA_SHORT)
 	{
-		std::cout<<"last_message_received:DATA:DATA_SHORT";
+		msg_recv_str = "last_message_received:DATA:DATA_SHORT";
 	}
 	else if (this->last_message_received_type==ACK_MULTI)
 	{
-		std::cout<<"last_message_received:DATA:ACK_MULTI";
+		msg_recv_str = "last_message_received:DATA:ACK_MULTI";
 	}
 	else if (this->last_message_received_type==ACK_RANGE)
 	{
-		std::cout<<"last_message_received:DATA:ACK_RANGE";
+		msg_recv_str = "last_message_received:DATA:ACK_RANGE";
 	}
 	else if (this->last_message_received_type==CONTROL)
 	{
-		std::cout<<"last_message_received:CONTROL:";
+		msg_recv_str = "last_message_received:CONTROL:";
 	}
 	else if (this->last_message_received_type==ACK_CONTROL)
 	{
-		std::cout<<"last_message_received:ACK_CONTROL:";
+		msg_recv_str = "last_message_received:ACK_CONTROL:";
 	}
 
+	const char* msg_recv_code_str = "";
 	if(this->last_message_received_type==CONTROL || this->last_message_received_type==ACK_CONTROL)
 	{
-		if (this->last_message_received_code==START_CONNECTION)
-		{
-			std::cout<<"START_CONNECTION";
-		}
-		else if (this->last_message_received_code==TEST_CONNECTION)
-		{
-			std::cout<<"TEST_CONNECTION";
-		}
-		else if (this->last_message_received_code==CLOSE_CONNECTION)
-		{
-			std::cout<<"CLOSE_CONNECTION";
-		}
-		else if (this->last_message_received_code==KEEP_ALIVE)
-		{
-			std::cout<<"KEEP_ALIVE";
-		}
-		else if (this->last_message_received_code==FILE_START)
-		{
-			std::cout<<"FILE_START";
-		}
-		else if (this->last_message_received_code==FILE_END_)
-		{
-			std::cout<<"FILE_END";
-		}
-		else if (this->last_message_received_code==PIPE_OPEN)
-		{
-			std::cout<<"PIPE_OPEN";
-		}
-		else if (this->last_message_received_code==PIPE_CLOSE)
-		{
-			std::cout<<"PIPE_CLOSE";
-		}
-		else if (this->last_message_received_code==SWITCH_ROLE)
-		{
-			std::cout<<"SWITCH_ROLE";
-		}
-		else if (this->last_message_received_code==BLOCK_END)
-		{
-			std::cout<<"BLOCK_END";
-		}
-		else if (this->last_message_received_code==SET_CONFIG)
-		{
-			std::cout<<"SET_CONFIG";
-		}
-		else if (this->last_message_received_code==REPEAT_LAST_ACK)
-		{
-			std::cout<<"REPEAT_LAST_ACK";
-		}
+		if (this->last_message_received_code==START_CONNECTION) msg_recv_code_str = "START_CONNECTION";
+		else if (this->last_message_received_code==TEST_CONNECTION) msg_recv_code_str = "TEST_CONNECTION";
+		else if (this->last_message_received_code==CLOSE_CONNECTION) msg_recv_code_str = "CLOSE_CONNECTION";
+		else if (this->last_message_received_code==KEEP_ALIVE) msg_recv_code_str = "KEEP_ALIVE";
+		else if (this->last_message_received_code==FILE_START) msg_recv_code_str = "FILE_START";
+		else if (this->last_message_received_code==FILE_END_) msg_recv_code_str = "FILE_END";
+		else if (this->last_message_received_code==PIPE_OPEN) msg_recv_code_str = "PIPE_OPEN";
+		else if (this->last_message_received_code==PIPE_CLOSE) msg_recv_code_str = "PIPE_CLOSE";
+		else if (this->last_message_received_code==SWITCH_ROLE) msg_recv_code_str = "SWITCH_ROLE";
+		else if (this->last_message_received_code==BLOCK_END) msg_recv_code_str = "BLOCK_END";
+		else if (this->last_message_received_code==SET_CONFIG) msg_recv_code_str = "SET_CONFIG";
+		else if (this->last_message_received_code==REPEAT_LAST_ACK) msg_recv_code_str = "REPEAT_LAST_ACK";
 	}
-	std::cout<<std::endl;
+	printf("%s%s\n", msg_recv_str, msg_recv_code_str);
 
-	std::cout<<std::endl;
-	std::cout<<"TX buffer occupancy= "<<(float)(fifo_buffer_tx.get_size()-fifo_buffer_tx.get_free_size())*100.0/(float)fifo_buffer_tx.get_size()<<" %"<<std::endl;
-	std::cout<<"RX buffer occupancy= "<<(float)(fifo_buffer_rx.get_size()-fifo_buffer_rx.get_free_size())*100.0/(float)fifo_buffer_rx.get_size()<<" %"<<std::endl;
-	std::cout<<"Backup buffer occupancy= "<<(float)(fifo_buffer_backup.get_size()-fifo_buffer_backup.get_free_size())*100.0/(float)fifo_buffer_backup.get_size()<<" %"<<std::endl;
+	printf("\n");
+	printf("TX buffer occupancy= %.2f %%\n", (float)(fifo_buffer_tx.get_size()-fifo_buffer_tx.get_free_size())*100.0f/(float)fifo_buffer_tx.get_size());
+	printf("RX buffer occupancy= %.2f %%\n", (float)(fifo_buffer_rx.get_size()-fifo_buffer_rx.get_free_size())*100.0f/(float)fifo_buffer_rx.get_size());
+	printf("Backup buffer occupancy= %.2f %%\n", (float)(fifo_buffer_backup.get_size()-fifo_buffer_backup.get_free_size())*100.0f/(float)fifo_buffer_backup.get_size());
+	fflush(stdout);
 }
 
 uint8_t cl_arq_controller::CRC8_calc(char* data_byte, int nItems)

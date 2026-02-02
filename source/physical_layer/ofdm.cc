@@ -388,6 +388,227 @@ double cl_ofdm::carrier_sampling_frequency_sync(std::complex <double>*in, double
 	//Ref3: M. Speth, S. Fechtel, G. Fock and H. Meyr, "Optimum receiver design for OFDM-based broadband transmission .II. A case study," in IEEE Transactions on Communications, vol. 49, no. 4, pp. 571-578, April 2001, doi: 10.1109/26.917759.
 }
 
+double cl_ofdm::frequency_sync_coarse(std::complex<double>* in, double subcarrier_spacing, int search_range_subcarriers, int interpolation_rate)
+{
+	/*
+	 * Full Schmidl-Cox frequency synchronization with integer CFO estimation.
+	 *
+	 * The preamble uses alternating carriers (even bins only), creating
+	 * time-domain repetition with period Nfft/2.
+	 *
+	 * Fractional CFO (within ±0.5 subcarrier spacing):
+	 *   - Correlate first half with second half of OFDM symbol
+	 *   - Phase of correlation = 2π × ε_frac × (Nfft/2) / Nfft = π × ε_frac
+	 *   - So: ε_frac = angle(P) / π (in subcarrier spacings)
+	 *
+	 * Integer CFO (multiples of subcarrier spacing):
+	 *   - After fractional correction, FFT the preamble
+	 *   - Correlate received spectrum with known preamble pattern at different shifts
+	 *   - Peak correlation indicates integer offset
+	 *
+	 * Input: baseband signal at interpolation_rate (e.g., 4x for 48kHz/12kHz)
+	 * Output: total frequency offset in Hz
+	 *
+	 * Ref: T. M. Schmidl and D. C. Cox, "Robust frequency and timing
+	 *      synchronization for OFDM," IEEE Trans. Comm., vol. 45, no. 12,
+	 *      pp. 1613-1621, Dec. 1997.
+	 */
+
+	// Step 1: Fractional CFO estimation from time-domain correlation
+	// Correlate first half with second half of each preamble symbol
+	std::complex<double> P(0.0, 0.0);  // Complex correlation
+	double R = 0.0;  // Normalization (energy of second half)
+
+	// Account for interpolation rate in sample indices
+	int half_symbol = (Nfft * interpolation_rate) / 2;
+	int gi_samples = Ngi * interpolation_rate;
+
+	// Use first preamble symbol (after GI)
+	std::complex<double>* symbol_start = in + gi_samples;
+
+	// Step 0: Energy gate - check signal level before CFO estimation
+	// This prevents noise from producing bogus CFO estimates
+	double input_energy = 0.0;
+	for (int n = 0; n < Nfft; n++) {
+		int src_idx = n * interpolation_rate;
+		input_energy += std::norm(symbol_start[src_idx]);
+	}
+
+	// Energy threshold - tune this based on observed signal vs noise levels
+	// Typical signal energy is ~10-100, noise is <1
+	const double min_energy = 1.0;
+	if (input_energy < min_energy) {
+		printf("[COARSE-FREQ] Low energy (%.3f < %.1f) - skip\n", input_energy, min_energy);
+		fflush(stdout);
+		return 0.0;  // No signal, don't apply any correction
+	}
+
+	printf("[COARSE-FREQ] Entry: Nfft=%d Ngi=%d interp=%d energy=%.3f\n",
+		   Nfft, Ngi, interpolation_rate, input_energy);
+	fflush(stdout);
+
+	for (int n = 0; n < half_symbol; n++)
+	{
+		std::complex<double> first_half = symbol_start[n];
+		std::complex<double> second_half = symbol_start[n + half_symbol];
+
+		// P = Σ r(n) × r*(n + Nfft/2)
+		P += first_half * std::conj(second_half);
+		R += std::norm(second_half);
+	}
+
+	// Fractional CFO in subcarrier spacings
+	// For frequency offset ε (in subcarrier spacings):
+	// r(n+N/2) = r(n) × exp(jπε), so P = Σ|r(n)|² × exp(-jπε)
+	// Therefore: ε = -arg(P) / π
+	double frac_cfo_subcarriers = -std::arg(P) / M_PI;
+
+	// Correlation quality check
+	double corr_mag = (R > 0.0) ? (std::abs(P) / R) : 0.0;
+	printf("[COARSE-FREQ] Fractional CFO: %.4f subcarriers (|P|=%.6f R=%.6f corr_mag=%.4f)\n",
+	       frac_cfo_subcarriers, std::abs(P), R, corr_mag);
+
+	// Gate on correlation quality - low correlation means we're not looking at a valid preamble
+	// A good preamble detection should have corr_mag > 0.5
+	const double min_corr_mag = 0.5;
+	if (corr_mag < min_corr_mag) {
+		printf("[COARSE-FREQ] Low correlation (%.3f < %.1f) - skip\n", corr_mag, min_corr_mag);
+		fflush(stdout);
+		return 0.0;
+	}
+	fflush(stdout);
+
+	// Note: We don't early exit here because the fractional CFO from noise
+	// is typically close to 0 anyway, and we'll check confidence on the
+	// integer CFO estimate before applying any large corrections.
+
+	// Step 2: Integer CFO estimation
+	// Apply fractional correction and FFT the preamble symbol
+	// Note: Input is at interpolation_rate, so we downsample by taking every
+	// interpolation_rate-th sample to get back to baseband (Nfft samples)
+	std::complex<double>* corrected_symbol = new std::complex<double>[Nfft];
+	std::complex<double>* fft_out = new std::complex<double>[Nfft];
+
+	// Apply fractional frequency correction and downsample to baseband rate
+	// Each output sample n corresponds to input sample n*interpolation_rate
+	double phase_inc = -2.0 * M_PI * frac_cfo_subcarriers / Nfft;
+	for (int n = 0; n < Nfft; n++)
+	{
+		int src_idx = n * interpolation_rate;
+		double phase = phase_inc * n;
+		std::complex<double> correction(std::cos(phase), std::sin(phase));
+		corrected_symbol[n] = symbol_start[src_idx] * correction;
+	}
+
+	// FFT the corrected preamble symbol
+	fft(corrected_symbol, fft_out);
+
+	// Debug: check FFT energy
+	double total_fft_energy = 0.0;
+	double max_bin_energy = 0.0;
+	int max_bin = 0;
+	for (int i = 0; i < Nfft; i++) {
+		double e = std::norm(fft_out[i]);
+		total_fft_energy += e;
+		if (e > max_bin_energy) {
+			max_bin_energy = e;
+			max_bin = i;
+		}
+	}
+	printf("[COARSE-FREQ] FFT: total_energy=%.4f max_bin=%d max_energy=%.4f Nfft=%d Nc=%d\n",
+		   total_fft_energy, max_bin, max_bin_energy, Nfft, Nc);
+	fflush(stdout);
+
+	// Note: Correlation quality check disabled - fractional estimate is used directly
+	// The filter in telecom_system.cc handles bogus values
+
+	// Integer CFO search is disabled when search_range_subcarriers <= 0
+	// (The integer CFO detection via even/odd pattern matching isn't working reliably)
+	int best_int_cfo = 0;
+	double best_metric = 0.0;
+	int search_limit = search_range_subcarriers;
+
+	// Integer CFO search (only if enabled)
+	if (search_limit > 0)
+	{
+		// Limit to valid range
+		if (search_limit > Nc / 2) search_limit = Nc / 2;
+
+		for (int k = -search_limit; k <= search_limit; k++)
+		{
+			double energy_data = 0.0;
+			double energy_null = 0.0;
+
+			// Check only active carrier bins (not all Nfft bins)
+			for (int carrier = 0; carrier < Nc; carrier++)
+			{
+				// Map carrier index to FFT bin (same mapping as zero_depadder)
+				int fft_bin;
+				if (carrier < Nc / 2)
+				{
+					fft_bin = Nfft - Nc / 2 + carrier;  // Negative frequencies
+				}
+				else
+				{
+					fft_bin = carrier - Nc / 2 + start_shift;  // Positive frequencies
+				}
+
+				// Apply trial offset to see where this carrier's energy would be
+				int received_bin = fft_bin + k;
+				if (received_bin < 0) received_bin += Nfft;
+				if (received_bin >= Nfft) received_bin -= Nfft;
+
+				// The ORIGINAL FFT bin (before any offset) determines even/odd
+				// Even original bins had data, odd original bins were null
+				bool should_have_data = ((fft_bin % 2) == 0);
+
+				double bin_energy = std::norm(fft_out[received_bin]);
+
+				if (should_have_data)
+				{
+					energy_data += bin_energy;
+				}
+				else
+				{
+					energy_null += bin_energy;
+				}
+			}
+
+			// Metric: ratio of energy on expected-data bins vs expected-null bins
+			double metric = (energy_null > 0.001) ? (energy_data / energy_null) : energy_data;
+
+			if (metric > best_metric)
+			{
+				best_metric = metric;
+				best_int_cfo = k;
+			}
+		}
+		printf("[COARSE-FREQ] Integer CFO: best k=%d metric=%.4f\n", best_int_cfo, best_metric);
+		fflush(stdout);
+	}
+
+	// Cleanup
+	delete[] corrected_symbol;
+	delete[] fft_out;
+
+	// Determine effective integer CFO (only use if confident)
+	int effective_int_cfo = 0;
+	if (search_limit > 0 && best_metric > 2.0)
+	{
+		effective_int_cfo = best_int_cfo;
+	}
+
+	// Total CFO: fractional + integer (if confident)
+	double total_cfo_subcarriers = frac_cfo_subcarriers + (double)effective_int_cfo;
+	double total_cfo_hz = total_cfo_subcarriers * subcarrier_spacing;
+
+	printf("[COARSE-FREQ] Result: frac=%.3f int=%d total=%.1f Hz (corr=%.2f)\n",
+	       frac_cfo_subcarriers, effective_int_cfo, total_cfo_hz, corr_mag);
+	fflush(stdout);
+
+	return total_cfo_hz;
+}
+
 void cl_ofdm::framer(std::complex <double>* in, std::complex <double>* out)
 {
 	int data_index=0;
@@ -1394,6 +1615,113 @@ int cl_ofdm::time_sync_preamble(std::complex <double>*in, int size, int interpol
  * 	Ref: T. M. Schmidl and D. C. Cox, "Robust frequency and timing synchronization for OFDM," in IEEE Transactions on Communications, vol. 45, no. 12, pp. 1613-1621, Dec. 1997, doi: 10.1109/26.650240.
  *
  */
+}
+
+TimeSyncResult cl_ofdm::time_sync_preamble_with_metric(std::complex <double>*in, int size, int interpolation_rate, int location_to_return, int step, int nTrials_max)
+{
+	/*
+	 * Same as time_sync_preamble() but also returns the correlation metric.
+	 * This allows the caller to assess the quality of the time sync detection.
+	 * A high correlation (>0.7) indicates strong preamble detection.
+	 */
+	double corss_corr=0;
+	double norm_a=0;
+	double norm_b=0;
+	double max_correlation = 0.0;
+
+	int *corss_corr_loc=new int[size];
+	double *corss_corr_vals=new double[size];
+	TimeSyncResult result;
+	result.delay = 0;
+	result.correlation = 0.0;
+
+	std::complex <double> *a_c, *b_c, *data;
+
+	for(int i=0;i<size;i++)
+	{
+		corss_corr_loc[i]=-1;
+		corss_corr_vals[i]=0;
+	}
+
+	data= new std::complex <double> [preamble_configurator.Nsymb*(this->Ngi+this->Nfft)*interpolation_rate];
+
+	for(int i=0;i<size-preamble_configurator.Nsymb*(this->Ngi+this->Nfft)*interpolation_rate;i+=step)
+	{
+		for(int k=0;k<preamble_configurator.Nsymb*(this->Ngi+this->Nfft)*interpolation_rate;k++)
+		{
+			data[k]=*(in+i+k);
+		}
+
+		corss_corr=0;
+		norm_a=0;
+		norm_b=0;
+		for(int l=0;l<preamble_configurator.Nsymb;l++)
+		{
+			a_c=data+l*(this->Ngi+this->Nfft)*interpolation_rate;
+			b_c=data+l*(this->Ngi+this->Nfft)*interpolation_rate+this->Nfft*interpolation_rate;
+
+			for(int m=0;m<this->Ngi*interpolation_rate;m++)
+			{
+				corss_corr+=a_c[m].real()*b_c[m].real();
+				norm_a+=a_c[m].real()*a_c[m].real();
+				norm_b+=b_c[m].real()*b_c[m].real();
+
+				corss_corr+=a_c[m].imag()*b_c[m].imag();
+				norm_a+=a_c[m].imag()*a_c[m].imag();
+				norm_b+=b_c[m].imag()*b_c[m].imag();
+			}
+
+			a_c=data+l*(this->Ngi+this->Nfft)*interpolation_rate+this->Ngi*interpolation_rate;
+			b_c=data+l*(this->Ngi+this->Nfft)*interpolation_rate+(this->Ngi+this->Nfft/2)*interpolation_rate;
+
+			for(int m=0;m<(this->Nfft/2)*interpolation_rate;m++)
+			{
+				corss_corr+=a_c[m].real()*b_c[m].real();
+				norm_a+=a_c[m].real()*a_c[m].real();
+				norm_b+=b_c[m].real()*b_c[m].real();
+
+				corss_corr+=a_c[m].imag()*b_c[m].imag();
+				norm_a+=a_c[m].imag()*a_c[m].imag();
+				norm_b+=b_c[m].imag()*b_c[m].imag();
+			}
+		}
+
+		corss_corr=corss_corr/sqrt(norm_a*norm_b);
+		corss_corr_vals[i]=corss_corr;
+		corss_corr_loc[i]=i;
+	}
+
+	for(int j=0;j<nTrials_max;j++)
+	{
+		corss_corr_loc[j]=j;
+		for(int i=j+1;i<size;i++)
+		{
+			if (corss_corr_vals[i]>corss_corr_vals[j])
+			{
+				corss_corr_vals[j]=corss_corr_vals[i];
+				corss_corr_loc[j]=i;
+			}
+		}
+	}
+
+	result.delay = corss_corr_loc[location_to_return];
+	// Get the correlation value at the returned location
+	max_correlation = corss_corr_vals[location_to_return];
+	result.correlation = max_correlation;
+
+	if(corss_corr_loc!=NULL)
+	{
+		delete[] corss_corr_loc;
+	}
+	if(corss_corr_vals!=NULL)
+	{
+		delete[] corss_corr_vals;
+	}
+	if(data!=NULL)
+	{
+		delete[] data;
+	}
+	return result;
 }
 
 int cl_ofdm::symbol_sync(std::complex <double>*in, int size, int interpolation_rate, int location_to_return)

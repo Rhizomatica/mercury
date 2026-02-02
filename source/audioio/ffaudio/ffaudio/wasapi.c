@@ -372,7 +372,20 @@ static int wasapi_format_mix(IAudioClient *client, ffaudio_conf *conf, const cha
 		goto end;
 	}
 
-	conf->format = FFAUDIO_F_FLOAT32;
+	// Parse actual format from device instead of assuming FLOAT32
+	int fmt = wfx_to_ff_format((WAVEFORMATEXTENSIBLE*)wf);
+	if (fmt < 0) {
+		// Fallback to FLOAT32 if format parsing fails
+		printf("[WASAPI] Warning: Could not parse device format, defaulting to FLOAT32\n");
+		conf->format = FFAUDIO_F_FLOAT32;
+	} else {
+		conf->format = fmt;
+		const char *fmt_name = (fmt == FFAUDIO_F_FLOAT32) ? "FLOAT32" :
+		                       (fmt == FFAUDIO_F_INT32) ? "INT32" :
+		                       (fmt == FFAUDIO_F_INT16) ? "INT16" : "OTHER";
+		printf("[WASAPI] Device native format: %s (%d-bit), %d Hz, %d ch\n",
+		       fmt_name, wf->wBitsPerSample, wf->nSamplesPerSec, wf->nChannels);
+	}
 	conf->sample_rate = wf->nSamplesPerSec;
 	conf->channels = wf->nChannels;
 

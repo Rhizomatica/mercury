@@ -60,8 +60,12 @@ void cl_arq_controller::process_messages_commander()
 		{
 			disconnect_requested=NO;
 			load_configuration(init_configuration,FULL,YES);
+
+			// Switch to RESPONDER/LISTENING so we can receive incoming connections
+			set_role(RESPONDER);
 			this->link_status=LISTENING;
 			this->connection_status=RECEIVING;
+
 			watchdog_timer.stop();
 			watchdog_timer.reset();
 			link_timer.stop();
@@ -70,10 +74,17 @@ void cl_arq_controller::process_messages_commander()
 			gear_shift_timer.reset();
 			receiving_timer.stop();
 			receiving_timer.reset();
+			// Reset RX state machine - wait for fresh data (prevents decode of self-received TX audio)
+			telecom_system->data_container.frames_to_read =
+				telecom_system->data_container.preamble_nSymb + telecom_system->data_container.Nsymb;
+			telecom_system->data_container.nUnder_processing_events = 0;
 
 			fifo_buffer_tx.flush();
 			fifo_buffer_backup.flush();
 			fifo_buffer_rx.flush();
+
+			// Reset messages_control so new CONNECT commands can work
+			messages_control.status=FREE;
 
 			std::string str="DISCONNECTED\r";
 			tcp_socket_control.message->length=str.length();
@@ -123,14 +134,16 @@ int cl_arq_controller::add_message_control(char code)
 			messages_control.data[1]=CRC8_calc((char*)destination_call_sign.c_str(), destination_call_sign.length());
 			int my_call_sign_sent_chars=0;
 
-			for(int j=0;j<(int)my_call_sign.length();j++)
+			// Calculate max callsign length - ensure at least 10 chars for amateur callsigns
+			int max_callsign_chars = max_data_length + max_header_length - CONTROL_ACK_CONTROL_HEADER_LENGTH - 3;
+			if (max_callsign_chars < 10) max_callsign_chars = 10;  // Minimum 10 chars for callsigns
+			int callsign_len = (int)my_call_sign.length();
+			if (callsign_len > max_callsign_chars) callsign_len = max_callsign_chars;
+
+			for(int j=0;j<callsign_len;j++)
 			{
 				messages_control.data[j+3]=my_call_sign[j];
 				my_call_sign_sent_chars++;
-				if(my_call_sign_sent_chars+3>=(max_data_length+max_header_length-CONTROL_ACK_CONTROL_HEADER_LENGTH))
-				{
-					break;
-				}
 			}
 			messages_control.data[2]=my_call_sign_sent_chars;
 			messages_control.length=my_call_sign_sent_chars+3;
@@ -616,6 +629,10 @@ void cl_arq_controller::process_control_commander()
 				last_message_received_type=NONE;
 				last_message_sent_type=NONE;
 				last_received_message_sequence=-1;
+				// Reset RX state machine - wait for fresh data (prevents decode of self-received TX audio)
+				telecom_system->data_container.frames_to_read =
+					telecom_system->data_container.preamble_nSymb + telecom_system->data_container.Nsymb;
+				telecom_system->data_container.nUnder_processing_events = 0;
 			}
 			else if (messages_control.data[0]==SET_CONFIG)
 			{
@@ -637,6 +654,10 @@ void cl_arq_controller::process_control_commander()
 			gear_shift_timer.reset();
 			receiving_timer.stop();
 			receiving_timer.reset();
+			// Reset RX state machine - wait for fresh data (prevents decode of self-received TX audio)
+			telecom_system->data_container.frames_to_read =
+				telecom_system->data_container.preamble_nSymb + telecom_system->data_container.Nsymb;
+			telecom_system->data_container.nUnder_processing_events = 0;
 
 			fifo_buffer_tx.flush();
 			fifo_buffer_backup.flush();

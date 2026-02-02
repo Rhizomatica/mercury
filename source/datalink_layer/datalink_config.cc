@@ -29,12 +29,12 @@ cl_configuration_arq::cl_configuration_arq()
 	fifo_buffer_rx_size=128000;
 	fifo_buffer_backup_size=128000;
 
-	link_timeout=10000000;
+	link_timeout=30000;
 
-	tcp_socket_control_port=7002;
+	tcp_socket_control_port=7001;
 	tcp_socket_control_timeout_ms=INFINITE_;
 
-	tcp_socket_data_port=7003;
+	tcp_socket_data_port=7002;
 	tcp_socket_data_timeout_ms=INFINITE_;
 
 
@@ -57,8 +57,10 @@ cl_configuration_arq::cl_configuration_arq()
 	ack_batch_size=2;
 	control_batch_size=2;
 	
-	ptt_on_delay_ms=10;
+	ptt_on_delay_ms=100;
 	ptt_off_delay_ms=200;
+	pilot_tone_ms=50;   // 50ms pilot tone by default
+	pilot_tone_hz=250;  // 250Hz = out of OFDM band, won't interfere with decoder
 	switch_role_timeout_ms=1500;
 }
 

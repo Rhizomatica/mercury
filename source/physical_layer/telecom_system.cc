@@ -23,8 +23,15 @@
 #include "physical_layer/telecom_system.h"
 #include "audioio/audioio.h"
 
+#ifdef MERCURY_GUI_ENABLED
+#include "gui/gui_state.h"
+#endif
+
 extern cbuf_handle_t capture_buffer;
 extern cbuf_handle_t playback_buffer;
+
+// Test mode: artificial TX carrier offset in Hz (for testing frequency sync)
+extern double test_tx_carrier_offset;
 
 
 cl_telecom_system::cl_telecom_system()
@@ -389,8 +396,10 @@ void cl_telecom_system::transmit_bit(int* data, double* out, int message_locatio
 	}
 
 
-	ofdm.baseband_to_passband(data_container.preamble_symbol_modulated_data,data_container.Nofdm*data_container.preamble_nSymb,data_container.passband_data_tx,sampling_frequency,carrier_frequency,carrier_amplitude,frequency_interpolation_rate);
-	ofdm.baseband_to_passband(data_container.ofdm_symbol_modulated_data,data_container.Nofdm*data_container.Nsymb,&data_container.passband_data_tx[data_container.Nofdm*data_container.preamble_nSymb*frequency_interpolation_rate],sampling_frequency,carrier_frequency,carrier_amplitude,frequency_interpolation_rate);
+	// Apply test TX carrier offset for frequency sync testing
+	double tx_carrier = carrier_frequency + test_tx_carrier_offset;
+	ofdm.baseband_to_passband(data_container.preamble_symbol_modulated_data,data_container.Nofdm*data_container.preamble_nSymb,data_container.passband_data_tx,sampling_frequency,tx_carrier,carrier_amplitude,frequency_interpolation_rate);
+	ofdm.baseband_to_passband(data_container.ofdm_symbol_modulated_data,data_container.Nofdm*data_container.Nsymb,&data_container.passband_data_tx[data_container.Nofdm*data_container.preamble_nSymb*frequency_interpolation_rate],sampling_frequency,tx_carrier,carrier_amplitude,frequency_interpolation_rate);
 
 	ofdm.peak_clip(data_container.passband_data_tx, data_container.Nofdm*data_container.preamble_nSymb*frequency_interpolation_rate,ofdm.preamble_papr_cut);
 	ofdm.peak_clip(&data_container.passband_data_tx[data_container.Nofdm*data_container.preamble_nSymb*frequency_interpolation_rate], data_container.Nofdm*data_container.Nsymb*frequency_interpolation_rate,ofdm.data_papr_cut);
@@ -521,22 +530,156 @@ st_receive_stats cl_telecom_system::receive_byte(double *data, int* out)
 	int pream_symb_loc=receive_stats.delay/(data_container.Nofdm*data_container.interpolation_rate);
 	if(pream_symb_loc<1){pream_symb_loc=1;}
 
-	if(pream_symb_loc>(ofdm.preamble_configurator.Nsymb+data_container.Nsymb/2) && pream_symb_loc<(data_container.buffer_Nsymb-(data_container.Nsymb+data_container.preamble_nSymb)))
+	// Widened lower bound to accept earlier preamble detection (was preamble_nSymb+Nsymb/2)
+	int lower_bound = data_container.preamble_nSymb;  // Minimum: just after preamble could fit
+	int upper_bound = data_container.buffer_Nsymb-(data_container.Nsymb+data_container.preamble_nSymb);
+
+	// Debug: show preamble detection status (print when signal detected)
+	static int debug_throttle = 0;
+	if(receive_stats.signal_stregth_dbm > -50) {
+		if(debug_throttle++ % 10 == 0) {
+			printf("[RX-PREAMBLE] sig=%.1fdBm pream_loc=%d range=[%d,%d] %s\n",
+				receive_stats.signal_stregth_dbm, pream_symb_loc,
+				lower_bound, upper_bound,
+				(pream_symb_loc > lower_bound && pream_symb_loc < upper_bound) ? "IN_RANGE" : "OUT_OF_RANGE");
+			fflush(stdout);
+		}
+	}
+
+	// Coarse frequency sync - Search approach
+	// Try multiple frequency offsets and pick the one with best time sync correlation.
+	// This is more robust than trying to estimate from a possibly wrong preamble location.
+	double coarse_freq_offset = 0.0;
+
+	if (receive_stats.signal_stregth_dbm > -50 && pream_symb_loc > lower_bound && pream_symb_loc < upper_bound)
+	{
+		// Try frequency offsets: -45, -30, -15, 0, +15, +30, +45 Hz
+		const double freq_search[] = {-45.0, -30.0, -15.0, 0.0, 15.0, 30.0, 45.0};
+		const int n_search = 7;
+		double best_correlation = 0.0;
+		double best_offset = 0.0;
+		int best_delay = receive_stats.delay;
+		double zero_hz_correlation = 0.0;  // Track 0 Hz baseline for comparison
+
+		for (int i = 0; i < n_search; i++)
+		{
+			double trial_offset = freq_search[i];
+
+			// Re-do passband_to_baseband with trial frequency
+			ofdm.passband_to_baseband((double*)data,
+				data_container.Nofdm * data_container.buffer_Nsymb * frequency_interpolation_rate,
+				data_container.baseband_data_interpolated,
+				sampling_frequency,
+				carrier_frequency + trial_offset,
+				carrier_amplitude, 1, &ofdm.FIR_rx_time_sync);
+
+			// Run time sync with metric
+			TimeSyncResult ts_result = ofdm.time_sync_preamble_with_metric(
+				data_container.baseband_data_interpolated,
+				data_container.Nofdm * (2 * data_container.preamble_nSymb + data_container.Nsymb) * frequency_interpolation_rate,
+				data_container.interpolation_rate, 0, step, 1);
+
+			// Track 0 Hz correlation as baseline
+			if (fabs(trial_offset) < 0.1)
+			{
+				zero_hz_correlation = ts_result.correlation;
+			}
+
+			if (ts_result.correlation > best_correlation)
+			{
+				best_correlation = ts_result.correlation;
+				best_offset = trial_offset;
+				best_delay = ts_result.delay;
+			}
+		}
+
+		// Apply correction only if:
+		// 1. Best offset is non-zero (|offset| > 1 Hz)
+		// 2. Best correlation is above minimum threshold (indicates real signal, not noise)
+		// 3. Best correlation is significantly better than 0 Hz (at least 0.1 higher)
+		const double min_correlation = 0.5;  // Minimum to consider valid signal
+		const double min_improvement = 0.1;  // Must be this much better than 0 Hz
+		bool should_apply = (fabs(best_offset) > 1.0) &&
+		                    (best_correlation > min_correlation) &&
+		                    (best_correlation > zero_hz_correlation + min_improvement);
+
+		if (should_apply)
+		{
+			printf("[RX-COARSE] Applying offset: %.1f Hz (corr=%.2f vs 0Hz=%.2f)\n",
+			       best_offset, best_correlation, zero_hz_correlation);
+			fflush(stdout);
+
+			coarse_freq_offset = best_offset;
+
+			// Re-do passband_to_baseband with best frequency
+			ofdm.passband_to_baseband((double*)data,
+				data_container.Nofdm * data_container.buffer_Nsymb * frequency_interpolation_rate,
+				data_container.baseband_data_interpolated,
+				sampling_frequency,
+				carrier_frequency + coarse_freq_offset,
+				carrier_amplitude, 1, &ofdm.FIR_rx_time_sync);
+
+			receive_stats.delay = best_delay;
+			pream_symb_loc = receive_stats.delay / (data_container.Nofdm * data_container.interpolation_rate);
+			if (pream_symb_loc < 1) { pream_symb_loc = 1; }
+
+			printf("[RX-COARSE] After correction: pream_loc=%d\n", pream_symb_loc);
+			fflush(stdout);
+		}
+		else
+		{
+			// Don't apply correction - restore 0 Hz demodulation
+			if (fabs(best_offset) > 1.0)
+			{
+				printf("[RX-COARSE] Skipping offset %.1f Hz (corr=%.2f, 0Hz=%.2f) - below threshold\n",
+				       best_offset, best_correlation, zero_hz_correlation);
+				fflush(stdout);
+			}
+			ofdm.passband_to_baseband((double*)data,
+				data_container.Nofdm * data_container.buffer_Nsymb * frequency_interpolation_rate,
+				data_container.baseband_data_interpolated,
+				sampling_frequency,
+				carrier_frequency,
+				carrier_amplitude, 1, &ofdm.FIR_rx_time_sync);
+		}
+	}
+
+	if(pream_symb_loc > lower_bound && pream_symb_loc < upper_bound)
 	{
 		while (receive_stats.sync_trials<=time_sync_trials_max)
 		{
+			// Track time sync correlation for gating coarse freq sync
+			double time_sync_correlation = 0.0;
+
 			if(receive_stats.sync_trials==time_sync_trials_max && use_last_good_time_sync==YES && receive_stats.delay_of_last_decoded_message!=-1)
 			{
 				receive_stats.delay=receive_stats.delay_of_last_decoded_message;
 			}
 			else
 			{
-				receive_stats.delay=(pream_symb_loc-1)*data_container.Nofdm*frequency_interpolation_rate+ofdm.time_sync_preamble(&data_container.baseband_data_interpolated[(pream_symb_loc-1)*data_container.Nofdm*frequency_interpolation_rate],(ofdm.preamble_configurator.Nsymb+2)*data_container.Nofdm*data_container.interpolation_rate,data_container.interpolation_rate,receive_stats.sync_trials,1,time_sync_trials_max);
+				// On trial 1 (second trial), use version with metric for coarse sync gating
+				if (receive_stats.sync_trials == 1)
+				{
+					TimeSyncResult ts_result = ofdm.time_sync_preamble_with_metric(
+						&data_container.baseband_data_interpolated[(pream_symb_loc-1)*data_container.Nofdm*frequency_interpolation_rate],
+						(ofdm.preamble_configurator.Nsymb+2)*data_container.Nofdm*data_container.interpolation_rate,
+						data_container.interpolation_rate,
+						receive_stats.sync_trials, 1, time_sync_trials_max);
+					receive_stats.delay = (pream_symb_loc-1)*data_container.Nofdm*frequency_interpolation_rate + ts_result.delay;
+					time_sync_correlation = ts_result.correlation;
+				}
+				else
+				{
+					receive_stats.delay=(pream_symb_loc-1)*data_container.Nofdm*frequency_interpolation_rate+ofdm.time_sync_preamble(&data_container.baseband_data_interpolated[(pream_symb_loc-1)*data_container.Nofdm*frequency_interpolation_rate],(ofdm.preamble_configurator.Nsymb+2)*data_container.Nofdm*data_container.interpolation_rate,data_container.interpolation_rate,receive_stats.sync_trials,1,time_sync_trials_max);
+				}
 			}
 
 			if(receive_stats.delay<0){receive_stats.delay=0;}
 
-			ofdm.passband_to_baseband((double*)data,data_container.Nofdm*data_container.buffer_Nsymb*frequency_interpolation_rate,data_container.baseband_data_interpolated,sampling_frequency,carrier_frequency,carrier_amplitude,1,&ofdm.FIR_rx_data);
+			// Use corrected carrier frequency if coarse sync applied
+			double effective_carrier_freq = carrier_frequency + coarse_freq_offset;
+
+			ofdm.passband_to_baseband((double*)data,data_container.Nofdm*data_container.buffer_Nsymb*frequency_interpolation_rate,data_container.baseband_data_interpolated,sampling_frequency,effective_carrier_freq,carrier_amplitude,1,&ofdm.FIR_rx_data);
 
 			ofdm.rational_resampler(&data_container.baseband_data_interpolated[receive_stats.delay], (data_container.Nofdm*(data_container.Nsymb+data_container.preamble_nSymb))*frequency_interpolation_rate, data_container.baseband_data, data_container.interpolation_rate, DECIMATION);
 
@@ -546,12 +689,20 @@ st_receive_stats cl_telecom_system::receive_byte(double *data, int* out)
 			}
 			else
 			{
+				// Fine frequency sync (Moose algorithm) - ±0.5 subcarrier range
+				// Note: Coarse offset already applied before this loop, so Moose measures residual
 				freq_offset_measured=ofdm.carrier_sampling_frequency_sync(&data_container.baseband_data[data_container.Ngi*data_container.interpolation_rate],bandwidth/(double)data_container.Nc,data_container.preamble_nSymb, sampling_frequency);
 			}
 
+			// Debug: show frequency offset
+			printf("[RX-AFC] trial=%d freq_offset=%.2fHz limit=%.2f\n",
+				receive_stats.sync_trials, freq_offset_measured, ofdm.freq_offset_ignore_limit);
+			fflush(stdout);
+
 			if(abs(freq_offset_measured)>ofdm.freq_offset_ignore_limit)
 			{
-				ofdm.passband_to_baseband((double*)data,(data_container.Nofdm*data_container.buffer_Nsymb)*frequency_interpolation_rate,data_container.baseband_data_interpolated,sampling_frequency,carrier_frequency+freq_offset_measured,carrier_amplitude,1,&ofdm.FIR_rx_data);
+				// Apply fine correction on top of coarse correction
+				ofdm.passband_to_baseband((double*)data,(data_container.Nofdm*data_container.buffer_Nsymb)*frequency_interpolation_rate,data_container.baseband_data_interpolated,sampling_frequency,effective_carrier_freq+freq_offset_measured,carrier_amplitude,1,&ofdm.FIR_rx_data);
 				ofdm.rational_resampler(&data_container.baseband_data_interpolated[receive_stats.delay], (data_container.Nofdm*(data_container.Nsymb+data_container.preamble_nSymb))*frequency_interpolation_rate, data_container.baseband_data, data_container.interpolation_rate, DECIMATION);
 			}
 			for(int i=0;i<data_container.Nsymb;i++)
@@ -600,6 +751,12 @@ st_receive_stats cl_telecom_system::receive_byte(double *data, int* out)
 
 			receive_stats.iterations_done=ldpc.decode(data_container.deinterleaved_data,data_container.hd_decoded_data_bit);
 
+			// Debug: show LDPC decode result
+			if(receive_stats.signal_stregth_dbm > -30) {
+				printf("[RX-LDPC] trial=%d iters=%d max=%d sig=%.1fdB\n",
+					receive_stats.sync_trials, receive_stats.iterations_done, ldpc.nIteration_max, receive_stats.signal_stregth_dbm);
+			}
+
 			bit_energy_dispersal(data_container.hd_decoded_data_bit, data_container.bit_energy_dispersal_sequence, data_container.hd_decoded_data_bit, nReal_data);
 
 			bit_to_byte(data_container.hd_decoded_data_bit, data_container.hd_decoded_data_byte, nReal_data);
@@ -631,12 +788,20 @@ st_receive_stats cl_telecom_system::receive_byte(double *data, int* out)
 			// TODO: FIX-ME receive_stats.crc is the crc itself, not the comparisson...
 			if((receive_stats.iterations_done > (ldpc.nIteration_max-1) && receive_stats.crc != 0 ) || receive_stats.all_zeros==YES)
 			{
+				// Debug: show why decode failed
+				if(receive_stats.signal_stregth_dbm > -30) {
+					printf("[RX-FAIL] trial=%d iters=%d/%d crc=0x%04X zeros=%d\n",
+						receive_stats.sync_trials, receive_stats.iterations_done, ldpc.nIteration_max,
+						receive_stats.crc, receive_stats.all_zeros);
+				}
 				receive_stats.SNR=-99.9;
 				receive_stats.message_decoded=NO;
 				receive_stats.sync_trials++;
 			}
 			else
 			{
+				printf("[RX-OK] Decoded! iters=%d crc=0x%04X SNR=%.1fdB\n",
+					receive_stats.iterations_done, receive_stats.crc, receive_stats.SNR);
 				if(ofdm.channel_estimator==LEAST_SQUARE)
 				{
 					if(ofdm.channel_estimator_amplitude_restoration==YES)
@@ -685,9 +850,37 @@ st_receive_stats cl_telecom_system::receive_byte(double *data, int* out)
 	{
 		std::cout<<"decoded in "<< receive_stats.iterations_done<<" iterations."<<std::endl;
 	}
+
+#ifdef MERCURY_GUI_ENABLED
+	// Update GUI with receive statistics
+	gui_update_receive_stats(receive_stats.SNR, receive_stats.signal_stregth_dbm, receive_stats.freq_offset);
+#endif
+
 	return receive_stats;
 }
 
+double cl_telecom_system::measure_signal_only(double *data)
+{
+	// Lightweight signal measurement - only passband to baseband + measure strength
+	// No preamble detection or decoding
+	ofdm.passband_to_baseband((double*)data,
+		data_container.Nofdm*data_container.buffer_Nsymb*frequency_interpolation_rate,
+		data_container.baseband_data_interpolated,
+		sampling_frequency, carrier_frequency, carrier_amplitude,
+		1, &ofdm.FIR_rx_time_sync);
+
+	double signal_dbm = ofdm.measure_signal_stregth(
+		data_container.baseband_data_interpolated,
+		data_container.Nofdm*data_container.buffer_Nsymb*frequency_interpolation_rate);
+
+	receive_stats.signal_stregth_dbm = signal_dbm;
+
+#ifdef MERCURY_GUI_ENABLED
+	gui_update_receive_stats(receive_stats.SNR, signal_dbm, receive_stats.freq_offset);
+#endif
+
+	return signal_dbm;
+}
 
 void cl_telecom_system::calculate_parameters()
 {
@@ -1167,7 +1360,15 @@ void cl_telecom_system::RX_SHM_process_main(cbuf_handle_t buffer)
 				printf("Decoded frame lost because of full buffer!\n");
 
 
-			printf("\rSNR: %5.1f db  Level: %5.1f dBm  RX: %c", receive_stats.SNR, receive_stats.signal_stregth_dbm, spinner[spinner_anim % 4]);
+			// Only display signal strength if in reasonable range (-150 to +50 dBm)
+			if (receive_stats.signal_stregth_dbm >= -150 && receive_stats.signal_stregth_dbm <= 50)
+			// Only display signal strength if in reasonable range (-150 to +50 dBm)
+			if (receive_stats.signal_stregth_dbm >= -150 && receive_stats.signal_stregth_dbm <= 50)
+				printf("\rSNR: %5.1f db  Level: %5.1f dBm  RX: %c", receive_stats.SNR, receive_stats.signal_stregth_dbm, spinner[spinner_anim % 4]);
+			else
+				printf("\rSNR: %5.1f db  RX: %c", receive_stats.SNR, spinner[spinner_anim % 4]);
+			else
+				printf("\rSNR: %5.1f db  RX: %c", receive_stats.SNR, spinner[spinner_anim % 4]);
 			spinner_anim++;
 			fflush(stdout);
 
@@ -1291,6 +1492,7 @@ void cl_telecom_system::load_configuration(int configuration)
 		return;
 	}
 
+	printf("[PHY] Loading configuration %d (was %d)\n", configuration, current_configuration);
 
 	int _modulation;
 	float _ldpc_rate;
@@ -1645,6 +1847,10 @@ void cl_telecom_system::load_configuration(int configuration)
 		reinit_subsystems.speaker=NO;
 #endif
 	}
+
+	printf("[PHY] Config %d active: M=%d LDPC_rate=%.3f BW=%.0fHz Nc=%d Nsymb=%d nBits=%d\n",
+		current_configuration, M, ldpc.rate, bandwidth,
+		data_container.Nc, data_container.Nsymb, data_container.nBits);
 }
 
 void cl_telecom_system::return_to_last_configuration()
