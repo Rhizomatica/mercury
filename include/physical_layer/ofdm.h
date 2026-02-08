@@ -107,9 +107,19 @@ private:
 	void gi_remover(std::complex <double>* in, std::complex <double>* out);
 	void _fft(std::complex <double> *v, int n);
 	void _ifft(std::complex <double> *v, int n);
+	void _fft_fast(std::complex <double> *v, int n);
+	void _ifft_fast(std::complex <double> *v, int n);
 	void fft(std::complex <double>* in, std::complex <double>* out);
 	void ifft(std::complex <double>* in, std::complex <double>* out);
 	void ifft(std::complex <double>* in, std::complex <double>* out, int _Nfft);
+
+	// Optimized FFT: precomputed twiddle factors
+	std::complex<double>* fft_twiddle;     // Twiddle factors for FFT
+	std::complex<double>* fft_scratch;     // Scratch buffer for in-place FFT
+	int* fft_bit_rev;                      // Bit-reversal permutation table
+	int fft_twiddle_size;                  // Size of twiddle table
+	void init_fft_tables(int n);
+	void deinit_fft_tables();
 
 	std::complex <double> *zero_padded_data,*iffted_data;
 	std::complex <double> *gi_removed_data,*ffted_data;
@@ -168,6 +178,11 @@ public:
 	int channel_estimator_amplitude_restoration;
 	int LS_window_width;
 	int LS_window_hight;
+
+	// Pre-allocated buffers for passband_to_baseband (avoids new/delete per call)
+	std::complex<double>* p2b_l_data;
+	std::complex<double>* p2b_data_filtered;
+	int p2b_buffer_size;
 };
 
 

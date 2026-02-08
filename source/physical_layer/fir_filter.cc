@@ -101,6 +101,7 @@ void cl_FIR::design()
 			std::cout<<"FIR filter design error.. exiting"<<std::endl;
 			exit(-5);
 		}
+		filter_coefficients_hpf[filter_nTaps/2]=1;  // Initialize center tap (matches LPF design at line 66)
 		for(int i=0;i<filter_nTaps/2;i++)
 		{
 			temp=2*M_PI*filter_cut_frequency*(double)(filter_nTaps/2-i) *sampling_interval;

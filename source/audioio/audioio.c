@@ -1013,6 +1013,15 @@ void *radio_capture_prep_thread(void *telecom_ptr_void)
 			continue;
 		}
 
+		// Wait for enough data, checking shutdown_ to avoid blocking forever
+		{
+			size_t needed = symbol_period * sizeof(double);
+			while (!shutdown_ && size_buffer(capture_buffer) < needed) {
+				ffthread_sleep(1);
+			}
+			if (shutdown_) break;
+		}
+
 		rx_transfer(buffer_temp, symbol_period);
 
 		MUTEX_LOCK(&capture_prep_mutex);
@@ -1033,6 +1042,7 @@ void *radio_capture_prep_thread(void *telecom_ptr_void)
 	}
 
 
+	printf("radio_capture_prep_thread exit\n");
 	shutdown_ = true;
 
 	free(buffer_temp);

@@ -23,6 +23,11 @@
 #include "datalink_layer/arq.h"
 #include "audioio/audioio.h"
 #include <cmath>
+#include <chrono>
+
+#ifdef MERCURY_GUI_ENABLED
+#include "gui/gui_state.h"
+#endif
 
 extern cbuf_handle_t capture_buffer;
 extern cbuf_handle_t playback_buffer;
@@ -468,7 +473,7 @@ int cl_arq_controller::init(int tcp_base_port, int gear_shift_on, int initial_mo
 	tcp_socket_control.timeout_ms=default_configuration_ARQ.tcp_socket_control_timeout_ms;
 	tcp_socket_data.timeout_ms=default_configuration_ARQ.tcp_socket_data_timeout_ms;
 
-	gear_shift_on = gear_shift_on;
+	this->gear_shift_on = gear_shift_on;
 	gear_shift_algorithm=default_configuration_ARQ.gear_shift_algorithm;
 	current_configuration=CONFIG_NONE;
 	init_configuration = initial_mode;
@@ -1943,7 +1948,33 @@ void cl_arq_controller::receive()
 
 		MUTEX_UNLOCK(&capture_prep_mutex);
 
+#ifdef MERCURY_GUI_ENABLED
+		// Apply live LDPC iteration limit from GUI
+		int gui_ldpc_max = g_gui_state.ldpc_iterations_max.load();
+		if (gui_ldpc_max >= 5 && gui_ldpc_max <= 50)
+			telecom_system->ldpc.nIteration_max = gui_ldpc_max;
+#endif
+
+		auto proc_start = std::chrono::steady_clock::now();
 		received_message_stats = telecom_system->receive_byte(telecom_system->data_container.ready_to_process_passband_delayed_data,telecom_system->data_container.data_byte);
+		auto proc_end = std::chrono::steady_clock::now();
+		double proc_ms = std::chrono::duration<double, std::milli>(proc_end - proc_start).count();
+
+		// Frame period = (preamble + data symbols) in wall clock time
+		double frame_samples = (double)(telecom_system->data_container.Nofdm *
+			(telecom_system->data_container.Nsymb + telecom_system->data_container.preamble_nSymb) *
+			telecom_system->data_container.interpolation_rate);
+		double frame_ms = (frame_samples / 48000.0) * 1000.0;
+		float load = (frame_ms > 0) ? (float)(proc_ms / frame_ms) : 0.0f;
+
+#ifdef MERCURY_GUI_ENABLED
+		g_gui_state.processing_load.store(load);
+		{
+			size_t buf_used = size_buffer(capture_buffer);
+			size_t buf_cap = circular_buf_capacity(capture_buffer);
+			g_gui_state.buffer_fill_pct.store(buf_cap > 0 ? 100.0f * (float)buf_used / (float)buf_cap : 0.0f);
+		}
+#endif
 
 		measurements.signal_stregth_dbm = received_message_stats.signal_stregth_dbm;
 
@@ -2119,7 +2150,7 @@ void cl_arq_controller::print_stats()
 	}
 	else if (this->link_status==CONNECTED)
 	{
-		printf("link_status:Connected to %s ID= %d\n", this->destination_call_sign, (int)this->connection_id);
+		printf("link_status:Connected to %s ID= %d\n", this->destination_call_sign.c_str(), (int)this->connection_id);
 	}
 	else if (this->link_status==DISCONNECTING)
 	{
@@ -2202,10 +2233,10 @@ void cl_arq_controller::print_stats()
 	printf("stats.nNAcked_control= %d\n", stats.nNAcked_control);
 
 	printf("\n");
-	printf("link_timer= %ld\n", link_timer.get_elapsed_time_ms());
-	printf("watchdog_timer= %ld\n", watchdog_timer.get_elapsed_time_ms());
-	printf("gear_shift_timer= %ld\n", gear_shift_timer.get_elapsed_time_ms());
-	printf("receiving_timer= %ld\n", receiving_timer.get_elapsed_time_ms());
+	printf("link_timer= %d\n", link_timer.get_elapsed_time_ms());
+	printf("watchdog_timer= %d\n", watchdog_timer.get_elapsed_time_ms());
+	printf("gear_shift_timer= %d\n", gear_shift_timer.get_elapsed_time_ms());
+	printf("receiving_timer= %d\n", receiving_timer.get_elapsed_time_ms());
 
 	printf("\n");
 	printf("last_received_message_sequence= %d\n", (int)last_received_message_sequence);

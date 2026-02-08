@@ -37,6 +37,7 @@ WaterfallDisplay::WaterfallDisplay()
     , texture_id_(0)
     , texture_data_(nullptr)
     , initialized_(false)
+    , enabled_(true)
 {
     memset(sample_buffer_, 0, sizeof(sample_buffer_));
     memset(fft_magnitudes_, 0, sizeof(fft_magnitudes_));
@@ -86,6 +87,9 @@ void WaterfallDisplay::shutdown() {
 }
 
 void WaterfallDisplay::pushSamples(const double* samples, int count) {
+    // Skip all processing when waterfall is disabled (major CPU savings)
+    if (!enabled_) return;
+
     GuiLockGuard lock(waterfall_mutex);
 
     for (int i = 0; i < count; i++) {
@@ -242,6 +246,10 @@ void WaterfallDisplay::render(float width, float height) {
 void WaterfallDisplay::setRange(float min_db, float max_db) {
     min_db_ = min_db;
     max_db_ = max_db;
+}
+
+void WaterfallDisplay::setEnabled(bool enabled) {
+    enabled_ = enabled;
 }
 
 // Thread-safe wrapper for pushing samples (extern "C" for C linkage)

@@ -22,6 +22,7 @@
 
 #include "common/os_interop.h"
 #include "physical_layer/ofdm.h"
+#include <algorithm>  // for std::swap in optimized FFT
 
 
 cl_ofdm::cl_ofdm()
@@ -49,6 +50,15 @@ cl_ofdm::cl_ofdm()
 	LS_window_width=0;
 	LS_window_hight=0;
 	channel_estimator_amplitude_restoration=NO;
+	// Optimized FFT tables
+	fft_twiddle=NULL;
+	fft_scratch=NULL;
+	fft_bit_rev=NULL;
+	fft_twiddle_size=0;
+	// Pre-allocated passband_to_baseband buffers
+	p2b_l_data=NULL;
+	p2b_data_filtered=NULL;
+	p2b_buffer_size=0;
 }
 
 cl_ofdm::~cl_ofdm()
@@ -89,6 +99,9 @@ void cl_ofdm::init()
 
 	preamble_configurator.init(this->Nfft, this->Nc,this->ofdm_preamble, this->start_shift);
 	pilot_configurator.init(this->Nfft, this->Nc,this->Nsymb,this->ofdm_frame, this->start_shift);
+
+	// Initialize optimized FFT tables
+	init_fft_tables(this->Nfft);
 
 
 	for(int i=0;i<Nsymb;i++)
@@ -166,8 +179,154 @@ void cl_ofdm::deinit()
 		estimated_channel_without_amplitude_restoration=NULL;
 	}
 
+	if(p2b_l_data!=NULL)
+	{
+		delete[] p2b_l_data;
+		p2b_l_data=NULL;
+	}
+	if(p2b_data_filtered!=NULL)
+	{
+		delete[] p2b_data_filtered;
+		p2b_data_filtered=NULL;
+	}
+	p2b_buffer_size=0;
+
 	pilot_configurator.deinit();
 	preamble_configurator.deinit();
+	deinit_fft_tables();
+}
+
+// ============================================================================
+// Optimized FFT Implementation
+// - Precomputed twiddle factors (no sin/cos in hot path)
+// - Iterative algorithm (no recursion, no heap allocation)
+// - Bit-reversal permutation table
+// ============================================================================
+
+void cl_ofdm::init_fft_tables(int n)
+{
+	if (n <= 0 || (n & (n-1)) != 0) {
+		// n must be power of 2
+		fft_twiddle_size = 0;
+		return;
+	}
+
+	fft_twiddle_size = n;
+
+	// Allocate twiddle factors (only need n/2 for radix-2)
+	fft_twiddle = new std::complex<double>[n/2];
+	for (int k = 0; k < n/2; k++) {
+		double angle = -2.0 * M_PI * k / n;
+		fft_twiddle[k] = std::complex<double>(cos(angle), sin(angle));
+	}
+
+	// Allocate scratch buffer
+	fft_scratch = new std::complex<double>[n];
+
+	// Build bit-reversal permutation table
+	fft_bit_rev = new int[n];
+	int bits = 0;
+	for (int temp = n; temp > 1; temp >>= 1) bits++;
+
+	for (int i = 0; i < n; i++) {
+		int rev = 0;
+		for (int j = 0; j < bits; j++) {
+			if (i & (1 << j)) {
+				rev |= (1 << (bits - 1 - j));
+			}
+		}
+		fft_bit_rev[i] = rev;
+	}
+}
+
+void cl_ofdm::deinit_fft_tables()
+{
+	if (fft_twiddle != NULL) {
+		delete[] fft_twiddle;
+		fft_twiddle = NULL;
+	}
+	if (fft_scratch != NULL) {
+		delete[] fft_scratch;
+		fft_scratch = NULL;
+	}
+	if (fft_bit_rev != NULL) {
+		delete[] fft_bit_rev;
+		fft_bit_rev = NULL;
+	}
+	fft_twiddle_size = 0;
+}
+
+// Optimized iterative in-place FFT (Cooley-Tukey radix-2 DIT)
+void cl_ofdm::_fft_fast(std::complex<double>* v, int n)
+{
+	// Use precomputed tables if available and size matches
+	if (fft_twiddle_size != n || fft_twiddle == NULL) {
+		// Fall back to original implementation for non-standard sizes
+		_fft(v, n);
+		return;
+	}
+
+	// Bit-reversal permutation
+	for (int i = 0; i < n; i++) {
+		if (i < fft_bit_rev[i]) {
+			std::swap(v[i], v[fft_bit_rev[i]]);
+		}
+	}
+
+	// Iterative FFT butterfly operations
+	for (int size = 2; size <= n; size *= 2) {
+		int halfsize = size / 2;
+		int step = n / size;
+
+		for (int i = 0; i < n; i += size) {
+			for (int j = 0; j < halfsize; j++) {
+				std::complex<double> w = fft_twiddle[j * step];
+				std::complex<double> t = w * v[i + j + halfsize];
+				v[i + j + halfsize] = v[i + j] - t;
+				v[i + j] = v[i + j] + t;
+			}
+		}
+	}
+}
+
+// Optimized iterative in-place IFFT
+void cl_ofdm::_ifft_fast(std::complex<double>* v, int n)
+{
+	// Use precomputed tables if available and size matches
+	if (fft_twiddle_size != n || fft_twiddle == NULL) {
+		// Fall back to original implementation
+		_ifft(v, n);
+		return;
+	}
+
+	// Bit-reversal permutation
+	for (int i = 0; i < n; i++) {
+		if (i < fft_bit_rev[i]) {
+			std::swap(v[i], v[fft_bit_rev[i]]);
+		}
+	}
+
+	// Iterative IFFT butterfly operations (conjugate twiddle factors)
+	for (int size = 2; size <= n; size *= 2) {
+		int halfsize = size / 2;
+		int step = n / size;
+
+		for (int i = 0; i < n; i += size) {
+			for (int j = 0; j < halfsize; j++) {
+				// Conjugate twiddle factor for IFFT
+				std::complex<double> w = std::conj(fft_twiddle[j * step]);
+				std::complex<double> t = w * v[i + j + halfsize];
+				v[i + j + halfsize] = v[i + j] - t;
+				v[i + j] = v[i + j] + t;
+			}
+		}
+	}
+
+	// Scale by 1/n for IFFT
+	double scale = 1.0 / n;
+	for (int i = 0; i < n; i++) {
+		v[i] *= scale;
+	}
 }
 
 void cl_ofdm::zero_padder(std::complex <double>* in, std::complex <double>* out)
@@ -228,7 +387,7 @@ void cl_ofdm::fft(std::complex <double>* in, std::complex <double>* out)
 	{
 		out[i]=in[i];
 	}
-	_fft(out,Nfft);
+	_fft_fast(out,Nfft);  // Use optimized FFT
 
 	for(int i=0;i<Nfft;i++)
 	{
@@ -242,7 +401,7 @@ void cl_ofdm::fft(std::complex <double>* in, std::complex <double>* out, int _Nf
 	{
 		out[i]=in[i];
 	}
-	_fft(out,_Nfft);
+	_fft_fast(out,_Nfft);  // Use optimized FFT
 
 	for(int i=0;i<_Nfft;i++)
 	{
@@ -288,7 +447,7 @@ void cl_ofdm::ifft(std::complex <double>* in, std::complex <double>* out)
 	{
 		out[i]=in[i];
 	}
-	_ifft(out,Nfft);
+	_ifft_fast(out,Nfft);  // Use optimized IFFT
 }
 
 void cl_ofdm::ifft(std::complex <double>* in, std::complex <double>* out,int _Nfft)
@@ -297,7 +456,7 @@ void cl_ofdm::ifft(std::complex <double>* in, std::complex <double>* out,int _Nf
 	{
 		out[i]=in[i];
 	}
-	_ifft(out,_Nfft);
+	_ifft_fast(out,_Nfft);  // Use optimized IFFT
 }
 
 void cl_ofdm::_ifft(std::complex <double>* v,int n)
@@ -1030,8 +1189,8 @@ void cl_preamble_configurator::configure()
 		}
 	}
 
-	nZeros *= Nsymb;
-	nPreamble *= Nsymb;
+	// Note: nZeros and nPreamble are already accumulated correctly in the nested loop above.
+	// The *= Nsymb lines were removed as they caused double-counting (values were Nsymb^2 too large).
 
 }
 
@@ -1850,24 +2009,23 @@ void cl_ofdm::passband_to_baseband(double* in, int in_size, std::complex <double
 {
 	double sampling_interval=1.0/sampling_frequency;
 
-	std::complex <double> *l_data= new std::complex <double>[in_size];
-	std::complex <double> *data_filtered= new std::complex <double>[in_size];
+	// Reuse pre-allocated buffers (reallocate only if size changed)
+	if(p2b_buffer_size < in_size)
+	{
+		delete[] p2b_l_data;
+		delete[] p2b_data_filtered;
+		p2b_l_data = new std::complex<double>[in_size];
+		p2b_data_filtered = new std::complex<double>[in_size];
+		p2b_buffer_size = in_size;
+	}
 
 	for(int i=0;i<in_size;i++)
 	{
-		l_data[i].real(in[i]*carrier_amplitude*cos(2*M_PI*carrier_frequency*(double)i * sampling_interval));
-		l_data[i].imag(in[i]*carrier_amplitude*sin(2*M_PI*carrier_frequency*(double)i * sampling_interval));
+		p2b_l_data[i].real(in[i]*carrier_amplitude*cos(2*M_PI*carrier_frequency*(double)i * sampling_interval));
+		p2b_l_data[i].imag(in[i]*carrier_amplitude*sin(2*M_PI*carrier_frequency*(double)i * sampling_interval));
 	}
 
-	filter->apply(l_data,data_filtered,in_size);
+	filter->apply(p2b_l_data,p2b_data_filtered,in_size);
 
-	rational_resampler(data_filtered, in_size, out, decimation_rate, DECIMATION);
-	if(l_data!=NULL)
-	{
-		delete[] l_data;
-	}
-	if(data_filtered!=NULL)
-	{
-		delete[] data_filtered;
-	}
+	rational_resampler(p2b_data_filtered, in_size, out, decimation_rate, DECIMATION);
 }

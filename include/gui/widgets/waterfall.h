@@ -56,6 +56,17 @@ public:
      */
     void setRange(float min_db, float max_db);
 
+    /**
+     * @brief Enable/disable waterfall processing
+     * @param enabled When false, pushSamples() skips FFT computation entirely
+     */
+    void setEnabled(bool enabled);
+
+    /**
+     * @brief Check if waterfall processing is enabled
+     */
+    bool isEnabled() const { return enabled_; }
+
 private:
     // FFT processing
     void processFFT();
@@ -78,6 +89,9 @@ private:
     unsigned int texture_id_;
     unsigned char* texture_data_;
     bool initialized_;
+
+    // Processing enabled flag (when false, pushSamples skips FFT)
+    bool enabled_;
 };
 
 // Global waterfall - Meyer's Singleton to avoid static init order fiasco

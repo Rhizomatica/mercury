@@ -29,13 +29,15 @@ SetupDialog::SetupDialog()
     , exit_on_disconnect_(false)
     , ptt_on_delay_ms_(100)
     , ptt_off_delay_ms_(200)
-    , pilot_tone_ms_(50)
+    , pilot_tone_ms_(0)
     , pilot_tone_hz_(250)
     , gear_shift_enabled_(true)
     , gear_shift_algorithm_(0)
     , gear_shift_up_rate_(0.8f)
     , gear_shift_down_rate_(0.4f)
     , initial_config_(4)
+    , ldpc_iterations_max_(50)
+    , coarse_freq_sync_enabled_(false)
     , hide_console_(false)
 {
     memset(my_callsign_, 0, sizeof(my_callsign_));
@@ -81,6 +83,8 @@ void SetupDialog::loadSettings() {
     gear_shift_up_rate_ = (float)g_settings.gear_shift_up_rate;
     gear_shift_down_rate_ = (float)g_settings.gear_shift_down_rate;
     initial_config_ = g_settings.initial_config;
+    ldpc_iterations_max_ = g_settings.ldpc_iterations_max;
+    coarse_freq_sync_enabled_ = g_settings.coarse_freq_sync_enabled;
 
     hide_console_ = g_settings.hide_console;
 }
@@ -153,6 +157,10 @@ bool SetupDialog::render() {
             g_settings.gear_shift_up_rate = gear_shift_up_rate_;
             g_settings.gear_shift_down_rate = gear_shift_down_rate_;
             g_settings.initial_config = initial_config_;
+            g_settings.ldpc_iterations_max = ldpc_iterations_max_;
+            g_gui_state.ldpc_iterations_max.store(ldpc_iterations_max_);
+            g_settings.coarse_freq_sync_enabled = coarse_freq_sync_enabled_;
+            g_gui_state.coarse_freq_sync_enabled.store(coarse_freq_sync_enabled_);
             g_settings.hide_console = hide_console_;
 
             settings_applied = true;
@@ -183,6 +191,10 @@ bool SetupDialog::render() {
             g_settings.gear_shift_up_rate = gear_shift_up_rate_;
             g_settings.gear_shift_down_rate = gear_shift_down_rate_;
             g_settings.initial_config = initial_config_;
+            g_settings.ldpc_iterations_max = ldpc_iterations_max_;
+            g_gui_state.ldpc_iterations_max.store(ldpc_iterations_max_);
+            g_settings.coarse_freq_sync_enabled = coarse_freq_sync_enabled_;
+            g_gui_state.coarse_freq_sync_enabled.store(coarse_freq_sync_enabled_);
             g_settings.hide_console = hide_console_;
 
             settings_applied = true;
@@ -383,6 +395,7 @@ void SetupDialog::renderGearShiftTab() {
     }
 
     ImGui::Spacing();
+    ImGui::Separator();
     ImGui::Spacing();
 
     ImGui::TextWrapped("Gear shifting automatically adjusts the modulation configuration based on channel conditions. "
@@ -392,44 +405,37 @@ void SetupDialog::renderGearShiftTab() {
 void SetupDialog::renderAdvancedTab() {
     ImGui::Spacing();
 
-    ImGui::Text("Audio Gain Settings");
+    ImGui::Text("LDPC Decoder");
     ImGui::Separator();
     ImGui::Spacing();
 
-    // Note about main window controls
-    ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f),
-        "Note: Gain controls are available on the main window.");
-    ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f),
-        "Use 'Lock Gain Adjustments' checkbox to enable/disable editing.");
-    ImGui::Spacing();
-
-    // Show current values (read-only display)
-    float tx_gain = (float)g_gui_state.tx_gain_db.load();
-    float rx_gain = (float)g_gui_state.rx_gain_db.load();
-    bool gains_locked = g_gui_state.gains_locked.load();
-
-    ImGui::Text("TX Drive Level: %.1f dB", tx_gain);
-    ImGui::Text("RX Gain: %.1f dB", rx_gain);
-    ImGui::Text("Gains Locked: %s", gains_locked ? "Yes" : "No");
-
-    ImGui::Spacing();
-    ImGui::Spacing();
-
-    ImGui::TextWrapped("TX Drive Level adjusts the output volume to your radio. "
-                       "Increase if your transmission is too quiet, decrease if clipping or ALC is too high.");
+    ImGui::Text("Max Iterations:");
+    ImGui::SameLine(180);
+    ImGui::SetNextItemWidth(150);
+    ImGui::SliderInt("##ldpc_iter", &ldpc_iterations_max_, 5, 50, "%d");
 
     ImGui::Spacing();
 
-    ImGui::TextWrapped("RX Gain adjusts the input sensitivity. "
-                       "Adjust with NO signal present to bring the noise floor to 0 dBm on the tuning meter. "
-                       "This calibrates your receive levels relative to the noise floor.");
+    ImGui::TextWrapped("Lower values reduce CPU load on slower hardware but may miss marginal frames. "
+                       "Recommended: 50 for desktop, 15-25 for low-power devices. "
+                       "Requires modem restart.");
 
     ImGui::Spacing();
     ImGui::Separator();
     ImGui::Spacing();
 
-    // Console visibility
-    ImGui::Text("Window Settings");
+    ImGui::Text("Frequency Sync");
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    ImGui::Checkbox("Enable Coarse Frequency Search", &coarse_freq_sync_enabled_);
+
+    ImGui::Spacing();
+
+    ImGui::TextWrapped("Searches +/-30 Hz for crystal oscillator drift between HF radios. "
+                       "Disable for loopback or same-clock setups to save CPU.");
+
+    ImGui::Spacing();
     ImGui::Separator();
     ImGui::Spacing();
 

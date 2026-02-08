@@ -196,7 +196,7 @@ void MercurySettings::setDefaults() {
     // PTT Timing
     ptt_on_delay_ms = 100;   // 100ms default for radio TX switch time
     ptt_off_delay_ms = 200;  // 200ms default tail delay
-    pilot_tone_ms = 50;      // 50ms pilot tone to warm up TX path (0=disabled)
+    pilot_tone_ms = 0;       // Disabled by default (0=disabled)
     pilot_tone_hz = 250;     // 250Hz = out of OFDM band, won't interfere with decoder
 
     // Gear Shift
@@ -205,6 +205,10 @@ void MercurySettings::setDefaults() {
     gear_shift_up_rate = 70.0;
     gear_shift_down_rate = 40.0;
     initial_config = 1;
+    ldpc_iterations_max = 50;
+
+    // Modem
+    coarse_freq_sync_enabled = false;  // Off by default (saves CPU; enable for real HF radio use)
 
     // GUI
     tx_gain_db = 0.0;
@@ -254,6 +258,10 @@ bool MercurySettings::load(const std::string& filename) {
     gear_shift_up_rate = ini.getDouble("GearShift", "UpSuccessRate", gear_shift_up_rate);
     gear_shift_down_rate = ini.getDouble("GearShift", "DownSuccessRate", gear_shift_down_rate);
     initial_config = ini.getInt("GearShift", "InitialConfig", initial_config);
+    ldpc_iterations_max = ini.getInt("GearShift", "LDPCIterationsMax", ldpc_iterations_max);
+
+    // Modem
+    coarse_freq_sync_enabled = ini.getBool("Modem", "CoarseFreqSync", coarse_freq_sync_enabled);
 
     // GUI
     tx_gain_db = ini.getDouble("GUI", "TxGainDb", tx_gain_db);
@@ -302,6 +310,10 @@ bool MercurySettings::save(const std::string& filename) {
     ini.setDouble("GearShift", "UpSuccessRate", gear_shift_up_rate);
     ini.setDouble("GearShift", "DownSuccessRate", gear_shift_down_rate);
     ini.setInt("GearShift", "InitialConfig", initial_config);
+    ini.setInt("GearShift", "LDPCIterationsMax", ldpc_iterations_max);
+
+    // Modem
+    ini.setBool("Modem", "CoarseFreqSync", coarse_freq_sync_enabled);
 
     // GUI
     ini.setDouble("GUI", "TxGainDb", tx_gain_db);

@@ -70,6 +70,7 @@ int main(int argc, char *argv[])
     int max_connection_attempts = 15;
     int link_timeout_ms = 30000;
     int exit_on_disconnect = 0;
+    int ldpc_iterations = 0;  // 0 = use default (50 or from INI)
 
     input_dev = (char *) malloc(ALSA_MAX_PATH);
     output_dev = (char *) malloc(ALSA_MAX_PATH);
@@ -120,6 +121,7 @@ int main(int argc, char *argv[])
         printf(" -C                         Check audio configuration (stereo, sample rate) before starting.\n");
         printf(" -z                         Lists all available sound cards.\n");
         printf(" -f [offset_hz]             TX carrier offset in Hz for testing frequency sync (e.g., -f 25 for 25 Hz offset).\n");
+        printf(" -I [iterations]            LDPC decoder max iterations (5-50, default 50). Lower = less CPU.\n");
 #ifdef MERCURY_GUI_ENABLED
         printf(" -n                         Disable GUI (headless mode). GUI is enabled by default.\n");
 #endif
@@ -128,7 +130,7 @@ int main(int argc, char *argv[])
     }
 
     int opt;
-    while ((opt = getopt(argc, argv, "hc:m:s:lr:i:o:x:p:zgt:a:k:eCnf:")) != -1)
+    while ((opt = getopt(argc, argv, "hc:m:s:lr:i:o:x:p:zgt:a:k:eCnf:I:")) != -1)
     {
         switch (opt)
         {
@@ -240,6 +242,15 @@ int main(int argc, char *argv[])
             {
                 test_tx_carrier_offset = atof(optarg);
                 printf("TX carrier offset for testing: %.2f Hz\n", test_tx_carrier_offset);
+            }
+            break;
+        case 'I':
+            if (optarg)
+            {
+                ldpc_iterations = atoi(optarg);
+                if (ldpc_iterations < 5) ldpc_iterations = 5;
+                if (ldpc_iterations > 50) ldpc_iterations = 50;
+                printf("LDPC max iterations: %d\n", ldpc_iterations);
             }
             break;
         case 'h':
@@ -446,6 +457,19 @@ start_modem:
         printf("PTT timing: on_delay=%dms, off_delay=%dms, pilot=%dms@%dHz\n",
                g_settings.ptt_on_delay_ms, g_settings.ptt_off_delay_ms,
                g_settings.pilot_tone_ms, g_settings.pilot_tone_hz);
+#endif
+
+        // Apply LDPC iterations: CLI overrides INI, INI overrides default
+#ifdef MERCURY_GUI_ENABLED
+        if (ldpc_iterations > 0)
+            telecom_system.default_configurations_telecom_system.ldpc_nIteration_max = ldpc_iterations;
+        else if (g_settings.ldpc_iterations_max != 50)
+            telecom_system.default_configurations_telecom_system.ldpc_nIteration_max = g_settings.ldpc_iterations_max;
+        g_gui_state.ldpc_iterations_max.store(telecom_system.default_configurations_telecom_system.ldpc_nIteration_max);
+        g_gui_state.coarse_freq_sync_enabled.store(g_settings.coarse_freq_sync_enabled);
+#else
+        if (ldpc_iterations > 0)
+            telecom_system.default_configurations_telecom_system.ldpc_nIteration_max = ldpc_iterations;
 #endif
 
         ARQ.init(base_tcp_port, (gear_shift_mode == NO_GEAR_SHIFT)? NO : YES, mod_config);

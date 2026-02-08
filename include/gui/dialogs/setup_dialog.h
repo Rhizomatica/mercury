@@ -81,6 +81,10 @@ private:
     float gear_shift_up_rate_;
     float gear_shift_down_rate_;
     int initial_config_;
+    int ldpc_iterations_max_;
+
+    // Modem
+    bool coarse_freq_sync_enabled_;
 
     // Advanced
     bool hide_console_;

@@ -112,14 +112,16 @@ int cl_fifo_buffer::pop(char* data, int length)
 			data[i]=this->data[read_location];
 			this->data[read_location]=0;
 			read_location++;
+			// Wraparound check must come BEFORE equality check to avoid comparing
+			// an out-of-bounds index (read_location == size) against write_location
+			if(read_location==size)
+			{
+				read_location=0;
+			}
 			if(read_location==write_location)
 			{
 				popped_data=i+1;
 				break;
-			}
-			if(read_location==size)
-			{
-				read_location=0;
 			}
 		}
 	}

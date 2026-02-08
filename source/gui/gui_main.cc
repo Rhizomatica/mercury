@@ -324,7 +324,10 @@ static void RenderGUI() {
             ImGui::EndMenu();
         }
         if (ImGui::BeginMenu("View")) {
-            ImGui::MenuItem("Waterfall", nullptr, &show_waterfall);
+            if (ImGui::MenuItem("Waterfall", nullptr, &show_waterfall)) {
+                // When toggled, enable/disable FFT computation
+                g_waterfall.setEnabled(show_waterfall);
+            }
             ImGui::EndMenu();
         }
         if (ImGui::BeginMenu("Help")) {
@@ -381,13 +384,32 @@ static void RenderGUI() {
 
     ImGui::Columns(3, "meter_columns", false);
 
+    // Rate-limited meter values (~15 Hz update instead of 60 fps)
+    // This reduces CPU load significantly on weaker systems
+    static DWORD last_meter_update = 0;
+    static float cached_vu_db = -60.0f;
+    static float cached_signal = 0.0f;
+    static float cached_snr_rx = -99.9f;
+    static float cached_snr_tx = -99.9f;
+    static float cached_load = 0.0f;
+    static float cached_buf_fill = 0.0f;
+
+    DWORD now = GetTickCount();
+    if (now - last_meter_update >= 66) {  // ~15 Hz
+        last_meter_update = now;
+        cached_vu_db = (float)g_gui_state.vu_rms_db;
+        cached_signal = (float)g_gui_state.signal_strength_dbm.load();
+        cached_snr_rx = (float)g_gui_state.snr_uplink_db.load();
+        cached_snr_tx = (float)g_gui_state.snr_downlink_db.load();
+        cached_load = g_gui_state.processing_load.load() * 100.0f;  // as percentage
+        cached_buf_fill = g_gui_state.buffer_fill_pct.load();
+    }
+
     // VU Meter and Signal Strength
     {
-        float vu_db = (float)g_gui_state.vu_rms_db;
-        DrawMeter("Audio Input", vu_db, -60.0f, 0.0f, -12.0f, -3.0f);
+        DrawMeter("Audio Input", cached_vu_db, -60.0f, 0.0f, -12.0f, -3.0f);
 
-        float signal = (float)g_gui_state.signal_strength_dbm.load();
-        DrawMeter("Signal Strength", signal, -10.0f, 50.0f, -4.0f, 10.0f, "%.1f dBm",
+        DrawMeter("Signal Strength", cached_signal, -10.0f, 50.0f, -4.0f, 10.0f, "%.1f dBm",
                   "Received signal power level.\n"
                   "Measured locally from incoming audio.\n"
                   "Use RX Gain to calibrate noise floor to ~0 dBm.",
@@ -399,8 +421,7 @@ static void RenderGUI() {
     // SNR Meters (Uplink and Downlink)
     {
         // Incoming SNR - what WE measure of their transmissions
-        float snr_rx = (float)g_gui_state.snr_uplink_db.load();
-        DrawMeter("RX SNR (Incoming)", snr_rx, -10.0f, 50.0f, 10.0f, 25.0f, "%.1f dB",
+        DrawMeter("RX SNR (Incoming)", cached_snr_rx, -10.0f, 50.0f, 10.0f, 25.0f, "%.1f dB",
                   "SNR of signals we RECEIVE from the remote station.\n"
                   "Measured locally by our receiver.\n"
                   "Higher is better (-10 to +50 dB range).",
@@ -409,8 +430,7 @@ static void RenderGUI() {
         ImGui::Spacing();
 
         // Outgoing SNR - what THEY measure of our transmissions
-        float snr_tx = (float)g_gui_state.snr_downlink_db.load();
-        DrawMeter("TX SNR (Outgoing)", snr_tx, -10.0f, 50.0f, 10.0f, 25.0f, "%.1f dB",
+        DrawMeter("TX SNR (Outgoing)", cached_snr_tx, -10.0f, 50.0f, 10.0f, 25.0f, "%.1f dB",
                   "SNR of signals the remote station RECEIVES from us.\n"
                   "Reported back by the remote station.\n"
                   "Higher is better (-10 to +50 dB range).",
@@ -419,20 +439,20 @@ static void RenderGUI() {
 
     ImGui::NextColumn();
 
-    // Status LEDs
+    // Performance Meters
     {
-        ImGui::Text("Status");
-        ImGui::Separator();
+        DrawMeter("Decode Time", cached_load, 0.0f, 200.0f, 80.0f, 120.0f, "%.2f%%",
+                  "Decode time as %% of real-time frame period.\n"
+                  "Below 100%% = keeping up with incoming audio.\n"
+                  "Above 100%% = falling behind, frames will be lost.\n"
+                  "Note: actual CPU use is lower (single-thread metric).");
 
-        bool is_tx = g_gui_state.is_transmitting.load();
-        bool is_rx = g_gui_state.is_receiving.load();
-        bool data_act = g_gui_state.data_activity.load();
-        bool ack_act = g_gui_state.ack_activity.load();
+        ImGui::Spacing();
 
-        DrawLED("TX", is_tx, IM_COL32(255, 0, 0, 255));
-        DrawLED("RX", is_rx, IM_COL32(0, 255, 0, 255));
-        DrawLED("DATA", data_act, IM_COL32(0, 200, 255, 255));
-        DrawLED("ACK", ack_act, IM_COL32(255, 200, 0, 255));
+        DrawMeter("RX Buffer", cached_buf_fill, 0.0f, 100.0f, 60.0f, 85.0f, "%.2f%%",
+                  "Audio capture ring buffer fill level.\n"
+                  "High values indicate processing can't keep up.\n"
+                  "If it hits 100%, audio samples are lost.");
     }
 
     ImGui::Columns(1);
@@ -846,7 +866,28 @@ static void RenderGUI() {
     }
 
     ImGui::SameLine(350);
-    ImGui::Text("| %.1f bps", g_gui_state.current_bitrate.load());
+    ImGui::Text("| %.1f bps |", g_gui_state.current_bitrate.load());
+
+    // Status LEDs in status bar
+    ImGui::SameLine();
+    {
+        bool sb_tx = g_gui_state.is_transmitting.load();
+        bool sb_rx = g_gui_state.is_receiving.load();
+        bool sb_data = g_gui_state.data_activity.load();
+        bool sb_ack = g_gui_state.ack_activity.load();
+
+        if (sb_tx)   ImGui::TextColored(ImVec4(1.0f, 0.2f, 0.2f, 1.0f), "TX");
+        else         ImGui::TextColored(ImVec4(0.3f, 0.3f, 0.3f, 1.0f), "TX");
+        ImGui::SameLine();
+        if (sb_rx)   ImGui::TextColored(ImVec4(0.2f, 1.0f, 0.2f, 1.0f), "RX");
+        else         ImGui::TextColored(ImVec4(0.3f, 0.3f, 0.3f, 1.0f), "RX");
+        ImGui::SameLine();
+        if (sb_data) ImGui::TextColored(ImVec4(0.0f, 0.8f, 1.0f, 1.0f), "DATA");
+        else         ImGui::TextColored(ImVec4(0.3f, 0.3f, 0.3f, 1.0f), "DATA");
+        ImGui::SameLine();
+        if (sb_ack)  ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), "ACK");
+        else         ImGui::TextColored(ImVec4(0.3f, 0.3f, 0.3f, 1.0f), "ACK");
+    }
 
     ImGui::SameLine((float)g_Width - 120);
     ImGui::Text("%.1f FPS", io.Framerate);

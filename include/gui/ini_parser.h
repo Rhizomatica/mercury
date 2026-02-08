@@ -80,6 +80,10 @@ struct MercurySettings {
     double gear_shift_up_rate;
     double gear_shift_down_rate;
     int initial_config;
+    int ldpc_iterations_max;  // Max LDPC decoder iterations (5-50)
+
+    // Modem settings
+    bool coarse_freq_sync_enabled;  // Enable coarse freq search (±30 Hz) for HF radio drift
 
     // GUI settings
     double tx_gain_db;

@@ -25,8 +25,7 @@
 
 void shift_left(double* matrix, int size, int nShift)
 {
-	// TODO: double check this
-	for(int j=0;j<size-nShift-1;j++)
+	for(int j=0;j<size-nShift;j++)
 	{
 		matrix[j]=matrix[j+nShift];
 	}

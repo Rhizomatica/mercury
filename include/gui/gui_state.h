@@ -111,6 +111,14 @@ struct st_gui_state {
     char my_callsign[32]{0};
     char dest_callsign[32]{0};
 
+    // ========== Performance Monitoring ==========
+    std::atomic<float> processing_load{0.0f};       // processing_time / frame_period (>1.0 = falling behind)
+    std::atomic<float> buffer_fill_pct{0.0f};       // capture ring buffer fill percentage (0-100)
+    std::atomic<int> ldpc_iterations_max{50};        // GUI-configurable LDPC max iterations
+
+    // ========== Modem Options ==========
+    std::atomic<bool> coarse_freq_sync_enabled{false}; // Coarse freq search (±30 Hz), for HF radio use
+
     // ========== GUI Control ==========
     std::atomic<bool> gui_running{true};
     std::atomic<bool> request_shutdown{false};

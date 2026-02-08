@@ -46,7 +46,7 @@ int cl_arq_controller::add_message_rx_data(char type, char id, int length, char*
 {
 	int success=ERROR_;
 	int loc=(int)((unsigned char)id);
-	if(loc>nMessages || loc<0)
+	if(loc>=nMessages || loc<0)
 	{
 		success=MESSAGE_ID_ERROR;
 		return success;

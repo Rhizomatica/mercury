@@ -134,9 +134,9 @@ int cl_arq_controller::add_message_control(char code)
 			messages_control.data[1]=CRC8_calc((char*)destination_call_sign.c_str(), destination_call_sign.length());
 			int my_call_sign_sent_chars=0;
 
-			// Calculate max callsign length - ensure at least 10 chars for amateur callsigns
+			// Calculate max callsign length that fits in the message buffer
 			int max_callsign_chars = max_data_length + max_header_length - CONTROL_ACK_CONTROL_HEADER_LENGTH - 3;
-			if (max_callsign_chars < 10) max_callsign_chars = 10;  // Minimum 10 chars for callsigns
+			if (max_callsign_chars < 0) max_callsign_chars = 0;
 			int callsign_len = (int)my_call_sign.length();
 			if (callsign_len > max_callsign_chars) callsign_len = max_callsign_chars;
 
