@@ -322,11 +322,8 @@ void cl_ofdm::_ifft_fast(std::complex<double>* v, int n)
 		}
 	}
 
-	// Scale by 1/n for IFFT
-	double scale = 1.0 / n;
-	for (int i = 0; i < n; i++) {
-		v[i] *= scale;
-	}
+	// No 1/N scaling - Mercury uses unnormalized IFFT convention
+	// (FFT already normalizes by 1/N in fft())
 }
 
 void cl_ofdm::zero_padder(std::complex <double>* in, std::complex <double>* out)
@@ -1881,6 +1878,227 @@ TimeSyncResult cl_ofdm::time_sync_preamble_with_metric(std::complex <double>*in,
 		delete[] data;
 	}
 	return result;
+}
+
+int cl_ofdm::time_sync_mfsk(std::complex<double>* baseband_interp, int buffer_size_interp,
+                            int interpolation_rate, int preamble_nSymb,
+                            const int* preamble_tones, int mfsk_M,
+                            int nStreams, const int* stream_offsets,
+                            int search_start_symb)
+{
+	// MFSK preamble time sync: correlate against known preamble tone sequence.
+	// Multi-stream: each preamble symbol has one tone per stream band.
+	// Score = sum of (target energy / total energy) across preamble symbols.
+	// search_start_symb: skip positions before this to avoid re-finding old preambles.
+
+	int Nofdm = Nfft + Ngi;
+	int sym_period_interp = Nofdm * interpolation_rate;
+	int buffer_nsymb = buffer_size_interp / sym_period_interp;
+
+	std::complex<double>* decimated_sym = new std::complex<double>[Nfft];
+	std::complex<double>* fft_out = new std::complex<double>[Nfft];
+
+	// Map preamble tone indices to FFT bin indices for each stream
+	int preamble_bins[8][4]; // [MAX_PREAMBLE_SYMB][MAX_STREAMS]
+	int half = Nc / 2;
+	for (int p = 0; p < preamble_nSymb; p++)
+	{
+		for (int st = 0; st < nStreams; st++)
+		{
+			int subcarrier = stream_offsets[st] + preamble_tones[p % preamble_nSymb];
+			int bin;
+			if (subcarrier < half)
+				bin = Nfft - half + subcarrier;
+			else
+				bin = start_shift + (subcarrier - half);
+			preamble_bins[p][st] = bin;
+		}
+	}
+
+	double best_metric = -1;
+	int best_sym_idx = 0;
+
+	int s_start = (search_start_symb > 0) ? search_start_symb : 0;
+	for (int s = s_start; s <= buffer_nsymb - preamble_nSymb; s++)
+	{
+		double metric = 0;
+
+		for (int p = 0; p < preamble_nSymb; p++)
+		{
+			int sym_idx = s + p;
+			int offset = sym_idx * sym_period_interp + Ngi * interpolation_rate;
+			if (offset + Nfft * interpolation_rate > buffer_size_interp)
+				break;
+
+			// Decimate and FFT this symbol
+			for (int i = 0; i < Nfft; i++)
+			{
+				decimated_sym[i] = baseband_interp[offset + i * interpolation_rate];
+			}
+			fft(decimated_sym, fft_out, Nfft);
+
+			// Energy in expected preamble tone bins (all streams)
+			double e_target = 0;
+			for (int st = 0; st < nStreams; st++)
+			{
+				int bin = preamble_bins[p][st];
+				e_target += fft_out[bin].real() * fft_out[bin].real() +
+				            fft_out[bin].imag() * fft_out[bin].imag();
+			}
+
+			// Total energy across all Nc bins
+			double e_total = 0;
+			for (int k = 0; k < Nc; k++)
+			{
+				int bk;
+				if (k < half)
+					bk = Nfft - half + k;
+				else
+					bk = start_shift + (k - half);
+				double e = fft_out[bk].real() * fft_out[bk].real() +
+				           fft_out[bk].imag() * fft_out[bk].imag();
+				e_total += e;
+			}
+
+			if (e_total > 0)
+				metric += e_target / e_total;
+		}
+
+		if (metric > best_metric)
+		{
+			best_metric = metric;
+			best_sym_idx = s;
+		}
+	}
+
+	int delay = best_sym_idx * sym_period_interp;
+
+	delete[] decimated_sym;
+	delete[] fft_out;
+
+	return delay;
+}
+
+// ACK pattern detection: slide window across buffer, accumulate E_target/E_total
+// Returns best metric (0.0 = noise, up to ack_nsymb = perfect match)
+double cl_ofdm::detect_ack_pattern(std::complex<double>* baseband_interp, int buffer_size_interp,
+                                   int interpolation_rate, int ack_nsymb,
+                                   const int* ack_tones, int ack_pattern_len,
+                                   int tone_hop_step, int mfsk_M,
+                                   int nStreams, const int* stream_offsets)
+{
+	int Nofdm = Nfft + Ngi;
+	int sym_period_interp = Nofdm * interpolation_rate;
+	int buffer_nsymb = buffer_size_interp / sym_period_interp;
+
+	if (buffer_nsymb < ack_nsymb) return 0.0;
+
+	std::complex<double>* decimated_sym = new std::complex<double>[Nfft];
+	std::complex<double>* fft_out = new std::complex<double>[Nfft];
+
+	int half = Nc / 2;
+	double best_metric = 0.0;
+	int best_pos = -1;
+	int best_matched = 0;
+
+	for (int s = 0; s <= buffer_nsymb - ack_nsymb; s++)
+	{
+		double metric = 0;
+		int matched = 0;
+
+		for (int p = 0; p < ack_nsymb; p++)
+		{
+			int sym_idx = s + p;
+			int offset = sym_idx * sym_period_interp + Ngi * interpolation_rate;
+			if (offset + Nfft * interpolation_rate > buffer_size_interp)
+				break;
+
+			// Decimate and FFT
+			for (int i = 0; i < Nfft; i++)
+			{
+				decimated_sym[i] = baseband_interp[offset + i * interpolation_rate];
+			}
+			fft(decimated_sym, fft_out, Nfft);
+
+			// Which tone is expected at symbol p?
+			int tone_base = ack_tones[p % ack_pattern_len];
+			int actual_tone = (tone_base + p * tone_hop_step) % mfsk_M;
+
+			// Order-aware detection: only count this symbol if the expected ACK tone
+			// is the peak bin for at least one stream. This prevents false positives
+			// from data tones that happen to coincide with ACK bins.
+			bool any_stream_peak = false;
+			double e_target = 0;
+			for (int st = 0; st < nStreams; st++)
+			{
+				int expected_subcarrier = stream_offsets[st] + actual_tone;
+				int expected_bin;
+				if (expected_subcarrier < half)
+					expected_bin = Nfft - half + expected_subcarrier;
+				else
+					expected_bin = start_shift + (expected_subcarrier - half);
+				double e_expected = fft_out[expected_bin].real() * fft_out[expected_bin].real() +
+				                    fft_out[expected_bin].imag() * fft_out[expected_bin].imag();
+				e_target += e_expected;
+
+				// Find peak bin among this stream's M MFSK bins
+				double peak_e = -1.0;
+				for (int t = 0; t < mfsk_M; t++)
+				{
+					int sub = stream_offsets[st] + t;
+					int b;
+					if (sub < half)
+						b = Nfft - half + sub;
+					else
+						b = start_shift + (sub - half);
+					double e = fft_out[b].real() * fft_out[b].real() +
+					           fft_out[b].imag() * fft_out[b].imag();
+					if (e > peak_e)
+						peak_e = e;
+				}
+				if (e_expected >= peak_e)
+					any_stream_peak = true;
+			}
+
+			if (!any_stream_peak)
+				continue;
+
+			matched++;
+
+			// Total energy across all Nc bins
+			double e_total = 0;
+			for (int k = 0; k < Nc; k++)
+			{
+				int bk;
+				if (k < half)
+					bk = Nfft - half + k;
+				else
+					bk = start_shift + (k - half);
+				double e = fft_out[bk].real() * fft_out[bk].real() +
+				           fft_out[bk].imag() * fft_out[bk].imag();
+				e_total += e;
+			}
+
+			if (e_total > 0)
+				metric += e_target / e_total;
+		}
+
+		if (metric > best_metric)
+		{
+			best_metric = metric;
+			best_pos = s;
+			best_matched = matched;
+		}
+	}
+
+	if (best_metric > 0.1)
+		printf("[ACK-DET] best_metric=%.3f pos=%d/%d matched=%d/%d\n",
+			best_metric, best_pos, buffer_nsymb, best_matched, ack_nsymb);
+
+	delete[] decimated_sym;
+	delete[] fft_out;
+
+	return best_metric;
 }
 
 int cl_ofdm::symbol_sync(std::complex <double>*in, int size, int interpolation_rate, int location_to_return)

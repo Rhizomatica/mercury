@@ -82,7 +82,9 @@ double  cl_awgn::awgn_value_generator()
 	double x2;
 	double result;
 
-	x1=rand() / ((double)RAND_MAX);
+	// Avoid x1=0 which causes log(0)=-inf → sqrt(inf)=inf → NaN in FFT
+	// On Windows RAND_MAX=32767, so rand()=0 occurs ~1/32768 calls
+	x1=(rand() + 1.0) / ((double)RAND_MAX + 1.0);
 	x2=rand() / ((double)RAND_MAX);
 
 	result=sqrt(- log(x1)) * (sqrt(2) * cos(2.0 * M_PI * x2));

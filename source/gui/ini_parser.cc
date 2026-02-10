@@ -209,6 +209,7 @@ void MercurySettings::setDefaults() {
 
     // Modem
     coarse_freq_sync_enabled = false;  // Off by default (saves CPU; enable for real HF radio use)
+    robust_mode_enabled = false;
 
     // GUI
     tx_gain_db = 0.0;
@@ -262,6 +263,7 @@ bool MercurySettings::load(const std::string& filename) {
 
     // Modem
     coarse_freq_sync_enabled = ini.getBool("Modem", "CoarseFreqSync", coarse_freq_sync_enabled);
+    robust_mode_enabled = ini.getBool("Modem", "RobustMode", robust_mode_enabled);
 
     // GUI
     tx_gain_db = ini.getDouble("GUI", "TxGainDb", tx_gain_db);
@@ -314,6 +316,7 @@ bool MercurySettings::save(const std::string& filename) {
 
     // Modem
     ini.setBool("Modem", "CoarseFreqSync", coarse_freq_sync_enabled);
+    ini.setBool("Modem", "RobustMode", robust_mode_enabled);
 
     // GUI
     ini.setDouble("GUI", "TxGainDb", tx_gain_db);

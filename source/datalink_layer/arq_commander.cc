@@ -236,14 +236,33 @@ void cl_arq_controller::process_messages_tx_control()
 
 	if(messages_control.status==ADDED_TO_BATCH_BUFFER)
 	{
-
+		// Commander CONTROL TX: full-length frames (responder can't predict frame type)
+		telecom_system->set_mfsk_ctrl_mode(false);
 		pad_messages_batch_tx(control_batch_size);
 		send_batch();
+		if(ack_pattern_time_ms > 0)
+		{
+			// Level 3: expect ACK tone pattern (not LDPC frame)
+			// Half-duplex: buffer flushed, wait for responder's ACK pattern.
+			telecom_system->data_container.frames_to_read =
+				cl_mfsk::ACK_PATTERN_NSYMB + 8;
+		}
+		else
+		{
+			// Level 2: expect short LDPC ctrl frame
+			telecom_system->set_mfsk_ctrl_mode(true);
+			telecom_system->data_container.frames_to_read =
+				telecom_system->data_container.preamble_nSymb + telecom_system->get_active_nsymb();
+		}
 		connection_status=RECEIVING_ACKS_CONTROL;
 
 		load_configuration(ack_configuration, PHYSICAL_LAYER_ONLY,NO);
 
 		receiving_timer.start();
+		printf("[CMD-RX] Entering receive mode: ack_cfg=%d recv_timeout=%d msg_tx_time=%d ctrl_tx_time=%d ack_batch=%d ftr=%d\n",
+			ack_configuration, receiving_timeout, message_transmission_time_ms, ctrl_transmission_time_ms, ack_batch_size,
+			telecom_system->data_container.frames_to_read.load());
+		fflush(stdout);
 
 		if(messages_control.data[0]==SET_CONFIG)
 		{
@@ -358,8 +377,23 @@ void cl_arq_controller::process_messages_tx_data()
 	}
 	if(message_batch_counter_tx<=data_batch_size && message_batch_counter_tx!=0)
 	{
+		telecom_system->set_mfsk_ctrl_mode(false);  // data TX (full-length frames)
 		pad_messages_batch_tx(data_batch_size);
 		send_batch();
+		if(ack_pattern_time_ms > 0)
+		{
+			// Level 3: expect ACK tone pattern (not LDPC frame)
+			// Half-duplex: buffer flushed, wait for responder's ACK pattern.
+			telecom_system->data_container.frames_to_read =
+				cl_mfsk::ACK_PATTERN_NSYMB + 8;
+		}
+		else
+		{
+			// Level 2: expect short LDPC ctrl frame
+			telecom_system->set_mfsk_ctrl_mode(true);
+			telecom_system->data_container.frames_to_read =
+				telecom_system->data_container.preamble_nSymb + telecom_system->get_active_nsymb();
+		}
 		data_ack_received=NO;
 		connection_status=RECEIVING_ACKS_DATA;
 		load_configuration(ack_configuration, PHYSICAL_LAYER_ONLY,NO);
@@ -371,27 +405,68 @@ void cl_arq_controller::process_messages_rx_acks_control()
 {
 	if (receiving_timer.get_elapsed_time_ms()<receiving_timeout)
 	{
-		this->receive();
-		if(messages_rx_buffer.status==RECEIVED && messages_rx_buffer.type==ACK_CONTROL)
+		if(ack_pattern_time_ms > 0)
 		{
-			if(messages_rx_buffer.data[0]==messages_control.data[0] && messages_control.status==PENDING_ACK)
+			// Level 3: detect ACK tone pattern instead of decoding LDPC frame
+			// Only call receive_ack_pattern while still waiting for the ACK.
+			// Once ACKED, stop checking — re-detection would zero the buffer
+			// and destroy the next frame's preamble arriving during the guard.
+			if(messages_control.status==PENDING_ACK)
 			{
-				for(int j=0;j<(max_data_length+max_header_length-CONTROL_ACK_CONTROL_HEADER_LENGTH);j++)
+				if(receive_ack_pattern())
 				{
-					messages_control.data[j]=messages_rx_buffer.data[j];
+					printf("[CMD-ACK-PAT] Control ACK pattern detected!\n");
+					fflush(stdout);
+					link_timer.start();
+					watchdog_timer.start();
+					gear_shift_timer.stop();
+					gear_shift_timer.reset();
+					messages_control.status=ACKED;
+					stats.nAcked_control++;
+
+					// Guard delay: wait for responder to finish PTT-off + flush before we TX.
+					// Without this, our next frame starts before the responder is listening.
+					int guard = ptt_off_delay_ms + 500;
+					receiving_timeout = (int)receiving_timer.get_elapsed_time_ms() + guard;
 				}
-				link_timer.start();
-				watchdog_timer.start();
-				gear_shift_timer.stop();
-				gear_shift_timer.reset();
-				messages_control.status=ACKED;
-				stats.nAcked_control++;
 			}
 		}
-		messages_rx_buffer.status=FREE;
+		else
+		{
+			// Level 2 / OFDM: decode LDPC ACK frame
+			this->receive();
+			if(messages_rx_buffer.status==RECEIVED && messages_rx_buffer.type==ACK_CONTROL)
+			{
+				if(messages_rx_buffer.data[0]==messages_control.data[0] && messages_control.status==PENDING_ACK)
+				{
+					for(int j=0;j<(max_data_length+max_header_length-CONTROL_ACK_CONTROL_HEADER_LENGTH);j++)
+					{
+						messages_control.data[j]=messages_rx_buffer.data[j];
+					}
+					link_timer.start();
+					watchdog_timer.start();
+					gear_shift_timer.stop();
+					gear_shift_timer.reset();
+					messages_control.status=ACKED;
+					stats.nAcked_control++;
+
+					// Wait for responder to finish remaining ACK batch frames
+					{
+						int drain = (int)receiving_timer.get_elapsed_time_ms()
+							+ (ack_batch_size - 1) * ctrl_transmission_time_ms
+							+ ptt_off_delay_ms + 500;
+						if (drain < receiving_timeout)
+							receiving_timeout = drain;
+					}
+				}
+			}
+			messages_rx_buffer.status=FREE;
+		}
 	}
 	else
 	{
+		// Restore receiving_timeout if batch drain logic adjusted it
+		calculate_receiving_timeout();
 		load_configuration(data_configuration, PHYSICAL_LAYER_ONLY,YES);
 		if(messages_control.status==ACKED)
 		{
@@ -412,43 +487,86 @@ void cl_arq_controller::process_messages_rx_acks_data()
 {
 	if (receiving_timer.get_elapsed_time_ms()<receiving_timeout)
 	{
-		this->receive();
-		if(messages_rx_buffer.status==RECEIVED)
+		if(ack_pattern_time_ms > 0)
 		{
-			link_timer.start();
-			watchdog_timer.start();
-			gear_shift_timer.stop();
-			gear_shift_timer.reset();
-			if(messages_rx_buffer.type==ACK_RANGE)
+			// Level 3: detect ACK tone pattern
+			// Only check while waiting — once detected, stop to avoid
+			// buffer zeroing that destroys the next frame's preamble.
+			if(data_ack_received==NO && receive_ack_pattern())
 			{
+				printf("[CMD-ACK-PAT] Data ACK pattern detected!\n");
+				fflush(stdout);
+				link_timer.start();
+				watchdog_timer.start();
+				gear_shift_timer.stop();
+				gear_shift_timer.reset();
 				data_ack_received=YES;
-				unsigned char start=(unsigned char)messages_rx_buffer.data[0];
-				unsigned char end=(unsigned char)messages_rx_buffer.data[1];
-				for(unsigned char i=start;i<=end;i++)
-				{
-					register_ack(i);
-				}
-			}
-			else if(messages_rx_buffer.type==ACK_MULTI)
-			{
-				data_ack_received=YES;
-				for(unsigned char i=0;i<(unsigned char)messages_rx_buffer.data[0];i++)
-				{
-					register_ack((unsigned char)messages_rx_buffer.data[i+1]);
-				}
-			}
-			messages_rx_buffer.status=FREE;
 
+				// Pattern = ACK for all pending messages (batch_size=1)
+				for(int i=0; i<nMessages; i++)
+				{
+					if(messages_tx[i].status==PENDING_ACK)
+					{
+						register_ack(i);
+					}
+				}
 
-			if(messages_control.data[0]==REPEAT_LAST_ACK && messages_control.status==PENDING_ACK)
+				if(messages_control.data[0]==REPEAT_LAST_ACK && messages_control.status==PENDING_ACK)
+				{
+					this->messages_control.ack_timeout=0;
+					this->messages_control.id=0;
+					this->messages_control.length=0;
+					this->messages_control.nResends=0;
+					this->messages_control.status=FREE;
+					this->messages_control.type=NONE;
+					stats.nAcked_control++;
+				}
+
+				// Guard delay: wait for responder to finish PTT-off + flush
+				int guard = ptt_off_delay_ms + 500;
+				receiving_timeout = (int)receiving_timer.get_elapsed_time_ms() + guard;
+			}
+		}
+		else
+		{
+			// Level 2 / OFDM: decode LDPC ACK frame
+			this->receive();
+			if(messages_rx_buffer.status==RECEIVED)
 			{
-				this->messages_control.ack_timeout=0;
-				this->messages_control.id=0;
-				this->messages_control.length=0;
-				this->messages_control.nResends=0;
-				this->messages_control.status=FREE;
-				this->messages_control.type=NONE;
-				stats.nAcked_control++;
+				link_timer.start();
+				watchdog_timer.start();
+				gear_shift_timer.stop();
+				gear_shift_timer.reset();
+				if(messages_rx_buffer.type==ACK_RANGE)
+				{
+					data_ack_received=YES;
+					unsigned char start=(unsigned char)messages_rx_buffer.data[0];
+					unsigned char end=(unsigned char)messages_rx_buffer.data[1];
+					for(unsigned char i=start;i<=end;i++)
+					{
+						register_ack(i);
+					}
+				}
+				else if(messages_rx_buffer.type==ACK_MULTI)
+				{
+					data_ack_received=YES;
+					for(unsigned char i=0;i<(unsigned char)messages_rx_buffer.data[0];i++)
+					{
+						register_ack((unsigned char)messages_rx_buffer.data[i+1]);
+					}
+				}
+				messages_rx_buffer.status=FREE;
+
+				if(messages_control.data[0]==REPEAT_LAST_ACK && messages_control.status==PENDING_ACK)
+				{
+					this->messages_control.ack_timeout=0;
+					this->messages_control.id=0;
+					this->messages_control.length=0;
+					this->messages_control.nResends=0;
+					this->messages_control.status=FREE;
+					this->messages_control.type=NONE;
+					stats.nAcked_control++;
+				}
 			}
 		}
 	}
@@ -478,8 +596,23 @@ void cl_arq_controller::process_control_commander()
 			watchdog_timer.start();
 			this->link_status=CONNECTION_ACCEPTED;
 			connection_status=TRANSMITTING_CONTROL;
-			this->connection_id=messages_control.data[1];
-			this->assigned_connection_id=messages_control.data[1];
+			// Reset per-phase so each handshake step gets its own timeout window
+			connection_attempt_timer.reset();
+			connection_attempt_timer.start();
+			if(ack_pattern_time_ms > 0)
+			{
+				// Level 3: ACK pattern carries no data, keep BROADCAST_ID
+				// (responder's assigned_connection_id is in the ACK frame payload
+				// which doesn't exist for tone patterns)
+				this->connection_id=BROADCAST_ID;
+				this->assigned_connection_id=BROADCAST_ID;
+			}
+			else
+			{
+				// Level 2 / OFDM: ACK frame carries responder's assigned connection_id
+				this->connection_id=messages_control.data[1];
+				this->assigned_connection_id=messages_control.data[1];
+			}
 		}
 		else if((this->link_status==CONNECTION_ACCEPTED || this->link_status==CONNECTED) && messages_control.data[0]==TEST_CONNECTION)
 		{
@@ -523,6 +656,8 @@ void cl_arq_controller::process_control_commander()
 				this->connection_status=TRANSMITTING_DATA;
 				watchdog_timer.start();
 				link_timer.start();
+				connection_attempt_timer.stop();
+				connection_attempt_timer.reset();
 			}
 
 		}
@@ -534,6 +669,8 @@ void cl_arq_controller::process_control_commander()
 			watchdog_timer.start();
 			gear_shift_timer.stop();
 			gear_shift_timer.reset();
+			connection_attempt_timer.stop();
+			connection_attempt_timer.reset();
 
 			std::string str="CONNECTED "+this->my_call_sign+" "+this->destination_call_sign+" "+ std::to_string(telecom_system->bandwidth)+"\r";
 			tcp_socket_control.message->length=str.length();
@@ -590,18 +727,18 @@ void cl_arq_controller::process_control_commander()
 						gear_shift_blocked_for_nBlocks++;
 						if(last_transmission_block_stats.success_rate_data>gear_shift_up_success_rate_precentage && gear_shift_blocked_for_nBlocks>= gear_shift_block_for_nBlocks_total)
 						{
-							if(current_configuration!=(NUMBER_OF_CONFIGS-1))
+							if(!config_is_at_top(current_configuration, robust_enabled))
 							{
-								negotiated_configuration=current_configuration+1;
+								negotiated_configuration=config_ladder_up(current_configuration, robust_enabled);
 								cleanup();
 								add_message_control(SET_CONFIG);
 							}
 						}
 						else if(last_transmission_block_stats.success_rate_data<gear_shift_down_success_rate_precentage)
 						{
-							if(current_configuration!=0)
+							if(!config_is_at_bottom(current_configuration, robust_enabled))
 							{
-								negotiated_configuration=current_configuration-1;
+								negotiated_configuration=config_ladder_down(current_configuration, robust_enabled);
 								cleanup();
 								add_message_control(SET_CONFIG);
 							}
@@ -629,10 +766,12 @@ void cl_arq_controller::process_control_commander()
 				last_message_received_type=NONE;
 				last_message_sent_type=NONE;
 				last_received_message_sequence=-1;
-				// Reset RX state machine - wait for fresh data (prevents decode of self-received TX audio)
+				// Reset RX state machine - wait for fresh data (prevents decode of self-received TX audio).
+				// Frame completeness gating handles late arrivals adaptively.
 				telecom_system->data_container.frames_to_read =
 					telecom_system->data_container.preamble_nSymb + telecom_system->data_container.Nsymb;
 				telecom_system->data_container.nUnder_processing_events = 0;
+				telecom_system->receive_stats.mfsk_search_raw = 0;
 			}
 			else if (messages_control.data[0]==SET_CONFIG)
 			{
@@ -678,10 +817,19 @@ void cl_arq_controller::process_control_commander()
 void cl_arq_controller::process_buffer_data_commander()
 {
 	int data_read_size;
+	static int dbg_counter = 0;
 	if(role==COMMANDER && link_status==CONNECTED && connection_status==TRANSMITTING_DATA)
 	{
+		if(++dbg_counter % 500 == 1)
+		{
+			int fifo_used = fifo_buffer_tx.get_size() - fifo_buffer_tx.get_free_size();
+			printf("[DBG-DATA] fifo=%d block_tx=%d batch=%d occ=%d ctrl=%d max_data=%d\n",
+				fifo_used, block_under_tx, message_batch_counter_tx,
+				get_nOccupied_messages(), messages_control.status, max_data_length);
+		}
 		if( fifo_buffer_tx.get_size()!=fifo_buffer_tx.get_free_size() && block_under_tx==NO)
 		{
+			int filled = 0;
 			for(int i=0;i<get_nTotal_messages();i++)
 			{
 				data_read_size=fifo_buffer_tx.pop(message_TxRx_byte_buffer,max_data_length+max_header_length-DATA_LONG_HEADER_LENGTH);
@@ -696,17 +844,24 @@ void cl_arq_controller::process_buffer_data_commander()
 					block_under_tx=YES;
 					add_message_tx_data(DATA_LONG, data_read_size, message_TxRx_byte_buffer);
 					fifo_buffer_backup.push(message_TxRx_byte_buffer,data_read_size);
+					filled++;
 				}
 				else
 				{
 					block_under_tx=YES;
 					add_message_tx_data(DATA_SHORT, data_read_size, message_TxRx_byte_buffer);
 					fifo_buffer_backup.push(message_TxRx_byte_buffer,data_read_size);
+					filled++;
 				}
 			}
+			printf("[DBG-FILL] Filled %d messages (nTotal=%d, batch_size=%d, pop_size=%d)\n",
+				filled, get_nTotal_messages(), data_batch_size, max_data_length+max_header_length-DATA_LONG_HEADER_LENGTH);
+			fflush(stdout);
 		}
 		else if(block_under_tx==YES && message_batch_counter_tx==0 && get_nOccupied_messages()==0 && messages_control.status==FREE)
 		{
+			printf("[DBG-BLOCKEND] Adding BLOCK_END\n");
+			fflush(stdout);
 			add_message_control(BLOCK_END);
 		}
 		else if(block_under_tx==NO && message_batch_counter_tx==0 && get_nOccupied_messages()==0 && messages_control.status==FREE)

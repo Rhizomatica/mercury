@@ -167,6 +167,8 @@ public:
 	   */
   void send(st_message* message, int message_location);
   void send_batch();
+  void send_ack_pattern();   // Level 3: TX short tone pattern instead of LDPC ACK
+  bool receive_ack_pattern(); // Level 3: RX + detect ACK pattern, returns true if detected
   void process_messages_rx_acks_control();
   void process_messages_rx_acks_data();
   void process_control_commander();
@@ -222,6 +224,8 @@ public:
 
 
   int message_transmission_time_ms;
+  int ctrl_transmission_time_ms;
+  int ack_pattern_time_ms;  // Level 3: ACK pattern TX duration (ms)
   int data_batch_size;
   int control_batch_size;
   int ack_batch_size;
@@ -290,6 +294,7 @@ public:
   char negotiated_configuration;
 
   int gear_shift_on;
+  int robust_enabled;
   int gear_shift_algorithm;
   double gear_shift_up_success_rate_precentage;
   double gear_shift_down_success_rate_precentage;

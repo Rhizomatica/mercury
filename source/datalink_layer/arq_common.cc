@@ -23,6 +23,7 @@
 #include "datalink_layer/arq.h"
 #include "audioio/audioio.h"
 #include <cmath>
+#include <cstring>
 #include <chrono>
 
 #ifdef MERCURY_GUI_ENABLED
@@ -105,6 +106,8 @@ cl_arq_controller::cl_arq_controller()
 	control_batch_size=1;
 	ack_batch_size=1;
 	message_transmission_time_ms=500;
+	ctrl_transmission_time_ms=500;
+	ack_pattern_time_ms=0;
 	role=RESPONDER;
 	original_role=RESPONDER;
 	connection_id=0;
@@ -127,6 +130,7 @@ cl_arq_controller::cl_arq_controller()
 	data_configuration=CONFIG_0;
 
 	gear_shift_on=NO;
+	robust_enabled=NO;
 	gear_shift_algorithm=SUCCESS_BASED_LADDER;
 
 	gear_shift_up_success_rate_precentage=70;
@@ -315,7 +319,15 @@ void cl_arq_controller::calculate_receiving_timeout()
 {
 	if(this->role==COMMANDER)
 	{
-		set_receiving_timeout((ack_batch_size+1)*message_transmission_time_ms+time_left_to_send_last_frame+ptt_on_delay_ms);
+		if(ack_pattern_time_ms > 0)
+		{
+			// Level 3: ACK pattern. Allow responder decode + pattern TX + margins.
+			set_receiving_timeout(message_transmission_time_ms + ack_pattern_time_ms + ptt_on_delay_ms + ptt_off_delay_ms + 3000);
+		}
+		else
+		{
+			set_receiving_timeout((ack_batch_size+1)*ctrl_transmission_time_ms+time_left_to_send_last_frame+ptt_on_delay_ms);
+		}
 	}
 	else
 	{
@@ -476,9 +488,21 @@ int cl_arq_controller::init(int tcp_base_port, int gear_shift_on, int initial_mo
 	this->gear_shift_on = gear_shift_on;
 	gear_shift_algorithm=default_configuration_ARQ.gear_shift_algorithm;
 	current_configuration=CONFIG_NONE;
-	init_configuration = initial_mode;
-	data_configuration = initial_mode;
-	ack_configuration=default_configuration_ARQ.ack_configuration;
+
+	if(robust_enabled)
+	{
+		// ROBUST mode: use requested ROBUST config for all roles
+		// Gearshift between ROBUST levels handled separately
+		init_configuration = initial_mode;
+		data_configuration = initial_mode;
+		ack_configuration = initial_mode;
+	}
+	else
+	{
+		init_configuration = initial_mode;
+		data_configuration = initial_mode;
+		ack_configuration=default_configuration_ARQ.ack_configuration;
+	}
 
 	if(tcp_socket_data.init()!=SUCCESS || tcp_socket_control.init()!=SUCCESS )
 	{
@@ -577,6 +601,17 @@ void cl_arq_controller::load_configuration(int configuration, int level, int bac
 	}
 	set_ack_batch_size(default_configuration_ARQ.ack_batch_size);
 	set_control_batch_size(default_configuration_ARQ.control_batch_size);
+
+	// MFSK modes: single ACK/control frame per batch (no redundant copies).
+	// LDPC provides cliff-effect protection; if a frame decodes, it's correct.
+	// Saves 1 frame per ACK cycle + 1 per control cycle = major time savings
+	// at 4.6-7.3s per frame.
+	if(is_robust_config(configuration))
+	{
+		set_data_batch_size(1);
+		set_ack_batch_size(1);
+		set_control_batch_size(1);
+	}
 	
 	gear_shift_up_success_rate_precentage=default_configuration_ARQ.gear_shift_up_success_rate_limit_precentage;
 	gear_shift_down_success_rate_precentage=default_configuration_ARQ.gear_shift_down_success_rate_limit_precentage;
@@ -585,23 +620,70 @@ void cl_arq_controller::load_configuration(int configuration, int level, int bac
 	gear_shift_blocked_for_nBlocks=default_configuration_ARQ.gear_shift_block_for_nBlocks_total;
 
 	message_transmission_time_ms=ceil((1000.0*(telecom_system->data_container.Nsymb+telecom_system->data_container.preamble_nSymb)*telecom_system->data_container.Nofdm*telecom_system->frequency_interpolation_rate)/(float)(telecom_system->frequency_interpolation_rate*(telecom_system->bandwidth/telecom_system->ofdm.Nc)*telecom_system->ofdm.Nfft));
+	if(telecom_system->ctrl_nsymb > 0)
+	{
+		ctrl_transmission_time_ms=ceil((1000.0*(telecom_system->ctrl_nsymb+telecom_system->data_container.preamble_nSymb)*telecom_system->data_container.Nofdm*telecom_system->frequency_interpolation_rate)/(float)(telecom_system->frequency_interpolation_rate*(telecom_system->bandwidth/telecom_system->ofdm.Nc)*telecom_system->ofdm.Nfft));
+	}
+	else
+	{
+		ctrl_transmission_time_ms=message_transmission_time_ms;
+	}
     // TODO: After audio I/O rewrite we don't use this anymore. Was:
 	// time_left_to_send_last_frame=(float)telecom_system->speaker.frames_to_leave_transmit_fct/(float)(telecom_system->frequency_interpolation_rate*(telecom_system->bandwidth/telecom_system->ofdm.Nc)*telecom_system->ofdm.Nfft);
     time_left_to_send_last_frame=0;
 
-	set_ack_timeout_data((data_batch_size+1+control_batch_size+2*ack_batch_size)*message_transmission_time_ms+time_left_to_send_last_frame+4*ptt_on_delay_ms+4*ptt_off_delay_ms);
-	set_ack_timeout_control((control_batch_size+ack_batch_size)*message_transmission_time_ms+time_left_to_send_last_frame+2*ptt_on_delay_ms+2*ptt_off_delay_ms);
+	// Level 3: compute ACK pattern transmission time for MFSK modes
+	if(telecom_system->ack_pattern_passband_samples > 0 && is_robust_config(configuration))
+	{
+		ack_pattern_time_ms = (int)ceil(1000.0 * telecom_system->ack_pattern_passband_samples / telecom_system->sampling_frequency);
+	}
+	else
+	{
+		ack_pattern_time_ms = 0;
+	}
+
+	if(ack_pattern_time_ms > 0)
+	{
+		// Level 3: ACK is a short tone pattern, not a full LDPC frame
+		set_ack_timeout_data((data_batch_size+1)*message_transmission_time_ms + ack_pattern_time_ms + 4*ptt_on_delay_ms + 4*ptt_off_delay_ms + 1500);
+		set_ack_timeout_control(control_batch_size*message_transmission_time_ms + ack_pattern_time_ms + 2*ptt_on_delay_ms + 2*ptt_off_delay_ms + 1500);
+	}
+	else
+	{
+		set_ack_timeout_data((data_batch_size+1)*message_transmission_time_ms+control_batch_size*message_transmission_time_ms+2*ack_batch_size*ctrl_transmission_time_ms+time_left_to_send_last_frame+4*ptt_on_delay_ms+4*ptt_off_delay_ms);
+		set_ack_timeout_control(control_batch_size*message_transmission_time_ms+ack_batch_size*ctrl_transmission_time_ms+time_left_to_send_last_frame+2*ptt_on_delay_ms+2*ptt_off_delay_ms);
+	}
 
 	ptt_on_delay_ms=default_configuration_ARQ.ptt_on_delay_ms;
 	ptt_off_delay_ms=default_configuration_ARQ.ptt_off_delay_ms;
 	pilot_tone_ms=default_configuration_ARQ.pilot_tone_ms;
 	pilot_tone_hz=default_configuration_ARQ.pilot_tone_hz;
 	switch_role_timeout=default_configuration_ARQ.switch_role_timeout_ms;
+	// MFSK modes: frame durations are 4-7s, so both sides have ample prep time
+	// during the frame itself. Reduce role-switch wait from 1500ms to 200ms.
+	if(is_robust_config(configuration))
+		switch_role_timeout = 200;
 
 	switch_role_test_timeout=(nResends/3)*ack_timeout_control;
 	watchdog_timeout=(nResends/3)*ack_timeout_data;
 	gearshift_timeout=(nResends/3)*ack_timeout_data;
 
+	// Ensure connection_timeout and link_timeout are adequate for MFSK frame durations.
+	{
+		int ack_time = (ack_pattern_time_ms > 0) ? ack_pattern_time_ms : (ack_batch_size * ctrl_transmission_time_ms);
+
+		// Connection handshake: 2 round-trips of control+ack batches
+		int min_ct = 2 * (control_batch_size * message_transmission_time_ms + ack_time)
+			+ 4 * ptt_on_delay_ms + 4 * ptt_off_delay_ms + 5000;
+		if (connection_timeout < min_ct)
+			connection_timeout = min_ct;
+
+		// Link timeout: must survive a full data+ack round-trip
+		int min_lt = (data_batch_size + 2) * message_transmission_time_ms + ack_time
+			+ 2 * ptt_on_delay_ms + 2 * ptt_off_delay_ms + 5000;
+		if (link_timeout < min_lt)
+			link_timeout = min_lt;
+	}
 
 	calculate_receiving_timeout();
 	if(level==FULL)
@@ -1010,8 +1092,7 @@ void cl_arq_controller::update_status()
 			}
 		}
 
-		last_data_configuration=init_configuration;
-		data_configuration=init_configuration;
+		last_data_configuration=data_configuration;
 		load_configuration(data_configuration,PHYSICAL_LAYER_ONLY,YES);
 
 		gear_shift_blocked_for_nBlocks=gear_shift_block_for_nBlocks_total;
@@ -1112,7 +1193,7 @@ void cl_arq_controller::update_status()
 		{
 
 			messages_control_backup();
-			data_configuration=current_configuration-1;
+			data_configuration=config_ladder_down(current_configuration, robust_enabled);
 			load_configuration(data_configuration,PHYSICAL_LAYER_ONLY,YES);
 			messages_control_restore();
 
@@ -1372,28 +1453,33 @@ void cl_arq_controller::process_main()
 		}
 	}
 
-	// Continuous signal measurement (even when not actively receiving)
-	// This ensures signal strength is always updated for display
-	MUTEX_LOCK(&capture_prep_mutex);
-	if(telecom_system->data_container.frames_to_read == 0)
+	// Signal measurement when idle: measure_signal_only() uses FIR_rx_time_sync,
+	// the same filter that receive_byte() uses for preamble detection. Running both
+	// on the same iteration corrupts the FIR delay line state. During active
+	// connections, receive_byte() already provides signal strength, so we only
+	// need measure_signal_only() when idle/listening (no receive() calls happening).
+	if(link_status == LISTENING || link_status == IDLE || link_status == DROPPED)
 	{
-		int signal_period = telecom_system->data_container.Nofdm *
-			telecom_system->data_container.buffer_Nsymb *
-			telecom_system->data_container.interpolation_rate;
+		MUTEX_LOCK(&capture_prep_mutex);
+		if(telecom_system->data_container.frames_to_read == 0)
+		{
+			int signal_period = telecom_system->data_container.Nofdm *
+				telecom_system->data_container.buffer_Nsymb *
+				telecom_system->data_container.interpolation_rate;
 
-		memcpy(telecom_system->data_container.ready_to_process_passband_delayed_data,
-			telecom_system->data_container.passband_delayed_data,
-			signal_period * sizeof(double));
+			memcpy(telecom_system->data_container.ready_to_process_passband_delayed_data,
+				telecom_system->data_container.passband_delayed_data,
+				signal_period * sizeof(double));
 
-		MUTEX_UNLOCK(&capture_prep_mutex);
+			MUTEX_UNLOCK(&capture_prep_mutex);
 
-		// Measure signal strength (lightweight, no decoding)
-		measurements.signal_stregth_dbm = telecom_system->measure_signal_only(
-			telecom_system->data_container.ready_to_process_passband_delayed_data);
-	}
-	else
-	{
-		MUTEX_UNLOCK(&capture_prep_mutex);
+			measurements.signal_stregth_dbm = telecom_system->measure_signal_only(
+				telecom_system->data_container.ready_to_process_passband_delayed_data);
+		}
+		else
+		{
+			MUTEX_UNLOCK(&capture_prep_mutex);
+		}
 	}
 
 	process_messages();
@@ -1686,9 +1772,12 @@ void cl_arq_controller::send(st_message* message, int message_location)
 
 	telecom_system->transmit_byte(telecom_system->data_container.data_byte,header_length+message->length,telecom_system->data_container.ready_to_transmit_passband_data_tx,message_location);
 
-	tx_transfer(telecom_system->data_container.ready_to_transmit_passband_data_tx,
-                telecom_system->data_container.Nofdm * telecom_system->data_container.interpolation_rate *
-                (telecom_system->data_container.Nsymb + telecom_system->data_container.preamble_nSymb));
+	{
+		int active_nsymb = telecom_system->get_active_nsymb();
+		tx_transfer(telecom_system->data_container.ready_to_transmit_passband_data_tx,
+					telecom_system->data_container.Nofdm * telecom_system->data_container.interpolation_rate *
+					(active_nsymb + telecom_system->data_container.preamble_nSymb));
+	}
 
 	while (size_buffer(playback_buffer) > 0)
 		msleep(1);
@@ -1707,12 +1796,14 @@ void cl_arq_controller::send_batch()
 	printf("[TX] send_batch() on CONFIG_%d, %d messages, first type=%d\n",
 		current_configuration, message_batch_counter_tx,
 		message_batch_counter_tx > 0 ? messages_batch_tx[0].type : -1);
+	fflush(stdout);
 	ptt_on();
 
 	cl_timer ptt_on_delay, ptt_off_delay;
 	ptt_on_delay.start();
 
-	int frame_output_size = telecom_system->data_container.Nofdm*telecom_system->data_container.interpolation_rate*(telecom_system->data_container.Nsymb+telecom_system->data_container.preamble_nSymb);
+	int active_nsymb = telecom_system->get_active_nsymb();
+	int frame_output_size = telecom_system->data_container.Nofdm*telecom_system->data_container.interpolation_rate*(active_nsymb+telecom_system->data_container.preamble_nSymb);
 
 	double *batch_frames_output_data=NULL;
 	double *batch_frames_output_data_filtered1=NULL;
@@ -1790,6 +1881,18 @@ void cl_arq_controller::send_batch()
 			telecom_system->data_container.data_byte[j]=(int)message_TxRx_byte_buffer[j];
 		}
 
+		// Debug: show serialized bytes before transmit
+		{
+			int total = header_length + messages_batch_tx[i].length;
+			printf("[TX-BYTES] frame=%d type=%d connid=%d hdr=%d len=%d bytes:",
+				i, messages_batch_tx[i].type, (int)(unsigned char)connection_id,
+				header_length, messages_batch_tx[i].length);
+			for(int j=0; j<total && j<12; j++)
+				printf(" %02x", (unsigned char)message_TxRx_byte_buffer[j]);
+			printf("\n");
+			fflush(stdout);
+		}
+
 		telecom_system->transmit_byte(telecom_system->data_container.data_byte,header_length+messages_batch_tx[i].length,&batch_frames_output_data[(i+1)*frame_output_size],NO_FILTER_MESSAGE);
 
 
@@ -1808,8 +1911,13 @@ void cl_arq_controller::send_batch()
 		batch_frames_output_data[(message_batch_counter_tx+1)*frame_output_size+i]=batch_frames_output_data[(message_batch_counter_tx)*frame_output_size+i];
 	}
 
-	telecom_system->ofdm.FIR_tx1.apply(batch_frames_output_data,batch_frames_output_data_filtered1,(message_batch_counter_tx+2)*frame_output_size);
-	telecom_system->ofdm.FIR_tx2.apply(batch_frames_output_data_filtered1,batch_frames_output_data_filtered2,(message_batch_counter_tx+2)*frame_output_size);
+	{
+		int total_fir_size = (message_batch_counter_tx+2)*frame_output_size;
+		memset(batch_frames_output_data_filtered1, 0, total_fir_size * sizeof(double));
+		memset(batch_frames_output_data_filtered2, 0, total_fir_size * sizeof(double));
+		telecom_system->ofdm.FIR_tx1.apply(batch_frames_output_data,batch_frames_output_data_filtered1,total_fir_size);
+		telecom_system->ofdm.FIR_tx2.apply(batch_frames_output_data_filtered1,batch_frames_output_data_filtered2,total_fir_size);
+	}
 
 	while(ptt_on_delay.get_elapsed_time_ms() < ptt_on_delay_ms)
 		msleep(1);
@@ -1848,13 +1956,19 @@ void cl_arq_controller::send_batch()
 
 	for(int i=0;i<message_batch_counter_tx;i++)
 	{
+		printf("[TX] tx_transfer frame %d/%d, size=%d\n", i, message_batch_counter_tx, frame_output_size);
+		fflush(stdout);
 		tx_transfer(&batch_frames_output_data_filtered2[(i+1)*frame_output_size], frame_output_size);
 	}
 
+	printf("[TX] Waiting for playback buffer to drain...\n");
+	fflush(stdout);
 	// wait buffer to be played
 	while (size_buffer(playback_buffer) > 0)
 		msleep(1);
 
+	printf("[TX] Playback done, ptt_off_delay...\n");
+	fflush(stdout);
 	ptt_off_delay.start();
 	while(ptt_off_delay.get_elapsed_time_ms() < ptt_off_delay_ms)
 		msleep(1);
@@ -1900,16 +2014,175 @@ void cl_arq_controller::send_batch()
 	}
 	message_batch_counter_tx=0;
 
-	// CRITICAL: Reset RX state machine after TX completes
-	// Set frames_to_read to full buffer size so receiver waits for fresh data,
-	// preventing decode of self-received TX audio (some radios play back TX audio)
+	// Flush capture buffer to discard self-echo from TX burst.
+	// Half-duplex: we must not process our own TX echo. On VB-Cable and
+	// sidetone radios, the TX audio loops back to the capture device.
+	// Flushing ensures we only process audio that arrives AFTER our TX ends.
+	circular_buf_reset(capture_buffer);
+	{
+		int buf_samples = telecom_system->data_container.Nofdm * telecom_system->data_container.buffer_Nsymb * telecom_system->data_container.interpolation_rate;
+		MUTEX_LOCK(&capture_prep_mutex);
+		memset(telecom_system->data_container.passband_delayed_data, 0, buf_samples * sizeof(double));
+		MUTEX_UNLOCK(&capture_prep_mutex);
+	}
 	telecom_system->data_container.frames_to_read =
-		telecom_system->data_container.preamble_nSymb + telecom_system->data_container.Nsymb;
+		telecom_system->data_container.preamble_nSymb + telecom_system->get_active_nsymb();
 	telecom_system->data_container.nUnder_processing_events = 0;
-	printf("[TX-END] Reset frames_to_read=%d (preamble=%d + Nsymb=%d)\n",
+	telecom_system->receive_stats.delay_of_last_decoded_message = -1;
+	telecom_system->receive_stats.mfsk_search_raw = 0;
+	printf("[TX-END] Flushed capture buffer, frames_to_read=%d (ctrl=%d)\n",
 		telecom_system->data_container.frames_to_read.load(),
-		telecom_system->data_container.preamble_nSymb,
-		telecom_system->data_container.Nsymb);
+		telecom_system->mfsk_ctrl_mode ? 1 : 0);
+}
+
+// Level 3: Transmit short ACK tone pattern instead of LDPC-encoded ACK frame
+void cl_arq_controller::send_ack_pattern()
+{
+	printf("[TX-ACK-PAT] Sending ACK pattern on CONFIG_%d\n", current_configuration);
+	fflush(stdout);
+
+	ptt_on();
+
+	cl_timer ptt_on_delay_timer, ptt_off_delay_timer;
+	ptt_on_delay_timer.start();
+
+	int pattern_samples = telecom_system->ack_pattern_passband_samples;
+	int symbol_period = telecom_system->data_container.Nofdm * telecom_system->data_container.interpolation_rate;
+
+	// Allocate buffers: pattern + 1 symbol padding at each end for FIR filtering
+	int padded_size = pattern_samples + 2 * symbol_period;
+	double *raw_output = new double[padded_size];
+	double *filtered1 = new double[padded_size];
+	double *filtered2 = new double[padded_size];
+
+	if(!raw_output || !filtered1 || !filtered2) exit(-34);
+
+	memset(raw_output, 0, padded_size * sizeof(double));
+
+	// Generate ACK pattern passband into the middle section
+	telecom_system->generate_ack_pattern_passband(&raw_output[symbol_period]);
+
+	// Pad start and end with copies of first/last symbol for FIR boundary
+	memcpy(&raw_output[0], &raw_output[symbol_period], symbol_period * sizeof(double));
+	memcpy(&raw_output[symbol_period + pattern_samples], &raw_output[pattern_samples], symbol_period * sizeof(double));
+
+	// FIR filter chain (same as send_batch)
+	memset(filtered1, 0, padded_size * sizeof(double));
+	memset(filtered2, 0, padded_size * sizeof(double));
+	telecom_system->ofdm.FIR_tx1.apply(raw_output, filtered1, padded_size);
+	telecom_system->ofdm.FIR_tx2.apply(filtered1, filtered2, padded_size);
+
+	// Wait PTT on delay
+	while(ptt_on_delay_timer.get_elapsed_time_ms() < ptt_on_delay_ms)
+		msleep(1);
+
+	// Pilot tone (if enabled)
+	if(pilot_tone_ms > 0 && pilot_tone_hz > 0)
+	{
+		const double SAMPLE_RATE = 48000.0;
+		const double PILOT_FREQ = (double)pilot_tone_hz;
+		const double PI = 3.14159265358979323846;
+		int pilot_samples = (int)(pilot_tone_ms * SAMPLE_RATE / 1000.0);
+		double* pilot_buffer = new double[pilot_samples];
+
+		for(int i = 0; i < pilot_samples; i++)
+		{
+			double t = (double)i / SAMPLE_RATE;
+			double envelope = 1.0;
+			int ramp_samples = (int)(SAMPLE_RATE * 0.005);
+			if(i < ramp_samples)
+				envelope = (double)i / ramp_samples;
+			else if(i > pilot_samples - ramp_samples)
+				envelope = (double)(pilot_samples - i) / ramp_samples;
+			pilot_buffer[i] = envelope * 0.5 * sin(2.0 * PI * PILOT_FREQ * t);
+		}
+
+		tx_transfer(pilot_buffer, pilot_samples);
+		delete[] pilot_buffer;
+	}
+
+	// Transmit the filtered ACK pattern (skip padding at start)
+	tx_transfer(&filtered2[symbol_period], pattern_samples);
+
+	// Wait for playback to drain
+	while(size_buffer(playback_buffer) > 0)
+		msleep(1);
+
+	// PTT off delay
+	ptt_off_delay_timer.start();
+	while(ptt_off_delay_timer.get_elapsed_time_ms() < ptt_off_delay_ms)
+		msleep(1);
+
+	ptt_off();
+
+	delete[] raw_output;
+	delete[] filtered1;
+	delete[] filtered2;
+
+	// Flush capture buffer and passband_delayed_data (discard self-echo + stale patterns)
+	circular_buf_reset(capture_buffer);
+	{
+		int buf_samples = telecom_system->data_container.Nofdm * telecom_system->data_container.buffer_Nsymb * telecom_system->data_container.interpolation_rate;
+		MUTEX_LOCK(&capture_prep_mutex);
+		memset(telecom_system->data_container.passband_delayed_data, 0, buf_samples * sizeof(double));
+		MUTEX_UNLOCK(&capture_prep_mutex);
+	}
+	telecom_system->data_container.nUnder_processing_events = 0;
+	telecom_system->receive_stats.delay_of_last_decoded_message = -1;
+	telecom_system->receive_stats.mfsk_search_raw = 0;
+
+	printf("[TX-ACK-PAT] Done, flushed capture buffer\n");
+	fflush(stdout);
+}
+
+// Level 3: Receive and detect ACK tone pattern, returns true if detected
+bool cl_arq_controller::receive_ack_pattern()
+{
+	int signal_period = telecom_system->data_container.Nofdm * telecom_system->data_container.buffer_Nsymb * telecom_system->data_container.interpolation_rate;
+
+	MUTEX_LOCK(&capture_prep_mutex);
+
+	if(telecom_system->data_container.frames_to_read == 0)
+	{
+		memcpy(telecom_system->data_container.ready_to_process_passband_delayed_data,
+			telecom_system->data_container.passband_delayed_data,
+			signal_period * sizeof(double));
+
+		telecom_system->data_container.data_ready = 0;
+		MUTEX_UNLOCK(&capture_prep_mutex);
+
+		double metric = telecom_system->detect_ack_pattern_from_passband(
+			telecom_system->data_container.ready_to_process_passband_delayed_data, signal_period);
+
+		printf("[ACK-RX] Pattern metric=%.3f threshold=%.3f\n",
+			metric, telecom_system->ack_pattern_detection_threshold);
+		fflush(stdout);
+
+		if(metric >= telecom_system->ack_pattern_detection_threshold)
+		{
+			// Don't zero the buffer — callers gate on status (PENDING_ACK /
+			// data_ack_received==NO) so this function won't be called again.
+			// Start capturing a full frame immediately so audio accumulates
+			// during the guard delay and the next frame's preamble isn't missed.
+			MUTEX_LOCK(&capture_prep_mutex);
+			telecom_system->data_container.frames_to_read =
+				telecom_system->data_container.preamble_nSymb + telecom_system->data_container.Nsymb;
+			telecom_system->data_container.nUnder_processing_events = 0;
+			telecom_system->receive_stats.mfsk_search_raw = 0;
+			MUTEX_UNLOCK(&capture_prep_mutex);
+			return true;
+		}
+
+		// Not detected - buffer another window and try again
+		int ack_window = cl_mfsk::ACK_PATTERN_NSYMB + 8;
+		telecom_system->data_container.frames_to_read = ack_window;
+		telecom_system->data_container.nUnder_processing_events = 0;
+		return false;
+	}
+
+	telecom_system->data_container.data_ready = 0;
+	MUTEX_UNLOCK(&capture_prep_mutex);
+	return false;
 }
 
 void cl_arq_controller::receive()
@@ -1927,15 +2200,6 @@ void cl_arq_controller::receive()
 	MUTEX_LOCK(&capture_prep_mutex);
 	st_receive_stats received_message_stats;
 
-	// Debug: track RX state (disabled for performance)
-	// static int rx_debug_count = 0;
-	// if(rx_debug_count++ % 50 == 0) {
-	// 	printf("[RX-DBG] frames_to_read=%d nUnder=%d data_ready=%d interp_rate=%d\n",
-	// 		telecom_system->data_container.frames_to_read.load(),
-	// 		telecom_system->data_container.nUnder_processing_events.load(),
-	// 		telecom_system->data_container.data_ready.load(),
-	// 		telecom_system->data_container.interpolation_rate);
-	// }
 
 	if(telecom_system->data_container.frames_to_read==0)
 	{
@@ -1980,17 +2244,42 @@ void cl_arq_controller::receive()
 
 		if (received_message_stats.message_decoded==YES)
 		{
-			int end_of_current_message = received_message_stats.delay / symbol_period  + telecom_system->data_container.Nsymb + telecom_system->data_container.preamble_nSymb;
+			int rx_nsymb = telecom_system->get_active_nsymb();
+			int rx_frame = rx_nsymb + telecom_system->data_container.preamble_nSymb;
+			int end_of_current_message = received_message_stats.delay / symbol_period  + rx_frame;
 			int frames_left_in_buffer = telecom_system->data_container.buffer_Nsymb - end_of_current_message;
 			if(frames_left_in_buffer<0)
 				frames_left_in_buffer=0;
 
-			telecom_system->data_container.frames_to_read=telecom_system->data_container.Nsymb+telecom_system->data_container.preamble_nSymb-frames_left_in_buffer-telecom_system->data_container.nUnder_processing_events;
+			int nUnder_snapshot = telecom_system->data_container.nUnder_processing_events.load();
+			telecom_system->data_container.frames_to_read=rx_frame-frames_left_in_buffer-nUnder_snapshot;
 
-			if(telecom_system->data_container.frames_to_read > (telecom_system->data_container.Nsymb+telecom_system->data_container.preamble_nSymb) || telecom_system->data_container.frames_to_read<0)
-				telecom_system->data_container.frames_to_read = telecom_system->data_container.Nsymb+telecom_system->data_container.preamble_nSymb-frames_left_in_buffer;
+			int ftr_clamped = 0;
+			if(telecom_system->data_container.frames_to_read > rx_frame || telecom_system->data_container.frames_to_read<0)
+			{
+				telecom_system->data_container.frames_to_read = rx_frame-frames_left_in_buffer;
+				ftr_clamped = 1;
+			}
 
-			telecom_system->receive_stats.delay_of_last_decoded_message += (telecom_system->data_container.Nsymb + telecom_system->data_container.preamble_nSymb - (telecom_system->data_container.frames_to_read + telecom_system->data_container.nUnder_processing_events)) * symbol_period;
+			printf("[RX-TIMING] OK: delay=%d delay_symb=%d rx_frame=%d end=%d left=%d nUnder=%d ftr=%d clamped=%d proc=%.0fms\n",
+				received_message_stats.delay, received_message_stats.delay / symbol_period,
+				rx_frame, end_of_current_message, frames_left_in_buffer, nUnder_snapshot,
+				telecom_system->data_container.frames_to_read.load(), ftr_clamped, proc_ms);
+			fflush(stdout);
+
+			// MFSK anti-re-decode: after successful decode, record where the old
+			// frame ends so the next time_sync_mfsk skips past it entirely.
+			// Must skip the full frame (preamble + data), not just the preamble,
+			// because MFSK data tones can create false preamble correlations.
+			// mfsk_search_raw = frame_end_symb - frames_to_read (base value).
+			// telecom_system subtracts nUnder at search time for the effective start.
+			if(telecom_system->M == MOD_MFSK)
+			{
+				int frame_end_symb = received_message_stats.delay / symbol_period + rx_frame;
+				telecom_system->receive_stats.mfsk_search_raw = frame_end_symb - telecom_system->data_container.frames_to_read;
+			}
+
+			telecom_system->receive_stats.delay_of_last_decoded_message += (rx_frame - (telecom_system->data_container.frames_to_read + telecom_system->data_container.nUnder_processing_events)) * symbol_period;
 
 			telecom_system->data_container.nUnder_processing_events = 0;
 
@@ -2009,6 +2298,15 @@ void cl_arq_controller::receive()
 				message_TxRx_byte_buffer[i] = (char)telecom_system->data_container.data_byte[i];
 			}
 
+			printf("[RX-DECODE] type=%d connid_rx=%d my_connid=%d broadcast=%d bytes:",
+				(int)(unsigned char)message_TxRx_byte_buffer[0],
+				(int)(unsigned char)message_TxRx_byte_buffer[1],
+				(int)(unsigned char)this->connection_id,
+				(int)BROADCAST_ID);
+			for(int db=0; db<12; db++)
+				printf(" %02x", (unsigned char)message_TxRx_byte_buffer[db]);
+			printf("\n");
+			fflush(stdout);
 			if(message_TxRx_byte_buffer[1] == this->connection_id || message_TxRx_byte_buffer[1] == BROADCAST_ID)
 			{
 				messages_rx_buffer.status=RECEIVED;
@@ -2057,6 +2355,26 @@ void cl_arq_controller::receive()
 		}
 		else
 		{
+			// MFSK frame completeness: if the frame extends beyond captured audio,
+			// capture the remaining symbols instead of wasting a full recapture cycle.
+			if(received_message_stats.frame_overflow_symbols > 0)
+			{
+				telecom_system->data_container.frames_to_read =
+					received_message_stats.frame_overflow_symbols + 4;
+				telecom_system->data_container.nUnder_processing_events = 0;
+				telecom_system->receive_stats.mfsk_search_raw = 0;
+				printf("[RX-TIMING] INCOMPLETE: overflow=%d symbols, capturing %d more\n",
+					received_message_stats.frame_overflow_symbols,
+					telecom_system->data_container.frames_to_read.load());
+				fflush(stdout);
+				return;
+			}
+
+			printf("[RX-TIMING] FAIL: nUnder=%d proc=%.0fms search_raw=%d delay_last=%d\n",
+				telecom_system->data_container.nUnder_processing_events.load(), proc_ms,
+				telecom_system->receive_stats.mfsk_search_raw,
+				telecom_system->receive_stats.delay_of_last_decoded_message);
+			fflush(stdout);
 			if(telecom_system->data_container.frames_to_read==0 && telecom_system->receive_stats.delay_of_last_decoded_message!=-1)
 			{
 				telecom_system->receive_stats.delay_of_last_decoded_message -= telecom_system->data_container.Nofdm*telecom_system->data_container.interpolation_rate;
@@ -2078,14 +2396,27 @@ void cl_arq_controller::receive()
 
 void cl_arq_controller::copy_data_to_buffer()
 {
+	int copied = 0;
+	int total_bytes = 0;
 	for(int i=0;i<this->nMessages;i++)
 	{
 		if(messages_rx[i].status==ACKED)
 		{
 			fifo_buffer_rx.push(messages_rx[i].data,messages_rx[i].length);
+			total_bytes += messages_rx[i].length;
 			messages_rx[i].status=FREE;
+			copied++;
+		}
+		else if(messages_rx[i].status!=FREE)
+		{
+			printf("[DBG-COPY] msg[%d] has status=%d (not ACKED=%d, not FREE=%d)\n",
+				i, messages_rx[i].status, ACKED, FREE);
+			fflush(stdout);
 		}
 	}
+	printf("[DBG-COPY] copy_data_to_buffer: copied %d/%d messages, %d bytes to fifo_rx\n",
+		copied, this->nMessages, total_bytes);
+	fflush(stdout);
 	block_ready=1;
 }
 

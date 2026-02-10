@@ -61,6 +61,7 @@ int main(int argc, char *argv[])
     int mod_config = CONFIG_1;
     int operation_mode = ARQ_MODE;
     int gear_shift_mode = NO_GEAR_SHIFT;
+    int robust_mode = 0;  // 0=disabled, 1=enabled via -R flag
     int base_tcp_port = 0;
 
     int audio_system = -1;
@@ -71,6 +72,7 @@ int main(int argc, char *argv[])
     int link_timeout_ms = 30000;
     int exit_on_disconnect = 0;
     int ldpc_iterations = 0;  // 0 = use default (50 or from INI)
+    int puncture_nBits = 0;  // 0 = disabled; >0 = punctured LDPC BER test
 
     input_dev = (char *) malloc(ALSA_MAX_PATH);
     output_dev = (char *) malloc(ALSA_MAX_PATH);
@@ -122,6 +124,7 @@ int main(int argc, char *argv[])
         printf(" -z                         Lists all available sound cards.\n");
         printf(" -f [offset_hz]             TX carrier offset in Hz for testing frequency sync (e.g., -f 25 for 25 Hz offset).\n");
         printf(" -I [iterations]            LDPC decoder max iterations (5-50, default 50). Lower = less CPU.\n");
+        printf(" -R                         Enable Robust mode (MFSK for weak-signal hailing/low-speed data).\n");
 #ifdef MERCURY_GUI_ENABLED
         printf(" -n                         Disable GUI (headless mode). GUI is enabled by default.\n");
 #endif
@@ -130,7 +133,7 @@ int main(int argc, char *argv[])
     }
 
     int opt;
-    while ((opt = getopt(argc, argv, "hc:m:s:lr:i:o:x:p:zgt:a:k:eCnf:I:")) != -1)
+    while ((opt = getopt(argc, argv, "hc:m:s:lr:i:o:x:p:zgt:a:k:eCnf:I:RP:")) != -1)
     {
         switch (opt)
         {
@@ -252,6 +255,17 @@ int main(int argc, char *argv[])
                 if (ldpc_iterations > 50) ldpc_iterations = 50;
                 printf("LDPC max iterations: %d\n", ldpc_iterations);
             }
+            break;
+        case 'P':
+            if (optarg)
+            {
+                puncture_nBits = atoi(optarg);
+                printf("Punctured LDPC BER test: ctrl_nBits=%d\n", puncture_nBits);
+            }
+            break;
+        case 'R':
+            robust_mode = 1;
+            printf("Robust mode (MFSK) enabled.\n");
             break;
         case 'h':
 
@@ -432,7 +446,7 @@ start_modem:
     }
 
 
-    if ((mod_config >= NUMBER_OF_CONFIGS) || (mod_config < 0))
+    if ((mod_config >= NUMBER_OF_CONFIGS && !is_robust_config(mod_config)) || (mod_config < 0))
     {
         printf("Wrong modulation config %d\n", mod_config);
         exit(EXIT_FAILURE);
@@ -467,11 +481,21 @@ start_modem:
             telecom_system.default_configurations_telecom_system.ldpc_nIteration_max = g_settings.ldpc_iterations_max;
         g_gui_state.ldpc_iterations_max.store(telecom_system.default_configurations_telecom_system.ldpc_nIteration_max);
         g_gui_state.coarse_freq_sync_enabled.store(g_settings.coarse_freq_sync_enabled);
+        // Robust mode: CLI -R overrides INI setting
+        if (robust_mode)
+            g_settings.robust_mode_enabled = true;
+        g_gui_state.robust_mode_enabled.store(g_settings.robust_mode_enabled);
 #else
         if (ldpc_iterations > 0)
             telecom_system.default_configurations_telecom_system.ldpc_nIteration_max = ldpc_iterations;
 #endif
 
+        // Robust mode: CLI -R or INI setting enables MFSK hailing
+#ifdef MERCURY_GUI_ENABLED
+        ARQ.robust_enabled = (g_settings.robust_mode_enabled || robust_mode) ? YES : NO;
+#else
+        ARQ.robust_enabled = robust_mode ? YES : NO;
+#endif
         ARQ.init(base_tcp_port, (gear_shift_mode == NO_GEAR_SHIFT)? NO : YES, mod_config);
 
         // Apply command-line arguments
@@ -479,6 +503,24 @@ start_modem:
         ARQ.link_timeout = link_timeout_ms;
         ARQ.max_connection_attempts = max_connection_attempts;
         ARQ.exit_on_disconnect = exit_on_disconnect;
+
+        // Ensure timeouts are adequate for MFSK frame durations
+        {
+            int min_ct = 2 * (ARQ.control_batch_size + ARQ.ack_batch_size)
+                * ARQ.message_transmission_time_ms + 5000;
+            if (ARQ.connection_timeout < min_ct) {
+                printf("Adjusting connection_timeout from %d to %d ms for frame duration\n",
+                       ARQ.connection_timeout, min_ct);
+                ARQ.connection_timeout = min_ct;
+            }
+            int min_lt = (ARQ.data_batch_size + ARQ.ack_batch_size + 2)
+                * ARQ.message_transmission_time_ms + 5000;
+            if (ARQ.link_timeout < min_lt) {
+                printf("Adjusting link_timeout from %d to %d ms for frame duration\n",
+                       ARQ.link_timeout, min_lt);
+                ARQ.link_timeout = min_lt;
+            }
+        }
 
         if (connection_timeout_ms != 15000 || max_connection_attempts != 15 || link_timeout_ms != 30000 || exit_on_disconnect) {
             printf("ARQ config: connection_timeout=%dms, link_timeout=%dms, max_attempts=%d, exit_on_disconnect=%s\n",
@@ -513,6 +555,9 @@ start_modem:
 
                 // Update SNR measurements (uplink = what we receive, downlink = what remote receives from us)
                 gui_update_arq_measurements(ARQ.get_snr_uplink(), ARQ.get_snr_downlink());
+
+                // Sync robust mode from GUI to ARQ (takes effect on next connection)
+                ARQ.robust_enabled = g_gui_state.robust_mode_enabled.load() ? YES : NO;
 
                 // Check if GUI requested shutdown
                 if (g_gui_state.request_shutdown.load()) {
@@ -582,6 +627,9 @@ start_modem:
     {
         printf("Mode selected: PLOT_PASSBAND\n");
         telecom_system.load_configuration(mod_config);
+        telecom_system.test_puncture_nBits = puncture_nBits;
+        if(puncture_nBits > 0)
+            printf("Punctured LDPC: transmitting %d of %d bits\n", puncture_nBits, telecom_system.data_container.nBits);
         printf("Modulation: %d  Bitrate: %.2f bps  Shannon_limit: %.2f db\n",  mod_config, telecom_system.rbc, telecom_system.Shannon_limit);
 
         telecom_system.constellation_plot.open("PLOT");

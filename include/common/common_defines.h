@@ -55,6 +55,61 @@
 #define CONFIG_15 15
 #define CONFIG_16 16
 
+// ROBUST (MFSK) configurations - values 100+ to avoid collision with OFDM configs
+#define NUMBER_OF_ROBUST_CONFIGS 3
+#define ROBUST_0 100  // 32-MFSK, LDPC rate 1/16, ~14 bps (hailing mode)
+#define ROBUST_1 101  // 16-MFSK x2, LDPC rate 1/16, ~22 bps
+#define ROBUST_2 102  // 16-MFSK x2, LDPC rate 1/4,  ~87 bps
+
+inline bool is_robust_config(int config) { return config >= 100 && config <= 102; }
+inline bool is_ofdm_config(int config) { return config >= 0 && config <= 16; }
+
+// Unified config ladder for gearshift (ROBUST → OFDM)
+// Used when robust_enabled + gearshift: ROBUST_0 → ROBUST_1 → ROBUST_2 → CONFIG_0 → ... → CONFIG_16
+static const int FULL_CONFIG_LADDER[] = {
+	ROBUST_0, ROBUST_1, ROBUST_2,
+	CONFIG_0, CONFIG_1, CONFIG_2, CONFIG_3, CONFIG_4, CONFIG_5, CONFIG_6,
+	CONFIG_7, CONFIG_8, CONFIG_9, CONFIG_10, CONFIG_11, CONFIG_12,
+	CONFIG_13, CONFIG_14, CONFIG_15, CONFIG_16
+};
+static const int FULL_CONFIG_LADDER_SIZE = 20;
+
+inline int config_ladder_index(int config) {
+	for (int i = 0; i < FULL_CONFIG_LADDER_SIZE; i++) {
+		if (FULL_CONFIG_LADDER[i] == config) return i;
+	}
+	return -1;
+}
+
+inline int config_ladder_up(int config, bool robust_enabled) {
+	if (!robust_enabled) {
+		// OFDM only: simple increment within CONFIG_0-16
+		return (config < CONFIG_16) ? config + 1 : config;
+	}
+	int idx = config_ladder_index(config);
+	if (idx >= 0 && idx < FULL_CONFIG_LADDER_SIZE - 1) return FULL_CONFIG_LADDER[idx + 1];
+	return config;
+}
+
+inline int config_ladder_down(int config, bool robust_enabled) {
+	if (!robust_enabled) {
+		return (config > CONFIG_0) ? config - 1 : config;
+	}
+	int idx = config_ladder_index(config);
+	if (idx > 0) return FULL_CONFIG_LADDER[idx - 1];
+	return config;
+}
+
+inline bool config_is_at_top(int config, bool robust_enabled) {
+	if (!robust_enabled) return config == CONFIG_16;
+	return config_ladder_index(config) == FULL_CONFIG_LADDER_SIZE - 1;
+}
+
+inline bool config_is_at_bottom(int config, bool robust_enabled) {
+	if (!robust_enabled) return config == CONFIG_0;
+	return config_ladder_index(config) == 0;
+}
+
 /*
  * Config	CODE	Mode	EsN0(FER<0,1)
 0	BPSK 	1/16	BPSK 1/16	-10

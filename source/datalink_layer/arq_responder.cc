@@ -137,6 +137,11 @@ void cl_arq_controller::process_messages_rx_data_control()
 			}
 			else if(messages_rx_buffer.type==DATA_LONG || messages_rx_buffer.type==DATA_SHORT)
 			{
+				printf("[RX-DATA] type=%d id=%d seq=%d/%d len=%d\n",
+					messages_rx_buffer.type, (int)(unsigned char)messages_rx_buffer.id,
+					messages_rx_buffer.sequence_number, data_batch_size,
+					messages_rx_buffer.length);
+				fflush(stdout);
 				add_message_rx_data(messages_rx_buffer.type, messages_rx_buffer.id, messages_rx_buffer.length, messages_rx_buffer.data);
 				set_receiving_timeout((data_batch_size-messages_rx_buffer.sequence_number-1)*message_transmission_time_ms+time_left_to_send_last_frame+ptt_on_delay_ms);
 				receiving_timer.start();
@@ -167,20 +172,46 @@ void cl_arq_controller::process_messages_rx_data_control()
 void cl_arq_controller::process_messages_acknowledging_control()
 {
 	message_batch_counter_tx=0;
+	printf("[ACK-CTRL] status=%d (need %d=RECEIVED), ack_cfg=%d\n",
+		messages_control.status, RECEIVED, ack_configuration);
+	fflush(stdout);
 	if(messages_control.status==RECEIVED)
 	{
 		messages_control.type=ACK_CONTROL;
 		messages_control.status=ACKED;
-		messages_batch_tx[message_batch_counter_tx]=messages_control;
-		message_batch_counter_tx++;
 		stats.nAcks_sent_control++;
 
+		printf("[ACK-CTRL] Sending ACK, loading config %d...\n", ack_configuration);
+		fflush(stdout);
 		load_configuration(ack_configuration, PHYSICAL_LAYER_ONLY,NO);
 
-		pad_messages_batch_tx(ack_batch_size);
-		send_batch();
+		if(ack_pattern_time_ms > 0)
+		{
+			// Level 3: send ACK tone pattern instead of LDPC frame
+			printf("[ACK-CTRL] Sending ACK pattern (Level 3)\n");
+			fflush(stdout);
+			send_ack_pattern();
+		}
+		else
+		{
+			// Level 2 / OFDM: send LDPC-encoded ACK frame
+			printf("[ACK-CTRL] Config loaded, sending batch of %d...\n", ack_batch_size);
+			fflush(stdout);
+			messages_batch_tx[message_batch_counter_tx]=messages_control;
+			message_batch_counter_tx++;
+			telecom_system->set_mfsk_ctrl_mode(true);
+			pad_messages_batch_tx(ack_batch_size);
+			send_batch();
+		}
 
+		printf("[ACK-CTRL] ACK sent, restoring config %d\n", data_configuration);
+		fflush(stdout);
 		load_configuration(data_configuration, PHYSICAL_LAYER_ONLY,YES);
+		// Expect data/ctrl frames next: use full Nsymb for capture.
+		// Frame completeness gating handles late arrivals adaptively.
+		telecom_system->set_mfsk_ctrl_mode(false);
+		telecom_system->data_container.frames_to_read =
+			telecom_system->data_container.preamble_nSymb + telecom_system->data_container.Nsymb;
 
 		messages_control.status=FREE;
 		connection_status=RECEIVING;
@@ -190,10 +221,10 @@ void cl_arq_controller::process_messages_acknowledging_control()
 		{
 			set_role(COMMANDER);
 			this->link_status=CONNECTED;
-			cl_timer ptt_off_delay;
-			ptt_off_delay.reset();
-			ptt_off_delay.start();
-			while(ptt_off_delay.get_elapsed_time_ms()<ptt_off_delay_ms);
+			cl_timer ptt_off_wait;
+			ptt_off_wait.reset();
+			ptt_off_wait.start();
+			while(ptt_off_wait.get_elapsed_time_ms()<ptt_off_delay_ms);
 			add_message_control(TEST_CONNECTION);
 			this->connection_status=TRANSMITTING_CONTROL;
 			switch_role_test_timer.reset();
@@ -219,81 +250,121 @@ void cl_arq_controller::process_messages_acknowledging_control()
 
 void cl_arq_controller::process_messages_acknowledging_data()
 {
-	// ACK_MULTI
 	int nAck_messages=0;
 	receiving_timer.stop();
 	receiving_timer.reset();
 
-	if(repeating_last_ack==YES)
+	if(ack_pattern_time_ms > 0)
 	{
-		messages_control.status=FREE;
-		message_batch_counter_tx=0;
-		if(messages_last_ack_bu.type==ACK_MULTI ||messages_last_ack_bu.type==ACK_RANGE)
+		// Level 3: send ACK tone pattern instead of LDPC-encoded ACK_MULTI
+		if(repeating_last_ack==NO)
 		{
-			messages_batch_ack[message_batch_counter_tx].type=messages_last_ack_bu.type;
-			messages_batch_ack[message_batch_counter_tx].id=messages_last_ack_bu.id;
-			messages_batch_ack[message_batch_counter_tx].length=messages_last_ack_bu.length;
-			for(int i=0;i<messages_batch_ack[message_batch_counter_tx].length;i++)
+			// Mark all received messages as ACKED and count for stats
+			for(int i=0; i<this->nMessages; i++)
 			{
-				messages_batch_ack[message_batch_counter_tx].data[i]=messages_last_ack_bu.data[i];
+				if(messages_rx[i].status==RECEIVED)
+				{
+					messages_rx[i].status=ACKED;
+					nAck_messages++;
+				}
 			}
-		}
-		else
-		{
-			messages_batch_ack[message_batch_counter_tx].type=NONE;
-			messages_batch_ack[message_batch_counter_tx].id=0;
-			messages_batch_ack[message_batch_counter_tx].length=0;
+			stats.nAcks_sent_data += nAck_messages;
 		}
 		repeating_last_ack=NO;
+		messages_control.status=FREE;
+
+		load_configuration(ack_configuration, PHYSICAL_LAYER_ONLY,NO);
+		send_ack_pattern();
+		load_configuration(data_configuration, PHYSICAL_LAYER_ONLY,YES);
+
+		// Expect data frames next: use full Nsymb for capture.
+		// Frame completeness gating handles late arrivals adaptively.
+		telecom_system->set_mfsk_ctrl_mode(false);
+		telecom_system->data_container.frames_to_read =
+			telecom_system->data_container.preamble_nSymb + telecom_system->data_container.Nsymb;
+
+		connection_status=RECEIVING;
 	}
 	else
 	{
-		nAck_messages=0;
-		for(int i=0;i<this->nMessages;i++)
+		// Level 2 / OFDM: send LDPC-encoded ACK_MULTI frame
+		if(repeating_last_ack==YES)
 		{
-			if(messages_rx[i].status==RECEIVED)
+			messages_control.status=FREE;
+			message_batch_counter_tx=0;
+			if(messages_last_ack_bu.type==ACK_MULTI ||messages_last_ack_bu.type==ACK_RANGE)
 			{
-				nAck_messages++;
+				messages_batch_ack[message_batch_counter_tx].type=messages_last_ack_bu.type;
+				messages_batch_ack[message_batch_counter_tx].id=messages_last_ack_bu.id;
+				messages_batch_ack[message_batch_counter_tx].length=messages_last_ack_bu.length;
+				for(int i=0;i<messages_batch_ack[message_batch_counter_tx].length;i++)
+				{
+					messages_batch_ack[message_batch_counter_tx].data[i]=messages_last_ack_bu.data[i];
+				}
 			}
-		}
-		message_batch_counter_tx=0;
-		messages_batch_ack[message_batch_counter_tx].type=ACK_MULTI;
-		messages_batch_ack[message_batch_counter_tx].id=0;
-		messages_batch_ack[message_batch_counter_tx].length=nAck_messages+1;
-		messages_batch_ack[message_batch_counter_tx].data=new char[nAck_messages+1];
-		messages_batch_ack[message_batch_counter_tx].data[0]=nAck_messages;
-
-		int counter=1;
-		for(int i=0;i<this->nMessages;i++)
-		{
-			if(messages_rx[i].status==RECEIVED)
+			else
 			{
-				messages_rx[i].status=ACKED;
-				messages_batch_ack[message_batch_counter_tx].data[counter]=i;
-				counter++;
+				messages_batch_ack[message_batch_counter_tx].type=NONE;
+				messages_batch_ack[message_batch_counter_tx].id=0;
+				messages_batch_ack[message_batch_counter_tx].length=0;
 			}
+			repeating_last_ack=NO;
 		}
-
-		messages_last_ack_bu.type=messages_batch_ack[message_batch_counter_tx].type;
-		messages_last_ack_bu.id=messages_batch_ack[message_batch_counter_tx].id;
-		messages_last_ack_bu.length=messages_batch_ack[message_batch_counter_tx].length;
-		for(int i=0;i<messages_last_ack_bu.length;i++)
+		else
 		{
-			messages_last_ack_bu.data[i]=messages_batch_ack[message_batch_counter_tx].data[i];
+			nAck_messages=0;
+			for(int i=0;i<this->nMessages;i++)
+			{
+				if(messages_rx[i].status==RECEIVED)
+				{
+					nAck_messages++;
+				}
+			}
+			message_batch_counter_tx=0;
+			messages_batch_ack[message_batch_counter_tx].type=ACK_MULTI;
+			messages_batch_ack[message_batch_counter_tx].id=0;
+			messages_batch_ack[message_batch_counter_tx].length=nAck_messages+1;
+			messages_batch_ack[message_batch_counter_tx].data=new char[nAck_messages+1];
+			messages_batch_ack[message_batch_counter_tx].data[0]=nAck_messages;
+
+			int counter=1;
+			for(int i=0;i<this->nMessages;i++)
+			{
+				if(messages_rx[i].status==RECEIVED)
+				{
+					messages_rx[i].status=ACKED;
+					messages_batch_ack[message_batch_counter_tx].data[counter]=i;
+					counter++;
+				}
+			}
+
+			messages_last_ack_bu.type=messages_batch_ack[message_batch_counter_tx].type;
+			messages_last_ack_bu.id=messages_batch_ack[message_batch_counter_tx].id;
+			messages_last_ack_bu.length=messages_batch_ack[message_batch_counter_tx].length;
+			for(int i=0;i<messages_last_ack_bu.length;i++)
+			{
+				messages_last_ack_bu.data[i]=messages_batch_ack[message_batch_counter_tx].data[i];
+			}
+			stats.nAcks_sent_data+=nAck_messages;
 		}
-		stats.nAcks_sent_data+=nAck_messages;
+		messages_batch_tx[message_batch_counter_tx]=messages_batch_ack[message_batch_counter_tx];
+		message_batch_counter_tx++;
+
+		load_configuration(ack_configuration, PHYSICAL_LAYER_ONLY,NO);
+
+		telecom_system->set_mfsk_ctrl_mode(true);  // data ACK TX (short ctrl frame)
+		pad_messages_batch_tx(ack_batch_size);
+		send_batch();
+
+		load_configuration(data_configuration, PHYSICAL_LAYER_ONLY,YES);
+		// Expect data frames next: use full Nsymb for capture.
+		// Frame completeness gating handles late arrivals adaptively.
+		telecom_system->set_mfsk_ctrl_mode(false);
+		telecom_system->data_container.frames_to_read =
+			telecom_system->data_container.preamble_nSymb + telecom_system->data_container.Nsymb;
+
+		connection_status=RECEIVING;
 	}
-	messages_batch_tx[message_batch_counter_tx]=messages_batch_ack[message_batch_counter_tx];
-	message_batch_counter_tx++;
-
-	load_configuration(ack_configuration, PHYSICAL_LAYER_ONLY,NO);
-
-	pad_messages_batch_tx(ack_batch_size);
-	send_batch();
-
-	load_configuration(data_configuration, PHYSICAL_LAYER_ONLY,YES);
-
-	connection_status=RECEIVING;
 
 	// ACK_RANGE
 	//	int nAcks_sent=0;
@@ -388,7 +459,16 @@ void cl_arq_controller::process_control_responder()
 
 			link_status=CONNECTION_RECEIVED;
 			connection_status=ACKNOWLEDGING_CONTROL;
-			messages_control.data[1]=1+rand()%0xfe;
+			if(ack_pattern_time_ms > 0)
+			{
+				// Level 3: ACK pattern carries no data, both sides use BROADCAST_ID
+				messages_control.data[1]=BROADCAST_ID;
+			}
+			else
+			{
+				// Level 2 / OFDM: assign random connection_id sent back in ACK frame
+				messages_control.data[1]=1+rand()%0xfe;
+			}
 			messages_control.length=2;
 			assigned_connection_id=messages_control.data[1];
 			watchdog_timer.start();
@@ -438,7 +518,7 @@ void cl_arq_controller::process_control_responder()
 	{
 		if(code==SET_CONFIG)
 		{
-			if(messages_control.data[1]!= current_configuration && messages_control.data[1]>=0 && messages_control.data[1]<NUMBER_OF_CONFIGS)
+			if(messages_control.data[1]!= current_configuration && (is_ofdm_config(messages_control.data[1]) || is_robust_config(messages_control.data[1])))
 			{
 				messages_control_backup();
 				data_configuration=messages_control.data[1];
@@ -545,11 +625,20 @@ void cl_arq_controller::process_buffer_data_responder()
 {
 	if(link_status==CONNECTED)
 	{
+		int fifo_used = fifo_buffer_rx.get_size() - fifo_buffer_rx.get_free_size();
+		if(fifo_used > 0)
+		{
+			printf("[DBG-RSP-TX] fifo_rx has %d bytes, tcp_status=%d\n",
+				fifo_used, tcp_socket_data.get_status());
+			fflush(stdout);
+		}
 		if (tcp_socket_data.get_status()==TCP_STATUS_ACCEPTED)
 		{
 			while(fifo_buffer_rx.get_size()!=fifo_buffer_rx.get_free_size())
 			{
 				tcp_socket_data.message->length=fifo_buffer_rx.pop(tcp_socket_data.message->buffer,max_data_length+max_header_length-DATA_LONG_HEADER_LENGTH);
+				printf("[DBG-RSP-TX] Sending %d bytes via TCP\n", tcp_socket_data.message->length);
+				fflush(stdout);
 				tcp_socket_data.transmit();
 			}
 		}

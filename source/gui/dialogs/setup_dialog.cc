@@ -38,6 +38,7 @@ SetupDialog::SetupDialog()
     , initial_config_(4)
     , ldpc_iterations_max_(50)
     , coarse_freq_sync_enabled_(false)
+    , robust_mode_enabled_(false)
     , hide_console_(false)
 {
     memset(my_callsign_, 0, sizeof(my_callsign_));
@@ -85,6 +86,7 @@ void SetupDialog::loadSettings() {
     initial_config_ = g_settings.initial_config;
     ldpc_iterations_max_ = g_settings.ldpc_iterations_max;
     coarse_freq_sync_enabled_ = g_settings.coarse_freq_sync_enabled;
+    robust_mode_enabled_ = g_settings.robust_mode_enabled;
 
     hide_console_ = g_settings.hide_console;
 }
@@ -161,6 +163,8 @@ bool SetupDialog::render() {
             g_gui_state.ldpc_iterations_max.store(ldpc_iterations_max_);
             g_settings.coarse_freq_sync_enabled = coarse_freq_sync_enabled_;
             g_gui_state.coarse_freq_sync_enabled.store(coarse_freq_sync_enabled_);
+            g_settings.robust_mode_enabled = robust_mode_enabled_;
+            g_gui_state.robust_mode_enabled.store(robust_mode_enabled_);
             g_settings.hide_console = hide_console_;
 
             settings_applied = true;
@@ -195,6 +199,8 @@ bool SetupDialog::render() {
             g_gui_state.ldpc_iterations_max.store(ldpc_iterations_max_);
             g_settings.coarse_freq_sync_enabled = coarse_freq_sync_enabled_;
             g_gui_state.coarse_freq_sync_enabled.store(coarse_freq_sync_enabled_);
+            g_settings.robust_mode_enabled = robust_mode_enabled_;
+            g_gui_state.robust_mode_enabled.store(robust_mode_enabled_);
             g_settings.hide_console = hide_console_;
 
             settings_applied = true;
@@ -357,6 +363,12 @@ void SetupDialog::renderGearShiftTab() {
     ImGui::Spacing();
 
     ImGui::Checkbox("Enable Gear Shifting", &gear_shift_enabled_);
+
+    ImGui::Spacing();
+
+    ImGui::Checkbox("Enable Robust Mode (MFSK)", &robust_mode_enabled_);
+    ImGui::TextWrapped("Uses narrowband FSK for weak-signal hailing and low-speed data. "
+                       "When combined with Gear Shift, hails on Robust then shifts to OFDM.");
 
     ImGui::Spacing();
 
