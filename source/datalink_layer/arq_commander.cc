@@ -242,14 +242,14 @@ void cl_arq_controller::process_messages_tx_control()
 		send_batch();
 		if(ack_pattern_time_ms > 0)
 		{
-			// Level 3: expect ACK tone pattern (not LDPC frame)
+			// Expect ACK tone pattern (not LDPC frame)
 			// Half-duplex: buffer flushed, wait for responder's ACK pattern.
 			telecom_system->data_container.frames_to_read =
 				cl_mfsk::ACK_PATTERN_NSYMB + 8;
 		}
 		else
 		{
-			// Level 2: expect short LDPC ctrl frame
+			// Fallback: expect short LDPC ctrl frame
 			telecom_system->set_mfsk_ctrl_mode(true);
 			telecom_system->data_container.frames_to_read =
 				telecom_system->data_container.preamble_nSymb + telecom_system->get_active_nsymb();
@@ -382,14 +382,14 @@ void cl_arq_controller::process_messages_tx_data()
 		send_batch();
 		if(ack_pattern_time_ms > 0)
 		{
-			// Level 3: expect ACK tone pattern (not LDPC frame)
+			// Expect ACK tone pattern (not LDPC frame)
 			// Half-duplex: buffer flushed, wait for responder's ACK pattern.
 			telecom_system->data_container.frames_to_read =
 				cl_mfsk::ACK_PATTERN_NSYMB + 8;
 		}
 		else
 		{
-			// Level 2: expect short LDPC ctrl frame
+			// Fallback: expect short LDPC ctrl frame
 			telecom_system->set_mfsk_ctrl_mode(true);
 			telecom_system->data_container.frames_to_read =
 				telecom_system->data_container.preamble_nSymb + telecom_system->get_active_nsymb();
@@ -407,7 +407,7 @@ void cl_arq_controller::process_messages_rx_acks_control()
 	{
 		if(ack_pattern_time_ms > 0)
 		{
-			// Level 3: detect ACK tone pattern instead of decoding LDPC frame
+			// Detect ACK tone pattern instead of decoding LDPC frame
 			// Only call receive_ack_pattern while still waiting for the ACK.
 			// Once ACKED, stop checking — re-detection would zero the buffer
 			// and destroy the next frame's preamble arriving during the guard.
@@ -433,7 +433,7 @@ void cl_arq_controller::process_messages_rx_acks_control()
 		}
 		else
 		{
-			// Level 2 / OFDM: decode LDPC ACK frame
+			// Fallback: decode LDPC ACK frame
 			this->receive();
 			if(messages_rx_buffer.status==RECEIVED && messages_rx_buffer.type==ACK_CONTROL)
 			{
@@ -489,7 +489,7 @@ void cl_arq_controller::process_messages_rx_acks_data()
 	{
 		if(ack_pattern_time_ms > 0)
 		{
-			// Level 3: detect ACK tone pattern
+			// Detect ACK tone pattern
 			// Only check while waiting — once detected, stop to avoid
 			// buffer zeroing that destroys the next frame's preamble.
 			if(data_ack_received==NO && receive_ack_pattern())
@@ -529,7 +529,7 @@ void cl_arq_controller::process_messages_rx_acks_data()
 		}
 		else
 		{
-			// Level 2 / OFDM: decode LDPC ACK frame
+			// Fallback: decode LDPC ACK frame
 			this->receive();
 			if(messages_rx_buffer.status==RECEIVED)
 			{
@@ -601,7 +601,7 @@ void cl_arq_controller::process_control_commander()
 			connection_attempt_timer.start();
 			if(ack_pattern_time_ms > 0)
 			{
-				// Level 3: ACK pattern carries no data, keep BROADCAST_ID
+				// ACK pattern carries no data, keep BROADCAST_ID
 				// (responder's assigned_connection_id is in the ACK frame payload
 				// which doesn't exist for tone patterns)
 				this->connection_id=BROADCAST_ID;
@@ -609,7 +609,7 @@ void cl_arq_controller::process_control_commander()
 			}
 			else
 			{
-				// Level 2 / OFDM: ACK frame carries responder's assigned connection_id
+				// Fallback: ACK frame carries responder's assigned connection_id
 				this->connection_id=messages_control.data[1];
 				this->assigned_connection_id=messages_control.data[1];
 			}

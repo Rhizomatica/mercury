@@ -187,14 +187,14 @@ void cl_arq_controller::process_messages_acknowledging_control()
 
 		if(ack_pattern_time_ms > 0)
 		{
-			// Level 3: send ACK tone pattern instead of LDPC frame
-			printf("[ACK-CTRL] Sending ACK pattern (Level 3)\n");
+			// Send ACK tone pattern (universal, all modes)
+			printf("[ACK-CTRL] Sending ACK pattern\n");
 			fflush(stdout);
 			send_ack_pattern();
 		}
 		else
 		{
-			// Level 2 / OFDM: send LDPC-encoded ACK frame
+			// Fallback: send LDPC-encoded ACK frame (not currently reachable)
 			printf("[ACK-CTRL] Config loaded, sending batch of %d...\n", ack_batch_size);
 			fflush(stdout);
 			messages_batch_tx[message_batch_counter_tx]=messages_control;
@@ -256,7 +256,7 @@ void cl_arq_controller::process_messages_acknowledging_data()
 
 	if(ack_pattern_time_ms > 0)
 	{
-		// Level 3: send ACK tone pattern instead of LDPC-encoded ACK_MULTI
+		// Send ACK tone pattern (universal, all modes)
 		if(repeating_last_ack==NO)
 		{
 			// Mark all received messages as ACKED and count for stats
@@ -287,7 +287,7 @@ void cl_arq_controller::process_messages_acknowledging_data()
 	}
 	else
 	{
-		// Level 2 / OFDM: send LDPC-encoded ACK_MULTI frame
+		// Fallback: send LDPC-encoded ACK_MULTI frame (not currently reachable)
 		if(repeating_last_ack==YES)
 		{
 			messages_control.status=FREE;
@@ -461,12 +461,12 @@ void cl_arq_controller::process_control_responder()
 			connection_status=ACKNOWLEDGING_CONTROL;
 			if(ack_pattern_time_ms > 0)
 			{
-				// Level 3: ACK pattern carries no data, both sides use BROADCAST_ID
+				// ACK pattern carries no data, both sides use BROADCAST_ID
 				messages_control.data[1]=BROADCAST_ID;
 			}
 			else
 			{
-				// Level 2 / OFDM: assign random connection_id sent back in ACK frame
+				// Fallback: assign random connection_id sent back in ACK frame
 				messages_control.data[1]=1+rand()%0xfe;
 			}
 			messages_control.length=2;

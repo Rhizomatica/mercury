@@ -47,7 +47,7 @@ public:
 	int preamble_tones[MAX_PREAMBLE_SYMB]; // Known tone indices per preamble symbol
 	int preamble_nSymb;                     // Number of preamble symbols used
 
-	// ACK pattern: known tone sequence for pattern-based ACK (Level 3)
+	// ACK pattern: known tone sequence for pattern-based ACK
 	// 8 unique tones transmitted 2x = 16 symbols total
 	static const int ACK_PATTERN_LEN = 8;
 	static const int ACK_PATTERN_REPS = 2;

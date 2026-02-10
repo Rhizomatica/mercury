@@ -457,16 +457,26 @@ void cl_telecom_system::transmit_bit(int* data, double* out, int message_locatio
 		ofdm.symbol_mod(&data_container.ofdm_framed_data[i*data_container.Nc],&data_container.ofdm_symbol_modulated_data[i*data_container.Nofdm]);
 	}
 
+	// MFSK amplitude boost: equalize drive level with OFDM
+	// power_normalization assumes Nc active subcarriers (OFDM), but MFSK has only nStreams.
+	// RMS scales as sqrt(nActive), so base boost = sqrt(Nc / nStreams).
+	// -2 dB trim: OFDM peak_clip removes ~2 dB of energy; MFSK isn't clipped (low PAPR).
+	double mfsk_boost = 1.0;
+	if(M == MOD_MFSK)
+	{
+		mfsk_boost = sqrt((double)data_container.Nc / mfsk.nStreams) * pow(10.0, -2.0 / 20.0);
+	}
+
 	for(int j=0;j<data_container.Nofdm*data_container.preamble_nSymb;j++)
 	{
 		data_container.preamble_symbol_modulated_data[j]/=power_normalization;
-		data_container.preamble_symbol_modulated_data[j]*=sqrt(output_power_Watt)*ofdm.preamble_configurator.boost;
+		data_container.preamble_symbol_modulated_data[j]*=sqrt(output_power_Watt)*ofdm.preamble_configurator.boost*mfsk_boost;
 	}
 
 	for(int j=0;j<data_container.Nofdm*active_nsymb;j++)
 	{
 		data_container.ofdm_symbol_modulated_data[j]/=power_normalization;
-		data_container.ofdm_symbol_modulated_data[j]*=sqrt(output_power_Watt);
+		data_container.ofdm_symbol_modulated_data[j]*=sqrt(output_power_Watt)*mfsk_boost;
 	}
 
 	// Apply test TX carrier offset for frequency sync testing
@@ -1021,14 +1031,16 @@ int cl_telecom_system::get_active_nbits() const
 // Returns number of passband samples written to out[]
 int cl_telecom_system::generate_ack_pattern_passband(double* out)
 {
-	if(M != MOD_MFSK || ack_pattern_passband_samples <= 0) return 0;
+	if(ack_pattern_passband_samples <= 0) return 0;
 
 	int nsymb = cl_mfsk::ACK_PATTERN_NSYMB;
 	float power_normalization = sqrt((double)(ofdm.Nfft * frequency_interpolation_rate));
 
 	// Generate subcarrier-domain ACK pattern (nsymb * Nc complex values)
 	// Reuse ofdm_framed_data buffer (allocated for Nsymb * Nc, nsymb=16 fits easily)
-	mfsk.generate_ack_pattern(data_container.ofdm_framed_data);
+	// Use data mfsk for MFSK modes (matches data M/nStreams), ack_mfsk for OFDM modes
+	cl_mfsk& ack_src = (M == MOD_MFSK) ? mfsk : ack_mfsk;
+	ack_src.generate_ack_pattern(data_container.ofdm_framed_data);
 
 	// IFFT each symbol to time domain
 	for(int i = 0; i < nsymb; i++)
@@ -1037,11 +1049,12 @@ int cl_telecom_system::generate_ack_pattern_passband(double* out)
 			&data_container.ofdm_symbol_modulated_data[i * data_container.Nofdm]);
 	}
 
-	// Power normalization (same as data frames)
+	// Amplitude boost: equalize drive level with OFDM (sqrt(Nc/nStreams) - 2 dB trim)
+	double ack_boost = sqrt((double)data_container.Nc / ack_src.nStreams) * pow(10.0, -2.0 / 20.0);
 	for(int j = 0; j < data_container.Nofdm * nsymb; j++)
 	{
 		data_container.ofdm_symbol_modulated_data[j] /= power_normalization;
-		data_container.ofdm_symbol_modulated_data[j] *= sqrt(output_power_Watt);
+		data_container.ofdm_symbol_modulated_data[j] *= sqrt(output_power_Watt) * ack_boost;
 	}
 
 	// Baseband to passband
@@ -1060,7 +1073,7 @@ int cl_telecom_system::generate_ack_pattern_passband(double* out)
 // Returns detection metric (0.0 = noise, up to ACK_PATTERN_NSYMB = perfect)
 double cl_telecom_system::detect_ack_pattern_from_passband(double* data, int size)
 {
-	if(M != MOD_MFSK || ack_pattern_passband_samples <= 0) return 0.0;
+	if(ack_pattern_passband_samples <= 0) return 0.0;
 
 	// Passband to baseband (use FIR_rx_data for proper image rejection)
 	ofdm.passband_to_baseband(data, size,
@@ -1069,13 +1082,15 @@ double cl_telecom_system::detect_ack_pattern_from_passband(double* data, int siz
 		1, &ofdm.FIR_rx_data);
 
 	// Run matched-filter ACK detector
+	// Use data mfsk for MFSK modes, ack_mfsk for OFDM modes
+	cl_mfsk& ack_src = (M == MOD_MFSK) ? mfsk : ack_mfsk;
 	double metric = ofdm.detect_ack_pattern(
 		data_container.baseband_data_interpolated, size,
 		data_container.interpolation_rate,
 		cl_mfsk::ACK_PATTERN_NSYMB,
-		mfsk.ack_tones, cl_mfsk::ACK_PATTERN_LEN,
-		mfsk.tone_hop_step, mfsk.M,
-		mfsk.nStreams, mfsk.stream_offsets);
+		ack_src.ack_tones, cl_mfsk::ACK_PATTERN_LEN,
+		ack_src.tone_hop_step, ack_src.M,
+		ack_src.nStreams, ack_src.stream_offsets);
 
 	return metric;
 }
@@ -1083,9 +1098,9 @@ double cl_telecom_system::detect_ack_pattern_from_passband(double* data, int siz
 // ACK pattern detection test: sweep SNR, measure detection metric and false alarm rate
 void cl_telecom_system::ack_pattern_detection_test()
 {
-	if(M != MOD_MFSK || ack_pattern_passband_samples <= 0)
+	if(ack_pattern_passband_samples <= 0)
 	{
-		printf("[ACK_TEST] Not MFSK mode or ack_pattern not configured\n");
+		printf("[ACK_TEST] ack_pattern not configured\n");
 		return;
 	}
 
@@ -2272,9 +2287,10 @@ void cl_telecom_system::load_configuration(int configuration)
 		data_container.Nc, data_container.Nsymb, data_container.nBits);
 	if(M == MOD_MFSK)
 	{
+		double _mfsk_boost = sqrt((double)data_container.Nc / mfsk.nStreams) * pow(10.0, -2.0 / 20.0);
 		printf("[PHY] MFSK: M=%d nStreams=%d bps=%d offsets=[", mfsk.M, mfsk.nStreams, mfsk.bits_per_symbol());
 		for(int i = 0; i < mfsk.nStreams; i++) printf("%s%d", i?",":"", mfsk.stream_offsets[i]);
-		printf("] Nc=%d\n", mfsk.Nc);
+		printf("] Nc=%d boost=%.1fdB\n", mfsk.Nc, 20.0*log10(_mfsk_boost));
 
 		// Set up short control frame parameters for MFSK modes.
 		// BER testing determined safe ctrl_nBits values (same waterfall as full frame):
@@ -2303,32 +2319,38 @@ void cl_telecom_system::load_configuration(int configuration)
 			printf("[PHY] Ctrl frame: nBits=%d nsymb=%d (%.0f%% of data)\n",
 				ctrl_nBits, ctrl_nsymb, 100.0 * ctrl_nsymb / data_container.Nsymb);
 
-		// ACK pattern: 16 known-tone symbols converted to passband
-		ack_pattern_passband_samples = cl_mfsk::ACK_PATTERN_NSYMB * data_container.Nofdm * frequency_interpolation_rate;
-
-		// Per-mode detection threshold, calibrated from BER test data:
-		// Noise-only metric: ~16 * nStreams / Nc (random energy fraction)
-		// Plus margin for sliding window max effect and noise variance
-		// ROBUST_0: noise max ~0.6, signal at -13 dB min ~0.7 → threshold 0.65
-		// ROBUST_1: noise max ~1.1, signal at -11 dB min ~1.8 → threshold 1.3
-		// ROBUST_2: noise max ~1.1, signal at -8 dB min ~2.0 → threshold 1.3
-		if(current_configuration == ROBUST_0)
-			ack_pattern_detection_threshold = 0.65;
-		else
-			ack_pattern_detection_threshold = 1.3;
-
-		printf("[PHY] ACK pattern: %d symbols, %d passband samples (%.0f ms), threshold=%.2f\n",
-			cl_mfsk::ACK_PATTERN_NSYMB, ack_pattern_passband_samples,
-			1000.0 * ack_pattern_passband_samples / sampling_frequency,
-			ack_pattern_detection_threshold);
 	}
 	else
 	{
 		ctrl_nBits = 0;
 		ctrl_nsymb = 0;
 		mfsk_ctrl_mode = false;
-		ack_pattern_passband_samples = 0;
 	}
+
+	// Universal ACK pattern: works for all modes (MFSK and OFDM)
+	// For OFDM modes, initialize a dedicated ack_mfsk with M=16, nStreams=1
+	if(M != MOD_MFSK)
+	{
+		ack_mfsk.init(16, data_container.Nc, 1);  // M=16, Nc=50, 1 stream centered in band
+	}
+
+	ack_pattern_passband_samples = cl_mfsk::ACK_PATTERN_NSYMB * data_container.Nofdm * frequency_interpolation_rate;
+
+	// Per-mode detection threshold, calibrated from BER test data:
+	// ROBUST_0 (-13 dB): noise max ~0.6, signal min ~0.7 → threshold 0.65
+	// ROBUST_1/2 (-11/-8 dB): noise max ~1.1, signal min ~1.8 → threshold 1.3
+	// OFDM (0 to +20 dB): M=16 nStreams=1 → noise metric ~0.06 (order-aware) → threshold 1.0
+	if(current_configuration == ROBUST_0)
+		ack_pattern_detection_threshold = 0.65;
+	else if(is_robust_config(current_configuration))
+		ack_pattern_detection_threshold = 1.3;
+	else
+		ack_pattern_detection_threshold = 1.0;
+
+	printf("[PHY] ACK pattern: %d symbols, %d passband samples (%.0f ms), threshold=%.2f\n",
+		cl_mfsk::ACK_PATTERN_NSYMB, ack_pattern_passband_samples,
+		1000.0 * ack_pattern_passband_samples / sampling_frequency,
+		ack_pattern_detection_threshold);
 }
 
 void cl_telecom_system::return_to_last_configuration()

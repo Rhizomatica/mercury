@@ -92,6 +92,7 @@ public:
 	cl_data_container data_container;
 	cl_psk psk;
 	cl_mfsk mfsk;
+	cl_mfsk ack_mfsk;  // Dedicated MFSK instance for ACK pattern (always initialized, all modes)
 	cl_awgn awgn_channel;
 	cl_error_rate error_rate;
 	cl_ofdm ofdm;
@@ -116,7 +117,7 @@ public:
 	int get_active_nsymb() const;  // ctrl_nsymb when mfsk_ctrl_mode, else Nsymb
 	int get_active_nbits() const;  // ctrl_nBits when mfsk_ctrl_mode, else nBits
 
-	// ACK pattern: short known-tone sequence for pattern-based ACK (Level 3)
+	// ACK pattern: short known-tone sequence for pattern-based ACK
 	int ack_pattern_passband_samples;    // = ACK_PATTERN_NSYMB * Nofdm * freq_interp_rate
 	double ack_pattern_detection_threshold;  // metric threshold for detection
 	int generate_ack_pattern_passband(double* out);  // TX: returns samples written

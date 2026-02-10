@@ -321,7 +321,7 @@ void cl_arq_controller::calculate_receiving_timeout()
 	{
 		if(ack_pattern_time_ms > 0)
 		{
-			// Level 3: ACK pattern. Allow responder decode + pattern TX + margins.
+			// ACK pattern. Allow responder decode + pattern TX + margins.
 			set_receiving_timeout(message_transmission_time_ms + ack_pattern_time_ms + ptt_on_delay_ms + ptt_off_delay_ms + 3000);
 		}
 		else
@@ -632,8 +632,8 @@ void cl_arq_controller::load_configuration(int configuration, int level, int bac
 	// time_left_to_send_last_frame=(float)telecom_system->speaker.frames_to_leave_transmit_fct/(float)(telecom_system->frequency_interpolation_rate*(telecom_system->bandwidth/telecom_system->ofdm.Nc)*telecom_system->ofdm.Nfft);
     time_left_to_send_last_frame=0;
 
-	// Level 3: compute ACK pattern transmission time for MFSK modes
-	if(telecom_system->ack_pattern_passband_samples > 0 && is_robust_config(configuration))
+	// ACK pattern transmission time (universal: all modes)
+	if(telecom_system->ack_pattern_passband_samples > 0)
 	{
 		ack_pattern_time_ms = (int)ceil(1000.0 * telecom_system->ack_pattern_passband_samples / telecom_system->sampling_frequency);
 	}
@@ -644,7 +644,7 @@ void cl_arq_controller::load_configuration(int configuration, int level, int bac
 
 	if(ack_pattern_time_ms > 0)
 	{
-		// Level 3: ACK is a short tone pattern, not a full LDPC frame
+		// ACK is a short tone pattern, not a full LDPC frame
 		set_ack_timeout_data((data_batch_size+1)*message_transmission_time_ms + ack_pattern_time_ms + 4*ptt_on_delay_ms + 4*ptt_off_delay_ms + 1500);
 		set_ack_timeout_control(control_batch_size*message_transmission_time_ms + ack_pattern_time_ms + 2*ptt_on_delay_ms + 2*ptt_off_delay_ms + 1500);
 	}
@@ -2035,7 +2035,7 @@ void cl_arq_controller::send_batch()
 		telecom_system->mfsk_ctrl_mode ? 1 : 0);
 }
 
-// Level 3: Transmit short ACK tone pattern instead of LDPC-encoded ACK frame
+// Transmit short ACK tone pattern instead of LDPC-encoded ACK frame
 void cl_arq_controller::send_ack_pattern()
 {
 	printf("[TX-ACK-PAT] Sending ACK pattern on CONFIG_%d\n", current_configuration);
@@ -2135,7 +2135,7 @@ void cl_arq_controller::send_ack_pattern()
 	fflush(stdout);
 }
 
-// Level 3: Receive and detect ACK tone pattern, returns true if detected
+// Receive and detect ACK tone pattern, returns true if detected
 bool cl_arq_controller::receive_ack_pattern()
 {
 	int signal_period = telecom_system->data_container.Nofdm * telecom_system->data_container.buffer_Nsymb * telecom_system->data_container.interpolation_rate;
