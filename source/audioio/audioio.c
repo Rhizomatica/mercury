@@ -1025,19 +1025,31 @@ void *radio_capture_prep_thread(void *telecom_ptr_void)
 		rx_transfer(buffer_temp, symbol_period);
 
 		MUTEX_LOCK(&capture_prep_mutex);
-		if(data_container_ptr->data_ready == 1)
-			data_container_ptr->nUnder_processing_events++;
 
-		shift_left(data_container_ptr->passband_delayed_data, signal_period, symbol_period);
+		// Re-read buffer parameters inside mutex to prevent use-after-free
+		// during config switches that deinit/reinit passband_delayed_data.
+		// The values read outside the mutex (signal_period) may be stale if
+		// deinit zeroed Nofdm/buffer_Nsymb between the read and the lock.
+		{
+			int sp = data_container_ptr->Nofdm * data_container_ptr->buffer_Nsymb * data_container_ptr->interpolation_rate;
+			int loc = sp - symbol_period - 1;
+			if(sp == 0 || data_container_ptr->passband_delayed_data == NULL || loc < 0) {
+				MUTEX_UNLOCK(&capture_prep_mutex);
+				continue;
+			}
 
+			if(data_container_ptr->data_ready == 1)
+				data_container_ptr->nUnder_processing_events++;
 
-		memcpy(&data_container_ptr->passband_delayed_data[location_of_last_frame], buffer_temp, symbol_period * sizeof(double));
+			shift_left(data_container_ptr->passband_delayed_data, sp, symbol_period);
+			memcpy(&data_container_ptr->passband_delayed_data[loc], buffer_temp, symbol_period * sizeof(double));
 
-		data_container_ptr->frames_to_read--;
-		if(data_container_ptr->frames_to_read < 0)
-			data_container_ptr->frames_to_read = 0;
+			data_container_ptr->frames_to_read--;
+			if(data_container_ptr->frames_to_read < 0)
+				data_container_ptr->frames_to_read = 0;
 
-		data_container_ptr->data_ready = 1;
+			data_container_ptr->data_ready = 1;
+		}
 		MUTEX_UNLOCK(&capture_prep_mutex);
 	}
 

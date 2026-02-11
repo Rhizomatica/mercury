@@ -78,6 +78,7 @@ struct st_receive_stats{
 	int all_zeros;
 	int mfsk_search_raw;  // MFSK anti-re-decode: base search position (symbol units, pre-nUnder adjustment)
 	int frame_overflow_symbols;  // >0: MFSK frame extends beyond captured audio by this many symbols
+	double coarse_metric;  // Schmidl-Cox correlation metric from coarse time_sync (diagnostic)
 };
 
 
@@ -121,7 +122,7 @@ public:
 	int ack_pattern_passband_samples;    // = ACK_PATTERN_NSYMB * Nofdm * freq_interp_rate
 	double ack_pattern_detection_threshold;  // metric threshold for detection
 	int generate_ack_pattern_passband(double* out);  // TX: returns samples written
-	double detect_ack_pattern_from_passband(double* data, int size);  // RX: returns metric
+	double detect_ack_pattern_from_passband(double* data, int size, int* out_matched = nullptr);  // RX: returns metric
 	void ack_pattern_detection_test();  // SNR sweep + false alarm test
 
 	st_receive_stats receive_stats;

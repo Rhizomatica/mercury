@@ -165,15 +165,29 @@ int cl_arq_controller::add_message_control(char code)
 		}
 		else if(code==SET_CONFIG)
 		{
-			messages_control.length=2;
 			messages_control.data[0]=code;
 			messages_control.id=0;
 
 			if(gear_shift_algorithm==SNR_BASED)
 			{
-				negotiated_configuration= get_configuration(measurements.SNR_downlink);
+				forward_configuration = get_configuration(measurements.SNR_downlink);
+				reverse_configuration = get_configuration(measurements.SNR_uplink);
 			}
-			messages_control.data[1]=negotiated_configuration;
+			else
+			{
+				// SUCCESS_BASED_LADDER: symmetric (same config both directions)
+				forward_configuration = negotiated_configuration;
+				reverse_configuration = negotiated_configuration;
+			}
+
+			negotiated_configuration = forward_configuration;
+			messages_control.data[1] = forward_configuration;
+			messages_control.data[2] = reverse_configuration;
+			messages_control.length = 3;
+
+			printf("[GEARSHIFT] SET_CONFIG: forward=%d reverse=%d (SNR down=%.1f up=%.1f)\n",
+				forward_configuration, reverse_configuration,
+				measurements.SNR_downlink, measurements.SNR_uplink);
 		}
 		else if(code==REPEAT_LAST_ACK)
 		{
@@ -242,10 +256,11 @@ void cl_arq_controller::process_messages_tx_control()
 		send_batch();
 		if(ack_pattern_time_ms > 0)
 		{
-			// Expect ACK tone pattern (not LDPC frame)
-			// Half-duplex: buffer flushed, wait for responder's ACK pattern.
-			telecom_system->data_container.frames_to_read =
-				cl_mfsk::ACK_PATTERN_NSYMB + 8;
+			// Expect ACK tone pattern. Poll frequently — receive_ack_pattern()
+			// scans only the tail of the buffer, so each poll is cheap (~120μs).
+			// The ACK arrives after responder decode + prep + TX + audio latency;
+			// polling adapts to any round-trip time without timing estimation.
+			telecom_system->data_container.frames_to_read = 4;
 		}
 		else
 		{
@@ -256,8 +271,13 @@ void cl_arq_controller::process_messages_tx_control()
 		}
 		connection_status=RECEIVING_ACKS_CONTROL;
 
-		load_configuration(ack_configuration, PHYSICAL_LAYER_ONLY,NO);
+		// ACK pattern detection uses dedicated ack_mfsk — no config switch needed
+		if(ack_pattern_time_ms <= 0)
+			load_configuration(ack_configuration, PHYSICAL_LAYER_ONLY,NO);
 
+		// Recalculate timeout: guard delays from prior ACK detection can leave
+		// receiving_timeout stale (e.g. 900ms), too short for the control round-trip.
+		calculate_receiving_timeout();
 		receiving_timer.start();
 		printf("[CMD-RX] Entering receive mode: ack_cfg=%d recv_timeout=%d msg_tx_time=%d ctrl_tx_time=%d ack_batch=%d ftr=%d\n",
 			ack_configuration, receiving_timeout, message_transmission_time_ms, ctrl_transmission_time_ms, ack_batch_size,
@@ -382,10 +402,8 @@ void cl_arq_controller::process_messages_tx_data()
 		send_batch();
 		if(ack_pattern_time_ms > 0)
 		{
-			// Expect ACK tone pattern (not LDPC frame)
-			// Half-duplex: buffer flushed, wait for responder's ACK pattern.
-			telecom_system->data_container.frames_to_read =
-				cl_mfsk::ACK_PATTERN_NSYMB + 8;
+			// Expect ACK tone pattern — poll frequently (same as control path).
+			telecom_system->data_container.frames_to_read = 4;
 		}
 		else
 		{
@@ -396,7 +414,12 @@ void cl_arq_controller::process_messages_tx_data()
 		}
 		data_ack_received=NO;
 		connection_status=RECEIVING_ACKS_DATA;
-		load_configuration(ack_configuration, PHYSICAL_LAYER_ONLY,NO);
+		// ACK pattern detection uses dedicated ack_mfsk — no config switch needed
+		if(ack_pattern_time_ms <= 0)
+			load_configuration(ack_configuration, PHYSICAL_LAYER_ONLY,NO);
+		// Recalculate timeout: guard delays from prior ACK detection can leave
+		// receiving_timeout stale, too short for the next ACK round-trip.
+		calculate_receiving_timeout();
 		receiving_timer.start();
 	}
 }
@@ -417,6 +440,9 @@ void cl_arq_controller::process_messages_rx_acks_control()
 				{
 					printf("[CMD-ACK-PAT] Control ACK pattern detected!\n");
 					fflush(stdout);
+					// Flush old batch audio from playback buffer so responder
+					// doesn't demodulate stale frames before the new batch.
+					clear_buffer(playback_buffer);
 					link_timer.start();
 					watchdog_timer.start();
 					gear_shift_timer.stop();
@@ -439,6 +465,9 @@ void cl_arq_controller::process_messages_rx_acks_control()
 			{
 				if(messages_rx_buffer.data[0]==messages_control.data[0] && messages_control.status==PENDING_ACK)
 				{
+					// Flush old batch audio from playback buffer so responder
+					// doesn't demodulate stale frames before the new batch.
+					clear_buffer(playback_buffer);
 					for(int j=0;j<(max_data_length+max_header_length-CONTROL_ACK_CONTROL_HEADER_LENGTH);j++)
 					{
 						messages_control.data[j]=messages_rx_buffer.data[j];
@@ -467,7 +496,9 @@ void cl_arq_controller::process_messages_rx_acks_control()
 	{
 		// Restore receiving_timeout if batch drain logic adjusted it
 		calculate_receiving_timeout();
-		load_configuration(data_configuration, PHYSICAL_LAYER_ONLY,YES);
+		// Only restore data config if we switched to ack config (LDPC ACK path)
+		if(ack_pattern_time_ms <= 0)
+			load_configuration(data_configuration, PHYSICAL_LAYER_ONLY,YES);
 		if(messages_control.status==ACKED)
 		{
 			process_control_commander();
@@ -496,6 +527,9 @@ void cl_arq_controller::process_messages_rx_acks_data()
 			{
 				printf("[CMD-ACK-PAT] Data ACK pattern detected!\n");
 				fflush(stdout);
+				// Flush old batch audio from playback buffer so responder
+				// doesn't demodulate stale frames before the new batch.
+				clear_buffer(playback_buffer);
 				link_timer.start();
 				watchdog_timer.start();
 				gear_shift_timer.stop();
@@ -533,6 +567,9 @@ void cl_arq_controller::process_messages_rx_acks_data()
 			this->receive();
 			if(messages_rx_buffer.status==RECEIVED)
 			{
+				// Flush old batch audio from playback buffer so responder
+				// doesn't demodulate stale frames before the new batch.
+				clear_buffer(playback_buffer);
 				link_timer.start();
 				watchdog_timer.start();
 				gear_shift_timer.stop();
@@ -572,17 +609,53 @@ void cl_arq_controller::process_messages_rx_acks_data()
 	}
 	else if (data_ack_received==NO && !(last_message_sent_type==CONTROL && last_message_sent_code==REPEAT_LAST_ACK))
 	{
-		load_configuration(data_configuration, PHYSICAL_LAYER_ONLY,YES);
+		consecutive_data_acks = 0;  // Reset on failure
+		if(ack_pattern_time_ms <= 0)
+			load_configuration(data_configuration, PHYSICAL_LAYER_ONLY,YES);
 		add_message_control(REPEAT_LAST_ACK);
 	}
 	else
 	{
-		load_configuration(data_configuration, PHYSICAL_LAYER_ONLY,YES);
+		if(ack_pattern_time_ms <= 0)
+			load_configuration(data_configuration, PHYSICAL_LAYER_ONLY,YES);
 		if (last_message_sent_type==CONTROL && last_message_sent_code==REPEAT_LAST_ACK)
 		{
 			stats.nNAcked_control++;
 		}
 		this->cleanup();
+
+		// Frame-level gearshift: after N consecutive successful data ACKs, shift up immediately
+		if(data_ack_received==YES && gear_shift_on==YES && gear_shift_algorithm==SUCCESS_BASED_LADDER &&
+			messages_control.status==FREE &&
+			!config_is_at_top(current_configuration, robust_enabled))
+		{
+			consecutive_data_acks++;
+			if(consecutive_data_acks >= frame_shift_threshold)
+			{
+				negotiated_configuration = config_ladder_up(current_configuration, robust_enabled);
+				printf("[GEARSHIFT] FRAME UP: %d consecutive ACKs, config %d -> %d\n",
+					consecutive_data_acks, current_configuration, negotiated_configuration);
+				fflush(stdout);
+				consecutive_data_acks = 0;
+
+				// Put unsent messages back into TX FIFO for re-encoding at new config
+				for(int i=0; i<nMessages; i++)
+				{
+					if(messages_tx[i].status == ADDED_TO_LIST || messages_tx[i].status == ADDED_TO_BATCH_BUFFER)
+					{
+						fifo_buffer_tx.push(messages_tx[i].data, messages_tx[i].length);
+					}
+					messages_tx[i].status = FREE;
+				}
+				fifo_buffer_backup.flush();
+				block_under_tx = NO;
+
+				add_message_control(SET_CONFIG);
+				connection_status = TRANSMITTING_CONTROL;
+				return;
+			}
+		}
+
 		connection_status=TRANSMITTING_DATA;
 	}
 }
@@ -627,19 +700,17 @@ void cl_arq_controller::process_control_commander()
 			switch_role_test_timer.stop();
 			switch_role_test_timer.reset();
 
-			if(gear_shift_on==YES)
+			if(gear_shift_on==YES && gear_shift_algorithm==SNR_BASED)
 			{
-				if(gear_shift_algorithm==SNR_BASED)
-				{
-					this->link_status=NEGOTIATING;
-					connection_status=TRANSMITTING_CONTROL;
-					link_timer.start();
-					watchdog_timer.start();
-					gear_shift_timer.start();
-				}
+				this->link_status=NEGOTIATING;
+				connection_status=TRANSMITTING_CONTROL;
+				link_timer.start();
+				watchdog_timer.start();
+				gear_shift_timer.start();
 			}
 			else
 			{
+				// gear_shift off, or SUCCESS_BASED_LADDER (defers SET_CONFIG to post-block)
 				if(this->link_status==CONNECTION_ACCEPTED)
 				{
 					std::string str="CONNECTED "+this->my_call_sign+" "+this->destination_call_sign+" "+ std::to_string(telecom_system->bandwidth)+"\r";
@@ -730,8 +801,19 @@ void cl_arq_controller::process_control_commander()
 							if(!config_is_at_top(current_configuration, robust_enabled))
 							{
 								negotiated_configuration=config_ladder_up(current_configuration, robust_enabled);
+								printf("[GEARSHIFT] LADDER UP: success=%.0f%% > %.0f%%, config %d -> %d\n",
+									last_transmission_block_stats.success_rate_data, gear_shift_up_success_rate_precentage,
+									current_configuration, negotiated_configuration);
+								fflush(stdout);
 								cleanup();
 								add_message_control(SET_CONFIG);
+							}
+							else
+							{
+								printf("[GEARSHIFT] LADDER: at top (config %d), success=%.0f%%\n",
+									current_configuration, last_transmission_block_stats.success_rate_data);
+								fflush(stdout);
+								this->connection_status=TRANSMITTING_DATA;
 							}
 						}
 						else if(last_transmission_block_stats.success_rate_data<gear_shift_down_success_rate_precentage)
@@ -739,13 +821,27 @@ void cl_arq_controller::process_control_commander()
 							if(!config_is_at_bottom(current_configuration, robust_enabled))
 							{
 								negotiated_configuration=config_ladder_down(current_configuration, robust_enabled);
+								printf("[GEARSHIFT] LADDER DOWN: success=%.0f%% < %.0f%%, config %d -> %d\n",
+									last_transmission_block_stats.success_rate_data, gear_shift_down_success_rate_precentage,
+									current_configuration, negotiated_configuration);
+								fflush(stdout);
 								cleanup();
 								add_message_control(SET_CONFIG);
+							}
+							else
+							{
+								printf("[GEARSHIFT] LADDER: at bottom (config %d), success=%.0f%%\n",
+									current_configuration, last_transmission_block_stats.success_rate_data);
+								fflush(stdout);
+								this->connection_status=TRANSMITTING_DATA;
 							}
 							gear_shift_blocked_for_nBlocks=0;
 						}
 						else
 						{
+							printf("[GEARSHIFT] LADDER: hold config %d, success=%.0f%%\n",
+								current_configuration, last_transmission_block_stats.success_rate_data);
+							fflush(stdout);
 							this->connection_status=TRANSMITTING_DATA;
 						}
 					}
@@ -758,6 +854,22 @@ void cl_arq_controller::process_control_commander()
 			}
 			else if (messages_control.data[0]==SWITCH_ROLE)
 			{
+				// Asymmetric gearshift: swap forward/reverse for the return path
+				if(forward_configuration != CONFIG_NONE && reverse_configuration != CONFIG_NONE)
+				{
+					char tmp = forward_configuration;
+					forward_configuration = reverse_configuration;
+					reverse_configuration = tmp;
+
+					if(forward_configuration != current_configuration)
+					{
+						data_configuration = forward_configuration;
+						load_configuration(data_configuration, PHYSICAL_LAYER_ONLY, YES);
+						printf("[GEARSHIFT] SWITCH_ROLE: loaded config %d for return path\n",
+							forward_configuration);
+					}
+				}
+
 				set_role(RESPONDER);
 				this->link_status=CONNECTED;
 				this->connection_status=RECEIVING;
@@ -775,6 +887,37 @@ void cl_arq_controller::process_control_commander()
 			}
 			else if (messages_control.data[0]==SET_CONFIG)
 			{
+				// SET_CONFIG ACK received: apply the new config now
+				gear_shift_timer.stop();
+				gear_shift_timer.reset();
+				if(data_configuration != current_configuration)
+				{
+					messages_control_backup();
+					load_configuration(data_configuration, PHYSICAL_LAYER_ONLY, YES);
+					messages_control_restore();
+					printf("[GEARSHIFT] SET_CONFIG ACKed, loaded config %d\n", data_configuration);
+					fflush(stdout);
+
+					// Re-fill TX messages for the new config's message sizes
+					for(int i=0;i<nMessages;i++)
+					{
+						messages_tx[i].status=FREE;
+					}
+					int data_read_size;
+					for(int i=0;i<get_nTotal_messages();i++)
+					{
+						data_read_size=fifo_buffer_backup.pop(message_TxRx_byte_buffer,max_data_length+max_header_length);
+						if(data_read_size!=0)
+						{
+							fifo_buffer_tx.push(message_TxRx_byte_buffer,data_read_size);
+						}
+						else
+						{
+							break;
+						}
+					}
+					fifo_buffer_backup.flush();
+				}
 				this->connection_status=TRANSMITTING_DATA;
 				watchdog_timer.start();
 				link_timer.start();

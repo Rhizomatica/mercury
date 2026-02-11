@@ -181,37 +181,51 @@ void cl_arq_controller::process_messages_acknowledging_control()
 		messages_control.status=ACKED;
 		stats.nAcks_sent_control++;
 
-		printf("[ACK-CTRL] Sending ACK, loading config %d...\n", ack_configuration);
-		fflush(stdout);
-		load_configuration(ack_configuration, PHYSICAL_LAYER_ONLY,NO);
-
 		if(ack_pattern_time_ms > 0)
 		{
-			// Send ACK tone pattern (universal, all modes)
-			printf("[ACK-CTRL] Sending ACK pattern\n");
+			// ACK pattern uses dedicated ack_mfsk — no config switch needed
+			printf("[ACK-CTRL] Sending ACK pattern (no config switch)\n");
 			fflush(stdout);
 			send_ack_pattern();
+			// If config changed (e.g., SET_CONFIG), load the new data config now.
+			// ACK was sent on old config (correct — commander is still on old config),
+			// but we need to switch to new config before receiving data.
+			if(data_configuration != current_configuration)
+			{
+				printf("[ACK-CTRL] Loading new data config %d (was %d)\n",
+					data_configuration, current_configuration);
+				fflush(stdout);
+				load_configuration(data_configuration, PHYSICAL_LAYER_ONLY, YES);
+			}
 		}
 		else
 		{
-			// Fallback: send LDPC-encoded ACK frame (not currently reachable)
-			printf("[ACK-CTRL] Config loaded, sending batch of %d...\n", ack_batch_size);
+			// Fallback: LDPC ACK needs ack_configuration for correct modulation
+			printf("[ACK-CTRL] Sending LDPC ACK, loading config %d...\n", ack_configuration);
 			fflush(stdout);
+			load_configuration(ack_configuration, PHYSICAL_LAYER_ONLY,NO);
 			messages_batch_tx[message_batch_counter_tx]=messages_control;
 			message_batch_counter_tx++;
 			telecom_system->set_mfsk_ctrl_mode(true);
 			pad_messages_batch_tx(ack_batch_size);
 			send_batch();
+			load_configuration(data_configuration, PHYSICAL_LAYER_ONLY,YES);
 		}
-
-		printf("[ACK-CTRL] ACK sent, restoring config %d\n", data_configuration);
-		fflush(stdout);
-		load_configuration(data_configuration, PHYSICAL_LAYER_ONLY,YES);
-		// Expect data/ctrl frames next: use full Nsymb for capture.
-		// Frame completeness gating handles late arrivals adaptively.
+		// Capture frame + turnaround gap: ~1200ms for ACK to propagate, commander
+		// guard delay, ptt_on, and VB-Cable latency. Frame completeness gating
+		// handles cases where turnaround exceeds this estimate.
 		telecom_system->set_mfsk_ctrl_mode(false);
-		telecom_system->data_container.frames_to_read =
-			telecom_system->data_container.preamble_nSymb + telecom_system->data_container.Nsymb;
+		{
+			double sym_time_ms = telecom_system->data_container.Nofdm
+				* telecom_system->data_container.interpolation_rate / 48.0;
+			int turnaround_symb = (int)ceil(1200.0 / sym_time_ms) + 4;
+			int ftr = telecom_system->data_container.preamble_nSymb
+				+ telecom_system->data_container.Nsymb
+				+ turnaround_symb;
+			int buf_nsymb = telecom_system->data_container.buffer_Nsymb.load();
+			if(ftr > buf_nsymb) ftr = buf_nsymb;
+			telecom_system->data_container.frames_to_read = ftr;
+		}
 
 		messages_control.status=FREE;
 		connection_status=RECEIVING;
@@ -225,8 +239,31 @@ void cl_arq_controller::process_messages_acknowledging_control()
 			ptt_off_wait.reset();
 			ptt_off_wait.start();
 			while(ptt_off_wait.get_elapsed_time_ms()<ptt_off_delay_ms);
-			add_message_control(TEST_CONNECTION);
-			this->connection_status=TRANSMITTING_CONTROL;
+
+			// Asymmetric gearshift: swap forward/reverse for the return path
+			if(forward_configuration != CONFIG_NONE && reverse_configuration != CONFIG_NONE)
+			{
+				char tmp = forward_configuration;
+				forward_configuration = reverse_configuration;
+				reverse_configuration = tmp;
+
+				if(forward_configuration != current_configuration)
+				{
+					data_configuration = forward_configuration;
+					load_configuration(data_configuration, PHYSICAL_LAYER_ONLY, YES);
+				}
+
+				printf("[GEARSHIFT] SWITCH_ROLE: transmitting at config %d (skip TEST_CONNECTION)\n",
+					forward_configuration);
+				this->connection_status=TRANSMITTING_DATA;
+			}
+			else
+			{
+				// No asymmetric negotiation (old firmware): fall back to TEST_CONNECTION
+				add_message_control(TEST_CONNECTION);
+				this->connection_status=TRANSMITTING_CONTROL;
+			}
+
 			switch_role_test_timer.reset();
 			switch_role_test_timer.start();
 			last_message_received_type=NONE;
@@ -273,15 +310,24 @@ void cl_arq_controller::process_messages_acknowledging_data()
 		repeating_last_ack=NO;
 		messages_control.status=FREE;
 
-		load_configuration(ack_configuration, PHYSICAL_LAYER_ONLY,NO);
+		// ACK pattern uses dedicated ack_mfsk (M=16, nStreams=1) — no config switch needed
 		send_ack_pattern();
-		load_configuration(data_configuration, PHYSICAL_LAYER_ONLY,YES);
 
-		// Expect data frames next: use full Nsymb for capture.
-		// Frame completeness gating handles late arrivals adaptively.
+		// Capture frame + turnaround gap: ~1200ms for ACK to propagate, commander
+		// guard delay, ptt_on, and VB-Cable latency. Frame completeness gating
+		// handles cases where turnaround exceeds this estimate.
 		telecom_system->set_mfsk_ctrl_mode(false);
-		telecom_system->data_container.frames_to_read =
-			telecom_system->data_container.preamble_nSymb + telecom_system->data_container.Nsymb;
+		{
+			double sym_time_ms = telecom_system->data_container.Nofdm
+				* telecom_system->data_container.interpolation_rate / 48.0;
+			int turnaround_symb = (int)ceil(1200.0 / sym_time_ms) + 4;
+			int ftr = telecom_system->data_container.preamble_nSymb
+				+ telecom_system->data_container.Nsymb
+				+ turnaround_symb;
+			int buf_nsymb = telecom_system->data_container.buffer_Nsymb.load();
+			if(ftr > buf_nsymb) ftr = buf_nsymb;
+			telecom_system->data_container.frames_to_read = ftr;
+		}
 
 		connection_status=RECEIVING;
 	}
@@ -518,12 +564,23 @@ void cl_arq_controller::process_control_responder()
 	{
 		if(code==SET_CONFIG)
 		{
-			if(messages_control.data[1]!= current_configuration && (is_ofdm_config(messages_control.data[1]) || is_robust_config(messages_control.data[1])))
+			// Asymmetric gearshift: extract forward and reverse configs
+			// Backward compat: 2-byte SET_CONFIG from old firmware → symmetric
+			forward_configuration = messages_control.data[1];
+			reverse_configuration = (messages_control.length >= 3) ?
+				messages_control.data[2] : messages_control.data[1];
+
+			printf("[GEARSHIFT] Received SET_CONFIG: forward=%d reverse=%d (len=%d)\n",
+				forward_configuration, reverse_configuration, messages_control.length);
+
+			if(forward_configuration != current_configuration &&
+				(is_ofdm_config(forward_configuration) || is_robust_config(forward_configuration)))
 			{
-				messages_control_backup();
-				data_configuration=messages_control.data[1];
-				load_configuration(data_configuration,PHYSICAL_LAYER_ONLY,YES);
-				messages_control_restore();
+				// Don't load_configuration here — ack_configuration must stay on
+				// the OLD config so the ACK reaches the commander (still on old config).
+				// Just save data_configuration; acknowledging_control will call
+				// load_configuration(data_configuration, ...) after the ACK is sent.
+				data_configuration = forward_configuration;
 			}
 
 			connection_status=ACKNOWLEDGING_CONTROL;

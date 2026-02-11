@@ -22,7 +22,6 @@
 
 #include "physical_layer/data_container.h"
 
-
 cl_data_container::cl_data_container()
 {
 	this->nData=0;
@@ -120,7 +119,17 @@ void cl_data_container::set_size(int nData, int Nc, int M, int Nfft , int Nofdm,
 
 	this->bit_energy_dispersal_sequence=new int[N_MAX];
 
-	this->buffer_Nsymb=(preamble_nSymb+Nsymb)*2;
+	// Buffer must accommodate frame + turnaround gap after ACK flush.
+	// Turnaround: ~1200ms (VB-Cable + ACK poll + commander guard + ptt_on + VB-Cable).
+	// Also need at least frame*2 for preamble search margin during batch reception.
+	double sym_time_ms = 1000.0 * Nofdm * frequency_interpolation_rate / 48000.0;
+	int turnaround_symb = (int)ceil(1200.0 / sym_time_ms) + 4;  // +4 margin
+	int frame_symb = preamble_nSymb + Nsymb;
+	int min_buf = frame_symb * 2;
+	int min_for_turnaround = frame_symb + turnaround_symb;
+	if(min_for_turnaround > min_buf) min_buf = min_for_turnaround;
+	if(min_buf < 32) min_buf = 32;
+	this->buffer_Nsymb = min_buf;
 
 	this->passband_data=new double[Nofdm*(Nsymb+preamble_nSymb)*frequency_interpolation_rate];
 	this->passband_delayed_data=new double[2*Nofdm*buffer_Nsymb*frequency_interpolation_rate];
@@ -298,7 +307,6 @@ void cl_data_container::deinit()
 		delete[] this->baseband_data_interpolated;
 		this->baseband_data_interpolated=NULL;
 	}
-
 	if(this->passband_data_tx!=NULL)
 	{
 		delete[] this->passband_data_tx;
@@ -309,13 +317,11 @@ void cl_data_container::deinit()
 		delete[] this->passband_data_tx_buffer;
 		this->passband_data_tx_buffer=NULL;
 	}
-
 	if(this->passband_data_tx_filtered_fir_1!=NULL)
 	{
 		delete[] this->passband_data_tx_filtered_fir_1;
 		this->passband_data_tx_filtered_fir_1=NULL;
 	}
-
 	if(this->passband_data_tx_filtered_fir_2!=NULL)
 	{
 		delete[] this->passband_data_tx_filtered_fir_2;

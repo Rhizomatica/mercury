@@ -614,8 +614,11 @@ st_receive_stats cl_telecom_system::receive_byte(double *data, int* out)
 
 	if(mfsk_fixed_delay >= 0)
 	{
-		// Known delay (BER test) - bypass time_sync entirely
+		// Known delay (BER test or overflow recapture) - bypass time_sync entirely.
+		// BER test: delay set per-frame at line 293, clearing is safe.
+		// Overflow recapture: delay pre-adjusted for buffer shift, use once.
 		receive_stats.delay = mfsk_fixed_delay;
+		mfsk_fixed_delay = -1;
 		pream_symb_loc = receive_stats.delay / (data_container.Nofdm * data_container.interpolation_rate);
 		if(pream_symb_loc < 1) { pream_symb_loc = 1; }
 		receive_stats.signal_stregth_dbm = 0;
@@ -635,7 +638,9 @@ st_receive_stats cl_telecom_system::receive_byte(double *data, int* out)
 		}
 		else
 		{
-			receive_stats.delay=ofdm.time_sync_preamble(data_container.baseband_data_interpolated,data_container.Nofdm*(2*data_container.preamble_nSymb+data_container.Nsymb)*frequency_interpolation_rate,data_container.interpolation_rate,0,step, 1);
+			TimeSyncResult coarse_result = ofdm.time_sync_preamble_with_metric(data_container.baseband_data_interpolated,data_container.Nofdm*(2*data_container.preamble_nSymb+data_container.Nsymb)*frequency_interpolation_rate,data_container.interpolation_rate,0,step, 1);
+			receive_stats.delay = coarse_result.delay;
+			receive_stats.coarse_metric = coarse_result.correlation;
 		}
 		pream_symb_loc=receive_stats.delay/(data_container.Nofdm*data_container.interpolation_rate);
 		if(pream_symb_loc<1){pream_symb_loc=1;}
@@ -659,12 +664,141 @@ st_receive_stats cl_telecom_system::receive_byte(double *data, int* out)
 		}
 	}
 
-	// Widened lower bound to accept earlier preamble detection (was preamble_nSymb+Nsymb/2)
-	int lower_bound = data_container.preamble_nSymb;  // Minimum: just after preamble could fit
+	int lower_bound = data_container.preamble_nSymb;
 	int upper_bound = data_container.buffer_Nsymb-(data_container.Nsymb+data_container.preamble_nSymb);
+
+	if(M != MOD_MFSK)
+	{
+		printf("[OFDM-SYNC] coarse: pream_symb=%d delay=%d bounds=[%d,%d] metric=%.3f %s\n",
+			pream_symb_loc, receive_stats.delay, lower_bound, upper_bound,
+			receive_stats.coarse_metric,
+			(pream_symb_loc > lower_bound && pream_symb_loc < upper_bound) ? "PASS" : "SKIP");
+		fflush(stdout);
+	}
 
 	if(pream_symb_loc > lower_bound && pream_symb_loc < upper_bound)
 	{
+		// Signal energy gate: reject false preamble detections in silence.
+		// Schmidl-Cox gives high correlation on near-zero noise (ratio of tiny
+		// values is unstable). Check actual signal energy at the detected
+		// preamble position before spending ~120ms on 3 LDPC decode trials.
+		bool energy_ok = true;
+		if(M != MOD_MFSK)
+		{
+			int sym_samples = data_container.Nofdm * frequency_interpolation_rate;
+			int buf_samples = data_container.Nofdm * data_container.buffer_Nsymb * frequency_interpolation_rate;
+			double energy_sum = 0.0;
+			int count = 0;
+			for(int i = 0; i < sym_samples && (receive_stats.delay + i) < buf_samples; i++)
+			{
+				double re = data_container.baseband_data_interpolated[receive_stats.delay + i].real();
+				double im = data_container.baseband_data_interpolated[receive_stats.delay + i].imag();
+				energy_sum += re*re + im*im;
+				count++;
+			}
+			double mean_energy = (count > 0) ? energy_sum / count : 0.0;
+
+			// Threshold: real OFDM signal has mean energy ~0.05-0.25;
+			// VB-Cable silence has ~1e-10. Use 0.001 as conservative gate.
+			if(mean_energy < 0.001)
+			{
+				printf("[OFDM-SYNC] energy=%.2e at delay=%d — silence, skipping decode\n",
+					mean_energy, receive_stats.delay);
+				fflush(stdout);
+				energy_ok = false;
+			}
+
+			// Metric threshold: reject weak Schmidl-Cox peaks that pass the energy
+			// gate but correspond to noise-on-signal, not a real OFDM preamble.
+			// Real preambles: metric 0.80-0.93. Noise peaks: metric 0.09-0.17.
+			// Threshold 0.5 provides wide margin between the two clusters.
+			if(energy_ok && receive_stats.coarse_metric < 0.5)
+			{
+				printf("[OFDM-SYNC] metric=%.3f at delay=%d — weak peak, skipping decode\n",
+					receive_stats.coarse_metric, receive_stats.delay);
+				fflush(stdout);
+				energy_ok = false;
+			}
+
+			// Silence-skip: when the best Schmidl-Cox peak lands in silence
+			// (energy gate rejected), scan forward to find where signal actually
+			// starts and re-run Schmidl-Cox from there. This handles
+			// silence-preceded buffers (e.g. SET_CONFIG after ACK) where silence
+			// or boundary peaks beat the real preamble in the initial search.
+			// On real HF this rarely activates (noise floor > energy threshold),
+			// but keeps Schmidl-Cox correlation for when it matters.
+			if(!energy_ok)
+			{
+				int signal_start_symb = -1;
+				for(int s = pream_symb_loc + 1; s < upper_bound; s++)
+				{
+					int offset = s * sym_samples;
+					double e = 0.0;
+					int cnt = 0;
+					for(int i = 0; i < sym_samples && (offset + i) < buf_samples; i++)
+					{
+						double re = data_container.baseband_data_interpolated[offset + i].real();
+						double im = data_container.baseband_data_interpolated[offset + i].imag();
+						e += re*re + im*im;
+						cnt++;
+					}
+					e = (cnt > 0) ? e / cnt : 0.0;
+					if(e > 0.001)
+					{
+						signal_start_symb = s;
+						break;
+					}
+				}
+
+				if(signal_start_symb >= 0)
+				{
+					int search_start = signal_start_symb * sym_samples;
+					int search_size = data_container.Nofdm *
+						(2 * data_container.preamble_nSymb + data_container.Nsymb) *
+						frequency_interpolation_rate;
+					int available = buf_samples - search_start;
+					if(available > search_size) available = search_size;
+
+					if(available > data_container.preamble_nSymb * sym_samples)
+					{
+						TimeSyncResult retry = ofdm.time_sync_preamble_with_metric(
+							&data_container.baseband_data_interpolated[search_start],
+							available, frequency_interpolation_rate, 0, step, 1);
+						retry.delay += search_start;
+
+						int retry_symb = retry.delay / sym_samples;
+						if(retry_symb < 1) retry_symb = 1;
+
+						// Check energy at the retry position
+						double retry_energy = 0.0;
+						int rcnt = 0;
+						for(int i = 0; i < sym_samples && (retry.delay + i) < buf_samples; i++)
+						{
+							double re = data_container.baseband_data_interpolated[retry.delay + i].real();
+							double im = data_container.baseband_data_interpolated[retry.delay + i].imag();
+							retry_energy += re*re + im*im;
+							rcnt++;
+						}
+						retry_energy = (rcnt > 0) ? retry_energy / rcnt : 0.0;
+
+						printf("[OFDM-SYNC] silence-skip: orig=%d signal=%d retry=%d metric=%.3f energy=%.2e\n",
+							pream_symb_loc, signal_start_symb, retry_symb, retry.correlation, retry_energy);
+						fflush(stdout);
+
+						if(retry_energy >= 0.001 && retry.correlation >= 0.5
+							&& retry_symb > lower_bound && retry_symb < upper_bound)
+						{
+							receive_stats.delay = retry.delay;
+							receive_stats.coarse_metric = retry.correlation;
+							pream_symb_loc = retry_symb;
+							energy_ok = true;
+						}
+					}
+				}
+			}
+		}
+
+		if(energy_ok)
 		while (receive_stats.sync_trials<=time_sync_trials_max)
 		{
 			if(mfsk_fixed_delay >= 0)
@@ -779,7 +913,10 @@ st_receive_stats cl_telecom_system::receive_byte(double *data, int* out)
 			{
 				// Fine frequency sync (Moose algorithm) - ±0.5 subcarrier range
 				// Note: Coarse offset already applied before this loop, so Moose measures residual
-				freq_offset_measured=ofdm.carrier_sampling_frequency_sync(&data_container.baseband_data[data_container.Ngi*data_container.interpolation_rate],bandwidth/(double)data_container.Nc,data_container.preamble_nSymb, sampling_frequency);
+				// BUG FIX: baseband_data is at decimated (base) rate after rational_resampler,
+				// so guard interval skip is Ngi samples, NOT Ngi*interpolation_rate.
+				// The old code skipped Ngi*4=256=Nfft samples, reading across symbol boundaries.
+				freq_offset_measured=ofdm.carrier_sampling_frequency_sync(&data_container.baseband_data[data_container.Ngi],bandwidth/(double)data_container.Nc,data_container.preamble_nSymb, sampling_frequency);
 			}
 
 			if(M == MOD_MFSK)
@@ -828,6 +965,46 @@ st_receive_stats cl_telecom_system::receive_byte(double *data, int* out)
 				else if (ofdm.channel_estimator==LEAST_SQUARE)
 				{
 					ofdm.LS_channel_estimator(data_container.ofdm_symbol_demodulated_data);
+				}
+
+				// Channel estimate diagnostic (BEFORE equalizer clears status)
+				double mean_H = -1.0;
+				{
+					double h_sum = 0, h_min = 1e9, h_max = 0;
+					int h_measured = 0, h_interpolated = 0;
+					for(int ci = 0; ci < ofdm.Nsymb * ofdm.Nc; ci++)
+					{
+						if(ofdm.estimated_channel[ci].status == MEASURED)
+						{
+							double h_abs = std::abs(ofdm.estimated_channel[ci].value);
+							h_sum += h_abs;
+							if(h_abs < h_min) h_min = h_abs;
+							if(h_abs > h_max) h_max = h_abs;
+							h_measured++;
+						}
+						else if(ofdm.estimated_channel[ci].status == INTERPOLATED)
+						{
+							h_interpolated++;
+						}
+					}
+					if(h_measured > 0) mean_H = h_sum / h_measured;
+					printf("[CHAN-EST] measured=%d interpolated=%d", h_measured, h_interpolated);
+					if(h_measured > 0)
+						printf(" mean_H=%.4f min_H=%.4f max_H=%.4f", mean_H, h_min, h_max);
+					printf(" freq=%.1f metric=%.3f\n", freq_offset_measured, receive_stats.coarse_metric);
+					fflush(stdout);
+				}
+
+				// Early exit: bad channel estimate means the preamble was a
+				// boundary artifact or misaligned frame. LDPC decode would
+				// waste ~35ms per trial and always fail.
+				if(mean_H < 0.3)
+				{
+					printf("[OFDM-SYNC] trial %d SKIP-H: mean_H=%.4f too low, skipping LDPC\n",
+						receive_stats.sync_trials, mean_H);
+					fflush(stdout);
+					receive_stats.sync_trials++;
+					continue;
 				}
 
 				if(ofdm.channel_estimator_amplitude_restoration==YES)
@@ -893,6 +1070,14 @@ st_receive_stats cl_telecom_system::receive_byte(double *data, int* out)
 			{
 				receive_stats.SNR=-99.9;
 				receive_stats.message_decoded=NO;
+				if(M != MOD_MFSK)
+				{
+					printf("[OFDM-SYNC] trial %d FAIL: delay=%d iter=%d all_zeros=%d freq_off=%.1f var=%.4f\n",
+						receive_stats.sync_trials, receive_stats.delay,
+						receive_stats.iterations_done, receive_stats.all_zeros,
+						freq_offset_measured, variance);
+					fflush(stdout);
+				}
 				receive_stats.sync_trials++;
 			}
 			else
@@ -939,8 +1124,14 @@ st_receive_stats cl_telecom_system::receive_byte(double *data, int* out)
 				}
 
 				receive_stats.message_decoded=YES;
-				receive_stats.freq_offset_of_last_decoded_message=freq_offset_measured;
-				receive_stats.freq_offset=freq_offset_measured;
+				// Only store freq offset for OFDM modes — MFSK runs the Moose estimator
+				// on non-OFDM preamble data producing a garbage value (~45 Hz) that would
+				// corrupt OFDM decoding after gearshift (use_last_good_freq_offset fallback).
+				if(M != MOD_MFSK)
+				{
+					receive_stats.freq_offset_of_last_decoded_message=freq_offset_measured;
+					receive_stats.freq_offset=freq_offset_measured;
+				}
 
 				receive_stats.delay_of_last_decoded_message=receive_stats.delay;
 				break;
@@ -1038,9 +1229,8 @@ int cl_telecom_system::generate_ack_pattern_passband(double* out)
 
 	// Generate subcarrier-domain ACK pattern (nsymb * Nc complex values)
 	// Reuse ofdm_framed_data buffer (allocated for Nsymb * Nc, nsymb=16 fits easily)
-	// Use data mfsk for MFSK modes (matches data M/nStreams), ack_mfsk for OFDM modes
-	cl_mfsk& ack_src = (M == MOD_MFSK) ? mfsk : ack_mfsk;
-	ack_src.generate_ack_pattern(data_container.ofdm_framed_data);
+	// Always use dedicated ack_mfsk (M=16, nStreams=1) — config-independent
+	ack_mfsk.generate_ack_pattern(data_container.ofdm_framed_data);
 
 	// IFFT each symbol to time domain
 	for(int i = 0; i < nsymb; i++)
@@ -1050,7 +1240,7 @@ int cl_telecom_system::generate_ack_pattern_passband(double* out)
 	}
 
 	// Amplitude boost: equalize drive level with OFDM (sqrt(Nc/nStreams) - 2 dB trim)
-	double ack_boost = sqrt((double)data_container.Nc / ack_src.nStreams) * pow(10.0, -2.0 / 20.0);
+	double ack_boost = sqrt((double)data_container.Nc / ack_mfsk.nStreams) * pow(10.0, -2.0 / 20.0);
 	for(int j = 0; j < data_container.Nofdm * nsymb; j++)
 	{
 		data_container.ofdm_symbol_modulated_data[j] /= power_normalization;
@@ -1071,7 +1261,7 @@ int cl_telecom_system::generate_ack_pattern_passband(double* out)
 
 // RX: Detect ACK pattern in passband audio buffer
 // Returns detection metric (0.0 = noise, up to ACK_PATTERN_NSYMB = perfect)
-double cl_telecom_system::detect_ack_pattern_from_passband(double* data, int size)
+double cl_telecom_system::detect_ack_pattern_from_passband(double* data, int size, int* out_matched)
 {
 	if(ack_pattern_passband_samples <= 0) return 0.0;
 
@@ -1081,16 +1271,15 @@ double cl_telecom_system::detect_ack_pattern_from_passband(double* data, int siz
 		sampling_frequency, carrier_frequency, carrier_amplitude,
 		1, &ofdm.FIR_rx_data);
 
-	// Run matched-filter ACK detector
-	// Use data mfsk for MFSK modes, ack_mfsk for OFDM modes
-	cl_mfsk& ack_src = (M == MOD_MFSK) ? mfsk : ack_mfsk;
+	// Run matched-filter ACK detector — always use dedicated ack_mfsk (config-independent)
 	double metric = ofdm.detect_ack_pattern(
 		data_container.baseband_data_interpolated, size,
 		data_container.interpolation_rate,
 		cl_mfsk::ACK_PATTERN_NSYMB,
-		ack_src.ack_tones, cl_mfsk::ACK_PATTERN_LEN,
-		ack_src.tone_hop_step, ack_src.M,
-		ack_src.nStreams, ack_src.stream_offsets);
+		ack_mfsk.ack_tones, cl_mfsk::ACK_PATTERN_LEN,
+		ack_mfsk.tone_hop_step, ack_mfsk.M,
+		ack_mfsk.nStreams, ack_mfsk.stream_offsets,
+		out_matched);
 
 	return metric;
 }
@@ -1270,7 +1459,20 @@ void cl_telecom_system::init()
 
 	if(reinit_subsystems.ofdm==YES)
 	{
+		printf("[PHY-DEBUG] Before ofdm.init(): Nsymb=%d Nc=%d Dx=%d Dy=%d density=%d M=%d\n",
+			ofdm.Nsymb, ofdm.Nc, ofdm.pilot_configurator.Dx, ofdm.pilot_configurator.Dy,
+			ofdm.pilot_configurator.pilot_density, M);
+		fflush(stdout);
 		ofdm.init();
+		printf("[PHY-DEBUG] After ofdm.init(): nPilots=%d nData=%d ofdm_frame=%p\n",
+			ofdm.pilot_configurator.nPilots, ofdm.pilot_configurator.nData,
+			(void*)ofdm.ofdm_frame);
+		// Verify PILOT count directly in ofdm_frame
+		int verify_pilots = 0;
+		for(int i = 0; i < ofdm.Nsymb * ofdm.Nc; i++)
+			if(ofdm.ofdm_frame[i].type == PILOT) verify_pilots++;
+		printf("[PHY-DEBUG] Direct pilot count in ofdm_frame: %d\n", verify_pilots);
+		fflush(stdout);
 		reinit_subsystems.ofdm=NO;
 	}
 
@@ -2051,6 +2253,7 @@ void cl_telecom_system::load_configuration(int configuration)
 		reinit_subsystems.data_container=YES;
 		reinit_subsystems.ofdm=YES;
 		reinit_subsystems.psk=YES;
+		reinit_subsystems.pre_equalization_channel=YES;
 	}
 
 	// MFSK: different ROBUST configs may change M or nStreams, need full reinit
@@ -2090,10 +2293,37 @@ void cl_telecom_system::load_configuration(int configuration)
 	}
 	if(reinit_subsystems.telecom_system==YES)
 	{
+		printf("[PHY-REINIT] About to deinit telecom_system (config %d -> %d)\n", last_configuration, configuration);
+		fflush(stdout);
+
+		// Zero audio-facing buffer parameters under the mutex BEFORE deinit
+		// frees passband_delayed_data.  The audio capture_prep thread re-reads
+		// these inside the same mutex, so it will see the zeroed values and
+		// skip the buffer access, preventing use-after-free.
+		// Only zero when data_container will actually be deinitialized and
+		// re-allocated by set_size(). Otherwise (e.g., LDPC-only reinit where
+		// buffers stay intact), Nofdm must stay valid for passband calculations.
+		if(reinit_subsystems.data_container==YES)
+		{
+			MUTEX_LOCK(&capture_prep_mutex);
+			data_container.Nofdm = 0;
+			data_container.buffer_Nsymb = 0;
+			MUTEX_UNLOCK(&capture_prep_mutex);
+		}
+
+		printf("[PHY-REINIT] Mutex zeroed, calling deinit...\n");
+		fflush(stdout);
 		this->deinit();
+		printf("[PHY-REINIT] deinit complete\n");
+		fflush(stdout);
 	}
 
+	printf("[PHY-M] _modulation=%d M_before=%.0f MOD_BPSK=%d MOD_MFSK=%d\n",
+		_modulation, M, MOD_BPSK, MOD_MFSK);
+	fflush(stdout);
 	M=_modulation;
+	printf("[PHY-M] M_after=%.0f\n", M);
+	fflush(stdout);
 	ldpc.rate=_ldpc_rate;
 	ofdm.preamble_configurator.Nsymb=ofdm_preamble_configurator_Nsymb;
 	ofdm.channel_estimator=ofdm_channel_estimator;
@@ -2220,7 +2450,11 @@ void cl_telecom_system::load_configuration(int configuration)
 	}
 	if(reinit_subsystems.telecom_system==YES)
 	{
+		printf("[PHY-REINIT] Calling init...\n");
+		fflush(stdout);
 		this->init();
+		printf("[PHY-REINIT] init complete\n");
+		fflush(stdout);
 		reinit_subsystems.telecom_system=NO;
 	}
 
@@ -2327,23 +2561,21 @@ void cl_telecom_system::load_configuration(int configuration)
 		mfsk_ctrl_mode = false;
 	}
 
-	// Universal ACK pattern: works for all modes (MFSK and OFDM)
-	// For OFDM modes, initialize a dedicated ack_mfsk with M=16, nStreams=1
-	if(M != MOD_MFSK)
-	{
-		ack_mfsk.init(16, data_container.Nc, 1);  // M=16, Nc=50, 1 stream centered in band
-	}
+	// Universal ACK pattern: dedicated ack_mfsk with fixed M=16, nStreams=1 for ALL modes.
+	// Config-independent: both sides always agree on ACK tone parameters,
+	// so no config switching needed for ACK pattern TX/RX.
+	ack_mfsk.init(16, data_container.Nc, 1);  // M=16, Nc=50, 1 stream centered in band
 
 	ack_pattern_passband_samples = cl_mfsk::ACK_PATTERN_NSYMB * data_container.Nofdm * frequency_interpolation_rate;
 
-	// Per-mode detection threshold, calibrated from BER test data:
-	// ROBUST_0 (-13 dB): noise max ~0.6, signal min ~0.7 → threshold 0.65
-	// ROBUST_1/2 (-11/-8 dB): noise max ~1.1, signal min ~1.8 → threshold 1.3
-	// OFDM (0 to +20 dB): M=16 nStreams=1 → noise metric ~0.06 (order-aware) → threshold 1.0
+	// Per-mode detection threshold (all using ack_mfsk: M=16, nStreams=1):
+	// ROBUST_0 (-13 dB): low SNR, need conservative threshold
+	// ROBUST_1/2 (-11/-8 dB): moderate SNR, standard threshold
+	// OFDM (0 to +20 dB): high SNR, easy detection
 	if(current_configuration == ROBUST_0)
 		ack_pattern_detection_threshold = 0.65;
 	else if(is_robust_config(current_configuration))
-		ack_pattern_detection_threshold = 1.3;
+		ack_pattern_detection_threshold = 1.0;
 	else
 		ack_pattern_detection_threshold = 1.0;
 

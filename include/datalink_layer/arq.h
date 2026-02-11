@@ -292,6 +292,8 @@ public:
   char current_configuration;
   char ack_configuration;
   char negotiated_configuration;
+  char forward_configuration;   // Commander→Responder TX speed (asymmetric gearshift)
+  char reverse_configuration;   // Responder→Commander TX speed (after SWITCH_ROLE)
 
   int gear_shift_on;
   int robust_enabled;
@@ -300,6 +302,8 @@ public:
   double gear_shift_down_success_rate_precentage;
   int gear_shift_block_for_nBlocks_total;
   int gear_shift_blocked_for_nBlocks;
+  int consecutive_data_acks;       // Frame-level gearshift: consecutive successful data ACKs
+  int frame_shift_threshold;       // Shift up after this many consecutive ACKs (default 3)
 
   int ptt_on_delay_ms;
   int ptt_off_delay_ms;

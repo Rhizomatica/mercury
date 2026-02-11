@@ -1289,6 +1289,15 @@ void cl_ofdm::LS_channel_estimator(std::complex <double>*in)
 		}
 	}
 
+	// Debug: how many pilots found in ofdm_frame?
+	static int ls_debug_count = 0;
+	if(ls_debug_count < 5) {
+		printf("[LS-DEBUG] ofdm_frame=%p Nsymb=%d Nc=%d pilot_index=%d\n",
+			(void*)ofdm_frame, Nsymb, Nc, pilot_index);
+		fflush(stdout);
+		ls_debug_count++;
+	}
+
 	int nPilots=0;
 	std::complex <double> ch_tmp;
 
@@ -1735,10 +1744,17 @@ int cl_ofdm::time_sync_preamble(std::complex <double>*in, int size, int interpol
 			}
 		}
 
-		corss_corr=corss_corr/sqrt(norm_a*norm_b);
+		if(norm_a < 0.001 || norm_b < 0.001)
+			corss_corr = 0.0;
+		else
+			corss_corr=corss_corr/sqrt(norm_a*norm_b);
 		corss_corr_vals[i]=corss_corr;
 		corss_corr_loc[i]=i;
 	}
+
+	// Clamp location_to_return to valid range to prevent reading uninitialized sort entries
+	if(location_to_return >= nTrials_max)
+		location_to_return = nTrials_max - 1;
 
 	for(int j=0;j<nTrials_max;j++)
 	{
@@ -1842,10 +1858,21 @@ TimeSyncResult cl_ofdm::time_sync_preamble_with_metric(std::complex <double>*in,
 			}
 		}
 
-		corss_corr=corss_corr/sqrt(norm_a*norm_b);
+		// Norm threshold: VB-Cable silence has amplitude ~1e-10 (nonzero).
+		// Norms accumulate to ~1e-18 and the ratio produces unstable metrics
+		// (up to 0.93) that can beat real preamble peaks. Use threshold
+		// instead of exact == 0.0 to suppress these degenerate cases.
+		if(norm_a < 0.001 || norm_b < 0.001)
+			corss_corr = 0.0;
+		else
+			corss_corr=corss_corr/sqrt(norm_a*norm_b);
 		corss_corr_vals[i]=corss_corr;
 		corss_corr_loc[i]=i;
 	}
+
+	// Clamp location_to_return to valid range to prevent reading uninitialized sort entries
+	if(location_to_return >= nTrials_max)
+		location_to_return = nTrials_max - 1;
 
 	for(int j=0;j<nTrials_max;j++)
 	{
@@ -1985,7 +2012,8 @@ double cl_ofdm::detect_ack_pattern(std::complex<double>* baseband_interp, int bu
                                    int interpolation_rate, int ack_nsymb,
                                    const int* ack_tones, int ack_pattern_len,
                                    int tone_hop_step, int mfsk_M,
-                                   int nStreams, const int* stream_offsets)
+                                   int nStreams, const int* stream_offsets,
+                                   int* out_matched)
 {
 	int Nofdm = Nfft + Ngi;
 	int sym_period_interp = Nofdm * interpolation_rate;
@@ -2094,6 +2122,9 @@ double cl_ofdm::detect_ack_pattern(std::complex<double>* baseband_interp, int bu
 	if (best_metric > 0.1)
 		printf("[ACK-DET] best_metric=%.3f pos=%d/%d matched=%d/%d\n",
 			best_metric, best_pos, buffer_nsymb, best_matched, ack_nsymb);
+
+	if (out_matched)
+		*out_matched = best_matched;
 
 	delete[] decimated_sym;
 	delete[] fft_out;

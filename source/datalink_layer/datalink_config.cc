@@ -59,7 +59,7 @@ cl_configuration_arq::cl_configuration_arq()
 	
 	ptt_on_delay_ms=100;
 	ptt_off_delay_ms=200;
-	pilot_tone_ms=50;   // 50ms pilot tone by default
+	pilot_tone_ms=0;    // Disabled by default — enable only for radios that need TX warmup
 	pilot_tone_hz=250;  // 250Hz = out of OFDM band, won't interfere with decoder
 	switch_role_timeout_ms=1500;
 }
