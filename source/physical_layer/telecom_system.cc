@@ -638,7 +638,7 @@ st_receive_stats cl_telecom_system::receive_byte(double *data, int* out)
 		}
 		else
 		{
-			TimeSyncResult coarse_result = ofdm.time_sync_preamble_with_metric(data_container.baseband_data_interpolated,data_container.Nofdm*(2*data_container.preamble_nSymb+data_container.Nsymb)*frequency_interpolation_rate,data_container.interpolation_rate,0,step, 1);
+			TimeSyncResult coarse_result = ofdm.time_sync_preamble_with_metric(data_container.baseband_data_interpolated,data_container.Nofdm*data_container.buffer_Nsymb*frequency_interpolation_rate,data_container.interpolation_rate,0,step, 1);
 			receive_stats.delay = coarse_result.delay;
 			receive_stats.coarse_metric = coarse_result.correlation;
 		}
@@ -674,6 +674,80 @@ st_receive_stats cl_telecom_system::receive_byte(double *data, int* out)
 			receive_stats.coarse_metric,
 			(pream_symb_loc > lower_bound && pream_symb_loc < upper_bound) ? "PASS" : "SKIP");
 		fflush(stdout);
+	}
+
+	// Recovery for OFDM when preamble lands outside the valid bounds.
+	// Even with full-buffer coarse search, Schmidl-Cox may peak at a position
+	// too close to the start or end to extract a complete frame. Scan the full
+	// buffer for signal energy and re-run Schmidl-Cox from the signal start.
+	if(M != MOD_MFSK && !(pream_symb_loc > lower_bound && pream_symb_loc < upper_bound))
+	{
+		int sym_samples = data_container.Nofdm * frequency_interpolation_rate;
+		int buf_samples = data_container.Nofdm * data_container.buffer_Nsymb * frequency_interpolation_rate;
+
+		printf("[OFDM-SYNC] bounds-failed: pream_symb=%d, scanning full buffer for signal\n", pream_symb_loc);
+		fflush(stdout);
+
+		int signal_start_symb = -1;
+		for(int s = lower_bound + 1; s < upper_bound; s++)
+		{
+			int offset = s * sym_samples;
+			double e = 0.0;
+			int cnt = 0;
+			for(int i = 0; i < sym_samples && (offset + i) < buf_samples; i++)
+			{
+				double re = data_container.baseband_data_interpolated[offset + i].real();
+				double im = data_container.baseband_data_interpolated[offset + i].imag();
+				e += re*re + im*im;
+				cnt++;
+			}
+			e = (cnt > 0) ? e / cnt : 0.0;
+			if(e > 0.001)
+			{
+				signal_start_symb = s;
+				break;
+			}
+		}
+
+		if(signal_start_symb >= 0)
+		{
+			int search_start = signal_start_symb * sym_samples;
+			int available = buf_samples - search_start;
+
+			if(available > data_container.preamble_nSymb * sym_samples)
+			{
+				TimeSyncResult retry = ofdm.time_sync_preamble_with_metric(
+					&data_container.baseband_data_interpolated[search_start],
+					available, frequency_interpolation_rate, 0, step, 1);
+				retry.delay += search_start;
+
+				int retry_symb = retry.delay / sym_samples;
+				if(retry_symb < 1) retry_symb = 1;
+
+				double retry_energy = 0.0;
+				int rcnt = 0;
+				for(int i = 0; i < sym_samples && (retry.delay + i) < buf_samples; i++)
+				{
+					double re = data_container.baseband_data_interpolated[retry.delay + i].real();
+					double im = data_container.baseband_data_interpolated[retry.delay + i].imag();
+					retry_energy += re*re + im*im;
+					rcnt++;
+				}
+				retry_energy = (rcnt > 0) ? retry_energy / rcnt : 0.0;
+
+				printf("[OFDM-SYNC] bounds-skip: signal=%d retry=%d metric=%.3f energy=%.2e\n",
+					signal_start_symb, retry_symb, retry.correlation, retry_energy);
+				fflush(stdout);
+
+				if(retry_energy >= 0.001 && retry.correlation >= 0.5
+					&& retry_symb > lower_bound && retry_symb < upper_bound)
+				{
+					receive_stats.delay = retry.delay;
+					receive_stats.coarse_metric = retry.correlation;
+					pream_symb_loc = retry_symb;
+				}
+			}
+		}
 	}
 
 	if(pream_symb_loc > lower_bound && pream_symb_loc < upper_bound)
@@ -753,11 +827,7 @@ st_receive_stats cl_telecom_system::receive_byte(double *data, int* out)
 				if(signal_start_symb >= 0)
 				{
 					int search_start = signal_start_symb * sym_samples;
-					int search_size = data_container.Nofdm *
-						(2 * data_container.preamble_nSymb + data_container.Nsymb) *
-						frequency_interpolation_rate;
 					int available = buf_samples - search_start;
-					if(available > search_size) available = search_size;
 
 					if(available > data_container.preamble_nSymb * sym_samples)
 					{
@@ -799,6 +869,10 @@ st_receive_stats cl_telecom_system::receive_byte(double *data, int* out)
 		}
 
 		if(energy_ok)
+		{
+		int skip_h_count = 0;
+		bool skip_h_recovery_attempted = false;
+skip_h_retry_point:
 		while (receive_stats.sync_trials<=time_sync_trials_max)
 		{
 			if(mfsk_fixed_delay >= 0)
@@ -873,16 +947,19 @@ st_receive_stats cl_telecom_system::receive_byte(double *data, int* out)
 					carrier_amplitude, 1, &ofdm.FIR_rx_time_sync);
 
 				// Fine time sync at the corrected frequency
+				// Window = preamble+4 symbols (±2 sym search range) to handle coarse
+				// Schmidl-Cox step=100 quantization + integer truncation of pream_symb_loc
 				TimeSyncResult ts_result = ofdm.time_sync_preamble_with_metric(
 					&data_container.baseband_data_interpolated[(pream_symb_loc-1)*data_container.Nofdm*frequency_interpolation_rate],
-					(ofdm.preamble_configurator.Nsymb+2)*data_container.Nofdm*data_container.interpolation_rate,
+					(ofdm.preamble_configurator.Nsymb+4)*data_container.Nofdm*data_container.interpolation_rate,
 					data_container.interpolation_rate,
 					receive_stats.sync_trials, 1, time_sync_trials_max);
 				receive_stats.delay = (pream_symb_loc-1)*data_container.Nofdm*frequency_interpolation_rate + ts_result.delay;
 			}
 			else
 			{
-				receive_stats.delay=(pream_symb_loc-1)*data_container.Nofdm*frequency_interpolation_rate+ofdm.time_sync_preamble(&data_container.baseband_data_interpolated[(pream_symb_loc-1)*data_container.Nofdm*frequency_interpolation_rate],(ofdm.preamble_configurator.Nsymb+2)*data_container.Nofdm*data_container.interpolation_rate,data_container.interpolation_rate,receive_stats.sync_trials,1,time_sync_trials_max);
+				// Window = preamble+4 symbols (±2 sym search range) — see trial 1 comment
+			receive_stats.delay=(pream_symb_loc-1)*data_container.Nofdm*frequency_interpolation_rate+ofdm.time_sync_preamble(&data_container.baseband_data_interpolated[(pream_symb_loc-1)*data_container.Nofdm*frequency_interpolation_rate],(ofdm.preamble_configurator.Nsymb+4)*data_container.Nofdm*data_container.interpolation_rate,data_container.interpolation_rate,receive_stats.sync_trials,1,time_sync_trials_max);
 			}
 
 			if(receive_stats.delay<0){receive_stats.delay=0;}
@@ -898,10 +975,76 @@ st_receive_stats cl_telecom_system::receive_byte(double *data, int* out)
 				}
 			}
 
+			// Post-fine-sync energy gate: Schmidl-Cox normalized correlation
+			// ties at ~1.0 for positions where 3 of 4 preamble symbols overlap
+			// signal (silence in the 4th cancels from numerator and denominator).
+			// Sort returns earliest tied position, which may be in silence.
+			// Fix: if energy at fine-sync delay is zero, advance by whole symbols
+			// to find signal onset while preserving sub-symbol alignment.
+			if(M != MOD_MFSK)
+			{
+				int sym_samples = data_container.Nofdm * frequency_interpolation_rate;
+				int buf_samples = data_container.Nofdm * data_container.buffer_Nsymb * frequency_interpolation_rate;
+				double fine_energy = 0.0;
+				for(int i = 0; i < sym_samples && (receive_stats.delay + i) < buf_samples; i++)
+					fine_energy += std::norm(data_container.baseband_data_interpolated[receive_stats.delay + i]);
+				fine_energy /= sym_samples;
+				if(fine_energy < 0.001)
+				{
+					int orig_delay = receive_stats.delay;
+					for(int fwd = sym_samples; fwd <= 3*sym_samples; fwd += sym_samples)
+					{
+						int candidate = orig_delay + fwd;
+						if(candidate + sym_samples > buf_samples) break;
+						double e = 0.0;
+						for(int i = 0; i < sym_samples; i++)
+							e += std::norm(data_container.baseband_data_interpolated[candidate + i]);
+						e /= sym_samples;
+						if(e >= 0.001)
+						{
+							printf("[OFDM-SYNC] fine-energy-fix: delay %d->%d (fwd %d sym)\n",
+								orig_delay, candidate, fwd / sym_samples);
+							fflush(stdout);
+							receive_stats.delay = candidate;
+							break;
+						}
+					}
+				}
+			}
+
 			// Use corrected carrier frequency if coarse sync applied
 			double effective_carrier_freq = carrier_frequency + coarse_freq_offset;
 
+			// DIAGNOSTIC: Save baseband snapshot from FIR_rx_time_sync before overwrite
+			std::complex<double> ts_snap[4];
+			if(M != MOD_MFSK && receive_stats.sync_trials == 0) {
+				for(int k=0; k<4; k++)
+					ts_snap[k] = data_container.baseband_data_interpolated[receive_stats.delay + k];
+			}
+
 			ofdm.passband_to_baseband((double*)data,data_container.Nofdm*data_container.buffer_Nsymb*frequency_interpolation_rate,data_container.baseband_data_interpolated,sampling_frequency,effective_carrier_freq,carrier_amplitude,1,&ofdm.FIR_rx_data);
+
+			// DIAGNOSTIC: Compare FIR_rx_time_sync vs FIR_rx_data at delay position
+			if(M != MOD_MFSK && receive_stats.sync_trials == 0) {
+				printf("[FIR-CMP] delay=%d ts_fir: ", receive_stats.delay);
+				for(int k=0; k<4; k++)
+					printf("(%.6f,%.6f) ", ts_snap[k].real(), ts_snap[k].imag());
+				printf("data_fir: ");
+				for(int k=0; k<4; k++)
+					printf("(%.6f,%.6f) ", data_container.baseband_data_interpolated[receive_stats.delay + k].real(), data_container.baseband_data_interpolated[receive_stats.delay + k].imag());
+				printf("\n"); fflush(stdout);
+
+				// Also check baseband energy around the extraction point
+				double energy_at_delay = 0.0, energy_mid_frame = 0.0;
+				int mid_offset = receive_stats.delay + (data_container.preamble_nSymb + data_container.Nsymb/2) * data_container.Nofdm * frequency_interpolation_rate;
+				for(int k=0; k<256; k++) {
+					energy_at_delay += std::norm(data_container.baseband_data_interpolated[receive_stats.delay + k]);
+					if(mid_offset + k < data_container.Nofdm * data_container.buffer_Nsymb * frequency_interpolation_rate)
+						energy_mid_frame += std::norm(data_container.baseband_data_interpolated[mid_offset + k]);
+				}
+				printf("[BB-ENERGY] at_delay=%.6f mid_frame=%.6f\n", energy_at_delay / 256, energy_mid_frame / 256);
+				fflush(stdout);
+			}
 
 			ofdm.rational_resampler(&data_container.baseband_data_interpolated[receive_stats.delay], (data_container.Nofdm*(data_container.Nsymb+data_container.preamble_nSymb))*frequency_interpolation_rate, data_container.baseband_data, data_container.interpolation_rate, DECIMATION);
 
@@ -958,6 +1101,22 @@ st_receive_stats cl_telecom_system::receive_byte(double *data, int* out)
 			{
 				ofdm.automatic_gain_control(data_container.ofdm_symbol_demodulated_data);
 
+				// DIAGNOSTIC: Print first few pilot subcarrier values after AGC
+				{
+					int diag_count = 0;
+					printf("[PILOT-DIAG] trial=%d first_pilots_after_AGC: ", receive_stats.sync_trials);
+					for(int si = 0; si < ofdm.Nsymb && diag_count < 5; si++) {
+						for(int sc = 0; sc < ofdm.Nc && diag_count < 5; sc++) {
+							if((ofdm.ofdm_frame + si*ofdm.Nc + sc)->type == PILOT) {
+								std::complex<double> v = data_container.ofdm_symbol_demodulated_data[si*data_container.Nc + sc];
+								printf("[%d,%d]=(%.3f,%.3f)|%.3f ", si, sc, v.real(), v.imag(), std::abs(v));
+								diag_count++;
+							}
+						}
+					}
+					printf("\n"); fflush(stdout);
+				}
+
 				if(ofdm.channel_estimator==ZERO_FORCE)
 				{
 					ofdm.ZF_channel_estimator(data_container.ofdm_symbol_demodulated_data);
@@ -993,6 +1152,22 @@ st_receive_stats cl_telecom_system::receive_byte(double *data, int* out)
 						printf(" mean_H=%.4f min_H=%.4f max_H=%.4f", mean_H, h_min, h_max);
 					printf(" freq=%.1f metric=%.3f\n", freq_offset_measured, receive_stats.coarse_metric);
 					fflush(stdout);
+					// DIAGNOSTIC: Print first few H complex values on trial 0
+					if(receive_stats.sync_trials == 0) {
+						int hd = 0;
+						printf("[H-DIAG] first_H: ");
+						for(int ci = 0; ci < ofdm.Nsymb * ofdm.Nc && hd < 5; ci++) {
+							if(ofdm.estimated_channel[ci].status == MEASURED) {
+								printf("[%d,%d]=(%.4f,%.4f)|%.4f ",
+									ci / ofdm.Nc, ci % ofdm.Nc,
+									ofdm.estimated_channel[ci].value.real(),
+									ofdm.estimated_channel[ci].value.imag(),
+									std::abs(ofdm.estimated_channel[ci].value));
+								hd++;
+							}
+						}
+						printf("\n"); fflush(stdout);
+					}
 				}
 
 				// Early exit: bad channel estimate means the preamble was a
@@ -1000,6 +1175,7 @@ st_receive_stats cl_telecom_system::receive_byte(double *data, int* out)
 				// waste ~35ms per trial and always fail.
 				if(mean_H < 0.3)
 				{
+					skip_h_count++;
 					printf("[OFDM-SYNC] trial %d SKIP-H: mean_H=%.4f too low, skipping LDPC\n",
 						receive_stats.sync_trials, mean_H);
 					fflush(stdout);
@@ -1137,6 +1313,79 @@ st_receive_stats cl_telecom_system::receive_byte(double *data, int* out)
 				break;
 			}
 		}
+
+		// SKIP-H recovery: if all trials failed with low channel estimate,
+		// the detected preamble was likely a false peak (e.g. residual MFSK
+		// ACK tones looping back through VB-Cable). Search forward for a
+		// later, real preamble and retry the trial loop.
+		if(receive_stats.message_decoded != YES
+			&& skip_h_count >= time_sync_trials_max + 1
+			&& !skip_h_recovery_attempted)
+		{
+			skip_h_recovery_attempted = true;
+			int sym_samples = data_container.Nofdm * frequency_interpolation_rate;
+			int buf_samples = data_container.Nofdm * data_container.buffer_Nsymb * frequency_interpolation_rate;
+
+			// Start searching 2 symbols past the false preamble
+			int search_start_symb = pream_symb_loc + 2;
+			int search_start = search_start_symb * sym_samples;
+			int search_size = data_container.Nofdm *
+				(2 * data_container.preamble_nSymb + data_container.Nsymb) *
+				frequency_interpolation_rate;
+			int available = buf_samples - search_start;
+			if(available > search_size) available = search_size;
+
+			if(search_start_symb < upper_bound
+				&& available > data_container.preamble_nSymb * sym_samples)
+			{
+				// Re-run passband_to_baseband with time_sync FIR for fresh search
+				ofdm.passband_to_baseband((double*)data,
+					data_container.Nofdm * data_container.buffer_Nsymb * frequency_interpolation_rate,
+					data_container.baseband_data_interpolated,
+					sampling_frequency, carrier_frequency, carrier_amplitude,
+					1, &ofdm.FIR_rx_time_sync);
+
+				TimeSyncResult retry = ofdm.time_sync_preamble_with_metric(
+					&data_container.baseband_data_interpolated[search_start],
+					available, frequency_interpolation_rate, 0, step, 1);
+				retry.delay += search_start;
+
+				int retry_symb = retry.delay / sym_samples;
+				if(retry_symb < 1) retry_symb = 1;
+
+				// Check energy at the retry position
+				double retry_energy = 0.0;
+				int rcnt = 0;
+				for(int i = 0; i < sym_samples && (retry.delay + i) < buf_samples; i++)
+				{
+					double re = data_container.baseband_data_interpolated[retry.delay + i].real();
+					double im = data_container.baseband_data_interpolated[retry.delay + i].imag();
+					retry_energy += re*re + im*im;
+					rcnt++;
+				}
+				retry_energy = (rcnt > 0) ? retry_energy / rcnt : 0.0;
+
+				printf("[OFDM-SYNC] SKIP-H recovery: orig=%d retry=%d metric=%.3f energy=%.2e\n",
+					pream_symb_loc, retry_symb, retry.correlation, retry_energy);
+				fflush(stdout);
+
+				// No metric threshold here — the trial loop's mean_H check
+				// validates the retry position. Fine time sync has ±2 symbol
+				// range to correct from nearby positions.
+				if(retry_energy >= 0.001
+					&& retry_symb > lower_bound && retry_symb < upper_bound)
+				{
+					receive_stats.delay = retry.delay;
+					receive_stats.coarse_metric = retry.correlation;
+					pream_symb_loc = retry_symb;
+					receive_stats.sync_trials = 0;
+					skip_h_count = 0;
+					coarse_freq_offset = 0.0;
+					goto skip_h_retry_point;
+				}
+			}
+		}
+		} // end if(energy_ok)
 	}
 	if(ldpc.print_nIteration==YES)
 	{
@@ -1857,6 +2106,17 @@ void cl_telecom_system::RX_SHM_process_main(cbuf_handle_t buffer)
 	}
 
 	MUTEX_LOCK(&capture_prep_mutex);
+	// Guard: deinit path zeros Nofdm/buffer_Nsymb under this mutex before freeing
+	// buffers. If we see zero, buffers are being freed — skip processing.
+	if(data_container.Nofdm == 0 || data_container.buffer_Nsymb == 0)
+	{
+		data_container.data_ready = 0;
+		MUTEX_UNLOCK(&capture_prep_mutex);
+		return;
+	}
+	// Recompute under mutex for consistency with guard check
+	signal_period = data_container.Nofdm * data_container.buffer_Nsymb * data_container.interpolation_rate;
+	symbol_period = data_container.Nofdm * data_container.interpolation_rate;
 	if (data_container.frames_to_read == 0)
 	{
 #ifdef MERCURY_GUI_ENABLED
@@ -2308,6 +2568,7 @@ void cl_telecom_system::load_configuration(int configuration)
 			MUTEX_LOCK(&capture_prep_mutex);
 			data_container.Nofdm = 0;
 			data_container.buffer_Nsymb = 0;
+			data_container.data_ready = 0;
 			MUTEX_UNLOCK(&capture_prep_mutex);
 		}
 

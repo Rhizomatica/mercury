@@ -129,6 +129,7 @@ public:
 	      \return None
 	   */
   void cleanup();
+  void finish_turbo_direction();
 
 	//! registers the ack of a data message.
 	    /*!
@@ -304,6 +305,14 @@ public:
   int gear_shift_blocked_for_nBlocks;
   int consecutive_data_acks;       // Frame-level gearshift: consecutive successful data ACKs
   int frame_shift_threshold;       // Shift up after this many consecutive ACKs (default 3)
+
+  // Turboshift: bidirectional probing phase before data exchange
+  enum TurboshiftPhase { TURBO_FORWARD, TURBO_REVERSE, TURBO_DONE };
+  TurboshiftPhase turboshift_phase;
+  bool turboshift_active;          // true = currently probing (climbing the ladder)
+  int turboshift_last_good;        // last config that decoded successfully (-1 = none)
+  bool turboshift_initiator;       // true = I started turboshift (original commander)
+  int turboshift_retries;          // retries left at current config (0 = ceiling)
 
   int ptt_on_delay_ms;
   int ptt_off_delay_ms;

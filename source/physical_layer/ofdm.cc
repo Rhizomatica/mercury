@@ -1437,6 +1437,10 @@ void cl_ofdm::automatic_gain_control(std::complex <double>*in)
 	pilot_amp/=pilot_index;
 	agc=pilot_configurator.boost/pilot_amp;
 
+	printf("[AGC] raw_pilot_amp=%.6f count=%d boost=%.3f gain=%.4f\n",
+		pilot_amp, pilot_index, pilot_configurator.boost, agc);
+	fflush(stdout);
+
 	for(int i=0;i<Nsymb;i++)
 	{
 		for(int j=0;j<Nc;j++)

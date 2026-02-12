@@ -44,6 +44,7 @@ void cl_psk::deinit()
 	if(constellation!=NULL)
 	{
 		delete[] constellation;
+		constellation=NULL;
 	}
 }
 

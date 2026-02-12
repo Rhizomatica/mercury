@@ -175,9 +175,11 @@ int cl_arq_controller::add_message_control(char code)
 			}
 			else
 			{
-				// SUCCESS_BASED_LADDER: symmetric (same config both directions)
+				// SUCCESS_BASED_LADDER: asymmetric — only update forward (TX direction)
 				forward_configuration = negotiated_configuration;
-				reverse_configuration = negotiated_configuration;
+				// reverse_configuration preserved from other direction's gearshift
+				if(reverse_configuration == CONFIG_NONE)
+					reverse_configuration = forward_configuration;
 			}
 
 			negotiated_configuration = forward_configuration;
@@ -450,9 +452,10 @@ void cl_arq_controller::process_messages_rx_acks_control()
 					messages_control.status=ACKED;
 					stats.nAcked_control++;
 
-					// Guard delay: wait for responder to finish PTT-off + flush before we TX.
-					// Without this, our next frame starts before the responder is listening.
-					int guard = ptt_off_delay_ms + 500;
+					// Guard delay: wait for responder to finish ACK TX + config load.
+					// ACK pattern ~363ms, CMD detects mid-way, RSP needs ~200ms after
+					// ACK for config load. Guard + ~300ms CMD processing = turnaround.
+					int guard = ptt_off_delay_ms + 200;
 					receiving_timeout = (int)receiving_timer.get_elapsed_time_ms() + guard;
 				}
 			}
@@ -483,7 +486,7 @@ void cl_arq_controller::process_messages_rx_acks_control()
 					{
 						int drain = (int)receiving_timer.get_elapsed_time_ms()
 							+ (ack_batch_size - 1) * ctrl_transmission_time_ms
-							+ ptt_off_delay_ms + 500;
+							+ ptt_off_delay_ms + 200;
 						if (drain < receiving_timeout)
 							receiving_timeout = drain;
 					}
@@ -556,8 +559,8 @@ void cl_arq_controller::process_messages_rx_acks_data()
 					stats.nAcked_control++;
 				}
 
-				// Guard delay: wait for responder to finish PTT-off + flush
-				int guard = ptt_off_delay_ms + 500;
+				// Guard delay: wait for responder to finish ACK TX + config load
+				int guard = ptt_off_delay_ms + 200;
 				receiving_timeout = (int)receiving_timer.get_elapsed_time_ms() + guard;
 			}
 		}
@@ -660,6 +663,40 @@ void cl_arq_controller::process_messages_rx_acks_data()
 	}
 }
 
+void cl_arq_controller::finish_turbo_direction()
+{
+	turboshift_active = false;
+
+	if(turboshift_phase == TURBO_FORWARD)
+	{
+		// Forward direction probed. Advance to REVERSE (other side will probe).
+		turboshift_phase = TURBO_REVERSE;
+		printf("[TURBO] FORWARD complete: ceiling=%d, switching roles\n",
+			turboshift_last_good);
+		fflush(stdout);
+		cleanup();
+		add_message_control(SWITCH_ROLE);
+		connection_status = TRANSMITTING_CONTROL;
+	}
+	else if(turboshift_phase == TURBO_REVERSE)
+	{
+		// Reverse direction probed. Switch back to original roles.
+		printf("[TURBO] REVERSE complete: ceiling=%d, switching back\n",
+			turboshift_last_good);
+		fflush(stdout);
+		turboshift_phase = TURBO_DONE;
+		cleanup();
+		add_message_control(SWITCH_ROLE);
+		connection_status = TRANSMITTING_CONTROL;
+	}
+	else
+	{
+		// Already done (shouldn't happen)
+		turboshift_phase = TURBO_DONE;
+		connection_status = TRANSMITTING_DATA;
+	}
+}
+
 void cl_arq_controller::process_control_commander()
 {
 	if(this->connection_status==RECEIVING_ACKS_CONTROL)
@@ -724,11 +761,31 @@ void cl_arq_controller::process_control_commander()
 				}
 
 				this->link_status=CONNECTED;
-				this->connection_status=TRANSMITTING_DATA;
 				watchdog_timer.start();
 				link_timer.start();
 				connection_attempt_timer.stop();
 				connection_attempt_timer.reset();
+
+				// Turboshift: start probing instead of jumping to data
+				if(turboshift_active && gear_shift_on==YES && !config_is_at_top(current_configuration, robust_enabled))
+				{
+					turboshift_initiator = true;
+					turboshift_phase = TURBO_FORWARD;
+					turboshift_last_good = current_configuration;
+					negotiated_configuration = config_ladder_up(current_configuration, robust_enabled);
+					printf("[TURBO] Phase: FORWARD — probing commander->responder\n");
+					printf("[TURBO] UP: config %d -> %d\n", current_configuration, negotiated_configuration);
+					fflush(stdout);
+					cleanup();
+					add_message_control(SET_CONFIG);
+					this->connection_status=TRANSMITTING_CONTROL;
+				}
+				else
+				{
+					turboshift_active = false;
+					turboshift_phase = TURBO_DONE;
+					this->connection_status=TRANSMITTING_DATA;
+				}
 			}
 
 		}
@@ -918,7 +975,33 @@ void cl_arq_controller::process_control_commander()
 					}
 					fifo_buffer_backup.flush();
 				}
-				this->connection_status=TRANSMITTING_DATA;
+
+				// Turboshift: keep climbing or finish direction
+				if(turboshift_active)
+				{
+					turboshift_last_good = current_configuration;
+					turboshift_retries = 1;  // reset retry for next config
+					if(!config_is_at_top(current_configuration, robust_enabled))
+					{
+						negotiated_configuration = config_ladder_up(current_configuration, robust_enabled);
+						printf("[TURBO] UP: config %d -> %d\n",
+							current_configuration, negotiated_configuration);
+						fflush(stdout);
+						cleanup();
+						add_message_control(SET_CONFIG);
+						this->connection_status=TRANSMITTING_CONTROL;
+					}
+					else
+					{
+						printf("[TURBO] Reached top at config %d\n", current_configuration);
+						fflush(stdout);
+						finish_turbo_direction();
+					}
+				}
+				else
+				{
+					this->connection_status=TRANSMITTING_DATA;
+				}
 				watchdog_timer.start();
 				link_timer.start();
 			}

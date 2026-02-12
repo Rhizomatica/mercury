@@ -21,11 +21,12 @@ gearshift = '--gearshift' in sys.argv or '-g' in sys.argv
 RSP_PORT = 7001  # responder control=7001, data=7002
 CMD_PORT = 7005  # commander control=7005, data=7006
 
-def log_output(proc, label, logfile):
-    """Read stdout from process and write to logfile and console."""
+def log_output(proc, label, logfile, start_time):
+    """Read stdout from process and write to logfile and console with timestamps."""
     for line in iter(proc.stdout.readline, b''):
         text = line.decode('utf-8', errors='replace').rstrip()
-        entry = f"[{label}] {text}\n"
+        elapsed = time.time() - start_time
+        entry = f"[T+{elapsed:010.3f}] [{label}] {text}\n"
         sys.stdout.write(entry)
         sys.stdout.flush()
         logfile.write(entry)
@@ -108,6 +109,9 @@ def main():
     sockets = []
     stop_event = threading.Event()
 
+    # T=0 reference for all timestamps (set before processes start)
+    t0 = time.time()
+
     try:
         # Start responder (headless)
         rsp_cmd = [
@@ -119,7 +123,7 @@ def main():
         print(f"Starting responder: {' '.join(rsp_cmd)}")
         rsp = subprocess.Popen(rsp_cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
         procs.append(rsp)
-        t_rsp = threading.Thread(target=log_output, args=(rsp, "RSP", logfile), daemon=True)
+        t_rsp = threading.Thread(target=log_output, args=(rsp, "RSP", logfile, t0), daemon=True)
         t_rsp.start()
         time.sleep(3)
 
@@ -133,7 +137,7 @@ def main():
         print(f"Starting commander: {' '.join(cmd_cmd)}")
         cmd = subprocess.Popen(cmd_cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
         procs.append(cmd)
-        t_cmd = threading.Thread(target=log_output, args=(cmd, "CMD", logfile), daemon=True)
+        t_cmd = threading.Thread(target=log_output, args=(cmd, "CMD", logfile, t0), daemon=True)
         t_cmd.start()
         time.sleep(3)
 
@@ -187,8 +191,8 @@ def main():
                 data = cmd_sock.recv(4096)
                 if data:
                     text = data.decode('utf-8', errors='replace').strip()
-                    elapsed = time.time() - start
-                    msg = f"[CMD-TCP @ {elapsed:.1f}s] {text}"
+                    elapsed = time.time() - t0
+                    msg = f"[T+{elapsed:010.3f}] [CMD-TCP] {text}"
                     print(msg)
                     logfile.write(msg + "\n")
                     logfile.flush()
@@ -203,8 +207,8 @@ def main():
                 data = rsp_sock.recv(4096)
                 if data:
                     text = data.decode('utf-8', errors='replace').strip()
-                    elapsed = time.time() - start
-                    msg = f"[RSP-TCP @ {elapsed:.1f}s] {text}"
+                    elapsed = time.time() - t0
+                    msg = f"[T+{elapsed:010.3f}] [RSP-TCP] {text}"
                     print(msg)
                     logfile.write(msg + "\n")
                     logfile.flush()
@@ -216,9 +220,9 @@ def main():
             # Check if processes are still alive
             for i, p in enumerate(procs):
                 if p.poll() is not None:
-                    elapsed = time.time() - start
+                    elapsed = time.time() - t0
                     label = "RSP" if i == 0 else "CMD"
-                    print(f"[WARN] {label} process exited with code {p.returncode} at {elapsed:.1f}s")
+                    print(f"[WARN] {label} process exited with code {p.returncode} at T+{elapsed:.1f}s")
 
         elapsed = time.time() - start
         print(f"\n=== Test complete after {elapsed:.1f}s ===")

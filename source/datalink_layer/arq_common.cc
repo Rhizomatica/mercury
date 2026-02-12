@@ -142,6 +142,12 @@ cl_arq_controller::cl_arq_controller()
 	consecutive_data_acks=0;
 	frame_shift_threshold=3;
 
+	turboshift_phase=TURBO_FORWARD;
+	turboshift_active=true;
+	turboshift_last_good=-1;
+	turboshift_initiator=false;
+	turboshift_retries=1;
+
 	ptt_on_delay_ms=0;
 	ptt_off_delay_ms=0;
 	time_left_to_send_last_frame=0;
@@ -326,7 +332,13 @@ void cl_arq_controller::calculate_receiving_timeout()
 		if(ack_pattern_time_ms > 0)
 		{
 			// ACK pattern. Allow responder decode + pattern TX + margins.
-			set_receiving_timeout(message_transmission_time_ms + ack_pattern_time_ms + ptt_on_delay_ms + ptt_off_delay_ms + 3000);
+			int timeout = message_transmission_time_ms + ack_pattern_time_ms + ptt_on_delay_ms + ptt_off_delay_ms + 3000;
+			// During turboshift, RSP calls load_configuration() on every probe,
+			// adding ~200-500ms overhead. Extend receive window to prevent
+			// premature timeout before ACK arrives.
+			if(gear_shift_on && turboshift_phase != TURBO_DONE)
+				timeout += 2000;
+			set_receiving_timeout(timeout);
 		}
 		else
 		{
@@ -627,6 +639,9 @@ void cl_arq_controller::load_configuration(int configuration, int level, int bac
 
 	gear_shift_block_for_nBlocks_total=default_configuration_ARQ.gear_shift_block_for_nBlocks_total;
 	gear_shift_blocked_for_nBlocks=default_configuration_ARQ.gear_shift_block_for_nBlocks_total;
+	consecutive_data_acks=0;
+	// NOTE: turboshift state is NOT reset here — it persists across config changes.
+	// Only reset at connection init (see init code above).
 
 	message_transmission_time_ms=ceil((1000.0*(telecom_system->data_container.Nsymb+telecom_system->data_container.preamble_nSymb)*telecom_system->data_container.Nofdm*telecom_system->frequency_interpolation_rate)/(float)(telecom_system->frequency_interpolation_rate*(telecom_system->bandwidth/telecom_system->ofdm.Nc)*telecom_system->ofdm.Nfft));
 	if(telecom_system->ctrl_nsymb > 0)
@@ -686,6 +701,13 @@ void cl_arq_controller::load_configuration(int configuration, int level, int bac
 		set_ack_timeout_control(control_batch_size*message_transmission_time_ms+ack_batch_size*ctrl_transmission_time_ms+time_left_to_send_last_frame+2*ptt_on_delay_ms+2*ptt_off_delay_ms);
 	}
 
+	// During turboshift, extend ack_timeout_control (the overall NAck deadline).
+	// receiving_timeout margin is handled inside calculate_receiving_timeout().
+	if(gear_shift_on && turboshift_phase != TURBO_DONE)
+	{
+		set_ack_timeout_control(ack_timeout_control + 2000);
+	}
+
 	ptt_on_delay_ms=default_configuration_ARQ.ptt_on_delay_ms;
 	ptt_off_delay_ms=default_configuration_ARQ.ptt_off_delay_ms;
 	pilot_tone_ms=default_configuration_ARQ.pilot_tone_ms;
@@ -718,6 +740,17 @@ void cl_arq_controller::load_configuration(int configuration, int level, int bac
 	}
 
 	calculate_receiving_timeout();
+
+	// Guard: ack_timeout_control must cover the full TX + receive window.
+	// ack_timer starts at frame send (T=0); receiving_timer starts after TX + PTT.
+	// Without this, ack_timeout can expire while CMD is still polling for ACK.
+	if(gear_shift_on && turboshift_phase != TURBO_DONE && this->role == COMMANDER)
+	{
+		int min_ack = message_transmission_time_ms + ptt_off_delay_ms + receiving_timeout + 500;
+		if(ack_timeout_control < min_ack)
+			set_ack_timeout_control(min_ack);
+	}
+
 	if(level==FULL)
 	{
 		this->init_messages_buffers();
@@ -1223,6 +1256,42 @@ void cl_arq_controller::update_status()
 		}
 		else if(gear_shift_algorithm==SUCCESS_BASED_LADDER)
 		{
+			// Turboshift: retry once before declaring ceiling
+			if(turboshift_active && this->role==COMMANDER)
+			{
+				if(turboshift_retries > 0)
+				{
+					turboshift_retries--;
+					printf("[TURBO] RETRY config %d (retries left: %d)\n",
+						current_configuration, turboshift_retries);
+					fflush(stdout);
+					// Re-send the same SET_CONFIG
+					cleanup();
+					add_message_control(SET_CONFIG);
+					connection_status=TRANSMITTING_CONTROL;
+					return;
+				}
+
+				int failed_config = current_configuration;
+				int settle_config = (turboshift_last_good >= 0) ?
+					turboshift_last_good : init_configuration;
+
+				printf("[TURBO] CEILING at config %d, settling at %d\n",
+					failed_config, settle_config);
+				fflush(stdout);
+
+				messages_control_backup();
+				data_configuration = settle_config;
+				load_configuration(data_configuration, PHYSICAL_LAYER_ONLY, YES);
+				messages_control_restore();
+
+				for(int i=0;i<nMessages;i++)
+					messages_tx[i].status=FREE;
+				fifo_buffer_backup.flush();
+
+				finish_turbo_direction();
+				return;
+			}
 
 			messages_control_backup();
 			data_configuration=config_ladder_down(current_configuration, robust_enabled);
@@ -1267,7 +1336,7 @@ void cl_arq_controller::update_status()
 		}
 	}
 
-	if(switch_role_test_timer.get_elapsed_time_ms()>switch_role_test_timeout)
+	if(!turboshift_active && switch_role_test_timer.get_elapsed_time_ms()>switch_role_test_timeout)
 	{
 		switch_role_test_timer.stop();
 		switch_role_test_timer.reset();
@@ -2142,19 +2211,7 @@ void cl_arq_controller::send_ack_pattern()
 	// Transmit the filtered ACK pattern (skip padding at start)
 	tx_transfer(&filtered2[symbol_period], pattern_samples);
 
-	// Tail padding: silence to flush the ACK through audio interfaces.
-	// Radios and virtual cables buffer audio internally; without padding
-	// the last ACK samples may still be in the interface when we flush
-	// the capture buffer, causing MFSK residue in the next RX window.
-	{
-		const int PAD_MS = 200;
-		int pad_samples = (int)(48000.0 * PAD_MS / 1000.0);
-		double* silence_pad = new double[pad_samples]();
-		tx_transfer(silence_pad, pad_samples);
-		delete[] silence_pad;
-	}
-
-	// Wait for playback to drain (ACK + tail padding)
+	// Wait for playback to drain
 	while(size_buffer(playback_buffer) > 0)
 		msleep(1);
 

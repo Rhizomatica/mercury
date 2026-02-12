@@ -101,10 +101,14 @@ void cl_data_container::set_size(int nData, int Nc, int M, int Nfft , int Nofdm,
 	this->encoded_data=new int[N_MAX];
 	this->bit_interleaved_data=new int[N_MAX];
 	this->modulated_data=new std::complex <double>[nData];
-	this->ofdm_framed_data=new std::complex <double>[Nsymb*Nc];
+	// ACK pattern generation reuses ofdm_framed_data and ofdm_symbol_modulated_data
+	// with ACK_PATTERN_NSYMB=16 symbols. For high-order modulations (16QAM+),
+	// Nsymb < 16, so we must allocate for whichever is larger.
+	int alloc_Nsymb = (Nsymb > 16) ? Nsymb : 16;
+	this->ofdm_framed_data=new std::complex <double>[alloc_Nsymb*Nc];
 	this->ofdm_time_freq_interleaved_data=new std::complex <double>[Nsymb*Nc];
 	this->ofdm_time_freq_deinterleaved_data=new std::complex <double>[Nsymb*Nc];
-	this->ofdm_symbol_modulated_data=new std::complex <double>[Nofdm*Nsymb];
+	this->ofdm_symbol_modulated_data=new std::complex <double>[Nofdm*alloc_Nsymb];
 	this->ofdm_symbol_demodulated_data=new std::complex <double>[Nsymb*Nc];
 	this->ofdm_deframed_data=new std::complex <double>[Nsymb*Nc];
 	this->ofdm_deframed_data_without_amplitude_restoration=new std::complex <double>[Nsymb*Nc];
@@ -131,7 +135,11 @@ void cl_data_container::set_size(int nData, int Nc, int M, int Nfft , int Nofdm,
 	if(min_buf < 32) min_buf = 32;
 	this->buffer_Nsymb = min_buf;
 
-	this->passband_data=new double[Nofdm*(Nsymb+preamble_nSymb)*frequency_interpolation_rate];
+	// ACK pattern uses 16*Nofdm*freq_interp passband samples, which can exceed
+	// the normal frame size at high modulations (16QAM+). Allocate for whichever is larger.
+	int passband_frame = (Nsymb + preamble_nSymb) * Nofdm * frequency_interpolation_rate;
+	int passband_ack = 16 * Nofdm * frequency_interpolation_rate;
+	this->passband_data=new double[(passband_frame > passband_ack) ? passband_frame : passband_ack];
 	this->passband_delayed_data=new double[2*Nofdm*buffer_Nsymb*frequency_interpolation_rate];
 	this->ready_to_process_passband_delayed_data=new double[Nofdm*buffer_Nsymb*frequency_interpolation_rate];
 	this->baseband_data=new std::complex <double>[Nofdm*buffer_Nsymb];

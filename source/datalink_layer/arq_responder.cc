@@ -211,9 +211,10 @@ void cl_arq_controller::process_messages_acknowledging_control()
 			send_batch();
 			load_configuration(data_configuration, PHYSICAL_LAYER_ONLY,YES);
 		}
-		// Capture frame + turnaround gap: ~1200ms for ACK to propagate, commander
-		// guard delay, ptt_on, and VB-Cable latency. Frame completeness gating
-		// handles cases where turnaround exceeds this estimate.
+		// Capture frame + turnaround gap: ~1200ms for CMD ACK detection (~900ms
+		// polling at 4-sym intervals) + guard (200ms) + config load + encode/TX.
+		// Must match buffer allocation (data_container.cc) to avoid preamble
+		// position exceeding upper_bound when arrival is late.
 		telecom_system->set_mfsk_ctrl_mode(false);
 		{
 			double sym_time_ms = telecom_system->data_container.Nofdm
@@ -240,9 +241,12 @@ void cl_arq_controller::process_messages_acknowledging_control()
 			ptt_off_wait.start();
 			while(ptt_off_wait.get_elapsed_time_ms()<ptt_off_delay_ms);
 
-			// Asymmetric gearshift: swap forward/reverse for the return path
-			if(forward_configuration != CONFIG_NONE && reverse_configuration != CONFIG_NONE)
+			bool has_asymmetric = (forward_configuration != CONFIG_NONE &&
+				reverse_configuration != CONFIG_NONE);
+
+			if(has_asymmetric)
 			{
+				// Asymmetric gearshift: swap forward/reverse for the return path
 				char tmp = forward_configuration;
 				forward_configuration = reverse_configuration;
 				reverse_configuration = tmp;
@@ -253,19 +257,69 @@ void cl_arq_controller::process_messages_acknowledging_control()
 					load_configuration(data_configuration, PHYSICAL_LAYER_ONLY, YES);
 				}
 
-				printf("[GEARSHIFT] SWITCH_ROLE: transmitting at config %d (skip TEST_CONNECTION)\n",
+				printf("[GEARSHIFT] SWITCH_ROLE: transmitting at config %d\n",
 					forward_configuration);
-				this->connection_status=TRANSMITTING_DATA;
+				fflush(stdout);
 			}
-			else
+
+			// Turboshift: start probing reverse direction as new commander
+			if(has_asymmetric && turboshift_phase == TURBO_FORWARD && gear_shift_on == YES)
+			{
+				turboshift_phase = TURBO_REVERSE;
+				turboshift_active = true;
+				turboshift_last_good = current_configuration;
+
+				if(!config_is_at_top(current_configuration, robust_enabled))
+				{
+					negotiated_configuration = config_ladder_up(current_configuration, robust_enabled);
+					printf("[TURBO] Phase: REVERSE — probing responder->commander\n");
+					printf("[TURBO] UP: config %d -> %d\n",
+						current_configuration, negotiated_configuration);
+					fflush(stdout);
+					add_message_control(SET_CONFIG);
+					this->connection_status = TRANSMITTING_CONTROL;
+				}
+				else
+				{
+					printf("[TURBO] REVERSE: already at top (%d), done\n",
+						current_configuration);
+					fflush(stdout);
+					turboshift_active = false;
+					turboshift_phase = TURBO_DONE;
+					cleanup();
+					add_message_control(SWITCH_ROLE);
+					this->connection_status = TRANSMITTING_CONTROL;
+				}
+			}
+			else if(has_asymmetric &&
+				(turboshift_phase == TURBO_REVERSE || turboshift_phase == TURBO_DONE))
+			{
+				// Returning to original roles after reverse probe
+				turboshift_phase = TURBO_DONE;
+				turboshift_active = false;
+				printf("[TURBO] DONE — starting data exchange\n");
+				fflush(stdout);
+				this->connection_status = TRANSMITTING_DATA;
+			}
+			else if(!has_asymmetric)
 			{
 				// No asymmetric negotiation (old firmware): fall back to TEST_CONNECTION
 				add_message_control(TEST_CONNECTION);
-				this->connection_status=TRANSMITTING_CONTROL;
+				this->connection_status = TRANSMITTING_CONTROL;
+			}
+			else
+			{
+				this->connection_status = TRANSMITTING_DATA;
 			}
 
-			switch_role_test_timer.reset();
-			switch_role_test_timer.start();
+			// Don't start the switch_role_test_timer during turboshift —
+			// turboshift probes with SET_CONFIG which doesn't reset this timer,
+			// causing it to force role=RESPONDER mid-probe or after TURBO_DONE.
+			if(!turboshift_active && turboshift_phase != TURBO_DONE)
+			{
+				switch_role_test_timer.reset();
+				switch_role_test_timer.start();
+			}
 			last_message_received_type=NONE;
 			last_message_sent_type=NONE;
 			last_received_message_sequence=-1;
@@ -313,9 +367,10 @@ void cl_arq_controller::process_messages_acknowledging_data()
 		// ACK pattern uses dedicated ack_mfsk (M=16, nStreams=1) — no config switch needed
 		send_ack_pattern();
 
-		// Capture frame + turnaround gap: ~1200ms for ACK to propagate, commander
-		// guard delay, ptt_on, and VB-Cable latency. Frame completeness gating
-		// handles cases where turnaround exceeds this estimate.
+		// Capture frame + turnaround gap: ~1200ms for CMD ACK detection (~900ms
+		// polling at 4-sym intervals) + guard (200ms) + config load + encode/TX.
+		// Must match buffer allocation (data_container.cc) to avoid preamble
+		// position exceeding upper_bound when arrival is late.
 		telecom_system->set_mfsk_ctrl_mode(false);
 		{
 			double sym_time_ms = telecom_system->data_container.Nofdm
@@ -565,13 +620,14 @@ void cl_arq_controller::process_control_responder()
 		if(code==SET_CONFIG)
 		{
 			// Asymmetric gearshift: extract forward and reverse configs
-			// Backward compat: 2-byte SET_CONFIG from old firmware → symmetric
+			// data[0]=SET_CONFIG, data[1]=forward, data[2]=reverse
+			// Always 3-byte payload from our fork; data[2] is always present
+			// in messages_rx_buffer (full buffer copied at arq_common.cc:2437)
 			forward_configuration = messages_control.data[1];
-			reverse_configuration = (messages_control.length >= 3) ?
-				messages_control.data[2] : messages_control.data[1];
+			reverse_configuration = messages_control.data[2];
 
-			printf("[GEARSHIFT] Received SET_CONFIG: forward=%d reverse=%d (len=%d)\n",
-				forward_configuration, reverse_configuration, messages_control.length);
+			printf("[GEARSHIFT] Received SET_CONFIG: forward=%d reverse=%d\n",
+				forward_configuration, reverse_configuration);
 
 			if(forward_configuration != current_configuration &&
 				(is_ofdm_config(forward_configuration) || is_robust_config(forward_configuration)))

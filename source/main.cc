@@ -62,6 +62,7 @@ int main(int argc, char *argv[])
     int operation_mode = ARQ_MODE;
     int gear_shift_mode = NO_GEAR_SHIFT;
     int robust_mode = 0;  // 0=disabled, 1=enabled via -R flag
+    bool explicit_config = false;  // true if user specified -s
     int base_tcp_port = 0;
 
     int audio_system = -1;
@@ -215,6 +216,7 @@ int main(int argc, char *argv[])
         case 's':
             if (optarg)
                 mod_config = atoi(optarg);
+            explicit_config = true;
             break;
         case 'l':
             list_modes = true;
@@ -489,6 +491,13 @@ start_modem:
         if (ldpc_iterations > 0)
             telecom_system.default_configurations_telecom_system.ldpc_nIteration_max = ldpc_iterations;
 #endif
+
+        // Gearshift with no explicit -s: default to ROBUST_0 and enable robust mode
+        if(gear_shift_mode != NO_GEAR_SHIFT && !explicit_config)
+        {
+            mod_config = ROBUST_0;
+            robust_mode = 1;
+        }
 
         // Robust mode: CLI -R or INI setting enables MFSK hailing
 #ifdef MERCURY_GUI_ENABLED
