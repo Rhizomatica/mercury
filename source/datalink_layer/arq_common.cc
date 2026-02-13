@@ -148,6 +148,16 @@ cl_arq_controller::cl_arq_controller()
 	turboshift_initiator=false;
 	turboshift_retries=1;
 
+	emergency_nack_count=0;
+	emergency_nack_threshold=2;
+	emergency_break_active=0;
+	emergency_break_retries=3;
+	emergency_previous_config=CONFIG_0;
+	break_drop_step=1;
+	break_recovery_phase=0;
+	break_recovery_retries=0;
+	break_detected=NO;
+
 	ptt_on_delay_ms=0;
 	ptt_off_delay_ms=0;
 	time_left_to_send_last_frame=0;
@@ -169,7 +179,7 @@ cl_arq_controller::cl_arq_controller()
 
 	this->messages_control_bu.status=FREE;
 	this->messages_control_bu.data=NULL;
-	this->messages_control_bu.data=new char[255];
+	this->messages_control_bu.data=new char[N_MAX / 8];
 	if(this->messages_control_bu.data==NULL)
 	{
 		exit(MEMORY_ERROR);
@@ -574,6 +584,10 @@ void cl_arq_controller::load_configuration(int configuration, int level, int bac
 	{
 		if(level==FULL)
 		{
+			printf("[CANARY] Pre-FULL-deinit canary check (config %d -> %d)\n",
+				current_configuration, configuration);
+			fflush(stdout);
+			check_buffer_canaries("pre_FULL_deinit");
 			this->restore_backup_buffer_data();
 			this->deinit_messages_buffers();
 		}
@@ -596,11 +610,16 @@ void cl_arq_controller::load_configuration(int configuration, int level, int bac
 
 	this->current_configuration=configuration;
 
+	// Canary check during PHYS_ONLY transitions — track when corruption first appears
+	if(level != FULL)
+	{
+		check_buffer_canaries("PHYS_ONLY_transition");
+	}
+
 	// Pause audio capture during PHY reconfig to prevent race condition:
 	// telecom_system->load_configuration may deinit/reinit buffers that
 	// the audio callback accesses (passband_delayed_data, etc.)
 	telecom_system->data_container.frames_to_read = 0;
-
 	telecom_system->load_configuration(configuration);
 	int nBytes_header=0;
 	if (ACK_MULTI_ACK_RANGE_HEADER_LENGTH>nBytes_header) nBytes_header=ACK_MULTI_ACK_RANGE_HEADER_LENGTH;
@@ -770,9 +789,75 @@ void cl_arq_controller::return_to_last_configuration()
 	current_configuration=tmp;
 }
 
+// Canary: 16 bytes of 0xCC appended to each buffer to detect overflow.
+// check_canaries() validates them; any corruption pinpoints the overflow target.
+#define CANARY_SIZE 16
+#define CANARY_BYTE 0xCC
+
+static void set_canary(char* buf, int data_size)
+{
+	memset(buf + data_size, CANARY_BYTE, CANARY_SIZE);
+}
+
+static int check_canary(const char* buf, int data_size, const char* name, int idx)
+{
+	if(buf == NULL) return 0;
+	for(int j=0; j<CANARY_SIZE; j++)
+	{
+		if((unsigned char)buf[data_size + j] != CANARY_BYTE)
+		{
+			printf("[CANARY] OVERFLOW %s[%d] at offset %d (byte=0x%02x, expected 0xCC)\n",
+				name, idx, data_size + j, (unsigned char)buf[data_size + j]);
+			fflush(stdout);
+			return 1;
+		}
+	}
+	return 0;
+}
+
+void cl_arq_controller::check_buffer_canaries(const char* caller)
+{
+	const int alloc_size = N_MAX / 8;
+	int corrupted = 0;
+
+	if(messages_tx != NULL)
+	{
+		for(int i=0; i<nMessages; i++)
+			corrupted += check_canary(messages_tx[i].data, alloc_size, "messages_tx", i);
+	}
+	if(messages_rx != NULL)
+	{
+		for(int i=0; i<nMessages; i++)
+			corrupted += check_canary(messages_rx[i].data, alloc_size, "messages_rx", i);
+	}
+	if(messages_batch_ack != NULL)
+	{
+		for(int i=0; i<255; i++)
+			corrupted += check_canary(messages_batch_ack[i].data, alloc_size, "messages_batch_ack", i);
+	}
+	corrupted += check_canary(messages_last_ack_bu.data, alloc_size, "messages_last_ack_bu", 0);
+	corrupted += check_canary(messages_control.data, alloc_size, "messages_control", 0);
+	corrupted += check_canary(messages_rx_buffer.data, alloc_size, "messages_rx_buffer", 0);
+	corrupted += check_canary(message_TxRx_byte_buffer, alloc_size, "message_TxRx_byte_buffer", 0);
+
+	if(corrupted > 0)
+	{
+		printf("[CANARY] %d canary violations detected! caller=%s\n", corrupted, caller);
+		fflush(stdout);
+	}
+}
+
 int cl_arq_controller::init_messages_buffers()
 {
 	int success=SUCCESSFUL;
+
+	// Allocate all message buffers with N_MAX/8 (= 200 bytes) instead of
+	// the current config's max_message_length. This prevents heap overflow
+	// when PHYS_ONLY config transitions (e.g., turboshift or gearshift)
+	// increase max_message_length without reallocating these buffers.
+	// N_MAX = 1600 bits is the absolute maximum LDPC codeword size.
+	const int alloc_size = N_MAX / 8;
+
 	this->messages_tx=new st_message[nMessages];
 
 	if(this->messages_tx==NULL)
@@ -791,7 +876,9 @@ int cl_arq_controller::init_messages_buffers()
 			this->messages_tx[i].type=NONE;
 			this->messages_tx[i].data=NULL;
 
-			this->messages_tx[i].data=new char[max_message_length];
+			this->messages_tx[i].data=new char[alloc_size + CANARY_SIZE];
+			set_canary(this->messages_tx[i].data, alloc_size);
+
 			if(this->messages_tx[i].data==NULL)
 			{
 				success=MEMORY_ERROR;
@@ -817,7 +904,9 @@ int cl_arq_controller::init_messages_buffers()
 			this->messages_rx[i].type=NONE;
 			this->messages_rx[i].data=NULL;
 
-			this->messages_rx[i].data=new char[max_message_length];
+			this->messages_rx[i].data=new char[alloc_size + CANARY_SIZE];
+			set_canary(this->messages_rx[i].data, alloc_size);
+
 			if(this->messages_rx[i].data==NULL)
 			{
 				success=MEMORY_ERROR;
@@ -825,7 +914,11 @@ int cl_arq_controller::init_messages_buffers()
 		}
 	}
 
-	this->messages_batch_tx=new st_message[data_batch_size];
+	// Allocate 255 elements (absolute max nMessages) rather than current
+	// data_batch_size, because PHYS_ONLY config transitions can increase
+	// both nMessages and data_batch_size without reallocating (Bug #15).
+	const int max_batch_alloc = 255;
+	this->messages_batch_tx=new st_message[max_batch_alloc];
 
 	if(this->messages_batch_tx==NULL)
 	{
@@ -833,7 +926,7 @@ int cl_arq_controller::init_messages_buffers()
 	}
 	else
 	{
-		for(int i=0;i<this->data_batch_size;i++)
+		for(int i=0;i<max_batch_alloc;i++)
 		{
 			this->messages_batch_tx[i].ack_timeout=0;
 			this->messages_batch_tx[i].id=0;
@@ -845,7 +938,8 @@ int cl_arq_controller::init_messages_buffers()
 		}
 	}
 
-	this->messages_batch_ack=new st_message[ack_batch_size];
+	// Same fix for ack batch array (Bug #15).
+	this->messages_batch_ack=new st_message[max_batch_alloc];
 
 	if(this->messages_batch_ack==NULL)
 	{
@@ -853,7 +947,7 @@ int cl_arq_controller::init_messages_buffers()
 	}
 	else
 	{
-		for(int i=0;i<this->ack_batch_size;i++)
+		for(int i=0;i<max_batch_alloc;i++)
 		{
 			this->messages_batch_ack[i].ack_timeout=0;
 			this->messages_batch_ack[i].id=0;
@@ -863,7 +957,9 @@ int cl_arq_controller::init_messages_buffers()
 			this->messages_batch_ack[i].type=NONE;
 			this->messages_batch_ack[i].data=NULL;
 
-			this->messages_batch_ack[i].data=new char[max_message_length];
+			this->messages_batch_ack[i].data=new char[alloc_size + CANARY_SIZE];
+			set_canary(this->messages_batch_ack[i].data, alloc_size);
+
 			if(this->messages_batch_ack[i].data==NULL)
 			{
 				success=MEMORY_ERROR;
@@ -873,7 +969,9 @@ int cl_arq_controller::init_messages_buffers()
 
 	this->messages_last_ack_bu.status=FREE;
 	this->messages_last_ack_bu.data=NULL;
-	this->messages_last_ack_bu.data=new char[max_message_length];
+	this->messages_last_ack_bu.data=new char[alloc_size + CANARY_SIZE];
+	set_canary(this->messages_last_ack_bu.data, alloc_size);
+
 	if(this->messages_last_ack_bu.data==NULL)
 	{
 		success=MEMORY_ERROR;
@@ -881,7 +979,9 @@ int cl_arq_controller::init_messages_buffers()
 
 	this->messages_control.status=FREE;
 	this->messages_control.data=NULL;
-	this->messages_control.data=new char[max_message_length];
+	this->messages_control.data=new char[alloc_size + CANARY_SIZE];
+	set_canary(this->messages_control.data, alloc_size);
+
 	if(this->messages_control.data==NULL)
 	{
 		success=MEMORY_ERROR;
@@ -889,14 +989,18 @@ int cl_arq_controller::init_messages_buffers()
 
 	this->messages_rx_buffer.status=FREE;
 	this->messages_rx_buffer.data=NULL;
-	this->messages_rx_buffer.data=new char[max_message_length];
+	this->messages_rx_buffer.data=new char[alloc_size + CANARY_SIZE];
+	set_canary(this->messages_rx_buffer.data, alloc_size);
+
 	if(this->messages_rx_buffer.data==NULL)
 	{
 		success=MEMORY_ERROR;
 	}
 
 	this->messages_control.status=FREE;
-	this->message_TxRx_byte_buffer=new char[max_message_length];
+	this->message_TxRx_byte_buffer=new char[alloc_size + CANARY_SIZE];
+	set_canary(this->message_TxRx_byte_buffer, alloc_size);
+
 	if(this->message_TxRx_byte_buffer==NULL)
 	{
 		success=MEMORY_ERROR;
@@ -907,6 +1011,9 @@ int cl_arq_controller::deinit_messages_buffers()
 {
 	int success=SUCCESSFUL;
 
+	// Check all canaries before freeing — any corruption reveals the overflow target
+	check_buffer_canaries("deinit_messages_buffers");
+
 	if(messages_tx!=NULL)
 	{
 		for(int i=0;i<nMessages;i++)
@@ -914,9 +1021,11 @@ int cl_arq_controller::deinit_messages_buffers()
 			if(messages_tx[i].data!=NULL)
 			{
 				delete[] messages_tx[i].data;
+				messages_tx[i].data=NULL;
 			}
 		}
 		delete[] messages_tx;
+		messages_tx=NULL;
 	}
 
 	if(messages_rx!=NULL)
@@ -926,43 +1035,51 @@ int cl_arq_controller::deinit_messages_buffers()
 			if(messages_rx[i].data!=NULL)
 			{
 				delete[] messages_rx[i].data;
+				messages_rx[i].data=NULL;
 			}
 		}
 		delete[] messages_rx;
+		messages_rx=NULL;
 	}
 
 	if(messages_batch_ack!=NULL)
 	{
-
-		for(int i=0;i<ack_batch_size;i++)
+		for(int i=0;i<255;i++)
 		{
 			if(messages_batch_ack[i].data!=NULL)
 			{
 				delete[] messages_batch_ack[i].data;
+				messages_batch_ack[i].data=NULL;
 			}
 		}
 		delete[] messages_batch_ack;
+		messages_batch_ack=NULL;
 	}
 
 	if(messages_last_ack_bu.data!=NULL)
 	{
 		delete[] messages_last_ack_bu.data;
+		messages_last_ack_bu.data=NULL;
 	}
 	if(messages_control.data!=NULL)
 	{
 		delete[] messages_control.data;
+		messages_control.data=NULL;
 	}
 	if(messages_rx_buffer.data!=NULL)
 	{
 		delete[] messages_rx_buffer.data;
+		messages_rx_buffer.data=NULL;
 	}
 	if(messages_batch_tx!=NULL)
 	{
 		delete[] messages_batch_tx;
+		messages_batch_tx=NULL;
 	}
 	if(message_TxRx_byte_buffer!=NULL)
 	{
 		delete[] message_TxRx_byte_buffer;
+		message_TxRx_byte_buffer=NULL;
 	}
 
 	return success;
@@ -1015,6 +1132,9 @@ void cl_arq_controller::update_status()
 		this->link_status=DROPPED;
 		connection_id=0;
 		assigned_connection_id=0;
+		emergency_break_active=0;
+		emergency_nack_count=0;
+		break_detected=NO;
 		connection_attempt_timer.stop();
 		connection_attempt_timer.reset();
 		connection_attempts=0;
@@ -1064,6 +1184,9 @@ void cl_arq_controller::update_status()
 		this->link_status=DROPPED;
 		connection_id=0;
 		assigned_connection_id=0;
+		emergency_break_active=0;
+		emergency_nack_count=0;
+		break_detected=NO;
 		connection_attempt_timer.stop();
 		connection_attempt_timer.reset();
 		connection_attempts=0;
@@ -1089,6 +1212,9 @@ void cl_arq_controller::update_status()
 		this->link_status=DROPPED;
 		connection_id=0;
 		assigned_connection_id=0;
+		emergency_break_active=0;
+		emergency_nack_count=0;
+		break_detected=NO;
 		link_timer.stop();
 		link_timer.reset();
 		watchdog_timer.stop();
@@ -2242,6 +2368,97 @@ void cl_arq_controller::send_ack_pattern()
 	fflush(stdout);
 }
 
+// Transmit BREAK tone pattern — emergency "drop to ROBUST_0" signal
+void cl_arq_controller::send_break_pattern()
+{
+	printf("[TX-BREAK] Sending BREAK pattern on CONFIG_%d\n", current_configuration);
+	fflush(stdout);
+
+	ptt_on();
+
+	cl_timer ptt_on_delay_timer, ptt_off_delay_timer;
+	ptt_on_delay_timer.start();
+
+	int pattern_samples = telecom_system->ack_pattern_passband_samples;
+	int symbol_period = telecom_system->data_container.Nofdm * telecom_system->data_container.interpolation_rate;
+
+	int padded_size = pattern_samples + 2 * symbol_period;
+	double *raw_output = new double[padded_size];
+	double *filtered1 = new double[padded_size];
+	double *filtered2 = new double[padded_size];
+
+	if(!raw_output || !filtered1 || !filtered2) exit(-35);
+
+	memset(raw_output, 0, padded_size * sizeof(double));
+
+	// Generate BREAK pattern passband (different tones from ACK)
+	telecom_system->generate_break_pattern_passband(&raw_output[symbol_period]);
+
+	memcpy(&raw_output[0], &raw_output[symbol_period], symbol_period * sizeof(double));
+	memcpy(&raw_output[symbol_period + pattern_samples], &raw_output[pattern_samples], symbol_period * sizeof(double));
+
+	memset(filtered1, 0, padded_size * sizeof(double));
+	memset(filtered2, 0, padded_size * sizeof(double));
+	telecom_system->ofdm.FIR_tx1.apply(raw_output, filtered1, padded_size);
+	telecom_system->ofdm.FIR_tx2.apply(filtered1, filtered2, padded_size);
+
+	while(ptt_on_delay_timer.get_elapsed_time_ms() < ptt_on_delay_ms)
+		msleep(1);
+
+	if(pilot_tone_ms > 0 && pilot_tone_hz > 0)
+	{
+		const double SAMPLE_RATE = 48000.0;
+		const double PILOT_FREQ = (double)pilot_tone_hz;
+		const double PI = 3.14159265358979323846;
+		int pilot_samples = (int)(pilot_tone_ms * SAMPLE_RATE / 1000.0);
+		double* pilot_buffer = new double[pilot_samples];
+
+		for(int i = 0; i < pilot_samples; i++)
+		{
+			double t = (double)i / SAMPLE_RATE;
+			double envelope = 1.0;
+			int ramp_samples = (int)(SAMPLE_RATE * 0.005);
+			if(i < ramp_samples)
+				envelope = (double)i / ramp_samples;
+			else if(i > pilot_samples - ramp_samples)
+				envelope = (double)(pilot_samples - i) / ramp_samples;
+			pilot_buffer[i] = envelope * 0.5 * sin(2.0 * PI * PILOT_FREQ * t);
+		}
+
+		tx_transfer(pilot_buffer, pilot_samples);
+		delete[] pilot_buffer;
+	}
+
+	tx_transfer(&filtered2[symbol_period], pattern_samples);
+
+	while(size_buffer(playback_buffer) > 0)
+		msleep(1);
+
+	ptt_off_delay_timer.start();
+	while(ptt_off_delay_timer.get_elapsed_time_ms() < ptt_off_delay_ms)
+		msleep(1);
+
+	ptt_off();
+
+	delete[] raw_output;
+	delete[] filtered1;
+	delete[] filtered2;
+
+	circular_buf_reset(capture_buffer);
+	{
+		int buf_samples = telecom_system->data_container.Nofdm * telecom_system->data_container.buffer_Nsymb * telecom_system->data_container.interpolation_rate;
+		MUTEX_LOCK(&capture_prep_mutex);
+		memset(telecom_system->data_container.passband_delayed_data, 0, buf_samples * sizeof(double));
+		MUTEX_UNLOCK(&capture_prep_mutex);
+	}
+	telecom_system->data_container.nUnder_processing_events = 0;
+	telecom_system->receive_stats.delay_of_last_decoded_message = -1;
+	telecom_system->receive_stats.mfsk_search_raw = 0;
+
+	printf("[TX-BREAK] Done, flushed capture buffer\n");
+	fflush(stdout);
+}
+
 // Receive and detect ACK tone pattern, returns true if detected.
 // Scans only the TAIL (newest 24 symbols) of the capture buffer.
 // Self-echo from our TX lives in the older part and is never scanned.
@@ -2440,7 +2657,6 @@ void cl_arq_controller::receive()
 			{
 				message_TxRx_byte_buffer[i] = (char)telecom_system->data_container.data_byte[i];
 			}
-
 			printf("[RX-DECODE] type=%d connid_rx=%d my_connid=%d broadcast=%d bytes:",
 				(int)(unsigned char)message_TxRx_byte_buffer[0],
 				(int)(unsigned char)message_TxRx_byte_buffer[1],
@@ -2483,6 +2699,12 @@ void cl_arq_controller::receive()
 				{
 					messages_rx_buffer.id=message_TxRx_byte_buffer[3];
 					messages_rx_buffer.length=(unsigned char)message_TxRx_byte_buffer[4];
+					// Clamp length to buffer size — corrupted frames (e.g., from
+					// noise) can have garbage length values that overflow the buffer.
+					int max_short_len = max_data_length + max_header_length - DATA_SHORT_HEADER_LENGTH;
+					if(max_short_len < 0) max_short_len = 0;
+					if(messages_rx_buffer.length > max_short_len)
+						messages_rx_buffer.length = max_short_len;
 					for(int j=0;j<messages_rx_buffer.length;j++)
 					{
 						messages_rx_buffer.data[j]=message_TxRx_byte_buffer[j+DATA_SHORT_HEADER_LENGTH];
@@ -2530,6 +2752,25 @@ void cl_arq_controller::receive()
 				telecom_system->receive_stats.delay_of_last_decoded_message,
 				telecom_system->M);
 			fflush(stdout);
+
+			// BREAK pattern detection: after failed OFDM decode, check for emergency
+			// "drop to ROBUST_0" signal from commander. Only in OFDM mode — MFSK data
+			// tones could create false correlations with BREAK tones.
+			if(telecom_system->M != MOD_MFSK && break_detected == NO)
+			{
+				int matched = 0;
+				double metric = telecom_system->detect_break_pattern_from_passband(
+					telecom_system->data_container.ready_to_process_passband_delayed_data,
+					signal_period, &matched);
+				if(metric >= telecom_system->ack_pattern_detection_threshold
+				   && matched >= cl_mfsk::ACK_PATTERN_NSYMB / 2)
+				{
+					printf("[BREAK] Emergency pattern detected! metric=%.2f matched=%d/16\n",
+						metric, matched);
+					fflush(stdout);
+					break_detected = YES;
+				}
+			}
 
 			// Prevent OFDM FAIL spin loop: pause 8 callbacks (~181ms) to let the
 			// buffer accumulate fresh audio instead of burning CPU on doomed LDPC

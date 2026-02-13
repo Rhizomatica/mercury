@@ -598,6 +598,7 @@ st_receive_stats cl_telecom_system::receive_bit(double *data, int* out)
 
 st_receive_stats cl_telecom_system::receive_byte(double *data, int* out)
 {
+
 	float variance;
 	int nVirtual_data=ldpc.N-data_container.nBits;
 	int nReal_data=data_container.nBits-ldpc.P;
@@ -626,6 +627,7 @@ st_receive_stats cl_telecom_system::receive_byte(double *data, int* out)
 	else
 	{
 		ofdm.passband_to_baseband((double*)data,data_container.Nofdm*data_container.buffer_Nsymb*frequency_interpolation_rate,data_container.baseband_data_interpolated,sampling_frequency,carrier_frequency,carrier_amplitude,1,&ofdm.FIR_rx_time_sync);
+
 		receive_stats.signal_stregth_dbm=ofdm.measure_signal_stregth(data_container.baseband_data_interpolated, data_container.Nofdm*data_container.buffer_Nsymb*frequency_interpolation_rate);
 
 		if(M == MOD_MFSK)
@@ -635,6 +637,7 @@ st_receive_stats cl_telecom_system::receive_byte(double *data, int* out)
 			int search_start = receive_stats.mfsk_search_raw - data_container.nUnder_processing_events;
 			if(search_start < 0) search_start = 0;
 			receive_stats.delay=ofdm.time_sync_mfsk(data_container.baseband_data_interpolated,data_container.Nofdm*data_container.buffer_Nsymb*frequency_interpolation_rate,data_container.interpolation_rate,data_container.preamble_nSymb,mfsk.preamble_tones,mfsk.M,mfsk.nStreams,mfsk.stream_offsets,search_start);
+
 		}
 		else
 		{
@@ -1048,6 +1051,7 @@ skip_h_retry_point:
 
 			ofdm.rational_resampler(&data_container.baseband_data_interpolated[receive_stats.delay], (data_container.Nofdm*(data_container.Nsymb+data_container.preamble_nSymb))*frequency_interpolation_rate, data_container.baseband_data, data_container.interpolation_rate, DECIMATION);
 
+
 			if(receive_stats.sync_trials==time_sync_trials_max && use_last_good_freq_offset==YES && receive_stats.freq_offset_of_last_decoded_message!=0)
 			{
 				freq_offset_measured=receive_stats.freq_offset_of_last_decoded_message;
@@ -1081,11 +1085,13 @@ skip_h_retry_point:
 				}
 			}
 
+
 			if(M == MOD_MFSK)
 			{
 				// MFSK: non-coherent energy detection on FFT output → soft LLRs
 				int rx_nbits = get_active_nbits();
 				mfsk.demod(data_container.ofdm_symbol_demodulated_data, rx_nbits, data_container.demodulated_data);
+
 
 				// Zero-pad LLRs beyond active bits (punctured positions = erasure)
 				// This covers both ctrl mode and BER test puncturing
@@ -1096,6 +1102,7 @@ skip_h_retry_point:
 				{
 					data_container.demodulated_data[i] = 0.0f;
 				}
+
 			}
 			else
 			{
@@ -1213,9 +1220,12 @@ skip_h_retry_point:
 
 			receive_stats.iterations_done=ldpc.decode(data_container.deinterleaved_data,data_container.hd_decoded_data_bit);
 
+
 			bit_energy_dispersal(data_container.hd_decoded_data_bit, data_container.bit_energy_dispersal_sequence, data_container.hd_decoded_data_bit, nReal_data);
 
+
 			bit_to_byte(data_container.hd_decoded_data_bit, data_container.hd_decoded_data_byte, nReal_data);
+
 
 			receive_stats.all_zeros=YES;
 			for(int i=0;i<nReal_data/8;i++)
@@ -1387,6 +1397,7 @@ skip_h_retry_point:
 		}
 		} // end if(energy_ok)
 	}
+
 	if(ldpc.print_nIteration==YES)
 	{
 		std::cout<<"decoded in "<< receive_stats.iterations_done<<" iterations."<<std::endl;
@@ -1471,6 +1482,7 @@ int cl_telecom_system::get_active_nbits() const
 // Returns number of passband samples written to out[]
 int cl_telecom_system::generate_ack_pattern_passband(double* out)
 {
+
 	if(ack_pattern_passband_samples <= 0) return 0;
 
 	int nsymb = cl_mfsk::ACK_PATTERN_NSYMB;
@@ -1480,6 +1492,7 @@ int cl_telecom_system::generate_ack_pattern_passband(double* out)
 	// Reuse ofdm_framed_data buffer (allocated for Nsymb * Nc, nsymb=16 fits easily)
 	// Always use dedicated ack_mfsk (M=16, nStreams=1) — config-independent
 	ack_mfsk.generate_ack_pattern(data_container.ofdm_framed_data);
+
 
 	// IFFT each symbol to time domain
 	for(int i = 0; i < nsymb; i++)
@@ -1505,6 +1518,7 @@ int cl_telecom_system::generate_ack_pattern_passband(double* out)
 	// Peak clipping
 	ofdm.peak_clip(out, ack_pattern_passband_samples, ofdm.data_papr_cut);
 
+
 	return ack_pattern_passband_samples;
 }
 
@@ -1526,6 +1540,61 @@ double cl_telecom_system::detect_ack_pattern_from_passband(double* data, int siz
 		data_container.interpolation_rate,
 		cl_mfsk::ACK_PATTERN_NSYMB,
 		ack_mfsk.ack_tones, cl_mfsk::ACK_PATTERN_LEN,
+		ack_mfsk.tone_hop_step, ack_mfsk.M,
+		ack_mfsk.nStreams, ack_mfsk.stream_offsets,
+		out_matched);
+
+	return metric;
+}
+
+// TX: Generate BREAK pattern as passband audio (identical to ACK but with break_tones)
+int cl_telecom_system::generate_break_pattern_passband(double* out)
+{
+	if(ack_pattern_passband_samples <= 0) return 0;
+
+	int nsymb = cl_mfsk::ACK_PATTERN_NSYMB;
+	float power_normalization = sqrt((double)(ofdm.Nfft * frequency_interpolation_rate));
+
+	ack_mfsk.generate_break_pattern(data_container.ofdm_framed_data);
+
+	for(int i = 0; i < nsymb; i++)
+	{
+		ofdm.symbol_mod(&data_container.ofdm_framed_data[i * data_container.Nc],
+			&data_container.ofdm_symbol_modulated_data[i * data_container.Nofdm]);
+	}
+
+	double ack_boost = sqrt((double)data_container.Nc / ack_mfsk.nStreams) * pow(10.0, -2.0 / 20.0);
+	for(int j = 0; j < data_container.Nofdm * nsymb; j++)
+	{
+		data_container.ofdm_symbol_modulated_data[j] /= power_normalization;
+		data_container.ofdm_symbol_modulated_data[j] *= sqrt(output_power_Watt) * ack_boost;
+	}
+
+	double tx_carrier = carrier_frequency;
+	ofdm.baseband_to_passband(data_container.ofdm_symbol_modulated_data,
+		data_container.Nofdm * nsymb, out,
+		sampling_frequency, tx_carrier, carrier_amplitude, frequency_interpolation_rate);
+
+	ofdm.peak_clip(out, ack_pattern_passband_samples, ofdm.data_papr_cut);
+
+	return ack_pattern_passband_samples;
+}
+
+// RX: Detect BREAK pattern in passband audio buffer (uses break_tones instead of ack_tones)
+double cl_telecom_system::detect_break_pattern_from_passband(double* data, int size, int* out_matched)
+{
+	if(ack_pattern_passband_samples <= 0) return 0.0;
+
+	ofdm.passband_to_baseband(data, size,
+		data_container.baseband_data_interpolated,
+		sampling_frequency, carrier_frequency, carrier_amplitude,
+		1, &ofdm.FIR_rx_data);
+
+	double metric = ofdm.detect_ack_pattern(
+		data_container.baseband_data_interpolated, size,
+		data_container.interpolation_rate,
+		cl_mfsk::ACK_PATTERN_NSYMB,
+		ack_mfsk.break_tones, cl_mfsk::ACK_PATTERN_LEN,
 		ack_mfsk.tone_hop_step, ack_mfsk.M,
 		ack_mfsk.nStreams, ack_mfsk.stream_offsets,
 		out_matched);
@@ -2547,6 +2616,7 @@ void cl_telecom_system::load_configuration(int configuration)
         // why do we need this?
 		// speaker.deinit();
 	}
+
 	if(reinit_subsystems.psk==YES)
 	{
 		psk.deinit();
@@ -2575,10 +2645,12 @@ void cl_telecom_system::load_configuration(int configuration)
 		printf("[PHY-REINIT] Mutex zeroed, calling deinit...\n");
 		fflush(stdout);
 		this->deinit();
-		printf("[PHY-REINIT] deinit complete\n");
+		printf("[PHY-REINIT] deinit complete (tid=%lu)\n", (unsigned long)GetCurrentThreadId());
 		fflush(stdout);
 	}
 
+	printf("[PHY-REINIT] post-deinit A (tid=%lu)\n", (unsigned long)GetCurrentThreadId());
+	fflush(stdout);
 	printf("[PHY-M] _modulation=%d M_before=%.0f MOD_BPSK=%d MOD_MFSK=%d\n",
 		_modulation, M, MOD_BPSK, MOD_MFSK);
 	fflush(stdout);

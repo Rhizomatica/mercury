@@ -53,6 +53,7 @@ public:
 	static const int ACK_PATTERN_REPS = 2;
 	static const int ACK_PATTERN_NSYMB = 16; // ACK_PATTERN_LEN * ACK_PATTERN_REPS
 	int ack_tones[ACK_PATTERN_LEN]; // Known tone indices for ACK pattern
+	int break_tones[ACK_PATTERN_LEN]; // BREAK pattern tones (different Welch-Costas, g=7)
 
 	cl_mfsk();
 	~cl_mfsk();
@@ -70,6 +71,9 @@ public:
 	// Generate ACK pattern: ACK_PATTERN_NSYMB symbols of known tones with hopping
 	// pattern_out: ACK_PATTERN_NSYMB * Nc complex values
 	void generate_ack_pattern(std::complex<double>* pattern_out);
+
+	// Generate BREAK pattern: same structure as ACK but with break_tones
+	void generate_break_pattern(std::complex<double>* pattern_out);
 
 	// TX: Map bits to one-hot subcarrier vectors across all streams
 	// Consumes bits_per_symbol() bits per symbol period

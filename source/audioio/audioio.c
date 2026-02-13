@@ -1033,6 +1033,12 @@ void *radio_capture_prep_thread(void *telecom_ptr_void)
 		{
 			int sp = data_container_ptr->Nofdm * data_container_ptr->buffer_Nsymb * data_container_ptr->interpolation_rate;
 			int loc = sp - symbol_period - 1;
+			if(sp != signal_period && sp != 0) {
+				printf("[CAP-STALE] sp_old=%d sp_new=%d symb_old=%d buf=%p tid=%lu\n",
+					signal_period, sp, symbol_period, (void*)data_container_ptr->passband_delayed_data,
+					(unsigned long)GetCurrentThreadId());
+				fflush(stdout);
+			}
 			if(sp == 0 || data_container_ptr->passband_delayed_data == NULL || loc < 0) {
 				MUTEX_UNLOCK(&capture_prep_mutex);
 				continue;

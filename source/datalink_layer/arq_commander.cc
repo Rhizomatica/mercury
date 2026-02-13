@@ -34,6 +34,123 @@ void cl_arq_controller::register_ack(int message_id)
 
 void cl_arq_controller::process_messages_commander()
 {
+	// Emergency BREAK state machine: poll for ACK after sending BREAK pattern
+	if(emergency_break_active)
+	{
+		if(disconnect_requested==YES)
+		{
+			emergency_break_active=0;
+			emergency_nack_count=0;
+			// Fall through to normal disconnect handling below
+		}
+		else
+		{
+		if(receiving_timer.get_elapsed_time_ms() < receiving_timeout)
+		{
+			if(receive_ack_pattern())
+			{
+				// Use ROBUST_0 as coordination layer, then probe target config.
+				// Phase 1: send SET_CONFIG at ROBUST_0 (guaranteed delivery).
+				// Phase 2: send SET_CONFIG at target to verify it works (2 tries).
+				int target = config_ladder_down_n(emergency_previous_config, break_drop_step, robust_enabled);
+				printf("[BREAK] ACK received! Dropping %d step(s): config %d -> %d\n",
+					break_drop_step, emergency_previous_config, target);
+				fflush(stdout);
+				if(break_drop_step < 4) break_drop_step *= 2;
+
+				emergency_break_active = 0;
+				emergency_nack_count = 0;
+				break_recovery_phase = 1;
+				break_recovery_retries = 2;
+
+				int robust_0 = robust_enabled ? ROBUST_0 : CONFIG_0;
+				messages_control_backup();
+				data_configuration = target;
+				load_configuration(robust_0, PHYSICAL_LAYER_ONLY, YES);
+				messages_control_restore();
+
+				negotiated_configuration = target;
+				forward_configuration = target;
+				if(reverse_configuration == CONFIG_NONE)
+					reverse_configuration = target;
+
+				for(int i=0; i<nMessages; i++)
+				{
+					if(messages_tx[i].status == ADDED_TO_LIST || messages_tx[i].status == ADDED_TO_BATCH_BUFFER)
+						fifo_buffer_tx.push(messages_tx[i].data, messages_tx[i].length);
+					messages_tx[i].status = FREE;
+				}
+				fifo_buffer_backup.flush();
+				block_under_tx = NO;
+
+				// Force-clear: cleanup() skips PENDING_ACK status
+				messages_control.status = FREE;
+				add_message_control(SET_CONFIG);
+				connection_status = TRANSMITTING_CONTROL;
+				link_timer.start();
+				watchdog_timer.start();
+			}
+		}
+		else
+		{
+			// Timeout — retry BREAK
+			emergency_break_retries--;
+			if(emergency_break_retries > 0)
+			{
+				printf("[BREAK] Retry (%d left)\n", emergency_break_retries);
+				fflush(stdout);
+				send_break_pattern();
+				telecom_system->data_container.frames_to_read = 4;
+				calculate_receiving_timeout();
+				receiving_timer.start();
+			}
+			else
+			{
+				printf("[BREAK] All retries exhausted — assuming responder already at ROBUST_0\n");
+				fflush(stdout);
+				emergency_break_active = 0;
+				emergency_nack_count = 0;
+				break_recovery_phase = 1;
+				break_recovery_retries = 2;
+
+				int target = config_ladder_down_n(emergency_previous_config, break_drop_step, robust_enabled);
+				printf("[BREAK] Dropping %d step(s): config %d -> %d\n",
+					break_drop_step, emergency_previous_config, target);
+				fflush(stdout);
+				if(break_drop_step < 4) break_drop_step *= 2;
+
+				int robust_0 = robust_enabled ? ROBUST_0 : CONFIG_0;
+				messages_control_backup();
+				data_configuration = target;
+				load_configuration(robust_0, PHYSICAL_LAYER_ONLY, YES);
+				messages_control_restore();
+
+				negotiated_configuration = target;
+				forward_configuration = target;
+				if(reverse_configuration == CONFIG_NONE)
+					reverse_configuration = target;
+
+				for(int i=0; i<nMessages; i++)
+				{
+					if(messages_tx[i].status == ADDED_TO_LIST || messages_tx[i].status == ADDED_TO_BATCH_BUFFER)
+						fifo_buffer_tx.push(messages_tx[i].data, messages_tx[i].length);
+					messages_tx[i].status = FREE;
+				}
+				fifo_buffer_backup.flush();
+				block_under_tx = NO;
+
+				// Force-clear: cleanup() skips PENDING_ACK status
+				messages_control.status = FREE;
+				add_message_control(SET_CONFIG);
+				connection_status = TRANSMITTING_CONTROL;
+				link_timer.start();
+				watchdog_timer.start();
+			}
+		}
+		return;
+		} // else (not disconnect_requested)
+	}
+
 	if(this->link_status==CONNECTING)
 	{
 		add_message_control(START_CONNECTION);
@@ -293,10 +410,10 @@ void cl_arq_controller::process_messages_tx_control()
 				data_configuration=negotiated_configuration;
 				gear_shift_timer.start();
 			}
-			else
-			{
-				connection_status=TRANSMITTING_DATA;
-			}
+			// Always wait for SET_CONFIG ACK (stay in RECEIVING_ACKS_CONTROL).
+			// Previously jumped to TRANSMITTING_DATA when negotiated==current,
+			// causing collision after BREAK (commander sent data before responder
+			// finished processing SET_CONFIG).
 		}
 
 		if(messages_control.data[0]==REPEAT_LAST_ACK)
@@ -504,10 +621,85 @@ void cl_arq_controller::process_messages_rx_acks_control()
 			load_configuration(data_configuration, PHYSICAL_LAYER_ONLY,YES);
 		if(messages_control.status==ACKED)
 		{
+			emergency_nack_count = 0;  // Channel working — reset BREAK counter
 			process_control_commander();
 		}
 		else
 		{
+			// Break recovery phase 2: probe at target config failed
+			if(break_recovery_phase == 2)
+			{
+				break_recovery_retries--;
+				if(break_recovery_retries > 0)
+				{
+					printf("[BREAK-RECOVERY] Probe retry (%d left) at config %d\n",
+						break_recovery_retries, current_configuration);
+					fflush(stdout);
+					receiving_timer.stop();
+					receiving_timer.reset();
+					// Force-clear: cleanup() skips PENDING_ACK status
+					messages_control.status = FREE;
+					add_message_control(SET_CONFIG);
+					connection_status = TRANSMITTING_CONTROL;
+					return;
+				}
+				else
+				{
+					// Probe failed — this config doesn't work.
+					// BREAK back to ROBUST_0 and try lower target.
+					printf("[BREAK-RECOVERY] Config %d failed probe, sending BREAK\n",
+						current_configuration);
+					fflush(stdout);
+					receiving_timer.stop();
+					receiving_timer.reset();
+					// Force-clear: cleanup() skips PENDING_ACK status
+					messages_control.status = FREE;
+					emergency_previous_config = current_configuration;
+					emergency_break_active = 1;
+					emergency_break_retries = 3;
+					break_recovery_phase = 0;  // BREAK ACK handler will set to 1
+					send_break_pattern();
+					telecom_system->data_container.frames_to_read = 4;
+					calculate_receiving_timeout();
+					receiving_timer.start();
+					return;
+				}
+			}
+
+			// Track control failures toward BREAK threshold.
+			// Only during connected data exchange (not connection setup or turboshift).
+			if(link_status == CONNECTED && turboshift_phase == TURBO_DONE
+				&& gear_shift_on == YES && !emergency_break_active)
+			{
+				emergency_nack_count++;
+				printf("[BREAK] Control failure #%d at config %d (threshold=%d)\n",
+					emergency_nack_count, current_configuration, emergency_nack_threshold);
+				fflush(stdout);
+
+				if(emergency_nack_count >= emergency_nack_threshold
+					&& !config_is_at_bottom(current_configuration, robust_enabled))
+				{
+					printf("[BREAK] Sending emergency BREAK pattern (control failure)\n");
+					fflush(stdout);
+
+					// Cancel pending control message
+					messages_control.ack_timeout=0;
+					messages_control.id=0;
+					messages_control.length=0;
+					messages_control.nResends=0;
+					messages_control.status=FREE;
+					messages_control.type=NONE;
+
+					emergency_previous_config = current_configuration;
+					emergency_break_active = 1;
+					emergency_break_retries = 3;
+					send_break_pattern();
+					telecom_system->data_container.frames_to_read = 4;
+					calculate_receiving_timeout();
+					receiving_timer.start();
+					return;
+				}
+			}
 			connection_status=TRANSMITTING_CONTROL;
 		}
 
@@ -580,17 +772,27 @@ void cl_arq_controller::process_messages_rx_acks_data()
 				if(messages_rx_buffer.type==ACK_RANGE)
 				{
 					data_ack_received=YES;
-					unsigned char start=(unsigned char)messages_rx_buffer.data[0];
-					unsigned char end=(unsigned char)messages_rx_buffer.data[1];
-					for(unsigned char i=start;i<=end;i++)
+					int start=(unsigned char)messages_rx_buffer.data[0];
+					int end=(unsigned char)messages_rx_buffer.data[1];
+					// Guard: start > end under garbage frames wraps unsigned char → infinite loop
+					if(start <= end)
 					{
-						register_ack(i);
+						for(int i=start;i<=end;i++)
+						{
+							register_ack(i);
+						}
 					}
 				}
 				else if(messages_rx_buffer.type==ACK_MULTI)
 				{
 					data_ack_received=YES;
-					for(unsigned char i=0;i<(unsigned char)messages_rx_buffer.data[0];i++)
+					// Clamp count to buffer bounds — garbage frames can have data[0]=255,
+					// reading past the 200-byte messages_rx_buffer.data (Bug #15)
+					int ack_count = (unsigned char)messages_rx_buffer.data[0];
+					int max_acks = max_data_length + max_header_length - ACK_MULTI_ACK_RANGE_HEADER_LENGTH - 1;
+					if(max_acks < 0) max_acks = 0;
+					if(ack_count > max_acks) ack_count = max_acks;
+					for(int i=0;i<ack_count;i++)
 					{
 						register_ack((unsigned char)messages_rx_buffer.data[i+1]);
 					}
@@ -626,6 +828,40 @@ void cl_arq_controller::process_messages_rx_acks_data()
 			stats.nNAcked_control++;
 		}
 		this->cleanup();
+
+		// Emergency BREAK: track consecutive complete failures (data + REPEAT_LAST_ACK)
+		if(data_ack_received == NO)
+		{
+			emergency_nack_count++;
+			printf("[BREAK] Block failure #%d at config %d (threshold=%d)\n",
+				emergency_nack_count, current_configuration, emergency_nack_threshold);
+			fflush(stdout);
+
+			// Trigger BREAK when threshold reached and not already at bottom
+			if(emergency_nack_count >= emergency_nack_threshold
+			   && !config_is_at_bottom(current_configuration, robust_enabled)
+			   && !emergency_break_active
+			   && turboshift_phase == TURBO_DONE
+			   && gear_shift_on == YES)
+			{
+				printf("[BREAK] Sending emergency BREAK pattern\n");
+				fflush(stdout);
+				emergency_previous_config = current_configuration;
+				emergency_break_active = 1;
+				emergency_break_retries = 3;
+				send_break_pattern();
+				// Poll for ACK from responder
+				telecom_system->data_container.frames_to_read = 4;
+				calculate_receiving_timeout();
+				receiving_timer.start();
+				return;
+			}
+		}
+		else
+		{
+			emergency_nack_count = 0;  // Reset on success
+			break_drop_step = 1;
+		}
 
 		// Frame-level gearshift: after N consecutive successful data ACKs, shift up immediately
 		if(data_ack_received==YES && gear_shift_on==YES && gear_shift_algorithm==SUCCESS_BASED_LADDER &&
@@ -976,8 +1212,32 @@ void cl_arq_controller::process_control_commander()
 					fifo_buffer_backup.flush();
 				}
 
+				// Break recovery: reverse-turboshift probing
+				if(break_recovery_phase == 1)
+				{
+					// Phase 1 complete: coordination at ROBUST_0 succeeded.
+					// Target config loaded. Now probe it with SET_CONFIG at target.
+					printf("[BREAK-RECOVERY] Phase 1 done, probing config %d (2 tries)\n",
+						current_configuration);
+					fflush(stdout);
+					break_recovery_phase = 2;
+					break_recovery_retries = 2;
+					cleanup();
+					add_message_control(SET_CONFIG);
+					this->connection_status = TRANSMITTING_CONTROL;
+				}
+				else if(break_recovery_phase == 2)
+				{
+					// Phase 2 complete: target config works!
+					printf("[BREAK-RECOVERY] Config %d verified, resuming data exchange\n",
+						current_configuration);
+					fflush(stdout);
+					break_recovery_phase = 0;
+					break_drop_step = 1;  // reset backoff on success
+					this->connection_status = TRANSMITTING_DATA;
+				}
 				// Turboshift: keep climbing or finish direction
-				if(turboshift_active)
+				else if(turboshift_active)
 				{
 					turboshift_last_good = current_configuration;
 					turboshift_retries = 1;  // reset retry for next config

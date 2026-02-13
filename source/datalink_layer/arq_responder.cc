@@ -95,6 +95,30 @@ void cl_arq_controller::process_messages_rx_data_control()
 	if (receiving_timer.get_elapsed_time_ms()<receiving_timeout)
 	{
 		this->receive();
+
+		// Emergency BREAK: commander signals "drop to ROBUST_0"
+		if(break_detected == YES)
+		{
+			printf("[BREAK] Responding with ACK, dropping to ROBUST_0\n");
+			fflush(stdout);
+			break_detected = NO;
+
+			// Send ACK to confirm BREAK received
+			send_ack_pattern();
+
+			// Drop to ROBUST_0 (commander will send SET_CONFIG at ROBUST_0)
+			int target = robust_enabled ? ROBUST_0 : CONFIG_0;
+			data_configuration = target;
+			load_configuration(target, PHYSICAL_LAYER_ONLY, YES);
+
+			// Wait for SET_CONFIG from commander
+			calculate_receiving_timeout();
+			receiving_timer.start();
+			connection_status = RECEIVING;
+			link_timer.start();
+			return;
+		}
+
 		if(messages_rx_buffer.status==RECEIVED)
 		{
 			if(messages_rx_buffer.type==CONTROL)
@@ -217,15 +241,31 @@ void cl_arq_controller::process_messages_acknowledging_control()
 		// position exceeding upper_bound when arrival is late.
 		telecom_system->set_mfsk_ctrl_mode(false);
 		{
+			// During load_configuration(), the capture thread keeps shifting
+			// the buffer (frames_to_read=0, data_ready=1 → nUnder accumulates).
+			// These shifts count toward the turnaround — the commander's ACK
+			// detection + encode + TX happens concurrently with our config load.
+			// Subtract the elapsed symbols so the total countdown (load_time +
+			// ftr) matches the intended turnaround, keeping the preamble near
+			// the right edge of the buffer instead of buried in silence.
+			int nUnder_during_load = telecom_system->data_container.nUnder_processing_events.load();
+			telecom_system->data_container.nUnder_processing_events = 0;
+
 			double sym_time_ms = telecom_system->data_container.Nofdm
 				* telecom_system->data_container.interpolation_rate / 48.0;
 			int turnaround_symb = (int)ceil(1200.0 / sym_time_ms) + 4;
+			turnaround_symb -= nUnder_during_load;
+			if(turnaround_symb < 0) turnaround_symb = 0;
 			int ftr = telecom_system->data_container.preamble_nSymb
 				+ telecom_system->data_container.Nsymb
 				+ turnaround_symb;
 			int buf_nsymb = telecom_system->data_container.buffer_Nsymb.load();
 			if(ftr > buf_nsymb) ftr = buf_nsymb;
 			telecom_system->data_container.frames_to_read = ftr;
+
+			printf("[ACK-CTRL] ftr=%d (turnaround=%d - load_shift=%d)\n",
+				ftr, (int)ceil(1200.0 / sym_time_ms) + 4, nUnder_during_load);
+			fflush(stdout);
 		}
 
 		messages_control.status=FREE;
@@ -373,15 +413,24 @@ void cl_arq_controller::process_messages_acknowledging_data()
 		// position exceeding upper_bound when arrival is late.
 		telecom_system->set_mfsk_ctrl_mode(false);
 		{
+			int nUnder_during_load = telecom_system->data_container.nUnder_processing_events.load();
+			telecom_system->data_container.nUnder_processing_events = 0;
+
 			double sym_time_ms = telecom_system->data_container.Nofdm
 				* telecom_system->data_container.interpolation_rate / 48.0;
 			int turnaround_symb = (int)ceil(1200.0 / sym_time_ms) + 4;
+			turnaround_symb -= nUnder_during_load;
+			if(turnaround_symb < 0) turnaround_symb = 0;
 			int ftr = telecom_system->data_container.preamble_nSymb
 				+ telecom_system->data_container.Nsymb
 				+ turnaround_symb;
 			int buf_nsymb = telecom_system->data_container.buffer_Nsymb.load();
 			if(ftr > buf_nsymb) ftr = buf_nsymb;
 			telecom_system->data_container.frames_to_read = ftr;
+
+			printf("[ACK-DATA] ftr=%d (turnaround=%d - load_shift=%d)\n",
+				ftr, (int)ceil(1200.0 / sym_time_ms) + 4, nUnder_during_load);
+			fflush(stdout);
 		}
 
 		connection_status=RECEIVING;
@@ -424,8 +473,11 @@ void cl_arq_controller::process_messages_acknowledging_data()
 			message_batch_counter_tx=0;
 			messages_batch_ack[message_batch_counter_tx].type=ACK_MULTI;
 			messages_batch_ack[message_batch_counter_tx].id=0;
+			// Clamp to buffer size — init_messages_buffers allocated N_MAX/8 bytes.
+			// Don't reallocate: reuse existing buffer to avoid memory leak (Bug #17).
+			if(nAck_messages + 1 > N_MAX / 8)
+				nAck_messages = N_MAX / 8 - 1;
 			messages_batch_ack[message_batch_counter_tx].length=nAck_messages+1;
-			messages_batch_ack[message_batch_counter_tx].data=new char[nAck_messages+1];
 			messages_batch_ack[message_batch_counter_tx].data[0]=nAck_messages;
 
 			int counter=1;
@@ -543,7 +595,14 @@ void cl_arq_controller::process_control_responder()
 		if(received_crc == my_crc)
 		{
 			destination_call_sign="";
-			for(int i=0;i<messages_control.data[2];i++)
+			// Clamp callsign length to buffer bounds — garbage LDPC decodes
+			// under noise can have data[2]=127 (signed char max), reading
+			// past valid data into the 200-byte buffer (Bug #19).
+			int cs_len = (int)(unsigned char)messages_control.data[2];
+			int max_cs = max_data_length + max_header_length - CONTROL_ACK_CONTROL_HEADER_LENGTH - 3;
+			if(max_cs < 0) max_cs = 0;
+			if(cs_len > max_cs) cs_len = max_cs;
+			for(int i=0;i<cs_len;i++)
 			{
 				destination_call_sign+=messages_control.data[3+i];
 			}

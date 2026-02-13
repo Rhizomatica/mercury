@@ -170,6 +170,7 @@ public:
   void send_batch();
   void send_ack_pattern();   // Level 3: TX short tone pattern instead of LDPC ACK
   bool receive_ack_pattern(); // Level 3: RX + detect ACK pattern, returns true if detected
+  void send_break_pattern(); // Emergency BREAK: TX "drop to ROBUST_0" tone pattern
   void process_messages_rx_acks_control();
   void process_messages_rx_acks_data();
   void process_control_commander();
@@ -314,6 +315,17 @@ public:
   bool turboshift_initiator;       // true = I started turboshift (original commander)
   int turboshift_retries;          // retries left at current config (0 = ceiling)
 
+  // Emergency BREAK: drop to ROBUST_0 when current config is undecodable
+  int emergency_nack_count;       // consecutive failed data blocks
+  int emergency_nack_threshold;   // trigger threshold (default 2)
+  int emergency_break_active;     // 1 = BREAK sent, waiting for ACK
+  int emergency_break_retries;    // retries left for current BREAK attempt
+  int emergency_previous_config;  // config that was failing
+  int break_drop_step;            // ladder steps to drop (1,2,4,4,4...)
+  int break_recovery_phase;       // 0=off, 1=coord at ROBUST_0, 2=probing target
+  int break_recovery_retries;     // probe attempts remaining (2 total)
+  int break_detected;             // YES if BREAK pattern detected by responder
+
   int ptt_on_delay_ms;
   int ptt_off_delay_ms;
   int pilot_tone_ms;   // Duration of pilot tone before OFDM (0=disabled)
@@ -355,6 +367,7 @@ private:
   void return_to_last_configuration();
   int init_messages_buffers();
   int deinit_messages_buffers();
+  void check_buffer_canaries(const char* caller);
 
   char last_received_message_sequence;
   char last_message_sent_type;

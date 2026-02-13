@@ -125,6 +125,10 @@ public:
 	double detect_ack_pattern_from_passband(double* data, int size, int* out_matched = nullptr);  // RX: returns metric
 	void ack_pattern_detection_test();  // SNR sweep + false alarm test
 
+	// BREAK pattern: emergency "drop to ROBUST_0" signal (different tones from ACK)
+	int generate_break_pattern_passband(double* out);  // TX: returns samples written
+	double detect_break_pattern_from_passband(double* data, int size, int* out_matched = nullptr);  // RX: returns metric
+
 	st_receive_stats receive_stats;
 
 	int operation_mode;

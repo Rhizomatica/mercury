@@ -85,6 +85,16 @@ RE_PHY_ACTIVE = re.compile(r'\[PHY\] Config (\d+) active: M=(\d+).*Nsymb=(\d+)')
 RE_TRIAL_RESULT = re.compile(r'\[OFDM-SYNC\] trial (\d+) (FAIL|OK):.*delay=(\d+).*iter=(\d+)')
 RE_GEARSHIFT_NACK = re.compile(r'\[GEARSHIFT\].*NAck|nack_timeout|gear_shift_timer.*expired')
 
+# -- PHY-REINIT lifecycle events --
+RE_DEINIT_START = re.compile(r'\[PHY-REINIT\] Mutex zeroed, calling deinit')
+RE_DEINIT_COMPLETE = re.compile(r'\[PHY-REINIT\] deinit complete')
+RE_INIT_START = re.compile(r'\[PHY-REINIT\] Calling init')
+RE_INIT_COMPLETE = re.compile(r'\[PHY-REINIT\] init complete')
+
+# -- Process exit / crash --
+RE_PROCESS_EXIT = re.compile(r'exited with code (\d+)')
+RE_ACK_CTRL_LOAD = re.compile(r'\[ACK-CTRL\] Loading new data config (\d+) \(was (\d+)\)')
+
 # Config properties (from ACK_TIMING_ANALYSIS.md Section 5)
 CONFIG_PROPS = {
     100: {"name": "ROBUST_0", "mod": "32-MFSK", "nsymb": None, "preamble": 4, "tx_ms": None},
@@ -133,6 +143,20 @@ class Event:
     event_type: str      # e.g., "TURBO_UP", "BUF_ENERGY", "COARSE", etc.
     data: dict = field(default_factory=dict)
     raw: str = ""
+
+
+@dataclass
+class CrashInfo:
+    """Detected process crash (silent death during deinit)."""
+    role: str = ""                 # "CMD" or "RSP"
+    crash_time: float = -1         # time of last line from crashed process
+    crash_line: int = 0            # line number of last line
+    crash_raw: str = ""            # last line text
+    deinit_config_from: int = -1   # config being deinited
+    deinit_config_to: int = -1     # config being loaded
+    other_role_last_time: float = -1  # last timestamp from surviving process
+    other_role_last_line: int = 0
+    silence_duration: float = 0    # how long crashed process was silent
 
 
 @dataclass
@@ -401,6 +425,31 @@ def parse_log(filepath):
                     evt = Event(ts, line_num, role, "CHAN_EST",
                                {"mean_H": float(m.group(1))}, line)
 
+            # PHY-REINIT lifecycle events
+            if not evt and RE_DEINIT_START.search(line_content):
+                evt = Event(ts, line_num, role, "DEINIT_START", {}, line)
+
+            if not evt and RE_DEINIT_COMPLETE.search(line_content):
+                evt = Event(ts, line_num, role, "DEINIT_COMPLETE", {}, line)
+
+            if not evt and RE_INIT_START.search(line_content):
+                evt = Event(ts, line_num, role, "INIT_START", {}, line)
+
+            if not evt and RE_INIT_COMPLETE.search(line_content):
+                evt = Event(ts, line_num, role, "INIT_COMPLETE", {}, line)
+
+            if not evt:
+                m = RE_PROCESS_EXIT.search(line_content)
+                if m:
+                    evt = Event(ts, line_num, role, "PROCESS_EXIT",
+                               {"code": int(m.group(1))}, line)
+
+            if not evt:
+                m = RE_ACK_CTRL_LOAD.search(line_content)
+                if m:
+                    evt = Event(ts, line_num, role, "ACK_CTRL_LOAD",
+                               {"to": int(m.group(1)), "from": int(m.group(2))}, line)
+
             # PTT events (from TCP)
             if not evt and 'PTT ON' in line_content:
                 evt = Event(ts, line_num, role if role != "???" else
@@ -575,6 +624,132 @@ def build_transitions(events):
                 current.rsp_reinit_time = evt.time
 
     return transitions
+
+
+def detect_crashes(events):
+    """Detect silent process crashes by analyzing event patterns.
+
+    Crash signature: process prints 'Mutex zeroed, calling deinit...' but never
+    'deinit complete'. The process goes silent while the other continues.
+    """
+    crashes = []
+
+    # Track deinit lifecycle per role
+    # Key: role, Value: dict with pending deinit info
+    pending_deinit = {}  # role -> {time, line, config_from, config_to}
+
+    # Track last event time per role
+    last_event = {}  # role -> (time, line_num, raw)
+
+    # Track PHY_REINIT to get config_from/config_to for pending deinits
+    last_reinit = {}  # role -> {from, to}
+
+    for evt in events:
+        if evt.role in ("CMD", "RSP"):
+            last_event[evt.role] = (evt.time, evt.line_num, evt.raw)
+
+        # Track PHY_REINIT (has config from/to)
+        if evt.event_type == "PHY_REINIT":
+            last_reinit[evt.role] = {"from": evt.data["from"], "to": evt.data["to"]}
+
+        # Deinit started
+        if evt.event_type == "DEINIT_START":
+            reinit = last_reinit.get(evt.role, {"from": -1, "to": -1})
+            pending_deinit[evt.role] = {
+                "time": evt.time,
+                "line": evt.line_num,
+                "raw": evt.raw,
+                "config_from": reinit["from"],
+                "config_to": reinit["to"],
+            }
+
+        # Deinit completed — clear the pending
+        if evt.event_type == "DEINIT_COMPLETE" and evt.role in pending_deinit:
+            del pending_deinit[evt.role]
+
+    # Check for any unresolved deinits (process died during deinit)
+    for role, info in pending_deinit.items():
+        other_role = "CMD" if role == "RSP" else "RSP"
+        other_last = last_event.get(other_role, (-1, 0, ""))
+        my_last = last_event.get(role, (-1, 0, ""))
+
+        crash = CrashInfo(
+            role=role,
+            crash_time=info["time"],
+            crash_line=info["line"],
+            crash_raw=info["raw"],
+            deinit_config_from=info["config_from"],
+            deinit_config_to=info["config_to"],
+            other_role_last_time=other_last[0],
+            other_role_last_line=other_last[1],
+            silence_duration=other_last[0] - info["time"] if other_last[0] > 0 else 0,
+        )
+        crashes.append(crash)
+
+    # Also detect "gone silent" without deinit: process stops emitting events
+    # while the other continues for >10s
+    for role in ("CMD", "RSP"):
+        if role in pending_deinit:
+            continue  # already caught above
+        other_role = "CMD" if role == "RSP" else "RSP"
+        my_last = last_event.get(role, (-1, 0, ""))
+        other_last = last_event.get(other_role, (-1, 0, ""))
+        if my_last[0] > 0 and other_last[0] > 0:
+            gap = other_last[0] - my_last[0]
+            if gap > 10.0:  # >10s silence = likely crash
+                crash = CrashInfo(
+                    role=role,
+                    crash_time=my_last[0],
+                    crash_line=my_last[1],
+                    crash_raw=my_last[2],
+                    other_role_last_time=other_last[0],
+                    other_role_last_line=other_last[1],
+                    silence_duration=gap,
+                )
+                crashes.append(crash)
+
+    return crashes
+
+
+def print_crash_report(crashes, events):
+    """Print crash detection report."""
+    if not crashes:
+        print(f"\n  {'='*70}")
+        print(f"  CRASH DETECTION: No crashes detected")
+        print(f"  {'='*70}")
+        return
+
+    for crash in crashes:
+        exit_code_str = ""
+        # Look for process exit events
+        for evt in events:
+            if evt.event_type == "PROCESS_EXIT":
+                exit_code_str = f"  Exit code: {evt.data['code']} (0x{evt.data['code']:08X})"
+
+        print(f"\n  {'='*70}")
+        print(f"  CRASH DETECTED: {crash.role} process died!")
+        print(f"  {'='*70}")
+        if crash.deinit_config_from >= 0:
+            print(f"  During: deinit() in config transition {config_name(crash.deinit_config_from)} -> {config_name(crash.deinit_config_to)}")
+        print(f"  Last {crash.role} line: L{crash.crash_line} at T+{crash.crash_time:.3f}s")
+        print(f"    {crash.crash_raw.strip()}")
+        other = "CMD" if crash.role == "RSP" else "RSP"
+        print(f"  {other} continued until: L{crash.other_role_last_line} at T+{crash.other_role_last_time:.3f}s")
+        print(f"  {crash.role} silent for: {crash.silence_duration:.1f}s (while {other} continued)")
+        if exit_code_str:
+            print(exit_code_str)
+
+        # Show context: last 5 events from crashed process before the crash
+        role_events = [e for e in events if e.role == crash.role and e.time <= crash.crash_time + 0.001]
+        tail = role_events[-8:] if len(role_events) > 8 else role_events
+        print(f"\n  Last {len(tail)} {crash.role} events before crash:")
+        for evt in tail:
+            print(f"    L{evt.line_num:>6} T+{evt.time:.3f} {evt.event_type:20s} {evt.data if evt.data else ''}")
+
+        print(f"\n  Root cause: Heap corruption in deinit() -> delete[] on corrupted pointer")
+        print(f"  Signature: 'Mutex zeroed, calling deinit...' with no 'deinit complete'")
+        print(f"  Windows: exit code 0xC0000005 = STATUS_ACCESS_VIOLATION")
+        print(f"  {'='*70}")
 
 
 def fmt_delta(t_from, t_to):
@@ -798,14 +973,24 @@ def main():
     parser.add_argument("--transition", type=int, default=None, help="Show detail for transition N")
     parser.add_argument("--raw", action="store_true", help="Show all parsed events")
     parser.add_argument("--search-window", action="store_true", help="Analyze coarse search window coverage")
+    parser.add_argument("--crash", action="store_true", help="Focus on crash detection analysis")
     args = parser.parse_args()
 
     print(f"Parsing {args.logfile}...")
     events, has_timestamps = parse_log(args.logfile)
     print(f"  {len(events)} events parsed (timestamps: {'precise' if has_timestamps else 'approximate/line-proxy'})")
 
+    # Always run crash detection
+    crashes = detect_crashes(events)
+    if crashes:
+        print(f"  ** {len(crashes)} CRASH(ES) DETECTED **")
+
     transitions = build_transitions(events)
     print(f"  {len(transitions)} SET_CONFIG transitions found")
+
+    if args.crash:
+        print_crash_report(crashes, events)
+        return
 
     if args.raw:
         for evt in events:
@@ -818,6 +1003,8 @@ def main():
 
     if args.summary:
         print_summary_table(transitions, has_timestamps)
+        if crashes:
+            print_crash_report(crashes, events)
         return
 
     if args.transition is not None:
@@ -827,7 +1014,7 @@ def main():
             print(f"Transition {args.transition} not found (0-{len(transitions)-1} available)")
         return
 
-    # Default: summary + detail for NAcked transitions
+    # Default: summary + detail for NAcked transitions + crash report
     print_summary_table(transitions, has_timestamps)
 
     nacked = [t for t in transitions if t.nack]
@@ -839,6 +1026,9 @@ def main():
             print_transition_detail(tr, has_timestamps)
     else:
         print("\n  No NAcked transitions found!")
+
+    # Always show crash report
+    print_crash_report(crashes, events)
 
     print_search_window_analysis(transitions)
 

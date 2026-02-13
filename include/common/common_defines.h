@@ -100,6 +100,17 @@ inline int config_ladder_down(int config, bool robust_enabled) {
 	return config;
 }
 
+inline int config_ladder_down_n(int config, int steps, bool robust_enabled) {
+	if (!robust_enabled) {
+		int target = config - steps;
+		return (target > CONFIG_0) ? target : CONFIG_0;
+	}
+	int idx = config_ladder_index(config);
+	idx -= steps;
+	if (idx < 0) idx = 0;
+	return FULL_CONFIG_LADDER[idx];
+}
+
 inline bool config_is_at_top(int config, bool robust_enabled) {
 	if (!robust_enabled) return config == CONFIG_16;
 	return config_ladder_index(config) == FULL_CONFIG_LADDER_SIZE - 1;

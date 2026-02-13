@@ -22,6 +22,9 @@
 
 #include "physical_layer/data_container.h"
 
+// Debug: shadow copy of data_bit pointer for corruption detection at deinit
+static int* g_data_bit_shadow = NULL;
+
 cl_data_container::cl_data_container()
 {
 	this->nData=0;
@@ -96,6 +99,10 @@ void cl_data_container::set_size(int nData, int Nc, int M, int Nfft , int Nofdm,
 	this->Nsymb=Nsymb;
 	this->preamble_nSymb=preamble_nSymb;
 	this->data_bit=new int[N_MAX];
+	g_data_bit_shadow = this->data_bit;
+	printf("[SET_SIZE] this=%p &data_bit=%p data_bit=%p Nc=%d M=%d Nsymb=%d\n",
+		(void*)this, (void*)&this->data_bit, (void*)this->data_bit, Nc, M, Nsymb);
+	fflush(stdout);
 	this->data_bit_energy_dispersal=new int[N_MAX];
 	this->data_byte=new int[N_MAX];
 	this->encoded_data=new int[N_MAX];
@@ -175,6 +182,25 @@ void cl_data_container::deinit()
 	this->Ngi=0;
 	this->Nsymb=0;
 	this->total_frame_size=0;
+
+	// Critical corruption check: verify data_bit matches what set_size() allocated
+	if(this->data_bit!=NULL && g_data_bit_shadow!=NULL && this->data_bit != g_data_bit_shadow)
+	{
+		printf("[CORRUPT] !!! data_bit CORRUPTED before delete[] !!!\n");
+		printf("[CORRUPT]   expected=%p actual=%p delta=%lld\n",
+			(void*)g_data_bit_shadow, (void*)this->data_bit,
+			(long long)((char*)this->data_bit - (char*)g_data_bit_shadow));
+		printf("[CORRUPT]   this=%p &data_bit=%p (offset %lld)\n",
+			(void*)this, (void*)&this->data_bit,
+			(long long)((char*)&this->data_bit - (char*)this));
+		// Dump raw bytes at start of object (first 32 bytes)
+		unsigned char* raw = (unsigned char*)this;
+		printf("[CORRUPT]   first 32 bytes of this: ");
+		for(int i = 0; i < 32; i++) printf("%02x ", raw[i]);
+		printf("\n");
+		fflush(stdout);
+	}
+
 	if(this->data_bit!=NULL)
 	{
 		delete[] this->data_bit;
@@ -341,7 +367,6 @@ void cl_data_container::deinit()
 		delete[] this->ready_to_transmit_passband_data_tx;
 		this->ready_to_transmit_passband_data_tx=NULL;
 	}
-
 	this->frames_to_read=0;
 	this->data_ready=0;
 	this->nUnder_processing_events=0;

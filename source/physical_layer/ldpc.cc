@@ -91,10 +91,12 @@ void cl_ldpc::deinit()
 	if(R!=NULL)
 	{
 		delete[] R;
+		R=NULL;
 	}
 	if(Q!=NULL)
 	{
 		delete[] Q;
+		Q=NULL;
 	}
 
 }

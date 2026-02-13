@@ -37,6 +37,31 @@
 #include "gui/ini_parser.h"
 #endif
 
+#if defined(_WIN32)
+#include <windows.h>
+#include <dbghelp.h>
+static LONG WINAPI crash_handler(EXCEPTION_POINTERS *ep) {
+    DWORD code = ep->ExceptionRecord->ExceptionCode;
+    void *addr = ep->ExceptionRecord->ExceptionAddress;
+    DWORD tid = GetCurrentThreadId();
+    fprintf(stderr, "\n[CRASH] Exception 0x%08lX at %p in thread %lu\n", code, addr, tid);
+    if (code == 0xC0000005) {
+        ULONG_PTR rw = ep->ExceptionRecord->ExceptionInformation[0];
+        ULONG_PTR target = ep->ExceptionRecord->ExceptionInformation[1];
+        fprintf(stderr, "[CRASH] ACCESS_VIOLATION: %s address %p\n",
+            rw == 0 ? "reading" : rw == 1 ? "writing" : "executing", (void*)target);
+    }
+    if (code == 0xC0000374) {
+        fprintf(stderr, "[CRASH] HEAP_CORRUPTION detected by heap manager\n");
+    }
+    fprintf(stderr, "[CRASH] RIP=%p RSP=%p\n",
+        (void*)ep->ContextRecord->Rip, (void*)ep->ContextRecord->Rsp);
+    fflush(stderr);
+    fflush(stdout);
+    return EXCEPTION_CONTINUE_SEARCH;
+}
+#endif
+
 // some globals TODO: wrap this up into some struct
 extern "C" {
     double carrier_frequency_offset; // set 0 to stock HF, or to the radio passband, eg., 15k for sBitx
@@ -52,6 +77,14 @@ extern "C" {
 
 int main(int argc, char *argv[])
 {
+#if defined(_WIN32)
+    SetUnhandledExceptionFilter(crash_handler);
+    // Also try vectored handler for heap corruption
+    AddVectoredExceptionHandler(1, crash_handler);
+#endif
+    setvbuf(stdout, NULL, _IONBF, 0);
+    setvbuf(stderr, NULL, _IONBF, 0);
+
     int cpu_nr = -1;
     bool list_modes = false;
     bool list_sndcards = false;

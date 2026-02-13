@@ -37,6 +37,8 @@ cl_mfsk::cl_mfsk()
 		preamble_tones[i] = 0;
 	for (int i = 0; i < ACK_PATTERN_LEN; i++)
 		ack_tones[i] = 0;
+	for (int i = 0; i < ACK_PATTERN_LEN; i++)
+		break_tones[i] = 0;
 }
 
 cl_mfsk::~cl_mfsk()
@@ -127,6 +129,33 @@ void cl_mfsk::init(int _M, int _Nc, int _nStreams)
 		for (int i = 0; i < ACK_PATTERN_LEN; i++)
 			ack_tones[i] = (i * M / ACK_PATTERN_LEN + 1) % M;
 	}
+
+	// BREAK pattern tones: Welch-Costas array (p=17, g=7) for emergency fallback.
+	// Different generator from ACK (g=5) gives different Costas array with same
+	// autocorrelation properties but near-zero cross-correlation with ACK.
+	// Values = (7^i mod 17) - 1 for i=1..8.
+	if (M == 32)
+	{
+		// 2x scaled M=16 Costas values.
+		break_tones[0] = 12; break_tones[1] = 28;
+		break_tones[2] = 4;  break_tones[3] = 6;
+		break_tones[4] = 20; break_tones[5] = 16;
+		break_tones[6] = 22; break_tones[7] = 30;
+	}
+	else if (M == 16)
+	{
+		// Welch-Costas (p=17, g=7).
+		break_tones[0] = 6;  break_tones[1] = 14;
+		break_tones[2] = 2;  break_tones[3] = 3;
+		break_tones[4] = 10; break_tones[5] = 8;
+		break_tones[6] = 11; break_tones[7] = 15;
+	}
+	else
+	{
+		// Generic: shifted offset from ACK tones
+		for (int i = 0; i < ACK_PATTERN_LEN; i++)
+			break_tones[i] = (ack_tones[i] + M / 2) % M;
+	}
 }
 
 void cl_mfsk::deinit()
@@ -186,6 +215,30 @@ void cl_mfsk::generate_ack_pattern(std::complex<double>* pattern_out)
 		int actual_tone = (tone_base + s * tone_hop_step) % M;
 
 		// Place in each stream's band (same tone in all streams, like preamble)
+		for (int st = 0; st < nStreams; st++)
+		{
+			pattern_out[s * Nc + stream_offsets[st] + actual_tone] = std::complex<double>(amp, 0.0);
+		}
+	}
+}
+
+// Generate BREAK pattern: identical structure to ACK but with break_tones
+void cl_mfsk::generate_break_pattern(std::complex<double>* pattern_out)
+{
+	if (M == 0 || Nc == 0 || nStreams == 0) return;
+
+	double amp = sqrt((double)Nc / nStreams);
+
+	for (int s = 0; s < ACK_PATTERN_NSYMB; s++)
+	{
+		for (int k = 0; k < Nc; k++)
+		{
+			pattern_out[s * Nc + k] = std::complex<double>(0.0, 0.0);
+		}
+
+		int tone_base = break_tones[s % ACK_PATTERN_LEN];
+		int actual_tone = (tone_base + s * tone_hop_step) % M;
+
 		for (int st = 0; st < nStreams; st++)
 		{
 			pattern_out[s * Nc + stream_offsets[st] + actual_tone] = std::complex<double>(amp, 0.0);
