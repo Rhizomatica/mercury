@@ -11,6 +11,7 @@
 #include "gui/widgets/waterfall.h"
 #include "gui/dialogs/soundcard_dialog.h"
 #include "gui/dialogs/setup_dialog.h"
+#include "common/common_defines.h"
 
 // ImGui headers
 #include "imgui.h"
@@ -291,6 +292,88 @@ static const char* GetLinkStatusString(int status) {
     }
 }
 
+/**
+ * @brief Draw constellation (IQ scatter) diagram
+ */
+static void DrawConstellation(float width, float height) {
+    ImGui::PushID("Constellation");
+
+    ImVec2 pos = ImGui::GetCursorScreenPos();
+    ImDrawList* draw_list = ImGui::GetWindowDrawList();
+
+    bool is_mfsk = g_gui_state.constellation_is_mfsk.load();
+
+    // Dark background
+    draw_list->AddRectFilled(pos, ImVec2(pos.x + width, pos.y + height),
+                             IM_COL32(15, 15, 20, 255));
+
+    if (is_mfsk) {
+        // MFSK mode - no constellation, show text
+        const char* mode_text = (width >= 120) ? "MFSK (non-coherent)" : "MFSK";
+        ImVec2 text_size = ImGui::CalcTextSize(mode_text);
+        draw_list->AddText(
+            ImVec2(pos.x + (width - text_size.x) / 2, pos.y + height / 2 - 10),
+            IM_COL32(150, 150, 150, 255), mode_text);
+        const char* no_iq = "No IQ data";
+        ImVec2 no_iq_size = ImGui::CalcTextSize(no_iq);
+        draw_list->AddText(
+            ImVec2(pos.x + (width - no_iq_size.x) / 2, pos.y + height / 2 + 8),
+            IM_COL32(100, 100, 100, 200), no_iq);
+    } else {
+        // Draw crosshairs
+        float cx = pos.x + width / 2;
+        float cy = pos.y + height / 2;
+        draw_list->AddLine(ImVec2(pos.x, cy), ImVec2(pos.x + width, cy),
+                           IM_COL32(50, 50, 50, 255));
+        draw_list->AddLine(ImVec2(cx, pos.y), ImVec2(cx, pos.y + height),
+                           IM_COL32(50, 50, 50, 255));
+
+        // Scale: normalized PSK/QAM values are roughly in [-2, 2]
+        float dim = (width < height) ? width : height;
+        float scale = dim / 4.5f;
+
+        // Read constellation data under lock
+        float local_i[GUI_CONSTELLATION_MAX_POINTS];
+        float local_q[GUI_CONSTELLATION_MAX_POINTS];
+        int count;
+        {
+            GuiLockGuard lock(g_gui_state.constellation_mutex);
+            count = g_gui_state.constellation_count;
+            if (count > GUI_CONSTELLATION_MAX_POINTS) count = GUI_CONSTELLATION_MAX_POINTS;
+            memcpy(local_i, g_gui_state.constellation_i, count * sizeof(float));
+            memcpy(local_q, g_gui_state.constellation_q, count * sizeof(float));
+        }
+
+        // Draw scatter points
+        for (int i = 0; i < count; i++) {
+            float px = cx + local_i[i] * scale;
+            float py = cy - local_q[i] * scale;  // Negate Q for screen coords
+            if (px >= pos.x && px <= pos.x + width &&
+                py >= pos.y && py <= pos.y + height) {
+                draw_list->AddCircleFilled(ImVec2(px, py), 1.5f,
+                                           IM_COL32(0, 200, 255, 180));
+            }
+        }
+
+        // Show placeholder when no data
+        if (count == 0) {
+            const char* waiting = (width >= 120) ? "Waiting for data..." : "No data";
+            ImVec2 ws = ImGui::CalcTextSize(waiting);
+            float tx = pos.x + (width - ws.x) / 2;
+            if (tx < pos.x + 2) tx = pos.x + 2;  // Clamp to left edge
+            draw_list->AddText(ImVec2(tx, pos.y + height / 2 - 6),
+                IM_COL32(80, 80, 80, 200), waiting);
+        }
+    }
+
+    // Border
+    draw_list->AddRect(pos, ImVec2(pos.x + width, pos.y + height),
+                       IM_COL32(80, 80, 80, 255));
+
+    ImGui::Dummy(ImVec2(width, height));
+    ImGui::PopID();
+}
+
 // ========== Main GUI Rendering ==========
 
 static void RenderGUI() {
@@ -458,7 +541,75 @@ static void RenderGUI() {
     ImGui::Columns(1);
     ImGui::EndChild();
 
-    // ========== Middle Row: Controls ==========
+    // ========== Signal Quality: Constellation + Status ==========
+    ImGui::BeginChild("SignalQuality", ImVec2(0, 140), true);
+    {
+        ImVec2 avail_sq = ImGui::GetContentRegionAvail();
+        float diagram_size = avail_sq.y;
+        if (diagram_size < 60) diagram_size = 60;
+
+        // Left: Constellation diagram (square, full height)
+        DrawConstellation(diagram_size, diagram_size);
+
+        ImGui::SameLine();
+
+        // Right: Status and throughput
+        ImGui::BeginGroup();
+        {
+            int cur_config = g_gui_state.current_configuration.load();
+            double throughput = g_gui_state.throughput_bps.load();
+            double phy_rate = g_gui_state.current_bitrate.load();
+            long long bytes_tx = g_gui_state.bytes_acked_total.load();
+            long long bytes_rx = g_gui_state.bytes_received_total.load();
+            int link_status = g_gui_state.link_status.load();
+            float snr_rx = (float)g_gui_state.snr_uplink_db.load();
+            float freq_off = (float)g_gui_state.freq_offset_hz.load();
+
+            // Config name (prominent)
+            ImGui::TextColored(ImVec4(0.6f, 0.8f, 1.0f, 1.0f), "%s",
+                               config_to_short_string(cur_config));
+
+            // Link status
+            const char* link_str = GetLinkStatusString(link_status);
+            if (link_status == 2)
+                ImGui::TextColored(ImVec4(0.3f, 1.0f, 0.3f, 1.0f), "%s", link_str);
+            else
+                ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "%s", link_str);
+
+            // SNR and freq offset
+            if (snr_rx > -90.0f)
+                ImGui::Text("SNR %.1f dB  |  AFC %.1f Hz", snr_rx, freq_off);
+            else
+                ImGui::Text("SNR ---  |  AFC %.1f Hz", freq_off);
+
+            ImGui::Spacing();
+
+            // Throughput
+            if (throughput >= 1000.0)
+                ImGui::Text("%.1f kbps", throughput / 1000.0);
+            else
+                ImGui::Text("%.0f bps", throughput);
+
+            // PHY rate + efficiency
+            if (phy_rate > 0 && throughput > 0)
+                ImGui::Text("PHY %.0f bps (%.0f%%)", phy_rate, 100.0 * throughput / phy_rate);
+            else if (phy_rate > 0)
+                ImGui::Text("PHY %.0f bps", phy_rate);
+
+            // Bytes transferred
+            long long total_bytes = bytes_tx + bytes_rx;
+            if (total_bytes >= 1048576)
+                ImGui::Text("%.1f MB transferred", total_bytes / 1048576.0);
+            else if (total_bytes >= 1024)
+                ImGui::Text("%.1f KB transferred", total_bytes / 1024.0);
+            else if (total_bytes > 0)
+                ImGui::Text("%lld B transferred", total_bytes);
+        }
+        ImGui::EndGroup();
+    }
+    ImGui::EndChild();
+
+    // ========== Controls: Gain Levels ==========
     ImGui::BeginChild("Controls", ImVec2(0, 190), true);
 
     // Lock checkbox at top
@@ -605,7 +756,7 @@ static void RenderGUI() {
 
             // Smart auto-tune with gain-to-signal relationship measurement
             const float target_dbm = 0.0f;
-            const float fine_tolerance = 2.0f;     // Done when within ±2 dB
+            const float fine_tolerance = 2.0f;     // Done when within +/-2 dB
             const float probe_step = 5.0f;         // Probe with 5dB change
             const DWORD settle_time_ms = 4000;     // Wait 4 seconds for settling
             const float signal_stable_threshold = 1.0f;
@@ -731,7 +882,7 @@ static void RenderGUI() {
                         } else {
                             // Use measured gain factor for fine adjustment
                             float adjustment = error / s_autotune_gain_factor;
-                            // Limit fine adjustment to ±3 dB max
+                            // Limit fine adjustment to +/-3 dB max
                             if (adjustment > 3.0f) adjustment = 3.0f;
                             if (adjustment < -3.0f) adjustment = -3.0f;
 
@@ -787,7 +938,7 @@ static void RenderGUI() {
         draw_list->AddLine(ImVec2(center_x, pos.y), ImVec2(center_x, pos.y + size.y),
                            IM_COL32(100, 100, 100, 255));
 
-        // Offset indicator (±100 Hz range)
+        // Offset indicator (+/-100 Hz range)
         float offset_norm = freq_offset / 100.0f;
         if (offset_norm < -1.0f) offset_norm = -1.0f;
         if (offset_norm > 1.0f) offset_norm = 1.0f;
@@ -810,7 +961,7 @@ static void RenderGUI() {
 
     // ========== Waterfall Display ==========
     if (show_waterfall) {
-        ImGui::BeginChild("Waterfall", ImVec2(0, 170), true);
+        ImGui::BeginChild("Waterfall", ImVec2(0, 120), true);
         ImGui::Text("Waterfall");
         ImGui::SameLine(ImGui::GetWindowWidth() - 100);
         ImGui::Text("-100 to 0 dB");
@@ -855,7 +1006,7 @@ static void RenderGUI() {
 
     ImGui::Text("%s", status_str);
     ImGui::SameLine(150);
-    ImGui::Text("| 2300 Hz |");
+    ImGui::Text("| %s |", config_to_short_string(g_gui_state.current_configuration.load()));
     ImGui::SameLine();
 
     bool is_tx = g_gui_state.is_transmitting.load();
@@ -983,7 +1134,7 @@ int gui_init() {
     // Create window
     g_hWnd = ::CreateWindowW(wc.lpszClassName, L"Mercury HF Modem",
                              WS_OVERLAPPEDWINDOW,
-                             100, 100, 850, 650,
+                             100, 100, 850, 720,
                              nullptr, nullptr, wc.hInstance, nullptr);
 
     if (!CreateDeviceWGL(g_hWnd)) {

@@ -672,10 +672,11 @@ st_receive_stats cl_telecom_system::receive_byte(double *data, int* out)
 
 	if(M != MOD_MFSK)
 	{
-		printf("[OFDM-SYNC] coarse: pream_symb=%d delay=%d bounds=[%d,%d] metric=%.3f %s\n",
-			pream_symb_loc, receive_stats.delay, lower_bound, upper_bound,
-			receive_stats.coarse_metric,
-			(pream_symb_loc > lower_bound && pream_symb_loc < upper_bound) ? "PASS" : "SKIP");
+		if (g_verbose)
+			printf("[OFDM-SYNC] coarse: pream_symb=%d delay=%d bounds=[%d,%d] metric=%.3f %s\n",
+				pream_symb_loc, receive_stats.delay, lower_bound, upper_bound,
+				receive_stats.coarse_metric,
+				(pream_symb_loc > lower_bound && pream_symb_loc < upper_bound) ? "PASS" : "SKIP");
 		fflush(stdout);
 	}
 
@@ -688,7 +689,7 @@ st_receive_stats cl_telecom_system::receive_byte(double *data, int* out)
 		int sym_samples = data_container.Nofdm * frequency_interpolation_rate;
 		int buf_samples = data_container.Nofdm * data_container.buffer_Nsymb * frequency_interpolation_rate;
 
-		printf("[OFDM-SYNC] bounds-failed: pream_symb=%d, scanning full buffer for signal\n", pream_symb_loc);
+		if (g_verbose) printf("[OFDM-SYNC] bounds-failed: pream_symb=%d, scanning full buffer for signal\n", pream_symb_loc);
 		fflush(stdout);
 
 		int signal_start_symb = -1;
@@ -738,8 +739,9 @@ st_receive_stats cl_telecom_system::receive_byte(double *data, int* out)
 				}
 				retry_energy = (rcnt > 0) ? retry_energy / rcnt : 0.0;
 
-				printf("[OFDM-SYNC] bounds-skip: signal=%d retry=%d metric=%.3f energy=%.2e\n",
-					signal_start_symb, retry_symb, retry.correlation, retry_energy);
+				if (g_verbose)
+					printf("[OFDM-SYNC] bounds-skip: signal=%d retry=%d metric=%.3f energy=%.2e\n",
+						signal_start_symb, retry_symb, retry.correlation, retry_energy);
 				fflush(stdout);
 
 				if(retry_energy >= 0.001 && retry.correlation >= 0.5
@@ -779,8 +781,9 @@ st_receive_stats cl_telecom_system::receive_byte(double *data, int* out)
 			// VB-Cable silence has ~1e-10. Use 0.001 as conservative gate.
 			if(mean_energy < 0.001)
 			{
-				printf("[OFDM-SYNC] energy=%.2e at delay=%d — silence, skipping decode\n",
-					mean_energy, receive_stats.delay);
+				if (g_verbose)
+					printf("[OFDM-SYNC] energy=%.2e at delay=%d — silence, skipping decode\n",
+						mean_energy, receive_stats.delay);
 				fflush(stdout);
 				energy_ok = false;
 			}
@@ -791,8 +794,9 @@ st_receive_stats cl_telecom_system::receive_byte(double *data, int* out)
 			// Threshold 0.5 provides wide margin between the two clusters.
 			if(energy_ok && receive_stats.coarse_metric < 0.5)
 			{
-				printf("[OFDM-SYNC] metric=%.3f at delay=%d — weak peak, skipping decode\n",
-					receive_stats.coarse_metric, receive_stats.delay);
+				if (g_verbose)
+					printf("[OFDM-SYNC] metric=%.3f at delay=%d — weak peak, skipping decode\n",
+						receive_stats.coarse_metric, receive_stats.delay);
 				fflush(stdout);
 				energy_ok = false;
 			}
@@ -854,8 +858,9 @@ st_receive_stats cl_telecom_system::receive_byte(double *data, int* out)
 						}
 						retry_energy = (rcnt > 0) ? retry_energy / rcnt : 0.0;
 
-						printf("[OFDM-SYNC] silence-skip: orig=%d signal=%d retry=%d metric=%.3f energy=%.2e\n",
-							pream_symb_loc, signal_start_symb, retry_symb, retry.correlation, retry_energy);
+						if (g_verbose)
+							printf("[OFDM-SYNC] silence-skip: orig=%d signal=%d retry=%d metric=%.3f energy=%.2e\n",
+								pream_symb_loc, signal_start_symb, retry_symb, retry.correlation, retry_energy);
 						fflush(stdout);
 
 						if(retry_energy >= 0.001 && retry.correlation >= 0.5
@@ -1005,8 +1010,9 @@ skip_h_retry_point:
 						e /= sym_samples;
 						if(e >= 0.001)
 						{
-							printf("[OFDM-SYNC] fine-energy-fix: delay %d->%d (fwd %d sym)\n",
-								orig_delay, candidate, fwd / sym_samples);
+							if (g_verbose)
+								printf("[OFDM-SYNC] fine-energy-fix: delay %d->%d (fwd %d sym)\n",
+									orig_delay, candidate, fwd / sym_samples);
 							fflush(stdout);
 							receive_stats.delay = candidate;
 							break;
@@ -1183,8 +1189,9 @@ skip_h_retry_point:
 				if(mean_H < 0.3)
 				{
 					skip_h_count++;
-					printf("[OFDM-SYNC] trial %d SKIP-H: mean_H=%.4f too low, skipping LDPC\n",
-						receive_stats.sync_trials, mean_H);
+					if (g_verbose)
+						printf("[OFDM-SYNC] trial %d SKIP-H: mean_H=%.4f too low, skipping LDPC\n",
+							receive_stats.sync_trials, mean_H);
 					fflush(stdout);
 					receive_stats.sync_trials++;
 					continue;
@@ -1258,10 +1265,11 @@ skip_h_retry_point:
 				receive_stats.message_decoded=NO;
 				if(M != MOD_MFSK)
 				{
-					printf("[OFDM-SYNC] trial %d FAIL: delay=%d iter=%d all_zeros=%d freq_off=%.1f var=%.4f\n",
-						receive_stats.sync_trials, receive_stats.delay,
-						receive_stats.iterations_done, receive_stats.all_zeros,
-						freq_offset_measured, variance);
+					if (g_verbose)
+						printf("[OFDM-SYNC] trial %d FAIL: delay=%d iter=%d all_zeros=%d freq_off=%.1f var=%.4f\n",
+							receive_stats.sync_trials, receive_stats.delay,
+							receive_stats.iterations_done, receive_stats.all_zeros,
+							freq_offset_measured, variance);
 					fflush(stdout);
 				}
 				receive_stats.sync_trials++;
@@ -1310,6 +1318,20 @@ skip_h_retry_point:
 				}
 
 				receive_stats.message_decoded=YES;
+
+#ifdef MERCURY_GUI_ENABLED
+				// Push constellation IQ data to GUI for scatter plot
+				if (M != MOD_MFSK) {
+					const std::complex<double>* iq_src =
+						(ofdm.channel_estimator_amplitude_restoration == YES)
+						? data_container.ofdm_deframed_data_without_amplitude_restoration
+						: data_container.ofdm_deframed_data;
+					gui_push_constellation(iq_src, data_container.nData, (int)M, false);
+				} else {
+					gui_push_constellation(nullptr, 0, (int)M, true);
+				}
+#endif
+
 				// Only store freq offset for OFDM modes — MFSK runs the Moose estimator
 				// on non-OFDM preamble data producing a garbage value (~45 Hz) that would
 				// corrupt OFDM decoding after gearshift (use_last_good_freq_offset fallback).
@@ -1375,8 +1397,9 @@ skip_h_retry_point:
 				}
 				retry_energy = (rcnt > 0) ? retry_energy / rcnt : 0.0;
 
-				printf("[OFDM-SYNC] SKIP-H recovery: orig=%d retry=%d metric=%.3f energy=%.2e\n",
-					pream_symb_loc, retry_symb, retry.correlation, retry_energy);
+				if (g_verbose)
+					printf("[OFDM-SYNC] SKIP-H recovery: orig=%d retry=%d metric=%.3f energy=%.2e\n",
+						pream_symb_loc, retry_symb, retry.correlation, retry_energy);
 				fflush(stdout);
 
 				// No metric threshold here — the trial loop's mean_H check

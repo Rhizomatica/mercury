@@ -13,12 +13,15 @@
 #endif
 
 #include <atomic>
+#include <complex>
 #include <cmath>
+#include <cstring>
 
 // Buffer sizes
 #define GUI_VU_BUFFER_SIZE 2048
 #define GUI_WATERFALL_FFT_SIZE 512
 #define GUI_WATERFALL_HISTORY 100
+#define GUI_CONSTELLATION_MAX_POINTS 2500  // Nc(50) * max_Nsymb(48) = 2400, rounded up
 
 // Simple cross-platform mutex wrapper
 class GuiMutex {
@@ -116,6 +119,19 @@ struct st_gui_state {
     std::atomic<float> buffer_fill_pct{0.0f};       // capture ring buffer fill percentage (0-100)
     std::atomic<int> ldpc_iterations_max{50};        // GUI-configurable LDPC max iterations
 
+    // ========== Constellation Data (updated by telecom_system on decode) ==========
+    GuiMutex constellation_mutex;
+    float constellation_i[GUI_CONSTELLATION_MAX_POINTS];  // In-phase (real) values
+    float constellation_q[GUI_CONSTELLATION_MAX_POINTS];  // Quadrature (imag) values
+    int constellation_count{0};                           // Number of valid IQ points
+    std::atomic<bool> constellation_is_mfsk{false};       // true = MFSK mode, no IQ data
+    std::atomic<int> constellation_modulation{2};         // MOD_BPSK=2, QPSK=4, etc.
+
+    // ========== Throughput Tracking (updated by ARQ) ==========
+    std::atomic<long long> bytes_acked_total{0};          // Commander: cumulative bytes ACKed
+    std::atomic<long long> bytes_received_total{0};       // Responder: cumulative bytes received
+    std::atomic<double> throughput_bps{0.0};              // Rolling 10s average throughput (bps)
+
     // ========== Modem Options ==========
     std::atomic<bool> coarse_freq_sync_enabled{false}; // Coarse freq search (±30 Hz), for HF radio use
     std::atomic<bool> robust_mode_enabled{false};      // MFSK robust mode for weak-signal hailing
@@ -137,6 +153,8 @@ struct st_gui_state {
                 waterfall_history[i][j] = -100.0f;
             }
         }
+        memset(constellation_i, 0, sizeof(constellation_i));
+        memset(constellation_q, 0, sizeof(constellation_q));
     }
 };
 
@@ -260,6 +278,39 @@ extern "C" void waterfall_push_samples(const double* samples, int count);
 inline void gui_push_audio_samples(const double* samples, int count) {
     gui_push_vu_samples(samples, count);
     waterfall_push_samples(samples, count);
+}
+
+/**
+ * @brief Push constellation (IQ scatter) data from decoded frame
+ * @param iq_data Complex IQ symbols after equalization/deframing
+ * @param count Number of IQ points
+ * @param modulation Modulation type (MOD_BPSK=2, MOD_QPSK=4, etc.)
+ * @param is_mfsk true if current mode is MFSK (no IQ data available)
+ */
+inline void gui_push_constellation(const std::complex<double>* iq_data, int count,
+                                    int modulation, bool is_mfsk) {
+    g_gui_state.constellation_is_mfsk.store(is_mfsk);
+    g_gui_state.constellation_modulation.store(modulation);
+    if (is_mfsk || count <= 0 || iq_data == nullptr) return;
+
+    GuiLockGuard lock(g_gui_state.constellation_mutex);
+    int n = (count > GUI_CONSTELLATION_MAX_POINTS) ? GUI_CONSTELLATION_MAX_POINTS : count;
+    for (int i = 0; i < n; i++) {
+        g_gui_state.constellation_i[i] = (float)iq_data[i].real();
+        g_gui_state.constellation_q[i] = (float)iq_data[i].imag();
+    }
+    g_gui_state.constellation_count = n;
+}
+
+/**
+ * @brief Add bytes to throughput tracking (called from ARQ on data ACK/receive)
+ */
+inline void gui_add_throughput_bytes_tx(long long bytes) {
+    g_gui_state.bytes_acked_total.fetch_add(bytes);
+}
+
+inline void gui_add_throughput_bytes_rx(long long bytes) {
+    g_gui_state.bytes_received_total.fetch_add(bytes);
 }
 
 #endif // GUI_STATE_H_

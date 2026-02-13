@@ -76,9 +76,6 @@ struct MercurySettings {
 
     // Gear shift settings
     bool gear_shift_enabled;
-    int gear_shift_algorithm;
-    double gear_shift_up_rate;
-    double gear_shift_down_rate;
     int initial_config;
     int ldpc_iterations_max;  // Max LDPC decoder iterations (5-50)
 

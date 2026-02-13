@@ -22,12 +22,19 @@
 
 #include "datalink_layer/arq.h"
 
+#ifdef MERCURY_GUI_ENABLED
+#include "gui/gui_state.h"
+#endif
+
 void cl_arq_controller::register_ack(int message_id)
 {
 	if(message_id>=0 && message_id<this->nMessages && messages_tx[message_id].status==PENDING_ACK)
 	{
 		messages_tx[message_id].status=ACKED;
 		stats.nAcked_data++;
+#ifdef MERCURY_GUI_ENABLED
+		gui_add_throughput_bytes_tx(messages_tx[message_id].length);
+#endif
 	}
 }
 

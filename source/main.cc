@@ -75,6 +75,8 @@ extern "C" {
     extern int configured_output_channel;
 }
 
+int g_verbose = 0;
+
 int main(int argc, char *argv[])
 {
 #if defined(_WIN32)
@@ -159,6 +161,7 @@ int main(int argc, char *argv[])
         printf(" -f [offset_hz]             TX carrier offset in Hz for testing frequency sync (e.g., -f 25 for 25 Hz offset).\n");
         printf(" -I [iterations]            LDPC decoder max iterations (5-50, default 50). Lower = less CPU.\n");
         printf(" -R                         Enable Robust mode (MFSK for weak-signal hailing/low-speed data).\n");
+        printf(" -v                         Verbose debug output (OFDM sync, RX timing, ACK detection).\n");
 #ifdef MERCURY_GUI_ENABLED
         printf(" -n                         Disable GUI (headless mode). GUI is enabled by default.\n");
 #endif
@@ -167,7 +170,7 @@ int main(int argc, char *argv[])
     }
 
     int opt;
-    while ((opt = getopt(argc, argv, "hc:m:s:lr:i:o:x:p:zgt:a:k:eCnf:I:RP:")) != -1)
+    while ((opt = getopt(argc, argv, "hc:m:s:lr:i:o:x:p:zgt:a:k:eCnf:I:RP:v")) != -1)
     {
         switch (opt)
         {
@@ -301,6 +304,10 @@ int main(int argc, char *argv[])
         case 'R':
             robust_mode = 1;
             printf("Robust mode (MFSK) enabled.\n");
+            break;
+        case 'v':
+            g_verbose = 1;
+            printf("Verbose debug output enabled.\n");
             break;
         case 'h':
 
@@ -600,6 +607,37 @@ start_modem:
 
                 // Sync robust mode from GUI to ARQ (takes effect on next connection)
                 ARQ.robust_enabled = g_gui_state.robust_mode_enabled.load() ? YES : NO;
+
+                // Rolling throughput (10-second window, updated every 1s)
+                {
+                    static long long last_bytes = 0;
+                    static DWORD last_time = 0;
+                    static double throughput_samples[10] = {0};
+                    static int throughput_idx = 0;
+                    static DWORD last_bucket_time = 0;
+
+                    DWORD now = GetTickCount();
+                    if (last_time == 0) { last_time = now; last_bucket_time = now; }
+
+                    if (now - last_bucket_time >= 1000) {
+                        long long current_bytes = g_gui_state.bytes_acked_total.load()
+                                                + g_gui_state.bytes_received_total.load();
+                        long long delta_bytes = current_bytes - last_bytes;
+                        double delta_sec = (now - last_time) / 1000.0;
+                        throughput_samples[throughput_idx % 10] =
+                            (delta_sec > 0.01) ? (delta_bytes * 8.0 / delta_sec) : 0.0;
+                        throughput_idx++;
+                        last_bytes = current_bytes;
+                        last_time = now;
+                        last_bucket_time = now;
+
+                        // Average over filled buckets
+                        int n = (throughput_idx < 10) ? throughput_idx : 10;
+                        double sum = 0;
+                        for (int i = 0; i < n; i++) sum += throughput_samples[i];
+                        g_gui_state.throughput_bps.store(n > 0 ? sum / n : 0.0);
+                    }
+                }
 
                 // Check if GUI requested shutdown
                 if (g_gui_state.request_shutdown.load()) {

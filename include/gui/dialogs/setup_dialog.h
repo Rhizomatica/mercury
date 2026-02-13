@@ -77,9 +77,6 @@ private:
 
     // Gear Shift
     bool gear_shift_enabled_;
-    int gear_shift_algorithm_;
-    float gear_shift_up_rate_;
-    float gear_shift_down_rate_;
     int initial_config_;
     int ldpc_iterations_max_;
 

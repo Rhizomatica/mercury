@@ -201,9 +201,6 @@ void MercurySettings::setDefaults() {
 
     // Gear Shift
     gear_shift_enabled = false;
-    gear_shift_algorithm = 1;
-    gear_shift_up_rate = 70.0;
-    gear_shift_down_rate = 40.0;
     initial_config = 1;
     ldpc_iterations_max = 50;
 
@@ -217,7 +214,7 @@ void MercurySettings::setDefaults() {
     gains_locked = true;  // Default to locked to prevent accidental adjustment
     hide_console = false; // Show console by default
     window_width = 850;
-    window_height = 650;
+    window_height = 720;
 }
 
 bool MercurySettings::load(const std::string& filename) {
@@ -255,9 +252,6 @@ bool MercurySettings::load(const std::string& filename) {
 
     // Gear Shift
     gear_shift_enabled = ini.getBool("GearShift", "Enabled", gear_shift_enabled);
-    gear_shift_algorithm = ini.getInt("GearShift", "Algorithm", gear_shift_algorithm);
-    gear_shift_up_rate = ini.getDouble("GearShift", "UpSuccessRate", gear_shift_up_rate);
-    gear_shift_down_rate = ini.getDouble("GearShift", "DownSuccessRate", gear_shift_down_rate);
     initial_config = ini.getInt("GearShift", "InitialConfig", initial_config);
     ldpc_iterations_max = ini.getInt("GearShift", "LDPCIterationsMax", ldpc_iterations_max);
 
@@ -308,9 +302,6 @@ bool MercurySettings::save(const std::string& filename) {
 
     // Gear Shift
     ini.setBool("GearShift", "Enabled", gear_shift_enabled);
-    ini.setInt("GearShift", "Algorithm", gear_shift_algorithm);
-    ini.setDouble("GearShift", "UpSuccessRate", gear_shift_up_rate);
-    ini.setDouble("GearShift", "DownSuccessRate", gear_shift_down_rate);
     ini.setInt("GearShift", "InitialConfig", initial_config);
     ini.setInt("GearShift", "LDPCIterationsMax", ldpc_iterations_max);
 

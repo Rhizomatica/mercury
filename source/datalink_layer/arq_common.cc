@@ -2556,19 +2556,21 @@ void cl_arq_controller::receive()
 			int buf_nsymb = telecom_system->data_container.buffer_Nsymb;
 			int chunk_symb = (buf_nsymb + 9) / 10;  // ~11 symbols per chunk
 			int chunk_samples = chunk_symb * sym_samples;
-			printf("[BUF-ENERGY] nUnder=%d |", telecom_system->data_container.nUnder_processing_events.load());
-			for(int c = 0; c < signal_period; c += chunk_samples)
-			{
-				double peak = 0.0;
-				int end = (c + chunk_samples < signal_period) ? c + chunk_samples : signal_period;
-				for(int s = c; s < end; s++)
+			if (g_verbose) {
+				printf("[BUF-ENERGY] nUnder=%d |", telecom_system->data_container.nUnder_processing_events.load());
+				for(int c = 0; c < signal_period; c += chunk_samples)
 				{
-					double v = fabs(telecom_system->data_container.ready_to_process_passband_delayed_data[s]);
-					if(v > peak) peak = v;
+					double peak = 0.0;
+					int end = (c + chunk_samples < signal_period) ? c + chunk_samples : signal_period;
+					for(int s = c; s < end; s++)
+					{
+						double v = fabs(telecom_system->data_container.ready_to_process_passband_delayed_data[s]);
+						if(v > peak) peak = v;
+					}
+					printf(" %.3f", peak);
 				}
-				printf(" %.3f", peak);
+				printf("\n");
 			}
-			printf("\n");
 			fflush(stdout);
 		}
 
@@ -2621,10 +2623,11 @@ void cl_arq_controller::receive()
 				ftr_clamped = 1;
 			}
 
-			printf("[RX-TIMING] OK: delay=%d delay_symb=%d rx_frame=%d end=%d left=%d nUnder=%d ftr=%d clamped=%d proc=%.0fms\n",
-				received_message_stats.delay, received_message_stats.delay / symbol_period,
-				rx_frame, end_of_current_message, frames_left_in_buffer, nUnder_snapshot,
-				telecom_system->data_container.frames_to_read.load(), ftr_clamped, proc_ms);
+			if (g_verbose)
+				printf("[RX-TIMING] OK: delay=%d delay_symb=%d rx_frame=%d end=%d left=%d nUnder=%d ftr=%d clamped=%d proc=%.0fms\n",
+					received_message_stats.delay, received_message_stats.delay / symbol_period,
+					rx_frame, end_of_current_message, frames_left_in_buffer, nUnder_snapshot,
+					telecom_system->data_container.frames_to_read.load(), ftr_clamped, proc_ms);
 			fflush(stdout);
 
 			// MFSK anti-re-decode: after successful decode, record where the old
@@ -2738,19 +2741,21 @@ void cl_arq_controller::receive()
 				if(telecom_system->mfsk_fixed_delay < 0)
 					telecom_system->mfsk_fixed_delay = 0;
 
-				printf("[RX-TIMING] INCOMPLETE: overflow=%d symbols, capturing %d more, saved_delay=%d\n",
-					received_message_stats.frame_overflow_symbols,
-					telecom_system->data_container.frames_to_read.load(),
-					telecom_system->mfsk_fixed_delay);
+				if (g_verbose)
+					printf("[RX-TIMING] INCOMPLETE: overflow=%d symbols, capturing %d more, saved_delay=%d\n",
+						received_message_stats.frame_overflow_symbols,
+						telecom_system->data_container.frames_to_read.load(),
+						telecom_system->mfsk_fixed_delay);
 				fflush(stdout);
 				return;
 			}
 
-			printf("[RX-TIMING] FAIL: nUnder=%d proc=%.0fms search_raw=%d delay_last=%d mod=%d\n",
-				telecom_system->data_container.nUnder_processing_events.load(), proc_ms,
-				telecom_system->receive_stats.mfsk_search_raw,
-				telecom_system->receive_stats.delay_of_last_decoded_message,
-				telecom_system->M);
+			if (g_verbose)
+				printf("[RX-TIMING] FAIL: nUnder=%d proc=%.0fms search_raw=%d delay_last=%d mod=%d\n",
+					telecom_system->data_container.nUnder_processing_events.load(), proc_ms,
+					telecom_system->receive_stats.mfsk_search_raw,
+					telecom_system->receive_stats.delay_of_last_decoded_message,
+					telecom_system->M);
 			fflush(stdout);
 
 			// BREAK pattern detection: after failed OFDM decode, check for emergency

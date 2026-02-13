@@ -22,6 +22,10 @@
 
 #include "datalink_layer/arq.h"
 
+#ifdef MERCURY_GUI_ENABLED
+#include "gui/gui_state.h"
+#endif
+
 void cl_arq_controller::process_messages_responder()
 {
 
@@ -83,6 +87,9 @@ int cl_arq_controller::add_message_rx_data(char type, char id, int length, char*
 	if(messages_rx[loc].status==FREE || messages_rx[loc].status==ACKED)
 	{
 		stats.nReceived_data++;
+#ifdef MERCURY_GUI_ENABLED
+		gui_add_throughput_bytes_rx(messages_rx[loc].length);
+#endif
 	}
 	messages_rx[loc].status=RECEIVED;
 	success=SUCCESSFUL;

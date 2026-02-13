@@ -6,6 +6,7 @@
 #include "gui/dialogs/setup_dialog.h"
 #include "gui/ini_parser.h"
 #include "gui/gui_state.h"
+#include "common/common_defines.h"
 #include "imgui.h"
 
 #include <cstring>
@@ -32,9 +33,6 @@ SetupDialog::SetupDialog()
     , pilot_tone_ms_(0)
     , pilot_tone_hz_(250)
     , gear_shift_enabled_(true)
-    , gear_shift_algorithm_(0)
-    , gear_shift_up_rate_(0.8f)
-    , gear_shift_down_rate_(0.4f)
     , initial_config_(4)
     , ldpc_iterations_max_(50)
     , coarse_freq_sync_enabled_(false)
@@ -80,9 +78,6 @@ void SetupDialog::loadSettings() {
     pilot_tone_hz_ = g_settings.pilot_tone_hz;
 
     gear_shift_enabled_ = g_settings.gear_shift_enabled;
-    gear_shift_algorithm_ = g_settings.gear_shift_algorithm;
-    gear_shift_up_rate_ = (float)g_settings.gear_shift_up_rate;
-    gear_shift_down_rate_ = (float)g_settings.gear_shift_down_rate;
     initial_config_ = g_settings.initial_config;
     ldpc_iterations_max_ = g_settings.ldpc_iterations_max;
     coarse_freq_sync_enabled_ = g_settings.coarse_freq_sync_enabled;
@@ -155,9 +150,6 @@ bool SetupDialog::render() {
             g_settings.pilot_tone_ms = pilot_tone_ms_;
             g_settings.pilot_tone_hz = pilot_tone_hz_;
             g_settings.gear_shift_enabled = gear_shift_enabled_;
-            g_settings.gear_shift_algorithm = gear_shift_algorithm_;
-            g_settings.gear_shift_up_rate = gear_shift_up_rate_;
-            g_settings.gear_shift_down_rate = gear_shift_down_rate_;
             g_settings.initial_config = initial_config_;
             g_settings.ldpc_iterations_max = ldpc_iterations_max_;
             g_gui_state.ldpc_iterations_max.store(ldpc_iterations_max_);
@@ -191,9 +183,6 @@ bool SetupDialog::render() {
             g_settings.pilot_tone_ms = pilot_tone_ms_;
             g_settings.pilot_tone_hz = pilot_tone_hz_;
             g_settings.gear_shift_enabled = gear_shift_enabled_;
-            g_settings.gear_shift_algorithm = gear_shift_algorithm_;
-            g_settings.gear_shift_up_rate = gear_shift_up_rate_;
-            g_settings.gear_shift_down_rate = gear_shift_down_rate_;
             g_settings.initial_config = initial_config_;
             g_settings.ldpc_iterations_max = ldpc_iterations_max_;
             g_gui_state.ldpc_iterations_max.store(ldpc_iterations_max_);
@@ -376,31 +365,20 @@ void SetupDialog::renderGearShiftTab() {
         ImGui::BeginDisabled();
     }
 
-    ImGui::Text("Algorithm:");
-    ImGui::SameLine(180);
-    const char* algorithms[] = { "Conservative", "Aggressive", "Balanced" };
-    ImGui::SetNextItemWidth(150);
-    ImGui::Combo("##gs_algorithm", &gear_shift_algorithm_, algorithms, 3);
-
-    ImGui::Spacing();
-
-    ImGui::Text("Upshift Threshold:");
-    ImGui::SameLine(180);
-    ImGui::SetNextItemWidth(150);
-    ImGui::SliderFloat("##gs_up", &gear_shift_up_rate_, 0.5f, 1.0f, "%.2f");
-
-    ImGui::Text("Downshift Threshold:");
-    ImGui::SameLine(180);
-    ImGui::SetNextItemWidth(150);
-    ImGui::SliderFloat("##gs_down", &gear_shift_down_rate_, 0.1f, 0.8f, "%.2f");
-
-    ImGui::Spacing();
-
     ImGui::Text("Initial Configuration:");
     ImGui::SameLine(180);
-    const char* configs[] = { "0 - Lowest", "1", "2", "3", "4 - Default", "5", "6", "7", "8", "9 - Highest" };
-    ImGui::SetNextItemWidth(150);
-    ImGui::Combo("##initial_config", &initial_config_, configs, 10);
+    ImGui::SetNextItemWidth(300);
+    const char* preview = config_to_string(initial_config_);
+    if (ImGui::BeginCombo("##initial_config", preview)) {
+        for (int i = 0; i < FULL_CONFIG_LADDER_SIZE; i++) {
+            int cfg = FULL_CONFIG_LADDER[i];
+            bool is_selected = (initial_config_ == cfg);
+            if (ImGui::Selectable(config_to_string(cfg), is_selected))
+                initial_config_ = cfg;
+            if (is_selected) ImGui::SetItemDefaultFocus();
+        }
+        ImGui::EndCombo();
+    }
 
     if (!gear_shift_enabled_) {
         ImGui::EndDisabled();
@@ -411,7 +389,8 @@ void SetupDialog::renderGearShiftTab() {
     ImGui::Spacing();
 
     ImGui::TextWrapped("Gear shifting automatically adjusts the modulation configuration based on channel conditions. "
-                       "Higher configurations provide faster data rates but require better channel quality.");
+                       "Turboshift probes the link bidirectionally at connection time, then the success-based "
+                       "ladder maintains the optimal rate during data transfer.");
 }
 
 void SetupDialog::renderAdvancedTab() {

@@ -2124,7 +2124,7 @@ double cl_ofdm::detect_ack_pattern(std::complex<double>* baseband_interp, int bu
 	}
 
 	if (best_metric > 0.1)
-		printf("[ACK-DET] best_metric=%.3f pos=%d/%d matched=%d/%d\n",
+		if (g_verbose) printf("[ACK-DET] best_metric=%.3f pos=%d/%d matched=%d/%d\n",
 			best_metric, best_pos, buffer_nsymb, best_matched, ack_nsymb);
 
 	if (out_matched)
