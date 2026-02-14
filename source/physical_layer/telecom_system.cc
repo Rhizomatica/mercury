@@ -2954,11 +2954,7 @@ char cl_telecom_system::get_configuration(double SNR)
 {
 	char configuration;
 
-	if(SNR>13.5)
-	{
-		configuration=CONFIG_16;
-	}
-	else if(SNR>12.5)
+	if(SNR>12.5)
 	{
 		configuration=CONFIG_15;
 	}

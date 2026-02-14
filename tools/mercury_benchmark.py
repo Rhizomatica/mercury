@@ -135,6 +135,25 @@ def count_pattern(lines, pattern, start_idx=0):
     return sum(1 for l in lines[start_idx:] if pattern in l)
 
 
+def parse_stat_delta(lines, stat_name, start_idx):
+    """Get the change in a cumulative stat counter during [start_idx:].
+
+    Mercury prints stats like 'stats.nNAcked_data= 5' every second.
+    Returns (last_value - value_at_start_idx), i.e. the delta during the window.
+    """
+    def _last_value(line_list):
+        for line in reversed(line_list):
+            if stat_name in line:
+                try:
+                    return int(line.split('=')[-1].strip())
+                except (ValueError, IndexError):
+                    continue
+        return 0
+    val_before = _last_value(lines[:start_idx]) if start_idx > 0 else 0
+    val_after = _last_value(lines)
+    return max(0, val_after - val_before)
+
+
 def tcp_connect_retry(port, timeout=5, retries=10, delay=1):
     """Connect to TCP port with retries. Returns socket."""
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -174,11 +193,12 @@ def tcp_send_commands(port, commands):
 class MercurySession:
     """Manages a commander+responder modem pair lifecycle."""
 
-    def __init__(self, config, gearshift=False, mercury_path=MERCURY_DEFAULT):
+    def __init__(self, config, gearshift=False, mercury_path=MERCURY_DEFAULT, extra_args=None):
         self.config = config
         self.gearshift = gearshift
         self.mercury_path = mercury_path
         self.robust = config >= 100
+        self.extra_args = extra_args or []
 
         self.procs = []
         self.sockets = []
@@ -202,7 +222,7 @@ class MercurySession:
         # Start responder
         rsp_cmd = [
             self.mercury_path, "-m", "ARQ", "-s", str(self.config),
-            *robust_flag, *gear_flag,
+            *robust_flag, *gear_flag, *self.extra_args,
             "-p", str(RSP_PORT), "-i", VB_IN, "-o", VB_OUT, "-x", "wasapi", "-n"
         ]
         rsp = subprocess.Popen(rsp_cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
@@ -213,7 +233,7 @@ class MercurySession:
         # Start commander
         cmd_cmd = [
             self.mercury_path, "-m", "ARQ", "-s", str(self.config),
-            *robust_flag, *gear_flag,
+            *robust_flag, *gear_flag, *self.extra_args,
             "-p", str(CMD_PORT), "-i", VB_IN, "-o", VB_OUT, "-x", "wasapi", "-n"
         ]
         cmd = subprocess.Popen(cmd_cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
@@ -264,17 +284,21 @@ class MercurySession:
 
     def _rx_loop(self):
         self._rx_sock.settimeout(2)
+        loop_count = 0
         while not self.stop_event.is_set():
             try:
                 data = self._rx_sock.recv(4096)
                 if not data:
+                    print(f"  [RX] Socket closed (empty recv) after {loop_count} iterations", flush=True)
                     break
                 with self._rx_lock:
                     self._rx_bytes += len(data)
                     self._rx_events.append((time.time(), len(data), self._rx_bytes))
             except socket.timeout:
+                loop_count += 1
                 continue
-            except (ConnectionError, OSError):
+            except (ConnectionError, OSError) as e:
+                print(f"  [RX] Socket error: {e} after {loop_count} iterations", flush=True)
                 break
 
     def wait_connected(self, timeout=120):
@@ -337,7 +361,19 @@ class MercurySession:
             start_events = len(self._rx_events)
         start_time = time.time()
 
-        time.sleep(duration_s)
+        # Periodic progress check during long measurements
+        remaining = duration_s
+        while remaining > 0:
+            chunk = min(remaining, 30)
+            time.sleep(chunk)
+            remaining -= chunk
+            if remaining > 0:
+                with self._rx_lock:
+                    cur = self._rx_bytes - start_bytes
+                if cur > 0:
+                    elapsed = time.time() - start_time
+                    sys.stdout.write(f"    [{elapsed:.0f}s] +{cur}B so far\n")
+                    sys.stdout.flush()
 
         end_time = time.time()
         with self._rx_lock:
@@ -363,9 +399,14 @@ class MercurySession:
 
     def get_stats(self, start_idx=0):
         """Parse modem stdout for event counts since start_idx."""
+        # NAcks: parse cumulative stats delta (avoids false matches on "nNAcked"/"nAcked")
+        nacks_rsp = (parse_stat_delta(self.rsp_lines, "nNAcked_data", start_idx) +
+                     parse_stat_delta(self.rsp_lines, "nNAcked_control", start_idx))
+        nacks_cmd = (parse_stat_delta(self.cmd_lines, "nNAcked_data", start_idx) +
+                     parse_stat_delta(self.cmd_lines, "nNAcked_control", start_idx))
         return {
-            'nacks_rsp': count_pattern(self.rsp_lines, "NAck", start_idx),
-            'nacks_cmd': count_pattern(self.cmd_lines, "NAck", start_idx),
+            'nacks_rsp': nacks_rsp,
+            'nacks_cmd': nacks_cmd,
             'breaks_rsp': count_pattern(self.rsp_lines, "[BREAK]", start_idx),
             'breaks_cmd': count_pattern(self.cmd_lines, "[BREAK]", start_idx),
             'geardown': count_pattern(self.cmd_lines, "LADDER DOWN", start_idx),
@@ -569,6 +610,7 @@ def run_sweep(args):
     print(f"{'='*70}")
     print(f"Mercury Benchmark — SNR Sweep")
     print(f"{'='*70}")
+    print(f"Signal level: {args.signal_dbfs:.1f} dBFS")
     print(f"Configs: {[CONFIG_NAMES.get(c, f'CONFIG_{c}') for c in configs]}")
     print(f"SNR levels: {snr_levels} dB")
     print(f"Measurement duration: {args.measure_duration}s per point")
@@ -578,6 +620,17 @@ def run_sweep(args):
     print(f"Estimated time: {est_time/3600:.1f} hours")
     print(f"Output: {csv_path}")
     print()
+
+    # TX gain override: only with --tx-attenuate (for real radio with RX gain).
+    # --tx-attenuate: lower TX to signal_dbfs, boost RX by the same amount.
+    # RX gain is applied in audioio.c capture path before the modem core,
+    # so both signal and noise get the same boost → SNR preserved.
+    extra_args = []
+    if hasattr(args, 'tx_attenuate') and args.tx_attenuate:
+        gain_db = args.signal_dbfs - NoiseInjector.DEFAULT_SIGNAL_DBFS  # negative
+        extra_args = ["-T", f"{gain_db:.1f}", "-G", f"{-gain_db:.1f}"]
+        print(f"[GAIN] TX {gain_db:.1f} dB (signal at {args.signal_dbfs:.1f} dBFS), "
+              f"RX +{-gain_db:.1f} dB (restores to ~{NoiseInjector.DEFAULT_SIGNAL_DBFS:.1f} dBFS)")
 
     # Setup noise injector
     device_idx = find_wasapi_cable_output()
@@ -597,7 +650,8 @@ def run_sweep(args):
             print(f"[{cfg_idx+1}/{len(configs)}] Starting {cfg_name} (config={cfg})")
             print(f"{'='*70}")
 
-            session = MercurySession(cfg, gearshift=False, mercury_path=args.mercury)
+            session = MercurySession(cfg, gearshift=False, mercury_path=args.mercury,
+                                     extra_args=extra_args)
             try:
                 session.start()
 
@@ -616,7 +670,10 @@ def run_sweep(args):
                     print(f"  [ERROR] Data exchange not started for {cfg_name}")
                     continue
 
-                print(f"  [OK] Data flowing. Starting SNR sweep...\n")
+                pre_rx = session.get_rx_bytes()
+                rx_alive = session._rx_thread.is_alive() if session._rx_thread else False
+                print(f"  [OK] Data flowing. RX thread alive={rx_alive}, pre-measurement bytes={pre_rx}")
+                print(f"  Starting SNR sweep...\n")
 
                 zero_count = 0
                 stat_baseline = len(session.rsp_lines)
@@ -671,6 +728,44 @@ def run_sweep(args):
                           f"({result['throughput_bps']:.0f} bps), "
                           f"{result['rx_bytes']}B in {result['duration_s']:.0f}s, "
                           f"NAcks={nacks} [{status}]")
+
+                    # Debug: dump Mercury output on zero throughput
+                    if result['rx_bytes'] == 0 and snr_idx == 0:
+                        # Extract key stats
+                        def _last_val(lines, key):
+                            for l in reversed(lines):
+                                if key in l:
+                                    try: return l.split('=')[-1].strip()
+                                    except: pass
+                            return '?'
+                        rsp, cmd = session.rsp_lines, session.cmd_lines
+                        print(f"  [DEBUG] RSP: nAcked_data={_last_val(rsp,'nAcked_data')}, "
+                              f"nNAcked_data={_last_val(rsp,'nNAcked_data')}, "
+                              f"nAcks_sent_data={_last_val(rsp,'nAcks_sent_data')}")
+                        print(f"  [DEBUG] CMD: nAcked_data={_last_val(cmd,'nAcked_data')}, "
+                              f"nNAcked_data={_last_val(cmd,'nNAcked_data')}")
+                        # Check for key events
+                        for pat in ['DBG-COPY', 'BLOCK_END', 'end of block', 'end of file',
+                                    'DBG-RSP-TX', 'Acknowledging data', 'Receiving data',
+                                    'DBG-DATA', 'DBG-FILL', 'DBG-BLOCKEND', 'DBG-BLKWAIT']:
+                            rc = sum(1 for l in rsp if pat in l)
+                            cc = sum(1 for l in cmd if pat in l)
+                            if rc or cc:
+                                print(f"  [DEBUG] '{pat}': RSP={rc}, CMD={cc}")
+                        print(f"  [DEBUG] Lines: RSP={len(rsp)}, CMD={len(cmd)}")
+                        # Last 5 send_batch lines
+                        batches = [l for l in cmd if 'send_batch' in l]
+                        print(f"  [DEBUG] CMD send_batch count: {len(batches)}")
+                        for b in batches[-3:]:
+                            print(f"    {b.rstrip()}")
+                        # DBG-DATA/BLKWAIT state dumps
+                        for tag in ['DBG-DATA', 'DBG-BLKWAIT', 'DBG-FILL', 'DBG-BLOCKEND']:
+                            hits = [l for l in cmd if tag in l]
+                            if hits:
+                                print(f"  [DEBUG] CMD {tag} ({len(hits)} lines):")
+                                for h in hits[:5]:
+                                    print(f"    {h.rstrip()}")
+                        sys.stdout.flush()
 
                     # Waterfall detection
                     if result['rx_bytes'] == 0:
@@ -767,12 +862,19 @@ def run_stress(args):
     print(f"Estimated total: {total_est/60:.0f} min")
     print()
 
+    extra_args = []
+    if hasattr(args, 'tx_attenuate') and args.tx_attenuate:
+        gain_db = args.signal_dbfs - NoiseInjector.DEFAULT_SIGNAL_DBFS
+        extra_args = ["-T", f"{gain_db:.1f}", "-G", f"{-gain_db:.1f}"]
+        print(f"[GAIN] TX {gain_db:.1f} dB, RX +{-gain_db:.1f} dB")
+
     device_idx = find_wasapi_cable_output()
     noise = NoiseInjector(device_idx, snr_db=30, sample_rate=SAMPLE_RATE,
                            signal_dbfs=args.signal_dbfs)
     noise.start()
 
-    session = MercurySession(args.start_config, gearshift=True, mercury_path=args.mercury)
+    session = MercurySession(args.start_config, gearshift=True, mercury_path=args.mercury,
+                              extra_args=extra_args)
     burst_results = []
     timeline = []
     t_origin = None  # set after connection
@@ -996,12 +1098,19 @@ def run_adaptive(args):
     print(f"Estimated time: {est_time/60:.0f} min")
     print()
 
+    extra_args = []
+    if hasattr(args, 'tx_attenuate') and args.tx_attenuate:
+        gain_db = args.signal_dbfs - NoiseInjector.DEFAULT_SIGNAL_DBFS
+        extra_args = ["-T", f"{gain_db:.1f}", "-G", f"{-gain_db:.1f}"]
+        print(f"[GAIN] TX {gain_db:.1f} dB, RX +{-gain_db:.1f} dB")
+
     device_idx = find_wasapi_cable_output()
     noise = NoiseInjector(device_idx, snr_db=30, sample_rate=SAMPLE_RATE,
                            signal_dbfs=args.signal_dbfs)
     noise.start()
 
-    session = MercurySession(100, gearshift=True, mercury_path=args.mercury)
+    session = MercurySession(100, gearshift=True, mercury_path=args.mercury,
+                              extra_args=extra_args)
     results = []
     fieldnames = ['snr_db', 'direction', 'rx_bytes', 'duration_s', 'throughput_bps',
                   'bytes_per_min', 'nacks', 'breaks', 'geardown', 'gearup',
@@ -1161,12 +1270,16 @@ def main():
                         help=f'Modem signal reference level in dBFS '
                              f'(default: {NoiseInjector.DEFAULT_SIGNAL_DBFS}). '
                              f'Mercury OFDM RMS is ~-4.4 dBFS with Nc=50, Nfft=256.')
+    parser.add_argument('--tx-attenuate', action='store_true',
+                        help='Attenuate Mercury TX and boost RX to match --signal-dbfs. '
+                             'Passes -T (TX atten) and -G (RX boost) to both Mercury processes. '
+                             'Noise is calibrated to the attenuated signal level for correct SNR.')
 
     sub = parser.add_subparsers(dest='command', help='Sub-command')
 
     # sweep
     p_sweep = sub.add_parser('sweep', help='Fixed-config SNR sweep')
-    p_sweep.add_argument('--configs', default='100,101,102,0,2,4,6,8,10,12,14,16',
+    p_sweep.add_argument('--configs', default='100,101,102,0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16',
                          help='Comma-separated config numbers')
     p_sweep.add_argument('--snr-start', type=float, default=30,
                          help='Starting SNR (dB)')

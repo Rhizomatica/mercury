@@ -213,8 +213,9 @@ inline void gui_apply_tx_gain(double* samples, int count) {
 }
 
 /**
- * @brief Apply RX gain to input samples (for GUI display only)
- * Note: This gain is for visualization. Mercury's core receives unmodified samples.
+ * @brief Apply RX gain to input samples (affects core modem processing)
+ * Note: Called in audioio capture path before ring buffer write — gain applies
+ * to both GUI display AND Mercury's core modem.
  * @param samples Pointer to audio samples (modified in-place)
  * @param count Number of samples
  */

@@ -465,15 +465,18 @@ void cl_arq_controller::messages_control_backup()
 	messages_control_bu.nResends=messages_control.nResends;
 	messages_control_bu.status=messages_control.status;
 	messages_control_bu.type=messages_control.type;
-	for(int i=0;i<max_data_length+max_header_length-CONTROL_ACK_CONTROL_HEADER_LENGTH;i++)
+	int copy_len=max_data_length+max_header_length-CONTROL_ACK_CONTROL_HEADER_LENGTH;
+	if(copy_len > N_MAX/8) copy_len = N_MAX/8;
+	for(int i=0;i<copy_len;i++)
 	{
 		messages_control_bu.data[i]=messages_control.data[i];
 	}
 }
 void cl_arq_controller::messages_control_restore()
 {
-
-	for(int i=0;i<max_data_length+max_header_length-CONTROL_ACK_CONTROL_HEADER_LENGTH;i++)
+	int copy_len=max_data_length+max_header_length-CONTROL_ACK_CONTROL_HEADER_LENGTH;
+	if(copy_len > N_MAX/8) copy_len = N_MAX/8;
+	for(int i=0;i<copy_len;i++)
 	{
 		messages_control.data[i]=messages_control_bu.data[i];
 	}
@@ -799,8 +802,17 @@ static void set_canary(char* buf, int data_size)
 	memset(buf + data_size, CANARY_BYTE, CANARY_SIZE);
 }
 
+// Diagnostic globals for crash handler — set before each canary read
+// so we know which buffer was being checked when the crash occurs.
+volatile const char* g_canary_check_name = NULL;
+volatile int g_canary_check_idx = -1;
+volatile const char* g_canary_check_ptr = NULL;
+
 static int check_canary(const char* buf, int data_size, const char* name, int idx)
 {
+	g_canary_check_name = name;
+	g_canary_check_idx = idx;
+	g_canary_check_ptr = buf;
 	if(buf == NULL) return 0;
 	for(int j=0; j<CANARY_SIZE; j++)
 	{
@@ -2656,9 +2668,13 @@ void cl_arq_controller::receive()
 				measurements.SNR_downlink = received_message_stats.SNR;
 			}
 
-			for(int i=0; i < this->max_data_length + this->max_header_length; i++)
 			{
-				message_TxRx_byte_buffer[i] = (char)telecom_system->data_container.data_byte[i];
+				int byte_copy_len = this->max_data_length + this->max_header_length;
+				if(byte_copy_len > N_MAX/8) byte_copy_len = N_MAX/8;
+				for(int i=0; i < byte_copy_len; i++)
+				{
+					message_TxRx_byte_buffer[i] = (char)telecom_system->data_container.data_byte[i];
+				}
 			}
 			printf("[RX-DECODE] type=%d connid_rx=%d my_connid=%d broadcast=%d bytes:",
 				(int)(unsigned char)message_TxRx_byte_buffer[0],
@@ -2675,16 +2691,23 @@ void cl_arq_controller::receive()
 				messages_rx_buffer.type=message_TxRx_byte_buffer[0];
 				messages_rx_buffer.sequence_number=message_TxRx_byte_buffer[2];
 				last_received_message_sequence=messages_rx_buffer.sequence_number;
+				// Defensive clamp: never write more than alloc_size (N_MAX/8 = 200) bytes
+				// into any .data buffer, regardless of max_data_length + max_header_length.
+				const int alloc_size = N_MAX / 8;
 				if(messages_rx_buffer.type==ACK_CONTROL  ||  messages_rx_buffer.type==CONTROL)
 				{
-					for(int j=0;j<max_data_length+max_header_length-CONTROL_ACK_CONTROL_HEADER_LENGTH;j++)
+					int copy_len = max_data_length+max_header_length-CONTROL_ACK_CONTROL_HEADER_LENGTH;
+					if(copy_len > alloc_size) copy_len = alloc_size;
+					for(int j=0;j<copy_len;j++)
 					{
 						messages_rx_buffer.data[j]=message_TxRx_byte_buffer[j+CONTROL_ACK_CONTROL_HEADER_LENGTH];
 					}
 				}
 				if( messages_rx_buffer.type==ACK_MULTI || messages_rx_buffer.type==ACK_RANGE)
 				{
-					for(int j=0;j<max_data_length+max_header_length-ACK_MULTI_ACK_RANGE_HEADER_LENGTH;j++)
+					int copy_len = max_data_length+max_header_length-ACK_MULTI_ACK_RANGE_HEADER_LENGTH;
+					if(copy_len > alloc_size) copy_len = alloc_size;
+					for(int j=0;j<copy_len;j++)
 					{
 						messages_rx_buffer.data[j]=message_TxRx_byte_buffer[j+ACK_MULTI_ACK_RANGE_HEADER_LENGTH];
 					}
@@ -2692,8 +2715,10 @@ void cl_arq_controller::receive()
 				else if(messages_rx_buffer.type==DATA_LONG)
 				{
 					messages_rx_buffer.id=message_TxRx_byte_buffer[3];
-					messages_rx_buffer.length=max_data_length+max_header_length-DATA_LONG_HEADER_LENGTH;
-					for(int j=0;j<max_data_length+max_header_length-DATA_LONG_HEADER_LENGTH;j++)
+					int copy_len = max_data_length+max_header_length-DATA_LONG_HEADER_LENGTH;
+					if(copy_len > alloc_size) copy_len = alloc_size;
+					messages_rx_buffer.length=copy_len;
+					for(int j=0;j<copy_len;j++)
 					{
 						messages_rx_buffer.data[j]=message_TxRx_byte_buffer[j+DATA_LONG_HEADER_LENGTH];
 					}
@@ -2706,6 +2731,7 @@ void cl_arq_controller::receive()
 					// noise) can have garbage length values that overflow the buffer.
 					int max_short_len = max_data_length + max_header_length - DATA_SHORT_HEADER_LENGTH;
 					if(max_short_len < 0) max_short_len = 0;
+					if(max_short_len > alloc_size) max_short_len = alloc_size;
 					if(messages_rx_buffer.length > max_short_len)
 						messages_rx_buffer.length = max_short_len;
 					for(int j=0;j<messages_rx_buffer.length;j++)

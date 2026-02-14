@@ -59,6 +59,18 @@ cl_ofdm::cl_ofdm()
 	p2b_l_data=NULL;
 	p2b_data_filtered=NULL;
 	p2b_buffer_size=0;
+	// Pre-allocated Nfft work buffers (Group A)
+	work_buf_a=NULL;
+	work_buf_b=NULL;
+	// Pre-allocated time_sync_preamble buffers (Group B)
+	tsync_corr_loc=NULL;
+	tsync_corr_vals=NULL;
+	tsync_corr_size=0;
+	tsync_data=NULL;
+	tsync_data_size=0;
+	// Pre-allocated baseband_to_passband buffer (Group C)
+	b2p_data_interpolated=NULL;
+	b2p_buffer_size=0;
 }
 
 cl_ofdm::~cl_ofdm()
@@ -103,6 +115,10 @@ void cl_ofdm::init()
 	// Initialize optimized FFT tables
 	init_fft_tables(this->Nfft);
 
+	// Pre-allocate shared Nfft work buffers (used by frequency_sync_coarse,
+	// time_sync_mfsk, detect_ack_pattern — never called concurrently)
+	work_buf_a = new std::complex<double>[Nfft];
+	work_buf_b = new std::complex<double>[Nfft];
 
 	for(int i=0;i<Nsymb;i++)
 	{
@@ -190,6 +206,40 @@ void cl_ofdm::deinit()
 		p2b_data_filtered=NULL;
 	}
 	p2b_buffer_size=0;
+
+	if(work_buf_a!=NULL)
+	{
+		delete[] work_buf_a;
+		work_buf_a=NULL;
+	}
+	if(work_buf_b!=NULL)
+	{
+		delete[] work_buf_b;
+		work_buf_b=NULL;
+	}
+	if(tsync_corr_loc!=NULL)
+	{
+		delete[] tsync_corr_loc;
+		tsync_corr_loc=NULL;
+	}
+	if(tsync_corr_vals!=NULL)
+	{
+		delete[] tsync_corr_vals;
+		tsync_corr_vals=NULL;
+	}
+	tsync_corr_size=0;
+	if(tsync_data!=NULL)
+	{
+		delete[] tsync_data;
+		tsync_data=NULL;
+	}
+	tsync_data_size=0;
+	if(b2p_data_interpolated!=NULL)
+	{
+		delete[] b2p_data_interpolated;
+		b2p_data_interpolated=NULL;
+	}
+	b2p_buffer_size=0;
 
 	pilot_configurator.deinit();
 	preamble_configurator.deinit();
@@ -642,8 +692,8 @@ double cl_ofdm::frequency_sync_coarse(std::complex<double>* in, double subcarrie
 	// Apply fractional correction and FFT the preamble symbol
 	// Note: Input is at interpolation_rate, so we downsample by taking every
 	// interpolation_rate-th sample to get back to baseband (Nfft samples)
-	std::complex<double>* corrected_symbol = new std::complex<double>[Nfft];
-	std::complex<double>* fft_out = new std::complex<double>[Nfft];
+	std::complex<double>* corrected_symbol = work_buf_a;
+	std::complex<double>* fft_out = work_buf_b;
 
 	// Apply fractional frequency correction and downsample to baseband rate
 	// Each output sample n corresponds to input sample n*interpolation_rate
@@ -742,10 +792,6 @@ double cl_ofdm::frequency_sync_coarse(std::complex<double>* in, double subcarrie
 		printf("[COARSE-FREQ] Integer CFO: best k=%d metric=%.4f\n", best_int_cfo, best_metric);
 		fflush(stdout);
 	}
-
-	// Cleanup
-	delete[] corrected_symbol;
-	delete[] fft_out;
 
 	// Determine effective integer CFO (only use if confident)
 	int effective_int_cfo = 0;
@@ -1692,12 +1738,21 @@ int cl_ofdm::time_sync_preamble(std::complex <double>*in, int size, int interpol
 	double norm_a=0;
 	double norm_b=0;
 
-	int *corss_corr_loc=new int[size];
-	double *corss_corr_vals=new double[size];
+	// Grow-as-needed correlation buffers (shared with time_sync_preamble_with_metric)
+	if(size > tsync_corr_size)
+	{
+		if(tsync_corr_loc!=NULL) delete[] tsync_corr_loc;
+		if(tsync_corr_vals!=NULL) delete[] tsync_corr_vals;
+		tsync_corr_loc = new int[size];
+		tsync_corr_vals = new double[size];
+		tsync_corr_size = size;
+	}
+	int *corss_corr_loc = tsync_corr_loc;
+	double *corss_corr_vals = tsync_corr_vals;
 	int return_val;
 
 
-	std::complex <double> *a_c, *b_c, *data;
+	std::complex <double> *a_c, *b_c;
 
 	for(int i=0;i<size;i++)
 	{
@@ -1705,7 +1760,14 @@ int cl_ofdm::time_sync_preamble(std::complex <double>*in, int size, int interpol
 		corss_corr_vals[i]=0;
 	}
 
-	data= new std::complex <double> [preamble_configurator.Nsymb*(this->Ngi+this->Nfft)*interpolation_rate];
+	int data_len = preamble_configurator.Nsymb*(this->Ngi+this->Nfft)*interpolation_rate;
+	if(data_len > tsync_data_size)
+	{
+		if(tsync_data!=NULL) delete[] tsync_data;
+		tsync_data = new std::complex<double>[data_len];
+		tsync_data_size = data_len;
+	}
+	std::complex <double> *data = tsync_data;
 
 	for(int i=0;i<size-preamble_configurator.Nsymb*(this->Ngi+this->Nfft)*interpolation_rate;i+=step)
 	{
@@ -1774,18 +1836,6 @@ int cl_ofdm::time_sync_preamble(std::complex <double>*in, int size, int interpol
 	}
 
 	return_val=corss_corr_loc[location_to_return];
-	if(corss_corr_loc!=NULL)
-	{
-		delete[] corss_corr_loc;
-	}
-	if(corss_corr_vals!=NULL)
-	{
-		delete[] corss_corr_vals;
-	}
-	if(data!=NULL)
-	{
-		delete[] data;
-	}
 	return return_val;
 /*
  * 	Ref: T. M. Schmidl and D. C. Cox, "Robust frequency and timing synchronization for OFDM," in IEEE Transactions on Communications, vol. 45, no. 12, pp. 1613-1621, Dec. 1997, doi: 10.1109/26.650240.
@@ -1805,13 +1855,23 @@ TimeSyncResult cl_ofdm::time_sync_preamble_with_metric(std::complex <double>*in,
 	double norm_b=0;
 	double max_correlation = 0.0;
 
-	int *corss_corr_loc=new int[size];
-	double *corss_corr_vals=new double[size];
 	TimeSyncResult result;
 	result.delay = 0;
 	result.correlation = 0.0;
 
-	std::complex <double> *a_c, *b_c, *data;
+	// Grow-as-needed correlation buffers
+	if(size > tsync_corr_size)
+	{
+		if(tsync_corr_loc!=NULL) delete[] tsync_corr_loc;
+		if(tsync_corr_vals!=NULL) delete[] tsync_corr_vals;
+		tsync_corr_loc = new int[size];
+		tsync_corr_vals = new double[size];
+		tsync_corr_size = size;
+	}
+	int *corss_corr_loc = tsync_corr_loc;
+	double *corss_corr_vals = tsync_corr_vals;
+
+	std::complex <double> *a_c, *b_c;
 
 	for(int i=0;i<size;i++)
 	{
@@ -1819,7 +1879,14 @@ TimeSyncResult cl_ofdm::time_sync_preamble_with_metric(std::complex <double>*in,
 		corss_corr_vals[i]=0;
 	}
 
-	data= new std::complex <double> [preamble_configurator.Nsymb*(this->Ngi+this->Nfft)*interpolation_rate];
+	int data_len = preamble_configurator.Nsymb*(this->Ngi+this->Nfft)*interpolation_rate;
+	if(data_len > tsync_data_size)
+	{
+		if(tsync_data!=NULL) delete[] tsync_data;
+		tsync_data = new std::complex<double>[data_len];
+		tsync_data_size = data_len;
+	}
+	std::complex <double> *data = tsync_data;
 
 	for(int i=0;i<size-preamble_configurator.Nsymb*(this->Ngi+this->Nfft)*interpolation_rate;i+=step)
 	{
@@ -1896,18 +1963,6 @@ TimeSyncResult cl_ofdm::time_sync_preamble_with_metric(std::complex <double>*in,
 	max_correlation = corss_corr_vals[location_to_return];
 	result.correlation = max_correlation;
 
-	if(corss_corr_loc!=NULL)
-	{
-		delete[] corss_corr_loc;
-	}
-	if(corss_corr_vals!=NULL)
-	{
-		delete[] corss_corr_vals;
-	}
-	if(data!=NULL)
-	{
-		delete[] data;
-	}
 	return result;
 }
 
@@ -1926,8 +1981,8 @@ int cl_ofdm::time_sync_mfsk(std::complex<double>* baseband_interp, int buffer_si
 	int sym_period_interp = Nofdm * interpolation_rate;
 	int buffer_nsymb = buffer_size_interp / sym_period_interp;
 
-	std::complex<double>* decimated_sym = new std::complex<double>[Nfft];
-	std::complex<double>* fft_out = new std::complex<double>[Nfft];
+	std::complex<double>* decimated_sym = work_buf_a;
+	std::complex<double>* fft_out = work_buf_b;
 
 	// Map preamble tone indices to FFT bin indices for each stream
 	int preamble_bins[8][4]; // [MAX_PREAMBLE_SYMB][MAX_STREAMS]
@@ -2004,9 +2059,6 @@ int cl_ofdm::time_sync_mfsk(std::complex<double>* baseband_interp, int buffer_si
 
 	int delay = best_sym_idx * sym_period_interp;
 
-	delete[] decimated_sym;
-	delete[] fft_out;
-
 	return delay;
 }
 
@@ -2025,8 +2077,8 @@ double cl_ofdm::detect_ack_pattern(std::complex<double>* baseband_interp, int bu
 
 	if (buffer_nsymb < ack_nsymb) return 0.0;
 
-	std::complex<double>* decimated_sym = new std::complex<double>[Nfft];
-	std::complex<double>* fft_out = new std::complex<double>[Nfft];
+	std::complex<double>* decimated_sym = work_buf_a;
+	std::complex<double>* fft_out = work_buf_b;
 
 	int half = Nc / 2;
 	double best_metric = 0.0;
@@ -2129,9 +2181,6 @@ double cl_ofdm::detect_ack_pattern(std::complex<double>* baseband_interp, int bu
 
 	if (out_matched)
 		*out_matched = best_matched;
-
-	delete[] decimated_sym;
-	delete[] fft_out;
 
 	return best_metric;
 }
@@ -2245,17 +2294,23 @@ void cl_ofdm::rational_resampler(std::complex <double>* in, int in_size, std::co
 void cl_ofdm::baseband_to_passband(std::complex <double>* in, int in_size, double* out, double sampling_frequency, double carrier_frequency, double carrier_amplitude,int interpolation_rate)
 {
 	double sampling_interval=1.0/sampling_frequency;
-	std::complex <double> *data_interpolated= new std::complex <double>[in_size*interpolation_rate];
+
+	// Grow-as-needed interpolation buffer
+	int needed = in_size * interpolation_rate;
+	if(needed > b2p_buffer_size)
+	{
+		if(b2p_data_interpolated!=NULL) delete[] b2p_data_interpolated;
+		b2p_data_interpolated = new std::complex<double>[needed];
+		b2p_buffer_size = needed;
+	}
+	std::complex <double> *data_interpolated = b2p_data_interpolated;
+
 	rational_resampler( in, in_size, data_interpolated, interpolation_rate, INTERPOLATION);
 	for(int i=0;i<in_size*interpolation_rate;i++)
 	{
 		out[i]=data_interpolated[i].real()*carrier_amplitude*cos(2*M_PI*carrier_frequency*(double)passband_start_sample * sampling_interval);
 		out[i]+=data_interpolated[i].imag()*carrier_amplitude*sin(2*M_PI*carrier_frequency*(double)passband_start_sample * sampling_interval);
 		passband_start_sample++;
-	}
-	if(data_interpolated!=NULL)
-	{
-		delete[] data_interpolated;
 	}
 }
 void cl_ofdm::passband_to_baseband(double* in, int in_size, std::complex <double>* out, double sampling_frequency, double carrier_frequency, double carrier_amplitude, int decimation_rate, cl_FIR* filter)

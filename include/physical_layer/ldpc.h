@@ -41,6 +41,7 @@ private:
 	int *QCmatrixd;
 	double* R;
 	double* Q;
+	int* V_pos;       // Pre-allocated SPA decoder workspace [P*Cwidth]
 
 
 

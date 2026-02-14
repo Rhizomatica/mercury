@@ -595,10 +595,14 @@ void cl_arq_controller::process_messages_rx_acks_control()
 					// Flush old batch audio from playback buffer so responder
 					// doesn't demodulate stale frames before the new batch.
 					clear_buffer(playback_buffer);
-					for(int j=0;j<(max_data_length+max_header_length-CONTROL_ACK_CONTROL_HEADER_LENGTH);j++)
+					{
+					int copy_len = max_data_length+max_header_length-CONTROL_ACK_CONTROL_HEADER_LENGTH;
+					if(copy_len > N_MAX/8) copy_len = N_MAX/8;
+					for(int j=0;j<copy_len;j++)
 					{
 						messages_control.data[j]=messages_rx_buffer.data[j];
 					}
+				}
 					link_timer.start();
 					watchdog_timer.start();
 					gear_shift_timer.stop();
@@ -1310,20 +1314,13 @@ void cl_arq_controller::process_control_commander()
 void cl_arq_controller::process_buffer_data_commander()
 {
 	int data_read_size;
-	static int dbg_counter = 0;
 	if(role==COMMANDER && link_status==CONNECTED && connection_status==TRANSMITTING_DATA)
 	{
-		if(++dbg_counter % 500 == 1)
-		{
-			int fifo_used = fifo_buffer_tx.get_size() - fifo_buffer_tx.get_free_size();
-			printf("[DBG-DATA] fifo=%d block_tx=%d batch=%d occ=%d ctrl=%d max_data=%d\n",
-				fifo_used, block_under_tx, message_batch_counter_tx,
-				get_nOccupied_messages(), messages_control.status, max_data_length);
-		}
 		if( fifo_buffer_tx.get_size()!=fifo_buffer_tx.get_free_size() && block_under_tx==NO)
 		{
 			int filled = 0;
-			for(int i=0;i<get_nTotal_messages();i++)
+			int fill_limit = data_batch_size;  // Fill exactly one batch worth of messages
+			for(int i=0;i<fill_limit;i++)
 			{
 				data_read_size=fifo_buffer_tx.pop(message_TxRx_byte_buffer,max_data_length+max_header_length-DATA_LONG_HEADER_LENGTH);
 				if(data_read_size==0)
@@ -1347,8 +1344,8 @@ void cl_arq_controller::process_buffer_data_commander()
 					filled++;
 				}
 			}
-			printf("[DBG-FILL] Filled %d messages (nTotal=%d, batch_size=%d, pop_size=%d)\n",
-				filled, get_nTotal_messages(), data_batch_size, max_data_length+max_header_length-DATA_LONG_HEADER_LENGTH);
+			printf("[DBG-FILL] Filled %d/%d messages (batch_size=%d, pop_size=%d)\n",
+				filled, fill_limit, data_batch_size, max_data_length+max_header_length-DATA_LONG_HEADER_LENGTH);
 			fflush(stdout);
 		}
 		else if(block_under_tx==YES && message_batch_counter_tx==0 && get_nOccupied_messages()==0 && messages_control.status==FREE)

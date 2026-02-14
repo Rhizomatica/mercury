@@ -68,14 +68,16 @@ inline bool is_robust_config(int config) { return config >= 100 && config <= 102
 inline bool is_ofdm_config(int config) { return config >= 0 && config <= 16; }
 
 // Unified config ladder for gearshift (ROBUST → OFDM)
-// Used when robust_enabled + gearshift: ROBUST_0 → ROBUST_1 → ROBUST_2 → CONFIG_0 → ... → CONFIG_16
+// Used when robust_enabled + gearshift: ROBUST_0 → ROBUST_1 → ROBUST_2 → CONFIG_0 → ... → CONFIG_15
+// CONFIG_16 (32QAM rate 14/16, 1 preamble) excluded: poor channel estimation makes it
+// strictly worse than CONFIG_15 at all tested SNRs (10k vs 19k B/min at +30 dB).
 static const int FULL_CONFIG_LADDER[] = {
 	ROBUST_0, ROBUST_1, ROBUST_2,
 	CONFIG_0, CONFIG_1, CONFIG_2, CONFIG_3, CONFIG_4, CONFIG_5, CONFIG_6,
 	CONFIG_7, CONFIG_8, CONFIG_9, CONFIG_10, CONFIG_11, CONFIG_12,
-	CONFIG_13, CONFIG_14, CONFIG_15, CONFIG_16
+	CONFIG_13, CONFIG_14, CONFIG_15
 };
-static const int FULL_CONFIG_LADDER_SIZE = 20;
+static const int FULL_CONFIG_LADDER_SIZE = 19;
 
 inline int config_ladder_index(int config) {
 	for (int i = 0; i < FULL_CONFIG_LADDER_SIZE; i++) {
@@ -87,7 +89,7 @@ inline int config_ladder_index(int config) {
 inline int config_ladder_up(int config, bool robust_enabled) {
 	if (!robust_enabled) {
 		// OFDM only: simple increment within CONFIG_0-16
-		return (config < CONFIG_16) ? config + 1 : config;
+		return (config < CONFIG_15) ? config + 1 : config;
 	}
 	int idx = config_ladder_index(config);
 	if (idx >= 0 && idx < FULL_CONFIG_LADDER_SIZE - 1) return FULL_CONFIG_LADDER[idx + 1];
@@ -115,7 +117,7 @@ inline int config_ladder_down_n(int config, int steps, bool robust_enabled) {
 }
 
 inline bool config_is_at_top(int config, bool robust_enabled) {
-	if (!robust_enabled) return config == CONFIG_16;
+	if (!robust_enabled) return config == CONFIG_15;
 	return config_ladder_index(config) == FULL_CONFIG_LADDER_SIZE - 1;
 }
 

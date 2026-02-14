@@ -80,9 +80,13 @@ int cl_arq_controller::add_message_rx_data(char type, char id, int length, char*
 	{
 		messages_rx[loc].data[j]=data[j];
 	}
-	for(int j=messages_rx[loc].length;j<(max_data_length+max_header_length-DATA_LONG_HEADER_LENGTH);j++)
 	{
-		messages_rx[loc].data[j]=0;
+		int fill_end = max_data_length+max_header_length-DATA_LONG_HEADER_LENGTH;
+		if(fill_end > N_MAX/8) fill_end = N_MAX/8;
+		for(int j=messages_rx[loc].length;j<fill_end;j++)
+		{
+			messages_rx[loc].data[j]=0;
+		}
 	}
 	if(messages_rx[loc].status==FREE || messages_rx[loc].status==ACKED)
 	{
@@ -140,10 +144,14 @@ void cl_arq_controller::process_messages_rx_data_control()
 					messages_control.status=RECEIVED;
 					messages_control.length=1;
 					messages_control.sequence_number=messages_rx_buffer.sequence_number;
-					for(int j=0;j<max_data_length+max_header_length-CONTROL_ACK_CONTROL_HEADER_LENGTH;j++)
+					{
+					int copy_len = max_data_length+max_header_length-CONTROL_ACK_CONTROL_HEADER_LENGTH;
+					if(copy_len > N_MAX/8) copy_len = N_MAX/8;
+					for(int j=0;j<copy_len;j++)
 					{
 						messages_control.data[j]=messages_rx_buffer.data[j];
 					}
+				}
 					stats.nReceived_control++;
 				}
 				// BUG FIX: Process control message immediately when batch is complete

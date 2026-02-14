@@ -1076,11 +1076,19 @@ static void CleanupDeviceWGL() {
     }
 }
 
+static bool g_in_modal_move = false;
+
 static LRESULT WINAPI WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     if (ImGui_ImplWin32_WndProcHandler(hWnd, msg, wParam, lParam))
         return true;
 
     switch (msg) {
+    case WM_ENTERSIZEMOVE:
+        g_in_modal_move = true;
+        return 0;
+    case WM_EXITSIZEMOVE:
+        g_in_modal_move = false;
+        return 0;
     case WM_SIZE:
         if (wParam != SIZE_MINIMIZED) {
             g_Width = LOWORD(lParam);
@@ -1195,7 +1203,7 @@ int gui_main_loop() {
         }
         if (done) break;
 
-        if (::IsIconic(g_hWnd)) {
+        if (::IsIconic(g_hWnd) || g_in_modal_move) {
             ::Sleep(10);
             continue;
         }

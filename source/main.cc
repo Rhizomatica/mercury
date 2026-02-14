@@ -39,7 +39,11 @@
 
 #if defined(_WIN32)
 #include <windows.h>
-#include <dbghelp.h>
+// Diagnostics from check_buffer_canaries — set before each canary read
+extern volatile const char* g_canary_check_name;
+extern volatile int g_canary_check_idx;
+extern volatile const char* g_canary_check_ptr;
+
 static LONG WINAPI crash_handler(EXCEPTION_POINTERS *ep) {
     DWORD code = ep->ExceptionRecord->ExceptionCode;
     void *addr = ep->ExceptionRecord->ExceptionAddress;
@@ -56,6 +60,11 @@ static LONG WINAPI crash_handler(EXCEPTION_POINTERS *ep) {
     }
     fprintf(stderr, "[CRASH] RIP=%p RSP=%p\n",
         (void*)ep->ContextRecord->Rip, (void*)ep->ContextRecord->Rsp);
+    // Print which canary buffer was being checked when we crashed
+    if (g_canary_check_name != NULL) {
+        fprintf(stderr, "[CRASH] Canary check was on: %s[%d] ptr=%p\n",
+            (const char*)g_canary_check_name, (int)g_canary_check_idx, (const void*)g_canary_check_ptr);
+    }
     fflush(stderr);
     fflush(stdout);
     return EXCEPTION_CONTINUE_SEARCH;
@@ -109,6 +118,8 @@ int main(int argc, char *argv[])
     int exit_on_disconnect = 0;
     int ldpc_iterations = 0;  // 0 = use default (50 or from INI)
     int puncture_nBits = 0;  // 0 = disabled; >0 = punctured LDPC BER test
+    double tx_gain_override = -999.0;  // -999 = not set; otherwise override TX gain in dB
+    double rx_gain_override = -999.0;  // -999 = not set; otherwise override RX gain in dB
 
     input_dev = (char *) malloc(ALSA_MAX_PATH);
     output_dev = (char *) malloc(ALSA_MAX_PATH);
@@ -161,6 +172,8 @@ int main(int argc, char *argv[])
         printf(" -f [offset_hz]             TX carrier offset in Hz for testing frequency sync (e.g., -f 25 for 25 Hz offset).\n");
         printf(" -I [iterations]            LDPC decoder max iterations (5-50, default 50). Lower = less CPU.\n");
         printf(" -R                         Enable Robust mode (MFSK for weak-signal hailing/low-speed data).\n");
+        printf(" -T [tx_gain_db]            TX gain in dB (temporary, overrides GUI slider). E.g. -T -25.6 for -30 dBFS output.\n");
+        printf(" -G [rx_gain_db]            RX gain in dB (temporary, overrides GUI slider). E.g. -G 25.6 to boost weak input.\n");
         printf(" -v                         Verbose debug output (OFDM sync, RX timing, ACK detection).\n");
 #ifdef MERCURY_GUI_ENABLED
         printf(" -n                         Disable GUI (headless mode). GUI is enabled by default.\n");
@@ -170,7 +183,7 @@ int main(int argc, char *argv[])
     }
 
     int opt;
-    while ((opt = getopt(argc, argv, "hc:m:s:lr:i:o:x:p:zgt:a:k:eCnf:I:RP:v")) != -1)
+    while ((opt = getopt(argc, argv, "hc:m:s:lr:i:o:x:p:zgt:a:k:eCnf:I:RP:vT:G:")) != -1)
     {
         switch (opt)
         {
@@ -308,6 +321,20 @@ int main(int argc, char *argv[])
         case 'v':
             g_verbose = 1;
             printf("Verbose debug output enabled.\n");
+            break;
+        case 'T':
+            if (optarg)
+            {
+                tx_gain_override = atof(optarg);
+                printf("TX gain override: %.1f dB\n", tx_gain_override);
+            }
+            break;
+        case 'G':
+            if (optarg)
+            {
+                rx_gain_override = atof(optarg);
+                printf("RX gain override: %.1f dB\n", rx_gain_override);
+            }
             break;
         case 'h':
 
@@ -527,6 +554,19 @@ start_modem:
         if (robust_mode)
             g_settings.robust_mode_enabled = true;
         g_gui_state.robust_mode_enabled.store(g_settings.robust_mode_enabled);
+        // TX gain override from -T flag (temporary, not saved to INI)
+        if (tx_gain_override > -900.0) {
+            g_gui_state.tx_gain_db.store(tx_gain_override);
+            g_gui_state.gains_locked.store(true);
+            printf("TX gain set to %.1f dB (signal at ~%.1f dBFS)\n",
+                   tx_gain_override, -4.4 + tx_gain_override);
+        }
+        // RX gain override from -G flag (temporary, not saved to INI)
+        if (rx_gain_override > -900.0) {
+            g_gui_state.rx_gain_db.store(rx_gain_override);
+            g_gui_state.gains_locked.store(true);
+            printf("RX gain set to %.1f dB\n", rx_gain_override);
+        }
 #else
         if (ldpc_iterations > 0)
             telecom_system.default_configurations_telecom_system.ldpc_nIteration_max = ldpc_iterations;

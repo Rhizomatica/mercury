@@ -185,6 +185,22 @@ public:
 	std::complex<double>* p2b_l_data;
 	std::complex<double>* p2b_data_filtered;
 	int p2b_buffer_size;
+
+	// Pre-allocated Nfft-sized work buffers shared by frequency_sync_coarse,
+	// time_sync_mfsk, and detect_ack_pattern (never called concurrently)
+	std::complex<double>* work_buf_a;
+	std::complex<double>* work_buf_b;
+
+	// Pre-allocated grow-as-needed buffers for time_sync_preamble[_with_metric]
+	int* tsync_corr_loc;
+	double* tsync_corr_vals;
+	int tsync_corr_size;
+	std::complex<double>* tsync_data;
+	int tsync_data_size;
+
+	// Pre-allocated grow-as-needed buffer for baseband_to_passband
+	std::complex<double>* b2p_data_interpolated;
+	int b2p_buffer_size;
 };
 
 

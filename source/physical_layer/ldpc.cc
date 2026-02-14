@@ -50,6 +50,7 @@ cl_ldpc::cl_ldpc()
 	Q=NULL;
 	Vwidth=0;
 	R=NULL;
+	V_pos=NULL;
 	dwidth=0;
 }
 
@@ -97,6 +98,11 @@ void cl_ldpc::deinit()
 	{
 		delete[] Q;
 		Q=NULL;
+	}
+	if(V_pos!=NULL)
+	{
+		delete[] V_pos;
+		V_pos=NULL;
 	}
 
 }
@@ -248,6 +254,8 @@ void cl_ldpc::encode(const int* data, int*  encoded_data)
   				std::cout<<"Memory allocation error"<<std::endl;
   				exit(2);
   			}
+  			// Pre-allocate V_pos workspace for SPA decoder (eliminates per-frame heap churn)
+  			V_pos=new int[P*Cwidth];
   		}
 
   	}
@@ -264,7 +272,7 @@ void cl_ldpc::encode(const int* data, int*  encoded_data)
  	}
  	else if(decoding_algorithm_val==SPA)
  	{
- 		iterations_done=decode_SPA(data,decoded_data,QCmatrixC,Cwidth,Cwidth, QCmatrixV,Vwidth,Vwidth,QCmatrixd,dwidth,R,Q,N,K,P,nIteration_max_val);
+ 		iterations_done=decode_SPA(data,decoded_data,QCmatrixC,Cwidth,Cwidth, QCmatrixV,Vwidth,Vwidth,QCmatrixd,dwidth,R,Q,V_pos,N,K,P,nIteration_max_val);
  	}
  	return iterations_done;
  }

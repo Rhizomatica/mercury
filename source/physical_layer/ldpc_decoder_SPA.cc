@@ -35,6 +35,7 @@ int decode_SPA(
 		int dWidth,
 		double* R,
 		double* Q,
+		int* V_pos,
 		int N,
 		int K,
 		int P,
@@ -76,7 +77,7 @@ int decode_SPA(
 	{
 		// Precompute V matrix positions to eliminate linear search in inner loop
 		// V_pos[check * CWidthMax + col] = position of check in V[C[check][col]][]
-		int* V_pos = new int[P * CWidthMax];
+		// V_pos buffer is pre-allocated by cl_ldpc::load() and passed in
 		for(int ci=0;ci<P;ci++)
 		{
 			for(int cj=0;cj<CWidth;cj++)
@@ -207,7 +208,6 @@ int decode_SPA(
 				start+=d[section];
 			}
 		}
-		delete[] V_pos;
 	}
 	for( i=0;i<K;i++)
 	{
