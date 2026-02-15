@@ -153,7 +153,11 @@ std::string getDefaultConfigPath() {
     const char* home = getenv("HOME");
     if (!home) {
         struct passwd* pw = getpwuid(getuid());
-        home = pw->pw_dir;
+        if (pw && pw->pw_dir) {
+            home = pw->pw_dir;
+        } else {
+            home = ".";
+        }
     }
     std::string config_dir = std::string(home) + "/.config/mercury";
     mkdir(config_dir.c_str(), 0755);
@@ -186,8 +190,8 @@ void MercurySettings::setDefaults() {
 #endif
 
     // Network
-    control_port = 7001;
-    data_port = 7002;
+    control_port = 7002;
+    data_port = 7003;
 
     // Station
     my_callsign = "";

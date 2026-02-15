@@ -16,6 +16,9 @@
 #else
 #include <unistd.h>
 #include <climits>
+#ifdef __APPLE__
+#include <mach-o/dyld.h>
+#endif
 #endif
 #include <cstdlib>
 #include <cstring>
@@ -59,15 +62,28 @@ static void restartMercury() {
         CloseHandle(pi.hThread);
         g_gui_state.request_shutdown.store(true);
     }
+#elif defined(__APPLE__)
+    // macOS: use _NSGetExecutablePath
+    char exePath[PATH_MAX];
+    uint32_t size = sizeof(exePath);
+    if (_NSGetExecutablePath(exePath, &size) == 0) {
+        pid_t pid = fork();
+        if (pid == 0) {
+            char* argv[] = { exePath, NULL };
+            execv(exePath, argv);
+            _exit(1);
+        } else if (pid > 0) {
+            g_gui_state.request_shutdown.store(true);
+        }
+    }
 #else
-    // Get the path to the current executable via /proc/self/exe
+    // Linux: get executable path via /proc/self/exe
     char exePath[PATH_MAX];
     ssize_t len = readlink("/proc/self/exe", exePath, sizeof(exePath) - 1);
     if (len > 0) {
         exePath[len] = '\0';
         pid_t pid = fork();
         if (pid == 0) {
-            // Child: exec the same binary
             char* argv[] = { exePath, NULL };
             execv(exePath, argv);
             _exit(1);

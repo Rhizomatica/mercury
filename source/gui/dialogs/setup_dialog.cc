@@ -22,8 +22,8 @@ SetupDialog::SetupDialog()
     : is_open_(false)
     , current_tab_(0)
     , radio_type_(0)
-    , control_port_(7001)
-    , data_port_(7002)
+    , control_port_(7002)
+    , data_port_(7003)
     , connection_timeout_ms_(60000)
     , link_timeout_ms_(120000)
     , max_connection_attempts_(10)
@@ -248,7 +248,7 @@ void SetupDialog::renderNetworkTab() {
 
     ImGui::TextWrapped("Control port is used for commands (connect, disconnect, etc.). "
                        "Data port is used for the actual data transfer. "
-                       "Default ports are 52001 and 52002.");
+                       "Default ports are 7002 and 7003.");
 }
 
 void SetupDialog::renderARQTab() {

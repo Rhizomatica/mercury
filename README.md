@@ -18,7 +18,14 @@ Mercury is a free software software-defined modem solution for the High-Frequenc
 - Enhanced API of the physical layer to allow for byte or bit transfer.
 - Separate Data and Acknowledge message robustness configuration.
 - Ladder-based Gearshift mode for the data link layer for low SNR.
-- 17 robustness modes for the ARQ/ Gearshift.
+- 17 OFDM robustness modes for the ARQ / Gearshift.
+- 3 MFSK weak-signal modes (ROBUST_0, ROBUST_1, ROBUST_2) for decoding below the OFDM threshold.
+- Non-coherent energy detection for MFSK modes (no channel estimation needed).
+- Pattern-based ACK using Welch-Costas tone sequences for reduced ARQ overhead on slow modes.
+- CRC16-MODBUS-RTU outer code.
+- Coarse frequency synchronization for wider capture range.
+- Base-36 callsign packing for small frame sizes.
+- Cross-platform GUI with real-time constellation display, waterfall spectrum, and signal meters (ImGui + GLFW + OpenGL).
 
 
 ## Compilation And Installation
@@ -29,7 +36,7 @@ Other optional depencies are GNUPlot (for ploting constellations), GraphViz and 
 a Debian based system (eg. Debian, Ubuntu), the dependencies can be installed with:
 
 ```
-apt-get install libasound2-dev libpulse-dev gnuplot-x11 graphviz
+apt-get install libasound2-dev libpulse-dev libglfw3-dev gnuplot-x11 graphviz
 ```
 To compile, use:
 
@@ -50,25 +57,30 @@ apt-get install doxygen
 make doc
 ```
 
-### Windows Build with GUI
+### GUI Build
 
-On Windows, Mercury can be built with a graphical user interface. The GUI requires Dear ImGui (included in `third_party/imgui/`).
+Mercury can be built with a graphical user interface on both Linux and Windows. The GUI uses Dear ImGui (included in `third_party/imgui/`) with a GLFW + OpenGL3 backend. GLFW is bundled for Windows in `third_party/glfw/`; on Linux, install `libglfw3-dev`.
 
-**Important**: Use a consistent compiler toolchain. Mixing object files from different GCC versions causes ABI incompatibility crashes (typically segfaults in `std::locale` during stream operations).
-
-Using Strawberry Perl's MinGW (recommended):
+Using `build.sh` (recommended, works on both platforms via MSYS2/MinGW64 on Windows):
 ```
-mingw32-make clean
-mingw32-make -j4 GUI_ENABLED=1 CXX=g++ CC=gcc
+./build.sh release
+```
+
+Other build modes: `debug`, `o0`, `o1`, `o2`, `o3`, `asan`, `ubsan`. See `./build.sh --help`.
+
+Using `make` directly:
+```
+make clean
+make -j4 GUI_ENABLED=1
 ```
 
 To build without GUI (headless mode only):
 ```
-mingw32-make clean
-mingw32-make -j4 GUI_ENABLED=0 CXX=g++ CC=gcc
+make clean
+make -j4 GUI_ENABLED=0
 ```
 
-**Troubleshooting**: If Mercury crashes immediately after printing the version, this usually indicates a compiler mismatch. Run `mingw32-make clean` and rebuild with explicit `CXX=g++ CC=gcc` flags to ensure the system compiler is used.
+**Important**: Use a consistent compiler toolchain. Mixing object files from different GCC versions causes ABI incompatibility crashes. `build.sh` always does a clean build to avoid stale object file issues.
 
 ## Running
 
@@ -96,7 +108,7 @@ Options:
 ```
 
 Mercury operating modes are:
-- ARQ: Data-link layer and Automatic repeat request mode. Default control port is 7001 and default data port is 7002.
+- ARQ: Data-link layer and Automatic repeat request mode. Default control port is 7002 and default data port is 7003.
 - TX_SHM: Transmits data read from shared memory interface (check folder examples).
 - RX_SHM: Received data is written to shared memory interface.
 
@@ -166,7 +178,7 @@ to use with the TX_SHM and RX_SHM modes. A more complete client called HERMES-BR
 For a simple ARQ client which supports hamlib, take a look at: https://github.com/Rhizomatica/mercury-connector
 
 Any VARA client should be compatible with Mercury. Compatibility support is not complete. If you
-find a VARA client which does not communicate, please report. Base TCP port is 7001 (7001 control and 7002 data).
+find a VARA client which does not communicate, please report. Base TCP port is 7002 (7002 control and 7003 data).
 
 For a more complete ARQ client which integrates Mercury to UUCP, look at: https://github.com/Rhizomatica/hermes-net/tree/main/uucpd
 
@@ -176,6 +188,9 @@ For a more complete ARQ client which integrates Mercury to UUCP, look at: https:
 The modulation modes can be listed with "./mercury -l", and are (without outer-code overhead):
 
 ```
+ROBUST_0 (~14 bps)   - 32-MFSK, LDPC 1/16, 1 stream
+ROBUST_1 (~22 bps)   - 16-MFSK, LDPC 1/16, 2 streams
+ROBUST_2 (~87 bps)   - 16-MFSK, LDPC 1/4, 2 streams
 CONFIG_0 (84.841629 bps)
 CONFIG_1 (169.683258 bps)
 CONFIG_2 (254.524887 bps)
@@ -194,6 +209,8 @@ CONFIG_14 (3428.921569 bps)
 CONFIG_15 (4411.764706 bps)
 CONFIG_16 (5735.294118 bps)
 ```
+
+ROBUST modes use MFSK (non-coherent) modulation and can decode at significantly lower SNR than the OFDM modes. With gearshift enabled, Mercury starts at ROBUST_0 and works up through ROBUST_1, ROBUST_2, then into CONFIG_0 through CONFIG_16 as channel conditions improve.
 
 ## Discussion
 

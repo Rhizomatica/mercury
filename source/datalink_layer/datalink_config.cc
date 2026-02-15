@@ -31,10 +31,10 @@ cl_configuration_arq::cl_configuration_arq()
 
 	link_timeout=30000;
 
-	tcp_socket_control_port=7001;
+	tcp_socket_control_port=7002;
 	tcp_socket_control_timeout_ms=INFINITE_;
 
-	tcp_socket_data_port=7002;
+	tcp_socket_data_port=7003;
 	tcp_socket_data_timeout_ms=INFINITE_;
 
 

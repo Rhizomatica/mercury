@@ -8,6 +8,9 @@
 #include "imgui.h"
 
 #include <GL/gl.h>
+#ifndef GL_CLAMP_TO_EDGE
+#define GL_CLAMP_TO_EDGE 0x812F
+#endif
 #include <cmath>
 #include <cstring>
 #include <cstdio>
@@ -62,8 +65,8 @@ bool WaterfallDisplay::init() {
     glBindTexture(GL_TEXTURE_2D, texture_id_);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, width, height, 0, GL_RGB, GL_UNSIGNED_BYTE, texture_data_);
 
     initialized_ = true;
@@ -126,31 +129,42 @@ void WaterfallDisplay::processFFT() {
     history_index_ = (history_index_ + 1) % WATERFALL_HISTORY_LINES;
 }
 
-// Cooley-Tukey FFT (in-place, radix-2, DIT)
+// Cooley-Tukey FFT (in-place, radix-2, DIT, iterative)
 void WaterfallDisplay::fft(std::complex<double>* v, int n) {
     if (n <= 1) return;
 
-    // Separate even and odd
-    std::complex<double>* tmp = new std::complex<double>[n];
-    for (int i = 0; i < n / 2; i++) {
-        tmp[i] = v[2 * i];           // even
-        tmp[n / 2 + i] = v[2 * i + 1]; // odd
+    // Bit-reversal permutation
+    int j = 0;
+    for (int i = 0; i < n; ++i) {
+        if (i < j) {
+            std::complex<double> tmp = v[i];
+            v[i] = v[j];
+            v[j] = tmp;
+        }
+        int m = n >> 1;
+        while (m >= 1 && j >= m) {
+            j -= m;
+            m >>= 1;
+        }
+        j += m;
     }
 
-    // Recurse
-    fft(tmp, n / 2);
-    fft(tmp + n / 2, n / 2);
-
-    // Combine
-    for (int k = 0; k < n / 2; k++) {
-        double angle = -2.0 * 3.14159265358979 * k / n;
-        std::complex<double> w(cos(angle), sin(angle));
-        std::complex<double> t = w * tmp[n / 2 + k];
-        v[k] = tmp[k] + t;
-        v[k + n / 2] = tmp[k] - t;
+    // Iterative butterfly passes
+    for (int len = 2; len <= n; len <<= 1) {
+        double angle = -2.0 * 3.14159265358979 / (double)len;
+        std::complex<double> wlen(cos(angle), sin(angle));
+        for (int i = 0; i < n; i += len) {
+            std::complex<double> w(1.0, 0.0);
+            int half = len >> 1;
+            for (int k = 0; k < half; ++k) {
+                std::complex<double> u = v[i + k];
+                std::complex<double> t = w * v[i + k + half];
+                v[i + k] = u + t;
+                v[i + k + half] = u - t;
+                w *= wlen;
+            }
+        }
     }
-
-    delete[] tmp;
 }
 
 // Jet colormap: blue -> cyan -> green -> yellow -> red

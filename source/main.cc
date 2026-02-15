@@ -162,7 +162,7 @@ int main(int argc, char *argv[])
         printf(" -i [device]                Radio Capture device id (eg: \"plughw:0,0\").\n");
         printf(" -o [device]                Radio Playback device id (eg: \"plughw:0,0\").\n");
         printf(" -x [sound_system]          Sets the sound system API to use: alsa, pulse, dsound or wasapi. Default is alsa on Linux and wasapi on Windows.\n");
-		printf(" -p [arq_tcp_base_port]     Sets the ARQ TCP base port (control is base_port, data is base_port + 1). Default is 7001.\n");
+		printf(" -p [arq_tcp_base_port]     Sets the ARQ TCP base port (control is base_port, data is base_port + 1). Default is 7002.\n");
         printf(" -g                         Enables the adaptive modulation selection (gear-shifting). Not working yet!.\n");
         printf(" -t [timeout_ms]            Connection timeout in milliseconds (ARQ mode only). Default is 15000.\n");
         printf(" -a [max_attempts]          Maximum connection attempts before giving up (ARQ mode only). Default is 15.\n");
