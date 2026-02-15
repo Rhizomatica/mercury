@@ -8,17 +8,30 @@
 #include "gui/gui_state.h"
 #include "imgui.h"
 
+#ifdef _WIN32
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
 #include <windows.h>
+#else
+#include <unistd.h>
+#include <climits>
+#endif
 #include <cstdlib>
+#include <cstring>
 
 // ffaudio for device enumeration
 extern "C" {
 #include "ffaudio/audio.h"
+#ifdef _WIN32
 extern const ffaudio_interface ffwasapi;
 extern const ffaudio_interface ffdsound;
+#elif defined(__APPLE__)
+extern const ffaudio_interface ffcoreaudio;
+#else  // Linux
+extern const ffaudio_interface ffalsa;
+extern const ffaudio_interface ffpulse;
+#endif
 }
 
 // Global dialog - Meyer's Singleton to avoid static init order fiasco
@@ -29,13 +42,14 @@ SoundCardDialog& get_soundcard_dialog() {
 
 // Helper to restart Mercury
 static void restartMercury() {
-    // Get the path to the current executable
-    char exePath[MAX_PATH];
-    GetModuleFileNameA(NULL, exePath, MAX_PATH);
-
     // Save settings before restart
     std::string config_path = getDefaultConfigPath();
     g_settings.save(config_path);
+
+#ifdef _WIN32
+    // Get the path to the current executable
+    char exePath[MAX_PATH];
+    GetModuleFileNameA(NULL, exePath, MAX_PATH);
 
     // Launch new instance
     STARTUPINFOA si = {sizeof(si)};
@@ -43,10 +57,25 @@ static void restartMercury() {
     if (CreateProcessA(exePath, NULL, NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi)) {
         CloseHandle(pi.hProcess);
         CloseHandle(pi.hThread);
-
-        // Signal shutdown of current instance
         g_gui_state.request_shutdown.store(true);
     }
+#else
+    // Get the path to the current executable via /proc/self/exe
+    char exePath[PATH_MAX];
+    ssize_t len = readlink("/proc/self/exe", exePath, sizeof(exePath) - 1);
+    if (len > 0) {
+        exePath[len] = '\0';
+        pid_t pid = fork();
+        if (pid == 0) {
+            // Child: exec the same binary
+            char* argv[] = { exePath, NULL };
+            execv(exePath, argv);
+            _exit(1);
+        } else if (pid > 0) {
+            g_gui_state.request_shutdown.store(true);
+        }
+    }
+#endif
 }
 
 SoundCardDialog::SoundCardDialog()
@@ -72,7 +101,13 @@ void SoundCardDialog::open() {
     is_open_ = true;
 
     // Load settings from g_settings
+#ifdef _WIN32
     temp_audio_system_ = (g_settings.audio_system == "wasapi") ? 0 : 1;
+#elif defined(__APPLE__)
+    temp_audio_system_ = 0;  // CoreAudio only
+#else  // Linux
+    temp_audio_system_ = (g_settings.audio_system == "alsa") ? 0 : 1;
+#endif
     temp_input_channel_ = g_settings.input_channel;
     temp_output_channel_ = g_settings.output_channel;
 
@@ -115,7 +150,13 @@ void SoundCardDialog::refreshDevices() {
     output_devices_.clear();
 
     // Select audio interface based on current system
+#ifdef _WIN32
     const ffaudio_interface* audio = (temp_audio_system_ == 0) ? &ffwasapi : &ffdsound;
+#elif defined(__APPLE__)
+    const ffaudio_interface* audio = &ffcoreaudio;
+#else  // Linux
+    const ffaudio_interface* audio = (temp_audio_system_ == 0) ? &ffalsa : &ffpulse;
+#endif
 
     // Initialize audio subsystem
     ffaudio_init_conf init_conf = {};
@@ -143,8 +184,9 @@ void SoundCardDialog::refreshDevices() {
             info.channels = 0;  // Unknown by default
             info.sample_rate = 0;
 
+#ifdef _WIN32
             // Try to get device format info (WASAPI only)
-            if (temp_audio_system_ == 0) {  // WASAPI
+            if (temp_audio_system_ == 0) {
                 const char* mix_fmt = audio->dev_info(dev, FFAUDIO_DEV_MIX_FORMAT);
                 if (mix_fmt) {
                     const unsigned int* fmt = (const unsigned int*)mix_fmt;
@@ -152,6 +194,7 @@ void SoundCardDialog::refreshDevices() {
                     info.channels = fmt[2];
                 }
             }
+#endif
 
             input_devices_.push_back(info);
         }
@@ -173,8 +216,9 @@ void SoundCardDialog::refreshDevices() {
             info.channels = 0;  // Unknown by default
             info.sample_rate = 0;
 
+#ifdef _WIN32
             // Try to get device format info (WASAPI only)
-            if (temp_audio_system_ == 0) {  // WASAPI
+            if (temp_audio_system_ == 0) {
                 const char* mix_fmt = audio->dev_info(dev, FFAUDIO_DEV_MIX_FORMAT);
                 if (mix_fmt) {
                     const unsigned int* fmt = (const unsigned int*)mix_fmt;
@@ -182,6 +226,7 @@ void SoundCardDialog::refreshDevices() {
                     info.channels = fmt[2];
                 }
             }
+#endif
 
             output_devices_.push_back(info);
         }
@@ -212,9 +257,18 @@ bool SoundCardDialog::render() {
         // Audio System Selection
         ImGui::Text("Audio System:");
         ImGui::SameLine(150);
+#ifdef _WIN32
         const char* audio_systems[] = { "WASAPI (Recommended)", "DirectSound" };
+        int n_audio_systems = 2;
+#elif defined(__APPLE__)
+        const char* audio_systems[] = { "CoreAudio" };
+        int n_audio_systems = 1;
+#else  // Linux
+        const char* audio_systems[] = { "ALSA", "PulseAudio" };
+        int n_audio_systems = 2;
+#endif
         int prev_system = temp_audio_system_;
-        if (ImGui::Combo("##audio_system", &temp_audio_system_, audio_systems, 2)) {
+        if (ImGui::Combo("##audio_system", &temp_audio_system_, audio_systems, n_audio_systems)) {
             if (prev_system != temp_audio_system_) {
                 devices_enumerated_ = false;
                 refreshDevices();
@@ -375,8 +429,15 @@ bool SoundCardDialog::render() {
 
         // Info text
         ImGui::Spacing();
+#ifdef _WIN32
         ImGui::TextWrapped("WASAPI is recommended for virtual audio cables and provides better latency. "
                            "DirectSound may be more compatible with older hardware.");
+#elif defined(__APPLE__)
+        ImGui::TextWrapped("CoreAudio is the native macOS audio system.");
+#else
+        ImGui::TextWrapped("PulseAudio is recommended for desktop Linux. "
+                           "ALSA provides direct hardware access with lower latency.");
+#endif
         ImGui::Spacing();
         ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f),
             "Tip: Most radio USB interfaces are mono. If you see [Mono], channel selection is automatic.");
@@ -420,7 +481,13 @@ bool SoundCardDialog::render() {
 
             g_settings.input_channel = in_ch_validated;
             g_settings.output_channel = out_ch_validated;
+#ifdef _WIN32
             g_settings.audio_system = (temp_audio_system_ == 0) ? "wasapi" : "dsound";
+#elif defined(__APPLE__)
+            g_settings.audio_system = "coreaudio";
+#else  // Linux
+            g_settings.audio_system = (temp_audio_system_ == 0) ? "alsa" : "pulse";
+#endif
 
             settings_applied = true;
             is_open_ = false;

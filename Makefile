@@ -52,13 +52,13 @@ ifeq ($(GUI_ENABLED),1)
     CPPFLAGS += -DMERCURY_GUI_ENABLED
     CPPFLAGS += -I./third_party/imgui -I./third_party/imgui/backends
 
-    # ImGui core sources
+    # ImGui core sources (GLFW + OpenGL3 backend)
     IMGUI_DIR = third_party/imgui
     IMGUI_SOURCES = $(IMGUI_DIR)/imgui.cpp \
                     $(IMGUI_DIR)/imgui_draw.cpp \
                     $(IMGUI_DIR)/imgui_tables.cpp \
                     $(IMGUI_DIR)/imgui_widgets.cpp \
-                    $(IMGUI_DIR)/backends/imgui_impl_win32.cpp \
+                    $(IMGUI_DIR)/backends/imgui_impl_glfw.cpp \
                     $(IMGUI_DIR)/backends/imgui_impl_opengl3.cpp
     IMGUI_OBJECTS = $(patsubst %.cpp,%.o,$(IMGUI_SOURCES))
 
@@ -70,11 +70,17 @@ ifeq ($(GUI_ENABLED),1)
     OBJECT_FILES += $(GUI_OBJECTS)
 
     ifeq ($(OS),Windows_NT)
-        # Windows: OpenGL32, GDI32 for Win32 backend
-        LDFLAGS += -lopengl32 -lgdi32 -ldwmapi
+        # Windows: GLFW (bundled static lib) + OpenGL32 + GDI32
+        CPPFLAGS += -I./third_party/glfw/include
+        LDFLAGS += -L./third_party/glfw/lib -lglfw3 -lopengl32 -lgdi32
+    else ifeq ($(UNAME_S),Darwin)
+        # macOS: GLFW via pkg-config + OpenGL framework
+        CPPFLAGS += $(shell pkg-config --cflags glfw3)
+        LDFLAGS += $(shell pkg-config --libs glfw3) -framework OpenGL
     else
-        # Linux: OpenGL
-        LDFLAGS += -lGL
+        # Linux: GLFW via pkg-config + GL
+        CPPFLAGS += $(shell pkg-config --cflags glfw3)
+        LDFLAGS += $(shell pkg-config --libs glfw3) -lGL
     endif
 endif
 

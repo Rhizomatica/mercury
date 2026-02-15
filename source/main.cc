@@ -23,6 +23,8 @@
 #include <iostream>
 #include <complex>
 #include <fstream>
+#include <chrono>
+#include <cstdint>
 #include <math.h>
 #include <unistd.h>
 #include <iostream>
@@ -672,12 +674,14 @@ start_modem:
                 // Rolling throughput (10-second window, updated every 1s)
                 {
                     static long long last_bytes = 0;
-                    static DWORD last_time = 0;
+                    static uint32_t last_time = 0;
                     static double throughput_samples[10] = {0};
                     static int throughput_idx = 0;
-                    static DWORD last_bucket_time = 0;
+                    static uint32_t last_bucket_time = 0;
 
-                    DWORD now = GetTickCount();
+                    auto tp = std::chrono::steady_clock::now();
+                    uint32_t now = (uint32_t)std::chrono::duration_cast<std::chrono::milliseconds>(
+                        tp.time_since_epoch()).count();
                     if (last_time == 0) { last_time = now; last_bucket_time = now; }
 
                     if (now - last_bucket_time >= 1000) {

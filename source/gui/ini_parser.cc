@@ -177,7 +177,13 @@ void MercurySettings::setDefaults() {
     output_device = "";
     input_channel = 0;  // LEFT (matches pre-GUI default for SBITX/unset radio_type)
     output_channel = 2; // STEREO for output
+#ifdef _WIN32
     audio_system = "wasapi";
+#elif defined(__APPLE__)
+    audio_system = "coreaudio";
+#else
+    audio_system = "pulse";
+#endif
 
     // Network
     control_port = 7001;

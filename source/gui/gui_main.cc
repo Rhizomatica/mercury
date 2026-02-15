@@ -2,7 +2,7 @@
  * @file gui_main.cc
  * @brief Mercury HF Modem GUI - Main window and render loop
  *
- * Uses Dear ImGui with Win32 + OpenGL3 backend (no SDL2 dependency)
+ * Uses Dear ImGui with GLFW + OpenGL3 backend (cross-platform)
  */
 
 #include "gui/gui_state.h"
@@ -15,16 +15,21 @@
 
 // ImGui headers
 #include "imgui.h"
+#include "imgui_impl_glfw.h"
 #include "imgui_impl_opengl3.h"
-#include "imgui_impl_win32.h"
 
-#ifndef WIN32_LEAN_AND_MEAN
-#define WIN32_LEAN_AND_MEAN
+// GLFW (cross-platform window/input/GL context)
+#include <GLFW/glfw3.h>
+
+// Platform-specific (minimal)
+#ifdef _WIN32
+#include <windows.h>  // For FreeConsole() only
 #endif
-#include <windows.h>
-#include <GL/gl.h>
+
 #include <cstdio>
 #include <cmath>
+#include <chrono>
+#include <thread>
 
 // Global GUI state - use Meyer's Singleton to avoid static init order fiasco
 // The macro g_gui_state in gui_state.h calls this function
@@ -34,17 +39,15 @@ st_gui_state& get_gui_state() {
 }
 
 // Window data
-static HGLRC g_hRC = nullptr;
-static HDC g_hDC = nullptr;
-static HWND g_hWnd = nullptr;
+static GLFWwindow* g_Window = nullptr;
 static int g_Width = 800;
 static int g_Height = 600;
 
-// Forward declarations
-static bool CreateDeviceWGL(HWND hWnd);
-static void CleanupDeviceWGL();
-static LRESULT WINAPI WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
-extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
+// Portable millisecond timer (replaces Win32 GetTickCount)
+static uint32_t GetTimeMs() {
+    using namespace std::chrono;
+    return (uint32_t)duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count();
+}
 
 // ========== Custom Widgets ==========
 
@@ -55,7 +58,7 @@ static bool s_tx_slider_active = false;
 static bool s_rx_slider_active = false;
 
 // State for auto-tune control loop
-static DWORD s_autotune_last_adjust_time = 0;
+static uint32_t s_autotune_last_adjust_time = 0;
 static float s_autotune_last_signal = -100.0f;
 static int s_autotune_stable_frames = 0;
 static bool s_autotune_waiting = false;
@@ -110,7 +113,6 @@ static void DrawTuningMeter(float signal_dbm) {
                              IM_COL32(100, 0, 0, 255));
 
     // Draw zone labels
-    ImVec2 text_size;
     float label_y = pos.y + 3;
 
     draw_list->AddText(ImVec2(pos.x + 5, label_y), IM_COL32(200, 150, 100, 200), "Quiet");
@@ -540,7 +542,7 @@ static void RenderGUI() {
 
     // Rate-limited meter values (~15 Hz update instead of 60 fps)
     // This reduces CPU load significantly on weaker systems
-    static DWORD last_meter_update = 0;
+    static uint32_t last_meter_update = 0;
     static float cached_vu_db = -60.0f;
     static float cached_signal = 0.0f;
     static float cached_snr_rx = -99.9f;
@@ -548,7 +550,7 @@ static void RenderGUI() {
     static float cached_load = 0.0f;
     static float cached_buf_fill = 0.0f;
 
-    DWORD now = GetTickCount();
+    uint32_t now = GetTimeMs();
     if (now - last_meter_update >= 66) {  // ~15 Hz
         last_meter_update = now;
         cached_vu_db = (float)g_gui_state.vu_rms_db;
@@ -824,7 +826,7 @@ static void RenderGUI() {
             if (!auto_tune_active) {
                 // Starting auto-tune - reset state
                 g_gui_state.auto_tune_active.store(true);
-                s_autotune_last_adjust_time = GetTickCount();
+                s_autotune_last_adjust_time = GetTimeMs();
                 s_autotune_last_signal = signal_dbm;
                 s_autotune_stable_frames = 0;
                 s_autotune_waiting = true;
@@ -850,11 +852,11 @@ static void RenderGUI() {
             const float target_dbm = 0.0f;
             const float fine_tolerance = 2.0f;     // Done when within +/-2 dB
             const float probe_step = 5.0f;         // Probe with 5dB change
-            const DWORD settle_time_ms = 4000;     // Wait 4 seconds for settling
+            const uint32_t settle_time_ms = 4000;   // Wait 4 seconds for settling
             const float signal_stable_threshold = 1.0f;
 
-            DWORD now = GetTickCount();
-            DWORD elapsed = now - s_autotune_last_adjust_time;
+            uint32_t now_at = GetTimeMs();
+            uint32_t elapsed = now_at - s_autotune_last_adjust_time;
 
             if (signal_dbm > -90.0f) {
                 float error = target_dbm - signal_dbm;
@@ -895,7 +897,7 @@ static void RenderGUI() {
                         if (rx_gain > 35.0f) rx_gain = 35.0f;
 
                         g_gui_state.rx_gain_db.store(rx_gain);
-                        s_autotune_last_adjust_time = now;
+                        s_autotune_last_adjust_time = now_at;
                         s_autotune_stable_frames = 0;
                         s_autotune_phase = 1;
                         printf("Auto-tune Phase 1: probed with %.1f dB step (gain: %.1f -> %.1f)\n",
@@ -935,7 +937,7 @@ static void RenderGUI() {
 
                         rx_gain = predicted_gain;
                         g_gui_state.rx_gain_db.store(rx_gain);
-                        s_autotune_last_adjust_time = now;
+                        s_autotune_last_adjust_time = now_at;
                         s_autotune_stable_frames = 0;
                         s_autotune_phase = 2;
                         printf("Auto-tune Phase 2: jumping to predicted gain %.1f dB (change: %.1f)\n",
@@ -983,7 +985,7 @@ static void RenderGUI() {
                             if (rx_gain > 35.0f) rx_gain = 35.0f;
 
                             g_gui_state.rx_gain_db.store(rx_gain);
-                            s_autotune_last_adjust_time = now;
+                            s_autotune_last_adjust_time = now_at;
                             s_autotune_stable_frames = 0;
                             printf("Auto-tune: fine-tune adjustment %.1f dB -> gain %.1f dB\n",
                                    adjustment, rx_gain);
@@ -1111,75 +1113,21 @@ static void RenderGUI() {
     ImGui::SameLine(350);
     ImGui::Text("| %.1f bps |", g_gui_state.current_bitrate.load());
 
-    // Status LEDs moved to signal quality section (near constellation)
-
     ImGui::SameLine((float)g_Width - 120);
     ImGui::Text("%.1f FPS", io.Framerate);
 
     ImGui::End();
 }
 
-// ========== Window Creation ==========
+// ========== GLFW Callbacks ==========
 
-static bool CreateDeviceWGL(HWND hWnd) {
-    HDC hDc = ::GetDC(hWnd);
-    PIXELFORMATDESCRIPTOR pfd = {0};
-    pfd.nSize = sizeof(pfd);
-    pfd.nVersion = 1;
-    pfd.dwFlags = PFD_DRAW_TO_WINDOW | PFD_SUPPORT_OPENGL | PFD_DOUBLEBUFFER;
-    pfd.iPixelType = PFD_TYPE_RGBA;
-    pfd.cColorBits = 32;
-
-    const int pf = ::ChoosePixelFormat(hDc, &pfd);
-    if (pf == 0) return false;
-    if (::SetPixelFormat(hDc, pf, &pfd) == FALSE) return false;
-    ::ReleaseDC(hWnd, hDc);
-
-    g_hDC = ::GetDC(hWnd);
-    if (!g_hRC)
-        g_hRC = wglCreateContext(g_hDC);
-    return true;
+static void glfw_error_callback(int error, const char* description) {
+    fprintf(stderr, "GLFW Error %d: %s\n", error, description);
 }
 
-static void CleanupDeviceWGL() {
-    wglMakeCurrent(nullptr, nullptr);
-    if (g_hDC) {
-        ::ReleaseDC(g_hWnd, g_hDC);
-        g_hDC = nullptr;
-    }
-}
-
-static bool g_in_modal_move = false;
-
-static LRESULT WINAPI WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
-    if (ImGui_ImplWin32_WndProcHandler(hWnd, msg, wParam, lParam))
-        return true;
-
-    switch (msg) {
-    case WM_ENTERSIZEMOVE:
-        g_in_modal_move = true;
-        return 0;
-    case WM_EXITSIZEMOVE:
-        g_in_modal_move = false;
-        return 0;
-    case WM_SIZE:
-        if (wParam != SIZE_MINIMIZED) {
-            g_Width = LOWORD(lParam);
-            g_Height = HIWORD(lParam);
-        }
-        return 0;
-    case WM_SYSCOMMAND:
-        if ((wParam & 0xfff0) == SC_KEYMENU)
-            return 0;
-        break;
-    case WM_CLOSE:
-        g_gui_state.request_shutdown.store(true);
-        return 0;
-    case WM_DESTROY:
-        ::PostQuitMessage(0);
-        return 0;
-    }
-    return ::DefWindowProcW(hWnd, msg, wParam, lParam);
+static void glfw_framebuffer_size_callback(GLFWwindow* window, int width, int height) {
+    g_Width = width;
+    g_Height = height;
 }
 
 // ========== Public Interface ==========
@@ -1189,10 +1137,12 @@ int gui_init() {
     std::string config_path = getDefaultConfigPath();
     g_settings.load(config_path);
 
-    // Hide console window if setting is enabled
+    // Hide console window (Windows only)
+#ifdef _WIN32
     if (g_settings.hide_console) {
         FreeConsole();
     }
+#endif
 
     // Apply loaded gain settings to GUI state
     g_gui_state.tx_gain_db.store(g_settings.tx_gain_db);
@@ -1203,44 +1153,33 @@ int gui_init() {
     s_last_tx_gain = (float)g_settings.tx_gain_db;
     s_last_rx_gain = (float)g_settings.rx_gain_db;
 
-    // Make process DPI aware
-    ImGui_ImplWin32_EnableDpiAwareness();
-
-    // Create window class
-    WNDCLASSEXW wc = {sizeof(wc), CS_OWNDC, WndProc, 0L, 0L,
-                      GetModuleHandle(nullptr), nullptr, nullptr, nullptr, nullptr,
-                      L"MercuryHFModem", nullptr};
-    ::RegisterClassExW(&wc);
-
-    // Create window
-    wchar_t window_title[64];
-    swprintf(window_title, 64, L"Mercury HF Modem v%hs", VERSION__);
-    g_hWnd = ::CreateWindowW(wc.lpszClassName, window_title,
-                             WS_OVERLAPPEDWINDOW,
-                             100, 100, 850, 720,
-                             nullptr, nullptr, wc.hInstance, nullptr);
-
-    if (!CreateDeviceWGL(g_hWnd)) {
-        CleanupDeviceWGL();
-        ::DestroyWindow(g_hWnd);
-        ::UnregisterClassW(wc.lpszClassName, wc.hInstance);
+    // Initialize GLFW
+    glfwSetErrorCallback(glfw_error_callback);
+    if (!glfwInit()) {
+        fprintf(stderr, "Failed to initialize GLFW\n");
         return -1;
     }
-    wglMakeCurrent(g_hDC, g_hRC);
 
-    // Enable vsync to limit FPS
-    typedef BOOL(WINAPI* PFNWGLSWAPINTERVALEXTPROC)(int interval);
-    PFNWGLSWAPINTERVALEXTPROC wglSwapIntervalEXT = (PFNWGLSWAPINTERVALEXTPROC)wglGetProcAddress("wglSwapIntervalEXT");
-    if (wglSwapIntervalEXT) {
-        wglSwapIntervalEXT(1);  // 1 = vsync on, 0 = vsync off
-        printf("VSync enabled\n");
-    } else {
-        printf("Warning: VSync not available (wglSwapIntervalEXT not found)\n");
+    // GL 3.0 + GLSL 130
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 0);
+
+    // Create window
+    char window_title[64];
+    snprintf(window_title, sizeof(window_title), "Mercury HF Modem v%s", VERSION__);
+    g_Window = glfwCreateWindow(850, 720, window_title, nullptr, nullptr);
+    if (!g_Window) {
+        fprintf(stderr, "Failed to create GLFW window\n");
+        glfwTerminate();
+        return -1;
     }
 
-    // Show window
-    ::ShowWindow(g_hWnd, SW_SHOWDEFAULT);
-    ::UpdateWindow(g_hWnd);
+    glfwMakeContextCurrent(g_Window);
+    glfwSwapInterval(1);  // VSync
+    glfwSetFramebufferSizeCallback(g_Window, glfw_framebuffer_size_callback);
+
+    // Get initial framebuffer size
+    glfwGetFramebufferSize(g_Window, &g_Width, &g_Height);
 
     // Setup ImGui context
     IMGUI_CHECKVERSION();
@@ -1255,37 +1194,29 @@ int gui_init() {
     style.FrameRounding = 3.0f;
 
     // Setup backends
-    ImGui_ImplWin32_InitForOpenGL(g_hWnd);
-    ImGui_ImplOpenGL3_Init();
+    ImGui_ImplGlfw_InitForOpenGL(g_Window, true);
+    ImGui_ImplOpenGL3_Init("#version 130");
 
     // Initialize waterfall
     g_waterfall.init();
 
+    printf("GUI initialized (GLFW + OpenGL3)\n");
     return 0;
 }
 
 int gui_main_loop() {
-    bool done = false;
+    while (!glfwWindowShouldClose(g_Window) && !g_gui_state.request_shutdown.load()) {
+        glfwPollEvents();
 
-    while (!done && !g_gui_state.request_shutdown.load()) {
-        // Poll messages
-        MSG msg;
-        while (::PeekMessage(&msg, nullptr, 0U, 0U, PM_REMOVE)) {
-            ::TranslateMessage(&msg);
-            ::DispatchMessage(&msg);
-            if (msg.message == WM_QUIT)
-                done = true;
-        }
-        if (done) break;
-
-        if (::IsIconic(g_hWnd) || g_in_modal_move) {
-            ::Sleep(10);
+        // Skip rendering when minimized
+        if (glfwGetWindowAttrib(g_Window, GLFW_ICONIFIED)) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
             continue;
         }
 
         // Start ImGui frame
         ImGui_ImplOpenGL3_NewFrame();
-        ImGui_ImplWin32_NewFrame();
+        ImGui_ImplGlfw_NewFrame();
         ImGui::NewFrame();
 
         // Render our GUI
@@ -1299,9 +1230,11 @@ int gui_main_loop() {
         ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
 
         // Present
-        ::SwapBuffers(g_hDC);
+        glfwSwapBuffers(g_Window);
     }
 
+    // Signal shutdown to modem core
+    g_gui_state.request_shutdown.store(true);
     g_gui_state.gui_running.store(false);
     return 0;
 }
@@ -1317,24 +1250,17 @@ void gui_shutdown() {
     // Shutdown waterfall
     g_waterfall.shutdown();
 
+    // Cleanup ImGui
     ImGui_ImplOpenGL3_Shutdown();
-    ImGui_ImplWin32_Shutdown();
+    ImGui_ImplGlfw_Shutdown();
     ImGui::DestroyContext();
 
-    CleanupDeviceWGL();
-    if (g_hRC) {
-        wglDeleteContext(g_hRC);
-        g_hRC = nullptr;
+    // Cleanup GLFW
+    if (g_Window) {
+        glfwDestroyWindow(g_Window);
+        g_Window = nullptr;
     }
-    if (g_hWnd) {
-        ::DestroyWindow(g_hWnd);
-        g_hWnd = nullptr;
-    }
-
-    WNDCLASSEXW wc = {};
-    wc.cbSize = sizeof(wc);
-    wc.lpszClassName = L"MercuryHFModem";
-    ::UnregisterClassW(wc.lpszClassName, GetModuleHandle(nullptr));
+    glfwTerminate();
 }
 
 // GUI thread entry point (called from main.cc)

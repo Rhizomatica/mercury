@@ -1036,7 +1036,7 @@ void *radio_capture_prep_thread(void *telecom_ptr_void)
 			if(sp != signal_period && sp != 0) {
 				printf("[CAP-STALE] sp_old=%d sp_new=%d symb_old=%d buf=%p tid=%lu\n",
 					signal_period, sp, symbol_period, (void*)data_container_ptr->passband_delayed_data,
-					(unsigned long)GetCurrentThreadId());
+					(unsigned long)pthread_self());
 				fflush(stdout);
 			}
 			if(sp == 0 || data_container_ptr->passband_delayed_data == NULL || loc < 0) {

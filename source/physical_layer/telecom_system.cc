@@ -2751,11 +2751,11 @@ void cl_telecom_system::load_configuration(int configuration)
 		printf("[PHY-REINIT] Mutex zeroed, calling deinit...\n");
 		fflush(stdout);
 		this->deinit();
-		printf("[PHY-REINIT] deinit complete (tid=%lu)\n", (unsigned long)GetCurrentThreadId());
+		printf("[PHY-REINIT] deinit complete (tid=%lu)\n", (unsigned long)pthread_self());
 		fflush(stdout);
 	}
 
-	printf("[PHY-REINIT] post-deinit A (tid=%lu)\n", (unsigned long)GetCurrentThreadId());
+	printf("[PHY-REINIT] post-deinit A (tid=%lu)\n", (unsigned long)pthread_self());
 	fflush(stdout);
 	printf("[PHY-M] _modulation=%d M_before=%.0f MOD_BPSK=%d MOD_MFSK=%d\n",
 		_modulation, M, MOD_BPSK, MOD_MFSK);
