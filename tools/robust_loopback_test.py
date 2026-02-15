@@ -18,8 +18,8 @@ config = int(sys.argv[1]) if len(sys.argv) > 1 and not sys.argv[1].startswith('-
 timeout_s = int(sys.argv[2]) if len(sys.argv) > 2 and not sys.argv[2].startswith('-') else 120
 gearshift = '--gearshift' in sys.argv or '-g' in sys.argv
 
-RSP_PORT = 7001  # responder control=7001, data=7002
-CMD_PORT = 7005  # commander control=7005, data=7006
+RSP_PORT = 7002  # responder control=7002, data=7003
+CMD_PORT = 7006  # commander control=7006, data=7007
 
 def log_output(proc, label, logfile, start_time):
     """Read stdout from process and write to logfile and console with timestamps."""

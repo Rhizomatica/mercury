@@ -14,8 +14,8 @@ VB_IN  = "CABLE Output (VB-Audio Virtual Cable)"
 config = int(sys.argv[1]) if len(sys.argv) > 1 else 0
 duration_s = int(sys.argv[2]) if len(sys.argv) > 2 else 180
 
-RSP_PORT = 7001
-CMD_PORT = 7005
+RSP_PORT = 7002
+CMD_PORT = 7006
 
 robust_flag = ["-R"] if config >= 100 else []
 

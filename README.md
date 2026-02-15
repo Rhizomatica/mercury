@@ -66,7 +66,7 @@ Using `build.sh` (recommended, works on both platforms via MSYS2/MinGW64 on Wind
 ./build.sh release
 ```
 
-Other build modes: `debug`, `o0`, `o1`, `o2`, `o3`, `asan`, `ubsan`. See `./build.sh --help`.
+Other build modes: `debug`, `o0`, `o1`, `o2`, `o3`, `asan`, `ubsan`.
 
 Using `make` directly:
 ```
@@ -87,21 +87,33 @@ make -j4 GUI_ENABLED=0
 Mercury has different operating modes and parameters. Usage parameters:
 
 ```
-Usage modes: 
+Usage modes:
 ./mercury -m [mode] -s [modulation_config] -i [device] -o [device] -r [radio_type] -x [sound_system]
 ./mercury -m ARQ -s [modulation_config] -i [device] -o [device] -r [radio_type] -x [sound_system] -p [arq_tcp_base_port]
 ./mercury -h
 
 Options:
- -c [cpu_nr]                Run on CPU [cpu_br]. Defaults to CPU 3. Use -1 to disable CPU selection.
+ -c [cpu_nr]                Run on CPU [cpu_nr]. Use -1 to disable CPU selection (default).
  -m [mode]                  Available operating modes are: ARQ, TX_SHM, RX_SHM, TX_TEST, RX_TEST, TX_RAND, RX_RAND, PLOT_BASEBAND, PLOT_PASSBAND.
- -s [modulation_config]     Sets modulation configuration for all modes including ARQ, except when gear-shift is enabled. Modes: 0 to 16. Use "-l" for listing all available modulations.
+ -s [modulation_config]     Sets modulation configuration. Modes: 0 to 16 (OFDM), 100-102 (ROBUST MFSK). Use "-l" for listing all available modulations.
  -r [radio_type]            Available radio types are: stockhf, sbitx.
  -i [device]                Radio Capture device id (eg: "plughw:0,0").
  -o [device]                Radio Playback device id (eg: "plughw:0,0").
- -x [sound_system]          Sets the sound system API to use: alsa, pulse, dsound or wasapi. Default is alsa on Linux and dsound on Windows.
+ -x [sound_system]          Sets the sound system API to use: alsa, pulse, dsound or wasapi. Default is alsa on Linux and wasapi on Windows.
  -p [arq_tcp_base_port]     Sets the ARQ TCP base port (control is base_port, data is base_port + 1). Default is 7002.
- -g                         Enables the adaptive modulation selection (gear-shifting). Not working yet!.
+ -g                         Enables the adaptive modulation selection (gear-shifting).
+ -t [timeout_ms]            Connection timeout in milliseconds (ARQ mode only). Default is 15000.
+ -a [max_attempts]          Maximum connection attempts before giving up (ARQ mode only). Default is 15.
+ -k [link_timeout_ms]       Link timeout in milliseconds (ARQ mode only). Default is 30000.
+ -e                         Exit when client disconnects from control port (ARQ mode only).
+ -R                         Enable Robust mode (MFSK for weak-signal hailing/low-speed data).
+ -I [iterations]            LDPC decoder max iterations (5-50, default 50). Lower = less CPU.
+ -T [tx_gain_db]            TX gain in dB (overrides GUI slider). E.g. -T -25.6 for -30 dBFS output.
+ -G [rx_gain_db]            RX gain in dB (overrides GUI slider). E.g. -G 25.6 to boost weak input.
+ -C                         Check audio configuration (stereo, sample rate) before starting.
+ -f [offset_hz]             TX carrier offset in Hz for testing frequency sync.
+ -v                         Verbose debug output (OFDM sync, RX timing, ACK detection).
+ -n                         Disable GUI (headless mode). GUI is enabled by default.
  -l                         Lists all modulator/coding modes.
  -z                         Lists all available sound cards.
  -h                         Prints this help.
@@ -132,7 +144,7 @@ Example of Mercury in the receive side (sBitx v3 radio):
 ./mercury -m RX_SHM -s 1 -r sbitx -i "plughw:0,0" -o "plughw:0,0"
 ```
 
-ARQ mode is under active development and can be used, for example, in a stock HF radio, as:
+ARQ mode with gearshift can be used, for example, in a stock HF radio, as:
 
 ```
 ./mercury -m ARQ -r stockhf -i "plughw:0,0" -o "plughw:0,0"
@@ -150,10 +162,17 @@ For transmitting such test data broadcast data, in stock HF radio (like an ICOM 
 ./mercury -m TX_TEST -s 0 -r stockhf -i "plughw:0,0" -o "plughw:0,0"
 ```
 
-On Windows it is recommended to use the default device, by not setting explicitly. Example using the DirectSound driver (other option is wasapi):
+On Windows, WASAPI is the default and recommended audio driver. To use the default audio device:
 
 ```
-./mercury -m TX_TEST -s 0 -r stockhf -x dsound
+./mercury -m TX_TEST -s 0 -r stockhf -x wasapi
+```
+
+To set a specific audio device, use `-i` and `-o` with the device name. Use `-z` to list available devices:
+
+```
+./mercury -z
+./mercury -m ARQ -r stockhf -x wasapi -i "CABLE Output (VB-Audio Virtual Cable)" -o "CABLE Input (VB-Audio Virtual Cable)"
 ```
 
 For enabling tx (keying the radio) in an ICOM IC-7100, for example, use:
@@ -170,10 +189,11 @@ rigctl -r /dev/ttyUSB0 -m 3070 T 0
 
 For the sBitx radio, use the HERMES software stack, available at https://github.com/Rhizomatica/hermes-net (use trx_v2-userland implementation).
 
-## Supported clients
+## Supported Clients
 
-Mercury alone is not very useful. A client is needed to receive and transmit information using Mercury. The folder "examples" has a transmitter and receiver example
-to use with the TX_SHM and RX_SHM modes. A more complete client called HERMES-BROADCAST to be used for data broadcast which uses RaptorQ codes is available here: https://github.com/Rhizomatica/hermes-broadcast .
+Mercury includes a built-in GUI for monitoring and configuration. When built with `GUI_ENABLED=1` (the default), Mercury displays a real-time constellation diagram, waterfall spectrum, signal level meters, and modem status indicators. The GUI also provides dialogs for sound card selection, callsign, network ports, and gearshift settings. To run headless (without GUI), use the `-n` flag.
+
+For ARQ mode, a client application connects to Mercury over TCP to send and receive data. The folder "examples" has a transmitter and receiver example for the TX_SHM and RX_SHM modes. A more complete client called HERMES-BROADCAST for data broadcast using RaptorQ codes is available here: https://github.com/Rhizomatica/hermes-broadcast .
 
 For a simple ARQ client which supports hamlib, take a look at: https://github.com/Rhizomatica/mercury-connector
 
@@ -211,6 +231,27 @@ CONFIG_16 (5735.294118 bps)
 ```
 
 ROBUST modes use MFSK (non-coherent) modulation and can decode at significantly lower SNR than the OFDM modes. With gearshift enabled, Mercury starts at ROBUST_0 and works up through ROBUST_1, ROBUST_2, then into CONFIG_0 through CONFIG_16 as channel conditions improve.
+
+## Testing and Benchmarking
+
+The `tools/` directory contains test and benchmark scripts. These require Python 3 and a virtual audio cable (eg. VB-Audio Virtual Cable on Windows).
+
+**Benchmark suite** (`tools/mercury_benchmark.py`) — SNR sweep, stress test, and adaptive gearshift test. Generates VARA-style throughput charts (bytes/min vs SNR). See `tools/BENCHMARK_GUIDE.md` for full documentation.
+
+```
+pip install numpy sounddevice matplotlib
+python tools/mercury_benchmark.py sweep --configs 100,0,8,16 --measure-duration 60
+python tools/mercury_benchmark.py stress --num-bursts 5
+python tools/mercury_benchmark.py adaptive --measure-duration 60
+```
+
+**Loopback test** (`tools/robust_loopback_test.py`) — quick ARQ sanity check for ROBUST modes. Starts commander + responder on a virtual cable and monitors for successful data exchange.
+
+```
+python tools/robust_loopback_test.py 100    # ROBUST_0
+python tools/robust_loopback_test.py 101    # ROBUST_1
+python tools/robust_loopback_test.py 102    # ROBUST_2
+```
 
 ## Discussion
 

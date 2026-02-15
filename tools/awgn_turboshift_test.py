@@ -30,8 +30,8 @@ MERCURY = r"C:\Program Files\Mercury\mercury.exe"
 VB_OUT = "CABLE Input (VB-Audio Virtual Cable)"
 VB_IN  = "CABLE Output (VB-Audio Virtual Cable)"
 
-RSP_PORT = 7001
-CMD_PORT = 7005
+RSP_PORT = 7002
+CMD_PORT = 7006
 SAMPLE_RATE = 48000
 
 def find_wasapi_cable_output():

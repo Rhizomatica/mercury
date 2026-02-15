@@ -155,15 +155,15 @@ int main(int argc, char *argv[])
         printf("%s -m ARQ -s [modulation_config] -i [device] -o [device] -r [radio_type] -x [sound_system] -p [arq_tcp_base_port]\n", argv[0], argv[0]);
         printf("%s -h\n", argv[0]);
         printf("\nOptions:\n");
-        printf(" -c [cpu_nr]                Run on CPU [cpu_br]. Use -1 to disable CPU selection, which is the default.\n");
+        printf(" -c [cpu_nr]                Run on CPU [cpu_nr]. Use -1 to disable CPU selection, which is the default.\n");
         printf(" -m [mode]                  Available operating modes are: ARQ, TX_SHM, RX_SHM, TX_TEST, RX_TEST, TX_RAND, RX_RAND, PLOT_BASEBAND, PLOT_PASSBAND.\n");
-        printf(" -s [modulation_config]     Sets modulation configuration for all modes including ARQ, except when gear-shift is enabled. Modes: 0 to 16. Use \"-l\" for listing all available modulations.\n");
+        printf(" -s [modulation_config]     Sets modulation configuration. Modes: 0 to 16 (OFDM), 100-102 (ROBUST MFSK). Use \"-l\" for listing all available modulations.\n");
         printf(" -r [radio_type]            Available radio types are: stockhf, sbitx.\n");
         printf(" -i [device]                Radio Capture device id (eg: \"plughw:0,0\").\n");
         printf(" -o [device]                Radio Playback device id (eg: \"plughw:0,0\").\n");
         printf(" -x [sound_system]          Sets the sound system API to use: alsa, pulse, dsound or wasapi. Default is alsa on Linux and wasapi on Windows.\n");
 		printf(" -p [arq_tcp_base_port]     Sets the ARQ TCP base port (control is base_port, data is base_port + 1). Default is 7002.\n");
-        printf(" -g                         Enables the adaptive modulation selection (gear-shifting). Not working yet!.\n");
+        printf(" -g                         Enables the adaptive modulation selection (gear-shifting).\n");
         printf(" -t [timeout_ms]            Connection timeout in milliseconds (ARQ mode only). Default is 15000.\n");
         printf(" -a [max_attempts]          Maximum connection attempts before giving up (ARQ mode only). Default is 15.\n");
         printf(" -k [link_timeout_ms]       Link timeout in milliseconds (ARQ mode only). Default is 30000.\n");
