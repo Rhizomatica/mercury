@@ -342,9 +342,10 @@ int cl_telecom_system::get_frame_size_bits()
 void cl_telecom_system::transmit_byte(int *data, int nBytes, double* out, int message_location)
 {
 	int nReal_data = data_container.nBits - ldpc.P;
-	int msB = 0, lsB = 0; // TODO: type mismatch here.. we should covert this to uint8_t
+	int msB = 0, lsB = 0;
+	int frame_size = (nReal_data - outer_code_reserved_bits) / 8;
 
-	if(nBytes > (nReal_data-outer_code_reserved_bits) / 8)
+	if(nBytes > frame_size)
 	{
 		std::cout<<"message too long.. not sent."<<std::endl;
 		return;
@@ -352,22 +353,32 @@ void cl_telecom_system::transmit_byte(int *data, int nBytes, double* out, int me
 
 	byte_to_bit(data, data_container.data_bit, nBytes);
 
-    // TODO: outer_code is byte aligned... better move this to transmit_bit not to waste bits
-	if(outer_code==CRC16_MODBUS_RTU)
+	// Zero-pad data to full frame_size BEFORE CRC so that CRC covers a
+	// fixed-size block.  RX self-check: CRC16([frame_size bytes + CRC]) = 0.
+	for(int i = nBytes * 8; i < frame_size * 8; i++)
 	{
-		uint16_t crc = CRC16_MODBUS_RTU_calc((int*)data, nBytes);
-		msB=(crc & 0xff00)>>8;
-		lsB=crc & 0x00ff;
-		byte_to_bit(&lsB, &data_container.data_bit[nBytes*8], 1);
-		byte_to_bit(&msB, &data_container.data_bit[(nBytes+1)*8], 1);
+		data_container.data_bit[i] = 0;
 	}
 
-	for(int i=0;i<nReal_data-nBytes*8-outer_code_reserved_bits;i++)
+	if(outer_code == CRC16_MODBUS_RTU)
 	{
-		data_container.data_bit[nBytes*8+outer_code_reserved_bits+i]=0;
+		// Pad byte array too (data may alias data_container.data_byte)
+		for(int i = nBytes; i < frame_size; i++)
+			data[i] = 0;
+		uint16_t crc = CRC16_MODBUS_RTU_calc(data, frame_size);
+		msB = (crc & 0xff00) >> 8;
+		lsB = crc & 0x00ff;
+		byte_to_bit(&lsB, &data_container.data_bit[frame_size * 8], 1);
+		byte_to_bit(&msB, &data_container.data_bit[(frame_size + 1) * 8], 1);
 	}
 
-	transmit_bit(data_container.data_bit,out,message_location);
+	// Zero any remaining non-byte-aligned waste bits after CRC
+	for(int i = frame_size * 8 + outer_code_reserved_bits; i < nReal_data; i++)
+	{
+		data_container.data_bit[i] = 0;
+	}
+
+	transmit_bit(data_container.data_bit, out, message_location);
 }
 
 void cl_telecom_system::transmit_bit(int* data, double* out, int message_location)
@@ -403,6 +414,42 @@ void cl_telecom_system::transmit_bit(int* data, double* out, int message_locatio
 		// In ctrl mode, only modulate first ctrl_nBits interleaved bits (fewer symbols)
 		int active_nbits = get_active_nbits();
 		mfsk.mod(data_container.bit_interleaved_data, active_nbits, data_container.ofdm_framed_data);
+
+#ifdef MERCURY_GUI_ENABLED
+		// Accumulate tone energies across ALL symbols for full-packet view
+		{
+			int nSymbols = active_nbits / (mfsk.nBits * mfsk.nStreams);
+			double gui_E[2][64] = {};
+			int gui_peak[2] = {};
+			for (int st = 0; st < mfsk.nStreams && st < 2; st++)
+			{
+				for (int s = 0; s < nSymbols; s++)
+				{
+					int hop = (s * mfsk.tone_hop_step) % mfsk.M;
+					for (int m = 0; m < mfsk.M && m < 64; m++)
+					{
+						std::complex<double> val = data_container.ofdm_framed_data[
+							s * data_container.Nc + mfsk.stream_offsets[st] + ((m + hop) % mfsk.M)];
+						gui_E[st][m] += val.real() * val.real() + val.imag() * val.imag();
+					}
+				}
+				// Peak = last symbol's active tone (current tone indicator)
+				if (nSymbols > 0) {
+					int last_s = nSymbols - 1;
+					int hop = (last_s * mfsk.tone_hop_step) % mfsk.M;
+					double max_e = -1.0;
+					for (int m = 0; m < mfsk.M && m < 64; m++)
+					{
+						std::complex<double> val = data_container.ofdm_framed_data[
+							last_s * data_container.Nc + mfsk.stream_offsets[st] + ((m + hop) % mfsk.M)];
+						double e = val.real() * val.real() + val.imag() * val.imag();
+						if (e > max_e) { max_e = e; gui_peak[st] = m; }
+					}
+				}
+			}
+			gui_push_mfsk_tones(gui_E, gui_peak, mfsk.M, mfsk.nStreams, true);
+		}
+#endif
 	}
 	else
 	{
@@ -1098,6 +1145,41 @@ skip_h_retry_point:
 				int rx_nbits = get_active_nbits();
 				mfsk.demod(data_container.ofdm_symbol_demodulated_data, rx_nbits, data_container.demodulated_data);
 
+#ifdef MERCURY_GUI_ENABLED
+				// Accumulate tone energies across ALL symbols for full-packet view
+				{
+					int nSymbols = rx_nbits / (mfsk.nBits * mfsk.nStreams);
+					double gui_E[2][64] = {};
+					int gui_peak[2] = {};
+					for (int st = 0; st < mfsk.nStreams && st < 2; st++)
+					{
+						for (int s = 0; s < nSymbols; s++)
+						{
+							int hop = (s * mfsk.tone_hop_step) % mfsk.M;
+							for (int m = 0; m < mfsk.M && m < 64; m++)
+							{
+								std::complex<double> val = data_container.ofdm_symbol_demodulated_data[
+									s * data_container.Nc + mfsk.stream_offsets[st] + ((m + hop) % mfsk.M)];
+								gui_E[st][m] += val.real() * val.real() + val.imag() * val.imag();
+							}
+						}
+						// Peak = last symbol's active tone
+						if (nSymbols > 0) {
+							int last_s = nSymbols - 1;
+							int hop = (last_s * mfsk.tone_hop_step) % mfsk.M;
+							double max_e = -1.0;
+							for (int m = 0; m < mfsk.M && m < 64; m++)
+							{
+								std::complex<double> val = data_container.ofdm_symbol_demodulated_data[
+									last_s * data_container.Nc + mfsk.stream_offsets[st] + ((m + hop) % mfsk.M)];
+								double e = val.real() * val.real() + val.imag() * val.imag();
+								if (e > max_e) { max_e = e; gui_peak[st] = m; }
+							}
+						}
+					}
+					gui_push_mfsk_tones(gui_E, gui_peak, mfsk.M, mfsk.nStreams, false);
+				}
+#endif
 
 				// Zero-pad LLRs beyond active bits (punctured positions = erasure)
 				// This covers both ctrl mode and BER test puncturing
@@ -1249,17 +1331,18 @@ skip_h_retry_point:
 				*(out+i)=data_container.hd_decoded_data_byte[i];
 			}
 
-            // TODO: FIX-ME
-			receive_stats.crc=0xff;
-			if(outer_code == CRC16_MODBUS_RTU && receive_stats.iterations_done > (ldpc.nIteration_max-1) && receive_stats.all_zeros == NO)
+			// CRC16 self-check: compute CRC over [data + CRC_LSB + CRC_MSB] = nReal_data/8 bytes.
+			// For correct data, CRC16_MODBUS_RTU of [message || appended_CRC] = 0.
+			// Check on ALL frames (not just LDPC failures) to catch wrong-codeword convergence.
+			receive_stats.crc=0;
+			if(outer_code == CRC16_MODBUS_RTU && receive_stats.all_zeros == NO)
 			{
-				// the CRC should be calculated on ((nReal_data - outer_code_reserved_bits) / 8) no??
 				receive_stats.crc=CRC16_MODBUS_RTU_calc(data_container.hd_decoded_data_byte, nReal_data/8);
-				// should we compare the CRC (and for every frame?)
 			}
 
-			// TODO: FIX-ME receive_stats.crc is the crc itself, not the comparisson...
-			if((receive_stats.iterations_done > (ldpc.nIteration_max-1) && receive_stats.crc != 0 ) || receive_stats.all_zeros==YES)
+			if(receive_stats.all_zeros==YES ||
+			   (outer_code == CRC16_MODBUS_RTU && receive_stats.crc != 0) ||
+			   (outer_code != CRC16_MODBUS_RTU && receive_stats.iterations_done > (ldpc.nIteration_max-1)))
 			{
 				receive_stats.SNR=-99.9;
 				receive_stats.message_decoded=NO;

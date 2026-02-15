@@ -39,6 +39,64 @@ union u_SNR {
   char char4_SNR[4];
 };
 
+// Base-36 callsign packing: fits up to 6 chars (A-Z, 0-9) into 5 bytes.
+// Used by START_CONNECTION to avoid callsign truncation on small frames.
+// Format: [4-bit length][6 chars x 6 bits] = 40 bits = 5 bytes.
+inline void callsign_pack(const char* callsign, int len, char* out)
+{
+	if(len > 6) len = 6;
+	uint64_t packed = ((uint64_t)(len & 0xF)) << 36;
+	for(int i = 0; i < 6; i++)
+	{
+		int val = 0;
+		if(i < len)
+		{
+			char c = callsign[i];
+			if(c >= 'A' && c <= 'Z') val = c - 'A';
+			else if(c >= 'a' && c <= 'z') val = c - 'a';
+			else if(c >= '0' && c <= '9') val = c - '0' + 26;
+		}
+		packed |= ((uint64_t)(val & 0x3F)) << (30 - i * 6);
+	}
+	out[0] = (char)((packed >> 32) & 0xFF);
+	out[1] = (char)((packed >> 24) & 0xFF);
+	out[2] = (char)((packed >> 16) & 0xFF);
+	out[3] = (char)((packed >> 8) & 0xFF);
+	out[4] = (char)(packed & 0xFF);
+}
+
+inline std::string callsign_unpack(const char* data)
+{
+	uint64_t packed = 0;
+	packed |= ((uint64_t)(unsigned char)data[0]) << 32;
+	packed |= ((uint64_t)(unsigned char)data[1]) << 24;
+	packed |= ((uint64_t)(unsigned char)data[2]) << 16;
+	packed |= ((uint64_t)(unsigned char)data[3]) << 8;
+	packed |= ((uint64_t)(unsigned char)data[4]);
+	int len = (int)((packed >> 36) & 0xF);
+	if(len > 6) len = 6;
+	std::string result;
+	for(int i = 0; i < len; i++)
+	{
+		int val = (int)((packed >> (30 - i * 6)) & 0x3F);
+		if(val < 26) result += (char)('A' + val);
+		else if(val < 36) result += (char)('0' + val - 26);
+	}
+	return result;
+}
+
+inline void hex_trace(const char* label, const char* data, int len, int max_show = 48)
+{
+	printf("[DATA-TRACE] %s (%d bytes):", label, len);
+	int show = len < max_show ? len : max_show;
+	for(int i = 0; i < show; i++)
+		printf(" %02X", (unsigned char)data[i]);
+	if(len > max_show)
+		printf(" ...");
+	printf("\n");
+	fflush(stdout);
+}
+
 struct st_message
 {
 	int ack_timeout;
@@ -221,6 +279,7 @@ public:
   void print_stats();
 
   void reset_all_timers();
+  void reset_session_state();
 
   cl_configuration_arq default_configuration_ARQ;
 
@@ -306,6 +365,7 @@ public:
   int gear_shift_blocked_for_nBlocks;
   int consecutive_data_acks;       // Frame-level gearshift: consecutive successful data ACKs
   int frame_shift_threshold;       // Shift up after this many consecutive ACKs (default 3)
+  bool frame_gearshift_just_applied;  // true after frame upshift ACKed — BREAK on first data failure
 
   // Turboshift: bidirectional probing phase before data exchange
   enum TurboshiftPhase { TURBO_FORWARD, TURBO_REVERSE, TURBO_DONE };

@@ -101,6 +101,31 @@ int cl_fifo_buffer::push(char* data, int length)
 	return pushed_data;
 }
 
+int cl_fifo_buffer::push_front(char* data, int length)
+{
+	int pushed_data=0;
+	if(length<=get_free_size() && length>0)
+	{
+		read_location -= length;
+		if(read_location < 0)
+		{
+			read_location += size;
+		}
+		int pos = read_location;
+		for(int i=0; i<length; i++)
+		{
+			this->data[pos] = data[i];
+			pos++;
+			if(pos == size)
+			{
+				pos = 0;
+			}
+		}
+		pushed_data = length;
+	}
+	return pushed_data;
+}
+
 int cl_fifo_buffer::pop(char* data, int length)
 {
 	int popped_data=0;

@@ -141,6 +141,7 @@ cl_arq_controller::cl_arq_controller()
 	gear_shift_blocked_for_nBlocks=0;
 	consecutive_data_acks=0;
 	frame_shift_threshold=3;
+	frame_gearshift_just_applied=false;
 
 	turboshift_phase=TURBO_FORWARD;
 	turboshift_active=true;
@@ -1142,14 +1143,10 @@ void cl_arq_controller::update_status()
 		}
 
 		this->link_status=DROPPED;
-		connection_id=0;
-		assigned_connection_id=0;
-		emergency_break_active=0;
-		emergency_nack_count=0;
-		break_detected=NO;
+		reset_session_state();
+		reset_all_timers();
 		connection_attempt_timer.stop();
 		connection_attempt_timer.reset();
-		connection_attempts=0;
 
 		fifo_buffer_tx.flush();
 		fifo_buffer_backup.flush();
@@ -1194,14 +1191,10 @@ void cl_arq_controller::update_status()
 		}
 
 		this->link_status=DROPPED;
-		connection_id=0;
-		assigned_connection_id=0;
-		emergency_break_active=0;
-		emergency_nack_count=0;
-		break_detected=NO;
+		reset_session_state();
+		reset_all_timers();
 		connection_attempt_timer.stop();
 		connection_attempt_timer.reset();
-		connection_attempts=0;
 
 		fifo_buffer_tx.flush();
 		fifo_buffer_backup.flush();
@@ -1222,30 +1215,46 @@ void cl_arq_controller::update_status()
 	if(link_timer.get_elapsed_time_ms()>=link_timeout)
 	{
 		this->link_status=DROPPED;
-		connection_id=0;
-		assigned_connection_id=0;
-		emergency_break_active=0;
-		emergency_nack_count=0;
-		break_detected=NO;
-		link_timer.stop();
-		link_timer.reset();
-		watchdog_timer.stop();
-		watchdog_timer.reset();
-		gear_shift_timer.stop();
-		gear_shift_timer.reset();
-		receiving_timer.stop();
-		receiving_timer.reset();
+		reset_session_state();
+		reset_all_timers();
 
 		fifo_buffer_tx.flush();
 		fifo_buffer_backup.flush();
 		fifo_buffer_rx.flush();
 
+		// Notify Winlink of disconnect
+		if(tcp_socket_control.get_status()==TCP_STATUS_ACCEPTED)
+		{
+			std::string str="DISCONNECTED\r";
+			tcp_socket_control.message->length=str.length();
+			for(int i=0;i<(int)tcp_socket_control.message->length;i++)
+			{
+				tcp_socket_control.message->buffer[i]=str[i];
+			}
+			tcp_socket_control.transmit();
+		}
+
 		if(this->role==COMMANDER)
 		{
-			set_role(RESPONDER);
-			link_status=LISTENING;
-			connection_status=RECEIVING;
+			// Stay as commander, retry connection at init config.
+			// The responder side already dropped to LISTENING.
+			// connection_attempt_timeout handler will give up after max retries.
+			printf("[LINK-TIMEOUT] Commander retrying connection at init config\n");
+			fflush(stdout);
 			load_configuration(init_configuration, FULL, YES);
+			link_status=CONNECTING;
+			connection_status=TRANSMITTING_CONTROL;
+
+			// Reset turboshift for fresh probe on reconnect
+			turboshift_active = true;
+			turboshift_phase = TURBO_DONE;
+			turboshift_last_good = -1;
+
+			messages_control.status = FREE;
+			connection_attempts = 0;
+			connection_attempt_timer.reset();
+			connection_attempt_timer.start();
+			add_message_control(START_CONNECTION);
 		}
 		else if(this->role==RESPONDER)
 		{
@@ -1267,19 +1276,23 @@ void cl_arq_controller::update_status()
 				messages_tx[i].status=FREE;
 			}
 
+			char restore_buf[N_MAX/8 * 20];
+			int total_restore = 0;
 			int data_read_size;
 			for(int i=0;i<get_nTotal_messages();i++)
 			{
-				data_read_size=fifo_buffer_backup.pop(message_TxRx_byte_buffer,max_data_length+max_header_length);
+				data_read_size=fifo_buffer_backup.pop(restore_buf + total_restore,max_data_length+max_header_length);
 				if(data_read_size!=0)
 				{
-					fifo_buffer_tx.push(message_TxRx_byte_buffer,data_read_size);
+					total_restore += data_read_size;
 				}
 				else
 				{
 					break;
 				}
 			}
+			if(total_restore > 0)
+				fifo_buffer_tx.push_front(restore_buf, total_restore);
 			fifo_buffer_backup.flush();
 
 		}
@@ -1318,23 +1331,18 @@ void cl_arq_controller::update_status()
 	{
 		printf("Forced role switch: no RX for %d seconds, switching to RESPONDER\n", FORCED_ROLE_SWITCH_TIMEOUT/1000);
 
+		reset_session_state();
 		set_role(RESPONDER);
 		link_status=LISTENING;
 		connection_status=RECEIVING;
 		load_configuration(init_configuration, FULL, YES);
-
-		// Reset timers
-		watchdog_timer.stop();
-		watchdog_timer.reset();
-		link_timer.stop();
-		link_timer.reset();
-		receiving_timer.stop();
-		receiving_timer.reset();
+		reset_all_timers();
 
 		// Flush buffers
 		fifo_buffer_tx.flush();
 		fifo_buffer_backup.flush();
 		fifo_buffer_rx.flush();
+		messages_control.status=FREE;
 	}
 
 	if(gear_shift_on==YES && gear_shift_timer.get_elapsed_time_ms()>=gearshift_timeout)
@@ -1355,19 +1363,23 @@ void cl_arq_controller::update_status()
 					messages_tx[i].status=FREE;
 				}
 
+				char restore_buf[N_MAX/8 * 20];
+				int total_restore = 0;
 				int data_read_size;
 				for(int i=0;i<get_nTotal_messages();i++)
 				{
-					data_read_size=fifo_buffer_backup.pop(message_TxRx_byte_buffer,max_data_length+max_header_length);
+					data_read_size=fifo_buffer_backup.pop(restore_buf + total_restore,max_data_length+max_header_length);
 					if(data_read_size!=0)
 					{
-						fifo_buffer_tx.push(message_TxRx_byte_buffer,data_read_size);
+						total_restore += data_read_size;
 					}
 					else
 					{
 						break;
 					}
 				}
+				if(total_restore > 0)
+					fifo_buffer_tx.push_front(restore_buf, total_restore);
 				fifo_buffer_backup.flush();
 
 				if (current_configuration!= last_data_configuration)
@@ -1394,40 +1406,37 @@ void cl_arq_controller::update_status()
 		}
 		else if(gear_shift_algorithm==SUCCESS_BASED_LADDER)
 		{
-			// Turboshift: retry once before declaring ceiling
-			if(turboshift_active && this->role==COMMANDER)
+			// During turboshift, retry/ceiling is handled in the control NAck
+			// handler (arq_commander.cc). Skip the normal gearshift-down here.
+			// During BREAK recovery, the SET_CONFIG for recovery is in-flight.
+			// gearshift_timeout must not overwrite data_configuration or connection_status.
+			if((turboshift_active || break_recovery_phase != 0 || emergency_break_active
+				|| turboshift_phase != TURBO_DONE) && this->role==COMMANDER)
 			{
-				if(turboshift_retries > 0)
+				// SWITCH_ROLE timeout during turboshift: the other side likely
+				// received SWITCH_ROLE and already became commander. Assume it
+				// was received and become responder so we hear their frames.
+				if(!turboshift_active && break_recovery_phase == 0
+					&& !emergency_break_active && turboshift_phase != TURBO_DONE)
 				{
-					turboshift_retries--;
-					printf("[TURBO] RETRY config %d (retries left: %d)\n",
-						current_configuration, turboshift_retries);
+					printf("[TURBO] SWITCH_ROLE timeout — assuming received, becoming responder\n");
 					fflush(stdout);
-					// Re-send the same SET_CONFIG
-					cleanup();
-					add_message_control(SET_CONFIG);
-					connection_status=TRANSMITTING_CONTROL;
-					return;
+					set_role(RESPONDER);
+					link_status = CONNECTED;
+					connection_status = RECEIVING;
+					watchdog_timer.start();
+					link_timer.start();
+					telecom_system->data_container.frames_to_read =
+						telecom_system->data_container.preamble_nSymb
+						+ telecom_system->data_container.Nsymb;
+					telecom_system->data_container.nUnder_processing_events = 0;
+					telecom_system->receive_stats.mfsk_search_raw = 0;
 				}
-
-				int failed_config = current_configuration;
-				int settle_config = (turboshift_last_good >= 0) ?
-					turboshift_last_good : init_configuration;
-
-				printf("[TURBO] CEILING at config %d, settling at %d\n",
-					failed_config, settle_config);
-				fflush(stdout);
-
-				messages_control_backup();
-				data_configuration = settle_config;
-				load_configuration(data_configuration, PHYSICAL_LAYER_ONLY, YES);
-				messages_control_restore();
-
-				for(int i=0;i<nMessages;i++)
-					messages_tx[i].status=FREE;
-				fifo_buffer_backup.flush();
-
-				finish_turbo_direction();
+				else
+				{
+					printf("[GEARSHIFT] Timeout during turboshift/break-recovery — skipping\n");
+					fflush(stdout);
+				}
 				return;
 			}
 
@@ -1445,19 +1454,23 @@ void cl_arq_controller::update_status()
 					messages_tx[i].status=FREE;
 				}
 
+				char restore_buf[N_MAX/8 * 20];
+				int total_restore = 0;
 				int data_read_size;
 				for(int i=0;i<get_nTotal_messages();i++)
 				{
-					data_read_size=fifo_buffer_backup.pop(message_TxRx_byte_buffer,max_data_length+max_header_length);
+					data_read_size=fifo_buffer_backup.pop(restore_buf + total_restore,max_data_length+max_header_length);
 					if(data_read_size!=0)
 					{
-						fifo_buffer_tx.push(message_TxRx_byte_buffer,data_read_size);
+						total_restore += data_read_size;
 					}
 					else
 					{
 						break;
 					}
 				}
+				if(total_restore > 0)
+					fifo_buffer_tx.push_front(restore_buf, total_restore);
 				fifo_buffer_backup.flush();
 
 				connection_status=TRANSMITTING_DATA;
@@ -1655,6 +1668,7 @@ void cl_arq_controller::process_main()
 		if(nBytes_received>0)
 		{
 			tcp_socket_data.timer.start();
+			hex_trace("S1-TCP-IN", tcp_socket_data.message->buffer, tcp_socket_data.message->length);
 			fifo_buffer_tx.push(tcp_socket_data.message->buffer, tcp_socket_data.message->length);
 
 			std::string str="BUFFER ";
@@ -1782,10 +1796,16 @@ void cl_arq_controller::process_user_command(std::string command)
 	}
 	else if(command=="ABORT")
 	{
-		// Abort connection attempt - stop trying to connect
-		if(link_status==CONNECTING || link_status==NEGOTIATING || link_status==CONNECTION_ACCEPTED)
+		// Abort connection attempt or active session - immediate teardown
+		if(link_status==CONNECTING || link_status==NEGOTIATING || link_status==CONNECTION_ACCEPTED
+			|| link_status==CONNECTED || link_status==DISCONNECTING)
 		{
-			// Always switch to RESPONDER/LISTENING after abort so we can receive incoming connections
+			printf("[ABORT] Aborting session (link_status=%d)\n", link_status);
+			fflush(stdout);
+
+			// Immediate teardown — no CLOSE_CONNECTION negotiation
+			reset_session_state();
+
 			set_role(RESPONDER);
 			link_status=LISTENING;
 			connection_status=RECEIVING;
@@ -1794,10 +1814,8 @@ void cl_arq_controller::process_user_command(std::string command)
 			// Clear buffers and reset timers
 			fifo_buffer_tx.flush();
 			fifo_buffer_backup.flush();
+			fifo_buffer_rx.flush();
 			reset_all_timers();
-
-			// Reset connection attempts counter
-			connection_attempts=0;
 
 			// Reset messages_control so new CONNECT commands can work
 			messages_control.status=FREE;
@@ -1833,6 +1851,7 @@ void cl_arq_controller::process_user_command(std::string command)
 		set_role(RESPONDER);
 		link_status=LISTENING;
 		connection_status=RECEIVING;
+		reset_session_state();
 		reset_all_timers();
 
 		// Load init_configuration so we can hear incoming START_CONNECTION messages
@@ -1955,6 +1974,53 @@ void cl_arq_controller::reset_all_timers()
 	switch_role_timer.reset();
 }
 
+void cl_arq_controller::reset_session_state()
+{
+	// Config state — must match init() defaults
+	negotiated_configuration = init_configuration;
+	data_configuration = init_configuration;
+	forward_configuration = CONFIG_NONE;
+	reverse_configuration = CONFIG_NONE;
+	ack_configuration = init_configuration;
+
+	// Turboshift — fresh state for next connection
+	turboshift_phase = TURBO_FORWARD;
+	turboshift_active = true;
+	turboshift_last_good = -1;
+	turboshift_initiator = false;
+	turboshift_retries = 1;
+
+	// BREAK / recovery
+	emergency_nack_count = 0;
+	emergency_break_active = 0;
+	emergency_break_retries = 3;
+	emergency_previous_config = init_configuration;
+	break_drop_step = 1;
+	break_recovery_phase = 0;
+	break_recovery_retries = 0;
+	break_detected = NO;
+
+	// Data exchange
+	block_under_tx = NO;
+	consecutive_data_acks = 0;
+	frame_gearshift_just_applied = false;
+	data_ack_received = NO;
+	repeating_last_ack = NO;
+
+	// Message tracking
+	last_message_sent_type = NONE;
+	last_message_sent_code = NONE;
+	last_message_received_type = NONE;
+	last_message_received_code = NONE;
+	last_received_message_sequence = 255;
+
+	// Connection
+	connection_id = 0;
+	assigned_connection_id = 0;
+	connection_attempts = 0;
+	disconnect_requested = NO;
+}
+
 
 void cl_arq_controller::send(st_message* message, int message_location)
 {
@@ -2006,7 +2072,12 @@ void cl_arq_controller::send(st_message* message, int message_location)
 
 	for(int i=0;i<(header_length+message->length);i++)
 	{
-		telecom_system->data_container.data_byte[i]=(int)message_TxRx_byte_buffer[i];
+		telecom_system->data_container.data_byte[i]=(int)(unsigned char)message_TxRx_byte_buffer[i];
+	}
+
+	if(message->type == DATA_LONG || message->type == DATA_SHORT)
+	{
+		hex_trace("S3-TX-PACK", message_TxRx_byte_buffer, header_length + message->length);
 	}
 
 	telecom_system->transmit_byte(telecom_system->data_container.data_byte,header_length+message->length,telecom_system->data_container.ready_to_transmit_passband_data_tx,message_location);
@@ -2135,7 +2206,7 @@ void cl_arq_controller::send_batch()
 
 		for(int j=0;j<(header_length+messages_batch_tx[i].length);j++)
 		{
-			telecom_system->data_container.data_byte[j]=(int)message_TxRx_byte_buffer[j];
+			telecom_system->data_container.data_byte[j]=(int)(unsigned char)message_TxRx_byte_buffer[j];
 		}
 
 		// Debug: show serialized bytes before transmit
@@ -2675,16 +2746,8 @@ void cl_arq_controller::receive()
 				{
 					message_TxRx_byte_buffer[i] = (char)telecom_system->data_container.data_byte[i];
 				}
+				hex_trace("S6-RX-RAW", message_TxRx_byte_buffer, byte_copy_len);
 			}
-			printf("[RX-DECODE] type=%d connid_rx=%d my_connid=%d broadcast=%d bytes:",
-				(int)(unsigned char)message_TxRx_byte_buffer[0],
-				(int)(unsigned char)message_TxRx_byte_buffer[1],
-				(int)(unsigned char)this->connection_id,
-				(int)BROADCAST_ID);
-			for(int db=0; db<12; db++)
-				printf(" %02x", (unsigned char)message_TxRx_byte_buffer[db]);
-			printf("\n");
-			fflush(stdout);
 			if(message_TxRx_byte_buffer[1] == this->connection_id || message_TxRx_byte_buffer[1] == BROADCAST_ID)
 			{
 				messages_rx_buffer.status=RECEIVED;
@@ -2722,6 +2785,7 @@ void cl_arq_controller::receive()
 					{
 						messages_rx_buffer.data[j]=message_TxRx_byte_buffer[j+DATA_LONG_HEADER_LENGTH];
 					}
+					hex_trace("S7-RX-DATA_LONG", messages_rx_buffer.data, messages_rx_buffer.length);
 				}
 				else if(messages_rx_buffer.type==DATA_SHORT)
 				{
@@ -2738,6 +2802,7 @@ void cl_arq_controller::receive()
 					{
 						messages_rx_buffer.data[j]=message_TxRx_byte_buffer[j+DATA_SHORT_HEADER_LENGTH];
 					}
+					hex_trace("S7-RX-DATA_SHORT", messages_rx_buffer.data, messages_rx_buffer.length);
 				}
 
 				last_message_received_type=messages_rx_buffer.type;
@@ -2784,10 +2849,10 @@ void cl_arq_controller::receive()
 					telecom_system->M);
 			fflush(stdout);
 
-			// BREAK pattern detection: after failed OFDM decode, check for emergency
-			// "drop to ROBUST_0" signal from commander. Only in OFDM mode — MFSK data
-			// tones could create false correlations with BREAK tones.
-			if(telecom_system->M != MOD_MFSK && break_detected == NO)
+			// BREAK pattern detection: after failed decode, check for emergency
+			// "drop to ROBUST_0" signal from commander. Works in both OFDM and MFSK
+			// modes — metric threshold + matched count prevent false positives.
+			if(break_detected == NO)
 			{
 				int matched = 0;
 				double metric = telecom_system->detect_break_pattern_from_passband(
@@ -2840,6 +2905,9 @@ void cl_arq_controller::copy_data_to_buffer()
 	{
 		if(messages_rx[i].status==ACKED)
 		{
+			char s8_label[64];
+			snprintf(s8_label, sizeof(s8_label), "S8-RX-FIFO msg[%d]", i);
+			hex_trace(s8_label, messages_rx[i].data, messages_rx[i].length);
 			fifo_buffer_rx.push(messages_rx[i].data,messages_rx[i].length);
 			total_bytes += messages_rx[i].length;
 			messages_rx[i].status=FREE;
@@ -2847,9 +2915,10 @@ void cl_arq_controller::copy_data_to_buffer()
 		}
 		else if(messages_rx[i].status!=FREE)
 		{
-			printf("[DBG-COPY] msg[%d] has status=%d (not ACKED=%d, not FREE=%d)\n",
+			printf("[DBG-COPY] CLEARING stale msg[%d] status=%d (not ACKED=%d, not FREE=%d)\n",
 				i, messages_rx[i].status, ACKED, FREE);
 			fflush(stdout);
+			messages_rx[i].status=FREE;
 		}
 	}
 	printf("[DBG-COPY] copy_data_to_buffer: copied %d/%d messages, %d bytes to fifo_rx\n",
@@ -2866,11 +2935,16 @@ void cl_arq_controller::restore_backup_buffer_data()
 	{
 		nMessages=nBackedup_bytes/(max_data_length+max_header_length-DATA_LONG_HEADER_LENGTH);
 
+		char restore_buf[N_MAX/8 * 20];
+		int total_restore = 0;
 		for(int i=0;i<nMessages+1;i++)
 		{
-			data_read_size=fifo_buffer_backup.pop(message_TxRx_byte_buffer,max_data_length+max_header_length-DATA_LONG_HEADER_LENGTH);
-			fifo_buffer_tx.push(message_TxRx_byte_buffer,data_read_size);
+			data_read_size=fifo_buffer_backup.pop(restore_buf + total_restore,max_data_length+max_header_length-DATA_LONG_HEADER_LENGTH);
+			if(data_read_size > 0)
+				total_restore += data_read_size;
 		}
+		if(total_restore > 0)
+			fifo_buffer_tx.push_front(restore_buf, total_restore);
 	}
 }
 

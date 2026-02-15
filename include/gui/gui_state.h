@@ -127,6 +127,13 @@ struct st_gui_state {
     std::atomic<bool> constellation_is_mfsk{false};       // true = MFSK mode, no IQ data
     std::atomic<int> constellation_modulation{2};         // MOD_BPSK=2, QPSK=4, etc.
 
+    // MFSK tone visualization
+    float mfsk_tone_energy[2][64];   // Per-bin energy, per stream (max 2 streams, max 64 bins)
+    int mfsk_peak_bin[2];            // Peak bin per stream
+    std::atomic<int> mfsk_M{0};      // Number of tones (16 or 32)
+    std::atomic<int> mfsk_nStreams{0}; // Number of streams (1 or 2)
+    std::atomic<bool> mfsk_tone_is_tx{false}; // true = TX tones, false = RX tones
+
     // ========== Throughput Tracking (updated by ARQ) ==========
     std::atomic<long long> bytes_acked_total{0};          // Commander: cumulative bytes ACKed
     std::atomic<long long> bytes_received_total{0};       // Responder: cumulative bytes received
@@ -301,6 +308,22 @@ inline void gui_push_constellation(const std::complex<double>* iq_data, int coun
         g_gui_state.constellation_q[i] = (float)iq_data[i].imag();
     }
     g_gui_state.constellation_count = n;
+}
+
+/**
+ * @brief Push MFSK tone energy data for visualization
+ */
+inline void gui_push_mfsk_tones(const double energy[][64], const int* peak_bins,
+                                 int M, int nStreams, bool is_tx) {
+    GuiLockGuard lock(g_gui_state.constellation_mutex);
+    g_gui_state.mfsk_M.store(M);
+    g_gui_state.mfsk_nStreams.store(nStreams);
+    g_gui_state.mfsk_tone_is_tx.store(is_tx);
+    for (int st = 0; st < nStreams && st < 2; st++) {
+        g_gui_state.mfsk_peak_bin[st] = peak_bins[st];
+        for (int m = 0; m < M && m < 64; m++)
+            g_gui_state.mfsk_tone_energy[st][m] = (float)energy[st][m];
+    }
 }
 
 /**

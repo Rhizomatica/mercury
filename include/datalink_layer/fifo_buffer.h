@@ -42,6 +42,7 @@ public:
 
 
   int push(char* data, int length);
+  int push_front(char* data, int length);
   int pop(char* data, int length);
 
 private:

@@ -108,7 +108,11 @@ void cl_arq_controller::process_messages_rx_data_control()
 		this->receive();
 
 		// Emergency BREAK: commander signals "drop to ROBUST_0"
-		if(break_detected == YES)
+		// Only respond if we're actually connected — prevents all radios on a
+		// frequency from ACKing someone else's BREAK.
+		if(break_detected == YES && link_status != CONNECTED)
+			break_detected = NO;
+		if(break_detected == YES && link_status == CONNECTED)
 		{
 			printf("[BREAK] Responding with ACK, dropping to ROBUST_0\n");
 			fflush(stdout);
@@ -291,6 +295,10 @@ void cl_arq_controller::process_messages_acknowledging_control()
 		{
 			set_role(COMMANDER);
 			this->link_status=CONNECTED;
+			// Clear messages_rx[] to prevent stale frames from previous phases
+			// from being ACKed alongside legitimate data in the next batch.
+			for(int i=0;i<nMessages;i++) messages_rx[i].status=FREE;
+			messages_rx_buffer.status=FREE;
 			cl_timer ptt_off_wait;
 			ptt_off_wait.reset();
 			ptt_off_wait.start();
@@ -299,6 +307,12 @@ void cl_arq_controller::process_messages_acknowledging_control()
 			bool has_asymmetric = (forward_configuration != CONFIG_NONE &&
 				reverse_configuration != CONFIG_NONE);
 
+			// Save pre-swap config: this is the mutual config both sides
+			// agreed on (e.g. settle config after BREAK recovery). The swap
+			// below may load a stale reverse_configuration, corrupting
+			// current_configuration before turboshift_last_good is set.
+			int pre_switch_config = current_configuration;
+
 			if(has_asymmetric)
 			{
 				// Asymmetric gearshift: swap forward/reverse for the return path
@@ -306,15 +320,27 @@ void cl_arq_controller::process_messages_acknowledging_control()
 				forward_configuration = reverse_configuration;
 				reverse_configuration = tmp;
 
-				if(forward_configuration != current_configuration)
+				// During turboshift, skip the config load — both sides are at the
+				// same mutual config and we'll probe from there. Loading the swapped
+				// forward_configuration would corrupt current_configuration.
+				if(turboshift_phase == TURBO_DONE || turboshift_phase == TURBO_REVERSE)
 				{
-					data_configuration = forward_configuration;
-					load_configuration(data_configuration, PHYSICAL_LAYER_ONLY, YES);
-				}
+					if(forward_configuration != current_configuration)
+					{
+						data_configuration = forward_configuration;
+						load_configuration(data_configuration, PHYSICAL_LAYER_ONLY, YES);
+					}
 
-				printf("[GEARSHIFT] SWITCH_ROLE: transmitting at config %d\n",
-					forward_configuration);
-				fflush(stdout);
+					printf("[GEARSHIFT] SWITCH_ROLE: transmitting at config %d\n",
+						forward_configuration);
+					fflush(stdout);
+				}
+				else
+				{
+					printf("[GEARSHIFT] SWITCH_ROLE during turboshift: staying at config %d\n",
+						current_configuration);
+					fflush(stdout);
+				}
 			}
 
 			// Turboshift: start probing reverse direction as new commander
@@ -322,7 +348,7 @@ void cl_arq_controller::process_messages_acknowledging_control()
 			{
 				turboshift_phase = TURBO_REVERSE;
 				turboshift_active = true;
-				turboshift_last_good = current_configuration;
+				turboshift_last_good = pre_switch_config;
 
 				if(!config_is_at_top(current_configuration, robust_enabled))
 				{
@@ -381,14 +407,20 @@ void cl_arq_controller::process_messages_acknowledging_control()
 		}
 		else if(messages_control.data[0]==CLOSE_CONNECTION)
 		{
-			disconnect_requested=NO;
+			reset_session_state();
 			load_configuration(init_configuration,FULL,YES);
 			this->link_status=LISTENING;
 			this->connection_status=RECEIVING;
+			reset_all_timers();
 			// Reset RX state machine - wait for fresh data (prevents decode of self-received TX audio)
 			telecom_system->data_container.frames_to_read =
 				telecom_system->data_container.preamble_nSymb + telecom_system->data_container.Nsymb;
 			telecom_system->data_container.nUnder_processing_events = 0;
+
+			fifo_buffer_tx.flush();
+			fifo_buffer_backup.flush();
+			fifo_buffer_rx.flush();
+			messages_control.status=FREE;
 		}
 	}
 }
@@ -448,6 +480,8 @@ void cl_arq_controller::process_messages_acknowledging_data()
 			fflush(stdout);
 		}
 
+		calculate_receiving_timeout();
+		receiving_timer.start();
 		connection_status=RECEIVING;
 	}
 	else
@@ -609,18 +643,9 @@ void cl_arq_controller::process_control_responder()
 
 		if(received_crc == my_crc)
 		{
-			destination_call_sign="";
-			// Clamp callsign length to buffer bounds — garbage LDPC decodes
-			// under noise can have data[2]=127 (signed char max), reading
-			// past valid data into the 200-byte buffer (Bug #19).
-			int cs_len = (int)(unsigned char)messages_control.data[2];
-			int max_cs = max_data_length + max_header_length - CONTROL_ACK_CONTROL_HEADER_LENGTH - 3;
-			if(max_cs < 0) max_cs = 0;
-			if(cs_len > max_cs) cs_len = max_cs;
-			for(int i=0;i<cs_len;i++)
-			{
-				destination_call_sign+=messages_control.data[3+i];
-			}
+			destination_call_sign = callsign_unpack(&messages_control.data[2]);
+			printf("[RX-CTRL] Unpacked commander callsign: '%s'\n", destination_call_sign.c_str());
+			fflush(stdout);
 
 			// Send PENDING to Winlink to notify incoming connection
 			// This allows Winlink to stop scanning and prepare PTT
@@ -779,17 +804,10 @@ void cl_arq_controller::process_control_responder()
 	{
 		if(code==CLOSE_CONNECTION)
 		{
-			assigned_connection_id=0;
+			reset_session_state();
 			link_status=DISCONNECTING;
 			connection_status=ACKNOWLEDGING_CONTROL;
-			link_timer.stop();
-			link_timer.reset();
-			watchdog_timer.stop();
-			watchdog_timer.reset();
-			gear_shift_timer.stop();
-			gear_shift_timer.reset();
-			receiving_timer.stop();
-			receiving_timer.reset();
+			reset_all_timers();
 
 			fifo_buffer_tx.flush();
 			fifo_buffer_backup.flush();
@@ -824,8 +842,7 @@ void cl_arq_controller::process_buffer_data_responder()
 			while(fifo_buffer_rx.get_size()!=fifo_buffer_rx.get_free_size())
 			{
 				tcp_socket_data.message->length=fifo_buffer_rx.pop(tcp_socket_data.message->buffer,max_data_length+max_header_length-DATA_LONG_HEADER_LENGTH);
-				printf("[DBG-RSP-TX] Sending %d bytes via TCP\n", tcp_socket_data.message->length);
-				fflush(stdout);
+				hex_trace("S9-TCP-OUT", tcp_socket_data.message->buffer, tcp_socket_data.message->length);
 				tcp_socket_data.transmit();
 			}
 		}

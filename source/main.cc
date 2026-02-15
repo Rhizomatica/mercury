@@ -572,10 +572,22 @@ start_modem:
             telecom_system.default_configurations_telecom_system.ldpc_nIteration_max = ldpc_iterations;
 #endif
 
-        // Gearshift with no explicit -s: default to ROBUST_0 and enable robust mode
+        // Apply GUI settings: gearshift and initial config from INI
+#ifdef MERCURY_GUI_ENABLED
+        if (!explicit_config) {
+            if (g_settings.gear_shift_enabled)
+                gear_shift_mode = GEAR_SHIFT_ENABLED;
+            mod_config = g_settings.initial_config;
+            if (is_robust_config(mod_config))
+                robust_mode = 1;
+        }
+#endif
+        // CLI gearshift with no explicit -s: default to ROBUST_0 and enable robust mode
         if(gear_shift_mode != NO_GEAR_SHIFT && !explicit_config)
         {
+#ifndef MERCURY_GUI_ENABLED
             mod_config = ROBUST_0;
+#endif
             robust_mode = 1;
         }
 
@@ -641,6 +653,15 @@ start_modem:
                 g_gui_state.current_bitrate.store(telecom_system.rbc);
                 g_gui_state.is_transmitting.store(ARQ.connection_status == TRANSMITTING_DATA ||
                                                    ARQ.connection_status == TRANSMITTING_CONTROL);
+                g_gui_state.is_receiving.store(ARQ.connection_status == RECEIVING);
+                g_gui_state.data_activity.store(ARQ.block_under_tx == YES ||
+                                                 ARQ.connection_status == ACKNOWLEDGING_DATA);
+                g_gui_state.ack_activity.store(ARQ.connection_status == RECEIVING_ACKS_DATA ||
+                                                ARQ.connection_status == RECEIVING_ACKS_CONTROL ||
+                                                ARQ.connection_status == ACKNOWLEDGING_DATA ||
+                                                ARQ.connection_status == ACKNOWLEDGING_CONTROL);
+                g_gui_state.constellation_is_mfsk.store(ARQ.current_configuration >= ROBUST_0
+                                                        && ARQ.link_status == CONNECTED);
 
                 // Update SNR measurements (uplink = what we receive, downlink = what remote receives from us)
                 gui_update_arq_measurements(ARQ.get_snr_uplink(), ARQ.get_snr_downlink());

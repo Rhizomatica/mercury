@@ -27,7 +27,7 @@ uint16_t CRC16_MODBUS_RTU_calc(int* data_byte, int nItems)
 	uint16_t crc = 0xffff;
 	for(int j=0; j < nItems; j++)
 	{
-		crc ^= data_byte[j];
+		crc ^= (data_byte[j] & 0xFF);
 		for (int i = 0; i < 8; i++)
 		{
 			if ((crc & 0x0001) == 0x0001)

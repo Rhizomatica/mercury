@@ -60,8 +60,8 @@ void cl_arq_controller::process_messages_commander()
 				// Phase 1: send SET_CONFIG at ROBUST_0 (guaranteed delivery).
 				// Phase 2: send SET_CONFIG at target to verify it works (2 tries).
 				int target = config_ladder_down_n(emergency_previous_config, break_drop_step, robust_enabled);
-				printf("[BREAK] ACK received! Dropping %d step(s): config %d -> %d\n",
-					break_drop_step, emergency_previous_config, target);
+				printf("[BREAK] ACK received! Dropping %d step(s): config %d -> %d (robust_enabled=%d)\n",
+					break_drop_step, emergency_previous_config, target, robust_enabled);
 				fflush(stdout);
 				if(break_drop_step < 4) break_drop_step *= 2;
 
@@ -81,18 +81,37 @@ void cl_arq_controller::process_messages_commander()
 				if(reverse_configuration == CONFIG_NONE)
 					reverse_configuration = target;
 
-				for(int i=0; i<nMessages; i++)
+				printf("[BREAK] Recovery phase 1: negotiated=%d forward=%d reverse=%d "
+					"data_cfg=%d current=%d target=%d\n",
+					negotiated_configuration, forward_configuration,
+					reverse_configuration, data_configuration,
+					current_configuration, target);
+				fflush(stdout);
+
 				{
-					if(messages_tx[i].status == ADDED_TO_LIST || messages_tx[i].status == ADDED_TO_BATCH_BUFFER)
-						fifo_buffer_tx.push(messages_tx[i].data, messages_tx[i].length);
-					messages_tx[i].status = FREE;
+					int saved = 0;
+					for(int i=nMessages-1; i>=0; i--)
+					{
+						if(messages_tx[i].status != FREE && messages_tx[i].length > 0)
+						{
+							fifo_buffer_tx.push_front(messages_tx[i].data, messages_tx[i].length);
+							saved++;
+						}
+						messages_tx[i].status = FREE;
+					}
+					fifo_buffer_backup.flush();
+					block_under_tx = NO;
+					int fifo_load = fifo_buffer_tx.get_size() - fifo_buffer_tx.get_free_size();
+					printf("[BREAK] Saved %d messages to FIFO (%d bytes total)\n", saved, fifo_load);
+					fflush(stdout);
 				}
-				fifo_buffer_backup.flush();
-				block_under_tx = NO;
 
 				// Force-clear: cleanup() skips PENDING_ACK status
 				messages_control.status = FREE;
 				add_message_control(SET_CONFIG);
+				printf("[BREAK] SET_CONFIG queued: data[1]=%d data[2]=%d\n",
+					(int)messages_control.data[1], (int)messages_control.data[2]);
+				fflush(stdout);
 				connection_status = TRANSMITTING_CONTROL;
 				link_timer.start();
 				watchdog_timer.start();
@@ -114,6 +133,8 @@ void cl_arq_controller::process_messages_commander()
 			else
 			{
 				printf("[BREAK] All retries exhausted — assuming responder already at ROBUST_0\n");
+				printf("[BREAK] EXHAUSTED state: emergency_prev=%d break_drop=%d robust=%d\n",
+					emergency_previous_config, break_drop_step, robust_enabled);
 				fflush(stdout);
 				emergency_break_active = 0;
 				emergency_nack_count = 0;
@@ -137,10 +158,14 @@ void cl_arq_controller::process_messages_commander()
 				if(reverse_configuration == CONFIG_NONE)
 					reverse_configuration = target;
 
-				for(int i=0; i<nMessages; i++)
+				printf("[BREAK] EXHAUSTED recovery: negotiated=%d forward=%d data_cfg=%d target=%d\n",
+					negotiated_configuration, forward_configuration, data_configuration, target);
+				fflush(stdout);
+
+				for(int i=nMessages-1; i>=0; i--)
 				{
-					if(messages_tx[i].status == ADDED_TO_LIST || messages_tx[i].status == ADDED_TO_BATCH_BUFFER)
-						fifo_buffer_tx.push(messages_tx[i].data, messages_tx[i].length);
+					if(messages_tx[i].status != FREE && messages_tx[i].length > 0)
+						fifo_buffer_tx.push_front(messages_tx[i].data, messages_tx[i].length);
 					messages_tx[i].status = FREE;
 				}
 				fifo_buffer_backup.flush();
@@ -149,6 +174,9 @@ void cl_arq_controller::process_messages_commander()
 				// Force-clear: cleanup() skips PENDING_ACK status
 				messages_control.status = FREE;
 				add_message_control(SET_CONFIG);
+				printf("[BREAK] EXHAUSTED SET_CONFIG queued: data[1]=%d data[2]=%d\n",
+					(int)messages_control.data[1], (int)messages_control.data[2]);
+				fflush(stdout);
 				connection_status = TRANSMITTING_CONTROL;
 				link_timer.start();
 				watchdog_timer.start();
@@ -175,14 +203,35 @@ void cl_arq_controller::process_messages_commander()
 	{
 		if(this->link_status==CONNECTED)
 		{
-			disconnect_requested=NO;
-			this->link_status=DISCONNECTING;
-			messages_control.status=FREE;
-			add_message_control(CLOSE_CONNECTION);
+			// Graceful disconnect (VARA-compatible): wait for TX FIFO to drain
+			// before closing the link. Winlink sends FQ data then DISCONNECT;
+			// we must deliver the FQ before tearing down the ARQ session.
+			int fifo_pending = fifo_buffer_tx.get_size() - fifo_buffer_tx.get_free_size();
+			if(fifo_pending > 0 || block_under_tx == YES)
+			{
+				// Data still pending — let normal data exchange drain it.
+				// disconnect_requested stays YES, re-checked next cycle.
+				static int disconnect_wait_prints = 0;
+				if(disconnect_wait_prints++ % 50 == 0)
+				{
+					printf("[DISCONNECT] Waiting for TX drain: FIFO=%d bytes, block_under_tx=%d\n",
+						fifo_pending, block_under_tx);
+					fflush(stdout);
+				}
+			}
+			else
+			{
+				printf("[DISCONNECT] TX drained, sending CLOSE_CONNECTION\n");
+				fflush(stdout);
+				disconnect_requested=NO;
+				this->link_status=DISCONNECTING;
+				messages_control.status=FREE;
+				add_message_control(CLOSE_CONNECTION);
+			}
 		}
 		else
 		{
-			disconnect_requested=NO;
+			reset_session_state();
 			load_configuration(init_configuration,FULL,YES);
 
 			// Switch to RESPONDER/LISTENING so we can receive incoming connections
@@ -190,14 +239,7 @@ void cl_arq_controller::process_messages_commander()
 			this->link_status=LISTENING;
 			this->connection_status=RECEIVING;
 
-			watchdog_timer.stop();
-			watchdog_timer.reset();
-			link_timer.stop();
-			link_timer.reset();
-			gear_shift_timer.stop();
-			gear_shift_timer.reset();
-			receiving_timer.stop();
-			receiving_timer.reset();
+			reset_all_timers();
 			// Reset RX state machine - wait for fresh data (prevents decode of self-received TX audio)
 			telecom_system->data_container.frames_to_read =
 				telecom_system->data_container.preamble_nSymb + telecom_system->data_container.Nsymb;
@@ -256,21 +298,8 @@ int cl_arq_controller::add_message_control(char code)
 		{
 			messages_control.data[0]=code;
 			messages_control.data[1]=CRC8_calc((char*)destination_call_sign.c_str(), destination_call_sign.length());
-			int my_call_sign_sent_chars=0;
-
-			// Calculate max callsign length that fits in the message buffer
-			int max_callsign_chars = max_data_length + max_header_length - CONTROL_ACK_CONTROL_HEADER_LENGTH - 3;
-			if (max_callsign_chars < 0) max_callsign_chars = 0;
-			int callsign_len = (int)my_call_sign.length();
-			if (callsign_len > max_callsign_chars) callsign_len = max_callsign_chars;
-
-			for(int j=0;j<callsign_len;j++)
-			{
-				messages_control.data[j+3]=my_call_sign[j];
-				my_call_sign_sent_chars++;
-			}
-			messages_control.data[2]=my_call_sign_sent_chars;
-			messages_control.length=my_call_sign_sent_chars+3;
+			callsign_pack(my_call_sign.c_str(), my_call_sign.length(), &messages_control.data[2]);
+			messages_control.length=7;  // cmd(1) + CRC8(1) + packed_callsign(5)
 			messages_control.id=0;
 			connection_id=BROADCAST_ID;
 		}
@@ -677,6 +706,151 @@ void cl_arq_controller::process_messages_rx_acks_control()
 				}
 			}
 
+			// Break recovery phase 1: coordination SET_CONFIG at ROBUST_0 failed
+			if(break_recovery_phase == 1)
+			{
+				break_recovery_retries--;
+				if(break_recovery_retries > 0)
+				{
+					printf("[BREAK-RECOVERY] Phase 1 retry (%d left) at config %d\n",
+						break_recovery_retries, current_configuration);
+					fflush(stdout);
+					receiving_timer.stop();
+					receiving_timer.reset();
+					messages_control.status = FREE;
+					add_message_control(SET_CONFIG);
+					connection_status = TRANSMITTING_CONTROL;
+					return;
+				}
+				else
+				{
+					// Phase 1 exhausted — BREAK again to resync
+					printf("[BREAK-RECOVERY] Phase 1 failed, re-sending BREAK\n");
+					fflush(stdout);
+					receiving_timer.stop();
+					receiving_timer.reset();
+					messages_control.status = FREE;
+					// Keep emergency_previous_config unchanged (still targeting original settle config)
+					emergency_break_active = 1;
+					emergency_break_retries = 3;
+					break_recovery_phase = 0;
+					send_break_pattern();
+					telecom_system->data_container.frames_to_read = 4;
+					calculate_receiving_timeout();
+					receiving_timer.start();
+					return;
+				}
+			}
+
+			// Turboshift probe failure: handle directly (1 retry, then ceiling+BREAK).
+			// Bypasses nResends sub-retries and gearshift_timeout for fast OTA response.
+			if(turboshift_active && this->role == COMMANDER)
+			{
+				// Force-clear control message (prevent nResends sub-retries)
+				messages_control.ack_timeout=0;
+				messages_control.id=0;
+				messages_control.length=0;
+				messages_control.nResends=0;
+				messages_control.status=FREE;
+				messages_control.type=NONE;
+
+				receiving_timer.stop();
+				receiving_timer.reset();
+				gear_shift_timer.stop();
+				gear_shift_timer.reset();
+
+				if(turboshift_retries > 0)
+				{
+					turboshift_retries--;
+					printf("[TURBO] RETRY config %d (retries left: %d)\n",
+						current_configuration, turboshift_retries);
+					fflush(stdout);
+					add_message_control(SET_CONFIG);
+					connection_status = TRANSMITTING_CONTROL;
+					return;
+				}
+
+				// Ceiling — send BREAK to resync both sides
+				int failed_config = current_configuration;
+				int settle_config = (turboshift_last_good >= 0) ?
+					turboshift_last_good : init_configuration;
+
+				printf("[TURBO] CEILING at config %d, sending BREAK to resync at %d\n",
+					failed_config, settle_config);
+				printf("[TURBO] CEILING state: turboshift_last_good=%d init_config=%d "
+					"negotiated=%d data_cfg=%d current=%d\n",
+					turboshift_last_good, init_configuration,
+					negotiated_configuration, data_configuration, current_configuration);
+				fflush(stdout);
+
+				turboshift_active = false;
+				data_configuration = settle_config;
+				emergency_previous_config = settle_config;
+				break_drop_step = 0;
+				emergency_break_active = 1;
+				emergency_break_retries = 3;
+				emergency_nack_count = 0;
+
+				for(int i=0; i<nMessages; i++)
+					messages_tx[i].status = FREE;
+				fifo_buffer_backup.flush();
+
+				send_break_pattern();
+				telecom_system->data_container.frames_to_read = 4;
+				calculate_receiving_timeout();
+				receiving_timer.start();
+				return;
+			}
+
+			// Frame gearshift up failure: BREAK immediately, double threshold.
+			// Only one attempt — no retries. Recover to the working config and
+			// require 2x consecutive ACKs before trying to upshift again.
+			if(messages_control.data[0] == SET_CONFIG
+				&& turboshift_phase == TURBO_DONE
+				&& !turboshift_active
+				&& break_recovery_phase == 0
+				&& !emergency_break_active)
+			{
+				gear_shift_timer.stop();
+				gear_shift_timer.reset();
+
+				int working_config = config_ladder_down(negotiated_configuration, robust_enabled);
+				frame_shift_threshold *= 2;
+				consecutive_data_acks = 0;
+
+				{
+					int fifo_load = fifo_buffer_tx.get_size() - fifo_buffer_tx.get_free_size();
+					printf("[GEARSHIFT] FRAME UP FAILED: %d->%d NAck, BREAK to %d (threshold now %d, fifo=%d bytes)\n",
+						working_config, negotiated_configuration, working_config, frame_shift_threshold, fifo_load);
+				}
+				fflush(stdout);
+
+				// Cancel the failed control message
+				messages_control.ack_timeout=0;
+				messages_control.id=0;
+				messages_control.length=0;
+				messages_control.nResends=0;
+				messages_control.status=FREE;
+				messages_control.type=NONE;
+
+				// Reset config state to the working config
+				data_configuration = working_config;
+				negotiated_configuration = working_config;
+
+				// BREAK to resync — recover to the working config
+				emergency_previous_config = working_config;
+				break_drop_step = 0;
+				emergency_break_active = 1;
+				emergency_break_retries = 3;
+				emergency_nack_count = 0;
+
+				send_break_pattern();
+				telecom_system->data_container.frames_to_read = 4;
+				calculate_receiving_timeout();
+				receiving_timer.start();
+				return;
+			}
+
 			// Track control failures toward BREAK threshold.
 			// Only during connected data exchange (not connection setup or turboshift).
 			if(link_status == CONNECTED && turboshift_phase == TURBO_DONE
@@ -826,6 +1000,48 @@ void cl_arq_controller::process_messages_rx_acks_data()
 	else if (data_ack_received==NO && !(last_message_sent_type==CONTROL && last_message_sent_code==REPEAT_LAST_ACK))
 	{
 		consecutive_data_acks = 0;  // Reset on failure
+
+		// Frame gearshift just applied but data failed — BREAK immediately, no retry
+		if(frame_gearshift_just_applied)
+		{
+			frame_gearshift_just_applied = false;
+			int working_config = config_ladder_down(data_configuration, robust_enabled);
+			frame_shift_threshold *= 2;
+
+			printf("[GEARSHIFT] FRAME UP DATA FAILED: config %d can't pass data, BREAK to %d (threshold now %d)\n",
+				data_configuration, working_config, frame_shift_threshold);
+			fflush(stdout);
+
+			// Preserve all pending data — push messages_tx back to FIFO for resend at working config
+			for(int i=0; i<nMessages; i++)
+			{
+				if(messages_tx[i].status != FREE && messages_tx[i].length > 0)
+					fifo_buffer_tx.push(messages_tx[i].data, messages_tx[i].length);
+				messages_tx[i].status = FREE;
+			}
+			fifo_buffer_backup.flush();
+			block_under_tx = NO;
+
+			int fifo_load = fifo_buffer_tx.get_size() - fifo_buffer_tx.get_free_size();
+			printf("[GEARSHIFT] Saved data to FIFO: %d bytes pending\n", fifo_load);
+			fflush(stdout);
+
+			data_configuration = working_config;
+			negotiated_configuration = working_config;
+
+			emergency_previous_config = working_config;
+			break_drop_step = 0;
+			emergency_break_active = 1;
+			emergency_break_retries = 3;
+			emergency_nack_count = 0;
+
+			send_break_pattern();
+			telecom_system->data_container.frames_to_read = 4;
+			calculate_receiving_timeout();
+			receiving_timer.start();
+			return;
+		}
+
 		if(ack_pattern_time_ms <= 0)
 			load_configuration(data_configuration, PHYSICAL_LAYER_ONLY,YES);
 		add_message_control(REPEAT_LAST_ACK);
@@ -872,28 +1088,33 @@ void cl_arq_controller::process_messages_rx_acks_data()
 		{
 			emergency_nack_count = 0;  // Reset on success
 			break_drop_step = 1;
+			frame_gearshift_just_applied = false;  // upshift survived — clear flag
 		}
 
 		// Frame-level gearshift: after N consecutive successful data ACKs, shift up immediately
+		{
+			int proposed_frame = config_ladder_up(current_configuration, robust_enabled);
+			bool frame_at_ceiling = (turboshift_phase == TURBO_DONE && turboshift_last_good >= 0
+				&& config_ladder_index(proposed_frame) > config_ladder_index(turboshift_last_good));
 		if(data_ack_received==YES && gear_shift_on==YES && gear_shift_algorithm==SUCCESS_BASED_LADDER &&
 			messages_control.status==FREE &&
-			!config_is_at_top(current_configuration, robust_enabled))
+			!config_is_at_top(current_configuration, robust_enabled) && !frame_at_ceiling)
 		{
 			consecutive_data_acks++;
 			if(consecutive_data_acks >= frame_shift_threshold)
 			{
-				negotiated_configuration = config_ladder_up(current_configuration, robust_enabled);
+				negotiated_configuration = proposed_frame;
 				printf("[GEARSHIFT] FRAME UP: %d consecutive ACKs, config %d -> %d\n",
 					consecutive_data_acks, current_configuration, negotiated_configuration);
 				fflush(stdout);
 				consecutive_data_acks = 0;
 
-				// Put unsent messages back into TX FIFO for re-encoding at new config
-				for(int i=0; i<nMessages; i++)
+				// Put all pending messages back into TX FIFO for re-encoding at new config
+				for(int i=nMessages-1; i>=0; i--)
 				{
-					if(messages_tx[i].status == ADDED_TO_LIST || messages_tx[i].status == ADDED_TO_BATCH_BUFFER)
+					if(messages_tx[i].status != FREE && messages_tx[i].length > 0)
 					{
-						fifo_buffer_tx.push(messages_tx[i].data, messages_tx[i].length);
+						fifo_buffer_tx.push_front(messages_tx[i].data, messages_tx[i].length);
 					}
 					messages_tx[i].status = FREE;
 				}
@@ -905,6 +1126,7 @@ void cl_arq_controller::process_messages_rx_acks_data()
 				return;
 			}
 		}
+		} // frame-level gearshift ceiling scope
 
 		connection_status=TRANSMITTING_DATA;
 	}
@@ -1102,9 +1324,13 @@ void cl_arq_controller::process_control_commander()
 						gear_shift_blocked_for_nBlocks++;
 						if(last_transmission_block_stats.success_rate_data>gear_shift_up_success_rate_precentage && gear_shift_blocked_for_nBlocks>= gear_shift_block_for_nBlocks_total)
 						{
-							if(!config_is_at_top(current_configuration, robust_enabled))
 							{
-								negotiated_configuration=config_ladder_up(current_configuration, robust_enabled);
+								int proposed = config_ladder_up(current_configuration, robust_enabled);
+								bool at_ceiling = (turboshift_phase == TURBO_DONE && turboshift_last_good >= 0
+									&& config_ladder_index(proposed) > config_ladder_index(turboshift_last_good));
+							if(!config_is_at_top(current_configuration, robust_enabled) && !at_ceiling)
+							{
+								negotiated_configuration=proposed;
 								printf("[GEARSHIFT] LADDER UP: success=%.0f%% > %.0f%%, config %d -> %d\n",
 									last_transmission_block_stats.success_rate_data, gear_shift_up_success_rate_precentage,
 									current_configuration, negotiated_configuration);
@@ -1114,11 +1340,16 @@ void cl_arq_controller::process_control_commander()
 							}
 							else
 							{
-								printf("[GEARSHIFT] LADDER: at top (config %d), success=%.0f%%\n",
-									current_configuration, last_transmission_block_stats.success_rate_data);
+								if(at_ceiling)
+									printf("[GEARSHIFT] LADDER: at turboshift ceiling %d (config %d), success=%.0f%%\n",
+										turboshift_last_good, current_configuration, last_transmission_block_stats.success_rate_data);
+								else
+									printf("[GEARSHIFT] LADDER: at top (config %d), success=%.0f%%\n",
+										current_configuration, last_transmission_block_stats.success_rate_data);
 								fflush(stdout);
 								this->connection_status=TRANSMITTING_DATA;
 							}
+						}
 						}
 						else if(last_transmission_block_stats.success_rate_data<gear_shift_down_success_rate_precentage)
 						{
@@ -1165,12 +1396,24 @@ void cl_arq_controller::process_control_commander()
 					forward_configuration = reverse_configuration;
 					reverse_configuration = tmp;
 
-					if(forward_configuration != current_configuration)
+					// During turboshift, both sides are at the same mutual config.
+					// Loading the swapped forward_configuration would corrupt it
+					// with a stale reverse_configuration from earlier probes.
+					if(turboshift_phase == TURBO_DONE)
 					{
-						data_configuration = forward_configuration;
-						load_configuration(data_configuration, PHYSICAL_LAYER_ONLY, YES);
-						printf("[GEARSHIFT] SWITCH_ROLE: loaded config %d for return path\n",
-							forward_configuration);
+						if(forward_configuration != current_configuration)
+						{
+							data_configuration = forward_configuration;
+							load_configuration(data_configuration, PHYSICAL_LAYER_ONLY, YES);
+							printf("[GEARSHIFT] SWITCH_ROLE: loaded config %d for return path\n",
+								forward_configuration);
+						}
+					}
+					else
+					{
+						printf("[GEARSHIFT] SWITCH_ROLE during turboshift: staying at config %d\n",
+							current_configuration);
+						fflush(stdout);
 					}
 				}
 
@@ -1182,6 +1425,10 @@ void cl_arq_controller::process_control_commander()
 				last_message_received_type=NONE;
 				last_message_sent_type=NONE;
 				last_received_message_sequence=-1;
+				// Clear messages_rx[] to prevent stale frames from previous phases
+				// from being ACKed alongside legitimate data in the next batch.
+				for(int i=0;i<nMessages;i++) messages_rx[i].status=FREE;
+				messages_rx_buffer.status=FREE;
 				// Reset RX state machine - wait for fresh data (prevents decode of self-received TX audio).
 				// Frame completeness gating handles late arrivals adaptively.
 				telecom_system->data_container.frames_to_read =
@@ -1194,6 +1441,7 @@ void cl_arq_controller::process_control_commander()
 				// SET_CONFIG ACK received: apply the new config now
 				gear_shift_timer.stop();
 				gear_shift_timer.reset();
+				int prev_configuration = current_configuration;  // save before load
 				if(data_configuration != current_configuration)
 				{
 					messages_control_backup();
@@ -1239,18 +1487,31 @@ void cl_arq_controller::process_control_commander()
 				}
 				else if(break_recovery_phase == 2)
 				{
-					// Phase 2 complete: target config works!
-					printf("[BREAK-RECOVERY] Config %d verified, resuming data exchange\n",
-						current_configuration);
-					fflush(stdout);
 					break_recovery_phase = 0;
 					break_drop_step = 1;  // reset backoff on success
-					this->connection_status = TRANSMITTING_DATA;
+
+					if(turboshift_phase != TURBO_DONE)
+					{
+						// Turboshift ceiling recovery: both sides now at settle config.
+						// Send SWITCH_ROLE to continue turboshift.
+						printf("[BREAK-RECOVERY] Config %d verified, continuing turboshift\n",
+							current_configuration);
+						fflush(stdout);
+						finish_turbo_direction();
+					}
+					else
+					{
+						int fifo_load = fifo_buffer_tx.get_size() - fifo_buffer_tx.get_free_size();
+						printf("[BREAK-RECOVERY] Config %d verified, resuming data exchange (fifo=%d bytes, block_tx=%d)\n",
+							current_configuration, fifo_load, block_under_tx);
+						fflush(stdout);
+						this->connection_status = TRANSMITTING_DATA;
+					}
 				}
 				// Turboshift: keep climbing or finish direction
 				else if(turboshift_active)
 				{
-					turboshift_last_good = current_configuration;
+					turboshift_last_good = prev_configuration;
 					turboshift_retries = 1;  // reset retry for next config
 					if(!config_is_at_top(current_configuration, robust_enabled))
 					{
@@ -1271,6 +1532,9 @@ void cl_arq_controller::process_control_commander()
 				}
 				else
 				{
+					// Frame gearshift applied — if data fails immediately, BREAK
+					if(data_configuration != prev_configuration)
+						frame_gearshift_just_applied = true;
 					this->connection_status=TRANSMITTING_DATA;
 				}
 				watchdog_timer.start();
@@ -1279,17 +1543,11 @@ void cl_arq_controller::process_control_commander()
 		}
 		else if(this->link_status==DISCONNECTING && messages_control.data[0]==CLOSE_CONNECTION)
 		{
+			reset_session_state();
 			load_configuration(init_configuration,FULL,YES);
 			this->link_status=LISTENING;
 			this->connection_status=RECEIVING;
-			watchdog_timer.stop();
-			watchdog_timer.reset();
-			link_timer.stop();
-			link_timer.reset();
-			gear_shift_timer.stop();
-			gear_shift_timer.reset();
-			receiving_timer.stop();
-			receiving_timer.reset();
+			reset_all_timers();
 			// Reset RX state machine - wait for fresh data (prevents decode of self-received TX audio)
 			telecom_system->data_container.frames_to_read =
 				telecom_system->data_container.preamble_nSymb + telecom_system->data_container.Nsymb;
@@ -1298,6 +1556,11 @@ void cl_arq_controller::process_control_commander()
 			fifo_buffer_tx.flush();
 			fifo_buffer_backup.flush();
 			fifo_buffer_rx.flush();
+
+			// Reset messages_control so new CONNECT commands can work
+			messages_control.status=FREE;
+
+			set_role(RESPONDER);
 
 			std::string str="DISCONNECTED\r";
 			tcp_socket_control.message->length=str.length();
@@ -1331,6 +1594,7 @@ void cl_arq_controller::process_buffer_data_commander()
 				}
 				else if(data_read_size==max_data_length+max_header_length-DATA_LONG_HEADER_LENGTH)
 				{
+					hex_trace("S2-FIFO-POP DATA_LONG", message_TxRx_byte_buffer, data_read_size);
 					block_under_tx=YES;
 					add_message_tx_data(DATA_LONG, data_read_size, message_TxRx_byte_buffer);
 					fifo_buffer_backup.push(message_TxRx_byte_buffer,data_read_size);
@@ -1338,6 +1602,7 @@ void cl_arq_controller::process_buffer_data_commander()
 				}
 				else
 				{
+					hex_trace("S2-FIFO-POP DATA_SHORT", message_TxRx_byte_buffer, data_read_size);
 					block_under_tx=YES;
 					add_message_tx_data(DATA_SHORT, data_read_size, message_TxRx_byte_buffer);
 					fifo_buffer_backup.push(message_TxRx_byte_buffer,data_read_size);

@@ -308,17 +308,88 @@ static void DrawConstellation(float width, float height) {
                              IM_COL32(15, 15, 20, 255));
 
     if (is_mfsk) {
-        // MFSK mode - no constellation, show text
-        const char* mode_text = (width >= 120) ? "MFSK (non-coherent)" : "MFSK";
-        ImVec2 text_size = ImGui::CalcTextSize(mode_text);
-        draw_list->AddText(
-            ImVec2(pos.x + (width - text_size.x) / 2, pos.y + height / 2 - 10),
-            IM_COL32(150, 150, 150, 255), mode_text);
-        const char* no_iq = "No IQ data";
-        ImVec2 no_iq_size = ImGui::CalcTextSize(no_iq);
-        draw_list->AddText(
-            ImVec2(pos.x + (width - no_iq_size.x) / 2, pos.y + height / 2 + 8),
-            IM_COL32(100, 100, 100, 200), no_iq);
+        // MFSK tone visualization: vertical bars showing energy per bin
+        int mM = g_gui_state.mfsk_M.load();
+        int mStreams = g_gui_state.mfsk_nStreams.load();
+        bool is_tx = g_gui_state.mfsk_tone_is_tx.load();
+
+        if (mM > 0 && mStreams > 0 && mM <= 64 && mStreams <= 2) {
+            float local_E[2][64];
+            int local_peak[2];
+            {
+                GuiLockGuard lock(g_gui_state.constellation_mutex);
+                for (int st = 0; st < mStreams; st++) {
+                    local_peak[st] = g_gui_state.mfsk_peak_bin[st];
+                    for (int m = 0; m < mM; m++)
+                        local_E[st][m] = g_gui_state.mfsk_tone_energy[st][m];
+                }
+            }
+
+            // Find max energy for normalization
+            float max_e = 1e-10f;
+            for (int st = 0; st < mStreams; st++)
+                for (int m = 0; m < mM; m++)
+                    if (local_E[st][m] > max_e) max_e = local_E[st][m];
+
+            // Layout: bars fill the width, split between streams
+            float bar_w = (width - 4.0f) / (mM * mStreams + (mStreams > 1 ? 2 : 0));
+            if (bar_w < 2.0f) bar_w = 2.0f;
+            float max_bar_h = height - 20.0f;  // Leave room for TX/RX label
+            float gap = (mStreams > 1) ? bar_w : 0;
+
+            for (int st = 0; st < mStreams; st++) {
+                float stream_x = pos.x + 2 + st * (mM * bar_w + gap);
+                for (int m = 0; m < mM; m++) {
+                    float bx = stream_x + m * bar_w;
+                    float base_y = pos.y + height - 2;
+
+                    // Dim lane marker for every bin position
+                    draw_list->AddRectFilled(ImVec2(bx, base_y - 3),
+                        ImVec2(bx + bar_w - 1, base_y),
+                        is_tx ? IM_COL32(60, 30, 0, 150) : IM_COL32(0, 30, 40, 150));
+
+                    float e_norm = local_E[st][m] / max_e;
+                    float bar_h = e_norm * max_bar_h;
+                    if (bar_h < 1.0f && e_norm > 0.001f) bar_h = 1.0f;
+                    if (bar_h < 1.0f) continue;  // Skip empty bins (already have lane marker)
+
+                    float by = base_y - bar_h;
+
+                    ImU32 color;
+                    if (is_tx) {
+                        // TX: warm orange/red
+                        if (m == local_peak[st])
+                            color = IM_COL32(255, 80, 20, 230);
+                        else {
+                            int b = (int)(40 + 120 * e_norm);
+                            color = IM_COL32(b + 40, b / 2, 0, 200);
+                        }
+                    } else {
+                        // RX: cool cyan/green
+                        if (m == local_peak[st])
+                            color = IM_COL32(0, 255, 100, 230);
+                        else {
+                            int b = (int)(40 + 120 * e_norm);
+                            color = IM_COL32(0, b, b + 40, 200);
+                        }
+                    }
+
+                    draw_list->AddRectFilled(ImVec2(bx, by),
+                        ImVec2(bx + bar_w - 1, base_y), color);
+                }
+            }
+
+            // TX/RX label in top-left corner
+            const char* dir_label = is_tx ? "TX" : "RX";
+            ImU32 label_color = is_tx ? IM_COL32(255, 150, 80, 200) : IM_COL32(80, 200, 255, 200);
+            draw_list->AddText(ImVec2(pos.x + 3, pos.y + 2), label_color, dir_label);
+        } else {
+            const char* mode_text = "MFSK";
+            ImVec2 text_size = ImGui::CalcTextSize(mode_text);
+            draw_list->AddText(
+                ImVec2(pos.x + (width - text_size.x) / 2, pos.y + height / 2 - 6),
+                IM_COL32(150, 150, 150, 255), mode_text);
+        }
     } else {
         // Draw crosshairs
         float cx = pos.x + width / 2;
@@ -441,7 +512,7 @@ static void RenderGUI() {
         show_about = false;
     }
     if (ImGui::BeginPopupModal("About Mercury", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-        ImGui::Text("Mercury HF Modem");
+        ImGui::Text("Mercury HF Modem v%s", VERSION__);
         ImGui::Separator();
         ImGui::Text("An open-source HF data modem");
         ImGui::Text("Compatible with VARA protocol");
@@ -542,14 +613,35 @@ static void RenderGUI() {
     ImGui::EndChild();
 
     // ========== Signal Quality: Constellation + Status ==========
-    ImGui::BeginChild("SignalQuality", ImVec2(0, 140), true);
+    ImGui::BeginChild("SignalQuality", ImVec2(0, 140), true, ImGuiWindowFlags_NoScrollbar);
     {
         ImVec2 avail_sq = ImGui::GetContentRegionAvail();
         float diagram_size = avail_sq.y;
         if (diagram_size < 60) diagram_size = 60;
 
-        // Left: Constellation diagram (square, full height)
+        // Left: Constellation diagram (square)
         DrawConstellation(diagram_size, diagram_size);
+
+        ImGui::SameLine();
+
+        // TX/RX/DATA/ACK indicators — vertically stacked
+        ImGui::BeginGroup();
+        {
+            bool sb_tx = g_gui_state.is_transmitting.load();
+            bool sb_rx = g_gui_state.is_receiving.load();
+            bool sb_data = g_gui_state.data_activity.load();
+            bool sb_ack = g_gui_state.ack_activity.load();
+
+            if (sb_tx)   ImGui::TextColored(ImVec4(1.0f, 0.2f, 0.2f, 1.0f), " TX");
+            else         ImGui::TextColored(ImVec4(0.3f, 0.3f, 0.3f, 1.0f), " TX");
+            if (sb_rx)   ImGui::TextColored(ImVec4(0.2f, 1.0f, 0.2f, 1.0f), " RX");
+            else         ImGui::TextColored(ImVec4(0.3f, 0.3f, 0.3f, 1.0f), " RX");
+            if (sb_data) ImGui::TextColored(ImVec4(0.0f, 0.8f, 1.0f, 1.0f), " DAT");
+            else         ImGui::TextColored(ImVec4(0.3f, 0.3f, 0.3f, 1.0f), " DAT");
+            if (sb_ack)  ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), " ACK");
+            else         ImGui::TextColored(ImVec4(0.3f, 0.3f, 0.3f, 1.0f), " ACK");
+        }
+        ImGui::EndGroup();
 
         ImGui::SameLine();
 
@@ -1019,26 +1111,7 @@ static void RenderGUI() {
     ImGui::SameLine(350);
     ImGui::Text("| %.1f bps |", g_gui_state.current_bitrate.load());
 
-    // Status LEDs in status bar
-    ImGui::SameLine();
-    {
-        bool sb_tx = g_gui_state.is_transmitting.load();
-        bool sb_rx = g_gui_state.is_receiving.load();
-        bool sb_data = g_gui_state.data_activity.load();
-        bool sb_ack = g_gui_state.ack_activity.load();
-
-        if (sb_tx)   ImGui::TextColored(ImVec4(1.0f, 0.2f, 0.2f, 1.0f), "TX");
-        else         ImGui::TextColored(ImVec4(0.3f, 0.3f, 0.3f, 1.0f), "TX");
-        ImGui::SameLine();
-        if (sb_rx)   ImGui::TextColored(ImVec4(0.2f, 1.0f, 0.2f, 1.0f), "RX");
-        else         ImGui::TextColored(ImVec4(0.3f, 0.3f, 0.3f, 1.0f), "RX");
-        ImGui::SameLine();
-        if (sb_data) ImGui::TextColored(ImVec4(0.0f, 0.8f, 1.0f, 1.0f), "DATA");
-        else         ImGui::TextColored(ImVec4(0.3f, 0.3f, 0.3f, 1.0f), "DATA");
-        ImGui::SameLine();
-        if (sb_ack)  ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), "ACK");
-        else         ImGui::TextColored(ImVec4(0.3f, 0.3f, 0.3f, 1.0f), "ACK");
-    }
+    // Status LEDs moved to signal quality section (near constellation)
 
     ImGui::SameLine((float)g_Width - 120);
     ImGui::Text("%.1f FPS", io.Framerate);
@@ -1140,7 +1213,9 @@ int gui_init() {
     ::RegisterClassExW(&wc);
 
     // Create window
-    g_hWnd = ::CreateWindowW(wc.lpszClassName, L"Mercury HF Modem",
+    wchar_t window_title[64];
+    swprintf(window_title, 64, L"Mercury HF Modem v%hs", VERSION__);
+    g_hWnd = ::CreateWindowW(wc.lpszClassName, window_title,
                              WS_OVERLAPPEDWINDOW,
                              100, 100, 850, 720,
                              nullptr, nullptr, wc.hInstance, nullptr);

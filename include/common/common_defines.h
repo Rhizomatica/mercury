@@ -23,7 +23,7 @@
 #ifndef INC_COMMON_DEFINES_H_
 #define INC_COMMON_DEFINES_H_
 
-#define VERSION__ "0.3.1"
+#define VERSION__ "0.3.1-dev1"
 
 // Verbose debug output (0=quiet, 1=debug prints enabled). Set via -v flag.
 extern int g_verbose;
