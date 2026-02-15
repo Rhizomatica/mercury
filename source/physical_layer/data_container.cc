@@ -22,6 +22,8 @@
 
 #include "physical_layer/data_container.h"
 
+// Debug: shadow copy of data_bit pointer for corruption detection at deinit
+static int* g_data_bit_shadow = NULL;
 
 cl_data_container::cl_data_container()
 {
@@ -97,15 +99,23 @@ void cl_data_container::set_size(int nData, int Nc, int M, int Nfft , int Nofdm,
 	this->Nsymb=Nsymb;
 	this->preamble_nSymb=preamble_nSymb;
 	this->data_bit=new int[N_MAX];
+	g_data_bit_shadow = this->data_bit;
+	printf("[SET_SIZE] this=%p &data_bit=%p data_bit=%p Nc=%d M=%d Nsymb=%d\n",
+		(void*)this, (void*)&this->data_bit, (void*)this->data_bit, Nc, M, Nsymb);
+	fflush(stdout);
 	this->data_bit_energy_dispersal=new int[N_MAX];
 	this->data_byte=new int[N_MAX];
 	this->encoded_data=new int[N_MAX];
 	this->bit_interleaved_data=new int[N_MAX];
 	this->modulated_data=new std::complex <double>[nData];
-	this->ofdm_framed_data=new std::complex <double>[Nsymb*Nc];
+	// ACK pattern generation reuses ofdm_framed_data and ofdm_symbol_modulated_data
+	// with ACK_PATTERN_NSYMB=16 symbols. For high-order modulations (16QAM+),
+	// Nsymb < 16, so we must allocate for whichever is larger.
+	int alloc_Nsymb = (Nsymb > 16) ? Nsymb : 16;
+	this->ofdm_framed_data=new std::complex <double>[alloc_Nsymb*Nc];
 	this->ofdm_time_freq_interleaved_data=new std::complex <double>[Nsymb*Nc];
 	this->ofdm_time_freq_deinterleaved_data=new std::complex <double>[Nsymb*Nc];
-	this->ofdm_symbol_modulated_data=new std::complex <double>[Nofdm*Nsymb];
+	this->ofdm_symbol_modulated_data=new std::complex <double>[Nofdm*alloc_Nsymb];
 	this->ofdm_symbol_demodulated_data=new std::complex <double>[Nsymb*Nc];
 	this->ofdm_deframed_data=new std::complex <double>[Nsymb*Nc];
 	this->ofdm_deframed_data_without_amplitude_restoration=new std::complex <double>[Nsymb*Nc];
@@ -120,9 +130,23 @@ void cl_data_container::set_size(int nData, int Nc, int M, int Nfft , int Nofdm,
 
 	this->bit_energy_dispersal_sequence=new int[N_MAX];
 
-	this->buffer_Nsymb=(preamble_nSymb+Nsymb)*2;
+	// Buffer must accommodate frame + turnaround gap after ACK flush.
+	// Turnaround: ~1200ms (VB-Cable + ACK poll + commander guard + ptt_on + VB-Cable).
+	// Also need at least frame*2 for preamble search margin during batch reception.
+	double sym_time_ms = 1000.0 * Nofdm * frequency_interpolation_rate / 48000.0;
+	int turnaround_symb = (int)ceil(1200.0 / sym_time_ms) + 4;  // +4 margin
+	int frame_symb = preamble_nSymb + Nsymb;
+	int min_buf = frame_symb * 2;
+	int min_for_turnaround = frame_symb + turnaround_symb;
+	if(min_for_turnaround > min_buf) min_buf = min_for_turnaround;
+	if(min_buf < 32) min_buf = 32;
+	this->buffer_Nsymb = min_buf;
 
-	this->passband_data=new double[Nofdm*(Nsymb+preamble_nSymb)*frequency_interpolation_rate];
+	// ACK pattern uses 16*Nofdm*freq_interp passband samples, which can exceed
+	// the normal frame size at high modulations (16QAM+). Allocate for whichever is larger.
+	int passband_frame = (Nsymb + preamble_nSymb) * Nofdm * frequency_interpolation_rate;
+	int passband_ack = 16 * Nofdm * frequency_interpolation_rate;
+	this->passband_data=new double[(passband_frame > passband_ack) ? passband_frame : passband_ack];
 	this->passband_delayed_data=new double[2*Nofdm*buffer_Nsymb*frequency_interpolation_rate];
 	this->ready_to_process_passband_delayed_data=new double[Nofdm*buffer_Nsymb*frequency_interpolation_rate];
 	this->baseband_data=new std::complex <double>[Nofdm*buffer_Nsymb];
@@ -158,6 +182,25 @@ void cl_data_container::deinit()
 	this->Ngi=0;
 	this->Nsymb=0;
 	this->total_frame_size=0;
+
+	// Critical corruption check: verify data_bit matches what set_size() allocated
+	if(this->data_bit!=NULL && g_data_bit_shadow!=NULL && this->data_bit != g_data_bit_shadow)
+	{
+		printf("[CORRUPT] !!! data_bit CORRUPTED before delete[] !!!\n");
+		printf("[CORRUPT]   expected=%p actual=%p delta=%lld\n",
+			(void*)g_data_bit_shadow, (void*)this->data_bit,
+			(long long)((char*)this->data_bit - (char*)g_data_bit_shadow));
+		printf("[CORRUPT]   this=%p &data_bit=%p (offset %lld)\n",
+			(void*)this, (void*)&this->data_bit,
+			(long long)((char*)&this->data_bit - (char*)this));
+		// Dump raw bytes at start of object (first 32 bytes)
+		unsigned char* raw = (unsigned char*)this;
+		printf("[CORRUPT]   first 32 bytes of this: ");
+		for(int i = 0; i < 32; i++) printf("%02x ", raw[i]);
+		printf("\n");
+		fflush(stdout);
+	}
+
 	if(this->data_bit!=NULL)
 	{
 		delete[] this->data_bit;
@@ -298,7 +341,6 @@ void cl_data_container::deinit()
 		delete[] this->baseband_data_interpolated;
 		this->baseband_data_interpolated=NULL;
 	}
-
 	if(this->passband_data_tx!=NULL)
 	{
 		delete[] this->passband_data_tx;
@@ -309,13 +351,11 @@ void cl_data_container::deinit()
 		delete[] this->passband_data_tx_buffer;
 		this->passband_data_tx_buffer=NULL;
 	}
-
 	if(this->passband_data_tx_filtered_fir_1!=NULL)
 	{
 		delete[] this->passband_data_tx_filtered_fir_1;
 		this->passband_data_tx_filtered_fir_1=NULL;
 	}
-
 	if(this->passband_data_tx_filtered_fir_2!=NULL)
 	{
 		delete[] this->passband_data_tx_filtered_fir_2;
@@ -327,7 +367,6 @@ void cl_data_container::deinit()
 		delete[] this->ready_to_transmit_passband_data_tx;
 		this->ready_to_transmit_passband_data_tx=NULL;
 	}
-
 	this->frames_to_read=0;
 	this->data_ready=0;
 	this->nUnder_processing_events=0;

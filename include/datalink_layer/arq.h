@@ -39,6 +39,64 @@ union u_SNR {
   char char4_SNR[4];
 };
 
+// Base-36 callsign packing: fits up to 6 chars (A-Z, 0-9) into 5 bytes.
+// Used by START_CONNECTION to avoid callsign truncation on small frames.
+// Format: [4-bit length][6 chars x 6 bits] = 40 bits = 5 bytes.
+inline void callsign_pack(const char* callsign, int len, char* out)
+{
+	if(len > 6) len = 6;
+	uint64_t packed = ((uint64_t)(len & 0xF)) << 36;
+	for(int i = 0; i < 6; i++)
+	{
+		int val = 0;
+		if(i < len)
+		{
+			char c = callsign[i];
+			if(c >= 'A' && c <= 'Z') val = c - 'A';
+			else if(c >= 'a' && c <= 'z') val = c - 'a';
+			else if(c >= '0' && c <= '9') val = c - '0' + 26;
+		}
+		packed |= ((uint64_t)(val & 0x3F)) << (30 - i * 6);
+	}
+	out[0] = (char)((packed >> 32) & 0xFF);
+	out[1] = (char)((packed >> 24) & 0xFF);
+	out[2] = (char)((packed >> 16) & 0xFF);
+	out[3] = (char)((packed >> 8) & 0xFF);
+	out[4] = (char)(packed & 0xFF);
+}
+
+inline std::string callsign_unpack(const char* data)
+{
+	uint64_t packed = 0;
+	packed |= ((uint64_t)(unsigned char)data[0]) << 32;
+	packed |= ((uint64_t)(unsigned char)data[1]) << 24;
+	packed |= ((uint64_t)(unsigned char)data[2]) << 16;
+	packed |= ((uint64_t)(unsigned char)data[3]) << 8;
+	packed |= ((uint64_t)(unsigned char)data[4]);
+	int len = (int)((packed >> 36) & 0xF);
+	if(len > 6) len = 6;
+	std::string result;
+	for(int i = 0; i < len; i++)
+	{
+		int val = (int)((packed >> (30 - i * 6)) & 0x3F);
+		if(val < 26) result += (char)('A' + val);
+		else if(val < 36) result += (char)('0' + val - 26);
+	}
+	return result;
+}
+
+inline void hex_trace(const char* label, const char* data, int len, int max_show = 48)
+{
+	printf("[DATA-TRACE] %s (%d bytes):", label, len);
+	int show = len < max_show ? len : max_show;
+	for(int i = 0; i < show; i++)
+		printf(" %02X", (unsigned char)data[i]);
+	if(len > max_show)
+		printf(" ...");
+	printf("\n");
+	fflush(stdout);
+}
+
 struct st_message
 {
 	int ack_timeout;
@@ -129,6 +187,7 @@ public:
 	      \return None
 	   */
   void cleanup();
+  void finish_turbo_direction();
 
 	//! registers the ack of a data message.
 	    /*!
@@ -167,6 +226,9 @@ public:
 	   */
   void send(st_message* message, int message_location);
   void send_batch();
+  void send_ack_pattern();   // Level 3: TX short tone pattern instead of LDPC ACK
+  bool receive_ack_pattern(); // Level 3: RX + detect ACK pattern, returns true if detected
+  void send_break_pattern(); // Emergency BREAK: TX "drop to ROBUST_0" tone pattern
   void process_messages_rx_acks_control();
   void process_messages_rx_acks_data();
   void process_control_commander();
@@ -217,11 +279,14 @@ public:
   void print_stats();
 
   void reset_all_timers();
+  void reset_session_state();
 
   cl_configuration_arq default_configuration_ARQ;
 
 
   int message_transmission_time_ms;
+  int ctrl_transmission_time_ms;
+  int ack_pattern_time_ms;  // Level 3: ACK pattern TX duration (ms)
   int data_batch_size;
   int control_batch_size;
   int ack_batch_size;
@@ -250,6 +315,7 @@ public:
   cl_timer gear_shift_timer;
   cl_timer switch_role_timer;
   cl_timer switch_role_test_timer;
+  cl_timer connection_attempt_timer;
 
   float print_stats_frequency_hz;
 
@@ -271,6 +337,7 @@ public:
   int switch_role_timeout;
   int switch_role_test_timeout;
   int gearshift_timeout;
+  int connection_timeout;
 
   std::string destination_call_sign;
 
@@ -286,20 +353,56 @@ public:
   char current_configuration;
   char ack_configuration;
   char negotiated_configuration;
+  char forward_configuration;   // Commander→Responder TX speed (asymmetric gearshift)
+  char reverse_configuration;   // Responder→Commander TX speed (after SWITCH_ROLE)
 
   int gear_shift_on;
+  int robust_enabled;
   int gear_shift_algorithm;
   double gear_shift_up_success_rate_precentage;
   double gear_shift_down_success_rate_precentage;
   int gear_shift_block_for_nBlocks_total;
   int gear_shift_blocked_for_nBlocks;
+  int consecutive_data_acks;       // Frame-level gearshift: consecutive successful data ACKs
+  int frame_shift_threshold;       // Shift up after this many consecutive ACKs (default 3)
+  bool frame_gearshift_just_applied;  // true after frame upshift ACKed — BREAK on first data failure
+
+  // Turboshift: bidirectional probing phase before data exchange
+  enum TurboshiftPhase { TURBO_FORWARD, TURBO_REVERSE, TURBO_DONE };
+  TurboshiftPhase turboshift_phase;
+  bool turboshift_active;          // true = currently probing (climbing the ladder)
+  int turboshift_last_good;        // last config that decoded successfully (-1 = none)
+  bool turboshift_initiator;       // true = I started turboshift (original commander)
+  int turboshift_retries;          // retries left at current config (0 = ceiling)
+
+  // Emergency BREAK: drop to ROBUST_0 when current config is undecodable
+  int emergency_nack_count;       // consecutive failed data blocks
+  int emergency_nack_threshold;   // trigger threshold (default 2)
+  int emergency_break_active;     // 1 = BREAK sent, waiting for ACK
+  int emergency_break_retries;    // retries left for current BREAK attempt
+  int emergency_previous_config;  // config that was failing
+  int break_drop_step;            // ladder steps to drop (1,2,4,4,4...)
+  int break_recovery_phase;       // 0=off, 1=coord at ROBUST_0, 2=probing target
+  int break_recovery_retries;     // probe attempts remaining (2 total)
+  int break_detected;             // YES if BREAK pattern detected by responder
 
   int ptt_on_delay_ms;
   int ptt_off_delay_ms;
+  int pilot_tone_ms;   // Duration of pilot tone before OFDM (0=disabled)
+  int pilot_tone_hz;   // Frequency of pilot tone (250=out of band, 1500=in band)
   double time_left_to_send_last_frame;
 
   int disconnect_requested;
 
+  int connection_attempts;
+  int max_connection_attempts;
+
+  int exit_on_disconnect;
+  int had_control_connection;
+
+  // GUI measurement getters
+  double get_snr_uplink() const { return measurements.SNR_uplink; }
+  double get_snr_downlink() const { return measurements.SNR_downlink; }
 
 private:
   int nMessages;
@@ -324,6 +427,7 @@ private:
   void return_to_last_configuration();
   int init_messages_buffers();
   int deinit_messages_buffers();
+  void check_buffer_canaries(const char* caller);
 
   char last_received_message_sequence;
   char last_message_sent_type;

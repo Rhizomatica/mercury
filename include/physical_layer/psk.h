@@ -39,6 +39,8 @@ private:
 	std::complex <double>* constellation;
 	int nBits;
 	int nSymbols;
+	float* D_buf;    // Pre-allocated demod workspace [nSymbols]
+	float* LLR_buf;  // Pre-allocated demod workspace [nBits]
 public:
 
 

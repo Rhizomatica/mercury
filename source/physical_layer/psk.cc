@@ -27,6 +27,8 @@
 cl_psk::cl_psk()
 {
 	constellation=NULL;
+	D_buf=NULL;
+	LLR_buf=NULL;
 	nBits=0;
 	nSymbols=0;
 }
@@ -35,6 +37,8 @@ cl_psk::~cl_psk()
 {
 	deinit();
 	constellation=NULL;
+	D_buf=NULL;
+	LLR_buf=NULL;
 	nBits=0;
 	nSymbols=0;
 }
@@ -44,6 +48,17 @@ void cl_psk::deinit()
 	if(constellation!=NULL)
 	{
 		delete[] constellation;
+		constellation=NULL;
+	}
+	if(D_buf!=NULL)
+	{
+		delete[] D_buf;
+		D_buf=NULL;
+	}
+	if(LLR_buf!=NULL)
+	{
+		delete[] LLR_buf;
+		LLR_buf=NULL;
 	}
 }
 
@@ -219,6 +234,10 @@ void cl_psk::set_constellation(std::complex <double> *_constellation, int size)
 	nSymbols=size;
 	nBits=(int)log2(nSymbols);
 
+	// Pre-allocate demod workspace buffers (eliminates per-frame heap churn)
+	D_buf=new float[nSymbols];
+	LLR_buf=new float[nBits];
+
 	for(int i=0;i<size;i++)
 	{
 		constellation[i]=*(_constellation+i);
@@ -259,8 +278,8 @@ void cl_psk::mod(const int *in,int nItems,std::complex <double> *out)
 void cl_psk::demod(const std::complex <double> *in,int nItems,float *out,float variance)
 {
 
-	float* D=new float[nSymbols];
-	float* LLR=new float[nBits];
+	float* D=D_buf;
+	float* LLR=LLR_buf;
 	float Dmin0,Dmin1;
 	unsigned int mask;
 
@@ -302,15 +321,6 @@ void cl_psk::demod(const std::complex <double> *in,int nItems,float *out,float v
 		{
 			*(out+i+j)=LLR[nBits-j-1];
 		}
-	}
-
-	if(D!=NULL)
-	{
-		delete[] D;
-	}
-	if(LLR!=NULL)
-	{
-		delete[] LLR;
 	}
 
 }

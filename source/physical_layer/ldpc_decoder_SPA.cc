@@ -22,17 +22,6 @@
 
 #include "physical_layer/ldpc_decoder_SPA.h"
 
-#define	find(matrix,matrix_size,value) \
-		{ \
-	for(loc_found=0;loc_found<matrix_size;loc_found++) \
-	{ \
-		if(*(matrix+loc_found)==value) \
-		{break;} \
-	} \
-	if(loc_found==matrix_size) \
-		{loc_found=-1;} \
-		}
-
 int decode_SPA(
 		const float LLRi[],
 		int LLRo[],
@@ -46,6 +35,7 @@ int decode_SPA(
 		int dWidth,
 		double* R,
 		double* Q,
+		int* V_pos,
 		int N,
 		int K,
 		int P,
@@ -55,7 +45,7 @@ int decode_SPA(
 	int Cout[N_MAX];
 	int LLRbin[N_MAX];
 	int iteration=0;
-	int i,j,k,nOnes;
+	int i,j,nOnes;
 	double LLRtmp[N_MAX];
 
 	for( i=0;i<N;i++)
@@ -85,6 +75,33 @@ int decode_SPA(
 	}
 	if(nOnes!=0)
 	{
+		// Precompute V matrix positions to eliminate linear search in inner loop
+		// V_pos[check * CWidthMax + col] = position of check in V[C[check][col]][]
+		// V_pos buffer is pre-allocated by cl_ldpc::load() and passed in
+		for(int ci=0;ci<P;ci++)
+		{
+			for(int cj=0;cj<CWidth;cj++)
+			{
+				int v=*(C+ci*CWidthMax+cj);
+				if(v!=-1)
+				{
+					int pos=-1;
+					for(int vk=0;vk<VWidth;vk++)
+					{
+						if(*(V+v*VWidthMax+vk)==ci)
+						{
+							pos=vk;
+							break;
+						}
+					}
+					V_pos[ci*CWidthMax+cj]=pos;
+				}
+				else
+				{
+					V_pos[ci*CWidthMax+cj]=-1;
+				}
+			}
+		}
 
 		int start=0;
 		int end=0;
@@ -122,9 +139,7 @@ int decode_SPA(
 							i1=*(C+iindex*CWidthMax+i1index);
 							if(i1!=j && i1!=-1)
 							{
-								int loc_found;
-								find(V+i1*VWidthMax,VWidth,iindex)
-								i=loc_found;
+								i=V_pos[iindex*CWidthMax+i1index];
 								temp*=tanh(0.5* (double)*(Q+i1*VWidthMax+i));
 							}
 
@@ -137,9 +152,7 @@ int decode_SPA(
 						{
 							temp=-0.9999999;
 						}
-						int loc_found;
-						find(V+j*VWidthMax,VWidth,iindex)
-						*(R+j*VWidthMax+loc_found)=2*atanh(temp);
+						*(R+j*VWidthMax+V_pos[iindex*CWidthMax+Cindex])=2*atanh(temp);
 
 					}
 
@@ -189,11 +202,7 @@ int decode_SPA(
 				{
 					for( j=0;j<width;j++)
 					{
-						*(Q+i*VWidthMax+j)=LLRi[i]-*(R+i*VWidthMax+j);
-						for( k=0;k<VWidth;k++)
-						{
-							*(Q+i*VWidthMax+j)+=*(R+i*VWidthMax+k);
-						}
+						*(Q+i*VWidthMax+j)=LLRtmp[i]-*(R+i*VWidthMax+j);
 					}
 				}
 				start+=d[section];
@@ -208,6 +217,6 @@ int decode_SPA(
 
 }
 
-/* F. R. Kschischang, B. J. Frey, and H. . Loeliger, “Factor graphs and the sum-product algorithm,” IEEE Transactions on Information Theory, vol. 47, no. 2, pp. 498–519, Feb 2001.
+/* F. R. Kschischang, B. J. Frey, and H. . Loeliger, "Factor graphs and the sum-product algorithm," IEEE Transactions on Information Theory, vol. 47, no. 2, pp. 498–519, Feb 2001.
  * https://ieeexplore.ieee.org/document/910572
  */

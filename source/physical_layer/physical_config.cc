@@ -74,7 +74,7 @@ cl_configuration_telecom_system::cl_configuration_telecom_system()
 	ldpc_nIteration_max=50;
 	ldpc_print_nIteration=NO;
 
-	outer_code=NO_OUTER_CODE;
+	outer_code=CRC16_MODBUS_RTU;
 
 	frequency_interpolation_rate=4; // should we change to 8 when samplerate is 96 kHz?
 

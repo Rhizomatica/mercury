@@ -33,3 +33,19 @@ mercury
 *.out
 *.app
 /Debug/
+
+# Local convenience scripts and logs
+build.sh
+build.log
+install.bat
+install.ps1
+imgui.ini
+TEST_ACOUSTIC.bat
+TEST_ACOUSTIC_CONTROL.ps1
+
+# Test logs and benchmark results
+*.log
+benchmark_results/
+
+# Windows short filename artifacts
+NDH6SA~M

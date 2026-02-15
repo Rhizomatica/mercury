@@ -22,6 +22,7 @@
 
 #include "common/os_interop.h"
 #include "physical_layer/ofdm.h"
+#include <algorithm>  // for std::swap in optimized FFT
 
 
 cl_ofdm::cl_ofdm()
@@ -49,6 +50,27 @@ cl_ofdm::cl_ofdm()
 	LS_window_width=0;
 	LS_window_hight=0;
 	channel_estimator_amplitude_restoration=NO;
+	// Optimized FFT tables
+	fft_twiddle=NULL;
+	fft_scratch=NULL;
+	fft_bit_rev=NULL;
+	fft_twiddle_size=0;
+	// Pre-allocated passband_to_baseband buffers
+	p2b_l_data=NULL;
+	p2b_data_filtered=NULL;
+	p2b_buffer_size=0;
+	// Pre-allocated Nfft work buffers (Group A)
+	work_buf_a=NULL;
+	work_buf_b=NULL;
+	// Pre-allocated time_sync_preamble buffers (Group B)
+	tsync_corr_loc=NULL;
+	tsync_corr_vals=NULL;
+	tsync_corr_size=0;
+	tsync_data=NULL;
+	tsync_data_size=0;
+	// Pre-allocated baseband_to_passband buffer (Group C)
+	b2p_data_interpolated=NULL;
+	b2p_buffer_size=0;
 }
 
 cl_ofdm::~cl_ofdm()
@@ -90,6 +112,13 @@ void cl_ofdm::init()
 	preamble_configurator.init(this->Nfft, this->Nc,this->ofdm_preamble, this->start_shift);
 	pilot_configurator.init(this->Nfft, this->Nc,this->Nsymb,this->ofdm_frame, this->start_shift);
 
+	// Initialize optimized FFT tables
+	init_fft_tables(this->Nfft);
+
+	// Pre-allocate shared Nfft work buffers (used by frequency_sync_coarse,
+	// time_sync_mfsk, detect_ack_pattern — never called concurrently)
+	work_buf_a = new std::complex<double>[Nfft];
+	work_buf_b = new std::complex<double>[Nfft];
 
 	for(int i=0;i<Nsymb;i++)
 	{
@@ -166,8 +195,185 @@ void cl_ofdm::deinit()
 		estimated_channel_without_amplitude_restoration=NULL;
 	}
 
+	if(p2b_l_data!=NULL)
+	{
+		delete[] p2b_l_data;
+		p2b_l_data=NULL;
+	}
+	if(p2b_data_filtered!=NULL)
+	{
+		delete[] p2b_data_filtered;
+		p2b_data_filtered=NULL;
+	}
+	p2b_buffer_size=0;
+
+	if(work_buf_a!=NULL)
+	{
+		delete[] work_buf_a;
+		work_buf_a=NULL;
+	}
+	if(work_buf_b!=NULL)
+	{
+		delete[] work_buf_b;
+		work_buf_b=NULL;
+	}
+	if(tsync_corr_loc!=NULL)
+	{
+		delete[] tsync_corr_loc;
+		tsync_corr_loc=NULL;
+	}
+	if(tsync_corr_vals!=NULL)
+	{
+		delete[] tsync_corr_vals;
+		tsync_corr_vals=NULL;
+	}
+	tsync_corr_size=0;
+	if(tsync_data!=NULL)
+	{
+		delete[] tsync_data;
+		tsync_data=NULL;
+	}
+	tsync_data_size=0;
+	if(b2p_data_interpolated!=NULL)
+	{
+		delete[] b2p_data_interpolated;
+		b2p_data_interpolated=NULL;
+	}
+	b2p_buffer_size=0;
+
 	pilot_configurator.deinit();
 	preamble_configurator.deinit();
+	deinit_fft_tables();
+}
+
+// ============================================================================
+// Optimized FFT Implementation
+// - Precomputed twiddle factors (no sin/cos in hot path)
+// - Iterative algorithm (no recursion, no heap allocation)
+// - Bit-reversal permutation table
+// ============================================================================
+
+void cl_ofdm::init_fft_tables(int n)
+{
+	if (n <= 0 || (n & (n-1)) != 0) {
+		// n must be power of 2
+		fft_twiddle_size = 0;
+		return;
+	}
+
+	fft_twiddle_size = n;
+
+	// Allocate twiddle factors (only need n/2 for radix-2)
+	fft_twiddle = new std::complex<double>[n/2];
+	for (int k = 0; k < n/2; k++) {
+		double angle = -2.0 * M_PI * k / n;
+		fft_twiddle[k] = std::complex<double>(cos(angle), sin(angle));
+	}
+
+	// Allocate scratch buffer
+	fft_scratch = new std::complex<double>[n];
+
+	// Build bit-reversal permutation table
+	fft_bit_rev = new int[n];
+	int bits = 0;
+	for (int temp = n; temp > 1; temp >>= 1) bits++;
+
+	for (int i = 0; i < n; i++) {
+		int rev = 0;
+		for (int j = 0; j < bits; j++) {
+			if (i & (1 << j)) {
+				rev |= (1 << (bits - 1 - j));
+			}
+		}
+		fft_bit_rev[i] = rev;
+	}
+}
+
+void cl_ofdm::deinit_fft_tables()
+{
+	if (fft_twiddle != NULL) {
+		delete[] fft_twiddle;
+		fft_twiddle = NULL;
+	}
+	if (fft_scratch != NULL) {
+		delete[] fft_scratch;
+		fft_scratch = NULL;
+	}
+	if (fft_bit_rev != NULL) {
+		delete[] fft_bit_rev;
+		fft_bit_rev = NULL;
+	}
+	fft_twiddle_size = 0;
+}
+
+// Optimized iterative in-place FFT (Cooley-Tukey radix-2 DIT)
+void cl_ofdm::_fft_fast(std::complex<double>* v, int n)
+{
+	// Use precomputed tables if available and size matches
+	if (fft_twiddle_size != n || fft_twiddle == NULL) {
+		// Fall back to original implementation for non-standard sizes
+		_fft(v, n);
+		return;
+	}
+
+	// Bit-reversal permutation
+	for (int i = 0; i < n; i++) {
+		if (i < fft_bit_rev[i]) {
+			std::swap(v[i], v[fft_bit_rev[i]]);
+		}
+	}
+
+	// Iterative FFT butterfly operations
+	for (int size = 2; size <= n; size *= 2) {
+		int halfsize = size / 2;
+		int step = n / size;
+
+		for (int i = 0; i < n; i += size) {
+			for (int j = 0; j < halfsize; j++) {
+				std::complex<double> w = fft_twiddle[j * step];
+				std::complex<double> t = w * v[i + j + halfsize];
+				v[i + j + halfsize] = v[i + j] - t;
+				v[i + j] = v[i + j] + t;
+			}
+		}
+	}
+}
+
+// Optimized iterative in-place IFFT
+void cl_ofdm::_ifft_fast(std::complex<double>* v, int n)
+{
+	// Use precomputed tables if available and size matches
+	if (fft_twiddle_size != n || fft_twiddle == NULL) {
+		// Fall back to original implementation
+		_ifft(v, n);
+		return;
+	}
+
+	// Bit-reversal permutation
+	for (int i = 0; i < n; i++) {
+		if (i < fft_bit_rev[i]) {
+			std::swap(v[i], v[fft_bit_rev[i]]);
+		}
+	}
+
+	// Iterative IFFT butterfly operations (conjugate twiddle factors)
+	for (int size = 2; size <= n; size *= 2) {
+		int halfsize = size / 2;
+		int step = n / size;
+
+		for (int i = 0; i < n; i += size) {
+			for (int j = 0; j < halfsize; j++) {
+				// Conjugate twiddle factor for IFFT
+				std::complex<double> w = std::conj(fft_twiddle[j * step]);
+				std::complex<double> t = w * v[i + j + halfsize];
+				v[i + j + halfsize] = v[i + j] - t;
+				v[i + j] = v[i + j] + t;
+			}
+		}
+	}
+
+	// No 1/N scaling - Mercury uses unnormalized IFFT convention
+	// (FFT already normalizes by 1/N in fft())
 }
 
 void cl_ofdm::zero_padder(std::complex <double>* in, std::complex <double>* out)
@@ -228,7 +434,7 @@ void cl_ofdm::fft(std::complex <double>* in, std::complex <double>* out)
 	{
 		out[i]=in[i];
 	}
-	_fft(out,Nfft);
+	_fft_fast(out,Nfft);  // Use optimized FFT
 
 	for(int i=0;i<Nfft;i++)
 	{
@@ -242,7 +448,7 @@ void cl_ofdm::fft(std::complex <double>* in, std::complex <double>* out, int _Nf
 	{
 		out[i]=in[i];
 	}
-	_fft(out,_Nfft);
+	_fft_fast(out,_Nfft);  // Use optimized FFT
 
 	for(int i=0;i<_Nfft;i++)
 	{
@@ -288,7 +494,7 @@ void cl_ofdm::ifft(std::complex <double>* in, std::complex <double>* out)
 	{
 		out[i]=in[i];
 	}
-	_ifft(out,Nfft);
+	_ifft_fast(out,Nfft);  // Use optimized IFFT
 }
 
 void cl_ofdm::ifft(std::complex <double>* in, std::complex <double>* out,int _Nfft)
@@ -297,7 +503,7 @@ void cl_ofdm::ifft(std::complex <double>* in, std::complex <double>* out,int _Nf
 	{
 		out[i]=in[i];
 	}
-	_ifft(out,_Nfft);
+	_ifft_fast(out,_Nfft);  // Use optimized IFFT
 }
 
 void cl_ofdm::_ifft(std::complex <double>* v,int n)
@@ -386,6 +592,223 @@ double cl_ofdm::carrier_sampling_frequency_sync(std::complex <double>*in, double
 	//Ref1: P. H. Moose, "A technique for orthogonal frequency division multiplexing frequency offset correction," in IEEE Transactions on Communications, vol. 42, no. 10, pp. 2908-2914, Oct. 1994, doi: 10.1109/26.328961.
 	//Ref2: T. M. Schmidl and D. C. Cox, "Robust frequency and timing synchronization for OFDM," in IEEE Transactions on Communications, vol. 45, no. 12, pp. 1613-1621, Dec. 1997, doi: 10.1109/26.650240.
 	//Ref3: M. Speth, S. Fechtel, G. Fock and H. Meyr, "Optimum receiver design for OFDM-based broadband transmission .II. A case study," in IEEE Transactions on Communications, vol. 49, no. 4, pp. 571-578, April 2001, doi: 10.1109/26.917759.
+}
+
+double cl_ofdm::frequency_sync_coarse(std::complex<double>* in, double subcarrier_spacing, int search_range_subcarriers, int interpolation_rate)
+{
+	/*
+	 * Full Schmidl-Cox frequency synchronization with integer CFO estimation.
+	 *
+	 * The preamble uses alternating carriers (even bins only), creating
+	 * time-domain repetition with period Nfft/2.
+	 *
+	 * Fractional CFO (within ±0.5 subcarrier spacing):
+	 *   - Correlate first half with second half of OFDM symbol
+	 *   - Phase of correlation = 2π × ε_frac × (Nfft/2) / Nfft = π × ε_frac
+	 *   - So: ε_frac = angle(P) / π (in subcarrier spacings)
+	 *
+	 * Integer CFO (multiples of subcarrier spacing):
+	 *   - After fractional correction, FFT the preamble
+	 *   - Correlate received spectrum with known preamble pattern at different shifts
+	 *   - Peak correlation indicates integer offset
+	 *
+	 * Input: baseband signal at interpolation_rate (e.g., 4x for 48kHz/12kHz)
+	 * Output: total frequency offset in Hz
+	 *
+	 * Ref: T. M. Schmidl and D. C. Cox, "Robust frequency and timing
+	 *      synchronization for OFDM," IEEE Trans. Comm., vol. 45, no. 12,
+	 *      pp. 1613-1621, Dec. 1997.
+	 */
+
+	// Step 1: Fractional CFO estimation from time-domain correlation
+	// Correlate first half with second half of each preamble symbol
+	std::complex<double> P(0.0, 0.0);  // Complex correlation
+	double R = 0.0;  // Normalization (energy of second half)
+
+	// Account for interpolation rate in sample indices
+	int half_symbol = (Nfft * interpolation_rate) / 2;
+	int gi_samples = Ngi * interpolation_rate;
+
+	// Use first preamble symbol (after GI)
+	std::complex<double>* symbol_start = in + gi_samples;
+
+	// Step 0: Energy gate - check signal level before CFO estimation
+	// This prevents noise from producing bogus CFO estimates
+	double input_energy = 0.0;
+	for (int n = 0; n < Nfft; n++) {
+		int src_idx = n * interpolation_rate;
+		input_energy += std::norm(symbol_start[src_idx]);
+	}
+
+	// Energy threshold - tune this based on observed signal vs noise levels
+	// Typical signal energy is ~10-100, noise is <1
+	const double min_energy = 1.0;
+	if (input_energy < min_energy) {
+		printf("[COARSE-FREQ] Low energy (%.3f < %.1f) - skip\n", input_energy, min_energy);
+		fflush(stdout);
+		return 0.0;  // No signal, don't apply any correction
+	}
+
+	printf("[COARSE-FREQ] Entry: Nfft=%d Ngi=%d interp=%d energy=%.3f\n",
+		   Nfft, Ngi, interpolation_rate, input_energy);
+	fflush(stdout);
+
+	for (int n = 0; n < half_symbol; n++)
+	{
+		std::complex<double> first_half = symbol_start[n];
+		std::complex<double> second_half = symbol_start[n + half_symbol];
+
+		// P = Σ r(n) × r*(n + Nfft/2)
+		P += first_half * std::conj(second_half);
+		R += std::norm(second_half);
+	}
+
+	// Fractional CFO in subcarrier spacings
+	// For frequency offset ε (in subcarrier spacings):
+	// r(n+N/2) = r(n) × exp(jπε), so P = Σ|r(n)|² × exp(-jπε)
+	// Therefore: ε = -arg(P) / π
+	double frac_cfo_subcarriers = -std::arg(P) / M_PI;
+
+	// Correlation quality check
+	double corr_mag = (R > 0.0) ? (std::abs(P) / R) : 0.0;
+	printf("[COARSE-FREQ] Fractional CFO: %.4f subcarriers (|P|=%.6f R=%.6f corr_mag=%.4f)\n",
+	       frac_cfo_subcarriers, std::abs(P), R, corr_mag);
+
+	// Gate on correlation quality - low correlation means we're not looking at a valid preamble
+	// A good preamble detection should have corr_mag > 0.5
+	const double min_corr_mag = 0.5;
+	if (corr_mag < min_corr_mag) {
+		printf("[COARSE-FREQ] Low correlation (%.3f < %.1f) - skip\n", corr_mag, min_corr_mag);
+		fflush(stdout);
+		return 0.0;
+	}
+	fflush(stdout);
+
+	// Note: We don't early exit here because the fractional CFO from noise
+	// is typically close to 0 anyway, and we'll check confidence on the
+	// integer CFO estimate before applying any large corrections.
+
+	// Step 2: Integer CFO estimation
+	// Apply fractional correction and FFT the preamble symbol
+	// Note: Input is at interpolation_rate, so we downsample by taking every
+	// interpolation_rate-th sample to get back to baseband (Nfft samples)
+	std::complex<double>* corrected_symbol = work_buf_a;
+	std::complex<double>* fft_out = work_buf_b;
+
+	// Apply fractional frequency correction and downsample to baseband rate
+	// Each output sample n corresponds to input sample n*interpolation_rate
+	double phase_inc = -2.0 * M_PI * frac_cfo_subcarriers / Nfft;
+	for (int n = 0; n < Nfft; n++)
+	{
+		int src_idx = n * interpolation_rate;
+		double phase = phase_inc * n;
+		std::complex<double> correction(std::cos(phase), std::sin(phase));
+		corrected_symbol[n] = symbol_start[src_idx] * correction;
+	}
+
+	// FFT the corrected preamble symbol
+	fft(corrected_symbol, fft_out);
+
+	// Debug: check FFT energy
+	double total_fft_energy = 0.0;
+	double max_bin_energy = 0.0;
+	int max_bin = 0;
+	for (int i = 0; i < Nfft; i++) {
+		double e = std::norm(fft_out[i]);
+		total_fft_energy += e;
+		if (e > max_bin_energy) {
+			max_bin_energy = e;
+			max_bin = i;
+		}
+	}
+	printf("[COARSE-FREQ] FFT: total_energy=%.4f max_bin=%d max_energy=%.4f Nfft=%d Nc=%d\n",
+		   total_fft_energy, max_bin, max_bin_energy, Nfft, Nc);
+	fflush(stdout);
+
+	// Note: Correlation quality check disabled - fractional estimate is used directly
+	// The filter in telecom_system.cc handles bogus values
+
+	// Integer CFO search is disabled when search_range_subcarriers <= 0
+	// (The integer CFO detection via even/odd pattern matching isn't working reliably)
+	int best_int_cfo = 0;
+	double best_metric = 0.0;
+	int search_limit = search_range_subcarriers;
+
+	// Integer CFO search (only if enabled)
+	if (search_limit > 0)
+	{
+		// Limit to valid range
+		if (search_limit > Nc / 2) search_limit = Nc / 2;
+
+		for (int k = -search_limit; k <= search_limit; k++)
+		{
+			double energy_data = 0.0;
+			double energy_null = 0.0;
+
+			// Check only active carrier bins (not all Nfft bins)
+			for (int carrier = 0; carrier < Nc; carrier++)
+			{
+				// Map carrier index to FFT bin (same mapping as zero_depadder)
+				int fft_bin;
+				if (carrier < Nc / 2)
+				{
+					fft_bin = Nfft - Nc / 2 + carrier;  // Negative frequencies
+				}
+				else
+				{
+					fft_bin = carrier - Nc / 2 + start_shift;  // Positive frequencies
+				}
+
+				// Apply trial offset to see where this carrier's energy would be
+				int received_bin = fft_bin + k;
+				if (received_bin < 0) received_bin += Nfft;
+				if (received_bin >= Nfft) received_bin -= Nfft;
+
+				// The ORIGINAL FFT bin (before any offset) determines even/odd
+				// Even original bins had data, odd original bins were null
+				bool should_have_data = ((fft_bin % 2) == 0);
+
+				double bin_energy = std::norm(fft_out[received_bin]);
+
+				if (should_have_data)
+				{
+					energy_data += bin_energy;
+				}
+				else
+				{
+					energy_null += bin_energy;
+				}
+			}
+
+			// Metric: ratio of energy on expected-data bins vs expected-null bins
+			double metric = (energy_null > 0.001) ? (energy_data / energy_null) : energy_data;
+
+			if (metric > best_metric)
+			{
+				best_metric = metric;
+				best_int_cfo = k;
+			}
+		}
+		printf("[COARSE-FREQ] Integer CFO: best k=%d metric=%.4f\n", best_int_cfo, best_metric);
+		fflush(stdout);
+	}
+
+	// Determine effective integer CFO (only use if confident)
+	int effective_int_cfo = 0;
+	if (search_limit > 0 && best_metric > 2.0)
+	{
+		effective_int_cfo = best_int_cfo;
+	}
+
+	// Total CFO: fractional + integer (if confident)
+	double total_cfo_subcarriers = frac_cfo_subcarriers + (double)effective_int_cfo;
+	double total_cfo_hz = total_cfo_subcarriers * subcarrier_spacing;
+
+	printf("[COARSE-FREQ] Result: frac=%.3f int=%d total=%.1f Hz (corr=%.2f)\n",
+	       frac_cfo_subcarriers, effective_int_cfo, total_cfo_hz, corr_mag);
+	fflush(stdout);
+
+	return total_cfo_hz;
 }
 
 void cl_ofdm::framer(std::complex <double>* in, std::complex <double>* out)
@@ -809,8 +1232,8 @@ void cl_preamble_configurator::configure()
 		}
 	}
 
-	nZeros *= Nsymb;
-	nPreamble *= Nsymb;
+	// Note: nZeros and nPreamble are already accumulated correctly in the nested loop above.
+	// The *= Nsymb lines were removed as they caused double-counting (values were Nsymb^2 too large).
 
 }
 
@@ -910,6 +1333,15 @@ void cl_ofdm::LS_channel_estimator(std::complex <double>*in)
 			}
 
 		}
+	}
+
+	// Debug: how many pilots found in ofdm_frame?
+	static int ls_debug_count = 0;
+	if(ls_debug_count < 5) {
+		printf("[LS-DEBUG] ofdm_frame=%p Nsymb=%d Nc=%d pilot_index=%d\n",
+			(void*)ofdm_frame, Nsymb, Nc, pilot_index);
+		fflush(stdout);
+		ls_debug_count++;
 	}
 
 	int nPilots=0;
@@ -1050,6 +1482,10 @@ void cl_ofdm::automatic_gain_control(std::complex <double>*in)
 	}
 	pilot_amp/=pilot_index;
 	agc=pilot_configurator.boost/pilot_amp;
+
+	printf("[AGC] raw_pilot_amp=%.6f count=%d boost=%.3f gain=%.4f\n",
+		pilot_amp, pilot_index, pilot_configurator.boost, agc);
+	fflush(stdout);
 
 	for(int i=0;i<Nsymb;i++)
 	{
@@ -1302,12 +1738,21 @@ int cl_ofdm::time_sync_preamble(std::complex <double>*in, int size, int interpol
 	double norm_a=0;
 	double norm_b=0;
 
-	int *corss_corr_loc=new int[size];
-	double *corss_corr_vals=new double[size];
+	// Grow-as-needed correlation buffers (shared with time_sync_preamble_with_metric)
+	if(size > tsync_corr_size)
+	{
+		if(tsync_corr_loc!=NULL) delete[] tsync_corr_loc;
+		if(tsync_corr_vals!=NULL) delete[] tsync_corr_vals;
+		tsync_corr_loc = new int[size];
+		tsync_corr_vals = new double[size];
+		tsync_corr_size = size;
+	}
+	int *corss_corr_loc = tsync_corr_loc;
+	double *corss_corr_vals = tsync_corr_vals;
 	int return_val;
 
 
-	std::complex <double> *a_c, *b_c, *data;
+	std::complex <double> *a_c, *b_c;
 
 	for(int i=0;i<size;i++)
 	{
@@ -1315,7 +1760,14 @@ int cl_ofdm::time_sync_preamble(std::complex <double>*in, int size, int interpol
 		corss_corr_vals[i]=0;
 	}
 
-	data= new std::complex <double> [preamble_configurator.Nsymb*(this->Ngi+this->Nfft)*interpolation_rate];
+	int data_len = preamble_configurator.Nsymb*(this->Ngi+this->Nfft)*interpolation_rate;
+	if(data_len > tsync_data_size)
+	{
+		if(tsync_data!=NULL) delete[] tsync_data;
+		tsync_data = new std::complex<double>[data_len];
+		tsync_data_size = data_len;
+	}
+	std::complex <double> *data = tsync_data;
 
 	for(int i=0;i<size-preamble_configurator.Nsymb*(this->Ngi+this->Nfft)*interpolation_rate;i+=step)
 	{
@@ -1358,10 +1810,17 @@ int cl_ofdm::time_sync_preamble(std::complex <double>*in, int size, int interpol
 			}
 		}
 
-		corss_corr=corss_corr/sqrt(norm_a*norm_b);
+		if(norm_a < 0.001 || norm_b < 0.001)
+			corss_corr = 0.0;
+		else
+			corss_corr=corss_corr/sqrt(norm_a*norm_b);
 		corss_corr_vals[i]=corss_corr;
 		corss_corr_loc[i]=i;
 	}
+
+	// Clamp location_to_return to valid range to prevent reading uninitialized sort entries
+	if(location_to_return >= nTrials_max)
+		location_to_return = nTrials_max - 1;
 
 	for(int j=0;j<nTrials_max;j++)
 	{
@@ -1377,23 +1836,353 @@ int cl_ofdm::time_sync_preamble(std::complex <double>*in, int size, int interpol
 	}
 
 	return_val=corss_corr_loc[location_to_return];
-	if(corss_corr_loc!=NULL)
-	{
-		delete[] corss_corr_loc;
-	}
-	if(corss_corr_vals!=NULL)
-	{
-		delete[] corss_corr_vals;
-	}
-	if(data!=NULL)
-	{
-		delete[] data;
-	}
 	return return_val;
 /*
  * 	Ref: T. M. Schmidl and D. C. Cox, "Robust frequency and timing synchronization for OFDM," in IEEE Transactions on Communications, vol. 45, no. 12, pp. 1613-1621, Dec. 1997, doi: 10.1109/26.650240.
  *
  */
+}
+
+TimeSyncResult cl_ofdm::time_sync_preamble_with_metric(std::complex <double>*in, int size, int interpolation_rate, int location_to_return, int step, int nTrials_max)
+{
+	/*
+	 * Same as time_sync_preamble() but also returns the correlation metric.
+	 * This allows the caller to assess the quality of the time sync detection.
+	 * A high correlation (>0.7) indicates strong preamble detection.
+	 */
+	double corss_corr=0;
+	double norm_a=0;
+	double norm_b=0;
+	double max_correlation = 0.0;
+
+	TimeSyncResult result;
+	result.delay = 0;
+	result.correlation = 0.0;
+
+	// Grow-as-needed correlation buffers
+	if(size > tsync_corr_size)
+	{
+		if(tsync_corr_loc!=NULL) delete[] tsync_corr_loc;
+		if(tsync_corr_vals!=NULL) delete[] tsync_corr_vals;
+		tsync_corr_loc = new int[size];
+		tsync_corr_vals = new double[size];
+		tsync_corr_size = size;
+	}
+	int *corss_corr_loc = tsync_corr_loc;
+	double *corss_corr_vals = tsync_corr_vals;
+
+	std::complex <double> *a_c, *b_c;
+
+	for(int i=0;i<size;i++)
+	{
+		corss_corr_loc[i]=-1;
+		corss_corr_vals[i]=0;
+	}
+
+	int data_len = preamble_configurator.Nsymb*(this->Ngi+this->Nfft)*interpolation_rate;
+	if(data_len > tsync_data_size)
+	{
+		if(tsync_data!=NULL) delete[] tsync_data;
+		tsync_data = new std::complex<double>[data_len];
+		tsync_data_size = data_len;
+	}
+	std::complex <double> *data = tsync_data;
+
+	for(int i=0;i<size-preamble_configurator.Nsymb*(this->Ngi+this->Nfft)*interpolation_rate;i+=step)
+	{
+		for(int k=0;k<preamble_configurator.Nsymb*(this->Ngi+this->Nfft)*interpolation_rate;k++)
+		{
+			data[k]=*(in+i+k);
+		}
+
+		corss_corr=0;
+		norm_a=0;
+		norm_b=0;
+		for(int l=0;l<preamble_configurator.Nsymb;l++)
+		{
+			a_c=data+l*(this->Ngi+this->Nfft)*interpolation_rate;
+			b_c=data+l*(this->Ngi+this->Nfft)*interpolation_rate+this->Nfft*interpolation_rate;
+
+			for(int m=0;m<this->Ngi*interpolation_rate;m++)
+			{
+				corss_corr+=a_c[m].real()*b_c[m].real();
+				norm_a+=a_c[m].real()*a_c[m].real();
+				norm_b+=b_c[m].real()*b_c[m].real();
+
+				corss_corr+=a_c[m].imag()*b_c[m].imag();
+				norm_a+=a_c[m].imag()*a_c[m].imag();
+				norm_b+=b_c[m].imag()*b_c[m].imag();
+			}
+
+			a_c=data+l*(this->Ngi+this->Nfft)*interpolation_rate+this->Ngi*interpolation_rate;
+			b_c=data+l*(this->Ngi+this->Nfft)*interpolation_rate+(this->Ngi+this->Nfft/2)*interpolation_rate;
+
+			for(int m=0;m<(this->Nfft/2)*interpolation_rate;m++)
+			{
+				corss_corr+=a_c[m].real()*b_c[m].real();
+				norm_a+=a_c[m].real()*a_c[m].real();
+				norm_b+=b_c[m].real()*b_c[m].real();
+
+				corss_corr+=a_c[m].imag()*b_c[m].imag();
+				norm_a+=a_c[m].imag()*a_c[m].imag();
+				norm_b+=b_c[m].imag()*b_c[m].imag();
+			}
+		}
+
+		// Norm threshold: VB-Cable silence has amplitude ~1e-10 (nonzero).
+		// Norms accumulate to ~1e-18 and the ratio produces unstable metrics
+		// (up to 0.93) that can beat real preamble peaks. Use threshold
+		// instead of exact == 0.0 to suppress these degenerate cases.
+		if(norm_a < 0.001 || norm_b < 0.001)
+			corss_corr = 0.0;
+		else
+			corss_corr=corss_corr/sqrt(norm_a*norm_b);
+		corss_corr_vals[i]=corss_corr;
+		corss_corr_loc[i]=i;
+	}
+
+	// Clamp location_to_return to valid range to prevent reading uninitialized sort entries
+	if(location_to_return >= nTrials_max)
+		location_to_return = nTrials_max - 1;
+
+	for(int j=0;j<nTrials_max;j++)
+	{
+		corss_corr_loc[j]=j;
+		for(int i=j+1;i<size;i++)
+		{
+			if (corss_corr_vals[i]>corss_corr_vals[j])
+			{
+				corss_corr_vals[j]=corss_corr_vals[i];
+				corss_corr_loc[j]=i;
+			}
+		}
+	}
+
+	result.delay = corss_corr_loc[location_to_return];
+	// Get the correlation value at the returned location
+	max_correlation = corss_corr_vals[location_to_return];
+	result.correlation = max_correlation;
+
+	return result;
+}
+
+int cl_ofdm::time_sync_mfsk(std::complex<double>* baseband_interp, int buffer_size_interp,
+                            int interpolation_rate, int preamble_nSymb,
+                            const int* preamble_tones, int mfsk_M,
+                            int nStreams, const int* stream_offsets,
+                            int search_start_symb)
+{
+	// MFSK preamble time sync: correlate against known preamble tone sequence.
+	// Multi-stream: each preamble symbol has one tone per stream band.
+	// Score = sum of (target energy / total energy) across preamble symbols.
+	// search_start_symb: skip positions before this to avoid re-finding old preambles.
+
+	int Nofdm = Nfft + Ngi;
+	int sym_period_interp = Nofdm * interpolation_rate;
+	int buffer_nsymb = buffer_size_interp / sym_period_interp;
+
+	std::complex<double>* decimated_sym = work_buf_a;
+	std::complex<double>* fft_out = work_buf_b;
+
+	// Map preamble tone indices to FFT bin indices for each stream
+	int preamble_bins[8][4]; // [MAX_PREAMBLE_SYMB][MAX_STREAMS]
+	int half = Nc / 2;
+	for (int p = 0; p < preamble_nSymb; p++)
+	{
+		for (int st = 0; st < nStreams; st++)
+		{
+			int subcarrier = stream_offsets[st] + preamble_tones[p % preamble_nSymb];
+			int bin;
+			if (subcarrier < half)
+				bin = Nfft - half + subcarrier;
+			else
+				bin = start_shift + (subcarrier - half);
+			preamble_bins[p][st] = bin;
+		}
+	}
+
+	double best_metric = -1;
+	int best_sym_idx = 0;
+
+	int s_start = (search_start_symb > 0) ? search_start_symb : 0;
+	for (int s = s_start; s <= buffer_nsymb - preamble_nSymb; s++)
+	{
+		double metric = 0;
+
+		for (int p = 0; p < preamble_nSymb; p++)
+		{
+			int sym_idx = s + p;
+			int offset = sym_idx * sym_period_interp + Ngi * interpolation_rate;
+			if (offset + Nfft * interpolation_rate > buffer_size_interp)
+				break;
+
+			// Decimate and FFT this symbol
+			for (int i = 0; i < Nfft; i++)
+			{
+				decimated_sym[i] = baseband_interp[offset + i * interpolation_rate];
+			}
+			fft(decimated_sym, fft_out, Nfft);
+
+			// Energy in expected preamble tone bins (all streams)
+			double e_target = 0;
+			for (int st = 0; st < nStreams; st++)
+			{
+				int bin = preamble_bins[p][st];
+				e_target += fft_out[bin].real() * fft_out[bin].real() +
+				            fft_out[bin].imag() * fft_out[bin].imag();
+			}
+
+			// Total energy across all Nc bins
+			double e_total = 0;
+			for (int k = 0; k < Nc; k++)
+			{
+				int bk;
+				if (k < half)
+					bk = Nfft - half + k;
+				else
+					bk = start_shift + (k - half);
+				double e = fft_out[bk].real() * fft_out[bk].real() +
+				           fft_out[bk].imag() * fft_out[bk].imag();
+				e_total += e;
+			}
+
+			if (e_total > 0)
+				metric += e_target / e_total;
+		}
+
+		if (metric > best_metric)
+		{
+			best_metric = metric;
+			best_sym_idx = s;
+		}
+	}
+
+	int delay = best_sym_idx * sym_period_interp;
+
+	return delay;
+}
+
+// ACK pattern detection: slide window across buffer, accumulate E_target/E_total
+// Returns best metric (0.0 = noise, up to ack_nsymb = perfect match)
+double cl_ofdm::detect_ack_pattern(std::complex<double>* baseband_interp, int buffer_size_interp,
+                                   int interpolation_rate, int ack_nsymb,
+                                   const int* ack_tones, int ack_pattern_len,
+                                   int tone_hop_step, int mfsk_M,
+                                   int nStreams, const int* stream_offsets,
+                                   int* out_matched)
+{
+	int Nofdm = Nfft + Ngi;
+	int sym_period_interp = Nofdm * interpolation_rate;
+	int buffer_nsymb = buffer_size_interp / sym_period_interp;
+
+	if (buffer_nsymb < ack_nsymb) return 0.0;
+
+	std::complex<double>* decimated_sym = work_buf_a;
+	std::complex<double>* fft_out = work_buf_b;
+
+	int half = Nc / 2;
+	double best_metric = 0.0;
+	int best_pos = -1;
+	int best_matched = 0;
+
+	for (int s = 0; s <= buffer_nsymb - ack_nsymb; s++)
+	{
+		double metric = 0;
+		int matched = 0;
+
+		for (int p = 0; p < ack_nsymb; p++)
+		{
+			int sym_idx = s + p;
+			int offset = sym_idx * sym_period_interp + Ngi * interpolation_rate;
+			if (offset + Nfft * interpolation_rate > buffer_size_interp)
+				break;
+
+			// Decimate and FFT
+			for (int i = 0; i < Nfft; i++)
+			{
+				decimated_sym[i] = baseband_interp[offset + i * interpolation_rate];
+			}
+			fft(decimated_sym, fft_out, Nfft);
+
+			// Which tone is expected at symbol p?
+			int tone_base = ack_tones[p % ack_pattern_len];
+			int actual_tone = (tone_base + p * tone_hop_step) % mfsk_M;
+
+			// Order-aware detection: only count this symbol if the expected ACK tone
+			// is the peak bin for at least one stream. This prevents false positives
+			// from data tones that happen to coincide with ACK bins.
+			bool any_stream_peak = false;
+			double e_target = 0;
+			for (int st = 0; st < nStreams; st++)
+			{
+				int expected_subcarrier = stream_offsets[st] + actual_tone;
+				int expected_bin;
+				if (expected_subcarrier < half)
+					expected_bin = Nfft - half + expected_subcarrier;
+				else
+					expected_bin = start_shift + (expected_subcarrier - half);
+				double e_expected = fft_out[expected_bin].real() * fft_out[expected_bin].real() +
+				                    fft_out[expected_bin].imag() * fft_out[expected_bin].imag();
+				e_target += e_expected;
+
+				// Find peak bin among this stream's M MFSK bins
+				double peak_e = -1.0;
+				for (int t = 0; t < mfsk_M; t++)
+				{
+					int sub = stream_offsets[st] + t;
+					int b;
+					if (sub < half)
+						b = Nfft - half + sub;
+					else
+						b = start_shift + (sub - half);
+					double e = fft_out[b].real() * fft_out[b].real() +
+					           fft_out[b].imag() * fft_out[b].imag();
+					if (e > peak_e)
+						peak_e = e;
+				}
+				if (e_expected >= peak_e)
+					any_stream_peak = true;
+			}
+
+			if (!any_stream_peak)
+				continue;
+
+			matched++;
+
+			// Total energy across all Nc bins
+			double e_total = 0;
+			for (int k = 0; k < Nc; k++)
+			{
+				int bk;
+				if (k < half)
+					bk = Nfft - half + k;
+				else
+					bk = start_shift + (k - half);
+				double e = fft_out[bk].real() * fft_out[bk].real() +
+				           fft_out[bk].imag() * fft_out[bk].imag();
+				e_total += e;
+			}
+
+			if (e_total > 0)
+				metric += e_target / e_total;
+		}
+
+		if (metric > best_metric)
+		{
+			best_metric = metric;
+			best_pos = s;
+			best_matched = matched;
+		}
+	}
+
+	if (best_metric > 0.1)
+		if (g_verbose) printf("[ACK-DET] best_metric=%.3f pos=%d/%d matched=%d/%d\n",
+			best_metric, best_pos, buffer_nsymb, best_matched, ack_nsymb);
+
+	if (out_matched)
+		*out_matched = best_matched;
+
+	return best_metric;
 }
 
 int cl_ofdm::symbol_sync(std::complex <double>*in, int size, int interpolation_rate, int location_to_return)
@@ -1505,7 +2294,17 @@ void cl_ofdm::rational_resampler(std::complex <double>* in, int in_size, std::co
 void cl_ofdm::baseband_to_passband(std::complex <double>* in, int in_size, double* out, double sampling_frequency, double carrier_frequency, double carrier_amplitude,int interpolation_rate)
 {
 	double sampling_interval=1.0/sampling_frequency;
-	std::complex <double> *data_interpolated= new std::complex <double>[in_size*interpolation_rate];
+
+	// Grow-as-needed interpolation buffer
+	int needed = in_size * interpolation_rate;
+	if(needed > b2p_buffer_size)
+	{
+		if(b2p_data_interpolated!=NULL) delete[] b2p_data_interpolated;
+		b2p_data_interpolated = new std::complex<double>[needed];
+		b2p_buffer_size = needed;
+	}
+	std::complex <double> *data_interpolated = b2p_data_interpolated;
+
 	rational_resampler( in, in_size, data_interpolated, interpolation_rate, INTERPOLATION);
 	for(int i=0;i<in_size*interpolation_rate;i++)
 	{
@@ -1513,33 +2312,28 @@ void cl_ofdm::baseband_to_passband(std::complex <double>* in, int in_size, doubl
 		out[i]+=data_interpolated[i].imag()*carrier_amplitude*sin(2*M_PI*carrier_frequency*(double)passband_start_sample * sampling_interval);
 		passband_start_sample++;
 	}
-	if(data_interpolated!=NULL)
-	{
-		delete[] data_interpolated;
-	}
 }
 void cl_ofdm::passband_to_baseband(double* in, int in_size, std::complex <double>* out, double sampling_frequency, double carrier_frequency, double carrier_amplitude, int decimation_rate, cl_FIR* filter)
 {
 	double sampling_interval=1.0/sampling_frequency;
 
-	std::complex <double> *l_data= new std::complex <double>[in_size];
-	std::complex <double> *data_filtered= new std::complex <double>[in_size];
+	// Reuse pre-allocated buffers (reallocate only if size changed)
+	if(p2b_buffer_size < in_size)
+	{
+		delete[] p2b_l_data;
+		delete[] p2b_data_filtered;
+		p2b_l_data = new std::complex<double>[in_size];
+		p2b_data_filtered = new std::complex<double>[in_size];
+		p2b_buffer_size = in_size;
+	}
 
 	for(int i=0;i<in_size;i++)
 	{
-		l_data[i].real(in[i]*carrier_amplitude*cos(2*M_PI*carrier_frequency*(double)i * sampling_interval));
-		l_data[i].imag(in[i]*carrier_amplitude*sin(2*M_PI*carrier_frequency*(double)i * sampling_interval));
+		p2b_l_data[i].real(in[i]*carrier_amplitude*cos(2*M_PI*carrier_frequency*(double)i * sampling_interval));
+		p2b_l_data[i].imag(in[i]*carrier_amplitude*sin(2*M_PI*carrier_frequency*(double)i * sampling_interval));
 	}
 
-	filter->apply(l_data,data_filtered,in_size);
+	filter->apply(p2b_l_data,p2b_data_filtered,in_size);
 
-	rational_resampler(data_filtered, in_size, out, decimation_rate, DECIMATION);
-	if(l_data!=NULL)
-	{
-		delete[] l_data;
-	}
-	if(data_filtered!=NULL)
-	{
-		delete[] data_filtered;
-	}
+	rational_resampler(p2b_data_filtered, in_size, out, decimation_rate, DECIMATION);
 }

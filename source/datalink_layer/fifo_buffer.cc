@@ -101,6 +101,31 @@ int cl_fifo_buffer::push(char* data, int length)
 	return pushed_data;
 }
 
+int cl_fifo_buffer::push_front(char* data, int length)
+{
+	int pushed_data=0;
+	if(length<=get_free_size() && length>0)
+	{
+		read_location -= length;
+		if(read_location < 0)
+		{
+			read_location += size;
+		}
+		int pos = read_location;
+		for(int i=0; i<length; i++)
+		{
+			this->data[pos] = data[i];
+			pos++;
+			if(pos == size)
+			{
+				pos = 0;
+			}
+		}
+		pushed_data = length;
+	}
+	return pushed_data;
+}
+
 int cl_fifo_buffer::pop(char* data, int length)
 {
 	int popped_data=0;
@@ -112,14 +137,16 @@ int cl_fifo_buffer::pop(char* data, int length)
 			data[i]=this->data[read_location];
 			this->data[read_location]=0;
 			read_location++;
+			// Wraparound check must come BEFORE equality check to avoid comparing
+			// an out-of-bounds index (read_location == size) against write_location
+			if(read_location==size)
+			{
+				read_location=0;
+			}
 			if(read_location==write_location)
 			{
 				popped_data=i+1;
 				break;
-			}
-			if(read_location==size)
-			{
-				read_location=0;
 			}
 		}
 	}

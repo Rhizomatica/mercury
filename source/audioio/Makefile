@@ -44,6 +44,12 @@ endif
 #CFLAGS += -Wall -Og -g -std=gnu99 -I./ffbase/ -I./ffaudio/ -I../../include
 CFLAGS = -Wall -Wno-unused -O3 -g0 -I./ffbase/ -I./ffaudio/ -I../../include -pthread
 
+# Pass GUI flag from parent Makefile
+GUI_ENABLED ?= 1
+ifeq ($(GUI_ENABLED),1)
+    CFLAGS += -DMERCURY_GUI_ENABLED
+endif
+
 LDFLAGS=$(FFAUDIO_LINKFLAGS)
 
 .PHONY: all

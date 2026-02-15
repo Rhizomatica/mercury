@@ -40,6 +40,7 @@ int decode_SPA(
 		int dWidth,
 		double* R,
 		double* Q,
+		int* V_pos,
 		int N,
 		int K,
 		int P,
