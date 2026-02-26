@@ -1515,6 +1515,15 @@ void cl_arq_controller::process_control_commander()
 				fflush(stdout);
 			}
 
+			// B2F handler: init for Winlink LZHUF unroll/reroll
+			b2f_handler.init();
+			b2f_handler.unroll_enabled = (local_capability & CAP_B2F_UNROLL) &&
+			                             (peer_capability & CAP_B2F_UNROLL);
+			printf("[B2F] %s (local=0x%02X peer=0x%02X)\n",
+				b2f_handler.unroll_enabled ? "Unroll ENABLED" : "Unroll DISABLED (peer lacks capability)",
+				local_capability, peer_capability);
+			fflush(stdout);
+
 			switch_role_test_timer.stop();
 			switch_role_test_timer.reset();
 

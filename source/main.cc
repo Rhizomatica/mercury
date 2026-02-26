@@ -713,7 +713,7 @@ start_modem:
             ARQ.narrowband_enabled = NO;
         else
             ARQ.narrowband_enabled = YES;  // Normal: start NB, negotiate WB via probe
-        ARQ.local_capability = ((ARQ.bandwidth_mode == BW_AUTO) ? CAP_WB_CAPABLE : 0) | CAP_COMPRESSION;
+        ARQ.local_capability = ((ARQ.bandwidth_mode == BW_AUTO) ? CAP_WB_CAPABLE : 0) | CAP_COMPRESSION | CAP_B2F_UNROLL;
 #else
         ARQ.robust_enabled = robust_mode ? YES : NO;
         ARQ.bandwidth_mode = (bandwidth_mode_cli >= 0) ? bandwidth_mode_cli : BW_AUTO;
@@ -723,7 +723,7 @@ start_modem:
             ARQ.narrowband_enabled = NO;
         else
             ARQ.narrowband_enabled = YES;  // Normal: start NB, negotiate WB via probe
-        ARQ.local_capability = ((ARQ.bandwidth_mode == BW_AUTO) ? CAP_WB_CAPABLE : 0) | CAP_COMPRESSION;
+        ARQ.local_capability = ((ARQ.bandwidth_mode == BW_AUTO) ? CAP_WB_CAPABLE : 0) | CAP_COMPRESSION | CAP_B2F_UNROLL;
 #endif
         telecom_system.narrowband_enabled = ARQ.narrowband_enabled;
         ARQ.init(base_tcp_port, (gear_shift_mode == NO_GEAR_SHIFT)? NO : YES, mod_config);
@@ -803,7 +803,7 @@ start_modem:
                 // Sync robust mode and bandwidth mode from GUI to ARQ
                 ARQ.robust_enabled = g_gui_state.robust_mode_enabled.load() ? YES : NO;
                 ARQ.bandwidth_mode = g_gui_state.bandwidth_mode.load();
-                ARQ.local_capability = ((ARQ.bandwidth_mode == BW_AUTO) ? CAP_WB_CAPABLE : 0) | CAP_COMPRESSION;
+                ARQ.local_capability = ((ARQ.bandwidth_mode == BW_AUTO) ? CAP_WB_CAPABLE : 0) | CAP_COMPRESSION | CAP_B2F_UNROLL;
                 // Don't overwrite narrowband_enabled while connected — WB upgrade changes it
                 if (ARQ.link_status != CONNECTED) {
                     ARQ.narrowband_enabled = YES;  // Always start NB

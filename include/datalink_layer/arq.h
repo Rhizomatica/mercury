@@ -33,6 +33,7 @@
 #include "common/common_defines.h"
 #include "audioio/audioio.h"
 #include "compression/mercury_compress.h"
+#include "datalink_layer/b2f_handler.h"
 #include <iomanip>
 
 union u_SNR {
@@ -371,6 +372,7 @@ public:
   bool wb_upgrade_pending;     // True between SWITCH_BANDWIDTH send and ACK
   cl_compressor compressor;           // Block compression (PPMd + zstd)
   bool compression_enabled;           // Negotiated: both sides have CAP_COMPRESSION
+  cl_b2f_handler b2f_handler;         // B2F protocol handler (Winlink LZHUF unroll/reroll)
   float compress_ratio_estimate;      // Running compression ratio (raw/compressed), init 2.0
   int gear_shift_algorithm;
   double gear_shift_up_success_rate_precentage;

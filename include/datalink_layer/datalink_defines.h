@@ -86,6 +86,7 @@
 // Capability flags (embedded in TEST_CONNECTION byte 5)
 #define CAP_WB_CAPABLE   0x01   // Supports wideband upgrade after NB connection
 #define CAP_COMPRESSION  0x02   // Supports block compression (PPMd/zstd)
+#define CAP_B2F_UNROLL   0x04   // Supports B2F LZHUF unroll/reroll (Winlink optimization)
 
 // Bandwidth mode (persisted in INI, controls NB/WB negotiation)
 enum BandwidthMode { BW_AUTO = 0, BW_NB_ONLY = 1 };

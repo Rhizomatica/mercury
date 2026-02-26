@@ -890,6 +890,15 @@ void cl_arq_controller::process_control_responder()
 			fflush(stdout);
 		}
 
+		// B2F handler: init for Winlink LZHUF unroll/reroll
+		b2f_handler.init();
+		b2f_handler.unroll_enabled = (local_capability & CAP_B2F_UNROLL) &&
+		                             (peer_capability & CAP_B2F_UNROLL);
+		printf("[B2F] %s (local=0x%02X peer=0x%02X)\n",
+			b2f_handler.unroll_enabled ? "Unroll ENABLED" : "Unroll DISABLED (peer lacks capability)",
+			local_capability, peer_capability);
+		fflush(stdout);
+
 		tmp_SNR.f_SNR=(float)measurements.SNR_downlink;
 		for(int i=0;i<4;i++)
 		{
@@ -1058,8 +1067,33 @@ void cl_arq_controller::process_buffer_data_responder()
 		{
 			while(fifo_buffer_rx.get_size()!=fifo_buffer_rx.get_free_size())
 			{
-				tcp_socket_data.message->length=fifo_buffer_rx.pop(tcp_socket_data.message->buffer,max_data_length+max_header_length-DATA_LONG_HEADER_LENGTH);
-	
+				// Pop raw data from RX FIFO
+				char rx_raw[MAX_BUFFER_SIZE];
+				int rx_raw_len = fifo_buffer_rx.pop(rx_raw, max_data_length+max_header_length-DATA_LONG_HEADER_LENGTH);
+
+				// B2F filter: parse incoming stream, reroll plaintext to LZHUF
+				if(b2f_handler.is_initialized())
+				{
+					char b2f_buf[MAX_BUFFER_SIZE * 4]; // LZHUF can be larger than plaintext (rare)
+					int b2f_len = b2f_handler.filter_rx(rx_raw, rx_raw_len,
+						b2f_buf, sizeof(b2f_buf));
+					if(b2f_len > 0)
+					{
+						memcpy(tcp_socket_data.message->buffer, b2f_buf, b2f_len);
+						tcp_socket_data.message->length = b2f_len;
+					}
+					else
+					{
+						memcpy(tcp_socket_data.message->buffer, rx_raw, rx_raw_len);
+						tcp_socket_data.message->length = rx_raw_len;
+					}
+				}
+				else
+				{
+					memcpy(tcp_socket_data.message->buffer, rx_raw, rx_raw_len);
+					tcp_socket_data.message->length = rx_raw_len;
+				}
+
 				tcp_socket_data.transmit();
 			}
 		}

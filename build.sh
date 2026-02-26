@@ -139,6 +139,7 @@ source/main.cc
 source/datalink_layer/arq_commander.cc
 source/datalink_layer/arq_common.cc
 source/datalink_layer/arq_responder.cc
+source/datalink_layer/b2f_handler.cc
 source/datalink_layer/datalink_config.cc
 source/datalink_layer/fifo_buffer.cc
 source/datalink_layer/tcp_socket.cc
@@ -180,14 +181,16 @@ source/gui/widgets/waterfall.cc
 source/gui/dialogs/setup_dialog.cc
 source/gui/dialogs/soundcard_dialog.cc
 source/compression/mercury_compress.cc
+source/compression/lzhuf_buffer.cc
 "
 
-# Compression library C sources (PPMd8 from LZMA SDK, zstd amalgamated)
+# Compression library C sources (PPMd8 from LZMA SDK, zstd amalgamated, LZHUF for B2F)
 COMPRESSION_C_SOURCES="
 source/compression/ppmd/Ppmd8.c
 source/compression/ppmd/Ppmd8Dec.c
 source/compression/ppmd/Ppmd8Enc.c
 source/compression/zstd/zstd.c
+source/compression/lzhuf/lzhuf.c
 "
 
 IMGUI_SOURCES="
@@ -266,14 +269,18 @@ for src in $AUDIO_C_SOURCES; do
 done
 ar rc source/audioio/audioio.a $AUDIO_OBJ_FILES
 
-# Build compression library C sources (PPMd8, zstd)
+# Build compression library C sources (PPMd8, zstd, LZHUF)
 echo "Compiling compression libraries..."
 COMPRESS_OBJ_FILES=""
 for src in $COMPRESSION_C_SOURCES; do
     obj="${src%.c}.o"
     if [ ! -f "$obj" ] || [ "$src" -nt "$obj" ] || [ "$CLEAN" = "1" ]; then
         echo "  $src"
-        $CC $CFLAGS -Wno-extra -Wno-sign-compare -Wno-implicit-fallthrough -c -o "$obj" "$src"
+        EXTRA_C=""
+        if [[ "$src" == *lzhuf.c ]]; then
+            EXTRA_C="-DLZHUF -DB2F"
+        fi
+        $CC $CFLAGS -Wno-extra -Wno-sign-compare -Wno-implicit-fallthrough $EXTRA_C -c -o "$obj" "$src"
     fi
     COMPRESS_OBJ_FILES="$COMPRESS_OBJ_FILES $obj"
 done

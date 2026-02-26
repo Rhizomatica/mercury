@@ -146,7 +146,7 @@ cl_arq_controller::cl_arq_controller()
 	nb_probe_max=2;
 	session_narrowband=false;
 	bandwidth_mode=BW_AUTO;
-	local_capability=CAP_COMPRESSION;  // Always advertise compression support
+	local_capability=CAP_COMPRESSION | CAP_B2F_UNROLL;  // Always advertise compression + B2F unroll
 	peer_capability=0;
 	wb_upgrade_pending=false;
 	compression_enabled=false;
@@ -1748,7 +1748,24 @@ void cl_arq_controller::process_main()
 			if(nBytes_received>0)
 			{
 				tcp_socket_data.timer.start();
-				fifo_buffer_tx.push(tcp_socket_data.message->buffer, tcp_socket_data.message->length);
+
+				// B2F filter: parse outgoing stream, unroll LZHUF payloads
+				if(b2f_handler.is_initialized())
+				{
+					char b2f_buf[MAX_BUFFER_SIZE * 4]; // plaintext can be larger than LZHUF
+					int b2f_len = b2f_handler.filter_tx(
+						tcp_socket_data.message->buffer,
+						tcp_socket_data.message->length,
+						b2f_buf, sizeof(b2f_buf));
+					if(b2f_len > 0)
+						fifo_buffer_tx.push(b2f_buf, b2f_len);
+					else
+						fifo_buffer_tx.push(tcp_socket_data.message->buffer, tcp_socket_data.message->length);
+				}
+				else
+				{
+					fifo_buffer_tx.push(tcp_socket_data.message->buffer, tcp_socket_data.message->length);
+				}
 
 				std::string str="BUFFER ";
 				str+=std::to_string(fifo_buffer_tx.get_size()-fifo_buffer_tx.get_free_size());
@@ -1837,7 +1854,7 @@ void cl_arq_controller::process_user_command(std::string command)
 		this->my_call_sign=command.substr(0,command.find(" "));
 		this->destination_call_sign=command.substr(my_call_sign.length()+1);
 		commander_configured_nb=narrowband_enabled;
-		local_capability = ((bandwidth_mode == BW_AUTO) ? CAP_WB_CAPABLE : 0) | CAP_COMPRESSION;
+		local_capability = ((bandwidth_mode == BW_AUTO) ? CAP_WB_CAPABLE : 0) | CAP_COMPRESSION | CAP_B2F_UNROLL;
 		peer_capability = 0;
 		wb_upgrade_pending = false;
 		compression_enabled = false;
@@ -1934,7 +1951,7 @@ void cl_arq_controller::process_user_command(std::string command)
 	{
 		original_role=RESPONDER;
 		set_role(RESPONDER);
-		local_capability = ((bandwidth_mode == BW_AUTO) ? CAP_WB_CAPABLE : 0) | CAP_COMPRESSION;
+		local_capability = ((bandwidth_mode == BW_AUTO) ? CAP_WB_CAPABLE : 0) | CAP_COMPRESSION | CAP_B2F_UNROLL;
 		peer_capability = 0;
 		wb_upgrade_pending = false;
 		compression_enabled = false;
@@ -1970,7 +1987,7 @@ void cl_arq_controller::process_user_command(std::string command)
 		printf("[BW] Setting NB only (500 Hz)\n");
 		fflush(stdout);
 		bandwidth_mode = BW_NB_ONLY;
-		local_capability = CAP_COMPRESSION;
+		local_capability = CAP_COMPRESSION | CAP_B2F_UNROLL;
 #ifdef MERCURY_GUI_ENABLED
 		g_gui_state.bandwidth_mode.store(BW_NB_ONLY);
 #endif
@@ -1988,7 +2005,7 @@ void cl_arq_controller::process_user_command(std::string command)
 		printf("[BW] Setting auto mode (%s)\n", command.c_str());
 		fflush(stdout);
 		bandwidth_mode = BW_AUTO;
-		local_capability = CAP_WB_CAPABLE | CAP_COMPRESSION;
+		local_capability = CAP_WB_CAPABLE | CAP_COMPRESSION | CAP_B2F_UNROLL;
 #ifdef MERCURY_GUI_ENABLED
 		g_gui_state.bandwidth_mode.store(BW_AUTO);
 #endif
@@ -2007,7 +2024,7 @@ void cl_arq_controller::process_user_command(std::string command)
 		printf("[BW] Setting auto mode (BW2500, legacy)\n");
 		fflush(stdout);
 		bandwidth_mode = BW_AUTO;
-		local_capability = CAP_WB_CAPABLE | CAP_COMPRESSION;
+		local_capability = CAP_WB_CAPABLE | CAP_COMPRESSION | CAP_B2F_UNROLL;
 #ifdef MERCURY_GUI_ENABLED
 		g_gui_state.bandwidth_mode.store(BW_AUTO);
 #endif
@@ -2146,6 +2163,9 @@ void cl_arq_controller::reset_session_state()
 	if(compression_enabled)
 		compressor.deinit();
 	compression_enabled = false;
+
+	// B2F handler — reset state for next connection
+	b2f_handler.reset();
 
 	// Data exchange
 	block_under_tx = NO;
