@@ -78,6 +78,12 @@ cl_ofdm::cl_ofdm()
 	mfsk_corr_template_energy=0.0;
 	mfsk_corr_template_nsymb=0;
 	for(int i=0;i<8;i++) mfsk_corr_template_sym_energy[i]=0.0;
+	// OFDM matched-filter template
+	ofdm_corr_template=NULL;
+	ofdm_corr_template_len=0;
+	ofdm_corr_template_nsymb=0;
+	ofdm_corr_template_energy=0.0;
+	for(int i=0;i<16;i++) ofdm_corr_template_sym_energy[i]=0.0;
 }
 
 cl_ofdm::~cl_ofdm()
@@ -192,6 +198,11 @@ void cl_ofdm::deinit()
 	mfsk_corr_template_energy=0.0;
 	mfsk_corr_template_nsymb=0;
 	for(int i=0;i<8;i++) mfsk_corr_template_sym_energy[i]=0.0;
+	CDELETE(ofdm_corr_template);
+	ofdm_corr_template_len=0;
+	ofdm_corr_template_nsymb=0;
+	ofdm_corr_template_energy=0.0;
+	for(int i=0;i<16;i++) ofdm_corr_template_sym_energy[i]=0.0;
 
 	pilot_configurator.deinit();
 	preamble_configurator.deinit();
@@ -2535,6 +2546,173 @@ TimeSyncResult cl_ofdm::time_sync_preamble_fft_fine(
 	TimeSyncResult result;
 	result.delay = best_gi_pos;
 	result.correlation = fft_metric;  // Return FFT metric (the discriminating one)
+	return result;
+}
+
+TimeSyncResult cl_ofdm::time_sync_preamble_matched(
+	std::complex<double>* baseband_interp, int buffer_size_interp,
+	int interpolation_rate, int preamble_nSymb)
+{
+	/*
+	 * Matched-filter preamble detection: time-domain cross-correlation
+	 * against FIR-round-tripped preamble template. Zero FFTs.
+	 *
+	 * Two phases:
+	 *   Coarse: GI-period stride over search window. Uses first preamble
+	 *           symbol only for speed. Per-symbol normalized correlation:
+	 *           |conj(template) · signal|² / (E_template × E_signal) → [0,1].
+	 *
+	 *   Fine:   baseband-sample stride (step = interpolation_rate) within
+	 *           ±gi_interp of coarse peak. All preamble symbols for accuracy.
+	 *
+	 * Metric convention: return avg_metric × preamble_nSymb so that
+	 *   preamble ≈ Nsymb, data ≈ 0, threshold = 2.0.
+	 */
+
+	if (ofdm_corr_template == NULL || ofdm_corr_template_len <= 0)
+	{
+		TimeSyncResult r;
+		r.delay = 0;
+		r.correlation = 0.0;
+		return r;
+	}
+
+	int Nofdm = Nfft + Ngi;
+	int sym_interp = Nofdm * interpolation_rate;
+	int preamble_interp = preamble_nSymb * sym_interp;
+	int gi_interp = Ngi * interpolation_rate;
+	int template_nsymb = ofdm_corr_template_nsymb;
+	if (template_nsymb > preamble_nSymb) template_nsymb = preamble_nSymb;
+
+	// ---- Coarse search: GI-period stride, first symbol only ----
+	// GI stride (64 interp samples) ensures preamble is within ±32 of
+	// a grid point. Fine search of ±gi_interp easily covers this.
+	int coarse_stride = gi_interp;
+	int n_coarse = (buffer_size_interp - preamble_interp) / coarse_stride;
+	if (n_coarse < 0) n_coarse = 0;
+
+	double best_coarse_metric = -1.0;
+	int best_coarse_pos = 0;
+
+	// Stack buffer for metrics (earliest-above-50% selection needs all values)
+	double* coarse_metrics = (double*)alloca((n_coarse + 1) * sizeof(double));
+
+	for (int ci = 0; ci <= n_coarse; ci++)
+	{
+		int pos = ci * coarse_stride;
+
+		// Single-symbol correlation for speed (symbol 0 only)
+		int rx_offset = pos;
+		if (rx_offset + (Nofdm - 1) * interpolation_rate >= buffer_size_interp)
+		{
+			coarse_metrics[ci] = 0.0;
+			continue;
+		}
+
+		double corr_re = 0.0, corr_im = 0.0;
+		double e_rx = 0.0;
+
+		for (int n = 0; n < Nofdm; n++)
+		{
+			std::complex<double> rx = baseband_interp[rx_offset + n * interpolation_rate];
+			double t_re = ofdm_corr_template[n].real();
+			double t_im = ofdm_corr_template[n].imag();
+
+			corr_re += t_re * rx.real() + t_im * rx.imag();
+			corr_im += t_im * rx.real() - t_re * rx.imag();
+			e_rx += rx.real() * rx.real() + rx.imag() * rx.imag();
+		}
+
+		double denom = ofdm_corr_template_sym_energy[0] * e_rx;
+		double metric = (denom > 1e-30) ? (corr_re * corr_re + corr_im * corr_im) / denom : 0.0;
+		coarse_metrics[ci] = metric;
+
+		if (metric > best_coarse_metric)
+		{
+			best_coarse_metric = metric;
+			best_coarse_pos = pos;
+		}
+	}
+
+	// Earliest-above-50%-of-max selection (same heuristic as FFT detection)
+	double early_threshold = best_coarse_metric * 0.5;
+	int coarse_result_pos = best_coarse_pos;
+	for (int ci = 0; ci <= n_coarse; ci++)
+	{
+		if (coarse_metrics[ci] >= early_threshold)
+		{
+			coarse_result_pos = ci * coarse_stride;
+			break;
+		}
+	}
+
+	// If no preamble detected at coarse level, return early
+	if (best_coarse_metric < 0.15)
+	{
+		TimeSyncResult r;
+		r.delay = coarse_result_pos;
+		r.correlation = best_coarse_metric * preamble_nSymb;
+		return r;
+	}
+
+	// ---- Fine search: all symbols, step = interpolation_rate, ±gi_interp ----
+	int fine_start = coarse_result_pos - gi_interp;
+	if (fine_start < 0) fine_start = 0;
+	int fine_end = coarse_result_pos + gi_interp;
+	if (fine_end + preamble_interp > buffer_size_interp)
+		fine_end = buffer_size_interp - preamble_interp;
+	if (fine_end < fine_start) fine_end = fine_start;
+
+	double best_fine_metric = -1.0;
+	int best_fine_pos = coarse_result_pos;
+
+	for (int pos = fine_start; pos <= fine_end; pos += interpolation_rate)
+	{
+		double total_metric = 0.0;
+		int valid_syms = 0;
+
+		for (int k = 0; k < template_nsymb; k++)
+		{
+			int tmpl_offset = k * Nofdm;
+			int rx_offset = pos + k * sym_interp;
+
+			if (rx_offset + (Nofdm - 1) * interpolation_rate >= buffer_size_interp)
+				break;
+
+			double corr_re = 0.0, corr_im = 0.0;
+			double e_rx = 0.0;
+
+			for (int n = 0; n < Nofdm; n++)
+			{
+				std::complex<double> rx = baseband_interp[rx_offset + n * interpolation_rate];
+				double t_re = ofdm_corr_template[tmpl_offset + n].real();
+				double t_im = ofdm_corr_template[tmpl_offset + n].imag();
+
+				corr_re += t_re * rx.real() + t_im * rx.imag();
+				corr_im += t_im * rx.real() - t_re * rx.imag();
+				e_rx += rx.real() * rx.real() + rx.imag() * rx.imag();
+			}
+
+			double denom = ofdm_corr_template_sym_energy[k] * e_rx;
+			if (denom > 1e-30)
+			{
+				total_metric += (corr_re * corr_re + corr_im * corr_im) / denom;
+				valid_syms++;
+			}
+		}
+
+		double metric = (valid_syms > 0) ? total_metric / valid_syms : 0.0;
+		if (metric > best_fine_metric)
+		{
+			best_fine_metric = metric;
+			best_fine_pos = pos;
+		}
+	}
+
+	TimeSyncResult result;
+	result.delay = best_fine_pos;
+	// Scale: avg per-symbol metric × nsymb. Preamble ≈ nsymb, data ≈ 0.
+	result.correlation = best_fine_metric * preamble_nSymb;
 	return result;
 }
 

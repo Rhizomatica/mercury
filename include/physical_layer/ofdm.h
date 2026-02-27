@@ -214,6 +214,14 @@ public:
 	int mfsk_corr_template_nsymb;
 	double mfsk_corr_template_sym_energy[8]; // per-symbol energy for per-symbol correlation
 	int time_sync_mfsk_corr(std::complex<double>* baseband_interp, int buffer_size_interp, int interpolation_rate, int search_start_symb, double* out_metric);
+
+	// OFDM matched-filter preamble template (replaces FFT-based detection)
+	std::complex<double>* ofdm_corr_template;
+	int ofdm_corr_template_len;       // total samples (nsymb * Nofdm)
+	int ofdm_corr_template_nsymb;     // preamble symbol count
+	double ofdm_corr_template_sym_energy[16]; // per-symbol energy
+	double ofdm_corr_template_energy; // total energy
+	TimeSyncResult time_sync_preamble_matched(std::complex<double>* baseband_interp, int buffer_size_interp, int interpolation_rate, int preamble_nSymb);
 };
 
 
