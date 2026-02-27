@@ -1085,22 +1085,15 @@ void cl_preamble_configurator::init(int Nfft, int Nc, struct st_carrier* _carrie
 		this->print();
 	}
 
-	__srandom(seed);
-	for(int i=0;i<this->Nsymb*this->Nc;i++)
-	{
-		if(modulation==MOD_BPSK)
-		{
-			sequence[i]=std::complex <double>(2*(__random()%2)-1,0);
-		}
-		else if(modulation==MOD_QPSK)
-		{
-			sequence[i]=std::complex <double>(2*(__random()%2)-1,2*(__random()%2)-1)/sqrt(2);
-		}
-	}
-
-	int preamble_index=0;
+	// Zadoff-Chu preamble values. ZC sequences have zero periodic
+	// auto-correlation sidelobes → sharper matched-filter peak, better
+	// discrimination at low SNR. Same sequence repeated each symbol.
+	int bins_per_sym = nPreamble / this->Nsymb;
+	int zc_root = 7;  // coprime with bins_per_sym for WB (25) and NB (4-5)
+	int seq_idx = 0;
 	for(int j=0;j<this->Nsymb;j++)
 	{
+		int sym_preamble_idx = 0;
 		for(int i=0;i<this->Nc;i++)
 		{
 			if ((carrier+j*this->Nc+i)->type==ZERO)
@@ -1109,8 +1102,12 @@ void cl_preamble_configurator::init(int Nfft, int Nc, struct st_carrier* _carrie
 			}
 			else if ((carrier+j*this->Nc+i)->type==PREAMBLE)
 			{
-				(carrier+j*this->Nc+i)->value=sequence[preamble_index];
-				preamble_index++;
+				double phase = -M_PI * zc_root * sym_preamble_idx * (sym_preamble_idx + 1.0) / bins_per_sym;
+				std::complex<double> zc_val(cos(phase), sin(phase));
+				(carrier+j*this->Nc+i)->value = zc_val;
+				sequence[seq_idx] = zc_val;
+				sym_preamble_idx++;
+				seq_idx++;
 			}
 		}
 	}
