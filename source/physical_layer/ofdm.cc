@@ -466,27 +466,30 @@ double cl_ofdm::carrier_sampling_frequency_sync(std::complex <double>*in, double
 		preamble_nSymb/=2;
 	}
 
+	// Repetition period L = Nfft / nIdentical_sections:
+	//   nIS=2 (NB, every-2nd): L=128, correlate halves
+	//   nIS=4 (WB, every-4th): L=64, correlate quarters
+	int nIS = preamble_configurator.nIdentical_sections;
+	int L = Nfft / nIS;
+
 	mul=0;
 	for(int j=0;j<preamble_nSymb;j++)
 	{
-		for(int i=0;i<Nfft/2;i++)
-		{
-			frame[i]=*(in+j*(Nfft+Ngi)+i);
-			frame[i+Nfft/2]=*(in+j*(Nfft+Ngi)+i);
-		}
+		// First repetition period [0..L-1], repeated nIS times to fill Nfft
+		for(int rep=0;rep<nIS;rep++)
+			for(int i=0;i<L;i++)
+				frame[rep*L+i]=*(in+j*(Nfft+Ngi)+i);
 
 		fft(frame,frame_fft);
 		zero_depadder(frame_fft,frame_depadded1);
 
-		for(int i=0;i<Nfft/2;i++)
-		{
-			frame[i]=*(in+j*(Nfft+Ngi)+i+Nfft/2);
-			frame[i+Nfft/2]=*(in+j*(Nfft+Ngi)+i+Nfft/2);
-		}
+		// Second repetition period [L..2L-1], repeated nIS times
+		for(int rep=0;rep<nIS;rep++)
+			for(int i=0;i<L;i++)
+				frame[rep*L+i]=*(in+j*(Nfft+Ngi)+i+L);
 
 		fft(frame,frame_fft);
 		zero_depadder(frame_fft,frame_depadded2);
-
 
 		for(int i=0;i<Nc;i++)
 		{
@@ -494,8 +497,11 @@ double cl_ofdm::carrier_sampling_frequency_sync(std::complex <double>*in, double
 		}
 	}
 
-
-	frequency_offset_prec = get_angle(mul) / M_PI;
+	// Moose formula: phase = 2π × ε × L / Nfft  →  ε = phase × Nfft / (2π × L)
+	// Simplifies to: ε = phase × nIS / (2π)
+	// For nIS=2: ε = phase / π  (±1 subcarrier range)
+	// For nIS=4: ε = 2·phase / π  (±2 subcarrier range)
+	frequency_offset_prec = get_angle(mul) * nIS / (2.0 * M_PI);
 
 	// float sampling_frequency_offset= -frequency_offset_prec*carrier_freq_width /sampling_frequency;
 
@@ -587,13 +593,13 @@ double cl_ofdm::frequency_sync_coarse(std::complex<double>* in, double subcarrie
 	/*
 	 * Full Schmidl-Cox frequency synchronization with integer CFO estimation.
 	 *
-	 * The preamble uses alternating carriers (even bins only), creating
-	 * time-domain repetition with period Nfft/2.
+	 * The preamble uses sparse subcarriers (every-Kth bin), creating
+	 * time-domain repetition with period L = Nfft/nIdentical_sections.
 	 *
-	 * Fractional CFO (within ±0.5 subcarrier spacing):
-	 *   - Correlate first half with second half of OFDM symbol
-	 *   - Phase of correlation = 2π × ε_frac × (Nfft/2) / Nfft = π × ε_frac
-	 *   - So: ε_frac = angle(P) / π (in subcarrier spacings)
+	 * Fractional CFO (within ±nIS/2 subcarrier spacings):
+	 *   - Correlate adjacent repetition periods (L = Nfft/nIS samples apart)
+	 *   - Phase = 2π × ε_frac × L / Nfft = 2π × ε_frac / nIS
+	 *   - So: ε_frac = angle(P) × nIS / (2π)
 	 *
 	 * Integer CFO (multiples of subcarrier spacing):
 	 *   - After fractional correction, FFT the preamble
@@ -609,12 +615,13 @@ double cl_ofdm::frequency_sync_coarse(std::complex<double>* in, double subcarrie
 	 */
 
 	// Step 1: Fractional CFO estimation from time-domain correlation
-	// Correlate first half with second half of each preamble symbol
+	// Correlate adjacent repetition periods within each preamble symbol.
+	// Repetition period L = Nfft/nIS (nIS=4 for WB every-4th, nIS=2 for NB every-2nd).
 	std::complex<double> P(0.0, 0.0);  // Complex correlation
-	double R = 0.0;  // Normalization (energy of second half)
+	double R = 0.0;  // Normalization (energy of second period)
 
-	// Account for interpolation rate in sample indices
-	int half_symbol = (Nfft * interpolation_rate) / 2;
+	int nIS = preamble_configurator.nIdentical_sections;
+	int L_interp = (Nfft / nIS) * interpolation_rate;
 	int gi_samples = Ngi * interpolation_rate;
 
 	// Use first preamble symbol (after GI)
@@ -635,21 +642,22 @@ double cl_ofdm::frequency_sync_coarse(std::complex<double>* in, double subcarrie
 		return 0.0;  // No signal, don't apply any correction
 	}
 
-	for (int n = 0; n < half_symbol; n++)
+	for (int n = 0; n < L_interp; n++)
 	{
-		std::complex<double> first_half = symbol_start[n];
-		std::complex<double> second_half = symbol_start[n + half_symbol];
+		std::complex<double> first_period = symbol_start[n];
+		std::complex<double> second_period = symbol_start[n + L_interp];
 
-		// P = Σ r(n) × r*(n + Nfft/2)
-		P += first_half * std::conj(second_half);
-		R += std::norm(second_half);
+		// P = Σ r(n) × r*(n + L)
+		P += first_period * std::conj(second_period);
+		R += std::norm(second_period);
 	}
 
 	// Fractional CFO in subcarrier spacings
-	// For frequency offset ε (in subcarrier spacings):
-	// r(n+N/2) = r(n) × exp(jπε), so P = Σ|r(n)|² × exp(-jπε)
-	// Therefore: ε = -arg(P) / π
-	double frac_cfo_subcarriers = -std::arg(P) / M_PI;
+	// Phase = 2π × ε × L / Nfft = 2π × ε / nIS
+	// Therefore: ε = -arg(P) × nIS / (2π)
+	// For nIS=2: ε = -arg(P)/π  (±1 subcarrier range)
+	// For nIS=4: ε = -2·arg(P)/π  (±2 subcarrier range)
+	double frac_cfo_subcarriers = -std::arg(P) * nIS / (2.0 * M_PI);
 
 	// Correlation quality check
 	double corr_mag = (R > 0.0) ? (std::abs(P) / R) : 0.0;
@@ -725,9 +733,9 @@ double cl_ofdm::frequency_sync_coarse(std::complex<double>* in, double subcarrie
 				if (received_bin < 0) received_bin += Nfft;
 				if (received_bin >= Nfft) received_bin -= Nfft;
 
-				// The ORIGINAL FFT bin (before any offset) determines even/odd
-				// Even original bins had data, odd original bins were null
-				bool should_have_data = ((fft_bin % 2) == 0);
+				// The ORIGINAL FFT bin (before any offset) determines active/null
+				// Every nIS-th bin has data, others are null
+				bool should_have_data = ((fft_bin % nIS) == 0);
 
 				double bin_energy = std::norm(fft_out[received_bin]);
 
@@ -1131,28 +1139,29 @@ void cl_preamble_configurator::configure()
 	int fft_zeros_tmp[Nfft];
 	int fft_zeros_depadded_tmp[Nc];
 
-	// Even-only subcarrier preamble: creates half-symbol periodicity (L=Nfft/2)
-	// for Schmidl-Cox detection, which works at any timing offset.
-	// Previously NB (Nc<=10) used all subcarriers for FFT-based detection,
-	// but that required GI-aligned search grid (only 5.9% hit rate — Bug #41).
-	// With even-only, NB gets 4 preamble subcarriers (bins 252,254,2,4).
-	// WB gets ~24 (Nc/2). Both use time_sync_preamble_halfsym().
-	bool all_preamble = false;
+	// Subcarrier spacing pattern determines time-domain repetition period:
+	//   Every-Kth bin → period = Nfft/K → K identical sections per symbol.
+	//
+	// WB (Nc>=50): every-4th → 4× repetition (period Nfft/4 = 64 samples).
+	//   ~12 preamble bins per symbol. Doubles Moose capture range (±2 subcarrier
+	//   spacings vs ±1) and enables auto-correlator pre-filter (future).
+	// NB (Nc<=10): every-2nd → 2× repetition (period Nfft/2 = 128 samples).
+	//   4 preamble bins per symbol — can't go sparser.
+	int subcarrier_step;
+	if(Nc >= 50)
+	{
+		subcarrier_step = 4;
+		nIdentical_sections = 4;
+	}
+	else
+	{
+		subcarrier_step = 2;
+		nIdentical_sections = 2;
+	}
 
 	for(int j=0;j<Nfft;j++)
 	{
-		if(all_preamble)
-		{
-			fft_zeros_tmp[j]=1;
-		}
-		else if(j%2==1)
-		{
-			fft_zeros_tmp[j]=0;
-		}
-		else
-		{
-			fft_zeros_tmp[j]=1;
-		}
+		fft_zeros_tmp[j] = (j % subcarrier_step == 0) ? 1 : 0;
 	}
 
 	for(int j=0;j<Nc/2;j++)
@@ -1898,12 +1907,13 @@ TimeSyncResult cl_ofdm::time_sync_preamble_with_metric(std::complex <double>*in,
 		corss_corr=0;
 		norm_a=0;
 		norm_b=0;
-		// GI + half-symbol correlation.
+		// GI + repetition-period correlation.
 		// GI: correlate cyclic prefix with end of FFT symbol (Ngi samples/symbol).
-		// Halfsym: even-only subcarrier preamble has period Nfft/2 in time domain,
-		// so first half of FFT window correlates with second half (Nfft/2 samples).
-		// Combined: 576 samples/symbol × 4 symbols = 2304 total — robust enough
-		// to reject false peaks from data symbols (which lack half-symbol periodicity).
+		// Repetition: preamble subcarrier pattern creates time-domain repetition
+		// with period L = Nfft/nIS (nIS=4 for WB every-4th, nIS=2 for NB every-2nd).
+		// Correlate adjacent L-sample sections within the FFT window.
+		int nIS = preamble_configurator.nIdentical_sections;
+		int L_interp = (this->Nfft / nIS) * interpolation_rate;
 		for(int l=0;l<preamble_configurator.Nsymb;l++)
 		{
 			a_c=data+l*(this->Ngi+this->Nfft)*interpolation_rate;
@@ -1920,18 +1930,24 @@ TimeSyncResult cl_ofdm::time_sync_preamble_with_metric(std::complex <double>*in,
 				norm_b+=b_c[m].imag()*b_c[m].imag();
 			}
 
-			a_c=data+l*(this->Ngi+this->Nfft)*interpolation_rate+this->Ngi*interpolation_rate;
-			b_c=data+l*(this->Ngi+this->Nfft)*interpolation_rate+(this->Ngi+this->Nfft/2)*interpolation_rate;
-
-			for(int m=0;m<(this->Nfft/2)*interpolation_rate;m++)
+			// Correlate all (nIS-1) adjacent pairs within the FFT window.
+			// For nIS=2: 1 pair of 128 samples = 128 (same as before).
+			// For nIS=4: 3 pairs of 64 samples = 192 (more robust).
+			for(int pair=0;pair<nIS-1;pair++)
 			{
-				corss_corr+=a_c[m].real()*b_c[m].real();
-				norm_a+=a_c[m].real()*a_c[m].real();
-				norm_b+=b_c[m].real()*b_c[m].real();
+				a_c=data+l*(this->Ngi+this->Nfft)*interpolation_rate+(this->Ngi)*interpolation_rate+pair*L_interp;
+				b_c=a_c+L_interp;
 
-				corss_corr+=a_c[m].imag()*b_c[m].imag();
-				norm_a+=a_c[m].imag()*a_c[m].imag();
-				norm_b+=b_c[m].imag()*b_c[m].imag();
+				for(int m=0;m<L_interp;m++)
+				{
+					corss_corr+=a_c[m].real()*b_c[m].real();
+					norm_a+=a_c[m].real()*a_c[m].real();
+					norm_b+=b_c[m].real()*b_c[m].real();
+
+					corss_corr+=a_c[m].imag()*b_c[m].imag();
+					norm_a+=a_c[m].imag()*a_c[m].imag();
+					norm_b+=b_c[m].imag()*b_c[m].imag();
+				}
 			}
 		}
 
@@ -1975,9 +1991,11 @@ TimeSyncResult cl_ofdm::time_sync_preamble_with_metric(std::complex <double>*in,
 TimeSyncResult cl_ofdm::time_sync_preamble_halfsym(std::complex<double>* in, int size, int interpolation_rate, int step)
 {
 	/*
-	 * Schmidl-Cox half-symbol preamble detection for wideband OFDM.
+	 * Schmidl-Cox preamble detection using time-domain repetition.
 	 *
-	 * Even-subcarrier preamble has period L = Nfft/2 in time domain:
+	 * Preamble subcarrier pattern creates period L = Nfft/nIS:
+	 *   nIS=4 (WB every-4th): L = Nfft/4
+	 *   nIS=2 (NB every-2nd): L = Nfft/2
 	 * r(d+m) = r(d+m+L) for all m within each symbol. Data symbols lack
 	 * this periodicity. Sliding L-sample windows give |P|²/R² ≈ 1.0 at
 	 * preamble, ≈ 0.0 at data, at ANY sample position (no GI alignment
@@ -1988,7 +2006,8 @@ TimeSyncResult cl_ofdm::time_sync_preamble_halfsym(std::complex<double>* in, int
 	 *   R = sum |r(d+m+L)|^2
 	 *   M = |P|^2 / R^2
 	 */
-	int L = (this->Nfft / 2) * interpolation_rate;
+	int nIS = preamble_configurator.nIdentical_sections;
+	int L = (this->Nfft / nIS) * interpolation_rate;
 	int Nofdm = (this->Ngi + this->Nfft) * interpolation_rate;
 	int nsym = preamble_configurator.Nsymb;
 	int pream_len = nsym * Nofdm;
@@ -3210,14 +3229,15 @@ int cl_ofdm::symbol_sync(std::complex <double>*in, int size, int interpolation_r
 		corss_corr_vals[i]=0;
 	}
 
+	int L_interp = (this->Nfft / preamble_configurator.nIdentical_sections) * interpolation_rate;
 	for(int i=0;i<Nsymb;i++)
 	{
 		a_c=in+i*(Nfft+Ngi)*interpolation_rate;
-		b_c=in+i*(Nfft+Ngi)*interpolation_rate+(Nfft/2)*interpolation_rate;
+		b_c=in+i*(Nfft+Ngi)*interpolation_rate+L_interp;
 		corss_corr=0;
 		norm_a=0;
 		norm_b=0;
-		for(int m=0;m<(this->Nfft/2)*interpolation_rate;m++)
+		for(int m=0;m<L_interp;m++)
 		{
 			corss_corr+=a_c[m].real()*b_c[m].real();
 			norm_a+=a_c[m].real()*a_c[m].real();
