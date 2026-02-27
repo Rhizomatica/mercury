@@ -85,6 +85,9 @@ cl_ofdm::~cl_ofdm()
 	this->deinit();
 }
 
+// Forward declaration — defined after butterfly variants below
+void init_simd_dispatch();
+
 void cl_ofdm::init(int Nfft, int Nc, int Nsymb, float gi)
 {
 	this->Nc=Nc;
@@ -119,8 +122,13 @@ void cl_ofdm::init()
 	preamble_configurator.init(this->Nfft, this->Nc,this->ofdm_preamble, this->start_shift);
 	pilot_configurator.init(this->Nfft, this->Nc,this->Nsymb,this->ofdm_frame, this->start_shift);
 
-	// Initialize optimized FFT tables
+	// Initialize optimized FFT tables + SIMD dispatch
 	init_fft_tables(this->Nfft);
+	static bool simd_initialized = false;
+	if (!simd_initialized) {
+		init_simd_dispatch();
+		simd_initialized = true;
+	}
 
 	// Pre-allocate shared Nfft work buffers (used by frequency_sync_coarse,
 	// time_sync_mfsk, detect_ack_pattern — never called concurrently)
@@ -195,7 +203,155 @@ void cl_ofdm::deinit()
 // - Precomputed twiddle factors (no sin/cos in hot path)
 // - Iterative algorithm (no recursion, no heap allocation)
 // - Bit-reversal permutation table
+// - Runtime SIMD dispatch: AVX2+FMA / SSE4.2 / default (SSE2)
 // ============================================================================
+
+// ---- SIMD-dispatched FFT butterfly (free functions for target attributes) ----
+
+typedef void (*fft_butterfly_fn)(std::complex<double>* v, int n,
+	const std::complex<double>* twiddle, const int* bit_rev);
+
+// Forward FFT butterfly — default (SSE2, all x86-64)
+__attribute__((target("default")))
+static void fft_butterfly_default(std::complex<double>* v, int n,
+	const std::complex<double>* twiddle, const int* bit_rev)
+{
+	for (int i = 0; i < n; i++)
+		if (i < bit_rev[i]) std::swap(v[i], v[bit_rev[i]]);
+	for (int size = 2; size <= n; size *= 2) {
+		int halfsize = size / 2;
+		int step = n / size;
+		for (int i = 0; i < n; i += size)
+			for (int j = 0; j < halfsize; j++) {
+				std::complex<double> w = twiddle[j * step];
+				std::complex<double> t = w * v[i + j + halfsize];
+				v[i + j + halfsize] = v[i + j] - t;
+				v[i + j] = v[i + j] + t;
+			}
+	}
+}
+
+// Forward FFT butterfly — SSE4.2
+__attribute__((target("sse4.2")))
+static void fft_butterfly_sse42(std::complex<double>* v, int n,
+	const std::complex<double>* twiddle, const int* bit_rev)
+{
+	for (int i = 0; i < n; i++)
+		if (i < bit_rev[i]) std::swap(v[i], v[bit_rev[i]]);
+	for (int size = 2; size <= n; size *= 2) {
+		int halfsize = size / 2;
+		int step = n / size;
+		for (int i = 0; i < n; i += size)
+			for (int j = 0; j < halfsize; j++) {
+				std::complex<double> w = twiddle[j * step];
+				std::complex<double> t = w * v[i + j + halfsize];
+				v[i + j + halfsize] = v[i + j] - t;
+				v[i + j] = v[i + j] + t;
+			}
+	}
+}
+
+// Forward FFT butterfly — AVX2+FMA
+__attribute__((target("avx2,fma")))
+static void fft_butterfly_avx2(std::complex<double>* v, int n,
+	const std::complex<double>* twiddle, const int* bit_rev)
+{
+	for (int i = 0; i < n; i++)
+		if (i < bit_rev[i]) std::swap(v[i], v[bit_rev[i]]);
+	for (int size = 2; size <= n; size *= 2) {
+		int halfsize = size / 2;
+		int step = n / size;
+		for (int i = 0; i < n; i += size)
+			for (int j = 0; j < halfsize; j++) {
+				std::complex<double> w = twiddle[j * step];
+				std::complex<double> t = w * v[i + j + halfsize];
+				v[i + j + halfsize] = v[i + j] - t;
+				v[i + j] = v[i + j] + t;
+			}
+	}
+}
+
+// Inverse FFT butterfly — default (SSE2)
+__attribute__((target("default")))
+static void ifft_butterfly_default(std::complex<double>* v, int n,
+	const std::complex<double>* twiddle, const int* bit_rev)
+{
+	for (int i = 0; i < n; i++)
+		if (i < bit_rev[i]) std::swap(v[i], v[bit_rev[i]]);
+	for (int size = 2; size <= n; size *= 2) {
+		int halfsize = size / 2;
+		int step = n / size;
+		for (int i = 0; i < n; i += size)
+			for (int j = 0; j < halfsize; j++) {
+				std::complex<double> w = std::conj(twiddle[j * step]);
+				std::complex<double> t = w * v[i + j + halfsize];
+				v[i + j + halfsize] = v[i + j] - t;
+				v[i + j] = v[i + j] + t;
+			}
+	}
+}
+
+// Inverse FFT butterfly — SSE4.2
+__attribute__((target("sse4.2")))
+static void ifft_butterfly_sse42(std::complex<double>* v, int n,
+	const std::complex<double>* twiddle, const int* bit_rev)
+{
+	for (int i = 0; i < n; i++)
+		if (i < bit_rev[i]) std::swap(v[i], v[bit_rev[i]]);
+	for (int size = 2; size <= n; size *= 2) {
+		int halfsize = size / 2;
+		int step = n / size;
+		for (int i = 0; i < n; i += size)
+			for (int j = 0; j < halfsize; j++) {
+				std::complex<double> w = std::conj(twiddle[j * step]);
+				std::complex<double> t = w * v[i + j + halfsize];
+				v[i + j + halfsize] = v[i + j] - t;
+				v[i + j] = v[i + j] + t;
+			}
+	}
+}
+
+// Inverse FFT butterfly — AVX2+FMA
+__attribute__((target("avx2,fma")))
+static void ifft_butterfly_avx2(std::complex<double>* v, int n,
+	const std::complex<double>* twiddle, const int* bit_rev)
+{
+	for (int i = 0; i < n; i++)
+		if (i < bit_rev[i]) std::swap(v[i], v[bit_rev[i]]);
+	for (int size = 2; size <= n; size *= 2) {
+		int halfsize = size / 2;
+		int step = n / size;
+		for (int i = 0; i < n; i += size)
+			for (int j = 0; j < halfsize; j++) {
+				std::complex<double> w = std::conj(twiddle[j * step]);
+				std::complex<double> t = w * v[i + j + halfsize];
+				v[i + j + halfsize] = v[i + j] - t;
+				v[i + j] = v[i + j] + t;
+			}
+	}
+}
+
+// Dispatch function pointers (default = SSE2 baseline, upgraded at init)
+static fft_butterfly_fn g_fft_butterfly = fft_butterfly_default;
+static fft_butterfly_fn g_ifft_butterfly = ifft_butterfly_default;
+
+void init_simd_dispatch()
+{
+	if (__builtin_cpu_supports("avx2") && __builtin_cpu_supports("fma")) {
+		g_fft_butterfly = fft_butterfly_avx2;
+		g_ifft_butterfly = ifft_butterfly_avx2;
+		printf("[SIMD] FFT using AVX2+FMA\n");
+	} else if (__builtin_cpu_supports("sse4.2")) {
+		g_fft_butterfly = fft_butterfly_sse42;
+		g_ifft_butterfly = ifft_butterfly_sse42;
+		printf("[SIMD] FFT using SSE4.2\n");
+	} else {
+		printf("[SIMD] FFT using default (SSE2)\n");
+	}
+	fflush(stdout);
+}
+
+// ---- End SIMD dispatch ----
 
 void cl_ofdm::init_fft_tables(int n)
 {
@@ -241,74 +397,24 @@ void cl_ofdm::deinit_fft_tables()
 	fft_twiddle_size = 0;
 }
 
-// Optimized iterative in-place FFT (Cooley-Tukey radix-2 DIT)
+// Optimized FFT — dispatches to SIMD-selected butterfly
 void cl_ofdm::_fft_fast(std::complex<double>* v, int n)
 {
-	// Use precomputed tables if available and size matches
 	if (fft_twiddle_size != n || fft_twiddle == NULL) {
-		// Fall back to original implementation for non-standard sizes
 		_fft(v, n);
 		return;
 	}
-
-	// Bit-reversal permutation
-	for (int i = 0; i < n; i++) {
-		if (i < fft_bit_rev[i]) {
-			std::swap(v[i], v[fft_bit_rev[i]]);
-		}
-	}
-
-	// Iterative FFT butterfly operations
-	for (int size = 2; size <= n; size *= 2) {
-		int halfsize = size / 2;
-		int step = n / size;
-
-		for (int i = 0; i < n; i += size) {
-			for (int j = 0; j < halfsize; j++) {
-				std::complex<double> w = fft_twiddle[j * step];
-				std::complex<double> t = w * v[i + j + halfsize];
-				v[i + j + halfsize] = v[i + j] - t;
-				v[i + j] = v[i + j] + t;
-			}
-		}
-	}
+	g_fft_butterfly(v, n, fft_twiddle, fft_bit_rev);
 }
 
-// Optimized iterative in-place IFFT
+// Optimized IFFT — dispatches to SIMD-selected butterfly (conjugate twiddle)
 void cl_ofdm::_ifft_fast(std::complex<double>* v, int n)
 {
-	// Use precomputed tables if available and size matches
 	if (fft_twiddle_size != n || fft_twiddle == NULL) {
-		// Fall back to original implementation
 		_ifft(v, n);
 		return;
 	}
-
-	// Bit-reversal permutation
-	for (int i = 0; i < n; i++) {
-		if (i < fft_bit_rev[i]) {
-			std::swap(v[i], v[fft_bit_rev[i]]);
-		}
-	}
-
-	// Iterative IFFT butterfly operations (conjugate twiddle factors)
-	for (int size = 2; size <= n; size *= 2) {
-		int halfsize = size / 2;
-		int step = n / size;
-
-		for (int i = 0; i < n; i += size) {
-			for (int j = 0; j < halfsize; j++) {
-				// Conjugate twiddle factor for IFFT
-				std::complex<double> w = std::conj(fft_twiddle[j * step]);
-				std::complex<double> t = w * v[i + j + halfsize];
-				v[i + j + halfsize] = v[i + j] - t;
-				v[i + j] = v[i + j] + t;
-			}
-		}
-	}
-
-	// No 1/N scaling - Mercury uses unnormalized IFFT convention
-	// (FFT already normalizes by 1/N in fft())
+	g_ifft_butterfly(v, n, fft_twiddle, fft_bit_rev);
 }
 
 void cl_ofdm::zero_padder(std::complex <double>* in, std::complex <double>* out)
@@ -2082,12 +2188,12 @@ TimeSyncResult cl_ofdm::time_sync_preamble_halfsym(std::complex<double>* in, int
 
 TimeSyncResult cl_ofdm::time_sync_preamble_fft(
 	std::complex<double>* baseband_interp, int buffer_size_interp,
-	int interpolation_rate, int preamble_nSymb, int search_step)
+	int interpolation_rate, int preamble_nSymb)
 {
 	/*
 	 * FFT-based preamble detection for narrowband OFDM.
 	 *
-	 * Coarse search at symbol-period steps. Per-bin coherent across symbols
+	 * Coarse search at GI-period steps. Per-bin coherent across symbols
 	 * (timing-dependent phase is constant per bin across symbols), non-coherent
 	 * across bins (avoids cross-bin phase spread from timing offset).
 	 *
@@ -2136,12 +2242,10 @@ TimeSyncResult cl_ofdm::time_sync_preamble_fft(
 	std::complex<double> fft_in[256];
 	std::complex<double> fft_out[256];
 
-	// Coarse search: step by GI period for sub-symbol alignment accuracy.
-	// search_step controls coarse grid resolution.
-	// GI-period steps (default) guarantee worst-case offset of ±gi_interp/2,
-	// needed for NB (only 5 preamble bins, sensitive to ISI).
-	// WB (25 preamble bins) tolerates ISI from symbol-period steps (5x cheaper).
-	if(search_step <= 0) search_step = gi_interp;
+	// GI-period steps guarantee worst-case ±gi_interp/2 offset from symbol
+	// boundary. Symbol-period steps are 17× coarser (1088 vs 64 at interp=4)
+	// and cause ISI when the FFT window extends past the 64-sample GI.
+	int search_step = gi_interp;
 	int n_coarse = (buffer_size_interp - preamble_interp) / search_step;
 	if(n_coarse < 0) n_coarse = 0;
 	if(n_coarse > 1023) n_coarse = 1023;  // safety cap for local arrays
