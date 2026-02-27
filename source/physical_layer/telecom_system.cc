@@ -941,7 +941,7 @@ st_receive_stats cl_telecom_system::receive_byte(double *data, int* out)
 			{
 				// Matched-filter detection: time-domain cross-correlation
 				// against FIR-round-tripped preamble template. Zero FFTs.
-				// GI-period coarse stride (single symbol) + sub-GI fine (all symbols).
+				// All-symbol coarse (GI stride) + sub-GI fine (all symbols).
 				TimeSyncResult matched = ofdm.time_sync_preamble_matched(
 					&data_container.baseband_data_interpolated[search_offset],
 					search_size, interp, data_container.preamble_nSymb);

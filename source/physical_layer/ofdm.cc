@@ -2584,9 +2584,11 @@ TimeSyncResult cl_ofdm::time_sync_preamble_matched(
 	int template_nsymb = ofdm_corr_template_nsymb;
 	if (template_nsymb > preamble_nSymb) template_nsymb = preamble_nSymb;
 
-	// ---- Coarse search: GI-period stride, first symbol only ----
-	// GI stride (64 interp samples) ensures preamble is within ±32 of
-	// a grid point. Fine search of ±gi_interp easily covers this.
+	// ---- Coarse search: GI-period stride, ALL symbols ----
+	// Uses all preamble symbols for discrimination. Single-symbol coarse
+	// was insufficient: data can randomly correlate with one template symbol
+	// at 0.4-0.5, causing the earliest-above-50% heuristic to pick false peaks.
+	// All-symbol coarse: ~962K MACs (NB) — still 4x cheaper than FFT approach.
 	int coarse_stride = gi_interp;
 	int n_coarse = (buffer_size_interp - preamble_interp) / coarse_stride;
 	if (n_coarse < 0) n_coarse = 0;
@@ -2601,30 +2603,40 @@ TimeSyncResult cl_ofdm::time_sync_preamble_matched(
 	{
 		int pos = ci * coarse_stride;
 
-		// Single-symbol correlation for speed (symbol 0 only)
-		int rx_offset = pos;
-		if (rx_offset + (Nofdm - 1) * interpolation_rate >= buffer_size_interp)
+		double total_metric = 0.0;
+		int valid_syms = 0;
+
+		for (int k = 0; k < template_nsymb; k++)
 		{
-			coarse_metrics[ci] = 0.0;
-			continue;
+			int tmpl_offset = k * Nofdm;
+			int rx_offset = pos + k * sym_interp;
+
+			if (rx_offset + (Nofdm - 1) * interpolation_rate >= buffer_size_interp)
+				break;
+
+			double corr_re = 0.0, corr_im = 0.0;
+			double e_rx = 0.0;
+
+			for (int n = 0; n < Nofdm; n++)
+			{
+				std::complex<double> rx = baseband_interp[rx_offset + n * interpolation_rate];
+				double t_re = ofdm_corr_template[tmpl_offset + n].real();
+				double t_im = ofdm_corr_template[tmpl_offset + n].imag();
+
+				corr_re += t_re * rx.real() + t_im * rx.imag();
+				corr_im += t_im * rx.real() - t_re * rx.imag();
+				e_rx += rx.real() * rx.real() + rx.imag() * rx.imag();
+			}
+
+			double denom = ofdm_corr_template_sym_energy[k] * e_rx;
+			if (denom > 1e-30)
+			{
+				total_metric += (corr_re * corr_re + corr_im * corr_im) / denom;
+				valid_syms++;
+			}
 		}
 
-		double corr_re = 0.0, corr_im = 0.0;
-		double e_rx = 0.0;
-
-		for (int n = 0; n < Nofdm; n++)
-		{
-			std::complex<double> rx = baseband_interp[rx_offset + n * interpolation_rate];
-			double t_re = ofdm_corr_template[n].real();
-			double t_im = ofdm_corr_template[n].imag();
-
-			corr_re += t_re * rx.real() + t_im * rx.imag();
-			corr_im += t_im * rx.real() - t_re * rx.imag();
-			e_rx += rx.real() * rx.real() + rx.imag() * rx.imag();
-		}
-
-		double denom = ofdm_corr_template_sym_energy[0] * e_rx;
-		double metric = (denom > 1e-30) ? (corr_re * corr_re + corr_im * corr_im) / denom : 0.0;
+		double metric = (valid_syms > 0) ? total_metric / valid_syms : 0.0;
 		coarse_metrics[ci] = metric;
 
 		if (metric > best_coarse_metric)
