@@ -155,7 +155,7 @@ public:
 	int time_sync_preamble(std::complex <double>*in, int size, int interpolation_rate, int location_to_return, int step, int nTrials_max);
 	TimeSyncResult time_sync_preamble_with_metric(std::complex <double>*in, int size, int interpolation_rate, int location_to_return, int step, int nTrials_max);
 	TimeSyncResult time_sync_preamble_halfsym(std::complex<double>* in, int size, int interpolation_rate, int step);
-	TimeSyncResult time_sync_preamble_fft(std::complex<double>* baseband_interp, int buffer_size_interp, int interpolation_rate, int preamble_nSymb);
+	TimeSyncResult time_sync_preamble_fft(std::complex<double>* baseband_interp, int buffer_size_interp, int interpolation_rate, int preamble_nSymb, int search_step = 0);
 	TimeSyncResult time_sync_preamble_fft_fine(std::complex<double>* baseband_interp, int buffer_size_interp, int interpolation_rate, int preamble_nSymb, int coarse_pos, int search_half_window);
 	int time_sync_mfsk(std::complex<double>* baseband_interp, int buffer_size_interp, int interpolation_rate, int preamble_nSymb, const int* preamble_tones, int mfsk_M, int nStreams, const int* stream_offsets, int search_start_symb = 0, double* out_metric = nullptr);
 	double detect_ack_pattern(std::complex<double>* baseband_interp, int buffer_size_interp, int interpolation_rate, int ack_nsymb, const int* ack_tones, int ack_pattern_len, int tone_hop_step, int mfsk_M, int nStreams, const int* stream_offsets, int* out_matched = nullptr);

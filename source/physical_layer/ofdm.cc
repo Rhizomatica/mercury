@@ -2082,7 +2082,7 @@ TimeSyncResult cl_ofdm::time_sync_preamble_halfsym(std::complex<double>* in, int
 
 TimeSyncResult cl_ofdm::time_sync_preamble_fft(
 	std::complex<double>* baseband_interp, int buffer_size_interp,
-	int interpolation_rate, int preamble_nSymb)
+	int interpolation_rate, int preamble_nSymb, int search_step)
 {
 	/*
 	 * FFT-based preamble detection for narrowband OFDM.
@@ -2137,19 +2137,18 @@ TimeSyncResult cl_ofdm::time_sync_preamble_fft(
 	std::complex<double> fft_out[256];
 
 	// Coarse search: step by GI period for sub-symbol alignment accuracy.
-	// Symbol-period steps (old approach) miss the preamble when the search
-	// grid is phase-misaligned: NB GI is only 64 interp samples, so even
-	// small phase errors cause ISI in the FFT window (metric ≈ 1.0 everywhere).
-	// GI-period steps guarantee worst-case offset of ±gi_interp/2 = ±32 samples,
-	// well within the guard interval. Cost: ~200 FFTs vs ~12 (under 2ms total).
-	int search_step = gi_interp;
+	// search_step controls coarse grid resolution.
+	// GI-period steps (default) guarantee worst-case offset of ±gi_interp/2,
+	// needed for NB (only 5 preamble bins, sensitive to ISI).
+	// WB (25 preamble bins) tolerates ISI from symbol-period steps (5x cheaper).
+	if(search_step <= 0) search_step = gi_interp;
 	int n_coarse = (buffer_size_interp - preamble_interp) / search_step;
 	if(n_coarse < 0) n_coarse = 0;
 	if(n_coarse > 1023) n_coarse = 1023;  // safety cap for local arrays
 
 	double best_coarse_metric = -1.0;
 	int best_coarse_pos = 0;
-	double* coarse_metrics = new double[n_coarse + 1];
+	double coarse_metrics[1024];  // stack alloc (n_coarse capped to 1023 above)
 
 	std::complex<double> bin_accum[256];
 
@@ -2232,8 +2231,6 @@ TimeSyncResult cl_ofdm::time_sync_preamble_fft(
 		}
 	}
 
-	delete[] coarse_metrics;
-
 	TimeSyncResult result;
 	result.delay = best_coarse_pos;
 	result.correlation = (energy > 0.0) ? best_coarse_metric / energy : 0.0;
@@ -2311,7 +2308,7 @@ TimeSyncResult cl_ofdm::time_sync_preamble_fft_fine(
 
 	double best_fine_metric = -1.0;
 	int best_fine_pos = coarse_pos;
-	double* fine_metrics = new double[n_fine + 1];
+	double fine_metrics[512];  // stack alloc (n_fine capped to 511 above)
 
 	for(int idx = 0; idx <= n_fine; idx++)
 	{
@@ -2364,8 +2361,6 @@ TimeSyncResult cl_ofdm::time_sync_preamble_fft_fine(
 			break;
 		}
 	}
-
-	delete[] fine_metrics;
 
 	// Normalize FFT metric (same as time_sync_preamble_fft)
 	double energy = 0.0;

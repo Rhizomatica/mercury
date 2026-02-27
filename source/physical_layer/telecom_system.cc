@@ -873,10 +873,9 @@ st_receive_stats cl_telecom_system::receive_byte(double *data, int* out)
 				// BATCH mode: narrow window around predicted position.
 				// ofdm_search_raw overshoots the actual preamble by ~3-6 symbols
 				// due to nUnder shifts and integer truncation. Look back 8 symbols.
-				// Forward look is 40 symbols to accommodate batch boundaries:
-				// after the last frame of a batch, the turnaround gap (~20-30
-				// symbols for ACK+processing) pushes the next preamble well past
-				// the predicted position.
+				// Forward look covers turnaround timing uncertainty.
+				// After ACK+processing the next preamble can land 30-40 symbols
+				// past ofdm_search_raw. 40 symbols keeps batch detection reliable.
 				int lookback = 8;
 				int forward_look = 40;
 				int start = ofdm_skip - lookback;
@@ -895,32 +894,41 @@ st_receive_stats cl_telecom_system::receive_byte(double *data, int* out)
 				int effective_start = (ofdm_skip > signal_start_symb) ? ofdm_skip : signal_start_symb;
 				search_offset = effective_start * sym_samples;
 				search_size = buf_interp - search_offset;
+
+				// NB INIT uses FFT coarse with GI-period steps (same as BATCH).
+				// Halfsym can't discriminate preamble from data (gives 0.88-0.99
+				// on ALL OFDM symbols), so FFT coarse is needed even for INIT.
 			}
 
-			// Stage 1: FFT coarse detection (GI-period steps).
-			TimeSyncResult fft_coarse = ofdm.time_sync_preamble_fft(
-				&data_container.baseband_data_interpolated[search_offset],
-				search_size, interp, data_container.preamble_nSymb);
-
-			if(fft_coarse.correlation < 2.0)
 			{
-				// No preamble found in search region.
-				receive_stats.delay = search_offset + fft_coarse.delay;
-				receive_stats.coarse_metric = fft_coarse.correlation / (double)data_container.preamble_nSymb;
-				// Batch miss: exit batch mode but preserve search_raw for
-				// anti-re-decode. INIT search uses ofdm_skip (from search_raw)
-				// as start position, preventing re-detection of old frames.
-				receive_stats.ofdm_batch_active = false;
-			}
-			else
-			{
-				// Stage 2+3: FFT fine search + GI-only refinement.
-				TimeSyncResult fine = ofdm.time_sync_preamble_fft_fine(
+				// FFT coarse detection at GI-period steps.
+				// GI steps guarantee worst-case ±gi/2 offset from symbol boundary.
+				// Symbol-period steps would be 17× coarser (1088 vs 64 at interp=4),
+				// causing ISI when FFT window extends past the 64-sample GI.
+				TimeSyncResult fft_coarse = ofdm.time_sync_preamble_fft(
 					&data_container.baseband_data_interpolated[search_offset],
-					search_size, interp, data_container.preamble_nSymb,
-					fft_coarse.delay, sym_samples);
-				receive_stats.delay = search_offset + fine.delay;
-				receive_stats.coarse_metric = fine.correlation / (double)data_container.preamble_nSymb;
+					search_size, interp, data_container.preamble_nSymb);
+
+				if(fft_coarse.correlation < 2.0)
+				{
+					// No preamble found in search region.
+					receive_stats.delay = search_offset + fft_coarse.delay;
+					receive_stats.coarse_metric = fft_coarse.correlation / (double)data_container.preamble_nSymb;
+					// Batch miss: exit batch mode but preserve search_raw for
+					// anti-re-decode. INIT search uses ofdm_skip (from search_raw)
+					// as start position, preventing re-detection of old frames.
+					receive_stats.ofdm_batch_active = false;
+				}
+				else
+				{
+					// Stage 2+3: FFT fine search + GI-only refinement.
+					TimeSyncResult fine = ofdm.time_sync_preamble_fft_fine(
+						&data_container.baseband_data_interpolated[search_offset],
+						search_size, interp, data_container.preamble_nSymb,
+						fft_coarse.delay, sym_samples);
+					receive_stats.delay = search_offset + fine.delay;
+					receive_stats.coarse_metric = fine.correlation / (double)data_container.preamble_nSymb;
+				}
 			}
 
 			if(g_verbose)
