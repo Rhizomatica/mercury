@@ -328,7 +328,7 @@ void test_b2f_passthrough()
 	PASS("Passthrough: LZHUF data unchanged when unroll disabled");
 }
 
-// ---- Test 6: Non-B2F data passthrough ----
+// ---- Test 6: Non-B2F data passthrough (byte-exact transparency) ----
 void test_non_b2f_passthrough()
 {
 	printf("\n--- Test 6: Non-B2F data passthrough ---\n");
@@ -340,17 +340,60 @@ void test_non_b2f_passthrough()
 	char out[65536];
 	int out_len;
 
-	// Normal data without B2F SID -> passthrough
+	// 6a: Normal \r-delimited data -> passthrough
 	const char* data = "Hello world\rSome TCP data\rMore stuff\r";
 	int data_len = (int)strlen(data);
 	out_len = handler.filter_tx(data, data_len, out, sizeof(out));
-	CHECK(out_len == data_len, "non-B2F output length should match");
-	CHECK(memcmp(out, data, data_len) == 0, "non-B2F data should be unchanged");
-	CHECK(!handler.is_b2f_session(), "B2F should not be detected");
-	printf("  Non-B2F data passed through unchanged (%d bytes)\n", out_len);
+	CHECK(out_len == data_len, "6a: non-B2F output length should match");
+	CHECK(memcmp(out, data, data_len) == 0, "6a: non-B2F data should be unchanged");
+	CHECK(!handler.is_b2f_session(), "6a: B2F should not be detected");
+	printf("  6a: \\r-delimited data passed through unchanged (%d bytes)\n", out_len);
+
+	// 6b: Data with \n characters must NOT be stripped
+	handler.reset(); handler.init();
+	const char* unix_data = "Line one\nLine two\nLine three\n";
+	int unix_len = (int)strlen(unix_data);
+	out_len = handler.filter_tx(unix_data, unix_len, out, sizeof(out));
+	CHECK(out_len == unix_len, "6b: \\n data length must be preserved");
+	CHECK(memcmp(out, unix_data, unix_len) == 0, "6b: \\n bytes must not be stripped");
+	printf("  6b: \\n characters preserved (%d bytes)\n", out_len);
+
+	// 6c: Mixed \r\n line endings
+	handler.reset(); handler.init();
+	const char* crlf_data = "Line one\r\nLine two\r\nLine three\r\n";
+	int crlf_len = (int)strlen(crlf_data);
+	out_len = handler.filter_tx(crlf_data, crlf_len, out, sizeof(out));
+	CHECK(out_len == crlf_len, "6c: \\r\\n length must be preserved");
+	CHECK(memcmp(out, crlf_data, crlf_len) == 0, "6c: \\r\\n bytes unchanged");
+	printf("  6c: \\r\\n line endings preserved (%d bytes)\n", out_len);
+
+	// 6d: Binary data (all 256 byte values) must be byte-exact
+	handler.reset(); handler.init();
+	char binary[1024];
+	for (int i = 0; i < 1024; i++) binary[i] = (char)(i & 0xFF);
+	out_len = handler.filter_tx(binary, 1024, out, sizeof(out));
+	CHECK(out_len == 1024, "6d: binary length must be preserved");
+	CHECK(memcmp(out, binary, 1024) == 0, "6d: binary data must be byte-exact");
+	printf("  6d: binary data (all 256 values) byte-exact (%d bytes)\n", out_len);
+
+	// 6e: Large chunk without any \r (should not buffer/stall)
+	handler.reset(); handler.init();
+	char no_cr[4096];
+	memset(no_cr, 'A', sizeof(no_cr));
+	out_len = handler.filter_tx(no_cr, sizeof(no_cr), out, sizeof(out));
+	CHECK(out_len == (int)sizeof(no_cr), "6e: no-\\r data length must be preserved");
+	CHECK(memcmp(out, no_cr, sizeof(no_cr)) == 0, "6e: no-\\r data byte-exact");
+	printf("  6e: 4KB chunk without \\r passed through (%d bytes)\n", out_len);
+
+	// 6f: Same tests on filter_rx
+	handler.reset(); handler.init();
+	out_len = handler.filter_rx(binary, 1024, out, sizeof(out));
+	CHECK(out_len == 1024, "6f: RX binary length must be preserved");
+	CHECK(memcmp(out, binary, 1024) == 0, "6f: RX binary data must be byte-exact");
+	printf("  6f: RX binary passthrough byte-exact (%d bytes)\n", out_len);
 
 	handler.deinit();
-	PASS("Non-B2F data passthrough");
+	PASS("Non-B2F data passthrough (byte-exact)");
 }
 
 // ---- Test 7: Payload + control in same chunk (edge case) ----

@@ -343,13 +343,22 @@ void cl_arq_controller::process_messages_acknowledging_control()
 
 			int frame_symb = telecom_system->data_container.preamble_nSymb
 				+ telecom_system->data_container.Nsymb;
-			// After ACK+flush, set ftr = frame_symb so we wait just long
-			// enough for one frame to accumulate. Quick anti-spin FAILs
-			// bridge any turnaround gap (~5ms each, empty buffer).
-			telecom_system->data_container.frames_to_read = frame_symb;
+			// OFDM: ftr = buffer_Nsymb so preamble lands in-bounds on first
+			// snapshot even when T_p is large (60-170 symbols for last
+			// turboshift step or SWITCH_ROLE). Position = T_p < upper_bound.
+			// MFSK: ftr = frame_symb + 20 for quick turnaround. MFSK uses
+			// different preamble detection — no beyond-bounds issue.
+			// buffer_Nsymb is 791-1225 for MFSK which causes ACK timeouts.
+			// See OFDM_BEYOND_BOUNDS.md §15.
+			int ftr_val;
+			if(is_ofdm_config(current_configuration))
+				ftr_val = telecom_system->data_container.buffer_Nsymb.load();
+			else
+				ftr_val = frame_symb + 20;
+			telecom_system->data_container.frames_to_read = ftr_val;
 			telecom_system->data_container.nUnder_processing_events = 0;
 
-			if(g_verbose) { printf("[ACK-CTRL] ftr=%d (frame_symb=%d)\n", frame_symb, frame_symb); fflush(stdout); }
+			if(g_verbose) { int buf_Nsymb = telecom_system->data_container.buffer_Nsymb.load(); printf("[ACK-CTRL] ftr=%d (buffer_Nsymb=%d frame_symb=%d ofdm=%d)\n", ftr_val, buf_Nsymb, frame_symb, is_ofdm_config(current_configuration)); fflush(stdout); }
 		}
 
 		char ack_command = messages_control.data[0];  // Save before potential NB switch
@@ -621,22 +630,19 @@ void cl_arq_controller::process_messages_acknowledging_data()
 		// ACK pattern uses dedicated ack_mfsk (M=16, nStreams=1) — no config switch needed
 		send_ack_pattern();
 
-		// Capture frame + turnaround gap: CMD processing overhead only (ACK detect
-		// ~100ms + guard 563ms + encode ~50ms + PTT ~300ms + margin ~1000ms ≈ 2000ms).
-		// CMD frame TX runs concurrently with our ftr countdown. (Revised from
-		// Bug #44 frame_symb + 4000ms — was 2x too long.)
-		// Must match buffer allocation (data_container.cc).
+		// send_ack_pattern() sets ftr = rx_frame + turnaround_symbols to cover
+		// the full turnaround gap (ACK TX → commander ACK detect → encode →
+		// batch TX → preamble arrives).  DO NOT override ftr here — the old
+		// ftr=rx_frame approach caused the preamble to always land 19 symbols
+		// past upper_bound (position=buf-33, upper=buf-52), producing the
+		// persistent 22 OK / 9 FAIL pattern on VB-Cable benchmarks.
 		telecom_system->set_mfsk_ctrl_mode(false);
-		{
-			// After ACK+flush, set ftr = rx_frame so we wait just long
-			// enough for one frame to accumulate. Quick anti-spin FAILs
-			// bridge any turnaround gap (~5ms each, empty buffer).
-			telecom_system->data_container.nUnder_processing_events = 0;
-			int rx_frame = telecom_system->data_container.preamble_nSymb
-				+ telecom_system->get_active_nsymb();
-			telecom_system->data_container.frames_to_read = rx_frame;
+		telecom_system->data_container.nUnder_processing_events = 0;
 
-			if(g_verbose) { printf("[ACK-DATA] ftr=%d (rx_frame=%d)\n", rx_frame, rx_frame); fflush(stdout); }
+		if(g_verbose) {
+			printf("[ACK-DATA] ftr=%d (from send_ack_pattern turnaround)\n",
+				telecom_system->data_container.frames_to_read.load());
+			fflush(stdout);
 		}
 
 		// BLOCK_END eliminated: flush data to application immediately after

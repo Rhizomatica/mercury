@@ -127,14 +127,15 @@ void cl_data_container::set_size(int nData, int Nc, int M, int Nfft , int Nofdm,
 
 	this->bit_energy_dispersal_sequence=CNEW(int, N_MAX, "dc.bit_energy_dispersal_seq");
 
-	// Buffer must accommodate: previous frame data still in buffer + turnaround
-	// gap + a full new frame. Buffer zeroing removed (rx_mute handles echo),
-	// so signal persists across anti-spin polls. 2000ms is sufficient; the
-	// anti-spin mechanism (ftr=8) polls every ~260ms to catch late arrivals.
+	// Buffer: frame + turnaround + frame + tail margin.
+	// Tail margin gives headroom for preambles that land close to buffer end.
 	double sym_time_ms = 1000.0 * Nofdm * frequency_interpolation_rate / 48000.0;
 	int frame_symb = preamble_nSymb + Nsymb;
 	int turnaround_symb = (int)ceil(2000.0 / sym_time_ms) + 4;
-	int min_buf = frame_symb + turnaround_symb + frame_symb;  // old frame + gap + new frame
+	int margin = frame_symb / 2;
+	if(margin < 20) margin = 20;
+	if(margin > 50) margin = 50;
+	int min_buf = frame_symb + turnaround_symb + frame_symb + margin;
 	if(min_buf < 32) min_buf = 32;
 	this->buffer_Nsymb = min_buf;
 

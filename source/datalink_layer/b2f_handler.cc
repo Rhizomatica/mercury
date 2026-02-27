@@ -629,6 +629,47 @@ int cl_b2f_handler::filter_tx(const char* in, int in_len, char* out, int out_cap
 		return copy;
 	}
 
+	// Pre-detection: pass all bytes through unchanged while shadow-scanning
+	// for B2F SID pattern.  The line parser strips \n and buffers until \r,
+	// which corrupts non-B2F data (benchmark, plain user data).
+	if (!b2f_detected)
+	{
+		int copy = in_len < out_cap ? in_len : out_cap;
+		memcpy(out, in, copy);
+
+		// Shadow-scan for SID: accumulate into line buffer without
+		// modifying the output stream
+		for (int i = 0; i < copy; i++)
+		{
+			char c = in[i];
+			if (c == '\r')
+			{
+				if (tx_line_pos > 0)
+				{
+					tx_line_buf[tx_line_pos] = '\0';
+					if (parse_sid_line(tx_line_buf, tx_line_pos))
+					{
+						b2f_detected = true;
+						state = B2F_SID_EXCHANGE;
+						printf("[B2F-TX] SID detected: %.*s\n", tx_line_pos, tx_line_buf);
+						fflush(stdout);
+					}
+					tx_line_pos = 0;
+				}
+			}
+			else if (c != '\n')
+			{
+				if (tx_line_pos < B2F_LINE_BUF_SIZE - 1)
+					tx_line_buf[tx_line_pos++] = c;
+				else
+					tx_line_pos = 0; // too long, not a SID
+			}
+		}
+
+		return copy;
+	}
+
+	// B2F active: full line parser with state machine
 	int out_pos = 0;
 	int in_pos = 0;
 
@@ -675,6 +716,44 @@ int cl_b2f_handler::filter_rx(const char* in, int in_len, char* out, int out_cap
 		return copy;
 	}
 
+	// Pre-detection: pass all bytes through unchanged while shadow-scanning
+	// for B2F SID pattern (same logic as filter_tx).
+	if (!b2f_detected)
+	{
+		int copy = in_len < out_cap ? in_len : out_cap;
+		memcpy(out, in, copy);
+
+		for (int i = 0; i < copy; i++)
+		{
+			char c = in[i];
+			if (c == '\r')
+			{
+				if (rx_line_pos > 0)
+				{
+					rx_line_buf[rx_line_pos] = '\0';
+					if (parse_sid_line(rx_line_buf, rx_line_pos))
+					{
+						b2f_detected = true;
+						state = B2F_SID_EXCHANGE;
+						printf("[B2F-RX] SID detected: %.*s\n", rx_line_pos, rx_line_buf);
+						fflush(stdout);
+					}
+					rx_line_pos = 0;
+				}
+			}
+			else if (c != '\n')
+			{
+				if (rx_line_pos < B2F_LINE_BUF_SIZE - 1)
+					rx_line_buf[rx_line_pos++] = c;
+				else
+					rx_line_pos = 0;
+			}
+		}
+
+		return copy;
+	}
+
+	// B2F active: full line parser with state machine
 	int out_pos = 0;
 	int in_pos = 0;
 

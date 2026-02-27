@@ -2240,6 +2240,205 @@ TimeSyncResult cl_ofdm::time_sync_preamble_fft(
 	return result;
 }
 
+TimeSyncResult cl_ofdm::time_sync_preamble_fft_fine(
+	std::complex<double>* baseband_interp, int buffer_size_interp,
+	int interpolation_rate, int preamble_nSymb,
+	int coarse_pos, int search_half_window)
+{
+	/*
+	 * FFT fine preamble detection + GI-only sample-level refinement.
+	 *
+	 * Stage 1: FFT search at half-GI steps in a narrow window around coarse_pos.
+	 *          Same metric as time_sync_preamble_fft() but finer grid.
+	 *          Resolves the "wrong symbol boundary" ambiguity that GI+halfsym
+	 *          Phase 2 cannot solve (GI+halfsym gives 0.88-0.99 on ALL symbols).
+	 *
+	 * Stage 2: GI-only correlation at step=1 within ±gi_interp/2 of the FFT
+	 *          fine position. Safe because FFT already confirmed the correct
+	 *          symbol — GI just fine-tunes within the guard interval.
+	 *
+	 * Returns: sample-accurate position with FFT metric (the discriminating one).
+	 */
+
+	int Nofdm = Nfft + Ngi;
+	int symbol_interp = Nofdm * interpolation_rate;
+	int preamble_interp = preamble_nSymb * symbol_interp;
+	int gi_interp = Ngi * interpolation_rate;
+
+	// --- Precompute preamble bin list (same as time_sync_preamble_fft) ---
+	int n_preamble_bins_per_sym[16] = {};
+	int preamble_bin_list[16][256];
+	int preamble_bin_fft[16][256];
+
+	for(int sym = 0; sym < preamble_nSymb && sym < 16; sym++)
+	{
+		int nb = 0;
+		for(int k = 0; k < Nc; k++)
+		{
+			if(ofdm_preamble[sym * Nc + k].type == PREAMBLE)
+			{
+				int fft_bin;
+				if(k < Nc / 2)
+					fft_bin = k + Nfft - Nc / 2;
+				else
+					fft_bin = k - Nc / 2 + start_shift;
+				preamble_bin_list[sym][nb] = k;
+				preamble_bin_fft[sym][nb] = fft_bin;
+				nb++;
+			}
+		}
+		n_preamble_bins_per_sym[sym] = nb;
+	}
+
+	std::complex<double> fft_in[256];
+	std::complex<double> fft_out[256];
+	std::complex<double> bin_accum[256];
+
+	// --- Stage 1: FFT fine search at half-GI steps ---
+	int fine_step = gi_interp / 2;
+	if(fine_step < 1) fine_step = 1;
+
+	int win_start = coarse_pos - search_half_window;
+	if(win_start < 0) win_start = 0;
+	int win_end = coarse_pos + search_half_window;
+	if(win_end + preamble_interp > buffer_size_interp)
+		win_end = buffer_size_interp - preamble_interp;
+	if(win_end < win_start) win_end = win_start;
+
+	int n_fine = (win_end - win_start) / fine_step;
+	if(n_fine < 0) n_fine = 0;
+	if(n_fine > 511) n_fine = 511;
+
+	double best_fine_metric = -1.0;
+	int best_fine_pos = coarse_pos;
+	double* fine_metrics = new double[n_fine + 1];
+
+	for(int idx = 0; idx <= n_fine; idx++)
+	{
+		int sample_start = win_start + idx * fine_step;
+
+		int max_bins = n_preamble_bins_per_sym[0];
+		for(int b = 0; b < max_bins; b++)
+			bin_accum[b] = std::complex<double>(0.0, 0.0);
+
+		for(int sym = 0; sym < preamble_nSymb; sym++)
+		{
+			int sym_start = sample_start + sym * symbol_interp;
+			int fft_start = sym_start + gi_interp;
+
+			if(fft_start + (Nfft - 1) * interpolation_rate >= buffer_size_interp)
+				break;
+
+			for(int k = 0; k < Nfft; k++)
+				fft_in[k] = baseband_interp[fft_start + k * interpolation_rate];
+
+			fft(fft_in, fft_out, Nfft);
+
+			for(int b = 0; b < n_preamble_bins_per_sym[sym]; b++)
+			{
+				int sc = preamble_bin_list[sym][b];
+				bin_accum[b] += fft_out[preamble_bin_fft[sym][b]] * std::conj(ofdm_preamble[sym * Nc + sc].value);
+			}
+		}
+
+		double metric = 0.0;
+		for(int b = 0; b < n_preamble_bins_per_sym[0]; b++)
+			metric += std::norm(bin_accum[b]);
+
+		fine_metrics[idx] = metric;
+		if(metric > best_fine_metric)
+		{
+			best_fine_metric = metric;
+			best_fine_pos = win_start + idx * fine_step;
+		}
+	}
+
+	// Earliest-above-50%-of-max selection (same as coarse)
+	double early_threshold = best_fine_metric * 0.5;
+	for(int idx = 0; idx <= n_fine; idx++)
+	{
+		if(fine_metrics[idx] >= early_threshold)
+		{
+			best_fine_metric = fine_metrics[idx];
+			best_fine_pos = win_start + idx * fine_step;
+			break;
+		}
+	}
+
+	delete[] fine_metrics;
+
+	// Normalize FFT metric (same as time_sync_preamble_fft)
+	double energy = 0.0;
+	{
+		int sample_start = best_fine_pos;
+		for(int sym = 0; sym < preamble_nSymb; sym++)
+		{
+			int sym_start = sample_start + sym * symbol_interp;
+			int fft_start = sym_start + gi_interp;
+
+			if(fft_start + (Nfft - 1) * interpolation_rate >= buffer_size_interp)
+				break;
+
+			for(int k = 0; k < Nfft; k++)
+				fft_in[k] = baseband_interp[fft_start + k * interpolation_rate];
+
+			fft(fft_in, fft_out, Nfft);
+
+			for(int b = 0; b < n_preamble_bins_per_sym[sym]; b++)
+				energy += std::norm(fft_out[preamble_bin_fft[sym][b]]);
+		}
+	}
+
+	double fft_metric = (energy > 0.0) ? best_fine_metric / energy : 0.0;
+
+	// --- Stage 2: GI-only refinement at step=1 within ±gi_interp/2 ---
+	// GI correlation: correlate cyclic prefix (first Ngi samples) with the
+	// matching end of the FFT window (last Ngi samples) across all preamble symbols.
+	int gi_win_start = best_fine_pos - gi_interp / 2;
+	if(gi_win_start < 0) gi_win_start = 0;
+	int gi_win_end = best_fine_pos + gi_interp / 2;
+	if(gi_win_end + preamble_interp > buffer_size_interp)
+		gi_win_end = buffer_size_interp - preamble_interp;
+	if(gi_win_end < gi_win_start) gi_win_end = gi_win_start;
+
+	double best_gi_metric = -1.0;
+	int best_gi_pos = best_fine_pos;
+
+	for(int pos = gi_win_start; pos <= gi_win_end; pos++)
+	{
+		double corr = 0.0, na = 0.0, nb = 0.0;
+		for(int sym = 0; sym < preamble_nSymb; sym++)
+		{
+			int base = pos + sym * symbol_interp;
+			std::complex<double>* a = &baseband_interp[base];
+			std::complex<double>* b = &baseband_interp[base + Nfft * interpolation_rate];
+			for(int m = 0; m < gi_interp; m++)
+			{
+				corr += a[m].real() * b[m].real() + a[m].imag() * b[m].imag();
+				na += a[m].real() * a[m].real() + a[m].imag() * a[m].imag();
+				nb += b[m].real() * b[m].real() + b[m].imag() * b[m].imag();
+			}
+		}
+
+		double gi_metric;
+		if(na < 0.001 || nb < 0.001)
+			gi_metric = -1.0;
+		else
+			gi_metric = corr / sqrt(na * nb);
+
+		if(gi_metric > best_gi_metric)
+		{
+			best_gi_metric = gi_metric;
+			best_gi_pos = pos;
+		}
+	}
+
+	TimeSyncResult result;
+	result.delay = best_gi_pos;
+	result.correlation = fft_metric;  // Return FFT metric (the discriminating one)
+	return result;
+}
+
 int cl_ofdm::time_sync_mfsk(std::complex<double>* baseband_interp, int buffer_size_interp,
                             int interpolation_rate, int preamble_nSymb,
                             const int* preamble_tones, int mfsk_M,

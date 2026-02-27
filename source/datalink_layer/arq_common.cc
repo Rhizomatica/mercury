@@ -1502,6 +1502,7 @@ void cl_arq_controller::update_status()
 					telecom_system->data_container.nUnder_processing_events = 0;
 					telecom_system->receive_stats.mfsk_search_raw = 0;
 					telecom_system->receive_stats.ofdm_search_raw = 0;
+					telecom_system->receive_stats.ofdm_batch_active = false;
 				}
 				else
 				{
@@ -2342,6 +2343,7 @@ void cl_arq_controller::send_batch()
 	telecom_system->receive_stats.delay_of_last_decoded_message = -1;
 	telecom_system->receive_stats.mfsk_search_raw = 0;
 	telecom_system->receive_stats.ofdm_search_raw = 0;
+	telecom_system->receive_stats.ofdm_batch_active = false;
 
 	ptt_on();
 
@@ -2557,11 +2559,15 @@ void cl_arq_controller::send_batch()
 
 
 
-	// After TX, set ftr to preamble length. The commander overrides this
-	// to ftr=4 when entering receive mode, so this is just a default.
+	// Commander: after batch TX, set small ftr for quick ACK polling.
+	// receive_ack_pattern() checks frames_to_read==0 before polling, so
+	// a large ftr would delay the first ACK check by seconds, causing the
+	// ACK pattern to scroll past the detection window.  preamble_nSymb (4)
+	// gives a ~90ms initial delay, then receive_ack_pattern sets ftr=2.
 	telecom_system->data_container.frames_to_read =
 		telecom_system->data_container.preamble_nSymb;
-	if(g_verbose) { printf("[TX-END] frames_to_read=%d (ctrl=%d)\n", telecom_system->data_container.frames_to_read.load(), telecom_system->mfsk_ctrl_mode ? 1 : 0); }
+	printf("[TX-END] frames_to_read=%d (ctrl=%d)\n", telecom_system->data_container.frames_to_read.load(), telecom_system->mfsk_ctrl_mode ? 1 : 0);
+	fflush(stdout);
 }
 
 // Transmit short ACK tone pattern instead of LDPC-encoded ACK frame
@@ -2670,17 +2676,24 @@ void cl_arq_controller::send_ack_pattern()
 	telecom_system->receive_stats.delay_of_last_decoded_message = -1;
 	telecom_system->receive_stats.mfsk_search_raw = 0;
 	telecom_system->receive_stats.ofdm_search_raw = 0;
-	// After flush, set ftr = rx_frame so we wait just long enough for one
-	// frame worth of audio to accumulate. If the other side hasn't started TX
-	// yet (turnaround delay), a quick anti-spin FAIL (~5ms, empty buffer) and
-	// retry bridges the gap. This avoids the ~2s turnaround_symb padding that
-	// upper_bound adds, which was a major bottleneck in WB turboshift.
+	telecom_system->receive_stats.ofdm_batch_active = false;
+	// Small capture window: rx_frame + 20 symbols.
+	// For non-turboshift (data ACK → next data batch): the commander's
+	// preamble arrives T_p ≈ 9 symbols after flush. K = (rx_frame+20) - 9
+	// = 63 ≥ frame_symb(52). In bounds.
+	// For turboshift (data ACK → SET_CONFIG → ctrl ACK → data):
+	// SET_CONFIG is received at the first snapshot (rx_frame+20)*sym_time
+	// ≈ 1.6s, much faster than upper_bound (3.9s). The ctrl ACK handler
+	// then overrides ftr to upper_bound for the data batch.
+	// See OFDM_BEYOND_BOUNDS.md §15.
 	{
-		int rx_frame = telecom_system->data_container.preamble_nSymb + telecom_system->get_active_nsymb();
-		telecom_system->data_container.frames_to_read = rx_frame;
+		int rx_frame = telecom_system->data_container.preamble_nSymb
+		             + telecom_system->data_container.Nsymb;
+		telecom_system->data_container.frames_to_read = rx_frame + 20;
 	}
 
-	if(g_verbose) { printf("[TX-ACK-PAT] Done, flushed capture buffer, nUnder reset, ftr=%d\n", telecom_system->data_container.frames_to_read.load()); fflush(stdout); }
+	printf("[TX-ACK-PAT] Done, flushed capture buffer, nUnder reset, ftr=%d\n", telecom_system->data_container.frames_to_read.load());
+	fflush(stdout);
 }
 
 // Transmit BREAK tone pattern — emergency "drop to ROBUST_0" signal
@@ -2773,6 +2786,7 @@ void cl_arq_controller::send_break_pattern()
 	telecom_system->receive_stats.delay_of_last_decoded_message = -1;
 	telecom_system->receive_stats.mfsk_search_raw = 0;
 	telecom_system->receive_stats.ofdm_search_raw = 0;
+	telecom_system->receive_stats.ofdm_batch_active = false;
 	{
 		int frame_symb = telecom_system->data_container.preamble_nSymb + telecom_system->data_container.Nsymb;
 		telecom_system->data_container.frames_to_read =
@@ -2873,6 +2887,7 @@ void cl_arq_controller::send_hail_pattern()
 	telecom_system->receive_stats.delay_of_last_decoded_message = -1;
 	telecom_system->receive_stats.mfsk_search_raw = 0;
 	telecom_system->receive_stats.ofdm_search_raw = 0;
+	telecom_system->receive_stats.ofdm_batch_active = false;
 	// Short ftr for fast HAIL response scanning (not a full LDPC frame).
 	// The listen loop polls receive_hail_pattern() which needs ftr==0.
 	telecom_system->data_container.frames_to_read = 2;
@@ -2917,6 +2932,7 @@ bool cl_arq_controller::receive_hail_pattern()
 			telecom_system->data_container.nUnder_processing_events = 0;
 			telecom_system->receive_stats.mfsk_search_raw = 0;
 			telecom_system->receive_stats.ofdm_search_raw = 0;
+			telecom_system->receive_stats.ofdm_batch_active = false;
 			MUTEX_UNLOCK(&capture_prep_mutex);
 			return true;
 		}
@@ -2971,14 +2987,15 @@ bool cl_arq_controller::receive_ack_pattern()
 		// NB: 24/32 (M=8) or 40/48 (M=4) — Sidelnikov sequences eliminate false alarms.
 		if(matched_count >= telecom_system->ack_mfsk.ack_match_threshold && metric >= 3.0)
 		{
-			// Detected — start capturing a full frame immediately so audio
-			// accumulates during guard delay and next preamble isn't missed.
+			// Detected — commander is about to TX next batch. Small ftr
+			// keeps polling responsive; audio accumulated here is destroyed
+			// by the pre-TX flush in send_batch() anyway.
 			MUTEX_LOCK(&capture_prep_mutex);
-			telecom_system->data_container.frames_to_read =
-				telecom_system->data_container.preamble_nSymb + telecom_system->data_container.Nsymb;
+			telecom_system->data_container.frames_to_read = 4;
 			telecom_system->data_container.nUnder_processing_events = 0;
 			telecom_system->receive_stats.mfsk_search_raw = 0;
 			telecom_system->receive_stats.ofdm_search_raw = 0;
+			telecom_system->receive_stats.ofdm_batch_active = false;
 			MUTEX_UNLOCK(&capture_prep_mutex);
 			return true;
 		}
@@ -3151,22 +3168,32 @@ void cl_arq_controller::receive()
 			}
 
 			// Minimum shift to keep next frame within extraction bounds.
-			// For NB configs (frame_symb ≈ buffer/2), the nUnder adjustment
-			// can push ftr negative→clamped to 0, leaving ofdm_search_raw
-			// at frame_end-1 which exceeds upper_bound (buffer-rx_frame).
-			// The next search then starts past the extraction limit, unable
-			// to fit a complete frame, causing cascading FAILs.
+			// Must account for the turnaround gap: after this decode, the
+			// other station receives the ACK then sends the next frame.
+			// The gap is ~2s (~93 symbols at 22.67ms/sym).  Without this,
+			// the next preamble lands past the buffer end because the ftr
+			// was too small to make room.
+			//
+			// Safety margin (+4): without it, the next batch frame lands
+			// exactly at upper_bound.  Any nUnder event (1-3 symbols of
+			// capture-thread latency) pushes the preamble 1 symbol past
+			// upper_bound → beyond-bounds FAIL → fast-forward → OK → repeat
+			// (alternating 50% FAIL rate on VB-Cable batch runs).
 			int upper_bound = telecom_system->data_container.buffer_Nsymb - rx_frame;
-			int min_ftr = end_of_current_message - upper_bound;
+			int min_ftr = end_of_current_message - upper_bound + 4;
 			if(min_ftr > 0 && telecom_system->data_container.frames_to_read < min_ftr)
 			{
 				telecom_system->data_container.frames_to_read = min_ftr;
 				ftr_clamped = 3;
 			}
 
-			if(telecom_system->data_container.frames_to_read > rx_frame)
+			// Upper clamp: limit shift to end_of_current_message (flush
+			// all decoded audio, keep only fresh buffer for next frame).
+			// Old clamp was rx_frame which is too small when the turnaround
+			// gap pushes the next preamble far into the buffer.
+			if(telecom_system->data_container.frames_to_read > end_of_current_message)
 			{
-				telecom_system->data_container.frames_to_read = rx_frame;
+				telecom_system->data_container.frames_to_read = end_of_current_message;
 				ftr_clamped = 2;
 			}
 
@@ -3202,6 +3229,7 @@ void cl_arq_controller::receive()
 					frame_end_symb - telecom_system->data_container.frames_to_read - 1;
 				if(telecom_system->receive_stats.ofdm_search_raw < 0)
 					telecom_system->receive_stats.ofdm_search_raw = 0;
+				telecom_system->receive_stats.ofdm_batch_active = true;
 
 				printf("[OFDM-SKIP] frame_end=%d ftr=%d search_raw=%d clamped=%d\n",
 					frame_end_symb, telecom_system->data_container.frames_to_read.load(),
@@ -3415,7 +3443,9 @@ void cl_arq_controller::receive()
 						{
 							// Beyond-bounds with meaningful metric: fast-forward
 							// to bring the preamble within bounds in one shift.
-							ftr = pream_symb - upper + 2;  // +2 margin
+							// +20 margin ensures the preamble lands well within
+							// bounds even with timing jitter.
+							ftr = pream_symb - upper + 20;
 						}
 						else
 						{
@@ -3427,7 +3457,10 @@ void cl_arq_controller::receive()
 						// anti-re-decode skip stays aligned with frame positions.
 						telecom_system->receive_stats.ofdm_search_raw -= ftr;
 						if(telecom_system->receive_stats.ofdm_search_raw < 0)
+						{
 							telecom_system->receive_stats.ofdm_search_raw = 0;
+							telecom_system->receive_stats.ofdm_batch_active = false;
+						}
 						printf("[RX-TIMING] OFDM beyond-bounds: pream=%d upper=%d metric=%.3f shift=%d search_raw=%d\n",
 							pream_symb, upper,
 							telecom_system->receive_stats.coarse_metric,
@@ -3435,7 +3468,8 @@ void cl_arq_controller::receive()
 							telecom_system->receive_stats.ofdm_search_raw);
 						fflush(stdout);
 					}
-					else if(telecom_system->receive_stats.ofdm_search_raw > 0)
+					else if(telecom_system->receive_stats.ofdm_search_raw > 0
+						&& telecom_system->receive_stats.ofdm_batch_active)
 					{
 						// In-bounds FAIL with batch search active. Use minimal shift
 						// and track the buffer movement to avoid skipping the real
@@ -3445,7 +3479,28 @@ void cl_arq_controller::receive()
 						ftr = 2;
 						telecom_system->receive_stats.ofdm_search_raw -= ftr;
 						if(telecom_system->receive_stats.ofdm_search_raw < 0)
+						{
 							telecom_system->receive_stats.ofdm_search_raw = 0;
+							telecom_system->receive_stats.ofdm_batch_active = false;
+						}
+					}
+					else if(telecom_system->receive_stats.coarse_metric < 0.5)
+					{
+						// No preamble (metric < 0.5 = FFT correlation < 2.0).
+						// Shift by a full frame to flush stale audio faster.
+						// Covers batch-miss → INIT transition and turnaround gaps.
+						ftr = frame_symb;
+						// Keep search_raw aligned with buffer shift (same as
+						// beyond-bounds and batch-hit branches).  Without this,
+						// the INIT search after a batch-miss starts too high
+						// in the shifted buffer, finding stale batch data that
+						// gives FFT metric 0.85 beyond upper_bound.
+						telecom_system->receive_stats.ofdm_search_raw -= ftr;
+						if(telecom_system->receive_stats.ofdm_search_raw < 0)
+						{
+							telecom_system->receive_stats.ofdm_search_raw = 0;
+							telecom_system->receive_stats.ofdm_batch_active = false;
+						}
 					}
 				}
 
@@ -3458,7 +3513,10 @@ void cl_arq_controller::receive()
 					int nUnder_snap = telecom_system->data_container.nUnder_processing_events.load();
 					telecom_system->receive_stats.ofdm_search_raw -= nUnder_snap;
 					if(telecom_system->receive_stats.ofdm_search_raw < 0)
+					{
 						telecom_system->receive_stats.ofdm_search_raw = 0;
+						telecom_system->receive_stats.ofdm_batch_active = false;
+					}
 				}
 				telecom_system->data_container.frames_to_read = ftr;
 				telecom_system->data_container.nUnder_processing_events = 0;
@@ -3517,7 +3575,10 @@ void cl_arq_controller::receive()
 				int buf_nsymb = telecom_system->data_container.buffer_Nsymb.load();
 				telecom_system->receive_stats.ofdm_search_raw = buf_nsymb - rx_frame;
 				if(telecom_system->receive_stats.ofdm_search_raw < 0)
+				{
 					telecom_system->receive_stats.ofdm_search_raw = 0;
+					telecom_system->receive_stats.ofdm_batch_active = false;
+				}
 			}
 			else if(telecom_system->M != MOD_MFSK && received_message_stats.delay >= 0)
 			{

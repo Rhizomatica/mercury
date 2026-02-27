@@ -1751,17 +1751,18 @@ void cl_arq_controller::process_control_commander()
 					MUTEX_UNLOCK(&capture_prep_mutex);
 				}
 				circular_buf_reset(capture_buffer);
-				// Set ftr = rx_frame so we wait just long enough for one frame
-				// to accumulate after the flush. Quick anti-spin FAILs bridge
-				// any turnaround gap (~5ms each, empty buffer).
-				{
-					int rx_frame = telecom_system->data_container.preamble_nSymb
-						+ telecom_system->get_active_nsymb();
-					telecom_system->data_container.frames_to_read = rx_frame;
-				}
+				// Set ftr = buffer_Nsymb so the first snapshot catches the
+				// preamble in-bounds. SWITCH_ROLE transitions have large T_p
+				// (~120-170 symbols): new commander processes role switch,
+				// fills batch, ptt_on, encode, TX. With ftr=rx_frame, rapid
+				// ftr=8 FAIL snapshots scroll the preamble past upper_bound.
+				// See OFDM_BEYOND_BOUNDS.md §15.
+				telecom_system->data_container.frames_to_read =
+					telecom_system->data_container.buffer_Nsymb.load();
 				telecom_system->data_container.nUnder_processing_events = 0;
 				telecom_system->receive_stats.mfsk_search_raw = 0;
 				telecom_system->receive_stats.ofdm_search_raw = 0;
+				telecom_system->receive_stats.ofdm_batch_active = false;
 			}
 			else if (messages_control.data[0]==SET_CONFIG)
 			{
