@@ -3653,7 +3653,20 @@ void cl_arq_controller::receive()
 							}
 						}
 					}
-					// Default ftr=8 applies for other cases (no preamble,
+					else if(received_message_stats.frame_data_missing)
+				{
+					// Frame incomplete: preamble detected but data symbols
+					// are silence (still arriving in audio pipeline). Large
+					// shift to flush the partial frame and capture fresh audio.
+					ftr = pream_symb;
+					if(ftr < frame_symb) ftr = frame_symb;
+					telecom_system->receive_stats.ofdm_search_raw = 0;
+					printf("[FTR-INCOMPLETE] pream=%d ftr=%d metric=%.3f\n",
+						pream_symb, ftr,
+						telecom_system->receive_stats.coarse_metric);
+					fflush(stdout);
+				}
+				// Default ftr=8 applies for other cases (no preamble,
 				// low metric without batch mode, etc.)
 				}
 

@@ -94,6 +94,7 @@ struct st_receive_stats{
 	int ofdm_search_raw;  // OFDM anti-re-decode: base search position (symbol units, pre-nUnder adjustment)
 	bool ofdm_batch_active;  // true when consecutive OFDM frames expected (narrow BATCH window)
 	int frame_overflow_symbols;  // >0: MFSK frame extends beyond captured audio by this many symbols
+	bool frame_data_missing;  // true: preamble found but data symbols are silence (incomplete capture)
 	double coarse_metric;  // Schmidl-Cox correlation metric from coarse time_sync (diagnostic)
 	double ofdm_drift_per_frame;  // IIR-filtered prediction error (interp samples) for BATCH verify
 };

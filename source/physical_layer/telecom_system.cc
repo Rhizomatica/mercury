@@ -771,6 +771,7 @@ st_receive_stats cl_telecom_system::receive_byte(double *data, int* out)
 	double freq_offset_measured=0;
 	receive_stats.message_decoded=NO;
 	receive_stats.frame_overflow_symbols=0;
+	receive_stats.frame_data_missing=false;
 	receive_stats.sync_trials=0;
 
 	// Timing breakdown
@@ -1203,6 +1204,7 @@ st_receive_stats cl_telecom_system::receive_byte(double *data, int* out)
 		} // else: recovery with anti-re-decode scan
 	}
 
+	int skip_h_count = 0;
 	if(pream_symb_loc > lower_bound && pream_symb_loc <= upper_bound)
 	{
 		// Signal energy gate: reject false preamble detections in silence.
@@ -1331,6 +1333,36 @@ st_receive_stats cl_telecom_system::receive_byte(double *data, int* out)
 			}
 		}
 
+		// Data energy gate (after all recovery paths): preamble has energy
+		// but data symbols may be silence — frame partially captured, with
+		// preamble at trailing edge and data still arriving in the pipeline.
+		// Runs after silence-skip recovery so the final pream position is used.
+		if(energy_ok && M != MOD_MFSK)
+		{
+			int sym_samples_de = data_container.Nofdm * frequency_interpolation_rate;
+			int buf_samples_de = data_container.Nofdm * data_container.buffer_Nsymb * frequency_interpolation_rate;
+			int data_offset = receive_stats.delay + data_container.preamble_nSymb * sym_samples_de;
+			double data_e = 0.0;
+			int d_count = 0;
+			int check_len = 4 * sym_samples_de; // first 4 data symbols
+			for(int i = 0; i < check_len && (data_offset + i) < buf_samples_de; i++)
+			{
+				double re = data_container.baseband_data_interpolated[data_offset + i].real();
+				double im = data_container.baseband_data_interpolated[data_offset + i].imag();
+				data_e += re*re + im*im;
+				d_count++;
+			}
+			data_e = (d_count > 0) ? data_e / d_count : 0.0;
+			if(data_e < 0.001)
+			{
+				printf("[OFDM-SYNC] data_energy=%.2e at pream=%d delay=%d — frame incomplete, skipping decode\n",
+					data_e, pream_symb_loc, receive_stats.delay);
+				fflush(stdout);
+				energy_ok = false;
+				receive_stats.frame_data_missing = true;
+			}
+		}
+
 		if(energy_ok)
 		{
 		if(M != MOD_MFSK && g_verbose)
@@ -1341,7 +1373,8 @@ st_receive_stats cl_telecom_system::receive_byte(double *data, int* out)
 			fflush(stdout);
 		}
 
-		int skip_h_count = 0;
+		skip_h_count = 0;
+		double mean_H = -1.0;
 		bool skip_h_recovery_attempted = false;
 skip_h_retry_point:
 		while (receive_stats.sync_trials<=time_sync_trials_max)
@@ -1689,7 +1722,7 @@ skip_h_retry_point:
 					ofdm.LS_channel_estimator(data_container.ofdm_symbol_demodulated_data);
 				}
 
-				double mean_H = -1.0;
+				mean_H = -1.0;
 				int h_count = 0;
 				{
 					double h_sum = 0;
@@ -1965,18 +1998,37 @@ skip_h_retry_point:
 				}
 			}
 		}
-		} // end if(energy_ok)
 
-		// Diagnostic: high-metric decode failure analysis
-		if(receive_stats.message_decoded != YES && receive_stats.coarse_metric >= 0.9)
+		// Diagnostic: decode failure analysis
+		if(receive_stats.message_decoded != YES)
 		{
 			const char* fail_type = (skip_h_count > 0) ? "SKIP-H" : "LDPC";
-			printf("[FAIL-DIAG] %s: metric=%.3f pream_sym=%d skip_h=%d/%d delay=%d signal_start=%d\n",
+			// Measure energy at preamble and data positions
+			int sym_samp = data_container.Nofdm * frequency_interpolation_rate;
+			int buf_samp = data_container.Nofdm * data_container.buffer_Nsymb * frequency_interpolation_rate;
+			double pream_energy = 0.0, data_energy = 0.0;
+			int pream_start = pream_symb_loc * sym_samp;
+			int data_start = (pream_symb_loc + data_container.preamble_nSymb) * sym_samp;
+			for(int i = 0; i < sym_samp && (pream_start + i) < buf_samp; i++) {
+				double re = data_container.baseband_data_interpolated[pream_start + i].real();
+				double im = data_container.baseband_data_interpolated[pream_start + i].imag();
+				pream_energy += re*re + im*im;
+			}
+			pream_energy /= sym_samp;
+			for(int i = 0; i < 4*sym_samp && (data_start + i) < buf_samp; i++) {
+				double re = data_container.baseband_data_interpolated[data_start + i].real();
+				double im = data_container.baseband_data_interpolated[data_start + i].imag();
+				data_energy += re*re + im*im;
+			}
+			data_energy /= (4*sym_samp);
+			printf("[FAIL-DIAG] %s: metric=%.3f pream_sym=%d skip_h=%d/%d delay=%d mean_H=%.4f pE=%.2e dE=%.2e\n",
 				fail_type, receive_stats.coarse_metric, pream_symb_loc,
 				skip_h_count, time_sync_trials_max + 1,
-				receive_stats.delay, signal_start_symb);
+				receive_stats.delay, mean_H, pream_energy, data_energy);
 			fflush(stdout);
 		}
+
+		} // end if(energy_ok)
 
 	}
 
