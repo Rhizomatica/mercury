@@ -235,21 +235,25 @@ void cl_arq_controller::process_messages_rx_data_control()
 				add_message_rx_data(messages_rx_buffer.type, messages_rx_buffer.id, messages_rx_buffer.length, messages_rx_buffer.data);
 				batch_rx_frame_count++;
 
-				// Note: early completion removed — commander sends all
-				// data_batch_size frames (including padding). Sending ACK
-				// before all frames finish TX causes audio collision on
-				// VB-Cable and half-duplex channels. Timer handles completion.
-
 				{
-					// Add one msg_time margin for FAIL recovery: after each
-					// decode, SC may find false peaks in the old frame body
-					// (1-2 FAIL iterations × ~300ms each). Without margin,
-					// the last frame's timeout is ~400ms and a single FAIL
-					// causes the timer to fire before the real frame is found.
-					int rx_timeout = (data_batch_size-messages_rx_buffer.sequence_number-1)
-						*message_transmission_time_ms
-						+time_left_to_send_last_frame+ptt_on_delay_ms
-						+message_transmission_time_ms;
+					int rx_timeout;
+					if(batch_rx_frame_count >= data_batch_size)
+					{
+						// All frames in batch decoded (count-based, not seq-based).
+						// send_ack_pattern()'s OFDM wait prevents TX collision.
+						// Note: seq order may differ from decode order when
+						// beyond-bounds recovery skips then recovers frames.
+						rx_timeout = ptt_on_delay_ms;
+					}
+					else
+					{
+						// More frames expected.  Add one msg_time margin for
+						// FAIL recovery (false peaks in old frame body).
+						int remaining = data_batch_size - messages_rx_buffer.sequence_number - 1;
+						rx_timeout = remaining * message_transmission_time_ms
+							+ time_left_to_send_last_frame + ptt_on_delay_ms
+							+ message_transmission_time_ms;
+					}
 					set_receiving_timeout(rx_timeout);
 				}
 				receiving_timer.start();
@@ -343,22 +347,32 @@ void cl_arq_controller::process_messages_acknowledging_control()
 
 			int frame_symb = telecom_system->data_container.preamble_nSymb
 				+ telecom_system->data_container.Nsymb;
-			// OFDM: ftr = buffer_Nsymb so preamble lands in-bounds on first
-			// snapshot even when T_p is large (60-170 symbols for last
-			// turboshift step or SWITCH_ROLE). Position = T_p < upper_bound.
-			// MFSK: ftr = frame_symb + 20 for quick turnaround. MFSK uses
-			// different preamble detection — no beyond-bounds issue.
-			// buffer_Nsymb is 791-1225 for MFSK which causes ACK timeouts.
-			// See OFDM_BEYOND_BOUNDS.md §15.
+			// OFDM ftr depends on command type:
+			//   SWITCH_ROLE/SWITCH_BANDWIDTH: T_p = 118-167 symbols
+			//     (new commander processes role switch + fills batch).
+			//     Needs full buffer_Nsymb. See OFDM_BEYOND_BOUNDS.md §18.
+			//   SET_CONFIG and others: T_p ≈ 30-44 symbols
+			//     (commander detects ACK + guard + ptt_on).
+			//     upper_bound = buffer_Nsymb - frame_symb suffices.
+			// MFSK: frame_symb + 20 (no beyond-bounds issue, and
+			//   buffer_Nsymb is 791-1225 which causes ACK timeouts).
 			int ftr_val;
 			if(is_ofdm_config(current_configuration))
-				ftr_val = telecom_system->data_container.buffer_Nsymb.load();
+			{
+				char cmd = messages_control.data[0];
+				int buf_nsymb = telecom_system->data_container.buffer_Nsymb.load();
+				if(cmd == SWITCH_ROLE || cmd == SWITCH_BANDWIDTH)
+					ftr_val = buf_nsymb;
+				else
+					ftr_val = buf_nsymb - frame_symb;  // = upper_bound
+			}
 			else
 				ftr_val = frame_symb + 20;
 			telecom_system->data_container.frames_to_read = ftr_val;
 			telecom_system->data_container.nUnder_processing_events = 0;
 
-			if(g_verbose) { int buf_Nsymb = telecom_system->data_container.buffer_Nsymb.load(); printf("[ACK-CTRL] ftr=%d (buffer_Nsymb=%d frame_symb=%d ofdm=%d)\n", ftr_val, buf_Nsymb, frame_symb, is_ofdm_config(current_configuration)); fflush(stdout); }
+			// === DIAG: gearshift ftr trace (remove after debug) ===
+			{ int buf_Nsymb = telecom_system->data_container.buffer_Nsymb.load(); printf("[FTR-GEAR] CONFIG_%d ftr=%d (buffer_Nsymb=%d frame_symb=%d ofdm=%d)\n", current_configuration, ftr_val, buf_Nsymb, frame_symb, is_ofdm_config(current_configuration)); fflush(stdout); }
 		}
 
 		char ack_command = messages_control.data[0];  // Save before potential NB switch
@@ -385,6 +399,21 @@ void cl_arq_controller::process_messages_acknowledging_control()
 			fflush(stdout);
 			wb_upgrade_pending = false;
 			switch_narrowband_mode(NO);
+			// After WB config loads, the NB ftr=264 is still active but the
+			// WB buffer is only 223 symbols. The leftover NB ftr causes the
+			// first WB scan to happen after 264 symbols of total capture,
+			// by which time the commander's preamble has scrolled out of the
+			// smaller WB buffer. Reset ftr to the WB-appropriate value so
+			// the first WB scan catches the preamble with margin.
+			{
+				int rx_frame = telecom_system->data_container.preamble_nSymb
+				             + telecom_system->data_container.Nsymb;
+				telecom_system->data_container.frames_to_read = rx_frame + 40;
+				telecom_system->data_container.nUnder_processing_events = 0;
+				printf("[BW-NEG] WB ftr reset to %d\n",
+					telecom_system->data_container.frames_to_read.load());
+				fflush(stdout);
+			}
 		}
 
 		if (ack_command==SWITCH_ROLE)
@@ -582,6 +611,14 @@ void cl_arq_controller::process_messages_acknowledging_data()
 				expected = (total_compressed + mf - 1) / mf;
 				if(expected > data_batch_size) expected = data_batch_size;
 				if(expected < 1) expected = 1;
+			}
+
+			// Diagnostic: show which sequence numbers were received
+			{
+				printf("[ACK-GATE-DIAG] rx=%d/%d exp=%d seqs:", rx_received, data_batch_size, expected);
+				for(int i = 0; i < data_batch_size; i++)
+					if(messages_rx[i].status == RECEIVED) printf(" %d", i);
+				printf("\n"); fflush(stdout);
 			}
 
 			if(data_batch_size > 1 && rx_received < expected)

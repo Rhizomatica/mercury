@@ -112,10 +112,11 @@ def config_max_bps(config_id, is_nb):
 
 def build_config_extra_args(is_nb, signal_dbfs):
     """Build Mercury CLI args for a specific config's NB/WB mode and cable level."""
-    extra = ["-Q", "0"]  # Disable NB auto-negotiation probing (both sides same mode)
     if is_nb:
+        extra = ["-Q", "0"]      # Disable NB probing (already NB)
         extra += ["-M", "nb"]    # Force nb_only mode (stays NB, no WB upgrade)
     else:
+        extra = []               # No -Q 0: let NB→WB negotiation work properly
         extra += ["-M", "auto"]  # Auto mode: starts NB, negotiates WB upgrade
     native_dbfs = (NoiseInjector.DEFAULT_SIGNAL_DBFS_NB if is_nb
                    else NoiseInjector.DEFAULT_SIGNAL_DBFS)
@@ -1659,7 +1660,11 @@ def run_sweep(args):
                                         or 'ACK-RX' in l or 'CMD-RX' in l or 'CFG]' in l
                                         or 'PHY]' in l or 'recv_timeout' in l
                                         or 'ACK-DET' in l or 'ACK-SEND' in l
-                                        or 'ACK-DIAG' in l or 'ACK-WINDOW' in l]
+                                        or 'ACK-DIAG' in l or 'ACK-WINDOW' in l
+                                        or 'MF-BRUTE' in l or 'TMPL-PREEQ' in l
+                                        or 'TX-PREEQ' in l or 'CMD-TX' in l
+                                        or 'FTR-FAIL' in l or 'FTR-OK' in l
+                                        or 'FTR-GEAR' in l]
                         # Also find ACK-DIAG lines separately (they appear early)
                         diag_lines = [l for l in lines if 'ACK-DIAG' in l]
                         if diag_lines:
@@ -1667,8 +1672,8 @@ def run_sweep(args):
                             for dl in diag_lines[:30]:
                                 print(f"    {dl.rstrip()}")
                         if decode_lines:
-                            print(f"  [DIAG-{role}] ({len(decode_lines)} key lines, showing last 60):")
-                            for dl in decode_lines[-60:]:
+                            print(f"  [DIAG-{role}] ({len(decode_lines)} key lines, showing last 200):")
+                            for dl in decode_lines[-200:]:
                                 print(f"    {dl.rstrip()}")
                         else:
                             print(f"  [DIAG-{role}] No key diagnostic lines in {len(lines)} total lines")

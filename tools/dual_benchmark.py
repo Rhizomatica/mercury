@@ -102,17 +102,14 @@ def run_single_test(mercury_bin, config, bandwidth, data_type, text_data,
 
     # Build command flags
     robust_flag = ["-R"] if is_robust else []
-    nb_flags = ["-M", "nb", "-G", "8.3"] if is_nb else ["-Q", "0"]
+    nb_flags = ["-M", "nb", "-G", "8.3", "-Q", "0"] if is_nb else ["-M", "auto", "-Q", "0"]
 
     # Start responder
     rsp_cmd = [
         mercury_bin, "-m", "ARQ", "-s", str(config),
         *robust_flag, *nb_flags,
         "-p", str(RSP_PORT), "-i", VB_IN, "-o", VB_OUT, "-x", "wasapi", "-n",
-        "-Q", "0"
     ]
-    # Deduplicate -Q flags (nb_flags may already have -Q 0 for WB)
-    rsp_cmd = _dedup_flag(rsp_cmd, "-Q")
 
     print(f"  RSP: {' '.join(rsp_cmd)}")
     rsp = subprocess.Popen(rsp_cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
@@ -125,9 +122,7 @@ def run_single_test(mercury_bin, config, bandwidth, data_type, text_data,
         mercury_bin, "-m", "ARQ", "-s", str(config),
         *robust_flag, *nb_flags,
         "-p", str(CMD_PORT), "-i", VB_IN, "-o", VB_OUT, "-x", "wasapi", "-n",
-        "-Q", "0"
     ]
-    cmd_cmd = _dedup_flag(cmd_cmd, "-Q")
 
     print(f"  CMD: {' '.join(cmd_cmd)}")
     cmd = subprocess.Popen(cmd_cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
@@ -305,6 +300,26 @@ def run_single_test(mercury_bin, config, bandwidth, data_type, text_data,
                         if "[RX-DECODE" in l and ("FAIL:" in l or "NO-PREAMBLE" in l)]
         result["ok_decodes"] = len(ok_decodes)
         result["fail_decodes"] = len(fail_decodes)
+
+        # Always show ACK-GATE diagnostics (batch completeness)
+        for l in rsp_lines:
+            if "[ACK-GATE" in l:
+                print(f"    {l[:200]}")
+
+        # Dump diagnostic lines when retransmit or NO_DATA
+        has_retransmit = len(fail_decodes) > 0
+        if result["integrity"] == "NO_DATA" or total_rx == 0 or has_retransmit:
+            diag_tags = ["[FTR-OK]", "[FTR-FAIL]", "[RX-DECODE",
+                         "[CFG]", "[OFDM-SKIP]", "[RX-TIMING]", "[NB-NEG]"]
+            label = "NO_DATA" if (result["integrity"] == "NO_DATA" or total_rx == 0) else "RETRANSMIT"
+            print(f"  --- RSP diagnostic [{label}] ({len(rsp_lines)} lines) ---")
+            for l in rsp_lines:
+                if any(t in l for t in diag_tags):
+                    print(f"    {l[:200]}")
+            print(f"  --- CMD diagnostic [{label}] ({len(cmd_lines)} lines) ---")
+            for l in cmd_lines:
+                if any(t in l for t in diag_tags):
+                    print(f"    {l[:200]}")
 
         # Close sockets
         for s in [rsp_ctrl, rsp_data, cmd_ctrl, cmd_data]:

@@ -69,6 +69,7 @@ class cl_data_container
 	_Atomic(int) nUnder_processing_events;
 	_Atomic(int) buffer_Nsymb;
 	_Atomic(int) rx_mute;
+	_Atomic(int) rx_mute_samples;  // samples zeroed by rx_mute since last MF search
 
 	int total_frame_size;
 

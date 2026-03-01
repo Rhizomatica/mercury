@@ -23,6 +23,7 @@
 #include "datalink_layer/arq.h"
 #include "audioio/audioio.h"
 #include "debug/canary_guard.h"
+#include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <chrono>
@@ -1170,22 +1171,26 @@ void cl_arq_controller::update_status()
 	{
 		std::cout<<"Connection attempt timeout after "<<connection_timeout<<" ms"<<std::endl;
 
-		// NB/WB auto-negotiation: Phase 1 → Phase 2 transition when timer fires.
-		// WB commanders: were in NB probe, restore WB.
-		// NB commanders: NB failed (responder may be WB), switch to WB temporarily.
+		// NB/WB auto-negotiation: if commander is still in NB probe mode at
+		// timeout, switch to WB and retry. Covers two cases:
+		//   1. connection_attempts < nb_probe_max (original Phase 1→2)
+		//   2. connection_attempts >= nb_probe_max but still NB (HAIL retry
+		//      loop consumed all probe attempts without triggering switch-back)
 		if(role == COMMANDER && link_status == CONNECTING &&
-		   commander_configured_nb >= 0 && connection_attempts < nb_probe_max)
+		   commander_configured_nb >= 0 &&
+		   narrowband_enabled == YES && commander_configured_nb != YES)
 		{
 			connection_attempts = nb_probe_max;  // Skip remaining probes
-			printf("[NB-NEG] Commander: Phase 2 (timeout-triggered) - switching to %s\n",
-				commander_configured_nb == YES ? "WB (temporary, NB commander)" : "WB (restore)");
+			printf("[NB-NEG] Commander: timeout — restoring WB (attempts=%d)\n",
+				connection_attempts);
 			fflush(stdout);
 			switch_narrowband_mode(NO);  // Switch to WB
-			// Reset timer and control message for fresh Phase 2 attempt
+			hail_detected = NO;  // Reset so WB HAIL is attempted
+			// Reset timer and control message for fresh WB attempt
 			connection_attempt_timer.reset();
 			connection_attempt_timer.start();
 			messages_control.status = FREE;
-			// Stay in CONNECTING — process_messages_commander will send new START_CONNECTION
+			// Stay in CONNECTING — process_messages_commander will send new HAIL/START_CONNECTION
 			return;
 		}
 
@@ -2212,6 +2217,12 @@ void cl_arq_controller::switch_narrowband_mode(int nb_enabled)
 	// processing thread won't start a new receive() cycle, and stop the
 	// capture_prep thread from accumulating nUnder during the transition.
 	telecom_system->data_container.data_ready = 0;
+	// Reset nUnder and anti-re-decode markers from the previous bandwidth
+	// mode. Stale nUnder from large NB frames (Nsymb=80) would corrupt the
+	// first frames_to_read calculation after switching to WB.
+	telecom_system->data_container.nUnder_processing_events = 0;
+	telecom_system->receive_stats.ofdm_search_raw = 0;
+	telecom_system->receive_stats.mfsk_search_raw = 0;
 
 	narrowband_enabled = nb_enabled;
 	telecom_system->narrowband_enabled = nb_enabled;
@@ -2319,6 +2330,13 @@ void cl_arq_controller::send(st_message* message, int message_location)
 
 void cl_arq_controller::send_batch()
 {
+	// === DIAG: always print TX activity (remove after debug) ===
+	printf("[CMD-TX] CONFIG_%d batch=%d type=%d pream=%d Nsymb=%d\n",
+		current_configuration, message_batch_counter_tx,
+		message_batch_counter_tx > 0 ? messages_batch_tx[0].type : -1,
+		telecom_system->data_container.preamble_nSymb,
+		telecom_system->data_container.Nsymb);
+	fflush(stdout);
 	if(g_verbose) {
 		printf("[TX] send_batch() on CONFIG_%d, %d messages, first type=%d\n",
 			current_configuration, message_batch_counter_tx,
@@ -2465,6 +2483,90 @@ void cl_arq_controller::send_batch()
 		memset(batch_frames_output_data_filtered2, 0, total_fir_size * sizeof(double));
 		telecom_system->ofdm.FIR_tx1.apply(batch_frames_output_data,batch_frames_output_data_filtered1,total_fir_size);
 		telecom_system->ofdm.FIR_tx2.apply(batch_frames_output_data_filtered1,batch_frames_output_data_filtered2,total_fir_size);
+
+		// DIAG: TX peak amplitude after FIR filtering
+		{
+			double pk_pre = 0, pk_post = 0;
+			for(int j = 0; j < total_fir_size; j++) {
+				if(fabs(batch_frames_output_data[j]) > pk_pre) pk_pre = fabs(batch_frames_output_data[j]);
+				if(fabs(batch_frames_output_data_filtered2[j]) > pk_post) pk_post = fabs(batch_frames_output_data_filtered2[j]);
+			}
+			printf("[TX-PEAK] pre_fir=%.4f post_fir=%.4f frames=%d size=%d cfg=%d\n",
+				pk_pre, pk_post, message_batch_counter_tx, total_fir_size, current_configuration);
+			fflush(stdout);
+		}
+	}
+
+	// === TX SELF-TEST: verify matched filter template vs actual batch TX output ===
+	// The first frame in the batch starts at offset frame_output_size in the filtered data
+	// (position 0 is the padding copy). Preamble is at the start of the first frame.
+	{
+		static int batch_selftest_count = 0;
+		static int batch_selftest_last_config = -1;
+		if(batch_selftest_last_config != current_configuration) {
+			batch_selftest_count = 0;
+			batch_selftest_last_config = current_configuration;
+		}
+		if(batch_selftest_count < 1 && telecom_system->ofdm.ofdm_corr_template != NULL
+			&& telecom_system->M != MOD_MFSK)
+		{
+			batch_selftest_count++;
+			int interp = telecom_system->frequency_interpolation_rate;
+			int Nofdm_l = telecom_system->data_container.Nofdm;
+			int preamble_nsymb = telecom_system->data_container.preamble_nSymb;
+			// First frame in batch is at offset frame_output_size (slot 1; slot 0 is padding)
+			double* frame_pb = &batch_frames_output_data_filtered2[frame_output_size];
+			int frame_len = frame_output_size;
+
+			std::complex<double>* tx_bb = new std::complex<double>[frame_len];
+			telecom_system->ofdm.passband_to_baseband(frame_pb, frame_len, tx_bb,
+				telecom_system->sampling_frequency, telecom_system->carrier_frequency,
+				telecom_system->carrier_amplitude, 1, &telecom_system->ofdm.FIR_rx_time_sync);
+
+			int sym_interp = Nofdm_l * interp;
+			printf("[TX-SELFTEST-BATCH] CONFIG_%d frames=%d frame_size=%d\n",
+				current_configuration, message_batch_counter_tx, frame_output_size);
+			double total_metric = 0;
+			for(int k = 0; k < preamble_nsymb && k < telecom_system->ofdm.ofdm_corr_template_nsymb; k++)
+			{
+				int tmpl_off = k * Nofdm_l;
+				int rx_off = k * sym_interp;
+				double cr = 0, ci = 0, e_t = 0, e_r = 0;
+				for(int n = 0; n < Nofdm_l; n++)
+				{
+					int rx_idx = rx_off + n * interp;
+					if(rx_idx >= frame_len) break;
+					std::complex<double> rx = tx_bb[rx_idx];
+					double t_re = telecom_system->ofdm.ofdm_corr_template[tmpl_off + n].real();
+					double t_im = telecom_system->ofdm.ofdm_corr_template[tmpl_off + n].imag();
+					e_t += t_re*t_re + t_im*t_im;
+					e_r += rx.real()*rx.real() + rx.imag()*rx.imag();
+					cr += t_re*rx.real() + t_im*rx.imag();
+					ci += t_im*rx.real() - t_re*rx.imag();
+				}
+				double cs = (e_t*e_r > 1e-30) ? (cr*cr + ci*ci) / (e_t*e_r) : 0;
+				printf("  sym%d: cs=%.4f e_t=%.3f e_r=%.3f |corr|2=%.3f\n",
+					k, cs, e_t, e_r, cr*cr+ci*ci);
+				total_metric += cs;
+			}
+			printf("  total=%.4f (expect ~%.1f if template matches TX)\n",
+				total_metric, (double)preamble_nsymb);
+			printf("  tmpl[0..3]:");
+			for(int n = 0; n < 4 && n < Nofdm_l; n++)
+				printf(" (%.4f,%.4f)",
+					telecom_system->ofdm.ofdm_corr_template[n].real(),
+					telecom_system->ofdm.ofdm_corr_template[n].imag());
+			printf("\n  tx_bb[0..3]:");
+			for(int n = 0; n < 4; n++) {
+				int idx = n * interp;
+				if(idx < frame_len)
+					printf(" (%.4f,%.4f)", tx_bb[idx].real(), tx_bb[idx].imag());
+			}
+			printf("\n");
+			fflush(stdout);
+
+			delete[] tx_bb;
+		}
 	}
 
 	while(ptt_on_delay.get_elapsed_time_ms() < ptt_on_delay_ms)
@@ -2575,6 +2677,41 @@ void cl_arq_controller::send_ack_pattern()
 {
 	if(g_verbose) { printf("[TX-ACK-PAT] Sending ACK pattern on CONFIG_%d\n", current_configuration); fflush(stdout); }
 
+	// Wait for the full OFDM frame to finish being received before
+	// transmitting. With high-redundancy LDPC (e.g. CONFIG_0 rate 1/16),
+	// the decoder converges before the frame is fully captured. Transmitting
+	// prematurely on a half-duplex link collides with the incoming frame
+	// and destroys subsequent audio via rx_mute + buffer flush.
+	// Total commander TX: ptt_on_delay + pilot + OFDM frame + ptt_off_delay.
+	// We see the preamble in audio (after ptt_on_delay + pilot), so remaining
+	// channel time = remaining OFDM symbols + ptt_off_delay + ptt_on_delay.
+	if(is_ofdm_config(current_configuration))
+	{
+		int interp = telecom_system->data_container.interpolation_rate;
+		int sym_samples = telecom_system->data_container.Nofdm * interp;
+		int frame_sym = telecom_system->data_container.preamble_nSymb
+		              + telecom_system->data_container.Nsymb;
+		int buf_sym = telecom_system->data_container.buffer_Nsymb.load();
+		int delay_sym = (sym_samples > 0)
+		              ? telecom_system->receive_stats.delay / sym_samples : 0;
+		int frame_end_sym = delay_sym + frame_sym;
+		int remaining_sym = frame_end_sym - buf_sym;
+		if(remaining_sym < 0) remaining_sym = 0;
+
+		// Remaining OFDM audio + commander's PTT tail + guard margin
+		int wait_ms = (remaining_sym * telecom_system->data_container.Nofdm
+		              * 1000 + 47999) / 48000;
+		wait_ms += ptt_off_delay_ms + ptt_on_delay_ms;
+
+		if(wait_ms > 0)
+		{
+			printf("[TX-ACK-PAT] Waiting %dms (frame=%dsym past buf, ptt_off=%d, ptt_on=%d)\n",
+				wait_ms, frame_end_sym - buf_sym, ptt_off_delay_ms, ptt_on_delay_ms);
+			fflush(stdout);
+			msleep(wait_ms);
+		}
+	}
+
 	ptt_on();
 
 	cl_timer ptt_on_delay_timer, ptt_off_delay_timer;
@@ -2642,20 +2779,17 @@ void cl_arq_controller::send_ack_pattern()
 	while(size_buffer(playback_buffer) > 0)
 		msleep(1);
 
-	// PTT off delay
-	ptt_off_delay_timer.start();
-	while(ptt_off_delay_timer.get_elapsed_time_ms() < ptt_off_delay_ms)
-		msleep(1);
-
-	ptt_off();
-
 	delete[] raw_output;
 	delete[] filtered1;
 	delete[] filtered2;
 
-	// Mute briefly after TX to catch echo tail in audio pipeline,
-	// then flush buffer to remove self-echo. Unmute after flush so
-	// the other station's signal can enter the clean buffer.
+	// Flush capture buffer immediately after drain — BEFORE ptt_off_delay.
+	// On VB-Cable (zero propagation delay), the commander detects the ACK
+	// pattern mid-TX and starts its guard timer. If we wait for ptt_off_delay
+	// (200ms) before flushing, the commander's data can arrive while the
+	// responder is still muted, destroying seq=00's preamble.
+	// Flushing now lets the capture thread receive clean audio during
+	// ptt_off_delay, giving 200ms+ margin instead of potentially negative.
 	telecom_system->data_container.rx_mute = 1;
 	msleep(RX_MUTE_GUARD_MS);
 	circular_buf_reset(capture_buffer);
@@ -2666,6 +2800,7 @@ void cl_arq_controller::send_ack_pattern()
 		MUTEX_UNLOCK(&capture_prep_mutex);
 	}
 	telecom_system->data_container.rx_mute = 0;
+	telecom_system->data_container.rx_mute_samples = 0;
 	// Bug #41: Reset nUnder after flush. The flush destroyed all pre-flush
 	// audio, so nUnder accumulated during ACK TX is stale — those captured
 	// symbols no longer exist in the buffer. Without this reset, same-modulation
@@ -2677,23 +2812,35 @@ void cl_arq_controller::send_ack_pattern()
 	telecom_system->receive_stats.mfsk_search_raw = 0;
 	telecom_system->receive_stats.ofdm_search_raw = 0;
 	telecom_system->receive_stats.ofdm_batch_active = false;
-	// Small capture window: rx_frame + 20 symbols.
-	// For non-turboshift (data ACK → next data batch): the commander's
-	// preamble arrives T_p ≈ 9 symbols after flush. K = (rx_frame+20) - 9
-	// = 63 ≥ frame_symb(52). In bounds.
-	// For turboshift (data ACK → SET_CONFIG → ctrl ACK → data):
-	// SET_CONFIG is received at the first snapshot (rx_frame+20)*sym_time
-	// ≈ 1.6s, much faster than upper_bound (3.9s). The ctrl ACK handler
-	// then overrides ftr to upper_bound for the data batch.
-	// See OFDM_BEYOND_BOUNDS.md §15.
+	// Capture window after ACK: rx_frame + margin.
+	// Commander turnaround (detect ACK + guard delay + TX ramp) takes
+	// 119-800 ms on VB-Cable, increasing with session duration.
+	// WB (Nsymb=48): margin=80 → ftr=132 → 748 ms capture.
+	//   Covers up to ~700 ms commander delay.  If preamble arrives at
+	//   the tail end, beyond-bounds recovery handles the rest.
+	//   Previous values: +20 (ftr=72, stuck after 1 batch),
+	//                    +40 (ftr=92, stuck after 4 batches).
+	// NB (Nsymb=240): margin=20 → ftr=264. NB timing is relaxed due
+	// to large buffer (631 symbols). Keep +20 to avoid shifting the
+	// WB preamble further out during NB→WB bandwidth switch.
 	{
 		int rx_frame = telecom_system->data_container.preamble_nSymb
 		             + telecom_system->data_container.Nsymb;
-		telecom_system->data_container.frames_to_read = rx_frame + 20;
+		int margin = (telecom_system->data_container.Nsymb <= 48) ? 80 : 20;
+		telecom_system->data_container.frames_to_read = rx_frame + margin;
 	}
 
 	printf("[TX-ACK-PAT] Done, flushed capture buffer, nUnder reset, ftr=%d\n", telecom_system->data_container.frames_to_read.load());
 	fflush(stdout);
+
+	// PTT off delay + release after flush. The capture thread is active
+	// during this delay, receiving silence (VB-Cable) or post-TX settling
+	// noise (real radio — rejected by preamble energy gate / metric threshold).
+	ptt_off_delay_timer.start();
+	while(ptt_off_delay_timer.get_elapsed_time_ms() < ptt_off_delay_ms)
+		msleep(1);
+
+	ptt_off();
 }
 
 // Transmit BREAK tone pattern — emergency "drop to ROBUST_0" signal
@@ -2762,16 +2909,11 @@ void cl_arq_controller::send_break_pattern()
 	while(size_buffer(playback_buffer) > 0)
 		msleep(1);
 
-	ptt_off_delay_timer.start();
-	while(ptt_off_delay_timer.get_elapsed_time_ms() < ptt_off_delay_ms)
-		msleep(1);
-
-	ptt_off();
-
 	delete[] raw_output;
 	delete[] filtered1;
 	delete[] filtered2;
 
+	// Flush before ptt_off_delay (same rationale as send_ack_pattern).
 	telecom_system->data_container.rx_mute = 1;
 	msleep(RX_MUTE_GUARD_MS);
 	circular_buf_reset(capture_buffer);
@@ -2795,6 +2937,12 @@ void cl_arq_controller::send_break_pattern()
 
 	printf("[TX-BREAK] Done, flushed capture buffer, ftr=%d\n", telecom_system->data_container.frames_to_read.load());
 	fflush(stdout);
+
+	ptt_off_delay_timer.start();
+	while(ptt_off_delay_timer.get_elapsed_time_ms() < ptt_off_delay_ms)
+		msleep(1);
+
+	ptt_off();
 }
 
 // TX "I am Mercury" HAIL beacon — short tone pattern for scanner attention.
@@ -2863,16 +3011,11 @@ void cl_arq_controller::send_hail_pattern()
 	while(size_buffer(playback_buffer) > 0)
 		msleep(1);
 
-	ptt_off_delay_timer.start();
-	while(ptt_off_delay_timer.get_elapsed_time_ms() < ptt_off_delay_ms)
-		msleep(1);
-
-	ptt_off();
-
 	delete[] raw_output;
 	delete[] filtered1;
 	delete[] filtered2;
 
+	// Flush before ptt_off_delay (same rationale as send_ack_pattern).
 	telecom_system->data_container.rx_mute = 1;
 	msleep(RX_MUTE_GUARD_MS);
 	circular_buf_reset(capture_buffer);
@@ -2894,6 +3037,12 @@ void cl_arq_controller::send_hail_pattern()
 
 	printf("[TX-HAIL] Done, flushed capture buffer, ftr=%d\n", telecom_system->data_container.frames_to_read.load());
 	fflush(stdout);
+
+	ptt_off_delay_timer.start();
+	while(ptt_off_delay_timer.get_elapsed_time_ms() < ptt_off_delay_ms)
+		msleep(1);
+
+	ptt_off();
 }
 
 // RX: Detect HAIL beacon in capture buffer tail (same mechanism as receive_ack_pattern).
@@ -3197,6 +3346,13 @@ void cl_arq_controller::receive()
 				ftr_clamped = 2;
 			}
 
+			// === DIAG: success ftr trace (remove after debug) ===
+			printf("[FTR-OK] CONFIG_%d ftr=%d delay_sym=%d end=%d left=%d nUnder=%d clamped=%d\n",
+				current_configuration,
+				telecom_system->data_container.frames_to_read.load(),
+				received_message_stats.delay / symbol_period,
+				end_of_current_message, frames_left_in_buffer, nUnder_snapshot, ftr_clamped);
+			fflush(stdout);
 			if (g_verbose)
 				printf("[RX-TIMING] OK: delay=%d delay_symb=%d rx_frame=%d end=%d left=%d nUnder=%d ftr=%d clamped=%d proc=%.0fms\n",
 					received_message_stats.delay, received_message_stats.delay / symbol_period,
@@ -3220,13 +3376,15 @@ void cl_arq_controller::receive()
 			{
 				// OFDM anti-re-decode: record frame end so next Schmidl-Cox
 				// search skips past this decoded preamble.
-				// -1 margin: effective = frame_end - ftr - 1 - nUnder. Catches
-				// frames that land 1 symbol below the expected position. SC may
-				// find false peaks in old frame body, but the in-bounds FAIL
-				// handler (ftr=2 + search_raw tracking) recovers efficiently.
+				// Account for nUnder: during LDPC decode, the buffer shifted
+				// nUnder_snapshot times. Without subtracting it here, search_raw
+				// overshoots by nUnder symbols after the reset at line 3291,
+				// causing the next batch frame to land BEFORE ofdm_skip and
+				// become invisible to detection.
+				// -1 margin catches frames 1 symbol below expected position.
 				int frame_end_symb = received_message_stats.delay / symbol_period + rx_frame;
 				telecom_system->receive_stats.ofdm_search_raw =
-					frame_end_symb - telecom_system->data_container.frames_to_read - 1;
+					frame_end_symb - telecom_system->data_container.frames_to_read - nUnder_snapshot - 1;
 				if(telecom_system->receive_stats.ofdm_search_raw < 0)
 					telecom_system->receive_stats.ofdm_search_raw = 0;
 				telecom_system->receive_stats.ofdm_batch_active = true;
@@ -3449,8 +3607,6 @@ void cl_arq_controller::receive()
 						}
 						else
 						{
-							// Very low metric beyond bounds: noise/false peak.
-							// Minimal shift to avoid pushing real frame out of reach.
 							ftr = 2;
 						}
 						// Track buffer shift: reduce search_raw by ftr so the
@@ -3471,37 +3627,34 @@ void cl_arq_controller::receive()
 					else if(telecom_system->receive_stats.ofdm_search_raw > 0
 						&& telecom_system->receive_stats.ofdm_batch_active)
 					{
-						// In-bounds FAIL with batch search active. Use minimal shift
-						// and track the buffer movement to avoid skipping the real
-						// next preamble. On VB-Cable, in-bounds FAILs with high metric
-						// (0.88+) are false SC peaks in the old frame body — data
-						// symbols have GI correlation that looks like a preamble.
-						ftr = 2;
-						telecom_system->receive_stats.ofdm_search_raw -= ftr;
-						if(telecom_system->receive_stats.ofdm_search_raw < 0)
+						if(telecom_system->receive_stats.coarse_metric < 0.5)
 						{
-							telecom_system->receive_stats.ofdm_search_raw = 0;
+							// Low-metric FAIL in batch → no more real frames.
+							// Real preambles have metric ≥ 0.9; false GI peaks from
+							// data symbols or silence give 0.16–0.24. Exit batch
+							// immediately instead of grinding with ftr=2 (which wastes
+							// ~2.3s on 58 iterations through the buffer).
 							telecom_system->receive_stats.ofdm_batch_active = false;
+							telecom_system->receive_stats.ofdm_search_raw = 0;
+							ftr = 8;
+						}
+						else
+						{
+							// High-metric FAIL in batch (≥0.5) — likely a real
+							// preamble that LDPC couldn't decode (rare on clean
+							// cable, common at low SNR). Minimal shift to find
+							// the next real preamble nearby.
+							ftr = 2;
+							telecom_system->receive_stats.ofdm_search_raw -= ftr;
+							if(telecom_system->receive_stats.ofdm_search_raw < 0)
+							{
+								telecom_system->receive_stats.ofdm_search_raw = 0;
+								telecom_system->receive_stats.ofdm_batch_active = false;
+							}
 						}
 					}
-					else if(telecom_system->receive_stats.coarse_metric < 0.5)
-					{
-						// No preamble (metric < 0.5 = FFT correlation < 2.0).
-						// Shift by a full frame to flush stale audio faster.
-						// Covers batch-miss → INIT transition and turnaround gaps.
-						ftr = frame_symb;
-						// Keep search_raw aligned with buffer shift (same as
-						// beyond-bounds and batch-hit branches).  Without this,
-						// the INIT search after a batch-miss starts too high
-						// in the shifted buffer, finding stale batch data that
-						// gives FFT metric 0.85 beyond upper_bound.
-						telecom_system->receive_stats.ofdm_search_raw -= ftr;
-						if(telecom_system->receive_stats.ofdm_search_raw < 0)
-						{
-							telecom_system->receive_stats.ofdm_search_raw = 0;
-							telecom_system->receive_stats.ofdm_batch_active = false;
-						}
-					}
+					// Default ftr=8 applies for other cases (no preamble,
+				// low metric without batch mode, etc.)
 				}
 
 				if(telecom_system->receive_stats.ofdm_search_raw > 0)
@@ -3520,6 +3673,14 @@ void cl_arq_controller::receive()
 				}
 				telecom_system->data_container.frames_to_read = ftr;
 				telecom_system->data_container.nUnder_processing_events = 0;
+				// === DIAG: OFDM anti-spin ftr trace (remove after debug) ===
+				printf("[FTR-FAIL] CONFIG_%d ftr=%d delay=%d metric=%.3f batch=%d search_raw=%d\n",
+					current_configuration, ftr,
+					received_message_stats.delay,
+					telecom_system->receive_stats.coarse_metric,
+					telecom_system->receive_stats.ofdm_batch_active ? 1 : 0,
+					telecom_system->receive_stats.ofdm_search_raw);
+				fflush(stdout);
 			}
 
 			// MFSK anti-spin (Bug #37): without this, MFSK NO-PREAMBLE leaves

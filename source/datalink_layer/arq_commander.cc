@@ -211,6 +211,22 @@ void cl_arq_controller::process_messages_commander()
 			switch_narrowband_mode(YES);
 		}
 
+		// NB probe switch-back: after nb_probe_max HAIL attempts in NB,
+		// switch to WB so HAIL can reach the WB responder.
+		// The START_CONNECTION retry path (line ~468) has its own switch-back,
+		// but it's never reached when HAIL fails — HAIL failure prevents
+		// START_CONNECTION from being queued.
+		if(commander_configured_nb >= 0 && commander_configured_nb != YES &&
+		   nb_probe_max > 0 && connection_attempts >= nb_probe_max &&
+		   narrowband_enabled == YES)
+		{
+			printf("[NB-NEG] Commander: restoring WB after %d NB HAIL attempts\n",
+				connection_attempts);
+			fflush(stdout);
+			switch_narrowband_mode(NO);
+			// hail_detected is already NO — WB HAIL will be attempted below
+		}
+
 		// "I am Mercury" HAIL phase: fast MFSK beacons replace slow LDPC probes.
 		// Send HAIL, listen for response. Repeat up to max_connection_attempts.
 		// Only proceed to START_CONNECTION after HAIL response detected.
@@ -570,11 +586,15 @@ void cl_arq_controller::process_messages_tx_control()
 
 		if(messages_control.data[0]==SWITCH_BANDWIDTH)
 		{
-			// Short timeout: responder ACKs in one frame or silently rejects.
-			// One ctrl TX + ACK pattern + PTT delays + margin.
-			receiving_timeout = ctrl_transmission_time_ms + ack_pattern_time_ms
+			// Responder must fill its RX buffer before it can decode the
+			// SWITCH_BANDWIDTH control frame.  For NB CONFIG_0 the buffer
+			// fill time alone is ~14 s, so use the same 2×msg_tx basis as
+			// the normal ACK timeout (calculate_receiving_timeout).
+			receiving_timeout = 2 * message_transmission_time_ms
+				+ ack_pattern_time_ms
 				+ 2*ptt_on_delay_ms + 2*ptt_off_delay_ms + 3000;
-			printf("[BW-NEG] SWITCH_BANDWIDTH recv_timeout=%d\n", receiving_timeout);
+			printf("[BW-NEG] SWITCH_BANDWIDTH recv_timeout=%d msg_tx=%d\n",
+				receiving_timeout, message_transmission_time_ms);
 			fflush(stdout);
 		}
 
@@ -1294,6 +1314,15 @@ void cl_arq_controller::process_messages_rx_acks_data()
 			printf("[CMD-ACK-PAT] Timeout: no ACK pattern detected, retransmitting\n");
 			fflush(stdout);
 			stats.nNAcked_data++;
+			// Force all PENDING_ACK messages to ACK_TIMED_OUT so
+			// process_messages_tx_data() can resend them immediately.
+			// Without this, messages stay PENDING_ACK until their
+			// individual ack_timeout fires (~13s), stalling the commander.
+			for(int i=0; i<nMessages; i++)
+			{
+				if(messages_tx[i].status == PENDING_ACK)
+					messages_tx[i].status = ACK_TIMED_OUT;
+			}
 		}
 		this->cleanup();
 

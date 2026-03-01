@@ -154,7 +154,8 @@ public:
 	int time_sync(std::complex <double>*in, int size, int interpolation_rate, int location_to_return);
 	int time_sync_preamble(std::complex <double>*in, int size, int interpolation_rate, int location_to_return, int step, int nTrials_max);
 	TimeSyncResult time_sync_preamble_with_metric(std::complex <double>*in, int size, int interpolation_rate, int location_to_return, int step, int nTrials_max);
-	TimeSyncResult time_sync_preamble_halfsym(std::complex<double>* in, int size, int interpolation_rate, int step);
+	TimeSyncResult time_sync_preamble_halfsym(std::complex<double>* in, int size, int interpolation_rate, int step, double early_exit_metric = 0.0);
+	TimeSyncResult time_sync_preamble_halfsym_2phase(std::complex<double>* in, int size, int interpolation_rate, double early_exit_metric = 0.0);
 	TimeSyncResult time_sync_preamble_fft(std::complex<double>* baseband_interp, int buffer_size_interp, int interpolation_rate, int preamble_nSymb);
 	TimeSyncResult time_sync_preamble_fft_fine(std::complex<double>* baseband_interp, int buffer_size_interp, int interpolation_rate, int preamble_nSymb, int coarse_pos, int search_half_window);
 	int time_sync_mfsk(std::complex<double>* baseband_interp, int buffer_size_interp, int interpolation_rate, int preamble_nSymb, const int* preamble_tones, int mfsk_M, int nStreams, const int* stream_offsets, int search_start_symb = 0, double* out_metric = nullptr);

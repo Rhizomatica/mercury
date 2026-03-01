@@ -1058,8 +1058,21 @@ void *radio_capture_prep_thread(void *telecom_ptr_void)
 
 		rx_transfer(buffer_temp, symbol_period);
 
+		// DIAG: capture peak amplitude (every 200 symbols ~4.5s for WB)
+		{
+			static int cap_pk_count = 0;
+			if(++cap_pk_count % 200 == 0) {
+				double pk = 0;
+				for(int ci = 0; ci < symbol_period; ci++)
+					if(fabs(buffer_temp[ci]) > pk) pk = fabs(buffer_temp[ci]);
+				printf("[CAP-PEAK] pk=%.6f sp=%d mute=%d\n", pk, symbol_period, (int)data_container_ptr->rx_mute);
+				fflush(stdout);
+			}
+		}
+
 		if(data_container_ptr->rx_mute) {
 			memset(buffer_temp, 0, symbol_period * sizeof(double));
+			data_container_ptr->rx_mute_samples += symbol_period;
 		}
 
 		MUTEX_LOCK(&capture_prep_mutex);

@@ -1135,6 +1135,11 @@ void cl_preamble_configurator::deinit()
 
 void cl_preamble_configurator::configure()
 {
+	// Reset counters — they are accumulated in the loop below.
+	// Without this, deinit→init cycles cause nPreamble/nZeros to grow
+	// across configurations, corrupting bins_per_sym in the ZC formula.
+	nPreamble = 0;
+	nZeros = 0;
 
 	int fft_zeros_tmp[Nfft];
 	int fft_zeros_depadded_tmp[Nc];
@@ -1988,7 +1993,7 @@ TimeSyncResult cl_ofdm::time_sync_preamble_with_metric(std::complex <double>*in,
 	return result;
 }
 
-TimeSyncResult cl_ofdm::time_sync_preamble_halfsym(std::complex<double>* in, int size, int interpolation_rate, int step)
+TimeSyncResult cl_ofdm::time_sync_preamble_halfsym(std::complex<double>* in, int size, int interpolation_rate, int step, double early_exit_metric)
 {
 	/*
 	 * Schmidl-Cox preamble detection using time-domain repetition.
@@ -2066,11 +2071,68 @@ TimeSyncResult cl_ofdm::time_sync_preamble_halfsym(std::complex<double>* in, int
 			best_normalized = metric;
 			best_pos = d;
 		}
+
+		// Early exit: return the FIRST position where normalized metric
+		// exceeds threshold. Energy floor rejects false peaks on digital
+		// silence. This finds the earliest preamble in the buffer rather
+		// than the strongest, preventing later frames from shadowing
+		// earlier ones when multiple back-to-back frames are present.
+		if(early_exit_metric > 0.0 && metric >= early_exit_metric
+			&& (A2 + R) > 1e-6)
+		{
+			result.delay = d;
+			result.correlation = metric;
+			return result;
+		}
 	}
 
 	result.delay = best_pos;
 	result.correlation = best_normalized;
 	return result;
+}
+
+TimeSyncResult cl_ofdm::time_sync_preamble_halfsym_2phase(
+	std::complex<double>* in, int size, int interpolation_rate,
+	double early_exit_metric)
+{
+	/*
+	 * Two-phase Schmidl-Cox preamble detection:
+	 *   Phase 1: coarse search at GI stride (fast, finds approximate position)
+	 *   Phase 2: fine search at baseband stride within ±1 GI of coarse peak
+	 *
+	 * When early_exit_metric > 0, Phase 1 returns the FIRST position with
+	 * metric >= threshold (earliest preamble) instead of the maximum.
+	 * Phase 2 always uses max-metric for precise sample alignment.
+	 */
+	int gi_interp = Ngi * interpolation_rate;
+	int pream_len = preamble_configurator.Nsymb * (Ngi + Nfft) * interpolation_rate;
+
+	// Phase 1: coarse at GI stride (early exit finds earliest preamble)
+	TimeSyncResult coarse = time_sync_preamble_halfsym(
+		in, size, interpolation_rate, gi_interp, early_exit_metric);
+
+	if(coarse.correlation < 0.05)
+		return coarse;  // No preamble found
+
+	// Phase 2: fine at baseband stride around coarse peak.
+	// When early exit was used, the coarse position may be at the transition
+	// edge (metric ramps from 0 to 1.0 over ~3 symbol widths as the window
+	// slides into the preamble). Early exit at 0.5 triggers ~2 symbols before
+	// the true peak. Widen fine search to ±1 preamble length so the true peak
+	// is always reachable. Without early exit, ±1 GI suffices.
+	int fine_margin = (early_exit_metric > 0.0) ? pream_len : gi_interp;
+	int fine_start = coarse.delay - fine_margin;
+	if(fine_start < 0) fine_start = 0;
+	int fine_size = 2 * fine_margin + pream_len;
+	if(fine_start + fine_size > size)
+		fine_size = size - fine_start;
+	if(fine_size <= pream_len)
+		return coarse;  // Not enough room for fine search
+
+	TimeSyncResult fine = time_sync_preamble_halfsym(
+		&in[fine_start], fine_size, interpolation_rate, interpolation_rate);
+	fine.delay += fine_start;
+	return fine;
 }
 
 TimeSyncResult cl_ofdm::time_sync_preamble_fft(
@@ -2434,15 +2496,15 @@ TimeSyncResult cl_ofdm::time_sync_preamble_matched(
 	 * against FIR-round-tripped preamble template. Zero FFTs.
 	 *
 	 * Two phases:
-	 *   Coarse: GI-period stride over search window. Uses first preamble
-	 *           symbol only for speed. Per-symbol normalized correlation:
-	 *           |conj(template) · signal|² / (E_template × E_signal) → [0,1].
+	 *   Coarse: GI-period stride, ALL preamble symbols for discrimination.
+	 *           Per-symbol Cauchy-Schwarz: |corr|² / (E_template × E_rx) → [0,1].
+	 *           Amplitude-independent: works at any RX gain / HF fading level.
 	 *
 	 *   Fine:   baseband-sample stride (step = interpolation_rate) within
-	 *           ±gi_interp of coarse peak. All preamble symbols for accuracy.
+	 *           ±gi_interp of coarse peak. All preamble symbols.
 	 *
-	 * Metric convention: return avg_metric × preamble_nSymb so that
-	 *   preamble ≈ Nsymb, data ≈ 0, threshold = 2.0.
+	 * Metric convention: sum of per-symbol normalized correlations.
+	 *   Preamble ≈ nSymb (e.g. 4.0), data ≈ 0.1-0.3. Threshold = 2.0.
 	 */
 
 	if (ofdm_corr_template == NULL || ofdm_corr_template_len <= 0)
@@ -2472,15 +2534,12 @@ TimeSyncResult cl_ofdm::time_sync_preamble_matched(
 	double best_coarse_metric = -1.0;
 	int best_coarse_pos = 0;
 
-	// Stack buffer for metrics (earliest-above-50% selection needs all values)
-	double* coarse_metrics = (double*)alloca((n_coarse + 1) * sizeof(double));
 
 	for (int ci = 0; ci <= n_coarse; ci++)
 	{
 		int pos = ci * coarse_stride;
 
 		double total_metric = 0.0;
-		int valid_syms = 0;
 
 		for (int k = 0; k < template_nsymb; k++)
 		{
@@ -2504,42 +2563,79 @@ TimeSyncResult cl_ofdm::time_sync_preamble_matched(
 				e_rx += rx.real() * rx.real() + rx.imag() * rx.imag();
 			}
 
+			// Cauchy-Schwarz: |corr|²/(E_template × E_rx) → [0,1] per symbol.
+			// Amplitude-independent: works regardless of RX gain, HF fading, etc.
+			// Silence protection: energy gate in caller rejects e_rx ≈ 0 cases.
 			double denom = ofdm_corr_template_sym_energy[k] * e_rx;
 			if (denom > 1e-30)
-			{
 				total_metric += (corr_re * corr_re + corr_im * corr_im) / denom;
-				valid_syms++;
-			}
 		}
 
-		double metric = (valid_syms > 0) ? total_metric / valid_syms : 0.0;
-		coarse_metrics[ci] = metric;
-
-		if (metric > best_coarse_metric)
+		if (total_metric > best_coarse_metric)
 		{
-			best_coarse_metric = metric;
+			best_coarse_metric = total_metric;
 			best_coarse_pos = pos;
 		}
 	}
 
-	// Earliest-above-50%-of-max selection (same heuristic as FFT detection)
-	double early_threshold = best_coarse_metric * 0.5;
+	// Use peak position directly. The earliest-above-50% heuristic from FFT
+	// detection doesn't work here: with K identical preamble symbols, an
+	// offset-by-1-symbol position gives (K-1)/K match which exceeds 50% for
+	// all K>=2, systematically selecting the wrong (one-symbol-early) position.
 	int coarse_result_pos = best_coarse_pos;
-	for (int ci = 0; ci <= n_coarse; ci++)
+
+	// DIAG: per-symbol breakdown at best coarse position (remove after debug)
+	if (best_coarse_metric < 2.0)
 	{
-		if (coarse_metrics[ci] >= early_threshold)
+		printf("[MF-DIAG] best_coarse=%.4f pos=%d n_coarse=%d\n",
+			best_coarse_metric, best_coarse_pos, n_coarse);
+		for (int k = 0; k < template_nsymb; k++)
 		{
-			coarse_result_pos = ci * coarse_stride;
-			break;
+			int tmpl_offset = k * Nofdm;
+			int rx_offset = best_coarse_pos + k * sym_interp;
+			if (rx_offset + (Nofdm - 1) * interpolation_rate >= buffer_size_interp)
+				break;
+			double corr_re = 0, corr_im = 0, e_rx = 0;
+			for (int n = 0; n < Nofdm; n++)
+			{
+				std::complex<double> rx = baseband_interp[rx_offset + n * interpolation_rate];
+				double t_re = ofdm_corr_template[tmpl_offset + n].real();
+				double t_im = ofdm_corr_template[tmpl_offset + n].imag();
+				corr_re += t_re * rx.real() + t_im * rx.imag();
+				corr_im += t_im * rx.real() - t_re * rx.imag();
+				e_rx += rx.real() * rx.real() + rx.imag() * rx.imag();
+			}
+			double denom = ofdm_corr_template_sym_energy[k] * e_rx;
+			double cs = (denom > 1e-30) ? (corr_re*corr_re + corr_im*corr_im) / denom : 0;
+			printf("  sym%d: cs=%.4f e_tmpl=%.1f e_rx=%.1f |corr|2=%.1f\n",
+				k, cs, ofdm_corr_template_sym_energy[k], e_rx,
+				corr_re*corr_re + corr_im*corr_im);
 		}
+		// Also print a few raw template and rx samples at the best position
+		if (template_nsymb > 0)
+		{
+			printf("  tmpl[0..4]: ");
+			for (int n = 0; n < 5 && n < Nofdm; n++)
+				printf("(%.4f,%.4f) ", ofdm_corr_template[n].real(), ofdm_corr_template[n].imag());
+			printf("\n  rx[0..4]:   ");
+			for (int n = 0; n < 5 && n < Nofdm; n++)
+			{
+				std::complex<double> rx = baseband_interp[best_coarse_pos + n * interpolation_rate];
+				printf("(%.4f,%.4f) ", rx.real(), rx.imag());
+			}
+			printf("\n");
+		}
+		fflush(stdout);
 	}
 
-	// If no preamble detected at coarse level, return early
-	if (best_coarse_metric < 0.15)
+	// If no preamble detected at coarse level, return early.
+	// Coarse is a pre-filter; fine search makes the real decision.
+	// Threshold 0.1: blocks pure noise, allows degraded preambles through.
+	if (best_coarse_metric < 0.1)
 	{
 		TimeSyncResult r;
 		r.delay = coarse_result_pos;
-		r.correlation = best_coarse_metric * preamble_nSymb;
+		r.correlation = best_coarse_metric;
 		return r;
 	}
 
@@ -2557,7 +2653,6 @@ TimeSyncResult cl_ofdm::time_sync_preamble_matched(
 	for (int pos = fine_start; pos <= fine_end; pos += interpolation_rate)
 	{
 		double total_metric = 0.0;
-		int valid_syms = 0;
 
 		for (int k = 0; k < template_nsymb; k++)
 		{
@@ -2583,24 +2678,73 @@ TimeSyncResult cl_ofdm::time_sync_preamble_matched(
 
 			double denom = ofdm_corr_template_sym_energy[k] * e_rx;
 			if (denom > 1e-30)
-			{
 				total_metric += (corr_re * corr_re + corr_im * corr_im) / denom;
-				valid_syms++;
-			}
 		}
 
-		double metric = (valid_syms > 0) ? total_metric / valid_syms : 0.0;
-		if (metric > best_fine_metric)
+		if (total_metric > best_fine_metric)
 		{
-			best_fine_metric = metric;
+			best_fine_metric = total_metric;
 			best_fine_pos = pos;
 		}
 	}
 
+	// DIAG: per-quarter energy decomposition at fine search peak
+	if (best_fine_metric < 2.0 && best_fine_metric >= 0.5)
+	{
+		printf("[MF-DIAG2] fine_pos=%d fine_metric=%.4f interp=%d Nofdm=%d Ngi=%d\n",
+			best_fine_pos, best_fine_metric, interpolation_rate, Nofdm, Ngi);
+		// Analyze sym0 AND sym1 to see if Q1 dead zone is consistent
+		for (int k = 0; k < template_nsymb && k < 2; k++)
+		{
+			int tmpl_off = k * Nofdm;
+			int rx_off = best_fine_pos + k * sym_interp;
+			if (rx_off + (Nofdm - 1) * interpolation_rate >= buffer_size_interp)
+				break;
+			int quarter = Nofdm / 4;
+			printf("  sym%d:", k);
+			for (int q = 0; q < 4; q++)
+			{
+				double e_t = 0, e_r = 0, cr = 0, ci = 0;
+				for (int n = q * quarter; n < (q + 1) * quarter; n++)
+				{
+					std::complex<double> rx = baseband_interp[rx_off + n * interpolation_rate];
+					double t_re = ofdm_corr_template[tmpl_off + n].real();
+					double t_im = ofdm_corr_template[tmpl_off + n].imag();
+					e_t += t_re * t_re + t_im * t_im;
+					e_r += rx.real() * rx.real() + rx.imag() * rx.imag();
+					cr += t_re * rx.real() + t_im * rx.imag();
+					ci += t_im * rx.real() - t_re * rx.imag();
+				}
+				double cs = (e_t * e_r > 1e-30) ? (cr * cr + ci * ci) / (e_t * e_r) : 0;
+				printf(" Q%d[Et=%.3f Er=%.3f CS=%.3f]", q + 1, e_t, e_r, cs);
+			}
+			printf("\n");
+		}
+		// Print first 8 and last 8 template+RX sample amplitudes for sym1
+		int k = (template_nsymb > 1) ? 1 : 0;
+		int tmpl_off = k * Nofdm;
+		int rx_off = best_fine_pos + k * sym_interp;
+		printf("  tmpl[0..7]:");
+		for (int n = 0; n < 8; n++)
+			printf(" %.4f", std::abs(ofdm_corr_template[tmpl_off + n]));
+		printf("\n  rx  [0..7]:");
+		for (int n = 0; n < 8; n++)
+			printf(" %.4f", std::abs(baseband_interp[rx_off + n * interpolation_rate]));
+		printf("\n  tmpl[%d..%d]:", Nofdm - 8, Nofdm - 1);
+		for (int n = Nofdm - 8; n < Nofdm; n++)
+			printf(" %.4f", std::abs(ofdm_corr_template[tmpl_off + n]));
+		printf("\n  rx  [%d..%d]:", Nofdm - 8, Nofdm - 1);
+		for (int n = Nofdm - 8; n < Nofdm; n++)
+			printf(" %.4f", std::abs(baseband_interp[rx_off + n * interpolation_rate]));
+		printf("\n");
+		fflush(stdout);
+	}
+
 	TimeSyncResult result;
 	result.delay = best_fine_pos;
-	// Scale: avg per-symbol metric × nsymb. Preamble ≈ nsymb, data ≈ 0.
-	result.correlation = best_fine_metric * preamble_nSymb;
+	// Cauchy-Schwarz sum: preamble ≈ nsymb (4.0 for 4-sym), data ≈ 0.
+	// Amplitude-independent: works at any RX gain level.
+	result.correlation = best_fine_metric;
 	return result;
 }
 
