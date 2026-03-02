@@ -2288,12 +2288,13 @@ double cl_telecom_system::detect_break_pattern_from_passband(double* data, int s
 	return metric;
 }
 
-// TX: Generate HAIL pattern as passband audio (identical to ACK but with hail_tones)
+// TX: Generate HAIL pattern as passband audio (prefix + optional directed suffix)
 int cl_telecom_system::generate_hail_pattern_passband(double* out)
 {
 	if(ack_pattern_passband_samples <= 0) return 0;
 
-	int nsymb = ack_mfsk.ack_pattern_nsymb;
+	int nsymb = ack_mfsk.hail_detect_nsymb;
+	int hail_samples = nsymb * data_container.Nofdm * frequency_interpolation_rate;
 	float power_normalization = sqrt((double)(ofdm.Nfft * frequency_interpolation_rate));
 
 	ack_mfsk.generate_hail_pattern(data_container.ofdm_framed_data);
@@ -2316,12 +2317,12 @@ int cl_telecom_system::generate_hail_pattern_passband(double* out)
 		data_container.Nofdm * nsymb, out,
 		sampling_frequency, tx_carrier, carrier_amplitude, frequency_interpolation_rate);
 
-	ofdm.peak_clip(out, ack_pattern_passband_samples, ofdm.data_papr_cut);
+	ofdm.peak_clip(out, hail_samples, ofdm.data_papr_cut);
 
-	return ack_pattern_passband_samples;
+	return hail_samples;
 }
 
-// RX: Detect HAIL pattern in passband audio buffer (uses hail_tones)
+// RX: Detect HAIL pattern in passband audio buffer (prefix + optional directed suffix)
 double cl_telecom_system::detect_hail_pattern_from_passband(double* data, int size, int* out_matched)
 {
 	if(ack_pattern_passband_samples <= 0) return 0.0;
@@ -2334,8 +2335,8 @@ double cl_telecom_system::detect_hail_pattern_from_passband(double* data, int si
 	double metric = ofdm.detect_ack_pattern(
 		data_container.baseband_data_interpolated, size,
 		data_container.interpolation_rate,
-		ack_mfsk.ack_pattern_nsymb,
-		ack_mfsk.hail_tones, ack_mfsk.ack_pattern_len,
+		ack_mfsk.hail_detect_nsymb,
+		ack_mfsk.hail_detect_tones, ack_mfsk.hail_detect_nsymb,
 		ack_mfsk.tone_hop_step, ack_mfsk.M,
 		ack_mfsk.nStreams, ack_mfsk.stream_offsets,
 		out_matched);

@@ -102,8 +102,13 @@ void cl_arq_controller::process_messages_rx_data_control()
 {
 	// Fast HAIL scanning while LISTENING: use receive_hail_pattern() (~32ms cycles)
 	// instead of slow receive() (multi-second LDPC frame captures).
+	// Directed HAIL: only respond to beacons targeting our callsign (CRC suffix match).
 	if(link_status == LISTENING && ack_pattern_time_ms > 0 && hail_detected == NO)
 	{
+		// Set directed HAIL target to our own callsign (including SSID)
+		telecom_system->ack_mfsk.set_hail_target(
+			my_call_sign.c_str(), my_call_sign.length());
+
 		// Override large frames_to_read from LISTENING init — HAIL scanning
 		// needs frames_to_read==0 to check the buffer. The audio callback
 		// continuously fills the buffer regardless, so audio is always fresh.
@@ -909,6 +914,21 @@ void cl_arq_controller::process_control_responder()
 			(peer_capability & CAP_COMPRESSION) ? "yes" : "no");
 		fflush(stdout);
 
+		// Read commander's SSID from byte 6 (sent separately from packed callsign)
+		{
+			int peer_ssid = (uint8_t)messages_control.data[6];
+			if(peer_ssid != SSID_NONE)
+			{
+				destination_call_sign = callsign_format_ssid(destination_call_sign, peer_ssid);
+				printf("[SSID] Commander SSID=%d, full callsign: '%s'\n", peer_ssid, destination_call_sign.c_str());
+			}
+			else
+			{
+				printf("[SSID] Commander has no SSID, callsign: '%s'\n", destination_call_sign.c_str());
+			}
+			fflush(stdout);
+		}
+
 		// Compression: defer unless force_compress CLI flag is set
 		{
 			bool both_support = (local_capability & CAP_COMPRESSION) &&
@@ -943,7 +963,8 @@ void cl_arq_controller::process_control_responder()
 			messages_control.data[i+1]=tmp_SNR.char4_SNR[i];;
 		}
 		messages_control.data[5]=(char)local_capability;
-		messages_control.length=6;
+		messages_control.data[6]=(char)callsign_get_ssid(my_call_sign);
+		messages_control.length=7;
 
 		if(this->link_status==CONNECTION_RECEIVED)
 		{

@@ -227,8 +227,12 @@ void cl_arq_controller::process_messages_commander()
 		// "I am Mercury" HAIL phase: fast MFSK beacons replace slow LDPC probes.
 		// Send HAIL, listen for response. Repeat up to max_connection_attempts.
 		// Only proceed to START_CONNECTION after HAIL response detected.
+		// Directed HAIL: CRC suffix derived from responder's callsign prevents
+		// multi-station collisions — only the target responder responds.
 		if(ack_pattern_time_ms > 0 && hail_detected == NO)
 		{
+			telecom_system->ack_mfsk.set_hail_target(
+				destination_call_sign.c_str(), destination_call_sign.length());
 			send_hail_pattern();
 			connection_attempts++;
 			printf("[HAIL] Sent beacon %d of %d\n", connection_attempts, max_connection_attempts);
@@ -363,13 +367,16 @@ int cl_arq_controller::add_message_control(char code)
 		if(code==START_CONNECTION)
 		{
 			messages_control.data[0]=code;
+			// CRC8 on full destination callsign (including SSID if present)
 			messages_control.data[1]=CRC8_calc((char*)destination_call_sign.c_str(), destination_call_sign.length());
-			// Pack callsign with NB flag: reflects current physical mode or commander's NB preference
+			// Pack base callsign (strip SSID — pack only supports A-Z, 0-9, 6 chars)
+			// SSID is sent separately in TEST_CONNECTION
+			std::string base_call = callsign_strip_ssid(my_call_sign);
 			int pack_flags = 0;
 			if (narrowband_enabled == YES || commander_configured_nb == YES)
 				pack_flags |= 0x01;
-			callsign_pack(my_call_sign.c_str(), my_call_sign.length(), &messages_control.data[2], pack_flags);
-			messages_control.length=7;  // cmd(1) + CRC8(1) + packed_callsign(5, flags embedded)
+			callsign_pack(base_call.c_str(), base_call.length(), &messages_control.data[2], pack_flags);
+			messages_control.length=7;  // cmd(1) + CRC8(1) + packed_callsign(5)
 			messages_control.id=0;
 			connection_id=BROADCAST_ID;
 		}
@@ -384,7 +391,8 @@ int cl_arq_controller::add_message_control(char code)
 				messages_control.data[i+1]=tmp_SNR.char4_SNR[i];;
 			}
 			messages_control.data[5]=(char)local_capability;
-			messages_control.length=6;
+			messages_control.data[6]=(char)callsign_get_ssid(my_call_sign);
+			messages_control.length=7;
 			messages_control.id=0;
 		}
 		else if(code==SWITCH_BANDWIDTH)
@@ -1541,6 +1549,13 @@ void cl_arq_controller::process_control_commander()
 				(peer_capability & CAP_WB_CAPABLE) ? "yes" : "no",
 				(peer_capability & CAP_COMPRESSION) ? "yes" : "no");
 			fflush(stdout);
+
+			// Read responder's SSID from byte 6 (confirmation — commander already knows it)
+			{
+				int peer_ssid = (uint8_t)messages_control.data[6];
+				printf("[SSID] Responder SSID=%d (0xFF=none)\n", peer_ssid);
+				fflush(stdout);
+			}
 
 			// Compression: defer unless force_compress CLI flag is set
 			{

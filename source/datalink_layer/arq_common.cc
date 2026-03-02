@@ -2960,11 +2960,12 @@ void cl_arq_controller::send_break_pattern()
 	ptt_off();
 }
 
-// TX "I am Mercury" HAIL beacon — short tone pattern for scanner attention.
-// Identical structure to ACK/BREAK TX but uses hail_tones.
+// TX "I am Mercury" HAIL beacon — prefix + optional CRC suffix for directed hailing.
 void cl_arq_controller::send_hail_pattern()
 {
-	printf("[TX-HAIL] Sending HAIL beacon\n");
+	printf("[TX-HAIL] Sending HAIL beacon (%s, %d symbols)\n",
+		telecom_system->ack_mfsk.hail_directed ? "directed" : "undirected",
+		telecom_system->ack_mfsk.hail_detect_nsymb);
 	fflush(stdout);
 
 	ptt_on();
@@ -2972,7 +2973,10 @@ void cl_arq_controller::send_hail_pattern()
 	cl_timer ptt_on_delay_timer, ptt_off_delay_timer;
 	ptt_on_delay_timer.start();
 
-	int pattern_samples = telecom_system->ack_pattern_passband_samples;
+	int hail_nsymb = telecom_system->ack_mfsk.hail_detect_nsymb;
+	int sym_samples = telecom_system->data_container.Nofdm
+	                * telecom_system->data_container.interpolation_rate;
+	int pattern_samples = hail_nsymb * sym_samples;
 	int symbol_period = telecom_system->data_container.Nofdm * telecom_system->data_container.interpolation_rate;
 
 	int padded_size = pattern_samples + 2 * symbol_period;
@@ -3064,7 +3068,7 @@ void cl_arq_controller::send_hail_pattern()
 // RX: Detect HAIL beacon in capture buffer tail (same mechanism as receive_ack_pattern).
 bool cl_arq_controller::receive_hail_pattern()
 {
-	const int tail_nsymb = telecom_system->ack_mfsk.ack_pattern_nsymb + 8 + 16;
+	const int tail_nsymb = telecom_system->ack_mfsk.hail_detect_nsymb + 8 + 16;
 	int sym_samples = telecom_system->data_container.Nofdm
 	                * telecom_system->data_container.interpolation_rate;
 	int signal_period = sym_samples * telecom_system->data_container.buffer_Nsymb;
@@ -3090,7 +3094,7 @@ bool cl_arq_controller::receive_hail_pattern()
 			telecom_system->data_container.ready_to_process_passband_delayed_data,
 			tail_samples, &matched_count);
 
-		if(matched_count >= telecom_system->ack_mfsk.hail_match_threshold && metric >= 3.0)
+		if(matched_count >= telecom_system->ack_mfsk.hail_detect_threshold && metric >= 3.0)
 		{
 			MUTEX_LOCK(&capture_prep_mutex);
 			telecom_system->data_container.frames_to_read =

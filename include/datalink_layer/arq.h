@@ -46,6 +46,64 @@ union u_SNR {
 // Format: [1-bit flags][3-bit length][6 chars x 6 bits] = 40 bits = 5 bytes.
 // Bit 39: narrowband flag (0=wideband, 1=narrowband).
 // Bits 38-36: length (0-6). Bits 35-0: 6 chars x 6 bits.
+//
+// SSID is NOT carried in the pack — it's sent separately in TEST_CONNECTION
+// (data[6]) so that 6-char callsigns are not truncated.
+#define CALLSIGN_PACK_SIZE  5
+#define SSID_NONE           0xFF
+
+// SSID helpers: parse, format, and get SSID from "CALLSIGN-SSID" strings.
+// SSID mapping: 0-15 = numeric (AX.25), 16=L, 17=T, 18=R, 19=X (Winlink/VARA)
+
+inline int callsign_get_ssid(const std::string& callsign)
+{
+	size_t hyp = callsign.rfind('-');
+	if(hyp == std::string::npos || hyp == callsign.size() - 1 || hyp == 0)
+		return SSID_NONE;
+	std::string ssid_str = callsign.substr(hyp + 1);
+	if(ssid_str.size() == 1)
+	{
+		char c = ssid_str[0];
+		if(c >= '0' && c <= '9') return c - '0';
+		if(c == 'L' || c == 'l') return 16;
+		if(c == 'T' || c == 't') return 17;
+		if(c == 'R' || c == 'r') return 18;
+		if(c == 'X' || c == 'x') return 19;
+		return SSID_NONE;
+	}
+	else if(ssid_str.size() == 2 && ssid_str[0] >= '0' && ssid_str[0] <= '1'
+	        && ssid_str[1] >= '0' && ssid_str[1] <= '9')
+	{
+		return (ssid_str[0] - '0') * 10 + (ssid_str[1] - '0');
+	}
+	return SSID_NONE;
+}
+
+inline std::string callsign_strip_ssid(const std::string& callsign)
+{
+	int ssid = callsign_get_ssid(callsign);
+	if(ssid == SSID_NONE) return callsign;
+	size_t hyp = callsign.rfind('-');
+	return callsign.substr(0, hyp);
+}
+
+inline std::string callsign_format_ssid(const std::string& base, int ssid)
+{
+	if(ssid == SSID_NONE || ssid < 0) return base;
+	std::string result = base + "-";
+	if(ssid <= 15)
+	{
+		if(ssid >= 10) { result += (char)('0' + ssid / 10); result += (char)('0' + ssid % 10); }
+		else result += (char)('0' + ssid);
+	}
+	else if(ssid == 16) result += 'L';
+	else if(ssid == 17) result += 'T';
+	else if(ssid == 18) result += 'R';
+	else if(ssid == 19) result += 'X';
+	else { result += (char)('0' + ssid / 10); result += (char)('0' + ssid % 10); }
+	return result;
+}
+
 inline void callsign_pack(const char* callsign, int len, char* out, int flags = 0)
 {
 	if(len > 6) len = 6;

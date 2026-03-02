@@ -21,6 +21,7 @@
  */
 
 #include "physical_layer/mfsk.h"
+#include <cstdint>
 #include <cstdio>
 
 cl_mfsk::cl_mfsk()
@@ -41,6 +42,13 @@ cl_mfsk::cl_mfsk()
 		break_tones[i] = 0;
 	for (int i = 0; i < MAX_ACK_TONES; i++)
 		hail_tones[i] = 0;
+	for (int i = 0; i < HAIL_SUFFIX_LEN; i++)
+		hail_suffix[i] = 0;
+	for (int i = 0; i < MAX_ACK_TONES + HAIL_SUFFIX_LEN; i++)
+		hail_detect_tones[i] = 0;
+	hail_directed = false;
+	hail_detect_nsymb = 0;
+	hail_detect_threshold = 0;
 	ack_pattern_len = 0;
 	ack_pattern_nsymb = 0;
 	ack_match_threshold = 0;
@@ -296,6 +304,57 @@ void cl_mfsk::init(int _M, int _Nc, int _nStreams)
 		for (int i = 0; i < ack_pattern_len; i++)
 			hail_tones[i] = (ack_tones[i] + M / 4) % M;
 	}
+
+	// Initialize directed HAIL detect arrays (undirected by default)
+	clear_hail_target();
+}
+
+void cl_mfsk::set_hail_target(const char* callsign, int len)
+{
+	if (!callsign || len <= 0 || M == 0)
+	{
+		clear_hail_target();
+		return;
+	}
+
+	// FNV-1a 32-bit hash of uppercase callsign (case-insensitive matching)
+	uint32_t hash = 2166136261u;
+	for (int i = 0; i < len; i++)
+	{
+		char c = callsign[i];
+		if (c >= 'a' && c <= 'z') c -= 32;  // uppercase
+		hash ^= (uint8_t)c;
+		hash *= 16777619u;
+	}
+
+	// Derive 4 suffix tones from hash
+	for (int i = 0; i < HAIL_SUFFIX_LEN; i++)
+		hail_suffix[i] = (int)((hash >> (i * 5)) & 0x1F) % M;
+
+	hail_directed = true;
+
+	// Build flat detect array: [expanded hail tones (no modulo)] + [suffix]
+	for (int s = 0; s < ack_pattern_nsymb; s++)
+		hail_detect_tones[s] = hail_tones[s % ack_pattern_len];
+	for (int s = 0; s < HAIL_SUFFIX_LEN; s++)
+		hail_detect_tones[ack_pattern_nsymb + s] = hail_suffix[s];
+
+	hail_detect_nsymb = ack_pattern_nsymb + HAIL_SUFFIX_LEN;
+	hail_detect_threshold = hail_match_threshold + HAIL_SUFFIX_LEN;
+}
+
+void cl_mfsk::clear_hail_target()
+{
+	hail_directed = false;
+	for (int i = 0; i < HAIL_SUFFIX_LEN; i++)
+		hail_suffix[i] = 0;
+
+	// Undirected: flat array of just the base hail tones
+	for (int s = 0; s < ack_pattern_nsymb; s++)
+		hail_detect_tones[s] = hail_tones[s % ack_pattern_len];
+
+	hail_detect_nsymb = ack_pattern_nsymb;
+	hail_detect_threshold = hail_match_threshold;
 }
 
 void cl_mfsk::deinit()
@@ -381,21 +440,23 @@ void cl_mfsk::generate_break_pattern(std::complex<double>* pattern_out)
 	}
 }
 
-// Generate HAIL pattern: "I am Mercury" beacon, identical structure to ACK but with hail_tones
+// Generate HAIL pattern: "I am Mercury" prefix + optional CRC suffix for directed hailing.
+// When hail_directed is true, appends HAIL_SUFFIX_LEN symbols derived from target callsign.
 void cl_mfsk::generate_hail_pattern(std::complex<double>* pattern_out)
 {
 	if (M == 0 || Nc == 0 || nStreams == 0) return;
 
 	double amp = sqrt((double)Nc / nStreams);
 
-	for (int s = 0; s < ack_pattern_nsymb; s++)
+	// Generate all symbols (prefix + suffix) from the flat detect array
+	for (int s = 0; s < hail_detect_nsymb; s++)
 	{
 		for (int k = 0; k < Nc; k++)
 		{
 			pattern_out[s * Nc + k] = std::complex<double>(0.0, 0.0);
 		}
 
-		int tone_base = hail_tones[s % ack_pattern_len];
+		int tone_base = hail_detect_tones[s];
 		int actual_tone = (tone_base + s * tone_hop_step) % M;
 
 		for (int st = 0; st < nStreams; st++)

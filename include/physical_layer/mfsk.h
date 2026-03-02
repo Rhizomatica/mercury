@@ -59,7 +59,20 @@ public:
 	int ack_pattern_nsymb;  // Total symbols transmitted (16 for WB, 32/48 for NB)
 	int ack_match_threshold;   // Min matched symbols for ACK detection
 	int break_match_threshold; // Min matched symbols for BREAK detection
-	int hail_match_threshold;  // Min matched symbols for HAIL detection
+	int hail_match_threshold;  // Min matched symbols for undirected HAIL detection
+
+	// Directed HAIL: 4-tone CRC suffix appended after the "I am Mercury" prefix.
+	// Derived from FNV-1a hash of the target callsign (including SSID).
+	// Only stations matching the suffix respond, preventing multi-station collisions.
+	static const int HAIL_SUFFIX_LEN = 4;
+	int hail_suffix[HAIL_SUFFIX_LEN];          // CRC-derived suffix tones
+	bool hail_directed;                          // true when suffix is active
+	int hail_detect_tones[MAX_ACK_TONES + HAIL_SUFFIX_LEN]; // flat expanded array for detection
+	int hail_detect_nsymb;                       // total symbols (base + suffix when directed)
+	int hail_detect_threshold;                   // adjusted threshold
+
+	void set_hail_target(const char* callsign, int len);
+	void clear_hail_target();
 
 	cl_mfsk();
 	~cl_mfsk();
