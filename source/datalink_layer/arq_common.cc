@@ -151,6 +151,8 @@ cl_arq_controller::cl_arq_controller()
 	peer_capability=0;
 	wb_upgrade_pending=false;
 	compression_enabled=false;
+	force_compress=false;
+	b2f_compression_pending=false;
 	compress_ratio_estimate=2.0f;
 	gear_shift_algorithm=SUCCESS_BASED_LADDER;
 
@@ -1763,6 +1765,21 @@ void cl_arq_controller::process_main()
 						tcp_socket_data.message->buffer,
 						tcp_socket_data.message->length,
 						b2f_buf, sizeof(b2f_buf));
+
+					// Auto-arm compression when B2F SID detected (Winlink traffic)
+					if(!compression_enabled && !force_compress &&
+					   !b2f_compression_pending && b2f_handler.is_b2f_session())
+					{
+						bool both_support = (local_capability & CAP_COMPRESSION) &&
+						                    (peer_capability & CAP_COMPRESSION);
+						if(both_support)
+						{
+							b2f_compression_pending = true;
+							printf("[COMPRESS] B2F detected — will arm on next ACK\n");
+							fflush(stdout);
+						}
+					}
+
 					if(b2f_len > 0)
 						fifo_buffer_tx.push(b2f_buf, b2f_len);
 					else
@@ -2166,10 +2183,10 @@ void cl_arq_controller::reset_session_state()
 	hail_detected = NO;
 	hail_sent = NO;
 
-	// Compression — deinit contexts, will re-init on next negotiation
-	if(compression_enabled)
-		compressor.deinit();
+	// Compression — always deinit (safe if not initialized; handles deferred pre-init)
+	compressor.deinit();
 	compression_enabled = false;
+	b2f_compression_pending = false;
 
 	// B2F handler — reset state for next connection
 	b2f_handler.reset();
@@ -3909,6 +3926,10 @@ void cl_arq_controller::copy_data_to_buffer()
 			{
 				fifo_buffer_rx.push(decomp_buf, dec_size);
 				total_bytes += dec_size;
+#ifdef MERCURY_GUI_ENABLED
+				// Push algo to GUI from decompressed header (responder side)
+				g_gui_state.compression_algo.store((int)(unsigned char)assembled[0]);
+#endif
 			}
 			else
 			{

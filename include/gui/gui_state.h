@@ -147,6 +147,14 @@ struct st_gui_state {
     std::atomic<bool> session_is_wideband{false};     // True when connected in WB after upgrade
     std::atomic<bool> peer_wb_capable{false};         // Remote station supports WB (from TEST_CONNECTION)
 
+    // ========== Compression Status ==========
+    std::atomic<bool> compression_active{false};     // Whether compression is currently active
+    std::atomic<int> compression_algo{0};            // Last batch algo: 0=RAW, 1=PPMd, 2=zstd
+    std::atomic<float> compression_ratio{1.0f};      // EMA compression ratio (raw/compressed)
+
+    // ========== RX Overload ==========
+    std::atomic<bool> rx_overload{false};             // Average energy too high in last 1s window
+
     // ========== GUI Control ==========
     std::atomic<bool> gui_running{true};
     std::atomic<bool> request_shutdown{false};

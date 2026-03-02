@@ -912,14 +912,23 @@ void cl_arq_controller::process_control_responder()
 			(peer_capability & CAP_COMPRESSION) ? "yes" : "no");
 		fflush(stdout);
 
-		// Compression: enable if both sides support it
-		compression_enabled = (local_capability & CAP_COMPRESSION) &&
-		                      (peer_capability & CAP_COMPRESSION);
-		if(compression_enabled)
+		// Compression: defer unless force_compress CLI flag is set
 		{
-			compressor.init();
-			printf("[COMPRESS] Enabled (both peers support compression)\n");
-			fflush(stdout);
+			bool both_support = (local_capability & CAP_COMPRESSION) &&
+			                    (peer_capability & CAP_COMPRESSION);
+			if(force_compress && both_support)
+			{
+				compression_enabled = true;
+				compressor.init();
+				printf("[COMPRESS] Force-enabled (--compress flag)\n");
+				fflush(stdout);
+			}
+			else if(both_support)
+			{
+				compressor.init();  // Pre-init contexts, arm later on B2F detection
+				printf("[COMPRESS] Deferred (waiting for B2F detection)\n");
+				fflush(stdout);
+			}
 		}
 
 		// B2F handler: init for Winlink LZHUF unroll/reroll
@@ -1109,6 +1118,20 @@ void cl_arq_controller::process_buffer_data_responder()
 					char b2f_buf[MAX_BUFFER_SIZE * 4]; // LZHUF can be larger than plaintext (rare)
 					int b2f_len = b2f_handler.filter_rx(rx_raw, rx_raw_len,
 						b2f_buf, sizeof(b2f_buf));
+
+					// Auto-arm compression when B2F detected on RX path
+					if(!compression_enabled && !force_compress && b2f_handler.is_b2f_session())
+					{
+						bool both_support = (local_capability & CAP_COMPRESSION) &&
+						                    (peer_capability & CAP_COMPRESSION);
+						if(both_support)
+						{
+							compression_enabled = true;
+							printf("[COMPRESS] Armed by B2F detection (responder)\n");
+							fflush(stdout);
+						}
+					}
+
 					if(b2f_len > 0)
 					{
 						memcpy(tcp_socket_data.message->buffer, b2f_buf, b2f_len);

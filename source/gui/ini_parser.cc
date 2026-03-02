@@ -219,6 +219,7 @@ void MercurySettings::setDefaults() {
     robust_mode_enabled = false;
     narrowband_enabled = false;
     bandwidth_mode = 0;  // BW_AUTO
+    force_compress = false;
 
     // GUI
     tx_gain_db = 0.0;
@@ -272,6 +273,7 @@ bool MercurySettings::load(const std::string& filename) {
     robust_mode_enabled = ini.getBool("Modem", "RobustMode", robust_mode_enabled);
     narrowband_enabled = ini.getBool("Modem", "Narrowband", narrowband_enabled);
     bandwidth_mode = ini.getInt("Modem", "BandwidthMode", bandwidth_mode);
+    force_compress = ini.getBool("Modem", "ForceCompress", force_compress);
 
     // GUI
     tx_gain_db = ini.getDouble("GUI", "TxGainDb", tx_gain_db);
@@ -324,6 +326,7 @@ bool MercurySettings::save(const std::string& filename) {
     ini.setBool("Modem", "RobustMode", robust_mode_enabled);
     ini.setBool("Modem", "Narrowband", narrowband_enabled);
     ini.setInt("Modem", "BandwidthMode", bandwidth_mode);
+    ini.setBool("Modem", "ForceCompress", force_compress);
 
     // GUI
     ini.setDouble("GUI", "TxGainDb", tx_gain_db);

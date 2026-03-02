@@ -372,6 +372,8 @@ public:
   bool wb_upgrade_pending;     // True between SWITCH_BANDWIDTH send and ACK
   cl_compressor compressor;           // Block compression (PPMd + zstd)
   bool compression_enabled;           // Negotiated: both sides have CAP_COMPRESSION
+  bool force_compress;                // CLI -F on: always enable compression (skip B2F detection)
+  bool b2f_compression_pending;       // B2F SID detected, arm compression on next data ACK
   cl_b2f_handler b2f_handler;         // B2F protocol handler (Winlink LZHUF unroll/reroll)
   float compress_ratio_estimate;      // Running compression ratio (raw/compressed), init 2.0
   int gear_shift_algorithm;

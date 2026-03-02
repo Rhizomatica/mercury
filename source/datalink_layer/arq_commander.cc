@@ -1400,6 +1400,15 @@ void cl_arq_controller::process_messages_rx_acks_data()
 			frame_gearshift_just_applied = false;  // upshift survived — clear flag
 		}
 
+		// Auto-arm compression after B2F SID is ACKed
+		if(data_ack_received==YES && b2f_compression_pending)
+		{
+			compression_enabled = true;
+			b2f_compression_pending = false;
+			printf("[COMPRESS] Armed after B2F ACK (commander)\n");
+			fflush(stdout);
+		}
+
 		// Frame-level gearshift: after N consecutive successful data ACKs, shift up immediately
 		{
 			int proposed_frame = config_ladder_up(current_configuration, robust_enabled, narrowband_enabled == YES);
@@ -1536,14 +1545,23 @@ void cl_arq_controller::process_control_commander()
 				(peer_capability & CAP_COMPRESSION) ? "yes" : "no");
 			fflush(stdout);
 
-			// Compression: enable if both sides support it
-			compression_enabled = (local_capability & CAP_COMPRESSION) &&
-			                      (peer_capability & CAP_COMPRESSION);
-			if(compression_enabled)
+			// Compression: defer unless force_compress CLI flag is set
 			{
-				compressor.init();
-				printf("[COMPRESS] Enabled (both peers support compression)\n");
-				fflush(stdout);
+				bool both_support = (local_capability & CAP_COMPRESSION) &&
+				                    (peer_capability & CAP_COMPRESSION);
+				if(force_compress && both_support)
+				{
+					compression_enabled = true;
+					compressor.init();
+					printf("[COMPRESS] Force-enabled (--compress flag)\n");
+					fflush(stdout);
+				}
+				else if(both_support)
+				{
+					compressor.init();  // Pre-init contexts, arm later on B2F detection
+					printf("[COMPRESS] Deferred (waiting for B2F detection)\n");
+					fflush(stdout);
+				}
 			}
 
 			// B2F handler: init for Winlink LZHUF unroll/reroll
@@ -2201,6 +2219,10 @@ void cl_arq_controller::process_buffer_data_commander()
 							compress_ratio_estimate = 0.7f * compress_ratio_estimate + 0.3f * measured;
 						}
 						fifo_buffer_backup.push(staging, raw_size);
+#ifdef MERCURY_GUI_ENABLED
+						// Push algo to GUI (read from compressed header byte 0)
+						g_gui_state.compression_algo.store((int)(unsigned char)comp_buf[0]);
+#endif
 					}
 					else
 					{

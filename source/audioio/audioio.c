@@ -870,10 +870,9 @@ void *radio_capture_thread(void *device_ptr)
 
 	double *buffer_internal = NULL;
 
-	// RX overload detection
-	int rx_overload_count = 0;
-	double rx_overload_peak = 0.0;
-	int rx_overload_report_counter = 0;
+	// RX overload detection — average energy based
+	double rx_energy_sum = 0.0;
+	int rx_energy_sample_count = 0;
 
 #if ENABLE_FLOAT64_TAP == 1
 	FILE *tap = fopen("tap-capture.f64", "w");
@@ -1011,25 +1010,22 @@ void *radio_capture_thread(void *device_ptr)
 		// Apply RX gain as preprocessing step (affects Mercury's core too)
 		gui_apply_rx_gain_for_display(buffer_internal, frames_to_write);
 
-		// RX overload detection (after gain)
+		// RX overload detection: average energy over 1-second window
 		for (int i = 0; i < frames_to_write; i++) {
-			double absval = buffer_internal[i] > 0 ? buffer_internal[i] : -buffer_internal[i];
-			if (absval > 1.0) {
-				rx_overload_count++;
-				if (absval > rx_overload_peak) rx_overload_peak = absval;
-			}
+			rx_energy_sum += buffer_internal[i] * buffer_internal[i];
 		}
-		rx_overload_report_counter += frames_to_write;
-		if (rx_overload_report_counter >= 48000) {
-			if (rx_overload_count > 0) {
-				printf("[RX-OVERLOAD] %d samples over 1.0 (peak=%.3f, %.1f%%)\n",
-					rx_overload_count, rx_overload_peak,
-					100.0 * rx_overload_count / rx_overload_report_counter);
+		rx_energy_sample_count += frames_to_write;
+		if (rx_energy_sample_count >= 48000) {
+			double rms = sqrt(rx_energy_sum / rx_energy_sample_count);
+			int overloaded = (rms > 0.794);  // -2 dBFS threshold
+			g_gui_state.rx_overload.store(overloaded != 0);
+			if (overloaded) {
+				printf("[RX-OVERLOAD] avg energy too high: RMS=%.3f (%.1f dBFS)\n",
+					rms, 20.0 * log10(rms));
 				fflush(stdout);
-				rx_overload_count = 0;
-				rx_overload_peak = 0.0;
 			}
-			rx_overload_report_counter = 0;
+			rx_energy_sum = 0.0;
+			rx_energy_sample_count = 0;
 		}
 
 		// Push to VU meter and waterfall

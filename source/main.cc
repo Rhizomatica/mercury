@@ -112,6 +112,7 @@ int main(int argc, char *argv[])
     int robust_mode = 0;  // 0=disabled, 1=enabled via -R flag
     int narrowband_mode = -1;  // -1=use INI, 0=force wideband (-W), 1=force narrowband (-N)
     int bandwidth_mode_cli = -1;  // -1=use INI, 0=BW_AUTO, 1=BW_NB_ONLY
+    int force_compress_cli = -1;  // -1=use INI, 0=off, 1=on
     bool explicit_config = false;  // true if user specified -s
     int base_tcp_port = 0;
 
@@ -185,6 +186,7 @@ int main(int argc, char *argv[])
         printf(" -T [tx_gain_db]            TX gain in dB (temporary, overrides GUI slider). E.g. -T -25.6 for -30 dBFS output.\n");
         printf(" -G [rx_gain_db]            RX gain in dB (temporary, overrides GUI slider). E.g. -G 25.6 to boost weak input.\n");
         printf(" -Q [nb_probe_max]          NB auto-negotiation probe attempts (0=disable, default 2).\n");
+        printf(" -F [on|off]                Force compression on (for non-Winlink traffic). Default: off (auto-detect B2F).\n");
         printf(" -v                         Verbose debug output (OFDM sync, RX timing, ACK detection).\n");
 #ifdef MERCURY_GUI_ENABLED
         printf(" -n                         Disable GUI (headless mode). GUI is enabled by default.\n");
@@ -194,7 +196,7 @@ int main(int argc, char *argv[])
     }
 
     int opt;
-    while ((opt = getopt(argc, argv, "hc:m:s:lr:i:o:x:p:zgt:a:k:eCnf:I:RNP:vT:G:WB:Q:A:M:Z:")) != -1)
+    while ((opt = getopt(argc, argv, "hc:m:s:lr:i:o:x:p:zgt:a:k:eCnf:I:RNP:vT:G:WB:Q:A:M:Z:F:")) != -1)
     {
         switch (opt)
         {
@@ -388,6 +390,19 @@ int main(int argc, char *argv[])
                 else
                     printf("Unknown bandwidth mode '%s', use 'auto' or 'nb'\n", optarg);
                 printf("Bandwidth mode: %s\n", bandwidth_mode_cli == BW_AUTO ? "auto" : "nb_only");
+            }
+            break;
+        case 'F':
+            if (optarg)
+            {
+                std::string fc_arg(optarg);
+                if (fc_arg == "on" || fc_arg == "1")
+                    force_compress_cli = 1;
+                else if (fc_arg == "off" || fc_arg == "0")
+                    force_compress_cli = 0;
+                else
+                    printf("Unknown compress mode '%s', use 'on' or 'off'\n", optarg);
+                printf("Force compression: %s\n", force_compress_cli == 1 ? "on" : "off");
             }
             break;
         case 'Z':
@@ -714,6 +729,7 @@ start_modem:
         else
             ARQ.narrowband_enabled = YES;  // Normal: start NB, negotiate WB via probe
         ARQ.local_capability = ((ARQ.bandwidth_mode == BW_AUTO) ? CAP_WB_CAPABLE : 0) | CAP_COMPRESSION | CAP_B2F_UNROLL;
+        ARQ.force_compress = (force_compress_cli >= 0) ? (force_compress_cli == 1) : g_settings.force_compress;
 #else
         ARQ.robust_enabled = robust_mode ? YES : NO;
         ARQ.bandwidth_mode = (bandwidth_mode_cli >= 0) ? bandwidth_mode_cli : BW_AUTO;
@@ -724,6 +740,7 @@ start_modem:
         else
             ARQ.narrowband_enabled = YES;  // Normal: start NB, negotiate WB via probe
         ARQ.local_capability = ((ARQ.bandwidth_mode == BW_AUTO) ? CAP_WB_CAPABLE : 0) | CAP_COMPRESSION | CAP_B2F_UNROLL;
+        ARQ.force_compress = (force_compress_cli == 1);
 #endif
         telecom_system.narrowband_enabled = ARQ.narrowband_enabled;
         ARQ.init(base_tcp_port, (gear_shift_mode == NO_GEAR_SHIFT)? NO : YES, mod_config);
@@ -811,6 +828,10 @@ start_modem:
                 }
                 g_gui_state.session_is_wideband.store(ARQ.narrowband_enabled == NO && ARQ.link_status == CONNECTED);
                 g_gui_state.peer_wb_capable.store((ARQ.peer_capability & CAP_WB_CAPABLE) != 0);
+
+                // Compression status
+                g_gui_state.compression_active.store(ARQ.compression_enabled);
+                g_gui_state.compression_ratio.store(ARQ.compress_ratio_estimate);
 
                 // Rolling throughput (10-second window, updated every 1s)
                 {

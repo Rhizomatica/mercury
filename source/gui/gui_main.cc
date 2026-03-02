@@ -642,6 +642,15 @@ static void RenderGUI() {
             else         ImGui::TextColored(ImVec4(0.3f, 0.3f, 0.3f, 1.0f), " DAT");
             if (sb_ack)  ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), " ACK");
             else         ImGui::TextColored(ImVec4(0.3f, 0.3f, 0.3f, 1.0f), " ACK");
+
+            bool ovl = g_gui_state.rx_overload.load();
+            if (ovl) {
+                // Strobe: alternate red/dark at ~4 Hz
+                float t = (float)fmod(ImGui::GetTime() * 4.0, 1.0);
+                float bright = (t < 0.5f) ? 1.0f : 0.2f;
+                ImGui::TextColored(ImVec4(bright, 0.0f, 0.0f, 1.0f), " OVL");
+            }
+            else         ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), " OVL");
         }
         ImGui::EndGroup();
 
@@ -678,11 +687,27 @@ static void RenderGUI() {
 
             ImGui::Spacing();
 
-            // Throughput
-            if (throughput >= 1000.0)
-                ImGui::Text("%.1f kbps", throughput / 1000.0);
-            else
-                ImGui::Text("%.0f bps", throughput);
+            // Throughput (raw and effective when compressed)
+            {
+                float comp_ratio = g_gui_state.compression_ratio.load();
+                bool comp_on = g_gui_state.compression_active.load();
+                double eff_throughput = comp_on ? throughput * comp_ratio : throughput;
+
+                if (comp_on && comp_ratio > 1.01f)
+                {
+                    if (eff_throughput >= 1000.0)
+                        ImGui::Text("%.1f kbps (%.1fk eff)", throughput / 1000.0, eff_throughput / 1000.0);
+                    else
+                        ImGui::Text("%.0f bps (%.0f eff)", throughput, eff_throughput);
+                }
+                else
+                {
+                    if (throughput >= 1000.0)
+                        ImGui::Text("%.1f kbps", throughput / 1000.0);
+                    else
+                        ImGui::Text("%.0f bps", throughput);
+                }
+            }
 
             // PHY rate + efficiency
             if (phy_rate > 0 && throughput > 0)
@@ -736,6 +761,32 @@ static void RenderGUI() {
             }
             else
                 ImGui::TextColored(ImVec4(0.4f, 0.4f, 0.4f, 1.0f), " ---");
+        }
+        ImGui::EndGroup();
+
+        ImGui::SameLine();
+
+        // Compression status display
+        ImGui::BeginGroup();
+        {
+            bool comp_on = g_gui_state.compression_active.load();
+            int comp_algo = g_gui_state.compression_algo.load();
+            float comp_ratio = g_gui_state.compression_ratio.load();
+
+            ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Compress");
+            if (comp_on)
+            {
+                const char* algo_str = "RAW";
+                if (comp_algo == 1) algo_str = "PPMd";
+                else if (comp_algo == 2) algo_str = "zstd";
+                ImGui::TextColored(ImVec4(0.3f, 1.0f, 0.3f, 1.0f), " ON (%s)", algo_str);
+                if (comp_ratio > 1.0f)
+                    ImGui::TextColored(ImVec4(0.4f, 0.9f, 1.0f, 1.0f), " %.1fx", comp_ratio);
+            }
+            else
+            {
+                ImGui::TextColored(ImVec4(0.4f, 0.4f, 0.4f, 1.0f), " OFF");
+            }
         }
         ImGui::EndGroup();
     }
