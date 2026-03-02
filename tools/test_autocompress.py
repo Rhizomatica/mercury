@@ -70,7 +70,7 @@ def run_test(mode, config=6, duration=45, gearshift=False):
             tx_data = f.read()
         print(f"TX data: pg84_b2f.txt ({len(tx_data)} bytes, B2F SID header)")
     else:
-        pg84_file = os.path.join(TOOLS_DIR, "pg84_full.txt")
+        pg84_file = os.path.join(TOOLS_DIR, "pg84.txt")
         if not os.path.exists(pg84_file):
             print(f"ERROR: {pg84_file} not found")
             return False

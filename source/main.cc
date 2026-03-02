@@ -821,11 +821,9 @@ start_modem:
                 ARQ.robust_enabled = g_gui_state.robust_mode_enabled.load() ? YES : NO;
                 ARQ.bandwidth_mode = g_gui_state.bandwidth_mode.load();
                 ARQ.local_capability = ((ARQ.bandwidth_mode == BW_AUTO) ? CAP_WB_CAPABLE : 0) | CAP_COMPRESSION | CAP_B2F_UNROLL;
-                // Don't overwrite narrowband_enabled while connected — WB upgrade changes it
-                if (ARQ.link_status != CONNECTED) {
-                    ARQ.narrowband_enabled = YES;  // Always start NB
-                    telecom_system.narrowband_enabled = YES;
-                }
+                // narrowband_enabled is set at startup (line ~728) based on -Q and -M flags.
+                // Do NOT override here — forcing NB on telecom_system while the actual
+                // config is WB causes get_tx_gain() to return NB gains (+7 dB overboosted).
                 g_gui_state.session_is_wideband.store(ARQ.narrowband_enabled == NO && ARQ.link_status == CONNECTED);
                 g_gui_state.peer_wb_capable.store((ARQ.peer_capability & CAP_WB_CAPABLE) != 0);
 
