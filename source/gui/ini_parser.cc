@@ -221,6 +221,10 @@ void MercurySettings::setDefaults() {
     bandwidth_mode = 0;  // BW_AUTO
     force_compress = false;
 
+    // Security
+    encryption_mode = 0;  // ENCRYPT_OFF
+    psk_hex = "";
+
     // GUI
     tx_gain_db = 0.0;
     rx_gain_db = 0.0;
@@ -275,6 +279,10 @@ bool MercurySettings::load(const std::string& filename) {
     bandwidth_mode = ini.getInt("Modem", "BandwidthMode", bandwidth_mode);
     force_compress = ini.getBool("Modem", "ForceCompress", force_compress);
 
+    // Security
+    encryption_mode = ini.getInt("Security", "EncryptionMode", encryption_mode);
+    psk_hex = ini.getString("Security", "PSK", psk_hex);
+
     // GUI
     tx_gain_db = ini.getDouble("GUI", "TxGainDb", tx_gain_db);
     rx_gain_db = ini.getDouble("GUI", "RxGainDb", rx_gain_db);
@@ -327,6 +335,10 @@ bool MercurySettings::save(const std::string& filename) {
     ini.setBool("Modem", "Narrowband", narrowband_enabled);
     ini.setInt("Modem", "BandwidthMode", bandwidth_mode);
     ini.setBool("Modem", "ForceCompress", force_compress);
+
+    // Security
+    ini.setInt("Security", "EncryptionMode", encryption_mode);
+    ini.setString("Security", "PSK", psk_hex);
 
     // GUI
     ini.setDouble("GUI", "TxGainDb", tx_gain_db);

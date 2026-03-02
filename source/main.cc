@@ -113,6 +113,8 @@ int main(int argc, char *argv[])
     int narrowband_mode = -1;  // -1=use INI, 0=force wideband (-W), 1=force narrowband (-N)
     int bandwidth_mode_cli = -1;  // -1=use INI, 0=BW_AUTO, 1=BW_NB_ONLY
     int force_compress_cli = -1;  // -1=use INI, 0=off, 1=on
+    int encryption_mode_cli = -1; // -1=use INI, ENCRYPT_OFF/ENCRYPT_STRICT/ENCRYPT_FAST
+    char psk_hex_cli[129] = {0};  // Pre-shared key from -K flag (hex string)
     bool explicit_config = false;  // true if user specified -s
     int base_tcp_port = 0;
 
@@ -187,6 +189,8 @@ int main(int argc, char *argv[])
         printf(" -G [rx_gain_db]            RX gain in dB (temporary, overrides GUI slider). E.g. -G 25.6 to boost weak input.\n");
         printf(" -Q [nb_probe_max]          NB auto-negotiation probe attempts (0=disable, default 2).\n");
         printf(" -F [on|off]                Force compression on (for non-Winlink traffic). Default: off (auto-detect B2F).\n");
+        printf(" -E [strict|fast]           Enable encryption. strict=SNDL-safe (hold data until PQ key exchange), fast=classical-first.\n");
+        printf(" -K [hex_psk]               Pre-shared key for encryption authentication (hex string, up to 64 bytes).\n");
         printf(" -v                         Verbose debug output (OFDM sync, RX timing, ACK detection).\n");
 #ifdef MERCURY_GUI_ENABLED
         printf(" -n                         Disable GUI (headless mode). GUI is enabled by default.\n");
@@ -196,7 +200,7 @@ int main(int argc, char *argv[])
     }
 
     int opt;
-    while ((opt = getopt(argc, argv, "hc:m:s:lr:i:o:x:p:zgt:a:k:eCnf:I:RNP:vT:G:WB:Q:A:M:Z:F:")) != -1)
+    while ((opt = getopt(argc, argv, "hc:m:s:lr:i:o:x:p:zgt:a:k:eCnf:I:RNP:vT:G:WB:Q:A:M:Z:F:E:K:")) != -1)
     {
         switch (opt)
         {
@@ -403,6 +407,28 @@ int main(int argc, char *argv[])
                 else
                     printf("Unknown compress mode '%s', use 'on' or 'off'\n", optarg);
                 printf("Force compression: %s\n", force_compress_cli == 1 ? "on" : "off");
+            }
+            break;
+        case 'E':
+            if (optarg)
+            {
+                std::string enc_arg(optarg);
+                if (enc_arg == "strict" || enc_arg == "1")
+                    encryption_mode_cli = ENCRYPT_STRICT;
+                else if (enc_arg == "fast" || enc_arg == "2")
+                    encryption_mode_cli = ENCRYPT_FAST;
+                else
+                    printf("Unknown encryption mode '%s', use 'strict' or 'fast'\n", optarg);
+                printf("Encryption: %s\n", encryption_mode_cli == ENCRYPT_STRICT ? "SNDL-safe (strict)" :
+                       encryption_mode_cli == ENCRYPT_FAST ? "classical-first (fast)" : "unknown");
+            }
+            break;
+        case 'K':
+            if (optarg)
+            {
+                strncpy(psk_hex_cli, optarg, 128);
+                psk_hex_cli[128] = '\0';
+                printf("PSK configured (%d hex chars)\n", (int)strlen(psk_hex_cli));
             }
             break;
         case 'Z':
@@ -730,6 +756,12 @@ start_modem:
             ARQ.narrowband_enabled = YES;  // Normal: start NB, negotiate WB via probe
         ARQ.local_capability = ((ARQ.bandwidth_mode == BW_AUTO) ? CAP_WB_CAPABLE : 0) | CAP_COMPRESSION | CAP_B2F_UNROLL;
         ARQ.force_compress = (force_compress_cli >= 0) ? (force_compress_cli == 1) : g_settings.force_compress;
+        // Encryption: CLI -E overrides INI setting
+        ARQ.encryption_mode = (encryption_mode_cli >= 0) ? encryption_mode_cli : g_settings.encryption_mode;
+        if (ARQ.encryption_mode != ENCRYPT_OFF)
+            ARQ.local_capability |= CAP_ENCRYPTION;
+        if (!g_settings.psk_hex.empty() && psk_hex_cli[0] == '\0')
+            strncpy(ARQ.psk_hex, g_settings.psk_hex.c_str(), 128);
 #else
         ARQ.robust_enabled = robust_mode ? YES : NO;
         ARQ.bandwidth_mode = (bandwidth_mode_cli >= 0) ? bandwidth_mode_cli : BW_AUTO;
@@ -741,6 +773,10 @@ start_modem:
             ARQ.narrowband_enabled = YES;  // Normal: start NB, negotiate WB via probe
         ARQ.local_capability = ((ARQ.bandwidth_mode == BW_AUTO) ? CAP_WB_CAPABLE : 0) | CAP_COMPRESSION | CAP_B2F_UNROLL;
         ARQ.force_compress = (force_compress_cli == 1);
+        // Encryption: CLI -E flag
+        ARQ.encryption_mode = (encryption_mode_cli >= 0) ? encryption_mode_cli : ENCRYPT_OFF;
+        if (ARQ.encryption_mode != ENCRYPT_OFF)
+            ARQ.local_capability |= CAP_ENCRYPTION;
 #endif
         telecom_system.narrowband_enabled = ARQ.narrowband_enabled;
         ARQ.init(base_tcp_port, (gear_shift_mode == NO_GEAR_SHIFT)? NO : YES, mod_config);
@@ -752,6 +788,9 @@ start_modem:
         ARQ.exit_on_disconnect = exit_on_disconnect;
         if (nb_probe_max >= 0)
             ARQ.nb_probe_max = nb_probe_max;
+        if (psk_hex_cli[0] != '\0')
+            strncpy(ARQ.psk_hex, psk_hex_cli, sizeof(ARQ.psk_hex) - 1);
+            ARQ.psk_hex[sizeof(ARQ.psk_hex) - 1] = '\0';
 
         // Ensure timeouts are adequate for MFSK frame durations
         {
@@ -820,7 +859,8 @@ start_modem:
                 // Sync robust mode and bandwidth mode from GUI to ARQ
                 ARQ.robust_enabled = g_gui_state.robust_mode_enabled.load() ? YES : NO;
                 ARQ.bandwidth_mode = g_gui_state.bandwidth_mode.load();
-                ARQ.local_capability = ((ARQ.bandwidth_mode == BW_AUTO) ? CAP_WB_CAPABLE : 0) | CAP_COMPRESSION | CAP_B2F_UNROLL;
+                ARQ.local_capability = ((ARQ.bandwidth_mode == BW_AUTO) ? CAP_WB_CAPABLE : 0) | CAP_COMPRESSION | CAP_B2F_UNROLL
+                                    | ((ARQ.encryption_mode != ENCRYPT_OFF) ? CAP_ENCRYPTION : 0);
                 // narrowband_enabled is set at startup (line ~728) based on -Q and -M flags.
                 // Do NOT override here — forcing NB on telecom_system while the actual
                 // config is WB causes get_tx_gain() to return NB gains (+7 dB overboosted).

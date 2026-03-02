@@ -34,6 +34,7 @@ do_clean() {
     rm -f source/gui/*.o source/gui/widgets/*.o source/gui/dialogs/*.o
     rm -f third_party/imgui/*.o third_party/imgui/backends/*.o
     rm -f source/audioio/*.o source/audioio/*.a source/audioio/ffaudio/ffaudio/*.o
+    rm -f source/crypto/*.o source/crypto/mlkem/*.o
     echo "Clean done."
 }
 
@@ -109,14 +110,14 @@ echo "=== Building Mercury ($MODE) ==="
 # Compiler settings
 CXX=g++
 CC=gcc
-CXXFLAGS="$OPT $DBG $EXTRA_CFLAGS -Wall -Wextra -Wno-format -Wno-unused -std=c++14 -I./include -I./source/audioio/ffaudio -I./source/compression -pthread -DMERCURY_GUI_ENABLED -I./third_party/imgui -I./third_party/imgui/backends"
-CFLAGS="$OPT $DBG $EXTRA_CFLAGS -Wall -Wno-unused -I./source/audioio/ffbase/ -I./source/audioio/ffaudio/ -I./include -I./source/compression -pthread -std=c17"
+CXXFLAGS="$OPT $DBG $EXTRA_CFLAGS -Wall -Wextra -Wno-format -Wno-unused -std=c++14 -I./include -I./source/audioio/ffaudio -I./source/compression -I./source/crypto -I./source/crypto/mlkem -pthread -DMERCURY_GUI_ENABLED -I./third_party/imgui -I./third_party/imgui/backends"
+CFLAGS="$OPT $DBG $EXTRA_CFLAGS -Wall -Wno-unused -I./source/audioio/ffbase/ -I./source/audioio/ffaudio/ -I./include -I./source/compression -I./source/crypto -I./source/crypto/mlkem -pthread -std=c17"
 
 # Platform-specific flags
 if [[ "$OSTYPE" == "msys"* ]] || [[ "$OSTYPE" == "mingw"* ]] || [[ "$OSTYPE" == "cygwin"* ]]; then
     PLATFORM="windows"
     CXXFLAGS="$CXXFLAGS -I./third_party/glfw/include"
-    LDFLAGS="-L./third_party/glfw/lib -lglfw3 -lopengl32 -lgdi32 -lole32 -ldsound -ldxguid -lws2_32 -static-libgcc -static-libstdc++ -static -l:libwinpthread.a $EXTRA_LDFLAGS"
+    LDFLAGS="-L./third_party/glfw/lib -lglfw3 -lopengl32 -lgdi32 -lole32 -ldsound -ldxguid -lws2_32 -lbcrypt -static-libgcc -static-libstdc++ -static -l:libwinpthread.a $EXTRA_LDFLAGS"
 elif [[ "$OSTYPE" == "darwin"* ]]; then
     PLATFORM="macos"
     CXXFLAGS="$CXXFLAGS $(pkg-config --cflags glfw3)"
@@ -182,6 +183,7 @@ source/gui/dialogs/setup_dialog.cc
 source/gui/dialogs/soundcard_dialog.cc
 source/compression/mercury_compress.cc
 source/compression/lzhuf_buffer.cc
+source/crypto/mercury_crypto.cc
 "
 
 # Compression library C sources (PPMd8 from LZMA SDK, zstd amalgamated, LZHUF for B2F)
@@ -191,6 +193,12 @@ source/compression/ppmd/Ppmd8Dec.c
 source/compression/ppmd/Ppmd8Enc.c
 source/compression/zstd/zstd.c
 source/compression/lzhuf/lzhuf.c
+"
+
+# Crypto C sources (monocypher + ML-KEM-768)
+CRYPTO_C_SOURCES="
+source/crypto/monocypher.c
+source/crypto/mlkem/mlkem_native.c
 "
 
 IMGUI_SOURCES="
@@ -285,9 +293,25 @@ for src in $COMPRESSION_C_SOURCES; do
     COMPRESS_OBJ_FILES="$COMPRESS_OBJ_FILES $obj"
 done
 
+# Build crypto C sources (monocypher, ML-KEM-768)
+echo "Compiling crypto libraries..."
+CRYPTO_OBJ_FILES=""
+for src in $CRYPTO_C_SOURCES; do
+    obj="${src%.c}.o"
+    if [ ! -f "$obj" ] || [ "$src" -nt "$obj" ] || [ "$CLEAN" = "1" ]; then
+        echo "  $src"
+        EXTRA_C=""
+        if [[ "$src" == *mlkem_native.c ]]; then
+            EXTRA_C="-I./source/crypto/mlkem -DMLK_CONFIG_PARAMETER_SET=768"
+        fi
+        $CC $CFLAGS -Wno-extra -Wno-sign-compare $EXTRA_C -c -o "$obj" "$src"
+    fi
+    CRYPTO_OBJ_FILES="$CRYPTO_OBJ_FILES $obj"
+done
+
 # Link
 echo "Linking $OUTPUT..."
-$CXX -o "$OUTPUT" $OBJ_FILES $COMPRESS_OBJ_FILES source/audioio/audioio.a $LDFLAGS
+$CXX -o "$OUTPUT" $OBJ_FILES $COMPRESS_OBJ_FILES $CRYPTO_OBJ_FILES source/audioio/audioio.a $LDFLAGS
 
 echo "=== Build complete: $OUTPUT ==="
 ls -la "$OUTPUT"

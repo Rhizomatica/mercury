@@ -56,6 +56,7 @@ def main():
     parser.add_argument("--mercury", default=MERCURY, help="Mercury binary path")
     parser.add_argument("--gearshift", action="store_true", help="Enable gearshift")
     parser.add_argument("--wideband", action="store_true", help="Use wideband mode (default: narrowband)")
+    parser.add_argument("--encrypt", action="store_true", help="Enable encryption (-E strict)")
     args = parser.parse_args()
 
     if args.mode == "text" and not args.file:
@@ -82,11 +83,12 @@ def main():
     robust_flag = ["-R"] if args.config >= 100 else []
     gear_flag = ["-g"] if args.gearshift else []
     nb_flag = [] if args.wideband else ["-n"]
+    encrypt_flag = ["-E", "strict"] if args.encrypt else []
 
     # Start responder
     rsp_cmd = [
         args.mercury, "-m", "ARQ", "-s", str(args.config),
-        *robust_flag, *gear_flag,
+        *robust_flag, *gear_flag, *encrypt_flag,
         "-p", str(RSP_PORT), "-i", VB_IN, "-o", VB_OUT, "-x", "wasapi", *nb_flag,
         "-Q", "0"
     ]
@@ -98,7 +100,7 @@ def main():
     # Start commander
     cmd_cmd = [
         args.mercury, "-m", "ARQ", "-s", str(args.config),
-        *robust_flag, *gear_flag,
+        *robust_flag, *gear_flag, *encrypt_flag,
         "-p", str(CMD_PORT), "-i", VB_IN, "-o", VB_OUT, "-x", "wasapi", *nb_flag,
         "-Q", "0"
     ]
@@ -212,7 +214,11 @@ def main():
         sys.exit(1)
 
     print(f"CONNECTED on config {args.config}")
-    time.sleep(2)
+    if args.encrypt:
+        print("Waiting for key exchange to complete...")
+        time.sleep(15)  # Key exchange: ~2 round trips at OFDM speed
+    else:
+        time.sleep(2)
 
     # Measure throughput
     with rx_lock:
@@ -283,6 +289,20 @@ def main():
                 print(f"\n*** DATA INTEGRITY: PASS ({len(rx_data)} bytes verified) ***")
     else:
         print(f"\n*** DATA INTEGRITY: NO DATA RECEIVED ***")
+
+    # Show crypto stats
+    crypto_cmd = [l for l in cmd_lines if "[CRYPTO" in l or "[CMD-RX]" in l or "[ACK-CTRL]" in l]
+    crypto_rsp = [l for l in rsp_lines if "[CRYPTO" in l or "[CMD-RX]" in l or "[ACK-CTRL]" in l]
+    if crypto_cmd or crypto_rsp:
+        print(f"\n=== ENCRYPTION ===")
+        if crypto_cmd:
+            print(f"Commander crypto ({len(crypto_cmd)} entries):")
+            for l in crypto_cmd[:30]:
+                print(f"  {l}")
+        if crypto_rsp:
+            print(f"Responder crypto ({len(crypto_rsp)} entries):")
+            for l in crypto_rsp[:30]:
+                print(f"  {l}")
 
     # Show compression stats from stdout
     compress_lines = [l for l in cmd_lines if "[COMPRESS]" in l or "[COMPRESS-TX]" in l]

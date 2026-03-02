@@ -82,11 +82,16 @@
 #define SET_CONFIG 0x3B
 #define REPEAT_LAST_ACK 0x3C
 #define SWITCH_BANDWIDTH 0x3D
+#define KEY_EXCHANGE_1   0x3E   // X25519 public key (32 bytes)
+#define KEY_EXCHANGE_2   0x3F   // ML-KEM encaps key (sent as data, 1184 bytes)
+#define KEY_EXCHANGE_3   0x40   // ML-KEM ciphertext (sent as data, 1088 bytes)
+#define KEY_ACTIVATE     0x41   // Encryption activated (both sides switch to encrypted data)
 
 // Capability flags (embedded in TEST_CONNECTION byte 5)
 #define CAP_WB_CAPABLE   0x01   // Supports wideband upgrade after NB connection
 #define CAP_COMPRESSION  0x02   // Supports block compression (PPMd/zstd)
 #define CAP_B2F_UNROLL   0x04   // Supports B2F LZHUF unroll/reroll (Winlink optimization)
+#define CAP_ENCRYPTION   0x08   // Supports hybrid PQ encryption (X25519 + ML-KEM-768)
 
 // Bandwidth mode (persisted in INI, controls NB/WB negotiation)
 enum BandwidthMode { BW_AUTO = 0, BW_NB_ONLY = 1 };

@@ -86,6 +86,10 @@ struct MercurySettings {
     int bandwidth_mode;             // BW_AUTO=0, BW_NB_ONLY=1
     bool force_compress;            // Force compression on (for non-Winlink traffic)
 
+    // Security / encryption settings
+    int encryption_mode;            // ENCRYPT_OFF=0, ENCRYPT_STRICT=1, ENCRYPT_FAST=2
+    std::string psk_hex;            // Pre-shared key (hex string, up to 128 chars)
+
     // GUI settings
     double tx_gain_db;
     double rx_gain_db;

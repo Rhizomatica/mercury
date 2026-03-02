@@ -34,6 +34,7 @@
 #include "audioio/audioio.h"
 #include "compression/mercury_compress.h"
 #include "datalink_layer/b2f_handler.h"
+#include "crypto/mercury_crypto.h"
 #include <iomanip>
 
 union u_SNR {
@@ -435,6 +436,18 @@ public:
   cl_b2f_handler b2f_handler;         // B2F protocol handler (Winlink LZHUF unroll/reroll)
   float compress_ratio_estimate;      // Running compression ratio (raw/compressed), init 2.0
   int batch_uncompressed_size;        // Uncompressed bytes in current TX batch (for throughput)
+
+  // Encryption (hybrid PQ: X25519 + ML-KEM-768 + ChaCha20-Poly1305)
+  cl_cipher_suite cipher_suite;       // Per-connection cipher state (ephemeral keys, session key)
+  int encryption_mode;                // ENCRYPT_OFF, ENCRYPT_STRICT, ENCRYPT_FAST
+  bool encryption_enabled;            // Negotiated: both sides have CAP_ENCRYPTION and mode != OFF
+  uint64_t tx_batch_counter;          // Monotonic counter for encrypt nonces (TX direction)
+  uint64_t rx_batch_counter;          // Monotonic counter for decrypt nonces (RX direction)
+  int consecutive_auth_failures;      // Auth failures since last success (3 → disconnect)
+  uint8_t* kx_data_buf;              // Buffer for ML-KEM key exchange data (1184 or 1088 bytes)
+  int kx_data_len;                    // Length of pending key exchange data
+  char psk_hex[129];                  // Pre-shared key (hex string, up to 64 bytes = 128 hex chars)
+
   int gear_shift_algorithm;
   double gear_shift_up_success_rate_precentage;
   double gear_shift_down_success_rate_precentage;

@@ -345,6 +345,20 @@ void cl_arq_controller::process_messages_commander()
 	}
 	else if(this->connection_status==TRANSMITTING_DATA)
 	{
+		// Key exchange gate: if encryption negotiated but not active, run key exchange first
+		if(encryption_enabled && !cipher_suite.is_active() && cipher_suite.get_kx_phase() == KX_IDLE)
+		{
+			printf("[CRYPTO] Turboshift done, initiating key exchange\n");
+			fflush(stdout);
+			add_message_control(KEY_EXCHANGE_1);
+			// connection_status set to TRANSMITTING_CONTROL by add_message_control
+			return;
+		}
+		// Hold data until key exchange completes (encryption negotiated but not yet active)
+		if(encryption_enabled && !cipher_suite.is_active())
+		{
+			return;
+		}
 		print_stats();
 		process_messages_tx_data();
 	}
@@ -432,6 +446,32 @@ int cl_arq_controller::add_message_control(char code)
 			printf("[GEARSHIFT] SET_CONFIG: forward=%d reverse=%d (SNR down=%.1f up=%.1f) link_status=%d\n",
 				forward_configuration, reverse_configuration,
 				measurements.SNR_downlink, measurements.SNR_uplink, (int)link_status);
+			fflush(stdout);
+		}
+		else if(code==KEY_EXCHANGE_1)
+		{
+			// X25519 public key exchange (32 bytes)
+			uint8_t pubkey[X25519_KEY_SIZE];
+			if(cipher_suite.generate_x25519_keypair(pubkey) != 0)
+			{
+				printf("[CRYPTO] ERROR: X25519 keypair generation failed (RNG)\n");
+				fflush(stdout);
+				messages_control.status = FREE;
+				return ERROR_;
+			}
+			messages_control.data[0] = code;
+			memcpy(&messages_control.data[1], pubkey, X25519_KEY_SIZE);
+			messages_control.length = 1 + X25519_KEY_SIZE;  // 33 bytes
+			messages_control.id = 0;
+			printf("[CRYPTO] Sending X25519 pubkey (32 bytes)\n");
+			fflush(stdout);
+		}
+		else if(code==KEY_ACTIVATE)
+		{
+			messages_control.data[0] = code;
+			messages_control.length = 1;
+			messages_control.id = 0;
+			printf("[CRYPTO] Sending KEY_ACTIVATE\n");
 			fflush(stdout);
 		}
 		else if(code==REPEAT_LAST_ACK)
@@ -563,7 +603,19 @@ void cl_arq_controller::process_messages_tx_control()
 			MUTEX_UNLOCK(&capture_prep_mutex);
 		}
 
-		if(ack_pattern_time_ms > 0)
+		if(messages_control.data[0] == KEY_EXCHANGE_1)
+		{
+			// KEY_EXCHANGE_1: receive LDPC ACK on data_configuration (OFDM).
+			// Responder sends full OFDM frame with pubkey data.
+			telecom_system->set_mfsk_ctrl_mode(false);
+			telecom_system->data_container.frames_to_read =
+				telecom_system->data_container.preamble_nSymb + telecom_system->data_container.Nsymb;
+			printf("[CMD-RX] KEY_EXCHANGE_1: expecting LDPC ACK on config %d, ftr=%d\n",
+				data_configuration,
+				telecom_system->data_container.frames_to_read.load());
+			fflush(stdout);
+		}
+		else if(ack_pattern_time_ms > 0)
 		{
 			// Expect ACK tone pattern. Start polling quickly (4 symbols ~90ms);
 			// receive_ack_pattern() re-polls every 2 symbols until pattern arrives.
@@ -573,16 +625,13 @@ void cl_arq_controller::process_messages_tx_control()
 		}
 		else
 		{
-			// Fallback: expect short LDPC ctrl frame
+			// Fallback: expect short LDPC ctrl frame on ack_configuration
+			load_configuration(ack_configuration, PHYSICAL_LAYER_ONLY,NO);
 			telecom_system->set_mfsk_ctrl_mode(true);
 			telecom_system->data_container.frames_to_read =
 				telecom_system->data_container.preamble_nSymb + telecom_system->get_active_nsymb();
 		}
 		connection_status=RECEIVING_ACKS_CONTROL;
-
-		// ACK pattern detection uses dedicated ack_mfsk — no config switch needed
-		if(ack_pattern_time_ms <= 0)
-			load_configuration(ack_configuration, PHYSICAL_LAYER_ONLY,NO);
 
 		// Recalculate timeout: guard delays from prior ACK detection can leave
 		// receiving_timeout stale (e.g. 900ms), too short for the control round-trip.
@@ -762,12 +811,13 @@ void cl_arq_controller::process_messages_rx_acks_control()
 {
 	if (receiving_timer.get_elapsed_time_ms()<receiving_timeout)
 	{
-		if(ack_pattern_time_ms > 0)
+		if(ack_pattern_time_ms > 0 && messages_control.data[0] != KEY_EXCHANGE_1)
 		{
 			// Detect ACK tone pattern instead of decoding LDPC frame.
 			// Keep checking until ACKED (not just PENDING_ACK): update_status()
 			// may set ACK_TIMED_OUT before the receive window expires, but the
 			// ACK pattern can still arrive within receiving_timeout.
+			// KEY_EXCHANGE_1 must use LDPC path to receive responder's pubkey.
 			if(messages_control.status != ACKED)
 			{
 				if(receive_ack_pattern())
@@ -794,7 +844,8 @@ void cl_arq_controller::process_messages_rx_acks_control()
 		}
 		else
 		{
-			// Fallback: decode LDPC ACK frame
+			// Decode LDPC ACK frame (also used for KEY_EXCHANGE_1 which
+			// carries the responder's pubkey in the ACK data payload).
 			this->receive();
 			if(messages_rx_buffer.status==RECEIVED && messages_rx_buffer.type==ACK_CONTROL)
 			{
@@ -835,9 +886,10 @@ void cl_arq_controller::process_messages_rx_acks_control()
 	{
 		// Restore receiving_timeout if batch drain logic adjusted it
 		calculate_receiving_timeout();
-		// Only restore data config if we switched to ack config (LDPC ACK path)
+		// Restore data config if we switched to ack config (LDPC ACK path)
 		if(ack_pattern_time_ms <= 0)
 			load_configuration(data_configuration, PHYSICAL_LAYER_ONLY,YES);
+		// KEY_EXCHANGE_1 stays on data_configuration — no restore needed
 		if(messages_control.status==ACKED)
 		{
 			emergency_nack_count = 0;  // Channel working — reset BREAK counter
@@ -1544,10 +1596,11 @@ void cl_arq_controller::process_control_commander()
 			// symmetric capability — works when both sides use same bandwidth_mode).
 			// Responder's SWITCH_BANDWIDTH handler rejects if nb_only as a safety net.
 			peer_capability = (uint8_t)messages_control.data[5];
-			printf("[BW-NEG] Responder capability: 0x%02X (WB=%s, COMPRESS=%s)\n",
+			printf("[BW-NEG] Responder capability: 0x%02X (WB=%s, COMPRESS=%s, ENCRYPT=%s)\n",
 				peer_capability,
 				(peer_capability & CAP_WB_CAPABLE) ? "yes" : "no",
-				(peer_capability & CAP_COMPRESSION) ? "yes" : "no");
+				(peer_capability & CAP_COMPRESSION) ? "yes" : "no",
+				(peer_capability & CAP_ENCRYPTION) ? "yes" : "no");
 			fflush(stdout);
 
 			// Read responder's SSID from byte 6 (confirmation — commander already knows it)
@@ -1583,6 +1636,30 @@ void cl_arq_controller::process_control_commander()
 			printf("[B2F] %s (local=0x%02X peer=0x%02X)\n",
 				b2f_handler.unroll_enabled ? "Unroll ENABLED" : "Unroll DISABLED (peer lacks capability)",
 				local_capability, peer_capability);
+			fflush(stdout);
+
+			// Encryption negotiation
+			{
+				bool both_support = (local_capability & CAP_ENCRYPTION) &&
+				                    (peer_capability & CAP_ENCRYPTION);
+				if (encryption_mode != ENCRYPT_OFF && both_support)
+				{
+					encryption_enabled = true;
+					// Encryption requires batch-level assembly (compression path)
+					if (!compression_enabled)
+					{
+						compression_enabled = true;
+						printf("[CRYPTO] Forced compression ON (required for batch encryption)\n");
+					}
+					printf("[CRYPTO] Encryption negotiated (%s mode), key exchange after turboshift\n",
+						encryption_mode == ENCRYPT_STRICT ? "SNDL-safe" : "classical-first");
+				}
+				else if (encryption_mode != ENCRYPT_OFF && !both_support)
+				{
+					printf("[CRYPTO] WARNING: Peer does not support encryption (peer_cap=0x%02X)\n",
+						peer_capability);
+				}
+			}
 			fflush(stdout);
 
 			switch_role_test_timer.stop();
@@ -1696,6 +1773,55 @@ void cl_arq_controller::process_control_commander()
 				tcp_socket_control.message->buffer[i]=str[i];
 			}
 			tcp_socket_control.transmit();
+		}
+		else if(this->link_status==CONNECTED && messages_control.data[0]==KEY_EXCHANGE_1)
+		{
+			// KEY_EXCHANGE_1 ACK: responder's X25519 pubkey (32 bytes at data[1..32])
+			printf("[CRYPTO] KEY_EXCHANGE_1 ACKed — received responder's X25519 pubkey\n");
+			fflush(stdout);
+
+			cipher_suite.compute_x25519_shared((const uint8_t*)&messages_control.data[1]);
+
+			// Derive session key from X25519 (classical-only for now)
+			// ML-KEM upgrade will be added as a follow-up (requires data-channel transport)
+			cipher_suite.derive_session_key(
+				my_call_sign.c_str(), destination_call_sign.c_str(),
+				(psk_hex[0] != '\0') ? (const uint8_t*)psk_hex : NULL,
+				(psk_hex[0] != '\0') ? (int)strlen(psk_hex) : 0,
+				false);  // mlkem_done=false (X25519-only for now)
+
+			// Send KEY_ACTIVATE to start encrypted data transfer
+			messages_control.status = FREE;
+			add_message_control(KEY_ACTIVATE);
+
+			watchdog_timer.start();
+			link_timer.start();
+		}
+		else if(this->link_status==CONNECTED && messages_control.data[0]==KEY_ACTIVATE)
+		{
+			// KEY_ACTIVATE ACKed — encryption is now active on both sides
+			cipher_suite.activate();
+			tx_batch_counter = 0;
+			rx_batch_counter = 0;
+			consecutive_auth_failures = 0;
+			printf("[CRYPTO] KEY_ACTIVATE ACKed — encryption active (X25519 + ChaCha20-Poly1305)\n");
+			fflush(stdout);
+
+			// Report encryption state on control port
+			{
+				std::string str = "ENCRYPTION CLASSICAL\r";
+				if (tcp_socket_control.get_status() == TCP_STATUS_ACCEPTED)
+				{
+					tcp_socket_control.message->length = str.length();
+					for (int i = 0; i < (int)str.length(); i++)
+						tcp_socket_control.message->buffer[i] = str[i];
+					tcp_socket_control.transmit();
+				}
+			}
+
+			this->connection_status = TRANSMITTING_DATA;
+			watchdog_timer.start();
+			link_timer.start();
 		}
 		else if(this->link_status==CONNECTED && messages_control.data[0]==SWITCH_BANDWIDTH)
 		{
@@ -2145,6 +2271,12 @@ void cl_arq_controller::process_buffer_data_commander()
 	int data_read_size;
 	if(role==COMMANDER && link_status==CONNECTED && connection_status==TRANSMITTING_DATA)
 	{
+		// Key exchange gate: don't fill FIFO data while key exchange is in progress.
+		// process_commander() gates process_messages_tx_data(), but this function
+		// is called separately from process_messages() and needs its own gate.
+		if(encryption_enabled && !cipher_suite.is_active())
+			return;
+
 		if( fifo_buffer_tx.get_size()!=fifo_buffer_tx.get_free_size() && block_under_tx==NO)
 		{
 			int max_frame = max_data_length+max_header_length-DATA_LONG_HEADER_LENGTH;
@@ -2155,6 +2287,12 @@ void cl_arq_controller::process_buffer_data_commander()
 				// Pop raw data based on estimated compression ratio, compress,
 				// iteratively add more data until batch is 85%+ full.
 				int batch_capacity = data_batch_size * max_frame;
+
+				// Reserve space for encryption auth tag if active
+				int crypto_overhead = 0;
+				if(cipher_suite.is_active())
+					crypto_overhead = AUTH_TAG_SIZE;
+				batch_capacity -= crypto_overhead;
 
 				// Initial guess based on running ratio estimate.
 				// Staging can be up to COMPRESS_WORKSPACE_SIZE (64KB) because
@@ -2266,9 +2404,58 @@ void cl_arq_controller::process_buffer_data_commander()
 						batch_uncompressed_size = raw_size;
 					}
 
-					// No zero-padding: send only actual compressed data frames.
-					// pad_messages_batch_tx() fills remaining batch slots with
-					// duplicates (same IDs → idempotent overwrite on RX).
+					// --- Encrypt batch (after compression, before frame split) ---
+					if(cipher_suite.is_active() && comp_size > 0)
+					{
+						// Always use full 16-byte auth tag — encryption only runs
+						// after turboshift at OFDM speeds where 16 bytes is negligible.
+						int tag_size = AUTH_TAG_SIZE;
+
+						// Pad compressed data so encrypted output fills all
+						// data_batch_size frames.  The ACK gate can't peek at
+						// the compression header when it's encrypted, so it
+						// expects data_batch_size unique frames.  Without
+						// padding, compression may produce fewer frames and
+						// the duplicate-ID padding causes ACK gate suppression.
+						// Receiver decrypts, reads comp_size from header, and
+						// ignores the zero padding beyond it.
+						int target_comp = data_batch_size * max_frame - tag_size;
+						if(comp_size < target_comp && target_comp <= (int)sizeof(comp_buf))
+						{
+							memset(comp_buf + comp_size, 0, target_comp - comp_size);
+							comp_size = target_comp;
+						}
+
+						uint32_t tx_direction = (original_role == COMMANDER)
+							? DIRECTION_CMD_TO_RSP : DIRECTION_RSP_TO_CMD;
+						printf("[CRYPTO-TX] Encrypting %d bytes, counter=%llu dir=%u tag=%d config=%d\n",
+							comp_size, (unsigned long long)tx_batch_counter,
+							tx_direction, tag_size, (int)data_configuration);
+						fflush(stdout);
+						char enc_buf[16384];
+						int enc_size = cipher_suite.encrypt(
+							(const uint8_t*)comp_buf, comp_size,
+							(uint8_t*)enc_buf, sizeof(enc_buf),
+							tx_batch_counter, tx_direction,
+							tag_size);
+						if(enc_size > 0)
+						{
+							memcpy(comp_buf, enc_buf, enc_size);
+							comp_size = enc_size;
+							tx_batch_counter++;
+						}
+						else
+						{
+							printf("[CRYPTO] Encrypt failed (batch %llu)\n",
+								(unsigned long long)tx_batch_counter);
+							fflush(stdout);
+						}
+					}
+
+					// With encryption, comp_buf is padded + encrypted to fill
+					// all data_batch_size frames exactly (no duplicate IDs).
+					// Without encryption, pad_messages_batch_tx() fills
+					// remaining batch slots with duplicates.
 
 					// Ensure contiguous IDs 0..data_batch_size-1
 					for(int i = 0; i < data_batch_size; i++)

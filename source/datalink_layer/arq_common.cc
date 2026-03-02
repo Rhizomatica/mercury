@@ -155,6 +155,14 @@ cl_arq_controller::cl_arq_controller()
 	b2f_compression_pending=false;
 	compress_ratio_estimate=2.0f;
 	batch_uncompressed_size=0;
+	encryption_mode=ENCRYPT_OFF;
+	encryption_enabled=false;
+	tx_batch_counter=0;
+	rx_batch_counter=0;
+	consecutive_auth_failures=0;
+	kx_data_buf=NULL;
+	kx_data_len=0;
+	memset(psk_hex, 0, sizeof(psk_hex));
 	gear_shift_algorithm=SUCCESS_BASED_LADDER;
 
 	gear_shift_up_success_rate_precentage=70;
@@ -1879,7 +1887,7 @@ void cl_arq_controller::process_user_command(std::string command)
 		this->my_call_sign=command.substr(0,command.find(" "));
 		this->destination_call_sign=command.substr(my_call_sign.length()+1);
 		commander_configured_nb=narrowband_enabled;
-		local_capability = ((bandwidth_mode == BW_AUTO) ? CAP_WB_CAPABLE : 0) | CAP_COMPRESSION | CAP_B2F_UNROLL;
+		local_capability = ((bandwidth_mode == BW_AUTO) ? CAP_WB_CAPABLE : 0) | CAP_COMPRESSION | CAP_B2F_UNROLL | ((encryption_mode != ENCRYPT_OFF) ? CAP_ENCRYPTION : 0);
 		peer_capability = 0;
 		wb_upgrade_pending = false;
 		compression_enabled = false;
@@ -1976,7 +1984,7 @@ void cl_arq_controller::process_user_command(std::string command)
 	{
 		original_role=RESPONDER;
 		set_role(RESPONDER);
-		local_capability = ((bandwidth_mode == BW_AUTO) ? CAP_WB_CAPABLE : 0) | CAP_COMPRESSION | CAP_B2F_UNROLL;
+		local_capability = ((bandwidth_mode == BW_AUTO) ? CAP_WB_CAPABLE : 0) | CAP_COMPRESSION | CAP_B2F_UNROLL | ((encryption_mode != ENCRYPT_OFF) ? CAP_ENCRYPTION : 0);
 		peer_capability = 0;
 		wb_upgrade_pending = false;
 		compression_enabled = false;
@@ -2012,7 +2020,7 @@ void cl_arq_controller::process_user_command(std::string command)
 		printf("[BW] Setting NB only (500 Hz)\n");
 		fflush(stdout);
 		bandwidth_mode = BW_NB_ONLY;
-		local_capability = CAP_COMPRESSION | CAP_B2F_UNROLL;
+		local_capability = CAP_COMPRESSION | CAP_B2F_UNROLL | ((encryption_mode != ENCRYPT_OFF) ? CAP_ENCRYPTION : 0);
 #ifdef MERCURY_GUI_ENABLED
 		g_gui_state.bandwidth_mode.store(BW_NB_ONLY);
 #endif
@@ -2030,7 +2038,7 @@ void cl_arq_controller::process_user_command(std::string command)
 		printf("[BW] Setting auto mode (%s)\n", command.c_str());
 		fflush(stdout);
 		bandwidth_mode = BW_AUTO;
-		local_capability = CAP_WB_CAPABLE | CAP_COMPRESSION | CAP_B2F_UNROLL;
+		local_capability = CAP_WB_CAPABLE | CAP_COMPRESSION | CAP_B2F_UNROLL | ((encryption_mode != ENCRYPT_OFF) ? CAP_ENCRYPTION : 0);
 #ifdef MERCURY_GUI_ENABLED
 		g_gui_state.bandwidth_mode.store(BW_AUTO);
 #endif
@@ -2049,7 +2057,7 @@ void cl_arq_controller::process_user_command(std::string command)
 		printf("[BW] Setting auto mode (BW2500, legacy)\n");
 		fflush(stdout);
 		bandwidth_mode = BW_AUTO;
-		local_capability = CAP_WB_CAPABLE | CAP_COMPRESSION | CAP_B2F_UNROLL;
+		local_capability = CAP_WB_CAPABLE | CAP_COMPRESSION | CAP_B2F_UNROLL | ((encryption_mode != ENCRYPT_OFF) ? CAP_ENCRYPTION : 0);
 #ifdef MERCURY_GUI_ENABLED
 		g_gui_state.bandwidth_mode.store(BW_AUTO);
 #endif
@@ -2191,6 +2199,15 @@ void cl_arq_controller::reset_session_state()
 
 	// B2F handler — reset state for next connection
 	b2f_handler.reset();
+
+	// Encryption — wipe all key material (volatile memset, compiler can't elide)
+	cipher_suite.wipe();
+	encryption_enabled = false;
+	tx_batch_counter = 0;
+	rx_batch_counter = 0;
+	consecutive_auth_failures = 0;
+	if (kx_data_buf) { free(kx_data_buf); kx_data_buf = NULL; }
+	kx_data_len = 0;
 
 	// Data exchange
 	block_under_tx = NO;
@@ -3922,17 +3939,73 @@ void cl_arq_controller::copy_data_to_buffer()
 
 		if(assembled_size >= COMPRESS_HEADER_SIZE)
 		{
+			// --- Decrypt batch (after reassembly, before decompression) ---
+			char* comp_data = assembled;
+			int comp_len = assembled_size;
+			char decrypt_buf[16384];
+
+			if(cipher_suite.is_active() && assembled_size > 0)
+			{
+				// Always use full 16-byte auth tag (matches TX side)
+				int tag_size = AUTH_TAG_SIZE;
+				uint32_t rx_direction = (original_role == COMMANDER)
+					? DIRECTION_RSP_TO_CMD : DIRECTION_CMD_TO_RSP;
+				printf("[CRYPTO-RX] Decrypting %d bytes, counter=%llu dir=%u tag=%d config=%d\n",
+					assembled_size, (unsigned long long)rx_batch_counter,
+					rx_direction, tag_size, (int)data_configuration);
+				fflush(stdout);
+				int plain_size = cipher_suite.decrypt(
+					(const uint8_t*)assembled, assembled_size,
+					(uint8_t*)decrypt_buf, sizeof(decrypt_buf),
+					rx_batch_counter, rx_direction,
+					tag_size);
+				if(plain_size > 0)
+				{
+					comp_data = decrypt_buf;
+					comp_len = plain_size;
+					rx_batch_counter++;
+					printf("[CRYPTO-RX] Decrypted: %d -> %d bytes OK\n",
+						assembled_size, plain_size);
+					fflush(stdout);
+				}
+				else
+				{
+					consecutive_auth_failures++;
+					printf("[CRYPTO] Decrypt FAILED (batch %llu, fails=%d)\n",
+						(unsigned long long)rx_batch_counter, consecutive_auth_failures);
+					fflush(stdout);
+					if(consecutive_auth_failures >= 3)
+					{
+						printf("[CRYPTO] 3 consecutive auth failures — disconnecting\n");
+						fflush(stdout);
+						// Report error on control port
+						const char* err_msg = "ENCRYPTION FAILURE\r";
+						int elen = (int)strlen(err_msg);
+						for(int e=0; e<elen; e++)
+							tcp_socket_control.message->buffer[e] = err_msg[e];
+						tcp_socket_control.message->length = elen;
+						tcp_socket_control.transmit();
+					}
+					// Push raw as fallback (will be garbled but keeps flow going)
+					fifo_buffer_rx.push(assembled, assembled_size);
+					total_bytes += assembled_size;
+					goto copy_data_done;
+				}
+			}
 
 			char decomp_buf[COMPRESS_WORKSPACE_SIZE];
 			int dec_size = compressor.decompress_block(
-				assembled, assembled_size,
+				comp_data, comp_len,
 				decomp_buf, (int)sizeof(decomp_buf));
 			if(dec_size > 0)
 			{
 				fifo_buffer_rx.push(decomp_buf, dec_size);
 				total_bytes += dec_size;
+				// Reset auth failure counter on success
+				if(cipher_suite.is_active())
+					consecutive_auth_failures = 0;
 				// Update compression ratio on responder side (EMA)
-				int comp_payload = assembled_size - COMPRESS_HEADER_SIZE;
+				int comp_payload = comp_len - COMPRESS_HEADER_SIZE;
 				if(comp_payload > 0)
 				{
 					float measured = (float)dec_size / (float)comp_payload;
@@ -3940,20 +4013,20 @@ void cl_arq_controller::copy_data_to_buffer()
 				}
 #ifdef MERCURY_GUI_ENABLED
 				// Push algo to GUI from decompressed header (responder side)
-				g_gui_state.compression_algo.store((int)(unsigned char)assembled[0]);
+				g_gui_state.compression_algo.store((int)(unsigned char)comp_data[0]);
 #endif
 			}
 			else
 			{
 				// Decompression error — push assembled raw as fallback
-				const unsigned char* ehdr = (const unsigned char*)assembled;
+				const unsigned char* ehdr = (const unsigned char*)comp_data;
 				printf("[DECOMPRESS] Batch error (assembled %d bytes, hdr: algo=%d comp=%d orig=%d), pushing raw\n",
-					assembled_size, (int)ehdr[0],
+					comp_len, (int)ehdr[0],
 					(int)(ehdr[1] | (ehdr[2] << 8)),
 					(int)(ehdr[3] | (ehdr[4] << 8)));
 				fflush(stdout);
-				fifo_buffer_rx.push(assembled, assembled_size);
-				total_bytes += assembled_size;
+				fifo_buffer_rx.push(comp_data, comp_len);
+				total_bytes += comp_len;
 			}
 		}
 		else if(assembled_size > 0)
@@ -3988,6 +4061,7 @@ void cl_arq_controller::copy_data_to_buffer()
 				messages_rx[i].status=FREE;
 		}
 	}
+copy_data_done:
 #ifdef MERCURY_GUI_ENABLED
 	if(total_bytes > 0)
 		gui_add_throughput_bytes_rx(total_bytes);
@@ -3997,6 +4071,21 @@ void cl_arq_controller::copy_data_to_buffer()
 
 void cl_arq_controller::restore_tx_from_compressed()
 {
+	// When encryption is active, messages_tx contains encrypted+compressed data.
+	// Decrypting requires the exact batch counter that was used, which is fragile.
+	// The backup buffer always has raw plaintext, so use it directly.
+	if(cipher_suite.is_active())
+	{
+		printf("[RESTORE_TX] Encryption active — restoring from backup buffer\n");
+		fflush(stdout);
+		for(int i=0; i<nMessages; i++)
+			messages_tx[i].status = FREE;
+		restore_backup_buffer_data();
+		// Rewind TX counter so re-encrypted batch gets same counter
+		if(tx_batch_counter > 0) tx_batch_counter--;
+		return;
+	}
+
 	// Reassemble compressed chunks from messages_tx, decompress back to raw,
 	// push raw data to fifo_buffer_tx for re-compression at new config.
 	char assembled[16384];

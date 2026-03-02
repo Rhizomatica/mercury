@@ -295,7 +295,9 @@ void cl_arq_controller::process_messages_rx_data_control()
 void cl_arq_controller::process_messages_acknowledging_control()
 {
 	message_batch_counter_tx=0;
-	if(g_verbose) { printf("[ACK-CTRL] status=%d (need %d=RECEIVED), ack_cfg=%d\n", messages_control.status, RECEIVED, ack_configuration); fflush(stdout); }
+	printf("[ACK-CTRL] status=%d (need %d=RECEIVED), code=%d, ack_cfg=%d\n",
+		messages_control.status, RECEIVED, (int)messages_control.data[0], ack_configuration);
+	fflush(stdout);
 	if(messages_control.status==RECEIVED)
 	{
 		messages_control.type=ACK_CONTROL;
@@ -306,7 +308,21 @@ void cl_arq_controller::process_messages_acknowledging_control()
 		// nUnder is counted (not accumulated LISTENING nUnder).
 		telecom_system->data_container.nUnder_processing_events = 0;
 
-		if(ack_pattern_time_ms > 0)
+		if(messages_control.data[0] == KEY_EXCHANGE_1)
+		{
+			// KEY_EXCHANGE_1: must use LDPC ACK to carry responder's pubkey.
+			// Send on data_configuration (OFDM) — NOT ack_configuration (MFSK).
+			// Commander will load data_configuration to receive this.
+			printf("[ACK-CTRL] Sending LDPC ACK for KEY_EXCHANGE_1 on config %d\n",
+				data_configuration);
+			fflush(stdout);
+			telecom_system->set_mfsk_ctrl_mode(false);  // full OFDM frame
+			messages_batch_tx[message_batch_counter_tx]=messages_control;
+			message_batch_counter_tx++;
+			pad_messages_batch_tx(control_batch_size);
+			send_batch();
+		}
+		else if(ack_pattern_time_ms > 0)
 		{
 			// ACK pattern uses dedicated ack_mfsk — no config switch needed
 			if(g_verbose) { printf("[ACK-CTRL] Sending ACK pattern (no config switch)\n"); fflush(stdout); }
@@ -592,6 +608,7 @@ void cl_arq_controller::process_messages_acknowledging_data()
 
 			int expected = data_batch_size;  // Default for non-compressed
 			if(compression_enabled
+				&& !cipher_suite.is_active()  // Can't peek header when encrypted
 				&& messages_rx[0].status == RECEIVED
 				&& messages_rx[0].length >= COMPRESS_HEADER_SIZE)
 			{
@@ -908,10 +925,11 @@ void cl_arq_controller::process_control_responder()
 		// Always present (LDPC decodes full block; unused bytes are zero-padded).
 		// Backwards-compatible: old firmware doesn't fill byte 5 → decodes as 0 = no WB.
 		peer_capability = (uint8_t)messages_control.data[5];
-		printf("[BW-NEG] Commander capability: 0x%02X (WB=%s, COMPRESS=%s)\n",
+		printf("[BW-NEG] Commander capability: 0x%02X (WB=%s, COMPRESS=%s, ENCRYPT=%s)\n",
 			peer_capability,
 			(peer_capability & CAP_WB_CAPABLE) ? "yes" : "no",
-			(peer_capability & CAP_COMPRESSION) ? "yes" : "no");
+			(peer_capability & CAP_COMPRESSION) ? "yes" : "no",
+			(peer_capability & CAP_ENCRYPTION) ? "yes" : "no");
 		fflush(stdout);
 
 		// Read commander's SSID from byte 6 (sent separately from packed callsign)
@@ -957,6 +975,30 @@ void cl_arq_controller::process_control_responder()
 			local_capability, peer_capability);
 		fflush(stdout);
 
+		// Encryption negotiation
+		{
+			bool both_support = (local_capability & CAP_ENCRYPTION) &&
+			                    (peer_capability & CAP_ENCRYPTION);
+			if (encryption_mode != ENCRYPT_OFF && both_support)
+			{
+				encryption_enabled = true;
+				// Encryption requires batch-level assembly (compression path)
+				if (!compression_enabled)
+				{
+					compression_enabled = true;
+					printf("[CRYPTO] Forced compression ON (required for batch encryption)\n");
+				}
+				printf("[CRYPTO] Encryption negotiated (%s mode), key exchange after turboshift\n",
+					encryption_mode == ENCRYPT_STRICT ? "SNDL-safe" : "classical-first");
+			}
+			else if (encryption_mode != ENCRYPT_OFF && !both_support)
+			{
+				printf("[CRYPTO] WARNING: Peer does not support encryption (peer_cap=0x%02X)\n",
+					peer_capability);
+			}
+		}
+		fflush(stdout);
+
 		tmp_SNR.f_SNR=(float)measurements.SNR_downlink;
 		for(int i=0;i<4;i++)
 		{
@@ -984,6 +1026,73 @@ void cl_arq_controller::process_control_responder()
 		link_timer.start();
 
 
+	}
+	else if(link_status==CONNECTED && (code==KEY_EXCHANGE_1 || code==KEY_ACTIVATE))
+	{
+		if(code==KEY_EXCHANGE_1)
+		{
+			// Commander's X25519 public key (32 bytes at data[1..32])
+			printf("[CRYPTO] Received KEY_EXCHANGE_1 (X25519 pubkey from commander)\n");
+			fflush(stdout);
+
+			// Generate our own keypair
+			uint8_t our_pubkey[X25519_KEY_SIZE];
+			if(cipher_suite.generate_x25519_keypair(our_pubkey) != 0)
+			{
+				printf("[CRYPTO] ERROR: X25519 keypair generation failed\n");
+				fflush(stdout);
+			}
+
+			// Compute shared secret from commander's pubkey
+			cipher_suite.compute_x25519_shared((const uint8_t*)&messages_control.data[1]);
+
+			// Derive session key from X25519 (classical-only for now)
+			// ML-KEM upgrade will be added in follow-up (requires data-channel transport)
+			cipher_suite.derive_session_key(
+				destination_call_sign.c_str(), my_call_sign.c_str(),
+				(psk_hex[0] != '\0') ? (const uint8_t*)psk_hex : NULL,
+				(psk_hex[0] != '\0') ? (int)strlen(psk_hex) : 0,
+				false);  // mlkem_done=false (X25519-only for now)
+
+			// Put our pubkey in the ACK data (same pattern as TEST_CONNECTION)
+			messages_control.data[0] = KEY_EXCHANGE_1;
+			memcpy(&messages_control.data[1], our_pubkey, X25519_KEY_SIZE);
+			messages_control.length = 1 + X25519_KEY_SIZE;
+
+			printf("[CRYPTO] X25519 shared secret computed, session key derived\n");
+			printf("[CRYPTO] Setting ACKNOWLEDGING_CONTROL, msg_status=%d\n",
+				messages_control.status);
+			fflush(stdout);
+
+			connection_status = ACKNOWLEDGING_CONTROL;
+			link_timer.start();
+			watchdog_timer.start();
+		}
+		else if(code==KEY_ACTIVATE)
+		{
+			printf("[CRYPTO] Received KEY_ACTIVATE — encryption active\n");
+			fflush(stdout);
+			cipher_suite.activate();
+			tx_batch_counter = 0;
+			rx_batch_counter = 0;
+			consecutive_auth_failures = 0;
+
+			// Report encryption state on control port
+			{
+				std::string str = "ENCRYPTION CLASSICAL\r";
+				if (tcp_socket_control.get_status() == TCP_STATUS_ACCEPTED)
+				{
+					tcp_socket_control.message->length = str.length();
+					for (int i = 0; i < (int)str.length(); i++)
+						tcp_socket_control.message->buffer[i] = str[i];
+					tcp_socket_control.transmit();
+				}
+			}
+
+			connection_status = ACKNOWLEDGING_CONTROL;
+			link_timer.start();
+			watchdog_timer.start();
+		}
 	}
 	else if(link_status==CONNECTED && (code==SET_CONFIG || code==BLOCK_END || code==FILE_END_ || code==SWITCH_ROLE || code==REPEAT_LAST_ACK || code==SWITCH_BANDWIDTH))
 	{
