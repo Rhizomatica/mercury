@@ -543,6 +543,11 @@ void *radio_playback_thread(void *device_ptr)
 
 	ffuint total_written = 0;
 
+	// TX clipping detection
+	int tx_clip_count = 0;
+	int tx_clip_samples_total = 0;
+	double tx_clip_peak = 0.0;
+	int tx_clip_report_counter = 0;
 
 #if ENABLE_FLOAT64_TAP == 1
 	FILE *tap_pay = fopen("tap-playback.f64", "w");
@@ -640,12 +645,18 @@ void *radio_playback_thread(void *device_ptr)
 		float *buffer_float_out = (float*)buffer_internal_stereo;
 		int16_t *buffer_int16_out = (int16_t*)buffer_internal_stereo;
 
+		int clip_this_buffer = 0;
 		for (int i = 0; i < samples_read; i++)
 		{
 			// Clamp to [-1.0, 1.0]
 			double clamped = buffer_double[i];
-			if (clamped > 1.0) clamped = 1.0;
-			if (clamped < -1.0) clamped = -1.0;
+			if (clamped > 1.0 || clamped < -1.0) {
+				double absval = clamped > 0 ? clamped : -clamped;
+				if (absval > tx_clip_peak) tx_clip_peak = absval;
+				clip_this_buffer++;
+				if (clamped > 1.0) clamped = 1.0;
+				else clamped = -1.0;
+			}
 
 			if (device_is_mono)
 			{
@@ -678,6 +689,24 @@ void *radio_playback_thread(void *device_ptr)
 						buffer_internal_stereo[idx + 1] = buffer_internal_stereo[idx + out_ch_idx];
 				}
 			}
+		}
+
+		// TX clipping report (every ~1s = 48000 samples)
+		if (clip_this_buffer > 0) {
+			tx_clip_count += clip_this_buffer;
+			tx_clip_samples_total += samples_read;
+		}
+		tx_clip_report_counter += samples_read;
+		if (tx_clip_report_counter >= 48000) {
+			if (tx_clip_count > 0) {
+				printf("[TX-CLIP] %d samples clipped (peak=%.3f, %.1f%% of buffer)\n",
+					tx_clip_count, tx_clip_peak,
+					100.0 * tx_clip_count / tx_clip_report_counter);
+				fflush(stdout);
+				tx_clip_count = 0;
+				tx_clip_peak = 0.0;
+			}
+			tx_clip_report_counter = 0;
 		}
 
 		n = samples_read * frame_size;
@@ -841,6 +870,11 @@ void *radio_capture_thread(void *device_ptr)
 
 	double *buffer_internal = NULL;
 
+	// RX overload detection
+	int rx_overload_count = 0;
+	double rx_overload_peak = 0.0;
+	int rx_overload_report_counter = 0;
+
 #if ENABLE_FLOAT64_TAP == 1
 	FILE *tap = fopen("tap-capture.f64", "w");
 #endif
@@ -894,6 +928,7 @@ void *radio_capture_thread(void *device_ptr)
 	in_nch = cfg->channels;
 
 	static int read_loop_counter = 0;
+
 	while (!shutdown_)
     {
 		r = audio->read(b, (const void **)&buffer);
@@ -975,6 +1010,27 @@ void *radio_capture_thread(void *device_ptr)
 #ifdef MERCURY_GUI_ENABLED
 		// Apply RX gain as preprocessing step (affects Mercury's core too)
 		gui_apply_rx_gain_for_display(buffer_internal, frames_to_write);
+
+		// RX overload detection (after gain)
+		for (int i = 0; i < frames_to_write; i++) {
+			double absval = buffer_internal[i] > 0 ? buffer_internal[i] : -buffer_internal[i];
+			if (absval > 1.0) {
+				rx_overload_count++;
+				if (absval > rx_overload_peak) rx_overload_peak = absval;
+			}
+		}
+		rx_overload_report_counter += frames_to_write;
+		if (rx_overload_report_counter >= 48000) {
+			if (rx_overload_count > 0) {
+				printf("[RX-OVERLOAD] %d samples over 1.0 (peak=%.3f, %.1f%%)\n",
+					rx_overload_count, rx_overload_peak,
+					100.0 * rx_overload_count / rx_overload_report_counter);
+				fflush(stdout);
+				rx_overload_count = 0;
+				rx_overload_peak = 0.0;
+			}
+			rx_overload_report_counter = 0;
+		}
 
 		// Push to VU meter and waterfall
 		gui_push_audio_samples(buffer_internal, frames_to_write);
@@ -1083,14 +1139,13 @@ void *radio_capture_prep_thread(void *telecom_ptr_void)
 		// deinit zeroed Nofdm/buffer_Nsymb between the read and the lock.
 		{
 			int sp = data_container_ptr->Nofdm * data_container_ptr->buffer_Nsymb * data_container_ptr->interpolation_rate;
-			int loc = sp - symbol_period - 1;
 			if(sp != signal_period && sp != 0) {
 				printf("[CAP-STALE] sp_old=%d sp_new=%d symb_old=%d buf=%p tid=%lu\n",
 					signal_period, sp, symbol_period, (void*)data_container_ptr->passband_delayed_data,
 					(unsigned long)pthread_self());
 				fflush(stdout);
 			}
-			if(sp == 0 || data_container_ptr->passband_delayed_data == NULL || loc < 0) {
+			if(sp == 0 || data_container_ptr->passband_delayed_data == NULL || sp <= symbol_period) {
 				MUTEX_UNLOCK(&capture_prep_mutex);
 				continue;
 			}
@@ -1104,8 +1159,33 @@ void *radio_capture_prep_thread(void *telecom_ptr_void)
 			if(data_container_ptr->data_ready == 1 && data_container_ptr->frames_to_read <= 0)
 				data_container_ptr->nUnder_processing_events++;
 
-			shift_left(data_container_ptr->passband_delayed_data, sp, symbol_period);
-			memcpy(&data_container_ptr->passband_delayed_data[loc], buffer_temp, symbol_period * sizeof(double));
+			// Double-mapped ring buffer write: write at write_index AND
+			// write_index+sp (mirror). Reading sp samples from any position
+			// in [0,sp) gives a contiguous chronological view via the mirror.
+			{
+				int wi = data_container_ptr->ring_write_index;
+				int remaining = sp - wi;
+				if(remaining >= symbol_period) {
+					// Common case: no wrap
+					memcpy(&data_container_ptr->passband_delayed_data[wi],
+						buffer_temp, symbol_period * sizeof(double));
+					memcpy(&data_container_ptr->passband_delayed_data[wi + sp],
+						buffer_temp, symbol_period * sizeof(double));
+				} else {
+					// Rare: write spans ring boundary
+					memcpy(&data_container_ptr->passband_delayed_data[wi],
+						buffer_temp, remaining * sizeof(double));
+					memcpy(&data_container_ptr->passband_delayed_data[wi + sp],
+						buffer_temp, remaining * sizeof(double));
+					int wrap = symbol_period - remaining;
+					memcpy(&data_container_ptr->passband_delayed_data[0],
+						&buffer_temp[remaining], wrap * sizeof(double));
+					memcpy(&data_container_ptr->passband_delayed_data[sp],
+						&buffer_temp[remaining], wrap * sizeof(double));
+				}
+				data_container_ptr->ring_write_index =
+					(wi + symbol_period) % sp;
+			}
 
 			data_container_ptr->frames_to_read--;
 			if(data_container_ptr->frames_to_read < 0)

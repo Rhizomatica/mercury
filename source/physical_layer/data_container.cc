@@ -70,6 +70,7 @@ cl_data_container::cl_data_container()
 	this->data_ready=0;
 	this->nUnder_processing_events=0;
 	this->rx_mute=0;
+	this->ring_write_index=0;
 	this->interpolation_rate=0;
 
 	this->total_frame_size=0;
@@ -154,6 +155,7 @@ void cl_data_container::set_size(int nData, int Nc, int M, int Nfft , int Nofdm,
 	this->frames_to_read=preamble_nSymb+Nsymb;
 	this->data_ready=0;
 	this->nUnder_processing_events=0;
+	this->ring_write_index=0;
 	this->interpolation_rate=frequency_interpolation_rate;
 	this->total_frame_size=Nofdm*(Nsymb+preamble_nSymb)*frequency_interpolation_rate;
 
@@ -222,5 +224,6 @@ void cl_data_container::deinit()
 	this->frames_to_read=0;
 	this->data_ready=0;
 	this->nUnder_processing_events=0;
+	this->ring_write_index=0;
 	this->interpolation_rate=0;
 }

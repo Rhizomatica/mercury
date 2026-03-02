@@ -825,6 +825,17 @@ st_receive_stats cl_telecom_system::receive_byte(double *data, int* out)
 			}
 		}
 		auto t0_pb = std::chrono::steady_clock::now();
+		{
+			static int p2b_diag = 0;
+			if(p2b_diag < 5) {
+				p2b_diag++;
+				printf("[P2B-DIAG] M=%.0f carrier_freq=%.1f carrier_amp=%.6f fs=%.0f interp=%d buf_samples=%d\n",
+					M, carrier_frequency, carrier_amplitude, sampling_frequency,
+					frequency_interpolation_rate,
+					data_container.Nofdm*data_container.buffer_Nsymb*frequency_interpolation_rate);
+				fflush(stdout);
+			}
+		}
 		ofdm.passband_to_baseband((double*)data,data_container.Nofdm*data_container.buffer_Nsymb*frequency_interpolation_rate,data_container.baseband_data_interpolated,sampling_frequency,carrier_frequency,carrier_amplitude,1,&ofdm.FIR_rx_time_sync);
 		auto t1_pb = std::chrono::steady_clock::now();
 		timing_pb_tsync_ms = std::chrono::duration<double, std::milli>(t1_pb - t0_pb).count();
@@ -1353,6 +1364,31 @@ st_receive_stats cl_telecom_system::receive_byte(double *data, int* out)
 				d_count++;
 			}
 			data_e = (d_count > 0) ? data_e / d_count : 0.0;
+
+			// DIAG: compare passband vs baseband energy at preamble and data positions
+			{
+				int pream_offset = receive_stats.delay;
+				double pb_pream = 0, pb_data = 0, bb_pream = 0;
+				int pream_len = data_container.preamble_nSymb * sym_samples_de;
+				for(int i = 0; i < pream_len && (pream_offset + i) < buf_samples_de; i++) {
+					double v = ((double*)data)[pream_offset + i];
+					pb_pream += v*v;
+					double re = data_container.baseband_data_interpolated[pream_offset + i].real();
+					double im = data_container.baseband_data_interpolated[pream_offset + i].imag();
+					bb_pream += re*re + im*im;
+				}
+				pb_pream /= pream_len;
+				bb_pream /= pream_len;
+				for(int i = 0; i < check_len && (data_offset + i) < buf_samples_de; i++) {
+					double v = ((double*)data)[data_offset + i];
+					pb_data += v*v;
+				}
+				pb_data = (d_count > 0) ? pb_data / d_count : 0.0;
+				printf("[ENERGY-DIAG] pream: pb=%.4e bb=%.4e | data: pb=%.4e bb=%.4e | delay=%d data_off=%d buf=%d\n",
+					pb_pream, bb_pream, pb_data, data_e, receive_stats.delay, data_offset, buf_samples_de);
+				fflush(stdout);
+			}
+
 			if(data_e < 0.001)
 			{
 				printf("[OFDM-SYNC] data_energy=%.2e at pream=%d delay=%d — frame incomplete, skipping decode\n",
@@ -1705,11 +1741,6 @@ skip_h_retry_point:
 			else
 			{
 				ofdm.automatic_gain_control(data_container.ofdm_symbol_demodulated_data);
-				// CPE_correction: NB-only. Estimates per-symbol phase rotation from
-				// pilot pairs and de-rotates. Not in old working commit; on WB with
-				// near-zero offset it should be a no-op, but after config switch with
-				// marginal data it can inject noise-driven rotation before the LS
-				// channel estimator, corrupting H estimates.
 				if(narrowband_enabled)
 					ofdm.CPE_correction(data_container.ofdm_symbol_demodulated_data);
 
@@ -2806,7 +2837,8 @@ void cl_telecom_system::RX_RAND_process_main()
 	if (data_container.frames_to_read == 0)
 	{
 
-		memcpy(data_container.ready_to_process_passband_delayed_data, data_container.passband_delayed_data, signal_period * sizeof(double));
+		int rwi = data_container.ring_write_index;
+		memcpy(data_container.ready_to_process_passband_delayed_data, &data_container.passband_delayed_data[rwi], signal_period * sizeof(double));
 
 		st_receive_stats received_message_stats = receive_byte(data_container.ready_to_process_passband_delayed_data, out_data);
 
@@ -2892,7 +2924,8 @@ void cl_telecom_system::RX_TEST_process_main()
 	if (data_container.frames_to_read == 0)
 	{
 
-		memcpy(data_container.ready_to_process_passband_delayed_data, data_container.passband_delayed_data, signal_period * sizeof(double));
+		int rwi = data_container.ring_write_index;
+		memcpy(data_container.ready_to_process_passband_delayed_data, &data_container.passband_delayed_data[rwi], signal_period * sizeof(double));
 
 		st_receive_stats received_message_stats = receive_byte(data_container.ready_to_process_passband_delayed_data, out_data);
 
@@ -2985,7 +3018,8 @@ void cl_telecom_system::RX_SHM_process_main(cbuf_handle_t buffer)
 			ldpc.nIteration_max = gui_ldpc_max;
 #endif
 
-		memcpy(data_container.ready_to_process_passband_delayed_data, data_container.passband_delayed_data, signal_period * sizeof(double));
+		int rwi = data_container.ring_write_index;
+		memcpy(data_container.ready_to_process_passband_delayed_data, &data_container.passband_delayed_data[rwi], signal_period * sizeof(double));
 
 		auto proc_start = std::chrono::steady_clock::now();
 		st_receive_stats received_message_stats = receive_byte(data_container.ready_to_process_passband_delayed_data, out_data);
@@ -3465,14 +3499,13 @@ void cl_telecom_system::load_configuration(int configuration)
 	// NB MFSK: 8-symbol preamble for cross-correlation detection
 	if(narrowband_enabled && M == MOD_MFSK)
 		ofdm.preamble_configurator.Nsymb = 8;
-	// Fix A: NB OFDM estimator override — ZF for ALL NB configs.
-	// ZF (per-pilot H=Y/P) is immune to phase rotation from residual freq
-	// offset (Bug #51). With Nc=10, LS averaging was tried for QAM amplitude
-	// discrimination, but CONFIG_15-16 (preamble_nSymb 1-2) fail to decode
-	// reliably: LS's cross-pilot averaging + small NB pilot grid → noisy H
-	// estimates on high-order QAM. ZF handles both amplitude and phase
-	// per-pilot and works for all modulations on VB-Cable. CPE_correction
-	// still runs pre-estimator for any residual freq offset.
+	// NB estimator: blanket ZF for all NB configs.
+	// ZF (per-pilot H=Y/P) is immune to inter-symbol phase jitter that makes
+	// LS cross-pilot averaging destructive on VB-Cable/HF. With Nc=10 and only
+	// 3-4 pilots per row, LS averaging can't reduce noise without destroying
+	// phase coherence. Tested: LS gives mean_H=0.45 on VB-Cable CONFIG_15
+	// while ZF gives mean_H=1.0. CPE_correction pre-estimator handles residual
+	// freq offset. CONFIG_14+ NB is a design limitation of sparse pilot density.
 	if(narrowband_enabled && ofdm_channel_estimator == LEAST_SQUARE)
 	{
 		ofdm_channel_estimator = ZERO_FORCE;

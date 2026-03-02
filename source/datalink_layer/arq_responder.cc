@@ -347,27 +347,18 @@ void cl_arq_controller::process_messages_acknowledging_control()
 
 			int frame_symb = telecom_system->data_container.preamble_nSymb
 				+ telecom_system->data_container.Nsymb;
-			// OFDM ftr depends on command type:
-			//   SWITCH_ROLE/SWITCH_BANDWIDTH: T_p = 118-167 symbols
-			//     (new commander processes role switch + fills batch).
-			//     Needs full buffer_Nsymb. See OFDM_BEYOND_BOUNDS.md §18.
-			//   SET_CONFIG and others: T_p ≈ 30-44 symbols
-			//     (commander detects ACK + guard + ptt_on).
-			//     upper_bound = buffer_Nsymb - frame_symb suffices.
-			// MFSK: frame_symb + 20 (no beyond-bounds issue, and
-			//   buffer_Nsymb is 791-1225 which causes ACK timeouts).
+			// Ring buffer: preamble stays at fixed ring position (no shift_left
+			// drift), so we don't need buffer_Nsymb-sized waits. Just enough
+			// for the peer's turnaround + one frame arrival.
+			// Old shift_left values: SWITCH_ROLE=223 (4.7s!), other=171 (3.6s!).
 			int ftr_val;
-			if(is_ofdm_config(current_configuration))
 			{
 				char cmd = messages_control.data[0];
-				int buf_nsymb = telecom_system->data_container.buffer_Nsymb.load();
 				if(cmd == SWITCH_ROLE || cmd == SWITCH_BANDWIDTH)
-					ftr_val = buf_nsymb;
+					ftr_val = frame_symb + 20;  // ~1.3s: role switch turnaround
 				else
-					ftr_val = buf_nsymb - frame_symb;  // = upper_bound
+					ftr_val = frame_symb + 10;  // ~1.3s: normal turnaround
 			}
-			else
-				ftr_val = frame_symb + 20;
 			telecom_system->data_container.frames_to_read = ftr_val;
 			telecom_system->data_container.nUnder_processing_events = 0;
 
@@ -401,14 +392,12 @@ void cl_arq_controller::process_messages_acknowledging_control()
 			switch_narrowband_mode(NO);
 			// After WB config loads, the NB ftr=264 is still active but the
 			// WB buffer is only 223 symbols. The leftover NB ftr causes the
-			// first WB scan to happen after 264 symbols of total capture,
-			// by which time the commander's preamble has scrolled out of the
-			// smaller WB buffer. Reset ftr to the WB-appropriate value so
-			// the first WB scan catches the preamble with margin.
+			// Ring buffer: preamble stays put, no scroll-out. Small margin.
+			// Old shift_left value: rx_frame + 40 (= 92, ~1.9s).
 			{
 				int rx_frame = telecom_system->data_container.preamble_nSymb
 				             + telecom_system->data_container.Nsymb;
-				telecom_system->data_container.frames_to_read = rx_frame + 40;
+				telecom_system->data_container.frames_to_read = rx_frame + 10;
 				telecom_system->data_container.nUnder_processing_events = 0;
 				printf("[BW-NEG] WB ftr reset to %d\n",
 					telecom_system->data_container.frames_to_read.load());

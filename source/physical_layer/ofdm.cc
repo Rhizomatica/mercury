@@ -1247,27 +1247,49 @@ void cl_ofdm::ZF_channel_estimator(std::complex <double>*in)
 		}
 	}
 
-	for(int j=0;j<Nc;j++)
+	if(Nc <= 10)
 	{
-		if(j%this->pilot_configurator.Dx==0)
+		// NB (Nc=10): Column-wise interpolation (same as WB for Dx=1).
+		// Row-wise approaches fail because VB-Cable audio path has genuine
+		// frequency-selective response across 469 Hz, and complex H
+		// interpolation/averaging causes phase cancellation.
+		for(int j=0;j<Nc;j++)
 		{
-			interpolate_linear_col(estimated_channel,Nc,Nsymb,j);
-		}
-		else if(j==Nc-1)
-		{
-			interpolate_linear_col(estimated_channel,Nc,Nsymb,j);
+			if(j%this->pilot_configurator.Dx==0)
+			{
+				interpolate_linear_col(estimated_channel,Nc,Nsymb,j);
+			}
+			else if(j==Nc-1)
+			{
+				interpolate_linear_col(estimated_channel,Nc,Nsymb,j);
+			}
 		}
 	}
-
-	for(int j=0;j<Nc;j+=this->pilot_configurator.Dx)
+	else
 	{
-		if(j+this->pilot_configurator.Dx<Nc)
+		// WB (Nc=50): Column-wise + bilinear matrix (original approach).
+		for(int j=0;j<Nc;j++)
 		{
-			interpolate_bilinear_matrix(estimated_channel,Nc,Nsymb,j,j+this->pilot_configurator.Dx,0,Nsymb-1);
+			if(j%this->pilot_configurator.Dx==0)
+			{
+				interpolate_linear_col(estimated_channel,Nc,Nsymb,j);
+			}
+			else if(j==Nc-1)
+			{
+				interpolate_linear_col(estimated_channel,Nc,Nsymb,j);
+			}
 		}
-		else if(j!=Nc-1)
+
+		for(int j=0;j<Nc;j+=this->pilot_configurator.Dx)
 		{
-			interpolate_bilinear_matrix(estimated_channel,Nc,Nsymb,j,Nc-1,0,Nsymb-1);
+			if(j+this->pilot_configurator.Dx<Nc)
+			{
+				interpolate_bilinear_matrix(estimated_channel,Nc,Nsymb,j,j+this->pilot_configurator.Dx,0,Nsymb-1);
+			}
+			else if(j!=Nc-1)
+			{
+				interpolate_bilinear_matrix(estimated_channel,Nc,Nsymb,j,Nc-1,0,Nsymb-1);
+			}
 		}
 	}
 /*

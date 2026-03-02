@@ -553,7 +553,8 @@ void cl_arq_controller::process_messages_tx_control()
 				* telecom_system->data_container.buffer_Nsymb
 				* telecom_system->data_container.interpolation_rate;
 			memset(telecom_system->data_container.passband_delayed_data, 0,
-				signal_period * sizeof(double));
+				2 * signal_period * sizeof(double));
+			telecom_system->data_container.ring_write_index = 0;
 			MUTEX_UNLOCK(&capture_prep_mutex);
 		}
 
@@ -723,7 +724,8 @@ void cl_arq_controller::process_messages_tx_data()
 				* telecom_system->data_container.buffer_Nsymb
 				* telecom_system->data_container.interpolation_rate;
 			memset(telecom_system->data_container.passband_delayed_data, 0,
-				signal_period * sizeof(double));
+				2 * signal_period * sizeof(double));
+			telecom_system->data_container.ring_write_index = 0;
 			MUTEX_UNLOCK(&capture_prep_mutex);
 		}
 
@@ -1776,18 +1778,21 @@ void cl_arq_controller::process_control_commander()
 						* telecom_system->data_container.buffer_Nsymb
 						* telecom_system->data_container.interpolation_rate;
 					memset(telecom_system->data_container.passband_delayed_data, 0,
-						signal_period * sizeof(double));
+						2 * signal_period * sizeof(double));
+					telecom_system->data_container.ring_write_index = 0;
 					MUTEX_UNLOCK(&capture_prep_mutex);
 				}
 				circular_buf_reset(capture_buffer);
-				// Set ftr = buffer_Nsymb so the first snapshot catches the
-				// preamble in-bounds. SWITCH_ROLE transitions have large T_p
-				// (~120-170 symbols): new commander processes role switch,
-				// fills batch, ptt_on, encode, TX. With ftr=rx_frame, rapid
-				// ftr=8 FAIL snapshots scroll the preamble past upper_bound.
-				// See OFDM_BEYOND_BOUNDS.md §15.
-				telecom_system->data_container.frames_to_read =
-					telecom_system->data_container.buffer_Nsymb.load();
+				// SWITCH_ROLE: new commander needs ~120-170 symbols to process
+				// role switch, fill batch, ptt_on, encode, TX. Ring buffer
+				// preserves data in place (no shift_left drift), so we just
+				// need enough callbacks for the turnaround. Old shift_left
+				// value was buffer_Nsymb (223 = 4.7s!) to prevent drift.
+				{
+					int rx_frame = telecom_system->data_container.preamble_nSymb
+						+ telecom_system->get_active_nsymb();
+					telecom_system->data_container.frames_to_read = rx_frame + 10;
+				}
 				telecom_system->data_container.nUnder_processing_events = 0;
 				telecom_system->receive_stats.mfsk_search_raw = 0;
 				telecom_system->receive_stats.ofdm_search_raw = 0;

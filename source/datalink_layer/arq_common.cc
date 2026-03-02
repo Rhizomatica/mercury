@@ -1823,8 +1823,9 @@ void cl_arq_controller::process_main()
 				telecom_system->data_container.buffer_Nsymb *
 				telecom_system->data_container.interpolation_rate;
 
+			int rwi = telecom_system->data_container.ring_write_index;
 			memcpy(telecom_system->data_container.ready_to_process_passband_delayed_data,
-				telecom_system->data_container.passband_delayed_data,
+				&telecom_system->data_container.passband_delayed_data[rwi],
 				signal_period * sizeof(double));
 
 			MUTEX_UNLOCK(&capture_prep_mutex);
@@ -2354,7 +2355,8 @@ void cl_arq_controller::send_batch()
 	{
 		int buf_samples = telecom_system->data_container.Nofdm * telecom_system->data_container.buffer_Nsymb * telecom_system->data_container.interpolation_rate;
 		MUTEX_LOCK(&capture_prep_mutex);
-		memset(telecom_system->data_container.passband_delayed_data, 0, buf_samples * sizeof(double));
+		memset(telecom_system->data_container.passband_delayed_data, 0, 2 * buf_samples * sizeof(double));
+		telecom_system->data_container.ring_write_index = 0;
 		MUTEX_UNLOCK(&capture_prep_mutex);
 	}
 	telecom_system->data_container.nUnder_processing_events = 0;
@@ -2796,7 +2798,8 @@ void cl_arq_controller::send_ack_pattern()
 	{
 		int buf_samples = telecom_system->data_container.Nofdm * telecom_system->data_container.buffer_Nsymb * telecom_system->data_container.interpolation_rate;
 		MUTEX_LOCK(&capture_prep_mutex);
-		memset(telecom_system->data_container.passband_delayed_data, 0, buf_samples * sizeof(double));
+		memset(telecom_system->data_container.passband_delayed_data, 0, 2 * buf_samples * sizeof(double));
+		telecom_system->data_container.ring_write_index = 0;
 		MUTEX_UNLOCK(&capture_prep_mutex);
 	}
 	telecom_system->data_container.rx_mute = 0;
@@ -2812,21 +2815,13 @@ void cl_arq_controller::send_ack_pattern()
 	telecom_system->receive_stats.mfsk_search_raw = 0;
 	telecom_system->receive_stats.ofdm_search_raw = 0;
 	telecom_system->receive_stats.ofdm_batch_active = false;
-	// Capture window after ACK: rx_frame + margin.
-	// Commander turnaround (detect ACK + guard delay + TX ramp) takes
-	// 119-800 ms on VB-Cable, increasing with session duration.
-	// WB (Nsymb=48): margin=80 → ftr=132 → 748 ms capture.
-	//   Covers up to ~700 ms commander delay.  If preamble arrives at
-	//   the tail end, beyond-bounds recovery handles the rest.
-	//   Previous values: +20 (ftr=72, stuck after 1 batch),
-	//                    +40 (ftr=92, stuck after 4 batches).
-	// NB (Nsymb=240): margin=20 → ftr=264. NB timing is relaxed due
-	// to large buffer (631 symbols). Keep +20 to avoid shifting the
-	// WB preamble further out during NB→WB bandwidth switch.
+	// Ring buffer: data stays at fixed ring positions, no shift_left drift.
+	// Just need enough for commander turnaround + frame arrival (~1.3s).
+	// Old shift_left values: +80 WB (2.8s!), +20 NB (5.5s!).
 	{
 		int rx_frame = telecom_system->data_container.preamble_nSymb
 		             + telecom_system->data_container.Nsymb;
-		int margin = (telecom_system->data_container.Nsymb <= 48) ? 80 : 20;
+		int margin = 10;  // ~210ms for ptt turnaround
 		telecom_system->data_container.frames_to_read = rx_frame + margin;
 	}
 
@@ -2920,7 +2915,8 @@ void cl_arq_controller::send_break_pattern()
 	{
 		int buf_samples = telecom_system->data_container.Nofdm * telecom_system->data_container.buffer_Nsymb * telecom_system->data_container.interpolation_rate;
 		MUTEX_LOCK(&capture_prep_mutex);
-		memset(telecom_system->data_container.passband_delayed_data, 0, buf_samples * sizeof(double));
+		memset(telecom_system->data_container.passband_delayed_data, 0, 2 * buf_samples * sizeof(double));
+		telecom_system->data_container.ring_write_index = 0;
 		MUTEX_UNLOCK(&capture_prep_mutex);
 	}
 	telecom_system->data_container.rx_mute = 0;
@@ -2930,9 +2926,10 @@ void cl_arq_controller::send_break_pattern()
 	telecom_system->receive_stats.ofdm_search_raw = 0;
 	telecom_system->receive_stats.ofdm_batch_active = false;
 	{
+		// Ring buffer: no need to wait for nearly the entire buffer to fill.
+		// One frame + small margin is enough. Old value was buffer_Nsymb - frame (171 = 3.6s!).
 		int frame_symb = telecom_system->data_container.preamble_nSymb + telecom_system->data_container.Nsymb;
-		telecom_system->data_container.frames_to_read =
-			telecom_system->data_container.buffer_Nsymb - frame_symb;
+		telecom_system->data_container.frames_to_read = frame_symb + 10;
 	}
 
 	printf("[TX-BREAK] Done, flushed capture buffer, ftr=%d\n", telecom_system->data_container.frames_to_read.load());
@@ -3022,7 +3019,8 @@ void cl_arq_controller::send_hail_pattern()
 	{
 		int buf_samples = telecom_system->data_container.Nofdm * telecom_system->data_container.buffer_Nsymb * telecom_system->data_container.interpolation_rate;
 		MUTEX_LOCK(&capture_prep_mutex);
-		memset(telecom_system->data_container.passband_delayed_data, 0, buf_samples * sizeof(double));
+		memset(telecom_system->data_container.passband_delayed_data, 0, 2 * buf_samples * sizeof(double));
+		telecom_system->data_container.ring_write_index = 0;
 		MUTEX_UNLOCK(&capture_prep_mutex);
 	}
 	telecom_system->data_container.rx_mute = 0;
@@ -3061,8 +3059,9 @@ bool cl_arq_controller::receive_hail_pattern()
 
 	if(telecom_system->data_container.frames_to_read == 0)
 	{
+		int rwi = telecom_system->data_container.ring_write_index;
 		memcpy(telecom_system->data_container.ready_to_process_passband_delayed_data,
-			&telecom_system->data_container.passband_delayed_data[tail_offset],
+			&telecom_system->data_container.passband_delayed_data[rwi + tail_offset],
 			tail_samples * sizeof(double));
 
 		telecom_system->data_container.data_ready = 0;
@@ -3119,8 +3118,9 @@ bool cl_arq_controller::receive_ack_pattern()
 	if(telecom_system->data_container.frames_to_read == 0)
 	{
 		// Snapshot only the tail (newest audio) — smaller copy, shorter mutex hold
+		int rwi = telecom_system->data_container.ring_write_index;
 		memcpy(telecom_system->data_container.ready_to_process_passband_delayed_data,
-			&telecom_system->data_container.passband_delayed_data[tail_offset],
+			&telecom_system->data_container.passband_delayed_data[rwi + tail_offset],
 			tail_samples * sizeof(double));
 
 		telecom_system->data_container.data_ready = 0;
@@ -3182,7 +3182,33 @@ void cl_arq_controller::receive()
 	{
 
 
-		memcpy(telecom_system->data_container.ready_to_process_passband_delayed_data, telecom_system->data_container.passband_delayed_data, signal_period * sizeof(double));
+		int rwi = telecom_system->data_container.ring_write_index;
+		memcpy(telecom_system->data_container.ready_to_process_passband_delayed_data, &telecom_system->data_container.passband_delayed_data[rwi], signal_period * sizeof(double));
+
+		// DIAG: ring buffer snapshot debug
+		{
+			double peak_head = 0, peak_mid = 0, peak_tail = 0;
+			int sp = signal_period;
+			for(int i = 0; i < sp/10 && i < sp; i++) {
+				double v = fabs(telecom_system->data_container.ready_to_process_passband_delayed_data[i]);
+				if(v > peak_head) peak_head = v;
+			}
+			for(int i = sp/2 - sp/20; i < sp/2 + sp/20 && i < sp; i++) {
+				double v = fabs(telecom_system->data_container.ready_to_process_passband_delayed_data[i]);
+				if(v > peak_mid) peak_mid = v;
+			}
+			for(int i = sp - sp/10; i < sp; i++) {
+				double v = fabs(telecom_system->data_container.ready_to_process_passband_delayed_data[i]);
+				if(v > peak_tail) peak_tail = v;
+			}
+			static int snap_count = 0;
+			snap_count++;
+			printf("[RING-SNAP] #%d rwi=%d sp=%d head=%.4f mid=%.4f tail=%.4f nUnder=%d M=%.0f\n",
+				snap_count, rwi, sp, peak_head, peak_mid, peak_tail,
+				telecom_system->data_container.nUnder_processing_events.load(),
+				telecom_system->M);
+			fflush(stdout);
+		}
 
 		// Previously: zero passband_delayed_data after copy to prevent stale
 		// preamble re-detection from self-echo. Now handled by rx_mute (Bug #44):
@@ -3249,6 +3275,34 @@ void cl_arq_controller::receive()
 #endif
 
 		measurements.signal_stregth_dbm = received_message_stats.signal_stregth_dbm;
+
+		// Ring buffer: zero the entire decoded frame (preamble + data)
+		// after successful decode to prevent false Schmidl-Cox detections.
+		// Without this, the data symbols of decoded frames contain OFDM
+		// structure (pilots, subcarrier patterns) that produce false
+		// autocorrelation peaks at metric 0.08-0.22, causing cascading
+		// FAILs that waste 10-20 seconds per turnaround.
+		// IMPORTANT: Only on OK decode. Zeroing on FAIL would destroy
+		// real preambles during turnaround (data still arriving).
+		if(telecom_system->M != MOD_MFSK
+			&& received_message_stats.message_decoded == YES
+			&& received_message_stats.delay > 0)
+		{
+			int sp = signal_period;
+			int frame_syms = telecom_system->data_container.preamble_nSymb
+				+ telecom_system->get_active_nsymb();
+			int frame_samples = frame_syms * symbol_period;
+			int frame_ring_start = (rwi + received_message_stats.delay) % sp;
+
+			MUTEX_LOCK(&capture_prep_mutex);
+			for(int k = 0; k < frame_samples; k++)
+			{
+				int pos = (frame_ring_start + k) % sp;
+				telecom_system->data_container.passband_delayed_data[pos] = 0.0;
+				telecom_system->data_container.passband_delayed_data[pos + sp] = 0.0;
+			}
+			MUTEX_UNLOCK(&capture_prep_mutex);
+		}
 
 		// Bug #35 diagnostic: track every decode attempt
 		{
@@ -3595,7 +3649,35 @@ void cl_arq_controller::receive()
 						+ telecom_system->data_container.preamble_nSymb;
 					int upper = telecom_system->data_container.buffer_Nsymb - frame_symb;
 
-					if(pream_symb > upper)
+					if(received_message_stats.frame_data_missing)
+					{
+						// Preamble detected but data symbols are silence.
+						// Zero the stale preamble in the ring to prevent
+						// re-detection (shift_left would have slid it off).
+						{
+							int sp = signal_period;
+							int pream_samples = telecom_system->data_container.preamble_nSymb * symbol_period;
+							int pream_ring_start = (rwi + received_message_stats.delay) % sp;
+
+							MUTEX_LOCK(&capture_prep_mutex);
+							for(int k = 0; k < pream_samples; k++)
+							{
+								int pos = (pream_ring_start + k) % sp;
+								telecom_system->data_container.passband_delayed_data[pos] = 0.0;
+								telecom_system->data_container.passband_delayed_data[pos + sp] = 0.0;
+							}
+							MUTEX_UNLOCK(&capture_prep_mutex);
+						}
+						// Short retry — real frame may arrive soon.
+						ftr = 8;
+						telecom_system->receive_stats.ofdm_search_raw = 0;
+						telecom_system->receive_stats.ofdm_batch_active = false;
+						printf("[FTR-INCOMPLETE] pream=%d ftr=%d metric=%.3f\n",
+							pream_symb, ftr,
+							telecom_system->receive_stats.coarse_metric);
+						fflush(stdout);
+					}
+					else if(pream_symb > upper)
 					{
 						if(telecom_system->receive_stats.coarse_metric >= 0.5)
 						{
@@ -3607,15 +3689,26 @@ void cl_arq_controller::receive()
 						}
 						else
 						{
-							ftr = 2;
-						}
-						// Track buffer shift: reduce search_raw by ftr so the
-						// anti-re-decode skip stays aligned with frame positions.
-						telecom_system->receive_stats.ofdm_search_raw -= ftr;
-						if(telecom_system->receive_stats.ofdm_search_raw < 0)
-						{
+							// Low-metric beyond-bounds: false detection in decoded
+							// frame's data region (OFDM symbols create Schmidl-Cox
+							// peaks at metric 0.08-0.11). Reset search_raw to 0 to
+							// break the cascade — without this, search_raw -= ftr
+							// below walks backwards ~8 syms/iter causing 20+ FAILs.
+							// Fresh search from prescan gives only 1-2 FAILs.
+							ftr = 8;
 							telecom_system->receive_stats.ofdm_search_raw = 0;
 							telecom_system->receive_stats.ofdm_batch_active = false;
+						}
+						if(telecom_system->receive_stats.ofdm_search_raw > 0)
+						{
+							// Track buffer shift: reduce search_raw by ftr so the
+							// anti-re-decode skip stays aligned with frame positions.
+							telecom_system->receive_stats.ofdm_search_raw -= ftr;
+							if(telecom_system->receive_stats.ofdm_search_raw < 0)
+							{
+								telecom_system->receive_stats.ofdm_search_raw = 0;
+								telecom_system->receive_stats.ofdm_batch_active = false;
+							}
 						}
 						printf("[RX-TIMING] OFDM beyond-bounds: pream=%d upper=%d metric=%.3f shift=%d search_raw=%d\n",
 							pream_symb, upper,
@@ -3632,10 +3725,12 @@ void cl_arq_controller::receive()
 							// Low-metric FAIL in batch → no more real frames.
 							// Real preambles have metric ≥ 0.9; false GI peaks from
 							// data symbols or silence give 0.16–0.24. Exit batch
-							// immediately instead of grinding with ftr=2 (which wastes
-							// ~2.3s on 58 iterations through the buffer).
+							// but keep search_raw nonzero so next search skips past
+							// decoded frames. nUnder decay naturally resets ofdm_skip
+							// to 0 as the ring buffer rotates past old audio.
+							// Resetting to 0 here causes false preamble detections
+							// in the DATA region of already-decoded frames.
 							telecom_system->receive_stats.ofdm_batch_active = false;
-							telecom_system->receive_stats.ofdm_search_raw = 0;
 							ftr = 8;
 						}
 						else
@@ -3653,19 +3748,6 @@ void cl_arq_controller::receive()
 							}
 						}
 					}
-					else if(received_message_stats.frame_data_missing)
-				{
-					// Frame incomplete: preamble detected but data symbols
-					// are silence (still arriving in audio pipeline). Large
-					// shift to flush the partial frame and capture fresh audio.
-					ftr = pream_symb;
-					if(ftr < frame_symb) ftr = frame_symb;
-					telecom_system->receive_stats.ofdm_search_raw = 0;
-					printf("[FTR-INCOMPLETE] pream=%d ftr=%d metric=%.3f\n",
-						pream_symb, ftr,
-						telecom_system->receive_stats.coarse_metric);
-					fflush(stdout);
-				}
 				// Default ftr=8 applies for other cases (no preamble,
 				// low metric without batch mode, etc.)
 				}

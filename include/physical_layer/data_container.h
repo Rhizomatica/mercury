@@ -70,6 +70,7 @@ class cl_data_container
 	_Atomic(int) buffer_Nsymb;
 	_Atomic(int) rx_mute;
 	_Atomic(int) rx_mute_samples;  // samples zeroed by rx_mute since last MF search
+	_Atomic(int) ring_write_index;  // current write position in double-mapped ring buffer
 
 	int total_frame_size;
 

@@ -67,9 +67,10 @@ extern int g_verbose;
 inline bool is_robust_config(int config) { return config >= 100 && config <= 102; }
 inline bool is_ofdm_config(int config) { return config >= 0 && config <= 16; }
 
-// NB mode cap — CONFIG_16 reachable in NB (ZF estimator handles sparse pilots).
-// WB cap stays at CONFIG_15 (CONFIG_16's 32QAM + 1 preamble + LS = poor WB estimation).
-#define NB_CONFIG_MAX CONFIG_16
+// NB mode cap — CONFIG_14 (8PSK, LDPC 14/16) is the highest feasible NB config.
+// 16QAM/32QAM (CONFIG_15+) require accurate amplitude equalization that NB's
+// sparse pilot grid (Nc=10, Dy=3) cannot provide with sufficient accuracy.
+#define NB_CONFIG_MAX CONFIG_14
 
 // Unified config ladder for gearshift (ROBUST → OFDM)
 // CONFIG_16 included for NB; WB ceiling (CONFIG_15) enforced in config_ladder_up().

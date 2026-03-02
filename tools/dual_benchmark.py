@@ -28,7 +28,7 @@ RSP_PORT = 7015
 CMD_PORT = 7025
 
 # Config definitions matching common_defines.h
-NB_CONFIGS = [100, 101, 102] + list(range(0, 17))  # ROBUST_0-2, CONFIG_0-16
+NB_CONFIGS = [100, 101, 102] + list(range(0, 14))  # ROBUST_0-2, CONFIG_0-13 (14+ infeasible with Nc=10)
 WB_CONFIGS = [100, 101, 102] + list(range(0, 16))   # ROBUST_0-2, CONFIG_0-15
 
 CONFIG_NAMES = {
@@ -76,7 +76,7 @@ def collect_output(proc, lines, stop_event):
 
 
 def run_single_test(mercury_bin, config, bandwidth, data_type, text_data,
-                    duration, logs_dir=None, verbose=False):
+                    duration, logs_dir=None, verbose=False, fast_start=False):
     """Run a single benchmark test. Returns a result dict."""
     config_name = CONFIG_NAMES.get(config, f"UNKNOWN_{config}")
     is_robust = config >= 100
@@ -102,7 +102,14 @@ def run_single_test(mercury_bin, config, bandwidth, data_type, text_data,
 
     # Build command flags
     robust_flag = ["-R"] if is_robust else []
-    nb_flags = ["-M", "nb", "-G", "8.3", "-Q", "0"] if is_nb else ["-M", "auto", "-Q", "0"]
+    # NB: stay narrowband. WB: start NB, negotiate up to WB (normal operation).
+    # --fast-start: skip NB negotiation for WB (both sides controlled, -Q 0).
+    if is_nb:
+        nb_flags = ["-M", "nb", "-G", "8.3"]
+    elif fast_start:
+        nb_flags = ["-M", "auto", "-Q", "0"]
+    else:
+        nb_flags = ["-M", "auto"]
 
     # Start responder
     rsp_cmd = [
@@ -210,7 +217,7 @@ def run_single_test(mercury_bin, config, bandwidth, data_type, text_data,
         # Wait for CONNECTED
         cmd_ctrl.settimeout(2)
         connected = False
-        connect_timeout = 180 if is_robust else 120
+        connect_timeout = 180  # NB negotiation + WB upgrade needs time
         start = time.time()
         buf = b''
         while time.time() - start < connect_timeout:
@@ -233,7 +240,10 @@ def run_single_test(mercury_bin, config, bandwidth, data_type, text_data,
         if not connected:
             print("  ERROR: Connection failed")
             result["notes"] = "CONNECTION_FAILED"
-            return result
+            # Don't return early — fall through to log saving and cleanup
+
+        if not connected:
+            raise Exception("CONNECTION_FAILED")
 
         print(f"  CONNECTED")
         time.sleep(2)
@@ -333,7 +343,8 @@ def run_single_test(mercury_bin, config, bandwidth, data_type, text_data,
         result["notes"] = "TCP_TIMEOUT"
     except Exception as e:
         print(f"  ERROR: {e}")
-        result["notes"] = str(e)[:80]
+        if not result["notes"]:  # Don't overwrite CONNECTION_FAILED
+            result["notes"] = str(e)[:80]
     finally:
         stop_event.set()
         time.sleep(1)
@@ -395,6 +406,8 @@ def main():
                         help="Override per-test duration in seconds")
     parser.add_argument("--skip-robust", action="store_true",
                         help="Skip ROBUST modes")
+    parser.add_argument("--fast-start", action="store_true",
+                        help="Skip NB negotiation for WB tests (both sides controlled)")
     args = parser.parse_args()
 
     # Find text file
@@ -465,8 +478,12 @@ def main():
     for idx, (bw, cfg, dt) in enumerate(tests):
         print(f"\n[{idx+1}/{len(tests)}]", end="")
         dur = get_duration(cfg, args.duration)
+        # WB CONFIG_14+: auto-enable fast_start to bypass NB negotiation.
+        # NB can't decode these configs (LDPC rate 14-16/16, sparse Nc=10 pilots),
+        # so the NB hail exchange times out. Skip straight to WB.
+        use_fast_start = args.fast_start or (bw == "wb" and cfg >= 14 and cfg < 100)
         r = run_single_test(args.mercury, cfg, bw, dt, text_data, dur,
-                            logs_dir=logs_dir)
+                            logs_dir=logs_dir, fast_start=use_fast_start)
         results.append(r)
 
         # Write CSV incrementally
