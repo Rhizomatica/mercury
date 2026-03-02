@@ -376,6 +376,7 @@ public:
   bool b2f_compression_pending;       // B2F SID detected, arm compression on next data ACK
   cl_b2f_handler b2f_handler;         // B2F protocol handler (Winlink LZHUF unroll/reroll)
   float compress_ratio_estimate;      // Running compression ratio (raw/compressed), init 2.0
+  int batch_uncompressed_size;        // Uncompressed bytes in current TX batch (for throughput)
   int gear_shift_algorithm;
   double gear_shift_up_success_rate_precentage;
   double gear_shift_down_success_rate_precentage;

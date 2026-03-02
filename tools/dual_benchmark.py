@@ -111,11 +111,14 @@ def run_single_test(mercury_bin, config, bandwidth, data_type, text_data,
     else:
         nb_flags = ["-M", "auto"]
 
+    # Force compression for binary data (no B2F SID to auto-detect)
+    compress_flag = ["-F"] if data_type == "binary" else []
+
     # Start responder
     rsp_cmd = [
         mercury_bin, "-m", "ARQ", "-s", str(config),
-        *robust_flag, *nb_flags,
-        "-p", str(RSP_PORT), "-i", VB_IN, "-o", VB_OUT, "-x", "wasapi", "-n",
+        *robust_flag, *nb_flags, *compress_flag,
+        "-p", str(RSP_PORT), "-i", VB_IN, "-o", VB_OUT, "-x", "wasapi",
     ]
 
     print(f"  RSP: {' '.join(rsp_cmd)}")
@@ -127,8 +130,8 @@ def run_single_test(mercury_bin, config, bandwidth, data_type, text_data,
     # Start commander
     cmd_cmd = [
         mercury_bin, "-m", "ARQ", "-s", str(config),
-        *robust_flag, *nb_flags,
-        "-p", str(CMD_PORT), "-i", VB_IN, "-o", VB_OUT, "-x", "wasapi", "-n",
+        *robust_flag, *nb_flags, *compress_flag,
+        "-p", str(CMD_PORT), "-i", VB_IN, "-o", VB_OUT, "-x", "wasapi",
     ]
 
     print(f"  CMD: {' '.join(cmd_cmd)}")
@@ -187,7 +190,7 @@ def run_single_test(mercury_bin, config, bandwidth, data_type, text_data,
         rx_thread = threading.Thread(target=rx_loop, daemon=True)
         rx_thread.start()
 
-        # TX thread
+        # TX thread (started after CONNECTED to ensure B2F handler is initialized)
         def tx_loop():
             cmd_data.settimeout(30)
             pos = 0
@@ -207,10 +210,7 @@ def run_single_test(mercury_bin, config, bandwidth, data_type, text_data,
                 except (ConnectionError, OSError):
                     break
 
-        tx_thread = threading.Thread(target=tx_loop, daemon=True)
-        tx_thread.start()
-
-        # Connect
+        # Connect first, then start TX (B2F handler needs TEST_CONNECTION to init)
         cmd_ctrl.sendall(b"CONNECT TESTA TESTB\r")
         print("  Waiting for connection...")
 
@@ -247,6 +247,10 @@ def run_single_test(mercury_bin, config, bandwidth, data_type, text_data,
 
         print(f"  CONNECTED")
         time.sleep(2)
+
+        # Start TX after connection (B2F SID must go through filter_tx)
+        tx_thread = threading.Thread(target=tx_loop, daemon=True)
+        tx_thread.start()
 
         # Measure throughput
         with rx_lock:

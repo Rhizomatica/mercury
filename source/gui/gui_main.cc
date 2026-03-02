@@ -687,31 +687,25 @@ static void RenderGUI() {
 
             ImGui::Spacing();
 
-            // Throughput (raw and effective when compressed)
+            // Throughput (TCP-to-TCP, pre-compression bytes)
             {
-                float comp_ratio = g_gui_state.compression_ratio.load();
-                bool comp_on = g_gui_state.compression_active.load();
-                double eff_throughput = comp_on ? throughput * comp_ratio : throughput;
-
-                if (comp_on && comp_ratio > 1.01f)
-                {
-                    if (eff_throughput >= 1000.0)
-                        ImGui::Text("%.1f kbps (%.1fk eff)", throughput / 1000.0, eff_throughput / 1000.0);
-                    else
-                        ImGui::Text("%.0f bps (%.0f eff)", throughput, eff_throughput);
-                }
+                if (throughput >= 1000.0)
+                    ImGui::Text("%.1f kbps", throughput / 1000.0);
+                else if (throughput > 0)
+                    ImGui::Text("%.0f bps", throughput);
                 else
-                {
-                    if (throughput >= 1000.0)
-                        ImGui::Text("%.1f kbps", throughput / 1000.0);
-                    else
-                        ImGui::Text("%.0f bps", throughput);
-                }
+                    ImGui::Text("--- bps");
             }
 
-            // PHY rate + efficiency
+            // PHY rate + efficiency (multiplier when compression boosts above 100%)
             if (phy_rate > 0 && throughput > 0)
-                ImGui::Text("PHY %.0f bps (%.0f%%)", phy_rate, 100.0 * throughput / phy_rate);
+            {
+                double efficiency = throughput / phy_rate;
+                if (efficiency > 1.0)
+                    ImGui::Text("PHY %.0f bps (%.1fx)", phy_rate, efficiency);
+                else
+                    ImGui::Text("PHY %.0f bps (%.0f%%)", phy_rate, efficiency * 100.0);
+            }
             else if (phy_rate > 0)
                 ImGui::Text("PHY %.0f bps", phy_rate);
 

@@ -32,9 +32,6 @@ void cl_arq_controller::register_ack(int message_id)
 	{
 		messages_tx[message_id].status=ACKED;
 		stats.nAcked_data++;
-#ifdef MERCURY_GUI_ENABLED
-		gui_add_throughput_bytes_tx(messages_tx[message_id].length);
-#endif
 	}
 }
 
@@ -2031,6 +2028,12 @@ void cl_arq_controller::finalize_block_commander()
 	block_under_tx=NO;
 	fifo_buffer_backup.flush();
 
+#ifdef MERCURY_GUI_ENABLED
+	if(batch_uncompressed_size > 0)
+		gui_add_throughput_bytes_tx(batch_uncompressed_size);
+	batch_uncompressed_size = 0;
+#endif
+
 	if(last_transmission_block_stats.nSent_data > 0)
 		last_transmission_block_stats.success_rate_data=100*(1-((float)last_transmission_block_stats.nReSent_data/(float)last_transmission_block_stats.nSent_data));
 	else
@@ -2219,6 +2222,7 @@ void cl_arq_controller::process_buffer_data_commander()
 							compress_ratio_estimate = 0.7f * compress_ratio_estimate + 0.3f * measured;
 						}
 						fifo_buffer_backup.push(staging, raw_size);
+						batch_uncompressed_size = raw_size;
 #ifdef MERCURY_GUI_ENABLED
 						// Push algo to GUI (read from compressed header byte 0)
 						g_gui_state.compression_algo.store((int)(unsigned char)comp_buf[0]);
@@ -2244,6 +2248,7 @@ void cl_arq_controller::process_buffer_data_commander()
 						memcpy(comp_buf + COMPRESS_HEADER_SIZE, staging, raw_size);
 						comp_size = COMPRESS_HEADER_SIZE + raw_size;
 						fifo_buffer_backup.push(staging, raw_size);
+						batch_uncompressed_size = raw_size;
 					}
 
 					// No zero-padding: send only actual compressed data frames.
@@ -2290,6 +2295,7 @@ void cl_arq_controller::process_buffer_data_commander()
 				// --- No compression: original per-frame loop ---
 				int filled = 0;
 				int fill_limit = data_batch_size;
+				batch_uncompressed_size = 0;
 				for(int i=0;i<fill_limit;i++)
 				{
 					data_read_size=fifo_buffer_tx.pop(message_TxRx_byte_buffer, max_frame);
@@ -2300,6 +2306,7 @@ void cl_arq_controller::process_buffer_data_commander()
 						break;
 					}
 					fifo_buffer_backup.push(message_TxRx_byte_buffer, data_read_size);
+					batch_uncompressed_size += data_read_size;
 					block_under_tx=YES;
 					if(data_read_size==max_frame)
 						add_message_tx_data(DATA_LONG, data_read_size, message_TxRx_byte_buffer);

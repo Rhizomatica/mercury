@@ -154,6 +154,7 @@ cl_arq_controller::cl_arq_controller()
 	force_compress=false;
 	b2f_compression_pending=false;
 	compress_ratio_estimate=2.0f;
+	batch_uncompressed_size=0;
 	gear_shift_algorithm=SUCCESS_BASED_LADDER;
 
 	gear_shift_up_success_rate_precentage=70;
@@ -3926,6 +3927,13 @@ void cl_arq_controller::copy_data_to_buffer()
 			{
 				fifo_buffer_rx.push(decomp_buf, dec_size);
 				total_bytes += dec_size;
+				// Update compression ratio on responder side (EMA)
+				int comp_payload = assembled_size - COMPRESS_HEADER_SIZE;
+				if(comp_payload > 0)
+				{
+					float measured = (float)dec_size / (float)comp_payload;
+					compress_ratio_estimate = 0.7f * compress_ratio_estimate + 0.3f * measured;
+				}
 #ifdef MERCURY_GUI_ENABLED
 				// Push algo to GUI from decompressed header (responder side)
 				g_gui_state.compression_algo.store((int)(unsigned char)assembled[0]);
@@ -3976,6 +3984,10 @@ void cl_arq_controller::copy_data_to_buffer()
 				messages_rx[i].status=FREE;
 		}
 	}
+#ifdef MERCURY_GUI_ENABLED
+	if(total_bytes > 0)
+		gui_add_throughput_bytes_rx(total_bytes);
+#endif
 	block_ready=1;
 }
 
