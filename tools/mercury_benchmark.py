@@ -110,7 +110,7 @@ def config_max_bps(config_id, is_nb):
     return table.get(config_id, 100)
 
 
-def build_config_extra_args(is_nb, signal_dbfs):
+def build_config_extra_args(is_nb, signal_dbfs, force_compress=False):
     """Build Mercury CLI args for a specific config's NB/WB mode and cable level."""
     if is_nb:
         extra = ["-Q", "0"]      # Disable NB probing (already NB)
@@ -122,6 +122,8 @@ def build_config_extra_args(is_nb, signal_dbfs):
                    else NoiseInjector.DEFAULT_SIGNAL_DBFS)
     atten_db = signal_dbfs - native_dbfs
     extra += ["-T", f"{atten_db:.1f}", "-G", f"{-atten_db:.1f}"]
+    if force_compress:
+        extra += ["-F", "on"]
     return extra
 
 
@@ -400,7 +402,7 @@ class MercurySession:
 
     def __init__(self, config, gearshift=False, mercury_path=MERCURY_DEFAULT,
                  extra_args=None, rsp_port=None, cmd_port=None,
-                 vb_in=None, vb_out=None, audio_channel=None):
+                 vb_in=None, vb_out=None, audio_channel=None, tx_data=None):
         self.config = config
         self.gearshift = gearshift
         self.mercury_path = mercury_path
@@ -411,6 +413,7 @@ class MercurySession:
         self.vb_in = vb_in if vb_in is not None else VB_IN
         self.vb_out = vb_out if vb_out is not None else VB_OUT
         self.audio_channel = audio_channel  # None = use default, 0-15 = specific channel
+        self.tx_data = tx_data  # None = default binary, bytes = custom TX data
 
         self.procs = []
         self.sockets = []
@@ -498,11 +501,17 @@ class MercurySession:
         return True
 
     def _tx_loop(self):
-        chunk = bytes(range(256)) * 4
+        data = self.tx_data if self.tx_data else bytes(range(256)) * 4
         self._tx_sock.settimeout(30)
+        pos = 0
         while not self.stop_event.is_set():
+            end = min(pos + 1024, len(data))
+            chunk = data[pos:end]
             try:
                 self._tx_sock.send(chunk)
+                pos = end
+                if pos >= len(data):
+                    pos = 0
             except socket.timeout:
                 continue
             except (ConnectionError, OSError):
@@ -1034,8 +1043,9 @@ def generate_sweep_chart(csv_path, output_path):
             ax.axhline(y=max_bpm, color=colors[idx], linestyle='--', alpha=0.3, linewidth=1)
 
     ax.set_xlabel('SNR (dB in 4 kHz)', fontsize=12)
-    ax.set_ylabel('Throughput (bytes/min)', fontsize=12)
-    ax.set_title('Mercury Modem — Throughput vs SNR', fontsize=14)
+    ax.set_ylabel('Effective Throughput (bytes/min)', fontsize=12)
+    ax.set_title('Mercury Modem — Effective Throughput vs SNR\n'
+                 '(English text, PPMd/zstd compression)', fontsize=14)
     ax.legend(loc='upper left', fontsize=8, ncol=2)
     ax.grid(True, alpha=0.3)
     ax.set_yscale('log')
@@ -1181,7 +1191,7 @@ class BenchmarkWorker:
     """One worker = one audio channel. Pulls work items from a shared queue."""
 
     def __init__(self, worker_id, cable, channel,
-                 results_queue, args, log_dir):
+                 results_queue, args, log_dir, tx_data=None):
         self.worker_id = worker_id
         self.cable = cable
         self.channel = channel
@@ -1193,6 +1203,7 @@ class BenchmarkWorker:
         self.args = args
         self.log_dir = log_dir
         self.items_done = 0
+        self.tx_data = tx_data
 
     def _kill_own_ports(self):
         """Kill any Mercury processes listening on this worker's ports."""
@@ -1213,7 +1224,9 @@ class BenchmarkWorker:
     def _start_session(self, cfg_id, is_nb, max_retries=2):
         """Start a Mercury session with retries. Returns session or None."""
         name = config_name(cfg_id, is_nb)
-        extra_args = build_config_extra_args(is_nb, self.args.signal_dbfs)
+        force_compress = getattr(self.args, 'compress', False) or getattr(self.args, 'text_file', None)
+        extra_args = build_config_extra_args(is_nb, self.args.signal_dbfs,
+                                             force_compress=bool(force_compress))
 
         for attempt in range(max_retries):
             session = MercurySession(
@@ -1221,7 +1234,8 @@ class BenchmarkWorker:
                 mercury_path=self.args.mercury,
                 rsp_port=self.rsp_port, cmd_port=self.cmd_port,
                 vb_in=self.vb_in, vb_out=self.vb_out,
-                audio_channel=self.channel, extra_args=extra_args)
+                audio_channel=self.channel, extra_args=extra_args,
+                tx_data=self.tx_data)
             try:
                 session.start(kill_all=False)
 
@@ -1474,6 +1488,27 @@ def run_parallel_sweep(args):
     print(f"Output: {csv_path}")
     print()
 
+    # Load text file for TX data (same logic as run_sweep)
+    tx_data = None
+    force_compress = getattr(args, 'compress', False)
+    text_file = getattr(args, 'text_file', None)
+    if text_file:
+        if not os.path.exists(text_file):
+            alt = os.path.join(os.path.dirname(__file__), os.path.basename(text_file))
+            if os.path.exists(alt):
+                text_file = alt
+            else:
+                print(f"ERROR: Text file not found: {text_file}")
+                sys.exit(1)
+        with open(text_file, 'rb') as f:
+            tx_data = f.read()
+        force_compress = True
+        print(f"TX data: {text_file} ({len(tx_data)} bytes, compression ON)")
+    elif force_compress:
+        print(f"TX data: binary (compression forced ON)")
+    else:
+        print(f"TX data: binary (no compression)")
+
     # Kill any existing mercury processes first
     os.system("taskkill /F /IM mercury.exe 2>nul >nul")
     time.sleep(2)
@@ -1496,7 +1531,8 @@ def run_parallel_sweep(args):
             if len(workers) >= max_workers:
                 break
             w = BenchmarkWorker(len(workers), cable, ch,
-                                results_queue, args, log_dir)
+                                results_queue, args, log_dir,
+                                tx_data=tx_data)
             workers.append(w)
 
     print(f"[PARALLEL] {len(work_items)} work items, {len(workers)} workers")
@@ -1589,6 +1625,28 @@ def run_sweep(args):
         snr_levels.append(snr)
         snr += args.snr_step  # step is negative
 
+    # Load text file for TX data (enables compression benchmark)
+    tx_data = None
+    force_compress = getattr(args, 'compress', False)
+    text_file = getattr(args, 'text_file', None)
+    if text_file:
+        if not os.path.exists(text_file):
+            # Try relative to script directory
+            alt = os.path.join(os.path.dirname(__file__), os.path.basename(text_file))
+            if os.path.exists(alt):
+                text_file = alt
+            else:
+                print(f"ERROR: Text file not found: {text_file}")
+                sys.exit(1)
+        with open(text_file, 'rb') as f:
+            tx_data = f.read()
+        force_compress = True  # text needs -F on (no B2F SID to auto-detect)
+        print(f"TX data: {text_file} ({len(tx_data)} bytes, compression ON)")
+    elif force_compress:
+        print(f"TX data: binary (compression forced ON)")
+    else:
+        print(f"TX data: binary (no compression)")
+
     ts = datetime.now().strftime('%Y%m%d_%H%M%S')
     os.makedirs(args.output_dir, exist_ok=True)
     csv_path = os.path.join(args.output_dir, f'benchmark_sweep_{ts}.csv')
@@ -1632,7 +1690,8 @@ def run_sweep(args):
     try:
         for cfg_idx, (cfg, is_nb) in enumerate(config_specs):
             cfg_name = config_name(cfg, is_nb)
-            extra_args = build_config_extra_args(is_nb, args.signal_dbfs)
+            extra_args = build_config_extra_args(is_nb, args.signal_dbfs,
+                                                 force_compress=force_compress)
             measure_dur = (auto_measure_duration(cfg, is_nb, args.measure_duration)
                            if use_auto_dur else args.measure_duration)
             native_dbfs = NoiseInjector.DEFAULT_SIGNAL_DBFS_NB if is_nb else NoiseInjector.DEFAULT_SIGNAL_DBFS
@@ -1645,7 +1704,7 @@ def run_sweep(args):
             print(f"{'='*70}")
 
             session = MercurySession(cfg, gearshift=False, mercury_path=args.mercury,
-                                     extra_args=extra_args)
+                                     extra_args=extra_args, tx_data=tx_data)
             try:
                 session.start()
 
@@ -3379,6 +3438,11 @@ def main():
     parser.add_argument('--narrowband', '-N', action='store_true',
                         help='Default NB mode for configs without nb:/wb: prefix. '
                              'Not needed when using prefixed config specs like nb:100,wb:0.')
+    parser.add_argument('--text-file', default=None,
+                        help='Text file for TX data (enables compression). '
+                             'Without this, sends incompressible binary data.')
+    parser.add_argument('--compress', action='store_true',
+                        help='Force compression on (-F on). Auto-enabled with --text-file.')
 
     sub = parser.add_subparsers(dest='command', help='Sub-command')
 

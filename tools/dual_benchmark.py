@@ -37,16 +37,31 @@ CONFIG_NAMES = {
 }
 
 
-def get_duration(config, override=None):
-    """Get test duration for a config."""
+def get_duration(config, override=None, bandwidth="wb"):
+    """Get test duration for a config.
+
+    NB configs need much longer durations because frame times scale 5x
+    (e.g. NB CONFIG_0: msg_time=5531ms, batch=5 → ~28s per batch cycle).
+    ROBUST modes also need extra time for slow MFSK symbol rates.
+    """
     if override:
         return override
-    if config >= 100:       # ROBUST modes
-        return 45
-    elif config <= 6:       # CONFIG_0-6 (slow)
-        return 45
-    else:                   # CONFIG_7-16 (fast)
-        return 30
+    if bandwidth == "nb":
+        if config >= 100:       # ROBUST modes (very slow MFSK)
+            return 120
+        elif config <= 3:       # CONFIG_0-3 NB (very slow OFDM)
+            return 120
+        elif config <= 6:       # CONFIG_4-6 NB (slow)
+            return 90
+        else:                   # CONFIG_7-13 NB (medium)
+            return 60
+    else:  # WB
+        if config >= 100:       # ROBUST modes
+            return 60
+        elif config <= 6:       # CONFIG_0-6 (slow)
+            return 45
+        else:                   # CONFIG_7-16 (fast)
+            return 30
 
 
 def tcp_connect(port, timeout=30):
@@ -111,8 +126,9 @@ def run_single_test(mercury_bin, config, bandwidth, data_type, text_data,
     else:
         nb_flags = ["-M", "auto"]
 
-    # Force compression for binary data (no B2F SID to auto-detect)
-    compress_flag = ["-F"] if data_type == "binary" else []
+    # Force compression on — without B2F/Winlink envelope, auto-detect never triggers
+    # -F requires an argument in getopt ("F:") — bare -F eats the next flag
+    compress_flag = ["-F", "on"]
 
     # Start responder
     rsp_cmd = [
@@ -246,11 +262,14 @@ def run_single_test(mercury_bin, config, bandwidth, data_type, text_data,
             raise Exception("CONNECTION_FAILED")
 
         print(f"  CONNECTED")
-        time.sleep(2)
 
-        # Start TX after connection (B2F SID must go through filter_tx)
+        # Start TX immediately — any delay lets SWITCH_ROLE fire (200ms timeout),
+        # causing role ping-pong that wastes the measurement window for slow NB configs
         tx_thread = threading.Thread(target=tx_loop, daemon=True)
         tx_thread.start()
+
+        # Brief settle for first TX data to reach FIFO before measurement starts
+        time.sleep(0.5)
 
         # Measure throughput
         with rx_lock:
@@ -481,7 +500,7 @@ def main():
 
     for idx, (bw, cfg, dt) in enumerate(tests):
         print(f"\n[{idx+1}/{len(tests)}]", end="")
-        dur = get_duration(cfg, args.duration)
+        dur = get_duration(cfg, args.duration, bandwidth=bw)
         # WB CONFIG_14+: auto-enable fast_start to bypass NB negotiation.
         # NB can't decode these configs (LDPC rate 14-16/16, sparse Nc=10 pilots),
         # so the NB hail exchange times out. Skip straight to WB.
