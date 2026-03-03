@@ -876,6 +876,11 @@ start_modem:
 		audioio_init_internal(input_dev, output_dev, audio_system, &radio_capture,
 							  &radio_playback, &radio_capture_prep, &telecom_system);
 
+        // Initialize parallel OFDM decoders for monitor mode (after audio init
+        // so primary telecom_system has its final narrowband/config state)
+        if (is_monitor_mode)
+            ARQ.init_monitor_decoders();
+
 #ifdef MERCURY_GUI_ENABLED
         pthread_t gui_thread;
         if (!nogui) {

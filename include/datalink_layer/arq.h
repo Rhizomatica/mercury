@@ -36,6 +36,8 @@
 #include "datalink_layer/b2f_handler.h"
 #include "crypto/mercury_crypto.h"
 #include <iomanip>
+#include <thread>
+#include <atomic>
 
 union u_SNR {
   float f_SNR;
@@ -493,6 +495,20 @@ public:
   int had_control_connection;
   bool passive_monitor;  // Third-party monitor mode: accept all frames, never TX
   bool monitor_stdout;   // Output decoded plaintext to stdout (headless monitor)
+  int monitor_consec_ofdm_fail{0};  // Consecutive OFDM decode failures (for opportunistic scan)
+
+  // Parallel monitor decoders — one cl_telecom_system per OFDM config.
+  // All share the same-sized audio buffer (buffer_Nsymb_min override).
+  // Decode attempts run on parallel threads, one per config.
+  cl_telecom_system* monitor_decoders[NUMBER_OF_CONFIGS];
+  bool monitor_decoders_ready{false};
+  int monitor_primary_buffer_nsymb{0};  // buffer_Nsymb of largest config (for sizing)
+  int monitor_decoded_data[N_MAX / 8];  // Staging buffer: decoded data_byte saved here
+  int monitor_decoded_len{0};            // Frame size in ints (from winning decoder)
+  void init_monitor_decoders();
+  void reinit_monitor_decoders();  // Re-create decoders after NB/WB switch
+  int parallel_monitor_decode(double* audio, int audio_len,
+                              st_receive_stats& out_stats);
 
   // GUI measurement getters
   double get_snr_uplink() const { return measurements.SNR_uplink; }

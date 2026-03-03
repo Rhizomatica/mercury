@@ -165,6 +165,10 @@ cl_arq_controller::cl_arq_controller()
 	memset(psk_hex, 0, sizeof(psk_hex));
 	passive_monitor=false;
 	monitor_stdout=false;
+	monitor_consec_ofdm_fail=0;
+	for(int i=0; i<NUMBER_OF_CONFIGS; i++) monitor_decoders[i]=NULL;
+	monitor_decoders_ready=false;
+	monitor_primary_buffer_nsymb=0;
 	gear_shift_algorithm=SUCCESS_BASED_LADDER;
 
 	gear_shift_up_success_rate_precentage=70;
@@ -600,6 +604,235 @@ int cl_arq_controller::init(int tcp_base_port, int gear_shift_on, int initial_mo
 //		}
 
 	return success;
+}
+
+void cl_arq_controller::init_monitor_decoders()
+{
+	if(!passive_monitor || monitor_decoders_ready) return;
+
+	printf("[MONITOR] Initializing %d parallel OFDM decoders...\n", NUMBER_OF_CONFIGS);
+	fflush(stdout);
+
+	// First, determine the largest buffer_Nsymb we need.
+	// Init a temporary decoder as CONFIG_0 (BPSK 1/16 = largest OFDM frame)
+	// to read its auto-calculated buffer_Nsymb.
+	{
+		cl_telecom_system tmp;
+		tmp.narrowband_enabled = telecom_system->narrowband_enabled;
+		tmp.load_configuration(CONFIG_0);
+		monitor_primary_buffer_nsymb = tmp.data_container.buffer_Nsymb.load();
+		printf("[MONITOR] CONFIG_0 buffer_Nsymb = %d (used as minimum for all decoders)\n",
+			monitor_primary_buffer_nsymb);
+		// tmp destructs here, freeing its buffers
+	}
+
+	for(int cfg = 0; cfg < NUMBER_OF_CONFIGS; cfg++)
+	{
+		monitor_decoders[cfg] = new cl_telecom_system();
+		monitor_decoders[cfg]->narrowband_enabled = telecom_system->narrowband_enabled;
+		// Force all decoders to use the largest buffer size so they can all
+		// process the same audio snapshot (CONFIG_0 has the most symbols).
+		monitor_decoders[cfg]->data_container.buffer_Nsymb_min = monitor_primary_buffer_nsymb;
+		monitor_decoders[cfg]->load_configuration(cfg);
+		printf("[MONITOR] Decoder CONFIG_%d ready (Nsymb=%d buffer_Nsymb=%d)\n",
+			cfg, monitor_decoders[cfg]->data_container.Nsymb,
+			monitor_decoders[cfg]->data_container.buffer_Nsymb.load());
+	}
+
+	// Set buffer_Nsymb_min on the primary telecom_system so the capture
+	// buffer is large enough for the largest OFDM frame. Takes effect on
+	// next load_configuration() call (first OFDM config switch via SET_CONFIG).
+	// During MFSK phase, parallel OFDM decode is not used (MFSK uses the
+	// regular single-decoder path), so the MFSK buffer size is fine.
+	telecom_system->data_container.buffer_Nsymb_min = monitor_primary_buffer_nsymb;
+
+	monitor_decoders_ready = true;
+	printf("[MONITOR] All %d parallel decoders initialized.\n", NUMBER_OF_CONFIGS);
+	fflush(stdout);
+}
+
+void cl_arq_controller::reinit_monitor_decoders()
+{
+	if(!passive_monitor) return;
+
+	printf("[MONITOR] Reinitializing parallel decoders for %s mode...\n",
+		telecom_system->narrowband_enabled ? "NB" : "WB");
+	fflush(stdout);
+
+	// Destroy existing decoders
+	for(int cfg = 0; cfg < NUMBER_OF_CONFIGS; cfg++)
+	{
+		if(monitor_decoders[cfg])
+		{
+			delete monitor_decoders[cfg];
+			monitor_decoders[cfg] = NULL;
+		}
+	}
+	monitor_decoders_ready = false;
+
+	// Recalculate buffer_Nsymb for the new bandwidth
+	{
+		cl_telecom_system tmp;
+		tmp.narrowband_enabled = telecom_system->narrowband_enabled;
+		tmp.load_configuration(CONFIG_0);
+		monitor_primary_buffer_nsymb = tmp.data_container.buffer_Nsymb.load();
+		printf("[MONITOR] CONFIG_0 buffer_Nsymb = %d (new bandwidth)\n",
+			monitor_primary_buffer_nsymb);
+	}
+
+	// Recreate all decoders with correct bandwidth
+	for(int cfg = 0; cfg < NUMBER_OF_CONFIGS; cfg++)
+	{
+		monitor_decoders[cfg] = new cl_telecom_system();
+		monitor_decoders[cfg]->narrowband_enabled = telecom_system->narrowband_enabled;
+		monitor_decoders[cfg]->data_container.buffer_Nsymb_min = monitor_primary_buffer_nsymb;
+		monitor_decoders[cfg]->load_configuration(cfg);
+		printf("[MONITOR] Decoder CONFIG_%d ready (Nsymb=%d buffer_Nsymb=%d)\n",
+			cfg, monitor_decoders[cfg]->data_container.Nsymb,
+			monitor_decoders[cfg]->data_container.buffer_Nsymb.load());
+	}
+
+	telecom_system->data_container.buffer_Nsymb_min = monitor_primary_buffer_nsymb;
+	monitor_decoders_ready = true;
+	printf("[MONITOR] Parallel decoders reinitialized (%d decoders, %s).\n",
+		NUMBER_OF_CONFIGS, telecom_system->narrowband_enabled ? "NB" : "WB");
+	fflush(stdout);
+}
+
+int cl_arq_controller::parallel_monitor_decode(double* audio, int audio_len,
+                                                st_receive_stats& out_stats)
+{
+	if(!monitor_decoders_ready) return -1;
+
+	// === GATE 1: Energy check ===
+	// Quick scan for signal presence. If all samples below threshold,
+	// no OFDM frame exists — skip everything. Eliminates decode attempts
+	// during silence (~50% of iterations).
+	{
+		double peak = 0;
+		int step = 64;
+		for(int i = 0; i < audio_len; i += step)
+		{
+			double v = fabs(audio[i]);
+			if(v > peak) peak = v;
+		}
+		if(peak < 0.05)
+		{
+			out_stats.message_decoded = NO;
+			out_stats.delay = -1;
+			return -1;
+		}
+	}
+
+	// === Sequential decode with config memory + protocol knowledge ===
+	// Try order priority:
+	//   1. forward_configuration (from SET_CONFIG — the config commander is sending)
+	//   2. reverse_configuration (responder→commander config after SWITCH_ROLE)
+	//   3. Last 2 successfully decoded configs (handles alternation patterns)
+	//   4. Remaining configs (rare — only on first encounter or after long gap)
+	// The monitor doesn't need real-time decode — the ring buffer holds
+	// ~5s (WB) to ~54s (NB) of audio. Worst case: 17 sequential attempts
+	// × ~30ms = ~500ms. Still far faster than real-time and uses 1 CPU core.
+	static int last_config_a = 0;  // Most recent successful config
+	static int last_config_b = -1; // Second most recent (different from a)
+
+	// Build try order: protocol-known configs first, then history, then rest
+	int try_order[NUMBER_OF_CONFIGS];
+	int idx = 0;
+	bool used[NUMBER_OF_CONFIGS] = {};
+
+	// Protocol-level knowledge: SET_CONFIG tells us exactly which configs are active
+	int fwd = (int)this->forward_configuration;
+	int rev = (int)this->reverse_configuration;
+	if(fwd >= 0 && fwd < NUMBER_OF_CONFIGS && !used[fwd])
+	{
+		try_order[idx++] = fwd;
+		used[fwd] = true;
+	}
+	if(rev >= 0 && rev < NUMBER_OF_CONFIGS && !used[rev])
+	{
+		try_order[idx++] = rev;
+		used[rev] = true;
+	}
+	// History-based: last 2 successful configs
+	if(last_config_a >= 0 && last_config_a < NUMBER_OF_CONFIGS && !used[last_config_a])
+	{
+		try_order[idx++] = last_config_a;
+		used[last_config_a] = true;
+	}
+	if(last_config_b >= 0 && last_config_b < NUMBER_OF_CONFIGS && !used[last_config_b])
+	{
+		try_order[idx++] = last_config_b;
+		used[last_config_b] = true;
+	}
+	// Fill remaining
+	for(int cfg = 0; cfg < NUMBER_OF_CONFIGS; cfg++)
+	{
+		if(!used[cfg])
+			try_order[idx++] = cfg;
+	}
+
+	bool preamble_seen = false;
+
+	for(int t = 0; t < NUMBER_OF_CONFIGS; t++)
+	{
+		int cfg = try_order[t];
+		cl_telecom_system* dec = monitor_decoders[cfg];
+
+		int dec_buf_len = dec->data_container.Nofdm
+			* dec->data_container.buffer_Nsymb.load()
+			* dec->data_container.interpolation_rate;
+		int copy_len = (audio_len < dec_buf_len) ? audio_len : dec_buf_len;
+		memcpy(dec->data_container.ready_to_process_passband_delayed_data,
+			audio, copy_len * sizeof(double));
+		if(copy_len < dec_buf_len)
+			memset(&dec->data_container.ready_to_process_passband_delayed_data[copy_len],
+				0, (dec_buf_len - copy_len) * sizeof(double));
+
+		st_receive_stats stats = dec->receive_byte(
+			dec->data_container.ready_to_process_passband_delayed_data,
+			dec->data_container.data_byte);
+
+		if(stats.message_decoded == YES)
+		{
+			if(cfg != last_config_a)
+			{
+				last_config_b = last_config_a;
+				last_config_a = cfg;
+			}
+			// Save decoded data to staging buffer — NOT to primary's data_byte.
+			// load_configuration() may deinit/reinit the primary on cross-modulation
+			// switches (BPSK→QPSK etc), destroying data_byte. The caller copies
+			// from monitor_decoded_data to primary AFTER load_configuration.
+			monitor_decoded_len = dec->get_frame_size_bytes();
+			if(monitor_decoded_len > N_MAX / 8) monitor_decoded_len = N_MAX / 8;
+			memcpy(monitor_decoded_data,
+				dec->data_container.data_byte,
+				monitor_decoded_len * sizeof(int));
+			out_stats = stats;
+			printf("[MONITOR] CONFIG_%d DECODED (SNR=%.1f iter=%d, tried %d/%d)\n",
+				cfg, stats.SNR, stats.iterations_done, t + 1, NUMBER_OF_CONFIGS);
+			fflush(stdout);
+			return cfg;
+		}
+
+		if(stats.delay >= 0)
+			preamble_seen = true;
+
+		// Preamble gate: if the first decoder found no preamble,
+		// no other config will either (Schmidl-Cox is config-independent).
+		if(t == 0 && !preamble_seen)
+		{
+			out_stats.message_decoded = NO;
+			out_stats.delay = -1;
+			return -1;
+		}
+	}
+
+	// All 17 configs tried, none decoded (interference / noise)
+	out_stats.message_decoded = NO;
+	out_stats.delay = -1;
+	return -1;
 }
 
 char cl_arq_controller::get_configuration(double SNR)
@@ -3309,7 +3542,38 @@ void cl_arq_controller::receive()
 #endif
 
 		auto proc_start = std::chrono::steady_clock::now();
-		received_message_stats = telecom_system->receive_byte(telecom_system->data_container.ready_to_process_passband_delayed_data,telecom_system->data_container.data_byte);
+
+		// Monitor mode with parallel decoders: try all 17 OFDM configs sequentially.
+		// Falls through to single receive_byte() for MFSK modes or if decoders not ready.
+		if(passive_monitor && monitor_decoders_ready && !is_robust_config(current_configuration))
+		{
+			int winning_config = parallel_monitor_decode(
+				telecom_system->data_container.ready_to_process_passband_delayed_data,
+				signal_period, received_message_stats);
+			if(winning_config >= 0)
+			{
+				// Switch primary config FIRST (may deinit/reinit data_byte),
+				// then copy decoded data from staging buffer.
+				if(winning_config != current_configuration)
+				{
+					printf("[MONITOR] Parallel decode found CONFIG_%d (was CONFIG_%d)\n",
+						winning_config, current_configuration);
+					data_configuration = winning_config;
+					load_configuration(winning_config, PHYSICAL_LAYER_ONLY, YES);
+				}
+				// Copy decoded data from staging buffer to primary's data_byte.
+				// Safe now: load_configuration has finished reinit.
+				memcpy(telecom_system->data_container.data_byte,
+					monitor_decoded_data, monitor_decoded_len * sizeof(int));
+			}
+		}
+		else
+		{
+			received_message_stats = telecom_system->receive_byte(
+				telecom_system->data_container.ready_to_process_passband_delayed_data,
+				telecom_system->data_container.data_byte);
+		}
+
 		auto proc_end = std::chrono::steady_clock::now();
 		double proc_ms = std::chrono::duration<double, std::milli>(proc_end - proc_start).count();
 
@@ -3497,6 +3761,9 @@ void cl_arq_controller::receive()
 				if(telecom_system->receive_stats.ofdm_search_raw < 0)
 					telecom_system->receive_stats.ofdm_search_raw = 0;
 				telecom_system->receive_stats.ofdm_batch_active = true;
+
+				// Opportunistic scan success: reset failure counter
+				if(passive_monitor) monitor_consec_ofdm_fail = 0;
 
 				printf("[OFDM-SKIP] frame_end=%d ftr=%d search_raw=%d clamped=%d\n",
 					frame_end_symb, telecom_system->data_container.frames_to_read.load(),
@@ -3846,16 +4113,63 @@ void cl_arq_controller::receive()
 						telecom_system->receive_stats.ofdm_batch_active = false;
 					}
 				}
+				// Monitor mode: when parallel decoders are active, they handle
+				// all 17 configs simultaneously — no sequential scan needed.
+				// Only use opportunistic scan as fallback if decoders aren't ready.
+				if(passive_monitor && !monitor_decoders_ready)
+				{
+					int frame_symb = telecom_system->data_container.preamble_nSymb
+						+ telecom_system->data_container.Nsymb;
+					int min_ftr = frame_symb * 2;
+					if(ftr < min_ftr) ftr = min_ftr;
+
+					monitor_consec_ofdm_fail++;
+					if(monitor_consec_ofdm_fail >= 3 && is_ofdm_config(current_configuration))
+					{
+						int cur = current_configuration;
+						int next = (cur + 1) % NUMBER_OF_CONFIGS;
+						int cur_mod = modulation_for_ofdm_config(cur);
+						int next_mod = modulation_for_ofdm_config(next);
+						bool same_mod = (cur_mod == next_mod);
+
+						printf("[MONITOR] Opportunistic: CONFIG_%d fail #%d → CONFIG_%d (%s)\n",
+							cur, monitor_consec_ofdm_fail, next,
+							same_mod ? "same-mod, instant" : "cross-mod, wait");
+						fflush(stdout);
+
+						data_configuration = next;
+						forward_configuration = next;
+						load_configuration(next, PHYSICAL_LAYER_ONLY, YES);
+
+						if(same_mod)
+						{
+							telecom_system->receive_stats.ofdm_search_raw = 0;
+							telecom_system->receive_stats.ofdm_batch_active = false;
+							ftr = 0;
+						}
+						else
+						{
+							frame_symb = telecom_system->data_container.preamble_nSymb
+								+ telecom_system->data_container.Nsymb;
+							ftr = frame_symb * 2;
+						}
+					}
+				}
 				telecom_system->data_container.frames_to_read = ftr;
 				telecom_system->data_container.nUnder_processing_events = 0;
-				// === DIAG: OFDM anti-spin ftr trace (remove after debug) ===
-				printf("[FTR-FAIL] CONFIG_%d ftr=%d delay=%d metric=%.3f batch=%d search_raw=%d\n",
-					current_configuration, ftr,
-					received_message_stats.delay,
-					telecom_system->receive_stats.coarse_metric,
-					telecom_system->receive_stats.ofdm_batch_active ? 1 : 0,
-					telecom_system->receive_stats.ofdm_search_raw);
-				fflush(stdout);
+				// === DIAG: OFDM anti-spin ftr trace ===
+				// Suppress during rapid same-mod opportunistic scan (ftr==0)
+				if(ftr > 0)
+				{
+					printf("[FTR-FAIL] CONFIG_%d ftr=%d delay=%d metric=%.3f batch=%d search_raw=%d consec_fail=%d\n",
+						current_configuration, ftr,
+						received_message_stats.delay,
+						telecom_system->receive_stats.coarse_metric,
+						telecom_system->receive_stats.ofdm_batch_active ? 1 : 0,
+						telecom_system->receive_stats.ofdm_search_raw,
+						passive_monitor ? monitor_consec_ofdm_fail : -1);
+					fflush(stdout);
+				}
 			}
 
 			// MFSK anti-spin (Bug #37): without this, MFSK NO-PREAMBLE leaves

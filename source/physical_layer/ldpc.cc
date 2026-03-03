@@ -285,7 +285,7 @@ void cl_ldpc::encode(const int* data, int*  encoded_data)
  	}
  	else if(decoding_algorithm_val==SPA)
  	{
- 		iterations_done=decode_SPA(data,decoded_data,QCmatrixC,Cwidth,Cwidth, QCmatrixV,Vwidth,Vwidth,QCmatrixd,dwidth,R,Q,V_pos,N,K,P,nIteration_max_val);
+ 		iterations_done=decode_SPA(data,decoded_data,QCmatrixC,Cwidth,Cwidth, QCmatrixV,Vwidth,Vwidth,QCmatrixd,dwidth,R,Q,V_pos,N,K,P,nIteration_max_val,decode_abort);
  	}
  	return iterations_done;
  }

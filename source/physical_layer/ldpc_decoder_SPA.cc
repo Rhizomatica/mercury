@@ -39,7 +39,8 @@ int decode_SPA(
 		int N,
 		int K,
 		int P,
-		int nIteration_max
+		int nIteration_max,
+		std::atomic<bool>* abort_flag
 )
 {
 	int Cout[N_MAX];
@@ -126,6 +127,10 @@ int decode_SPA(
 
 		for(iteration=1;iteration<=nIteration_max;iteration++)
 		{
+			// Early exit: another parallel decoder already succeeded
+			if(abort_flag && abort_flag->load(std::memory_order_relaxed))
+				return -iteration;
+
 			for ( iindex=0;iindex<P;iindex++)
 			{
 				for ( Cindex=0;Cindex<CWidth;Cindex++)

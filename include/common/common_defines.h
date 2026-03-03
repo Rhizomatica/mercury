@@ -154,6 +154,21 @@ inline bool config_is_at_bottom(int config, bool robust_enabled) {
 	return config_ladder_index(config) == 0;
 }
 
+// Returns the modulation type for an OFDM config (MOD_BPSK=2, MOD_QPSK=4, etc.)
+// Used by monitor opportunistic decoder to detect same-modulation config switches
+// (which preserve the audio buffer) vs cross-modulation switches (which destroy it).
+inline int modulation_for_ofdm_config(int config) {
+	if (config >= CONFIG_0  && config <= CONFIG_6)  return 2;  // MOD_BPSK
+	if (config >= CONFIG_7  && config <= CONFIG_9)  return 4;  // MOD_QPSK
+	if (config >= CONFIG_10 && config <= CONFIG_11) return 8;  // MOD_8PSK
+	if (config == CONFIG_12)                        return 4;  // MOD_QPSK
+	if (config == CONFIG_13)                        return 8;  // MOD_8PSK (12/16)
+	if (config == CONFIG_14)                        return 8;  // MOD_8PSK (14/16)
+	if (config == CONFIG_15)                        return 16; // MOD_16QAM
+	if (config == CONFIG_16)                        return 32; // MOD_32QAM
+	return -1;  // Not an OFDM config
+}
+
 /*
  * Config	CODE	Mode	EsN0(FER<0,1)
 0	BPSK 	1/16	BPSK 1/16	-10

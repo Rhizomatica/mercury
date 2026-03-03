@@ -1285,6 +1285,8 @@ void cl_arq_controller::process_control_responder()
 				gui_push_monitor_event("[SWITCH_BANDWIDTH: NB -> WB]", false);
 #endif
 				switch_narrowband_mode(NO);
+				// Parallel decoders were initialized for NB — recreate for WB
+				reinit_monitor_decoders();
 				messages_control.status = FREE;
 				batch_rx_frame_count = 0;
 				connection_status = RECEIVING;
@@ -1343,10 +1345,32 @@ void cl_arq_controller::process_control_responder()
 					(is_ofdm_config(forward_configuration) || is_robust_config(forward_configuration)))
 				{
 					load_configuration(data_configuration, PHYSICAL_LAYER_ONLY, YES);
+
+					// Flush capture buffer: stale preambles from old config
+					// would cause Schmidl-Cox false detections (same preamble
+					// structure across all OFDM configs). Without flush, the
+					// monitor keeps re-detecting the old preamble and failing
+					// LDPC decode because data symbols are wrong config.
+					int buf_samples = telecom_system->data_container.Nofdm
+						* telecom_system->data_container.buffer_Nsymb
+						* telecom_system->data_container.interpolation_rate;
+					MUTEX_LOCK(&capture_prep_mutex);
+					circular_buf_reset(capture_buffer);
+					memset(telecom_system->data_container.passband_delayed_data, 0,
+						2 * buf_samples * sizeof(double));
+					telecom_system->data_container.ring_write_index = 0;
+					telecom_system->receive_stats.ofdm_search_raw = 0;
+					telecom_system->receive_stats.ofdm_batch_active = false;
+					telecom_system->receive_stats.delay_of_last_decoded_message = -1;
+					MUTEX_UNLOCK(&capture_prep_mutex);
+					printf("[MONITOR] Flushed capture buffer for config switch to CONFIG_%d\n",
+						forward_configuration);
+					fflush(stdout);
 				}
 				messages_control.status = FREE;
 				batch_rx_frame_count = 0;
 				connection_status = RECEIVING;
+				monitor_consec_ofdm_fail = 0;  // Fresh start on new config
 
 				// Monitor must wait through: real responder's ACK (~750ms) +
 				// commander config load + processing (~500ms) + data batch TX.
@@ -1356,11 +1380,12 @@ void cl_arq_controller::process_control_responder()
 				set_receiving_timeout(monitor_timeout);
 				receiving_timer.start();
 
-				// Set frames_to_read so capture thread accumulates enough audio
-				// for OFDM preamble detection + one full data frame.
+				// Set frames_to_read to 2x frame size. The frame could start
+				// anywhere in the buffer, so we need enough room for a full
+				// frame even in the worst-case alignment.
 				int rx_frame = telecom_system->data_container.preamble_nSymb
 					+ telecom_system->data_container.Nsymb;
-				telecom_system->data_container.frames_to_read = rx_frame;
+				telecom_system->data_container.frames_to_read = rx_frame * 2;
 				telecom_system->data_container.nUnder_processing_events = 0;
 			}
 			else if(forward_configuration != current_configuration &&

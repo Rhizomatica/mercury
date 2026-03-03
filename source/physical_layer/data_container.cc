@@ -138,6 +138,8 @@ void cl_data_container::set_size(int nData, int Nc, int M, int Nfft , int Nofdm,
 	if(margin > 50) margin = 50;
 	int min_buf = frame_symb + turnaround_symb + frame_symb + margin;
 	if(min_buf < 32) min_buf = 32;
+	if(this->buffer_Nsymb_min > 0 && min_buf < this->buffer_Nsymb_min)
+		min_buf = this->buffer_Nsymb_min;
 	this->buffer_Nsymb = min_buf;
 
 	// ACK pattern uses 16*Nofdm*freq_interp passband samples, which can exceed
