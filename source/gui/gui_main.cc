@@ -679,6 +679,18 @@ static void RenderGUI() {
             else
                 ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "%s", link_str);
 
+            // Encryption status
+            {
+                bool enc_active = g_gui_state.encryption_active.load();
+                int enc_mode = g_gui_state.encryption_mode.load();
+                if (enc_active)
+                    ImGui::TextColored(ImVec4(0.2f, 1.0f, 0.4f, 1.0f), "ENCRYPTED");
+                else if (enc_mode > 0 && link_status == 2)
+                    ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.2f, 1.0f), "KEY EXCHANGE...");
+                else if (enc_mode > 0)
+                    ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.7f, 1.0f), "E2E Enabled");
+            }
+
             // SNR and freq offset
             if (snr_rx > -90.0f)
                 ImGui::Text("SNR %.1f dB  |  AFC %.1f Hz", snr_rx, freq_off);

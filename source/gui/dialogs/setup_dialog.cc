@@ -39,9 +39,11 @@ SetupDialog::SetupDialog()
     , robust_mode_enabled_(false)
     , bandwidth_mode_(0)
     , hide_console_(false)
+    , encryption_mode_(0)
 {
     memset(my_callsign_, 0, sizeof(my_callsign_));
     strncpy(my_callsign_, "N0CALL", sizeof(my_callsign_) - 1);
+    memset(psk_hex_, 0, sizeof(psk_hex_));
 }
 
 SetupDialog::~SetupDialog() {
@@ -86,6 +88,10 @@ void SetupDialog::loadSettings() {
     bandwidth_mode_ = g_settings.bandwidth_mode;
 
     hide_console_ = g_settings.hide_console;
+
+    encryption_mode_ = g_settings.encryption_mode;
+    strncpy(psk_hex_, g_settings.psk_hex.c_str(), sizeof(psk_hex_) - 1);
+    psk_hex_[sizeof(psk_hex_) - 1] = 0;
 }
 
 bool SetupDialog::render() {
@@ -116,6 +122,11 @@ bool SetupDialog::render() {
 
             if (ImGui::BeginTabItem("Gear Shift")) {
                 renderGearShiftTab();
+                ImGui::EndTabItem();
+            }
+
+            if (ImGui::BeginTabItem("Security")) {
+                renderSecurityTab();
                 ImGui::EndTabItem();
             }
 
@@ -165,6 +176,9 @@ bool SetupDialog::render() {
             g_settings.narrowband_enabled = true;
             g_gui_state.narrowband_enabled.store(true);
             g_settings.hide_console = hide_console_;
+            g_settings.encryption_mode = encryption_mode_;
+            g_gui_state.encryption_mode.store(encryption_mode_);
+            g_settings.psk_hex = psk_hex_;
 
             settings_applied = true;
             is_open_ = false;
@@ -203,6 +217,9 @@ bool SetupDialog::render() {
             g_settings.narrowband_enabled = true;
             g_gui_state.narrowband_enabled.store(true);
             g_settings.hide_console = hide_console_;
+            g_settings.encryption_mode = encryption_mode_;
+            g_gui_state.encryption_mode.store(encryption_mode_);
+            g_settings.psk_hex = psk_hex_;
 
             settings_applied = true;
         }
@@ -478,4 +495,74 @@ void SetupDialog::renderAdvancedTab() {
             loadSettings();  // Refresh dialog with loaded values
         }
     }
+}
+
+void SetupDialog::renderSecurityTab() {
+    ImGui::Spacing();
+
+    ImGui::Text("Encryption");
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    ImGui::Text("Encryption Mode:");
+    ImGui::SameLine(180);
+    ImGui::SetNextItemWidth(300);
+    const char* enc_modes[] = {
+        "Off (plaintext)",
+        "Strict (hold data until PQ key exchange)",
+        "Fast (classical-first, PQ upgrade later)"
+    };
+    ImGui::Combo("##enc_mode", &encryption_mode_, enc_modes, 3);
+
+    ImGui::Spacing();
+
+    if (encryption_mode_ == 0)
+        ImGui::BeginDisabled();
+
+    ImGui::TextWrapped(
+        "Strict: X25519 + ML-KEM-768 hybrid key exchange completes before any data is sent. "
+        "Provides post-quantum security from the first byte. "
+        "Fast: X25519 key exchange enables ChaCha20-Poly1305 immediately, then "
+        "upgrades to hybrid PQ in the background.");
+
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    ImGui::Text("Pre-Shared Key (PSK):");
+    ImGui::Spacing();
+    ImGui::SetNextItemWidth(-1);
+    ImGui::InputText("##psk_hex", psk_hex_, sizeof(psk_hex_),
+                     ImGuiInputTextFlags_CharsHexadecimal);
+
+    ImGui::Spacing();
+    ImGui::TextWrapped(
+        "Optional authentication key (hex string, up to 64 bytes / 128 hex chars). "
+        "Both stations must use the same PSK to connect. "
+        "When set, prevents unauthorized stations from establishing encrypted sessions. "
+        "Leave empty for unauthenticated encryption.");
+
+    if (encryption_mode_ == 0)
+        ImGui::EndDisabled();
+
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    // Show current encryption status
+    int active_mode = g_gui_state.encryption_mode.load();
+    bool enc_active = g_gui_state.encryption_active.load();
+    if (active_mode > 0 && enc_active) {
+        ImGui::TextColored(ImVec4(0.2f, 1.0f, 0.4f, 1.0f), "Encryption ACTIVE");
+    } else if (active_mode > 0) {
+        ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.2f, 1.0f), "Encryption enabled (waiting for connection)");
+    } else {
+        ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Encryption disabled");
+    }
+
+    ImGui::Spacing();
+    ImGui::TextWrapped(
+        "Note: Encryption settings take effect on the next connection. "
+        "Both stations must have encryption enabled to establish an encrypted session. "
+        "Requires modem restart to change mode.");
 }

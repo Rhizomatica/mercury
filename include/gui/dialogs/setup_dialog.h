@@ -53,6 +53,7 @@ private:
     void renderARQTab();
     void renderGearShiftTab();
     void renderAdvancedTab();
+    void renderSecurityTab();
 
     // Temporary settings (before Apply)
     // Station
@@ -87,6 +88,10 @@ private:
 
     // Advanced
     bool hide_console_;
+
+    // Security
+    int encryption_mode_;  // ENCRYPT_OFF=0, ENCRYPT_STRICT=1, ENCRYPT_FAST=2
+    char psk_hex_[130];    // Pre-shared key (hex string)
 };
 
 // Global dialog - Meyer's Singleton to avoid static init order fiasco

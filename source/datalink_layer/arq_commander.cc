@@ -1822,6 +1822,9 @@ void cl_arq_controller::process_control_commander()
 			tx_batch_counter = 0;
 			rx_batch_counter = 0;
 			consecutive_auth_failures = 0;
+#ifdef MERCURY_GUI_ENABLED
+			g_gui_state.encryption_active.store(true);
+#endif
 			printf("[CRYPTO] KEY_ACTIVATE ACKed — encryption active (X25519 + ChaCha20-Poly1305)\n");
 			fflush(stdout);
 

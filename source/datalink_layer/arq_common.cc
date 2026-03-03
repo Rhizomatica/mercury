@@ -164,6 +164,7 @@ cl_arq_controller::cl_arq_controller()
 	kx_data_len=0;
 	memset(psk_hex, 0, sizeof(psk_hex));
 	passive_monitor=false;
+	monitor_stdout=false;
 	gear_shift_algorithm=SUCCESS_BASED_LADDER;
 
 	gear_shift_up_success_rate_precentage=70;
@@ -2205,6 +2206,9 @@ void cl_arq_controller::reset_session_state()
 	// Encryption — wipe all key material (volatile memset, compiler can't elide)
 	cipher_suite.wipe();
 	encryption_enabled = false;
+#ifdef MERCURY_GUI_ENABLED
+	g_gui_state.encryption_active.store(false);
+#endif
 	tx_batch_counter = 0;
 	rx_batch_counter = 0;
 	consecutive_auth_failures = 0;
@@ -4040,6 +4044,12 @@ void cl_arq_controller::copy_data_to_buffer()
 				// Monitor tap: plaintext after decompression
 				gui_push_monitor_text(decomp_buf, dec_size, false);
 #endif
+				// Headless monitor: output plaintext to stdout
+				if(monitor_stdout)
+				{
+					fwrite(decomp_buf, 1, dec_size, stdout);
+					fflush(stdout);
+				}
 				fifo_buffer_rx.push(decomp_buf, dec_size);
 				total_bytes += dec_size;
 				// Reset auth failure counter on success
@@ -4076,6 +4086,11 @@ void cl_arq_controller::copy_data_to_buffer()
 #ifdef MERCURY_GUI_ENABLED
 			gui_push_monitor_text(assembled, assembled_size, false);
 #endif
+			if(monitor_stdout)
+			{
+				fwrite(assembled, 1, assembled_size, stdout);
+				fflush(stdout);
+			}
 			fifo_buffer_rx.push(assembled, assembled_size);
 			total_bytes += assembled_size;
 		}
@@ -4091,6 +4106,11 @@ void cl_arq_controller::copy_data_to_buffer()
 #ifdef MERCURY_GUI_ENABLED
 				gui_push_monitor_text(messages_rx[i].data, messages_rx[i].length, false);
 #endif
+				if(monitor_stdout)
+				{
+					fwrite(messages_rx[i].data, 1, messages_rx[i].length, stdout);
+					fflush(stdout);
+				}
 				fifo_buffer_rx.push(messages_rx[i].data, messages_rx[i].length);
 				total_bytes += messages_rx[i].length;
 				messages_rx[i].status=FREE;

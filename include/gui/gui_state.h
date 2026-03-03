@@ -157,6 +157,10 @@ struct st_gui_state {
     // ========== RX Overload ==========
     std::atomic<bool> rx_overload{false};             // Average energy too high in last 1s window
 
+    // ========== Encryption ==========
+    std::atomic<int> encryption_mode{0};              // ENCRYPT_OFF=0, STRICT=1, FAST=2
+    std::atomic<bool> encryption_active{false};       // True when cipher suite is active
+
     // ========== Monitor Panel ==========
     std::atomic<bool> monitor_enabled{false};
     GuiMutex monitor_mutex;

@@ -693,7 +693,7 @@ void cl_arq_controller::process_messages_acknowledging_data()
 				printf("\n"); fflush(stdout);
 			}
 
-			if(data_batch_size > 1 && rx_received < expected)
+			if(data_batch_size > 1 && rx_received < expected && !passive_monitor)
 			{
 				printf("[ACK-GATE] Suppressing: received %d/%d (expected %d)\n",
 					rx_received, data_batch_size, expected);
@@ -718,6 +718,12 @@ void cl_arq_controller::process_messages_acknowledging_data()
 				connection_status=RECEIVING;
 				return;
 			}
+			if(passive_monitor && rx_received < expected)
+			{
+				printf("[MONITOR] Partial batch: received %d/%d (expected %d) — accepting anyway\n",
+					rx_received, data_batch_size, expected);
+				fflush(stdout);
+			}
 			printf("[ACK-GATE] PASS: received %d/%d (expected %d)\n",
 				rx_received, data_batch_size, expected);
 			fflush(stdout);
@@ -741,10 +747,13 @@ void cl_arq_controller::process_messages_acknowledging_data()
 
 		if(passive_monitor)
 		{
-			// send_ack_pattern was suppressed — set frames_to_read for continuous reception
+			// send_ack_pattern was suppressed — set generous ftr for turnaround.
+			// Monitor must wait through: real responder's ACK TX (~750ms) +
+			// commander ACK detection + processing (~500ms) + next batch TX.
+			// Use 2x rx_frame to cover the full turnaround gap.
 			int rx_frame = telecom_system->data_container.preamble_nSymb
 			             + telecom_system->data_container.Nsymb;
-			telecom_system->data_container.frames_to_read = rx_frame;
+			telecom_system->data_container.frames_to_read = rx_frame * 2;
 			telecom_system->data_container.nUnder_processing_events = 0;
 		}
 
@@ -768,7 +777,18 @@ void cl_arq_controller::process_messages_acknowledging_data()
 		copy_data_to_buffer();
 		messages_last_ack_bu.type=NONE;
 
-		calculate_receiving_timeout();
+		if(passive_monitor)
+		{
+			// Monitor: generous timeout covering real responder ACK +
+			// commander turnaround + next batch TX
+			int monitor_timeout = data_batch_size * message_transmission_time_ms
+				+ time_left_to_send_last_frame + ptt_on_delay_ms + 5000;
+			set_receiving_timeout(monitor_timeout);
+		}
+		else
+		{
+			calculate_receiving_timeout();
+		}
 		receiving_timer.start();
 		batch_rx_frame_count = 0;
 		connection_status=RECEIVING;
@@ -1327,8 +1347,21 @@ void cl_arq_controller::process_control_responder()
 				messages_control.status = FREE;
 				batch_rx_frame_count = 0;
 				connection_status = RECEIVING;
-				calculate_receiving_timeout();
+
+				// Monitor must wait through: real responder's ACK (~750ms) +
+				// commander config load + processing (~500ms) + data batch TX.
+				// Use generous timeout to avoid premature expiry.
+				int monitor_timeout = data_batch_size * message_transmission_time_ms
+					+ time_left_to_send_last_frame + ptt_on_delay_ms + 5000;
+				set_receiving_timeout(monitor_timeout);
 				receiving_timer.start();
+
+				// Set frames_to_read so capture thread accumulates enough audio
+				// for OFDM preamble detection + one full data frame.
+				int rx_frame = telecom_system->data_container.preamble_nSymb
+					+ telecom_system->data_container.Nsymb;
+				telecom_system->data_container.frames_to_read = rx_frame;
+				telecom_system->data_container.nUnder_processing_events = 0;
 			}
 			else if(forward_configuration != current_configuration &&
 				(is_ofdm_config(forward_configuration) || is_robust_config(forward_configuration)))
@@ -1382,8 +1415,21 @@ void cl_arq_controller::process_control_responder()
 				messages_control.status = FREE;
 				batch_rx_frame_count = 0;
 				connection_status = RECEIVING;
-				calculate_receiving_timeout();
+				// Generous timeout: wait through real responder's ACK + commander
+				// switch role processing + next batch TX start
+				{
+					int monitor_timeout = data_batch_size * message_transmission_time_ms
+						+ time_left_to_send_last_frame + ptt_on_delay_ms + 5000;
+					set_receiving_timeout(monitor_timeout);
+				}
 				receiving_timer.start();
+				// Set ftr so OFDM capture accumulates enough audio
+				{
+					int rx_frame = telecom_system->data_container.preamble_nSymb
+						+ telecom_system->data_container.Nsymb;
+					telecom_system->data_container.frames_to_read = rx_frame * 2;
+					telecom_system->data_container.nUnder_processing_events = 0;
+				}
 				link_timer.start();
 				watchdog_timer.start();
 			}

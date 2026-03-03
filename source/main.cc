@@ -132,6 +132,7 @@ int main(int argc, char *argv[])
     double boost_override = -1.0;     // -1 = use default; >= 0 = override NB MFSK 1S gain (-B flag)
     int nb_probe_max = -1;            // -1 = use default (2); >= 0 = override nb_probe_max
     int audio_channel_override = -1;  // -1 = use INI settings; >= 0 = override both input+output channel index
+    bool monitor_stdout = false;      // --stdout: output decoded plaintext to stdout
 
     input_dev = (char *) malloc(ALSA_MAX_PATH);
     output_dev = (char *) malloc(ALSA_MAX_PATH);
@@ -192,11 +193,26 @@ int main(int argc, char *argv[])
         printf(" -E [strict|fast]           Enable encryption. strict=SNDL-safe (hold data until PQ key exchange), fast=classical-first.\n");
         printf(" -K [hex_psk]               Pre-shared key for encryption authentication (hex string, up to 64 bytes).\n");
         printf(" -v                         Verbose debug output (OFDM sync, RX timing, ACK detection).\n");
+        printf(" --stdout                   Output decoded plaintext to stdout (monitor mode).\n");
 #ifdef MERCURY_GUI_ENABLED
         printf(" -n                         Disable GUI (headless mode). GUI is enabled by default.\n");
 #endif
         printf(" -h                         Prints this help.\n");
         return EXIT_FAILURE;
+    }
+
+    // Scan for long options (--stdout) before getopt
+    for (int i = 1; i < argc; i++)
+    {
+        if (strcmp(argv[i], "--stdout") == 0)
+        {
+            monitor_stdout = true;
+            // Remove from argv so getopt doesn't choke on it
+            for (int j = i; j < argc - 1; j++)
+                argv[j] = argv[j + 1];
+            argc--;
+            i--;
+        }
     }
 
     int opt;
@@ -677,6 +693,7 @@ start_modem:
         cl_arq_controller ARQ;
         ARQ.telecom_system = &telecom_system;
         ARQ.passive_monitor = is_monitor_mode;
+        ARQ.monitor_stdout = is_monitor_mode && monitor_stdout;
 
         // Monitor mode: force monitor on, disable TX
         if (is_monitor_mode) {
@@ -777,6 +794,7 @@ start_modem:
         ARQ.encryption_mode = (encryption_mode_cli >= 0) ? encryption_mode_cli : g_settings.encryption_mode;
         if (ARQ.encryption_mode != ENCRYPT_OFF)
             ARQ.local_capability |= CAP_ENCRYPTION;
+        g_gui_state.encryption_mode.store(ARQ.encryption_mode);
         if (!g_settings.psk_hex.empty() && psk_hex_cli[0] == '\0')
             strncpy(ARQ.psk_hex, g_settings.psk_hex.c_str(), 128);
 #else
