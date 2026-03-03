@@ -105,9 +105,17 @@ void cl_arq_controller::process_messages_rx_data_control()
 	// Directed HAIL: only respond to beacons targeting our callsign (CRC suffix match).
 	if(link_status == LISTENING && ack_pattern_time_ms > 0 && hail_detected == NO)
 	{
-		// Set directed HAIL target to our own callsign (including SSID)
-		telecom_system->ack_mfsk.set_hail_target(
-			my_call_sign.c_str(), my_call_sign.length());
+		if(passive_monitor)
+		{
+			// Monitor: detect ALL HAILs (undirected), don't respond
+			telecom_system->ack_mfsk.clear_hail_target();
+		}
+		else
+		{
+			// Set directed HAIL target to our own callsign (including SSID)
+			telecom_system->ack_mfsk.set_hail_target(
+				my_call_sign.c_str(), my_call_sign.length());
+		}
 
 		// Override large frames_to_read from LISTENING init — HAIL scanning
 		// needs frames_to_read==0 to check the buffer. The audio callback
@@ -124,22 +132,55 @@ void cl_arq_controller::process_messages_rx_data_control()
 			printf("[HAIL] 'I am Mercury' beacon detected!\n");
 			fflush(stdout);
 
-			// Notify Winlink/trimode that incoming traffic detected
-			std::string pending_str = "PENDING\r";
-			tcp_socket_control.message->length = pending_str.length();
-			for(int i = 0; i < (int)pending_str.length(); i++)
-				tcp_socket_control.message->buffer[i] = pending_str[i];
-			tcp_socket_control.transmit();
+			if(!passive_monitor)
+			{
+				// Notify Winlink/trimode that incoming traffic detected
+				std::string pending_str = "PENDING\r";
+				tcp_socket_control.message->length = pending_str.length();
+				for(int i = 0; i < (int)pending_str.length(); i++)
+					tcp_socket_control.message->buffer[i] = pending_str[i];
+				tcp_socket_control.transmit();
+			}
 
-			// Respond with our own HAIL
+			// Respond with our own HAIL (suppressed in monitor mode)
 			send_hail_pattern();
-			printf("[HAIL] Responded with beacon\n");
-			fflush(stdout);
+			if(!passive_monitor)
+			{
+				printf("[HAIL] Responded with beacon\n");
+				fflush(stdout);
+			}
+
+			if(passive_monitor)
+			{
+				// Monitor: flush ring buffer so decode starts with fresh audio.
+				// In normal mode, send_hail_pattern() does this after TX.
+				// Without flush, old HAIL tones confuse MFSK preamble detection.
+				int buf_samples = telecom_system->data_container.Nofdm
+					* telecom_system->data_container.buffer_Nsymb
+					* telecom_system->data_container.interpolation_rate;
+				MUTEX_LOCK(&capture_prep_mutex);
+				circular_buf_reset(capture_buffer);
+				memset(telecom_system->data_container.passband_delayed_data, 0,
+					2 * buf_samples * sizeof(double));
+				telecom_system->data_container.ring_write_index = 0;
+				telecom_system->data_container.nUnder_processing_events = 0;
+				telecom_system->receive_stats.mfsk_search_raw = 0;
+				telecom_system->receive_stats.ofdm_search_raw = 0;
+				telecom_system->receive_stats.ofdm_batch_active = false;
+				telecom_system->receive_stats.delay_of_last_decoded_message = -1;
+				MUTEX_UNLOCK(&capture_prep_mutex);
+				printf("[MONITOR] Flushed capture buffer for clean decode\n");
+				fflush(stdout);
+			}
 
 			hail_detected = YES;
 
 			// Prepare for START_CONNECTION (generous timeout for commander turnaround)
-			set_receiving_timeout(3 * message_transmission_time_ms + 5000);
+			// Monitor needs extra time: must wait for real responder's HAIL + commander processing
+			int hail_timeout = passive_monitor
+				? 3 * message_transmission_time_ms + 10000
+				: 3 * message_transmission_time_ms + 5000;
+			set_receiving_timeout(hail_timeout);
 			receiving_timer.start();
 			connection_status = RECEIVING;
 
@@ -162,11 +203,17 @@ void cl_arq_controller::process_messages_rx_data_control()
 			break_detected = NO;
 		if(break_detected == YES && link_status == CONNECTED)
 		{
-			printf("[BREAK] Responding with ACK, dropping to ROBUST_0\n");
+			printf("[BREAK] %s, dropping to ROBUST_0\n",
+				passive_monitor ? "Observed" : "Responding with ACK");
 			fflush(stdout);
 			break_detected = NO;
 
-			// Send ACK to confirm BREAK received
+#ifdef MERCURY_GUI_ENABLED
+			if(passive_monitor)
+				gui_push_monitor_event("[BREAK -> ROBUST_0]", false);
+#endif
+
+			// Send ACK to confirm BREAK received (suppressed in monitor mode)
 			send_ack_pattern();
 
 			// Drop to ROBUST_0 (commander will send SET_CONFIG at ROBUST_0)
@@ -229,6 +276,23 @@ void cl_arq_controller::process_messages_rx_data_control()
 			}
 			else if(messages_rx_buffer.type==DATA_LONG || messages_rx_buffer.type==DATA_SHORT)
 			{
+				// Monitor: auto-adopt session if we receive data while still LISTENING
+				// (missed START_CONNECTION — joined mid-session)
+				if(passive_monitor && link_status == LISTENING)
+				{
+					printf("[MONITOR] Data frame received while LISTENING — adopting session mid-stream\n");
+					fflush(stdout);
+					link_status = CONNECTED;
+					connection_status = RECEIVING;
+					compression_enabled = true;
+					watchdog_timer.start();
+					link_timer.start();
+#ifdef MERCURY_GUI_ENABLED
+					gui_set_monitor_callsigns("STA_A", "STA_B");
+					gui_push_monitor_event("[MONITOR: joined session mid-stream]", false);
+#endif
+				}
+
 				printf("[RX-DATA] type=%d id=%d seq=%d/%d len=%d\n",
 					messages_rx_buffer.type, (int)(unsigned char)messages_rx_buffer.id,
 					messages_rx_buffer.sequence_number, data_batch_size,
@@ -675,6 +739,15 @@ void cl_arq_controller::process_messages_acknowledging_data()
 		// ACK pattern uses dedicated ack_mfsk (M=16, nStreams=1) — no config switch needed
 		send_ack_pattern();
 
+		if(passive_monitor)
+		{
+			// send_ack_pattern was suppressed — set frames_to_read for continuous reception
+			int rx_frame = telecom_system->data_container.preamble_nSymb
+			             + telecom_system->data_container.Nsymb;
+			telecom_system->data_container.frames_to_read = rx_frame;
+			telecom_system->data_container.nUnder_processing_events = 0;
+		}
+
 		// send_ack_pattern() sets ftr = rx_frame + turnaround_symbols to cover
 		// the full turnaround gap (ACK TX → commander ACK detect → encode →
 		// batch TX → preamble arrives).  DO NOT override ftr here — the old
@@ -858,7 +931,38 @@ void cl_arq_controller::process_control_responder()
 		printf("[RX-CTRL] START_CONNECTION received. CRC check: received=0x%02X, my_call='%s' (len=%d), my_crc=0x%02X\n",
 			received_crc, my_call_sign.c_str(), (int)my_call_sign.length(), my_crc);
 
-		if(received_crc == my_crc)
+		if(passive_monitor)
+		{
+			// Monitor mode: accept ANY START_CONNECTION, extract callsigns, fast-track to CONNECTED
+			int peer_flags = 0;
+			destination_call_sign = callsign_unpack(&messages_control.data[2], &peer_flags);
+			printf("[MONITOR] Observed START_CONNECTION from '%s'\n", destination_call_sign.c_str());
+			fflush(stdout);
+
+			bool peer_narrowband = (peer_flags & 0x01) != 0;
+			session_narrowband = peer_narrowband || (narrowband_enabled == YES);
+			compression_enabled = true;  // Assume compression (almost always on)
+
+			link_status = CONNECTED;
+			connection_status = RECEIVING;
+			messages_control.status = FREE;  // Critical: free so next control frame can be received
+			watchdog_timer.start();
+			link_timer.start();
+
+			// Prepare for next frame capture
+			calculate_receiving_timeout();
+			receiving_timer.start();
+
+#ifdef MERCURY_GUI_ENABLED
+			gui_set_monitor_callsigns(destination_call_sign.c_str(), "???");
+			{
+				char buf[128];
+				snprintf(buf, sizeof(buf), "[MONITOR: session %s -> ???]", destination_call_sign.c_str());
+				gui_push_monitor_event(buf, false);
+			}
+#endif
+		}
+		else if(received_crc == my_crc)
 		{
 			int peer_flags = 0;
 			destination_call_sign = callsign_unpack(&messages_control.data[2], &peer_flags);
@@ -1021,7 +1125,38 @@ void cl_arq_controller::process_control_responder()
 		}
 
 		link_status=CONNECTED;
-		connection_status=ACKNOWLEDGING_CONTROL;
+#ifdef MERCURY_GUI_ENABLED
+		if(passive_monitor)
+		{
+			// Monitor: don't use my_call_sign as responder (it's the monitor's own)
+			// Keep "???" from START_CONNECTION, just log the event
+			gui_push_monitor_event("[TEST_CONNECTION observed]", false);
+		}
+		else
+		{
+			gui_set_monitor_callsigns(this->destination_call_sign.c_str(),
+			                          this->my_call_sign.c_str());
+			{
+				char buf[128];
+				snprintf(buf, sizeof(buf), "[CONNECTED %s <-> %s]",
+				         this->destination_call_sign.c_str(),
+				         this->my_call_sign.c_str());
+				gui_push_monitor_event(buf, false);
+			}
+		}
+#endif
+		if(passive_monitor)
+		{
+			// Monitor: skip ACK, go directly to RECEIVING
+			messages_control.status = FREE;
+			connection_status = RECEIVING;
+			calculate_receiving_timeout();
+			receiving_timer.start();
+		}
+		else
+		{
+			connection_status=ACKNOWLEDGING_CONTROL;
+		}
 		watchdog_timer.start();
 		link_timer.start();
 
@@ -1029,7 +1164,23 @@ void cl_arq_controller::process_control_responder()
 	}
 	else if(link_status==CONNECTED && (code==KEY_EXCHANGE_1 || code==KEY_ACTIVATE))
 	{
-		if(code==KEY_EXCHANGE_1)
+		if(passive_monitor)
+		{
+			// Monitor: can't participate in key exchange, note encryption
+			printf("[MONITOR] Encryption negotiation observed (code=%d) — cannot decode encrypted data\n", code);
+			fflush(stdout);
+#ifdef MERCURY_GUI_ENABLED
+			if(code==KEY_EXCHANGE_1)
+				gui_push_monitor_event("[KEY_EXCHANGE observed — encryption negotiating]", false);
+			else
+				gui_push_monitor_event("[ENCRYPTION ACTIVE — monitor cannot decode encrypted payload]", false);
+#endif
+			messages_control.status = FREE;
+			connection_status = RECEIVING;
+			link_timer.start();
+			watchdog_timer.start();
+		}
+		else if(code==KEY_EXCHANGE_1)
 		{
 			// Commander's X25519 public key (32 bytes at data[1..32])
 			printf("[CRYPTO] Received KEY_EXCHANGE_1 (X25519 pubkey from commander)\n");
@@ -1089,6 +1240,10 @@ void cl_arq_controller::process_control_responder()
 				}
 			}
 
+#ifdef MERCURY_GUI_ENABLED
+			gui_push_monitor_event("[ENCRYPTION ACTIVE: X25519 + ChaCha20-Poly1305]", false);
+#endif
+
 			connection_status = ACKNOWLEDGING_CONTROL;
 			link_timer.start();
 			watchdog_timer.start();
@@ -1101,7 +1256,22 @@ void cl_arq_controller::process_control_responder()
 			printf("[BW-NEG] Received SWITCH_BANDWIDTH (target=%d) my_mode=%d\n",
 				(int)(unsigned char)messages_control.data[1], bandwidth_mode);
 			fflush(stdout);
-			if(bandwidth_mode == BW_NB_ONLY)
+			if(passive_monitor)
+			{
+				// Monitor: immediately switch bandwidth, no ACK needed
+				printf("[MONITOR] SWITCH_BANDWIDTH observed — switching immediately\n");
+				fflush(stdout);
+#ifdef MERCURY_GUI_ENABLED
+				gui_push_monitor_event("[SWITCH_BANDWIDTH: NB -> WB]", false);
+#endif
+				switch_narrowband_mode(NO);
+				messages_control.status = FREE;
+				batch_rx_frame_count = 0;
+				connection_status = RECEIVING;
+				link_timer.start();
+				watchdog_timer.start();
+			}
+			else if(bandwidth_mode == BW_NB_ONLY)
 			{
 				// Reject: don't ACK — commander will timeout and stay NB.
 				// MFSK ACK patterns carry no data, so we can't signal rejection
@@ -1136,7 +1306,31 @@ void cl_arq_controller::process_control_responder()
 			printf("[GEARSHIFT] Received SET_CONFIG: forward=%d reverse=%d\n",
 				forward_configuration, reverse_configuration);
 
-			if(forward_configuration != current_configuration &&
+#ifdef MERCURY_GUI_ENABLED
+			if(passive_monitor)
+			{
+				char buf[64];
+				snprintf(buf, sizeof(buf), "[GEARSHIFT -> CONFIG_%d]", forward_configuration);
+				gui_push_monitor_event(buf, false);
+			}
+#endif
+
+			if(passive_monitor)
+			{
+				// Monitor: load config immediately (no ACK to send first)
+				data_configuration = forward_configuration;
+				if(forward_configuration != current_configuration &&
+					(is_ofdm_config(forward_configuration) || is_robust_config(forward_configuration)))
+				{
+					load_configuration(data_configuration, PHYSICAL_LAYER_ONLY, YES);
+				}
+				messages_control.status = FREE;
+				batch_rx_frame_count = 0;
+				connection_status = RECEIVING;
+				calculate_receiving_timeout();
+				receiving_timer.start();
+			}
+			else if(forward_configuration != current_configuration &&
 				(is_ofdm_config(forward_configuration) || is_robust_config(forward_configuration)))
 			{
 				// Don't load_configuration here — ack_configuration must stay on
@@ -1146,10 +1340,13 @@ void cl_arq_controller::process_control_responder()
 				data_configuration = forward_configuration;
 			}
 
-			connection_status=ACKNOWLEDGING_CONTROL;
-			link_timer.start();
-			watchdog_timer.start();
-			gear_shift_timer.start();
+			if(!passive_monitor)
+			{
+				connection_status=ACKNOWLEDGING_CONTROL;
+				link_timer.start();
+				watchdog_timer.start();
+				gear_shift_timer.start();
+			}
 		}
 		// BLOCK_END eliminated — data flush now happens after pattern ACK in
 		// process_messages_acknowledging_data(). Commander never sends BLOCK_END.
@@ -1164,9 +1361,35 @@ void cl_arq_controller::process_control_responder()
 		}
 		else if(code==SWITCH_ROLE)
 		{
-			connection_status=ACKNOWLEDGING_CONTROL;
 			printf("switch role\n");
 			copy_data_to_buffer();
+
+			if(passive_monitor)
+			{
+				// Monitor: don't switch to commander, just note direction swap
+				printf("[MONITOR] SWITCH_ROLE observed — direction swap\n");
+				fflush(stdout);
+#ifdef MERCURY_GUI_ENABLED
+				gui_push_monitor_event("[SWITCH_ROLE]", false);
+				// Swap callsign labels (A becomes B)
+				{
+					GuiLockGuard lock(g_gui_state.monitor_mutex);
+					std::string tmp = g_gui_state.monitor_callsign_a;
+					g_gui_state.monitor_callsign_a = g_gui_state.monitor_callsign_b;
+					g_gui_state.monitor_callsign_b = tmp;
+				}
+#endif
+				messages_control.status = FREE;
+				batch_rx_frame_count = 0;
+				connection_status = RECEIVING;
+				calculate_receiving_timeout();
+				receiving_timer.start();
+				link_timer.start();
+				watchdog_timer.start();
+			}
+			else
+			{
+			connection_status=ACKNOWLEDGING_CONTROL;
 			link_timer.start();
 			watchdog_timer.start();
 			// Received data test code
@@ -1194,6 +1417,7 @@ void cl_arq_controller::process_control_responder()
 //				std::cout<<"all is good"<<std::endl;
 //				exit(0);
 //			}
+		} // end else (non-monitor SWITCH_ROLE)
 		}
 		else if(code==REPEAT_LAST_ACK)
 		{
@@ -1205,9 +1429,24 @@ void cl_arq_controller::process_control_responder()
 	{
 		if(code==CLOSE_CONNECTION)
 		{
+#ifdef MERCURY_GUI_ENABLED
+			if(passive_monitor)
+				gui_push_monitor_event("[DISCONNECT]", false);
+#endif
 			reset_session_state();
-			link_status=DISCONNECTING;
-			connection_status=ACKNOWLEDGING_CONTROL;
+			if(passive_monitor)
+			{
+				// Monitor: go back to LISTENING for next session
+				link_status=LISTENING;
+				connection_status=RECEIVING;
+				messages_control.status = FREE;
+				hail_detected = NO;
+			}
+			else
+			{
+				link_status=DISCONNECTING;
+				connection_status=ACKNOWLEDGING_CONTROL;
+			}
 			reset_all_timers();
 
 			fifo_buffer_tx.flush();

@@ -447,6 +447,13 @@ int cl_arq_controller::add_message_control(char code)
 				forward_configuration, reverse_configuration,
 				measurements.SNR_downlink, measurements.SNR_uplink, (int)link_status);
 			fflush(stdout);
+#ifdef MERCURY_GUI_ENABLED
+			{
+				char buf[80];
+				snprintf(buf, sizeof(buf), "[GEARSHIFT -> CONFIG_%d]", forward_configuration);
+				gui_push_monitor_event(buf, true);
+			}
+#endif
 		}
 		else if(code==KEY_EXCHANGE_1)
 		{
@@ -1689,6 +1696,17 @@ void cl_arq_controller::process_control_commander()
 				}
 
 				this->link_status=CONNECTED;
+#ifdef MERCURY_GUI_ENABLED
+				gui_set_monitor_callsigns(this->my_call_sign.c_str(),
+				                          this->destination_call_sign.c_str());
+				{
+					char buf[128];
+					snprintf(buf, sizeof(buf), "[CONNECTED %s <-> %s]",
+					         this->my_call_sign.c_str(),
+					         this->destination_call_sign.c_str());
+					gui_push_monitor_event(buf, true);
+				}
+#endif
 				watchdog_timer.start();
 				link_timer.start();
 				connection_attempt_timer.stop();
@@ -1818,6 +1836,10 @@ void cl_arq_controller::process_control_commander()
 					tcp_socket_control.transmit();
 				}
 			}
+
+#ifdef MERCURY_GUI_ENABLED
+			gui_push_monitor_event("[ENCRYPTION ACTIVE: X25519 + ChaCha20-Poly1305]", true);
+#endif
 
 			this->connection_status = TRANSMITTING_DATA;
 			watchdog_timer.start();
@@ -2377,6 +2399,8 @@ void cl_arq_controller::process_buffer_data_commander()
 						fifo_buffer_backup.push(staging, raw_size);
 						batch_uncompressed_size = raw_size;
 #ifdef MERCURY_GUI_ENABLED
+						// Monitor tap: plaintext before compression
+						gui_push_monitor_text(staging, raw_size, true);
 						// Push algo to GUI (read from compressed header byte 0)
 						g_gui_state.compression_algo.store((int)(unsigned char)comp_buf[0]);
 #endif
@@ -2402,6 +2426,10 @@ void cl_arq_controller::process_buffer_data_commander()
 						comp_size = COMPRESS_HEADER_SIZE + raw_size;
 						fifo_buffer_backup.push(staging, raw_size);
 						batch_uncompressed_size = raw_size;
+#ifdef MERCURY_GUI_ENABLED
+						// Monitor tap: plaintext (RAW fallback path)
+						gui_push_monitor_text(staging, raw_size, true);
+#endif
 					}
 
 					// --- Encrypt batch (after compression, before frame split) ---
@@ -2509,6 +2537,10 @@ void cl_arq_controller::process_buffer_data_commander()
 					}
 					fifo_buffer_backup.push(message_TxRx_byte_buffer, data_read_size);
 					batch_uncompressed_size += data_read_size;
+#ifdef MERCURY_GUI_ENABLED
+					// Monitor tap: plaintext (no compression path)
+					gui_push_monitor_text(message_TxRx_byte_buffer, data_read_size, true);
+#endif
 					block_under_tx=YES;
 					if(data_read_size==max_frame)
 						add_message_tx_data(DATA_LONG, data_read_size, message_TxRx_byte_buffer);

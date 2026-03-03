@@ -37,6 +37,7 @@ extern int g_verbose;
 #define TX_SHM 6
 #define RX_SHM 7
 #define ARQ_MODE 8
+#define MONITOR_MODE 9
 
 #define NUMBER_OF_CONFIGS 17
 #define CONFIG_NONE -1

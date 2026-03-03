@@ -163,6 +163,7 @@ cl_arq_controller::cl_arq_controller()
 	kx_data_buf=NULL;
 	kx_data_len=0;
 	memset(psk_hex, 0, sizeof(psk_hex));
+	passive_monitor=false;
 	gear_shift_algorithm=SUCCESS_BASED_LADDER;
 
 	gear_shift_up_success_rate_precentage=70;
@@ -2112,6 +2113,7 @@ void cl_arq_controller::process_user_command(std::string command)
 
 void cl_arq_controller::ptt_on()
 {
+	if(passive_monitor) return;  // Never transmit in monitor mode
 	std::string str="PTT ON\r";
 	tcp_socket_control.message->length=str.length();
 
@@ -2366,6 +2368,7 @@ void cl_arq_controller::send(st_message* message, int message_location)
 
 void cl_arq_controller::send_batch()
 {
+	if(passive_monitor) return;  // Never transmit in monitor mode
 	// === DIAG: always print TX activity (remove after debug) ===
 	printf("[CMD-TX] CONFIG_%d batch=%d type=%d pream=%d Nsymb=%d\n",
 		current_configuration, message_batch_counter_tx,
@@ -2712,6 +2715,7 @@ void cl_arq_controller::send_batch()
 // Transmit short ACK tone pattern instead of LDPC-encoded ACK frame
 void cl_arq_controller::send_ack_pattern()
 {
+	if(passive_monitor) return;
 	if(g_verbose) { printf("[TX-ACK-PAT] Sending ACK pattern on CONFIG_%d\n", current_configuration); fflush(stdout); }
 
 	// Wait for the full OFDM frame to finish being received before
@@ -2876,6 +2880,7 @@ void cl_arq_controller::send_ack_pattern()
 // Transmit BREAK tone pattern — emergency "drop to ROBUST_0" signal
 void cl_arq_controller::send_break_pattern()
 {
+	if(passive_monitor) return;
 	printf("[TX-BREAK] Sending BREAK pattern on CONFIG_%d\n", current_configuration);
 	fflush(stdout);
 
@@ -2980,6 +2985,7 @@ void cl_arq_controller::send_break_pattern()
 // TX "I am Mercury" HAIL beacon — prefix + optional CRC suffix for directed hailing.
 void cl_arq_controller::send_hail_pattern()
 {
+	if(passive_monitor) return;
 	printf("[TX-HAIL] Sending HAIL beacon (%s, %d symbols)\n",
 		telecom_system->ack_mfsk.hail_directed ? "directed" : "undirected",
 		telecom_system->ack_mfsk.hail_detect_nsymb);
@@ -3113,6 +3119,9 @@ bool cl_arq_controller::receive_hail_pattern()
 
 		if(matched_count >= telecom_system->ack_mfsk.hail_detect_threshold && metric >= 3.0)
 		{
+#ifdef MERCURY_GUI_ENABLED
+			gui_push_monitor_event("[HAIL detected]", false);
+#endif
 			MUTEX_LOCK(&capture_prep_mutex);
 			telecom_system->data_container.frames_to_read =
 				telecom_system->data_container.preamble_nSymb + telecom_system->data_container.Nsymb;
@@ -3175,6 +3184,9 @@ bool cl_arq_controller::receive_ack_pattern()
 		// NB: 24/32 (M=8) or 40/48 (M=4) — Sidelnikov sequences eliminate false alarms.
 		if(matched_count >= telecom_system->ack_mfsk.ack_match_threshold && metric >= 3.0)
 		{
+#ifdef MERCURY_GUI_ENABLED
+			gui_push_monitor_event("[ACK]", false);
+#endif
 			// Detected — commander is about to TX next batch. Small ftr
 			// keeps polling responsive; audio accumulated here is destroyed
 			// by the pre-TX flush in send_batch() anyway.
@@ -3511,7 +3523,15 @@ void cl_arq_controller::receive()
 				}
 	
 			}
-			if(message_TxRx_byte_buffer[1] == this->connection_id || message_TxRx_byte_buffer[1] == BROADCAST_ID)
+			// In passive monitor mode, accept ALL connection_ids and adopt the session
+			if(passive_monitor && this->connection_id == 0 && message_TxRx_byte_buffer[1] != BROADCAST_ID)
+			{
+				this->connection_id = message_TxRx_byte_buffer[1];
+				printf("[MONITOR] Adopted connection_id=0x%02x\n",
+					(unsigned char)this->connection_id);
+				fflush(stdout);
+			}
+			if(passive_monitor || message_TxRx_byte_buffer[1] == this->connection_id || message_TxRx_byte_buffer[1] == BROADCAST_ID)
 			{
 				messages_rx_buffer.status=RECEIVED;
 				messages_rx_buffer.type=message_TxRx_byte_buffer[0];
@@ -3645,6 +3665,9 @@ void cl_arq_controller::receive()
 					printf("[BREAK] Emergency pattern detected! metric=%.2f matched=%d/%d\n",
 						metric, matched, telecom_system->ack_mfsk.ack_pattern_nsymb);
 					fflush(stdout);
+#ifdef MERCURY_GUI_ENABLED
+					gui_push_monitor_event("[BREAK]", false);
+#endif
 					break_detected = YES;
 				}
 			}
@@ -3666,6 +3689,20 @@ void cl_arq_controller::receive()
 					fflush(stdout);
 					hail_detected = YES;
 				}
+			}
+
+			// MFSK FAIL anti-spin: without this, frames_to_read stays at 0
+			// after FAIL (no overflow), causing a tight spin loop where each
+			// iteration (~100-200ms) accumulates nUnder_processing_events.
+			// Large nUnder skews the MFSK preamble search start position.
+			// Small shift lets the buffer accumulate fresh audio.
+			if(telecom_system->M == MOD_MFSK && telecom_system->data_container.frames_to_read == 0)
+			{
+				int mfsk_ftr = telecom_system->data_container.preamble_nSymb * 2;
+				if(mfsk_ftr < 16) mfsk_ftr = 16;
+				telecom_system->data_container.frames_to_read = mfsk_ftr;
+				telecom_system->data_container.nUnder_processing_events = 0;
+				telecom_system->receive_stats.mfsk_search_raw = 0;
 			}
 
 			// Prevent OFDM FAIL spin loop: pause to let the buffer accumulate
@@ -3999,6 +4036,10 @@ void cl_arq_controller::copy_data_to_buffer()
 				decomp_buf, (int)sizeof(decomp_buf));
 			if(dec_size > 0)
 			{
+#ifdef MERCURY_GUI_ENABLED
+				// Monitor tap: plaintext after decompression
+				gui_push_monitor_text(decomp_buf, dec_size, false);
+#endif
 				fifo_buffer_rx.push(decomp_buf, dec_size);
 				total_bytes += dec_size;
 				// Reset auth failure counter on success
@@ -4032,6 +4073,9 @@ void cl_arq_controller::copy_data_to_buffer()
 		else if(assembled_size > 0)
 		{
 			// Too small for compression header — push raw
+#ifdef MERCURY_GUI_ENABLED
+			gui_push_monitor_text(assembled, assembled_size, false);
+#endif
 			fifo_buffer_rx.push(assembled, assembled_size);
 			total_bytes += assembled_size;
 		}
@@ -4044,6 +4088,9 @@ void cl_arq_controller::copy_data_to_buffer()
 		{
 			if(messages_rx[i].status==ACKED)
 			{
+#ifdef MERCURY_GUI_ENABLED
+				gui_push_monitor_text(messages_rx[i].data, messages_rx[i].length, false);
+#endif
 				fifo_buffer_rx.push(messages_rx[i].data, messages_rx[i].length);
 				total_bytes += messages_rx[i].length;
 				messages_rx[i].status=FREE;
@@ -4193,6 +4240,9 @@ void cl_arq_controller::print_stats()
 	if(this->link_status==DROPPED)
 	{
 		printf("link_status:Dropped\n");
+#ifdef MERCURY_GUI_ENABLED
+		gui_push_monitor_event("[DISCONNECTED]", true);
+#endif
 	}
 	else if(this->link_status==IDLE)
 	{

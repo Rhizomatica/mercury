@@ -491,6 +491,7 @@ public:
 
   int exit_on_disconnect;
   int had_control_connection;
+  bool passive_monitor;  // Third-party monitor mode: accept all frames, never TX
 
   // GUI measurement getters
   double get_snr_uplink() const { return measurements.SNR_uplink; }

@@ -95,6 +95,7 @@ struct MercurySettings {
     double rx_gain_db;
     bool gains_locked;    // Lock gain sliders to prevent accidental adjustment
     bool hide_console;    // Hide the console window (takes effect on restart)
+    bool monitor_enabled; // Enable monitor panel (show decoded plaintext)
     int window_width;
     int window_height;
 

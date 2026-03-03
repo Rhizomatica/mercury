@@ -258,6 +258,8 @@ int main(int argc, char *argv[])
                 operation_mode = BER_PLOT_baseband;
             if (!strcmp(optarg, "PLOT_PASSBAND"))
                 operation_mode = BER_PLOT_passband;
+            if (!strcmp(optarg, "MONITOR"))
+                operation_mode = MONITOR_MODE;
             break;
         case 'x':
             if (!strcmp(optarg, "alsa"))
@@ -662,11 +664,26 @@ start_modem:
     // initializing audio system
     pthread_t radio_capture, radio_playback, radio_capture_prep;
 
+    if (telecom_system.operation_mode == MONITOR_MODE)
+        telecom_system.operation_mode = ARQ_MODE;  // Reuse ARQ infrastructure
+
     if (telecom_system.operation_mode == ARQ_MODE)
     {
-        printf("Mode selected: ARQ\n");
+        bool is_monitor_mode = (operation_mode == MONITOR_MODE);
+        if (is_monitor_mode)
+            printf("Mode selected: MONITOR (passive third-party decode)\n");
+        else
+            printf("Mode selected: ARQ\n");
         cl_arq_controller ARQ;
         ARQ.telecom_system = &telecom_system;
+        ARQ.passive_monitor = is_monitor_mode;
+
+        // Monitor mode: force monitor on, disable TX
+        if (is_monitor_mode) {
+#ifdef MERCURY_GUI_ENABLED
+            g_gui_state.monitor_enabled.store(true);
+#endif
+        }
 
 #ifdef MERCURY_GUI_ENABLED
         // Apply PTT timing settings from INI before init
@@ -780,6 +797,24 @@ start_modem:
 #endif
         telecom_system.narrowband_enabled = ARQ.narrowband_enabled;
         ARQ.init(base_tcp_port, (gear_shift_mode == NO_GEAR_SHIFT)? NO : YES, mod_config);
+
+        // Monitor mode: auto-start in LISTENING state (no TCP LISTEN ON needed)
+        if (is_monitor_mode) {
+            ARQ.original_role = RESPONDER;
+            ARQ.set_role(RESPONDER);
+            ARQ.link_status = LISTENING;
+            ARQ.connection_status = RECEIVING;
+
+            // Monitor must always be BW_AUTO to follow WB upgrades
+            ARQ.bandwidth_mode = BW_AUTO;
+            ARQ.narrowband_enabled = YES;  // Start NB, follow upgrade
+            ARQ.local_capability |= CAP_WB_CAPABLE;
+#ifdef MERCURY_GUI_ENABLED
+            g_gui_state.bandwidth_mode.store(BW_AUTO);
+#endif
+            printf("[MONITOR] Auto-started in LISTENING mode (BW_AUTO, scanning for HAIL)\n");
+            fflush(stdout);
+        }
 
         // Apply command-line arguments
         ARQ.connection_timeout = connection_timeout_ms;

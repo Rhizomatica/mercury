@@ -230,6 +230,7 @@ void MercurySettings::setDefaults() {
     rx_gain_db = 0.0;
     gains_locked = true;  // Default to locked to prevent accidental adjustment
     hide_console = false; // Show console by default
+    monitor_enabled = false;
     window_width = 850;
     window_height = 720;
 }
@@ -288,6 +289,7 @@ bool MercurySettings::load(const std::string& filename) {
     rx_gain_db = ini.getDouble("GUI", "RxGainDb", rx_gain_db);
     gains_locked = ini.getBool("GUI", "GainsLocked", gains_locked);
     hide_console = ini.getBool("GUI", "HideConsole", hide_console);
+    monitor_enabled = ini.getBool("GUI", "MonitorEnabled", monitor_enabled);
     window_width = ini.getInt("GUI", "WindowWidth", window_width);
     window_height = ini.getInt("GUI", "WindowHeight", window_height);
 
@@ -345,6 +347,7 @@ bool MercurySettings::save(const std::string& filename) {
     ini.setDouble("GUI", "RxGainDb", rx_gain_db);
     ini.setBool("GUI", "GainsLocked", gains_locked);
     ini.setBool("GUI", "HideConsole", hide_console);
+    ini.setBool("GUI", "MonitorEnabled", monitor_enabled);
     ini.setInt("GUI", "WindowWidth", window_width);
     ini.setInt("GUI", "WindowHeight", window_height);
 

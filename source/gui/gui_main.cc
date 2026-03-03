@@ -787,10 +787,13 @@ static void RenderGUI() {
     ImGui::EndChild();
 
     // ========== Controls: Gain Levels ==========
-    ImGui::BeginChild("Controls", ImVec2(0, 190), true);
+    bool gains_locked = g_gui_state.gains_locked.load();
+
+    // When locked, collapse to just the checkbox row (~35px); when unlocked, full panel (190px)
+    float controls_height = gains_locked ? 35.0f : 190.0f;
+    ImGui::BeginChild("Controls", ImVec2(0, controls_height), true);
 
     // Lock checkbox at top
-    bool gains_locked = g_gui_state.gains_locked.load();
     if (ImGui::Checkbox("Lock Gain Adjustments", &gains_locked)) {
         g_gui_state.gains_locked.store(gains_locked);
         // Save immediately when lock state changes
@@ -804,6 +807,7 @@ static void RenderGUI() {
         ImGui::SetTooltip("Unlock to adjust gain sliders.\nSettings auto-save when you stop adjusting.");
     }
 
+    if (!gains_locked) {
     ImGui::Separator();
     ImGui::Spacing();
 
@@ -1134,17 +1138,157 @@ static void RenderGUI() {
     }
 
     ImGui::Columns(1);
+    } // end if (!gains_locked)
     ImGui::EndChild();
+
+    // ========== Monitor Panel ==========
+    ImGui::Separator();
+    {
+        static bool monitor_on = g_gui_state.monitor_enabled.load();
+        if (ImGui::Checkbox("Monitor", &monitor_on)) {
+            g_gui_state.monitor_enabled.store(monitor_on);
+            // Persist setting
+            g_settings.monitor_enabled = monitor_on;
+            std::string path = getDefaultConfigPath();
+            g_settings.save(path);
+        }
+        ImGui::SameLine();
+        ImGui::TextDisabled("(?)");
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Show decoded plaintext traffic.\nFor FCC compliance monitoring.");
+        }
+
+        if (monitor_on) {
+            ImGui::SameLine(0, 20);
+            if (ImGui::Button("Copy Text")) {
+                GuiLockGuard lock(g_gui_state.monitor_mutex);
+                if (!g_gui_state.monitor_text.empty())
+                    ImGui::SetClipboardText(g_gui_state.monitor_text.c_str());
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Clear")) {
+                {
+                    GuiLockGuard lock(g_gui_state.monitor_mutex);
+                    g_gui_state.monitor_text.clear();
+                }
+                g_gui_state.monitor_text_snapshot.clear();
+                {
+                    GuiLockGuard lock(g_gui_state.monitor_files_mutex);
+                    g_gui_state.monitor_files.clear();
+                }
+                g_gui_state.monitor_updated.store(true);
+            }
+
+            // Snapshot text for rendering (avoid holding lock during draw)
+            if (g_gui_state.monitor_updated.exchange(false)) {
+                GuiLockGuard lock(g_gui_state.monitor_mutex);
+                g_gui_state.monitor_text_snapshot = g_gui_state.monitor_text;
+            }
+
+            float panel_height = 150.0f;
+            ImGui::BeginChild("MonitorScroll", ImVec2(0, panel_height), true);
+            {
+                // Render text with callsign coloring
+                const std::string& call_a = g_gui_state.monitor_callsign_a;
+                const std::string& call_b = g_gui_state.monitor_callsign_b;
+                const char* p = g_gui_state.monitor_text_snapshot.c_str();
+
+                while (*p) {
+                    const char* eol = strchr(p, '\n');
+                    if (!eol) eol = p + strlen(p);
+                    int line_len = (int)(eol - p);
+
+                    std::string line(p, line_len);
+
+                    // Color callsign prefix
+                    bool colored = false;
+                    if (!call_a.empty() && line.compare(0, call_a.size(), call_a) == 0
+                        && line.size() > call_a.size() && line[call_a.size()] == '>') {
+                        // Cyan for station A (commander / TX)
+                        int prefix_len = (int)call_a.size() + 1;
+                        ImGui::TextColored(ImVec4(0.2f, 0.8f, 1.0f, 1.0f), "%.*s",
+                                           prefix_len, line.c_str());
+                        ImGui::SameLine(0, 0);
+                        ImGui::TextUnformatted(line.c_str() + prefix_len,
+                                               line.c_str() + line_len);
+                        colored = true;
+                    }
+                    else if (!call_b.empty() && line.compare(0, call_b.size(), call_b) == 0
+                             && line.size() > call_b.size() && line[call_b.size()] == '>') {
+                        // Green for station B (responder / RX)
+                        int prefix_len = (int)call_b.size() + 1;
+                        ImGui::TextColored(ImVec4(0.2f, 1.0f, 0.4f, 1.0f), "%.*s",
+                                           prefix_len, line.c_str());
+                        ImGui::SameLine(0, 0);
+                        ImGui::TextUnformatted(line.c_str() + prefix_len,
+                                               line.c_str() + line_len);
+                        colored = true;
+                    }
+                    else if (line.compare(0, 3, "TX>") == 0) {
+                        ImGui::TextColored(ImVec4(0.2f, 0.8f, 1.0f, 1.0f), "TX>");
+                        ImGui::SameLine(0, 0);
+                        ImGui::TextUnformatted(line.c_str() + 3, line.c_str() + line_len);
+                        colored = true;
+                    }
+                    else if (line.compare(0, 3, "RX>") == 0) {
+                        ImGui::TextColored(ImVec4(0.2f, 1.0f, 0.4f, 1.0f), "RX>");
+                        ImGui::SameLine(0, 0);
+                        ImGui::TextUnformatted(line.c_str() + 3, line.c_str() + line_len);
+                        colored = true;
+                    }
+
+                    if (!colored && line_len > 0) {
+                        ImGui::TextUnformatted(line.c_str(), line.c_str() + line_len);
+                    }
+                    else if (!colored && line_len == 0) {
+                        ImGui::TextUnformatted("");
+                    }
+
+                    // Check for inline Save button for binary entries
+                    if (line.find("[binary:") != std::string::npos) {
+                        ImGui::SameLine();
+                        // Find which file entry this corresponds to
+                        GuiLockGuard lock(g_gui_state.monitor_files_mutex);
+                        // Simple heuristic: count binary lines up to this point
+                        static int save_id = 0;
+                        char btn_id[32];
+                        snprintf(btn_id, sizeof(btn_id), "Save##mon_%d", save_id++);
+                        if (ImGui::SmallButton(btn_id)) {
+                            // For now just copy binary to clipboard notice
+                            // Full file dialog would use tinyfiledialogs
+                            printf("[MONITOR] Save button clicked for binary entry\n");
+                            fflush(stdout);
+                        }
+                    }
+
+                    p = (*eol) ? eol + 1 : eol;
+                }
+
+                // Auto-scroll to bottom (unless user scrolled up)
+                if (ImGui::GetScrollY() >= ImGui::GetScrollMaxY() - 10.0f)
+                    ImGui::SetScrollHereY(1.0f);
+            }
+            ImGui::EndChild();
+        }
+    }
 
     // ========== Waterfall Display ==========
     if (show_waterfall) {
-        ImGui::BeginChild("Waterfall", ImVec2(0, 120), true);
+        // Fill remaining space (minimum 80px), rounded to integer pixels
+        float wf_height = ImGui::GetContentRegionAvail().y;
+        if (wf_height < 80.0f) wf_height = 80.0f;
+        wf_height = (float)(int)wf_height;  // Round to integer pixel
+
+        ImGui::BeginChild("Waterfall", ImVec2(0, wf_height), true);
         ImGui::Text("Waterfall");
         ImGui::SameLine(ImGui::GetWindowWidth() - 100);
         ImGui::Text("-100 to 0 dB");
 
         ImVec2 avail = ImGui::GetContentRegionAvail();
-        g_waterfall.render(avail.x, avail.y - 25);
+        float render_w = (float)(int)avail.x;   // Integer pixels
+        float render_h = (float)(int)(avail.y - 25);
+        if (render_h > 0)
+            g_waterfall.render(render_w, render_h);
 
         ImGui::EndChild();
     }
@@ -1248,6 +1392,7 @@ int gui_init() {
     g_gui_state.tx_gain_db.store(g_settings.tx_gain_db);
     g_gui_state.rx_gain_db.store(g_settings.rx_gain_db);
     g_gui_state.gains_locked.store(g_settings.gains_locked);
+    g_gui_state.monitor_enabled.store(g_settings.monitor_enabled);
 
     // Initialize slider tracking
     s_last_tx_gain = (float)g_settings.tx_gain_db;
@@ -1345,6 +1490,7 @@ void gui_shutdown() {
     g_settings.tx_gain_db = g_gui_state.tx_gain_db.load();
     g_settings.rx_gain_db = g_gui_state.rx_gain_db.load();
     g_settings.gains_locked = g_gui_state.gains_locked.load();
+    g_settings.monitor_enabled = g_gui_state.monitor_enabled.load();
     g_settings.save(config_path);
 
     // Shutdown waterfall
