@@ -318,6 +318,22 @@ void cl_cipher_suite::derive_session_key(const char* commander_call,
 }
 
 // ---------------------------------------------------------------------------
+// Key Confirmation — PSK mismatch detection
+// ---------------------------------------------------------------------------
+
+void cl_cipher_suite::compute_key_confirmation(uint8_t tag_out[8])
+{
+    // BLAKE2b(session_key, "mercury-key-confirm") → 8 bytes
+    const char* msg = "mercury-key-confirm";
+    uint8_t full_hash[32];
+    crypto_blake2b_keyed(full_hash, 32,
+                         session_key, SESSION_KEY_SIZE,
+                         (const uint8_t*)msg, strlen(msg));
+    memcpy(tag_out, full_hash, 8);
+    crypto_wipe(full_hash, sizeof(full_hash));
+}
+
+// ---------------------------------------------------------------------------
 // Per-Batch Encrypt/Decrypt — ChaCha20-Poly1305 (IETF)
 // ---------------------------------------------------------------------------
 

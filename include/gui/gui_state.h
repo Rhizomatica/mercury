@@ -160,6 +160,7 @@ struct st_gui_state {
     // ========== Encryption ==========
     std::atomic<int> encryption_mode{0};              // ENCRYPT_OFF=0, STRICT=1, FAST=2
     std::atomic<bool> encryption_active{false};       // True when cipher suite is active
+    std::atomic<bool> encryption_psk_mismatch{false}; // True on auth failure (PSK mismatch)
 
     // ========== Monitor Panel ==========
     std::atomic<bool> monitor_enabled{false};

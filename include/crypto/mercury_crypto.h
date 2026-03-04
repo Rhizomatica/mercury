@@ -122,6 +122,11 @@ public:
     int  get_kx_phase() const { return kx_phase; }
     int  get_tag_size(bool is_robust) const { return is_robust ? AUTH_TAG_ROBUST : AUTH_TAG_SIZE; }
 
+    // --- Key Confirmation ---
+    // Compute 8-byte confirmation tag from session key.
+    // Both sides compute this; mismatch = PSK wrong.
+    void compute_key_confirmation(uint8_t tag_out[8]);
+
     // --- Activation ---
     void activate();     // Set encryption_active = true after KEY_ACTIVATE ACK
 

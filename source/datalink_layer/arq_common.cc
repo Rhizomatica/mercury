@@ -151,6 +151,7 @@ cl_arq_controller::cl_arq_controller()
 	local_capability=CAP_COMPRESSION | CAP_B2F_UNROLL | CAP_STREAMING;  // Always advertise compression + B2F unroll + streaming
 	peer_capability=0;
 	wb_upgrade_pending=false;
+	psk_mismatch_pending=false;
 	compression_enabled=false;
 	force_compress=false;
 	b2f_compression_pending=false;
@@ -2469,6 +2470,8 @@ void cl_arq_controller::reset_session_state()
 	encryption_enabled = false;
 #ifdef MERCURY_GUI_ENABLED
 	g_gui_state.encryption_active.store(false);
+	// Don't clear psk_mismatch here — let it persist so the GUI shows the error.
+	// It gets cleared on next successful encryption activation.
 #endif
 	tx_batch_counter = 0;
 	rx_batch_counter = 0;
@@ -4414,24 +4417,27 @@ void cl_arq_controller::copy_data_to_buffer()
 				else
 				{
 					consecutive_auth_failures++;
-					printf("[CRYPTO] Decrypt FAILED (batch %llu, fails=%d)\n",
+					printf("[CRYPTO] Decrypt FAILED (batch %llu, fails=%d) — PSK MISMATCH\n",
 						(unsigned long long)rx_batch_counter, consecutive_auth_failures);
 					fflush(stdout);
-					if(consecutive_auth_failures >= 3)
-					{
-						printf("[CRYPTO] 3 consecutive auth failures — disconnecting\n");
-						fflush(stdout);
-						// Report error on control port
-						const char* err_msg = "ENCRYPTION FAILURE\r";
-						int elen = (int)strlen(err_msg);
-						for(int e=0; e<elen; e++)
-							tcp_socket_control.message->buffer[e] = err_msg[e];
-						tcp_socket_control.message->length = elen;
-						tcp_socket_control.transmit();
-					}
-					// Push raw as fallback (will be garbled but keeps flow going)
-					fifo_buffer_rx.push(assembled, assembled_size);
-					total_bytes += assembled_size;
+
+					// Report error on control port
+					const char* err_msg = "ENCRYPTION FAILURE\r";
+					int elen = (int)strlen(err_msg);
+					for(int e=0; e<elen; e++)
+						tcp_socket_control.message->buffer[e] = err_msg[e];
+					tcp_socket_control.message->length = elen;
+					tcp_socket_control.transmit();
+
+#ifdef MERCURY_GUI_ENABLED
+					g_gui_state.encryption_psk_mismatch.store(true);
+					gui_push_monitor_event("[PSK MISMATCH — authentication failed, disconnecting]", false);
+#endif
+					// Disconnect immediately — mismatched PSK is unrecoverable
+					printf("[CRYPTO] Authentication failure — disconnecting\n");
+					fflush(stdout);
+					this->link_status = DROPPED;
+					reset_session_state();
 					goto copy_data_done;
 				}
 			}

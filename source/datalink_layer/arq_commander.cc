@@ -476,9 +476,13 @@ int cl_arq_controller::add_message_control(char code)
 		else if(code==KEY_ACTIVATE)
 		{
 			messages_control.data[0] = code;
-			messages_control.length = 1;
+			// Append 8-byte key confirmation tag for PSK verification
+			uint8_t confirm_tag[8];
+			cipher_suite.compute_key_confirmation(confirm_tag);
+			memcpy(&messages_control.data[1], confirm_tag, 8);
+			messages_control.length = 9;
 			messages_control.id = 0;
-			printf("[CRYPTO] Sending KEY_ACTIVATE\n");
+			printf("[CRYPTO] Sending KEY_ACTIVATE with confirmation tag\n");
 			fflush(stdout);
 		}
 		else if(code==REPEAT_LAST_ACK)
@@ -1042,6 +1046,18 @@ void cl_arq_controller::process_messages_rx_acks_control()
 					turboshift_phase = TURBO_DONE;
 					connection_status = TRANSMITTING_DATA;
 				}
+				return;
+			}
+
+			// PSK mismatch: KEY_ACTIVATE was sent to notify the responder.
+			// Whether ACKed or timed out, disconnect now.
+			if(psk_mismatch_pending && link_status == CONNECTED)
+			{
+				printf("[CRYPTO] KEY_ACTIVATE sent (PSK mismatch), disconnecting\n");
+				fflush(stdout);
+				psk_mismatch_pending = false;
+				this->link_status = DROPPED;
+				reset_session_state();
 				return;
 			}
 
@@ -1816,28 +1832,75 @@ void cl_arq_controller::process_control_commander()
 		else if(this->link_status==CONNECTED && messages_control.data[0]==KEY_EXCHANGE_1)
 		{
 			// KEY_EXCHANGE_1 ACK: responder's X25519 pubkey (32 bytes at data[1..32])
+			// + confirmation tag (8 bytes at data[33..40])
 			printf("[CRYPTO] KEY_EXCHANGE_1 ACKed — received responder's X25519 pubkey\n");
 			fflush(stdout);
 
 			cipher_suite.compute_x25519_shared((const uint8_t*)&messages_control.data[1]);
 
 			// Derive session key from X25519 (classical-only for now)
-			// ML-KEM upgrade will be added as a follow-up (requires data-channel transport)
 			cipher_suite.derive_session_key(
 				my_call_sign.c_str(), destination_call_sign.c_str(),
 				(psk_hex[0] != '\0') ? (const uint8_t*)psk_hex : NULL,
 				(psk_hex[0] != '\0') ? (int)strlen(psk_hex) : 0,
 				false);  // mlkem_done=false (X25519-only for now)
 
-			// Send KEY_ACTIVATE to start encrypted data transfer
-			messages_control.status = FREE;
-			add_message_control(KEY_ACTIVATE);
+			// Verify responder's key confirmation tag (PSK mismatch detection)
+			uint8_t our_tag[8];
+			cipher_suite.compute_key_confirmation(our_tag);
+			const uint8_t* peer_tag = (const uint8_t*)&messages_control.data[1 + X25519_KEY_SIZE];
 
-			watchdog_timer.start();
-			link_timer.start();
+			if(memcmp(our_tag, peer_tag, 8) != 0)
+			{
+				printf("[CRYPTO] PSK MISMATCH detected from KEY_EXCHANGE_1 ACK\n");
+				fflush(stdout);
+
+				// Report on control port
+				const char* err_msg = "ENCRYPTION FAILURE PSK MISMATCH\r";
+				int elen = (int)strlen(err_msg);
+				for(int e=0; e<elen; e++)
+					tcp_socket_control.message->buffer[e] = err_msg[e];
+				tcp_socket_control.message->length = elen;
+				tcp_socket_control.transmit();
+
+#ifdef MERCURY_GUI_ENABLED
+				g_gui_state.encryption_psk_mismatch.store(true);
+				gui_push_monitor_event("[PSK MISMATCH — pre-shared key does not match, disconnecting]", true);
+#endif
+				// Still send KEY_ACTIVATE so the responder can also verify
+				// the tag mismatch and disconnect cleanly on its side.
+				messages_control.status = FREE;
+				add_message_control(KEY_ACTIVATE);
+				psk_mismatch_pending = true;
+
+				watchdog_timer.start();
+				link_timer.start();
+			}
+			else
+			{
+				printf("[CRYPTO] Key confirmation matches — sending KEY_ACTIVATE\n");
+				fflush(stdout);
+
+				messages_control.status = FREE;
+				add_message_control(KEY_ACTIVATE);
+
+				watchdog_timer.start();
+				link_timer.start();
+			}
 		}
 		else if(this->link_status==CONNECTED && messages_control.data[0]==KEY_ACTIVATE)
 		{
+			if(psk_mismatch_pending)
+			{
+				// KEY_ACTIVATE ACKed despite mismatch? Shouldn't happen, but disconnect.
+				printf("[CRYPTO] KEY_ACTIVATE ACKed (PSK mismatch), disconnecting\n");
+				fflush(stdout);
+				psk_mismatch_pending = false;
+				this->link_status = DROPPED;
+				reset_session_state();
+				return;
+			}
+
 			// KEY_ACTIVATE ACKed — encryption is now active on both sides
 			cipher_suite.activate();
 			tx_batch_counter = 0;
@@ -1845,6 +1908,7 @@ void cl_arq_controller::process_control_commander()
 			consecutive_auth_failures = 0;
 #ifdef MERCURY_GUI_ENABLED
 			g_gui_state.encryption_active.store(true);
+			g_gui_state.encryption_psk_mismatch.store(false);
 #endif
 			printf("[CRYPTO] KEY_ACTIVATE ACKed — encryption active (X25519 + ChaCha20-Poly1305)\n");
 			fflush(stdout);

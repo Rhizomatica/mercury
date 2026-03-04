@@ -1256,10 +1256,14 @@ void cl_arq_controller::process_control_responder()
 				(psk_hex[0] != '\0') ? (int)strlen(psk_hex) : 0,
 				false);  // mlkem_done=false (X25519-only for now)
 
-			// Put our pubkey in the ACK data (same pattern as TEST_CONNECTION)
+			// Put our pubkey + confirmation tag in the ACK data
 			messages_control.data[0] = KEY_EXCHANGE_1;
 			memcpy(&messages_control.data[1], our_pubkey, X25519_KEY_SIZE);
-			messages_control.length = 1 + X25519_KEY_SIZE;
+			// Append 8-byte key confirmation tag for early PSK verification
+			uint8_t confirm_tag[8];
+			cipher_suite.compute_key_confirmation(confirm_tag);
+			memcpy(&messages_control.data[1 + X25519_KEY_SIZE], confirm_tag, 8);
+			messages_control.length = 1 + X25519_KEY_SIZE + 8;
 
 			printf("[CRYPTO] X25519 shared secret computed, session key derived\n");
 			printf("[CRYPTO] Setting ACKNOWLEDGING_CONTROL, msg_status=%d\n",
@@ -1272,32 +1276,69 @@ void cl_arq_controller::process_control_responder()
 		}
 		else if(code==KEY_ACTIVATE)
 		{
-			printf("[CRYPTO] Received KEY_ACTIVATE — encryption active\n");
-			fflush(stdout);
-			cipher_suite.activate();
-			tx_batch_counter = 0;
-			rx_batch_counter = 0;
-			consecutive_auth_failures = 0;
+			// Verify key confirmation tag (PSK mismatch detection)
+			// Note: messages_control.length is always 1 (hardcoded in receive path),
+			// but data[1..8] is populated from the full LDPC frame decode.
+			uint8_t our_tag[8];
+			cipher_suite.compute_key_confirmation(our_tag);
+			const uint8_t* peer_tag = (const uint8_t*)&messages_control.data[1];
 
-			// Report encryption state on control port
+			if(memcmp(our_tag, peer_tag, 8) == 0)
 			{
-				std::string str = "ENCRYPTION CLASSICAL\r";
-				if (tcp_socket_control.get_status() == TCP_STATUS_ACCEPTED)
+				printf("[CRYPTO] KEY_ACTIVATE confirmed — key confirmation matches\n");
+				fflush(stdout);
+				cipher_suite.activate();
+				tx_batch_counter = 0;
+				rx_batch_counter = 0;
+				consecutive_auth_failures = 0;
+
+				// Report encryption state on control port
 				{
-					tcp_socket_control.message->length = str.length();
-					for (int i = 0; i < (int)str.length(); i++)
-						tcp_socket_control.message->buffer[i] = str[i];
-					tcp_socket_control.transmit();
+					std::string str = "ENCRYPTION CLASSICAL\r";
+					if (tcp_socket_control.get_status() == TCP_STATUS_ACCEPTED)
+					{
+						tcp_socket_control.message->length = str.length();
+						for (int i = 0; i < (int)str.length(); i++)
+							tcp_socket_control.message->buffer[i] = str[i];
+						tcp_socket_control.transmit();
+					}
 				}
-			}
 
 #ifdef MERCURY_GUI_ENABLED
-			gui_push_monitor_event("[ENCRYPTION ACTIVE: X25519 + ChaCha20-Poly1305]", false);
+				g_gui_state.encryption_active.store(true);
+				gui_push_monitor_event("[ENCRYPTION ACTIVE: X25519 + ChaCha20-Poly1305]", false);
 #endif
 
-			connection_status = ACKNOWLEDGING_CONTROL;
-			link_timer.start();
-			watchdog_timer.start();
+				connection_status = ACKNOWLEDGING_CONTROL;
+				link_timer.start();
+				watchdog_timer.start();
+			}
+			else
+			{
+				printf("[CRYPTO] KEY_ACTIVATE FAILED — key confirmation mismatch (PSK wrong?)\n");
+				printf("[CRYPTO]   our_tag:  %02x%02x%02x%02x%02x%02x%02x%02x\n",
+					our_tag[0], our_tag[1], our_tag[2], our_tag[3],
+					our_tag[4], our_tag[5], our_tag[6], our_tag[7]);
+				printf("[CRYPTO]   peer_tag: %02x%02x%02x%02x%02x%02x%02x%02x\n",
+					peer_tag[0], peer_tag[1], peer_tag[2], peer_tag[3],
+					peer_tag[4], peer_tag[5], peer_tag[6], peer_tag[7]);
+				fflush(stdout);
+
+				// Report failure on control port
+				const char* err_msg = "ENCRYPTION FAILURE PSK MISMATCH\r";
+				int elen = (int)strlen(err_msg);
+				for(int e=0; e<elen; e++)
+					tcp_socket_control.message->buffer[e] = err_msg[e];
+				tcp_socket_control.message->length = elen;
+				tcp_socket_control.transmit();
+
+#ifdef MERCURY_GUI_ENABLED
+				g_gui_state.encryption_psk_mismatch.store(true);
+				gui_push_monitor_event("[PSK MISMATCH — pre-shared key does not match, disconnecting]", false);
+#endif
+				this->link_status = DROPPED;
+				reset_session_state();
+			}
 		}
 	}
 	else if(link_status==CONNECTED && (code==SET_CONFIG || code==BLOCK_END || code==FILE_END_ || code==SWITCH_ROLE || code==REPEAT_LAST_ACK || code==SWITCH_BANDWIDTH))

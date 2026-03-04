@@ -682,8 +682,11 @@ static void RenderGUI() {
             // Encryption status
             {
                 bool enc_active = g_gui_state.encryption_active.load();
+                bool psk_mismatch = g_gui_state.encryption_psk_mismatch.load();
                 int enc_mode = g_gui_state.encryption_mode.load();
-                if (enc_active)
+                if (psk_mismatch)
+                    ImGui::TextColored(ImVec4(1.0f, 0.2f, 0.2f, 1.0f), "PSK MISMATCH");
+                else if (enc_active)
                     ImGui::TextColored(ImVec4(0.2f, 1.0f, 0.4f, 1.0f), "ENCRYPTED");
                 else if (enc_mode > 0 && link_status == 2)
                     ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.2f, 1.0f), "KEY EXCHANGE...");

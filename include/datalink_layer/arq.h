@@ -449,6 +449,7 @@ public:
   uint8_t* kx_data_buf;              // Buffer for ML-KEM key exchange data (1184 or 1088 bytes)
   int kx_data_len;                    // Length of pending key exchange data
   char psk_hex[129];                  // Pre-shared key (hex string, up to 64 bytes = 128 hex chars)
+  bool psk_mismatch_pending;          // Commander detected PSK mismatch, KEY_ACTIVATE sent for responder notification
 
   int gear_shift_algorithm;
   double gear_shift_up_success_rate_precentage;
