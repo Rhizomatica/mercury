@@ -107,6 +107,41 @@ esac
 
 echo "=== Building Mercury ($MODE) ==="
 
+# Dependency check (Linux/macOS only — Windows uses vendored libs)
+check_deps() {
+    local missing=""
+    if ! command -v g++ &>/dev/null; then missing="$missing g++"; fi
+    if ! command -v gcc &>/dev/null; then missing="$missing gcc"; fi
+    if ! command -v pkg-config &>/dev/null; then missing="$missing pkg-config"; fi
+    if ! pkg-config --exists glfw3 2>/dev/null; then missing="$missing glfw3"; fi
+
+    # Check for audio headers
+    if [ "$1" = "linux" ]; then
+        if ! pkg-config --exists libpulse 2>/dev/null; then missing="$missing libpulse"; fi
+        if ! pkg-config --exists alsa 2>/dev/null; then missing="$missing alsa"; fi
+    fi
+
+    if [ -n "$missing" ]; then
+        echo ""
+        echo "ERROR: Missing dependencies:$missing"
+        echo ""
+        # Detect distro and suggest install command
+        if [ -f /etc/arch-release ]; then
+            echo "  sudo pacman -S base-devel glfw-x11 libpulse alsa-lib pkg-config"
+        elif [ -f /etc/debian_version ]; then
+            echo "  sudo apt install build-essential libglfw3-dev libpulse-dev libasound2-dev pkg-config"
+        elif [ -f /etc/fedora-release ]; then
+            echo "  sudo dnf install gcc gcc-c++ glfw-devel pulseaudio-libs-devel alsa-lib-devel pkg-config"
+        elif command -v brew &>/dev/null; then
+            echo "  brew install glfw pkg-config"
+        else
+            echo "  Install: g++ gcc pkg-config glfw3-dev libpulse-dev libasound-dev"
+        fi
+        echo ""
+        exit 1
+    fi
+}
+
 # Compiler settings
 CXX=g++
 CC=gcc
@@ -126,6 +161,11 @@ else
     PLATFORM="linux"
     CXXFLAGS="$CXXFLAGS $(pkg-config --cflags glfw3)"
     LDFLAGS="$(pkg-config --libs glfw3) -lGL -lpulse -lasound -lpthread -lrt $EXTRA_LDFLAGS"
+fi
+
+# Check dependencies before build (skip on Windows — uses vendored libs)
+if [ "$PLATFORM" != "windows" ]; then
+    check_deps "$PLATFORM"
 fi
 
 if [ "$PLATFORM" = "windows" ]; then
