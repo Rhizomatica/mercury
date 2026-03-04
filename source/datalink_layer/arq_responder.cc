@@ -142,6 +142,20 @@ void cl_arq_controller::process_messages_rx_data_control()
 				tcp_socket_control.transmit();
 			}
 
+			// Wait for commander to finish TX before responding.
+			// We detected HAIL mid-TX — remaining CMD symbols + flush could
+			// overlap our response, causing truncated capture on CMD side.
+			// Delay = (pattern_len - threshold) symbols + flush margin.
+			{
+				int sym_ms = (telecom_system->data_container.Nofdm
+					* telecom_system->data_container.interpolation_rate * 1000) / 48000;
+				int remaining_syms = telecom_system->ack_mfsk.hail_detect_nsymb
+					- telecom_system->ack_mfsk.hail_detect_threshold;
+				int delay_ms = remaining_syms * sym_ms + 200;
+				printf("[HAIL] Waiting %d ms for commander TX to finish\n", delay_ms);
+				fflush(stdout);
+				msleep(delay_ms);
+			}
 			// Respond with our own HAIL (suppressed in monitor mode)
 			send_hail_pattern();
 			if(!passive_monitor)
@@ -179,7 +193,7 @@ void cl_arq_controller::process_messages_rx_data_control()
 			// Monitor needs extra time: must wait for real responder's HAIL + commander processing
 			int hail_timeout = passive_monitor
 				? 3 * message_transmission_time_ms + 10000
-				: 3 * message_transmission_time_ms + 5000;
+				: 2 * message_transmission_time_ms + 3000;
 			set_receiving_timeout(hail_timeout);
 			receiving_timer.start();
 			connection_status = RECEIVING;

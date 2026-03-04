@@ -285,7 +285,7 @@ void cl_mfsk::init(int _M, int _Nc, int _nStreams)
 			2, 7, 7, 0, 3, 1, 6, 6, 5, 3, 7, 1, 4, 2, 6, 6
 		};
 		for (int i = 0; i < 32; i++) hail_tones[i] = tones[i];
-		hail_match_threshold = 24;
+		hail_match_threshold = 16;
 	}
 	else if (M == 4)
 	{
