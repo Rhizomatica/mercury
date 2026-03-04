@@ -150,7 +150,7 @@ public:
 
 	// HAIL pattern: "I am Mercury" beacon (different tones from ACK and BREAK)
 	int generate_hail_pattern_passband(double* out);  // TX: returns samples written
-	double detect_hail_pattern_from_passband(double* data, int size, int* out_matched = nullptr);  // RX: returns metric
+	double detect_hail_pattern_from_passband(double* data, int size, int* out_matched = nullptr, int suffix_start = 0, int* out_suffix_matched = nullptr);  // RX: returns metric
 
 	st_receive_stats receive_stats;
 

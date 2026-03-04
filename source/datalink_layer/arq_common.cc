@@ -2311,6 +2311,15 @@ void cl_arq_controller::process_user_command(std::string command)
 		tcp_socket_control.message->buffer[2]='\r';
 		tcp_socket_control.message->length=3;
 	}
+	else if(command=="VERSION")
+	{
+		std::string reply="VERSION Mercury " VERSION__ "\r";
+		for(long unsigned int i=0;i<reply.length();i++)
+		{
+			tcp_socket_control.message->buffer[i]=reply[i];
+		}
+		tcp_socket_control.message->length=reply.length();
+	}
 	else if(command=="BUFFER TX")
 	{
 		std::string reply="BUFFER ";
@@ -3369,12 +3378,27 @@ bool cl_arq_controller::receive_hail_pattern()
 		MUTEX_UNLOCK(&capture_prep_mutex);
 
 		int matched_count = 0;
+		int suffix_matched = 0;
+		int suffix_start = telecom_system->ack_mfsk.hail_directed
+		                  ? telecom_system->ack_mfsk.ack_pattern_nsymb : 0;
 		double metric = telecom_system->detect_hail_pattern_from_passband(
 			telecom_system->data_container.ready_to_process_passband_delayed_data,
-			tail_samples, &matched_count);
+			tail_samples, &matched_count, suffix_start, &suffix_matched);
 
-		if(matched_count >= telecom_system->ack_mfsk.hail_detect_threshold && metric >= 3.0)
+		// Separate base pattern and suffix verification:
+		// Base: enough Sidelnikov symbols match (same for all stations)
+		// Suffix: callsign-derived tones must match independently (directed HAIL only)
+		int base_matched = matched_count - suffix_matched;
+		bool base_ok = base_matched >= telecom_system->ack_mfsk.hail_match_threshold;
+		bool suffix_ok = !telecom_system->ack_mfsk.hail_directed
+		              || suffix_matched >= (telecom_system->ack_mfsk.HAIL_SUFFIX_LEN - 1);
+		if(base_ok && suffix_ok && metric >= 3.0)
 		{
+			printf("[HAIL] Detected: base=%d/%d suffix=%d/%d metric=%.1f%s\n",
+				base_matched, telecom_system->ack_mfsk.hail_match_threshold,
+				suffix_matched, telecom_system->ack_mfsk.HAIL_SUFFIX_LEN,
+				metric, telecom_system->ack_mfsk.hail_directed ? " (directed)" : "");
+			fflush(stdout);
 #ifdef MERCURY_GUI_ENABLED
 			gui_push_monitor_event("[HAIL detected]", false);
 #endif

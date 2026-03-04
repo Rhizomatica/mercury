@@ -2336,7 +2336,8 @@ int cl_telecom_system::generate_hail_pattern_passband(double* out)
 }
 
 // RX: Detect HAIL pattern in passband audio buffer (prefix + optional directed suffix)
-double cl_telecom_system::detect_hail_pattern_from_passband(double* data, int size, int* out_matched)
+double cl_telecom_system::detect_hail_pattern_from_passband(double* data, int size, int* out_matched,
+                                                            int suffix_start, int* out_suffix_matched)
 {
 	if(ack_pattern_passband_samples <= 0) return 0.0;
 
@@ -2352,7 +2353,7 @@ double cl_telecom_system::detect_hail_pattern_from_passband(double* data, int si
 		ack_mfsk.hail_detect_tones, ack_mfsk.hail_detect_nsymb,
 		ack_mfsk.tone_hop_step, ack_mfsk.M,
 		ack_mfsk.nStreams, ack_mfsk.stream_offsets,
-		out_matched);
+		out_matched, suffix_start, out_suffix_matched);
 
 	return metric;
 }

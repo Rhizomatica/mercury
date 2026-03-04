@@ -3140,7 +3140,8 @@ double cl_ofdm::detect_ack_pattern(std::complex<double>* baseband_interp, int bu
                                    const int* ack_tones, int ack_pattern_len,
                                    int tone_hop_step, int mfsk_M,
                                    int nStreams, const int* stream_offsets,
-                                   int* out_matched)
+                                   int* out_matched,
+                                   int suffix_start, int* out_suffix_matched)
 {
 	int Nofdm = Nfft + Ngi;
 	int sym_period_interp = Nofdm * interpolation_rate;
@@ -3155,11 +3156,13 @@ double cl_ofdm::detect_ack_pattern(std::complex<double>* baseband_interp, int bu
 	double best_metric = 0.0;
 	int best_pos = -1;
 	int best_matched = 0;
+	int best_suffix_matched = 0;
 
 	for (int s = 0; s <= buffer_nsymb - ack_nsymb; s++)
 	{
 		double metric = 0;
 		int matched = 0;
+		int suffix_matched = 0;
 
 		for (int p = 0; p < ack_nsymb; p++)
 		{
@@ -3239,6 +3242,8 @@ double cl_ofdm::detect_ack_pattern(std::complex<double>* baseband_interp, int bu
 				continue;
 
 			matched++;
+			if (suffix_start > 0 && p >= suffix_start)
+				suffix_matched++;
 
 			// Total energy across all Nc bins
 			double e_total = 0;
@@ -3263,6 +3268,7 @@ double cl_ofdm::detect_ack_pattern(std::complex<double>* baseband_interp, int bu
 			best_metric = metric;
 			best_pos = s;
 			best_matched = matched;
+			best_suffix_matched = suffix_matched;
 		}
 	}
 
@@ -3278,6 +3284,7 @@ double cl_ofdm::detect_ack_pattern(std::complex<double>* baseband_interp, int bu
 		int search_half = sym_period_interp / 2;
 		double fine_best_metric = -1.0;
 		int fine_best_matched = 0;
+		int fine_best_suffix = 0;
 		int fine_best_offset = coarse_offset;
 
 		for (int d = coarse_offset - search_half; d <= coarse_offset + search_half;
@@ -3287,6 +3294,7 @@ double cl_ofdm::detect_ack_pattern(std::complex<double>* baseband_interp, int bu
 
 			double metric_f = 0;
 			int matched_f = 0;
+			int suffix_f = 0;
 			bool oob = false;
 
 			for (int p = 0; p < ack_nsymb && !oob; p++)
@@ -3336,6 +3344,8 @@ double cl_ofdm::detect_ack_pattern(std::complex<double>* baseband_interp, int bu
 
 				if (streams_ok < nStreams) continue;
 				matched_f++;
+				if (suffix_start > 0 && p >= suffix_start)
+					suffix_f++;
 
 				double e_tot = 0;
 				for (int k = 0; k < Nc; k++)
@@ -3355,6 +3365,7 @@ double cl_ofdm::detect_ack_pattern(std::complex<double>* baseband_interp, int bu
 			    (matched_f == fine_best_matched && metric_f > fine_best_metric))
 			{
 				fine_best_matched = matched_f;
+				fine_best_suffix = suffix_f;
 				fine_best_metric = metric_f;
 				fine_best_offset = d;
 			}
@@ -3365,6 +3376,7 @@ double cl_ofdm::detect_ack_pattern(std::complex<double>* baseband_interp, int bu
 		    (fine_best_matched == best_matched && fine_best_metric > best_metric))
 		{
 			best_matched = fine_best_matched;
+			best_suffix_matched = fine_best_suffix;
 			best_metric = fine_best_metric;
 			best_pos = fine_best_offset / sym_period_interp;
 		}
@@ -3372,6 +3384,8 @@ double cl_ofdm::detect_ack_pattern(std::complex<double>* baseband_interp, int bu
 
 	if (out_matched)
 		*out_matched = best_matched;
+	if (out_suffix_matched)
+		*out_suffix_matched = best_suffix_matched;
 
 	return best_metric;
 }
