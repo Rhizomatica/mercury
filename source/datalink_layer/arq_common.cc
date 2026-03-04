@@ -40,7 +40,7 @@ extern "C" {
 extern cbuf_handle_t capture_buffer;
 extern cbuf_handle_t playback_buffer;
 
-static const int RX_MUTE_GUARD_MS = 150;
+static const int RX_MUTE_GUARD_MS = 50;
 
 cl_arq_controller::cl_arq_controller()
 {

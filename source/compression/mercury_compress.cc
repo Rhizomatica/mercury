@@ -459,13 +459,16 @@ int cl_compressor::compress_block(const char* in, int in_len, char* out, int out
 	// model advancement) → model desync on next streaming batch.
 	if (streaming_active && ppmd_model_warm)
 	{
-		int ps = ppmd_compress(uin, in_len, workspace + half, half);
-		if (ps > 0 && ps < best_comp_size)
+		if (entropy < ENTROPY_SKIP_ALL)
 		{
-			best_algo = COMPRESS_ALGO_PPMD;
-			best_comp_size = ps;
-			best_offset = half;
-			best_is_raw = false;
+			int ps = ppmd_compress(uin, in_len, workspace + half, half);
+			if (ps > 0 && ps < best_comp_size)
+			{
+				best_algo = COMPRESS_ALGO_PPMD;
+				best_comp_size = ps;
+				best_offset = half;
+				best_is_raw = false;
+			}
 		}
 	}
 	else

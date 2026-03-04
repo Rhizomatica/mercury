@@ -582,27 +582,10 @@ void cl_arq_controller::process_messages_acknowledging_control()
 						current_configuration);
 					fflush(stdout);
 					turboshift_active = false;
-					// Settle to ceiling before finishing, if above it
-					if(turboshift_last_good >= 0 && turboshift_last_good != current_configuration)
-					{
-						negotiated_configuration = turboshift_last_good;
-						data_configuration = turboshift_last_good;
-						forward_configuration = turboshift_last_good;
-						turbo_settle_pending = true;
-						printf("[TURBO] Settling to ceiling CONFIG_%d before finishing\n",
-							turboshift_last_good);
-						fflush(stdout);
-						cleanup();
-						add_message_control(SET_CONFIG);
-						this->connection_status = TRANSMITTING_CONTROL;
-					}
-					else
-					{
-						turboshift_phase = TURBO_DONE;
-						cleanup();
-						add_message_control(SWITCH_ROLE);
-						this->connection_status = TRANSMITTING_CONTROL;
-					}
+					turboshift_phase = TURBO_DONE;
+					cleanup();
+					add_message_control(SWITCH_ROLE);
+					this->connection_status = TRANSMITTING_CONTROL;
 				}
 			}
 			else if(has_asymmetric &&

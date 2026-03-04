@@ -2035,17 +2035,8 @@ void cl_arq_controller::process_control_commander()
 					fifo_buffer_backup.flush();
 				}
 
-				// Turboshift settle: reached top, settling to ceiling before finish
-				if(turbo_settle_pending)
-				{
-					turbo_settle_pending = false;
-					printf("[TURBO] Settled at ceiling CONFIG_%d, finishing direction\n",
-						current_configuration);
-					fflush(stdout);
-					finish_turbo_direction();
-				}
 				// Break recovery: reverse-turboshift probing
-				else if(break_recovery_phase == 1)
+				if(break_recovery_phase == 1)
 				{
 					// Phase 1 complete: coordination at ROBUST_0 succeeded.
 					// Target config loaded. Now probe it with SET_CONFIG at target.
@@ -2122,27 +2113,7 @@ void cl_arq_controller::process_control_commander()
 					{
 						printf("[TURBO] Reached top at config %d\n", current_configuration);
 						fflush(stdout);
-						// Settle back to turboshift_last_good before finishing.
-						// SUPERSHIFT doesn't test data — the current config (top)
-						// may not sustain data exchange. Settle to last proven config.
-						if(turboshift_last_good >= 0 && turboshift_last_good != current_configuration)
-						{
-							turboshift_active = false;
-							negotiated_configuration = turboshift_last_good;
-							data_configuration = turboshift_last_good;
-							forward_configuration = turboshift_last_good;
-							turbo_settle_pending = true;
-							printf("[TURBO] Settling to ceiling CONFIG_%d before finishing\n",
-								turboshift_last_good);
-							fflush(stdout);
-							cleanup();
-							add_message_control(SET_CONFIG);
-							this->connection_status = TRANSMITTING_CONTROL;
-						}
-						else
-						{
-							finish_turbo_direction();
-						}
+						finish_turbo_direction();
 					}
 				}
 				else
