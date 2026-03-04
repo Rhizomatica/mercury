@@ -30,6 +30,7 @@
 
 extern "C" {
     extern double noise_snr_db;
+    extern double noise_signal_dbfs;
 }
 
 #ifdef MERCURY_GUI_ENABLED
@@ -39,7 +40,7 @@ extern "C" {
 extern cbuf_handle_t capture_buffer;
 extern cbuf_handle_t playback_buffer;
 
-static const int RX_MUTE_GUARD_MS = 50;
+static const int RX_MUTE_GUARD_MS = 150;
 
 cl_arq_controller::cl_arq_controller()
 {
@@ -147,7 +148,7 @@ cl_arq_controller::cl_arq_controller()
 	nb_probe_max=2;
 	session_narrowband=false;
 	bandwidth_mode=BW_AUTO;
-	local_capability=CAP_COMPRESSION | CAP_B2F_UNROLL;  // Always advertise compression + B2F unroll
+	local_capability=CAP_COMPRESSION | CAP_B2F_UNROLL | CAP_STREAMING;  // Always advertise compression + B2F unroll + streaming
 	peer_capability=0;
 	wb_upgrade_pending=false;
 	compression_enabled=false;
@@ -184,6 +185,7 @@ cl_arq_controller::cl_arq_controller()
 	turboshift_last_good=-1;
 	turboshift_initiator=false;
 	turboshift_retries=1;
+	turbo_settle_pending=false;
 
 	emergency_nack_count=0;
 	emergency_nack_threshold=2;
@@ -966,12 +968,16 @@ void cl_arq_controller::load_configuration(int configuration, int level, int bac
 	// time_left_to_send_last_frame=(float)telecom_system->speaker.frames_to_leave_transmit_fct/(float)(telecom_system->frequency_interpolation_rate*(telecom_system->bandwidth/telecom_system->ofdm.Nc)*telecom_system->ofdm.Nfft);
     time_left_to_send_last_frame=0;
 
-	// Scale data_batch_size for ~10s block duration (OFDM modes only).
+	// Scale data_batch_size based on block duration (OFDM modes only).
 	// MFSK modes keep batch_size=1 for pattern ACK optimization.
 	// Adapts each gearshift: fast configs send more frames per block.
+	// NB (Nc≤10): ~25s target. NB frames are ~2.4s each, so the 10s target
+	// gives only 5 frames/batch, wasting ~40% of cycle time on ACK turnaround.
+	// With 11 frames (25s), overhead drops to ~22% and throughput exceeds PHY.
 	if(!is_robust_config(configuration) && message_transmission_time_ms > 0)
 	{
-		int target_batch = (int)(10000.0 / message_transmission_time_ms + 0.5);
+		int target_time_ms = 10000;
+		int target_batch = (int)((float)target_time_ms / message_transmission_time_ms + 0.5);
 		if(target_batch < 5) target_batch = 5;
 		if(target_batch > nMessages) target_batch = nMessages;
 		set_data_batch_size(target_batch);
@@ -1569,6 +1575,7 @@ void cl_arq_controller::update_status()
 			turboshift_active = true;
 			turboshift_phase = TURBO_DONE;
 			turboshift_last_good = -1;
+			turbo_settle_pending = false;
 
 			messages_control.status = FREE;
 			connection_attempts = 0;
@@ -2122,7 +2129,7 @@ void cl_arq_controller::process_user_command(std::string command)
 		this->my_call_sign=command.substr(0,command.find(" "));
 		this->destination_call_sign=command.substr(my_call_sign.length()+1);
 		commander_configured_nb=narrowband_enabled;
-		local_capability = ((bandwidth_mode == BW_AUTO) ? CAP_WB_CAPABLE : 0) | CAP_COMPRESSION | CAP_B2F_UNROLL | ((encryption_mode != ENCRYPT_OFF) ? CAP_ENCRYPTION : 0);
+		local_capability = ((bandwidth_mode == BW_AUTO) ? CAP_WB_CAPABLE : 0) | CAP_COMPRESSION | CAP_B2F_UNROLL | CAP_STREAMING | ((encryption_mode != ENCRYPT_OFF) ? CAP_ENCRYPTION : 0);
 		peer_capability = 0;
 		wb_upgrade_pending = false;
 		compression_enabled = false;
@@ -2219,7 +2226,7 @@ void cl_arq_controller::process_user_command(std::string command)
 	{
 		original_role=RESPONDER;
 		set_role(RESPONDER);
-		local_capability = ((bandwidth_mode == BW_AUTO) ? CAP_WB_CAPABLE : 0) | CAP_COMPRESSION | CAP_B2F_UNROLL | ((encryption_mode != ENCRYPT_OFF) ? CAP_ENCRYPTION : 0);
+		local_capability = ((bandwidth_mode == BW_AUTO) ? CAP_WB_CAPABLE : 0) | CAP_COMPRESSION | CAP_B2F_UNROLL | CAP_STREAMING | ((encryption_mode != ENCRYPT_OFF) ? CAP_ENCRYPTION : 0);
 		peer_capability = 0;
 		wb_upgrade_pending = false;
 		compression_enabled = false;
@@ -2255,7 +2262,7 @@ void cl_arq_controller::process_user_command(std::string command)
 		printf("[BW] Setting NB only (500 Hz)\n");
 		fflush(stdout);
 		bandwidth_mode = BW_NB_ONLY;
-		local_capability = CAP_COMPRESSION | CAP_B2F_UNROLL | ((encryption_mode != ENCRYPT_OFF) ? CAP_ENCRYPTION : 0);
+		local_capability = CAP_COMPRESSION | CAP_B2F_UNROLL | CAP_STREAMING | ((encryption_mode != ENCRYPT_OFF) ? CAP_ENCRYPTION : 0);
 #ifdef MERCURY_GUI_ENABLED
 		g_gui_state.bandwidth_mode.store(BW_NB_ONLY);
 #endif
@@ -2273,7 +2280,7 @@ void cl_arq_controller::process_user_command(std::string command)
 		printf("[BW] Setting auto mode (%s)\n", command.c_str());
 		fflush(stdout);
 		bandwidth_mode = BW_AUTO;
-		local_capability = CAP_WB_CAPABLE | CAP_COMPRESSION | CAP_B2F_UNROLL | ((encryption_mode != ENCRYPT_OFF) ? CAP_ENCRYPTION : 0);
+		local_capability = CAP_WB_CAPABLE | CAP_COMPRESSION | CAP_B2F_UNROLL | CAP_STREAMING | ((encryption_mode != ENCRYPT_OFF) ? CAP_ENCRYPTION : 0);
 #ifdef MERCURY_GUI_ENABLED
 		g_gui_state.bandwidth_mode.store(BW_AUTO);
 #endif
@@ -2292,7 +2299,7 @@ void cl_arq_controller::process_user_command(std::string command)
 		printf("[BW] Setting auto mode (BW2500, legacy)\n");
 		fflush(stdout);
 		bandwidth_mode = BW_AUTO;
-		local_capability = CAP_WB_CAPABLE | CAP_COMPRESSION | CAP_B2F_UNROLL | ((encryption_mode != ENCRYPT_OFF) ? CAP_ENCRYPTION : 0);
+		local_capability = CAP_WB_CAPABLE | CAP_COMPRESSION | CAP_B2F_UNROLL | CAP_STREAMING | ((encryption_mode != ENCRYPT_OFF) ? CAP_ENCRYPTION : 0);
 #ifdef MERCURY_GUI_ENABLED
 		g_gui_state.bandwidth_mode.store(BW_AUTO);
 #endif
@@ -2326,6 +2333,17 @@ void cl_arq_controller::process_user_command(std::string command)
 			noise_snr_db = std::stod(arg);
 			printf("[NOISE-Z] SNR set to %.1f dB\n", noise_snr_db);
 		}
+		tcp_socket_control.message->buffer[0]='O';
+		tcp_socket_control.message->buffer[1]='K';
+		tcp_socket_control.message->buffer[2]='\r';
+		tcp_socket_control.message->length=3;
+	}
+	else if(command.substr(0,12)=="NOISESIGNAL ")
+	{
+		// Set expected wire signal level for noise calibration: "NOISESIGNAL <dBFS>"
+		std::string arg=command.substr(12);
+		noise_signal_dbfs = std::stod(arg);
+		printf("[NOISE-Z] Signal level set to %.1f dBFS\n", noise_signal_dbfs);
 		tcp_socket_control.message->buffer[0]='O';
 		tcp_socket_control.message->buffer[1]='K';
 		tcp_socket_control.message->buffer[2]='\r';
@@ -2413,6 +2431,7 @@ void cl_arq_controller::reset_session_state()
 	turboshift_phase = TURBO_FORWARD;
 	turboshift_active = true;
 	turboshift_last_good = -1;
+	turbo_settle_pending = false;
 	turboshift_initiator = false;
 	turboshift_retries = 1;
 
@@ -3760,6 +3779,12 @@ void cl_arq_controller::receive()
 					frame_end_symb - telecom_system->data_container.frames_to_read - nUnder_snapshot - 1;
 				if(telecom_system->receive_stats.ofdm_search_raw < 0)
 					telecom_system->receive_stats.ofdm_search_raw = 0;
+				// Clamp at upper_bound: search_raw can exceed buffer_Nsymb - rx_frame
+				// when ftr is clamped to 0 (frame near buffer end). Without clamping,
+				// next search starts past upper_bound → recovery forces unnecessary FAIL.
+				int upper_clamp = telecom_system->data_container.buffer_Nsymb.load() - rx_frame;
+				if(upper_clamp > 0 && telecom_system->receive_stats.ofdm_search_raw > upper_clamp)
+					telecom_system->receive_stats.ofdm_search_raw = upper_clamp;
 				telecom_system->receive_stats.ofdm_batch_active = true;
 
 				// Opportunistic scan success: reset failure counter
@@ -3985,7 +4010,9 @@ void cl_arq_controller::receive()
 			// and shift by that amount in one go.
 			if(telecom_system->M != MOD_MFSK && telecom_system->data_container.frames_to_read == 0)
 			{
-				int ftr = 8;  // default anti-spin
+				// Default anti-spin: NB frames are 5x longer (nc_scale=5),
+				// so use 2x larger ftr to scroll past false detections faster.
+				int ftr = (telecom_system->ofdm.Nc <= 10) ? 16 : 8;
 
 				if(received_message_stats.delay > 0)
 				{
@@ -4095,8 +4122,45 @@ void cl_arq_controller::receive()
 							}
 						}
 					}
-				// Default ftr=8 applies for other cases (no preamble,
-				// low metric without batch mode, etc.)
+				else if(telecom_system->receive_stats.coarse_metric >= 0.15
+					&& telecom_system->receive_stats.coarse_metric < 0.5)
+					{
+						// Medium-metric within-bounds FAIL (not in batch): likely
+						// false preamble from NB OFDM data autocorrelation.
+						// NB (Nc=10) has higher Schmidl-Cox metric variance than
+						// WB (Nc=50), producing false peaks at 0.15-0.45.
+						// These waste LDPC decode time and push real preambles
+						// past the buffer boundary, causing NAcks.
+						// Zero the false detection region to prevent re-detection,
+						// then retry quickly with minimal shift.
+						// Sub-threshold detections (metric < detection_threshold)
+						// are caught by early return in receive_byte() but now
+						// preserve delay at the detected position (not -1), so
+						// they CAN reach this path for zeroing when metric >= 0.15.
+						{
+							int sp = signal_period;
+							int pream_samples = telecom_system->data_container.preamble_nSymb * symbol_period;
+							int pream_ring_start = (rwi + received_message_stats.delay) % sp;
+
+							MUTEX_LOCK(&capture_prep_mutex);
+							for(int k = 0; k < pream_samples; k++)
+							{
+								int pos = (pream_ring_start + k) % sp;
+								telecom_system->data_container.passband_delayed_data[pos] = 0.0;
+								telecom_system->data_container.passband_delayed_data[pos + sp] = 0.0;
+							}
+							MUTEX_UNLOCK(&capture_prep_mutex);
+						}
+						ftr = 2;
+						telecom_system->receive_stats.ofdm_search_raw = 0;
+						telecom_system->receive_stats.ofdm_batch_active = false;
+						printf("[FTR-FALSE] pream=%d metric=%.3f — zeroed, retry\n",
+							pream_symb,
+							telecom_system->receive_stats.coarse_metric);
+						fflush(stdout);
+					}
+				// Default ftr (8 WB, 16 NB) applies for other cases
+				// (no preamble, high metric without batch mode, etc.)
 				}
 
 				if(telecom_system->receive_stats.ofdm_search_raw > 0)
@@ -4292,7 +4356,7 @@ void cl_arq_controller::copy_data_to_buffer()
 		for(int i=this->data_batch_size;i<this->nMessages;i++)
 			messages_rx[i].status=FREE;
 
-		if(assembled_size >= COMPRESS_HEADER_SIZE)
+		if(assembled_size >= compressor.get_header_size())
 		{
 			// --- Decrypt batch (after reassembly, before decompression) ---
 			char* comp_data = assembled;
@@ -4366,11 +4430,14 @@ void cl_arq_controller::copy_data_to_buffer()
 				}
 				fifo_buffer_rx.push(decomp_buf, dec_size);
 				total_bytes += dec_size;
+				// Streaming: commit context (raw data = decompressed output)
+				if(compressor.is_streaming())
+					compressor.streaming_commit((unsigned char*)decomp_buf, dec_size);
 				// Reset auth failure counter on success
 				if(cipher_suite.is_active())
 					consecutive_auth_failures = 0;
 				// Update compression ratio on responder side (EMA)
-				int comp_payload = comp_len - COMPRESS_HEADER_SIZE;
+				int comp_payload = comp_len - compressor.get_header_size();
 				if(comp_payload > 0)
 				{
 					float measured = (float)dec_size / (float)comp_payload;
@@ -4383,7 +4450,9 @@ void cl_arq_controller::copy_data_to_buffer()
 			}
 			else
 			{
-				// Decompression error — push assembled raw as fallback
+				// Decompression error — reset streaming and push raw as fallback
+				if(compressor.is_streaming())
+					compressor.streaming_reset();
 				const unsigned char* ehdr = (const unsigned char*)comp_data;
 				printf("[DECOMPRESS] Batch error (assembled %d bytes, hdr: algo=%d comp=%d orig=%d), pushing raw\n",
 					comp_len, (int)ehdr[0],
@@ -4452,6 +4521,21 @@ copy_data_done:
 
 void cl_arq_controller::restore_tx_from_compressed()
 {
+	// When streaming is active, messages_tx was compressed with streaming context
+	// that has already advanced the PPMd model. We can't decompress it again.
+	// Use the backup buffer (raw plaintext) and reset streaming context.
+	if(compressor.is_streaming())
+	{
+		printf("[RESTORE_TX] Streaming active — resetting context, restoring from backup\n");
+		fflush(stdout);
+		compressor.streaming_reset();
+		compressor.clear_pending();
+		for(int i=0; i<nMessages; i++)
+			messages_tx[i].status = FREE;
+		restore_backup_buffer_data();
+		return;
+	}
+
 	// When encryption is active, messages_tx contains encrypted+compressed data.
 	// Decrypting requires the exact batch counter that was used, which is fragile.
 	// The backup buffer always has raw plaintext, so use it directly.
@@ -4486,7 +4570,7 @@ void cl_arq_controller::restore_tx_from_compressed()
 		messages_tx[i].status = FREE;
 	}
 
-	if(assembled_size >= COMPRESS_HEADER_SIZE)
+	if(assembled_size >= COMPRESS_HEADER_SIZE_LEGACY)
 	{
 		char decomp_buf[COMPRESS_WORKSPACE_SIZE];
 		int dec_size = compressor.decompress_block(

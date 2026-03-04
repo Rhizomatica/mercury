@@ -929,7 +929,13 @@ st_receive_stats cl_telecom_system::receive_byte(double *data, int* out)
 			//
 			// Metric: energy-weighted normalized correlation → [0,1].
 			// Amplitude-independent: works at any RX gain / HF fading level.
-			double preamble_detect_threshold = 0.15;
+			// NB (Nc=10) has higher metric variance than WB (Nc=50) because
+			// fewer subcarriers give less averaging in the autocorrelation.
+			// This causes OFDM data symbols to produce false peaks at 0.15-0.45
+			// instead of staying below 0.15. Raise threshold for NB to prevent
+			// false detections that waste decode time and push real preambles
+			// beyond the buffer boundary (causing NAcks).
+			double preamble_detect_threshold = narrowband_enabled ? 0.30 : 0.15;
 
 			// BER test: known delay bypasses detection entirely (same as mfsk_fixed_delay).
 			// The forced delay positions the preamble exactly; no detection needed.
@@ -1060,12 +1066,19 @@ st_receive_stats cl_telecom_system::receive_byte(double *data, int* out)
 
 				if(matched.correlation < preamble_detect_threshold)
 				{
-					// No preamble found — exit batch mode.  Don't reset
-					// ofdm_search_raw here; the ARQ FAIL handler will
-					// decrement it via ftr.  But signal that the full
-					// search came up empty so the ARQ layer can reset
-					// search_raw faster (e.g. ftr=frame_symb).
+					// Sub-threshold detection — skip demodulation entirely
+					// to save CPU (no LDPC decode of garbage), but preserve
+					// the detected delay position so the ARQ FAIL handler
+					// can see WHERE the false peak was. This allows the
+					// FTR-FALSE handler (metric 0.15-0.50) to zero the
+					// false preamble in the ring buffer, preventing
+					// re-detection on the next iteration.
+					// Previously delay was set to -1, which bypassed ALL
+					// smart FAIL handling (zeroing, fast-forward, batch exit)
+					// and fell through to default ftr=8 anti-spin.
 					receive_stats.ofdm_batch_active = false;
+					receive_stats.message_decoded = NO;
+					return receive_stats;
 				}
 			}
 
@@ -1102,7 +1115,7 @@ st_receive_stats cl_telecom_system::receive_byte(double *data, int* out)
 
 	int lower_bound = data_container.preamble_nSymb;
 	int upper_bound = data_container.buffer_Nsymb-(data_container.Nsymb+data_container.preamble_nSymb);
-	double preamble_detect_threshold = 0.15;
+	double preamble_detect_threshold = narrowband_enabled ? 0.30 : 0.15;
 
 	if(M != MOD_MFSK)
 	{

@@ -132,7 +132,11 @@ void cl_data_container::set_size(int nData, int Nc, int M, int Nfft , int Nofdm,
 	// Tail margin gives headroom for preambles that land close to buffer end.
 	double sym_time_ms = 1000.0 * Nofdm * frequency_interpolation_rate / 48000.0;
 	int frame_symb = preamble_nSymb + Nsymb;
-	int turnaround_symb = (int)ceil(2000.0 / sym_time_ms) + 4;
+	// NB OFDM (Nc=10) has longer inter-batch turnaround than WB (Nc=50):
+	// NB ACK pattern TX (~1.5s) + Commander processing/compression (~1.5s) = ~3s.
+	// 4000ms gives ~1s headroom for radio propagation delay.
+	double turnaround_ms = (Nc <= 10) ? 4000.0 : 2000.0;
+	int turnaround_symb = (int)ceil(turnaround_ms / sym_time_ms) + 4;
 	int margin = frame_symb / 2;
 	if(margin < 20) margin = 20;
 	if(margin > 50) margin = 50;

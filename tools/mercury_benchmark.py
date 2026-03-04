@@ -111,17 +111,30 @@ def config_max_bps(config_id, is_nb):
 
 
 def build_config_extra_args(is_nb, signal_dbfs, force_compress=False):
-    """Build Mercury CLI args for a specific config's NB/WB mode and cable level."""
+    """Build Mercury CLI args for a specific config's NB/WB mode and cable level.
+
+    NB mode requires two independent gain adjustments:
+      1. Noise calibration: -T atten / -G (-atten) to set cable level for SNR target
+      2. NB RX compensation: additional -G boost (8.3 dB) because NB OFDM's ZF
+         channel estimator needs adequate absolute signal level with only 10
+         subcarriers.  Without this, preamble detects (metric=1.0) but data
+         extraction fails (ofdm_raw=0).
+    Both are folded into a single -G value: (-atten) + NB_RX_COMPENSATION.
+    Noise is injected before RX gain, so SNR on the wire is unaffected.
+    """
     if is_nb:
         extra = ["-Q", "0"]      # Disable NB probing (already NB)
         extra += ["-M", "nb"]    # Force nb_only mode (stays NB, no WB upgrade)
     else:
-        extra = []               # No -Q 0: let NB→WB negotiation work properly
-        extra += ["-M", "auto"]  # Auto mode: starts NB, negotiates WB upgrade
+        extra = ["-Q", "0"]      # Skip NB probing — go directly to WB for throughput
+        extra += ["-M", "auto"]  # Auto mode with -Q 0: direct WB (no NB hailing overhead)
     native_dbfs = (NoiseInjector.DEFAULT_SIGNAL_DBFS_NB if is_nb
                    else NoiseInjector.DEFAULT_SIGNAL_DBFS)
     atten_db = signal_dbfs - native_dbfs
-    extra += ["-T", f"{atten_db:.1f}", "-G", f"{-atten_db:.1f}"]
+    rx_gain = -atten_db
+    if is_nb:
+        rx_gain += NoiseInjector.NB_RX_COMPENSATION
+    extra += ["-T", f"{atten_db:.1f}", "-G", f"{rx_gain:.1f}"]
     if force_compress:
         extra += ["-F", "on"]
     return extra
@@ -167,15 +180,26 @@ class NoiseInjector:
     So: sigma = signal_amp * sqrt(fs / (2 * REF_BW)) * 10^(-SNR/20)
     Correction factor: sqrt(48000 / 8000) = sqrt(6) = 2.449 (+7.78 dB).
 
-    signal_dbfs sets the reference level. Default -4.4 dBFS = 0.6 amplitude,
-    matching Mercury's WB OFDM theoretical RMS with peak clipping.
+    signal_dbfs sets the reference level for noise calibration.
     """
 
-    # Mercury OFDM passband RMS: sqrt(Nc)/sqrt(Nfft) * carrier_amplitude
-    # = sqrt(50)/sqrt(256) * sqrt(2) ≈ 0.625 → -4.1 dBFS
-    DEFAULT_SIGNAL_DBFS = -4.4  # conservative estimate accounting for peak clip
-    # Narrowband (Nc=10): sqrt(10)/sqrt(256) * sqrt(2) ≈ 0.279 → -11.1 dBFS
-    DEFAULT_SIGNAL_DBFS_NB = -11.1
+    # Empirically measured native OFDM RMS on VB-Cable (average including
+    # TX silence / rx_mute periods).
+    #
+    # WB: NOISE-DIAG with -T 0 reports -17.4 dBFS average.
+    # NB: NOISE-DIAG with -T 0 -G 8.3 reports -16.3 dBFS (before RX gain).
+    #     NB is 1.1 dB stronger due to tx_gain[NB_OFDM]=2.317 and lower PAPR
+    #     with 10 subcarriers vs 50.
+    DEFAULT_SIGNAL_DBFS = -17.4
+    DEFAULT_SIGNAL_DBFS_NB = -16.3
+
+    # NB OFDM requires additional RX gain beyond the noise-calibration -G.
+    # Without this, NB preamble detects (metric=1.0) but data extraction
+    # fails (ofdm_raw=0) — the ZF channel estimator needs adequate signal
+    # level to produce usable channel estimates with only 10 subcarriers.
+    # Measured: NB works with -G 8.3, fails without it, on VB-Cable.
+    # This is added ON TOP of the -G that reverses -T attenuation.
+    NB_RX_COMPENSATION = 8.3
     # Reference noise bandwidth (Hz) — HF standard, matches PACTOR benchmarks
     NOISE_REF_BW = 4000
 
@@ -309,6 +333,39 @@ def count_pattern(lines, pattern, start_idx=0):
     return sum(1 for l in lines[start_idx:] if pattern in l)
 
 
+def parse_compression_stats(lines, start_idx=0):
+    """Extract compression stats from [COMPRESS] log lines.
+
+    Returns dict with: count, avg_ratio, total_in, total_out, algo_counts.
+    Only counts lines where compression was applied (ratio > 1.0).
+    Lines without [COMPRESS] = raw/uncompressed (not logged by mercury).
+    """
+    import re
+    pat = re.compile(r'\[COMPRESS\]\s+(\d+)\s*->\s*(\d+)\s+bytes\s+\((\w+)')
+    total_in = 0
+    total_out = 0
+    count = 0
+    algos = {}
+    for line in lines[start_idx:]:
+        m = pat.search(line)
+        if m:
+            in_bytes = int(m.group(1))
+            out_bytes = int(m.group(2))
+            algo = m.group(3)
+            total_in += in_bytes
+            total_out += out_bytes
+            count += 1
+            algos[algo] = algos.get(algo, 0) + 1
+    avg_ratio = total_in / total_out if total_out > 0 else 1.0
+    return {
+        'count': count,
+        'avg_ratio': round(avg_ratio, 2),
+        'total_in': total_in,
+        'total_out': total_out,
+        'algo_counts': algos,
+    }
+
+
 def parse_stat_delta(lines, stat_name, start_idx):
     """Get the change in a cumulative stat counter during [start_idx:].
 
@@ -402,7 +459,8 @@ class MercurySession:
 
     def __init__(self, config, gearshift=False, mercury_path=MERCURY_DEFAULT,
                  extra_args=None, rsp_port=None, cmd_port=None,
-                 vb_in=None, vb_out=None, audio_channel=None, tx_data=None):
+                 vb_in=None, vb_out=None, audio_channel=None, tx_data=None,
+                 signal_dbfs=None):
         self.config = config
         self.gearshift = gearshift
         self.mercury_path = mercury_path
@@ -414,6 +472,7 @@ class MercurySession:
         self.vb_out = vb_out if vb_out is not None else VB_OUT
         self.audio_channel = audio_channel  # None = use default, 0-15 = specific channel
         self.tx_data = tx_data  # None = default binary, bytes = custom TX data
+        self.signal_dbfs = signal_dbfs  # Wire signal level for noise calibration
 
         self.procs = []
         self.sockets = []
@@ -507,8 +566,11 @@ class MercurySession:
         while not self.stop_event.is_set():
             end = min(pos + 1024, len(data))
             chunk = data[pos:end]
+            if not chunk:
+                pos = 0
+                continue
             try:
-                self._tx_sock.send(chunk)
+                self._tx_sock.sendall(chunk)
                 pos = end
                 if pos >= len(data):
                     pos = 0
@@ -516,7 +578,6 @@ class MercurySession:
                 continue
             except (ConnectionError, OSError):
                 break
-            time.sleep(0.05)
 
     def _rx_loop(self):
         self._rx_sock.settimeout(2)
@@ -537,10 +598,24 @@ class MercurySession:
                 print(f"  [RX] Socket error: {e} after {loop_count} iterations", flush=True)
                 break
 
-    def set_noise_snr(self, snr_db):
-        """Set internal AWGN noise level on both cmd and rsp via NOISESNR command."""
+    def set_noise_snr(self, snr_db, both_sides=True):
+        """Set internal AWGN noise level via NOISESNR command.
+        Sends NOISESIGNAL first if signal_dbfs is set, so noise is calibrated
+        to the actual wire signal level (not the hardcoded -30 dBFS default).
+        If both_sides=False, only injects noise on the responder (data receiver)."""
+        targets = [self._rsp_ctrl, self._cmd_ctrl] if both_sides else [self._rsp_ctrl]
+        # Tell noise generator the actual signal level on the wire
+        if self.signal_dbfs is not None:
+            sig_cmd = f"NOISESIGNAL {self.signal_dbfs:.1f}\r"
+            for ctrl in targets:
+                try:
+                    ctrl.sendall(sig_cmd.encode())
+                    ctrl.settimeout(0.5)
+                    ctrl.recv(256)
+                except Exception:
+                    pass
         cmd = f"NOISESNR {snr_db:.1f}\r"
-        for ctrl in (self._rsp_ctrl, self._cmd_ctrl):
+        for ctrl in targets:
             try:
                 ctrl.sendall(cmd.encode())
                 ctrl.settimeout(0.5)
@@ -611,6 +686,106 @@ class MercurySession:
             time.sleep(0.5)
         return False
 
+    def wait_config_reached(self, target_config, timeout=300, settle_time=15):
+        """Wait for turboshift to complete and config to stabilize.
+
+        Phase 1: Wait for [TURBO] DONE (turboshift completion). Track progress
+        via SUPERSHIFT/GEARSHIFT messages for user feedback.
+
+        Phase 2: Wait settle_time seconds for regular gearshift to stabilize.
+        Then read the final config from commander stdout.
+
+        Returns the settled config, or -1 on timeout."""
+        import re
+        start = time.time()
+        seen = 0
+        best_config = -1
+        turbo_done = False
+        ceiling = -1
+
+        # Phase 1: wait for [TURBO] DONE
+        while time.time() - start < timeout:
+            while seen < len(self.cmd_lines):
+                line = self.cmd_lines[seen]
+                # Track supershift progress for user feedback
+                m2 = re.search(r'\[TURBO\].*?config \d+ -> (\d+)', line)
+                if m2:
+                    cfg = int(m2.group(1))
+                    if cfg > best_config:
+                        best_config = cfg
+                        elapsed = time.time() - start
+                        print(f"    [TURBO] Supershift to CONFIG_{cfg} ({elapsed:.0f}s)", flush=True)
+                # Track gearshift SET_CONFIG (regular gearshift after turbo)
+                m = re.search(r'\[GEARSHIFT\] SET_CONFIG: forward=(\d+)', line)
+                if m:
+                    cfg = int(m.group(1))
+                    if cfg > best_config:
+                        best_config = cfg
+                # Ceiling detection
+                m3 = re.search(r'\[TURBO\] CEILING at config (\d+)', line)
+                if m3:
+                    ceiling = int(m3.group(1))
+                    elapsed = time.time() - start
+                    print(f"    [TURBO] Ceiling at CONFIG_{ceiling} ({elapsed:.0f}s)", flush=True)
+                # FORWARD complete: records the real ceiling
+                m4 = re.search(r'\[TURBO\] FORWARD complete: ceiling=(\d+)', line)
+                if m4:
+                    ceiling = int(m4.group(1))
+                # Turboshift done
+                if '[TURBO] DONE' in line:
+                    turbo_done = True
+                    elapsed = time.time() - start
+                    print(f"    [TURBO] Done ({elapsed:.0f}s), ceiling=CONFIG_{ceiling}", flush=True)
+                    break
+                seen += 1
+            if turbo_done:
+                break
+            if not self.is_alive():
+                return best_config if best_config >= 0 else -1
+            time.sleep(0.5)
+
+        if not turbo_done:
+            print(f"    [TURBO] Timeout waiting for TURBO DONE (best=CONFIG_{best_config})")
+            return best_config
+
+        # Phase 2: wait for gearshift to settle at sustainable config
+        # After turboshift, the modem may be above its sustainable ceiling.
+        # Regular gearshift will bring it down. Wait for it to stabilize.
+        print(f"    [TURBO] Settling ({settle_time}s)...", flush=True)
+        settle_start = time.time()
+        last_config_change = time.time()
+        current_config = best_config
+        seen_after_done = seen
+
+        while time.time() - settle_start < settle_time:
+            while seen_after_done < len(self.cmd_lines):
+                line = self.cmd_lines[seen_after_done]
+                m = re.search(r'\[GEARSHIFT\] SET_CONFIG: forward=(\d+)', line)
+                if m:
+                    cfg = int(m.group(1))
+                    if cfg != current_config:
+                        current_config = cfg
+                        last_config_change = time.time()
+                        elapsed = time.time() - start
+                        print(f"    [SETTLE] Gearshift to CONFIG_{cfg} ({elapsed:.0f}s)", flush=True)
+                seen_after_done += 1
+            if not self.is_alive():
+                break
+            time.sleep(0.5)
+
+        # Read final stable config from status display
+        final_config = current_config
+        for line in reversed(self.cmd_lines):
+            m = re.search(r'configuration:CONFIG_(\d+)', line)
+            if m:
+                final_config = int(m.group(1))
+                break
+
+        if final_config != current_config:
+            print(f"    [SETTLE] Display shows CONFIG_{final_config} (gearshift said {current_config})")
+
+        return final_config
+
     def wait_data_batches(self, n, timeout=120):
         """Wait until commander stdout shows nAcked_data >= n.
         This confirms that data frames have been sent and acknowledged."""
@@ -676,22 +851,32 @@ class MercurySession:
         with self._rx_lock:
             return self._rx_bytes
 
-    def get_stats(self, start_idx=0):
-        """Parse modem stdout for event counts since start_idx."""
+    def get_stats_snapshot(self):
+        """Capture current line indices for both RSP and CMD."""
+        return (len(self.rsp_lines), len(self.cmd_lines))
+
+    def get_stats(self, start_idx=0, cmd_start_idx=None):
+        """Parse modem stdout for event counts since start indices.
+
+        start_idx: index into rsp_lines (for backward compat, also used for cmd if cmd_start_idx is None)
+        cmd_start_idx: separate index into cmd_lines (fixes miscount when RSP/CMD produce lines at different rates)
+        """
+        if cmd_start_idx is None:
+            cmd_start_idx = start_idx
         # NAcks: parse cumulative stats delta (avoids false matches on "nNAcked"/"nAcked")
         nacks_rsp = (parse_stat_delta(self.rsp_lines, "nNAcked_data", start_idx) +
                      parse_stat_delta(self.rsp_lines, "nNAcked_control", start_idx))
-        nacks_cmd = (parse_stat_delta(self.cmd_lines, "nNAcked_data", start_idx) +
-                     parse_stat_delta(self.cmd_lines, "nNAcked_control", start_idx))
+        nacks_cmd = (parse_stat_delta(self.cmd_lines, "nNAcked_data", cmd_start_idx) +
+                     parse_stat_delta(self.cmd_lines, "nNAcked_control", cmd_start_idx))
         return {
             'nacks_rsp': nacks_rsp,
             'nacks_cmd': nacks_cmd,
             'breaks_rsp': count_pattern(self.rsp_lines, "[BREAK]", start_idx),
-            'breaks_cmd': count_pattern(self.cmd_lines, "[BREAK]", start_idx),
-            'geardown': count_pattern(self.cmd_lines, "LADDER DOWN", start_idx),
-            'gearup': count_pattern(self.cmd_lines, "LADDER UP", start_idx),
-            'break_drops': count_pattern(self.cmd_lines, "Dropping", start_idx),
-            'break_recovery': count_pattern(self.cmd_lines, "BREAK-RECOVERY", start_idx),
+            'breaks_cmd': count_pattern(self.cmd_lines, "[BREAK]", cmd_start_idx),
+            'geardown': count_pattern(self.cmd_lines, "LADDER DOWN", cmd_start_idx),
+            'gearup': count_pattern(self.cmd_lines, "LADDER UP", cmd_start_idx),
+            'break_drops': count_pattern(self.cmd_lines, "Dropping", cmd_start_idx),
+            'break_recovery': count_pattern(self.cmd_lines, "BREAK-RECOVERY", cmd_start_idx),
             'config_changes': count_pattern(self.rsp_lines, "PHY-REINIT", start_idx),
         }
 
@@ -877,12 +1062,11 @@ class VaraSession:
                 continue
             throttled = False
             try:
-                self._tx_sock.send(chunk)
+                self._tx_sock.sendall(chunk)
             except socket.timeout:
                 continue
             except (ConnectionError, OSError):
                 break
-            time.sleep(0.05)
 
     def _rx_loop(self):
         self._rx_sock.settimeout(2)
@@ -1344,9 +1528,9 @@ class BenchmarkWorker:
                     session.set_noise_snr(snr_db)
                     time.sleep(self.args.settle_time)
 
-                    pre_stat = len(session.rsp_lines)
+                    snap = session.get_stats_snapshot()
                     result = session.measure_throughput(measure_dur)
-                    stats = session.get_stats(pre_stat)
+                    stats = session.get_stats(snap[0], snap[1])
 
                     session.silence_noise()
 
@@ -1697,14 +1881,28 @@ def run_sweep(args):
             native_dbfs = NoiseInjector.DEFAULT_SIGNAL_DBFS_NB if is_nb else NoiseInjector.DEFAULT_SIGNAL_DBFS
             atten_db = args.signal_dbfs - native_dbfs
 
+            # For high configs (>threshold), use turboshift to reach the target.
+            # Direct start at CONFIG_10+ can fail because control frame exchange
+            # requires high SNR.  Turboshift starts at ROBUST_0 and climbs.
+            ts_threshold = getattr(args, 'turboshift_threshold', 9)
+            use_turboshift = (cfg > ts_threshold and cfg < 100)
+
             print(f"\n{'='*70}")
-            print(f"[{cfg_idx+1}/{len(config_specs)}] Starting {cfg_name} (config={cfg})")
+            print(f"[{cfg_idx+1}/{len(config_specs)}] Starting {cfg_name} (config={cfg})"
+                  f"{' [TURBOSHIFT]' if use_turboshift else ''}")
             print(f"  TX {atten_db:.1f}dB -> cable {args.signal_dbfs:.1f}dBFS, "
                   f"RX +{-atten_db:.1f}dB, measure={measure_dur:.0f}s")
             print(f"{'='*70}")
 
-            session = MercurySession(cfg, gearshift=False, mercury_path=args.mercury,
-                                     extra_args=extra_args, tx_data=tx_data)
+            if use_turboshift:
+                # Start at ROBUST_0 with gearshift, let turboshift climb
+                session = MercurySession(100, gearshift=True, mercury_path=args.mercury,
+                                         extra_args=extra_args, tx_data=tx_data,
+                                         signal_dbfs=args.signal_dbfs)
+            else:
+                session = MercurySession(cfg, gearshift=False, mercury_path=args.mercury,
+                                         extra_args=extra_args, tx_data=tx_data,
+                                         signal_dbfs=args.signal_dbfs)
             try:
                 session.start()
 
@@ -1745,7 +1943,53 @@ def run_sweep(args):
                         })
                     continue
 
-                print(f"  [OK] Connected. Waiting for 2 data batches...")
+                if use_turboshift:
+                    print(f"  [OK] Connected. Waiting for turboshift to complete...")
+                    reached = session.wait_config_reached(cfg, timeout=args.timeout,
+                                                          settle_time=0)
+                    if reached < 0:
+                        print(f"  [ERROR] Turboshift failed for {cfg_name}")
+                        for snr_db in snr_levels:
+                            results.append({
+                                'config': cfg, 'config_name': cfg_name, 'snr_db': snr_db,
+                                'rx_bytes': 0, 'duration_s': 0, 'throughput_bps': 0,
+                                'bytes_per_min': 0, 'nacks': 0, 'breaks': 0,
+                                'process_alive': False,
+                            })
+                        continue
+                    else:
+                        print(f"  [OK] Turboshift done (config={reached})")
+
+                    # Set noise early so gearshift settles under realistic conditions.
+                    # After turboshift, modem may be above its ceiling. Noise causes
+                    # natural gearshift down to a sustainable config.
+                    first_snr = snr_levels[0]
+                    print(f"  Setting noise SNR={first_snr:.0f} dB and settling "
+                          f"({args.settle_time:.0f}s)...")
+                    session.set_noise_snr(first_snr)
+                    time.sleep(args.settle_time)
+
+                    # Read the settled config
+                    import re as _re
+                    settled_cfg = reached
+                    for line in reversed(session.cmd_lines):
+                        m = _re.search(r'configuration:CONFIG_(\d+)', line)
+                        if m:
+                            settled_cfg = int(m.group(1))
+                            break
+                    if settled_cfg >= 100:
+                        # Still at ROBUST — gearshift in progress, wait more
+                        print(f"  [WARN] Still at ROBUST, waiting 30s more...")
+                        time.sleep(30)
+                        for line in reversed(session.cmd_lines):
+                            m = _re.search(r'configuration:CONFIG_(\d+)', line)
+                            if m:
+                                settled_cfg = int(m.group(1))
+                                break
+                    if settled_cfg != reached:
+                        print(f"  [SETTLE] Gearshift settled at CONFIG_{settled_cfg}")
+
+                print(f"  Waiting for 2 data batches...")
                 if not session.wait_data_batches(2, timeout=args.timeout):
                     print(f"  [ERROR] Data exchange not started for {cfg_name}")
                     continue
@@ -1780,12 +2024,17 @@ def run_sweep(args):
                             })
                         break
 
-                    session.set_noise_snr(snr_db)
+                    # For turboshift mode, noise was already set for first SNR
+                    # during settle phase. Only set noise for subsequent SNR levels
+                    # or for non-turboshift mode.
+                    if not use_turboshift or snr_idx > 0:
+                        session.set_noise_snr(snr_db)
+                        time.sleep(args.settle_time)
 
-                    pre_stat = len(session.rsp_lines)
+                    snap = session.get_stats_snapshot()
                     result = session.measure_throughput(measure_dur)
                     sys.stdout.flush()
-                    stats = session.get_stats(pre_stat)
+                    stats = session.get_stats(snap[0], snap[1])
 
                     session.silence_noise()
 
@@ -1903,6 +2152,341 @@ def run_sweep(args):
 
 
 # ============================================================
+# Sub-command: smart
+# ============================================================
+
+def run_smart(args):
+    """Smart benchmark: long throughput measurement at high SNR, then quick floor-finding.
+
+    Phase 1: For each config, one long run (default 300s) at high SNR (default 30 dB)
+             to let streaming compression warm up and get accurate throughput.
+    Phase 2: Quick runs (default 30s) stepping SNR down to find the floor where
+             the modem can't maintain a connection.
+    """
+    default_nb = getattr(args, 'narrowband', False)
+    config_specs = parse_config_spec(args.configs, default_nb=default_nb)
+
+    # Load text file for TX data
+    tx_data = None
+    force_compress = getattr(args, 'compress', False)
+    text_file = getattr(args, 'text_file', None)
+    if text_file:
+        if not os.path.exists(text_file):
+            alt = os.path.join(os.path.dirname(__file__), os.path.basename(text_file))
+            if os.path.exists(alt):
+                text_file = alt
+            else:
+                print(f"ERROR: Text file not found: {text_file}")
+                sys.exit(1)
+        with open(text_file, 'rb') as f:
+            tx_data = f.read()
+        force_compress = True
+        print(f"TX data: {text_file} ({len(tx_data)} bytes, compression ON)")
+    elif force_compress:
+        print(f"TX data: binary (compression forced ON)")
+    else:
+        print(f"TX data: binary (no compression)")
+
+    ts = datetime.now().strftime('%Y%m%d_%H%M%S')
+    os.makedirs(args.output_dir, exist_ok=True)
+    csv_path = os.path.join(args.output_dir, f'benchmark_smart_{ts}.csv')
+    chart_path = os.path.join(args.output_dir, f'benchmark_smart_{ts}.png')
+    log_dir = os.path.join(args.output_dir, f'logs_{ts}')
+    os.makedirs(log_dir, exist_ok=True)
+
+    has_nb = any(nb for _, nb in config_specs)
+    has_wb = any(not nb for _, nb in config_specs)
+    mode_str = "NB+WB" if (has_nb and has_wb) else ("NB" if has_nb else "WB")
+
+    throughput_dur = args.throughput_duration
+    floor_dur = args.floor_duration
+    floor_step = args.floor_step
+    floor_stop = args.floor_stop
+    high_snr = args.high_snr
+    settle = args.settle_time
+    floor_zeros = args.floor_zeros
+    ts_threshold = getattr(args, 'turboshift_threshold', 12)
+
+    # Estimate time: throughput_dur per config + ~6 floor steps per config
+    avg_floor_steps = max(1, int((high_snr - floor_stop) / abs(floor_step)))
+    est_per_config = throughput_dur + avg_floor_steps * (floor_dur + settle) + 60  # overhead
+    est_total = len(config_specs) * est_per_config
+
+    print(f"{'='*70}")
+    print(f"Mercury Smart Benchmark ({mode_str})")
+    print(f"{'='*70}")
+    print(f"Configs ({len(config_specs)}):")
+    for cfg_id, is_nb in config_specs:
+        name = config_name(cfg_id, is_nb)
+        bps = config_max_bps(cfg_id, is_nb)
+        print(f"  {name:16s} max={bps:5d} bps")
+    print(f"\nPhase 1 — Throughput: {throughput_dur:.0f}s at SNR={high_snr:.0f} dB")
+    print(f"Phase 2 — Floor:     {floor_dur:.0f}s steps, {floor_step:.0f} dB/step, "
+          f"stop at {floor_stop:.0f} dB or {floor_zeros} consecutive zeros")
+    print(f"Settle: {settle:.0f}s between steps")
+    print(f"Est time: {est_total/3600:.1f} hours ({est_total/60:.0f} min)")
+    print(f"Output: {csv_path}")
+    print()
+
+    results = []
+    fieldnames = ['config', 'config_name', 'phase', 'snr_db', 'rx_bytes', 'duration_s',
+                  'throughput_bps', 'bytes_per_min', 'nacks', 'breaks', 'process_alive',
+                  'compress_ratio', 'compress_algo', 'compress_batches']
+
+    try:
+        for cfg_idx, (cfg, is_nb) in enumerate(config_specs):
+            cfg_name = config_name(cfg, is_nb)
+            extra_args = build_config_extra_args(is_nb, args.signal_dbfs,
+                                                  force_compress=force_compress)
+            native_dbfs = NoiseInjector.DEFAULT_SIGNAL_DBFS_NB if is_nb else NoiseInjector.DEFAULT_SIGNAL_DBFS
+            atten_db = args.signal_dbfs - native_dbfs
+            use_turboshift = (cfg > ts_threshold and cfg < 100)
+
+            print(f"\n{'='*70}")
+            print(f"[{cfg_idx+1}/{len(config_specs)}] {cfg_name}"
+                  f"{' [TURBOSHIFT]' if use_turboshift else ''}")
+            rx_gain = -atten_db + (NoiseInjector.NB_RX_COMPENSATION if is_nb else 0)
+            print(f"  TX {atten_db:.1f}dB -> cable {args.signal_dbfs:.1f}dBFS, "
+                  f"RX +{rx_gain:.1f}dB"
+                  f"{f' (incl NB +{NoiseInjector.NB_RX_COMPENSATION:.1f})' if is_nb else ''}")
+            print(f"{'='*70}")
+
+            if use_turboshift:
+                session = MercurySession(100, gearshift=True, mercury_path=args.mercury,
+                                          extra_args=extra_args, tx_data=tx_data,
+                                          signal_dbfs=args.signal_dbfs)
+            else:
+                session = MercurySession(cfg, gearshift=False, mercury_path=args.mercury,
+                                          extra_args=extra_args, tx_data=tx_data,
+                                          signal_dbfs=args.signal_dbfs)
+
+            try:
+                session.start()
+
+                if not session.wait_connected(timeout=args.timeout):
+                    print(f"  [ERROR] Connection failed for {cfg_name}")
+                    results.append({
+                        'config': cfg, 'config_name': cfg_name, 'phase': 'throughput',
+                        'snr_db': high_snr, 'rx_bytes': 0, 'duration_s': 0,
+                        'throughput_bps': 0, 'bytes_per_min': 0, 'nacks': 0,
+                        'breaks': 0, 'process_alive': False,
+                    })
+                    continue
+
+                if use_turboshift:
+                    print(f"  Waiting for turboshift...")
+                    reached = session.wait_config_reached(cfg, timeout=args.timeout,
+                                                          settle_time=0)
+                    if reached < 0:
+                        print(f"  [ERROR] Turboshift failed for {cfg_name}")
+                        results.append({
+                            'config': cfg, 'config_name': cfg_name, 'phase': 'throughput',
+                            'snr_db': high_snr, 'rx_bytes': 0, 'duration_s': 0,
+                            'throughput_bps': 0, 'bytes_per_min': 0, 'nacks': 0,
+                            'breaks': 0, 'process_alive': False,
+                        })
+                        continue
+                    print(f"  [OK] Turboshift done (config={reached})")
+
+                # Set high SNR for throughput phase
+                session.set_noise_snr(high_snr)
+                time.sleep(settle)
+
+                # Wait for data flow
+                print(f"  Waiting for data flow...")
+                if not session.wait_data_batches(2, timeout=args.timeout):
+                    print(f"  [ERROR] Data exchange not started for {cfg_name}")
+                    results.append({
+                        'config': cfg, 'config_name': cfg_name, 'phase': 'throughput',
+                        'snr_db': high_snr, 'rx_bytes': 0, 'duration_s': 0,
+                        'throughput_bps': 0, 'bytes_per_min': 0, 'nacks': 0,
+                        'breaks': 0, 'process_alive': False,
+                    })
+                    continue
+
+                # ============================================================
+                # Phase 1: Long throughput measurement
+                # ============================================================
+                print(f"\n  --- Phase 1: Throughput ({throughput_dur:.0f}s at SNR={high_snr:.0f} dB) ---")
+                snap = session.get_stats_snapshot()
+                result = session.measure_throughput(throughput_dur)
+                stats = session.get_stats(snap[0], snap[1])
+                nacks = stats['nacks_rsp'] + stats['nacks_cmd']
+                breaks = stats['breaks_rsp'] + stats['breaks_cmd']
+
+                phy_bps = config_max_bps(cfg, is_nb)
+                ratio = result['throughput_bps'] / phy_bps if phy_bps > 0 else 0
+
+                row = {
+                    'config': cfg, 'config_name': cfg_name, 'phase': 'throughput',
+                    'snr_db': high_snr,
+                    'rx_bytes': result['rx_bytes'],
+                    'duration_s': round(result['duration_s'], 1),
+                    'throughput_bps': round(result['throughput_bps'], 1),
+                    'bytes_per_min': round(result['bytes_per_min'], 1),
+                    'nacks': nacks, 'breaks': breaks,
+                    'process_alive': session.is_alive(),
+                }
+                results.append(row)
+
+                # Compression stats from commander log
+                comp = parse_compression_stats(session.cmd_lines, snap[1])
+                comp_info = ""
+                if comp['count'] > 0:
+                    algo_str = '+'.join(f"{a}:{n}" for a, n in sorted(comp['algo_counts'].items()))
+                    comp_info = (f", compress={comp['avg_ratio']:.1f}x "
+                                 f"({comp['count']} batches, {algo_str})")
+                    row['compress_ratio'] = comp['avg_ratio']
+                    row['compress_algo'] = algo_str
+                    row['compress_batches'] = comp['count']
+                else:
+                    comp_info = ", compress=NONE (raw)"
+                    row['compress_ratio'] = 1.0
+                    row['compress_algo'] = 'raw'
+                    row['compress_batches'] = 0
+
+                status = "OK" if result['rx_bytes'] > 0 else "ZERO"
+                print(f"  THROUGHPUT: {result['throughput_bps']:.0f} bps "
+                      f"({ratio:.2f}x PHY), "
+                      f"{result['bytes_per_min']:.0f} B/min, "
+                      f"{result['rx_bytes']}B, NAcks={nacks}{comp_info} [{status}]")
+                sys.stdout.flush()
+
+                # Diagnostic: dump noise/decode-related log lines from responder
+                if high_snr < 999:
+                    diag_keys = ['NOISE-Z', 'NOISE-DIAG', 'FAIL', 'NAck', 'gearshift', 'SUCCESS',
+                                 'BREAK', 'preamble', 'CAP-PEAK', 'COMPRESS']
+                    diag_lines = [l for l in session.rsp_lines[-200:]
+                                  if any(k in l for k in diag_keys)]
+                    if diag_lines:
+                        print(f"  --- Responder diagnostics (last 200 lines) ---")
+                        for dl in diag_lines[-30:]:
+                            print(f"    RSP: {dl.rstrip()}")
+                    diag_cmd = [l for l in session.cmd_lines[-200:]
+                                if any(k in l for k in diag_keys)]
+                    if diag_cmd:
+                        print(f"  --- Commander diagnostics ---")
+                        for dl in diag_cmd[-30:]:
+                            print(f"    CMD: {dl.rstrip()}")
+                    sys.stdout.flush()
+
+                if not session.is_alive():
+                    print(f"  [CRASH] Process died during throughput phase")
+                    continue
+
+                # ============================================================
+                # Phase 2: Floor-finding (quick SNR steps down)
+                # ============================================================
+                print(f"\n  --- Phase 2: Floor-finding ({floor_dur:.0f}s steps, "
+                      f"{floor_step:.0f} dB/step) ---")
+
+                zero_count = 0
+                snr = high_snr + floor_step  # first step from high_snr
+
+                while True:
+                    snr += floor_step  # floor_step is negative
+                    if snr < floor_stop:
+                        print(f"  Reached floor stop at {floor_stop:.0f} dB")
+                        break
+
+                    if not session.is_alive():
+                        print(f"  [CRASH] Process died at SNR={snr:.0f} dB")
+                        break
+
+                    session.set_noise_snr(snr)
+                    time.sleep(settle)
+
+                    snap = session.get_stats_snapshot()
+                    result = session.measure_throughput(floor_dur)
+                    stats = session.get_stats(snap[0], snap[1])
+                    nacks = stats['nacks_rsp'] + stats['nacks_cmd']
+                    breaks = stats['breaks_rsp'] + stats['breaks_cmd']
+
+                    session.silence_noise()
+
+                    row = {
+                        'config': cfg, 'config_name': cfg_name, 'phase': 'floor',
+                        'snr_db': snr,
+                        'rx_bytes': result['rx_bytes'],
+                        'duration_s': round(result['duration_s'], 1),
+                        'throughput_bps': round(result['throughput_bps'], 1),
+                        'bytes_per_min': round(result['bytes_per_min'], 1),
+                        'nacks': nacks, 'breaks': breaks,
+                        'process_alive': session.is_alive(),
+                    }
+                    results.append(row)
+
+                    status = "OK" if result['rx_bytes'] > 0 else "ZERO"
+                    print(f"    SNR={snr:+.0f} dB: {result['throughput_bps']:.0f} bps, "
+                          f"NAcks={nacks}, BREAKs={breaks} [{status}]")
+                    sys.stdout.flush()
+
+                    if result['rx_bytes'] == 0:
+                        zero_count += 1
+                        if zero_count >= floor_zeros:
+                            waterfall = snr - floor_step * (floor_zeros - 1)
+                            print(f"  [FLOOR] {floor_zeros} consecutive zeros — "
+                                  f"waterfall ~{waterfall:.0f} dB")
+                            break
+                    else:
+                        zero_count = 0
+
+                    # Settle between floor steps
+                    time.sleep(max(settle / 2, 5))
+
+            finally:
+                session.save_log(os.path.join(log_dir, f'{cfg_name}.log'))
+                session.stop()
+
+        # Write CSV
+        with open(csv_path, 'w', newline='') as f:
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            writer.writeheader()
+            writer.writerows(results)
+        print(f"\n[CSV] Saved to {csv_path}")
+
+        # Generate chart
+        generate_sweep_chart(csv_path, chart_path)
+
+        # ============================================================
+        # Summary
+        # ============================================================
+        print(f"\n{'='*70}")
+        print(f"SMART BENCHMARK COMPLETE ({mode_str})")
+        print(f"{'='*70}")
+        print(f"{'Config':<16s} {'PHY bps':>8s} {'Measured':>8s} {'Ratio':>6s} "
+              f"{'B/min':>8s} {'NAcks':>6s} {'Floor':>6s}")
+        print(f"{'-'*16} {'-'*8} {'-'*8} {'-'*6} {'-'*8} {'-'*6} {'-'*6}")
+
+        for cfg_id, is_nb in config_specs:
+            name = config_name(cfg_id, is_nb)
+            phy = config_max_bps(cfg_id, is_nb)
+
+            # Throughput result
+            tp_rows = [r for r in results if r['config_name'] == name and r['phase'] == 'throughput']
+            if tp_rows and tp_rows[0]['rx_bytes'] > 0:
+                tp = tp_rows[0]
+                ratio = tp['throughput_bps'] / phy if phy > 0 else 0
+                # Floor: find lowest SNR with nonzero throughput
+                floor_rows = [r for r in results if r['config_name'] == name and r['phase'] == 'floor']
+                floor_snr = high_snr
+                for r in sorted(floor_rows, key=lambda x: x['snr_db']):
+                    if r['rx_bytes'] > 0:
+                        floor_snr = r['snr_db']
+                    else:
+                        break
+                print(f"{name:<16s} {phy:>8d} {tp['throughput_bps']:>8.0f} "
+                      f"{ratio:>5.2f}x {tp['bytes_per_min']:>8.0f} "
+                      f"{tp['nacks']:>6d} {floor_snr:>+5.0f}dB")
+            else:
+                print(f"{name:<16s} {phy:>8d} {'FAIL':>8s} {'---':>6s} "
+                      f"{'---':>8s} {'---':>6s} {'---':>6s}")
+
+    finally:
+        pass
+
+
+# ============================================================
 # Sub-command: stress
 # ============================================================
 
@@ -1948,7 +2532,8 @@ def run_stress(args):
     extra_args = build_extra_args(args)
 
     session = MercurySession(args.start_config, gearshift=True, mercury_path=args.mercury,
-                              extra_args=extra_args)
+                              extra_args=extra_args,
+                              signal_dbfs=getattr(args, 'signal_dbfs', -30.0))
     burst_results = []
     timeline = []
     t_origin = None  # set after connection
@@ -2017,7 +2602,8 @@ def run_stress(args):
                 })
                 continue
 
-            pre_stat = len(session.rsp_lines)
+            snap = session.get_stats_snapshot()
+            pre_stat = snap[0]  # keep for backward-compat with other uses
             pre_bytes = session.get_rx_bytes()
 
             # Noise ON
@@ -2032,7 +2618,7 @@ def run_stress(args):
                     break
                 now = time.time()
                 if now - last_report >= 15:
-                    stats = session.get_stats(pre_stat)
+                    stats = session.get_stats(snap[0], snap[1])
                     rx_during = session.get_rx_bytes() - pre_bytes
                     print(f"  T+{now-t_origin:.0f}s | "
                           f"RX={rx_during}B NAcks={stats['nacks_rsp']+stats['nacks_cmd']} "
@@ -2058,7 +2644,7 @@ def run_stress(args):
                 time.sleep(1)
             bytes_during_recovery = session.get_rx_bytes() - pre_recovery_bytes
 
-            stats = session.get_stats(pre_stat)
+            stats = session.get_stats(snap[0], snap[1])
             burst_results.append({
                 'burst': burst_num, 'snr_db': round(burst_snr, 1),
                 'duration': round(burst_dur, 0),
@@ -2175,7 +2761,8 @@ def run_adaptive(args):
     extra_args = build_extra_args(args)
 
     session = MercurySession(100, gearshift=True, mercury_path=args.mercury,
-                              extra_args=extra_args)
+                              extra_args=extra_args,
+                              signal_dbfs=getattr(args, 'signal_dbfs', -30.0))
     results = []
     fieldnames = ['snr_db', 'direction', 'rx_bytes', 'duration_s', 'throughput_bps',
                   'bytes_per_min', 'nacks', 'breaks', 'geardown', 'gearup',
@@ -2221,11 +2808,11 @@ def run_adaptive(args):
                     })
                 break
 
-            pre_stat = len(session.rsp_lines)
+            snap = session.get_stats_snapshot()
             session.set_noise_snr(snr_db)
 
             result = session.measure_throughput(args.measure_duration)
-            stats = session.get_stats(pre_stat)
+            stats = session.get_stats(snap[0], snap[1])
 
             session.silence_noise()
 
@@ -3475,6 +4062,32 @@ def main():
                          help='Enable multi-channel parallel mode (uses all discovered VB-Cable A/B channels)')
     p_sweep.add_argument('--max-workers', type=int, default=None,
                          help='Limit number of parallel workers (default: all available channels)')
+    p_sweep.add_argument('--turboshift-threshold', type=int, default=12,
+                         help='Use turboshift for configs above this value (default: 12). '
+                              'CONFIG_0-12 connect directly; CONFIG_13+ need turboshift.')
+
+    # smart
+    p_smart = sub.add_parser('smart', help='Smart benchmark: long throughput + quick floor-finding',
+                              epilog='Phase 1: 5-min throughput at high SNR. '
+                                     'Phase 2: Quick floor sweep stepping SNR down.')
+    p_smart.add_argument('--configs', default='wb-ofdm',
+                          help='Config specs (default: wb-ofdm)')
+    p_smart.add_argument('--high-snr', type=float, default=30,
+                          help='SNR for throughput phase (default: 30)')
+    p_smart.add_argument('--throughput-duration', type=float, default=300,
+                          help='Throughput measurement duration in seconds (default: 300 = 5 min)')
+    p_smart.add_argument('--floor-duration', type=float, default=30,
+                          help='Floor-finding step duration in seconds (default: 30)')
+    p_smart.add_argument('--floor-step', type=float, default=-3,
+                          help='SNR step for floor-finding (default: -3)')
+    p_smart.add_argument('--floor-stop', type=float, default=-20,
+                          help='Lowest SNR to test (default: -20)')
+    p_smart.add_argument('--floor-zeros', type=int, default=2,
+                          help='Consecutive zero-throughput steps to declare floor (default: 2)')
+    p_smart.add_argument('--settle-time', type=float, default=15,
+                          help='Settle time between steps (default: 15)')
+    p_smart.add_argument('--turboshift-threshold', type=int, default=12,
+                          help='Use turboshift above this config (default: 12)')
 
     # stress
     p_stress = sub.add_parser('stress', help='Random noise stress test')
@@ -3615,6 +4228,8 @@ def main():
             run_parallel_sweep(args)
         else:
             run_sweep(args)
+    elif args.command == 'smart':
+        run_smart(args)
     elif args.command == 'stress':
         run_stress(args)
     elif args.command == 'adaptive':
