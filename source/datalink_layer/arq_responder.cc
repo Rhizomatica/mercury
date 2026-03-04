@@ -1132,6 +1132,20 @@ void cl_arq_controller::process_control_responder()
 			}
 			else if (encryption_mode != ENCRYPT_OFF && !both_support)
 			{
+				if (encryption_mode == ENCRYPT_STRICT)
+				{
+					printf("[CRYPTO] STRICT mode: peer lacks encryption — refusing connection\n");
+					fflush(stdout);
+					const char* err_msg = "ENCRYPTION FAILURE PEER UNSUPPORTED\r";
+					int elen = (int)strlen(err_msg);
+					for(int e=0; e<elen; e++)
+						tcp_socket_control.message->buffer[e] = err_msg[e];
+					tcp_socket_control.message->length = elen;
+					tcp_socket_control.transmit();
+					this->link_status = DROPPED;
+					reset_session_state();
+					return;
+				}
 				printf("[CRYPTO] WARNING: Peer does not support encryption (peer_cap=0x%02X)\n",
 					peer_capability);
 			}
@@ -1241,12 +1255,22 @@ void cl_arq_controller::process_control_responder()
 			uint8_t our_pubkey[X25519_KEY_SIZE];
 			if(cipher_suite.generate_x25519_keypair(our_pubkey) != 0)
 			{
-				printf("[CRYPTO] ERROR: X25519 keypair generation failed\n");
+				printf("[CRYPTO] FATAL: X25519 keypair generation failed (RNG)\n");
 				fflush(stdout);
+				this->link_status = DROPPED;
+				reset_session_state();
+				return;
 			}
 
 			// Compute shared secret from commander's pubkey
-			cipher_suite.compute_x25519_shared((const uint8_t*)&messages_control.data[1]);
+			if(cipher_suite.compute_x25519_shared((const uint8_t*)&messages_control.data[1]) != 0)
+			{
+				printf("[CRYPTO] FATAL: X25519 shared secret is zero (low-order point attack?)\n");
+				fflush(stdout);
+				this->link_status = DROPPED;
+				reset_session_state();
+				return;
+			}
 
 			// Derive session key from X25519 (classical-only for now)
 			// ML-KEM upgrade will be added in follow-up (requires data-channel transport)

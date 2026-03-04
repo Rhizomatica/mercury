@@ -1684,6 +1684,20 @@ void cl_arq_controller::process_control_commander()
 				}
 				else if (encryption_mode != ENCRYPT_OFF && !both_support)
 				{
+					if (encryption_mode == ENCRYPT_STRICT)
+					{
+						printf("[CRYPTO] STRICT mode: peer lacks encryption — refusing connection\n");
+						fflush(stdout);
+						const char* err_msg = "ENCRYPTION FAILURE PEER UNSUPPORTED\r";
+						int elen = (int)strlen(err_msg);
+						for(int e=0; e<elen; e++)
+							tcp_socket_control.message->buffer[e] = err_msg[e];
+						tcp_socket_control.message->length = elen;
+						tcp_socket_control.transmit();
+						this->link_status = DROPPED;
+						reset_session_state();
+						return;
+					}
 					printf("[CRYPTO] WARNING: Peer does not support encryption (peer_cap=0x%02X)\n",
 						peer_capability);
 				}
@@ -1836,7 +1850,14 @@ void cl_arq_controller::process_control_commander()
 			printf("[CRYPTO] KEY_EXCHANGE_1 ACKed — received responder's X25519 pubkey\n");
 			fflush(stdout);
 
-			cipher_suite.compute_x25519_shared((const uint8_t*)&messages_control.data[1]);
+			if(cipher_suite.compute_x25519_shared((const uint8_t*)&messages_control.data[1]) != 0)
+			{
+				printf("[CRYPTO] FATAL: X25519 shared secret is zero (low-order point attack?)\n");
+				fflush(stdout);
+				this->link_status = DROPPED;
+				reset_session_state();
+				return;
+			}
 
 			// Derive session key from X25519 (classical-only for now)
 			cipher_suite.derive_session_key(

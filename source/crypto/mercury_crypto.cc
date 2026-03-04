@@ -311,9 +311,17 @@ void cl_cipher_suite::derive_session_key(const char* commander_call,
     crypto_wipe(prk, sizeof(prk));
     crypto_wipe(salt, sizeof(salt));
 
-    printf("[CRYPTO] Session key derived (%s), fingerprint: %02x%02x%02x%02x\n",
-           pq_active ? "hybrid PQ" : "classical X25519",
-           session_key[0], session_key[1], session_key[2], session_key[3]);
+    // Log a fingerprint derived from the session key (not the raw key bytes)
+    {
+        uint8_t fp[32];
+        const char* fp_label = "mercury-fingerprint";
+        crypto_blake2b_keyed(fp, 32, session_key, SESSION_KEY_SIZE,
+                             (const uint8_t*)fp_label, strlen(fp_label));
+        printf("[CRYPTO] Session key derived (%s), fingerprint: %02x%02x%02x%02x\n",
+               pq_active ? "hybrid PQ" : "classical X25519",
+               fp[0], fp[1], fp[2], fp[3]);
+        crypto_wipe(fp, sizeof(fp));
+    }
     fflush(stdout);
 }
 
