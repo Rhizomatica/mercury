@@ -466,6 +466,7 @@ public:
   int turboshift_last_good;        // last config that decoded successfully (-1 = none)
   bool turboshift_initiator;       // true = I started turboshift (original commander)
   int turboshift_retries;          // retries left at current config (0 = ceiling)
+  bool turbo_settle_pending;       // waiting for settle SET_CONFIG ACK before finish
 
   // Emergency BREAK: drop to ROBUST_0 when current config is undecodable
   int emergency_nack_count;       // consecutive failed data blocks

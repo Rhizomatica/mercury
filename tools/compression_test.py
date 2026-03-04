@@ -84,11 +84,12 @@ def main():
     gear_flag = ["-g"] if args.gearshift else []
     nb_flag = [] if args.wideband else ["-n"]
     encrypt_flag = ["-E", "strict"] if args.encrypt else []
+    compress_flag = ["-F", "on"]  # Always force compression on for this test
 
     # Start responder
     rsp_cmd = [
         args.mercury, "-m", "ARQ", "-s", str(args.config),
-        *robust_flag, *gear_flag, *encrypt_flag,
+        *robust_flag, *gear_flag, *encrypt_flag, *compress_flag,
         "-p", str(RSP_PORT), "-i", VB_IN, "-o", VB_OUT, "-x", "wasapi", *nb_flag,
         "-Q", "0"
     ]
@@ -100,7 +101,7 @@ def main():
     # Start commander
     cmd_cmd = [
         args.mercury, "-m", "ARQ", "-s", str(args.config),
-        *robust_flag, *gear_flag, *encrypt_flag,
+        *robust_flag, *gear_flag, *encrypt_flag, *compress_flag,
         "-p", str(CMD_PORT), "-i", VB_IN, "-o", VB_OUT, "-x", "wasapi", *nb_flag,
         "-Q", "0"
     ]
@@ -303,6 +304,15 @@ def main():
             print(f"Responder crypto ({len(crypto_rsp)} entries):")
             for l in crypto_rsp[:30]:
                 print(f"  {l}")
+
+    # Show streaming stats
+    stream_lines = [l for l in cmd_lines + rsp_lines if "[STREAMING]" in l]
+    if stream_lines:
+        print(f"\nStreaming log ({len(stream_lines)} entries):")
+        for l in stream_lines[:20]:
+            print(f"  {l}")
+        if len(stream_lines) > 20:
+            print(f"  ... ({len(stream_lines) - 20} more)")
 
     # Show compression stats from stdout
     compress_lines = [l for l in cmd_lines if "[COMPRESS]" in l or "[COMPRESS-TX]" in l]

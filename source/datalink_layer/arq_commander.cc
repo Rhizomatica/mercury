@@ -1471,6 +1471,11 @@ void cl_arq_controller::process_messages_rx_acks_data()
 			b2f_compression_pending = false;
 			printf("[COMPRESS] Armed after B2F ACK (commander)\n");
 			fflush(stdout);
+			// Enable streaming if both sides support it
+			bool streaming_ok = (local_capability & CAP_STREAMING)
+				&& (peer_capability & CAP_STREAMING);
+			if(streaming_ok && !compressor.is_streaming())
+				compressor.streaming_enable();
 		}
 
 		// Frame-level gearshift: after N consecutive successful data ACKs, shift up immediately
@@ -1665,6 +1670,22 @@ void cl_arq_controller::process_control_commander()
 				{
 					printf("[CRYPTO] WARNING: Peer does not support encryption (peer_cap=0x%02X)\n",
 						peer_capability);
+				}
+			}
+
+			// Streaming compression negotiation
+			{
+				bool streaming_ok = (local_capability & CAP_STREAMING)
+					&& (peer_capability & CAP_STREAMING)
+					&& compression_enabled;
+				if(streaming_ok)
+				{
+					compressor.streaming_enable();
+				}
+				else
+				{
+					printf("[STREAMING] Not enabled (local=0x%02X peer=0x%02X compress=%d)\n",
+						local_capability, peer_capability, compression_enabled);
 				}
 			}
 			fflush(stdout);
@@ -2014,8 +2035,17 @@ void cl_arq_controller::process_control_commander()
 					fifo_buffer_backup.flush();
 				}
 
+				// Turboshift settle: reached top, settling to ceiling before finish
+				if(turbo_settle_pending)
+				{
+					turbo_settle_pending = false;
+					printf("[TURBO] Settled at ceiling CONFIG_%d, finishing direction\n",
+						current_configuration);
+					fflush(stdout);
+					finish_turbo_direction();
+				}
 				// Break recovery: reverse-turboshift probing
-				if(break_recovery_phase == 1)
+				else if(break_recovery_phase == 1)
 				{
 					// Phase 1 complete: coordination at ROBUST_0 succeeded.
 					// Target config loaded. Now probe it with SET_CONFIG at target.
@@ -2092,7 +2122,27 @@ void cl_arq_controller::process_control_commander()
 					{
 						printf("[TURBO] Reached top at config %d\n", current_configuration);
 						fflush(stdout);
-						finish_turbo_direction();
+						// Settle back to turboshift_last_good before finishing.
+						// SUPERSHIFT doesn't test data — the current config (top)
+						// may not sustain data exchange. Settle to last proven config.
+						if(turboshift_last_good >= 0 && turboshift_last_good != current_configuration)
+						{
+							turboshift_active = false;
+							negotiated_configuration = turboshift_last_good;
+							data_configuration = turboshift_last_good;
+							forward_configuration = turboshift_last_good;
+							turbo_settle_pending = true;
+							printf("[TURBO] Settling to ceiling CONFIG_%d before finishing\n",
+								turboshift_last_good);
+							fflush(stdout);
+							cleanup();
+							add_message_control(SET_CONFIG);
+							this->connection_status = TRANSMITTING_CONTROL;
+						}
+						else
+						{
+							finish_turbo_direction();
+						}
 					}
 				}
 				else
@@ -2193,6 +2243,10 @@ void cl_arq_controller::finalize_block_commander()
 	}
 	block_under_tx=NO;
 	fifo_buffer_backup.flush();
+
+	// Streaming: commit context after successful data ACK
+	if(compressor.is_streaming())
+		compressor.commit_pending();
 
 #ifdef MERCURY_GUI_ENABLED
 	if(batch_uncompressed_size > 0)
@@ -2323,10 +2377,11 @@ void cl_arq_controller::process_buffer_data_commander()
 				// Staging can be up to COMPRESS_WORKSPACE_SIZE (64KB) because
 				// high-ratio compressors (zstd/PPMd) can shrink 33KB+ to <1.5KB.
 				const int staging_max = 65535;  // Header orig_size is uint16; cap to prevent overflow
+				int chdr_size = compressor.get_header_size();
 				int initial_pop = (int)(batch_capacity * compress_ratio_estimate);
 				if(initial_pop > staging_max) initial_pop = staging_max;
-				if(initial_pop < batch_capacity - COMPRESS_HEADER_SIZE)
-					initial_pop = batch_capacity - COMPRESS_HEADER_SIZE;
+				if(initial_pop < batch_capacity - chdr_size)
+					initial_pop = batch_capacity - chdr_size;
 
 				char staging[COMPRESS_WORKSPACE_SIZE];
 				int raw_size = fifo_buffer_tx.pop(staging, initial_pop);
@@ -2341,8 +2396,13 @@ void cl_arq_controller::process_buffer_data_commander()
 					int comp_size = 0;
 					bool compress_ok = false;
 
-					// Adaptive fill loop: compress, check fill ratio, add more
-					for(int iter = 0; iter < 4; iter++)
+					// Adaptive fill loop: compress, check fill ratio, add more.
+					// Streaming mode: single compress call (no retry). The PPMd
+					// model advances on each compress_block call. Retrying with
+					// different data sizes causes TX/RX model desync because RX
+					// only decompresses the final data once.
+					int max_iter = compressor.is_streaming() ? 1 : 4;
+					for(int iter = 0; iter < max_iter; iter++)
 					{
 						comp_size = compressor.compress_block(
 							staging, raw_size, comp_buf, batch_capacity);
@@ -2351,13 +2411,13 @@ void cl_arq_controller::process_buffer_data_commander()
 						{
 							// Compression succeeded — check fill ratio
 							float fill_ratio = (float)comp_size / (float)batch_capacity;
-							if(fill_ratio >= 0.85f || iter == 3)
+							if(fill_ratio >= 0.85f || iter == max_iter - 1)
 							{
 								compress_ok = true;
 								break;  // Good enough
 							}
 							// Under-filled: estimate how much more raw data to add
-							int comp_payload = comp_size - COMPRESS_HEADER_SIZE;
+							int comp_payload = comp_size - chdr_size;
 							if(comp_payload <= 0) { compress_ok = true; break; }
 							float current_ratio = (float)raw_size / (float)comp_payload;
 							int remaining_comp = batch_capacity - comp_size;
@@ -2374,7 +2434,19 @@ void cl_arq_controller::process_buffer_data_commander()
 						}
 						else if(comp_size == -1)
 						{
-							// Doesn't fit — push back 40% and retry
+							// Doesn't fit — push back excess and accept as-is
+							if(compressor.is_streaming())
+							{
+								// Streaming: push back 40%, use raw (model already advanced)
+								int pushback = raw_size * 2 / 5;
+								if(pushback < 1) pushback = 1;
+								fifo_buffer_tx.push_front(
+									staging + raw_size - pushback, pushback);
+								raw_size -= pushback;
+								// Model is desynced — reset streaming
+								compressor.streaming_reset();
+								break;
+							}
 							int pushback = raw_size * 2 / 5;
 							if(pushback < 1) pushback = 1;
 							fifo_buffer_tx.push_front(
@@ -2393,7 +2465,7 @@ void cl_arq_controller::process_buffer_data_commander()
 					if(compress_ok && comp_size > 0)
 					{
 						// Update running ratio estimate (EMA)
-						int comp_payload = comp_size - COMPRESS_HEADER_SIZE;
+						int comp_payload = comp_size - chdr_size;
 						if(comp_payload > 0)
 						{
 							float measured = (float)raw_size / (float)comp_payload;
@@ -2401,6 +2473,9 @@ void cl_arq_controller::process_buffer_data_commander()
 						}
 						fifo_buffer_backup.push(staging, raw_size);
 						batch_uncompressed_size = raw_size;
+						// Streaming: save raw data pending ACK confirmation
+						if(compressor.is_streaming())
+							compressor.set_pending_raw((unsigned char*)staging, raw_size);
 #ifdef MERCURY_GUI_ENABLED
 						// Monitor tap: plaintext before compression
 						gui_push_monitor_text(staging, raw_size, true);
@@ -2412,7 +2487,8 @@ void cl_arq_controller::process_buffer_data_commander()
 					{
 						// compress_block() error fallback — wrap raw data in ALGO_RAW.
 						// Cap to batch capacity minus header.
-						int max_raw = batch_capacity - COMPRESS_HEADER_SIZE;
+						int hdr_sz = compressor.get_header_size();
+						int max_raw = batch_capacity - hdr_sz;
 						if(raw_size > max_raw)
 						{
 							fifo_buffer_tx.push_front(
@@ -2425,10 +2501,26 @@ void cl_arq_controller::process_buffer_data_commander()
 						comp_buf[2] = (char)((raw_size >> 8) & 0xFF);
 						comp_buf[3] = (char)(raw_size & 0xFF);
 						comp_buf[4] = (char)((raw_size >> 8) & 0xFF);
-						memcpy(comp_buf + COMPRESS_HEADER_SIZE, staging, raw_size);
-						comp_size = COMPRESS_HEADER_SIZE + raw_size;
+						if(compressor.is_streaming())
+						{
+							// CRC16 for streaming desync detection
+							uint16_t crc = 0xFFFF;
+							for(int j = 0; j < raw_size; j++)
+							{
+								crc ^= (unsigned char)staging[j];
+								for(int b = 0; b < 8; b++)
+									crc = (crc & 1) ? (crc >> 1) ^ 0xA001 : crc >> 1;
+							}
+							comp_buf[5] = (char)(crc & 0xFF);
+							comp_buf[6] = (char)((crc >> 8) & 0xFF);
+						}
+						memcpy(comp_buf + hdr_sz, staging, raw_size);
+						comp_size = hdr_sz + raw_size;
 						fifo_buffer_backup.push(staging, raw_size);
 						batch_uncompressed_size = raw_size;
+						// Streaming: save raw data pending ACK confirmation
+						if(compressor.is_streaming())
+							compressor.set_pending_raw((unsigned char*)staging, raw_size);
 #ifdef MERCURY_GUI_ENABLED
 						// Monitor tap: plaintext (RAW fallback path)
 						gui_push_monitor_text(staging, raw_size, true);

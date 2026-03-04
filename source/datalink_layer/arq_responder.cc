@@ -582,10 +582,27 @@ void cl_arq_controller::process_messages_acknowledging_control()
 						current_configuration);
 					fflush(stdout);
 					turboshift_active = false;
-					turboshift_phase = TURBO_DONE;
-					cleanup();
-					add_message_control(SWITCH_ROLE);
-					this->connection_status = TRANSMITTING_CONTROL;
+					// Settle to ceiling before finishing, if above it
+					if(turboshift_last_good >= 0 && turboshift_last_good != current_configuration)
+					{
+						negotiated_configuration = turboshift_last_good;
+						data_configuration = turboshift_last_good;
+						forward_configuration = turboshift_last_good;
+						turbo_settle_pending = true;
+						printf("[TURBO] Settling to ceiling CONFIG_%d before finishing\n",
+							turboshift_last_good);
+						fflush(stdout);
+						cleanup();
+						add_message_control(SET_CONFIG);
+						this->connection_status = TRANSMITTING_CONTROL;
+					}
+					else
+					{
+						turboshift_phase = TURBO_DONE;
+						cleanup();
+						add_message_control(SWITCH_ROLE);
+						this->connection_status = TRANSMITTING_CONTROL;
+					}
 				}
 			}
 			else if(has_asymmetric &&
@@ -674,11 +691,12 @@ void cl_arq_controller::process_messages_acknowledging_data()
 			if(compression_enabled
 				&& !cipher_suite.is_active()  // Can't peek header when encrypted
 				&& messages_rx[0].status == RECEIVED
-				&& messages_rx[0].length >= COMPRESS_HEADER_SIZE)
+				&& messages_rx[0].length >= compressor.get_header_size())
 			{
 				const unsigned char* hdr = (const unsigned char*)messages_rx[0].data;
 				int hdr_comp = hdr[1] | (hdr[2] << 8);
-				int total_compressed = COMPRESS_HEADER_SIZE + hdr_comp;
+				int gate_hdr_size = compressor.get_header_size();
+				int total_compressed = gate_hdr_size + hdr_comp;
 				int mf = max_data_length + max_header_length - DATA_LONG_HEADER_LENGTH;
 				expected = (total_compressed + mf - 1) / mf;
 				if(expected > data_batch_size) expected = data_batch_size;
@@ -1119,6 +1137,22 @@ void cl_arq_controller::process_control_responder()
 			{
 				printf("[CRYPTO] WARNING: Peer does not support encryption (peer_cap=0x%02X)\n",
 					peer_capability);
+			}
+		}
+
+		// Streaming compression negotiation
+		{
+			bool streaming_ok = (local_capability & CAP_STREAMING)
+				&& (peer_capability & CAP_STREAMING)
+				&& compression_enabled;
+			if(streaming_ok)
+			{
+				compressor.streaming_enable();
+			}
+			else
+			{
+				printf("[STREAMING] Not enabled (local=0x%02X peer=0x%02X compress=%d)\n",
+					local_capability, peer_capability, compression_enabled);
 			}
 		}
 		fflush(stdout);
@@ -1566,6 +1600,11 @@ void cl_arq_controller::process_buffer_data_responder()
 							compression_enabled = true;
 							printf("[COMPRESS] Armed by B2F detection (responder)\n");
 							fflush(stdout);
+							// Enable streaming if both sides support it
+							bool streaming_ok = (local_capability & CAP_STREAMING)
+								&& (peer_capability & CAP_STREAMING);
+							if(streaming_ok && !compressor.is_streaming())
+								compressor.streaming_enable();
 						}
 					}
 

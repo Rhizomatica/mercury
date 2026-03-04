@@ -50,6 +50,7 @@ int multichannel_mode = 0;          // Set to 1 when -A flag is used (forces 16c
 // When noise_snr_db < 999, white noise is added to captured audio at the specified SNR.
 // SNR is relative to the signal level AFTER TX/RX gain (i.e. the cable level).
 double noise_snr_db = 999.0;       // 999 = disabled
+double noise_signal_dbfs = -30.0;  // Expected signal level on wire (dBFS), set via NOISESIGNAL cmd
 static uint64_t noise_rng_state[2] = {0x853c49e6748fea9bULL, 0xda3e39cb94b95bdbULL};
 
 // xoshiro128+ PRNG — fast, good quality for noise generation
@@ -994,12 +995,33 @@ void *radio_capture_thread(void *device_ptr)
 		if (noise_snr_db < 999.0) {
 			static double noise_sigma = 0.0;
 			static double last_snr_db = 999.0;
-			if (noise_snr_db != last_snr_db) {
-				double signal_amp = pow(10.0, -30.0 / 20.0);
+			static double last_signal_dbfs = -999.0;
+			if (noise_snr_db != last_snr_db || noise_signal_dbfs != last_signal_dbfs) {
+				double signal_amp = pow(10.0, noise_signal_dbfs / 20.0);
 				double bw_correction = sqrt(48000.0 / (2.0 * 4000.0));
 				noise_sigma = signal_amp * bw_correction * pow(10.0, -noise_snr_db / 20.0);
-				printf("[NOISE-Z] SNR=%.1f dB, sigma=%.6f\n", noise_snr_db, noise_sigma);
+				printf("[NOISE-Z] SNR=%.1f dB, signal=%.1f dBFS, sigma=%.6f\n",
+					noise_snr_db, noise_signal_dbfs, noise_sigma);
 				last_snr_db = noise_snr_db;
+				last_signal_dbfs = noise_signal_dbfs;
+			}
+			// DIAG: measure actual signal RMS before noise injection (every ~1s)
+			{
+				static int noise_diag_count = 0;
+				static double noise_diag_sig_sum = 0;
+				static int noise_diag_sig_n = 0;
+				for (int i = 0; i < frames_to_write; i++) {
+					noise_diag_sig_sum += buffer_internal[i] * buffer_internal[i];
+				}
+				noise_diag_sig_n += frames_to_write;
+				if (++noise_diag_count % 100 == 0 && noise_diag_sig_n > 0) {
+					double sig_rms = sqrt(noise_diag_sig_sum / noise_diag_sig_n);
+					double sig_dbfs = (sig_rms > 1e-10) ? 20.0 * log10(sig_rms) : -999.0;
+					printf("[NOISE-DIAG] signal_rms=%.6f (%.1f dBFS) noise_sigma=%.6f ratio=%.1f expect=%.1f dBFS\n",
+						sig_rms, sig_dbfs, noise_sigma, sig_rms / noise_sigma, noise_signal_dbfs);
+					noise_diag_sig_sum = 0;
+					noise_diag_sig_n = 0;
+				}
 			}
 			for (int i = 0; i < frames_to_write; i++) {
 				buffer_internal[i] += noise_sigma * noise_gaussian();
