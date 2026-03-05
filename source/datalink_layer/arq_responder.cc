@@ -1675,10 +1675,15 @@ void cl_arq_controller::process_buffer_data_responder()
 						memcpy(tcp_socket_data.message->buffer, b2f_buf, b2f_len);
 						tcp_socket_data.message->length = b2f_len;
 					}
-					else
+					else if(!b2f_handler.is_b2f_session())
 					{
 						memcpy(tcp_socket_data.message->buffer, rx_raw, rx_raw_len);
 						tcp_socket_data.message->length = rx_raw_len;
+					}
+					else
+					{
+						// B2F active, parser accumulating partial line -- don't send raw
+						tcp_socket_data.message->length = 0;
 					}
 				}
 				else
@@ -1687,7 +1692,8 @@ void cl_arq_controller::process_buffer_data_responder()
 					tcp_socket_data.message->length = rx_raw_len;
 				}
 
-				tcp_socket_data.transmit();
+				if(tcp_socket_data.message->length > 0)
+					tcp_socket_data.transmit();
 			}
 		}
 

@@ -2034,8 +2034,9 @@ void cl_arq_controller::process_main()
 
 					if(b2f_len > 0)
 						fifo_buffer_tx.push(b2f_buf, b2f_len);
-					else
+					else if(!b2f_handler.is_b2f_session())
 						fifo_buffer_tx.push(tcp_socket_data.message->buffer, tcp_socket_data.message->length);
+					// else: B2F active, parser accumulating partial line -- skip raw push
 				}
 				else
 				{
@@ -3019,6 +3020,18 @@ void cl_arq_controller::send_ack_pattern()
 			fflush(stdout);
 			msleep(wait_ms);
 		}
+	}
+	else
+	{
+		// MFSK: frame is fully captured before decode, but the commander's
+		// radio still needs PTT-off + TX→RX hardware switching time.
+		// Without this, the ACK fires ~10ms after decode — before the
+		// commander has switched to RX.
+		int wait_ms = ptt_off_delay_ms + ptt_on_delay_ms;
+		printf("[TX-ACK-PAT] MFSK guard %dms (ptt_off=%d, ptt_on=%d)\n",
+			wait_ms, ptt_off_delay_ms, ptt_on_delay_ms);
+		fflush(stdout);
+		msleep(wait_ms);
 	}
 
 	ptt_on();
