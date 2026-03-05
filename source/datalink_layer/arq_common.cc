@@ -115,6 +115,7 @@ cl_arq_controller::cl_arq_controller()
 	control_batch_size=1;
 	ack_batch_size=1;
 	batch_rx_frame_count=0;
+	batch_data_delivered=false;
 	message_transmission_time_ms=500;
 	ctrl_transmission_time_ms=500;
 	ack_pattern_time_ms=0;

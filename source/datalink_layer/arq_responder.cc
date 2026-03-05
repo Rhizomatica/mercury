@@ -641,6 +641,7 @@ void cl_arq_controller::process_messages_acknowledging_control()
 			load_configuration(init_configuration,FULL,YES);
 			this->link_status=LISTENING;
 			batch_rx_frame_count = 0;
+			batch_data_delivered = false;
 			this->connection_status=RECEIVING;
 			reset_all_timers();
 			// Reset RX state machine - wait for fresh data (prevents decode of self-received TX audio)
@@ -789,7 +790,11 @@ void cl_arq_controller::process_messages_acknowledging_data()
 
 		// BLOCK_END eliminated: flush data to application immediately after
 		// sending pattern ACK. Commander finalizes locally in parallel.
-		copy_data_to_buffer();
+		if(!batch_data_delivered)
+		{
+			copy_data_to_buffer();
+			batch_data_delivered = true;
+		}
 		messages_last_ack_bu.type=NONE;
 
 		if(passive_monitor)
@@ -1509,6 +1514,7 @@ void cl_arq_controller::process_control_responder()
 			connection_status=ACKNOWLEDGING_CONTROL;
 			printf("end of file\n");
 			copy_data_to_buffer();
+			batch_data_delivered = false;
 			messages_last_ack_bu.type=NONE;
 			link_timer.start();
 			watchdog_timer.start();
@@ -1517,6 +1523,7 @@ void cl_arq_controller::process_control_responder()
 		{
 			printf("switch role\n");
 			copy_data_to_buffer();
+			batch_data_delivered = false;
 
 			if(passive_monitor)
 			{

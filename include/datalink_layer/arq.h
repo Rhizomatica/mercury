@@ -355,6 +355,7 @@ public:
   int control_batch_size;
   int ack_batch_size;
   int batch_rx_frame_count;  // Total data frames decoded in current RX batch (including padding duplicates)
+  bool batch_data_delivered; // True after copy_data_to_buffer() — prevents re-delivery on retransmission
   int block_ready;
   int block_under_tx;
   int max_message_length;
