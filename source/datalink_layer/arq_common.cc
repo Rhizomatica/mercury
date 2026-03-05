@@ -3395,12 +3395,16 @@ bool cl_arq_controller::receive_hail_pattern()
 		bool base_ok = base_matched >= telecom_system->ack_mfsk.hail_match_threshold;
 		bool suffix_ok = !telecom_system->ack_mfsk.hail_directed
 		              || suffix_matched >= (telecom_system->ack_mfsk.HAIL_SUFFIX_LEN - 1);
-		if(base_ok && suffix_ok && metric >= 3.0)
+		// Per-match quality: noise gives metric/matched ≈ 2/Nc (0.2 NB, 0.04 WB).
+		// Real signals give 0.5+. Gate at 0.3 to reject noise false alarms.
+		double quality = (matched_count > 0) ? metric / matched_count : 0.0;
+		if(base_ok && suffix_ok && metric >= 3.0 && quality >= 0.3)
 		{
-			printf("[HAIL] Detected: base=%d/%d suffix=%d/%d metric=%.1f%s\n",
+			printf("[HAIL] Detected: base=%d/%d suffix=%d/%d metric=%.1f quality=%.2f%s\n",
 				base_matched, telecom_system->ack_mfsk.hail_match_threshold,
 				suffix_matched, telecom_system->ack_mfsk.HAIL_SUFFIX_LEN,
-				metric, telecom_system->ack_mfsk.hail_directed ? " (directed)" : "");
+				metric, quality,
+				telecom_system->ack_mfsk.hail_directed ? " (directed)" : "");
 			fflush(stdout);
 #ifdef MERCURY_GUI_ENABLED
 			gui_push_monitor_event("[HAIL detected]", false);
@@ -4004,11 +4008,13 @@ void cl_arq_controller::receive()
 				double metric = telecom_system->detect_hail_pattern_from_passband(
 					telecom_system->data_container.ready_to_process_passband_delayed_data,
 					signal_period, &matched);
+				double hail_quality = (matched > 0) ? metric / matched : 0.0;
 				if(metric >= telecom_system->ack_pattern_detection_threshold
-				   && matched >= telecom_system->ack_mfsk.hail_match_threshold)
+				   && matched >= telecom_system->ack_mfsk.hail_match_threshold
+				   && hail_quality >= 0.3)
 				{
-					printf("[HAIL] 'I am Mercury' beacon detected! metric=%.2f matched=%d/%d\n",
-						metric, matched, telecom_system->ack_mfsk.ack_pattern_nsymb);
+					printf("[HAIL] 'I am Mercury' beacon detected! metric=%.2f matched=%d/%d quality=%.2f\n",
+						metric, matched, telecom_system->ack_mfsk.ack_pattern_nsymb, hail_quality);
 					fflush(stdout);
 					hail_detected = YES;
 				}

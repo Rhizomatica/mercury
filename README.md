@@ -1,8 +1,6 @@
 # Mercury
 
-Mercury is a free software software-defined modem for the High-Frequency (HF) band. It provides reliable data transfer over HF radio channels using OFDM with LDPC forward error correction, adaptive modulation, and automatic repeat request (ARQ).
-
-This fork extends the upstream Mercury with narrowband operation, weak-signal MFSK modes, end-to-end encryption, batch compression, passive monitoring, and multi-station support.
+Mercury is a free software software-defined modem for the High-Frequency (HF) band. It provides reliable data transfer over HF radio channels using OFDM and MFSK modulation with LDPC forward error correction, adaptive modulation, end-to-end encryption, and automatic repeat request (ARQ).
 
 ## Features
 
@@ -284,7 +282,7 @@ Join the HERMES mailing list: https://lists.riseup.net/www/info/hermes-general
 
 ## About
 
-Mercury was originally written by Fadi Jerji for Rhizomatica's HERMES project and is maintained by the HERMES team. This project is sponsored by ARDC.
+Mercury was written by Fadi Jerji for Rhizomatica's HERMES project and is maintained by the HERMES team. This project is sponsored by ARDC.
 
 ## License
 
