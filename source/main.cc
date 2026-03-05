@@ -162,42 +162,69 @@ int main(int argc, char *argv[])
 
     if (0) {
  manual:
-        printf("Usage modes: \n%s -m [mode] -s [modulation_config] -i [device] -o [device] -r [radio_type] -x [sound_system]\n", argv[0], argv[0]);
-        printf("%s -m ARQ -s [modulation_config] -i [device] -o [device] -r [radio_type] -x [sound_system] -p [arq_tcp_base_port]\n", argv[0], argv[0]);
-        printf("%s -h\n", argv[0]);
-        printf("\nOptions:\n");
-        printf(" -c [cpu_nr]                Run on CPU [cpu_nr]. Use -1 to disable CPU selection, which is the default.\n");
-        printf(" -m [mode]                  Available operating modes are: ARQ, TX_SHM, RX_SHM, TX_TEST, RX_TEST, TX_RAND, RX_RAND, PLOT_BASEBAND, PLOT_PASSBAND.\n");
-        printf(" -s [modulation_config]     Sets modulation configuration. Modes: 0 to 16 (OFDM), 100-102 (ROBUST MFSK). Use \"-l\" for listing all available modulations.\n");
-        printf(" -r [radio_type]            Available radio types are: stockhf, sbitx.\n");
-        printf(" -i [device]                Radio Capture device id (eg: \"plughw:0,0\").\n");
-        printf(" -o [device]                Radio Playback device id (eg: \"plughw:0,0\").\n");
-        printf(" -x [sound_system]          Sets the sound system API to use: alsa, pulse, dsound or wasapi. Default is alsa on Linux and wasapi on Windows.\n");
-		printf(" -p [arq_tcp_base_port]     Sets the ARQ TCP base port (control is base_port, data is base_port + 1). Default is 7002.\n");
-        printf(" -g                         Enables the adaptive modulation selection (gear-shifting).\n");
-        printf(" -t [timeout_ms]            Connection timeout in milliseconds (ARQ mode only). Default is 15000.\n");
-        printf(" -a [max_attempts]          Maximum connection attempts before giving up (ARQ mode only). Default is 15.\n");
-        printf(" -k [link_timeout_ms]       Link timeout in milliseconds (ARQ mode only). Default is 30000.\n");
-        printf(" -e                         Exit when client disconnects from control port (ARQ mode only).\n");
-        printf(" -l                         Lists all modulator/coding modes.\n");
-        printf(" -C                         Check audio configuration (stereo, sample rate) before starting.\n");
-        printf(" -z                         Lists all available sound cards.\n");
-        printf(" -f [offset_hz]             TX carrier offset in Hz for testing frequency sync (e.g., -f 25 for 25 Hz offset).\n");
-        printf(" -I [iterations]            LDPC decoder max iterations (5-50, default 50). Lower = less CPU.\n");
-        printf(" -R                         Enable Robust mode (MFSK for weak-signal hailing/low-speed data).\n");
-        printf(" -N                         Enable Narrowband mode (500 Hz bandwidth, 10 subcarriers).\n");
-        printf(" -T [tx_gain_db]            TX gain in dB (temporary, overrides GUI slider). E.g. -T -25.6 for -30 dBFS output.\n");
-        printf(" -G [rx_gain_db]            RX gain in dB (temporary, overrides GUI slider). E.g. -G 25.6 to boost weak input.\n");
-        printf(" -Q [nb_probe_max]          NB auto-negotiation probe attempts (0=disable, default 2).\n");
-        printf(" -F [on|off]                Force compression on (for non-Winlink traffic). Default: off (auto-detect B2F).\n");
-        printf(" -E [strict|fast]           Enable encryption. strict=SNDL-safe (hold data until PQ key exchange), fast=classical-first.\n");
-        printf(" -K [hex_psk]               Pre-shared key for encryption authentication (hex string, up to 64 bytes).\n");
-        printf(" -v                         Verbose debug output (OFDM sync, RX timing, ACK detection).\n");
-        printf(" --stdout                   Output decoded plaintext to stdout (monitor mode).\n");
+        printf("Usage:\n");
+        printf("  %s -m [mode] [options]\n", argv[0]);
+        printf("  %s -h\n\n", argv[0]);
+
+        printf("Operating modes (-m):\n");
+        printf("  ARQ             Automatic Repeat Request (primary mode)\n");
+        printf("  MONITOR         Passive monitor — decode without transmitting\n");
+        printf("  TX_SHM / RX_SHM Shared memory interface (see examples/)\n");
+        printf("  PLOT_BASEBAND   Baseband BER simulation (AWGN)\n");
+        printf("  PLOT_PASSBAND   Passband BER simulation (AWGN)\n");
+        printf("  TX_TEST / RX_TEST   Test pattern transmission/reception\n");
+        printf("  TX_RAND / RX_RAND   Random data transmission/reception\n");
+
+        printf("\nDevice and audio:\n");
+        printf("  -i [device]       Audio capture device (e.g. \"plughw:0,0\" or device name from -z)\n");
+        printf("  -o [device]       Audio playback device\n");
+        printf("  -x [api]          Sound system: alsa, pulse, dsound, wasapi (default: alsa/wasapi)\n");
+        printf("  -A [channel]      Audio channel index override (enables multichannel mode)\n");
+        printf("  -r [radio]        Radio type: stockhf, sbitx\n");
+        printf("  -c [cpu_nr]       Pin to CPU core (-1 = auto, default)\n");
+        printf("  -C                Check audio config (stereo, sample rate) before starting\n");
+        printf("  -z                List available sound devices\n");
+
+        printf("\nModulation and bandwidth:\n");
+        printf("  -s [config]       Modulation: 0-16 (OFDM), 100-102 (ROBUST MFSK). Use -l to list.\n");
+        printf("  -g                Enable adaptive gearshift\n");
+        printf("  -R                Enable ROBUST mode (MFSK weak-signal hailing)\n");
+        printf("  -M [auto|nb]      Bandwidth: auto (NB hail + WB upgrade) or nb (500 Hz only)\n");
+        printf("  -N                Force narrowband mode (500 Hz, 10 subcarriers)\n");
+        printf("  -W                Force wideband mode (2344 Hz, 50 subcarriers)\n");
+        printf("  -I [5-50]         LDPC decoder max iterations (default: 50)\n");
+        printf("  -l                List all modulation/coding modes\n");
+
+        printf("\nARQ tuning:\n");
+        printf("  -p [port]         TCP base port (control=port, data=port+1). Default: 7002\n");
+        printf("  -t [ms]           Connection timeout (default: 15000)\n");
+        printf("  -a [attempts]     Max connection attempts (default: 15)\n");
+        printf("  -k [ms]           Link timeout (default: 30000)\n");
+        printf("  -e                Exit on client disconnect\n");
+
+        printf("\nCompression and encryption:\n");
+        printf("  -F [on|off]       Force compression on/off (default: auto-detect B2F)\n");
+        printf("  -E [strict|fast]  Encryption: strict (require PQ KX) or fast (classical-first)\n");
+        printf("  -K [hex]          Pre-shared key for encryption (hex, up to 64 bytes)\n");
+
+        printf("\nGain and calibration:\n");
+        printf("  -T [dB]           TX gain override (e.g. -T -25.6)\n");
+        printf("  -G [dB]           RX gain override (e.g. -G 25.6)\n");
+        printf("  -B [gain]         NB MFSK boost override\n");
+        printf("  -Q [n]            NB probe max (0=disable, default 2)\n");
+
+        printf("\nTesting and debug:\n");
+        printf("  -Z [snr_dB]       Inject AWGN noise at specified SNR\n");
+        printf("  -f [hz]           TX carrier offset for frequency sync testing\n");
+        printf("  -P [nBits]        Punctured LDPC BER test with specified ctrl_nBits\n");
+        printf("  -v                Verbose debug output\n");
+        printf("  --stdout          Output decoded plaintext to stdout (monitor mode)\n");
+
+        printf("\nGeneral:\n");
 #ifdef MERCURY_GUI_ENABLED
-        printf(" -n                         Disable GUI (headless mode). GUI is enabled by default.\n");
+        printf("  -n                Disable GUI (headless mode)\n");
 #endif
-        printf(" -h                         Prints this help.\n");
+        printf("  -h                Print this help\n");
         return EXIT_FAILURE;
     }
 

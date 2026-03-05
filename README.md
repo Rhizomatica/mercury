@@ -1,242 +1,253 @@
 # Mercury
 
-Mercury is a free software software-defined modem solution for the High-Frequency (HF) band.
+Mercury is a free software software-defined modem for the High-Frequency (HF) band. It provides reliable data transfer over HF radio channels using OFDM with LDPC forward error correction, adaptive modulation, and automatic repeat request (ARQ).
+
+This fork extends the upstream Mercury with narrowband operation, weak-signal MFSK modes, end-to-end encryption, batch compression, passive monitoring, and multi-station support.
 
 ## Features
 
-- Least Square channel estimator with a configurable estimation window.
-- Time and Frequency synchronization for low SNR values.
-- TX and RX filtering with separate filters for time synchronization and data messages.
-- Time and Frequency interleavers.
-- LDPC codes (1/16 to 14/16) optimized for multipath channel
-- Outer CRC coding.
-- Energy dispersal for power amplification efficiency.
-- Pre-equalization to compensate filters and DSP imperfections.
-- Peak to average power ratio (PAPR) and modulation error rate (MER) measurements.
-- Two pilot distribution modes for different channels and bitrate requirements with further optimized parameters such as number of symbols, number of carriers, and synchronization symbols.
-- Dynamic partial configuration of the physical layer for computing performance enhancement.
-- Enhanced API of the physical layer to allow for byte or bit transfer.
-- Separate Data and Acknowledge message robustness configuration.
-- Ladder-based Gearshift mode for the data link layer for low SNR.
-- 17 OFDM robustness modes for the ARQ / Gearshift.
-- 3 MFSK weak-signal modes (ROBUST_0, ROBUST_1, ROBUST_2) for decoding below the OFDM threshold.
-- Non-coherent energy detection for MFSK modes (no channel estimation needed).
-- Pattern-based ACK using Welch-Costas tone sequences for reduced ARQ overhead on slow modes.
-- CRC16-MODBUS-RTU outer code.
-- Coarse frequency synchronization for wider capture range.
-- Base-36 callsign packing for small frame sizes.
-- Cross-platform GUI with real-time constellation display, waterfall spectrum, and signal meters (ImGui + GLFW + OpenGL).
+### Physical Layer — 20 Modes from 14 bps to 5665 bps
 
+**OFDM modes** (CONFIG_0 through CONFIG_16): 17 configurations spanning BPSK 1/16 through 32QAM 14/16. Coherent demodulation with LDPC SPA decoding (up to 50 iterations), CRC16 outer code, and adaptive pilot-aided channel estimation.
 
-## Compilation And Installation
+**MFSK weak-signal modes** (ROBUST_0, ROBUST_1, ROBUST_2): Non-coherent energy detection for decoding below the OFDM threshold. ROBUST_0 operates at -13 dB Es/N0 — well into the noise floor. Gray-coded tone mapping with soft LLR output feeds into the same LDPC decoder as OFDM.
 
-Mercury is implemented mainly in C++ (compiles in C++14 mode). Currently runs on Linux and Windows.
-Compilation is tested on Linux (gcc / glibc toolchain) and Windows (Mingw64 posix toolchain). ALSA and PulseAudio libraries and development headers must be installed on Linux. On Windows, DirectSound and WASAPI are supported.
-Other optional depencies are GNUPlot (for ploting constellations), GraphViz and Doxygen (for documentation). On
-a Debian based system (eg. Debian, Ubuntu), the dependencies can be installed with:
+**Adaptive gearshift**: Automatic mode selection from ROBUST_0 through CONFIG_15 based on measured SNR. Turboshift uses SNR-based supershift for fast initial climb, then ladder gearshift for fine-grained adaptation.
 
+### Narrowband Mode (500 Hz)
+
+Operates in a 469 Hz bandwidth (Nc=10 subcarriers) alongside the standard 2344 Hz wideband mode (Nc=50). All 20 modes are available in narrowband. Bandwidth negotiation is automatic: NB stations connect via MFSK hailing and optionally upgrade to WB when both sides support it.
+
+- CLI: `-M nb` (narrowband only), `-M auto` (NB hail, WB upgrade)
+- ZF channel estimator (immune to narrowband phase rotation artifacts)
+- NB ceiling at CONFIG_14; CONFIG_15/16 available but marginal in 469 Hz
+
+### Batch Compression
+
+Entire data batches are compressed before splitting across frames, improving throughput by up to 1.9x on text. Two algorithms compete per batch — best ratio wins:
+
+- **PPMd8** (order 6, 2 MB model): Adaptive statistical compression, strong on text
+- **zstd** (level 3): Fast dictionary compression, effective on structured/binary data
+- **Streaming context**: PPMd model carries across batches; zstd uses a 32 KB raw-data prefix. Self-correcting on failure (CRC16 detects model desync).
+
+Compression is negotiated via capabilities (`CAP_COMPRESSION`) and auto-arms on B2F detection or force-enabled with `-F on`.
+
+### End-to-End Encryption
+
+Optional authenticated encryption for all data transfers:
+
+- **Key exchange**: X25519 ECDH (Curve25519) with HKDF-Blake2b key derivation
+- **Symmetric cipher**: ChaCha20-Poly1305 AEAD (16-byte auth tags)
+- **Pre-shared key** (optional): `-K <hex>` adds a PSK mixed into key derivation for quantum-resistant forward secrecy
+- **Key confirmation**: PSK mismatch detection prevents silent decryption failure
+- Direction-bound nonces (separate TX/RX keys) prevent reflection attacks
+- CLI: `-E strict` (require encryption), `-E fast` (classical-first negotiation)
+- Cryptographic library: Monocypher 4.0.2 (BSD-2, vendored)
+
+### ARQ and Data Link
+
+- **Pattern-based ACK**: Welch-Costas tone sequences replace LDPC-encoded ACK frames on slow modes, reducing turnaround from seconds to ~725 ms
+- **HAIL beacon**: "I am Mercury" MFSK pattern for connectionless discovery. Directed HAIL adds a 4-tone CRC suffix derived from target callsign to prevent multi-station collisions.
+- **SSID support**: Callsign-SSID addressing (e.g., `N0CALL-5`) for multi-station environments
+- **B2F unroll/reroll**: Transparent stripping of Winlink LZHUF compression on TX (Mercury's PPMd/zstd compresses the raw payload better), deterministic re-encoding on RX
+- **Frame completeness gating**: Detects when OFDM frames extend beyond captured audio and recaptures remaining symbols rather than dropping the block
+
+### Passive Monitor Mode
+
+Third-party stations can monitor ongoing sessions without participating in the ARQ protocol. The monitor decodes both sides of a conversation in real-time using a parallel OFDM decoder with independent LDPC abort flags. Useful for FCC compliance monitoring and debugging.
+
+- CLI: `--monitor` (passive decode, no TX)
+- Outputs decoded text to stdout or GUI monitor panel
+
+### GUI
+
+Cross-platform graphical interface (Dear ImGui + GLFW + OpenGL3):
+
+- Real-time constellation diagram and waterfall spectrum
+- Signal level meters, SNR display, compression ratio indicator
+- Sound card selection, callsign/SSID configuration, network port settings
+- Gearshift controls, encryption status, bandwidth mode selector
+- Run headless with `-n`
+
+### Performance
+
+- **PocketFFT** (BSD): Replaces hand-rolled Cooley-Tukey for all demodulation FFTs
+- **SIMD dispatch**: Runtime detection of AVX2+FMA / SSE4.2 / SSE2 for FFT butterfly operations
+- **3-stage preamble detection**: Schmidl-Cox autocorrelation + matched-filter refinement + batch prediction from prior frame timing
+- **RX mute guard**: Prevents TX echo feedback on shared audio devices (virtual cables, full-duplex radios)
+
+## Mode Reference
+
+All modes sorted by wideband PHY rate. NB PHY is approximately WB/5.
+
+```
+Mode          Modulation    LDPC    WB PHY    NB PHY    Es/N0
+                            Rate     (bps)     (bps)    Waterfall
+-----------   -----------   ----    ------    ------    ---------
+ROBUST_0      32-MFSK       1/16       14        28    -13.0 dB
+ROBUST_1      16-MFSK x2    1/16       22        37    -11.0 dB
+CONFIG_0      BPSK          1/16       71        14    -10.0 dB
+ROBUST_2      16-MFSK x2     1/4       87       149     -8.0 dB
+CONFIG_1      BPSK          2/16      156        31     -7.5 dB
+CONFIG_2      BPSK          3/16      241        48     -6.0 dB
+CONFIG_3      BPSK          4/16      326        65     -4.5 dB
+CONFIG_4      BPSK          5/16      411        82     -3.5 dB
+CONFIG_5      BPSK          6/16      496        99     -2.5 dB
+CONFIG_6      BPSK          8/16      665       133     -1.5 dB
+CONFIG_7      QPSK          5/16      763       153     -0.5 dB
+CONFIG_8      QPSK          6/16      920       184     +0.5 dB
+CONFIG_9      QPSK          8/16     1235       247     +1.5 dB
+CONFIG_10     8PSK          6/16     1354       271     +3.0 dB
+CONFIG_11     8PSK          8/16     1818       364     +4.0 dB
+CONFIG_12     QPSK         14/16     2261       452     +6.5 dB
+CONFIG_13     8PSK         12/16     2471       494     +7.5 dB
+CONFIG_14     8PSK         14/16     3390       678     +9.0 dB
+CONFIG_15     16QAM        14/16     4361       872    +12.5 dB
+CONFIG_16     32QAM        14/16     5665      1133    +13.5 dB
+```
+
+With streaming compression on English text, effective throughput reaches ~1.9x PHY rate (e.g., CONFIG_10 WB: 1354 PHY -> ~2573 effective bps).
+
+## Building
+
+Mercury is implemented in C++ (C++14). Builds on Linux (gcc/glibc) and Windows (MinGW64 POSIX toolchain).
+
+### Dependencies
+
+**Linux:**
 ```
 apt-get install libasound2-dev libpulse-dev libglfw3-dev gnuplot-x11 graphviz
 ```
-To compile, use:
 
+**Windows:** MinGW64 POSIX toolchain via MSYS2. GLFW is bundled in `third_party/glfw/`.
+
+### Compile
+
+Using `build.sh` (recommended, works on both platforms):
 ```
-make
+./build.sh release    # optimized build with GUI
+./build.sh o3         # max optimization
+./build.sh debug      # debug symbols, no optimization
+```
+
+Other build modes: `o0`, `o1`, `o2`, `asan`, `ubsan`.
+
+Using `make` directly:
+```
+make clean && make -j4 GUI_ENABLED=1    # with GUI
+make clean && make -j4 GUI_ENABLED=0    # headless only
 ```
 
 To install:
-
 ```
 make install
 ```
 
-To generate the Mercury documentation, run the following:
+**Important**: Use a consistent compiler toolchain. Mixing object files from different GCC versions causes ABI crashes. `build.sh` always does a clean build.
+
+### Documentation
 
 ```
 apt-get install doxygen
 make doc
 ```
 
-### GUI Build
-
-Mercury can be built with a graphical user interface on both Linux and Windows. The GUI uses Dear ImGui (included in `third_party/imgui/`) with a GLFW + OpenGL3 backend. GLFW is bundled for Windows in `third_party/glfw/`; on Linux, install `libglfw3-dev`.
-
-Using `build.sh` (recommended, works on both platforms via MSYS2/MinGW64 on Windows):
-```
-./build.sh release
-```
-
-Other build modes: `debug`, `o0`, `o1`, `o2`, `o3`, `asan`, `ubsan`.
-
-Using `make` directly:
-```
-make clean
-make -j4 GUI_ENABLED=1
-```
-
-To build without GUI (headless mode only):
-```
-make clean
-make -j4 GUI_ENABLED=0
-```
-
-**Important**: Use a consistent compiler toolchain. Mixing object files from different GCC versions causes ABI incompatibility crashes. `build.sh` always does a clean build to avoid stale object file issues.
-
-## Running
-
-Mercury has different operating modes and parameters. Usage parameters:
+## Usage
 
 ```
-Usage modes:
-./mercury -m [mode] -s [modulation_config] -i [device] -o [device] -r [radio_type] -x [sound_system]
-./mercury -m ARQ -s [modulation_config] -i [device] -o [device] -r [radio_type] -x [sound_system] -p [arq_tcp_base_port]
-./mercury -h
+mercury -m [mode] [options]
 
-Options:
- -c [cpu_nr]                Run on CPU [cpu_nr]. Use -1 to disable CPU selection (default).
- -m [mode]                  Available operating modes are: ARQ, TX_SHM, RX_SHM, TX_TEST, RX_TEST, TX_RAND, RX_RAND, PLOT_BASEBAND, PLOT_PASSBAND.
- -s [modulation_config]     Sets modulation configuration. Modes: 0 to 16 (OFDM), 100-102 (ROBUST MFSK). Use "-l" for listing all available modulations.
- -r [radio_type]            Available radio types are: stockhf, sbitx.
- -i [device]                Radio Capture device id (eg: "plughw:0,0").
- -o [device]                Radio Playback device id (eg: "plughw:0,0").
- -x [sound_system]          Sets the sound system API to use: alsa, pulse, dsound or wasapi. Default is alsa on Linux and wasapi on Windows.
- -p [arq_tcp_base_port]     Sets the ARQ TCP base port (control is base_port, data is base_port + 1). Default is 7002.
- -g                         Enables the adaptive modulation selection (gear-shifting).
- -t [timeout_ms]            Connection timeout in milliseconds (ARQ mode only). Default is 15000.
- -a [max_attempts]          Maximum connection attempts before giving up (ARQ mode only). Default is 15.
- -k [link_timeout_ms]       Link timeout in milliseconds (ARQ mode only). Default is 30000.
- -e                         Exit when client disconnects from control port (ARQ mode only).
- -R                         Enable Robust mode (MFSK for weak-signal hailing/low-speed data).
- -I [iterations]            LDPC decoder max iterations (5-50, default 50). Lower = less CPU.
- -T [tx_gain_db]            TX gain in dB (overrides GUI slider). E.g. -T -25.6 for -30 dBFS output.
- -G [rx_gain_db]            RX gain in dB (overrides GUI slider). E.g. -G 25.6 to boost weak input.
- -C                         Check audio configuration (stereo, sample rate) before starting.
- -f [offset_hz]             TX carrier offset in Hz for testing frequency sync.
- -v                         Verbose debug output (OFDM sync, RX timing, ACK detection).
- -n                         Disable GUI (headless mode). GUI is enabled by default.
- -l                         Lists all modulator/coding modes.
- -z                         Lists all available sound cards.
- -h                         Prints this help.
+Operating modes (-m):
+  ARQ               Automatic Repeat Request (primary mode)
+  MONITOR           Passive monitor — decode without transmitting
+  TX_SHM / RX_SHM   Shared memory interface (see examples/)
+  PLOT_BASEBAND     Baseband BER simulation (AWGN)
+  PLOT_PASSBAND     Passband BER simulation (AWGN)
+  TX_TEST / RX_TEST Test pattern transmission/reception
+  TX_RAND / RX_RAND Random data transmission/reception
+
+Device and audio:
+  -i [device]       Audio capture device (e.g., "plughw:0,0" or device name from -z)
+  -o [device]       Audio playback device
+  -x [api]          Sound system: alsa, pulse, dsound, wasapi (default: alsa/wasapi)
+  -A [channel]      Audio channel index override (enables multichannel mode)
+  -r [radio]        Radio type: stockhf, sbitx
+  -c [cpu_nr]       Pin to CPU core (-1 = auto, default)
+  -C                Check audio config (stereo, sample rate) before starting
+  -z                List available sound devices
+
+Modulation and bandwidth:
+  -s [config]       Modulation: 0-16 (OFDM), 100-102 (ROBUST MFSK). Use -l to list.
+  -g                Enable adaptive gearshift
+  -R                Enable ROBUST mode (MFSK weak-signal hailing)
+  -M [auto|nb]      Bandwidth: auto (NB hail + WB upgrade) or nb (500 Hz only)
+  -N                Force narrowband mode (500 Hz, 10 subcarriers)
+  -W                Force wideband mode (2344 Hz, 50 subcarriers)
+  -I [5-50]         LDPC decoder max iterations (default: 50)
+  -l                List all modulation/coding modes
+
+ARQ tuning:
+  -p [port]         TCP base port (control=port, data=port+1). Default: 7002
+  -t [ms]           Connection timeout (default: 15000)
+  -a [attempts]     Max connection attempts (default: 15)
+  -k [ms]           Link timeout (default: 30000)
+  -e                Exit on client disconnect
+
+Compression and encryption:
+  -F [on|off]       Force compression on/off (default: auto-detect B2F)
+  -E [strict|fast]  Encryption: strict (require PQ KX) or fast (classical-first)
+  -K [hex]          Pre-shared key for encryption (hex, up to 64 bytes)
+
+Gain and calibration:
+  -T [dB]           TX gain override (e.g., -T -25.6)
+  -G [dB]           RX gain override (e.g., -G 25.6)
+  -B [gain]         NB MFSK boost override
+  -Q [n]            NB probe max (0=disable, default 2)
+
+Testing and debug:
+  -Z [snr_dB]       Inject AWGN noise at specified SNR
+  -f [hz]           TX carrier offset for frequency sync testing
+  -P [nBits]        Punctured LDPC BER test with specified ctrl_nBits
+  -v                Verbose debug output
+  --stdout          Output decoded plaintext to stdout (monitor mode)
+
+General:
+  -n                Disable GUI (headless mode)
+  -h                Print this help
 ```
 
-Mercury operating modes are:
-- ARQ: Data-link layer and Automatic repeat request mode. Default control port is 7002 and default data port is 7003.
-- TX_SHM: Transmits data read from shared memory interface (check folder examples).
-- RX_SHM: Received data is written to shared memory interface.
+### Examples
 
-Mercury also has some modes for development / channel analysis:
-- PLOT_BASEBAND: Baseband Bit Error Rate (BER) simulation mode over an AWGN channel with/without plotting.
-- PLOT_PASSBAND: Passeband BER simulation mode over an AWGN channel with/without plotting.
-- TX_RAND: Transmission test using random data as source
-- RX_RAND: Data reception test (supports plotting constelation)
-- TX_TEST: Data transmission test (a moving byte set to 1, all the rest zeros)
-- RX_TEST: Data reception test
-
-For using the shared memory interface, Mercury should be started in mode RX_SHM in receive side, and TX_SHM at transmit site. 
-
-Example (stock hf radio, like an ICOM IC-7100) for transmitter side:
+ARQ with gearshift on a stock HF radio:
 ```
-./mercury -m TX_SHM -s 1 -r stockhf -i "plughw:0,0" -o "plughw:0,0"
+mercury -m ARQ -g -r stockhf -i "plughw:0,0" -o "plughw:0,0"
 ```
 
-Example of Mercury in the receive side (sBitx v3 radio):
+Narrowband ARQ on Windows with virtual cable:
 ```
-./mercury -m RX_SHM -s 1 -r sbitx -i "plughw:0,0" -o "plughw:0,0"
-```
-
-ARQ mode with gearshift can be used, for example, in a stock HF radio, as:
-
-```
-./mercury -m ARQ -r stockhf -i "plughw:0,0" -o "plughw:0,0"
+mercury -m ARQ -g -R -M nb -x wasapi -i "CABLE Output (VB-Audio Virtual Cable)" -o "CABLE Input (VB-Audio Virtual Cable)"
 ```
 
-For receiving broadcat data in test mode, for example, in a sBitx radio, using mode 0, use:
-
+Encrypted session with pre-shared key:
 ```
-./mercury -m RX_TEST -s 0 -r sbitx -i "plughw:0,0" -o "plughw:0,0"
-```
-
-For transmitting such test data broadcast data, in stock HF radio (like an ICOM IC-7100), using mode 0, use (and key the radio using rigctl):
-
-```
-./mercury -m TX_TEST -s 0 -r stockhf -i "plughw:0,0" -o "plughw:0,0"
+mercury -m ARQ -g -R -E strict -K 0123456789abcdef0123456789abcdef -x wasapi
 ```
 
-On Windows, WASAPI is the default and recommended audio driver. To use the default audio device:
-
+BER simulation for CONFIG_10:
 ```
-./mercury -m TX_TEST -s 0 -r stockhf -x wasapi
-```
-
-To set a specific audio device, use `-i` and `-o` with the device name. Use `-z` to list available devices:
-
-```
-./mercury -z
-./mercury -m ARQ -r stockhf -x wasapi -i "CABLE Output (VB-Audio Virtual Cable)" -o "CABLE Input (VB-Audio Virtual Cable)"
+mercury -m PLOT_PASSBAND -s 10
 ```
 
-For enabling tx (keying the radio) in an ICOM IC-7100, for example, use:
-
+List sound devices:
 ```
-rigctl -r /dev/ttyUSB0 -m 3070 T 1
+mercury -z
 ```
-
-For unkeying:
-
-```
-rigctl -r /dev/ttyUSB0 -m 3070 T 0
-```
-
-For the sBitx radio, use the HERMES software stack, available at https://github.com/Rhizomatica/hermes-net (use trx_v2-userland implementation).
-
-## Supported Clients
-
-Mercury includes a built-in GUI for monitoring and configuration. When built with `GUI_ENABLED=1` (the default), Mercury displays a real-time constellation diagram, waterfall spectrum, signal level meters, and modem status indicators. The GUI also provides dialogs for sound card selection, callsign, network ports, and gearshift settings. To run headless (without GUI), use the `-n` flag.
-
-For ARQ mode, a client application connects to Mercury over TCP to send and receive data. The folder "examples" has a transmitter and receiver example for the TX_SHM and RX_SHM modes. A more complete client called HERMES-BROADCAST for data broadcast using RaptorQ codes is available here: https://github.com/Rhizomatica/hermes-broadcast .
-
-For a simple ARQ client which supports hamlib, take a look at: https://github.com/Rhizomatica/mercury-connector
-
-Any VARA client should be compatible with Mercury. Compatibility support is not complete. If you
-find a VARA client which does not communicate, please report. Base TCP port is 7002 (7002 control and 7003 data).
-
-For a more complete ARQ client which integrates Mercury to UUCP, look at: https://github.com/Rhizomatica/hermes-net/tree/main/uucpd
-
-
-## Supported Modulation Modes
-
-The modulation modes can be listed with "./mercury -l", and are (without outer-code overhead):
-
-```
-ROBUST_0 (~14 bps)   - 32-MFSK, LDPC 1/16, 1 stream
-ROBUST_1 (~22 bps)   - 16-MFSK, LDPC 1/16, 2 streams
-ROBUST_2 (~87 bps)   - 16-MFSK, LDPC 1/4, 2 streams
-CONFIG_0 (84.841629 bps)
-CONFIG_1 (169.683258 bps)
-CONFIG_2 (254.524887 bps)
-CONFIG_3 (339.366516 bps)
-CONFIG_4 (424.208145 bps)
-CONFIG_5 (509.049774 bps)
-CONFIG_6 (678.733032 bps)
-CONFIG_7 (787.815126 bps)
-CONFIG_8 (945.378151 bps)
-CONFIG_9 (1260.504202 bps)
-CONFIG_10 (1390.866873 bps)
-CONFIG_11 (1855.263158 bps)
-CONFIG_12 (2287.581699 bps)
-CONFIG_13 (2521.008403 bps)
-CONFIG_14 (3428.921569 bps)
-CONFIG_15 (4411.764706 bps)
-CONFIG_16 (5735.294118 bps)
-```
-
-ROBUST modes use MFSK (non-coherent) modulation and can decode at significantly lower SNR than the OFDM modes. With gearshift enabled, Mercury starts at ROBUST_0 and works up through ROBUST_1, ROBUST_2, then into CONFIG_0 through CONFIG_16 as channel conditions improve.
 
 ## Testing and Benchmarking
 
-The `tools/` directory contains test and benchmark scripts. These require Python 3 and a virtual audio cable (eg. VB-Audio Virtual Cable on Windows).
+The `tools/` directory contains test and benchmark scripts. These require Python 3 and a virtual audio cable (e.g., VB-Audio Virtual Cable on Windows).
 
-**Benchmark suite** (`tools/mercury_benchmark.py`) — SNR sweep, stress test, and adaptive gearshift test. Generates VARA-style throughput charts (bytes/min vs SNR). See `tools/BENCHMARK_GUIDE.md` for full documentation.
+**Benchmark suite** (`tools/mercury_benchmark.py`): SNR sweep, stress test, and adaptive gearshift test. See `tools/BENCHMARK_GUIDE.md`.
 
 ```
 pip install numpy sounddevice matplotlib
@@ -245,7 +256,9 @@ python tools/mercury_benchmark.py stress --num-bursts 5
 python tools/mercury_benchmark.py adaptive --measure-duration 60
 ```
 
-**Loopback test** (`tools/robust_loopback_test.py`) — quick ARQ sanity check for ROBUST modes. Starts commander + responder on a virtual cable and monitors for successful data exchange.
+**Bisect benchmark** (`tools/bisect_benchmark.py`): Automated throughput regression testing across git commits for NB and WB configs.
+
+**Loopback test** (`tools/robust_loopback_test.py`): Quick ARQ sanity check for ROBUST modes.
 
 ```
 python tools/robust_loopback_test.py 100    # ROBUST_0
@@ -253,14 +266,26 @@ python tools/robust_loopback_test.py 101    # ROBUST_1
 python tools/robust_loopback_test.py 102    # ROBUST_2
 ```
 
+## Supported Clients
+
+Mercury's ARQ mode uses a VARA-compatible TCP protocol (control on base port, data on base+1). Compatible clients include:
+
+- **Built-in GUI**: Real-time monitoring and configuration (enabled by default, `-n` for headless)
+- **mercury-connector**: Simple ARQ client with hamlib support — https://github.com/Rhizomatica/mercury-connector
+- **HERMES-BROADCAST**: Data broadcast using RaptorQ codes — https://github.com/Rhizomatica/hermes-broadcast
+- **hermes-net UUCP**: UUCP integration — https://github.com/Rhizomatica/hermes-net/tree/main/uucpd
+- **VARA clients**: Any VARA-compatible client should work. Base TCP port is 7002.
+
+For the sBitx radio, use the HERMES software stack: https://github.com/Rhizomatica/hermes-net (trx_v2-userland).
+
 ## Discussion
 
-Join HERMES mailing list:
-https://lists.riseup.net/www/info/hermes-general
-
+Join the HERMES mailing list: https://lists.riseup.net/www/info/hermes-general
 
 ## About
 
-The code was originally written by Fadi Jerji for Rhizomatica's HERMES project. Currently the project is maintained by Rhizomatica's HERMES team.
+Mercury was originally written by Fadi Jerji for Rhizomatica's HERMES project and is maintained by the HERMES team. This project is sponsored by ARDC.
 
-This project is sponsored by ARDC.
+## License
+
+GNU Affero General Public License v3.0
