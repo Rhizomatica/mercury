@@ -28,6 +28,7 @@
 #include "mercury_ldpc.h"
 #include "physical_defines.h"
 #include <iostream>
+#include <atomic>
 
 class cl_ldpc
 {
@@ -89,6 +90,10 @@ public:
 	   */
 	int decode(const float* data,  int*  decoded_data);
 
+	// Abort flag for parallel monitor decode: when another decoder succeeds,
+	// set this to true so remaining decoders exit their LDPC iteration loop early.
+	// NULL means no abort checking (normal operation).
+	std::atomic<bool>* decode_abort{nullptr};
 
 };
 

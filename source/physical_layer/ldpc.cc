@@ -21,6 +21,7 @@
  */
 
 #include "physical_layer/ldpc.h"
+#include "debug/canary_guard.h"
 
 cl_ldpc::cl_ldpc()
 {
@@ -89,21 +90,9 @@ void cl_ldpc::deinit()
 	QCmatrixC=NULL;
 	QCmatrixEnc=NULL;
 
-	if(R!=NULL)
-	{
-		delete[] R;
-		R=NULL;
-	}
-	if(Q!=NULL)
-	{
-		delete[] Q;
-		Q=NULL;
-	}
-	if(V_pos!=NULL)
-	{
-		delete[] V_pos;
-		V_pos=NULL;
-	}
+	CDELETE(R);
+	CDELETE(Q);
+	CDELETE(V_pos);
 
 }
 
@@ -148,8 +137,8 @@ void cl_ldpc::encode(const int* data, int*  encoded_data)
   				QCmatrixEnc=&mercury_normal_QCmatrixEnc_1_16[0][0];
   				QCmatrixV=&mercury_normal_QCmatrixV_1_16[0][0];
   				QCmatrixd=&mercury_normal_QCmatrixd_1_16[0];
-  				R=new double [N*Vwidth];
-  				Q=new double [N*Vwidth];
+  				R=CNEW(double, N*Vwidth, "ldpc.R");
+  				Q=CNEW(double, N*Vwidth, "ldpc.Q");
   			}
   			else if(K==200)//rate == 2/16
   			{
@@ -168,8 +157,8 @@ void cl_ldpc::encode(const int* data, int*  encoded_data)
   				QCmatrixEnc=&mercury_normal_QCmatrixEnc_2_16[0][0];
   				QCmatrixV=&mercury_normal_QCmatrixV_2_16[0][0];
   				QCmatrixd=&mercury_normal_QCmatrixd_2_16[0];
-  				R=new double [N*Vwidth];
-  				Q=new double [N*Vwidth];
+  				R=CNEW(double, N*Vwidth, "ldpc.R");
+  				Q=CNEW(double, N*Vwidth, "ldpc.Q");
   			}
   			else if(K==300)//rate == 3/16
   			{
@@ -180,8 +169,8 @@ void cl_ldpc::encode(const int* data, int*  encoded_data)
   				QCmatrixEnc=&mercury_normal_QCmatrixEnc_3_16[0][0];
   				QCmatrixV=&mercury_normal_QCmatrixV_3_16[0][0];
   				QCmatrixd=&mercury_normal_QCmatrixd_3_16[0];
-  				R=new double [N*Vwidth];
-  				Q=new double [N*Vwidth];
+  				R=CNEW(double, N*Vwidth, "ldpc.R");
+  				Q=CNEW(double, N*Vwidth, "ldpc.Q");
   			}
   			else if(K==400)//rate == 4/16
   			{
@@ -192,8 +181,8 @@ void cl_ldpc::encode(const int* data, int*  encoded_data)
   				QCmatrixEnc=&mercury_normal_QCmatrixEnc_4_16[0][0];
   				QCmatrixV=&mercury_normal_QCmatrixV_4_16[0][0];
   				QCmatrixd=&mercury_normal_QCmatrixd_4_16[0];
-  				R=new double [N*Vwidth];
-  				Q=new double [N*Vwidth];
+  				R=CNEW(double, N*Vwidth, "ldpc.R");
+  				Q=CNEW(double, N*Vwidth, "ldpc.Q");
   			}
   			else if(K==500)//rate == 5/16
   			{
@@ -204,8 +193,8 @@ void cl_ldpc::encode(const int* data, int*  encoded_data)
   				QCmatrixEnc=&mercury_normal_QCmatrixEnc_5_16[0][0];
   				QCmatrixV=&mercury_normal_QCmatrixV_5_16[0][0];
   				QCmatrixd=&mercury_normal_QCmatrixd_5_16[0];
-  				R=new double [N*Vwidth];
-  				Q=new double [N*Vwidth];
+  				R=CNEW(double, N*Vwidth, "ldpc.R");
+  				Q=CNEW(double, N*Vwidth, "ldpc.Q");
   			}
   			else if(K==600)//rate == 6/16
   			{
@@ -216,8 +205,8 @@ void cl_ldpc::encode(const int* data, int*  encoded_data)
   				QCmatrixEnc=&mercury_normal_QCmatrixEnc_6_16[0][0];
   				QCmatrixV=&mercury_normal_QCmatrixV_6_16[0][0];
   				QCmatrixd=&mercury_normal_QCmatrixd_6_16[0];
-  				R=new double [N*Vwidth];
-  				Q=new double [N*Vwidth];
+  				R=CNEW(double, N*Vwidth, "ldpc.R");
+  				Q=CNEW(double, N*Vwidth, "ldpc.Q");
   			}
   			else if(K==800)//rate == 8/16
   			{
@@ -228,8 +217,32 @@ void cl_ldpc::encode(const int* data, int*  encoded_data)
   				QCmatrixEnc=&mercury_normal_QCmatrixEnc_8_16[0][0];
   				QCmatrixV=&mercury_normal_QCmatrixV_8_16[0][0];
   				QCmatrixd=&mercury_normal_QCmatrixd_8_16[0];
-  				R=new double [N*Vwidth];
-  				Q=new double [N*Vwidth];
+  				R=CNEW(double, N*Vwidth, "ldpc.R");
+  				Q=CNEW(double, N*Vwidth, "ldpc.Q");
+  			}
+  			else if(K==1000)//rate == 10/16
+  			{
+  				Cwidth=mercury_normal_Cwidth_10_16;
+  				Vwidth=mercury_normal_Vwidth_10_16;
+  				dwidth=mercury_normal_dwidth_10_16;
+  				QCmatrixC=&mercury_normal_QCmatrixC_10_16[0][0];
+  				QCmatrixEnc=&mercury_normal_QCmatrixEnc_10_16[0][0];
+  				QCmatrixV=&mercury_normal_QCmatrixV_10_16[0][0];
+  				QCmatrixd=&mercury_normal_QCmatrixd_10_16[0];
+  				R=CNEW(double, N*Vwidth, "ldpc.R");
+  				Q=CNEW(double, N*Vwidth, "ldpc.Q");
+  			}
+  			else if(K==1200)//rate == 12/16
+  			{
+  				Cwidth=mercury_normal_Cwidth_12_16;
+  				Vwidth=mercury_normal_Vwidth_12_16;
+  				dwidth=mercury_normal_dwidth_12_16;
+  				QCmatrixC=&mercury_normal_QCmatrixC_12_16[0][0];
+  				QCmatrixEnc=&mercury_normal_QCmatrixEnc_12_16[0][0];
+  				QCmatrixV=&mercury_normal_QCmatrixV_12_16[0][0];
+  				QCmatrixd=&mercury_normal_QCmatrixd_12_16[0];
+  				R=CNEW(double, N*Vwidth, "ldpc.R");
+  				Q=CNEW(double, N*Vwidth, "ldpc.Q");
   			}
   			else if(K==1400)//rate == 14/16
   			{
@@ -240,8 +253,8 @@ void cl_ldpc::encode(const int* data, int*  encoded_data)
   				QCmatrixEnc=&mercury_normal_QCmatrixEnc_14_16[0][0];
   				QCmatrixV=&mercury_normal_QCmatrixV_14_16[0][0];
   				QCmatrixd=&mercury_normal_QCmatrixd_14_16[0];
-  				R=new double [N*Vwidth];
-  				Q=new double [N*Vwidth];
+  				R=CNEW(double, N*Vwidth, "ldpc.R");
+  				Q=CNEW(double, N*Vwidth, "ldpc.Q");
   			}
   			else
   			{
@@ -255,7 +268,7 @@ void cl_ldpc::encode(const int* data, int*  encoded_data)
   				exit(2);
   			}
   			// Pre-allocate V_pos workspace for SPA decoder (eliminates per-frame heap churn)
-  			V_pos=new int[P*Cwidth];
+  			V_pos=CNEW(int, P*Cwidth, "ldpc.V_pos");
   		}
 
   	}
@@ -272,7 +285,7 @@ void cl_ldpc::encode(const int* data, int*  encoded_data)
  	}
  	else if(decoding_algorithm_val==SPA)
  	{
- 		iterations_done=decode_SPA(data,decoded_data,QCmatrixC,Cwidth,Cwidth, QCmatrixV,Vwidth,Vwidth,QCmatrixd,dwidth,R,Q,V_pos,N,K,P,nIteration_max_val);
+ 		iterations_done=decode_SPA(data,decoded_data,QCmatrixC,Cwidth,Cwidth, QCmatrixV,Vwidth,Vwidth,QCmatrixd,dwidth,R,Q,V_pos,N,K,P,nIteration_max_val,decode_abort);
  	}
  	return iterations_done;
  }

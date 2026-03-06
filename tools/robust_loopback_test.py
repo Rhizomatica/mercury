@@ -17,6 +17,9 @@ VB_IN  = "CABLE Output (VB-Audio Virtual Cable)"
 config = int(sys.argv[1]) if len(sys.argv) > 1 and not sys.argv[1].startswith('-') else 100
 timeout_s = int(sys.argv[2]) if len(sys.argv) > 2 and not sys.argv[2].startswith('-') else 120
 gearshift = '--gearshift' in sys.argv or '-g' in sys.argv
+narrowband = '--nb' in sys.argv or '-N' in sys.argv
+no_robust = '--no-robust' in sys.argv  # skip -R flag (for testing OFDM configs directly)
+verbose = '--verbose' in sys.argv or '-v' in sys.argv
 
 RSP_PORT = 7002  # responder control=7002, data=7003
 CMD_PORT = 7006  # commander control=7006, data=7007
@@ -93,8 +96,9 @@ def rx_thread_fn(sock, stop_event, logfile):
 
 def main():
     mode_name = {100: "ROBUST_0", 101: "ROBUST_1", 102: "ROBUST_2"}.get(config, f"CONFIG_{config}")
-    print(f"=== Mercury ROBUST Loopback Test: {mode_name} (config={config}) ===")
-    print(f"Timeout: {timeout_s}s, Gearshift: {'ON' if gearshift else 'OFF'}")
+    bw = "NB" if narrowband else "WB"
+    print(f"=== Mercury ROBUST Loopback Test: {bw} {mode_name} (config={config}) ===")
+    print(f"Timeout: {timeout_s}s, Gearshift: {'ON' if gearshift else 'OFF'}, Narrowband: {'ON' if narrowband else 'OFF'}")
     print(f"Commander ports: ctrl={CMD_PORT} data={CMD_PORT+1}")
     print(f"Responder ports: ctrl={RSP_PORT} data={RSP_PORT+1}")
     print()
@@ -103,7 +107,7 @@ def main():
     os.system("taskkill /F /IM mercury.exe 2>nul")
     time.sleep(1)
 
-    logpath = f"robust_{config}_test.log"
+    logpath = f"robust_{bw.lower()}_{config}_test.log"
     logfile = open(logpath, "w")
     procs = []
     sockets = []
@@ -115,11 +119,11 @@ def main():
     try:
         # Start responder (headless)
         rsp_cmd = [
-            MERCURY, "-m", "ARQ", "-s", str(config), "-R",
+            MERCURY, "-m", "ARQ", "-s", str(config)] + ([] if no_robust else ["-R"]) + [
             "-p", str(RSP_PORT),
             "-i", VB_IN, "-o", VB_OUT,
             "-x", "wasapi", "-n"
-        ] + (["-g"] if gearshift else [])
+        ] + (["-g"] if gearshift else []) + (["-N"] if narrowband else ["-W"]) + (["-v"] if verbose else [])
         print(f"Starting responder: {' '.join(rsp_cmd)}")
         rsp = subprocess.Popen(rsp_cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
         procs.append(rsp)
@@ -129,11 +133,11 @@ def main():
 
         # Start commander (headless)
         cmd_cmd = [
-            MERCURY, "-m", "ARQ", "-s", str(config), "-R",
+            MERCURY, "-m", "ARQ", "-s", str(config)] + ([] if no_robust else ["-R"]) + [
             "-p", str(CMD_PORT),
             "-i", VB_IN, "-o", VB_OUT,
             "-x", "wasapi", "-n"
-        ] + (["-g"] if gearshift else [])
+        ] + (["-g"] if gearshift else []) + (["-N"] if narrowband else ["-W"]) + (["-v"] if verbose else [])
         print(f"Starting commander: {' '.join(cmd_cmd)}")
         cmd = subprocess.Popen(cmd_cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
         procs.append(cmd)

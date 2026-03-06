@@ -46,6 +46,13 @@ TEST_ACOUSTIC_CONTROL.ps1
 # Test logs and benchmark results
 *.log
 benchmark_results/
+benchmark_results_nb/
+
+# Development-only test/debug scripts
+tools/crash_loop_test.py
+tools/data_integrity_test.py
+tools/turbo_gdb_test.py
+tools/watchpoint_gdb.py
 
 # Windows short filename artifacts
 NDH6SA~M

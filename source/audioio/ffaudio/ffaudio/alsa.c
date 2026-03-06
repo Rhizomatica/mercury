@@ -158,9 +158,13 @@ struct ffaudio_buf {
 	ffuint bufsize;
 	ffuint channels;
 	ffuint nonblock;
+	ffuint use_mmap; // 1=MMAP access, 0=RW access (fallback)
 
 	snd_pcm_uframes_t mmap_frames;
 	snd_pcm_uframes_t mmap_off;
+
+	void *rw_buf;      // read buffer for RW mode
+	ffuint rw_buf_size;
 
 	int retcode;
 	const char *errfunc; // libALSA function name
@@ -183,6 +187,7 @@ void ffalsa_free(ffaudio_buf *b)
 
 	if (b->pcm != NULL)
 		snd_pcm_close(b->pcm);
+	ffmem_free(b->rw_buf);
 	ffmem_free(b->errmsg);
 	ffmem_free(b);
 }
@@ -314,8 +319,10 @@ int ffalsa_open(ffaudio_buf *b, ffaudio_conf *conf, ffuint flags)
 		goto end;
 	}
 
-	int access = SND_PCM_ACCESS_MMAP_INTERLEAVED;
-	if (0 != (e = snd_pcm_hw_params_set_access(b->pcm, params, access))) {
+	b->use_mmap = 0;
+	if (0 == snd_pcm_hw_params_set_access(b->pcm, params, SND_PCM_ACCESS_MMAP_INTERLEAVED)) {
+		b->use_mmap = 1;
+	} else if (0 != (e = snd_pcm_hw_params_set_access(b->pcm, params, SND_PCM_ACCESS_RW_INTERLEAVED))) {
 		b->errfunc = "snd_pcm_hw_params_set_access";
 		b->err = e;
 		goto end;
@@ -346,6 +353,16 @@ int ffalsa_open(ffaudio_buf *b, ffaudio_conf *conf, ffuint flags)
 	b->period_ms = conf->buffer_length_msec / 3;
 	b->bufsize = buffer_usec_to_size(conf, bufsize_usec);
 	b->channels = conf->channels;
+
+	if (!b->use_mmap) {
+		b->rw_buf_size = b->bufsize;
+		b->rw_buf = ffmem_alloc(b->rw_buf_size);
+		if (b->rw_buf == NULL) {
+			b->errfunc = "rw_buf alloc";
+			b->err = -ENOMEM;
+			goto end;
+		}
+	}
 
 	return 0;
 
@@ -464,19 +481,29 @@ int ffalsa_clear(ffaudio_buf *b)
 
 static int alsa_writeonce(ffaudio_buf *b, const void *data, ffsize len)
 {
+	snd_pcm_sframes_t r;
+	snd_pcm_uframes_t frames = len / b->frame_size;
+
+	if (!b->use_mmap) {
+		r = snd_pcm_writei(b->pcm, data, frames);
+		if (r < 0) {
+			b->errfunc = "snd_pcm_writei";
+			b->err = r;
+			return -FFAUDIO_ERROR;
+		}
+		return r * b->frame_size;
+	}
+
 	int e;
 	const snd_pcm_channel_area_t *areas;
-	snd_pcm_sframes_t r;
-	snd_pcm_uframes_t frames;
 	snd_pcm_uframes_t off;
 
-	if (0 > (r = snd_pcm_avail_update(b->pcm))) { // needed for snd_pcm_mmap_begin()
+	if (0 > (r = snd_pcm_avail_update(b->pcm))) {
 		b->errfunc = "snd_pcm_avail_update";
 		b->err = r;
 		return -FFAUDIO_ERROR;
 	}
 
-	frames = len / b->frame_size;
 	if (0 != (e = snd_pcm_mmap_begin(b->pcm, &areas, &off, &frames))) {
 		b->errfunc = "snd_pcm_mmap_begin";
 		b->err = e;
@@ -505,25 +532,40 @@ static int alsa_writeonce(ffaudio_buf *b, const void *data, ffsize len)
 
 static int alsa_readonce(ffaudio_buf *b, const void **data)
 {
+	snd_pcm_sframes_t r;
+
+	if (!b->use_mmap) {
+		snd_pcm_uframes_t frames = b->rw_buf_size / b->frame_size;
+		r = snd_pcm_readi(b->pcm, b->rw_buf, frames);
+		if (r < 0) {
+			b->errfunc = "snd_pcm_readi";
+			b->err = r;
+			return -FFAUDIO_ERROR;
+		}
+		if (r == 0)
+			return 0;
+		*data = b->rw_buf;
+		return r * b->frame_size;
+	}
+
 	int e;
 	const snd_pcm_channel_area_t *areas;
-	snd_pcm_sframes_t wr;
 
 	if (b->mmap_frames != 0) {
-		wr = snd_pcm_mmap_commit(b->pcm, b->mmap_off, b->mmap_frames);
-		if (wr >= 0 && (snd_pcm_uframes_t)wr != b->mmap_frames)
-			wr = -EPIPE;
+		r = snd_pcm_mmap_commit(b->pcm, b->mmap_off, b->mmap_frames);
+		if (r >= 0 && (snd_pcm_uframes_t)r != b->mmap_frames)
+			r = -EPIPE;
 		b->mmap_frames = 0;
-		if (wr < 0) {
+		if (r < 0) {
 			b->errfunc = "snd_pcm_mmap_commit";
-			b->err = wr;
+			b->err = r;
 			return -FFAUDIO_ERROR;
 		}
 	}
 
-	if (0 > (wr = snd_pcm_avail_update(b->pcm))) { // needed for snd_pcm_mmap_begin()
+	if (0 > (r = snd_pcm_avail_update(b->pcm))) {
 		b->errfunc = "snd_pcm_avail_update";
-		b->err = wr;
+		b->err = r;
 		return -FFAUDIO_ERROR;
 	}
 

@@ -53,6 +53,7 @@ private:
     void renderARQTab();
     void renderGearShiftTab();
     void renderAdvancedTab();
+    void renderSecurityTab();
 
     // Temporary settings (before Apply)
     // Station
@@ -83,9 +84,18 @@ private:
     // Modem
     bool coarse_freq_sync_enabled_;
     bool robust_mode_enabled_;
+    int bandwidth_mode_;
+
+    // OFDM
+    int guard_interval_idx_;  // Index into GI dropdown values
 
     // Advanced
     bool hide_console_;
+    bool log_file_enabled_;
+
+    // Security
+    int encryption_mode_;  // ENCRYPT_OFF=0, ENCRYPT_STRICT=1, ENCRYPT_FAST=2
+    char psk_hex_[130];    // Pre-shared key (hex string)
 };
 
 // Global dialog - Meyer's Singleton to avoid static init order fiasco

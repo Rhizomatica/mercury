@@ -32,6 +32,8 @@
 #include "mercury_normal_5_16.h"
 #include "mercury_normal_6_16.h"
 #include "mercury_normal_8_16.h"
+#include "mercury_normal_10_16.h"
+#include "mercury_normal_12_16.h"
 
 #include "mercury_met_2_16.h"
 

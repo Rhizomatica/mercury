@@ -14,7 +14,10 @@
 
 #include <atomic>
 #include <complex>
+#include <string>
+#include <vector>
 #include <cmath>
+#include <cstdio>
 #include <cstring>
 
 // Buffer sizes
@@ -142,6 +145,40 @@ struct st_gui_state {
     // ========== Modem Options ==========
     std::atomic<bool> coarse_freq_sync_enabled{false}; // Coarse freq search (±30 Hz), for HF radio use
     std::atomic<bool> robust_mode_enabled{false};      // MFSK robust mode for weak-signal hailing
+    std::atomic<bool> narrowband_enabled{false};       // Narrowband mode (Nc=10, BW=469 Hz)
+    std::atomic<int> bandwidth_mode{0};               // BW_AUTO=0, BW_NB_ONLY=1
+    std::atomic<bool> session_is_wideband{false};     // True when connected in WB after upgrade
+    std::atomic<bool> peer_wb_capable{false};         // Remote station supports WB (from TEST_CONNECTION)
+
+    // ========== Compression Status ==========
+    std::atomic<bool> compression_active{false};     // Whether compression is currently active
+    std::atomic<int> compression_algo{0};            // Last batch algo: 0=RAW, 1=PPMd, 2=zstd
+    std::atomic<float> compression_ratio{1.0f};      // EMA compression ratio (raw/compressed)
+
+    // ========== RX Overload ==========
+    std::atomic<bool> rx_overload{false};             // Average energy too high in last 1s window
+
+    // ========== Encryption ==========
+    std::atomic<int> encryption_mode{0};              // ENCRYPT_OFF=0, STRICT=1, FAST=2
+    std::atomic<bool> encryption_active{false};       // True when cipher suite is active
+    std::atomic<bool> encryption_psk_mismatch{false}; // True on auth failure (PSK mismatch)
+
+    // ========== Monitor Panel ==========
+    std::atomic<bool> monitor_enabled{false};
+    GuiMutex monitor_mutex;
+    std::string monitor_text;               // Accumulated monitor output (mutex-protected)
+    std::string monitor_text_snapshot;       // Snapshot for rendering (avoids holding lock)
+    std::atomic<bool> monitor_updated{false}; // Dirty flag for GUI redraw
+    std::string monitor_callsign_a;          // Commander callsign (for labeling)
+    std::string monitor_callsign_b;          // Responder callsign (for labeling)
+
+    // File entries from binary transfers (downloadable)
+    struct MonitorFileEntry {
+        std::string suggested_name;
+        std::vector<uint8_t> data;
+    };
+    GuiMutex monitor_files_mutex;
+    std::vector<MonitorFileEntry> monitor_files;
 
     // ========== GUI Control ==========
     std::atomic<bool> gui_running{true};
@@ -335,6 +372,93 @@ inline void gui_add_throughput_bytes_tx(long long bytes) {
 
 inline void gui_add_throughput_bytes_rx(long long bytes) {
     g_gui_state.bytes_received_total.fetch_add(bytes);
+}
+
+/**
+ * @brief Push plaintext data to monitor panel (called from ARQ TX/RX paths)
+ * @param data Pointer to plaintext data
+ * @param len Length in bytes
+ * @param is_tx true if this is data we are sending, false if receiving
+ */
+inline void gui_push_monitor_text(const char* data, int len, bool is_tx) {
+    if (!g_gui_state.monitor_enabled.load(std::memory_order_relaxed)) return;
+    if (len <= 0 || data == nullptr) return;
+
+    bool is_binary = false;
+    std::vector<uint8_t> binary_copy;
+
+    { // Scope monitor_mutex — never hold while locking monitor_files_mutex
+        GuiLockGuard lock(g_gui_state.monitor_mutex);
+
+        // Label with callsign (A=commander/TX, B=responder/RX)
+        const std::string& call = is_tx ? g_gui_state.monitor_callsign_a
+                                        : g_gui_state.monitor_callsign_b;
+        if (!call.empty()) {
+            g_gui_state.monitor_text += call;
+            g_gui_state.monitor_text += "> ";
+        } else {
+            g_gui_state.monitor_text += is_tx ? "TX> " : "RX> ";
+        }
+
+        // Check if data is printable text or binary
+        bool is_text = true;
+        for (int i = 0; i < len && is_text; i++) {
+            unsigned char c = (unsigned char)data[i];
+            if (c < 0x20 && c != '\n' && c != '\r' && c != '\t') is_text = false;
+        }
+
+        if (is_text) {
+            g_gui_state.monitor_text.append(data, len);
+        } else {
+            is_binary = true;
+            binary_copy.assign((const uint8_t*)data, (const uint8_t*)data + len);
+            char buf[80];
+            snprintf(buf, sizeof(buf), "[binary: %d bytes]", len);
+            g_gui_state.monitor_text += buf;
+        }
+        g_gui_state.monitor_text += "\n";
+
+        // Cap buffer at ~1 MB, trim oldest
+        if (g_gui_state.monitor_text.size() > 1024 * 1024) {
+            size_t trim = g_gui_state.monitor_text.size() - 768 * 1024;
+            size_t nl = g_gui_state.monitor_text.find('\n', trim);
+            if (nl != std::string::npos)
+                g_gui_state.monitor_text.erase(0, nl + 1);
+        }
+
+        g_gui_state.monitor_updated.store(true);
+    }
+
+    // Queue binary file outside monitor_mutex to avoid nested lock
+    if (is_binary) {
+        GuiLockGuard flock(g_gui_state.monitor_files_mutex);
+        st_gui_state::MonitorFileEntry entry;
+        char name[64];
+        snprintf(name, sizeof(name), "transfer_%d.bin",
+                 (int)g_gui_state.monitor_files.size());
+        entry.suggested_name = name;
+        entry.data = std::move(binary_copy);
+        g_gui_state.monitor_files.push_back(std::move(entry));
+    }
+}
+
+/**
+ * @brief Push a symbolic event to monitor panel (ACK, BREAK, HAIL, GEARSHIFT, etc.)
+ * @param event Event string (e.g., "[ACK]", "[HAIL -> W1ABC]")
+ * @param is_tx true if this station generated the event
+ */
+inline void gui_push_monitor_event(const char* event, bool is_tx) {
+    if (!g_gui_state.monitor_enabled.load(std::memory_order_relaxed)) return;
+    gui_push_monitor_text(event, (int)strlen(event), is_tx);
+}
+
+/**
+ * @brief Set monitor callsigns (called during connection setup)
+ */
+inline void gui_set_monitor_callsigns(const char* my_call, const char* dest_call) {
+    GuiLockGuard lock(g_gui_state.monitor_mutex);
+    g_gui_state.monitor_callsign_a = my_call ? my_call : "";
+    g_gui_state.monitor_callsign_b = dest_call ? dest_call : "";
 }
 
 #endif // GUI_STATE_H_

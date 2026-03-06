@@ -68,6 +68,10 @@ class cl_data_container
 	_Atomic(int) data_ready;
 	_Atomic(int) nUnder_processing_events;
 	_Atomic(int) buffer_Nsymb;
+	int buffer_Nsymb_min{0};  // Monitor mode: minimum buffer size (0=auto-calculate)
+	_Atomic(int) rx_mute;
+	_Atomic(int) rx_mute_samples;  // samples zeroed by rx_mute since last MF search
+	_Atomic(int) ring_write_index;  // current write position in double-mapped ring buffer
 
 	int total_frame_size;
 

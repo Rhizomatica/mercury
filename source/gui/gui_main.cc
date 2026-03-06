@@ -642,6 +642,15 @@ static void RenderGUI() {
             else         ImGui::TextColored(ImVec4(0.3f, 0.3f, 0.3f, 1.0f), " DAT");
             if (sb_ack)  ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), " ACK");
             else         ImGui::TextColored(ImVec4(0.3f, 0.3f, 0.3f, 1.0f), " ACK");
+
+            bool ovl = g_gui_state.rx_overload.load();
+            if (ovl) {
+                // Strobe: alternate red/dark at ~4 Hz
+                float t = (float)fmod(ImGui::GetTime() * 4.0, 1.0);
+                float bright = (t < 0.5f) ? 1.0f : 0.2f;
+                ImGui::TextColored(ImVec4(bright, 0.0f, 0.0f, 1.0f), " OVL");
+            }
+            else         ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), " OVL");
         }
         ImGui::EndGroup();
 
@@ -670,6 +679,21 @@ static void RenderGUI() {
             else
                 ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "%s", link_str);
 
+            // Encryption status
+            {
+                bool enc_active = g_gui_state.encryption_active.load();
+                bool psk_mismatch = g_gui_state.encryption_psk_mismatch.load();
+                int enc_mode = g_gui_state.encryption_mode.load();
+                if (psk_mismatch)
+                    ImGui::TextColored(ImVec4(1.0f, 0.2f, 0.2f, 1.0f), "PSK MISMATCH");
+                else if (enc_active)
+                    ImGui::TextColored(ImVec4(0.2f, 1.0f, 0.4f, 1.0f), "ENCRYPTED");
+                else if (enc_mode > 0 && link_status == 2)
+                    ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.2f, 1.0f), "KEY EXCHANGE...");
+                else if (enc_mode > 0)
+                    ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.7f, 1.0f), "E2E Enabled");
+            }
+
             // SNR and freq offset
             if (snr_rx > -90.0f)
                 ImGui::Text("SNR %.1f dB  |  AFC %.1f Hz", snr_rx, freq_off);
@@ -678,15 +702,25 @@ static void RenderGUI() {
 
             ImGui::Spacing();
 
-            // Throughput
-            if (throughput >= 1000.0)
-                ImGui::Text("%.1f kbps", throughput / 1000.0);
-            else
-                ImGui::Text("%.0f bps", throughput);
+            // Throughput (TCP-to-TCP, pre-compression bytes)
+            {
+                if (throughput >= 1000.0)
+                    ImGui::Text("%.1f kbps", throughput / 1000.0);
+                else if (throughput > 0)
+                    ImGui::Text("%.0f bps", throughput);
+                else
+                    ImGui::Text("--- bps");
+            }
 
-            // PHY rate + efficiency
+            // PHY rate + efficiency (multiplier when compression boosts above 100%)
             if (phy_rate > 0 && throughput > 0)
-                ImGui::Text("PHY %.0f bps (%.0f%%)", phy_rate, 100.0 * throughput / phy_rate);
+            {
+                double efficiency = throughput / phy_rate;
+                if (efficiency > 1.0)
+                    ImGui::Text("PHY %.0f bps (%.1fx)", phy_rate, efficiency);
+                else
+                    ImGui::Text("PHY %.0f bps (%.0f%%)", phy_rate, efficiency * 100.0);
+            }
             else if (phy_rate > 0)
                 ImGui::Text("PHY %.0f bps", phy_rate);
 
@@ -700,14 +734,81 @@ static void RenderGUI() {
                 ImGui::Text("%lld B transferred", total_bytes);
         }
         ImGui::EndGroup();
+
+        ImGui::SameLine();
+
+        // Right: Bandwidth mode display (local + remote)
+        ImGui::BeginGroup();
+        {
+            bool local_nb = g_gui_state.narrowband_enabled.load();
+            bool connected = (g_gui_state.link_status.load() == 2);
+            bool session_wb = g_gui_state.session_is_wideband.load();
+            bool peer_wb = g_gui_state.peer_wb_capable.load();
+            int bw_mode = g_gui_state.bandwidth_mode.load();
+
+            // Local bandwidth
+            const char* local_bw;
+            if (connected)
+                local_bw = session_wb ? "2300 Hz" : "500 Hz";
+            else
+                local_bw = local_nb ? "500 Hz" : "2300 Hz";
+            ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Local");
+            ImGui::TextColored(ImVec4(0.4f, 0.9f, 1.0f, 1.0f), " %s", local_bw);
+            if (!connected && bw_mode == 0)
+                ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), " (auto)");
+
+            ImGui::Spacing();
+
+            // Remote bandwidth (only meaningful when connected)
+            ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Remote");
+            if (connected)
+            {
+                const char* remote_bw = session_wb ? "2300 Hz" : "500 Hz";
+                ImGui::TextColored(ImVec4(0.4f, 0.9f, 1.0f, 1.0f), " %s", remote_bw);
+                if (peer_wb && !session_wb)
+                    ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), " (WB ok)");
+            }
+            else
+                ImGui::TextColored(ImVec4(0.4f, 0.4f, 0.4f, 1.0f), " ---");
+        }
+        ImGui::EndGroup();
+
+        ImGui::SameLine();
+
+        // Compression status display
+        ImGui::BeginGroup();
+        {
+            bool comp_on = g_gui_state.compression_active.load();
+            int comp_algo = g_gui_state.compression_algo.load();
+            float comp_ratio = g_gui_state.compression_ratio.load();
+
+            ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Compress");
+            if (comp_on)
+            {
+                const char* algo_str = "RAW";
+                if (comp_algo == 1) algo_str = "PPMd";
+                else if (comp_algo == 2) algo_str = "zstd";
+                ImGui::TextColored(ImVec4(0.3f, 1.0f, 0.3f, 1.0f), " ON (%s)", algo_str);
+                if (comp_ratio > 1.0f)
+                    ImGui::TextColored(ImVec4(0.4f, 0.9f, 1.0f, 1.0f), " %.1fx", comp_ratio);
+            }
+            else
+            {
+                ImGui::TextColored(ImVec4(0.4f, 0.4f, 0.4f, 1.0f), " OFF");
+            }
+        }
+        ImGui::EndGroup();
     }
     ImGui::EndChild();
 
     // ========== Controls: Gain Levels ==========
-    ImGui::BeginChild("Controls", ImVec2(0, 190), true);
+    bool gains_locked = g_gui_state.gains_locked.load();
+
+    // When locked, collapse to just the checkbox row (~35px); when unlocked, full panel (190px)
+    float controls_height = gains_locked ? 35.0f : 190.0f;
+    ImGui::BeginChild("Controls", ImVec2(0, controls_height), true);
 
     // Lock checkbox at top
-    bool gains_locked = g_gui_state.gains_locked.load();
     if (ImGui::Checkbox("Lock Gain Adjustments", &gains_locked)) {
         g_gui_state.gains_locked.store(gains_locked);
         // Save immediately when lock state changes
@@ -721,6 +822,7 @@ static void RenderGUI() {
         ImGui::SetTooltip("Unlock to adjust gain sliders.\nSettings auto-save when you stop adjusting.");
     }
 
+    if (!gains_locked) {
     ImGui::Separator();
     ImGui::Spacing();
 
@@ -1051,17 +1153,157 @@ static void RenderGUI() {
     }
 
     ImGui::Columns(1);
+    } // end if (!gains_locked)
     ImGui::EndChild();
+
+    // ========== Monitor Panel ==========
+    ImGui::Separator();
+    {
+        static bool monitor_on = g_gui_state.monitor_enabled.load();
+        if (ImGui::Checkbox("Monitor", &monitor_on)) {
+            g_gui_state.monitor_enabled.store(monitor_on);
+            // Persist setting
+            g_settings.monitor_enabled = monitor_on;
+            std::string path = getDefaultConfigPath();
+            g_settings.save(path);
+        }
+        ImGui::SameLine();
+        ImGui::TextDisabled("(?)");
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Show decoded plaintext traffic.\nFor FCC compliance monitoring.");
+        }
+
+        if (monitor_on) {
+            ImGui::SameLine(0, 20);
+            if (ImGui::Button("Copy Text")) {
+                GuiLockGuard lock(g_gui_state.monitor_mutex);
+                if (!g_gui_state.monitor_text.empty())
+                    ImGui::SetClipboardText(g_gui_state.monitor_text.c_str());
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Clear")) {
+                {
+                    GuiLockGuard lock(g_gui_state.monitor_mutex);
+                    g_gui_state.monitor_text.clear();
+                }
+                g_gui_state.monitor_text_snapshot.clear();
+                {
+                    GuiLockGuard lock(g_gui_state.monitor_files_mutex);
+                    g_gui_state.monitor_files.clear();
+                }
+                g_gui_state.monitor_updated.store(true);
+            }
+
+            // Snapshot text for rendering (avoid holding lock during draw)
+            if (g_gui_state.monitor_updated.exchange(false)) {
+                GuiLockGuard lock(g_gui_state.monitor_mutex);
+                g_gui_state.monitor_text_snapshot = g_gui_state.monitor_text;
+            }
+
+            float panel_height = 150.0f;
+            ImGui::BeginChild("MonitorScroll", ImVec2(0, panel_height), true);
+            {
+                // Render text with callsign coloring
+                const std::string& call_a = g_gui_state.monitor_callsign_a;
+                const std::string& call_b = g_gui_state.monitor_callsign_b;
+                const char* p = g_gui_state.monitor_text_snapshot.c_str();
+
+                while (*p) {
+                    const char* eol = strchr(p, '\n');
+                    if (!eol) eol = p + strlen(p);
+                    int line_len = (int)(eol - p);
+
+                    std::string line(p, line_len);
+
+                    // Color callsign prefix
+                    bool colored = false;
+                    if (!call_a.empty() && line.compare(0, call_a.size(), call_a) == 0
+                        && line.size() > call_a.size() && line[call_a.size()] == '>') {
+                        // Cyan for station A (commander / TX)
+                        int prefix_len = (int)call_a.size() + 1;
+                        ImGui::TextColored(ImVec4(0.2f, 0.8f, 1.0f, 1.0f), "%.*s",
+                                           prefix_len, line.c_str());
+                        ImGui::SameLine(0, 0);
+                        ImGui::TextUnformatted(line.c_str() + prefix_len,
+                                               line.c_str() + line_len);
+                        colored = true;
+                    }
+                    else if (!call_b.empty() && line.compare(0, call_b.size(), call_b) == 0
+                             && line.size() > call_b.size() && line[call_b.size()] == '>') {
+                        // Green for station B (responder / RX)
+                        int prefix_len = (int)call_b.size() + 1;
+                        ImGui::TextColored(ImVec4(0.2f, 1.0f, 0.4f, 1.0f), "%.*s",
+                                           prefix_len, line.c_str());
+                        ImGui::SameLine(0, 0);
+                        ImGui::TextUnformatted(line.c_str() + prefix_len,
+                                               line.c_str() + line_len);
+                        colored = true;
+                    }
+                    else if (line.compare(0, 3, "TX>") == 0) {
+                        ImGui::TextColored(ImVec4(0.2f, 0.8f, 1.0f, 1.0f), "TX>");
+                        ImGui::SameLine(0, 0);
+                        ImGui::TextUnformatted(line.c_str() + 3, line.c_str() + line_len);
+                        colored = true;
+                    }
+                    else if (line.compare(0, 3, "RX>") == 0) {
+                        ImGui::TextColored(ImVec4(0.2f, 1.0f, 0.4f, 1.0f), "RX>");
+                        ImGui::SameLine(0, 0);
+                        ImGui::TextUnformatted(line.c_str() + 3, line.c_str() + line_len);
+                        colored = true;
+                    }
+
+                    if (!colored && line_len > 0) {
+                        ImGui::TextUnformatted(line.c_str(), line.c_str() + line_len);
+                    }
+                    else if (!colored && line_len == 0) {
+                        ImGui::TextUnformatted("");
+                    }
+
+                    // Check for inline Save button for binary entries
+                    if (line.find("[binary:") != std::string::npos) {
+                        ImGui::SameLine();
+                        // Find which file entry this corresponds to
+                        GuiLockGuard lock(g_gui_state.monitor_files_mutex);
+                        // Simple heuristic: count binary lines up to this point
+                        static int save_id = 0;
+                        char btn_id[32];
+                        snprintf(btn_id, sizeof(btn_id), "Save##mon_%d", save_id++);
+                        if (ImGui::SmallButton(btn_id)) {
+                            // For now just copy binary to clipboard notice
+                            // Full file dialog would use tinyfiledialogs
+                            printf("[MONITOR] Save button clicked for binary entry\n");
+                            fflush(stdout);
+                        }
+                    }
+
+                    p = (*eol) ? eol + 1 : eol;
+                }
+
+                // Auto-scroll to bottom (unless user scrolled up)
+                if (ImGui::GetScrollY() >= ImGui::GetScrollMaxY() - 10.0f)
+                    ImGui::SetScrollHereY(1.0f);
+            }
+            ImGui::EndChild();
+        }
+    }
 
     // ========== Waterfall Display ==========
     if (show_waterfall) {
-        ImGui::BeginChild("Waterfall", ImVec2(0, 120), true);
+        // Fill remaining space (minimum 80px), rounded to integer pixels
+        float wf_height = ImGui::GetContentRegionAvail().y;
+        if (wf_height < 80.0f) wf_height = 80.0f;
+        wf_height = (float)(int)wf_height;  // Round to integer pixel
+
+        ImGui::BeginChild("Waterfall", ImVec2(0, wf_height), true);
         ImGui::Text("Waterfall");
         ImGui::SameLine(ImGui::GetWindowWidth() - 100);
         ImGui::Text("-100 to 0 dB");
 
         ImVec2 avail = ImGui::GetContentRegionAvail();
-        g_waterfall.render(avail.x, avail.y - 25);
+        float render_w = (float)(int)avail.x;   // Integer pixels
+        float render_h = (float)(int)(avail.y - 25);
+        if (render_h > 0)
+            g_waterfall.render(render_w, render_h);
 
         ImGui::EndChild();
     }
@@ -1101,6 +1343,23 @@ static void RenderGUI() {
     ImGui::Text("%s", status_str);
     ImGui::SameLine(150);
     ImGui::Text("| %s |", config_to_short_string(g_gui_state.current_configuration.load()));
+    ImGui::SameLine();
+
+    {
+        bool session_wb = g_gui_state.session_is_wideband.load();
+        int bw = g_gui_state.bandwidth_mode.load();
+        const char* bw_str;
+        ImVec4 bw_col;
+        if (connected) {
+            bw_str = session_wb ? "WB" : "NB";
+            bw_col = session_wb ? ImVec4(0.3f, 1.0f, 0.3f, 1.0f)   // green
+                                : ImVec4(1.0f, 1.0f, 0.3f, 1.0f);  // yellow
+        } else {
+            bw_str = (bw == 1) ? "NB" : "AUTO";
+            bw_col = ImVec4(0.5f, 0.8f, 1.0f, 1.0f);  // blue
+        }
+        ImGui::TextColored(bw_col, "| %s |", bw_str);
+    }
     ImGui::SameLine();
 
     bool is_tx = g_gui_state.is_transmitting.load();
@@ -1148,6 +1407,7 @@ int gui_init() {
     g_gui_state.tx_gain_db.store(g_settings.tx_gain_db);
     g_gui_state.rx_gain_db.store(g_settings.rx_gain_db);
     g_gui_state.gains_locked.store(g_settings.gains_locked);
+    g_gui_state.monitor_enabled.store(g_settings.monitor_enabled);
 
     // Initialize slider tracking
     s_last_tx_gain = (float)g_settings.tx_gain_db;
@@ -1245,6 +1505,7 @@ void gui_shutdown() {
     g_settings.tx_gain_db = g_gui_state.tx_gain_db.load();
     g_settings.rx_gain_db = g_gui_state.rx_gain_db.load();
     g_settings.gains_locked = g_gui_state.gains_locked.load();
+    g_settings.monitor_enabled = g_gui_state.monitor_enabled.load();
     g_settings.save(config_path);
 
     // Shutdown waterfall

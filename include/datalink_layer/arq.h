@@ -32,7 +32,12 @@
 #include "datalink_defines.h"
 #include "common/common_defines.h"
 #include "audioio/audioio.h"
+#include "compression/mercury_compress.h"
+#include "datalink_layer/b2f_handler.h"
+#include "crypto/mercury_crypto.h"
 #include <iomanip>
+#include <thread>
+#include <atomic>
 
 union u_SNR {
   float f_SNR;
@@ -41,11 +46,72 @@ union u_SNR {
 
 // Base-36 callsign packing: fits up to 6 chars (A-Z, 0-9) into 5 bytes.
 // Used by START_CONNECTION to avoid callsign truncation on small frames.
-// Format: [4-bit length][6 chars x 6 bits] = 40 bits = 5 bytes.
-inline void callsign_pack(const char* callsign, int len, char* out)
+// Format: [1-bit flags][3-bit length][6 chars x 6 bits] = 40 bits = 5 bytes.
+// Bit 39: narrowband flag (0=wideband, 1=narrowband).
+// Bits 38-36: length (0-6). Bits 35-0: 6 chars x 6 bits.
+//
+// SSID is NOT carried in the pack — it's sent separately in TEST_CONNECTION
+// (data[6]) so that 6-char callsigns are not truncated.
+#define CALLSIGN_PACK_SIZE  5
+#define SSID_NONE           0xFF
+
+// SSID helpers: parse, format, and get SSID from "CALLSIGN-SSID" strings.
+// SSID mapping: 0-15 = numeric (AX.25), 16=L, 17=T, 18=R, 19=X (Winlink/VARA)
+
+inline int callsign_get_ssid(const std::string& callsign)
+{
+	size_t hyp = callsign.rfind('-');
+	if(hyp == std::string::npos || hyp == callsign.size() - 1 || hyp == 0)
+		return SSID_NONE;
+	std::string ssid_str = callsign.substr(hyp + 1);
+	if(ssid_str.size() == 1)
+	{
+		char c = ssid_str[0];
+		if(c >= '0' && c <= '9') return c - '0';
+		if(c == 'L' || c == 'l') return 16;
+		if(c == 'T' || c == 't') return 17;
+		if(c == 'R' || c == 'r') return 18;
+		if(c == 'X' || c == 'x') return 19;
+		return SSID_NONE;
+	}
+	else if(ssid_str.size() == 2 && ssid_str[0] >= '0' && ssid_str[0] <= '1'
+	        && ssid_str[1] >= '0' && ssid_str[1] <= '9')
+	{
+		return (ssid_str[0] - '0') * 10 + (ssid_str[1] - '0');
+	}
+	return SSID_NONE;
+}
+
+inline std::string callsign_strip_ssid(const std::string& callsign)
+{
+	int ssid = callsign_get_ssid(callsign);
+	if(ssid == SSID_NONE) return callsign;
+	size_t hyp = callsign.rfind('-');
+	return callsign.substr(0, hyp);
+}
+
+inline std::string callsign_format_ssid(const std::string& base, int ssid)
+{
+	if(ssid == SSID_NONE || ssid < 0) return base;
+	std::string result = base + "-";
+	if(ssid <= 15)
+	{
+		if(ssid >= 10) { result += (char)('0' + ssid / 10); result += (char)('0' + ssid % 10); }
+		else result += (char)('0' + ssid);
+	}
+	else if(ssid == 16) result += 'L';
+	else if(ssid == 17) result += 'T';
+	else if(ssid == 18) result += 'R';
+	else if(ssid == 19) result += 'X';
+	else { result += (char)('0' + ssid / 10); result += (char)('0' + ssid % 10); }
+	return result;
+}
+
+inline void callsign_pack(const char* callsign, int len, char* out, int flags = 0)
 {
 	if(len > 6) len = 6;
-	uint64_t packed = ((uint64_t)(len & 0xF)) << 36;
+	uint64_t packed = ((uint64_t)(len & 0x7)) << 36;
+	if(flags & 0x01) packed |= ((uint64_t)1) << 39;  // narrowband flag
 	for(int i = 0; i < 6; i++)
 	{
 		int val = 0;
@@ -65,7 +131,7 @@ inline void callsign_pack(const char* callsign, int len, char* out)
 	out[4] = (char)(packed & 0xFF);
 }
 
-inline std::string callsign_unpack(const char* data)
+inline std::string callsign_unpack(const char* data, int* out_flags = nullptr)
 {
 	uint64_t packed = 0;
 	packed |= ((uint64_t)(unsigned char)data[0]) << 32;
@@ -73,8 +139,13 @@ inline std::string callsign_unpack(const char* data)
 	packed |= ((uint64_t)(unsigned char)data[2]) << 16;
 	packed |= ((uint64_t)(unsigned char)data[3]) << 8;
 	packed |= ((uint64_t)(unsigned char)data[4]);
-	int len = (int)((packed >> 36) & 0xF);
+	int len = (int)((packed >> 36) & 0x7);  // 3 bits for length
 	if(len > 6) len = 6;
+	if(out_flags)
+	{
+		*out_flags = 0;
+		if(packed & (((uint64_t)1) << 39)) *out_flags |= 0x01;  // narrowband
+	}
 	std::string result;
 	for(int i = 0; i < len; i++)
 	{
@@ -85,17 +156,6 @@ inline std::string callsign_unpack(const char* data)
 	return result;
 }
 
-inline void hex_trace(const char* label, const char* data, int len, int max_show = 48)
-{
-	printf("[DATA-TRACE] %s (%d bytes):", label, len);
-	int show = len < max_show ? len : max_show;
-	for(int i = 0; i < show; i++)
-		printf(" %02X", (unsigned char)data[i]);
-	if(len > max_show)
-		printf(" ...");
-	printf("\n");
-	fflush(stdout);
-}
 
 struct st_message
 {
@@ -160,6 +220,7 @@ public:
   void set_control_batch_size(int control_batch_size);
   void set_role(int role);
   void calculate_receiving_timeout();
+  void recalculate_ack_timeout_for_batch();
   void set_call_sign(std::string call_sign);
 
   int get_nOccupied_messages();
@@ -229,10 +290,13 @@ public:
   void send_ack_pattern();   // Level 3: TX short tone pattern instead of LDPC ACK
   bool receive_ack_pattern(); // Level 3: RX + detect ACK pattern, returns true if detected
   void send_break_pattern(); // Emergency BREAK: TX "drop to ROBUST_0" tone pattern
+  void send_hail_pattern();    // TX "I am Mercury" beacon
+  bool receive_hail_pattern(); // RX + detect HAIL beacon, returns true if detected
   void process_messages_rx_acks_control();
   void process_messages_rx_acks_data();
   void process_control_commander();
   void process_buffer_data_commander();
+  void finalize_block_commander();
 
 
   void process_messages_responder();
@@ -265,6 +329,7 @@ public:
 
   void copy_data_to_buffer();
   void restore_backup_buffer_data();
+  void restore_tx_from_compressed();  // Decompress messages_tx back to raw in fifo_buffer_tx
 
 	//! Receives a data or a control message from the other end (via ALSA driver).
 	    /*!
@@ -288,8 +353,11 @@ public:
   int ctrl_transmission_time_ms;
   int ack_pattern_time_ms;  // Level 3: ACK pattern TX duration (ms)
   int data_batch_size;
+  int nominal_batch_size;   // Full batch size for current config (from load_configuration)
   int control_batch_size;
   int ack_batch_size;
+  int batch_rx_frame_count;  // Total data frames decoded in current RX batch (including padding duplicates)
+  bool batch_data_delivered; // True after copy_data_to_buffer() — prevents re-delivery on retransmission
   int block_ready;
   int block_under_tx;
   int max_message_length;
@@ -358,6 +426,34 @@ public:
 
   int gear_shift_on;
   int robust_enabled;
+  int narrowband_enabled;  // 0=wideband (2344 Hz), 1=narrowband (469 Hz)
+  int commander_configured_nb;  // commander's original NB setting (-1=unset, YES/NO)
+  int nb_probe_max;             // max NB probe attempts before fallback (default 2)
+  bool session_narrowband;      // negotiated NB for this session (NB always wins)
+  int bandwidth_mode;           // BW_AUTO=0, BW_NB_ONLY=1
+  uint8_t local_capability;    // CAP_WB_CAPABLE | CAP_COMPRESSION
+  uint8_t peer_capability;     // Received from peer via TEST_CONNECTION
+  bool wb_upgrade_pending;     // True between SWITCH_BANDWIDTH send and ACK
+  cl_compressor compressor;           // Block compression (PPMd + zstd)
+  bool compression_enabled;           // Negotiated: both sides have CAP_COMPRESSION
+  bool force_compress;                // CLI -F on: always enable compression (skip B2F detection)
+  bool b2f_compression_pending;       // B2F SID detected, arm compression on next data ACK
+  cl_b2f_handler b2f_handler;         // B2F protocol handler (Winlink LZHUF unroll/reroll)
+  float compress_ratio_estimate;      // Running compression ratio (raw/compressed), init 2.0
+  int batch_uncompressed_size;        // Uncompressed bytes in current TX batch (for throughput)
+
+  // Encryption (hybrid PQ: X25519 + ML-KEM-768 + ChaCha20-Poly1305)
+  cl_cipher_suite cipher_suite;       // Per-connection cipher state (ephemeral keys, session key)
+  int encryption_mode;                // ENCRYPT_OFF, ENCRYPT_STRICT, ENCRYPT_FAST
+  bool encryption_enabled;            // Negotiated: both sides have CAP_ENCRYPTION and mode != OFF
+  uint64_t tx_batch_counter;          // Monotonic counter for encrypt nonces (TX direction)
+  uint64_t rx_batch_counter;          // Monotonic counter for decrypt nonces (RX direction)
+  int consecutive_auth_failures;      // Auth failures since last success (3 → disconnect)
+  uint8_t* kx_data_buf;              // Buffer for ML-KEM key exchange data (1184 or 1088 bytes)
+  int kx_data_len;                    // Length of pending key exchange data
+  char psk_hex[129];                  // Pre-shared key (hex string, up to 64 bytes = 128 hex chars)
+  bool psk_mismatch_pending;          // Commander detected PSK mismatch, KEY_ACTIVATE sent for responder notification
+
   int gear_shift_algorithm;
   double gear_shift_up_success_rate_precentage;
   double gear_shift_down_success_rate_precentage;
@@ -374,6 +470,7 @@ public:
   int turboshift_last_good;        // last config that decoded successfully (-1 = none)
   bool turboshift_initiator;       // true = I started turboshift (original commander)
   int turboshift_retries;          // retries left at current config (0 = ceiling)
+  bool turbo_settle_pending;       // waiting for settle SET_CONFIG ACK before finish
 
   // Emergency BREAK: drop to ROBUST_0 when current config is undecodable
   int emergency_nack_count;       // consecutive failed data blocks
@@ -385,6 +482,8 @@ public:
   int break_recovery_phase;       // 0=off, 1=coord at ROBUST_0, 2=probing target
   int break_recovery_retries;     // probe attempts remaining (2 total)
   int break_detected;             // YES if BREAK pattern detected by responder
+  int hail_detected;              // YES if HAIL beacon detected (responder LISTENING)
+  int hail_sent;                  // YES if commander has sent HAIL in current CONNECTING phase
 
   int ptt_on_delay_ms;
   int ptt_off_delay_ms;
@@ -399,6 +498,22 @@ public:
 
   int exit_on_disconnect;
   int had_control_connection;
+  bool passive_monitor;  // Third-party monitor mode: accept all frames, never TX
+  bool monitor_stdout;   // Output decoded plaintext to stdout (headless monitor)
+  int monitor_consec_ofdm_fail{0};  // Consecutive OFDM decode failures (for opportunistic scan)
+
+  // Parallel monitor decoders — one cl_telecom_system per OFDM config.
+  // All share the same-sized audio buffer (buffer_Nsymb_min override).
+  // Decode attempts run on parallel threads, one per config.
+  cl_telecom_system* monitor_decoders[NUMBER_OF_CONFIGS];
+  bool monitor_decoders_ready{false};
+  int monitor_primary_buffer_nsymb{0};  // buffer_Nsymb of largest config (for sizing)
+  int monitor_decoded_data[N_MAX / 8];  // Staging buffer: decoded data_byte saved here
+  int monitor_decoded_len{0};            // Frame size in ints (from winning decoder)
+  void init_monitor_decoders();
+  void reinit_monitor_decoders();  // Re-create decoders after NB/WB switch
+  int parallel_monitor_decode(double* audio, int audio_len,
+                              st_receive_stats& out_stats);
 
   // GUI measurement getters
   double get_snr_uplink() const { return measurements.SNR_uplink; }
@@ -424,12 +539,14 @@ private:
 
   char get_configuration(double SNR);
   void load_configuration(int configuration, int level, int backup_configuration);
+  void switch_narrowband_mode(int nb_enabled);
   void return_to_last_configuration();
   int init_messages_buffers();
   int deinit_messages_buffers();
   void check_buffer_canaries(const char* caller);
 
   char last_received_message_sequence;
+  int last_received_end_of_batch_seq;  // End-of-batch flag: seq# of frame with bit 7 set, or -1
   char last_message_sent_type;
   char last_message_sent_code;
 

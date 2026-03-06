@@ -45,6 +45,20 @@
 #define msleep(a) usleep(a * 1000)
 #endif
 
+// TX gain table: amplitude boost per signal type × NB/WB mode
+// Indexed as tx_gain[signal_type][nb_mode][nb_fir]
+// nb_mode: 0=WB modulation (Nc=50), 1=NB modulation (Nc=10)
+// nb_fir:  0=WB FIR filter,         1=NB FIR filter
+// Currently mod and FIR always match; cross-entries exist for future per-mode tuning.
+enum tx_signal_type {
+	TX_SIG_MFSK_1S = 0,  // MFSK data frame, 1 stream  (ROBUST_0)
+	TX_SIG_MFSK_2S,       // MFSK data frame, 2 streams (ROBUST_1, ROBUST_2)
+	TX_SIG_OFDM,          // OFDM data frame (CONFIG_0..CONFIG_16)
+	TX_SIG_ACK,           // ACK pattern
+	TX_SIG_BREAK,         // BREAK pattern
+	TX_SIG_COUNT
+};
+
 struct st_reinit_subsystems{
 	int microphone=YES;
 	int speaker=YES;
@@ -77,8 +91,12 @@ struct st_receive_stats{
 	int crc;
 	int all_zeros;
 	int mfsk_search_raw;  // MFSK anti-re-decode: base search position (symbol units, pre-nUnder adjustment)
+	int ofdm_search_raw;  // OFDM anti-re-decode: base search position (symbol units, pre-nUnder adjustment)
+	bool ofdm_batch_active;  // true when consecutive OFDM frames expected (narrow BATCH window)
 	int frame_overflow_symbols;  // >0: MFSK frame extends beyond captured audio by this many symbols
+	bool frame_data_missing;  // true: preamble found but data symbols are silence (incomplete capture)
 	double coarse_metric;  // Schmidl-Cox correlation metric from coarse time_sync (diagnostic)
+	double ofdm_drift_per_frame;  // IIR-filtered prediction error (interp samples) for BATCH verify
 };
 
 
@@ -108,6 +126,7 @@ public:
 	int use_last_good_time_sync;
 	int use_last_good_freq_offset;
 	int mfsk_fixed_delay;  // >= 0: bypass time_sync with this delay (BER test); -1: use time_sync
+	int ofdm_forced_delay; // >= 0: override time_sync result (BER test, keeps passband_to_baseband); -1: normal
 	int test_puncture_nBits;  // > 0: zero out LLRs past this position (punctured LDPC BER test); 0: disabled
 
 	// MFSK short control frames: punctured LDPC for ACK/control messages
@@ -119,7 +138,7 @@ public:
 	int get_active_nbits() const;  // ctrl_nBits when mfsk_ctrl_mode, else nBits
 
 	// ACK pattern: short known-tone sequence for pattern-based ACK
-	int ack_pattern_passband_samples;    // = ACK_PATTERN_NSYMB * Nofdm * freq_interp_rate
+	int ack_pattern_passband_samples;    // = ack_mfsk.ack_pattern_nsymb * Nofdm * freq_interp_rate
 	double ack_pattern_detection_threshold;  // metric threshold for detection
 	int generate_ack_pattern_passband(double* out);  // TX: returns samples written
 	double detect_ack_pattern_from_passband(double* data, int size, int* out_matched = nullptr);  // RX: returns metric
@@ -128,6 +147,10 @@ public:
 	// BREAK pattern: emergency "drop to ROBUST_0" signal (different tones from ACK)
 	int generate_break_pattern_passband(double* out);  // TX: returns samples written
 	double detect_break_pattern_from_passband(double* data, int size, int* out_matched = nullptr);  // RX: returns metric
+
+	// HAIL pattern: "I am Mercury" beacon (different tones from ACK and BREAK)
+	int generate_hail_pattern_passband(double* out);  // TX: returns samples written
+	double detect_hail_pattern_from_passband(double* data, int size, int* out_matched = nullptr, int suffix_start = 0, int* out_suffix_matched = nullptr);  // RX: returns metric
 
 	st_receive_stats receive_stats;
 
@@ -193,7 +216,14 @@ public:
 
 	int bit_energy_dispersal_seed;
 
+	int narrowband_enabled;  // 0=wideband (Nc=50, BW=2344 Hz), 1=narrowband (Nc=10, BW=469 Hz)
 	bool coarse_freq_sync_enabled;  // Coarse freq search (±30 Hz) for HF radio drift
+
+	// TX gain table: per signal-type × NB/WB mode amplitude scalars
+	double tx_gain[TX_SIG_COUNT][2][2];  // [signal_type][nb_mod][nb_fir]
+	double get_tx_gain(tx_signal_type sig) const;
+	void init_tx_gain_defaults();
+	void print_tx_gain_table() const;
 
 	st_reinit_subsystems reinit_subsystems;
 

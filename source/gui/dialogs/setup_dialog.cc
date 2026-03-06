@@ -11,6 +11,40 @@
 
 #include <cstring>
 #include <cstdio>
+#include <cmath>
+
+// Guard interval dropdown values (ms). Ngi = ms * 12 samples at 12kHz OFDM rate.
+static const double GI_VALUES_MS[] = {
+    1.333, 2.0, 2.667, 3.0, 3.333, 4.0, 4.5, 5.0, 5.5, 6.0, 6.5
+};
+static const char* GI_LABELS[] = {
+    "1.33 ms (Ngi=16)",
+    "2.00 ms (Ngi=24)",
+    "2.67 ms (Ngi=32)",
+    "3.00 ms (Ngi=36) [default]",
+    "3.33 ms (Ngi=40)",
+    "4.00 ms (Ngi=48)",
+    "4.50 ms (Ngi=54)",
+    "5.00 ms (Ngi=60)",
+    "5.50 ms (Ngi=66)",
+    "6.00 ms (Ngi=72)",
+    "6.50 ms (Ngi=78)"
+};
+static const int GI_COUNT = sizeof(GI_VALUES_MS) / sizeof(GI_VALUES_MS[0]);
+static const int GI_DEFAULT_IDX = 3;  // 3.0ms
+
+static int gi_ms_to_index(double ms) {
+    int best = GI_DEFAULT_IDX;
+    double best_diff = 999.0;
+    for (int i = 0; i < GI_COUNT; i++) {
+        double diff = fabs(GI_VALUES_MS[i] - ms);
+        if (diff < best_diff) {
+            best_diff = diff;
+            best = i;
+        }
+    }
+    return best;
+}
 
 // Global dialog - Meyer's Singleton to avoid static init order fiasco
 SetupDialog& get_setup_dialog() {
@@ -37,10 +71,14 @@ SetupDialog::SetupDialog()
     , ldpc_iterations_max_(50)
     , coarse_freq_sync_enabled_(false)
     , robust_mode_enabled_(false)
+    , bandwidth_mode_(0)
+    , guard_interval_idx_(GI_DEFAULT_IDX)
     , hide_console_(false)
+    , encryption_mode_(0)
 {
     memset(my_callsign_, 0, sizeof(my_callsign_));
     strncpy(my_callsign_, "N0CALL", sizeof(my_callsign_) - 1);
+    memset(psk_hex_, 0, sizeof(psk_hex_));
 }
 
 SetupDialog::~SetupDialog() {
@@ -82,8 +120,16 @@ void SetupDialog::loadSettings() {
     ldpc_iterations_max_ = g_settings.ldpc_iterations_max;
     coarse_freq_sync_enabled_ = g_settings.coarse_freq_sync_enabled;
     robust_mode_enabled_ = g_settings.robust_mode_enabled;
+    bandwidth_mode_ = g_settings.bandwidth_mode;
+
+    guard_interval_idx_ = gi_ms_to_index(g_settings.guard_interval_ms);
 
     hide_console_ = g_settings.hide_console;
+    log_file_enabled_ = g_settings.log_enabled;
+
+    encryption_mode_ = g_settings.encryption_mode;
+    strncpy(psk_hex_, g_settings.psk_hex.c_str(), sizeof(psk_hex_) - 1);
+    psk_hex_[sizeof(psk_hex_) - 1] = 0;
 }
 
 bool SetupDialog::render() {
@@ -114,6 +160,11 @@ bool SetupDialog::render() {
 
             if (ImGui::BeginTabItem("Gear Shift")) {
                 renderGearShiftTab();
+                ImGui::EndTabItem();
+            }
+
+            if (ImGui::BeginTabItem("Security")) {
+                renderSecurityTab();
                 ImGui::EndTabItem();
             }
 
@@ -157,7 +208,17 @@ bool SetupDialog::render() {
             g_gui_state.coarse_freq_sync_enabled.store(coarse_freq_sync_enabled_);
             g_settings.robust_mode_enabled = robust_mode_enabled_;
             g_gui_state.robust_mode_enabled.store(robust_mode_enabled_);
+            g_settings.bandwidth_mode = bandwidth_mode_;
+            g_gui_state.bandwidth_mode.store(bandwidth_mode_);
+            // narrowband_enabled driven by bandwidth_mode: always start NB
+            g_settings.narrowband_enabled = true;
+            g_gui_state.narrowband_enabled.store(true);
+            g_settings.guard_interval_ms = GI_VALUES_MS[guard_interval_idx_];
             g_settings.hide_console = hide_console_;
+            g_settings.log_enabled = log_file_enabled_;
+            g_settings.encryption_mode = encryption_mode_;
+            g_gui_state.encryption_mode.store(encryption_mode_);
+            g_settings.psk_hex = psk_hex_;
 
             settings_applied = true;
             is_open_ = false;
@@ -190,7 +251,17 @@ bool SetupDialog::render() {
             g_gui_state.coarse_freq_sync_enabled.store(coarse_freq_sync_enabled_);
             g_settings.robust_mode_enabled = robust_mode_enabled_;
             g_gui_state.robust_mode_enabled.store(robust_mode_enabled_);
+            g_settings.bandwidth_mode = bandwidth_mode_;
+            g_gui_state.bandwidth_mode.store(bandwidth_mode_);
+            // narrowband_enabled driven by bandwidth_mode: always start NB
+            g_settings.narrowband_enabled = true;
+            g_gui_state.narrowband_enabled.store(true);
+            g_settings.guard_interval_ms = GI_VALUES_MS[guard_interval_idx_];
             g_settings.hide_console = hide_console_;
+            g_settings.log_enabled = log_file_enabled_;
+            g_settings.encryption_mode = encryption_mode_;
+            g_gui_state.encryption_mode.store(encryption_mode_);
+            g_settings.psk_hex = psk_hex_;
 
             settings_applied = true;
         }
@@ -361,6 +432,16 @@ void SetupDialog::renderGearShiftTab() {
 
     ImGui::Spacing();
 
+    ImGui::Text("Bandwidth Mode:");
+    ImGui::SameLine(180);
+    ImGui::SetNextItemWidth(300);
+    const char* bw_items[] = { "Auto (NB hail, WB upgrade)", "Narrowband Only (500 Hz)" };
+    ImGui::Combo("##bw_mode", &bandwidth_mode_, bw_items, 2);
+    ImGui::TextWrapped("Auto: all connections start narrowband. If both stations support wideband, "
+                       "upgrades to 2344 Hz after connecting. NB Only: stays at 500 Hz always.");
+
+    ImGui::Spacing();
+
     if (!gear_shift_enabled_) {
         ImGui::BeginDisabled();
     }
@@ -394,6 +475,35 @@ void SetupDialog::renderGearShiftTab() {
 }
 
 void SetupDialog::renderAdvancedTab() {
+    ImGui::Spacing();
+
+    ImGui::Text("OFDM Guard Interval");
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    ImGui::Text("Guard Interval:");
+    ImGui::SameLine(180);
+    ImGui::SetNextItemWidth(300);
+    if (ImGui::BeginCombo("##gi", GI_LABELS[guard_interval_idx_])) {
+        for (int i = 0; i < GI_COUNT; i++) {
+            bool is_selected = (guard_interval_idx_ == i);
+            if (ImGui::Selectable(GI_LABELS[i], is_selected))
+                guard_interval_idx_ = i;
+            if (is_selected) ImGui::SetItemDefaultFocus();
+        }
+        ImGui::EndCombo();
+    }
+    ImGui::SameLine();
+    ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "(restart)");
+
+    ImGui::Spacing();
+
+    ImGui::TextWrapped("Shorter GI = faster throughput but less multipath tolerance. "
+                       "4.5ms covers most HF channels (ITU moderate+poor). "
+                       "Reduce for loopback/VHF. Both stations must match. Requires restart.");
+
+    ImGui::Spacing();
+    ImGui::Separator();
     ImGui::Spacing();
 
     ImGui::Text("LDPC Decoder");
@@ -440,6 +550,21 @@ void SetupDialog::renderAdvancedTab() {
     ImGui::Separator();
     ImGui::Spacing();
 
+    ImGui::Text("Logging");
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    ImGui::Checkbox("Enable log file output", &log_file_enabled_);
+
+    ImGui::Spacing();
+    ImGui::TextWrapped("Captures all console output to a timestamped log file. "
+                       "Logs are saved to %%APPDATA%%\\Mercury\\logs\\ (Windows) "
+                       "or ~/.config/mercury/logs/ (Linux). Requires restart to take effect.");
+
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Spacing();
+
     // Save/Load buttons
     if (ImGui::Button("Save Settings to File")) {
         std::string path = getDefaultConfigPath();
@@ -456,4 +581,74 @@ void SetupDialog::renderAdvancedTab() {
             loadSettings();  // Refresh dialog with loaded values
         }
     }
+}
+
+void SetupDialog::renderSecurityTab() {
+    ImGui::Spacing();
+
+    ImGui::Text("Encryption");
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    ImGui::Text("Encryption Mode:");
+    ImGui::SameLine(180);
+    ImGui::SetNextItemWidth(300);
+    const char* enc_modes[] = {
+        "Off (plaintext)",
+        "Strict (hold data until PQ key exchange)",
+        "Fast (classical-first, PQ upgrade later)"
+    };
+    ImGui::Combo("##enc_mode", &encryption_mode_, enc_modes, 3);
+
+    ImGui::Spacing();
+
+    if (encryption_mode_ == 0)
+        ImGui::BeginDisabled();
+
+    ImGui::TextWrapped(
+        "Strict: X25519 + ML-KEM-768 hybrid key exchange completes before any data is sent. "
+        "Provides post-quantum security from the first byte. "
+        "Fast: X25519 key exchange enables ChaCha20-Poly1305 immediately, then "
+        "upgrades to hybrid PQ in the background.");
+
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    ImGui::Text("Pre-Shared Key (PSK):");
+    ImGui::Spacing();
+    ImGui::SetNextItemWidth(-1);
+    ImGui::InputText("##psk_hex", psk_hex_, sizeof(psk_hex_),
+                     ImGuiInputTextFlags_CharsHexadecimal);
+
+    ImGui::Spacing();
+    ImGui::TextWrapped(
+        "Optional authentication key (hex string, up to 64 bytes / 128 hex chars). "
+        "Both stations must use the same PSK to connect. "
+        "When set, prevents unauthorized stations from establishing encrypted sessions. "
+        "Leave empty for unauthenticated encryption.");
+
+    if (encryption_mode_ == 0)
+        ImGui::EndDisabled();
+
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    // Show current encryption status
+    int active_mode = g_gui_state.encryption_mode.load();
+    bool enc_active = g_gui_state.encryption_active.load();
+    if (active_mode > 0 && enc_active) {
+        ImGui::TextColored(ImVec4(0.2f, 1.0f, 0.4f, 1.0f), "Encryption ACTIVE");
+    } else if (active_mode > 0) {
+        ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.2f, 1.0f), "Encryption enabled (waiting for connection)");
+    } else {
+        ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Encryption disabled");
+    }
+
+    ImGui::Spacing();
+    ImGui::TextWrapped(
+        "Note: Encryption settings take effect on the next connection. "
+        "Both stations must have encryption enabled to establish an encrypted session. "
+        "Requires modem restart to change mode.");
 }

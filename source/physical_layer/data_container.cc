@@ -21,9 +21,9 @@
  */
 
 #include "physical_layer/data_container.h"
+#include "debug/canary_guard.h"
+#include <cstring>
 
-// Debug: shadow copy of data_bit pointer for corruption detection at deinit
-static int* g_data_bit_shadow = NULL;
 
 cl_data_container::cl_data_container()
 {
@@ -69,6 +69,8 @@ cl_data_container::cl_data_container()
 	this->frames_to_read=0;
 	this->data_ready=0;
 	this->nUnder_processing_events=0;
+	this->rx_mute=0;
+	this->ring_write_index=0;
 	this->interpolation_rate=0;
 
 	this->total_frame_size=0;
@@ -98,77 +100,83 @@ void cl_data_container::set_size(int nData, int Nc, int M, int Nfft , int Nofdm,
 	this->Ngi=Nofdm-Nfft;
 	this->Nsymb=Nsymb;
 	this->preamble_nSymb=preamble_nSymb;
-	this->data_bit=new int[N_MAX];
-	g_data_bit_shadow = this->data_bit;
-	printf("[SET_SIZE] this=%p &data_bit=%p data_bit=%p Nc=%d M=%d Nsymb=%d\n",
-		(void*)this, (void*)&this->data_bit, (void*)this->data_bit, Nc, M, Nsymb);
-	fflush(stdout);
-	this->data_bit_energy_dispersal=new int[N_MAX];
-	this->data_byte=new int[N_MAX];
-	this->encoded_data=new int[N_MAX];
-	this->bit_interleaved_data=new int[N_MAX];
-	this->modulated_data=new std::complex <double>[nData];
-	// ACK pattern generation reuses ofdm_framed_data and ofdm_symbol_modulated_data
-	// with ACK_PATTERN_NSYMB=16 symbols. For high-order modulations (16QAM+),
-	// Nsymb < 16, so we must allocate for whichever is larger.
-	int alloc_Nsymb = (Nsymb > 16) ? Nsymb : 16;
-	this->ofdm_framed_data=new std::complex <double>[alloc_Nsymb*Nc];
-	this->ofdm_time_freq_interleaved_data=new std::complex <double>[Nsymb*Nc];
-	this->ofdm_time_freq_deinterleaved_data=new std::complex <double>[Nsymb*Nc];
-	this->ofdm_symbol_modulated_data=new std::complex <double>[Nofdm*alloc_Nsymb];
-	this->ofdm_symbol_demodulated_data=new std::complex <double>[Nsymb*Nc];
-	this->ofdm_deframed_data=new std::complex <double>[Nsymb*Nc];
-	this->ofdm_deframed_data_without_amplitude_restoration=new std::complex <double>[Nsymb*Nc];
-	this->equalized_data= new std::complex <double>[Nsymb*Nc];
-	this->equalized_data_without_amplitude_restoration= new std::complex <double>[Nsymb*Nc];
-	this->preamble_symbol_modulated_data= new std::complex <double>[preamble_nSymb*Nofdm];
-	this->preamble_data= new std::complex <double>[preamble_nSymb*Nc];
-	this->demodulated_data=new float[N_MAX];
-	this->deinterleaved_data=new float[N_MAX];
-	this->hd_decoded_data_bit=new int[N_MAX];
-	this->hd_decoded_data_byte=new int[N_MAX];
+	this->data_bit=CNEW(int, N_MAX, "dc.data_bit");
+	this->data_bit_energy_dispersal=CNEW(int, N_MAX, "dc.data_bit_energy_dispersal");
+	this->data_byte=CNEW(int, N_MAX, "dc.data_byte");
+	this->encoded_data=CNEW(int, N_MAX, "dc.encoded_data");
+	this->bit_interleaved_data=CNEW(int, N_MAX, "dc.bit_interleaved_data");
+	this->modulated_data=CNEW(std::complex<double>, nData, "dc.modulated_data");
+	// ACK pattern generation reuses ofdm_framed_data and ofdm_symbol_modulated_data.
+	// NB Sidelnikov ACK uses up to 48 symbols (M=4), WB Welch-Costas uses 16.
+	// For high-order modulations (16QAM+), Nsymb < 48, so allocate for the max.
+	int alloc_Nsymb = (Nsymb > 48) ? Nsymb : 48;
+	this->ofdm_framed_data=CNEW(std::complex<double>, alloc_Nsymb*Nc, "dc.ofdm_framed_data");
+	this->ofdm_time_freq_interleaved_data=CNEW(std::complex<double>, Nsymb*Nc, "dc.ofdm_time_freq_interleaved_data");
+	this->ofdm_time_freq_deinterleaved_data=CNEW(std::complex<double>, Nsymb*Nc, "dc.ofdm_time_freq_deinterleaved_data");
+	this->ofdm_symbol_modulated_data=CNEW(std::complex<double>, Nofdm*alloc_Nsymb, "dc.ofdm_symbol_modulated_data");
+	this->ofdm_symbol_demodulated_data=CNEW(std::complex<double>, Nsymb*Nc, "dc.ofdm_symbol_demodulated_data");
+	this->ofdm_deframed_data=CNEW(std::complex<double>, Nsymb*Nc, "dc.ofdm_deframed_data");
+	this->ofdm_deframed_data_without_amplitude_restoration=CNEW(std::complex<double>, Nsymb*Nc, "dc.ofdm_deframed_data_noamp");
+	this->equalized_data=CNEW(std::complex<double>, Nsymb*Nc, "dc.equalized_data");
+	this->equalized_data_without_amplitude_restoration=CNEW(std::complex<double>, Nsymb*Nc, "dc.equalized_data_noamp");
+	this->preamble_symbol_modulated_data=CNEW(std::complex<double>, preamble_nSymb*Nofdm, "dc.preamble_symbol_mod");
+	this->preamble_data=CNEW(std::complex<double>, preamble_nSymb*Nc, "dc.preamble_data");
+	this->demodulated_data=CNEW(float, N_MAX, "dc.demodulated_data");
+	this->deinterleaved_data=CNEW(float, N_MAX, "dc.deinterleaved_data");
+	this->hd_decoded_data_bit=CNEW(int, N_MAX, "dc.hd_decoded_data_bit");
+	this->hd_decoded_data_byte=CNEW(int, N_MAX, "dc.hd_decoded_data_byte");
 
-	this->bit_energy_dispersal_sequence=new int[N_MAX];
+	this->bit_energy_dispersal_sequence=CNEW(int, N_MAX, "dc.bit_energy_dispersal_seq");
 
-	// Buffer must accommodate frame + turnaround gap after ACK flush.
-	// Turnaround: ~1200ms (VB-Cable + ACK poll + commander guard + ptt_on + VB-Cable).
-	// Also need at least frame*2 for preamble search margin during batch reception.
+	// Buffer: frame + turnaround + frame + tail margin.
+	// Tail margin gives headroom for preambles that land close to buffer end.
 	double sym_time_ms = 1000.0 * Nofdm * frequency_interpolation_rate / 48000.0;
-	int turnaround_symb = (int)ceil(1200.0 / sym_time_ms) + 4;  // +4 margin
 	int frame_symb = preamble_nSymb + Nsymb;
-	int min_buf = frame_symb * 2;
-	int min_for_turnaround = frame_symb + turnaround_symb;
-	if(min_for_turnaround > min_buf) min_buf = min_for_turnaround;
+	// NB OFDM (Nc=10) has longer inter-batch turnaround than WB (Nc=50):
+	// NB ACK pattern TX (~1.5s) + Commander processing/compression (~1.5s) = ~3s.
+	// 4000ms gives ~1s headroom for radio propagation delay.
+	double turnaround_ms = (Nc <= 10) ? 4000.0 : 2000.0;
+	int turnaround_symb = (int)ceil(turnaround_ms / sym_time_ms) + 4;
+	int margin = frame_symb / 2;
+	if(margin < 20) margin = 20;
+	if(margin > 50) margin = 50;
+	int min_buf = frame_symb + turnaround_symb + frame_symb + margin;
 	if(min_buf < 32) min_buf = 32;
+	if(this->buffer_Nsymb_min > 0 && min_buf < this->buffer_Nsymb_min)
+		min_buf = this->buffer_Nsymb_min;
 	this->buffer_Nsymb = min_buf;
 
 	// ACK pattern uses 16*Nofdm*freq_interp passband samples, which can exceed
 	// the normal frame size at high modulations (16QAM+). Allocate for whichever is larger.
 	int passband_frame = (Nsymb + preamble_nSymb) * Nofdm * frequency_interpolation_rate;
 	int passband_ack = 16 * Nofdm * frequency_interpolation_rate;
-	this->passband_data=new double[(passband_frame > passband_ack) ? passband_frame : passband_ack];
-	this->passband_delayed_data=new double[2*Nofdm*buffer_Nsymb*frequency_interpolation_rate];
-	this->ready_to_process_passband_delayed_data=new double[Nofdm*buffer_Nsymb*frequency_interpolation_rate];
-	this->baseband_data=new std::complex <double>[Nofdm*buffer_Nsymb];
-	this->baseband_data_interpolated=new std::complex <double>[Nofdm*buffer_Nsymb*frequency_interpolation_rate];
+	this->passband_data=CNEW(double, (passband_frame > passband_ack) ? passband_frame : passband_ack, "dc.passband_data");
+	this->passband_delayed_data=CNEW(double, 2*Nofdm*buffer_Nsymb*frequency_interpolation_rate, "dc.passband_delayed_data");
+	memset(this->passband_delayed_data, 0, 2*Nofdm*buffer_Nsymb*frequency_interpolation_rate * sizeof(double));
+	this->ready_to_process_passband_delayed_data=CNEW(double, Nofdm*buffer_Nsymb*frequency_interpolation_rate, "dc.ready_to_process_pdd");
+	memset(this->ready_to_process_passband_delayed_data, 0, Nofdm*buffer_Nsymb*frequency_interpolation_rate * sizeof(double));
+	this->baseband_data=CNEW(std::complex<double>, Nofdm*buffer_Nsymb, "dc.baseband_data");
+	this->baseband_data_interpolated=CNEW(std::complex<double>, Nofdm*buffer_Nsymb*frequency_interpolation_rate, "dc.baseband_data_interp");
 
 	this->frames_to_read=preamble_nSymb+Nsymb;
 	this->data_ready=0;
 	this->nUnder_processing_events=0;
+	this->ring_write_index=0;
 	this->interpolation_rate=frequency_interpolation_rate;
 	this->total_frame_size=Nofdm*(Nsymb+preamble_nSymb)*frequency_interpolation_rate;
 
 
-	this->passband_data_tx=new double[total_frame_size];
-	this->passband_data_tx_buffer=new double[3*total_frame_size];
-	this->passband_data_tx_filtered_fir_1=new double[2*total_frame_size];
-	this->passband_data_tx_filtered_fir_2=new double[2*total_frame_size];
-	this->ready_to_transmit_passband_data_tx=new double[total_frame_size];
+	this->passband_data_tx=CNEW(double, total_frame_size, "dc.passband_data_tx");
+	this->passband_data_tx_buffer=CNEW(double, 3*total_frame_size, "dc.passband_data_tx_buffer");
+	this->passband_data_tx_filtered_fir_1=CNEW(double, 2*total_frame_size, "dc.passband_data_tx_filt1");
+	this->passband_data_tx_filtered_fir_2=CNEW(double, 2*total_frame_size, "dc.passband_data_tx_filt2");
+	this->ready_to_transmit_passband_data_tx=CNEW(double, total_frame_size, "dc.ready_to_tx_passband");
 
-	for(int i=0;i<2*Nofdm*buffer_Nsymb*frequency_interpolation_rate;i++)
-	{
-		this->passband_delayed_data[i]=(double)(rand()%1000 -500)/1000.0;
-	}
+	// Buffer is zero-initialized (memset above). Do NOT fill with random noise:
+	// after a config switch (e.g. MFSK→OFDM gearshift), random data in the buffer
+	// passes the energy gate and gets decoded as noise, producing garbage channel
+	// estimates (mean_H ≈ 0.12). Zero-fill lets the energy gate skip empty frames
+	// until real audio arrives from the capture thread.
 }
 
 void cl_data_container::deinit()
@@ -183,193 +191,45 @@ void cl_data_container::deinit()
 	this->Nsymb=0;
 	this->total_frame_size=0;
 
-	// Critical corruption check: verify data_bit matches what set_size() allocated
-	if(this->data_bit!=NULL && g_data_bit_shadow!=NULL && this->data_bit != g_data_bit_shadow)
-	{
-		printf("[CORRUPT] !!! data_bit CORRUPTED before delete[] !!!\n");
-		printf("[CORRUPT]   expected=%p actual=%p delta=%lld\n",
-			(void*)g_data_bit_shadow, (void*)this->data_bit,
-			(long long)((char*)this->data_bit - (char*)g_data_bit_shadow));
-		printf("[CORRUPT]   this=%p &data_bit=%p (offset %lld)\n",
-			(void*)this, (void*)&this->data_bit,
-			(long long)((char*)&this->data_bit - (char*)this));
-		// Dump raw bytes at start of object (first 32 bytes)
-		unsigned char* raw = (unsigned char*)this;
-		printf("[CORRUPT]   first 32 bytes of this: ");
-		for(int i = 0; i < 32; i++) printf("%02x ", raw[i]);
-		printf("\n");
-		fflush(stdout);
-	}
-
-	if(this->data_bit!=NULL)
-	{
-		delete[] this->data_bit;
-		this->data_bit=NULL;
-	}
-	if(this->data_bit_energy_dispersal!=NULL)
-	{
-		delete[] this->data_bit_energy_dispersal;
-		this->data_bit_energy_dispersal=NULL;
-	}
-
-	if(this->data_byte!=NULL)
-	{
-		delete[] this->data_byte;
-		this->data_byte=NULL;
-	}
-	if(this->encoded_data!=NULL)
-	{
-		delete[] this->encoded_data;
-		this->encoded_data=NULL;
-	}
-	if(this->bit_interleaved_data!=NULL)
-	{
-		delete[] this->bit_interleaved_data;
-		this->bit_interleaved_data=NULL;
-	}
-	if(this->modulated_data!=NULL)
-	{
-		delete[] this->modulated_data;
-		this->modulated_data=NULL;
-	}
-	if(this->ofdm_framed_data!=NULL)
-	{
-		delete[] this->ofdm_framed_data;
-		this->ofdm_framed_data=NULL;
-	}
-	if(this->ofdm_time_freq_interleaved_data!=NULL)
-	{
-		delete[] this->ofdm_time_freq_interleaved_data;
-		this->ofdm_time_freq_interleaved_data=NULL;
-	}
-	if(this->ofdm_time_freq_deinterleaved_data!=NULL)
-	{
-		delete[] this->ofdm_time_freq_deinterleaved_data;
-		this->ofdm_time_freq_deinterleaved_data=NULL;
-	}
-	if(this->ofdm_symbol_modulated_data!=NULL)
-	{
-		delete[] this->ofdm_symbol_modulated_data;
-		this->ofdm_symbol_modulated_data=NULL;
-	}
-	if(this->ofdm_symbol_demodulated_data!=NULL)
-	{
-		delete[] this->ofdm_symbol_demodulated_data;
-		this->ofdm_symbol_demodulated_data=NULL;
-	}
-	if(this->ofdm_deframed_data!=NULL)
-	{
-		delete[] this->ofdm_deframed_data;
-		this->ofdm_deframed_data=NULL;
-	}
-	if(this->ofdm_deframed_data_without_amplitude_restoration!=NULL)
-	{
-		delete[] this->ofdm_deframed_data_without_amplitude_restoration;
-		this->ofdm_deframed_data_without_amplitude_restoration=NULL;
-	}
-	if(this->equalized_data!=NULL)
-	{
-		delete[] this->equalized_data;
-		this->equalized_data=NULL;
-	}
-	if(this->equalized_data_without_amplitude_restoration!=NULL)
-	{
-		delete[] this->equalized_data_without_amplitude_restoration;
-		this->equalized_data_without_amplitude_restoration=NULL;
-	}
-	if(this->preamble_symbol_modulated_data!=NULL)
-	{
-		delete[] this->preamble_symbol_modulated_data;
-		this->preamble_symbol_modulated_data=NULL;
-	}
-	if(this->preamble_data!=NULL)
-	{
-		delete[] this->preamble_data;
-		this->preamble_data=NULL;
-	}
-	if(this->demodulated_data!=NULL)
-	{
-		delete[] this->demodulated_data;
-		this->demodulated_data=NULL;
-	}
-	if(this->deinterleaved_data!=NULL)
-	{
-		delete[] this->deinterleaved_data;
-		this->deinterleaved_data=NULL;
-	}
-	if(this->hd_decoded_data_bit!=NULL)
-	{
-		delete[] this->hd_decoded_data_bit;
-		this->hd_decoded_data_bit=NULL;
-	}
-	if(this->hd_decoded_data_byte!=NULL)
-	{
-		delete[] this->hd_decoded_data_byte;
-		this->hd_decoded_data_byte=NULL;
-	}
-
-	if(this->bit_energy_dispersal_sequence!=NULL)
-	{
-		delete[] this->bit_energy_dispersal_sequence;
-		this->bit_energy_dispersal_sequence=NULL;
-	}
+	CDELETE(this->data_bit);
+	CDELETE(this->data_bit_energy_dispersal);
+	CDELETE(this->data_byte);
+	CDELETE(this->encoded_data);
+	CDELETE(this->bit_interleaved_data);
+	CDELETE(this->modulated_data);
+	CDELETE(this->ofdm_framed_data);
+	CDELETE(this->ofdm_time_freq_interleaved_data);
+	CDELETE(this->ofdm_time_freq_deinterleaved_data);
+	CDELETE(this->ofdm_symbol_modulated_data);
+	CDELETE(this->ofdm_symbol_demodulated_data);
+	CDELETE(this->ofdm_deframed_data);
+	CDELETE(this->ofdm_deframed_data_without_amplitude_restoration);
+	CDELETE(this->equalized_data);
+	CDELETE(this->equalized_data_without_amplitude_restoration);
+	CDELETE(this->preamble_symbol_modulated_data);
+	CDELETE(this->preamble_data);
+	CDELETE(this->demodulated_data);
+	CDELETE(this->deinterleaved_data);
+	CDELETE(this->hd_decoded_data_bit);
+	CDELETE(this->hd_decoded_data_byte);
+	CDELETE(this->bit_energy_dispersal_sequence);
 
 	this->buffer_Nsymb=0;
 
-	if(this->passband_data!=NULL)
-	{
-		delete[] this->passband_data;
-		this->passband_data=NULL;
-	}
-	if(this->passband_delayed_data!=NULL)
-	{
-		delete[] this->passband_delayed_data;
-		this->passband_delayed_data=NULL;
-	}
-	if(this->ready_to_process_passband_delayed_data!=NULL)
-	{
-		delete[] this->ready_to_process_passband_delayed_data;
-		this->ready_to_process_passband_delayed_data=NULL;
-	}
-	if(this->baseband_data!=NULL)
-	{
-		delete[] this->baseband_data;
-		this->baseband_data=NULL;
-	}
-	if(this->baseband_data_interpolated!=NULL)
-	{
-		delete[] this->baseband_data_interpolated;
-		this->baseband_data_interpolated=NULL;
-	}
-	if(this->passband_data_tx!=NULL)
-	{
-		delete[] this->passband_data_tx;
-		this->passband_data_tx=NULL;
-	}
-	if(this->passband_data_tx_buffer!=NULL)
-	{
-		delete[] this->passband_data_tx_buffer;
-		this->passband_data_tx_buffer=NULL;
-	}
-	if(this->passband_data_tx_filtered_fir_1!=NULL)
-	{
-		delete[] this->passband_data_tx_filtered_fir_1;
-		this->passband_data_tx_filtered_fir_1=NULL;
-	}
-	if(this->passband_data_tx_filtered_fir_2!=NULL)
-	{
-		delete[] this->passband_data_tx_filtered_fir_2;
-		this->passband_data_tx_filtered_fir_2=NULL;
-	}
+	CDELETE(this->passband_data);
+	CDELETE(this->passband_delayed_data);
+	CDELETE(this->ready_to_process_passband_delayed_data);
+	CDELETE(this->baseband_data);
+	CDELETE(this->baseband_data_interpolated);
+	CDELETE(this->passband_data_tx);
+	CDELETE(this->passband_data_tx_buffer);
+	CDELETE(this->passband_data_tx_filtered_fir_1);
+	CDELETE(this->passband_data_tx_filtered_fir_2);
+	CDELETE(this->ready_to_transmit_passband_data_tx);
 
-	if(this->ready_to_transmit_passband_data_tx!=NULL)
-	{
-		delete[] this->ready_to_transmit_passband_data_tx;
-		this->ready_to_transmit_passband_data_tx=NULL;
-	}
 	this->frames_to_read=0;
 	this->data_ready=0;
 	this->nUnder_processing_events=0;
+	this->ring_write_index=0;
 	this->interpolation_rate=0;
-
 }

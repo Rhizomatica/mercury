@@ -51,7 +51,7 @@ cl_configuration_arq::cl_configuration_arq()
 	gear_shift_block_for_nBlocks_total=2;
 
 	batch_size=5; //MAX Max_data_length-3 (ack header) bytes
-	nMessages=20; //MAX 255
+	nMessages=75; //MAX 255
 
 	nResends=20;
 	ack_batch_size=2;

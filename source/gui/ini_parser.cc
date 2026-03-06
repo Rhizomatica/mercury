@@ -214,17 +214,31 @@ void MercurySettings::setDefaults() {
     initial_config = 1;
     ldpc_iterations_max = 50;
 
+    // OFDM
+    guard_interval_ms = 3.0;  // Ngi=36 samples at 12kHz
+
     // Modem
     coarse_freq_sync_enabled = false;  // Off by default (saves CPU; enable for real HF radio use)
     robust_mode_enabled = false;
+    narrowband_enabled = false;
+    bandwidth_mode = 0;  // BW_AUTO
+    force_compress = false;
+
+    // Security
+    encryption_mode = 0;  // ENCRYPT_OFF
+    psk_hex = "";
 
     // GUI
     tx_gain_db = 0.0;
     rx_gain_db = 0.0;
     gains_locked = true;  // Default to locked to prevent accidental adjustment
     hide_console = false; // Show console by default
+    monitor_enabled = false;
     window_width = 850;
     window_height = 720;
+
+    // Logging
+    log_enabled = false;
 }
 
 bool MercurySettings::load(const std::string& filename) {
@@ -265,17 +279,31 @@ bool MercurySettings::load(const std::string& filename) {
     initial_config = ini.getInt("GearShift", "InitialConfig", initial_config);
     ldpc_iterations_max = ini.getInt("GearShift", "LDPCIterationsMax", ldpc_iterations_max);
 
+    // OFDM
+    guard_interval_ms = ini.getDouble("OFDM", "GuardIntervalMs", guard_interval_ms);
+
     // Modem
     coarse_freq_sync_enabled = ini.getBool("Modem", "CoarseFreqSync", coarse_freq_sync_enabled);
     robust_mode_enabled = ini.getBool("Modem", "RobustMode", robust_mode_enabled);
+    narrowband_enabled = ini.getBool("Modem", "Narrowband", narrowband_enabled);
+    bandwidth_mode = ini.getInt("Modem", "BandwidthMode", bandwidth_mode);
+    force_compress = ini.getBool("Modem", "ForceCompress", force_compress);
+
+    // Security
+    encryption_mode = ini.getInt("Security", "EncryptionMode", encryption_mode);
+    psk_hex = ini.getString("Security", "PSK", psk_hex);
 
     // GUI
     tx_gain_db = ini.getDouble("GUI", "TxGainDb", tx_gain_db);
     rx_gain_db = ini.getDouble("GUI", "RxGainDb", rx_gain_db);
     gains_locked = ini.getBool("GUI", "GainsLocked", gains_locked);
     hide_console = ini.getBool("GUI", "HideConsole", hide_console);
+    monitor_enabled = ini.getBool("GUI", "MonitorEnabled", monitor_enabled);
     window_width = ini.getInt("GUI", "WindowWidth", window_width);
     window_height = ini.getInt("GUI", "WindowHeight", window_height);
+
+    // Logging
+    log_enabled = ini.getBool("Logging", "LogEnabled", log_enabled);
 
     return true;
 }
@@ -315,17 +343,31 @@ bool MercurySettings::save(const std::string& filename) {
     ini.setInt("GearShift", "InitialConfig", initial_config);
     ini.setInt("GearShift", "LDPCIterationsMax", ldpc_iterations_max);
 
+    // OFDM
+    ini.setDouble("OFDM", "GuardIntervalMs", guard_interval_ms);
+
     // Modem
     ini.setBool("Modem", "CoarseFreqSync", coarse_freq_sync_enabled);
     ini.setBool("Modem", "RobustMode", robust_mode_enabled);
+    ini.setBool("Modem", "Narrowband", narrowband_enabled);
+    ini.setInt("Modem", "BandwidthMode", bandwidth_mode);
+    ini.setBool("Modem", "ForceCompress", force_compress);
+
+    // Security
+    ini.setInt("Security", "EncryptionMode", encryption_mode);
+    ini.setString("Security", "PSK", psk_hex);
 
     // GUI
     ini.setDouble("GUI", "TxGainDb", tx_gain_db);
     ini.setDouble("GUI", "RxGainDb", rx_gain_db);
     ini.setBool("GUI", "GainsLocked", gains_locked);
     ini.setBool("GUI", "HideConsole", hide_console);
+    ini.setBool("GUI", "MonitorEnabled", monitor_enabled);
     ini.setInt("GUI", "WindowWidth", window_width);
     ini.setInt("GUI", "WindowHeight", window_height);
+
+    // Logging
+    ini.setBool("Logging", "LogEnabled", log_enabled);
 
     return ini.save(filename);
 }

@@ -12,6 +12,7 @@
 #include <stdbool.h>
 #include <limits.h>
 #include <string.h>
+#include <math.h>
 #ifdef _WIN32
 #include <wchar.h>
 #endif
@@ -43,6 +44,32 @@ extern int radio_type;
 // 0=LEFT, 1=RIGHT, 2=STEREO (L+R)
 int configured_input_channel = 0;   // Default: LEFT (matches pre-GUI CLI default)
 int configured_output_channel = 2;  // Default: STEREO
+int multichannel_mode = 0;          // Set to 1 when -A flag is used (forces 16ch WASAPI)
+
+// Internal AWGN noise injection (-Z flag)
+// When noise_snr_db < 999, white noise is added to captured audio at the specified SNR.
+// SNR is relative to the signal level AFTER TX/RX gain (i.e. the cable level).
+double noise_snr_db = 999.0;       // 999 = disabled
+double noise_signal_dbfs = -30.0;  // Expected signal level on wire (dBFS), set via NOISESIGNAL cmd
+static uint64_t noise_rng_state[2] = {0x853c49e6748fea9bULL, 0xda3e39cb94b95bdbULL};
+
+// xoshiro128+ PRNG — fast, good quality for noise generation
+static inline uint64_t noise_rng_next(void) {
+	uint64_t s0 = noise_rng_state[0], s1 = noise_rng_state[1];
+	uint64_t result = s0 + s1;
+	s1 ^= s0;
+	noise_rng_state[0] = ((s0 << 55) | (s0 >> 9)) ^ s1 ^ (s1 << 14);
+	noise_rng_state[1] = (s1 << 36) | (s1 >> 28);
+	return result;
+}
+
+// Box-Muller: two uniform → two Gaussian
+static inline double noise_gaussian(void) {
+	double u1 = (noise_rng_next() >> 11) * (1.0 / 9007199254740992.0);  // (0,1)
+	double u2 = (noise_rng_next() >> 11) * (1.0 / 9007199254740992.0);
+	if (u1 < 1e-15) u1 = 1e-15;
+	return sqrt(-2.0 * log(u1)) * cos(6.283185307179586 * u2);
+}
 
 // Tune tone state (for GUI tune button)
 static long tune_sample_index = 0;
@@ -297,13 +324,12 @@ int validate_audio_config(const char *capture_dev, const char *playback_dev, int
 
 						printf("  Format: %s / %u Hz / %u channels\n", fmt_name, sample_rate, channels);
 
-						if (channels != 2) {
-							printf("  *** ERROR: Must be 2 channels (stereo), found %u ***\n", channels);
-							printf("  FIX: Windows Sound Settings -> Recording -> %s\n", name);
-							printf("       -> Properties -> Advanced -> Set to 2 channel, 48000 Hz\n");
-							errors |= 4;
-						} else {
+						if (channels == 1) {
+							printf("  Channels: OK (mono)\n");
+						} else if (channels == 2) {
 							printf("  Channels: OK (stereo)\n");
+						} else {
+							printf("  Channels: %u (multi-channel)\n", channels);
 						}
 
 						if (sample_rate != 48000) {
@@ -374,13 +400,12 @@ int validate_audio_config(const char *capture_dev, const char *playback_dev, int
 
 						printf("  Format: %s / %u Hz / %u channels\n", fmt_name, sample_rate, channels);
 
-						if (channels != 2) {
-							printf("  *** ERROR: Must be 2 channels (stereo), found %u ***\n", channels);
-							printf("  FIX: Windows Sound Settings -> Playback -> %s\n", name);
-							printf("       -> Properties -> Advanced -> Set to 2 channel, 48000 Hz\n");
-							errors |= 8;
-						} else {
+						if (channels == 1) {
+							printf("  Channels: OK (mono)\n");
+						} else if (channels == 2) {
 							printf("  Channels: OK (stereo)\n");
+						} else {
+							printf("  Channels: %u (multi-channel)\n", channels);
 						}
 
 						if (sample_rate != 48000) {
@@ -424,11 +449,20 @@ void *radio_playback_thread(void *device_ptr)
 {
     ffaudio_interface *audio;
 	int device_is_mono = 0;  // Will be set after device opens
+	int out_ch_idx = 0;
+	int out_stereo = 0;
+	int out_nch = 2;
 	struct conf conf = {};
 	conf.buf.app_name = "mercury_playback";
 	conf.buf.format = FFAUDIO_F_INT32;
 	conf.buf.sample_rate = 48000;
-	conf.buf.channels = 2;
+	// When -A flag is used (multichannel_mode=1), request 16 channels so
+	// WASAPI shared-mode streams all use the same format. This allows noise
+	// injection and multiple Mercury instances to mix on the same device.
+	if (multichannel_mode)
+		conf.buf.channels = 16;
+	else
+		conf.buf.channels = 2;
 	conf.buf.device_id = (const char *) device_ptr;
 	uint32_t period_ms;
 	uint32_t period_bytes;
@@ -505,10 +539,16 @@ void *radio_playback_thread(void *device_ptr)
 
 	uint8_t *buffer = (uint8_t *) malloc(AUDIO_PAYLOAD_BUFFER_SIZE * sizeof(double) * 2);
 	double *buffer_double =  (double *) buffer;
-	int32_t *buffer_internal_stereo = (int32_t *) malloc(AUDIO_PAYLOAD_BUFFER_SIZE * sizeof(int32_t) * 2); // a big enough buffer
+	int out_nch_alloc = multichannel_mode ? 16 : 2;
+	int32_t *buffer_internal_stereo = (int32_t *) malloc(AUDIO_PAYLOAD_BUFFER_SIZE * sizeof(int32_t) * out_nch_alloc);
 
 	ffuint total_written = 0;
-	int ch_layout = STEREO;
+
+	// TX clipping detection
+	int tx_clip_count = 0;
+	int tx_clip_samples_total = 0;
+	double tx_clip_peak = 0.0;
+	int tx_clip_report_counter = 0;
 
 #if ENABLE_FLOAT64_TAP == 1
 	FILE *tap_pay = fopen("tap-playback.f64", "w");
@@ -549,15 +589,17 @@ void *radio_playback_thread(void *device_ptr)
 	frame_size = cfg->channels * (cfg->format & 0xff) / 8;
 	msec_bytes = cfg->sample_rate * frame_size / 1000;
 
-	// Use configured output channel from settings
-	if (configured_output_channel == 0)
-		ch_layout = LEFT;
-	else if (configured_output_channel == 1)
-		ch_layout = RIGHT;
-	else
-		ch_layout = STEREO;
-	// Set mono flag based on actual device channels
+	// Determine output channel index (0-based)
+	// For multi-channel devices (>2ch), configured_output_channel is used directly as index.
+	// For 2ch devices: 0=LEFT, 1=RIGHT, 2=STEREO (backwards compatible).
+	out_ch_idx = configured_output_channel;
+	out_stereo = 0;
 	device_is_mono = (cfg->channels == 1);
+	if (!device_is_mono && cfg->channels == 2 && configured_output_channel == 2)
+		out_stereo = 1;  // STEREO only for 2-channel devices
+	if (out_ch_idx >= (int)cfg->channels)
+		out_ch_idx = 0;  // safety fallback
+	out_nch = cfg->channels;
 
     while (!shutdown_)
     {
@@ -604,65 +646,68 @@ void *radio_playback_thread(void *device_ptr)
 		float *buffer_float_out = (float*)buffer_internal_stereo;
 		int16_t *buffer_int16_out = (int16_t*)buffer_internal_stereo;
 
+		int clip_this_buffer = 0;
 		for (int i = 0; i < samples_read; i++)
 		{
 			// Clamp to [-1.0, 1.0]
 			double clamped = buffer_double[i];
-			if (clamped > 1.0) clamped = 1.0;
-			if (clamped < -1.0) clamped = -1.0;
+			if (clamped > 1.0 || clamped < -1.0) {
+				double absval = clamped > 0 ? clamped : -clamped;
+				if (absval > tx_clip_peak) tx_clip_peak = absval;
+				clip_this_buffer++;
+				if (clamped > 1.0) clamped = 1.0;
+				else clamped = -1.0;
+			}
 
-			int idx = i * cfg->channels;
-
-			// Handle mono device - just write single channel
 			if (device_is_mono)
 			{
-				if (is_float32) {
+				// Mono device: single sample per frame
+				if (is_float32)
 					buffer_float_out[i] = (float)clamped;
-				} else if (is_int16) {
+				else if (is_int16)
 					buffer_int16_out[i] = (int16_t)(clamped * 32767.0);
-				} else {
+				else
 					buffer_internal_stereo[i] = clamped * INT_MAX;
-				}
 			}
-			else if (ch_layout == LEFT)
+			else
 			{
+				// Multi-channel: zero all channels, write active channel(s)
+				int idx = i * out_nch;
 				if (is_float32) {
-					buffer_float_out[idx] = (float)clamped;
-					buffer_float_out[idx + 1] = 0.0f;
+					memset(&buffer_float_out[idx], 0, out_nch * sizeof(float));
+					buffer_float_out[idx + out_ch_idx] = (float)clamped;
+					if (out_stereo)
+						buffer_float_out[idx + 1] = (float)clamped;
 				} else if (is_int16) {
-					buffer_int16_out[idx] = (int16_t)(clamped * 32767.0);
-					buffer_int16_out[idx + 1] = 0;
+					memset(&buffer_int16_out[idx], 0, out_nch * sizeof(int16_t));
+					buffer_int16_out[idx + out_ch_idx] = (int16_t)(clamped * 32767.0);
+					if (out_stereo)
+						buffer_int16_out[idx + 1] = buffer_int16_out[idx + out_ch_idx];
 				} else {
-					buffer_internal_stereo[idx] = clamped * INT_MAX;
-					buffer_internal_stereo[idx + 1] = 0;
+					memset(&buffer_internal_stereo[idx], 0, out_nch * sizeof(int32_t));
+					buffer_internal_stereo[idx + out_ch_idx] = clamped * INT_MAX;
+					if (out_stereo)
+						buffer_internal_stereo[idx + 1] = buffer_internal_stereo[idx + out_ch_idx];
 				}
 			}
-			else if (ch_layout == RIGHT)
-			{
-				if (is_float32) {
-					buffer_float_out[idx] = 0.0f;
-					buffer_float_out[idx + 1] = (float)clamped;
-				} else if (is_int16) {
-					buffer_int16_out[idx] = 0;
-					buffer_int16_out[idx + 1] = (int16_t)(clamped * 32767.0);
-				} else {
-					buffer_internal_stereo[idx] = 0;
-					buffer_internal_stereo[idx + 1] = clamped * INT_MAX;
-				}
+		}
+
+		// TX clipping report (every ~1s = 48000 samples)
+		if (clip_this_buffer > 0) {
+			tx_clip_count += clip_this_buffer;
+			tx_clip_samples_total += samples_read;
+		}
+		tx_clip_report_counter += samples_read;
+		if (tx_clip_report_counter >= 48000) {
+			if (tx_clip_count > 0) {
+				printf("[TX-CLIP] %d samples clipped (peak=%.3f, %.1f%% of buffer)\n",
+					tx_clip_count, tx_clip_peak,
+					100.0 * tx_clip_count / tx_clip_report_counter);
+				fflush(stdout);
+				tx_clip_count = 0;
+				tx_clip_peak = 0.0;
 			}
-			else // STEREO
-			{
-				if (is_float32) {
-					buffer_float_out[idx] = (float)clamped;
-					buffer_float_out[idx + 1] = (float)clamped;
-				} else if (is_int16) {
-					buffer_int16_out[idx] = (int16_t)(clamped * 32767.0);
-					buffer_int16_out[idx + 1] = buffer_int16_out[idx];
-				} else {
-					buffer_internal_stereo[idx] = clamped * INT_MAX;
-					buffer_internal_stereo[idx + 1] = buffer_internal_stereo[idx];
-				}
-			}
+			tx_clip_report_counter = 0;
 		}
 
 		n = samples_read * frame_size;
@@ -739,11 +784,18 @@ void *radio_capture_thread(void *device_ptr)
 {
     ffaudio_interface *audio;
 	int device_is_mono = 0;  // Will be set after device opens
+	int in_ch_idx = 0;
+	int in_stereo = 0;
+	int in_nch = 2;
 	struct conf conf = {};
 	conf.buf.app_name = "mercury_capture";
 	conf.buf.format = FFAUDIO_F_INT32;
 	conf.buf.sample_rate = 48000;
-	conf.buf.channels = 2;
+	// Match playback: request 16 channels when -A flag is used.
+	if (multichannel_mode)
+		conf.buf.channels = 16;
+	else
+		conf.buf.channels = 2;
 	conf.buf.device_id = (const char *) device_ptr;
 
 #if defined(_WIN32)
@@ -815,9 +867,13 @@ void *radio_capture_thread(void *device_ptr)
 
 	int32_t *buffer = NULL;
 
-	int ch_layout = STEREO;
+
 
 	double *buffer_internal = NULL;
+
+	// RX overload detection — average energy based
+	double rx_energy_sum = 0.0;
+	int rx_energy_sample_count = 0;
 
 #if ENABLE_FLOAT64_TAP == 1
 	FILE *tap = fopen("tap-capture.f64", "w");
@@ -859,18 +915,20 @@ void *radio_capture_thread(void *device_ptr)
 
 	buffer_internal = (double *) malloc(AUDIO_PAYLOAD_BUFFER_SIZE * sizeof(double) * 2);
 
-	// Use configured input channel from settings
-	if (configured_input_channel == 0)
-		ch_layout = LEFT;
-	else if (configured_input_channel == 1)
-		ch_layout = RIGHT;
-	else
-		ch_layout = STEREO;
-
-	// Detect if device is mono - override ch_layout to work with single channel
+	// Determine input channel index (0-based)
+	// For multi-channel devices (>2ch), configured_input_channel is used directly as index.
+	// For 2ch devices: 0=LEFT, 1=RIGHT, 2=STEREO (backwards compatible).
+	in_ch_idx = configured_input_channel;
+	in_stereo = 0;
 	device_is_mono = (cfg->channels == 1);
+	if (!device_is_mono && cfg->channels == 2 && configured_input_channel == 2)
+		in_stereo = 1;
+	if (in_ch_idx >= (int)cfg->channels)
+		in_ch_idx = 0;  // safety fallback
+	in_nch = cfg->channels;
 
 	static int read_loop_counter = 0;
+
 	while (!shutdown_)
     {
 		r = audio->read(b, (const void **)&buffer);
@@ -898,9 +956,9 @@ void *radio_capture_thread(void *device_ptr)
 
 		for (int i = 0; i < frames_to_write; i++)
 		{
-			// Handle mono device - just read single channel directly
 			if (device_is_mono)
 			{
+				// Mono device: single sample per frame
 				if (is_float32)
 					buffer_internal[i] = (double) buffer_float[i];
 				else if (is_int16)
@@ -908,26 +966,9 @@ void *radio_capture_thread(void *device_ptr)
 				else
 					buffer_internal[i] = (double) buffer[i] / (double) INT_MAX;
 			}
-			else if (ch_layout == LEFT)
+			else if (in_stereo)
 			{
-				if (is_float32)
-					buffer_internal[i] = (double) buffer_float[i*2];
-				else if (is_int16)
-					buffer_internal[i] = (double) buffer_int16[i*2] / 32768.0;
-				else
-					buffer_internal[i] = (double) buffer[i*2] / (double) INT_MAX;
-			}
-			else if (ch_layout == RIGHT)
-			{
-				if (is_float32)
-					buffer_internal[i] = (double) buffer_float[i*2 + 1];
-				else if (is_int16)
-					buffer_internal[i] = (double) buffer_int16[i*2 + 1] / 32768.0;
-				else
-					buffer_internal[i] = (double) buffer[i*2 + 1] / (double) INT_MAX;
-			}
-			else // STEREO - average both channels
-			{
+				// STEREO: average channels 0+1 (only for 2ch devices)
 				if (is_float32)
 					buffer_internal[i] = (double) ((buffer_float[i*2] + buffer_float[i*2 + 1]) / 2.0);
 				else if (is_int16)
@@ -935,12 +976,79 @@ void *radio_capture_thread(void *device_ptr)
 				else
 					buffer_internal[i] = (double) ((buffer[i*2] + buffer[i*2 + 1]) / 2.0) / (double) INT_MAX;
 			}
+			else
+			{
+				// Indexed channel: works for 2ch (LEFT/RIGHT) and multi-channel (0-15)
+				int pos = i * in_nch + in_ch_idx;
+				if (is_float32)
+					buffer_internal[i] = (double) buffer_float[pos];
+				else if (is_int16)
+					buffer_internal[i] = (double) buffer_int16[pos] / 32768.0;
+				else
+					buffer_internal[i] = (double) buffer[pos] / (double) INT_MAX;
+			}
+		}
 
+		// Internal AWGN noise injection (-Z flag or NOISESNR command)
+		// Adds noise BEFORE RX gain, at the cable signal level.
+		// noise_snr_db is referenced to 4 kHz standard HF bandwidth.
+		if (noise_snr_db < 999.0) {
+			static double noise_sigma = 0.0;
+			static double last_snr_db = 999.0;
+			static double last_signal_dbfs = -999.0;
+			if (noise_snr_db != last_snr_db || noise_signal_dbfs != last_signal_dbfs) {
+				double signal_amp = pow(10.0, noise_signal_dbfs / 20.0);
+				double bw_correction = sqrt(48000.0 / (2.0 * 4000.0));
+				noise_sigma = signal_amp * bw_correction * pow(10.0, -noise_snr_db / 20.0);
+				printf("[NOISE-Z] SNR=%.1f dB, signal=%.1f dBFS, sigma=%.6f\n",
+					noise_snr_db, noise_signal_dbfs, noise_sigma);
+				last_snr_db = noise_snr_db;
+				last_signal_dbfs = noise_signal_dbfs;
+			}
+			// DIAG: measure actual signal RMS before noise injection (every ~1s)
+			{
+				static int noise_diag_count = 0;
+				static double noise_diag_sig_sum = 0;
+				static int noise_diag_sig_n = 0;
+				for (int i = 0; i < frames_to_write; i++) {
+					noise_diag_sig_sum += buffer_internal[i] * buffer_internal[i];
+				}
+				noise_diag_sig_n += frames_to_write;
+				if (++noise_diag_count % 100 == 0 && noise_diag_sig_n > 0) {
+					double sig_rms = sqrt(noise_diag_sig_sum / noise_diag_sig_n);
+					double sig_dbfs = (sig_rms > 1e-10) ? 20.0 * log10(sig_rms) : -999.0;
+					printf("[NOISE-DIAG] signal_rms=%.6f (%.1f dBFS) noise_sigma=%.6f ratio=%.1f expect=%.1f dBFS\n",
+						sig_rms, sig_dbfs, noise_sigma, sig_rms / noise_sigma, noise_signal_dbfs);
+					noise_diag_sig_sum = 0;
+					noise_diag_sig_n = 0;
+				}
+			}
+			for (int i = 0; i < frames_to_write; i++) {
+				buffer_internal[i] += noise_sigma * noise_gaussian();
+			}
 		}
 
 #ifdef MERCURY_GUI_ENABLED
 		// Apply RX gain as preprocessing step (affects Mercury's core too)
 		gui_apply_rx_gain_for_display(buffer_internal, frames_to_write);
+
+		// RX overload detection: average energy over 1-second window
+		for (int i = 0; i < frames_to_write; i++) {
+			rx_energy_sum += buffer_internal[i] * buffer_internal[i];
+		}
+		rx_energy_sample_count += frames_to_write;
+		if (rx_energy_sample_count >= 48000) {
+			double rms = sqrt(rx_energy_sum / rx_energy_sample_count);
+			int overloaded = (rms > 0.794);  // -2 dBFS threshold
+			g_gui_state.rx_overload.store(overloaded != 0);
+			if (overloaded) {
+				printf("[RX-OVERLOAD] avg energy too high: RMS=%.3f (%.1f dBFS)\n",
+					rms, 20.0 * log10(rms));
+				fflush(stdout);
+			}
+			rx_energy_sum = 0.0;
+			rx_energy_sample_count = 0;
+		}
 
 		// Push to VU meter and waterfall
 		gui_push_audio_samples(buffer_internal, frames_to_write);
@@ -1024,6 +1132,23 @@ void *radio_capture_prep_thread(void *telecom_ptr_void)
 
 		rx_transfer(buffer_temp, symbol_period);
 
+		// DIAG: capture peak amplitude (every 200 symbols ~4.5s for WB)
+		{
+			static int cap_pk_count = 0;
+			if(++cap_pk_count % 200 == 0) {
+				double pk = 0;
+				for(int ci = 0; ci < symbol_period; ci++)
+					if(fabs(buffer_temp[ci]) > pk) pk = fabs(buffer_temp[ci]);
+				printf("[CAP-PEAK] pk=%.6f sp=%d mute=%d\n", pk, symbol_period, (int)data_container_ptr->rx_mute);
+				fflush(stdout);
+			}
+		}
+
+		if(data_container_ptr->rx_mute) {
+			memset(buffer_temp, 0, symbol_period * sizeof(double));
+			data_container_ptr->rx_mute_samples += symbol_period;
+		}
+
 		MUTEX_LOCK(&capture_prep_mutex);
 
 		// Re-read buffer parameters inside mutex to prevent use-after-free
@@ -1032,23 +1157,53 @@ void *radio_capture_prep_thread(void *telecom_ptr_void)
 		// deinit zeroed Nofdm/buffer_Nsymb between the read and the lock.
 		{
 			int sp = data_container_ptr->Nofdm * data_container_ptr->buffer_Nsymb * data_container_ptr->interpolation_rate;
-			int loc = sp - symbol_period - 1;
 			if(sp != signal_period && sp != 0) {
 				printf("[CAP-STALE] sp_old=%d sp_new=%d symb_old=%d buf=%p tid=%lu\n",
 					signal_period, sp, symbol_period, (void*)data_container_ptr->passband_delayed_data,
 					(unsigned long)pthread_self());
 				fflush(stdout);
 			}
-			if(sp == 0 || data_container_ptr->passband_delayed_data == NULL || loc < 0) {
+			if(sp == 0 || data_container_ptr->passband_delayed_data == NULL || sp <= symbol_period) {
 				MUTEX_UNLOCK(&capture_prep_mutex);
 				continue;
 			}
 
-			if(data_container_ptr->data_ready == 1)
+			// Only count overrun shifts: when buffer is full (ftr==0) but
+			// processing thread hasn't consumed data yet (data_ready==1).
+			// During normal fill (ftr>0), shifts are expected — NOT overruns.
+			// Without this gate, NB MFSK fills of 500+ symbols inflate nUnder
+			// to ~500, wiping out mfsk_search_raw and causing re-decode of
+			// stale preambles (RSP stuck in FAIL decode loop).
+			if(data_container_ptr->data_ready == 1 && data_container_ptr->frames_to_read <= 0)
 				data_container_ptr->nUnder_processing_events++;
 
-			shift_left(data_container_ptr->passband_delayed_data, sp, symbol_period);
-			memcpy(&data_container_ptr->passband_delayed_data[loc], buffer_temp, symbol_period * sizeof(double));
+			// Double-mapped ring buffer write: write at write_index AND
+			// write_index+sp (mirror). Reading sp samples from any position
+			// in [0,sp) gives a contiguous chronological view via the mirror.
+			{
+				int wi = data_container_ptr->ring_write_index;
+				int remaining = sp - wi;
+				if(remaining >= symbol_period) {
+					// Common case: no wrap
+					memcpy(&data_container_ptr->passband_delayed_data[wi],
+						buffer_temp, symbol_period * sizeof(double));
+					memcpy(&data_container_ptr->passband_delayed_data[wi + sp],
+						buffer_temp, symbol_period * sizeof(double));
+				} else {
+					// Rare: write spans ring boundary
+					memcpy(&data_container_ptr->passband_delayed_data[wi],
+						buffer_temp, remaining * sizeof(double));
+					memcpy(&data_container_ptr->passband_delayed_data[wi + sp],
+						buffer_temp, remaining * sizeof(double));
+					int wrap = symbol_period - remaining;
+					memcpy(&data_container_ptr->passband_delayed_data[0],
+						&buffer_temp[remaining], wrap * sizeof(double));
+					memcpy(&data_container_ptr->passband_delayed_data[sp],
+						&buffer_temp[remaining], wrap * sizeof(double));
+				}
+				data_container_ptr->ring_write_index =
+					(wi + symbol_period) % sp;
+			}
 
 			data_container_ptr->frames_to_read--;
 			if(data_container_ptr->frames_to_read < 0)
@@ -1190,6 +1345,10 @@ int audioio_init_internal(char *capture_dev, char *playback_dev, int audio_subsy
 	clear_buffer(capture_buffer);
 	clear_buffer(playback_buffer);
 
+#if defined(_WIN32)
+    capture_prep_mutex = CreateMutex(NULL, FALSE, NULL);
+#endif
+
     pthread_create(radio_capture, NULL, radio_capture_thread, (void *) capture_dev);
 	pthread_create(radio_playback, NULL, radio_playback_thread, (void *) playback_dev);
 	pthread_create(radio_capture_prep, NULL, radio_capture_prep_thread, (void *) telecom_system);
@@ -1199,6 +1358,10 @@ int audioio_init_internal(char *capture_dev, char *playback_dev, int audio_subsy
 
 int audioio_deinit(pthread_t *radio_capture, pthread_t *radio_playback, pthread_t *radio_capture_prep)
 {
+    // Guard: if audio was never initialized (e.g. BER test modes), skip everything
+    if(!capture_buffer)
+        return 0;
+
     pthread_join(*radio_capture_prep, NULL);
     pthread_join(*radio_capture, NULL);
     pthread_join(*radio_playback, NULL);
@@ -1208,6 +1371,8 @@ int audioio_deinit(pthread_t *radio_capture, pthread_t *radio_playback, pthread_
 #endif
 
 #if defined(_WIN32)
+	CloseHandle(capture_prep_mutex);
+	capture_prep_mutex = NULL;
 	free(capture_buffer->buffer);
 	circular_buf_free(capture_buffer);
 	free(playback_buffer->buffer);

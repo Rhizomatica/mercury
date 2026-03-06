@@ -23,7 +23,7 @@
 #ifndef INC_COMMON_DEFINES_H_
 #define INC_COMMON_DEFINES_H_
 
-#define VERSION__ "0.3.1-dev1"
+#define VERSION__ "0.4.2"
 
 // Verbose debug output (0=quiet, 1=debug prints enabled). Set via -v flag.
 extern int g_verbose;
@@ -37,6 +37,7 @@ extern int g_verbose;
 #define TX_SHM 6
 #define RX_SHM 7
 #define ARQ_MODE 8
+#define MONITOR_MODE 9
 
 #define NUMBER_OF_CONFIGS 17
 #define CONFIG_NONE -1
@@ -67,17 +68,20 @@ extern int g_verbose;
 inline bool is_robust_config(int config) { return config >= 100 && config <= 102; }
 inline bool is_ofdm_config(int config) { return config >= 0 && config <= 16; }
 
+// NB mode cap — CONFIG_14 (8PSK, LDPC 14/16) is the highest feasible NB config.
+// 16QAM/32QAM (CONFIG_15+) require accurate amplitude equalization that NB's
+// sparse pilot grid (Nc=10, Dy=3) cannot provide with sufficient accuracy.
+#define NB_CONFIG_MAX CONFIG_14
+
 // Unified config ladder for gearshift (ROBUST → OFDM)
-// Used when robust_enabled + gearshift: ROBUST_0 → ROBUST_1 → ROBUST_2 → CONFIG_0 → ... → CONFIG_15
-// CONFIG_16 (32QAM rate 14/16, 1 preamble) excluded: poor channel estimation makes it
-// strictly worse than CONFIG_15 at all tested SNRs (10k vs 19k B/min at +30 dB).
+// CONFIG_16 included for both NB and WB.
 static const int FULL_CONFIG_LADDER[] = {
 	ROBUST_0, ROBUST_1, ROBUST_2,
 	CONFIG_0, CONFIG_1, CONFIG_2, CONFIG_3, CONFIG_4, CONFIG_5, CONFIG_6,
 	CONFIG_7, CONFIG_8, CONFIG_9, CONFIG_10, CONFIG_11, CONFIG_12,
-	CONFIG_13, CONFIG_14, CONFIG_15
+	CONFIG_13, CONFIG_14, CONFIG_15, CONFIG_16
 };
-static const int FULL_CONFIG_LADDER_SIZE = 19;
+static const int FULL_CONFIG_LADDER_SIZE = 20;
 
 inline int config_ladder_index(int config) {
 	for (int i = 0; i < FULL_CONFIG_LADDER_SIZE; i++) {
@@ -86,14 +90,34 @@ inline int config_ladder_index(int config) {
 	return -1;
 }
 
-inline int config_ladder_up(int config, bool robust_enabled) {
+inline int config_ladder_up(int config, bool robust_enabled, bool narrowband = false) {
+	int ceiling = narrowband ? NB_CONFIG_MAX : CONFIG_16;
 	if (!robust_enabled) {
-		// OFDM only: simple increment within CONFIG_0-16
-		return (config < CONFIG_15) ? config + 1 : config;
+		return (config < ceiling) ? config + 1 : config;
 	}
 	int idx = config_ladder_index(config);
-	if (idx >= 0 && idx < FULL_CONFIG_LADDER_SIZE - 1) return FULL_CONFIG_LADDER[idx + 1];
-	return config;
+	if (idx < 0) return config;
+	int next_idx = idx + 1;
+	if (next_idx >= FULL_CONFIG_LADDER_SIZE) return config;
+	int next = FULL_CONFIG_LADDER[next_idx];
+	if (is_ofdm_config(next) && next > ceiling) return config;
+	return next;
+}
+
+inline int config_ladder_up_n(int config, int steps, bool robust_enabled, bool narrowband = false) {
+	int ceiling = narrowband ? NB_CONFIG_MAX : CONFIG_16;
+	if (!robust_enabled) {
+		int target = config + steps;
+		return (target < ceiling) ? target : ceiling;
+	}
+	int idx = config_ladder_index(config);
+	if (idx < 0) return config;
+	int next_idx = idx + steps;
+	if (next_idx >= FULL_CONFIG_LADDER_SIZE) next_idx = FULL_CONFIG_LADDER_SIZE - 1;
+	int next = FULL_CONFIG_LADDER[next_idx];
+	if (is_ofdm_config(next) && next > ceiling)
+		return ceiling;
+	return next;
 }
 
 inline int config_ladder_down(int config, bool robust_enabled) {
@@ -116,14 +140,33 @@ inline int config_ladder_down_n(int config, int steps, bool robust_enabled) {
 	return FULL_CONFIG_LADDER[idx];
 }
 
-inline bool config_is_at_top(int config, bool robust_enabled) {
-	if (!robust_enabled) return config == CONFIG_15;
+inline bool config_is_at_top(int config, bool robust_enabled, bool narrowband = false) {
+	if (is_ofdm_config(config)) {
+		int ceiling = narrowband ? NB_CONFIG_MAX : CONFIG_16;
+		return config >= ceiling;
+	}
+	if (!robust_enabled) return config == CONFIG_16;
 	return config_ladder_index(config) == FULL_CONFIG_LADDER_SIZE - 1;
 }
 
 inline bool config_is_at_bottom(int config, bool robust_enabled) {
 	if (!robust_enabled) return config == CONFIG_0;
 	return config_ladder_index(config) == 0;
+}
+
+// Returns the modulation type for an OFDM config (MOD_BPSK=2, MOD_QPSK=4, etc.)
+// Used by monitor opportunistic decoder to detect same-modulation config switches
+// (which preserve the audio buffer) vs cross-modulation switches (which destroy it).
+inline int modulation_for_ofdm_config(int config) {
+	if (config >= CONFIG_0  && config <= CONFIG_6)  return 2;  // MOD_BPSK
+	if (config >= CONFIG_7  && config <= CONFIG_9)  return 4;  // MOD_QPSK
+	if (config >= CONFIG_10 && config <= CONFIG_11) return 8;  // MOD_8PSK
+	if (config == CONFIG_12)                        return 4;  // MOD_QPSK
+	if (config == CONFIG_13)                        return 8;  // MOD_8PSK (12/16)
+	if (config == CONFIG_14)                        return 8;  // MOD_8PSK (14/16)
+	if (config == CONFIG_15)                        return 16; // MOD_16QAM
+	if (config == CONFIG_16)                        return 32; // MOD_32QAM
+	return -1;  // Not an OFDM config
 }
 
 /*
@@ -221,6 +264,14 @@ CONFIG_16 (5664.7 bps).
 // #define NO_GEAR_SHIFT_LADDER 2
 // #define NO_GEAR_SHIFT_SNR 3
 
+// SNR-based supershift margin: subtract this from measured SNR before config lookup.
+// Lands ~2 configs below the edge for reliable first probe; slow ladder closes the gap.
+#define SUPERSHIFT_MARGIN_DB 3.0
+
+// Re-trigger supershift if measured SNR suggests we're this many configs below optimal.
+// Checked after each ladder gearshift SET_CONFIG success (fresh OFDM SNR available).
+#define SUPERSHIFT_RETRIGGER_CONFIGS 3
+
 #define YES 1
 #define NO 0
 
@@ -244,11 +295,25 @@ inline const char* config_to_string(int config) {
 		case CONFIG_10: return "CONFIG 10 (8PSK 6/16, ~1354 bps)";
 		case CONFIG_11: return "CONFIG 11 (8PSK 8/16, ~1818 bps)";
 		case CONFIG_12: return "CONFIG 12 (QPSK 14/16, ~2655 bps)";
-		case CONFIG_13: return "CONFIG 13 (16QAM 8/16, ~2882 bps)";
+		case CONFIG_13: return "CONFIG 13 (8PSK 12/16, ~2882 bps)";
 		case CONFIG_14: return "CONFIG 14 (8PSK 14/16, ~3390 bps)";
 		case CONFIG_15: return "CONFIG 15 (16QAM 14/16, ~5088 bps)";
 		case CONFIG_16: return "CONFIG 16 (32QAM 14/16, ~5665 bps)";
 		default: return "UNKNOWN";
+	}
+}
+
+// Long config name with narrowband awareness
+inline const char* config_to_string_nb(int config, bool narrowband) {
+	if (!narrowband) return config_to_string(config);
+	switch (config) {
+		case ROBUST_0: return "ROBUST 0 NB (8-MFSK, ~28 bps)";
+		case ROBUST_1: return "ROBUST 1 NB (4-MFSK x2, ~37 bps)";
+		case ROBUST_2: return "ROBUST 2 NB (4-MFSK x2, ~149 bps)";
+		case CONFIG_0:  return "CONFIG 0 NB (BPSK 1/16, ~61 bps)";
+		case CONFIG_15: return "CONFIG 15 NB (16QAM 14/16, ~1018 bps)";
+		case CONFIG_16: return "CONFIG 16 NB (32QAM 14/16, ~1133 bps)";
+		default: return config_to_string(config); // fallback to wideband string
 	}
 }
 
@@ -271,11 +336,39 @@ inline const char* config_to_short_string(int config) {
 		case CONFIG_10: return "CFG 10 8PSK";
 		case CONFIG_11: return "CFG 11 8PSK";
 		case CONFIG_12: return "CFG 12 QPSK";
-		case CONFIG_13: return "CFG 13 16QAM";
+		case CONFIG_13: return "CFG 13 8PSK";
 		case CONFIG_14: return "CFG 14 8PSK";
 		case CONFIG_15: return "CFG 15 16QAM";
 		case CONFIG_16: return "CFG 16 32QAM";
 		default: return "???";
+	}
+}
+
+// Short config label with narrowband prefix
+inline const char* config_to_short_string_nb(int config, bool narrowband) {
+	if (!narrowband) return config_to_short_string(config);
+	switch (config) {
+		case ROBUST_0: return "NB ROB 0";
+		case ROBUST_1: return "NB ROB 1";
+		case ROBUST_2: return "NB ROB 2";
+		case CONFIG_0:  return "NB C0 BPSK";
+		case CONFIG_1:  return "NB C1 BPSK";
+		case CONFIG_2:  return "NB C2 BPSK";
+		case CONFIG_3:  return "NB C3 BPSK";
+		case CONFIG_4:  return "NB C4 BPSK";
+		case CONFIG_5:  return "NB C5 BPSK";
+		case CONFIG_6:  return "NB C6 BPSK";
+		case CONFIG_7:  return "NB C7 QPSK";
+		case CONFIG_8:  return "NB C8 QPSK";
+		case CONFIG_9:  return "NB C9 QPSK";
+		case CONFIG_10: return "NB C10 8PSK";
+		case CONFIG_11: return "NB C11 8PSK";
+		case CONFIG_12: return "NB C12 QPSK";
+		case CONFIG_13: return "NB C13 8PSK";
+		case CONFIG_14: return "NB C14 8PSK";
+		case CONFIG_15: return "NB C15 16QAM";
+		case CONFIG_16: return "NB C16 32QAM";
+		default: return "NB ???";
 	}
 }
 

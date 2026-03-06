@@ -79,17 +79,31 @@ struct MercurySettings {
     int initial_config;
     int ldpc_iterations_max;  // Max LDPC decoder iterations (5-50)
 
+    // OFDM settings
+    double guard_interval_ms;  // Guard interval in ms (1.33-6.5, default 3.0)
+
     // Modem settings
     bool coarse_freq_sync_enabled;  // Enable coarse freq search (±30 Hz) for HF radio drift
     bool robust_mode_enabled;       // MFSK robust mode for weak-signal hailing
+    bool narrowband_enabled;        // Narrowband mode (Nc=10, BW=469 Hz)
+    int bandwidth_mode;             // BW_AUTO=0, BW_NB_ONLY=1
+    bool force_compress;            // Force compression on (for non-Winlink traffic)
+
+    // Security / encryption settings
+    int encryption_mode;            // ENCRYPT_OFF=0, ENCRYPT_STRICT=1, ENCRYPT_FAST=2
+    std::string psk_hex;            // Pre-shared key (hex string, up to 128 chars)
 
     // GUI settings
     double tx_gain_db;
     double rx_gain_db;
     bool gains_locked;    // Lock gain sliders to prevent accidental adjustment
     bool hide_console;    // Hide the console window (takes effect on restart)
+    bool monitor_enabled; // Enable monitor panel (show decoded plaintext)
     int window_width;
     int window_height;
+
+    // Logging
+    bool log_enabled;      // Enable logging to <exe_dir>/logs/<timestamp>.log
 
     MercurySettings();
     void setDefaults();

@@ -24,6 +24,7 @@
 #define LDPC_DECODER_SPA_H_
 
 #include <cmath>
+#include <atomic>
 #include "physical_defines.h"
 #include "ldpc.h"
 
@@ -44,7 +45,8 @@ int decode_SPA(
 		int N,
 		int K,
 		int P,
-		int nIteration_max
+		int nIteration_max,
+		std::atomic<bool>* abort_flag = nullptr
 );
 
 

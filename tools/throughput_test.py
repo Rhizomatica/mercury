@@ -13,6 +13,21 @@ VB_IN  = "CABLE Output (VB-Audio Virtual Cable)"
 
 config = int(sys.argv[1]) if len(sys.argv) > 1 else 0
 duration_s = int(sys.argv[2]) if len(sys.argv) > 2 else 180
+# Extra flags: --wb for wideband auto, --gain N for RX gain boost
+extra_flags = []
+gain_flag = []
+text_file = None
+i = 3
+while i < len(sys.argv):
+    if sys.argv[i] == "--wb":
+        extra_flags += ["-M", "auto", "-g"]
+    elif sys.argv[i] == "--gain" and i + 1 < len(sys.argv):
+        gain_flag = ["-G", sys.argv[i+1]]
+        i += 1
+    elif sys.argv[i] == "--text" and i + 1 < len(sys.argv):
+        text_file = sys.argv[i+1]
+        i += 1
+    i += 1
 
 RSP_PORT = 7002
 CMD_PORT = 7006
@@ -48,13 +63,27 @@ def rx_thread_fn(sock):
 
 def tx_thread_fn(sock, start_event):
     """Push data continuously until stop_flag."""
-    global stop_flag
-    chunk = bytes(range(256)) * 4  # 1024 bytes
+    global stop_flag, text_file
+    if text_file:
+        with open(text_file, 'rb') as f:
+            text_data = f.read()
+        print(f"  TX source: text file ({len(text_data)} bytes)")
+    else:
+        text_data = None
+    chunk = text_data if text_data else bytes(range(256)) * 4  # 1024 bytes
     start_event.wait()  # Wait for signal to start
     sock.settimeout(30)
+    offset = 0
     while not stop_flag:
         try:
-            sock.send(chunk)
+            if text_data:
+                end = min(offset + 4096, len(chunk))
+                sock.send(chunk[offset:end])
+                offset = end
+                if offset >= len(chunk):
+                    offset = 0  # loop
+            else:
+                sock.send(chunk)
         except socket.timeout:
             continue
         except (ConnectionError, OSError):
@@ -94,7 +123,7 @@ def main():
 
     try:
         # Start responder
-        rsp_cmd = [MERCURY, "-m", "ARQ", "-s", str(config)] + robust_flag + [
+        rsp_cmd = [MERCURY, "-m", "ARQ", "-s", str(config)] + robust_flag + extra_flags + gain_flag + [
             "-p", str(RSP_PORT), "-i", VB_IN, "-o", VB_OUT, "-x", "wasapi", "-n"
         ]
         print("Starting responder...")
@@ -104,7 +133,7 @@ def main():
         time.sleep(3)
 
         # Start commander
-        cmd_cmd = [MERCURY, "-m", "ARQ", "-s", str(config)] + robust_flag + [
+        cmd_cmd = [MERCURY, "-m", "ARQ", "-s", str(config)] + robust_flag + extra_flags + gain_flag + [
             "-p", str(CMD_PORT), "-i", VB_IN, "-o", VB_OUT, "-x", "wasapi", "-n"
         ]
         print("Starting commander...")

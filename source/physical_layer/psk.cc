@@ -283,6 +283,15 @@ void cl_psk::demod(const std::complex <double> *in,int nItems,float *out,float v
 	float Dmin0,Dmin1;
 	unsigned int mask;
 
+	// ZF channel estimation produces zero pilot residual variance by construction.
+	// With variance=0, LLRs become +/-infinity, preventing LDPC SPA convergence
+	// when any data symbols are misclassified (e.g. from H interpolation errors
+	// at non-pilot positions). Floor the variance so that max LLR magnitude stays
+	// within the SPA's useful range (~20-50), allowing error correction.
+	// Value 0.05 is below the LDPC threshold variance for all configs (>0.1)
+	// so it only affects near-perfect channels where it prevents the degenerate case.
+	float eff_var = (variance > 0.05f) ? variance : 0.05f;
+
 	for(int i=0;i<nItems;i+=nBits)
 	{
 
@@ -314,7 +323,7 @@ void cl_psk::demod(const std::complex <double> *in,int nItems,float *out,float v
 					}
 				}
 			}
-			LLR[k]=((1/variance)*(Dmin1-Dmin0));
+			LLR[k]=(Dmin1-Dmin0)/eff_var;
 			mask<<=1;
 		}
 		for(int j=0;j<nBits;j++)

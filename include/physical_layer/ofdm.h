@@ -136,8 +136,10 @@ public:
 	void deframer(std::complex <double>* in, std::complex <double>* out);
 	void ZF_channel_estimator(std::complex <double>*in);
 	void LS_channel_estimator(std::complex <double>*in);
+	void CPE_correction(std::complex<double>* in);
 	void restore_channel_amplitude();
 	double carrier_sampling_frequency_sync(std::complex <double>*in, double carrier_freq_width, int preamble_nSymb, double sampling_frequency);
+	double carrier_frequency_sync_nb(std::complex<double>* in, double carrier_freq_width, int preamble_nSymb);
 	double frequency_sync_coarse(std::complex<double>* in, double subcarrier_spacing, int search_range_subcarriers = 0, int interpolation_rate = 1);
 	void channel_equalizer(std::complex <double>* in, std::complex <double>* out);
 	void channel_equalizer_without_amplitude_restoration(std::complex <double>* in,std::complex <double>* out);
@@ -152,12 +154,16 @@ public:
 	int time_sync(std::complex <double>*in, int size, int interpolation_rate, int location_to_return);
 	int time_sync_preamble(std::complex <double>*in, int size, int interpolation_rate, int location_to_return, int step, int nTrials_max);
 	TimeSyncResult time_sync_preamble_with_metric(std::complex <double>*in, int size, int interpolation_rate, int location_to_return, int step, int nTrials_max);
-	int time_sync_mfsk(std::complex<double>* baseband_interp, int buffer_size_interp, int interpolation_rate, int preamble_nSymb, const int* preamble_tones, int mfsk_M, int nStreams, const int* stream_offsets, int search_start_symb = 0);
-	double detect_ack_pattern(std::complex<double>* baseband_interp, int buffer_size_interp, int interpolation_rate, int ack_nsymb, const int* ack_tones, int ack_pattern_len, int tone_hop_step, int mfsk_M, int nStreams, const int* stream_offsets, int* out_matched = nullptr);
+	TimeSyncResult time_sync_preamble_halfsym(std::complex<double>* in, int size, int interpolation_rate, int step, double early_exit_metric = 0.0);
+	TimeSyncResult time_sync_preamble_halfsym_2phase(std::complex<double>* in, int size, int interpolation_rate, double early_exit_metric = 0.0);
+	TimeSyncResult time_sync_preamble_fft(std::complex<double>* baseband_interp, int buffer_size_interp, int interpolation_rate, int preamble_nSymb);
+	TimeSyncResult time_sync_preamble_fft_fine(std::complex<double>* baseband_interp, int buffer_size_interp, int interpolation_rate, int preamble_nSymb, int coarse_pos, int search_half_window);
+	int time_sync_mfsk(std::complex<double>* baseband_interp, int buffer_size_interp, int interpolation_rate, int preamble_nSymb, const int* preamble_tones, int mfsk_M, int nStreams, const int* stream_offsets, int search_start_symb = 0, double* out_metric = nullptr);
+	double detect_ack_pattern(std::complex<double>* baseband_interp, int buffer_size_interp, int interpolation_rate, int ack_nsymb, const int* ack_tones, int ack_pattern_len, int tone_hop_step, int mfsk_M, int nStreams, const int* stream_offsets, int* out_matched = nullptr, int suffix_start = 0, int* out_suffix_matched = nullptr);
 	int symbol_sync(std::complex <double>*, int size, int interpolation_rate, int location_to_return);
 	void rational_resampler(std::complex <double>* in, int in_size , std::complex <double>* out, int rate, int interpolation_decimation);
 	void baseband_to_passband(std::complex <double>* in, int in_size, double* out, double sampling_frequency, double carrier_frequency, double carrier_amplitude, int interpolation_rate);
-	void passband_to_baseband(double* in, int in_size, std::complex <double>* out, double sampling_frequency, double carrier_frequency, double carrier_amplitude, int decimation_rate, cl_FIR* filter);
+	void passband_to_baseband(double* in, int in_size, std::complex <double>* out, double sampling_frequency, double carrier_frequency, double carrier_amplitude, int decimation_rate, cl_FIR* filter, int sample_offset=0);
 	struct st_channel_complex * estimated_channel, *estimated_channel_without_amplitude_restoration;
 	int Nfft,Nc,Nsymb;
 	float gi;
@@ -181,6 +187,10 @@ public:
 	int LS_window_width;
 	int LS_window_hight;
 
+	// MMSE regularization: noise variance estimated from pilot residuals
+	// Set by ZF/LS channel estimator, used by channel_equalizer
+	double noise_variance_estimate;
+
 	// Pre-allocated buffers for passband_to_baseband (avoids new/delete per call)
 	std::complex<double>* p2b_l_data;
 	std::complex<double>* p2b_data_filtered;
@@ -201,6 +211,22 @@ public:
 	// Pre-allocated grow-as-needed buffer for baseband_to_passband
 	std::complex<double>* b2p_data_interpolated;
 	int b2p_buffer_size;
+
+	// MFSK cross-correlation preamble template (NB only)
+	std::complex<double>* mfsk_corr_template;
+	int mfsk_corr_template_len;
+	double mfsk_corr_template_energy;
+	int mfsk_corr_template_nsymb;
+	double mfsk_corr_template_sym_energy[8]; // per-symbol energy for per-symbol correlation
+	int time_sync_mfsk_corr(std::complex<double>* baseband_interp, int buffer_size_interp, int interpolation_rate, int search_start_symb, double* out_metric);
+
+	// OFDM matched-filter preamble template (replaces FFT-based detection)
+	std::complex<double>* ofdm_corr_template;
+	int ofdm_corr_template_len;       // total samples (nsymb * Nofdm)
+	int ofdm_corr_template_nsymb;     // preamble symbol count
+	double ofdm_corr_template_sym_energy[16]; // per-symbol energy
+	double ofdm_corr_template_energy; // total energy
+	TimeSyncResult time_sync_preamble_matched(std::complex<double>* baseband_interp, int buffer_size_interp, int interpolation_rate, int preamble_nSymb);
 };
 
 
