@@ -94,7 +94,13 @@ ifeq (${uname_m},aarch64)
 #	CPPFLAGS+=-march=armv8.2-a+crypto+fp16+rcpc+dotprod
 endif
 
-.PHONY: clean install examples audioio
+# Cross-compile for Windows using MinGW (requires g++-mingw-w64-x86-64)
+MINGW_CPP = x86_64-w64-mingw32-g++
+MINGW_CC  = x86_64-w64-mingw32-gcc
+MINGW_CXX = x86_64-w64-mingw32-g++
+MINGW_AR  = x86_64-w64-mingw32-ar
+
+.PHONY: clean install examples audioio windows
 
 all: mercury examples
 
@@ -125,6 +131,10 @@ $(IMGUI_DIR)/%.o: $(IMGUI_DIR)/%.cpp
 $(IMGUI_DIR)/backends/%.o: $(IMGUI_DIR)/backends/%.cpp
 	$(CPP) -c $(CPPFLAGS) -Wno-cast-function-type $< -o $@
 endif
+
+windows:
+	$(MAKE) clean OS=Windows_NT CPP=$(MINGW_CPP) CC=$(MINGW_CC) CXX=$(MINGW_CXX) AR=$(MINGW_AR)
+	$(MAKE) -j$$(nproc) OS=Windows_NT CPP=$(MINGW_CPP) CC=$(MINGW_CC) CXX=$(MINGW_CXX) AR=$(MINGW_AR)
 
 doc: $(CPP_SOURCES)
 	@doxygen ./mercury.doxyfile
