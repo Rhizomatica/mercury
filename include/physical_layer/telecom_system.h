@@ -193,6 +193,8 @@ public:
 
 	int bit_energy_dispersal_seed;
 
+	bool coarse_freq_sync_enabled;  // Coarse freq search (±30 Hz) for HF radio drift
+
 	st_reinit_subsystems reinit_subsystems;
 
 };

@@ -60,6 +60,7 @@ cl_telecom_system::cl_telecom_system()
 	ctrl_nBits=0;
 	ctrl_nsymb=0;
 	mfsk_ctrl_mode=false;
+	coarse_freq_sync_enabled=false;
 	ack_pattern_passband_samples=0;
 	ack_pattern_detection_threshold=0.8;
 	operation_mode=BER_PLOT_baseband;
@@ -946,7 +947,7 @@ skip_h_retry_point:
 			{
 				receive_stats.delay=receive_stats.delay_of_last_decoded_message;
 			}
-			else if (receive_stats.sync_trials == 1 && g_gui_state.coarse_freq_sync_enabled.load())
+			else if (receive_stats.sync_trials == 1 && coarse_freq_sync_enabled)
 			{
 				// Trial 0 failed - try coarse frequency search before trial 1
 				// Search ±30 Hz; Moose handles ±22 Hz residual at each,
