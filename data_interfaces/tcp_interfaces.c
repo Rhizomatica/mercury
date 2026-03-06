@@ -993,6 +993,16 @@ void tnc_send_bitrate(uint32_t speed_level, uint32_t bps)
     (void)tnc_queue_line(buffer);
 }
 
+float tnc_get_last_snr(void)
+{
+    return last_sn_value;
+}
+
+uint32_t tnc_get_last_bitrate_bps(void)
+{
+    return last_bitrate_bps;
+}
+
 int interfaces_init(int arq_tcp_base_port, int broadcast_tcp_port, size_t broadcast_frame_size)
 {
     arq_tcp_base_port_cfg = arq_tcp_base_port;

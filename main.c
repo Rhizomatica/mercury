@@ -48,6 +48,7 @@
 #include "tcp_interfaces.h"
 #include "hermes_log.h"
 #include "radio_io.h"
+#include "gui_interface/ui_communication.h"
 
 extern cbuf_handle_t capture_buffer;
 extern cbuf_handle_t playback_buffer;
@@ -86,7 +87,7 @@ static int parse_rx_channel_layout(const char *value)
 static void print_usage(const char *prog)
 {
     printf("Usage modes: \n");
-    printf("%s -m [mode_index] -i [device] -o [device] -x [sound_system] -p [arq_tcp_base_port] -b [broadcast_tcp_port] -f [freedv_verbosity] -k [rx_input_channel]\n", prog);
+    printf("%s -m [mode_index] -i [device] -o [device] -x [sound_system] -p [arq_tcp_base_port] -b [broadcast_tcp_port] -f [freedv_verbosity] -k [rx_input_channel] -u [ui_ip] -U [ui_base_port]\n", prog);
     printf("%s [-h -l -z]\n", prog);
     printf("\nOptions:\n");
     printf(" -c [cpu_nr]                Run on CPU [cpu_nr]. Use -1 to disable CPU selection, which is the default.\n");
@@ -99,6 +100,8 @@ static void print_usage(const char *prog)
     printf(" -x [sound_system]          Sets the sound system or IO API to use: alsa, pulse, dsound, wasapi or shm. Default is alsa on Linux and dsound on Windows.\n");
     printf(" -p [arq_tcp_base_port]     Sets the ARQ TCP base port (control is base_port, data is base_port + 1). Default is 8300.\n");
     printf(" -b [broadcast_tcp_port]    Sets the broadcast TCP port. Default is 8100.\n");
+    printf(" -u [ui_ip]                 Sets the UI IP address. Default is 127.0.0.1.\n");
+    printf(" -U [ui_base_port]          Sets the UI base port (UI TX port is ui_base_port, UI RX port is ui_base_port + 1). Default is 10000.\n");
     printf(" -l                         Lists all modulator/coding modes.\n");
     printf(" -z                         Lists all available sound cards.\n");
     printf(" -v                         Verbose mode. Prints more information during execution.\n");
@@ -145,6 +148,8 @@ int main(int argc, char *argv[])
     int audio_system = -1; // default audio system
     char *input_dev = (char *) malloc(MAX_PATH);
     char *output_dev = (char *) malloc(MAX_PATH);
+    const char *ui_ip = UI_DEFAULT_IP;
+    int ui_tx_port = UI_BASE_PORT;
     int startup_payload_mode = FREEDV_MODE_DATAC3;
     int freedv_verbosity = 0;
     int rx_input_channel = LEFT;
@@ -159,10 +164,20 @@ int main(int argc, char *argv[])
     bool list_radio_models = false;
 
     int opt;
-    while ((opt = getopt(argc, argv, "hc:s:m:f:k:li:o:x:p:b:zvtrL:JR:A:SK")) != -1)
+    while ((opt = getopt(argc, argv, "hc:s:m:f:k:li:o:x:p:b:zvtrL:JR:u:U:A:SK")) != -1)
     {
         switch (opt)
         {
+        case 'u':
+            if (optarg)
+                ui_ip = optarg;
+            break;
+        case 'U':
+            if (optarg)
+            {
+                ui_tx_port = atoi(optarg);
+            }
+            break;
 	case 't':
             test_mode = 1;
             break;
@@ -527,13 +542,23 @@ int main(int argc, char *argv[])
         return EXIT_FAILURE;
     }
 
+    // ---- Initialize UI communication (UDP JSON to mercury-qt) ----
+    ui_ctx_t ui_ctx;
+    printf("Initializing UI communication (TX %s:%d)\n",
+           ui_ip, ui_tx_port);
+    if (ui_comm_init(&ui_ctx, ui_ip, (uint16_t)ui_tx_port) != 0)
+    {
+        // Non-fatal: mercury can run without UI
+        HLOGW("main", "UI communication init failed. Running without GUI.\n");
+    }
 
     // we block somewhere here until shutdown
     if (audio_system != AUDIO_SUBSYSTEM_SHM)
     {
         audioio_deinit(&radio_capture, &radio_playback);
     }
-
+    
+    ui_comm_shutdown(&ui_ctx);
     radio_io_shutdown();
     shutdown_modem(&g_modem);
     HLOGI("main", "Shutting down");

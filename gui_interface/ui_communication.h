@@ -29,6 +29,14 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 
+// ---- Default UDP ports for UI <-> backend communication ----
+// Backend sends status TO UI on UI TX port = UI base port (UI listening)
+// Backend listens for commands FROM UI on UI RX port = UI base port + 1 (UI sending)
+#define UI_BASE_PORT 10000
+#define UI_DEFAULT_IP "127.0.0.1"
+// Status publish interval in microseconds (500ms)
+#define UI_PUBLISH_INTERVAL_US 500000
+
 // ---- Direction type ----
 typedef enum {
     DIR_RX,
@@ -93,6 +101,17 @@ typedef struct {
     uint16_t listen_port;
 } rx_args_t;
 
+// ---- Publisher thread context ----
+typedef struct {
+    udp_tx_t tx;
+    uint16_t rx_port;
+    pthread_t rx_tid;
+    pthread_t pub_tid;
+
+    // For logging rate limiting
+    modem_status_t last_sent_status;
+} ui_ctx_t;
+
 // ---- API ----
 int udp_tx_init(udp_tx_t *tx, const char *ip, uint16_t port);
 void udp_tx_close(udp_tx_t *tx);
@@ -124,7 +143,14 @@ int udp_tx_send_radio_list(udp_tx_t *tx,
                            const char *radios[], int count);
 
 
-// RX thread
+// RX thread (listens for commands from the UI)
 void *rx_thread_main(void *arg);
+
+// Publisher thread (periodically sends modem status to the UI)
+void *ui_publisher_thread(void *arg);
+
+// High-level init/shutdown for the UI communication subsystem
+int ui_comm_init(ui_ctx_t *ctx, const char *ip, uint16_t tx_port);
+void ui_comm_shutdown(ui_ctx_t *ctx);
 
 #endif

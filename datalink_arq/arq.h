@@ -89,6 +89,8 @@ typedef struct
     int control_mode;
     int preferred_rx_mode;
     int preferred_tx_mode;
+    uint64_t tx_bytes;
+    uint64_t rx_bytes;
 } arq_runtime_snapshot_t;
 
 extern arq_info arq_conn;

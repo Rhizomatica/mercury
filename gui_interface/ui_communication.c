@@ -36,8 +36,30 @@
 #include <sys/socket.h>
 #include <stdarg.h>
 #include <time.h>
+#include <errno.h>
+#include <stdbool.h>
 
 #include "ui_communication.h"
+
+#ifndef TEST_MAIN
+#include "../datalink_arq/arq.h"
+#include "../data_interfaces/net.h"
+#include "../data_interfaces/tcp_interfaces.h"
+#include "../common/hermes_log.h"
+
+// global shutdown flag from main.c
+extern bool shutdown_;
+#else
+// Standalone test mode: provide a local shutdown flag
+static bool shutdown_ = false;
+// Stub logger macros for standalone test build
+#define HLOGD(c, fmt, ...) printf("[DBG] [" c "] " fmt "\n", ##__VA_ARGS__)
+#define HLOGI(c, fmt, ...) printf("[INF] [" c "] " fmt "\n", ##__VA_ARGS__)
+#define HLOGW(c, fmt, ...) printf("[WRN] [" c "] " fmt "\n", ##__VA_ARGS__)
+#define HLOGE(c, fmt, ...) printf("[ERR] [" c "] " fmt "\n", ##__VA_ARGS__)
+#endif
+
+#define UI_LOG_TAG "ui-comm"
 
 // ---------------- TX ----------------
 int udp_tx_init(udp_tx_t *tx, const char *ip, uint16_t port)
@@ -46,7 +68,7 @@ int udp_tx_init(udp_tx_t *tx, const char *ip, uint16_t port)
 
     if (tx->sock < 0)
     {
-        perror("socket");
+        HLOGE(UI_LOG_TAG, "socket(): %s", strerror(errno));
         return -1;
     }
 
@@ -56,13 +78,21 @@ int udp_tx_init(udp_tx_t *tx, const char *ip, uint16_t port)
 
     if (inet_pton(AF_INET, ip, &tx->dest.sin_addr) <= 0)
     {
-        perror("inet_pton");
+        HLOGE(UI_LOG_TAG, "inet_pton(%s): %s", ip, strerror(errno));
         close(tx->sock);
         tx->sock = -1;
         return -1;
     }
 
     return 0;
+}
+
+void udp_tx_close(udp_tx_t *tx)
+{
+    if (tx->sock >= 0) {
+        close(tx->sock);
+        tx->sock = -1;
+    }
 }
 
 int udp_tx_send_json_pairs(udp_tx_t *tx, ...)
@@ -82,9 +112,11 @@ int udp_tx_send_json_pairs(udp_tx_t *tx, ...)
         if (!first) strcat(buf, ",");
 
         // Don't quote arrays, objects, numbers, booleans, null
-        if (val[0] == '[' || val[0] == '{' ||
+        // But always quote empty strings (len==0) to produce valid JSON
+        if (val[0] != '\0' &&
+            (val[0] == '[' || val[0] == '{' ||
             strcmp(val, "true") == 0 || strcmp(val, "false") == 0 ||
-            strcmp(val, "null") == 0 || strspn(val, "0123456789.-") == strlen(val)) {
+            strcmp(val, "null") == 0 || strspn(val, "0123456789.-") == strlen(val))) {
             snprintf(tmp, sizeof(tmp), "\"%s\":%s", key, val);
         } else {
             snprintf(tmp, sizeof(tmp), "\"%s\":\"%s\"", key, val);
@@ -98,8 +130,6 @@ int udp_tx_send_json_pairs(udp_tx_t *tx, ...)
 
     ssize_t sent = sendto(tx->sock, buf, strlen(buf), 0,
                           (struct sockaddr *)&tx->dest, sizeof(tx->dest));
-
-    printf("[tx] Sent %zu bytes: %s\n", sent, buf);
 
     return sent;
 }
@@ -315,7 +345,7 @@ static void fill_modem_message(modem_message_t *msg, char keys[][64], char vals[
                     strncpy(msg->radio_list.list, vals[i], sizeof msg->radio_list.list - 1);
             break;
         default:
-            printf("   Unknown message type, raw: %s\n", vals[i]);
+            HLOGW(UI_LOG_TAG, "Unknown message type, raw: %s", vals[i]);
         }
     }
 }
@@ -327,9 +357,14 @@ void *rx_thread_main(void *arg)
     int sock = socket(AF_INET, SOCK_DGRAM, 0);
     if (sock < 0)
     {
-        perror("socket(rx)");
+        HLOGE(UI_LOG_TAG, "socket(rx): %s", strerror(errno));
+        free(rxa);
         return NULL;
     }
+
+    // Set receive timeout so we can check shutdown_ periodically
+    struct timeval tv = { .tv_sec = 1, .tv_usec = 0 };
+    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
 
     struct sockaddr_in addr;
     memset(&addr, 0, sizeof(addr));
@@ -338,13 +373,16 @@ void *rx_thread_main(void *arg)
     addr.sin_addr.s_addr = INADDR_ANY;
 
     if (bind(sock, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
-        perror("bind");
+        HLOGE(UI_LOG_TAG, "bind(port %u): %s", rxa->listen_port, strerror(errno));
         close(sock);
+        free(rxa);
         return NULL;
     }
 
+    free(rxa); // no longer needed
+
     char buf[1500];
-    while (1)
+    while (!shutdown_)
     {
         struct sockaddr_in src;
         socklen_t srclen = sizeof(src);
@@ -353,7 +391,7 @@ void *rx_thread_main(void *arg)
         if (n <= 0) continue;
         buf[n] = '\0';
 
-        printf("[rx] Received %d bytes: %s\n", n, buf);
+        HLOGD(UI_LOG_TAG, "RX %d bytes: %s", n, buf);
         char keys[32][64], vals[32][1024];
         int pairs = 0;
         parse_json(buf, keys, vals, &pairs);
@@ -363,37 +401,31 @@ void *rx_thread_main(void *arg)
 
         char ip[INET_ADDRSTRLEN];
         inet_ntop(AF_INET, &src.sin_addr, ip, sizeof(ip));
-        printf("[rx] From %s:%u\n", ip, ntohs(src.sin_port));
+        HLOGD(UI_LOG_TAG, "RX from %s:%u", ip, ntohs(src.sin_port));
 
         switch (msg.type) {
         case MSG_STATUS:
-            printf("   STATUS:\n");
-            printf("      bitrate: %d bps\n", msg.status.bitrate);
-            printf("      snr: %.1f dB\n", msg.status.snr);
-            printf("      user_callsign: %s\n", msg.status.user_callsign);
-            printf("      dest_callsign: %s\n", msg.status.dest_callsign);
-            printf("      sync: %s\n", msg.status.sync ? "true" : "false");
-            printf("      direction: %s\n", msg.status.dir == DIR_TX ? "tx" : "rx");
-            printf("      client_tcp_connected: %s\n",
-                   msg.status.client_tcp_connected ? "true" : "false");
-            printf("      bytes_transmitted: %ld\n", msg.status.bytes_transmitted);
-            printf("      bytes_received: %ld\n", msg.status.bytes_received);
+            HLOGD(UI_LOG_TAG, "STATUS bitrate=%d snr=%.1f call=%s dest=%s sync=%s dir=%s tcp=%s tx=%ld rx=%ld",
+                  msg.status.bitrate, msg.status.snr,
+                  msg.status.user_callsign, msg.status.dest_callsign,
+                  msg.status.sync ? "true" : "false",
+                  msg.status.dir == DIR_TX ? "tx" : "rx",
+                  msg.status.client_tcp_connected ? "true" : "false",
+                  msg.status.bytes_transmitted, msg.status.bytes_received);
             break;
 
         case MSG_SOUNDCARD_LIST:
-            printf("   SOUNDCARD LIST:\n");
-            printf("      selected: %s\n", msg.soundcard_list.selected);
-            printf("      list: %s\n", msg.soundcard_list.list);
+            HLOGD(UI_LOG_TAG, "SOUNDCARD_LIST selected=%s list=%s",
+                  msg.soundcard_list.selected, msg.soundcard_list.list);
             break;
 
         case MSG_RADIO_LIST:
-            printf("   RADIO LIST:\n");
-            printf("      selected: %s\n", msg.radio_list.selected);
-            printf("      list: %s\n", msg.radio_list.list);
+            HLOGD(UI_LOG_TAG, "RADIO_LIST selected=%s list=%s",
+                  msg.radio_list.selected, msg.radio_list.list);
             break;
 
         default:
-            printf("   Unknown message type, raw: %s\n", buf);
+            HLOGW(UI_LOG_TAG, "Unknown message type, raw: %s", buf);
             break;
         }
     }
@@ -401,6 +433,144 @@ void *rx_thread_main(void *arg)
     close(sock);
     return NULL;
 }
+
+// ---------------- UI PUBLISHER THREAD ----------------
+// Periodically gathers modem/ARQ/network status and sends it to the UI.
+
+#ifndef TEST_MAIN
+
+void *ui_publisher_thread(void *arg)
+{
+    ui_ctx_t *ctx = (ui_ctx_t *)arg;
+    udp_tx_t *tx = &ctx->tx;
+
+    HLOGI(UI_LOG_TAG, "Publisher started — sending status every %d ms to port %d",
+           UI_PUBLISH_INTERVAL_US / 1000, ntohs(tx->dest.sin_port));
+
+    while (!shutdown_)
+    {
+        // --- Gather status from ARQ snapshot ---
+        arq_runtime_snapshot_t snap;
+        int have_snap = arq_get_runtime_snapshot(&snap);
+
+        int bitrate = (int)tnc_get_last_bitrate_bps();
+        double snr = (double)tnc_get_last_snr();
+        const char *user_call = arq_conn.my_call_sign;
+        const char *dest_call = arq_conn.dst_addr;
+        int sync = 0;
+        modem_direction_t dir = DIR_RX;
+        int tcp_connected = 0;
+        long bytes_tx = 0;
+        long bytes_rx = 0;
+
+        if (have_snap && snap.initialized)
+        {
+            dir = (snap.trx == 1) ? DIR_TX : DIR_RX;
+            sync = snap.connected ? 1 : 0;
+            bytes_tx = (long)snap.tx_bytes;
+            bytes_rx = (long)snap.rx_bytes;
+        }
+
+        // --- Check TCP client connected status ---
+        int ctl_status = net_get_status(CTL_TCP_PORT);
+        int data_status = net_get_status(DATA_TCP_PORT);
+        tcp_connected = (ctl_status == NET_CONNECTED || data_status == NET_CONNECTED) ? 1 : 0;
+
+        // --- Log only if something meaningful changed ---
+        if (bitrate != ctx->last_sent_status.bitrate ||
+            snr != ctx->last_sent_status.snr ||
+            sync != ctx->last_sent_status.sync ||
+            dir != ctx->last_sent_status.dir ||
+            tcp_connected != ctx->last_sent_status.client_tcp_connected ||
+            bytes_tx != ctx->last_sent_status.bytes_transmitted ||
+            bytes_rx != ctx->last_sent_status.bytes_received ||
+            (user_call && strcmp(user_call, ctx->last_sent_status.user_callsign) != 0) ||
+            (dest_call && strcmp(dest_call, ctx->last_sent_status.dest_callsign) != 0))
+        {
+            HLOGD(UI_LOG_TAG, "Status changed: bitrate=%d snr=%.1f sync=%d dir=%d tcp=%d tx=%ld rx=%ld call=%s dest=%s",
+                  bitrate, snr, sync, dir, tcp_connected, bytes_tx, bytes_rx,
+                  user_call ? user_call : "", dest_call ? dest_call : "");
+            
+            // update last sent status
+            ctx->last_sent_status.bitrate = bitrate;
+            ctx->last_sent_status.snr = snr;
+            ctx->last_sent_status.sync = sync;
+            ctx->last_sent_status.dir = dir;
+            ctx->last_sent_status.client_tcp_connected = tcp_connected;
+            ctx->last_sent_status.bytes_transmitted = bytes_tx;
+            ctx->last_sent_status.bytes_received = bytes_rx;
+            if (user_call) strncpy(ctx->last_sent_status.user_callsign, user_call, sizeof(ctx->last_sent_status.user_callsign)-1);
+            if (dest_call) strncpy(ctx->last_sent_status.dest_callsign, dest_call, sizeof(ctx->last_sent_status.dest_callsign)-1);
+        }
+
+        // --- Send status to UI ---
+        udp_tx_send_status(tx,
+                           bitrate, snr,
+                           user_call ? user_call : "",
+                           dest_call ? dest_call : "",
+                           sync, dir,
+                           tcp_connected,
+                           bytes_tx, bytes_rx);
+
+        usleep(UI_PUBLISH_INTERVAL_US);
+    }
+
+    HLOGI(UI_LOG_TAG, "Publisher shutting down");
+    return NULL;
+}
+
+// ---------------- HIGH-LEVEL INIT / SHUTDOWN ----------------
+
+int ui_comm_init(ui_ctx_t *ctx, const char *ip, uint16_t tx_port)
+{
+    memset(ctx, 0, sizeof(*ctx));
+
+    // Initialize TX socket — sends status TO the UI
+    if (udp_tx_init(&ctx->tx, ip, tx_port) != 0) {
+        HLOGE(UI_LOG_TAG, "Failed to init TX socket to %s:%u", ip, tx_port);
+        return -1;
+    }
+    HLOGI(UI_LOG_TAG, "TX socket ready - sending to %s:%u", ip, tx_port);
+
+    // Start RX thread - listens for commands FROM the UI
+    uint16_t rx_port = tx_port + 1;
+    ctx->rx_port = rx_port;
+    rx_args_t *rxa = malloc(sizeof(rx_args_t));
+    if (!rxa) {
+        udp_tx_close(&ctx->tx);
+        return -1;
+    }
+    rxa->listen_port = rx_port;
+    if (pthread_create(&ctx->rx_tid, NULL, rx_thread_main, rxa) != 0) {
+        HLOGE(UI_LOG_TAG, "pthread_create(rx) failed: %s", strerror(errno));
+        free(rxa);
+        udp_tx_close(&ctx->tx);
+        return -1;
+    }
+    pthread_detach(ctx->rx_tid);
+    HLOGI(UI_LOG_TAG, "RX thread started - listening on port %u", rx_port);
+
+    // Start publisher thread - periodic status broadcaster
+    if (pthread_create(&ctx->pub_tid, NULL, ui_publisher_thread, ctx) != 0) {
+        HLOGE(UI_LOG_TAG, "pthread_create(pub) failed: %s", strerror(errno));
+        udp_tx_close(&ctx->tx);
+        return -1;
+    }
+    pthread_detach(ctx->pub_tid);
+    HLOGI(UI_LOG_TAG, "Publisher thread started");
+
+    return 0;
+}
+
+void ui_comm_shutdown(ui_ctx_t *ctx)
+{
+    // Threads check shutdown_ flag and will exit on their own.
+    // Just close the TX socket.
+    udp_tx_close(&ctx->tx);
+    HLOGI(UI_LOG_TAG, "Shut down");
+}
+
+#endif /* !TEST_MAIN */
 
 // ---------------- MAIN TEST ----------------
 

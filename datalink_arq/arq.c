@@ -724,6 +724,8 @@ bool arq_get_runtime_snapshot(arq_runtime_snapshot_t *snapshot)
     snapshot->control_mode      = g_sess.control_mode;
     snapshot->preferred_rx_mode = arq_modem_preferred_rx_mode(&g_sess);
     snapshot->preferred_tx_mode = arq_modem_preferred_tx_mode(&g_sess);
+    snapshot->tx_bytes          = g_timing.tx_bytes;
+    snapshot->rx_bytes          = g_timing.rx_bytes;
     return true;
 }
 

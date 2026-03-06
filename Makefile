@@ -75,7 +75,7 @@ ifeq ($(HAVE_HERMES_SHM),1)
 HERMES_SHM_CFLAGS = -DHAVE_HERMES_SHM
 endif
 
-CFLAGS = $(COMMON_CFLAGS) -Imodem/freedv -Imodem -Idatalink_broadcast -Idata_interfaces -Idatalink_arq -Iaudioio/ffaudio -Icommon -Iradio_io $(HAMLIB_CFLAGS) $(HERMES_SHM_CFLAGS)
+CFLAGS = $(COMMON_CFLAGS) -Imodem/freedv -Imodem -Idatalink_broadcast -Idata_interfaces -Idatalink_arq -Iaudioio/ffaudio -Icommon -Igui_interface -Iradio_io $(HAMLIB_CFLAGS) $(HERMES_SHM_CFLAGS)
 
 ifeq ($(OS),Windows_NT)
 BINARY = mercury.exe
@@ -91,7 +91,7 @@ MERCURY_LINK_INPUTS = \
 	datalink_broadcast/broadcast.o datalink_broadcast/kiss.o modem/modem.o modem/framer.o modem/freedv/libfreedvdata.a \
 	audioio/audioio.a common/os_interop.o common/ring_buffer_posix.o common/shm_posix.o common/crc6.o common/hermes_log.o \
 	common/chan.o common/queue.o data_interfaces/tcp_interfaces.o data_interfaces/net.o \
-	radio_io/radio_io.o
+	gui_interface/ui_communication.o radio_io/radio_io.o
 
 ifeq ($(HAVE_HERMES_SHM),1)
 MERCURY_LINK_INPUTS += radio_io/sbitx_io.o radio_io/shm_utils.o
@@ -137,8 +137,8 @@ internal_deps:
 	$(MAKE) -C data_interfaces
 	$(MAKE) -C audioio
 	$(MAKE) -C common
+	$(MAKE) -C gui_interface gui_interface
 	$(MAKE) -C radio_io
-
 
 windows:
 	$(MAKE) clean OS=Windows_NT CC=$(MINGW_CC) AR=$(MINGW_AR)
@@ -164,6 +164,7 @@ clean:
 	$(MAKE) -C data_interfaces clean
 	$(MAKE) -C audioio clean
 	$(MAKE) -C common clean
+	$(MAKE) -C gui_interface clean
 	$(MAKE) -C radio_io clean
 
 doxygen:

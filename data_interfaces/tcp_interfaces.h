@@ -54,4 +54,8 @@ void tnc_send_buffer(uint32_t bytes);
 void tnc_send_sn(float snr);
 void tnc_send_bitrate(uint32_t speed_level, uint32_t bps);
 
+// Getters for cached telemetry (thread-safe reads of last reported values)
+float tnc_get_last_snr(void);
+uint32_t tnc_get_last_bitrate_bps(void);
+
 #endif // TCP_INTERFACES_H_
