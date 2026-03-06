@@ -551,6 +551,7 @@ start_modem:
         else if (g_settings.ldpc_iterations_max != 50)
             telecom_system.default_configurations_telecom_system.ldpc_nIteration_max = g_settings.ldpc_iterations_max;
         g_gui_state.ldpc_iterations_max.store(telecom_system.default_configurations_telecom_system.ldpc_nIteration_max);
+        telecom_system.coarse_freq_sync_enabled = g_settings.coarse_freq_sync_enabled;
         g_gui_state.coarse_freq_sync_enabled.store(g_settings.coarse_freq_sync_enabled);
         // Robust mode: CLI -R overrides INI setting
         if (robust_mode)
@@ -668,6 +669,8 @@ start_modem:
                 // Update SNR measurements (uplink = what we receive, downlink = what remote receives from us)
                 gui_update_arq_measurements(ARQ.get_snr_uplink(), ARQ.get_snr_downlink());
 
+                // Sync coarse freq sync from GUI to telecom_system
+                telecom_system.coarse_freq_sync_enabled = g_gui_state.coarse_freq_sync_enabled.load();
                 // Sync robust mode from GUI to ARQ (takes effect on next connection)
                 ARQ.robust_enabled = g_gui_state.robust_mode_enabled.load() ? YES : NO;
 
