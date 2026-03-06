@@ -286,7 +286,9 @@ Join the HERMES mailing list: https://lists.riseup.net/www/info/hermes-general
 
 ## About
 
-Mercury was written by Fadi Jerji for Rhizomatica's HERMES project and is maintained by the HERMES team. This project is sponsored by ARDC.
+Mercury was initially written by Fadi Jerji for Rhizomatica's HERMES project, and currently is developed by Kameron Markham and Rhizomatica's HERMES team.
+
+This project is sponsored by ARDC.
 
 ## License
 
