@@ -70,6 +70,7 @@ cl_telecom_system::cl_telecom_system()
 	ctrl_nBits=0;
 	ctrl_nsymb=0;
 	mfsk_ctrl_mode=false;
+	coarse_freq_sync_enabled=false;
 	ack_pattern_passband_samples=0;
 	ack_pattern_detection_threshold=0.8;
 	operation_mode=BER_PLOT_baseband;
@@ -836,6 +837,31 @@ st_receive_stats cl_telecom_system::receive_byte(double *data, int* out)
 				fflush(stdout);
 			}
 		}
+		// Impulse noise blanking: clip passband samples exceeding 10× RMS.
+		// HF atmospheric noise (QRN) creates short, high-energy bursts that
+		// produce outlier LLRs and poison the LDPC soft decoder. Clipping
+		// limits the damage to a bounded constellation error.
+		// Threshold 10× RMS: OFDM peaks reach ~4× RMS (50 subcarriers),
+		// pre-equalization can push to ~8×. Impulse noise is 15-50× RMS.
+		// NOTE: Disabled in BER test path (data is passed const, clipper
+		// modifies in-place which is safe for ARQ but must not clip BER).
+		if(M != MOD_MFSK)  // guard: only on OFDM, skip if buffer is too quiet
+		{
+			int pb_samples = data_container.Nofdm * data_container.buffer_Nsymb * frequency_interpolation_rate;
+			double* pb = (double*)data;
+			double sum_sq = 0.0;
+			for(int i = 0; i < pb_samples; i++)
+				sum_sq += pb[i] * pb[i];
+			double rms = sqrt(sum_sq / pb_samples);
+			if(rms > 1e-6) {  // skip if buffer is silence/empty
+				double clip_threshold = 10.0 * rms;
+				int clipped = 0;
+				for(int i = 0; i < pb_samples; i++) {
+					if(pb[i] > clip_threshold) { pb[i] = clip_threshold; clipped++; }
+					else if(pb[i] < -clip_threshold) { pb[i] = -clip_threshold; clipped++; }
+				}
+			}
+		}
 		ofdm.passband_to_baseband((double*)data,data_container.Nofdm*data_container.buffer_Nsymb*frequency_interpolation_rate,data_container.baseband_data_interpolated,sampling_frequency,carrier_frequency,carrier_amplitude,1,&ofdm.FIR_rx_time_sync);
 		auto t1_pb = std::chrono::steady_clock::now();
 		timing_pb_tsync_ms = std::chrono::duration<double, std::milli>(t1_pb - t0_pb).count();
@@ -1457,7 +1483,7 @@ skip_h_retry_point:
 			{
 				receive_stats.delay=receive_stats.delay_of_last_decoded_message;
 			}
-			else if (receive_stats.sync_trials == 1 && g_gui_state.coarse_freq_sync_enabled.load())
+			else if (receive_stats.sync_trials == 1 && coarse_freq_sync_enabled)
 			{
 				// Trial 0 failed - try coarse frequency search before trial 1
 				// Search ±30 Hz; Moose handles ±22 Hz residual at each,
@@ -1882,11 +1908,12 @@ skip_h_retry_point:
 				receive_stats.message_decoded=NO;
 				if(M != MOD_MFSK)
 				{
-					if (g_verbose)
-						printf("[OFDM-SYNC] trial %d FAIL: delay=%d iter=%d all_zeros=%d freq_off=%.1f var=%.4f\n",
-							receive_stats.sync_trials, receive_stats.delay,
-							receive_stats.iterations_done, receive_stats.all_zeros,
-							freq_offset_measured, variance);
+					// Always log OFDM decode failures — needed for HF diagnostics
+					printf("[OFDM-FAIL] t%d cfg=%d delay=%d iter=%d zeros=%d freq=%.1f var=%.4f meanH=%.3f coarse=%.1f crc=0x%04X\n",
+						receive_stats.sync_trials, current_configuration,
+						receive_stats.delay, receive_stats.iterations_done,
+						receive_stats.all_zeros, freq_offset_measured, variance,
+						mean_H, coarse_freq_offset, receive_stats.crc);
 					fflush(stdout);
 				}
 				receive_stats.sync_trials++;
@@ -1943,6 +1970,15 @@ skip_h_retry_point:
 				}
 
 				receive_stats.message_decoded=YES;
+				if(M != MOD_MFSK)
+				{
+					printf("[OFDM-OK] t%d cfg=%d delay=%d iter=%d freq=%.1f var=%.4f meanH=%.3f SNR=%.1f coarse=%.1f\n",
+						receive_stats.sync_trials, current_configuration,
+						receive_stats.delay, receive_stats.iterations_done,
+						freq_offset_measured, variance, mean_H,
+						receive_stats.SNR, coarse_freq_offset);
+					fflush(stdout);
+				}
 
 #ifdef MERCURY_GUI_ENABLED
 				// Push fully-equalized data for visualization (tight clusters).
@@ -2043,11 +2079,10 @@ skip_h_retry_point:
 			}
 		}
 
-		// Diagnostic: decode failure analysis
-		if(receive_stats.message_decoded != YES)
+		// Diagnostic: decode failure analysis (verbose only — energy scan is expensive)
+		if(receive_stats.message_decoded != YES && g_verbose)
 		{
 			const char* fail_type = (skip_h_count > 0) ? "SKIP-H" : "LDPC";
-			// Measure energy at preamble and data positions
 			int sym_samp = data_container.Nofdm * frequency_interpolation_rate;
 			int buf_samp = data_container.Nofdm * data_container.buffer_Nsymb * frequency_interpolation_rate;
 			double pream_energy = 0.0, data_energy = 0.0;
@@ -4130,4 +4165,16 @@ void cl_telecom_system::get_pre_equalization_channel()
 		pre_equalization_channel[i].value/=nTries;
 	}
 
+	// DIAG: print pre-eq magnitude range
+	{
+		double min_mag = 1e30, max_mag = 0;
+		for(int i=0;i<data_container.Nc;i++)
+		{
+			double m = std::abs(pre_equalization_channel[i].value);
+			if(m < min_mag) min_mag = m;
+			if(m > max_mag) max_mag = m;
+		}
+		printf("[PRE-EQ] Nc=%d min_mag=%.4f max_mag=%.4f\n", data_container.Nc, min_mag, max_mag);
+		fflush(stdout);
+	}
 }

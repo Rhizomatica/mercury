@@ -217,6 +217,7 @@ public:
 	int bit_energy_dispersal_seed;
 
 	int narrowband_enabled;  // 0=wideband (Nc=50, BW=2344 Hz), 1=narrowband (Nc=10, BW=469 Hz)
+	bool coarse_freq_sync_enabled;  // Coarse freq search (±30 Hz) for HF radio drift
 
 	// TX gain table: per signal-type × NB/WB mode amplitude scalars
 	double tx_gain[TX_SIG_COUNT][2][2];  // [signal_type][nb_mod][nb_fir]

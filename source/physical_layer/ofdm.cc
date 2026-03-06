@@ -56,6 +56,7 @@ cl_ofdm::cl_ofdm()
 	LS_window_width=0;
 	LS_window_hight=0;
 	channel_estimator_amplitude_restoration=NO;
+	noise_variance_estimate=0.01; // Safe default (SNR ~20dB)
 	// Optimized FFT tables
 	fft_twiddle=NULL;
 	fft_scratch=NULL;
@@ -1292,6 +1293,34 @@ void cl_ofdm::ZF_channel_estimator(std::complex <double>*in)
 			}
 		}
 	}
+	// Estimate noise variance from pilot residuals for MMSE equalization.
+	// noise = received_pilot - H_interpolated * known_pilot_value
+	// This measures how well the (interpolated) channel estimate explains the
+	// actual received pilots — the residual is noise + estimation error.
+	{
+		double noise_sum = 0.0;
+		int noise_count = 0;
+		int pi = 0;
+		for(int i = 0; i < Nsymb; i++)
+		{
+			for(int j = 0; j < Nc; j++)
+			{
+				if((ofdm_frame + i*Nc + j)->type == PILOT)
+				{
+					std::complex<double> reconstructed = (estimated_channel + i*Nc + j)->value * pilot_configurator.sequence[pi];
+					std::complex<double> residual = *(in + i*Nc + j) - reconstructed;
+					noise_sum += residual.real()*residual.real() + residual.imag()*residual.imag();
+					noise_count++;
+					pi++;
+				}
+			}
+		}
+		if(noise_count > 0)
+			noise_variance_estimate = noise_sum / noise_count;
+		// Floor to prevent division instability at very high SNR
+		if(noise_variance_estimate < 1e-6)
+			noise_variance_estimate = 1e-6;
+	}
 /*
  * Ref: R. Lucky, “The adaptive equalizer,” IEEE Signal Processing Magazine, vol. 23, no. 3, pp. 104–107, 2006.
  */
@@ -1420,6 +1449,30 @@ void cl_ofdm::LS_channel_estimator(std::complex <double>*in)
 		{
 			interpolate_bilinear_matrix(estimated_channel,Nc,Nsymb,j,Nc-1,0,Nsymb-1);
 		}
+	}
+	// Estimate noise variance from pilot residuals (same as ZF estimator)
+	{
+		double noise_sum = 0.0;
+		int noise_count = 0;
+		int pi = 0;
+		for(int i = 0; i < Nsymb; i++)
+		{
+			for(int j = 0; j < Nc; j++)
+			{
+				if((ofdm_frame + i*Nc + j)->type == PILOT)
+				{
+					std::complex<double> reconstructed = (estimated_channel + i*Nc + j)->value * pilot_configurator.sequence[pi];
+					std::complex<double> residual = *(in + i*Nc + j) - reconstructed;
+					noise_sum += residual.real()*residual.real() + residual.imag()*residual.imag();
+					noise_count++;
+					pi++;
+				}
+			}
+		}
+		if(noise_count > 0)
+			noise_variance_estimate = noise_sum / noise_count;
+		if(noise_variance_estimate < 1e-6)
+			noise_variance_estimate = 1e-6;
 	}
 /*
  * Ref J. . -J. van de Beek, O. Edfors, M. Sandell, S. K. Wilson and P. O. Borjesson, "On channel estimation in OFDM systems," 1995 IEEE 45th Vehicular Technology Conference. Countdown to the Wireless Twenty-First Century, Chicago, IL, USA, 1995, pp. 815-819 vol.2, doi: 10.1109/VETEC.1995.504981.
@@ -1679,22 +1732,38 @@ double cl_ofdm::measure_SNR(std::complex <double>*in_s, std::complex <double>*in
 
 void cl_ofdm::channel_equalizer(std::complex <double>* in, std::complex <double>* out)
 {
+	// MMSE-regularized ZF: out = in / H, but when |H|² < σ²_n the channel
+	// is too faded to recover — output zero (soft erasure) instead of
+	// amplifying noise.  At good subcarriers this is identical to ZF.
+	// At spectral nulls it prevents noise blowup that poisons LDPC LLRs.
+	double nv = noise_variance_estimate;
 	for(int i=0;i<Nsymb;i++)
 	{
 		for(int j=0;j<Nc;j++)
 		{
-			*(out+i*Nc+j)=*(in+i*Nc+j) / (estimated_channel+i*Nc+j)->value;
+			std::complex<double> H = (estimated_channel+i*Nc+j)->value;
+			double H_mag_sq = H.real()*H.real() + H.imag()*H.imag();
+			if(H_mag_sq > nv)
+				*(out+i*Nc+j) = *(in+i*Nc+j) / H;
+			else
+				*(out+i*Nc+j) = std::complex<double>(0.0, 0.0);  // erasure
 			(estimated_channel+i*Nc+j)->status=UNKNOWN;
 		}
 	}
 }
 void cl_ofdm::channel_equalizer_without_amplitude_restoration(std::complex <double>* in,std::complex <double>* out)
 {
+	double nv = noise_variance_estimate;
 	for(int i=0;i<Nsymb;i++)
 	{
 		for(int j=0;j<Nc;j++)
 		{
-			*(out+i*Nc+j)=*(in+i*Nc+j) / (estimated_channel_without_amplitude_restoration+i*Nc+j)->value;
+			std::complex<double> H = (estimated_channel_without_amplitude_restoration+i*Nc+j)->value;
+			double H_mag_sq = H.real()*H.real() + H.imag()*H.imag();
+			if(H_mag_sq > nv)
+				*(out+i*Nc+j) = *(in+i*Nc+j) / H;
+			else
+				*(out+i*Nc+j) = std::complex<double>(0.0, 0.0);
 		}
 	}
 }

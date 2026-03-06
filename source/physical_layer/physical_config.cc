@@ -34,7 +34,7 @@ cl_configuration_telecom_system::cl_configuration_telecom_system()
 
 	ofdm_Nc=AUTO_SELLECT;
 	ofdm_Nfft=256;
-	ofdm_gi=1.0/16.0;
+	ofdm_gi=54.0/256.0;  // Ngi=54 → 4.5ms GI (covers most HF multipath, ITU moderate+poor)
 	ofdm_Nsymb=AUTO_SELLECT;
 	ofdm_pilot_configurator_Dx=AUTO_SELLECT;
 	ofdm_pilot_configurator_Dy=AUTO_SELLECT;

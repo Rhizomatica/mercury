@@ -187,6 +187,10 @@ public:
 	int LS_window_width;
 	int LS_window_hight;
 
+	// MMSE regularization: noise variance estimated from pilot residuals
+	// Set by ZF/LS channel estimator, used by channel_equalizer
+	double noise_variance_estimate;
+
 	// Pre-allocated buffers for passband_to_baseband (avoids new/delete per call)
 	std::complex<double>* p2b_l_data;
 	std::complex<double>* p2b_data_filtered;
