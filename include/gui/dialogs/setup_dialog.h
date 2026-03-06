@@ -86,8 +86,12 @@ private:
     bool robust_mode_enabled_;
     int bandwidth_mode_;
 
+    // OFDM
+    int guard_interval_idx_;  // Index into GI dropdown values
+
     // Advanced
     bool hide_console_;
+    bool log_file_enabled_;
 
     // Security
     int encryption_mode_;  // ENCRYPT_OFF=0, ENCRYPT_STRICT=1, ENCRYPT_FAST=2

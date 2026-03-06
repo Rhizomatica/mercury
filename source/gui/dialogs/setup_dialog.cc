@@ -11,6 +11,40 @@
 
 #include <cstring>
 #include <cstdio>
+#include <cmath>
+
+// Guard interval dropdown values (ms). Ngi = ms * 12 samples at 12kHz OFDM rate.
+static const double GI_VALUES_MS[] = {
+    1.333, 2.0, 2.667, 3.0, 3.333, 4.0, 4.5, 5.0, 5.5, 6.0, 6.5
+};
+static const char* GI_LABELS[] = {
+    "1.33 ms (Ngi=16)",
+    "2.00 ms (Ngi=24)",
+    "2.67 ms (Ngi=32)",
+    "3.00 ms (Ngi=36) [default]",
+    "3.33 ms (Ngi=40)",
+    "4.00 ms (Ngi=48)",
+    "4.50 ms (Ngi=54)",
+    "5.00 ms (Ngi=60)",
+    "5.50 ms (Ngi=66)",
+    "6.00 ms (Ngi=72)",
+    "6.50 ms (Ngi=78)"
+};
+static const int GI_COUNT = sizeof(GI_VALUES_MS) / sizeof(GI_VALUES_MS[0]);
+static const int GI_DEFAULT_IDX = 3;  // 3.0ms
+
+static int gi_ms_to_index(double ms) {
+    int best = GI_DEFAULT_IDX;
+    double best_diff = 999.0;
+    for (int i = 0; i < GI_COUNT; i++) {
+        double diff = fabs(GI_VALUES_MS[i] - ms);
+        if (diff < best_diff) {
+            best_diff = diff;
+            best = i;
+        }
+    }
+    return best;
+}
 
 // Global dialog - Meyer's Singleton to avoid static init order fiasco
 SetupDialog& get_setup_dialog() {
@@ -38,6 +72,7 @@ SetupDialog::SetupDialog()
     , coarse_freq_sync_enabled_(false)
     , robust_mode_enabled_(false)
     , bandwidth_mode_(0)
+    , guard_interval_idx_(GI_DEFAULT_IDX)
     , hide_console_(false)
     , encryption_mode_(0)
 {
@@ -87,7 +122,10 @@ void SetupDialog::loadSettings() {
     robust_mode_enabled_ = g_settings.robust_mode_enabled;
     bandwidth_mode_ = g_settings.bandwidth_mode;
 
+    guard_interval_idx_ = gi_ms_to_index(g_settings.guard_interval_ms);
+
     hide_console_ = g_settings.hide_console;
+    log_file_enabled_ = g_settings.log_enabled;
 
     encryption_mode_ = g_settings.encryption_mode;
     strncpy(psk_hex_, g_settings.psk_hex.c_str(), sizeof(psk_hex_) - 1);
@@ -175,7 +213,9 @@ bool SetupDialog::render() {
             // narrowband_enabled driven by bandwidth_mode: always start NB
             g_settings.narrowband_enabled = true;
             g_gui_state.narrowband_enabled.store(true);
+            g_settings.guard_interval_ms = GI_VALUES_MS[guard_interval_idx_];
             g_settings.hide_console = hide_console_;
+            g_settings.log_enabled = log_file_enabled_;
             g_settings.encryption_mode = encryption_mode_;
             g_gui_state.encryption_mode.store(encryption_mode_);
             g_settings.psk_hex = psk_hex_;
@@ -216,7 +256,9 @@ bool SetupDialog::render() {
             // narrowband_enabled driven by bandwidth_mode: always start NB
             g_settings.narrowband_enabled = true;
             g_gui_state.narrowband_enabled.store(true);
+            g_settings.guard_interval_ms = GI_VALUES_MS[guard_interval_idx_];
             g_settings.hide_console = hide_console_;
+            g_settings.log_enabled = log_file_enabled_;
             g_settings.encryption_mode = encryption_mode_;
             g_gui_state.encryption_mode.store(encryption_mode_);
             g_settings.psk_hex = psk_hex_;
@@ -435,6 +477,35 @@ void SetupDialog::renderGearShiftTab() {
 void SetupDialog::renderAdvancedTab() {
     ImGui::Spacing();
 
+    ImGui::Text("OFDM Guard Interval");
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    ImGui::Text("Guard Interval:");
+    ImGui::SameLine(180);
+    ImGui::SetNextItemWidth(300);
+    if (ImGui::BeginCombo("##gi", GI_LABELS[guard_interval_idx_])) {
+        for (int i = 0; i < GI_COUNT; i++) {
+            bool is_selected = (guard_interval_idx_ == i);
+            if (ImGui::Selectable(GI_LABELS[i], is_selected))
+                guard_interval_idx_ = i;
+            if (is_selected) ImGui::SetItemDefaultFocus();
+        }
+        ImGui::EndCombo();
+    }
+    ImGui::SameLine();
+    ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "(restart)");
+
+    ImGui::Spacing();
+
+    ImGui::TextWrapped("Shorter GI = faster throughput but less multipath tolerance. "
+                       "4.5ms covers most HF channels (ITU moderate+poor). "
+                       "Reduce for loopback/VHF. Both stations must match. Requires restart.");
+
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Spacing();
+
     ImGui::Text("LDPC Decoder");
     ImGui::Separator();
     ImGui::Spacing();
@@ -474,6 +545,21 @@ void SetupDialog::renderAdvancedTab() {
     }
     ImGui::SameLine();
     ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "(requires restart)");
+
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    ImGui::Text("Logging");
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    ImGui::Checkbox("Enable log file output", &log_file_enabled_);
+
+    ImGui::Spacing();
+    ImGui::TextWrapped("Captures all console output to a timestamped log file. "
+                       "Logs are saved to %%APPDATA%%\\Mercury\\logs\\ (Windows) "
+                       "or ~/.config/mercury/logs/ (Linux). Requires restart to take effect.");
 
     ImGui::Spacing();
     ImGui::Separator();

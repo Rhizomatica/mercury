@@ -23,7 +23,7 @@
 #ifndef INC_COMMON_DEFINES_H_
 #define INC_COMMON_DEFINES_H_
 
-#define VERSION__ "0.4.1"
+#define VERSION__ "0.4.2"
 
 // Verbose debug output (0=quiet, 1=debug prints enabled). Set via -v flag.
 extern int g_verbose;
@@ -74,7 +74,7 @@ inline bool is_ofdm_config(int config) { return config >= 0 && config <= 16; }
 #define NB_CONFIG_MAX CONFIG_14
 
 // Unified config ladder for gearshift (ROBUST → OFDM)
-// CONFIG_16 included for NB; WB ceiling (CONFIG_15) enforced in config_ladder_up().
+// CONFIG_16 included for both NB and WB.
 static const int FULL_CONFIG_LADDER[] = {
 	ROBUST_0, ROBUST_1, ROBUST_2,
 	CONFIG_0, CONFIG_1, CONFIG_2, CONFIG_3, CONFIG_4, CONFIG_5, CONFIG_6,
@@ -91,7 +91,7 @@ inline int config_ladder_index(int config) {
 }
 
 inline int config_ladder_up(int config, bool robust_enabled, bool narrowband = false) {
-	int ceiling = narrowband ? NB_CONFIG_MAX : CONFIG_15;
+	int ceiling = narrowband ? NB_CONFIG_MAX : CONFIG_16;
 	if (!robust_enabled) {
 		return (config < ceiling) ? config + 1 : config;
 	}
@@ -105,7 +105,7 @@ inline int config_ladder_up(int config, bool robust_enabled, bool narrowband = f
 }
 
 inline int config_ladder_up_n(int config, int steps, bool robust_enabled, bool narrowband = false) {
-	int ceiling = narrowband ? NB_CONFIG_MAX : CONFIG_15;
+	int ceiling = narrowband ? NB_CONFIG_MAX : CONFIG_16;
 	if (!robust_enabled) {
 		int target = config + steps;
 		return (target < ceiling) ? target : ceiling;
@@ -142,10 +142,10 @@ inline int config_ladder_down_n(int config, int steps, bool robust_enabled) {
 
 inline bool config_is_at_top(int config, bool robust_enabled, bool narrowband = false) {
 	if (is_ofdm_config(config)) {
-		int ceiling = narrowband ? NB_CONFIG_MAX : CONFIG_15;
+		int ceiling = narrowband ? NB_CONFIG_MAX : CONFIG_16;
 		return config >= ceiling;
 	}
-	if (!robust_enabled) return config == CONFIG_15;
+	if (!robust_enabled) return config == CONFIG_16;
 	return config_ladder_index(config) == FULL_CONFIG_LADDER_SIZE - 1;
 }
 

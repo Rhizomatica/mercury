@@ -214,6 +214,9 @@ void MercurySettings::setDefaults() {
     initial_config = 1;
     ldpc_iterations_max = 50;
 
+    // OFDM
+    guard_interval_ms = 3.0;  // Ngi=36 samples at 12kHz
+
     // Modem
     coarse_freq_sync_enabled = false;  // Off by default (saves CPU; enable for real HF radio use)
     robust_mode_enabled = false;
@@ -233,6 +236,9 @@ void MercurySettings::setDefaults() {
     monitor_enabled = false;
     window_width = 850;
     window_height = 720;
+
+    // Logging
+    log_enabled = false;
 }
 
 bool MercurySettings::load(const std::string& filename) {
@@ -273,6 +279,9 @@ bool MercurySettings::load(const std::string& filename) {
     initial_config = ini.getInt("GearShift", "InitialConfig", initial_config);
     ldpc_iterations_max = ini.getInt("GearShift", "LDPCIterationsMax", ldpc_iterations_max);
 
+    // OFDM
+    guard_interval_ms = ini.getDouble("OFDM", "GuardIntervalMs", guard_interval_ms);
+
     // Modem
     coarse_freq_sync_enabled = ini.getBool("Modem", "CoarseFreqSync", coarse_freq_sync_enabled);
     robust_mode_enabled = ini.getBool("Modem", "RobustMode", robust_mode_enabled);
@@ -292,6 +301,9 @@ bool MercurySettings::load(const std::string& filename) {
     monitor_enabled = ini.getBool("GUI", "MonitorEnabled", monitor_enabled);
     window_width = ini.getInt("GUI", "WindowWidth", window_width);
     window_height = ini.getInt("GUI", "WindowHeight", window_height);
+
+    // Logging
+    log_enabled = ini.getBool("Logging", "LogEnabled", log_enabled);
 
     return true;
 }
@@ -331,6 +343,9 @@ bool MercurySettings::save(const std::string& filename) {
     ini.setInt("GearShift", "InitialConfig", initial_config);
     ini.setInt("GearShift", "LDPCIterationsMax", ldpc_iterations_max);
 
+    // OFDM
+    ini.setDouble("OFDM", "GuardIntervalMs", guard_interval_ms);
+
     // Modem
     ini.setBool("Modem", "CoarseFreqSync", coarse_freq_sync_enabled);
     ini.setBool("Modem", "RobustMode", robust_mode_enabled);
@@ -350,6 +365,9 @@ bool MercurySettings::save(const std::string& filename) {
     ini.setBool("GUI", "MonitorEnabled", monitor_enabled);
     ini.setInt("GUI", "WindowWidth", window_width);
     ini.setInt("GUI", "WindowHeight", window_height);
+
+    // Logging
+    ini.setBool("Logging", "LogEnabled", log_enabled);
 
     return ini.save(filename);
 }

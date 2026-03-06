@@ -79,6 +79,9 @@ struct MercurySettings {
     int initial_config;
     int ldpc_iterations_max;  // Max LDPC decoder iterations (5-50)
 
+    // OFDM settings
+    double guard_interval_ms;  // Guard interval in ms (1.33-6.5, default 3.0)
+
     // Modem settings
     bool coarse_freq_sync_enabled;  // Enable coarse freq search (±30 Hz) for HF radio drift
     bool robust_mode_enabled;       // MFSK robust mode for weak-signal hailing
@@ -98,6 +101,9 @@ struct MercurySettings {
     bool monitor_enabled; // Enable monitor panel (show decoded plaintext)
     int window_width;
     int window_height;
+
+    // Logging
+    bool log_enabled;      // Enable logging to <exe_dir>/logs/<timestamp>.log
 
     MercurySettings();
     void setDefaults();
