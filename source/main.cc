@@ -1087,9 +1087,10 @@ start_modem:
         ARQ.exit_on_disconnect = exit_on_disconnect;
         if (nb_probe_max >= 0)
             ARQ.nb_probe_max = nb_probe_max;
-        if (psk_hex_cli[0] != '\0')
+        if (psk_hex_cli[0] != '\0') {
             strncpy(ARQ.psk_hex, psk_hex_cli, sizeof(ARQ.psk_hex) - 1);
             ARQ.psk_hex[sizeof(ARQ.psk_hex) - 1] = '\0';
+        }
 
         // Ensure timeouts are adequate for MFSK frame durations
         {

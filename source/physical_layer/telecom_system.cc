@@ -766,7 +766,7 @@ st_receive_stats cl_telecom_system::receive_bit(double *data, int* out)
 st_receive_stats cl_telecom_system::receive_byte(double *data, int* out)
 {
 
-	float variance;
+	float variance = 1.0f;
 	int nVirtual_data=ldpc.N-data_container.nBits;
 	int nReal_data=data_container.nBits-ldpc.P;
 	double freq_offset_measured=0;
@@ -1013,7 +1013,7 @@ st_receive_stats cl_telecom_system::receive_byte(double *data, int* out)
 			int ofdm_skip = receive_stats.ofdm_search_raw - data_container.nUnder_processing_events;
 			if(ofdm_skip < 0) ofdm_skip = 0;
 
-			int search_offset, search_size;
+			int search_offset = 0, search_size = 0;
 
 			bool batch_verified = false;
 
