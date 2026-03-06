@@ -1,3 +1,9 @@
+mercuryv1 (0.4.2-1) unstable; urgency=medium
+
+  * Release 0.4.2.
+
+ -- Rafael Diniz <rafael@riseup.net>  Thu, 06 Mar 2026 20:54:00 +0000
+
 mercuryv1 (0.3.1~dev1-1) unstable; urgency=medium
 
   * Initial packaging of Mercury v1.
