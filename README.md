@@ -10,7 +10,7 @@ Mercury is a free software software-defined modem for the High-Frequency (HF) ba
 
 **MFSK weak-signal modes** (ROBUST_0, ROBUST_1, ROBUST_2): Non-coherent energy detection for decoding below the OFDM threshold. ROBUST_0 operates at -13 dB Es/N0 — well into the noise floor. Gray-coded tone mapping with soft LLR output feeds into the same LDPC decoder as OFDM.
 
-**Adaptive gearshift**: Automatic mode selection from ROBUST_0 through CONFIG_15 based on measured SNR. Turboshift uses SNR-based supershift for fast initial climb, then ladder gearshift for fine-grained adaptation.
+**Adaptive gearshift**: Automatic mode selection from ROBUST_0 through CONFIG_16 based on measured SNR. Turboshift uses SNR-based supershift for fast initial climb, then ladder gearshift for fine-grained adaptation. A verification probe at the top config ensures the highest mode actually works before data transfer begins.
 
 ### Narrowband Mode (500 Hz)
 
@@ -202,12 +202,16 @@ Gain and calibration:
   -B [gain]         NB MFSK boost override
   -Q [n]            NB probe max (0=disable, default 2)
 
+OFDM tuning:
+  --gi [ms]         Guard interval in ms (1.0-8.0, default 3.0). Both sides must match.
+
 Testing and debug:
   -Z [snr_dB]       Inject AWGN noise at specified SNR
   -f [hz]           TX carrier offset for frequency sync testing
   -P [nBits]        Punctured LDPC BER test with specified ctrl_nBits
   -v                Verbose debug output
   --stdout          Output decoded plaintext to stdout (monitor mode)
+  --log [file]      Redirect output to log file (for HF field debugging)
 
 General:
   -n                Disable GUI (headless mode)
