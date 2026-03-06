@@ -1016,7 +1016,7 @@ void cl_arq_controller::process_messages_rx_acks_control()
 					{
 						snr_target = get_configuration(measurements.SNR_uplink - SUPERSHIFT_MARGIN_DB);
 						// Enforce bandwidth ceiling
-						int cfg_ceiling = (narrowband_enabled == YES) ? NB_CONFIG_MAX : CONFIG_15;
+						int cfg_ceiling = (narrowband_enabled == YES) ? NB_CONFIG_MAX : CONFIG_16;
 						if(snr_target > cfg_ceiling)
 							snr_target = cfg_ceiling;
 					}
@@ -1093,13 +1093,16 @@ void cl_arq_controller::process_messages_rx_acks_control()
 					return;
 				}
 
-				// Ceiling — send BREAK to resync both sides
+				// Ceiling — BREAK to ROBUST_0, then use BREAK recovery to probe
+				// down from the failed config: CONFIG_0 → ROBUST_2 → ROBUST_1 → ROBUST_0.
+				// emergency_previous_config = failed config so config_ladder_down_n()
+				// steps down from it. break_drop_step = 1 starts one step below.
 				int failed_config = current_configuration;
 				int settle_config = (turboshift_last_good >= 0) ?
 					turboshift_last_good : init_configuration;
 
-				printf("[TURBO] CEILING at config %d, sending BREAK to resync at %d\n",
-					failed_config, settle_config);
+				printf("[TURBO] CEILING at config %d, BREAK to %d then probe down from %d\n",
+					failed_config, settle_config, failed_config);
 				printf("[TURBO] CEILING state: turboshift_last_good=%d init_config=%d "
 					"negotiated=%d data_cfg=%d current=%d\n",
 					turboshift_last_good, init_configuration,
@@ -1108,8 +1111,8 @@ void cl_arq_controller::process_messages_rx_acks_control()
 
 				turboshift_active = false;
 				data_configuration = settle_config;
-				emergency_previous_config = settle_config;
-				break_drop_step = 0;
+				emergency_previous_config = failed_config;
+				break_drop_step = 1;
 				emergency_break_active = 1;
 				emergency_break_retries = 3;
 				emergency_nack_count = 0;
@@ -1448,9 +1451,26 @@ void cl_arq_controller::process_messages_rx_acks_data()
 				return;
 			}
 
+			// Adaptive batch: reduce before emergency BREAK
+			if(data_batch_size > 1 && gear_shift_on == YES && turboshift_phase == TURBO_DONE)
+			{
+				int prev = data_batch_size;
+				data_batch_size = data_batch_size / 2;
+				if(data_batch_size < 1) data_batch_size = 1;
+				recalculate_ack_timeout_for_batch();
+				// Batch reduction = this config is marginal. Set ceiling.
+				turboshift_last_good = current_configuration;
+				printf("[BATCH-ADAPT] Emergency reduce: %d -> %d at config %d (ceiling set)\n",
+					prev, data_batch_size, current_configuration);
+				fflush(stdout);
+				// Retry at smaller batch — messages already ACK_TIMED_OUT from force-clear above
+				connection_status = TRANSMITTING_DATA;
+				return;
+			}
+
 			emergency_nack_count++;
-			printf("[BREAK] Block failure #%d at config %d (threshold=%d)\n",
-				emergency_nack_count, current_configuration, emergency_nack_threshold);
+			printf("[BREAK] Block failure #%d at config %d (threshold=%d, batch=%d)\n",
+				emergency_nack_count, current_configuration, emergency_nack_threshold, data_batch_size);
 			fflush(stdout);
 
 			// Trigger BREAK when threshold reached and not already at bottom
@@ -1791,7 +1811,7 @@ void cl_arq_controller::process_control_commander()
 					if(is_ofdm_config(current_configuration) && measurements.SNR_uplink > -90)
 					{
 						snr_target = get_configuration(measurements.SNR_uplink - SUPERSHIFT_MARGIN_DB);
-						int cfg_ceiling = (narrowband_enabled == YES) ? NB_CONFIG_MAX : CONFIG_15;
+						int cfg_ceiling = (narrowband_enabled == YES) ? NB_CONFIG_MAX : CONFIG_16;
 						if(snr_target > cfg_ceiling)
 							snr_target = cfg_ceiling;
 					}
@@ -1974,7 +1994,7 @@ void cl_arq_controller::process_control_commander()
 				{
 					snr_target = get_configuration(measurements.SNR_uplink - SUPERSHIFT_MARGIN_DB);
 					// Enforce bandwidth ceiling
-					int cfg_ceiling = (narrowband_enabled == YES) ? NB_CONFIG_MAX : CONFIG_15;
+					int cfg_ceiling = (narrowband_enabled == YES) ? NB_CONFIG_MAX : CONFIG_16;
 					if(snr_target > cfg_ceiling)
 						snr_target = cfg_ceiling;
 				}
@@ -2058,32 +2078,39 @@ void cl_arq_controller::process_control_commander()
 				// After SWITCH_ROLE, the buffer contains stale ACK pattern audio
 				// from the ACK detection polling. MFSK ACK tones create false
 				// OFDM preamble correlations → 10-15 LDPC FAILs before the real
-				// frame shifts in. Flush the buffer to eliminate false detections.
+				// frame shifts in. Flush with rx_mute to prevent capture thread
+				// race (same pattern as send_ack_pattern).
+				telecom_system->data_container.rx_mute = 1;
+				msleep(50); // RX_MUTE_GUARD_MS — let in-flight audio callbacks drain
+				circular_buf_reset(capture_buffer);
 				{
-					MUTEX_LOCK(&capture_prep_mutex);
-					int signal_period = telecom_system->data_container.Nofdm
+					int buf_samples = telecom_system->data_container.Nofdm
 						* telecom_system->data_container.buffer_Nsymb
 						* telecom_system->data_container.interpolation_rate;
+					MUTEX_LOCK(&capture_prep_mutex);
 					memset(telecom_system->data_container.passband_delayed_data, 0,
-						2 * signal_period * sizeof(double));
+						2 * buf_samples * sizeof(double));
 					telecom_system->data_container.ring_write_index = 0;
 					MUTEX_UNLOCK(&capture_prep_mutex);
 				}
-				circular_buf_reset(capture_buffer);
+				telecom_system->data_container.rx_mute = 0;
+				telecom_system->data_container.rx_mute_samples = 0;
 				// SWITCH_ROLE: new commander needs ~120-170 symbols to process
 				// role switch, fill batch, ptt_on, encode, TX. Ring buffer
 				// preserves data in place (no shift_left drift), so we just
-				// need enough callbacks for the turnaround. Old shift_left
-				// value was buffer_Nsymb (223 = 4.7s!) to prevent drift.
+				// need enough callbacks for the turnaround.
 				{
 					int rx_frame = telecom_system->data_container.preamble_nSymb
 						+ telecom_system->get_active_nsymb();
 					telecom_system->data_container.frames_to_read = rx_frame + 10;
 				}
 				telecom_system->data_container.nUnder_processing_events = 0;
+				telecom_system->receive_stats.delay_of_last_decoded_message = -1;
 				telecom_system->receive_stats.mfsk_search_raw = 0;
 				telecom_system->receive_stats.ofdm_search_raw = 0;
 				telecom_system->receive_stats.ofdm_batch_active = false;
+				batch_rx_frame_count = 0;
+				last_received_end_of_batch_seq = -1;
 			}
 			else if (messages_control.data[0]==SET_CONFIG)
 			{
@@ -2171,7 +2198,7 @@ void cl_arq_controller::process_control_commander()
 						{
 							snr_target = get_configuration(measurements.SNR_uplink - SUPERSHIFT_MARGIN_DB);
 							// Enforce bandwidth ceiling
-							int cfg_ceiling = (narrowband_enabled == YES) ? NB_CONFIG_MAX : CONFIG_15;
+							int cfg_ceiling = (narrowband_enabled == YES) ? NB_CONFIG_MAX : CONFIG_16;
 							if(snr_target > cfg_ceiling)
 								snr_target = cfg_ceiling;
 						}
@@ -2184,7 +2211,8 @@ void cl_arq_controller::process_control_commander()
 						}
 						else
 						{
-							// ROBUST or no SNR: step 3 up the ladder
+							// Step 3 up the ladder (ROBUST and OFDM alike).
+							// If the jump overshoots, the ceiling handler steps down by 1.
 							negotiated_configuration = config_ladder_up_n(current_configuration, 3, robust_enabled, narrowband_enabled == YES);
 							printf("[TURBO] SUPERSHIFT: config %d -> %d (step 3)\n",
 								current_configuration, negotiated_configuration);
@@ -2196,9 +2224,28 @@ void cl_arq_controller::process_control_commander()
 					}
 					else
 					{
-						printf("[TURBO] Reached top at config %d\n", current_configuration);
-						fflush(stdout);
-						finish_turbo_direction();
+						// At the top config. The SET_CONFIG that brought us here was decoded
+						// at the PREVIOUS config's LDPC rate — so the top config is unverified.
+						// Verify by sending SET_CONFIG(top) AT the top config. If the responder
+						// can decode it, the config works and we can finish. If not, the existing
+						// turboshift retry/BREAK recovery will settle at turboshift_last_good.
+						if(turboshift_last_good == current_configuration)
+						{
+							// Second pass: verification probe ACKed. Top config works.
+							printf("[TURBO] Top config %d verified, finishing\n", current_configuration);
+							fflush(stdout);
+							finish_turbo_direction();
+						}
+						else
+						{
+							printf("[TURBO] Reached top at config %d, sending verification probe\n",
+								current_configuration);
+							fflush(stdout);
+							negotiated_configuration = current_configuration;
+							cleanup();
+							add_message_control(SET_CONFIG);
+							this->connection_status = TRANSMITTING_CONTROL;
+						}
 					}
 				}
 				else
@@ -2355,22 +2402,38 @@ void cl_arq_controller::finalize_block_commander()
 				else
 				{
 					if(at_ceiling)
-						printf("[GEARSHIFT] LADDER: at turboshift ceiling %d (config %d), success=%.0f%%\n",
-							turboshift_last_good, current_configuration, last_transmission_block_stats.success_rate_data);
+						printf("[GEARSHIFT] LADDER: at ceiling %d (config %d, batch=%d), success=%.0f%%\n",
+							turboshift_last_good, current_configuration, data_batch_size, last_transmission_block_stats.success_rate_data);
 					else
 						printf("[GEARSHIFT] LADDER: at top (config %d), success=%.0f%%\n",
 							current_configuration, last_transmission_block_stats.success_rate_data);
 					fflush(stdout);
 					this->connection_status=TRANSMITTING_DATA;
 				}
-			}
+				}
 			}
 			else if(last_transmission_block_stats.success_rate_data<gear_shift_down_success_rate_precentage)
 			{
-				if(!config_is_at_bottom(current_configuration, robust_enabled))
+				if(data_batch_size > 1)
+				{
+					// Adaptive batch: reduce before downshifting config
+					int prev = data_batch_size;
+					data_batch_size = data_batch_size / 2;
+					if(data_batch_size < 1) data_batch_size = 1;
+					recalculate_ack_timeout_for_batch();
+					// Batch reduction = this config is marginal. Set ceiling.
+					turboshift_last_good = current_configuration;
+					printf("[BATCH-ADAPT] Ladder reduce: %d -> %d at config %d (success=%.0f%%, ceiling set)\n",
+						prev, data_batch_size, current_configuration,
+						last_transmission_block_stats.success_rate_data);
+					fflush(stdout);
+					gear_shift_blocked_for_nBlocks = 0;
+					this->connection_status=TRANSMITTING_DATA;
+				}
+				else if(!config_is_at_bottom(current_configuration, robust_enabled))
 				{
 					negotiated_configuration=config_ladder_down(current_configuration, robust_enabled);
-					printf("[GEARSHIFT] LADDER DOWN: success=%.0f%% < %.0f%%, config %d -> %d\n",
+					printf("[GEARSHIFT] LADDER DOWN: success=%.0f%% < %.0f%%, config %d -> %d (batch=1)\n",
 						last_transmission_block_stats.success_rate_data, gear_shift_down_success_rate_precentage,
 						current_configuration, negotiated_configuration);
 					fflush(stdout);

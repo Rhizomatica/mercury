@@ -317,19 +317,46 @@ void cl_arq_controller::process_messages_rx_data_control()
 
 				{
 					int rx_timeout;
-					if(batch_rx_frame_count >= data_batch_size)
+					// Determine actual expected frame count.
+					// With adaptive batch sizing, commander may send fewer frames
+					// than data_batch_size. Use compression header to detect this.
+					int effective_batch = data_batch_size;
+					// End-of-batch flag: commander marks last frame with bit 7
+					if(last_received_end_of_batch_seq >= 0)
 					{
-						// All frames in batch decoded (count-based, not seq-based).
-						// send_ack_pattern()'s OFDM wait prevents TX collision.
-						// Note: seq order may differ from decode order when
-						// beyond-bounds recovery skips then recovers frames.
+						int eob = last_received_end_of_batch_seq + 1;
+						if(eob < effective_batch)
+							effective_batch = eob;
+					}
+					else if(compression_enabled
+						&& !cipher_suite.is_active()
+						&& messages_rx[0].status == RECEIVED
+						&& messages_rx[0].length >= compressor.get_header_size())
+					{
+						// Fallback: compression header
+						const unsigned char* hdr = (const unsigned char*)messages_rx[0].data;
+						int hdr_comp = hdr[1] | (hdr[2] << 8);
+						int gate_hdr_size = compressor.get_header_size();
+						int total_compressed = gate_hdr_size + hdr_comp;
+						int mf = max_data_length + max_header_length - DATA_LONG_HEADER_LENGTH;
+						int hdr_expected = (total_compressed + mf - 1) / mf;
+						if(hdr_expected < 1) hdr_expected = 1;
+						if(hdr_expected < effective_batch)
+							effective_batch = hdr_expected;
+					}
+
+					if(batch_rx_frame_count >= effective_batch)
+					{
+						// All expected frames decoded — ACK immediately.
+						// Handles adaptive batch (commander sent fewer than data_batch_size).
 						rx_timeout = ptt_on_delay_ms;
 					}
 					else
 					{
 						// More frames expected.  Add one msg_time margin for
 						// FAIL recovery (false peaks in old frame body).
-						int remaining = data_batch_size - messages_rx_buffer.sequence_number - 1;
+						int remaining = effective_batch - messages_rx_buffer.sequence_number - 1;
+						if(remaining < 0) remaining = 0;
 						rx_timeout = remaining * message_transmission_time_ms
 							+ time_left_to_send_last_frame + ptt_on_delay_ms
 							+ message_transmission_time_ms;
@@ -358,6 +385,18 @@ void cl_arq_controller::process_messages_rx_data_control()
 
 		receiving_timer.stop();
 		receiving_timer.reset();
+
+		if(link_status == CONNECTED && batch_rx_frame_count == 0)
+		{
+			printf("[RX-TIMEOUT] No frames decoded. cfg=%d Nsymb=%d M=%.0f nBits=%d ftr=%d batch=%d\n",
+				current_configuration,
+				telecom_system->data_container.Nsymb,
+				telecom_system->M,
+				telecom_system->data_container.nBits,
+				telecom_system->data_container.frames_to_read.load(),
+				data_batch_size);
+			fflush(stdout);
+		}
 
 		// If we responded to HAIL but START_CONNECTION never arrived,
 		// go back to HAIL scanning for the next beacon.
@@ -458,8 +497,8 @@ void cl_arq_controller::process_messages_acknowledging_control()
 			telecom_system->data_container.frames_to_read = ftr_val;
 			telecom_system->data_container.nUnder_processing_events = 0;
 
-			// === DIAG: gearshift ftr trace (remove after debug) ===
-			{ int buf_Nsymb = telecom_system->data_container.buffer_Nsymb.load(); printf("[FTR-GEAR] CONFIG_%d ftr=%d (buffer_Nsymb=%d frame_symb=%d ofdm=%d)\n", current_configuration, ftr_val, buf_Nsymb, frame_symb, is_ofdm_config(current_configuration)); fflush(stdout); }
+			// === DIAG: gearshift ftr trace (verbose only) ===
+			if(g_verbose) { int buf_Nsymb = telecom_system->data_container.buffer_Nsymb.load(); printf("[FTR-GEAR] CONFIG_%d ftr=%d (buffer_Nsymb=%d frame_symb=%d ofdm=%d)\n", current_configuration, ftr_val, buf_Nsymb, frame_symb, is_ofdm_config(current_configuration)); fflush(stdout); }
 		}
 
 		char ack_command = messages_control.data[0];  // Save before potential NB switch
@@ -482,6 +521,12 @@ void cl_arq_controller::process_messages_acknowledging_control()
 		// BW negotiation: deferred WB switch after SWITCH_BANDWIDTH ACK
 		if(wb_upgrade_pending)
 		{
+			// Save pre-upgrade NB mode for restore on disconnect.
+			// When responder started in NB and no NB negotiation switch occurred,
+			// commander_configured_nb is still -1 — save it now so
+			// reset_session_state() can restore NB after the session ends.
+			if(commander_configured_nb < 0)
+				commander_configured_nb = narrowband_enabled;
 			printf("[BW-NEG] Responder: switching to WB after SWITCH_BANDWIDTH ACK\n");
 			fflush(stdout);
 			wb_upgrade_pending = false;
@@ -686,11 +731,21 @@ void cl_arq_controller::process_messages_acknowledging_data()
 				if(messages_rx[i].status == RECEIVED) rx_received++;
 
 			int expected = data_batch_size;  // Default for non-compressed
-			if(compression_enabled
+			// End-of-batch flag: commander marks last frame with bit 7 in
+			// sequence_number, giving us the actual batch size sent.
+			// Works for all modes (compressed, uncompressed, encrypted).
+			if(last_received_end_of_batch_seq >= 0)
+			{
+				expected = last_received_end_of_batch_seq + 1;
+				if(expected > data_batch_size) expected = data_batch_size;
+			}
+			else if(compression_enabled
 				&& !cipher_suite.is_active()  // Can't peek header when encrypted
 				&& messages_rx[0].status == RECEIVED
 				&& messages_rx[0].length >= compressor.get_header_size())
 			{
+				// Fallback: derive from compression header (old commanders
+				// without end-of-batch flag)
 				const unsigned char* hdr = (const unsigned char*)messages_rx[0].data;
 				int hdr_comp = hdr[1] | (hdr[2] << 8);
 				int gate_hdr_size = compressor.get_header_size();
@@ -719,6 +774,7 @@ void cl_arq_controller::process_messages_acknowledging_data()
 				// frames while already-received frames are preserved.
 				stats.nNAcked_data++;
 				batch_rx_frame_count = 0;
+				last_received_end_of_batch_seq = -1;
 				// Reset RX state for fresh retransmission capture
 				telecom_system->data_container.frames_to_read =
 					telecom_system->data_container.preamble_nSymb
@@ -793,7 +849,7 @@ void cl_arq_controller::process_messages_acknowledging_data()
 		if(!batch_data_delivered)
 		{
 			copy_data_to_buffer();
-			batch_data_delivered = true;
+			batch_data_delivered = true;  // Prevent duplicate delivery on retransmit
 		}
 		messages_last_ack_bu.type=NONE;
 
@@ -811,6 +867,8 @@ void cl_arq_controller::process_messages_acknowledging_data()
 		}
 		receiving_timer.start();
 		batch_rx_frame_count = 0;
+		last_received_end_of_batch_seq = -1;
+		batch_data_delivered = false;  // Ready for next batch (e924d89 bug: was never reset → all batches after first silently dropped)
 		connection_status=RECEIVING;
 	}
 	else
@@ -892,7 +950,7 @@ void cl_arq_controller::process_messages_acknowledging_data()
 		// Frame completeness gating handles late arrivals adaptively.
 		telecom_system->set_mfsk_ctrl_mode(false);
 		telecom_system->data_container.frames_to_read =
-			telecom_system->data_container.preamble_nSymb + telecom_system->data_container.Nsymb;
+			telecom_system->data_container.preamble_nSymb + telecom_system->data_container.Nsymb + 10;
 
 		batch_rx_frame_count = 0;
 		connection_status=RECEIVING;

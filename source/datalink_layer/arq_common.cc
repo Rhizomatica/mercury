@@ -112,6 +112,7 @@ cl_arq_controller::cl_arq_controller()
 	measurements.frequency_offset=-99.9;
 
 	data_batch_size=1;
+	nominal_batch_size=1;
 	control_batch_size=1;
 	ack_batch_size=1;
 	batch_rx_frame_count=0;
@@ -212,6 +213,7 @@ cl_arq_controller::cl_arq_controller()
 	last_message_received_code=NONE;
 
 	last_received_message_sequence=255;
+	last_received_end_of_batch_seq=-1;
 	data_ack_received=NO;
 	repeating_last_ack=NO;
 	disconnect_requested=NO;
@@ -404,6 +406,14 @@ void cl_arq_controller::calculate_receiving_timeout()
 	{
 		set_receiving_timeout((data_batch_size)*message_transmission_time_ms+time_left_to_send_last_frame+ptt_on_delay_ms);
 	}
+}
+
+void cl_arq_controller::recalculate_ack_timeout_for_batch()
+{
+	if(ack_pattern_time_ms > 0)
+		set_ack_timeout_data((data_batch_size+2)*message_transmission_time_ms + ack_pattern_time_ms + 4*ptt_on_delay_ms + 4*ptt_off_delay_ms + 3000);
+	else
+		set_ack_timeout_data((data_batch_size+1)*message_transmission_time_ms+control_batch_size*message_transmission_time_ms+2*ack_batch_size*ctrl_transmission_time_ms+time_left_to_send_last_frame+4*ptt_on_delay_ms+4*ptt_off_delay_ms);
 }
 
 void cl_arq_controller::set_call_sign(std::string call_sign)
@@ -988,6 +998,9 @@ void cl_arq_controller::load_configuration(int configuration, int level, int bac
 		fflush(stdout);
 	}
 
+	// Save nominal batch size for adaptive batch reduction/restoration
+	nominal_batch_size = data_batch_size;
+
 	// ACK pattern transmission time (universal: all modes)
 	if(telecom_system->ack_pattern_passband_samples > 0)
 	{
@@ -1060,6 +1073,15 @@ void cl_arq_controller::load_configuration(int configuration, int level, int bac
 	}
 
 	calculate_receiving_timeout();
+
+	// Reset OFDM batch prediction state on config change.
+	// After turboshift, ofdm_batch_active/ofdm_search_raw hold stale positions
+	// from control frames decoded at the old config.  The new config has different
+	// Nsymb/frame geometry, so the old ofdm_skip prediction lands in the wrong
+	// place → wrong delay → wrong Moose freq offset → LDPC fails on real HF.
+	telecom_system->receive_stats.ofdm_batch_active = false;
+	telecom_system->receive_stats.ofdm_search_raw = 0;
+	telecom_system->receive_stats.ofdm_drift_per_frame = 0.0;
 
 	// Guard: ack_timeout must cover the full TX + receive window.
 	// ack_timer starts at frame send (T=0); receiving_timer starts after TX + PTT.
@@ -2495,13 +2517,18 @@ void cl_arq_controller::reset_session_state()
 	last_message_received_code = NONE;
 	last_received_message_sequence = 255;
 
-	// NB/WB negotiation: restore pre-session NB mode
-	if(commander_configured_nb >= 0)
+	// Always return to NB after session ends — NB is the discovery/HAIL mode.
+	// Next connection will WB-upgrade if both sides are capable (BW_AUTO).
+	if(narrowband_enabled != YES)
 	{
-		narrowband_enabled = commander_configured_nb;
-		telecom_system->narrowband_enabled = commander_configured_nb;
-		commander_configured_nb = -1;
+		printf("[NB-SWITCH] Restoring narrowband after session end\n");
+		fflush(stdout);
 	}
+	narrowband_enabled = YES;
+	telecom_system->narrowband_enabled = YES;
+	current_configuration = CONFIG_NONE;
+	telecom_system->current_configuration = CONFIG_NONE;
+	commander_configured_nb = -1;
 	session_narrowband = false;
 	peer_capability = 0;
 	wb_upgrade_pending = false;
@@ -2707,6 +2734,11 @@ void cl_arq_controller::send_batch()
 	for(int i=0;i<message_batch_counter_tx;i++)
 	{
 		messages_batch_tx[i].sequence_number=i;
+		// Mark last DATA frame in batch with bit 7 so responder knows actual batch size.
+		// Only for data frames — control frames must not set this flag.
+		if(i == message_batch_counter_tx - 1
+			&& (messages_batch_tx[i].type == DATA_LONG || messages_batch_tx[i].type == DATA_SHORT))
+			messages_batch_tx[i].sequence_number |= 0x80;
 
 		header_length=0;
 
@@ -3537,7 +3569,8 @@ void cl_arq_controller::receive()
 		int rwi = telecom_system->data_container.ring_write_index;
 		memcpy(telecom_system->data_container.ready_to_process_passband_delayed_data, &telecom_system->data_container.passband_delayed_data[rwi], signal_period * sizeof(double));
 
-		// DIAG: ring buffer snapshot debug
+		// DIAG: ring buffer snapshot debug (verbose only — buffer scan is expensive)
+		if(g_verbose)
 		{
 			double peak_head = 0, peak_mid = 0, peak_tail = 0;
 			int sp = signal_period;
@@ -3687,7 +3720,8 @@ void cl_arq_controller::receive()
 			MUTEX_UNLOCK(&capture_prep_mutex);
 		}
 
-		// Bug #35 diagnostic: track every decode attempt
+		// Bug #35 diagnostic: track every decode attempt (verbose only)
+		if(g_verbose)
 		{
 			static int decode_attempt = 0;
 			decode_attempt++;
@@ -3783,13 +3817,16 @@ void cl_arq_controller::receive()
 				ftr_clamped = 2;
 			}
 
-			// === DIAG: success ftr trace (remove after debug) ===
-			printf("[FTR-OK] CONFIG_%d ftr=%d delay_sym=%d end=%d left=%d nUnder=%d clamped=%d\n",
-				current_configuration,
-				telecom_system->data_container.frames_to_read.load(),
-				received_message_stats.delay / symbol_period,
-				end_of_current_message, frames_left_in_buffer, nUnder_snapshot, ftr_clamped);
-			fflush(stdout);
+			// === DIAG: success ftr trace (verbose only) ===
+			if(g_verbose)
+			{
+				printf("[FTR-OK] CONFIG_%d ftr=%d delay_sym=%d end=%d left=%d nUnder=%d clamped=%d\n",
+					current_configuration,
+					telecom_system->data_container.frames_to_read.load(),
+					received_message_stats.delay / symbol_period,
+					end_of_current_message, frames_left_in_buffer, nUnder_snapshot, ftr_clamped);
+				fflush(stdout);
+			}
 			if (g_verbose)
 				printf("[RX-TIMING] OK: delay=%d delay_symb=%d rx_frame=%d end=%d left=%d nUnder=%d ftr=%d clamped=%d proc=%.0fms\n",
 					received_message_stats.delay, received_message_stats.delay / symbol_period,
@@ -3835,10 +3872,13 @@ void cl_arq_controller::receive()
 				// Opportunistic scan success: reset failure counter
 				if(passive_monitor) monitor_consec_ofdm_fail = 0;
 
-				printf("[OFDM-SKIP] frame_end=%d ftr=%d search_raw=%d clamped=%d\n",
-					frame_end_symb, telecom_system->data_container.frames_to_read.load(),
-					telecom_system->receive_stats.ofdm_search_raw, ftr_clamped);
-				fflush(stdout);
+				if(g_verbose)
+				{
+					printf("[OFDM-SKIP] frame_end=%d ftr=%d search_raw=%d clamped=%d\n",
+						frame_end_symb, telecom_system->data_container.frames_to_read.load(),
+						telecom_system->receive_stats.ofdm_search_raw, ftr_clamped);
+					fflush(stdout);
+				}
 			}
 
 			telecom_system->receive_stats.delay_of_last_decoded_message += (rx_frame - (telecom_system->data_container.frames_to_read + telecom_system->data_container.nUnder_processing_events)) * symbol_period;
@@ -3846,11 +3886,11 @@ void cl_arq_controller::receive()
 			telecom_system->data_container.nUnder_processing_events = 0;
 
 			measurements.frequency_offset = received_message_stats.freq_offset;
-			if(this->role == COMMANDER)
-			{
-				measurements.SNR_uplink = received_message_stats.SNR;
-			}
-			else
+			// Always update RX SNR from any decoded LDPC frame (regardless of role).
+			// With pattern ACK, the commander never decodes LDPC during ACK detection,
+			// so SNR_uplink only refreshes during SWITCH_ROLE when we receive data.
+			measurements.SNR_uplink = received_message_stats.SNR;
+			if(this->role == RESPONDER)
 			{
 				measurements.SNR_downlink = received_message_stats.SNR;
 			}
@@ -3876,7 +3916,11 @@ void cl_arq_controller::receive()
 			{
 				messages_rx_buffer.status=RECEIVED;
 				messages_rx_buffer.type=message_TxRx_byte_buffer[0];
-				messages_rx_buffer.sequence_number=message_TxRx_byte_buffer[2];
+				// Bit 7 of sequence_number = end-of-batch flag from commander (data frames only)
+				if((message_TxRx_byte_buffer[2] & 0x80)
+					&& (messages_rx_buffer.type == DATA_LONG || messages_rx_buffer.type == DATA_SHORT))
+					last_received_end_of_batch_seq = message_TxRx_byte_buffer[2] & 0x7F;
+				messages_rx_buffer.sequence_number=message_TxRx_byte_buffer[2] & 0x7F;
 				last_received_message_sequence=messages_rx_buffer.sequence_number;
 				// Defensive clamp: never write more than alloc_size (N_MAX/8 = 200) bytes
 				// into any .data buffer, regardless of max_data_length + max_header_length.

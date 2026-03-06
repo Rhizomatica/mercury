@@ -220,6 +220,7 @@ public:
   void set_control_batch_size(int control_batch_size);
   void set_role(int role);
   void calculate_receiving_timeout();
+  void recalculate_ack_timeout_for_batch();
   void set_call_sign(std::string call_sign);
 
   int get_nOccupied_messages();
@@ -352,6 +353,7 @@ public:
   int ctrl_transmission_time_ms;
   int ack_pattern_time_ms;  // Level 3: ACK pattern TX duration (ms)
   int data_batch_size;
+  int nominal_batch_size;   // Full batch size for current config (from load_configuration)
   int control_batch_size;
   int ack_batch_size;
   int batch_rx_frame_count;  // Total data frames decoded in current RX batch (including padding duplicates)
@@ -544,6 +546,7 @@ private:
   void check_buffer_canaries(const char* caller);
 
   char last_received_message_sequence;
+  int last_received_end_of_batch_seq;  // End-of-batch flag: seq# of frame with bit 7 set, or -1
   char last_message_sent_type;
   char last_message_sent_code;
 
