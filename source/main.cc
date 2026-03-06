@@ -25,6 +25,8 @@
 #include <fstream>
 #include <chrono>
 #include <cstdint>
+#include <ctime>
+#include <cstdarg>
 #include <math.h>
 #include <unistd.h>
 #include <iostream>
@@ -41,6 +43,7 @@
 
 #if defined(_WIN32)
 #include <windows.h>
+#include <shlobj.h>
 // Diagnostics from check_buffer_canaries — set before each canary read
 extern volatile const char* g_canary_check_name;
 extern volatile int g_canary_check_idx;
@@ -72,6 +75,141 @@ static LONG WINAPI crash_handler(EXCEPTION_POINTERS *ep) {
     return EXCEPTION_CONTINUE_SEARCH;
 }
 #endif
+
+// --- Tee logging: pipe stdout through a thread to both console and log file ---
+#ifdef _WIN32
+#include <io.h>
+#include <fcntl.h>
+#define DUP_FD(fd)          _dup(fd)
+#define DUP2_FD(src,dst)    _dup2(src,dst)
+#define CLOSE_FD(fd)        _close(fd)
+#define READ_FD(fd,buf,n)   _read(fd,buf,(unsigned int)(n))
+#define WRITE_FD(fd,buf,n)  _write(fd,buf,(unsigned int)(n))
+#define PIPE_FD(fds,sz)     _pipe(fds,sz,_O_BINARY)
+#else
+#include <pthread.h>
+#define DUP_FD(fd)          dup(fd)
+#define DUP2_FD(src,dst)    dup2(src,dst)
+#define CLOSE_FD(fd)        close(fd)
+#define READ_FD(fd,buf,n)   read(fd,buf,n)
+#define WRITE_FD(fd,buf,n)  write(fd,buf,n)
+#define PIPE_FD(fds,sz)     pipe(fds)
+#endif
+
+static FILE* g_log_file = NULL;
+static int g_saved_stdout_fd = -1;
+static int g_pipe_read_fd = -1;
+#ifdef _WIN32
+static HANDLE g_tee_thread = NULL;
+#else
+static pthread_t g_tee_thread;
+static bool g_tee_thread_created = false;
+#endif
+
+static void write_timestamp(FILE* f) {
+#ifdef _WIN32
+    SYSTEMTIME st;
+    GetLocalTime(&st);
+    fprintf(f, "[%02d:%02d:%02d.%03d] ", st.wHour, st.wMinute, st.wSecond, st.wMilliseconds);
+#else
+    struct timespec ts;
+    clock_gettime(CLOCK_REALTIME, &ts);
+    struct tm tm;
+    localtime_r(&ts.tv_sec, &tm);
+    fprintf(f, "[%02d:%02d:%02d.%03ld] ", tm.tm_hour, tm.tm_min, tm.tm_sec, ts.tv_nsec / 1000000);
+#endif
+}
+
+#ifdef _WIN32
+static DWORD WINAPI tee_thread_func(LPVOID arg) {
+#else
+static void* tee_thread_func(void* arg) {
+#endif
+    (void)arg;
+    char buf[4096];
+    int n;
+    bool at_line_start = true;
+    while ((n = READ_FD(g_pipe_read_fd, buf, sizeof(buf))) > 0) {
+        WRITE_FD(g_saved_stdout_fd, buf, n);
+        if (g_log_file) {
+            for (int i = 0; i < n; i++) {
+                if (at_line_start) {
+                    write_timestamp(g_log_file);
+                    at_line_start = false;
+                }
+                fputc(buf[i], g_log_file);
+                if (buf[i] == '\n') at_line_start = true;
+            }
+            fflush(g_log_file);
+        }
+    }
+#ifdef _WIN32
+    return 0;
+#else
+    return NULL;
+#endif
+}
+
+static void setup_tee_logging(const char* path, int argc, char* argv[]) {
+    g_log_file = fopen(path, "w");
+    if (!g_log_file) {
+        fprintf(stderr, "Cannot open log file: %s\n", path);
+        return;
+    }
+    setvbuf(g_log_file, NULL, _IONBF, 0);
+    // Write header
+    time_t now = time(NULL);
+    struct tm* t = localtime(&now);
+    fprintf(g_log_file, "=== Mercury v%s log started %04d-%02d-%02d %02d:%02d:%02d ===\n",
+        VERSION__, t->tm_year + 1900, t->tm_mon + 1, t->tm_mday,
+        t->tm_hour, t->tm_min, t->tm_sec);
+    fprintf(g_log_file, "=== Command:");
+    for (int i = 0; i < argc; i++) fprintf(g_log_file, " %s", argv[i]);
+    fprintf(g_log_file, " ===\n");
+    fflush(g_log_file);
+
+    // Save original stdout fd
+    g_saved_stdout_fd = DUP_FD(1);
+    // Create pipe
+    int fds[2];
+    if (PIPE_FD(fds, 8192) != 0) {
+        fprintf(stderr, "Failed to create logging pipe\n");
+        fclose(g_log_file);
+        g_log_file = NULL;
+        CLOSE_FD(g_saved_stdout_fd);
+        g_saved_stdout_fd = -1;
+        return;
+    }
+    g_pipe_read_fd = fds[0];
+    // Redirect stdout to pipe write end
+    DUP2_FD(fds[1], 1);
+    CLOSE_FD(fds[1]);
+    setvbuf(stdout, NULL, _IONBF, 0);
+    // Start tee thread
+#ifdef _WIN32
+    g_tee_thread = CreateThread(NULL, 0, tee_thread_func, NULL, 0, NULL);
+#else
+    pthread_create(&g_tee_thread, NULL, tee_thread_func, NULL);
+    g_tee_thread_created = true;
+#endif
+}
+
+static void shutdown_tee_logging() {
+    if (g_saved_stdout_fd < 0) return;
+    fflush(stdout);
+    // Restore original stdout — closes pipe write end, reader gets EOF
+    DUP2_FD(g_saved_stdout_fd, 1);
+    CLOSE_FD(g_saved_stdout_fd);
+    g_saved_stdout_fd = -1;
+    // Wait for reader thread to finish
+#ifdef _WIN32
+    if (g_tee_thread) { WaitForSingleObject(g_tee_thread, 5000); CloseHandle(g_tee_thread); g_tee_thread = NULL; }
+#else
+    if (g_tee_thread_created) { pthread_join(g_tee_thread, NULL); g_tee_thread_created = false; }
+#endif
+    if (g_pipe_read_fd >= 0) { CLOSE_FD(g_pipe_read_fd); g_pipe_read_fd = -1; }
+    if (g_log_file) { fclose(g_log_file); g_log_file = NULL; }
+}
 
 // some globals TODO: wrap this up into some struct
 extern "C" {
@@ -129,10 +267,12 @@ int main(int argc, char *argv[])
     int puncture_nBits = 0;  // 0 = disabled; >0 = punctured LDPC BER test
     double tx_gain_override = -999.0;  // -999 = not set; otherwise override TX gain in dB
     double rx_gain_override = -999.0;  // -999 = not set; otherwise override RX gain in dB
+    double guard_interval_ms_cli = -1.0;  // -1 = use default; > 0 = override GI in ms
     double boost_override = -1.0;     // -1 = use default; >= 0 = override NB MFSK 1S gain (-B flag)
     int nb_probe_max = -1;            // -1 = use default (2); >= 0 = override nb_probe_max
     int audio_channel_override = -1;  // -1 = use INI settings; >= 0 = override both input+output channel index
     bool monitor_stdout = false;      // --stdout: output decoded plaintext to stdout
+    char log_file_path[512] = "";     // --log: tee stdout to file
 
     input_dev = (char *) malloc(ALSA_MAX_PATH);
     output_dev = (char *) malloc(ALSA_MAX_PATH);
@@ -212,6 +352,7 @@ int main(int argc, char *argv[])
         printf("  -G [dB]           RX gain override (e.g. -G 25.6)\n");
         printf("  -B [gain]         NB MFSK boost override\n");
         printf("  -Q [n]            NB probe max (0=disable, default 2)\n");
+        printf("  --gi [ms]         Guard interval in ms (1.0-8.0, default 3.0)\n");
 
         printf("\nTesting and debug:\n");
         printf("  -Z [snr_dB]       Inject AWGN noise at specified SNR\n");
@@ -219,6 +360,7 @@ int main(int argc, char *argv[])
         printf("  -P [nBits]        Punctured LDPC BER test with specified ctrl_nBits\n");
         printf("  -v                Verbose debug output\n");
         printf("  --stdout          Output decoded plaintext to stdout (monitor mode)\n");
+        printf("  --log <file>      Log all output to file (timestamped) while keeping console\n");
 
         printf("\nGeneral:\n");
 #ifdef MERCURY_GUI_ENABLED
@@ -228,7 +370,7 @@ int main(int argc, char *argv[])
         return EXIT_FAILURE;
     }
 
-    // Scan for long options (--stdout) before getopt
+    // Scan for long options (--stdout, --log) before getopt
     for (int i = 1; i < argc; i++)
     {
         if (strcmp(argv[i], "--stdout") == 0)
@@ -240,7 +382,33 @@ int main(int argc, char *argv[])
             argc--;
             i--;
         }
+        else if (strcmp(argv[i], "--log") == 0 && i + 1 < argc)
+        {
+            strncpy(log_file_path, argv[i + 1], sizeof(log_file_path) - 1);
+            // Remove --log and <file> from argv
+            for (int j = i; j < argc - 2; j++)
+                argv[j] = argv[j + 2];
+            argc -= 2;
+            i--;
+        }
+        else if (strcmp(argv[i], "--gi") == 0 && i + 1 < argc)
+        {
+            guard_interval_ms_cli = atof(argv[i + 1]);
+            if (guard_interval_ms_cli < 1.0) guard_interval_ms_cli = 1.0;
+            if (guard_interval_ms_cli > 8.0) guard_interval_ms_cli = 8.0;
+            printf("Guard interval override: %.2f ms (Ngi=%d)\n",
+                   guard_interval_ms_cli, (int)(guard_interval_ms_cli * 12.0 + 0.5));
+            // Remove --gi and <ms> from argv
+            for (int j = i; j < argc - 2; j++)
+                argv[j] = argv[j + 2];
+            argc -= 2;
+            i--;
+        }
     }
+
+    // Set up tee logging early if --log specified (captures startup output)
+    if (log_file_path[0])
+        setup_tee_logging(log_file_path, argc, argv);
 
     int opt;
     while ((opt = getopt(argc, argv, "hc:m:s:lr:i:o:x:p:zgt:a:k:eCnf:I:RNP:vT:G:WB:Q:A:M:Z:F:E:K:")) != -1)
@@ -560,6 +728,38 @@ start_modem:
         configured_output_channel = audio_channel_override;
         printf("Audio channel override (-A): %d\n", audio_channel_override);
     }
+    // Set up tee logging from INI if --log wasn't specified on CLI
+    if (!log_file_path[0] && g_settings.log_enabled) {
+        // Auto-generate log path: %APPDATA%/Mercury/logs/ (Win) or ~/.config/mercury/logs/ (Linux)
+        char logs_dir[600] = ".";
+#ifdef _WIN32
+        char appdata[MAX_PATH];
+        if (SUCCEEDED(SHGetFolderPathA(NULL, CSIDL_APPDATA, NULL, 0, appdata))) {
+            char mercury_dir[512];
+            snprintf(mercury_dir, sizeof(mercury_dir), "%s\\Mercury", appdata);
+            CreateDirectoryA(mercury_dir, NULL);
+            snprintf(logs_dir, sizeof(logs_dir), "%s\\logs", mercury_dir);
+        }
+        CreateDirectoryA(logs_dir, NULL);
+#else
+        const char* home = getenv("HOME");
+        if (home) {
+            char mercury_dir[512];
+            snprintf(mercury_dir, sizeof(mercury_dir), "%s/.config/mercury", home);
+            mkdir(mercury_dir, 0755);
+            snprintf(logs_dir, sizeof(logs_dir), "%s/logs", mercury_dir);
+        }
+        mkdir(logs_dir, 0755);
+#endif
+        // Generate timestamped filename
+        time_t now = time(NULL);
+        struct tm* t = localtime(&now);
+        char auto_log_path[700];
+        snprintf(auto_log_path, sizeof(auto_log_path), "%s/%04d%02d%02d_%02d%02d%02d.log",
+                 logs_dir, t->tm_year + 1900, t->tm_mon + 1, t->tm_mday,
+                 t->tm_hour, t->tm_min, t->tm_sec);
+        setup_tee_logging(auto_log_path, argc, argv);
+    }
     fflush(stdout);  // Ensure output is synchronized
 #endif
 
@@ -748,6 +948,7 @@ start_modem:
         else if (g_settings.ldpc_iterations_max != 50)
             telecom_system.default_configurations_telecom_system.ldpc_nIteration_max = g_settings.ldpc_iterations_max;
         g_gui_state.ldpc_iterations_max.store(telecom_system.default_configurations_telecom_system.ldpc_nIteration_max);
+        telecom_system.coarse_freq_sync_enabled = g_settings.coarse_freq_sync_enabled;
         g_gui_state.coarse_freq_sync_enabled.store(g_settings.coarse_freq_sync_enabled);
         // Robust mode: CLI -R overrides INI setting
         if (robust_mode)
@@ -785,6 +986,24 @@ start_modem:
         if (ldpc_iterations > 0)
             telecom_system.default_configurations_telecom_system.ldpc_nIteration_max = ldpc_iterations;
 #endif
+
+        // Apply guard interval: CLI --gi overrides INI, INI overrides default (3.0ms)
+        {
+            double gi_ms = 3.0;  // default
+#ifdef MERCURY_GUI_ENABLED
+            if (guard_interval_ms_cli > 0)
+                gi_ms = guard_interval_ms_cli;
+            else if (g_settings.guard_interval_ms != 3.0)
+                gi_ms = g_settings.guard_interval_ms;
+#else
+            if (guard_interval_ms_cli > 0)
+                gi_ms = guard_interval_ms_cli;
+#endif
+            int ngi = (int)(gi_ms * 12.0 + 0.5);  // 12kHz OFDM rate
+            telecom_system.default_configurations_telecom_system.ofdm_gi = (float)ngi / 256.0f;
+            printf("Guard interval: %.2f ms (Ngi=%d, gi=%.4f)\n", gi_ms, ngi,
+                   telecom_system.default_configurations_telecom_system.ofdm_gi);
+        }
 
         // Apply GUI settings: gearshift and initial config from INI
 #ifdef MERCURY_GUI_ENABLED
@@ -941,6 +1160,8 @@ start_modem:
                 // Update SNR measurements (uplink = what we receive, downlink = what remote receives from us)
                 gui_update_arq_measurements(ARQ.get_snr_uplink(), ARQ.get_snr_downlink());
 
+                // Sync coarse freq sync from GUI to telecom_system
+                telecom_system.coarse_freq_sync_enabled = g_gui_state.coarse_freq_sync_enabled.load();
                 // Sync robust mode and bandwidth mode from GUI to ARQ
                 ARQ.robust_enabled = g_gui_state.robust_mode_enabled.load() ? YES : NO;
                 ARQ.bandwidth_mode = g_gui_state.bandwidth_mode.load();
@@ -1152,6 +1373,7 @@ start_modem:
 
     audioio_deinit(&radio_capture, &radio_playback, &radio_capture_prep);
 
+    shutdown_tee_logging();
 
     return EXIT_SUCCESS;
 }
