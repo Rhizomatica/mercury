@@ -1,5 +1,5 @@
-mercury (2.0.0~alpha1-1) unstable; urgency=medium
+mercury (1.9.2-1) unstable; urgency=medium
 
-  * Initial packaging of Mercury v2.
+  * Release 1.9.2.
 
- -- Rafael Diniz <rafael@riseup.net>  Wed, 05 Mar 2026 01:50:00 +0000
+ -- Rafael Diniz <rafael@riseup.net>  Thu, 06 Mar 2026 20:58:00 +0000
