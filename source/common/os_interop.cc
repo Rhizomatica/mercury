@@ -29,7 +29,7 @@ int MUTEX_LOCK(HANDLE *mqh_lock)
 {
 	DWORD dwWaitResult = WaitForSingleObject(
 		*mqh_lock,    // handle to mutex (dereference pointer to get HANDLE value)
-		-1);  // no time-out interval
+		INFINITE);  // no time-out interval
 
     switch (dwWaitResult)
     {
@@ -52,7 +52,7 @@ int COND_WAIT(HANDLE *mqh_wait, HANDLE *mqh_lock)
 	DWORD dwWaitResult;
 
 	ReleaseMutex(*mqh_lock);
-	dwWaitResult = WaitForSingleObject(*mqh_wait, -1);
+	dwWaitResult = WaitForSingleObject(*mqh_wait, INFINITE);
 	if(dwWaitResult != WAIT_OBJECT_0) {
 		return EINVAL;
 	}

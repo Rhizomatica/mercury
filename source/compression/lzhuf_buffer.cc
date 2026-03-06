@@ -6,15 +6,20 @@
  * the output back.  On a modern system, temp file I/O for <128 KB payloads
  * takes <1 ms — negligible for an HF modem running at <6 kbps.
  *
- * Thread safety: NOT thread-safe (uses fixed temp file names).  B2F
- * processing is single-threaded (one data-port connection at a time),
- * so this is fine for Mercury.
+ * Thread safety: uses PID-unique temp file names to avoid collisions
+ * between instances.  B2F processing is single-threaded within each
+ * process (one data-port connection at a time).
  */
 
 #include "compression/lzhuf_buffer.h"
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <unistd.h>
+#endif
 
 extern "C" {
 #define LZHUF 1
@@ -22,15 +27,20 @@ extern "C" {
 #include "lzhuf/lzhuf.h"
 }
 
-// Temp file paths — use system temp dir if available.
+// Generate unique temp file paths using PID to avoid collisions.
 static void get_temp_paths(char* in_path, size_t in_sz,
                            char* out_path, size_t out_sz)
 {
 	const char* tmp = getenv("TEMP");
 	if (!tmp) tmp = getenv("TMP");
 	if (!tmp) tmp = ".";
-	snprintf(in_path, in_sz, "%s/_mercury_lzhuf_in.tmp", tmp);
-	snprintf(out_path, out_sz, "%s/_mercury_lzhuf_out.tmp", tmp);
+#ifdef _WIN32
+	int pid = (int)GetCurrentProcessId();
+#else
+	int pid = (int)getpid();
+#endif
+	snprintf(in_path, in_sz, "%s/_mercury_lzhuf_%d_in.tmp", tmp, pid);
+	snprintf(out_path, out_sz, "%s/_mercury_lzhuf_%d_out.tmp", tmp, pid);
 }
 
 int lzhuf_decode_buffer(const uint8_t* in, size_t in_len,

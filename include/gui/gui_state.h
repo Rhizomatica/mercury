@@ -17,6 +17,7 @@
 #include <string>
 #include <vector>
 #include <cmath>
+#include <cstdio>
 #include <cstring>
 
 // Buffer sizes
@@ -382,54 +383,63 @@ inline void gui_add_throughput_bytes_rx(long long bytes) {
 inline void gui_push_monitor_text(const char* data, int len, bool is_tx) {
     if (!g_gui_state.monitor_enabled.load(std::memory_order_relaxed)) return;
     if (len <= 0 || data == nullptr) return;
-    GuiLockGuard lock(g_gui_state.monitor_mutex);
 
-    // Label with callsign (A=commander/TX, B=responder/RX)
-    const std::string& call = is_tx ? g_gui_state.monitor_callsign_a
-                                    : g_gui_state.monitor_callsign_b;
-    if (!call.empty()) {
-        g_gui_state.monitor_text += call;
-        g_gui_state.monitor_text += "> ";
-    } else {
-        g_gui_state.monitor_text += is_tx ? "TX> " : "RX> ";
-    }
+    bool is_binary = false;
+    std::vector<uint8_t> binary_copy;
 
-    // Check if data is printable text or binary
-    bool is_text = true;
-    for (int i = 0; i < len && is_text; i++) {
-        unsigned char c = (unsigned char)data[i];
-        if (c < 0x20 && c != '\n' && c != '\r' && c != '\t') is_text = false;
-    }
+    { // Scope monitor_mutex — never hold while locking monitor_files_mutex
+        GuiLockGuard lock(g_gui_state.monitor_mutex);
 
-    if (is_text) {
-        g_gui_state.monitor_text.append(data, len);
-    } else {
-        // Store binary as downloadable file
-        {
-            GuiLockGuard flock(g_gui_state.monitor_files_mutex);
-            st_gui_state::MonitorFileEntry entry;
-            char name[64];
-            snprintf(name, sizeof(name), "transfer_%d.bin",
-                     (int)g_gui_state.monitor_files.size());
-            entry.suggested_name = name;
-            entry.data.assign((const uint8_t*)data, (const uint8_t*)data + len);
-            g_gui_state.monitor_files.push_back(std::move(entry));
+        // Label with callsign (A=commander/TX, B=responder/RX)
+        const std::string& call = is_tx ? g_gui_state.monitor_callsign_a
+                                        : g_gui_state.monitor_callsign_b;
+        if (!call.empty()) {
+            g_gui_state.monitor_text += call;
+            g_gui_state.monitor_text += "> ";
+        } else {
+            g_gui_state.monitor_text += is_tx ? "TX> " : "RX> ";
         }
-        char buf[80];
-        snprintf(buf, sizeof(buf), "[binary: %d bytes]", len);
-        g_gui_state.monitor_text += buf;
-    }
-    g_gui_state.monitor_text += "\n";
 
-    // Cap buffer at ~1 MB, trim oldest
-    if (g_gui_state.monitor_text.size() > 1024 * 1024) {
-        size_t trim = g_gui_state.monitor_text.size() - 768 * 1024;
-        size_t nl = g_gui_state.monitor_text.find('\n', trim);
-        if (nl != std::string::npos)
-            g_gui_state.monitor_text.erase(0, nl + 1);
+        // Check if data is printable text or binary
+        bool is_text = true;
+        for (int i = 0; i < len && is_text; i++) {
+            unsigned char c = (unsigned char)data[i];
+            if (c < 0x20 && c != '\n' && c != '\r' && c != '\t') is_text = false;
+        }
+
+        if (is_text) {
+            g_gui_state.monitor_text.append(data, len);
+        } else {
+            is_binary = true;
+            binary_copy.assign((const uint8_t*)data, (const uint8_t*)data + len);
+            char buf[80];
+            snprintf(buf, sizeof(buf), "[binary: %d bytes]", len);
+            g_gui_state.monitor_text += buf;
+        }
+        g_gui_state.monitor_text += "\n";
+
+        // Cap buffer at ~1 MB, trim oldest
+        if (g_gui_state.monitor_text.size() > 1024 * 1024) {
+            size_t trim = g_gui_state.monitor_text.size() - 768 * 1024;
+            size_t nl = g_gui_state.monitor_text.find('\n', trim);
+            if (nl != std::string::npos)
+                g_gui_state.monitor_text.erase(0, nl + 1);
+        }
+
+        g_gui_state.monitor_updated.store(true);
     }
 
-    g_gui_state.monitor_updated.store(true);
+    // Queue binary file outside monitor_mutex to avoid nested lock
+    if (is_binary) {
+        GuiLockGuard flock(g_gui_state.monitor_files_mutex);
+        st_gui_state::MonitorFileEntry entry;
+        char name[64];
+        snprintf(name, sizeof(name), "transfer_%d.bin",
+                 (int)g_gui_state.monitor_files.size());
+        entry.suggested_name = name;
+        entry.data = std::move(binary_copy);
+        g_gui_state.monitor_files.push_back(std::move(entry));
+    }
 }
 
 /**
