@@ -16,6 +16,7 @@
 
 #include <winsock2.h>
 #include <windows.h>
+#include <pthread.h>
 #include <io.h>
 #include <time.h>
 
