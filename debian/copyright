@@ -1,0 +1,12 @@
+Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Upstream-Name: mercury
+Upstream-Contact: Rafael Diniz <rafael@riseup.net>
+Source: https://github.com/Rhizomatica/mercury
+
+Files: *
+Copyright: 2024-2026 Rhizomatica
+License: AGPL-3+
+
+License: AGPL-3+
+ On Debian systems, the full text of the GNU Affero General Public
+ License version 3 can be found in `/usr/share/common-licenses/AGPL-3'.

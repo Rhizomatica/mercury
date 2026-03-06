@@ -1,0 +1,16 @@
+#!/usr/bin/make -f
+
+export DEB_BUILD_MAINT_OPTIONS = hardening=+all,-format
+
+%:
+	dh $@
+
+override_dh_auto_build:
+	$(MAKE) -j$(shell nproc)
+
+override_dh_auto_install:
+	install -D -m 755 mercury $(CURDIR)/debian/mercuryv1/usr/bin/mercury
+	install -D -m 644 systemd/modem.service $(CURDIR)/debian/mercuryv1/etc/systemd/system/modem.service
+
+override_dh_auto_clean:
+	$(MAKE) clean
