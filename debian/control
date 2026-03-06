@@ -1,0 +1,19 @@
+Source: mercuryv1
+Section: comm
+Priority: optional
+Maintainer: Rafael Diniz <rafael@riseup.net>
+Build-Depends: debhelper-compat (= 13), libasound2-dev, libpulse-dev, libglfw3-dev, libgl-dev
+Standards-Version: 4.6.2
+Homepage: https://github.com/Rhizomatica/mercury
+Vcs-Git: https://github.com/Rhizomatica/mercury.git -b mercuryv1
+Vcs-Browser: https://github.com/Rhizomatica/mercury/tree/mercuryv1
+
+Package: mercuryv1
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}
+Conflicts: mercury
+Description: HERMES HF modem v1 for store-and-forward communication
+ Mercury is the modem component of the HERMES (High-Frequency Emergency
+ and Rural Multimedia Exchange System) project. It provides ARQ and
+ broadcast data links over HF radio using FreeDV OFDM waveforms with
+ a VARA-compatible TCP TNC interface.
