@@ -46,6 +46,8 @@
 #include "../data_interfaces/net.h"
 #include "../data_interfaces/tcp_interfaces.h"
 #include "../common/hermes_log.h"
+#include "../modem/freedv/modem_stats.h"
+#include "../modem/modem.h"
 
 // global shutdown flag from main.c
 extern bool shutdown_;
@@ -140,7 +142,8 @@ int udp_tx_send_status(udp_tx_t *tx,
                        const char *dest_callsign,
                        int sync, modem_direction_t dir,
                        int client_tcp_connected,
-                       long bytes_transmitted, long bytes_received)
+                       long bytes_transmitted, long bytes_received,
+                       int waterfall_enabled)
 {
     char br[32], snrbuf[32], tx_bytes[32], rx_bytes[32];
     snprintf(br, sizeof(br), "%d", bitrate);
@@ -159,6 +162,7 @@ int udp_tx_send_status(udp_tx_t *tx,
         "client_tcp_connected", client_tcp_connected ? "true" : "false",
         "bytes_transmitted", tx_bytes,
         "bytes_received", rx_bytes,
+        "waterfall", waterfall_enabled ? "true" : "false",
         NULL);
 }
 
@@ -444,7 +448,7 @@ void *ui_publisher_thread(void *arg)
     ui_ctx_t *ctx = (ui_ctx_t *)arg;
     udp_tx_t *tx = &ctx->tx;
 
-    HLOGI(UI_LOG_TAG, "Publisher started — sending status every %d ms to port %d",
+    HLOGI(UI_LOG_TAG, "Publisher started - sending status every %d ms to port %d",
            UI_PUBLISH_INTERVAL_US / 1000, ntohs(tx->dest.sin_port));
 
     while (!shutdown_)
@@ -510,7 +514,8 @@ void *ui_publisher_thread(void *arg)
                            dest_call ? dest_call : "",
                            sync, dir,
                            tcp_connected,
-                           bytes_tx, bytes_rx);
+                           bytes_tx, bytes_rx,
+                           ctx->waterfall_enabled);
 
         usleep(UI_PUBLISH_INTERVAL_US);
     }
@@ -519,18 +524,62 @@ void *ui_publisher_thread(void *arg)
     return NULL;
 }
 
+// ---------------- SPECTRUM PUBLISHER THREAD ----------------
+// Sends FFT spectrum data to the UI at ~20 fps (50 ms interval),
+// decoupled from the slower status publisher (500 ms).
+
+void *spectrum_publisher_thread(void *arg)
+{
+    ui_ctx_t *ctx = (ui_ctx_t *)arg;
+
+    HLOGI(UI_LOG_TAG, "Spectrum publisher started - sending spectrum every %d ms",
+          SPECTRUM_PUBLISH_INTERVAL_US / 1000);
+
+    while (!shutdown_)
+    {
+        float spec_dB[MODEM_STATS_NSPEC];
+        int sr = modem_get_rx_spectrum(spec_dB, MODEM_STATS_NSPEC);
+        if (sr > 0)
+        {
+            spectrum_tx_send(&ctx->spectrum_tx, spec_dB,
+                             (uint16_t)MODEM_STATS_NSPEC, (uint16_t)sr);
+        }
+
+        usleep(SPECTRUM_PUBLISH_INTERVAL_US);
+    }
+
+    HLOGI(UI_LOG_TAG, "Spectrum publisher shutting down");
+    return NULL;
+}
+
 // ---------------- HIGH-LEVEL INIT / SHUTDOWN ----------------
 
-int ui_comm_init(ui_ctx_t *ctx, const char *ip, uint16_t tx_port)
+int ui_comm_init(ui_ctx_t *ctx, const char *ip, uint16_t tx_port, int waterfall_enabled)
 {
     memset(ctx, 0, sizeof(*ctx));
 
-    // Initialize TX socket — sends status TO the UI
+    ctx->waterfall_enabled = waterfall_enabled;
+
+    // Initialize TX socket - sends status TO the UI
     if (udp_tx_init(&ctx->tx, ip, tx_port) != 0) {
         HLOGE(UI_LOG_TAG, "Failed to init TX socket to %s:%u", ip, tx_port);
         return -1;
     }
     HLOGI(UI_LOG_TAG, "TX socket ready - sending to %s:%u", ip, tx_port);
+
+    if (waterfall_enabled) {
+        // Spectrum is sent on tx_port + 2 (spectrum UDP port = UI base port + 2)
+        uint16_t spectrum_port = tx_port + 2;
+        if (spectrum_tx_init(&ctx->spectrum_tx, ip, spectrum_port) != 0) {
+            HLOGW(UI_LOG_TAG, "Failed to init spectrum TX socket (waterfall will not work)");
+            // Non-fatal: continue without spectrum
+        } else {
+            HLOGI(UI_LOG_TAG, "Spectrum TX ready - sending to %s:%u", ip, spectrum_port);
+        }
+    } else {
+        HLOGI(UI_LOG_TAG, "Waterfall disabled - spectrum data wont be sent to the UI");
+        ctx->spectrum_tx.sock = -1;
+    }
 
     // Start RX thread - listens for commands FROM the UI
     uint16_t rx_port = tx_port + 1;
@@ -559,14 +608,27 @@ int ui_comm_init(ui_ctx_t *ctx, const char *ip, uint16_t tx_port)
     pthread_detach(ctx->pub_tid);
     HLOGI(UI_LOG_TAG, "Publisher thread started");
 
+    if (waterfall_enabled) {
+        // Start spectrum publisher thread - high-rate FFT/waterfall broadcaster
+        if (pthread_create(&ctx->spec_tid, NULL, spectrum_publisher_thread, ctx) != 0) {
+            HLOGE(UI_LOG_TAG, "pthread_create(spec) failed: %s", strerror(errno));
+            // Non-fatal: status still works without spectrum
+            HLOGW(UI_LOG_TAG, "Spectrum publisher thread not started (waterfall may not update)");
+        } else {
+            pthread_detach(ctx->spec_tid);
+            HLOGI(UI_LOG_TAG, "Spectrum publisher thread started");
+        }
+    }
+
     return 0;
 }
 
 void ui_comm_shutdown(ui_ctx_t *ctx)
 {
     // Threads check shutdown_ flag and will exit on their own.
-    // Just close the TX socket.
+    // Close the TX sockets.
     udp_tx_close(&ctx->tx);
+    spectrum_tx_close(&ctx->spectrum_tx);
     HLOGI(UI_LOG_TAG, "Shut down");
 }
 
@@ -610,7 +672,7 @@ int main(int argc, char *argv[]) {
         long bytes_received = rand() % 100000;
 
         udp_tx_send_status(&tx, bitrate, snr, "K1ABC", "N0XYZ", sync, dir, client,
-                           bytes_transmitted, bytes_received);
+                           bytes_transmitted, bytes_received, 1 /* waterfall=true for test */);
 
         // Occasionally send a soundcard list
         if (counter % 3 == 0) {

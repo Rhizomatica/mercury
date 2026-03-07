@@ -56,4 +56,9 @@ void *tx_thread(void *g_modem);
 // rx from the modem and send to the tcp socket
 void *rx_thread(void *g_modem);
 
+// Spectrum data for UI waterfall display
+// Copies the latest rx spectrum (MODEM_STATS_NSPEC floats) into out_dB.
+// Returns the sample rate on success, 0 if no spectrum is available yet.
+int modem_get_rx_spectrum(float *out_dB, int max_bins);
+
 #endif // MODEM_H

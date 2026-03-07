@@ -25,20 +25,22 @@ CFLAGS_COMMON = $(COMMON_CFLAGS) -Wno-stringop-truncation -I../datalink_arq -I..
 LDFLAGS = -pthread
 
 # Objects
-OBJS = ui_communication.o
+OBJS = ui_communication.o spectrum_sender.o
 
 # Standalone test binary
 TARGET = ui_communication
 
 all: $(TARGET)
 
-$(TARGET): ui_communication.c ui_communication.h
+$(TARGET): ui_communication.c ui_communication.h spectrum_sender.c spectrum_sender.h
 	$(CC) $(CFLAGS_COMMON) -DTEST_MAIN -c ui_communication.c -o ui_communication_test.o
-	$(CC) $(CFLAGS_COMMON) -o $@ ui_communication_test.o $(LDFLAGS)
+	$(CC) $(CFLAGS_COMMON) -c spectrum_sender.c -o spectrum_sender.o
+	$(CC) $(CFLAGS_COMMON) -o $@ ui_communication_test.o spectrum_sender.o $(LDFLAGS)
 
 # Library object (no TEST_MAIN) — used by top-level mercury build
-gui_interface: ui_communication.c ui_communication.h
+gui_interface: ui_communication.c ui_communication.h spectrum_sender.c spectrum_sender.h
 	$(CC) $(CFLAGS_COMMON) -c ui_communication.c -o ui_communication.o
+	$(CC) $(CFLAGS_COMMON) -c spectrum_sender.c -o spectrum_sender.o
 
 clean:
 	rm -f $(OBJS) $(TARGET) ui_communication_test.o

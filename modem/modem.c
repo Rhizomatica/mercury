@@ -65,6 +65,15 @@ pthread_t tx_thread_tid, rx_thread_tid;
 static pthread_mutex_t modem_freedv_lock = PTHREAD_MUTEX_INITIALIZER;
 static uint64_t modem_freedv_epoch = 1;
 static uint64_t modem_last_switch_ms = 0;
+
+/* --- Spectrum data for UI waterfall display --- */
+#include "freedv/modem_stats.h"
+static float g_rx_spectrum_dB[MODEM_STATS_NSPEC];
+static pthread_mutex_t g_spectrum_lock = PTHREAD_MUTEX_INITIALIZER;
+static int g_spectrum_sample_rate = 8000;
+static bool g_spectrum_valid = false;
+static struct MODEM_STATS g_spectrum_stats;
+static bool g_spectrum_stats_inited = false;
 #define ARQ_ACTION_WAIT_MS 100
 #define RX_TX_DRAIN_SAMPLES 160
 #define RX_DECODE_CHUNK_SAMPLES 160
@@ -1357,6 +1366,39 @@ void *rx_thread(void *g_modem)
                                     metrics.rx_status,
                                     metrics.frame_decoded);
         }
+
+        /* --- Update spectrum buffer for UI waterfall display --- */
+        {
+            /* Convert i16 samples to COMP for modem_stats_get_rx_spectrum */
+            int spec_nin = chunk_samples;
+            if (spec_nin > MODEM_STATS_NSPEC)
+                spec_nin = MODEM_STATS_NSPEC;
+            COMP rx_fdm[MODEM_STATS_NSPEC];
+            for (int i = 0; i < spec_nin; i++)
+            {
+                /* Pass raw i16 amplitude — modem_stats_get_rx_spectrum normalises
+                 * against FDMDV_SCALE=825, not against 32768.  Dividing by 32768
+                 * shifts the entire spectrum down by ~90 dB */
+                rx_fdm[i].real = (float)capture_i16[i];
+                rx_fdm[i].imag = 0.0f;
+            }
+
+            pthread_mutex_lock(&g_spectrum_lock);
+            if (!g_spectrum_stats_inited)
+            {
+                modem_stats_open(&g_spectrum_stats);
+                g_spectrum_stats_inited = true;
+            }
+            modem_stats_get_rx_spectrum(&g_spectrum_stats, g_rx_spectrum_dB,
+                                        rx_fdm, spec_nin);
+            g_spectrum_valid = true;
+            /* Determine sample rate from the modem */
+            pthread_mutex_lock(&modem_freedv_lock);
+            if (modem->freedv)
+                g_spectrum_sample_rate = freedv_get_modem_sample_rate(modem->freedv);
+            pthread_mutex_unlock(&modem_freedv_lock);
+            pthread_mutex_unlock(&g_spectrum_lock);
+        }
     }
 
     rx_decoder_dispose(&control_decoder);
@@ -1364,4 +1406,20 @@ void *rx_thread(void *g_modem)
     free(capture_i32);
     free(capture_i16);
     return NULL;
+}
+
+/* --- Public API: get latest rx spectrum for UI waterfall --- */
+int modem_get_rx_spectrum(float *out_dB, int max_bins)
+{
+    int sr = 0;
+    pthread_mutex_lock(&g_spectrum_lock);
+    if (g_spectrum_valid)
+    {
+        int n = max_bins < MODEM_STATS_NSPEC ? max_bins : MODEM_STATS_NSPEC;
+        memcpy(out_dB, g_rx_spectrum_dB, n * sizeof(float));
+        sr = g_spectrum_sample_rate;
+        g_spectrum_valid = false;
+    }
+    pthread_mutex_unlock(&g_spectrum_lock);
+    return sr;
 }

@@ -29,13 +29,18 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 
+#include "spectrum_sender.h"
+
 // ---- Default UDP ports for UI <-> backend communication ----
 // Backend sends status TO UI on UI TX port = UI base port (UI listening)
 // Backend listens for commands FROM UI on UI RX port = UI base port + 1 (UI sending)
+// Spectrum / waterfall data is sent to UI_BASE_PORT + 2
 #define UI_BASE_PORT 10000
 #define UI_DEFAULT_IP "127.0.0.1"
 // Status publish interval in microseconds (500ms)
 #define UI_PUBLISH_INTERVAL_US 500000
+// Spectrum publish interval in microseconds (50ms = 20 fps)
+#define SPECTRUM_PUBLISH_INTERVAL_US 50000
 
 // ---- Direction type ----
 typedef enum {
@@ -104,9 +109,12 @@ typedef struct {
 // ---- Publisher thread context ----
 typedef struct {
     udp_tx_t tx;
+    spectrum_tx_t spectrum_tx;  // spectrum/FFT sender for waterfall display
     uint16_t rx_port;
     pthread_t rx_tid;
     pthread_t pub_tid;
+    pthread_t spec_tid;         // dedicated spectrum publisher thread (20 fps)
+    int waterfall_enabled;      // 1 = send spectrum data to UI, 0 = disabled
 
     // For logging rate limiting
     modem_status_t last_sent_status;
@@ -125,7 +133,8 @@ int udp_tx_send_status(udp_tx_t *tx,
                        int sync, modem_direction_t dir,
                        int client_tcp_connected,
                        long bytes_transmitted,
-                       long bytes_received);
+                       long bytes_received,
+                       int waterfall_enabled);
 
 int udp_tx_send_config(udp_tx_t *tx,
                        const char *soundcard,
@@ -149,8 +158,12 @@ void *rx_thread_main(void *arg);
 // Publisher thread (periodically sends modem status to the UI)
 void *ui_publisher_thread(void *arg);
 
+// Spectrum publisher thread (sends FFT data to the UI at ~20 fps)
+void *spectrum_publisher_thread(void *arg);
+
 // High-level init/shutdown for the UI communication subsystem
-int ui_comm_init(ui_ctx_t *ctx, const char *ip, uint16_t tx_port);
+// waterfall_enabled: 1 = start spectrum publisher thread (default), 0 = skip it
+int ui_comm_init(ui_ctx_t *ctx, const char *ip, uint16_t tx_port, int waterfall_enabled);
 void ui_comm_shutdown(ui_ctx_t *ctx);
 
 #endif
