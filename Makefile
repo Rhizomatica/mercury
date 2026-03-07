@@ -41,11 +41,17 @@ endif
 #GCC_CFLAGS="-lpthread -lrt"
 
 CPP=g++
+CC=gcc
 LDFLAGS=$(FFAUDIO_LINKFLAGS)
 CPPFLAGS=-O3 -g0 -Wall -Wextra -Wno-format -Wno-unused -std=c++14 -I./include -I./source/audioio/ffaudio -pthread
 #CPPFLAGS=-Ofast -g0 -Wall -fstack-protector -D_FORTIFY_SOURCE=2 -Wno-format -std=gnu++14 -I./include
-CPP_SOURCES=$(wildcard source/*.cc source/datalink_layer/*.cc source/physical_layer/*.cc source/common/*.cc)
-OBJECT_FILES=$(patsubst %.cc,%.o,$(CPP_SOURCES))
+CFLAGS=-O3 -g0 -Wall -Wno-unused -std=c11 -I./include -pthread
+CPP_SOURCES=$(wildcard source/*.cc source/datalink_layer/*.cc source/physical_layer/*.cc source/common/*.cc source/compression/*.cc source/crypto/*.cc)
+C_SOURCES=source/crypto/monocypher.c source/crypto/mlkem/mlkem_native.c \
+          source/compression/lzhuf/lzhuf.c \
+          source/compression/ppmd/Ppmd8.c source/compression/ppmd/Ppmd8Dec.c source/compression/ppmd/Ppmd8Enc.c \
+          source/compression/zstd/zstd.c
+OBJECT_FILES=$(patsubst %.cc,%.o,$(CPP_SOURCES)) $(patsubst %.c,%.o,$(C_SOURCES))
 
 # ========== GUI Build Configuration ==========
 ifeq ($(GUI_ENABLED),1)
@@ -122,6 +128,28 @@ endif
 # Mercury source files
 %.o : %.cc %.h
 	$(CPP) -c $(CPPFLAGS) $< -o $@
+
+# C source files (monocypher, mlkem-native, lzhuf, ppmd, zstd)
+source/crypto/monocypher.o: source/crypto/monocypher.c source/crypto/monocypher.h
+	$(CC) -c $(CFLAGS) $< -o $@
+
+source/crypto/mlkem/mlkem_native.o: source/crypto/mlkem/mlkem_native.c
+	$(CC) -c $(CFLAGS) -I./source/crypto/mlkem $< -o $@
+
+source/compression/lzhuf/lzhuf.o: source/compression/lzhuf/lzhuf.c
+	$(CC) -c $(CFLAGS) -DLZHUF $< -o $@
+
+source/compression/ppmd/Ppmd8.o: source/compression/ppmd/Ppmd8.c
+	$(CC) -c $(CFLAGS) -I./source/compression/ppmd $< -o $@
+
+source/compression/ppmd/Ppmd8Dec.o: source/compression/ppmd/Ppmd8Dec.c
+	$(CC) -c $(CFLAGS) -I./source/compression/ppmd $< -o $@
+
+source/compression/ppmd/Ppmd8Enc.o: source/compression/ppmd/Ppmd8Enc.c
+	$(CC) -c $(CFLAGS) -I./source/compression/ppmd $< -o $@
+
+source/compression/zstd/zstd.o: source/compression/zstd/zstd.c
+	$(CC) -c $(CFLAGS) -I./source/compression/zstd $< -o $@
 
 # ImGui source files (C++)
 ifeq ($(GUI_ENABLED),1)

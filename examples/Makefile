@@ -16,8 +16,8 @@
 #
 
 
-CC=gcc
-CFLAGS=-Wall -pedantic -pthread -std=c17 -xc -I../include
+CC=g++
+CFLAGS=-Wall -pthread -std=c++14 -I../include
 ifeq ($(OS),Windows_NT)
 	LDFLAGS += -static-libgcc -static-libstdc++ -static -l:libwinpthread.a
 else
