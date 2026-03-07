@@ -1285,23 +1285,20 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
         }
         else if (ev->id == ARQ_EV_TIMER_ACK)
         {
-            /* Honour a disconnect that was deferred while a frame was in
-             * flight (DATA_TX).  The PTT is now off; stop retrying. */
-            if (sess->pending_disconnect)
-            {
-                HLOGI(LOG_COMP,
-                      "Pending DISCONNECT: aborting retry seq=%d",
-                      (int)sess->tx_seq);
-                sess->pending_disconnect      = false;
-                sess->tx_retries_left         = ARQ_DISCONNECT_RETRY_SLOTS;
-                sess->disconnect_to_no_client = false;
-                sess_enter(sess, ARQ_CONN_DISCONNECTING,
-                           hermes_uptime_ms() + ARQ_CHANNEL_GUARD_MS,
-                           ARQ_EV_TIMER_ACK);
-                return;
-            }
             if (sess->tx_retries_left > 0)
             {
+                /* When a disconnect is pending (deferred from DATA_TX), cap
+                 * remaining retries to 1 so the peer gets one more chance to
+                 * ACK our last frame before we give up.  Aborting with zero
+                 * retries (old Fix-14 behaviour) drops the final UUCP hangup
+                 * frame, causing "Got termination signal" on the remote side. */
+                if (sess->pending_disconnect && sess->tx_retries_left > 1)
+                {
+                    HLOGD(LOG_COMP,
+                          "Pending DISCONNECT: capping retries to 1 for seq=%d",
+                          (int)sess->tx_seq);
+                    sess->tx_retries_left = 1;
+                }
                 sess->tx_retries_left--;
                 /* Ladder step-down happens once per frame in the RX_ACK /
                  * implicit-ACK handler via record_tx_outcome(), NOT here.
