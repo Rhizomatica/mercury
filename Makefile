@@ -22,6 +22,7 @@ ifeq ($(OS),Windows_NT)
 	FFAUDIO_LINKFLAGS += -lole32
 	FFAUDIO_LINKFLAGS += -ldsound -ldxguid
 	FFAUDIO_LINKFLAGS += -lws2_32
+	FFAUDIO_LINKFLAGS += -lbcrypt
 	FFAUDIO_LINKFLAGS += -static-libgcc -static-libstdc++ -static -l:libwinpthread.a
 else
 	UNAME_S := $(shell uname -s)

@@ -106,6 +106,28 @@ CONFIG_16     32QAM        14/16     5665      1133    +13.5 dB
 
 With streaming compression on English text, effective throughput reaches ~1.9x PHY rate (e.g., CONFIG_10 WB: 1354 PHY -> ~2573 effective bps).
 
+## Getting Mercury
+
+### Pre-built Binaries
+
+**Windows:** Ready-to-run executables are available on the [GitHub Releases page](https://github.com/Rhizomatica/mercury/releases).
+
+**Debian / Raspberry Pi OS:** A package repository is available for amd64 and arm64 (Debian 13 Trixie / Raspberry Pi OS). To install:
+
+```
+# Install the repository certificate
+wget --no-check-certificate -qO- https://debian.hermes.radio/hermes/hermes.key | gpg --dearmor -o - | sudo tee /etc/apt/trusted.gpg.d/hermes.gpg > /dev/null
+
+# For arm64 (Raspberry Pi, sBitx radio, etc.)
+echo 'deb [arch=arm64] http://debian.hermes.radio/hermes trixie main' | sudo tee -a /etc/apt/sources.list.d/hermes.list
+
+# For amd64 (laptop, desktop, etc.)
+echo 'deb [arch=amd64] http://debian.hermes.radio/hermes trixie main' | sudo tee -a /etc/apt/sources.list.d/hermes.list
+
+sudo apt update
+sudo apt install mercury
+```
+
 ## Building
 
 Mercury is implemented in C++ (C++14). Builds on Linux (gcc/glibc) and Windows (MinGW64 POSIX toolchain).
