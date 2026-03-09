@@ -76,7 +76,7 @@ int radio_io_init(int radio_type, const char *device_path)
     }
 
     if (device_path && device_path[0])
-        strncpy(radio->state.rigport.pathname, device_path, HAMLIB_FILPATHLEN - 1);
+        snprintf(radio->state.rigport.pathname, HAMLIB_FILPATHLEN, "%s", device_path);
 
     int ret = rig_open(radio);
     if (ret != RIG_OK)

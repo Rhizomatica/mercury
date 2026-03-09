@@ -261,7 +261,16 @@ int main(int argc, char *argv[])
             break;
         case 'R':
             if (optarg)
-                radio_type = atoi(optarg);
+            {
+                char *endptr = NULL;
+                long parsed_radio_type = strtol(optarg, &endptr, 10);
+                if (endptr == optarg || *endptr != '\0' || parsed_radio_type <= 0)
+                {
+                    fprintf(stderr, "Invalid radio model '%s'. Expected a positive integer HAMLIB model ID (>0).\n", optarg);
+                    return EXIT_FAILURE;
+                }
+                radio_type = (int)parsed_radio_type;
+            }
             break;
         case 'A':
             if (optarg)
@@ -282,6 +291,12 @@ int main(int argc, char *argv[])
         }
     }
     
+
+    if (radio_type == RADIO_TYPE_SHM && radio_device[0])
+    {
+        fprintf(stderr, "Error: -S (HERMES SHM) and -A (HAMLIB device) are mutually exclusive.\n");
+        return EXIT_FAILURE;
+    }
 
     if (list_radio_models)
     {

@@ -104,8 +104,8 @@ void list_models(void)
                e->mfg_name,
                e->model_name,
                e->version,
-               e->macro_name,
-               e->status);
+               e->status,
+               e->macro_name);
     }
 
     free(g_models);
