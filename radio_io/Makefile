@@ -21,15 +21,44 @@
 
 include ../config.mk
 
+ifeq ($(origin HAVE_HERMES_SHM), undefined)
 ifeq ($(OS),Windows_NT)
-HAMLIB_CFLAGS = -Ihamlib-w64/include
+HAVE_HERMES_SHM = 0
 else
-HAMLIB_CFLAGS =
+UNAME_S := $(shell uname -s)
+ifeq ($(UNAME_S),Linux)
+HAVE_HERMES_SHM = 1
+else
+HAVE_HERMES_SHM = 0
+endif
+endif
 endif
 
-CFLAGS = $(COMMON_CFLAGS) $(HAMLIB_CFLAGS)
+ifeq ($(OS),Windows_NT)
+HAMLIB_CFLAGS_LOCAL = -Ihamlib-w64/include -DHAVE_HAMLIB
+else ifeq ($(HAVE_HAMLIB),1)
+HAMLIB_CFLAGS_LOCAL = $(shell pkg-config --cflags hamlib) -DHAVE_HAMLIB
+else
+HAMLIB_CFLAGS_LOCAL =
+endif
 
-all: radio_io.o sbitx_io.o shm_utils.o rigctl_parse.o
+ifeq ($(HAVE_HERMES_SHM),1)
+HERMES_SHM_CFLAGS_LOCAL = -DHAVE_HERMES_SHM
+endif
+
+CFLAGS = $(COMMON_CFLAGS) $(HAMLIB_CFLAGS_LOCAL) $(HERMES_SHM_CFLAGS_LOCAL)
+
+OBJS = radio_io.o
+
+ifeq ($(HAVE_HERMES_SHM),1)
+OBJS += sbitx_io.o shm_utils.o
+endif
+
+ifeq ($(HAVE_HAMLIB),1)
+OBJS += rigctl_parse.o
+endif
+
+all: $(OBJS)
 
 radio_io.o: radio_io.c radio_io.h sbitx_io.h radio_cmds.h shm_utils.h rigctl_parse.h
 	$(CC) $(CFLAGS) -c radio_io.c

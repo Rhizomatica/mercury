@@ -23,6 +23,8 @@
  *
  */
 
+#ifdef HAVE_HAMLIB
+
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -113,3 +115,5 @@ void list_models(void)
     g_count = 0;
     g_capacity = 0;
 }
+
+#endif /* HAVE_HAMLIB */

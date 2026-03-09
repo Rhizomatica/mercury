@@ -23,9 +23,13 @@
 #ifndef RIGCTL_PARSE_H
 #define RIGCTL_PARSE_H
 
+#ifdef HAVE_HAMLIB
+
 #include <stdio.h>
 #include <hamlib/rig.h>
 
 void list_models(void);
+
+#endif /* HAVE_HAMLIB */
 
 #endif  /* RIGCTL_PARSE_H */

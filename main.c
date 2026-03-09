@@ -106,7 +106,11 @@ static void print_usage(const char *prog)
     printf(" -J                         Use JSONL format for log file (requires -L).\n");
     printf(" -R [radio_model]           Sets HAMLIB radio model.\n");
     printf(" -A [radio_address]         Sets HAMLIB radio device file or ip:port address.\n");
+#ifdef HAVE_HERMES_SHM
     printf(" -S                         Use HERMES's shared memory interface instead of HAMLIB (Do not use -R and -A in this case).\n");
+#else
+    printf(" -S                         HERMES shared memory radio control (Linux-only; unavailable in this build).\n");
+#endif
     printf(" -K                         List HAMLIB supported radio models.\n");
     printf(" -t                         Test TX mode.\n");
     printf(" -r                         Test RX mode.\n");
@@ -277,7 +281,12 @@ int main(int argc, char *argv[])
                 strncpy(radio_device, optarg, sizeof(radio_device) - 1);
             break;
         case 'S':
+#ifdef HAVE_HERMES_SHM
             radio_type = RADIO_TYPE_SHM;
+#else
+            fprintf(stderr, "Error: -S (HERMES shared memory radio control) is only available on Linux builds.\n");
+            return EXIT_FAILURE;
+#endif
             break;
         case 'K':
             list_radio_models = true;

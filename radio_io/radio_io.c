@@ -24,17 +24,27 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#ifdef HAVE_HAMLIB
 #include <hamlib/rig.h>
+#include "rigctl_parse.h"
+#endif
 
 #include "radio_io.h"
+
+#ifdef HAVE_HERMES_SHM
 #include "sbitx_io.h"
 #include "radio_cmds.h"
 #include "shm_utils.h"
-#include "rigctl_parse.h"
+#endif
 
 static int g_radio_type = RADIO_TYPE_NONE;
+#ifdef HAVE_HAMLIB
 static RIG *radio = NULL;
+#endif
+
+#ifdef HAVE_HERMES_SHM
 static controller_conn *sbitx_connector = NULL;
+#endif
 
 int radio_io_init(int radio_type, const char *device_path)
 {
@@ -45,6 +55,7 @@ int radio_io_init(int radio_type, const char *device_path)
 
     if (radio_type == RADIO_TYPE_SHM)
     {
+#ifdef HAVE_HERMES_SHM
         if (!shm_is_created(SYSV_SHM_CONTROLLER_KEY_STR, sizeof(controller_conn)))
         {
             fprintf(stderr, "Radio SHM not created. Is sbitx_controller running?\n");
@@ -63,8 +74,14 @@ int radio_io_init(int radio_type, const char *device_path)
 
         printf("Radio control: HERMES shared memory interface\n");
         return 0;
+#else
+        fprintf(stderr, "HERMES shared memory radio control is only available on Linux builds.\n");
+        g_radio_type = RADIO_TYPE_NONE;
+        return -1;
+#endif
     }
 
+#ifdef HAVE_HAMLIB
     /* Hamlib path */
     radio = rig_init(radio_type);
     if (!radio)
@@ -98,10 +115,16 @@ int radio_io_init(int radio_type, const char *device_path)
     printf("Radio control: HAMLIB (model %d, device %s)\n",
            radio_type, device_path && device_path[0] ? device_path : "(default)");
     return 0;
+#else
+    fprintf(stderr, "HAMLIB support not compiled in. Install libhamlib-dev and rebuild.\n");
+    g_radio_type = RADIO_TYPE_NONE;
+    return -1;
+#endif
 }
 
 void radio_io_shutdown(void)
 {
+#ifdef HAVE_HERMES_SHM
     if (g_radio_type == RADIO_TYPE_SHM)
     {
         if (sbitx_connector)
@@ -110,13 +133,20 @@ void radio_io_shutdown(void)
                         sizeof(controller_conn), sbitx_connector);
             sbitx_connector = NULL;
         }
+
+        g_radio_type = RADIO_TYPE_NONE;
+        return;
     }
-    else if (g_radio_type > 0 && radio)
+#endif
+
+#ifdef HAVE_HAMLIB
+    if (g_radio_type > 0 && radio)
     {
         rig_close(radio);
         rig_cleanup(radio);
         radio = NULL;
     }
+#endif
 
     g_radio_type = RADIO_TYPE_NONE;
 }
@@ -128,6 +158,7 @@ bool radio_io_enabled(void)
 
 void radio_io_key_on(void)
 {
+#ifdef HAVE_HERMES_SHM
     if (g_radio_type == RADIO_TYPE_SHM)
     {
         uint8_t srv_cmd[5];
@@ -138,15 +169,22 @@ void radio_io_key_on(void)
 
         srv_cmd[4] = CMD_PTT_ON;
         radio_cmd(sbitx_connector, srv_cmd, response);
+
+        return;
     }
-    else if (g_radio_type > 0 && radio)
+#endif
+
+#ifdef HAVE_HAMLIB
+    if (g_radio_type > 0 && radio)
     {
         rig_set_ptt(radio, RIG_VFO_CURR, RIG_PTT_ON);
     }
+#endif
 }
 
 void radio_io_key_off(void)
 {
+#ifdef HAVE_HERMES_SHM
     if (g_radio_type == RADIO_TYPE_SHM)
     {
         uint8_t srv_cmd[5];
@@ -157,14 +195,24 @@ void radio_io_key_off(void)
 
         srv_cmd[4] = CMD_PTT_OFF;
         radio_cmd(sbitx_connector, srv_cmd, response);
+
+        return;
     }
-    else if (g_radio_type > 0 && radio)
+#endif
+
+#ifdef HAVE_HAMLIB
+    if (g_radio_type > 0 && radio)
     {
         rig_set_ptt(radio, RIG_VFO_CURR, RIG_PTT_OFF);
     }
+#endif
 }
 
 void radio_io_list_models(void)
 {
+#ifdef HAVE_HAMLIB
     list_models();
+#else
+    fprintf(stderr, "HAMLIB support not compiled in. Install libhamlib-dev and rebuild.\n");
+#endif
 }
