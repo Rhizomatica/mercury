@@ -52,7 +52,7 @@ bindir ?= $(prefix)/bin
 DOXYGEN ?= doxygen
 DOXYFILE ?= Doxyfile
 
-CFLAGS = $(COMMON_CFLAGS) -Imodem/freedv -Imodem -Idatalink_broadcast -Idata_interfaces -Idatalink_arq -Iaudioio/ffaudio -Icommon
+CFLAGS = $(COMMON_CFLAGS) -Imodem/freedv -Imodem -Idatalink_broadcast -Idata_interfaces -Idatalink_arq -Iaudioio/ffaudio -Icommon -Iradio_io
 
 ifeq ($(OS),Windows_NT)
 BINARY = mercury.exe
@@ -60,14 +60,15 @@ else
 BINARY = mercury
 endif
 
-LDFLAGS=$(FFAUDIO_LINKFLAGS) -lm
+LDFLAGS=$(FFAUDIO_LINKFLAGS) -lm -lhamlib
 
 MERCURY_LINK_INPUTS = \
 	main.o datalink_arq/arq.o datalink_arq/fsm.o datalink_arq/arith.o datalink_arq/arq_channels.o \
 	datalink_arq/arq_fsm.o datalink_arq/arq_protocol.o datalink_arq/arq_timing.o datalink_arq/arq_modem.o \
 	datalink_broadcast/broadcast.o datalink_broadcast/kiss.o modem/modem.o modem/framer.o modem/freedv/libfreedvdata.a \
 	audioio/audioio.a common/os_interop.o common/ring_buffer_posix.o common/shm_posix.o common/crc6.o common/hermes_log.o \
-	common/chan.o common/queue.o data_interfaces/tcp_interfaces.o data_interfaces/net.o
+	common/chan.o common/queue.o data_interfaces/tcp_interfaces.o data_interfaces/net.o \
+	radio_io/radio_io.o radio_io/sbitx_io.o radio_io/shm_utils.o radio_io/rigctl_parse.o
 
 all: internal_deps utils
 	$(MAKE) $(BINARY)
@@ -100,6 +101,7 @@ internal_deps:
 	$(MAKE) -C data_interfaces
 	$(MAKE) -C audioio
 	$(MAKE) -C common
+	$(MAKE) -C radio_io
 
 
 windows:
@@ -114,6 +116,7 @@ clean:
 	$(MAKE) -C data_interfaces clean
 	$(MAKE) -C audioio clean
 	$(MAKE) -C common clean
+	$(MAKE) -C radio_io clean
 
 doxygen:
 	@command -v $(DOXYGEN) >/dev/null 2>&1 || { echo "ERROR: doxygen not found"; exit 1; }

@@ -47,6 +47,7 @@
 #include "audioio/audioio.h"
 #include "tcp_interfaces.h"
 #include "hermes_log.h"
+#include "radio_io.h"
 
 extern cbuf_handle_t capture_buffer;
 extern cbuf_handle_t playback_buffer;
@@ -103,6 +104,10 @@ static void print_usage(const char *prog)
     printf(" -v                         Verbose mode. Prints more information during execution.\n");
     printf(" -L <path>                  Write log to file (TIMING level and above).\n");
     printf(" -J                         Use JSONL format for log file (requires -L).\n");
+    printf(" -R [radio_model]           Sets HAMLIB radio model.\n");
+    printf(" -A [radio_address]         Sets HAMLIB radio device file or ip:port address.\n");
+    printf(" -S                         Use HERMES's shared memory interface instead of HAMLIB (Do not use -R and -A in this case).\n");
+    printf(" -K                         List HAMLIB supported radio models.\n");
     printf(" -t                         Test TX mode.\n");
     printf(" -r                         Test RX mode.\n");
     printf(" -h                         Prints this help.\n");
@@ -145,9 +150,12 @@ int main(int argc, char *argv[])
 
     int test_mode = 0;
 
+    int radio_type = RADIO_TYPE_NONE;
+    char radio_device[1024] = "";
+    bool list_radio_models = false;
 
     int opt;
-    while ((opt = getopt(argc, argv, "hc:s:m:f:k:li:o:x:p:b:zvtrL:J")) != -1)
+    while ((opt = getopt(argc, argv, "hc:s:m:f:k:li:o:x:p:b:zvtrL:JR:A:SK")) != -1)
     {
         switch (opt)
         {
@@ -251,6 +259,20 @@ int main(int argc, char *argv[])
         case 'J':
             log_file_jsonl = true;
             break;
+        case 'R':
+            if (optarg)
+                radio_type = atoi(optarg);
+            break;
+        case 'A':
+            if (optarg)
+                strncpy(radio_device, optarg, sizeof(radio_device) - 1);
+            break;
+        case 'S':
+            radio_type = RADIO_TYPE_SHM;
+            break;
+        case 'K':
+            list_radio_models = true;
+            break;
         case 'h':
             print_usage(argv[0]);
             return EXIT_SUCCESS;
@@ -260,6 +282,12 @@ int main(int argc, char *argv[])
         }
     }
     
+
+    if (list_radio_models)
+    {
+        radio_io_list_models();
+        return EXIT_SUCCESS;
+    }
 
     if (list_modes)
     {
@@ -435,6 +463,16 @@ int main(int argc, char *argv[])
         audioio_init_internal(input_dev, output_dev, audio_system, rx_input_channel, &radio_capture, &radio_playback);
     }
 
+    if (radio_type != RADIO_TYPE_NONE)
+    {
+        if (radio_io_init(radio_type, radio_device) != 0)
+        {
+            fprintf(stderr, "Failed to initialize radio control.\n");
+            hermes_log_shutdown();
+            return EXIT_FAILURE;
+        }
+    }
+
     printf("Initializing Modem\n");
     init_modem(&g_modem, startup_payload_mode, 1, test_mode, freedv_verbosity); // frames per burst is 1 for now
     
@@ -472,6 +510,7 @@ int main(int argc, char *argv[])
         audioio_deinit(&radio_capture, &radio_playback);
     }
 
+    radio_io_shutdown();
     shutdown_modem(&g_modem);
     HLOGI("main", "Shutting down");
     hermes_log_shutdown();

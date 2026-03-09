@@ -1,4 +1,4 @@
-# HERMES Modem
+# HERMES Modem - Radio I/O
 #
 # Copyright (C) 2025 Rhizomatica
 # Author: Rafael Diniz <rafael@riseup.net>
@@ -21,16 +21,21 @@
 
 include ../config.mk
 
-CFLAGS = $(COMMON_CFLAGS) -I../modem -I../modem/freedv -I../common -I../datalink_arq -I../datalink_broadcast -I../third_party/chan -I../radio_io
+CFLAGS = $(COMMON_CFLAGS)
 
-all: tcp_interfaces.o net.o
+all: radio_io.o sbitx_io.o shm_utils.o rigctl_parse.o
 
-tcp_interfaces.o: tcp_interfaces.c tcp_interfaces.h
-	$(CC) $(CFLAGS) -c tcp_interfaces.c
+radio_io.o: radio_io.c radio_io.h sbitx_io.h radio_cmds.h shm_utils.h rigctl_parse.h
+	$(CC) $(CFLAGS) -c radio_io.c
 
-net.o: net.c net.h
-	$(CC) $(CFLAGS) -c net.c
+sbitx_io.o: sbitx_io.c sbitx_io.h radio_cmds.h
+	$(CC) $(CFLAGS) -c sbitx_io.c
 
+shm_utils.o: shm_utils.c shm_utils.h
+	$(CC) $(CFLAGS) -c shm_utils.c
+
+rigctl_parse.o: rigctl_parse.c rigctl_parse.h
+	$(CC) $(CFLAGS) -c rigctl_parse.c
 
 clean:
 	rm -f *.o
