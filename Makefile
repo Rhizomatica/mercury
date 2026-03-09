@@ -50,7 +50,7 @@ include config.mk
 MINGW_CC  = x86_64-w64-mingw32-gcc
 MINGW_AR  = x86_64-w64-mingw32-ar
 
-.PHONY: all install internal_deps utils clean doxygen doxygen-clean windows FORCE
+.PHONY: all install internal_deps utils clean doxygen doxygen-clean windows windows-zip FORCE
 
 prefix ?= /usr
 bindir ?= $(prefix)/bin
@@ -114,8 +114,20 @@ windows:
 	$(MAKE) clean OS=Windows_NT CC=$(MINGW_CC) AR=$(MINGW_AR)
 	$(MAKE) -j$$(nproc) OS=Windows_NT CC=$(MINGW_CC) AR=$(MINGW_AR)
 
+WINDOWS_ZIP = mercury-w64-$(GIT_HASH).zip
+
+windows-zip: windows
+	rm -rf mercury-w64 $(WINDOWS_ZIP)
+	mkdir -p mercury-w64
+	cp mercury.exe mercury-w64/
+	cp $(HAMLIB_W64_DIR)/bin/*.dll mercury-w64/
+	cd mercury-w64 && zip -9 ../$(WINDOWS_ZIP) *
+	rm -rf mercury-w64
+	@echo "Created $(WINDOWS_ZIP)"
+
 clean:
-	rm -f mercury mercury.exe *.o .git_hash_stamp
+	rm -f mercury mercury.exe *.o .git_hash_stamp mercury-w64-*.zip
+	rm -rf mercury-w64
 	$(MAKE) -C modem clean
 	$(MAKE) -C datalink_arq clean
 	$(MAKE) -C datalink_broadcast clean
