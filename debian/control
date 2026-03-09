@@ -2,7 +2,7 @@ Source: mercury
 Section: comm
 Priority: optional
 Maintainer: Rafael Diniz <rafael@riseup.net>
-Build-Depends: debhelper-compat (= 13), libasound2-dev, libpulse-dev
+Build-Depends: debhelper-compat (= 13), libasound2-dev, libpulse-dev, libhamlib-dev
 Standards-Version: 4.6.2
 Homepage: https://github.com/Rhizomatica/mercury
 Vcs-Git: https://github.com/Rhizomatica/mercury.git
