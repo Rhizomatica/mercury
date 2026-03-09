@@ -11,6 +11,12 @@
 #include <string.h>
 #include <stdio.h>
 
+/* Runtime-configurable retry counts, initialised from compile-time defaults */
+int arq_call_retry_slots       = ARQ_CALL_RETRY_SLOTS_DEFAULT;
+int arq_accept_retry_slots     = ARQ_ACCEPT_RETRY_SLOTS_DEFAULT;
+int arq_data_retry_slots       = ARQ_DATA_RETRY_SLOTS_DEFAULT;
+int arq_disconnect_retry_slots = ARQ_DISCONNECT_RETRY_SLOTS_DEFAULT;
+
 /* Include FreeDV mode constants */
 #include "../modem/freedv/freedv_api.h"
 

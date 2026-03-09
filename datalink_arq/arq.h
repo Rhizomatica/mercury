@@ -51,6 +51,7 @@ typedef struct
     int call_burst_size;
     bool listen;
     int bw; // in Hz
+    int retry_slots; // 0 = use compiled default
     size_t frame_size;
     int mode;
 } arq_info;
@@ -243,6 +244,17 @@ void clear_connection_data();
  * @param arq_conn Pointer to structure to reset.
  */
 void reset_arq_info(arq_info *arq_conn);
+
+/**
+ * @brief Set runtime retry slot counts.
+ *
+ * Updates CALL, ACCEPT, and DATA retry counters used by the ARQ FSM.
+ * DISCONNECT retries are left at the compiled default.
+ * Pass 0 to restore all counters to compiled defaults.
+ *
+ * @param slots  Number of retry slots, or 0 to restore defaults.
+ */
+void arq_set_retry_slots(int slots);
 
 /**
  * @brief Trigger outgoing call attempt using current ARQ addresses.

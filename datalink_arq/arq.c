@@ -249,6 +249,11 @@ static void handle_cmd(const arq_cmd_msg_t *msg)
         arq_conn.bw = msg->value;
         return;
 
+    case ARQ_CMD_SET_RETRY:
+        arq_conn.retry_slots = msg->value;
+        arq_set_retry_slots(msg->value);
+        return;
+
     case ARQ_CMD_LISTEN_ON:
         arq_conn.listen = true;
         ev.id = ARQ_EV_APP_LISTEN;
@@ -724,6 +729,28 @@ void clear_connection_data(void)
     clear_buffer(data_rx_buffer_arq);
     clear_buffer(data_tx_buffer_arq);
     clear_buffer(data_tx_buffer_arq_control);
+}
+
+void arq_set_retry_slots(int slots)
+{
+    if (slots <= 0)
+    {
+        arq_call_retry_slots       = ARQ_CALL_RETRY_SLOTS_DEFAULT;
+        arq_accept_retry_slots     = ARQ_ACCEPT_RETRY_SLOTS_DEFAULT;
+        arq_data_retry_slots       = ARQ_DATA_RETRY_SLOTS_DEFAULT;
+        arq_disconnect_retry_slots = ARQ_DISCONNECT_RETRY_SLOTS_DEFAULT;
+    }
+    else
+    {
+        arq_call_retry_slots       = slots;
+        arq_accept_retry_slots     = slots;
+        arq_data_retry_slots       = slots;
+        /* Leave disconnect retries at default — no benefit to long teardown */
+        arq_disconnect_retry_slots = ARQ_DISCONNECT_RETRY_SLOTS_DEFAULT;
+    }
+    HLOGI(LOG_COMP, "Retry slots: call=%d accept=%d data=%d disconnect=%d",
+          arq_call_retry_slots, arq_accept_retry_slots,
+          arq_data_retry_slots, arq_disconnect_retry_slots);
 }
 
 void reset_arq_info(arq_info *conn)

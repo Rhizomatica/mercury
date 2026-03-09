@@ -294,6 +294,19 @@ static void execute_control_command(char *buffer)
         return;
     }
 
+    if (!memcmp(buffer, "RETRIES", strlen("RETRIES")))
+    {
+        memset(&cmd, 0, sizeof(cmd));
+        cmd.type = ARQ_CMD_SET_RETRY;
+        if (sscanf(buffer, "RETRIES %d", &cmd.value) == 1 &&
+            cmd.value > 0 &&
+            arq_submit_tcp_cmd(&cmd) == 0)
+            tcp_write(CTL_TCP_PORT, (uint8_t *)"OK\r", 3);
+        else
+            tcp_write(CTL_TCP_PORT, (uint8_t *)"WRONG\r", 6);
+        return;
+    }
+
     if (!memcmp(buffer, "BUFFER", strlen("BUFFER")))
     {
         int buffered = arq_buffered_bytes_snapshot();
