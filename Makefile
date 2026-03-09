@@ -20,11 +20,15 @@
 #
 
 
+HAMLIB_W64_DIR = radio_io/hamlib-w64
+
 ifeq ($(OS),Windows_NT)
 	FFAUDIO_LINKFLAGS += -lole32
 	FFAUDIO_LINKFLAGS += -ldsound -ldxguid
 	FFAUDIO_LINKFLAGS += -lws2_32
 	FFAUDIO_LINKFLAGS += -static-libgcc -static-libstdc++ -static -l:libwinpthread.a
+	HAMLIB_CFLAGS = -I$(HAMLIB_W64_DIR)/include
+	HAMLIB_LDFLAGS = -L$(HAMLIB_W64_DIR)/lib -lhamlib
 else
     UNAME_S := $(shell uname -s)
     ifeq ($(UNAME_S),Linux)
@@ -37,6 +41,8 @@ else
     ifeq ($(UNAME_S),FreeBSD)
 	FFAUDIO_LINKFLAGS := -lm
     endif
+	HAMLIB_CFLAGS =
+	HAMLIB_LDFLAGS = -lhamlib
 endif
 
 include config.mk
@@ -52,7 +58,7 @@ bindir ?= $(prefix)/bin
 DOXYGEN ?= doxygen
 DOXYFILE ?= Doxyfile
 
-CFLAGS = $(COMMON_CFLAGS) -Imodem/freedv -Imodem -Idatalink_broadcast -Idata_interfaces -Idatalink_arq -Iaudioio/ffaudio -Icommon -Iradio_io
+CFLAGS = $(COMMON_CFLAGS) -Imodem/freedv -Imodem -Idatalink_broadcast -Idata_interfaces -Idatalink_arq -Iaudioio/ffaudio -Icommon -Iradio_io $(HAMLIB_CFLAGS)
 
 ifeq ($(OS),Windows_NT)
 BINARY = mercury.exe
@@ -60,7 +66,7 @@ else
 BINARY = mercury
 endif
 
-LDFLAGS=$(FFAUDIO_LINKFLAGS) -lm -lhamlib
+LDFLAGS=$(FFAUDIO_LINKFLAGS) -lm $(HAMLIB_LDFLAGS)
 
 MERCURY_LINK_INPUTS = \
 	main.o datalink_arq/arq.o datalink_arq/fsm.o datalink_arq/arith.o datalink_arq/arq_channels.o \

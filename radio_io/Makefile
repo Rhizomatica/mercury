@@ -21,7 +21,13 @@
 
 include ../config.mk
 
-CFLAGS = $(COMMON_CFLAGS)
+ifeq ($(OS),Windows_NT)
+HAMLIB_CFLAGS = -Ihamlib-w64/include
+else
+HAMLIB_CFLAGS =
+endif
+
+CFLAGS = $(COMMON_CFLAGS) $(HAMLIB_CFLAGS)
 
 all: radio_io.o sbitx_io.o shm_utils.o rigctl_parse.o
 
