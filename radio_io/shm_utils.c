@@ -59,7 +59,7 @@ bool shm_create(key_t key, size_t size)
 
 bool shm_destroy(key_t key, size_t size)
 {
-    int shmid = shmget(1, size, 0);
+    int shmid = shmget(key, size, 0);
 
     if (shmid == -1)
     {
