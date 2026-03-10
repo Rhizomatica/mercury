@@ -20,6 +20,18 @@ static inline int pcm_gain(const struct pcm_af *af, double gain, const void *in,
 	to.p = out;
 
 	if (af->interleaved) {
+
+		if (af->channels == 2) {
+			switch (af->format) {
+			case FFAUDIO_F_FLOAT32:
+				for (i = 0;  i < samples;  i++) {
+					*to.f32++ = *from.f32++ * gain;
+					*to.f32++ = *from.f32++ * gain;
+				}
+				return 0;
+			}
+		}
+
 		from.pi8 = pcm_setni(ini, from.i8, af->format, nch);
 		to.pi8 = pcm_setni(oni, to.i8, af->format, nch);
 		step = nch;
