@@ -205,7 +205,7 @@ BITRATE\r
 
 ### RETRIES
 
-Set the amount of retries mercury will try to connect or retry a transmission before giving up.
+Set the amount of retries Mercury will try to connect or retry a transmission before giving up.
 
 ```
 RETRIES 10\r
