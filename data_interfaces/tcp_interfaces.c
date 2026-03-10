@@ -300,7 +300,7 @@ static void execute_control_command(char *buffer)
         memset(&cmd, 0, sizeof(cmd));
         cmd.type = ARQ_CMD_SET_RETRY;
         if (sscanf(buffer, "RETRIES %d", &cmd.value) == 1 &&
-            cmd.value > 0 &&
+            cmd.value >= 0 &&
             arq_submit_tcp_cmd(&cmd) == 0)
             tcp_write(CTL_TCP_PORT, (uint8_t *)"OK\r", 3);
         else
