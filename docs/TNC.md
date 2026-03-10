@@ -207,7 +207,8 @@ BITRATE\r
 
 ### RETRIES
 
-Set the amount of retries Mercury will try to connect or retry a transmission before giving up.
+Override the amount of retries Mercury will try to connect or retry a transmission before giving up.
+Setting to 0 should revert to the defined values in datalink_arq/arq_protocol.h.
 
 ```
 RETRIES 10\r
