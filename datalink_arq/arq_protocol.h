@@ -178,7 +178,7 @@ typedef struct
 #define ARQ_DATA_RETRY_SLOTS_DEFAULT      10    /* DATA retries before disconnect      */
 #define ARQ_DISCONNECT_RETRY_SLOTS_DEFAULT 2    /* DISCONNECT frame retries            */
 
-/* Runtime-configurable retry counts (set via RETRY TCP command).
+/* Runtime-configurable retry counts (set via RETRIES TCP command).
  * Macros below preserve existing FSM code unchanged. */
 extern int arq_call_retry_slots;
 extern int arq_accept_retry_slots;
