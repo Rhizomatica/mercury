@@ -21,10 +21,13 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
 #include <errno.h>
+
+#include "../common/os_interop.h"
+#if !defined(_WIN32)
 #include <arpa/inet.h>
 #include <sys/socket.h>
+#endif
 
 #include "spectrum_sender.h"
 #include "../common/hermes_log.h"
@@ -47,7 +50,7 @@ int spectrum_tx_init(spectrum_tx_t *stx, const char *ip, uint16_t port)
 
     if (inet_pton(AF_INET, ip, &stx->dest.sin_addr) <= 0) {
         HLOGE(SPECTRUM_LOG_TAG, "inet_pton(%s): %s", ip, strerror(errno));
-        close(stx->sock);
+        SOCK_CLOSE(stx->sock);
         stx->sock = -1;
         return -1;
     }
@@ -103,7 +106,7 @@ int spectrum_tx_send(spectrum_tx_t *stx,
 void spectrum_tx_close(spectrum_tx_t *stx)
 {
     if (stx->sock >= 0) {
-        close(stx->sock);
+        SOCK_CLOSE(stx->sock);
         stx->sock = -1;
     }
 }

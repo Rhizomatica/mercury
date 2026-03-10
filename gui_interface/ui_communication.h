@@ -26,8 +26,12 @@
 
 #include <stdint.h>
 #include <pthread.h>
-#include <sys/socket.h>
+
+#include "../common/os_interop.h"
+#if !defined(_WIN32)
+#include <arpa/inet.h>
 #include <netinet/in.h>
+#endif
 
 #include "spectrum_sender.h"
 

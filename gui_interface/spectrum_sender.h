@@ -37,7 +37,12 @@
 #define SPECTRUM_SENDER_H
 
 #include <stdint.h>
+#if defined(_WIN32)
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#else
 #include <arpa/inet.h>
+#endif
 
 #define SPECTRUM_MAGIC      0x4D435259  /* "MCRY" */
 

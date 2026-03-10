@@ -31,13 +31,23 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
-#include <arpa/inet.h>
-#include <sys/socket.h>
 #include <stdarg.h>
 #include <time.h>
 #include <errno.h>
 #include <stdbool.h>
+
+#include "../common/os_interop.h"
+#if !defined(_WIN32)
+#include <arpa/inet.h>
+#include <sys/socket.h>
+#endif
+
+/* Cross-platform microsecond sleep */
+#ifdef _WIN32
+#define hermes_usleep(us) Sleep((DWORD)((us) / 1000))
+#else
+#define hermes_usleep(us) usleep(us)
+#endif
 
 #include "ui_communication.h"
 
@@ -81,7 +91,7 @@ int udp_tx_init(udp_tx_t *tx, const char *ip, uint16_t port)
     if (inet_pton(AF_INET, ip, &tx->dest.sin_addr) <= 0)
     {
         HLOGE(UI_LOG_TAG, "inet_pton(%s): %s", ip, strerror(errno));
-        close(tx->sock);
+        SOCK_CLOSE(tx->sock);
         tx->sock = -1;
         return -1;
     }
@@ -92,7 +102,7 @@ int udp_tx_init(udp_tx_t *tx, const char *ip, uint16_t port)
 void udp_tx_close(udp_tx_t *tx)
 {
     if (tx->sock >= 0) {
-        close(tx->sock);
+        SOCK_CLOSE(tx->sock);
         tx->sock = -1;
     }
 }
@@ -367,8 +377,13 @@ void *rx_thread_main(void *arg)
     }
 
     // Set receive timeout so we can check shutdown_ periodically
+#ifdef _WIN32
+    DWORD rcvtimeo = 1000;  /* 1 second in milliseconds */
+    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, (const char *)&rcvtimeo, sizeof(rcvtimeo));
+#else
     struct timeval tv = { .tv_sec = 1, .tv_usec = 0 };
     setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+#endif
 
     struct sockaddr_in addr;
     memset(&addr, 0, sizeof(addr));
@@ -378,7 +393,7 @@ void *rx_thread_main(void *arg)
 
     if (bind(sock, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
         HLOGE(UI_LOG_TAG, "bind(port %u): %s", rxa->listen_port, strerror(errno));
-        close(sock);
+        SOCK_CLOSE(sock);
         free(rxa);
         return NULL;
     }
@@ -434,7 +449,7 @@ void *rx_thread_main(void *arg)
         }
     }
 
-    close(sock);
+    SOCK_CLOSE(sock);
     return NULL;
 }
 
@@ -517,7 +532,7 @@ void *ui_publisher_thread(void *arg)
                            bytes_tx, bytes_rx,
                            ctx->waterfall_enabled);
 
-        usleep(UI_PUBLISH_INTERVAL_US);
+        hermes_usleep(UI_PUBLISH_INTERVAL_US);
     }
 
     HLOGI(UI_LOG_TAG, "Publisher shutting down");
@@ -545,7 +560,7 @@ void *spectrum_publisher_thread(void *arg)
                              (uint16_t)MODEM_STATS_NSPEC, (uint16_t)sr);
         }
 
-        usleep(SPECTRUM_PUBLISH_INTERVAL_US);
+        hermes_usleep(SPECTRUM_PUBLISH_INTERVAL_US);
     }
 
     HLOGI(UI_LOG_TAG, "Spectrum publisher shutting down");
@@ -687,7 +702,7 @@ int main(int argc, char *argv[]) {
         }
 
         counter++;
-        usleep(500 * 1000); // 500 ms
+        hermes_usleep(500 * 1000); // 500 ms
     }
 
     udp_tx_close(&tx);
