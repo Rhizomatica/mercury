@@ -80,10 +80,18 @@ int spectrum_tx_send(spectrum_tx_t *stx,
     }
 
     /* Little-endian header */
-    uint32_t magic = SPECTRUM_MAGIC;
-    memcpy(buf + 0, &magic,       4);
-    memcpy(buf + 4, &fft_size,    2);
-    memcpy(buf + 6, &sample_rate, 2);
+    uint32_t magic = (uint32_t)SPECTRUM_MAGIC;
+    /* magic (4 bytes, little-endian) */
+    buf[0] = (uint8_t)(magic & 0xFF);
+    buf[1] = (uint8_t)((magic >> 8) & 0xFF);
+    buf[2] = (uint8_t)((magic >> 16) & 0xFF);
+    buf[3] = (uint8_t)((magic >> 24) & 0xFF);
+    /* fft_size (2 bytes, little-endian) */
+    buf[4] = (uint8_t)(fft_size & 0xFF);
+    buf[5] = (uint8_t)((fft_size >> 8) & 0xFF);
+    /* sample_rate (2 bytes, little-endian) */
+    buf[6] = (uint8_t)(sample_rate & 0xFF);
+    buf[7] = (uint8_t)((sample_rate >> 8) & 0xFF);
 
     /* Payload: float32 array (platform native == little-endian on x86/ARM) */
     memcpy(buf + hdr_sz, mag_spec_dB, data_sz);
