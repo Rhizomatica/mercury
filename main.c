@@ -18,7 +18,7 @@
  *
  */
 
-#define VERSION__ "2.0.0alpha"
+#define VERSION__ "1.9.3"
 #ifndef GIT_HASH
 #define GIT_HASH "unknown000"
 #endif
@@ -47,6 +47,7 @@
 #include "audioio/audioio.h"
 #include "tcp_interfaces.h"
 #include "hermes_log.h"
+#include "radio_io.h"
 
 extern cbuf_handle_t capture_buffer;
 extern cbuf_handle_t playback_buffer;
@@ -103,6 +104,14 @@ static void print_usage(const char *prog)
     printf(" -v                         Verbose mode. Prints more information during execution.\n");
     printf(" -L <path>                  Write log to file (TIMING level and above).\n");
     printf(" -J                         Use JSONL format for log file (requires -L).\n");
+    printf(" -R [radio_model]           Sets HAMLIB radio model.\n");
+    printf(" -A [radio_address]         Sets HAMLIB radio device file or ip:port address.\n");
+#ifdef HAVE_HERMES_SHM
+    printf(" -S                         Use HERMES's shared memory interface instead of HAMLIB (Do not use -R and -A in this case).\n");
+#else
+    printf(" -S                         HERMES shared memory radio control (Linux-only; unavailable in this build).\n");
+#endif
+    printf(" -K                         List HAMLIB supported radio models.\n");
     printf(" -t                         Test TX mode.\n");
     printf(" -r                         Test RX mode.\n");
     printf(" -h                         Prints this help.\n");
@@ -145,9 +154,12 @@ int main(int argc, char *argv[])
 
     int test_mode = 0;
 
+    int radio_type = RADIO_TYPE_NONE;
+    char radio_device[1024] = "";
+    bool list_radio_models = false;
 
     int opt;
-    while ((opt = getopt(argc, argv, "hc:s:m:f:k:li:o:x:p:b:zvtrL:J")) != -1)
+    while ((opt = getopt(argc, argv, "hc:s:m:f:k:li:o:x:p:b:zvtrL:JR:A:SK")) != -1)
     {
         switch (opt)
         {
@@ -251,6 +263,34 @@ int main(int argc, char *argv[])
         case 'J':
             log_file_jsonl = true;
             break;
+        case 'R':
+            if (optarg)
+            {
+                char *endptr = NULL;
+                long parsed_radio_type = strtol(optarg, &endptr, 10);
+                if (endptr == optarg || *endptr != '\0' || parsed_radio_type <= 0)
+                {
+                    fprintf(stderr, "Invalid radio model '%s'. Expected a positive integer HAMLIB model ID (>0).\n", optarg);
+                    return EXIT_FAILURE;
+                }
+                radio_type = (int)parsed_radio_type;
+            }
+            break;
+        case 'A':
+            if (optarg)
+                strncpy(radio_device, optarg, sizeof(radio_device) - 1);
+            break;
+        case 'S':
+#ifdef HAVE_HERMES_SHM
+            radio_type = RADIO_TYPE_SHM;
+#else
+            fprintf(stderr, "Error: -S (HERMES shared memory radio control) is only available on Linux builds.\n");
+            return EXIT_FAILURE;
+#endif
+            break;
+        case 'K':
+            list_radio_models = true;
+            break;
         case 'h':
             print_usage(argv[0]);
             return EXIT_SUCCESS;
@@ -260,6 +300,18 @@ int main(int argc, char *argv[])
         }
     }
     
+
+    if (radio_type == RADIO_TYPE_SHM && radio_device[0])
+    {
+        fprintf(stderr, "Error: -S (HERMES SHM) and -A (HAMLIB device) are mutually exclusive.\n");
+        return EXIT_FAILURE;
+    }
+
+    if (list_radio_models)
+    {
+        radio_io_list_models();
+        return EXIT_SUCCESS;
+    }
 
     if (list_modes)
     {
@@ -435,6 +487,16 @@ int main(int argc, char *argv[])
         audioio_init_internal(input_dev, output_dev, audio_system, rx_input_channel, &radio_capture, &radio_playback);
     }
 
+    if (radio_type != RADIO_TYPE_NONE)
+    {
+        if (radio_io_init(radio_type, radio_device) != 0)
+        {
+            fprintf(stderr, "Failed to initialize radio control.\n");
+            hermes_log_shutdown();
+            return EXIT_FAILURE;
+        }
+    }
+
     printf("Initializing Modem\n");
     init_modem(&g_modem, startup_payload_mode, 1, test_mode, freedv_verbosity); // frames per burst is 1 for now
     
@@ -472,6 +534,7 @@ int main(int argc, char *argv[])
         audioio_deinit(&radio_capture, &radio_playback);
     }
 
+    radio_io_shutdown();
     shutdown_modem(&g_modem);
     HLOGI("main", "Shutting down");
     hermes_log_shutdown();

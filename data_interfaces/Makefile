@@ -21,7 +21,7 @@
 
 include ../config.mk
 
-CFLAGS = $(COMMON_CFLAGS) -I../modem -I../modem/freedv -I../common -I../datalink_arq -I../datalink_broadcast -I../third_party/chan
+CFLAGS = $(COMMON_CFLAGS) -I../modem -I../modem/freedv -I../common -I../datalink_arq -I../datalink_broadcast -I../third_party/chan -I../radio_io
 
 all: tcp_interfaces.o net.o
 

@@ -74,12 +74,14 @@ Set the maximum ARQ bandwidth.
 ```
 BW2300\r
 BW500\r
+BW2750\r
 ```
 
 **Response:** `OK\r` on success, `WRONG\r` on error.
 
 - **BW2300** — Full bandwidth.  Allows gear-shifting up to DATAC1 (510 bytes/frame).
-- **BW500** — Narrow bandwidth.  Restricts the maximum payload mode.
+- **BW500** — Narrow bandwidth.  Restricts the maximum payload mode to DATAC3/DATAC4.
+- **BW2750** — Accepted for compatibility, but currently behaves like **BW2300**.
 
 ---
 
@@ -142,7 +144,7 @@ CONNECT <mycall> <theircall>\r
 **Response:** `OK\r` if the command was accepted, `WRONG\r` on error.
 
 Mercury will transmit CALL frames on DATAC13 and wait for an ACCEPT.
-On success, the asynchronous response `CONNECTED <mycall> <theircall> 2300\r`
+On success, the asynchronous response `CONNECTED <mycall> <theircall> <bandwidth>\r`
 is sent on the control port.
 
 Example:
@@ -220,7 +222,7 @@ These are sent on the **control port** without a preceding command.
 
 | Response                                    | Meaning                                      |
 |---------------------------------------------|----------------------------------------------|
-| `CONNECTED <mycall> <theircall> 2300\r`     | ARQ session established                      |
+| `CONNECTED <mycall> <theircall> <bandwidth>\r` | ARQ session established                   |
 | `DISCONNECTED\r`                            | ARQ session ended                            |
 | `PTT ON\r`                                  | Radio transmitter keyed                      |
 | `PTT OFF\r`                                 | Radio transmitter unkeyed                    |
@@ -232,7 +234,8 @@ These are sent on the **control port** without a preceding command.
 ### CONNECTED
 
 Sent when a session is successfully established (either outgoing CONNECT
-or incoming CALL accepted).  The `2300` value is the negotiated bandwidth.
+or incoming CALL accepted).  The `<bandwidth>` value is the effective
+negotiated bandwidth, currently `500` or `2300`.
 
 ### DISCONNECTED
 

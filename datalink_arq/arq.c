@@ -230,6 +230,22 @@ static void cb_send_buffer_status(int backlog_bytes)
     tnc_send_buffer((uint32_t)(backlog_bytes < 0 ? 0 : backlog_bytes));
 }
 
+int arq_effective_bandwidth_hz(void)
+{
+    if (arq_conn.bw == ARQ_BANDWIDTH_NARROW_HZ)
+        return ARQ_BANDWIDTH_NARROW_HZ;
+
+    return ARQ_BANDWIDTH_FULL_HZ;
+}
+
+bool arq_bandwidth_allows_mode(int mode)
+{
+    if (mode == FREEDV_MODE_DATAC1)
+        return arq_effective_bandwidth_hz() > ARQ_BANDWIDTH_NARROW_HZ;
+
+    return true;
+}
+
 /* ======================================================================
  * CMD bridge worker
  * ====================================================================== */
@@ -534,6 +550,7 @@ int arq_init(size_t frame_size, int mode)
     arq_conn.frame_size      = frame_size;
     arq_conn.mode            = mode;
     arq_conn.call_burst_size = 1;
+    arq_conn.bw              = ARQ_BANDWIDTH_FULL_HZ;
 
     init_model();
 

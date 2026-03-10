@@ -308,6 +308,162 @@ static int _pcm_chan_mix(uint ochan, void *odata, const struct pcm_af *inpcm, co
 #define X(f1, f2) \
 	(f1 << 16) | (f2 & 0xffff)
 
+// IFFF IFFF
+#define X4(f1, i1, f2, i2) \
+	(i1 << 31) | (f1 << 16) | (i2 << 15) | (f2 & 0xfff)
+
+/* Priority formats:
+Library     Format
+======================
+libfdk-aac  int16/i
+CD WAV      int16/i
+CD libFLAC  int16/ni
+HD libFLAC  int24/ni
+libsox      int32/i
+libopus     float32/i
+libmpg123   float32/i
+libvorbis   float32/ni
+DANorm      float64/ni
+*/
+
+static int _pcm_convert_stereo(unsigned format_hash, void *out, const void *in, unsigned in_ileaved, size_t samples)
+{
+	// Priority output formats:
+	// int16/i
+	// int32/i
+	// float32/i
+
+	size_t i;
+	union pcm_data o, iL, iR = {};
+	o.p = out;
+	iL.p = (void*)in;
+	if (!in_ileaved && in) {
+		iL.p = ((void**)in)[0];
+		iR.p = ((void**)in)[1];
+	}
+
+	switch (format_hash) {
+
+	// int <- int:
+
+	case X4(FFAUDIO_F_INT16, 1, FFAUDIO_F_INT16, 0):
+		for (i = 0;  i < samples;  i++) {
+			*o.i16++ = iL.i16[i];
+			*o.i16++ = iR.i16[i];
+		}
+		break;
+
+	case X4(FFAUDIO_F_INT16, 1, FFAUDIO_F_INT24, 0):
+		for (i = 0;  i < samples;  i++) {
+			*o.i16++ = (int)ffint_le_cpu24_ptr(iL.i8 + i * 3) / 0x100;
+			*o.i16++ = (int)ffint_le_cpu24_ptr(iR.i8 + i * 3) / 0x100;
+		}
+		break;
+
+	case X4(FFAUDIO_F_INT16, 1, FFAUDIO_F_INT32, 1):
+		for (i = 0;  i < samples;  i++) {
+			*o.i16++ = *iL.i32++;
+			*o.i16++ = *iL.i32++;
+		}
+		break;
+
+	case X4(FFAUDIO_F_INT32, 1, FFAUDIO_F_INT16, 0):
+		for (i = 0;  i < samples;  i++) {
+			*o.i32++ = (int)iL.i16[i] * 0x10000;
+			*o.i32++ = (int)iR.i16[i] * 0x10000;
+		}
+		break;
+
+	case X4(FFAUDIO_F_INT32, 1, FFAUDIO_F_INT16, 1):
+		for (i = 0;  i < samples;  i++) {
+			*o.i32++ = (int)*iL.i16++ * 0x10000;
+			*o.i32++ = (int)*iL.i16++ * 0x10000;
+		}
+		break;
+
+	case X4(FFAUDIO_F_INT32, 1, FFAUDIO_F_INT24, 0):
+		for (i = 0;  i < samples;  i++) {
+			*o.i32++ = (int)ffint_le_cpu24_ptr(iL.i8 + i * 3) * 0x100;
+			*o.i32++ = (int)ffint_le_cpu24_ptr(iR.i8 + i * 3) * 0x100;
+		}
+		break;
+
+	// int <- float:
+
+	case X4(FFAUDIO_F_INT16, 1, FFAUDIO_F_FLOAT32, 0):
+		for (i = 0;  i < samples;  i++) {
+			*o.i16++ = pcm_i16_flt(iL.f32[i]);
+			*o.i16++ = pcm_i16_flt(iR.f32[i]);
+		}
+		break;
+
+	case X4(FFAUDIO_F_INT16, 1, FFAUDIO_F_FLOAT32, 1):
+		for (i = 0;  i < samples;  i++) {
+			*o.i16++ = pcm_i16_flt(*iL.f32++);
+			*o.i16++ = pcm_i16_flt(*iL.f32++);
+		}
+		break;
+
+	case X4(FFAUDIO_F_INT24, 1, FFAUDIO_F_FLOAT32, 1):
+		for (i = 0;  i < samples;  i++) {
+			pcm_i24_i32(o.i8, pcm_i24_flt(*iL.f32++));
+			o.i8 += 3;
+			pcm_i24_i32(o.i8, pcm_i24_flt(*iL.f32++));
+			o.i8 += 3;
+		}
+		break;
+
+	case X4(FFAUDIO_F_INT32, 1, FFAUDIO_F_FLOAT32, 0):
+		for (i = 0;  i < samples;  i++) {
+			*o.i32++ = pcm_i32_flt(iL.f32[i]);
+			*o.i32++ = pcm_i32_flt(iR.f32[i]);
+		}
+		break;
+
+	case X4(FFAUDIO_F_INT32, 1, FFAUDIO_F_FLOAT32, 1):
+		for (i = 0;  i < samples;  i++) {
+			*o.i32++ = pcm_i32_flt(*iL.f32++);
+			*o.i32++ = pcm_i32_flt(*iL.f32++);
+		}
+		break;
+
+	// float <- int:
+
+	case X4(FFAUDIO_F_FLOAT32, 1, FFAUDIO_F_INT16, 0):
+		for (i = 0;  i < samples;  i++) {
+			*o.f32++ = pcm_flt_i16(iL.i16[i]);
+			*o.f32++ = pcm_flt_i16(iR.i16[i]);
+		}
+		break;
+
+	case X4(FFAUDIO_F_FLOAT32, 1, FFAUDIO_F_INT16, 1):
+		for (i = 0;  i < samples;  i++) {
+			*o.f32++ = pcm_flt_i16(*iL.i16++);
+			*o.f32++ = pcm_flt_i16(*iL.i16++);
+		}
+		break;
+
+	case X4(FFAUDIO_F_FLOAT32, 1, FFAUDIO_F_INT24, 0):
+		for (i = 0;  i < samples;  i++) {
+			*o.f32++ = pcm_flt_i24(pcm_i32_i24(iL.i8 + i * 3));
+			*o.f32++ = pcm_flt_i24(pcm_i32_i24(iR.i8 + i * 3));
+		}
+		break;
+
+	case X4(FFAUDIO_F_FLOAT32, 1, FFAUDIO_F_INT32, 1):
+		for (i = 0;  i < samples;  i++) {
+			*o.f32++ = pcm_flt_i32(*iL.i32++);
+			*o.f32++ = pcm_flt_i32(*iL.i32++);
+		}
+		break;
+
+	default:
+		return 1;
+	}
+
+	return 0;
+}
+
 /** Convert PCM samples
 Note: sample rate conversion isn't supported. */
 /* Algorithm:
@@ -419,6 +575,12 @@ static inline int pcm_convert(const struct pcm_af *outpcm, void *out, const stru
 		}
 	}
 
+	r = 0;
+	if (nch == 2) {
+		if (!_pcm_convert_stereo(X4(outpcm->format, outpcm->interleaved, ifmt, in_ileaved), to.i8, from.i8, in_ileaved, samples))
+			goto done;
+	}
+
 	if (in_ileaved) {
 		from.pi8 = pcm_setni(ini, from.i8, ifmt, nch);
 		istep = nch;
@@ -433,24 +595,24 @@ static inline int pcm_convert(const struct pcm_af *outpcm, void *out, const stru
 
 // uint8
 	case X(FFAUDIO_F_UINT8, FFAUDIO_F_INT16):
-		for (ich = 0;  ich != nch;  ich++) {
-			for (i = 0;  i != samples;  i++) {
+		for (i = 0;  i != samples;  i++) {
+			for (ich = 0;  ich != nch;  ich++) {
 				to.pi16[ich][i * ostep] = (((int)from.pu8[ich][i * istep]) - 127) * 0x100;
 			}
 		}
 		break;
 
 	case X(FFAUDIO_F_UINT8, FFAUDIO_F_INT32):
-		for (ich = 0;  ich != nch;  ich++) {
-			for (i = 0;  i != samples;  i++) {
+		for (i = 0;  i != samples;  i++) {
+			for (ich = 0;  ich != nch;  ich++) {
 				to.pi32[ich][i * ostep] = (((int)from.pu8[ich][i * istep]) - 127) * 0x1000000;
 			}
 		}
 		break;
 
 	case X(FFAUDIO_F_UINT8, FFAUDIO_F_FLOAT64):
-		for (ich = 0;  ich != nch;  ich++) {
-			for (i = 0;  i != samples;  i++) {
+		for (i = 0;  i != samples;  i++) {
+			for (ich = 0;  ich != nch;  ich++) {
 				to.pf64[ich][i * ostep] = pcm_flt_i8(((int)from.pu8[ich][i * istep]) - 127);
 			}
 		}
@@ -458,32 +620,32 @@ static inline int pcm_convert(const struct pcm_af *outpcm, void *out, const stru
 
 // int8
 	case X(FFAUDIO_F_INT8, FFAUDIO_F_INT8):
-		for (ich = 0;  ich != nch;  ich++) {
-			for (i = 0;  i != samples;  i++) {
+		for (i = 0;  i != samples;  i++) {
+			for (ich = 0;  ich != nch;  ich++) {
 				to.pi8[ich][i * ostep] = from.pi8[ich][i * istep];
 			}
 		}
 		break;
 
 	case X(FFAUDIO_F_INT8, FFAUDIO_F_INT16):
-		for (ich = 0;  ich != nch;  ich++) {
-			for (i = 0;  i != samples;  i++) {
+		for (i = 0;  i != samples;  i++) {
+			for (ich = 0;  ich != nch;  ich++) {
 				to.pi16[ich][i * ostep] = (int)from.pi8[ich][i * istep] * 0x100;
 			}
 		}
 		break;
 
 	case X(FFAUDIO_F_INT8, FFAUDIO_F_INT32):
-		for (ich = 0;  ich != nch;  ich++) {
-			for (i = 0;  i != samples;  i++) {
+		for (i = 0;  i != samples;  i++) {
+			for (ich = 0;  ich != nch;  ich++) {
 				to.pi32[ich][i * ostep] = (int)from.pi8[ich][i * istep] * 0x1000000;
 			}
 		}
 		break;
 
 	case X(FFAUDIO_F_INT8, FFAUDIO_F_FLOAT32):
-		for (ich = 0;  ich != nch;  ich++) {
-			for (i = 0;  i != samples;  i++) {
+		for (i = 0;  i != samples;  i++) {
+			for (ich = 0;  ich != nch;  ich++) {
 				to.pf32[ich][i * ostep] = pcm_flt_i8((int)from.pi8[ich][i * istep]);
 			}
 		}
@@ -491,32 +653,32 @@ static inline int pcm_convert(const struct pcm_af *outpcm, void *out, const stru
 
 // int16
 	case X(FFAUDIO_F_INT16, FFAUDIO_F_INT8):
-		for (ich = 0;  ich != nch;  ich++) {
-			for (i = 0;  i != samples;  i++) {
+		for (i = 0;  i != samples;  i++) {
+			for (ich = 0;  ich != nch;  ich++) {
 				to.pi8[ich][i * ostep] = from.pi16[ich][i * istep] / 0x100;
 			}
 		}
 		break;
 
 	case X(FFAUDIO_F_INT16, FFAUDIO_F_INT16):
-		for (ich = 0;  ich != nch;  ich++) {
-			for (i = 0;  i != samples;  i++) {
+		for (i = 0;  i != samples;  i++) {
+			for (ich = 0;  ich != nch;  ich++) {
 				to.pi16[ich][i * ostep] = from.pi16[ich][i * istep];
 			}
 		}
 		break;
 
 	case X(FFAUDIO_F_INT16, FFAUDIO_F_INT24):
-		for (ich = 0;  ich != nch;  ich++) {
-			for (i = 0;  i != samples;  i++) {
+		for (i = 0;  i != samples;  i++) {
+			for (ich = 0;  ich != nch;  ich++) {
 				pcm_i24_i32(&to.pi8[ich][i * ostep * 3], (int)from.pi16[ich][i * istep] * 0x100);
 			}
 		}
 		break;
 
 	case X(FFAUDIO_F_INT16, FFAUDIO_F_INT24_4):
-		for (ich = 0;  ich != nch;  ich++) {
-			for (i = 0;  i != samples;  i++) {
+		for (i = 0;  i != samples;  i++) {
+			for (ich = 0;  ich != nch;  ich++) {
 				to.pi8[ich][i * ostep * 4 + 0] = 0;
 				pcm_i24_i32(&to.pi8[ich][i * ostep * 4 + 1], (int)from.pi16[ich][i * istep] * 0x100);
 			}
@@ -524,24 +686,24 @@ static inline int pcm_convert(const struct pcm_af *outpcm, void *out, const stru
 		break;
 
 	case X(FFAUDIO_F_INT16, FFAUDIO_F_INT32):
-		for (ich = 0;  ich != nch;  ich++) {
-			for (i = 0;  i != samples;  i++) {
+		for (i = 0;  i != samples;  i++) {
+			for (ich = 0;  ich != nch;  ich++) {
 				to.pi32[ich][i * ostep] = (int)from.pi16[ich][i * istep] * 0x10000;
 			}
 		}
 		break;
 
 	case X(FFAUDIO_F_INT16, FFAUDIO_F_FLOAT32):
-		for (ich = 0;  ich != nch;  ich++) {
-			for (i = 0;  i != samples;  i++) {
+		for (i = 0;  i != samples;  i++) {
+			for (ich = 0;  ich != nch;  ich++) {
 				to.pf32[ich][i * ostep] = pcm_flt_i16(from.pi16[ich][i * istep]);
 			}
 		}
 		break;
 
 	case X(FFAUDIO_F_INT16, FFAUDIO_F_FLOAT64):
-		for (ich = 0;  ich != nch;  ich++) {
-			for (i = 0;  i != samples;  i++) {
+		for (i = 0;  i != samples;  i++) {
+			for (ich = 0;  ich != nch;  ich++) {
 				to.pf64[ich][i * ostep] = pcm_flt_i16(from.pi16[ich][i * istep]);
 			}
 		}
@@ -549,8 +711,8 @@ static inline int pcm_convert(const struct pcm_af *outpcm, void *out, const stru
 
 // int24
 	case X(FFAUDIO_F_INT24, FFAUDIO_F_INT16):
-		for (ich = 0;  ich != nch;  ich++) {
-			for (i = 0;  i != samples;  i++) {
+		for (i = 0;  i != samples;  i++) {
+			for (ich = 0;  ich != nch;  ich++) {
 				to.pi16[ich][i * ostep] = ffint_le_cpu24_ptr(&from.pi8[ich][i * istep * 3]) / 0x100;
 			}
 		}
@@ -558,16 +720,16 @@ static inline int pcm_convert(const struct pcm_af *outpcm, void *out, const stru
 
 
 	case X(FFAUDIO_F_INT24, FFAUDIO_F_INT24):
-		for (ich = 0;  ich != nch;  ich++) {
-			for (i = 0;  i != samples;  i++) {
+		for (i = 0;  i != samples;  i++) {
+			for (ich = 0;  ich != nch;  ich++) {
 				memcpy(&to.pi8[ich][i * ostep * 3], &from.pi8[ich][i * istep * 3], 3);
 			}
 		}
 		break;
 
 	case X(FFAUDIO_F_INT24, FFAUDIO_F_INT24_4):
-		for (ich = 0;  ich != nch;  ich++) {
-			for (i = 0;  i != samples;  i++) {
+		for (i = 0;  i != samples;  i++) {
+			for (ich = 0;  ich != nch;  ich++) {
 				to.pi8[ich][i * ostep * 4 + 0] = 0;
 				memcpy(&to.pi8[ich][i * ostep * 4 + 1], &from.pi8[ich][i * istep * 3], 3);
 			}
@@ -575,24 +737,24 @@ static inline int pcm_convert(const struct pcm_af *outpcm, void *out, const stru
 		break;
 
 	case X(FFAUDIO_F_INT24, FFAUDIO_F_INT32):
-		for (ich = 0;  ich != nch;  ich++) {
-			for (i = 0;  i != samples;  i++) {
+		for (i = 0;  i != samples;  i++) {
+			for (ich = 0;  ich != nch;  ich++) {
 				to.pi32[ich][i * ostep] = ffint_le_cpu24_ptr(&from.pi8[ich][i * istep * 3]) * 0x100;
 			}
 		}
 		break;
 
 	case X(FFAUDIO_F_INT24, FFAUDIO_F_FLOAT32):
-		for (ich = 0;  ich != nch;  ich++) {
-			for (i = 0;  i != samples;  i++) {
+		for (i = 0;  i != samples;  i++) {
+			for (ich = 0;  ich != nch;  ich++) {
 				to.pf32[ich][i * ostep] = pcm_flt_i24(pcm_i32_i24(&from.pi8[ich][i * istep * 3]));
 			}
 		}
 		break;
 
 	case X(FFAUDIO_F_INT24, FFAUDIO_F_FLOAT64):
-		for (ich = 0;  ich != nch;  ich++) {
-			for (i = 0;  i != samples;  i++) {
+		for (i = 0;  i != samples;  i++) {
+			for (ich = 0;  ich != nch;  ich++) {
 				to.pf64[ich][i * ostep] = pcm_flt_i24(pcm_i32_i24(&from.pi8[ich][i * istep * 3]));
 			}
 		}
@@ -600,24 +762,24 @@ static inline int pcm_convert(const struct pcm_af *outpcm, void *out, const stru
 
 // int32
 	case X(FFAUDIO_F_INT32, FFAUDIO_F_INT16):
-		for (ich = 0;  ich != nch;  ich++) {
-			for (i = 0;  i != samples;  i++) {
-				to.pi16[ich][i * ostep] = from.pi32[ich][i * istep];
+		for (i = 0;  i != samples;  i++) {
+			for (ich = 0;  ich != nch;  ich++) {
+				to.pi16[ich][i * ostep] = from.pi32[ich][i * istep] / 0x10000;
 			}
 		}
 		break;
 
 	case X(FFAUDIO_F_INT32, FFAUDIO_F_INT24):
-		for (ich = 0;  ich != nch;  ich++) {
-			for (i = 0;  i != samples;  i++) {
+		for (i = 0;  i != samples;  i++) {
+			for (ich = 0;  ich != nch;  ich++) {
 				pcm_i24_i32(&to.pi8[ich][i * ostep * 3], from.pi32[ich][i * istep] / 0x100);
 			}
 		}
 		break;
 
 	case X(FFAUDIO_F_INT32, FFAUDIO_F_INT24_4):
-		for (ich = 0;  ich != nch;  ich++) {
-			for (i = 0;  i != samples;  i++) {
+		for (i = 0;  i != samples;  i++) {
+			for (ich = 0;  ich != nch;  ich++) {
 				to.pi8[ich][i * ostep * 4 + 0] = 0;
 				pcm_i24_i32(&to.pi8[ich][i * ostep * 4 + 1], from.pi32[ich][i * istep] / 0x100);
 			}
@@ -625,16 +787,16 @@ static inline int pcm_convert(const struct pcm_af *outpcm, void *out, const stru
 		break;
 
 	case X(FFAUDIO_F_INT32, FFAUDIO_F_INT32):
-		for (ich = 0;  ich != nch;  ich++) {
-			for (i = 0;  i != samples;  i++) {
+		for (i = 0;  i != samples;  i++) {
+			for (ich = 0;  ich != nch;  ich++) {
 				to.pi32[ich][i * ostep] = from.pi32[ich][i * istep];
 			}
 		}
 		break;
 
 	case X(FFAUDIO_F_INT32, FFAUDIO_F_FLOAT32):
-		for (ich = 0;  ich != nch;  ich++) {
-			for (i = 0;  i != samples;  i++) {
+		for (i = 0;  i != samples;  i++) {
+			for (ich = 0;  ich != nch;  ich++) {
 				to.pf32[ich][i * ostep] = pcm_flt_i32(from.pi32[ich][i * istep]);
 			}
 		}
@@ -642,24 +804,24 @@ static inline int pcm_convert(const struct pcm_af *outpcm, void *out, const stru
 
 // float32
 	case X(FFAUDIO_F_FLOAT32, FFAUDIO_F_INT16):
-		for (ich = 0;  ich != nch;  ich++) {
-			for (i = 0;  i != samples;  i++) {
+		for (i = 0;  i != samples;  i++) {
+			for (ich = 0;  ich != nch;  ich++) {
 				to.pi16[ich][i * ostep] = pcm_i16_flt(from.pf32[ich][i * istep]);
 			}
 		}
 		break;
 
 	case X(FFAUDIO_F_FLOAT32, FFAUDIO_F_INT24):
-		for (ich = 0;  ich != nch;  ich++) {
-			for (i = 0;  i != samples;  i++) {
+		for (i = 0;  i != samples;  i++) {
+			for (ich = 0;  ich != nch;  ich++) {
 				pcm_i24_i32(&to.pi8[ich][i * ostep * 3], pcm_i24_flt(from.pf32[ich][i * istep]));
 			}
 		}
 		break;
 
 	case X(FFAUDIO_F_FLOAT32, FFAUDIO_F_INT24_4):
-		for (ich = 0;  ich != nch;  ich++) {
-			for (i = 0;  i != samples;  i++) {
+		for (i = 0;  i != samples;  i++) {
+			for (ich = 0;  ich != nch;  ich++) {
 				to.pi8[ich][i * ostep * 4 + 0] = 0;
 				pcm_i24_i32(&to.pi8[ich][i * ostep * 4 + 1], pcm_i24_flt(from.pf32[ich][i * istep]));
 			}
@@ -667,24 +829,24 @@ static inline int pcm_convert(const struct pcm_af *outpcm, void *out, const stru
 		break;
 
 	case X(FFAUDIO_F_FLOAT32, FFAUDIO_F_INT32):
-		for (ich = 0;  ich != nch;  ich++) {
-			for (i = 0;  i != samples;  i++) {
+		for (i = 0;  i != samples;  i++) {
+			for (ich = 0;  ich != nch;  ich++) {
 				to.pi32[ich][i * ostep] = pcm_i32_flt(from.pf32[ich][i * istep]);
 			}
 		}
 		break;
 
 	case X(FFAUDIO_F_FLOAT32, FFAUDIO_F_FLOAT32):
-		for (ich = 0;  ich != nch;  ich++) {
-			for (i = 0;  i != samples;  i++) {
+		for (i = 0;  i != samples;  i++) {
+			for (ich = 0;  ich != nch;  ich++) {
 				to.pf32[ich][i * ostep] = from.pf32[ich][i * istep];
 			}
 		}
 		break;
 
 	case X(FFAUDIO_F_FLOAT32, FFAUDIO_F_FLOAT64):
-		for (ich = 0;  ich != nch;  ich++) {
-			for (i = 0;  i != samples;  i++) {
+		for (i = 0;  i != samples;  i++) {
+			for (ich = 0;  ich != nch;  ich++) {
 				to.pf64[ich][i * ostep] = from.pf32[ich][i * istep];
 			}
 		}
@@ -692,49 +854,49 @@ static inline int pcm_convert(const struct pcm_af *outpcm, void *out, const stru
 
 // float64
 	case X(FFAUDIO_F_FLOAT64, FFAUDIO_F_INT16):
-		for (ich = 0;  ich != nch;  ich++) {
-			for (i = 0;  i != samples;  i++) {
+		for (i = 0;  i != samples;  i++) {
+			for (ich = 0;  ich != nch;  ich++) {
 				to.pi16[ich][i * ostep] = pcm_i16_flt(from.pf64[ich][i * istep]);
 			}
 		}
 		break;
 
 	case X(FFAUDIO_F_FLOAT64, FFAUDIO_F_INT24):
-		for (ich = 0;  ich != nch;  ich++) {
-			for (i = 0;  i != samples;  i++) {
+		for (i = 0;  i != samples;  i++) {
+			for (ich = 0;  ich != nch;  ich++) {
 				pcm_i24_i32(&to.pi8[ich][i * ostep * 3], pcm_i24_flt(from.pf64[ich][i * istep]));
 			}
 		}
 		break;
 
 	case X(FFAUDIO_F_FLOAT64, FFAUDIO_F_INT32):
-		for (ich = 0;  ich != nch;  ich++) {
-			for (i = 0;  i != samples;  i++) {
+		for (i = 0;  i != samples;  i++) {
+			for (ich = 0;  ich != nch;  ich++) {
 				to.pi32[ich][i * ostep] = pcm_i32_flt(from.pf64[ich][i * istep]);
 			}
 		}
 		break;
 
 	case X(FFAUDIO_F_FLOAT64, FFAUDIO_F_FLOAT32):
-		for (ich = 0;  ich != nch;  ich++) {
-			for (i = 0;  i != samples;  i++) {
+		for (i = 0;  i != samples;  i++) {
+			for (ich = 0;  ich != nch;  ich++) {
 				to.pf32[ich][i * ostep] = from.pf64[ich][i * istep];
 			}
 		}
 		break;
 
 	case X(FFAUDIO_F_FLOAT64, FFAUDIO_F_FLOAT64):
-		for (ich = 0;  ich != nch;  ich++) {
-			for (i = 0;  i != samples;  i++) {
+		for (i = 0;  i != samples;  i++) {
+			for (ich = 0;  ich != nch;  ich++) {
 				to.pf64[ich][i * ostep] = from.pf64[ich][i * istep];
 			}
 		}
 		break;
 
 	default:
+		r = -1;
 		goto done;
 	}
-	r = 0;
 
 done:
 	ffmem_free(tmpptr);
@@ -742,3 +904,4 @@ done:
 }
 
 #undef X
+#undef X4

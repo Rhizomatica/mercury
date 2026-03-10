@@ -257,6 +257,14 @@ static int mode_rank(int mode)
     return 0; /* DATAC4 or any other conservative mode */
 }
 
+static int clamp_payload_mode_to_bandwidth(int mode)
+{
+    if (!arq_bandwidth_allows_mode(mode) && mode == FREEDV_MODE_DATAC1)
+        return FREEDV_MODE_DATAC3;
+
+    return mode;
+}
+
 /** Record the outcome of a TX frame.  Called once per frame when its fate is
  *  known: clean=true when ACK arrived with no retries consumed, clean=false
  *  when the frame was retransmitted at least once.  Steps speed_level ladder
@@ -301,34 +309,39 @@ static void record_tx_outcome(arq_session_t *sess, bool clean)
  *  a hold timer prevents re-upgrade oscillation. */
 static int select_best_mode(const arq_session_t *sess, int backlog)
 {
+    int effective_mode = clamp_payload_mode_to_bandwidth(sess->payload_mode);
+
     /* Safety net: if consecutive retries hit the threshold, the channel
      * can't support the current mode — force one level down.  The hold
      * timer in maybe_upgrade_mode() prevents immediate re-upgrade. */
     if (sess->consecutive_retries >= ARQ_RETRY_DOWNGRADE_THRESHOLD &&
-        mode_rank(sess->payload_mode) > 0)
+        mode_rank(effective_mode) > 0)
     {
-        int cur = sess->payload_mode;
+        int cur = effective_mode;
         if (cur == FREEDV_MODE_DATAC1) return FREEDV_MODE_DATAC3;
         return FREEDV_MODE_DATAC4;
     }
 
     /* Don't upgrade if the backlog fits in a single frame at the current mode.
      * MODE_REQ/MODE_ACK airtime overhead is never worthwhile for one frame. */
-    const arq_mode_timing_t *cur = arq_protocol_mode_timing(sess->payload_mode);
+    const arq_mode_timing_t *cur = arq_protocol_mode_timing(effective_mode);
     if (cur && backlog <= cur->payload_bytes - ARQ_FRAME_HDR_SIZE)
-        return sess->payload_mode;
+        return effective_mode;
 
     float peer_snr = (float)sess->peer_snr_x10 / 10.0f;
-    int   cur_rank = mode_rank(sess->payload_mode);
+    int   cur_rank = mode_rank(effective_mode);
 
     /* For the current mode, stay if SNR is at or above base threshold.
      * For a higher mode, upgrade only if SNR exceeds threshold + hysteresis.
      * This asymmetry prevents rapid oscillation at mode boundaries. */
-    float c1_thresh = (cur_rank >= mode_rank(FREEDV_MODE_DATAC1))
-                      ? ARQ_SNR_MIN_DATAC1_DB
-                      : ARQ_SNR_MIN_DATAC1_DB + ARQ_SNR_HYST_DB;
-    if (peer_snr >= c1_thresh && backlog >= ARQ_BACKLOG_MIN_DATAC1)
-        return FREEDV_MODE_DATAC1;
+    if (arq_bandwidth_allows_mode(FREEDV_MODE_DATAC1))
+    {
+        float c1_thresh = (cur_rank >= mode_rank(FREEDV_MODE_DATAC1))
+                          ? ARQ_SNR_MIN_DATAC1_DB
+                          : ARQ_SNR_MIN_DATAC1_DB + ARQ_SNR_HYST_DB;
+        if (peer_snr >= c1_thresh && backlog >= ARQ_BACKLOG_MIN_DATAC1)
+            return FREEDV_MODE_DATAC1;
+    }
 
     float c3_thresh = (cur_rank >= mode_rank(FREEDV_MODE_DATAC3))
                       ? ARQ_SNR_MIN_DATAC3_DB

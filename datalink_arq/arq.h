@@ -23,6 +23,9 @@
 
 #define CALLSIGN_MAX_SIZE 16 
 
+#define ARQ_BANDWIDTH_NARROW_HZ 500
+#define ARQ_BANDWIDTH_FULL_HZ   2300
+
 #define RX 0
 #define TX 1
 
@@ -120,6 +123,19 @@ void arq_post_event(int event);
  * @return true when connected; otherwise false.
  */
 bool arq_is_link_connected(void);
+
+/**
+ * @brief Get the effective ARQ bandwidth cap in Hz.
+ * @return 500 for narrow-band mode, otherwise 2300.
+ */
+int arq_effective_bandwidth_hz(void);
+
+/**
+ * @brief Check whether the current ARQ bandwidth cap allows a modem mode.
+ * @param mode FreeDV mode value.
+ * @return true if the mode is allowed under the active BW setting.
+ */
+bool arq_bandwidth_allows_mode(int mode);
 
 /**
  * @brief Queue outbound payload bytes for ARQ transmission.

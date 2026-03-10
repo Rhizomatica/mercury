@@ -117,7 +117,15 @@ typedef struct ffaudio_conf {
 
 	/** Device ID returned by dev_info(FFAUDIO_DEV_ID)
 	NULL: use default device
-	AAudio: "unprocessed" - use UNPROCESSED audio source */
+	AAudio:
+		For opening capture buffer:
+		* "generic"
+		* "camcorder"
+		* "voice_recognition"
+		* "voice_communication"
+		* "unprocessed"
+		* "voice_performance"
+	*/
 	const char *device_id;
 
 	/** Audio buffer size

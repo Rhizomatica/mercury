@@ -20,16 +20,24 @@
 #
 
 
+HAMLIB_W64_DIR = radio_io/hamlib-w64
+
+HAVE_HERMES_SHM = 0
+
 ifeq ($(OS),Windows_NT)
 	FFAUDIO_LINKFLAGS += -lole32
 	FFAUDIO_LINKFLAGS += -ldsound -ldxguid
 	FFAUDIO_LINKFLAGS += -lws2_32
-	FFAUDIO_LINKFLAGS += -static-libgcc -static-libstdc++ -static -l:libwinpthread.a
+	FFAUDIO_LINKFLAGS += -static-libgcc -static-libstdc++ -l:libwinpthread.a
+	HAVE_HAMLIB = 1
+	HAMLIB_CFLAGS = -I$(HAMLIB_W64_DIR)/include -DHAVE_HAMLIB
+	HAMLIB_LDFLAGS = -L$(HAMLIB_W64_DIR)/lib -lhamlib
 else
     UNAME_S := $(shell uname -s)
     ifeq ($(UNAME_S),Linux)
 	FFAUDIO_LINKFLAGS += -lpulse
 	FFAUDIO_LINKFLAGS += -lasound -lpthread -lrt
+	HAVE_HERMES_SHM = 1
     endif
     ifeq ($(UNAME_S),Darwin)
 	FFAUDIO_LINKFLAGS := -framework CoreFoundation -framework CoreAudio
@@ -37,14 +45,25 @@ else
     ifeq ($(UNAME_S),FreeBSD)
 	FFAUDIO_LINKFLAGS := -lm
     endif
+    HAVE_HAMLIB := $(shell pkg-config --exists hamlib 2>/dev/null && echo 1)
+    ifeq ($(HAVE_HAMLIB),1)
+	HAMLIB_CFLAGS := $(shell pkg-config --cflags hamlib) -DHAVE_HAMLIB
+	HAMLIB_LDFLAGS := $(shell pkg-config --libs hamlib)
+    else
+	HAMLIB_CFLAGS =
+	HAMLIB_LDFLAGS =
+    endif
 endif
+
+export HAVE_HAMLIB
+export HAVE_HERMES_SHM
 
 include config.mk
 
 MINGW_CC  = x86_64-w64-mingw32-gcc
 MINGW_AR  = x86_64-w64-mingw32-ar
 
-.PHONY: all install internal_deps utils clean doxygen doxygen-clean windows FORCE
+.PHONY: all install internal_deps utils clean doxygen doxygen-clean windows windows-zip FORCE
 
 prefix ?= /usr
 bindir ?= $(prefix)/bin
@@ -52,7 +71,11 @@ bindir ?= $(prefix)/bin
 DOXYGEN ?= doxygen
 DOXYFILE ?= Doxyfile
 
-CFLAGS = $(COMMON_CFLAGS) -Imodem/freedv -Imodem -Idatalink_broadcast -Idata_interfaces -Idatalink_arq -Iaudioio/ffaudio -Icommon
+ifeq ($(HAVE_HERMES_SHM),1)
+HERMES_SHM_CFLAGS = -DHAVE_HERMES_SHM
+endif
+
+CFLAGS = $(COMMON_CFLAGS) -Imodem/freedv -Imodem -Idatalink_broadcast -Idata_interfaces -Idatalink_arq -Iaudioio/ffaudio -Icommon -Iradio_io $(HAMLIB_CFLAGS) $(HERMES_SHM_CFLAGS)
 
 ifeq ($(OS),Windows_NT)
 BINARY = mercury.exe
@@ -60,16 +83,30 @@ else
 BINARY = mercury
 endif
 
-LDFLAGS=$(FFAUDIO_LINKFLAGS) -lm
+LDFLAGS=$(FFAUDIO_LINKFLAGS) -lm $(HAMLIB_LDFLAGS)
 
 MERCURY_LINK_INPUTS = \
 	main.o datalink_arq/arq.o datalink_arq/fsm.o datalink_arq/arith.o datalink_arq/arq_channels.o \
 	datalink_arq/arq_fsm.o datalink_arq/arq_protocol.o datalink_arq/arq_timing.o datalink_arq/arq_modem.o \
 	datalink_broadcast/broadcast.o datalink_broadcast/kiss.o modem/modem.o modem/framer.o modem/freedv/libfreedvdata.a \
 	audioio/audioio.a common/os_interop.o common/ring_buffer_posix.o common/shm_posix.o common/crc6.o common/hermes_log.o \
-	common/chan.o common/queue.o data_interfaces/tcp_interfaces.o data_interfaces/net.o
+	common/chan.o common/queue.o data_interfaces/tcp_interfaces.o data_interfaces/net.o \
+	radio_io/radio_io.o
+
+ifeq ($(HAVE_HERMES_SHM),1)
+MERCURY_LINK_INPUTS += radio_io/sbitx_io.o radio_io/shm_utils.o
+endif
+
+ifeq ($(HAVE_HAMLIB),1)
+MERCURY_LINK_INPUTS += radio_io/rigctl_parse.o
+endif
 
 all: internal_deps utils
+ifeq ($(HAVE_HAMLIB),1)
+	@echo "HAMLIB support: enabled"
+else
+	@echo "HAMLIB support: disabled (install libhamlib-dev and pkg-config to enable)"
+endif
 	$(MAKE) $(BINARY)
 	$(MAKE) -C utils
 
@@ -100,20 +137,34 @@ internal_deps:
 	$(MAKE) -C data_interfaces
 	$(MAKE) -C audioio
 	$(MAKE) -C common
+	$(MAKE) -C radio_io
 
 
 windows:
 	$(MAKE) clean OS=Windows_NT CC=$(MINGW_CC) AR=$(MINGW_AR)
 	$(MAKE) -j$$(nproc) OS=Windows_NT CC=$(MINGW_CC) AR=$(MINGW_AR)
 
+WINDOWS_ZIP = mercury-w64-$(GIT_HASH).zip
+
+windows-zip: windows
+	rm -rf mercury-w64 $(WINDOWS_ZIP)
+	mkdir -p mercury-w64
+	cp mercury.exe mercury-w64/
+	cp $(HAMLIB_W64_DIR)/bin/*.dll mercury-w64/
+	cd mercury-w64 && zip -9 ../$(WINDOWS_ZIP) *
+	rm -rf mercury-w64
+	@echo "Created $(WINDOWS_ZIP)"
+
 clean:
-	rm -f mercury mercury.exe *.o .git_hash_stamp
+	rm -f mercury mercury.exe *.o .git_hash_stamp mercury-w64-*.zip
+	rm -rf mercury-w64
 	$(MAKE) -C modem clean
 	$(MAKE) -C datalink_arq clean
 	$(MAKE) -C datalink_broadcast clean
 	$(MAKE) -C data_interfaces clean
 	$(MAKE) -C audioio clean
 	$(MAKE) -C common clean
+	$(MAKE) -C radio_io clean
 
 doxygen:
 	@command -v $(DOXYGEN) >/dev/null 2>&1 || { echo "ERROR: doxygen not found"; exit 1; }

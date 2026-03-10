@@ -33,6 +33,7 @@ over HF radio links in rural and emergency scenarios.
 - **Broadcast data mode** in parallel to ARQ, with dedicated broadcast framing and TCP ingress port.
 - **VARA-style TCP TNC interface** with separate control and data sockets (base port and base+1), including commands/status like `MYCALL`, `LISTEN`, `CONNECT`, `BUFFER`, `SN`, and `BITRATE`.
 - **Audio modem operation over multiple backends** (`alsa`, `pulse`, `dsound`, `wasapi`, `shm`) with split RX/TX modem orchestration.
+- **Direct radio control** via HAMLIB or HERMES shared-memory interface for direct PTT keying.
 
 ```
 Usage modes: 
@@ -41,7 +42,7 @@ Usage modes:
 
 Options:
  -c [cpu_nr]                Run on CPU [cpu_nr]. Use -1 to disable CPU selection, which is the default.
- -m [mode_index]            Startup payload mode index shown in "-l" output. Sets broadcast/test mode. Default is 1 (DATAC3).
+ -m [mode_index]            Startup payload mode index shown in "-l" output. Used for broadcast and idle/disconnected ARQ decode. Default is 1 (DATAC3).
  -s [mode_index]            Legacy alias for -m.
  -f [freedv_verbosity]      FreeDV modem verbosity level (0..3). Default is 0.
  -k [rx_input_channel]      Capture input channel: left, right, or stereo. Default is left.
@@ -53,8 +54,12 @@ Options:
  -l                         Lists all modulator/coding modes.
  -z                         Lists all available sound cards.
  -v                         Verbose mode. Prints more information during execution.
- -L [path]                  Write full log (DEBUG level and above) to file at <path>.
+ -L [path]                  Write log to file (TIMING level and above).
  -J                         Write log file in JSONL format (requires -L).
+ -R [radio_model]           Sets HAMLIB radio model.
+ -A [radio_address]         Sets HAMLIB radio device file or ip:port address.
+ -S                         Use HERMES shared memory radio control (Linux-only; do not use with -R and -A).
+ -K                         List HAMLIB supported radio models.
  -t                         Test TX mode.
  -r                         Test RX mode.
  -h                         Prints this help.
@@ -64,6 +69,11 @@ Mode behavior notes:
 - `-m` / `-s` affects **broadcast** and **test** modes only.
 - During an active ARQ link, control frames use DATAC13 and ARQ payload starts in DATAC4 (then may adapt to DATAC3/DATAC1).
 - `FSK_LDPC` is currently **experimental** (mainly for lab/test usage), may have longer decode/sync latency depending on setup, and is not recommended for production links yet.
+
+Radio control notes:
+- With no `-R`, `-A`, or `-S`, Mercury does **not** key the radio directly; it leaves for the tcp client the radio keying task.
+- `-R` selects a HAMLIB model ID, `-A` optionally points HAMLIB at a device path or `ip:port`, and `-K` prints the available HAMLIB models.
+- `-S` selects the HERMES shared-memory controller interface, is mutually exclusive with `-A`, and is unavailable on Windows builds.
 
 ## Getting Mercury
 

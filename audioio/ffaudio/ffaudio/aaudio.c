@@ -82,6 +82,8 @@ static int fmt_aa_ffa(ffuint ffa)
 {
 	switch (ffa) {
 	case FFAUDIO_F_INT16: return AAUDIO_FORMAT_PCM_I16;
+	case FFAUDIO_F_INT24: return AAUDIO_FORMAT_PCM_I24_PACKED;
+	case FFAUDIO_F_INT32: return AAUDIO_FORMAT_PCM_I32;
 	case FFAUDIO_F_FLOAT32: return AAUDIO_FORMAT_PCM_FLOAT;
 	}
 	return AAUDIO_FORMAT_PCM_FLOAT;
@@ -91,9 +93,38 @@ static ffuint fmt_fa_aa(int aa)
 {
 	switch (aa) {
 	case AAUDIO_FORMAT_PCM_I16: return FFAUDIO_F_INT16;
+	case AAUDIO_FORMAT_PCM_I24_PACKED: return FFAUDIO_F_INT24;
+	case AAUDIO_FORMAT_PCM_I32: return FFAUDIO_F_INT32;
 	case AAUDIO_FORMAT_PCM_FLOAT: return FFAUDIO_F_FLOAT32;
 	}
 	return 0;
+}
+
+static unsigned _ffaa_input_preset(const char *device_id)
+{
+	static const struct {
+		char name[20];
+		u_char preset;
+	} presets[] = {
+		{ "generic",				AAUDIO_INPUT_PRESET_GENERIC },
+		{ "camcorder",				AAUDIO_INPUT_PRESET_CAMCORDER },
+		{ "voice_recognition",		AAUDIO_INPUT_PRESET_VOICE_RECOGNITION },
+		{ "voice_communication",	AAUDIO_INPUT_PRESET_VOICE_COMMUNICATION },
+		{ "unprocessed",			AAUDIO_INPUT_PRESET_UNPROCESSED },
+		{ "voice_performance",		AAUDIO_INPUT_PRESET_VOICE_PERFORMANCE },
+	};
+
+	for (unsigned i = 0;  i < FF_COUNT(presets);  i++) {
+		if (!strcmp(device_id, presets[i].name))
+			return presets[i].preset;
+	}
+
+	return 0;
+}
+
+static void _ffaa_format_best(unsigned *format)
+{
+	*format = FFAUDIO_F_FLOAT32;
 }
 
 static int ffaaudio_open(ffaudio_buf *b, ffaudio_conf *conf, ffuint flags)
@@ -113,7 +144,7 @@ static int ffaaudio_open(ffaudio_buf *b, ffaudio_conf *conf, ffuint flags)
 	if (b->capture)
 		AAudioStreamBuilder_setDirection(asb, AAUDIO_DIRECTION_INPUT);
 
-	if (conf->device_id && !strcmp(conf->device_id, "unprocessed")) {
+	if (conf->device_id) {
 		typedef AAUDIO_API void (*AAudioStreamBuilder_setInputPreset_t)(AAudioStreamBuilder* builder, aaudio_input_preset_t inputPreset);
 		static AAudioStreamBuilder_setInputPreset_t _AAudioStreamBuilder_setInputPreset;
 		if (!_AAudioStreamBuilder_setInputPreset) {
@@ -123,8 +154,15 @@ static int ffaaudio_open(ffaudio_buf *b, ffaudio_conf *conf, ffuint flags)
 				dlclose(dl);
 			}
 		}
-		if (_AAudioStreamBuilder_setInputPreset)
-			_AAudioStreamBuilder_setInputPreset(asb, AAUDIO_INPUT_PRESET_UNPROCESSED);
+		if (_AAudioStreamBuilder_setInputPreset) {
+			unsigned ip;
+			if (!(ip = _ffaa_input_preset(conf->device_id))) {
+				b->err = "AAudioStreamBuilder_setInputPreset()";
+				b->errcode = 0;
+				goto end;
+			}
+			_AAudioStreamBuilder_setInputPreset(asb, ip);
+		}
 	}
 
 	if (conf->format != 0)
@@ -154,6 +192,11 @@ static int ffaaudio_open(ffaudio_buf *b, ffaudio_conf *conf, ffuint flags)
 	AAudioStreamBuilder_setErrorCallback(asb, on_error, b);
 
 	if (0 != (r = AAudioStreamBuilder_openStream(asb, &b->as))) {
+		if (r == AAUDIO_ERROR_INVALID_FORMAT) {
+			_ffaa_format_best(&conf->format);
+			rc = FFAUDIO_EFORMAT;
+			goto end;
+		}
 		b->err = "AAudioStreamBuilder_openStream()";
 		b->errcode = r;
 		goto end;

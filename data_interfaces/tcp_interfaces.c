@@ -46,6 +46,7 @@
 #include "defines_modem.h"
 #include "kiss.h"
 #include "hermes_log.h"
+#include "radio_io.h"
 
 static pthread_t tid[7];
 static bool tid_started[7];
@@ -923,6 +924,8 @@ void *tcp_server_thread(void *port_ptr)
 void ptt_on()
 {
     arq_conn.TRX = TX;
+    if (radio_io_enabled())
+        radio_io_key_on();
     /* Queue "PTT ON\r" asynchronously so a transient write failure on the
      * non-blocking CTL socket does NOT set NET_RESTART and kill the DATA
      * socket (which would send EOF to uucico and abort the UUCP session).
@@ -936,6 +939,8 @@ void ptt_on()
 void ptt_off()
 {
     arq_conn.TRX = RX;
+    if (radio_io_enabled())
+        radio_io_key_off();
     /* Same reasoning as ptt_on(): queue asynchronously. */
     (void)tnc_queue_line("PTT OFF\r");
     HLOGI("radio", "TX disabled (PTT OFF)");
@@ -944,7 +949,8 @@ void ptt_off()
 void tnc_send_connected()
 {
     char buffer[128];
-    sprintf(buffer, "CONNECTED %s %s %d\r", arq_conn.my_call_sign, arq_conn.dst_addr, 2300);
+    sprintf(buffer, "CONNECTED %s %s %d\r",
+            arq_conn.my_call_sign, arq_conn.dst_addr, arq_effective_bandwidth_hz());
     if (tnc_queue_line(buffer) < 0)
         HLOGW("tcp-ctl", "Error queuing connected message");
 }
