@@ -1158,6 +1158,11 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
         {
             if (sess->tx_retries_left > 0)
             {
+                /* Save the pre-cap value so the attempt number reported to
+                 * timing instrumentation reflects the true retry count rather
+                 * than the artificially capped one. */
+                int retries_before_cap = (int)sess->tx_retries_left;
+
                 /* When a disconnect is pending (deferred from DATA_TX), cap
                  * remaining retries to 1 so the peer gets one more chance to
                  * ACK our last frame before we give up.  Aborting with zero
@@ -1177,7 +1182,7 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
                  * when the ACK handler also calls it. */
                 if (g_timing)
                     arq_timing_record_retry(g_timing, (int)sess->tx_seq,
-                                            ARQ_DATA_RETRY_SLOTS - sess->tx_retries_left,
+                                            ARQ_DATA_RETRY_SLOTS - retries_before_cap + 1,
                                             "ack_timeout");
                 dflow_enter(sess, ARQ_DFLOW_DATA_TX, UINT64_MAX, ARQ_EV_TIMER_RETRY);
                 send_data_frame(sess);
