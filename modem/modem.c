@@ -1405,6 +1405,16 @@ void *rx_thread(void *g_modem)
     rx_decoder_dispose(&payload_decoder);
     free(capture_i32);
     free(capture_i16);
+
+    pthread_mutex_lock(&g_spectrum_lock);
+    if (g_spectrum_stats_inited)
+    {
+        modem_stats_close(&g_spectrum_stats);
+        g_spectrum_stats_inited = false;
+        g_spectrum_valid = false;
+    }
+    pthread_mutex_unlock(&g_spectrum_lock);
+
     return NULL;
 }
 
