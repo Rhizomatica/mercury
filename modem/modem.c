@@ -1412,13 +1412,26 @@ void *rx_thread(void *g_modem)
 int modem_get_rx_spectrum(float *out_dB, int max_bins)
 {
     int sr = 0;
+        /* Validate output buffer and requested number of bins */
+    if (out_dB == NULL || max_bins <= 0) {
+        return 0;
+    }
     pthread_mutex_lock(&g_spectrum_lock);
     if (g_spectrum_valid)
     {
-        int n = max_bins < MODEM_STATS_NSPEC ? max_bins : MODEM_STATS_NSPEC;
-        memcpy(out_dB, g_rx_spectrum_dB, n * sizeof(float));
-        sr = g_spectrum_sample_rate;
-        g_spectrum_valid = false;
+        /* Clamp max_bins to the valid range [0, MODEM_STATS_NSPEC] */
+        int n = max_bins;
+        if (n < 0) {
+            n = 0;
+        } else if (n > MODEM_STATS_NSPEC) {
+            n = MODEM_STATS_NSPEC;
+        }
+        if (n > 0)
+        {
+            memcpy(out_dB, g_rx_spectrum_dB, (size_t)n * sizeof(float));
+            sr = g_spectrum_sample_rate;
+            g_spectrum_valid = false;
+        }
     }
     pthread_mutex_unlock(&g_spectrum_lock);
     return sr;
