@@ -24,6 +24,7 @@
 #include <time.h>
 #include <errno.h>
 #include <limits.h>
+#include <stdatomic.h>
 
 #include "../common/hermes_log.h"
 #include "../common/defines_modem.h"
@@ -752,22 +753,22 @@ void arq_set_retry_slots(int slots)
 {
     if (slots <= 0)
     {
-        arq_call_retry_slots       = ARQ_CALL_RETRY_SLOTS_DEFAULT;
-        arq_accept_retry_slots     = ARQ_ACCEPT_RETRY_SLOTS_DEFAULT;
-        arq_data_retry_slots       = ARQ_DATA_RETRY_SLOTS_DEFAULT;
-        arq_disconnect_retry_slots = ARQ_DISCONNECT_RETRY_SLOTS_DEFAULT;
+        atomic_store(&arq_call_retry_slots,       ARQ_CALL_RETRY_SLOTS_DEFAULT);
+        atomic_store(&arq_accept_retry_slots,     ARQ_ACCEPT_RETRY_SLOTS_DEFAULT);
+        atomic_store(&arq_data_retry_slots,       ARQ_DATA_RETRY_SLOTS_DEFAULT);
+        atomic_store(&arq_disconnect_retry_slots, ARQ_DISCONNECT_RETRY_SLOTS_DEFAULT);
     }
     else
     {
-        arq_call_retry_slots       = slots;
-        arq_accept_retry_slots     = slots;
-        arq_data_retry_slots       = slots;
+        atomic_store(&arq_call_retry_slots,   slots);
+        atomic_store(&arq_accept_retry_slots, slots);
+        atomic_store(&arq_data_retry_slots,   slots);
         /* Leave disconnect retries at default — no benefit to long teardown */
-        arq_disconnect_retry_slots = ARQ_DISCONNECT_RETRY_SLOTS_DEFAULT;
+        atomic_store(&arq_disconnect_retry_slots, ARQ_DISCONNECT_RETRY_SLOTS_DEFAULT);
     }
     HLOGI(LOG_COMP, "Retry slots: call=%d accept=%d data=%d disconnect=%d",
-          arq_call_retry_slots, arq_accept_retry_slots,
-          arq_data_retry_slots, arq_disconnect_retry_slots);
+          atomic_load(&arq_call_retry_slots), atomic_load(&arq_accept_retry_slots),
+          atomic_load(&arq_data_retry_slots), atomic_load(&arq_disconnect_retry_slots));
 }
 
 void reset_arq_info(arq_info *conn)
