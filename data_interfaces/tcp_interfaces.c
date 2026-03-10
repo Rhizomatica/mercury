@@ -53,9 +53,13 @@ static bool tid_started[7];
 static int arq_tcp_base_port_cfg = 0;
 static int broadcast_tcp_port_cfg = 0;
 static size_t broadcast_frame_size_cfg = 0;
-static float last_sn_value = 0.0f;
-static uint32_t last_bitrate_sl = 0;
-static uint32_t last_bitrate_bps = 0;
+/* SNR and bitrate are written by the ARQ FSM thread and read by the UI
+ * publisher thread; use atomics to avoid a data race.  The float SNR is
+ * stored as its raw IEEE-754 bit pattern in a uint32 atomic and
+ * reinterpreted via memcpy on every load (no strict-aliasing violation). */
+static _Atomic uint32_t last_sn_bits = 0;        /* float bits, relaxed */
+static _Atomic uint32_t last_bitrate_sl = 0;
+static _Atomic uint32_t last_bitrate_bps = 0;
 static chan_t *tnc_tx_chan = NULL;
 static atomic_ulong tnc_tx_drop_count = 0;
 static atomic_int tnc_last_buffer_sent = -1;
@@ -317,13 +321,18 @@ static void execute_control_command(char *buffer)
 
     if (!memcmp(buffer, "SN", strlen("SN")))
     {
-        tnc_send_sn(last_sn_value);
+        uint32_t bits = atomic_load_explicit(&last_sn_bits, memory_order_relaxed);
+        float snr;
+        memcpy(&snr, &bits, sizeof snr);
+        tnc_send_sn(snr);
         return;
     }
 
     if (!memcmp(buffer, "BITRATE", strlen("BITRATE")))
     {
-        tnc_send_bitrate(last_bitrate_sl, last_bitrate_bps);
+        uint32_t sl  = atomic_load_explicit(&last_bitrate_sl, memory_order_relaxed);
+        uint32_t bps = atomic_load_explicit(&last_bitrate_bps, memory_order_relaxed);
+        tnc_send_bitrate(sl, bps);
         return;
     }
 
@@ -979,7 +988,9 @@ void tnc_send_buffer(uint32_t bytes)
 void tnc_send_sn(float snr)
 {
     char buffer[64];
-    last_sn_value = snr;
+    uint32_t bits;
+    memcpy(&bits, &snr, sizeof bits);
+    atomic_store_explicit(&last_sn_bits, bits, memory_order_relaxed);
     snprintf(buffer, sizeof(buffer), "SN %.1f\r", snr);
     (void)tnc_queue_line(buffer);
 }
@@ -987,20 +998,23 @@ void tnc_send_sn(float snr)
 void tnc_send_bitrate(uint32_t speed_level, uint32_t bps)
 {
     char buffer[64];
-    last_bitrate_sl = speed_level;
-    last_bitrate_bps = bps;
+    atomic_store_explicit(&last_bitrate_sl, speed_level, memory_order_relaxed);
+    atomic_store_explicit(&last_bitrate_bps, bps, memory_order_relaxed);
     snprintf(buffer, sizeof(buffer), "BITRATE (%u) %u BPS\r", speed_level, bps);
     (void)tnc_queue_line(buffer);
 }
 
 float tnc_get_last_snr(void)
 {
-    return last_sn_value;
+    uint32_t bits = atomic_load_explicit(&last_sn_bits, memory_order_relaxed);
+    float val;
+    memcpy(&val, &bits, sizeof val);
+    return val;
 }
 
 uint32_t tnc_get_last_bitrate_bps(void)
 {
-    return last_bitrate_bps;
+    return atomic_load_explicit(&last_bitrate_bps, memory_order_relaxed);
 }
 
 int interfaces_init(int arq_tcp_base_port, int broadcast_tcp_port, size_t broadcast_frame_size)
