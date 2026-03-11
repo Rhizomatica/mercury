@@ -519,6 +519,69 @@ finish_cap:
     return NULL;
 }
 
+int get_soundcard_list(int audio_system, char names[][64], int max_count)
+{
+    ffaudio_interface *audio = NULL;
+    int count = 0;
+
+    if (audio_system == AUDIO_SUBSYSTEM_SHM)
+        return 0;
+
+#if defined(_WIN32)
+    if (audio_system == AUDIO_SUBSYSTEM_WASAPI)
+        audio = (ffaudio_interface *) &ffwasapi;
+    if (audio_system == AUDIO_SUBSYSTEM_DSOUND)
+        audio = (ffaudio_interface *) &ffdsound;
+#elif defined(__linux__)
+    if (audio_system == AUDIO_SUBSYSTEM_ALSA)
+        audio = (ffaudio_interface *) &ffalsa;
+    if (audio_system == AUDIO_SUBSYSTEM_PULSE)
+        audio = (ffaudio_interface *) &ffpulse;
+#elif defined(__FREEBSD__)
+    if (audio_system == AUDIO_SUBSYSTEM_OSS)
+        audio = (ffaudio_interface *) &ffoss;
+#elif defined(__APPLE__)
+    if (audio_system == AUDIO_SUBSYSTEM_COREAUDIO)
+        audio = (ffaudio_interface *) &ffcoreaudio;
+#elif defined(__ANDROID__)
+    if (audio_system == AUDIO_SUBSYSTEM_AAUDIO)
+        audio = (ffaudio_interface *) &ffaaudio;
+#endif
+
+    if (!audio)
+        return 0;
+
+    ffaudio_init_conf aconf = {};
+    if (audio->init(&aconf) != 0)
+        return 0;
+
+    // Enumerate capture devices (FFAUDIO_DEV_CAPTURE = 1)
+    ffaudio_dev *d = audio->dev_alloc(FFAUDIO_DEV_CAPTURE);
+    if (d == NULL)
+    {
+        audio->uninit();
+        return 0;
+    }
+
+    for (;;)
+    {
+        int r = audio->dev_next(d);
+        if (r != 0)
+            break;
+        const char *id = audio->dev_info(d, FFAUDIO_DEV_ID);
+        if (id && count < max_count)
+        {
+            strncpy(names[count], id, 63);
+            names[count][63] = '\0';
+            count++;
+        }
+    }
+
+    audio->dev_free(d);
+    audio->uninit();
+    return count;
+}
+
 void list_soundcards(int audio_system)
 {
     ffaudio_interface *audio;

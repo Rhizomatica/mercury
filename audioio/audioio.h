@@ -46,3 +46,8 @@ int rx_transfer(double *buffer, size_t len);
 
 
 void list_soundcards(int audio_system);
+
+// Enumerate capture device IDs into caller-supplied buffer.
+// Returns the number of devices found (up to max_count).
+// Each entry in names[] will be a NUL-terminated string.
+int get_soundcard_list(int audio_system, char names[][64], int max_count);

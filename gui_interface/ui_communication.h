@@ -120,6 +120,10 @@ typedef struct {
     pthread_t spec_tid;         // dedicated spectrum publisher thread (20 fps)
     int waterfall_enabled;      // 1 = send spectrum data to UI, 0 = disabled
 
+    // Audio subsystem info for soundcard enumeration
+    int audio_system;           // AUDIO_SUBSYSTEM_* constant
+    char selected_soundcard[64]; // currently active capture device
+
     // For logging rate limiting
     modem_status_t last_sent_status;
 } ui_ctx_t;
@@ -167,7 +171,10 @@ void *spectrum_publisher_thread(void *arg);
 
 // High-level init/shutdown for the UI communication subsystem
 // waterfall_enabled: 1 = start spectrum publisher thread (default), 0 = skip it
-int ui_comm_init(ui_ctx_t *ctx, const char *ip, uint16_t tx_port, int waterfall_enabled);
+// audio_system: AUDIO_SUBSYSTEM_* constant for soundcard enumeration
+// selected_soundcard: currently active capture device name (may be NULL)
+int ui_comm_init(ui_ctx_t *ctx, const char *ip, uint16_t tx_port, int waterfall_enabled,
+                 int audio_system, const char *selected_soundcard);
 void ui_comm_shutdown(ui_ctx_t *ctx);
 
 #endif

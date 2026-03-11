@@ -59,6 +59,8 @@
 #include "../modem/freedv/modem_stats.h"
 #include "../modem/modem.h"
 
+extern int get_soundcard_list(int audio_system, char names[][64], int max_count);
+
 // global shutdown flag from main.c
 extern volatile bool shutdown_;
 #else
@@ -466,6 +468,10 @@ void *ui_publisher_thread(void *arg)
     HLOGI(UI_LOG_TAG, "Publisher started - sending status every %d ms to port %d",
            UI_PUBLISH_INTERVAL_US / 1000, ntohs(tx->dest.sin_port));
 
+    // Send soundcard list once at the beginning and then every ~5s (10 cycles)
+    int soundcard_cycle = 0;
+    const int SOUNDCARD_SEND_INTERVAL = 10; // every 10 status cycles (~5 seconds)
+
     while (!shutdown_)
     {
         // --- Gather status from ARQ snapshot ---
@@ -532,6 +538,21 @@ void *ui_publisher_thread(void *arg)
                            bytes_tx, bytes_rx,
                            ctx->waterfall_enabled);
 
+        // --- Periodically send soundcard list to UI ---
+        if (soundcard_cycle % SOUNDCARD_SEND_INTERVAL == 0)
+        {
+            char sc_names[32][64];
+            int sc_count = get_soundcard_list(ctx->audio_system, sc_names, 32);
+            if (sc_count > 0)
+            {
+                const char *sc_ptrs[32];
+                for (int i = 0; i < sc_count; i++)
+                    sc_ptrs[i] = sc_names[i];
+                udp_tx_send_soundcard_list(tx, ctx->selected_soundcard, sc_ptrs, sc_count);
+            }
+        }
+        soundcard_cycle++;
+
         hermes_usleep(UI_PUBLISH_INTERVAL_US);
     }
 
@@ -569,11 +590,17 @@ void *spectrum_publisher_thread(void *arg)
 
 // ---------------- HIGH-LEVEL INIT / SHUTDOWN ----------------
 
-int ui_comm_init(ui_ctx_t *ctx, const char *ip, uint16_t tx_port, int waterfall_enabled)
+int ui_comm_init(ui_ctx_t *ctx, const char *ip, uint16_t tx_port, int waterfall_enabled,
+                 int audio_system, const char *selected_soundcard)
 {
     memset(ctx, 0, sizeof(*ctx));
 
     ctx->waterfall_enabled = waterfall_enabled;
+    ctx->audio_system = audio_system;
+    if (selected_soundcard)
+        strncpy(ctx->selected_soundcard, selected_soundcard, sizeof(ctx->selected_soundcard) - 1);
+    else
+        ctx->selected_soundcard[0] = '\0';
 
     // Initialize TX socket - sends status TO the UI
     if (udp_tx_init(&ctx->tx, ip, tx_port) != 0) {
