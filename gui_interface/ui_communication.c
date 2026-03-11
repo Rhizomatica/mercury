@@ -59,7 +59,7 @@
 #include "../modem/freedv/modem_stats.h"
 #include "../modem/modem.h"
 
-extern int get_soundcard_list(int audio_system, char names[][64], int max_count);
+extern int get_soundcard_list(int audio_system, int mode, char names[][64], int max_count);
 
 // global shutdown flag from main.c
 extern volatile bool shutdown_;
@@ -178,24 +178,36 @@ int udp_tx_send_status(udp_tx_t *tx,
         NULL);
 }
 
-int udp_tx_send_soundcard_list(udp_tx_t *tx,
-                               const char *selected_soundcard,
-                               const char *soundcards[], int count) {
-    char buf[1500]; // max mtu size
+static int udp_tx_send_dev_list(udp_tx_t *tx, const char *type_str,
+                                const char *selected,
+                                const char *devices[], int count) {
+    char buf[1500];
     snprintf(buf, sizeof(buf), "[");
     for (int i = 0; i < count; i++) {
         strcat(buf, "\"");
-        strcat(buf, soundcards[i]);
+        strcat(buf, devices[i]);
         strcat(buf, "\"");
         if (i < count - 1) strcat(buf, ",");
     }
     strcat(buf, "]");
 
     return udp_tx_send_json_pairs(tx,
-        "type", "soundcard_list",
-        "selected", selected_soundcard,
+        "type", type_str,
+        "selected", selected,
         "list", buf,
         NULL);
+}
+
+int udp_tx_send_capture_dev_list(udp_tx_t *tx,
+                                 const char *selected,
+                                 const char *devices[], int count) {
+    return udp_tx_send_dev_list(tx, "capture_dev_list", selected, devices, count);
+}
+
+int udp_tx_send_playback_dev_list(udp_tx_t *tx,
+                                  const char *selected,
+                                  const char *devices[], int count) {
+    return udp_tx_send_dev_list(tx, "playback_dev_list", selected, devices, count);
 }
 
 int udp_tx_send_radio_list(udp_tx_t *tx,
@@ -310,7 +322,8 @@ static void fill_modem_message(modem_message_t *msg, char keys[][64], char vals[
         {
             if (strcmp(vals[i], "status") == 0) msg->type = MSG_STATUS;
             else if (strcmp(vals[i], "config") == 0) msg->type = MSG_CONFIG;
-            else if (strcmp(vals[i], "soundcard_list") == 0) msg->type = MSG_SOUNDCARD_LIST;
+            else if (strcmp(vals[i], "capture_dev_list") == 0) msg->type = MSG_CAPTURE_DEV_LIST;
+            else if (strcmp(vals[i], "playback_dev_list") == 0) msg->type = MSG_PLAYBACK_DEV_LIST;
             else if (strcmp(vals[i], "radio_list") == 0) msg->type = MSG_RADIO_LIST;
         }
     }
@@ -342,16 +355,18 @@ static void fill_modem_message(modem_message_t *msg, char keys[][64], char vals[
                 msg->status.bytes_transmitted = atol(vals[i]);
             else if (strcmp(keys[i], "bytes_received") == 0)
                 msg->status.bytes_received = atol(vals[i]);
-                    break;
-        case MSG_SOUNDCARD_LIST:
-            if (msg->type == MSG_SOUNDCARD_LIST)
-            {
-                if (strcmp(keys[i], "selected") == 0)
-                    strncpy(msg->soundcard_list.selected, vals[i], sizeof msg->soundcard_list.selected - 1);
-                else
-                    if (strcmp(keys[i], "list") == 0)
-                        strncpy(msg->soundcard_list.list, vals[i], sizeof msg->soundcard_list.list - 1);
-            }
+            break;
+        case MSG_CAPTURE_DEV_LIST:
+            if (strcmp(keys[i], "selected") == 0)
+                strncpy(msg->capture_dev_list.selected, vals[i], sizeof msg->capture_dev_list.selected - 1);
+            else if (strcmp(keys[i], "list") == 0)
+                strncpy(msg->capture_dev_list.list, vals[i], sizeof msg->capture_dev_list.list - 1);
+            break;
+        case MSG_PLAYBACK_DEV_LIST:
+            if (strcmp(keys[i], "selected") == 0)
+                strncpy(msg->playback_dev_list.selected, vals[i], sizeof msg->playback_dev_list.selected - 1);
+            else if (strcmp(keys[i], "list") == 0)
+                strncpy(msg->playback_dev_list.list, vals[i], sizeof msg->playback_dev_list.list - 1);
             break;
         case MSG_RADIO_LIST:
             if (strcmp(keys[i], "selected") == 0)
@@ -433,11 +448,6 @@ void *rx_thread_main(void *arg)
                   msg.status.dir == DIR_TX ? "tx" : "rx",
                   msg.status.client_tcp_connected ? "true" : "false",
                   msg.status.bytes_transmitted, msg.status.bytes_received);
-            break;
-
-        case MSG_SOUNDCARD_LIST:
-            HLOGD(UI_LOG_TAG, "SOUNDCARD_LIST selected=%s list=%s",
-                  msg.soundcard_list.selected, msg.soundcard_list.list);
             break;
 
         case MSG_RADIO_LIST:
@@ -538,17 +548,29 @@ void *ui_publisher_thread(void *arg)
                            bytes_tx, bytes_rx,
                            ctx->waterfall_enabled);
 
-        // --- Periodically send soundcard list to UI ---
+        // --- Periodically send capture & playback device lists to UI ---
         if (soundcard_cycle % SOUNDCARD_SEND_INTERVAL == 0)
         {
-            char sc_names[32][64];
-            int sc_count = get_soundcard_list(ctx->audio_system, sc_names, 32);
-            if (sc_count > 0)
+            // Capture (input) devices - mode 1 = FFAUDIO_DEV_CAPTURE
+            char cap_names[32][64];
+            int cap_count = get_soundcard_list(ctx->audio_system, 1, cap_names, 32);
+            if (cap_count > 0)
             {
-                const char *sc_ptrs[32];
-                for (int i = 0; i < sc_count; i++)
-                    sc_ptrs[i] = sc_names[i];
-                udp_tx_send_soundcard_list(tx, ctx->selected_soundcard, sc_ptrs, sc_count);
+                const char *cap_ptrs[32];
+                for (int i = 0; i < cap_count; i++)
+                    cap_ptrs[i] = cap_names[i];
+                udp_tx_send_capture_dev_list(tx, ctx->selected_capture_dev, cap_ptrs, cap_count);
+            }
+
+            // Playback (output) devices - mode 0 = FFAUDIO_DEV_PLAYBACK
+            char pb_names[32][64];
+            int pb_count = get_soundcard_list(ctx->audio_system, 0, pb_names, 32);
+            if (pb_count > 0)
+            {
+                const char *pb_ptrs[32];
+                for (int i = 0; i < pb_count; i++)
+                    pb_ptrs[i] = pb_names[i];
+                udp_tx_send_playback_dev_list(tx, ctx->selected_playback_dev, pb_ptrs, pb_count);
             }
         }
         soundcard_cycle++;
@@ -591,16 +613,20 @@ void *spectrum_publisher_thread(void *arg)
 // ---------------- HIGH-LEVEL INIT / SHUTDOWN ----------------
 
 int ui_comm_init(ui_ctx_t *ctx, const char *ip, uint16_t tx_port, int waterfall_enabled,
-                 int audio_system, const char *selected_soundcard)
+                 int audio_system, const char *selected_capture, const char *selected_playback)
 {
     memset(ctx, 0, sizeof(*ctx));
 
     ctx->waterfall_enabled = waterfall_enabled;
     ctx->audio_system = audio_system;
-    if (selected_soundcard)
-        strncpy(ctx->selected_soundcard, selected_soundcard, sizeof(ctx->selected_soundcard) - 1);
+    if (selected_capture)
+        strncpy(ctx->selected_capture_dev, selected_capture, sizeof(ctx->selected_capture_dev) - 1);
     else
-        ctx->selected_soundcard[0] = '\0';
+        ctx->selected_capture_dev[0] = '\0';
+    if (selected_playback)
+        strncpy(ctx->selected_playback_dev, selected_playback, sizeof(ctx->selected_playback_dev) - 1);
+    else
+        ctx->selected_playback_dev[0] = '\0';
 
     // Initialize TX socket - sends status TO the UI
     if (udp_tx_init(&ctx->tx, ip, tx_port) != 0) {
@@ -716,10 +742,12 @@ int main(int argc, char *argv[]) {
         udp_tx_send_status(&tx, bitrate, snr, "K1ABC", "N0XYZ", sync, dir, client,
                            bytes_transmitted, bytes_received, 1 /* waterfall=true for test */);
 
-        // Occasionally send a soundcard list
+        // Occasionally send capture & playback device lists
         if (counter % 3 == 0) {
-            const char *soundcards[] = { "hw:0,0", "hw:1,0", "hw:2,0" };
-            udp_tx_send_soundcard_list(&tx, "hw:1,0", soundcards, 3);
+            const char *capture_devs[] = { "hw:0,0", "hw:1,0", "hw:2,0" };
+            udp_tx_send_capture_dev_list(&tx, "hw:1,0", capture_devs, 3);
+            const char *playback_devs[] = { "hw:0,0", "hw:1,0" };
+            udp_tx_send_playback_dev_list(&tx, "hw:0,0", playback_devs, 2);
         }
 
         // Occasionally send a radio list

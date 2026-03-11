@@ -519,7 +519,7 @@ finish_cap:
     return NULL;
 }
 
-int get_soundcard_list(int audio_system, char names[][64], int max_count)
+int get_soundcard_list(int audio_system, int mode, char names[][64], int max_count)
 {
     ffaudio_interface *audio = NULL;
     int count = 0;
@@ -555,8 +555,8 @@ int get_soundcard_list(int audio_system, char names[][64], int max_count)
     if (audio->init(&aconf) != 0)
         return 0;
 
-    // Enumerate capture devices (FFAUDIO_DEV_CAPTURE = 1)
-    ffaudio_dev *d = audio->dev_alloc(FFAUDIO_DEV_CAPTURE);
+    // mode: FFAUDIO_DEV_PLAYBACK (0) or FFAUDIO_DEV_CAPTURE (1)
+    ffaudio_dev *d = audio->dev_alloc(mode);
     if (d == NULL)
     {
         audio->uninit();

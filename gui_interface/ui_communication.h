@@ -70,8 +70,9 @@ typedef enum {
     MSG_UNKNOWN,
     MSG_STATUS,
     MSG_CONFIG,
-    MSG_SOUNDCARD_LIST,
-    MSG_RADIO_LIST
+    MSG_RADIO_LIST,
+    MSG_CAPTURE_DEV_LIST,   // capture (input) device list
+    MSG_PLAYBACK_DEV_LIST   // playback (output) device list
 } message_type_t;
 
 // ---- Unified message ----
@@ -87,11 +88,16 @@ typedef struct {
     int arq_base_port;
     char aes_key[128];
     int encryption_enabled; // bool
-    // Soundcard list
+    // Capture device list
     struct {
         char selected[64];
-        char list[512]; // JSON array string
-    } soundcard_list;
+        char list[512];
+    } capture_dev_list;
+    // Playback device list
+    struct {
+        char selected[64];
+        char list[512];
+    } playback_dev_list;
     // Radio list
     struct {
         char selected[64];
@@ -121,8 +127,9 @@ typedef struct {
     int waterfall_enabled;      // 1 = send spectrum data to UI, 0 = disabled
 
     // Audio subsystem info for soundcard enumeration
-    int audio_system;           // AUDIO_SUBSYSTEM_* constant
-    char selected_soundcard[64]; // currently active capture device
+    int audio_system;                // AUDIO_SUBSYSTEM_* constant
+    char selected_capture_dev[64];   // currently active capture (input) device
+    char selected_playback_dev[64];  // currently active playback (output) device
 
     // For logging rate limiting
     modem_status_t last_sent_status;
@@ -155,6 +162,14 @@ int udp_tx_send_soundcard_list(udp_tx_t *tx,
                                const char *selected_soundcard,
                                const char *soundcards[], int count);
 
+int udp_tx_send_capture_dev_list(udp_tx_t *tx,
+                                 const char *selected,
+                                 const char *devices[], int count);
+
+int udp_tx_send_playback_dev_list(udp_tx_t *tx,
+                                  const char *selected,
+                                  const char *devices[], int count);
+
 int udp_tx_send_radio_list(udp_tx_t *tx,
                            const char *selected_radio,
                            const char *radios[], int count);
@@ -172,9 +187,10 @@ void *spectrum_publisher_thread(void *arg);
 // High-level init/shutdown for the UI communication subsystem
 // waterfall_enabled: 1 = start spectrum publisher thread (default), 0 = skip it
 // audio_system: AUDIO_SUBSYSTEM_* constant for soundcard enumeration
-// selected_soundcard: currently active capture device name (may be NULL)
+// selected_capture: currently active capture device name (may be NULL)
+// selected_playback: currently active playback device name (may be NULL)
 int ui_comm_init(ui_ctx_t *ctx, const char *ip, uint16_t tx_port, int waterfall_enabled,
-                 int audio_system, const char *selected_soundcard);
+                 int audio_system, const char *selected_capture, const char *selected_playback);
 void ui_comm_shutdown(ui_ctx_t *ctx);
 
 #endif

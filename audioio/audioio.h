@@ -47,7 +47,8 @@ int rx_transfer(double *buffer, size_t len);
 
 void list_soundcards(int audio_system);
 
-// Enumerate capture device IDs into caller-supplied buffer.
+// Enumerate device IDs into caller-supplied buffer.
+// mode: 0 = FFAUDIO_DEV_PLAYBACK, 1 = FFAUDIO_DEV_CAPTURE
 // Returns the number of devices found (up to max_count).
 // Each entry in names[] will be a NUL-terminated string.
-int get_soundcard_list(int audio_system, char names[][64], int max_count);
+int get_soundcard_list(int audio_system, int mode, char names[][64], int max_count);
