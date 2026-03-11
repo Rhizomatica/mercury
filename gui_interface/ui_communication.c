@@ -62,6 +62,9 @@
 extern int get_soundcard_list(int audio_system, int mode,
                               char ids[][64], char dev_names[][64], int max_count);
 
+extern int audioio_restart(const char *capture_dev, const char *playback_dev,
+                           int audio_subsys, int capture_channel_layout);
+
 // global shutdown flag from main.c
 extern volatile bool shutdown_;
 #else
@@ -491,14 +494,18 @@ void *rx_thread_main(void *arg)
             HLOGI(UI_LOG_TAG, "CMD from UI: command=\"%s\" value=\"%s\"",
                   msg.cmd.command, msg.cmd.value);
             if (ctx) {
+                int need_audio_restart = 0;
+
                 if (strcmp(msg.cmd.command, "set_capture_dev") == 0) {
                     strncpy(ctx->selected_capture_dev, msg.cmd.value,
                             sizeof(ctx->selected_capture_dev) - 1);
                     HLOGI(UI_LOG_TAG, "Capture device set to: %s", ctx->selected_capture_dev);
+                    need_audio_restart = 1;
                 } else if (strcmp(msg.cmd.command, "set_playback_dev") == 0) {
                     strncpy(ctx->selected_playback_dev, msg.cmd.value,
                             sizeof(ctx->selected_playback_dev) - 1);
                     HLOGI(UI_LOG_TAG, "Playback device set to: %s", ctx->selected_playback_dev);
+                    need_audio_restart = 1;
                 } else if (strcmp(msg.cmd.command, "set_input_channel") == 0) {
                     if (strcmp(msg.cmd.value, "right") == 0)
                         ctx->rx_input_channel = 1;  // RIGHT
@@ -508,10 +515,19 @@ void *rx_thread_main(void *arg)
                         ctx->rx_input_channel = 0;  // LEFT (default)
                     HLOGI(UI_LOG_TAG, "Input channel set to: %s (%d)",
                           msg.cmd.value, ctx->rx_input_channel);
+                    need_audio_restart = 1;
                 } else if (strcmp(msg.cmd.command, "set_radio") == 0) {
                     HLOGI(UI_LOG_TAG, "Radio set to: %s", msg.cmd.value);
                 } else {
                     HLOGW(UI_LOG_TAG, "Unknown UI command: %s", msg.cmd.command);
+                }
+
+                if (need_audio_restart) {
+                    HLOGI(UI_LOG_TAG, "Restarting audioio subsystem (capture=%s playback=%s channel=%d)",
+                          ctx->selected_capture_dev, ctx->selected_playback_dev, ctx->rx_input_channel);
+                    audioio_restart(ctx->selected_capture_dev, ctx->selected_playback_dev,
+                                    ctx->audio_system, ctx->rx_input_channel);
+                    HLOGI(UI_LOG_TAG, "Audioio subsystem restarted successfully");
                 }
             }
             break;

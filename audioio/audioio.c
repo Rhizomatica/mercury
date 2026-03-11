@@ -33,6 +33,14 @@ cbuf_handle_t playback_buffer;
 int audio_subsystem;
 static int capture_input_channel_layout = LEFT;
 
+// Internal state for restart support
+static pthread_t s_radio_capture;
+static pthread_t s_radio_playback;
+static char s_capture_dev[256];
+static char s_playback_dev[256];
+static int s_buffers_initialized = 0;
+static volatile bool audio_shutdown_ = false;  // local stop flag for audio threads
+
 struct conf {
     const char *cmd;
     ffaudio_conf buf;
@@ -201,7 +209,7 @@ void *radio_playback_thread(void *device_ptr)
     // period_bytes at 8kHz (input rate) - adjust for the lower sample rate
     uint32_t period_bytes_8k = period_bytes / resample_ratio;
 
-    while (!shutdown_)
+    while (!shutdown_ && !audio_shutdown_)
     {
         ffssize n;
         size_t buffer_size = size_buffer(playback_buffer);
@@ -269,6 +277,8 @@ void *radio_playback_thread(void *device_ptr)
 
         while (n >= frame_size)
         {
+            if (audio_shutdown_) break;  // exit fast on restart
+
             r = audio->write(b, ((uint8_t *)buffer_output_stereo) + total_written, n);
 
             if (r == -FFAUDIO_ESYNC) {
@@ -290,11 +300,14 @@ void *radio_playback_thread(void *device_ptr)
         }
         // printf("n = %lld total written = %u\n", n, total_written);
     }
-
-    r = audio->drain(b);
-    if (r < 0)
-        HLOGE("audio-play", "ffaudio.drain: %s", audio->error(b));
-
+    // Only drain when doing a full shutdown, not a restart
+    // audio->drain() blocks until all buffered data is played out
+    // which can hang indefinitely during a device switch
+    if (!audio_shutdown_) {
+        r = audio->drain(b);
+        if (r < 0)
+            HLOGE("audio-play", "ffaudio.drain: %s", audio->error(b));
+    }
     r = audio->stop(b);
     if (r != 0)
         HLOGE("audio-play", "ffaudio.stop: %s", audio->error(b));
@@ -319,7 +332,9 @@ finish_play:
 
     HLOGI("audio-play", "radio_playback_thread exit");
 
-    shutdown_ = true;
+    // Only trigger global shutdown if this was NOT a restart-initiated stop
+    if (!audio_shutdown_)
+        shutdown_ = true;
 
     return NULL;
 }
@@ -435,7 +450,7 @@ void *radio_capture_thread(void *device_ptr)
 
     static int resample_remainder = 0;  // Track fractional samples for accurate resampling
     
-    while (!shutdown_)
+    while (!shutdown_ && !audio_shutdown_)
     {
         r = audio->read(b, (const void **)&buffer);
         if (r < 0)
@@ -514,7 +529,9 @@ cleanup_cap:
 finish_cap:
     HLOGI("audio-cap", "radio_capture_thread exit");
 
-    shutdown_ = true;
+    // Only trigger global shutdown if this was NOT a restart-initiated stop
+    if (!audio_shutdown_)
+        shutdown_ = true;
 
     return NULL;
 }
@@ -698,16 +715,10 @@ int rx_transfer(double *buffer, size_t len)
 }
 #endif
 
-int audioio_init_internal(char *capture_dev, char *playback_dev, int audio_subsys, int capture_channel_layout, pthread_t *radio_capture,
-                          pthread_t *radio_playback)
+int audioio_init_buffers(void)
 {
-    audio_subsystem = audio_subsys;
-    if (capture_channel_layout == LEFT ||
-        capture_channel_layout == RIGHT ||
-        capture_channel_layout == STEREO)
-        capture_input_channel_layout = capture_channel_layout;
-    else
-        capture_input_channel_layout = LEFT;
+    if (s_buffers_initialized)
+        return 0;  // already created
 
 #if defined(_WIN32)
     uint8_t *buffer_cap = (uint8_t *)malloc(SIGNAL_BUFFER_SIZE);
@@ -721,6 +732,53 @@ int audioio_init_internal(char *capture_dev, char *playback_dev, int audio_subsy
 
     clear_buffer(capture_buffer);
     clear_buffer(playback_buffer);
+    s_buffers_initialized = 1;
+    return 0;
+}
+
+void audioio_deinit_buffers(void)
+{
+    if (!s_buffers_initialized)
+        return;
+
+#if defined(_WIN32)
+    free(capture_buffer->buffer);
+    circular_buf_free(capture_buffer);
+    free(playback_buffer->buffer);
+    circular_buf_free(playback_buffer);
+#else
+    circular_buf_destroy_shm(capture_buffer, SIGNAL_BUFFER_SIZE, (char *) SIGNAL_INPUT);
+    circular_buf_free_shm(capture_buffer);
+
+    circular_buf_destroy_shm(playback_buffer, SIGNAL_BUFFER_SIZE, (char *) SIGNAL_OUTPUT);
+    circular_buf_free_shm(playback_buffer);
+#endif
+    s_buffers_initialized = 0;
+}
+
+int audioio_init_internal(char *capture_dev, char *playback_dev, int audio_subsys, int capture_channel_layout, pthread_t *radio_capture,
+                          pthread_t *radio_playback)
+{
+    audio_subsystem = audio_subsys;
+    if (capture_channel_layout == LEFT ||
+        capture_channel_layout == RIGHT ||
+        capture_channel_layout == STEREO)
+        capture_input_channel_layout = capture_channel_layout;
+    else
+        capture_input_channel_layout = LEFT;
+
+    // Store device names for restart support
+    if (capture_dev)
+        strncpy(s_capture_dev, capture_dev, sizeof(s_capture_dev) - 1);
+    else
+        s_capture_dev[0] = '\0';
+    if (playback_dev)
+        strncpy(s_playback_dev, playback_dev, sizeof(s_playback_dev) - 1);
+    else
+        s_playback_dev[0] = '\0';
+
+    // Create buffers if not already created
+    audioio_init_buffers();
 
     /* Pre-initialize PulseAudio once here in the main thread before spawning
      * capture/playback threads. ffpulse_init() uses a single global context
@@ -741,9 +799,72 @@ int audioio_init_internal(char *capture_dev, char *playback_dev, int audio_subsy
     }
 #endif
 
-    pthread_create(radio_capture, NULL, radio_capture_thread, (void *) capture_dev);
-    pthread_create(radio_playback, NULL, radio_playback_thread, (void *) playback_dev);
+    pthread_create(radio_capture, NULL, radio_capture_thread, (void *) s_capture_dev);
+    pthread_create(radio_playback, NULL, radio_playback_thread, (void *) s_playback_dev);
 
+    // Keep internal copies of thread handles
+    s_radio_capture = *radio_capture;
+    s_radio_playback = *radio_playback;
+
+    return 0;
+}
+
+static void audioio_stop_threads(void)
+{
+    // Signal audio threads to exit their loops
+    audio_shutdown_ = true;
+    pthread_join(s_radio_capture, NULL);
+    pthread_join(s_radio_playback, NULL);
+    audio_shutdown_ = false;
+    HLOGI("audio-stop", "audioio threads stopped\n");
+}
+
+int audioio_restart(const char *capture_dev, const char *playback_dev,
+                    int audio_subsys, int capture_channel_layout)
+{
+    HLOGI("audio-restart", "stopping audio threads...\n");
+    audioio_stop_threads();
+
+    // Update stored parameters
+    audio_subsystem = audio_subsys;
+    if (capture_channel_layout == LEFT ||
+        capture_channel_layout == RIGHT ||
+        capture_channel_layout == STEREO)
+        capture_input_channel_layout = capture_channel_layout;
+    else
+        capture_input_channel_layout = LEFT;
+
+    if (capture_dev && capture_dev[0] != '\0')
+        strncpy(s_capture_dev, capture_dev, sizeof(s_capture_dev) - 1);
+    if (playback_dev && playback_dev[0] != '\0')
+        strncpy(s_playback_dev, playback_dev, sizeof(s_playback_dev) - 1);
+
+    // Clear buffers (NEVER destroy/recreate them)
+    clear_buffer(capture_buffer);
+    clear_buffer(playback_buffer);
+
+    HLOGI("audio-restart", "starting audio threads (capture=%s playback=%s channel=%d)...\n",
+           s_capture_dev[0] ? s_capture_dev : "default",
+           s_playback_dev[0] ? s_playback_dev : "default",
+           capture_input_channel_layout);
+
+#if defined(__linux__)
+    if (audio_subsystem == AUDIO_SUBSYSTEM_PULSE)
+    {
+        ffaudio_interface *audio = (ffaudio_interface *) &ffpulse;
+        ffaudio_init_conf aconf = {};
+        aconf.app_name = "mercury";
+        if (audio->init(&aconf) != 0)
+        {
+            // "already initialized" is expected and fine
+        }
+    }
+#endif
+
+    pthread_create(&s_radio_capture, NULL, radio_capture_thread, (void *) s_capture_dev);
+    pthread_create(&s_radio_playback, NULL, radio_playback_thread, (void *) s_playback_dev);
+
+    HLOGI("audio-restart", "audio threads restarted\n");
     return 0;
 }
 
@@ -752,17 +873,6 @@ int audioio_deinit(pthread_t *radio_capture, pthread_t *radio_playback)
     pthread_join(*radio_capture, NULL);
     pthread_join(*radio_playback, NULL);
 
-#if defined(_WIN32)
-    free(capture_buffer->buffer);
-    circular_buf_free(capture_buffer);
-    free(playback_buffer->buffer);
-    circular_buf_free(playback_buffer);
-#else
-    circular_buf_destroy_shm(capture_buffer, SIGNAL_BUFFER_SIZE, (char *) SIGNAL_INPUT);
-    circular_buf_free_shm(capture_buffer);
-
-    circular_buf_destroy_shm(playback_buffer, SIGNAL_BUFFER_SIZE, (char *) SIGNAL_OUTPUT);
-    circular_buf_free_shm(playback_buffer);
-#endif
+    audioio_deinit_buffers();
     return 0;
 }
