@@ -348,6 +348,11 @@ static void fill_modem_message(modem_message_t *msg, char keys[][64], char vals[
             else if (strcmp(vals[i], "playback_dev_list") == 0) msg->type = MSG_PLAYBACK_DEV_LIST;
             else if (strcmp(vals[i], "radio_list") == 0) msg->type = MSG_RADIO_LIST;
         }
+        else if (strcmp(keys[i], "command") == 0)
+        {
+            msg->type = MSG_COMMAND;
+            strncpy(msg->cmd.command, vals[i], sizeof(msg->cmd.command) - 1);
+        }
     }
 
     for (int i = 0; i < pairs; i++)
@@ -397,6 +402,10 @@ static void fill_modem_message(modem_message_t *msg, char keys[][64], char vals[
                 if (strcmp(keys[i], "list") == 0)
                     strncpy(msg->radio_list.list, vals[i], sizeof msg->radio_list.list - 1);
             break;
+        case MSG_COMMAND:
+            if (strcmp(keys[i], "value") == 0)
+                strncpy(msg->cmd.value, vals[i], sizeof(msg->cmd.value) - 1);
+            break;
         default:
             HLOGW(UI_LOG_TAG, "Unknown message type, raw: %s", vals[i]);
         }
@@ -437,6 +446,7 @@ void *rx_thread_main(void *arg)
         return NULL;
     }
 
+    ui_ctx_t *ctx = rxa->ctx;  // save back-pointer before freeing
     free(rxa); // no longer needed
 
     char buf[1500];
@@ -475,6 +485,35 @@ void *rx_thread_main(void *arg)
         case MSG_RADIO_LIST:
             HLOGD(UI_LOG_TAG, "RADIO_LIST selected=%s list=%s",
                   msg.radio_list.selected, msg.radio_list.list);
+            break;
+
+        case MSG_COMMAND:
+            HLOGI(UI_LOG_TAG, "CMD from UI: command=\"%s\" value=\"%s\"",
+                  msg.cmd.command, msg.cmd.value);
+            if (ctx) {
+                if (strcmp(msg.cmd.command, "set_capture_dev") == 0) {
+                    strncpy(ctx->selected_capture_dev, msg.cmd.value,
+                            sizeof(ctx->selected_capture_dev) - 1);
+                    HLOGI(UI_LOG_TAG, "Capture device set to: %s", ctx->selected_capture_dev);
+                } else if (strcmp(msg.cmd.command, "set_playback_dev") == 0) {
+                    strncpy(ctx->selected_playback_dev, msg.cmd.value,
+                            sizeof(ctx->selected_playback_dev) - 1);
+                    HLOGI(UI_LOG_TAG, "Playback device set to: %s", ctx->selected_playback_dev);
+                } else if (strcmp(msg.cmd.command, "set_input_channel") == 0) {
+                    if (strcmp(msg.cmd.value, "right") == 0)
+                        ctx->rx_input_channel = 1;  // RIGHT
+                    else if (strcmp(msg.cmd.value, "stereo") == 0)
+                        ctx->rx_input_channel = 2;  // STEREO
+                    else
+                        ctx->rx_input_channel = 0;  // LEFT (default)
+                    HLOGI(UI_LOG_TAG, "Input channel set to: %s (%d)",
+                          msg.cmd.value, ctx->rx_input_channel);
+                } else if (strcmp(msg.cmd.command, "set_radio") == 0) {
+                    HLOGI(UI_LOG_TAG, "Radio set to: %s", msg.cmd.value);
+                } else {
+                    HLOGW(UI_LOG_TAG, "Unknown UI command: %s", msg.cmd.command);
+                }
+            }
             break;
 
         default:
@@ -695,6 +734,7 @@ int ui_comm_init(ui_ctx_t *ctx, const char *ip, uint16_t tx_port, int waterfall_
         return -1;
     }
     rxa->listen_port = rx_port;
+    rxa->ctx = ctx;
     if (pthread_create(&ctx->rx_tid, NULL, rx_thread_main, rxa) != 0) {
         HLOGE(UI_LOG_TAG, "pthread_create(rx) failed: %s", strerror(errno));
         free(rxa);

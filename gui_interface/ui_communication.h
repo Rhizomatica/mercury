@@ -72,7 +72,8 @@ typedef enum {
     MSG_CONFIG,
     MSG_RADIO_LIST,
     MSG_CAPTURE_DEV_LIST,   // capture (input) device list
-    MSG_PLAYBACK_DEV_LIST   // playback (output) device list
+    MSG_PLAYBACK_DEV_LIST,  // playback (output) device list
+    MSG_COMMAND              // UI command (set_capture_dev, set_playback_dev, etc.)
 } message_type_t;
 
 // ---- Unified message ----
@@ -103,6 +104,11 @@ typedef struct {
         char selected[64];
         char list[512]; // JSON array string
     } radio_list;
+    // UI command (from mercury-qt)
+    struct {
+        char command[64];  // e.g. "set_capture_dev", "set_input_channel"
+        char value[256];   // e.g. "plughw:2,0", "right"
+    } cmd;
 } modem_message_t;
 
 // ---- TX handle ----
@@ -112,12 +118,14 @@ typedef struct {
 } udp_tx_t;
 
 // ---- RX thread args ----
+typedef struct ui_ctx ui_ctx_t;   // forward declaration
 typedef struct {
     uint16_t listen_port;
+    ui_ctx_t *ctx;            // back-pointer for applying UI commands
 } rx_args_t;
 
 // ---- Publisher thread context ----
-typedef struct {
+struct ui_ctx {
     udp_tx_t tx;
     spectrum_tx_t spectrum_tx;  // spectrum/FFT sender for waterfall display
     uint16_t rx_port;
@@ -134,7 +142,7 @@ typedef struct {
 
     // For logging rate limiting
     modem_status_t last_sent_status;
-} ui_ctx_t;
+};
 
 // ---- API ----
 int udp_tx_init(udp_tx_t *tx, const char *ip, uint16_t port);
