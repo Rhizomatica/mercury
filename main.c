@@ -568,7 +568,7 @@ int main(int argc, char *argv[])
         HLOGI("main", "Initializing UI communication (TX %s:%d | Waterfall %s)",
                ui_ip, ui_tx_port, waterfall_enabled ? "enabled" : "disabled");
         if (ui_comm_init(&ui_ctx, ui_ip, (uint16_t)ui_tx_port, waterfall_enabled ? 1 : 0,
-                         audio_system, input_dev, output_dev) != 0)
+                         audio_system, input_dev, output_dev, rx_input_channel) != 0)
         {
             // Non-fatal: mercury can run without UI
             HLOGW("main", "UI communication init failed. Running without GUI.\n");

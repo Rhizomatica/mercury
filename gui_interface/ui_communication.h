@@ -130,6 +130,7 @@ typedef struct {
     int audio_system;                // AUDIO_SUBSYSTEM_* constant
     char selected_capture_dev[64];   // currently active capture (input) device
     char selected_playback_dev[64];  // currently active playback (output) device
+    int rx_input_channel;            // LEFT=0, RIGHT=1, STEREO=2
 
     // For logging rate limiting
     modem_status_t last_sent_status;
@@ -172,6 +173,7 @@ int udp_tx_send_radio_list(udp_tx_t *tx,
                            const char *selected_radio,
                            const char *radios[], int count);
 
+int udp_tx_send_input_channel(udp_tx_t *tx, int rx_input_channel);
 
 // RX thread (listens for commands from the UI)
 void *rx_thread_main(void *arg);
@@ -188,7 +190,8 @@ void *spectrum_publisher_thread(void *arg);
 // selected_capture: currently active capture device name (may be NULL)
 // selected_playback: currently active playback device name (may be NULL)
 int ui_comm_init(ui_ctx_t *ctx, const char *ip, uint16_t tx_port, int waterfall_enabled,
-                 int audio_system, const char *selected_capture, const char *selected_playback);
+                 int audio_system, const char *selected_capture, const char *selected_playback,
+                 int rx_input_channel);
 void ui_comm_shutdown(ui_ctx_t *ctx);
 
 #endif

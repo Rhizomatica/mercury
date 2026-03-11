@@ -236,6 +236,22 @@ int udp_tx_send_radio_list(udp_tx_t *tx,
         NULL);
 }
 
+static const char *input_channel_str(int ch) {
+    switch (ch) {
+        case 1:  return "right";
+        case 2:  return "stereo";
+        default: return "left";
+    }
+}
+
+int udp_tx_send_input_channel(udp_tx_t *tx, int rx_input_channel) {
+    return udp_tx_send_json_pairs(tx,
+        "type", "input_channel",
+        "selected", input_channel_str(rx_input_channel),
+        "list", "[\"left\",\"right\",\"stereo\"]",
+        NULL);
+}
+
 // ---------------- RX ----------------
 static void parse_json(const char *json, char keys[][64], char vals[][1024], int *count)
 {
@@ -587,6 +603,13 @@ void *ui_publisher_thread(void *arg)
         }
         soundcard_cycle++;
 
+        // --- Send capture input channel setting to UI ---
+        // Sent together with device lists (same interval)
+        if ((soundcard_cycle - 1) % SOUNDCARD_SEND_INTERVAL == 0)
+        {
+            udp_tx_send_input_channel(tx, ctx->rx_input_channel);
+        }
+
         hermes_usleep(UI_PUBLISH_INTERVAL_US);
     }
 
@@ -625,12 +648,14 @@ void *spectrum_publisher_thread(void *arg)
 // ---------------- HIGH-LEVEL INIT / SHUTDOWN ----------------
 
 int ui_comm_init(ui_ctx_t *ctx, const char *ip, uint16_t tx_port, int waterfall_enabled,
-                 int audio_system, const char *selected_capture, const char *selected_playback)
+                 int audio_system, const char *selected_capture, const char *selected_playback,
+                 int rx_input_channel)
 {
     memset(ctx, 0, sizeof(*ctx));
 
     ctx->waterfall_enabled = waterfall_enabled;
     ctx->audio_system = audio_system;
+    ctx->rx_input_channel = rx_input_channel;
     if (selected_capture)
         strncpy(ctx->selected_capture_dev, selected_capture, sizeof(ctx->selected_capture_dev) - 1);
     else
@@ -768,6 +793,11 @@ int main(int argc, char *argv[]) {
         if (counter % 5 == 0) {
             const char *radios[] = { "Radio A", "Radio B", "Radio C" };
             udp_tx_send_radio_list(&tx, "Radio B", radios, 3);
+        }
+
+        // Occasionally send input channel
+        if (counter % 3 == 0) {
+            udp_tx_send_input_channel(&tx, 0); // LEFT
         }
 
         counter++;
