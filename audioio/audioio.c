@@ -519,7 +519,8 @@ finish_cap:
     return NULL;
 }
 
-int get_soundcard_list(int audio_system, int mode, char names[][64], int max_count)
+int get_soundcard_list(int audio_system, int mode,
+                       char ids[][64], char dev_names[][64], int max_count)
 {
     ffaudio_interface *audio = NULL;
     int count = 0;
@@ -569,10 +570,18 @@ int get_soundcard_list(int audio_system, int mode, char names[][64], int max_cou
         if (r != 0)
             break;
         const char *id = audio->dev_info(d, FFAUDIO_DEV_ID);
+        const char *name = audio->dev_info(d, FFAUDIO_DEV_NAME);
         if (id && count < max_count)
         {
-            strncpy(names[count], id, 63);
-            names[count][63] = '\0';
+            strncpy(ids[count], id, 63);
+            ids[count][63] = '\0';
+            if (name) {
+                strncpy(dev_names[count], name, 63);
+                dev_names[count][63] = '\0';
+            } else {
+                strncpy(dev_names[count], id, 63);
+                dev_names[count][63] = '\0';
+            }
             count++;
         }
     }

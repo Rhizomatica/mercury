@@ -158,17 +158,15 @@ int udp_tx_send_config(udp_tx_t *tx,
                        const char *aes_key,
                        int encryption_enabled);
 
-int udp_tx_send_soundcard_list(udp_tx_t *tx,
-                               const char *selected_soundcard,
-                               const char *soundcards[], int count);
-
 int udp_tx_send_capture_dev_list(udp_tx_t *tx,
                                  const char *selected,
-                                 const char *devices[], int count);
+                                 const char *ids[], const char *names[],
+                                 int count);
 
 int udp_tx_send_playback_dev_list(udp_tx_t *tx,
                                   const char *selected,
-                                  const char *devices[], int count);
+                                  const char *ids[], const char *names[],
+                                  int count);
 
 int udp_tx_send_radio_list(udp_tx_t *tx,
                            const char *selected_radio,

@@ -59,7 +59,8 @@
 #include "../modem/freedv/modem_stats.h"
 #include "../modem/modem.h"
 
-extern int get_soundcard_list(int audio_system, int mode, char names[][64], int max_count);
+extern int get_soundcard_list(int audio_system, int mode,
+                              char ids[][64], char dev_names[][64], int max_count);
 
 // global shutdown flag from main.c
 extern volatile bool shutdown_;
@@ -111,7 +112,7 @@ void udp_tx_close(udp_tx_t *tx)
 
 int udp_tx_send_json_pairs(udp_tx_t *tx, ...)
 {
-    char buf[1500];
+    char buf[8192];
     char tmp[512];
     buf[0] = '\0';
 
@@ -180,16 +181,19 @@ int udp_tx_send_status(udp_tx_t *tx,
 
 static int udp_tx_send_dev_list(udp_tx_t *tx, const char *type_str,
                                 const char *selected,
-                                const char *devices[], int count) {
-    char buf[1500];
-    snprintf(buf, sizeof(buf), "[");
-    for (int i = 0; i < count; i++) {
-        strcat(buf, "\"");
-        strcat(buf, devices[i]);
-        strcat(buf, "\"");
-        if (i < count - 1) strcat(buf, ",");
+                                const char *ids[], const char *names[],
+                                int count) {
+    // Build JSON array of objects: [{"name":"...","id":"..."},...]
+    char buf[4096];
+    int pos = 0;
+    pos += snprintf(buf + pos, sizeof(buf) - pos, "[");
+    for (int i = 0; i < count && pos < (int)sizeof(buf) - 64; i++) {
+        if (i > 0) pos += snprintf(buf + pos, sizeof(buf) - pos, ",");
+        pos += snprintf(buf + pos, sizeof(buf) - pos,
+                        "{\"name\":\"%s\",\"id\":\"%s\"}",
+                        names[i], ids[i]);
     }
-    strcat(buf, "]");
+    snprintf(buf + pos, sizeof(buf) - pos, "]");
 
     return udp_tx_send_json_pairs(tx,
         "type", type_str,
@@ -200,14 +204,16 @@ static int udp_tx_send_dev_list(udp_tx_t *tx, const char *type_str,
 
 int udp_tx_send_capture_dev_list(udp_tx_t *tx,
                                  const char *selected,
-                                 const char *devices[], int count) {
-    return udp_tx_send_dev_list(tx, "capture_dev_list", selected, devices, count);
+                                 const char *ids[], const char *names[],
+                                 int count) {
+    return udp_tx_send_dev_list(tx, "capture_dev_list", selected, ids, names, count);
 }
 
 int udp_tx_send_playback_dev_list(udp_tx_t *tx,
                                   const char *selected,
-                                  const char *devices[], int count) {
-    return udp_tx_send_dev_list(tx, "playback_dev_list", selected, devices, count);
+                                  const char *ids[], const char *names[],
+                                  int count) {
+    return udp_tx_send_dev_list(tx, "playback_dev_list", selected, ids, names, count);
 }
 
 int udp_tx_send_radio_list(udp_tx_t *tx,
@@ -552,25 +558,31 @@ void *ui_publisher_thread(void *arg)
         if (soundcard_cycle % SOUNDCARD_SEND_INTERVAL == 0)
         {
             // Capture (input) devices - mode 1 = FFAUDIO_DEV_CAPTURE
-            char cap_names[32][64];
-            int cap_count = get_soundcard_list(ctx->audio_system, 1, cap_names, 32);
+            char cap_ids[32][64], cap_names[32][64];
+            int cap_count = get_soundcard_list(ctx->audio_system, 1, cap_ids, cap_names, 32);
             if (cap_count > 0)
             {
-                const char *cap_ptrs[32];
-                for (int i = 0; i < cap_count; i++)
-                    cap_ptrs[i] = cap_names[i];
-                udp_tx_send_capture_dev_list(tx, ctx->selected_capture_dev, cap_ptrs, cap_count);
+                const char *id_ptrs[32], *name_ptrs[32];
+                for (int i = 0; i < cap_count; i++) {
+                    id_ptrs[i] = cap_ids[i];
+                    name_ptrs[i] = cap_names[i];
+                }
+                udp_tx_send_capture_dev_list(tx, ctx->selected_capture_dev,
+                                             id_ptrs, name_ptrs, cap_count);
             }
 
             // Playback (output) devices - mode 0 = FFAUDIO_DEV_PLAYBACK
-            char pb_names[32][64];
-            int pb_count = get_soundcard_list(ctx->audio_system, 0, pb_names, 32);
+            char pb_ids[32][64], pb_names[32][64];
+            int pb_count = get_soundcard_list(ctx->audio_system, 0, pb_ids, pb_names, 32);
             if (pb_count > 0)
             {
-                const char *pb_ptrs[32];
-                for (int i = 0; i < pb_count; i++)
-                    pb_ptrs[i] = pb_names[i];
-                udp_tx_send_playback_dev_list(tx, ctx->selected_playback_dev, pb_ptrs, pb_count);
+                const char *id_ptrs[32], *name_ptrs[32];
+                for (int i = 0; i < pb_count; i++) {
+                    id_ptrs[i] = pb_ids[i];
+                    name_ptrs[i] = pb_names[i];
+                }
+                udp_tx_send_playback_dev_list(tx, ctx->selected_playback_dev,
+                                              id_ptrs, name_ptrs, pb_count);
             }
         }
         soundcard_cycle++;
@@ -744,10 +756,12 @@ int main(int argc, char *argv[]) {
 
         // Occasionally send capture & playback device lists
         if (counter % 3 == 0) {
-            const char *capture_devs[] = { "hw:0,0", "hw:1,0", "hw:2,0" };
-            udp_tx_send_capture_dev_list(&tx, "hw:1,0", capture_devs, 3);
-            const char *playback_devs[] = { "hw:0,0", "hw:1,0" };
-            udp_tx_send_playback_dev_list(&tx, "hw:0,0", playback_devs, 2);
+            const char *cap_ids[] = { "hw:0,0", "hw:1,0", "plughw:1,0" };
+            const char *cap_names[] = { "HDA Intel PCM", "Loopback PCM", "Loopback Loopback PCM" };
+            udp_tx_send_capture_dev_list(&tx, "hw:1,0", cap_ids, cap_names, 3);
+            const char *pb_ids[] = { "hw:0,0", "hw:1,0" };
+            const char *pb_names[] = { "HDA Intel PCM", "Loopback PCM" };
+            udp_tx_send_playback_dev_list(&tx, "hw:0,0", pb_ids, pb_names, 2);
         }
 
         // Occasionally send a radio list
