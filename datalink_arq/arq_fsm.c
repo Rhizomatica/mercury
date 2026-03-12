@@ -711,6 +711,14 @@ static void fsm_disconnected(arq_session_t *sess, const arq_event_t *ev)
     }
 }
 
+static void arm_connect_confirm(arq_session_t *sess)
+{
+    sess->pending_connect_confirm = true;
+    dflow_enter(sess, ARQ_DFLOW_ACK_TX,
+                hermes_uptime_ms() + ARQ_ISS_POST_ACK_GUARD_MS,
+                ARQ_EV_TIMER_ACK);
+}
+
 static void fsm_listening(arq_session_t *sess, const arq_event_t *ev)
 {
     switch (ev->id)
@@ -826,14 +834,12 @@ static void fsm_calling(arq_session_t *sess, const arq_event_t *ev)
              * first DATA or ACK.  If the app has no payload queued yet, send
              * an initial ACK after the post-ACCEPT guard so the peer does not
              * sit in ACCEPTING retrying ACCEPT forever. */
-            sess->pending_connect_confirm = !has_tx_backlog;
+            sess->pending_connect_confirm = false;
             sess->need_initial_guard = has_tx_backlog;
             sess_enter(sess, ARQ_CONN_CONNECTED, UINT64_MAX, ARQ_EV_TIMER_RETRY);
-            if (sess->pending_connect_confirm)
+            if (!has_tx_backlog)
             {
-                dflow_enter(sess, ARQ_DFLOW_ACK_TX,
-                            hermes_uptime_ms() + ARQ_ISS_POST_ACK_GUARD_MS,
-                            ARQ_EV_TIMER_ACK);
+                arm_connect_confirm(sess);
             }
             else
             {
@@ -1039,6 +1045,20 @@ static void fsm_connected(arq_session_t *sess, const arq_event_t *ev)
         if (g_timing) arq_timing_record_disconnect(g_timing, "rx_disconnect");
         sess_enter(sess, ARQ_CONN_DISCONNECTED, UINT64_MAX, ARQ_EV_TIMER_RETRY);
         return;
+
+    case ARQ_EV_RX_ACCEPT:
+        if (sess->role == ARQ_ROLE_CALLER &&
+            ev->session_id == sess->session_id &&
+            sess->dflow_state == ARQ_DFLOW_IDLE_ISS &&
+            !sess->pending_connect_confirm)
+        {
+            /* The callee is retrying ACCEPT because it did not decode our
+             * earlier post-ACCEPT confirmation. Re-send the confirmation ACK
+             * so the peer can leave ACCEPTING without restarting the session. */
+            arm_connect_confirm(sess);
+            return;
+        }
+        break;
 
     case ARQ_EV_TIMER_KEEPALIVE:
         send_ctrl_frame(sess, ARQ_SUBTYPE_KEEPALIVE);

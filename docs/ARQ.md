@@ -210,6 +210,8 @@ If the caller receives `ACCEPT` before any application payload is queued, it
 sends an empty `ACK` after the post-`ACCEPT` guard to complete the handshake.
 Without that confirmation, the callee remains in `ACCEPTING` and keeps retrying
 `ACCEPT` until its window expires.
+If a duplicate `ACCEPT` arrives for the active session while the caller is
+already connected and idle, the caller re-sends that confirmation `ACK`.
 
 ### Level 2 — Data-Flow Sub-FSM
 
