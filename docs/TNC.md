@@ -224,6 +224,8 @@ These are sent on the **control port** without a preceding command.
 
 | Response                                    | Meaning                                      |
 |---------------------------------------------|----------------------------------------------|
+| `PENDING\r`                                 | Incoming connect request detected            |
+| `CANCELPENDING\r`                           | Pending incoming connect did not complete    |
 | `CONNECTED <sourcecall> <destcall> <bandwidth>\r` | ARQ session established                |
 | `DISCONNECTED\r`                            | ARQ session ended                            |
 | `PTT ON\r`                                  | Radio transmitter keyed                      |
@@ -232,6 +234,17 @@ These are sent on the **control port** without a preceding command.
 | `SN <value>\r`                              | SNR update                                   |
 | `BITRATE (<level>) <bps> BPS\r`            | Throughput update                            |
 | `IAMALIVE\r`                                | Heartbeat (sent periodically while idle)     |
+
+### PENDING
+
+Sent when Mercury detects an incoming ARQ connect request addressed to the
+local station. This is an early warning so VARA-compatible host applications
+can suspend scanning or other idle activity while the link setup is in progress.
+
+### CANCELPENDING
+
+Sent when a previously pending incoming connect request does not complete and
+Mercury returns to the idle/listening state.
 
 ### CONNECTED
 

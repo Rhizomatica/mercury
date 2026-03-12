@@ -743,6 +743,8 @@ static void fsm_listening(arq_session_t *sess, const arq_event_t *ev)
         sess_enter(sess, ARQ_CONN_ACCEPTING,
                    hermes_uptime_ms() + ARQ_CHANNEL_GUARD_MS,
                    ARQ_EV_TIMER_RETRY);
+        if (g_cbs.notify_pending)
+            g_cbs.notify_pending(ev->remote_call);
         break;
 
     case ARQ_EV_RX_ACCEPT:
@@ -935,6 +937,8 @@ static void fsm_accepting(arq_session_t *sess, const arq_event_t *ev)
         }
         else
         {
+            if (g_cbs.notify_cancelpending)
+                g_cbs.notify_cancelpending();
             sess_enter(sess, ARQ_CONN_LISTENING, UINT64_MAX, ARQ_EV_TIMER_RETRY);
         }
         break;
@@ -945,11 +949,15 @@ static void fsm_accepting(arq_session_t *sess, const arq_event_t *ev)
          * given up its CALLING attempt already (its retries exhausted), so
          * continuing to send ACCEPTs is pointless.  Transition through
          * DISCONNECTED → CALLING so the new session gets a fresh ID. */
+        if (g_cbs.notify_cancelpending)
+            g_cbs.notify_cancelpending();
         sess_enter(sess, ARQ_CONN_DISCONNECTED, UINT64_MAX, ARQ_EV_TIMER_RETRY);
         fsm_disconnected(sess, ev);
         break;
 
     case ARQ_EV_APP_DISCONNECT:
+        if (g_cbs.notify_cancelpending)
+            g_cbs.notify_cancelpending();
         if (g_cbs.notify_disconnected) g_cbs.notify_disconnected(false);
         sess_enter(sess, ARQ_CONN_DISCONNECTED, UINT64_MAX, ARQ_EV_TIMER_RETRY);
         break;

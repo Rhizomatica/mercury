@@ -970,6 +970,18 @@ void tnc_send_connected()
         HLOGW("tcp-ctl", "Error queuing connected message");
 }
 
+void tnc_send_pending()
+{
+    if (tnc_queue_line("PENDING\r") < 0)
+        HLOGW("tcp-ctl", "Error queuing pending message");
+}
+
+void tnc_send_cancelpending()
+{
+    if (tnc_queue_line("CANCELPENDING\r") < 0)
+        HLOGW("tcp-ctl", "Error queuing cancelpending message");
+}
+
 void tnc_send_disconnected()
 {
     char buffer[128];

@@ -50,6 +50,8 @@ extern cbuf_handle_t data_tx_buffer_arq;
 extern cbuf_handle_t data_tx_buffer_arq_control;
 extern cbuf_handle_t data_rx_buffer_arq;
 
+extern void tnc_send_pending(void);
+extern void tnc_send_cancelpending(void);
 extern void tnc_send_connected(void);
 extern void tnc_send_disconnected(void);
 extern void tnc_send_buffer(uint32_t bytes);
@@ -170,6 +172,18 @@ static void cb_notify_connected(const char *remote_call)
     clear_buffer(data_rx_buffer_arq);
     tnc_send_connected();
     HLOGI(LOG_COMP, "Connected to %s", remote_call);
+}
+
+static void cb_notify_pending(const char *remote_call)
+{
+    tnc_send_pending();
+    HLOGI(LOG_COMP, "Incoming connection from %s (pending)", remote_call);
+}
+
+static void cb_notify_cancelpending(void)
+{
+    tnc_send_cancelpending();
+    HLOGI(LOG_COMP, "Incoming connection cancelled");
 }
 
 static void cb_notify_disconnected(bool to_no_client)
@@ -578,6 +592,8 @@ int arq_init(size_t frame_size, int mode)
     static const arq_fsm_callbacks_t cbs = {
         .send_tx_frame       = cb_send_tx_frame,
         .notify_connected    = cb_notify_connected,
+        .notify_pending      = cb_notify_pending,
+        .notify_cancelpending = cb_notify_cancelpending,
         .notify_disconnected = cb_notify_disconnected,
         .deliver_rx_data     = cb_deliver_rx_data,
         .tx_backlog          = cb_tx_backlog,

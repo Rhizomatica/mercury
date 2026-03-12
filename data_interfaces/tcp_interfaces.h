@@ -48,6 +48,8 @@ void *tcp_server_thread(void *port_ptr);
 // TNC / radio functions
 void ptt_on();
 void ptt_off();
+void tnc_send_pending();
+void tnc_send_cancelpending();
 void tnc_send_connected();
 void tnc_send_disconnected();
 void tnc_send_buffer(uint32_t bytes);
