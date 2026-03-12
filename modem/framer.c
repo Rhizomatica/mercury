@@ -19,36 +19,30 @@
  */
 
 #include <stdio.h>
-
-#include "crc6.h"
 #include "framer.h"
 
 /*
- * Framer byte layout (v3):
+ * Framer byte layout (v4):
  *   bits [7:5] = packet_type  (3 bits, PACKET_TYPE_* values)
- *   bits [4:0] = CRC5         (polynomial x^5+x^4+x^2+1 = 0x15, init=1)
+ *   bits [4:0] = extension    (packet-type-specific metadata)
  */
 
-int8_t parse_frame_header(uint8_t *data_frame, uint32_t frame_size)
+int8_t parse_frame_header(const uint8_t *data_frame, uint32_t frame_size, uint8_t *extension_out)
 {
-    if (frame_size < 2)
+    if (!data_frame || frame_size < 1)
         return -1;
 
-    uint8_t packet_type = (data_frame[0] >> PACKET_TYPE_SHIFT) & PACKET_TYPE_MASK;
-    uint8_t stored_crc  = data_frame[0] & CRC_MASK;
-    uint8_t calc_crc    = crc5_0X15(1, data_frame + HEADER_SIZE, (int)(frame_size - HEADER_SIZE));
+    if (extension_out)
+        *extension_out = frame_header_extension(data_frame[0]);
 
-    if (stored_crc != calc_crc)
-    {
-        printf("Packet received has CRC5 error!\n");
-        return -1;
-    }
-
-    return (int8_t)packet_type;
+    return (int8_t)frame_header_packet_type(data_frame[0]);
 }
 
-void write_frame_header(uint8_t *data, int packet_type, size_t frame_size)
+void write_frame_header(uint8_t *data, int packet_type, uint8_t extension)
 {
-    uint8_t crc = crc5_0X15(1, data + HEADER_SIZE, (int)(frame_size - HEADER_SIZE));
-    data[0] = (uint8_t)(((packet_type & PACKET_TYPE_MASK) << PACKET_TYPE_SHIFT) | (crc & CRC_MASK));
+    if (!data)
+        return;
+
+    data[0] = (uint8_t)(((packet_type & PACKET_TYPE_MASK) << PACKET_TYPE_SHIFT) |
+                        (extension & FRAME_EXT_MASK));
 }

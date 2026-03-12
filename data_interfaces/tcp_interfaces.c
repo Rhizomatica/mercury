@@ -973,6 +973,18 @@ void tnc_send_connected()
         HLOGW("tcp-ctl", "Error queuing connected message");
 }
 
+void tnc_send_cqframe(const char *source_call, int bw_hz)
+{
+    char buffer[128];
+
+    if (!source_call || source_call[0] == '\0')
+        return;
+
+    sprintf(buffer, "CQFRAME %s %d\r", source_call, bw_hz);
+    if (tnc_queue_line(buffer) < 0)
+        HLOGW("tcp-ctl", "Error queuing CQFRAME message");
+}
+
 void tnc_send_pending()
 {
     if (tnc_queue_line("PENDING\r") < 0)

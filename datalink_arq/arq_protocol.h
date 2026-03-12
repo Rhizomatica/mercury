@@ -18,7 +18,7 @@
  * Protocol version (informational — not carried in wire frames)
  * ====================================================================== */
 
-#define ARQ_PROTO_VERSION  3   /* v3: 8-byte header, no proto_ver field on wire */
+#define ARQ_PROTO_VERSION  4   /* v4: framer extension field, no proto_ver field on wire */
 
 /* ======================================================================
  * Frame header layout (v3, 8 bytes total)
@@ -27,9 +27,9 @@
  * ack_delay reduced to 1 byte (10ms units, max 2.55s — covers all real delays).
  * HAS_SNR bit removed — snr_raw==0 already signals "unknown".
  *
- *  Byte 0: framer byte — set/validated by write_frame_header()/parse_frame_header()
+ *  Byte 0: framer byte — set/read by write_frame_header()/parse_frame_header()
  *            bits [7:5] = packet_type (3 bits: PACKET_TYPE_ARQ_CONTROL=0, ARQ_DATA=1, ARQ_CALL=2)
- *            bits [4:0] = CRC5 of bytes [1..frame_size-1]
+ *            bits [4:0] = extension field (packet-type-specific)
  *  Byte 1: subtype      — arq_subtype_t
  *  Byte 2: flags        — bit7=TURN_REQ, bit6=HAS_DATA, bits[5:0]=spare
  *  Byte 3: session_id   — random byte chosen by caller at connect time
@@ -58,7 +58,7 @@
 /* CONNECT frames (CALL/ACCEPT) compact layout — 14 bytes, DATAC13 only.
  * Uses PACKET_TYPE_ARQ_CALL in the framer byte.
  *
- *  Byte 0: framer byte (PACKET_TYPE_ARQ_CALL | CRC5, set by write_frame_header)
+ *  Byte 0: framer byte (PACKET_TYPE_ARQ_CALL | BW token, set by write_frame_header)
  *  Byte 1: connect_meta  = (session_id & 0x7F) | (is_accept ? 0x80 : 0x00)
  *  Bytes 2-3:  CRC16-CCITT of DST callsign (little-endian) — for local validation
  *  Bytes 4-13: arithmetic_encode(SRC callsign only) — 10 bytes, fits callsigns up to ~14 chars
@@ -72,6 +72,21 @@
 #define ARQ_CONNECT_MAX_ENCODED       (ARQ_CONTROL_FRAME_SIZE - ARQ_CONNECT_META_SIZE)
 #define ARQ_CONNECT_DST_CRC_SIZE      2   /* CRC16-CCITT of DST at bytes [2..3], little-endian */
 #define ARQ_CONNECT_SRC_MAX_ENCODED   (ARQ_CONNECT_MAX_ENCODED - ARQ_CONNECT_DST_CRC_SIZE) /* 10 */
+
+/* Compact CQ frame layout — 14 bytes, DATAC13 only.
+ * Uses PACKET_TYPE_ARQ_CQ in the framer byte.
+ *
+ *  Byte 0: framer byte (PACKET_TYPE_ARQ_CQ | BW token)
+ *  Bytes 1-13: arithmetic_encode(SRC callsign only)
+ */
+#define ARQ_CQ_PAYLOAD_IDX            1
+#define ARQ_CQ_SRC_MAX_ENCODED        (ARQ_CONTROL_FRAME_SIZE - ARQ_CQ_PAYLOAD_IDX) /* 13 */
+
+/* BW token values carried in the framer byte extension field for ARQ_CALL/ARQ_CQ. */
+#define ARQ_BW_TOKEN_NONE             0
+#define ARQ_BW_TOKEN_500              1
+#define ARQ_BW_TOKEN_2300             2
+#define ARQ_BW_TOKEN_2750             3
 
 /* ======================================================================
  * Flags byte (byte 2)
@@ -112,6 +127,7 @@ typedef enum
 typedef struct
 {
     uint8_t  packet_type;   /* PACKET_TYPE_ARQ_CONTROL or _DATA   (from framer byte) */
+    uint8_t  frame_ext;     /* low 5 bits of framer byte                          */
     uint8_t  subtype;       /* arq_subtype_t                                         */
     uint8_t  flags;         /* ARQ_FLAG_* bitmask                                    */
     uint8_t  session_id;
@@ -215,8 +231,9 @@ extern _Atomic int arq_disconnect_retry_slots;
 /* In DATA frames the ack_delay byte is repurposed to carry payload_valid:
  *   0               = full frame (all user bytes are valid data)
  *   1 .. user_bytes = only this many leading bytes are valid; rest is padding
- * This lets partial last-frames be transmitted with correct CRC5 (the slot is
- * always filled to the full modem payload, CRC5 covers all bytes). */
+ * This lets partial last-frames be transmitted while still filling the full
+ * modem slot; the receiver uses `data_len` to distinguish valid payload bytes
+ * from trailing padding. */
 #define ARQ_DATA_LEN_FULL             0
 
 /* Mode table (defined in arq_protocol.c) */
@@ -238,6 +255,18 @@ int arq_protocol_encode_hdr(uint8_t *buf, size_t buf_len, const arq_frame_hdr_t 
  * @return 0 on success, -1 if buf too short.
  */
 int arq_protocol_decode_hdr(const uint8_t *buf, size_t buf_len, arq_frame_hdr_t *hdr);
+
+/**
+ * @brief Map a configured bandwidth in Hz to an on-air BW token.
+ * @return ARQ_BW_TOKEN_* value, or ARQ_BW_TOKEN_NONE if unsupported.
+ */
+uint8_t arq_protocol_bw_token_from_hz(int bw_hz);
+
+/**
+ * @brief Map an on-air BW token back to Hz.
+ * @return 500/2300/2750 on success, or 0 if the token is invalid.
+ */
+int arq_protocol_bw_hz_from_token(uint8_t bw_token);
 
 /**
  * @brief Encode a floating-point SNR (dB) into the snr_raw wire byte.
@@ -280,7 +309,7 @@ uint16_t arq_protocol_callsign_crc16(const char *callsign);
  * frame (framer byte + header/payload) and returns the total byte count,
  * or -1 if buf_len < required size or arguments are invalid.
  *
- * The framer byte (byte 0, CRC5 + packet_type) is written by
+ * The framer byte (byte 0, extension field + packet_type) is written by
  * write_frame_header() inside each builder.
  *
  * For control frames, frame_size = ARQ_CONTROL_FRAME_SIZE (14 bytes).
@@ -373,8 +402,9 @@ int arq_protocol_build_data(uint8_t *buf, size_t buf_len,
  * @return Total frame bytes (ARQ_CONTROL_FRAME_SIZE = 14) on success, -1 on error.
  */
 int arq_protocol_build_call(uint8_t *buf, size_t buf_len,
-                             uint8_t session_id,
-                             const char *src, const char *dst);
+                              uint8_t session_id,
+                              const char *src, const char *dst,
+                              int bw_hz);
 
 /**
  * Build an ACCEPT frame.
@@ -385,8 +415,9 @@ int arq_protocol_build_call(uint8_t *buf, size_t buf_len,
  * @param dst  Remote callsign.
  */
 int arq_protocol_build_accept(uint8_t *buf, size_t buf_len,
-                               uint8_t session_id,
-                               const char *src, const char *dst);
+                                uint8_t session_id,
+                                const char *src, const char *dst,
+                                int bw_hz);
 
 /**
  * Parse a CALL frame; extract callsigns.
@@ -398,14 +429,28 @@ int arq_protocol_build_accept(uint8_t *buf, size_t buf_len,
  * @return 0 on success, -1 on parse error.
  */
 int arq_protocol_parse_call(const uint8_t *buf, size_t buf_len,
-                             uint8_t *session_id_out,
-                             char *src_out, char *dst_out);
+                              uint8_t *session_id_out,
+                              char *src_out, char *dst_out,
+                              int *bw_hz_out);
 
 /**
  * Parse an ACCEPT frame; same layout as CALL.
  */
 int arq_protocol_parse_accept(const uint8_t *buf, size_t buf_len,
-                               uint8_t *session_id_out,
-                               char *src_out, char *dst_out);
+                                uint8_t *session_id_out,
+                                char *src_out, char *dst_out,
+                                int *bw_hz_out);
+
+/**
+ * Build a compact DATAC13 CQ frame carrying source callsign and BW token.
+ */
+int arq_protocol_build_cq(uint8_t *buf, size_t buf_len,
+                           const char *src, int bw_hz);
+
+/**
+ * Parse a compact DATAC13 CQ frame.
+ */
+int arq_protocol_parse_cq(const uint8_t *buf, size_t buf_len,
+                           char *src_out, int *bw_hz_out);
 
 #endif /* ARQ_PROTOCOL_H_ */

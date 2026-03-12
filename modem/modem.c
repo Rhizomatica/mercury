@@ -923,13 +923,17 @@ static void process_received_frame(const uint8_t *data,
     tnc_send_sn(snr_est);
     tnc_send_bitrate(bitrate_level_from_payload_mode(payload_mode), bitrate_bps);
 
-    frame_type = parse_frame_header((uint8_t *)data, payload_nbytes);
+    frame_type = parse_frame_header((const uint8_t *)data, payload_nbytes, NULL);
 
     switch (frame_type)
     {
     case PACKET_TYPE_ARQ_CALL:
         if (arq_policy_ready)
             arq_handle_incoming_connect_frame((uint8_t *)data, payload_nbytes);
+        break;
+    case PACKET_TYPE_ARQ_CQ:
+        if (arq_policy_ready)
+            arq_handle_incoming_cq_frame((uint8_t *)data, payload_nbytes);
         break;
     case PACKET_TYPE_ARQ_CONTROL:
     case PACKET_TYPE_ARQ_DATA:

@@ -91,7 +91,7 @@ int arq_protocol_encode_hdr(uint8_t *buf, size_t buf_len, const arq_frame_hdr_t 
     if (!buf || !hdr || buf_len < ARQ_FRAME_HDR_SIZE)
         return -1;
 
-    /* byte 0 (framer: CRC6 + packet_type) is set by write_frame_header() */
+    /* byte 0 (framer: extension + packet_type) is set by write_frame_header() */
     buf[ARQ_HDR_SUBTYPE_IDX]  = hdr->subtype;
     buf[ARQ_HDR_FLAGS_IDX]    = hdr->flags;
     buf[ARQ_HDR_SESSION_IDX]  = hdr->session_id;
@@ -107,7 +107,8 @@ int arq_protocol_decode_hdr(const uint8_t *buf, size_t buf_len, arq_frame_hdr_t 
     if (!buf || !hdr || buf_len < ARQ_FRAME_HDR_SIZE)
         return -1;
 
-    hdr->packet_type   = (buf[0] >> PACKET_TYPE_SHIFT) & PACKET_TYPE_MASK;
+    hdr->packet_type   = frame_header_packet_type(buf[0]);
+    hdr->frame_ext     = frame_header_extension(buf[0]);
     hdr->subtype       = buf[ARQ_HDR_SUBTYPE_IDX];
     hdr->flags         = buf[ARQ_HDR_FLAGS_IDX];
     hdr->session_id    = buf[ARQ_HDR_SESSION_IDX];
@@ -116,6 +117,36 @@ int arq_protocol_decode_hdr(const uint8_t *buf, size_t buf_len, arq_frame_hdr_t 
     hdr->snr_raw       = buf[ARQ_HDR_SNR_IDX];
     hdr->ack_delay_raw = buf[ARQ_HDR_DELAY_IDX];
     return 0;
+}
+
+uint8_t arq_protocol_bw_token_from_hz(int bw_hz)
+{
+    switch (bw_hz)
+    {
+    case ARQ_BANDWIDTH_NARROW_HZ:
+        return ARQ_BW_TOKEN_500;
+    case ARQ_BANDWIDTH_FULL_HZ:
+        return ARQ_BW_TOKEN_2300;
+    case ARQ_BANDWIDTH_TACTICAL_HZ:
+        return ARQ_BW_TOKEN_2750;
+    default:
+        return ARQ_BW_TOKEN_NONE;
+    }
+}
+
+int arq_protocol_bw_hz_from_token(uint8_t bw_token)
+{
+    switch (bw_token)
+    {
+    case ARQ_BW_TOKEN_500:
+        return ARQ_BANDWIDTH_NARROW_HZ;
+    case ARQ_BW_TOKEN_2300:
+        return ARQ_BANDWIDTH_FULL_HZ;
+    case ARQ_BW_TOKEN_2750:
+        return ARQ_BANDWIDTH_TACTICAL_HZ;
+    default:
+        return 0;
+    }
 }
 
 /* ======================================================================
@@ -188,7 +219,7 @@ static int build_ctrl(uint8_t *buf, size_t buf_len,
     buf[ARQ_HDR_DELAY_IDX]    = ack_delay_raw;
     if (payload && payload_len > 0)
         memcpy(buf + ARQ_FRAME_HDR_SIZE, payload, payload_len);
-    write_frame_header(buf, PACKET_TYPE_ARQ_CONTROL, total);
+    write_frame_header(buf, PACKET_TYPE_ARQ_CONTROL, 0);
     return (int)total;
 }
 
@@ -294,7 +325,7 @@ int arq_protocol_build_data(uint8_t *buf, size_t buf_len,
     buf[ARQ_HDR_SNR_IDX]      = snr_raw;
     buf[ARQ_HDR_DELAY_IDX]    = payload_valid;   /* 0=full, else=valid bytes */
     memcpy(buf + ARQ_FRAME_HDR_SIZE, payload, payload_len);
-    write_frame_header(buf, PACKET_TYPE_ARQ_DATA, total);
+    write_frame_header(buf, PACKET_TYPE_ARQ_DATA, 0);
     return (int)total;
 }
 
@@ -379,14 +410,61 @@ static int decode_callsign_payload(const uint8_t *in, size_t in_len,
     return 0;
 }
 
+static int encode_callsign_only_payload(const char *src, uint8_t *out, size_t out_cap)
+{
+    uint8_t tmp[4096];
+    int enc_len;
+
+    if (!src || !out || out_cap == 0)
+        return -1;
+
+    char src_upper[CALLSIGN_MAX_SIZE];
+    int n = 0;
+    for (; src[n] && n < (int)sizeof(src_upper) - 1; n++)
+    {
+        char c = src[n];
+        if (c >= 'a' && c <= 'z') c = (char)(c - ('a' - 'A'));
+        src_upper[n] = c;
+    }
+    src_upper[n] = 0;
+
+    init_model();
+    enc_len = arithmetic_encode(src_upper, tmp);
+    if (enc_len <= 0)
+        return -1;
+
+    if ((size_t)enc_len > out_cap)
+        enc_len = (int)out_cap;
+    memcpy(out, tmp, (size_t)enc_len);
+    return enc_len;
+}
+
+static int decode_callsign_only_payload(const uint8_t *in, size_t in_len, char *src_out)
+{
+    if (!in || !src_out || in_len == 0)
+        return -1;
+
+    init_model();
+    if (arithmetic_decode((uint8_t *)in, (int)in_len, src_out, CALLSIGN_MAX_SIZE) < 0)
+        return -1;
+    src_out[CALLSIGN_MAX_SIZE - 1] = 0;
+    return 0;
+}
+
 static int build_call_accept(uint8_t *buf, size_t buf_len, bool is_accept,
                               uint8_t session_id,
-                              const char *src, const char *dst)
+                              const char *src, const char *dst,
+                              int bw_hz)
 {
     uint8_t encoded[ARQ_CONNECT_MAX_ENCODED];
     int enc_len;
+    uint8_t bw_token;
 
     if (!buf || !src || !dst || buf_len < ARQ_CONTROL_FRAME_SIZE)
+        return -1;
+
+    bw_token = arq_protocol_bw_token_from_hz(bw_hz);
+    if (bw_token == ARQ_BW_TOKEN_NONE)
         return -1;
 
     enc_len = encode_callsign_payload(src, dst, encoded, sizeof(encoded));
@@ -398,30 +476,37 @@ static int build_call_accept(uint8_t *buf, size_t buf_len, bool is_accept,
         (uint8_t)((session_id & ARQ_CONNECT_SESSION_MASK) |
                   (is_accept ? ARQ_CONNECT_ACCEPT_FLAG : 0));
     memcpy(buf + ARQ_CONNECT_PAYLOAD_IDX, encoded, (size_t)enc_len);
-    write_frame_header(buf, PACKET_TYPE_ARQ_CALL, ARQ_CONTROL_FRAME_SIZE);
+    write_frame_header(buf, PACKET_TYPE_ARQ_CALL, bw_token);
     return ARQ_CONTROL_FRAME_SIZE;
 }
 
 int arq_protocol_build_call(uint8_t *buf, size_t buf_len,
                              uint8_t session_id,
-                             const char *src, const char *dst)
+                             const char *src, const char *dst,
+                             int bw_hz)
 {
-    return build_call_accept(buf, buf_len, false, session_id, src, dst);
+    return build_call_accept(buf, buf_len, false, session_id, src, dst, bw_hz);
 }
 
 int arq_protocol_build_accept(uint8_t *buf, size_t buf_len,
                                uint8_t session_id,
-                               const char *src, const char *dst)
+                               const char *src, const char *dst,
+                               int bw_hz)
 {
-    return build_call_accept(buf, buf_len, true, session_id, src, dst);
+    return build_call_accept(buf, buf_len, true, session_id, src, dst, bw_hz);
 }
 
 static int parse_call_accept(const uint8_t *buf, size_t buf_len,
-                              uint8_t *session_id_out,
-                              char *src_out, char *dst_out)
+                               uint8_t *session_id_out,
+                               char *src_out, char *dst_out,
+                               int *bw_hz_out)
 {
     if (!buf || buf_len < ARQ_CONTROL_FRAME_SIZE ||
-        !session_id_out || !src_out || !dst_out)
+        !session_id_out || !src_out || !dst_out || !bw_hz_out)
+        return -1;
+
+    *bw_hz_out = arq_protocol_bw_hz_from_token(frame_header_extension(buf[0]));
+    if (*bw_hz_out == 0)
         return -1;
 
     *session_id_out = buf[ARQ_CONNECT_SESSION_IDX] & ARQ_CONNECT_SESSION_MASK;
@@ -431,15 +516,58 @@ static int parse_call_accept(const uint8_t *buf, size_t buf_len,
 }
 
 int arq_protocol_parse_call(const uint8_t *buf, size_t buf_len,
-                             uint8_t *session_id_out,
-                             char *src_out, char *dst_out)
+                              uint8_t *session_id_out,
+                              char *src_out, char *dst_out,
+                              int *bw_hz_out)
 {
-    return parse_call_accept(buf, buf_len, session_id_out, src_out, dst_out);
+    return parse_call_accept(buf, buf_len, session_id_out, src_out, dst_out,
+                             bw_hz_out);
 }
 
 int arq_protocol_parse_accept(const uint8_t *buf, size_t buf_len,
-                               uint8_t *session_id_out,
-                               char *src_out, char *dst_out)
+                                uint8_t *session_id_out,
+                                char *src_out, char *dst_out,
+                                int *bw_hz_out)
 {
-    return parse_call_accept(buf, buf_len, session_id_out, src_out, dst_out);
+    return parse_call_accept(buf, buf_len, session_id_out, src_out, dst_out,
+                             bw_hz_out);
+}
+
+int arq_protocol_build_cq(uint8_t *buf, size_t buf_len,
+                           const char *src, int bw_hz)
+{
+    int enc_len;
+    uint8_t bw_token;
+
+    if (!buf || !src || buf_len < ARQ_CONTROL_FRAME_SIZE)
+        return -1;
+
+    bw_token = arq_protocol_bw_token_from_hz(bw_hz);
+    if (bw_token == ARQ_BW_TOKEN_NONE)
+        return -1;
+
+    memset(buf, 0, ARQ_CONTROL_FRAME_SIZE);
+    enc_len = encode_callsign_only_payload(src,
+                                           buf + ARQ_CQ_PAYLOAD_IDX,
+                                           ARQ_CQ_SRC_MAX_ENCODED);
+    if (enc_len <= 0)
+        return -1;
+
+    write_frame_header(buf, PACKET_TYPE_ARQ_CQ, bw_token);
+    return ARQ_CONTROL_FRAME_SIZE;
+}
+
+int arq_protocol_parse_cq(const uint8_t *buf, size_t buf_len,
+                           char *src_out, int *bw_hz_out)
+{
+    if (!buf || !src_out || !bw_hz_out || buf_len < ARQ_CONTROL_FRAME_SIZE)
+        return -1;
+
+    *bw_hz_out = arq_protocol_bw_hz_from_token(frame_header_extension(buf[0]));
+    if (*bw_hz_out == 0)
+        return -1;
+
+    return decode_callsign_only_payload(buf + ARQ_CQ_PAYLOAD_IDX,
+                                        ARQ_CQ_SRC_MAX_ENCODED,
+                                        src_out);
 }

@@ -1,7 +1,7 @@
 # Compiler and flags
 include ../config.mk
 
-CFLAGS = $(COMMON_CFLAGS) -Wextra -I../common
+CFLAGS = $(COMMON_CFLAGS) -Wextra -I../common -I../modem
 LDFLAGS = -pthread
 
 ifeq ($(OS),Windows_NT)
@@ -16,10 +16,10 @@ all: $(OUT)
 broadcast_test: broadcast_test.c kiss.c
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
-broadcast_diag_tx: broadcast_diag_tx.c kiss.c ../common/crc6.c
+broadcast_diag_tx: broadcast_diag_tx.c kiss.c ../modem/framer.c
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
-broadcast_diag_rx: broadcast_diag_rx.c kiss.c ../common/crc6.c
+broadcast_diag_rx: broadcast_diag_rx.c kiss.c ../modem/framer.c
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
 # Clean up build artifacts

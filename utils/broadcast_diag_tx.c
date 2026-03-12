@@ -21,7 +21,7 @@
 #endif
 
 #include "../common/os_interop.h"
-#include "crc6.h"
+#include "framer.h"
 #include "kiss.h"
 
 #define DEFAULT_IP "127.0.0.1"
@@ -89,13 +89,6 @@ static int send_all(int socket_fd, const uint8_t *buffer, size_t len)
     return 0;
 }
 
-static uint16_t crc_len_for_type(uint8_t packet_type, size_t frame_size)
-{
-    if (packet_type == 0x02 && frame_size >= CONFIG_PACKET_SIZE)
-        return CONFIG_PACKET_SIZE - 1;
-    return frame_size - 1;
-}
-
 static void fill_frame(uint8_t *frame, size_t frame_size, uint8_t packet_type, uint64_t seq)
 {
     memset(frame, 0, frame_size);
@@ -105,7 +98,8 @@ static void fill_frame(uint8_t *frame, size_t frame_size, uint8_t packet_type, u
         frame[i] = (uint8_t)((seq + (i * 17)) & 0xff);
     }
 
-    if (packet_type == 0x02 && frame_size >= CONFIG_PACKET_SIZE)
+    if (packet_type == PACKET_TYPE_BROADCAST_CONTROL &&
+        frame_size >= BROADCAST_CONFIG_PACKET_SIZE)
     {
         /* deterministic 8-byte config payload for debug */
         frame[1] = 0xAA;
@@ -118,20 +112,16 @@ static void fill_frame(uint8_t *frame, size_t frame_size, uint8_t packet_type, u
         frame[8] = 0x01;
     }
 
-    uint16_t crc_len = crc_len_for_type(packet_type, frame_size);
-    frame[0] = (uint8_t)((packet_type << 6) & 0xff);
-    frame[0] |= (uint8_t)crc6_0X6F(1, frame + 1, crc_len);
+    write_frame_header(frame, packet_type, 0);
 }
 
 static void print_frame_debug(const char *tag, const uint8_t *frame, size_t frame_size, int kiss_len, uint64_t seq)
 {
-    uint8_t packet_type = (frame[0] >> 6) & 0x3;
-    uint8_t crc_local = frame[0] & 0x3f;
-    uint16_t crc_len = crc_len_for_type(packet_type, frame_size);
-    uint8_t crc_calc = (uint8_t)crc6_0X6F(1, frame + 1, crc_len);
+    uint8_t packet_type = frame_header_packet_type(frame[0]);
+    uint8_t extension = frame_header_extension(frame[0]);
 
-    printf("[%s] seq=%llu type=0x%02x frame=%zu kiss=%d crc(local=0x%02x calc=0x%02x) first16=",
-           tag, (unsigned long long)seq, packet_type, frame_size, kiss_len, crc_local, crc_calc);
+    printf("[%s] seq=%llu type=0x%02x ext=0x%02x frame=%zu kiss=%d first16=",
+           tag, (unsigned long long)seq, packet_type, extension, frame_size, kiss_len);
     for (size_t i = 0; i < frame_size && i < 16; i++)
     {
         printf("%02x ", frame[i]);
@@ -180,7 +170,7 @@ int main(int argc, char *argv[])
     uint64_t seq = 0;
     while (running)
     {
-        fill_frame(frame, frame_size, 0x02, seq);
+        fill_frame(frame, frame_size, PACKET_TYPE_BROADCAST_CONTROL, seq);
         int kiss_len = kiss_write_frame(frame, (int)frame_size, kiss_frame);
         print_frame_debug("TX", frame, frame_size, kiss_len, seq);
         if (send_all(tcp_socket, kiss_frame, (size_t)kiss_len) < 0)
@@ -189,7 +179,7 @@ int main(int argc, char *argv[])
             break;
         }
 
-        fill_frame(frame, frame_size, 0x03, seq);
+        fill_frame(frame, frame_size, PACKET_TYPE_BROADCAST_DATA, seq);
         kiss_len = kiss_write_frame(frame, (int)frame_size, kiss_frame);
         print_frame_debug("TX", frame, frame_size, kiss_len, seq);
         if (send_all(tcp_socket, kiss_frame, (size_t)kiss_len) < 0)

@@ -10,7 +10,7 @@ a table-driven, two-level hierarchical FSM and a clean protocol codec.
 
 1. [Overview](#overview)
 2. [Module Map](#module-map)
-3. [Wire Protocol v3](#wire-protocol-v3)
+3. [Wire Protocol v4](#wire-protocol-v4)
 4. [Frame Types and Subtypes](#frame-types-and-subtypes)
 5. [Mode Timing Table](#mode-timing-table)
 6. [Two-Level FSM](#two-level-fsm)
@@ -65,14 +65,14 @@ datalink_arq/
 
 ---
 
-## Wire Protocol v3
+## Wire Protocol v4
 
 All ARQ frames begin with a **framer byte** managed by `modem/framer.c`:
 
 ```
-Byte 0: [packet_type(3)] | [CRC5(5)]
+Byte 0: [packet_type(3)] | [extension_field(5)]
          bits [7:5] = packet_type
-         bits [4:0] = CRC5 of bytes [1 .. frame_size-1]
+         bits [4:0] = packet-type-specific extension field
 ```
 
 Packet type values:
@@ -84,11 +84,12 @@ Packet type values:
 | 0x2   | `ARQ_CALL`            | CALL and ACCEPT compact frames      |
 | 0x3   | `BROADCAST_CONTROL`   | Broadcast subsystem (unrelated)     |
 | 0x4   | `BROADCAST_DATA`      | Broadcast subsystem (unrelated)     |
+| 0x5   | `ARQ_CQ`              | Compact DATAC13 CQ metadata frame   |
 
 ### Standard 8-byte header (ARQ_CONTROL and ARQ_DATA)
 
 ```
-Byte 0: framer byte  (packet_type | CRC5)
+Byte 0: framer byte  (packet_type | extension_field)
 Byte 1: subtype      (arq_subtype_t)
 Byte 2: flags        bit7=TURN_REQ  bit6=HAS_DATA
 Byte 3: session_id   random byte chosen by caller at connect time
@@ -100,13 +101,15 @@ Byte 7: ack_delay    IRS→ISS delay from data_rx to ack_tx, in 10ms units; 0=un
 
 For **DATA frames** (`ARQ_DATA`), payload bytes follow immediately after byte 7.
 The payload size is determined by the FreeDV mode in use.
+For current `ARQ_CONTROL` and `ARQ_DATA` frames, the extension field is transmitted
+as `0` and reserved for future use.
 
 ### CALL/ACCEPT compact frame (ARQ_CALL, 14 bytes)
 
 CALL and ACCEPT use a different layout to fit two callsigns in 14 bytes:
 
 ```
-Byte 0:      framer byte  (PACKET_TYPE_ARQ_CALL | CRC5)
+Byte 0:      framer byte  (PACKET_TYPE_ARQ_CALL | BW token)
 Byte 1:      connect_meta = (session_id & 0x7F) | (is_accept ? 0x80 : 0x00)
 Bytes 2-3:   CRC16-CCITT of DST callsign (little-endian) — for local validation
 Bytes 4-13:  arithmetic_encode(SRC callsign only) — 10 bytes, fits any realistic callsign
@@ -116,11 +119,40 @@ The transmitting side's callsign (SRC) is compressed with an arithmetic codec (`
 The receiving side's callsign (DST) is not transmitted in full; instead its CRC16 is sent
 so the receiver can silently discard frames not addressed to it.
 
-### CRC5
+BW token values in the framer-byte extension field:
 
-Polynomial `0x15` (x⁵ + x⁴ + x² + 1), non-reflected, init=1.
-Covers bytes `[1 .. frame_size-1]` of the *unframed* data.
-False-positive rate: 1/32 ≈ 3.1 %.
+| Token | Meaning   |
+|-------|-----------|
+| `0`   | Reserved  |
+| `1`   | `BW500`   |
+| `2`   | `BW2300`  |
+| `3`   | `BW2750`  |
+
+Handshake semantics:
+
+- `CALL` advertises the caller's configured BW token.
+- `ACCEPT` returns the negotiated session BW token, computed as `min(caller, callee)`.
+- Once `ACCEPT` is processed, both peers know the session bandwidth without adding a
+  separate negotiation round trip.
+
+### CQ compact frame (ARQ_CQ, 14 bytes)
+
+Mercury also defines a compact DATAC13 CQ metadata frame:
+
+```
+Byte 0:      framer byte  (PACKET_TYPE_ARQ_CQ | BW token)
+Bytes 1-13:  arithmetic_encode(SRC callsign only)
+```
+
+The BW token uses the same values as `ARQ_CALL`. When a CQ frame is decoded,
+Mercury emits `CQFRAME <source> <bw>` on the TNC control port.
+
+### Integrity note
+
+The framer byte no longer carries a CRC5. Mercury relies on the modem-layer
+FreeDV frame integrity checks for whole-frame validation, while `CALL` / `ACCEPT`
+still keep the destination callsign CRC16 so receivers can quickly reject connect
+attempts not addressed to them.
 
 ---
 
@@ -515,5 +547,5 @@ All in `arq_protocol.h`:
 | `datalink_arq/arq_channels.c`| Channel bus between TCP layer and event loop        |
 | `common/hermes_log.c`        | Async ring-buffer logger with TIMING level and JSONL|
 | `common/hermes_log.h`        | Logger API and `HLOGD/T/I/W/E` macros               |
-| `modem/framer.c`             | 3-bit packet_type + CRC5 framer byte encoding       |
-| `common/crc6.c`              | `crc5_0X15()` — CRC5 polynomial 0x15               |
+| `modem/framer.c`             | 3-bit packet_type + 5-bit extension-field encoding  |
+| `common/crc6.c`              | CRC helper implementations (legacy CRC5 still lives here) |

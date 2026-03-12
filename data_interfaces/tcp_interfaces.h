@@ -51,6 +51,7 @@ void ptt_off();
 void tnc_send_pending();
 void tnc_send_cancelpending();
 void tnc_send_connected();
+void tnc_send_cqframe(const char *source_call, int bw_hz);
 void tnc_send_disconnected();
 void tnc_send_buffer(uint32_t bytes);
 void tnc_send_sn(float snr);

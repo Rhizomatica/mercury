@@ -73,7 +73,10 @@ Mode behavior notes:
 - `-m` / `-s` affects **broadcast** and **test** modes only.
 - During an active ARQ link, control frames use DATAC13 and ARQ payload starts in DATAC4 (then may adapt to DATAC3/DATAC1).
 - VARA `BW500` blocks DATAC1; `BW2300` and `BW2750` both allow the full Mercury
-  payload-mode ladder, with `BW2750` preserved as a compatibility/reporting token.
+  payload-mode ladder.
+- `CALL` advertises the local BW token and `ACCEPT` returns the negotiated
+  session token. If either side uses `BW500`, the link stays narrow; `BW2750`
+  is preserved in `CONNECTED ... BW` only when both peers advertise it.
 - `FSK_LDPC` is currently **experimental** (mainly for lab/test usage), may have longer decode/sync latency depending on setup, and is not recommended for production links yet.
 
 Radio control notes:

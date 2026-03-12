@@ -53,6 +53,7 @@ extern cbuf_handle_t data_rx_buffer_arq;
 extern void tnc_send_pending(void);
 extern void tnc_send_cancelpending(void);
 extern void tnc_send_connected(void);
+extern void tnc_send_cqframe(const char *source_call, int bw_hz);
 extern void tnc_send_disconnected(void);
 extern void tnc_send_buffer(uint32_t bytes);
 
@@ -194,6 +195,7 @@ static void cb_notify_disconnected(bool to_no_client)
     bool was_connected = arq_conn.dst_addr[0] != '\0';
     memset(arq_conn.src_addr, 0, sizeof(arq_conn.src_addr));
     memset(arq_conn.dst_addr, 0, sizeof(arq_conn.dst_addr));
+    arq_conn.session_bw = 0;
     arq_conn.TRX = RX;
     /* Flush stale TX bytes from the previous session.  RX bytes are flushed
      * at connection start (cb_notify_connected) instead of here, so that the
@@ -250,9 +252,27 @@ static void cb_send_buffer_status(int backlog_bytes)
     tnc_send_buffer((uint32_t)(backlog_bytes < 0 ? 0 : backlog_bytes));
 }
 
+static int normalize_bandwidth_hz(int bw_hz)
+{
+    if (bw_hz == ARQ_BANDWIDTH_NARROW_HZ ||
+        bw_hz == ARQ_BANDWIDTH_FULL_HZ ||
+        bw_hz == ARQ_BANDWIDTH_TACTICAL_HZ)
+        return bw_hz;
+
+    return ARQ_BANDWIDTH_FULL_HZ;
+}
+
+static int active_session_bandwidth_hz(void)
+{
+    if (arq_conn.session_bw != 0)
+        return normalize_bandwidth_hz(arq_conn.session_bw);
+
+    return normalize_bandwidth_hz(arq_conn.bw);
+}
+
 int arq_effective_bandwidth_hz(void)
 {
-    if (arq_conn.bw == ARQ_BANDWIDTH_NARROW_HZ)
+    if (active_session_bandwidth_hz() == ARQ_BANDWIDTH_NARROW_HZ)
         return ARQ_BANDWIDTH_NARROW_HZ;
 
     return ARQ_BANDWIDTH_FULL_HZ;
@@ -260,12 +280,7 @@ int arq_effective_bandwidth_hz(void)
 
 int arq_reported_bandwidth_hz(void)
 {
-    if (arq_conn.bw == ARQ_BANDWIDTH_NARROW_HZ ||
-        arq_conn.bw == ARQ_BANDWIDTH_FULL_HZ ||
-        arq_conn.bw == ARQ_BANDWIDTH_TACTICAL_HZ)
-        return arq_conn.bw;
-
-    return ARQ_BANDWIDTH_FULL_HZ;
+    return active_session_bandwidth_hz();
 }
 
 bool arq_bandwidth_allows_mode(int mode)
@@ -292,7 +307,7 @@ static void handle_cmd(const arq_cmd_msg_t *msg)
         return;
 
     case ARQ_CMD_SET_BANDWIDTH:
-        arq_conn.bw = msg->value;
+        arq_conn.bw = normalize_bandwidth_hz(msg->value);
         return;
 
     case ARQ_CMD_SET_RETRY:
@@ -313,6 +328,7 @@ static void handle_cmd(const arq_cmd_msg_t *msg)
     case ARQ_CMD_CONNECT:
         snprintf(arq_conn.src_addr, CALLSIGN_MAX_SIZE, "%s", msg->arg0);
         snprintf(arq_conn.dst_addr, CALLSIGN_MAX_SIZE, "%s", msg->arg1);
+        arq_conn.session_bw = 0;
         snprintf(ev.remote_call, CALLSIGN_MAX_SIZE, "%s", msg->arg1);
         ev.id = ARQ_EV_APP_CONNECT;
         break;
@@ -439,10 +455,11 @@ bool arq_handle_incoming_connect_frame(uint8_t *data, size_t frame_size)
     uint8_t session_id;
     char src[CALLSIGN_MAX_SIZE] = {0};
     char dst[CALLSIGN_MAX_SIZE] = {0};
+    int bw_hz = 0;
 
     int rc = is_accept
-             ? arq_protocol_parse_accept(data, frame_size, &session_id, src, dst)
-             : arq_protocol_parse_call  (data, frame_size, &session_id, src, dst);
+             ? arq_protocol_parse_accept(data, frame_size, &session_id, src, dst, &bw_hz)
+             : arq_protocol_parse_call  (data, frame_size, &session_id, src, dst, &bw_hz);
 
     if (rc < 0)
     {
@@ -467,7 +484,31 @@ bool arq_handle_incoming_connect_frame(uint8_t *data, size_t frame_size)
     ev.session_id = session_id;
     /* src = transmitting side's callsign */
     snprintf(ev.remote_call, CALLSIGN_MAX_SIZE, "%s", src);
+    if (is_accept)
+        arq_conn.session_bw = normalize_bandwidth_hz(bw_hz);
+    else
+        arq_conn.session_bw = normalize_bandwidth_hz(
+            bw_hz < normalize_bandwidth_hz(arq_conn.bw) ? bw_hz : normalize_bandwidth_hz(arq_conn.bw));
     evq_push(&ev);
+    return true;
+}
+
+bool arq_handle_incoming_cq_frame(uint8_t *data, size_t frame_size)
+{
+    char source_call[CALLSIGN_MAX_SIZE] = {0};
+    int bw_hz = 0;
+
+    if (!data || frame_size < ARQ_CONTROL_FRAME_SIZE)
+        return false;
+
+    if (arq_protocol_parse_cq(data, frame_size, source_call, &bw_hz) < 0)
+    {
+        HLOGD(LOG_COMP, "CQ parse failed");
+        return false;
+    }
+
+    tnc_send_cqframe(source_call, normalize_bandwidth_hz(bw_hz));
+    HLOGI(LOG_COMP, "CQ frame decoded from %s (%d Hz)", source_call, bw_hz);
     return true;
 }
 
@@ -583,6 +624,7 @@ int arq_init(size_t frame_size, int mode)
     arq_conn.mode            = mode;
     arq_conn.call_burst_size = 1;
     arq_conn.bw              = ARQ_BANDWIDTH_FULL_HZ;
+    arq_conn.session_bw      = 0;
 
     init_model();
 

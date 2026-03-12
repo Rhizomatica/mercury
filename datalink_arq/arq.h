@@ -54,7 +54,8 @@ typedef struct
     bool encryption;
     int call_burst_size;
     bool listen;
-    int bw; // in Hz
+    int bw;         // configured local bandwidth in Hz
+    int session_bw; // negotiated session bandwidth in Hz (0 = not negotiated)
     int retry_slots; // 0 = use compiled default
     size_t frame_size;
     int mode;
@@ -204,6 +205,14 @@ void arq_set_active_modem_mode(int mode, size_t frame_size);
  * @return true if frame was handled by ARQ connect path.
  */
 bool arq_handle_incoming_connect_frame(uint8_t *data, size_t frame_size);
+
+/**
+ * @brief Handle incoming compact CQ frame and emit host-side CQFRAME notification.
+ * @param data Incoming frame bytes.
+ * @param frame_size Frame length in bytes.
+ * @return true if frame was handled by CQ path.
+ */
+bool arq_handle_incoming_cq_frame(uint8_t *data, size_t frame_size);
 
 /**
  * @brief Handle incoming regular ARQ control/data frame.

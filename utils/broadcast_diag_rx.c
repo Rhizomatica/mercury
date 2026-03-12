@@ -21,7 +21,7 @@
 #endif
 
 #include "../common/os_interop.h"
-#include "crc6.h"
+#include "framer.h"
 #include "kiss.h"
 
 #define DEFAULT_IP "127.0.0.1"
@@ -66,13 +66,17 @@ static int create_tcp_socket(const char *ip, int port)
     return tcp_socket;
 }
 
-static uint16_t crc_len_for_type(uint8_t packet_type, size_t frame_size)
+static const char *packet_type_name(uint8_t packet_type)
 {
-    if (packet_type == 0x02 && frame_size >= CONFIG_PACKET_SIZE)
-        return CONFIG_PACKET_SIZE - 1;
-    if (frame_size > 0)
-        return frame_size - 1;
-    return 0;
+    switch (packet_type)
+    {
+    case PACKET_TYPE_BROADCAST_CONTROL:
+        return "BCAST_CTRL";
+    case PACKET_TYPE_BROADCAST_DATA:
+        return "BCAST_DATA";
+    default:
+        return "OTHER";
+    }
 }
 
 static void print_frame_debug(uint64_t frame_no, const uint8_t *frame, size_t frame_size)
@@ -83,14 +87,12 @@ static void print_frame_debug(uint64_t frame_no, const uint8_t *frame, size_t fr
         return;
     }
 
-    uint8_t packet_type = (frame[0] >> 6) & 0x3;
-    uint8_t crc_local = frame[0] & 0x3f;
-    uint16_t crc_len = crc_len_for_type(packet_type, frame_size);
-    uint8_t crc_calc = (uint8_t)crc6_0X6F(1, frame + 1, crc_len);
-    bool crc_ok = (crc_local == crc_calc);
+    uint8_t packet_type = frame_header_packet_type(frame[0]);
+    uint8_t extension = frame_header_extension(frame[0]);
 
-    printf("[RX] frame=%llu len=%zu type=0x%02x crc(local=0x%02x calc=0x%02x %s) first16=",
-           (unsigned long long)frame_no, frame_size, packet_type, crc_local, crc_calc, crc_ok ? "OK" : "BAD");
+    printf("[RX] frame=%llu len=%zu type=0x%02x(%s) ext=0x%02x first16=",
+           (unsigned long long)frame_no, frame_size, packet_type,
+           packet_type_name(packet_type), extension);
     for (size_t i = 0; i < frame_size && i < 16; i++)
     {
         printf("%02x ", frame[i]);
@@ -115,7 +117,7 @@ int main(int argc, char *argv[])
     uint8_t rx_buf[4096];
     uint8_t frame_buf[MAX_PAYLOAD];
     uint64_t frame_no = 0;
-    uint64_t t02 = 0, t03 = 0, bad_crc = 0;
+    uint64_t ctrl_frames = 0, data_frames = 0, other_frames = 0;
 
     while (running)
     {
@@ -143,20 +145,21 @@ int main(int argc, char *argv[])
             frame_no++;
             print_frame_debug(frame_no, frame_buf, (size_t)frame_len);
 
-            uint8_t packet_type = (frame_buf[0] >> 6) & 0x3;
-            uint8_t crc_local = frame_buf[0] & 0x3f;
-            uint8_t crc_calc = (uint8_t)crc6_0X6F(1, frame_buf + 1, crc_len_for_type(packet_type, (size_t)frame_len));
-            if (packet_type == 0x02) t02++;
-            if (packet_type == 0x03) t03++;
-            if (crc_local != crc_calc) bad_crc++;
+            uint8_t packet_type = frame_header_packet_type(frame_buf[0]);
+            if (packet_type == PACKET_TYPE_BROADCAST_CONTROL)
+                ctrl_frames++;
+            else if (packet_type == PACKET_TYPE_BROADCAST_DATA)
+                data_frames++;
+            else
+                other_frames++;
 
             if ((frame_no % 20) == 0)
             {
-                printf("[RX-SUM] frames=%llu type02=%llu type03=%llu bad_crc=%llu\n",
+                printf("[RX-SUM] frames=%llu ctrl=%llu data=%llu other=%llu\n",
                        (unsigned long long)frame_no,
-                       (unsigned long long)t02,
-                       (unsigned long long)t03,
-                       (unsigned long long)bad_crc);
+                       (unsigned long long)ctrl_frames,
+                       (unsigned long long)data_frames,
+                       (unsigned long long)other_frames);
             }
         }
     }

@@ -195,7 +195,7 @@ static void send_frame(int ptype, int mode, size_t len, const uint8_t *frame)
         uint8_t padded[INT_BUFFER_SIZE];
         memcpy(padded, frame, len);
         memset(padded + len, 0, slot - len);
-        write_frame_header(padded, ptype, slot);
+        write_frame_header(padded, ptype, frame_header_extension(frame[0]));
         g_cbs.send_tx_frame(ptype, mode, slot, padded);
         return;
     }
@@ -436,12 +436,13 @@ static void send_call_accept(arq_session_t *sess, bool is_accept)
     uint8_t frame[INT_BUFFER_SIZE];
     int n;
     const char *my_call = arq_conn.my_call_sign;
+    int bw_hz = is_accept ? arq_reported_bandwidth_hz() : arq_conn.bw;
     if (is_accept)
         n = arq_protocol_build_accept(frame, sizeof(frame), sess->session_id,
-                                      my_call, sess->remote_call);
+                                      my_call, sess->remote_call, bw_hz);
     else
         n = arq_protocol_build_call(frame, sizeof(frame), sess->session_id,
-                                    my_call, sess->remote_call);
+                                    my_call, sess->remote_call, bw_hz);
     if (n > 0)
         send_frame(PACKET_TYPE_ARQ_CALL, sess->control_mode, (size_t)n, frame);
 }
