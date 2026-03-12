@@ -68,6 +68,7 @@ extern int audioio_restart(const char *capture_dev, const char *playback_dev,
 extern int radio_io_get_radio_list(char ids[][16], char names[][64], int max_count);
 extern int radio_io_restart(int new_radio_type, const char *device_path);
 extern const char *radio_io_get_device_path(void);
+extern int radio_io_get_radio_type(void);
 
 // global shutdown flag from main.c
 extern volatile bool shutdown_;
@@ -558,6 +559,16 @@ void *rx_thread_main(void *arg)
                         HLOGI(UI_LOG_TAG, "Radio subsystem restarted successfully (model=%d)", new_radio_type);
                     else
                         HLOGE(UI_LOG_TAG, "Radio subsystem restart FAILED (model=%d, rc=%d)", new_radio_type, rc);
+                } else if (strcmp(msg.cmd.command, "set_device_path") == 0) {
+                    HLOGI(UI_LOG_TAG, "Device path set_device_path command: value=\"%s\"", msg.cmd.value);
+                    int cur_type = radio_io_get_radio_type();
+                    int rc = radio_io_restart(cur_type, msg.cmd.value);
+                    if (rc == 0)
+                        HLOGI(UI_LOG_TAG, "Radio subsystem restarted with new device path (type=%d, path=%s)",
+                              cur_type, msg.cmd.value);
+                    else
+                        HLOGE(UI_LOG_TAG, "Radio subsystem restart FAILED (type=%d, path=%s, rc=%d)",
+                              cur_type, msg.cmd.value, rc);
                 } else {
                     HLOGW(UI_LOG_TAG, "Unknown UI command: %s", msg.cmd.command);
                 }

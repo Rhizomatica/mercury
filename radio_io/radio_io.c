@@ -312,3 +312,8 @@ const char *radio_io_get_device_path(void)
 {
     return g_device_path;
 }
+
+int radio_io_get_radio_type(void)
+{
+    return g_radio_type;
+}

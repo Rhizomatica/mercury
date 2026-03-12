@@ -60,4 +60,7 @@ int radio_io_restart(int new_radio_type, const char *device_path);
 /* Return the device path used by the current (or last) init. */
 const char *radio_io_get_device_path(void);
 
+/* Return the current radio type (RADIO_TYPE_NONE, RADIO_TYPE_SHM, or hamlib model ID). */
+int radio_io_get_radio_type(void);
+
 #endif /* RADIO_IO_H_ */
