@@ -216,3 +216,13 @@ void radio_io_list_models(void)
     fprintf(stderr, "HAMLIB support not compiled in. Install libhamlib-dev and rebuild.\n");
 #endif
 }
+
+int radio_io_get_radio_list(char ids[][16], char names[][64], int max_count)
+{
+#ifdef HAVE_HAMLIB
+    return get_radio_list(ids, names, max_count);
+#else
+    (void)ids; (void)names; (void)max_count;
+    return 0;
+#endif
+}

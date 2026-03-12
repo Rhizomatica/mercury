@@ -47,4 +47,9 @@ void radio_io_key_off(void);
 /* List all hamlib-supported radio models and exit. */
 void radio_io_list_models(void);
 
+/* Populate arrays with hamlib radio IDs and display names.
+ * Returns number of radios written (up to max_count), or 0 if hamlib
+ * is not compiled in. */
+int radio_io_get_radio_list(char ids[][16], char names[][64], int max_count);
+
 #endif /* RADIO_IO_H_ */

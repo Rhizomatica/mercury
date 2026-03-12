@@ -29,6 +29,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
+#include <fcntl.h>
 
 #include <hamlib/rig.h>
 
@@ -114,6 +116,54 @@ void list_models(void)
     g_models = NULL;
     g_count = 0;
     g_capacity = 0;
+}
+
+int get_radio_list(char ids[][16], char names[][64], int max_count)
+{
+    /* Load backends quietly — redirect stdout & stderr to /dev/null
+     * so the hamlib "initrigs4_*" messages don't pollute the console. */
+    if (g_count == 0)
+    {
+        fflush(stdout);
+        fflush(stderr);
+        int saved_stdout = dup(STDOUT_FILENO);
+        int saved_stderr = dup(STDERR_FILENO);
+        int devnull = open("/dev/null", O_WRONLY);
+        if (devnull >= 0)
+        {
+            dup2(devnull, STDOUT_FILENO);
+            dup2(devnull, STDERR_FILENO);
+            close(devnull);
+        }
+
+        rig_load_all_backends();
+
+        /* Restore original stdout / stderr */
+        fflush(stdout);
+        fflush(stderr);
+        dup2(saved_stdout, STDOUT_FILENO);
+        dup2(saved_stderr, STDERR_FILENO);
+        close(saved_stdout);
+        close(saved_stderr);
+
+        int status = rig_list_foreach(collect_model, NULL);
+        if (status != RIG_OK)
+        {
+            fprintf(stderr, "rig_list_foreach: error = %s\n", rigerror(status));
+            return 0;
+        }
+
+        qsort(g_models, g_count, sizeof(struct mod_entry), cmp_model_id);
+    }
+
+    int n = g_count < max_count ? g_count : max_count;
+    for (int i = 0; i < n; i++)
+    {
+        struct mod_entry *e = &g_models[i];
+        snprintf(ids[i], 16, "%d", e->id);
+        snprintf(names[i], 64, "%s %s", e->mfg_name, e->model_name);
+    }
+    return n;
 }
 
 #endif /* HAVE_HAMLIB */

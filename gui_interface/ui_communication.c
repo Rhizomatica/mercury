@@ -65,6 +65,8 @@ extern int get_soundcard_list(int audio_system, int mode,
 extern int audioio_restart(const char *capture_dev, const char *playback_dev,
                            int audio_subsys, int capture_channel_layout);
 
+extern int radio_io_get_radio_list(char ids[][16], char names[][64], int max_count);
+
 // global shutdown flag from main.c
 extern volatile bool shutdown_;
 #else
@@ -116,10 +118,9 @@ void udp_tx_close(udp_tx_t *tx)
 int udp_tx_send_json_pairs(udp_tx_t *tx, ...)
 {
     char buf[8192];
-    char tmp[512];
-    buf[0] = '\0';
+    int pos = 0;
 
-    strcat(buf, "{");
+    buf[pos++] = '{';
     va_list ap;
     va_start(ap, tx);
     const char *key;
@@ -127,7 +128,7 @@ int udp_tx_send_json_pairs(udp_tx_t *tx, ...)
     while ((key = va_arg(ap, const char *)) != NULL)
     {
         const char *val = va_arg(ap, const char *);
-        if (!first) strcat(buf, ",");
+        if (!first) buf[pos++] = ',';
 
         // Don't quote arrays, objects, numbers, booleans, null
         // But always quote empty strings (len==0) to produce valid JSON
@@ -135,18 +136,23 @@ int udp_tx_send_json_pairs(udp_tx_t *tx, ...)
             (val[0] == '[' || val[0] == '{' ||
             strcmp(val, "true") == 0 || strcmp(val, "false") == 0 ||
             strcmp(val, "null") == 0 || strspn(val, "0123456789.-") == strlen(val))) {
-            snprintf(tmp, sizeof(tmp), "\"%s\":%s", key, val);
+            pos += snprintf(buf + pos, sizeof(buf) - pos, "\"%s\":%s", key, val);
         } else {
-            snprintf(tmp, sizeof(tmp), "\"%s\":\"%s\"", key, val);
+            pos += snprintf(buf + pos, sizeof(buf) - pos, "\"%s\":\"%s\"", key, val);
         }
 
-        strcat(buf, tmp);
+        if (pos >= (int)sizeof(buf) - 2)
+        {
+            pos = (int)sizeof(buf) - 2; /* clamp to leave room for } and NUL */
+            break;
+        }
         first = 0;
     }
     va_end(ap);
-    strcat(buf, "}");
+    buf[pos++] = '}';
+    buf[pos] = '\0';
 
-    ssize_t sent = sendto(tx->sock, buf, strlen(buf), 0,
+    ssize_t sent = sendto(tx->sock, buf, pos, 0,
                           (struct sockaddr *)&tx->dest, sizeof(tx->dest));
 
     return sent;
@@ -221,16 +227,40 @@ int udp_tx_send_playback_dev_list(udp_tx_t *tx,
 
 int udp_tx_send_radio_list(udp_tx_t *tx,
                            const char *selected_radio,
-                           const char *radios[], int count) {
-    char buf[1500];
-    snprintf(buf, sizeof(buf), "[");
+                           const char *ids[], const char *names[],
+                           int count) {
+    /* Build JSON array of objects: [{"name":"...","id":"..."},...].
+     * The outer JSON envelope added by udp_tx_send_json_pairs adds
+     * ~60 bytes, so keep the inner array well under 1400 to stay
+     * within a single UDP datagram (< 1400 total). */
+    char buf[1300];
+    int pos = 0;
+    int remaining;
+    pos += snprintf(buf, sizeof(buf), "[");
     for (int i = 0; i < count; i++) {
-        strcat(buf, "\"");
-        strcat(buf, radios[i]);
-        strcat(buf, "\"");
-        if (i < count - 1) strcat(buf, ",");
+        /* Reserve space for: comma + object + closing bracket + NUL.
+         * Worst case object: {"name":"<63>","id":"<15>"} ~ 96 chars */
+        remaining = (int)sizeof(buf) - pos - 2; /* 2 = "]" + NUL */
+        if (remaining < 100)
+            break;
+        char entry[128];
+        int elen;
+        if (i > 0) {
+            elen = snprintf(entry, sizeof(entry),
+                            ",{\"name\":\"%s\",\"id\":\"%s\"}",
+                            names[i], ids[i]);
+        } else {
+            elen = snprintf(entry, sizeof(entry),
+                            "{\"name\":\"%s\",\"id\":\"%s\"}",
+                            names[i], ids[i]);
+        }
+        if (elen >= remaining)
+            break;
+        memcpy(buf + pos, entry, elen);
+        pos += elen;
     }
-    strcat(buf, "]");
+    buf[pos++] = ']';
+    buf[pos] = '\0';
 
     return udp_tx_send_json_pairs(tx,
         "type", "radio_list",
@@ -655,6 +685,25 @@ void *ui_publisher_thread(void *arg)
                 udp_tx_send_playback_dev_list(tx, ctx->selected_playback_dev,
                                               id_ptrs, name_ptrs, pb_count);
             }
+
+            // Radio list (hamlib models)
+            // Static arrays — hamlib has 700+ models but we only send
+            // what fits in one 1400-byte UDP packet anyway.
+            {
+                static char radio_ids[512][16];
+                static char radio_names[512][64];
+                int radio_count = radio_io_get_radio_list(radio_ids, radio_names, 512);
+                if (radio_count > 0)
+                {
+                    const char *rid_ptrs[512], *rname_ptrs[512];
+                    for (int i = 0; i < radio_count; i++) {
+                        rid_ptrs[i] = radio_ids[i];
+                        rname_ptrs[i] = radio_names[i];
+                    }
+                    udp_tx_send_radio_list(tx, "",
+                                           rid_ptrs, rname_ptrs, radio_count);
+                }
+            }
         }
         soundcard_cycle++;
 
@@ -847,8 +896,9 @@ int main(int argc, char *argv[]) {
 
         // Occasionally send a radio list
         if (counter % 5 == 0) {
-            const char *radios[] = { "Radio A", "Radio B", "Radio C" };
-            udp_tx_send_radio_list(&tx, "Radio B", radios, 3);
+            const char *radio_ids[] = { "1001", "1003", "2" };
+            const char *radio_names[] = { "Yaesu FT-847", "Yaesu FT-1000D", "Hamlib NET rigctl" };
+            udp_tx_send_radio_list(&tx, "1001", radio_ids, radio_names, 3);
         }
 
         // Occasionally send input channel

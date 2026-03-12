@@ -179,7 +179,8 @@ int udp_tx_send_playback_dev_list(udp_tx_t *tx,
 
 int udp_tx_send_radio_list(udp_tx_t *tx,
                            const char *selected_radio,
-                           const char *radios[], int count);
+                           const char *ids[], const char *names[],
+                           int count);
 
 int udp_tx_send_input_channel(udp_tx_t *tx, int rx_input_channel);
 

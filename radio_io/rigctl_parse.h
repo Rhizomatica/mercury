@@ -30,6 +30,10 @@
 
 void list_models(void);
 
+/* Populate arrays with radio IDs (as strings) and display names ("Mfg Model").
+ * Returns the number of entries written (up to max_count). */
+int get_radio_list(char ids[][16], char names[][64], int max_count);
+
 #endif /* HAVE_HAMLIB */
 
 #endif  /* RIGCTL_PARSE_H */
