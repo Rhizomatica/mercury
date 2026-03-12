@@ -159,6 +159,8 @@ static void cb_send_tx_frame(int packet_type, int mode,
 
 static void cb_notify_connected(const char *remote_call)
 {
+    if (arq_conn.src_addr[0] == '\0')
+        snprintf(arq_conn.src_addr, CALLSIGN_MAX_SIZE, "%s", remote_call);
     snprintf(arq_conn.dst_addr, CALLSIGN_MAX_SIZE, "%s", remote_call);
     arq_conn.TRX = RX;
     /* Flush any stale RX bytes from the previous session before notifying
@@ -174,6 +176,7 @@ static void cb_notify_disconnected(bool to_no_client)
 {
     (void)to_no_client;
     bool was_connected = arq_conn.dst_addr[0] != '\0';
+    memset(arq_conn.src_addr, 0, sizeof(arq_conn.src_addr));
     memset(arq_conn.dst_addr, 0, sizeof(arq_conn.dst_addr));
     arq_conn.TRX = RX;
     /* Flush stale TX bytes from the previous session.  RX bytes are flushed
@@ -282,6 +285,8 @@ static void handle_cmd(const arq_cmd_msg_t *msg)
         break;
 
     case ARQ_CMD_CONNECT:
+        snprintf(arq_conn.src_addr, CALLSIGN_MAX_SIZE, "%s", msg->arg0);
+        snprintf(arq_conn.dst_addr, CALLSIGN_MAX_SIZE, "%s", msg->arg1);
         snprintf(ev.remote_call, CALLSIGN_MAX_SIZE, "%s", msg->arg1);
         ev.id = ARQ_EV_APP_CONNECT;
         break;

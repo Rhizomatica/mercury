@@ -144,8 +144,9 @@ CONNECT <mycall> <theircall>\r
 **Response:** `OK\r` if the command was accepted, `WRONG\r` on error.
 
 Mercury will transmit CALL frames on DATAC13 and wait for an ACCEPT.
-On success, the asynchronous response `CONNECTED <mycall> <theircall> <bandwidth>\r`
-is sent on the control port.
+On success, the asynchronous response
+`CONNECTED <sourcecall> <destcall> <bandwidth>\r` is sent on the control port,
+preserving the same call order as the original `CONNECT` command on both peers.
 
 Example:
 ```
@@ -223,7 +224,7 @@ These are sent on the **control port** without a preceding command.
 
 | Response                                    | Meaning                                      |
 |---------------------------------------------|----------------------------------------------|
-| `CONNECTED <mycall> <theircall> <bandwidth>\r` | ARQ session established                   |
+| `CONNECTED <sourcecall> <destcall> <bandwidth>\r` | ARQ session established                |
 | `DISCONNECTED\r`                            | ARQ session ended                            |
 | `PTT ON\r`                                  | Radio transmitter keyed                      |
 | `PTT OFF\r`                                 | Radio transmitter unkeyed                    |
@@ -236,7 +237,9 @@ These are sent on the **control port** without a preceding command.
 
 Sent when a session is successfully established (either outgoing CONNECT
 or incoming CALL accepted).  The `<bandwidth>` value is the effective
-negotiated bandwidth, currently `500` or `2300`.
+negotiated bandwidth, currently `500` or `2300`.  `<sourcecall>` is always the
+station that initiated the session, and `<destcall>` is always the station that
+was called.
 
 ### DISCONNECTED
 
