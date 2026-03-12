@@ -66,6 +66,8 @@ extern int audioio_restart(const char *capture_dev, const char *playback_dev,
                            int audio_subsys, int capture_channel_layout);
 
 extern int radio_io_get_radio_list(char ids[][16], char names[][64], int max_count);
+extern int radio_io_restart(int new_radio_type, const char *device_path);
+extern const char *radio_io_get_device_path(void);
 
 // global shutdown flag from main.c
 extern volatile bool shutdown_;
@@ -546,8 +548,16 @@ void *rx_thread_main(void *arg)
                     HLOGI(UI_LOG_TAG, "Input channel set to: %s (%d)",
                           msg.cmd.value, ctx->rx_input_channel);
                     need_audio_restart = 1;
-                } else if (strcmp(msg.cmd.command, "set_radio") == 0) {
-                    HLOGI(UI_LOG_TAG, "Radio set to: %s", msg.cmd.value);
+                } else if (strcmp(msg.cmd.command, "set_radio_model") == 0) {
+                    int new_radio_type = atoi(msg.cmd.value);
+                    HLOGI(UI_LOG_TAG, "Radio set_radio_model command: model_id=%d (raw value=\"%s\")",
+                          new_radio_type, msg.cmd.value);
+                    const char *dev = radio_io_get_device_path();
+                    int rc = radio_io_restart(new_radio_type, dev);
+                    if (rc == 0)
+                        HLOGI(UI_LOG_TAG, "Radio subsystem restarted successfully (model=%d)", new_radio_type);
+                    else
+                        HLOGE(UI_LOG_TAG, "Radio subsystem restart FAILED (model=%d, rc=%d)", new_radio_type, rc);
                 } else {
                     HLOGW(UI_LOG_TAG, "Unknown UI command: %s", msg.cmd.command);
                 }

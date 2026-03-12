@@ -52,4 +52,12 @@ void radio_io_list_models(void);
  * is not compiled in. */
 int radio_io_get_radio_list(char ids[][16], char names[][64], int max_count);
 
+/* Restart radio subsystem with a new radio type.
+ * Thread-safe — blocks key_on / key_off during the restart cycle.
+ * Returns 0 on success, -1 on failure. */
+int radio_io_restart(int new_radio_type, const char *device_path);
+
+/* Return the device path used by the current (or last) init. */
+const char *radio_io_get_device_path(void);
+
 #endif /* RADIO_IO_H_ */

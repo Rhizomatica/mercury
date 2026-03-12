@@ -23,6 +23,7 @@
 #include <string.h>
 #include <stdbool.h>
 #include <stdint.h>
+#include <pthread.h>
 
 #ifdef HAVE_HAMLIB
 #include <hamlib/rig.h>
@@ -30,6 +31,9 @@
 #endif
 
 #include "radio_io.h"
+#include "../common/hermes_log.h"
+
+#define RADIO_LOG_TAG "radio-io"
 
 #ifdef HAVE_HERMES_SHM
 #include "sbitx_io.h"
@@ -37,7 +41,13 @@
 #include "shm_utils.h"
 #endif
 
+/* Global mutex — protects radio state (g_radio_type, radio pointer,
+ * sbitx_connector) so that key_on / key_off cannot race with a
+ * shutdown / restart cycle triggered from the UI thread. */
+static pthread_mutex_t g_radio_mutex = PTHREAD_MUTEX_INITIALIZER;
+
 static int g_radio_type = RADIO_TYPE_NONE;
+static char g_device_path[256] = {0};
 #ifdef HAVE_HAMLIB
 static RIG *radio = NULL;
 #endif
@@ -48,18 +58,31 @@ static controller_conn *sbitx_connector = NULL;
 
 int radio_io_init(int radio_type, const char *device_path)
 {
+    pthread_mutex_lock(&g_radio_mutex);
+    HLOGI(RADIO_LOG_TAG, "Initializing radio (type=%d, device=%s)",
+          radio_type, device_path && device_path[0] ? device_path : "(none)");
+
     if (radio_type == RADIO_TYPE_NONE)
+    {
+        HLOGI(RADIO_LOG_TAG, "Radio control disabled (type=NONE)");
+        pthread_mutex_unlock(&g_radio_mutex);
         return 0;
+    }
 
     g_radio_type = radio_type;
+    if (device_path && device_path[0])
+        snprintf(g_device_path, sizeof(g_device_path), "%s", device_path);
+    else
+        g_device_path[0] = '\0';
 
     if (radio_type == RADIO_TYPE_SHM)
     {
 #ifdef HAVE_HERMES_SHM
         if (!shm_is_created(SYSV_SHM_CONTROLLER_KEY_STR, sizeof(controller_conn)))
         {
-            fprintf(stderr, "Radio SHM not created. Is sbitx_controller running?\n");
+            HLOGE(RADIO_LOG_TAG, "Radio SHM not created. Is sbitx_controller running?");
             g_radio_type = RADIO_TYPE_NONE;
+            pthread_mutex_unlock(&g_radio_mutex);
             return -1;
         }
 
@@ -67,42 +90,50 @@ int radio_io_init(int radio_type, const char *device_path)
                                                           sizeof(controller_conn));
         if (!sbitx_connector)
         {
-            fprintf(stderr, "Failed to attach to radio SHM.\n");
+            HLOGE(RADIO_LOG_TAG, "Failed to attach to radio SHM");
             g_radio_type = RADIO_TYPE_NONE;
+            pthread_mutex_unlock(&g_radio_mutex);
             return -1;
         }
 
-        printf("Radio control: HERMES shared memory interface\n");
+        HLOGI(RADIO_LOG_TAG, "Radio control: HERMES shared memory interface");
+        pthread_mutex_unlock(&g_radio_mutex);
         return 0;
 #else
-        fprintf(stderr, "HERMES shared memory radio control is only available on Linux builds.\n");
+        HLOGE(RADIO_LOG_TAG, "HERMES SHM radio control is only available on Linux builds");
         g_radio_type = RADIO_TYPE_NONE;
+        pthread_mutex_unlock(&g_radio_mutex);
         return -1;
 #endif
     }
 
 #ifdef HAVE_HAMLIB
     /* Hamlib path */
+    HLOGD(RADIO_LOG_TAG, "Calling rig_init(model=%d)", radio_type);
     radio = rig_init(radio_type);
     if (!radio)
     {
-        fprintf(stderr, "Unknown rig num %d, or initialization error.\n", radio_type);
-        fprintf(stderr, "Please check available radios with -K option.\n");
+        HLOGE(RADIO_LOG_TAG, "Unknown rig num %d, or initialization error.\n", radio_type);
+        HLOGE(RADIO_LOG_TAG, "Please check available radios with -K option.\n");
         g_radio_type = RADIO_TYPE_NONE;
+        pthread_mutex_unlock(&g_radio_mutex);
         return -1;
     }
 
     if (device_path && device_path[0])
         snprintf(radio->state.rigport.pathname, HAMLIB_FILPATHLEN, "%s", device_path);
 
+    HLOGD(RADIO_LOG_TAG, "Calling rig_open(device=%s)",
+          device_path && device_path[0] ? device_path : "(default)");
     int ret = rig_open(radio);
     if (ret != RIG_OK)
     {
-        fprintf(stderr, "rig_open: error = %s %s\n",
-                device_path ? device_path : "(default)", rigerror(ret));
+        HLOGE(RADIO_LOG_TAG, "rig_open: error = %s %s",
+              device_path ? device_path : "(default)", rigerror(ret));
         rig_cleanup(radio);
         radio = NULL;
         g_radio_type = RADIO_TYPE_NONE;
+        pthread_mutex_unlock(&g_radio_mutex);
         return -1;
     }
 
@@ -112,18 +143,23 @@ int radio_io_init(int radio_type, const char *device_path)
         radio->state.vfo_opt = rigctld_vfo_opt;
     }
 
-    printf("Radio control: HAMLIB (model %d, device %s)\n",
-           radio_type, device_path && device_path[0] ? device_path : "(default)");
+    HLOGI(RADIO_LOG_TAG, "Radio control: HAMLIB (model %d, device %s)",
+          radio_type, device_path && device_path[0] ? device_path : "(default)");
+    pthread_mutex_unlock(&g_radio_mutex);
     return 0;
 #else
-    fprintf(stderr, "HAMLIB support not compiled in. Install libhamlib-dev and rebuild.\n");
+    HLOGE(RADIO_LOG_TAG, "HAMLIB support not compiled in. Install libhamlib-dev and rebuild.");
     g_radio_type = RADIO_TYPE_NONE;
+    pthread_mutex_unlock(&g_radio_mutex);
     return -1;
 #endif
 }
 
 void radio_io_shutdown(void)
 {
+    pthread_mutex_lock(&g_radio_mutex);
+    HLOGI(RADIO_LOG_TAG, "Shutting down radio (type=%d)", g_radio_type);
+
 #ifdef HAVE_HERMES_SHM
     if (g_radio_type == RADIO_TYPE_SHM)
     {
@@ -135,6 +171,8 @@ void radio_io_shutdown(void)
         }
 
         g_radio_type = RADIO_TYPE_NONE;
+        HLOGI(RADIO_LOG_TAG, "Radio shutdown complete (SHM)");
+        pthread_mutex_unlock(&g_radio_mutex);
         return;
     }
 #endif
@@ -142,6 +180,8 @@ void radio_io_shutdown(void)
 #ifdef HAVE_HAMLIB
     if (g_radio_type > 0 && radio)
     {
+        HLOGD(RADIO_LOG_TAG, "Sending PTT OFF before closing rig");
+        rig_set_ptt(radio, RIG_VFO_CURR, RIG_PTT_OFF);
         rig_close(radio);
         rig_cleanup(radio);
         radio = NULL;
@@ -149,6 +189,8 @@ void radio_io_shutdown(void)
 #endif
 
     g_radio_type = RADIO_TYPE_NONE;
+    HLOGI(RADIO_LOG_TAG, "Radio shutdown complete");
+    pthread_mutex_unlock(&g_radio_mutex);
 }
 
 bool radio_io_enabled(void)
@@ -158,6 +200,15 @@ bool radio_io_enabled(void)
 
 void radio_io_key_on(void)
 {
+    pthread_mutex_lock(&g_radio_mutex);
+
+    if (g_radio_type == RADIO_TYPE_NONE)
+    {
+        HLOGD(RADIO_LOG_TAG, "key_on called but radio is disabled, ignoring");
+        pthread_mutex_unlock(&g_radio_mutex);
+        return;
+    }
+
 #ifdef HAVE_HERMES_SHM
     if (g_radio_type == RADIO_TYPE_SHM)
     {
@@ -170,6 +221,8 @@ void radio_io_key_on(void)
         srv_cmd[4] = CMD_PTT_ON;
         radio_cmd(sbitx_connector, srv_cmd, response);
 
+        HLOGD(RADIO_LOG_TAG, "PTT ON via SHM");
+        pthread_mutex_unlock(&g_radio_mutex);
         return;
     }
 #endif
@@ -178,12 +231,24 @@ void radio_io_key_on(void)
     if (g_radio_type > 0 && radio)
     {
         rig_set_ptt(radio, RIG_VFO_CURR, RIG_PTT_ON);
+        HLOGD(RADIO_LOG_TAG, "PTT ON via HAMLIB (model %d)", g_radio_type);
     }
 #endif
+
+    pthread_mutex_unlock(&g_radio_mutex);
 }
 
 void radio_io_key_off(void)
 {
+    pthread_mutex_lock(&g_radio_mutex);
+
+    if (g_radio_type == RADIO_TYPE_NONE)
+    {
+        HLOGD(RADIO_LOG_TAG, "key_off called but radio is disabled, ignoring");
+        pthread_mutex_unlock(&g_radio_mutex);
+        return;
+    }
+
 #ifdef HAVE_HERMES_SHM
     if (g_radio_type == RADIO_TYPE_SHM)
     {
@@ -196,6 +261,8 @@ void radio_io_key_off(void)
         srv_cmd[4] = CMD_PTT_OFF;
         radio_cmd(sbitx_connector, srv_cmd, response);
 
+        HLOGD(RADIO_LOG_TAG, "PTT OFF via SHM");
+        pthread_mutex_unlock(&g_radio_mutex);
         return;
     }
 #endif
@@ -204,8 +271,11 @@ void radio_io_key_off(void)
     if (g_radio_type > 0 && radio)
     {
         rig_set_ptt(radio, RIG_VFO_CURR, RIG_PTT_OFF);
+        HLOGD(RADIO_LOG_TAG, "PTT OFF via HAMLIB (model %d)", g_radio_type);
     }
 #endif
+
+    pthread_mutex_unlock(&g_radio_mutex);
 }
 
 void radio_io_list_models(void)
@@ -225,4 +295,20 @@ int radio_io_get_radio_list(char ids[][16], char names[][64], int max_count)
     (void)ids; (void)names; (void)max_count;
     return 0;
 #endif
+}
+
+int radio_io_restart(int new_radio_type, const char *device_path)
+{
+    HLOGI(RADIO_LOG_TAG, "Restart requested (new_type=%d, device=%s)",
+          new_radio_type, device_path && device_path[0] ? device_path : "(none)");
+
+    /* radio_io_shutdown / radio_io_init both acquire the mutex internally
+     * which serialises this restart against any concurrent key_on/key_off. */
+    radio_io_shutdown();
+    return radio_io_init(new_radio_type, device_path);
+}
+
+const char *radio_io_get_device_path(void)
+{
+    return g_device_path;
 }
