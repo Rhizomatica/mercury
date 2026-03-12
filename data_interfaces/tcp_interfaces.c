@@ -964,7 +964,7 @@ void tnc_send_connected()
     const char *source_call = arq_conn.src_addr[0]
                               ? arq_conn.src_addr
                               : arq_conn.my_call_sign;
-    const char *dest_call = strcmp(source_call, arq_conn.my_call_sign) == 0
+    const char *dest_call = arq_conn.dst_addr[0]
                             ? arq_conn.dst_addr
                             : arq_conn.my_call_sign;
     sprintf(buffer, "CONNECTED %s %s %d\r",

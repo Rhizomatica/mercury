@@ -162,8 +162,10 @@ static void cb_send_tx_frame(int packet_type, int mode,
 static void cb_notify_connected(const char *remote_call)
 {
     if (arq_conn.src_addr[0] == '\0')
+    {
         snprintf(arq_conn.src_addr, CALLSIGN_MAX_SIZE, "%s", remote_call);
-    snprintf(arq_conn.dst_addr, CALLSIGN_MAX_SIZE, "%s", remote_call);
+        snprintf(arq_conn.dst_addr, CALLSIGN_MAX_SIZE, "%s", arq_conn.my_call_sign);
+    }
     arq_conn.TRX = RX;
     /* Flush any stale RX bytes from the previous session before notifying
      * UUCP.  Moved here from cb_notify_disconnected so that the last bytes
