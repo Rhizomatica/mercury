@@ -206,6 +206,11 @@ States:
 | CONNECTED      | Data-flow sub-FSM is active                        |
 | DISCONNECTING  | DISCONNECT frame exchange in progress              |
 
+If the caller receives `ACCEPT` before any application payload is queued, it
+sends an empty `ACK` after the post-`ACCEPT` guard to complete the handshake.
+Without that confirmation, the callee remains in `ACCEPTING` and keeps retrying
+`ACCEPT` until its window expires.
+
 ### Level 2 — Data-Flow Sub-FSM
 
 Active only when L1 is in `CONNECTED`.  Manages the half-duplex turn-taking and

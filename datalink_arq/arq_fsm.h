@@ -202,6 +202,9 @@ typedef struct
     bool     pending_disconnect;       /* APP_DISCONNECT deferred until TX buf empty */
 
     /* --- Initial connect guard --- */
+    bool     pending_connect_confirm;  /* caller must ACK ACCEPT when no initial
+                                        * DATA is queued, otherwise callee stays
+                                        * in ACCEPTING waiting for first traffic */
     bool     need_initial_guard;       /* ISS must apply channel guard before
                                         * first DATA after connect (prevents
                                         * transmitting before IRS resets its

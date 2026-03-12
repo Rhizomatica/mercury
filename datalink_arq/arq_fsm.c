@@ -153,6 +153,11 @@ static void sess_enter(arq_session_t *sess, arq_conn_state_t new_state,
     sess->state_enter_ms = hermes_uptime_ms();
     sess->deadline_ms    = deadline_ms;
     sess->deadline_event = deadline_event;
+    if (new_state != ARQ_CONN_CONNECTED)
+    {
+        sess->pending_connect_confirm = false;
+        sess->need_initial_guard = false;
+    }
     /* Reset data-flow and mode state when returning to idle connection states.
      * Restore peer_tx_mode to initial_payload_mode (= broadcast mode) so the
      * payload decoder can receive broadcast frames while LISTENING.  The
@@ -798,6 +803,7 @@ static void fsm_calling(arq_session_t *sess, const arq_event_t *ev)
     case ARQ_EV_RX_ACCEPT:
         if (ev->session_id == sess->session_id)
         {
+            bool has_tx_backlog = g_cbs.tx_backlog && g_cbs.tx_backlog() > 0;
             sess->role        = ARQ_ROLE_CALLER;
             sess->tx_seq      = 0;
             sess->rx_expected = 0;
@@ -816,9 +822,23 @@ static void fsm_calling(arq_session_t *sess, const arq_event_t *ev)
                 g_cbs.notify_connected(sess->remote_call);
             if (g_timing)
                 arq_timing_record_connect(g_timing, sess->control_mode);
-            sess->need_initial_guard = true;  /* guard first DATA so IRS can reset decoders */
+            /* The callee does not enter CONNECTED until it sees the caller's
+             * first DATA or ACK.  If the app has no payload queued yet, send
+             * an initial ACK after the post-ACCEPT guard so the peer does not
+             * sit in ACCEPTING retrying ACCEPT forever. */
+            sess->pending_connect_confirm = !has_tx_backlog;
+            sess->need_initial_guard = has_tx_backlog;
             sess_enter(sess, ARQ_CONN_CONNECTED, UINT64_MAX, ARQ_EV_TIMER_RETRY);
-            enter_idle_iss_guarded(sess, false);   /* caller sends data first */
+            if (sess->pending_connect_confirm)
+            {
+                dflow_enter(sess, ARQ_DFLOW_ACK_TX,
+                            hermes_uptime_ms() + ARQ_ISS_POST_ACK_GUARD_MS,
+                            ARQ_EV_TIMER_ACK);
+            }
+            else
+            {
+                enter_idle_iss_guarded(sess, false);   /* caller sends data first */
+            }
         }
         break;
 
@@ -1409,9 +1429,22 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
         break;
 
     case ARQ_DFLOW_ACK_TX:
-        if (ev->id == ARQ_EV_TX_COMPLETE)
+        if (ev->id == ARQ_EV_TIMER_ACK && sess->pending_connect_confirm)
         {
-            if (sess->peer_has_data)
+            send_ack(sess, 0);
+            dflow_enter(sess, ARQ_DFLOW_ACK_TX, UINT64_MAX, ARQ_EV_TIMER_RETRY);
+        }
+        else if (ev->id == ARQ_EV_TX_COMPLETE)
+        {
+            if (sess->pending_connect_confirm)
+            {
+                sess->pending_connect_confirm = false;
+                if (g_cbs.tx_backlog && g_cbs.tx_backlog() > 0)
+                    enter_idle_iss_guarded(sess, false);
+                else
+                    enter_idle_iss(sess, false);
+            }
+            else if (sess->peer_has_data)
                 enter_idle_irs(sess);
             else if (sess->acktx_had_has_data)
             {
