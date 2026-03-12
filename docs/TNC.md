@@ -81,7 +81,9 @@ BW2750\r
 
 - **BW2300** — Full bandwidth.  Allows gear-shifting up to DATAC1 (510 bytes/frame).
 - **BW500** — Narrow bandwidth.  Restricts the maximum payload mode to DATAC3/DATAC4.
-- **BW2750** — Accepted for compatibility, but currently behaves like **BW2300**.
+- **BW2750** — Tactical mode token accepted for VARA compatibility. Mercury
+  currently uses the same payload-mode ceiling as **BW2300**, but preserves
+  `2750` in `CONNECTED ... BW` reports.
 
 ---
 
@@ -250,9 +252,9 @@ Mercury returns to the idle/listening state.
 
 Sent when a session is successfully established (either outgoing CONNECT
 or incoming CALL accepted).  The `<bandwidth>` value is the effective
-negotiated bandwidth, currently `500` or `2300`.  `<sourcecall>` is always the
-station that initiated the session, and `<destcall>` is always the station that
-was called.
+configured VARA bandwidth token for this side (`500`, `2300`, or `2750`).
+`<sourcecall>` is always the station that initiated the session, and
+`<destcall>` is always the station that was called.
 
 ### DISCONNECTED
 

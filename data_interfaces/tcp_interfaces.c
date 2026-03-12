@@ -292,6 +292,9 @@ static void execute_control_command(char *buffer)
         memset(&cmd, 0, sizeof(cmd));
         cmd.type = ARQ_CMD_SET_BANDWIDTH;
         if (sscanf(buffer, "BW%d", &cmd.value) == 1 &&
+            (cmd.value == ARQ_BANDWIDTH_NARROW_HZ ||
+             cmd.value == ARQ_BANDWIDTH_FULL_HZ ||
+             cmd.value == ARQ_BANDWIDTH_TACTICAL_HZ) &&
             arq_submit_tcp_cmd(&cmd) == 0)
             tcp_write(CTL_TCP_PORT, (uint8_t *)"OK\r", 3);
         else
@@ -965,7 +968,7 @@ void tnc_send_connected()
                             ? arq_conn.dst_addr
                             : arq_conn.my_call_sign;
     sprintf(buffer, "CONNECTED %s %s %d\r",
-            source_call, dest_call, arq_effective_bandwidth_hz());
+            source_call, dest_call, arq_reported_bandwidth_hz());
     if (tnc_queue_line(buffer) < 0)
         HLOGW("tcp-ctl", "Error queuing connected message");
 }

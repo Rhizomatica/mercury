@@ -256,6 +256,16 @@ int arq_effective_bandwidth_hz(void)
     return ARQ_BANDWIDTH_FULL_HZ;
 }
 
+int arq_reported_bandwidth_hz(void)
+{
+    if (arq_conn.bw == ARQ_BANDWIDTH_NARROW_HZ ||
+        arq_conn.bw == ARQ_BANDWIDTH_FULL_HZ ||
+        arq_conn.bw == ARQ_BANDWIDTH_TACTICAL_HZ)
+        return arq_conn.bw;
+
+    return ARQ_BANDWIDTH_FULL_HZ;
+}
+
 bool arq_bandwidth_allows_mode(int mode)
 {
     if (mode == FREEDV_MODE_DATAC1)

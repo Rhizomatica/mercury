@@ -25,6 +25,7 @@
 
 #define ARQ_BANDWIDTH_NARROW_HZ 500
 #define ARQ_BANDWIDTH_FULL_HZ   2300
+#define ARQ_BANDWIDTH_TACTICAL_HZ 2750
 
 #define RX 0
 #define TX 1
@@ -127,10 +128,16 @@ void arq_post_event(int event);
 bool arq_is_link_connected(void);
 
 /**
- * @brief Get the effective ARQ bandwidth cap in Hz.
+ * @brief Get the effective ARQ bandwidth cap in Hz used for mode gating.
  * @return 500 for narrow-band mode, otherwise 2300.
  */
 int arq_effective_bandwidth_hz(void);
+
+/**
+ * @brief Get the configured ARQ bandwidth token to report to VARA clients.
+ * @return 500, 2300, or 2750 when configured; otherwise 2300.
+ */
+int arq_reported_bandwidth_hz(void);
 
 /**
  * @brief Check whether the current ARQ bandwidth cap allows a modem mode.
