@@ -97,7 +97,7 @@ static int parse_rx_channel_layout(const char *value)
 static void print_usage(const char *prog)
 {
     printf("Usage modes: \n");
-    printf("%s -m [mode_index] -i [device] -o [device] -x [sound_system] -p [arq_tcp_base_port] -b [broadcast_tcp_port] -f [freedv_verbosity] -k [rx_input_channel] [-G] [-u ui_ip] [-U ui_base_port] [-W]\n", prog);
+    printf("%s -m [mode_index] -i [device] -o [device] -x [sound_system] -p [arq_tcp_base_port] -b [broadcast_tcp_port] -f [freedv_verbosity] -k [rx_input_channel] [-G] [-U ui_port] [-W]\n", prog);
     printf("%s [-h -l -z]\n", prog);
     printf("\nOptions:\n");
     printf(" -c [cpu_nr]                Run on CPU [cpu_nr]. Use -1 to disable CPU selection, which is the default.\n");
@@ -110,8 +110,7 @@ static void print_usage(const char *prog)
     printf(" -x [sound_system]          Sets the sound system or IO API to use: alsa, pulse, dsound, wasapi or shm. Default is alsa on Linux and dsound on Windows.\n");
     printf(" -p [arq_tcp_base_port]     Sets the ARQ TCP base port (control is base_port, data is base_port + 1). Default is 8300.\n");
     printf(" -b [broadcast_tcp_port]    Sets the broadcast TCP port. Default is 8100.\n");
-    printf(" -u [ui_ip]                 Sets the UI IP address. Default is 127.0.0.1.\n");
-    printf(" -U [ui_base_port]          Sets the UI base port (WebSocket port is ui_base_port - 1). Default is 10000.\n");
+    printf(" -U [ui_port]               Sets the UI port (WebSocket port). Default is 10000. Requires -G.\n");
     printf(" -W                         Disable waterfall/spectrum data sent to the UI (used to spare CPU).\n");
     printf(" -G                         Enable UI communication (WebSocket server for mercury-qt). Off by default.\n");
     printf(" -l                         Lists all modulator/coding modes.\n");
@@ -160,8 +159,7 @@ int main(int argc, char *argv[])
     int audio_system = -1; // default audio system
     char *input_dev = (char *) malloc(MAX_PATH);
     char *output_dev = (char *) malloc(MAX_PATH);
-    const char *ui_ip = UI_DEFAULT_IP;
-    int ui_tx_port = UI_BASE_PORT;
+    uint16_t ui_port = UI_DEFAULT_PORT;
     bool waterfall_enabled = true;
     bool ui_enabled = false;
     int startup_payload_mode = FREEDV_MODE_DATAC3;
@@ -178,19 +176,13 @@ int main(int argc, char *argv[])
     bool list_radio_models = false;
 
     int opt;
-    while ((opt = getopt(argc, argv, "hc:s:m:f:k:li:o:x:p:b:zvtrL:JR:u:U:A:SKWG")) != -1)
+    while ((opt = getopt(argc, argv, "hc:s:m:f:k:li:o:x:p:b:zvtrL:JR:U:A:SKWG")) != -1)
     {
         switch (opt)
         {
-        case 'u':
-            if (optarg)
-                ui_ip = optarg;
-            break;
         case 'U':
             if (optarg)
-            {
-                ui_tx_port = atoi(optarg);
-            }
+                ui_port = atoi(optarg);
             break;
         case 'W':
             waterfall_enabled = false;
@@ -565,10 +557,9 @@ int main(int argc, char *argv[])
     ui_ctx_t ui_ctx;
     if (ui_enabled)
     {
-        uint16_t ws_port = (uint16_t)(ui_tx_port - 1);
         HLOGI("main", "Initializing UI communication (WebSocket port %u | Waterfall %s)\n",
-               ws_port, waterfall_enabled ? "enabled" : "disabled");
-        if (ui_comm_init(&ui_ctx, ws_port, waterfall_enabled ? 1 : 0,
+               ui_port, waterfall_enabled ? "enabled" : "disabled");
+        if (ui_comm_init(&ui_ctx, (uint16_t)ui_port, waterfall_enabled ? 1 : 0,
                          audio_system, input_dev, output_dev, rx_input_channel) != 0)
         {
             // Non-fatal: mercury can run without UI

@@ -39,4 +39,3 @@ modem/freedv/libfreedvdata.a
 utils/broadcast_diag_rx
 utils/broadcast_diag_tx
 utils/broadcast_test
-gui_interface/ui_communication

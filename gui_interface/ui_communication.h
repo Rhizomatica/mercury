@@ -18,32 +18,20 @@
  *
  */
 
-// UDP JSON sender + receiver interface (POSIX).
-// Threaded receiver, variadic JSON key/value sender.
+// WebSocket-based UI communication interface (POSIX).
+// Bidirectional: backend publishes status/device lists, UI sends commands.
 
-#ifndef UDP_JSON_H
-#define UDP_JSON_H
+#ifndef UI_COMMUNICATION_H
+#define UI_COMMUNICATION_H
 
 #include <stdint.h>
 #include <pthread.h>
 
-#include "../common/os_interop.h"
-#if !defined(_WIN32)
-#include <arpa/inet.h>
-#include <netinet/in.h>
-#endif
-
-#include "spectrum_sender.h"
 #include "websocket/mercury_websocket.h"
 
 // ---- Default ports for UI <-> backend communication ----
-// WebSocket server port = UI_BASE_PORT - 1 (single bidirectional channel)
-// Legacy UDP ports (kept for TEST_MAIN standalone mode):
-//   Backend sends status TO UI on UI TX port = UI base port (UI listening)
-//   Backend listens for commands FROM UI on UI RX port = UI base port + 1 (UI sending)
-//   Spectrum / waterfall data is sent to UI_BASE_PORT + 2
-#define UI_BASE_PORT 10000
-#define UI_DEFAULT_IP "127.0.0.1"
+// WebSocket server port = UI_DEFAULT_PORT (single bidirectional channel)
+#define UI_DEFAULT_PORT 10000
 // Status publish interval in microseconds (500ms)
 #define UI_PUBLISH_INTERVAL_US 500000
 // Spectrum publish interval in microseconds (50ms = 20 fps)
@@ -55,7 +43,7 @@ typedef enum {
     DIR_TX
 } modem_direction_t;
 
-// ---- Status message ----
+// ---- Status snapshot (for change-detection / rate limiting) ----
 typedef struct {
     int bitrate;
     double snr;
@@ -68,78 +56,13 @@ typedef struct {
     long bytes_received;
 } modem_status_t;
 
-// ---- Message types ----
-typedef enum {
-    MSG_UNKNOWN,
-    MSG_STATUS,
-    MSG_CONFIG,
-    MSG_RADIO_LIST,
-    MSG_CAPTURE_DEV_LIST,   // capture (input) device list
-    MSG_PLAYBACK_DEV_LIST,  // playback (output) device list
-    MSG_COMMAND              // UI command (set_capture_dev, set_playback_dev, etc.)
-} message_type_t;
+// ---- UI context ----
+typedef struct ui_ctx ui_ctx_t;
 
-// ---- Unified message ----
-typedef struct {
-    message_type_t type;
-
-    // Status
-    modem_status_t status;
-
-    // Config
-    char soundcard[64];   // string or index
-    int broadcast_port;
-    int arq_base_port;
-    char aes_key[128];
-    int encryption_enabled; // bool
-    // Capture device list
-    struct {
-        char selected[64];
-        char list[512];
-    } capture_dev_list;
-    // Playback device list
-    struct {
-        char selected[64];
-        char list[512];
-    } playback_dev_list;
-    // Radio list
-    struct {
-        char selected[64];
-        char device_path[256];
-        char list[512]; // JSON array string
-    } radio_list;
-    // UI command (from mercury-qt)
-    struct {
-        char command[64];  // e.g. "set_capture_dev", "set_input_channel"
-        char value[256];   // e.g. "plughw:2,0", "right"
-        char value2[256];  // optional second value (e.g. device path)
-    } cmd;
-} modem_message_t;
-
-// ---- TX handle ----
-typedef struct {
-    int sock;
-    struct sockaddr_in dest;
-} udp_tx_t;
-
-// ---- RX thread args ----
-typedef struct ui_ctx ui_ctx_t;   // forward declaration
-typedef struct {
-    uint16_t listen_port;
-    ui_ctx_t *ctx;            // back-pointer for applying UI commands
-} rx_args_t;
-
-// ---- Publisher thread context ----
 struct ui_ctx {
-    // WebSocket server (replaces UDP TX/RX sockets)
+    // WebSocket server (bidirectional: status TX + command RX)
     ws_ctx_t ws;
-    uint16_t ws_port;           // WSS listen port (UI_BASE_PORT - 1)
-
-    // Legacy UDP (kept for TEST_MAIN standalone mode)
-    udp_tx_t tx;
-    spectrum_tx_t spectrum_tx;
-    uint16_t rx_port;
-    pthread_t rx_tid;
+    uint16_t ws_port;           // WSS listen port (default=10000)
 
     pthread_t pub_tid;
     pthread_t spec_tid;         // dedicated spectrum publisher thread (20 fps)
@@ -159,48 +82,6 @@ struct ui_ctx {
 };
 
 // ---- API ----
-int udp_tx_init(udp_tx_t *tx, const char *ip, uint16_t port);
-void udp_tx_close(udp_tx_t *tx);
-int udp_tx_send_json_pairs(udp_tx_t *tx, ...);
-
-// Helpers for specific messages
-int udp_tx_send_status(udp_tx_t *tx,
-                       int bitrate, double snr,
-                       const char *user_callsign,
-                       const char *dest_callsign,
-                       int sync, modem_direction_t dir,
-                       int client_tcp_connected,
-                       long bytes_transmitted,
-                       long bytes_received,
-                       int waterfall_enabled);
-
-int udp_tx_send_config(udp_tx_t *tx,
-                       const char *soundcard,
-                       int broadcast_port,
-                       int arq_base_port,
-                       const char *aes_key,
-                       int encryption_enabled);
-
-int udp_tx_send_capture_dev_list(udp_tx_t *tx,
-                                 const char *selected,
-                                 const char *ids[], const char *names[],
-                                 int count);
-
-int udp_tx_send_playback_dev_list(udp_tx_t *tx,
-                                  const char *selected,
-                                  const char *ids[], const char *names[],
-                                  int count);
-
-int udp_tx_send_radio_list(udp_tx_t *tx,
-                           const char *selected_radio,
-                           const char *device_path,
-                           const char *ids[], const char *names[],
-                           int count);
-
-int udp_tx_send_input_channel(udp_tx_t *tx, int rx_input_channel);
-
-// RX thread (listens for commands from the UI)
-void *rx_thread_main(void *arg);
 
 // Publisher thread (periodically sends modem status to the UI)
 void *ui_publisher_thread(void *arg);
@@ -209,7 +90,7 @@ void *ui_publisher_thread(void *arg);
 void *spectrum_publisher_thread(void *arg);
 
 // High-level init/shutdown for the UI communication subsystem
-// ws_port: WebSocket server port (UI_BASE_PORT - 1)
+// ws_port: WebSocket server port (default=10000)
 // waterfall_enabled: 1 = start spectrum publisher thread (default), 0 = skip it
 // audio_system: AUDIO_SUBSYSTEM_* constant for soundcard enumeration
 // selected_capture: currently active capture device name (may be NULL)

@@ -28,9 +28,13 @@
 #include <string.h>
 #include <pthread.h>
 #include <stdbool.h>
+#include <errno.h>
 
 #include "mongoose.h"
 #include "mercury_websocket.h"
+#include "../../common/hermes_log.h"
+
+#define WS_LOG_TAG "websocket"
 
 // ---- Internal state shared with the server thread ----
 static struct mg_mgr s_mgr;            // Mongoose event manager
@@ -140,7 +144,7 @@ static void ws_handle_message(struct mg_connection *c, struct mg_ws_message *wm)
         return;
     }
 
-    printf("WS RX command=\"%s\" value=\"%s\" value2=\"%s\"\n",
+    HLOGI(WS_LOG_TAG, "RX command=\"%s\" value=\"%s\" value2=\"%s\"",
            cmd.command, cmd.value, cmd.value2);
 
     int rc = s_ws_ctx->cmd_callback(&cmd, s_ws_ctx->cmd_callback_data);
@@ -180,7 +184,7 @@ static void ws_event_handler(struct mg_connection *c, int ev, void *ev_data, voi
         {
             // Upgrade HTTP to WebSocket
             mg_ws_upgrade(c, hm, NULL);
-            printf("Mercury WS: client connected (conn %p)\n", (void *)c);
+            HLOGI(WS_LOG_TAG, "Client connected (conn %p)", (void *)c);
         }
         else if (s_ws_ctx && s_ws_ctx->web_root[0])
         {
@@ -201,13 +205,13 @@ static void ws_event_handler(struct mg_connection *c, int ev, void *ev_data, voi
     }
     else if (ev == MG_EV_ERROR)
     {
-        printf("Mercury WS: connection error (conn %p): %s\n",
+        HLOGE(WS_LOG_TAG, "Connection error (conn %p): %s",
                (void *)c, (char *)ev_data);
     }
     else if (ev == MG_EV_CLOSE)
     {
         if (c->is_websocket)
-            printf("Mercury WS: client disconnected (conn %p)\n", (void *)c);
+            HLOGI(WS_LOG_TAG, "Client disconnected (conn %p)", (void *)c);
     }
 }
 
@@ -219,7 +223,7 @@ static void *ws_server_thread(void *arg)
     mg_mgr_init(&s_mgr);
     mg_http_listen(&s_mgr, ctx->listen_url, ws_event_handler, NULL);
 
-    printf("Mercury WS: server listening on %s\n", ctx->listen_url);
+    HLOGI(WS_LOG_TAG, "Server listening on %s", ctx->listen_url);
 
     while (ctx->running)
     {
@@ -234,7 +238,7 @@ static void *ws_server_thread(void *arg)
     mg_mgr_poll(&s_mgr, WS_POLL_INTERVAL_MS);
     mg_mgr_free(&s_mgr);
 
-    printf("Mercury WS: server thread stopped\n");
+    HLOGI(WS_LOG_TAG, "Server thread stopped");
     return NULL;
 }
 
@@ -265,12 +269,12 @@ int ws_init(ws_ctx_t *ctx,
 
     if (pthread_create(&ctx->ws_tid, NULL, ws_server_thread, ctx) != 0)
     {
-        perror("Mercury WS: pthread_create failed");
+        HLOGE(WS_LOG_TAG, "pthread_create failed: %s", strerror(errno));
         ctx->running = false;
         return -1;
     }
 
-    printf("Mercury WS: initialized (url=%s)\n", ctx->listen_url);
+    HLOGI(WS_LOG_TAG, "Initialized (url=%s)", ctx->listen_url);
     return 0;
 }
 
@@ -317,5 +321,5 @@ void ws_shutdown(ws_ctx_t *ctx)
     pthread_join(ctx->ws_tid, NULL);
     s_ws_ctx = NULL;
 
-    printf("Mercury WS: shut down\n");
+    HLOGI(WS_LOG_TAG, "Shut down");
 }
