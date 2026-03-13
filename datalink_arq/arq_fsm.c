@@ -535,8 +535,6 @@ static void send_data_frame(arq_session_t *sess)
     if (payload_len <= 0)
         return;  /* no data and no saved frame */
 
-    sess->tx_inflight_bytes = payload_len;
-
     /* 0 = full frame; else = exact valid byte count (receiver trims).
      * payload_len can exceed 255 for DATAC1 (up to 502 bytes), so we
      * cannot fit it in uint8_t directly.  Carry bit 8 of the count in
@@ -566,6 +564,8 @@ static void send_data_frame(arq_session_t *sess)
                                     payload, user_bytes);
     if (n <= 0)
         return;
+
+    sess->tx_inflight_bytes = payload_len;
 
     /* Save for potential retransmission if ACK is lost. */
     if ((size_t)n <= sizeof(sess->tx_retransmit_buf))
