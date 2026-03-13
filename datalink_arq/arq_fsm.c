@@ -534,6 +534,8 @@ static void send_data_frame(arq_session_t *sess)
     if (payload_len <= 0)
         return;  /* no data and no saved frame */
 
+    sess->tx_inflight_bytes = payload_len;
+
     /* 0 = full frame; else = exact valid byte count (receiver trims).
      * payload_len can exceed 255 for DATAC1 (up to 502 bytes), so we
      * cannot fit it in uint8_t directly.  Carry bit 8 of the count in
@@ -780,6 +782,7 @@ static void fsm_listening(arq_session_t *sess, const arq_event_t *ev)
             sess->tx_seq      = 0;
             sess->rx_expected = 0;
             sess->tx_retransmit_len = 0;
+            sess->tx_inflight_bytes = 0;
             sess->tx_retries_left = ARQ_DATA_RETRY_SLOTS;
             sess->payload_mode       = FREEDV_MODE_DATAC4;
             sess->peer_tx_mode       = FREEDV_MODE_DATAC4;
@@ -819,6 +822,7 @@ static void fsm_calling(arq_session_t *sess, const arq_event_t *ev)
             sess->tx_seq      = 0;
             sess->rx_expected = 0;
             sess->tx_retransmit_len = 0;  /* discard any stale retransmit buf from prior session */
+            sess->tx_inflight_bytes = 0;
             sess->tx_retries_left = ARQ_DATA_RETRY_SLOTS;
             sess->payload_mode       = FREEDV_MODE_DATAC4;   /* reset mode state from prior session */
             sess->peer_tx_mode       = FREEDV_MODE_DATAC4;
@@ -888,6 +892,7 @@ static void fsm_accepting(arq_session_t *sess, const arq_event_t *ev)
         sess->tx_seq      = 0;
         sess->rx_expected = 0;
         sess->tx_retransmit_len = 0;  /* discard any stale retransmit buf from prior session */
+        sess->tx_inflight_bytes = 0;
         sess->tx_retries_left = ARQ_DATA_RETRY_SLOTS;
         sess->payload_mode       = FREEDV_MODE_DATAC4;   /* reset mode state from prior session */
         sess->peer_tx_mode       = FREEDV_MODE_DATAC4;
@@ -1201,6 +1206,7 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
                                          sess->peer_snr_x10);
             sess->tx_seq++;
             sess->tx_retransmit_len = 0;  /* ACKed — discard retransmit buffer */
+            sess->tx_inflight_bytes = 0;  /* payload confirmed by peer */
             sess->tx_retries_left   = ARQ_DATA_RETRY_SLOTS;  /* fresh counter for next seq */
             sess->peer_has_data = (ev->rx_flags & ARQ_FLAG_HAS_DATA) != 0;
             if (g_cbs.send_buffer_status)
@@ -1277,6 +1283,7 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
                 record_tx_outcome(sess, sess->tx_retries_left == ARQ_DATA_RETRY_SLOTS);
                 sess->tx_seq++;
                 sess->tx_retransmit_len = 0;
+                sess->tx_inflight_bytes = 0;
                 sess->tx_retries_left   = ARQ_DATA_RETRY_SLOTS;
                 sess->peer_has_data = (ev->rx_flags & ARQ_FLAG_HAS_DATA) != 0;
                 if (g_cbs.send_buffer_status)
@@ -1324,6 +1331,7 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
                 record_tx_outcome(sess, sess->tx_retries_left == ARQ_DATA_RETRY_SLOTS);
                 sess->tx_seq++;
                 sess->tx_retransmit_len = 0;
+                sess->tx_inflight_bytes = 0;
                 sess->tx_retries_left   = ARQ_DATA_RETRY_SLOTS;
                 if (g_cbs.send_buffer_status)
                     g_cbs.send_buffer_status(g_cbs.tx_backlog ? g_cbs.tx_backlog() : 0);

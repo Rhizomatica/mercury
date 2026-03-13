@@ -232,6 +232,8 @@ static int cb_tx_backlog(void)
     pthread_mutex_lock(&g_app_tx_mtx);
     int n = (int)size_buffer(g_app_tx_buf);
     pthread_mutex_unlock(&g_app_tx_mtx);
+    /* Include payload bytes in the unACKed in-flight frame */
+    n += g_sess.tx_inflight_bytes;
     return n;
 }
 

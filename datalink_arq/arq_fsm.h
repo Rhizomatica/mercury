@@ -225,6 +225,7 @@ typedef struct
                                        * ring bytes, corrupting byte stream)  */
     int      tx_retransmit_len;       /* 0 = no saved frame                   */
     uint8_t  tx_retransmit_seq;       /* tx_seq the saved frame belongs to    */
+    int      tx_inflight_bytes;      /* payload bytes in unACKed frame       */
 
     /* --- Keepalive tracking --- */
     int      keepalive_miss_count;
