@@ -185,6 +185,7 @@ static void cb_notify_pending(const char *remote_call)
 
 static void cb_notify_cancelpending(void)
 {
+    arq_conn.session_bw = 0;
     tnc_send_cancelpending();
     HLOGI(LOG_COMP, "Incoming connection cancelled");
 }

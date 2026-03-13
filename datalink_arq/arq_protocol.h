@@ -21,7 +21,7 @@
 #define ARQ_PROTO_VERSION  4   /* v4: framer extension field, no proto_ver field on wire */
 
 /* ======================================================================
- * Frame header layout (v3, 8 bytes total)
+ * Frame header layout (v4, 8 bytes total)
  *
  * Proto_ver field removed — both sides always run the same binary.
  * ack_delay reduced to 1 byte (10ms units, max 2.55s — covers all real delays).
