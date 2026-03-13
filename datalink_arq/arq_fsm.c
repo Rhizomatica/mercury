@@ -165,8 +165,9 @@ static void sess_enter(arq_session_t *sess, arq_conn_state_t new_state,
      * before entering ACCEPTING/CALLING. */
     if (new_state == ARQ_CONN_DISCONNECTED || new_state == ARQ_CONN_LISTENING)
     {
-        sess->dflow_state  = ARQ_DFLOW_IDLE_ISS;
-        sess->peer_tx_mode = sess->initial_payload_mode;
+        sess->dflow_state       = ARQ_DFLOW_IDLE_ISS;
+        sess->peer_tx_mode      = sess->initial_payload_mode;
+        sess->tx_inflight_bytes = 0;
     }
 }
 

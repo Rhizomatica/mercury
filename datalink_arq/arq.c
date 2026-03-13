@@ -232,8 +232,6 @@ static int cb_tx_backlog(void)
     pthread_mutex_lock(&g_app_tx_mtx);
     int n = (int)size_buffer(g_app_tx_buf);
     pthread_mutex_unlock(&g_app_tx_mtx);
-    /* Include payload bytes in the unACKed in-flight frame */
-    n += g_sess.tx_inflight_bytes;
     return n;
 }
 
@@ -825,7 +823,7 @@ bool arq_get_runtime_snapshot(arq_runtime_snapshot_t *snapshot)
     snapshot->initialized      = true;
     snapshot->connected        = arq_is_link_connected();
     snapshot->trx              = arq_conn.TRX;
-    snapshot->tx_backlog_bytes = cb_tx_backlog();
+    snapshot->tx_backlog_bytes = cb_tx_backlog() + g_sess.tx_inflight_bytes;
     snapshot->speed_level      = g_sess.speed_level;
     snapshot->payload_mode      = g_sess.payload_mode;
     snapshot->peer_tx_mode      = g_sess.peer_tx_mode;
