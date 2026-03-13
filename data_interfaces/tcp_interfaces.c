@@ -357,6 +357,21 @@ static void execute_control_command(char *buffer)
         return;
     }
 
+    if (!memcmp(buffer, "CQFRAME", strlen("CQFRAME")))
+    {
+        memset(&cmd, 0, sizeof(cmd));
+        cmd.type = ARQ_CMD_SEND_CQ;
+        if (sscanf(buffer, "CQFRAME %15s %d", cmd.arg0, &cmd.value) == 2 &&
+            (cmd.value == ARQ_BANDWIDTH_NARROW_HZ ||
+             cmd.value == ARQ_BANDWIDTH_FULL_HZ ||
+             cmd.value == ARQ_BANDWIDTH_TACTICAL_HZ) &&
+            arq_submit_tcp_cmd(&cmd) == 0)
+            tcp_write(CTL_TCP_PORT, (uint8_t *)"OK\r", 3);
+        else
+            tcp_write(CTL_TCP_PORT, (uint8_t *)"WRONG\r", 6);
+        return;
+    }
+
     if (!memcmp(buffer, "DISCONNECT", strlen("DISCONNECT")))
     {
         memset(&cmd, 0, sizeof(cmd));

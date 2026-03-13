@@ -333,6 +333,24 @@ static void handle_cmd(const arq_cmd_msg_t *msg)
         ev.id = ARQ_EV_APP_CONNECT;
         break;
 
+    case ARQ_CMD_SEND_CQ:
+    {
+        uint8_t frame[INT_BUFFER_SIZE];
+        const char *source_call = msg->arg0[0] ? msg->arg0 : arq_conn.my_call_sign;
+        int bw_hz = normalize_bandwidth_hz(msg->value);
+        int n = arq_protocol_build_cq(frame, sizeof(frame), source_call, bw_hz);
+        if (n <= 0)
+        {
+            HLOGW(LOG_COMP, "Failed to build CQ frame (source=%s bw=%d)",
+                  source_call, bw_hz);
+            return;
+        }
+
+        cb_send_tx_frame(PACKET_TYPE_ARQ_CQ, g_sess.control_mode, (size_t)n, frame);
+        HLOGI(LOG_COMP, "Queued CQ frame from %s (%d Hz)", source_call, bw_hz);
+        return;
+    }
+
     case ARQ_CMD_DISCONNECT:
         /* VARA TNC spec: send DISCONNECTED to host immediately on receiving
          * DISCONNECT command, before the over-the-air exchange completes.

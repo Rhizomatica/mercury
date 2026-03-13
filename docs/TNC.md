@@ -163,6 +163,20 @@ CONNECT AAAA BBBB\r
 
 ---
 
+### CQFRAME
+
+Transmit a compact DATAC13 CQ frame.
+
+```
+CQFRAME <sourcecall> <bandwidth>\r
+```
+
+`<bandwidth>` must be one of `500`, `2300`, or `2750`.
+
+**Response:** `OK\r` if the command was accepted, `WRONG\r` on error.
+
+---
+
 ### DISCONNECT
 
 Terminate the current ARQ session.

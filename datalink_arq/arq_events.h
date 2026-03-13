@@ -29,7 +29,8 @@ typedef enum
     ARQ_CMD_SET_BANDWIDTH = 7,
     ARQ_CMD_CONNECT = 8,
     ARQ_CMD_DISCONNECT = 9,
-    ARQ_CMD_SET_RETRY = 10
+    ARQ_CMD_SET_RETRY = 10,
+    ARQ_CMD_SEND_CQ = 11
 } arq_cmd_type_t;
 
 typedef enum
