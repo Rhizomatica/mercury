@@ -597,6 +597,77 @@ void *rx_thread_main(void *arg)
     return NULL;
 }
 
+// ---------------- WS COMMAND CALLBACK ----------------
+// Called by the websocket server thread when a command JSON arrives from UI.
+// Replaces the UDP rx_thread_main for websocket-based communication.
+
+#ifndef TEST_MAIN
+static int ws_command_handler(const ws_command_t *cmd, void *user_data)
+{
+    ui_ctx_t *ctx = (ui_ctx_t *)user_data;
+    if (!ctx || !cmd)
+        return -1;
+
+    HLOGI(UI_LOG_TAG, "WS CMD from UI: command=\"%s\" value=\"%s\" value2=\"%s\"",
+          cmd->command, cmd->value, cmd->value2);
+
+    int need_audio_restart = 0;
+
+    if (strcmp(cmd->command, "set_capture_dev") == 0) {
+        strncpy(ctx->selected_capture_dev, cmd->value,
+                sizeof(ctx->selected_capture_dev) - 1);
+        HLOGI(UI_LOG_TAG, "Capture device set to: %s", ctx->selected_capture_dev);
+        need_audio_restart = 1;
+    } else if (strcmp(cmd->command, "set_playback_dev") == 0) {
+        strncpy(ctx->selected_playback_dev, cmd->value,
+                sizeof(ctx->selected_playback_dev) - 1);
+        HLOGI(UI_LOG_TAG, "Playback device set to: %s", ctx->selected_playback_dev);
+        need_audio_restart = 1;
+    } else if (strcmp(cmd->command, "set_input_channel") == 0) {
+        if (strcmp(cmd->value, "right") == 0)
+            ctx->rx_input_channel = 1;  // RIGHT
+        else if (strcmp(cmd->value, "stereo") == 0)
+            ctx->rx_input_channel = 2;  // STEREO
+        else
+            ctx->rx_input_channel = 0;  // LEFT (default)
+        HLOGI(UI_LOG_TAG, "Input channel set to: %s (%d)",
+              cmd->value, ctx->rx_input_channel);
+        need_audio_restart = 1;
+    } else if (strcmp(cmd->command, "set_radio_config") == 0) {
+        int new_radio_type = atoi(cmd->value);
+        const char *dev_path = cmd->value2;
+        HLOGI(UI_LOG_TAG, "Radio set_radio_config command: model_id=%d device_path=\"%s\"",
+              new_radio_type, dev_path);
+        int rc = radio_io_restart(new_radio_type, dev_path);
+        if (rc == 0) {
+            HLOGI(UI_LOG_TAG, "Radio subsystem restarted (model=%d, path=%s)",
+                  new_radio_type, dev_path);
+            ctx->radio_list_pending = 1;
+        } else {
+            HLOGE(UI_LOG_TAG, "Radio subsystem restart FAILED (model=%d, path=%s, rc=%d)",
+                  new_radio_type, dev_path, rc);
+            return rc;
+        }
+    } else if (strcmp(cmd->command, "get_radio_list") == 0) {
+        HLOGI(UI_LOG_TAG, "UI requested radio list");
+        ctx->radio_list_pending = 1;
+    } else {
+        HLOGW(UI_LOG_TAG, "Unknown UI command: %s", cmd->command);
+        return -1;
+    }
+
+    if (need_audio_restart) {
+        HLOGI(UI_LOG_TAG, "Restarting audioio subsystem (capture=%s playback=%s channel=%d)",
+              ctx->selected_capture_dev, ctx->selected_playback_dev, ctx->rx_input_channel);
+        audioio_restart(ctx->selected_capture_dev, ctx->selected_playback_dev,
+                        ctx->audio_system, ctx->rx_input_channel);
+        HLOGI(UI_LOG_TAG, "Audioio subsystem restarted successfully");
+    }
+
+    return 0;
+}
+#endif /* !TEST_MAIN */
+
 // ---------------- UI PUBLISHER THREAD ----------------
 // Periodically gathers modem/ARQ/network status and sends it to the UI.
 
@@ -605,10 +676,9 @@ void *rx_thread_main(void *arg)
 void *ui_publisher_thread(void *arg)
 {
     ui_ctx_t *ctx = (ui_ctx_t *)arg;
-    udp_tx_t *tx = &ctx->tx;
 
-    HLOGI(UI_LOG_TAG, "Publisher started - sending status every %d ms to port %d",
-           UI_PUBLISH_INTERVAL_US / 1000, ntohs(tx->dest.sin_port));
+    HLOGI(UI_LOG_TAG, "Publisher started - sending status every %dms via WebSocket (port %u)",
+           UI_PUBLISH_INTERVAL_US / 1000, ctx->ws_port);
 
     // Send soundcard list once at the beginning and then every ~5s (10 cycles)
     int soundcard_cycle = 0;
@@ -680,17 +750,35 @@ void *ui_publisher_thread(void *arg)
             if (dest_call) strncpy(ctx->last_sent_status.dest_callsign, dest_call, sizeof(ctx->last_sent_status.dest_callsign)-1);
         }
 
-        // --- Send status to UI ---
-        udp_tx_send_status(tx,
-                           bitrate, snr,
-                           user_call ? user_call : "",
-                           dest_call ? dest_call : "",
-                           sync, dir,
-                           tcp_connected,
-                           bytes_tx, bytes_rx,
-                           ctx->waterfall_enabled);
+        // --- Build and broadcast status JSON via WebSocket ---
+        {
+            char buf[4096];
+            int pos = 0;
+            pos += snprintf(buf + pos, sizeof(buf) - pos,
+                "{\"type\":\"status\","
+                "\"bitrate\":%d,"
+                "\"snr\":%.1f,"
+                "\"user_callsign\":\"%s\","
+                "\"dest_callsign\":\"%s\","
+                "\"sync\":%s,"
+                "\"direction\":\"%s\","
+                "\"client_tcp_connected\":%s,"
+                "\"bytes_transmitted\":%ld,"
+                "\"bytes_received\":%ld,"
+                "\"waterfall\":%s}",
+                bitrate, snr,
+                user_call ? user_call : "",
+                dest_call ? dest_call : "",
+                sync ? "true" : "false",
+                dir == DIR_TX ? "tx" : "rx",
+                tcp_connected ? "true" : "false",
+                bytes_tx, bytes_rx,
+                ctx->waterfall_enabled ? "true" : "false");
 
-        // --- Periodically send capture & playback device lists to UI ---
+            ws_broadcast_json(&ctx->ws, buf);
+        }
+
+        // --- Periodically send capture & playback device lists via WebSocket ---
         if (soundcard_cycle % SOUNDCARD_SEND_INTERVAL == 0)
         {
             // Capture (input) devices - mode 1 = FFAUDIO_DEV_CAPTURE
@@ -698,13 +786,18 @@ void *ui_publisher_thread(void *arg)
             int cap_count = get_soundcard_list(ctx->audio_system, 1, cap_ids, cap_names, 32);
             if (cap_count > 0)
             {
-                const char *id_ptrs[32], *name_ptrs[32];
-                for (int i = 0; i < cap_count; i++) {
-                    id_ptrs[i] = cap_ids[i];
-                    name_ptrs[i] = cap_names[i];
+                char buf[4096];
+                int pos = 0;
+                pos += snprintf(buf + pos, sizeof(buf) - pos,
+                    "{\"type\":\"capture_dev_list\",\"selected\":\"%s\",\"list\":[",
+                    ctx->selected_capture_dev);
+                for (int i = 0; i < cap_count && pos < (int)sizeof(buf) - 128; i++) {
+                    if (i > 0) buf[pos++] = ',';
+                    pos += snprintf(buf + pos, sizeof(buf) - pos,
+                        "{\"name\":\"%s\",\"id\":\"%s\"}", cap_names[i], cap_ids[i]);
                 }
-                udp_tx_send_capture_dev_list(tx, ctx->selected_capture_dev,
-                                             id_ptrs, name_ptrs, cap_count);
+                pos += snprintf(buf + pos, sizeof(buf) - pos, "]}");
+                ws_broadcast_json(&ctx->ws, buf);
             }
 
             // Playback (output) devices - mode 0 = FFAUDIO_DEV_PLAYBACK
@@ -712,15 +805,19 @@ void *ui_publisher_thread(void *arg)
             int pb_count = get_soundcard_list(ctx->audio_system, 0, pb_ids, pb_names, 32);
             if (pb_count > 0)
             {
-                const char *id_ptrs[32], *name_ptrs[32];
-                for (int i = 0; i < pb_count; i++) {
-                    id_ptrs[i] = pb_ids[i];
-                    name_ptrs[i] = pb_names[i];
+                char buf[4096];
+                int pos = 0;
+                pos += snprintf(buf + pos, sizeof(buf) - pos,
+                    "{\"type\":\"playback_dev_list\",\"selected\":\"%s\",\"list\":[",
+                    ctx->selected_playback_dev);
+                for (int i = 0; i < pb_count && pos < (int)sizeof(buf) - 128; i++) {
+                    if (i > 0) buf[pos++] = ',';
+                    pos += snprintf(buf + pos, sizeof(buf) - pos,
+                        "{\"name\":\"%s\",\"id\":\"%s\"}", pb_names[i], pb_ids[i]);
                 }
-                udp_tx_send_playback_dev_list(tx, ctx->selected_playback_dev,
-                                              id_ptrs, name_ptrs, pb_count);
+                pos += snprintf(buf + pos, sizeof(buf) - pos, "]}");
+                ws_broadcast_json(&ctx->ws, buf);
             }
-
         }
         soundcard_cycle++;
 
@@ -733,27 +830,41 @@ void *ui_publisher_thread(void *arg)
             int radio_count = radio_io_get_radio_list(radio_ids, radio_names, 512);
             if (radio_count > 0)
             {
-                const char *rid_ptrs[512], *rname_ptrs[512];
-                for (int i = 0; i < radio_count; i++) {
-                    rid_ptrs[i] = radio_ids[i];
-                    rname_ptrs[i] = radio_names[i];
-                }
                 char sel_buf[16] = "";
                 int cur_type = radio_io_get_radio_type();
                 if (cur_type > 0)
                     snprintf(sel_buf, sizeof(sel_buf), "%d", cur_type);
                 const char *cur_dev = radio_io_get_device_path();
-                udp_tx_send_radio_list(tx, sel_buf,
-                                       cur_dev ? cur_dev : "",
-                                       rid_ptrs, rname_ptrs, radio_count);
+
+                char buf[4096];
+                int pos = 0;
+                pos += snprintf(buf + pos, sizeof(buf) - pos,
+                    "{\"type\":\"radio_list\",\"selected\":\"%s\",\"device_path\":\"%s\",\"list\":[",
+                    sel_buf, cur_dev ? cur_dev : "");
+                for (int i = 0; i < radio_count && pos < (int)sizeof(buf) - 128; i++) {
+                    if (i > 0) buf[pos++] = ',';
+                    pos += snprintf(buf + pos, sizeof(buf) - pos,
+                        "{\"name\":\"%s\",\"id\":\"%s\"}", radio_names[i], radio_ids[i]);
+                }
+                pos += snprintf(buf + pos, sizeof(buf) - pos, "]}");
+                ws_broadcast_json(&ctx->ws, buf);
             }
         }
 
         // --- Send capture input channel setting to UI ---
-        // Sent together with device lists (same interval)
         if ((soundcard_cycle - 1) % SOUNDCARD_SEND_INTERVAL == 0)
         {
-            udp_tx_send_input_channel(tx, ctx->rx_input_channel);
+            const char *ch_str;
+            switch (ctx->rx_input_channel) {
+                case 1:  ch_str = "right"; break;
+                case 2:  ch_str = "stereo"; break;
+                default: ch_str = "left"; break;
+            }
+            char buf[256];
+            snprintf(buf, sizeof(buf),
+                "{\"type\":\"input_channel\",\"selected\":\"%s\","
+                "\"list\":[\"left\",\"right\",\"stereo\"]}", ch_str);
+            ws_broadcast_json(&ctx->ws, buf);
         }
 
         hermes_usleep(UI_PUBLISH_INTERVAL_US);
@@ -771,7 +882,7 @@ void *spectrum_publisher_thread(void *arg)
 {
     ui_ctx_t *ctx = (ui_ctx_t *)arg;
 
-    HLOGI(UI_LOG_TAG, "Spectrum publisher started - sending spectrum every %d ms",
+    HLOGI(UI_LOG_TAG, "Spectrum publisher started - sending spectrum every %d ms via WebSocket",
           SPECTRUM_PUBLISH_INTERVAL_US / 1000);
 
     while (!shutdown_)
@@ -780,8 +891,16 @@ void *spectrum_publisher_thread(void *arg)
         int sr = modem_get_rx_spectrum(spec_dB, MODEM_STATS_NSPEC);
         if (sr > 0)
         {
-            spectrum_tx_send(&ctx->spectrum_tx, spec_dB,
-                             (uint16_t)MODEM_STATS_NSPEC, (uint16_t)sr);
+            // Build binary spectrum frame: magic(4) + fft_size(2) + sample_rate(2) + floats
+            uint8_t frame[8 + MODEM_STATS_NSPEC * sizeof(float)];
+            uint32_t magic = 0x4D435259;  // "MCRY"
+            uint16_t fft_size = (uint16_t)MODEM_STATS_NSPEC;
+            uint16_t sample_rate = (uint16_t)sr;
+            memcpy(frame, &magic, 4);
+            memcpy(frame + 4, &fft_size, 2);
+            memcpy(frame + 6, &sample_rate, 2);
+            memcpy(frame + 8, spec_dB, MODEM_STATS_NSPEC * sizeof(float));
+            ws_broadcast_binary(&ctx->ws, frame, 8 + MODEM_STATS_NSPEC * sizeof(float));
         }
 
         hermes_usleep(SPECTRUM_PUBLISH_INTERVAL_US);
@@ -793,7 +912,7 @@ void *spectrum_publisher_thread(void *arg)
 
 // ---------------- HIGH-LEVEL INIT / SHUTDOWN ----------------
 
-int ui_comm_init(ui_ctx_t *ctx, const char *ip, uint16_t tx_port, int waterfall_enabled,
+int ui_comm_init(ui_ctx_t *ctx, uint16_t ws_port, int waterfall_enabled,
                  int audio_system, const char *selected_capture, const char *selected_playback,
                  int rx_input_channel)
 {
@@ -803,6 +922,7 @@ int ui_comm_init(ui_ctx_t *ctx, const char *ip, uint16_t tx_port, int waterfall_
     ctx->audio_system = audio_system;
     ctx->rx_input_channel = rx_input_channel;
     ctx->radio_list_pending = 1;  // send radio list on first publisher cycle
+    ctx->ws_port = ws_port;
     if (selected_capture)
         strncpy(ctx->selected_capture_dev, selected_capture, sizeof(ctx->selected_capture_dev) - 1);
     else
@@ -812,60 +932,28 @@ int ui_comm_init(ui_ctx_t *ctx, const char *ip, uint16_t tx_port, int waterfall_
     else
         ctx->selected_playback_dev[0] = '\0';
 
-    // Initialize TX socket - sends status TO the UI
-    if (udp_tx_init(&ctx->tx, ip, tx_port) != 0) {
-        HLOGE(UI_LOG_TAG, "Failed to init TX socket to %s:%u", ip, tx_port);
+    // Initialize WebSocket server (bidirectional: status TX + command RX)
+    // Serve static test page from websocket/web/ directory
+    if (ws_init(&ctx->ws, ws_port, "gui_interface/websocket/web",
+                ws_command_handler, ctx) != 0) {
+        HLOGE(UI_LOG_TAG, "Failed to init WebSocket server on port %u", ws_port);
         return -1;
     }
-    HLOGI(UI_LOG_TAG, "TX socket ready - sending to %s:%u", ip, tx_port);
+    HLOGI(UI_LOG_TAG, "WebSocket server ready on port %u", ws_port);
 
-    if (waterfall_enabled) {
-        // Spectrum is sent on tx_port + 2 (spectrum UDP port = UI base port + 2)
-        uint16_t spectrum_port = tx_port + 2;
-        if (spectrum_tx_init(&ctx->spectrum_tx, ip, spectrum_port) != 0) {
-            HLOGW(UI_LOG_TAG, "Failed to init spectrum TX socket (waterfall will not work)");
-            // Non-fatal: continue without spectrum
-        } else {
-            HLOGI(UI_LOG_TAG, "Spectrum TX ready - sending to %s:%u", ip, spectrum_port);
-        }
-    } else {
-        HLOGI(UI_LOG_TAG, "Waterfall disabled - spectrum data wont be sent to the UI");
-        ctx->spectrum_tx.sock = -1;
-    }
-
-    // Start RX thread - listens for commands FROM the UI
-    uint16_t rx_port = tx_port + 1;
-    ctx->rx_port = rx_port;
-    rx_args_t *rxa = malloc(sizeof(rx_args_t));
-    if (!rxa) {
-        udp_tx_close(&ctx->tx);
-        return -1;
-    }
-    rxa->listen_port = rx_port;
-    rxa->ctx = ctx;
-    if (pthread_create(&ctx->rx_tid, NULL, rx_thread_main, rxa) != 0) {
-        HLOGE(UI_LOG_TAG, "pthread_create(rx) failed: %s", strerror(errno));
-        free(rxa);
-        udp_tx_close(&ctx->tx);
-        return -1;
-    }
-    pthread_detach(ctx->rx_tid);
-    HLOGI(UI_LOG_TAG, "RX thread started - listening on port %u", rx_port);
-
-    // Start publisher thread - periodic status broadcaster
+    // Start publisher thread - periodic status broadcaster (via WebSocket)
     if (pthread_create(&ctx->pub_tid, NULL, ui_publisher_thread, ctx) != 0) {
         HLOGE(UI_LOG_TAG, "pthread_create(pub) failed: %s", strerror(errno));
-        udp_tx_close(&ctx->tx);
+        ws_shutdown(&ctx->ws);
         return -1;
     }
     pthread_detach(ctx->pub_tid);
     HLOGI(UI_LOG_TAG, "Publisher thread started");
 
     if (waterfall_enabled) {
-        // Start spectrum publisher thread - high-rate FFT/waterfall broadcaster
+        // Start spectrum publisher thread - high-rate FFT/waterfall broadcaster (via WebSocket)
         if (pthread_create(&ctx->spec_tid, NULL, spectrum_publisher_thread, ctx) != 0) {
             HLOGE(UI_LOG_TAG, "pthread_create(spec) failed: %s", strerror(errno));
-            // Non-fatal: status still works without spectrum
             HLOGW(UI_LOG_TAG, "Spectrum publisher thread not started (waterfall may not update)");
         } else {
             pthread_detach(ctx->spec_tid);
@@ -879,9 +967,8 @@ int ui_comm_init(ui_ctx_t *ctx, const char *ip, uint16_t tx_port, int waterfall_
 void ui_comm_shutdown(ui_ctx_t *ctx)
 {
     // Threads check shutdown_ flag and will exit on their own.
-    // Close the TX sockets.
-    udp_tx_close(&ctx->tx);
-    spectrum_tx_close(&ctx->spectrum_tx);
+    // Shut down the WebSocket server.
+    ws_shutdown(&ctx->ws);
     HLOGI(UI_LOG_TAG, "Shut down");
 }
 

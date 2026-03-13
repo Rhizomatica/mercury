@@ -111,9 +111,9 @@ static void print_usage(const char *prog)
     printf(" -p [arq_tcp_base_port]     Sets the ARQ TCP base port (control is base_port, data is base_port + 1). Default is 8300.\n");
     printf(" -b [broadcast_tcp_port]    Sets the broadcast TCP port. Default is 8100.\n");
     printf(" -u [ui_ip]                 Sets the UI IP address. Default is 127.0.0.1.\n");
-    printf(" -U [ui_base_port]          Sets the UI base port (UI TX port is ui_base_port, UI RX port is ui_base_port + 1, UI spectrum port is ui_base_port + 2). Default is 10000.\n");
+    printf(" -U [ui_base_port]          Sets the UI base port (WebSocket port is ui_base_port - 1). Default is 10000.\n");
     printf(" -W                         Disable waterfall/spectrum data sent to the UI (used to spare CPU).\n");
-    printf(" -G                         Enable UI communication (UDP status/spectrum/command sockets for mercury-qt). Off by default.\n");
+    printf(" -G                         Enable UI communication (WebSocket server for mercury-qt). Off by default.\n");
     printf(" -l                         Lists all modulator/coding modes.\n");
     printf(" -z                         Lists all available sound cards.\n");
     printf(" -v                         Verbose mode. Prints more information during execution.\n");
@@ -561,13 +561,14 @@ int main(int argc, char *argv[])
         return EXIT_FAILURE;
     }
 
-    // ---- Initialize UI communication (UDP JSON to mercury-qt) ----
+    // ---- Initialize UI communication (WebSocket to mercury-qt) ----
     ui_ctx_t ui_ctx;
     if (ui_enabled)
     {
-        HLOGI("main", "Initializing UI communication (TX %s:%d | Waterfall %s)",
-               ui_ip, ui_tx_port, waterfall_enabled ? "enabled" : "disabled");
-        if (ui_comm_init(&ui_ctx, ui_ip, (uint16_t)ui_tx_port, waterfall_enabled ? 1 : 0,
+        uint16_t ws_port = (uint16_t)(ui_tx_port - 1);
+        HLOGI("main", "Initializing UI communication (WebSocket port %u | Waterfall %s)\n",
+               ws_port, waterfall_enabled ? "enabled" : "disabled");
+        if (ui_comm_init(&ui_ctx, ws_port, waterfall_enabled ? 1 : 0,
                          audio_system, input_dev, output_dev, rx_input_channel) != 0)
         {
             // Non-fatal: mercury can run without UI

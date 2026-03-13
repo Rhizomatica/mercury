@@ -37,7 +37,6 @@
 #define CFG_SSL_KEY  "/etc/ssl/private/hermes.radio.key"
 
 // ---- WebSocket server defaults ----
-#define WS_DEFAULT_LISTEN_URL "wss://0.0.0.0:9999"
 #define WS_MAX_MESSAGE_SIZE   8192
 #define WS_POLL_INTERVAL_MS   100
 
@@ -63,6 +62,9 @@ typedef struct {
 
     // Server listen URL (e.g. "wss://0.0.0.0:9999")
     char listen_url[128];
+
+    // Web root for serving static files (e.g. test.html)
+    char web_root[256];
 } ws_ctx_t;
 
 // ---- Public API ----
@@ -71,15 +73,17 @@ typedef struct {
  * Initialise and start the WebSocket server thread.
  *
  * @param ctx            WebSocket context (caller-allocated, zeroed before call).
- * @param listen_url     Mongoose-style listen URL, e.g. "wss://0.0.0.0:9999".
- *                       Pass NULL to use WS_DEFAULT_LISTEN_URL.
+ * @param port           WSS listen port (e.g. 9999). Listens on 0.0.0.0.
+ * @param web_root       Path to directory with static files to serve (e.g. test.html).
+ *                       Pass NULL to disable static file serving.
  * @param cmd_callback   Function called when a command is received from the UI.
  *                       May be NULL if no command handling is needed yet.
  * @param cb_data        Opaque pointer forwarded to cmd_callback.
  * @return 0 on success, -1 on error.
  */
 int ws_init(ws_ctx_t *ctx,
-            const char *listen_url,
+            uint16_t port,
+            const char *web_root,
             ws_command_callback_t cmd_callback,
             void *cb_data);
 

@@ -34,11 +34,14 @@
 #endif
 
 #include "spectrum_sender.h"
+#include "websocket/mercury_websocket.h"
 
-// ---- Default UDP ports for UI <-> backend communication ----
-// Backend sends status TO UI on UI TX port = UI base port (UI listening)
-// Backend listens for commands FROM UI on UI RX port = UI base port + 1 (UI sending)
-// Spectrum / waterfall data is sent to UI_BASE_PORT + 2
+// ---- Default ports for UI <-> backend communication ----
+// WebSocket server port = UI_BASE_PORT - 1 (single bidirectional channel)
+// Legacy UDP ports (kept for TEST_MAIN standalone mode):
+//   Backend sends status TO UI on UI TX port = UI base port (UI listening)
+//   Backend listens for commands FROM UI on UI RX port = UI base port + 1 (UI sending)
+//   Spectrum / waterfall data is sent to UI_BASE_PORT + 2
 #define UI_BASE_PORT 10000
 #define UI_DEFAULT_IP "127.0.0.1"
 // Status publish interval in microseconds (500ms)
@@ -128,10 +131,16 @@ typedef struct {
 
 // ---- Publisher thread context ----
 struct ui_ctx {
+    // WebSocket server (replaces UDP TX/RX sockets)
+    ws_ctx_t ws;
+    uint16_t ws_port;           // WSS listen port (UI_BASE_PORT - 1)
+
+    // Legacy UDP (kept for TEST_MAIN standalone mode)
     udp_tx_t tx;
-    spectrum_tx_t spectrum_tx;  // spectrum/FFT sender for waterfall display
+    spectrum_tx_t spectrum_tx;
     uint16_t rx_port;
     pthread_t rx_tid;
+
     pthread_t pub_tid;
     pthread_t spec_tid;         // dedicated spectrum publisher thread (20 fps)
     int waterfall_enabled;      // 1 = send spectrum data to UI, 0 = disabled
@@ -200,11 +209,12 @@ void *ui_publisher_thread(void *arg);
 void *spectrum_publisher_thread(void *arg);
 
 // High-level init/shutdown for the UI communication subsystem
+// ws_port: WebSocket server port (UI_BASE_PORT - 1)
 // waterfall_enabled: 1 = start spectrum publisher thread (default), 0 = skip it
 // audio_system: AUDIO_SUBSYSTEM_* constant for soundcard enumeration
 // selected_capture: currently active capture device name (may be NULL)
 // selected_playback: currently active playback device name (may be NULL)
-int ui_comm_init(ui_ctx_t *ctx, const char *ip, uint16_t tx_port, int waterfall_enabled,
+int ui_comm_init(ui_ctx_t *ctx, uint16_t ws_port, int waterfall_enabled,
                  int audio_system, const char *selected_capture, const char *selected_playback,
                  int rx_input_channel);
 void ui_comm_shutdown(ui_ctx_t *ctx);

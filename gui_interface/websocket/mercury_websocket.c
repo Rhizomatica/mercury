@@ -182,9 +182,14 @@ static void ws_event_handler(struct mg_connection *c, int ev, void *ev_data, voi
             mg_ws_upgrade(c, hm, NULL);
             printf("Mercury WS: client connected (conn %p)\n", (void *)c);
         }
+        else if (s_ws_ctx && s_ws_ctx->web_root[0])
+        {
+            // Serve static files from web_root (e.g. test.html)
+            struct mg_http_serve_opts opts = { .root_dir = s_ws_ctx->web_root };
+            mg_http_serve_dir(c, ev_data, &opts);
+        }
         else
         {
-            // Not a websocket path - return 404
             mg_http_reply(c, 404, "", "Not Found\n");
         }
     }
@@ -236,7 +241,8 @@ static void *ws_server_thread(void *arg)
 // ---- Public API ----
 
 int ws_init(ws_ctx_t *ctx,
-            const char *listen_url,
+            uint16_t port,
+            const char *web_root,
             ws_command_callback_t cmd_callback,
             void *cb_data)
 {
@@ -248,10 +254,12 @@ int ws_init(ws_ctx_t *ctx,
     ctx->cmd_callback = cmd_callback;
     ctx->cmd_callback_data = cb_data;
 
-    if (listen_url)
-        strncpy(ctx->listen_url, listen_url, sizeof(ctx->listen_url) - 1);
+    snprintf(ctx->listen_url, sizeof(ctx->listen_url), "wss://0.0.0.0:%u", port);
+
+    if (web_root)
+        strncpy(ctx->web_root, web_root, sizeof(ctx->web_root) - 1);
     else
-        strncpy(ctx->listen_url, WS_DEFAULT_LISTEN_URL, sizeof(ctx->listen_url) - 1);
+        ctx->web_root[0] = '\0';
 
     s_ws_ctx = ctx;
 
