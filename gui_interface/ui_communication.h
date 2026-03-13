@@ -102,12 +102,14 @@ typedef struct {
     // Radio list
     struct {
         char selected[64];
+        char device_path[256];
         char list[512]; // JSON array string
     } radio_list;
     // UI command (from mercury-qt)
     struct {
         char command[64];  // e.g. "set_capture_dev", "set_input_channel"
         char value[256];   // e.g. "plughw:2,0", "right"
+        char value2[256];  // optional second value (e.g. device path)
     } cmd;
 } modem_message_t;
 
@@ -139,6 +141,9 @@ struct ui_ctx {
     char selected_capture_dev[64];   // currently active capture (input) device
     char selected_playback_dev[64];  // currently active playback (output) device
     int rx_input_channel;            // LEFT=0, RIGHT=1, STEREO=2
+
+    // Radio list is sent once at startup and again after set_radio_config
+    volatile int radio_list_pending;  // 1 = need to (re-)send radio list to UI
 
     // For logging rate limiting
     modem_status_t last_sent_status;
@@ -179,6 +184,7 @@ int udp_tx_send_playback_dev_list(udp_tx_t *tx,
 
 int udp_tx_send_radio_list(udp_tx_t *tx,
                            const char *selected_radio,
+                           const char *device_path,
                            const char *ids[], const char *names[],
                            int count);
 

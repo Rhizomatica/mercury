@@ -230,6 +230,7 @@ int udp_tx_send_playback_dev_list(udp_tx_t *tx,
 
 int udp_tx_send_radio_list(udp_tx_t *tx,
                            const char *selected_radio,
+                           const char *device_path,
                            const char *ids[], const char *names[],
                            int count) {
     /* Build JSON array of objects: [{"name":"...","id":"..."},...].
@@ -268,6 +269,7 @@ int udp_tx_send_radio_list(udp_tx_t *tx,
     return udp_tx_send_json_pairs(tx,
         "type", "radio_list",
         "selected", selected_radio,
+        "device_path", device_path ? device_path : "",
         "list", buf,
         NULL);
 }
@@ -434,13 +436,16 @@ static void fill_modem_message(modem_message_t *msg, char keys[][64], char vals[
         case MSG_RADIO_LIST:
             if (strcmp(keys[i], "selected") == 0)
                 strncpy(msg->radio_list.selected, vals[i], sizeof msg->radio_list.selected - 1);
-            else
-                if (strcmp(keys[i], "list") == 0)
-                    strncpy(msg->radio_list.list, vals[i], sizeof msg->radio_list.list - 1);
+            else if (strcmp(keys[i], "device_path") == 0)
+                strncpy(msg->radio_list.device_path, vals[i], sizeof msg->radio_list.device_path - 1);
+            else if (strcmp(keys[i], "list") == 0)
+                strncpy(msg->radio_list.list, vals[i], sizeof msg->radio_list.list - 1);
             break;
         case MSG_COMMAND:
             if (strcmp(keys[i], "value") == 0)
                 strncpy(msg->cmd.value, vals[i], sizeof(msg->cmd.value) - 1);
+            else if (strcmp(keys[i], "value2") == 0)
+                strncpy(msg->cmd.value2, vals[i], sizeof(msg->cmd.value2) - 1);
             break;
         default:
             HLOGW(UI_LOG_TAG, "Unknown message type, raw: %s", vals[i]);
@@ -549,26 +554,25 @@ void *rx_thread_main(void *arg)
                     HLOGI(UI_LOG_TAG, "Input channel set to: %s (%d)",
                           msg.cmd.value, ctx->rx_input_channel);
                     need_audio_restart = 1;
-                } else if (strcmp(msg.cmd.command, "set_radio_model") == 0) {
+                } else if (strcmp(msg.cmd.command, "set_radio_config") == 0) {
                     int new_radio_type = atoi(msg.cmd.value);
-                    HLOGI(UI_LOG_TAG, "Radio set_radio_model command: model_id=%d (raw value=\"%s\")",
-                          new_radio_type, msg.cmd.value);
-                    const char *dev = radio_io_get_device_path();
-                    int rc = radio_io_restart(new_radio_type, dev);
-                    if (rc == 0)
-                        HLOGI(UI_LOG_TAG, "Radio subsystem restarted successfully (model=%d)", new_radio_type);
-                    else
-                        HLOGE(UI_LOG_TAG, "Radio subsystem restart FAILED (model=%d, rc=%d)", new_radio_type, rc);
-                } else if (strcmp(msg.cmd.command, "set_device_path") == 0) {
-                    HLOGI(UI_LOG_TAG, "Device path set_device_path command: value=\"%s\"", msg.cmd.value);
-                    int cur_type = radio_io_get_radio_type();
-                    int rc = radio_io_restart(cur_type, msg.cmd.value);
-                    if (rc == 0)
-                        HLOGI(UI_LOG_TAG, "Radio subsystem restarted with new device path (type=%d, path=%s)",
-                              cur_type, msg.cmd.value);
-                    else
-                        HLOGE(UI_LOG_TAG, "Radio subsystem restart FAILED (type=%d, path=%s, rc=%d)",
-                              cur_type, msg.cmd.value, rc);
+                    const char *dev_path = msg.cmd.value2;
+                    HLOGI(UI_LOG_TAG, "Radio set_radio_config command: model_id=%d device_path=\"%s\"",
+                          new_radio_type, dev_path);
+                    int rc = radio_io_restart(new_radio_type, dev_path);
+                    if (rc == 0) {
+                        HLOGI(UI_LOG_TAG, "Radio subsystem restarted (model=%d, path=%s)",
+                              new_radio_type, dev_path);
+                        /* Re-send the radio list so the UI refreshes its
+                         * controls with the now-active selection. */
+                        ctx->radio_list_pending = 1;
+                    } else {
+                        HLOGE(UI_LOG_TAG, "Radio subsystem restart FAILED (model=%d, path=%s, rc=%d)",
+                              new_radio_type, dev_path, rc);
+                    }
+                } else if (strcmp(msg.cmd.command, "get_radio_list") == 0) {
+                    HLOGI(UI_LOG_TAG, "UI requested radio list");
+                    ctx->radio_list_pending = 1;
                 } else {
                     HLOGW(UI_LOG_TAG, "Unknown UI command: %s", msg.cmd.command);
                 }
@@ -717,26 +721,33 @@ void *ui_publisher_thread(void *arg)
                                               id_ptrs, name_ptrs, pb_count);
             }
 
-            // Radio list (hamlib models)
-            // Static arrays — hamlib has 700+ models but we only send
-            // what fits in one 1400-byte UDP packet anyway.
-            {
-                static char radio_ids[512][16];
-                static char radio_names[512][64];
-                int radio_count = radio_io_get_radio_list(radio_ids, radio_names, 512);
-                if (radio_count > 0)
-                {
-                    const char *rid_ptrs[512], *rname_ptrs[512];
-                    for (int i = 0; i < radio_count; i++) {
-                        rid_ptrs[i] = radio_ids[i];
-                        rname_ptrs[i] = radio_names[i];
-                    }
-                    udp_tx_send_radio_list(tx, "",
-                                           rid_ptrs, rname_ptrs, radio_count);
-                }
-            }
         }
         soundcard_cycle++;
+
+        // --- Send radio list to UI (once at startup, and after set_radio_config) ---
+        if (ctx->radio_list_pending)
+        {
+            ctx->radio_list_pending = 0;
+            static char radio_ids[512][16];
+            static char radio_names[512][64];
+            int radio_count = radio_io_get_radio_list(radio_ids, radio_names, 512);
+            if (radio_count > 0)
+            {
+                const char *rid_ptrs[512], *rname_ptrs[512];
+                for (int i = 0; i < radio_count; i++) {
+                    rid_ptrs[i] = radio_ids[i];
+                    rname_ptrs[i] = radio_names[i];
+                }
+                char sel_buf[16] = "";
+                int cur_type = radio_io_get_radio_type();
+                if (cur_type > 0)
+                    snprintf(sel_buf, sizeof(sel_buf), "%d", cur_type);
+                const char *cur_dev = radio_io_get_device_path();
+                udp_tx_send_radio_list(tx, sel_buf,
+                                       cur_dev ? cur_dev : "",
+                                       rid_ptrs, rname_ptrs, radio_count);
+            }
+        }
 
         // --- Send capture input channel setting to UI ---
         // Sent together with device lists (same interval)
@@ -791,6 +802,7 @@ int ui_comm_init(ui_ctx_t *ctx, const char *ip, uint16_t tx_port, int waterfall_
     ctx->waterfall_enabled = waterfall_enabled;
     ctx->audio_system = audio_system;
     ctx->rx_input_channel = rx_input_channel;
+    ctx->radio_list_pending = 1;  // send radio list on first publisher cycle
     if (selected_capture)
         strncpy(ctx->selected_capture_dev, selected_capture, sizeof(ctx->selected_capture_dev) - 1);
     else
@@ -929,7 +941,7 @@ int main(int argc, char *argv[]) {
         if (counter % 5 == 0) {
             const char *radio_ids[] = { "1001", "1003", "2" };
             const char *radio_names[] = { "Yaesu FT-847", "Yaesu FT-1000D", "Hamlib NET rigctl" };
-            udp_tx_send_radio_list(&tx, "1001", radio_ids, radio_names, 3);
+            udp_tx_send_radio_list(&tx, "1001", "/dev/ttyUSB0", radio_ids, radio_names, 3);
         }
 
         // Occasionally send input channel
