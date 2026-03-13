@@ -675,6 +675,25 @@ int send_modulated_data(generic_modem_t *g_modem, uint8_t *bytes_in, int frames_
     return 0;
 }
 
+static int send_modulated_data_with_cq_status(generic_modem_t *g_modem,
+                                              uint8_t *bytes_in,
+                                              int frames_per_burst)
+{
+    bool is_cq_frame = bytes_in != NULL &&
+                       frames_per_burst == 1 &&
+                       frame_header_packet_type(bytes_in[0]) == PACKET_TYPE_ARQ_CQ;
+
+    if (is_cq_frame)
+        arq_notify_cq_tx_started();
+
+    int rc = send_modulated_data(g_modem, bytes_in, frames_per_burst);
+
+    if (is_cq_frame)
+        arq_notify_cq_tx_complete();
+
+    return rc;
+}
+
 int receive_modulated_data(generic_modem_t *g_modem, uint8_t *bytes_out, size_t *nbytes_out)
 {
     struct freedv *freedv = NULL;
@@ -1195,8 +1214,10 @@ void *tx_thread(void *g_modem)
                     data_size = action_frame_size;
                 }
                 read_buffer(action_buffer, data, action_frame_size);
-                send_modulated_data(modem, data, 1);
-                sent_from_action = true;
+                if (send_modulated_data_with_cq_status(modem, data, 1) == 0)
+                    sent_from_action = true;
+                else
+                    HLOGW("modem-tx", "Failed to send queued TX action");
             }
         }
 
@@ -1207,7 +1228,8 @@ void *tx_thread(void *g_modem)
             {
                 read_buffer(arq_tx_buffer, data + (payload_bytes_per_modem_frame * i), payload_bytes_per_modem_frame);
             }
-            send_modulated_data(modem, data, tx_frames_per_burst);
+            if (send_modulated_data_with_cq_status(modem, data, tx_frames_per_burst) < 0)
+                HLOGW("modem-tx", "Failed to send ARQ buffered frame");
         }
 
         if (size_buffer(data_tx_buffer_broadcast) >= required)
@@ -1216,7 +1238,8 @@ void *tx_thread(void *g_modem)
             {
                 read_buffer(data_tx_buffer_broadcast, data + (payload_bytes_per_modem_frame * i), payload_bytes_per_modem_frame);
             }
-            send_modulated_data(modem, data, tx_frames_per_burst);
+            if (send_modulated_data_with_cq_status(modem, data, tx_frames_per_burst) < 0)
+                HLOGW("modem-tx", "Failed to send broadcast buffered frame");
         }
 
         if (!sent_from_action &&

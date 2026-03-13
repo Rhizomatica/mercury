@@ -530,6 +530,18 @@ bool arq_handle_incoming_cq_frame(uint8_t *data, size_t frame_size)
     return true;
 }
 
+void arq_notify_cq_tx_started(void)
+{
+    tnc_send_pending();
+    HLOGI(LOG_COMP, "CQ transmission started");
+}
+
+void arq_notify_cq_tx_complete(void)
+{
+    tnc_send_cancelpending();
+    HLOGI(LOG_COMP, "CQ transmission completed");
+}
+
 void arq_handle_incoming_frame(uint8_t *data, size_t frame_size, float rx_snr)
 {
     if (!data || frame_size < ARQ_FRAME_HDR_SIZE) return;

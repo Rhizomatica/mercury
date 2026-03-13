@@ -215,6 +215,15 @@ bool arq_handle_incoming_connect_frame(uint8_t *data, size_t frame_size);
 bool arq_handle_incoming_cq_frame(uint8_t *data, size_t frame_size);
 
 /**
+ * @brief Emit VARA-style async status for an outgoing CQFRAME transmission.
+ *
+ * VARA clients such as varim treat CQFRAME as a pending operation and expect
+ * PENDING/CANCELPENDING around the actual send lifecycle.
+ */
+void arq_notify_cq_tx_started(void);
+void arq_notify_cq_tx_complete(void);
+
+/**
  * @brief Handle incoming regular ARQ control/data frame.
  * @param data Frame bytes.
  * @param frame_size Frame length in bytes.

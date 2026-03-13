@@ -175,6 +175,9 @@ CQFRAME <sourcecall> <bandwidth>\r
 
 **Response:** `OK\r` if the command was accepted, `WRONG\r` on error.
 
+For VARA compatibility, Mercury also emits `PENDING\r` when the CQ frame
+starts transmitting and `CANCELPENDING\r` once that CQ transmission is done.
+
 ---
 
 ### DISCONNECT
@@ -246,8 +249,8 @@ These are sent on the **control port** without a preceding command.
 
 | Response                                    | Meaning                                      |
 |---------------------------------------------|----------------------------------------------|
-| `PENDING\r`                                 | Incoming connect request detected            |
-| `CANCELPENDING\r`                           | Pending incoming connect did not complete    |
+| `PENDING\r`                                 | Incoming connect request or outgoing CQ TX started |
+| `CANCELPENDING\r`                           | Pending incoming connect cancelled or outgoing CQ TX completed |
 | `CONNECTED <sourcecall> <destcall> <bandwidth>\r` | ARQ session established                |
 | `CQFRAME <sourcecall> <bandwidth>\r`        | Compact CQ frame decoded                     |
 | `DISCONNECTED\r`                            | ARQ session ended                            |
@@ -264,10 +267,16 @@ Sent when Mercury detects an incoming ARQ connect request addressed to the
 local station. This is an early warning so VARA-compatible host applications
 can suspend scanning or other idle activity while the link setup is in progress.
 
+Mercury also sends `PENDING\r` when an outgoing `CQFRAME` actually begins
+transmitting so VARA clients can treat CQ send as an in-progress operation.
+
 ### CANCELPENDING
 
 Sent when a previously pending incoming connect request does not complete and
 Mercury returns to the idle/listening state.
+
+Mercury also sends `CANCELPENDING\r` when an outgoing `CQFRAME` transmission
+finishes, which matches the lifecycle expected by VARA clients such as varim.
 
 ### CONNECTED
 
