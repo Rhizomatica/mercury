@@ -296,18 +296,24 @@ void *ui_publisher_thread(void *arg)
                     snprintf(sel_buf, sizeof(sel_buf), "%d", cur_type);
                 const char *cur_dev = radio_io_get_device_path();
 
-                char buf[4096];
+                const size_t buf_size = 65536;
+                char *buf = malloc(buf_size);
+                if (!buf) {
+                    HLOGE(UI_LOG_TAG, "Failed to allocate radio_list buffer");
+                    continue;
+                }
                 int pos = 0;
-                pos += snprintf(buf + pos, sizeof(buf) - pos,
+                pos += snprintf(buf + pos, buf_size - pos,
                     "{\"type\":\"radio_list\",\"selected\":\"%s\",\"device_path\":\"%s\",\"list\":[",
                     sel_buf, cur_dev ? cur_dev : "");
-                for (int i = 0; i < radio_count && pos < (int)sizeof(buf) - 128; i++) {
+                for (int i = 0; i < radio_count && pos < (int)buf_size - 128; i++) {
                     if (i > 0) buf[pos++] = ',';
-                    pos += snprintf(buf + pos, sizeof(buf) - pos,
+                    pos += snprintf(buf + pos, buf_size - pos,
                         "{\"name\":\"%s\",\"id\":\"%s\"}", radio_names[i], radio_ids[i]);
                 }
-                pos += snprintf(buf + pos, sizeof(buf) - pos, "]}");
+                pos += snprintf(buf + pos, buf_size - pos, "]}");
                 ws_broadcast_json(&ctx->ws, buf);
+                free(buf);
             }
         }
 
