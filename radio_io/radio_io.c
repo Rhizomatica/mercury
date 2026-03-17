@@ -113,8 +113,8 @@ int radio_io_init(int radio_type, const char *device_path)
     radio = rig_init(radio_type);
     if (!radio)
     {
-        HLOGE(RADIO_LOG_TAG, "Unknown rig num %d, or initialization error.\n", radio_type);
-        HLOGE(RADIO_LOG_TAG, "Please check available radios with -K option.\n");
+        HLOGE(RADIO_LOG_TAG, "Unknown rig num %d, or initialization error.", radio_type);
+        HLOGE(RADIO_LOG_TAG, "Please check available radios with -K option.");
         g_radio_type = RADIO_TYPE_NONE;
         pthread_mutex_unlock(&g_radio_mutex);
         return -1;

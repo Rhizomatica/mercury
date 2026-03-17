@@ -870,8 +870,11 @@ int audioio_restart(const char *capture_dev, const char *playback_dev,
 
 int audioio_deinit(pthread_t *radio_capture, pthread_t *radio_playback)
 {
-    pthread_join(*radio_capture, NULL);
-    pthread_join(*radio_playback, NULL);
+    // The external thread handles may be stale after a restart; use internal statics instead.
+    (void) radio_capture;
+    (void) radio_playback;
+    pthread_join(s_radio_capture, NULL);
+    pthread_join(s_radio_playback, NULL);
 
     audioio_deinit_buffers();
     return 0;

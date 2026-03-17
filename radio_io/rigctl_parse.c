@@ -29,10 +29,13 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <hamlib/rig.h>
+
+#ifndef _WIN32
 #include <unistd.h>
 #include <fcntl.h>
+#endif
 
-#include <hamlib/rig.h>
 
 #include "rigctl_parse.h"
 
@@ -124,6 +127,7 @@ int get_radio_list(char ids[][16], char names[][64], int max_count)
      * so the hamlib "initrigs4_*" messages don't pollute the console. */
     if (g_count == 0)
     {
+#ifndef _WIN32
         fflush(stdout);
         fflush(stderr);
         int saved_stdout = dup(STDOUT_FILENO);
@@ -135,9 +139,11 @@ int get_radio_list(char ids[][16], char names[][64], int max_count)
             dup2(devnull, STDERR_FILENO);
             close(devnull);
         }
+#endif
 
         rig_load_all_backends();
 
+#ifndef _WIN32
         /* Restore original stdout / stderr */
         fflush(stdout);
         fflush(stderr);
@@ -145,7 +151,7 @@ int get_radio_list(char ids[][16], char names[][64], int max_count)
         dup2(saved_stderr, STDERR_FILENO);
         close(saved_stdout);
         close(saved_stderr);
-
+#endif
         int status = rig_list_foreach(collect_model, NULL);
         if (status != RIG_OK)
         {

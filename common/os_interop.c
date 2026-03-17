@@ -9,6 +9,8 @@
 
 #include "os_interop.h"
 
+#include <string.h>
+
 #if defined(_WIN32)
 
 int get_temp_path(char* pathBuffer, int pathBufferSize, const char* pathPart)
@@ -100,3 +102,20 @@ void MUTEX_UNLOCK(HANDLE *mqh_lock)
 }
 
 #endif
+
+// Portable replacement for GNU-specific memmem()
+const void *portable_memmem(const void *haystack, size_t haystacklen,
+                                const void *needle, size_t needlelen)
+{
+    const unsigned char *h = (const unsigned char *) haystack;
+    const unsigned char *n = (const unsigned char *) needle;
+if (!h || !n || needlelen == 0 || haystacklen < needlelen)
+        return NULL;
+    size_t last = haystacklen - needlelen;
+    for (size_t i = 0; i <= last; i++)
+    {
+        if (h[i] == n[0] && memcmp(h + i, n, needlelen) == 0)
+            return h + i;
+    }
+    return NULL;
+}

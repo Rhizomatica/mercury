@@ -285,8 +285,15 @@ void *ui_publisher_thread(void *arg)
         if (ctx->radio_list_pending)
         {
             ctx->radio_list_pending = 0;
-            static char radio_ids[512][16];
-            static char radio_names[512][64];
+            char (*radio_ids)[16] = malloc(sizeof(*radio_ids) * 512);
+            char (*radio_names)[64] = malloc(sizeof(*radio_names) * 512);
+            if (!radio_ids || !radio_names)
+            {
+                HLOGE(UI_LOG_TAG, "Failed to allocate radio list arrays");
+                free(radio_ids);
+                free(radio_names);
+                continue;
+            }
             int radio_count = radio_io_get_radio_list(radio_ids, radio_names, 512);
             if (radio_count > 0)
             {
@@ -300,6 +307,8 @@ void *ui_publisher_thread(void *arg)
                 char *buf = malloc(buf_size);
                 if (!buf) {
                     HLOGE(UI_LOG_TAG, "Failed to allocate radio_list buffer");
+                    free(radio_ids);
+                    free(radio_names);
                     continue;
                 }
                 int pos = 0;
@@ -315,6 +324,8 @@ void *ui_publisher_thread(void *arg)
                 ws_broadcast_json(&ctx->ws, buf);
                 free(buf);
             }
+            free(radio_ids);
+            free(radio_names);
         }
 
         // --- Send capture input channel setting to UI ---
@@ -359,13 +370,30 @@ void *spectrum_publisher_thread(void *arg)
         {
             // Build binary spectrum frame: magic(4) + fft_size(2) + sample_rate(2) + floats
             uint8_t frame[8 + MODEM_STATS_NSPEC * sizeof(float)];
-            uint32_t magic = 0x4D435259;  // "MCRY"
             uint16_t fft_size = (uint16_t)MODEM_STATS_NSPEC;
             uint16_t sample_rate = (uint16_t)sr;
-            memcpy(frame, &magic, 4);
-            memcpy(frame + 4, &fft_size, 2);
-            memcpy(frame + 6, &sample_rate, 2);
+            /* All fields are little-endian on the wire for compatibility with mercury-qt */
+#define SPECTRUM_MAGIC 0x4D435259U
+            frame[0] = (uint8_t)( SPECTRUM_MAGIC        & 0xFF);
+            frame[1] = (uint8_t)((SPECTRUM_MAGIC >>  8) & 0xFF);
+            frame[2] = (uint8_t)((SPECTRUM_MAGIC >> 16) & 0xFF);
+            frame[3] = (uint8_t)((SPECTRUM_MAGIC >> 24) & 0xFF);
+#undef SPECTRUM_MAGIC
+            frame[4] = (uint8_t)(fft_size & 0xFF);
+            frame[5] = (uint8_t)((fft_size >> 8) & 0xFF);
+            frame[6] = (uint8_t)(sample_rate & 0xFF);
+            frame[7] = (uint8_t)((sample_rate >> 8) & 0xFF);
+#if __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+            for (int _i = 0; _i < MODEM_STATS_NSPEC; _i++) {
+                uint32_t _w;
+                memcpy(&_w, &spec_dB[_i], 4);
+                _w = ((_w >> 24) & 0xFF) | ((_w >> 8) & 0xFF00) |
+                     ((_w & 0xFF00) << 8) | ((_w & 0xFF) << 24);
+                memcpy(frame + 8 + _i * 4, &_w, 4);
+            }
+#else
             memcpy(frame + 8, spec_dB, MODEM_STATS_NSPEC * sizeof(float));
+#endif
             ws_broadcast_binary(&ctx->ws, frame, 8 + MODEM_STATS_NSPEC * sizeof(float));
         }
 

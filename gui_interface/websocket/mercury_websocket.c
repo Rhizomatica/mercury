@@ -34,6 +34,8 @@
 #include "mercury_websocket.h"
 #include "../../common/hermes_log.h"
 
+extern const void *portable_memmem(const void *haystack, size_t haystacklen, const void *needle, size_t needlelen);
+
 #define WS_LOG_TAG "websocket"
 
 // ---- Internal state shared with the server thread ----
@@ -61,7 +63,7 @@ static int json_find_key(const char *json, size_t json_len,
     const char *end = json + json_len;
     while (p < end)
     {
-        const char *found = memmem(p, end - p, needle, nlen);
+        const char *found = (const char *) portable_memmem(p, (size_t) (end - p), needle, (size_t) nlen);
         if (!found)
             return 0;
 

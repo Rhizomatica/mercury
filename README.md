@@ -51,7 +51,7 @@ Options:
  -x [sound_system]          Sets the sound system or IO API to use: alsa, pulse, dsound, wasapi or shm. Default is alsa on Linux and dsound on Windows.
  -p [arq_tcp_base_port]     Sets the ARQ TCP base port (control is base_port, data is base_port + 1). Default is 8300.
  -b [broadcast_tcp_port]    Sets the broadcast TCP port. Default is 8100.
- -G                         Enable UI communication (UDP status/spectrum/command sockets for mercury-qt). Off by default.
+ -G                         Enable UI communication (WebSocket status/spectrum/command interface for mercury-qt). Off by default.
  -U [ui_port]               Sets the UI port (WebSocket port). Default is 10000. Requires -G.
  -W                         Disable waterfall/spectrum data sent to the UI (saves CPU). Requires -G.
  -l                         Lists all modulator/coding modes.
