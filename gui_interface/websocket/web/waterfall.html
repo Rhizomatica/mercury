@@ -1,0 +1,512 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Mercury Waterfall</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #1a1a2e; color: #e0e0e0; font-family: 'Segoe UI', system-ui, sans-serif; }
+
+    .header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 8px 16px; background: #16213e; border-bottom: 1px solid #0f3460;
+    }
+    .header h1 { font-size: 18px; color: #00d2ff; }
+
+    .controls {
+      display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
+    }
+    .controls label { font-size: 15px; color: #aaa; }
+    .controls input, .controls select, .controls button {
+      font-size: 15px; padding: 4px 8px; border: 1px solid #0f3460;
+      background: #1a1a2e; color: #e0e0e0; border-radius: 4px;
+    }
+    .controls button {
+      cursor: pointer; background: #0f3460; font-weight: bold;
+      transition: background 0.2s;
+    }
+    .controls button:hover { background: #1a5276; }
+    .controls button.connected { background: #1e6f50; }
+
+    .status-bar {
+      display: flex; gap: 24px; padding: 10px 16px;
+      background: #16213e; border-bottom: 1px solid #0f3460;
+      font-size: 24px; flex-wrap: wrap;
+    }
+    .status-bar .item { display: flex; gap: 6px; }
+    .status-bar .label { color: #888; }
+    .status-bar .value { color: #00d2ff; font-weight: bold; }
+    .status-bar .value.synced { color: #2ecc71; }
+    .status-bar .value.tx { color: #008aaa; }
+
+    .display-area {
+      display: flex; flex-direction: column; width: 100%; overflow: hidden;
+    }
+
+    .spectrum-container, .waterfall-container {
+      position: relative; width: 100%;
+    }
+    .spectrum-container { height: 180px; border-bottom: 1px solid #0f3460; }
+    .waterfall-container { flex: 1; min-height: 50vh; }
+
+    canvas { display: block; width: 100%; height: 100%; }
+
+    .freq-axis {
+      position: relative; height: 28px; background: #16213e;
+      border-top: 1px solid #0f3460; font-size: 20px; color: #888;
+    }
+    .freq-axis span {
+      position: absolute; transform: translateX(-50%); top: 4px;
+    }
+
+    .settings-panel {
+      display: flex; gap: 16px; padding: 8px 16px;
+      background: #16213e; border-top: 1px solid #0f3460;
+      font-size: 22px; flex-wrap: wrap; align-items: center;
+    }
+    .settings-panel label { color: #888; }
+    .settings-panel input[type="range"] { width: 120px; height: 20px; vertical-align: middle; }
+    .settings-panel select { font-size: 22px; padding: 4px 8px; }
+    .settings-panel .range-val { color: #00d2ff; min-width: 50px; display: inline-block; }
+
+    .color-legend {
+      display: flex; align-items: center; gap: 6px; font-size: 22px;
+    }
+    .color-legend .bar {
+      width: 140px; height: 16px; border-radius: 2px;
+    }
+  </style>
+</head>
+<body>
+
+<div class="header">
+  <h1>&#x1F4E1; Mercury Waterfall</h1>
+  <div class="controls">
+    <label>WS URL</label>
+    <input id="url" type="text" style="width:260px" />
+    <button id="connectBtn" onclick="toggleConnect()">Connect</button>
+    <button onclick="clearWaterfall()">Clear</button>
+    <button onclick="togglePause();" id="pauseBtn">Pause</button>
+  </div>
+</div>
+
+<div class="status-bar" id="statusBar">
+  <div class="item"><span class="label">SNR:</span><span class="value" id="st-snr">--</span></div>
+  <div class="item"><span class="label">Bitrate:</span><span class="value" id="st-bitrate">--</span></div>
+  <div class="item"><span class="label">Direction:</span><span class="value" id="st-dir">--</span></div>
+  <div class="item"><span class="label">Sync:</span><span class="value" id="st-sync">--</span></div>
+  <div class="item"><span class="label">User Callsign:</span><span class="value" id="st-call">--</span></div>
+  <div class="item"><span class="label">Dest Callsign:</span><span class="value" id="st-dest">--</span></div>
+  <div class="item"><span class="label">TCP:</span><span class="value" id="st-tcp">--</span></div>
+  <div class="item"><span class="label">TX/RX:</span><span class="value" id="st-bytes">--</span></div>
+  <div class="item"><span class="label">FPS:</span><span class="value" id="st-fps">0</span></div>
+</div>
+
+<div class="display-area" id="displayArea">
+  <div class="spectrum-container">
+    <canvas id="spectrumCanvas"></canvas>
+  </div>
+  <div class="freq-axis" id="freqAxis"></div>
+  <div class="waterfall-container">
+    <canvas id="waterfallCanvas"></canvas>
+  </div>
+</div>
+
+<div class="settings-panel">
+  <div>
+    <label>Min dB</label>
+    <input id="minDb" type="range" min="-140" max="0" value="-100"
+           oninput="document.getElementById('minDbVal').textContent=this.value">
+    <span class="range-val" id="minDbVal">-100</span>
+  </div>
+  <div>
+    <label>Max dB</label>
+    <input id="maxDb" type="range" min="-80" max="40" value="0"
+           oninput="document.getElementById('maxDbVal').textContent=this.value">
+    <span class="range-val" id="maxDbVal">0</span>
+  </div>
+  <div>
+    <label>Speed</label>
+    <input id="speed" type="range" min="1" max="4" value="1"
+           oninput="document.getElementById('speedVal').textContent=this.value+'x'">
+    <span class="range-val" id="speedVal">1x</span>
+  </div>
+  <div>
+    <label>Palette</label>
+    <select id="palette" onchange="buildPalette()">
+      <option value="turbo" selected>Turbo</option>
+      <option value="viridis">Viridis</option>
+      <option value="hot">Hot</option>
+      <option value="grayscale">Grayscale</option>
+      <option value="blackblue">Black &amp; Blue</option>
+    </select>
+  </div>
+  <div class="color-legend">
+    <span>Low</span>
+    <canvas id="legendBar" class="bar" width="120" height="12"></canvas>
+    <span>High</span>
+  </div>
+</div>
+
+<script>
+"use strict";
+
+// --- Config ---
+const SPECTRUM_MAGIC = 0x4D435259;
+const HEADER_SIZE = 8;
+const GRID_COLOR = "rgba(255,255,255,0.08)";
+const SPEC_LINE_COLOR = "#00d2ff";
+const SPEC_FILL = "rgba(0,210,255,0.12)";
+const SPEC_PEAK_COLOR = "rgba(255,200,0,0.5)";
+
+// --- State ---
+let ws = null;
+let paused = false;
+let sampleRate = 8000;
+let fftSize = 512;
+let spectrumData = null;
+let peakHold = null;
+let peakDecay = 0.005;
+let frameCount = 0;
+let lastFpsTime = performance.now();
+
+// --- Canvas setup ---
+const specCanvas = document.getElementById("spectrumCanvas");
+const specCtx = specCanvas.getContext("2d");
+const wfCanvas = document.getElementById("waterfallCanvas");
+const wfCtx = wfCanvas.getContext("2d");
+
+// --- Color palette (256 RGBA entries) ---
+let colorMap = new Uint8ClampedArray(256 * 4);
+
+function turboPalette(t) {
+  // Attempt at a turbo-like colormap
+  const r = Math.max(0, Math.min(255, Math.round(
+    34.61 + t*(1172.33 + t*(-10793.56 + t*(33300.12 + t*(-38394.49 + t*14825.05)))))));
+  const g = Math.max(0, Math.min(255, Math.round(
+    23.31 + t*(557.33 + t*(1225.33 + t*(-5765.73 + t*(8240.07 + t*-3832.07)))))));
+  const b = Math.max(0, Math.min(255, Math.round(
+    27.2 + t*(3211.1 + t*(-15327.97 + t*(27814.0 + t*(-22569.18 + t*6838.66)))))));
+  return [r, g, b];
+}
+
+function viridisPalette(t) {
+  const r = Math.max(0, Math.min(255, Math.round(255 * (0.267004 + t*(0.003991 + t*(- 0.530 + t*1.262))))));
+  const g = Math.max(0, Math.min(255, Math.round(255 * (0.004874 + t*(1.016 + t*(-0.571 + t*0.140))))));
+  const b = Math.max(0, Math.min(255, Math.round(255 * (0.329415 + t*(1.402 + t*(-3.078 + t*1.346))))));
+  return [r, g, b];
+}
+
+function hotPalette(t) {
+  const r = Math.min(255, Math.round(t * 3 * 255));
+  const g = Math.min(255, Math.max(0, Math.round((t - 0.33) * 3 * 255)));
+  const b = Math.min(255, Math.max(0, Math.round((t - 0.67) * 3 * 255)));
+  return [r, g, b];
+}
+
+function grayscalePalette(t) {
+  const v = Math.round(t * 255);
+  return [v, v, v];
+}
+
+function blackbluePalette(t) {
+  // Black → dark blue → blue → cyan → white (matches Mercury QT waterfall)
+  if (t < 0.25) {
+    const s = t / 0.25;
+    return [0, 0, Math.round(s * 128)];
+  } else if (t < 0.5) {
+    const s = (t - 0.25) / 0.25;
+    return [0, 0, Math.round(128 + s * 127)];
+  } else if (t < 0.75) {
+    const s = (t - 0.5) / 0.25;
+    return [0, Math.round(s * 255), 255];
+  } else {
+    const s = (t - 0.75) / 0.25;
+    return [Math.round(s * 255), 255, 255];
+  }
+}
+
+function buildPalette() {
+  const name = document.getElementById("palette").value;
+  const fn = { turbo: turboPalette, viridis: viridisPalette, hot: hotPalette, grayscale: grayscalePalette, blackblue: blackbluePalette }[name];
+  for (let i = 0; i < 256; i++) {
+    const [r, g, b] = fn(i / 255);
+    colorMap[i * 4]     = r;
+    colorMap[i * 4 + 1] = g;
+    colorMap[i * 4 + 2] = b;
+    colorMap[i * 4 + 3] = 255;
+  }
+  drawLegend();
+}
+
+function drawLegend() {
+  const c = document.getElementById("legendBar");
+  const ctx = c.getContext("2d");
+  const img = ctx.createImageData(120, 1);
+  for (let x = 0; x < 120; x++) {
+    const i = Math.round(x / 119 * 255);
+    img.data[x * 4]     = colorMap[i * 4];
+    img.data[x * 4 + 1] = colorMap[i * 4 + 1];
+    img.data[x * 4 + 2] = colorMap[i * 4 + 2];
+    img.data[x * 4 + 3] = 255;
+  }
+  for (let y = 0; y < 12; y++) ctx.putImageData(img, 0, y);
+}
+
+buildPalette();
+
+// --- Resize handling ---
+function resizeCanvases() {
+  const specCont = specCanvas.parentElement;
+  specCanvas.width = specCont.clientWidth;
+  specCanvas.height = specCont.clientHeight;
+
+  const wfCont = wfCanvas.parentElement;
+  const avail = window.innerHeight - wfCont.getBoundingClientRect().top
+                - document.querySelector(".settings-panel").offsetHeight;
+  wfCont.style.height = Math.max(200, avail) + "px";
+  wfCanvas.width = wfCont.clientWidth;
+  wfCanvas.height = wfCont.clientHeight;
+
+  updateFreqAxis();
+}
+window.addEventListener("resize", resizeCanvases);
+
+// --- Frequency axis ---
+function updateFreqAxis() {
+  const axis = document.getElementById("freqAxis");
+  axis.innerHTML = "";
+  const maxF = 3100;
+  const w = axis.clientWidth;
+  const steps = Math.max(4, Math.floor(w / 80));
+  for (let i = 0; i <= steps; i++) {
+    const f = (maxF * i / steps);
+    const span = document.createElement("span");
+    span.style.left = (i / steps * 100) + "%";
+    span.textContent = f >= 1000 ? (f / 1000).toFixed(1) + "k" : Math.round(f);
+    axis.appendChild(span);
+  }
+}
+
+// --- WebSocket URL default ---
+(function() {
+  const host = location.hostname || "localhost";
+  const scheme = location.protocol === "https:" ? "wss://" : "ws://";
+  document.getElementById("url").value = scheme + host + ":10000/websocket";
+})();
+
+// --- Connect / Disconnect ---
+function toggleConnect() {
+  if (ws) { ws.close(); return; }
+  const url = document.getElementById("url").value;
+  ws = new WebSocket(url);
+  ws.binaryType = "arraybuffer";
+
+  ws.onopen = function() {
+    document.getElementById("connectBtn").textContent = "Disconnect";
+    document.getElementById("connectBtn").classList.add("connected");
+  };
+  ws.onclose = function() {
+    ws = null;
+    document.getElementById("connectBtn").textContent = "Connect";
+    document.getElementById("connectBtn").classList.remove("connected");
+  };
+  ws.onerror = function(e) {
+    console.error("WebSocket error:", e);
+  };
+  ws.onmessage = function(ev) {
+    if (ev.data instanceof ArrayBuffer) {
+      handleBinaryFrame(ev.data);
+    } else {
+      handleJsonMessage(ev.data);
+    }
+  };
+}
+
+// --- Parse binary spectrum frame ---
+function handleBinaryFrame(buf) {
+  if (buf.byteLength < HEADER_SIZE) return;
+  const view = new DataView(buf);
+  const magic = view.getUint32(0, true);
+  if (magic !== SPECTRUM_MAGIC) return;
+
+  fftSize = view.getUint16(4, true);
+  sampleRate = view.getUint16(6, true);
+
+  if (buf.byteLength < HEADER_SIZE + fftSize * 4) return;
+
+  spectrumData = new Float32Array(buf, HEADER_SIZE, fftSize);
+
+  // Peak hold
+  if (!peakHold || peakHold.length !== fftSize) {
+    peakHold = new Float32Array(fftSize);
+    peakHold.fill(-200);
+  }
+  for (let i = 0; i < fftSize; i++) {
+    if (spectrumData[i] > peakHold[i]) peakHold[i] = spectrumData[i];
+    else peakHold[i] -= peakDecay;
+  }
+
+  if (!paused) {
+    drawSpectrum();
+    drawWaterfallLine();
+  }
+
+  // FPS counter
+  frameCount++;
+  const now = performance.now();
+  if (now - lastFpsTime >= 1000) {
+    document.getElementById("st-fps").textContent = frameCount;
+    frameCount = 0;
+    lastFpsTime = now;
+  }
+}
+
+// --- Parse JSON status ---
+function handleJsonMessage(data) {
+  try {
+    const msg = JSON.parse(data);
+    if (msg.type === "status") {
+      document.getElementById("st-snr").textContent = msg.snr != null ? msg.snr.toFixed(1) + " dB" : "--";
+      document.getElementById("st-bitrate").textContent = msg.bitrate != null ? msg.bitrate + " bps" : "--";
+      const dirEl = document.getElementById("st-dir");
+      dirEl.textContent = msg.direction ? msg.direction.toUpperCase() : "--";
+      dirEl.className = "value" + (msg.direction === "tx" ? " tx" : "");
+      const syncEl = document.getElementById("st-sync");
+      syncEl.textContent = msg.sync ? "On" : "Off";
+      syncEl.className = "value" + (msg.sync ? " synced" : "");
+      document.getElementById("st-call").textContent = msg.user_callsign || "--";
+      document.getElementById("st-dest").textContent = msg.dest_callsign || "--";
+      document.getElementById("st-tcp").textContent = msg.client_tcp_connected ? "Connected" : "--";
+      const txB = msg.bytes_transmitted != null ? msg.bytes_transmitted : 0;
+      const rxB = msg.bytes_received != null ? msg.bytes_received : 0;
+      document.getElementById("st-bytes").textContent = txB + " / " + rxB + " Bytes";
+    }
+  } catch(e) {}
+}
+
+// --- Draw spectrum plot ---
+function drawSpectrum() {
+  if (!spectrumData) return;
+  const w = specCanvas.width, h = specCanvas.height;
+  const ctx = specCtx;
+  const minDb = parseFloat(document.getElementById("minDb").value);
+  const maxDb = parseFloat(document.getElementById("maxDb").value);
+  const range = maxDb - minDb || 1;
+
+  ctx.fillStyle = "#1a1a2e";
+  ctx.fillRect(0, 0, w, h);
+
+  // Grid lines
+  ctx.strokeStyle = GRID_COLOR;
+  ctx.lineWidth = 1;
+  const dbStep = 10;
+  ctx.font = "10px sans-serif";
+  ctx.fillStyle = "#555";
+  for (let db = Math.ceil(minDb / dbStep) * dbStep; db <= maxDb; db += dbStep) {
+    const y = h - ((db - minDb) / range) * h;
+    ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke();
+    ctx.fillText(db + " dB", 4, y - 2);
+  }
+
+  // Frequency grid
+  const maxF = 3100;
+  const fStep = 500;
+  for (let f = fStep; f < maxF; f += fStep) {
+    const x = (f / maxF) * w;
+    ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, h); ctx.stroke();
+  }
+
+  // Peak hold line
+  if (peakHold) {
+    ctx.strokeStyle = SPEC_PEAK_COLOR;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    const displayBins = Math.round(3100 / (sampleRate / 2) * fftSize);
+    for (let i = 0; i < displayBins; i++) {
+      const x = (i / displayBins) * w;
+      const norm = Math.max(0, Math.min(1, (peakHold[i] - minDb) / range));
+      const y = h - norm * h;
+      i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+  }
+
+  // Spectrum line + fill
+  const displayBins2 = Math.round(3100 / (sampleRate / 2) * fftSize);
+  ctx.beginPath();
+  for (let i = 0; i < displayBins2; i++) {
+    const x = (i / displayBins2) * w;
+    const norm = Math.max(0, Math.min(1, (spectrumData[i] - minDb) / range));
+    const y = h - norm * h;
+    i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+  }
+  ctx.strokeStyle = SPEC_LINE_COLOR;
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+
+  // Fill under curve
+  ctx.lineTo(w, h);
+  ctx.lineTo(0, h);
+  ctx.closePath();
+  ctx.fillStyle = SPEC_FILL;
+  ctx.fill();
+}
+
+// --- Draw one waterfall line ---
+function drawWaterfallLine() {
+  if (!spectrumData) return;
+  const w = wfCanvas.width, h = wfCanvas.height;
+  const ctx = wfCtx;
+  const minDb = parseFloat(document.getElementById("minDb").value);
+  const maxDb = parseFloat(document.getElementById("maxDb").value);
+  const range = maxDb - minDb || 1;
+  const scrollPx = parseInt(document.getElementById("speed").value);
+
+  // Scroll down
+  const imgData = ctx.getImageData(0, 0, w, h - scrollPx);
+  ctx.putImageData(imgData, 0, scrollPx);
+
+  const maxDisplayFreq = 3100;
+  const displayBinsWf = Math.round(maxDisplayFreq / (sampleRate / 2) * fftSize);
+
+  // Draw new top line
+  const line = ctx.createImageData(w, scrollPx);
+  for (let x = 0; x < w; x++) {
+    const bin = (x / w) * displayBinsWf;
+    const lo = Math.floor(bin), hi = Math.min(lo + 1, fftSize - 1);
+    const frac = bin - lo;
+    const val = spectrumData[lo] * (1 - frac) + spectrumData[hi] * frac;
+    const norm = Math.max(0, Math.min(1, (val - minDb) / range));
+    const ci = Math.round(norm * 255) * 4;
+    for (let row = 0; row < scrollPx; row++) {
+      const p = (row * w + x) * 4;
+      line.data[p]     = colorMap[ci];
+      line.data[p + 1] = colorMap[ci + 1];
+      line.data[p + 2] = colorMap[ci + 2];
+      line.data[p + 3] = 255;
+    }
+  }
+  ctx.putImageData(line, 0, 0);
+}
+
+// --- Clear waterfall ---
+function clearWaterfall() {
+  wfCtx.fillStyle = "#000";
+  wfCtx.fillRect(0, 0, wfCanvas.width, wfCanvas.height);
+  if (peakHold) peakHold.fill(-200);
+}
+
+// --- Pause/Resume ---
+function togglePause() {
+  paused = !paused;
+  document.getElementById("pauseBtn").textContent = paused ? "Resume" : "Pause";
+}
+
+// --- Init ---
+resizeCanvases();
+clearWaterfall();
+</script>
+</body>
+</html>
