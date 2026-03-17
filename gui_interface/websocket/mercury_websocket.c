@@ -36,11 +36,56 @@
 
 extern const void *portable_memmem(const void *haystack, size_t haystacklen, const void *needle, size_t needlelen);
 
+#if MG_TLS != MG_TLS_NONE
+#define MERCURY_WS_USE_TLS 1
+#define MERCURY_WS_SCHEME "wss"
+#else
+#define MERCURY_WS_USE_TLS 0
+#define MERCURY_WS_SCHEME "ws"
+#endif
+
 #define WS_LOG_TAG "websocket"
 
 // ---- Internal state shared with the server thread ----
 static struct mg_mgr s_mgr;            // Mongoose event manager
 static ws_ctx_t     *s_ws_ctx = NULL;  // Back-pointer to the caller context
+#if MERCURY_WS_USE_TLS
+static struct mg_str s_tls_cert = {0};
+static struct mg_str s_tls_key = {0};
+
+static void ws_free_tls_material(void)
+{
+    if (s_tls_cert.buf) {
+        mg_free((void *)s_tls_cert.buf);
+        s_tls_cert.buf = NULL;
+        s_tls_cert.len = 0;
+    }
+
+    if (s_tls_key.buf) {
+        mg_free((void *)s_tls_key.buf);
+        s_tls_key.buf = NULL;
+        s_tls_key.len = 0;
+    }
+}
+
+static int ws_load_tls_material(void)
+{
+    s_tls_cert = mg_file_read(&mg_fs_posix, CFG_SSL_CERT);
+    if (s_tls_cert.buf == NULL) {
+        HLOGE(WS_LOG_TAG, "Failed to read TLS certificate: %s", CFG_SSL_CERT);
+        return -1;
+    }
+
+    s_tls_key = mg_file_read(&mg_fs_posix, CFG_SSL_KEY);
+    if (s_tls_key.buf == NULL) {
+        HLOGE(WS_LOG_TAG, "Failed to read TLS private key: %s", CFG_SSL_KEY);
+        ws_free_tls_material();
+        return -1;
+    }
+
+    return 0;
+}
+#endif
 
 // ---- Minimal JSON helpers ----
 
@@ -139,7 +184,7 @@ static void ws_handle_message(struct mg_connection *c, struct mg_ws_message *wm)
     }
 
     ws_command_t cmd;
-    if (parse_ws_command(wm->data.ptr, wm->data.len, &cmd) != 0)
+    if (parse_ws_command(wm->data.buf, wm->data.len, &cmd) != 0)
     {
         const char *err = "{\"error\":\"malformed command JSON\"}";
         mg_ws_send(c, err, strlen(err), WEBSOCKET_OP_TEXT);
@@ -165,24 +210,24 @@ static void ws_handle_message(struct mg_connection *c, struct mg_ws_message *wm)
 }
 
 // ---- Mongoose event handler ----
-static void ws_event_handler(struct mg_connection *c, int ev, void *ev_data, void *fn_data)
+static void ws_event_handler(struct mg_connection *c, int ev, void *ev_data)
 {
-    (void)fn_data;
-
     if (ev == MG_EV_ACCEPT)
     {
+#if MERCURY_WS_USE_TLS
         // TLS handshake for WSS connections
         struct mg_tls_opts opts = {
-            .cert    = CFG_SSL_CERT,
-            .certkey = CFG_SSL_KEY,
+            .cert = s_tls_cert,
+            .key = s_tls_key,
         };
         mg_tls_init(c, &opts);
+#endif
     }
     else if (ev == MG_EV_HTTP_MSG)
     {
         struct mg_http_message *hm = (struct mg_http_message *) ev_data;
 
-        if (mg_http_match_uri(hm, "/websocket"))
+        if (mg_match(hm->uri, mg_str("/websocket"), NULL))
         {
             // Upgrade HTTP to WebSocket
             mg_ws_upgrade(c, hm, NULL);
@@ -192,7 +237,7 @@ static void ws_event_handler(struct mg_connection *c, int ev, void *ev_data, voi
         {
             // Serve static files from web_root (e.g. test.html)
             struct mg_http_serve_opts opts = { .root_dir = s_ws_ctx->web_root };
-            mg_http_serve_dir(c, ev_data, &opts);
+            mg_http_serve_dir(c, hm, &opts);
         }
         else
         {
@@ -223,7 +268,13 @@ static void *ws_server_thread(void *arg)
     ws_ctx_t *ctx = (ws_ctx_t *)arg;
 
     mg_mgr_init(&s_mgr);
-    mg_http_listen(&s_mgr, ctx->listen_url, ws_event_handler, NULL);
+    if (mg_http_listen(&s_mgr, ctx->listen_url, ws_event_handler, NULL) == NULL)
+    {
+        HLOGE(WS_LOG_TAG, "Failed to listen on %s", ctx->listen_url);
+        ctx->running = false;
+        mg_mgr_free(&s_mgr);
+        return NULL;
+    }
 
     HLOGI(WS_LOG_TAG, "Server listening on %s", ctx->listen_url);
 
@@ -260,12 +311,19 @@ int ws_init(ws_ctx_t *ctx,
     ctx->cmd_callback = cmd_callback;
     ctx->cmd_callback_data = cb_data;
 
-    snprintf(ctx->listen_url, sizeof(ctx->listen_url), "wss://0.0.0.0:%u", port);
+    snprintf(ctx->listen_url, sizeof(ctx->listen_url), MERCURY_WS_SCHEME "://0.0.0.0:%u", port);
 
     if (web_root)
         strncpy(ctx->web_root, web_root, sizeof(ctx->web_root) - 1);
     else
         ctx->web_root[0] = '\0';
+
+#if MERCURY_WS_USE_TLS
+    if (ws_load_tls_material() != 0) {
+        ctx->running = false;
+        return -1;
+    }
+#endif
 
     s_ws_ctx = ctx;
 
@@ -273,6 +331,9 @@ int ws_init(ws_ctx_t *ctx,
     {
         HLOGE(WS_LOG_TAG, "pthread_create failed: %s", strerror(errno));
         ctx->running = false;
+#if MERCURY_WS_USE_TLS
+        ws_free_tls_material();
+#endif
         return -1;
     }
 
@@ -322,6 +383,9 @@ void ws_shutdown(ws_ctx_t *ctx)
     ctx->running = false;
     pthread_join(ctx->ws_tid, NULL);
     s_ws_ctx = NULL;
+#if MERCURY_WS_USE_TLS
+    ws_free_tls_material();
+#endif
 
     HLOGI(WS_LOG_TAG, "Shut down");
 }

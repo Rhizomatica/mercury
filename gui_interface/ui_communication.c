@@ -30,11 +30,12 @@
 #include <errno.h>
 #include <stdbool.h>
 
+#include "../common/os_interop.h"
+
 /* Cross-platform microsecond sleep */
 #ifdef _WIN32
 #define hermes_usleep(us) Sleep((DWORD)((us) / 1000))
 #else
-#include <unistd.h>
 #define hermes_usleep(us) usleep(us)
 #endif
 

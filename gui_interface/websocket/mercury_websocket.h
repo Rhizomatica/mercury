@@ -21,7 +21,8 @@
  */
 
 // Bidirectional WebSocket server for Mercury C backend <-> MercuryQT UI
-// communication. Uses mongoose for the WSS transport layer.
+// communication. Uses mongoose for the WebSocket transport layer, enabling WSS
+// when a TLS backend is compiled in.
 // Based on the sbitx_websocket implementation (unidirectional) but extended
 // to support receiving commands from the UI (bidirectional).
 
@@ -60,7 +61,7 @@ typedef struct {
     ws_command_callback_t cmd_callback;
     void *cmd_callback_data;           // opaque pointer passed to cmd_callback
 
-    // Server listen URL (e.g. "wss://0.0.0.0:10000")
+    // Server listen URL (e.g. "wss://0.0.0.0:10000" or "ws://0.0.0.0:10000")
     char listen_url[128];
 
     // Web root for serving static files (e.g. test.html)
@@ -73,7 +74,7 @@ typedef struct {
  * Initialise and start the WebSocket server thread.
  *
  * @param ctx            WebSocket context (caller-allocated, zeroed before call).
- * @param port           WSS listen port (e.g. 10000). Listens on 0.0.0.0.
+ * @param port           WebSocket listen port (e.g. 10000). Listens on 0.0.0.0.
  * @param web_root       Path to directory with static files to serve (e.g. test.html).
  *                       Pass NULL to disable static file serving.
  * @param cmd_callback   Function called when a command is received from the UI.

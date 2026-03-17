@@ -21,6 +21,7 @@
 
 
 HAMLIB_W64_DIR = radio_io/hamlib-w64
+HAMLIB_W64_LIBS = $(wildcard $(HAMLIB_W64_DIR)/lib/libhamlib*.a)
 
 HAVE_HERMES_SHM = 0
 
@@ -29,10 +30,18 @@ ifeq ($(OS),Windows_NT)
 	FFAUDIO_LINKFLAGS += -ldsound -ldxguid
 	FFAUDIO_LINKFLAGS += -lws2_32
 	FFAUDIO_LINKFLAGS += -static-libgcc -static-libstdc++ -l:libwinpthread.a
-	HAVE_HAMLIB = 1
-	HAMLIB_CFLAGS = -I$(HAMLIB_W64_DIR)/include -DHAVE_HAMLIB
-	HAMLIB_LDFLAGS = -L$(HAMLIB_W64_DIR)/lib -lhamlib
+	WS_TLS_LDFLAGS =
+	ifneq ($(strip $(HAMLIB_W64_LIBS)),)
+		HAVE_HAMLIB = 1
+		HAMLIB_CFLAGS = -I$(HAMLIB_W64_DIR)/include -DHAVE_HAMLIB
+		HAMLIB_LDFLAGS = -L$(HAMLIB_W64_DIR)/lib -lhamlib
+	else
+		HAVE_HAMLIB = 0
+		HAMLIB_CFLAGS =
+		HAMLIB_LDFLAGS =
+	endif
 else
+	WS_TLS_LDFLAGS = -lssl -lcrypto
     UNAME_S := $(shell uname -s)
     ifeq ($(UNAME_S),Linux)
 	FFAUDIO_LINKFLAGS += -lpulse
@@ -84,7 +93,7 @@ else
 BINARY = mercury
 endif
 
-LDFLAGS=$(FFAUDIO_LINKFLAGS) -lm $(HAMLIB_LDFLAGS) -lssl -lcrypto
+LDFLAGS=$(FFAUDIO_LINKFLAGS) -lm $(HAMLIB_LDFLAGS) $(WS_TLS_LDFLAGS)
 
 MERCURY_LINK_INPUTS = \
 	main.o datalink_arq/arq.o datalink_arq/fsm.o datalink_arq/arith.o datalink_arq/arq_channels.o \
@@ -154,7 +163,9 @@ windows-zip: windows
 	rm -rf mercury-w64 $(WINDOWS_ZIP)
 	mkdir -p mercury-w64
 	cp mercury.exe mercury-w64/
-	cp $(HAMLIB_W64_DIR)/bin/*.dll mercury-w64/
+	if ls $(HAMLIB_W64_DIR)/bin/*.dll >/dev/null 2>&1; then \
+		cp $(HAMLIB_W64_DIR)/bin/*.dll mercury-w64/; \
+	fi
 	cd mercury-w64 && zip -9 ../$(WINDOWS_ZIP) *
 	rm -rf mercury-w64
 	@echo "Created $(WINDOWS_ZIP)"

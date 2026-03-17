@@ -62,7 +62,7 @@ typedef struct ui_ctx ui_ctx_t;
 struct ui_ctx {
     // WebSocket server (bidirectional: status TX + command RX)
     ws_ctx_t ws;
-    uint16_t ws_port;           // WSS listen port (default=10000)
+    uint16_t ws_port;           // WebSocket listen port (default=10000)
 
     pthread_t pub_tid;
     pthread_t spec_tid;         // dedicated spectrum publisher thread (20 fps)

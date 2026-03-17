@@ -17,7 +17,8 @@
 
   <script>
     var host = self.location.hostname;
-    document.getElementById("url").value = "wss://"+host+":10000/websocket";
+    var scheme = self.location.protocol === "https:" ? "wss://" : "ws://";
+    document.getElementById("url").value = scheme + host + ":10000/websocket";
 </script>
 
   <script>

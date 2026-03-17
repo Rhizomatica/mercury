@@ -34,10 +34,12 @@ endif
 endif
 endif
 
+ifeq ($(HAVE_HAMLIB),1)
 ifeq ($(OS),Windows_NT)
 HAMLIB_CFLAGS_LOCAL = -Ihamlib-w64/include -DHAVE_HAMLIB
-else ifeq ($(HAVE_HAMLIB),1)
+else
 HAMLIB_CFLAGS_LOCAL = $(shell pkg-config --cflags hamlib) -DHAVE_HAMLIB
+endif
 else
 HAMLIB_CFLAGS_LOCAL =
 endif

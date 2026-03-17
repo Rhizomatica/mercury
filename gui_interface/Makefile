@@ -24,8 +24,13 @@ include ../config.mk
 CFLAGS_COMMON = $(COMMON_CFLAGS) -Wno-stringop-truncation -I../datalink_arq -I../data_interfaces -I../common -I../modem/freedv
 
 # Mongoose / WebSocket flags
-# Enable OpenSSL TLS support for WSS in mongoose
-WS_CFLAGS = $(COMMON_CFLAGS) -DMG_ENABLE_OPENSSL=1 -Iwebsocket
+# Use the built-in TLS backend on Windows and OpenSSL elsewhere.
+WS_CFLAGS = $(COMMON_CFLAGS) -Iwebsocket
+ifeq ($(OS),Windows_NT)
+WS_CFLAGS += -DMG_TLS=MG_TLS_BUILTIN
+else
+WS_CFLAGS += -DMG_TLS=MG_TLS_OPENSSL
+endif
 
 # Objects
 OBJS = ui_communication.o
