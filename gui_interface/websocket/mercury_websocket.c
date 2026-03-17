@@ -268,6 +268,7 @@ static void *ws_server_thread(void *arg)
     ws_ctx_t *ctx = (ws_ctx_t *)arg;
 
     mg_mgr_init(&s_mgr);
+    mg_log_set(MG_LL_NONE);  /* suppress mongoose internal debug output */
     if (mg_http_listen(&s_mgr, ctx->listen_url, ws_event_handler, NULL) == NULL)
     {
         HLOGE(WS_LOG_TAG, "Failed to listen on %s", ctx->listen_url);
