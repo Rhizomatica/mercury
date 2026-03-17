@@ -232,6 +232,8 @@ static void ws_event_handler(struct mg_connection *c, int ev, void *ev_data)
             // Upgrade HTTP to WebSocket
             mg_ws_upgrade(c, hm, NULL);
             HLOGI(WS_LOG_TAG, "Client connected (conn %p)", (void *)c);
+            if (s_ws_ctx && s_ws_ctx->connect_callback)
+                s_ws_ctx->connect_callback(s_ws_ctx->connect_callback_data);
         }
         else if (s_ws_ctx && s_ws_ctx->web_root[0])
         {

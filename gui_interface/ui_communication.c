@@ -64,6 +64,17 @@ extern volatile bool shutdown_;
 
 #define UI_LOG_TAG "ui-comm"
 
+// Called by the WebSocket server thread when a new UI client connects.
+// Sets pending flags so the publisher sends device lists and radio list.
+static void ws_connect_handler(void *user_data)
+{
+    ui_ctx_t *ctx = (ui_ctx_t *)user_data;
+    if (ctx) {
+        ctx->soundcard_list_pending = 1;
+        ctx->radio_list_pending = 1;
+    }
+}
+
 // ---------------- WS COMMAND CALLBACK ----------------
 // Called by the websocket server thread when a command JSON arrives from UI.
 static int ws_command_handler(const ws_command_t *cmd, void *user_data)
@@ -104,17 +115,14 @@ static int ws_command_handler(const ws_command_t *cmd, void *user_data)
               new_radio_type, dev_path);
         int rc = radio_io_restart(new_radio_type, dev_path);
         if (rc == 0) {
-            HLOGI(UI_LOG_TAG, "Radio subsystem restarted (model=%d, path=%s)",
+            HLOGI(UI_LOG_TAG, "Radioio subsystem restarted (model=%d, path=%s)",
                   new_radio_type, dev_path);
             ctx->radio_list_pending = 1;
         } else {
-            HLOGE(UI_LOG_TAG, "Radio subsystem restart FAILED (model=%d, path=%s, rc=%d)",
+            HLOGE(UI_LOG_TAG, "Radioio subsystem restart FAILED (model=%d, path=%s, rc=%d)",
                   new_radio_type, dev_path, rc);
             return rc;
         }
-    } else if (strcmp(cmd->command, "get_radio_list") == 0) {
-        HLOGI(UI_LOG_TAG, "UI requested radio list");
-        ctx->radio_list_pending = 1;
     } else {
         HLOGW(UI_LOG_TAG, "Unknown UI command: %s", cmd->command);
         return -1;
@@ -140,10 +148,6 @@ void *ui_publisher_thread(void *arg)
 
     HLOGI(UI_LOG_TAG, "Publisher started - sending status every %dms via WebSocket (port %u)",
            UI_PUBLISH_INTERVAL_US / 1000, ctx->ws_port);
-
-    // Send soundcard list once at the beginning and then every ~5s (10 cycles)
-    int soundcard_cycle = 0;
-    const int SOUNDCARD_SEND_INTERVAL = 10; // every 10 status cycles (~5 seconds)
 
     while (!shutdown_)
     {
@@ -239,9 +243,11 @@ void *ui_publisher_thread(void *arg)
             ws_broadcast_json(&ctx->ws, buf);
         }
 
-        // --- Periodically send capture & playback device lists via WebSocket ---
-        if (soundcard_cycle % SOUNDCARD_SEND_INTERVAL == 0)
+        // --- Send capture/playback device lists and input channel when a new UI client connects ---
+        if (ctx->soundcard_list_pending)
         {
+            ctx->soundcard_list_pending = 0;
+
             // Capture (input) devices - mode 1 = FFAUDIO_DEV_CAPTURE
             char cap_ids[32][64], cap_names[32][64];
             int cap_count = get_soundcard_list(ctx->audio_system, 1, cap_ids, cap_names, 32);
@@ -279,8 +285,20 @@ void *ui_publisher_thread(void *arg)
                 pos += snprintf(buf + pos, sizeof(buf) - pos, "]}");
                 ws_broadcast_json(&ctx->ws, buf);
             }
+
+            // Input channel selection
+            const char *ch_str;
+            switch (ctx->rx_input_channel) {
+                case 1:  ch_str = "right"; break;
+                case 2:  ch_str = "stereo"; break;
+                default: ch_str = "left"; break;
+            }
+            char ch_buf[256];
+            snprintf(ch_buf, sizeof(ch_buf),
+                "{\"type\":\"input_channel\",\"selected\":\"%s\","
+                "\"list\":[\"left\",\"right\",\"stereo\"]}", ch_str);
+            ws_broadcast_json(&ctx->ws, ch_buf);
         }
-        soundcard_cycle++;
 
         // --- Send radio list to UI (once at startup, and after set_radio_config) ---
         if (ctx->radio_list_pending)
@@ -327,22 +345,6 @@ void *ui_publisher_thread(void *arg)
             }
             free(radio_ids);
             free(radio_names);
-        }
-
-        // --- Send capture input channel setting to UI ---
-        if ((soundcard_cycle - 1) % SOUNDCARD_SEND_INTERVAL == 0)
-        {
-            const char *ch_str;
-            switch (ctx->rx_input_channel) {
-                case 1:  ch_str = "right"; break;
-                case 2:  ch_str = "stereo"; break;
-                default: ch_str = "left"; break;
-            }
-            char buf[256];
-            snprintf(buf, sizeof(buf),
-                "{\"type\":\"input_channel\",\"selected\":\"%s\","
-                "\"list\":[\"left\",\"right\",\"stereo\"]}", ch_str);
-            ws_broadcast_json(&ctx->ws, buf);
         }
 
         hermes_usleep(UI_PUBLISH_INTERVAL_US);
@@ -416,7 +418,6 @@ int ui_comm_init(ui_ctx_t *ctx, uint16_t ws_port, int waterfall_enabled,
     ctx->waterfall_enabled = waterfall_enabled;
     ctx->audio_system = audio_system;
     ctx->rx_input_channel = rx_input_channel;
-    ctx->radio_list_pending = 1;  // send radio list on first publisher cycle
     ctx->ws_port = ws_port;
     if (selected_capture)
         strncpy(ctx->selected_capture_dev, selected_capture, sizeof(ctx->selected_capture_dev) - 1);
@@ -434,6 +435,9 @@ int ui_comm_init(ui_ctx_t *ctx, uint16_t ws_port, int waterfall_enabled,
         HLOGE(UI_LOG_TAG, "Failed to init WebSocket server on port %u", ws_port);
         return -1;
     }
+    // Register connect callback - sends all device lists and radio list on each new UI connection
+    ctx->ws.connect_callback = ws_connect_handler;
+    ctx->ws.connect_callback_data = ctx;
     HLOGI(UI_LOG_TAG, "WebSocket server ready on port %u", ws_port);
 
     // Start publisher thread - periodic status broadcaster (via WebSocket)

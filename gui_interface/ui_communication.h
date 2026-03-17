@@ -75,7 +75,10 @@ struct ui_ctx {
     int rx_input_channel;            // LEFT=0, RIGHT=1, STEREO=2
 
     // Radio list is sent once at startup and again after set_radio_config
-    volatile int radio_list_pending;  // 1 = need to (re-)send radio list to UI
+    volatile int radio_list_pending;      // 1 = need to (re-)send radio list to UI
+
+    // Soundcard lists and input_channel are sent when a new UI client connects
+    volatile int soundcard_list_pending;  // 1 = need to send capture/playback/input_channel to UI
 
     // For logging rate limiting
     modem_status_t last_sent_status;

@@ -52,6 +52,9 @@ typedef struct {
 // The implementation should be thread-safe. Return 0 on success.
 typedef int (*ws_command_callback_t)(const ws_command_t *cmd, void *user_data);
 
+// Callback invoked on the websocket thread when a new client connects.
+typedef void (*ws_connect_callback_t)(void *user_data);
+
 // ---- WebSocket server context ----
 typedef struct {
     pthread_t ws_tid;                  // websocket server thread
@@ -60,6 +63,10 @@ typedef struct {
     // Callback for incoming UI commands
     ws_command_callback_t cmd_callback;
     void *cmd_callback_data;           // opaque pointer passed to cmd_callback
+
+    // Callback invoked when a new WebSocket client connects
+    ws_connect_callback_t connect_callback;
+    void *connect_callback_data;       // opaque pointer passed to connect_callback
 
     // Server listen URL (e.g. "wss://0.0.0.0:10000" or "ws://0.0.0.0:10000")
     char listen_url[128];
