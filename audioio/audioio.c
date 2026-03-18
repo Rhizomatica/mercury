@@ -816,13 +816,13 @@ static void audioio_stop_threads(void)
     pthread_join(s_radio_capture, NULL);
     pthread_join(s_radio_playback, NULL);
     audio_shutdown_ = false;
-    HLOGI("audio-stop", "audioio threads stopped\n");
+    HLOGI("audio-stop", "audioio threads stopped");
 }
 
 int audioio_restart(const char *capture_dev, const char *playback_dev,
                     int audio_subsys, int capture_channel_layout)
 {
-    HLOGI("audio-restart", "stopping audio threads...\n");
+    HLOGI("audio-restart", "stopping audio threads...");
     audioio_stop_threads();
 
     // Update stored parameters
@@ -843,7 +843,7 @@ int audioio_restart(const char *capture_dev, const char *playback_dev,
     clear_buffer(capture_buffer);
     clear_buffer(playback_buffer);
 
-    HLOGI("audio-restart", "starting audio threads (capture=%s playback=%s channel=%d)...\n",
+    HLOGI("audio-restart", "starting audio threads (capture=%s playback=%s channel=%d)...",
            s_capture_dev[0] ? s_capture_dev : "default",
            s_playback_dev[0] ? s_playback_dev : "default",
            capture_input_channel_layout);
@@ -864,7 +864,7 @@ int audioio_restart(const char *capture_dev, const char *playback_dev,
     pthread_create(&s_radio_capture, NULL, radio_capture_thread, (void *) s_capture_dev);
     pthread_create(&s_radio_playback, NULL, radio_playback_thread, (void *) s_playback_dev);
 
-    HLOGI("audio-restart", "audio threads restarted\n");
+    HLOGI("audio-restart", "audio threads restarted");
     return 0;
 }
 
