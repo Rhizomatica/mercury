@@ -46,6 +46,7 @@ typedef struct {
     char command[64];   // e.g. "set_capture_dev", "set_input_channel", "set_radio_config"
     char value[256];    // primary value (e.g. device id, channel name)
     char value2[256];   // optional second value (e.g. device path for radio config)
+    char value3[256];   // optional third value (e.g. input channel for audio config)
 } ws_command_t;
 
 // Callback invoked on the websocket thread when the UI sends a command.

@@ -86,28 +86,33 @@ static int ws_command_handler(const ws_command_t *cmd, void *user_data)
     HLOGI(UI_LOG_TAG, "WS CMD from UI: command=\"%s\" value=\"%s\" value2=\"%s\"",
           cmd->command, cmd->value, cmd->value2);
 
-    int need_audio_restart = 0;
-
-    if (strcmp(cmd->command, "set_capture_dev") == 0) {
-        strncpy(ctx->selected_capture_dev, cmd->value,
-                sizeof(ctx->selected_capture_dev) - 1);
+    if (strcmp(cmd->command, "set_audio_config") == 0) {
+        // value = capture_dev, value2 = playback_dev, value3 = input_channel
+        if (cmd->value[0])
+            strncpy(ctx->selected_capture_dev, cmd->value,
+                    sizeof(ctx->selected_capture_dev) - 1);
         HLOGI(UI_LOG_TAG, "Capture device set to: %s", ctx->selected_capture_dev);
-        need_audio_restart = 1;
-    } else if (strcmp(cmd->command, "set_playback_dev") == 0) {
-        strncpy(ctx->selected_playback_dev, cmd->value,
-                sizeof(ctx->selected_playback_dev) - 1);
+
+        if (cmd->value2[0])
+            strncpy(ctx->selected_playback_dev, cmd->value2,
+                    sizeof(ctx->selected_playback_dev) - 1);
         HLOGI(UI_LOG_TAG, "Playback device set to: %s", ctx->selected_playback_dev);
-        need_audio_restart = 1;
-    } else if (strcmp(cmd->command, "set_input_channel") == 0) {
-        if (strcmp(cmd->value, "right") == 0)
+
+        if (strcmp(cmd->value3, "right") == 0)
             ctx->rx_input_channel = 1;  // RIGHT
-        else if (strcmp(cmd->value, "stereo") == 0)
+        else if (strcmp(cmd->value3, "stereo") == 0)
             ctx->rx_input_channel = 2;  // STEREO
         else
             ctx->rx_input_channel = 0;  // LEFT (default)
         HLOGI(UI_LOG_TAG, "Input channel set to: %s (%d)",
-              cmd->value, ctx->rx_input_channel);
-        need_audio_restart = 1;
+              cmd->value3, ctx->rx_input_channel);
+
+        HLOGI(UI_LOG_TAG, "Restarting audioio subsystem (capture=%s playback=%s channel=%d)",
+              ctx->selected_capture_dev, ctx->selected_playback_dev, ctx->rx_input_channel);
+        audioio_restart(ctx->selected_capture_dev, ctx->selected_playback_dev,
+                        ctx->audio_system, ctx->rx_input_channel);
+        HLOGI(UI_LOG_TAG, "Audioio subsystem restarted successfully");
+
     } else if (strcmp(cmd->command, "set_radio_config") == 0) {
         int new_radio_type = atoi(cmd->value);
         const char *dev_path = cmd->value2;
@@ -126,14 +131,6 @@ static int ws_command_handler(const ws_command_t *cmd, void *user_data)
     } else {
         HLOGW(UI_LOG_TAG, "Unknown UI command: %s", cmd->command);
         return -1;
-    }
-
-    if (need_audio_restart) {
-        HLOGI(UI_LOG_TAG, "Restarting audioio subsystem (capture=%s playback=%s channel=%d)",
-              ctx->selected_capture_dev, ctx->selected_playback_dev, ctx->rx_input_channel);
-        audioio_restart(ctx->selected_capture_dev, ctx->selected_playback_dev,
-                        ctx->audio_system, ctx->rx_input_channel);
-        HLOGI(UI_LOG_TAG, "Audioio subsystem restarted successfully");
     }
 
     return 0;
