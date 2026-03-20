@@ -1381,10 +1381,26 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
         {
             if (g_cbs.tx_backlog && g_cbs.tx_backlog() > 0)
             {
+                sess->irs_idle_count = 0;
                 send_ctrl_frame(sess, ARQ_SUBTYPE_TURN_REQ);
                 sess->tx_retries_left = ARQ_TURN_REQ_RETRIES;
                 tm = arq_protocol_mode_timing(sess->control_mode);
                 dflow_enter(sess, ARQ_DFLOW_TURN_REQ_TX,
+                            deadline_from_s(tm ? tm->retry_interval_s : 7.0f),
+                            ARQ_EV_TIMER_RETRY);
+            }
+            else if (++sess->irs_idle_count >= ARQ_IRS_INACTIVITY_LIMIT)
+            {
+                /* Peer has been silent too long - probe with keepalive.
+                 * If the peer responds, keepalive_miss_count resets and
+                 * we return to IDLE_IRS.  If not, the keepalive retry
+                 * loop disconnects after ARQ_KEEPALIVE_MISS_LIMIT misses. */
+                HLOGW(LOG_COMP, "IRS inactivity limit (%d cycles) - sending keepalive",
+                      sess->irs_idle_count);
+                sess->irs_idle_count = 0;
+                send_ctrl_frame(sess, ARQ_SUBTYPE_KEEPALIVE);
+                tm = arq_protocol_mode_timing(sess->control_mode);
+                dflow_enter(sess, ARQ_DFLOW_KEEPALIVE_TX,
                             deadline_from_s(tm ? tm->retry_interval_s : 7.0f),
                             ARQ_EV_TIMER_RETRY);
             }
@@ -1717,7 +1733,7 @@ void arq_fsm_dispatch(arq_session_t *sess, const arq_event_t *ev)
           arq_dflow_state_name(sess->dflow_state),
           arq_event_name(ev->id));
 
-    /* Track last RX time from any received frame */
+    /* Track last RX time from any received frame and reset IRS idle counter */
     switch (ev->id)
     {
     case ARQ_EV_RX_DATA:
@@ -1730,6 +1746,7 @@ void arq_fsm_dispatch(arq_session_t *sess, const arq_event_t *ev)
     case ARQ_EV_RX_KEEPALIVE:
     case ARQ_EV_RX_KEEPALIVE_ACK:
         sess->last_rx_ms = hermes_uptime_ms();
+        sess->irs_idle_count = 0;
         /* Session ID validation: drop frames from a different session when
          * we are in CONNECTED or DISCONNECTING state (CALL/ACCEPT frames
          * are handled separately and carry session_id in their own format). */
