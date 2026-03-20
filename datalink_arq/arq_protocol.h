@@ -212,8 +212,8 @@ extern _Atomic int arq_disconnect_retry_slots;
 #define ARQ_KEEPALIVE_MISS_LIMIT      5     /* missed keepalives before disconnect */
 #define ARQ_TURN_REQ_RETRIES          2
 #define ARQ_MODE_REQ_RETRIES          2
-#define ARQ_IRS_INACTIVITY_LIMIT      5     /* TIMER_PEER_BACKLOG cycles (×15s)
-                                            * without RX before keepalive probe */
+#define ARQ_IRS_INACTIVITY_S          75    /* seconds without RX before IRS
+                                            * initiates a keepalive probe      */
 #define ARQ_MODE_SWITCH_HYST_COUNT    1     /* SNR provides stability gate; 1 = immediate */
 #define ARQ_STARTUP_MAX_S             8     /* DATAC13-only startup window         */
 #define ARQ_STARTUP_ACKS_REQUIRED     1

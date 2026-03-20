@@ -229,9 +229,6 @@ typedef struct
 
     /* --- Keepalive tracking --- */
     int      keepalive_miss_count;
-    int      irs_idle_count;           /* consecutive TIMER_PEER_BACKLOG cycles
-                                       * with no RX -> triggers keepalive probe
-                                       * when it reaches ARQ_IRS_INACTIVITY_LIMIT */
     uint64_t last_rx_ms;              /* last successful frame decode time     */
 
     /* --- Timer mechanism --- */
