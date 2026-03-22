@@ -39,7 +39,7 @@
 
 // ---- WebSocket server defaults ----
 #define WS_MAX_MESSAGE_SIZE   8192
-#define WS_POLL_INTERVAL_MS   100
+#define WS_POLL_INTERVAL_MS   40
 
 // ---- Incoming command from UI (parsed from JSON) ----
 typedef struct {

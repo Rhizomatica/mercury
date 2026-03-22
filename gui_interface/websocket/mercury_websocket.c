@@ -42,6 +42,80 @@ extern const void *portable_memmem(const void *haystack, size_t haystacklen, con
 static struct mg_mgr s_mgr;            // Mongoose event manager
 static ws_ctx_t     *s_ws_ctx = NULL;  // Back-pointer to the caller context
 
+// ---- Thread-safe broadcast queue ----
+// Publisher threads enqueue messages here; the server thread drains the
+// queue inside its poll loop so that all Mongoose API calls (mg_ws_send,
+// mg_mgr_poll) stay on a single thread — exactly how Mongoose is designed.
+
+typedef struct ws_msg {
+    struct ws_msg *next;
+    void          *data;
+    size_t         len;
+    int            op;     // WEBSOCKET_OP_TEXT or WEBSOCKET_OP_BINARY
+} ws_msg_t;
+
+static ws_msg_t        *s_msg_head = NULL;
+static ws_msg_t        *s_msg_tail = NULL;
+static pthread_mutex_t  s_msg_lock = PTHREAD_MUTEX_INITIALIZER;
+
+static void ws_enqueue(const void *data, size_t len, int op)
+{
+    ws_msg_t *msg = (ws_msg_t *)malloc(sizeof(*msg));
+    if (!msg) return;
+    msg->data = malloc(len);
+    if (!msg->data) { free(msg); return; }
+    memcpy(msg->data, data, len);
+    msg->len  = len;
+    msg->op   = op;
+    msg->next = NULL;
+
+    pthread_mutex_lock(&s_msg_lock);
+    if (s_msg_tail)
+        s_msg_tail->next = msg;
+    else
+        s_msg_head = msg;
+    s_msg_tail = msg;
+    pthread_mutex_unlock(&s_msg_lock);
+}
+
+// Drain all queued messages — called only from the server thread.
+static void ws_drain_queue(void)
+{
+    pthread_mutex_lock(&s_msg_lock);
+    ws_msg_t *head = s_msg_head;
+    s_msg_head = NULL;
+    s_msg_tail = NULL;
+    pthread_mutex_unlock(&s_msg_lock);
+
+    while (head) {
+        ws_msg_t *msg = head;
+        head = head->next;
+        for (struct mg_connection *c = s_mgr.conns; c != NULL; c = c->next) {
+            if (c->is_accepted && c->is_websocket && !c->is_draining)
+                mg_ws_send(c, msg->data, msg->len, msg->op);
+        }
+        free(msg->data);
+        free(msg);
+    }
+}
+
+// Free any messages left in the queue (called at shutdown).
+static void ws_flush_queue(void)
+{
+    pthread_mutex_lock(&s_msg_lock);
+    ws_msg_t *head = s_msg_head;
+    s_msg_head = NULL;
+    s_msg_tail = NULL;
+    pthread_mutex_unlock(&s_msg_lock);
+
+    while (head) {
+        ws_msg_t *msg = head;
+        head = head->next;
+        free(msg->data);
+        free(msg);
+    }
+}
+
 // TLS material (PEM-encoded): loaded at init when tls_enabled=true.
 // Protected by compile-time guard so this compiles cleanly even with MG_TLS_NONE.
 #if MG_TLS != MG_TLS_NONE
@@ -81,6 +155,35 @@ static int ws_load_tls_material(void)
     return 0;
 }
 #endif
+
+// ---- UTF-8 / JSON sanitisation ----
+// Replace non-UTF-8 bytes AND JSON control characters (0x00-0x1F) with '?'
+// so WebSocket TEXT frames are both valid UTF-8 and valid JSON string content.
+// Control characters are valid single-byte UTF-8 but illegal unescaped in JSON,
+// causing "Invalid control character" parse errors on the client.
+
+static void sanitise_utf8(char *s, size_t len)
+{
+    size_t i = 0;
+    while (i < len) {
+        unsigned char c = (unsigned char)s[i];
+        size_t seq;
+
+        if (c < 0x20) { s[i] = '?'; i++; continue; }         // JSON control char
+        if (c <= 0x7F) { i++; continue; }                     // printable ASCII
+        else if ((c & 0xE0) == 0xC0) seq = 2;                  // 110xxxxx
+        else if ((c & 0xF0) == 0xE0) seq = 3;                  // 1110xxxx
+        else if ((c & 0xF8) == 0xF0) seq = 4;                  // 11110xxx
+        else { s[i] = '?'; i++; continue; }                    // bad lead
+
+        if (i + seq > len) { s[i] = '?'; i++; continue; }     // truncated
+        bool ok = true;
+        for (size_t j = 1; j < seq; j++) {
+            if (((unsigned char)s[i + j] & 0xC0) != 0x80) { ok = false; break; }
+        }
+        if (ok) i += seq; else { s[i] = '?'; i++; }
+    }
+}
 
 // ---- Minimal JSON helpers ----
 
@@ -258,7 +361,8 @@ static void ws_event_handler(struct mg_connection *c, int ev, void *ev_data)
     else if (ev == MG_EV_CLOSE)
     {
         if (c->is_websocket)
-            HLOGI(WS_LOG_TAG, "Client disconnected (conn %p)", (void *)c);
+            HLOGI(WS_LOG_TAG, "Client disconnected (conn %p, draining=%d)",
+                   (void *)c, c->is_draining);
     }
 }
 
@@ -282,15 +386,18 @@ static void *ws_server_thread(void *arg)
     while (ctx->running)
     {
         mg_mgr_poll(&s_mgr, WS_POLL_INTERVAL_MS);
+        ws_drain_queue();
     }
 
-    // Drain remaining connections
+    // Send any remaining queued messages, then close connections.
+    ws_drain_queue();
     for (struct mg_connection *c = s_mgr.conns; c != NULL; c = c->next)
     {
         c->is_closing = 1;
     }
     mg_mgr_poll(&s_mgr, WS_POLL_INTERVAL_MS);
     mg_mgr_free(&s_mgr);
+    ws_flush_queue();
 
     HLOGI(WS_LOG_TAG, "Server thread stopped");
     return NULL;
@@ -359,16 +466,17 @@ int ws_broadcast_json(ws_ctx_t *ctx, const char *json)
     if (!ctx || !ctx->running || !json)
         return -1;
 
-    int count = 0;
-    for (struct mg_connection *c = s_mgr.conns; c != NULL; c = c->next)
-    {
-        if (c->is_accepted && c->is_websocket && !c->is_draining)
-        {
-            mg_ws_send(c, json, strlen(json), WEBSOCKET_OP_TEXT);
-            count++;
-        }
-    }
-    return count;
+    // Sanitise a copy before queuing so the server thread sends clean UTF-8.
+    size_t json_len = strlen(json);
+    char *buf = (char *)malloc(json_len + 1);
+    if (!buf)
+        return -1;
+    memcpy(buf, json, json_len + 1);
+    sanitise_utf8(buf, json_len);
+
+    ws_enqueue(buf, json_len, WEBSOCKET_OP_TEXT);
+    free(buf);
+    return 0;
 }
 
 int ws_broadcast_binary(ws_ctx_t *ctx, const void *data, size_t len)
@@ -376,16 +484,8 @@ int ws_broadcast_binary(ws_ctx_t *ctx, const void *data, size_t len)
     if (!ctx || !ctx->running || !data)
         return -1;
 
-    int count = 0;
-    for (struct mg_connection *c = s_mgr.conns; c != NULL; c = c->next)
-    {
-        if (c->is_accepted && c->is_websocket && !c->is_draining)
-        {
-            mg_ws_send(c, data, len, WEBSOCKET_OP_BINARY);
-            count++;
-        }
-    }
-    return count;
+    ws_enqueue(data, len, WEBSOCKET_OP_BINARY);
+    return 0;
 }
 
 void ws_shutdown(ws_ctx_t *ctx)
