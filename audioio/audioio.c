@@ -27,6 +27,44 @@
 
 extern volatile bool shutdown_;
 
+/* ------------------------------------------------------------------ */
+/*  DirectSound GUID ↔ string helpers (Windows only)                  */
+/* ------------------------------------------------------------------ */
+#if defined(_WIN32)
+
+/* Format a GUID as "{XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX}".
+ * buf must be at least 39 bytes (38 chars + NUL).                    */
+static void guid_to_str(const GUID *g, char *buf, size_t bufsize)
+{
+    snprintf(buf, bufsize,
+             "{%08lX-%04X-%04X-%02X%02X-%02X%02X%02X%02X%02X%02X}",
+             (unsigned long)g->Data1, g->Data2, g->Data3,
+             g->Data4[0], g->Data4[1],
+             g->Data4[2], g->Data4[3], g->Data4[4],
+             g->Data4[5], g->Data4[6], g->Data4[7]);
+}
+
+/* Parse a GUID string back into a GUID struct.  Returns 0 on success. */
+static int str_to_guid(const char *s, GUID *g)
+{
+    unsigned long d1;
+    unsigned int d2, d3;
+    unsigned int d4[8];
+    if (sscanf(s, "{%8lX-%4X-%4X-%2X%2X-%2X%2X%2X%2X%2X%2X}",
+               &d1, &d2, &d3,
+               &d4[0], &d4[1], &d4[2], &d4[3],
+               &d4[4], &d4[5], &d4[6], &d4[7]) != 11)
+        return -1;
+    g->Data1 = d1;
+    g->Data2 = (unsigned short)d2;
+    g->Data3 = (unsigned short)d3;
+    for (int i = 0; i < 8; i++)
+        g->Data4[i] = (unsigned char)d4[i];
+    return 0;
+}
+
+#endif /* _WIN32 */
+
 cbuf_handle_t capture_buffer;
 cbuf_handle_t playback_buffer;
 
@@ -127,6 +165,16 @@ void *radio_playback_thread(void *device_ptr)
 
     //printf("period_ms: %u\n", period_ms);
     //printf("period_size: %u\n", period_bytes);
+
+#if defined(_WIN32)
+    /* DirectSound device IDs are GUID strings from get_soundcard_list().
+     * Convert back to binary GUID for the DirectSound API. */
+    GUID play_guid;
+    if (audio_subsystem == AUDIO_SUBSYSTEM_DSOUND && conf.buf.device_id &&
+        conf.buf.device_id[0] == '{' && str_to_guid(conf.buf.device_id, &play_guid) == 0)
+        conf.buf.device_id = (const char *)&play_guid;
+#endif
+
     conf.flags = FFAUDIO_PLAYBACK;
     ffaudio_init_conf aconf = {};
     aconf.app_name = "mercury_playback";
@@ -192,7 +240,7 @@ void *radio_playback_thread(void *device_ptr)
         goto cleanup_play;
     }
 
-    HLOGI("audio-play", "I/O playback (%s) %d bits per sample / %dHz / %dch / %dms buffer", conf.buf.device_id ? conf.buf.device_id : "default", cfg->format, cfg->sample_rate, cfg->channels, cfg->buffer_length_msec);
+    HLOGI("audio-play", "I/O playback (%s) %d bits per sample / %dHz / %dch / %dms buffer", device_ptr ? (const char *)device_ptr : "default", cfg->format, cfg->sample_rate, cfg->channels, cfg->buffer_length_msec);
 
 
     frame_size = cfg->channels * (cfg->format & 0xff) / 8;
@@ -372,6 +420,15 @@ void *radio_capture_thread(void *device_ptr)
         audio = (ffaudio_interface *) &ffcoreaudio;
 #endif
 
+#if defined(_WIN32)
+    /* DirectSound device IDs are GUID strings from get_soundcard_list().
+     * Convert back to binary GUID for the DirectSound API. */
+    GUID cap_guid;
+    if (audio_subsystem == AUDIO_SUBSYSTEM_DSOUND && conf.buf.device_id &&
+        conf.buf.device_id[0] == '{' && str_to_guid(conf.buf.device_id, &cap_guid) == 0)
+        conf.buf.device_id = (const char *)&cap_guid;
+#endif
+
     conf.flags = FFAUDIO_CAPTURE;
     ffaudio_init_conf aconf = {};
     aconf.app_name = "mercury_capture";
@@ -432,7 +489,7 @@ void *radio_capture_thread(void *device_ptr)
         goto cleanup_cap;
     }
 
-    HLOGI("audio-cap", "I/O capture (%s) %d bits per sample / %dHz / %dch / %dms buffer", conf.buf.device_id ? conf.buf.device_id : "default", cfg->format, cfg->sample_rate, cfg->channels, cfg->buffer_length_msec);
+    HLOGI("audio-cap", "I/O capture (%s) %d bits per sample / %dHz / %dch / %dms buffer", device_ptr ? (const char *)device_ptr : "default", cfg->format, cfg->sample_rate, cfg->channels, cfg->buffer_length_msec);
 
     frame_size = cfg->channels * (cfg->format & 0xff) / 8;
     msec_bytes = cfg->sample_rate * frame_size / 1000;
@@ -590,8 +647,15 @@ int get_soundcard_list(int audio_system, int mode,
         const char *name = audio->dev_info(d, FFAUDIO_DEV_NAME);
         if (id && count < max_count)
         {
-            strncpy(ids[count], id, 63);
-            ids[count][63] = '\0';
+#if defined(_WIN32)
+            if (audio_system == AUDIO_SUBSYSTEM_DSOUND)
+                guid_to_str((const GUID *)id, ids[count], 64);
+            else
+#endif
+            {
+                strncpy(ids[count], id, 63);
+                ids[count][63] = '\0';
+            }
             if (name) {
                 strncpy(dev_names[count], name, 63);
                 dev_names[count][63] = '\0';
