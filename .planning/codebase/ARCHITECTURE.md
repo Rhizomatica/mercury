@@ -36,12 +36,14 @@
 ## Layers
 
 ### 1. Entry Point (`main.c`)
+
 - CLI option parsing via `getopt`
 - Subsystem initialization in dependency order: audio → radio → modem → ARQ → broadcast → TCP → UI
 - Global shutdown flag (`volatile bool shutdown_`) + signal handlers (SIGINT, SIGTERM)
 - Graceful shutdown in reverse order
 
 ### 2. Modem Layer (`modem/`)
+
 - FreeDV codec initialization and management (`generic_modem_t`)
 - TX thread: dequeues ARQ actions → modulates audio → pushes to playback ring buffer
 - RX thread: reads capture ring buffer → demodulates → dispatches frames to ARQ/broadcast
@@ -49,6 +51,7 @@
 - Spectrum data extraction for UI waterfall display
 
 ### 3. ARQ Data Link (`datalink_arq/`)
+
 - **FSM** (`fsm.c`, `arq_fsm.c`): thread-safe state machine for link lifecycle (IDLE → CALLING → CONNECTED → DISCONNECTING)
 - **Protocol** (`arq_protocol.c`): CALL/ACCEPT handshake, ACK/NAK, keepalive, controlled disconnect
 - **Channels** (`arq_channels.c`): per-direction mode management, bandwidth negotiation
@@ -58,17 +61,20 @@
 - **Message bus** (`arq_events.h`): typed union messages between TCP bridge, modem, and ARQ core
 
 ### 4. Broadcast Data Link (`datalink_broadcast/`)
+
 - One-way broadcast framing alongside ARQ
 - KISS protocol framing (`kiss.c`)
 - Frame size tables per FreeDV mode
 
 ### 5. TCP/TNC Interface (`data_interfaces/`)
+
 - VARA-compatible control/data socket pair
 - Command parsing and status emission
 - Bridge between TCP clients and ARQ subsystem
 - Thread-per-connection model
 
 ### 6. GUI Interface (`gui_interface/`)
+
 - WebSocket server (Mongoose) for `mercury-qt`
 - Status publisher thread: polls modem/ARQ state → JSON → WebSocket (500ms interval)
 - Spectrum publisher thread: FFT data → WebSocket (~20fps, 50ms interval)
@@ -76,18 +82,21 @@
 - Optional TLS support
 
 ### 7. Radio I/O (`radio_io/`)
+
 - Abstraction layer for PTT keying
 - HAMLIB backend (pluggable radio models)
 - HERMES SHM backend (direct shared memory for sBitx radios)
 - Hot-restart capability (`radio_io_restart`)
 
 ### 8. Audio I/O (`audioio/`)
+
 - ffaudio wrapper for multi-platform audio capture/playback
 - Shared ring buffers (`capture_buffer`, `playback_buffer`) connect audio threads to modem
 - Device enumeration and selection
 - Hot-restart capability (`audioio_restart`)
 
 ### 9. Common (`common/`)
+
 - `ring_buffer_posix.c` — lock-free circular buffers for audio
 - `chan.c` — typed message channels (thread-safe)
 - `queue.c` — generic queue implementation
@@ -111,7 +120,7 @@ Host App ←TCP→ data_interfaces ←msg bus→ ARQ core ←action queue→ mod
 ## Threading Model
 
 | Thread | Module | Purpose |
-|--------|--------|---------|
+| -------- | -------- | --------- |
 | Main | `main.c` | Init, shutdown, sleep loop |
 | Modem TX | `modem/` | Dequeue ARQ actions, modulate, play |
 | Modem RX | `modem/` | Capture audio, demodulate, dispatch |
