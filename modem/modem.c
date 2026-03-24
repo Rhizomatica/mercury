@@ -66,6 +66,7 @@ static pthread_mutex_t modem_freedv_lock = PTHREAD_MUTEX_INITIALIZER;
 static uint64_t modem_freedv_epoch = 1;
 static uint64_t modem_last_switch_ms = 0;
 static bool modem_owns_radio_buffers = false;
+static size_t broadcast_frame_size = 0;  /* expected broadcast payload size (set at init) */
 
 /* --- Spectrum data for UI waterfall display --- */
 #include "freedv/modem_stats.h"
@@ -380,6 +381,7 @@ try_shm_connect2:
 
     g_modem->mode = mode;
     g_modem->payload_bytes_per_modem_frame = payload_bytes_per_modem_frame;
+    broadcast_frame_size = payload_bytes_per_modem_frame;
     
     int modem_sample_rate = freedv_get_modem_sample_rate(g_modem->freedv);
     HLOGI("modem", "Initialized persistent FreeDV mode pool (DATAC13/DATAC4/DATAC3/DATAC1), frames per burst: %d", frames_per_burst);
@@ -961,6 +963,12 @@ static void process_received_frame(const uint8_t *data,
         break;
     case PACKET_TYPE_BROADCAST_CONTROL:
     case PACKET_TYPE_BROADCAST_DATA:
+        if (broadcast_frame_size > 0 && payload_nbytes != broadcast_frame_size)
+        {
+            HLOGD("modem-rx", "Discarding broadcast frame: size %zu != expected %zu",
+                  payload_nbytes, broadcast_frame_size);
+            break;
+        }
         write_buffer(data_rx_buffer_broadcast, (uint8_t *)data, payload_nbytes);
         break;
     default:
@@ -1232,7 +1240,9 @@ void *tx_thread(void *g_modem)
                 HLOGW("modem-tx", "Failed to send ARQ buffered frame");
         }
 
-        if (size_buffer(data_tx_buffer_broadcast) >= required)
+        if (size_buffer(data_tx_buffer_broadcast) >= required &&
+            broadcast_frame_size > 0 &&
+            payload_bytes_per_modem_frame == broadcast_frame_size)
         {
             for (int i = 0; i < tx_frames_per_burst; i++)
             {
