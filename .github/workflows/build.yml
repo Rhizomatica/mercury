@@ -1,0 +1,181 @@
+# Mercury CI Pipeline - Build Verification
+#
+# Triggers:
+#   - Automatically on every Pull Request
+#   - Manually via workflow_dispatch (select which targets to build)
+#
+# Builds:
+#   - Linux amd64 (native, Debian 13)
+#   - Linux arm64 (cross-compile, Debian 13)
+#   - Windows x64 (cross-compile via MinGW, Debian 13)
+
+name: Build
+
+on:
+  pull_request:
+    branches: [mercuryv2]
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: 'Target branch | default = "mercuryv2"'
+        required: false
+        type: string
+        default: 'mercuryv2'
+      build_linux_amd64:
+        description: 'Build Linux amd64'
+        type: boolean
+        default: true
+      build_linux_arm64:
+        description: 'Build Linux arm64 (cross-compile)'
+        type: boolean
+        default: true
+      build_windows:
+        description: 'Build Windows x64 (cross-compile)'
+        type: boolean
+        default: true
+
+jobs:
+  build-linux-amd64:
+    name: Build Linux amd64 (Debian 13)
+    runs-on: ubuntu-latest
+    container: debian:trixie
+    if: >-
+      github.event_name == 'pull_request' ||
+      github.event.inputs.build_linux_amd64 == 'true'
+    timeout-minutes: 5
+
+    steps:
+      - name: Install build dependencies
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            build-essential \
+            git \
+            openssh-client \
+            libpulse-dev \
+            libasound2-dev \
+            libhamlib-dev
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          repository: Rhizomatica/mercury
+          ssh-key: ${{ secrets.SSH_PRIVATE_KEY }}
+          fetch-depth: 0
+          ref: ${{ github.event.inputs.branch || 'mercuryv2' }}
+
+      - name: Git Safe Directory
+        run: git config --global --add safe.directory /__w/mercury/mercury
+
+      - name: Build Mercury (Linux amd64)
+        shell: bash
+        run: |
+          make clean
+          make -j$(nproc) 2>&1 | tee build-linux-amd64.log
+          echo "BUILD_EXIT_CODE=${PIPESTATUS[0]}" >> "$GITHUB_ENV"
+
+      - name: Check build result
+        run: |
+          if [ "$BUILD_EXIT_CODE" != "0" ]; then
+            echo "::error::Linux amd64 build failed"
+            exit 1
+          fi
+          echo "Linux amd64 build succeeded"
+
+  build-linux-arm64:
+    name: Build Linux arm64 (cross-compile, Debian 13)
+    runs-on: ubuntu-latest
+    container: debian:trixie
+    if: >-
+      github.event_name == 'pull_request' ||
+      github.event.inputs.build_linux_arm64 == 'true'
+    timeout-minutes: 5
+
+    steps:
+      - name: Install build dependencies
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            build-essential \
+            git \
+            openssh-client \
+            gcc-aarch64-linux-gnu
+
+      - name: Enable arm64 multiarch
+        run: |
+          dpkg --add-architecture arm64
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            libpulse-dev:arm64 \
+            libasound2-dev:arm64 \
+            libhamlib-dev:arm64
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          repository: Rhizomatica/mercury
+          ssh-key: ${{ secrets.SSH_PRIVATE_KEY }}
+          fetch-depth: 0
+          ref: ${{ github.event.inputs.branch || 'mercuryv2' }}
+
+      - name: Git Safe Directory
+        run: git config --global --add safe.directory /__w/mercury/mercury
+
+      - name: Build Mercury (Linux arm64 cross-compile)
+        shell: bash
+        run: |
+          make clean
+          make -j$(nproc) CC=aarch64-linux-gnu-gcc 2>&1 | tee build-linux-arm64.log
+          echo "BUILD_EXIT_CODE=${PIPESTATUS[0]}" >> "$GITHUB_ENV"
+
+      - name: Check build result
+        run: |
+          if [ "$BUILD_EXIT_CODE" != "0" ]; then
+            echo "::error::Linux arm64 cross-compile failed"
+            exit 1
+          fi
+          echo "Linux arm64 cross-compile succeeded"
+
+  build-windows:
+    name: Build Windows x64 (cross-compile, Debian 13)
+    runs-on: ubuntu-latest
+    container: debian:trixie
+    if: >-
+      github.event_name == 'pull_request' ||
+      github.event.inputs.build_windows == 'true'
+    timeout-minutes: 5
+
+    steps:
+      - name: Install build dependencies
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            build-essential \
+            git \
+            openssh-client \
+            gcc-mingw-w64-x86-64
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          repository: Rhizomatica/mercury
+          ssh-key: ${{ secrets.SSH_PRIVATE_KEY }}
+          fetch-depth: 0
+          ref: ${{ github.event.inputs.branch || 'mercuryv2' }}
+
+      - name: Git Safe Directory
+        run: git config --global --add safe.directory /__w/mercury/mercury
+
+      - name: Build Mercury (Windows x64 cross-compile)
+        shell: bash
+        run: |
+          make windows 2>&1 | tee build-windows-x64.log
+          echo "BUILD_EXIT_CODE=${PIPESTATUS[0]}" >> "$GITHUB_ENV"
+
+      - name: Check build result
+        run: |
+          if [ "$BUILD_EXIT_CODE" != "0" ]; then
+            echo "::error::Windows x64 cross-compile failed"
+            exit 1
+          fi
+          echo "Windows x64 cross-compile succeeded"
