@@ -63,7 +63,7 @@ static _Atomic uint32_t last_bitrate_bps = 0;
 static chan_t *tnc_tx_chan = NULL;
 static atomic_ulong tnc_tx_drop_count = 0;
 static atomic_int tnc_last_buffer_sent = -1;
-static volatile bool bcast_client_done = false;
+static atomic_bool bcast_client_done = false;
 
 #if defined(MSG_NOSIGNAL)
 #define HERMES_SEND_FLAGS MSG_NOSIGNAL
@@ -800,7 +800,7 @@ void *send_thread(void *client_socket_ptr)
          * and signals the condvar via clear_buffer(). */
         if (size_buffer(data_rx_buffer_broadcast) < frame_size)
         {
-            usleep(50000);
+            usleep(100000);
             continue;
         }
 
