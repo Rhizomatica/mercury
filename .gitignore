@@ -39,3 +39,6 @@ modem/freedv/libfreedvdata.a
 utils/broadcast_diag_rx
 utils/broadcast_diag_tx
 utils/broadcast_test
+
+# Test binaries
+tests/test_*

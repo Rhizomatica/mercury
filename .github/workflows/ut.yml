@@ -1,0 +1,47 @@
+# Mercury CI Pipeline - Unit Tests
+#
+# Triggers:
+#   - Automatically on every Pull Request
+#   - Manually via workflow_dispatch
+#
+# Runs unit tests on Linux amd64 only.
+
+name: UT
+
+on:
+  pull_request:
+    branches: [mercuryv2]
+  workflow_dispatch:
+
+jobs:
+  unit-tests:
+    name: Unit Tests (Linux amd64, Debian 13)
+    runs-on: ubuntu-latest
+    container: debian:trixie
+    timeout-minutes: 30
+
+    steps:
+      - name: Install build dependencies
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            build-essential \
+            git \
+            openssh-client \
+            libpulse-dev \
+            libasound2-dev \
+            libhamlib-dev
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          repository: Rhizomatica/mercury
+          ssh-key: ${{ secrets.SSH_PRIVATE_KEY }}
+          fetch-depth: 0
+
+      - name: Git Safe Directory
+        run: git config --global --add safe.directory /__w/mercury/mercury
+
+      - name: Run Unit Tests
+        shell: bash
+        run: make test
