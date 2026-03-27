@@ -50,6 +50,7 @@
 #include "hermes_log.h"
 #include "radio_io.h"
 #include "gui_interface/ui_communication.h"
+#include "cfg_utils.h"
 
 extern cbuf_handle_t capture_buffer;
 extern cbuf_handle_t playback_buffer;
@@ -126,6 +127,7 @@ static void print_usage(const char *prog)
 #else
     printf(" -S                         HERMES shared memory radio control (Linux-only; unavailable in this build).\n");
 #endif
+    printf(" -C [config_file]           Path to init configuration file (INI format). Default is mercury.ini in the current directory.\n");
     printf(" -K                         List HAMLIB supported radio models.\n");
     printf(" -t                         Test TX mode.\n");
     printf(" -r                         Test RX mode.\n");
@@ -177,8 +179,47 @@ int main(int argc, char *argv[])
     char radio_device[1024] = "";
     bool list_radio_models = false;
 
+    // --- Load init configuration file ---
+    // Pre-scan argv for -C option; fall back to "mercury.ini" in cwd
+    const char *cfg_path = "mercury.ini";
+    for (int i = 1; i < argc - 1; i++)
+    {
+        if (!strcmp(argv[i], "-C"))
+        {
+            cfg_path = argv[i + 1];
+            break;
+        }
+    }
+
+    mercury_config mcfg;
+    cfg_set_defaults(&mcfg);
+    if (access(cfg_path, R_OK) == 0)
+    {
+        if (cfg_read(&mcfg, cfg_path))
+        {
+            printf("Loaded configuration from %s\n", cfg_path);
+            // Apply config-file values as initial defaults
+            ui_enabled         = mcfg.ui_enabled;
+            ui_port            = mcfg.ui_port;
+            tls_enabled        = mcfg.tls_enabled;
+            waterfall_enabled  = mcfg.waterfall_enabled;
+            radio_type         = mcfg.radio_type;
+            if (mcfg.radio_device[0])
+                strncpy(radio_device, mcfg.radio_device, sizeof(radio_device) - 1);
+            if (mcfg.input_device[0])
+                strncpy(input_dev, mcfg.input_device, MAX_PATH - 1);
+            if (mcfg.output_device[0])
+                strncpy(output_dev, mcfg.output_device, MAX_PATH - 1);
+            rx_input_channel   = mcfg.capture_channel;
+            audio_system       = mcfg.sound_system;
+            base_tcp_port      = mcfg.arq_tcp_base_port;
+            broadcast_port     = mcfg.broadcast_tcp_port;
+        }
+    }
+
+    // CLI arguments override config-file values
     int opt;
-    while ((opt = getopt(argc, argv, "hc:s:m:f:k:li:o:x:p:b:zvtrL:JR:U:A:SKWGT")) != -1)
+    while ((opt = getopt(argc, argv, "hc:s:m:f:k:li:o:x:p:b:zvtrL:JR:U:A:C:SKWGT")) != -1)
     {
         switch (opt)
         {
@@ -319,6 +360,9 @@ int main(int argc, char *argv[])
             fprintf(stderr, "Error: -S (HERMES shared memory radio control) is only available on Linux builds.\n");
             return EXIT_FAILURE;
 #endif
+            break;
+        case 'C':
+            /* already handled in pre-scan above */
             break;
         case 'K':
             list_radio_models = true;

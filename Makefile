@@ -85,16 +85,18 @@ endif
 
 CFLAGS = $(COMMON_CFLAGS) -Imodem/freedv -Imodem -Idatalink_broadcast -Idata_interfaces -Idatalink_arq -Iaudioio/ffaudio -Icommon -Igui_interface -Iradio_io $(HAMLIB_CFLAGS) $(HERMES_SHM_CFLAGS)
 
+INIPARSER_LDFLAGS = -liniparser
+
 ifeq ($(OS),Windows_NT)
 BINARY = mercury.exe
 else
 BINARY = mercury
 endif
 
-LDFLAGS=$(FFAUDIO_LINKFLAGS) -lm $(HAMLIB_LDFLAGS)
+LDFLAGS=$(FFAUDIO_LINKFLAGS) -lm $(HAMLIB_LDFLAGS) $(INIPARSER_LDFLAGS)
 
 MERCURY_LINK_INPUTS = \
-	main.o datalink_arq/arq.o datalink_arq/fsm.o datalink_arq/arith.o datalink_arq/arq_channels.o \
+	main.o cfg_utils.o datalink_arq/arq.o datalink_arq/fsm.o datalink_arq/arith.o datalink_arq/arq_channels.o \
 	datalink_arq/arq_fsm.o datalink_arq/arq_protocol.o datalink_arq/arq_timing.o datalink_arq/arq_modem.o \
 	datalink_broadcast/broadcast.o datalink_broadcast/kiss.o modem/modem.o modem/framer.o modem/freedv/libfreedvdata.a \
 	audioio/audioio.a common/os_interop.o common/ring_buffer_posix.o common/shm_posix.o common/crc6.o common/hermes_log.o \
@@ -140,6 +142,9 @@ FORCE:
 
 main.o: main.c .git_hash_stamp
 	$(CC) $(CFLAGS) -c main.c
+
+cfg_utils.o: cfg_utils.c cfg_utils.h
+	$(CC) $(CFLAGS) -c cfg_utils.c
 
 internal_deps:
 	$(MAKE) -C modem
