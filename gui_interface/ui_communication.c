@@ -114,15 +114,23 @@ static int ws_command_handler(const ws_command_t *cmd, void *user_data)
                         ctx->audio_system, ctx->rx_input_channel);
         HLOGI(UI_LOG_TAG, "Audioio subsystem restarted successfully");
 
+        // Persist audio config to INI
+        strncpy(ctx->cfg.input_device, ctx->selected_capture_dev,
+                sizeof(ctx->cfg.input_device) - 1);
+        ctx->cfg.input_device[sizeof(ctx->cfg.input_device) - 1] = '\0';
+        strncpy(ctx->cfg.output_device, ctx->selected_playback_dev,
+                sizeof(ctx->cfg.output_device) - 1);
+        ctx->cfg.output_device[sizeof(ctx->cfg.output_device) - 1] = '\0';
+        ctx->cfg.capture_channel = ctx->rx_input_channel;
+        if (ctx->cfg_path[0] && cfg_write(&ctx->cfg, ctx->cfg_path))
+            HLOGI(UI_LOG_TAG, "Config saved to %s", ctx->cfg_path);
+
     } else if (strcmp(cmd->command, "set_radio_config") == 0) {
         int new_radio_type = atoi(cmd->value);
         const char *dev_path = cmd->value2;
         HLOGI(UI_LOG_TAG, "Radio set_radio_config command: model_id=%d device_path=\"%s\"",
               new_radio_type, dev_path);
         if (new_radio_type == RADIO_TYPE_NONE) {
-            /* Shut down any active radio, then set state to NONE.
-             * radio_io_restart -> shutdown (closes hamlib/SHM) then
-             * init(NONE) which clears g_radio_type and g_device_path. */
             radio_io_restart(RADIO_TYPE_NONE, NULL);
             HLOGI(UI_LOG_TAG, "Radio type set to NONE - radio subsystem shut down");
             ctx->radio_list_pending = 1;
@@ -138,6 +146,15 @@ static int ws_command_handler(const ws_command_t *cmd, void *user_data)
                 return rc;
             }
         }
+
+        // Persist radio config to INI
+        ctx->cfg.radio_type = new_radio_type;
+        strncpy(ctx->cfg.radio_device, dev_path ? dev_path : "",
+                sizeof(ctx->cfg.radio_device) - 1);
+        ctx->cfg.radio_device[sizeof(ctx->cfg.radio_device) - 1] = '\0';
+        if (ctx->cfg_path[0] && cfg_write(&ctx->cfg, ctx->cfg_path))
+            HLOGI(UI_LOG_TAG, "Config saved to %s", ctx->cfg_path);
+
     } else {
         HLOGW(UI_LOG_TAG, "Unknown UI command: %s", cmd->command);
         return -1;
@@ -422,7 +439,8 @@ void *spectrum_publisher_thread(void *arg)
 int ui_comm_init(ui_ctx_t *ctx, uint16_t ws_port, bool tls_enabled,
                  int waterfall_enabled, int audio_system,
                  const char *selected_capture, const char *selected_playback,
-                 int rx_input_channel)
+                 int rx_input_channel,
+                 const mercury_config *initial_cfg, const char *cfg_path)
 {
     memset(ctx, 0, sizeof(*ctx));
 
@@ -439,6 +457,16 @@ int ui_comm_init(ui_ctx_t *ctx, uint16_t ws_port, bool tls_enabled,
         strncpy(ctx->selected_playback_dev, selected_playback, sizeof(ctx->selected_playback_dev) - 1);
     else
         ctx->selected_playback_dev[0] = '\0';
+
+    // Store config snapshot and path for persisting UI changes
+    if (initial_cfg)
+        ctx->cfg = *initial_cfg;
+    else
+        cfg_set_defaults(&ctx->cfg);
+    if (cfg_path) {
+        strncpy(ctx->cfg_path, cfg_path, sizeof(ctx->cfg_path) - 1);
+        ctx->cfg_path[sizeof(ctx->cfg_path) - 1] = '\0';
+    }
 
     // Initialize WebSocket server (bidirectional: status TX + command RX)
     // Serve static test page from websocket/web/ directory

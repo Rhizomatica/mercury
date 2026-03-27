@@ -28,6 +28,7 @@
 #include <pthread.h>
 
 #include "websocket/mercury_websocket.h"
+#include "../cfg_utils.h"
 
 // ---- Default ports for UI <-> backend communication ----
 // WebSocket server port = UI_DEFAULT_PORT (single bidirectional channel)
@@ -81,6 +82,10 @@ struct ui_ctx {
     // Soundcard lists and input_channel are sent when a new UI client connects
     volatile int soundcard_list_pending;  // 1 = need to send capture/playback/input_channel to UI
 
+    // Persistent configuration (written back to INI on UI changes)
+    mercury_config cfg;
+    char cfg_path[1024];
+
     // For logging rate limiting
     modem_status_t last_sent_status;
 };
@@ -103,7 +108,8 @@ void *spectrum_publisher_thread(void *arg);
 int ui_comm_init(ui_ctx_t *ctx, uint16_t ws_port, bool tls_enabled,
                  int waterfall_enabled, int audio_system,
                  const char *selected_capture, const char *selected_playback,
-                 int rx_input_channel);
+                 int rx_input_channel,
+                 const mercury_config *initial_cfg, const char *cfg_path);
 void ui_comm_shutdown(ui_ctx_t *ctx);
 
 #endif

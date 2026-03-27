@@ -59,6 +59,10 @@ typedef struct {
  * Returns true on success, false if the file cannot be parsed. */
 bool cfg_read(mercury_config *cfg, const char *ini_path);
 
+/* Write |cfg| to an INI file at |ini_path|.
+ * Returns true on success, false if the file cannot be written. */
+bool cfg_write(const mercury_config *cfg, const char *ini_path);
+
 /* Populate |cfg| with compile/runtime defaults. Call before cfg_read(). */
 void cfg_set_defaults(mercury_config *cfg);
 

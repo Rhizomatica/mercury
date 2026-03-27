@@ -138,3 +138,55 @@ bool cfg_read(mercury_config *cfg, const char *ini_path)
     iniparser_freedict(ini);
     return true;
 }
+
+/* Map an AUDIO_SUBSYSTEM_* constant back to a name string. */
+static const char *sound_system_name(int sys)
+{
+    switch (sys) {
+    case AUDIO_SUBSYSTEM_ALSA:      return "alsa";
+    case AUDIO_SUBSYSTEM_PULSE:     return "pulse";
+    case AUDIO_SUBSYSTEM_DSOUND:    return "dsound";
+    case AUDIO_SUBSYSTEM_WASAPI:    return "wasapi";
+    case AUDIO_SUBSYSTEM_OSS:       return "oss";
+    case AUDIO_SUBSYSTEM_COREAUDIO: return "coreaudio";
+    case AUDIO_SUBSYSTEM_AAUDIO:    return "aaudio";
+    case AUDIO_SUBSYSTEM_SHM:       return "shm";
+    default:                        return "alsa";
+    }
+}
+
+/* Map a capture-channel constant back to a name string. */
+static const char *capture_channel_name(int ch)
+{
+    switch (ch) {
+    case RIGHT:  return "right";
+    case STEREO: return "stereo";
+    default:     return "left";
+    }
+}
+
+bool cfg_write(const mercury_config *cfg, const char *ini_path)
+{
+    FILE *f = fopen(ini_path, "w");
+    if (!f) {
+        fprintf(stderr, "cfg_write: cannot open file for writing: %s\n", ini_path);
+        return false;
+    }
+
+    fprintf(f, "[main]\n");
+    fprintf(f, "ui_enabled = %s\n",      cfg->ui_enabled ? "true" : "false");
+    fprintf(f, "ui_port = %d\n",          cfg->ui_port);
+    fprintf(f, "ui_protocol = %s\n",      cfg->tls_enabled ? "wss" : "ws");
+    fprintf(f, "waterfall_enabled = %s\n", cfg->waterfall_enabled ? "true" : "false");
+    fprintf(f, "radio_model = %d\n",      cfg->radio_type);
+    fprintf(f, "radio_device = %s\n",     cfg->radio_device);
+    fprintf(f, "input_device = %s\n",     cfg->input_device);
+    fprintf(f, "output_device = %s\n",    cfg->output_device);
+    fprintf(f, "capture_channel = %s\n",  capture_channel_name(cfg->capture_channel));
+    fprintf(f, "sound_system = %s\n",     sound_system_name(cfg->sound_system));
+    fprintf(f, "arq_tcp_base_port = %d\n", cfg->arq_tcp_base_port);
+    fprintf(f, "broadcast_tcp_port = %d\n", cfg->broadcast_tcp_port);
+
+    fclose(f);
+    return true;
+}

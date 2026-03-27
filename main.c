@@ -608,6 +608,27 @@ int main(int argc, char *argv[])
     }
 
     // ---- Initialize UI communication (WebSocket to mercury-qt) ----
+    // Sync mcfg with final runtime values (CLI may have overridden INI)
+    mcfg.ui_enabled        = ui_enabled;
+    mcfg.ui_port           = ui_port;
+    mcfg.tls_enabled       = tls_enabled;
+    mcfg.waterfall_enabled = waterfall_enabled;
+    mcfg.radio_type        = radio_type;
+    strncpy(mcfg.radio_device, radio_device, sizeof(mcfg.radio_device) - 1);
+    mcfg.radio_device[sizeof(mcfg.radio_device) - 1] = '\0';
+    if (input_dev && input_dev[0]) {
+        strncpy(mcfg.input_device, input_dev, sizeof(mcfg.input_device) - 1);
+        mcfg.input_device[sizeof(mcfg.input_device) - 1] = '\0';
+    }
+    if (output_dev && output_dev[0]) {
+        strncpy(mcfg.output_device, output_dev, sizeof(mcfg.output_device) - 1);
+        mcfg.output_device[sizeof(mcfg.output_device) - 1] = '\0';
+    }
+    mcfg.capture_channel   = rx_input_channel;
+    mcfg.sound_system      = audio_system;
+    mcfg.arq_tcp_base_port = base_tcp_port;
+    mcfg.broadcast_tcp_port = broadcast_port;
+
     ui_ctx_t ui_ctx;
     if (ui_enabled)
     {
@@ -615,7 +636,8 @@ int main(int argc, char *argv[])
                ui_port, tls_enabled ? "WSS" : "WS", waterfall_enabled ? "enabled" : "disabled");
         if (ui_comm_init(&ui_ctx, (uint16_t)ui_port, tls_enabled,
                          waterfall_enabled ? 1 : 0,
-                         audio_system, input_dev, output_dev, rx_input_channel) != 0)
+                         audio_system, input_dev, output_dev, rx_input_channel,
+                         &mcfg, cfg_path) != 0)
         {
             // Non-fatal: mercury can run without UI
             HLOGW("main", "UI communication init failed. Running without GUI.");
