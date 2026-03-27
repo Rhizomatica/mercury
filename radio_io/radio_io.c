@@ -64,6 +64,8 @@ int radio_io_init(int radio_type, const char *device_path)
 
     if (radio_type == RADIO_TYPE_NONE)
     {
+        g_radio_type = RADIO_TYPE_NONE;
+        g_device_path[0] = '\0';
         HLOGI(RADIO_LOG_TAG, "Radio control disabled (type=NONE)");
         pthread_mutex_unlock(&g_radio_mutex);
         return 0;

@@ -47,6 +47,7 @@
 #include "../common/hermes_log.h"
 #include "../modem/freedv/modem_stats.h"
 #include "../modem/modem.h"
+#include "../radio_io/radio_io.h"  /* RADIO_TYPE_NONE */
 
 extern int get_soundcard_list(int audio_system, int mode,
                               char ids[][64], char dev_names[][64], int max_count);
@@ -118,15 +119,24 @@ static int ws_command_handler(const ws_command_t *cmd, void *user_data)
         const char *dev_path = cmd->value2;
         HLOGI(UI_LOG_TAG, "Radio set_radio_config command: model_id=%d device_path=\"%s\"",
               new_radio_type, dev_path);
-        int rc = radio_io_restart(new_radio_type, dev_path);
-        if (rc == 0) {
-            HLOGI(UI_LOG_TAG, "Radioio subsystem restarted (model=%d, path=%s)",
-                  new_radio_type, dev_path);
+        if (new_radio_type == RADIO_TYPE_NONE) {
+            /* Shut down any active radio, then set state to NONE.
+             * radio_io_restart -> shutdown (closes hamlib/SHM) then
+             * init(NONE) which clears g_radio_type and g_device_path. */
+            radio_io_restart(RADIO_TYPE_NONE, NULL);
+            HLOGI(UI_LOG_TAG, "Radio type set to NONE - radio subsystem shut down");
             ctx->radio_list_pending = 1;
         } else {
-            HLOGE(UI_LOG_TAG, "Radioio subsystem restart FAILED (model=%d, path=%s, rc=%d)",
-                  new_radio_type, dev_path, rc);
-            return rc;
+            int rc = radio_io_restart(new_radio_type, dev_path);
+            if (rc == 0) {
+                HLOGI(UI_LOG_TAG, "Radioio subsystem restarted (model=%d, path=%s)",
+                      new_radio_type, dev_path);
+                ctx->radio_list_pending = 1;
+            } else {
+                HLOGE(UI_LOG_TAG, "Radioio subsystem restart FAILED (model=%d, path=%s, rc=%d)",
+                      new_radio_type, dev_path, rc);
+                return rc;
+            }
         }
     } else {
         HLOGW(UI_LOG_TAG, "Unknown UI command: %s", cmd->command);
@@ -331,8 +341,11 @@ void *ui_publisher_thread(void *arg)
                 pos += snprintf(buf + pos, buf_size - pos,
                     "{\"type\":\"radio_list\",\"selected\":\"%s\",\"device_path\":\"%s\",\"list\":[",
                     sel_buf, cur_dev ? cur_dev : "");
+                // First entry always "None"
+                pos += snprintf(buf + pos, buf_size - pos,
+                    "{\"name\":\"None\",\"id\":\"%d\"}", RADIO_TYPE_NONE);
                 for (int i = 0; i < radio_count && pos < (int)buf_size - 128; i++) {
-                    if (i > 0) buf[pos++] = ',';
+                    buf[pos++] = ',';
                     pos += snprintf(buf + pos, buf_size - pos,
                         "{\"name\":\"%s\",\"id\":\"%s\"}", radio_names[i], radio_ids[i]);
                 }
