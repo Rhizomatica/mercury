@@ -180,17 +180,17 @@ int main(int argc, char *argv[])
     bool list_radio_models = false;
 
     // --- Load init configuration file ---
-    // Pre-scan argv for -C option; fall back to "mercury.ini" in cwd
+    // First pass: extract -C config path only
+    const char *optstring = "hc:s:m:f:k:li:o:x:p:b:zvtrL:JR:U:A:C:SKWGT";
     const char *cfg_path = "mercury.ini";
-    for (int i = 1; i < argc - 1; i++)
+    int opt;
+    while ((opt = getopt(argc, argv, optstring)) != -1)
     {
-        if (!strcmp(argv[i], "-C"))
-        {
-            cfg_path = argv[i + 1];
-            break;
-        }
+        if (opt == 'C' && optarg)
+            cfg_path = optarg;
     }
 
+    // Load config file (sets defaults for values not overridden by CLI)
     mercury_config mcfg;
     cfg_set_defaults(&mcfg);
     if (access(cfg_path, R_OK) == 0)
@@ -198,18 +198,23 @@ int main(int argc, char *argv[])
         if (cfg_read(&mcfg, cfg_path))
         {
             printf("Loaded configuration from %s\n", cfg_path);
-            // Apply config-file values as initial defaults
             ui_enabled         = mcfg.ui_enabled;
             ui_port            = mcfg.ui_port;
             tls_enabled        = mcfg.tls_enabled;
             waterfall_enabled  = mcfg.waterfall_enabled;
             radio_type         = mcfg.radio_type;
-            if (mcfg.radio_device[0])
+            if (mcfg.radio_device[0]) {
                 strncpy(radio_device, mcfg.radio_device, sizeof(radio_device) - 1);
-            if (mcfg.input_device[0])
+                radio_device[sizeof(radio_device) - 1] = '\0';
+            }
+            if (mcfg.input_device[0]) {
                 strncpy(input_dev, mcfg.input_device, MAX_PATH - 1);
-            if (mcfg.output_device[0])
+                input_dev[MAX_PATH - 1] = '\0';
+            }
+            if (mcfg.output_device[0]) {
                 strncpy(output_dev, mcfg.output_device, MAX_PATH - 1);
+                output_dev[MAX_PATH - 1] = '\0';
+            }
             rx_input_channel   = mcfg.capture_channel;
             audio_system       = mcfg.sound_system;
             base_tcp_port      = mcfg.arq_tcp_base_port;
@@ -217,9 +222,9 @@ int main(int argc, char *argv[])
         }
     }
 
-    // CLI arguments override config-file values
-    int opt;
-    while ((opt = getopt(argc, argv, "hc:s:m:f:k:li:o:x:p:b:zvtrL:JR:U:A:C:SKWGT")) != -1)
+    // Second pass: CLI arguments override config-file values
+    optind = 1;
+    while ((opt = getopt(argc, argv, optstring)) != -1)
     {
         switch (opt)
         {
@@ -362,7 +367,7 @@ int main(int argc, char *argv[])
 #endif
             break;
         case 'C':
-            /* already handled in pre-scan above */
+            /* handled in first pass */
             break;
         case 'K':
             list_radio_models = true;

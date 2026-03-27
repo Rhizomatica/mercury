@@ -18,7 +18,7 @@
  *
  */
 
-#include <iniparser/iniparser.h>
+#include "iniparser.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -103,11 +103,23 @@ bool cfg_read(mercury_config *cfg, const char *ini_path)
     i = iniparser_getint(ini, CFG_KEY_RADIO_MODEL, cfg->radio_type);
     cfg->radio_type = i;
 
-    s = iniparser_getstring(ini, CFG_KEY_RADIO_DEVICE, cfg->radio_device);
+    s = iniparser_getstring(ini, CFG_KEY_RADIO_DEVICE, NULL);
+    if (s) {
+        strncpy(cfg->radio_device, s, sizeof(cfg->radio_device) - 1);
+        cfg->radio_device[sizeof(cfg->radio_device) - 1] = '\0';
+    }
 
-    s = iniparser_getstring(ini, CFG_KEY_INPUT_DEVICE, cfg->input_device);
+    s = iniparser_getstring(ini, CFG_KEY_INPUT_DEVICE, NULL);
+    if (s) {
+        strncpy(cfg->input_device, s, sizeof(cfg->input_device) - 1);
+        cfg->input_device[sizeof(cfg->input_device) - 1] = '\0';
+    }
 
-    s = iniparser_getstring(ini, CFG_KEY_OUTPUT_DEVICE, cfg->output_device);
+    s = iniparser_getstring(ini, CFG_KEY_OUTPUT_DEVICE, NULL);
+    if (s) {
+        strncpy(cfg->output_device, s, sizeof(cfg->output_device) - 1);
+        cfg->output_device[sizeof(cfg->output_device) - 1] = '\0';
+    }
 
     s = iniparser_getstring(ini, CFG_KEY_CAPTURE_CHANNEL, NULL);
     if (s)

@@ -83,9 +83,7 @@ ifeq ($(HAVE_HERMES_SHM),1)
 HERMES_SHM_CFLAGS = -DHAVE_HERMES_SHM
 endif
 
-CFLAGS = $(COMMON_CFLAGS) -Imodem/freedv -Imodem -Idatalink_broadcast -Idata_interfaces -Idatalink_arq -Iaudioio/ffaudio -Icommon -Igui_interface -Iradio_io $(HAMLIB_CFLAGS) $(HERMES_SHM_CFLAGS)
-
-INIPARSER_LDFLAGS = -liniparser
+CFLAGS = $(COMMON_CFLAGS) -Imodem/freedv -Imodem -Idatalink_broadcast -Idata_interfaces -Idatalink_arq -Iaudioio/ffaudio -Icommon -Igui_interface -Iradio_io -Iiniparser $(HAMLIB_CFLAGS) $(HERMES_SHM_CFLAGS)
 
 ifeq ($(OS),Windows_NT)
 BINARY = mercury.exe
@@ -93,10 +91,11 @@ else
 BINARY = mercury
 endif
 
-LDFLAGS=$(FFAUDIO_LINKFLAGS) -lm $(HAMLIB_LDFLAGS) $(INIPARSER_LDFLAGS)
+LDFLAGS=$(FFAUDIO_LINKFLAGS) -lm $(HAMLIB_LDFLAGS)
 
 MERCURY_LINK_INPUTS = \
-	main.o cfg_utils.o datalink_arq/arq.o datalink_arq/fsm.o datalink_arq/arith.o datalink_arq/arq_channels.o \
+	main.o cfg_utils.o iniparser/iniparser.o iniparser/dictionary.o \
+	datalink_arq/arq.o datalink_arq/fsm.o datalink_arq/arith.o datalink_arq/arq_channels.o \
 	datalink_arq/arq_fsm.o datalink_arq/arq_protocol.o datalink_arq/arq_timing.o datalink_arq/arq_modem.o \
 	datalink_broadcast/broadcast.o datalink_broadcast/kiss.o modem/modem.o modem/framer.o modem/freedv/libfreedvdata.a \
 	audioio/audioio.a common/os_interop.o common/ring_buffer_posix.o common/shm_posix.o common/crc6.o common/hermes_log.o \
@@ -146,6 +145,12 @@ main.o: main.c .git_hash_stamp
 cfg_utils.o: cfg_utils.c cfg_utils.h
 	$(CC) $(CFLAGS) -c cfg_utils.c
 
+iniparser/iniparser.o: iniparser/iniparser.c iniparser/iniparser.h iniparser/dictionary.h
+	$(CC) $(COMMON_CFLAGS) -Iiniparser -c iniparser/iniparser.c -o iniparser/iniparser.o
+
+iniparser/dictionary.o: iniparser/dictionary.c iniparser/dictionary.h
+	$(CC) $(COMMON_CFLAGS) -Iiniparser -c iniparser/dictionary.c -o iniparser/dictionary.o
+
 internal_deps:
 	$(MAKE) -C modem
 	$(MAKE) -C datalink_arq
@@ -176,7 +181,7 @@ windows-zip: windows
 	@echo "Created $(WINDOWS_ZIP)"
 
 clean:
-	rm -f mercury mercury.exe *.o .git_hash_stamp mercury-*.zip
+	rm -f mercury mercury.exe *.o iniparser/*.o .git_hash_stamp mercury-*.zip
 	rm -rf mercury-[0-9]*
 	$(MAKE) -C modem clean
 	$(MAKE) -C datalink_arq clean
