@@ -2,7 +2,11 @@ include ../config.mk
 
 CFLAGS = $(COMMON_CFLAGS)
 
-all: os_interop.o ring_buffer_posix.o shm_posix.o crc6.o hermes_log.o chan.o queue.o
+# cfg_utils needs headers from several sibling directories
+CFG_CFLAGS = $(COMMON_CFLAGS) -I. -I../audioio/ffaudio -I../gui_interface -I../datalink_arq -I../data_interfaces -I../modem/freedv
+
+all: os_interop.o ring_buffer_posix.o shm_posix.o crc6.o hermes_log.o chan.o queue.o \
+     cfg_utils.o iniparser/iniparser.o iniparser/dictionary.o
 
 os_interop.o: os_interop.c
 	$(CC) $(CFLAGS) -c os_interop.c
@@ -25,7 +29,16 @@ chan.o: chan.c chan.h queue.h
 queue.o: queue.c queue.h
 	$(CC) $(CFLAGS) -c queue.c
 
+cfg_utils.o: cfg_utils.c cfg_utils.h
+	$(CC) $(CFG_CFLAGS) -c cfg_utils.c
+
+iniparser/iniparser.o: iniparser/iniparser.c iniparser/iniparser.h iniparser/dictionary.h
+	$(CC) $(CFLAGS) -Iiniparser -c iniparser/iniparser.c -o iniparser/iniparser.o
+
+iniparser/dictionary.o: iniparser/dictionary.c iniparser/dictionary.h
+	$(CC) $(CFLAGS) -Iiniparser -c iniparser/dictionary.c -o iniparser/dictionary.o
+
 .PHONY: all clean
 
 clean:
-	rm -f *.o
+	rm -f *.o iniparser/*.o

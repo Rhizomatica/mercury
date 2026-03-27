@@ -28,7 +28,7 @@
 #include <pthread.h>
 
 #include "websocket/mercury_websocket.h"
-#include "../cfg_utils.h"
+#include "cfg_utils.h"
 
 // ---- Default ports for UI <-> backend communication ----
 // WebSocket server port = UI_DEFAULT_PORT (single bidirectional channel)

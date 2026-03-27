@@ -18,16 +18,16 @@
  *
  */
 
-#include "iniparser.h"
+#include "iniparser/iniparser.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 #include "cfg_utils.h"
-#include "audioio/audioio.h"
-#include "radio_io.h"
-#include "tcp_interfaces.h"
-#include "gui_interface/ui_communication.h"
+#include "../audioio/audioio.h"
+#include "../radio_io/radio_io.h"
+#include "../data_interfaces/tcp_interfaces.h"
+#include "../gui_interface/ui_communication.h"
 
 void cfg_set_defaults(mercury_config *cfg)
 {
