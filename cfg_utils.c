@@ -40,11 +40,7 @@ void cfg_set_defaults(mercury_config *cfg)
     cfg->input_device[0]    = '\0';
     cfg->output_device[0]   = '\0';
     cfg->capture_channel    = LEFT;
-#ifdef _WIN32
-    cfg->sound_system       = AUDIO_SUBSYSTEM_DSOUND;
-#else
-    cfg->sound_system       = AUDIO_SUBSYSTEM_ALSA;
-#endif
+    cfg->sound_system       = -1;  /* auto: resolved by audioio_pick_default_subsystem() */
     cfg->arq_tcp_base_port  = DEFAULT_ARQ_PORT;       /* 8300   */
     cfg->broadcast_tcp_port = DEFAULT_BROADCAST_PORT; /* 8100  */
 }
@@ -54,6 +50,7 @@ void cfg_set_defaults(mercury_config *cfg)
 static int parse_sound_system(const char *s)
 {
     if (!s) return -1;
+    if (!strcmp(s, "auto"))      return -1;
     if (!strcmp(s, "alsa"))      return AUDIO_SUBSYSTEM_ALSA;
     if (!strcmp(s, "pulse"))     return AUDIO_SUBSYSTEM_PULSE;
     if (!strcmp(s, "dsound"))    return AUDIO_SUBSYSTEM_DSOUND;
@@ -151,7 +148,7 @@ static const char *sound_system_name(int sys)
     case AUDIO_SUBSYSTEM_COREAUDIO: return "coreaudio";
     case AUDIO_SUBSYSTEM_AAUDIO:    return "aaudio";
     case AUDIO_SUBSYSTEM_SHM:       return "shm";
-    default:                        return "alsa";
+    default:                        return "auto";
     }
 }
 
