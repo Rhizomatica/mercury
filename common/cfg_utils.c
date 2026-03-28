@@ -162,6 +162,19 @@ static const char *capture_channel_name(int ch)
     }
 }
 
+/* Escape \ and " in |in| so the result can be written inside a double-quoted
+ * INI value and round-trip through iniparser's parse_quoted_value(). */
+static void cfg_escape_str(char *out, size_t out_size, const char *in)
+{
+    size_t o = 0;
+    for (const char *p = in; *p != '\0' && o + 2 < out_size; p++) {
+        if (*p == '\\' || *p == '"')
+            out[o++] = '\\';
+        out[o++] = (char)*p;
+    }
+    out[o] = '\0';
+}
+
 bool cfg_write(const mercury_config *cfg, const char *ini_path)
 {
     FILE *f = fopen(ini_path, "w");
@@ -170,15 +183,25 @@ bool cfg_write(const mercury_config *cfg, const char *ini_path)
         return false;
     }
 
+    // Worst-case escaped length: every byte in the source becomes two bytes.
+    char escaped[2049];
+
     fprintf(f, "[main]\n");
     fprintf(f, "ui_enabled = %s\n",      cfg->ui_enabled ? "true" : "false");
     fprintf(f, "ui_port = %d\n",          cfg->ui_port);
     fprintf(f, "ui_protocol = %s\n",      cfg->tls_enabled ? "wss" : "ws");
     fprintf(f, "waterfall_enabled = %s\n", cfg->waterfall_enabled ? "true" : "false");
     fprintf(f, "radio_model = %d\n",      cfg->radio_type);
-    fprintf(f, "radio_device = %s\n",     cfg->radio_device);
-    fprintf(f, "input_device = %s\n",     cfg->input_device);
-    fprintf(f, "output_device = %s\n",    cfg->output_device);
+
+    cfg_escape_str(escaped, sizeof(escaped), cfg->radio_device);
+    fprintf(f, "radio_device = \"%s\"\n",  escaped);
+
+    cfg_escape_str(escaped, sizeof(escaped), cfg->input_device);
+    fprintf(f, "input_device = \"%s\"\n",  escaped);
+
+    cfg_escape_str(escaped, sizeof(escaped), cfg->output_device);
+    fprintf(f, "output_device = \"%s\"\n", escaped);
+
     fprintf(f, "capture_channel = %s\n",  capture_channel_name(cfg->capture_channel));
     fprintf(f, "sound_system = %s\n",     sound_system_name(cfg->sound_system));
     fprintf(f, "arq_tcp_base_port = %d\n", cfg->arq_tcp_base_port);
