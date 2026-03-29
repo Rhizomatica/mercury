@@ -794,15 +794,18 @@ void *send_thread(void *client_socket_ptr)
 
     while (!shutdown_ && !bcast_client_done)
     {
-        /* Use size_buffer() + read_buffer() to avoid blocking forever
-         * inside read_buffer()'s condvar wait when the client disconnects.
-         * After recv_thread exits, tcp_server_thread sets bcast_client_done
-         * and signals the condvar via clear_buffer(). */
+        /* Poll size_buffer() instead of blocking in read_buffer()'s
+         * condvar wait.  Re-check bcast_client_done after size_buffer()
+         * returns to close the race where clear_buffer() drains the
+         * ring between our size check and the read_buffer() call. */
         if (size_buffer(data_rx_buffer_broadcast) < frame_size)
         {
             usleep(100000);
             continue;
         }
+
+        if (bcast_client_done)
+            break;
 
         if (read_buffer(data_rx_buffer_broadcast, frame_buffer, frame_size) < 0)
             break;
@@ -810,7 +813,8 @@ void *send_thread(void *client_socket_ptr)
         int kiss_len = kiss_write_frame(frame_buffer, (int)frame_size, kiss_buffer);
         if (send_all(client_socket, kiss_buffer, (size_t)kiss_len) < 0)
         {
-            HLOGW("tcp-bcast", "Error sending KISS broadcast frame");
+            HLOGW("tcp-bcast", "Error sending KISS broadcast frame: %s",
+                  strerror(errno));
             break;
         }
     }
