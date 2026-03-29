@@ -1,0 +1,14 @@
+{
+  "name": "Mercury Modem",
+  "short_name": "Mercury",
+  "description": "Mercury HF Radio Modem Web Interface",
+  "start_url": ".",
+  "display": "standalone",
+  "background_color": "#1e1e1e",
+  "theme_color": "#ff8800",
+  "icons": [
+    { "src": "icon-192.svg", "sizes": "192x192", "type": "image/svg+xml" },
+    { "src": "icon-512.svg", "sizes": "512x512", "type": "image/svg+xml" },
+    { "src": "icon-192.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "maskable" }
+  ]
+}

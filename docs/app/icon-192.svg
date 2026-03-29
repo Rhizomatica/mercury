@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 192" width="192" height="192">
+  <rect width="192" height="192" rx="32" fill="#1e1e1e"/>
+  <circle cx="96" cy="76" r="36" fill="none" stroke="#ff8800" stroke-width="6"/>
+  <line x1="96" y1="112" x2="96" y2="160" stroke="#ff8800" stroke-width="6" stroke-linecap="round"/>
+  <line x1="72" y1="140" x2="120" y2="140" stroke="#ff8800" stroke-width="6" stroke-linecap="round"/>
+  <!-- signal waves -->
+  <path d="M140 56 Q156 76 140 96" fill="none" stroke="#ff8800" stroke-width="4" stroke-linecap="round" opacity="0.8"/>
+  <path d="M150 44 Q172 76 150 108" fill="none" stroke="#ff8800" stroke-width="4" stroke-linecap="round" opacity="0.5"/>
+  <path d="M52 56 Q36 76 52 96" fill="none" stroke="#ff8800" stroke-width="4" stroke-linecap="round" opacity="0.8"/>
+  <path d="M42 44 Q20 76 42 108" fill="none" stroke="#ff8800" stroke-width="4" stroke-linecap="round" opacity="0.5"/>
+</svg>

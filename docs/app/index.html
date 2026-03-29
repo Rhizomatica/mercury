@@ -1,0 +1,997 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Mercury</title>
+  <!-- PWA -->
+  <link rel="manifest" href="manifest.json">
+  <meta name="theme-color" content="#ff8800">
+  <meta name="description" content="Mercury HF Radio Modem Web Interface">
+  <!-- iOS PWA -->
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Mercury">
+  <link rel="apple-touch-icon" href="icon-192.svg">
+  <style>
+/* ===== Reset & Base ===== */
+*, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+html, body { height: 100%; overflow: hidden; }
+body {
+  background: #1e1e1e; color: #e6e6e6;
+  font-family: -apple-system, 'Segoe UI', system-ui, sans-serif;
+  font-size: 13px; display: flex; flex-direction: column;
+}
+
+/* ===== Header ===== */
+.app-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 6px 16px; background: #282828; border-bottom: 1px solid #464646;
+  flex-shrink: 0;
+}
+.app-header h1 { font-size: 16px; font-weight: bold; color: #ff8800; }
+.ws-status {
+  font-size: 12px; font-weight: bold; padding: 3px 10px;
+  border-radius: 10px; background: #3a1a1a; color: #c44;
+}
+.ws-status.connected { background: #1a3a1a; color: #4c4; }
+
+/* ===== Main Layout ===== */
+.app-main {
+  display: flex; flex: 1; gap: 8px; padding: 8px;
+  overflow: hidden; min-height: 0;
+}
+.left-column { flex: 2; display: flex; flex-direction: column; gap: 8px; min-width: 0; min-height: 0; }
+.right-column { flex: 1; display: flex; flex-direction: column; gap: 8px; min-width: 260px; overflow-y: auto; }
+
+@media (max-width: 900px) {
+  .app-main { flex-direction: column; overflow-y: auto; }
+  .right-column { min-width: unset; }
+}
+
+/* ===== Group Box (mirrors QGroupBox) ===== */
+.group-box {
+  background: #282828; border: 1px solid #464646; border-radius: 6px;
+  display: flex; flex-direction: column; overflow: hidden;
+}
+.group-box:hover { border-color: #ffa033; }
+.group-title {
+  background: #ff8800; color: #fff; font-size: 13px; font-weight: bold;
+  padding: 3px 10px; flex-shrink: 0;
+}
+.group-content { padding: 10px; flex: 1; display: flex; flex-direction: column; min-height: 0; }
+
+/* ===== Controls ===== */
+.control-section {
+  display: flex; flex-direction: column; gap: 5px;
+  border: 1px solid #464646; border-radius: 5px; padding: 8px;
+  background: #282828; margin-bottom: 8px;
+}
+.control-section:last-child { margin-bottom: 0; }
+
+label { color: #dcdcdc; font-size: 13px; padding: 2px 0; }
+
+select, input[type="text"] {
+  background: #2d2d2d; color: #e6e6e6; border: 1px solid #464646;
+  border-radius: 6px; padding: 5px 8px; font-size: 13px;
+  font-family: inherit; width: 100%;
+}
+select:hover, input[type="text"]:hover { border-color: #ff8800; }
+select:focus, input[type="text"]:focus { border-color: #ff8800; outline: none; }
+
+select option { background: #2d2d2d; color: #e6e6e6; }
+
+.apply-btn {
+  background: #ff8800; color: #fff; font-size: 13px; font-weight: bold;
+  border: none; border-radius: 8px; padding: 6px 16px; cursor: pointer;
+  margin-top: 4px; transition: background 0.15s;
+}
+.apply-btn:hover { background: #ffa033; }
+.apply-btn:active { background: #d26e00; }
+
+/* ===== Connection Info ===== */
+.info-grid {
+  display: grid; grid-template-columns: auto 1fr; gap: 4px 12px;
+  align-items: center; font-size: 13px;
+}
+.info-label { color: #aaa; font-weight: 500; text-align: right; white-space: nowrap; }
+.info-value { color: #e6e6e6; font-weight: bold; }
+.info-value.highlight { color: #ff8800; }
+
+.status-dot {
+  display: inline-block; width: 10px; height: 10px; border-radius: 50%;
+  margin-right: 4px; vertical-align: middle;
+}
+.status-dot.on  { background: #0c0; }
+.status-dot.off { background: #c44; }
+.status-dot.na  { background: #888; }
+
+/* ===== Waterfall Area ===== */
+.waterfall-area {
+  padding: 0 !important; gap: 0; overflow: hidden;
+}
+.waterfall-area canvas { display: block; width: 100%; flex-shrink: 0; }
+#snrCanvas    { height: 18px; }
+#spectrumCanvas { height: 60px; }
+#markerCanvas { height: 6px; }
+#waterfallCanvas { flex: 1; min-height: 80px; }
+
+.freq-axis {
+  position: relative; height: 22px; background: #121218; flex-shrink: 0;
+  font-size: 10px; color: #a0a0b4;
+}
+.freq-axis span {
+  position: absolute; transform: translateX(-50%); top: 6px;
+}
+.freq-axis .tick {
+  position: absolute; top: 0; width: 1px; height: 4px; background: #505064;
+}
+  </style>
+</head>
+<body>
+
+<header class="app-header">
+  <h1>Mercury</h1>
+  <span class="ws-status" id="wsStatus">Disconnected</span>
+</header>
+
+<main class="app-main">
+  <!-- LEFT COLUMN -->
+  <section class="left-column">
+    <!-- Waterfall -->
+    <div class="group-box" id="waterfallGroup" style="flex:3; display:none;">
+      <div class="group-title">Waterfall</div>
+      <div class="group-content waterfall-area">
+        <canvas id="snrCanvas"></canvas>
+        <canvas id="spectrumCanvas"></canvas>
+        <canvas id="markerCanvas"></canvas>
+        <canvas id="waterfallCanvas"></canvas>
+        <div class="freq-axis" id="freqAxis"></div>
+      </div>
+    </div>
+    <!-- Connection Info -->
+    <div class="group-box" id="connInfoGroup" style="flex:1;">
+      <div class="group-title">Connection Info.</div>
+      <div class="group-content">
+        <div class="info-grid" id="connectionInfo"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- RIGHT COLUMN -->
+  <aside class="right-column">
+    <div class="group-box">
+      <div class="group-title">Radio Controls</div>
+      <div class="group-content">
+        <!-- Audio Config -->
+        <div class="control-section">
+          <label for="captureDevSelect">Capture Device</label>
+          <select id="captureDevSelect"><option value="">--</option></select>
+          <label for="playbackDevSelect">Playback Device</label>
+          <select id="playbackDevSelect"><option value="">--</option></select>
+          <label for="inputChannelSelect">Capture Input Channel</label>
+          <select id="inputChannelSelect"><option value="">--</option></select>
+          <button class="apply-btn" id="audioApplyBtn">Apply</button>
+        </div>
+        <!-- HAMLIB Radio -->
+        <div class="control-section">
+          <label for="radioModelSelect">HAMLIB Model</label>
+          <select id="radioModelSelect"><option value="">--</option></select>
+          <label for="devicePathInput">Device Path</label>
+          <input type="text" id="devicePathInput" placeholder="/dev/ttyUSB0 or 127.0.0.1:4532" />
+          <button class="apply-btn" id="radioApplyBtn">Apply</button>
+        </div>
+        <!-- WebSocket Connection -->
+        <div class="control-section">
+          <label for="wsHost">Host</label>
+          <input type="text" id="wsHost" />
+          <label for="wsPort">Port</label>
+          <input type="text" id="wsPort" value="10000" maxlength="5" />
+          <button class="apply-btn" id="connectBtn">Connect</button>
+        </div>
+      </div>
+    </div>
+  </aside>
+</main>
+
+<script>
+"use strict";
+
+/* ===========================================================================
+ *  Constants
+ * =========================================================================*/
+
+const SPECTRUM_MAGIC = 0x4D435259;
+const HEADER_SIZE    = 8;
+const DISPLAY_MAX_HZ = 3000.0;
+const MIN_DB  = -50.0;
+const MAX_DB  =  30.0;
+const OFDM_LOW_HZ  = 300.0;
+const OFDM_HIGH_HZ = 2500.0;
+const HISTORY_LINES = 300;
+const RECONNECT_MS  = 3000;
+const INACTIVITY_MS = 5000;
+const MAX_SCHEME_FAILURES = 2;
+
+/* ===========================================================================
+ *  State
+ * =========================================================================*/
+
+let ws = null;
+let sampleRate = 8000;
+let fftSize = 512;
+let nBins = 256;
+let currentSpectrum = null;
+let snrValue = 0.0;
+let syncState = false;
+let waterfallOn = false;
+let waterfallConfigured = false;
+let dirty = false;
+let rafId = null;
+
+// Ring buffer
+let wfData = [];     // array of Float32Array
+let writeIdx = 0;
+let linesWritten = 0;
+
+// Connection
+let currentScheme = "wss";
+let schemeFailures = 0;
+let reconnectTimer = null;
+let inactivityTimer = null;
+let connectTimeout = null;
+let autoReconnect = true;
+
+// Applied-state tracking (mirrors controls.py)
+let appliedCapture  = "";
+let appliedPlayback = "";
+let appliedChannel  = "";
+let appliedRadioModel = "";
+let appliedDevicePath = "";
+
+/* ===========================================================================
+ *  VARA Colormap (from waterfall_widget.py _build_vara_colormap)
+ * =========================================================================*/
+
+const VARA_STOPS = [
+  [0.00,   0,   0,   0],
+  [0.10,   0,   0,  40],
+  [0.20,   0,   0, 120],
+  [0.30,   0,  30, 180],
+  [0.40,   0, 100, 200],
+  [0.50,   0, 180, 130],
+  [0.60,  40, 220,  40],
+  [0.70, 200, 220,   0],
+  [0.80, 255, 160,   0],
+  [0.90, 255,  60,   0],
+  [1.00, 255, 255, 255],
+];
+
+// Build flat Uint8 LUT: colorLUT[i*3], [i*3+1], [i*3+2] = R,G,B
+const colorLUT = new Uint8Array(256 * 3);
+(function buildColorLUT() {
+  for (let i = 0; i < 256; i++) {
+    const t = i / 255;
+    for (let j = 0; j < VARA_STOPS.length - 1; j++) {
+      if (t >= VARA_STOPS[j][0] && t <= VARA_STOPS[j + 1][0]) {
+        const lo = VARA_STOPS[j], hi = VARA_STOPS[j + 1];
+        const f = (hi[0] === lo[0]) ? 0 : (t - lo[0]) / (hi[0] - lo[0]);
+        colorLUT[i * 3]     = Math.round(lo[1] + f * (hi[1] - lo[1]));
+        colorLUT[i * 3 + 1] = Math.round(lo[2] + f * (hi[2] - lo[2]));
+        colorLUT[i * 3 + 2] = Math.round(lo[3] + f * (hi[3] - lo[3]));
+        break;
+      }
+    }
+  }
+})();
+
+function dbToColorIndex(db) {
+  const t = (db - MIN_DB) / (MAX_DB - MIN_DB);
+  return Math.max(0, Math.min(255, Math.round(t * 255)));
+}
+
+/* ===========================================================================
+ *  Canvas References
+ * =========================================================================*/
+
+const snrCanvas      = document.getElementById("snrCanvas");
+const specCanvas     = document.getElementById("spectrumCanvas");
+const markerCanvas   = document.getElementById("markerCanvas");
+const wfCanvas       = document.getElementById("waterfallCanvas");
+const snrCtx         = snrCanvas.getContext("2d");
+const specCtx        = specCanvas.getContext("2d");
+const markerCtx      = markerCanvas.getContext("2d");
+const wfCtx          = wfCanvas.getContext("2d");
+
+/* ===========================================================================
+ *  Helpers
+ * =========================================================================*/
+
+function hzToX(hz, w) {
+  return Math.max(0, Math.min(w, (hz / DISPLAY_MAX_HZ) * w));
+}
+
+function visibleBinCount() {
+  const maxHz = sampleRate / 2;
+  if (maxHz <= 0 || nBins <= 1) return Math.max(1, nBins);
+  return Math.max(1, Math.min(nBins, Math.ceil(nBins * (DISPLAY_MAX_HZ / maxHz))));
+}
+
+function xToBin(px, w, visBins) {
+  if (visBins <= 1 || w <= 1) return 0;
+  return Math.min(Math.floor((px / (w - 1)) * (visBins - 1)), visBins - 1);
+}
+
+/* ===========================================================================
+ *  Ring Buffer
+ * =========================================================================*/
+
+function resetRingBuffer() {
+  const noiseDb = MIN_DB + (MAX_DB - MIN_DB) * 0.12;
+  wfData = [];
+  for (let i = 0; i < HISTORY_LINES; i++) {
+    const row = new Float32Array(nBins);
+    row.fill(noiseDb);
+    wfData.push(row);
+  }
+  writeIdx = 0;
+  linesWritten = 0;
+}
+
+function pushSpectrum(powerDb) {
+  const n = powerDb.length;
+  if (n !== nBins) {
+    nBins = n;
+    resetRingBuffer();
+    currentSpectrum = new Float32Array(n);
+    currentSpectrum.fill(MIN_DB + (MAX_DB - MIN_DB) * 0.12);
+  }
+  wfData[writeIdx] = new Float32Array(powerDb);
+  writeIdx = (writeIdx + 1) % HISTORY_LINES;
+  linesWritten++;
+  currentSpectrum = powerDb;
+  dirty = true;
+}
+
+resetRingBuffer();
+
+/* ===========================================================================
+ *  Rendering: SNR Bar
+ * =========================================================================*/
+
+function drawSnrBar() {
+  const w = snrCanvas.width, h = snrCanvas.height;
+  if (w === 0 || h === 0) return;
+  const ctx = snrCtx;
+  ctx.fillStyle = "#121218";
+  ctx.fillRect(0, 0, w, h);
+
+  const snrMin = -10, snrMax = 30;
+  const frac = Math.max(0, Math.min(1, (snrValue - snrMin) / (snrMax - snrMin)));
+  const barW = Math.round(frac * (w - 120));
+
+  ctx.fillStyle = snrValue < 3 ? "#c81e1e" : snrValue < 10 ? "#dcb400" : "#00c850";
+  ctx.fillRect(2, 2, barW, h - 4);
+
+  ctx.font = "bold 10px monospace";
+  ctx.fillStyle = "#ddd";
+  ctx.textBaseline = "middle";
+  const snrText = "SNR: " + (snrValue >= 0 ? "+" : "") + snrValue.toFixed(1) + " dB";
+  ctx.fillText(snrText, barW + 8, h / 2);
+
+  const syncText = syncState ? "SYNC" : "NO SYNC";
+  ctx.fillStyle = syncState ? "#00ff64" : "#a03232";
+  const tw = ctx.measureText(syncText).width;
+  ctx.fillText(syncText, w - tw - 8, h / 2);
+}
+
+/* ===========================================================================
+ *  Rendering: Spectrum Graph
+ * =========================================================================*/
+
+function drawSpectrum() {
+  const w = specCanvas.width, h = specCanvas.height;
+  if (w === 0 || h === 0 || !currentSpectrum) return;
+  const ctx = specCtx;
+  const spec = currentSpectrum;
+  const visBins = visibleBinCount();
+  const range = MAX_DB - MIN_DB;
+
+  ctx.fillStyle = "#0a0a12";
+  ctx.fillRect(0, 0, w, h);
+
+  // Grid lines
+  ctx.setLineDash([2, 3]);
+  ctx.strokeStyle = "#282837";
+  ctx.lineWidth = 1;
+  for (let db = -80; db < 0; db += 10) {
+    const fy = h - ((db - MIN_DB) / range) * h;
+    if (fy >= 0 && fy <= h) {
+      ctx.beginPath(); ctx.moveTo(0, fy); ctx.lineTo(w, fy); ctx.stroke();
+    }
+  }
+  ctx.setLineDash([]);
+
+  // OFDM passband shading
+  const lx = hzToX(OFDM_LOW_HZ, w), rx = hzToX(OFDM_HIGH_HZ, w);
+  ctx.fillStyle = "rgba(25,35,60,0.4)";
+  ctx.fillRect(lx, 0, rx - lx, h);
+
+  // Spectrum fill path
+  ctx.beginPath();
+  ctx.moveTo(0, h);
+  for (let px = 0; px < w; px++) {
+    const bi = xToBin(px, w, visBins);
+    const db = spec[bi];
+    let fy = h - ((db - MIN_DB) / range) * h;
+    fy = Math.max(0, Math.min(h, fy));
+    ctx.lineTo(px, fy);
+  }
+  ctx.lineTo(w, h);
+  ctx.closePath();
+  const grad = ctx.createLinearGradient(0, 0, 0, h);
+  grad.addColorStop(0, "rgba(0,200,255,0.47)");
+  grad.addColorStop(0.5, "rgba(0,120,200,0.31)");
+  grad.addColorStop(1, "rgba(0,40,80,0.16)");
+  ctx.fillStyle = grad;
+  ctx.fill();
+
+  // Spectrum line
+  ctx.beginPath();
+  for (let px = 0; px < w; px++) {
+    const bi = xToBin(px, w, visBins);
+    const db = spec[bi];
+    let fy = h - ((db - MIN_DB) / range) * h;
+    fy = Math.max(0, Math.min(h, fy));
+    px === 0 ? ctx.moveTo(px, fy) : ctx.lineTo(px, fy);
+  }
+  ctx.strokeStyle = "rgba(0,220,255,0.86)";
+  ctx.lineWidth = 1.2;
+  ctx.stroke();
+}
+
+/* ===========================================================================
+ *  Rendering: Marker Strip
+ * =========================================================================*/
+
+function drawMarkerStrip() {
+  const w = markerCanvas.width, h = markerCanvas.height;
+  if (w === 0 || h === 0) return;
+  const ctx = markerCtx;
+  ctx.fillStyle = "#0c0c10";
+  ctx.fillRect(0, 0, w, h);
+
+  const lx = hzToX(OFDM_LOW_HZ, w), rx = hzToX(OFDM_HIGH_HZ, w);
+  ctx.fillStyle = "rgba(0,80,120,0.2)";
+  ctx.fillRect(lx, 0, rx - lx, h);
+  ctx.strokeStyle = "rgba(0,130,180,0.35)";
+  ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(lx, 0); ctx.lineTo(lx, h); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(rx, 0); ctx.lineTo(rx, h); ctx.stroke();
+}
+
+/* ===========================================================================
+ *  Rendering: Waterfall Image
+ * =========================================================================*/
+
+function drawWaterfall() {
+  const w = wfCanvas.width, h = wfCanvas.height;
+  if (w === 0 || h === 0) return;
+  const ctx = wfCtx;
+  const visBins = visibleBinCount();
+  const lines = Math.min(linesWritten, HISTORY_LINES);
+
+  if (lines === 0) {
+    ctx.fillStyle = "#000";
+    ctx.fillRect(0, 0, w, h);
+    return;
+  }
+
+  const imgData = ctx.createImageData(w, h);
+  const pixels = imgData.data;
+  const range = MAX_DB - MIN_DB;
+
+  // Pre-compute column-to-bin mapping
+  const colBin = new Int32Array(w);
+  for (let x = 0; x < w; x++) colBin[x] = xToBin(x, w, visBins);
+
+  for (let y = 0; y < h; y++) {
+    // top = newest, bottom = oldest
+    const lineF = ((h - 1 - y) / h) * lines;
+    let lineIdx = Math.min(Math.floor(lineF), lines - 1);
+    const ringPos = ((writeIdx - lines + lineIdx) % HISTORY_LINES + HISTORY_LINES) % HISTORY_LINES;
+    const row = wfData[ringPos];
+    const rowOff = y * w * 4;
+
+    for (let x = 0; x < w; x++) {
+      const ci = dbToColorIndex(row[colBin[x]]);
+      const p = rowOff + x * 4;
+      pixels[p]     = colorLUT[ci * 3];
+      pixels[p + 1] = colorLUT[ci * 3 + 1];
+      pixels[p + 2] = colorLUT[ci * 3 + 2];
+      pixels[p + 3] = 255;
+    }
+  }
+  ctx.putImageData(imgData, 0, 0);
+
+  // OFDM band edge overlays
+  ctx.setLineDash([4, 4]);
+  ctx.strokeStyle = "rgba(0,200,255,0.2)";
+  ctx.lineWidth = 1;
+  const lx = hzToX(OFDM_LOW_HZ, w), rx = hzToX(OFDM_HIGH_HZ, w);
+  ctx.beginPath(); ctx.moveTo(lx, 0); ctx.lineTo(lx, h); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(rx, 0); ctx.lineTo(rx, h); ctx.stroke();
+  ctx.setLineDash([]);
+}
+
+/* ===========================================================================
+ *  Rendering: Frequency Axis
+ * =========================================================================*/
+
+function drawFreqAxis() {
+  const axis = document.getElementById("freqAxis");
+  axis.innerHTML = "";
+  const maxHz = DISPLAY_MAX_HZ;
+  const w = axis.clientWidth;
+  if (w === 0) return;
+  const step = 500;
+
+  for (let hz = 0; hz <= maxHz; hz += step) {
+    const frac = hz / maxHz;
+    // Tick
+    const tick = document.createElement("span");
+    tick.className = "tick";
+    tick.style.left = (frac * 100) + "%";
+    axis.appendChild(tick);
+    // Label
+    const lbl = document.createElement("span");
+    lbl.style.left = (frac * 100) + "%";
+    lbl.textContent = hz.toString();
+    axis.appendChild(lbl);
+  }
+}
+
+/* ===========================================================================
+ *  Rendering: Animation Loop (~20fps)
+ * =========================================================================*/
+
+let lastRender = 0;
+function renderLoop(ts) {
+  rafId = requestAnimationFrame(renderLoop);
+  if (ts - lastRender < 50) return; // ~20fps
+  lastRender = ts;
+  if (!dirty && !waterfallOn) return;
+
+  if (waterfallOn) {
+    drawSnrBar();
+    drawSpectrum();
+    drawMarkerStrip();
+    drawWaterfall();
+    dirty = false;
+  }
+}
+rafId = requestAnimationFrame(renderLoop);
+
+/* ===========================================================================
+ *  Canvas Resize
+ * =========================================================================*/
+
+function resizeCanvases() {
+  if (!waterfallOn) return;
+  const area = document.querySelector(".waterfall-area");
+  if (!area) return;
+  const w = area.clientWidth;
+
+  snrCanvas.width = w;       snrCanvas.height = 18;
+  specCanvas.width = w;      specCanvas.height = 60;
+  markerCanvas.width = w;    markerCanvas.height = 6;
+
+  // Waterfall gets remaining height
+  const usedH = 18 + 60 + 6 + 22; // snr + spectrum + marker + freq axis
+  const availH = area.clientHeight - usedH;
+  wfCanvas.width = w;
+  wfCanvas.height = Math.max(80, availH);
+
+  drawFreqAxis();
+  dirty = true;
+}
+
+let resizeTimeout;
+window.addEventListener("resize", function() {
+  clearTimeout(resizeTimeout);
+  resizeTimeout = setTimeout(resizeCanvases, 100);
+});
+
+/* ===========================================================================
+ *  Connection Info Panel
+ * =========================================================================*/
+
+const INFO_FIELDS = [
+  { key: "bitrate",               label: "Bitrate" },
+  { key: "snr",                   label: "SNR" },
+  { key: "sync",                  label: "Sync" },
+  { key: "direction",             label: "Direction" },
+  { key: "user_callsign",        label: "User Callsign" },
+  { key: "dest_callsign",        label: "Dest Callsign" },
+  { key: "client_tcp_connected", label: "TCP Connected" },
+  { key: "bytes_transmitted",    label: "TX Bytes" },
+  { key: "bytes_received",       label: "RX Bytes" },
+];
+
+function updateConnectionInfo(data) {
+  const grid = document.getElementById("connectionInfo");
+  grid.innerHTML = "";
+
+  // When waterfall is on, exclude snr and sync (shown on waterfall overlay)
+  const excludeKeys = waterfallOn ? ["snr", "sync"] : [];
+
+  for (const field of INFO_FIELDS) {
+    if (excludeKeys.indexOf(field.key) !== -1) continue;
+    if (!(field.key in data)) continue;
+
+    const val = data[field.key];
+
+    const labelEl = document.createElement("span");
+    labelEl.className = "info-label";
+    labelEl.textContent = field.label + ":";
+
+    const valueEl = document.createElement("span");
+    valueEl.className = "info-value";
+
+    if (field.key === "client_tcp_connected") {
+      const dot = document.createElement("span");
+      dot.className = "status-dot " + (val ? "on" : "off");
+      valueEl.appendChild(dot);
+      valueEl.appendChild(document.createTextNode(val ? "On" : "Off"));
+    } else if (field.key === "sync") {
+      const dot = document.createElement("span");
+      dot.className = "status-dot " + (val ? "on" : "off");
+      valueEl.appendChild(dot);
+      valueEl.appendChild(document.createTextNode(val ? "On" : "Off"));
+    } else if (field.key === "direction") {
+      valueEl.textContent = val ? String(val).toUpperCase() : "--";
+    } else if (field.key === "snr") {
+      valueEl.textContent = val != null ? Number(val).toFixed(1) + " dB" : "--";
+    } else if (field.key === "bitrate") {
+      valueEl.textContent = val != null ? val + " bps" : "--";
+    } else if (field.key === "bytes_transmitted" || field.key === "bytes_received") {
+      valueEl.textContent = val != null ? val.toLocaleString() : "0";
+    } else {
+      valueEl.textContent = val != null && val !== "" ? String(val) : "--";
+    }
+
+    grid.appendChild(labelEl);
+    grid.appendChild(valueEl);
+  }
+}
+
+// Initial placeholder
+updateConnectionInfo({ bitrate: null, direction: null, user_callsign: "", dest_callsign: "", client_tcp_connected: false, bytes_transmitted: 0, bytes_received: 0 });
+
+/* ===========================================================================
+ *  Dropdown Population (mirrors main.py handlers)
+ * =========================================================================*/
+
+function populateSelect(sel, items, selected, prependDefault) {
+  sel.innerHTML = "";
+  if (prependDefault) {
+    const opt = document.createElement("option");
+    opt.value = "default"; opt.textContent = "Default";
+    sel.appendChild(opt);
+  }
+  for (const item of items) {
+    const opt = document.createElement("option");
+    if (typeof item === "string") {
+      opt.value = item;
+      opt.textContent = item.charAt(0).toUpperCase() + item.slice(1);
+    } else {
+      opt.value = item.id || item.name || "";
+      opt.textContent = item.display || item.name || item.id || "";
+    }
+    sel.appendChild(opt);
+  }
+  if (selected) setSelectValue(sel, selected);
+}
+
+function setSelectValue(sel, val) {
+  for (let i = 0; i < sel.options.length; i++) {
+    if (sel.options[i].value === val) { sel.selectedIndex = i; return; }
+  }
+}
+
+function getSelectValue(sel) {
+  return sel.selectedIndex >= 0 ? sel.options[sel.selectedIndex].value : "";
+}
+
+function restoreAudioSelection() {
+  if (appliedCapture)  setSelectValue(document.getElementById("captureDevSelect"), appliedCapture);
+  if (appliedPlayback) setSelectValue(document.getElementById("playbackDevSelect"), appliedPlayback);
+  if (appliedChannel)  setSelectValue(document.getElementById("inputChannelSelect"), appliedChannel);
+}
+
+function restoreRadioSelection() {
+  if (appliedRadioModel) setSelectValue(document.getElementById("radioModelSelect"), appliedRadioModel);
+  if (appliedDevicePath) document.getElementById("devicePathInput").value = appliedDevicePath;
+}
+
+function clearAppliedState() {
+  appliedCapture = ""; appliedPlayback = ""; appliedChannel = "";
+  appliedRadioModel = ""; appliedDevicePath = "";
+}
+
+function resetControls() {
+  document.getElementById("captureDevSelect").innerHTML   = '<option value="">--</option>';
+  document.getElementById("playbackDevSelect").innerHTML  = '<option value="">--</option>';
+  document.getElementById("inputChannelSelect").innerHTML = '<option value="">--</option>';
+  document.getElementById("radioModelSelect").innerHTML   = '<option value="">--</option>';
+  document.getElementById("devicePathInput").value = "";
+}
+
+/* ===========================================================================
+ *  JSON Message Handlers
+ * =========================================================================*/
+
+function handleCaptureDevList(msg) {
+  populateSelect(document.getElementById("captureDevSelect"), msg.list || [], msg.selected || "", true);
+  restoreAudioSelection();
+}
+
+function handlePlaybackDevList(msg) {
+  populateSelect(document.getElementById("playbackDevSelect"), msg.list || [], msg.selected || "", true);
+  restoreAudioSelection();
+}
+
+function handleInputChannel(msg) {
+  populateSelect(document.getElementById("inputChannelSelect"), msg.list || [], msg.selected || "", false);
+  restoreAudioSelection();
+}
+
+function handleRadioList(msg) {
+  populateSelect(document.getElementById("radioModelSelect"), msg.list || [], msg.selected || "", false);
+  if (msg.device_path && !appliedDevicePath) {
+    document.getElementById("devicePathInput").value = msg.device_path;
+  }
+  restoreRadioSelection();
+}
+
+function handleStatus(msg) {
+  // First status: configure waterfall visibility
+  if (!waterfallConfigured) {
+    waterfallConfigured = true;
+    waterfallOn = msg.waterfall !== undefined ? !!msg.waterfall : true;
+    const wfGroup = document.getElementById("waterfallGroup");
+    const ciGroup = document.getElementById("connInfoGroup");
+    if (waterfallOn) {
+      wfGroup.style.display = "flex";
+      ciGroup.style.flex = "1";
+      // Resize canvases after making visible
+      setTimeout(resizeCanvases, 50);
+    } else {
+      wfGroup.style.display = "none";
+      ciGroup.style.flex = "1";
+    }
+  }
+
+  // Update SNR/sync for waterfall overlay
+  if (msg.snr != null) snrValue = msg.snr;
+  syncState = !!msg.sync;
+
+  // Update connection info (exclude type and waterfall meta fields)
+  const infoData = {};
+  for (const k in msg) {
+    if (k === "type" || k === "waterfall") continue;
+    infoData[k] = msg[k];
+  }
+  updateConnectionInfo(infoData);
+
+  dirty = true;
+}
+
+function handleJsonMessage(raw) {
+  let msg;
+  try { msg = JSON.parse(raw); } catch (e) { return; }
+
+  const type = msg.type;
+  if (type === "status")            handleStatus(msg);
+  else if (type === "capture_dev_list")  handleCaptureDevList(msg);
+  else if (type === "playback_dev_list") handlePlaybackDevList(msg);
+  else if (type === "input_channel")     handleInputChannel(msg);
+  else if (type === "radio_list")        handleRadioList(msg);
+  else if (msg.error)               console.warn("[WS] Backend error:", msg.error);
+}
+
+/* ===========================================================================
+ *  Binary Frame Handler
+ * =========================================================================*/
+
+function handleBinaryFrame(buf) {
+  if (buf.byteLength < HEADER_SIZE) return;
+  const view = new DataView(buf);
+  if (view.getUint32(0, true) !== SPECTRUM_MAGIC) return;
+
+  fftSize = view.getUint16(4, true);
+  const sr = view.getUint16(6, true);
+  if (sr > 0 && sr !== sampleRate) {
+    sampleRate = sr;
+    dirty = true;
+  }
+
+  if (buf.byteLength < HEADER_SIZE + fftSize * 4) return;
+  const powerDb = new Float32Array(buf, HEADER_SIZE, fftSize);
+  pushSpectrum(powerDb);
+}
+
+/* ===========================================================================
+ *  WebSocket Connection Manager
+ * =========================================================================*/
+
+function wsConnect() {
+  if (ws) { try { ws.close(); } catch(e) {} ws = null; }
+
+  const host = document.getElementById("wsHost").value.trim() || "127.0.0.1";
+  const port = document.getElementById("wsPort").value.trim() || "10000";
+  const url = currentScheme + "://" + host + ":" + port + "/websocket";
+
+  try {
+    ws = new WebSocket(url);
+  } catch (e) {
+    onSchemeFailure();
+    scheduleReconnect();
+    return;
+  }
+  ws.binaryType = "arraybuffer";
+
+  ws.onopen = function() {
+    clearTimeout(connectTimeout);
+    connectTimeout = null;
+    schemeFailures = 0;
+    document.getElementById("wsStatus").textContent = "Connected";
+    document.getElementById("wsStatus").classList.add("connected");
+    document.getElementById("connectBtn").textContent = "Disconnect";
+    resetInactivityTimer();
+  };
+
+  ws.onclose = function() {
+    clearTimeout(connectTimeout);
+    connectTimeout = null;
+    clearTimeout(inactivityTimer);
+    ws = null;
+    onDisconnected();
+    if (autoReconnect) scheduleReconnect();
+  };
+
+  ws.onerror = function() {
+    onSchemeFailure();
+  };
+
+  ws.onmessage = function(ev) {
+    resetInactivityTimer();
+    if (ev.data instanceof ArrayBuffer) handleBinaryFrame(ev.data);
+    else handleJsonMessage(ev.data);
+  };
+
+  // Connect timeout (5s)
+  connectTimeout = setTimeout(function() {
+    if (ws && ws.readyState !== WebSocket.OPEN) {
+      try { ws.close(); } catch(e) {}
+    }
+  }, 5000);
+}
+
+function onDisconnected() {
+  document.getElementById("wsStatus").textContent = "Disconnected";
+  document.getElementById("wsStatus").classList.remove("connected");
+  document.getElementById("connectBtn").textContent = "Connect";
+  waterfallConfigured = false;
+
+  // Reset display
+  snrValue = 0; syncState = false;
+  updateConnectionInfo({ bitrate: null, direction: null, user_callsign: "", dest_callsign: "", client_tcp_connected: false, bytes_transmitted: 0, bytes_received: 0 });
+  dirty = true;
+}
+
+function onSchemeFailure() {
+  schemeFailures++;
+  if (schemeFailures >= MAX_SCHEME_FAILURES) {
+    currentScheme = (currentScheme === "wss") ? "ws" : "wss";
+    schemeFailures = 0;
+  }
+}
+
+function scheduleReconnect() {
+  clearTimeout(reconnectTimer);
+  reconnectTimer = setTimeout(wsConnect, RECONNECT_MS);
+}
+
+function resetInactivityTimer() {
+  clearTimeout(inactivityTimer);
+  inactivityTimer = setTimeout(function() {
+    if (ws) { try { ws.close(); } catch(e) {} }
+  }, INACTIVITY_MS);
+}
+
+function sendJson(obj) {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify(obj));
+  }
+}
+
+/* ===========================================================================
+ *  Command Senders
+ * =========================================================================*/
+
+document.getElementById("audioApplyBtn").addEventListener("click", function() {
+  const capture  = getSelectValue(document.getElementById("captureDevSelect"))  || "default";
+  const playback = getSelectValue(document.getElementById("playbackDevSelect")) || "default";
+  const channel  = getSelectValue(document.getElementById("inputChannelSelect")) || "left";
+  appliedCapture = capture;
+  appliedPlayback = playback;
+  appliedChannel = channel;
+  sendJson({ command: "set_audio_config", value: capture, value2: playback, value3: channel });
+});
+
+document.getElementById("radioApplyBtn").addEventListener("click", function() {
+  const modelId = getSelectValue(document.getElementById("radioModelSelect"));
+  const devPath = document.getElementById("devicePathInput").value.trim();
+  if (!modelId) return;
+  appliedRadioModel = modelId;
+  appliedDevicePath = devPath;
+  if (modelId === "-1") document.getElementById("devicePathInput").value = "";
+  sendJson({ command: "set_radio_config", value: modelId, value2: devPath });
+});
+
+// Enter key on device path triggers radio apply
+document.getElementById("devicePathInput").addEventListener("keydown", function(e) {
+  if (e.key === "Enter") document.getElementById("radioApplyBtn").click();
+});
+
+/* ===========================================================================
+ *  Connect Button
+ * =========================================================================*/
+
+document.getElementById("connectBtn").addEventListener("click", function() {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    // Disconnect
+    autoReconnect = false;
+    clearTimeout(reconnectTimer);
+    try { ws.close(); } catch(e) {}
+    return;
+  }
+  // Connect
+  autoReconnect = true;
+  clearAppliedState();
+  resetControls();
+  waterfallConfigured = false;
+  clearTimeout(reconnectTimer);
+  wsConnect();
+});
+
+// Enter key on host/port triggers connect
+document.getElementById("wsHost").addEventListener("keydown", function(e) {
+  if (e.key === "Enter") document.getElementById("connectBtn").click();
+});
+document.getElementById("wsPort").addEventListener("keydown", function(e) {
+  if (e.key === "Enter") document.getElementById("connectBtn").click();
+});
+
+/* ===========================================================================
+ *  Init
+ * =========================================================================*/
+
+(function init() {
+  // Set default host from current location
+  const host = location.hostname || "127.0.0.1";
+  document.getElementById("wsHost").value = host;
+
+  // Auto-connect
+  autoReconnect = true;
+  wsConnect();
+
+  // Register service worker for PWA
+  if ("serviceWorker" in navigator) {
+    navigator.serviceWorker.register("sw.js").catch(function() {});
+  }
+})();
+</script>
+</body>
+</html>
