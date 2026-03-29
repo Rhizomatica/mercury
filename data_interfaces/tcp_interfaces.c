@@ -800,7 +800,7 @@ void *send_thread(void *client_socket_ptr)
          * ring between our size check and the read_buffer() call. */
         if (size_buffer(data_rx_buffer_broadcast) < frame_size)
         {
-            usleep(100000);
+            msleep(100);
             continue;
         }
 
