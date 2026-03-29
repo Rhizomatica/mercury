@@ -9,9 +9,10 @@ var searchData=
   ['peer_5fhas_5fdata_6',['peer_has_data',['../structarq__session__t.html#a027799fb526eef075e47b395dba7dd2d',1,'arq_session_t']]],
   ['peer_5fsnr_5fx10_7',['peer_snr_x10',['../structarq__session__t.html#afaadb99e3c9273cd06b12c1ddc730225',1,'arq_session_t']]],
   ['peer_5ftx_5fmode_8',['peer_tx_mode',['../structarq__runtime__snapshot__t.html#a53d93bdcf017cc9dbbf1088311cf4ca8',1,'arq_runtime_snapshot_t::peer_tx_mode'],['../structarq__session__t.html#aa6fbeea1f86549d2063c80c0399a8021',1,'arq_session_t::peer_tx_mode']]],
-  ['pending_5fdisconnect_9',['pending_disconnect',['../structarq__session__t.html#ade0a93c712b7330bf8bd9bd64b305727',1,'arq_session_t']]],
-  ['pending_5fdisconnect_5fnotify_10',['pending_disconnect_notify',['../structarq__session__t.html#a2c4e3cc0cc093fec1f7187a1946127cc',1,'arq_session_t']]],
-  ['pending_5ftx_5fmode_11',['pending_tx_mode',['../structarq__session__t.html#ad8bd6a0bcbfcccad26a824fc0b30d3ba',1,'arq_session_t']]],
-  ['preferred_5frx_5fmode_12',['preferred_rx_mode',['../structarq__runtime__snapshot__t.html#a586b625b0103620c48ab8395d87a1e12',1,'arq_runtime_snapshot_t']]],
-  ['preferred_5ftx_5fmode_13',['preferred_tx_mode',['../structarq__runtime__snapshot__t.html#a75112d21532bea7f3be15253ae5af568',1,'arq_runtime_snapshot_t']]]
+  ['pending_5fconnect_5fconfirm_9',['pending_connect_confirm',['../structarq__session__t.html#a7edbac6867d0134d2995d6e9fcf7ad31',1,'arq_session_t']]],
+  ['pending_5fdisconnect_10',['pending_disconnect',['../structarq__session__t.html#ade0a93c712b7330bf8bd9bd64b305727',1,'arq_session_t']]],
+  ['pending_5fdisconnect_5fnotify_11',['pending_disconnect_notify',['../structarq__session__t.html#a2c4e3cc0cc093fec1f7187a1946127cc',1,'arq_session_t']]],
+  ['pending_5ftx_5fmode_12',['pending_tx_mode',['../structarq__session__t.html#ad8bd6a0bcbfcccad26a824fc0b30d3ba',1,'arq_session_t']]],
+  ['preferred_5frx_5fmode_13',['preferred_rx_mode',['../structarq__runtime__snapshot__t.html#a586b625b0103620c48ab8395d87a1e12',1,'arq_runtime_snapshot_t']]],
+  ['preferred_5ftx_5fmode_14',['preferred_tx_mode',['../structarq__runtime__snapshot__t.html#a75112d21532bea7f3be15253ae5af568',1,'arq_runtime_snapshot_t']]]
 ];

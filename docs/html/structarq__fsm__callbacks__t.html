@@ -86,6 +86,12 @@ Data Fields</h2></td></tr>
 <tr class="memitem:a4f6a5764a9c69efb176f87016b09ea7b" id="r_a4f6a5764a9c69efb176f87016b09ea7b"><td class="memItemLeft" align="right" valign="top">void(*&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__fsm__callbacks__t.html#a4f6a5764a9c69efb176f87016b09ea7b">notify_connected</a> )(const char *remote_call)</td></tr>
 <tr class="memdesc:a4f6a5764a9c69efb176f87016b09ea7b"><td class="mdescLeft">&#160;</td><td class="mdescRight">Notify TCP interface that a connection is established.  <br /></td></tr>
 <tr class="separator:a4f6a5764a9c69efb176f87016b09ea7b"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a992131b6c1abd20bbd8f3d27ef95ef78" id="r_a992131b6c1abd20bbd8f3d27ef95ef78"><td class="memItemLeft" align="right" valign="top">void(*&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__fsm__callbacks__t.html#a992131b6c1abd20bbd8f3d27ef95ef78">notify_pending</a> )(const char *remote_call)</td></tr>
+<tr class="memdesc:a992131b6c1abd20bbd8f3d27ef95ef78"><td class="mdescLeft">&#160;</td><td class="mdescRight">Notify TCP interface of an incoming call that is pending acceptance.  <br /></td></tr>
+<tr class="separator:a992131b6c1abd20bbd8f3d27ef95ef78"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a3862caf333e5001120cfd807db8e1dc0" id="r_a3862caf333e5001120cfd807db8e1dc0"><td class="memItemLeft" align="right" valign="top">void(*&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__fsm__callbacks__t.html#a3862caf333e5001120cfd807db8e1dc0">notify_cancelpending</a> )(void)</td></tr>
+<tr class="memdesc:a3862caf333e5001120cfd807db8e1dc0"><td class="mdescLeft">&#160;</td><td class="mdescRight">Notify TCP interface that a pending incoming call did not complete.  <br /></td></tr>
+<tr class="separator:a3862caf333e5001120cfd807db8e1dc0"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:ae765d5f60bb23e4d4a09bb1f5694b85b" id="r_ae765d5f60bb23e4d4a09bb1f5694b85b"><td class="memItemLeft" align="right" valign="top">void(*&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__fsm__callbacks__t.html#ae765d5f60bb23e4d4a09bb1f5694b85b">notify_disconnected</a> )(bool to_no_client)</td></tr>
 <tr class="memdesc:ae765d5f60bb23e4d4a09bb1f5694b85b"><td class="mdescLeft">&#160;</td><td class="mdescRight">Notify TCP interface of disconnection.  <br /></td></tr>
 <tr class="separator:ae765d5f60bb23e4d4a09bb1f5694b85b"><td class="memSeparator" colspan="2">&#160;</td></tr>
@@ -116,6 +122,22 @@ Data Fields</h2></td></tr>
 </div><div class="memdoc">
 
 <p>Deliver received data bytes to the TCP data stream. </p>
+
+</div>
+</div>
+<a id="a3862caf333e5001120cfd807db8e1dc0" name="a3862caf333e5001120cfd807db8e1dc0"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a3862caf333e5001120cfd807db8e1dc0">&#9670;&#160;</a></span>notify_cancelpending</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">void(* arq_fsm_callbacks_t::notify_cancelpending) (void)</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+<p>Notify TCP interface that a pending incoming call did not complete. </p>
 
 </div>
 </div>
@@ -154,6 +176,22 @@ Data Fields</h2></td></tr>
   </table>
   </dd>
 </dl>
+
+</div>
+</div>
+<a id="a992131b6c1abd20bbd8f3d27ef95ef78" name="a992131b6c1abd20bbd8f3d27ef95ef78"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a992131b6c1abd20bbd8f3d27ef95ef78">&#9670;&#160;</a></span>notify_pending</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">void(* arq_fsm_callbacks_t::notify_pending) (const char *remote_call)</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+<p>Notify TCP interface of an incoming call that is pending acceptance. </p>
 
 </div>
 </div>

@@ -134,6 +134,8 @@ Data Fields</h2></td></tr>
 <tr class="separator:a2c4e3cc0cc093fec1f7187a1946127cc"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:ade0a93c712b7330bf8bd9bd64b305727" id="r_ade0a93c712b7330bf8bd9bd64b305727"><td class="memItemLeft" align="right" valign="top">bool&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__session__t.html#ade0a93c712b7330bf8bd9bd64b305727">pending_disconnect</a></td></tr>
 <tr class="separator:ade0a93c712b7330bf8bd9bd64b305727"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a7edbac6867d0134d2995d6e9fcf7ad31" id="r_a7edbac6867d0134d2995d6e9fcf7ad31"><td class="memItemLeft" align="right" valign="top">bool&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__session__t.html#a7edbac6867d0134d2995d6e9fcf7ad31">pending_connect_confirm</a></td></tr>
+<tr class="separator:a7edbac6867d0134d2995d6e9fcf7ad31"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a7e42bb0d35b055768c6f6813b7e458a2" id="r_a7e42bb0d35b055768c6f6813b7e458a2"><td class="memItemLeft" align="right" valign="top">bool&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__session__t.html#a7e42bb0d35b055768c6f6813b7e458a2">need_initial_guard</a></td></tr>
 <tr class="separator:a7e42bb0d35b055768c6f6813b7e458a2"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a811bdc10a3789f6c7a8f978c21596063" id="r_a811bdc10a3789f6c7a8f978c21596063"><td class="memItemLeft" align="right" valign="top">int&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__session__t.html#a811bdc10a3789f6c7a8f978c21596063">consecutive_retries</a></td></tr>
@@ -146,6 +148,8 @@ Data Fields</h2></td></tr>
 <tr class="separator:a180fbb1e331dabb7b1531ea5f38d7441"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a4ddb3b77099bed8a5c69cb2e41f991e0" id="r_a4ddb3b77099bed8a5c69cb2e41f991e0"><td class="memItemLeft" align="right" valign="top">uint8_t&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__session__t.html#a4ddb3b77099bed8a5c69cb2e41f991e0">tx_retransmit_seq</a></td></tr>
 <tr class="separator:a4ddb3b77099bed8a5c69cb2e41f991e0"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:ae769e6a1d0f633f9d90b3ddd33972cf9" id="r_ae769e6a1d0f633f9d90b3ddd33972cf9"><td class="memItemLeft" align="right" valign="top">int&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__session__t.html#ae769e6a1d0f633f9d90b3ddd33972cf9">tx_inflight_bytes</a></td></tr>
+<tr class="separator:ae769e6a1d0f633f9d90b3ddd33972cf9"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a2428420bd7032d8d4fa98e7d64e32ae2" id="r_a2428420bd7032d8d4fa98e7d64e32ae2"><td class="memItemLeft" align="right" valign="top">int&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__session__t.html#a2428420bd7032d8d4fa98e7d64e32ae2">keepalive_miss_count</a></td></tr>
 <tr class="separator:a2428420bd7032d8d4fa98e7d64e32ae2"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a359aabbd8838b6d6a895ba3a146aa2a2" id="r_a359aabbd8838b6d6a895ba3a146aa2a2"><td class="memItemLeft" align="right" valign="top">uint64_t&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__session__t.html#a359aabbd8838b6d6a895ba3a146aa2a2">last_rx_ms</a></td></tr>
@@ -436,6 +440,20 @@ Data Fields</h2></td></tr>
 
 </div>
 </div>
+<a id="a7edbac6867d0134d2995d6e9fcf7ad31" name="a7edbac6867d0134d2995d6e9fcf7ad31"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a7edbac6867d0134d2995d6e9fcf7ad31">&#9670;&#160;</a></span>pending_connect_confirm</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">bool arq_session_t::pending_connect_confirm</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+</div>
+</div>
 <a id="ade0a93c712b7330bf8bd9bd64b305727" name="ade0a93c712b7330bf8bd9bd64b305727"></a>
 <h2 class="memtitle"><span class="permalink"><a href="#ade0a93c712b7330bf8bd9bd64b305727">&#9670;&#160;</a></span>pending_disconnect</h2>
 
@@ -584,6 +602,20 @@ Data Fields</h2></td></tr>
       <table class="memname">
         <tr>
           <td class="memname">int arq_session_t::tx_backlog_bytes</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+</div>
+</div>
+<a id="ae769e6a1d0f633f9d90b3ddd33972cf9" name="ae769e6a1d0f633f9d90b3ddd33972cf9"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#ae769e6a1d0f633f9d90b3ddd33972cf9">&#9670;&#160;</a></span>tx_inflight_bytes</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">int arq_session_t::tx_inflight_bytes</td>
         </tr>
       </table>
 </div><div class="memdoc">

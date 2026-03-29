@@ -1,27 +1,5 @@
 var searchData=
 [
-  ['schedule_5fflow_5fhint_5flocked_0',['schedule_flow_hint_locked',['../arq_8c.html#adfd1333ffc2bad5c34f7ce6c5a417306',1,'arq.c']]],
-  ['schedule_5fimmediate_5fcontrol_5ftx_5flocked_1',['schedule_immediate_control_tx_locked',['../arq_8c.html#ae6c57cffc84eaef28e94e542b6a7e3ee',1,'arq.c']]],
-  ['schedule_5fimmediate_5fcontrol_5ftx_5fwith_5fguard_5flocked_2',['schedule_immediate_control_tx_with_guard_locked',['../arq_8c.html#a0b78dad0840573b72ddc3b88122fb2e8',1,'arq.c']]],
-  ['schedule_5fnext_5ftx_5flocked_3',['schedule_next_tx_locked',['../arq_8c.html#a3e12720c28200c2969c14c8bc7b63970',1,'arq.c']]],
-  ['send_5faccept_5flocked_4',['send_accept_locked',['../arq_8c.html#ab822ba72f784b84ae0323dbbb23bdc8a',1,'arq.c']]],
-  ['send_5fack_5flocked_5',['send_ack_locked',['../arq_8c.html#af12deb596c4d475548b6f913c96bd06c',1,'arq.c']]],
-  ['send_5fcall_5flocked_6',['send_call_locked',['../arq_8c.html#a336b4e60cc12d92ba505b0c4f21f0543',1,'arq.c']]],
-  ['send_5fdisconnect_5flocked_7',['send_disconnect_locked',['../arq_8c.html#a137d41079b6b448a644160bf474aad6c',1,'arq.c']]],
-  ['send_5fkeepalive_5flocked_8',['send_keepalive_locked',['../arq_8c.html#a3b9519e6b7519216a3e3c11c357a944c',1,'arq.c']]],
-  ['send_5fmode_5fchange_5flocked_9',['send_mode_change_locked',['../arq_8c.html#a29ddc128ef64d2635e0a3fe589007c51',1,'arq.c']]],
-  ['send_5fturn_5fcontrol_5flocked_10',['send_turn_control_locked',['../arq_8c.html#abe346f86dd5afbc0d4fd3aa6c9095574',1,'arq.c']]],
-  ['split_5fcall_5fconnect_5fpayload_11',['split_call_connect_payload',['../arq_8c.html#af75ac7c1c0ba0969a95ac6df5d9ded7f',1,'arq.c']]],
-  ['start_5fdisconnect_5flocked_12',['start_disconnect_locked',['../arq_8c.html#a581ed54ebbc13945cf35c4fb361bbf26',1,'arq.c']]],
-  ['start_5foutgoing_5fcall_5flocked_13',['start_outgoing_call_locked',['../arq_8c.html#a0a106038ec745047511b35ddd17d95e5',1,'arq.c']]],
-  ['state_5fcalling_5fwait_5faccept_14',['state_calling_wait_accept',['../arq_8c.html#a8c537171203e99a12a9346eb252dfaea',1,'arq.c']]],
-  ['state_5fconnected_15',['state_connected',['../arq_8c.html#a3afd948859ef7e861a4ac74f14330bb8',1,'arq.c']]],
-  ['state_5fconnected_5fcommon_16',['state_connected_common',['../arq_8c.html#a9aba6be089415061ba4b9589d8dbe04c',1,'arq.c']]],
-  ['state_5fconnected_5firs_17',['state_connected_irs',['../arq_8c.html#abf0d7422648089602494dc62342078c5',1,'arq.c']]],
-  ['state_5fconnected_5fiss_18',['state_connected_iss',['../arq_8c.html#aee8aa67641c258ccfde86d7fc14616bc',1,'arq.c']]],
-  ['state_5fdisconnecting_19',['state_disconnecting',['../arq_8c.html#ade02377208a524da47f544ab7342ff71',1,'arq.c']]],
-  ['state_5fidle_20',['state_idle',['../arq_8c.html#a403e77f72c25be3acb33b7533f675559',1,'arq.c']]],
-  ['state_5flisten_21',['state_listen',['../arq_8c.html#a8f37d639f81e593d6df66339c4c1b56b',1,'arq.c']]],
-  ['state_5fno_5fconnected_5fclient_22',['state_no_connected_client',['../arq_8c.html#a60f8503127bdfc76ad6d05806742ee2c',1,'arq.c']]],
-  ['state_5fturn_5fnegotiating_23',['state_turn_negotiating',['../arq_8c.html#a929df86215d6a365ba811d5beae7d8cc',1,'arq.c']]]
+  ['update_5flocal_5fsnr_0',['update_local_snr',['../arq__fsm_8c.html#ac58fe04fc71cc4aef2c17b703908a0f0',1,'arq_fsm.c']]],
+  ['update_5fpeer_5fsnr_1',['update_peer_snr',['../arq__fsm_8c.html#accd0bd9c1394f134c77d1e1010a1ea2f',1,'arq_fsm.c']]]
 ];

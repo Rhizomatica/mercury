@@ -1,9 +1,11 @@
 <map id="arq_protocol.h" name="arq_protocol.h">
-<area shape="rect" id="Node000001" title=" " alt="" coords="87,5,191,31"/>
+<area shape="rect" id="Node000001" title=" " alt="" coords="132,5,236,31"/>
 <area shape="rect" id="Node000002" title=" " alt="" coords="5,79,80,104"/>
-<area shape="poly" id="edge1_Node000001_Node000002" title=" " alt="" coords="125,33,71,72,68,68,122,29"/>
+<area shape="poly" id="edge1_Node000001_Node000002" title=" " alt="" coords="162,33,79,75,77,70,160,28"/>
 <area shape="rect" id="Node000003" title=" " alt="" coords="104,79,173,104"/>
-<area shape="poly" id="edge2_Node000001_Node000003" title=" " alt="" coords="141,31,141,65,136,65,136,31"/>
+<area shape="poly" id="edge2_Node000001_Node000003" title=" " alt="" coords="179,32,156,69,151,66,174,30"/>
 <area shape="rect" id="Node000004" title=" " alt="" coords="198,79,263,104"/>
-<area shape="poly" id="edge3_Node000001_Node000004" title=" " alt="" coords="155,29,207,68,203,72,152,33"/>
+<area shape="poly" id="edge3_Node000001_Node000004" title=" " alt="" coords="194,30,218,66,213,69,189,32"/>
+<area shape="rect" id="Node000005" title=" " alt="" coords="288,79,379,104"/>
+<area shape="poly" id="edge4_Node000001_Node000005" title=" " alt="" coords="209,28,298,70,295,75,207,33"/>
 </map>

@@ -17,6 +17,8 @@ This documentation covers the ARQ data link subsystem API.
   Build instructions, CLI usage, logging.
 - [mercury-qt GUI](https://github.com/Rhizomatica/mercury-qt) —
   Qt-based graphical interface (under development).
+- [Mercury Web UI](https://Rhizomatica.github.io/mercury/app/) —
+  Browser-based interface (installable PWA).
 
 @section modules Key Modules
 

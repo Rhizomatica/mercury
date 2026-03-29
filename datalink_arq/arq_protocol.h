@@ -403,6 +403,7 @@ int arq_protocol_build_data(uint8_t *buf, size_t buf_len,
  * @param session_id   ARQ session identifier.
  * @param src  Local callsign.
  * @param dst  Remote callsign.
+ * @param bw_hz        Requested bandwidth in Hz.
  * @return Total frame bytes (ARQ_CONTROL_FRAME_SIZE = 14) on success, -1 on error.
  */
 int arq_protocol_build_call(uint8_t *buf, size_t buf_len,
@@ -417,6 +418,7 @@ int arq_protocol_build_call(uint8_t *buf, size_t buf_len,
  * @param session_id   ARQ session identifier.
  * @param src  Local callsign.
  * @param dst  Remote callsign.
+ * @param bw_hz        Accepted bandwidth in Hz.
  */
 int arq_protocol_build_accept(uint8_t *buf, size_t buf_len,
                                 uint8_t session_id,
@@ -430,6 +432,7 @@ int arq_protocol_build_accept(uint8_t *buf, size_t buf_len,
  * @param session_id_out  Receives the session_id byte.
  * @param src_out         Buffer for local (transmitting) callsign, CALLSIGN_MAX_SIZE bytes.
  * @param dst_out         Buffer for remote callsign, CALLSIGN_MAX_SIZE bytes.
+ * @param bw_hz_out       Receives the requested bandwidth in Hz.
  * @return 0 on success, -1 on parse error.
  */
 int arq_protocol_parse_call(const uint8_t *buf, size_t buf_len,

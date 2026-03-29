@@ -128,6 +128,7 @@ $(function() {
 <li>frame&#160;:&#160;<a class="el" href="structarq__bus__msg__t.html#a12f337d4c8b1f4988056b9a081ecfac0">arq_bus_msg_t</a>, <a class="el" href="structarq__frame__msg__t.html#a6e166fbcc25189bfae8906588db48f56">arq_frame_msg_t</a>, <a class="el" href="structarq__tx__frame__msg__t.html#af411bdc891ab79bf5f45875d138f1787">arq_tx_frame_msg_t</a></li>
 <li>frame_decoded&#160;:&#160;<a class="el" href="structarq__modem__metrics__msg__t.html#a3e04fc46203ed108abe740d9287e0cf8">arq_modem_metrics_msg_t</a></li>
 <li>frame_duration_s&#160;:&#160;<a class="el" href="structarq__mode__timing__t.html#a5cdbd399685a864de4e131ce1c187853">arq_mode_timing_t</a></li>
+<li>frame_ext&#160;:&#160;<a class="el" href="structarq__frame__hdr__t.html#a92e7967fee6bcaff71bd9b4e1e07d840">arq_frame_hdr_t</a></li>
 <li>frame_size&#160;:&#160;<a class="el" href="structarq__action__t.html#a03f83b92f0a7bc380306cdff8d739986">arq_action_t</a>, <a class="el" href="structarq__frame__msg__t.html#a737ac76863a01fd37707c0f701efd129">arq_frame_msg_t</a>, <a class="el" href="structarq__info.html#a355a22a3ccdb662942e4f562b480ba25">arq_info</a>, <a class="el" href="structarq__tx__frame__msg__t.html#a303b5032372fab951b6986267414b7e6">arq_tx_frame_msg_t</a></li>
 <li>frames_rx&#160;:&#160;<a class="el" href="structarq__timing__ctx__t.html#a31f001f60d087be4d34ba9caafd80da2">arq_timing_ctx_t</a></li>
 <li>frames_tx&#160;:&#160;<a class="el" href="structarq__timing__ctx__t.html#a0f6441b4bac27e33661449dc11bfa93a">arq_timing_ctx_t</a></li>
@@ -173,8 +174,10 @@ $(function() {
 
 <h3><a id="index_n" name="index_n"></a>- n -</h3><ul>
 <li>need_initial_guard&#160;:&#160;<a class="el" href="structarq__session__t.html#a7e42bb0d35b055768c6f6813b7e458a2">arq_session_t</a></li>
+<li>notify_cancelpending&#160;:&#160;<a class="el" href="structarq__fsm__callbacks__t.html#a3862caf333e5001120cfd807db8e1dc0">arq_fsm_callbacks_t</a></li>
 <li>notify_connected&#160;:&#160;<a class="el" href="structarq__fsm__callbacks__t.html#a4f6a5764a9c69efb176f87016b09ea7b">arq_fsm_callbacks_t</a></li>
 <li>notify_disconnected&#160;:&#160;<a class="el" href="structarq__fsm__callbacks__t.html#ae765d5f60bb23e4d4a09bb1f5694b85b">arq_fsm_callbacks_t</a></li>
+<li>notify_pending&#160;:&#160;<a class="el" href="structarq__fsm__callbacks__t.html#a992131b6c1abd20bbd8f3d27ef95ef78">arq_fsm_callbacks_t</a></li>
 </ul>
 
 
@@ -188,6 +191,7 @@ $(function() {
 <li>peer_has_data&#160;:&#160;<a class="el" href="structarq__session__t.html#a027799fb526eef075e47b395dba7dd2d">arq_session_t</a></li>
 <li>peer_snr_x10&#160;:&#160;<a class="el" href="structarq__session__t.html#afaadb99e3c9273cd06b12c1ddc730225">arq_session_t</a></li>
 <li>peer_tx_mode&#160;:&#160;<a class="el" href="structarq__runtime__snapshot__t.html#a53d93bdcf017cc9dbbf1088311cf4ca8">arq_runtime_snapshot_t</a>, <a class="el" href="structarq__session__t.html#aa6fbeea1f86549d2063c80c0399a8021">arq_session_t</a></li>
+<li>pending_connect_confirm&#160;:&#160;<a class="el" href="structarq__session__t.html#a7edbac6867d0134d2995d6e9fcf7ad31">arq_session_t</a></li>
 <li>pending_disconnect&#160;:&#160;<a class="el" href="structarq__session__t.html#ade0a93c712b7330bf8bd9bd64b305727">arq_session_t</a></li>
 <li>pending_disconnect_notify&#160;:&#160;<a class="el" href="structarq__session__t.html#a2c4e3cc0cc093fec1f7187a1946127cc">arq_session_t</a></li>
 <li>pending_tx_mode&#160;:&#160;<a class="el" href="structarq__session__t.html#ad8bd6a0bcbfcccad26a824fc0b30d3ba">arq_session_t</a></li>
@@ -201,10 +205,11 @@ $(function() {
 <li>retries_total&#160;:&#160;<a class="el" href="structarq__timing__ctx__t.html#a7fd4a6e54d6c81b4696fa5db81778a7f">arq_timing_ctx_t</a></li>
 <li>retry_count&#160;:&#160;<a class="el" href="structarq__timing__ctx__t.html#a442d143ede2ba7654e65a25db3304290">arq_timing_ctx_t</a></li>
 <li>retry_interval_s&#160;:&#160;<a class="el" href="structarq__mode__timing__t.html#a3d391846e59e574f729edc45fb625627">arq_mode_timing_t</a></li>
+<li>retry_slots&#160;:&#160;<a class="el" href="structarq__info.html#a405bf844794d1662910672fdf226be56">arq_info</a></li>
 <li>role&#160;:&#160;<a class="el" href="structarq__session__t.html#a9a1f19cfddaa0de35c62132cbcce1a5e">arq_session_t</a></li>
 <li>rtt_ms&#160;:&#160;<a class="el" href="structarq__timing__ctx__t.html#a8d927cdfdb8901ebe12f7bb1b433e45b">arq_timing_ctx_t</a></li>
 <li>rx_ack_seq&#160;:&#160;<a class="el" href="structarq__frame__hdr__t.html#af485355c8c8bc2fbdd15bbdd6281c07a">arq_frame_hdr_t</a></li>
-<li>rx_bytes&#160;:&#160;<a class="el" href="structarq__timing__ctx__t.html#ab4bd89e1a8170e732d244e68110c2089">arq_timing_ctx_t</a></li>
+<li>rx_bytes&#160;:&#160;<a class="el" href="structarq__runtime__snapshot__t.html#ab1ebcd0929486e105473c3131fdeaed9">arq_runtime_snapshot_t</a>, <a class="el" href="structarq__timing__ctx__t.html#ab4bd89e1a8170e732d244e68110c2089">arq_timing_ctx_t</a></li>
 <li>rx_expected&#160;:&#160;<a class="el" href="structarq__session__t.html#afaad3025e202bf2a4f8bac28788f3cb5">arq_session_t</a></li>
 <li>rx_flags&#160;:&#160;<a class="el" href="structarq__event__t.html#ab26526ba6664544c46badc1dd684fd88">arq_event_t</a></li>
 <li>rx_snr&#160;:&#160;<a class="el" href="structarq__event__t.html#ae16b2a97a9ae4116f8b501b2439e3306">arq_event_t</a></li>
@@ -216,6 +221,7 @@ $(function() {
 <li>send_buffer_status&#160;:&#160;<a class="el" href="structarq__fsm__callbacks__t.html#ab677b725c4d280efefedb228592cb53b">arq_fsm_callbacks_t</a></li>
 <li>send_tx_frame&#160;:&#160;<a class="el" href="structarq__fsm__callbacks__t.html#ab80a6e809eab72c2d918fa8f131d2e6c">arq_fsm_callbacks_t</a></li>
 <li>seq&#160;:&#160;<a class="el" href="structarq__event__t.html#aff75e012a4eb10c53630ac9b996c38fa">arq_event_t</a></li>
+<li>session_bw&#160;:&#160;<a class="el" href="structarq__info.html#a226d3e4eea50e9ed000a89be81d741bb">arq_info</a></li>
 <li>session_id&#160;:&#160;<a class="el" href="structarq__event__t.html#a631d0f2080a92b135a83534caf3341d7">arq_event_t</a>, <a class="el" href="structarq__frame__hdr__t.html#a49a8e714fc28da4ee966a1668b553b2c">arq_frame_hdr_t</a>, <a class="el" href="structarq__session__t.html#a26a779eac94ebe47574774a5f1a1f8fc">arq_session_t</a></li>
 <li>shutdown&#160;:&#160;<a class="el" href="structarq__channel__bus__t.html#a34bf344013c0cbe1d374b8a5e6fb1e37">arq_channel_bus_t</a></li>
 <li>snr&#160;:&#160;<a class="el" href="structarq__modem__metrics__msg__t.html#a149a8602f623a6d60e28d94b327b843b">arq_modem_metrics_msg_t</a></li>
@@ -241,8 +247,9 @@ $(function() {
 <li>tx&#160;:&#160;<a class="el" href="structarq__bus__msg__t.html#a0acf3580ae82daeed573576ee57648b7">arq_bus_msg_t</a></li>
 <li>tx_backlog&#160;:&#160;<a class="el" href="structarq__fsm__callbacks__t.html#aff2e3444c2698a190e460a1b59b0b117">arq_fsm_callbacks_t</a></li>
 <li>tx_backlog_bytes&#160;:&#160;<a class="el" href="structarq__runtime__snapshot__t.html#a225fbaa70bf5859c6aa03e5dcbc79fb5">arq_runtime_snapshot_t</a>, <a class="el" href="structarq__session__t.html#a9110070fe7482c9a82a3b1b6b89b31c7">arq_session_t</a></li>
-<li>tx_bytes&#160;:&#160;<a class="el" href="structarq__timing__ctx__t.html#a45e23deb12784d445ab28378b51d1b2a">arq_timing_ctx_t</a></li>
+<li>tx_bytes&#160;:&#160;<a class="el" href="structarq__runtime__snapshot__t.html#a7e431179cb313573ad0e09e5a16f86a5">arq_runtime_snapshot_t</a>, <a class="el" href="structarq__timing__ctx__t.html#a45e23deb12784d445ab28378b51d1b2a">arq_timing_ctx_t</a></li>
 <li>tx_end_ms&#160;:&#160;<a class="el" href="structarq__timing__ctx__t.html#aace6b3fe308d74a76bfd35a6de4bae77">arq_timing_ctx_t</a></li>
+<li>tx_inflight_bytes&#160;:&#160;<a class="el" href="structarq__session__t.html#ae769e6a1d0f633f9d90b3ddd33972cf9">arq_session_t</a></li>
 <li>tx_period_s&#160;:&#160;<a class="el" href="structarq__mode__timing__t.html#a05ca0d81a4b0b0b042d55ae772def516">arq_mode_timing_t</a></li>
 <li>tx_queue_ms&#160;:&#160;<a class="el" href="structarq__timing__ctx__t.html#a0dda487fc80ca0d8bce41b12fbdf44ab">arq_timing_ctx_t</a></li>
 <li>tx_read&#160;:&#160;<a class="el" href="structarq__fsm__callbacks__t.html#ac602264c8713a76c2c45a08faa50203e">arq_fsm_callbacks_t</a></li>
