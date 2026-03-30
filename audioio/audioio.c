@@ -189,17 +189,14 @@ void *radio_playback_thread(void *device_ptr)
     // input is int32_t (8kHz samples from playback_buffer)
     int32_t *input_buffer = (int32_t *) malloc(SIGNAL_BUFFER_SIZE * sizeof(int32_t));
 
-    // upsampled buffer (48kHz mono)
-    int32_t *buffer_upsampled = (int32_t *) malloc(SIGNAL_BUFFER_SIZE * sizeof(int32_t) * 6);
-
-    // output is int32_t stereo (48kHz)
-    int32_t *buffer_output_stereo = (int32_t *) malloc(SIGNAL_BUFFER_SIZE * sizeof(int32_t) * 2 * 6); // a big enough buffer
+    // Buffers allocated after we know the actual device sample rate
+    int32_t *buffer_upsampled = NULL;
+    int32_t *buffer_output_stereo = NULL;
 
     ffuint total_written = 0;
     int ch_layout = STEREO;
-
-    // Resampling ratio: 8kHz -> 48kHz = 1:6
-    const int resample_ratio = 6;
+    int actual_rate = 0;   // filled after open
+    double upsample_ratio = 0.0;
 
     /* PulseAudio uses a single global context (gconn in pulse.c).
      * If init() returns "already initialized" it means the capture thread
@@ -240,8 +237,18 @@ void *radio_playback_thread(void *device_ptr)
         goto cleanup_play;
     }
 
-    HLOGI("audio-play", "I/O playback (%s) %d bits per sample / %dHz / %dch / %dms buffer", device_ptr ? (const char *)device_ptr : "default", cfg->format, cfg->sample_rate, cfg->channels, cfg->buffer_length_msec);
+    actual_rate = cfg->sample_rate;
+    upsample_ratio = (double)actual_rate / 8000.0;
 
+    HLOGI("audio-play", "I/O playback (%s) %d bits per sample / %dHz / %dch / %dms buffer (resample ratio %.4f)",
+          device_ptr ? (const char *)device_ptr : "default",
+          cfg->format & 0xff, cfg->sample_rate, cfg->channels,
+          cfg->buffer_length_msec, upsample_ratio);
+
+    // Allocate resampling buffers now that we know the actual rate
+    int max_upsample = (int)(upsample_ratio + 1.5);  // ceiling + margin
+    buffer_upsampled = (int32_t *) malloc(SIGNAL_BUFFER_SIZE * sizeof(int32_t) * max_upsample);
+    buffer_output_stereo = (int32_t *) malloc(SIGNAL_BUFFER_SIZE * sizeof(int32_t) * 2 * max_upsample);
 
     frame_size = cfg->channels * (cfg->format & 0xff) / 8;
     msec_bytes = cfg->sample_rate * frame_size / 1000;
@@ -255,7 +262,7 @@ void *radio_playback_thread(void *device_ptr)
     ch_layout = STEREO;
     
     // period_bytes at 8kHz (input rate) - adjust for the lower sample rate
-    uint32_t period_bytes_8k = period_bytes / resample_ratio;
+    uint32_t period_bytes_8k = (uint32_t)(period_bytes / upsample_ratio);
 
     while (!shutdown_ && !audio_shutdown_)
     {
@@ -284,18 +291,20 @@ void *radio_playback_thread(void *device_ptr)
 
         int samples_read_8k = n / sizeof(int32_t);
 
-        // Upsample from 8kHz to 48kHz using linear interpolation
-        int samples_upsampled = samples_read_8k * resample_ratio;
-        for (int i = 0; i < samples_read_8k; i++)
+        // Upsample from 8kHz to device rate using linear interpolation
+        // with fractional stepping (works for any ratio, e.g. 48000/8000=6.0 or 44100/8000=5.5125)
+        int samples_upsampled = (int)(samples_read_8k * upsample_ratio);
+        double step = 1.0 / upsample_ratio;  // step in 8kHz domain per output sample
+        for (int i = 0; i < samples_upsampled; i++)
         {
-            int32_t current = input_buffer[i];
-            int32_t next = (i + 1 < samples_read_8k) ? input_buffer[i + 1] : current;
+            double pos = i * step;
+            int idx = (int)pos;
+            double frac = pos - idx;
 
-            for (int j = 0; j < resample_ratio; j++)
-            {
-                // Linear interpolation between current and next sample
-                buffer_upsampled[i * resample_ratio + j] = current + (next - current) * j / resample_ratio;
-            }
+            int32_t current = (idx < samples_read_8k) ? input_buffer[idx] : 0;
+            int32_t next = (idx + 1 < samples_read_8k) ? input_buffer[idx + 1] : current;
+
+            buffer_upsampled[i] = (int32_t)(current + (next - current) * frac);
         }
 
         // Convert upsampled mono to stereo
@@ -447,9 +456,6 @@ void *radio_capture_thread(void *device_ptr)
     int32_t *buffer_output = NULL;
     int32_t *buffer_downsampled = NULL;
 
-    // Resampling ratio: 48kHz -> 8kHz = 6:1
-    const int resample_ratio = 6;
-
     /* PulseAudio uses a single global context (gconn in pulse.c).
      * If init() returns "already initialized" it means the playback thread
      * already called init() successfully and we can proceed normally.
@@ -489,7 +495,12 @@ void *radio_capture_thread(void *device_ptr)
         goto cleanup_cap;
     }
 
-    HLOGI("audio-cap", "I/O capture (%s) %d bits per sample / %dHz / %dch / %dms buffer", device_ptr ? (const char *)device_ptr : "default", cfg->format, cfg->sample_rate, cfg->channels, cfg->buffer_length_msec);
+    double downsample_ratio = (double)cfg->sample_rate / 8000.0;
+
+    HLOGI("audio-cap", "I/O capture (%s) %d bits per sample / %dHz / %dch / %dms buffer (resample ratio %.4f)",
+          device_ptr ? (const char *)device_ptr : "default",
+          cfg->format & 0xff, cfg->sample_rate, cfg->channels,
+          cfg->buffer_length_msec, downsample_ratio);
 
     frame_size = cfg->channels * (cfg->format & 0xff) / 8;
     msec_bytes = cfg->sample_rate * frame_size / 1000;
@@ -505,8 +516,10 @@ void *radio_capture_thread(void *device_ptr)
 #endif
     ch_layout = capture_input_channel_layout;
 
-    static int resample_remainder = 0;  // Track fractional samples for accurate resampling
-    
+    // Fractional accumulator for downsampling (works for any ratio)
+    double resample_accum = 0.0;
+    double resample_step = 1.0 / downsample_ratio;  // how much to advance per input frame
+
     while (!shutdown_ && !audio_shutdown_)
     {
         r = audio->read(b, (const void **)&buffer);
@@ -515,44 +528,30 @@ void *radio_capture_thread(void *device_ptr)
             HLOGE("audio-cap", "ffaudio.read: %s", audio->error(b));
             continue;
         }
-#if 0
-        else
-        {
-            printf(" %dms\n", r / msec_bytes);
-        }
-#endif
 
         int frames_read = r / frame_size;
-        int frames_to_write = frames_read;
-        
-        // Downsample from 48kHz to 8kHz with decimation
-        // resample_remainder tracks position in decimation cycle (0 to resample_ratio-1)
-        // When remainder is 0, we take a sample; otherwise skip
-        int downsampled_frames = 0;
-        for (int i = 0; i < frames_to_write; i++)
-        {
-            int32_t sample;
-            if (ch_layout == LEFT)
-            {
-                sample = buffer[i*2];
-            }
-            else if (ch_layout == RIGHT)
-            {
-                sample = buffer[i*2 + 1];
-            }
-            else // STEREO
-            {
-                sample = (buffer[i*2] + buffer[i*2 + 1]) / 2;
-            }
 
-            // Take every 6th sample (when remainder == 0)
-            // Bounds check: ensure we don't overflow buffer_downsampled
-            if (resample_remainder == 0 && downsampled_frames < (int)SIGNAL_BUFFER_SIZE)
+        // Downsample from device rate to 8kHz using fractional accumulator.
+        // For each input frame, advance accumulator by (8000/device_rate).
+        // Emit an output sample each time accumulator crosses an integer boundary.
+        int downsampled_frames = 0;
+        for (int i = 0; i < frames_read; i++)
+        {
+            resample_accum += resample_step;
+            if (resample_accum >= 1.0 && downsampled_frames < (int)SIGNAL_BUFFER_SIZE)
             {
+                resample_accum -= 1.0;
+
+                int32_t sample;
+                if (ch_layout == LEFT)
+                    sample = buffer[i*2];
+                else if (ch_layout == RIGHT)
+                    sample = buffer[i*2 + 1];
+                else // STEREO
+                    sample = (buffer[i*2] + buffer[i*2 + 1]) / 2;
+
                 buffer_downsampled[downsampled_frames++] = sample;
             }
-
-            resample_remainder = (resample_remainder + 1) % resample_ratio;
         }
 
         if (downsampled_frames > 0)
