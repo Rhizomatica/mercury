@@ -37,6 +37,9 @@
 #define CFG_KEY_SOUND_SYSTEM        "main:sound_system"
 #define CFG_KEY_ARQ_TCP_BASE_PORT   "main:arq_tcp_base_port"
 #define CFG_KEY_BROADCAST_TCP_PORT  "main:broadcast_tcp_port"
+#define CFG_KEY_VERBOSE             "main:verbose"
+#define CFG_KEY_FREEDV_VERBOSITY    "main:freedv_verbosity"
+#define CFG_KEY_HAMLIB_LOG_LEVEL    "main:hamlib_log_level"
 
 /* Holds all values read from the init configuration file */
 typedef struct {
@@ -52,6 +55,9 @@ typedef struct {
     int      sound_system;          /* AUDIO_SUBSYSTEM_* or -1 for auto */
     int      arq_tcp_base_port;
     int      broadcast_tcp_port;
+    bool     verbose;
+    int      freedv_verbosity;      /* 0..3 */
+    int      hamlib_log_level;      /* 0..6 */
 } mercury_config;
 
 /* Load configuration from an INI file into |cfg|.

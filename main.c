@@ -221,6 +221,9 @@ int main(int argc, char *argv[])
             audio_system       = mcfg.sound_system;
             base_tcp_port      = mcfg.arq_tcp_base_port;
             broadcast_port     = mcfg.broadcast_tcp_port;
+            verbose            = mcfg.verbose ? 1 : 0;
+            freedv_verbosity   = mcfg.freedv_verbosity;
+            hamlib_log_level   = mcfg.hamlib_log_level;
         }
     }
 
@@ -582,11 +585,11 @@ int main(int argc, char *argv[])
         audioio_init_internal(input_dev, output_dev, audio_system, rx_input_channel, &radio_capture, &radio_playback);
     }
 
-        if (radio_io_init(radio_type, radio_device, hamlib_log_level) != 0)
-        {
-            fprintf(stderr, "Failed to initialize radio control.\n");
-            hermes_log_shutdown();
-            return EXIT_FAILURE;
+    if (radio_io_init(radio_type, radio_device, hamlib_log_level) != 0)
+    {
+        fprintf(stderr, "Failed to initialize radio control.\n");
+        hermes_log_shutdown();
+        return EXIT_FAILURE;
     }
 
     HLOGI("main", "Initializing Modem");
@@ -640,6 +643,9 @@ int main(int argc, char *argv[])
     mcfg.sound_system      = audio_system;
     mcfg.arq_tcp_base_port = base_tcp_port;
     mcfg.broadcast_tcp_port = broadcast_port;
+    mcfg.verbose           = verbose ? true : false;
+    mcfg.freedv_verbosity  = freedv_verbosity;
+    mcfg.hamlib_log_level  = hamlib_log_level;
 
     ui_ctx_t ui_ctx;
     if (ui_enabled)
@@ -672,7 +678,7 @@ int main(int argc, char *argv[])
     if (ui_enabled)
         ui_comm_shutdown(&ui_ctx);
 
-        radio_io_shutdown();
+    radio_io_shutdown();
 
     shutdown_modem(&g_modem);
     HLOGI("main", "Shutting down");
