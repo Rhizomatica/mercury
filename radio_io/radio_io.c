@@ -63,7 +63,17 @@ int radio_io_init(int radio_type, const char *device_path, int hamlib_log_level)
     HLOGI(RADIO_LOG_TAG, "Initializing radio (type=%d, device=%s, hamlib_log_level=%d)",
           radio_type, device_path && device_path[0] ? device_path : "(none)", hamlib_log_level);
 
-    g_hamlib_log_level = hamlib_log_level;
+    /* Validate/clamp hamlib_log_level so that g_hamlib_log_level always
+     * reflects a value that can actually be applied (valid range 0-6). */
+    int effective_log_level = hamlib_log_level;
+    if (effective_log_level < 0 || effective_log_level > 6)
+    {
+        HLOGW(RADIO_LOG_TAG,
+              "Invalid hamlib_log_level=%d; clamping to 0 (valid range is 0-6)",
+              hamlib_log_level);
+        effective_log_level = 0;
+    }
+    g_hamlib_log_level = effective_log_level;
 
     if (radio_type == RADIO_TYPE_NONE)
     {
