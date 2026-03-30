@@ -29,8 +29,9 @@
 /* Initialize radio control.
  * radio_type: RADIO_TYPE_NONE (disabled), RADIO_TYPE_SHM, or hamlib model ID (>0).
  * device_path: hamlib device file or ip:port (ignored for SHM/NONE).
+ * hamlib_log_level: hamlib debug level (0-6). 0=NONE, 1=BUG, 2=ERR, 3=WARN, 4=VERBOSE, 5=TRACE, 6=CACHE.
  * Returns 0 on success, -1 on failure. */
-int radio_io_init(int radio_type, const char *device_path);
+int radio_io_init(int radio_type, const char *device_path, int hamlib_log_level);
 
 /* Shutdown radio control and release resources. */
 void radio_io_shutdown(void);
@@ -54,13 +55,17 @@ int radio_io_get_radio_list(char ids[][16], char names[][64], int max_count);
 
 /* Restart radio subsystem with a new radio type.
  * Thread-safe — blocks key_on / key_off during the restart cycle.
+ * hamlib_log_level: hamlib debug level (0-6).
  * Returns 0 on success, -1 on failure. */
-int radio_io_restart(int new_radio_type, const char *device_path);
+int radio_io_restart(int new_radio_type, const char *device_path, int hamlib_log_level);
 
 /* Return the device path used by the current (or last) init. */
 const char *radio_io_get_device_path(void);
 
 /* Return the current radio type (RADIO_TYPE_NONE, RADIO_TYPE_SHM, or hamlib model ID). */
 int radio_io_get_radio_type(void);
+
+/* Return the hamlib debug level used by the current (or last) init. */
+int radio_io_get_hamlib_log_level(void);
 
 #endif /* RADIO_IO_H_ */

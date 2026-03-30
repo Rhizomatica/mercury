@@ -37,7 +37,7 @@ over HF radio links in rural and emergency scenarios.
 
 ```
 Usage modes:
-./mercury -m [mode_index] -i [device] -o [device] -x [sound_system] -p [arq_tcp_base_port] -b [broadcast_tcp_port] -f [freedv_verbosity] -k [rx_input_channel] [-G] [-T] [-U ui_port] [-W]
+./mercury -m [mode_index] -i [device] -o [device] -x [sound_system] -p [arq_tcp_base_port] -b [broadcast_tcp_port] -f [freedv_verbosity] -H [hamlib_log_level] -k [rx_input_channel] [-G] [-T] [-U ui_port] [-W]
 ./mercury [-h -l -z]
 
 Options:
@@ -45,6 +45,7 @@ Options:
  -m [mode_index]            Startup payload mode index shown in "-l" output. Used for broadcast and idle/disconnected ARQ decode. Default is 1 (DATAC3).
  -s [mode_index]            Legacy alias for -m.
  -f [freedv_verbosity]      FreeDV modem verbosity level (0..3). Default is 0.
+ -H [hamlib_log_level]      Hamlib radio log level (0..6). Default is 0.
  -k [rx_input_channel]      Capture input channel: left, right, or stereo. Default is left.
  -i [device]                Radio Capture device id (eg: "plughw:0,0").
  -o [device]                Radio Playback device id (eg: "plughw:0,0").

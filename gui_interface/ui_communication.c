@@ -55,11 +55,6 @@ extern int get_soundcard_list(int audio_system, int mode,
 extern int audioio_restart(const char *capture_dev, const char *playback_dev,
                            int audio_subsys, int capture_channel_layout);
 
-extern int radio_io_get_radio_list(char ids[][16], char names[][64], int max_count);
-extern int radio_io_restart(int new_radio_type, const char *device_path);
-extern const char *radio_io_get_device_path(void);
-extern int radio_io_get_radio_type(void);
-
 // global shutdown flag from main.c
 extern volatile bool shutdown_;
 
@@ -131,11 +126,11 @@ static int ws_command_handler(const ws_command_t *cmd, void *user_data)
         HLOGI(UI_LOG_TAG, "Radio set_radio_config command: model_id=%d device_path=\"%s\"",
               new_radio_type, dev_path);
         if (new_radio_type == RADIO_TYPE_NONE) {
-            radio_io_restart(RADIO_TYPE_NONE, NULL);
+            radio_io_restart(RADIO_TYPE_NONE, NULL, radio_io_get_hamlib_log_level());
             HLOGI(UI_LOG_TAG, "Radio type set to NONE - radio subsystem shut down");
             ctx->radio_list_pending = 1;
         } else {
-            int rc = radio_io_restart(new_radio_type, dev_path);
+            int rc = radio_io_restart(new_radio_type, dev_path, radio_io_get_hamlib_log_level());
             if (rc == 0) {
                 HLOGI(UI_LOG_TAG, "Radioio subsystem restarted (model=%d, path=%s)",
                       new_radio_type, dev_path);

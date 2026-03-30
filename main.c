@@ -98,13 +98,14 @@ static int parse_rx_channel_layout(const char *value)
 static void print_usage(const char *prog)
 {
     printf("Usage modes: \n");
-    printf("%s -m [mode_index] -i [device] -o [device] -x [sound_system] -p [arq_tcp_base_port] -b [broadcast_tcp_port] -f [freedv_verbosity] -k [rx_input_channel] [-G] [-T] [-U ui_port] [-W]\n", prog);
+    printf("%s -m [mode_index] -i [device] -o [device] -x [sound_system] -p [arq_tcp_base_port] -b [broadcast_tcp_port] -f [freedv_verbosity] -H [hamlib_log_level] -k [rx_input_channel] [-G] [-T] [-U ui_port] [-W]\n", prog);
     printf("%s [-h -l -z]\n", prog);
     printf("\nOptions:\n");
     printf(" -c [cpu_nr]                Run on CPU [cpu_nr]. Use -1 to disable CPU selection, which is the default.\n");
     printf(" -m [mode_index]            Startup payload mode index shown in \"-l\" output. Used for broadcast and idle/disconnected ARQ decode. Default is 1 (DATAC3)\n");
     printf(" -s [mode_index]            Legacy alias for -m.\n");
     printf(" -f [freedv_verbosity]      FreeDV modem verbosity level (0..3). Default is 0.\n");
+    printf(" -H [hamlib_log_level]      Hamlib radio log level (0..6). Default is 0.\n");
     printf(" -k [rx_input_channel]      Capture input channel: left, right, or stereo. Default is left.\n");
     printf(" -i [device]                Radio Capture device id (eg: \"plughw:0,0\").\n");
     printf(" -o [device]                Radio Playback device id (eg: \"plughw:0,0\").\n");
@@ -168,6 +169,7 @@ int main(int argc, char *argv[])
     bool tls_enabled = false;
     int startup_payload_mode = FREEDV_MODE_DATAC3;
     int freedv_verbosity = 0;
+    int hamlib_log_level = 0;
     int rx_input_channel = LEFT;
     
     input_dev[0] = 0;
@@ -181,7 +183,7 @@ int main(int argc, char *argv[])
 
     // --- Load init configuration file ---
     // First pass: extract -C config path only
-    const char *optstring = "hc:s:m:f:k:li:o:x:p:b:zvtrL:JR:U:A:C:SKWGT";
+    const char *optstring = "hc:s:m:f:H:k:li:o:x:p:b:zvtrL:JR:U:A:C:SKWGT";
     const char *cfg_path = "mercury.ini";
     int opt;
     while ((opt = getopt(argc, argv, optstring)) != -1)
@@ -270,6 +272,19 @@ int main(int argc, char *argv[])
                     return EXIT_FAILURE;
                 }
                 freedv_verbosity = (int)verbosity;
+            }
+            break;
+        case 'H':
+            if (optarg)
+            {
+                char *endptr = NULL;
+                long log_level = strtol(optarg, &endptr, 10);
+                if (endptr == optarg || *endptr != '\0' || log_level < 0 || log_level > 6)
+                {
+                    fprintf(stderr, "Invalid Hamlib log level '%s'. Valid range is 0..6.\n", optarg);
+                    return EXIT_FAILURE;
+                }
+                hamlib_log_level = (int)log_level;
             }
             break;
         case 'k':
@@ -567,14 +582,11 @@ int main(int argc, char *argv[])
         audioio_init_internal(input_dev, output_dev, audio_system, rx_input_channel, &radio_capture, &radio_playback);
     }
 
-    if (radio_type != RADIO_TYPE_NONE)
-    {
-        if (radio_io_init(radio_type, radio_device) != 0)
+        if (radio_io_init(radio_type, radio_device, hamlib_log_level) != 0)
         {
             fprintf(stderr, "Failed to initialize radio control.\n");
             hermes_log_shutdown();
             return EXIT_FAILURE;
-        }
     }
 
     HLOGI("main", "Initializing Modem");
@@ -660,10 +672,7 @@ int main(int argc, char *argv[])
     if (ui_enabled)
         ui_comm_shutdown(&ui_ctx);
 
-    if (radio_type != RADIO_TYPE_NONE)
-    {
         radio_io_shutdown();
-    }
 
     shutdown_modem(&g_modem);
     HLOGI("main", "Shutting down");
