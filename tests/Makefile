@@ -30,28 +30,49 @@ PROJECT_INC = -I../common -I../modem -I../datalink_arq -I../datalink_broadcast \
               -I../data_interfaces -I../gui_interface -I../radio_io -I../audioio/ffaudio
 
 CFLAGS = $(COMMON_CFLAGS) $(UNITY_INC) $(PROJECT_INC)
-LDFLAGS = -lpthread -lrt
+LDFLAGS = -lpthread -lrt -lm
+
+# Shared mock stubs for ARQ tests
+ARQ_STUBS = datalink_arq/arq_test_stubs.c
 
 # Test executables
-TEST_BINS = test_ring_buffer
+TEST_BINS = test_ring_buffer test_arq_protocol test_arq_timing test_arq_fsm
 
 .PHONY: all test clean
 
 all: test
 
 test: $(TEST_BINS)
-	@echo "=== Running Unit Tests ==="
+	@echo "\n=== Running Unit Tests ===\n"
 	@fail=0; \
 	for t in $(TEST_BINS); do \
 		echo "--- Running $$t ---"; \
 		./$$t || fail=1; \
 	done; \
 	if [ $$fail -ne 0 ]; then echo "TESTS FAILED"; exit 1; fi
-	@echo "=== All Tests Passed ==="
+	@echo "\n=== All Tests Passed ===\n"
 
 # Common module tests
 test_ring_buffer: common/test_ring_buffer.c $(UNITY_SRC) ../common/ring_buffer_posix.c ../common/os_interop.c ../common/shm_posix.c
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
+# ARQ protocol tests (frame encode/decode, utilities)
+test_arq_protocol: datalink_arq/test_arq_protocol.c $(UNITY_SRC) $(ARQ_STUBS) \
+                   ../datalink_arq/arq_protocol.c ../datalink_arq/arith.c
+	$(CC) $(CFLAGS) -I../modem/freedv -o $@ $^ $(LDFLAGS)
+
+# ARQ timing tests (instrumentation recording)
+test_arq_timing: datalink_arq/test_arq_timing.c $(UNITY_SRC) $(ARQ_STUBS) \
+                 ../datalink_arq/arq_timing.c ../datalink_arq/arq_protocol.c \
+                 ../datalink_arq/arith.c
+	$(CC) $(CFLAGS) -I../modem/freedv -o $@ $^ $(LDFLAGS)
+
+# ARQ FSM tests (state transitions, callback invocations)
+test_arq_fsm: datalink_arq/test_arq_fsm.c $(UNITY_SRC) $(ARQ_STUBS) \
+              ../datalink_arq/arq_fsm.c ../datalink_arq/fsm.c \
+              ../datalink_arq/arq_protocol.c ../datalink_arq/arq_timing.c \
+              ../datalink_arq/arith.c
+	$(CC) $(CFLAGS) -I../modem/freedv -o $@ $^ $(LDFLAGS)
 
 clean:
 	rm -f $(TEST_BINS)
