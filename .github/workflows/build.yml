@@ -3,6 +3,7 @@
 # Triggers:
 #   - Automatically on every Pull Request
 #   - Manually via workflow_dispatch (select which targets to build)
+#   - Automatically on every push to mercuryv2
 #
 # Builds:
 #   - Linux amd64 (native, Debian 13)
@@ -13,6 +14,8 @@ name: Build
 
 on:
   pull_request:
+    branches: [mercuryv2]
+  push:
     branches: [mercuryv2]
   workflow_dispatch:
     inputs:
@@ -41,6 +44,7 @@ jobs:
     container: debian:trixie
     if: >-
       github.event_name == 'pull_request' ||
+      github.event_name == 'push' ||
       github.event.inputs.build_linux_amd64 == 'true'
     timeout-minutes: 5
 
@@ -88,6 +92,7 @@ jobs:
     container: debian:trixie
     if: >-
       github.event_name == 'pull_request' ||
+      github.event_name == 'push' ||
       github.event.inputs.build_linux_arm64 == 'true'
     timeout-minutes: 5
 
@@ -142,6 +147,7 @@ jobs:
     container: debian:trixie
     if: >-
       github.event_name == 'pull_request' ||
+      github.event_name == 'push' ||
       github.event.inputs.build_windows == 'true'
     timeout-minutes: 5
 

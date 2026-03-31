@@ -3,6 +3,7 @@
 # Triggers:
 #   - Automatically on every Pull Request
 #   - Manually via workflow_dispatch
+#   - Automatically on every push to mercuryv2
 #
 # Runs unit tests on Linux amd64 only.
 
@@ -10,6 +11,8 @@ name: UT
 
 on:
   pull_request:
+    branches: [mercuryv2]
+  push:
     branches: [mercuryv2]
   workflow_dispatch:
     inputs:
