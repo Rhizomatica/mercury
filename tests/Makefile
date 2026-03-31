@@ -36,7 +36,8 @@ LDFLAGS = -lpthread -lrt -lm
 ARQ_STUBS = datalink_arq/arq_test_stubs.c
 
 # Test executables
-TEST_BINS = test_ring_buffer test_arq_protocol test_arq_timing test_arq_fsm
+TEST_BINS = test_ring_buffer test_arq_protocol test_arq_timing test_arq_fsm \
+            test_tcp_interfaces
 
 .PHONY: all test clean
 
@@ -72,6 +73,11 @@ test_arq_fsm: datalink_arq/test_arq_fsm.c $(UNITY_SRC) $(ARQ_STUBS) \
               ../datalink_arq/arq_fsm.c ../datalink_arq/fsm.c \
               ../datalink_arq/arq_protocol.c ../datalink_arq/arq_timing.c \
               ../datalink_arq/arith.c
+	$(CC) $(CFLAGS) -I../modem/freedv -o $@ $^ $(LDFLAGS)
+
+# TCP TNC interface tests (command parsing, status emitters)
+# Uses #include "tcp_interfaces.c" — no separate source linkage needed
+test_tcp_interfaces: data_interfaces/test_tcp_interfaces.c $(UNITY_SRC)
 	$(CC) $(CFLAGS) -I../modem/freedv -o $@ $^ $(LDFLAGS)
 
 clean:
