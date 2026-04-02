@@ -33,7 +33,7 @@ int get_temp_path(char* pathBuffer, int pathBufferSize, const char* pathPart)
 int MUTEX_LOCK(HANDLE *mqh_lock)
 {
 	DWORD dwWaitResult = WaitForSingleObject(
-		mqh_lock,    // handle to mutex
+		*mqh_lock,    // handle to mutex
 		-1);  // no time-out interval
 
     switch (dwWaitResult)
@@ -56,8 +56,8 @@ int COND_WAIT(HANDLE *mqh_wait, HANDLE *mqh_lock)
 {
 	DWORD dwWaitResult;
 
-	ReleaseMutex(mqh_lock);
-	dwWaitResult = WaitForSingleObject(mqh_wait, -1);
+	ReleaseMutex(*mqh_lock);
+	dwWaitResult = WaitForSingleObject(*mqh_wait, -1);
 	if(dwWaitResult != WAIT_OBJECT_0) {
 		return EINVAL;
 	}
@@ -70,8 +70,8 @@ int COND_TIMED_WAIT(HANDLE *mqh_wait, HANDLE *mqh_lock, const struct timespec* a
 {
 	DWORD dwWaitResult;
 
-	ReleaseMutex(mqh_lock);
-	dwWaitResult = WaitForSingleObject(mqh_wait, (DWORD) abstime->tv_sec);
+	ReleaseMutex(*mqh_lock);
+	dwWaitResult = WaitForSingleObject(*mqh_wait, (DWORD) abstime->tv_sec);
 	switch(dwWaitResult) {
 	    case WAIT_OBJECT_0:
 	        break;
@@ -81,7 +81,7 @@ int COND_TIMED_WAIT(HANDLE *mqh_wait, HANDLE *mqh_lock, const struct timespec* a
 	        return EINVAL;
 	}
 
-	dwWaitResult = WaitForSingleObject(mqh_lock,(DWORD) abstime->tv_sec);
+	dwWaitResult = WaitForSingleObject(*mqh_lock,(DWORD) abstime->tv_sec);
 	if(dwWaitResult == WAIT_OBJECT_0) {
 	    return 0;
 	}
@@ -96,7 +96,7 @@ int COND_TIMED_WAIT(HANDLE *mqh_wait, HANDLE *mqh_lock, const struct timespec* a
 /* Returns 0 on success */
 int COND_SIGNAL(HANDLE *mqh_wait)
 {
-	BOOL result = SetEvent(mqh_wait);
+	BOOL result = SetEvent(*mqh_wait);
 	if (result) {
 		return 0;
 	}
@@ -104,7 +104,7 @@ int COND_SIGNAL(HANDLE *mqh_wait)
 }
 void MUTEX_UNLOCK(HANDLE *mqh_lock)
 {
-	ReleaseMutex(mqh_lock);
+	ReleaseMutex(*mqh_lock);
 }
 
 #endif
