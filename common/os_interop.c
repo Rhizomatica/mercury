@@ -16,6 +16,9 @@
 int get_temp_path(char* pathBuffer, int pathBufferSize, const char* pathPart)
 {
 	const char* temp = getenv(TMP_ENV_NAME);
+	if(temp == NULL) {
+		return 0;
+	}
 	if(strlen(temp) >= pathBufferSize - strlen(pathPart+1)) {
 		return 0;
 	}
