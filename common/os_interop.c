@@ -97,7 +97,10 @@ int COND_TIMED_WAIT(HANDLE *mqh_wait, HANDLE *mqh_lock, const struct timespec* a
 int COND_SIGNAL(HANDLE *mqh_wait)
 {
 	BOOL result = SetEvent(mqh_wait);
-	return result == 0;
+	if (result) {
+		return 0;
+	}
+	return EINVAL;
 }
 void MUTEX_UNLOCK(HANDLE *mqh_lock)
 {
