@@ -147,7 +147,7 @@ void *shm_map(int fd, size_t size)
 // returns 0 on success, -1 on error
 int shm_unmap(void *addr, size_t size)
 {
-#if defined(WIN32)
+#if defined(_WIN32)
 
 #if 0  // TODO: we need to have access to these variables...
     if (fmap != NULL)
