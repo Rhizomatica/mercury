@@ -47,7 +47,7 @@ jobs:
           repository: Rhizomatica/mercury
           ssh-key: ${{ secrets.SSH_PRIVATE_KEY }}
           fetch-depth: 0
-          ref: ${{ github.event.inputs.branch || 'mercuryv2' }}
+          ref: ${{ github.event.inputs.branch || github.event.pull_request.head.sha || github.sha }}
 
       - name: Git Safe Directory
         run: git config --global --add safe.directory /__w/mercury/mercury

@@ -66,7 +66,7 @@ jobs:
           repository: Rhizomatica/mercury
           ssh-key: ${{ secrets.SSH_PRIVATE_KEY }}
           fetch-depth: 0
-          ref: ${{ github.event.inputs.branch || 'mercuryv2' }}
+          ref: ${{ github.event.inputs.branch || github.event.pull_request.head.sha || github.sha }}
 
       - name: Git Safe Directory
         run: git config --global --add safe.directory /__w/mercury/mercury
@@ -75,7 +75,7 @@ jobs:
         shell: bash
         run: |
           make clean
-          make -j$(nproc) 2>&1 | tee build-linux-amd64.log
+          make -j$(nproc) 2>&1
           echo "BUILD_EXIT_CODE=${PIPESTATUS[0]}" >> "$GITHUB_ENV"
 
       - name: Check build result
@@ -121,7 +121,7 @@ jobs:
           repository: Rhizomatica/mercury
           ssh-key: ${{ secrets.SSH_PRIVATE_KEY }}
           fetch-depth: 0
-          ref: ${{ github.event.inputs.branch || 'mercuryv2' }}
+          ref: ${{ github.event.inputs.branch || github.event.pull_request.head.sha || github.sha }}
 
       - name: Git Safe Directory
         run: git config --global --add safe.directory /__w/mercury/mercury
@@ -130,7 +130,7 @@ jobs:
         shell: bash
         run: |
           make clean
-          make -j$(nproc) CC=aarch64-linux-gnu-gcc 2>&1 | tee build-linux-arm64.log
+          make -j$(nproc) CC=aarch64-linux-gnu-gcc 2>&1
           echo "BUILD_EXIT_CODE=${PIPESTATUS[0]}" >> "$GITHUB_ENV"
 
       - name: Check build result
@@ -167,7 +167,7 @@ jobs:
           repository: Rhizomatica/mercury
           ssh-key: ${{ secrets.SSH_PRIVATE_KEY }}
           fetch-depth: 0
-          ref: ${{ github.event.inputs.branch || 'mercuryv2' }}
+          ref: ${{ github.event.inputs.branch || github.event.pull_request.head.sha || github.sha }}
 
       - name: Git Safe Directory
         run: git config --global --add safe.directory /__w/mercury/mercury
@@ -175,7 +175,7 @@ jobs:
       - name: Build Mercury (Windows x64 cross-compile)
         shell: bash
         run: |
-          make windows 2>&1 | tee build-windows-x64.log
+          make windows 2>&1
           echo "BUILD_EXIT_CODE=${PIPESTATUS[0]}" >> "$GITHUB_ENV"
 
       - name: Check build result
