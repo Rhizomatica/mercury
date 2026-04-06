@@ -184,6 +184,7 @@ struct ffaudio_buf {
 	ffuint last_filled;
 	ffuint drained;
 	ffuint nonblock;
+	ffuint started;
 
 	const char *errfunc;
 	ffuint err;
@@ -344,6 +345,9 @@ int ffdsound_open(ffaudio_buf *b, ffaudio_conf *conf, ffuint flags)
 
 int ffdsound_start(ffaudio_buf *b)
 {
+	if (b->started)
+		return 0;
+
 	int r;
 
 	if (b->play_buf != NULL) {
@@ -361,6 +365,7 @@ int ffdsound_start(ffaudio_buf *b)
 		}
 	}
 
+	b->started = 1;
 	return 0;
 }
 
@@ -383,6 +388,7 @@ int ffdsound_stop(ffaudio_buf *b)
 		}
 	}
 
+	b->started = 0;
 	return 0;
 }
 
