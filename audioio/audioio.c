@@ -678,7 +678,7 @@ void *radio_capture_thread(void *device_ptr)
             double rate_8k  = diag_total_8k_samples / elapsed_sec;
             size_t buf_used = size_buffer(capture_buffer);
             size_t buf_free = circular_buf_free_size(capture_buffer);
-            HLOGI("audio-cap",
+            HLOGD("audio-cap",
                   "DIAG: %.1fs | reads=%u errs=%u | 48kHz=%.0f Hz (expect 48000) | 8kHz=%.0f Hz (expect 8000) | last_read=%d B | ringbuf used=%zu free=%zu | drops=%u",
                   elapsed_sec, diag_read_calls, diag_read_errors,
                   rate_48k, rate_8k, diag_last_read_bytes,

@@ -1482,7 +1482,7 @@ void *rx_thread(void *g_modem)
                 double avg_read_ms = rx_diag_iterations ?
                     (double)rx_diag_read_time_ms / rx_diag_iterations : 0.0;
                 size_t buf_used = size_buffer(capture_buffer);
-                HLOGI("modem-rx",
+                HLOGD("modem-rx",
                       "DIAG: %.1fs | iters=%u | consumed=%.0f samp/s (expect 8000) | avg_read_wait=%.1f ms | ringbuf_used=%zu B | chunk=%d",
                       sec, rx_diag_iterations, rx_rate, avg_read_ms,
                       buf_used, chunk_samples);
