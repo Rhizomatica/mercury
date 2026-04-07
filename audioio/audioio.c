@@ -141,7 +141,8 @@ void *radio_playback_thread(void *device_ptr)
     conf.buf.format = FFAUDIO_F_INT32;
     conf.buf.sample_rate = 48000;
     conf.buf.channels = 2;
-    conf.buf.device_id = (const char *) device_ptr;
+    conf.buf.device_id = (device_ptr && ((const char *)device_ptr)[0] != '\0')
+                         ? (const char *) device_ptr : NULL;
     uint32_t period_ms;
     uint32_t period_bytes;
 
@@ -414,14 +415,21 @@ void *radio_capture_thread(void *device_ptr)
     conf.buf.format = FFAUDIO_F_INT32;
     conf.buf.sample_rate = 48000;
     conf.buf.channels = 2;
-    conf.buf.device_id = (const char *) device_ptr;
+    conf.buf.device_id = (device_ptr && ((const char *)device_ptr)[0] != '\0')
+                         ? (const char *) device_ptr : NULL;
 
 #if defined(_WIN32)
-    conf.buf.buffer_length_msec = 40;
-    if (audio_subsystem == AUDIO_SUBSYSTEM_WASAPI)
+    if (audio_subsystem == AUDIO_SUBSYSTEM_WASAPI) {
+        conf.buf.buffer_length_msec = 40;
         audio = (ffaudio_interface *) &ffwasapi;
-    if (audio_subsystem == AUDIO_SUBSYSTEM_DSOUND)
+    }
+    if (audio_subsystem == AUDIO_SUBSYSTEM_DSOUND) {
+        /* DSound on Win10/11 is emulated via WASAPI. A small looping buffer
+         * causes the write cursor to lap our read position between polls,
+         * losing most captured data.  Use 500ms (DSound's own default). */
+        conf.buf.buffer_length_msec = 200;
         audio = (ffaudio_interface *) &ffdsound;
+    }
 #elif defined(__linux__)
     conf.buf.buffer_length_msec = 30;
     if (audio_subsystem == AUDIO_SUBSYSTEM_ALSA)
