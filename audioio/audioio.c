@@ -14,7 +14,7 @@
 #include "os_interop.h"
 #include <ffaudio/audio.h>
 #include "std.h"
-#ifdef FF_LINUX
+#ifndef FF_WIN
 #include <time.h>
 #endif
 
@@ -104,12 +104,23 @@ static inline void ffthread_sleep(ffuint msec)
 #endif
 }
 
+static inline uint64_t audioio_monotonic_ms(void)
+{
+#ifdef FF_WIN
+    return (uint64_t)GetTickCount64();
+#else
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return ((uint64_t)ts.tv_sec * 1000ULL) + ((uint64_t)ts.tv_nsec / 1000000ULL);
+#endif
+}
+
 int audioio_pick_default_subsystem(void)
 {
 #if defined(__linux__)
     return AUDIO_SUBSYSTEM_ALSA;
 #elif defined(_WIN32)
-    return AUDIO_SUBSYSTEM_DSOUND;
+    return AUDIO_SUBSYSTEM_WASAPI;
 #elif defined(__FREEBSD__)
     return AUDIO_SUBSYSTEM_OSS;
 #elif defined(__APPLE__)
@@ -130,7 +141,8 @@ void *radio_playback_thread(void *device_ptr)
     conf.buf.format = FFAUDIO_F_INT32;
     conf.buf.sample_rate = 48000;
     conf.buf.channels = 2;
-    conf.buf.device_id = (const char *) device_ptr;
+    conf.buf.device_id = (device_ptr && ((const char *)device_ptr)[0] != '\0')
+                         ? (const char *) device_ptr : NULL;
     uint32_t period_ms;
     uint32_t period_bytes;
 
@@ -240,7 +252,14 @@ void *radio_playback_thread(void *device_ptr)
         goto cleanup_play;
     }
 
-    HLOGI("audio-play", "I/O playback (%s) %d bits per sample / %dHz / %dch / %dms buffer", device_ptr ? (const char *)device_ptr : "default", cfg->format, cfg->sample_rate, cfg->channels, cfg->buffer_length_msec);
+    HLOGI("audio-play", "I/O playback (%s) %s / %dHz / %dch / %dms buffer",
+          device_ptr ? (const char *)device_ptr : "default",
+          cfg->format == FFAUDIO_F_FLOAT32 ? "float32" :
+          cfg->format == FFAUDIO_F_INT32   ? "int32"   :
+          cfg->format == FFAUDIO_F_INT24_4 ? "int24in32" :
+          cfg->format == FFAUDIO_F_INT24   ? "int24"   :
+          cfg->format == FFAUDIO_F_INT16   ? "int16"   : "unknown",
+          cfg->sample_rate, cfg->channels, cfg->buffer_length_msec);
 
 
     frame_size = cfg->channels * (cfg->format & 0xff) / 8;
@@ -396,14 +415,21 @@ void *radio_capture_thread(void *device_ptr)
     conf.buf.format = FFAUDIO_F_INT32;
     conf.buf.sample_rate = 48000;
     conf.buf.channels = 2;
-    conf.buf.device_id = (const char *) device_ptr;
+    conf.buf.device_id = (device_ptr && ((const char *)device_ptr)[0] != '\0')
+                         ? (const char *) device_ptr : NULL;
 
 #if defined(_WIN32)
-    conf.buf.buffer_length_msec = 40;
-    if (audio_subsystem == AUDIO_SUBSYSTEM_WASAPI)
+    if (audio_subsystem == AUDIO_SUBSYSTEM_WASAPI) {
+        conf.buf.buffer_length_msec = 40;
         audio = (ffaudio_interface *) &ffwasapi;
-    if (audio_subsystem == AUDIO_SUBSYSTEM_DSOUND)
+    }
+    if (audio_subsystem == AUDIO_SUBSYSTEM_DSOUND) {
+        /* DSound on Win10/11 is emulated via WASAPI. A small looping buffer
+         * causes the write cursor to lap our read position between polls,
+         * losing most captured data.  Use 500ms (DSound's own default). */
+        conf.buf.buffer_length_msec = 200;
         audio = (ffaudio_interface *) &ffdsound;
+    }
 #elif defined(__linux__)
     conf.buf.buffer_length_msec = 30;
     if (audio_subsystem == AUDIO_SUBSYSTEM_ALSA)
@@ -489,10 +515,29 @@ void *radio_capture_thread(void *device_ptr)
         goto cleanup_cap;
     }
 
-    HLOGI("audio-cap", "I/O capture (%s) %d bits per sample / %dHz / %dch / %dms buffer", device_ptr ? (const char *)device_ptr : "default", cfg->format, cfg->sample_rate, cfg->channels, cfg->buffer_length_msec);
+    HLOGI("audio-cap", "I/O capture (%s) %s / %dHz / %dch / %dms buffer",
+          device_ptr ? (const char *)device_ptr : "default",
+          cfg->format == FFAUDIO_F_FLOAT32 ? "float32" :
+          cfg->format == FFAUDIO_F_INT32   ? "int32"   :
+          cfg->format == FFAUDIO_F_INT24_4 ? "int24in32" :
+          cfg->format == FFAUDIO_F_INT24   ? "int24"   :
+          cfg->format == FFAUDIO_F_INT16   ? "int16"   : "unknown",
+          cfg->sample_rate, cfg->channels, cfg->buffer_length_msec);
 
     frame_size = cfg->channels * (cfg->format & 0xff) / 8;
     msec_bytes = cfg->sample_rate * frame_size / 1000;
+
+    bool capture_is_float = (cfg->format == FFAUDIO_F_FLOAT32);
+    bool capture_is_int16 = (cfg->format == FFAUDIO_F_INT16);
+    int  capture_channels = cfg->channels;
+
+    if (!capture_is_float && !capture_is_int16 &&
+        cfg->format != FFAUDIO_F_INT32 && cfg->format != FFAUDIO_F_INT24_4)
+    {
+        HLOGE("audio-cap", "Unsupported capture format %d, aborting", cfg->format);
+        audio->free(b);
+        return NULL;
+    }
 
     buffer_output = (int32_t *) malloc(SIGNAL_BUFFER_SIZE * sizeof(int32_t) * 2);
     buffer_downsampled = (int32_t *) malloc(SIGNAL_BUFFER_SIZE * sizeof(int32_t));
@@ -506,21 +551,28 @@ void *radio_capture_thread(void *device_ptr)
     ch_layout = capture_input_channel_layout;
 
     static int resample_remainder = 0;  // Track fractional samples for accurate resampling
-    
+
+    /* --- Capture rate diagnostics (prints every ~5 seconds) --- */
+    uint64_t diag_start_ms = audioio_monotonic_ms();
+    uint64_t diag_total_48k_frames = 0;   /* frames read from audio device (48kHz) */
+    uint64_t diag_total_8k_samples = 0;   /* samples after downsampling (8kHz) */
+    uint32_t diag_read_calls = 0;
+    uint32_t diag_read_errors = 0;
+    uint32_t diag_buf_full_drops = 0;
+    int      diag_last_read_bytes = 0;
+
     while (!shutdown_ && !audio_shutdown_)
     {
         r = audio->read(b, (const void **)&buffer);
         if (r < 0)
         {
+            diag_read_errors++;
             HLOGE("audio-cap", "ffaudio.read: %s", audio->error(b));
             continue;
         }
-#if 0
-        else
-        {
-            printf(" %dms\n", r / msec_bytes);
-        }
-#endif
+
+        diag_read_calls++;
+        diag_last_read_bytes = r;
 
         int frames_read = r / frame_size;
         int frames_to_write = frames_read;
@@ -532,17 +584,64 @@ void *radio_capture_thread(void *device_ptr)
         for (int i = 0; i < frames_to_write; i++)
         {
             int32_t sample;
-            if (ch_layout == LEFT)
+
+            if (capture_channels == 1)
             {
-                sample = buffer[i*2];
+                // Mono: one sample per frame
+                if (capture_is_float)
+                {
+                    float fsample = ((float *)buffer)[i];
+                    if (fsample > 1.0f) fsample = 1.0f;
+                    else if (fsample < -1.0f) fsample = -1.0f;
+                    sample = (int32_t)(fsample * 2147483647.0f);
+                }
+                else if (capture_is_int16)
+                {
+                    sample = (int32_t)((int16_t *)buffer)[i] * 65536;
+                }
+                else
+                {
+                    sample = buffer[i];
+                }
             }
-            else if (ch_layout == RIGHT)
+            else
             {
-                sample = buffer[i*2 + 1];
-            }
-            else // STEREO
-            {
-                sample = (buffer[i*2] + buffer[i*2 + 1]) / 2;
+                // Stereo: two samples per frame, extract based on ch_layout
+                if (capture_is_float)
+                {
+                    float *fbuf = (float *)buffer;
+                    float fl = fbuf[i*2];
+                    float fr = fbuf[i*2 + 1];
+                    float fs;
+                    if (ch_layout == LEFT)
+                        fs = fl;
+                    else if (ch_layout == RIGHT)
+                        fs = fr;
+                    else
+                        fs = (fl + fr) * 0.5f;
+                    if (fs > 1.0f) fs = 1.0f;
+                    else if (fs < -1.0f) fs = -1.0f;
+                    sample = (int32_t)(fs * 2147483647.0f);
+                }
+                else if (capture_is_int16)
+                {
+                    int16_t *i16buf = (int16_t *)buffer;
+                    if (ch_layout == LEFT)
+                        sample = (int32_t)i16buf[i*2] * 65536;
+                    else if (ch_layout == RIGHT)
+                        sample = (int32_t)i16buf[i*2 + 1] * 65536;
+                    else
+                        sample = ((int32_t)i16buf[i*2] + (int32_t)i16buf[i*2 + 1]) * 32768;
+                }
+                else
+                {
+                    if (ch_layout == LEFT)
+                        sample = buffer[i*2];
+                    else if (ch_layout == RIGHT)
+                        sample = buffer[i*2 + 1];
+                    else
+                        sample = (buffer[i*2] + buffer[i*2 + 1]) / 2;
+                }
             }
 
             // Take every 6th sample (when remainder == 0)
@@ -560,7 +659,37 @@ void *radio_capture_thread(void *device_ptr)
             if (circular_buf_free_size(capture_buffer) >= (size_t)(downsampled_frames * sizeof(int32_t)))
                 write_buffer(capture_buffer, (uint8_t *)buffer_downsampled, downsampled_frames * sizeof(int32_t));
             else
+            {
+                diag_buf_full_drops += downsampled_frames;
                 HLOGW("audio-cap", "Buffer full in capture buffer!");
+            }
+        }
+
+        diag_total_48k_frames += frames_read;
+        diag_total_8k_samples += downsampled_frames;
+
+        /* Print diagnostics every ~5 seconds */
+        uint64_t diag_now = audioio_monotonic_ms();
+        uint64_t diag_elapsed = diag_now - diag_start_ms;
+        if (diag_elapsed >= 5000)
+        {
+            double elapsed_sec = diag_elapsed / 1000.0;
+            double rate_48k = diag_total_48k_frames / elapsed_sec;
+            double rate_8k  = diag_total_8k_samples / elapsed_sec;
+            size_t buf_used = size_buffer(capture_buffer);
+            size_t buf_free = circular_buf_free_size(capture_buffer);
+            HLOGD("audio-cap",
+                  "DIAG: %.1fs | reads=%u errs=%u | 48kHz=%.0f Hz (expect 48000) | 8kHz=%.0f Hz (expect 8000) | last_read=%d B | ringbuf used=%zu free=%zu | drops=%u",
+                  elapsed_sec, diag_read_calls, diag_read_errors,
+                  rate_48k, rate_8k, diag_last_read_bytes,
+                  buf_used, buf_free, diag_buf_full_drops);
+            /* reset counters */
+            diag_start_ms = diag_now;
+            diag_total_48k_frames = 0;
+            diag_total_8k_samples = 0;
+            diag_read_calls = 0;
+            diag_read_errors = 0;
+            diag_buf_full_drops = 0;
         }
     }
 

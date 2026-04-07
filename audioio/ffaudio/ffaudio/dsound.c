@@ -184,6 +184,7 @@ struct ffaudio_buf {
 	ffuint last_filled;
 	ffuint drained;
 	ffuint nonblock;
+	ffuint started;
 
 	const char *errfunc;
 	ffuint err;
@@ -319,7 +320,12 @@ static int dsound_open_capt(ffaudio_buf *b, ffaudio_conf *conf, ffuint flags)
 		goto end;
 	}
 
+	/* Cap capture poll interval: large buffers need frequent polling to
+	 * avoid the write cursor lapping our read position (especially on
+	 * Win10/11 where DSound is emulated via WASAPI). */
 	b->period_ms = conf->buffer_length_msec / 4;
+	if (b->period_ms > 10)
+		b->period_ms = 10;
 	return 0;
 
 end:
@@ -344,6 +350,9 @@ int ffdsound_open(ffaudio_buf *b, ffaudio_conf *conf, ffuint flags)
 
 int ffdsound_start(ffaudio_buf *b)
 {
+	if (b->started)
+		return 0;
+
 	int r;
 
 	if (b->play_buf != NULL) {
@@ -361,6 +370,7 @@ int ffdsound_start(ffaudio_buf *b)
 		}
 	}
 
+	b->started = 1;
 	return 0;
 }
 
@@ -383,6 +393,7 @@ int ffdsound_stop(ffaudio_buf *b)
 		}
 	}
 
+	b->started = 0;
 	return 0;
 }
 

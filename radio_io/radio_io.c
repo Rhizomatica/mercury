@@ -124,6 +124,13 @@ int radio_io_init(int radio_type, const char *device_path, int hamlib_log_level)
 
 #ifdef HAVE_HAMLIB
     /* Hamlib path */
+    /* Set hamlib debug level before rig_init so it takes effect immediately */
+    if (hamlib_log_level >= 0 && hamlib_log_level <= 6)
+    {
+        rig_set_debug((enum rig_debug_level_e)hamlib_log_level);
+        HLOGD(RADIO_LOG_TAG, "Set hamlib debug level to %d", hamlib_log_level);
+    }
+
     HLOGD(RADIO_LOG_TAG, "Calling rig_init(model=%d)", radio_type);
     radio = rig_init(radio_type);
     if (!radio)
@@ -133,13 +140,6 @@ int radio_io_init(int radio_type, const char *device_path, int hamlib_log_level)
         g_radio_type = RADIO_TYPE_NONE;
         pthread_mutex_unlock(&g_radio_mutex);
         return -1;
-    }
-
-    /* Set hamlib debug level */
-    if (hamlib_log_level >= 0 && hamlib_log_level <= 6)
-    {
-        rig_set_debug((enum rig_debug_level_e)hamlib_log_level);
-        HLOGD(RADIO_LOG_TAG, "Set hamlib debug level to %d", hamlib_log_level);
     }
 
     if (device_path && device_path[0])

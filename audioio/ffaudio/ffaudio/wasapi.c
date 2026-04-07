@@ -548,7 +548,7 @@ int ffwasapi_open(ffaudio_buf *b, ffaudio_conf *conf, ffuint flags)
 		goto end;
 	}
 
-	if (conf->device_id == NULL) {
+	if (conf->device_id == NULL || conf->device_id[0] == '\0') {
 		ffuint mode = (capture && !loopback) ? eCapture : eRender;
 		if (0 != (r = IMMDeviceEnumerator_GetDefaultAudioEndpoint(enu, mode, eConsole, &dev))) {
 			b->errfunc = "IMMDeviceEnumerator_GetDefaultAudioEndpoint";
