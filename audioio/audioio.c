@@ -120,7 +120,7 @@ int audioio_pick_default_subsystem(void)
 #if defined(__linux__)
     return AUDIO_SUBSYSTEM_ALSA;
 #elif defined(_WIN32)
-    return AUDIO_SUBSYSTEM_DSOUND;
+    return AUDIO_SUBSYSTEM_WASAPI;
 #elif defined(__FREEBSD__)
     return AUDIO_SUBSYSTEM_OSS;
 #elif defined(__APPLE__)
