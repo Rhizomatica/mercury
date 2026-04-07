@@ -1285,7 +1285,7 @@ void *rx_thread(void *g_modem)
     uint64_t rx_diag_start_ms = monotonic_ms();
     uint64_t rx_diag_total_samples = 0;
     uint32_t rx_diag_iterations = 0;
-    uint64_t rx_diag_read_time_us = 0; /* cumulative time blocked in read_buffer */
+    uint64_t rx_diag_read_time_ms = 0; /* cumulative time blocked in read_buffer */
 
     while (!shutdown_)
     {
@@ -1387,7 +1387,7 @@ void *rx_thread(void *g_modem)
                         (uint8_t *)capture_i32,
                         sizeof(int32_t) * (size_t)chunk_samples);
             uint64_t t1 = monotonic_ms();
-            rx_diag_read_time_us += (t1 - t0) * 1000ULL;
+            rx_diag_read_time_ms += (t1 - t0);
         }
         rx_diag_iterations++;
         rx_diag_total_samples += chunk_samples;
@@ -1456,17 +1456,17 @@ void *rx_thread(void *g_modem)
                 modem_stats_get_rx_spectrum(&g_spectrum_stats, g_rx_spectrum_dB,
                                             rx_fdm, spec_nin);
                 g_spectrum_valid = true;
+                /* Determine sample rate from the modem */
+                pthread_mutex_lock(&modem_freedv_lock);
+                if (modem->freedv)
+                    g_spectrum_sample_rate = freedv_get_modem_sample_rate(modem->freedv);
+                pthread_mutex_unlock(&modem_freedv_lock);
                 if (spectrum_first_log)
                 {
                     HLOGI("modem-rx", "Spectrum FFT active: nin=%d sr=%d dB[0]=%.1f",
                           spec_nin, g_spectrum_sample_rate, g_rx_spectrum_dB[0]);
                     spectrum_first_log = false;
                 }
-                /* Determine sample rate from the modem */
-                pthread_mutex_lock(&modem_freedv_lock);
-                if (modem->freedv)
-                    g_spectrum_sample_rate = freedv_get_modem_sample_rate(modem->freedv);
-                pthread_mutex_unlock(&modem_freedv_lock);
                 pthread_mutex_unlock(&g_spectrum_lock);
             }
         }
@@ -1480,7 +1480,7 @@ void *rx_thread(void *g_modem)
                 double sec = rx_elapsed / 1000.0;
                 double rx_rate = rx_diag_total_samples / sec;
                 double avg_read_ms = rx_diag_iterations ?
-                    (rx_diag_read_time_us / 1000.0) / rx_diag_iterations : 0.0;
+                    (double)rx_diag_read_time_ms / rx_diag_iterations : 0.0;
                 size_t buf_used = size_buffer(capture_buffer);
                 HLOGI("modem-rx",
                       "DIAG: %.1fs | iters=%u | consumed=%.0f samp/s (expect 8000) | avg_read_wait=%.1f ms | ringbuf_used=%zu B | chunk=%d",
@@ -1489,7 +1489,7 @@ void *rx_thread(void *g_modem)
                 rx_diag_start_ms = rx_now;
                 rx_diag_total_samples = 0;
                 rx_diag_iterations = 0;
-                rx_diag_read_time_us = 0;
+                rx_diag_read_time_ms = 0;
             }
         }
     }

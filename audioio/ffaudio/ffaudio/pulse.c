@@ -496,7 +496,8 @@ int ffpulse_open(ffaudio_buf *b, ffaudio_conf *conf, ffuint flags)
 	// For capture streams, set fragsize to control how often PA delivers data.
 	// Leaving it at 0xFFFFFFFF lets the server choose a potentially very large
 	// default, which causes long stalls in the capture thread on some setups.
-	attr.fragsize = _ffau_buf_msec_to_size(conf, conf->buffer_length_msec);
+	if (b->capture)
+		attr.fragsize = _ffau_buf_msec_to_size(conf, conf->buffer_length_msec);
 
 	pa_stream_set_state_callback(b->stm, pulse_on_change, b);
 	if (!b->capture) {

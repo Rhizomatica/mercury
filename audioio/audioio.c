@@ -14,7 +14,7 @@
 #include "os_interop.h"
 #include <ffaudio/audio.h>
 #include "std.h"
-#ifdef FF_LINUX
+#ifndef FF_WIN
 #include <time.h>
 #endif
 
@@ -531,6 +531,14 @@ void *radio_capture_thread(void *device_ptr)
     bool capture_is_int16 = (cfg->format == FFAUDIO_F_INT16);
     int  capture_channels = cfg->channels;
 
+    if (!capture_is_float && !capture_is_int16 &&
+        cfg->format != FFAUDIO_F_INT32 && cfg->format != FFAUDIO_F_INT24_4)
+    {
+        HLOGE("audio-cap", "Unsupported capture format %d, aborting", cfg->format);
+        audio->free(b);
+        return NULL;
+    }
+
     buffer_output = (int32_t *) malloc(SIGNAL_BUFFER_SIZE * sizeof(int32_t) * 2);
     buffer_downsampled = (int32_t *) malloc(SIGNAL_BUFFER_SIZE * sizeof(int32_t));
 
@@ -583,11 +591,13 @@ void *radio_capture_thread(void *device_ptr)
                 if (capture_is_float)
                 {
                     float fsample = ((float *)buffer)[i];
+                    if (fsample > 1.0f) fsample = 1.0f;
+                    else if (fsample < -1.0f) fsample = -1.0f;
                     sample = (int32_t)(fsample * 2147483647.0f);
                 }
                 else if (capture_is_int16)
                 {
-                    sample = (int32_t)((int16_t *)buffer)[i] << 16;
+                    sample = (int32_t)((int16_t *)buffer)[i] * 65536;
                 }
                 else
                 {
@@ -609,17 +619,19 @@ void *radio_capture_thread(void *device_ptr)
                         fs = fr;
                     else
                         fs = (fl + fr) * 0.5f;
+                    if (fs > 1.0f) fs = 1.0f;
+                    else if (fs < -1.0f) fs = -1.0f;
                     sample = (int32_t)(fs * 2147483647.0f);
                 }
                 else if (capture_is_int16)
                 {
                     int16_t *i16buf = (int16_t *)buffer;
                     if (ch_layout == LEFT)
-                        sample = (int32_t)i16buf[i*2] << 16;
+                        sample = (int32_t)i16buf[i*2] * 65536;
                     else if (ch_layout == RIGHT)
-                        sample = (int32_t)i16buf[i*2 + 1] << 16;
+                        sample = (int32_t)i16buf[i*2 + 1] * 65536;
                     else
-                        sample = ((int32_t)i16buf[i*2] + (int32_t)i16buf[i*2 + 1]) << 15;
+                        sample = ((int32_t)i16buf[i*2] + (int32_t)i16buf[i*2 + 1]) * 32768;
                 }
                 else
                 {
