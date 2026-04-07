@@ -1279,6 +1279,7 @@ void *rx_thread(void *g_modem)
     int last_pref_tx_mode = -1;
     bool was_tx = false;
     uint64_t spectrum_next_ms = 0; /* throttle FFT to ~20 fps */
+    bool spectrum_first_log = true;
 
     /* --- RX thread rate diagnostics (prints every ~5 seconds) --- */
     uint64_t rx_diag_start_ms = monotonic_ms();
@@ -1455,6 +1456,12 @@ void *rx_thread(void *g_modem)
                 modem_stats_get_rx_spectrum(&g_spectrum_stats, g_rx_spectrum_dB,
                                             rx_fdm, spec_nin);
                 g_spectrum_valid = true;
+                if (spectrum_first_log)
+                {
+                    HLOGI("modem-rx", "Spectrum FFT active: nin=%d sr=%d dB[0]=%.1f",
+                          spec_nin, g_spectrum_sample_rate, g_rx_spectrum_dB[0]);
+                    spectrum_first_log = false;
+                }
                 /* Determine sample rate from the modem */
                 pthread_mutex_lock(&modem_freedv_lock);
                 if (modem->freedv)
