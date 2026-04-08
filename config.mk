@@ -47,3 +47,10 @@ endif
 
 GIT_HASH ?= $(shell git rev-parse --short=8 HEAD 2>/dev/null || echo unknown000)
 COMMON_CFLAGS += -DGIT_HASH=\"$(GIT_HASH)\"
+
+# Optional: enable DIAG I/O debug logging (default: off)
+# Enable with: make DEBUG_IO=1
+DEBUG_IO ?= 0
+ifeq ($(DEBUG_IO),1)
+  COMMON_CFLAGS += -DDEBUG_IO
+endif

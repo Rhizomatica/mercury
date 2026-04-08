@@ -1477,6 +1477,7 @@ void *rx_thread(void *g_modem)
             uint64_t rx_elapsed = rx_now - rx_diag_start_ms;
             if (rx_elapsed >= 5000)
             {
+#ifdef DEBUG_IO
                 double sec = rx_elapsed / 1000.0;
                 double rx_rate = rx_diag_total_samples / sec;
                 double avg_read_ms = rx_diag_iterations ?
@@ -1486,6 +1487,7 @@ void *rx_thread(void *g_modem)
                       "DIAG: %.1fs | iters=%u | consumed=%.0f samp/s (expect 8000) | avg_read_wait=%.1f ms | ringbuf_used=%zu B | chunk=%d",
                       sec, rx_diag_iterations, rx_rate, avg_read_ms,
                       buf_used, chunk_samples);
+#endif /* DEBUG_IO */
                 rx_diag_start_ms = rx_now;
                 rx_diag_total_samples = 0;
                 rx_diag_iterations = 0;
