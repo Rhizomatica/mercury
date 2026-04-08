@@ -673,6 +673,7 @@ void *radio_capture_thread(void *device_ptr)
         uint64_t diag_elapsed = diag_now - diag_start_ms;
         if (diag_elapsed >= 5000)
         {
+#ifdef DEBUG_IO
             double elapsed_sec = diag_elapsed / 1000.0;
             double rate_48k = diag_total_48k_frames / elapsed_sec;
             double rate_8k  = diag_total_8k_samples / elapsed_sec;
@@ -683,6 +684,7 @@ void *radio_capture_thread(void *device_ptr)
                   elapsed_sec, diag_read_calls, diag_read_errors,
                   rate_48k, rate_8k, diag_last_read_bytes,
                   buf_used, buf_free, diag_buf_full_drops);
+#endif /* DEBUG_IO */
             /* reset counters */
             diag_start_ms = diag_now;
             diag_total_48k_frames = 0;
