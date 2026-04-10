@@ -1,3 +1,9 @@
+mercury (1.9.6-1) unstable; urgency=medium
+
+  * Release 1.9.6.
+
+ -- Rafael Diniz <rafael@riseup.net>  Fri, 10 Apr 2026 16:01:00 +0100
+
 mercury (1.9.5-1) unstable; urgency=medium
 
   * Release 1.9.5.
