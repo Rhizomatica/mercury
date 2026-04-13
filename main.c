@@ -179,6 +179,7 @@ int main(int argc, char *argv[])
 
     int radio_type = RADIO_TYPE_NONE;
     char radio_device[1024] = "";
+    int radio_serial_speed = 0;
     bool list_radio_models = false;
 
     // --- Load init configuration file ---
@@ -224,6 +225,7 @@ int main(int argc, char *argv[])
             verbose            = mcfg.verbose ? 1 : 0;
             freedv_verbosity   = mcfg.freedv_verbosity;
             hamlib_log_level   = mcfg.hamlib_log_level;
+            radio_serial_speed = mcfg.radio_serial_speed;
         }
     }
 
@@ -585,7 +587,7 @@ int main(int argc, char *argv[])
         audioio_init_internal(input_dev, output_dev, audio_system, rx_input_channel, &radio_capture, &radio_playback);
     }
 
-    if (radio_io_init(radio_type, radio_device, hamlib_log_level) != 0)
+    if (radio_io_init(radio_type, radio_device, hamlib_log_level, radio_serial_speed) != 0)
     {
         fprintf(stderr, "Failed to initialize radio control.\n");
         hermes_log_shutdown();
@@ -646,6 +648,7 @@ int main(int argc, char *argv[])
     mcfg.verbose           = verbose ? true : false;
     mcfg.freedv_verbosity  = freedv_verbosity;
     mcfg.hamlib_log_level  = hamlib_log_level;
+    mcfg.radio_serial_speed = radio_serial_speed;
 
     ui_ctx_t ui_ctx;
     if (ui_enabled)
