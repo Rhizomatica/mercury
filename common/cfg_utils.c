@@ -46,6 +46,7 @@ void cfg_set_defaults(mercury_config *cfg)
     cfg->verbose            = false;
     cfg->freedv_verbosity   = 0;
     cfg->hamlib_log_level   = 0;
+    cfg->radio_serial_speed = 0;  /* 0 = use hamlib default */
 }
 
 /* Map a sound-system name to the AUDIO_SUBSYSTEM_* constant.
@@ -146,6 +147,10 @@ bool cfg_read(mercury_config *cfg, const char *ini_path)
     if (i >= 0 && i <= 6)
         cfg->hamlib_log_level = i;
 
+    i = iniparser_getint(ini, CFG_KEY_RADIO_SERIAL_SPEED, cfg->radio_serial_speed);
+    if (i >= 0)
+        cfg->radio_serial_speed = i;
+
     iniparser_freedict(ini);
     return true;
 }
@@ -223,6 +228,7 @@ bool cfg_write(const mercury_config *cfg, const char *ini_path)
     fprintf(f, "verbose = %s\n",           cfg->verbose ? "true" : "false");
     fprintf(f, "freedv_verbosity = %d\n",  cfg->freedv_verbosity);
     fprintf(f, "hamlib_log_level = %d\n",  cfg->hamlib_log_level);
+    fprintf(f, "radio_serial_speed = %d\n", cfg->radio_serial_speed);
 
     fclose(f);
     return true;

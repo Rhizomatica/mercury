@@ -49,6 +49,7 @@ static pthread_mutex_t g_radio_mutex = PTHREAD_MUTEX_INITIALIZER;
 static int g_radio_type = RADIO_TYPE_NONE;
 static char g_device_path[256] = {0};
 static int g_hamlib_log_level = 0; /* hamlib debug level (0-6) */
+static int g_serial_speed = 0;    /* serial baud rate (0 = hamlib default) */
 #ifdef HAVE_HAMLIB
 static RIG *radio = NULL;
 #endif
@@ -57,11 +58,13 @@ static RIG *radio = NULL;
 static controller_conn *sbitx_connector = NULL;
 #endif
 
-int radio_io_init(int radio_type, const char *device_path, int hamlib_log_level)
+int radio_io_init(int radio_type, const char *device_path, int hamlib_log_level, int serial_speed)
 {
     pthread_mutex_lock(&g_radio_mutex);
-    HLOGI(RADIO_LOG_TAG, "Initializing radio (type=%d, device=%s, hamlib_log_level=%d)",
-          radio_type, device_path && device_path[0] ? device_path : "(none)", hamlib_log_level);
+    HLOGI(RADIO_LOG_TAG, "Initializing radio (type=%d, device=%s, hamlib_log_level=%d, serial_speed=%d)",
+          radio_type, device_path && device_path[0] ? device_path : "(none)", hamlib_log_level, serial_speed);
+
+    g_serial_speed = serial_speed;
 
     /* Validate/clamp hamlib_log_level so that g_hamlib_log_level always
      * reflects a value that can actually be applied (valid range 0-6). */
@@ -144,6 +147,12 @@ int radio_io_init(int radio_type, const char *device_path, int hamlib_log_level)
 
     if (device_path && device_path[0])
         snprintf(radio->state.rigport.pathname, HAMLIB_FILPATHLEN, "%s", device_path);
+
+    if (serial_speed > 0)
+    {
+        radio->state.rigport.parm.serial.rate = serial_speed;
+        HLOGI(RADIO_LOG_TAG, "Serial speed overridden to %d baud", serial_speed);
+    }
 
     HLOGD(RADIO_LOG_TAG, "Calling rig_open(device=%s)",
           device_path && device_path[0] ? device_path : "(default)");
@@ -319,15 +328,15 @@ int radio_io_get_radio_list(char ids[][16], char names[][64], int max_count)
 #endif
 }
 
-int radio_io_restart(int new_radio_type, const char *device_path, int hamlib_log_level)
+int radio_io_restart(int new_radio_type, const char *device_path, int hamlib_log_level, int serial_speed)
 {
-    HLOGI(RADIO_LOG_TAG, "Restart requested (new_type=%d, device=%s, hamlib_log_level=%d)",
-          new_radio_type, device_path && device_path[0] ? device_path : "(none)", hamlib_log_level);
+    HLOGI(RADIO_LOG_TAG, "Restart requested (new_type=%d, device=%s, hamlib_log_level=%d, serial_speed=%d)",
+          new_radio_type, device_path && device_path[0] ? device_path : "(none)", hamlib_log_level, serial_speed);
 
     /* radio_io_shutdown / radio_io_init both acquire the mutex internally
      * which serialises this restart against any concurrent key_on/key_off. */
     radio_io_shutdown();
-    return radio_io_init(new_radio_type, device_path, hamlib_log_level);
+    return radio_io_init(new_radio_type, device_path, hamlib_log_level, serial_speed);
 }
 
 const char *radio_io_get_device_path(void)
@@ -343,4 +352,9 @@ int radio_io_get_radio_type(void)
 int radio_io_get_hamlib_log_level(void)
 {
     return g_hamlib_log_level;
+}
+
+int radio_io_get_serial_speed(void)
+{
+    return g_serial_speed;
 }
