@@ -559,7 +559,11 @@ static void *arq_reactor_thread(void *port)
             nfds++;
         }
 
-        (void)poll(pfds, (nfds_t)nfds, 100);
+        {
+            int poll_rc = poll(pfds, (nfds_t)nfds, 100);
+            if (poll_rc < 0)
+                HLOGW("tcp-poll", "poll() error: %d", sock_errno());
+        }
         now_ms = monotonic_ms();
 
         if (pfds[0].revents & POLLIN)
@@ -625,10 +629,12 @@ static void *arq_reactor_thread(void *port)
                 ssize_t n = recv(ctl_client, (char *)rx_buf, sizeof(rx_buf), 0);
                 if (n > 0)
                 {
+                    HLOGD("tcp-ctl", "recv %zd bytes from control client", n);
                     process_control_bytes(ctl_line, &ctl_len, rx_buf, n);
                 }
                 else if (n == 0 || (n < 0 && sock_errno() != SOCK_EAGAIN && sock_errno() != SOCK_EWOULDBLOCK && sock_errno() != SOCK_EINTR))
                 {
+                    HLOGW("tcp-ctl", "Control recv returned %zd (err=%d), closing", n, sock_errno());
                     close_ctl_client(&ctl_client, &data_client, true);
                 }
             }
@@ -646,6 +652,7 @@ static void *arq_reactor_thread(void *port)
                 ssize_t n = recv(data_client, (char *)rx_buf, sizeof(rx_buf), 0);
                 if (n > 0)
                 {
+                    HLOGD("tcp-data", "recv %zd bytes from data client", n);
                     int queued = arq_submit_tcp_payload(rx_buf, (size_t)n);
                     if (queued < 0)
                         HLOGW("tcp-data", "Failed to queue ARQ data frame(s)");
@@ -654,6 +661,7 @@ static void *arq_reactor_thread(void *port)
                 }
                 else if (n == 0 || (n < 0 && sock_errno() != SOCK_EAGAIN && sock_errno() != SOCK_EWOULDBLOCK && sock_errno() != SOCK_EINTR))
                 {
+                    HLOGW("tcp-data", "Data recv returned %zd (err=%d), closing", n, sock_errno());
                     close_data_client(&data_client);
                 }
             }
@@ -874,7 +882,7 @@ void *recv_thread(void *client_socket_ptr)
         }
         else if (received < 0)
         {
-            perror("Error receiving TCP data");
+            HLOGW("tcp-bcast", "Error receiving TCP data (err=%d)", sock_errno());
             break;
         }
     }
