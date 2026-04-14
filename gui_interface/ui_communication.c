@@ -123,21 +123,23 @@ static int ws_command_handler(const ws_command_t *cmd, void *user_data)
     } else if (strcmp(cmd->command, "set_radio_config") == 0) {
         int new_radio_type = atoi(cmd->value);
         const char *dev_path = cmd->value2;
-        HLOGI(UI_LOG_TAG, "Radio set_radio_config command: model_id=%d device_path=\"%s\"",
-              new_radio_type, dev_path);
+        int new_serial_speed = cmd->value3[0] ? atoi(cmd->value3) : radio_io_get_serial_speed();
+        if (new_serial_speed < 0) new_serial_speed = 0;
+        HLOGI(UI_LOG_TAG, "Radio set_radio_config command: model_id=%d device_path=\"%s\" baud_rate=%d",
+              new_radio_type, dev_path, new_serial_speed);
         if (new_radio_type == RADIO_TYPE_NONE) {
-            radio_io_restart(RADIO_TYPE_NONE, NULL, radio_io_get_hamlib_log_level(), radio_io_get_serial_speed());
+            radio_io_restart(RADIO_TYPE_NONE, NULL, radio_io_get_hamlib_log_level(), new_serial_speed);
             HLOGI(UI_LOG_TAG, "Radio type set to NONE - radio subsystem shut down");
             ctx->radio_list_pending = 1;
         } else {
-            int rc = radio_io_restart(new_radio_type, dev_path, radio_io_get_hamlib_log_level(), radio_io_get_serial_speed());
+            int rc = radio_io_restart(new_radio_type, dev_path, radio_io_get_hamlib_log_level(), new_serial_speed);
             if (rc == 0) {
-                HLOGI(UI_LOG_TAG, "Radioio subsystem restarted (model=%d, path=%s)",
-                      new_radio_type, dev_path);
+                HLOGI(UI_LOG_TAG, "Radioio subsystem restarted (model=%d, path=%s, baud=%d)",
+                      new_radio_type, dev_path, new_serial_speed);
                 ctx->radio_list_pending = 1;
             } else {
-                HLOGE(UI_LOG_TAG, "Radioio subsystem restart FAILED (model=%d, path=%s, rc=%d)",
-                      new_radio_type, dev_path, rc);
+                HLOGE(UI_LOG_TAG, "Radioio subsystem restart FAILED (model=%d, path=%s, baud=%d, rc=%d)",
+                      new_radio_type, dev_path, new_serial_speed, rc);
                 return rc;
             }
         }
@@ -147,6 +149,7 @@ static int ws_command_handler(const ws_command_t *cmd, void *user_data)
         strncpy(ctx->cfg.radio_device, dev_path ? dev_path : "",
                 sizeof(ctx->cfg.radio_device) - 1);
         ctx->cfg.radio_device[sizeof(ctx->cfg.radio_device) - 1] = '\0';
+        ctx->cfg.radio_serial_speed = new_serial_speed;
         if (ctx->cfg_path[0] && cfg_write(&ctx->cfg, ctx->cfg_path))
             HLOGI(UI_LOG_TAG, "Config saved to %s", ctx->cfg_path);
 
@@ -340,6 +343,7 @@ void *ui_publisher_thread(void *arg)
                 if (cur_type > 0)
                     snprintf(sel_buf, sizeof(sel_buf), "%d", cur_type);
                 const char *cur_dev = radio_io_get_device_path();
+                int cur_serial_speed = radio_io_get_serial_speed();
 
                 const size_t buf_size = 65536;
                 char *buf = malloc(buf_size);
@@ -351,8 +355,8 @@ void *ui_publisher_thread(void *arg)
                 }
                 int pos = 0;
                 pos += snprintf(buf + pos, buf_size - pos,
-                    "{\"type\":\"radio_list\",\"selected\":\"%s\",\"device_path\":\"%s\",\"list\":[",
-                    sel_buf, cur_dev ? cur_dev : "");
+                    "{\"type\":\"radio_list\",\"selected\":\"%s\",\"device_path\":\"%s\",\"serial_speed\":%d,\"list\":[",
+                    sel_buf, cur_dev ? cur_dev : "", cur_serial_speed);
                 // First entry always "None"
                 pos += snprintf(buf + pos, buf_size - pos,
                     "{\"name\":\"None\",\"id\":\"%d\"}", RADIO_TYPE_NONE);

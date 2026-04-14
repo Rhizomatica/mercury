@@ -179,6 +179,15 @@ select option { background: #2d2d2d; color: #e6e6e6; }
           <select id="radioModelSelect"><option value="">--</option></select>
           <label for="devicePathInput">Device Path</label>
           <input type="text" id="devicePathInput" placeholder="/dev/ttyUSB0 or 127.0.0.1:4532" />
+          <label for="baudRateSelect">Baud Rate</label>
+          <select id="baudRateSelect">
+            <option value="0" selected>Auto</option>
+            <option value="4800">4800</option>
+            <option value="9600">9600</option>
+            <option value="19200">19200</option>
+            <option value="38400">38400</option>
+            <option value="115200">115200</option>
+          </select>
           <button class="apply-btn" id="radioApplyBtn">Apply</button>
         </div>
         <!-- WebSocket Connection -->
@@ -248,6 +257,7 @@ let appliedPlayback = "";
 let appliedChannel  = "";
 let appliedRadioModel = "";
 let appliedDevicePath = "";
+let appliedBaudRate = "";
 
 /* ===========================================================================
  *  VARA Colormap (from waterfall_widget.py _build_vara_colormap)
@@ -695,8 +705,9 @@ function populateSelect(sel, items, selected, prependDefault) {
 
 function setSelectValue(sel, val) {
   for (let i = 0; i < sel.options.length; i++) {
-    if (sel.options[i].value === val) { sel.selectedIndex = i; return; }
+    if (sel.options[i].value === val) { sel.selectedIndex = i; return true; }
   }
+  return false;
 }
 
 function getSelectValue(sel) {
@@ -712,11 +723,12 @@ function restoreAudioSelection() {
 function restoreRadioSelection() {
   if (appliedRadioModel) setSelectValue(document.getElementById("radioModelSelect"), appliedRadioModel);
   if (appliedDevicePath) document.getElementById("devicePathInput").value = appliedDevicePath;
+  if (appliedBaudRate) setSelectValue(document.getElementById("baudRateSelect"), appliedBaudRate);
 }
 
 function clearAppliedState() {
   appliedCapture = ""; appliedPlayback = ""; appliedChannel = "";
-  appliedRadioModel = ""; appliedDevicePath = "";
+  appliedRadioModel = ""; appliedDevicePath = ""; appliedBaudRate = "";
 }
 
 function resetControls() {
@@ -725,6 +737,7 @@ function resetControls() {
   document.getElementById("inputChannelSelect").innerHTML = '<option value="">--</option>';
   document.getElementById("radioModelSelect").innerHTML   = '<option value="">--</option>';
   document.getElementById("devicePathInput").value = "";
+  document.getElementById("baudRateSelect").value = "0";
 }
 
 /* ===========================================================================
@@ -750,6 +763,13 @@ function handleRadioList(msg) {
   populateSelect(document.getElementById("radioModelSelect"), msg.list || [], msg.selected || "", false);
   if (msg.device_path && !appliedDevicePath) {
     document.getElementById("devicePathInput").value = msg.device_path;
+  }
+  if (msg.serial_speed != null && !appliedBaudRate) {
+    const baudVal = String(msg.serial_speed);
+    const baudSel = document.getElementById("baudRateSelect");
+    if (!setSelectValue(baudSel, baudVal)) {
+      setSelectValue(baudSel, "0");
+    }
   }
   restoreRadioSelection();
 }
@@ -933,11 +953,13 @@ document.getElementById("audioApplyBtn").addEventListener("click", function() {
 document.getElementById("radioApplyBtn").addEventListener("click", function() {
   const modelId = getSelectValue(document.getElementById("radioModelSelect"));
   const devPath = document.getElementById("devicePathInput").value.trim();
+  const baudRate = document.getElementById("baudRateSelect").value;
   if (!modelId) return;
   appliedRadioModel = modelId;
   appliedDevicePath = devPath;
+  appliedBaudRate = baudRate;
   if (modelId === "-1") document.getElementById("devicePathInput").value = "";
-  sendJson({ command: "set_radio_config", value: modelId, value2: devPath });
+  sendJson({ command: "set_radio_config", value: modelId, value2: devPath, value3: baudRate });
 });
 
 // Enter key on device path triggers radio apply
