@@ -261,7 +261,7 @@ static void execute_control_command(char *buffer)
     {
         memset(&cmd, 0, sizeof(cmd));
         sscanf(buffer, "LISTEN %15s", temp);
-        if (temp[1] == 'N')
+        if (temp[1] == 'N' || temp[1] == 'Q')
             cmd.type = ARQ_CMD_LISTEN_ON;
         if (temp[1] == 'F')
             cmd.type = ARQ_CMD_LISTEN_OFF;
@@ -409,6 +409,33 @@ static void execute_control_command(char *buffer)
             tcp_write(CTL_TCP_PORT, (uint8_t *)"OK\r", 3);
         else
             tcp_write(CTL_TCP_PORT, (uint8_t *)"WRONG\r", 6);
+        return;
+    }
+
+    if (!memcmp(buffer, "ABORT", strlen("ABORT")))
+    {
+        /* VARA compatibility: ABORT is a dirty disconnect — clear all
+         * buffers and disconnect immediately without air-side teardown. */
+        memset(&cmd, 0, sizeof(cmd));
+        cmd.type = ARQ_CMD_ABORT;
+        if (arq_submit_tcp_cmd(&cmd) == 0)
+            tcp_write(CTL_TCP_PORT, (uint8_t *)"OK\r", 3);
+        else
+            tcp_write(CTL_TCP_PORT, (uint8_t *)"WRONG\r", 6);
+        return;
+    }
+
+    if (!memcmp(buffer, "VERSION", strlen("VERSION")))
+    {
+        /* VARA compatibility: respond with modem identification. */
+        tcp_write(CTL_TCP_PORT, (uint8_t *)"VARA version 4.9.0 registered\r", 30);
+        return;
+    }
+
+    if (!memcmp(buffer, "IGNOREKISSDCD", strlen("IGNOREKISSDCD")))
+    {
+        /* VARA compatibility no-op. */
+        tcp_write(CTL_TCP_PORT, (uint8_t *)"OK\r", 3);
         return;
     }
 

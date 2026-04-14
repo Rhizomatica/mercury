@@ -386,6 +386,15 @@ static void handle_cmd(const arq_cmd_msg_t *msg)
         ev.id = ARQ_EV_APP_DISCONNECT;
         break;
 
+    case ARQ_CMD_ABORT:
+        /* Dirty disconnect: flush all buffers immediately so the FSM sees no
+         * pending data and transitions to DISCONNECTED without deferral.
+         * No air-side DISCONNECT frame is sent — the peer will time out. */
+        clear_connection_data();
+        tnc_send_disconnected();
+        ev.id = ARQ_EV_APP_DISCONNECT;
+        break;
+
     case ARQ_CMD_CLIENT_DISCONNECT:
         ev.id = ARQ_EV_APP_DISCONNECT;
         break;
