@@ -447,6 +447,57 @@ void test_tnc_send_cqframe(void)
     TEST_ASSERT_EQUAL_STRING("CQFRAME CALL1 500\r", last_queued_line);
 }
 
+/* ---- VARA compatibility command tests ---- */
+
+void test_cmd_abort(void)
+{
+    char cmd[] = "ABORT";
+    execute_control_command(cmd);
+
+    assert_ok_response();
+    TEST_ASSERT_EQUAL_INT(ARQ_CMD_ABORT, captured_cmd.type);
+}
+
+void test_cmd_abort_submit_failure(void)
+{
+    arq_submit_return = -1;
+    char cmd[] = "ABORT";
+    execute_control_command(cmd);
+
+    assert_wrong_response();
+}
+
+void test_cmd_version(void)
+{
+    char cmd[] = "VERSION";
+    execute_control_command(cmd);
+
+    TEST_ASSERT_EQUAL(1, tcp_write_call_count);
+    TEST_ASSERT_EQUAL_STRING_LEN("VARA version 4.9.0 registered\r",
+                                 (char *)last_tcp_write_buf, 30);
+    /* VERSION must not submit any ARQ command */
+    TEST_ASSERT_EQUAL(0, captured_cmd_count);
+}
+
+void test_cmd_ignorekissdcd(void)
+{
+    char cmd[] = "IGNOREKISSDCD ON";
+    execute_control_command(cmd);
+
+    assert_ok_response();
+    /* Must not submit any ARQ command */
+    TEST_ASSERT_EQUAL(0, captured_cmd_count);
+}
+
+void test_cmd_listen_cq(void)
+{
+    char cmd[] = "LISTEN CQ";
+    execute_control_command(cmd);
+
+    assert_ok_response();
+    TEST_ASSERT_EQUAL_INT(ARQ_CMD_LISTEN_ON, captured_cmd.type);
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -467,6 +518,11 @@ int main(void)
     RUN_TEST(test_cmd_p2p);
     RUN_TEST(test_cmd_unknown);
     RUN_TEST(test_cmd_submit_failure);
+    RUN_TEST(test_cmd_abort);
+    RUN_TEST(test_cmd_abort_submit_failure);
+    RUN_TEST(test_cmd_version);
+    RUN_TEST(test_cmd_ignorekissdcd);
+    RUN_TEST(test_cmd_listen_cq);
     RUN_TEST(test_process_control_bytes_multiline);
     /* Status emitter tests */
     RUN_TEST(test_tnc_send_disconnected);
