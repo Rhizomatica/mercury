@@ -21,7 +21,8 @@
 #ifndef ARQ_H_
 #define ARQ_H_
 
-#define CALLSIGN_MAX_SIZE 16 
+#define CALLSIGN_MAX_SIZE 16
+#define CALLSIGN_MAX_SECONDARY 4
 
 #define ARQ_BANDWIDTH_NARROW_HZ 500
 #define ARQ_BANDWIDTH_FULL_HZ   2300
@@ -50,6 +51,8 @@ typedef struct
 {
     int TRX; // RX (0) or TX (1)
     char my_call_sign[CALLSIGN_MAX_SIZE];
+    char secondary_calls[CALLSIGN_MAX_SECONDARY][CALLSIGN_MAX_SIZE];
+    int  secondary_call_count;
     char src_addr[CALLSIGN_MAX_SIZE], dst_addr[CALLSIGN_MAX_SIZE];
     bool encryption;
     int call_burst_size;

@@ -304,7 +304,32 @@ static void handle_cmd(const arq_cmd_msg_t *msg)
     {
     case ARQ_CMD_SET_CALLSIGN:
         snprintf(arq_conn.my_call_sign, CALLSIGN_MAX_SIZE, "%s", msg->arg0);
+        /* Setting a new primary callsign clears all secondary callsigns */
+        memset(arq_conn.secondary_calls, 0, sizeof(arq_conn.secondary_calls));
+        arq_conn.secondary_call_count = 0;
         HLOGI(LOG_COMP, "My callsign: %s", arq_conn.my_call_sign);
+        return;
+
+    case ARQ_CMD_ADD_SECONDARY_CALLSIGN:
+        if (arq_conn.secondary_call_count < CALLSIGN_MAX_SECONDARY)
+        {
+            snprintf(arq_conn.secondary_calls[arq_conn.secondary_call_count],
+                     CALLSIGN_MAX_SIZE, "%s", msg->arg0);
+            arq_conn.secondary_call_count++;
+            HLOGI(LOG_COMP, "Secondary callsign added: %s (total=%d)",
+                  msg->arg0, arq_conn.secondary_call_count);
+        }
+        else
+        {
+            HLOGW(LOG_COMP, "Secondary callsign list full (max=%d), ignoring %s",
+                  CALLSIGN_MAX_SECONDARY, msg->arg0);
+        }
+        return;
+
+    case ARQ_CMD_CLEAR_SECONDARY_CALLSIGNS:
+        memset(arq_conn.secondary_calls, 0, sizeof(arq_conn.secondary_calls));
+        arq_conn.secondary_call_count = 0;
+        HLOGI(LOG_COMP, "Secondary callsigns cleared");
         return;
 
     case ARQ_CMD_SET_BANDWIDTH:
@@ -486,12 +511,15 @@ bool arq_handle_incoming_connect_frame(uint8_t *data, size_t frame_size)
         return false;
     }
 
-    /* Validate that DST CRC16 matches our own callsign */
+    /* Validate that DST CRC16 matches our own callsign or a secondary */
     if (arq_conn.my_call_sign[0] != 0)
     {
         uint16_t frame_crc = (uint16_t)data[ARQ_CONNECT_PAYLOAD_IDX]
                            | ((uint16_t)data[ARQ_CONNECT_PAYLOAD_IDX + 1] << 8);
-        if (frame_crc != arq_protocol_callsign_crc16(arq_conn.my_call_sign))
+        bool match = (frame_crc == arq_protocol_callsign_crc16(arq_conn.my_call_sign));
+        for (int i = 0; !match && i < arq_conn.secondary_call_count; i++)
+            match = (frame_crc == arq_protocol_callsign_crc16(arq_conn.secondary_calls[i]));
+        if (!match)
         {
             HLOGD(LOG_COMP, "CALL/ACCEPT not for us (DST CRC16 mismatch)");
             return false;
@@ -884,10 +912,15 @@ void reset_arq_info(arq_info *conn)
     if (!conn) return;
     char my_call[CALLSIGN_MAX_SIZE];
     snprintf(my_call, CALLSIGN_MAX_SIZE, "%s", conn->my_call_sign);
+    char secondary[CALLSIGN_MAX_SECONDARY][CALLSIGN_MAX_SIZE];
+    int  secondary_count = conn->secondary_call_count;
+    memcpy(secondary, conn->secondary_calls, sizeof(secondary));
     int bw = conn->bw;
     bool listen = conn->listen;
     memset(conn, 0, sizeof(*conn));
     snprintf(conn->my_call_sign, CALLSIGN_MAX_SIZE, "%s", my_call);
+    memcpy(conn->secondary_calls, secondary, sizeof(secondary));
+    conn->secondary_call_count = secondary_count;
     conn->bw              = bw;
     conn->listen          = listen;
     conn->call_burst_size = 1;

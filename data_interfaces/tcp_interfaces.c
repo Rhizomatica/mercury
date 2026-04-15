@@ -219,13 +219,41 @@ static void execute_control_command(char *buffer)
 
     if (!memcmp(buffer, "MYCALL", strlen("MYCALL")))
     {
+        /* VARA-style: MYCALL PRIMARY [SECONDARY1 SECONDARY2 ...]
+         * First token sets the primary callsign (clears any previous secondaries).
+         * Remaining space-separated tokens are added as secondary callsigns. */
+        char tmp[256];
+        strncpy(tmp, buffer + strlen("MYCALL"), sizeof(tmp) - 1);
+        tmp[sizeof(tmp) - 1] = '\0';
+
+        char *saveptr = NULL;
+        char *tok = strtok_r(tmp, " \t\r\n", &saveptr);
+        if (!tok)
+        {
+            tcp_write(CTL_TCP_PORT, (uint8_t *)"WRONG\r", 6);
+            return;
+        }
+
+        /* Primary callsign */
         memset(&cmd, 0, sizeof(cmd));
         cmd.type = ARQ_CMD_SET_CALLSIGN;
-        if (sscanf(buffer, "MYCALL %15s", cmd.arg0) == 1 &&
-            arq_submit_tcp_cmd(&cmd) == 0)
-            tcp_write(CTL_TCP_PORT, (uint8_t *)"OK\r", 3);
-        else
+        snprintf(cmd.arg0, sizeof(cmd.arg0), "%s", tok);
+        if (arq_submit_tcp_cmd(&cmd) != 0)
+        {
             tcp_write(CTL_TCP_PORT, (uint8_t *)"WRONG\r", 6);
+            return;
+        }
+
+        /* Secondary callsigns (remaining tokens) */
+        while ((tok = strtok_r(NULL, " \t\r\n", &saveptr)) != NULL)
+        {
+            memset(&cmd, 0, sizeof(cmd));
+            cmd.type = ARQ_CMD_ADD_SECONDARY_CALLSIGN;
+            snprintf(cmd.arg0, sizeof(cmd.arg0), "%s", tok);
+            arq_submit_tcp_cmd(&cmd);   /* best-effort; overflow is logged in arq.c */
+        }
+
+        tcp_write(CTL_TCP_PORT, (uint8_t *)"OK\r", 3);
         return;
     }
 

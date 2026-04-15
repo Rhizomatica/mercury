@@ -23,15 +23,31 @@ Commands are sent on the **control port**.
 
 ### MYCALL
 
-Set the local station callsign (up to 15 characters).
+Set the local station callsign and optional secondary callsigns.
 
 ```
-MYCALL <callsign>\r
+MYCALL <callsign> [<secondary1> <secondary2> ...]\r
 ```
 
 **Response:** `OK\r` on success, `WRONG\r` on error.
 
+The first token is the **primary callsign** (up to 15 characters), used as the
+source address for outgoing `CALL` and `ACCEPT` frames.  Any additional
+space-separated tokens are registered as **secondary callsigns** — Mercury will
+accept incoming `CALL` frames addressed to any of them, up to a maximum of
+`CALLSIGN_MAX_SECONDARY` (currently 4) secondary callsigns.
+
+Sending a new `MYCALL` command replaces the primary callsign and **clears all
+previously registered secondary callsigns**.
+
 Must be set before `LISTEN ON` or `CONNECT`.
+
+Examples:
+
+```
+MYCALL VK2XYZ\r
+MYCALL VK2XYZ VK2XYZ-1 VK2XYZ-2\r
+```
 
 ---
 
