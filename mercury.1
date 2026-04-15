@@ -3,7 +3,7 @@
 .\" Copyright (C) 2025 Rhizomatica
 .\" Author: Rafael Diniz <rafael@riseup.net>
 .\" SPDX-License-Identifier: GPL-3.0-or-later
-.TH MERCURY 1 "2026" "Mercury 1.9.5" "HERMES Manual"
+.TH MERCURY 1 "2026" "Mercury 1.9.7" "HERMES Manual"
 .SH NAME
 mercury \- HF radio modem with ARQ and broadcast data links
 .SH SYNOPSIS
@@ -130,28 +130,24 @@ Default is
 Broadcast TCP port.
 Default is
 .BR 8100 .
-.SS "GUI options"
+.SS "UI options"
 .TP
 .B \-G
-Enable UI communication (UDP status/spectrum/command sockets for
+Enable UI communication (WebSocket server for
 .BR mercury-qt ).
 Off by default.
 .TP
-.BI \-u " ip"
-UI IP address.
-Default is
-.BR 127.0.0.1 .
-.TP
 .BI \-U " port"
-UI base port.
-TX port is
-.IR port ,
-RX port is
-.IR port +1,
-spectrum port is
-.IR port +2.
+UI WebSocket port.
 Default is
 .BR 10000 .
+Requires
+.BR \-G .
+.TP
+.B \-T
+Use WSS (WebSocket Secure / TLS) for UI communication instead of plain WS.
+Requires
+.BR \-G .
 .TP
 .B \-W
 Disable waterfall/spectrum data sent to the UI (saves CPU).
@@ -165,7 +161,8 @@ to list available models.
 .TP
 .BI \-A " address"
 Set Hamlib radio device file or ip:port address (e.g.,
-.IR /dev/ttyUSB0
+.IR /dev/ttyUSB0 ,
+.IR COM3 ,
 or
 .IR localhost:4532 ).
 .TP
@@ -200,8 +197,59 @@ Pin the process to CPU number
 Use \-1 to disable CPU selection (default).
 Linux only.
 .TP
+.BI \-C " path"
+Path to init configuration file (INI format).
+Default is
+.B mercury.ini
+in the current directory.
+See
+.B CONFIGURATION FILE
+below.
+.TP
 .B \-h
 Print usage help and exit.
+.SH CONFIGURATION FILE
+Mercury reads an INI-format configuration file at startup.
+The default path is
+.B mercury.ini
+in the current working directory; use
+.B \-C
+to specify an alternative path.
+Command-line arguments take priority over file values.
+.PP
+All settings are under the
+.B [main]
+section.
+The recognized keys are:
+.PP
+.TS
+l l l.
+Key	Default	Description
+_
+ui_enabled	false	Enable WebSocket UI server
+ui_port	10000	WebSocket port
+ui_protocol	ws	ws (plain) or wss (TLS)
+waterfall_enabled	true	Send waterfall/spectrum data to UI
+radio_model	\-1	Hamlib model ID (\-1=none, 0=SHM)
+radio_device	(empty)	Serial device or ip:port
+radio_serial_speed	0	Serial baud rate (0=hamlib default)
+input_device	(empty)	Audio capture device
+output_device	(empty)	Audio playback device
+capture_channel	left	left, right, or stereo
+sound_system	auto	Audio subsystem
+arq_tcp_base_port	8300	ARQ TCP base port
+broadcast_tcp_port	8100	Broadcast TCP port
+verbose	false	Enable debug logging
+freedv_verbosity	0	FreeDV modem verbosity (0\-3)
+hamlib_log_level	0	Hamlib debug level (0\-6)
+.TE
+.PP
+The
+.B radio_serial_speed
+setting overrides the compiled-in hamlib default baud rate for the
+selected radio model.
+It must match the CAT Rate configured on the radio.
+Common values are 4800, 9600, 19200, 38400, and 115200.
 .SH TNC INTERFACE
 Mercury provides a VARA-compatible TCP TNC interface for ARQ operations.
 The control port accepts text commands terminated by a carriage return,
@@ -209,11 +257,18 @@ and sends asynchronous status responses.
 The data port carries the raw byte stream.
 .SS "Commands (control port)"
 .TP
-.BI "MYCALL " callsign
+.BI "MYCALL " "callsign " "[secondary1 secondary2 ...]"
 Set the local station callsign (up to 15 characters).
+Additional space-separated tokens register secondary callsigns (up to 4);
+Mercury will accept incoming connections addressed to any of them.
+Sending a new MYCALL replaces the primary callsign and clears all
+previously registered secondaries.
 .TP
-.BI "LISTEN " "ON|OFF"
+.BI "LISTEN " "ON|OFF|CQ"
 Enable or disable listening for incoming connections.
+.B LISTEN CQ
+is treated as
+.BR "LISTEN ON" .
 .TP
 .BI "PUBLIC " "ON|OFF"
 Enable or disable public mode (accept connections from any station).
@@ -225,7 +280,12 @@ to
 .IR destcall .
 .TP
 .B DISCONNECT
-Disconnect the current ARQ session.
+Disconnect the current ARQ session gracefully.
+The air-side teardown proceeds in the background.
+.TP
+.B ABORT
+Disconnect immediately without air-side teardown.
+All buffers are flushed; the remote peer will time out.
 .TP
 .BI "BW" bandwidth
 Set the channel bandwidth in Hz.
@@ -256,6 +316,10 @@ Transmit a CQ broadcast frame.
 accepts the same values as
 .BR BW .
 .TP
+.B VERSION
+Return modem identification string.
+Accepted for VARA compatibility.
+.TP
 .B COMPRESSION ON|OFF
 Accepted for VARA compatibility; no-op.
 .TP
@@ -268,6 +332,9 @@ is a no-op.
 Accepted for VARA compatibility.
 .TP
 .B P2P
+Accepted for VARA compatibility; no-op.
+.TP
+.B IGNOREKISSDCD
 Accepted for VARA compatibility; no-op.
 .SS "Responses (control port)"
 .TP
@@ -335,9 +402,7 @@ _
 ARQ control	8300	TCP
 ARQ data	8301	TCP
 Broadcast	8100	TCP
-UI TX	10000	UDP
-UI RX	10001	UDP
-UI spectrum	10002	UDP
+UI (WebSocket)	10000	TCP
 .TE
 .SH EXAMPLES
 Start mercury with default settings (ALSA, DATAC3, port 8300):
@@ -364,6 +429,14 @@ mercury \-i plughw:1,0 \-o plughw:1,0 \-R 2 \-A localhost:4532
 .fi
 .RE
 .PP
+Start with Hamlib radio control on a serial port (Yaesu FT-710 on Windows):
+.PP
+.RS
+.nf
+mercury \-i dsound \-o dsound \-R 1049 \-A COM3
+.fi
+.RE
+.PP
 Start with HERMES shared memory PTT control:
 .PP
 .RS
@@ -372,11 +445,19 @@ mercury \-i plughw:1,0 \-o plughw:1,0 \-S
 .fi
 .RE
 .PP
-Start with PulseAudio, narrow bandwidth, and GUI enabled:
+Start with PulseAudio, narrow bandwidth, and GUI enabled over WSS:
 .PP
 .RS
 .nf
-mercury \-x pulse \-m 3 \-G
+mercury \-x pulse \-m 3 \-G \-T
+.fi
+.RE
+.PP
+Use a custom configuration file:
+.PP
+.RS
+.nf
+mercury \-C /etc/mercury/my_config.ini
 .fi
 .RE
 .PP

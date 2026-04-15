@@ -1,3 +1,13 @@
+mercury (1.9.7-1) unstable; urgency=medium
+
+  * Release 1.9.7.
+  * Fix Windows ARQ socket reads (replace WSAPoll with select).
+  * Add radio_serial_speed config for hamlib baud rate override.
+  * Add MYCALL secondary callsigns support (up to 4).
+  * Add VARA commands: ABORT, VERSION, IGNOREKISSDCD, LISTEN CQ.
+
+ -- Rafael Diniz <rafael@riseup.net>  Tue, 15 Apr 2026 12:00:00 +0100
+
 mercury (1.9.6-1) unstable; urgency=medium
 
   * Release 1.9.6.

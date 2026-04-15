@@ -58,12 +58,15 @@ Enable or disable listening for incoming ARQ connections.
 ```
 LISTEN ON\r
 LISTEN OFF\r
+LISTEN CQ\r
 ```
 
 **Response:** `OK\r` on success, `WRONG\r` on error.
 
 When enabled, Mercury enters the LISTENING state and will accept incoming
 CALL frames addressed to the local callsign (or any callsign if PUBLIC is ON).
+
+`LISTEN CQ` is treated as `LISTEN ON` (VarAC compatibility).
 
 ---
 
@@ -208,6 +211,49 @@ DISCONNECT\r
 
 Mercury sends DISCONNECT frames to the peer.  Once complete, the
 asynchronous response `DISCONNECTED\r` is sent on the control port.
+
+---
+
+### ABORT
+
+Dirty disconnect — immediately flush all buffers and terminate the session
+without air-side teardown.  The remote peer will time out.
+
+```
+ABORT\r
+```
+
+**Response:** `OK\r` if the command was accepted, `WRONG\r` on error.
+
+Unlike `DISCONNECT`, `ABORT` does not send any over-the-air DISCONNECT
+frames and clears all pending TX data immediately.
+
+---
+
+### VERSION
+
+Query the modem identification string.
+
+```
+VERSION\r
+```
+
+**Response:** A VARA-compatible version string on the control port.
+
+This command exists for VARA-compatible clients (e.g., VarAC) that check
+the modem version at startup.
+
+---
+
+### IGNOREKISSDCD
+
+No-op for VARA client compatibility.
+
+```
+IGNOREKISSDCD\r
+```
+
+**Response:** `OK\r` (always).
 
 ---
 
