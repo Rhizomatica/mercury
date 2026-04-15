@@ -121,9 +121,12 @@ endif
 	$(MAKE) $(BINARY)
 	$(MAKE) -C utils
 
+docdir ?= $(prefix)/share/doc/mercury
+
 install: all
 	install -D -m 755 $(BINARY) $(DESTDIR)$(bindir)/mercury
 	install -D -m 644 mercury.1 $(DESTDIR)$(mandir)/man1/mercury.1
+	install -D -m 644 mercury.ini.example $(DESTDIR)$(docdir)/mercury.ini.example
 
 $(BINARY): $(MERCURY_LINK_INPUTS)
 	$(CC) -o $(BINARY)  \
@@ -164,6 +167,7 @@ windows-zip: windows
 	rm -rf $(WINDOWS_DIR) $(WINDOWS_ZIP)
 	mkdir -p $(WINDOWS_DIR)
 	cp mercury.exe $(WINDOWS_DIR)/
+	cp mercury.ini.example $(WINDOWS_DIR)/
 	if ls $(HAMLIB_W64_DIR)/bin/*.dll >/dev/null 2>&1; then \
 		cp $(HAMLIB_W64_DIR)/bin/*.dll $(WINDOWS_DIR)/; \
 	fi
