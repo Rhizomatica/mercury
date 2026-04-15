@@ -7,10 +7,10 @@ Mercury is part of the [HERMES project](https://www.rhizomatica.org/hermes/)
 
 There are currently two versions:
 
-- **[Mercury v1](https://github.com/Rhizomatica/mercury/tree/mercuryv1)** — the original Mercury modem written in C++.
-- **Mercury v2** (this branch) — a complete rewrite in C with a new ARQ data link.
+- **Mercury v2** (this branch) — a complete rewrite in C with a new ARQ data link. **This is the recommended version.**
+- **[Mercury v1](https://github.com/Rhizomatica/mercury/tree/mercuryv1)** — the original Mercury modem written in C++. Legacy; use only if you know what you are doing.
 
-A Qt-based GUI is under development: [mercury-qt](https://github.com/Rhizomatica/mercury-qt)
+A Qt-based GUI is available: [mercury-qt](https://github.com/Rhizomatica/mercury-qt)
 
 Mailing list: https://lists.riseup.net/www/info/hermes-general
 
@@ -37,7 +37,7 @@ over HF radio links in rural and emergency scenarios.
 
 ```
 Usage modes:
-./mercury -m [mode_index] -i [device] -o [device] -x [sound_system] -p [arq_tcp_base_port] -b [broadcast_tcp_port] -f [freedv_verbosity] -H [hamlib_log_level] -k [rx_input_channel] [-G] [-T] [-U ui_port] [-W]
+./mercury -m [mode_index] -i [device] -o [device] -x [sound_system] -p [arq_tcp_base_port] -b [broadcast_tcp_port] -f [freedv_verbosity] -H [hamlib_log_level] -k [rx_input_channel] [-G] [-T] [-U ui_port] [-W] [-C config_file]
 ./mercury [-h -l -z]
 
 Options:
@@ -65,6 +65,7 @@ Options:
  -A [radio_address]         Sets HAMLIB radio device file or ip:port address.
  -S                         Use HERMES shared memory radio control (Linux-only; do not use with -R and -A).
  -K                         List HAMLIB supported radio models.
+ -C [path]                  Path to INI configuration file (default: mercury.ini in the current directory).
  -t                         Test TX mode.
  -r                         Test RX mode.
  -h                         Prints this help.
@@ -84,6 +85,10 @@ Radio control notes:
 - With no `-R`, `-A`, or `-S`, Mercury does **not** key the radio directly; it leaves for the tcp client the radio keying task.
 - `-R` selects a HAMLIB model ID, `-A` optionally points HAMLIB at a device path or `ip:port`, and `-K` prints the available HAMLIB models.
 - `-S` selects the HERMES shared-memory controller interface, is mutually exclusive with `-A`, and is unavailable on Windows builds.
+
+## Configuration File
+
+Mercury reads an INI-format configuration file at startup. The default path is `mercury.ini` in the current working directory; use `-C` to specify an alternative path. Command-line arguments take priority over file values. See the included [mercury.ini](mercury.ini) for all available settings and their defaults.
 
 ## Getting Mercury
 
@@ -147,11 +152,11 @@ See [docs/ARQ.md](docs/ARQ.md) for full ARQ architecture, protocol reference, an
 
 Mercury v2 currently uses FreeDV modulator code developed by David Rowe. We plan to introduce other modulator modes present in Mercury v1.
 
-# Graphical Interface
+## Graphical Interfaces
 
-Mercuryv2 currently has 2 interfaces:
-- Mercury-qt: https://github.com/Rhizomatica/mercury-qt
-- Web-based: located in docs/app in this repository, and accessible via https://rhizomatica.github.io/mercury/app/
+Mercury v2 has two interfaces:
+- **Mercury-qt** (desktop): https://github.com/Rhizomatica/mercury-qt
+- **Web-based**: located in `docs/app/` in this repository, and accessible via https://rhizomatica.github.io/mercury/app/
 
 ## About
 
