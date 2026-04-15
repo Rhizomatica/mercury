@@ -22,6 +22,9 @@ Thumbs.db
 /tmp/
 *.tmp
 
+# User config (copy mercury.ini.example to mercury.ini)
+mercury.ini
+
 .git_hash_stamp
 *.deb
 *.rpm

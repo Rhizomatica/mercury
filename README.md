@@ -88,7 +88,7 @@ Radio control notes:
 
 ## Configuration File
 
-Mercury reads an INI-format configuration file at startup. The default path is `mercury.ini` in the current working directory; use `-C` to specify an alternative path. Command-line arguments take priority over file values. See the included [mercury.ini](mercury.ini) for all available settings and their defaults.
+Mercury reads an INI-format configuration file at startup. The default path is `mercury.ini` in the current working directory; use `-C` to specify an alternative path. Command-line arguments take priority over file values. See the included [mercury.ini.example](mercury.ini.example) for all available settings and their defaults — copy it to `mercury.ini` and edit as needed.
 
 ## Getting Mercury
 
