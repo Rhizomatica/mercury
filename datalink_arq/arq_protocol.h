@@ -203,8 +203,9 @@ extern _Atomic int arq_data_retry_slots;
 extern _Atomic int arq_disconnect_retry_slots;
 
 /* Runtime-configurable DATAC13 call interval in seconds (set via CALLINT TCP
- * command).  0.0 = use compiled default (7.0s).  Minimum enforced: 3.0s. */
-#define ARQ_CALLINT_MIN_S      3.0f
+ * command).  0.0 = use compiled default (7.0s).  Minimum enforced: 4.0s.
+ * This timer starts at the start of the transmission not the end. */
+#define ARQ_CALLINT_MIN_S      4.0f
 #define ARQ_CALLINT_DEFAULT_S  0.0f   /* 0 = use table default */
 extern _Atomic float arq_callint_override_s;
 

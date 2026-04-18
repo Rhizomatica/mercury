@@ -309,10 +309,11 @@ RETRIES 10\r
 Override the interval in **whole seconds** between successive CALL frame
 attempts during connection setup.  This only affects the DATAC13 control
 channel used for CALL/ACCEPT — it has no effect on data frame retry timing
-once a session is established.
+once a session is established.  This timer starts at the beginning of the
+transmission cycle.
 
 Send `0` to restore the compiled default (7 seconds).  The minimum
-enforced value is 3 seconds; values below 3 are clamped to 3 to avoid
+enforced value is 4 seconds; values below 4 are clamped to 4 to avoid
 firing a retry before a valid ACCEPT can return over the air.
 
 ```
