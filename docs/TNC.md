@@ -304,6 +304,26 @@ RETRIES 10\r
 
 ---
 
+### CALLINT
+
+Override the interval in **whole seconds** between successive CALL frame
+attempts during connection setup.  This only affects the DATAC13 control
+channel used for CALL/ACCEPT — it has no effect on data frame retry timing
+once a session is established.
+
+Send `0` to restore the compiled default (7 seconds).  The minimum
+enforced value is 3 seconds; values below 3 are clamped to 3 to avoid
+firing a retry before a valid ACCEPT can return over the air.
+
+```
+CALLINT 5\r
+CALLINT 0\r
+```
+
+**Response:** `OK\r` on success, `WRONG\r` on error.
+
+---
+
 
 ## Asynchronous Responses (Mercury → Client)
 

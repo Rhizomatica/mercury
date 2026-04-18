@@ -341,6 +341,22 @@ static void handle_cmd(const arq_cmd_msg_t *msg)
         arq_set_retry_slots(msg->value);
         return;
 
+    case ARQ_CMD_SET_CALLINT:
+        if (msg->value <= 0)
+        {
+            atomic_store(&arq_callint_override_s, ARQ_CALLINT_DEFAULT_S);
+            HLOGI(LOG_COMP, "CALLINT reset to default (%.1fs)",
+                  arq_mode_table[0].retry_interval_s);
+        }
+        else
+        {
+            float v = (float)msg->value;
+            if (v < ARQ_CALLINT_MIN_S) v = ARQ_CALLINT_MIN_S;
+            atomic_store(&arq_callint_override_s, v);
+            HLOGI(LOG_COMP, "CALLINT set to %.1fs", v);
+        }
+        return;
+
     case ARQ_CMD_LISTEN_ON:
         arq_conn.listen = true;
         ev.id = ARQ_EV_APP_LISTEN;

@@ -33,7 +33,8 @@ typedef enum
     ARQ_CMD_SEND_CQ = 11,
     ARQ_CMD_ADD_SECONDARY_CALLSIGN = 12,
     ARQ_CMD_CLEAR_SECONDARY_CALLSIGNS = 13,
-    ARQ_CMD_ABORT = 14
+    ARQ_CMD_ABORT = 14,
+    ARQ_CMD_SET_CALLINT = 15
 } arq_cmd_type_t;
 
 typedef enum
