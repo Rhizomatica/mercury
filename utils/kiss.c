@@ -64,11 +64,11 @@ int kiss_read(uint8_t sbyte, uint8_t *frame_buffer)
     return 0;
 }
 
-int kiss_write_frame(uint8_t* buffer, int frame_len, uint8_t *write_buffer)
+int kiss_write_frame(uint8_t* buffer, int frame_len, uint8_t cmd, uint8_t *write_buffer)
 {
     int write_len = 0;
     write_buffer[write_len++] = FEND;
-    write_buffer[write_len++] = CMD_DATA;
+    write_buffer[write_len++] = cmd;
     for (int i = 0; i < frame_len; i++)
     {
         uint8_t byte = buffer[i];

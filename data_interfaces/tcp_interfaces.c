@@ -45,6 +45,7 @@
 #include "chan.h"
 #include "defines_modem.h"
 #include "kiss.h"
+#include "framer.h"
 #include "hermes_log.h"
 #include "radio_io.h"
 
@@ -886,7 +887,19 @@ void *send_thread(void *client_socket_ptr)
         if (read_buffer(data_rx_buffer_broadcast, frame_buffer, frame_size) < 0)
             break;
 
-        int kiss_len = kiss_write_frame(frame_buffer, (int)frame_size, kiss_buffer);
+        /* Strip the Mercury frame header (byte 0) before sending to the
+         * KISS client.  The ring buffer always stores framed data with a
+         * PACKET_TYPE_BROADCAST_* header that was either placed by the TX
+         * side (hermes-broadcast) or added by recv_thread (VARA clients).
+         * Clients on the KISS port expect raw payload only. */
+        uint8_t *payload_start = frame_buffer + HEADER_SIZE;
+        int payload_len = (int)frame_size - HEADER_SIZE;
+        if (payload_len <= 0)
+            continue;
+
+        int kiss_len = kiss_write_frame(payload_start, payload_len, CMD_AX25CALLSIGN, kiss_buffer);
+        HLOGI("tcp-bcast", "Sending KISS frame to client: kiss_cmd=0x%02X payload=%d kiss_len=%d",
+              CMD_AX25CALLSIGN, payload_len, kiss_len);
         if (send_all(client_socket, kiss_buffer, (size_t)kiss_len) < 0)
         {
             HLOGW("tcp-bcast", "Error sending KISS broadcast frame: %s",
@@ -922,25 +935,64 @@ void *recv_thread(void *client_socket_ptr)
         goto cleanup;
     }
 
+    HLOGI("tcp-bcast", "Receive thread started (expected frame_size=%zu)", frame_size);
+
     while (!shutdown_)
     {
         ssize_t received = recv(client_socket, (char *)buffer, DATA_TX_BUFFER_SIZE, 0);
         if (received > 0)
         {
+            HLOGD("tcp-bcast", "recv %zd bytes from broadcast client", received);
             for (ssize_t i = 0; i < received; i++)
             {
                 int frame_len = kiss_read(buffer[i], decoded_frame);
                 if (frame_len <= 0)
                     continue;
 
-                if ((size_t)frame_len != frame_size)
+                uint8_t kiss_cmd = kiss_last_command();
+                HLOGI("tcp-bcast", "KISS frame decoded: cmd=0x%02X len=%d (expected %zu)",
+                      kiss_cmd, frame_len, frame_size);
+
+                /* VARA clients (CMD_AX25 / CMD_AX25CALLSIGN) send raw
+                 * AX.25 payloads without a Mercury frame header.
+                 * Hermes-broadcast (CMD_DATA) already includes the header.
+                 * Normalize: always store header + payload in the ring
+                 * buffer so the modem TX path sees a proper frame type. */
+                if (kiss_cmd == CMD_AX25 || kiss_cmd == CMD_AX25CALLSIGN)
                 {
-                    HLOGW("tcp-bcast", "Discarding broadcast frame with unexpected size %d (expected %zu)",
+                    /* Max payload we can fit after adding 1-byte header */
+                    size_t max_payload = frame_size - HEADER_SIZE;
+                    if ((size_t)frame_len > max_payload)
+                    {
+                        HLOGW("tcp-bcast", "Truncating VARA frame from %d to %zu to fit header",
+                              frame_len, max_payload);
+                        frame_len = (int)max_payload;
+                    }
+                    /* Shift payload right by 1 byte and prepend header */
+                    memmove(decoded_frame + HEADER_SIZE, decoded_frame, (size_t)frame_len);
+                    write_frame_header(decoded_frame, PACKET_TYPE_BROADCAST_DATA, 0);
+                    frame_len += HEADER_SIZE;
+                    HLOGD("tcp-bcast", "Added Mercury broadcast header (cmd=0x%02X), frame now %d bytes",
+                          kiss_cmd, frame_len);
+                }
+
+                if ((size_t)frame_len > frame_size)
+                {
+                    HLOGW("tcp-bcast", "Discarding broadcast frame: size %d exceeds modem frame size %zu",
                             frame_len, frame_size);
                     continue;
                 }
 
+                if ((size_t)frame_len < frame_size)
+                {
+                    HLOGD("tcp-bcast", "Padding broadcast frame from %d to %zu bytes",
+                          frame_len, frame_size);
+                    memset(decoded_frame + frame_len, 0, frame_size - (size_t)frame_len);
+                }
+
                 write_buffer(data_tx_buffer_broadcast, decoded_frame, frame_size);
+                HLOGI("tcp-bcast", "Broadcast frame queued for TX (%zu bytes, type=0x%02X)",
+                      frame_size, frame_header_packet_type(decoded_frame[0]));
             }
         }
         else if (received == 0)

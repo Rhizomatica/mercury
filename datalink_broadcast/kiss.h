@@ -47,7 +47,9 @@ void kiss_reset_state(void);
 
 int kiss_read(uint8_t sbyte, uint8_t *frame_buffer);
 
-int kiss_write_frame(uint8_t* buffer, int frame_len, uint8_t* write_buffer);
+uint8_t kiss_last_command(void);
+
+int kiss_write_frame(uint8_t* buffer, int frame_len, uint8_t cmd, uint8_t* write_buffer);
 
 
 #ifdef __cplusplus

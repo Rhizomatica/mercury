@@ -19,6 +19,11 @@ bool ESCAPE;
 
 uint8_t kiss_command = CMD_UNKNOWN;
 
+static bool kiss_cmd_carries_data(uint8_t cmd)
+{
+    return cmd == CMD_DATA || cmd == CMD_AX25 || cmd == CMD_AX25CALLSIGN;
+}
+
 void kiss_reset_state(void)
 {
     frame_len = 0;
@@ -27,9 +32,14 @@ void kiss_reset_state(void)
     kiss_command = CMD_UNKNOWN;
 }
 
+uint8_t kiss_last_command(void)
+{
+    return kiss_command;
+}
+
 int kiss_read(uint8_t sbyte, uint8_t *frame_buffer)
 {
-    if (IN_FRAME && sbyte == FEND && kiss_command == CMD_DATA)
+    if (IN_FRAME && sbyte == FEND && kiss_cmd_carries_data(kiss_command))
     {
         IN_FRAME = false;
         return frame_len;
@@ -50,7 +60,7 @@ int kiss_read(uint8_t sbyte, uint8_t *frame_buffer)
             kiss_command = sbyte & 0x0F;
             return 0;
         }
-        if (kiss_command == CMD_DATA)
+        if (kiss_cmd_carries_data(kiss_command))
         {
             if (sbyte == FESC)
             {
@@ -72,11 +82,11 @@ int kiss_read(uint8_t sbyte, uint8_t *frame_buffer)
     return 0;
 }
 
-int kiss_write_frame(uint8_t* buffer, int frame_len, uint8_t *write_buffer)
+int kiss_write_frame(uint8_t* buffer, int frame_len, uint8_t cmd, uint8_t *write_buffer)
 {
     int write_len = 0;
     write_buffer[write_len++] = FEND;
-    write_buffer[write_len++] = CMD_DATA;
+    write_buffer[write_len++] = cmd;
     for (int i = 0; i < frame_len; i++)
     {
         uint8_t byte = buffer[i];

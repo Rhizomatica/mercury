@@ -135,7 +135,7 @@ void clear_buffer(cbuf_handle_t cbuf) { (void)cbuf; }
 
 /* ---- kiss stubs ---- */
 
-int kiss_write_frame(uint8_t *a, int b, uint8_t *c) { (void)a; (void)b; (void)c; return 0; }
+int kiss_write_frame(uint8_t *a, int b, uint8_t cmd, uint8_t *c) { (void)a; (void)b; (void)cmd; (void)c; return 0; }
 int kiss_read(uint8_t b, uint8_t *c) { (void)b; (void)c; return 0; }
 void kiss_reset_state(void) { }
 
