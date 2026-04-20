@@ -345,8 +345,10 @@ static void handle_cmd(const arq_cmd_msg_t *msg)
         if (msg->value <= 0)
         {
             atomic_store(&arq_callint_override_s, ARQ_CALLINT_DEFAULT_S);
+            const arq_mode_timing_t *datac13 =
+                arq_protocol_mode_timing(FREEDV_MODE_DATAC13);
             HLOGI(LOG_COMP, "CALLINT reset to default (%.1fs)",
-                  arq_mode_table[0].retry_interval_s);
+                  datac13 ? datac13->retry_interval_s : 7.0f);
         }
         else
         {

@@ -498,6 +498,52 @@ void test_cmd_listen_cq(void)
     TEST_ASSERT_EQUAL_INT(ARQ_CMD_LISTEN_ON, captured_cmd.type);
 }
 
+/* ---- CALLINT command tests ---- */
+
+void test_cmd_callint_valid(void)
+{
+    char cmd[] = "CALLINT 5";
+    execute_control_command(cmd);
+
+    assert_ok_response();
+    TEST_ASSERT_EQUAL_INT(ARQ_CMD_SET_CALLINT, captured_cmd.type);
+    TEST_ASSERT_EQUAL_INT(5, captured_cmd.value);
+}
+
+void test_cmd_callint_zero(void)
+{
+    char cmd[] = "CALLINT 0";
+    execute_control_command(cmd);
+
+    assert_ok_response();
+    TEST_ASSERT_EQUAL_INT(ARQ_CMD_SET_CALLINT, captured_cmd.type);
+    TEST_ASSERT_EQUAL_INT(0, captured_cmd.value);
+}
+
+void test_cmd_callint_no_arg(void)
+{
+    char cmd[] = "CALLINT";
+    execute_control_command(cmd);
+
+    assert_wrong_response();
+}
+
+void test_cmd_callint_nonnumeric(void)
+{
+    char cmd[] = "CALLINT abc";
+    execute_control_command(cmd);
+
+    assert_wrong_response();
+}
+
+void test_cmd_callint_negative(void)
+{
+    char cmd[] = "CALLINT -1";
+    execute_control_command(cmd);
+
+    assert_wrong_response();
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -523,6 +569,12 @@ int main(void)
     RUN_TEST(test_cmd_version);
     RUN_TEST(test_cmd_ignorekissdcd);
     RUN_TEST(test_cmd_listen_cq);
+    /* CALLINT command tests */
+    RUN_TEST(test_cmd_callint_valid);
+    RUN_TEST(test_cmd_callint_zero);
+    RUN_TEST(test_cmd_callint_no_arg);
+    RUN_TEST(test_cmd_callint_nonnumeric);
+    RUN_TEST(test_cmd_callint_negative);
     RUN_TEST(test_process_control_bytes_multiline);
     /* Status emitter tests */
     RUN_TEST(test_tnc_send_disconnected);

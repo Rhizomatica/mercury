@@ -10,6 +10,7 @@
 
 #include <string.h>
 #include <stdint.h>
+#include <stdatomic.h>
 
 #include "unity.h"
 #include "arq_protocol.h"
@@ -17,7 +18,12 @@
 #include "framer.h"
 #include "freedv/freedv_api.h"
 
-void setUp(void) { }
+void setUp(void)
+{
+    /* Reset CALLINT override before each test so tests are isolated */
+    atomic_store(&arq_callint_override_s, 0.0f);
+}
+
 void tearDown(void) { }
 
 /* ---- Header encode/decode ---- */
@@ -191,6 +197,45 @@ void test_mode_timing_invalid(void)
     TEST_ASSERT_NULL(t);
 }
 
+/* ---- CALLINT / call interval override ---- */
+
+void test_call_interval_default(void)
+{
+    /* Override is 0 (default) → should return DATAC13 table value (7.0s) */
+    float interval = arq_protocol_call_interval_s();
+    TEST_ASSERT_FLOAT_WITHIN(0.01f, 7.0f, interval);
+}
+
+void test_call_interval_override(void)
+{
+    /* Set override to 5.0s → should return 5.0s */
+    atomic_store(&arq_callint_override_s, 5.0f);
+    float interval = arq_protocol_call_interval_s();
+    TEST_ASSERT_FLOAT_WITHIN(0.01f, 5.0f, interval);
+}
+
+void test_call_interval_reset(void)
+{
+    /* Set override, then reset to 0 → should return table default */
+    atomic_store(&arq_callint_override_s, 5.0f);
+    TEST_ASSERT_FLOAT_WITHIN(0.01f, 5.0f, arq_protocol_call_interval_s());
+
+    atomic_store(&arq_callint_override_s, ARQ_CALLINT_DEFAULT_S);
+    TEST_ASSERT_FLOAT_WITHIN(0.01f, 7.0f, arq_protocol_call_interval_s());
+}
+
+void test_mode_timing_datac13_unaffected_by_override(void)
+{
+    /* Even with CALLINT override active, arq_protocol_mode_timing() must
+     * return the immutable table entry — the override only takes effect
+     * through arq_protocol_call_interval_s(). */
+    atomic_store(&arq_callint_override_s, 5.0f);
+
+    const arq_mode_timing_t *t = arq_protocol_mode_timing(FREEDV_MODE_DATAC13);
+    TEST_ASSERT_NOT_NULL(t);
+    TEST_ASSERT_FLOAT_WITHIN(0.01f, 7.0f, t->retry_interval_s);
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -214,5 +259,10 @@ int main(void)
     /* Mode timing */
     RUN_TEST(test_mode_timing_datac4);
     RUN_TEST(test_mode_timing_invalid);
+    /* CALLINT / call interval override */
+    RUN_TEST(test_call_interval_default);
+    RUN_TEST(test_call_interval_override);
+    RUN_TEST(test_call_interval_reset);
+    RUN_TEST(test_mode_timing_datac13_unaffected_by_override);
     return UNITY_END();
 }

@@ -71,8 +71,10 @@ const int arq_mode_table_count =
  * Mode timing lookup
  * ====================================================================== */
 
-/* Runtime-configurable DATAC13 call interval (set via CALLINT TCP command).
- * 0.0 = use compiled default from arq_mode_table. */
+/* Runtime-configurable CALL/ACCEPT retry interval in seconds (set via
+ * CALLINT TCP command).  0.0 = use compiled default from arq_mode_table.
+ * Only affects CALL/ACCEPT retry scheduling — all other DATAC13 control
+ * frames (keepalive, disconnect, turn_req) use the immutable table values. */
 _Atomic float arq_callint_override_s = 0.0f;
 
 const arq_mode_timing_t *arq_protocol_mode_timing(int freedv_mode)
@@ -80,25 +82,19 @@ const arq_mode_timing_t *arq_protocol_mode_timing(int freedv_mode)
     for (int i = 0; i < arq_mode_table_count; i++)
     {
         if (arq_mode_table[i].freedv_mode == freedv_mode)
-        {
-            if (freedv_mode == FREEDV_MODE_DATAC13)
-            {
-                float override = atomic_load(&arq_callint_override_s);
-                if (override > 0.0f)
-                {
-                    /* Return a patched copy with the overridden interval.
-                     * Static local — safe because the event loop is single-
-                     * threaded and only reads the pointer synchronously. */
-                    static arq_mode_timing_t patched;
-                    patched = arq_mode_table[i];
-                    patched.retry_interval_s = override;
-                    return &patched;
-                }
-            }
             return &arq_mode_table[i];
-        }
     }
     return NULL;
+}
+
+float arq_protocol_call_interval_s(void)
+{
+    float override = atomic_load(&arq_callint_override_s);
+    if (override > 0.0f)
+        return override;
+
+    const arq_mode_timing_t *tm = arq_protocol_mode_timing(FREEDV_MODE_DATAC13);
+    return tm ? tm->retry_interval_s : 7.0f;
 }
 
 /* ======================================================================

@@ -306,11 +306,10 @@ RETRIES 10\r
 
 ### CALLINT
 
-Override the interval in **whole seconds** between successive CALL frame
-attempts during connection setup.  This only affects the DATAC13 control
-channel used for CALL/ACCEPT — it has no effect on data frame retry timing
-once a session is established.  This timer starts at the beginning of the
-transmission cycle.
+Override the interval in **whole seconds** between successive CALL/ACCEPT
+frame retries during connection setup.  This has no effect on other control
+frame timing (keepalive, disconnect, turn request) or on data frame retry
+timing once a session is established.
 
 Send `0` to restore the compiled default (7 seconds).  The minimum
 enforced value is 4 seconds; values below 4 are clamped to 4 to avoid

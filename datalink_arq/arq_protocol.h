@@ -202,9 +202,10 @@ extern _Atomic int arq_accept_retry_slots;
 extern _Atomic int arq_data_retry_slots;
 extern _Atomic int arq_disconnect_retry_slots;
 
-/* Runtime-configurable DATAC13 call interval in seconds (set via CALLINT TCP
- * command).  0.0 = use compiled default (7.0s).  Minimum enforced: 4.0s.
- * This timer starts at the start of the transmission not the end. */
+/* Runtime-configurable CALL/ACCEPT retry interval in seconds (set via CALLINT
+ * TCP command).  0.0 = use compiled default (7.0s).  Minimum enforced: 4.0s.
+ * Only affects CALL/ACCEPT retry scheduling during connection setup — all
+ * other DATAC13 control frames use the immutable table values. */
 #define ARQ_CALLINT_MIN_S      4.0f
 #define ARQ_CALLINT_DEFAULT_S  0.0f   /* 0 = use table default */
 extern _Atomic float arq_callint_override_s;
@@ -306,6 +307,12 @@ uint32_t arq_protocol_decode_ack_delay(uint8_t raw);
  * @return Pointer to timing entry, or NULL if mode is unknown.
  */
 const arq_mode_timing_t *arq_protocol_mode_timing(int freedv_mode);
+
+/**
+ * Return the CALL/ACCEPT retry interval in seconds, applying any
+ * CALLINT override.  Falls back to the DATAC13 table default (7.0s).
+ */
+float arq_protocol_call_interval_s(void);
 
 /**
  * @brief Compute CRC16-CCITT of an uppercase-normalised callsign.

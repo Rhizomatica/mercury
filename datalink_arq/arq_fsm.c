@@ -701,13 +701,9 @@ static void fsm_disconnected(arq_session_t *sess, const arq_event_t *ev)
         sess->consecutive_retries = 0;
         sess->mode_hold_until_ms = 0;
         send_call_accept(sess, false);
-        {
-            const arq_mode_timing_t *tm =
-                arq_protocol_mode_timing(sess->control_mode);
-            float interval = tm ? tm->retry_interval_s : 7.0f;
-            sess_enter(sess, ARQ_CONN_CALLING,
-                       deadline_from_s(interval), ARQ_EV_TIMER_RETRY);
-        }
+        sess_enter(sess, ARQ_CONN_CALLING,
+                   deadline_from_s(arq_protocol_call_interval_s()),
+                   ARQ_EV_TIMER_RETRY);
         break;
 
     default:
@@ -811,8 +807,6 @@ static void fsm_listening(arq_session_t *sess, const arq_event_t *ev)
 
 static void fsm_calling(arq_session_t *sess, const arq_event_t *ev)
 {
-    const arq_mode_timing_t *tm;
-
     switch (ev->id)
     {
     case ARQ_EV_RX_ACCEPT:
@@ -861,8 +855,7 @@ static void fsm_calling(arq_session_t *sess, const arq_event_t *ev)
         {
             sess->tx_retries_left--;
             send_call_accept(sess, false);
-            tm = arq_protocol_mode_timing(sess->control_mode);
-            sess->deadline_ms = deadline_from_s(tm ? tm->retry_interval_s : 7.0f);
+            sess->deadline_ms = deadline_from_s(arq_protocol_call_interval_s());
         }
         else
         {
@@ -883,8 +876,6 @@ static void fsm_calling(arq_session_t *sess, const arq_event_t *ev)
 
 static void fsm_accepting(arq_session_t *sess, const arq_event_t *ev)
 {
-    const arq_mode_timing_t *tm;
-
     switch (ev->id)
     {
     case ARQ_EV_RX_DATA:
@@ -939,8 +930,7 @@ static void fsm_accepting(arq_session_t *sess, const arq_event_t *ev)
             send_call_accept(sess, true);
             /* deadline is now managed via TX_COMPLETE above; set a generous
              * fallback here in case TX_COMPLETE is missed for any reason */
-            tm = arq_protocol_mode_timing(sess->control_mode);
-            sess->deadline_ms = deadline_from_s(tm ? tm->retry_interval_s : 7.0f);
+            sess->deadline_ms = deadline_from_s(arq_protocol_call_interval_s());
         }
         else
         {
