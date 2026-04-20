@@ -71,6 +71,12 @@ const int arq_mode_table_count =
  * Mode timing lookup
  * ====================================================================== */
 
+/* Runtime-configurable CALL/ACCEPT retry interval in seconds (set via
+ * CALLINT TCP command).  0.0 = use compiled default from arq_mode_table.
+ * Only affects CALL/ACCEPT retry scheduling — all other DATAC13 control
+ * frames (keepalive, disconnect, turn_req) use the immutable table values. */
+_Atomic float arq_callint_override_s = 0.0f;
+
 const arq_mode_timing_t *arq_protocol_mode_timing(int freedv_mode)
 {
     for (int i = 0; i < arq_mode_table_count; i++)
@@ -79,6 +85,16 @@ const arq_mode_timing_t *arq_protocol_mode_timing(int freedv_mode)
             return &arq_mode_table[i];
     }
     return NULL;
+}
+
+float arq_protocol_call_interval_s(void)
+{
+    float override = atomic_load(&arq_callint_override_s);
+    if (override > 0.0f)
+        return override;
+
+    const arq_mode_timing_t *tm = arq_protocol_mode_timing(FREEDV_MODE_DATAC13);
+    return tm ? tm->retry_interval_s : 7.0f;
 }
 
 /* ======================================================================

@@ -304,6 +304,26 @@ RETRIES 10\r
 
 ---
 
+### CALLINT
+
+Override the interval in **whole seconds** between successive CALL/ACCEPT
+frame retries during connection setup.  This has no effect on other control
+frame timing (keepalive, disconnect, turn request) or on data frame retry
+timing once a session is established.
+
+Send `0` to restore the compiled default (7 seconds).  The minimum
+enforced value is 4 seconds; values below 4 are clamped to 4 to avoid
+firing a retry before a valid ACCEPT can return over the air.
+
+```
+CALLINT 5\r
+CALLINT 0\r
+```
+
+**Response:** `OK\r` on success, `WRONG\r` on error.
+
+---
+
 
 ## Asynchronous Responses (Mercury → Client)
 
