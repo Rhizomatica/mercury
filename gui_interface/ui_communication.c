@@ -84,14 +84,14 @@ static int ws_command_handler(const ws_command_t *cmd, void *user_data)
 
     if (strcmp(cmd->command, "set_audio_config") == 0) {
         // value = capture_dev, value2 = playback_dev, value3 = input_channel
-        if (cmd->value[0])
-            strncpy(ctx->selected_capture_dev, cmd->value,
-                    sizeof(ctx->selected_capture_dev) - 1);
+        strncpy(ctx->selected_capture_dev, cmd->value,
+                sizeof(ctx->selected_capture_dev) - 1);
+        ctx->selected_capture_dev[sizeof(ctx->selected_capture_dev) - 1] = '\0';
         HLOGI(UI_LOG_TAG, "Capture device set to: %s", ctx->selected_capture_dev);
 
-        if (cmd->value2[0])
-            strncpy(ctx->selected_playback_dev, cmd->value2,
-                    sizeof(ctx->selected_playback_dev) - 1);
+        strncpy(ctx->selected_playback_dev, cmd->value2,
+                sizeof(ctx->selected_playback_dev) - 1);
+        ctx->selected_playback_dev[sizeof(ctx->selected_playback_dev) - 1] = '\0';
         HLOGI(UI_LOG_TAG, "Playback device set to: %s", ctx->selected_playback_dev);
 
         if (strcmp(cmd->value3, "right") == 0)
@@ -449,11 +449,17 @@ int ui_comm_init(ui_ctx_t *ctx, uint16_t ws_port, bool tls_enabled,
     ctx->ws_port = ws_port;
     ctx->tls_enabled = tls_enabled;
     if (selected_capture)
+    {
         strncpy(ctx->selected_capture_dev, selected_capture, sizeof(ctx->selected_capture_dev) - 1);
+        ctx->selected_capture_dev[sizeof(ctx->selected_capture_dev) - 1] = '\0';
+    }
     else
         ctx->selected_capture_dev[0] = '\0';
     if (selected_playback)
+    {
         strncpy(ctx->selected_playback_dev, selected_playback, sizeof(ctx->selected_playback_dev) - 1);
+        ctx->selected_playback_dev[sizeof(ctx->selected_playback_dev) - 1] = '\0';
+    }
     else
         ctx->selected_playback_dev[0] = '\0';
 

@@ -50,11 +50,11 @@ int ffpulse_init(ffaudio_init_conf *conf)
 		goto end;
 	}
 
+	pa_context_set_state_callback(p->ctx, pulse_on_conn_state_change, p);
 	if (0 != pa_context_connect(p->ctx, NULL, 0, NULL)) {
 		conf->error = "pa_context_connect";
 		goto end;
 	}
-	pa_context_set_state_callback(p->ctx, pulse_on_conn_state_change, p);
 
 	if (0 != pa_threaded_mainloop_start(p->mloop)) {
 		conf->error = "pa_threaded_mainloop_start";
@@ -509,12 +509,20 @@ int ffpulse_open(ffaudio_buf *b, ffaudio_conf *conf, ffuint flags)
 	pa_stream_set_state_callback(b->stm, pulse_on_change, b);
 	if (!b->capture) {
 		pa_stream_set_write_callback(b->stm, pulse_on_io, b);
-		pa_stream_connect_playback(b->stm, conf->device_id, &attr, pulse_connect_flags(), NULL, NULL);
 		b->errfunc = "pa_stream_connect_playback";
+		if (0 != pa_stream_connect_playback(b->stm, conf->device_id, &attr,
+				pulse_connect_flags(), NULL, NULL)) {
+			b->err = pa_context_errno(b->conn->ctx);
+			goto end;
+		}
 	} else {
 		pa_stream_set_read_callback(b->stm, pulse_on_io, b);
-		pa_stream_connect_record(b->stm, conf->device_id, &attr, pulse_connect_flags());
 		b->errfunc = "pa_stream_connect_record";
+		if (0 != pa_stream_connect_record(b->stm, conf->device_id, &attr,
+				pulse_connect_flags())) {
+			b->err = pa_context_errno(b->conn->ctx);
+			goto end;
+		}
 	}
 
 	for (;;) {
