@@ -446,6 +446,13 @@ static int pulse_fmt(ffuint f)
 
 static void pulse_on_io(pa_stream *s, ffsize nbytes, void *udata);
 
+static pa_stream_flags_t pulse_connect_flags(void)
+{
+	/* Make Pulse/PipeWire honor the requested buffer attributes instead of
+	using server defaults that can add enough latency to break the modem. */
+	return PA_STREAM_ADJUST_LATENCY;
+}
+
 /** PA manual: "called whenever the state of the stream changes" */
 static void pulse_on_change(pa_stream *s, void *udata)
 {
@@ -502,11 +509,11 @@ int ffpulse_open(ffaudio_buf *b, ffaudio_conf *conf, ffuint flags)
 	pa_stream_set_state_callback(b->stm, pulse_on_change, b);
 	if (!b->capture) {
 		pa_stream_set_write_callback(b->stm, pulse_on_io, b);
-		pa_stream_connect_playback(b->stm, conf->device_id, &attr, 0, NULL, NULL);
+		pa_stream_connect_playback(b->stm, conf->device_id, &attr, pulse_connect_flags(), NULL, NULL);
 		b->errfunc = "pa_stream_connect_playback";
 	} else {
 		pa_stream_set_read_callback(b->stm, pulse_on_io, b);
-		pa_stream_connect_record(b->stm, conf->device_id, &attr, 0);
+		pa_stream_connect_record(b->stm, conf->device_id, &attr, pulse_connect_flags());
 		b->errfunc = "pa_stream_connect_record";
 	}
 
