@@ -115,6 +115,41 @@ static inline uint64_t audioio_monotonic_ms(void)
 #endif
 }
 
+#if defined(__linux__)
+static bool pulse_init_already_initialized(const ffaudio_init_conf *aconf)
+{
+    return aconf && aconf->error && strcmp(aconf->error, "already initialized") == 0;
+}
+
+static int pulse_shared_init(bool *did_init)
+{
+    ffaudio_interface *audio = (ffaudio_interface *) &ffpulse;
+    ffaudio_init_conf aconf = {};
+    aconf.app_name = "mercury";
+    if (did_init)
+        *did_init = false;
+
+    if (audio->init(&aconf) != 0)
+    {
+        if (pulse_init_already_initialized(&aconf))
+            return 0;
+        HLOGE("audio-pulse", "Error initializing PulseAudio: %s",
+              aconf.error ? aconf.error : "unknown");
+        return -1;
+    }
+
+    if (did_init)
+        *did_init = true;
+    return 0;
+}
+
+static void pulse_shared_uninit(void)
+{
+    ffaudio_interface *audio = (ffaudio_interface *) &ffpulse;
+    audio->uninit();
+}
+#endif
+
 int audioio_pick_default_subsystem(void)
 {
 #if defined(__linux__)
@@ -729,6 +764,7 @@ int get_soundcard_list(int audio_system, int mode,
 {
     ffaudio_interface *audio = NULL;
     int count = 0;
+    bool did_init = false;
 
     if (audio_system == AUDIO_SUBSYSTEM_SHM)
         return 0;
@@ -757,15 +793,27 @@ int get_soundcard_list(int audio_system, int mode,
     if (!audio)
         return 0;
 
-    ffaudio_init_conf aconf = {};
-    if (audio->init(&aconf) != 0)
-        return 0;
+#if defined(__linux__)
+    if (audio_system == AUDIO_SUBSYSTEM_PULSE)
+    {
+        if (pulse_shared_init(&did_init) != 0)
+            return 0;
+    }
+    else
+#endif
+    {
+        ffaudio_init_conf aconf = {};
+        if (audio->init(&aconf) != 0)
+            return 0;
+        did_init = true;
+    }
 
     // mode: FFAUDIO_DEV_PLAYBACK (0) or FFAUDIO_DEV_CAPTURE (1)
     ffaudio_dev *d = audio->dev_alloc(mode);
     if (d == NULL)
     {
-        audio->uninit();
+        if (did_init)
+            audio->uninit();
         return 0;
     }
 
@@ -792,13 +840,15 @@ int get_soundcard_list(int audio_system, int mode,
     }
 
     audio->dev_free(d);
-    audio->uninit();
+    if (did_init)
+        audio->uninit();
     return count;
 }
 
 void list_soundcards(int audio_system)
 {
-    ffaudio_interface *audio;
+    ffaudio_interface *audio = NULL;
+    bool did_init = false;
     audio_subsystem = audio_system;
 
     if (audio_subsystem == AUDIO_SUBSYSTEM_SHM)
@@ -833,11 +883,28 @@ void list_soundcards(int audio_system)
         audio = (ffaudio_interface *) &ffaaudio;
 #endif
 
-    ffaudio_init_conf aconf = {};
-    if ( audio->init(&aconf) != 0)
-    {
-        printf("Error in audio->init()\n");
+    if (!audio)
         return;
+
+#if defined(__linux__)
+    if (audio_subsystem == AUDIO_SUBSYSTEM_PULSE)
+    {
+        if (pulse_shared_init(&did_init) != 0)
+        {
+            printf("Error in audio->init()\n");
+            return;
+        }
+    }
+    else
+#endif
+    {
+        ffaudio_init_conf aconf = {};
+        if (audio->init(&aconf) != 0)
+        {
+            printf("Error in audio->init()\n");
+            return;
+        }
+        did_init = true;
     }
 
     ffaudio_dev *d;
@@ -851,6 +918,8 @@ void list_soundcards(int audio_system)
         if (d == NULL)
         {
             printf("Error in audio->dev_alloc\n");
+            if (did_init)
+                audio->uninit();
             return;
         }
 
@@ -875,6 +944,9 @@ void list_soundcards(int audio_system)
 
         audio->dev_free(d);
     }
+
+    if (did_init)
+        audio->uninit();
 }
 
 #if 0
@@ -957,11 +1029,17 @@ int audioio_init_internal(char *capture_dev, char *playback_dev, int audio_subsy
 
     // Store device names for restart support
     if (capture_dev)
+    {
         strncpy(s_capture_dev, capture_dev, sizeof(s_capture_dev) - 1);
+        s_capture_dev[sizeof(s_capture_dev) - 1] = '\0';
+    }
     else
         s_capture_dev[0] = '\0';
     if (playback_dev)
+    {
         strncpy(s_playback_dev, playback_dev, sizeof(s_playback_dev) - 1);
+        s_playback_dev[sizeof(s_playback_dev) - 1] = '\0';
+    }
     else
         s_playback_dev[0] = '\0';
 
@@ -977,13 +1055,7 @@ int audioio_init_internal(char *capture_dev, char *playback_dev, int audio_subsy
 #if defined(__linux__)
     if (audio_subsystem == AUDIO_SUBSYSTEM_PULSE)
     {
-        ffaudio_interface *audio = (ffaudio_interface *) &ffpulse;
-        ffaudio_init_conf aconf = {};
-        aconf.app_name = "mercury";
-        if (audio->init(&aconf) != 0)
-        {
-            printf("Error pre-initializing PulseAudio: %s\n", aconf.error ? aconf.error : "unknown");
-        }
+        (void) pulse_shared_init(NULL);
     }
 #endif
 
@@ -1004,6 +1076,12 @@ static void audioio_stop_threads(void)
     pthread_join(s_radio_capture, NULL);
     pthread_join(s_radio_playback, NULL);
     audio_shutdown_ = false;
+
+#if defined(__linux__)
+    if (audio_subsystem == AUDIO_SUBSYSTEM_PULSE)
+        pulse_shared_uninit();
+#endif
+
     HLOGI("audio-stop", "audioio threads stopped");
 }
 
@@ -1022,10 +1100,21 @@ int audioio_restart(const char *capture_dev, const char *playback_dev,
     else
         capture_input_channel_layout = LEFT;
 
-    if (capture_dev && capture_dev[0] != '\0')
+    if (capture_dev)
+    {
         strncpy(s_capture_dev, capture_dev, sizeof(s_capture_dev) - 1);
-    if (playback_dev && playback_dev[0] != '\0')
+        s_capture_dev[sizeof(s_capture_dev) - 1] = '\0';
+    }
+    else
+        s_capture_dev[0] = '\0';
+
+    if (playback_dev)
+    {
         strncpy(s_playback_dev, playback_dev, sizeof(s_playback_dev) - 1);
+        s_playback_dev[sizeof(s_playback_dev) - 1] = '\0';
+    }
+    else
+        s_playback_dev[0] = '\0';
 
     // Clear buffers (NEVER destroy/recreate them)
     clear_buffer(capture_buffer);
@@ -1039,13 +1128,7 @@ int audioio_restart(const char *capture_dev, const char *playback_dev,
 #if defined(__linux__)
     if (audio_subsystem == AUDIO_SUBSYSTEM_PULSE)
     {
-        ffaudio_interface *audio = (ffaudio_interface *) &ffpulse;
-        ffaudio_init_conf aconf = {};
-        aconf.app_name = "mercury";
-        if (audio->init(&aconf) != 0)
-        {
-            // "already initialized" is expected and fine
-        }
+        (void) pulse_shared_init(NULL);
     }
 #endif
 
@@ -1063,6 +1146,11 @@ int audioio_deinit(pthread_t *radio_capture, pthread_t *radio_playback)
     (void) radio_playback;
     pthread_join(s_radio_capture, NULL);
     pthread_join(s_radio_playback, NULL);
+
+#if defined(__linux__)
+    if (audio_subsystem == AUDIO_SUBSYSTEM_PULSE)
+        pulse_shared_uninit();
+#endif
 
     audioio_deinit_buffers();
     return 0;
