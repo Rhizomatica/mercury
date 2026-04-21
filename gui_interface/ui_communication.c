@@ -84,14 +84,20 @@ static int ws_command_handler(const ws_command_t *cmd, void *user_data)
 
     if (strcmp(cmd->command, "set_audio_config") == 0) {
         // value = capture_dev, value2 = playback_dev, value3 = input_channel
-        strncpy(ctx->selected_capture_dev, cmd->value,
-                sizeof(ctx->selected_capture_dev) - 1);
-        ctx->selected_capture_dev[sizeof(ctx->selected_capture_dev) - 1] = '\0';
+        if (cmd->value[0])
+        {
+            strncpy(ctx->selected_capture_dev, cmd->value,
+                    sizeof(ctx->selected_capture_dev) - 1);
+            ctx->selected_capture_dev[sizeof(ctx->selected_capture_dev) - 1] = '\0';
+        }
         HLOGI(UI_LOG_TAG, "Capture device set to: %s", ctx->selected_capture_dev);
 
-        strncpy(ctx->selected_playback_dev, cmd->value2,
-                sizeof(ctx->selected_playback_dev) - 1);
-        ctx->selected_playback_dev[sizeof(ctx->selected_playback_dev) - 1] = '\0';
+        if (cmd->value2[0])
+        {
+            strncpy(ctx->selected_playback_dev, cmd->value2,
+                    sizeof(ctx->selected_playback_dev) - 1);
+            ctx->selected_playback_dev[sizeof(ctx->selected_playback_dev) - 1] = '\0';
+        }
         HLOGI(UI_LOG_TAG, "Playback device set to: %s", ctx->selected_playback_dev);
 
         if (strcmp(cmd->value3, "right") == 0)
