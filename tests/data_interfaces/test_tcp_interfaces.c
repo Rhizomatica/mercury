@@ -130,14 +130,32 @@ void radio_io_key_off(void) { }
 
 size_t size_buffer(cbuf_handle_t cbuf) { (void)cbuf; return 0; }
 int read_buffer(cbuf_handle_t cbuf, uint8_t *data, size_t len) { (void)cbuf; (void)data; (void)len; return 0; }
-int write_buffer(cbuf_handle_t cbuf, uint8_t *data, size_t len) { (void)cbuf; (void)data; (void)len; return 0; }
 void clear_buffer(cbuf_handle_t cbuf) { (void)cbuf; }
+
+static uint8_t last_write_buffer_data[MAX_PAYLOAD];
+static size_t  last_write_buffer_len  = 0;
+static int     write_buffer_call_count = 0;
+
+int write_buffer(cbuf_handle_t cbuf, uint8_t *data, size_t len)
+{
+    (void)cbuf;
+    write_buffer_call_count++;
+    if (len <= MAX_PAYLOAD)
+    {
+        memcpy(last_write_buffer_data, data, len);
+        last_write_buffer_len = len;
+    }
+    return 0;
+}
 
 /* ---- kiss stubs ---- */
 
 int kiss_write_frame(uint8_t *a, int b, uint8_t cmd, uint8_t *c) { (void)a; (void)b; (void)cmd; (void)c; return 0; }
 int kiss_read(uint8_t b, uint8_t *c) { (void)b; (void)c; return 0; }
 void kiss_reset_state(void) { }
+
+static uint8_t mock_kiss_last_command_val = CMD_DATA;
+uint8_t kiss_last_command(void) { return mock_kiss_last_command_val; }
 
 /* ---- chan stubs ---- */
 
@@ -204,6 +222,13 @@ void setUp(void)
     chan_select_call_count = 0;
     memset(&arq_conn, 0, sizeof(arq_conn));
     mock_bandwidth_hz = 2300;
+
+    /* Broadcast framing state */
+    memset(last_write_buffer_data, 0, sizeof(last_write_buffer_data));
+    last_write_buffer_len  = 0;
+    write_buffer_call_count = 0;
+    mock_kiss_last_command_val = CMD_DATA;
+    atomic_store_explicit(&bcast_reply_cmd, CMD_DATA, memory_order_relaxed);
 
     /* tnc_queue_line() needs tnc_tx_chan non-NULL */
     static chan_t dummy_chan;
@@ -544,6 +569,178 @@ void test_cmd_callint_negative(void)
     assert_wrong_response();
 }
 
+/* ---- Broadcast framing helper tests ---- */
+
+/* Expected Mercury header byte for PACKET_TYPE_BROADCAST_DATA (0x04), ext=0:
+ *   (0x04 << 5) | 0 = 0x80 */
+#define BCAST_HDR_BYTE 0x80
+
+/* CMD_DATA, exact frame_size: queued unchanged, bcast_reply_cmd = CMD_DATA */
+void test_bcast_rx_cmd_data_exact_size(void)
+{
+    const size_t fsz = 10;
+    broadcast_frame_size_cfg = fsz;
+
+    uint8_t frame[MAX_PAYLOAD];
+    memset(frame, 0xAA, fsz);
+    frame[0] = 0x60; /* arbitrary Mercury header already in place */
+
+    bool ok = bcast_process_decoded_frame(frame, (int)fsz, CMD_DATA, fsz);
+
+    TEST_ASSERT_TRUE(ok);
+    TEST_ASSERT_EQUAL(1, write_buffer_call_count);
+    TEST_ASSERT_EQUAL_size_t(fsz, last_write_buffer_len);
+    TEST_ASSERT_EQUAL_HEX8(0x60, last_write_buffer_data[0]);
+    TEST_ASSERT_EQUAL_HEX8(CMD_DATA,
+        atomic_load_explicit(&bcast_reply_cmd, memory_order_relaxed));
+}
+
+/* CMD_DATA, short frame: zero-padded to frame_size */
+void test_bcast_rx_cmd_data_short_padded(void)
+{
+    const size_t fsz = 10;
+    broadcast_frame_size_cfg = fsz;
+
+    uint8_t frame[MAX_PAYLOAD];
+    memset(frame, 0, sizeof(frame));
+    frame[0] = 0x60;
+    memset(frame + 1, 0xBB, 4); /* 5 bytes total */
+
+    bool ok = bcast_process_decoded_frame(frame, 5, CMD_DATA, fsz);
+
+    TEST_ASSERT_TRUE(ok);
+    TEST_ASSERT_EQUAL(1, write_buffer_call_count);
+    TEST_ASSERT_EQUAL_size_t(fsz, last_write_buffer_len);
+    /* Tail must be zero-filled */
+    for (size_t i = 5; i < fsz; i++)
+        TEST_ASSERT_EQUAL_HEX8(0x00, last_write_buffer_data[i]);
+    TEST_ASSERT_EQUAL_HEX8(CMD_DATA,
+        atomic_load_explicit(&bcast_reply_cmd, memory_order_relaxed));
+}
+
+/* CMD_DATA, oversized: discarded, write_buffer never called */
+void test_bcast_rx_cmd_data_oversized_discarded(void)
+{
+    const size_t fsz = 10;
+    broadcast_frame_size_cfg = fsz;
+
+    uint8_t frame[MAX_PAYLOAD];
+    memset(frame, 0x11, sizeof(frame));
+
+    bool ok = bcast_process_decoded_frame(frame, (int)fsz + 5, CMD_DATA, fsz);
+
+    TEST_ASSERT_FALSE(ok);
+    TEST_ASSERT_EQUAL(0, write_buffer_call_count);
+    /* bcast_reply_cmd is still set even for discarded frames */
+    TEST_ASSERT_EQUAL_HEX8(CMD_DATA,
+        atomic_load_explicit(&bcast_reply_cmd, memory_order_relaxed));
+}
+
+/* CMD_AX25CALLSIGN, payload fits: header injected, payload shifted, zero-padded */
+void test_bcast_rx_vara_header_injected(void)
+{
+    const size_t fsz = 10;
+    broadcast_frame_size_cfg = fsz;
+
+    uint8_t frame[MAX_PAYLOAD];
+    memset(frame, 0, sizeof(frame));
+    /* 5-byte payload: 0x01 0x02 0x03 0x04 0x05 */
+    for (int i = 0; i < 5; i++) frame[i] = (uint8_t)(i + 1);
+
+    bool ok = bcast_process_decoded_frame(frame, 5, CMD_AX25CALLSIGN, fsz);
+
+    TEST_ASSERT_TRUE(ok);
+    TEST_ASSERT_EQUAL(1, write_buffer_call_count);
+    TEST_ASSERT_EQUAL_size_t(fsz, last_write_buffer_len);
+    /* frame[0] must be the broadcast header byte */
+    TEST_ASSERT_EQUAL_HEX8(BCAST_HDR_BYTE, last_write_buffer_data[0]);
+    /* Original payload shifted to [1..5] */
+    for (int i = 0; i < 5; i++)
+        TEST_ASSERT_EQUAL_HEX8((uint8_t)(i + 1), last_write_buffer_data[1 + i]);
+    /* Tail bytes [6..9] must be zero */
+    for (size_t i = 6; i < fsz; i++)
+        TEST_ASSERT_EQUAL_HEX8(0x00, last_write_buffer_data[i]);
+    /* Reply cmd normalised to CMD_AX25CALLSIGN regardless of CMD_AX25 vs _CALLSIGN */
+    TEST_ASSERT_EQUAL_HEX8(CMD_AX25CALLSIGN,
+        atomic_load_explicit(&bcast_reply_cmd, memory_order_relaxed));
+}
+
+/* CMD_AX25 (bare): reply cmd normalised to CMD_AX25CALLSIGN */
+void test_bcast_rx_cmd_ax25_reply_cmd(void)
+{
+    const size_t fsz = 10;
+    broadcast_frame_size_cfg = fsz;
+
+    uint8_t frame[MAX_PAYLOAD];
+    memset(frame, 0xCC, 3);
+
+    bool ok = bcast_process_decoded_frame(frame, 3, CMD_AX25, fsz);
+
+    TEST_ASSERT_TRUE(ok);
+    TEST_ASSERT_EQUAL_HEX8(CMD_AX25CALLSIGN,
+        atomic_load_explicit(&bcast_reply_cmd, memory_order_relaxed));
+}
+
+/* CMD_AX25CALLSIGN, payload longer than frame_size-1: truncated then header added */
+void test_bcast_rx_vara_long_payload_truncated(void)
+{
+    const size_t fsz = 10;
+    broadcast_frame_size_cfg = fsz;
+    /* max_payload = fsz - HEADER_SIZE = 9; send 12 bytes */
+    const int raw_len = 12;
+
+    uint8_t frame[MAX_PAYLOAD];
+    for (int i = 0; i < raw_len; i++) frame[i] = (uint8_t)(0x10 + i);
+
+    bool ok = bcast_process_decoded_frame(frame, raw_len, CMD_AX25CALLSIGN, fsz);
+
+    TEST_ASSERT_TRUE(ok);
+    TEST_ASSERT_EQUAL(1, write_buffer_call_count);
+    TEST_ASSERT_EQUAL_size_t(fsz, last_write_buffer_len);
+    TEST_ASSERT_EQUAL_HEX8(BCAST_HDR_BYTE, last_write_buffer_data[0]);
+    /* Only the first 9 bytes of the original payload must survive */
+    for (int i = 0; i < 9; i++)
+        TEST_ASSERT_EQUAL_HEX8((uint8_t)(0x10 + i), last_write_buffer_data[1 + i]);
+}
+
+/* bcast_get_tx_payload: CMD_DATA → full frame, payload_len == frame_size */
+void test_bcast_tx_cmd_data_full_frame(void)
+{
+    const size_t fsz = 10;
+    uint8_t frame[10];
+    memset(frame, 0xDD, fsz);
+    frame[0] = 0x60; /* Mercury header present */
+
+    atomic_store_explicit(&bcast_reply_cmd, CMD_DATA, memory_order_relaxed);
+
+    uint8_t *payload = NULL;
+    int plen = 0;
+    uint8_t cmd = bcast_get_tx_payload(frame, fsz, &payload, &plen);
+
+    TEST_ASSERT_EQUAL_HEX8(CMD_DATA, cmd);
+    TEST_ASSERT_EQUAL_PTR(frame, payload);       /* must point to start of frame */
+    TEST_ASSERT_EQUAL_INT((int)fsz, plen);        /* full frame_size */
+}
+
+/* bcast_get_tx_payload: CMD_AX25CALLSIGN → header stripped, payload_len == frame_size-1 */
+void test_bcast_tx_vara_strips_header(void)
+{
+    const size_t fsz = 10;
+    uint8_t frame[10];
+    frame[0] = BCAST_HDR_BYTE;
+    memset(frame + 1, 0xEE, fsz - 1);
+
+    atomic_store_explicit(&bcast_reply_cmd, CMD_AX25CALLSIGN, memory_order_relaxed);
+
+    uint8_t *payload = NULL;
+    int plen = 0;
+    uint8_t cmd = bcast_get_tx_payload(frame, fsz, &payload, &plen);
+
+    TEST_ASSERT_EQUAL_HEX8(CMD_AX25CALLSIGN, cmd);
+    TEST_ASSERT_EQUAL_PTR(frame + HEADER_SIZE, payload); /* skips the Mercury header */
+    TEST_ASSERT_EQUAL_INT((int)fsz - HEADER_SIZE, plen); /* one byte shorter */
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -585,5 +782,14 @@ int main(void)
     RUN_TEST(test_tnc_send_bitrate);
     RUN_TEST(test_tnc_send_connected);
     RUN_TEST(test_tnc_send_cqframe);
+    /* Broadcast framing helper tests */
+    RUN_TEST(test_bcast_rx_cmd_data_exact_size);
+    RUN_TEST(test_bcast_rx_cmd_data_short_padded);
+    RUN_TEST(test_bcast_rx_cmd_data_oversized_discarded);
+    RUN_TEST(test_bcast_rx_vara_header_injected);
+    RUN_TEST(test_bcast_rx_cmd_ax25_reply_cmd);
+    RUN_TEST(test_bcast_rx_vara_long_payload_truncated);
+    RUN_TEST(test_bcast_tx_cmd_data_full_frame);
+    RUN_TEST(test_bcast_tx_vara_strips_header);
     return UNITY_END();
 }
