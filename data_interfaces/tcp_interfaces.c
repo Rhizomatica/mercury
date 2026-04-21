@@ -65,6 +65,7 @@ static chan_t *tnc_tx_chan = NULL;
 static atomic_ulong tnc_tx_drop_count = 0;
 static atomic_int tnc_last_buffer_sent = -1;
 static atomic_bool bcast_client_done = false;
+static _Atomic uint8_t bcast_reply_cmd = CMD_DATA;
 
 #if defined(MSG_NOSIGNAL)
 #define HERMES_SEND_FLAGS MSG_NOSIGNAL
@@ -897,9 +898,10 @@ void *send_thread(void *client_socket_ptr)
         if (payload_len <= 0)
             continue;
 
-        int kiss_len = kiss_write_frame(payload_start, payload_len, CMD_AX25CALLSIGN, kiss_buffer);
+        uint8_t reply_cmd = atomic_load_explicit(&bcast_reply_cmd, memory_order_relaxed);
+        int kiss_len = kiss_write_frame(payload_start, payload_len, reply_cmd, kiss_buffer);
         HLOGI("tcp-bcast", "Sending KISS frame to client: kiss_cmd=0x%02X payload=%d kiss_len=%d",
-              CMD_AX25CALLSIGN, payload_len, kiss_len);
+              reply_cmd, payload_len, kiss_len);
         if (send_all(client_socket, kiss_buffer, (size_t)kiss_len) < 0)
         {
             HLOGW("tcp-bcast", "Error sending KISS broadcast frame: %s",
@@ -958,6 +960,14 @@ void *recv_thread(void *client_socket_ptr)
                  * Hermes-broadcast (CMD_DATA) already includes the header.
                  * Normalize: always store header + payload in the ring
                  * buffer so the modem TX path sees a proper frame type. */
+                /* Remember the client's command type so send_thread can
+                 * reply with the same framing (CMD_DATA for hermes-broadcast,
+                 * CMD_AX25CALLSIGN for VarAC/VARA clients). */
+                atomic_store_explicit(&bcast_reply_cmd,
+                    (kiss_cmd == CMD_AX25 || kiss_cmd == CMD_AX25CALLSIGN)
+                        ? CMD_AX25CALLSIGN : CMD_DATA,
+                    memory_order_relaxed);
+
                 if (kiss_cmd == CMD_AX25 || kiss_cmd == CMD_AX25CALLSIGN)
                 {
                     /* Max payload we can fit after adding 1-byte header */
@@ -1072,6 +1082,7 @@ void *tcp_server_thread(void *port_ptr)
         HLOGI("tcp-bcast", "Client connected.");
 
         bcast_client_done = false;
+        atomic_store_explicit(&bcast_reply_cmd, CMD_DATA, memory_order_relaxed);
 
         pthread_t recv_tid, send_tid;
 
