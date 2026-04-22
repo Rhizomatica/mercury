@@ -45,6 +45,7 @@
 #include "chan.h"
 #include "defines_modem.h"
 #include "kiss.h"
+#include "framer.h"
 #include "hermes_log.h"
 #include "radio_io.h"
 
@@ -64,6 +65,7 @@ static chan_t *tnc_tx_chan = NULL;
 static atomic_ulong tnc_tx_drop_count = 0;
 static atomic_int tnc_last_buffer_sent = -1;
 static atomic_bool bcast_client_done = false;
+static _Atomic uint8_t bcast_reply_cmd = CMD_DATA;
 
 #if defined(MSG_NOSIGNAL)
 #define HERMES_SEND_FLAGS MSG_NOSIGNAL
@@ -844,6 +846,97 @@ void *control_worker_thread_rx(void *conn)
 
 
 /********** BROADCAST TCP port INTERFACE **********/
+
+/*
+ * Normalises a decoded KISS broadcast frame and queues it to
+ * data_tx_buffer_broadcast.
+ *
+ * VARA clients (CMD_AX25 / CMD_AX25CALLSIGN): inject a 1-byte Mercury
+ * PACKET_TYPE_BROADCAST_DATA header, truncate if the payload would overflow,
+ * then zero-pad to frame_size.
+ *
+ * hermes-broadcast (CMD_DATA): the frame already carries the Mercury header;
+ * zero-pad if short, discard if oversized.
+ *
+ * Also latches bcast_reply_cmd so send_thread mirrors the client's framing.
+ *
+ * Returns true if the frame was queued, false if it was discarded.
+ */
+static bool bcast_process_decoded_frame(uint8_t *decoded_frame, int frame_len,
+                                         uint8_t kiss_cmd, size_t frame_size)
+{
+    /* Latch reply command — same framing style goes back to the client */
+    atomic_store_explicit(&bcast_reply_cmd,
+        (kiss_cmd == CMD_AX25 || kiss_cmd == CMD_AX25CALLSIGN)
+            ? CMD_AX25CALLSIGN : CMD_DATA,
+        memory_order_relaxed);
+
+    if (kiss_cmd == CMD_AX25 || kiss_cmd == CMD_AX25CALLSIGN)
+    {
+        /* Inject 1-byte Mercury header before the AX.25 payload */
+        size_t max_payload = frame_size - HEADER_SIZE;
+        if ((size_t)frame_len > max_payload)
+        {
+            HLOGW("tcp-bcast", "Truncating VARA frame from %d to %zu to fit header",
+                  frame_len, max_payload);
+            frame_len = (int)max_payload;
+        }
+        memmove(decoded_frame + HEADER_SIZE, decoded_frame, (size_t)frame_len);
+        write_frame_header(decoded_frame, PACKET_TYPE_BROADCAST_DATA, 0);
+        frame_len += HEADER_SIZE;
+        HLOGD("tcp-bcast", "Added Mercury broadcast header (cmd=0x%02X), frame now %d bytes",
+              kiss_cmd, frame_len);
+    }
+
+    if ((size_t)frame_len > frame_size)
+    {
+        HLOGW("tcp-bcast", "Discarding broadcast frame: size %d exceeds modem frame size %zu",
+              frame_len, frame_size);
+        return false;
+    }
+
+    if ((size_t)frame_len < frame_size)
+    {
+        HLOGD("tcp-bcast", "Padding broadcast frame from %d to %zu bytes",
+              frame_len, frame_size);
+        memset(decoded_frame + frame_len, 0, frame_size - (size_t)frame_len);
+    }
+
+    write_buffer(data_tx_buffer_broadcast, decoded_frame, frame_size);
+    HLOGI("tcp-bcast", "Broadcast frame queued for TX (%zu bytes, type=0x%02X)",
+          frame_size, frame_header_packet_type(decoded_frame[0]));
+    return true;
+}
+
+/*
+ * Computes the payload slice and KISS command byte to send back to a broadcast
+ * client, reading the latched bcast_reply_cmd.
+ *
+ * CMD_DATA (hermes-broadcast): forward the full frame including the Mercury
+ * header — hermes-broadcast's receiver parses frame[0] as the packet type.
+ *
+ * CMD_AX25CALLSIGN (VarAC/VARA): strip the Mercury header byte so the client
+ * receives a raw AX.25 payload.
+ *
+ * Sets *payload_out and *payload_len_out; returns the reply command byte.
+ */
+static uint8_t bcast_get_tx_payload(uint8_t *frame_buffer, size_t frame_size,
+                                     uint8_t **payload_out, int *payload_len_out)
+{
+    uint8_t reply_cmd = atomic_load_explicit(&bcast_reply_cmd, memory_order_relaxed);
+    if (reply_cmd == CMD_DATA)
+    {
+        *payload_out     = frame_buffer;
+        *payload_len_out = (int)frame_size;
+    }
+    else
+    {
+        *payload_out     = frame_buffer + HEADER_SIZE;
+        *payload_len_out = (int)frame_size - HEADER_SIZE;
+    }
+    return reply_cmd;
+}
+
 void *send_thread(void *client_socket_ptr)
 {
     int client_socket = *((int *)client_socket_ptr);
@@ -886,7 +979,16 @@ void *send_thread(void *client_socket_ptr)
         if (read_buffer(data_rx_buffer_broadcast, frame_buffer, frame_size) < 0)
             break;
 
-        int kiss_len = kiss_write_frame(frame_buffer, (int)frame_size, kiss_buffer);
+        uint8_t *payload_start;
+        int payload_len;
+        uint8_t reply_cmd = bcast_get_tx_payload(frame_buffer, frame_size,
+                                                  &payload_start, &payload_len);
+        if (payload_len <= 0)
+            continue;
+
+        int kiss_len = kiss_write_frame(payload_start, payload_len, reply_cmd, kiss_buffer);
+        HLOGI("tcp-bcast", "Sending KISS frame to client: kiss_cmd=0x%02X payload=%d kiss_len=%d",
+              reply_cmd, payload_len, kiss_len);
         if (send_all(client_socket, kiss_buffer, (size_t)kiss_len) < 0)
         {
             HLOGW("tcp-bcast", "Error sending KISS broadcast frame: %s",
@@ -922,25 +1024,26 @@ void *recv_thread(void *client_socket_ptr)
         goto cleanup;
     }
 
+    HLOGI("tcp-bcast", "Receive thread started (expected frame_size=%zu)", frame_size);
+
     while (!shutdown_)
     {
         ssize_t received = recv(client_socket, (char *)buffer, DATA_TX_BUFFER_SIZE, 0);
         if (received > 0)
         {
+            HLOGD("tcp-bcast", "recv %zd bytes from broadcast client", received);
             for (ssize_t i = 0; i < received; i++)
             {
                 int frame_len = kiss_read(buffer[i], decoded_frame);
                 if (frame_len <= 0)
                     continue;
 
-                if ((size_t)frame_len != frame_size)
-                {
-                    HLOGW("tcp-bcast", "Discarding broadcast frame with unexpected size %d (expected %zu)",
-                            frame_len, frame_size);
-                    continue;
-                }
+                uint8_t kiss_cmd = kiss_last_command();
+                HLOGI("tcp-bcast", "KISS frame decoded: cmd=0x%02X len=%d (expected %zu)",
+                      kiss_cmd, frame_len, frame_size);
 
-                write_buffer(data_tx_buffer_broadcast, decoded_frame, frame_size);
+                if (!bcast_process_decoded_frame(decoded_frame, frame_len, kiss_cmd, frame_size))
+                    continue;
             }
         }
         else if (received == 0)
@@ -1020,6 +1123,7 @@ void *tcp_server_thread(void *port_ptr)
         HLOGI("tcp-bcast", "Client connected.");
 
         bcast_client_done = false;
+        atomic_store_explicit(&bcast_reply_cmd, CMD_DATA, memory_order_relaxed);
 
         pthread_t recv_tid, send_tid;
 

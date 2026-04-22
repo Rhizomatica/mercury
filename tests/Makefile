@@ -75,9 +75,9 @@ test_arq_fsm: datalink_arq/test_arq_fsm.c $(UNITY_SRC) $(ARQ_STUBS) \
               ../datalink_arq/arith.c
 	$(CC) $(CFLAGS) -I../modem/freedv -o $@ $^ $(LDFLAGS)
 
-# TCP TNC interface tests (command parsing, status emitters)
-# Uses #include "tcp_interfaces.c" — no separate source linkage needed
-test_tcp_interfaces: data_interfaces/test_tcp_interfaces.c $(UNITY_SRC)
+# TCP TNC interface tests (command parsing, status emitters, broadcast framing)
+# Uses #include "tcp_interfaces.c" — framer.c provides write_frame_header
+test_tcp_interfaces: data_interfaces/test_tcp_interfaces.c $(UNITY_SRC) ../modem/framer.c
 	$(CC) $(CFLAGS) -I../modem/freedv -o $@ $^ $(LDFLAGS)
 
 clean:

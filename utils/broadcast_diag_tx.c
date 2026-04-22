@@ -171,7 +171,7 @@ int main(int argc, char *argv[])
     while (running)
     {
         fill_frame(frame, frame_size, PACKET_TYPE_BROADCAST_CONTROL, seq);
-        int kiss_len = kiss_write_frame(frame, (int)frame_size, kiss_frame);
+        int kiss_len = kiss_write_frame(frame, (int)frame_size, CMD_DATA, kiss_frame);
         print_frame_debug("TX", frame, frame_size, kiss_len, seq);
         if (send_all(tcp_socket, kiss_frame, (size_t)kiss_len) < 0)
         {
@@ -180,7 +180,7 @@ int main(int argc, char *argv[])
         }
 
         fill_frame(frame, frame_size, PACKET_TYPE_BROADCAST_DATA, seq);
-        kiss_len = kiss_write_frame(frame, (int)frame_size, kiss_frame);
+        kiss_len = kiss_write_frame(frame, (int)frame_size, CMD_DATA, kiss_frame);
         print_frame_debug("TX", frame, frame_size, kiss_len, seq);
         if (send_all(tcp_socket, kiss_frame, (size_t)kiss_len) < 0)
         {
