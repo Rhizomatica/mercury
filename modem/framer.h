@@ -24,11 +24,19 @@
 #ifndef FRAMER_H
 #define FRAMER_H
 
+/*
+ * Mercury routes decoded modem frames by the framer byte in data[0].
+ *
+ * After KISS (or any other outer transport) has delivered a modem payload,
+ * parse_frame_header() reads byte 0 and tells the modem whether the frame
+ * belongs to ARQ or broadcast. This is independent from the KISS command
+ * byte used on the TCP link.
+ */
 #define PACKET_TYPE_ARQ_CONTROL       0x00  /* ACK, DISCONNECT, TURN_REQ, etc.    */
 #define PACKET_TYPE_ARQ_DATA          0x01  /* data payload frames                */
 #define PACKET_TYPE_ARQ_CALL          0x02  /* CALL/ACCEPT setup (compact layout) */
-#define PACKET_TYPE_BROADCAST_CONTROL 0x03  /* (was 0x02 in v2)                   */
-#define PACKET_TYPE_BROADCAST_DATA    0x04  /* (was 0x03 in v2)                   */
+#define PACKET_TYPE_BROADCAST_CONTROL 0x03  /* broadcast/control frame type       */
+#define PACKET_TYPE_BROADCAST_DATA    0x04  /* broadcast/data frame type          */
 #define PACKET_TYPE_ARQ_CQ            0x05  /* compact DATAC13 CQ metadata frame  */
 
 #define PACKET_TYPE_BITS   3    /* bits [7:5] of framer byte */

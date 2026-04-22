@@ -32,14 +32,25 @@ extern "C" {
 // If you send callsigns origin and destination in the frames it's better to use KISS Type 1
 // and follow the AX25 structure instead of KISS Type2, as the frame is specially compressed
 // and the final size it is greater than unformatted KISS.       by Ros <-
+//
+// KISS command bytes describe the outer TCP/TNC framing only.
+//
+// In the current Mercury <-> hermes-broadcast TCP path, raw modem frames are
+// normally carried inside CMD_DATA, and the first byte of the decoded modem
+// frame carries the Mercury packet type (see modem/framer.h).
+//
+// So broadcast-vs-ARQ classification happens from frame[0] after KISS
+// decoding, not from the KISS command byte. CMD_RQ_* are kept here as
+// reserved/legacy KISS command-space values; do not confuse them with Mercury
+// packet-type values such as PACKET_TYPE_BROADCAST_*.
 
 
 #define CMD_UNKNOWN 0xFE
 #define CMD_AX25 0x00 //  AX25 Frame (standard) in VARA
 #define CMD_AX25CALLSIGN 0x01 // AX25 Frame (7 chrs Call Signs) in VARA
-#define CMD_DATA 0x02 // VARA / Mercury unformatted frame
-#define CMD_RQ_CONFIG 0x03 // Mercury special fountain code configuration frame
-#define CMD_RQ_PAYLOAD 0x04 // Fountain code payload
+#define CMD_DATA 0x02 // Raw/unformatted KISS payload; current hermes-broadcast TCP framing uses this
+#define CMD_RQ_CONFIG 0x03 // Reserved/legacy KISS command value; current TCP framing does not use it for RaptorQ config
+#define CMD_RQ_PAYLOAD 0x04 // Reserved/legacy KISS command value; current TCP framing does not use it for RaptorQ payload
 
 #define MAX_PAYLOAD 756 // ~ 18 frames at VARA Level 4
 
