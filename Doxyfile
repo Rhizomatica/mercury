@@ -1,5 +1,5 @@
-PROJECT_NAME           = "HERMES Modem"
-PROJECT_BRIEF          = "Hermes ARQ/Broadcast modem"
+PROJECT_NAME           = "Mercury Modem"
+PROJECT_BRIEF          = "Mercury ARQ/Broadcast modem"
 OUTPUT_DIRECTORY       = docs
 CREATE_SUBDIRS         = NO
 OPTIMIZE_OUTPUT_FOR_C  = YES

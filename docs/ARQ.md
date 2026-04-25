@@ -1,4 +1,4 @@
-# HERMES ARQ Datalink — Architecture and Protocol Reference
+# ARQ Datalink — Architecture and Protocol Reference
 
 This document covers the ARQ (Automatic Repeat Request) datalink layer introduced
 in Mercury v2 (`datalink_arq/`).  It replaces the original monolithic `arq.c` with

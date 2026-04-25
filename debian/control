@@ -11,7 +11,7 @@ Vcs-Browser: https://github.com/Rhizomatica/mercury
 Package: mercury
 Architecture: any
 Depends: ${shlibs:Depends}, ${misc:Depends}
-Description: HERMES HF modem for store-and-forward communication
+Description: Mercury HF modem for store-and-forward communication
  Mercury is the modem component of the HERMES (High-Frequency Emergency
  and Rural Multimedia Exchange System) project. It provides ARQ and
  broadcast data links over HF radio using FreeDV OFDM waveforms
