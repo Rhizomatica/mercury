@@ -90,7 +90,30 @@ void list_models(void)
 {
     int status;
 
+#ifndef _WIN32
+    fflush(stdout);
+    fflush(stderr);
+    int saved_stdout = dup(STDOUT_FILENO);
+    int saved_stderr = dup(STDERR_FILENO);
+    int devnull = open("/dev/null", O_WRONLY);
+    if (devnull >= 0)
+    {
+        dup2(devnull, STDOUT_FILENO);
+        dup2(devnull, STDERR_FILENO);
+        close(devnull);
+    }
+#endif
+
     rig_load_all_backends();
+
+#ifndef _WIN32
+    fflush(stdout);
+    fflush(stderr);
+    dup2(saved_stdout, STDOUT_FILENO);
+    dup2(saved_stderr, STDERR_FILENO);
+    close(saved_stdout);
+    close(saved_stderr);
+#endif
 
     printf(" Rig #  Mfg                    Model                   Version         Status      Macro\n");
     status = rig_list_foreach(collect_model, NULL);
