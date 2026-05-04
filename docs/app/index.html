@@ -45,8 +45,12 @@ body {
 .right-column { flex: 1; display: flex; flex-direction: column; gap: 8px; min-width: 260px; overflow-y: auto; }
 
 @media (max-width: 900px) {
-  .app-main { flex-direction: column; overflow-y: auto; }
+  html, body { height: auto; overflow-y: auto; }
+  .app-main { flex-direction: column; overflow: visible; }
+  .left-column { min-height: unset; }
   .right-column { min-width: unset; }
+  .waterfall-area { height: 200px; }
+  #waterfallCanvas { flex: none; height: 100%; display: block; }
 }
 
 /* ===== Group Box (mirrors QGroupBox) ===== */
