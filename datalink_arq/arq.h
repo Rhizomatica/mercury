@@ -165,6 +165,13 @@ int arq_queue_data(const uint8_t *data, size_t len);
 int arq_get_tx_backlog_bytes(void);
 
 /**
+ * @brief Set the ARQ no-progress disconnect budget.
+ * @param seconds Budget in seconds.  Values <= 0 reset to the compiled
+ *                default (ARQ_NO_PROGRESS_TIMEOUT_S_DEFAULT).
+ */
+void arq_set_no_progress_timeout_s(int seconds);
+
+/**
  * @brief Get current ARQ speed level (gear).
  * @return Speed level index.
  */

@@ -41,6 +41,7 @@
 #define CFG_KEY_FREEDV_VERBOSITY    "main:freedv_verbosity"
 #define CFG_KEY_HAMLIB_LOG_LEVEL    "main:hamlib_log_level"
 #define CFG_KEY_RADIO_SERIAL_SPEED  "main:radio_serial_speed"
+#define CFG_KEY_NO_PROGRESS_TIMEOUT_S "arq:no_progress_timeout_s"
 
 /* Holds all values read from the init configuration file */
 typedef struct {
@@ -60,6 +61,9 @@ typedef struct {
     int      freedv_verbosity;      /* 0..3 */
     int      hamlib_log_level;      /* 0..6 */
     int      radio_serial_speed;   /* 0 = use hamlib default */
+    int      no_progress_timeout_s;/* ARQ: disconnect when no forward progress
+                                    * (no advancing ACK) for this many seconds
+                                    * after data-retry exhaustion. Default 600. */
 } mercury_config;
 
 /* Load configuration from an INI file into |cfg|.
