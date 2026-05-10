@@ -236,9 +236,9 @@ extern _Atomic float arq_callint_override_s;
 #define ARQ_BACKLOG_MIN_DATAC1        126
 #define ARQ_BACKLOG_MIN_BIDIR_UPGRADE 48    /* > DATAC4 payload capacity          */
 #define ARQ_LADDER_LEVELS             3     /* 0=DATAC4, 1=DATAC3, 2=DATAC1     */
-#define ARQ_LADDER_UP_SUCCESSES       4     /* clean ACKs required to step up    */
+#define ARQ_LADDER_UP_SUCCESSES       2     /* clean ACKs required to step up    */
 #define ARQ_RETRY_DOWNGRADE_THRESHOLD 2     /* consecutive retries to force downgrade */
-#define ARQ_MODE_HOLD_AFTER_DOWNGRADE_S 15  /* hold lower mode after forced downgrade */
+#define ARQ_MODE_HOLD_AFTER_DOWNGRADE_S 6   /* hold lower mode after forced downgrade */
 
 /* No-progress disconnect budget (seconds).  When data retries exhaust we no
  * longer disconnect immediately — instead we reset the retry counter and keep
