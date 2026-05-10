@@ -97,6 +97,32 @@ select option { background: #2d2d2d; color: #e6e6e6; }
 .status-dot.off { background: #c44; }
 .status-dot.na  { background: #888; }
 
+/* ===== TX gain slider + peak meter ===== */
+input[type="range"] {
+  width: 100%; accent-color: #ff8800; background: transparent;
+  margin: 2px 0;
+}
+.tx-meter {
+  position: relative; height: 14px; background: #121212;
+  border: 1px solid #464646; border-radius: 3px; overflow: hidden;
+  margin-top: 4px;
+}
+.tx-meter-fill {
+  position: absolute; left: 0; top: 0; bottom: 0; width: 0%;
+  background: #2c7; transition: width 0.1s linear;
+}
+.tx-meter-fill.warn   { background: #fc4; }
+.tx-meter-fill.danger { background: #f44; }
+.tx-meter-peak {
+  position: absolute; top: 0; bottom: 0; width: 2px; background: #fff;
+  left: 0%; transition: left 0.2s linear;
+}
+.tx-meter-scale {
+  display: flex; justify-content: space-between;
+  font-size: 10px; color: #777; margin-top: 1px;
+}
+.tx-meter-label { font-size: 11px; color: #aaa; margin-top: 2px; }
+
 /* ===== Waterfall Area ===== */
 .waterfall-area {
   padding: 0 !important; gap: 0; overflow: hidden;
@@ -163,6 +189,19 @@ select option { background: #2d2d2d; color: #e6e6e6; }
           <label for="inputChannelSelect">Capture Input Channel</label>
           <select id="inputChannelSelect"><option value="">--</option></select>
           <button class="apply-btn" id="audioApplyBtn">Apply</button>
+        </div>
+        <!-- TX Audio Level -->
+        <div class="control-section">
+          <label for="txGainSlider">TX Audio Level (<span id="txGainValue">0.0</span> dB)</label>
+          <input type="range" id="txGainSlider" min="-20" max="20" step="0.5" value="0">
+          <div class="tx-meter" title="Per-burst TX peak (dBFS, 0 = clip)">
+            <div class="tx-meter-fill" id="txMeterFill"></div>
+            <div class="tx-meter-peak" id="txMeterPeak"></div>
+          </div>
+          <div class="tx-meter-scale">
+            <span>-60</span><span>-30</span><span>-12</span><span>-6</span><span>0</span>
+          </div>
+          <div class="tx-meter-label">TX peak: <span id="txPeakValue">—</span> dBFS</div>
         </div>
         <!-- HAMLIB Radio -->
         <div class="control-section">
@@ -767,16 +806,81 @@ function handleStatus(msg) {
   if (msg.snr != null) snrValue = msg.snr;
   syncState = !!msg.sync;
 
-  // Update connection info (exclude type and waterfall meta fields)
+  // TX gain slider — only echo from backend when the user isn't dragging
+  if (msg.tx_gain_db != null && !txGainUserActive) {
+    const db = +msg.tx_gain_db;
+    if (Math.abs(db - parseFloat(txGainSliderEl.value)) >= 0.05) {
+      txGainSliderEl.value = db.toFixed(1);
+      txGainValueEl.textContent = db.toFixed(1);
+    }
+  }
+  // TX peak meter
+  if (msg.tx_peak_dbfs != null) updateTxMeter(+msg.tx_peak_dbfs);
+
+  // Update connection info (exclude type, waterfall, and meter-only fields)
   const infoData = {};
   for (const k in msg) {
-    if (k === "type" || k === "waterfall") continue;
+    if (k === "type" || k === "waterfall" ||
+        k === "tx_gain_db" || k === "tx_peak_dbfs") continue;
     infoData[k] = msg[k];
   }
   updateConnectionInfo(infoData);
 
   dirty = true;
 }
+
+/* ===========================================================================
+ *  TX gain slider + peak meter
+ * =========================================================================*/
+const txGainSliderEl = document.getElementById("txGainSlider");
+const txGainValueEl  = document.getElementById("txGainValue");
+const txMeterFillEl  = document.getElementById("txMeterFill");
+const txMeterPeakEl  = document.getElementById("txMeterPeak");
+const txPeakValueEl  = document.getElementById("txPeakValue");
+let txGainUserActive = false;       /* user is dragging — suppress echo */
+let txPeakHeldDbfs  = -120.0;      /* held-peak hairline, decays over time */
+let txPeakHoldUntil = 0;
+
+function dbfsToPct(dbfs) {
+  /* -60 .. 0 dBFS mapped linearly to 0..100% bar width */
+  const pct = ((dbfs + 60) / 60) * 100;
+  if (pct < 0)   return 0;
+  if (pct > 100) return 100;
+  return pct;
+}
+
+function updateTxMeter(dbfs) {
+  if (!isFinite(dbfs)) dbfs = -120;
+  const pct = dbfsToPct(dbfs);
+  txMeterFillEl.style.width = pct + "%";
+  txMeterFillEl.classList.remove("warn", "danger");
+  if (dbfs >= -1.0) txMeterFillEl.classList.add("danger");
+  else if (dbfs >= -6.0) txMeterFillEl.classList.add("warn");
+
+  txPeakValueEl.textContent = dbfs <= -120 ? "—" : dbfs.toFixed(1);
+
+  /* Held peak hairline: capture max, decay after 2 s of no new peak */
+  const now = performance.now();
+  if (dbfs > txPeakHeldDbfs) {
+    txPeakHeldDbfs = dbfs;
+    txPeakHoldUntil = now + 2000;
+  } else if (now > txPeakHoldUntil) {
+    txPeakHeldDbfs = Math.max(dbfs, txPeakHeldDbfs - 0.5);
+  }
+  txMeterPeakEl.style.left = dbfsToPct(txPeakHeldDbfs) + "%";
+}
+
+txGainSliderEl.addEventListener("input", function() {
+  txGainUserActive = true;
+  txGainValueEl.textContent = parseFloat(this.value).toFixed(1);
+});
+txGainSliderEl.addEventListener("change", function() {
+  const db = parseFloat(this.value);
+  sendJson({ command: "set_tx_gain", value: db.toFixed(2) });
+  /* Release the suppression a beat after we send so the next status echo
+   * (which carries the new value) doesn't fight us. */
+  setTimeout(function() { txGainUserActive = false; }, 600);
+});
 
 function handleJsonMessage(raw) {
   let msg;
