@@ -61,4 +61,11 @@ void *rx_thread(void *g_modem);
 // Returns the sample rate on success, 0 if no spectrum is available yet.
 int modem_get_rx_spectrum(float *out_dB, int max_bins);
 
+// TX audio gain (linear multiplier on modulator output samples).
+// Default 1.0f = no change. Hot-tunable from any thread; the modulator
+// reads it once per burst.  Applied with int32 saturation, so any value
+// is safe — values that would overflow simply clip cleanly.
+void  modem_set_tx_gain(float linear);
+float modem_get_tx_gain(void);
+
 #endif // MODEM_H

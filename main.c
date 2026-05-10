@@ -29,6 +29,7 @@
 #include <unistd.h>
 #include <string.h>
 #include <signal.h>
+#include <math.h>
 
 #ifdef __linux__
 #include <sched.h>
@@ -227,6 +228,7 @@ int main(int argc, char *argv[])
             hamlib_log_level   = mcfg.hamlib_log_level;
             radio_serial_speed = mcfg.radio_serial_speed;
             arq_set_no_progress_timeout_s(mcfg.no_progress_timeout_s);
+            modem_set_tx_gain(powf(10.0f, mcfg.tx_gain_db / 20.0f));
         }
     }
 

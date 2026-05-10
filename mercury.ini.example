@@ -69,6 +69,16 @@ freedv_verbosity = 0
 ; 0=NONE, 1=BUG, 2=ERR, 3=WARN, 4=VERBOSE, 5=TRACE, 6=CACHE
 hamlib_log_level = 0
 
+[audio]
+
+; TX audio gain in dB applied to modulator output samples (default: 0.0).
+; 0.0 dB = no change.  Use this to set Mercury's TX level independently
+; of the host audio mixer, so other modems sharing the radio aren't
+; disturbed when you tune Mercury's drive.  Saturation is applied at the
+; int32 PCM ceiling so any value clips cleanly.
+; Range: -20.0 .. +20.0 (values outside are clamped).
+tx_gain_db = 0.0
+
 [arq]
 
 ; ARQ link no-progress disconnect budget (seconds, default: 600).

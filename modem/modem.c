@@ -26,6 +26,9 @@
 #include <pthread.h>
 #include <stdint.h>
 #include <time.h>
+#include <stdatomic.h>
+#include <math.h>
+#include <limits.h>
 
 #include "modem.h"
 #include "ring_buffer_posix.h"
@@ -76,6 +79,36 @@ static int g_spectrum_sample_rate = 8000;
 static bool g_spectrum_valid = false;
 static struct MODEM_STATS g_spectrum_stats;
 static bool g_spectrum_stats_inited = false;
+
+/* --- TX audio gain (linear multiplier applied to modulator samples) --- */
+static _Atomic float g_tx_gain = 1.0f;
+
+void modem_set_tx_gain(float linear)
+{
+    if (!isfinite(linear) || linear < 0.0f) linear = 1.0f;
+    if (linear > 100.0f) linear = 100.0f;   /* +40 dB safety cap */
+    atomic_store(&g_tx_gain, linear);
+}
+
+float modem_get_tx_gain(void)
+{
+    return atomic_load(&g_tx_gain);
+}
+
+/* Convert a 16-bit modulator sample to a 32-bit playback sample with gain
+ * and saturation.  At gain == 1.0 this matches the historical behavior of
+ * shifting int16 into the upper bits of int32.  Saturates against INT32
+ * limits using a >= / <= compare because the literal 2147483647.0f rounds
+ * up to 2^31 in float, so a strict > would let the boundary case fall
+ * through to an undefined int cast. */
+static inline int32_t tx_sample_with_gain(int16_t sample, float gain)
+{
+    float fs = (float)((int32_t)sample << 16) * gain;
+    if (fs >=  2147483647.0f) return INT32_MAX;
+    if (fs <= -2147483648.0f) return INT32_MIN;
+    return (int32_t)fs;
+}
+
 #define ARQ_ACTION_WAIT_MS 100
 #define RX_TX_DRAIN_SAMPLES 160
 #define RX_DECODE_CHUNK_SAMPLES 160
@@ -604,6 +637,7 @@ int send_modulated_data(generic_modem_t *g_modem, uint8_t *bytes_in, int frames_
     }
 
     int total_samples = 0;
+    float tx_gain = atomic_load(&g_tx_gain);
 
 
     /* === STEP 1: Generate all modulated audio into temp buffer === */
@@ -616,7 +650,7 @@ int send_modulated_data(generic_modem_t *g_modem, uint8_t *bytes_in, int frames_
     int n_preamble = freedv_rawdatapreambletx(freedv, mod_out_short);
     for (int i = 0; i < n_preamble; i++)
     {
-        tx_buffer[total_samples++] = (int32_t)mod_out_short[i] << 16;
+        tx_buffer[total_samples++] = tx_sample_with_gain(mod_out_short[i], tx_gain);
     }
 
     /* Generate data frame(s) */
@@ -631,7 +665,7 @@ int send_modulated_data(generic_modem_t *g_modem, uint8_t *bytes_in, int frames_
         freedv_rawdatatx(freedv, mod_out_short, frame_with_crc);
         for (size_t j = 0; j < n_mod_out; j++)
         {
-            tx_buffer[total_samples++] = (int32_t)mod_out_short[j] << 16;
+            tx_buffer[total_samples++] = tx_sample_with_gain(mod_out_short[j], tx_gain);
         }
     }
 
@@ -639,7 +673,7 @@ int send_modulated_data(generic_modem_t *g_modem, uint8_t *bytes_in, int frames_
     int n_postamble = freedv_rawdatapostambletx(freedv, mod_out_short);
     for (int i = 0; i < n_postamble; i++)
     {
-        tx_buffer[total_samples++] = (int32_t)mod_out_short[i] << 16;
+        tx_buffer[total_samples++] = tx_sample_with_gain(mod_out_short[i], tx_gain);
     }
 
     /* Add silence at end */
