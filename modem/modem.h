@@ -68,4 +68,9 @@ int modem_get_rx_spectrum(float *out_dB, int max_bins);
 void  modem_set_tx_gain(float linear);
 float modem_get_tx_gain(void);
 
+// Most recent TX burst peak amplitude in dBFS (0 dBFS = INT32 full-scale,
+// i.e. clipping).  Measured post-gain, pre-saturation, once per burst.
+// Returns -120.0f when no TX has occurred yet or the last burst was silent.
+float modem_get_tx_peak_dbfs(void);
+
 #endif // MODEM_H

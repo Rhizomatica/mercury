@@ -29,6 +29,7 @@
 #include <time.h>
 #include <errno.h>
 #include <stdbool.h>
+#include <math.h>
 
 #include "../common/os_interop.h"
 
@@ -159,6 +160,20 @@ static int ws_command_handler(const ws_command_t *cmd, void *user_data)
         if (ctx->cfg_path[0] && cfg_write(&ctx->cfg, ctx->cfg_path))
             HLOGI(UI_LOG_TAG, "Config saved to %s", ctx->cfg_path);
 
+    } else if (strcmp(cmd->command, "set_tx_gain") == 0) {
+        /* value carries the dB string; clamp to plan range and convert to
+         * linear before pushing to the modulator.  Persist to INI so the
+         * next start picks it up automatically. */
+        float db = (float)atof(cmd->value);
+        if (db < -20.0f) db = -20.0f;
+        if (db >  20.0f) db =  20.0f;
+        float linear = powf(10.0f, db / 20.0f);
+        modem_set_tx_gain(linear);
+        ctx->cfg.tx_gain_db = db;
+        HLOGI(UI_LOG_TAG, "TX gain set to %.2f dB (linear=%.4f)", db, linear);
+        if (ctx->cfg_path[0] && cfg_write(&ctx->cfg, ctx->cfg_path))
+            HLOGI(UI_LOG_TAG, "Config saved to %s", ctx->cfg_path);
+
     } else {
         HLOGW(UI_LOG_TAG, "Unknown UI command: %s", cmd->command);
         return -1;
@@ -245,6 +260,11 @@ void *ui_publisher_thread(void *arg)
 
         // --- Build and broadcast status JSON via WebSocket ---
         {
+            float tx_gain_linear = modem_get_tx_gain();
+            float tx_gain_db = (tx_gain_linear > 0.0f)
+                                ? 20.0f * log10f(tx_gain_linear)
+                                : -120.0f;
+            float tx_peak_dbfs = modem_get_tx_peak_dbfs();
             char buf[4096];
             int pos = 0;
             pos += snprintf(buf + pos, sizeof(buf) - pos,
@@ -258,6 +278,8 @@ void *ui_publisher_thread(void *arg)
                 "\"client_tcp_connected\":%s,"
                 "\"bytes_transmitted\":%ld,"
                 "\"bytes_received\":%ld,"
+                "\"tx_gain_db\":%.1f,"
+                "\"tx_peak_dbfs\":%.1f,"
                 "\"waterfall\":%s}",
                 bitrate, snr,
                 user_call ? user_call : "",
@@ -266,6 +288,7 @@ void *ui_publisher_thread(void *arg)
                 dir == DIR_TX ? "tx" : "rx",
                 tcp_connected ? "true" : "false",
                 bytes_tx, bytes_rx,
+                tx_gain_db, tx_peak_dbfs,
                 ctx->waterfall_enabled ? "true" : "false");
 
             ws_broadcast_json(&ctx->ws, buf);

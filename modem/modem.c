@@ -81,7 +81,8 @@ static struct MODEM_STATS g_spectrum_stats;
 static bool g_spectrum_stats_inited = false;
 
 /* --- TX audio gain (linear multiplier applied to modulator samples) --- */
-static _Atomic float g_tx_gain = 1.0f;
+static _Atomic float g_tx_gain      = 1.0f;
+static _Atomic float g_tx_peak_dbfs = -120.0f;
 
 void modem_set_tx_gain(float linear)
 {
@@ -93,6 +94,11 @@ void modem_set_tx_gain(float linear)
 float modem_get_tx_gain(void)
 {
     return atomic_load(&g_tx_gain);
+}
+
+float modem_get_tx_peak_dbfs(void)
+{
+    return atomic_load(&g_tx_peak_dbfs);
 }
 
 /* Convert a 16-bit modulator sample to a 32-bit playback sample with gain
@@ -682,6 +688,28 @@ int send_modulated_data(generic_modem_t *g_modem, uint8_t *bytes_in, int frames_
         tx_buffer[total_samples++] = 0;
     }
     pthread_mutex_unlock(&modem_freedv_lock);
+
+    /* Measure post-gain pre-saturation TX peak for the UI meter.  Walk the
+     * buffer once; values were already saturated in tx_sample_with_gain so
+     * INT32_MAX maps to 0 dBFS = the clip ceiling. */
+    {
+        int32_t peak_abs = 0;
+        for (int i = 0; i < total_samples; i++)
+        {
+            int32_t v = tx_buffer[i];
+            int32_t a = (v < 0) ? -v : v;
+            if (a > peak_abs) peak_abs = a;
+        }
+        float dbfs = -120.0f;
+        if (peak_abs > 0)
+        {
+            float lin = (float)peak_abs / 2147483648.0f;  /* INT32 full-scale = 0 dBFS */
+            dbfs = 20.0f * log10f(lin);
+            if (dbfs < -120.0f) dbfs = -120.0f;
+            if (dbfs >    0.0f) dbfs =    0.0f;
+        }
+        atomic_store(&g_tx_peak_dbfs, dbfs);
+    }
 
 
     /* === STEP 2: Key transmitter and send pre-generated audio === */
