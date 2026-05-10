@@ -1284,7 +1284,21 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
                                                 ARQ_DATA_RETRY_SLOTS,
                                                 "persist_after_exhaust");
                     sess->tx_retries_left = ARQ_DATA_RETRY_SLOTS;
-                    sess->consecutive_retries++;
+
+                    /* Channel couldn't deliver a frame in ARQ_DATA_RETRY_SLOTS
+                     * attempts — force the delivery-feedback safety net to
+                     * threshold so select_best_mode pulls payload_mode one
+                     * step lower.  maybe_upgrade_mode handles the MODE_REQ /
+                     * MODE_ACK negotiation; on success the FSM is now in
+                     * MODE_REQ_TX state and will resume DATA_TX at the lower
+                     * mode after MODE_ACK.  On failure (no peer SNR yet,
+                     * MODE_REQ retries exhaust, already at slowest mode)
+                     * fall through and retransmit at the current mode. */
+                    if (sess->consecutive_retries < ARQ_RETRY_DOWNGRADE_THRESHOLD)
+                        sess->consecutive_retries = ARQ_RETRY_DOWNGRADE_THRESHOLD;
+                    if (maybe_upgrade_mode(sess))
+                        return;
+
                     dflow_enter(sess, ARQ_DFLOW_DATA_TX, UINT64_MAX, ARQ_EV_TIMER_RETRY);
                     send_data_frame(sess);
                 }
