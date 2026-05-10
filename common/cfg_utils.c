@@ -49,6 +49,7 @@ void cfg_set_defaults(mercury_config *cfg)
     cfg->hamlib_log_level   = 0;
     cfg->radio_serial_speed = 0;  /* 0 = use hamlib default */
     cfg->no_progress_timeout_s = ARQ_NO_PROGRESS_TIMEOUT_S_DEFAULT;
+    cfg->tx_gain_db            = 0.0f;
 }
 
 /* Map a sound-system name to the AUDIO_SUBSYSTEM_* constant.
@@ -157,6 +158,11 @@ bool cfg_read(mercury_config *cfg, const char *ini_path)
     if (i > 0)
         cfg->no_progress_timeout_s = i;
 
+    double d = iniparser_getdouble(ini, CFG_KEY_TX_GAIN_DB, (double)cfg->tx_gain_db);
+    if (d < -20.0) d = -20.0;
+    if (d >  20.0) d =  20.0;
+    cfg->tx_gain_db = (float)d;
+
     iniparser_freedict(ini);
     return true;
 }
@@ -238,6 +244,9 @@ bool cfg_write(const mercury_config *cfg, const char *ini_path)
 
     fprintf(f, "\n[arq]\n");
     fprintf(f, "no_progress_timeout_s = %d\n", cfg->no_progress_timeout_s);
+
+    fprintf(f, "\n[audio]\n");
+    fprintf(f, "tx_gain_db = %.2f\n", cfg->tx_gain_db);
 
     fclose(f);
     return true;
