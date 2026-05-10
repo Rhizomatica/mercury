@@ -56,7 +56,7 @@ All three reviewer concerns are in scope (A, B, C). Each item lists the concrete
 **A1. Replace the hard 10-retry-and-drop with persistent retry + absolute no-progress budget.** *(highest impact, becomes the only behavior)*
 - Today, 10 DATA retries → `send_ctrl_frame(DISCONNECT)` (`arq_fsm.c:1249-1256`).
 - Change: when the existing per-frame retry budget exhausts, **force-downgrade one mode step (DATAC1→DATAC3→DATAC4), reset the retry counter, and keep going**. Only disconnect when (i) we are already in DATAC4 *and* the absolute no-progress wall-clock budget elapses, or (ii) keepalives miss `keepalive_miss_limit` in a row.
-- New INI key `no_progress_timeout_s` (default 600 s = 10 min) caps the total time without forward progress.
+- New INI key `no_progress_timeout_s` (default 180 s = 3 min) caps the total time without forward progress.  Sits just above the keepalive timeout (5 × 20 = 100 s) so keepalive remains the normal disconnect path; this is a safety net for the asymmetric case where peer keepalives still arrive but our TX direction has gone one-way.
 - The old "drop after N retries" path is removed outright — pre-2.0, no compat shim. Matches VARA-HF "keep trying" behavior unconditionally.
 
 **A2. Make all retry / timeout / hysteresis values INI-tunable.**

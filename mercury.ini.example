@@ -81,12 +81,13 @@ tx_gain_db = 0.0
 
 [arq]
 
-; ARQ link no-progress disconnect budget (seconds, default: 600).
+; ARQ link no-progress disconnect budget (seconds, default: 180).
 ; When data-retry slots exhaust on a frame, Mercury no longer disconnects
-; immediately — it resets the retry counter and keeps banging at the channel.
-; The link only drops when wall-clock since the last ACK that advanced the
-; sequence number exceeds this budget, OR when the keepalive miss limit is
-; reached.  Lower this if you want VARA-HF-style persistence with a tighter
-; ceiling; raise it for ultra-marginal channels where forward progress can
-; take many minutes.
-no_progress_timeout_s = 600
+; immediately — it resets the retry counter and forces a payload-mode
+; downgrade.  The link only drops when wall-clock since the last ACK that
+; advanced the sequence number exceeds this budget, OR when the keepalive
+; miss limit is reached (5 * 20s = 100s by default).  180s sits just above
+; the keepalive timeout as a safety net for the asymmetric case where peer
+; keepalives still arrive but our TX direction has gone one-way.  Raise
+; this for ultra-marginal NVIS work where forward progress can take longer.
+no_progress_timeout_s = 180

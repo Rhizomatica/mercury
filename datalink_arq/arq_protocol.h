@@ -244,8 +244,11 @@ extern _Atomic float arq_callint_override_s;
  * longer disconnect immediately — instead we reset the retry counter and keep
  * trying.  Disconnect only fires when wall-clock since the last forward
  * progress (an ACK that advanced tx_seq) exceeds this budget, OR when the
- * keepalive miss limit is reached. */
-#define ARQ_NO_PROGRESS_TIMEOUT_S_DEFAULT 600
+ * keepalive miss limit is reached.  Default sits just above the keepalive
+ * timeout (5 * 20 = 100s) — keepalive is the normal disconnect path; this
+ * is a safety net for the asymmetric case where peer keepalives still
+ * arrive but our TX direction has gone one-way. */
+#define ARQ_NO_PROGRESS_TIMEOUT_S_DEFAULT 180
 extern _Atomic int arq_no_progress_timeout_s;
 #define ARQ_NO_PROGRESS_TIMEOUT_S atomic_load(&arq_no_progress_timeout_s)
 
