@@ -230,6 +230,10 @@ typedef struct
     /* --- Keepalive tracking --- */
     int      keepalive_miss_count;
     uint64_t last_rx_ms;              /* last successful frame decode time     */
+    uint64_t last_tx_progress_ms;     /* last time tx_seq advanced (forward
+                                       * progress).  0 = no progress yet — used
+                                       * by the no-progress disconnect budget
+                                       * in the data-retry-exhausted path.    */
 
     /* --- Timer mechanism --- */
     uint64_t       deadline_ms;       /* absolute monotonic deadline           */

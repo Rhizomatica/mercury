@@ -240,6 +240,15 @@ extern _Atomic float arq_callint_override_s;
 #define ARQ_RETRY_DOWNGRADE_THRESHOLD 2     /* consecutive retries to force downgrade */
 #define ARQ_MODE_HOLD_AFTER_DOWNGRADE_S 15  /* hold lower mode after forced downgrade */
 
+/* No-progress disconnect budget (seconds).  When data retries exhaust we no
+ * longer disconnect immediately — instead we reset the retry counter and keep
+ * trying.  Disconnect only fires when wall-clock since the last forward
+ * progress (an ACK that advanced tx_seq) exceeds this budget, OR when the
+ * keepalive miss limit is reached. */
+#define ARQ_NO_PROGRESS_TIMEOUT_S_DEFAULT 600
+extern _Atomic int arq_no_progress_timeout_s;
+#define ARQ_NO_PROGRESS_TIMEOUT_S atomic_load(&arq_no_progress_timeout_s)
+
 /* In DATA frames the ack_delay byte is repurposed to carry payload_valid:
  *   0               = full frame (all user bytes are valid data)
  *   1 .. user_bytes = only this many leading bytes are valid; rest is padding

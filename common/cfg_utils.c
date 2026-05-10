@@ -28,6 +28,7 @@
 #include "../radio_io/radio_io.h"
 #include "../data_interfaces/tcp_interfaces.h"
 #include "../gui_interface/ui_communication.h"
+#include "../datalink_arq/arq_protocol.h"
 
 void cfg_set_defaults(mercury_config *cfg)
 {
@@ -47,6 +48,7 @@ void cfg_set_defaults(mercury_config *cfg)
     cfg->freedv_verbosity   = 0;
     cfg->hamlib_log_level   = 0;
     cfg->radio_serial_speed = 0;  /* 0 = use hamlib default */
+    cfg->no_progress_timeout_s = ARQ_NO_PROGRESS_TIMEOUT_S_DEFAULT;
 }
 
 /* Map a sound-system name to the AUDIO_SUBSYSTEM_* constant.
@@ -151,6 +153,10 @@ bool cfg_read(mercury_config *cfg, const char *ini_path)
     if (i >= 0)
         cfg->radio_serial_speed = i;
 
+    i = iniparser_getint(ini, CFG_KEY_NO_PROGRESS_TIMEOUT_S, cfg->no_progress_timeout_s);
+    if (i > 0)
+        cfg->no_progress_timeout_s = i;
+
     iniparser_freedict(ini);
     return true;
 }
@@ -229,6 +235,9 @@ bool cfg_write(const mercury_config *cfg, const char *ini_path)
     fprintf(f, "freedv_verbosity = %d\n",  cfg->freedv_verbosity);
     fprintf(f, "hamlib_log_level = %d\n",  cfg->hamlib_log_level);
     fprintf(f, "radio_serial_speed = %d\n", cfg->radio_serial_speed);
+
+    fprintf(f, "\n[arq]\n");
+    fprintf(f, "no_progress_timeout_s = %d\n", cfg->no_progress_timeout_s);
 
     fclose(f);
     return true;

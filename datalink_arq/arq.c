@@ -912,6 +912,16 @@ void clear_connection_data(void)
     clear_buffer(data_tx_buffer_arq_control);
 }
 
+void arq_set_no_progress_timeout_s(int seconds)
+{
+    if (seconds > 0)
+        atomic_store(&arq_no_progress_timeout_s, seconds);
+    else
+        atomic_store(&arq_no_progress_timeout_s, ARQ_NO_PROGRESS_TIMEOUT_S_DEFAULT);
+    HLOGI(LOG_COMP, "ARQ no-progress timeout: %ds",
+          atomic_load(&arq_no_progress_timeout_s));
+}
+
 void arq_set_retry_slots(int slots)
 {
     if (slots <= 0)

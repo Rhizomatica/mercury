@@ -1199,6 +1199,7 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
             sess->tx_retransmit_len = 0;  /* ACKed — discard retransmit buffer */
             sess->tx_inflight_bytes = 0;  /* payload confirmed by peer */
             sess->tx_retries_left   = ARQ_DATA_RETRY_SLOTS;  /* fresh counter for next seq */
+            sess->last_tx_progress_ms = hermes_uptime_ms();  /* forward progress */
             sess->peer_has_data = (ev->rx_flags & ARQ_FLAG_HAS_DATA) != 0;
             if (g_cbs.send_buffer_status)
                 g_cbs.send_buffer_status(g_cbs.tx_backlog ? g_cbs.tx_backlog() : 0);
@@ -1246,14 +1247,47 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
             }
             else
             {
-                HLOGW(LOG_COMP, "Data retry exhausted seq=%d — disconnecting",
-                      (int)sess->tx_seq);
-                send_ctrl_frame(sess, ARQ_SUBTYPE_DISCONNECT);
-                sess->tx_retries_left = ARQ_DISCONNECT_RETRY_SLOTS;
-                tm = arq_protocol_mode_timing(sess->control_mode);
-                sess_enter(sess, ARQ_CONN_DISCONNECTING,
-                           deadline_from_s(tm ? tm->retry_interval_s : 7.0f),
-                           ARQ_EV_TIMER_RETRY);
+                /* Retry budget exhausted — disconnect only if we're past the
+                 * absolute no-progress wall-clock budget.  Otherwise reset the
+                 * retry counter and keep banging at the channel: VARA-like
+                 * persistence beats Pactor-like give-up.  Bumping
+                 * consecutive_retries lets select_best_mode pull us down to a
+                 * more robust mode the next time a decision point runs. */
+                uint64_t now = hermes_uptime_ms();
+                uint64_t budget_ms = (uint64_t)ARQ_NO_PROGRESS_TIMEOUT_S * 1000ULL;
+                bool no_progress_dead = sess->last_tx_progress_ms != 0 &&
+                                        (now - sess->last_tx_progress_ms) >= budget_ms;
+                if (no_progress_dead)
+                {
+                    HLOGW(LOG_COMP,
+                          "Data retry exhausted seq=%d, no progress for %llus — disconnecting",
+                          (int)sess->tx_seq,
+                          (unsigned long long)((now - sess->last_tx_progress_ms) / 1000));
+                    send_ctrl_frame(sess, ARQ_SUBTYPE_DISCONNECT);
+                    sess->tx_retries_left = ARQ_DISCONNECT_RETRY_SLOTS;
+                    tm = arq_protocol_mode_timing(sess->control_mode);
+                    sess_enter(sess, ARQ_CONN_DISCONNECTING,
+                               deadline_from_s(tm ? tm->retry_interval_s : 7.0f),
+                               ARQ_EV_TIMER_RETRY);
+                }
+                else
+                {
+                    unsigned long long since_s =
+                        sess->last_tx_progress_ms != 0
+                        ? (unsigned long long)((now - sess->last_tx_progress_ms) / 1000)
+                        : 0ULL;
+                    HLOGI(LOG_COMP,
+                          "Data retry exhausted seq=%d, persisting (%llus / %ds budget)",
+                          (int)sess->tx_seq, since_s, ARQ_NO_PROGRESS_TIMEOUT_S);
+                    if (g_timing)
+                        arq_timing_record_retry(g_timing, (int)sess->tx_seq,
+                                                ARQ_DATA_RETRY_SLOTS,
+                                                "persist_after_exhaust");
+                    sess->tx_retries_left = ARQ_DATA_RETRY_SLOTS;
+                    sess->consecutive_retries++;
+                    dflow_enter(sess, ARQ_DFLOW_DATA_TX, UINT64_MAX, ARQ_EV_TIMER_RETRY);
+                    send_data_frame(sess);
+                }
             }
         }
         else if (ev->id == ARQ_EV_RX_DATA)
@@ -1276,6 +1310,7 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
                 sess->tx_retransmit_len = 0;
                 sess->tx_inflight_bytes = 0;
                 sess->tx_retries_left   = ARQ_DATA_RETRY_SLOTS;
+                sess->last_tx_progress_ms = hermes_uptime_ms();
                 sess->peer_has_data = (ev->rx_flags & ARQ_FLAG_HAS_DATA) != 0;
                 if (g_cbs.send_buffer_status)
                     g_cbs.send_buffer_status(g_cbs.tx_backlog ? g_cbs.tx_backlog() : 0);

@@ -226,6 +226,7 @@ int main(int argc, char *argv[])
             freedv_verbosity   = mcfg.freedv_verbosity;
             hamlib_log_level   = mcfg.hamlib_log_level;
             radio_serial_speed = mcfg.radio_serial_speed;
+            arq_set_no_progress_timeout_s(mcfg.no_progress_timeout_s);
         }
     }
 
