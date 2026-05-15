@@ -1,0 +1,155 @@
+# Mercury CD Pipeline - Generate Release
+#
+# Triggers:
+#   - Manually via workflow_dispatch (provide the new version to release)
+#
+# Steps:
+#   1. Update debian/changelog with new section (version header, release bullets
+#      with all PR titles since the last tag, and maintainer/date footer)
+#   2. Bump VERSION__ macro in main.c
+#   3. Bump version string in mercury.1
+#   4. Commit and push those changes: "Updates for release X.Y.Z"
+#   5. Build the Windows x64 zip (make windows-zip)
+#   6. Create a GitHub release with the zip attached (gh release create)
+
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version (e.g. 1.9.9)'
+        required: true
+        type: string
+
+jobs:
+  release:
+    name: Release Mercury v${{ inputs.version }}
+    runs-on: ubuntu-latest
+    container: debian:trixie
+    timeout-minutes: 20
+    permissions:
+      contents: write
+      pull-requests: read
+
+    steps:
+      - name: Validate version format
+        run: |
+          VERSION="${{ inputs.version }}"
+          if ! echo "$VERSION" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "::error::Invalid version format: '${VERSION}' — expected X.Y.Z (e.g. 1.9.9)"
+            exit 1
+          fi
+
+      - name: Install dependencies
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            ca-certificates \
+            build-essential \
+            git \
+            gh \
+            gcc-mingw-w64-x86-64 \
+            mingw-w64-x86-64-dev \
+            mingw-w64-common \
+            mingw-w64-tools \
+            gcc-mingw-w64 \
+            zip
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: mercuryv2
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Git safe directory
+        run: git config --global --add safe.directory /__w/mercury/mercury
+
+      - name: Configure git
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git config user.name "GitHub Actions"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git remote set-url origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}.git"
+
+      - name: Collect PR titles since last tag
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null) || {
+            echo "No tags found — falling back to initial commit"
+            LAST_TAG=$(git rev-list --max-parents=0 HEAD)
+          }
+          echo "Collecting PRs since: ${LAST_TAG}"
+
+          # Get the ISO timestamp of the tag's commit so we can query the API
+          LAST_TAG_DATE=$(git log -1 --format="%cI" "${LAST_TAG}")
+          echo "Tag commit date: ${LAST_TAG_DATE}"
+
+          # Query GitHub directly for PRs merged into mercuryv2 after that date,
+          # sorted oldest-first so the changelog order matches the release history.
+          PR_TITLES=$(gh pr list \
+            --repo Rhizomatica/mercury \
+            --state merged \
+            --base mercuryv2 \
+            --search "merged:>${LAST_TAG_DATE}" \
+            --limit 200 \
+            --json title,mergedAt \
+            --jq 'sort_by(.mergedAt) | .[].title')
+
+          PR_ENTRIES=""
+          while IFS= read -r title; do
+            [[ -z "$title" ]] && continue
+            title="${title%.}"  # strip trailing period if present
+            PR_ENTRIES="${PR_ENTRIES}  * ${title}.\n"
+          done <<< "$PR_TITLES"
+
+          {
+            echo 'PR_ENTRIES<<EOF'
+            printf '%b' "$PR_ENTRIES"
+            echo 'EOF'
+          } >> "$GITHUB_ENV"
+
+      - name: Update debian/changelog
+        run: |
+          VERSION="${{ inputs.version }}"
+          DATE=$(date -R)
+
+          {
+            printf 'mercury (%s-1) unstable; urgency=medium\n\n' "$VERSION"
+            printf '  * Release %s.\n' "$VERSION"
+            printf '%b' "$PR_ENTRIES"
+            printf '\n\n -- Rafael Diniz <rafael@riseup.net>  %s\n\n' "$DATE"
+          } | cat - debian/changelog > debian/changelog.tmp
+          mv debian/changelog.tmp debian/changelog
+
+      - name: Update VERSION__ in main.c
+        run: |
+          sed -i 's/#define VERSION__ "[^"]*"/#define VERSION__ "${{ inputs.version }}"/' main.c
+
+      - name: Update mercury.1
+        run: |
+          sed -i 's/"Mercury [0-9]*\.[0-9]*\.[0-9]*"/"Mercury ${{ inputs.version }}"/' mercury.1
+
+      - name: Commit and push release files
+        run: |
+          git add debian/changelog main.c mercury.1
+          git commit -m "Updates for release ${{ inputs.version }}"
+          git push origin mercuryv2
+
+      - name: Build Windows zip
+        run: make windows-zip
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          ZIP_FILE=$(ls mercury-${{ inputs.version }}-w64-*.zip)
+          gh release create "v${{ inputs.version }}" \
+            "./${ZIP_FILE}" \
+            --repo Rhizomatica/mercury \
+            --target mercuryv2 \
+            --generate-notes
