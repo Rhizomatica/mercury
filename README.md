@@ -88,11 +88,11 @@ Radio control notes:
 
 ## Getting Started with Mercury
 
-### Install via GitHub repository on Linux
+### Compile and Install from Git repository on Linux
 
 1. Install the dependencies:
     ```bash
-    sudo apt-get update && sudo apt-get install libasound2-dev libpulse-dev libhamlib-dev cmake git
+    sudo apt-get update && sudo apt-get install libasound2-dev libpulse-dev libhamlib-dev make git
     ```
 
 2. Clone Mercury GitHub repository:
@@ -107,8 +107,13 @@ Radio control notes:
 
 4. Edit `config.mk` with your C compiler and appropriate flags (defaults should be fine for most), then run `make` and `make install` commands:
     ```bash
-    make && make install
+    make
     ```
+
+5. For installing mercury in the system:
+   ```bash
+   sudo make install
+   ```
 
 ### Install via Debian package on Linux
 
