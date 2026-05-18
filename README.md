@@ -117,7 +117,7 @@ Radio control notes:
 
 ### Install via Debian package on Linux
 
-For now just Debian 13 (Trixie) packages are built, for both arm64 (works on both RaspberryPi OS and Debian) and arm64.
+For now just Debian 13 (Trixie) packages are built, for both arm64 (works on both RaspberryPi OS and Debian) and amd64.
 
 1. Install the repository certificate:
     ```bash
