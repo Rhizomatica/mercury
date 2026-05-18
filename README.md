@@ -86,51 +86,73 @@ Radio control notes:
 - `-R` selects a HAMLIB model ID, `-A` optionally points HAMLIB at a device path or `ip:port`, and `-K` prints the available HAMLIB models.
 - `-S` selects the HERMES shared-memory controller interface, is mutually exclusive with `-A`, and is unavailable on Windows builds.
 
+## Getting Started with Mercury
+
+### Install via GitHub repository on Linux
+
+1. Install the dependencies:
+    ```bash
+    sudo apt-get update && sudo apt-get install libasound2-dev libpulse-dev libhamlib-dev cmake git
+    ```
+
+2. Clone Mercury GitHub repository:
+    ```bash
+    git clone https://github.com/Rhizomatica/mercury.git
+    ```
+
+3. Change directory to `mercury/`:
+    ```bash
+    cd mercury
+    ```
+
+4. Edit `config.mk` with your C compiler and appropriate flags (defaults should be fine for most), then run `make` and `make install` commands:
+    ```bash
+    make && make install
+    ```
+
+### Install via Debian package on Linux
+
+1. Install the repository certificate:
+    ```bash
+    wget --no-check-certificate -qO- https://debian.hermes.radio/hermes/hermes.key | gpg --dearmor -o - | sudo tee /etc/apt/trusted.gpg.d/hermes.gpg > /dev/null
+    ```
+
+2. Add mercury to the sources list (change it for you current architecture):
+
+    **ARM64:**
+
+    ```bash
+    echo 'deb [arch=arm64] http://debian.hermes.radio/hermes trixie main' | sudo tee /etc/apt/sources.list.d/hermes.list
+    ```
+    **AMD64:**
+    ```bash
+    echo 'deb [arch=amd64] http://debian.hermes.radio/hermes trixie main' | sudo tee /etc/apt/sources.list.d/hermes.list
+    ```
+
+3. Update the debian packages:
+    ```bash
+    sudo apt-get update
+    ```
+
+4. Install mercury:
+    ```bash
+    sudo apt-get install mercury
+    ```
+
+**Note:** Installation via Debian package requires Debian 13 (Trixie)
+
+### Install ZIP package on Windows
+
+1. Navigate to the releases page on the official GitHub repository: https://github.com/Rhizomatica/mercury/releases
+2. Download the ZIP package for the latest version
+3. Go to Downloads folder (or the folder you download mercury ZIP) and extract the files
+4. Click on the `mercury` executable file (``mercury.exe``) to run Mercury HF modem
+
 ## Configuration File
 
-Mercury reads an INI-format configuration file at startup. The default path is `mercury.ini` in the current working directory; use `-C` to specify an alternative path. Command-line arguments take priority over file values. See the included [mercury.ini.example](mercury.ini.example) for all available settings and their defaults — copy it to `mercury.ini` and edit as needed.
+Mercury reads an INI-format configuration file at startup. The default path is `mercury.ini` in the current working directory; use `-C` to specify an alternative path. Command-line arguments take priority over values from the file.
 
-## Getting Mercury
-
-### Pre-built Binaries
-
-**Windows:** Ready-to-run executables are available on the [GitHub Releases page](https://github.com/Rhizomatica/mercury/releases).
-
-**Debian / Raspberry Pi OS:** A package repository is available for amd64 and arm64 (Debian 13 Trixie / Raspberry Pi OS). To install:
-
-```
-# Install the repository certificate
-wget --no-check-certificate -qO- https://debian.hermes.radio/hermes/hermes.key | gpg --dearmor -o - | sudo tee /etc/apt/trusted.gpg.d/hermes.gpg > /dev/null
-
-# For arm64 (Raspberry Pi, sBitx radio, etc.)
-echo 'deb [arch=arm64] http://debian.hermes.radio/hermes trixie main' | sudo tee -a /etc/apt/sources.list.d/hermes.list
-
-# For amd64 (laptop, desktop, etc.)
-echo 'deb [arch=amd64] http://debian.hermes.radio/hermes trixie main' | sudo tee -a /etc/apt/sources.list.d/hermes.list
-
-sudo apt update
-sudo apt install mercury
-```
-
-## Compilation
-
-Edit config.mk with your C compiler and appropriate flags (defaults should be fine for most) and type:
-
-```
-make
-```
-
-If you have `doxygen` installed, you can generate HTML documentation for the ARQ subsystem:
-
-```
-make doxygen
-```
-
-Output will be generated in `docs/html/` (open `docs/html/index.html` in a browser). To remove generated docs:
-
-```
-make doxygen-clean
-```
+See the included [mercury.ini.example](mercury.ini.example) for all available settings and their default values — copy it to `mercury.ini` and edit as needed.
 
 ## Documentation
 
