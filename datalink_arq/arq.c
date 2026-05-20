@@ -396,13 +396,14 @@ static void handle_cmd(const arq_cmd_msg_t *msg)
     }
 
     case ARQ_CMD_DISCONNECT:
-        /* VARA TNC spec: notify host immediately. */
+        /* VARA TNC spec: send DISCONNECTED to host immediately on receiving
+         * DISCONNECT command, before the over-the-air exchange completes.
+         * This lets the host close the socket cleanly while the FSM handles
+         * the air-side teardown.  We deliberately do NOT clear g_app_tx_buf
+         * here: the FSM drains any bytes still queued, then completes a clean
+         * air-side DISCONNECT handshake.  The retry-exhaustion path bounds the
+         * drain so a dead channel still tears down quickly (see arq_fsm.c). */
         tnc_send_disconnected();
-        /* Clear app TX buffer so FSM sees no pending data and does not
-        * defer the DISCONNECT while trying to drain bytes already abandoned. */
-        pthread_mutex_lock(&g_app_tx_mtx);
-        clear_buffer(g_app_tx_buf);
-        pthread_mutex_unlock(&g_app_tx_mtx);
         ev.id = ARQ_EV_APP_DISCONNECT;
         break;
 
@@ -416,9 +417,6 @@ static void handle_cmd(const arq_cmd_msg_t *msg)
         break;
 
     case ARQ_CMD_CLIENT_DISCONNECT:
-        pthread_mutex_lock(&g_app_tx_mtx);
-        clear_buffer(g_app_tx_buf);
-        pthread_mutex_unlock(&g_app_tx_mtx);
         ev.id = ARQ_EV_APP_DISCONNECT;
         break;
 
