@@ -693,6 +693,7 @@ static void fsm_disconnected(arq_session_t *sess, const arq_event_t *ev)
         sess->session_id      = (uint8_t)(hermes_uptime_ms() & 0x7F) | 0x01;
         sess->tx_retries_left = ARQ_CALL_RETRY_SLOTS;
         sess->pending_disconnect = false;  /* clear stale deferred disconnect from prior session */
+        sess->disconnect_deadline_ms = 0;
         /* Reset mode state for new session */
         sess->payload_mode       = FREEDV_MODE_DATAC4;
         sess->peer_tx_mode       = FREEDV_MODE_DATAC4;
@@ -1014,6 +1015,28 @@ static void fsm_connected(arq_session_t *sess, const arq_event_t *ev)
 {
     const arq_mode_timing_t *tm;
 
+    /* Fallback for a deferred APP_DISCONNECT that the normal fire points
+     * (idle-ISS entry, WAIT_ACK ack-timer, retry exhaustion) never reach —
+     * e.g. a session stuck ping-ponging keepalives or pinned as IRS.  Once
+     * the drain deadline elapses, force a clean air-side teardown regardless
+     * of role or backlog so the rig is never keyed indefinitely after the
+     * host has disconnected (K7EK "Mercury kept hanging on"). */
+    if (sess->pending_disconnect && sess->disconnect_deadline_ms != 0 &&
+        hermes_uptime_ms() >= sess->disconnect_deadline_ms)
+    {
+        HLOGW(LOG_COMP,
+              "Deferred DISCONNECT drain timeout (%ds) — forcing teardown",
+              ARQ_DISCONNECT_DRAIN_TIMEOUT_S);
+        sess->pending_disconnect      = false;
+        sess->disconnect_deadline_ms  = 0;
+        sess->tx_retries_left         = ARQ_DISCONNECT_RETRY_SLOTS;
+        sess->disconnect_to_no_client = false;
+        sess_enter(sess, ARQ_CONN_DISCONNECTING,
+                   hermes_uptime_ms() + ARQ_CHANNEL_GUARD_MS,
+                   ARQ_EV_TIMER_ACK);
+        return;
+    }
+
     switch (ev->id)
     {
     case ARQ_EV_APP_DISCONNECT:
@@ -1030,6 +1053,9 @@ static void fsm_connected(arq_session_t *sess, const arq_event_t *ev)
                   g_cbs.tx_backlog ? g_cbs.tx_backlog() : 0,
                   arq_dflow_state_name(sess->dflow_state));
             sess->pending_disconnect = true;
+            sess->disconnect_deadline_ms =
+                hermes_uptime_ms() +
+                (uint64_t)ARQ_DISCONNECT_DRAIN_TIMEOUT_S * 1000ULL;
             return;
         }
         sess->pending_disconnect      = false;

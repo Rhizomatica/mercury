@@ -200,6 +200,9 @@ typedef struct
     bool     disconnect_to_no_client;  /* after disconnect: clear arq_info     */
     bool     pending_disconnect_notify;/* defer notify_disconnected until TX done */
     bool     pending_disconnect;       /* APP_DISCONNECT deferred until TX buf empty */
+    uint64_t disconnect_deadline_ms;   /* absolute time by which a deferred
+                                        * APP_DISCONNECT must resolve into a
+                                        * clean teardown. 0 = none armed. */
 
     /* --- Initial connect guard --- */
     bool     pending_connect_confirm;  /* caller must ACK ACCEPT when no initial
