@@ -1257,12 +1257,24 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
                 uint64_t budget_ms = (uint64_t)ARQ_NO_PROGRESS_TIMEOUT_S * 1000ULL;
                 bool no_progress_dead = sess->last_tx_progress_ms != 0 &&
                                         (now - sess->last_tx_progress_ms) >= budget_ms;
-                if (no_progress_dead)
+                /* The application has already asked to disconnect and we are
+                 * only draining its final bytes.  Persistence is for data the
+                 * app still wants delivered; once it has said "disconnect",
+                 * the contract is bounded effort then a CLEAN air-side
+                 * teardown.  Hammering the channel for the full no-progress
+                 * budget here leaves BPQ32 thinking it disconnected cleanly
+                 * while Mercury keys the rig for minutes and the peer times
+                 * out — the "dirty disconnect" Gary/K7EK reported.  So treat a
+                 * pending disconnect like the dead-channel case: stop draining
+                 * and complete the DISCONNECT handshake now. */
+                if (no_progress_dead || sess->pending_disconnect)
                 {
                     HLOGW(LOG_COMP,
-                          "Data retry exhausted seq=%d, no progress for %llus — disconnecting",
+                          "Data retry exhausted seq=%d (%s) — disconnecting",
                           (int)sess->tx_seq,
-                          (unsigned long long)((now - sess->last_tx_progress_ms) / 1000));
+                          sess->pending_disconnect ? "app disconnect pending"
+                                                   : "no forward progress");
+                    sess->pending_disconnect = false;
                     send_ctrl_frame(sess, ARQ_SUBTYPE_DISCONNECT);
                     sess->tx_retries_left = ARQ_DISCONNECT_RETRY_SLOTS;
                     tm = arq_protocol_mode_timing(sess->control_mode);
