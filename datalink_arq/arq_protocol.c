@@ -18,6 +18,7 @@ _Atomic int arq_accept_retry_slots     = ARQ_ACCEPT_RETRY_SLOTS_DEFAULT;
 _Atomic int arq_data_retry_slots       = ARQ_DATA_RETRY_SLOTS_DEFAULT;
 _Atomic int arq_disconnect_retry_slots = ARQ_DISCONNECT_RETRY_SLOTS_DEFAULT;
 _Atomic int arq_no_progress_timeout_s  = ARQ_NO_PROGRESS_TIMEOUT_S_DEFAULT;
+_Atomic int arq_disconnect_drain_timeout_s = ARQ_DISCONNECT_DRAIN_TIMEOUT_S_DEFAULT;
 
 /* Include FreeDV mode constants */
 #include "../modem/freedv/freedv_api.h"

@@ -172,6 +172,14 @@ int arq_get_tx_backlog_bytes(void);
 void arq_set_no_progress_timeout_s(int seconds);
 
 /**
+ * @brief Set the absolute cap on how long an app DISCONNECT may stay deferred
+ *        while draining the last TX bytes.
+ * @param seconds Window in seconds.  Values <= 0 reset to the compiled
+ *                default (ARQ_DISCONNECT_DRAIN_TIMEOUT_S_DEFAULT).
+ */
+void arq_set_disconnect_drain_timeout_s(int seconds);
+
+/**
  * @brief Get current ARQ speed level (gear).
  * @return Speed level index.
  */

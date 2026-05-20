@@ -925,6 +925,17 @@ void arq_set_no_progress_timeout_s(int seconds)
           atomic_load(&arq_no_progress_timeout_s));
 }
 
+void arq_set_disconnect_drain_timeout_s(int seconds)
+{
+    if (seconds > 0)
+        atomic_store(&arq_disconnect_drain_timeout_s, seconds);
+    else
+        atomic_store(&arq_disconnect_drain_timeout_s,
+                     ARQ_DISCONNECT_DRAIN_TIMEOUT_S_DEFAULT);
+    HLOGI(LOG_COMP, "ARQ disconnect drain timeout: %ds",
+          atomic_load(&arq_disconnect_drain_timeout_s));
+}
+
 void arq_set_retry_slots(int slots)
 {
     if (slots <= 0)

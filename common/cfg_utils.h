@@ -42,6 +42,7 @@
 #define CFG_KEY_HAMLIB_LOG_LEVEL    "main:hamlib_log_level"
 #define CFG_KEY_RADIO_SERIAL_SPEED  "main:radio_serial_speed"
 #define CFG_KEY_NO_PROGRESS_TIMEOUT_S "arq:no_progress_timeout_s"
+#define CFG_KEY_DISCONNECT_DRAIN_TIMEOUT_S "arq:disconnect_drain_timeout_s"
 #define CFG_KEY_TX_GAIN_DB          "audio:tx_gain_db"
 
 /* Holds all values read from the init configuration file */
@@ -65,6 +66,9 @@ typedef struct {
     int      no_progress_timeout_s;/* ARQ: disconnect when no forward progress
                                     * (no advancing ACK) for this many seconds
                                     * after data-retry exhaustion. Default 600. */
+    int      disconnect_drain_timeout_s;/* ARQ: absolute cap (s) on how long an
+                                    * app DISCONNECT stays deferred while
+                                    * draining the last TX bytes. Default 30. */
     float    tx_gain_db;            /* Linear-equivalent gain on the modulator
                                     * TX samples, in dB. 0.0 = no change.
                                     * Range -20.0 .. +20.0 (clamped). */

@@ -252,6 +252,17 @@ extern _Atomic float arq_callint_override_s;
 extern _Atomic int arq_no_progress_timeout_s;
 #define ARQ_NO_PROGRESS_TIMEOUT_S atomic_load(&arq_no_progress_timeout_s)
 
+/* Absolute cap on how long an APP_DISCONNECT may stay deferred while the FSM
+ * tries to drain the last app bytes.  Once the application has asked to
+ * disconnect, the deferral must always resolve into a clean air-side
+ * DISCONNECT handshake within this window — otherwise a stuck/ping-ponging
+ * session keeps keying the rig forever (the K7EK "Mercury kept hanging on"
+ * report).  On a healthy link the drain completes in seconds via idle-ISS, so
+ * this only bites when the FSM would otherwise be starved. */
+#define ARQ_DISCONNECT_DRAIN_TIMEOUT_S_DEFAULT 30
+extern _Atomic int arq_disconnect_drain_timeout_s;
+#define ARQ_DISCONNECT_DRAIN_TIMEOUT_S atomic_load(&arq_disconnect_drain_timeout_s)
+
 /* In DATA frames the ack_delay byte is repurposed to carry payload_valid:
  *   0               = full frame (all user bytes are valid data)
  *   1 .. user_bytes = only this many leading bytes are valid; rest is padding

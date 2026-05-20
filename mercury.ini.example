@@ -91,3 +91,13 @@ tx_gain_db = 0.0
 ; keepalives still arrive but our TX direction has gone one-way.  Raise
 ; this for ultra-marginal NVIS work where forward progress can take longer.
 no_progress_timeout_s = 180
+
+; Absolute cap (seconds, default: 30) on how long an application DISCONNECT
+; may stay deferred while Mercury drains the last queued TX bytes.  When the
+; host (e.g. BPQ32) ends a BBS forwarding session, Mercury finishes sending
+; any buffered data, then completes a clean air-side DISCONNECT handshake.
+; This cap guarantees the link always tears down within the window even if
+; the session is stuck ping-ponging — preventing the rig from being keyed
+; indefinitely after the host has already disconnected.  On a healthy link
+; the drain finishes in seconds, so this only bites on a stuck session.
+disconnect_drain_timeout_s = 30
