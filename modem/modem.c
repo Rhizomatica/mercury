@@ -103,13 +103,22 @@ float modem_get_tx_peak_dbfs(void)
 
 /* Convert a 16-bit modulator sample to a 32-bit playback sample with gain
  * and saturation.  At gain == 1.0 this matches the historical behavior of
- * shifting int16 into the upper bits of int32.  Saturates against INT32
- * limits using a >= / <= compare because the literal 2147483647.0f rounds
- * up to 2^31 in float, so a strict > would let the boundary case fall
- * through to an undefined int cast. */
-static inline int32_t tx_sample_with_gain(int16_t sample, float gain)
+ * mapping int16 into the upper bits of int32 — but via a multiply by 65536,
+ * not a left shift: shifting a negative int32 is undefined in C.  Saturates
+ * against INT32 limits using a >= / <= compare because the literal
+ * 2147483647.0f rounds up to 2^31 in float, so a strict > would let the
+ * boundary case fall through to an undefined int cast.  *peak_fs, if
+ * non-NULL, is raised to the pre-saturation magnitude |fs| so the UI meter
+ * reflects the true post-gain level (it can read above full-scale, i.e. the
+ * amount of clipping) rather than the clamped sample. */
+static inline int32_t tx_sample_with_gain(int16_t sample, float gain, float *peak_fs)
 {
-    float fs = (float)((int32_t)sample << 16) * gain;
+    float fs = (float)sample * 65536.0f * gain;
+    if (peak_fs)
+    {
+        float mag = fabsf(fs);
+        if (mag > *peak_fs) *peak_fs = mag;
+    }
     if (fs >=  2147483647.0f) return INT32_MAX;
     if (fs <= -2147483648.0f) return INT32_MIN;
     return (int32_t)fs;
@@ -644,6 +653,7 @@ int send_modulated_data(generic_modem_t *g_modem, uint8_t *bytes_in, int frames_
 
     int total_samples = 0;
     float tx_gain = atomic_load(&g_tx_gain);
+    float peak_fs = 0.0f;  /* pre-saturation peak magnitude across this burst */
 
 
     /* === STEP 1: Generate all modulated audio into temp buffer === */
@@ -656,7 +666,7 @@ int send_modulated_data(generic_modem_t *g_modem, uint8_t *bytes_in, int frames_
     int n_preamble = freedv_rawdatapreambletx(freedv, mod_out_short);
     for (int i = 0; i < n_preamble; i++)
     {
-        tx_buffer[total_samples++] = tx_sample_with_gain(mod_out_short[i], tx_gain);
+        tx_buffer[total_samples++] = tx_sample_with_gain(mod_out_short[i], tx_gain, &peak_fs);
     }
 
     /* Generate data frame(s) */
@@ -671,7 +681,7 @@ int send_modulated_data(generic_modem_t *g_modem, uint8_t *bytes_in, int frames_
         freedv_rawdatatx(freedv, mod_out_short, frame_with_crc);
         for (size_t j = 0; j < n_mod_out; j++)
         {
-            tx_buffer[total_samples++] = tx_sample_with_gain(mod_out_short[j], tx_gain);
+            tx_buffer[total_samples++] = tx_sample_with_gain(mod_out_short[j], tx_gain, &peak_fs);
         }
     }
 
@@ -679,7 +689,7 @@ int send_modulated_data(generic_modem_t *g_modem, uint8_t *bytes_in, int frames_
     int n_postamble = freedv_rawdatapostambletx(freedv, mod_out_short);
     for (int i = 0; i < n_postamble; i++)
     {
-        tx_buffer[total_samples++] = tx_sample_with_gain(mod_out_short[i], tx_gain);
+        tx_buffer[total_samples++] = tx_sample_with_gain(mod_out_short[i], tx_gain, &peak_fs);
     }
 
     /* Add silence at end */
@@ -689,24 +699,17 @@ int send_modulated_data(generic_modem_t *g_modem, uint8_t *bytes_in, int frames_
     }
     pthread_mutex_unlock(&modem_freedv_lock);
 
-    /* Measure post-gain pre-saturation TX peak for the UI meter.  Walk the
-     * buffer once; values were already saturated in tx_sample_with_gain so
-     * INT32_MAX maps to 0 dBFS = the clip ceiling. */
+    /* Publish the post-gain, pre-saturation TX peak for the UI meter.
+     * peak_fs was accumulated as |fs| inside tx_sample_with_gain before any
+     * clamping, so it reflects the true level: at 0 dBFS the signal is right
+     * at the clip ceiling, above 0 dBFS it is clipping by that many dB. */
     {
-        int32_t peak_abs = 0;
-        for (int i = 0; i < total_samples; i++)
-        {
-            int32_t v = tx_buffer[i];
-            int32_t a = (v < 0) ? -v : v;
-            if (a > peak_abs) peak_abs = a;
-        }
         float dbfs = -120.0f;
-        if (peak_abs > 0)
+        if (peak_fs > 0.0f)
         {
-            float lin = (float)peak_abs / 2147483648.0f;  /* INT32 full-scale = 0 dBFS */
+            float lin = peak_fs / 2147483648.0f;  /* INT32 full-scale = 0 dBFS */
             dbfs = 20.0f * log10f(lin);
             if (dbfs < -120.0f) dbfs = -120.0f;
-            if (dbfs >    0.0f) dbfs =    0.0f;
         }
         atomic_store(&g_tx_peak_dbfs, dbfs);
     }

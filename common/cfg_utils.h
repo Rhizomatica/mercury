@@ -65,7 +65,7 @@ typedef struct {
     int      radio_serial_speed;   /* 0 = use hamlib default */
     int      no_progress_timeout_s;/* ARQ: disconnect when no forward progress
                                     * (no advancing ACK) for this many seconds
-                                    * after data-retry exhaustion. Default 600. */
+                                    * after data-retry exhaustion. Default 180. */
     int      disconnect_drain_timeout_s;/* ARQ: absolute cap (s) on how long an
                                     * app DISCONNECT stays deferred while
                                     * draining the last TX bytes. Default 30. */
