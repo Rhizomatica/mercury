@@ -22,6 +22,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <math.h>
 
 #include "cfg_utils.h"
 #include "../audioio/audioio.h"
@@ -164,6 +165,7 @@ bool cfg_read(mercury_config *cfg, const char *ini_path)
         cfg->disconnect_drain_timeout_s = i;
 
     double d = iniparser_getdouble(ini, CFG_KEY_TX_GAIN_DB, (double)cfg->tx_gain_db);
+    if (!isfinite(d)) d = 0.0;  /* malformed/non-finite INI value -> default */
     if (d < -20.0) d = -20.0;
     if (d >  20.0) d =  20.0;
     cfg->tx_gain_db = (float)d;

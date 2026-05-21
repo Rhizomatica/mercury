@@ -377,8 +377,15 @@ static bool maybe_upgrade_mode(arq_session_t *sess)
     if (hermes_uptime_ms() < sess->startup_deadline_ms)
         return false;
 
-    /* Need at least one valid SNR reading from the peer before deciding. */
-    if (sess->peer_snr_x10 == 0)
+    /* Normally we need at least one valid peer SNR reading before deciding.
+     * Exception: a retry-forced downgrade is driven purely by delivery
+     * failure (consecutive_retries), not SNR — select_best_mode's safety net
+     * steps the mode down regardless of SNR.  Allow it through even with no
+     * SNR estimate, otherwise a link that never lands an advancing ACK (so
+     * peer_snr_x10 stays 0) would keep retransmitting at a too-fast mode
+     * forever, defeating the persist-after-exhaustion downgrade. */
+    if (sess->peer_snr_x10 == 0 &&
+        sess->consecutive_retries < ARQ_RETRY_DOWNGRADE_THRESHOLD)
         return false;
 
     int backlog = g_cbs.tx_backlog ? g_cbs.tx_backlog() : 0;
