@@ -707,7 +707,10 @@ int send_modulated_data(generic_modem_t *g_modem, uint8_t *bytes_in, int frames_
         float dbfs = -120.0f;
         if (peak_fs > 0.0f)
         {
-            float lin = peak_fs / 2147483648.0f;  /* INT32 full-scale = 0 dBFS */
+            /* 0 dBFS reference is the symmetric full scale 2^31 (= |INT32_MIN|),
+             * since peak_fs is a pre-saturation magnitude that ranges over
+             * +/-2^31; the ~4e-9 dB gap to INT32_MAX is irrelevant here. */
+            float lin = peak_fs / 2147483648.0f;
             dbfs = 20.0f * log10f(lin);
             if (dbfs < -120.0f) dbfs = -120.0f;
         }

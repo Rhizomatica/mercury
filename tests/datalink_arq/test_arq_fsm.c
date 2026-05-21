@@ -271,6 +271,83 @@ void test_disconnect_drain_timeout_forces_teardown(void)
     TEST_ASSERT_FALSE(sess.pending_disconnect);
 }
 
+/* tx_read fake that always yields one small frame of data. */
+static int tx_read_one_frame(uint8_t *buf, size_t n)
+{
+    size_t k = (n < 16) ? n : 16;
+    memset(buf, 0xA5, k);
+    return (int)k;
+}
+
+/* Drive one ACK-timeout cycle in WAIT_ACK: the timeout resends (DATA_TX) or,
+ * once retries are exhausted, runs the exhaustion branch.  If we land back in
+ * DATA_TX, complete the TX so the next call resumes from WAIT_ACK. */
+static void wait_ack_timeout_cycle(void)
+{
+    arq_event_t ev = make_event(ARQ_EV_TIMER_ACK);
+    arq_fsm_dispatch(&sess, &ev);
+    if (sess.conn_state == ARQ_CONN_CONNECTED &&
+        sess.dflow_state == ARQ_DFLOW_DATA_TX)
+    {
+        ev = make_event(ARQ_EV_TX_COMPLETE);
+        arq_fsm_dispatch(&sess, &ev);
+    }
+}
+
+/* Drive the session into WAIT_ACK with one frame in flight.  The caller side
+ * first has to clear the post-accept connect-confirmation (resolved on
+ * TX_COMPLETE) before data flows, then send a DATA frame (TIMER_ACK triggers
+ * the actual send) and complete it (TX_COMPLETE) to land in WAIT_ACK. */
+static void goto_wait_ack(void)
+{
+    fake_tx_backlog_fake.return_val = 512;
+    fake_tx_read_fake.custom_fake   = tx_read_one_frame;
+
+    arq_event_t ev = make_event(ARQ_EV_APP_DATA_READY);
+    arq_fsm_dispatch(&sess, &ev);
+
+    for (int i = 0; i < 8 && sess.dflow_state != ARQ_DFLOW_WAIT_ACK; i++)
+    {
+        if (sess.dflow_state == ARQ_DFLOW_DATA_TX)
+        {
+            ev = make_event(ARQ_EV_TIMER_ACK);    /* ensure the frame is sent */
+            arq_fsm_dispatch(&sess, &ev);
+            ev = make_event(ARQ_EV_TX_COMPLETE);  /* DATA_TX -> WAIT_ACK */
+            arq_fsm_dispatch(&sess, &ev);
+        }
+        else
+        {
+            ev = make_event(ARQ_EV_TX_COMPLETE);  /* advance connect-confirm */
+            arq_fsm_dispatch(&sess, &ev);
+        }
+    }
+    TEST_ASSERT_EQUAL_INT(ARQ_DFLOW_WAIT_ACK, sess.dflow_state);
+}
+
+/* Retry exhaustion within the no-progress budget persists (stays CONNECTED);
+ * once the budget elapses, the next exhaustion tears the link down. */
+void test_retry_exhaustion_persists_then_disconnects(void)
+{
+    goto_connected();
+    goto_wait_ack();
+
+    /* Within budget: many ACK timeouts (several full exhaustion rounds) must
+     * never disconnect — VARA-style persistence. */
+    for (int i = 0; i < 3 * (ARQ_DATA_RETRY_SLOTS + 2); i++)
+    {
+        wait_ack_timeout_cycle();
+        TEST_ASSERT_EQUAL_INT(ARQ_CONN_CONNECTED, sess.conn_state);
+    }
+
+    /* Past the no-progress budget: the next exhaustion must disconnect. */
+    mock_set_uptime_ms(1000 + (uint64_t)ARQ_NO_PROGRESS_TIMEOUT_S * 1000 + 5000);
+    int guard = 0;
+    while (sess.conn_state == ARQ_CONN_CONNECTED && guard++ < ARQ_DATA_RETRY_SLOTS + 4)
+        wait_ack_timeout_cycle();
+
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_DISCONNECTING, sess.conn_state);
+}
+
 /* ---- Timeout tests ---- */
 
 /* CALL timeout transitions to DISCONNECTED */
@@ -330,6 +407,7 @@ int main(void)
     RUN_TEST(test_connected_seeds_no_progress_clock);
     RUN_TEST(test_app_disconnect_defers_with_backlog);
     RUN_TEST(test_disconnect_drain_timeout_forces_teardown);
+    RUN_TEST(test_retry_exhaustion_persists_then_disconnects);
     /* Timeout tests */
     RUN_TEST(test_call_timeout);
     RUN_TEST(test_stop_listen);

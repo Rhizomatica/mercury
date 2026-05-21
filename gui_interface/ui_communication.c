@@ -165,6 +165,7 @@ static int ws_command_handler(const ws_command_t *cmd, void *user_data)
          * linear before pushing to the modulator.  Persist to INI so the
          * next start picks it up automatically. */
         float db = (float)atof(cmd->value);
+        if (!isfinite(db)) db = 0.0f;  /* reject NaN/Inf from a bad client */
         if (db < -20.0f) db = -20.0f;
         if (db >  20.0f) db =  20.0f;
         float linear = powf(10.0f, db / 20.0f);
