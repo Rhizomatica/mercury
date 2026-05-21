@@ -158,6 +158,17 @@ static void sess_enter(arq_session_t *sess, arq_conn_state_t new_state,
         sess->pending_connect_confirm = false;
         sess->need_initial_guard = false;
     }
+    else
+    {
+        /* Seed the no-progress clock at connection establishment so the
+         * wall-clock disconnect budget always has a baseline.  Without this,
+         * a session that never lands an advancing ACK (e.g. one-way TX
+         * failure while peer keepalives still arrive) would leave
+         * last_tx_progress_ms at 0 and persist forever after retry
+         * exhaustion.  Advancing ACKs refresh this timestamp during data
+         * flow (see fsm_dflow). */
+        sess->last_tx_progress_ms = hermes_uptime_ms();
+    }
     /* Reset data-flow and mode state when returning to idle connection states.
      * Restore peer_tx_mode to initial_payload_mode (= broadcast mode) so the
      * payload decoder can receive broadcast frames while LISTENING.  The
@@ -1040,11 +1051,15 @@ static void fsm_connected(arq_session_t *sess, const arq_event_t *ev)
     switch (ev->id)
     {
     case ARQ_EV_APP_DISCONNECT:
-        /* Defer DISCONNECT only while a frame is physically being transmitted
-         * (PTT on) or the TX buffer still has unsent bytes.  We must NOT defer
-         * when in WAIT_ACK: the frame is already sent (PTT off) and the peer
-         * may never ACK it; waiting up to 10×12 s before honouring the
-         * application's explicit disconnect request is unacceptable. */
+        /* Defer DISCONNECT while a frame is physically being transmitted
+         * (PTT on, DATA_TX) or the TX buffer still has unsent bytes, so the
+         * last application bytes get delivered before teardown.  The deferral
+         * is bounded three ways and can never hang: (1) retry exhaustion with
+         * a pending disconnect tears down immediately, (2) the absolute
+         * disconnect_drain_timeout_s deadline armed below forces teardown
+         * regardless of FSM state, and (3) a drained buffer fires the
+         * deferred disconnect at the next idle-ISS entry.  An idle WAIT_ACK
+         * with no backlog falls through to immediate teardown below. */
         if ((g_cbs.tx_backlog && g_cbs.tx_backlog() > 0) ||
             sess->dflow_state == ARQ_DFLOW_DATA_TX)
         {

@@ -210,6 +210,67 @@ void test_rx_disconnect_from_connected(void)
     TEST_ASSERT_EQUAL_INT(ARQ_CONN_DISCONNECTED, sess.conn_state);
 }
 
+/* ---- Helper: drive the session to CONNECTED ---- */
+static void goto_connected(void)
+{
+    arq_event_t ev = make_event(ARQ_EV_APP_LISTEN);
+    arq_fsm_dispatch(&sess, &ev);
+    ev = make_event(ARQ_EV_APP_CONNECT);
+    strncpy(ev.remote_call, "DST1", CALLSIGN_MAX_SIZE);
+    arq_fsm_dispatch(&sess, &ev);
+    ev = make_event(ARQ_EV_RX_ACCEPT);
+    ev.session_id = sess.session_id;
+    strncpy(ev.remote_call, "DST1", CALLSIGN_MAX_SIZE);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_CONNECTED, sess.conn_state);
+}
+
+/* ---- Disconnect teardown tests (K7EK field regressions) ---- */
+
+/* Entering CONNECTED seeds the no-progress clock so the wall-clock budget
+ * always has a baseline even before the first advancing ACK. */
+void test_connected_seeds_no_progress_clock(void)
+{
+    goto_connected();
+    TEST_ASSERT_NOT_EQUAL_UINT64(0, sess.last_tx_progress_ms);
+}
+
+/* APP_DISCONNECT with unsent TX backlog is deferred (stays CONNECTED) and
+ * arms the absolute drain deadline rather than tearing down immediately. */
+void test_app_disconnect_defers_with_backlog(void)
+{
+    goto_connected();
+    fake_tx_backlog_fake.return_val = 256;  /* bytes still queued */
+
+    arq_event_t ev = make_event(ARQ_EV_APP_DISCONNECT);
+    arq_fsm_dispatch(&sess, &ev);
+
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_CONNECTED, sess.conn_state);
+    TEST_ASSERT_TRUE(sess.pending_disconnect);
+    TEST_ASSERT_NOT_EQUAL_UINT64(0, sess.disconnect_deadline_ms);
+}
+
+/* A deferred APP_DISCONNECT that never drains must still tear down once the
+ * drain deadline elapses — guarantees the rig is not keyed indefinitely
+ * after the host disconnects (the "Mercury kept hanging on" report). */
+void test_disconnect_drain_timeout_forces_teardown(void)
+{
+    goto_connected();
+    fake_tx_backlog_fake.return_val = 256;
+
+    arq_event_t ev = make_event(ARQ_EV_APP_DISCONNECT);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_CONNECTED, sess.conn_state);
+
+    /* Advance past the absolute drain budget and feed any CONNECTED event. */
+    mock_set_uptime_ms(1000 + (uint64_t)ARQ_DISCONNECT_DRAIN_TIMEOUT_S * 1000 + 1000);
+    ev = make_event(ARQ_EV_TIMER_KEEPALIVE);
+    arq_fsm_dispatch(&sess, &ev);
+
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_DISCONNECTING, sess.conn_state);
+    TEST_ASSERT_FALSE(sess.pending_disconnect);
+}
+
 /* ---- Timeout tests ---- */
 
 /* CALL timeout transitions to DISCONNECTED */
@@ -266,6 +327,9 @@ int main(void)
     RUN_TEST(test_accept_transitions_to_connected);
     RUN_TEST(test_disconnect_from_connected);
     RUN_TEST(test_rx_disconnect_from_connected);
+    RUN_TEST(test_connected_seeds_no_progress_clock);
+    RUN_TEST(test_app_disconnect_defers_with_backlog);
+    RUN_TEST(test_disconnect_drain_timeout_forces_teardown);
     /* Timeout tests */
     RUN_TEST(test_call_timeout);
     RUN_TEST(test_stop_listen);
