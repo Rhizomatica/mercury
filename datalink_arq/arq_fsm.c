@@ -1303,8 +1303,8 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
                  * more robust mode the next time a decision point runs. */
                 uint64_t now = hermes_uptime_ms();
                 uint64_t budget_ms = (uint64_t)ARQ_NO_PROGRESS_TIMEOUT_S * 1000ULL;
-                bool no_progress_dead = sess->last_tx_progress_ms != 0 &&
-                                        (now - sess->last_tx_progress_ms) >= budget_ms;
+                bool no_progress_dead =
+                    (now - sess->last_tx_progress_ms) >= budget_ms;
                 /* The application has already asked to disconnect and we are
                  * only draining its final bytes.  Persistence is for data the
                  * app still wants delivered; once it has said "disconnect",
@@ -1333,9 +1333,7 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
                 else
                 {
                     unsigned long long since_s =
-                        sess->last_tx_progress_ms != 0
-                        ? (unsigned long long)((now - sess->last_tx_progress_ms) / 1000)
-                        : 0ULL;
+                        (unsigned long long)((now - sess->last_tx_progress_ms) / 1000);
                     HLOGI(LOG_COMP,
                           "Data retry exhausted seq=%d, persisting (%llus / %ds budget)",
                           (int)sess->tx_seq, since_s, ARQ_NO_PROGRESS_TIMEOUT_S);

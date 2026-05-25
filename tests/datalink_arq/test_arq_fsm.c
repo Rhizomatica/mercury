@@ -348,6 +348,29 @@ void test_retry_exhaustion_persists_then_disconnects(void)
     TEST_ASSERT_EQUAL_INT(ARQ_CONN_DISCONNECTING, sess.conn_state);
 }
 
+/* A CONNECTED baseline at uptime 0 is still valid: the no-progress budget
+ * must expire relative to that baseline rather than treating 0 as "unset". */
+void test_retry_exhaustion_disconnects_from_zero_uptime_baseline(void)
+{
+    mock_set_uptime_ms(0);
+    goto_connected();
+    TEST_ASSERT_EQUAL_UINT64(0, sess.last_tx_progress_ms);
+    goto_wait_ack();
+
+    for (int i = 0; i < 3 * (ARQ_DATA_RETRY_SLOTS + 2); i++)
+    {
+        wait_ack_timeout_cycle();
+        TEST_ASSERT_EQUAL_INT(ARQ_CONN_CONNECTED, sess.conn_state);
+    }
+
+    mock_set_uptime_ms((uint64_t)ARQ_NO_PROGRESS_TIMEOUT_S * 1000 + 5000);
+    int guard = 0;
+    while (sess.conn_state == ARQ_CONN_CONNECTED && guard++ < ARQ_DATA_RETRY_SLOTS + 4)
+        wait_ack_timeout_cycle();
+
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_DISCONNECTING, sess.conn_state);
+}
+
 /* ---- Timeout tests ---- */
 
 /* CALL timeout transitions to DISCONNECTED */
@@ -408,6 +431,7 @@ int main(void)
     RUN_TEST(test_app_disconnect_defers_with_backlog);
     RUN_TEST(test_disconnect_drain_timeout_forces_teardown);
     RUN_TEST(test_retry_exhaustion_persists_then_disconnects);
+    RUN_TEST(test_retry_exhaustion_disconnects_from_zero_uptime_baseline);
     /* Timeout tests */
     RUN_TEST(test_call_timeout);
     RUN_TEST(test_stop_listen);
