@@ -152,4 +152,6 @@ jobs:
             "./${ZIP_FILE}" \
             --repo Rhizomatica/mercury \
             --target mercuryv2 \
-            --generate-notes
+            --generate-notes \
+            --title "Mercury ${{ inputs.version }}"
+
