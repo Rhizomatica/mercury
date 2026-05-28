@@ -1121,6 +1121,26 @@ static void fsm_connected(arq_session_t *sess, const arq_event_t *ev)
                     ARQ_EV_TIMER_RETRY);
         return;
 
+    case ARQ_EV_RX_KEEPALIVE:
+        /* Handle keepalive probe from ANY data-flow state so the peer
+         * never sees a timeout just because we are busy (e.g. WAIT_ACK
+         * retrying a data frame whose ACK is lost).  KEEPALIVE_TX and
+         * KEEPALIVE_WAIT manage their own RX_KEEPALIVE paths in fsm_dflow. */
+        if (sess->dflow_state != ARQ_DFLOW_KEEPALIVE_TX &&
+            sess->dflow_state != ARQ_DFLOW_KEEPALIVE_WAIT)
+        {
+            HLOGI(LOG_COMP, "RX_KEEPALIVE in dflow=%s — sending KEEPALIVE_ACK",
+                  arq_dflow_state_name(sess->dflow_state));
+            send_ctrl_frame(sess, ARQ_SUBTYPE_KEEPALIVE_ACK);
+            sess->keepalive_miss_count = 0;
+            /* Reset the IRS inactivity timer so it doesn't fire
+             * immediately after the keepalive round-trip completes. */
+            if (sess->dflow_state == ARQ_DFLOW_IDLE_IRS)
+                enter_idle_irs(sess);
+            return;
+        }
+        break;
+
     default:
         break;
     }
@@ -1732,6 +1752,8 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
         else if (ev->id == ARQ_EV_TIMER_RETRY)
         {
             sess->keepalive_miss_count++;
+            HLOGD(LOG_COMP, "Keepalive miss %d/%d",
+                  sess->keepalive_miss_count, ARQ_KEEPALIVE_MISS_LIMIT);
             if (sess->keepalive_miss_count >= ARQ_KEEPALIVE_MISS_LIMIT)
             {
                 HLOGW(LOG_COMP, "Keepalive miss limit — disconnecting");
