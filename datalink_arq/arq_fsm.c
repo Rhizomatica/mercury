@@ -1782,9 +1782,27 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
         if (ev->id == ARQ_EV_TX_COMPLETE)
         {
             tm = arq_protocol_mode_timing(sess->control_mode);
-            dflow_enter(sess, ARQ_DFLOW_MODE_REQ_WAIT,
-                        deadline_from_s(tm ? tm->retry_interval_s : 7.0f),
-                        ARQ_EV_TIMER_RETRY);
+            if (sess->pending_tx_mode == 0)
+            {
+                /* Revert notification delivered.  Guard for a full DATAC13
+                 * round-trip (peer guard + MODE_ACK TX + channel clear ≈ 4s;
+                 * ack_timeout_s=6s provides adequate margin) so the peer's
+                 * payload decoder is reset before our next DATA preamble.
+                 * Skip mode-upgrade check here — we just aborted one. */
+                uint64_t guard_ms = tm ? (uint64_t)(tm->ack_timeout_s * 1000.0f) : 6000ULL;
+                if (g_cbs.tx_backlog && g_cbs.tx_backlog() > 0)
+                    dflow_enter(sess, ARQ_DFLOW_DATA_TX,
+                                hermes_uptime_ms() + guard_ms,
+                                ARQ_EV_TIMER_ACK);
+                else
+                    dflow_enter(sess, ARQ_DFLOW_IDLE_ISS, UINT64_MAX, ARQ_EV_TIMER_RETRY);
+            }
+            else
+            {
+                dflow_enter(sess, ARQ_DFLOW_MODE_REQ_WAIT,
+                            deadline_from_s(tm ? tm->retry_interval_s : 7.0f),
+                            ARQ_EV_TIMER_RETRY);
+            }
         }
         break;
 
@@ -1822,9 +1840,17 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
             }
             else
             {
-                HLOGW(LOG_COMP, "MODE_REQ timeout — staying at mode %d",
+                HLOGW(LOG_COMP, "MODE_REQ timeout — staying at mode %d; "
+                      "sending revert notification to peer",
                       sess->payload_mode);
-                enter_idle_iss(sess, false);  /* ISS stays, no turn change */
+                /* Fire-and-forget: tell the peer to revert its payload RX
+                 * decoder to our actual (unchanged) TX mode.  Without this,
+                 * the peer's decoder stays locked on the negotiated mode and
+                 * cannot receive our DATA frames.  pending_tx_mode=0 signals
+                 * MODE_REQ_TX that no MODE_ACK wait is needed after this TX. */
+                sess->pending_tx_mode = 0;
+                send_mode_negotiation(sess, ARQ_SUBTYPE_MODE_REQ, sess->payload_mode);
+                dflow_enter(sess, ARQ_DFLOW_MODE_REQ_TX, UINT64_MAX, ARQ_EV_TIMER_RETRY);
             }
         }
         break;
