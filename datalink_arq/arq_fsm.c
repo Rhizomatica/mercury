@@ -1114,6 +1114,7 @@ static void fsm_connected(arq_session_t *sess, const arq_event_t *ev)
         break;
 
     case ARQ_EV_TIMER_KEEPALIVE:
+        sess->keepalive_from_irs = false;  /* ISS-originated keepalive */
         send_ctrl_frame(sess, ARQ_SUBTYPE_KEEPALIVE);
         tm = arq_protocol_mode_timing(sess->control_mode);
         dflow_enter(sess, ARQ_DFLOW_KEEPALIVE_TX,
@@ -1510,6 +1511,7 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
                 HLOGW(LOG_COMP, "IRS inactivity (%ds without RX) - sending keepalive",
                       (int)((hermes_uptime_ms() - sess->last_rx_ms) / 1000));
                 sess->keepalive_miss_count = 0;
+                sess->keepalive_from_irs = true;  /* IRS-originated keepalive */
                 send_ctrl_frame(sess, ARQ_SUBTYPE_KEEPALIVE);
                 tm = arq_protocol_mode_timing(sess->control_mode);
                 dflow_enter(sess, ARQ_DFLOW_KEEPALIVE_TX,
@@ -1735,7 +1737,7 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
         if (ev->id == ARQ_EV_RX_KEEPALIVE_ACK)
         {
             sess->keepalive_miss_count = 0;
-            if (sess->role == ARQ_ROLE_CALLER)
+            if (sess->keepalive_from_irs)
                 enter_idle_irs(sess);
             else
                 enter_idle_iss_guarded(sess, false);
@@ -1744,7 +1746,7 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
         {
             send_ctrl_frame(sess, ARQ_SUBTYPE_KEEPALIVE_ACK);
             sess->keepalive_miss_count = 0;
-            if (sess->role == ARQ_ROLE_CALLER)
+            if (sess->keepalive_from_irs)
                 enter_idle_irs(sess);
             else
                 enter_idle_iss_guarded(sess, false);

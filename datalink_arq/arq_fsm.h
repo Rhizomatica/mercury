@@ -232,6 +232,7 @@ typedef struct
 
     /* --- Keepalive tracking --- */
     int      keepalive_miss_count;
+    bool     keepalive_from_irs;       /* true when keepalive was initiated from IRS idle state */
     uint64_t last_rx_ms;              /* last successful frame decode time     */
     uint64_t last_tx_progress_ms;     /* baseline for the no-progress budget:
                                        * seeded on CONNECTED entry and refreshed
