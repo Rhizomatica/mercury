@@ -1788,14 +1788,20 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
                  * round-trip (peer guard + MODE_ACK TX + channel clear ≈ 4s;
                  * ack_timeout_s=6s provides adequate margin) so the peer's
                  * payload decoder is reset before our next DATA preamble.
-                 * Skip mode-upgrade check here — we just aborted one. */
+                 * Skip mode-upgrade check here — we just aborted one.
+                 *
+                 * Reset tx_retries_left: it was decremented to 0 by the
+                 * MODE_REQ retry loop and must not be inherited by the next
+                 * DATA_TX cycle.  Also lets enter_idle_iss() honour a
+                 * pending_disconnect whose drain condition was met here. */
+                sess->tx_retries_left = ARQ_DATA_RETRY_SLOTS;
                 uint64_t guard_ms = tm ? (uint64_t)(tm->ack_timeout_s * 1000.0f) : 6000ULL;
                 if (g_cbs.tx_backlog && g_cbs.tx_backlog() > 0)
                     dflow_enter(sess, ARQ_DFLOW_DATA_TX,
                                 hermes_uptime_ms() + guard_ms,
                                 ARQ_EV_TIMER_ACK);
                 else
-                    dflow_enter(sess, ARQ_DFLOW_IDLE_ISS, UINT64_MAX, ARQ_EV_TIMER_RETRY);
+                    enter_idle_iss(sess, false);
             }
             else
             {
