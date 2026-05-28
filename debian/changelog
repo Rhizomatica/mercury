@@ -1,3 +1,14 @@
+mercury (1.9.9-1) unstable; urgency=medium
+
+  * Release 1.9.9.
+  * Improve hamlib list models output.
+  * Improve PWA responsive layout for mobile view.
+  * Update installation guide on README.
+  * Add implementation plan for ARQ robustness and TX gain control.
+  * Harden keepalive handling and add mode-revert notification.
+
+ -- Rafael Diniz <rafael@riseup.net>  Thu, 28 May 2026 20:18:47 +0000
+
 mercury (1.9.8-1) unstable; urgency=medium
 
   * Release 1.9.8.
