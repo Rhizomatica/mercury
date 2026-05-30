@@ -82,7 +82,7 @@ Mode behavior notes:
 - `FSK_LDPC` is currently **experimental** (mainly for lab/test usage), may have longer decode/sync latency depending on setup, and is not recommended for production links yet.
 
 Radio control notes:
-- With no `-R`, `-A`, or `-S`, Mercury does **not** key the radio directly; it leaves for the tcp client the radio keying task.
+- With no `-R`, `-A`, or `-S`, Mercury does **not** key the radio directly; it leaves the radio keying task to the TCP client.
 - `-R` selects a HAMLIB model ID, `-A` optionally points HAMLIB at a device path or `ip:port`, and `-K` prints the available HAMLIB models.
 - `-S` selects the HERMES shared-memory controller interface, is mutually exclusive with `-A`, and is unavailable on Windows builds.
 
@@ -124,7 +124,7 @@ For now just Debian 13 (Trixie) packages are built, for both arm64 (works on bot
     wget --no-check-certificate -qO- https://debian.hermes.radio/hermes/hermes.key | gpg --dearmor -o - | sudo tee /etc/apt/trusted.gpg.d/hermes.gpg > /dev/null
     ```
 
-2. Add mercury to the sources list (change it for you current architecture):
+2. Add mercury to the sources list (change it for your current architecture):
 
     **ARM64:**
 
@@ -136,7 +136,7 @@ For now just Debian 13 (Trixie) packages are built, for both arm64 (works on bot
     echo 'deb [arch=amd64] http://debian.hermes.radio/hermes trixie main' | sudo tee /etc/apt/sources.list.d/hermes.list
     ```
 
-3. Update the debian packages:
+3. Update the Debian packages:
     ```bash
     sudo apt-get update
     ```
@@ -152,7 +152,7 @@ For now just Debian 13 (Trixie) packages are built, for both arm64 (works on bot
 
 1. Navigate to the releases page on the official GitHub repository: https://github.com/Rhizomatica/mercury/releases
 2. Download the ZIP package for the latest version
-3. Go to Downloads folder (or the folder you download mercury ZIP) and extract the files
+3. Go to Downloads folder (or the folder where you downloaded the Mercury ZIP) and extract the files
 4. Click on the `mercury` executable file (``mercury.exe``) to run Mercury HF modem
 
 ## Configuration File
