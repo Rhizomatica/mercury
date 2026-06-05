@@ -58,6 +58,7 @@ jobs:
         run: |
           apt-get update
           apt-get install -y --no-install-recommends \
+            ca-certificates \
             build-essential \
             git \
             openssh-client \
@@ -106,6 +107,7 @@ jobs:
         run: |
           apt-get update
           apt-get install -y --no-install-recommends \
+            ca-certificates \
             build-essential \
             git \
             openssh-client \
@@ -222,6 +224,7 @@ jobs:
         run: |
           apt-get update
           apt-get install -y --no-install-recommends \
+            ca-certificates \
             build-essential \
             git \
             openssh-client \
