@@ -5,7 +5,7 @@
 #   - Manually via workflow_dispatch
 #   - Automatically on every push to mercuryv2
 #
-# Runs Go integration smoke tests on Linux amd64 only.
+# Runs Go startup/control integration tests on Linux amd64 only.
 
 name: Integration
 

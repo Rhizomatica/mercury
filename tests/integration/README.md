@@ -1,6 +1,6 @@
 # Mercury integration test notes
 
-This directory contains small Go integration smoke tests. Mercury currently has
+This directory contains small Go startup/control integration tests. Mercury currently has
 Unity-based C unit tests under `tests/`; these Go tests are intentionally
 separate because they start the real `mercury` binary.
 
@@ -31,9 +31,9 @@ cd tests/integration && go test -v ./...
 - Codec2's channel simulator source is already present at `modem/freedv/ch.c`,
   but the local FreeDV Makefile does not build a `ch` executable.
 
-## Current smoke test
+## Current test
 
-`mercury_smoke_test.go` uses only the Go standard library. It locates or builds
+`mercury_control_test.go` uses only the Go standard library. It locates or builds
 the root Mercury binary, starts one process with `-x null`, then one process
 with `-x fifo`, each with unique TCP ports, then waits for the ARQ/TNC control
 port.

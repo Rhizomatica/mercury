@@ -23,20 +23,20 @@ const (
 	processStopTimeout = 3 * time.Second
 )
 
-func TestMercurySingleProcessNullSmoke(t *testing.T) {
-	runSingleProcessSmoke(t, []string{"-x", "null"}, "null")
+func TestMercurySingleProcessNullControl(t *testing.T) {
+	runSingleProcessControlTest(t, []string{"-x", "null"}, "null")
 }
 
-func TestMercurySingleProcessFIFOSmoke(t *testing.T) {
+func TestMercurySingleProcessFIFOControl(t *testing.T) {
 	if runtime.GOOS == "windows" {
-		t.Skip("FIFO smoke test requires POSIX FIFOs")
+		t.Skip("FIFO control test requires POSIX FIFOs")
 	}
 	rxPath, txPath, cleanup := createFIFOAudioPaths(t)
 	defer cleanup()
-	runSingleProcessSmoke(t, []string{"-x", "fifo", "-i", rxPath, "-o", txPath}, "fifo")
+	runSingleProcessControlTest(t, []string{"-x", "fifo", "-i", rxPath, "-o", txPath}, "fifo")
 }
 
-func runSingleProcessSmoke(t *testing.T, audioArgs []string, backendName string) {
+func runSingleProcessControlTest(t *testing.T, audioArgs []string, backendName string) {
 	t.Helper()
 	repoRoot := mustRepoRoot(t)
 	bin := locateOrBuildMercury(t, repoRoot)
@@ -99,7 +99,7 @@ func runSingleProcessSmoke(t *testing.T, audioArgs []string, backendName string)
 	select {
 	case <-proc.done:
 		printLogs(t, stdout.Name(), stderr.Name())
-		t.Fatalf("mercury exited during smoke test: %v", proc.err)
+		t.Fatalf("mercury exited during control test: %v", proc.err)
 	default:
 	}
 
