@@ -11,6 +11,8 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <limits.h>
+#include <errno.h>
+#include <signal.h>
 #include "os_interop.h"
 #include <ffaudio/audio.h>
 #include "std.h"
@@ -78,6 +80,11 @@ static char s_capture_dev[256];
 static char s_playback_dev[256];
 static int s_buffers_initialized = 0;
 static volatile bool audio_shutdown_ = false;  // local stop flag for audio threads
+
+#define NULL_AUDIO_PERIOD_MS 20
+#define NULL_AUDIO_SAMPLES_PER_PERIOD 160
+#define FIFO_AUDIO_POLL_MS 10
+#define FIFO_AUDIO_CHUNK_BYTES 4096
 
 struct conf {
     const char *cmd;
@@ -164,6 +171,183 @@ int audioio_pick_default_subsystem(void)
     return AUDIO_SUBSYSTEM_AAUDIO;
 #else
     return AUDIO_SUBSYSTEM_ALSA;
+#endif
+}
+
+static void *null_capture_thread(void *unused)
+{
+    (void) unused;
+    int32_t silence[NULL_AUDIO_SAMPLES_PER_PERIOD] = {0};
+    const size_t bytes = sizeof(silence);
+
+    HLOGI("audio-null", "capture silence thread started");
+    while (!shutdown_ && !audio_shutdown_)
+    {
+        if (circular_buf_free_size(capture_buffer) >= bytes)
+            write_buffer(capture_buffer, (uint8_t *) silence, bytes);
+        ffthread_sleep(NULL_AUDIO_PERIOD_MS);
+    }
+    HLOGI("audio-null", "capture silence thread exit");
+    return NULL;
+}
+
+static void *null_playback_thread(void *unused)
+{
+    (void) unused;
+    uint8_t discard[4096];
+
+    HLOGI("audio-null", "playback discard thread started");
+    while (!shutdown_ && !audio_shutdown_)
+    {
+        size_t bytes = size_buffer(playback_buffer);
+        if (bytes > sizeof(discard))
+            bytes = sizeof(discard);
+        if (bytes > 0)
+            read_buffer(playback_buffer, discard, bytes);
+        else
+            ffthread_sleep(NULL_AUDIO_PERIOD_MS);
+    }
+    HLOGI("audio-null", "playback discard thread exit");
+    return NULL;
+}
+
+static int fifo_open_retry(const char *path, int flags, const char *log_tag)
+{
+    if (!path || path[0] == '\0')
+    {
+        HLOGE(log_tag, "missing FIFO path");
+        return -1;
+    }
+
+    while (!shutdown_ && !audio_shutdown_)
+    {
+        int fd = open(path, flags);
+        if (fd >= 0)
+        {
+            HLOGI(log_tag, "opened %s", path);
+            return fd;
+        }
+
+        if (errno != ENXIO && errno != ENOENT && errno != EINTR)
+            HLOGW(log_tag, "open(%s) failed: %s", path, strerror(errno));
+        ffthread_sleep(FIFO_AUDIO_POLL_MS);
+    }
+    return -1;
+}
+
+static void *fifo_capture_thread(void *device_ptr)
+{
+    const char *path = (const char *) device_ptr;
+    uint8_t buf[FIFO_AUDIO_CHUNK_BYTES];
+    uint8_t carry[sizeof(int32_t)];
+    size_t carry_len = 0;
+
+    int fd = fifo_open_retry(path, O_RDONLY | O_NONBLOCK, "audio-fifo-cap");
+    if (fd < 0)
+    {
+        shutdown_ = true;
+        return NULL;
+    }
+
+    while (!shutdown_ && !audio_shutdown_)
+    {
+        ssize_t n = read(fd, buf + carry_len, sizeof(buf) - carry_len);
+        if (n > 0)
+        {
+            size_t total = carry_len + (size_t)n;
+            size_t aligned = total - (total % sizeof(int32_t));
+            if (aligned > 0 && circular_buf_free_size(capture_buffer) >= aligned)
+                write_buffer(capture_buffer, buf, aligned);
+
+            carry_len = total - aligned;
+            if (carry_len > 0)
+                memcpy(carry, buf + aligned, carry_len);
+            if (carry_len > 0)
+                memcpy(buf, carry, carry_len);
+            continue;
+        }
+
+        if (n < 0 && errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR)
+        {
+            HLOGW("audio-fifo-cap", "read(%s) failed: %s", path, strerror(errno));
+            close(fd);
+            fd = fifo_open_retry(path, O_RDONLY | O_NONBLOCK, "audio-fifo-cap");
+            if (fd < 0)
+                break;
+        }
+        ffthread_sleep(FIFO_AUDIO_POLL_MS);
+    }
+
+    close(fd);
+    HLOGI("audio-fifo-cap", "capture FIFO thread exit");
+    return NULL;
+}
+
+static void *fifo_playback_thread(void *device_ptr)
+{
+    const char *path = (const char *) device_ptr;
+    uint8_t buf[FIFO_AUDIO_CHUNK_BYTES];
+    size_t pending_off = 0;
+    size_t pending_len = 0;
+
+    int fd = fifo_open_retry(path, O_WRONLY | O_NONBLOCK, "audio-fifo-play");
+    if (fd < 0)
+    {
+        shutdown_ = true;
+        return NULL;
+    }
+
+    while (!shutdown_ && !audio_shutdown_)
+    {
+        if (pending_off >= pending_len)
+        {
+            pending_off = 0;
+            pending_len = 0;
+            size_t available = size_buffer(playback_buffer);
+            if (available > sizeof(buf))
+                available = sizeof(buf);
+            available -= available % sizeof(int32_t);
+            if (available > 0)
+            {
+                read_buffer(playback_buffer, buf, available);
+                pending_len = available;
+            }
+            else
+            {
+                ffthread_sleep(FIFO_AUDIO_POLL_MS);
+                continue;
+            }
+        }
+
+        ssize_t n = write(fd, buf + pending_off, pending_len - pending_off);
+        if (n > 0)
+        {
+            pending_off += (size_t)n;
+            continue;
+        }
+
+        if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR))
+        {
+            ffthread_sleep(FIFO_AUDIO_POLL_MS);
+            continue;
+        }
+
+        HLOGW("audio-fifo-play", "write(%s) failed: %s", path, strerror(errno));
+        close(fd);
+        fd = fifo_open_retry(path, O_WRONLY | O_NONBLOCK, "audio-fifo-play");
+        if (fd < 0)
+            break;
+    }
+
+    close(fd);
+    HLOGI("audio-fifo-play", "playback FIFO thread exit");
+    return NULL;
+}
+
+static void fifo_ignore_sigpipe(void)
+{
+#ifdef SIGPIPE
+    signal(SIGPIPE, SIG_IGN);
 #endif
 }
 
@@ -766,7 +950,9 @@ int get_soundcard_list(int audio_system, int mode,
     int count = 0;
     bool did_init = false;
 
-    if (audio_system == AUDIO_SUBSYSTEM_SHM)
+    if (audio_system == AUDIO_SUBSYSTEM_SHM ||
+        audio_system == AUDIO_SUBSYSTEM_NULL ||
+        audio_system == AUDIO_SUBSYSTEM_FIFO)
         return 0;
 
 #if defined(_WIN32)
@@ -855,6 +1041,18 @@ void list_soundcards(int audio_system)
     {
         // TODO: connect to the shared memory
         printf("Shared Memory (SHM) audio subsystem selected.\n");
+        audio = NULL;
+        return;
+    }
+    if (audio_subsystem == AUDIO_SUBSYSTEM_NULL)
+    {
+        printf("Null audio subsystem selected (developer/test backend; no devices).\n");
+        audio = NULL;
+        return;
+    }
+    if (audio_subsystem == AUDIO_SUBSYSTEM_FIFO)
+    {
+        printf("FIFO audio subsystem selected (developer/test backend; no devices).\n");
         audio = NULL;
         return;
     }
@@ -975,19 +1173,70 @@ int rx_transfer(double *buffer, size_t len)
 }
 #endif
 
+static int audioio_init_local_buffers(void)
+{
+    uint8_t *buffer_cap = (uint8_t *) malloc(SIGNAL_BUFFER_SIZE);
+    uint8_t *buffer_play = (uint8_t *) malloc(SIGNAL_BUFFER_SIZE);
+    if (!buffer_cap || !buffer_play)
+    {
+        free(buffer_cap);
+        free(buffer_play);
+        return -1;
+    }
+
+    capture_buffer = circular_buf_init(buffer_cap, SIGNAL_BUFFER_SIZE);
+    playback_buffer = circular_buf_init(buffer_play, SIGNAL_BUFFER_SIZE);
+    if (!capture_buffer || !playback_buffer)
+    {
+        if (capture_buffer)
+            circular_buf_free(capture_buffer);
+        if (playback_buffer)
+            circular_buf_free(playback_buffer);
+        free(buffer_cap);
+        free(buffer_play);
+        capture_buffer = NULL;
+        playback_buffer = NULL;
+        return -1;
+    }
+    return 0;
+}
+
+static void audioio_deinit_local_buffers(void)
+{
+    if (capture_buffer)
+    {
+        free(capture_buffer->buffer);
+        circular_buf_free(capture_buffer);
+    }
+    if (playback_buffer)
+    {
+        free(playback_buffer->buffer);
+        circular_buf_free(playback_buffer);
+    }
+    capture_buffer = NULL;
+    playback_buffer = NULL;
+}
+
 int audioio_init_buffers(void)
 {
     if (s_buffers_initialized)
         return 0;  // already created
 
+    if (audio_subsystem == AUDIO_SUBSYSTEM_NULL ||
+        audio_subsystem == AUDIO_SUBSYSTEM_FIFO)
+    {
+        if (audioio_init_local_buffers() != 0)
+            return -1;
+    }
 #if defined(_WIN32)
-    uint8_t *buffer_cap = (uint8_t *)malloc(SIGNAL_BUFFER_SIZE);
-    uint8_t *buffer_play = (uint8_t *)malloc(SIGNAL_BUFFER_SIZE);
-    capture_buffer = circular_buf_init(buffer_cap, SIGNAL_BUFFER_SIZE);
-    playback_buffer = circular_buf_init(buffer_play, SIGNAL_BUFFER_SIZE);
+    else if (audioio_init_local_buffers() != 0)
+        return -1;
 #else
+    else
+    {
     capture_buffer = circular_buf_init_shm(SIGNAL_BUFFER_SIZE, (char *) SIGNAL_INPUT);
     playback_buffer = circular_buf_init_shm(SIGNAL_BUFFER_SIZE, (char *) SIGNAL_OUTPUT);
+    }
 #endif
 
     clear_buffer(capture_buffer);
@@ -1001,17 +1250,27 @@ void audioio_deinit_buffers(void)
     if (!s_buffers_initialized)
         return;
 
+    if (audio_subsystem == AUDIO_SUBSYSTEM_NULL ||
+        audio_subsystem == AUDIO_SUBSYSTEM_FIFO)
+    {
+        audioio_deinit_local_buffers();
+    }
 #if defined(_WIN32)
-    free(capture_buffer->buffer);
-    circular_buf_free(capture_buffer);
-    free(playback_buffer->buffer);
-    circular_buf_free(playback_buffer);
+    else
+    {
+        audioio_deinit_local_buffers();
+    }
 #else
+    else
+    {
     circular_buf_destroy_shm(capture_buffer, SIGNAL_BUFFER_SIZE, (char *) SIGNAL_INPUT);
     circular_buf_free_shm(capture_buffer);
 
     circular_buf_destroy_shm(playback_buffer, SIGNAL_BUFFER_SIZE, (char *) SIGNAL_OUTPUT);
     circular_buf_free_shm(playback_buffer);
+    capture_buffer = NULL;
+    playback_buffer = NULL;
+    }
 #endif
     s_buffers_initialized = 0;
 }
@@ -1044,7 +1303,27 @@ int audioio_init_internal(char *capture_dev, char *playback_dev, int audio_subsy
         s_playback_dev[0] = '\0';
 
     // Create buffers if not already created
-    audioio_init_buffers();
+    if (audioio_init_buffers() != 0)
+        return -1;
+
+    if (audio_subsystem == AUDIO_SUBSYSTEM_FIFO)
+    {
+        fifo_ignore_sigpipe();
+        pthread_create(radio_capture, NULL, fifo_capture_thread, (void *) s_capture_dev);
+        pthread_create(radio_playback, NULL, fifo_playback_thread, (void *) s_playback_dev);
+        s_radio_capture = *radio_capture;
+        s_radio_playback = *radio_playback;
+        return 0;
+    }
+
+    if (audio_subsystem == AUDIO_SUBSYSTEM_NULL)
+    {
+        pthread_create(radio_capture, NULL, null_capture_thread, NULL);
+        pthread_create(radio_playback, NULL, null_playback_thread, NULL);
+        s_radio_capture = *radio_capture;
+        s_radio_playback = *radio_playback;
+        return 0;
+    }
 
     /* Pre-initialize PulseAudio once here in the main thread before spawning
      * capture/playback threads. ffpulse_init() uses a single global context
@@ -1120,6 +1399,23 @@ int audioio_restart(const char *capture_dev, const char *playback_dev,
            s_capture_dev[0] ? s_capture_dev : "default",
            s_playback_dev[0] ? s_playback_dev : "default",
            capture_input_channel_layout);
+
+    if (audio_subsystem == AUDIO_SUBSYSTEM_NULL)
+    {
+        pthread_create(&s_radio_capture, NULL, null_capture_thread, NULL);
+        pthread_create(&s_radio_playback, NULL, null_playback_thread, NULL);
+        HLOGI("audio-restart", "null audio threads restarted");
+        return 0;
+    }
+
+    if (audio_subsystem == AUDIO_SUBSYSTEM_FIFO)
+    {
+        fifo_ignore_sigpipe();
+        pthread_create(&s_radio_capture, NULL, fifo_capture_thread, (void *) s_capture_dev);
+        pthread_create(&s_radio_playback, NULL, fifo_playback_thread, (void *) s_playback_dev);
+        HLOGI("audio-restart", "FIFO audio threads restarted");
+        return 0;
+    }
 
 #if defined(__linux__)
     if (audio_subsystem == AUDIO_SUBSYSTEM_PULSE)

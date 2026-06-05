@@ -110,7 +110,8 @@ static void print_usage(const char *prog)
     printf(" -k [rx_input_channel]      Capture input channel: left, right, or stereo. Default is left.\n");
     printf(" -i [device]                Radio Capture device id (eg: \"plughw:0,0\").\n");
     printf(" -o [device]                Radio Playback device id (eg: \"plughw:0,0\").\n");
-    printf(" -x [sound_system]          Sets the sound system or IO API to use: alsa, pulse, dsound, wasapi or shm. Default is alsa on Linux and dsound on Windows.\n");
+    printf(" -x [sound_system]          Sets the sound system or IO API to use: alsa, pulse, dsound, wasapi, shm, null or fifo. Default is alsa on Linux and dsound on Windows.\n");
+    printf("                            null and fifo are developer/test backends; fifo uses raw s32le PCM at 8 kHz via -i/-o paths.\n");
     printf(" -p [arq_tcp_base_port]     Sets the ARQ TCP base port (control is base_port, data is base_port + 1). Default is 8300.\n");
     printf(" -b [broadcast_tcp_port]    Sets the broadcast TCP port. Default is 8100.\n");
     printf(" -U [ui_port]               Sets the UI port (WebSocket port). Default is 10000. Requires -G.\n");
@@ -333,6 +334,10 @@ int main(int argc, char *argv[])
                 audio_system = AUDIO_SUBSYSTEM_AAUDIO;
             if (!strcmp(optarg, "shm"))
                 audio_system = AUDIO_SUBSYSTEM_SHM;
+            if (!strcmp(optarg, "null"))
+                audio_system = AUDIO_SUBSYSTEM_NULL;
+            if (!strcmp(optarg, "fifo"))
+                audio_system = AUDIO_SUBSYSTEM_FIFO;
             break;
         case 'z':
             list_sndcards = true;
@@ -554,6 +559,12 @@ int main(int argc, char *argv[])
     case AUDIO_SUBSYSTEM_SHM:
         printf("Shared Memory (SHM)\n");
         break;
+    case AUDIO_SUBSYSTEM_NULL:
+        printf("Null audio (software silence/discard; developer/test backend)\n");
+        break;
+    case AUDIO_SUBSYSTEM_FIFO:
+        printf("FIFO audio (raw s32le PCM at 8 kHz; developer/test backend)\n");
+        break;
     default:
         printf("Selected audio system not supported. Trying to continue.\n");
     }
@@ -588,7 +599,12 @@ int main(int argc, char *argv[])
     if (audio_system != AUDIO_SUBSYSTEM_SHM)
     {
         HLOGI("main", "Initializing I/O from Sound Card");
-        audioio_init_internal(input_dev, output_dev, audio_system, rx_input_channel, &radio_capture, &radio_playback);
+        if (audioio_init_internal(input_dev, output_dev, audio_system, rx_input_channel, &radio_capture, &radio_playback) != 0)
+        {
+            fprintf(stderr, "Failed to initialize audio I/O.\n");
+            hermes_log_shutdown();
+            return EXIT_FAILURE;
+        }
     }
 
     if (radio_io_init(radio_type, radio_device, hamlib_log_level, radio_serial_speed) != 0)

@@ -69,12 +69,24 @@ Valid values:
 .BR oss ,
 .BR coreaudio ,
 .BR aaudio ,
-.BR shm .
+.BR shm ,
+or
+.BR null ,
+or
+.BR fifo .
 Default is
 .B alsa
 on Linux and
 .B dsound
 on Windows.
+.B null
+is a developer/test backend that feeds RX silence and discards TX audio.
+.B fifo
+is a developer/test backend using raw signed 32-bit little-endian PCM at 8 kHz via
+.B \-i
+and
+.B \-o
+paths.
 .TP
 .BI \-k " channel"
 Capture input channel layout:
