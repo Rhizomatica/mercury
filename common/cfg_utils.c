@@ -68,6 +68,8 @@ static int parse_sound_system(const char *s)
     if (!strcmp(s, "coreaudio")) return AUDIO_SUBSYSTEM_COREAUDIO;
     if (!strcmp(s, "aaudio"))    return AUDIO_SUBSYSTEM_AAUDIO;
     if (!strcmp(s, "shm"))       return AUDIO_SUBSYSTEM_SHM;
+    if (!strcmp(s, "null"))      return AUDIO_SUBSYSTEM_NULL;
+    if (!strcmp(s, "fifo"))      return AUDIO_SUBSYSTEM_FIFO;
     return -1;
 }
 
@@ -186,6 +188,8 @@ static const char *sound_system_name(int sys)
     case AUDIO_SUBSYSTEM_COREAUDIO: return "coreaudio";
     case AUDIO_SUBSYSTEM_AAUDIO:    return "aaudio";
     case AUDIO_SUBSYSTEM_SHM:       return "shm";
+    case AUDIO_SUBSYSTEM_NULL:      return "null";
+    case AUDIO_SUBSYSTEM_FIFO:      return "fifo";
     default:                        return "auto";
     }
 }

@@ -70,7 +70,7 @@ include config.mk
 MINGW_CC  = x86_64-w64-mingw32-gcc
 MINGW_AR  = x86_64-w64-mingw32-ar
 
-.PHONY: all install internal_deps utils clean doxygen doxygen-clean windows windows-zip test FORCE
+.PHONY: all install internal_deps utils clean doxygen doxygen-clean windows windows-zip test integration-test FORCE
 
 prefix ?= /usr
 bindir ?= $(prefix)/bin
@@ -198,3 +198,6 @@ doxygen-clean:
 
 test:
 	$(MAKE) -C tests test
+
+integration-test:
+	cd tests/integration && go test -v ./...

@@ -48,8 +48,10 @@ output_device =
 ; Capture input channel: left, right, or stereo (default: left)
 capture_channel = left
 
-; Sound system / IO API: auto, alsa, pulse, dsound, wasapi, oss, coreaudio, aaudio, shm
+; Sound system / IO API: auto, alsa, pulse, dsound, wasapi, oss, coreaudio, aaudio, shm, null, fifo
 ; (default: auto — alsa on Linux, dsound on Windows)
+; null is a developer/test backend: RX silence, TX discarded.
+; fifo is a developer/test backend: raw s32le PCM at 8 kHz via input_device/output_device.
 sound_system = auto
 
 ; ARQ TCP base port (control = base_port, data = base_port + 1)

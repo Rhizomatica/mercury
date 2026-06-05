@@ -1,0 +1,58 @@
+# Mercury CI Pipeline - Integration Tests
+#
+# Triggers:
+#   - Automatically on every Pull Request
+#   - Manually via workflow_dispatch
+#   - Automatically on every push to mercuryv2
+#
+# Runs Go integration smoke tests on Linux amd64 only.
+
+name: Integration
+
+on:
+  pull_request:
+    branches: [mercuryv2]
+  push:
+    branches: [mercuryv2]
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: 'Target branch | default = "mercuryv2"'
+        required: false
+        type: string
+        default: 'mercuryv2'
+
+jobs:
+  integration-tests:
+    name: Integration Tests (Linux amd64, Debian 13)
+    runs-on: ubuntu-latest
+    container: debian:trixie
+    timeout-minutes: 30
+
+    steps:
+      - name: Install build dependencies
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            build-essential \
+            git \
+            openssh-client \
+            libpulse-dev \
+            libasound2-dev \
+            libhamlib-dev \
+            pkg-config \
+            golang-go
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Git Safe Directory
+        run: git config --global --add safe.directory /__w/mercury/mercury
+
+      - name: Build Mercury
+        shell: bash
+        run: make
+
+      - name: Run Integration Tests
+        shell: bash
+        run: make integration-test
