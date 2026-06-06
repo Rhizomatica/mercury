@@ -575,6 +575,13 @@ void test_cmd_callint_negative(void)
  *   (0x04 << 5) | 0 = 0x80 */
 #define BCAST_HDR_BYTE 0x80
 
+/* Length-prefixed broadcast framing (mirrors tcp_interfaces.c). VARA frames now
+ * carry a 2-byte length after the header, flagged with ext bit 0x01, so the
+ * header byte becomes 0x80 | 0x01 = 0x81. */
+#define BCAST_LEN_SIZE       2
+#define BCAST_EXT_LEN_PREFIX 0x01
+#define BCAST_HDR_BYTE_LEN   (BCAST_HDR_BYTE | BCAST_EXT_LEN_PREFIX)
+
 /* CMD_DATA, exact frame_size: queued unchanged, bcast_reply_cmd = CMD_DATA */
 void test_bcast_rx_cmd_data_exact_size(void)
 {
@@ -636,7 +643,8 @@ void test_bcast_rx_cmd_data_oversized_discarded(void)
         atomic_load_explicit(&bcast_reply_cmd, memory_order_relaxed));
 }
 
-/* CMD_AX25CALLSIGN, payload fits: header injected, payload shifted, zero-padded */
+/* CMD_AX25CALLSIGN, payload fits: header + length prefix injected, payload
+ * shifted, zero-padded */
 void test_bcast_rx_vara_header_injected(void)
 {
     const size_t fsz = 10;
@@ -652,13 +660,17 @@ void test_bcast_rx_vara_header_injected(void)
     TEST_ASSERT_TRUE(ok);
     TEST_ASSERT_EQUAL(1, write_buffer_call_count);
     TEST_ASSERT_EQUAL_size_t(fsz, last_write_buffer_len);
-    /* frame[0] must be the broadcast header byte */
-    TEST_ASSERT_EQUAL_HEX8(BCAST_HDR_BYTE, last_write_buffer_data[0]);
-    /* Original payload shifted to [1..5] */
+    /* frame[0] is the broadcast header byte with the length-prefix flag set */
+    TEST_ASSERT_EQUAL_HEX8(BCAST_HDR_BYTE_LEN, last_write_buffer_data[0]);
+    /* 2-byte big-endian length prefix = 5 */
+    TEST_ASSERT_EQUAL_HEX8(0x00, last_write_buffer_data[1]);
+    TEST_ASSERT_EQUAL_HEX8(0x05, last_write_buffer_data[2]);
+    /* Original payload shifted to [3..7] */
     for (int i = 0; i < 5; i++)
-        TEST_ASSERT_EQUAL_HEX8((uint8_t)(i + 1), last_write_buffer_data[1 + i]);
-    /* Tail bytes [6..9] must be zero */
-    for (size_t i = 6; i < fsz; i++)
+        TEST_ASSERT_EQUAL_HEX8((uint8_t)(i + 1),
+            last_write_buffer_data[HEADER_SIZE + BCAST_LEN_SIZE + i]);
+    /* Tail bytes [8..9] must be zero */
+    for (size_t i = 8; i < fsz; i++)
         TEST_ASSERT_EQUAL_HEX8(0x00, last_write_buffer_data[i]);
     /* Reply cmd normalised to CMD_AX25CALLSIGN regardless of CMD_AX25 vs _CALLSIGN */
     TEST_ASSERT_EQUAL_HEX8(CMD_AX25CALLSIGN,
@@ -681,13 +693,14 @@ void test_bcast_rx_cmd_ax25_reply_cmd(void)
         atomic_load_explicit(&bcast_reply_cmd, memory_order_relaxed));
 }
 
-/* CMD_AX25CALLSIGN, payload longer than frame_size-1: truncated then header added */
+/* CMD_AX25CALLSIGN, payload longer than frame_size-(header+len): truncated */
 void test_bcast_rx_vara_long_payload_truncated(void)
 {
     const size_t fsz = 10;
     broadcast_frame_size_cfg = fsz;
-    /* max_payload = fsz - HEADER_SIZE = 9; send 12 bytes */
+    /* max_payload = fsz - HEADER_SIZE - BCAST_LEN_SIZE = 7; send 12 bytes */
     const int raw_len = 12;
+    const int max_payload = (int)fsz - HEADER_SIZE - BCAST_LEN_SIZE; /* 7 */
 
     uint8_t frame[MAX_PAYLOAD];
     for (int i = 0; i < raw_len; i++) frame[i] = (uint8_t)(0x10 + i);
@@ -697,10 +710,14 @@ void test_bcast_rx_vara_long_payload_truncated(void)
     TEST_ASSERT_TRUE(ok);
     TEST_ASSERT_EQUAL(1, write_buffer_call_count);
     TEST_ASSERT_EQUAL_size_t(fsz, last_write_buffer_len);
-    TEST_ASSERT_EQUAL_HEX8(BCAST_HDR_BYTE, last_write_buffer_data[0]);
-    /* Only the first 9 bytes of the original payload must survive */
-    for (int i = 0; i < 9; i++)
-        TEST_ASSERT_EQUAL_HEX8((uint8_t)(0x10 + i), last_write_buffer_data[1 + i]);
+    TEST_ASSERT_EQUAL_HEX8(BCAST_HDR_BYTE_LEN, last_write_buffer_data[0]);
+    /* Length prefix reflects the truncated length (7) */
+    TEST_ASSERT_EQUAL_HEX8(0x00, last_write_buffer_data[1]);
+    TEST_ASSERT_EQUAL_HEX8((uint8_t)max_payload, last_write_buffer_data[2]);
+    /* Only the first 7 bytes of the original payload must survive */
+    for (int i = 0; i < max_payload; i++)
+        TEST_ASSERT_EQUAL_HEX8((uint8_t)(0x10 + i),
+            last_write_buffer_data[HEADER_SIZE + BCAST_LEN_SIZE + i]);
 }
 
 /* bcast_get_tx_payload: CMD_DATA → full frame, payload_len == frame_size */
@@ -739,6 +756,70 @@ void test_bcast_tx_vara_strips_header(void)
     TEST_ASSERT_EQUAL_HEX8(CMD_AX25CALLSIGN, cmd);
     TEST_ASSERT_EQUAL_PTR(frame + HEADER_SIZE, payload); /* skips the Mercury header */
     TEST_ASSERT_EQUAL_INT((int)fsz - HEADER_SIZE, plen); /* one byte shorter */
+}
+
+/* Round-trip: a VARA frame run through TX framing then RX extraction must yield
+ * exactly the original payload (length + bytes), with the modem zero padding
+ * stripped. This is the core of the length-prefix fix. */
+void test_bcast_vara_length_roundtrip(void)
+{
+    const size_t fsz = 32;
+    broadcast_frame_size_cfg = fsz;
+
+    const int orig_len = 11;
+    uint8_t orig[32];
+    for (int i = 0; i < orig_len; i++) orig[i] = (uint8_t)(0xA0 + i);
+
+    /* TX: build the on-air frame (captured by the mock write_buffer). */
+    uint8_t txframe[MAX_PAYLOAD];
+    memset(txframe, 0, sizeof(txframe));
+    memcpy(txframe, orig, orig_len);
+    bool ok = bcast_process_decoded_frame(txframe, orig_len, CMD_AX25CALLSIGN, fsz);
+    TEST_ASSERT_TRUE(ok);
+    TEST_ASSERT_EQUAL_size_t(fsz, last_write_buffer_len);
+
+    /* RX: extract from the framed buffer; reply_cmd was latched by the TX call. */
+    uint8_t rxframe[MAX_PAYLOAD];
+    memcpy(rxframe, last_write_buffer_data, fsz);
+    uint8_t *payload = NULL;
+    int plen = 0;
+    uint8_t cmd = bcast_get_tx_payload(rxframe, fsz, &payload, &plen);
+
+    TEST_ASSERT_EQUAL_HEX8(CMD_AX25CALLSIGN, cmd);
+    TEST_ASSERT_EQUAL_INT(orig_len, plen);              /* exact original length */
+    TEST_ASSERT_EQUAL_PTR(rxframe + HEADER_SIZE + BCAST_LEN_SIZE, payload);
+    TEST_ASSERT_EQUAL_HEX8_ARRAY(orig, payload, orig_len); /* exact original bytes */
+}
+
+/* Receive-only station: a length-prefixed frame must be delivered as the exact
+ * AX.25 payload with CMD_AX25CALLSIGN even when bcast_reply_cmd is still the
+ * default CMD_DATA (local client has not transmitted). Regression for the bug
+ * where receive-only stations forwarded the raw padded frame as CMD_DATA. */
+void test_bcast_tx_lenprefix_ignores_reply_cmd_default(void)
+{
+    const size_t fsz = 32;
+    const int len = 9;
+
+    uint8_t frame[32];
+    memset(frame, 0, sizeof(frame));
+    frame[0] = BCAST_HDR_BYTE_LEN;                 /* BROADCAST_DATA + len flag */
+    frame[1] = (uint8_t)((len >> 8) & 0xFF);
+    frame[2] = (uint8_t)(len & 0xFF);
+    for (int i = 0; i < len; i++)
+        frame[HEADER_SIZE + BCAST_LEN_SIZE + i] = (uint8_t)(0x40 + i);
+
+    /* Default / receive-only state */
+    atomic_store_explicit(&bcast_reply_cmd, CMD_DATA, memory_order_relaxed);
+
+    uint8_t *payload = NULL;
+    int plen = 0;
+    uint8_t cmd = bcast_get_tx_payload(frame, fsz, &payload, &plen);
+
+    TEST_ASSERT_EQUAL_HEX8(CMD_AX25CALLSIGN, cmd);     /* NOT CMD_DATA */
+    TEST_ASSERT_EQUAL_INT(len, plen);                  /* exact length, not fsz */
+    TEST_ASSERT_EQUAL_PTR(frame + HEADER_SIZE + BCAST_LEN_SIZE, payload);
+    for (int i = 0; i < len; i++)
+        TEST_ASSERT_EQUAL_HEX8((uint8_t)(0x40 + i), payload[i]);
 }
 
 int main(void)
@@ -791,5 +872,7 @@ int main(void)
     RUN_TEST(test_bcast_rx_vara_long_payload_truncated);
     RUN_TEST(test_bcast_tx_cmd_data_full_frame);
     RUN_TEST(test_bcast_tx_vara_strips_header);
+    RUN_TEST(test_bcast_vara_length_roundtrip);
+    RUN_TEST(test_bcast_tx_lenprefix_ignores_reply_cmd_default);
     return UNITY_END();
 }

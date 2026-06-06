@@ -848,12 +848,28 @@ void *control_worker_thread_rx(void *conn)
 /********** BROADCAST TCP port INTERFACE **********/
 
 /*
+ * Length-prefixed broadcast framing.
+ *
+ * The broadcast datalink uses fixed-size modem frames, so a short VARA/AX.25
+ * frame is zero-padded up to frame_size for TX. Without recording the original
+ * length, the receiver can only hand the client the whole padded frame, and a
+ * VARA client (e.g. VarAC) then rejects it because the trailing zeros corrupt
+ * its payload. To fix this we store the real payload length in a 2-byte
+ * big-endian prefix right after the Mercury header and flag it with a header
+ * extension bit, so the receiver delivers the exact original frame. Receivers
+ * fall back to the legacy header-strip when the flag is absent.
+ */
+#define BCAST_LEN_SIZE       2     /* big-endian payload length after the header */
+#define BCAST_EXT_LEN_PREFIX 0x01  /* header extension bit: length prefix present */
+
+/*
  * Normalises a decoded KISS broadcast frame and queues it to
  * data_tx_buffer_broadcast.
  *
- * VARA clients (CMD_AX25 / CMD_AX25CALLSIGN): inject a 1-byte Mercury
- * PACKET_TYPE_BROADCAST_DATA header, truncate if the payload would overflow,
- * then zero-pad to frame_size.
+ * VARA clients (CMD_AX25 / CMD_AX25CALLSIGN): inject the 1-byte Mercury
+ * PACKET_TYPE_BROADCAST_DATA header plus a 2-byte length prefix (flagged with
+ * BCAST_EXT_LEN_PREFIX), truncate if the payload would overflow, then zero-pad
+ * to frame_size.
  *
  * hermes-broadcast (CMD_DATA): the frame already carries the Mercury header;
  * zero-pad if short, discard if oversized.
@@ -873,19 +889,23 @@ static bool bcast_process_decoded_frame(uint8_t *decoded_frame, int frame_len,
 
     if (kiss_cmd == CMD_AX25 || kiss_cmd == CMD_AX25CALLSIGN)
     {
-        /* Inject 1-byte Mercury header before the AX.25 payload */
-        size_t max_payload = frame_size - HEADER_SIZE;
+        /* Inject Mercury header + 2-byte payload-length prefix before the AX.25
+         * payload, so the receiver can recover the exact frame length (the modem
+         * zero-pads to frame_size). The length prefix is flagged in the header. */
+        size_t max_payload = frame_size - HEADER_SIZE - BCAST_LEN_SIZE;
         if ((size_t)frame_len > max_payload)
         {
-            HLOGW("tcp-bcast", "Truncating VARA frame from %d to %zu to fit header",
+            HLOGW("tcp-bcast", "Truncating VARA frame from %d to %zu to fit header+len",
                   frame_len, max_payload);
             frame_len = (int)max_payload;
         }
-        memmove(decoded_frame + HEADER_SIZE, decoded_frame, (size_t)frame_len);
-        write_frame_header(decoded_frame, PACKET_TYPE_BROADCAST_DATA, 0);
-        frame_len += HEADER_SIZE;
-        HLOGD("tcp-bcast", "Added Mercury broadcast header (cmd=0x%02X), frame now %d bytes",
+        memmove(decoded_frame + HEADER_SIZE + BCAST_LEN_SIZE, decoded_frame, (size_t)frame_len);
+        write_frame_header(decoded_frame, PACKET_TYPE_BROADCAST_DATA, BCAST_EXT_LEN_PREFIX);
+        decoded_frame[HEADER_SIZE]     = (uint8_t)(((unsigned)frame_len >> 8) & 0xFF);
+        decoded_frame[HEADER_SIZE + 1] = (uint8_t)((unsigned)frame_len & 0xFF);
+        HLOGD("tcp-bcast", "Added Mercury broadcast header+len (cmd=0x%02X, payload=%d bytes)",
               kiss_cmd, frame_len);
+        frame_len += HEADER_SIZE + BCAST_LEN_SIZE;
     }
 
     if ((size_t)frame_len > frame_size)
@@ -910,19 +930,43 @@ static bool bcast_process_decoded_frame(uint8_t *decoded_frame, int frame_len,
 
 /*
  * Computes the payload slice and KISS command byte to send back to a broadcast
- * client, reading the latched bcast_reply_cmd.
+ * client.
  *
- * CMD_DATA (hermes-broadcast): forward the full frame including the Mercury
- * header — hermes-broadcast's receiver parses frame[0] as the packet type.
+ * Length-prefixed frame (BCAST_EXT_LEN_PREFIX set in a BROADCAST_DATA header):
+ * return exactly the original AX.25 payload (header + 2-byte length stripped,
+ * padding dropped) and reply with CMD_AX25CALLSIGN. This is detected from the
+ * received frame itself, so it works on a receive-only station regardless of
+ * the latched bcast_reply_cmd.
  *
- * CMD_AX25CALLSIGN (VarAC/VARA): strip the Mercury header byte so the client
- * receives a raw AX.25 payload.
+ * Otherwise mirror the latched bcast_reply_cmd:
+ *   CMD_DATA (hermes-broadcast): forward the full frame including the header.
+ *   else (VarAC/VARA legacy): strip the 1-byte Mercury header only.
  *
  * Sets *payload_out and *payload_len_out; returns the reply command byte.
  */
 static uint8_t bcast_get_tx_payload(uint8_t *frame_buffer, size_t frame_size,
                                      uint8_t **payload_out, int *payload_len_out)
 {
+    /* A length-prefixed broadcast frame is self-describing: detect it from the
+     * received frame's own header, independent of what the local client last
+     * transmitted (bcast_reply_cmd defaults to CMD_DATA and is reset on every
+     * client connect, so a receive-only station would otherwise forward the raw
+     * padded frame). Deliver exactly the original AX.25 payload and reply with
+     * the AX.25/CALLSIGN KISS command so a VARA client (VarAC) accepts it. */
+    if (frame_size >= HEADER_SIZE + BCAST_LEN_SIZE &&
+        frame_header_packet_type(frame_buffer[0]) == PACKET_TYPE_BROADCAST_DATA &&
+        (frame_header_extension(frame_buffer[0]) & BCAST_EXT_LEN_PREFIX))
+    {
+        int len = ((int)frame_buffer[HEADER_SIZE] << 8) | (int)frame_buffer[HEADER_SIZE + 1];
+        int max_len = (int)frame_size - HEADER_SIZE - BCAST_LEN_SIZE;
+        if (len < 0) len = 0;
+        if (len > max_len) len = max_len;
+        *payload_out     = frame_buffer + HEADER_SIZE + BCAST_LEN_SIZE;
+        *payload_len_out = len;
+        return CMD_AX25CALLSIGN;
+    }
+
+    /* Legacy / hermes-broadcast frames: mirror the latched client framing. */
     uint8_t reply_cmd = atomic_load_explicit(&bcast_reply_cmd, memory_order_relaxed);
     if (reply_cmd == CMD_DATA)
     {
