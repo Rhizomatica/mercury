@@ -213,6 +213,8 @@ static void *null_playback_thread(void *unused)
 
 static int fifo_open_retry(const char *path, int flags, const char *log_tag)
 {
+    bool logged_wait = false;
+
     if (!path || path[0] == '\0')
     {
         HLOGE(log_tag, "missing FIFO path");
@@ -228,8 +230,19 @@ static int fifo_open_retry(const char *path, int flags, const char *log_tag)
             return fd;
         }
 
-        if (errno != ENXIO && errno != ENOENT && errno != EINTR)
-            HLOGW(log_tag, "open(%s) failed: %s", path, strerror(errno));
+        int err = errno;
+        if (err == ENOENT || err == ENXIO)
+        {
+            if (!logged_wait)
+            {
+                HLOGW(log_tag, "waiting for FIFO %s: %s", path, strerror(err));
+                logged_wait = true;
+            }
+        }
+        else if (err != EINTR)
+        {
+            HLOGW(log_tag, "open(%s) failed: %s", path, strerror(err));
+        }
         ffthread_sleep(FIFO_AUDIO_POLL_MS);
     }
     return -1;
@@ -241,6 +254,7 @@ static void *fifo_capture_thread(void *device_ptr)
     uint8_t buf[FIFO_AUDIO_CHUNK_BYTES];
     uint8_t carry[sizeof(int32_t)];
     size_t carry_len = 0;
+    bool logged_eof = false;
 
     int fd = fifo_open_retry(path, O_RDONLY | O_NONBLOCK, "audio-fifo-cap");
     if (fd < 0)
@@ -254,6 +268,7 @@ static void *fifo_capture_thread(void *device_ptr)
         ssize_t n = read(fd, buf + carry_len, sizeof(buf) - carry_len);
         if (n > 0)
         {
+            logged_eof = false;
             size_t total = carry_len + (size_t)n;
             size_t aligned = total - (total % sizeof(int32_t));
             if (aligned > 0 && circular_buf_free_size(capture_buffer) >= aligned)
@@ -264,6 +279,22 @@ static void *fifo_capture_thread(void *device_ptr)
                 memcpy(carry, buf + aligned, carry_len);
             if (carry_len > 0)
                 memcpy(buf, carry, carry_len);
+            continue;
+        }
+
+        if (n == 0)
+        {
+            if (!logged_eof)
+            {
+                HLOGI("audio-fifo-cap", "read(%s) reached EOF; reopening", path);
+                logged_eof = true;
+            }
+            carry_len = 0;
+            close(fd);
+            fd = fifo_open_retry(path, O_RDONLY | O_NONBLOCK, "audio-fifo-cap");
+            if (fd < 0)
+                break;
+            ffthread_sleep(FIFO_AUDIO_POLL_MS);
             continue;
         }
 
