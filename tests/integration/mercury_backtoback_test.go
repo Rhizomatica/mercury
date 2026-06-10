@@ -58,11 +58,11 @@ func TestMercuryBackToBackFIFO(t *testing.T) {
 
 	cmdA, procA, outA, errA := startInstance("A", aRX, aTX, aPort, aPort+100)
 	defer func() {
-		_ = stopProcess(t, cmdA, procA, filepath.Base(outA.Name()), filepath.Base(errA.Name()))
+		_ = stopProcess(t, cmdA, procA, outA.Name(), errA.Name())
 	}()
 	cmdB, procB, outB, errB := startInstance("B", bRX, bTX, bPort, bPort+100)
 	defer func() {
-		_ = stopProcess(t, cmdB, procB, filepath.Base(outB.Name()), filepath.Base(errB.Name()))
+		_ = stopProcess(t, cmdB, procB, outB.Name(), errB.Name())
 	}()
 
 	bridgeCtx, bridgeCancel := context.WithCancel(ctx)
@@ -154,14 +154,12 @@ func bridgeDirection(ctx context.Context, txPath, rxPath, label string) {
 		}
 		txF := os.NewFile(uintptr(txFD), txPath)
 
-		// closer goroutine captures a pointer to txF so it can close the
-		// current fd (which may be refreshed on EOF) when ctx is cancelled.
-		txFPtr := &txF
+		// closer goroutine signal to unblock read on ctx.Done()
 		closed := make(chan struct{})
 		go func() {
 			select {
 			case <-ctx.Done():
-				(*txFPtr).Close()
+				txF.Close()
 				rxF.Close()
 			case <-closed:
 			}
@@ -180,16 +178,8 @@ func bridgeDirection(ctx context.Context, txPath, rxPath, label string) {
 				break
 			}
 			if n == 0 {
-				// FIFO read fd sees no writer; close/reopen to clear EOF state
-				txF.Close()
-				newFD, err2 := waitForFIFOOpen(ctx, txPath, syscall.O_RDONLY|syscall.O_NONBLOCK)
-				if err2 != nil {
-					*txFPtr = nil
-					break readLoop
-				}
-				txF = os.NewFile(uintptr(newFD), txPath)
-				*txFPtr = txF
-				continue
+				// FIFO read fd sees no writer; break and let outer loop reopen
+				break
 			}
 			written := 0
 			for written < n {
