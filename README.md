@@ -187,6 +187,9 @@ Mercury v2 has two interfaces:
 - **Mercury-qt** (desktop): https://github.com/Rhizomatica/mercury-qt
 - **Web-based**: located in `docs/app/` in this repository, and accessible via https://rhizomatica.github.io/mercury/app/
 
+Also, community interfaces also exist:
+- **Mercury-tk**: https://github.com/odorajbotoj/mercury-tk/
+
 ## About
 
 Mercury v2 is developed by Rhizomatica's HERMES team, namely:
