@@ -26,10 +26,11 @@ cd tests/integration && go test -v ./...
 - Mercury also accepts `-x shm`. In that mode `main.c` skips the sound-card
   capture/playback threads, and `modem/modem.c` connects to shared-memory ring
   buffers named by `SIGNAL_INPUT` and `SIGNAL_OUTPUT`.
-- There is no raw PCM, FIFO, pipe, or file-backed Mercury audio backend that is
-  currently suitable for a portable two-process integration test.
+- The `fifo` backend supports raw s32le PCM at 8 kHz via `-i`/`-o` named pipes,
+  suitable for two-process integration tests (see `mercury_backtoback_test.go`).
 - Codec2's channel simulator source is already present at `modem/freedv/ch.c`,
-  but the local FreeDV Makefile does not build a `ch` executable.
+  but the local FreeDV Makefile does not build a `ch` executable;
+  it can be built manually with `gcc -I. -o ch ch.c -L. -lfreedvdata -lm`.
 
 ## Current test
 
