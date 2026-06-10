@@ -141,24 +141,27 @@ func TestMercuryBackToBackFIFO(t *testing.T) {
 
 func bridgeDirection(ctx context.Context, txPath, rxPath, label string) {
 	for {
-		txFD, err := waitForFIFOOpen(ctx, txPath, syscall.O_RDONLY|syscall.O_NONBLOCK)
-		if err != nil {
-			return
-		}
-		txF := os.NewFile(uintptr(txFD), txPath)
-
 		rxFD, err := waitForFIFOOpen(ctx, rxPath, syscall.O_WRONLY|syscall.O_NONBLOCK)
 		if err != nil {
-			txF.Close()
 			return
 		}
 		rxF := os.NewFile(uintptr(rxFD), rxPath)
 
+		txFD, err := waitForFIFOOpen(ctx, txPath, syscall.O_RDONLY|syscall.O_NONBLOCK)
+		if err != nil {
+			rxF.Close()
+			return
+		}
+		txF := os.NewFile(uintptr(txFD), txPath)
+
+		// closer goroutine captures a pointer to txF so it can close the
+		// current fd (which may be refreshed on EOF) when ctx is cancelled.
+		txFPtr := &txF
 		closed := make(chan struct{})
 		go func() {
 			select {
 			case <-ctx.Done():
-				txF.Close()
+				(*txFPtr).Close()
 				rxF.Close()
 			case <-closed:
 			}
@@ -167,12 +170,34 @@ func bridgeDirection(ctx context.Context, txPath, rxPath, label string) {
 		var buf [4096]byte
 	readLoop:
 		for {
+			select {
+			case <-ctx.Done():
+				break readLoop
+			default:
+			}
 			n, err := txF.Read(buf[:])
-			if err != nil || n == 0 {
+			if err != nil {
 				break
+			}
+			if n == 0 {
+				// FIFO read fd sees no writer; close/reopen to clear EOF state
+				txF.Close()
+				newFD, err2 := waitForFIFOOpen(ctx, txPath, syscall.O_RDONLY|syscall.O_NONBLOCK)
+				if err2 != nil {
+					*txFPtr = nil
+					break readLoop
+				}
+				txF = os.NewFile(uintptr(newFD), txPath)
+				*txFPtr = txF
+				continue
 			}
 			written := 0
 			for written < n {
+				select {
+				case <-ctx.Done():
+					break readLoop
+				default:
+				}
 				wn, werr := rxF.Write(buf[written:n])
 				if werr != nil {
 					break readLoop

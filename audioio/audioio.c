@@ -252,8 +252,7 @@ static void *fifo_capture_thread(void *device_ptr)
 {
     const char *path = (const char *) device_ptr;
     uint8_t buf[FIFO_AUDIO_CHUNK_BYTES];
-    uint8_t carry[sizeof(int32_t)];
-    size_t carry_len = 0;
+    size_t buf_len = 0;
     bool logged_eof = false;
 
     int fd = fifo_open_retry(path, O_RDONLY | O_NONBLOCK, "audio-fifo-cap");
@@ -265,20 +264,28 @@ static void *fifo_capture_thread(void *device_ptr)
 
     while (!shutdown_ && !audio_shutdown_)
     {
-        ssize_t n = read(fd, buf + carry_len, sizeof(buf) - carry_len);
+        /* Try to consume aligned int32_t samples from buf first */
+        if (buf_len >= sizeof(int32_t))
+        {
+            size_t aligned = buf_len - (buf_len % sizeof(int32_t));
+            if (circular_buf_free_size(capture_buffer) >= aligned)
+            {
+                write_buffer(capture_buffer, buf, aligned);
+                buf_len -= aligned;
+                if (buf_len > 0)
+                    memmove(buf, buf + aligned, buf_len);
+                continue;
+            }
+            ffthread_sleep(FIFO_AUDIO_POLL_MS);
+            continue;
+        }
+
+        /* Read more data from FIFO */
+        ssize_t n = read(fd, buf + buf_len, sizeof(buf) - buf_len);
         if (n > 0)
         {
             logged_eof = false;
-            size_t total = carry_len + (size_t)n;
-            size_t aligned = total - (total % sizeof(int32_t));
-            if (aligned > 0 && circular_buf_free_size(capture_buffer) >= aligned)
-                write_buffer(capture_buffer, buf, aligned);
-
-            carry_len = total - aligned;
-            if (carry_len > 0)
-                memcpy(carry, buf + aligned, carry_len);
-            if (carry_len > 0)
-                memcpy(buf, carry, carry_len);
+            buf_len += (size_t)n;
             continue;
         }
 
@@ -289,7 +296,7 @@ static void *fifo_capture_thread(void *device_ptr)
                 HLOGI("audio-fifo-cap", "read(%s) reached EOF; reopening", path);
                 logged_eof = true;
             }
-            carry_len = 0;
+            buf_len = 0;
             close(fd);
             fd = fifo_open_retry(path, O_RDONLY | O_NONBLOCK, "audio-fifo-cap");
             if (fd < 0)
@@ -298,9 +305,10 @@ static void *fifo_capture_thread(void *device_ptr)
             continue;
         }
 
-        if (n < 0 && errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR)
+        if (errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR)
         {
             HLOGW("audio-fifo-cap", "read(%s) failed: %s", path, strerror(errno));
+            buf_len = 0;
             close(fd);
             fd = fifo_open_retry(path, O_RDONLY | O_NONBLOCK, "audio-fifo-cap");
             if (fd < 0)
