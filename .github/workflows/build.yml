@@ -8,6 +8,7 @@
 # Builds:
 #   - Linux amd64 (native, Debian 13)
 #   - Linux arm64 (cross-compile, Debian 13)
+#   - Linux armhf (cross-compile, Debian 13)
 #   - Windows x64 (cross-compile via MinGW, Debian 13)
 
 name: Build
@@ -30,6 +31,10 @@ on:
         default: true
       build_linux_arm64:
         description: 'Build Linux arm64 (cross-compile)'
+        type: boolean
+        default: true
+      build_linux_armhf:
+        description: 'Build Linux armhf (cross-compile)'
         type: boolean
         default: true
       build_windows:
@@ -104,6 +109,7 @@ jobs:
             build-essential \
             git \
             openssh-client \
+            pkg-config \
             gcc-aarch64-linux-gnu
 
       - name: Enable arm64 multiarch
@@ -129,6 +135,8 @@ jobs:
       - name: Build Mercury (Linux arm64 cross-compile)
         shell: bash
         run: |
+          export PKG_CONFIG_ALLOW_CROSS=1
+          export PKG_CONFIG_LIBDIR=/usr/lib/aarch64-linux-gnu/pkgconfig:/usr/share/pkgconfig:/usr/lib/pkgconfig
           make clean
           make -j$(nproc) CC=aarch64-linux-gnu-gcc 2>&1
           echo "BUILD_EXIT_CODE=${PIPESTATUS[0]}" >> "$GITHUB_ENV"
@@ -140,6 +148,64 @@ jobs:
             exit 1
           fi
           echo "Linux arm64 cross-compile succeeded"
+
+  build-linux-armhf:
+    name: Build Linux armhf (cross-compile, Debian 13)
+    runs-on: ubuntu-latest
+    container: debian:trixie
+    if: >-
+      github.event_name == 'pull_request' ||
+      github.event_name == 'push' ||
+      github.event.inputs.build_linux_armhf == 'true'
+    timeout-minutes: 5
+
+    steps:
+      - name: Install build dependencies
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            build-essential \
+            git \
+            openssh-client \
+            pkg-config \
+            gcc-arm-linux-gnueabihf
+
+      - name: Enable armhf multiarch
+        run: |
+          dpkg --add-architecture armhf
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            libpulse-dev:armhf \
+            libasound2-dev:armhf \
+            libhamlib-dev:armhf
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          repository: Rhizomatica/mercury
+          ssh-key: ${{ secrets.SSH_PRIVATE_KEY }}
+          fetch-depth: 0
+          ref: ${{ github.event.inputs.branch || github.event.pull_request.head.sha || github.sha }}
+
+      - name: Git Safe Directory
+        run: git config --global --add safe.directory /__w/mercury/mercury
+
+      - name: Build Mercury (Linux armhf cross-compile)
+        shell: bash
+        run: |
+          export PKG_CONFIG_ALLOW_CROSS=1
+          export PKG_CONFIG_LIBDIR=/usr/lib/arm-linux-gnueabihf/pkgconfig:/usr/share/pkgconfig:/usr/lib/pkgconfig
+          make clean
+          make -j$(nproc) CC=arm-linux-gnueabihf-gcc 2>&1
+          echo "BUILD_EXIT_CODE=${PIPESTATUS[0]}" >> "$GITHUB_ENV"
+
+      - name: Check build result
+        run: |
+          if [ "$BUILD_EXIT_CODE" != "0" ]; then
+            echo "::error::Linux armhf cross-compile failed"
+            exit 1
+          fi
+          echo "Linux armhf cross-compile succeeded"
 
   build-windows:
     name: Build Windows x64 (cross-compile, Debian 13)

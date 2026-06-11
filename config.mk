@@ -7,7 +7,8 @@
 #   make CC=arm-linux-gnueabihf-gcc
 #   make CC=clang COMMON_CFLAGS="-Wall -O2 -std=gnu11 -march=armv7-a"
 #
-# Platform-specific tuning (auto-detected for aarch64, or set PLATFORM=):
+# Platform-specific tuning (detected from the compiler target for aarch64,
+# or set PLATFORM=):
 #   make PLATFORM=rpi4          # Raspberry Pi 4 (Cortex-A72)
 #   make PLATFORM=rpi5          # Raspberry Pi 5 (Cortex-A76)
 
@@ -23,9 +24,13 @@ EXTRA_CFLAGS := $(CFLAGS)
 COMMON_CFLAGS ?= -Wall -O2 -std=gnu11 -pthread -D_GNU_SOURCE
 COMMON_CFLAGS += $(EXTRA_CFLAGS)
 
-# --- Platform-specific flags for aarch64 ---
-UNAME_M := $(shell uname -m 2>/dev/null)
-ifeq ($(UNAME_M),aarch64)
+# Detect the compiler target so cross-compiling armhf from an aarch64 host
+# doesn't inherit aarch64-only flags from uname -m.
+CC_MACHINE := $(strip $(shell $(CC) -dumpmachine 2>/dev/null))
+TARGET_MACHINE := $(if $(CC_MACHINE),$(CC_MACHINE),$(shell uname -m 2>/dev/null))
+
+# --- Platform-specific flags for aarch64 targets ---
+ifneq ($(filter aarch64%,$(TARGET_MACHINE)),)
   # Runtime-dispatched atomics: uses LSE on ARMv8.1+ cores, falls back to
   # LL/SC on older cores.  Safe and correct on all aarch64 (GCC 10+).
   COMMON_CFLAGS += -moutline-atomics
