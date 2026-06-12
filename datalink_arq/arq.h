@@ -43,7 +43,6 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include "fsm.h"
 #include "arq_events.h"
 
 /** @brief Runtime ARQ connection and mode state shared across modules. */
@@ -99,7 +98,6 @@ typedef struct
 } arq_runtime_snapshot_t;
 
 extern arq_info arq_conn;
-extern fsm_handle arq_fsm;
 
 /**
  * @brief Initialize ARQ subsystem.

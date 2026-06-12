@@ -12,7 +12,6 @@
 #include "arq_timing.h"
 #include "arq_modem.h"
 #include "arq_channels.h"
-#include "fsm.h"
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -40,7 +39,6 @@
  * ====================================================================== */
 
 arq_info   arq_conn;
-fsm_handle arq_fsm;   /* legacy stub kept for link-time compatibility */
 
 /* ======================================================================
  * Module-private state

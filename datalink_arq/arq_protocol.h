@@ -263,7 +263,6 @@ extern _Atomic float arq_callint_override_s;
 #define ARQ_BACKLOG_MIN_DATAC1        126
 #define ARQ_BACKLOG_MIN_DATAC17       503   /* > DATAC1 usable payload (502) */
 #define ARQ_BACKLOG_MIN_QAM16C2       1173  /* > DATAC17 usable payload      */
-#define ARQ_BACKLOG_MIN_BIDIR_UPGRADE 31    /* > DATAC15 payload capacity         */
 #define ARQ_LADDER_LEVELS             6     /* 0=DATAC15, 1=DATAC4, 2=DATAC3,
                                              * 3=DATAC1, 4=DATAC17, 5=QAM16C2 */
 #define ARQ_LADDER_UP_SUCCESSES       2     /* clean ACKs required to step up    */

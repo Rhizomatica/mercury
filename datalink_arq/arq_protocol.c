@@ -118,7 +118,6 @@ float arq_protocol_call_interval_s(void)
 
 /* ======================================================================
  * Frame header codec
- * TODO Phase 2: implement encode/decode
  * ====================================================================== */
 
 int arq_protocol_encode_hdr(uint8_t *buf, size_t buf_len, const arq_frame_hdr_t *hdr)

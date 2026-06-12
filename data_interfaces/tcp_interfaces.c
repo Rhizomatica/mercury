@@ -41,7 +41,6 @@
 #include "ring_buffer_posix.h"
 #include "net.h"
 #include "arq.h"
-#include "fsm.h"
 #include "chan.h"
 #include "defines_modem.h"
 #include "kiss.h"
@@ -810,44 +809,6 @@ void *server_worker_thread_ctl(void *port)
     HLOGW("tcp", "server_worker_thread_ctl now runs unified ARQ reactor");
     return arq_reactor_thread(port);
 }
-
-void *server_worker_thread_data(void *port)
-{
-    (void)port;
-    HLOGW("tcp", "server_worker_thread_data is deprecated (reactor owns DATA socket)");
-    return NULL;
-}
-
-// tx to tcp socket the received data from the modem
-void *data_worker_thread_tx(void *conn)
-{
-    (void)conn;
-    HLOGW("tcp", "data_worker_thread_tx is deprecated (reactor owns DATA TX)");
-    return NULL;
-}
-
-// rx from tcp socket and send to trasmit by the modem
-void *data_worker_thread_rx(void *conn)
-{
-    (void)conn;
-    HLOGW("tcp", "data_worker_thread_rx is deprecated (reactor owns DATA RX)");
-    return NULL;
-}
-
-void *control_worker_thread_tx(void *conn)
-{
-    (void)conn;
-    HLOGW("tcp", "control_worker_thread_tx is deprecated (reactor owns CTL TX)");
-    return NULL;
-}
-
-void *control_worker_thread_rx(void *conn)
-{
-    (void)conn;
-    HLOGW("tcp", "control_worker_thread_rx is deprecated (reactor owns CTL RX)");
-    return NULL;
-}
-
 
 /********** BROADCAST TCP port INTERFACE **********/
 

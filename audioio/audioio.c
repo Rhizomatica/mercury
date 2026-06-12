@@ -809,12 +809,6 @@ void *radio_capture_thread(void *device_ptr)
         goto finish_cap;
     }
 
-#if 0 // TODO: parametrize this
-    if (radio_type == RADIO_SBITX)
-        ch_layout = LEFT;
-    if (radio_type == RADIO_STOCKHF)
-        ch_layout = STEREO;
-#endif
     ch_layout = capture_input_channel_layout;
 
     /* Polyphase anti-aliasing downsampler, stateful across reads. */

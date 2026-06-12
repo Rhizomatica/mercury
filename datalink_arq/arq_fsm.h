@@ -199,7 +199,6 @@ typedef struct
     int      tx_backlog_bytes;         /* bytes pending in TX buffer           */
 
     /* --- Teardown flags --- */
-    bool     disconnect_to_no_client;  /* after disconnect: clear arq_info     */
     bool     pending_disconnect_notify;/* defer notify_disconnected until TX done */
     bool     pending_disconnect;       /* APP_DISCONNECT deferred until TX buf empty */
     uint64_t disconnect_deadline_ms;   /* absolute time by which a deferred

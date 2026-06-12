@@ -671,7 +671,6 @@ static void enter_idle_iss(arq_session_t *sess, bool gained_turn)
         HLOGD(LOG_COMP, "Deferred DISCONNECT: TX buffer drained — disconnecting now");
         sess->pending_disconnect      = false;
         sess->tx_retries_left         = ARQ_DISCONNECT_RETRY_SLOTS;
-        sess->disconnect_to_no_client = false;
         sess_enter(sess, ARQ_CONN_DISCONNECTING,
                    hermes_uptime_ms() + ARQ_CHANNEL_GUARD_MS,
                    ARQ_EV_TIMER_ACK);
@@ -712,7 +711,6 @@ static void enter_idle_iss_guarded(arq_session_t *sess, bool gained_turn)
         HLOGD(LOG_COMP, "Deferred DISCONNECT: TX buffer drained — disconnecting now");
         sess->pending_disconnect      = false;
         sess->tx_retries_left         = ARQ_DISCONNECT_RETRY_SLOTS;
-        sess->disconnect_to_no_client = false;
         sess_enter(sess, ARQ_CONN_DISCONNECTING,
                    hermes_uptime_ms() + ARQ_CHANNEL_GUARD_MS,
                    ARQ_EV_TIMER_ACK);
@@ -1025,7 +1023,6 @@ static void fsm_accepting(arq_session_t *sess, const arq_event_t *ev)
 
 static void fsm_disconnecting(arq_session_t *sess, const arq_event_t *ev)
 {
-    bool to_no_client = sess->disconnect_to_no_client;
     const arq_mode_timing_t *tm;
 
     switch (ev->id)
@@ -1041,7 +1038,7 @@ static void fsm_disconnecting(arq_session_t *sess, const arq_event_t *ev)
 
     case ARQ_EV_RX_DISCONNECT:
         HLOGI(LOG_COMP, "Disconnect finalized (peer ack)");
-        if (g_cbs.notify_disconnected) g_cbs.notify_disconnected(to_no_client);
+        if (g_cbs.notify_disconnected) g_cbs.notify_disconnected(false);
         if (g_timing) arq_timing_record_disconnect(g_timing, "peer_ack");
         sess_enter(sess, ARQ_CONN_DISCONNECTED, UINT64_MAX, ARQ_EV_TIMER_RETRY);
         break;
@@ -1058,7 +1055,7 @@ static void fsm_disconnecting(arq_session_t *sess, const arq_event_t *ev)
         else
         {
             HLOGI(LOG_COMP, "Disconnect finalized (timeout)");
-            if (g_cbs.notify_disconnected) g_cbs.notify_disconnected(to_no_client);
+            if (g_cbs.notify_disconnected) g_cbs.notify_disconnected(false);
             if (g_timing) arq_timing_record_disconnect(g_timing, "timeout");
             sess_enter(sess, ARQ_CONN_DISCONNECTED, UINT64_MAX, ARQ_EV_TIMER_RETRY);
         }
@@ -1088,7 +1085,6 @@ static void fsm_connected(arq_session_t *sess, const arq_event_t *ev)
         sess->pending_disconnect      = false;
         sess->disconnect_deadline_ms  = 0;
         sess->tx_retries_left         = ARQ_DISCONNECT_RETRY_SLOTS;
-        sess->disconnect_to_no_client = false;
         sess_enter(sess, ARQ_CONN_DISCONNECTING,
                    hermes_uptime_ms() + ARQ_CHANNEL_GUARD_MS,
                    ARQ_EV_TIMER_ACK);
@@ -1128,7 +1124,6 @@ static void fsm_connected(arq_session_t *sess, const arq_event_t *ev)
         }
         sess->pending_disconnect      = false;
         sess->tx_retries_left         = ARQ_DISCONNECT_RETRY_SLOTS;
-        sess->disconnect_to_no_client = false;
         sess_enter(sess, ARQ_CONN_DISCONNECTING,
                    hermes_uptime_ms() + ARQ_CHANNEL_GUARD_MS,
                    ARQ_EV_TIMER_ACK);

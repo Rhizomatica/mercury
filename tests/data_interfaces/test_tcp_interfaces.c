@@ -28,7 +28,6 @@
 #include "ring_buffer_posix.h"
 #include "net.h"
 #include "arq.h"
-#include "fsm.h"
 #include "chan.h"
 #include "defines_modem.h"
 #include "kiss.h"
