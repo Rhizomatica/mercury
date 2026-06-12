@@ -35,6 +35,7 @@
 #include "framer.h"
 #include "arq.h"
 #include "../datalink_arq/arq_modem.h"
+#include "../datalink_arq/arq_protocol.h"
 #include "tcp_interfaces.h"
 #include "freedv_api.h"
 #include "fsk.h"
@@ -1472,7 +1473,7 @@ void *rx_thread(void *g_modem)
             was_tx = false;
         }
 
-        if (rx_decoder_bind_mode(&control_decoder, FREEDV_MODE_DATAC16) < 0 ||
+        if (rx_decoder_bind_mode(&control_decoder, ARQ_CONTROL_MODE) < 0 ||
             rx_decoder_bind_mode(&payload_decoder, payload_mode) < 0)
         {
             usleep(100000);

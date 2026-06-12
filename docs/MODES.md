@@ -109,13 +109,62 @@ Operational consequences, reflected in the ARQ design (see `docs/ARQ.md`):
   ladder's `ARQ_SNR_MIN_DATAC4_DB = −6 dB` upgrade threshold (−5 dB effective
   with hysteresis) leaves ~1.5 dB margin to the crossover and ~3 dB to
   DATAC4's AWGN cliff.
-- **DATAC16** replaced DATAC13 as the ARQ control mode.  At moderate SNR the
-  two are comparable (ARQ retries absorb the difference); below −9 dB DATAC16
-  delivers roughly twice as many control frames, which is what keeps a fringe
-  session alive.
+- **DATAC16** replaced DATAC13 as the ARQ control mode.  The choice is
+  channel-dependent: on fast fading (1 Hz) DATAC13 delivers a few points more
+  in the −4…−8 dB band, while on slow fading (0.5 Hz, closer to calm NVIS)
+  DATAC16 wins the same band (e.g. 76 vs 67 at −7 dB) — its longer frame is
+  not punished and the stronger code prevails.  On AWGN below −10 dB DATAC16
+  delivers roughly twice as many frames; on fading the deep-fringe difference
+  is small.  See the control-mode comparison table below.
 - Acquisition (preamble/UW detection) is the dominant loss for both new modes
   above −5 dB MPP — a future tuning candidate (`timing_mx_thresh`, UW length)
   independent of the FEC design.
+
+## Control-mode comparison: DATAC13 vs DATAC16 vs DATAC18
+
+The first OTA session (June 2026, São Roque–Belo Horizonte) measured a ~7 dB
+asymmetric link whose weak direction sat at −7…−9 dB and lost ~50 % of
+frames; control-frame retries dominated session latency.  **DATAC18** was a
+prototype designed against that data point (benched below, **not merged**):
+the same effective rate-1/3 code class as DATAC13/16 but spread over 9
+carriers (~560 Hz, fits BW500) in a 1.10 s frame (1.65 s with preamble) —
+3× the frequency diversity and half the fade exposure, at ~2.6 dB less
+energy per bit.  Config, for future revival: nc=9, ns=5, np=10, ts=0.016,
+tcp=0.006, `H_256_768_22` shortened to 128+512, nuwbits=80,
+bad_uw_errors=30, timing_mx_thresh=0.10, DATAC3 TX chain.
+
+Measured delivery/100 frames (rows aligned by each mode's actual SNR3k;
+DATAC18 reads ~1.2 dB lower than DATAC13 at equal noise density):
+
+**Fast fading (1 Hz Doppler):**
+
+| ≈SNR | DATAC13 (2.64 s) | DATAC16 (3.74 s) | DATAC18 (1.65 s) |
+|---|---|---|---|
+| −2 dB | 97 | 89 | 94 (−2.3) |
+| −4 dB | 92 | 86 | ~80 (interp.) |
+| −6 dB | 83 | 76 | ~55 |
+| −7 dB | 74 | 65 | ~46 |
+| −8 dB | 57 | 57 | ~28 |
+| −9 dB | 51 | 50 | ~14 |
+
+**Slow fading (0.5 Hz Doppler):**
+
+| ≈SNR | DATAC13 | DATAC16 | DATAC18 |
+|---|---|---|---|
+| −2 dB | 94 | 89 | 90 (−2.3) |
+| −4 dB | 89 | 88 | ~78 |
+| −6 dB | 78 | 80 | ~49 |
+| −7 dB | 67 | 76 | ~34 |
+| −8 dB | 56 | 66 | ~23 |
+| −9 dB | 49 | 47 | ~16 |
+
+Verdict (control plane stays **DATAC16**): DATAC18's short frame gives the
+best airtime-per-delivered above ≈ −6 dB (2.1 s vs 2.9/4.3 at −4), but its
+energy-per-bit deficit collapses preamble acquisition below −7 dB — exactly
+the OTA design point — so it loses there to both incumbents and was dropped
+rather than left in the tree as a dead mode.  DATAC13 vs DATAC16 splits by
+Doppler: fast fading favours DATAC13, slow fading (the measured OTA regime)
+favours DATAC16.
 
 ## Reproducing the measurements
 

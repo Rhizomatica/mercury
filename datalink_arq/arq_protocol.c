@@ -112,7 +112,7 @@ float arq_protocol_call_interval_s(void)
     if (override > 0.0f)
         return override;
 
-    const arq_mode_timing_t *tm = arq_protocol_mode_timing(FREEDV_MODE_DATAC16);
+    const arq_mode_timing_t *tm = arq_protocol_mode_timing(ARQ_CONTROL_MODE);
     return tm ? tm->retry_interval_s : 8.0f;
 }
 

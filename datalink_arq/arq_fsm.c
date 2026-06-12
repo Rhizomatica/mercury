@@ -123,7 +123,7 @@ void arq_fsm_init(arq_session_t *sess)
     sess->role           = ARQ_ROLE_NONE;
     sess->deadline_ms    = UINT64_MAX;
     sess->deadline_event = ARQ_EV_TIMER_RETRY;
-    sess->control_mode        = FREEDV_MODE_DATAC16;
+    sess->control_mode        = ARQ_CONTROL_MODE;
     sess->payload_mode        = FREEDV_MODE_DATAC15;  /* my TX mode, starts at safest level */
     sess->peer_tx_mode        = FREEDV_MODE_DATAC15;  /* RX decoder, starts at safest level */
     sess->initial_payload_mode = FREEDV_MODE_DATAC15;  /* overwritten by arq_set_initial_mode */
@@ -1484,7 +1484,7 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
         else if (ev->id == ARQ_EV_RX_MODE_REQ)
         {
             if (arq_protocol_mode_timing(ev->mode) != NULL &&
-                ev->mode != FREEDV_MODE_DATAC16)
+                ev->mode != ARQ_CONTROL_MODE)
             {
                 /* Peer has taken ISS and is requesting a mode switch.  The peer
                  * only enters ISS after receiving our pending frame (via DATA_RX
@@ -1601,7 +1601,7 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
              * Per-direction: only update our RX decoder (peer_tx_mode), not our
              * own TX mode (payload_mode), which is managed independently. */
             if (arq_protocol_mode_timing(ev->mode) != NULL &&
-                ev->mode != FREEDV_MODE_DATAC16)
+                ev->mode != ARQ_CONTROL_MODE)
             {
                 HLOGI(LOG_COMP, "MODE_REQ: peer TX mode %d -> %d (my TX mode %d unchanged)",
                       sess->peer_tx_mode, ev->mode, sess->payload_mode);
@@ -1864,7 +1864,7 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
         if (ev->id == ARQ_EV_RX_MODE_ACK)
         {
             if (arq_protocol_mode_timing(ev->mode) != NULL &&
-                ev->mode != FREEDV_MODE_DATAC16)
+                ev->mode != ARQ_CONTROL_MODE)
             {
                 /* If this MODE_ACK confirms a downgrade, start the hold
                  * timer NOW (not when MODE_REQ was sent).  The MODE_REQ/ACK
