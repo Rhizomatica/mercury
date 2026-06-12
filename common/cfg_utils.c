@@ -51,6 +51,8 @@ void cfg_set_defaults(mercury_config *cfg)
     cfg->radio_serial_speed = 0;  /* 0 = use hamlib default */
     cfg->no_progress_timeout_s = ARQ_NO_PROGRESS_TIMEOUT_S_DEFAULT;
     cfg->disconnect_drain_timeout_s = ARQ_DISCONNECT_DRAIN_TIMEOUT_S_DEFAULT;
+    cfg->tnc_keepalive_s = 60;
+    cfg->tnc_buffer_report_ms = 1000;
     cfg->tx_gain_db            = 0.0f;
 }
 
@@ -165,6 +167,14 @@ bool cfg_read(mercury_config *cfg, const char *ini_path)
     i = iniparser_getint(ini, CFG_KEY_DISCONNECT_DRAIN_TIMEOUT_S, cfg->disconnect_drain_timeout_s);
     if (i > 0)
         cfg->disconnect_drain_timeout_s = i;
+
+    i = iniparser_getint(ini, CFG_KEY_TNC_KEEPALIVE_S, cfg->tnc_keepalive_s);
+    if (i >= 5 && i <= 600)
+        cfg->tnc_keepalive_s = i;
+
+    i = iniparser_getint(ini, CFG_KEY_TNC_BUFFER_REPORT_MS, cfg->tnc_buffer_report_ms);
+    if (i >= 100 && i <= 10000)
+        cfg->tnc_buffer_report_ms = i;
 
     double d = iniparser_getdouble(ini, CFG_KEY_TX_GAIN_DB, (double)cfg->tx_gain_db);
     if (!isfinite(d)) d = 0.0;  /* malformed/non-finite INI value -> default */

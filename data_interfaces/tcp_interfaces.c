@@ -82,6 +82,22 @@ extern volatile bool shutdown_;
 
 extern arq_info arq_conn;
 
+/* TNC control-port pacing — runtime-configurable via [tnc] INI keys. */
+static _Atomic uint64_t tnc_keepalive_interval_ms = 60000;
+static _Atomic uint64_t tnc_buffer_report_interval_ms = 1000;
+
+void tnc_set_intervals(int keepalive_s, int buffer_report_ms)
+{
+    if (keepalive_s >= 5 && keepalive_s <= 600)
+        atomic_store_explicit(&tnc_keepalive_interval_ms,
+                              (uint64_t)keepalive_s * 1000ULL,
+                              memory_order_relaxed);
+    if (buffer_report_ms >= 100 && buffer_report_ms <= 10000)
+        atomic_store_explicit(&tnc_buffer_report_interval_ms,
+                              (uint64_t)buffer_report_ms,
+                              memory_order_relaxed);
+}
+
 static ssize_t send_all(int socket_fd, const uint8_t *buffer, size_t len)
 {
     size_t total_sent = 0;
@@ -655,8 +671,8 @@ static void *arq_reactor_thread(void *port)
                     memset(&cmd, 0, sizeof(cmd));
                     cmd.type = ARQ_CMD_CLIENT_CONNECT;
                     (void)arq_submit_tcp_cmd(&cmd);
-                    next_keepalive_ms = now_ms + 60000ULL;
-                    next_buffer_report_ms = now_ms + 1000ULL;
+                    next_keepalive_ms = now_ms + atomic_load_explicit(&tnc_keepalive_interval_ms, memory_order_relaxed);
+                    next_buffer_report_ms = now_ms + atomic_load_explicit(&tnc_buffer_report_interval_ms, memory_order_relaxed);
                     last_buffer_report = -1;
                     atomic_store_explicit(&tnc_last_buffer_sent, -1, memory_order_relaxed);
                     ctl_len = 0;
@@ -750,7 +766,7 @@ static void *arq_reactor_thread(void *port)
                 {
                     char imalive[] = "IAMALIVE\r";
                     (void)tcp_write(CTL_TCP_PORT, (uint8_t *)imalive, strlen(imalive));
-                    next_keepalive_ms = now_ms + 60000ULL;
+                    next_keepalive_ms = now_ms + atomic_load_explicit(&tnc_keepalive_interval_ms, memory_order_relaxed);
                 }
                 if (now_ms >= next_buffer_report_ms)
                 {
@@ -760,7 +776,7 @@ static void *arq_reactor_thread(void *port)
                         tnc_send_buffer((uint32_t)buffered);
                         last_buffer_report = buffered;
                     }
-                    next_buffer_report_ms = now_ms + 1000ULL;
+                    next_buffer_report_ms = now_ms + atomic_load_explicit(&tnc_buffer_report_interval_ms, memory_order_relaxed);
                 }
             }
         }

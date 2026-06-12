@@ -90,8 +90,20 @@ void arq_timing_record_data_rx(arq_timing_ctx_t *ctx, int seq,
     ctx->last_snr_local_x10 = snr_x10;
     ctx->rx_bytes          += (uint64_t)bytes;
     ctx->frames_rx++;
-    HLOGT(LOG_COMP, "data_rx seq=%d bytes=%d snr_local=%.1f rx_total=%llu",
-          seq, bytes, (float)snr_x10 / 10.0f, (unsigned long long)ctx->rx_bytes);
+
+    /* Channel turnaround: time from our last PTT-OFF to this decode.
+     * Subtract the mode's frame duration to estimate the clear-air gap —
+     * the per-station measurement that informs guard-interval choices
+     * (guards bundle radio switch time AND audio-backend buffering, so
+     * they must never be tuned blind). */
+    uint32_t turnaround = 0;
+    if (ctx->tx_end_ms > 0 && ctx->data_rx_ms > ctx->tx_end_ms &&
+        ctx->data_rx_ms - ctx->tx_end_ms < 60000)
+        turnaround = (uint32_t)(ctx->data_rx_ms - ctx->tx_end_ms);
+
+    HLOGT(LOG_COMP, "data_rx seq=%d bytes=%d snr_local=%.1f rx_total=%llu turnaround=%ums",
+          seq, bytes, (float)snr_x10 / 10.0f,
+          (unsigned long long)ctx->rx_bytes, turnaround);
 }
 
 void arq_timing_record_ack_tx(arq_timing_ctx_t *ctx, int seq)

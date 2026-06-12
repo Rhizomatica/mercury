@@ -151,6 +151,14 @@ typedef struct {
 
 static modem_mode_pool_t modem_mode_pool = {0};
 
+/* Spectrum/waterfall FFT gate: set false when no UI consumes it. */
+static atomic_bool g_spectrum_enabled = true;
+
+void modem_set_spectrum_enabled(bool enabled)
+{
+    atomic_store_explicit(&g_spectrum_enabled, enabled, memory_order_relaxed);
+}
+
 static uint64_t monotonic_ms(void)
 {
     struct timespec ts;
@@ -1548,7 +1556,9 @@ void *rx_thread(void *g_modem)
         }
 
         /* --- Update spectrum buffer for UI waterfall display --- */
-        /* Throttle FFT to match the 50 ms publish interval (~20 fps) */
+        /* Throttle FFT to match the 50 ms publish interval (~20 fps);
+         * skip entirely when no UI consumer exists (-W or UI disabled). */
+        if (atomic_load_explicit(&g_spectrum_enabled, memory_order_relaxed))
         {
             uint64_t now_ms = monotonic_ms();
             if (now_ms >= spectrum_next_ms)
@@ -1559,7 +1569,7 @@ void *rx_thread(void *g_modem)
                 int spec_nin = chunk_samples;
                 if (spec_nin > MODEM_STATS_NSPEC)
                     spec_nin = MODEM_STATS_NSPEC;
-                COMP rx_fdm[MODEM_STATS_NSPEC];
+                static COMP rx_fdm[MODEM_STATS_NSPEC];
                 for (int i = 0; i < spec_nin; i++)
                 {
                     /* Pass raw i16 amplitude — modem_stats_get_rx_spectrum normalises
