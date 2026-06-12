@@ -66,6 +66,10 @@ extern "C" {
 // Mercury custom modes (not in upstream codec2)
 #define FREEDV_MODE_DATAC15 22
 #define FREEDV_MODE_DATAC16 23
+#define FREEDV_MODE_DATAC17 24
+// Ported from the Rhizomatica codec2 fork (enum renumbered: the fork
+// uses 22, which collides with FREEDV_MODE_DATAC15 here)
+#define FREEDV_MODE_QAM16C2 25
 
 // Sample rates used
 #define FREEDV_FS_8000 8000
@@ -156,6 +160,12 @@ extern "C" {
 #endif
 #if !defined(FREEDV_MODE_DATAC16_EN)
 #define FREEDV_MODE_DATAC16_EN FREEDV_MODE_EN_DEFAULT
+#endif
+#if !defined(FREEDV_MODE_DATAC17_EN)
+#define FREEDV_MODE_DATAC17_EN FREEDV_MODE_EN_DEFAULT
+#endif
+#if !defined(FREEDV_MODE_QAM16C2_EN)
+#define FREEDV_MODE_QAM16C2_EN FREEDV_MODE_EN_DEFAULT
 #endif
 
 #define FDV_MODE_ACTIVE(mode_name, var) \
