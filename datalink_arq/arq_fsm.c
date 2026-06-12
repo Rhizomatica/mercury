@@ -1059,16 +1059,22 @@ static void fsm_connected(arq_session_t *sess, const arq_event_t *ev)
     {
     case ARQ_EV_APP_DISCONNECT:
         /* Defer DISCONNECT while a frame is physically being transmitted
-         * (PTT on, DATA_TX) or the TX buffer still has unsent bytes, so the
-         * last application bytes get delivered before teardown.  The deferral
-         * is bounded three ways and can never hang: (1) retry exhaustion with
-         * a pending disconnect tears down immediately, (2) the absolute
-         * disconnect_drain_timeout_s deadline armed below forces teardown
-         * regardless of FSM state, and (3) a drained buffer fires the
-         * deferred disconnect at the next idle-ISS entry.  An idle WAIT_ACK
-         * with no backlog falls through to immediate teardown below. */
+         * (PTT on, DATA_TX), still awaiting its ACK (WAIT_ACK), or the TX
+         * buffer has unsent bytes, so the last application bytes get
+         * delivered before teardown.  Without the WAIT_ACK case the final
+         * frame loses its retry protection whenever the app's disconnect
+         * lands after PTT-OFF but before the ACK — the same last-frame loss
+         * the WAIT_ACK capped-retry fix addresses, just in a different
+         * timing window.  The deferral is bounded three ways and can never
+         * hang: (1) retry exhaustion with a pending disconnect tears down
+         * immediately, (2) the absolute disconnect_drain_timeout_s deadline
+         * armed below forces teardown regardless of FSM state, and (3) a
+         * drained buffer fires the deferred disconnect at the next idle-ISS
+         * entry (an ACKed last frame with empty backlog disconnects there
+         * without extra delay). */
         if ((g_cbs.tx_backlog && g_cbs.tx_backlog() > 0) ||
-            sess->dflow_state == ARQ_DFLOW_DATA_TX)
+            sess->dflow_state == ARQ_DFLOW_DATA_TX ||
+            sess->dflow_state == ARQ_DFLOW_WAIT_ACK)
         {
             HLOGD(LOG_COMP,
                   "APP_DISCONNECT deferred — backlog=%d dflow=%s",

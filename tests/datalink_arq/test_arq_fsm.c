@@ -324,6 +324,61 @@ static void goto_wait_ack(void)
     TEST_ASSERT_EQUAL_INT(ARQ_DFLOW_WAIT_ACK, sess.dflow_state);
 }
 
+/* A pending (deferred) disconnect must not drop the unACKed last frame: the
+ * first ACK timeout retries it once (capped), and only the second timeout
+ * completes the teardown.  Regression test for the Fix-14 zero-retry abort
+ * that dropped the peer's final UUCP hangup packet. */
+void test_pending_disconnect_retries_last_frame_before_teardown(void)
+{
+    goto_connected();
+    goto_wait_ack();   /* one frame in flight, backlog still > 0 */
+
+    arq_event_t ev = make_event(ARQ_EV_APP_DISCONNECT);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_CONNECTED, sess.conn_state);
+    TEST_ASSERT_TRUE(sess.pending_disconnect);
+
+    /* First ACK timeout: must retransmit the unACKed frame, not abort. */
+    unsigned sends_before = fake_send_tx_frame_fake.call_count;
+    ev = make_event(ARQ_EV_TIMER_ACK);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_CONNECTED, sess.conn_state);
+    TEST_ASSERT_EQUAL_INT(ARQ_DFLOW_DATA_TX, sess.dflow_state);
+    TEST_ASSERT_GREATER_THAN(sends_before, fake_send_tx_frame_fake.call_count);
+    TEST_ASSERT_TRUE(sess.pending_disconnect);
+
+    /* Retry exhausted (capped to 1): the next timeout completes the
+     * deferred disconnect cleanly. */
+    ev = make_event(ARQ_EV_TX_COMPLETE);
+    arq_fsm_dispatch(&sess, &ev);
+    ev = make_event(ARQ_EV_TIMER_ACK);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_DISCONNECTING, sess.conn_state);
+    TEST_ASSERT_FALSE(sess.pending_disconnect);
+}
+
+/* APP_DISCONNECT landing in WAIT_ACK with an empty backlog (last frame sent,
+ * awaiting its ACK) must defer, not tear down immediately — otherwise the
+ * unACKed final frame loses its retry protection whenever the disconnect
+ * arrives after PTT-OFF instead of during DATA_TX. */
+void test_app_disconnect_defers_in_wait_ack(void)
+{
+    goto_connected();
+    goto_wait_ack();
+    fake_tx_backlog_fake.return_val = 0;  /* everything sent, ACK outstanding */
+
+    arq_event_t ev = make_event(ARQ_EV_APP_DISCONNECT);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_CONNECTED, sess.conn_state);
+    TEST_ASSERT_TRUE(sess.pending_disconnect);
+
+    /* The capped retry still protects the in-flight frame. */
+    ev = make_event(ARQ_EV_TIMER_ACK);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_CONNECTED, sess.conn_state);
+    TEST_ASSERT_EQUAL_INT(ARQ_DFLOW_DATA_TX, sess.dflow_state);
+}
+
 /* Retry exhaustion within the no-progress budget persists (stays CONNECTED);
  * once the budget elapses, the next exhaustion tears the link down. */
 void test_retry_exhaustion_persists_then_disconnects(void)
@@ -429,6 +484,8 @@ int main(void)
     RUN_TEST(test_rx_disconnect_from_connected);
     RUN_TEST(test_connected_seeds_no_progress_clock);
     RUN_TEST(test_app_disconnect_defers_with_backlog);
+    RUN_TEST(test_pending_disconnect_retries_last_frame_before_teardown);
+    RUN_TEST(test_app_disconnect_defers_in_wait_ack);
     RUN_TEST(test_disconnect_drain_timeout_forces_teardown);
     RUN_TEST(test_retry_exhaustion_persists_then_disconnects);
     RUN_TEST(test_retry_exhaustion_disconnects_from_zero_uptime_baseline);

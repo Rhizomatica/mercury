@@ -258,8 +258,13 @@ extern _Atomic int arq_no_progress_timeout_s;
  * DISCONNECT handshake within this window — otherwise a stuck/ping-ponging
  * session keeps keying the rig forever (the K7EK "Mercury kept hanging on"
  * report).  On a healthy link the drain completes in seconds via idle-ISS, so
- * this only bites when the FSM would otherwise be starved. */
-#define ARQ_DISCONNECT_DRAIN_TIMEOUT_S_DEFAULT 30
+ * this only bites when the FSM would otherwise be starved.
+ *
+ * Must outlast one full capped-retry cycle for the last unACKed frame on the
+ * slowest mode (frame + ack_timeout, twice: ~36-39 s for DATAC4), so the
+ * deadline does not cut short the single retry the WAIT_ACK
+ * pending-disconnect path grants before teardown. */
+#define ARQ_DISCONNECT_DRAIN_TIMEOUT_S_DEFAULT 45
 extern _Atomic int arq_disconnect_drain_timeout_s;
 #define ARQ_DISCONNECT_DRAIN_TIMEOUT_S atomic_load(&arq_disconnect_drain_timeout_s)
 
