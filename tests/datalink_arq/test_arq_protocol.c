@@ -252,6 +252,24 @@ void test_mode_timing_datac13_removed(void)
     TEST_ASSERT_NULL(t);
 }
 
+void test_mode_timing_fast_modes(void)
+{
+    const arq_mode_timing_t *t17 = arq_protocol_mode_timing(FREEDV_MODE_DATAC17);
+    TEST_ASSERT_NOT_NULL(t17);
+    TEST_ASSERT_EQUAL(1180, t17->payload_bytes);
+
+    const arq_mode_timing_t *tq = arq_protocol_mode_timing(FREEDV_MODE_QAM16C2);
+    TEST_ASSERT_NOT_NULL(tq);
+    TEST_ASSERT_EQUAL(1213, tq->payload_bytes);
+
+    /* Frame sizes must stay pairwise unique across the whole table — the
+     * RX path infers the peer's TX mode from frame size alone. */
+    for (int i = 0; i < arq_mode_table_count; i++)
+        for (int j = i + 1; j < arq_mode_table_count; j++)
+            TEST_ASSERT_NOT_EQUAL(arq_mode_table[i].payload_bytes,
+                                  arq_mode_table[j].payload_bytes);
+}
+
 void test_mode_timing_invalid(void)
 {
     const arq_mode_timing_t *t = arq_protocol_mode_timing(9999);
@@ -323,6 +341,7 @@ int main(void)
     RUN_TEST(test_mode_timing_datac15);
     RUN_TEST(test_mode_timing_datac16);
     RUN_TEST(test_mode_timing_datac13_removed);
+    RUN_TEST(test_mode_timing_fast_modes);
     RUN_TEST(test_mode_timing_invalid);
     /* CALLINT / call interval override */
     RUN_TEST(test_call_interval_default);

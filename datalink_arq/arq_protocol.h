@@ -243,11 +243,17 @@ extern _Atomic float arq_callint_override_s;
                                              * SNR estimates. */
 #define ARQ_SNR_MIN_DATAC3_DB        -1.0f
 #define ARQ_SNR_MIN_DATAC1_DB         3.0f
+#define ARQ_SNR_MIN_DATAC17_DB        9.0f  /* QPSK rate-0.6 big codeword;
+                                             * provisional, bench-tuned     */
+#define ARQ_SNR_MIN_QAM16C2_DB       15.0f  /* upstream README_data figure  */
 #define ARQ_BACKLOG_MIN_DATAC4        31    /* > DATAC15 payload capacity         */
 #define ARQ_BACKLOG_MIN_DATAC3        56
 #define ARQ_BACKLOG_MIN_DATAC1        126
+#define ARQ_BACKLOG_MIN_DATAC17       503   /* > DATAC1 usable payload (502) */
+#define ARQ_BACKLOG_MIN_QAM16C2       1173  /* > DATAC17 usable payload      */
 #define ARQ_BACKLOG_MIN_BIDIR_UPGRADE 31    /* > DATAC15 payload capacity         */
-#define ARQ_LADDER_LEVELS             4     /* 0=DATAC15, 1=DATAC4, 2=DATAC3, 3=DATAC1 */
+#define ARQ_LADDER_LEVELS             6     /* 0=DATAC15, 1=DATAC4, 2=DATAC3,
+                                             * 3=DATAC1, 4=DATAC17, 5=QAM16C2 */
 #define ARQ_LADDER_UP_SUCCESSES       2     /* clean ACKs required to step up    */
 #define ARQ_RETRY_DOWNGRADE_THRESHOLD 2     /* consecutive retries to force downgrade */
 #define ARQ_MODE_HOLD_AFTER_DOWNGRADE_S 6   /* hold lower mode after forced downgrade */

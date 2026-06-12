@@ -264,20 +264,27 @@ static void send_mode_negotiation(arq_session_t *sess, arq_subtype_t subtype, in
 }
 
 /** Map a FreeDV payload mode to a comparable rank: higher rank = faster/more
- *  aggressive mode.  DATAC1 (=10) is fastest, then DATAC3 (=12), DATAC4
- *  (=18), and DATAC15 (=22) is slowest — the numeric constants do not order
- *  by throughput, so direct integer comparisons between them are misleading. */
+ *  aggressive mode (by ARQ goodput, not raw bps).  QAM16C2 is fastest, then
+ *  DATAC17, DATAC1, DATAC3, DATAC4, and DATAC15 is slowest — the numeric
+ *  constants do not order by throughput, so direct integer comparisons
+ *  between them are misleading. */
 static int mode_rank(int mode)
 {
-    if (mode == FREEDV_MODE_DATAC1) return 3;
-    if (mode == FREEDV_MODE_DATAC3) return 2;
-    if (mode == FREEDV_MODE_DATAC4) return 1;
+    if (mode == FREEDV_MODE_QAM16C2) return 5;
+    if (mode == FREEDV_MODE_DATAC17) return 4;
+    if (mode == FREEDV_MODE_DATAC1)  return 3;
+    if (mode == FREEDV_MODE_DATAC3)  return 2;
+    if (mode == FREEDV_MODE_DATAC4)  return 1;
     return 0; /* DATAC15 or any other conservative mode */
 }
 
 static int clamp_payload_mode_to_bandwidth(int mode)
 {
-    if (!arq_bandwidth_allows_mode(mode) && mode == FREEDV_MODE_DATAC1)
+    /* All bandwidth-restricted modes clamp to the fastest narrow mode. */
+    if (!arq_bandwidth_allows_mode(mode) &&
+        (mode == FREEDV_MODE_DATAC1 ||
+         mode == FREEDV_MODE_DATAC17 ||
+         mode == FREEDV_MODE_QAM16C2))
         return FREEDV_MODE_DATAC3;
 
     return mode;
@@ -336,6 +343,8 @@ static int select_best_mode(const arq_session_t *sess, int backlog)
         mode_rank(effective_mode) > 0)
     {
         int cur = effective_mode;
+        if (cur == FREEDV_MODE_QAM16C2) return FREEDV_MODE_DATAC17;
+        if (cur == FREEDV_MODE_DATAC17) return FREEDV_MODE_DATAC1;
         if (cur == FREEDV_MODE_DATAC1) return FREEDV_MODE_DATAC3;
         if (cur == FREEDV_MODE_DATAC3) return FREEDV_MODE_DATAC4;
         return FREEDV_MODE_DATAC15;
@@ -353,6 +362,24 @@ static int select_best_mode(const arq_session_t *sess, int backlog)
     /* For the current mode, stay if SNR is at or above base threshold.
      * For a higher mode, upgrade only if SNR exceeds threshold + hysteresis.
      * This asymmetry prevents rapid oscillation at mode boundaries. */
+    if (arq_bandwidth_allows_mode(FREEDV_MODE_QAM16C2))
+    {
+        float qc2_thresh = (cur_rank >= mode_rank(FREEDV_MODE_QAM16C2))
+                           ? ARQ_SNR_MIN_QAM16C2_DB
+                           : ARQ_SNR_MIN_QAM16C2_DB + ARQ_SNR_HYST_DB;
+        if (peer_snr >= qc2_thresh && backlog >= ARQ_BACKLOG_MIN_QAM16C2)
+            return FREEDV_MODE_QAM16C2;
+    }
+
+    if (arq_bandwidth_allows_mode(FREEDV_MODE_DATAC17))
+    {
+        float c17_thresh = (cur_rank >= mode_rank(FREEDV_MODE_DATAC17))
+                           ? ARQ_SNR_MIN_DATAC17_DB
+                           : ARQ_SNR_MIN_DATAC17_DB + ARQ_SNR_HYST_DB;
+        if (peer_snr >= c17_thresh && backlog >= ARQ_BACKLOG_MIN_DATAC17)
+            return FREEDV_MODE_DATAC17;
+    }
+
     if (arq_bandwidth_allows_mode(FREEDV_MODE_DATAC1))
     {
         float c1_thresh = (cur_rank >= mode_rank(FREEDV_MODE_DATAC1))

@@ -286,7 +286,11 @@ int arq_reported_bandwidth_hz(void)
 
 bool arq_bandwidth_allows_mode(int mode)
 {
-    if (mode == FREEDV_MODE_DATAC1)
+    /* Wideband payload modes (~1.7-2.2 kHz) need more than the narrow
+     * session bandwidth. */
+    if (mode == FREEDV_MODE_DATAC1 ||
+        mode == FREEDV_MODE_DATAC17 ||
+        mode == FREEDV_MODE_QAM16C2)
         return arq_effective_bandwidth_hz() > ARQ_BANDWIDTH_NARROW_HZ;
 
     return true;

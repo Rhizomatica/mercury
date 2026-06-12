@@ -39,7 +39,7 @@
 extern volatile bool shutdown_; // global shutdown flag
 extern arq_info arq_conn; // ARQ connection info
 
-static const uint32_t hermes_broadcast_frame_size[] = { 510, 126, 14, 54, 14, 3, 30, 30, 14 };
+static const uint32_t hermes_broadcast_frame_size[] = { 510, 126, 14, 54, 14, 3, 30, 30, 14, 1180, 1213 };
 static const int freedv_to_hermes_mode_map[] = {
     FREEDV_MODE_DATAC1,
     FREEDV_MODE_DATAC3,
@@ -49,7 +49,9 @@ static const int freedv_to_hermes_mode_map[] = {
     FREEDV_MODE_DATAC14,
     FREEDV_MODE_FSK_LDPC,
     FREEDV_MODE_DATAC15,
-    FREEDV_MODE_DATAC16
+    FREEDV_MODE_DATAC16,
+    FREEDV_MODE_DATAC17,
+    FREEDV_MODE_QAM16C2
 };
 #define HERMES_BROADCAST_MODE_COUNT \
     ((int)(sizeof(freedv_to_hermes_mode_map) / sizeof(freedv_to_hermes_mode_map[0])))

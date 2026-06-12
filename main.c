@@ -64,7 +64,9 @@ int freedv_modes[] = { FREEDV_MODE_DATAC1,
                        FREEDV_MODE_DATAC14,
                        FREEDV_MODE_FSK_LDPC,
                        FREEDV_MODE_DATAC15,
-                       FREEDV_MODE_DATAC16 };
+                       FREEDV_MODE_DATAC16,
+                       FREEDV_MODE_DATAC17,
+                       FREEDV_MODE_QAM16C2 };
 
 char *freedv_mode_names[] = { "DATAC1",
                               "DATAC3",
@@ -74,7 +76,9 @@ char *freedv_mode_names[] = { "DATAC1",
                               "DATAC14",
                               "FSK_LDPC",
                               "DATAC15",
-                              "DATAC16" };
+                              "DATAC16",
+                              "DATAC17",
+                              "QAM16C2" };
 
 volatile bool shutdown_ = false; // global shutdown flag
 

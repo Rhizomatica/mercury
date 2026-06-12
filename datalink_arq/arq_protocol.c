@@ -54,11 +54,16 @@ extern int  arithmetic_decode(uint8_t *input, int max_len, char *output, int max
  *   frame_dur DATAC3:  3820ms  (measured)
  *   frame_dur DATAC1:  4810ms  (measured — table previously had wrong 6500ms)
  *
+ *   frame_dur DATAC17:  7400ms  (single-frame burst incl. preamble, bench)
+ *   frame_dur QAM16C2:  3700ms  (single-frame burst incl. preamble, bench)
+ *
  *   DATAC16: no piggybacking (control-only) → 3950 + 1500ms margin ≈ 5.5s → 7s
  *   DATAC15: 3950 + 1035 + 4400 + 1500ms margin ≈ 10.9s → 11s
  *   DATAC4:  3950 + 1035 + 5800 + 1500ms margin ≈ 12.3s → 13s
  *   DATAC3:  3950 + 1035 + 3820 + 1500ms margin ≈ 10.3s → 11s
  *   DATAC1:  3950 + 1035 + 4810 + 1500ms margin ≈ 11.3s → 12s
+ *   DATAC17: 3950 + 1035 + 7400 + 1500ms margin ≈ 13.9s → 14s
+ *   QAM16C2: 3950 + 1035 + 3700 + 1500ms margin ≈ 10.2s → 11s
  *
  * retry_interval_s = ack_timeout_s + ARQ_ACK_GUARD_S (1s)
  *
@@ -74,6 +79,8 @@ const arq_mode_timing_t arq_mode_table[] = {
     {  FREEDV_MODE_DATAC4,    5.80f,     1.0f,      13.0f,       14.0f,          54 },
     {  FREEDV_MODE_DATAC3,    3.82f,     1.0f,      11.0f,       12.0f,          126 },
     {  FREEDV_MODE_DATAC1,    4.81f,     1.0f,      12.0f,       13.0f,          510 },
+    {  FREEDV_MODE_DATAC17,   7.40f,     1.0f,      14.0f,       15.0f,          1180 },
+    {  FREEDV_MODE_QAM16C2,   3.70f,     1.0f,      11.0f,       12.0f,          1213 },
 };
 
 const int arq_mode_table_count =

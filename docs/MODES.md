@@ -24,11 +24,25 @@ single-frame bursts, 100 trials, "delivered" = acquired AND decoded.
 | DATAC14 | 250  | 58  | 3   | (112,56)    | 0.69 | 90/100 at −2 dB ¹ | Reverse link ACK packets (low SNR) |
 | **DATAC15** | 200 | 68 | 30 | (768,256)  | 3.74 | 81/100 at −4 dB, 70/100 at −7 dB ² | Forward link data (very low SNR / fringe) |
 | **DATAC16** | 200 | 42 | 14 | (640,128)  | 3.08 | 78/100 at −4 dB, 67/100 at −7 dB ² | Control/ACK packets (very low SNR / fringe) |
+| **DATAC17** | 2100 | 1410 | 1180 | (15936,9456) | 6.71 | bench TBD (target ≈ +9 dB) | Forward link data (intermediate SNR, ~2× DATAC1 goodput) |
+| QAM16C2 | 2100 | 3100 | 1213 | (16200,9720) | 3.2 | 90/100 at 15 dB ¹ | Forward link data (high SNR, ~2.9× DATAC1 goodput) |
 
 ¹ Upstream codec2 figures.
 ² Mercury bench (ch simulator, `--mpp`, Octave-generated fading file).  The
 bench reproduces upstream DATAC13 exactly (90/100 at −4 dB) and DATAC4 within
 0.5 dB (89/100 at −3.6 dB), so the DATAC15/16 rows are directly comparable.
+
+## DATAC17 and QAM16C2: the fast end of the ladder
+
+Under stop-and-wait ARQ every frame pays a ~5.3 s ACK cycle, so goodput — not
+raw bps — picks the ladder order: DATAC1 ≈ 50 B/s, DATAC17 ≈ 98 B/s, QAM16C2
+≈ 142 B/s.  DATAC17 is a Mercury custom mode: QPSK on the same rate-0.6
+`H_16200_9720` codeword QAM16C2 uses, shortened to np=61 so its 1180-byte
+frame stays distinct from QAM16C2's 1213 bytes (the ARQ infers the peer TX
+mode from frame size).  QAM16C2 is ported from the Rhizomatica codec2 fork
+(dr-qam16-cport); it runs unclipped (PAPR ≈ 10 dB), so on peak-limited
+transmitters its effective +15 dB operating point is harder to reach than the
+clipped QPSK modes' figures suggest.
 
 ## Why DATAC15/16: behavior below the DATAC4/13 floor
 

@@ -167,7 +167,7 @@ attempts not addressed to them.
 | 2             | ACCEPT          | Callee → Caller | DATAC16   |
 | 3             | ACK             | IRS → ISS       | DATAC16   |
 | 4             | DISCONNECT      | Either          | DATAC16   |
-| 5             | DATA            | ISS → IRS       | DATAC15/4/3/1|
+| 5             | DATA            | ISS → IRS       | DATAC15/4/3/1/17/QAM16C2|
 | 6             | KEEPALIVE       | Either          | DATAC16   |
 | 7             | KEEPALIVE_ACK   | Either          | DATAC16   |
 | 8             | MODE_REQ        | ISS → IRS       | DATAC16   |
@@ -191,6 +191,8 @@ Empirical values from NVIS HF path OTA testing.  All times are seconds.
 | DATAC4  | 54            | 5.8 s          | 1.0 s     | 13.0 s      | 14.0 s         |
 | DATAC3  | 126           | 3.8 s          | 1.0 s     | 11.0 s      | 12.0 s         |
 | DATAC1  | 510           | 4.8 s          | 1.0 s     | 12.0 s      | 13.0 s         |
+| DATAC17 | 1180          | 7.4 s          | 1.0 s     | 14.0 s      | 15.0 s         |
+| QAM16C2 | 1213          | 3.7 s          | 1.0 s     | 11.0 s      | 12.0 s         |
 
 - **ACK timeout**: measured from PTT-ON to ACK reception deadline.
   `= frame_duration + channel_guard + ACK_return_time`, rounded up.
@@ -381,7 +383,7 @@ more data.
 ## Mode Upgrade / Downgrade
 
 Mode selection follows a `speed_level` ladder:
-`DATAC15 (0) → DATAC4 (1) → DATAC3 (2) → DATAC1 (3)`.
+`DATAC15 (0) → DATAC4 (1) → DATAC3 (2) → DATAC1 (3) → DATAC17 (4) → QAM16C2 (5)`.
 
 **Upgrade** triggers (ISS side, checked after each ACK):
 - SNR > threshold + `ARQ_SNR_HYST_DB` (1.0 dB), *and*
