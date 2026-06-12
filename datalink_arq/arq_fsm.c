@@ -123,10 +123,10 @@ void arq_fsm_init(arq_session_t *sess)
     sess->role           = ARQ_ROLE_NONE;
     sess->deadline_ms    = UINT64_MAX;
     sess->deadline_event = ARQ_EV_TIMER_RETRY;
-    sess->control_mode        = FREEDV_MODE_DATAC13;
-    sess->payload_mode        = FREEDV_MODE_DATAC4;  /* my TX mode, starts at safest level */
-    sess->peer_tx_mode        = FREEDV_MODE_DATAC4;  /* RX decoder, starts at safest level */
-    sess->initial_payload_mode = FREEDV_MODE_DATAC4;  /* overwritten by arq_set_initial_mode */
+    sess->control_mode        = FREEDV_MODE_DATAC16;
+    sess->payload_mode        = FREEDV_MODE_DATAC15;  /* my TX mode, starts at safest level */
+    sess->peer_tx_mode        = FREEDV_MODE_DATAC15;  /* RX decoder, starts at safest level */
+    sess->initial_payload_mode = FREEDV_MODE_DATAC15;  /* overwritten by arq_set_initial_mode */
     sess->speed_level    = 0;
     sess->tx_success_count = 0;
 }
@@ -172,7 +172,7 @@ static void sess_enter(arq_session_t *sess, arq_conn_state_t new_state,
     /* Reset data-flow and mode state when returning to idle connection states.
      * Restore peer_tx_mode to initial_payload_mode (= broadcast mode) so the
      * payload decoder can receive broadcast frames while LISTENING.  The
-     * session-start paths (RX_CALL, APP_CONNECT) override this to DATAC4
+     * session-start paths (RX_CALL, APP_CONNECT) override this to DATAC15
      * before entering ACCEPTING/CALLING. */
     if (new_state == ARQ_CONN_DISCONNECTED || new_state == ARQ_CONN_LISTENING)
     {
@@ -264,14 +264,15 @@ static void send_mode_negotiation(arq_session_t *sess, arq_subtype_t subtype, in
 }
 
 /** Map a FreeDV payload mode to a comparable rank: higher rank = faster/more
- *  aggressive mode.  DATAC1 (=10) is fastest, DATAC3 (=12) is medium, and
- *  DATAC4 (=18) is slowest — the numeric constants decrease as throughput
- *  increases, so direct integer comparisons between them are misleading. */
+ *  aggressive mode.  DATAC1 (=10) is fastest, then DATAC3 (=12), DATAC4
+ *  (=18), and DATAC15 (=22) is slowest — the numeric constants do not order
+ *  by throughput, so direct integer comparisons between them are misleading. */
 static int mode_rank(int mode)
 {
-    if (mode == FREEDV_MODE_DATAC1) return 2;
-    if (mode == FREEDV_MODE_DATAC3) return 1;
-    return 0; /* DATAC4 or any other conservative mode */
+    if (mode == FREEDV_MODE_DATAC1) return 3;
+    if (mode == FREEDV_MODE_DATAC3) return 2;
+    if (mode == FREEDV_MODE_DATAC4) return 1;
+    return 0; /* DATAC15 or any other conservative mode */
 }
 
 static int clamp_payload_mode_to_bandwidth(int mode)
@@ -336,7 +337,8 @@ static int select_best_mode(const arq_session_t *sess, int backlog)
     {
         int cur = effective_mode;
         if (cur == FREEDV_MODE_DATAC1) return FREEDV_MODE_DATAC3;
-        return FREEDV_MODE_DATAC4;
+        if (cur == FREEDV_MODE_DATAC3) return FREEDV_MODE_DATAC4;
+        return FREEDV_MODE_DATAC15;
     }
 
     /* Don't upgrade if the backlog fits in a single frame at the current mode.
@@ -366,14 +368,20 @@ static int select_best_mode(const arq_session_t *sess, int backlog)
     if (peer_snr >= c3_thresh && backlog >= ARQ_BACKLOG_MIN_DATAC3)
         return FREEDV_MODE_DATAC3;
 
-    return FREEDV_MODE_DATAC4;
+    float c4_thresh = (cur_rank >= mode_rank(FREEDV_MODE_DATAC4))
+                      ? ARQ_SNR_MIN_DATAC4_DB
+                      : ARQ_SNR_MIN_DATAC4_DB + ARQ_SNR_HYST_DB;
+    if (peer_snr >= c4_thresh && backlog >= ARQ_BACKLOG_MIN_DATAC4)
+        return FREEDV_MODE_DATAC4;
+
+    return FREEDV_MODE_DATAC15;
 }
 
 /** Check whether a mode upgrade/downgrade is warranted.  If yes, send
  *  MODE_REQ and enter MODE_REQ_TX.  Returns true when negotiation started. */
 static bool maybe_upgrade_mode(arq_session_t *sess)
 {
-    /* Stay on DATAC13 during startup window. */
+    /* Hold the initial DATAC15 payload mode during the startup window. */
     if (hermes_uptime_ms() < sess->startup_deadline_ms)
         return false;
 
@@ -713,8 +721,8 @@ static void fsm_disconnected(arq_session_t *sess, const arq_event_t *ev)
         sess->pending_disconnect = false;  /* clear stale deferred disconnect from prior session */
         sess->disconnect_deadline_ms = 0;
         /* Reset mode state for new session */
-        sess->payload_mode       = FREEDV_MODE_DATAC4;
-        sess->peer_tx_mode       = FREEDV_MODE_DATAC4;
+        sess->payload_mode       = FREEDV_MODE_DATAC15;
+        sess->peer_tx_mode       = FREEDV_MODE_DATAC15;
         sess->speed_level        = 0;
         sess->tx_success_count   = 0;
         sess->consecutive_retries = 0;
@@ -747,11 +755,11 @@ static void fsm_listening(arq_session_t *sess, const arq_event_t *ev)
         sess->session_id      = ev->session_id;
         sess->tx_retries_left = ARQ_ACCEPT_RETRY_SLOTS;
         /* Reset mode state so the payload decoder matches the new caller's
-         * initial DATAC4.  This must happen here (not in sess_enter for
+         * initial DATAC15.  This must happen here (not in sess_enter for
          * DISCONNECTED/LISTENING) because LISTENING needs peer_tx_mode to
          * stay at the broadcast mode for receiving broadcast frames. */
-        sess->payload_mode       = FREEDV_MODE_DATAC4;
-        sess->peer_tx_mode       = FREEDV_MODE_DATAC4;
+        sess->payload_mode       = FREEDV_MODE_DATAC15;
+        sess->peer_tx_mode       = FREEDV_MODE_DATAC15;
         sess->speed_level        = 0;
         sess->tx_success_count   = 0;
         sess->consecutive_retries = 0;
@@ -800,8 +808,8 @@ static void fsm_listening(arq_session_t *sess, const arq_event_t *ev)
             sess->tx_retransmit_len = 0;
             sess->tx_inflight_bytes = 0;
             sess->tx_retries_left = ARQ_DATA_RETRY_SLOTS;
-            sess->payload_mode       = FREEDV_MODE_DATAC4;
-            sess->peer_tx_mode       = FREEDV_MODE_DATAC4;
+            sess->payload_mode       = FREEDV_MODE_DATAC15;
+            sess->peer_tx_mode       = FREEDV_MODE_DATAC15;
             sess->pending_tx_mode    = 0;
             sess->mode_upgrade_count = 0;
             sess->speed_level        = 0;
@@ -838,8 +846,8 @@ static void fsm_calling(arq_session_t *sess, const arq_event_t *ev)
             sess->tx_retransmit_len = 0;  /* discard any stale retransmit buf from prior session */
             sess->tx_inflight_bytes = 0;
             sess->tx_retries_left = ARQ_DATA_RETRY_SLOTS;
-            sess->payload_mode       = FREEDV_MODE_DATAC4;   /* reset mode state from prior session */
-            sess->peer_tx_mode       = FREEDV_MODE_DATAC4;
+            sess->payload_mode       = FREEDV_MODE_DATAC15;  /* reset mode state from prior session */
+            sess->peer_tx_mode       = FREEDV_MODE_DATAC15;
             sess->pending_tx_mode    = 0;
             sess->mode_upgrade_count = 0;
             sess->speed_level        = 0;
@@ -905,8 +913,8 @@ static void fsm_accepting(arq_session_t *sess, const arq_event_t *ev)
         sess->tx_retransmit_len = 0;  /* discard any stale retransmit buf from prior session */
         sess->tx_inflight_bytes = 0;
         sess->tx_retries_left = ARQ_DATA_RETRY_SLOTS;
-        sess->payload_mode       = FREEDV_MODE_DATAC4;   /* reset mode state from prior session */
-        sess->peer_tx_mode       = FREEDV_MODE_DATAC4;
+        sess->payload_mode       = FREEDV_MODE_DATAC15;  /* reset mode state from prior session */
+        sess->peer_tx_mode       = FREEDV_MODE_DATAC15;
         sess->pending_tx_mode    = 0;
         sess->mode_upgrade_count = 0;
         sess->speed_level        = 0;
@@ -932,12 +940,12 @@ static void fsm_accepting(arq_session_t *sess, const arq_event_t *ev)
 
     case ARQ_EV_TX_COMPLETE:
         /* ACCEPT frame just finished transmitting.  The peer (caller) will
-         * start its first DATA frame (DATAC4, ~5800 ms) almost immediately
+         * start its first DATA frame (DATAC15, ~4400 ms) almost immediately
          * after our PTT drops.  The deadline that was set in TIMER_RETRY was
          * relative to when TIMER_RETRY fired — not to TX_COMPLETE — so it
-         * only left ~4400 ms of RX window after PTT-OFF, which is shorter
-         * than one DATAC4 frame.  Reset the deadline here so we always have
-         * a full ARQ_ACCEPT_RX_WINDOW_MS window (guard + DATAC4 frame +
+         * only left ~4400 ms of RX window after PTT-OFF, which is barely
+         * one DATAC15 frame.  Reset the deadline here so we always have
+         * a full ARQ_ACCEPT_RX_WINDOW_MS window (guard + DATAC15 frame +
          * margin) measured from the moment our TX actually ends. */
         sess->deadline_ms = hermes_uptime_ms() + ARQ_ACCEPT_RX_WINDOW_MS;
         break;
@@ -1445,7 +1453,7 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
         else if (ev->id == ARQ_EV_RX_MODE_REQ)
         {
             if (arq_protocol_mode_timing(ev->mode) != NULL &&
-                ev->mode != FREEDV_MODE_DATAC13)
+                ev->mode != FREEDV_MODE_DATAC16)
             {
                 /* Peer has taken ISS and is requesting a mode switch.  The peer
                  * only enters ISS after receiving our pending frame (via DATA_RX
@@ -1562,7 +1570,7 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
              * Per-direction: only update our RX decoder (peer_tx_mode), not our
              * own TX mode (payload_mode), which is managed independently. */
             if (arq_protocol_mode_timing(ev->mode) != NULL &&
-                ev->mode != FREEDV_MODE_DATAC13)
+                ev->mode != FREEDV_MODE_DATAC16)
             {
                 HLOGI(LOG_COMP, "MODE_REQ: peer TX mode %d -> %d (my TX mode %d unchanged)",
                       sess->peer_tx_mode, ev->mode, sess->payload_mode);
@@ -1792,9 +1800,9 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
             tm = arq_protocol_mode_timing(sess->control_mode);
             if (sess->pending_tx_mode == 0)
             {
-                /* Revert notification delivered.  Guard for a full DATAC13
-                 * round-trip (peer guard + MODE_ACK TX + channel clear ≈ 4s;
-                 * ack_timeout_s=6s provides adequate margin) so the peer's
+                /* Revert notification delivered.  Guard for a full DATAC16
+                 * round-trip (peer guard + MODE_ACK TX + channel clear ≈ 5s;
+                 * ack_timeout_s=7s provides adequate margin) so the peer's
                  * payload decoder is reset before our next DATA preamble.
                  * Skip mode-upgrade check here — we just aborted one.
                  *
@@ -1825,7 +1833,7 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
         if (ev->id == ARQ_EV_RX_MODE_ACK)
         {
             if (arq_protocol_mode_timing(ev->mode) != NULL &&
-                ev->mode != FREEDV_MODE_DATAC13)
+                ev->mode != FREEDV_MODE_DATAC16)
             {
                 /* If this MODE_ACK confirms a downgrade, start the hold
                  * timer NOW (not when MODE_REQ was sent).  The MODE_REQ/ACK

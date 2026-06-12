@@ -55,7 +55,7 @@
 #define ARQ_HDR_DELAY_IDX     7
 #define ARQ_FRAME_HDR_SIZE    8   /* bytes 0-7 inclusive */
 
-/* CONNECT frames (CALL/ACCEPT) compact layout — 14 bytes, DATAC13 only.
+/* CONNECT frames (CALL/ACCEPT) compact layout — 14 bytes, DATAC16 only.
  * Uses PACKET_TYPE_ARQ_CALL in the framer byte.
  *
  *  Byte 0: framer byte (PACKET_TYPE_ARQ_CALL | BW token, set by write_frame_header)
@@ -73,7 +73,7 @@
 #define ARQ_CONNECT_DST_CRC_SIZE      2   /* CRC16-CCITT of DST at bytes [2..3], little-endian */
 #define ARQ_CONNECT_SRC_MAX_ENCODED   (ARQ_CONNECT_MAX_ENCODED - ARQ_CONNECT_DST_CRC_SIZE) /* 10 */
 
-/* Compact CQ frame layout — 14 bytes, DATAC13 only.
+/* Compact CQ frame layout — 14 bytes, DATAC16 only.
  * Uses PACKET_TYPE_ARQ_CQ in the framer byte.
  *
  *  Byte 0: framer byte (PACKET_TYPE_ARQ_CQ | BW token)
@@ -182,10 +182,10 @@ typedef struct
                                             * DATAC1 re-sync after IRS ACK TX.
                                             * At 900ms: gap=832ms — 492ms of clear
                                             * air before the DATAC1 preamble. */
-#define ARQ_TURN_WAIT_AFTER_ACK_MS   3500  /* IRS post-ACK wait before TURN_REQ:
-                                            * ISS guard(900ms)+frame(2510ms)+margin */
+#define ARQ_TURN_WAIT_AFTER_ACK_MS   5000  /* IRS post-ACK wait before TURN_REQ:
+                                            * ISS guard(900ms)+frame(3740ms)+margin */
 #define ARQ_ACCEPT_RX_WINDOW_MS      9000  /* ACCEPTING RX window after ACCEPT TX:
-                                            * ISS_guard(900)+DATAC4(5800)+margin(2300)
+                                            * ISS_guard(900)+DATAC15(4400)+margin(3700)
                                             * Old value 7000 left only ~300ms margin
                                             * and raced with TIMER_RETRY, causing
                                             * 3-4 wasted ACCEPT retries (~28s).    */
@@ -205,7 +205,7 @@ extern _Atomic int arq_disconnect_retry_slots;
 /* Runtime-configurable CALL/ACCEPT retry interval in seconds (set via CALLINT
  * TCP command).  0.0 = use compiled default (7.0s).  Minimum enforced: 4.0s.
  * Only affects CALL/ACCEPT retry scheduling during connection setup — all
- * other DATAC13 control frames use the immutable table values. */
+ * other DATAC16 control frames use the immutable table values. */
 #define ARQ_CALLINT_MIN_S      4.0f
 #define ARQ_CALLINT_DEFAULT_S  0.0f   /* 0 = use table default */
 extern _Atomic float arq_callint_override_s;
@@ -226,16 +226,18 @@ extern _Atomic float arq_callint_override_s;
 #define ARQ_IRS_INACTIVITY_S          (ARQ_PEER_PAYLOAD_HOLD_S * \
                                        ARQ_IRS_INACTIVITY_CYCLES)
 #define ARQ_MODE_SWITCH_HYST_COUNT    1     /* SNR provides stability gate; 1 = immediate */
-#define ARQ_STARTUP_MAX_S             8     /* DATAC13-only startup window         */
+#define ARQ_STARTUP_MAX_S             10    /* control-mode-only startup window    */
 #define ARQ_STARTUP_ACKS_REQUIRED     1
 #define ARQ_SNR_HYST_DB               1.0f
-#define ARQ_SNR_MIN_DATAC4_DB        -4.0f  /* target MPP SNR (codec2 README) */
+#define ARQ_SNR_MIN_DATAC4_DB        -4.0f  /* target MPP SNR (codec2 README);
+                                             * entry threshold from DATAC15 floor */
 #define ARQ_SNR_MIN_DATAC3_DB        -1.0f
 #define ARQ_SNR_MIN_DATAC1_DB         3.0f
+#define ARQ_BACKLOG_MIN_DATAC4        31    /* > DATAC15 payload capacity         */
 #define ARQ_BACKLOG_MIN_DATAC3        56
 #define ARQ_BACKLOG_MIN_DATAC1        126
-#define ARQ_BACKLOG_MIN_BIDIR_UPGRADE 48    /* > DATAC4 payload capacity          */
-#define ARQ_LADDER_LEVELS             3     /* 0=DATAC4, 1=DATAC3, 2=DATAC1     */
+#define ARQ_BACKLOG_MIN_BIDIR_UPGRADE 31    /* > DATAC15 payload capacity         */
+#define ARQ_LADDER_LEVELS             4     /* 0=DATAC15, 1=DATAC4, 2=DATAC3, 3=DATAC1 */
 #define ARQ_LADDER_UP_SUCCESSES       2     /* clean ACKs required to step up    */
 #define ARQ_RETRY_DOWNGRADE_THRESHOLD 2     /* consecutive retries to force downgrade */
 #define ARQ_MODE_HOLD_AFTER_DOWNGRADE_S 6   /* hold lower mode after forced downgrade */
@@ -338,7 +340,7 @@ const arq_mode_timing_t *arq_protocol_mode_timing(int freedv_mode);
 
 /**
  * Return the CALL/ACCEPT retry interval in seconds, applying any
- * CALLINT override.  Falls back to the DATAC13 table default (7.0s).
+ * CALLINT override.  Falls back to the DATAC16 table default (8.0s).
  */
 float arq_protocol_call_interval_s(void);
 
@@ -491,13 +493,13 @@ int arq_protocol_parse_accept(const uint8_t *buf, size_t buf_len,
                                 int *bw_hz_out);
 
 /**
- * Build a compact DATAC13 CQ frame carrying source callsign and BW token.
+ * Build a compact DATAC16 CQ frame carrying source callsign and BW token.
  */
 int arq_protocol_build_cq(uint8_t *buf, size_t buf_len,
                            const char *src, int bw_hz);
 
 /**
- * Parse a compact DATAC13 CQ frame.
+ * Parse a compact DATAC16 CQ frame.
  */
 int arq_protocol_parse_cq(const uint8_t *buf, size_t buf_len,
                            char *src_out, int *bw_hz_out);

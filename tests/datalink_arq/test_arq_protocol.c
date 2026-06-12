@@ -191,6 +191,32 @@ void test_mode_timing_datac4(void)
     TEST_ASSERT_EQUAL(54, t->payload_bytes);
 }
 
+void test_mode_timing_datac15(void)
+{
+    const arq_mode_timing_t *t = arq_protocol_mode_timing(FREEDV_MODE_DATAC15);
+    TEST_ASSERT_NOT_NULL(t);
+    TEST_ASSERT_EQUAL_INT(FREEDV_MODE_DATAC15, t->freedv_mode);
+    TEST_ASSERT_EQUAL(30, t->payload_bytes);
+}
+
+void test_mode_timing_datac16(void)
+{
+    const arq_mode_timing_t *t = arq_protocol_mode_timing(FREEDV_MODE_DATAC16);
+    TEST_ASSERT_NOT_NULL(t);
+    TEST_ASSERT_EQUAL_INT(FREEDV_MODE_DATAC16, t->freedv_mode);
+    /* Control frames are fixed 14 bytes — the control mode must match. */
+    TEST_ASSERT_EQUAL(ARQ_CONTROL_FRAME_SIZE, t->payload_bytes);
+}
+
+void test_mode_timing_datac13_removed(void)
+{
+    /* DATAC13 was replaced by DATAC16 as the control mode and intentionally
+     * has no timing row (its 14-byte payload would collide with DATAC16 in
+     * the DATA-frame mode-inference loop). */
+    const arq_mode_timing_t *t = arq_protocol_mode_timing(FREEDV_MODE_DATAC13);
+    TEST_ASSERT_NULL(t);
+}
+
 void test_mode_timing_invalid(void)
 {
     const arq_mode_timing_t *t = arq_protocol_mode_timing(9999);
@@ -201,9 +227,9 @@ void test_mode_timing_invalid(void)
 
 void test_call_interval_default(void)
 {
-    /* Override is 0 (default) → should return DATAC13 table value (7.0s) */
+    /* Override is 0 (default) → should return DATAC16 table value (8.0s) */
     float interval = arq_protocol_call_interval_s();
-    TEST_ASSERT_FLOAT_WITHIN(0.01f, 7.0f, interval);
+    TEST_ASSERT_FLOAT_WITHIN(0.01f, 8.0f, interval);
 }
 
 void test_call_interval_override(void)
@@ -221,19 +247,19 @@ void test_call_interval_reset(void)
     TEST_ASSERT_FLOAT_WITHIN(0.01f, 5.0f, arq_protocol_call_interval_s());
 
     atomic_store(&arq_callint_override_s, ARQ_CALLINT_DEFAULT_S);
-    TEST_ASSERT_FLOAT_WITHIN(0.01f, 7.0f, arq_protocol_call_interval_s());
+    TEST_ASSERT_FLOAT_WITHIN(0.01f, 8.0f, arq_protocol_call_interval_s());
 }
 
-void test_mode_timing_datac13_unaffected_by_override(void)
+void test_mode_timing_datac16_unaffected_by_override(void)
 {
     /* Even with CALLINT override active, arq_protocol_mode_timing() must
      * return the immutable table entry — the override only takes effect
      * through arq_protocol_call_interval_s(). */
     atomic_store(&arq_callint_override_s, 5.0f);
 
-    const arq_mode_timing_t *t = arq_protocol_mode_timing(FREEDV_MODE_DATAC13);
+    const arq_mode_timing_t *t = arq_protocol_mode_timing(FREEDV_MODE_DATAC16);
     TEST_ASSERT_NOT_NULL(t);
-    TEST_ASSERT_FLOAT_WITHIN(0.01f, 7.0f, t->retry_interval_s);
+    TEST_ASSERT_FLOAT_WITHIN(0.01f, 8.0f, t->retry_interval_s);
 }
 
 int main(void)
@@ -258,11 +284,14 @@ int main(void)
     RUN_TEST(test_build_disconnect);
     /* Mode timing */
     RUN_TEST(test_mode_timing_datac4);
+    RUN_TEST(test_mode_timing_datac15);
+    RUN_TEST(test_mode_timing_datac16);
+    RUN_TEST(test_mode_timing_datac13_removed);
     RUN_TEST(test_mode_timing_invalid);
     /* CALLINT / call interval override */
     RUN_TEST(test_call_interval_default);
     RUN_TEST(test_call_interval_override);
     RUN_TEST(test_call_interval_reset);
-    RUN_TEST(test_mode_timing_datac13_unaffected_by_override);
+    RUN_TEST(test_mode_timing_datac16_unaffected_by_override);
     return UNITY_END();
 }

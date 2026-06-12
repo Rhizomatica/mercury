@@ -39,16 +39,20 @@
 extern volatile bool shutdown_; // global shutdown flag
 extern arq_info arq_conn; // ARQ connection info
 
-static const uint32_t hermes_broadcast_frame_size[7] = { 510, 126, 14, 54, 14, 3, 30 };
-static const int freedv_to_hermes_mode_map[7] = {
+static const uint32_t hermes_broadcast_frame_size[] = { 510, 126, 14, 54, 14, 3, 30, 30, 14 };
+static const int freedv_to_hermes_mode_map[] = {
     FREEDV_MODE_DATAC1,
     FREEDV_MODE_DATAC3,
     FREEDV_MODE_DATAC0,
     FREEDV_MODE_DATAC4,
     FREEDV_MODE_DATAC13,
     FREEDV_MODE_DATAC14,
-    FREEDV_MODE_FSK_LDPC
+    FREEDV_MODE_FSK_LDPC,
+    FREEDV_MODE_DATAC15,
+    FREEDV_MODE_DATAC16
 };
+#define HERMES_BROADCAST_MODE_COUNT \
+    ((int)(sizeof(freedv_to_hermes_mode_map) / sizeof(freedv_to_hermes_mode_map[0])))
 
 // Main function to handle broadcast operations
 void broadcast_run(generic_modem_t *g_modem)
@@ -62,7 +66,7 @@ void broadcast_run(generic_modem_t *g_modem)
     HLOGI("bcast", "Starting broadcast system...");
 
     int hermes_mode = -1;
-    for (int i = 0; i < 7; i++)
+    for (int i = 0; i < HERMES_BROADCAST_MODE_COUNT; i++)
     {
         if (g_modem->mode == freedv_to_hermes_mode_map[i])
         {

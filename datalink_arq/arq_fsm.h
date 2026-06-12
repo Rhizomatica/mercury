@@ -167,12 +167,12 @@ typedef struct
     /* --- Mode / speed --- */
     int      payload_mode;             /* MY data TX mode (ISS); per-direction,
                                         * independent of peer's TX mode        */
-    int      control_mode;             /* always FREEDV_MODE_DATAC13           */
+    int      control_mode;             /* always FREEDV_MODE_DATAC16           */
     int      initial_payload_mode;     /* startup payload mode (= broadcast RX
                                         * mode); restored on disconnect so the
                                         * payload decoder matches broadcast    */
-    int      speed_level;              /* reliability ladder: 0=DATAC4,
-                                        * 1=DATAC3, 2=DATAC1                  */
+    int      speed_level;              /* reliability ladder: 0=DATAC15,
+                                        * 1=DATAC4, 2=DATAC3, 3=DATAC1        */
     int      tx_success_count;         /* consecutive clean ACKs (no retry)
                                         * towards ladder step-up               */
     int      mode_upgrade_count;       /* SNR hysteresis counter for upgrade   */
@@ -184,7 +184,7 @@ typedef struct
     /* --- Retry/timeout bookkeeping --- */
     int      tx_retries_left;          /* retries remaining for current frame  */
     uint64_t state_enter_ms;          /* when current conn_state was entered   */
-    uint64_t startup_deadline_ms;     /* end of DATAC13-only startup period    */
+    uint64_t startup_deadline_ms;     /* end of control-mode-only startup      */
 
     /* --- Peer state observed from frames --- */
     bool     peer_has_data;            /* peer's HAS_DATA flag in last frame   */

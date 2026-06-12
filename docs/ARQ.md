@@ -35,10 +35,12 @@ radio using the FreeDV modem stack.
 
 Key properties:
 - **Half-duplex**, explicit turn-taking (ISS/IRS roles).
-- **DATAC13** is the *control-only* mode: CALL, ACCEPT, ACK, DISCONNECT, TURN_REQ/ACK,
-  KEEPALIVE, MODE_REQ/ACK frames are always 14 bytes on DATAC13.
-- **Data frames** start in DATAC4 (54 bytes payload) and may upgrade to DATAC3 (126 bytes)
-  or DATAC1 (510 bytes) based on SNR and backlog.
+- **DATAC16** is the *control-only* mode: CALL, ACCEPT, ACK, DISCONNECT, TURN_REQ/ACK,
+  KEEPALIVE, MODE_REQ/ACK frames are always 14 bytes on DATAC16 (a Mercury custom
+  rate-1/3 mode that replaced DATAC13 as the control mode).
+- **Data frames** start in DATAC15 (30 bytes payload, Mercury custom rate-1/3 mode) and
+  may upgrade to DATAC4 (54 bytes), DATAC3 (126 bytes) or DATAC1 (510 bytes) based on
+  SNR and backlog.
 - **VARA-compatible TCP TNC** interface: control on `base_port` (default 8300), data on
   `base_port+1` (8301). This interface is frozen and not modified by the ARQ rewrite.
 - **Broadcast** runs in parallel on a separate TCP port (default 8100) and is
@@ -84,7 +86,7 @@ Packet type values:
 | 0x2   | `ARQ_CALL`            | CALL and ACCEPT compact frames      |
 | 0x3   | `BROADCAST_CONTROL`   | Broadcast subsystem (unrelated)     |
 | 0x4   | `BROADCAST_DATA`      | Broadcast subsystem (unrelated)     |
-| 0x5   | `ARQ_CQ`              | Compact DATAC13 CQ metadata frame   |
+| 0x5   | `ARQ_CQ`              | Compact DATAC16 CQ metadata frame   |
 
 ### Standard 8-byte header (ARQ_CONTROL and ARQ_DATA)
 
@@ -137,7 +139,7 @@ Handshake semantics:
 
 ### CQ compact frame (ARQ_CQ, 14 bytes)
 
-Mercury also defines a compact DATAC13 CQ metadata frame:
+Mercury also defines a compact DATAC16 CQ metadata frame:
 
 ```
 Byte 0:      framer byte  (PACKET_TYPE_ARQ_CQ | BW token)
@@ -160,17 +162,17 @@ attempts not addressed to them.
 
 | Subtype value | Name            | Direction       | Mode used |
 |---------------|-----------------|-----------------|-----------|
-| 1             | CALL            | Caller → Callee | DATAC13   |
-| 2             | ACCEPT          | Callee → Caller | DATAC13   |
-| 3             | ACK             | IRS → ISS       | DATAC13   |
-| 4             | DISCONNECT      | Either          | DATAC13   |
-| 5             | DATA            | ISS → IRS       | DATAC4/3/1|
-| 6             | KEEPALIVE       | Either          | DATAC13   |
-| 7             | KEEPALIVE_ACK   | Either          | DATAC13   |
-| 8             | MODE_REQ        | ISS → IRS       | DATAC13   |
-| 9             | MODE_ACK        | IRS → ISS       | DATAC13   |
-| 10            | TURN_REQ        | IRS → ISS       | DATAC13   |
-| 11            | TURN_ACK        | ISS → IRS       | DATAC13   |
+| 1             | CALL            | Caller → Callee | DATAC16   |
+| 2             | ACCEPT          | Callee → Caller | DATAC16   |
+| 3             | ACK             | IRS → ISS       | DATAC16   |
+| 4             | DISCONNECT      | Either          | DATAC16   |
+| 5             | DATA            | ISS → IRS       | DATAC15/4/3/1|
+| 6             | KEEPALIVE       | Either          | DATAC16   |
+| 7             | KEEPALIVE_ACK   | Either          | DATAC16   |
+| 8             | MODE_REQ        | ISS → IRS       | DATAC16   |
+| 9             | MODE_ACK        | IRS → ISS       | DATAC16   |
+| 10            | TURN_REQ        | IRS → ISS       | DATAC16   |
+| 11            | TURN_ACK        | ISS → IRS       | DATAC16   |
 
 Note: Subtype 12 (`FLOW_HINT`) from the old protocol was removed; the `HAS_DATA`
 flag in byte 2 serves the same purpose.
@@ -183,10 +185,11 @@ Empirical values from NVIS HF path OTA testing.  All times are seconds.
 
 | Mode    | Payload bytes | Frame duration | TX period | ACK timeout | Retry interval |
 |---------|---------------|----------------|-----------|-------------|----------------|
-| DATAC13 | 14            | 2.5 s          | 1.0 s     | 6.0 s       | 7.0 s          |
-| DATAC4  | 54            | 5.7 s          | 1.0 s     | 9.0 s       | 10.0 s         |
-| DATAC3  | 126           | 4.0 s          | 1.0 s     | 8.0 s       | 9.0 s          |
-| DATAC1  | 510           | 6.5 s          | 1.0 s     | 11.0 s      | 12.0 s         |
+| DATAC16 | 14            | 3.7 s          | 1.0 s     | 7.0 s       | 8.0 s          |
+| DATAC15 | 30            | 4.4 s          | 1.0 s     | 11.0 s      | 12.0 s         |
+| DATAC4  | 54            | 5.8 s          | 1.0 s     | 13.0 s      | 14.0 s         |
+| DATAC3  | 126           | 3.8 s          | 1.0 s     | 11.0 s      | 12.0 s         |
+| DATAC1  | 510           | 4.8 s          | 1.0 s     | 12.0 s      | 13.0 s         |
 
 - **ACK timeout**: measured from PTT-ON to ACK reception deadline.
   `= frame_duration + channel_guard + ACK_return_time`, rounded up.
@@ -369,7 +372,7 @@ Either side may request a role reversal.
 3. Both sides swap roles.
 
 The `ARQ_PEER_PAYLOAD_HOLD_S` constant (15 s) prevents the ISS from immediately
-downgrading the modem mode back to DATAC13 while the peer is expected to have
+downgrading the modem mode back to DATAC16 while the peer is expected to have
 more data.
 
 ---
@@ -377,21 +380,21 @@ more data.
 ## Mode Upgrade / Downgrade
 
 Mode selection follows a `speed_level` ladder:
-`DATAC4 (0) → DATAC3 (1) → DATAC1 (2)`.
+`DATAC15 (0) → DATAC4 (1) → DATAC3 (2) → DATAC1 (3)`.
 
 **Upgrade** triggers (ISS side, checked after each ACK):
 - SNR > threshold + `ARQ_SNR_HYST_DB` (1.0 dB), *and*
-- backlog > `ARQ_BACKLOG_MIN_DATAC3` (56 bytes) or `ARQ_BACKLOG_MIN_DATAC1` (126 bytes).
+- backlog > `ARQ_BACKLOG_MIN_DATAC4` (31 bytes), `ARQ_BACKLOG_MIN_DATAC3` (56 bytes) or `ARQ_BACKLOG_MIN_DATAC1` (126 bytes).
 - A hysteresis counter (`ARQ_MODE_SWITCH_HYST_COUNT = 1`) avoids rapid flapping.
 
 **Downgrade** triggers:
-- A retry event (frame not ACKed in time): drop to DATAC4.
+- A retry event (frame not ACKed in time): step one level down (floor: DATAC15).
 - Peer SNR feedback below threshold.
 
 Mode change procedure: ISS sends `MODE_REQ`; IRS responds with `MODE_ACK` or
 ignores (ISS falls back after `ARQ_MODE_REQ_RETRIES = 2`).
 
-During the **startup window** (`ARQ_STARTUP_MAX_S = 8 s`), only DATAC13 is used
+During the **startup window** (`ARQ_STARTUP_MAX_S = 10 s`), only DATAC16 is used
 for bidirectional control framing to ensure the link is stable before upgrading.
 
 ---
@@ -506,7 +509,7 @@ the mode timing table in `arq_protocol.c`.
 | Symptom                                 | Likely cause                              | Fix                                    |
 |-----------------------------------------|-------------------------------------------|----------------------------------------|
 | Spurious retries despite good SNR       | `ack_timeout_s` too short                 | Increase by 1–2 s in mode table        |
-| Link stuck at DATAC4, no mode upgrade   | SNR not high enough, or backlog too small | Check `ARQ_BACKLOG_MIN_DATAC3`         |
+| Link stuck at DATAC15, no mode upgrade  | SNR not high enough, or backlog too small | Check `ARQ_BACKLOG_MIN_DATAC3`         |
 | UUCP handshake fails (timeout)          | First few data frames lost in startup     | Increase `ARQ_STARTUP_MAX_S` or reduce startup guard behaviour |
 | Long gaps between turns                 | `ARQ_PEER_PAYLOAD_HOLD_S` too large       | Reduce to 8–10 s                       |
 | Keepalive disconnects on idle link      | Propagation gap > keepalive window        | Increase `ARQ_KEEPALIVE_MISS_LIMIT`    |
@@ -523,7 +526,7 @@ All in `arq_protocol.h`:
 #define ARQ_DISCONNECT_RETRY_SLOTS    2
 #define ARQ_KEEPALIVE_INTERVAL_S      20
 #define ARQ_KEEPALIVE_MISS_LIMIT      5
-#define ARQ_STARTUP_MAX_S             8     /* DATAC13-only startup window      */
+#define ARQ_STARTUP_MAX_S             10    /* control-mode-only startup window */
 #define ARQ_PEER_PAYLOAD_HOLD_S       15    /* hold payload mode after activity */
 #define ARQ_SNR_HYST_DB               1.0f
 ```

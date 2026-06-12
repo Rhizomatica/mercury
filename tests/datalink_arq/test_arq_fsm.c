@@ -21,6 +21,7 @@ DEFINE_FFF_GLOBALS;
 
 #include "arq_fsm.h"
 #include "arq_protocol.h"
+#include "freedv/freedv_api.h"
 
 /* Provided by arq_test_stubs.c */
 extern void mock_set_uptime_ms(uint64_t ms);
@@ -93,6 +94,16 @@ void tearDown(void) { }
 void test_init_state_disconnected(void)
 {
     TEST_ASSERT_EQUAL_INT(ARQ_CONN_DISCONNECTED, sess.conn_state);
+}
+
+/* Initial modes: DATAC16 control plane, DATAC15 payload floor */
+void test_init_mode_defaults(void)
+{
+    TEST_ASSERT_EQUAL_INT(FREEDV_MODE_DATAC16, sess.control_mode);
+    TEST_ASSERT_EQUAL_INT(FREEDV_MODE_DATAC15, sess.payload_mode);
+    TEST_ASSERT_EQUAL_INT(FREEDV_MODE_DATAC15, sess.peer_tx_mode);
+    TEST_ASSERT_EQUAL_INT(FREEDV_MODE_DATAC15, sess.initial_payload_mode);
+    TEST_ASSERT_EQUAL_INT(0, sess.speed_level);
 }
 
 /* APP_LISTEN transitions to LISTENING */
@@ -476,6 +487,7 @@ int main(void)
     UNITY_BEGIN();
     /* Connection lifecycle tests */
     RUN_TEST(test_init_state_disconnected);
+    RUN_TEST(test_init_mode_defaults);
     RUN_TEST(test_listen_transitions_to_listening);
     RUN_TEST(test_connect_transitions_to_calling);
     RUN_TEST(test_incoming_call_transitions_to_accepting);

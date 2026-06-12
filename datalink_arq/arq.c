@@ -345,10 +345,10 @@ static void handle_cmd(const arq_cmd_msg_t *msg)
         if (msg->value <= 0)
         {
             atomic_store(&arq_callint_override_s, ARQ_CALLINT_DEFAULT_S);
-            const arq_mode_timing_t *datac13 =
-                arq_protocol_mode_timing(FREEDV_MODE_DATAC13);
+            const arq_mode_timing_t *ctrl =
+                arq_protocol_mode_timing(FREEDV_MODE_DATAC16);
             HLOGI(LOG_COMP, "CALLINT reset to default (%.1fs)",
-                  datac13 ? datac13->retry_interval_s : 7.0f);
+                  ctrl ? ctrl->retry_interval_s : 8.0f);
         }
         else
         {
@@ -626,7 +626,7 @@ void arq_handle_incoming_frame(uint8_t *data, size_t frame_size, float rx_snr)
         /* Infer the FreeDV mode from frame_size by matching the mode table.
          * This lets the FSM track what mode the peer was actually transmitting
          * in (for decoder-sync enforcement on role switch). */
-        ev.mode = FREEDV_MODE_DATAC13;   /* safe default */
+        ev.mode = FREEDV_MODE_DATAC15;   /* safe default */
         for (int i = 0; i < arq_mode_table_count; i++)
         {
             if ((int)frame_size == arq_mode_table[i].payload_bytes)
@@ -843,7 +843,7 @@ int arq_get_preferred_tx_mode(void) { return arq_modem_preferred_tx_mode(&g_sess
 void arq_set_active_modem_mode(int mode, size_t frame_size)
 {
     /* Only record payload_mode for data modes.  Control-mode TX switches
-     * (DATAC13 for ACK/TURN_REQ/etc.) must not overwrite the negotiated
+     * (DATAC16 for ACK/TURN_REQ/etc.) must not overwrite the negotiated
      * payload_mode that the RX decoder uses when the peer transmits data. */
     if (mode != g_sess.control_mode)
         g_sess.payload_mode = mode;

@@ -162,14 +162,14 @@ void arq_modem_ptt_off(void)
 
 int arq_modem_preferred_rx_mode(const arq_session_t *sess)
 {
-    /* Always receive in control mode (DATAC13) to catch all frame types */
+    /* Always receive in control mode (DATAC16) to catch all frame types */
     (void)sess;
-    return FREEDV_MODE_DATAC13;
+    return FREEDV_MODE_DATAC16;
 }
 
 int arq_modem_preferred_tx_mode(const arq_session_t *sess)
 {
-    if (!sess) return FREEDV_MODE_DATAC13;
+    if (!sess) return FREEDV_MODE_DATAC16;
 
     if (sess->conn_state == ARQ_CONN_CONNECTED &&
         (sess->dflow_state == ARQ_DFLOW_DATA_TX ||

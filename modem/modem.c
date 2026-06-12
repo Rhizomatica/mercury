@@ -134,10 +134,14 @@ typedef struct {
     struct freedv *datac3;
     struct freedv *datac4;
     struct freedv *datac13;
+    struct freedv *datac15;
+    struct freedv *datac16;
     size_t payload_datac1;
     size_t payload_datac3;
     size_t payload_datac4;
     size_t payload_datac13;
+    size_t payload_datac15;
+    size_t payload_datac16;
 } modem_mode_pool_t;
 
 static modem_mode_pool_t modem_mode_pool = {0};
@@ -159,14 +163,17 @@ static bool is_supported_split_mode(int mode)
     return mode == FREEDV_MODE_DATAC1 ||
            mode == FREEDV_MODE_DATAC3 ||
            mode == FREEDV_MODE_DATAC4 ||
-           mode == FREEDV_MODE_DATAC13;
+           mode == FREEDV_MODE_DATAC13 ||
+           mode == FREEDV_MODE_DATAC15 ||
+           mode == FREEDV_MODE_DATAC16;
 }
 
 static bool is_payload_split_mode(int mode)
 {
     return mode == FREEDV_MODE_DATAC1 ||
            mode == FREEDV_MODE_DATAC3 ||
-           mode == FREEDV_MODE_DATAC4;
+           mode == FREEDV_MODE_DATAC4 ||
+           mode == FREEDV_MODE_DATAC15;
 }
 
 static const char *mode_name_from_enum(int mode)
@@ -179,6 +186,8 @@ static const char *mode_name_from_enum(int mode)
     case FREEDV_MODE_DATAC4: return "DATAC4";
     case FREEDV_MODE_DATAC13: return "DATAC13";
     case FREEDV_MODE_DATAC14: return "DATAC14";
+    case FREEDV_MODE_DATAC15: return "DATAC15";
+    case FREEDV_MODE_DATAC16: return "DATAC16";
     case FREEDV_MODE_FSK_LDPC: return "FSK_LDPC";
     default: return "UNKNOWN";
     }
@@ -203,6 +212,8 @@ static void clear_mode_pool_locked(void)
     if (modem_mode_pool.datac3) freedv_close(modem_mode_pool.datac3);
     if (modem_mode_pool.datac4) freedv_close(modem_mode_pool.datac4);
     if (modem_mode_pool.datac13) freedv_close(modem_mode_pool.datac13);
+    if (modem_mode_pool.datac15) freedv_close(modem_mode_pool.datac15);
+    if (modem_mode_pool.datac16) freedv_close(modem_mode_pool.datac16);
     memset(&modem_mode_pool, 0, sizeof(modem_mode_pool));
 }
 
@@ -221,6 +232,10 @@ static int pool_open_mode_locked(struct freedv **slot, size_t *payload_slot, int
 static int init_mode_pool_locked(int frames_per_burst, int freedv_verbosity)
 {
     clear_mode_pool_locked();
+    if (pool_open_mode_locked(&modem_mode_pool.datac16, &modem_mode_pool.payload_datac16, FREEDV_MODE_DATAC16, frames_per_burst, freedv_verbosity) < 0)
+        goto fail;
+    if (pool_open_mode_locked(&modem_mode_pool.datac15, &modem_mode_pool.payload_datac15, FREEDV_MODE_DATAC15, frames_per_burst, freedv_verbosity) < 0)
+        goto fail;
     if (pool_open_mode_locked(&modem_mode_pool.datac13, &modem_mode_pool.payload_datac13, FREEDV_MODE_DATAC13, frames_per_burst, freedv_verbosity) < 0)
         goto fail;
     if (pool_open_mode_locked(&modem_mode_pool.datac4, &modem_mode_pool.payload_datac4, FREEDV_MODE_DATAC4, frames_per_burst, freedv_verbosity) < 0)
@@ -251,6 +266,12 @@ static struct freedv *pooled_freedv_for_mode_locked(int mode, size_t *payload_by
     case FREEDV_MODE_DATAC13:
         if (payload_bytes) *payload_bytes = modem_mode_pool.payload_datac13;
         return modem_mode_pool.datac13;
+    case FREEDV_MODE_DATAC15:
+        if (payload_bytes) *payload_bytes = modem_mode_pool.payload_datac15;
+        return modem_mode_pool.datac15;
+    case FREEDV_MODE_DATAC16:
+        if (payload_bytes) *payload_bytes = modem_mode_pool.payload_datac16;
+        return modem_mode_pool.datac16;
     default:
         if (payload_bytes) *payload_bytes = 0;
         return NULL;
@@ -263,7 +284,9 @@ static bool is_pooled_freedv_locked(struct freedv *f)
            (f == modem_mode_pool.datac1 ||
             f == modem_mode_pool.datac3 ||
             f == modem_mode_pool.datac4 ||
-            f == modem_mode_pool.datac13);
+            f == modem_mode_pool.datac13 ||
+            f == modem_mode_pool.datac15 ||
+            f == modem_mode_pool.datac16);
 }
 
 static uint32_t compute_bitrate_bps_locked(struct freedv *freedv)
@@ -288,14 +311,16 @@ static uint32_t bitrate_level_from_payload_mode(int mode)
         return 3;
     case FREEDV_MODE_DATAC4:
         return 4;
+    case FREEDV_MODE_DATAC15:
+        return 15;
     default:
-        return 4;
+        return 15;
     }
 }
 
 static int select_payload_rx_mode(const arq_runtime_snapshot_t *snapshot, bool ready)
 {
-    int mode = FREEDV_MODE_DATAC4;
+    int mode = FREEDV_MODE_DATAC15;
 
     if (!ready || !snapshot)
         return mode;
@@ -432,7 +457,7 @@ try_shm_connect2:
     broadcast_frame_size = payload_bytes_per_modem_frame;
     
     int modem_sample_rate = freedv_get_modem_sample_rate(g_modem->freedv);
-    HLOGI("modem", "Initialized persistent FreeDV mode pool (DATAC13/DATAC4/DATAC3/DATAC1), frames per burst: %d", frames_per_burst);
+    HLOGI("modem", "Initialized persistent FreeDV mode pool (DATAC16/DATAC15/DATAC13/DATAC4/DATAC3/DATAC1), frames per burst: %d", frames_per_burst);
     HLOGI("modem", "Active FreeDV mode at startup: %d (%s), verbosity: %d", mode, mode_name_from_enum(mode), freedv_verbosity);
     HLOGI("modem", "Modem expects sample rate: %d Hz", modem_sample_rate);
     HLOGI("modem", "Modem payload bytes per frame: %zu", payload_bytes_per_modem_frame);
@@ -1419,7 +1444,7 @@ void *rx_thread(void *g_modem)
             was_tx = false;
         }
 
-        if (rx_decoder_bind_mode(&control_decoder, FREEDV_MODE_DATAC13) < 0 ||
+        if (rx_decoder_bind_mode(&control_decoder, FREEDV_MODE_DATAC16) < 0 ||
             rx_decoder_bind_mode(&payload_decoder, payload_mode) < 0)
         {
             usleep(100000);
