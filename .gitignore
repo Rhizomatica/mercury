@@ -45,3 +45,13 @@ utils/broadcast_test
 
 # Test binaries
 tests/test_*
+
+# Bench/scratch artifacts (never commit)
+tap-*.f64
+*.champion
+mercury.lnx
+logs/
+claude_context.txt
+context-*.txt
+copilot-*.txt
+screen.jpg

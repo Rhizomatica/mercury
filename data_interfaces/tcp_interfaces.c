@@ -38,6 +38,8 @@
 #include "os_interop.h"
 
 #include "tcp_interfaces.h"
+#include <errno.h>
+#include <string.h>
 #include "ring_buffer_posix.h"
 #include "net.h"
 #include "arq.h"
@@ -1102,13 +1104,13 @@ void *tcp_server_thread(void *port_ptr)
     tcp_socket = socket(AF_INET, SOCK_STREAM, 0);
     if (tcp_socket < 0)
     {
-        perror("Failed to create TCP socket");
+        HLOGE("tcp-bcast", "Failed to create TCP socket: %s", strerror(errno));
         return NULL;
     }
 
     if (setsockopt(tcp_socket, SOL_SOCKET, SO_REUSEADDR, (const char *)&opt, sizeof(opt)) < 0)
     {
-        perror("Failed to set SO_REUSEADDR on broadcast TCP socket");
+        HLOGE("tcp-bcast", "Failed to set SO_REUSEADDR: %s", strerror(errno));
         SOCK_CLOSE(tcp_socket);
         return NULL;
     }
@@ -1120,14 +1122,14 @@ void *tcp_server_thread(void *port_ptr)
 
     if (bind(tcp_socket, (struct sockaddr *)&local_addr, sizeof(local_addr)) < 0)
     {
-        perror("Failed to bind TCP socket");
+        HLOGE("tcp-bcast", "Failed to bind TCP socket: %s", strerror(errno));
         SOCK_CLOSE(tcp_socket);
         return NULL;
     }
 
     if (listen(tcp_socket, 1) < 0)
     {
-        perror("Failed to listen on TCP socket");
+        HLOGE("tcp-bcast", "Failed to listen on TCP socket: %s", strerror(errno));
         SOCK_CLOSE(tcp_socket);
         return NULL;
     }
@@ -1139,7 +1141,7 @@ void *tcp_server_thread(void *port_ptr)
         client_socket = accept(tcp_socket, (struct sockaddr *)&client_addr, &client_addr_len);
         if (client_socket < 0)
         {
-            perror("Failed to accept client connection");
+            HLOGE("tcp-bcast", "Failed to accept client connection: %s", strerror(errno));
             if (shutdown_)
                 break; // Exit if shutdown flag is set
             continue; // Retry accepting a connection
@@ -1206,7 +1208,7 @@ void tnc_send_connected()
     const char *dest_call = arq_conn.dst_addr[0]
                             ? arq_conn.dst_addr
                             : arq_conn.my_call_sign;
-    sprintf(buffer, "CONNECTED %s %s %d\r",
+    snprintf(buffer, sizeof(buffer), "CONNECTED %s %s %d\r",
             source_call, dest_call, arq_reported_bandwidth_hz());
     if (tnc_queue_line(buffer) < 0)
         HLOGW("tcp-ctl", "Error queuing connected message");
@@ -1219,7 +1221,7 @@ void tnc_send_cqframe(const char *source_call, int bw_hz)
     if (!source_call || source_call[0] == '\0')
         return;
 
-    sprintf(buffer, "CQFRAME %s %d\r", source_call, bw_hz);
+    snprintf(buffer, sizeof(buffer), "CQFRAME %s %d\r", source_call, bw_hz);
     if (tnc_queue_line(buffer) < 0)
         HLOGW("tcp-ctl", "Error queuing CQFRAME message");
 }
@@ -1239,7 +1241,7 @@ void tnc_send_cancelpending()
 void tnc_send_disconnected()
 {
     char buffer[128];
-    sprintf(buffer, "DISCONNECTED\r");
+    snprintf(buffer, sizeof(buffer), "DISCONNECTED\r");
     if (tnc_queue_line(buffer) < 0)
         HLOGW("tcp-ctl", "Error queuing disconnected message");
 }

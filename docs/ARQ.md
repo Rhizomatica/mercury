@@ -505,7 +505,7 @@ the mode timing table in `arq_protocol.c`.
    (`ARQ_DATA_RETRY_SLOTS = 10`) indicates marginal timing.  Increase `ack_timeout_s`.
 
 4. **Turn latency** — time between `tx_end` on ISS and first `tx_start` on new ISS.
-   Should be < 2 × `ARQ_CHANNEL_GUARD_MS` (400 ms).
+   Should be < 2 × `ARQ_CHANNEL_GUARD_MS` (700 ms).
 
 ### Common issues
 
@@ -522,7 +522,11 @@ the mode timing table in `arq_protocol.c`.
 All in `arq_protocol.h`:
 
 ```c
-#define ARQ_CHANNEL_GUARD_MS          400   /* ms after PTT-OFF before next TX  */
+#define ARQ_CHANNEL_GUARD_MS          700   /* armed at frame DECODE (fires
+                                             * ~200ms before sender PTT-OFF), so
+                                             * the effective clear-air gap is
+                                             * ~500ms; the radio needs ~340ms
+                                             * for TX->RX switch */
 #define ARQ_ACK_GUARD_S               1     /* slack added to retry interval    */
 #define ARQ_CALL_RETRY_SLOTS          4     /* CALL retries                     */
 #define ARQ_DATA_RETRY_SLOTS          10    /* DATA retries before disconnect   */
