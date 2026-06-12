@@ -137,69 +137,106 @@ func runChannelDirOnce(ctx context.Context, chBin, txPath, rxPath string, params
 		}
 	}()
 
-	var buf [blockS32 + 4096]byte
-	bufLen := 0
-	s16block := make([]byte, blockS16)
-	ticker := time.NewTicker(19 * time.Millisecond)
-	defer ticker.Stop()
+	// Two independent streaming pumps instead of a write/read lockstep:
+	// ch consumes and produces 160-sample blocks but its internal pipe
+	// buffering must not be coupled to our scheduling.  The TX pump reads
+	// whatever Mercury wrote (a whole burst arrives much faster than real
+	// time), converts s32le→s16le and streams it into ch; the RX pump
+	// streams ch output back as s32le into the peer's capture FIFO.
 
-loop:
-	for {
-		select {
-		case <-ctx.Done():
-			break loop
-		case <-ticker.C:
-		}
+	var inBytes, outBytes int64
+	pumpDone := make(chan error, 2)
 
-		// Read available bytes from TX FIFO (non-blocking)
+	go func() { // TX FIFO -> ch stdin
+		buf := make([]byte, 64*1024)
+		s16 := make([]byte, 32*1024)
+		carry := 0
 		for {
-			var tmp [4096]byte
-			n, err := syscall.Read(txFD, tmp[:])
+			select {
+			case <-ctx.Done():
+				pumpDone <- ctx.Err()
+				return
+			default:
+			}
+			n, err := syscall.Read(txFD, buf[carry:])
 			if n > 0 {
-				if bufLen+n <= len(buf) {
-					copy(buf[bufLen:], tmp[:n])
-					bufLen += n
+				n += carry
+				whole := n &^ 3 // s32le sample alignment
+				for i := 0; i < whole/4; i++ {
+					v := int32(binary.LittleEndian.Uint32(buf[i*4 : i*4+4]))
+					binary.LittleEndian.PutUint16(s16[i*2:i*2+2], uint16(int16(v>>16)))
 				}
+				if _, werr := chStdin.Write(s16[:whole/2]); werr != nil {
+					pumpDone <- werr
+					return
+				}
+				inBytes += int64(whole)
+				carry = n - whole
+				copy(buf[:carry], buf[whole:n])
+				continue
+			}
+			if err == syscall.EAGAIN || (err == nil && n == 0) {
+				time.Sleep(2 * time.Millisecond) // idle: no TX in progress
+				continue
+			}
+			pumpDone <- err
+			return
+		}
+	}()
+
+	go func() { // ch stdout -> RX FIFO, paced at real-time 8 kHz
+		// Mercury's TX side writes a whole burst into its FIFO immediately
+		// while holding PTT for the frame's nominal wall-clock duration.
+		// Delivery to the peer must be paced at the sample rate: otherwise
+		// the peer decodes and replies while the sender still has PTT on,
+		// and the half-duplex RX path discards the reply (TX drain/flush).
+		s16 := make([]byte, blockS16)
+		s32 := make([]byte, blockS32)
+		deadline := time.Now()
+		for {
+			n, err := io.ReadFull(chStdout, s16)
+			if n > 0 {
+				whole := n &^ 1
+				for i := 0; i < whole/2; i++ {
+					v := int16(binary.LittleEndian.Uint16(s16[i*2 : i*2+2]))
+					binary.LittleEndian.PutUint32(s32[i*4:i*4+4], uint32(int32(v)<<16))
+				}
+				// Absolute-clock pacing: one 160-sample block per 20 ms.
+				now := time.Now()
+				if deadline.Before(now) {
+					deadline = now // idle gap: restart the pacing clock
+				}
+				time.Sleep(deadline.Sub(now))
+				deadline = deadline.Add(20 * time.Millisecond)
+
+				written := 0
+				for written < whole*2 {
+					wn, werr := syscall.Write(rxFD, s32[written:whole*2])
+					if wn > 0 {
+						written += wn
+					}
+					if werr != nil {
+						if werr == syscall.EAGAIN {
+							// Peer capture FIFO momentarily full.
+							time.Sleep(2 * time.Millisecond)
+							continue
+						}
+						pumpDone <- werr
+						return
+					}
+				}
+				outBytes += int64(whole * 2)
 			}
 			if err != nil {
-				break
+				pumpDone <- err
+				return
 			}
 		}
+	}()
 
-		// Process blocks when we have enough data
-		for bufLen >= blockS32 {
-			s32toS16block(buf[:blockS32], s16block)
-
-			if _, err := chStdin.Write(s16block); err != nil {
-				break loop
-			}
-
-			s16out := make([]byte, blockS16)
-			if _, err := io.ReadFull(chStdout, s16out); err != nil {
-				break loop
-			}
-
-			s32out := make([]byte, blockS32)
-			s16toS32block(s16out, s32out)
-
-			written := 0
-			for written < len(s32out) {
-				select {
-				case <-ctx.Done():
-					break loop
-				default:
-				}
-				wn, werr := syscall.Write(rxFD, s32out[written:])
-				if werr != nil {
-					break loop
-				}
-				written += wn
-			}
-
-			copy(buf[:], buf[blockS32:bufLen])
-			bufLen -= blockS32
-		}
-	}
+	err = <-pumpDone
+	fmt.Printf("channel bridge %s->%s: %d bytes in, %d bytes out (%v)\n",
+		filepath.Base(txPath), filepath.Base(rxPath), inBytes, outBytes, err)
 
 	close(done)
 	chStdin.Close()
