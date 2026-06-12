@@ -129,7 +129,8 @@ typedef struct
 
     /* Received data payload — carried through event queue so the FSM can
      * validate sequence numbers before delivering to the application. */
-    uint8_t  payload[512];
+    uint8_t  payload[1280];           /* >= largest user payload: QAM16C2
+                                       * carries 1213 - 8 = 1205 bytes      */
     size_t   payload_len;
 
     /* Local receive SNR at the time the frame was decoded (dB, 0 = unknown).
@@ -221,11 +222,12 @@ typedef struct
                                         * channel can't support it)            */
 
     /* --- Retransmit buffer --- */
-    uint8_t  tx_retransmit_buf[1024];  /* last-sent data frame bytes; must be
-                                       * >= max frame: 8 hdr + 502 DATAC1
-                                       * payload = 510 bytes (was 256, too
-                                       * small → DATAC1 retries consumed fresh
-                                       * ring bytes, corrupting byte stream)  */
+    uint8_t  tx_retransmit_buf[1280];  /* last-sent data frame bytes; must be
+                                       * >= max frame: QAM16C2 is 1213 bytes
+                                       * (8 hdr + 1205 payload).  Sized small
+                                       * once (256) → DATAC1 retries consumed
+                                       * fresh ring bytes, corrupting the
+                                       * byte stream.                         */
     int      tx_retransmit_len;       /* 0 = no saved frame                   */
     uint8_t  tx_retransmit_seq;       /* tx_seq the saved frame belongs to    */
     int      tx_inflight_bytes;      /* payload bytes in unACKed frame       */

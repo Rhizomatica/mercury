@@ -96,9 +96,12 @@
 #define ARQ_FLAG_HAS_DATA  0x40  /* bit 6: sender has data queued (IRS→ISS)   */
 #define ARQ_FLAG_LEN_HI    0x20  /* bit 5: DATA frames only — payload_valid    *
                                   * field carries bits [7:0] of valid byte     *
-                                  * count; this flag carries bit 8, allowing   *
-                                  * counts up to 511 (needed for DATAC1 which  *
-                                  * has 502-byte payloads).                    */
+                                  * count; this flag carries bit 8.            */
+#define ARQ_FLAG_LEN_B9    0x10  /* bit 4: valid byte count bit 9              */
+#define ARQ_FLAG_LEN_B10   0x08  /* bit 3: valid byte count bit 10 — together  *
+                                  * with LEN_HI/LEN_B9 allows counts up to     *
+                                  * 2047 (DATAC17 carries 1172 user bytes,     *
+                                  * QAM16C2 1205).                             */
 
 /* ======================================================================
  * Frame subtypes
@@ -435,14 +438,16 @@ int arq_protocol_build_mode_ack(uint8_t *buf, size_t buf_len,
  * @param rx_ack_seq   Last seq received from peer (piggybacked ACK).
  * @param flags        ARQ_FLAG_TURN_REQ | ARQ_FLAG_HAS_DATA (bitmask).
  * @param snr_raw      Local SNR encoded for wire.
- * @param payload_valid Number of valid bytes in the payload slot.
+ * @param payload_valid Number of valid bytes in the payload slot (low 8 bits
+ *                      go on the wire here; bits 8-10 travel in the caller-
+ *                      provided flags as LEN_HI/LEN_B9/LEN_B10).
  * @param payload      Payload bytes (must be <= buf_len - ARQ_FRAME_HDR_SIZE).
  * @param payload_len  Number of payload bytes.
  */
 int arq_protocol_build_data(uint8_t *buf, size_t buf_len,
                              uint8_t session_id, uint8_t tx_seq,
                              uint8_t rx_ack_seq, uint8_t flags,
-                             uint8_t snr_raw, uint8_t payload_valid,
+                             uint8_t snr_raw, uint16_t payload_valid,
                              const uint8_t *payload, size_t payload_len);
 
 /* --- CALL/ACCEPT compact frames (PACKET_TYPE_ARQ_CALL) --- */

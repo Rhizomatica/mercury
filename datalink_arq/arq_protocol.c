@@ -337,7 +337,7 @@ int arq_protocol_build_mode_ack(uint8_t *buf, size_t buf_len,
 int arq_protocol_build_data(uint8_t *buf, size_t buf_len,
                              uint8_t session_id, uint8_t tx_seq,
                              uint8_t rx_ack_seq, uint8_t flags,
-                             uint8_t snr_raw, uint8_t payload_valid,
+                             uint8_t snr_raw, uint16_t payload_valid,
                              const uint8_t *payload, size_t payload_len)
 {
     size_t total = ARQ_FRAME_HDR_SIZE + payload_len;
@@ -351,7 +351,9 @@ int arq_protocol_build_data(uint8_t *buf, size_t buf_len,
     buf[ARQ_HDR_SEQ_IDX]      = tx_seq;
     buf[ARQ_HDR_ACK_IDX]      = rx_ack_seq;
     buf[ARQ_HDR_SNR_IDX]      = snr_raw;
-    buf[ARQ_HDR_DELAY_IDX]    = payload_valid;   /* 0=full, else=valid bytes */
+    buf[ARQ_HDR_DELAY_IDX]    = (uint8_t)(payload_valid & 0xFF);
+    /* bits 8-10 of payload_valid travel in the caller-provided flags
+     * (ARQ_FLAG_LEN_HI / LEN_B9 / LEN_B10) */
     memcpy(buf + ARQ_FRAME_HDR_SIZE, payload, payload_len);
     write_frame_header(buf, PACKET_TYPE_ARQ_DATA, 0);
     return (int)total;

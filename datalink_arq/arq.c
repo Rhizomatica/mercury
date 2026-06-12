@@ -639,12 +639,14 @@ void arq_handle_incoming_frame(uint8_t *data, size_t frame_size, float rx_snr)
                             ? (frame_size - ARQ_FRAME_HDR_SIZE) : 0;
         /* ack_delay_raw is repurposed in DATA frames: 0 = full frame (all
          * slot_bytes are valid), else = bits [7:0] of the valid byte count.
-         * ARQ_FLAG_LEN_HI in the flags byte carries bit 8, allowing counts
-         * up to 511 (needed for DATAC1 which has 502-byte payloads).
-         * See ARQ_DATA_LEN_FULL / ARQ_FLAG_LEN_HI in arq_protocol.h. */
+         * Bits 8-10 travel in the flags byte (ARQ_FLAG_LEN_HI / LEN_B9 /
+         * LEN_B10), allowing counts up to 2047 (QAM16C2 carries 1205 user
+         * bytes).  See ARQ_DATA_LEN_FULL in arq_protocol.h. */
+        const uint8_t len_flags =
+            ARQ_FLAG_LEN_HI | ARQ_FLAG_LEN_B9 | ARQ_FLAG_LEN_B10;
         size_t valid_bytes;
         if (hdr.ack_delay_raw == ARQ_DATA_LEN_FULL &&
-            !(hdr.flags & ARQ_FLAG_LEN_HI))
+            !(hdr.flags & len_flags))
         {
             valid_bytes = slot_bytes;
         }
@@ -653,6 +655,10 @@ void arq_handle_incoming_frame(uint8_t *data, size_t frame_size, float rx_snr)
             valid_bytes = (size_t)hdr.ack_delay_raw;
             if (hdr.flags & ARQ_FLAG_LEN_HI)
                 valid_bytes |= 0x100u;
+            if (hdr.flags & ARQ_FLAG_LEN_B9)
+                valid_bytes |= 0x200u;
+            if (hdr.flags & ARQ_FLAG_LEN_B10)
+                valid_bytes |= 0x400u;
         }
         if (valid_bytes > slot_bytes)
             valid_bytes = slot_bytes;   /* sanity cap */

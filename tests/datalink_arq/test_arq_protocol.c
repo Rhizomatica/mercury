@@ -181,6 +181,41 @@ void test_build_disconnect(void)
     TEST_ASSERT_EQUAL_UINT8(0x42, hdr.session_id);
 }
 
+/* ---- DATA frame valid-length encoding (3 flag bits + low byte) ---- */
+
+/* Encode payload_valid > 511 the way send_data_frame() does, then verify
+ * the wire bytes reconstruct the exact count the way arq.c does.  1205 is
+ * QAM16C2's user payload (1213 - 8 header); 0x4B5 exercises LEN_B10. */
+void test_data_valid_length_over_511(void)
+{
+    static const uint16_t lens[] = { 256, 511, 512, 1023, 1172, 1205, 2047 };
+    uint8_t payload[8] = {0xA5};
+
+    for (size_t i = 0; i < sizeof(lens) / sizeof(lens[0]); i++)
+    {
+        uint16_t len = lens[i];
+        uint8_t flags = 0;
+        if (len & 0x100) flags |= ARQ_FLAG_LEN_HI;
+        if (len & 0x200) flags |= ARQ_FLAG_LEN_B9;
+        if (len & 0x400) flags |= ARQ_FLAG_LEN_B10;
+
+        uint8_t buf[64];
+        int size = arq_protocol_build_data(buf, sizeof(buf), 0x42, 1, 0,
+                                           flags, 0, len,
+                                           payload, sizeof(payload));
+        TEST_ASSERT_GREATER_THAN(0, size);
+
+        arq_frame_hdr_t hdr;
+        TEST_ASSERT_EQUAL_INT(0, arq_protocol_decode_hdr(buf, (size_t)size, &hdr));
+
+        size_t valid = (size_t)hdr.ack_delay_raw;
+        if (hdr.flags & ARQ_FLAG_LEN_HI)  valid |= 0x100u;
+        if (hdr.flags & ARQ_FLAG_LEN_B9)  valid |= 0x200u;
+        if (hdr.flags & ARQ_FLAG_LEN_B10) valid |= 0x400u;
+        TEST_ASSERT_EQUAL_UINT(len, valid);
+    }
+}
+
 /* ---- Mode timing lookup ---- */
 
 void test_mode_timing_datac4(void)
@@ -282,6 +317,7 @@ int main(void)
     /* Frame builders */
     RUN_TEST(test_build_ack);
     RUN_TEST(test_build_disconnect);
+    RUN_TEST(test_data_valid_length_over_511);
     /* Mode timing */
     RUN_TEST(test_mode_timing_datac4);
     RUN_TEST(test_mode_timing_datac15);
