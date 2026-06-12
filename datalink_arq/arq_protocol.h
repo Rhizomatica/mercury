@@ -243,9 +243,14 @@ extern _Atomic float arq_callint_override_s;
                                              * SNR estimates. */
 #define ARQ_SNR_MIN_DATAC3_DB        -1.0f
 #define ARQ_SNR_MIN_DATAC1_DB         3.0f
-#define ARQ_SNR_MIN_DATAC17_DB        9.0f  /* QPSK rate-0.6 big codeword;
-                                             * provisional, bench-tuned     */
-#define ARQ_SNR_MIN_QAM16C2_DB       15.0f  /* upstream README_data figure  */
+#define ARQ_SNR_MIN_DATAC17_DB        7.0f  /* bench (docs/MODES.md): goodput
+                                             * crossover vs DATAC1 ~ +6 dB MPP;
+                                             * 89/100 delivery at +8 (entry
+                                             * threshold with hysteresis)    */
+#define ARQ_SNR_MIN_QAM16C2_DB       13.0f  /* bench: goodput crossover vs
+                                             * DATAC17 ~ +11 dB MPP, 84/100 at
+                                             * +13.7; upstream's published
+                                             * operating point is +15        */
 #define ARQ_BACKLOG_MIN_DATAC4        31    /* > DATAC15 payload capacity         */
 #define ARQ_BACKLOG_MIN_DATAC3        56
 #define ARQ_BACKLOG_MIN_DATAC1        126

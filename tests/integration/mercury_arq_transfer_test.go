@@ -164,14 +164,26 @@ func TestMercuryARQTransfer(t *testing.T) {
 	}
 	_ = connA.SetReadDeadline(time.Time{})
 
-	payload := []byte(strings.Repeat("MERCURY-DATAC15-PAYLOAD-0123456789", 3)) // 102 bytes
+	// Default 102 bytes (3 datac15 frames).  MERCURY_TEST_PAYLOAD_KB sets a
+	// larger transfer to exercise the speed-ladder climb and the >511-byte
+	// DATA valid-length encoding (datac17/qam16c2 frames).
+	repeats := 3
+	if v := os.Getenv("MERCURY_TEST_PAYLOAD_KB"); v != "" {
+		kb, err := strconv.Atoi(v)
+		if err != nil || kb <= 0 {
+			t.Fatalf("bad MERCURY_TEST_PAYLOAD_KB %q", v)
+		}
+		repeats = (kb*1024 + 33) / 34
+	}
+	payload := []byte(strings.Repeat("MERCURY-DATAC15-PAYLOAD-0123456789", repeats))
 	if _, err := dataA.Write(payload); err != nil {
 		failWithLogs("write payload: %v", err)
 	}
 
 	rx := make([]byte, 0, len(payload))
 	buf := make([]byte, 4096)
-	rxDeadline := time.Now().Add(5 * time.Minute)
+	rxDeadline := time.Now().Add(5*time.Minute +
+		time.Duration(len(payload)/100)*time.Second)
 	for len(rx) < len(payload) && time.Now().Before(rxDeadline) {
 		if err := dataB.SetReadDeadline(time.Now().Add(15 * time.Second)); err != nil {
 			t.Fatal(err)

@@ -24,8 +24,8 @@ single-frame bursts, 100 trials, "delivered" = acquired AND decoded.
 | DATAC14 | 250  | 58  | 3   | (112,56)    | 0.69 | 90/100 at −2 dB ¹ | Reverse link ACK packets (low SNR) |
 | **DATAC15** | 200 | 68 | 30 | (768,256)  | 3.74 | 81/100 at −4 dB, 70/100 at −7 dB ² | Forward link data (very low SNR / fringe) |
 | **DATAC16** | 200 | 42 | 14 | (640,128)  | 3.08 | 78/100 at −4 dB, 67/100 at −7 dB ² | Control/ACK packets (very low SNR / fringe) |
-| **DATAC17** | 2100 | 1410 | 1180 | (15936,9456) | 6.71 | bench TBD (target ≈ +9 dB) | Forward link data (intermediate SNR, ~2× DATAC1 goodput) |
-| QAM16C2 | 2100 | 3100 | 1213 | (16200,9720) | 3.2 | 90/100 at 15 dB ¹ | Forward link data (high SNR, ~2.9× DATAC1 goodput) |
+| **DATAC17** | 2100 | 1410 | 1180 | (15936,9456) | 6.71 | 89/100 at +8 dB, 97/100 at +10 dB ² | Forward link data (intermediate SNR, ~2× DATAC1 goodput) |
+| QAM16C2 | 2100 | 3100 | 1213 | (16200,9720) | 3.2 | 94/100 at +15.7 dB, 84/100 at +13.7 dB ² (upstream: 90/100 at 15 dB ¹) | Forward link data (high SNR, ~2.9× DATAC1 goodput) |
 
 ¹ Upstream codec2 figures.
 ² Mercury bench (ch simulator, `--mpp`, Octave-generated fading file).  The
@@ -42,7 +42,28 @@ frame stays distinct from QAM16C2's 1213 bytes (the ARQ infers the peer TX
 mode from frame size).  QAM16C2 is ported from the Rhizomatica codec2 fork
 (dr-qam16-cport); it runs unclipped (PAPR ≈ 10 dB), so on peak-limited
 transmitters its effective +15 dB operating point is harder to reach than the
-clipped QPSK modes' figures suggest.
+clipped QPSK modes' figures suggest — on the bench this shows up directly as
+~5 dB less average signal power at the same ch gain setting.
+
+Measured MPP delivery (1 Hz Doppler, 100 single-frame bursts), same bench as
+the DATAC15/16 tables (DATAC1 control row reproduces upstream within ~1 dB):
+
+| SNR (3 kHz) | DATAC1 | DATAC17 | QAM16C2 |
+|---|---|---|---|
+| +2 dB  | 32 | —  | —  |
+| +4 dB  | 72 | 3  | —  |
+| +6 dB  | 93 | 54 | —  |
+| +8 dB  | —  | 89 | —  |
+| +10 dB | —  | 97 | 36 (+9.7) |
+| +12 dB | —  | —  | 73 (+11.7) |
+| +14 dB | —  | —  | 84 (+13.7) |
+| +16 dB | —  | —  | 94 (+15.7) |
+
+AWGN: DATAC17 100/100 at +5, 63/100 at +3; QAM16C2 100/100 down to +8.7.
+
+Goodput crossovers including the ACK cycle put the ladder upgrade thresholds
+at `ARQ_SNR_MIN_DATAC17_DB = +7` (crossover vs DATAC1 ≈ +6) and
+`ARQ_SNR_MIN_QAM16C2_DB = +13` (crossover vs DATAC17 ≈ +11).
 
 ## Why DATAC15/16: behavior below the DATAC4/13 floor
 
