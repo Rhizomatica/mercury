@@ -229,8 +229,15 @@ extern _Atomic float arq_callint_override_s;
 #define ARQ_STARTUP_MAX_S             10    /* control-mode-only startup window    */
 #define ARQ_STARTUP_ACKS_REQUIRED     1
 #define ARQ_SNR_HYST_DB               1.0f
-#define ARQ_SNR_MIN_DATAC4_DB        -4.0f  /* target MPP SNR (codec2 README);
-                                             * entry threshold from DATAC15 floor */
+#define ARQ_SNR_MIN_DATAC4_DB        -6.0f  /* entry threshold from the DATAC15
+                                             * floor.  Bench (docs/MODES.md):
+                                             * DATAC15/DATAC4 goodput crossover
+                                             * incl. ACK overhead is ~-7.5 dB
+                                             * MPP / -8.5 dB AWGN; -6 (+1 dB
+                                             * hysteresis on upgrade) leaves
+                                             * 1.5 dB margin, and the 2-retry
+                                             * downgrade catches optimistic
+                                             * SNR estimates. */
 #define ARQ_SNR_MIN_DATAC3_DB        -1.0f
 #define ARQ_SNR_MIN_DATAC1_DB         3.0f
 #define ARQ_BACKLOG_MIN_DATAC4        31    /* > DATAC15 payload capacity         */

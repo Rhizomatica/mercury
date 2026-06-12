@@ -68,9 +68,12 @@ DATAC13 ≈ −9.6 dB, with DATAC16 degrading much more gracefully below that.
 
 Operational consequences, reflected in the ARQ design (see `docs/ARQ.md`):
 
-- **DATAC15** is the payload-ladder floor and initial mode.  Goodput per
-  airtime crosses over vs DATAC4 around −5…−6 dB MPP; the ladder's
-  `ARQ_SNR_MIN_DATAC4_DB = −4 dB` upgrade threshold sits safely above that.
+- **DATAC15** is the payload-ladder floor and initial mode.  Including the
+  full ARQ cycle overhead (frame + guards + DATAC16 ACK ≈ frame + 5.3 s),
+  goodput crosses over vs DATAC4 at ≈ −7.5 dB MPP / −8.5 dB AWGN; the
+  ladder's `ARQ_SNR_MIN_DATAC4_DB = −6 dB` upgrade threshold (−5 dB effective
+  with hysteresis) leaves ~1.5 dB margin to the crossover and ~3 dB to
+  DATAC4's AWGN cliff.
 - **DATAC16** replaced DATAC13 as the ARQ control mode.  At moderate SNR the
   two are comparable (ARQ retries absorb the difference); below −9 dB DATAC16
   delivers roughly twice as many control frames, which is what keeps a fringe
