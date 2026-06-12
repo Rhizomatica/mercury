@@ -779,9 +779,13 @@ static void *arq_reactor_thread(void *port)
                 {
                     if (read_buffer(data_rx_buffer_arq, tx_buf, available) == 0)
                     {
-                        ssize_t sent = tcp_write(DATA_TCP_PORT, tx_buf, available);
+                        /* Bytes were already consumed from the ring, so a
+                         * partial write must not drop them — loop until the
+                         * kernel takes everything (or the socket dies). */
+                        ssize_t sent = tcp_write_all(DATA_TCP_PORT, tx_buf, available);
                         if (sent < (ssize_t)available)
-                            HLOGW("tcp-data", "Partial DATA write (%zd/%zu)", sent, available);
+                            HLOGW("tcp-data", "DATA write failed (%zd/%zu), socket restarting",
+                                  sent, available);
                     }
                 }
             }

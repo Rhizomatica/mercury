@@ -618,6 +618,7 @@ int main(int argc, char *argv[])
     if (radio_io_init(radio_type, radio_device, hamlib_log_level, radio_serial_speed) != 0)
     {
         fprintf(stderr, "Failed to initialize radio control.\n");
+        audioio_deinit(&radio_capture, &radio_playback);
         hermes_log_shutdown();
         return EXIT_FAILURE;
     }

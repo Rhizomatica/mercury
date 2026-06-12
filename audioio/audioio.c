@@ -403,7 +403,6 @@ void *radio_playback_thread(void *device_ptr)
     conf.buf.device_id = (device_ptr && ((const char *)device_ptr)[0] != '\0')
                          ? (const char *) device_ptr : NULL;
     uint32_t period_ms;
-    uint32_t period_bytes;
 
 
 #if defined(_WIN32)
@@ -432,10 +431,6 @@ void *radio_playback_thread(void *device_ptr)
         audio = (ffaudio_interface *) &ffcoreaudio;
 #endif
 
-    period_bytes = conf.buf.sample_rate * sizeof(double) * period_ms / 1000;
-
-    //printf("period_ms: %u\n", period_ms);
-    //printf("period_size: %u\n", period_bytes);
 
 #if defined(_WIN32)
     /* DirectSound device IDs are GUID strings from get_soundcard_list().
@@ -465,6 +460,12 @@ void *radio_playback_thread(void *device_ptr)
 
     // output is int32_t stereo (48kHz)
     int32_t *buffer_output_stereo = (int32_t *) malloc(SIGNAL_BUFFER_SIZE * sizeof(int32_t) * 2 * 6); // a big enough buffer
+
+    if (!input_buffer || !buffer_upsampled || !buffer_output_stereo)
+    {
+        HLOGE("audio-play", "Failed to allocate playback buffers");
+        goto finish_play;
+    }
 
     ffuint total_written = 0;
     int ch_layout = STEREO;
@@ -532,8 +533,10 @@ void *radio_playback_thread(void *device_ptr)
 #endif
     ch_layout = STEREO;
     
-    // period_bytes at 8kHz (input rate) - adjust for the lower sample rate
-    uint32_t period_bytes_8k = period_bytes / resample_ratio;
+    /* Bytes per period of 8 kHz mono int32 modem audio.  The previous
+     * formula (48 kHz x sizeof(double) / resample_ratio) worked out to
+     * 8 bytes per 8 kHz sample, i.e. chunks of 2x period_ms. */
+    uint32_t period_bytes_8k = 8000u * sizeof(int32_t) * period_ms / 1000u;
 
     /* Polyphase anti-imaging upsampler, stateful across periods (its filter
      * history bridges read boundaries, so no per-period click — issue #81). */
@@ -796,6 +799,15 @@ void *radio_capture_thread(void *device_ptr)
 
     buffer_output = (int32_t *) malloc(SIGNAL_BUFFER_SIZE * sizeof(int32_t) * 2);
     buffer_downsampled = (int32_t *) malloc(SIGNAL_BUFFER_SIZE * sizeof(int32_t));
+    if (!buffer_output || !buffer_downsampled)
+    {
+        HLOGE("audio-cap", "Failed to allocate capture buffers");
+        free(buffer_output);
+        free(buffer_downsampled);
+        buffer_output = NULL;
+        buffer_downsampled = NULL;
+        goto finish_cap;
+    }
 
 #if 0 // TODO: parametrize this
     if (radio_type == RADIO_SBITX)
