@@ -413,7 +413,7 @@ void *radio_playback_thread(void *device_ptr)
     if (audio_subsystem == AUDIO_SUBSYSTEM_DSOUND)
         audio = (ffaudio_interface *) &ffdsound;
 #elif defined(__linux__)
-    conf.buf.buffer_length_msec = 30;
+    conf.buf.buffer_length_msec = 80;
     period_ms = conf.buf.buffer_length_msec / 3;
     if (audio_subsystem == AUDIO_SUBSYSTEM_ALSA)
         audio = (ffaudio_interface *) &ffalsa;
@@ -689,7 +689,7 @@ void *radio_capture_thread(void *device_ptr)
         audio = (ffaudio_interface *) &ffdsound;
     }
 #elif defined(__linux__)
-    conf.buf.buffer_length_msec = 30;
+    conf.buf.buffer_length_msec = 80;
     if (audio_subsystem == AUDIO_SUBSYSTEM_ALSA)
         audio = (ffaudio_interface *) &ffalsa;
     if (audio_subsystem == AUDIO_SUBSYSTEM_PULSE)
