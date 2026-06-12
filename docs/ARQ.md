@@ -40,7 +40,8 @@ Key properties:
   rate-1/3 mode that replaced DATAC13 as the control mode).
 - **Data frames** start in DATAC15 (30 bytes payload, Mercury custom rate-1/3 mode) and
   may upgrade to DATAC4 (54 bytes), DATAC3 (126 bytes) or DATAC1 (510 bytes) based on
-  SNR and backlog.
+  SNR and backlog.  See `docs/MODES.md` for the full mode table with measured
+  AWGN/MPP performance.
 - **VARA-compatible TCP TNC** interface: control on `base_port` (default 8300), data on
   `base_port+1` (8301). This interface is frozen and not modified by the ARQ rewrite.
 - **Broadcast** runs in parallel on a separate TCP port (default 8100) and is
