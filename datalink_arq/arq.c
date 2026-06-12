@@ -133,8 +133,14 @@ static void ptt_event_inject(int mode, bool ptt_on)
  * ====================================================================== */
 
 static void cb_send_tx_frame(int packet_type, int mode,
-                              size_t frame_size, const uint8_t *frame)
+                              size_t frame_size, const uint8_t *frame,
+                              int burst_remaining)
 {
+    /* Frames of one PTT burst arrive as consecutive calls (FSM event loop
+     * is single-threaded); the modem action is enqueued once, when the
+     * last frame (burst_remaining == 0) lands in the ring. */
+    static int pending_burst_frames = 0;
+
     if (!frame || frame_size == 0 || frame_size > INT_BUFFER_SIZE)
         return;
 
@@ -146,15 +152,26 @@ static void cb_send_tx_frame(int packet_type, int mode,
     {
         HLOGW(LOG_COMP, "TX buffer write failed (ptype=%d size=%zu)",
               packet_type, frame_size);
-        return;
+    }
+    else
+    {
+        pending_burst_frames++;
     }
 
+    if (burst_remaining > 0)
+        return;  /* more frames of this burst follow */
+
+    if (pending_burst_frames == 0)
+        return;  /* every write failed — nothing to transmit */
+
     arq_action_t action = {
-        .type       = (packet_type == PACKET_TYPE_ARQ_DATA)
-                      ? ARQ_ACTION_TX_PAYLOAD : ARQ_ACTION_TX_CONTROL,
-        .mode       = mode,
-        .frame_size = frame_size,
+        .type        = (packet_type == PACKET_TYPE_ARQ_DATA)
+                       ? ARQ_ACTION_TX_PAYLOAD : ARQ_ACTION_TX_CONTROL,
+        .mode        = mode,
+        .frame_size  = frame_size,
+        .frame_count = pending_burst_frames,
     };
+    pending_burst_frames = 0;
     arq_modem_enqueue(&action);
 }
 
@@ -392,7 +409,7 @@ static void handle_cmd(const arq_cmd_msg_t *msg)
             return;
         }
 
-        cb_send_tx_frame(PACKET_TYPE_ARQ_CQ, g_sess.control_mode, (size_t)n, frame);
+        cb_send_tx_frame(PACKET_TYPE_ARQ_CQ, g_sess.control_mode, (size_t)n, frame, 0);
         HLOGI(LOG_COMP, "Queued CQ frame from %s (%d Hz)", source_call, bw_hz);
         return;
     }

@@ -77,7 +77,10 @@ typedef struct
 {
     arq_action_type_t type;
     int mode;
-    size_t frame_size;
+    size_t frame_size;   /* bytes per frame                                  */
+    int frame_count;     /* frames in this PTT burst (>= 1); the modem reads
+                          * frame_count * frame_size bytes and modulates them
+                          * behind a single preamble                          */
 } arq_action_t;
 
 /** @brief Snapshot of current ARQ runtime state for telemetry/decision making. */

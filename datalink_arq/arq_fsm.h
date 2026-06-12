@@ -15,6 +15,7 @@
 
 #include "arq.h"  /* CALLSIGN_MAX_SIZE, arq_action_t/type, arq_info */
 #include "arq_timing.h"  /* arq_timing_ctx_t */
+#include "arq_protocol.h"  /* ARQ_BURST_MAX */
 
 /* ======================================================================
  * Level 1 — Connection FSM states
@@ -222,15 +223,19 @@ typedef struct
                                         * channel can't support it)            */
 
     /* --- Retransmit buffer --- */
-    uint8_t  tx_retransmit_buf[1280];  /* last-sent data frame bytes; must be
-                                       * >= max frame: QAM16C2 is 1213 bytes
-                                       * (8 hdr + 1205 payload).  Sized small
-                                       * once (256) → DATAC1 retries consumed
-                                       * fresh ring bytes, corrupting the
-                                       * byte stream.                         */
-    int      tx_retransmit_len;       /* 0 = no saved frame                   */
-    uint8_t  tx_retransmit_seq;       /* tx_seq the saved frame belongs to    */
-    int      tx_inflight_bytes;      /* payload bytes in unACKed frame       */
+    /* --- TX window (go-back-N, one PTT burst) ---
+     * Slot buffers must hold the largest frame: QAM16C2 is 1213 bytes
+     * (8 hdr + 1205 payload). */
+    struct
+    {
+        uint8_t buf[1280];
+        int     len;            /* frame bytes (hdr + payload slot)       */
+        int     payload_len;    /* valid user bytes carried               */
+        uint8_t seq;
+    }        tx_window[ARQ_BURST_MAX];
+    int      tx_window_count;          /* unACKed frames in the window      */
+    bool     tx_window_retx;           /* window needed >=1 retransmission  */
+    int      tx_inflight_bytes;       /* payload bytes across the window    */
 
     /* --- Keepalive tracking --- */
     int      keepalive_miss_count;
@@ -257,8 +262,12 @@ typedef struct
 typedef struct
 {
     /** Enqueue a complete TX frame to the modem action queue. */
+    /* burst_remaining: DATA frames still to follow in the same PTT burst
+     * (0 = last/only frame — the bridge enqueues the modem action then).
+     * Control frames always pass 0. */
     void (*send_tx_frame)(int packet_type, int mode,
-                          size_t frame_size, const uint8_t *frame);
+                          size_t frame_size, const uint8_t *frame,
+                          int burst_remaining);
 
     /** Notify TCP interface that a connection is established. */
     void (*notify_connected)(const char *remote_call);

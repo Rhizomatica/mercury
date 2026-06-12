@@ -73,14 +73,14 @@ extern int  arithmetic_decode(uint8_t *input, int max_len, char *output, int max
  * ====================================================================== */
 
 const arq_mode_timing_t arq_mode_table[] = {
-    /*  freedv_mode           frame_dur  tx_period  ack_timeout  retry_interval  payload_bytes */
-    {  FREEDV_MODE_DATAC16,   3.74f,     1.0f,      7.0f,        8.0f,           14 },
-    {  FREEDV_MODE_DATAC15,   4.40f,     1.0f,      11.0f,       12.0f,          30 },
-    {  FREEDV_MODE_DATAC4,    5.80f,     1.0f,      13.0f,       14.0f,          54 },
-    {  FREEDV_MODE_DATAC3,    3.82f,     1.0f,      11.0f,       12.0f,          126 },
-    {  FREEDV_MODE_DATAC1,    4.81f,     1.0f,      12.0f,       13.0f,          510 },
-    {  FREEDV_MODE_DATAC17,   7.40f,     1.0f,      14.0f,       15.0f,          1180 },
-    {  FREEDV_MODE_QAM16C2,   3.70f,     1.0f,      11.0f,       12.0f,          1213 },
+    /*  freedv_mode           frame_dur  tx_period  ack_timeout  retry_interval  payload  burst */
+    {  FREEDV_MODE_DATAC16,   3.74f,     1.0f,      7.0f,        8.0f,           14,   1 },
+    {  FREEDV_MODE_DATAC15,   4.40f,     1.0f,      11.0f,       12.0f,          30,   1 },
+    {  FREEDV_MODE_DATAC4,    5.80f,     1.0f,      13.0f,       14.0f,          54,   1 },
+    {  FREEDV_MODE_DATAC3,    3.82f,     1.0f,      11.0f,       12.0f,          126,   1 },
+    {  FREEDV_MODE_DATAC1,    4.81f,     1.0f,      12.0f,       13.0f,          510,   1 },
+    {  FREEDV_MODE_DATAC17,   7.40f,     1.0f,      14.0f,       15.0f,          1180,   1 },
+    {  FREEDV_MODE_QAM16C2,   3.70f,     1.0f,      11.0f,       12.0f,          1213,   1 },
 };
 
 const int arq_mode_table_count =

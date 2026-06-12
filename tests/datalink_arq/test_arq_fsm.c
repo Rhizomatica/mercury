@@ -28,7 +28,7 @@ extern void mock_set_uptime_ms(uint64_t ms);
 
 /* ---- FFF Fakes for arq_fsm_callbacks_t ---- */
 
-FAKE_VOID_FUNC(fake_send_tx_frame, int, int, size_t, const uint8_t *);
+FAKE_VOID_FUNC(fake_send_tx_frame, int, int, size_t, const uint8_t *, int);
 FAKE_VOID_FUNC(fake_notify_connected, const char *);
 FAKE_VOID_FUNC(fake_notify_pending, const char *);
 FAKE_VOID_FUNC(fake_notify_cancelpending);
@@ -390,6 +390,40 @@ void test_app_disconnect_defers_in_wait_ack(void)
     TEST_ASSERT_EQUAL_INT(ARQ_DFLOW_DATA_TX, sess.dflow_state);
 }
 
+/* Cumulative ACK with ack_seq == window base + 1 confirms the single
+ * in-flight frame (the K=1 degenerate case of the burst window). */
+void test_wait_ack_cumulative_ack_advances_window(void)
+{
+    goto_connected();
+    goto_wait_ack();
+    TEST_ASSERT_EQUAL_INT(1, sess.tx_window_count);
+
+    arq_event_t ev = make_event(ARQ_EV_RX_ACK);
+    ev.ack_seq = (uint8_t)(sess.tx_window[0].seq + 1);
+    arq_fsm_dispatch(&sess, &ev);
+
+    TEST_ASSERT_EQUAL_INT(0, sess.tx_window_count);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_CONNECTED, sess.conn_state);
+    TEST_ASSERT_NOT_EQUAL(ARQ_DFLOW_WAIT_ACK, sess.dflow_state);
+}
+
+/* A stale ACK (ack_seq == window base — peer still expects our oldest
+ * frame) must confirm nothing: stay in WAIT_ACK with the window intact
+ * so TIMER_ACK drives the retransmission. */
+void test_wait_ack_stale_ack_keeps_window(void)
+{
+    goto_connected();
+    goto_wait_ack();
+    TEST_ASSERT_EQUAL_INT(1, sess.tx_window_count);
+
+    arq_event_t ev = make_event(ARQ_EV_RX_ACK);
+    ev.ack_seq = sess.tx_window[0].seq;   /* nothing new received */
+    arq_fsm_dispatch(&sess, &ev);
+
+    TEST_ASSERT_EQUAL_INT(1, sess.tx_window_count);
+    TEST_ASSERT_EQUAL_INT(ARQ_DFLOW_WAIT_ACK, sess.dflow_state);
+}
+
 /* Retry exhaustion within the no-progress budget persists (stays CONNECTED);
  * once the budget elapses, the next exhaustion tears the link down. */
 void test_retry_exhaustion_persists_then_disconnects(void)
@@ -498,6 +532,8 @@ int main(void)
     RUN_TEST(test_app_disconnect_defers_with_backlog);
     RUN_TEST(test_pending_disconnect_retries_last_frame_before_teardown);
     RUN_TEST(test_app_disconnect_defers_in_wait_ack);
+    RUN_TEST(test_wait_ack_cumulative_ack_advances_window);
+    RUN_TEST(test_wait_ack_stale_ack_keeps_window);
     RUN_TEST(test_disconnect_drain_timeout_forces_teardown);
     RUN_TEST(test_retry_exhaustion_persists_then_disconnects);
     RUN_TEST(test_retry_exhaustion_disconnects_from_zero_uptime_baseline);

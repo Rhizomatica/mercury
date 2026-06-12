@@ -102,6 +102,10 @@
                                   * with LEN_HI/LEN_B9 allows counts up to     *
                                   * 2047 (DATAC17 carries 1172 user bytes,     *
                                   * QAM16C2 1205).                             */
+#define ARQ_FLAG_BURST_END 0x04  /* bit 2: DATA frames only — last frame of a  *
+                                  * multi-frame burst; the IRS sends one       *
+                                  * cumulative ACK when it sees this (or when  *
+                                  * the burst fallback timer expires).         */
 
 /* ======================================================================
  * Frame subtypes
@@ -156,6 +160,9 @@ typedef struct
  * payload_bytes:    usable data bytes per frame.
  * ====================================================================== */
 
+/* Upper bound on frames per TX burst (sizes the go-back-N window). */
+#define ARQ_BURST_MAX 5
+
 typedef struct
 {
     int   freedv_mode;          /* FREEDV_MODE_* constant                        */
@@ -164,6 +171,8 @@ typedef struct
     float ack_timeout_s;        /* from PTT-ON to ACK deadline                   */
     float retry_interval_s;     /* ack_timeout_s + ACK_GUARD_S                   */
     int   payload_bytes;        /* usable payload per frame                      */
+    int   burst_frames;         /* DATA frames per PTT burst (1..ARQ_BURST_MAX);
+                                 * 1 = classic stop-and-wait                     */
 } arq_mode_timing_t;
 
 /* The one FreeDV mode used for all ARQ control frames (CALL/ACCEPT/ACK/

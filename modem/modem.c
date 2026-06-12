@@ -1334,25 +1334,30 @@ void *tx_thread(void *g_modem)
             else if (action.type == ARQ_ACTION_MODE_SWITCH)
                 sent_from_action = true;
 
+            int action_frames = action.frame_count;
+            if (action_frames < 1) action_frames = 1;
+            if (action_frames > ARQ_BURST_MAX) action_frames = ARQ_BURST_MAX;
+            size_t action_total = action_frame_size * (size_t)action_frames;
+
             if (action_buffer &&
                 action_frame_size > 0 &&
                 action_frame_size <= INT_BUFFER_SIZE &&
                 action.frame_size == action_frame_size &&
-                size_buffer(action_buffer) >= action_frame_size)
+                size_buffer(action_buffer) >= action_total)
             {
-                if (data_size < action_frame_size)
+                if (data_size < action_total)
                 {
-                    uint8_t *new_data = (uint8_t *)realloc(data, action_frame_size);
+                    uint8_t *new_data = (uint8_t *)realloc(data, action_total);
                     if (!new_data)
                     {
                         HLOGE("modem-tx", "Failed to allocate memory for action TX data");
                         continue;
                     }
                     data = new_data;
-                    data_size = action_frame_size;
+                    data_size = action_total;
                 }
-                read_buffer(action_buffer, data, action_frame_size);
-                if (send_modulated_data_with_cq_status(modem, data, 1) == 0)
+                read_buffer(action_buffer, data, action_total);
+                if (send_modulated_data_with_cq_status(modem, data, action_frames) == 0)
                     sent_from_action = true;
                 else
                     HLOGW("modem-tx", "Failed to send queued TX action");
