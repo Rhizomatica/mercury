@@ -63,6 +63,9 @@ extern "C" {
 #define FREEDV_MODE_DATAC13 19
 #define FREEDV_MODE_DATAC14 20
 #define FREEDV_MODE_DATA_CUSTOM 21
+// Mercury custom modes (not in upstream codec2)
+#define FREEDV_MODE_DATAC15 22
+#define FREEDV_MODE_DATAC16 23
 
 // Sample rates used
 #define FREEDV_FS_8000 8000
@@ -147,6 +150,12 @@ extern "C" {
 #endif
 #if !defined(FREEDV_MODE_DATA_CUSTOM_EN)
 #define FREEDV_MODE_DATA_CUSTOM_EN FREEDV_MODE_EN_DEFAULT
+#endif
+#if !defined(FREEDV_MODE_DATAC15_EN)
+#define FREEDV_MODE_DATAC15_EN FREEDV_MODE_EN_DEFAULT
+#endif
+#if !defined(FREEDV_MODE_DATAC16_EN)
+#define FREEDV_MODE_DATAC16_EN FREEDV_MODE_EN_DEFAULT
 #endif
 
 #define FDV_MODE_ACTIVE(mode_name, var) \

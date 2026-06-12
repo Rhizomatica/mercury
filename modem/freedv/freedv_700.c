@@ -198,6 +198,8 @@ void freedv_ofdm_data_open(struct freedv *f, struct freedv_advanced *adv) {
   if (f->mode == FREEDV_MODE_DATAC4) strcpy(mode, "datac4");
   if (f->mode == FREEDV_MODE_DATAC13) strcpy(mode, "datac13");
   if (f->mode == FREEDV_MODE_DATAC14) strcpy(mode, "datac14");
+  if (f->mode == FREEDV_MODE_DATAC15) strcpy(mode, "datac15");
+  if (f->mode == FREEDV_MODE_DATAC16) strcpy(mode, "datac16");
   if (f->mode == FREEDV_MODE_DATA_CUSTOM) {
     assert(adv != NULL);
     assert(adv->config != NULL);

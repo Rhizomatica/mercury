@@ -551,7 +551,8 @@ static void allocate_tx_bpf(struct OFDM *ofdm) {
   quisk_filt_cfInit(ofdm->tx_bpf, ofdm->tx_bpf_proto, ofdm->tx_bpf_proto_n);
   float tx_centre = ofdm->tx_centre;
   if (!strcmp(ofdm->mode, "datac4") || !strcmp(ofdm->mode, "datac13") ||
-      !strcmp(ofdm->mode, "datac14")) {
+      !strcmp(ofdm->mode, "datac14") || !strcmp(ofdm->mode, "datac15") ||
+      !strcmp(ofdm->mode, "datac16")) {
     // Centre the filter on the mean carrier freq, allows a narrower
     // filter to be used. Only really useful for very narrow, Nc odd
     // waveforms. TODO: make this feature config controlled
@@ -583,7 +584,8 @@ static void allocate_rx_bpf(struct OFDM *ofdm) {
      controlled. */
 
   if (!strcmp(ofdm->mode, "datac4") || !strcmp(ofdm->mode, "datac13") ||
-      !strcmp(ofdm->mode, "datac14")) {
+      !strcmp(ofdm->mode, "datac14") || !strcmp(ofdm->mode, "datac15") ||
+      !strcmp(ofdm->mode, "datac16")) {
     quisk_filt_cfInit(ofdm->rx_bpf, filtP200S400,
                       sizeof(filtP200S400) / sizeof(float));
     // centre the filter on the mean carrier freq, allows a narrower filter to

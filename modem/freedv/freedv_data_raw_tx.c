@@ -238,6 +238,10 @@ int main(int argc, char *argv[]) {
     mode = FREEDV_MODE_DATAC13;
   if (!strcmp(argv[dx], "DATAC14") || !strcmp(argv[dx], "datac14"))
     mode = FREEDV_MODE_DATAC14;
+  if (!strcmp(argv[dx], "DATAC15") || !strcmp(argv[dx], "datac15"))
+    mode = FREEDV_MODE_DATAC15;
+  if (!strcmp(argv[dx], "DATAC16") || !strcmp(argv[dx], "datac16"))
+    mode = FREEDV_MODE_DATAC16;
   if (!strcmp(argv[dx], "CUSTOM") || !strcmp(argv[dx], "custom"))
     mode = FREEDV_MODE_DATA_CUSTOM;
   if (mode == -1) {
