@@ -38,10 +38,10 @@ It provides ARQ (Automatic Repeat reQuest) and broadcast data links over
 HF radio using FreeDV OFDM waveforms with LDPC forward error correction.
 .PP
 The ARQ link implements a half-duplex stop-and-wait protocol with adaptive
-gear-shifting between FreeDV modes (DATAC4, DATAC3, DATAC1) based on
-measured channel SNR, providing per-direction mode selection and a
-reliability ladder that steps down immediately on errors and steps up
-after consecutive clean acknowledgements.
+gear-shifting between FreeDV modes (DATAC15, DATAC4, DATAC3, DATAC1,
+DATAC17, QAM16C2) based on measured channel SNR, providing per-direction
+mode selection and a reliability ladder that steps down immediately on
+errors and steps up after consecutive clean acknowledgements.
 .PP
 Mercury exposes a VARA-compatible TNC (Terminal Node Controller) TCP
 interface, allowing existing amateur radio software such as UUCP, Winlink,
@@ -391,18 +391,23 @@ Mercury uses the following FreeDV OFDM waveforms:
 l l l l.
 Mode	Index	Usage	Notes
 _
-DATAC1	0	Payload	502 bytes/frame, highest throughput
+DATAC1	0	Payload	502 bytes/frame, +5 dB SNR
 DATAC3	1	Payload	118 bytes/frame, default startup mode
 DATAC0	2	Payload	6 bytes/frame
-DATAC4	3	Payload	46 bytes/frame, lowest SNR requirement
-DATAC13	4	Control	6 bytes/frame, ARQ control channel
-DATAC14	5	Control	1 byte/frame
+DATAC4	3	Payload	46 bytes/frame, low SNR
+DATAC13	4	Broadcast	6 bytes/frame (replaced by DATAC16 in ARQ)
+DATAC14	5	Broadcast	1 byte/frame
 FSK_LDPC	6	Payload	22 bytes/frame
+DATAC15	7	Payload	22 bytes/frame, lowest SNR (ladder floor)
+DATAC16	8	Control	6 bytes/frame, ARQ control channel
+DATAC17	9	Payload	1172 bytes/frame, intermediate SNR (~+8 dB)
+QAM16C2	10	Payload	1205 bytes/frame, high SNR (~+15 dB)
 .TE
 .PP
-In ARQ mode, DATAC13 is always used for the control channel.
-The payload channel starts at DATAC4 and upgrades through DATAC3 to
-DATAC1 as channel conditions permit.
+In ARQ mode, DATAC16 is always used for the control channel.
+The payload channel starts at DATAC15 and upgrades through DATAC4,
+DATAC3, DATAC1 and DATAC17 to QAM16C2 as channel conditions permit.
+See docs/MODES.md for measured per-mode performance curves.
 The dual-decoder architecture runs control and payload decoders
 simultaneously.
 .SH DEFAULT PORTS
