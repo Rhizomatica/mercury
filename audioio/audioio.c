@@ -534,6 +534,14 @@ void *radio_playback_thread(void *device_ptr)
     // period_bytes at 8kHz (input rate) - adjust for the lower sample rate
     uint32_t period_bytes_8k = period_bytes / resample_ratio;
 
+    /* Linear-interpolation upsampler state, persistent across periods.
+     * Carrying the previous input sample makes the 8k->48k interpolation
+     * continuous over period boundaries; interpolating each period in
+     * isolation left a flat step at every boundary, heard as a click once
+     * per period (issue #81).  Per-thread, so it resets to 0 on restart and
+     * silence ramps cleanly in/out. */
+    int32_t resamp_prev = 0;
+
     while (!shutdown_ && !audio_shutdown_)
     {
         ffssize n;
@@ -565,14 +573,18 @@ void *radio_playback_thread(void *device_ptr)
         int samples_upsampled = samples_read_8k * resample_ratio;
         for (int i = 0; i < samples_read_8k; i++)
         {
-            int32_t current = input_buffer[i];
-            int32_t next = (i + 1 < samples_read_8k) ? input_buffer[i + 1] : current;
-
+            int32_t cur = input_buffer[i];
             for (int j = 0; j < resample_ratio; j++)
             {
-                // Linear interpolation between current and next sample
-                buffer_upsampled[i * resample_ratio + j] = current + (next - current) * j / resample_ratio;
+                // Linear interpolation bridging the PREVIOUS input sample to
+                // the current one, so the signal stays continuous across
+                // period boundaries (no per-period click).  (cur - resamp_prev)
+                // spans up to 2^32 for full-scale int32, so widen to 64 bit.
+                buffer_upsampled[i * resample_ratio + j] =
+                    resamp_prev +
+                    (int32_t)(((int64_t)cur - resamp_prev) * j / resample_ratio);
             }
+            resamp_prev = cur;
         }
 
         // Convert upsampled mono to stereo

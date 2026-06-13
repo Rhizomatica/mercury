@@ -38,7 +38,7 @@ ARQ_STUBS = datalink_arq/arq_test_stubs.c
 
 # Test executables
 TEST_BINS = test_ring_buffer test_arq_protocol test_arq_timing test_arq_fsm \
-            test_tcp_interfaces
+            test_tcp_interfaces test_resampler
 
 .PHONY: all test clean
 
@@ -57,6 +57,10 @@ test: $(TEST_BINS)
 # Common module tests
 test_ring_buffer: common/test_ring_buffer.c $(UNITY_SRC) ../common/ring_buffer_posix.c ../common/os_interop.c ../common/shm_posix.c
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
+# Audio resampler test (offline, no sound card)
+test_resampler: audioio/test_resampler.c $(UNITY_SRC)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS) -lm
 
 # ARQ protocol tests (frame encode/decode, utilities)
 test_arq_protocol: datalink_arq/test_arq_protocol.c $(UNITY_SRC) $(ARQ_STUBS) \
