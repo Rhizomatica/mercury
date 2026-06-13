@@ -172,7 +172,14 @@ typedef struct
     float retry_interval_s;     /* ack_timeout_s + ACK_GUARD_S                   */
     int   payload_bytes;        /* usable payload per frame                      */
     int   burst_frames;         /* DATA frames per PTT burst (1..ARQ_BURST_MAX);
-                                 * 1 = classic stop-and-wait                     */
+                                 * 1 = classic stop-and-wait.
+                                 * NOTE: keep at 1 until the modem pool opens
+                                 * freedv instances with frames_per_burst > 1
+                                 * (modem.c / init_modem, currently hardcoded
+                                 * 1).  The ISS/IRS go-back-N logic is ready,
+                                 * but a >1 burst is dropped after its first
+                                 * frame because the RX freedv is configured
+                                 * for one frame per preamble.                  */
 } arq_mode_timing_t;
 
 /* The one FreeDV mode used for all ARQ control frames (CALL/ACCEPT/ACK/
