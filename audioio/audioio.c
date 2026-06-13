@@ -26,6 +26,7 @@
 
 #include "audioio.h"
 #include "hermes_log.h"
+#include "resampler.h"
 
 extern volatile bool shutdown_;
 
@@ -534,13 +535,11 @@ void *radio_playback_thread(void *device_ptr)
     // period_bytes at 8kHz (input rate) - adjust for the lower sample rate
     uint32_t period_bytes_8k = period_bytes / resample_ratio;
 
-    /* Linear-interpolation upsampler state, persistent across periods.
-     * Carrying the previous input sample makes the 8k->48k interpolation
-     * continuous over period boundaries; interpolating each period in
-     * isolation left a flat step at every boundary, heard as a click once
-     * per period (issue #81).  Per-thread, so it resets to 0 on restart and
-     * silence ramps cleanly in/out. */
-    int32_t resamp_prev = 0;
+    /* Polyphase anti-imaging upsampler, stateful across periods (its filter
+     * history bridges read boundaries, so no per-period click — issue #81). */
+    resampler_global_init();
+    resamp_up_t up_rs;
+    resamp_up_reset(&up_rs);
 
     while (!shutdown_ && !audio_shutdown_)
     {
@@ -569,23 +568,9 @@ void *radio_playback_thread(void *device_ptr)
 
         int samples_read_8k = n / sizeof(int32_t);
 
-        // Upsample from 8kHz to 48kHz using linear interpolation
-        int samples_upsampled = samples_read_8k * resample_ratio;
-        for (int i = 0; i < samples_read_8k; i++)
-        {
-            int32_t cur = input_buffer[i];
-            for (int j = 0; j < resample_ratio; j++)
-            {
-                // Linear interpolation bridging the PREVIOUS input sample to
-                // the current one, so the signal stays continuous across
-                // period boundaries (no per-period click).  (cur - resamp_prev)
-                // spans up to 2^32 for full-scale int32, so widen to 64 bit.
-                buffer_upsampled[i * resample_ratio + j] =
-                    resamp_prev +
-                    (int32_t)(((int64_t)cur - resamp_prev) * j / resample_ratio);
-            }
-            resamp_prev = cur;
-        }
+        // Upsample 8kHz -> 48kHz through the polyphase anti-imaging FIR.
+        int samples_upsampled =
+            resamp_up_process(&up_rs, input_buffer, samples_read_8k, buffer_upsampled);
 
         // Convert upsampled mono to stereo
         for (int i = 0; i < samples_upsampled; i++)
@@ -820,7 +805,10 @@ void *radio_capture_thread(void *device_ptr)
 #endif
     ch_layout = capture_input_channel_layout;
 
-    static int resample_remainder = 0;  // Track fractional samples for accurate resampling
+    /* Polyphase anti-aliasing downsampler, stateful across reads. */
+    resampler_global_init();
+    resamp_down_t down_rs;
+    resamp_down_reset(&down_rs);
 
     /* --- Capture rate diagnostics (prints every ~5 seconds) --- */
     uint64_t diag_start_ms = audioio_monotonic_ms();
@@ -847,10 +835,10 @@ void *radio_capture_thread(void *device_ptr)
         int frames_read = r / frame_size;
         int frames_to_write = frames_read;
         
-        // Downsample from 48kHz to 8kHz with decimation
-        // resample_remainder tracks position in decimation cycle (0 to resample_ratio-1)
-        // When remainder is 0, we take a sample; otherwise skip
-        int downsampled_frames = 0;
+        // Extract one mono int32 sample per 48 kHz frame into the scratch
+        // buffer, then run the polyphase anti-aliasing downsampler.  The old
+        // path decimated 1-in-6 with NO filter, folding everything above
+        // 4 kHz into the modem band.
         for (int i = 0; i < frames_to_write; i++)
         {
             int32_t sample;
@@ -914,15 +902,12 @@ void *radio_capture_thread(void *device_ptr)
                 }
             }
 
-            // Take every 6th sample (when remainder == 0)
-            // Bounds check: ensure we don't overflow buffer_downsampled
-            if (resample_remainder == 0 && downsampled_frames < (int)SIGNAL_BUFFER_SIZE)
-            {
-                buffer_downsampled[downsampled_frames++] = sample;
-            }
-
-            resample_remainder = (resample_remainder + 1) % resample_ratio;
+            buffer_output[i] = sample;   // mono 48 kHz scratch
         }
+
+        int downsampled_frames =
+            resamp_down_process(&down_rs, buffer_output, frames_to_write,
+                                buffer_downsampled);
 
         if (downsampled_frames > 0)
         {

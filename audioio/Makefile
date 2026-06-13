@@ -65,8 +65,11 @@ ffaudio/ffaudio/alsa.o: ffaudio/ffaudio/alsa.c
 audioio.o: audioio.c std.h $(OBJS)
 	$(CC) $(CFLAGS) -std=gnu11 -c audioio.c -o audioio.o
 
-audioio.a: audioio.o $(OBJS)
-	$(AR) rc audioio.a audioio.o $(OBJS)
+resampler.o: resampler.c resampler.h
+	$(CC) $(CFLAGS) -std=gnu11 -c resampler.c -o resampler.o
+
+audioio.a: audioio.o resampler.o $(OBJS)
+	$(AR) rc audioio.a audioio.o resampler.o $(OBJS)
 
 .PHONY: clean
 clean:

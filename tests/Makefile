@@ -59,8 +59,8 @@ test_ring_buffer: common/test_ring_buffer.c $(UNITY_SRC) ../common/ring_buffer_p
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
 # Audio resampler test (offline, no sound card)
-test_resampler: audioio/test_resampler.c $(UNITY_SRC)
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS) -lm
+test_resampler: audioio/test_resampler.c $(UNITY_SRC) ../audioio/resampler.c
+	$(CC) $(CFLAGS) -I../audioio -o $@ $^ $(LDFLAGS) -lm
 
 # ARQ protocol tests (frame encode/decode, utilities)
 test_arq_protocol: datalink_arq/test_arq_protocol.c $(UNITY_SRC) $(ARQ_STUBS) \
