@@ -16,6 +16,7 @@ type ChannelParams struct {
 	No_dBHz      float64
 	FreqOffsetHz float64
 	Gain         float64
+	Fading       string // "", "mpg", "mpp", or "mpd" — multipath fading profile
 }
 
 func DefaultChannelParams() ChannelParams {
@@ -23,11 +24,15 @@ func DefaultChannelParams() ChannelParams {
 }
 
 func (p ChannelParams) args() []string {
-	return []string{
+	a := []string{
 		"--No", fmt.Sprintf("%.2f", p.No_dBHz),
 		"--freq", fmt.Sprintf("%.2f", p.FreqOffsetHz),
 		"--gain", fmt.Sprintf("%.4f", p.Gain),
 	}
+	if p.Fading != "" {
+		a = append(a, "--"+p.Fading)
+	}
+	return a
 }
 
 func buildCh(repoRoot string) (string, error) {
@@ -102,6 +107,7 @@ func runChannelDirOnce(ctx context.Context, chBin, txPath, rxPath string, params
 
 	chCmd := exec.CommandContext(ctx, chBin, "-", "-")
 	chCmd.Args = append(chCmd.Args, params.args()...)
+	chCmd.Dir = filepath.Dir(chBin) // so --fading_dir 'unittest' resolves
 	chCmd.Stderr = nil
 
 	chStdin, err := chCmd.StdinPipe()

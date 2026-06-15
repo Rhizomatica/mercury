@@ -40,6 +40,16 @@ func TestMercuryARQTransfer(t *testing.T) {
 		}
 		params.No_dBHz = no
 	}
+	if v := os.Getenv("MERCURY_CH_FADING"); v != "" {
+		params.Fading = v // mpg | mpp | mpd
+	}
+	if v := os.Getenv("MERCURY_CH_GAIN"); v != "" {
+		g, err := strconv.ParseFloat(v, 64)
+		if err != nil {
+			t.Fatalf("bad MERCURY_CH_GAIN %q: %v", v, err)
+		}
+		params.Gain = g
+	}
 
 	dir := t.TempDir()
 	aRX := filepath.Join(dir, "a_rx.s32le.fifo")
