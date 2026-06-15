@@ -177,7 +177,6 @@ int main(int argc, char *argv[])
                 /* ITU-R Good: 1 path, 0.1 Hz Doppler, 0.5 ms delay */
                 watterson_init(&watterson, Fs);
                 watterson_add_path(&watterson, 0.0f, 0.1f, 0.0f, 0.8f);
-                watterson_set_noise(&watterson, No);
                 watterson_configured = 1;
                 break;
             case '2':
@@ -185,7 +184,6 @@ int main(int argc, char *argv[])
                 watterson_init(&watterson, Fs);
                 watterson_add_path(&watterson, 0.0f, 1.0f, 0.0f, 0.7f);
                 watterson_add_path(&watterson, 1.0f, 1.0f, 0.0f, 0.7f);
-                watterson_set_noise(&watterson, No);
                 watterson_configured = 1;
                 break;
             case '3':
@@ -193,7 +191,6 @@ int main(int argc, char *argv[])
                 watterson_init(&watterson, Fs);
                 watterson_add_path(&watterson, 0.0f, 1.0f, 0.0f, 0.7f);
                 watterson_add_path(&watterson, 2.0f, 1.0f, 0.0f, 0.7f);
-                watterson_set_noise(&watterson, No);
                 watterson_configured = 1;
                 break;
             case '4':
@@ -201,7 +198,6 @@ int main(int argc, char *argv[])
                 watterson_init(&watterson, Fs);
                 watterson_add_path(&watterson, 0.0f, 10.0f, 0.0f, 0.7f);
                 watterson_add_path(&watterson, 2.0f, 10.0f, 0.0f, 0.7f);
-                watterson_set_noise(&watterson, No);
                 watterson_configured = 1;
                 break;
             case 'P':
@@ -215,7 +211,6 @@ int main(int argc, char *argv[])
                     if (!watterson_configured)
                     {
                         watterson_init(&watterson, Fs);
-                        watterson_set_noise(&watterson, No);
                         watterson_configured = 1;
                     }
                     if (watterson_add_path(&watterson, p_delay, p_doppler, p_freq, p_gain) < 0)
@@ -233,12 +228,14 @@ int main(int argc, char *argv[])
         }
     }
 
-    /* If no Watterson preset was selected, init with no paths and AWGN only */
+    /* If no Watterson preset was selected, init with no paths (AWGN only). */
     if (!watterson_configured)
-    {
         watterson_init(&watterson, Fs);
-        watterson_set_noise(&watterson, No);
-    }
+
+    /* Apply the AWGN level ONCE, after all options are parsed — so --No takes
+     * effect regardless of its position relative to a preset/--path (getopt
+     * may permute argv, and presets must not bake in a stale No). */
+    watterson_set_noise(&watterson, No);
 
     /* ---- Initialisation ---- */
 
@@ -430,8 +427,12 @@ int main(int argc, char *argv[])
         int nsamples = frames * BUF_N;
         float outclipped_percent;
         papr = 10.0f * log10f(peak * peak / (tx_pwr / nsamples));
-        CNo  = 10.0f * log10f(tx_pwr_fade / (watterson.noise_var * nsamples / Fs));
-        snr3k = CNo - 10.0f * log10f(3000.0f);
+        /* SNR from the model's measured pre-noise signal power and actual
+         * added-noise power (the previous tx_pwr_fade was sampled AFTER the
+         * AWGN was added, so it reported signal+noise and pinned the SNR). */
+        snr3k = watterson_measured_snr3k(&watterson);
+        CNo   = snr3k + 10.0f * log10f(3000.0f);
+        (void)tx_pwr_fade;
         outclipped_percent = noutclipped * 100.0f / nsamples;
 
         fprintf(stderr, "SNR3k(dB): %8.2f  C/No....: %8.2f\n", snr3k, CNo);

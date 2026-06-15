@@ -69,6 +69,15 @@ typedef struct watterson
     /* AWGN noise parameters (optional) */
     int    awgn_en;     /* Enable AWGN (0 or 1) */
     float  noise_var;   /* Noise variance per sample */
+
+    /* Power accumulators for SNR measurement.  Reset at init and on
+     * watterson_reset_meas(); accumulated across watterson_process() calls.
+     * The faded signal power is summed BEFORE the AWGN is added, and the
+     * actual added-noise power is summed, so the true post-channel SNR is
+     * sig_pwr_acc / noise_pwr_acc (independent of the configured noise_var). */
+    double sig_pwr_acc;    /* Sum |faded signal|^2 (pre-noise)            */
+    double noise_pwr_acc;  /* Sum |noise added|^2                         */
+    long   meas_nsamp;     /* samples accumulated into the sums           */
 } watterson_t;
 
 /* Initialise the Watterson channel simulator.
@@ -107,6 +116,15 @@ int watterson_add_path(watterson_t *w, float delay_ms, float doppler_hz,
  * Set nodb <= -160 (or any very negative value) to disable AWGN.
  */
 void watterson_set_noise(watterson_t *w, float nodb);
+
+/* Reset the SNR power accumulators (sig_pwr_acc / noise_pwr_acc / meas_nsamp).
+ * Called automatically by watterson_init(). */
+void watterson_reset_meas(watterson_t *w);
+
+/* Measured post-channel SNR in a 3 kHz bandwidth (dB), from the accumulated
+ * faded-signal and added-noise powers.  Returns a large value if no AWGN was
+ * added.  Call after processing the stream. */
+float watterson_measured_snr3k(const watterson_t *w);
 
 /* Process a block of complex samples through the Watterson model.
  * Samples are processed in-place: input and output share the same buffer.

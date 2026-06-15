@@ -32,16 +32,31 @@ S_i(f) = (1/(√(2π)·σ_i)) · exp(-f²/(2σ_i²))
 
 3. **Frequency offset**: Complex rotation per path with phase accumulator.
 
-4. **AWGN**: Same scaling convention as `modem/freedv/ch.c` (No in dB/Hz, variance = Fs × 10^(No/10) × 10^6).
+4. **AWGN**: same scaling convention as `modem/freedv/ch.c` (No in dB/Hz, variance = Fs × 10^(No/10) × 10^6). The model accumulates the pre-noise faded-signal power and the actual added-noise power, so the true post-channel SNR is reported by `watterson_measured_snr3k()` (independent of the configured `noise_var`).
+
+## Correctness fixes (post-landing)
+
+Two bugs were fixed after the initial commit:
+
+1. **`--No` ignored when placed after a preset.** The `--good`/`--moderate`/… (and `--path`) cases called `watterson_set_noise()` inline with whatever `No` had been parsed so far; with `getopt` permutation this silently used the default −100. **Fix:** `watterson_set_noise()` is now called **once, after option parsing**, so `--No` works in any position.
+
+2. **Reported SNR didn't track `--No`.** The CLI computed SNR from `tx_pwr_fade`, which was summed **after** `watterson_process()` had already added the AWGN — i.e. |signal + noise|² — pinning the reported SNR near a constant as noise grew. **Fix:** the model now measures the pre-noise signal power and the actual added-noise power (`watterson_reset_meas()` / `watterson_measured_snr3k()`), and the CLI reports SNR from those.
+
+After the fix the reported `SNR3k` tracks `--No` with the correct slope and **agrees with the modem's own measured SNR to ~2 dB**.
+
+### SNR calibration vs `ch.c`
+
+`watterson_test` reads ~3 dB **lower** than `modem/freedv/ch.c` at the same `--No` in AWGN-only mode (a signal-power convention difference; the modem's measured SNR sits between the two). When using SNR thresholds derived with `ch` (e.g. `docs/MODES.md`), read the **reported** `SNR3k` rather than assuming `ch`-equivalent `--No` values. Note the `--No` operating range also differs from `ch` (watterson needs a more-negative `--No` for the same SNR), and a fading preset further lowers the mean SNR by the (physical) fade loss.
 
 ### API
 
 ```c
 watterson_t w;
-watterson_init(&w, 8000);
+watterson_init(&w, 8000);                /* also resets the SNR accumulators */
 watterson_add_path(&w, delay_ms, doppler_hz, freq_hz, gain);
 watterson_set_noise(&w, nodb);
-watterson_process(&w, samples, n);
+watterson_process(&w, samples, n);       /* accumulates sig/noise power */
+float snr3k = watterson_measured_snr3k(&w);   /* true post-channel SNR (dB) */
 watterson_dispose(&w);
 ```
 

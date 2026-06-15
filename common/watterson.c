@@ -234,6 +234,25 @@ void watterson_set_noise(watterson_t *w, float nodb)
     w->noise_var = (float)w->sample_rate * No;
 }
 
+void watterson_reset_meas(watterson_t *w)
+{
+    assert(w != NULL);
+    w->sig_pwr_acc = 0.0;
+    w->noise_pwr_acc = 0.0;
+    w->meas_nsamp = 0;
+}
+
+float watterson_measured_snr3k(const watterson_t *w)
+{
+    assert(w != NULL);
+    if (w->sig_pwr_acc <= 0.0 || w->noise_pwr_acc <= 0.0)
+        return 999.0f;   /* no AWGN added — effectively noiseless */
+    /* SNR in the sample-rate bandwidth, scaled to a 3 kHz reference, in dB.
+     * Matches ch.c: SNR3k = 10log10( (Psig/Pnoise) * Fs / 3000 ). */
+    double snr_fs = w->sig_pwr_acc / w->noise_pwr_acc;
+    return (float)(10.0 * log10(snr_fs * (double)w->sample_rate / 3000.0));
+}
+
 void watterson_process(watterson_t *w, COMP *samples, int n)
 {
     int i, p;
@@ -252,6 +271,11 @@ void watterson_process(watterson_t *w, COMP *samples, int n)
                 COMP noise;
                 noise.real = gaussian() * sqrtf(w->noise_var);
                 noise.imag = gaussian() * sqrtf(w->noise_var);
+                w->sig_pwr_acc   += (double)samples[i].real * samples[i].real +
+                                    (double)samples[i].imag * samples[i].imag;
+                w->noise_pwr_acc += (double)noise.real * noise.real +
+                                    (double)noise.imag * noise.imag;
+                w->meas_nsamp++;
                 samples[i] = cadd(samples[i], noise);
             }
         }
@@ -347,6 +371,11 @@ void watterson_process(watterson_t *w, COMP *samples, int n)
             COMP noise;
             noise.real = gaussian() * sqrtf(w->noise_var);
             noise.imag = gaussian() * sqrtf(w->noise_var);
+            w->sig_pwr_acc   += (double)out.real * out.real +
+                                (double)out.imag * out.imag;
+            w->noise_pwr_acc += (double)noise.real * noise.real +
+                                (double)noise.imag * noise.imag;
+            w->meas_nsamp++;
             out = cadd(out, noise);
         }
 
