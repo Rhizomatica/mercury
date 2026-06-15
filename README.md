@@ -93,7 +93,7 @@ Radio control notes:
 
 1. Install the dependencies:
     ```bash
-    sudo apt-get update && sudo apt-get install libasound2-dev libpulse-dev libhamlib-dev make git
+    sudo apt-get update && sudo apt-get install build-essential pkg-config libasound2-dev libpulse-dev libhamlib-dev make git
     ```
 
 2. Clone Mercury GitHub repository:
@@ -106,15 +106,17 @@ Radio control notes:
     cd mercury
     ```
 
-4. Edit `config.mk` with your C compiler and appropriate flags (defaults should be fine for most), then run `make` and `make install` commands:
+4. Build mercury (edit `config.mk` first if you need a custom compiler or flags; defaults are fine for most):
     ```bash
     make
     ```
 
-5. For installing mercury in the system:
+5. Install system-wide:
    ```bash
    sudo make install
    ```
+
+   The FreeDV codec is vendored in-tree — no external FreeDV or codec2 packages are needed.
 
 ### Install via Debian package on Linux
 
