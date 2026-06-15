@@ -51,6 +51,7 @@ typedef enum
     ARQ_DFLOW_MODE_ACK_TX     = 11, /* mode upgrade: MODE_ACK being transmitted  */
     ARQ_DFLOW_KEEPALIVE_TX    = 12, /* KEEPALIVE being transmitted               */
     ARQ_DFLOW_KEEPALIVE_WAIT  = 13, /* waiting for KEEPALIVE_ACK                 */
+    ARQ_DFLOW_KEEPALIVE_ACK_TX = 14, /* sending KEEPALIVE_ACK (with guard)        */
     ARQ_DFLOW__COUNT
 } arq_dflow_state_t;
 
@@ -235,6 +236,8 @@ typedef struct
     /* --- Keepalive tracking --- */
     int      keepalive_miss_count;
     bool     keepalive_from_irs;       /* true when keepalive was initiated from IRS idle state */
+    bool     keepalive_ack_from_irs;   /* true when KEEPALIVE_ACK is in response to KEEPALIVE
+                                        * received while in IDLE_IRS state           */
     uint64_t last_rx_ms;              /* last successful frame decode time     */
     uint64_t last_tx_progress_ms;     /* baseline for the no-progress budget:
                                        * seeded on CONNECTED entry and refreshed

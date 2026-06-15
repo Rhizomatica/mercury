@@ -58,6 +58,7 @@ const char *arq_dflow_state_name(arq_dflow_state_t s)
         [ARQ_DFLOW_MODE_ACK_TX]    = "MODE_ACK_TX",
         [ARQ_DFLOW_KEEPALIVE_TX]   = "KEEPALIVE_TX",
         [ARQ_DFLOW_KEEPALIVE_WAIT] = "KEEPALIVE_WAIT",
+        [ARQ_DFLOW_KEEPALIVE_ACK_TX] = "KEEPALIVE_ACK_TX",
     };
     if ((unsigned)s < ARQ_DFLOW__COUNT) return names[s];
     return "UNKNOWN";
@@ -1171,18 +1172,38 @@ static void fsm_connected(arq_session_t *sess, const arq_event_t *ev)
         /* Handle keepalive probe from ANY data-flow state so the peer
          * never sees a timeout just because we are busy (e.g. WAIT_ACK
          * retrying a data frame whose ACK is lost).  KEEPALIVE_TX and
-         * KEEPALIVE_WAIT manage their own RX_KEEPALIVE paths in fsm_dflow. */
+         * KEEPALIVE_WAIT manage their own RX_KEEPALIVE paths in fsm_dflow.
+         *
+         * When we are in an idle state (IDLE_ISS or IDLE_IRS), defer the
+         * KEEPALIVE_ACK by ARQ_CHANNEL_GUARD_MS so the peer has time to
+         * finish its KEEPALIVE TX and switch back to RX.  Without this
+         * guard the OFDM decoder fires ~200ms before the peer's PTT-OFF
+         * and our KEEPALIVE_ACK is transmitted too early, colliding with
+         * the peer's still-active TX (issue #70). */
         if (sess->dflow_state != ARQ_DFLOW_KEEPALIVE_TX &&
-            sess->dflow_state != ARQ_DFLOW_KEEPALIVE_WAIT)
+            sess->dflow_state != ARQ_DFLOW_KEEPALIVE_WAIT &&
+            sess->dflow_state != ARQ_DFLOW_KEEPALIVE_ACK_TX)
         {
             HLOGI(LOG_COMP, "RX_KEEPALIVE in dflow=%s — sending KEEPALIVE_ACK",
                   arq_dflow_state_name(sess->dflow_state));
-            send_ctrl_frame(sess, ARQ_SUBTYPE_KEEPALIVE_ACK);
             sess->keepalive_miss_count = 0;
-            /* Reset the IRS inactivity timer so it doesn't fire
-             * immediately after the keepalive round-trip completes. */
-            if (sess->dflow_state == ARQ_DFLOW_IDLE_IRS)
-                enter_idle_irs(sess);
+            if (sess->dflow_state == ARQ_DFLOW_IDLE_IRS ||
+                sess->dflow_state == ARQ_DFLOW_IDLE_ISS)
+            {
+                /* Guarded response: defer TX so the peer finishes its
+                 * KEEPALIVE and returns to RX before our ACK arrives. */
+                sess->keepalive_ack_from_irs =
+                    (sess->dflow_state == ARQ_DFLOW_IDLE_IRS);
+                dflow_enter(sess, ARQ_DFLOW_KEEPALIVE_ACK_TX,
+                            hermes_uptime_ms() + ARQ_CHANNEL_GUARD_MS,
+                            ARQ_EV_TIMER_ACK);
+            }
+            else
+            {
+                /* Busy state (DATA_TX, WAIT_ACK, etc.): immediate ACK
+                 * so we don't perturb the active data-flow timeline. */
+                send_ctrl_frame(sess, ARQ_SUBTYPE_KEEPALIVE_ACK);
+            }
             return;
         }
         break;
@@ -1821,6 +1842,21 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
                             deadline_from_s(tm ? tm->retry_interval_s : 7.0f),
                             ARQ_EV_TIMER_RETRY);
             }
+        }
+        break;
+
+    case ARQ_DFLOW_KEEPALIVE_ACK_TX:
+        /* Guarded KEEPALIVE_ACK transmitter: TIMER_ACK fires after
+         * ARQ_CHANNEL_GUARD_MS, giving the peer time to finish its
+         * KEEPALIVE TX and switch its radio back to RX (issue #70). */
+        if (ev->id == ARQ_EV_TIMER_ACK)
+            send_ctrl_frame(sess, ARQ_SUBTYPE_KEEPALIVE_ACK);
+        else if (ev->id == ARQ_EV_TX_COMPLETE)
+        {
+            if (sess->keepalive_ack_from_irs)
+                enter_idle_irs(sess);
+            else
+                enter_idle_iss_guarded(sess, false);
         }
         break;
 
