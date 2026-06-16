@@ -209,6 +209,17 @@ struct freedv {
   int fsk_ldpc_state, fsk_ldpc_best_location, fsk_ldpc_baduw;
   float fsk_ldpc_snr;
   float fsk_S[2], fsk_N[2];
+
+  /* HARQ (Chase) soft-combining for OFDM data modes: when enabled, the LLRs
+   * of a CRC-failed frame are retained and accumulated with the next (bit-
+   * identical retransmitted) frame's LLRs before LDPC decode.  harq_llr holds
+   * the running LLR sum; harq_valid marks it occupied; the caller must call
+   * freedv_harq_reset() whenever a *new* frame (not a retransmit) is expected
+   * so stale soft information is not combined across different payloads. */
+  float *harq_llr;
+  int harq_llr_nbits;
+  int harq_enable;
+  int harq_valid;
 };
 
 // open function for each mode

@@ -281,6 +281,8 @@ void freedv_set_callback_data(struct freedv *freedv,
                               freedv_callback_datatx datatx,
                               void *callback_state);
 void freedv_set_test_frames(struct freedv *freedv, int test_frames);
+void freedv_set_harq(struct freedv *freedv, int enable);
+void freedv_harq_reset(struct freedv *freedv);
 void freedv_set_test_frames_diversity(struct freedv *freedv,
                                       int test_frames_diversity);
 void freedv_set_smooth_symbols(struct freedv *freedv, int smooth_symbols);

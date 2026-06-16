@@ -258,6 +258,14 @@ void freedv_ofdm_data_open(struct freedv *f, struct freedv_advanced *adv) {
   assert(f->tx_payload_bits != NULL);
   f->rx_payload_bits = (unsigned char *)MALLOC(f->bits_per_modem_frame);
   assert(f->rx_payload_bits != NULL);
+
+  /* HARQ soft-combining buffer (sized to the full coded packet; the data
+   * payload LLR count is always <= ofdm_bitsperpacket).  Disabled by default. */
+  f->harq_llr = (float *)MALLOC(sizeof(float) * f->ofdm_bitsperpacket);
+  assert(f->harq_llr != NULL);
+  f->harq_llr_nbits = 0;
+  f->harq_enable = 0;
+  f->harq_valid = 0;
 }
 
 /* speech or raw data, complex OFDM modulation out */
@@ -509,6 +517,15 @@ int freedv_comp_short_rx_ofdm(struct freedv *f, void *demod_in_8kHz,
       uint8_t decoded_codeword[Npayloadbitsperpacket];
       symbols_to_llrs(llr, payload_syms_de, payload_amps_de, EsNo,
                       ofdm->mean_amp, ofdm->bps, Npayloadsymsperpacket);
+      /* HARQ Chase combining: accumulate the retained LLRs of a previously
+       * failed (bit-identical) retransmission before decoding.  LLRs from
+       * independent noise realisations of the same codeword add coherently,
+       * lifting the effective Es/No on each retry. */
+      if (f->harq_enable && f->harq_valid &&
+          f->harq_llr_nbits == Npayloadbitsperpacket) {
+        for (int i = 0; i < Npayloadbitsperpacket; i++)
+          llr[i] += f->harq_llr[i];
+      }
       ldpc_decode_frame(ldpc, &parityCheckCount, &iter, decoded_codeword, llr);
       memcpy(f->rx_payload_bits, decoded_codeword, Ndatabitsperpacket);
 
@@ -553,6 +570,19 @@ int freedv_comp_short_rx_ofdm(struct freedv *f, void *demod_in_8kHz,
           rx_status |= FREEDV_RX_BITS;
         else
           rx_status |= FREEDV_RX_BIT_ERRORS;
+
+        /* HARQ: on success drop the retained soft info; on failure retain the
+         * (already-combined) LLRs so the next retransmission combines with all
+         * prior copies of this frame. */
+        if (f->harq_enable) {
+          if (crc_ok) {
+            f->harq_valid = 0;
+          } else {
+            memcpy(f->harq_llr, llr, sizeof(float) * Npayloadbitsperpacket);
+            f->harq_llr_nbits = Npayloadbitsperpacket;
+            f->harq_valid = 1;
+          }
+        }
       } else {
         // voice modes aren't as strict - pass everything through to the
         // speech decoder, but flag frame with possible errors
