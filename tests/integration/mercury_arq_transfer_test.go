@@ -27,12 +27,23 @@ func TestMercuryARQTransfer(t *testing.T) {
 	repoRoot := mustRepoRoot(t)
 	bin := locateOrBuildMercury(t, repoRoot)
 
-	chBin, err := buildCh(repoRoot)
+	params := DefaultChannelParams()
+
+	// Channel engine: codec2 ch.c (default) or the Watterson HF model.  The
+	// Watterson model gives controllable slow/deep fades (ITU-R good/moderate/
+	// poor) that reach the gear-shift oscillation regime ch --mpp cannot.
+	var chBin string
+	var err error
+	if os.Getenv("MERCURY_CH_ENGINE") == "watterson" {
+		params.Engine = "watterson"
+		chBin, err = buildWatterson(repoRoot)
+	} else {
+		chBin, err = buildCh(repoRoot)
+	}
 	if err != nil {
 		t.Skipf("channel simulator unavailable: %v", err)
 	}
 
-	params := DefaultChannelParams()
 	if v := os.Getenv("MERCURY_CH_NO"); v != "" {
 		no, err := strconv.ParseFloat(v, 64)
 		if err != nil {

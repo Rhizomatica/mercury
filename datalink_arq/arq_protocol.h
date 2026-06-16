@@ -254,7 +254,7 @@ extern _Atomic float arq_callint_override_s;
 #define ARQ_MODE_SWITCH_HYST_COUNT    1     /* SNR provides stability gate; 1 = immediate */
 #define ARQ_STARTUP_MAX_S             10    /* control-mode-only startup window    */
 #define ARQ_STARTUP_ACKS_REQUIRED     1
-#define ARQ_SNR_HYST_DB               1.0f
+#define ARQ_SNR_HYST_DB               5.0f
 #define ARQ_SNR_MIN_DATAC4_DB        -6.0f  /* entry threshold from the DATAC15
                                              * floor.  Bench (docs/MODES.md):
                                              * DATAC15/DATAC4 goodput crossover
@@ -295,7 +295,16 @@ extern _Atomic float arq_callint_override_s;
  * that keeps failing drives the offset down and HOLDS it down (no fixed timer)
  * until clean delivery at the lower mode raises it again, so there is no
  * climb→fail→downgrade→re-climb oscillation. */
-#define ARQ_OLLA_TARGET_FER          0.10f  /* target first-try frame-error rate */
+#define ARQ_OLLA_TARGET_FER          0.30f  /* target first-try frame-error rate.
+                                            * NOT the cellular 10%: Mercury uses
+                                            * plain go-back-N (no HARQ soft-
+                                            * combining), so the throughput-
+                                            * optimal operating point tolerates a
+                                            * higher FER — the big-payload modes
+                                            * (DATAC1/17) win even with ~25-30%
+                                            * first-try loss.  Matches where the
+                                            * bench goodput crossovers / v1.9.9's
+                                            * stable DATAC1 operate. */
 #define ARQ_OLLA_STEP_DOWN_DB        1.0f   /* offset decrement per first-try failure */
 #define ARQ_OLLA_STEP_UP_DB   (ARQ_OLLA_STEP_DOWN_DB * ARQ_OLLA_TARGET_FER / (1.0f - ARQ_OLLA_TARGET_FER))
                                             /* increment per success; ratio sets FER */

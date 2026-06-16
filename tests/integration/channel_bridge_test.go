@@ -16,7 +16,8 @@ type ChannelParams struct {
 	No_dBHz      float64
 	FreqOffsetHz float64
 	Gain         float64
-	Fading       string // "", "mpg", "mpp", or "mpd" — multipath fading profile
+	Fading       string // ch: "mpg"/"mpp"/"mpd"; watterson: "good"/"moderate"/"poor"/"flutter"
+	Engine       string // "" or "ch" = codec2 ch.c; "watterson" = utils/watterson_test
 }
 
 func DefaultChannelParams() ChannelParams {
@@ -33,6 +34,22 @@ func (p ChannelParams) args() []string {
 		a = append(a, "--"+p.Fading)
 	}
 	return a
+}
+
+// buildWatterson builds utils/watterson_test (the fixed Watterson HF channel)
+// and returns its path.  Used when MERCURY_CH_ENGINE=watterson.
+func buildWatterson(repoRoot string) (string, error) {
+	dst := filepath.Join(repoRoot, "utils", "watterson_test")
+	cmd := exec.Command("make", "watterson_test")
+	cmd.Dir = filepath.Join(repoRoot, "utils")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("build watterson_test: %v\n%s", err, string(out))
+	}
+	if !executableExists(dst) {
+		return "", fmt.Errorf("watterson_test built but not found at %s", dst)
+	}
+	return dst, nil
 }
 
 func buildCh(repoRoot string) (string, error) {
@@ -105,7 +122,11 @@ func runChannelDirOnce(ctx context.Context, chBin, txPath, rxPath string, params
 		return err
 	}
 
-	chCmd := exec.CommandContext(ctx, chBin, "-", "-")
+	inArg, outArg := "-", "-"
+	if params.Engine == "watterson" {
+		inArg, outArg = "/dev/stdin", "/dev/stdout"
+	}
+	chCmd := exec.CommandContext(ctx, chBin, inArg, outArg)
 	chCmd.Args = append(chCmd.Args, params.args()...)
 	chCmd.Dir = filepath.Dir(chBin) // so --fading_dir 'unittest' resolves
 	chCmd.Stderr = nil
