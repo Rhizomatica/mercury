@@ -130,6 +130,7 @@ void arq_fsm_init(arq_session_t *sess)
     sess->initial_payload_mode = FREEDV_MODE_DATAC15;  /* overwritten by arq_set_initial_mode */
     sess->speed_level    = 0;
     sess->tx_success_count = 0;
+    sess->olla_offset_db = 0.0f;
 }
 
 int arq_fsm_timeout_ms(const arq_session_t *sess, uint64_t now)
@@ -299,6 +300,12 @@ static int clamp_payload_mode_to_bandwidth(int mode)
  *  non-clean outcome). */
 static void record_tx_outcome(arq_session_t *sess, bool clean)
 {
+    /* OLLA: drive the per-link SNR offset toward the target first-try FER.
+     * This is the primary anti-oscillation: a mode that keeps failing pushes
+     * the offset down (via select_best_mode's effective SNR) and holds it
+     * there until clean delivery at a lower mode raises it again. */
+    sess->olla_offset_db = arq_olla_update(sess->olla_offset_db, clean);
+
     if (!clean)
     {
         /* Any retry → step down immediately to improve reliability */
@@ -358,7 +365,10 @@ static int select_best_mode(const arq_session_t *sess, int backlog)
     if (cur && backlog <= cur->payload_bytes - ARQ_FRAME_HDR_SIZE)
         return effective_mode;
 
-    float peer_snr = (float)sess->peer_snr_x10 / 10.0f;
+    /* OLLA: threshold on the delivery-corrected SNR, not the raw peer report.
+     * The offset (negative after failures) keeps a fade-failing mode from being
+     * re-selected until clean delivery at the lower mode raises it back. */
+    float peer_snr = (float)sess->peer_snr_x10 / 10.0f + sess->olla_offset_db;
     int   cur_rank = mode_rank(effective_mode);
 
     /* For the current mode, stay if SNR is at or above base threshold.
@@ -461,9 +471,10 @@ static bool maybe_upgrade_mode(arq_session_t *sess)
     sess->pending_tx_mode = desired_mode;
     sess->tx_retries_left = ARQ_MODE_REQ_RETRIES;
 
-    HLOGI(LOG_COMP, "Mode negotiation: %d -> %d (peer_snr=%.1f dB, ladder=%d, backlog=%d)",
+    HLOGI(LOG_COMP, "Mode negotiation: %d -> %d (peer_snr=%.1f olla=%+.1f eff=%.1f dB, backlog=%d)",
           sess->payload_mode, desired_mode,
-          (float)sess->peer_snr_x10 / 10.0f, sess->speed_level, backlog);
+          (float)sess->peer_snr_x10 / 10.0f, sess->olla_offset_db,
+          (float)sess->peer_snr_x10 / 10.0f + sess->olla_offset_db, backlog);
 
     send_mode_negotiation(sess, ARQ_SUBTYPE_MODE_REQ, desired_mode);
     dflow_enter(sess, ARQ_DFLOW_MODE_REQ_TX, UINT64_MAX, ARQ_EV_TIMER_RETRY);
@@ -775,6 +786,7 @@ static void fsm_disconnected(arq_session_t *sess, const arq_event_t *ev)
         sess->peer_tx_mode       = FREEDV_MODE_DATAC15;
         sess->speed_level        = 0;
         sess->tx_success_count   = 0;
+        sess->olla_offset_db     = 0.0f;
         sess->consecutive_retries = 0;
         sess->mode_hold_until_ms = 0;
         send_call_accept(sess, false);
@@ -812,6 +824,7 @@ static void fsm_listening(arq_session_t *sess, const arq_event_t *ev)
         sess->peer_tx_mode       = FREEDV_MODE_DATAC15;
         sess->speed_level        = 0;
         sess->tx_success_count   = 0;
+        sess->olla_offset_db     = 0.0f;
         sess->consecutive_retries = 0;
         sess->mode_hold_until_ms = 0;
         /* Do NOT send ACCEPT immediately: the caller's PTT-OFF may not have
@@ -972,6 +985,7 @@ static void fsm_accepting(arq_session_t *sess, const arq_event_t *ev)
         sess->mode_upgrade_count = 0;
         sess->speed_level        = 0;
         sess->tx_success_count   = 0;
+        sess->olla_offset_db     = 0.0f;
         sess->startup_deadline_ms =
             hermes_uptime_ms() + (ARQ_STARTUP_MAX_S * 1000ULL);
         if (g_cbs.notify_connected)

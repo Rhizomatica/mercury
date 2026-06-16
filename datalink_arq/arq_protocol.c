@@ -205,6 +205,14 @@ float arq_protocol_decode_snr(uint8_t snr_raw)
     return (float)((int)snr_raw - 128);
 }
 
+float arq_olla_update(float offset_db, bool first_try_ok)
+{
+    offset_db += first_try_ok ? ARQ_OLLA_STEP_UP_DB : -ARQ_OLLA_STEP_DOWN_DB;
+    if (offset_db < ARQ_OLLA_OFFSET_MIN_DB) offset_db = ARQ_OLLA_OFFSET_MIN_DB;
+    if (offset_db > ARQ_OLLA_OFFSET_MAX_DB) offset_db = ARQ_OLLA_OFFSET_MAX_DB;
+    return offset_db;
+}
+
 /* ======================================================================
  * ACK delay codec
  *

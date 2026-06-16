@@ -38,7 +38,7 @@ ARQ_STUBS = datalink_arq/arq_test_stubs.c
 
 # Test executables
 TEST_BINS = test_ring_buffer test_arq_protocol test_arq_timing test_arq_fsm \
-            test_tcp_interfaces test_resampler
+            test_tcp_interfaces test_resampler test_arq_olla
 
 .PHONY: all test clean
 
@@ -66,6 +66,11 @@ test_resampler: audioio/test_resampler.c $(UNITY_SRC) ../audioio/resampler.c
 test_arq_protocol: datalink_arq/test_arq_protocol.c $(UNITY_SRC) $(ARQ_STUBS) \
                    ../datalink_arq/arq_protocol.c ../datalink_arq/arith.c
 	$(CC) $(CFLAGS) -I../modem/freedv -o $@ $^ $(LDFLAGS)
+
+# OLLA control-loop test (closed-loop gear-shift convergence)
+test_arq_olla: datalink_arq/test_arq_olla.c $(UNITY_SRC) $(ARQ_STUBS) \
+               ../datalink_arq/arq_protocol.c ../datalink_arq/arith.c
+	$(CC) $(CFLAGS) -I../modem/freedv -o $@ $^ $(LDFLAGS) -lm
 
 # ARQ timing tests (instrumentation recording)
 test_arq_timing: datalink_arq/test_arq_timing.c $(UNITY_SRC) $(ARQ_STUBS) \

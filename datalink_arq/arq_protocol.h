@@ -285,6 +285,23 @@ extern _Atomic float arq_callint_override_s;
 #define ARQ_RETRY_DOWNGRADE_THRESHOLD 2     /* consecutive retries to force downgrade */
 #define ARQ_MODE_HOLD_AFTER_DOWNGRADE_S 6   /* hold lower mode after forced downgrade */
 
+/* ---- Outer-loop link adaptation (OLLA) ----
+ * A per-link SNR offset (dB) driven by delivery outcomes corrects the gap
+ * between the peer's reported SNR and the SNR the link actually sustains
+ * (fading margin, estimator bias).  Mode selection thresholds on
+ * (peer_snr + olla_offset).  On a first-try success the offset rises a little;
+ * on a failure it drops more.  At equilibrium the up/down ratio fixes the
+ * first-try FER:  FER = up/(up+down).  This self-damps the gear-shift — a mode
+ * that keeps failing drives the offset down and HOLDS it down (no fixed timer)
+ * until clean delivery at the lower mode raises it again, so there is no
+ * climb→fail→downgrade→re-climb oscillation. */
+#define ARQ_OLLA_TARGET_FER          0.10f  /* target first-try frame-error rate */
+#define ARQ_OLLA_STEP_DOWN_DB        1.0f   /* offset decrement per first-try failure */
+#define ARQ_OLLA_STEP_UP_DB   (ARQ_OLLA_STEP_DOWN_DB * ARQ_OLLA_TARGET_FER / (1.0f - ARQ_OLLA_TARGET_FER))
+                                            /* increment per success; ratio sets FER */
+#define ARQ_OLLA_OFFSET_MIN_DB     (-20.0f) /* clamp: never bias below this        */
+#define ARQ_OLLA_OFFSET_MAX_DB       (3.0f) /* clamp: small optimistic headroom    */
+
 /* No-progress disconnect budget (seconds).  When data retries exhaust we no
  * longer disconnect immediately — instead we reset the retry counter and keep
  * trying.  Disconnect only fires when wall-clock since the last forward
@@ -364,6 +381,14 @@ uint8_t arq_protocol_encode_snr(float snr_db);
  * @return SNR in dB, or 0.0f if snr_raw == 0 (unknown).
  */
 float arq_protocol_decode_snr(uint8_t snr_raw);
+
+/**
+ * @brief OLLA: update the per-link SNR offset (dB) from one first-try delivery
+ * outcome.  Returns the new, clamped offset.  Pure — no session state.
+ * @param offset_db     current offset
+ * @param first_try_ok  true = frame delivered on first try; false = needed a retry
+ */
+float arq_olla_update(float offset_db, bool first_try_ok);
 
 /**
  * @brief Encode ack_delay_ms to the 8-bit wire value (10ms units, max 2.55s).

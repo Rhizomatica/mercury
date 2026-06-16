@@ -194,6 +194,8 @@ typedef struct
     bool     acktx_had_has_data;       /* HAS_DATA was set in the last ACK sent */
     int      peer_snr_x10;            /* peer-reported SNR * 10 (integer)     */
     int      local_snr_x10;           /* local SNR EMA * 10                   */
+    float    olla_offset_db;          /* OLLA per-link SNR offset (dB); added  *
+                                       * to peer_snr before mode thresholding  */
     uint64_t peer_busy_until_ms;      /* remote TX busy guard expiry          */
 
     /* --- Data bookkeeping --- */
