@@ -70,7 +70,31 @@ coding gain and a **4–5× delivery gain at the fading cliff** (10%→45%). Thi
 the lever that makes a low target FER both optimal *and* robust, and the path to
 beating v1.9.9/VARA at the fringe — not achievable at the ARQ layer alone.
 
-## Next: ARQ integration (design — needs E2E validation before landing)
+## ARQ integration — LANDED (modem.c)
+
+HARQ is now wired into Mercury's RX decoder (`rx_decoder_bind_mode`, `modem.c`):
+on each mode bind it calls `freedv_harq_reset()` + `freedv_set_harq()`, enabling
+combining for **data modes only** (not the DATAC16 control plane), gated by a
+`MERCURY_HARQ=0` runtime kill-switch (`harq_enabled()`).
+
+**Why this is safe with no per-frame reset logic:** every ARQ mode is
+`burst_frames == 1` (one DATA frame per preamble — multi-frame bursts are still
+dormant, `arq_protocol.c` mode table + `modem.c` `frames_per_burst=1`). So the
+IRS only ever sees retransmissions of the single in-flight `rx_expected` frame
+until it is delivered; freedv auto-clears the residual on CRC success, and the
+mode-bind reset stops a pooled instance combining a stale failed frame with a
+different payload after a mode excursion. The within-burst pollution hazard
+(below) cannot occur until multi-frame bursts are switched on — at which point
+the combiner must additionally gate to the first frame after each acquisition.
+
+**Harness validation** (`tests/integration`, FIFO + ch): clean SNR PASS (HARQ a
+no-op at 18 dB), AWGN cliff SN −5.1 dB PASS (transfer completes), no regression,
+no crash under combining stress. A statistically meaningful goodput A/B is NOT
+achievable in the harness — transfers are tiny, `ch` noise is unseeded, and the
+SNR that makes the *data* mode fail also fails the no-HARQ *connect* handshake
+(DATAC16). **The real A/B is the dummy load**: v1.9.9 vs OLLA vs OLLA+HARQ.
+
+### Within-burst hazard (only relevant once multi-frame bursts are enabled)
 
 Wire `freedv_set_harq` on the IRS data-RX path and reset at the right moments.
 **Frame-identity subtlety (important):** the data path is NOT pure stop-and-wait

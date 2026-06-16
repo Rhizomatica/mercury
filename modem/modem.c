@@ -971,6 +971,14 @@ static void rx_metrics_update(rx_metrics_accum_t *metrics, int sync, float snr, 
         metrics->frame_decoded = true;
 }
 
+/* HARQ Chase soft-combining kill-switch (default ON).  Set MERCURY_HARQ=0 to
+ * disable, e.g. for A/B comparison or field fallback. */
+static int harq_enabled(void)
+{
+    const char *e = getenv("MERCURY_HARQ");
+    return !(e && e[0] == '0');
+}
+
 static int rx_decoder_bind_mode(rx_decoder_state_t *state, int mode)
 {
     struct freedv *freedv = NULL;
@@ -998,6 +1006,17 @@ static int rx_decoder_bind_mode(rx_decoder_state_t *state, int mode)
              * the new mode's preamble pattern, and the non-zero energy
              * keeps the normalizer well-conditioned. */
             state->demod_count = 0;
+
+            /* HARQ Chase soft-combining on the RX decoder.  Every ARQ mode is
+             * burst_frames==1 (one DATA frame per preamble), so each
+             * retransmission the IRS sees is a fresh, bit-identical copy of the
+             * single in-flight frame — freedv accumulates their LLRs and
+             * auto-clears the residual on CRC success.  Enabled for data modes
+             * only (the DATAC16 control plane carries non-identical frames).
+             * Reset on every bind so a pooled instance never combines a stale
+             * failed frame with a different payload after a mode excursion. */
+            freedv_harq_reset(freedv);
+            freedv_set_harq(freedv, harq_enabled() && mode != FREEDV_MODE_DATAC16);
         }
     }
     pthread_mutex_unlock(&modem_freedv_lock);
