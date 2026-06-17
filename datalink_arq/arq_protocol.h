@@ -473,6 +473,10 @@ int arq_protocol_parse_compact(const uint8_t *buf, size_t len,
 int arq_protocol_mode_to_idx(int freedv_mode);
 int arq_protocol_idx_to_mode(int idx);
 
+/** True for either control-plane mode (DATAC16 connect / DATAC14 in-session) —
+ * never a payload data mode. */
+bool arq_protocol_is_control_mode(int freedv_mode);
+
 /** DISCONNECT frame. */
 int arq_protocol_build_disconnect(uint8_t *buf, size_t buf_len,
                                    uint8_t session_id, uint8_t snr_raw);

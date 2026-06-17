@@ -290,6 +290,11 @@ static const int arq_ladder_modes[] = {
 };
 #define ARQ_LADDER_COUNT ((int)(sizeof(arq_ladder_modes)/sizeof(arq_ladder_modes[0])))
 
+bool arq_protocol_is_control_mode(int freedv_mode)
+{
+    return freedv_mode == ARQ_CONNECT_MODE || freedv_mode == ARQ_INSESSION_MODE;
+}
+
 int arq_protocol_mode_to_idx(int freedv_mode)
 {
     for (int i = 0; i < ARQ_LADDER_COUNT; i++)

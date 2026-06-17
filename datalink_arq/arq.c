@@ -883,9 +883,9 @@ int arq_get_preferred_tx_mode(void) { return arq_modem_preferred_tx_mode(&g_sess
 void arq_set_active_modem_mode(int mode, size_t frame_size)
 {
     /* Only record payload_mode for data modes.  Control-mode TX switches
-     * (DATAC16 for ACK/TURN_REQ/etc.) must not overwrite the negotiated
-     * payload_mode that the RX decoder uses when the peer transmits data. */
-    if (mode != g_sess.control_mode)
+     * (DATAC16 connect / DATAC14 in-session ACK/TURN/etc.) must not overwrite
+     * the negotiated payload_mode that the RX decoder uses for peer data. */
+    if (!arq_protocol_is_control_mode(mode))
         g_sess.payload_mode = mode;
     arq_conn.mode       = mode;
     arq_conn.frame_size = frame_size;
