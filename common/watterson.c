@@ -107,6 +107,7 @@ int watterson_init(watterson_t *w, int sample_rate)
     w->num_paths = 0;
     w->awgn_en = 0;
     w->noise_var = 0.0f;
+    w->chan_norm = 1.0f;
 
     return 0;
 }
@@ -183,19 +184,41 @@ int watterson_add_path(watterson_t *w, float delay_ms, float doppler_hz,
                            &p->b0, &p->b1, &p->b2,
                            &p->a1, &p->a2);
 
-        /* Seed the filters so outputs don't start at zero.
-         * Run a few warm-up noise samples through the IIR. */
+        /* Normalise the Doppler-shaped tap to unit average power.  The narrow
+         * LPF otherwise passes only a tiny fraction of the unit-variance
+         * driving noise, attenuating the signal ~20-30 dB and breaking the
+         * SNR <-> No calibration.
+         *
+         * The driven LPF output variance (per I/Q component) for unit white
+         * input is exactly the impulse-response energy E_h = sum h[n]^2, so
+         * E[|tap|^2] = 2*E_h.  We compute E_h DETERMINISTICALLY from the
+         * impulse response.  (A finite random measurement is wrong for very
+         * narrow Doppler: the fade is ~constant over any short window, so it
+         * would normalise to a single fade realisation, not the ensemble.) */
+        {
+            float xh[3] = {0,0,0}, yh[3] = {0,0,0};
+            double e_h = 0.0;
+            float in = 1.0f;        /* unit impulse at n=0, zero thereafter */
+            int n;
+            for (n = 0; n < 2000000; n++)
+            {
+                float y = iir_tick(in, xh, yh, p->b0, p->b1, p->b2, p->a1, p->a2);
+                in = 0.0f;
+                e_h += (double)y * y;
+                if (n > 2000 && (double)y * y < e_h * 1e-13)
+                    break;          /* impulse-response tail is negligible */
+            }
+            double tap_pwr = 2.0 * e_h;             /* E[|tap|^2] */
+            p->tap_norm = (tap_pwr > 0.0) ? (float)(1.0 / sqrt(tap_pwr)) : 1.0f;
+        }
+
+        /* Seed the running filter state so the tap doesn't start at zero. */
         {
             int k;
-            float xi, xq, yi, yq;
             for (k = 0; k < 1000; k++)
             {
-                xi = gaussian();
-                xq = gaussian();
-                yi = iir_tick(xi, p->x_i, p->y_i, p->b0, p->b1, p->b2, p->a1, p->a2);
-                yq = iir_tick(xq, p->x_q, p->y_q, p->b0, p->b1, p->b2, p->a1, p->a2);
-                (void)yi;
-                (void)yq;
+                iir_tick(gaussian(), p->x_i, p->y_i, p->b0, p->b1, p->b2, p->a1, p->a2);
+                iir_tick(gaussian(), p->x_q, p->y_q, p->b0, p->b1, p->b2, p->a1, p->a2);
             }
         }
     }
@@ -207,6 +230,7 @@ int watterson_add_path(watterson_t *w, float delay_ms, float doppler_hz,
         p->b2 = 0.0f;
         p->a1 = 0.0f;
         p->a2 = 0.0f;
+        p->tap_norm = 1.0f;   /* tap is (1, 0): already unit power */
     }
 
     /* Pre-compute frequency offset phase increment per sample */
@@ -214,6 +238,19 @@ int watterson_add_path(watterson_t *w, float delay_ms, float doppler_hz,
     p->phase = 0.0f;
 
     w->num_paths++;
+
+    /* Normalise the summed channel to unit average power gain: with unit-power
+     * taps, E[|h|^2] = sum(gain^2) over paths, so divide the output by its
+     * square root.  Keeps the faded signal at the same average power as the
+     * input (ch.c hf_gain convention) so SNR3k = -No - 14.82 holds. */
+    {
+        double sumg2 = 0.0;
+        int j;
+        for (j = 0; j < w->num_paths; j++)
+            sumg2 += (double)w->paths[j].gain * w->paths[j].gain;
+        w->chan_norm = (sumg2 > 0.0) ? (float)(1.0 / sqrt(sumg2)) : 1.0f;
+    }
+
     return idx;
 }
 
@@ -269,8 +306,13 @@ void watterson_process(watterson_t *w, COMP *samples, int n)
             for (i = 0; i < n; i++)
             {
                 COMP noise;
-                noise.real = gaussian() * sqrtf(w->noise_var);
-                noise.imag = gaussian() * sqrtf(w->noise_var);
+                /* Per-component variance noise_var/2 so the COMPLEX noise power
+                 * is noise_var = Fs*No, matching ch.c (whose gaussian() carries
+                 * the sqrt(1/2)).  Our gaussian() is unit-variance, so apply the
+                 * 1/2 here — otherwise the channel is 3 dB hotter than ch and the
+                 * SNR<->No calibration (and the mode thresholds) shift by 3 dB. */
+                noise.real = gaussian() * sqrtf(w->noise_var * 0.5f);
+                noise.imag = gaussian() * sqrtf(w->noise_var * 0.5f);
                 w->sig_pwr_acc   += (double)samples[i].real * samples[i].real +
                                     (double)samples[i].imag * samples[i].imag;
                 w->noise_pwr_acc += (double)noise.real * noise.real +
@@ -316,8 +358,9 @@ void watterson_process(watterson_t *w, COMP *samples, int n)
                 tap.imag = 0.0f;
             }
 
-            /* Apply path gain */
-            tap = fcmult(wp->gain, tap);
+            /* Apply unit-power normalisation then path gain, so each path's
+             * average power is gain^2 (E[|tap|^2] = 1). */
+            tap = fcmult(wp->gain * wp->tap_norm, tap);
 
             /* Write current sample into delay line */
             if (wp->delay_buf != NULL)
@@ -365,12 +408,19 @@ void watterson_process(watterson_t *w, COMP *samples, int n)
             out = cadd(out, contrib);
         }
 
+        /* Normalise summed multi-path power to unit average gain (ch.c hf_gain
+         * convention) so the faded signal keeps the input's average power and
+         * the AWGN below lands at SNR3k = -No - 14.82. */
+        out = fcmult(w->chan_norm, out);
+
         /* AWGN (optional) */
         if (w->awgn_en)
         {
             COMP noise;
-            noise.real = gaussian() * sqrtf(w->noise_var);
-            noise.imag = gaussian() * sqrtf(w->noise_var);
+            /* per-component variance noise_var/2 => complex noise power = Fs*No,
+             * matching ch.c (see the no-paths branch above). */
+            noise.real = gaussian() * sqrtf(w->noise_var * 0.5f);
+            noise.imag = gaussian() * sqrtf(w->noise_var * 0.5f);
             w->sig_pwr_acc   += (double)out.real * out.real +
                                 (double)out.imag * out.imag;
             w->noise_pwr_acc += (double)noise.real * noise.real +

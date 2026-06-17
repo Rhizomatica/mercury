@@ -37,6 +37,10 @@ typedef struct watterson_path
     float doppler_hz;    /* Doppler spread (σ) in Hz, typically 0.1-2.0 */
     float freq_hz;       /* Frequency offset / Doppler shift in Hz */
     float gain;          /* Linear gain factor (0.0 to 1.0) */
+    float tap_norm;      /* normalises the Doppler-shaped tap to unit average
+                          * power (E[|tap|^2]=1).  The narrow Butterworth LPF
+                          * otherwise passes only a tiny fraction of the driving
+                          * white-noise power, attenuating the signal ~20-30 dB. */
 
     /* IIR filter state for Doppler shaping (2nd-order Butterworth LPF)
      * Separate filters are used for the I and Q components */
@@ -69,6 +73,12 @@ typedef struct watterson
     /* AWGN noise parameters (optional) */
     int    awgn_en;     /* Enable AWGN (0 or 1) */
     float  noise_var;   /* Noise variance per sample */
+
+    /* Normalises the summed multi-path output to unit average power gain
+     * (E[|h|^2]=1, i.e. sum of path powers = 1), so the faded signal carries
+     * the same average power as the unfaded input — matching ch.c's hf_gain
+     * convention so SNR3k = -No - 14.82 holds. */
+    float  chan_norm;
 
     /* Power accumulators for SNR measurement.  Reset at init and on
      * watterson_reset_meas(); accumulated across watterson_process() calls.
