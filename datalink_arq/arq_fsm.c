@@ -258,15 +258,11 @@ static void send_mode_negotiation(arq_session_t *sess, arq_subtype_t subtype, in
     if (sess->local_snr_x10 != 0)
         snr_raw = arq_protocol_encode_snr((float)sess->local_snr_x10 / 10.0f);
 
-    int n = -1;
-    if (subtype == ARQ_SUBTYPE_MODE_REQ)
-        n = arq_protocol_build_mode_req(frame, sizeof(frame),
-                                        sess->session_id, snr_raw, mode);
-    else
-        n = arq_protocol_build_mode_ack(frame, sizeof(frame),
-                                        sess->session_id, snr_raw, mode);
+    int n = arq_protocol_build_compact(frame, sizeof(frame), subtype,
+                                       sess->session_id, 0, 0, snr_raw,
+                                       (uint8_t)arq_protocol_mode_to_idx(mode));
     if (n > 0)
-        send_frame(PACKET_TYPE_ARQ_CONTROL, sess->control_mode, (size_t)n, frame, 0);
+        send_frame(PACKET_TYPE_ARQ_CONTROL, ARQ_INSESSION_MODE, (size_t)n, frame, 0);
 }
 
 /** Map a FreeDV payload mode to a comparable rank: higher rank = faster/more
@@ -566,30 +562,13 @@ static void send_ctrl_frame(arq_session_t *sess, arq_subtype_t subtype)
     if (sess->local_snr_x10 != 0)
         snr_raw = arq_protocol_encode_snr((float)sess->local_snr_x10 / 10.0f);
 
-    int n = -1;
-    switch (subtype)
-    {
-    case ARQ_SUBTYPE_DISCONNECT:
-        n = arq_protocol_build_disconnect(frame, sizeof(frame),
-                                          sess->session_id, snr_raw); break;
-    case ARQ_SUBTYPE_KEEPALIVE:
-        n = arq_protocol_build_keepalive(frame, sizeof(frame),
-                                         sess->session_id, snr_raw); break;
-    case ARQ_SUBTYPE_KEEPALIVE_ACK:
-        n = arq_protocol_build_keepalive_ack(frame, sizeof(frame),
-                                             sess->session_id, snr_raw); break;
-    case ARQ_SUBTYPE_TURN_REQ:
-        n = arq_protocol_build_turn_req(frame, sizeof(frame),
-                                        sess->session_id,
-                                        sess->rx_expected, snr_raw); break;
-    case ARQ_SUBTYPE_TURN_ACK:
-        n = arq_protocol_build_turn_ack(frame, sizeof(frame),
-                                        sess->session_id, snr_raw); break;
-    default:
-        return;
-    }
+    /* TURN_REQ carries the IRS rx_expected in the ack_seq slot; the others
+     * carry no seq.  All ride the compact in-session control mode (DATAC18). */
+    uint8_t ack_seq = (subtype == ARQ_SUBTYPE_TURN_REQ) ? sess->rx_expected : 0;
+    int n = arq_protocol_build_compact(frame, sizeof(frame), subtype,
+                                       sess->session_id, ack_seq, 0, snr_raw, 0);
     if (n > 0)
-        send_frame(PACKET_TYPE_ARQ_CONTROL, sess->control_mode, (size_t)n, frame, 0);
+        send_frame(PACKET_TYPE_ARQ_CONTROL, ARQ_INSESSION_MODE, (size_t)n, frame, 0);
 }
 
 static void send_ack(arq_session_t *sess, uint8_t ack_delay_raw)
@@ -598,15 +577,38 @@ static void send_ack(arq_session_t *sess, uint8_t ack_delay_raw)
     uint8_t flags   = 0;
     uint8_t snr_raw = 0;
 
-    if (g_cbs.tx_backlog && g_cbs.tx_backlog() > 0)
-        flags |= ARQ_FLAG_HAS_DATA;
+    uint8_t backlog_hint = 0;
+    if (g_cbs.tx_backlog)
+    {
+        int b = g_cbs.tx_backlog();
+        if (b > 0) flags |= ARQ_FLAG_HAS_DATA;
+        backlog_hint = (uint8_t)(b > 15 ? 15 : (b < 0 ? 0 : b));
+    }
     if (sess->local_snr_x10 != 0)
         snr_raw = arq_protocol_encode_snr((float)sess->local_snr_x10 / 10.0f);
 
-    int n = arq_protocol_build_ack(frame, sizeof(frame), sess->session_id,
+    /* aux carries a 0-15 reverse-backlog hint so the ISS can pre-empt the
+     * turnaround instead of a blind TURN_REQ.  ack_delay is dropped (compact). */
+    int n, mode;
+    if (sess->pending_connect_confirm)
+    {
+        /* The connect-confirmation ACK: the peer is still in the connect phase
+         * (ACCEPTING) listening on the DATAC16 connect mode, so this one ACK
+         * must ride DATAC16 with the full header.  Every later ACK is compact
+         * on DATAC18. */
+        mode = ARQ_CONNECT_MODE;
+        n = arq_protocol_build_ack(frame, sizeof(frame), sess->session_id,
                                    sess->rx_expected, flags, snr_raw, ack_delay_raw);
+    }
+    else
+    {
+        mode = ARQ_INSESSION_MODE;
+        n = arq_protocol_build_compact(frame, sizeof(frame), ARQ_SUBTYPE_ACK,
+                                       sess->session_id, sess->rx_expected,
+                                       flags, snr_raw, backlog_hint);
+    }
     if (n > 0)
-        send_frame(PACKET_TYPE_ARQ_CONTROL, sess->control_mode, (size_t)n, frame, 0);
+        send_frame(PACKET_TYPE_ARQ_CONTROL, mode, (size_t)n, frame, 0);
 }
 
 static void send_data_burst(arq_session_t *sess)
@@ -815,7 +817,9 @@ static void fsm_disconnected(arq_session_t *sess, const arq_event_t *ev)
 
     case ARQ_EV_APP_CONNECT:
         snprintf(sess->remote_call, CALLSIGN_MAX_SIZE, "%s", ev->remote_call);
-        sess->session_id      = (uint8_t)(hermes_uptime_ms() & 0x7F) | 0x01;
+        /* 1-15: the compact in-session control header carries session_id in
+         * 4 bits, so it must agree with the DATAC16 connect frame's byte. */
+        sess->session_id      = (uint8_t)((hermes_uptime_ms() % 15) + 1);
         sess->tx_retries_left = ARQ_CALL_RETRY_SLOTS;
         sess->pending_disconnect = false;  /* clear stale deferred disconnect from prior session */
         sess->disconnect_deadline_ms = 0;
