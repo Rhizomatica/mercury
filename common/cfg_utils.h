@@ -44,6 +44,8 @@
 #define CFG_KEY_NO_PROGRESS_TIMEOUT_S "arq:no_progress_timeout_s"
 #define CFG_KEY_DISCONNECT_DRAIN_TIMEOUT_S "arq:disconnect_drain_timeout_s"
 #define CFG_KEY_TX_GAIN_DB          "audio:tx_gain_db"
+#define CFG_KEY_TNC_KEEPALIVE_S     "tnc:keepalive_s"
+#define CFG_KEY_TNC_BUFFER_REPORT_MS "tnc:buffer_report_ms"
 
 /* Holds all values read from the init configuration file */
 typedef struct {
@@ -72,6 +74,11 @@ typedef struct {
     float    tx_gain_db;            /* Linear-equivalent gain on the modulator
                                     * TX samples, in dB. 0.0 = no change.
                                     * Range -20.0 .. +20.0 (clamped). */
+    int      tnc_keepalive_s;       /* IAMALIVE interval on the TNC control
+                                    * port. Default 60, clamped 5..600.   */
+    int      tnc_buffer_report_ms;  /* BUFFER report interval on the TNC
+                                    * control port. Default 1000, clamped
+                                    * 100..10000.                          */
 } mercury_config;
 
 /* Load configuration from an INI file into |cfg|.

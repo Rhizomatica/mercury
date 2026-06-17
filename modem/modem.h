@@ -61,6 +61,9 @@ void *rx_thread(void *g_modem);
 // Returns the sample rate on success, 0 if no spectrum is available yet.
 int modem_get_rx_spectrum(float *out_dB, int max_bins);
 
+/* Enable/disable the RX spectrum FFT (skipped when no UI consumes it). */
+void modem_set_spectrum_enabled(bool enabled);
+
 // TX audio gain (linear multiplier on modulator output samples).
 // Default 1.0f = no change. Hot-tunable from any thread; the modulator
 // reads it once per burst.  Applied with int32 saturation, so any value

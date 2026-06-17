@@ -38,10 +38,11 @@
 #include "os_interop.h"
 
 #include "tcp_interfaces.h"
+#include <errno.h>
+#include <string.h>
 #include "ring_buffer_posix.h"
 #include "net.h"
 #include "arq.h"
-#include "fsm.h"
 #include "chan.h"
 #include "defines_modem.h"
 #include "kiss.h"
@@ -82,6 +83,22 @@ extern cbuf_handle_t data_rx_buffer_broadcast;
 extern volatile bool shutdown_;
 
 extern arq_info arq_conn;
+
+/* TNC control-port pacing — runtime-configurable via [tnc] INI keys. */
+static _Atomic uint64_t tnc_keepalive_interval_ms = 60000;
+static _Atomic uint64_t tnc_buffer_report_interval_ms = 1000;
+
+void tnc_set_intervals(int keepalive_s, int buffer_report_ms)
+{
+    if (keepalive_s >= 5 && keepalive_s <= 600)
+        atomic_store_explicit(&tnc_keepalive_interval_ms,
+                              (uint64_t)keepalive_s * 1000ULL,
+                              memory_order_relaxed);
+    if (buffer_report_ms >= 100 && buffer_report_ms <= 10000)
+        atomic_store_explicit(&tnc_buffer_report_interval_ms,
+                              (uint64_t)buffer_report_ms,
+                              memory_order_relaxed);
+}
 
 static ssize_t send_all(int socket_fd, const uint8_t *buffer, size_t len)
 {
@@ -656,8 +673,8 @@ static void *arq_reactor_thread(void *port)
                     memset(&cmd, 0, sizeof(cmd));
                     cmd.type = ARQ_CMD_CLIENT_CONNECT;
                     (void)arq_submit_tcp_cmd(&cmd);
-                    next_keepalive_ms = now_ms + 60000ULL;
-                    next_buffer_report_ms = now_ms + 1000ULL;
+                    next_keepalive_ms = now_ms + atomic_load_explicit(&tnc_keepalive_interval_ms, memory_order_relaxed);
+                    next_buffer_report_ms = now_ms + atomic_load_explicit(&tnc_buffer_report_interval_ms, memory_order_relaxed);
                     last_buffer_report = -1;
                     atomic_store_explicit(&tnc_last_buffer_sent, -1, memory_order_relaxed);
                     ctl_len = 0;
@@ -751,7 +768,7 @@ static void *arq_reactor_thread(void *port)
                 {
                     char imalive[] = "IAMALIVE\r";
                     (void)tcp_write(CTL_TCP_PORT, (uint8_t *)imalive, strlen(imalive));
-                    next_keepalive_ms = now_ms + 60000ULL;
+                    next_keepalive_ms = now_ms + atomic_load_explicit(&tnc_keepalive_interval_ms, memory_order_relaxed);
                 }
                 if (now_ms >= next_buffer_report_ms)
                 {
@@ -761,7 +778,7 @@ static void *arq_reactor_thread(void *port)
                         tnc_send_buffer((uint32_t)buffered);
                         last_buffer_report = buffered;
                     }
-                    next_buffer_report_ms = now_ms + 1000ULL;
+                    next_buffer_report_ms = now_ms + atomic_load_explicit(&tnc_buffer_report_interval_ms, memory_order_relaxed);
                 }
             }
         }
@@ -779,9 +796,13 @@ static void *arq_reactor_thread(void *port)
                 {
                     if (read_buffer(data_rx_buffer_arq, tx_buf, available) == 0)
                     {
-                        ssize_t sent = tcp_write(DATA_TCP_PORT, tx_buf, available);
+                        /* Bytes were already consumed from the ring, so a
+                         * partial write must not drop them — loop until the
+                         * kernel takes everything (or the socket dies). */
+                        ssize_t sent = tcp_write_all(DATA_TCP_PORT, tx_buf, available);
                         if (sent < (ssize_t)available)
-                            HLOGW("tcp-data", "Partial DATA write (%zd/%zu)", sent, available);
+                            HLOGW("tcp-data", "DATA write failed (%zd/%zu), socket restarting",
+                                  sent, available);
                     }
                 }
             }
@@ -806,44 +827,6 @@ void *server_worker_thread_ctl(void *port)
     HLOGW("tcp", "server_worker_thread_ctl now runs unified ARQ reactor");
     return arq_reactor_thread(port);
 }
-
-void *server_worker_thread_data(void *port)
-{
-    (void)port;
-    HLOGW("tcp", "server_worker_thread_data is deprecated (reactor owns DATA socket)");
-    return NULL;
-}
-
-// tx to tcp socket the received data from the modem
-void *data_worker_thread_tx(void *conn)
-{
-    (void)conn;
-    HLOGW("tcp", "data_worker_thread_tx is deprecated (reactor owns DATA TX)");
-    return NULL;
-}
-
-// rx from tcp socket and send to trasmit by the modem
-void *data_worker_thread_rx(void *conn)
-{
-    (void)conn;
-    HLOGW("tcp", "data_worker_thread_rx is deprecated (reactor owns DATA RX)");
-    return NULL;
-}
-
-void *control_worker_thread_tx(void *conn)
-{
-    (void)conn;
-    HLOGW("tcp", "control_worker_thread_tx is deprecated (reactor owns CTL TX)");
-    return NULL;
-}
-
-void *control_worker_thread_rx(void *conn)
-{
-    (void)conn;
-    HLOGW("tcp", "control_worker_thread_rx is deprecated (reactor owns CTL RX)");
-    return NULL;
-}
-
 
 /********** BROADCAST TCP port INTERFACE **********/
 
@@ -1121,13 +1104,13 @@ void *tcp_server_thread(void *port_ptr)
     tcp_socket = socket(AF_INET, SOCK_STREAM, 0);
     if (tcp_socket < 0)
     {
-        perror("Failed to create TCP socket");
+        HLOGE("tcp-bcast", "Failed to create TCP socket: %s", strerror(errno));
         return NULL;
     }
 
     if (setsockopt(tcp_socket, SOL_SOCKET, SO_REUSEADDR, (const char *)&opt, sizeof(opt)) < 0)
     {
-        perror("Failed to set SO_REUSEADDR on broadcast TCP socket");
+        HLOGE("tcp-bcast", "Failed to set SO_REUSEADDR: %s", strerror(errno));
         SOCK_CLOSE(tcp_socket);
         return NULL;
     }
@@ -1139,14 +1122,14 @@ void *tcp_server_thread(void *port_ptr)
 
     if (bind(tcp_socket, (struct sockaddr *)&local_addr, sizeof(local_addr)) < 0)
     {
-        perror("Failed to bind TCP socket");
+        HLOGE("tcp-bcast", "Failed to bind TCP socket: %s", strerror(errno));
         SOCK_CLOSE(tcp_socket);
         return NULL;
     }
 
     if (listen(tcp_socket, 1) < 0)
     {
-        perror("Failed to listen on TCP socket");
+        HLOGE("tcp-bcast", "Failed to listen on TCP socket: %s", strerror(errno));
         SOCK_CLOSE(tcp_socket);
         return NULL;
     }
@@ -1158,7 +1141,7 @@ void *tcp_server_thread(void *port_ptr)
         client_socket = accept(tcp_socket, (struct sockaddr *)&client_addr, &client_addr_len);
         if (client_socket < 0)
         {
-            perror("Failed to accept client connection");
+            HLOGE("tcp-bcast", "Failed to accept client connection: %s", strerror(errno));
             if (shutdown_)
                 break; // Exit if shutdown flag is set
             continue; // Retry accepting a connection
@@ -1225,7 +1208,7 @@ void tnc_send_connected()
     const char *dest_call = arq_conn.dst_addr[0]
                             ? arq_conn.dst_addr
                             : arq_conn.my_call_sign;
-    sprintf(buffer, "CONNECTED %s %s %d\r",
+    snprintf(buffer, sizeof(buffer), "CONNECTED %s %s %d\r",
             source_call, dest_call, arq_reported_bandwidth_hz());
     if (tnc_queue_line(buffer) < 0)
         HLOGW("tcp-ctl", "Error queuing connected message");
@@ -1238,7 +1221,7 @@ void tnc_send_cqframe(const char *source_call, int bw_hz)
     if (!source_call || source_call[0] == '\0')
         return;
 
-    sprintf(buffer, "CQFRAME %s %d\r", source_call, bw_hz);
+    snprintf(buffer, sizeof(buffer), "CQFRAME %s %d\r", source_call, bw_hz);
     if (tnc_queue_line(buffer) < 0)
         HLOGW("tcp-ctl", "Error queuing CQFRAME message");
 }
@@ -1258,7 +1241,7 @@ void tnc_send_cancelpending()
 void tnc_send_disconnected()
 {
     char buffer[128];
-    sprintf(buffer, "DISCONNECTED\r");
+    snprintf(buffer, sizeof(buffer), "DISCONNECTED\r");
     if (tnc_queue_line(buffer) < 0)
         HLOGW("tcp-ctl", "Error queuing disconnected message");
 }

@@ -618,12 +618,17 @@ int main(int argc, char *argv[])
     if (radio_io_init(radio_type, radio_device, hamlib_log_level, radio_serial_speed) != 0)
     {
         fprintf(stderr, "Failed to initialize radio control.\n");
+        audioio_deinit(&radio_capture, &radio_playback);
         hermes_log_shutdown();
         return EXIT_FAILURE;
     }
 
     HLOGI("main", "Initializing Modem");
     init_modem(&g_modem, startup_payload_mode, 1, test_mode, freedv_verbosity); // frames per burst is 1 for now
+    /* The waterfall FFT only has a consumer when the UI is enabled and -W
+     * was not given — skip the per-50ms FFT otherwise. */
+    modem_set_spectrum_enabled(ui_enabled && waterfall_enabled);
+    tnc_set_intervals(mcfg.tnc_keepalive_s, mcfg.tnc_buffer_report_ms);
     
     if (arq_init(g_modem.payload_bytes_per_modem_frame, g_modem.mode) != EXIT_SUCCESS)
     {

@@ -198,6 +198,7 @@ void freedv_close(struct freedv *freedv) {
 
   FREE(freedv->tx_payload_bits);
   FREE(freedv->rx_payload_bits);
+  FREE(freedv->harq_llr);
   if (freedv->codec2) codec2_destroy(freedv->codec2);
 
   if (FDV_MODE_ACTIVE(FREEDV_MODE_1600, freedv->mode)) {
@@ -1338,6 +1339,15 @@ void freedv_get_modem_stats(struct freedv *f, int *sync, float *snr_est) {
 \*---------------------------------------------------------------------------*/
 
 void freedv_set_test_frames(struct freedv *f, int val) { f->test_frames = val; }
+/* HARQ (Chase) soft-combining control for OFDM data modes.  Enable accumulates
+ * the LLRs of CRC-failed frames into the next decode; reset drops any retained
+ * soft info and must be called by the caller whenever the next frame is a NEW
+ * payload rather than a retransmission of the failed one. */
+void freedv_set_harq(struct freedv *f, int enable) {
+  f->harq_enable = enable ? 1 : 0;
+  if (!enable) f->harq_valid = 0;
+}
+void freedv_harq_reset(struct freedv *f) { f->harq_valid = 0; }
 void freedv_set_test_frames_diversity(struct freedv *f, int val) {
   f->test_frames_diversity = val;
 }

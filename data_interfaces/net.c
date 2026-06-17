@@ -22,6 +22,7 @@
 
 #include "net.h"
 #include "os_interop.h"
+#include "defines_modem.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -323,6 +324,51 @@ ssize_t tcp_write(int port_type, uint8_t *buffer, size_t tx_size)
         fprintf(stderr, "ERROR writing to socket\n");
 
     return n;
+}
+
+/* Lossless variant for the bulk DATA stream: loops until every byte is
+ * accepted by the kernel (sockets are blocking; partial send() is rare but
+ * possible).  On hard error marks the port for restart and returns -1.
+ * Control lines keep using tcp_write() — they are periodic status messages
+ * where dropping one beats blocking the reactor. */
+ssize_t tcp_write_all(int port_type, uint8_t *buffer, size_t tx_size)
+{
+    if (port_type != DATA_TCP_PORT)
+        return tcp_write(port_type, buffer, tx_size);
+
+    pthread_mutex_lock(&write_mutex[port_type]);
+
+    if (net_get_status(DATA_TCP_PORT) != NET_CONNECTED)
+    {
+        pthread_mutex_unlock(&write_mutex[port_type]);
+        return 0;
+    }
+
+    size_t total = 0;
+    while (total < tx_size)
+    {
+        ssize_t n = send(cli_data_sockfd, (const char *)buffer + total,
+                         tx_size - total, MSG_NOSIGNAL);
+        if (n > 0)
+        {
+            total += (size_t)n;
+            continue;
+        }
+        if (n < 0 && (sock_errno() == SOCK_EAGAIN ||
+                      sock_errno() == SOCK_EWOULDBLOCK))
+        {
+            /* Transient backpressure on a (normally blocking) socket —
+             * yield briefly and retry rather than dropping session bytes. */
+            msleep(5);
+            continue;
+        }
+        net_set_status(DATA_TCP_PORT, NET_RESTART);
+        pthread_mutex_unlock(&write_mutex[port_type]);
+        return -1;
+    }
+
+    pthread_mutex_unlock(&write_mutex[port_type]);
+    return (ssize_t)total;
 }
 
 int tcp_close(int port_type)

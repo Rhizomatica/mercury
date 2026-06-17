@@ -34,11 +34,9 @@ void interfaces_shutdown();
 
 // ARQ TCP/IP server threads
 void *server_worker_thread_ctl(void *port);
-void *server_worker_thread_data(void *port);
-void *data_worker_thread_tx(void *conn);
-void *data_worker_thread_rx(void *conn);
-void *control_worker_thread_tx(void *conn);
-void *control_worker_thread_rx(void *conn);
+
+/* Configure TNC control-port pacing (from [tnc] INI keys; clamped). */
+void tnc_set_intervals(int keepalive_s, int buffer_report_ms);
 
 // BROADCAST TCP/IP server threads
 void *send_thread(void *client_socket_ptr);

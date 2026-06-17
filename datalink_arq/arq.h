@@ -43,7 +43,6 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include "fsm.h"
 #include "arq_events.h"
 
 /** @brief Runtime ARQ connection and mode state shared across modules. */
@@ -78,7 +77,10 @@ typedef struct
 {
     arq_action_type_t type;
     int mode;
-    size_t frame_size;
+    size_t frame_size;   /* bytes per frame                                  */
+    int frame_count;     /* frames in this PTT burst (>= 1); the modem reads
+                          * frame_count * frame_size bytes and modulates them
+                          * behind a single preamble                          */
 } arq_action_t;
 
 /** @brief Snapshot of current ARQ runtime state for telemetry/decision making. */
@@ -99,7 +101,6 @@ typedef struct
 } arq_runtime_snapshot_t;
 
 extern arq_info arq_conn;
-extern fsm_handle arq_fsm;
 
 /**
  * @brief Initialize ARQ subsystem.

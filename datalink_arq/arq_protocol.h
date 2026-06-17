@@ -102,6 +102,10 @@
                                   * with LEN_HI/LEN_B9 allows counts up to     *
                                   * 2047 (DATAC17 carries 1172 user bytes,     *
                                   * QAM16C2 1205).                             */
+#define ARQ_FLAG_BURST_END 0x04  /* bit 2: DATA frames only — last frame of a  *
+                                  * multi-frame burst; the IRS sends one       *
+                                  * cumulative ACK when it sees this (or when  *
+                                  * the burst fallback timer expires).         */
 
 /* ======================================================================
  * Frame subtypes
@@ -156,6 +160,9 @@ typedef struct
  * payload_bytes:    usable data bytes per frame.
  * ====================================================================== */
 
+/* Upper bound on frames per TX burst (sizes the go-back-N window). */
+#define ARQ_BURST_MAX 5
+
 typedef struct
 {
     int   freedv_mode;          /* FREEDV_MODE_* constant                        */
@@ -164,6 +171,15 @@ typedef struct
     float ack_timeout_s;        /* from PTT-ON to ACK deadline                   */
     float retry_interval_s;     /* ack_timeout_s + ACK_GUARD_S                   */
     int   payload_bytes;        /* usable payload per frame                      */
+    int   burst_frames;         /* DATA frames per PTT burst (1..ARQ_BURST_MAX);
+                                 * 1 = classic stop-and-wait.
+                                 * NOTE: keep at 1 until the modem pool opens
+                                 * freedv instances with frames_per_burst > 1
+                                 * (modem.c / init_modem, currently hardcoded
+                                 * 1).  The ISS/IRS go-back-N logic is ready,
+                                 * but a >1 burst is dropped after its first
+                                 * frame because the RX freedv is configured
+                                 * for one frame per preamble.                  */
 } arq_mode_timing_t;
 
 /* The one FreeDV mode used for all ARQ control frames (CALL/ACCEPT/ACK/
@@ -238,7 +254,7 @@ extern _Atomic float arq_callint_override_s;
 #define ARQ_MODE_SWITCH_HYST_COUNT    1     /* SNR provides stability gate; 1 = immediate */
 #define ARQ_STARTUP_MAX_S             10    /* control-mode-only startup window    */
 #define ARQ_STARTUP_ACKS_REQUIRED     1
-#define ARQ_SNR_HYST_DB               1.0f
+#define ARQ_SNR_HYST_DB               5.0f
 #define ARQ_SNR_MIN_DATAC4_DB        -6.0f  /* entry threshold from the DATAC15
                                              * floor.  Bench (docs/MODES.md):
                                              * DATAC15/DATAC4 goodput crossover
@@ -263,12 +279,42 @@ extern _Atomic float arq_callint_override_s;
 #define ARQ_BACKLOG_MIN_DATAC1        126
 #define ARQ_BACKLOG_MIN_DATAC17       503   /* > DATAC1 usable payload (502) */
 #define ARQ_BACKLOG_MIN_QAM16C2       1173  /* > DATAC17 usable payload      */
-#define ARQ_BACKLOG_MIN_BIDIR_UPGRADE 31    /* > DATAC15 payload capacity         */
 #define ARQ_LADDER_LEVELS             6     /* 0=DATAC15, 1=DATAC4, 2=DATAC3,
                                              * 3=DATAC1, 4=DATAC17, 5=QAM16C2 */
 #define ARQ_LADDER_UP_SUCCESSES       2     /* clean ACKs required to step up    */
 #define ARQ_RETRY_DOWNGRADE_THRESHOLD 2     /* consecutive retries to force downgrade */
 #define ARQ_MODE_HOLD_AFTER_DOWNGRADE_S 6   /* hold lower mode after forced downgrade */
+/* Hard total-link-loss net: OLLA's offset handles normal per-fade dips (the old
+ * 2-retry forced downgrade fought OLLA and oscillated badly at low SNR — see
+ * test_olla_low_snr_no_collapse).  Only a long unbroken fail run drops straight
+ * to the robust floor and lets OLLA climb back. */
+#define ARQ_HARD_LOSS_THRESHOLD       8     /* consecutive retries => drop to floor */
+
+/* ---- Outer-loop link adaptation (OLLA) ----
+ * A per-link SNR offset (dB) driven by delivery outcomes corrects the gap
+ * between the peer's reported SNR and the SNR the link actually sustains
+ * (fading margin, estimator bias).  Mode selection thresholds on
+ * (peer_snr + olla_offset).  On a first-try success the offset rises a little;
+ * on a failure it drops more.  At equilibrium the up/down ratio fixes the
+ * first-try FER:  FER = up/(up+down).  This self-damps the gear-shift — a mode
+ * that keeps failing drives the offset down and HOLDS it down (no fixed timer)
+ * until clean delivery at the lower mode raises it again, so there is no
+ * climb→fail→downgrade→re-climb oscillation. */
+#define ARQ_OLLA_TARGET_FER          0.30f  /* target first-try frame-error rate.
+                                            * NOT the cellular 10%: Mercury uses
+                                            * plain go-back-N (no HARQ soft-
+                                            * combining), so the throughput-
+                                            * optimal operating point tolerates a
+                                            * higher FER — the big-payload modes
+                                            * (DATAC1/17) win even with ~25-30%
+                                            * first-try loss.  Matches where the
+                                            * bench goodput crossovers / v1.9.9's
+                                            * stable DATAC1 operate. */
+#define ARQ_OLLA_STEP_DOWN_DB        1.0f   /* offset decrement per first-try failure */
+#define ARQ_OLLA_STEP_UP_DB   (ARQ_OLLA_STEP_DOWN_DB * ARQ_OLLA_TARGET_FER / (1.0f - ARQ_OLLA_TARGET_FER))
+                                            /* increment per success; ratio sets FER */
+#define ARQ_OLLA_OFFSET_MIN_DB     (-20.0f) /* clamp: never bias below this        */
+#define ARQ_OLLA_OFFSET_MAX_DB       (3.0f) /* clamp: small optimistic headroom    */
 
 /* No-progress disconnect budget (seconds).  When data retries exhaust we no
  * longer disconnect immediately — instead we reset the retry counter and keep
@@ -349,6 +395,14 @@ uint8_t arq_protocol_encode_snr(float snr_db);
  * @return SNR in dB, or 0.0f if snr_raw == 0 (unknown).
  */
 float arq_protocol_decode_snr(uint8_t snr_raw);
+
+/**
+ * @brief OLLA: update the per-link SNR offset (dB) from one first-try delivery
+ * outcome.  Returns the new, clamped offset.  Pure — no session state.
+ * @param offset_db     current offset
+ * @param first_try_ok  true = frame delivered on first try; false = needed a retry
+ */
+float arq_olla_update(float offset_db, bool first_try_ok);
 
 /**
  * @brief Encode ack_delay_ms to the 8-bit wire value (10ms units, max 2.55s).

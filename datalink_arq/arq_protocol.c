@@ -73,14 +73,14 @@ extern int  arithmetic_decode(uint8_t *input, int max_len, char *output, int max
  * ====================================================================== */
 
 const arq_mode_timing_t arq_mode_table[] = {
-    /*  freedv_mode           frame_dur  tx_period  ack_timeout  retry_interval  payload_bytes */
-    {  FREEDV_MODE_DATAC16,   3.74f,     1.0f,      7.0f,        8.0f,           14 },
-    {  FREEDV_MODE_DATAC15,   4.40f,     1.0f,      11.0f,       12.0f,          30 },
-    {  FREEDV_MODE_DATAC4,    5.80f,     1.0f,      13.0f,       14.0f,          54 },
-    {  FREEDV_MODE_DATAC3,    3.82f,     1.0f,      11.0f,       12.0f,          126 },
-    {  FREEDV_MODE_DATAC1,    4.81f,     1.0f,      12.0f,       13.0f,          510 },
-    {  FREEDV_MODE_DATAC17,   7.40f,     1.0f,      14.0f,       15.0f,          1180 },
-    {  FREEDV_MODE_QAM16C2,   3.70f,     1.0f,      11.0f,       12.0f,          1213 },
+    /*  freedv_mode           frame_dur  tx_period  ack_timeout  retry_interval  payload  burst */
+    {  FREEDV_MODE_DATAC16,   3.74f,     1.0f,      7.0f,        8.0f,           14,   1 },
+    {  FREEDV_MODE_DATAC15,   4.40f,     1.0f,      11.0f,       12.0f,          30,   1 },
+    {  FREEDV_MODE_DATAC4,    5.80f,     1.0f,      13.0f,       14.0f,          54,   1 },
+    {  FREEDV_MODE_DATAC3,    3.82f,     1.0f,      11.0f,       12.0f,          126,   1 },
+    {  FREEDV_MODE_DATAC1,    4.81f,     1.0f,      12.0f,       13.0f,          510,   1 },
+    {  FREEDV_MODE_DATAC17,   7.40f,     1.0f,      14.0f,       15.0f,          1180,   1 },
+    {  FREEDV_MODE_QAM16C2,   3.70f,     1.0f,      11.0f,       12.0f,          1213,   1 },
 };
 
 const int arq_mode_table_count =
@@ -118,7 +118,6 @@ float arq_protocol_call_interval_s(void)
 
 /* ======================================================================
  * Frame header codec
- * TODO Phase 2: implement encode/decode
  * ====================================================================== */
 
 int arq_protocol_encode_hdr(uint8_t *buf, size_t buf_len, const arq_frame_hdr_t *hdr)
@@ -204,6 +203,14 @@ float arq_protocol_decode_snr(uint8_t snr_raw)
     if (snr_raw == 0)
         return 0.0f;  /* unknown */
     return (float)((int)snr_raw - 128);
+}
+
+float arq_olla_update(float offset_db, bool first_try_ok)
+{
+    offset_db += first_try_ok ? ARQ_OLLA_STEP_UP_DB : -ARQ_OLLA_STEP_DOWN_DB;
+    if (offset_db < ARQ_OLLA_OFFSET_MIN_DB) offset_db = ARQ_OLLA_OFFSET_MIN_DB;
+    if (offset_db > ARQ_OLLA_OFFSET_MAX_DB) offset_db = ARQ_OLLA_OFFSET_MAX_DB;
+    return offset_db;
 }
 
 /* ======================================================================

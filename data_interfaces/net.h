@@ -66,6 +66,7 @@ int tcp_open(int portno, int port_type);
 ssize_t tcp_read(int port_type, uint8_t *buffer, size_t rx_size);
 
 ssize_t tcp_write(int port_type, uint8_t *buffer, size_t tx_size);
+ssize_t tcp_write_all(int port_type, uint8_t *buffer, size_t tx_size);
 
 int tcp_close(int port_type);
 

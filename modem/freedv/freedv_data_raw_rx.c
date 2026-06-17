@@ -56,7 +56,7 @@ int main(int argc, char *argv[]) {
   struct freedv *freedv;
   int nin, nbytes, nbytes_out = 0, nframes_out = 0, buf = 0;
   int mode;
-  int verbose = 0, use_testframes = 0;
+  int verbose = 0, use_testframes = 0, use_harq = 0;
   int mask = 0;
   int framesperburst = 1;
   FILE *foct = NULL;
@@ -86,6 +86,7 @@ int main(int argc, char *argv[]) {
         {"fsk_upper", required_argument, 0, 'u'},
         {"code", required_argument, 0, 'o'},
         {"listcodes", no_argument, 0, 'i'},
+        {"harq", no_argument, 0, 'H'},
         {0, 0, 0, 0}};
 
     o = getopt_long(argc, argv, "bf:hm:qr:tvx", long_opts, &opt_idx);
@@ -130,6 +131,9 @@ int main(int argc, char *argv[]) {
         break;
       case 't':
         use_testframes = 1;
+        break;
+      case 'H':
+        use_harq = 1;
         break;
       case 'v':
         verbose = 1;
@@ -283,6 +287,7 @@ int main(int argc, char *argv[]) {
   assert(freedv != NULL);
   freedv_set_verbose(freedv, verbose);
   freedv_set_test_frames(freedv, use_testframes);
+  freedv_set_harq(freedv, use_harq);
   freedv_set_frames_per_burst(freedv, framesperburst);
 
   if (mode == FREEDV_MODE_FSK_LDPC) {

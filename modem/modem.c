@@ -151,6 +151,14 @@ typedef struct {
 
 static modem_mode_pool_t modem_mode_pool = {0};
 
+/* Spectrum/waterfall FFT gate: set false when no UI consumes it. */
+static atomic_bool g_spectrum_enabled = true;
+
+void modem_set_spectrum_enabled(bool enabled)
+{
+    atomic_store_explicit(&g_spectrum_enabled, enabled, memory_order_relaxed);
+}
+
 static uint64_t monotonic_ms(void)
 {
     struct timespec ts;
@@ -963,6 +971,14 @@ static void rx_metrics_update(rx_metrics_accum_t *metrics, int sync, float snr, 
         metrics->frame_decoded = true;
 }
 
+/* HARQ Chase soft-combining kill-switch (default ON).  Set MERCURY_HARQ=0 to
+ * disable, e.g. for A/B comparison or field fallback. */
+static int harq_enabled(void)
+{
+    const char *e = getenv("MERCURY_HARQ");
+    return !(e && e[0] == '0');
+}
+
 static int rx_decoder_bind_mode(rx_decoder_state_t *state, int mode)
 {
     struct freedv *freedv = NULL;
@@ -990,6 +1006,17 @@ static int rx_decoder_bind_mode(rx_decoder_state_t *state, int mode)
              * the new mode's preamble pattern, and the non-zero energy
              * keeps the normalizer well-conditioned. */
             state->demod_count = 0;
+
+            /* HARQ Chase soft-combining on the RX decoder.  Every ARQ mode is
+             * burst_frames==1 (one DATA frame per preamble), so each
+             * retransmission the IRS sees is a fresh, bit-identical copy of the
+             * single in-flight frame — freedv accumulates their LLRs and
+             * auto-clears the residual on CRC success.  Enabled for data modes
+             * only (the DATAC16 control plane carries non-identical frames).
+             * Reset on every bind so a pooled instance never combines a stale
+             * failed frame with a different payload after a mode excursion. */
+            freedv_harq_reset(freedv);
+            freedv_set_harq(freedv, harq_enabled() && mode != FREEDV_MODE_DATAC16);
         }
     }
     pthread_mutex_unlock(&modem_freedv_lock);
@@ -1326,25 +1353,30 @@ void *tx_thread(void *g_modem)
             else if (action.type == ARQ_ACTION_MODE_SWITCH)
                 sent_from_action = true;
 
+            int action_frames = action.frame_count;
+            if (action_frames < 1) action_frames = 1;
+            if (action_frames > ARQ_BURST_MAX) action_frames = ARQ_BURST_MAX;
+            size_t action_total = action_frame_size * (size_t)action_frames;
+
             if (action_buffer &&
                 action_frame_size > 0 &&
                 action_frame_size <= INT_BUFFER_SIZE &&
                 action.frame_size == action_frame_size &&
-                size_buffer(action_buffer) >= action_frame_size)
+                size_buffer(action_buffer) >= action_total)
             {
-                if (data_size < action_frame_size)
+                if (data_size < action_total)
                 {
-                    uint8_t *new_data = (uint8_t *)realloc(data, action_frame_size);
+                    uint8_t *new_data = (uint8_t *)realloc(data, action_total);
                     if (!new_data)
                     {
                         HLOGE("modem-tx", "Failed to allocate memory for action TX data");
                         continue;
                     }
                     data = new_data;
-                    data_size = action_frame_size;
+                    data_size = action_total;
                 }
-                read_buffer(action_buffer, data, action_frame_size);
-                if (send_modulated_data_with_cq_status(modem, data, 1) == 0)
+                read_buffer(action_buffer, data, action_total);
+                if (send_modulated_data_with_cq_status(modem, data, action_frames) == 0)
                     sent_from_action = true;
                 else
                     HLOGW("modem-tx", "Failed to send queued TX action");
@@ -1548,7 +1580,9 @@ void *rx_thread(void *g_modem)
         }
 
         /* --- Update spectrum buffer for UI waterfall display --- */
-        /* Throttle FFT to match the 50 ms publish interval (~20 fps) */
+        /* Throttle FFT to match the 50 ms publish interval (~20 fps);
+         * skip entirely when no UI consumer exists (-W or UI disabled). */
+        if (atomic_load_explicit(&g_spectrum_enabled, memory_order_relaxed))
         {
             uint64_t now_ms = monotonic_ms();
             if (now_ms >= spectrum_next_ms)
@@ -1559,7 +1593,7 @@ void *rx_thread(void *g_modem)
                 int spec_nin = chunk_samples;
                 if (spec_nin > MODEM_STATS_NSPEC)
                     spec_nin = MODEM_STATS_NSPEC;
-                COMP rx_fdm[MODEM_STATS_NSPEC];
+                static COMP rx_fdm[MODEM_STATS_NSPEC];
                 for (int i = 0; i < spec_nin; i++)
                 {
                     /* Pass raw i16 amplitude — modem_stats_get_rx_spectrum normalises
