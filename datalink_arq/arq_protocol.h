@@ -187,7 +187,7 @@ typedef struct
  * one-line change here; everything else references this define.  The mode
  * must carry exactly ARQ_CONTROL_FRAME_SIZE payload bytes and must be the
  * only mode with that frame size in arq_mode_table. */
-#define ARQ_CONTROL_MODE  FREEDV_MODE_DATAC16
+#define ARQ_CONTROL_MODE  FREEDV_MODE_DATAC13
 
 /* Timing constants shared across modules */
 #define ARQ_CHANNEL_GUARD_MS          700   /* IRS response guard after frame decode.

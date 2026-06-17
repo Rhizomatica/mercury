@@ -1016,7 +1016,11 @@ static int rx_decoder_bind_mode(rx_decoder_state_t *state, int mode)
              * Reset on every bind so a pooled instance never combines a stale
              * failed frame with a different payload after a mode excursion. */
             freedv_harq_reset(freedv);
-            freedv_set_harq(freedv, harq_enabled() && mode != FREEDV_MODE_DATAC16);
+            /* HARQ only on payload data modes — never the control plane
+             * (DATAC13/DATAC16 carry non-identical control frames). */
+            freedv_set_harq(freedv, harq_enabled() &&
+                            mode != FREEDV_MODE_DATAC16 &&
+                            mode != FREEDV_MODE_DATAC13);
         }
     }
     pthread_mutex_unlock(&modem_freedv_lock);

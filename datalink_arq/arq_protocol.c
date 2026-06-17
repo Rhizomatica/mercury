@@ -75,6 +75,7 @@ extern int  arithmetic_decode(uint8_t *input, int max_len, char *output, int max
 const arq_mode_timing_t arq_mode_table[] = {
     /*  freedv_mode           frame_dur  tx_period  ack_timeout  retry_interval  payload  burst */
     {  FREEDV_MODE_DATAC16,   3.74f,     1.0f,      7.0f,        8.0f,           14,   1 },
+    {  FREEDV_MODE_DATAC13,   2.94f,     1.0f,      6.0f,        7.0f,           14,   1 },
     {  FREEDV_MODE_DATAC15,   4.40f,     1.0f,      11.0f,       12.0f,          30,   1 },
     {  FREEDV_MODE_DATAC4,    5.80f,     1.0f,      13.0f,       14.0f,          54,   1 },
     {  FREEDV_MODE_DATAC3,    3.82f,     1.0f,      11.0f,       12.0f,          126,   1 },
