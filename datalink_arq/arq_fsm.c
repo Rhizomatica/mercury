@@ -1432,6 +1432,20 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
                 enter_idle_iss_guarded(sess, false);  /* ISS retaining turn */
             }
         }
+        else if (ev->id == ARQ_EV_RX_TURN_REQ)
+        {
+            /* The peer has reverse data and explicitly requested the floor
+             * while we are awaiting the ACK of our last burst.  Yield instead
+             * of ignoring it: otherwise we sit out the full ack-timeout and
+             * retransmit, while the peer keeps re-sending TURN_REQ — a mutual
+             * stall that hangs bidirectional traffic (e.g. the uucp handshake).
+             * Our unacked window is retransmitted (go-back-N) once we regain
+             * the turn, so no data is lost. */
+            if (g_timing) arq_timing_record_turn(g_timing, false, "turn_req");
+            dflow_enter(sess, ARQ_DFLOW_TURN_ACK_TX,
+                        hermes_uptime_ms() + ARQ_CHANNEL_GUARD_MS,
+                        ARQ_EV_TIMER_ACK);
+        }
         else if (ev->id == ARQ_EV_TIMER_ACK)
         {
             if (sess->tx_retries_left > 0)
