@@ -452,14 +452,22 @@ void *radio_playback_thread(void *device_ptr)
     ffuint frame_size;
     ffuint msec_bytes;
 
-    // input is int32_t (8kHz samples from playback_buffer)
-    int32_t *input_buffer = (int32_t *) malloc(SIGNAL_BUFFER_SIZE * sizeof(int32_t));
+    /* Per-period resampler scratch.  These only ever hold ONE 8 kHz read
+     * period (period_bytes_8k below) and its 1:6 upsampled 48 kHz stereo
+     * expansion.  Sizing from SIGNAL_BUFFER_SIZE allocated ~590 MB for the
+     * stereo buffer alone (~1 GB across both audio threads), which fails on
+     * low-RAM 32-bit hosts such as the 512 MB Pi Zero2W — the modem could not
+     * run there (issue #79).  Size from the actual period instead. */
+    size_t period_scratch_bytes = (size_t) 8000u * sizeof(int32_t) * period_ms / 1000u + 64;
 
-    // upsampled buffer (48kHz mono)
-    int32_t *buffer_upsampled = (int32_t *) malloc(SIGNAL_BUFFER_SIZE * sizeof(int32_t) * 6);
+    // input is int32_t (8kHz samples from playback_buffer)
+    int32_t *input_buffer = (int32_t *) malloc(period_scratch_bytes);
+
+    // upsampled buffer (48kHz mono), 1:6 upsample
+    int32_t *buffer_upsampled = (int32_t *) malloc(period_scratch_bytes * 6);
 
     // output is int32_t stereo (48kHz)
-    int32_t *buffer_output_stereo = (int32_t *) malloc(SIGNAL_BUFFER_SIZE * sizeof(int32_t) * 2 * 6); // a big enough buffer
+    int32_t *buffer_output_stereo = (int32_t *) malloc(period_scratch_bytes * 2 * 6);
 
     if (!input_buffer || !buffer_upsampled || !buffer_output_stereo)
     {
@@ -797,8 +805,15 @@ void *radio_capture_thread(void *device_ptr)
         return NULL;
     }
 
-    buffer_output = (int32_t *) malloc(SIGNAL_BUFFER_SIZE * sizeof(int32_t) * 2);
-    buffer_downsampled = (int32_t *) malloc(SIGNAL_BUFFER_SIZE * sizeof(int32_t));
+    /* Per-read resampler scratch, sized from the device buffer length (was
+     * SIGNAL_BUFFER_SIZE — same ~1 GB oversizing as the playback path,
+     * issue #79).  buffer_output holds one device read of mono 48 kHz samples;
+     * buffer_downsampled its 6:1 decimation. */
+    size_t cap_frames_max = (size_t) cfg->sample_rate * cfg->buffer_length_msec / 1000;
+    cap_frames_max += cap_frames_max / 2 + 64;   /* margin over one read */
+
+    buffer_output = (int32_t *) malloc(cap_frames_max * sizeof(int32_t));
+    buffer_downsampled = (int32_t *) malloc((cap_frames_max / 6 + 2) * sizeof(int32_t));
     if (!buffer_output || !buffer_downsampled)
     {
         HLOGE("audio-cap", "Failed to allocate capture buffers");
