@@ -424,6 +424,31 @@ void test_wait_ack_stale_ack_keeps_window(void)
     TEST_ASSERT_EQUAL_INT(ARQ_DFLOW_WAIT_ACK, sess.dflow_state);
 }
 
+/* Turn-coordination deadlock guard.  When the ISS is in WAIT_ACK (awaiting the
+ * ACK of its last burst) and the peer — which has reverse data — requests the
+ * floor via RX_TURN_REQ, the ISS must YIELD (-> TURN_ACK_TX), not ignore it.
+ * The pre-fix bug ignored RX_TURN_REQ here, so the ISS sat out the full
+ * ack-timeout and retransmitted while the peer kept re-sending TURN_REQ — a
+ * mutual stall that hangs bidirectional traffic (observed: a 21-min uucp hang).
+ * The unACKed window must survive so it is retransmitted (go-back-N) once the
+ * turn is regained.  This is the case the one-way transfer harness can never
+ * reach (its IRS never initiates data), so only a unit test guards it. */
+void test_wait_ack_yields_on_turn_req(void)
+{
+    goto_connected();
+    goto_wait_ack();
+    TEST_ASSERT_EQUAL_INT(1, sess.tx_window_count);
+
+    arq_event_t ev = make_event(ARQ_EV_RX_TURN_REQ);
+    arq_fsm_dispatch(&sess, &ev);
+
+    /* Yielded the floor instead of deadlocking in WAIT_ACK. */
+    TEST_ASSERT_EQUAL_INT(ARQ_DFLOW_TURN_ACK_TX, sess.dflow_state);
+    /* In-flight frame retained for go-back-N retransmit on turn regain. */
+    TEST_ASSERT_EQUAL_INT(1, sess.tx_window_count);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_CONNECTED, sess.conn_state);
+}
+
 /* Retry exhaustion within the no-progress budget persists (stays CONNECTED);
  * once the budget elapses, the next exhaustion tears the link down. */
 void test_retry_exhaustion_persists_then_disconnects(void)
@@ -534,6 +559,7 @@ int main(void)
     RUN_TEST(test_app_disconnect_defers_in_wait_ack);
     RUN_TEST(test_wait_ack_cumulative_ack_advances_window);
     RUN_TEST(test_wait_ack_stale_ack_keeps_window);
+    RUN_TEST(test_wait_ack_yields_on_turn_req);
     RUN_TEST(test_disconnect_drain_timeout_forces_teardown);
     RUN_TEST(test_retry_exhaustion_persists_then_disconnects);
     RUN_TEST(test_retry_exhaustion_disconnects_from_zero_uptime_baseline);
