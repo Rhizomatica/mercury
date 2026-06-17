@@ -254,6 +254,25 @@ void test_olla_low_snr_no_collapse(void)
     }
 }
 
+/* 4c. VERY LOW SNR (-10..-12 dB): below the data-mode floor.  The adapter must
+ *     give up GRACEFULLY — settle pinned at the robust floor (DATAC15) without
+ *     thrashing — rather than oscillate.  (Delivery down here is HARQ's job, not
+ *     OLLA's; see docs/HARQ-FINDINGS.md.) */
+void test_olla_floors_at_very_low_snr(void)
+{
+    for (float snr = -12.0f; snr <= -10.0f; snr += 2.0f) {
+        float gp, avg_rank; int chg;
+        run_loop_real(snr, 4000, 1000, false, &gp, &avg_rank, &chg);
+        printf("  @%.0fdB: OLLA-only %.1f B/s (avg_rank %.2f, %d chg)\n",
+               snr, gp, avg_rank, chg);
+        char msg[180];
+        snprintf(msg, sizeof msg, "@%.0fdB did not settle at floor (avg_rank %.2f)", snr, avg_rank);
+        TEST_ASSERT_TRUE_MESSAGE(avg_rank < 1.0f, msg);   /* pinned at floor      */
+        snprintf(msg, sizeof msg, "@%.0fdB thrashes at floor (%d mode changes)", snr, chg);
+        TEST_ASSERT_TRUE_MESSAGE(chg < 30, msg);          /* stable, not flapping */
+    }
+}
+
 /* 4. THE PROOF: on the same fading channel, OLLA delivers more effective
  *    goodput than the old oscillating gear-shift, with far less mode churn. */
 void test_olla_beats_oscillating_baseline(void)
@@ -279,6 +298,7 @@ int main(void)
     RUN_TEST(test_olla_stabilizes_under_fade);
     RUN_TEST(test_olla_tracks_snr_steps);
     RUN_TEST(test_olla_low_snr_no_collapse);
+    RUN_TEST(test_olla_floors_at_very_low_snr);
     RUN_TEST(test_olla_beats_oscillating_baseline);
     return UNITY_END();
 }
