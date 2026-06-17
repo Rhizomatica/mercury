@@ -282,6 +282,27 @@ int arq_protocol_build_ack(uint8_t *buf, size_t buf_len,
                       NULL, 0);
 }
 
+/* Compact mode index: the 6 gear-shift data modes map to a 0-5 value that
+ * fits the 4-bit aux field of a compact MODE_REQ/MODE_ACK frame. */
+static const int arq_ladder_modes[] = {
+    FREEDV_MODE_DATAC15, FREEDV_MODE_DATAC4, FREEDV_MODE_DATAC3,
+    FREEDV_MODE_DATAC1,  FREEDV_MODE_DATAC17, FREEDV_MODE_QAM16C2,
+};
+#define ARQ_LADDER_COUNT ((int)(sizeof(arq_ladder_modes)/sizeof(arq_ladder_modes[0])))
+
+int arq_protocol_mode_to_idx(int freedv_mode)
+{
+    for (int i = 0; i < ARQ_LADDER_COUNT; i++)
+        if (arq_ladder_modes[i] == freedv_mode) return i;
+    return 0;
+}
+
+int arq_protocol_idx_to_mode(int idx)
+{
+    return (idx >= 0 && idx < ARQ_LADDER_COUNT)
+           ? arq_ladder_modes[idx] : FREEDV_MODE_DATAC15;
+}
+
 int arq_protocol_build_compact(uint8_t *buf, size_t buf_len, uint8_t subtype,
                                uint8_t session_id, uint8_t rx_ack_seq,
                                uint8_t flags, uint8_t snr_raw, uint8_t aux)

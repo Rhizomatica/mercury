@@ -88,6 +88,7 @@ func TestMercuryARQTransfer(t *testing.T) {
 			"-p", fmt.Sprint(port),
 			"-b", fmt.Sprint(bcastPort),
 			"-m", "1",
+			"-v",
 			"-C", filepath.Join(t.TempDir(), "missing-mercury.ini"),
 		)
 		cmd.Dir = repoRoot

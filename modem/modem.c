@@ -135,6 +135,7 @@ typedef struct {
     struct freedv *datac3;
     struct freedv *datac4;
     struct freedv *datac13;
+    struct freedv *datac14;
     struct freedv *datac15;
     struct freedv *datac16;
     struct freedv *datac17;
@@ -143,6 +144,7 @@ typedef struct {
     size_t payload_datac3;
     size_t payload_datac4;
     size_t payload_datac13;
+    size_t payload_datac14;
     size_t payload_datac15;
     size_t payload_datac16;
     size_t payload_datac17;
@@ -177,6 +179,7 @@ static bool is_supported_split_mode(int mode)
            mode == FREEDV_MODE_DATAC3 ||
            mode == FREEDV_MODE_DATAC4 ||
            mode == FREEDV_MODE_DATAC13 ||
+           mode == FREEDV_MODE_DATAC14 ||
            mode == FREEDV_MODE_DATAC15 ||
            mode == FREEDV_MODE_DATAC16 ||
            mode == FREEDV_MODE_DATAC17 ||
@@ -231,6 +234,7 @@ static void clear_mode_pool_locked(void)
     if (modem_mode_pool.datac3) freedv_close(modem_mode_pool.datac3);
     if (modem_mode_pool.datac4) freedv_close(modem_mode_pool.datac4);
     if (modem_mode_pool.datac13) freedv_close(modem_mode_pool.datac13);
+    if (modem_mode_pool.datac14) freedv_close(modem_mode_pool.datac14);
     if (modem_mode_pool.datac15) freedv_close(modem_mode_pool.datac15);
     if (modem_mode_pool.datac16) freedv_close(modem_mode_pool.datac16);
     if (modem_mode_pool.datac17) freedv_close(modem_mode_pool.datac17);
@@ -258,6 +262,8 @@ static int init_mode_pool_locked(int frames_per_burst, int freedv_verbosity)
     if (pool_open_mode_locked(&modem_mode_pool.datac15, &modem_mode_pool.payload_datac15, FREEDV_MODE_DATAC15, frames_per_burst, freedv_verbosity) < 0)
         goto fail;
     if (pool_open_mode_locked(&modem_mode_pool.datac13, &modem_mode_pool.payload_datac13, FREEDV_MODE_DATAC13, frames_per_burst, freedv_verbosity) < 0)
+        goto fail;
+    if (pool_open_mode_locked(&modem_mode_pool.datac14, &modem_mode_pool.payload_datac14, FREEDV_MODE_DATAC14, frames_per_burst, freedv_verbosity) < 0)
         goto fail;
     if (pool_open_mode_locked(&modem_mode_pool.datac4, &modem_mode_pool.payload_datac4, FREEDV_MODE_DATAC4, frames_per_burst, freedv_verbosity) < 0)
         goto fail;
@@ -291,6 +297,9 @@ static struct freedv *pooled_freedv_for_mode_locked(int mode, size_t *payload_by
     case FREEDV_MODE_DATAC13:
         if (payload_bytes) *payload_bytes = modem_mode_pool.payload_datac13;
         return modem_mode_pool.datac13;
+    case FREEDV_MODE_DATAC14:
+        if (payload_bytes) *payload_bytes = modem_mode_pool.payload_datac14;
+        return modem_mode_pool.datac14;
     case FREEDV_MODE_DATAC15:
         if (payload_bytes) *payload_bytes = modem_mode_pool.payload_datac15;
         return modem_mode_pool.datac15;
@@ -316,6 +325,7 @@ static bool is_pooled_freedv_locked(struct freedv *f)
             f == modem_mode_pool.datac3 ||
             f == modem_mode_pool.datac4 ||
             f == modem_mode_pool.datac13 ||
+            f == modem_mode_pool.datac14 ||
             f == modem_mode_pool.datac15 ||
             f == modem_mode_pool.datac16 ||
             f == modem_mode_pool.datac17 ||
@@ -1020,7 +1030,8 @@ static int rx_decoder_bind_mode(rx_decoder_state_t *state, int mode)
              * (DATAC13/DATAC16 carry non-identical control frames). */
             freedv_set_harq(freedv, harq_enabled() &&
                             mode != FREEDV_MODE_DATAC16 &&
-                            mode != FREEDV_MODE_DATAC13);
+                            mode != FREEDV_MODE_DATAC13 &&
+                            mode != FREEDV_MODE_DATAC14);
         }
     }
     pthread_mutex_unlock(&modem_freedv_lock);
@@ -1096,6 +1107,18 @@ static void process_received_frame(const uint8_t *data,
 
     tnc_send_sn(snr_est);
     tnc_send_bitrate(bitrate_level_from_payload_mode(payload_mode), bitrate_bps);
+
+    /* Compact in-session control frames (DATAC14) carry no PACKET_TYPE byte —
+     * byte 0 is [subtype|flags].  No other frame type is this small, so route
+     * by size straight to the ARQ control handler (which parses compact). */
+    if (payload_nbytes == ARQ_COMPACT_CTRL_SIZE)
+    {
+        if (arq_policy_ready)
+            arq_handle_incoming_frame((uint8_t *)data, payload_nbytes, snr_est);
+        HLOGD("modem-rx", "Frame rx bytes=%zu (compact ctrl) frame_bytes=%zu",
+              payload_nbytes, frame_bytes);
+        return;
+    }
 
     frame_type = parse_frame_header((const uint8_t *)data, payload_nbytes, NULL);
 
@@ -1509,7 +1532,13 @@ void *rx_thread(void *g_modem)
             was_tx = false;
         }
 
-        if (rx_decoder_bind_mode(&control_decoder, ARQ_CONTROL_MODE) < 0 ||
+        /* Bind the control decoder to the ARQ's phase-aware preferred RX mode:
+         * DATAC16 (connect) while LISTENING/CONNECTING, DATAC14 (compact
+         * in-session) once CONNECTED.  Falls back to the connect mode before
+         * the ARQ policy is ready. */
+        int ctrl_rx_mode = (arq_policy_ready && pref_rx_mode > 0)
+                           ? pref_rx_mode : ARQ_CONTROL_MODE;
+        if (rx_decoder_bind_mode(&control_decoder, ctrl_rx_mode) < 0 ||
             rx_decoder_bind_mode(&payload_decoder, payload_mode) < 0)
         {
             usleep(100000);

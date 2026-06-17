@@ -622,13 +622,26 @@ void arq_notify_cq_tx_complete(void)
 
 void arq_handle_incoming_frame(uint8_t *data, size_t frame_size, float rx_snr)
 {
-    if (!data || frame_size < ARQ_FRAME_HDR_SIZE) return;
+    if (!data) return;
 
     arq_frame_hdr_t hdr;
-    if (arq_protocol_decode_hdr(data, frame_size, &hdr) < 0)
+    bool is_compact = (frame_size == ARQ_COMPACT_CTRL_SIZE);
+    if (is_compact)
     {
-        HLOGD(LOG_COMP, "Frame header decode failed");
-        return;
+        if (arq_protocol_parse_compact(data, frame_size, &hdr) < 0)
+        {
+            HLOGD(LOG_COMP, "Compact control frame parse failed");
+            return;
+        }
+    }
+    else
+    {
+        if (frame_size < ARQ_FRAME_HDR_SIZE) return;
+        if (arq_protocol_decode_hdr(data, frame_size, &hdr) < 0)
+        {
+            HLOGD(LOG_COMP, "Frame header decode failed");
+            return;
+        }
     }
 
     arq_event_t ev = {0};
@@ -701,13 +714,15 @@ void arq_handle_incoming_frame(uint8_t *data, size_t frame_size, float rx_snr)
         case ARQ_SUBTYPE_KEEPALIVE_ACK: ev.id = ARQ_EV_RX_KEEPALIVE_ACK; break;
         case ARQ_SUBTYPE_MODE_REQ:
             ev.id   = ARQ_EV_RX_MODE_REQ;
-            ev.mode = (frame_size > ARQ_FRAME_HDR_SIZE)
-                      ? (int)data[ARQ_FRAME_HDR_SIZE] : 0;
+            ev.mode = is_compact ? arq_protocol_idx_to_mode(hdr.aux)
+                      : ((frame_size > ARQ_FRAME_HDR_SIZE)
+                         ? (int)data[ARQ_FRAME_HDR_SIZE] : 0);
             break;
         case ARQ_SUBTYPE_MODE_ACK:
             ev.id   = ARQ_EV_RX_MODE_ACK;
-            ev.mode = (frame_size > ARQ_FRAME_HDR_SIZE)
-                      ? (int)data[ARQ_FRAME_HDR_SIZE] : 0;
+            ev.mode = is_compact ? arq_protocol_idx_to_mode(hdr.aux)
+                      : ((frame_size > ARQ_FRAME_HDR_SIZE)
+                         ? (int)data[ARQ_FRAME_HDR_SIZE] : 0);
             break;
         default:
             return;

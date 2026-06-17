@@ -469,6 +469,10 @@ int arq_protocol_build_compact(uint8_t *buf, size_t buf_len, uint8_t subtype,
 int arq_protocol_parse_compact(const uint8_t *buf, size_t len,
                                arq_frame_hdr_t *hdr);
 
+/** Map a gear-shift data mode to/from a 0-5 index for the 4-bit aux field. */
+int arq_protocol_mode_to_idx(int freedv_mode);
+int arq_protocol_idx_to_mode(int idx);
+
 /** DISCONNECT frame. */
 int arq_protocol_build_disconnect(uint8_t *buf, size_t buf_len,
                                    uint8_t session_id, uint8_t snr_raw);
