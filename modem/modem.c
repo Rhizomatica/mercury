@@ -1549,6 +1549,15 @@ void *rx_thread(void *g_modem)
         int payload_chunk = rx_decoder_target_chunk_samples(&payload_decoder);
         if (payload_chunk > chunk_samples)
             chunk_samples = payload_chunk;
+        /* Both decoders consume this one shared chunk; rx_decoder_consume_chunk
+         * truncates (drops leading samples, corrupting an in-flight packet) when
+         * the chunk exceeds a decoder's demod buffer.  Cap to the smaller buffer
+         * so neither truncates — critical now that control (DATAC14) and payload
+         * (e.g. DATAC15) have different per-mode buffer sizes. */
+        if (control_decoder.demod_cap > 0 && chunk_samples > control_decoder.demod_cap)
+            chunk_samples = control_decoder.demod_cap;
+        if (payload_decoder.demod_cap > 0 && chunk_samples > payload_decoder.demod_cap)
+            chunk_samples = payload_decoder.demod_cap;
 
         if (capture_cap < chunk_samples)
         {

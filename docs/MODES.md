@@ -21,7 +21,7 @@ single-frame bursts, 100 trials, "delivered" = acquired AND decoded.
 | DATAC3  | 500  | 321 | 126 | (2048,1024) | 3.19 | 74/100 at 0 dB ¹ | Forward link data (low SNR) |
 | DATAC4  | 250  | 87  | 54  | (1472,448)  | 5.17 | 90/100 at −4 dB ¹ ² | Forward link data (low SNR) |
 | DATAC13 | 200  | 64  | 14  | (384,128)   | 2.0  | 90/100 at −4 dB ¹ ² | Reverse link ACK packets (low SNR) |
-| DATAC14 | 250  | 58  | 3   | (112,56)    | 0.69 | 90/100 at −2 dB ¹ | Reverse link ACK packets (low SNR) |
+| **DATAC14** | 200 | 55 | 4 | (160,48) | 0.88 | AWGN 92/100 at −10.8 dB ³ (more robust than DATAC13 at every SNR) | **In-session control** (ACK/TURN/KEEPALIVE/DISCONNECT/MODE) via compact 4-byte header |
 | **DATAC15** | 200 | 68 | 30 | (768,256)  | 3.74 | 81/100 at −4 dB, 70/100 at −7 dB ² | Forward link data (very low SNR / fringe) |
 | **DATAC16** | 200 | 42 | 14 | (640,128)  | 3.08 | 78/100 at −4 dB, 67/100 at −7 dB ² | Control/ACK packets (very low SNR / fringe) |
 | **DATAC17** | 2100 | 1410 | 1180 | (15936,9456) | 6.71 | 89/100 at +8 dB, 97/100 at +10 dB ² | Forward link data (intermediate SNR, ~2× DATAC1 goodput) |
@@ -31,6 +31,34 @@ single-frame bursts, 100 trials, "delivered" = acquired AND decoded.
 ² Mercury bench (ch simulator, `--mpp`, Octave-generated fading file).  The
 bench reproduces upstream DATAC13 exactly (90/100 at −4 dB) and DATAC4 within
 0.5 dB (89/100 at −3.6 dB), so the DATAC15/16 rows are directly comparable.
+³ Mercury bench, AWGN, 100 bit-identical bursts through `ch` (SNR3k = −No −
+14.82).  At −10.8 dB DATAC14 92/100 vs DATAC13 94/100 vs DATAC16 98/100; at the
+−12.8 dB cliff DATAC14 36/100 vs DATAC13 4/100 vs DATAC16 86/100.  DATAC14 beats
+DATAC13 (which v1.9.9 used for its whole control plane) at every SNR.
+
+## Dual-mode control plane (DATAC14 + DATAC16)
+
+The ARQ control plane is split by frequency of use, since the control frame's
+airtime is paid on **every turnaround**:
+
+- **DATAC14 (in-session, `ARQ_INSESSION_MODE`)** — the frequent per-turnaround
+  frames (ACK / TURN / KEEPALIVE / DISCONNECT / MODE) ride DATAC14 with a
+  **compact 4-byte header** (`arq_protocol_build_compact`):
+  `b0=[subtype:4|flags:4] b1=[session:4|aux:4] b2=rx_ack_seq b3=snr`.  aux
+  carries the requested mode index for MODE frames or a reverse-backlog hint for
+  ACKs.  Measured on-air span **1.54 s vs DATAC16's 3.74 s (−59 %)**, more robust
+  than the DATAC13 it effectively replaces.  HRA_112_112 shortened to 48 data
+  bits (4 payload + CRC16) keeps all 112 parity bits → effective rate 0.30.
+- **DATAC16 (connect, `ARQ_CONNECT_MODE`)** — the rare CALL / ACCEPT / CQ
+  handshake (14-byte callsign payload, rate 0.2), where robustness matters more
+  than airtime.  The connect-confirmation ACK also rides DATAC16 (the peer is
+  still listening on the connect mode at that instant).
+
+The RX side runs two parallel decoders: a control decoder bound to the
+phase-aware preferred mode (DATAC16 while connecting → DATAC14 once connected)
+and a payload decoder on the negotiated data mode.  (Supersedes the earlier
+DATAC18 control-mode experiment below — the compact header is what makes a short
+control mode carry a full ACK.)
 
 ## DATAC17 and QAM16C2: the fast end of the ladder
 
