@@ -345,19 +345,18 @@ static int select_best_mode(const arq_session_t *sess, int backlog)
 {
     int effective_mode = clamp_payload_mode_to_bandwidth(sess->payload_mode);
 
-    /* Safety net: if consecutive retries hit the threshold, the channel
-     * can't support the current mode — force one level down.  The hold
-     * timer in maybe_upgrade_mode() prevents immediate re-upgrade. */
-    if (sess->consecutive_retries >= ARQ_RETRY_DOWNGRADE_THRESHOLD &&
+    /* Hard total-link-loss net.  OLLA (below) is the primary controller: its
+     * SNR offset already drives the effective SNR — and thus the selected mode —
+     * down on sustained first-try failures, smoothly and without oscillation.
+     * The old per-2-retry forced downgrade + hold ran ALONGSIDE OLLA and fought
+     * it: on a marginal/fading link it ratcheted the mode toward the floor on
+     * every fade cluster and churned MODE_REQ round-trips (measured 4-8x more
+     * mode changes and ~20% less goodput at 5-8 dB — test_olla_low_snr_no_collapse).
+     * Keep only a hard net: after a long unbroken fail run (genuine link loss,
+     * not a normal fade dip) drop straight to the robust floor; OLLA climbs back. */
+    if (sess->consecutive_retries >= ARQ_HARD_LOSS_THRESHOLD &&
         mode_rank(effective_mode) > 0)
-    {
-        int cur = effective_mode;
-        if (cur == FREEDV_MODE_QAM16C2) return FREEDV_MODE_DATAC17;
-        if (cur == FREEDV_MODE_DATAC17) return FREEDV_MODE_DATAC1;
-        if (cur == FREEDV_MODE_DATAC1) return FREEDV_MODE_DATAC3;
-        if (cur == FREEDV_MODE_DATAC3) return FREEDV_MODE_DATAC4;
         return FREEDV_MODE_DATAC15;
-    }
 
     /* Don't upgrade if the backlog fits in a single frame at the current mode.
      * MODE_REQ/MODE_ACK airtime overhead is never worthwhile for one frame. */
@@ -430,9 +429,9 @@ static bool maybe_upgrade_mode(arq_session_t *sess)
      * steps the mode down regardless of SNR.  Allow it through even with no
      * SNR estimate, otherwise a link that never lands an advancing ACK (so
      * peer_snr_x10 stays 0) would keep retransmitting at a too-fast mode
-     * forever, defeating the persist-after-exhaustion downgrade. */
+     * forever, defeating the hard-loss drop to the floor. */
     if (sess->peer_snr_x10 == 0 &&
-        sess->consecutive_retries < ARQ_RETRY_DOWNGRADE_THRESHOLD)
+        sess->consecutive_retries < ARQ_HARD_LOSS_THRESHOLD)
         return false;
 
     int backlog = g_cbs.tx_backlog ? g_cbs.tx_backlog() : 0;
@@ -456,14 +455,15 @@ static bool maybe_upgrade_mode(arq_session_t *sess)
     if (sess->mode_upgrade_count < ARQ_MODE_SWITCH_HYST_COUNT)
         return false;
 
-    /* If this is a retry-forced downgrade, set the hold timer. */
+    /* After a hard-loss drop to the floor, hold briefly so OLLA re-climbs on
+     * fresh delivery evidence rather than stale SNR. */
     if (mode_rank(desired_mode) < mode_rank(sess->payload_mode) &&
-        sess->consecutive_retries >= ARQ_RETRY_DOWNGRADE_THRESHOLD)
+        sess->consecutive_retries >= ARQ_HARD_LOSS_THRESHOLD)
     {
         sess->mode_hold_until_ms =
             hermes_uptime_ms() + (ARQ_MODE_HOLD_AFTER_DOWNGRADE_S * 1000ULL);
         sess->consecutive_retries = 0;
-        HLOGI(LOG_COMP, "Retry-forced downgrade: hold for %ds",
+        HLOGI(LOG_COMP, "Hard-loss downgrade to floor: hold for %ds",
               ARQ_MODE_HOLD_AFTER_DOWNGRADE_S);
     }
 

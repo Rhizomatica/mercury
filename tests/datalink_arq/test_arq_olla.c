@@ -150,6 +150,110 @@ void test_olla_tracks_snr_steps(void)
     TEST_ASSERT_TRUE_MESSAGE(rk_lo2 < rk_hi, "did not back off with lower SNR");
 }
 
+/* Faithful model of the REAL adaptive loop: OLLA offset + the legacy
+ * consecutive-retries forced-downgrade + post-downgrade hold that coexist in
+ * select_best_mode()/maybe_upgrade_mode().  Mirrors arq_fsm.c so the test sees
+ * what ships, not an idealized OLLA.  Returns time-averaged rank too, to detect
+ * a pathological collapse to the robust floor. */
+static void run_loop_real(float mean_snr, int nsteps, int warmup, bool safetynet,
+                          float *out_goodput_bps, float *out_avg_rank,
+                          int *out_changes)
+{
+    uint32_t seed = 12345;
+    float offset = 0.0f;
+    int rank = 0, prev_rank = 0, changes = 0, counted = 0;
+    int consec_fail = 0, hold_until = 0;
+    long delivered = 0; double airtime = 0.0, rank_sum = 0.0;
+    const int HOLD = 4;       /* ~ ARQ_MODE_HOLD_AFTER_DOWNGRADE_S worth of frames */
+    const int HARD_LOSS = 8;  /* OLLA-only total-link-loss net (rare) */
+
+    for (int t = 0; t < nsteps; t++) {
+        int olla_pick = select_rank(mean_snr + offset, rank);
+        int sel;
+        if (safetynet) {
+            /* CURRENT ship behaviour: FER-blind forced downgrade + hold that
+             * coexists with OLLA (arq_fsm.c select_best_mode/maybe_upgrade_mode). */
+            if (consec_fail >= ARQ_RETRY_DOWNGRADE_THRESHOLD && rank > 0) {
+                sel = rank - 1; hold_until = t + HOLD; consec_fail = 0;
+            } else {
+                sel = olla_pick;
+                if (sel > rank && t < hold_until) sel = rank;
+            }
+        } else {
+            /* PROPOSED: OLLA is the sole adaptation controller; only a rare hard
+             * net drops to the floor on a sustained fail run (total link loss). */
+            sel = olla_pick;
+            if (consec_fail >= HARD_LOSS) { sel = 0; hold_until = t + HOLD; }
+            else if (sel > rank && t < hold_until) sel = rank;
+        }
+        rank = sel;
+
+        float inst = mean_snr - fade_db(&seed);
+        bool ok = inst >= LADDER[rank].thresh_db;
+
+        offset = arq_olla_update(offset, ok);
+        if (!ok) consec_fail++; else consec_fail = 0;
+
+        if (t >= warmup) {
+            airtime += LADDER[rank].frame_s + (ok ? ACK_OK_S : LADDER[rank].ack_to_s);
+            if (rank != prev_rank) { changes++; airtime += MODE_CHANGE_COST_S; }
+            if (ok) delivered += LADDER[rank].payload;
+            rank_sum += rank; counted++;
+        }
+        prev_rank = rank;
+    }
+    *out_goodput_bps = airtime > 0 ? (float)(delivered / airtime) : 0.0f;
+    *out_avg_rank    = counted ? (float)(rank_sum / counted) : 0.0f;
+    *out_changes     = changes;
+}
+
+/* Goodput of statically pinning a single rank on the same fading channel. */
+static float goodput_fixed(float mean_snr, int fixed_rank, int nsteps, int warmup)
+{
+    uint32_t seed = 12345;
+    long delivered = 0; double airtime = 0.0;
+    for (int t = 0; t < nsteps; t++) {
+        float inst = mean_snr - fade_db(&seed);
+        bool ok = inst >= LADDER[fixed_rank].thresh_db;
+        if (t >= warmup) {
+            airtime += LADDER[fixed_rank].frame_s + (ok ? ACK_OK_S : LADDER[fixed_rank].ack_to_s);
+            if (ok) delivered += LADDER[fixed_rank].payload;
+        }
+    }
+    return airtime > 0 ? (float)(delivered / airtime) : 0.0f;
+}
+
+/* 4b. LOW / VARIABLE SNR: the real adaptive loop (OLLA + legacy forced-downgrade)
+ *     must NOT collapse to the robust floor when a faster mode is the goodput
+ *     optimum.  Reproduces the marginal-link concern seen on the dummy-load
+ *     bench (mode ratcheting toward the floor at ~6-8 dB). At 6 dB the floor
+ *     (DATAC15) is far from optimal: DATAC4/DATAC3 thresholds (-6/-1 dB) clear
+ *     easily, so adaptation must beat both the floor and approach best-static. */
+void test_olla_low_snr_no_collapse(void)
+{
+    for (float snr = 5.0f; snr <= 8.0f; snr += 1.5f) {
+        float gp_net, gp_olla, ar_net, ar_olla; int ch_net, ch_olla;
+        run_loop_real(snr, 4000, 1000, true,  &gp_net,  &ar_net,  &ch_net);   /* ship */
+        run_loop_real(snr, 4000, 1000, false, &gp_olla, &ar_olla, &ch_olla);  /* fix  */
+        float floor_gp = goodput_fixed(snr, 0, 4000, 1000);
+
+        printf("  @%.1fdB: forced-dgr %.1f B/s (rank %.2f, %d chg) | OLLA-only %.1f B/s (rank %.2f, %d chg) | floor %.1f\n",
+               snr, gp_net, ar_net, ch_net, gp_olla, ar_olla, ch_olla, floor_gp);
+
+        char msg[220];
+        /* (1) no pathological collapse to the robust floor */
+        snprintf(msg, sizeof msg, "@%.1fdB OLLA-only collapsed to floor: %.1f <= floor %.1f", snr, gp_olla, floor_gp);
+        TEST_ASSERT_TRUE_MESSAGE(gp_olla > floor_gp, msg);
+        TEST_ASSERT_TRUE_MESSAGE(ar_olla >= 1.0f, "OLLA-only stuck at/near floor rank");
+        /* (2) dropping the FER-blind forced-downgrade is strictly better at low SNR:
+         *     more goodput AND far less mode churn (the dummy-load symptom). */
+        snprintf(msg, sizeof msg, "@%.1fdB OLLA-only goodput %.1f < forced-dgr %.1f", snr, gp_olla, gp_net);
+        TEST_ASSERT_TRUE_MESSAGE(gp_olla >= gp_net, msg);
+        snprintf(msg, sizeof msg, "@%.1fdB OLLA-only churn %d not below forced-dgr %d", snr, ch_olla, ch_net);
+        TEST_ASSERT_TRUE_MESSAGE(ch_olla < ch_net, msg);
+    }
+}
+
 /* 4. THE PROOF: on the same fading channel, OLLA delivers more effective
  *    goodput than the old oscillating gear-shift, with far less mode churn. */
 void test_olla_beats_oscillating_baseline(void)
@@ -174,6 +278,7 @@ int main(void)
     RUN_TEST(test_olla_update_basic);
     RUN_TEST(test_olla_stabilizes_under_fade);
     RUN_TEST(test_olla_tracks_snr_steps);
+    RUN_TEST(test_olla_low_snr_no_collapse);
     RUN_TEST(test_olla_beats_oscillating_baseline);
     return UNITY_END();
 }

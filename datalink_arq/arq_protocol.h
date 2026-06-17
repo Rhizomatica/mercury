@@ -284,6 +284,11 @@ extern _Atomic float arq_callint_override_s;
 #define ARQ_LADDER_UP_SUCCESSES       2     /* clean ACKs required to step up    */
 #define ARQ_RETRY_DOWNGRADE_THRESHOLD 2     /* consecutive retries to force downgrade */
 #define ARQ_MODE_HOLD_AFTER_DOWNGRADE_S 6   /* hold lower mode after forced downgrade */
+/* Hard total-link-loss net: OLLA's offset handles normal per-fade dips (the old
+ * 2-retry forced downgrade fought OLLA and oscillated badly at low SNR — see
+ * test_olla_low_snr_no_collapse).  Only a long unbroken fail run drops straight
+ * to the robust floor and lets OLLA climb back. */
+#define ARQ_HARD_LOSS_THRESHOLD       8     /* consecutive retries => drop to floor */
 
 /* ---- Outer-loop link adaptation (OLLA) ----
  * A per-link SNR offset (dB) driven by delivery outcomes corrects the gap
