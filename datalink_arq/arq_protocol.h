@@ -142,6 +142,7 @@ typedef struct
     uint8_t  rx_ack_seq;
     uint8_t  snr_raw;       /* 0=unknown; decode via arq_protocol_decode_snr         */
     uint8_t  ack_delay_raw; /* 0=unknown; 10ms units; decode via _decode_ack_delay   */
+    uint8_t  aux;           /* compact-ctrl 4-bit aux: MODE req mode / ACK backlog hint */
 } arq_frame_hdr_t;
 
 /* ======================================================================
@@ -182,12 +183,18 @@ typedef struct
                                  * for one frame per preamble.                  */
 } arq_mode_timing_t;
 
-/* The one FreeDV mode used for all ARQ control frames (CALL/ACCEPT/ACK/
- * KEEPALIVE/MODE/TURN/DISCONNECT/CQ).  Swapping the control mode is a
- * one-line change here; everything else references this define.  The mode
- * must carry exactly ARQ_CONTROL_FRAME_SIZE payload bytes and must be the
- * only mode with that frame size in arq_mode_table. */
-#define ARQ_CONTROL_MODE  FREEDV_MODE_DATAC13
+/* Dual control plane:
+ *  - ARQ_CONNECT_MODE (DATAC16, robust rate-0.2, 14 B): the rare connect
+ *    handshake (CALL/ACCEPT/CQ) that must carry callsigns — robustness over
+ *    airtime since it happens once per link.
+ *  - ARQ_INSESSION_MODE (DATAC14, rate-0.30, 1.54 s, 4 B): the frequent
+ *    per-turnaround frames (ACK/TURN/KEEPALIVE/DISCONNECT/MODE) using the
+ *    compact 4-byte header — airtime is paid every turnaround.
+ * ARQ_CONTROL_MODE keeps the legacy name = the connect mode. */
+#define ARQ_CONNECT_MODE     FREEDV_MODE_DATAC16
+#define ARQ_INSESSION_MODE   FREEDV_MODE_DATAC14
+#define ARQ_CONTROL_MODE     ARQ_CONNECT_MODE
+#define ARQ_COMPACT_CTRL_SIZE 4   /* compact in-session control header bytes */
 
 /* Timing constants shared across modules */
 #define ARQ_CHANNEL_GUARD_MS          700   /* IRS response guard after frame decode.
@@ -448,6 +455,19 @@ int arq_protocol_build_ack(uint8_t *buf, size_t buf_len,
                             uint8_t session_id, uint8_t rx_ack_seq,
                             uint8_t flags, uint8_t snr_raw,
                             uint8_t ack_delay_raw);
+
+/** Compact 4-byte in-session control frame for DATAC14:
+ *   b0=[subtype:4|flags:4] b1=[session:4|aux:4] b2=rx_ack_seq b3=snr_raw.
+ * session_id is masked to 4 bits; aux = requested mode (MODE_REQ/ACK) or a
+ * reverse-backlog hint (ACK).  Returns ARQ_COMPACT_CTRL_SIZE or -1. */
+int arq_protocol_build_compact(uint8_t *buf, size_t buf_len, uint8_t subtype,
+                               uint8_t session_id, uint8_t rx_ack_seq,
+                               uint8_t flags, uint8_t snr_raw, uint8_t aux);
+
+/** Parse a compact 4-byte in-session control frame into hdr (packet_type set
+ * to ARQ_CONTROL, tx_seq=0).  Returns 0 or -1. */
+int arq_protocol_parse_compact(const uint8_t *buf, size_t len,
+                               arq_frame_hdr_t *hdr);
 
 /** DISCONNECT frame. */
 int arq_protocol_build_disconnect(uint8_t *buf, size_t buf_len,
