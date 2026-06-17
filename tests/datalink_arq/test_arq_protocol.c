@@ -164,6 +164,37 @@ void test_build_ack(void)
     TEST_ASSERT_EQUAL_UINT8(0x42, hdr.session_id);
 }
 
+/* Regression: the compact 4-byte control codec must preserve the two
+ * control-plane flags (HAS_DATA / TURN_REQ) that live in the high nibble of
+ * the full flags byte.  Dropping HAS_DATA stalls the turnaround (the ISS never
+ * hands the floor to a peer with reverse data — e.g. the uucp slave greeting),
+ * which broke on-air uucp while the one-shot harness passed. */
+void test_compact_flags_roundtrip(void)
+{
+    uint8_t buf[ARQ_COMPACT_CTRL_SIZE];
+    arq_frame_hdr_t hdr;
+
+    /* HAS_DATA + a 0-15 aux backlog hint survive. */
+    int n = arq_protocol_build_compact(buf, sizeof(buf), ARQ_SUBTYPE_ACK,
+                                       0x0D, 7, ARQ_FLAG_HAS_DATA, 200, 9);
+    TEST_ASSERT_EQUAL_INT(ARQ_COMPACT_CTRL_SIZE, n);
+    TEST_ASSERT_EQUAL_INT(0, arq_protocol_parse_compact(buf, n, &hdr));
+    TEST_ASSERT_EQUAL_UINT8(ARQ_SUBTYPE_ACK, hdr.subtype);
+    TEST_ASSERT_EQUAL_UINT8(0x0D, hdr.session_id);
+    TEST_ASSERT_EQUAL_UINT8(7, hdr.rx_ack_seq);
+    TEST_ASSERT_EQUAL_UINT8(9, hdr.aux);
+    TEST_ASSERT_TRUE(hdr.flags & ARQ_FLAG_HAS_DATA);
+    TEST_ASSERT_FALSE(hdr.flags & ARQ_FLAG_TURN_REQ);
+
+    /* TURN_REQ survives; no HAS_DATA. */
+    n = arq_protocol_build_compact(buf, sizeof(buf), ARQ_SUBTYPE_TURN_REQ,
+                                   1, 0, ARQ_FLAG_TURN_REQ, 0, 0);
+    TEST_ASSERT_EQUAL_INT(0, arq_protocol_parse_compact(buf, n, &hdr));
+    TEST_ASSERT_EQUAL_UINT8(ARQ_SUBTYPE_TURN_REQ, hdr.subtype);
+    TEST_ASSERT_TRUE(hdr.flags & ARQ_FLAG_TURN_REQ);
+    TEST_ASSERT_FALSE(hdr.flags & ARQ_FLAG_HAS_DATA);
+}
+
 /* ---- Build DISCONNECT frame ---- */
 
 void test_build_disconnect(void)
@@ -334,6 +365,7 @@ int main(void)
     RUN_TEST(test_ack_delay_zero);
     /* Frame builders */
     RUN_TEST(test_build_ack);
+    RUN_TEST(test_compact_flags_roundtrip);
     RUN_TEST(test_build_disconnect);
     RUN_TEST(test_data_valid_length_over_511);
     /* Mode timing */
