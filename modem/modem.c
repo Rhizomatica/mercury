@@ -139,6 +139,7 @@ typedef struct {
     struct freedv *datac16;
     struct freedv *datac17;
     struct freedv *qam16c2;
+    struct freedv *datac18;
     size_t payload_datac1;
     size_t payload_datac3;
     size_t payload_datac4;
@@ -147,6 +148,7 @@ typedef struct {
     size_t payload_datac16;
     size_t payload_datac17;
     size_t payload_qam16c2;
+    size_t payload_datac18;
 } modem_mode_pool_t;
 
 static modem_mode_pool_t modem_mode_pool = {0};
@@ -180,7 +182,8 @@ static bool is_supported_split_mode(int mode)
            mode == FREEDV_MODE_DATAC15 ||
            mode == FREEDV_MODE_DATAC16 ||
            mode == FREEDV_MODE_DATAC17 ||
-           mode == FREEDV_MODE_QAM16C2;
+           mode == FREEDV_MODE_QAM16C2 ||
+           mode == FREEDV_MODE_DATAC18;
 }
 
 static bool is_payload_split_mode(int mode)
@@ -207,6 +210,7 @@ static const char *mode_name_from_enum(int mode)
     case FREEDV_MODE_DATAC16: return "DATAC16";
     case FREEDV_MODE_DATAC17: return "DATAC17";
     case FREEDV_MODE_QAM16C2: return "QAM16C2";
+    case FREEDV_MODE_DATAC18: return "DATAC18";
     case FREEDV_MODE_FSK_LDPC: return "FSK_LDPC";
     default: return "UNKNOWN";
     }
@@ -235,6 +239,7 @@ static void clear_mode_pool_locked(void)
     if (modem_mode_pool.datac16) freedv_close(modem_mode_pool.datac16);
     if (modem_mode_pool.datac17) freedv_close(modem_mode_pool.datac17);
     if (modem_mode_pool.qam16c2) freedv_close(modem_mode_pool.qam16c2);
+    if (modem_mode_pool.datac18) freedv_close(modem_mode_pool.datac18);
     memset(&modem_mode_pool, 0, sizeof(modem_mode_pool));
 }
 
@@ -268,6 +273,8 @@ static int init_mode_pool_locked(int frames_per_burst, int freedv_verbosity)
     if (pool_open_mode_locked(&modem_mode_pool.datac17, &modem_mode_pool.payload_datac17, FREEDV_MODE_DATAC17, frames_per_burst, freedv_verbosity) < 0)
         goto fail;
     if (pool_open_mode_locked(&modem_mode_pool.qam16c2, &modem_mode_pool.payload_qam16c2, FREEDV_MODE_QAM16C2, frames_per_burst, freedv_verbosity) < 0)
+        goto fail;
+    if (pool_open_mode_locked(&modem_mode_pool.datac18, &modem_mode_pool.payload_datac18, FREEDV_MODE_DATAC18, frames_per_burst, freedv_verbosity) < 0)
         goto fail;
     return 0;
 fail:
@@ -303,6 +310,9 @@ static struct freedv *pooled_freedv_for_mode_locked(int mode, size_t *payload_by
     case FREEDV_MODE_QAM16C2:
         if (payload_bytes) *payload_bytes = modem_mode_pool.payload_qam16c2;
         return modem_mode_pool.qam16c2;
+    case FREEDV_MODE_DATAC18:
+        if (payload_bytes) *payload_bytes = modem_mode_pool.payload_datac18;
+        return modem_mode_pool.datac18;
     default:
         if (payload_bytes) *payload_bytes = 0;
         return NULL;
@@ -319,7 +329,8 @@ static bool is_pooled_freedv_locked(struct freedv *f)
             f == modem_mode_pool.datac15 ||
             f == modem_mode_pool.datac16 ||
             f == modem_mode_pool.datac17 ||
-            f == modem_mode_pool.qam16c2);
+            f == modem_mode_pool.qam16c2 ||
+            f == modem_mode_pool.datac18);
 }
 
 static uint32_t compute_bitrate_bps_locked(struct freedv *freedv)
@@ -494,7 +505,7 @@ try_shm_connect2:
     broadcast_frame_size = payload_bytes_per_modem_frame;
     
     int modem_sample_rate = freedv_get_modem_sample_rate(g_modem->freedv);
-    HLOGI("modem", "Initialized persistent FreeDV mode pool (DATAC16/DATAC15/DATAC13/DATAC4/DATAC3/DATAC1/DATAC17/QAM16C2), frames per burst: %d", frames_per_burst);
+    HLOGI("modem", "Initialized persistent FreeDV mode pool (DATAC16/DATAC15/DATAC13/DATAC4/DATAC3/DATAC1/DATAC17/QAM16C2/DATAC18), frames per burst: %d", frames_per_burst);
     HLOGI("modem", "Active FreeDV mode at startup: %d (%s), verbosity: %d", mode, mode_name_from_enum(mode), freedv_verbosity);
     HLOGI("modem", "Modem expects sample rate: %d Hz", modem_sample_rate);
     HLOGI("modem", "Modem payload bytes per frame: %zu", payload_bytes_per_modem_frame);
@@ -1012,11 +1023,14 @@ static int rx_decoder_bind_mode(rx_decoder_state_t *state, int mode)
              * retransmission the IRS sees is a fresh, bit-identical copy of the
              * single in-flight frame — freedv accumulates their LLRs and
              * auto-clears the residual on CRC success.  Enabled for data modes
-             * only (the DATAC16 control plane carries non-identical frames).
-             * Reset on every bind so a pooled instance never combines a stale
-             * failed frame with a different payload after a mode excursion. */
+             * only (the DATAC16/DATAC18 control plane carries non-identical
+             * frames).  Reset on every bind so a pooled instance never combines
+             * a stale failed frame with a different payload after a mode
+             * excursion. */
             freedv_harq_reset(freedv);
-            freedv_set_harq(freedv, harq_enabled() && mode != FREEDV_MODE_DATAC16);
+            freedv_set_harq(freedv, harq_enabled() &&
+                            mode != FREEDV_MODE_DATAC16 &&
+                            mode != FREEDV_MODE_DATAC18);
         }
     }
     pthread_mutex_unlock(&modem_freedv_lock);
@@ -1093,6 +1107,18 @@ static void process_received_frame(const uint8_t *data,
     tnc_send_sn(snr_est);
     tnc_send_bitrate(bitrate_level_from_payload_mode(payload_mode), bitrate_bps);
 
+    /* Compact in-session control frames (DATAC18) carry no PACKET_TYPE byte —
+     * byte 0 is [subtype|flags].  No other frame type is this small, so route
+     * by size straight to the ARQ control handler (which parses compact). */
+    if (payload_nbytes == ARQ_COMPACT_CTRL_SIZE)
+    {
+        if (arq_policy_ready)
+            arq_handle_incoming_frame((uint8_t *)data, payload_nbytes, snr_est);
+        HLOGD("modem-rx", "Frame rx bytes=%zu (compact ctrl) frame_bytes=%zu",
+              payload_nbytes, frame_bytes);
+        return;
+    }
+
     frame_type = parse_frame_header((const uint8_t *)data, payload_nbytes, NULL);
 
     switch (frame_type)
@@ -1143,100 +1169,102 @@ static void rx_decoder_consume_chunk(rx_decoder_state_t *state,
         !samples || sample_count <= 0)
         return;
 
-    if (sample_count > state->demod_cap)
+    /* Feed the whole chunk in demod_cap-sized pieces, draining decoded frames
+     * between pieces.  The shared capture chunk is sized to the LARGER of the
+     * two decoders' target sample counts, so for the decoder with the smaller
+     * demod_cap the chunk exceeds its buffer.  Truncating (dropping the leading
+     * samples) corrupts in-flight frames — the DATAC18-control + DATAC15-payload
+     * geometry triggers this, where DATAC16 happened not to — so feed every
+     * sample through instead, never dropping any. */
+    int fed = 0;
+    while (fed < sample_count)
     {
-        samples += sample_count - state->demod_cap;
-        sample_count = state->demod_cap;
-    }
-
-    if ((size_t)state->demod_count + (size_t)sample_count > (size_t)state->demod_cap)
-    {
-        size_t overflow = ((size_t)state->demod_count + (size_t)sample_count) - (size_t)state->demod_cap;
-        if (overflow >= (size_t)state->demod_count)
+        int space = state->demod_cap - state->demod_count;
+        if (space <= 0)
         {
-            state->demod_count = 0;
-        }
-        else
-        {
-            memmove(state->demod_in,
-                    state->demod_in + overflow,
-                    ((size_t)state->demod_count - overflow) * sizeof(int16_t));
-            state->demod_count -= (int)overflow;
-        }
-    }
-
-    memcpy(state->demod_in + state->demod_count, samples, (size_t)sample_count * sizeof(int16_t));
-    state->demod_count += sample_count;
-
-    while (guard++ < 32)
-    {
-        int nin = 0;
-        int sync = 0;
-        int rx_status = 0;
-        float snr_est = 0.0f;
-        size_t nbytes_out = 0;
-
-        pthread_mutex_lock(&modem_freedv_lock);
-        if (!state->freedv)
-        {
-            pthread_mutex_unlock(&modem_freedv_lock);
-            break;
+            /* demod_in full and nothing drained this round — trim the oldest
+             * half so we never deadlock (defensive; the drain below normally
+             * empties it via nin). */
+            int trim = state->demod_cap / 2;
+            if (trim < 1) trim = 1;
+            if (trim > state->demod_count) trim = state->demod_count;
+            if (state->demod_count - trim > 0)
+                memmove(state->demod_in, state->demod_in + trim,
+                        (size_t)(state->demod_count - trim) * sizeof(int16_t));
+            state->demod_count -= trim;
+            space = state->demod_cap - state->demod_count;
         }
 
-        nin = freedv_nin(state->freedv);
-        if (nin < 0 || nin > state->demod_count)
+        int piece = sample_count - fed;
+        if (piece > space) piece = space;
+        memcpy(state->demod_in + state->demod_count, samples + fed,
+               (size_t)piece * sizeof(int16_t));
+        state->demod_count += piece;
+        fed += piece;
+
+        guard = 0;
+        while (guard++ < 32)
         {
+            int nin = 0;
+            int sync = 0;
+            int rx_status = 0;
+            float snr_est = 0.0f;
+            size_t nbytes_out = 0;
+
+            pthread_mutex_lock(&modem_freedv_lock);
+            if (!state->freedv)
+            {
+                pthread_mutex_unlock(&modem_freedv_lock);
+                break;
+            }
+
+            nin = freedv_nin(state->freedv);
+            if (nin < 0 || nin > state->demod_count)
+            {
+                rx_status = freedv_get_rx_status(state->freedv);
+                freedv_get_modem_stats(state->freedv, &sync, &snr_est);
+                pthread_mutex_unlock(&modem_freedv_lock);
+                rx_metrics_update(metrics, sync, snr_est, rx_status, false);
+                break;
+            }
+
+            nbytes_out = freedv_rawdatarx(state->freedv, state->bytes_out, state->demod_in);
+            if (nin > 0)
+            {
+                state->demod_count -= nin;
+                if (state->demod_count > 0)
+                {
+                    memmove(state->demod_in,
+                            state->demod_in + nin,
+                            (size_t)state->demod_count * sizeof(int16_t));
+                }
+            }
+
             rx_status = freedv_get_rx_status(state->freedv);
             freedv_get_modem_stats(state->freedv, &sync, &snr_est);
             pthread_mutex_unlock(&modem_freedv_lock);
-            rx_metrics_update(metrics, sync, snr_est, rx_status, false);
-            break;
-        }
 
-        nbytes_out = freedv_rawdatarx(state->freedv, state->bytes_out, state->demod_in);
-        if (nin > 0)
-        {
-            state->demod_count -= nin;
-            if (state->demod_count > 0)
+            rx_metrics_update(metrics, sync, snr_est, rx_status, nbytes_out > 0);
+
+            if (nbytes_out > 0)
             {
-                memmove(state->demod_in,
-                        state->demod_in + nin,
-                        (size_t)state->demod_count * sizeof(int16_t));
+                HLOGD("modem-rx", "Decoded frame mode=%d (%s) bytes=%zu snr=%.2f",
+                      state->mode,
+                      mode_name_from_enum(state->mode),
+                      nbytes_out,
+                      snr_est);
+                process_received_frame(state->bytes_out,
+                                       nbytes_out,
+                                       state->bytes_cap,
+                                       arq_policy_ready,
+                                       payload_mode,
+                                       bitrate_bps,
+                                       snr_est);
             }
+
+            if (nin == 0 && nbytes_out == 0)
+                break;
         }
-
-        rx_status = freedv_get_rx_status(state->freedv);
-        freedv_get_modem_stats(state->freedv, &sync, &snr_est);
-        pthread_mutex_unlock(&modem_freedv_lock);
-
-        rx_metrics_update(metrics, sync, snr_est, rx_status, nbytes_out > 0);
-
-        if (nbytes_out > 0)
-        {
-            HLOGD("modem-rx", "Decoded frame mode=%d (%s) bytes=%zu snr=%.2f",
-                  state->mode,
-                  mode_name_from_enum(state->mode),
-                  nbytes_out,
-                  snr_est);
-            process_received_frame(state->bytes_out,
-                                   nbytes_out,
-                                   state->bytes_cap,
-                                   arq_policy_ready,
-                                   payload_mode,
-                                   bitrate_bps,
-                                   snr_est);
-        }
-
-        if (nin == 0 && nbytes_out == 0)
-            break;
-    }
-
-    if (guard > 32)
-    {
-        HLOGW("modem-rx",
-              "rx_decoder_consume_chunk guard limit reached (mode=%d, demod_count=%d)",
-              state->mode,
-              state->demod_count);
     }
 }
 
@@ -1505,7 +1533,13 @@ void *rx_thread(void *g_modem)
             was_tx = false;
         }
 
-        if (rx_decoder_bind_mode(&control_decoder, ARQ_CONTROL_MODE) < 0 ||
+        /* Bind the control decoder to the ARQ's phase-aware preferred RX mode:
+         * DATAC16 (connect) while LISTENING/CONNECTING, DATAC18 (compact
+         * in-session) once CONNECTED.  Falls back to the connect mode before
+         * the ARQ policy is ready. */
+        int ctrl_rx_mode = (arq_policy_ready && pref_rx_mode > 0)
+                           ? pref_rx_mode : ARQ_CONTROL_MODE;
+        if (rx_decoder_bind_mode(&control_decoder, ctrl_rx_mode) < 0 ||
             rx_decoder_bind_mode(&payload_decoder, payload_mode) < 0)
         {
             usleep(100000);
