@@ -971,20 +971,21 @@ static void rx_metrics_update(rx_metrics_accum_t *metrics, int sync, float snr, 
         metrics->frame_decoded = true;
 }
 
-/* HARQ Chase soft-combining switch (default OFF).  Set MERCURY_HARQ=1 to enable.
+/* HARQ Chase soft-combining switch (default ON).  Set MERCURY_HARQ=0 to disable.
  *
- * Default flipped to OFF (2026-06-18): on-air, Chase-combining CORRUPTED the
- * payload decoder.  It assumes each retransmission is a bit-identical copy of
- * the in-flight frame, but the ARQ DATA-frame header (snr, rx_ack_seq, flags)
- * changes per retransmission, so the combined LLRs are garbage and DATAC15
- * never completes a packet (verified: DATAC15 syncs every time, 0/227 decode;
- * with HARQ off it decodes and a uucp transfer reaches Login/Handshake/Sending
- * like v1.9.9).  Re-enable once retransmissions are made bit-identical
- * (resend the saved frame bytes verbatim) so combining is valid again. */
+ * Default returned to ON (2026-06-18) after the combining was made a
+ * non-destructive fallback (freedv_700.c): the RX now decodes the single-shot
+ * LLRs FIRST and only adds the retained LLRs and retries on failure, so stale /
+ * cross-frame soft info can never corrupt an otherwise-good frame.  Previously
+ * combining ran before the decode and broke DATAC15 (synced but 0/227 decode;
+ * HARQ-off worked).  Validated on-air with HARQ on: DATAC15 decodes and a uucp
+ * transfer reaches Login/Handshake/Sending like HARQ-off / v1.9.9.  The fading
+ * Es/No gain (the point of HARQ) is realised when retransmissions of the same
+ * frame accumulate; confirm the magnitude on a fading link (Watterson / OTA). */
 static int harq_enabled(void)
 {
     const char *e = getenv("MERCURY_HARQ");
-    return e && e[0] == '1';
+    return !(e && e[0] == '0');
 }
 
 static int rx_decoder_bind_mode(rx_decoder_state_t *state, int mode)
