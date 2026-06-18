@@ -971,12 +971,20 @@ static void rx_metrics_update(rx_metrics_accum_t *metrics, int sync, float snr, 
         metrics->frame_decoded = true;
 }
 
-/* HARQ Chase soft-combining kill-switch (default ON).  Set MERCURY_HARQ=0 to
- * disable, e.g. for A/B comparison or field fallback. */
+/* HARQ Chase soft-combining switch (default OFF).  Set MERCURY_HARQ=1 to enable.
+ *
+ * Default flipped to OFF (2026-06-18): on-air, Chase-combining CORRUPTED the
+ * payload decoder.  It assumes each retransmission is a bit-identical copy of
+ * the in-flight frame, but the ARQ DATA-frame header (snr, rx_ack_seq, flags)
+ * changes per retransmission, so the combined LLRs are garbage and DATAC15
+ * never completes a packet (verified: DATAC15 syncs every time, 0/227 decode;
+ * with HARQ off it decodes and a uucp transfer reaches Login/Handshake/Sending
+ * like v1.9.9).  Re-enable once retransmissions are made bit-identical
+ * (resend the saved frame bytes verbatim) so combining is valid again. */
 static int harq_enabled(void)
 {
     const char *e = getenv("MERCURY_HARQ");
-    return !(e && e[0] == '0');
+    return e && e[0] == '1';
 }
 
 static int rx_decoder_bind_mode(rx_decoder_state_t *state, int mode)
