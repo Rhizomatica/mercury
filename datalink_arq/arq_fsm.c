@@ -419,6 +419,25 @@ static int select_best_mode(const arq_session_t *sess, int backlog)
  *  MODE_REQ and enter MODE_REQ_TX.  Returns true when negotiation started. */
 static bool maybe_upgrade_mode(arq_session_t *sess)
 {
+    /* --- Phase-A diagnostic: throttled OLLA state, to confirm on-air climbing
+     * (peer_snr should now be non-zero and the body should ride a fast mode). */
+    {
+        static uint64_t s_olla_log_ms = 0;
+        uint64_t now_ms = hermes_uptime_ms();
+        if (now_ms - s_olla_log_ms >= 4000)
+        {
+            s_olla_log_ms = now_ms;
+            int bk = g_cbs.tx_backlog ? g_cbs.tx_backlog() : 0;
+            HLOGI(LOG_COMP,
+                  "OLLA-state: payload_mode=%d peer_snr=%.1f local_snr=%.1f olla=%+.1f retries=%d backlog=%d startup_rem=%lldms",
+                  sess->payload_mode,
+                  (float)sess->peer_snr_x10 / 10.0f,
+                  (float)sess->local_snr_x10 / 10.0f,
+                  sess->olla_offset_db, sess->consecutive_retries, bk,
+                  (long long)((int64_t)sess->startup_deadline_ms - (int64_t)now_ms));
+        }
+    }
+
     /* Hold the initial DATAC15 payload mode during the startup window. */
     if (hermes_uptime_ms() < sess->startup_deadline_ms)
         return false;
