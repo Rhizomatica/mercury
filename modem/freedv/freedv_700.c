@@ -417,6 +417,43 @@ int freedv_comprx_700c(struct freedv *f, COMP demod_in_8kHz[]) {
   return rx_status;
 }
 
+/* Per-mode SNR-estimate calibration.
+ *
+ * ofdm_esno_est_calc() estimates Es/No from the magnitude variance of the
+ * received symbols.  That variance is mode-dependent, so ofdm_snr_from_esno()
+ * reports SNR3k several dB LOW for the faster modes while the robust
+ * DATAC15 / DATAC16 reference reads accurately.  Worst offender is QAM16C2:
+ * its 16-QAM amplitude rings are intrinsic constellation spread that the
+ * estimator counts as noise (~9 dB low).
+ *
+ * Left uncorrected this breaks OLLA link adaptation: peer SNR is measured on
+ * whatever payload mode is currently flying, so the instant OLLA climbs off
+ * DATAC15 the faster mode under-reports and OLLA false-downgrades straight
+ * back to the floor (the measured "gear-shift oscillation").  The offsets
+ * below bring every mode onto the accurate DATAC15 / true-SNR3k scale that the
+ * ARQ_SNR_MIN_* thresholds are defined against.  Calibrated against the codec2
+ * ch.c AWGN reference (SNR3k = -No - 14.82) over true 4..15 dB:
+ *
+ *   mode      reported @ true 15.2 dB   offset
+ *   DATAC15   13.99                      0.0  (reference)
+ *   DATAC16   13.77                      0.0  (control, accurate)
+ *   DATAC4    13.15                     +1.0
+ *   DATAC1    10.70                     +3.0
+ *   DATAC17   10.00                     +3.5
+ *   DATAC3     7.56                     +5.0
+ *   QAM16C2    4.32                     +9.0
+ */
+static float freedv_snr_calib(int mode, float snr_raw) {
+  switch (mode) {
+    case FREEDV_MODE_DATAC4:  return snr_raw + 1.0f;
+    case FREEDV_MODE_DATAC1:  return snr_raw + 3.0f;
+    case FREEDV_MODE_DATAC17: return snr_raw + 3.5f;
+    case FREEDV_MODE_DATAC3:  return snr_raw + 5.0f;
+    case FREEDV_MODE_QAM16C2: return snr_raw + 9.0f;
+    default:                  return snr_raw; /* DATAC15/DATAC16 read true */
+  }
+}
+
 /*
   OFDM demod function that can support complex (float) or real (short)
   samples.  The real short samples are useful for low memory platforms such as
@@ -654,6 +691,7 @@ int freedv_comp_short_rx_ofdm(struct freedv *f, void *demod_in_8kHz,
       }
 
       ofdm_get_demod_stats(ofdm, &f->stats, rx_syms, Nsymsperpacket);
+      f->stats.snr_est = freedv_snr_calib(f->mode, f->stats.snr_est);
       f->snr_est = f->stats.snr_est;
     } /* complete packet */
 
