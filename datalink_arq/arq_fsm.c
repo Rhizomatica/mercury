@@ -243,8 +243,11 @@ static void update_local_snr(arq_session_t *sess, const arq_event_t *ev)
 static void update_peer_snr(arq_session_t *sess, const arq_event_t *ev)
 {
     if (ev->snr_encoded != 0)
+    {
         sess->peer_snr_x10 =
             (int)(arq_protocol_decode_snr((uint8_t)ev->snr_encoded) * 10.0f);
+        sess->peer_snr_valid = true;
+    }
 }
 
 /** Build and send a MODE_REQ or MODE_ACK control frame. */
@@ -447,9 +450,12 @@ static bool maybe_upgrade_mode(arq_session_t *sess)
      * failure (consecutive_retries), not SNR — select_best_mode's safety net
      * steps the mode down regardless of SNR.  Allow it through even with no
      * SNR estimate, otherwise a link that never lands an advancing ACK (so
-     * peer_snr_x10 stays 0) would keep retransmitting at a too-fast mode
-     * forever, defeating the hard-loss drop to the floor. */
-    if (sess->peer_snr_x10 == 0 &&
+     * no reading ever arrives) would keep retransmitting at a too-fast mode
+     * forever, defeating the hard-loss drop to the floor.  Gate on the
+     * validity flag, not peer_snr_x10==0, so a genuine 0 dB report (snr_raw=128,
+     * common at the OTA fade cliff) is honoured instead of mistaken for "no
+     * reading" and stalling the climb. */
+    if (!sess->peer_snr_valid &&
         sess->consecutive_retries < ARQ_HARD_LOSS_THRESHOLD)
         return false;
 

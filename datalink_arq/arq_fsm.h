@@ -193,6 +193,10 @@ typedef struct
     bool     peer_has_data;            /* peer's HAS_DATA flag in last frame   */
     bool     acktx_had_has_data;       /* HAS_DATA was set in the last ACK sent */
     int      peer_snr_x10;            /* peer-reported SNR * 10 (integer)     */
+    bool     peer_snr_valid;          /* a peer SNR reading has been received; *
+                                       * distinguishes a genuine 0 dB report   *
+                                       * (snr_raw=128) from "no reading yet" so *
+                                       * mode-climbing isn't stalled at ~0 dB   */
     int      local_snr_x10;           /* local SNR EMA * 10                   */
     float    olla_offset_db;          /* OLLA per-link SNR offset (dB); added  *
                                        * to peer_snr before mode thresholding  */
