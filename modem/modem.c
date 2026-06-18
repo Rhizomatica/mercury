@@ -1209,6 +1209,15 @@ static void rx_decoder_consume_chunk(rx_decoder_state_t *state,
 
         rx_metrics_update(metrics, sync, snr_est, rx_status, nbytes_out > 0);
 
+        /* RXDBG (debug branch only): one line per decode attempt where the
+         * decoder shows any sync/status, so we can see whether the DATAC15
+         * payload decoder syncs-but-fails-CRC (rxstat set, nbytes 0) or never
+         * syncs at all (sync stays 0) on the real channel. */
+        if (sync != 0 || rx_status != 0 || nbytes_out > 0)
+            HLOGD("modem-rx", "RXDBG mode=%d(%s) sync=%d rxstat=0x%x snr=%.1f nin=%d nbytes=%zu",
+                  state->mode, mode_name_from_enum(state->mode), sync, rx_status,
+                  snr_est, nin, nbytes_out);
+
         if (nbytes_out > 0)
         {
             HLOGD("modem-rx", "Decoded frame mode=%d (%s) bytes=%zu snr=%.2f",
