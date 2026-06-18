@@ -129,6 +129,10 @@ static inline int32_t tx_sample_with_gain(int16_t sample, float gain, float *pea
 #define RX_TX_DRAIN_SAMPLES 160
 #define RX_DECODE_CHUNK_SAMPLES 160
 #define RX_IDLE_SLEEP_US 5000
+/* Max RX capture backlog before flushing stale audio (~2 s @ 8 kHz). Caps
+ * decode latency and stops an unbounded backlog on low-power cores that
+ * decode slower than real time (issue #81 follow-up). */
+#define RX_MAX_BACKLOG_SAMPLES 16000
 
 typedef struct {
     struct freedv *datac1;
@@ -1522,6 +1526,26 @@ void *rx_thread(void *g_modem)
             control_decoder.demod_count = 0;
             payload_decoder.demod_count = 0;
             was_tx = false;
+        }
+
+        /* Bound the RX capture backlog (issue #81 follow-up: 100% CPU and
+         * decode latency growing to minutes). read_buffer() blocks when idle,
+         * so an idle modem sits near 0% CPU. But if the two parallel decoders
+         * cannot keep up with the 8 kHz input, the capture ring fills, the loop
+         * stops blocking, one core pegs, and decode latency grows without bound
+         * (frames get decoded minutes after they arrived). Audio that stale is
+         * already past every ARQ ack and turnaround deadline, so decoding it
+         * cannot help the link. Drop it and reset the decoder accumulators, the
+         * same way the was_tx turnaround flush above does. */
+        if (size_buffer(capture_buffer) >
+            (size_t)RX_MAX_BACKLOG_SAMPLES * sizeof(int32_t))
+        {
+            HLOGW("modem-rx",
+                  "RX backlog exceeded ~%d s cap; flushing stale audio to catch up",
+                  RX_MAX_BACKLOG_SAMPLES / 8000);
+            clear_buffer(capture_buffer);
+            control_decoder.demod_count = 0;
+            payload_decoder.demod_count = 0;
         }
 
         if (rx_decoder_bind_mode(&control_decoder, ARQ_CONTROL_MODE) < 0 ||
