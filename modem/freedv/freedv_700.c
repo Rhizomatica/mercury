@@ -514,24 +514,37 @@ int freedv_comp_short_rx_ofdm(struct freedv *f, void *demod_in_8kHz,
                             Npayloadsymsperpacket);
 
       float llr[Npayloadbitsperpacket];
+      float llr_raw[Npayloadbitsperpacket];
       uint8_t decoded_codeword[Npayloadbitsperpacket];
       symbols_to_llrs(llr, payload_syms_de, payload_amps_de, EsNo,
                       ofdm->mean_amp, ofdm->bps, Npayloadsymsperpacket);
-      /* HARQ Chase combining: accumulate the retained LLRs of a previously
-       * failed (bit-identical) retransmission before decoding.  LLRs from
-       * independent noise realisations of the same codeword add coherently,
-       * lifting the effective Es/No on each retry. */
-      if (f->harq_enable && f->harq_valid &&
-          f->harq_llr_nbits == Npayloadbitsperpacket) {
-        for (int i = 0; i < Npayloadbitsperpacket; i++)
-          llr[i] += f->harq_llr[i];
-      }
+      /* Save this-transmission-only LLRs.  HARQ combining is applied BELOW only
+       * as a fallback if the single-shot decode fails, so retained soft info
+       * can never corrupt a frame that would have decoded on its own. */
+      memcpy(llr_raw, llr, sizeof(float) * Npayloadbitsperpacket);
       ldpc_decode_frame(ldpc, &parityCheckCount, &iter, decoded_codeword, llr);
       memcpy(f->rx_payload_bits, decoded_codeword, Ndatabitsperpacket);
 
       if (strlen(ofdm->data_mode)) {
         int crc_ok =
             freedv_check_crc16_unpacked(f->rx_payload_bits, Ndatabitsperpacket);
+        /* HARQ Chase combining FALLBACK: only when the single-shot decode
+         * failed, add the retained running sum of prior (same-frame) LLRs and
+         * retry.  Independent noise realisations of the same codeword add
+         * coherently, lifting effective Es/No; running this only on single-shot
+         * failure means stale/cross-frame retained LLRs can never break an
+         * otherwise-good frame (the cause of the on-air HARQ data regression). */
+        if (!crc_ok && f->harq_enable && f->harq_valid &&
+            f->harq_llr_nbits == Npayloadbitsperpacket) {
+          float llr_comb[Npayloadbitsperpacket];
+          for (int i = 0; i < Npayloadbitsperpacket; i++)
+            llr_comb[i] = llr_raw[i] + f->harq_llr[i];
+          ldpc_decode_frame(ldpc, &parityCheckCount, &iter, decoded_codeword,
+                            llr_comb);
+          memcpy(f->rx_payload_bits, decoded_codeword, Ndatabitsperpacket);
+          crc_ok = freedv_check_crc16_unpacked(f->rx_payload_bits,
+                                               Ndatabitsperpacket);
+        }
         if (!crc_ok && f->verbose) {
           int bytes_per_frame = (Ndatabitsperpacket + 7) / 8;
           uint8_t rx_bytes[bytes_per_frame];
@@ -578,8 +591,16 @@ int freedv_comp_short_rx_ofdm(struct freedv *f, void *demod_in_8kHz,
           if (crc_ok) {
             f->harq_valid = 0;
           } else {
-            memcpy(f->harq_llr, llr, sizeof(float) * Npayloadbitsperpacket);
-            f->harq_llr_nbits = Npayloadbitsperpacket;
+            /* Retain the running SUM of single-shot LLRs across retries so the
+             * next attempt's fallback combines all prior copies of this frame. */
+            if (f->harq_valid && f->harq_llr_nbits == Npayloadbitsperpacket) {
+              for (int i = 0; i < Npayloadbitsperpacket; i++)
+                f->harq_llr[i] += llr_raw[i];
+            } else {
+              memcpy(f->harq_llr, llr_raw,
+                     sizeof(float) * Npayloadbitsperpacket);
+              f->harq_llr_nbits = Npayloadbitsperpacket;
+            }
             f->harq_valid = 1;
           }
         }
