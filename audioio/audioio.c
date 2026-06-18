@@ -721,7 +721,13 @@ void *radio_capture_thread(void *device_ptr)
         conf.buf.device_id = (const char *)&cap_guid;
 #endif
 
-    conf.flags = FFAUDIO_CAPTURE;
+    /* Open non-blocking.  A blocking ffalsa_read() spins internally on
+     * readonce->start->sleep forever once the device stops producing samples
+     * (e.g. a half-duplex ALSA capture wedged after a TX): it never returns,
+     * so the loop below could never recover it.  Non-blocking returns 0
+     * immediately on no-data, handing control back so the stall watchdog can
+     * tear the device down and reopen it. */
+    conf.flags = FFAUDIO_CAPTURE | FFAUDIO_O_NONBLOCK;
     ffaudio_init_conf aconf = {};
     aconf.app_name = "mercury_capture";
 
@@ -840,6 +846,19 @@ void *radio_capture_thread(void *device_ptr)
     uint32_t diag_buf_full_drops = 0;
     int      diag_last_read_bytes = 0;
 
+    /* Stall watchdog.  With the non-blocking open above, audio->read() returns
+     * 0 the instant no samples are available instead of spinning inside
+     * ffalsa_read() forever.  Brief idle is normal; if the device stays silent
+     * past CAP_STALL_MS it is wedged (a half-duplex capture can stop delivering
+     * after a TX and never self-recover) so we free and reopen it.  The window
+     * is deliberately longer than a single control-frame transmission so a
+     * normal TX gap on a full-duplex device does not trip it -- tune from the
+     * on-air "reopen #N" log lines. */
+    const uint64_t CAP_STALL_MS = 2000;
+    const uint64_t CAP_POLL_MS  = 5;
+    uint64_t cap_last_data_ms   = audioio_monotonic_ms();
+    uint32_t diag_reopens       = 0;
+
     while (!shutdown_ && !audio_shutdown_)
     {
         r = audio->read(b, (const void **)&buffer);
@@ -847,9 +866,43 @@ void *radio_capture_thread(void *device_ptr)
         {
             diag_read_errors++;
             HLOGE("audio-cap", "ffaudio.read: %s", audio->error(b));
+        }
+        if (r <= 0)
+        {
+            /* No samples this poll.  Reopen the device if it has been silent
+             * past the watchdog window (wedged, not merely idle). */
+            uint64_t now = audioio_monotonic_ms();
+            if (now - cap_last_data_ms >= CAP_STALL_MS)
+            {
+                HLOGW("audio-cap",
+                      "capture stalled %llu ms, reopening device (reopen #%u)",
+                      (unsigned long long)(now - cap_last_data_ms), ++diag_reopens);
+                audio->free(b);
+                b = NULL;
+                while (!shutdown_ && !audio_shutdown_)
+                {
+                    b = audio->alloc();
+                    if (b != NULL && audio->open(b, cfg, conf.flags) == 0)
+                        break;
+                    HLOGE("audio-cap", "capture reopen failed: %s",
+                          b ? audio->error(b) : "alloc()");
+                    if (b != NULL) { audio->free(b); b = NULL; }
+                    ffthread_sleep(200);
+                }
+                if (b == NULL)   /* shutdown requested mid-reopen */
+                {
+                    free(buffer_output);
+                    free(buffer_downsampled);
+                    goto finish_cap;
+                }
+                resamp_down_reset(&down_rs);
+                cap_last_data_ms = audioio_monotonic_ms();
+            }
+            ffthread_sleep(CAP_POLL_MS);
             continue;
         }
 
+        cap_last_data_ms = audioio_monotonic_ms();
         diag_read_calls++;
         diag_last_read_bytes = r;
 
