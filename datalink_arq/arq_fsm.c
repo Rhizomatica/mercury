@@ -782,6 +782,17 @@ static void enter_idle_irs(arq_session_t *sess)
                 ARQ_EV_TIMER_PEER_BACKLOG);
 }
 
+/* Return to the pre-call idle status after an ARQ call ends: LISTENING if the
+ * app has listen mode enabled, otherwise DISCONNECTED.  The connection status
+ * is torn down only by the end of a call (or a TCP-client disconnect) and
+ * always returns to where it was before the call rather than getting stuck. */
+static void enter_idle_after_call(arq_session_t *sess)
+{
+    sess_enter(sess,
+               sess->listen_enabled ? ARQ_CONN_LISTENING : ARQ_CONN_DISCONNECTED,
+               UINT64_MAX, ARQ_EV_TIMER_RETRY);
+}
+
 static void fsm_disconnected(arq_session_t *sess, const arq_event_t *ev)
 {
     switch (ev->id)
@@ -793,6 +804,8 @@ static void fsm_disconnected(arq_session_t *sess, const arq_event_t *ev)
         {
             sess->pending_disconnect_notify = false;
             if (g_cbs.notify_disconnected) g_cbs.notify_disconnected(false);
+            /* Call fully torn down — restore the pre-call idle status. */
+            enter_idle_after_call(sess);
         }
         break;
 
@@ -977,13 +990,13 @@ static void fsm_calling(arq_session_t *sess, const arq_event_t *ev)
         else
         {
             if (g_cbs.notify_disconnected) g_cbs.notify_disconnected(false);
-            sess_enter(sess, ARQ_CONN_DISCONNECTED, UINT64_MAX, ARQ_EV_TIMER_RETRY);
+            enter_idle_after_call(sess);
         }
         break;
 
     case ARQ_EV_APP_DISCONNECT:
         if (g_cbs.notify_disconnected) g_cbs.notify_disconnected(false);
-        sess_enter(sess, ARQ_CONN_DISCONNECTED, UINT64_MAX, ARQ_EV_TIMER_RETRY);
+        enter_idle_after_call(sess);
         break;
 
     default:
@@ -1075,7 +1088,7 @@ static void fsm_accepting(arq_session_t *sess, const arq_event_t *ev)
         if (g_cbs.notify_cancelpending)
             g_cbs.notify_cancelpending();
         if (g_cbs.notify_disconnected) g_cbs.notify_disconnected(false);
-        sess_enter(sess, ARQ_CONN_DISCONNECTED, UINT64_MAX, ARQ_EV_TIMER_RETRY);
+        enter_idle_after_call(sess);
         break;
 
     default:
@@ -1102,7 +1115,7 @@ static void fsm_disconnecting(arq_session_t *sess, const arq_event_t *ev)
         HLOGI(LOG_COMP, "Disconnect finalized (peer ack)");
         if (g_cbs.notify_disconnected) g_cbs.notify_disconnected(false);
         if (g_timing) arq_timing_record_disconnect(g_timing, "peer_ack");
-        sess_enter(sess, ARQ_CONN_DISCONNECTED, UINT64_MAX, ARQ_EV_TIMER_RETRY);
+        enter_idle_after_call(sess);
         break;
 
     case ARQ_EV_TIMER_RETRY:
@@ -1119,7 +1132,7 @@ static void fsm_disconnecting(arq_session_t *sess, const arq_event_t *ev)
             HLOGI(LOG_COMP, "Disconnect finalized (timeout)");
             if (g_cbs.notify_disconnected) g_cbs.notify_disconnected(false);
             if (g_timing) arq_timing_record_disconnect(g_timing, "timeout");
-            sess_enter(sess, ARQ_CONN_DISCONNECTED, UINT64_MAX, ARQ_EV_TIMER_RETRY);
+            enter_idle_after_call(sess);
         }
         break;
 
@@ -2128,6 +2141,14 @@ void arq_fsm_dispatch(arq_session_t *sess, const arq_event_t *ev)
     default:
         break;
     }
+
+    /* Track the app's listen intent before the per-state dispatch so LISTEN
+     * ON/OFF is honoured in any state.  enter_idle_after_call() uses it to
+     * restore the correct post-call idle status (LISTENING vs DISCONNECTED). */
+    if (ev->id == ARQ_EV_APP_LISTEN)
+        sess->listen_enabled = true;
+    else if (ev->id == ARQ_EV_APP_STOP_LISTEN)
+        sess->listen_enabled = false;
 
     switch (sess->conn_state)
     {

@@ -205,6 +205,12 @@ typedef struct
     /* --- Data bookkeeping --- */
     int      tx_backlog_bytes;         /* bytes pending in TX buffer           */
 
+    /* --- Connection lifecycle --- */
+    bool     listen_enabled;           /* app listen intent (LISTEN ON/OFF):
+                                        * selects the post-call idle status,
+                                        * LISTENING vs DISCONNECTED, so an ARQ
+                                        * call always returns to where it was   */
+
     /* --- Teardown flags --- */
     bool     pending_disconnect_notify;/* defer notify_disconnected until TX done */
     bool     pending_disconnect;       /* APP_DISCONNECT deferred until TX buf empty */

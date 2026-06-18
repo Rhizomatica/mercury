@@ -498,7 +498,9 @@ void test_retry_exhaustion_disconnects_from_zero_uptime_baseline(void)
 
 /* ---- Timeout tests ---- */
 
-/* CALL timeout transitions to DISCONNECTED */
+/* CALL timeout returns to the pre-call status.  The app had LISTEN enabled
+ * before placing the call, so an exhausted call must fall back to LISTENING
+ * (not DISCONNECTED) -- the connection status returns to where it was. */
 void test_call_timeout(void)
 {
     arq_event_t ev = make_event(ARQ_EV_APP_LISTEN);
@@ -510,6 +512,25 @@ void test_call_timeout(void)
     TEST_ASSERT_EQUAL_INT(ARQ_CONN_CALLING, sess.conn_state);
 
     /* Exhaust retries */
+    for (int i = 0; i < ARQ_CALL_RETRY_SLOTS_DEFAULT + 2; i++) {
+        ev = make_event(ARQ_EV_TIMER_RETRY);
+        mock_set_uptime_ms(1000 + (uint64_t)(i + 1) * 10000);
+        arq_fsm_dispatch(&sess, &ev);
+        if (sess.conn_state == ARQ_CONN_LISTENING)
+            break;
+    }
+
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_LISTENING, sess.conn_state);
+}
+
+/* CALL timeout with NO listen intent falls back to DISCONNECTED. */
+void test_call_timeout_no_listen(void)
+{
+    arq_event_t ev = make_event(ARQ_EV_APP_CONNECT);
+    strncpy(ev.remote_call, "DST1", CALLSIGN_MAX_SIZE);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_CALLING, sess.conn_state);
+
     for (int i = 0; i < ARQ_CALL_RETRY_SLOTS_DEFAULT + 2; i++) {
         ev = make_event(ARQ_EV_TIMER_RETRY);
         mock_set_uptime_ms(1000 + (uint64_t)(i + 1) * 10000);
@@ -565,6 +586,7 @@ int main(void)
     RUN_TEST(test_retry_exhaustion_disconnects_from_zero_uptime_baseline);
     /* Timeout tests */
     RUN_TEST(test_call_timeout);
+    RUN_TEST(test_call_timeout_no_listen);
     RUN_TEST(test_stop_listen);
     RUN_TEST(test_timeout_ms_idle);
     return UNITY_END();
