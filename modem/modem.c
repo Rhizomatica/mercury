@@ -1152,31 +1152,36 @@ static void rx_decoder_consume_chunk(rx_decoder_state_t *state,
         !samples || sample_count <= 0)
         return;
 
-    /* Feed the chunk in demod-buffer-sized pieces, draining decoded frames
-     * between pieces.  A chunk larger than this decoder's buffer must never be
-     * truncated (the old code dropped the leading samples) nor have accumulated
-     * samples dropped — discarding samples corrupts an in-flight packet, which
-     * silently broke the parallel payload decoder whenever control (DATAC16)
-     * and payload (DATAC15) geometries differ: the shared chunk is sized to the
-     * larger of the two, so the smaller-buffer decoder lost its frame start and
-     * never synced (uucp data delivered 0 bytes on-air).  The inner loop drains
-     * frames until under one frame remains, so the next piece always fits. */
+    /* Feed the chunk in demod-buffer-sized pieces and run one decode step per
+     * iteration.  Two invariants matter:
+     *  - Never truncate or drop accumulated samples: a chunk larger than this
+     *    decoder's buffer is fed in pieces, not clipped (the old code dropped
+     *    the leading samples, corrupting an in-flight packet).  The shared
+     *    capture chunk is sized to the larger of the control (DATAC16) and
+     *    payload (DATAC15) geometries, so the smaller-buffer decoder would
+     *    otherwise lose its frame start and never sync.
+     *  - Decode even when demod_in is full (space==0): freedv_nin()==0 means
+     *    freedv has buffered a full frame internally and produces it WITHOUT
+     *    consuming our input, so freedv_rawdatarx must still be called.  The old
+     *    "space<=0 -> break" skipped that call, wedging the payload decoder with
+     *    a permanently full buffer that never drained — DATAC15 frames were
+     *    never delivered (B got 0 bytes while the control decoder, whose frames
+     *    fit in one feed, worked). */
     int fed = 0;
-    while (fed < sample_count && guard < 256)
+    while (guard++ < 256)
     {
         int space = state->demod_cap - state->demod_count;
-        if (space <= 0)
-            break;
-        int feed = sample_count - fed;
-        if (feed > space)
-            feed = space;
-        memcpy(state->demod_in + state->demod_count, samples + fed,
-               (size_t)feed * sizeof(int16_t));
-        state->demod_count += feed;
-        fed += feed;
-
-        while (guard++ < 256)
+        if (space > 0 && fed < sample_count)
         {
+            int feed = sample_count - fed;
+            if (feed > space)
+                feed = space;
+            memcpy(state->demod_in + state->demod_count, samples + fed,
+                   (size_t)feed * sizeof(int16_t));
+            state->demod_count += feed;
+            fed += feed;
+        }
+
         int nin = 0;
         int sync = 0;
         int rx_status = 0;
@@ -1193,11 +1198,15 @@ static void rx_decoder_consume_chunk(rx_decoder_state_t *state,
         nin = freedv_nin(state->freedv);
         if (nin < 0 || nin > state->demod_count)
         {
+            /* freedv needs more samples than we hold: feed the rest of the
+             * chunk if any remains, otherwise this chunk is consumed. */
             rx_status = freedv_get_rx_status(state->freedv);
             freedv_get_modem_stats(state->freedv, &sync, &snr_est);
             pthread_mutex_unlock(&modem_freedv_lock);
             rx_metrics_update(metrics, sync, snr_est, rx_status, false);
-            break;
+            if (fed >= sample_count)
+                break;
+            continue;
         }
 
         nbytes_out = freedv_rawdatarx(state->freedv, state->bytes_out, state->demod_in);
@@ -1234,9 +1243,10 @@ static void rx_decoder_consume_chunk(rx_decoder_state_t *state,
                                    snr_est);
         }
 
-        if (nin == 0 && nbytes_out == 0)
+        /* Whole chunk fed and freedv produced nothing and wants no input
+         * (nin==0): its internal buffer is drained — done with this chunk. */
+        if (fed >= sample_count && nin == 0 && nbytes_out == 0)
             break;
-        }
     }
 
     if (guard >= 256)
