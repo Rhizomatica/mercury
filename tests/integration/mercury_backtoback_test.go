@@ -230,6 +230,9 @@ func waitForFIFOOpen(ctx context.Context, path string, flags int) (int, error) {
 func tempLogFilesNamed(t *testing.T, name string) (*os.File, *os.File) {
 	t.Helper()
 	dir := t.TempDir()
+	if d := os.Getenv("MERCURY_TEST_LOGDIR"); d != "" {
+		dir = d // persist mercury logs for debugging (not cleaned up)
+	}
 	stdout, err := os.Create(filepath.Join(dir, name+".stdout.log"))
 	if err != nil {
 		t.Fatal(err)

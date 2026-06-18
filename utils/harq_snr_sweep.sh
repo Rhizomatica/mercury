@@ -29,7 +29,7 @@ done
 D=$(mktemp -d); trap 'rm -rf "$D"' EXIT
 "$TX" "$MODE" --testframes "$B" --bursts "$B" /dev/zero "$D/tx.raw" 2>/dev/null
 
-deliv() { "$RX" $1 --testframes "$MODE" "$D/f.raw" /dev/null 2>&1 \
+deliv() { "$RX" ${1:-} --testframes "$MODE" "$D/f.raw" /dev/null 2>&1 \
           | awk '/Coded FER/{d=$5-$7; printf "%d/%d (%d%%)", d,$5,(($5)?100*d/$5:0)}'; }
 
 echo "# HARQ low-SNR sweep  mode=$MODE  channel=$CH  bursts=$B"
