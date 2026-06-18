@@ -33,16 +33,37 @@ func TestMercuryARQBidirectional(t *testing.T) {
 	bin := locateOrBuildMercury(t, repoRoot)
 
 	params := DefaultChannelParams()
-	chBin, err := buildCh(repoRoot)
+	// Channel engine: clean ch.c (default) or the Watterson HF fading model.
+	// The on-air DATAC15 data-decode failure does NOT reproduce on the clean
+	// channel, so set MERCURY_CH_ENGINE=watterson (+ MERCURY_CH_FADING) to add
+	// realistic slow/deep fades and a finite SNR closer to the real link.
+	var chBin string
+	var err error
+	if os.Getenv("MERCURY_CH_ENGINE") == "watterson" {
+		params.Engine = "watterson"
+		chBin, err = buildWatterson(repoRoot)
+	} else {
+		chBin, err = buildCh(repoRoot)
+	}
 	if err != nil {
 		t.Skipf("channel simulator unavailable: %v", err)
 	}
 	if v := os.Getenv("MERCURY_CH_NO"); v != "" {
-		no, err := strconv.ParseFloat(v, 64)
-		if err != nil {
-			t.Fatalf("bad MERCURY_CH_NO %q: %v", v, err)
+		no, perr := strconv.ParseFloat(v, 64)
+		if perr != nil {
+			t.Fatalf("bad MERCURY_CH_NO %q: %v", v, perr)
 		}
 		params.No_dBHz = no
+	}
+	if v := os.Getenv("MERCURY_CH_FADING"); v != "" {
+		params.Fading = v // ch: mpg|mpp|mpd ; watterson: good|moderate|poor
+	}
+	if v := os.Getenv("MERCURY_CH_GAIN"); v != "" {
+		g, perr := strconv.ParseFloat(v, 64)
+		if perr != nil {
+			t.Fatalf("bad MERCURY_CH_GAIN %q: %v", v, perr)
+		}
+		params.Gain = g
 	}
 
 	dir := t.TempDir()
