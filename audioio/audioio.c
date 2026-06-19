@@ -1332,22 +1332,26 @@ int audioio_init_buffers(void)
     if (s_buffers_initialized)
         return 0;  // already created
 
-    if (audio_subsystem == AUDIO_SUBSYSTEM_NULL ||
-        audio_subsystem == AUDIO_SUBSYSTEM_FIFO)
+    if (audio_subsystem == AUDIO_SUBSYSTEM_SHM)
     {
+        // Named cross-process SHM: the transport to an EXTERNAL signal source
+        // (the radio daemon, e.g. sbitx_controller, via -x shm).  Only this
+        // backend needs the fixed SHM names.
+        capture_buffer  = circular_buf_init_shm(SIGNAL_BUFFER_SIZE, (char *) SIGNAL_INPUT);
+        playback_buffer = circular_buf_init_shm(SIGNAL_BUFFER_SIZE, (char *) SIGNAL_OUTPUT);
+    }
+    else
+    {
+        // ALSA / PULSE / OSS / CoreAudio / WASAPI / DSOUND / NULL / FIFO: a real
+        // (or loopback) sound device, self-contained.  The capture/playback
+        // rings are just in-process staging between the audio threads and the
+        // modem (same process), so they need NOT be named SHM.  Anonymous local
+        // buffers let multiple mercury instances run on one host (e.g. two wired
+        // via snd-aloop + a channel sim) without colliding on the fixed SHM
+        // names.  (The radio-daemon audio path is the SHM backend above.)
         if (audioio_init_local_buffers() != 0)
             return -1;
     }
-#if defined(_WIN32)
-    else if (audioio_init_local_buffers() != 0)
-        return -1;
-#else
-    else
-    {
-    capture_buffer = circular_buf_init_shm(SIGNAL_BUFFER_SIZE, (char *) SIGNAL_INPUT);
-    playback_buffer = circular_buf_init_shm(SIGNAL_BUFFER_SIZE, (char *) SIGNAL_OUTPUT);
-    }
-#endif
 
     clear_buffer(capture_buffer);
     clear_buffer(playback_buffer);
