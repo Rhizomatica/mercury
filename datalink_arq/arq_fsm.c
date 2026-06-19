@@ -292,6 +292,38 @@ static int clamp_payload_mode_to_bandwidth(int mode)
     return mode;
 }
 
+/* Forward-link SNR margin (dB) above a mode's base threshold at which the
+ * forward (data) link is judged to comfortably support the current mode — so a
+ * retransmission is more likely a lost ACK on the (independently-faded) reverse
+ * path than a forward decode failure. */
+#define ARQ_REVERSE_LOSS_MARGIN_DB   2.0f
+
+/* Base SNR (dB) the forward link needs to sustain a payload mode (no hyst). */
+static float mode_snr_floor_db(int mode)
+{
+    switch (mode)
+    {
+    case FREEDV_MODE_QAM16C2: return ARQ_SNR_MIN_QAM16C2_DB;
+    case FREEDV_MODE_DATAC17: return ARQ_SNR_MIN_DATAC17_DB;
+    case FREEDV_MODE_DATAC1:  return ARQ_SNR_MIN_DATAC1_DB;
+    case FREEDV_MODE_DATAC3:  return ARQ_SNR_MIN_DATAC3_DB;
+    case FREEDV_MODE_DATAC4:  return ARQ_SNR_MIN_DATAC4_DB;
+    default:                  return -100.0f;  /* DATAC15 floor / unknown */
+    }
+}
+
+/* True when the peer-reported SNR (the FORWARD link — what the IRS sees of our
+ * data) comfortably supports the given payload mode.  Lets us tell a forward
+ * decode failure (step the mode down) apart from a reverse-path ACK loss (hold
+ * the mode).  Conservative when no peer reading exists yet. */
+static bool peer_snr_supports_mode(const arq_session_t *sess, int mode)
+{
+    if (!sess->peer_snr_valid)
+        return false;
+    float peer_snr = (float)sess->peer_snr_x10 / 10.0f;
+    return peer_snr >= mode_snr_floor_db(mode) + ARQ_REVERSE_LOSS_MARGIN_DB;
+}
+
 /** Record the outcome of a TX frame.  Called once per frame when its fate is
  *  known: clean=true when ACK arrived with no retries consumed, clean=false
  *  when the frame was retransmitted at least once.  Steps speed_level ladder
@@ -299,6 +331,24 @@ static int clamp_payload_mode_to_bandwidth(int mode)
  *  non-clean outcome). */
 static void record_tx_outcome(arq_session_t *sess, bool clean)
 {
+    /* Asymmetric-link awareness: a non-clean outcome (frame retransmitted) is
+     * often a LOST ACK on the reverse path, not a forward decode failure — HF
+     * links are typically asymmetric.  peer_snr reads the forward link directly;
+     * if it comfortably supports the current mode, treat the retry as a
+     * reverse-path loss and HOLD the forward mode + OLLA offset (penalizing them
+     * would needlessly under-run a healthy forward link).  Genuine forward /
+     * propagation degradation drops peer_snr and falls through to the normal
+     * step-down below. */
+    if (!clean && peer_snr_supports_mode(sess, sess->payload_mode))
+    {
+        HLOGD(LOG_COMP,
+              "Retry but peer_snr=%.1f dB supports mode %d — likely reverse-path "
+              "ACK loss; holding forward level %d (no step-down)",
+              (float)sess->peer_snr_x10 / 10.0f, sess->payload_mode,
+              sess->speed_level);
+        return;
+    }
+
     /* OLLA: drive the per-link SNR offset toward the target first-try FER.
      * This is the primary anti-oscillation: a mode that keeps failing pushes
      * the offset down (via select_best_mode's effective SNR) and holds it
