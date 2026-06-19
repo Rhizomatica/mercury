@@ -99,6 +99,21 @@ func startChannelBridge(ctx context.Context, chBin string,
 			rev.No_dBHz = f
 		}
 	}
+	// Per-direction fading profile (watterson engine: good|moderate|poor|flutter;
+	// "none" disables fading on that direction).  Mimics the OTA: a workable
+	// forward path and a harsher-faded reverse/ACK path.
+	if v := os.Getenv("MERCURY_CH_FADING_FWD"); v != "" {
+		fwd.Fading = v
+		if v == "none" {
+			fwd.Fading = ""
+		}
+	}
+	if v := os.Getenv("MERCURY_CH_FADING_REV"); v != "" {
+		rev.Fading = v
+		if v == "none" {
+			rev.Fading = ""
+		}
+	}
 
 	cb.wg.Add(2)
 	go func() { defer cb.wg.Done(); runChannelDir(bridgeCtx, chBin, aTX, bRX, fwd) }()
