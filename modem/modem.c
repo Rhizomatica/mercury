@@ -694,11 +694,17 @@ int send_modulated_data(generic_modem_t *g_modem, uint8_t *bytes_in, int frames_
      * the peer's audio path time to settle before the preamble arrives. */
     int samples_head = FREEDV_FS_8000 * 100 / 1000;
 
-    /* Calculate max buffer size needed:
-     * head silence + preamble + (frames * n_mod_out) + postamble + tail silence */
+    /* Each DATA frame is sent as its OWN self-contained burst (preamble + frame
+     * + postamble), so the packetsperburst==1 burst-mode RX re-acquires and
+     * decodes every frame in the PTT regardless of how many there are
+     * (variable-length go-back-N window).  A short inter-burst gap lets the
+     * preamble correlator re-acquire between frames. */
+    int inter_burst_gap = FREEDV_FS_8000 * 40 / 1000;   /* 40 ms between frames in a burst */
     int max_preamble = freedv_get_n_tx_modem_samples(freedv) * 2;  /* conservative estimate */
     int max_postamble = max_preamble;
-    size_t max_samples = (size_t)samples_head + max_preamble + (frames_per_burst * n_mod_out) + max_postamble + samples_silence;
+    size_t max_samples = (size_t)samples_head
+        + (size_t)frames_per_burst * ((size_t)max_preamble + n_mod_out + (size_t)max_postamble + (size_t)inter_burst_gap)
+        + samples_silence;
 
     /* Allocate temporary buffer for all modulated audio */
     int32_t *tx_buffer = (int32_t *)malloc(max_samples * sizeof(int32_t));
@@ -724,34 +730,35 @@ int send_modulated_data(generic_modem_t *g_modem, uint8_t *bytes_in, int frames_
     for (int i = 0; i < samples_head; i++)
         tx_buffer[total_samples++] = 0;
 
-    /* Generate preamble */
-    int n_preamble = freedv_rawdatapreambletx(freedv, mod_out_short);
-    for (int i = 0; i < n_preamble; i++)
+    /* One self-contained burst per DATA frame: preamble + frame + postamble,
+     * with a short inter-burst gap so the ppb==1 RX re-acquires each frame's
+     * preamble.  K bursts share one PTT (one keyed transmission), so the peer
+     * still sends a single cumulative ACK for the whole window. */
+    for (int f = 0; f < frames_per_burst; f++)
     {
-        tx_buffer[total_samples++] = tx_sample_with_gain(mod_out_short[i], tx_gain, &peak_fs);
-    }
+        /* Preamble */
+        int n_preamble = freedv_rawdatapreambletx(freedv, mod_out_short);
+        for (int i = 0; i < n_preamble; i++)
+            tx_buffer[total_samples++] = tx_sample_with_gain(mod_out_short[i], tx_gain, &peak_fs);
 
-    /* Generate data frame(s) */
-    for (int i = 0; i < frames_per_burst; i++)
-    {
-        /* Copy payload and add CRC16 in last 2 bytes */
-        memcpy(frame_with_crc, &bytes_in[payload_bytes * i], payload_bytes);
+        /* Data frame f (payload + CRC16 in last 2 bytes) */
+        memcpy(frame_with_crc, &bytes_in[payload_bytes * f], payload_bytes);
         uint16_t crc16 = freedv_gen_crc16(frame_with_crc, payload_bytes);
         frame_with_crc[bytes_per_modem_frame - 2] = crc16 >> 8;
         frame_with_crc[bytes_per_modem_frame - 1] = crc16 & 0xff;
-
         freedv_rawdatatx(freedv, mod_out_short, frame_with_crc);
         for (size_t j = 0; j < n_mod_out; j++)
-        {
             tx_buffer[total_samples++] = tx_sample_with_gain(mod_out_short[j], tx_gain, &peak_fs);
-        }
-    }
 
-    /* Generate postamble */
-    int n_postamble = freedv_rawdatapostambletx(freedv, mod_out_short);
-    for (int i = 0; i < n_postamble; i++)
-    {
-        tx_buffer[total_samples++] = tx_sample_with_gain(mod_out_short[i], tx_gain, &peak_fs);
+        /* Postamble */
+        int n_postamble = freedv_rawdatapostambletx(freedv, mod_out_short);
+        for (int i = 0; i < n_postamble; i++)
+            tx_buffer[total_samples++] = tx_sample_with_gain(mod_out_short[i], tx_gain, &peak_fs);
+
+        /* Inter-burst gap (none after the last frame; tail silence follows) */
+        if (f < frames_per_burst - 1)
+            for (int i = 0; i < inter_burst_gap; i++)
+                tx_buffer[total_samples++] = 0;
     }
 
     /* Add silence at end */
