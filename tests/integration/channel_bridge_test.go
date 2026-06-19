@@ -156,10 +156,13 @@ func runChannelDirOnce(ctx context.Context, chBin, txPath, rxPath string, params
 		return err
 	}
 
+	// Use "-" (stdin/stdout) for BOTH engines.  Passing "/dev/stdout" made
+	// watterson_test fopen() a SEPARATE fully-buffered stream, so its
+	// `if (fout == stdout) fflush()` guard was false and output was never
+	// flushed — it dribbled out only when the 4 KB stdio buffer filled, adding
+	// ~seconds of latency that broke the real-time connect handshake.  With "-"
+	// fout == stdout, the per-block fflush fires, and watterson streams like ch.
 	inArg, outArg := "-", "-"
-	if params.Engine == "watterson" {
-		inArg, outArg = "/dev/stdin", "/dev/stdout"
-	}
 	chCmd := exec.CommandContext(ctx, chBin, inArg, outArg)
 	chCmd.Args = append(chCmd.Args, params.args()...)
 	chCmd.Dir = filepath.Dir(chBin) // so --fading_dir 'unittest' resolves
