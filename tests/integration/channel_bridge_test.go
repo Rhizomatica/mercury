@@ -5,8 +5,10 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"sync"
 	"syscall"
 	"time"
@@ -81,9 +83,26 @@ func startChannelBridge(ctx context.Context, chBin string,
 	bridgeCtx, cancel := context.WithCancel(ctx)
 	cb := &channelBridge{cancel: cancel}
 
+	// Per-direction No override to reproduce an ASYMMETRIC link, e.g. the OTA
+	// estacao6<->estacao10 case (workable forward, ~5 dB weaker reverse that
+	// kills ACK survival).  A->B is forward (caller's data); B->A is reverse
+	// (callee's ACKs).  MERCURY_CH_NO_FWD / MERCURY_CH_NO_REV (dBHz) override
+	// each direction; unset = symmetric params.No_dBHz.  ch: SNR3k = -No - 14.82.
+	fwd, rev := params, params
+	if v := os.Getenv("MERCURY_CH_NO_FWD"); v != "" {
+		if f, err := strconv.ParseFloat(v, 64); err == nil {
+			fwd.No_dBHz = f
+		}
+	}
+	if v := os.Getenv("MERCURY_CH_NO_REV"); v != "" {
+		if f, err := strconv.ParseFloat(v, 64); err == nil {
+			rev.No_dBHz = f
+		}
+	}
+
 	cb.wg.Add(2)
-	go func() { defer cb.wg.Done(); runChannelDir(bridgeCtx, chBin, aTX, bRX, params) }()
-	go func() { defer cb.wg.Done(); runChannelDir(bridgeCtx, chBin, bTX, aRX, params) }()
+	go func() { defer cb.wg.Done(); runChannelDir(bridgeCtx, chBin, aTX, bRX, fwd) }()
+	go func() { defer cb.wg.Done(); runChannelDir(bridgeCtx, chBin, bTX, aRX, rev) }()
 
 	return cb
 }
