@@ -60,6 +60,20 @@ extern void init_model(void);
 static arq_session_t    g_sess;
 static arq_timing_ctx_t g_timing;
 
+/* Serializes ALL access to g_sess.  g_sess is logically owned by the ARQ
+ * event-loop thread (which runs the FSM and fires deadline timers), but
+ * several scalar fields are also read by the modem RX/TX, TCP and GUI threads
+ * through the getters below and written by the modem threads via
+ * arq_update_link_metrics() (local_snr_x10) and arq_set_active_modem_mode()
+ * (payload_mode).  Without this lock those concurrent accesses are a C data
+ * race (UB): under -O2 the compiler is entitled to assume g_sess is not
+ * modified concurrently and may hoist/cache the event loop's deadline_ms read,
+ * so "now >= deadline_ms" never re-evaluates true and the deadline timer never
+ * fires (the on-air ARQ handshake freeze).  Recursive so a dispatch callback
+ * that re-enters a getter cannot self-deadlock; never acquired while holding
+ * g_qmtx/g_evq_lock, so there is no lock-order inversion. */
+static pthread_mutex_t  g_sess_lock = PTHREAD_RECURSIVE_MUTEX_INITIALIZER_NP;
+
 /* App TX ring buffer (data from TCP client) */
 #define APP_TX_BUF_SIZE (64 * 1024)
 static uint8_t         g_app_tx_storage[APP_TX_BUF_SIZE];
@@ -409,7 +423,10 @@ static void handle_cmd(const arq_cmd_msg_t *msg)
             return;
         }
 
-        cb_send_tx_frame(PACKET_TYPE_ARQ_CQ, g_sess.control_mode, (size_t)n, frame, 0);
+        pthread_mutex_lock(&g_sess_lock);
+        int cq_mode = g_sess.control_mode;
+        pthread_mutex_unlock(&g_sess_lock);
+        cb_send_tx_frame(PACKET_TYPE_ARQ_CQ, cq_mode, (size_t)n, frame, 0);
         HLOGI(LOG_COMP, "Queued CQ frame from %s (%d Hz)", source_call, bw_hz);
         return;
     }
@@ -495,7 +512,9 @@ static void *arq_event_loop_worker(void *arg)
     while (g_running)
     {
         uint64_t now   = hermes_uptime_ms();
+        pthread_mutex_lock(&g_sess_lock);
         int timeout_ms = arq_fsm_timeout_ms(&g_sess, now);
+        pthread_mutex_unlock(&g_sess_lock);
         if (timeout_ms > 500 || timeout_ms < 0)
             timeout_ms = 500;
 
@@ -519,6 +538,7 @@ static void *arq_event_loop_worker(void *arg)
             events[n++] = ev;
         pthread_mutex_unlock(&g_evq_lock);
 
+        pthread_mutex_lock(&g_sess_lock);
         for (size_t i = 0; i < n; i++)
             arq_fsm_dispatch(&g_sess, &events[i]);
 
@@ -530,6 +550,7 @@ static void *arq_event_loop_worker(void *arg)
             arq_event_t tev = { .id = g_sess.deadline_event };
             arq_fsm_dispatch(&g_sess, &tev);
         }
+        pthread_mutex_unlock(&g_sess_lock);
     }
 
     HLOGI(LOG_COMP, "Event loop stopped");
@@ -841,7 +862,10 @@ void arq_post_event(int event) { (void)event; }
 
 bool arq_is_link_connected(void)
 {
-    return g_sess.conn_state == ARQ_CONN_CONNECTED;
+    pthread_mutex_lock(&g_sess_lock);
+    bool connected = (g_sess.conn_state == ARQ_CONN_CONNECTED);
+    pthread_mutex_unlock(&g_sess_lock);
+    return connected;
 }
 
 int arq_queue_data(const uint8_t *data, size_t len)
@@ -859,19 +883,29 @@ int arq_queue_data(const uint8_t *data, size_t len)
 }
 
 int arq_get_tx_backlog_bytes(void)  { return cb_tx_backlog(); }
-int arq_get_speed_level(void)       { return g_sess.speed_level; }
-int arq_get_payload_mode(void)      { return g_sess.payload_mode; }
-int arq_get_control_mode(void)      { return g_sess.control_mode; }
-int arq_get_preferred_rx_mode(void) { return arq_modem_preferred_rx_mode(&g_sess); }
-int arq_get_preferred_tx_mode(void) { return arq_modem_preferred_tx_mode(&g_sess); }
+
+#define SESS_READ(expr) do { \
+        pthread_mutex_lock(&g_sess_lock); \
+        int _v = (expr); \
+        pthread_mutex_unlock(&g_sess_lock); \
+        return _v; \
+    } while (0)
+
+int arq_get_speed_level(void)       { SESS_READ(g_sess.speed_level); }
+int arq_get_payload_mode(void)      { SESS_READ(g_sess.payload_mode); }
+int arq_get_control_mode(void)      { SESS_READ(g_sess.control_mode); }
+int arq_get_preferred_rx_mode(void) { SESS_READ(arq_modem_preferred_rx_mode(&g_sess)); }
+int arq_get_preferred_tx_mode(void) { SESS_READ(arq_modem_preferred_tx_mode(&g_sess)); }
 
 void arq_set_active_modem_mode(int mode, size_t frame_size)
 {
     /* Only record payload_mode for data modes.  Control-mode TX switches
      * (DATAC16 for ACK/TURN_REQ/etc.) must not overwrite the negotiated
      * payload_mode that the RX decoder uses when the peer transmits data. */
+    pthread_mutex_lock(&g_sess_lock);
     if (mode != g_sess.control_mode)
         g_sess.payload_mode = mode;
+    pthread_mutex_unlock(&g_sess_lock);
     arq_conn.mode       = mode;
     arq_conn.frame_size = frame_size;
 }
@@ -881,10 +915,12 @@ void arq_update_link_metrics(int sync, float snr, int rx_status, bool frame_deco
     (void)sync; (void)rx_status;
     if (frame_decoded && snr > -100.0f && snr < 100.0f)
     {
+        pthread_mutex_lock(&g_sess_lock);
         if (g_sess.local_snr_x10 == 0)
             g_sess.local_snr_x10 = (int)(snr * 10.0f);
         else
             g_sess.local_snr_x10 = (g_sess.local_snr_x10 * 3 + (int)(snr * 10.0f)) / 4;
+        pthread_mutex_unlock(&g_sess_lock);
     }
 }
 
@@ -903,10 +939,12 @@ bool arq_wait_dequeue_action(arq_action_t *action, int timeout_ms)
 bool arq_get_runtime_snapshot(arq_runtime_snapshot_t *snapshot)
 {
     if (!snapshot || !g_initialized) return false;
+    int backlog = cb_tx_backlog();   /* takes g_app_tx_mtx; compute before g_sess_lock */
+    pthread_mutex_lock(&g_sess_lock);
     snapshot->initialized      = true;
-    snapshot->connected        = arq_is_link_connected();
+    snapshot->connected        = (g_sess.conn_state == ARQ_CONN_CONNECTED);
     snapshot->trx              = arq_conn.TRX;
-    snapshot->tx_backlog_bytes = cb_tx_backlog() + g_sess.tx_inflight_bytes;
+    snapshot->tx_backlog_bytes = backlog + g_sess.tx_inflight_bytes;
     snapshot->speed_level      = g_sess.speed_level;
     snapshot->payload_mode      = g_sess.payload_mode;
     snapshot->peer_tx_mode      = g_sess.peer_tx_mode;
@@ -915,6 +953,7 @@ bool arq_get_runtime_snapshot(arq_runtime_snapshot_t *snapshot)
     snapshot->preferred_tx_mode = arq_modem_preferred_tx_mode(&g_sess);
     snapshot->tx_bytes          = g_timing.tx_bytes;
     snapshot->rx_bytes          = g_timing.rx_bytes;
+    pthread_mutex_unlock(&g_sess_lock);
     return true;
 }
 
