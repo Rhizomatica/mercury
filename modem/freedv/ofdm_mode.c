@@ -398,6 +398,41 @@ void ofdm_init_mode(char mode[], struct OFDM_CONFIG *config) {
     config->rx_bpf_en = true;
     config->tx_bpf_proto = filtP200S400;
     config->tx_bpf_proto_n = sizeof(filtP200S400) / sizeof(float);
+  } else if (strcmp(mode, "datac18") == 0) {
+    /* Mercury custom mode: fast robust CONTROL-PLANE mode (the in-session ACK/
+       TURN/MODE carrier).  HRA_112_112 shortened to 48 data bits (4 payload +
+       2 CRC16) — all 112 parity bits kept, so effective rate 0.30 (the
+       shortened data positions are known bits that strengthen the code).
+       Narrowband (nc=3) like datac13/16 but np=8 → ~half the airtime of
+       datac16 (~1.54 s), sized to exactly the compact 4-byte in-session header.
+       Defined additively here: the upstream codec2 "datac14" (HRA_56_56) above
+       is left untouched so this fork stays compatible with stock freedv. */
+    config->ns = 5;
+    config->np = 8;
+    config->tcp = 0.006;
+    config->ts = 0.016;
+    config->nc = 3;
+    config->edge_pilots = 0;
+    config->txtbits = 0;
+    config->state_machine = "data";
+    config->ftwindowwidth = 80;
+    config->timing_mx_thresh = 0.45;
+    config->codename = "HRA_112_112";
+    config->amp_est_mode = 1;
+    config->nuwbits = 32;
+    config->bad_uw_errors = 12;
+    uint8_t uw18[] = {1, 1, 0, 0, 1, 0, 1, 0, 1, 1, 1, 1,
+                      0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0};
+    assert(sizeof(uw18) <= MAX_UW_BITS);
+    memcpy(config->tx_uw, uw18, sizeof(uw18));
+    memcpy(&config->tx_uw[config->nuwbits - sizeof(uw18)], uw18, sizeof(uw18));
+    config->data_mode = "streaming";
+    config->amp_scale = 2.5 * 300E3;
+    config->clip_gain1 = 1.2;
+    config->clip_gain2 = 1.0;
+    config->rx_bpf_en = true;
+    config->tx_bpf_proto = filtP200S400;
+    config->tx_bpf_proto_n = sizeof(filtP200S400) / sizeof(float);
   } else {
     assert(0);
   }

@@ -20,6 +20,7 @@ static const char *mode_name(int mode)
 {
     switch (mode)
     {
+    case 26: return "DATAC18";
     case 25: return "QAM16C2";
     case 24: return "DATAC17";
     case 23: return "DATAC16";
