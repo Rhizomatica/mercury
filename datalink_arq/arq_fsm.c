@@ -495,6 +495,18 @@ static bool maybe_upgrade_mode(arq_session_t *sess)
     if (hermes_uptime_ms() < sess->startup_deadline_ms)
         return false;
 
+    /* Never change the payload mode while unACKed frames are in flight.  Those
+     * go-back-N window frames were built for the current mode; the per-frame
+     * size and the FULL-length sentinel (payload_valid==0 means "all slot bytes
+     * valid") are mode-RELATIVE, so retransmitting them after a mode change
+     * makes the receiver — now decoding at the new mode's geometry — deliver the
+     * wrong byte count (a FULL DATAC15 frame read at DATAC3's larger slot
+     * over-delivers: the 118-vs-112 bidirectional regression).  Defer the change
+     * until the window drains; it reaches 0 after every fully-ACKed burst, so
+     * mode adaptation still happens at burst boundaries. */
+    if (sess->tx_window_count > 0)
+        return false;
+
     /* Normally we need at least one valid peer SNR reading before deciding.
      * Exception: a retry-forced downgrade is driven purely by delivery
      * failure (consecutive_retries), not SNR — select_best_mode's safety net
