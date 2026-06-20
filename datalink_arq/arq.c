@@ -72,6 +72,13 @@ static arq_timing_ctx_t g_timing;
  * fires (the on-air ARQ handshake freeze).  Recursive so a dispatch callback
  * that re-enters a getter cannot self-deadlock; never acquired while holding
  * g_qmtx/g_evq_lock, so there is no lock-order inversion. */
+/* glibc spells the static recursive-mutex initializer with the _NP suffix;
+ * mingw-w64 winpthreads provides the non-suffixed PTHREAD_RECURSIVE_MUTEX_
+ * INITIALIZER (and not the _NP one), so fall back to it for the Windows
+ * cross-compile. */
+#ifndef PTHREAD_RECURSIVE_MUTEX_INITIALIZER_NP
+#define PTHREAD_RECURSIVE_MUTEX_INITIALIZER_NP PTHREAD_RECURSIVE_MUTEX_INITIALIZER
+#endif
 static pthread_mutex_t  g_sess_lock = PTHREAD_RECURSIVE_MUTEX_INITIALIZER_NP;
 
 /* App TX ring buffer (data from TCP client) */
