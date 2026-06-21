@@ -163,6 +163,18 @@ typedef struct
 /* Upper bound on frames per TX burst (sizes the go-back-N window). */
 #define ARQ_BURST_MAX 5
 
+/* ACK robustness: send each ACK as N identical self-contained bursts in one PTT
+ * (time/sync diversity). The ISS needs only ONE copy to decode, and duplicate
+ * ACKs are idempotent (cumulative ACK + the n_acked==0 guard in WAIT_ACK), so
+ * extra copies are harmless. On a weak/asymmetric reverse HF path this lifts
+ * ACK survival from ~p to 1-(1-p)^N (measured: DATAC16 p~0.81 at -5dB → ~0.96
+ * at N=2). But every extra copy lengthens the ACK PTT (~3.74s/copy DATAC16), so
+ * repetition is ADAPTIVE (see send_ack): N=1 normally, escalating only when the
+ * IRS sees the ISS resend already-ACKed data (proof the reverse ACK was lost),
+ * capped at ARQ_ACK_REPEAT_MAX. So good links pay nothing; weak reverse paths
+ * get the diversity exactly when needed. */
+#define ARQ_ACK_REPEAT_MAX 3
+
 typedef struct
 {
     int   freedv_mode;          /* FREEDV_MODE_* constant                        */

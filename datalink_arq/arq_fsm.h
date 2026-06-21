@@ -166,6 +166,10 @@ typedef struct
     /* --- Sequence numbers --- */
     uint8_t  tx_seq;                   /* next seq we will send                */
     uint8_t  rx_expected;              /* next seq we expect from peer         */
+    uint8_t  dup_data_streak;          /* IRS: consecutive duplicate DATA rx
+                                        * since last advancing delivery = proof
+                                        * our prior ACK(s) were lost on the
+                                        * reverse path → escalate ACK repetition */
 
     /* --- Mode / speed --- */
     int      payload_mode;             /* MY data TX mode (ISS); per-direction,

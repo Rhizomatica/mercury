@@ -15,6 +15,7 @@
 #include <string.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 
 #include "../common/hermes_log.h"
 #include "../modem/framer.h"
@@ -595,13 +596,19 @@ static bool deliver_rx_checked(arq_session_t *sess, const arq_event_t *ev)
 {
     if (ev->seq != sess->rx_expected)
     {
-        HLOGD(LOG_COMP, "Duplicate data seq=%d (expected=%d) — suppressed",
-              (int)ev->seq, (int)sess->rx_expected);
+        /* Duplicate: the ISS resent data we already ACKed → our prior ACK was
+         * lost on the reverse path.  Bump the streak so the next ACK is sent
+         * with more copies (adaptive repetition, see send_ack). */
+        if (sess->dup_data_streak < 255)
+            sess->dup_data_streak++;
+        HLOGD(LOG_COMP, "Duplicate data seq=%d (expected=%d) — suppressed (dup_streak=%u)",
+              (int)ev->seq, (int)sess->rx_expected, sess->dup_data_streak);
         return false;
     }
     if (ev->payload_len > 0 && g_cbs.deliver_rx_data)
         g_cbs.deliver_rx_data(ev->payload, ev->payload_len);
     sess->rx_expected = ev->seq + 1;
+    sess->dup_data_streak = 0;  /* advancing delivery → ACKs are getting through */
     return true;
 }
 
@@ -668,7 +675,23 @@ static void send_ack(arq_session_t *sess, uint8_t ack_delay_raw)
     int n = arq_protocol_build_ack(frame, sizeof(frame), sess->session_id,
                                    sess->rx_expected, flags, snr_raw, ack_delay_raw);
     if (n > 0)
-        send_frame(PACKET_TYPE_ARQ_CONTROL, sess->control_mode, (size_t)n, frame, 0);
+    {
+        /* Adaptive repetition: send 1 + dup_data_streak copies (the streak is
+         * how many times the ISS has resent already-ACKed data = lost ACKs),
+         * capped at ARQ_ACK_REPEAT_MAX.  Copies go as self-contained bursts in
+         * one PTT (descending burst_remaining batches them into one keying via
+         * cb_send_tx_frame); time/sync diversity, ISS needs only one, duplicates
+         * idempotent.  Good links: streak 0 → 1 copy → no cost.  MERCURY_ACK_REPEAT
+         * forces a fixed count (A/B and field tuning). */
+        int copies = 1 + (int)sess->dup_data_streak;
+        const char *e = getenv("MERCURY_ACK_REPEAT");
+        if (e && e[0]) copies = atoi(e);
+        if (copies < 1) copies = 1;
+        if (copies > ARQ_ACK_REPEAT_MAX) copies = ARQ_ACK_REPEAT_MAX;
+        for (int c = 0; c < copies; c++)
+            send_frame(PACKET_TYPE_ARQ_CONTROL, sess->control_mode,
+                       (size_t)n, frame, copies - 1 - c);
+    }
 }
 
 static void send_data_burst(arq_session_t *sess)
@@ -968,6 +991,7 @@ static void fsm_listening(arq_session_t *sess, const arq_event_t *ev)
             sess->role        = ARQ_ROLE_CALLEE;
             sess->tx_seq      = 0;
             sess->rx_expected = 0;
+            sess->dup_data_streak = 0;
             sess->tx_window_count = 0;
             sess->tx_window_retx  = false;
             sess->tx_inflight_bytes = 0;
@@ -1007,6 +1031,7 @@ static void fsm_calling(arq_session_t *sess, const arq_event_t *ev)
             sess->role        = ARQ_ROLE_CALLER;
             sess->tx_seq      = 0;
             sess->rx_expected = 0;
+            sess->dup_data_streak = 0;
             sess->tx_window_count = 0;  /* discard any stale retransmit buf from prior session */
             sess->tx_window_retx  = false;
             sess->tx_inflight_bytes = 0;
@@ -1075,6 +1100,7 @@ static void fsm_accepting(arq_session_t *sess, const arq_event_t *ev)
         sess->role        = ARQ_ROLE_CALLEE;
         sess->tx_seq      = 0;
         sess->rx_expected = 0;
+        sess->dup_data_streak = 0;
         sess->tx_window_count = 0;  /* discard any stale retransmit buf from prior session */
         sess->tx_window_retx  = false;
         sess->tx_inflight_bytes = 0;
