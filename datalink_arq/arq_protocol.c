@@ -313,15 +313,7 @@ int arq_protocol_build_compact(uint8_t *buf, size_t buf_len, uint8_t subtype,
 {
     if (buf_len < ARQ_COMPACT_CTRL_SIZE)
         return -1;
-    /* The two control-plane flags live in the high nibble of the full flags
-     * byte (HAS_DATA=0x40, TURN_REQ=0x80), so a plain (flags & 0x0F) would drop
-     * them — fatal: HAS_DATA is what makes the ISS turn the floor over to a
-     * peer with reverse data (e.g. the uucp slave's greeting).  Remap them into
-     * the 4-bit compact flags field (the low-nibble flags are DATA-frame-only
-     * and never ride a compact control frame). */
-    uint8_t cf = (uint8_t)(((flags & ARQ_FLAG_HAS_DATA) ? 0x01u : 0u) |
-                           ((flags & ARQ_FLAG_TURN_REQ) ? 0x02u : 0u));
-    buf[0] = (uint8_t)(((subtype & 0x0F) << 4) | (cf & 0x0F));
+    buf[0] = (uint8_t)(((subtype & 0x0F) << 4) | (flags & 0x0F));
     buf[1] = (uint8_t)(((session_id & 0x0F) << 4) | (aux & 0x0F));
     buf[2] = rx_ack_seq;
     buf[3] = snr_raw;
@@ -336,12 +328,7 @@ int arq_protocol_parse_compact(const uint8_t *buf, size_t len,
     hdr->packet_type   = PACKET_TYPE_ARQ_CONTROL;
     hdr->frame_ext     = 0;
     hdr->subtype       = buf[0] >> 4;
-    /* Un-map the two control flags packed by build_compact (see there). */
-    {
-        uint8_t cf = buf[0] & 0x0F;
-        hdr->flags = (uint8_t)(((cf & 0x01u) ? ARQ_FLAG_HAS_DATA : 0u) |
-                               ((cf & 0x02u) ? ARQ_FLAG_TURN_REQ : 0u));
-    }
+    hdr->flags         = buf[0] & 0x0F;
     hdr->session_id    = buf[1] >> 4;
     hdr->aux           = buf[1] & 0x0F;
     hdr->tx_seq        = 0;
