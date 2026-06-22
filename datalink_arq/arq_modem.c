@@ -162,26 +162,19 @@ void arq_modem_ptt_off(void)
 
 int arq_modem_preferred_rx_mode(const arq_session_t *sess)
 {
-    /* Dual control plane: once CONNECTED, in-session control (ACK/TURN/MODE)
-     * arrives on the fast DATAC18; data RX is selected separately via the
-     * payload decoder.  Before connect (LISTENING/CONNECTING) the CALL/ACCEPT
-     * handshake is on the robust DATAC16 connect mode. */
-    if (sess && sess->conn_state == ARQ_CONN_CONNECTED)
-        return ARQ_INSESSION_MODE;
-    return ARQ_CONNECT_MODE;
+    /* Always receive in control mode (DATAC16) to catch all frame types */
+    (void)sess;
+    return ARQ_CONTROL_MODE;
 }
 
 int arq_modem_preferred_tx_mode(const arq_session_t *sess)
 {
-    if (!sess) return ARQ_CONNECT_MODE;
+    if (!sess) return ARQ_CONTROL_MODE;
 
-    if (sess->conn_state == ARQ_CONN_CONNECTED)
-    {
-        if (sess->dflow_state == ARQ_DFLOW_DATA_TX ||
-            sess->dflow_state == ARQ_DFLOW_IDLE_ISS)
-            return sess->payload_mode;
-        return ARQ_INSESSION_MODE;   /* in-session control on DATAC18 */
-    }
+    if (sess->conn_state == ARQ_CONN_CONNECTED &&
+        (sess->dflow_state == ARQ_DFLOW_DATA_TX ||
+         sess->dflow_state == ARQ_DFLOW_IDLE_ISS))
+        return sess->payload_mode;
 
-    return ARQ_CONNECT_MODE;          /* CALL/ACCEPT/CQ on DATAC16 */
+    return sess->control_mode;
 }

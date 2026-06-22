@@ -75,7 +75,6 @@ extern int  arithmetic_decode(uint8_t *input, int max_len, char *output, int max
 const arq_mode_timing_t arq_mode_table[] = {
     /*  freedv_mode           frame_dur  tx_period  ack_timeout  retry_interval  payload  burst */
     {  FREEDV_MODE_DATAC16,   3.74f,     1.0f,      7.0f,        8.0f,           14,   1 },
-    {  FREEDV_MODE_DATAC18,   1.54f,     1.0f,      5.0f,        6.0f,            4,   1 },
     {  FREEDV_MODE_DATAC15,   4.40f,     1.0f,      11.0f,       12.0f,          30,   1 },
     {  FREEDV_MODE_DATAC4,    5.80f,     1.0f,      13.0f,       14.0f,          54,   1 },
     {  FREEDV_MODE_DATAC3,    3.82f,     1.0f,      11.0f,       12.0f,          126,   1 },
@@ -279,63 +278,6 @@ int arq_protocol_build_ack(uint8_t *buf, size_t buf_len,
                       ARQ_SUBTYPE_ACK, session_id,
                       0, rx_ack_seq, flags, snr_raw, ack_delay_raw,
                       NULL, 0);
-}
-
-/* Compact mode index: the 6 gear-shift data modes map to a 0-5 value that
- * fits the 4-bit aux field of a compact MODE_REQ/MODE_ACK frame. */
-static const int arq_ladder_modes[] = {
-    FREEDV_MODE_DATAC15, FREEDV_MODE_DATAC4, FREEDV_MODE_DATAC3,
-    FREEDV_MODE_DATAC1,  FREEDV_MODE_DATAC17, FREEDV_MODE_QAM16C2,
-};
-#define ARQ_LADDER_COUNT ((int)(sizeof(arq_ladder_modes)/sizeof(arq_ladder_modes[0])))
-
-int arq_protocol_mode_to_idx(int freedv_mode)
-{
-    for (int i = 0; i < ARQ_LADDER_COUNT; i++)
-        if (arq_ladder_modes[i] == freedv_mode) return i;
-    return 0;
-}
-
-int arq_protocol_idx_to_mode(int idx)
-{
-    return (idx >= 0 && idx < ARQ_LADDER_COUNT)
-           ? arq_ladder_modes[idx] : FREEDV_MODE_DATAC15;
-}
-
-bool arq_protocol_is_control_mode(int freedv_mode)
-{
-    return freedv_mode == ARQ_CONNECT_MODE || freedv_mode == ARQ_INSESSION_MODE;
-}
-
-int arq_protocol_build_compact(uint8_t *buf, size_t buf_len, uint8_t subtype,
-                               uint8_t session_id, uint8_t rx_ack_seq,
-                               uint8_t flags, uint8_t snr_raw, uint8_t aux)
-{
-    if (buf_len < ARQ_COMPACT_CTRL_SIZE)
-        return -1;
-    buf[0] = (uint8_t)(((subtype & 0x0F) << 4) | (flags & 0x0F));
-    buf[1] = (uint8_t)(((session_id & 0x0F) << 4) | (aux & 0x0F));
-    buf[2] = rx_ack_seq;
-    buf[3] = snr_raw;
-    return ARQ_COMPACT_CTRL_SIZE;
-}
-
-int arq_protocol_parse_compact(const uint8_t *buf, size_t len,
-                               arq_frame_hdr_t *hdr)
-{
-    if (!buf || !hdr || len < ARQ_COMPACT_CTRL_SIZE)
-        return -1;
-    hdr->packet_type   = PACKET_TYPE_ARQ_CONTROL;
-    hdr->frame_ext     = 0;
-    hdr->subtype       = buf[0] >> 4;
-    hdr->flags         = buf[0] & 0x0F;
-    hdr->session_id    = buf[1] >> 4;
-    hdr->aux           = buf[1] & 0x0F;
-    hdr->tx_seq        = 0;
-    hdr->rx_ack_seq    = buf[2];
-    hdr->snr_raw       = buf[3];
-    hdr->ack_delay_raw = 0;
-    return 0;
 }
 
 int arq_protocol_build_disconnect(uint8_t *buf, size_t buf_len,
