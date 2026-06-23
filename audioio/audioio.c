@@ -533,6 +533,23 @@ void *radio_playback_thread(void *device_ptr)
     frame_size = cfg->channels * (cfg->format & 0xff) / 8;
     msec_bytes = cfg->sample_rate * frame_size / 1000;
 
+    /* The device can negotiate a different format/channel count than the
+     * int32 / 2ch we requested at open().  A 16-bit-only USB codec (e.g. a
+     * Yaesu opened via hw:) comes back FFAUDIO_F_INT16; some hosts return
+     * float32; a mono-only card comes back with cfg->channels == 1.  Emit
+     * samples in the negotiated layout below so the bytes we write match what
+     * frame_size counts -- otherwise the device reads our int32 stereo as
+     * garbage and only part of each period is written. */
+    bool playback_is_float = (cfg->format == FFAUDIO_F_FLOAT32);
+    bool playback_is_int16 = (cfg->format == FFAUDIO_F_INT16);
+
+    if (!playback_is_float && !playback_is_int16 &&
+        cfg->format != FFAUDIO_F_INT32 && cfg->format != FFAUDIO_F_INT24_4)
+    {
+        HLOGE("audio-play", "Unsupported playback format %d, aborting", cfg->format);
+        goto cleanup_play;
+    }
+
 #if 0 // TODO: parametrize this
     if (radio_type == RADIO_SBITX)
         ch_layout = RIGHT;
@@ -583,26 +600,35 @@ void *radio_playback_thread(void *device_ptr)
         int samples_upsampled =
             resamp_up_process(&up_rs, input_buffer, samples_read_8k, buffer_upsampled);
 
-        // Convert upsampled mono to stereo
+        /* Expand the upsampled mono modem signal into the device's negotiated
+         * channel/format layout.  cfg->channels is 1 or 2; cfg->format is what
+         * open() actually got (int16 / int32 / int24-in-32 / float32). */
         for (int i = 0; i < samples_upsampled; i++)
         {
+            int32_t s = buffer_upsampled[i];
+            int32_t left  = (ch_layout == RIGHT) ? 0 : s;
+            int32_t right = (ch_layout == LEFT)  ? 0 : s;
             int idx = i * cfg->channels;
-            if (ch_layout == LEFT)
-            {
-                buffer_output_stereo[idx] = buffer_upsampled[i];
-                buffer_output_stereo[idx + 1] = 0;
-            }
 
-            if (ch_layout == RIGHT)
+            if (playback_is_int16)
             {
-                buffer_output_stereo[idx] = 0;
-                buffer_output_stereo[idx + 1] = buffer_upsampled[i];
+                int16_t *o = (int16_t *) buffer_output_stereo;
+                o[idx] = (int16_t)(left >> 16);
+                if (cfg->channels > 1)
+                    o[idx + 1] = (int16_t)(right >> 16);
             }
-
-            if (ch_layout == STEREO)
+            else if (playback_is_float)
             {
-                buffer_output_stereo[idx] = buffer_upsampled[i];
-                buffer_output_stereo[idx + 1] = buffer_upsampled[i];
+                float *o = (float *) buffer_output_stereo;
+                o[idx] = (float)(left / 2147483648.0);
+                if (cfg->channels > 1)
+                    o[idx + 1] = (float)(right / 2147483648.0);
+            }
+            else   /* int32 or 24-bit-in-32 container */
+            {
+                buffer_output_stereo[idx] = left;
+                if (cfg->channels > 1)
+                    buffer_output_stereo[idx + 1] = right;
             }
         }
 
