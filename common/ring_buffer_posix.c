@@ -20,7 +20,22 @@
 #include <string.h>
 
 #include <time.h>
+#if defined(__APPLE__)
+/* macOS has no <malloc.h>, memalign(3), or SHMLBA.  The shared-memory path
+ * below (the -x shm backend) is Linux-only at runtime, but still has to
+ * compile.  posix_memalign(3) from <stdlib.h> is the portable equivalent. */
+#include <unistd.h>
+#ifndef SHMLBA
+#define SHMLBA sysconf(_SC_PAGESIZE)
+#endif
+static inline void *memalign(size_t alignment, size_t size)
+{
+    void *p = NULL;
+    return posix_memalign(&p, alignment, size) == 0 ? p : NULL;
+}
+#else
 #include <malloc.h>
+#endif
 
 #include "os_interop.h"
 
