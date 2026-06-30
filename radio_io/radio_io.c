@@ -27,6 +27,13 @@
 
 #ifdef HAVE_HAMLIB
 #include <hamlib/rig.h>
+#if defined(__has_include)
+#if __has_include(<hamlib/port.h>)
+#include <hamlib/port.h>
+#endif
+#else
+#include <hamlib/port.h>
+#endif
 #include "rigctl_parse.h"
 #endif
 
@@ -39,6 +46,29 @@
 #include "sbitx_io.h"
 #include "radio_cmds.h"
 #include "shm_utils.h"
+#endif
+
+#ifdef HAVE_HAMLIB
+static hamlib_port_t *radio_io_get_rig_port(RIG *radio)
+{
+#if defined(HAMLIB_RIGPORT)
+    return HAMLIB_RIGPORT(radio);
+#elif defined(RIGPORT)
+    return RIGPORT(radio);
+#else
+    return &radio->state.rigport;
+#endif
+}
+
+static int radio_io_set_rig_vfo_opt(RIG *radio, int opt)
+{
+#if defined(HAMLIB_RIGPORT)
+    return rig_set_vfo_opt(radio, opt);
+#else
+    radio->state.vfo_opt = opt;
+    return RIG_OK;
+#endif
+}
 #endif
 
 /* Global mutex — protects radio state (g_radio_type, radio pointer,
@@ -145,12 +175,13 @@ int radio_io_init(int radio_type, const char *device_path, int hamlib_log_level,
         return -1;
     }
 
-    if (device_path && device_path[0])
-        snprintf(radio->state.rigport.pathname, HAMLIB_FILPATHLEN, "%s", device_path);
+    hamlib_port_t *rigport = radio_io_get_rig_port(radio);
+    if (device_path && device_path[0] && rigport)
+        snprintf(rigport->pathname, HAMLIB_FILPATHLEN, "%s", device_path);
 
-    if (serial_speed > 0)
+    if (serial_speed > 0 && rigport)
     {
-        radio->state.rigport.parm.serial.rate = serial_speed;
+        rigport->parm.serial.rate = serial_speed;
         HLOGI(RADIO_LOG_TAG, "Serial speed overridden to %d baud", serial_speed);
     }
 
@@ -171,7 +202,11 @@ int radio_io_init(int radio_type, const char *device_path, int hamlib_log_level,
     if (radio->caps->rig_model == RIG_MODEL_NETRIGCTL)
     {
         int rigctld_vfo_opt = netrigctl_get_vfo_mode(radio);
-        radio->state.vfo_opt = rigctld_vfo_opt;
+        int rc = radio_io_set_rig_vfo_opt(radio, rigctld_vfo_opt);
+        if (rc != RIG_OK)
+        {
+            HLOGW(RADIO_LOG_TAG, "Failed to set NetRigCtl VFO option: %d", rc);
+        }
     }
 
     HLOGI(RADIO_LOG_TAG, "Radio control: HAMLIB (model %d, device %s)",
