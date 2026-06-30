@@ -713,7 +713,7 @@ int send_modulated_data(generic_modem_t *g_modem, uint8_t *bytes_in, int frames_
         return -1;
     }
 
-    int total_samples = 0;
+    size_t total_samples = 0;
     float tx_gain = atomic_load(&g_tx_gain);
     float peak_fs = 0.0f;  /* pre-saturation peak magnitude across this burst */
 
@@ -793,7 +793,8 @@ int send_modulated_data(generic_modem_t *g_modem, uint8_t *bytes_in, int frames_
     write_buffer(playback_buffer, (uint8_t *)tx_buffer, total_samples * sizeof(int32_t));
 
     /* Wait for all samples to be played out */
-    usleep(total_samples * 1000000 / FREEDV_FS_8000);
+    uint64_t playback_duration_us = ((uint64_t)total_samples * 1000000ULL) / FREEDV_FS_8000;
+    usleep((useconds_t)playback_duration_us);
 
     /* Give some tail time before turning off PTT */
     usleep(TAIL_TIME_US);
