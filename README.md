@@ -205,4 +205,18 @@ This project is sponsored by ARDC.
 
 ## LICENSE
 
-Please check LICENSE and LICENSE-freedv.
+Mercury is free software, licensed under the **GNU General Public License,
+version 3 or (at your option) any later version** (GPL-3.0-or-later). See the
+LICENSE file and the per-file headers.
+
+Mercury bundles third-party components which carry their own licenses when
+taken separately:
+
+- `modem/freedv` — a subset of FreeDV / codec2, **LGPL-2.1** (see LICENSE-freedv)
+- `common/iniparser` — **MIT** (see common/iniparser/LICENSE)
+- `audioio/ffaudio` and `ffbase` — **Unlicense** / public domain (see audioio/ffaudio/UNLICENSE)
+- Windows binary releases link against Hamlib — **LGPL-2.1** (see radio_io/hamlib-w64/COPYING.LIB.txt)
+
+The combined work (the Mercury binary) is distributed under the terms of the
+GPL-3.0-or-later. The LGPL/MIT/Unlicense terms apply to those components only
+when they are used separately from Mercury.
