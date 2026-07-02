@@ -180,6 +180,13 @@ Online HTML docs: https://rhizomatica.github.io/mercury/
 
 See [docs/ARQ.md](docs/ARQ.md) for full ARQ architecture, protocol reference, and OTA tuning guide.
 
+## Reticulum
+
+Mercury can carry [Reticulum](https://github.com/markqvist/reticulum) mesh
+networking over HF via its KISS-over-TCP broadcast port (verified) or as a
+point-to-point ARQ backbone. See [docs/RETICULUM.md](docs/RETICULUM.md) for
+the integration architectures and configuration.
+
 ## Physical Layer
 
 Mercury v2 currently uses FreeDV modulator code developed by David Rowe. We plan to introduce other modulator modes present in Mercury v1.
