@@ -175,6 +175,16 @@ windows-zip: windows
 	rm -rf $(WINDOWS_DIR)
 	@echo "Created $(WINDOWS_ZIP)"
 
+WINDOWS_INSTALLER_DIR = windows-installer
+
+windows-installer: windows
+	cp mercury.exe $(WINDOWS_INSTALLER_DIR)/
+	cp mercury.ini.example $(WINDOWS_INSTALLER_DIR)/mercury.ini
+	sed -i 's/ui_enabled = false/ui_enabled = true/g' $(WINDOWS_INSTALLER_DIR)/mercury.ini
+	if ls $(HAMLIB_W64_DIR)/bin/*.dll >/dev/null 2>&1; then \
+		cp $(HAMLIB_W64_DIR)/bin/*.dll $(WINDOWS_INSTALLER_DIR)/; \
+	fi
+
 clean:
 	rm -f mercury mercury.exe *.o .git_hash_stamp mercury-*.zip
 	rm -rf mercury-[0-9]*
