@@ -844,6 +844,11 @@ void *server_worker_thread_ctl(void *port)
  */
 #define BCAST_LEN_SIZE       2     /* big-endian payload length after the header */
 #define BCAST_EXT_LEN_PREFIX 0x01  /* header extension bit: length prefix present */
+#define BCAST_EXT_KISS_STD   0x02  /* header extension bit: sender framed with
+                                      standard KISS CMD_DATA/CMD_AX25 (0x00), so
+                                      deliver with 0x00 (e.g. Reticulum). Clear =
+                                      VARA compressed-callsign framing, deliver
+                                      with CMD_AX25CALLSIGN (VarAC). */
 
 /*
  * Normalises a decoded KISS broadcast frame and queues it to
@@ -874,7 +879,9 @@ static bool bcast_process_decoded_frame(uint8_t *decoded_frame, int frame_len,
     {
         /* Inject Mercury header + 2-byte payload-length prefix before the AX.25
          * payload, so the receiver can recover the exact frame length (the modem
-         * zero-pads to frame_size). The length prefix is flagged in the header. */
+         * zero-pads to frame_size). The length prefix is flagged in the header,
+         * along with the sender's KISS framing (0x00 standard vs 0x01 VARA
+         * callsign-compressed) so the receiving side can mirror it. */
         size_t max_payload = frame_size - HEADER_SIZE - BCAST_LEN_SIZE;
         if ((size_t)frame_len > max_payload)
         {
@@ -882,8 +889,11 @@ static bool bcast_process_decoded_frame(uint8_t *decoded_frame, int frame_len,
                   frame_len, max_payload);
             frame_len = (int)max_payload;
         }
+        uint8_t ext = BCAST_EXT_LEN_PREFIX;
+        if (kiss_cmd == CMD_AX25)
+            ext |= BCAST_EXT_KISS_STD;
         memmove(decoded_frame + HEADER_SIZE + BCAST_LEN_SIZE, decoded_frame, (size_t)frame_len);
-        write_frame_header(decoded_frame, PACKET_TYPE_BROADCAST_DATA, BCAST_EXT_LEN_PREFIX);
+        write_frame_header(decoded_frame, PACKET_TYPE_BROADCAST_DATA, ext);
         decoded_frame[HEADER_SIZE]     = (uint8_t)(((unsigned)frame_len >> 8) & 0xFF);
         decoded_frame[HEADER_SIZE + 1] = (uint8_t)((unsigned)frame_len & 0xFF);
         HLOGD("tcp-bcast", "Added Mercury broadcast header+len (cmd=0x%02X, payload=%d bytes)",
@@ -917,9 +927,12 @@ static bool bcast_process_decoded_frame(uint8_t *decoded_frame, int frame_len,
  *
  * Length-prefixed frame (BCAST_EXT_LEN_PREFIX set in a BROADCAST_DATA header):
  * return exactly the original AX.25 payload (header + 2-byte length stripped,
- * padding dropped) and reply with CMD_AX25CALLSIGN. This is detected from the
- * received frame itself, so it works on a receive-only station regardless of
- * the latched bcast_reply_cmd.
+ * padding dropped) and reply with the sender's own KISS framing, carried in
+ * the BCAST_EXT_KISS_STD header bit: standard 0x00 (CMD_AX25, e.g. Reticulum)
+ * when set, CMD_AX25CALLSIGN (VarAC) when clear — which is also what frames
+ * from pre-extension senders yield. This is detected from the received frame
+ * itself, so it works on a receive-only station regardless of the latched
+ * bcast_reply_cmd.
  *
  * Otherwise mirror the latched bcast_reply_cmd:
  *   CMD_DATA (hermes-broadcast): forward the full frame including the header.
@@ -946,7 +959,8 @@ static uint8_t bcast_get_tx_payload(uint8_t *frame_buffer, size_t frame_size,
         if (len > max_len) len = max_len;
         *payload_out     = frame_buffer + HEADER_SIZE + BCAST_LEN_SIZE;
         *payload_len_out = len;
-        return CMD_AX25CALLSIGN;
+        return (frame_header_extension(frame_buffer[0]) & BCAST_EXT_KISS_STD)
+                   ? CMD_AX25 : CMD_AX25CALLSIGN;
     }
 
     /* Legacy / hermes-broadcast frames: mirror the latched client framing. */

@@ -411,6 +411,24 @@ The **broadcast port** (default 8100) is independent of ARQ and uses
 **KISS framing**.  One-way broadcast frames are sent/received as
 fixed-size KISS-encoded packets matching the modem's payload size.
 
+Three client framings are accepted, distinguished by the KISS command byte:
+
+- `0x00` (standard KISS data / VARA "AX.25 standard") and `0x01` (VARA
+  "AX.25 7-char callsign", used by VarAC): Mercury injects its 1-byte
+  broadcast header plus a 2-byte payload-length prefix, zero-pads to the
+  modem frame size, and records which of the two framings the sender used
+  in a header extension bit (`BCAST_EXT_KISS_STD`).  The receiving side
+  delivers exactly the original payload with the **sender's** command byte
+  — so VarAC↔VarAC traffic stays `0x01` and standard-KISS clients
+  (e.g. Reticulum, see [RETICULUM.md](RETICULUM.md)) get `0x00`.
+- `0x02` (`CMD_DATA`, used by hermes-broadcast): the frame is passed raw —
+  the client supplies its own broadcast header, and receivers with a
+  `CMD_DATA` client get the full unmodified frame back.
+
+Payloads larger than the modem frame (minus 3 bytes of header+length)
+are truncated (`0x00`/`0x01`) or discarded (`0x02`) — the broadcast plane
+does not fragment.
+
 ---
 
 ## Typical Session Flow

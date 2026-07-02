@@ -79,18 +79,22 @@ Mercury must do the PTT itself here (Hamlib `-R`/`-A`, or `-S` on
 sbitx-based stations): there is no client in this architecture that could
 react to the `PTT ON`/`PTT OFF` control-port lines.
 
-### The KISS command-byte shim (required today)
+### KISS command-byte compatibility (older Mercury builds)
 
-Mercury accepts standard KISS data frames (command byte `0x00`) from the
-client, but **delivers received frames with command byte `0x01`**
-(`CMD_AX25CALLSIGN`, chosen for VARA/VarAC client compatibility).
-Reticulum's KISS decoder only accepts command `0x00` and silently discards
-everything else — so without help, RNS→Mercury works and Mercury→RNS does
-not.
+Reticulum frames broadcasts with the standard KISS data command byte
+(`0x00`), while VarAC uses VARA's compressed-callsign framing (`0x01`).
+Current Mercury carries the sender's framing over the air in a broadcast
+header extension bit (`BCAST_EXT_KISS_STD`) and delivers each received
+frame to the local client with the **sender's own command byte** — so
+stock Reticulum works against the broadcast port directly, and VarAC
+behavior is unchanged.  Both stations must run a Mercury build with this
+feature (newer than 1.9.10).
 
-Until Mercury grows a native RNS-framing option, run this small shim between
-rnsd and Mercury (it rewrites the command byte of Mercury→client frames to
-`0x00` and passes the client→Mercury direction through untouched):
+**Older builds** always deliver received frames with command byte `0x01`,
+which Reticulum's KISS decoder silently discards — RNS→Mercury works but
+Mercury→RNS does not.  For those, run this small shim between rnsd and
+Mercury (it rewrites the command byte of Mercury→client frames to `0x00`
+and passes the client→Mercury direction through untouched):
 
 ```python
 #!/usr/bin/env python3
@@ -143,7 +147,7 @@ In `~/.reticulum/config`:
     interface_enabled = True
     kiss_framing = True
     target_host = 127.0.0.1
-    target_port = 8110        # the shim; use 8100 once Mercury speaks 0x00 natively
+    target_port = 8100        # Mercury broadcast port (or the shim port on older builds)
     bitrate = 980             # match the Mercury mode (DATAC1)
 ```
 
@@ -230,7 +234,7 @@ Trade-offs vs Architecture 1:
 | Topology | multipoint / mesh | fixed point-to-point |
 | Loss recovery | Reticulum end-to-end | Mercury ARQ + HARQ (fast, local) |
 | Modes | DATAC1/DATAC17/QAM16C2 only (MTU) | full adaptive ladder incl. DATAC15 fringe modes |
-| Status | **verified working** (with shim) | design pattern, needs a bridge implementation |
+| Status | **verified working** | design pattern, needs a bridge implementation |
 | Best for | community mesh, several stations | maximum robustness on one marginal backbone hop |
 
 Start with Architecture 1.  If you have exactly two stations and a marginal
@@ -256,16 +260,16 @@ Linux host with `sudo modprobe snd-aloop` (see `utils/loopsim/README.md`):
 1. Start two Mercury instances wired through the ALSA loopback, both at
    DATAC1, broadcast ports 8100/8200 — same wiring as
    `utils/loopsim/run_loopsim.sh` with `-m 0` added and a clean channel.
-2. Start two shims: `kiss_shim.py 8110 8100` and `kiss_shim.py 8210 8200`.
-3. Create two Reticulum config dirs with the interface config above
-   (`target_port` 8110 / 8210, `share_instance = No` in `[reticulum]`).
-4. On instance B, announce a destination every 40 s; on instance A, register
+2. Create two Reticulum config dirs with the interface config above
+   (`target_port` 8100 / 8200, `share_instance = No` in `[reticulum]`).
+3. On instance B, announce a destination every 40 s; on instance A, register
    an announce handler (see the Reticulum announce example; note that
    `aspect_filter` must be the **full** destination name, e.g.
    `"myapp.aspect"`).
-5. Result with RNS 1.3.5: every announce was delivered — Mercury logs
-   `[tcp-bcast] Sending KISS frame to client: … payload=167`, and the RNS
-   handler fires on instance A.
+4. Result with RNS 1.3.5 against the broadcast ports directly (no shim):
+   every announce was delivered — Mercury logs
+   `[tcp-bcast] Sending KISS frame to client: kiss_cmd=0x00 payload=167`,
+   and the RNS handler fires on instance A.
 
 ## See also
 

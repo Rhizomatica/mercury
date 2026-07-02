@@ -579,7 +579,9 @@ void test_cmd_callint_negative(void)
  * header byte becomes 0x80 | 0x01 = 0x81. */
 #define BCAST_LEN_SIZE       2
 #define BCAST_EXT_LEN_PREFIX 0x01
+#define BCAST_EXT_KISS_STD   0x02
 #define BCAST_HDR_BYTE_LEN   (BCAST_HDR_BYTE | BCAST_EXT_LEN_PREFIX)
+#define BCAST_HDR_BYTE_STD   (BCAST_HDR_BYTE | BCAST_EXT_LEN_PREFIX | BCAST_EXT_KISS_STD)
 
 /* CMD_DATA, exact frame_size: queued unchanged, bcast_reply_cmd = CMD_DATA */
 void test_bcast_rx_cmd_data_exact_size(void)
@@ -821,6 +823,46 @@ void test_bcast_tx_lenprefix_ignores_reply_cmd_default(void)
         TEST_ASSERT_EQUAL_HEX8((uint8_t)(0x40 + i), payload[i]);
 }
 
+/* Standard-KISS roundtrip: a frame the client transmitted with KISS cmd 0x00
+ * (CMD_AX25, e.g. Reticulum) must carry the BCAST_EXT_KISS_STD header bit on
+ * the air and be delivered on the far side with cmd 0x00 — even on a
+ * receive-only station (reply_cmd still at its default). VarAC-framed frames
+ * (cmd 0x01) must NOT carry the bit and keep being delivered as 0x01, which
+ * test_bcast_vara_length_roundtrip guards. */
+void test_bcast_std_kiss_roundtrip(void)
+{
+    const size_t fsz = 32;
+    broadcast_frame_size_cfg = fsz;
+
+    const int orig_len = 13;
+    uint8_t orig[32];
+    for (int i = 0; i < orig_len; i++) orig[i] = (uint8_t)(0x90 + i);
+
+    /* TX: client framed with standard KISS cmd 0x00 */
+    uint8_t txframe[MAX_PAYLOAD];
+    memset(txframe, 0, sizeof(txframe));
+    memcpy(txframe, orig, orig_len);
+    bool ok = bcast_process_decoded_frame(txframe, orig_len, CMD_AX25, fsz);
+    TEST_ASSERT_TRUE(ok);
+    TEST_ASSERT_EQUAL_size_t(fsz, last_write_buffer_len);
+    /* On-air header carries len-prefix + std-KISS bits */
+    TEST_ASSERT_EQUAL_HEX8(BCAST_HDR_BYTE_STD, last_write_buffer_data[0]);
+
+    /* RX on a receive-only station: reply_cmd still at its connect default */
+    uint8_t rxframe[MAX_PAYLOAD];
+    memcpy(rxframe, last_write_buffer_data, fsz);
+    atomic_store_explicit(&bcast_reply_cmd, CMD_DATA, memory_order_relaxed);
+
+    uint8_t *payload = NULL;
+    int plen = 0;
+    uint8_t cmd = bcast_get_tx_payload(rxframe, fsz, &payload, &plen);
+
+    TEST_ASSERT_EQUAL_HEX8(CMD_AX25, cmd);              /* 0x00, not 0x01 */
+    TEST_ASSERT_EQUAL_INT(orig_len, plen);
+    TEST_ASSERT_EQUAL_PTR(rxframe + HEADER_SIZE + BCAST_LEN_SIZE, payload);
+    TEST_ASSERT_EQUAL_HEX8_ARRAY(orig, payload, orig_len);
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -873,5 +915,6 @@ int main(void)
     RUN_TEST(test_bcast_tx_vara_strips_header);
     RUN_TEST(test_bcast_vara_length_roundtrip);
     RUN_TEST(test_bcast_tx_lenprefix_ignores_reply_cmd_default);
+    RUN_TEST(test_bcast_std_kiss_roundtrip);
     return UNITY_END();
 }
