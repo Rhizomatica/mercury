@@ -271,7 +271,8 @@ static void ws_handle_message(struct mg_connection *c, struct mg_ws_message *wm)
     if (!s_ws_ctx || !s_ws_ctx->cmd_callback)
     {
         // No callback registered - acknowledge but ignore
-        mg_ws_send(c, "{\"error\":\"no handler\"}", 21, WEBSOCKET_OP_TEXT);
+        const char *err = "{\"error\":\"no handler\"}";
+        mg_ws_send(c, err, strlen(err), WEBSOCKET_OP_TEXT);
         return;
     }
 

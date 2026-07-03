@@ -270,6 +270,10 @@ bool cfg_write(const mercury_config *cfg, const char *ini_path)
     fprintf(f, "\n[audio]\n");
     fprintf(f, "tx_gain_db = %.2f\n", cfg->tx_gain_db);
 
+    fprintf(f, "\n[tnc]\n");
+    fprintf(f, "keepalive_s = %d\n", cfg->tnc_keepalive_s);
+    fprintf(f, "buffer_report_ms = %d\n", cfg->tnc_buffer_report_ms);
+
     fclose(f);
     return true;
 }

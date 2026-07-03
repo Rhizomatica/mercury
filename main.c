@@ -263,7 +263,16 @@ int main(int argc, char *argv[])
         {
         case 'U':
             if (optarg)
-                ui_port = atoi(optarg);
+            {
+                char *endptr = NULL;
+                long value = strtol(optarg, &endptr, 10);
+                if (endptr == optarg || *endptr != '\0' || value <= 0 || value > 65535)
+                {
+                    fprintf(stderr, "Invalid UI port '%s'. Valid range is 1..65535.\n", optarg);
+                    return EXIT_FAILURE;
+                }
+                ui_port = (uint16_t)value;
+            }
             break;
         case 'W':
             waterfall_enabled = false;
@@ -332,11 +341,29 @@ int main(int argc, char *argv[])
             break;
         case 'p':
             if (optarg)
-                base_tcp_port = atoi(optarg);
+            {
+                char *endptr = NULL;
+                long value = strtol(optarg, &endptr, 10);
+                if (endptr == optarg || *endptr != '\0' || value <= 0 || value > 65535)
+                {
+                    fprintf(stderr, "Invalid ARQ TCP base port '%s'. Valid range is 1..65535.\n", optarg);
+                    return EXIT_FAILURE;
+                }
+                base_tcp_port = (int)value;
+            }
             break;
         case 'b':
             if (optarg)
-                broadcast_port = atoi(optarg);
+            {
+                char *endptr = NULL;
+                long value = strtol(optarg, &endptr, 10);
+                if (endptr == optarg || *endptr != '\0' || value <= 0 || value > 65535)
+                {
+                    fprintf(stderr, "Invalid broadcast TCP port '%s'. Valid range is 1..65535.\n", optarg);
+                    return EXIT_FAILURE;
+                }
+                broadcast_port = (int)value;
+            }
             break;
         case 'x':
             if (!strcmp(optarg, "alsa"))

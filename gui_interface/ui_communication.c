@@ -310,7 +310,7 @@ void *ui_publisher_thread(void *arg)
                 pos += snprintf(buf + pos, sizeof(buf) - pos,
                     "{\"type\":\"capture_dev_list\",\"selected\":\"%s\",\"list\":[",
                     ctx->selected_capture_dev);
-                for (int i = 0; i < cap_count && pos < (int)sizeof(buf) - 128; i++) {
+                for (int i = 0; i < cap_count && pos < (int)sizeof(buf) - 160; i++) {
                     if (i > 0) buf[pos++] = ',';
                     pos += snprintf(buf + pos, sizeof(buf) - pos,
                         "{\"name\":\"%s\",\"id\":\"%s\"}", cap_names[i], cap_ids[i]);
@@ -329,7 +329,7 @@ void *ui_publisher_thread(void *arg)
                 pos += snprintf(buf + pos, sizeof(buf) - pos,
                     "{\"type\":\"playback_dev_list\",\"selected\":\"%s\",\"list\":[",
                     ctx->selected_playback_dev);
-                for (int i = 0; i < pb_count && pos < (int)sizeof(buf) - 128; i++) {
+                for (int i = 0; i < pb_count && pos < (int)sizeof(buf) - 160; i++) {
                     if (i > 0) buf[pos++] = ',';
                     pos += snprintf(buf + pos, sizeof(buf) - pos,
                         "{\"name\":\"%s\",\"id\":\"%s\"}", pb_names[i], pb_ids[i]);
