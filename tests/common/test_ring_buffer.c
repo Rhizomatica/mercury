@@ -223,6 +223,164 @@ void test_clear_buffer_wakes_blocked_writer(void)
     circular_buf_free(cbuf);
 }
 
+/* Test 11: read_buffer wakes a writer blocked in write_buffer (ring full).
+ *
+ * This is the mechanism the TX-path deadlock fix relies on: with the outer
+ * g_app_tx_mtx gone from the write sites, a writer parked in write_buffer()'s
+ * COND_WAIT is woken by the drain-side COND_SIGNAL in read_buffer().  If that
+ * signal is ever removed, any >APP_TX_BUF_SIZE transfer deadlocks again and
+ * the pthread_join() below hangs. */
+static void *full_ring_writer(void *arg)
+{
+    struct clear_wake_ctx *ctx = arg;
+    uint8_t extra[8];
+    memset(extra, 0xEE, sizeof(extra));
+    write_buffer(ctx->cbuf, extra, sizeof(extra)); /* blocks: ring is full */
+    ctx->done = 1;
+    return NULL;
+}
+
+void test_read_buffer_wakes_blocked_writer(void)
+{
+    uint8_t backing[32];
+    cbuf_handle_t rb = circular_buf_init(backing, sizeof(backing));
+    TEST_ASSERT_NOT_NULL(rb);
+
+    uint8_t fill[32];
+    memset(fill, 0x11, sizeof(fill));
+    TEST_ASSERT_EQUAL_INT(0, write_buffer(rb, fill, sizeof(fill)));
+    TEST_ASSERT_TRUE(circular_buf_full(rb));
+
+    struct clear_wake_ctx ctx = { .cbuf = rb, .done = 0 };
+    pthread_t tid;
+    pthread_create(&tid, NULL, full_ring_writer, &ctx);
+
+    struct timespec ts = { 0, 50 * 1000 * 1000 }; /* 50 ms */
+    nanosleep(&ts, NULL);
+    TEST_ASSERT_EQUAL_INT(0, ctx.done); /* writer must be parked */
+
+    /* Drain enough for the pending 8-byte write; the read must signal. */
+    uint8_t sink[16];
+    TEST_ASSERT_EQUAL_INT(0, read_buffer(rb, sink, sizeof(sink)));
+    TEST_ASSERT_EQUAL_HEX8(0x11, sink[0]);
+
+    pthread_join(tid, NULL); /* hangs here if read_buffer stops signalling */
+    TEST_ASSERT_EQUAL_INT(1, ctx.done);
+
+    /* The woken writer's bytes must be in the ring, after the old data. */
+    uint8_t rest[24];
+    TEST_ASSERT_EQUAL_INT(0, read_buffer(rb, rest, sizeof(rest)));
+    TEST_ASSERT_EQUAL_HEX8(0x11, rest[15]);
+    TEST_ASSERT_EQUAL_HEX8(0xEE, rest[16]);
+    TEST_ASSERT_EQUAL_HEX8(0xEE, rest[23]);
+    circular_buf_free(rb);
+}
+
+/* Test 12: write_buffer wakes a reader blocked in read_buffer (ring empty) —
+ * the dual of Test 11, guarding the COND_SIGNAL in write_buffer()'s success
+ * path that the RX-side consumers rely on. */
+static void *empty_ring_reader(void *arg)
+{
+    struct clear_wake_ctx *ctx = arg;
+    uint8_t got = 0;
+    read_buffer(ctx->cbuf, &got, 1); /* blocks: ring is empty */
+    ctx->done = (got == 0x77) ? 1 : -1;
+    return NULL;
+}
+
+void test_write_buffer_wakes_blocked_reader(void)
+{
+    uint8_t backing[32];
+    cbuf_handle_t rb = circular_buf_init(backing, sizeof(backing));
+    TEST_ASSERT_NOT_NULL(rb);
+
+    struct clear_wake_ctx ctx = { .cbuf = rb, .done = 0 };
+    pthread_t tid;
+    pthread_create(&tid, NULL, empty_ring_reader, &ctx);
+
+    struct timespec ts = { 0, 50 * 1000 * 1000 }; /* 50 ms */
+    nanosleep(&ts, NULL);
+    TEST_ASSERT_EQUAL_INT(0, ctx.done); /* reader must be parked */
+
+    uint8_t byte = 0x77;
+    TEST_ASSERT_EQUAL_INT(0, write_buffer(rb, &byte, 1));
+
+    pthread_join(tid, NULL); /* hangs here if write_buffer stops signalling */
+    TEST_ASSERT_EQUAL_INT(1, ctx.done); /* woke AND read the right byte */
+    circular_buf_free(rb);
+}
+
+/* Test 13: two concurrent writers + one reader, no outer lock.
+ *
+ * The deadlock fix removed g_app_tx_mtx from the write sites on the grounds
+ * that the ring's internal mutex alone serializes concurrent writers
+ * (arq_payload_bridge_worker and arq_queue_data) against the event-loop
+ * reader.  This test hammers that claim: every byte written by each writer
+ * must come out exactly once — a lost signal deadlocks (join hangs), a
+ * head/tail race drops or duplicates bytes (count mismatch). */
+#define CW_CHUNK   16
+#define CW_CHUNKS  256   /* 4 KB per writer through a 64-byte ring */
+
+struct cw_writer_ctx {
+    cbuf_handle_t cbuf;
+    uint8_t       tag;
+};
+
+static void *cw_writer(void *arg)
+{
+    struct cw_writer_ctx *ctx = arg;
+    uint8_t chunk[CW_CHUNK];
+    memset(chunk, ctx->tag, sizeof(chunk));
+    for (int i = 0; i < CW_CHUNKS; i++)
+        write_buffer(ctx->cbuf, chunk, sizeof(chunk));
+    return NULL;
+}
+
+void test_concurrent_writers_data_integrity(void)
+{
+    uint8_t backing[64];
+    cbuf_handle_t rb = circular_buf_init(backing, sizeof(backing));
+    TEST_ASSERT_NOT_NULL(rb);
+
+    struct cw_writer_ctx w1 = { .cbuf = rb, .tag = 0xA5 };
+    struct cw_writer_ctx w2 = { .cbuf = rb, .tag = 0x5A };
+    pthread_t t1, t2;
+    pthread_create(&t1, NULL, cw_writer, &w1);
+    pthread_create(&t2, NULL, cw_writer, &w2);
+
+    /* Drain from this thread (the single reader, like the ARQ event loop). */
+    const size_t total = 2u * CW_CHUNKS * CW_CHUNK;
+    size_t got = 0, n_a5 = 0, n_5a = 0;
+    while (got < total)
+    {
+        size_t avail = size_buffer(rb);
+        if (avail == 0)
+        {
+            struct timespec ts = { 0, 1 * 1000 * 1000 }; /* 1 ms */
+            nanosleep(&ts, NULL);
+            continue;
+        }
+        uint8_t sink[64];
+        if (avail > sizeof(sink)) avail = sizeof(sink);
+        TEST_ASSERT_EQUAL_INT(0, read_buffer(rb, sink, avail));
+        for (size_t i = 0; i < avail; i++)
+        {
+            if (sink[i] == 0xA5) n_a5++;
+            else if (sink[i] == 0x5A) n_5a++;
+            else TEST_FAIL_MESSAGE("corrupted byte from ring");
+        }
+        got += avail;
+    }
+
+    pthread_join(t1, NULL);
+    pthread_join(t2, NULL);
+
+    TEST_ASSERT_EQUAL_size_t((size_t)CW_CHUNKS * CW_CHUNK, n_a5);
+    TEST_ASSERT_EQUAL_size_t((size_t)CW_CHUNKS * CW_CHUNK, n_5a);
+    TEST_ASSERT_EQUAL_size_t(0, size_buffer(rb)); /* nothing left over */
+    circular_buf_free(rb);
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -236,5 +394,8 @@ int main(void)
     RUN_TEST(test_free_size_decreases_on_put);
     RUN_TEST(test_wrap_around);
     RUN_TEST(test_clear_buffer_wakes_blocked_writer);
+    RUN_TEST(test_read_buffer_wakes_blocked_writer);
+    RUN_TEST(test_write_buffer_wakes_blocked_reader);
+    RUN_TEST(test_concurrent_writers_data_integrity);
     return UNITY_END();
 }
