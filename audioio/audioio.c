@@ -529,17 +529,22 @@ void *radio_playback_thread(void *device_ptr)
           cfg->format == FFAUDIO_F_INT16   ? "int16"   : "unknown",
           cfg->sample_rate, cfg->channels, cfg->buffer_length_msec);
 
-    /* S2: Channel-count safety.  buffer_output_stereo is sized for at most
-     * 2 channels.  If the host negotiates a wider mix format (e.g. 6-ch
-     * WASAPI/CoreAudio surround sink) the write loop at i*cfg->channels
-     * overflows the buffer.  Mercury outputs mono modem audio expanded to
-     * at most stereo, so clamping to 2 is always correct here. */
+    /* Channel-count safety.  buffer_output_stereo is sized for at most 2
+     * channels, and the emit loop below only fills 2.  Forcing cfg->channels
+     * back to 2 would avoid the overflow but leave frame_size disagreeing
+     * with the device's real frame layout — every write would be
+     * misinterpreted (wrong interleave, samples on the wrong channels) and
+     * the radio would be keyed with garbage audio, the same failure mode the
+     * format guard below exists to prevent.  So a >2-channel negotiation
+     * (e.g. 6-ch WASAPI/CoreAudio surround sink) aborts like an unsupported
+     * format; point Mercury at a stereo/mono endpoint (or a plug/dmix alias)
+     * for such devices. */
     if (cfg->channels < 1 || cfg->channels > 2)
     {
-        HLOGW("audio-play",
-              "Device negotiated %d channels; clamping to 2 (scratch buffer is stereo-sized)",
+        HLOGE("audio-play",
+              "Device negotiated %d channels; only mono/stereo playback is supported, aborting",
               cfg->channels);
-        cfg->channels = 2;
+        goto cleanup_play;
     }
 
     frame_size = cfg->channels * (cfg->format & 0xff) / 8;
