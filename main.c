@@ -618,7 +618,13 @@ int main(int argc, char *argv[])
     if (radio_io_init(radio_type, radio_device, hamlib_log_level, radio_serial_speed) != 0)
     {
         fprintf(stderr, "Failed to initialize radio control.\n");
-        audioio_deinit(&radio_capture, &radio_playback);
+        /* item2: guard matches all sibling error-path calls.  Without it,
+         * SHM mode calls audioio_deinit() when audioio_init_internal was
+         * never run, so s_radio_capture/s_radio_playback are zero-
+         * initialized statics and pthread_join(0,NULL) joins the main
+         * thread or an invalid ID. */
+        if (audio_system != AUDIO_SUBSYSTEM_SHM)
+            audioio_deinit(&radio_capture, &radio_playback);
         hermes_log_shutdown();
         return EXIT_FAILURE;
     }

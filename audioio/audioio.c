@@ -529,6 +529,18 @@ void *radio_playback_thread(void *device_ptr)
           cfg->format == FFAUDIO_F_INT16   ? "int16"   : "unknown",
           cfg->sample_rate, cfg->channels, cfg->buffer_length_msec);
 
+    /* S2: Channel-count safety.  buffer_output_stereo is sized for at most
+     * 2 channels.  If the host negotiates a wider mix format (e.g. 6-ch
+     * WASAPI/CoreAudio surround sink) the write loop at i*cfg->channels
+     * overflows the buffer.  Mercury outputs mono modem audio expanded to
+     * at most stereo, so clamping to 2 is always correct here. */
+    if (cfg->channels < 1 || cfg->channels > 2)
+    {
+        HLOGW("audio-play",
+              "Device negotiated %d channels; clamping to 2 (scratch buffer is stereo-sized)",
+              cfg->channels);
+        cfg->channels = 2;
+    }
 
     frame_size = cfg->channels * (cfg->format & 0xff) / 8;
     msec_bytes = cfg->sample_rate * frame_size / 1000;
@@ -935,7 +947,21 @@ void *radio_capture_thread(void *device_ptr)
 
         int frames_read = r / frame_size;
         int frames_to_write = frames_read;
-        
+
+        /* S3: PipeWire's PulseAudio compatibility layer can return larger
+         * fragments than the buffer_length_msec we requested.  Without a
+         * bound check the loop below would write past the end of
+         * buffer_output (cap_frames_max slots).  Clamp here; the excess
+         * samples are silently dropped which is preferable to a heap
+         * overflow. */
+        if (frames_to_write > (int)cap_frames_max)
+        {
+            HLOGW("audio-cap",
+                  "capture read %d frames exceeds scratch capacity %zu; clamping",
+                  frames_to_write, (size_t)cap_frames_max);
+            frames_to_write = (int)cap_frames_max;
+        }
+
         // Extract one mono int32 sample per 48 kHz frame into the scratch
         // buffer, then run the polyphase anti-aliasing downsampler.  The old
         // path decimated 1-in-6 with NO filter, folding everything above
@@ -1402,15 +1428,26 @@ void audioio_deinit_buffers(void)
         audioio_deinit_local_buffers();
     }
 #else
+    /* S5-item1: d99e3d8 moved ALSA/Pulse/OSS/CoreAudio from named SHM to
+     * in-process malloc'd buffers (audioio_init_local_buffers).  The
+     * original else-branch here unconditionally called
+     * circular_buf_destroy_shm (munmap of a heap pointer + shm_unlink of
+     * a wrong segment name) for every non-NULL/FIFO backend, which is
+     * wrong and causes heap corruption.  Only AUDIO_SUBSYSTEM_SHM needs
+     * the SHM teardown path; every other non-NULL/FIFO backend was
+     * allocated locally and must go through the local free path. */
+    else if (audio_subsystem == AUDIO_SUBSYSTEM_SHM)
+    {
+        circular_buf_destroy_shm(capture_buffer, SIGNAL_BUFFER_SIZE, (char *) SIGNAL_INPUT);
+        circular_buf_free_shm(capture_buffer);
+        circular_buf_destroy_shm(playback_buffer, SIGNAL_BUFFER_SIZE, (char *) SIGNAL_OUTPUT);
+        circular_buf_free_shm(playback_buffer);
+        capture_buffer = NULL;
+        playback_buffer = NULL;
+    }
     else
     {
-    circular_buf_destroy_shm(capture_buffer, SIGNAL_BUFFER_SIZE, (char *) SIGNAL_INPUT);
-    circular_buf_free_shm(capture_buffer);
-
-    circular_buf_destroy_shm(playback_buffer, SIGNAL_BUFFER_SIZE, (char *) SIGNAL_OUTPUT);
-    circular_buf_free_shm(playback_buffer);
-    capture_buffer = NULL;
-    playback_buffer = NULL;
+        audioio_deinit_local_buffers();
     }
 #endif
     s_buffers_initialized = 0;
