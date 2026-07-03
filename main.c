@@ -82,13 +82,21 @@ char *freedv_mode_names[] = { "DATAC1",
 
 volatile bool shutdown_ = false; // global shutdown flag
 
+static volatile sig_atomic_t g_signal_count = 0;
+
 static void handle_termination_signal(int sig)
 {
     (void)sig;
+    if (g_signal_count)
+    {
+        static const char msg[] = "Caught second signal, forcing exit.\n";
+        write(STDERR_FILENO, msg, sizeof(msg) - 1);
+        _exit(1);
+    }
+    g_signal_count = 1;
+    static const char msg[] = "Signal received, shutting down...\n";
+    write(STDERR_FILENO, msg, sizeof(msg) - 1);
     shutdown_ = true;
-    HLOGI("main", "Termination signal received, shutting down...");
-    msleep(1500); // give some time for the main loop to exit and for the modem and interfaces to shutdown gracefully
-    exit(0); // in case the main loop is stuck for some reason, we force exit after a delay
 }
 
 static int parse_rx_channel_layout(const char *value)
@@ -173,6 +181,11 @@ int main(int argc, char *argv[])
     int audio_system = -1; // default audio system
     char *input_dev = (char *) malloc(MAX_PATH);
     char *output_dev = (char *) malloc(MAX_PATH);
+    if (!input_dev || !output_dev)
+    {
+        fprintf(stderr, "out of memory\n");
+        exit(1);
+    }
     uint16_t ui_port = UI_DEFAULT_PORT;
     bool waterfall_enabled = true;
     bool ui_enabled = false;
@@ -550,11 +563,11 @@ int main(int argc, char *argv[])
     case AUDIO_SUBSYSTEM_OSS:
         if (input_dev[0] == 0)
         {
-            sprintf(input_dev, "/dev/dsp");
+            snprintf(input_dev, MAX_PATH, "/dev/dsp");
         }
         if (output_dev[0] == 0)
         {
-            sprintf(output_dev, "/dev/dsp");
+            snprintf(output_dev, MAX_PATH, "/dev/dsp");
         }
         printf("Open Sound System (OSS)\n");
         break;
