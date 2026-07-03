@@ -33,9 +33,9 @@ PROJECT_INC = -I../common -I../modem -I../datalink_arq -I../datalink_broadcast \
 CFLAGS = $(COMMON_CFLAGS) $(UNITY_CFLAGS) $(UNITY_INC) $(PROJECT_INC)
 UNAME_S := $(shell uname -s)
 ifeq ($(UNAME_S),Darwin)
-LDFLAGS = -lpthread -lm
+LDFLAGS = -lpthread -lm $(SAN_LDFLAGS)
 else
-LDFLAGS = -lpthread -lrt -lm
+LDFLAGS = -lpthread -lrt -lm $(SAN_LDFLAGS)
 endif
 
 # Shared mock stubs for ARQ tests

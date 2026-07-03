@@ -59,3 +59,30 @@ DEBUG_IO ?= 0
 ifeq ($(DEBUG_IO),1)
   COMMON_CFLAGS += -DDEBUG_IO
 endif
+
+# Optional: build with sanitizers (default: off). Mutually exclusive.
+# Enable with:  make SANITIZE_TSAN=1 ...        (ThreadSanitizer)
+#          or:  make SANITIZE_ASAN_UBSAN=1 ...  (Address + UndefinedBehavior)
+# Sanitizer flags must reach the linker too, so they are also collected into
+# SAN_LDFLAGS, which every link line appends (the binary link uses LDFLAGS,
+# not CFLAGS, so COMMON_CFLAGS alone would not instrument the final link).
+SAN_LDFLAGS =
+
+SANITIZE_TSAN ?= 0
+SANITIZE_ASAN_UBSAN ?= 0
+
+ifeq ($(SANITIZE_TSAN),1)
+  ifeq ($(SANITIZE_ASAN_UBSAN),1)
+    $(error SANITIZE_TSAN and SANITIZE_ASAN_UBSAN are mutually exclusive)
+  endif
+  SAN_FLAGS := -fsanitize=thread -g -O1 -fno-omit-frame-pointer
+  COMMON_CFLAGS += $(SAN_FLAGS)
+  SAN_LDFLAGS += -fsanitize=thread
+endif
+
+ifeq ($(SANITIZE_ASAN_UBSAN),1)
+  SAN_FLAGS := -fsanitize=address,undefined -fno-sanitize-recover=undefined \
+               -g -O1 -fno-omit-frame-pointer
+  COMMON_CFLAGS += $(SAN_FLAGS)
+  SAN_LDFLAGS += -fsanitize=address,undefined
+endif
