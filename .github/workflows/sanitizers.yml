@@ -46,7 +46,7 @@ jobs:
       - name: Run unit tests under ThreadSanitizer
         shell: bash
         env:
-          TSAN_OPTIONS: "halt_on_error=1 second_deadlock_stack=1 suppressions=tests/sanitizer-suppressions/tsan.supp"
+          TSAN_OPTIONS: "halt_on_error=1 second_deadlock_stack=1 suppressions=${{ github.workspace }}/tests/sanitizer-suppressions/tsan.supp"
         run: |
           make -C tests clean
           make -C tests SANITIZE_TSAN=1 test
@@ -75,7 +75,7 @@ jobs:
         shell: bash
         env:
           ASAN_OPTIONS: "halt_on_error=1 detect_leaks=1 abort_on_error=1"
-          LSAN_OPTIONS: "suppressions=tests/sanitizer-suppressions/lsan.supp"
+          LSAN_OPTIONS: "suppressions=${{ github.workspace }}/tests/sanitizer-suppressions/lsan.supp"
           UBSAN_OPTIONS: "halt_on_error=1 print_stacktrace=1"
         run: |
           make -C tests clean
@@ -84,7 +84,7 @@ jobs:
         shell: bash
         env:
           ASAN_OPTIONS: "halt_on_error=1 detect_leaks=1 abort_on_error=1"
-          LSAN_OPTIONS: "suppressions=tests/sanitizer-suppressions/lsan.supp"
+          LSAN_OPTIONS: "suppressions=${{ github.workspace }}/tests/sanitizer-suppressions/lsan.supp"
           UBSAN_OPTIONS: "halt_on_error=1 print_stacktrace=1"
         run: |
           make clean
