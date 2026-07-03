@@ -191,6 +191,12 @@ int chan_select(chan_t *recv_chans[], int recv_count, void **recv_out,
         memset(last_queued_line, 0, sizeof(last_queued_line));
         if (len < sizeof(last_queued_line))
             memcpy(last_queued_line, data_ptr, len);
+        /* Returning 0 signals the message was accepted by the channel, so
+         * tnc_queue_line() transfers ownership and does not free it (in
+         * production the send_thread consumer frees each msg).  This mock is
+         * that terminal consumer, so it must free the msg or it leaks — which
+         * LeakSanitizer flags in the tnc_send_* tests. */
+        free(send_msgs[0]);
         return 0;
     }
 
