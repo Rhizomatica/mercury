@@ -101,21 +101,25 @@ int shm_create_and_get_fd(char *name, size_t size)
 		abort();
 	}
 #else
-    if (shm_open(name, O_RDWR, 0644) >= 0)
     {
-        // fprintf(stderr, "POSIX shared memory already created. Re-creating it.\n");
-        shm_unlink(name);
+        int probe_fd = shm_open(name, O_RDWR, 0644);
+        if (probe_fd >= 0)
+        {
+            // fprintf(stderr, "POSIX shared memory already created. Re-creating it.\n");
+            close(probe_fd);
+            shm_unlink(name);
+        }
     }
 
     if((fd = shm_open(name, O_RDWR | O_CREAT, 0644)) == -1)
     {
-        fprintf(stderr, "ERROR: This should never happen! SHM creation error!\n");
+        fprintf(stderr, "ERROR: This should never happen! SHM creation error: %s\n", strerror(errno));
         abort();
     }
 
     if (ftruncate (fd, size) == -1)
     {
-        fprintf(stderr, "ERROR: This should never happen! Error in ftruncate!\n");
+        fprintf(stderr, "ERROR: This should never happen! Error in ftruncate: %s\n", strerror(errno));
         abort();
     }
 #endif
@@ -124,7 +128,7 @@ int shm_create_and_get_fd(char *name, size_t size)
 }
 
 
-// returns the pointer to the region, or (void *) -1 in case of error
+// returns the pointer to the region, or NULL in case of error
 void *shm_map(int fd, size_t size)
 {
 #if defined(_WIN32)
@@ -140,7 +144,8 @@ void *shm_map(int fd, size_t size)
 
     return data;
 #else
-    return mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    void *ptr = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    return (ptr == MAP_FAILED) ? NULL : ptr;
 #endif
 }
 
