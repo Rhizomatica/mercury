@@ -275,7 +275,11 @@ void freedv_comptx_ofdm(struct freedv *f, COMP mod_out[]) {
 
   /* Generate Varicode txt bits (if used), waren't protected by FEC */
   nspare = f->ofdm_ntxtbits;
-  uint8_t txt_bits[nspare];
+  /* Mercury's custom data modes carry no text bits (ofdm_ntxtbits == 0); a
+   * zero-length VLA is undefined behaviour (UBSan aborts on it).  Size to at
+   * least 1 — the loop below and ofdm_ldpc_interleave_tx() only touch the
+   * first nspare elements, so txt_bits[0] is never read when nspare == 0. */
+  uint8_t txt_bits[nspare > 0 ? nspare : 1];
 
   for (k = 0; k < nspare; k++) {
     if (f->nvaricode_bits == 0) {
