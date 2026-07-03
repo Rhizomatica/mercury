@@ -1,0 +1,8 @@
+# ThreadSanitizer suppressions for Mercury unit tests.
+#
+# Policy: every entry MUST have a one-line justification and, where the race is
+# a real pre-existing bug being tracked separately, a reference (issue/PR/plan).
+# Suppress ONLY known, triaged, pre-existing findings so the job stays green on
+# the baseline; a NEW race must fail the job. Format: race:<symbol substring>
+#
+# (no active suppressions yet — the first CI run populates this if needed)
