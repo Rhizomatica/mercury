@@ -8,8 +8,10 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
 */
 
+#include <pthread.h>
 #include <string.h>
 #include <stdint.h>
+#include <time.h>
 
 #include "unity.h"
 #include "ring_buffer_posix.h"
@@ -164,6 +166,63 @@ void test_wrap_around(void)
     TEST_ASSERT_EQUAL_UINT8_ARRAY(pattern, result, TEST_BUF_SIZE);
 }
 
+/* Test 10: clear_buffer wakes a writer blocked in write_buffer (ring full).
+ *
+ * Regression guard for the arq.c TX-path deadlock: the bridge worker holds
+ * g_app_tx_mtx across write_buffer().  When the ring is full, write_buffer()
+ * parks in COND_WAIT; the only drainer (cb_tx_read) also needs g_app_tx_mtx,
+ * so nothing ever signals the cond and the ARQ event loop wedges permanently.
+ * The fix has two parts: (a) drop the outer mutex from the write sites, and
+ * (b) add COND_SIGNAL to clear_buffer() so that teardown-triggered clears
+ * wake any blocked writer.  This test covers part (b): if clear_buffer() does
+ * not signal, the pthread_join() below will block indefinitely.
+ */
+
+struct clear_wake_ctx {
+    cbuf_handle_t cbuf;
+    volatile int  done;
+};
+
+static void *clear_wake_writer(void *arg)
+{
+    struct clear_wake_ctx *ctx = arg;
+    uint8_t extra = 0xFF;
+    write_buffer(ctx->cbuf, &extra, 1); /* blocks until ring has space */
+    ctx->done = 1;
+    return NULL;
+}
+
+void test_clear_buffer_wakes_blocked_writer(void)
+{
+    uint8_t backing[32];
+    cbuf_handle_t cbuf = circular_buf_init(backing, sizeof(backing));
+    TEST_ASSERT_NOT_NULL(cbuf);
+
+    /* Fill the ring to capacity so the next write_buffer call will block. */
+    uint8_t fill[32] = {0};
+    TEST_ASSERT_EQUAL_INT(0, write_buffer(cbuf, fill, sizeof(fill)));
+    TEST_ASSERT_TRUE(circular_buf_full(cbuf));
+
+    struct clear_wake_ctx ctx = { .cbuf = cbuf, .done = 0 };
+    pthread_t tid;
+    pthread_create(&tid, NULL, clear_wake_writer, &ctx);
+
+    /* Give the writer thread time to enter COND_WAIT inside write_buffer. */
+    struct timespec ts = { 0, 50 * 1000 * 1000 }; /* 50 ms */
+    nanosleep(&ts, NULL);
+
+    TEST_ASSERT_EQUAL_INT(0, ctx.done); /* should still be blocked */
+
+    /* clear_buffer() must signal the cond to unblock the writer. */
+    clear_buffer(cbuf);
+
+    /* If clear_buffer() did not signal, pthread_join() hangs here. */
+    pthread_join(tid, NULL);
+
+    TEST_ASSERT_EQUAL_INT(1, ctx.done);
+    circular_buf_free(cbuf);
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -176,5 +235,6 @@ int main(void)
     RUN_TEST(test_capacity_returns_max);
     RUN_TEST(test_free_size_decreases_on_put);
     RUN_TEST(test_wrap_around);
+    RUN_TEST(test_clear_buffer_wakes_blocked_writer);
     return UNITY_END();
 }

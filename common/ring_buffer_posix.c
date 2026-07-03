@@ -355,6 +355,7 @@ void clear_buffer(cbuf_handle_t cbuf)
     cbuf->internal->head = 0;
     cbuf->internal->tail = 0;
 
+    COND_SIGNAL( &cbuf->internal->cond );
     MUTEX_UNLOCK( &cbuf->internal->mutex );
 }
 

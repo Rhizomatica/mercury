@@ -497,9 +497,7 @@ static void *arq_payload_bridge_worker(void *arg)
     {
         if (payload.len == 0 || payload.len > INT_BUFFER_SIZE)
             continue;
-        pthread_mutex_lock(&g_app_tx_mtx);
         write_buffer(g_app_tx_buf, payload.data, payload.len);
-        pthread_mutex_unlock(&g_app_tx_mtx);
 
         arq_event_t ev = { .id = ARQ_EV_APP_DATA_READY };
         evq_push(&ev);
@@ -878,9 +876,7 @@ bool arq_is_link_connected(void)
 int arq_queue_data(const uint8_t *data, size_t len)
 {
     if (!data || len == 0) return -1;
-    pthread_mutex_lock(&g_app_tx_mtx);
     int rc = write_buffer(g_app_tx_buf, (uint8_t *)data, len);
-    pthread_mutex_unlock(&g_app_tx_mtx);
     if (rc == 0)
     {
         arq_event_t ev = { .id = ARQ_EV_APP_DATA_READY };
