@@ -1,0 +1,92 @@
+# Mercury CI Pipeline - Sanitizers (TSan + ASan/UBSan)
+#
+# Triggers: PRs and pushes to mercuryv2, plus manual dispatch.
+# INFORMATIONAL to start (continue-on-error): the tree has known pre-existing
+# findings (e.g. the arq_conn data race) triaged separately. Flip
+# continue-on-error to false to make these required once the baseline is clean.
+#
+# Runs on Linux amd64 only (sanitizers need native execution).
+
+name: Sanitizers
+
+on:
+  pull_request:
+    branches: [mercuryv2]
+  push:
+    branches: [mercuryv2]
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: 'Target branch | default = "mercuryv2"'
+        required: false
+        type: string
+        default: 'mercuryv2'
+
+jobs:
+  tsan-unit:
+    name: TSan (unit tests, Linux amd64)
+    runs-on: ubuntu-latest
+    container: debian:trixie
+    timeout-minutes: 30
+    continue-on-error: true
+    steps:
+      - name: Install build dependencies
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            ca-certificates build-essential git openssh-client \
+            libpulse-dev libasound2-dev libhamlib-dev
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.inputs.branch || github.event.pull_request.head.sha || github.sha }}
+      - name: Git Safe Directory
+        run: git config --global --add safe.directory /__w/mercury/mercury
+      - name: Run unit tests under ThreadSanitizer
+        shell: bash
+        env:
+          TSAN_OPTIONS: "halt_on_error=1 second_deadlock_stack=1 suppressions=tests/sanitizer-suppressions/tsan.supp"
+        run: |
+          make -C tests clean
+          make -C tests SANITIZE_TSAN=1 test
+
+  asan-ubsan:
+    name: ASan+UBSan (unit + one integration session, Linux amd64)
+    runs-on: ubuntu-latest
+    container: debian:trixie
+    timeout-minutes: 30
+    continue-on-error: true
+    steps:
+      - name: Install build dependencies
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            ca-certificates build-essential git openssh-client \
+            libpulse-dev libasound2-dev libhamlib-dev pkg-config golang-go
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.inputs.branch || github.event.pull_request.head.sha || github.sha }}
+      - name: Git Safe Directory
+        run: git config --global --add safe.directory /__w/mercury/mercury
+      - name: Run unit tests under ASan/UBSan
+        shell: bash
+        env:
+          ASAN_OPTIONS: "halt_on_error=1 detect_leaks=1 abort_on_error=1"
+          LSAN_OPTIONS: "suppressions=tests/sanitizer-suppressions/lsan.supp"
+          UBSAN_OPTIONS: "halt_on_error=1 print_stacktrace=1"
+        run: |
+          make -C tests clean
+          make -C tests SANITIZE_ASAN_UBSAN=1 test
+      - name: Build mercury with ASan/UBSan and run one integration session
+        shell: bash
+        env:
+          ASAN_OPTIONS: "halt_on_error=1 detect_leaks=1 abort_on_error=1"
+          LSAN_OPTIONS: "suppressions=tests/sanitizer-suppressions/lsan.supp"
+          UBSAN_OPTIONS: "halt_on_error=1 print_stacktrace=1"
+        run: |
+          make clean
+          make SANITIZE_ASAN_UBSAN=1 -j$(nproc)
+          make integration-test
