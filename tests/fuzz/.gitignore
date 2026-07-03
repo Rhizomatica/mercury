@@ -1,0 +1,15 @@
+# Built fuzz target binaries (anchored to this directory to avoid matching
+# corpus/fuzz_*/  and regressions/fuzz_*/ path components)
+/fuzz_arq_hdr
+/fuzz_frame_header
+/fuzz_kiss
+/fuzz_arith
+/fuzz_ws_json
+# libFuzzer artifacts (also anchored)
+/crash-*
+/leak-*
+/oom-*
+/timeout-*
+*.profraw
+# macOS debug symbol bundles
+*.dSYM/
