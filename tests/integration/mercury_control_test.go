@@ -20,7 +20,13 @@ import (
 const (
 	controlPortTimeout = 6 * time.Second
 	commandTimeout     = 2 * time.Second
-	processStopTimeout = 3 * time.Second
+	// Mercury's shutdown is deliberately ordered (the main loop polls the
+	// shutdown flag at 500 ms, then joins the audio threads and frees the
+	// persistent FreeDV mode pool).  A plain build exits well under a second,
+	// but sanitizer-instrumented builds (the ASan/TSan CI jobs) stretch that
+	// same sequence past 3 s.  stopProcess waits event-driven on process
+	// exit, so a generous budget costs nothing when shutdown is fast.
+	processStopTimeout = 15 * time.Second
 )
 
 func TestMercurySingleProcessNullControl(t *testing.T) {
