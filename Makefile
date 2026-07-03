@@ -130,7 +130,7 @@ install: all
 
 $(BINARY): $(MERCURY_LINK_INPUTS)
 	$(CC) -o $(BINARY)  \
-		$(MERCURY_LINK_INPUTS) $(LDFLAGS)
+		$(MERCURY_LINK_INPUTS) $(LDFLAGS) $(SAN_LDFLAGS)
 
 # Stamp file: written only when GIT_HASH changes so main.o is rebuilt
 # exactly when needed (FORCE makes the recipe always run; the recipe
