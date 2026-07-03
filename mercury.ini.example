@@ -105,7 +105,9 @@ no_progress_timeout_s = 180
 disconnect_drain_timeout_s = 30
 
 [tnc]
-; IAMALIVE interval on the TNC control port, seconds (5..600).
-;keepalive_s = 60
-; BUFFER report interval on the TNC control port, milliseconds (100..10000).
-;buffer_report_ms = 1000
+; IAMALIVE interval sent on the TNC control port to tell connected clients
+; the TNC is still alive. Valid range: 5..600 seconds. (default: 60)
+keepalive_s = 60
+; Interval between BUFFER reports sent to the TNC control port, telling
+; clients how many bytes are queued for TX. Valid range: 100..10000 ms. (default: 1000)
+buffer_report_ms = 1000
