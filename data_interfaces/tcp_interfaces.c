@@ -236,7 +236,7 @@ static void execute_control_command(char *buffer)
 
     HLOGI("tcp-ctl", "Command received: %s", buffer);
 
-    if (!memcmp(buffer, "MYCALL", strlen("MYCALL")))
+    if (!strncmp(buffer, "MYCALL", strlen("MYCALL")))
     {
         /* VARA-style: MYCALL PRIMARY [SECONDARY1 SECONDARY2 ...]
          * First token sets the primary callsign (clears any previous secondaries).
@@ -276,7 +276,7 @@ static void execute_control_command(char *buffer)
         return;
     }
 
-    if (!memcmp(buffer, "LISTEN", strlen("LISTEN")))
+    if (!strncmp(buffer, "LISTEN", strlen("LISTEN")))
     {
         memset(&cmd, 0, sizeof(cmd));
         sscanf(buffer, "LISTEN %15s", temp);
@@ -291,7 +291,7 @@ static void execute_control_command(char *buffer)
         return;
     }
 
-    if (!memcmp(buffer, "PUBLIC", strlen("PUBLIC")))
+    if (!strncmp(buffer, "PUBLIC", strlen("PUBLIC")))
     {
         memset(&cmd, 0, sizeof(cmd));
         cmd.type = ARQ_CMD_SET_PUBLIC;
@@ -307,14 +307,14 @@ static void execute_control_command(char *buffer)
         return;
     }
 
-    if (!memcmp(buffer, "COMPRESSION", strlen("COMPRESSION")))
+    if (!strncmp(buffer, "COMPRESSION", strlen("COMPRESSION")))
     {
         /* Compatibility no-op: VARA-style clients expect this command. */
         tcp_write(CTL_TCP_PORT, (uint8_t *)"OK\r", 3);
         return;
     }
 
-    if (!memcmp(buffer, "CHAT", strlen("CHAT")))
+    if (!strncmp(buffer, "CHAT", strlen("CHAT")))
     {
         /* CHAT ON implies LISTEN ON (VARA compatibility).
          * CHAT OFF is a no-op — Mercury does not limit idle loops. */
@@ -335,7 +335,7 @@ static void execute_control_command(char *buffer)
         return;
     }
 
-    if (!memcmp(buffer, "BW", strlen("BW")))
+    if (!strncmp(buffer, "BW", strlen("BW")))
     {
         memset(&cmd, 0, sizeof(cmd));
         cmd.type = ARQ_CMD_SET_BANDWIDTH;
@@ -350,7 +350,7 @@ static void execute_control_command(char *buffer)
         return;
     }
 
-    if (!memcmp(buffer, "RETRIES", strlen("RETRIES")))
+    if (!strncmp(buffer, "RETRIES", strlen("RETRIES")))
     {
         memset(&cmd, 0, sizeof(cmd));
         cmd.type = ARQ_CMD_SET_RETRY;
@@ -363,7 +363,7 @@ static void execute_control_command(char *buffer)
         return;
     }
 
-    if (!memcmp(buffer, "CALLINT", strlen("CALLINT")))
+    if (!strncmp(buffer, "CALLINT", strlen("CALLINT")))
     {
         memset(&cmd, 0, sizeof(cmd));
         cmd.type = ARQ_CMD_SET_CALLINT;
@@ -376,14 +376,14 @@ static void execute_control_command(char *buffer)
         return;
     }
 
-    if (!memcmp(buffer, "BUFFER", strlen("BUFFER")))
+    if (!strncmp(buffer, "BUFFER", strlen("BUFFER")))
     {
         int buffered = arq_buffered_bytes_snapshot();
         tnc_send_buffer((uint32_t)buffered);
         return;
     }
 
-    if (!memcmp(buffer, "SN", strlen("SN")))
+    if (!strncmp(buffer, "SN", strlen("SN")))
     {
         uint32_t bits = atomic_load_explicit(&last_sn_bits, memory_order_relaxed);
         float snr;
@@ -392,7 +392,7 @@ static void execute_control_command(char *buffer)
         return;
     }
 
-    if (!memcmp(buffer, "BITRATE", strlen("BITRATE")))
+    if (!strncmp(buffer, "BITRATE", strlen("BITRATE")))
     {
         uint32_t sl  = atomic_load_explicit(&last_bitrate_sl, memory_order_relaxed);
         uint32_t bps = atomic_load_explicit(&last_bitrate_bps, memory_order_relaxed);
@@ -400,13 +400,13 @@ static void execute_control_command(char *buffer)
         return;
     }
 
-    if (!memcmp(buffer, "P2P", strlen("P2P")))
+    if (!strncmp(buffer, "P2P", strlen("P2P")))
     {
         tcp_write(CTL_TCP_PORT, (uint8_t *)"OK\r", 3);
         return;
     }
 
-    if (!memcmp(buffer, "CONNECT", strlen("CONNECT")))
+    if (!strncmp(buffer, "CONNECT", strlen("CONNECT")))
     {
         memset(&cmd, 0, sizeof(cmd));
         cmd.type = ARQ_CMD_CONNECT;
@@ -418,7 +418,7 @@ static void execute_control_command(char *buffer)
         return;
     }
 
-    if (!memcmp(buffer, "CQFRAME", strlen("CQFRAME")))
+    if (!strncmp(buffer, "CQFRAME", strlen("CQFRAME")))
     {
         memset(&cmd, 0, sizeof(cmd));
         cmd.type = ARQ_CMD_SEND_CQ;
@@ -433,7 +433,7 @@ static void execute_control_command(char *buffer)
         return;
     }
 
-    if (!memcmp(buffer, "DISCONNECT", strlen("DISCONNECT")))
+    if (!strncmp(buffer, "DISCONNECT", strlen("DISCONNECT")))
     {
         memset(&cmd, 0, sizeof(cmd));
         cmd.type = ARQ_CMD_DISCONNECT;
@@ -444,7 +444,7 @@ static void execute_control_command(char *buffer)
         return;
     }
 
-    if (!memcmp(buffer, "ABORT", strlen("ABORT")))
+    if (!strncmp(buffer, "ABORT", strlen("ABORT")))
     {
         /* VARA compatibility: ABORT is a dirty disconnect — clear all
          * buffers and disconnect immediately without air-side teardown. */
@@ -457,14 +457,14 @@ static void execute_control_command(char *buffer)
         return;
     }
 
-    if (!memcmp(buffer, "VERSION", strlen("VERSION")))
+    if (!strncmp(buffer, "VERSION", strlen("VERSION")))
     {
         /* VARA compatibility: respond with modem identification. */
         tcp_write(CTL_TCP_PORT, (uint8_t *)"VARA version 4.9.0 registered\r", 30);
         return;
     }
 
-    if (!memcmp(buffer, "IGNOREKISSDCD", strlen("IGNOREKISSDCD")))
+    if (!strncmp(buffer, "IGNOREKISSDCD", strlen("IGNOREKISSDCD")))
     {
         /* VARA compatibility no-op. */
         tcp_write(CTL_TCP_PORT, (uint8_t *)"OK\r", 3);
