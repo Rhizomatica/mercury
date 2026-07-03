@@ -43,7 +43,7 @@ ARQ_STUBS = datalink_arq/arq_test_stubs.c
 
 # Test executables
 TEST_BINS = test_ring_buffer test_arq_protocol test_arq_timing test_arq_fsm \
-            test_tcp_interfaces test_resampler test_arq_olla
+            test_tcp_interfaces test_resampler test_arq_olla test_arq_sim
 
 .PHONY: all test clean
 
@@ -94,6 +94,14 @@ test_arq_fsm: datalink_arq/test_arq_fsm.c $(UNITY_SRC) $(ARQ_STUBS) \
 # Uses #include "tcp_interfaces.c" — framer.c provides write_frame_header
 test_tcp_interfaces: data_interfaces/test_tcp_interfaces.c $(UNITY_SRC) ../modem/framer.c
 	$(CC) $(CFLAGS) -I../modem/freedv -o $@ $^ $(LDFLAGS)
+
+# Two-FSM ARQ simulation harness
+SIM_SRC = sim/sim_clock.c sim/sim_channel.c sim/sim_endpoint.c \
+          sim/sim_translate.c sim/sim_core.c sim/sim_props.c
+test_arq_sim: sim/test_arq_sim.c $(UNITY_SRC) $(ARQ_STUBS) $(SIM_SRC) \
+              ../datalink_arq/arq_fsm.c ../datalink_arq/arq_protocol.c \
+              ../datalink_arq/arq_timing.c ../datalink_arq/arith.c
+	$(CC) $(CFLAGS) -Isim -I../modem/freedv -o $@ $^ $(LDFLAGS)
 
 clean:
 	rm -f $(TEST_BINS)
