@@ -580,6 +580,8 @@ int read_buffer(cbuf_handle_t cbuf, uint8_t *data, size_t len)
 {
     assert(cbuf && data && cbuf->internal && cbuf->buffer);
 
+    if (len == 0) return 0;
+
     int r = -1;
 
  try_again_read:
@@ -617,6 +619,8 @@ int read_buffer(cbuf_handle_t cbuf, uint8_t *data, size_t len)
 int write_buffer(cbuf_handle_t cbuf, uint8_t * data, size_t len)
 {
     assert(cbuf && cbuf->internal && cbuf->buffer);
+
+    if (len == 0) return 0;
 
     int r = -1;
 
