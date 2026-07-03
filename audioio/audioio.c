@@ -647,6 +647,7 @@ void *radio_playback_thread(void *device_ptr)
             if (r < 0)
             {
                 HLOGE("audio-play", "ffaudio.write: %s", audio->error(b));
+                break;
             }
 #if 0 // print time measurement
             else
