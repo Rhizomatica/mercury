@@ -485,7 +485,9 @@ int freedv_comp_short_rx_ofdm(struct freedv *f, void *demod_in_8kHz,
   float *rx_amps = f->rx_amps;
 
   int rx_bits[Nbitsperframe];
-  short txt_bits[f->ofdm_ntxtbits];
+  /* Text-free data modes have ofdm_ntxtbits == 0; avoid a zero-length VLA
+   * (UB) — only the first ofdm_ntxtbits elements are ever accessed. */
+  short txt_bits[f->ofdm_ntxtbits > 0 ? f->ofdm_ntxtbits : 1];
   COMP payload_syms[Npayloadsymsperpacket];
   float payload_amps[Npayloadsymsperpacket];
 
@@ -556,7 +558,15 @@ int freedv_comp_short_rx_ofdm(struct freedv *f, void *demod_in_8kHz,
 
       float llr[Npayloadbitsperpacket];
       float llr_raw[Npayloadbitsperpacket];
-      uint8_t decoded_codeword[Npayloadbitsperpacket];
+      /* run_ldpc_decoder() writes the ENTIRE codeword (ldpc->CodeLength bytes)
+       * into decoded_codeword, not just the payload; for Mercury's shortened
+       * custom-mode LDPC codes CodeLength > Npayloadbitsperpacket, so a buffer
+       * sized to the payload overflows (caught by ASan in run_ldpc_decoder).
+       * Size to the codeword length — Mercury still reads only the first
+       * Ndatabitsperpacket, so decode output is unchanged. */
+      int codeword_len = ldpc->CodeLength > Npayloadbitsperpacket
+                             ? ldpc->CodeLength : Npayloadbitsperpacket;
+      uint8_t decoded_codeword[codeword_len];
       symbols_to_llrs(llr, payload_syms_de, payload_amps_de, EsNo,
                       ofdm->mean_amp, ofdm->bps, Npayloadsymsperpacket);
       /* Save this-transmission-only LLRs.  HARQ combining is applied BELOW only
