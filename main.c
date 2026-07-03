@@ -118,12 +118,12 @@ static void print_usage(const char *prog)
     printf(" -k [rx_input_channel]      Capture input channel: left, right, or stereo. Default is left.\n");
     printf(" -i [device]                Radio Capture device id (eg: \"plughw:0,0\").\n");
     printf(" -o [device]                Radio Playback device id (eg: \"plughw:0,0\").\n");
-    printf(" -x [sound_system]          Sets the sound system or IO API to use: alsa, pulse, dsound, wasapi, shm, null or fifo. Default is alsa on Linux and dsound on Windows.\n");
+    printf(" -x [sound_system]          Sets the sound system or IO API to use: alsa, pulse, oss, coreaudio, aaudio, dsound, wasapi, shm, null or fifo. Default is alsa on Linux, dsound on Windows.\n");
     printf("                            null and fifo are developer/test backends; fifo uses raw s32le PCM at 8 kHz via -i/-o paths.\n");
     printf(" -p [arq_tcp_base_port]     Sets the ARQ TCP base port (control is base_port, data is base_port + 1). Default is 8300.\n");
     printf(" -b [broadcast_tcp_port]    Sets the broadcast TCP port. Default is 8100.\n");
     printf(" -U [ui_port]               Sets the UI port (WebSocket port). Default is 10000. Requires -G.\n");
-    printf(" -W                         Disable waterfall/spectrum data sent to the UI (used to spare CPU).\n");
+    printf(" -W                         Disable waterfall/spectrum data sent to the UI (used to spare CPU). Requires -G.\n");
     printf(" -G                         Enable UI communication (WebSocket server for mercury-qt). Off by default.\n");
     printf(" -T                         Use WSS (WebSocket Secure/TLS) for UI communication. Requires -G. Default uses plain WS (no TLS).\n");
     printf(" -l                         Lists all modulator/coding modes.\n");

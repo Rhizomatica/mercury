@@ -32,7 +32,7 @@ over HF radio links in rural and emergency scenarios.
 - **Per-direction mode selection**: each path (A→B and B→A) negotiates its mode independently based on local SNR.
 - **Broadcast data mode** in parallel to ARQ, with dedicated broadcast framing and TCP ingress port.
 - **VARA-style TCP TNC interface** with separate control and data sockets (base port and base+1), including commands/status like `MYCALL`, `LISTEN`, `CONNECT`, `BUFFER`, `SN`, and `BITRATE`.
-- **Audio modem operation over multiple backends** (`alsa`, `pulse`, `dsound`, `wasapi`, `shm`, `null`, `fifo`) with split RX/TX modem orchestration.
+- **Audio modem operation over multiple backends** (`alsa`, `pulse`, `oss`, `coreaudio`, `aaudio`, `dsound`, `wasapi`, `shm`, `null`, `fifo`) with split RX/TX modem orchestration.
 - **Direct radio control** via HAMLIB or HERMES shared-memory interface for direct PTT keying.
 
 ```
@@ -49,7 +49,7 @@ Options:
  -k [rx_input_channel]      Capture input channel: left, right, or stereo. Default is left.
  -i [device]                Radio Capture device id (eg: "plughw:0,0").
  -o [device]                Radio Playback device id (eg: "plughw:0,0").
- -x [sound_system]          Sets the sound system or IO API to use: alsa, pulse, dsound, wasapi, shm, null or fifo. Default is alsa on Linux and dsound on Windows.
+ -x [sound_system]          Sets the sound system or IO API to use: alsa, pulse, oss, coreaudio, aaudio, dsound, wasapi, shm, null or fifo. Default is alsa on Linux, dsound on Windows.
                              null and fifo are developer/test backends; fifo uses raw s32le PCM at 8 kHz via -i/-o paths.
  -p [arq_tcp_base_port]     Sets the ARQ TCP base port (control is base_port, data is base_port + 1). Default is 8300.
  -b [broadcast_tcp_port]    Sets the broadcast TCP port. Default is 8100.

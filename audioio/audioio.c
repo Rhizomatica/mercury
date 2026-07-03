@@ -550,12 +550,6 @@ void *radio_playback_thread(void *device_ptr)
         goto cleanup_play;
     }
 
-#if 0 // TODO: parametrize this
-    if (radio_type == RADIO_SBITX)
-        ch_layout = RIGHT;
-    if (radio_type == RADIO_STOCKHF)
-        ch_layout = STEREO;
-#endif
     ch_layout = STEREO;
     
     /* Bytes per period of 8 kHz mono int32 modem audio.  The previous
@@ -649,12 +643,6 @@ void *radio_playback_thread(void *device_ptr)
                 HLOGE("audio-play", "ffaudio.write: %s", audio->error(b));
                 break;
             }
-#if 0 // print time measurement
-            else
-            {
-                printf(" %dms\n", r / msec_bytes);
-            }
-#endif
             total_written += r;
             n -= r;
         }
@@ -1283,32 +1271,6 @@ void list_soundcards(int audio_system)
     if (did_init)
         audio->uninit();
 }
-
-#if 0
-// size in "double" samples
-int tx_transfer(double *buffer, size_t len)
-{
-    uint8_t *buffer_internal = (uint8_t *) buffer;
-    int buffer_size_bytes = len * sizeof(double);
-
-    write_buffer(playback_buffer, buffer_internal, buffer_size_bytes);
-
-    // printf("size %llu free %llu\n", size_buffer(playback_buffer), circular_buf_free_size(playback_buffer));
-
-    return 0;
-}
-
-// size in "double" samples
-int rx_transfer(double *buffer, size_t len)
-{
-    uint8_t *buffer_internal = (uint8_t *) buffer;
-    int buffer_size_bytes = len * sizeof(double);
-
-    read_buffer(capture_buffer, buffer_internal, buffer_size_bytes);
-
-    return 0;
-}
-#endif
 
 static int audioio_init_local_buffers(void)
 {
