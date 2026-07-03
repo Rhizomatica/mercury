@@ -680,9 +680,9 @@ int main(int argc, char *argv[])
     {
         fprintf(stderr, "Failed to initialize ARQ subsystem.\n");
         shutdown_ = true;
+        shutdown_modem(&g_modem); /* join modem threads before freeing audio rings */
         if (audio_system != AUDIO_SUBSYSTEM_SHM)
             audioio_deinit(&radio_capture, &radio_playback);
-        shutdown_modem(&g_modem);
         hermes_log_shutdown();
         return EXIT_FAILURE;
     }
@@ -695,9 +695,9 @@ int main(int argc, char *argv[])
         fprintf(stderr, "Failed to initialize TCP interfaces.\n");
         shutdown_ = true;
         interfaces_shutdown();
+        shutdown_modem(&g_modem); /* join modem threads before freeing audio rings */
         if (audio_system != AUDIO_SUBSYSTEM_SHM)
             audioio_deinit(&radio_capture, &radio_playback);
-        shutdown_modem(&g_modem);
         HLOGI("main", "Shutting down");
         hermes_log_shutdown();
         return EXIT_FAILURE;
@@ -752,17 +752,33 @@ int main(int argc, char *argv[])
     while (!shutdown_)
         msleep(500);
 
+#ifndef _WIN32
+    /* Teardown watchdog: graceful shutdown normally completes well under a
+     * second.  If it ever wedges (a stuck join, a hung audio driver), the
+     * pending SIGALRM terminates the process bounded instead of leaving a
+     * zombie modem keying nothing on a headless station.  This replaces the
+     * old exit(0)-after-1.5s that lived (unsafely) inside the signal handler. */
+    alarm(10);
+#endif
+
+    /* Teardown order matters: the modem rx/tx threads read/write the audio
+     * ring buffers, so they must be joined (shutdown_modem) BEFORE
+     * audioio_deinit frees those buffers.  The audio threads themselves exit
+     * on shutdown_ on their own; audioio_deinit afterwards only reaps them
+     * and releases the buffers.  The old order freed the rings under a
+     * still-running rx_thread — a use-after-free, and a shutdown hang when
+     * rx_thread was parked inside the freed ring's condition wait. */
+    shutdown_modem(&g_modem);
+
     if (audio_system != AUDIO_SUBSYSTEM_SHM)
     {
         audioio_deinit(&radio_capture, &radio_playback);
     }
-    
+
     if (ui_enabled)
         ui_comm_shutdown(&ui_ctx);
 
     radio_io_shutdown();
-
-    shutdown_modem(&g_modem);
     HLOGI("main", "Shutting down");
     hermes_log_shutdown();
 

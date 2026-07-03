@@ -635,6 +635,22 @@ int run_tests_rx(generic_modem_t *g_modem)
 
 int shutdown_modem(generic_modem_t *g_modem)
 {
+    /* rx_thread reads the capture ring with a BLOCKING read_buffer() sized to
+     * the decoder chunk.  By the time we get here the audio capture thread
+     * has already exited, so if rx_thread parked on an empty ring after its
+     * last shutdown_ check, nothing will ever wake it and the join below
+     * hangs (normal builds usually win this race; sanitizer-instrumented
+     * builds lose it deterministically).  Feed one chunk of silence larger
+     * than any decoder chunk (max freedv nin is ~3.5k samples) so a parked
+     * reader wakes, re-checks shutdown_, and exits.  tx_thread is safe: it
+     * size-checks every ring before its blocking reads. */
+    if (capture_buffer)
+    {
+        static int32_t wake_silence[8192]; /* zero-filled, > max chunk */
+        if (circular_buf_free_size(capture_buffer) >= sizeof(wake_silence))
+            write_buffer(capture_buffer, (uint8_t *)wake_silence, sizeof(wake_silence));
+    }
+
     // Wait for threads to finish
     pthread_join(tx_thread_tid, NULL);
     pthread_join(rx_thread_tid, NULL);
