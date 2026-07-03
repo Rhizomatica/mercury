@@ -1,0 +1,7 @@
+# LeakSanitizer (ASan) suppressions for Mercury.
+#
+# Policy: same as tsan.supp — justified, triaged, pre-existing only.
+# Format: leak:<symbol or library substring>
+#
+# Example (commented; enable only if the first run proves it and it is triaged):
+# leak:hamlib            # one-time rig backend table, freed at process exit
