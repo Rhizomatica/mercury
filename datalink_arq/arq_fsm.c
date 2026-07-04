@@ -1714,11 +1714,27 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
                 if (sess->consecutive_retries >= ARQ_RETRY_DOWNGRADE_THRESHOLD)
                 {
                     /* Probe for a mode change mid-window (see the exhaustion
-                     * path and maybe_upgrade_mode for the full S1 story). */
-                    sess->mode_probe = true;
-                    if (maybe_upgrade_mode(sess))
-                        return;
-                    sess->mode_probe = false;
+                     * path and maybe_upgrade_mode for the full S1 story) —
+                     * but NEVER once the no-progress budget is spent.  A
+                     * probe's purpose is finding a mode that restores
+                     * progress; past the budget the session's job is to
+                     * disconnect.  Without this gate a dead peer produced an
+                     * infinite persist loop (Pedro's estacao6/10 OTA, S1
+                     * build): hard-loss probe -> MODE_REQ retries exhaust ->
+                     * revert -> retry budget and consecutive_retries reset ->
+                     * repeat every ~200 s, preempting the retry-exhaustion
+                     * branch that owns the no-progress disconnect. */
+                    uint64_t np_now = hermes_uptime_ms();
+                    bool budget_spent =
+                        (np_now - sess->last_tx_progress_ms) >=
+                        (uint64_t)ARQ_NO_PROGRESS_TIMEOUT_S * 1000ULL;
+                    if (!budget_spent)
+                    {
+                        sess->mode_probe = true;
+                        if (maybe_upgrade_mode(sess))
+                            return;
+                        sess->mode_probe = false;
+                    }
                 }
                 if (g_timing)
                     arq_timing_record_retry(g_timing,

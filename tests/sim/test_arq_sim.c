@@ -333,6 +333,52 @@ void test_sim_fade_cliff_downgrades(void)
     sim_destroy(s);
 }
 
+void test_sim_peer_loss_disconnects(void)
+{
+    /* Peer-death teardown: mid-transfer the channel goes fully dark (peer
+     * off the air).  The ISS must reach a disconnected/listening state
+     * within a bounded time — the no-progress budget plus one retry-
+     * exhaustion round — instead of keying the radio forever.
+     *
+     * Regression guard for Pedro's estacao6/estacao10 OTA finding on the S1
+     * build ("IRS desconectou e a ISS continuou transmitindo"): the mid-
+     * window mode probe fired on hard-loss, its failed MODE_REQ negotiation
+     * reset the data retry budget, and the loop repeated every ~200 s —
+     * permanently preempting the retry-exhaustion branch that owns the
+     * no-progress disconnect.  Fixed by never probing once the no-progress
+     * budget is spent. */
+    sim_channel_cfg_t chan = { .seed = 5, .per = 0.02, .guard_ms = 150 };
+    sim_t *s = make_connected(&chan);
+    TEST_ASSERT_NOT_NULL(s);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_CONNECTED,
+                          sim_endpoint_session(sim_a(s))->conn_state);
+
+    static uint8_t blob[4000];
+    for (int i = 0; i < (int)sizeof(blob); i++) blob[i] = (uint8_t)(i & 0xFF);
+    sim_endpoint_queue_tx(sim_a(s), blob, sizeof(blob));
+    arq_event_t dready = { .id = ARQ_EV_APP_DATA_READY };
+    sim_inject(s, sim_a(s), &dready);
+
+    /* A short slice only: the blackout must land MID-TRANSFER with backlog
+     * still queued, so the ISS is in the DATA_TX/WAIT_ACK retry cycle (the
+     * path with the probe loop).  NB sim_run_until_idle never goes "idle"
+     * while connected (keepalive deadlines stay armed), so this consumes the
+     * full slice of virtual time. */
+    sim_run_until_idle(s, 15000);
+
+    sim_set_per(s, 1.0);            /* peer vanishes: total blackout */
+
+    /* Budget (180 s) + a full retry-exhaustion round (~190 s) + margin. */
+    sim_run_until_idle(s, 900000);
+
+    TEST_ASSERT_NOT_EQUAL(ARQ_CONN_CONNECTED,
+                          sim_endpoint_session(sim_a(s))->conn_state);
+    TEST_ASSERT_NOT_EQUAL(ARQ_CONN_CONNECTED,
+                          sim_endpoint_session(sim_b(s))->conn_state);
+
+    sim_destroy(s);
+}
+
 /* ======================================================================
  * Task 8: Seeded fuzz loop
  * ====================================================================== */
@@ -461,6 +507,7 @@ int main(void)
     RUN_TEST(test_sim_transfer_clean);
     RUN_TEST(test_sim_transfer_lossy_per20);
     RUN_TEST(test_sim_fade_cliff_downgrades);
+    RUN_TEST(test_sim_peer_loss_disconnects);
 
     /* Task 8: seeded fuzz loop */
     RUN_TEST(test_sim_fuzz);
