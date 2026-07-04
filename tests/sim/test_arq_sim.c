@@ -475,6 +475,115 @@ void test_sim_fuzz(void)
     }
 }
 
+/* SplitMix64 helper: n-th derived uniform double in [0,1) from a seed. */
+static double splitmix_u(uint64_t seed, int n)
+{
+    uint64_t st = seed;
+    uint64_t z = 0;
+    for (int i = 0; i <= n; i++) {
+        z = (st += 0x9E3779B97F4A7C15ULL);
+        z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ULL;
+        z = (z ^ (z >> 27)) * 0x94D049BB133111EBULL;
+        z ^= (z >> 31);
+    }
+    return (double)(z >> 11) / (double)(1ULL << 53);
+}
+
+void test_sim_fuzz_fading(void)
+{
+    /* Fading/ISI fuzz over the S1 code paths (cliff model + empirical
+     * per-mode PER), which test_sim_fuzz (flat AWGN erasure) never reaches.
+     * Each seed connects clean, then a fade lands mid-transfer — either a
+     * mode-aware SNR cliff or an ISI-limited per-mode PER profile (NVIS-like:
+     * healthy SNR, fast modes fail) — the exact regime the S1 fix targets.
+     *
+     * Two invariants that MUST hold on ANY channel, checked every seed:
+     *   (a) NO CORRUPTION — whatever the peer received is a byte-exact prefix
+     *       of what was sent (retransmission ARQ may deliver less under a
+     *       brutal fade, but never wrong bytes; the restage path is the new
+     *       risk here);
+     *   (b) CLEAN TERMINATION — within a generous budget the session either
+     *       completed or disconnected; it is never left CONNECTED-but-stuck
+     *       cycling retries forever (the peer-death pathology, generalized). */
+    const int SEEDS = 60;
+    for (int seed = 1; seed <= SEEDS; seed++)
+    {
+        sim_channel_cfg_t cfg = { .seed = (uint64_t)seed,
+                                  .per = 0.02, .guard_ms = 150 };
+        sim_t *s = sim_create(&cfg, "A0AAA", "B0BBB");
+        if (!s) { TEST_FAIL_MESSAGE("sim_create failed"); return; }
+
+        arq_event_t listen = { .id = ARQ_EV_APP_LISTEN };
+        sim_inject(s, sim_b(s), &listen);
+        arq_event_t conn = { .id = ARQ_EV_APP_CONNECT };
+        snprintf(conn.remote_call, CALLSIGN_MAX_SIZE, "%s", "B0BBB");
+        sim_inject(s, sim_a(s), &conn);
+        sim_run_until_idle(s, 60000);
+        if (sim_endpoint_session(sim_a(s))->conn_state != ARQ_CONN_CONNECTED) {
+            sim_destroy(s); continue;  /* connect-under-loss is tested elsewhere */
+        }
+
+        size_t xfer = 500 + (size_t)(splitmix_u(seed, 0) * 4000.0); /* [500,4500) */
+        double sel  = splitmix_u(seed, 1);
+
+        if (sel < 0.5) {
+            /* Mode-aware SNR cliff: fade to a random depth [-6, +4) dB. */
+            double snr = -6.0 + splitmix_u(seed, 2) * 10.0;
+            sim_set_snr(s, snr);
+        } else {
+            /* ISI-limited per-mode PER, scaled by severity [0.6, 1.0). */
+            double sev = 0.6 + splitmix_u(seed, 2) * 0.4;
+            sim_mode_per_t tbl[] = {
+                { FREEDV_MODE_DATAC15, 0.15 * sev }, { FREEDV_MODE_DATAC16, 0.15 * sev },
+                { FREEDV_MODE_DATAC13, 0.25 * sev }, { FREEDV_MODE_DATAC14, 0.25 * sev },
+                { FREEDV_MODE_DATAC4,  0.45 * sev }, { FREEDV_MODE_DATAC3,  0.67 * sev },
+                { FREEDV_MODE_DATAC1,  0.89 * sev }, { FREEDV_MODE_DATAC17, 0.93 * sev },
+                { FREEDV_MODE_QAM16C2, 0.95 * sev },
+            };
+            sim_set_mode_per(s, tbl, (int)(sizeof(tbl)/sizeof(tbl[0])), 10.0f);
+        }
+
+        uint8_t *blob = malloc(xfer);
+        if (!blob) { sim_destroy(s); continue; }
+        for (size_t i = 0; i < xfer; i++) blob[i] = (uint8_t)((i * 3 + seed) & 0xFF);
+        sim_endpoint_queue_tx(sim_a(s), blob, xfer);
+        arq_event_t dready = { .id = ARQ_EV_APP_DATA_READY };
+        sim_inject(s, sim_a(s), &dready);
+
+        sim_run_until_idle(s, 45 * 60 * 1000);  /* 45 virtual min ceiling */
+
+        /* (a) no corruption: delivered is a byte-exact prefix of sent. */
+        uint8_t *got = malloc(xfer);
+        if (!got) { free(blob); sim_destroy(s); continue; }
+        size_t n = sim_endpoint_delivered(sim_b(s), got, xfer);
+        if (n > xfer || memcmp(blob, got, n) != 0) {
+            char msg[192];
+            snprintf(msg, sizeof(msg),
+                     "fading fuzz seed=%d xfer=%zu: CORRUPT at/after byte %zu",
+                     seed, xfer, n);
+            free(got); free(blob); sim_destroy(s);
+            TEST_FAIL_MESSAGE(msg);
+            return;
+        }
+
+        /* (b) clean termination: complete, or disconnected — never stuck. */
+        int cs = sim_endpoint_session(sim_a(s))->conn_state;
+        bool complete = (n == xfer);
+        bool terminated = (cs != ARQ_CONN_CONNECTED);
+        if (!complete && !terminated) {
+            char msg[192];
+            snprintf(msg, sizeof(msg),
+                     "fading fuzz seed=%d xfer=%zu: STUCK connected, only %zu/%zu delivered",
+                     seed, xfer, n, xfer);
+            free(got); free(blob); sim_destroy(s);
+            TEST_FAIL_MESSAGE(msg);
+            return;
+        }
+
+        free(got); free(blob); sim_destroy(s);
+    }
+}
+
 /* ======================================================================
  * Unity main
  * ====================================================================== */
@@ -511,6 +620,7 @@ int main(void)
 
     /* Task 8: seeded fuzz loop */
     RUN_TEST(test_sim_fuzz);
+    RUN_TEST(test_sim_fuzz_fading);
 
     return UNITY_END();
 }
