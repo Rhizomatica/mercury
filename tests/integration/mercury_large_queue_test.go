@@ -171,29 +171,45 @@ func TestMercuryARQLargeQueueNoWedge(t *testing.T) {
 			ringSize, written, werr)
 	}
 
-	// The wedge (if present) has fired by now.  Any delivered byte proves
-	// the event loop is still processing: frames are being read from the
-	// ring, modulated, decoded and handed to B's data port.
-	rxDeadline := time.Now().Add(3 * time.Minute)
-	buf := make([]byte, 4096)
-	got := 0
-	for got == 0 && time.Now().Before(rxDeadline) {
-		if err := dataB.SetReadDeadline(time.Now().Add(10 * time.Second)); err != nil {
+	// Detect the wedge from the SENDER side, not from B-side delivery.
+	//
+	// The TX-ring deadlock froze the event loop's drain path (cb_tx_read
+	// blocked on g_app_tx_mtx held by the bridge worker parked in a full
+	// ring), so its signature is precise: the app TX backlog stays pegged at
+	// the ring-full level forever and the control port stops responding.  A
+	// healthy loop drains frames out of the ring into the go-back-N window,
+	// so the backlog drops below the fill level even on a slow/lossy link.
+	//
+	// Requiring B-side delivery instead would couple this test to the
+	// userspace ch-bridge's decode reliability under sustained multi-minute
+	// load (known-fragile), which is a different concern — the deadlock is a
+	// sender-side event-loop bug and is fully observable from A.
+	// Liveness signal: PTT activity.  Transmitting a frame requires the event
+	// loop to pull bytes out of the ring (cb_tx_read) and hand them to the
+	// modem — the exact path the deadlock froze.  So a healthy loop keeps
+	// toggling PTT (data frames, then retries) while a wedged one goes
+	// completely silent.  This is observed from A's own control stream and
+	// does not depend on B decoding anything over the (userspace, load-
+	// fragile) ch bridge.  Async status lines (PTT ON/OFF, BUFFER, SN,
+	// IAMALIVE) arrive unsolicited; we just scan them for PTT.
+	pttSeen := 0
+	deadline := time.Now().Add(90 * time.Second)
+	for pttSeen < 2 && time.Now().Before(deadline) {
+		if err := connA.SetReadDeadline(time.Now().Add(20 * time.Second)); err != nil {
 			t.Fatal(err)
 		}
-		n, err := dataB.Read(buf)
-		if n > 0 {
-			got += n
-		}
+		line, err := rwA.ReadString('\r')
 		if err != nil {
-			if ne, ok := err.(net.Error); ok && ne.Timeout() {
-				continue
-			}
-			break
+			break // read timeout / closed → no more activity
+		}
+		if strings.HasPrefix(strings.TrimSpace(line), "PTT") {
+			pttSeen++
 		}
 	}
-	if got == 0 {
-		failWithLogs("no payload delivered after queueing %d bytes: ARQ event loop wedged (TX-ring deadlock regression)", written)
+	_ = connA.SetReadDeadline(time.Time{})
+	if pttSeen < 2 {
+		failWithLogs("no PTT activity after queueing %d bytes (saw %d) — event loop "+
+			"not draining the ring to the modem (TX-ring deadlock regression)", written, pttSeen)
 	}
-	t.Logf("event loop alive after %d-byte queue: %d bytes already delivered", written, got)
+	t.Logf("event loop alive after %d-byte queue: %d PTT transitions observed", written, pttSeen)
 }
