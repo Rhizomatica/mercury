@@ -114,6 +114,54 @@ more data delivered on the channel these stations actually operate on.**
   an **empty** backlog never keepalive-times-out — only the IRS monitors
   inactivity.  Belongs to the keepalive-persistence work.
 
+## Update (2026-07-05): broadened regression sweep + the NVIS mode question
+
+**A mode-selection "NVIS fix" was tried and REJECTED by the data.**  The
+hypothesis: since OLLA is a single SNR-offset scalar, on ISI-limited NVIS it
+re-climbs into fast modes that fail — so add a delivery-driven *mode ceiling*
+that caps selection below any rank that just failed to deliver.  Implemented,
+then measured on the NVIS bench: it made throughput **worse** (8-seed total
+23,100 B vs 29,900 B without it, −23 %).  The goodput arithmetic on the
+pathsim-measured NVIS profile explains why — throughput rises monotonically
+with mode speed *despite* high erasure, because the big frames carry so much
+more per delivered frame:
+
+| mode | frame | deliver | goodput (incl. go-back-N ACK cost) |
+|---|---|---|---|
+| DATAC15 | 22 B | 80 % | 1.9 B/s |
+| DATAC3 | 118 B | 33 % | 4.8 B/s |
+| DATAC1 | 502 B | 11 % | 6.0 B/s |
+| DATAC17 | 1172 B | 7 % | 7.0 B/s |
+
+So on NVIS the *correct* strategy is to favour the fast modes — which S1's
+existing re-climb behaviour already does.  The ceiling was reverted; **S1 as it
+stands is the NVIS win, not something needing a mode-selection fix.**  (A
+goodput-aware mode *lock* that holds the best-measured-goodput mode instead of
+oscillating is real future work, but it is an optimisation on top of an already
+large win, and this attempt shows how easily such a change regresses — it must
+be driven by the bench, not intuition.)
+
+**Broadened A/B regression grid (trunk `e7a2d84` vs branch, `tests/sim/ab_bench.c`,
+8 KB / 30 virtual min, 9 channels × 6 seeds = 108 runs; the two flagged channels
+re-run to 16 seeds):**
+
+| channel | branch ÷ trunk (aggregate) | note |
+|---|---|---|
+| clean, awgn 0.10, awgn 0.25 | 100 % | identical |
+| cliff +6, cliff +2 | 100 % | identical |
+| cliff −2 | 99 % | noise |
+| **cliff −5 (below cliff)** | **1728 %** | S1 target — trunk starves |
+| **nvis** (16 seeds) | **558 %**, branch wins 15/16 | primary channel |
+| awgn 0.40 (16 seeds) | 96 %, 13/16 ties | see below |
+
+- **Integrity: 0 corruptions across all 108 + 32 runs.**
+- The lone soft spot is **awgn 0.40** (96 % aggregate): a 40 %-flat-erasure
+  channel with *healthy* SNR — artificial (real high-erasure comes with low
+  SNR), and flat across modes so, unlike NVIS, downgrading cannot help.  S1's
+  slightly more eager downgrade response costs ~4 % there.  It is the flip side
+  of the exact mechanism that yields 5–17× on the realistic hard channels, has
+  13/16 ties and no integrity loss, and is not considered a blocker.
+
 ## Verdict
 
 - **No regression found anywhere workable**: clean AWGN, harsh AWGN, and
