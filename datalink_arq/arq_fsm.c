@@ -264,7 +264,8 @@ static void send_mode_negotiation(arq_session_t *sess, arq_subtype_t subtype, in
                                         sess->session_id, snr_raw, mode);
     else
         n = arq_protocol_build_mode_ack(frame, sizeof(frame),
-                                        sess->session_id, snr_raw, mode);
+                                        sess->session_id, snr_raw, mode,
+                                        sess->rx_expected);
     if (n > 0)
         send_frame(PACKET_TYPE_ARQ_CONTROL, sess->control_mode, (size_t)n, frame, 0);
 }
@@ -343,13 +344,22 @@ static void record_tx_outcome(arq_session_t *sess, bool clean)
      * would needlessly under-run a healthy forward link).  Genuine forward /
      * propagation degradation drops peer_snr and falls through to the normal
      * step-down below. */
-    if (!clean && peer_snr_supports_mode(sess, sess->payload_mode))
+    if (!clean && peer_snr_supports_mode(sess, sess->payload_mode) &&
+        sess->reverse_hold_streak < ARQ_REVERSE_HOLD_MAX)
     {
+        /* Bounded (S1 fade-cliff fix): an UNBOUNDED hold froze OLLA and
+         * consecutive_retries whenever the SNR of the (few) surviving frames
+         * still looked healthy, making every downgrade path — including the
+         * hard-loss floor — unreachable while the transfer stalled above the
+         * fade cliff.  After ARQ_REVERSE_HOLD_MAX consecutive holds with no
+         * clean delivery in between, the retry falls through to the normal
+         * delivery feedback below. */
+        sess->reverse_hold_streak++;
         HLOGD(LOG_COMP,
               "Retry but peer_snr=%.1f dB supports mode %d — likely reverse-path "
-              "ACK loss; holding forward level %d (no step-down)",
+              "ACK loss; holding forward level %d (no step-down, hold %d/%d)",
               (float)sess->peer_snr_x10 / 10.0f, sess->payload_mode,
-              sess->speed_level);
+              sess->speed_level, sess->reverse_hold_streak, ARQ_REVERSE_HOLD_MAX);
         return;
     }
 
@@ -373,6 +383,7 @@ static void record_tx_outcome(arq_session_t *sess, bool clean)
     else
     {
         sess->consecutive_retries = 0;
+        sess->reverse_hold_streak = 0;  /* clean delivery re-arms the gate */
         sess->tx_success_count++;
         if (sess->tx_success_count >= ARQ_LADDER_UP_SUCCESSES &&
             sess->speed_level < ARQ_LADDER_LEVELS - 1)
@@ -383,6 +394,99 @@ static void record_tx_outcome(arq_session_t *sess, bool clean)
                   sess->speed_level, ARQ_LADDER_UP_SUCCESSES);
         }
     }
+}
+
+/* ---- Restage plumbing (S1 fade-cliff fix) ----
+ * The app TX ring has no un-read; once bytes enter the go-back-N window they
+ * can only leave via an ACK.  To change mode with unACKed frames stuck in a
+ * fade, their bytes are pulled back into sess->restage_buf and re-framed at
+ * the (new) mode by send_data_burst().  These wrappers make the restage bytes
+ * part of the TX stream, ahead of the ring. */
+
+static int session_tx_backlog(const arq_session_t *sess)
+{
+    int n = (int)(sess->restage_len - sess->restage_off);
+    if (g_cbs.tx_backlog)
+        n += g_cbs.tx_backlog();
+    return n;
+}
+
+static int session_tx_read(arq_session_t *sess, uint8_t *buf, size_t len)
+{
+    size_t n = 0;
+    while (n < len && sess->restage_off < sess->restage_len)
+        buf[n++] = sess->restage_buf[sess->restage_off++];
+    if (sess->restage_off >= sess->restage_len)
+        sess->restage_off = sess->restage_len = 0;
+    if (n < len && g_cbs.tx_read)
+    {
+        int m = g_cbs.tx_read(buf + n, len - n);
+        if (m > 0)
+            n += (size_t)m;
+    }
+    return (int)n;
+}
+
+/** Pull the unACKed window's user bytes back into the restage buffer and
+ *  rewind tx_seq to the window base.  ONLY safe once the peer's rx_expected
+ *  is known to equal the window base (the MODE_ACK probe proves the frames
+ *  were never delivered) — otherwise re-sending these bytes under the old
+ *  base seq would double-deliver on the peer. */
+static void restage_tx_window(arq_session_t *sess)
+{
+    if (sess->tx_window_count == 0)
+        return;
+
+    /* Rebuild the whole unsent prefix in strict stream order:
+     *   [ window frame payloads, seq order ] ++ [ unread restage residue ]
+     * The window frames are the EARLIEST unacknowledged bytes, so they must
+     * precede any residue already staged (bytes further along the stream).
+     * Appending them after the residue (the previous bug) reordered the
+     * stream and corrupted delivery when a second mode change hit with a
+     * partially-read restage buffer.  Ring bytes are always later still and
+     * are appended by session_tx_read after the restage buffer drains. */
+    uint8_t tmp[sizeof(sess->restage_buf)];
+    size_t  n = 0;
+
+    for (int i = 0; i < sess->tx_window_count; i++)
+    {
+        int plen = sess->tx_window[i].payload_len;
+        if (plen <= 0)
+            continue;
+        if (n + (size_t)plen > sizeof(tmp))
+        {
+            HLOGE(LOG_COMP, "restage overflow (%zu + %d) — keeping window",
+                  n, plen);
+            return;
+        }
+        memcpy(tmp + n, sess->tx_window[i].buf + ARQ_FRAME_HDR_SIZE, (size_t)plen);
+        n += (size_t)plen;
+    }
+
+    size_t residue = sess->restage_len - sess->restage_off;
+    if (n + residue > sizeof(tmp))
+    {
+        HLOGE(LOG_COMP, "restage+residue overflow (%zu + %zu) — keeping window",
+              n, residue);
+        return;
+    }
+    memcpy(tmp + n, sess->restage_buf + sess->restage_off, residue);
+    n += residue;
+
+    memcpy(sess->restage_buf, tmp, n);
+    sess->restage_len = n;
+    sess->restage_off = 0;
+
+    HLOGI(LOG_COMP,
+          "Restaged %d unACKed frame(s) (+%zu residue = %zu bytes) — "
+          "tx_seq rewound %d -> %d",
+          sess->tx_window_count, residue, n,
+          (int)sess->tx_seq, (int)sess->tx_window[0].seq);
+
+    sess->tx_seq            = sess->tx_window[0].seq;
+    sess->tx_window_count   = 0;
+    sess->tx_window_retx    = false;
+    sess->tx_inflight_bytes = 0;
 }
 
 /** Compute desired payload mode based on peer_snr_x10 and TX backlog.
@@ -480,7 +584,7 @@ static bool maybe_upgrade_mode(arq_session_t *sess)
         if (now_ms - s_olla_log_ms >= 4000)
         {
             s_olla_log_ms = now_ms;
-            int bk = g_cbs.tx_backlog ? g_cbs.tx_backlog() : 0;
+            int bk = session_tx_backlog(sess);
             HLOGI(LOG_COMP,
                   "OLLA-state: payload_mode=%d peer_snr=%.1f local_snr=%.1f olla=%+.1f retries=%d backlog=%d startup_rem=%lldms",
                   sess->payload_mode,
@@ -503,9 +607,19 @@ static bool maybe_upgrade_mode(arq_session_t *sess)
      * wrong byte count (a FULL DATAC15 frame read at DATAC3's larger slot
      * over-delivers: the 118-vs-112 bidirectional regression).  Defer the change
      * until the window drains; it reaches 0 after every fully-ACKed burst, so
-     * mode adaptation still happens at burst boundaries. */
-    if (sess->tx_window_count > 0)
+     * mode adaptation still happens at burst boundaries.
+     *
+     * Exception (S1 fade-cliff fix): the retry-exhaustion path sets mode_probe
+     * to break out of a channel that can no longer deliver the current mode —
+     * there the window may NEVER drain, which made this guard a permanent
+     * mode-change lockout (the transfer starved above the fade cliff).  The
+     * MODE_REQ itself doesn't touch the window; the MODE_ACK reply carries the
+     * peer's rx_expected, which resolves the window safely before the switch
+     * (delivered frames are ACK-progressed, undelivered bytes are restaged and
+     * re-framed at the new mode). */
+    if (sess->tx_window_count > 0 && !sess->mode_probe)
         return false;
+    sess->mode_probe = false;   /* one-shot */
 
     /* Normally we need at least one valid peer SNR reading before deciding.
      * Exception: a retry-forced downgrade is driven purely by delivery
@@ -521,7 +635,7 @@ static bool maybe_upgrade_mode(arq_session_t *sess)
         sess->consecutive_retries < ARQ_HARD_LOSS_THRESHOLD)
         return false;
 
-    int backlog = g_cbs.tx_backlog ? g_cbs.tx_backlog() : 0;
+    int backlog = session_tx_backlog(sess);
     int desired_mode = select_best_mode(sess, backlog);
 
     if (desired_mode == sess->payload_mode)
@@ -664,7 +778,7 @@ static void send_ack(arq_session_t *sess, uint8_t ack_delay_raw)
     uint8_t flags   = 0;
     uint8_t snr_raw = 0;
 
-    if (g_cbs.tx_backlog && g_cbs.tx_backlog() > 0)
+    if (session_tx_backlog(sess) > 0)
         flags |= ARQ_FLAG_HAS_DATA;
     if (sess->local_snr_x10 != 0)
         snr_raw = arq_protocol_encode_snr((float)sess->local_snr_x10 / 10.0f);
@@ -706,7 +820,7 @@ static void send_data_burst(arq_session_t *sess)
         int slot_idx = sess->tx_window_count;
 
         memset(payload, 0, user_bytes);
-        int payload_len = g_cbs.tx_read(payload, user_bytes);
+        int payload_len = session_tx_read(sess, payload, user_bytes);
         if (payload_len <= 0)
             break;  /* backlog drained */
 
@@ -767,7 +881,7 @@ static void send_data_burst(arq_session_t *sess)
         if (g_timing)
             arq_timing_record_tx_queue(g_timing, (int)sess->tx_window[i].seq,
                                        sess->payload_mode,
-                                       g_cbs.tx_backlog(),
+                                       session_tx_backlog(sess),
                                        sess->tx_window[i].payload_len);
     }
 }
@@ -782,7 +896,7 @@ static void enter_idle_iss(arq_session_t *sess, bool gained_turn)
 {
     (void)gained_turn;  /* per-direction mode: my TX mode evolves independently */
     sess->tx_retries_left = ARQ_DATA_RETRY_SLOTS;  /* fresh counter on ISS role entry */
-    if (g_cbs.tx_backlog && g_cbs.tx_backlog() > 0)
+    if (session_tx_backlog(sess) > 0)
     {
         dflow_enter(sess, ARQ_DFLOW_DATA_TX, UINT64_MAX, ARQ_EV_TIMER_RETRY);
         send_data_burst(sess);
@@ -814,7 +928,7 @@ static void enter_idle_iss_guarded(arq_session_t *sess, bool gained_turn)
 {
     (void)gained_turn;  /* per-direction mode: my TX mode evolves independently */
     sess->tx_retries_left = ARQ_DATA_RETRY_SLOTS;  /* fresh counter on ISS role entry */
-    if (g_cbs.tx_backlog && g_cbs.tx_backlog() > 0)
+    if (session_tx_backlog(sess) > 0)
     {
         /* Attempt mode negotiation when startup window has passed and we
          * have a valid peer SNR estimate.  If maybe_upgrade_mode() fires
@@ -1007,7 +1121,7 @@ static void fsm_calling(arq_session_t *sess, const arq_event_t *ev)
     case ARQ_EV_RX_ACCEPT:
         if (ev->session_id == sess->session_id)
         {
-            bool has_tx_backlog = g_cbs.tx_backlog && g_cbs.tx_backlog() > 0;
+            bool has_tx_backlog = session_tx_backlog(sess) > 0;
             sess->role        = ARQ_ROLE_CALLER;
             sess->tx_seq      = 0;
             sess->rx_expected = 0;
@@ -1249,13 +1363,13 @@ static void fsm_connected(arq_session_t *sess, const arq_event_t *ev)
          * drained buffer fires the deferred disconnect at the next idle-ISS
          * entry (an ACKed last frame with empty backlog disconnects there
          * without extra delay). */
-        if ((g_cbs.tx_backlog && g_cbs.tx_backlog() > 0) ||
+        if ((session_tx_backlog(sess) > 0) ||
             sess->dflow_state == ARQ_DFLOW_DATA_TX ||
             sess->dflow_state == ARQ_DFLOW_WAIT_ACK)
         {
             HLOGD(LOG_COMP,
                   "APP_DISCONNECT deferred — backlog=%d dflow=%s",
-                  g_cbs.tx_backlog ? g_cbs.tx_backlog() : 0,
+                  session_tx_backlog(sess),
                   arq_dflow_state_name(sess->dflow_state));
             sess->pending_disconnect = true;
             sess->disconnect_deadline_ms =
@@ -1362,8 +1476,7 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
     switch (sess->dflow_state)
     {
     case ARQ_DFLOW_IDLE_ISS:
-        if (ev->id == ARQ_EV_APP_DATA_READY && g_cbs.tx_backlog &&
-            g_cbs.tx_backlog() > 0)
+        if (ev->id == ARQ_EV_APP_DATA_READY && session_tx_backlog(sess) > 0)
         {
             if (sess->need_initial_guard)
             {
@@ -1425,7 +1538,7 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
             if (g_timing)
                 arq_timing_record_tx_start(g_timing, (int)sess->tx_seq,
                                            sess->payload_mode,
-                                           g_cbs.tx_backlog ? g_cbs.tx_backlog() : 0);
+                                           session_tx_backlog(sess));
         }
         else if (ev->id == ARQ_EV_TX_COMPLETE)
         {
@@ -1508,7 +1621,7 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
             sess->last_tx_progress_ms = hermes_uptime_ms();  /* forward progress */
             sess->peer_has_data = (ev->rx_flags & ARQ_FLAG_HAS_DATA) != 0;
             if (g_cbs.send_buffer_status)
-                g_cbs.send_buffer_status(g_cbs.tx_backlog ? g_cbs.tx_backlog() : 0);
+                g_cbs.send_buffer_status(session_tx_backlog(sess));
 
             if (sess->tx_window_count > 0)
             {
@@ -1576,7 +1689,25 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
                 /* Ladder step-down happens once per frame in the RX_ACK /
                  * implicit-ACK handler via record_tx_outcome(), NOT here.
                  * Calling it on every retry would cause double/triple penalty
-                 * when the ACK handler also calls it. */
+                 * when the ACK handler also calls it.
+                 *
+                 * consecutive_retries, however, IS advanced per timeout (S1
+                 * fade-cliff fix): each ACK timeout is a definitive non-
+                 * delivery, and it is the only evidence a fade ever produces
+                 * (no ACK arrives, so record_tx_outcome never runs).  This
+                 * feeds the hard-loss floor drop and the mode probe below
+                 * WITHOUT touching OLLA's tuned first-try-FER accounting.
+                 * Any ACK progress resets the counter. */
+                sess->consecutive_retries++;
+                if (sess->consecutive_retries >= ARQ_RETRY_DOWNGRADE_THRESHOLD)
+                {
+                    /* Probe for a mode change mid-window (see the exhaustion
+                     * path and maybe_upgrade_mode for the full S1 story). */
+                    sess->mode_probe = true;
+                    if (maybe_upgrade_mode(sess))
+                        return;
+                    sess->mode_probe = false;
+                }
                 if (g_timing)
                     arq_timing_record_retry(g_timing,
                                             sess->tx_window_count > 0
@@ -1638,18 +1769,34 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
                     sess->tx_retries_left = ARQ_DATA_RETRY_SLOTS;
 
                     /* Channel couldn't deliver a frame in ARQ_DATA_RETRY_SLOTS
-                     * attempts — force the delivery-feedback safety net to
-                     * threshold so select_best_mode pulls payload_mode one
-                     * step lower.  maybe_upgrade_mode handles the MODE_REQ /
-                     * MODE_ACK negotiation; on success the FSM is now in
-                     * MODE_REQ_TX state and will resume DATA_TX at the lower
-                     * mode after MODE_ACK.  On failure (no peer SNR yet,
-                     * MODE_REQ retries exhaust, already at slowest mode)
-                     * fall through and retransmit at the current mode. */
+                     * attempts.  Account that as what it is — one definitive
+                     * failed outcome per consumed retry slot — so OLLA and the
+                     * hard-loss counter actually move (S1 fix, part 1: no ACK
+                     * ever arrives on a channel this broken, so the RX_ACK /
+                     * implicit-ACK paths that normally call record_tx_outcome
+                     * never run; without this the delivery feedback stayed
+                     * frozen at "all fine" while everything died, and
+                     * select_best_mode — fed by stale pre-fade SNR — never
+                     * chose a lower mode).  No double-count: these attempts
+                     * produced no ACK, so no other path has recorded them.
+                     *
+                     * mode_probe then lets maybe_upgrade_mode fire the
+                     * MODE_REQ despite the unACKed window (S1 fix, part 2:
+                     * the window cannot drain here, and the old unconditional
+                     * window guard silently vetoed every downgrade attempt —
+                     * the "dead code" fade-cliff stall).  On MODE_ACK the
+                     * peer's rx_expected resolves the window; on failure (no
+                     * peer SNR yet, MODE_REQ retries exhaust, already at the
+                     * slowest mode) fall through and retransmit at the
+                     * current mode. */
+                    for (int i = 0; i < ARQ_DATA_RETRY_SLOTS; i++)
+                        record_tx_outcome(sess, false);
                     if (sess->consecutive_retries < ARQ_RETRY_DOWNGRADE_THRESHOLD)
                         sess->consecutive_retries = ARQ_RETRY_DOWNGRADE_THRESHOLD;
+                    sess->mode_probe = true;
                     if (maybe_upgrade_mode(sess))
                         return;
+                    sess->mode_probe = false;
 
                     dflow_enter(sess, ARQ_DFLOW_DATA_TX, UINT64_MAX, ARQ_EV_TIMER_RETRY);
                     send_data_burst(sess);
@@ -1680,7 +1827,7 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
                 sess->last_tx_progress_ms = hermes_uptime_ms();
                 sess->peer_has_data = (ev->rx_flags & ARQ_FLAG_HAS_DATA) != 0;
                 if (g_cbs.send_buffer_status)
-                    g_cbs.send_buffer_status(g_cbs.tx_backlog ? g_cbs.tx_backlog() : 0);
+                    g_cbs.send_buffer_status(session_tx_backlog(sess));
                 if (deliver_rx_checked(sess, ev) && g_timing)
                     arq_timing_record_data_rx(g_timing, (int)ev->seq,
                                               (int)ev->data_bytes,
@@ -1726,7 +1873,7 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
                 sess->tx_inflight_bytes = 0;
                 sess->tx_retries_left   = ARQ_DATA_RETRY_SLOTS;
                 if (g_cbs.send_buffer_status)
-                    g_cbs.send_buffer_status(g_cbs.tx_backlog ? g_cbs.tx_backlog() : 0);
+                    g_cbs.send_buffer_status(session_tx_backlog(sess));
                 sess->peer_tx_mode = ev->mode;  /* update RX decoder; our TX mode unchanged */
                 /* Guard: allow ARQ_CHANNEL_GUARD_MS for the ISS to drop PTT
                  * before our MODE_ACK preamble arrives (same guard used by
@@ -1789,7 +1936,7 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
                             deadline_from_s(tm ? tm->retry_interval_s : 7.0f),
                             ARQ_EV_TIMER_RETRY);
             }
-            else if (g_cbs.tx_backlog && g_cbs.tx_backlog() > 0)
+            else if (session_tx_backlog(sess) > 0)
             {
                 send_ctrl_frame(sess, ARQ_SUBTYPE_TURN_REQ);
                 sess->tx_retries_left = ARQ_TURN_REQ_RETRIES;
@@ -1847,7 +1994,7 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
              * Capture HAS_DATA state before sending so ACK_TX → TX_COMPLETE
              * knows whether a piggyback turn is valid. */
             uint32_t delay_ms = (uint32_t)(hermes_uptime_ms() - sess->last_rx_ms);
-            sess->acktx_had_has_data = g_cbs.tx_backlog && g_cbs.tx_backlog() > 0;
+            sess->acktx_had_has_data = session_tx_backlog(sess) > 0;
             send_ack(sess, arq_protocol_encode_ack_delay(delay_ms));
             if (g_timing)
                 arq_timing_record_ack_tx(g_timing, (int)sess->rx_expected - 1);
@@ -1891,7 +2038,7 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
             if (sess->pending_connect_confirm)
             {
                 sess->pending_connect_confirm = false;
-                if (g_cbs.tx_backlog && g_cbs.tx_backlog() > 0)
+                if (session_tx_backlog(sess) > 0)
                     enter_idle_iss_guarded(sess, false);
                 else
                     enter_idle_iss(sess, false);
@@ -1905,7 +2052,7 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
                 if (g_timing) arq_timing_record_turn(g_timing, true, "piggyback");
                 enter_idle_iss_guarded(sess, true);  /* IRS gaining turn — use peer's observed mode */
             }
-            else if (g_cbs.tx_backlog && g_cbs.tx_backlog() > 0)
+            else if (session_tx_backlog(sess) > 0)
             {
                 /* Data arrived during ACK TX (APP_DATA_READY ignored, HAS_DATA
                  * not set).  The ISS may start a new DATA_TX within ~150ms of
@@ -2084,7 +2231,7 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
                  * pending_disconnect whose drain condition was met here. */
                 sess->tx_retries_left = ARQ_DATA_RETRY_SLOTS;
                 uint64_t guard_ms = tm ? (uint64_t)(tm->ack_timeout_s * 1000.0f) : 6000ULL;
-                if (g_cbs.tx_backlog && g_cbs.tx_backlog() > 0)
+                if (session_tx_backlog(sess) > 0)
                     dflow_enter(sess, ARQ_DFLOW_DATA_TX,
                                 hermes_uptime_ms() + guard_ms,
                                 ARQ_EV_TIMER_ACK);
@@ -2104,7 +2251,55 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
         /* ISS: waiting for MODE_ACK from IRS. */
         if (ev->id == ARQ_EV_RX_MODE_ACK)
         {
-            if (arq_protocol_mode_timing(ev->mode) != NULL &&
+            /* S1 fade-cliff fix: a mode probe can arrive here with unACKed
+             * frames still in the window.  The MODE_ACK's rx_expected
+             * (flagged ARQ_FLAG_CTRL_ACKSEQ) resolves them definitively
+             * BEFORE the mode changes: frames the peer already delivered
+             * are ACK-progressed here; bytes it never got are restaged and
+             * re-framed at the new mode by the next send_data_burst(). */
+            bool window_resolved = true;
+            if (sess->tx_window_count > 0)
+            {
+                if (!(ev->rx_flags & ARQ_FLAG_CTRL_ACKSEQ))
+                {
+                    /* No rx_expected in the MODE_ACK — cannot prove the
+                     * window's fate; changing framing now could double-
+                     * deliver.  Keep the old mode and the intact window. */
+                    HLOGW(LOG_COMP,
+                          "MODE_ACK without ACKSEQ while %d frame(s) unACKed — "
+                          "keeping mode %d",
+                          sess->tx_window_count, sess->payload_mode);
+                    window_resolved = false;
+                }
+                else
+                {
+                    int n_acked = 0;
+                    uint8_t base = sess->tx_window[0].seq;
+                    uint8_t dist = (uint8_t)(ev->ack_seq - base);
+                    if (dist >= 1 && dist <= (uint8_t)sess->tx_window_count)
+                        n_acked = (int)dist;
+
+                    if (n_acked > 0)
+                    {
+                        /* Same bookkeeping as the WAIT_ACK progress path. */
+                        for (int i = 0; i < n_acked; i++)
+                            sess->tx_inflight_bytes -= sess->tx_window[i].payload_len;
+                        if (sess->tx_inflight_bytes < 0)
+                            sess->tx_inflight_bytes = 0;
+                        for (int i = n_acked; i < sess->tx_window_count; i++)
+                            sess->tx_window[i - n_acked] = sess->tx_window[i];
+                        sess->tx_window_count   -= n_acked;
+                        sess->last_tx_progress_ms = hermes_uptime_ms();
+                        record_tx_outcome(sess, false);  /* delivered, not clean */
+                    }
+                    if (sess->tx_window_count > 0)
+                        restage_tx_window(sess);
+                    sess->tx_retries_left = ARQ_DATA_RETRY_SLOTS;
+                }
+            }
+
+            if (window_resolved &&
+                arq_protocol_mode_timing(ev->mode) != NULL &&
                 ev->mode != ARQ_CONTROL_MODE)
             {
                 /* If this MODE_ACK confirms a downgrade, start the hold

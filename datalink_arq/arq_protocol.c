@@ -11,6 +11,7 @@
 #include <string.h>
 #include <stdio.h>
 #include <stdatomic.h>
+#include <math.h>
 
 /* Runtime-configurable retry counts, initialised from compile-time defaults */
 _Atomic int arq_call_retry_slots       = ARQ_CALL_RETRY_SLOTS_DEFAULT;
@@ -192,7 +193,10 @@ int arq_protocol_bw_hz_from_token(uint8_t bw_token)
 
 uint8_t arq_protocol_encode_snr(float snr_db)
 {
-    int v = (int)(snr_db + 0.5f) + 128;
+    /* floorf: plain (int) truncates toward zero, so negative SNRs rounded
+     * asymmetrically (-1.0 dB encoded as 0 dB) — a +1 dB flattery right at
+     * the fade cliff where mode decisions are most sensitive. */
+    int v = (int)floorf(snr_db + 0.5f) + 128;
     if (v < 1)   v = 1;
     if (v > 255) v = 255;
     return (uint8_t)v;
@@ -339,12 +343,12 @@ int arq_protocol_build_mode_req(uint8_t *buf, size_t buf_len,
 
 int arq_protocol_build_mode_ack(uint8_t *buf, size_t buf_len,
                                  uint8_t session_id, uint8_t snr_raw,
-                                 int freedv_mode)
+                                 int freedv_mode, uint8_t rx_ack_seq)
 {
     uint8_t payload[1] = { (uint8_t)freedv_mode };
     return build_ctrl(buf, buf_len,
                       ARQ_SUBTYPE_MODE_ACK, session_id,
-                      0, 0, 0, snr_raw, 0,
+                      0, rx_ack_seq, ARQ_FLAG_CTRL_ACKSEQ, snr_raw, 0,
                       payload, 1);
 }
 

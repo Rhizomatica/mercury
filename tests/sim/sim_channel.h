@@ -17,6 +17,16 @@ typedef struct sim_channel sim_channel_t;
 
 sim_channel_t *sim_channel_create(const sim_channel_cfg_t *cfg);
 void           sim_channel_destroy(sim_channel_t *ch);
+/* Change the erasure probability mid-simulation (models a fade onset). */
+void           sim_channel_set_per(sim_channel_t *ch, double per);
+
+/* Enable the mode-aware cliff model: frames in a mode whose SNR cliff lies
+ * above the current channel SNR are erased with high probability (0.9);
+ * modes below their cliff see the base per.  This is what makes "downgrade
+ * to a more robust mode" the winning strategy, as on real HF — a mode-blind
+ * per cannot reward downgrades.  Cliffs approximate the MPP curves in
+ * docs/MODES.md. */
+void           sim_channel_set_snr(sim_channel_t *ch, double snr_db);
 uint32_t       sim_channel_airtime_ms(int freedv_mode, size_t frame_size);
 bool           sim_channel_schedule(sim_channel_t *ch, uint64_t now_ms,
                                      int dir, int freedv_mode, size_t frame_size,

@@ -49,6 +49,8 @@ struct sim {
     sim_pending_t    pending[SIM_PENDING_MAX];
     int              pending_count;
 
+    float            rx_snr_db;  /* SNR stamped on delivered frames */
+
     arq_timing_ctx_t timing;  /* shared timing context (metrics only, not correctness) */
 };
 
@@ -93,7 +95,7 @@ static void drain_outframes_from(sim_t *s, sim_endpoint_t *sender,
                 .target     = peer,
                 .kind       = SIM_PENDING_FRAME,
                 .frame_len  = of.len,
-                .rx_snr     = 12.0f,  /* fixed simulated SNR; adequate for mode inference */
+                .rx_snr     = s->rx_snr_db, /* default 12 dB; sim_set_rx_snr models fades */
             };
             memcpy(frame_ev.frame, of.buf, of.len);
             enqueue(s, &frame_ev);
@@ -141,6 +143,7 @@ sim_t *sim_create(const sim_channel_cfg_t *chan_cfg,
     s->b  = sim_endpoint_create(call_b, call_a);
     s->ch = sim_channel_create(chan_cfg);
     if (!s->a || !s->b || !s->ch) { sim_destroy(s); return NULL; }
+    s->rx_snr_db = 12.0f;
 
     arq_timing_init(&s->timing);
     /* Register shared callbacks once; they read s_active for per-call context. */
@@ -165,6 +168,20 @@ sim_endpoint_t *sim_a(sim_t *s) { return s->a; }
 sim_endpoint_t *sim_b(sim_t *s) { return s->b; }
 
 int sim_frames_in_flight(sim_t *s) { return s->pending_count; }
+
+/* Fade controls: change channel loss and delivered-frame SNR mid-simulation
+ * (a real fade degrades both — surviving frames also arrive weaker). */
+void sim_set_per(sim_t *s, double per)      { sim_channel_set_per(s->ch, per); }
+void sim_set_rx_snr(sim_t *s, float snr_db) { s->rx_snr_db = snr_db; }
+
+/* Coherent SNR change: enables the channel's mode-aware cliff model AND
+ * stamps the same SNR on delivered frames, so the FSM's SNR feedback agrees
+ * with the channel physics (as on real HF). */
+void sim_set_snr(sim_t *s, double snr_db)
+{
+    sim_channel_set_snr(s->ch, snr_db);
+    s->rx_snr_db = (float)snr_db;
+}
 
 void sim_inject(sim_t *s, sim_endpoint_t *ep, const arq_event_t *ev)
 {

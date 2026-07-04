@@ -3,9 +3,38 @@
  * Copyright (C) 2026 Rhizomatica */
 #include "sim_channel.h"
 #include "arq_protocol.h"
+#include "freedv_api.h"
 #include <stdlib.h>
 
-struct sim_channel { uint64_t state; double per; uint32_t guard_ms; };
+struct sim_channel {
+    uint64_t state;
+    double   per;
+    uint32_t guard_ms;
+    bool     cliff_enabled;   /* mode-aware erasure (see sim_channel_set_snr) */
+    double   snr_db;          /* current channel SNR when cliff_enabled */
+};
+
+/* Per-mode SNR cliff (dB): below this the mode effectively stops decoding.
+ * Approximates the MPP delivery curves in docs/MODES.md. */
+static double mode_cliff_db(int freedv_mode)
+{
+    switch (freedv_mode)
+    {
+    case FREEDV_MODE_QAM16C2: return 13.0;
+    case FREEDV_MODE_DATAC17: return  8.0;
+    case FREEDV_MODE_DATAC1:  return  5.0;
+    case FREEDV_MODE_DATAC3:  return  0.0;
+    case FREEDV_MODE_DATAC4:  return -4.0;
+    case FREEDV_MODE_DATAC13: return -4.0;
+    case FREEDV_MODE_DATAC14: return -2.0;
+    default:                  return -7.0;  /* DATAC15 / DATAC16 floor modes */
+    }
+}
+
+/* Erasure probability of a frame above its mode's cliff.  Not 1.0: even a
+ * dead mode occasionally lands a frame on real HF, and a tiny success rate
+ * keeps unbounded-retry pathologies observable rather than instantly fatal. */
+#define SIM_CLIFF_PER 0.90
 
 sim_channel_t *sim_channel_create(const sim_channel_cfg_t *cfg)
 {
@@ -18,6 +47,21 @@ sim_channel_t *sim_channel_create(const sim_channel_cfg_t *cfg)
 }
 
 void sim_channel_destroy(sim_channel_t *ch) { free(ch); }
+
+void sim_channel_set_per(sim_channel_t *ch, double per)
+{
+    if (ch)
+        ch->per = per;
+}
+
+void sim_channel_set_snr(sim_channel_t *ch, double snr_db)
+{
+    if (ch)
+    {
+        ch->cliff_enabled = true;
+        ch->snr_db        = snr_db;
+    }
+}
 
 /* SplitMix64: deterministic, seedable, no global state. */
 double sim_channel_next_rand(sim_channel_t *ch)
@@ -44,7 +88,10 @@ bool sim_channel_schedule(sim_channel_t *ch, uint64_t now_ms,
                           uint64_t *deliver_at_ms)
 {
     (void)dir;
-    if (sim_channel_next_rand(ch) < ch->per)
+    double per = ch->per;
+    if (ch->cliff_enabled && ch->snr_db < mode_cliff_db(freedv_mode))
+        per = SIM_CLIFF_PER;
+    if (sim_channel_next_rand(ch) < per)
         return false;   /* erased */
     uint32_t air = sim_channel_airtime_ms(freedv_mode, frame_size);
     *deliver_at_ms = now_ms + air + ch->guard_ms;

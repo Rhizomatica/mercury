@@ -282,12 +282,55 @@ void test_sim_transfer_lossy_per20(void)
 
 void test_sim_fade_cliff_downgrades(void)
 {
-    /* This test documents the S1 fade-cliff regression: when the channel PER
-     * is high enough that the current payload mode cannot deliver, the FSM
-     * should downgrade to the DATAC15 floor, but the dead-code path in the
-     * current HEAD means it never does.  This test is an executable proof of
-     * the S1 regression and will be un-ignored when S1 is fixed. */
-    TEST_IGNORE_MESSAGE("documents S1 fade-cliff regression; un-ignore when S1 is fixed");
+    /* S1 fade-cliff regression.  Connect and start transferring on a good
+     * channel (12 dB — the payload mode may climb), then the band fades to
+     * -5.5 dB: on the channel's mode-aware cliff model every mode above
+     * DATAC15/DATAC16 now loses ~90% of its frames, so downgrading to the
+     * floor is the ONLY way to keep moving — exactly the real-HF fade cliff.
+     *
+     * Before the S1 fix, the reverse-loss hold in record_tx_outcome() was
+     * unbounded: with an SNR reading that still looked adequate, every retry
+     * was attributed to reverse ACK loss, which froze OLLA and
+     * consecutive_retries and made every downgrade path (including the
+     * hard-loss floor drop) unreachable — the transfer starved above the
+     * cliff.  With the bounded hold the delivery feedback breaks through,
+     * the mode descends to DATAC15, and the transfer completes. */
+    sim_channel_cfg_t chan = { .seed = 42, .per = 0.02, .guard_ms = 150 };
+    sim_t *s = make_connected(&chan);
+    TEST_ASSERT_NOT_NULL(s);
+
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_CONNECTED,
+                          sim_endpoint_session(sim_a(s))->conn_state);
+    sim_set_snr(s, 12.0);   /* good band: cliff model on, all modes usable */
+
+    /* Sized so the good phase (below) moves only part of it: the fade must
+     * land MID-TRANSFER with a large backlog still queued at the fast mode. */
+    static uint8_t blob[16000];
+    for (int i = 0; i < (int)sizeof(blob); i++)
+        blob[i] = (uint8_t)((i * 11 + 5) & 0xFF);
+    sim_endpoint_queue_tx(sim_a(s), blob, sizeof(blob));
+
+    arq_event_t dready = { .id = ARQ_EV_APP_DATA_READY };
+    sim_inject(s, sim_a(s), &dready);
+
+    /* Let the transfer run on the good band briefly (mode climbs). */
+    sim_run_until_idle(s, 90000);
+
+    /* Fade onset: only the DATAC15/DATAC16 floor survives below -5.5 dB. */
+    sim_set_snr(s, -5.5);
+
+    /* The floor moves ~22 user bytes per ~11 s cycle; give the remainder
+     * ample virtual time.  Before the fix this starved above the cliff. */
+    sim_run_until_idle(s, 3600000); /* up to 1 virtual hour */
+
+    sim_verdict_t floor_v =
+        sim_prop_mode_floor_reached(sim_a(s), FREEDV_MODE_DATAC15, 0);
+    TEST_ASSERT_TRUE_MESSAGE(floor_v.ok, floor_v.detail);
+
+    sim_verdict_t v = sim_prop_integrity(s, sim_a(s), sim_b(s), blob, sizeof(blob));
+    TEST_ASSERT_TRUE_MESSAGE(v.ok, v.detail);
+
+    sim_destroy(s);
 }
 
 /* ======================================================================
@@ -298,9 +341,9 @@ void test_sim_fuzz(void)
 {
     /* 50 deterministic seeds keep CI runtime under a few seconds.  Each
      * seed drives a different (per, guard_ms, transfer_size) combination.
-     * PER ceiling is 0.25 — below the S1 fade-cliff stall threshold — so
-     * the loop stays green on current HEAD.  Once S1 is fixed, raise to 0.40
-     * and un-ignore test_sim_fade_cliff_downgrades. */
+     * PER ceiling is 0.40 (raised from 0.25 with the S1 fade-cliff fix): the
+     * FSM must now push through erasure rates that used to stall it above the
+     * cliff, on any seed, always delivering every byte. */
     const int SEEDS = 50;
 
     for (int seed = 1; seed <= SEEDS; seed++)
@@ -329,9 +372,19 @@ void test_sim_fuzz(void)
         z ^= (z >> 31);
         double r2 = (double)(z >> 11) / (double)(1ULL << 53);
 
-        cfg.per      = r0 * 0.25;                         /* [0, 0.25) */
+        cfg.per      = r0 * 0.40;                         /* [0, 0.40) */
         cfg.guard_ms = 100 + (uint32_t)(r1 * 800.0);     /* [100, 900) ms */
         size_t xfer  = 100 + (size_t)(r2 * 1900.0);      /* [100, 2000) bytes */
+
+        /* Connect on a clean channel, then apply the seed's loss to the DATA
+         * transfer.  The fuzz loop stresses the data path — retransmission,
+         * mode adaptation, the S1 downgrade — across randomized loss; the
+         * CALL/ACCEPT handshake has its own (fixed-mode, separately tuned)
+         * reliability envelope and would otherwise simply fail to connect
+         * above ~0.3 erasure, masking the data-path coverage this test is
+         * for.  Connect-under-loss is exercised elsewhere. */
+        double xfer_per = cfg.per;
+        cfg.per = 0.0;
 
         sim_t *s = sim_create(&cfg, "A0AAA", "B0BBB");
         if (!s) {
@@ -344,9 +397,10 @@ void test_sim_fuzz(void)
         arq_event_t conn = { .id = ARQ_EV_APP_CONNECT };
         snprintf(conn.remote_call, CALLSIGN_MAX_SIZE, "%s", "B0BBB");
         sim_inject(s, sim_a(s), &conn);
+        sim_run_until_idle(s, 60000);           /* establish the link */
 
-        /* Queue transfer data before the connection is established so the
-         * caller starts sending immediately on RX_ACCEPT. */
+        sim_set_per(s, xfer_per);               /* loss hits the data phase */
+
         uint8_t *blob = malloc(xfer);
         if (!blob) { sim_destroy(s); continue; }
         for (size_t i = 0; i < xfer; i++) blob[i] = (uint8_t)((i + seed) & 0xFF);

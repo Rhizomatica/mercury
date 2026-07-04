@@ -102,6 +102,14 @@
                                   * with LEN_HI/LEN_B9 allows counts up to     *
                                   * 2047 (DATAC17 carries 1172 user bytes,     *
                                   * QAM16C2 1205).                             */
+#define ARQ_FLAG_CTRL_ACKSEQ 0x02 /* bit 1: CONTROL frames — rx_ack_seq field
+                                   * carries the sender's valid rx_expected.
+                                   * Set on MODE_ACK so the ISS can resolve an
+                                   * unACKed TX window during a mode-change
+                                   * probe (S1 fade-cliff fix): rx_ack_seq
+                                   * tells it definitively whether the stuck
+                                   * frame was delivered (late/lost ACK) or
+                                   * never arrived. */
 #define ARQ_FLAG_BURST_END 0x04  /* bit 2: DATA frames only — last frame of a  *
                                   * multi-frame burst; the IRS sends one       *
                                   * cumulative ACK when it sees this (or when  *
@@ -289,6 +297,18 @@ extern _Atomic float arq_callint_override_s;
  * test_olla_low_snr_no_collapse).  Only a long unbroken fail run drops straight
  * to the robust floor and lets OLLA climb back. */
 #define ARQ_HARD_LOSS_THRESHOLD       8     /* consecutive retries => drop to floor */
+/* Reverse-loss attribution bound (S1 fade-cliff fix).  The asymmetric-link
+ * gate holds the forward mode on a retry when peer_snr says the forward link
+ * comfortably supports it (retry = probably a lost ACK, not a decode fail).
+ * But SNR can look healthy while frames die (fade clusters, interference,
+ * sync loss), and an UNBOUNDED hold freezes OLLA and consecutive_retries,
+ * making every downgrade path — including the hard-loss floor — unreachable:
+ * the transfer stalls above the fade cliff.  Bound the run: after this many
+ * CONSECUTIVE holds with no clean delivery in between, stop attributing
+ * retries to reverse loss and let normal delivery feedback act.  3 matches
+ * the adaptive-ACK escalation cap: an isolated reverse-path ACK-loss run of
+ * <=3 stays protected (the bench-validated case). */
+#define ARQ_REVERSE_HOLD_MAX          3     /* consecutive reverse-loss holds */
 
 /* ---- Outer-loop link adaptation (OLLA) ----
  * A per-link SNR offset (dB) driven by delivery outcomes corrects the gap
@@ -494,10 +514,12 @@ int arq_protocol_build_mode_req(uint8_t *buf, size_t buf_len,
                                  uint8_t session_id, uint8_t snr_raw,
                                  int freedv_mode);
 
-/** MODE_ACK frame — accept peer's mode request. */
+/** MODE_ACK frame — accept peer's mode request.  Carries the responder's
+ *  rx_expected (flagged ARQ_FLAG_CTRL_ACKSEQ) so a probing ISS can resolve
+ *  its unACKed TX window before switching modes. */
 int arq_protocol_build_mode_ack(uint8_t *buf, size_t buf_len,
                                  uint8_t session_id, uint8_t snr_raw,
-                                 int freedv_mode);
+                                 int freedv_mode, uint8_t rx_ack_seq);
 
 /* --- Data frame (PACKET_TYPE_ARQ_DATA) --- */
 

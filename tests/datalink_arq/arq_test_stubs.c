@@ -12,6 +12,9 @@
 #include <stddef.h>
 #include <stdbool.h>
 #include <stdio.h>
+#ifdef SIM_TRACE_LOGS
+#include <stdarg.h>
+#endif
 
 #include "hermes_log.h"
 #include "framer.h"
@@ -34,7 +37,21 @@ void mock_set_uptime_ms(uint64_t ms)
 void hermes_logf(hermes_log_level_t level, const char *component,
                  const char *fmt, ...)
 {
+#ifdef SIM_TRACE_LOGS
+    /* Opt-in FSM log visibility for sim debugging:
+     *   make ... CFLAGS+=-DSIM_TRACE_LOGS
+     * Prefixes the virtual uptime so traces line up with sim time. */
+    va_list ap;
+    fprintf(stderr, "[%8llu ms] [%s] ",
+            (unsigned long long)hermes_uptime_ms(), component);
+    va_start(ap, fmt);
+    vfprintf(stderr, fmt, ap);
+    va_end(ap);
+    fputc('\n', stderr);
+    (void)level;
+#else
     (void)level; (void)component; (void)fmt;
+#endif
 }
 
 /* ---- framer stubs ---- */

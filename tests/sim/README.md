@@ -82,17 +82,29 @@ This is enough for the FSM to record `local_snr_x10` and enable mode
 upgrading, but does not exercise SNR-driven adaptation paths.  A richer SNR
 model (sampled from a distribution or derived from PER) is a future task.
 
-## The S1 fade-cliff regression
+## The S1 fade-cliff regression (fixed)
 
-`test_sim_fade_cliff_downgrades` is registered with `TEST_IGNORE_MESSAGE`.
-It documents that, on the current HEAD, when a channel is too lossy for the
-active payload mode, the FSM does not downgrade to the DATAC15 floor.  The
-dead-code path that should trigger the downgrade is the S1 issue.
+`test_sim_fade_cliff_downgrades` connects on a good band, then drops the
+channel SNR below the cliff of every mode except the DATAC15 floor
+(`sim_set_snr` enables the mode-aware cliff erasure model).  It asserts the
+FSM descends to DATAC15 and still delivers every byte.
 
-Once the S1 fix lands:
-1. Remove the `TEST_IGNORE_MESSAGE` wrapper.
-2. Raise the PER ceiling in `test_sim_fuzz` from 0.25 to 0.40.
-3. Verify that `test_sim_fade_cliff_downgrades` now PASS.
+The S1 bug was an UNBOUNDED reverse-loss hold in `record_tx_outcome()`: when
+the SNR of surviving frames still looked adequate, every retry was charged to
+reverse-path ACK loss, freezing OLLA and `consecutive_retries` so no downgrade
+path (not even the hard-loss floor) could fire — the transfer starved above
+the cliff.  The fix bounds the hold (`ARQ_REVERSE_HOLD_MAX`), advances
+`consecutive_retries` per ACK timeout, and lets a mode probe change mode with
+an unACKed window (the MODE_ACK carries the peer's `rx_expected`, which
+resolves the window; undelivered bytes are restaged and re-framed at the new
+mode).  The fuzz loop PER ceiling was raised 0.25 → 0.40 accordingly.
+
+### Debugging the FSM under the sim
+
+Build the sim binary with `-DSIM_TRACE_LOGS` to route the FSM's `HLOG*`
+output (normally swallowed by the test stub) to stderr, each line prefixed
+with the virtual uptime — invaluable for following mode negotiation, restage,
+and retry decisions.
 
 ## Future work
 

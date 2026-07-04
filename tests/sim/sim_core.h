@@ -28,4 +28,10 @@ uint64_t        sim_run_until_idle(sim_t *s, uint64_t max_ms);
 /* Number of pending channel events (for liveness checks). */
 int             sim_frames_in_flight(sim_t *s);
 
+/* Fade controls: change channel loss / delivered-frame SNR mid-simulation. */
+void            sim_set_per(sim_t *s, double per);
+void            sim_set_rx_snr(sim_t *s, float snr_db);
+/* Coherent fade: cliff-model channel SNR + delivered-frame SNR together. */
+void            sim_set_snr(sim_t *s, double snr_db);
+
 #endif

@@ -234,6 +234,12 @@ typedef struct
 
     /* --- Delivery-feedback safety net --- */
     int      consecutive_retries;      /* consecutive non-clean TX outcomes     */
+    int      reverse_hold_streak;      /* consecutive retries attributed to
+                                        * reverse-path ACK loss (mode held);
+                                        * capped at ARQ_REVERSE_HOLD_MAX so a
+                                        * fade cluster with healthy-looking SNR
+                                        * cannot freeze the downgrade paths
+                                        * (S1 fade-cliff fix); reset on clean  */
     uint64_t mode_hold_until_ms;       /* after forced downgrade: don't upgrade
                                         * until this uptime (prevents oscillation
                                         * when stale SNR says "upgrade" but the
@@ -253,6 +259,20 @@ typedef struct
     int      tx_window_count;          /* unACKed frames in the window      */
     bool     tx_window_retx;           /* window needed >=1 retransmission  */
     int      tx_inflight_bytes;       /* payload bytes across the window    */
+
+    /* --- Restage buffer (S1 fade-cliff fix) ---
+     * When a mode change is needed but the window holds unACKed frames, the
+     * MODE_ACK probe resolves their fate; bytes confirmed UNdelivered are
+     * pulled back here (tx_seq rewound to the window base) and re-framed by
+     * send_data_burst() at the new mode.  Sized for a full window of the
+     * largest frames. */
+    uint8_t  restage_buf[ARQ_BURST_MAX * 1280];
+    size_t   restage_len;              /* valid bytes in restage_buf        */
+    size_t   restage_off;              /* next unread offset                */
+    bool     mode_probe;               /* one-shot: allow MODE_REQ with a
+                                        * non-empty window (set by the retry-
+                                        * exhaustion path; consumed by
+                                        * maybe_upgrade_mode)               */
 
     /* --- Keepalive tracking --- */
     int      keepalive_miss_count;
