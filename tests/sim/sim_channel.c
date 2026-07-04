@@ -12,6 +12,8 @@ struct sim_channel {
     uint32_t guard_ms;
     bool     cliff_enabled;   /* mode-aware erasure (see sim_channel_set_snr) */
     double   snr_db;          /* current channel SNR when cliff_enabled */
+    sim_mode_per_t mode_per[SIM_MODE_PER_MAX]; /* empirical per-mode erasure */
+    int      mode_per_count;
 };
 
 /* Per-mode SNR cliff (dB): below this the mode effectively stops decoding.
@@ -63,6 +65,16 @@ void sim_channel_set_snr(sim_channel_t *ch, double snr_db)
     }
 }
 
+void sim_channel_set_mode_per(sim_channel_t *ch,
+                              const sim_mode_per_t *table, int count)
+{
+    if (!ch) return;
+    if (count > SIM_MODE_PER_MAX) count = SIM_MODE_PER_MAX;
+    for (int i = 0; i < count; i++)
+        ch->mode_per[i] = table[i];
+    ch->mode_per_count = count;
+}
+
 /* SplitMix64: deterministic, seedable, no global state. */
 double sim_channel_next_rand(sim_channel_t *ch)
 {
@@ -89,7 +101,16 @@ bool sim_channel_schedule(sim_channel_t *ch, uint64_t now_ms,
 {
     (void)dir;
     double per = ch->per;
-    if (ch->cliff_enabled && ch->snr_db < mode_cliff_db(freedv_mode))
+    if (ch->mode_per_count > 0)
+    {
+        for (int i = 0; i < ch->mode_per_count; i++)
+            if (ch->mode_per[i].freedv_mode == freedv_mode)
+            {
+                per = ch->mode_per[i].per;
+                break;
+            }
+    }
+    else if (ch->cliff_enabled && ch->snr_db < mode_cliff_db(freedv_mode))
         per = SIM_CLIFF_PER;
     if (sim_channel_next_rand(ch) < per)
         return false;   /* erased */

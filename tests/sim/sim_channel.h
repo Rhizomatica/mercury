@@ -27,6 +27,16 @@ void           sim_channel_set_per(sim_channel_t *ch, double per);
  * per cannot reward downgrades.  Cliffs approximate the MPP curves in
  * docs/MODES.md. */
 void           sim_channel_set_snr(sim_channel_t *ch, double snr_db);
+
+/* Empirical per-mode erasure model: each entry maps a FreeDV mode to a
+ * measured frame-erasure probability from a reference channel run (e.g. a
+ * pathsim NVIS characterization).  Modes not listed use the base per.
+ * Takes precedence over the cliff model while installed (count > 0). */
+typedef struct { int freedv_mode; double per; } sim_mode_per_t;
+#define SIM_MODE_PER_MAX 12
+void           sim_channel_set_mode_per(sim_channel_t *ch,
+                                        const sim_mode_per_t *table, int count);
+
 uint32_t       sim_channel_airtime_ms(int freedv_mode, size_t frame_size);
 bool           sim_channel_schedule(sim_channel_t *ch, uint64_t now_ms,
                                      int dir, int freedv_mode, size_t frame_size,

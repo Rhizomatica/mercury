@@ -29,15 +29,26 @@ func TestMercuryARQTransfer(t *testing.T) {
 
 	params := DefaultChannelParams()
 
-	// Channel engine: codec2 ch.c (default) or the Watterson HF model.  The
-	// Watterson model gives controllable slow/deep fades (ITU-R good/moderate/
-	// poor) that reach the gear-shift oscillation regime ch --mpp cannot.
+	// Channel engine: codec2 ch.c (default), the Watterson HF model, or the
+	// AE4JY pathsim reference (MERCURY_CH_ENGINE=pathsim, streaming-mode
+	// binary pointed at by MERCURY_PATHSIM_BIN; MERCURY_CH_NO then carries the
+	// pathsim-native --snr dB, and MERCURY_CH_FADING one of its presets, e.g.
+	// ccir-poor or midlat-dist-nvis).  The Watterson model gives controllable
+	// slow/deep fades (ITU-R good/moderate/poor) that reach the gear-shift
+	// oscillation regime ch --mpp cannot.
 	var chBin string
 	var err error
-	if os.Getenv("MERCURY_CH_ENGINE") == "watterson" {
+	switch os.Getenv("MERCURY_CH_ENGINE") {
+	case "watterson":
 		params.Engine = "watterson"
 		chBin, err = buildWatterson(repoRoot)
-	} else {
+	case "pathsim":
+		params.Engine = "pathsim"
+		chBin = os.Getenv("MERCURY_PATHSIM_BIN")
+		if chBin == "" {
+			t.Skip("MERCURY_CH_ENGINE=pathsim requires MERCURY_PATHSIM_BIN")
+		}
+	default:
 		chBin, err = buildCh(repoRoot)
 	}
 	if err != nil {
