@@ -34,4 +34,10 @@ void            sim_set_rx_snr(sim_t *s, float snr_db);
 /* Coherent fade: cliff-model channel SNR + delivered-frame SNR together. */
 void            sim_set_snr(sim_t *s, double snr_db);
 
+/* Empirical per-mode erasure table (see sim_channel_set_mode_per) plus the
+ * SNR stamped on delivered frames — models ISI-limited channels (e.g. NVIS
+ * disturbed) where the SNR reads healthy while fast modes fail. */
+void            sim_set_mode_per(sim_t *s, const sim_mode_per_t *table,
+                                 int count, float rx_snr_db);
+
 #endif

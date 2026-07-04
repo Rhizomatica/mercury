@@ -27,6 +27,17 @@ func DefaultChannelParams() ChannelParams {
 }
 
 func (p ChannelParams) args() []string {
+	if p.Engine == "pathsim" {
+		// pathsim (AE4JY PathSim port) speaks --snr, not --No, and its SNR is
+		// referenced to the MEASURED signal RMS (own convention, roughly 2-3 dB
+		// harsher than SNR3k at matched numbers — do not mix scales).  For this
+		// engine No_dBHz carries the pathsim-native SNR in dB directly.
+		a := []string{"--snr", fmt.Sprintf("%.2f", p.No_dBHz)}
+		if p.Fading != "" {
+			a = append(a, "--"+p.Fading)
+		}
+		return a
+	}
 	a := []string{
 		"--No", fmt.Sprintf("%.2f", p.No_dBHz),
 		"--freq", fmt.Sprintf("%.2f", p.FreqOffsetHz),

@@ -183,6 +183,13 @@ void sim_set_snr(sim_t *s, double snr_db)
     s->rx_snr_db = (float)snr_db;
 }
 
+void sim_set_mode_per(sim_t *s, const sim_mode_per_t *table, int count,
+                      float rx_snr_db)
+{
+    sim_channel_set_mode_per(s->ch, table, count);
+    s->rx_snr_db = rx_snr_db;
+}
+
 void sim_inject(sim_t *s, sim_endpoint_t *ep, const arq_event_t *ev)
 {
     sim_endpoint_set_active(ep);
