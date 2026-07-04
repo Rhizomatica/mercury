@@ -617,9 +617,10 @@ static bool maybe_upgrade_mode(arq_session_t *sess)
      * peer's rx_expected, which resolves the window safely before the switch
      * (delivered frames are ACK-progressed, undelivered bytes are restaged and
      * re-framed at the new mode). */
-    if (sess->tx_window_count > 0 && !sess->mode_probe)
-        return false;
+    bool probe = sess->mode_probe;
     sess->mode_probe = false;   /* one-shot */
+    if (sess->tx_window_count > 0 && !probe)
+        return false;
 
     /* Normally we need at least one valid peer SNR reading before deciding.
      * Exception: a retry-forced downgrade is driven purely by delivery
@@ -643,6 +644,17 @@ static bool maybe_upgrade_mode(arq_session_t *sess)
         sess->mode_upgrade_count = 0;
         return false;
     }
+
+    /* A probe is fired from retry trouble (ACK timeouts / exhaustion) to
+     * ESCAPE a mode the channel can no longer deliver — it must only ever
+     * move DOWN the ladder.  Without this, an SNR reading that still looks
+     * adequate (fading: the surviving frames measure fine) lets the probe
+     * UPGRADE mid-trouble — measured on the Watterson bench as a climb into
+     * the fade followed by a ~2 min go-back-N stall, slower than just
+     * holding the floor.  Upgrades keep the original discipline: only at
+     * burst boundaries with a drained window. */
+    if (probe && mode_rank(desired_mode) >= mode_rank(sess->payload_mode))
+        return false;
 
     /* After a retry-forced downgrade, don't allow re-upgrade until the
      * hold timer expires.  This prevents oscillation when stale SNR
