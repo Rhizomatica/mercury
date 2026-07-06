@@ -82,6 +82,38 @@ This is enough for the FSM to record `local_snr_x10` and enable mode
 upgrading, but does not exercise SNR-driven adaptation paths.  A richer SNR
 model (sampled from a distribution or derived from PER) is a future task.
 
+## Fault-injection API (channel controls)
+
+The channel starts at each `sim_channel_cfg_t`'s base per-frame erasure `per`.
+These calls change conditions mid-run (call them *after* `make_connected` so
+the handshake completes on a clean channel, then the fault hits the transfer):
+
+| Call (`sim_core.h`) | Effect |
+|---|---|
+| `sim_set_per(s, per)` | flat per-frame erasure probability [0,1] |
+| `sim_set_rx_snr(s, db)` | SNR stamped on delivered frames (drives OLLA feedback) |
+| `sim_set_snr(s, db)` | **coherent fade**: mode-aware SNR *cliff* erasure model + stamps the same SNR on survivors. A frame in a mode whose cliff (approx. `docs/MODES.md`) is above the channel SNR is erased ~90%; robust modes pass. This makes "downgrade" the winning move, as on real HF. |
+| `sim_set_mode_per(s, tbl, n, db)` | **empirical per-mode erasure**: a `{freedv_mode, per}` table (e.g. measured on pathsim `--midlat-dist-nvis`) plus the delivered-frame SNR. Models ISI-limited channels where SNR reads healthy while fast modes fail. Overrides the cliff model. |
+
+`test_sim_fuzz` sweeps flat AWGN erasure; `test_sim_fuzz_fading` sweeps the
+cliff and per-mode-PER models (60 seeds), asserting the two invariants that
+must hold on any channel — **no corruption** (delivered is a byte-exact prefix
+of sent) and **clean termination** (completed or disconnected, never stuck
+CONNECTED). `test_sim_peer_loss_disconnects` blacks out a peer mid-transfer and
+requires a bounded disconnect.
+
+## A/B throughput bench (`ab_bench.c`)
+
+`ab_bench <seed> <channel>` (channel = `clean | awgn:<per> | cliff:<snr> | nvis`)
+runs an 8 KB transfer and prints delivered/total, integrity, final mode and
+conn-state. It links against whatever tree's `arq_fsm.c` it is compiled in, so
+comparing two builds means compiling it twice (against tree A's and tree B's
+sources) and diffing the output across a seed × channel grid. Trust the
+**aggregate** over many seeds and always the integrity flag, not per-seed
+deltas — the channel PRNG is a single shared stream, so once two builds make
+different decisions they consume it differently and see different erasure
+realizations. Used for the S1 merge decision (`docs/S1-FADECLIFF-DECISION.md`).
+
 ## The S1 fade-cliff regression (fixed)
 
 `test_sim_fade_cliff_downgrades` connects on a good band, then drops the
