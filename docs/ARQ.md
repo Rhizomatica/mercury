@@ -94,13 +94,22 @@ Packet type values:
 ```
 Byte 0: framer byte  (packet_type | extension_field)
 Byte 1: subtype      (arq_subtype_t)
-Byte 2: flags        bit7=TURN_REQ  bit6=HAS_DATA
+Byte 2: flags        bit7=TURN_REQ  bit6=HAS_DATA  bit2=BURST_END (DATA)
+                     bit1=CTRL_ACKSEQ (CONTROL)  bits5/4/3=LEN_HI/B9/B10 (DATA)
 Byte 3: session_id   random byte chosen by caller at connect time
 Byte 4: tx_seq       sender's frame sequence number
 Byte 5: rx_ack_seq   last sequence number received from peer (implicit ACK)
 Byte 6: snr_raw      local RX SNR as uint8 = round(snr_dB) + 128; 0=unknown
 Byte 7: ack_delay    IRS→ISS delay from data_rx to ack_tx, in 10ms units; 0=unknown
 ```
+
+**`ARQ_FLAG_CTRL_ACKSEQ` (bit 1, CONTROL frames)** — set on `MODE_ACK` to mark
+`rx_ack_seq` (byte 5) as carrying the responder's valid `rx_expected`.  This
+lets a mode-probing ISS resolve an unACKed TX window during a mid-transfer
+mode change (see *Mode Upgrade / Downgrade* below): the value tells it
+definitively which queued frames the peer already delivered.  Absent on frames
+from older builds, in which case the ISS keeps its current mode and window
+(no interop break).
 
 For **DATA frames** (`ARQ_DATA`), payload bytes follow immediately after byte 7.
 The payload size is determined by the FreeDV mode in use.
@@ -393,12 +402,46 @@ Mode selection follows a `speed_level` ladder:
 **Downgrade** triggers:
 - A retry event (frame not ACKed in time): step one level down (floor: DATAC15).
 - Peer SNR feedback below threshold.
+- Sustained delivery failure — the S1 fade-cliff net below.
 
 Mode change procedure: ISS sends `MODE_REQ`; IRS responds with `MODE_ACK` or
 ignores (ISS falls back after `ARQ_MODE_REQ_RETRIES = 2`).
 
 During the **startup window** (`ARQ_STARTUP_MAX_S = 10 s`), only DATAC16 is used
 for bidirectional control framing to ensure the link is stable before upgrading.
+
+### Delivery-driven downgrade (S1 fade-cliff)
+
+The primary rate controller is OLLA, a per-link SNR offset. But SNR alone
+mispredicts on a fading or ISI-limited channel (e.g. NVIS), where a mode can
+lose most of its frames while the *surviving* frames still measure a healthy
+SNR. Three mechanisms keep the link from starving above such a cliff:
+
+- **Bounded reverse-loss hold.** A retry with healthy peer SNR is normally
+  attributed to reverse-path ACK loss (asymmetric HF) and the forward mode is
+  held. This hold is capped at `ARQ_REVERSE_HOLD_MAX` (3) consecutive holds;
+  a clean delivery re-arms it. Without the cap it froze OLLA and the retry
+  counters, making every downgrade path unreachable.
+- **Per-timeout failure accounting.** On a dead-enough channel no ACK ever
+  arrives, so the normal outcome accounting never runs. Each ACK timeout now
+  advances `consecutive_retries`, which feeds the hard-loss drop to the floor
+  (`ARQ_HARD_LOSS_THRESHOLD`) without disturbing OLLA's tuned first-try-FER
+  accounting.
+- **Mid-window mode probe (downgrade-only).** When retries can't drain the
+  go-back-N window (the window never empties if the mode can't deliver), a
+  *probe* issues a `MODE_REQ` despite the unACKed window. The `MODE_ACK`
+  carries the peer's `rx_expected` (flagged `ARQ_FLAG_CTRL_ACKSEQ`), which
+  resolves the window: frames the peer already got are ACK-progressed;
+  undelivered bytes are **restaged** (pulled back into `restage_buf`, `tx_seq`
+  rewound) and re-framed at the new mode. A probe only ever moves *down* the
+  ladder, and never fires once the no-progress budget is spent (past that the
+  session's job is to disconnect, not to keep probing a dead peer).
+
+Rationale note: capping selection *toward* robust modes on NVIS was tried and
+measured to reduce throughput (goodput rises with mode speed there despite
+high erasure — the large frames win). The mechanisms above therefore restore
+delivery without holding the link at the floor. See
+`docs/S1-FADECLIFF-DECISION.md` for the full simulation + OTA evidence.
 
 ---
 
@@ -536,6 +579,8 @@ All in `arq_protocol.h`:
 #define ARQ_STARTUP_MAX_S             10    /* control-mode-only startup window */
 #define ARQ_PEER_PAYLOAD_HOLD_S       15    /* hold payload mode after activity */
 #define ARQ_SNR_HYST_DB               1.0f
+#define ARQ_HARD_LOSS_THRESHOLD       8     /* consecutive retries => drop to floor */
+#define ARQ_REVERSE_HOLD_MAX          3     /* bounded reverse-loss holds (S1)   */
 ```
 
 ---
