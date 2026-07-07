@@ -282,12 +282,142 @@ void test_sim_transfer_lossy_per20(void)
 
 void test_sim_fade_cliff_downgrades(void)
 {
-    /* This test documents the S1 fade-cliff regression: when the channel PER
-     * is high enough that the current payload mode cannot deliver, the FSM
-     * should downgrade to the DATAC15 floor, but the dead-code path in the
-     * current HEAD means it never does.  This test is an executable proof of
-     * the S1 regression and will be un-ignored when S1 is fixed. */
-    TEST_IGNORE_MESSAGE("documents S1 fade-cliff regression; un-ignore when S1 is fixed");
+    /* Regression test for the S1 fade-cliff bug:
+     *   1. consecutive_retries was only clamped to ARQ_RETRY_DOWNGRADE_THRESHOLD
+     *      (2) in the retry-exhaustion path, so it never reached
+     *      ARQ_HARD_LOSS_THRESHOLD (8).
+     *   2. The window-gate in maybe_upgrade_mode returned false before the
+     *      consecutive_retries >= ARQ_HARD_LOSS_THRESHOLD bypass was reached,
+     *      so the hard-loss floor drop was dead code when unACKed frames
+     *      remained in the go-back-N window.
+     *
+     * Scenario: A is stuck at DATAC4, no peer SNR available (OLLA cannot act),
+     * and the channel delivers zero ACKs (total loss for DATA/ACKs).  After
+     * ARQ_HARD_LOSS_THRESHOLD budget exhaustions the FSM must send MODE_REQ for
+     * DATAC15 (the floor).  We intercept that MODE_REQ and inject a MODE_ACK so
+     * the mode negotiation completes, then assert payload_mode == DATAC15. */
+
+    /* Clean channel just to establish callbacks and get a connected session. */
+    sim_channel_cfg_t chan = { .seed = 1, .per = 0.0, .guard_ms = 100 };
+    sim_t *s = make_connected(&chan);
+    TEST_ASSERT_NOT_NULL_MESSAGE(s, "make_connected failed");
+
+    arq_session_t *sa = sim_endpoint_session(sim_a(s));
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ARQ_CONN_CONNECTED, sa->conn_state,
+                                  "A not connected after make_connected");
+
+    /* Override: put A into DATAC4 payload mode with no SNR feedback so the
+     * OLLA path is blocked.  The only downgrade route is the hard-loss
+     * consecutive_retries path we are testing. */
+    sa->payload_mode        = FREEDV_MODE_DATAC4;
+    sa->peer_snr_valid      = false;
+    sa->peer_snr_x10        = 0;
+    sa->olla_offset_db      = 0.0f;
+    sa->startup_deadline_ms = 0;      /* startup window already expired */
+    sa->consecutive_retries = 0;
+    sa->tx_retries_left     = ARQ_DATA_RETRY_SLOTS;
+    sa->mode_hold_until_ms  = 0;
+
+    /* Queue data for A so it enters DATA_TX. */
+    uint8_t blob[46];   /* one DATAC4 user-payload's worth */
+    memset(blob, 0x5A, sizeof(blob));
+    sim_endpoint_queue_tx(sim_a(s), blob, sizeof(blob));
+
+    /* Kick A into DATA_TX — clear need_initial_guard so it sends immediately. */
+    sa->need_initial_guard = false;
+    {
+        arq_event_t dready = { .id = ARQ_EV_APP_DATA_READY };
+        sim_endpoint_set_active(sim_a(s));
+        arq_fsm_dispatch(sa, &dready);
+    }
+    /* Drain any frame A just emitted (we discard all DATA frames). */
+    {
+        sim_outframe_t of;
+        while (sim_endpoint_take_outframe(sim_a(s), &of))
+        {
+            arq_event_t tx_done = { .id = ARQ_EV_TX_COMPLETE };
+            sim_endpoint_set_active(sim_a(s));
+            arq_fsm_dispatch(sa, &tx_done);
+        }
+    }
+
+    /* Drive A's timer loop.  For each timer event:
+     *   - fire the deadline event into A's FSM
+     *   - consume any outframe A queued:
+     *       * DATA frames: inject TX_COMPLETE and discard (no delivery to B)
+     *       * MODE_REQ frames: inject TX_COMPLETE; if the requested mode is
+     *         DATAC15 inject RX_MODE_ACK to complete negotiation and exit
+     * ARQ_HARD_LOSS_THRESHOLD=8 budget exhaustions are needed; each budget is
+     * ARQ_DATA_RETRY_SLOTS=10 retries × DATAC4 retry_interval(14s) = 140 virtual
+     * seconds.  Allow 300 iterations — well beyond the ~160 events required. */
+    bool mode_dropped = false;
+    for (int iter = 0; iter < 300 && !mode_dropped; iter++)
+    {
+        /* Prevent no-progress disconnect from firing: that path tests a
+         * different invariant (absolute wall-clock stall) and would cause
+         * A to send DISCONNECT rather than MODE_REQ before consecutive_retries
+         * ever reaches ARQ_HARD_LOSS_THRESHOLD.  Refreshing last_tx_progress_ms
+         * to "now" tells the FSM we made progress this iteration.
+         * This does not mask the behaviour under test. */
+        sa->last_tx_progress_ms = sim_clock_now();
+
+        uint64_t now = sim_clock_now();
+        int t = arq_fsm_timeout_ms(sa, now);
+        if (t == INT_MAX)
+            break;                  /* FSM idle — no more timer events */
+
+        /* If A has disconnected (no-progress guard fired despite the refresh,
+         * or some other path), stop early to avoid misleading spin. */
+        if (sa->conn_state != ARQ_CONN_CONNECTED)
+            break;
+
+        /* Advance virtual clock to next deadline. */
+        uint64_t next = now + (uint64_t)(t > 0 ? t : 1);
+        sim_clock_set(next);
+
+        /* Fire the deadline event. */
+        sa->deadline_ms = UINT64_MAX;
+        arq_event_t tev = { .id = sa->deadline_event };
+        sim_endpoint_set_active(sim_a(s));
+        arq_fsm_dispatch(sa, &tev);
+
+        /* Handle outframes A produced. */
+        sim_outframe_t of;
+        while (sim_endpoint_take_outframe(sim_a(s), &of))
+        {
+            /* Always inject TX_COMPLETE so A knows the frame left the radio. */
+            arq_event_t tx_done = { .id = ARQ_EV_TX_COMPLETE };
+            sim_endpoint_set_active(sim_a(s));
+            arq_fsm_dispatch(sa, &tx_done);
+
+            /* Is this a MODE_REQ asking for DATAC15?  Control frames use the
+             * 8-byte header layout; the requested mode byte follows the header. */
+            if ((int)of.len == ARQ_CONTROL_FRAME_SIZE &&
+                of.buf[ARQ_HDR_SUBTYPE_IDX] == ARQ_SUBTYPE_MODE_REQ &&
+                (int)of.len > ARQ_FRAME_HDR_SIZE &&
+                of.buf[ARQ_FRAME_HDR_SIZE] == FREEDV_MODE_DATAC15)
+            {
+                /* Simulate B accepting: inject RX_MODE_ACK for DATAC15. */
+                arq_event_t ack = {
+                    .id         = ARQ_EV_RX_MODE_ACK,
+                    .mode       = FREEDV_MODE_DATAC15,
+                    .session_id = sa->session_id,
+                };
+                sim_endpoint_set_active(sim_a(s));
+                arq_fsm_dispatch(sa, &ack);
+                mode_dropped = true;
+                break;
+            }
+        }
+    }
+
+    TEST_ASSERT_TRUE_MESSAGE(mode_dropped,
+        "FSM never sent MODE_REQ for DATAC15 floor after exhausting "
+        "ARQ_HARD_LOSS_THRESHOLD retry budgets (S1 fade-cliff regression)");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(FREEDV_MODE_DATAC15, sa->payload_mode,
+        "payload_mode did not reach DATAC15 floor after hard-loss downgrade");
+
+    sim_destroy(s);
 }
 
 /* ======================================================================
