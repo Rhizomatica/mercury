@@ -11,6 +11,7 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <stdbool.h>
+#include <stdio.h>
 
 #include "hermes_log.h"
 #include "framer.h"
@@ -61,6 +62,21 @@ arq_info arq_conn = {0};
 int arq_reported_bandwidth_hz(void)
 {
     return ARQ_BANDWIDTH_FULL_HZ; /* default to 2300 Hz for tests */
+}
+
+/* Single-threaded test doubles: read straight from the arq_conn global so
+ * tests that seed arq_conn.my_call_sign / arq_conn.bw still observe them. */
+void arq_conn_get_calls(char *my_call, char *src_addr, char *dst_addr, size_t bufsz)
+{
+    if (bufsz == 0) return;
+    if (my_call)  { snprintf(my_call,  bufsz, "%s", arq_conn.my_call_sign); }
+    if (src_addr) { snprintf(src_addr, bufsz, "%s", arq_conn.src_addr); }
+    if (dst_addr) { snprintf(dst_addr, bufsz, "%s", arq_conn.dst_addr); }
+}
+
+int arq_get_bw(void)
+{
+    return arq_conn.bw;
 }
 
 bool arq_bandwidth_allows_mode(int mode)

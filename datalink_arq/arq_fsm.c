@@ -609,8 +609,12 @@ static void send_call_accept(arq_session_t *sess, bool is_accept)
 {
     uint8_t frame[INT_BUFFER_SIZE];
     int n;
-    const char *my_call = arq_conn.my_call_sign;
-    int bw_hz = is_accept ? arq_reported_bandwidth_hz() : arq_conn.bw;
+    /* Read shared arq_conn through the locked accessors (g_conn_lock):
+     * this runs on the FSM/event-loop thread while handle_cmd may be writing
+     * my_call_sign/bw from the command-bridge thread. */
+    char my_call[CALLSIGN_MAX_SIZE];
+    arq_conn_get_calls(my_call, NULL, NULL, sizeof(my_call));
+    int bw_hz = is_accept ? arq_reported_bandwidth_hz() : arq_get_bw();
     if (is_accept)
         n = arq_protocol_build_accept(frame, sizeof(frame), sess->session_id,
                                       my_call, sess->remote_call, bw_hz);

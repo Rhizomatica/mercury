@@ -106,6 +106,8 @@ extern arq_info arq_conn;
  * None may be called while the caller already holds the connection lock. */
 void arq_set_trx(int trx);
 int  arq_get_trx(void);
+/* Configured (non-session) bandwidth in Hz, read under g_conn_lock. */
+int  arq_get_bw(void);
 /* Copy the current callsign strings out under g_conn_lock.  Each of my_call,
  * src_addr, dst_addr may be NULL to skip; each receives up to bufsz bytes,
  * always NUL-terminated. */
