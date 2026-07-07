@@ -318,6 +318,15 @@ void reset_arq_info(arq_info *arq_conn);
  */
 void arq_set_retry_slots(int slots);
 
+/* Setters for the newly-atomic ARQ timing/ladder tunables. */
+void arq_set_channel_guard_ms(int ms);
+void arq_set_iss_post_ack_guard_ms(int ms);
+void arq_set_keepalive_interval_s(int s);
+void arq_set_keepalive_miss_limit(int n);
+void arq_set_ladder_up_successes(int n);
+void arq_set_retry_downgrade_threshold(int n);
+void arq_set_mode_hold_after_downgrade_s(int s);
+
 /**
  * @brief Trigger outgoing call attempt using current ARQ addresses.
  */

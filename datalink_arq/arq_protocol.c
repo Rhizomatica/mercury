@@ -20,6 +20,15 @@ _Atomic int arq_disconnect_retry_slots = ARQ_DISCONNECT_RETRY_SLOTS_DEFAULT;
 _Atomic int arq_no_progress_timeout_s  = ARQ_NO_PROGRESS_TIMEOUT_S_DEFAULT;
 _Atomic int arq_disconnect_drain_timeout_s = ARQ_DISCONNECT_DRAIN_TIMEOUT_S_DEFAULT;
 
+/* Runtime-configurable guard/keepalive/ladder constants */
+_Atomic int arq_channel_guard_ms            = ARQ_CHANNEL_GUARD_MS_DEFAULT;
+_Atomic int arq_iss_post_ack_guard_ms       = ARQ_ISS_POST_ACK_GUARD_MS_DEFAULT;
+_Atomic int arq_keepalive_interval_s        = ARQ_KEEPALIVE_INTERVAL_S_DEFAULT;
+_Atomic int arq_keepalive_miss_limit        = ARQ_KEEPALIVE_MISS_LIMIT_DEFAULT;
+_Atomic int arq_ladder_up_successes         = ARQ_LADDER_UP_SUCCESSES_DEFAULT;
+_Atomic int arq_retry_downgrade_threshold   = ARQ_RETRY_DOWNGRADE_THRESHOLD_DEFAULT;
+_Atomic int arq_mode_hold_after_downgrade_s = ARQ_MODE_HOLD_AFTER_DOWNGRADE_S_DEFAULT;
+
 /* Include FreeDV mode constants */
 #include "../modem/freedv/freedv_api.h"
 

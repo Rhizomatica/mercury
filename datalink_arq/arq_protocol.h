@@ -190,24 +190,29 @@ typedef struct
 #define ARQ_CONTROL_MODE  FREEDV_MODE_DATAC16
 
 /* Timing constants shared across modules */
-#define ARQ_CHANNEL_GUARD_MS          700   /* IRS response guard after frame decode.
-                                            * OFDM decode fires ~200ms before sender
-                                            * PTT-OFF, so effective gap at sender is
-                                            * (guard - 200ms) ≈ 500ms.  Radio needs
-                                            * ~340ms for TX→RX switch → 160ms margin
-                                            * for preamble detection.  At 500ms the
-                                            * effective gap was ~300ms, causing ~50%
-                                            * ACK loss on DATAC1 (< 340ms switch).  */
-#define ARQ_ISS_POST_ACK_GUARD_MS     900   /* ISS guard before resuming DATA TX
-                                            * after receiving an ACK from the IRS.
-                                            * Larger than ARQ_CHANNEL_GUARD_MS:
-                                            * ack_rx fires ~168ms before IRS PTT-OFF,
-                                            * so the effective gap at IRS is only
-                                            * (guard + 100ms head) - 168ms.
-                                            * At 500ms: gap=432ms, too tight for
-                                            * DATAC1 re-sync after IRS ACK TX.
-                                            * At 900ms: gap=832ms — 492ms of clear
-                                            * air before the DATAC1 preamble. */
+#define ARQ_CHANNEL_GUARD_MS_DEFAULT      700   /* IRS response guard after frame decode.
+                                                * OFDM decode fires ~200ms before sender
+                                                * PTT-OFF, so effective gap at sender is
+                                                * (guard - 200ms) ~= 500ms.  Radio needs
+                                                * ~340ms for TX->RX switch -> 160ms margin
+                                                * for preamble detection.  At 500ms the
+                                                * effective gap was ~300ms, causing ~50%
+                                                * ACK loss on DATAC1 (< 340ms switch).  */
+extern _Atomic int arq_channel_guard_ms;
+#define ARQ_CHANNEL_GUARD_MS  atomic_load(&arq_channel_guard_ms)
+
+#define ARQ_ISS_POST_ACK_GUARD_MS_DEFAULT 900   /* ISS guard before resuming DATA TX
+                                                * after receiving an ACK from the IRS.
+                                                * Larger than ARQ_CHANNEL_GUARD_MS:
+                                                * ack_rx fires ~168ms before IRS PTT-OFF,
+                                                * so the effective gap at IRS is only
+                                                * (guard + 100ms head) - 168ms.
+                                                * At 500ms: gap=432ms, too tight for
+                                                * DATAC1 re-sync after IRS ACK TX.
+                                                * At 900ms: gap=832ms -- 492ms of clear
+                                                * air before the DATAC1 preamble. */
+extern _Atomic int arq_iss_post_ack_guard_ms;
+#define ARQ_ISS_POST_ACK_GUARD_MS  atomic_load(&arq_iss_post_ack_guard_ms)
 #define ARQ_TURN_WAIT_AFTER_ACK_MS   5000  /* IRS post-ACK wait before TURN_REQ:
                                             * ISS guard(900ms)+frame(3740ms)+margin */
 #define ARQ_ACCEPT_RX_WINDOW_MS      9000  /* ACCEPTING RX window after ACCEPT TX:
@@ -242,8 +247,13 @@ extern _Atomic float arq_callint_override_s;
 #define ARQ_DISCONNECT_RETRY_SLOTS atomic_load(&arq_disconnect_retry_slots)
 #define ARQ_CONNECT_GRACE_SLOTS       2     /* extra wait slots for ACCEPT         */
 #define ARQ_CONNECT_BUSY_EXT_S        2     /* busy-extension guard after CALL     */
-#define ARQ_KEEPALIVE_INTERVAL_S      20    /* keepalive TX interval               */
-#define ARQ_KEEPALIVE_MISS_LIMIT      5     /* missed keepalives before disconnect */
+#define ARQ_KEEPALIVE_INTERVAL_S_DEFAULT  20    /* keepalive TX interval               */
+extern _Atomic int arq_keepalive_interval_s;
+#define ARQ_KEEPALIVE_INTERVAL_S  atomic_load(&arq_keepalive_interval_s)
+
+#define ARQ_KEEPALIVE_MISS_LIMIT_DEFAULT  5     /* missed keepalives before disconnect */
+extern _Atomic int arq_keepalive_miss_limit;
+#define ARQ_KEEPALIVE_MISS_LIMIT  atomic_load(&arq_keepalive_miss_limit)
 #define ARQ_TURN_REQ_RETRIES          2
 #define ARQ_MODE_REQ_RETRIES          2
 #define ARQ_PEER_PAYLOAD_HOLD_S       15    /* hold peer payload mode after activity */
@@ -281,9 +291,17 @@ extern _Atomic float arq_callint_override_s;
 #define ARQ_BACKLOG_MIN_QAM16C2       1173  /* > DATAC17 usable payload      */
 #define ARQ_LADDER_LEVELS             6     /* 0=DATAC15, 1=DATAC4, 2=DATAC3,
                                              * 3=DATAC1, 4=DATAC17, 5=QAM16C2 */
-#define ARQ_LADDER_UP_SUCCESSES       2     /* clean ACKs required to step up    */
-#define ARQ_RETRY_DOWNGRADE_THRESHOLD 2     /* consecutive retries to force downgrade */
-#define ARQ_MODE_HOLD_AFTER_DOWNGRADE_S 6   /* hold lower mode after forced downgrade */
+#define ARQ_LADDER_UP_SUCCESSES_DEFAULT        2     /* clean ACKs required to step up    */
+extern _Atomic int arq_ladder_up_successes;
+#define ARQ_LADDER_UP_SUCCESSES  atomic_load(&arq_ladder_up_successes)
+
+#define ARQ_RETRY_DOWNGRADE_THRESHOLD_DEFAULT  2     /* consecutive retries to force downgrade */
+extern _Atomic int arq_retry_downgrade_threshold;
+#define ARQ_RETRY_DOWNGRADE_THRESHOLD  atomic_load(&arq_retry_downgrade_threshold)
+
+#define ARQ_MODE_HOLD_AFTER_DOWNGRADE_S_DEFAULT 6   /* hold lower mode after forced downgrade */
+extern _Atomic int arq_mode_hold_after_downgrade_s;
+#define ARQ_MODE_HOLD_AFTER_DOWNGRADE_S  atomic_load(&arq_mode_hold_after_downgrade_s)
 /* Hard total-link-loss net: OLLA's offset handles normal per-fade dips (the old
  * 2-retry forced downgrade fought OLLA and oscillated badly at low SNR — see
  * test_olla_low_snr_no_collapse).  Only a long unbroken fail run drops straight

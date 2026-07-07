@@ -104,6 +104,32 @@ no_progress_timeout_s = 180
 ; the drain finishes in seconds, so this only bites on a stuck session.
 disconnect_drain_timeout_s = 30
 
+; Number of DATA-frame retries before a downgrade cycle (default 10, range 1..64).
+; Behaves like the RETRIES TNC command: also caps CALL/ACCEPT retries.
+data_retry_slots = 10
+
+; Seconds to hold the lower mode after a forced downgrade (default 6, range 0..60).
+mode_hold_after_downgrade_s = 6
+
+; Clean ACKs required to step the speed ladder up one level (default 2, range 1..16).
+ladder_up_successes = 2
+
+; Consecutive retries that force a one-step downgrade (default 2, range 1..16).
+retry_downgrade_threshold = 2
+
+; IRS response guard after decoding a frame, in ms (default 700, range 200..3000).
+; Raise if your radio's TX-to-RX switch is slow and you lose ACKs.
+channel_guard_ms = 700
+
+; ISS guard before resuming DATA TX after an ACK, in ms (default 900, range 200..3000).
+iss_post_ack_guard_ms = 900
+
+; Keepalive transmit interval in seconds (default 20, range 5..120).
+keepalive_interval_s = 20
+
+; Missed keepalives before the link is dropped (default 5, range 2..20).
+keepalive_miss_limit = 5
+
 [tnc]
 ; IAMALIVE interval on the TNC control port, seconds (5..600).
 ;keepalive_s = 60

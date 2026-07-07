@@ -1025,6 +1025,62 @@ void arq_set_retry_slots(int slots)
           atomic_load(&arq_data_retry_slots), atomic_load(&arq_disconnect_retry_slots));
 }
 
+void arq_set_channel_guard_ms(int ms)
+{
+    if (ms < 200)  ms = (ms <= 0) ? ARQ_CHANNEL_GUARD_MS_DEFAULT : 200;
+    if (ms > 3000) ms = 3000;
+    atomic_store(&arq_channel_guard_ms, ms);
+    HLOGI(LOG_COMP, "channel_guard_ms = %d", atomic_load(&arq_channel_guard_ms));
+}
+
+void arq_set_iss_post_ack_guard_ms(int ms)
+{
+    if (ms < 200)  ms = (ms <= 0) ? ARQ_ISS_POST_ACK_GUARD_MS_DEFAULT : 200;
+    if (ms > 3000) ms = 3000;
+    atomic_store(&arq_iss_post_ack_guard_ms, ms);
+    HLOGI(LOG_COMP, "iss_post_ack_guard_ms = %d", atomic_load(&arq_iss_post_ack_guard_ms));
+}
+
+void arq_set_keepalive_interval_s(int s)
+{
+    if (s < 5)   s = (s <= 0) ? ARQ_KEEPALIVE_INTERVAL_S_DEFAULT : 5;
+    if (s > 120) s = 120;
+    atomic_store(&arq_keepalive_interval_s, s);
+    HLOGI(LOG_COMP, "keepalive_interval_s = %d", atomic_load(&arq_keepalive_interval_s));
+}
+
+void arq_set_keepalive_miss_limit(int n)
+{
+    if (n < 2)  n = (n <= 0) ? ARQ_KEEPALIVE_MISS_LIMIT_DEFAULT : 2;
+    if (n > 20) n = 20;
+    atomic_store(&arq_keepalive_miss_limit, n);
+    HLOGI(LOG_COMP, "keepalive_miss_limit = %d", atomic_load(&arq_keepalive_miss_limit));
+}
+
+void arq_set_ladder_up_successes(int n)
+{
+    if (n < 1)  n = (n <= 0) ? ARQ_LADDER_UP_SUCCESSES_DEFAULT : 1;
+    if (n > 16) n = 16;
+    atomic_store(&arq_ladder_up_successes, n);
+    HLOGI(LOG_COMP, "ladder_up_successes = %d", atomic_load(&arq_ladder_up_successes));
+}
+
+void arq_set_retry_downgrade_threshold(int n)
+{
+    if (n < 1)  n = (n <= 0) ? ARQ_RETRY_DOWNGRADE_THRESHOLD_DEFAULT : 1;
+    if (n > 16) n = 16;
+    atomic_store(&arq_retry_downgrade_threshold, n);
+    HLOGI(LOG_COMP, "retry_downgrade_threshold = %d", atomic_load(&arq_retry_downgrade_threshold));
+}
+
+void arq_set_mode_hold_after_downgrade_s(int s)
+{
+    if (s < 0)  s = ARQ_MODE_HOLD_AFTER_DOWNGRADE_S_DEFAULT;
+    if (s > 60) s = 60;
+    atomic_store(&arq_mode_hold_after_downgrade_s, s);
+    HLOGI(LOG_COMP, "mode_hold_after_downgrade_s = %d", atomic_load(&arq_mode_hold_after_downgrade_s));
+}
+
 void reset_arq_info(arq_info *conn)
 {
     if (!conn) return;
