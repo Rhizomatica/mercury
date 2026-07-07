@@ -102,6 +102,15 @@ typedef struct
 
 extern arq_info arq_conn;
 
+/* Thread-safe accessors for arq_conn (see g_conn_lock in arq.c).
+ * None may be called while the caller already holds the connection lock. */
+void arq_set_trx(int trx);
+int  arq_get_trx(void);
+/* Copy the current callsign strings out under g_conn_lock.  Each of my_call,
+ * src_addr, dst_addr may be NULL to skip; each receives up to bufsz bytes,
+ * always NUL-terminated. */
+void arq_conn_get_calls(char *my_call, char *src_addr, char *dst_addr, size_t bufsz);
+
 /**
  * @brief Initialize ARQ subsystem.
  * @param frame_size Active modem frame size in bytes.
