@@ -38,6 +38,7 @@
 #include "os_interop.h"
 
 #include "tcp_interfaces.h"
+#include "arq_tnc.h"
 #include <errno.h>
 #include <string.h>
 #include "ring_buffer_posix.h"
@@ -1272,6 +1273,17 @@ void tnc_send_buffer(uint32_t bytes)
         atomic_store_explicit(&tnc_last_buffer_sent, (int)bytes, memory_order_relaxed);
 }
 
+/* TNC notification callbacks registered into the ARQ layer.  Decouples ARQ
+ * from this file: ARQ calls arq_tnc_send_*(), which dispatch here. */
+static const arq_tnc_callbacks_t g_arq_tnc_cbs = {
+    .send_pending       = tnc_send_pending,
+    .send_cancelpending = tnc_send_cancelpending,
+    .send_connected     = tnc_send_connected,
+    .send_cqframe       = tnc_send_cqframe,
+    .send_disconnected  = tnc_send_disconnected,
+    .send_buffer        = tnc_send_buffer,
+};
+
 void tnc_send_sn(float snr)
 {
     char buffer[64];
@@ -1306,6 +1318,7 @@ uint32_t tnc_get_last_bitrate_bps(void)
 
 int interfaces_init(int arq_tcp_base_port, int broadcast_tcp_port, size_t broadcast_frame_size)
 {
+    arq_set_tnc_callbacks(&g_arq_tnc_cbs);
     arq_tcp_base_port_cfg = arq_tcp_base_port;
     broadcast_tcp_port_cfg = broadcast_tcp_port;
     broadcast_frame_size_cfg = broadcast_frame_size;
