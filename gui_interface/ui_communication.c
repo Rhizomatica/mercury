@@ -201,18 +201,19 @@ void *ui_publisher_thread(void *arg)
 
         int bitrate = (int)tnc_get_last_bitrate_bps();
         double snr = (double)tnc_get_last_snr();
-        const char *user_call = arq_conn.my_call_sign;
+        char my_call[CALLSIGN_MAX_SIZE], src_call[CALLSIGN_MAX_SIZE], dst_call[CALLSIGN_MAX_SIZE];
+        arq_conn_get_calls(my_call, src_call, dst_call, CALLSIGN_MAX_SIZE);
+        const char *user_call = my_call;
         /* Determine remote peer for UI display.
          * src_addr/dst_addr follow TNC convention (initiator/target):
          *   ISS (caller):   src_addr = self,   dst_addr = remote
          *   IRS (receiver): src_addr = remote,  dst_addr = self
          * Pick whichever is NOT our own callsign. */
         const char *dest_call;
-        if (arq_conn.dst_addr[0] != '\0' &&
-            strcmp(arq_conn.dst_addr, arq_conn.my_call_sign) != 0)
-            dest_call = arq_conn.dst_addr;   /* ISS: dst is remote */
+        if (dst_call[0] != '\0' && strcmp(dst_call, my_call) != 0)
+            dest_call = dst_call;   /* ISS: dst is remote */
         else
-            dest_call = arq_conn.src_addr;   /* IRS: src is remote */
+            dest_call = src_call;   /* IRS: src is remote */
         int sync = 0;
         modem_direction_t dir = DIR_RX;
         int tcp_connected = 0;

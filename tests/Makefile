@@ -43,7 +43,8 @@ ARQ_STUBS = datalink_arq/arq_test_stubs.c
 
 # Test executables
 TEST_BINS = test_ring_buffer test_arq_protocol test_arq_timing test_arq_fsm \
-            test_tcp_interfaces test_resampler test_arq_olla test_arq_sim
+            test_tcp_interfaces test_resampler test_arq_olla test_arq_sim \
+            test_arq_conn
 
 .PHONY: all test clean
 
@@ -102,6 +103,11 @@ test_arq_sim: sim/test_arq_sim.c $(UNITY_SRC) $(ARQ_STUBS) $(SIM_SRC) \
               ../datalink_arq/arq_fsm.c ../datalink_arq/arq_protocol.c \
               ../datalink_arq/arq_timing.c ../datalink_arq/arith.c
 	$(CC) $(CFLAGS) -Isim -I../modem/freedv -o $@ $^ $(LDFLAGS)
+
+# arq_conn accessor correctness tests (single-threaded; locking verified by TSan)
+test_arq_conn: datalink_arq/test_arq_conn.c $(UNITY_SRC) \
+               datalink_arq/arq_conn_accessors.c
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
 clean:
 	rm -f $(TEST_BINS)

@@ -1190,13 +1190,13 @@ void *tcp_server_thread(void *port_ptr)
 /*********** TNC / radio functions ***********/
 void ptt_on()
 {
-    arq_conn.TRX = TX;
+    arq_set_trx(TX);
     if (radio_io_enabled())
         radio_io_key_on();
     /* Queue "PTT ON\r" asynchronously so a transient write failure on the
      * non-blocking CTL socket does NOT set NET_RESTART and kill the DATA
      * socket (which would send EOF to uucico and abort the UUCP session).
-     * The PTT state change (arq_conn.TRX = TX) is already synchronous and
+     * The PTT state change (arq_set_trx(TX)) is already synchronous and
      * is what the modem RX thread actually polls; the TCP notification to
      * uucpd is informational only. */
     (void)tnc_queue_line("PTT ON\r");
@@ -1205,7 +1205,7 @@ void ptt_on()
 
 void ptt_off()
 {
-    arq_conn.TRX = RX;
+    arq_set_trx(RX);
     if (radio_io_enabled())
         radio_io_key_off();
     /* Same reasoning as ptt_on(): queue asynchronously. */
@@ -1216,14 +1216,13 @@ void ptt_off()
 void tnc_send_connected()
 {
     char buffer[128];
-    const char *source_call = arq_conn.src_addr[0]
-                              ? arq_conn.src_addr
-                              : arq_conn.my_call_sign;
-    const char *dest_call = arq_conn.dst_addr[0]
-                            ? arq_conn.dst_addr
-                            : arq_conn.my_call_sign;
+    char my_call[CALLSIGN_MAX_SIZE], src[CALLSIGN_MAX_SIZE], dst[CALLSIGN_MAX_SIZE];
+    arq_conn_get_calls(my_call, src, dst, CALLSIGN_MAX_SIZE);
+    const char *source_call = src[0] ? src : my_call;
+    const char *dest_call   = dst[0] ? dst : my_call;
+    int bw = arq_reported_bandwidth_hz();   /* separate locked call, AFTER the getter returns */
     snprintf(buffer, sizeof(buffer), "CONNECTED %s %s %d\r",
-            source_call, dest_call, arq_reported_bandwidth_hz());
+             source_call, dest_call, bw);
     if (tnc_queue_line(buffer) < 0)
         HLOGW("tcp-ctl", "Error queuing connected message");
 }
