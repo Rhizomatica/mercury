@@ -54,6 +54,14 @@ void cfg_set_defaults(mercury_config *cfg)
     cfg->tnc_keepalive_s = 60;
     cfg->tnc_buffer_report_ms = 1000;
     cfg->tx_gain_db            = 0.0f;
+    cfg->data_retry_slots            = ARQ_DATA_RETRY_SLOTS_DEFAULT;
+    cfg->mode_hold_after_downgrade_s = ARQ_MODE_HOLD_AFTER_DOWNGRADE_S_DEFAULT;
+    cfg->ladder_up_successes         = ARQ_LADDER_UP_SUCCESSES_DEFAULT;
+    cfg->retry_downgrade_threshold   = ARQ_RETRY_DOWNGRADE_THRESHOLD_DEFAULT;
+    cfg->channel_guard_ms            = ARQ_CHANNEL_GUARD_MS_DEFAULT;
+    cfg->iss_post_ack_guard_ms       = ARQ_ISS_POST_ACK_GUARD_MS_DEFAULT;
+    cfg->keepalive_interval_s        = ARQ_KEEPALIVE_INTERVAL_S_DEFAULT;
+    cfg->keepalive_miss_limit        = ARQ_KEEPALIVE_MISS_LIMIT_DEFAULT;
 }
 
 /* Map a sound-system name to the AUDIO_SUBSYSTEM_* constant.
@@ -176,6 +184,30 @@ bool cfg_read(mercury_config *cfg, const char *ini_path)
     if (i >= 100 && i <= 10000)
         cfg->tnc_buffer_report_ms = i;
 
+    i = iniparser_getint(ini, CFG_KEY_ARQ_DATA_RETRY_SLOTS, cfg->data_retry_slots);
+    if (i >= 1 && i <= 64)   cfg->data_retry_slots = i;
+
+    i = iniparser_getint(ini, CFG_KEY_ARQ_MODE_HOLD_DOWNGRADE_S, cfg->mode_hold_after_downgrade_s);
+    if (i >= 0 && i <= 60)   cfg->mode_hold_after_downgrade_s = i;
+
+    i = iniparser_getint(ini, CFG_KEY_ARQ_LADDER_UP_SUCCESSES, cfg->ladder_up_successes);
+    if (i >= 1 && i <= 16)   cfg->ladder_up_successes = i;
+
+    i = iniparser_getint(ini, CFG_KEY_ARQ_RETRY_DOWNGRADE_THRESHOLD, cfg->retry_downgrade_threshold);
+    if (i >= 1 && i <= 16)   cfg->retry_downgrade_threshold = i;
+
+    i = iniparser_getint(ini, CFG_KEY_ARQ_CHANNEL_GUARD_MS, cfg->channel_guard_ms);
+    if (i >= 200 && i <= 3000) cfg->channel_guard_ms = i;
+
+    i = iniparser_getint(ini, CFG_KEY_ARQ_ISS_POST_ACK_GUARD_MS, cfg->iss_post_ack_guard_ms);
+    if (i >= 200 && i <= 3000) cfg->iss_post_ack_guard_ms = i;
+
+    i = iniparser_getint(ini, CFG_KEY_ARQ_KEEPALIVE_INTERVAL_S, cfg->keepalive_interval_s);
+    if (i >= 5 && i <= 120)  cfg->keepalive_interval_s = i;
+
+    i = iniparser_getint(ini, CFG_KEY_ARQ_KEEPALIVE_MISS_LIMIT, cfg->keepalive_miss_limit);
+    if (i >= 2 && i <= 20)   cfg->keepalive_miss_limit = i;
+
     double d = iniparser_getdouble(ini, CFG_KEY_TX_GAIN_DB, (double)cfg->tx_gain_db);
     if (!isfinite(d)) d = 0.0;  /* malformed/non-finite INI value -> default */
     if (d < -20.0) d = -20.0;
@@ -266,6 +298,14 @@ bool cfg_write(const mercury_config *cfg, const char *ini_path)
     fprintf(f, "\n[arq]\n");
     fprintf(f, "no_progress_timeout_s = %d\n", cfg->no_progress_timeout_s);
     fprintf(f, "disconnect_drain_timeout_s = %d\n", cfg->disconnect_drain_timeout_s);
+    fprintf(f, "data_retry_slots = %d\n", cfg->data_retry_slots);
+    fprintf(f, "mode_hold_after_downgrade_s = %d\n", cfg->mode_hold_after_downgrade_s);
+    fprintf(f, "ladder_up_successes = %d\n", cfg->ladder_up_successes);
+    fprintf(f, "retry_downgrade_threshold = %d\n", cfg->retry_downgrade_threshold);
+    fprintf(f, "channel_guard_ms = %d\n", cfg->channel_guard_ms);
+    fprintf(f, "iss_post_ack_guard_ms = %d\n", cfg->iss_post_ack_guard_ms);
+    fprintf(f, "keepalive_interval_s = %d\n", cfg->keepalive_interval_s);
+    fprintf(f, "keepalive_miss_limit = %d\n", cfg->keepalive_miss_limit);
 
     fprintf(f, "\n[audio]\n");
     fprintf(f, "tx_gain_db = %.2f\n", cfg->tx_gain_db);
