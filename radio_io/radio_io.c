@@ -296,8 +296,11 @@ void radio_io_key_on(void)
 #ifdef HAVE_HAMLIB
     if (g_radio_type > 0 && radio)
     {
-        rig_set_ptt(radio, RIG_VFO_CURR, RIG_PTT_ON);
-        HLOGD(RADIO_LOG_TAG, "PTT ON via HAMLIB (model %d)", g_radio_type);
+        int ret = rig_set_ptt(radio, RIG_VFO_CURR, RIG_PTT_ON);
+        if (ret != RIG_OK)
+            HLOGW(RADIO_LOG_TAG, "PTT ON failed (model %d): %s", g_radio_type, rigerror(ret));
+        else
+            HLOGD(RADIO_LOG_TAG, "PTT ON via HAMLIB (model %d)", g_radio_type);
     }
 #endif
 
@@ -336,8 +339,11 @@ void radio_io_key_off(void)
 #ifdef HAVE_HAMLIB
     if (g_radio_type > 0 && radio)
     {
-        rig_set_ptt(radio, RIG_VFO_CURR, RIG_PTT_OFF);
-        HLOGD(RADIO_LOG_TAG, "PTT OFF via HAMLIB (model %d)", g_radio_type);
+        int ret = rig_set_ptt(radio, RIG_VFO_CURR, RIG_PTT_OFF);
+        if (ret != RIG_OK)
+            HLOGW(RADIO_LOG_TAG, "PTT OFF failed (model %d): %s", g_radio_type, rigerror(ret));
+        else
+            HLOGD(RADIO_LOG_TAG, "PTT OFF via HAMLIB (model %d)", g_radio_type);
     }
 #endif
 
