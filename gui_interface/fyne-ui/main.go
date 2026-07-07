@@ -15,6 +15,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
@@ -481,12 +482,8 @@ func main() {
 		ctx, cancel := context.WithCancel(context.Background())
 		state.backendCancel = cancel
 
-		binaryName := "../../mercury"
-		if runtime.GOOS == "windows" {
-			binaryName = "mercury.exe"
-		}
-
-		state.backendCmd = exec.CommandContext(ctx, binaryName, "-G", "-v", "-L", "mercury_engine.log")
+		binaryPath := resolveBackendBinary()
+		state.backendCmd = exec.CommandContext(ctx, binaryPath, "-G", "-v", "-L", "mercury_engine.log")
 		stdout, err := state.backendCmd.StdoutPipe()
 		if err != nil {
 			appendLog(fmt.Sprintf("Failed to create stdout pipe: %v\n", err))
@@ -494,7 +491,7 @@ func main() {
 			return
 		}
 		if err := state.backendCmd.Start(); err != nil {
-			appendLog(fmt.Sprintf("Failed to launch %s: %v\n", binaryName, err))
+			appendLog(fmt.Sprintf("Failed to launch %s: %v\n", binaryPath, err))
 			cancel()
 			return
 		}
@@ -889,16 +886,9 @@ func main() {
 
 	// On startup: if the mercury process is running, try to connect; otherwise start it and connect.
 	go func() {
-		// small delay to let UI initialize
 		time.Sleep(200 * time.Millisecond)
-		binaryName := "mercury"
-		// on windows the binary name might be different, but this UI generally runs on Linux
-		// check if process exists using pgrep
-		procRunning := false
-		if cmd := exec.Command("pgrep", "-x", binaryName); cmd.Run() == nil {
-			procRunning = true
-		}
-		if procRunning {
+		backendName := backendBinaryName()
+		if isBackendRunning(backendName) {
 			appendLog("Mercury process detected — attempting to connect...\n")
 			connectWS()
 			return
@@ -1162,4 +1152,57 @@ func netJoinHostPort(host, port string) string {
 		port = "10000"
 	}
 	return net.JoinHostPort(host, port)
+}
+
+func backendBinaryName() string {
+	if runtime.GOOS == "windows" {
+		return "mercury.exe"
+	}
+	return "mercury"
+}
+
+func isBackendRunning(binaryName string) bool {
+	if runtime.GOOS == "windows" {
+		cmd := exec.Command("tasklist", "/FI", "IMAGENAME eq "+binaryName, "/NH")
+		output, err := cmd.Output()
+		if err != nil {
+			return false
+		}
+		return strings.Contains(string(output), binaryName)
+	}
+	return exec.Command("pgrep", "-x", binaryName).Run() == nil
+}
+
+func resolveBackendBinary() string {
+	exeName := backendBinaryName()
+
+	exePath, err := os.Executable()
+	if err != nil {
+		if path, err := exec.LookPath(exeName); err == nil {
+			return path
+		}
+		return exeName
+	}
+
+	dir := filepath.Dir(exePath)
+
+	candidates := []string{
+		filepath.Join(dir, exeName),
+		filepath.Join(dir, "..", "..", exeName),
+	}
+
+	if runtime.GOOS == "windows" {
+		candidates = append(candidates, filepath.Join(dir, "..", exeName))
+	}
+
+	for _, candidate := range candidates {
+		if _, err := os.Stat(candidate); err == nil {
+			return candidate
+		}
+	}
+
+	if path, err := exec.LookPath(exeName); err == nil {
+		return path
+	}
+	return exeName
 }
