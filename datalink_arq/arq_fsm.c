@@ -503,8 +503,15 @@ static bool maybe_upgrade_mode(arq_session_t *sess)
      * wrong byte count (a FULL DATAC15 frame read at DATAC3's larger slot
      * over-delivers: the 118-vs-112 bidirectional regression).  Defer the change
      * until the window drains; it reaches 0 after every fully-ACKed burst, so
-     * mode adaptation still happens at burst boundaries. */
-    if (sess->tx_window_count > 0)
+     * mode adaptation still happens at burst boundaries.
+     *
+     * Exception: hard-loss floor drop (consecutive_retries >= ARQ_HARD_LOSS_THRESHOLD).
+     * On a total-fade channel the window never drains because no ACK ever arrives,
+     * so deferring until burst-boundary means the downgrade never happens.  Allow
+     * the hard-loss path through; the window is rebuilt at the new mode after
+     * MODE_ACK. */
+    if (sess->tx_window_count > 0 &&
+        sess->consecutive_retries < ARQ_HARD_LOSS_THRESHOLD)
         return false;
 
     /* Normally we need at least one valid peer SNR reading before deciding.
@@ -1634,14 +1641,17 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
                     sess->tx_retries_left = ARQ_DATA_RETRY_SLOTS;
 
                     /* Channel couldn't deliver a frame in ARQ_DATA_RETRY_SLOTS
-                     * attempts — force the delivery-feedback safety net to
-                     * threshold so select_best_mode pulls payload_mode one
-                     * step lower.  maybe_upgrade_mode handles the MODE_REQ /
-                     * MODE_ACK negotiation; on success the FSM is now in
-                     * MODE_REQ_TX state and will resume DATA_TX at the lower
-                     * mode after MODE_ACK.  On failure (no peer SNR yet,
-                     * MODE_REQ retries exhaust, already at slowest mode)
-                     * fall through and retransmit at the current mode. */
+                     * attempts — bump the delivery-failure counter so it
+                     * eventually reaches ARQ_HARD_LOSS_THRESHOLD and the
+                     * hard-loss floor drop fires.  Clamp to at least
+                     * ARQ_RETRY_DOWNGRADE_THRESHOLD on the first exhaustion
+                     * so the OLLA-based downgrade via select_best_mode is
+                     * also accelerated.  maybe_upgrade_mode handles the
+                     * MODE_REQ / MODE_ACK negotiation; on success the FSM is
+                     * in MODE_REQ_TX and resumes DATA_TX at the lower mode
+                     * after MODE_ACK.  On failure (MODE_REQ retries exhaust,
+                     * already at slowest mode) fall through and retransmit. */
+                    sess->consecutive_retries++;
                     if (sess->consecutive_retries < ARQ_RETRY_DOWNGRADE_THRESHOLD)
                         sess->consecutive_retries = ARQ_RETRY_DOWNGRADE_THRESHOLD;
                     if (maybe_upgrade_mode(sess))
