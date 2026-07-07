@@ -194,49 +194,6 @@ int listen4connection(int port_type)
     return newsockfd;
 }
 
-int tcp_open(int portno, int port_type)
-{
-    int sockfd;
-    struct sockaddr_in serv_addr;
-
-    sockfd = socket(AF_INET, SOCK_STREAM, 0);
-    if (sockfd < 0){
-        fprintf(stderr, "ERROR opening socket\n");
-        return -1;
-    }
-
-    int opt = 1;  
-    if (setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, (const char *)&opt, sizeof(opt)) < 0)
-    {
-        fprintf(stderr, "setsockopt(SO_REUSEADDR) failed\n");
-        SOCK_CLOSE(sockfd);
-        return -1;
-    }
-      
-    memset((char *) &serv_addr, 0,  sizeof(serv_addr));
-    serv_addr.sin_family = AF_INET;
-    serv_addr.sin_addr.s_addr = INADDR_ANY;
-    serv_addr.sin_port = htons(portno);
-    if (bind(sockfd, (struct sockaddr *) &serv_addr, sizeof(serv_addr)) < 0) 
-    {
-        fprintf(stderr, "ERROR on binding\n");
-        return -1;
-    }
-
-    listen(sockfd,1); // just 1 concurrent connections
-
-    if (port_type == CTL_TCP_PORT)
-    {
-        net_set_status(CTL_TCP_PORT, NET_LISTENING);
-        ctl_sockfd = sockfd;
-    }
-    if (port_type == DATA_TCP_PORT)
-    {
-        net_set_status(DATA_TCP_PORT, NET_LISTENING);
-        data_sockfd = sockfd;
-    }
-    return sockfd;
-}
 
 ssize_t tcp_read(int port_type, uint8_t *buffer, size_t rx_size)
 {
