@@ -61,7 +61,6 @@ int net_wait_while_status(int port_type, int status, int timeout_ms);
 
 int listen4connection(int port_type);
 
-int tcp_open(int portno, int port_type);
 
 ssize_t tcp_read(int port_type, uint8_t *buffer, size_t rx_size);
 

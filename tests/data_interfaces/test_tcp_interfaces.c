@@ -115,7 +115,6 @@ int net_get_status(int pt) { (void)pt; return NET_CONNECTED; }
 int net_wait_for_status(int p, int s, int t) { (void)p; (void)s; (void)t; return 0; }
 int net_wait_while_status(int p, int s, int t) { (void)p; (void)s; (void)t; return 0; }
 int listen4connection(int p) { (void)p; return 0; }
-int tcp_open(int p, int pt) { (void)p; (void)pt; return 0; }
 ssize_t tcp_read(int pt, uint8_t *b, size_t s) { (void)pt; (void)b; (void)s; return 0; }
 int tcp_close(int pt) { (void)pt; return 0; }
 
