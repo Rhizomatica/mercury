@@ -44,7 +44,7 @@ ARQ_STUBS = datalink_arq/arq_test_stubs.c
 # Test executables
 TEST_BINS = test_ring_buffer test_arq_protocol test_arq_timing test_arq_fsm \
             test_tcp_interfaces test_resampler test_arq_olla test_arq_sim \
-            test_arq_conn test_cfg_utils
+            test_arq_conn test_cfg_utils test_arq_tnc
 
 .PHONY: all test clean
 
@@ -112,6 +112,10 @@ test_arq_conn: datalink_arq/test_arq_conn.c $(UNITY_SRC) \
 test_cfg_utils: common/test_cfg_utils.c $(UNITY_SRC) \
                 ../common/cfg_utils.c \
                 ../common/iniparser/iniparser.c ../common/iniparser/dictionary.c
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
+# ARQ→TNC seam test (standalone TU, no threads/bus)
+test_arq_tnc: datalink_arq/test_arq_tnc.c $(UNITY_SRC) ../datalink_arq/arq_tnc.c
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
 clean:
