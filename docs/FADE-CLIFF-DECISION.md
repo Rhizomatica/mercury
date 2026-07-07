@@ -1,4 +1,4 @@
-# S1 fade-cliff fix (`fix-s1-fadecliff`) — merge-decision simulation report
+# Fade-cliff fix — merge-decision simulation report
 
 **Date:** 2026-07-04/05 · **Branch under decision:** `fix-s1-fadecliff` @ `a014b3c`
 (vs trunk `mercuryv2` @ `e7a2d84`) · **Question:** does the branch have real
@@ -7,7 +7,7 @@ advantages over trunk, and does it regress anything?
 ## What the branch changes
 
 Under a fade below the active payload mode's cliff, trunk transfers stall
-instead of downgrading to the DATAC15 floor (S1 — proven by an in-tree
+instead of downgrading to the DATAC15 floor (proven by an in-tree
 executable test that was shipped `TEST_IGNORE`d).  The branch:
 
 1. bounds the asymmetric-link reverse-loss hold (`ARQ_REVERSE_HOLD_MAX` = 3
@@ -44,7 +44,7 @@ branch to benefit).
 
 ## Results
 
-### 1. Deterministic fade-cliff test (the S1 proof)
+### 1. Deterministic fade-cliff test (the proof)
 
 `test_sim_fade_cliff_downgrades` (previously `TEST_IGNORE`d as documentation
 of the bug): connect clean → fade below every non-floor mode's cliff → the
@@ -79,7 +79,7 @@ v1.9.9 moves nothing.
 pathsim `--midlat-dist-nvis` (7 ms delay spread, 1 Hz Doppler) measured with
 freedv raw tools at SNR 10 is **ISI-limited, not SNR-limited** (delivery is
 flat from SNR 16 down to 4): DATAC15 ≈ 80 % delivery, DATAC3 ≈ 33 %,
-DATAC1 ≈ 11 %.  This is the exact S1 trap: SNR reads healthy while fast modes
+DATAC1 ≈ 11 %.  This is the exact fade-cliff trap: SNR reads healthy while fast modes
 die.  Those measured per-mode PERs drive the deterministic sim (8 KB, 30
 virtual minutes, frames stamped 10 dB):
 
@@ -101,7 +101,7 @@ more data delivered on the channel these stations actually operate on.**
 
 ### 5. OTA (Pedro, estacao6 ↔ estacao10, 2026-07-04, branch build)
 
-- S1 mechanics observed working on real sky: bounded holds engaging
+- Fix mechanics observed working on real sky: bounded holds engaging
   (`hold 1/3`, re-armed by clean deliveries), OLLA climbing +0→+3 dB, ladder
   ascending DATAC15→DATAC4→DATAC3→DATAC1 at burst boundaries on a −5 dB
   forward path, restage firing correctly on a mid-window downgrade.
@@ -133,8 +133,8 @@ more per delivered frame:
 | DATAC1 | 502 B | 11 % | 6.0 B/s |
 | DATAC17 | 1172 B | 7 % | 7.0 B/s |
 
-So on NVIS the *correct* strategy is to favour the fast modes — which S1's
-existing re-climb behaviour already does.  The ceiling was reverted; **S1 as it
+So on NVIS the *correct* strategy is to favour the fast modes — which the fix's
+existing re-climb behaviour already does.  The ceiling was reverted; **the fix as it
 stands is the NVIS win, not something needing a mode-selection fix.**  (A
 goodput-aware mode *lock* that holds the best-measured-goodput mode instead of
 oscillating is real future work, but it is an optimisation on top of an already
@@ -150,14 +150,14 @@ re-run to 16 seeds):**
 | clean, awgn 0.10, awgn 0.25 | 100 % | identical |
 | cliff +6, cliff +2 | 100 % | identical |
 | cliff −2 | 99 % | noise |
-| **cliff −5 (below cliff)** | **1728 %** | S1 target — trunk starves |
+| **cliff −5 (below cliff)** | **1728 %** | fade-cliff target — trunk starves |
 | **nvis** (16 seeds) | **558 %**, branch wins 15/16 | primary channel |
 | awgn 0.40 (16 seeds) | 96 %, 13/16 ties | see below |
 
 - **Integrity: 0 corruptions across all 108 + 32 runs.**
 - The lone soft spot is **awgn 0.40** (96 % aggregate): a 40 %-flat-erasure
   channel with *healthy* SNR — artificial (real high-erasure comes with low
-  SNR), and flat across modes so, unlike NVIS, downgrading cannot help.  S1's
+  SNR), and flat across modes so, unlike NVIS, downgrading cannot help.  The fix's
   slightly more eager downgrade response costs ~4 % there.  It is the flip side
   of the exact mechanism that yields 5–17× on the realistic hard channels, has
   13/16 ties and no integrity loss, and is not considered a blocker.

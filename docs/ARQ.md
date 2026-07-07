@@ -402,7 +402,7 @@ Mode selection follows a `speed_level` ladder:
 **Downgrade** triggers:
 - A retry event (frame not ACKed in time): step one level down (floor: DATAC15).
 - Peer SNR feedback below threshold.
-- Sustained delivery failure — the S1 fade-cliff net below.
+- Sustained delivery failure — the fade-cliff net below.
 
 Mode change procedure: ISS sends `MODE_REQ`; IRS responds with `MODE_ACK` or
 ignores (ISS falls back after `ARQ_MODE_REQ_RETRIES = 2`).
@@ -410,7 +410,7 @@ ignores (ISS falls back after `ARQ_MODE_REQ_RETRIES = 2`).
 During the **startup window** (`ARQ_STARTUP_MAX_S = 10 s`), only DATAC16 is used
 for bidirectional control framing to ensure the link is stable before upgrading.
 
-### Delivery-driven downgrade (S1 fade-cliff)
+### Delivery-driven downgrade (fade-cliff)
 
 The primary rate controller is OLLA, a per-link SNR offset. But SNR alone
 mispredicts on a fading or ISI-limited channel (e.g. NVIS), where a mode can
@@ -441,7 +441,7 @@ Rationale note: capping selection *toward* robust modes on NVIS was tried and
 measured to reduce throughput (goodput rises with mode speed there despite
 high erasure — the large frames win). The mechanisms above therefore restore
 delivery without holding the link at the floor. See
-`docs/S1-FADECLIFF-DECISION.md` for the full simulation + OTA evidence.
+`docs/FADE-CLIFF-DECISION.md` for the full simulation + OTA evidence.
 
 ---
 
@@ -580,8 +580,16 @@ All in `arq_protocol.h`:
 #define ARQ_PEER_PAYLOAD_HOLD_S       15    /* hold payload mode after activity */
 #define ARQ_SNR_HYST_DB               1.0f
 #define ARQ_HARD_LOSS_THRESHOLD       8     /* consecutive retries => drop to floor */
-#define ARQ_REVERSE_HOLD_MAX          3     /* bounded reverse-loss holds (S1)   */
+#define ARQ_REVERSE_HOLD_MAX          3     /* bounded reverse-loss holds        */
 ```
+
+Several of these are runtime-overridable from the `[arq]` section of the INI
+file (`mercury.ini`) rather than fixed at compile time — they are `_Atomic`
+globals seeded from the `_DEFAULT` value above and set once at startup:
+`channel_guard_ms`, `iss_post_ack_guard_ms`, `data_retry_slots`,
+`mode_hold_after_downgrade_s`, `ladder_up_successes`, `retry_downgrade_threshold`,
+`keepalive_interval_s`, `keepalive_miss_limit` (each clamped to a safe range).
+See `mercury.ini.example` for keys, defaults, and ranges.
 
 ---
 
@@ -600,6 +608,8 @@ All in `arq_protocol.h`:
 | `datalink_arq/arq_modem.c`   | Action queue (FSM→modem TX), PTT event injection    |
 | `datalink_arq/arq_modem.h`   | Action queue and PTT API                            |
 | `datalink_arq/arq_channels.c`| Channel bus between TCP layer and event loop        |
+| `datalink_arq/arq_tnc.c`     | ARQ→TNC notification seam (registered callback table)|
+| `common/cfg_utils.c`         | INI config load/write, incl. `[arq]` runtime tunables|
 | `common/hermes_log.c`        | Async ring-buffer logger with TIMING level and JSONL|
 | `common/hermes_log.h`        | Logger API and `HLOGD/T/I/W/E` macros               |
 | `modem/framer.c`             | 3-bit packet_type + 5-bit extension-field encoding  |
