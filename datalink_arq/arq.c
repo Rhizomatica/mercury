@@ -159,9 +159,13 @@ static void cb_send_tx_frame(int packet_type, int mode,
 {
     /* Frames of one PTT burst arrive as consecutive calls (FSM event loop
      * is single-threaded); the modem action is enqueued once, when the
-     * last frame (burst_remaining == 0) lands in the ring. */
-    static int pending_burst_frames = 0;
-
+     * last frame (burst_remaining == 0) lands in the ring.
+     *
+     * The counter lives in g_sess.pending_burst_frames rather than a
+     * function-static so that it is covered by g_sess_lock — both this
+     * call path (event loop, already under g_sess_lock) and the cmd-bridge
+     * SEND_CQ path (which now holds g_sess_lock across this call) share the
+     * same lock, preventing a burst-drop race. */
     if (!frame || frame_size == 0 || frame_size > INT_BUFFER_SIZE)
         return;
 
@@ -176,13 +180,13 @@ static void cb_send_tx_frame(int packet_type, int mode,
     }
     else
     {
-        pending_burst_frames++;
+        g_sess.pending_burst_frames++;
     }
 
     if (burst_remaining > 0)
         return;  /* more frames of this burst follow */
 
-    if (pending_burst_frames == 0)
+    if (g_sess.pending_burst_frames == 0)
         return;  /* every write failed — nothing to transmit */
 
     arq_action_t action = {
@@ -190,9 +194,9 @@ static void cb_send_tx_frame(int packet_type, int mode,
                        ? ARQ_ACTION_TX_PAYLOAD : ARQ_ACTION_TX_CONTROL,
         .mode        = mode,
         .frame_size  = frame_size,
-        .frame_count = pending_burst_frames,
+        .frame_count = g_sess.pending_burst_frames,
     };
-    pending_burst_frames = 0;
+    g_sess.pending_burst_frames = 0;
     arq_modem_enqueue(&action);
 }
 
@@ -432,8 +436,10 @@ static void handle_cmd(const arq_cmd_msg_t *msg)
 
         pthread_mutex_lock(&g_sess_lock);
         int cq_mode = g_sess.control_mode;
-        pthread_mutex_unlock(&g_sess_lock);
+        /* Hold g_sess_lock across the call so that g_sess.pending_burst_frames
+         * is protected — the event loop also holds this lock during dispatch. */
         cb_send_tx_frame(PACKET_TYPE_ARQ_CQ, cq_mode, (size_t)n, frame, 0);
+        pthread_mutex_unlock(&g_sess_lock);
         HLOGI(LOG_COMP, "Queued CQ frame from %s (%d Hz)", source_call, bw_hz);
         return;
     }

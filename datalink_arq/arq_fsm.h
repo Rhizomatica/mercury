@@ -204,6 +204,11 @@ typedef struct
 
     /* --- Data bookkeeping --- */
     int      tx_backlog_bytes;         /* bytes pending in TX buffer           */
+    int      pending_burst_frames;     /* frames accumulated for current PTT burst;
+                                        * written by cb_send_tx_frame under g_sess_lock
+                                        * (replaces the former function-static so that
+                                        * the cmd-bridge SEND_CQ path and the FSM event
+                                        * loop do not race on a shared static) */
 
     /* --- Connection lifecycle --- */
     bool     listen_enabled;           /* app listen intent (LISTEN ON/OFF):
