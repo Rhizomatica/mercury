@@ -196,7 +196,7 @@ func runOnUI(fn func()) {
 func main() {
 	myApp := app.New()
 	myWindow := myApp.NewWindow("Mercury Modem Controller")
-	myWindow.Resize(fyne.NewSize(1180, 860))
+	myWindow.Resize(fyne.NewSize(1180, 680))
 
 	state := &appState{wsScheme: "ws", wsHost: "127.0.0.1", wsPort: "10000"}
 	bindings := &uiBindings{}
@@ -323,7 +323,7 @@ func main() {
 	})
 	bindings.waterfallCanvas = waterfallCanvas
 
-	waterfallHeight := 300
+	waterfallHeight := 180
 	if myWindow.Canvas().Size().Width >= 1920 && myWindow.Canvas().Size().Height >= 1080 {
 		waterfallHeight = int(myWindow.Canvas().Size().Height / 4)
 	}
@@ -829,13 +829,13 @@ func main() {
 		),
 	)
 	waterfallBottom := container.NewGridWithColumns(7,
-		canvas.NewText("0", color.NRGBA{R: 0xCC, G: 0xCC, B: 0xCC, A: 0xFF}),
-		canvas.NewText("500", color.NRGBA{R: 0xCC, G: 0xCC, B: 0xCC, A: 0xFF}),
-		canvas.NewText("1000", color.NRGBA{R: 0xCC, G: 0xCC, B: 0xCC, A: 0xFF}),
-		canvas.NewText("1500", color.NRGBA{R: 0xCC, G: 0xCC, B: 0xCC, A: 0xFF}),
-		canvas.NewText("2000", color.NRGBA{R: 0xCC, G: 0xCC, B: 0xCC, A: 0xFF}),
-		canvas.NewText("2500", color.NRGBA{R: 0xCC, G: 0xCC, B: 0xCC, A: 0xFF}),
-		canvas.NewText("3000", color.NRGBA{R: 0xCC, G: 0xCC, B: 0xCC, A: 0xFF}),
+		func() fyne.CanvasObject { t := canvas.NewText("0", color.NRGBA{R: 0xCC, G: 0xCC, B: 0xCC, A: 0xFF}); t.TextSize = 8; return t }(),
+		func() fyne.CanvasObject { t := canvas.NewText("500", color.NRGBA{R: 0xCC, G: 0xCC, B: 0xCC, A: 0xFF}); t.TextSize = 8; return t }(),
+		func() fyne.CanvasObject { t := canvas.NewText("1000", color.NRGBA{R: 0xCC, G: 0xCC, B: 0xCC, A: 0xFF}); t.TextSize = 8; return t }(),
+		func() fyne.CanvasObject { t := canvas.NewText("1500", color.NRGBA{R: 0xCC, G: 0xCC, B: 0xCC, A: 0xFF}); t.TextSize = 8; return t }(),
+		func() fyne.CanvasObject { t := canvas.NewText("2000", color.NRGBA{R: 0xCC, G: 0xCC, B: 0xCC, A: 0xFF}); t.TextSize = 8; return t }(),
+		func() fyne.CanvasObject { t := canvas.NewText("2500", color.NRGBA{R: 0xCC, G: 0xCC, B: 0xCC, A: 0xFF}); t.TextSize = 8; return t }(),
+		func() fyne.CanvasObject { t := canvas.NewText("3000", color.NRGBA{R: 0xCC, G: 0xCC, B: 0xCC, A: 0xFF}); t.TextSize = 8; return t }(),
 	)
 	waterfallContent := container.NewBorder(
 		waterfallTop,
@@ -851,7 +851,7 @@ func main() {
 		nil,
 		waterfallContent,
 	))
-	const fixedWaterfallHeight = 430
+	const fixedWaterfallHeight = 310
 	spectrumCard.Resize(fyne.NewSize(0, fixedWaterfallHeight))
 
 	topPanel := container.NewVBox(
