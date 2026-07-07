@@ -87,6 +87,17 @@ static uint8_t         g_app_tx_storage[APP_TX_BUF_SIZE];
 static cbuf_handle_t   g_app_tx_buf;
 static pthread_mutex_t g_app_tx_mtx = PTHREAD_MUTEX_INITIALIZER;
 
+/* Guards the process-global arq_conn.  arq_conn is read and written from five
+ * threads (event loop, cmd bridge, modem RX frame handlers, modem TX PTT path,
+ * and the GUI status thread), so every field access is a data race without
+ * this lock.  It is a LEAF lock: it is never held while acquiring g_sess_lock
+ * or g_app_tx_mtx.  That is deliberate -- arq_get_runtime_snapshot() takes
+ * g_app_tx_mtx (via cb_tx_backlog) before g_sess_lock, while cb_notify_
+ * disconnected() writes arq_conn and then takes g_app_tx_mtx; guarding
+ * arq_conn with either of those locks would invert an ordering and deadlock.
+ * A separate leaf lock has no ordering relationship to maintain. */
+static pthread_mutex_t g_conn_lock = PTHREAD_MUTEX_INITIALIZER;
+
 /* Internal event queue */
 #define ARQ_EV_QUEUE_CAP 64
 static arq_event_t     g_evq[ARQ_EV_QUEUE_CAP];
@@ -198,18 +209,20 @@ static void cb_send_tx_frame(int packet_type, int mode,
 
 static void cb_notify_connected(const char *remote_call)
 {
+    pthread_mutex_lock(&g_conn_lock);
     if (arq_conn.src_addr[0] == '\0')
     {
         snprintf(arq_conn.src_addr, CALLSIGN_MAX_SIZE, "%s", remote_call);
         snprintf(arq_conn.dst_addr, CALLSIGN_MAX_SIZE, "%s", arq_conn.my_call_sign);
     }
     arq_conn.TRX = RX;
+    pthread_mutex_unlock(&g_conn_lock);
     /* Flush any stale RX bytes from the previous session before notifying
      * UUCP.  Moved here from cb_notify_disconnected so that the last bytes
      * of the previous session have time to drain to the TCP socket before
      * the buffer is cleared (clearing on disconnect races with UUCP reads). */
     clear_buffer(data_rx_buffer_arq);
-    tnc_send_connected();
+    tnc_send_connected();   /* takes g_conn_lock internally via arq_conn_get_calls; must be outside our lock */
     HLOGI(LOG_COMP, "Connected to %s", remote_call);
 }
 
@@ -221,7 +234,9 @@ static void cb_notify_pending(const char *remote_call)
 
 static void cb_notify_cancelpending(void)
 {
+    pthread_mutex_lock(&g_conn_lock);
     arq_conn.session_bw = 0;
+    pthread_mutex_unlock(&g_conn_lock);
     tnc_send_cancelpending();
     HLOGI(LOG_COMP, "Incoming connection cancelled");
 }
@@ -229,11 +244,14 @@ static void cb_notify_cancelpending(void)
 static void cb_notify_disconnected(bool to_no_client)
 {
     (void)to_no_client;
+    pthread_mutex_lock(&g_conn_lock);
     bool was_connected = arq_conn.dst_addr[0] != '\0';
     memset(arq_conn.src_addr, 0, sizeof(arq_conn.src_addr));
     memset(arq_conn.dst_addr, 0, sizeof(arq_conn.dst_addr));
     arq_conn.session_bw = 0;
     arq_conn.TRX = RX;
+    bool relisten = (arq_conn.listen && arq_conn.my_call_sign[0] != '\0');
+    pthread_mutex_unlock(&g_conn_lock);   /* release BEFORE g_app_tx_mtx: leaf discipline */
     /* Flush stale TX bytes from the previous session.  RX bytes are flushed
      * at connection start (cb_notify_connected) instead of here, so that the
      * last delivered bytes have time to drain to the TCP socket before the
@@ -249,7 +267,7 @@ static void cb_notify_disconnected(bool to_no_client)
      * DISCONNECTED, but fsm_disconnected has no APP_DISCONNECT handler, so
      * notify_disconnected is never called from that path. */
     (void)was_connected;
-    if (arq_conn.listen && arq_conn.my_call_sign[0] != '\0')
+    if (relisten)
     {
         arq_event_t ev = { .id = ARQ_EV_APP_LISTEN };
         evq_push(&ev);
@@ -301,10 +319,13 @@ static int normalize_bandwidth_hz(int bw_hz)
 
 static int active_session_bandwidth_hz(void)
 {
-    if (arq_conn.session_bw != 0)
-        return normalize_bandwidth_hz(arq_conn.session_bw);
-
-    return normalize_bandwidth_hz(arq_conn.bw);
+    pthread_mutex_lock(&g_conn_lock);
+    int session_bw = arq_conn.session_bw;
+    int bw         = arq_conn.bw;
+    pthread_mutex_unlock(&g_conn_lock);
+    if (session_bw != 0)
+        return normalize_bandwidth_hz(session_bw);
+    return normalize_bandwidth_hz(bw);
 }
 
 int arq_effective_bandwidth_hz(void)
@@ -318,6 +339,31 @@ int arq_effective_bandwidth_hz(void)
 int arq_reported_bandwidth_hz(void)
 {
     return active_session_bandwidth_hz();
+}
+
+void arq_set_trx(int trx)
+{
+    pthread_mutex_lock(&g_conn_lock);
+    arq_conn.TRX = trx;
+    pthread_mutex_unlock(&g_conn_lock);
+}
+
+int arq_get_trx(void)
+{
+    pthread_mutex_lock(&g_conn_lock);
+    int t = arq_conn.TRX;
+    pthread_mutex_unlock(&g_conn_lock);
+    return t;
+}
+
+void arq_conn_get_calls(char *my_call, char *src_addr, char *dst_addr, size_t bufsz)
+{
+    if (bufsz == 0) return;
+    pthread_mutex_lock(&g_conn_lock);
+    if (my_call)  { snprintf(my_call,  bufsz, "%s", arq_conn.my_call_sign); }
+    if (src_addr) { snprintf(src_addr, bufsz, "%s", arq_conn.src_addr); }
+    if (dst_addr) { snprintf(dst_addr, bufsz, "%s", arq_conn.dst_addr); }
+    pthread_mutex_unlock(&g_conn_lock);
 }
 
 bool arq_bandwidth_allows_mode(int mode)
@@ -343,42 +389,54 @@ static void handle_cmd(const arq_cmd_msg_t *msg)
     switch (msg->type)
     {
     case ARQ_CMD_SET_CALLSIGN:
+        pthread_mutex_lock(&g_conn_lock);
         snprintf(arq_conn.my_call_sign, CALLSIGN_MAX_SIZE, "%s", msg->arg0);
         /* Setting a new primary callsign clears all secondary callsigns */
         memset(arq_conn.secondary_calls, 0, sizeof(arq_conn.secondary_calls));
         arq_conn.secondary_call_count = 0;
-        HLOGI(LOG_COMP, "My callsign: %s", arq_conn.my_call_sign);
+        pthread_mutex_unlock(&g_conn_lock);
+        HLOGI(LOG_COMP, "My callsign: %s", msg->arg0);   /* log msg->arg0, not the shared field */
         return;
 
     case ARQ_CMD_ADD_SECONDARY_CALLSIGN:
+    {
+        int new_count = -1;
+        pthread_mutex_lock(&g_conn_lock);
         if (arq_conn.secondary_call_count < CALLSIGN_MAX_SECONDARY)
         {
             snprintf(arq_conn.secondary_calls[arq_conn.secondary_call_count],
                      CALLSIGN_MAX_SIZE, "%s", msg->arg0);
             arq_conn.secondary_call_count++;
-            HLOGI(LOG_COMP, "Secondary callsign added: %s (total=%d)",
-                  msg->arg0, arq_conn.secondary_call_count);
+            new_count = arq_conn.secondary_call_count;
         }
+        pthread_mutex_unlock(&g_conn_lock);
+        if (new_count >= 0)
+            HLOGI(LOG_COMP, "Secondary callsign added: %s (total=%d)", msg->arg0, new_count);
         else
-        {
             HLOGW(LOG_COMP, "Secondary callsign list full (max=%d), ignoring %s",
                   CALLSIGN_MAX_SECONDARY, msg->arg0);
-        }
         return;
+    }
 
     case ARQ_CMD_CLEAR_SECONDARY_CALLSIGNS:
+        pthread_mutex_lock(&g_conn_lock);
         memset(arq_conn.secondary_calls, 0, sizeof(arq_conn.secondary_calls));
         arq_conn.secondary_call_count = 0;
+        pthread_mutex_unlock(&g_conn_lock);
         HLOGI(LOG_COMP, "Secondary callsigns cleared");
         return;
 
     case ARQ_CMD_SET_BANDWIDTH:
+        pthread_mutex_lock(&g_conn_lock);
         arq_conn.bw = normalize_bandwidth_hz(msg->value);
+        pthread_mutex_unlock(&g_conn_lock);
         return;
 
     case ARQ_CMD_SET_RETRY:
+        pthread_mutex_lock(&g_conn_lock);
         arq_conn.retry_slots = msg->value;
-        arq_set_retry_slots(msg->value);
+        pthread_mutex_unlock(&g_conn_lock);
+        arq_set_retry_slots(msg->value);   /* outside lock: takes g_sess_lock internally */
         return;
 
     case ARQ_CMD_SET_CALLINT:
@@ -400,19 +458,25 @@ static void handle_cmd(const arq_cmd_msg_t *msg)
         return;
 
     case ARQ_CMD_LISTEN_ON:
+        pthread_mutex_lock(&g_conn_lock);
         arq_conn.listen = true;
+        pthread_mutex_unlock(&g_conn_lock);
         ev.id = ARQ_EV_APP_LISTEN;
         break;
 
     case ARQ_CMD_LISTEN_OFF:
+        pthread_mutex_lock(&g_conn_lock);
         arq_conn.listen = false;
+        pthread_mutex_unlock(&g_conn_lock);
         ev.id = ARQ_EV_APP_STOP_LISTEN;
         break;
 
     case ARQ_CMD_CONNECT:
+        pthread_mutex_lock(&g_conn_lock);
         snprintf(arq_conn.src_addr, CALLSIGN_MAX_SIZE, "%s", msg->arg0);
         snprintf(arq_conn.dst_addr, CALLSIGN_MAX_SIZE, "%s", msg->arg1);
         arq_conn.session_bw = 0;
+        pthread_mutex_unlock(&g_conn_lock);
         snprintf(ev.remote_call, CALLSIGN_MAX_SIZE, "%s", msg->arg1);
         ev.id = ARQ_EV_APP_CONNECT;
         break;
@@ -420,7 +484,11 @@ static void handle_cmd(const arq_cmd_msg_t *msg)
     case ARQ_CMD_SEND_CQ:
     {
         uint8_t frame[INT_BUFFER_SIZE];
-        const char *source_call = msg->arg0[0] ? msg->arg0 : arq_conn.my_call_sign;
+        char cq_my_call[CALLSIGN_MAX_SIZE];
+        pthread_mutex_lock(&g_conn_lock);
+        snprintf(cq_my_call, sizeof(cq_my_call), "%s", arq_conn.my_call_sign);
+        pthread_mutex_unlock(&g_conn_lock);
+        const char *source_call = msg->arg0[0] ? msg->arg0 : cq_my_call;
         int bw_hz = normalize_bandwidth_hz(msg->value);
         int n = arq_protocol_build_cq(frame, sizeof(frame), source_call, bw_hz);
         if (n <= 0)
@@ -586,14 +654,24 @@ bool arq_handle_incoming_connect_frame(uint8_t *data, size_t frame_size)
         return false;
     }
 
+    /* Copy callsigns out under g_conn_lock, compare CRCs unlocked */
+    char my_call[CALLSIGN_MAX_SIZE];
+    char sec[CALLSIGN_MAX_SECONDARY][CALLSIGN_MAX_SIZE];
+    int  sec_count;
+    pthread_mutex_lock(&g_conn_lock);
+    snprintf(my_call, sizeof(my_call), "%s", arq_conn.my_call_sign);
+    sec_count = arq_conn.secondary_call_count;
+    memcpy(sec, arq_conn.secondary_calls, sizeof(sec));
+    pthread_mutex_unlock(&g_conn_lock);
+
     /* Validate that DST CRC16 matches our own callsign or a secondary */
-    if (arq_conn.my_call_sign[0] != 0)
+    if (my_call[0] != 0)
     {
         uint16_t frame_crc = (uint16_t)data[ARQ_CONNECT_PAYLOAD_IDX]
                            | ((uint16_t)data[ARQ_CONNECT_PAYLOAD_IDX + 1] << 8);
-        bool match = (frame_crc == arq_protocol_callsign_crc16(arq_conn.my_call_sign));
-        for (int i = 0; !match && i < arq_conn.secondary_call_count; i++)
-            match = (frame_crc == arq_protocol_callsign_crc16(arq_conn.secondary_calls[i]));
+        bool match = (frame_crc == arq_protocol_callsign_crc16(my_call));
+        for (int i = 0; !match && i < sec_count; i++)
+            match = (frame_crc == arq_protocol_callsign_crc16(sec[i]));
         if (!match)
         {
             HLOGD(LOG_COMP, "CALL/ACCEPT not for us (DST CRC16 mismatch)");
@@ -606,11 +684,13 @@ bool arq_handle_incoming_connect_frame(uint8_t *data, size_t frame_size)
     ev.session_id = session_id;
     /* src = transmitting side's callsign */
     snprintf(ev.remote_call, CALLSIGN_MAX_SIZE, "%s", src);
+    pthread_mutex_lock(&g_conn_lock);
+    int local_bw = normalize_bandwidth_hz(arq_conn.bw);
     if (is_accept)
         arq_conn.session_bw = normalize_bandwidth_hz(bw_hz);
     else
-        arq_conn.session_bw = normalize_bandwidth_hz(
-            bw_hz < normalize_bandwidth_hz(arq_conn.bw) ? bw_hz : normalize_bandwidth_hz(arq_conn.bw));
+        arq_conn.session_bw = normalize_bandwidth_hz(bw_hz < local_bw ? bw_hz : local_bw);
+    pthread_mutex_unlock(&g_conn_lock);
     evq_push(&ev);
     return true;
 }
@@ -759,6 +839,7 @@ int arq_init(size_t frame_size, int mode)
         return -1;
     }
 
+    /* single-threaded: before worker threads start -- no lock needed */
     memset(&arq_conn, 0, sizeof(arq_conn));
     arq_conn.frame_size      = frame_size;
     arq_conn.mode            = mode;
@@ -909,8 +990,10 @@ void arq_set_active_modem_mode(int mode, size_t frame_size)
     if (mode != g_sess.control_mode)
         g_sess.payload_mode = mode;
     pthread_mutex_unlock(&g_sess_lock);
+    pthread_mutex_lock(&g_conn_lock);
     arq_conn.mode       = mode;
     arq_conn.frame_size = frame_size;
+    pthread_mutex_unlock(&g_conn_lock);
 }
 
 void arq_update_link_metrics(int sync, float snr, int rx_status, bool frame_decoded)
@@ -943,10 +1026,11 @@ bool arq_get_runtime_snapshot(arq_runtime_snapshot_t *snapshot)
 {
     if (!snapshot || !g_initialized) return false;
     int backlog = cb_tx_backlog();   /* takes g_app_tx_mtx; compute before g_sess_lock */
+    int trx     = arq_get_trx();     /* takes g_conn_lock (leaf); before g_sess_lock */
     pthread_mutex_lock(&g_sess_lock);
     snapshot->initialized      = true;
     snapshot->connected        = (g_sess.conn_state == ARQ_CONN_CONNECTED);
-    snapshot->trx              = arq_conn.TRX;
+    snapshot->trx              = trx;
     snapshot->tx_backlog_bytes = backlog + g_sess.tx_inflight_bytes;
     snapshot->speed_level      = g_sess.speed_level;
     snapshot->payload_mode      = g_sess.payload_mode;

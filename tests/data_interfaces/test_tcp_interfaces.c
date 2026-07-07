@@ -87,6 +87,17 @@ int arq_reported_bandwidth_hz(void)
 
 bool arq_bandwidth_allows_mode(int mode) { (void)mode; return true; }
 
+void arq_set_trx(int trx) { arq_conn.TRX = trx; }
+int  arq_get_trx(void)    { return arq_conn.TRX; }
+
+void arq_conn_get_calls(char *my_call, char *src_addr, char *dst_addr, size_t bufsz)
+{
+    if (bufsz == 0) return;
+    if (my_call)  snprintf(my_call,  bufsz, "%s", arq_conn.my_call_sign);
+    if (src_addr) snprintf(src_addr, bufsz, "%s", arq_conn.src_addr);
+    if (dst_addr) snprintf(dst_addr, bufsz, "%s", arq_conn.dst_addr);
+}
+
 /* ---- net stubs ---- */
 
 int cli_ctl_sockfd = -1;
