@@ -558,7 +558,7 @@ the mode timing table in `arq_protocol.c`.
 | Link stuck at DATAC15, no mode upgrade  | SNR not high enough, or backlog too small | Check `ARQ_BACKLOG_MIN_DATAC3`         |
 | UUCP handshake fails (timeout)          | First few data frames lost in startup     | Increase `ARQ_STARTUP_MAX_S` or reduce startup guard behaviour |
 | Long gaps between turns                 | `ARQ_PEER_PAYLOAD_HOLD_S` too large       | Reduce to 8–10 s                       |
-| Keepalive disconnects on idle link      | Propagation gap > keepalive window        | Increase `ARQ_KEEPALIVE_MISS_LIMIT`    |
+| Keepalive disconnects on idle link      | Propagation gap > keepalive window        | Raise `keepalive_miss_limit` in the `[arq]` INI section (no recompile) |
 
 ### Timing constants quick reference
 
@@ -609,6 +609,7 @@ See `mercury.ini.example` for keys, defaults, and ranges.
 | `datalink_arq/arq_modem.h`   | Action queue and PTT API                            |
 | `datalink_arq/arq_channels.c`| Channel bus between TCP layer and event loop        |
 | `datalink_arq/arq_tnc.c`     | ARQ→TNC notification seam (registered callback table)|
+| `datalink_arq/arq_tnc.h`     | `arq_tnc_callbacks_t` and seam invoker API          |
 | `common/cfg_utils.c`         | INI config load/write, incl. `[arq]` runtime tunables|
 | `common/hermes_log.c`        | Async ring-buffer logger with TIMING level and JSONL|
 | `common/hermes_log.h`        | Logger API and `HLOGD/T/I/W/E` macros               |
