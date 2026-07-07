@@ -8,6 +8,7 @@
 
 #include "arq.h"
 #include "arq_fsm.h"
+#include "arq_tnc.h"
 #include "arq_protocol.h"
 #include "arq_timing.h"
 #include "arq_modem.h"
@@ -47,13 +48,6 @@ arq_info   arq_conn;
 extern cbuf_handle_t data_tx_buffer_arq;
 extern cbuf_handle_t data_tx_buffer_arq_control;
 extern cbuf_handle_t data_rx_buffer_arq;
-
-extern void tnc_send_pending(void);
-extern void tnc_send_cancelpending(void);
-extern void tnc_send_connected(void);
-extern void tnc_send_cqframe(const char *source_call, int bw_hz);
-extern void tnc_send_disconnected(void);
-extern void tnc_send_buffer(uint32_t bytes);
 
 extern void init_model(void);
 
@@ -226,13 +220,13 @@ static void cb_notify_connected(const char *remote_call)
      * of the previous session have time to drain to the TCP socket before
      * the buffer is cleared (clearing on disconnect races with UUCP reads). */
     clear_buffer(data_rx_buffer_arq);
-    tnc_send_connected();   /* takes g_conn_lock internally via arq_conn_get_calls; must be outside our lock */
+    arq_tnc_send_connected();   /* dispatches to tnc_send_connected, which takes g_conn_lock via arq_conn_get_calls; must be outside our lock */
     HLOGI(LOG_COMP, "Connected to %s", remote_call);
 }
 
 static void cb_notify_pending(const char *remote_call)
 {
-    tnc_send_pending();
+    arq_tnc_send_pending();
     HLOGI(LOG_COMP, "Incoming connection from %s (pending)", remote_call);
 }
 
@@ -241,7 +235,7 @@ static void cb_notify_cancelpending(void)
     pthread_mutex_lock(&g_conn_lock);
     arq_conn.session_bw = 0;
     pthread_mutex_unlock(&g_conn_lock);
-    tnc_send_cancelpending();
+    arq_tnc_send_cancelpending();
     HLOGI(LOG_COMP, "Incoming connection cancelled");
 }
 
@@ -263,7 +257,7 @@ static void cb_notify_disconnected(bool to_no_client)
     pthread_mutex_lock(&g_app_tx_mtx);
     clear_buffer(g_app_tx_buf);
     pthread_mutex_unlock(&g_app_tx_mtx);
-    tnc_send_disconnected();
+    arq_tnc_send_disconnected();
     HLOGI(LOG_COMP, "Disconnected");
     /* Return to LISTENING after any disconnection (failed call, cancelled call,
      * or ended session) as long as listen mode is active.  The was_connected
@@ -308,7 +302,7 @@ static int cb_tx_read(uint8_t *buf, size_t len)
 
 static void cb_send_buffer_status(int backlog_bytes)
 {
-    tnc_send_buffer((uint32_t)(backlog_bytes < 0 ? 0 : backlog_bytes));
+    arq_tnc_send_buffer((uint32_t)(backlog_bytes < 0 ? 0 : backlog_bytes));
 }
 
 static int normalize_bandwidth_hz(int bw_hz)
@@ -528,7 +522,7 @@ static void handle_cmd(const arq_cmd_msg_t *msg)
          * here: the FSM drains any bytes still queued, then completes a clean
          * air-side DISCONNECT handshake.  The retry-exhaustion path bounds the
          * drain so a dead channel still tears down quickly (see arq_fsm.c). */
-        tnc_send_disconnected();
+        arq_tnc_send_disconnected();
         ev.id = ARQ_EV_APP_DISCONNECT;
         break;
 
@@ -537,7 +531,7 @@ static void handle_cmd(const arq_cmd_msg_t *msg)
          * pending data and transitions to DISCONNECTED without deferral.
          * No air-side DISCONNECT frame is sent — the peer will time out. */
         clear_connection_data();
-        tnc_send_disconnected();
+        arq_tnc_send_disconnected();
         ev.id = ARQ_EV_APP_DISCONNECT;
         break;
 
@@ -723,20 +717,20 @@ bool arq_handle_incoming_cq_frame(uint8_t *data, size_t frame_size)
         return false;
     }
 
-    tnc_send_cqframe(source_call, normalize_bandwidth_hz(bw_hz));
+    arq_tnc_send_cqframe(source_call, normalize_bandwidth_hz(bw_hz));
     HLOGI(LOG_COMP, "CQ frame decoded from %s (%d Hz)", source_call, bw_hz);
     return true;
 }
 
 void arq_notify_cq_tx_started(void)
 {
-    tnc_send_pending();
+    arq_tnc_send_pending();
     HLOGI(LOG_COMP, "CQ transmission started");
 }
 
 void arq_notify_cq_tx_complete(void)
 {
-    tnc_send_cancelpending();
+    arq_tnc_send_cancelpending();
     HLOGI(LOG_COMP, "CQ transmission completed");
 }
 
