@@ -370,6 +370,14 @@ void arq_conn_get_calls(char *my_call, char *src_addr, char *dst_addr, size_t bu
     pthread_mutex_unlock(&g_conn_lock);
 }
 
+int arq_get_bw(void)
+{
+    pthread_mutex_lock(&g_conn_lock);
+    int bw = arq_conn.bw;
+    pthread_mutex_unlock(&g_conn_lock);
+    return bw;
+}
+
 bool arq_bandwidth_allows_mode(int mode)
 {
     /* Wideband payload modes (~1.7-2.2 kHz) need more than the narrow
