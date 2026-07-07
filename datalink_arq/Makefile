@@ -25,10 +25,13 @@ CFLAGS = $(COMMON_CFLAGS) -I../modem/freedv -I../modem -I../datalink_broadcast -
 
 LDFLAGS=$(FFAUDIO_LINKFLAGS) -lm
 
-all: arq.o arith.o arq_channels.o arq_fsm.o arq_protocol.o arq_timing.o arq_modem.o
+all: arq.o arq_tnc.o arith.o arq_channels.o arq_fsm.o arq_protocol.o arq_timing.o arq_modem.o
 
 arq.o: arq.c
 	$(CC) $(CFLAGS) -c arq.c
+
+arq_tnc.o: arq_tnc.c arq_tnc.h
+	$(CC) $(CFLAGS) -c arq_tnc.c
 
 
 arith.o: arith.c
