@@ -29,6 +29,8 @@ _Atomic int arq_keepalive_miss_limit        = ARQ_KEEPALIVE_MISS_LIMIT_DEFAULT;
 _Atomic int arq_ladder_up_successes         = ARQ_LADDER_UP_SUCCESSES_DEFAULT;
 _Atomic int arq_retry_downgrade_threshold   = ARQ_RETRY_DOWNGRADE_THRESHOLD_DEFAULT;
 _Atomic int arq_mode_hold_after_downgrade_s = ARQ_MODE_HOLD_AFTER_DOWNGRADE_S_DEFAULT;
+_Atomic int arq_peer_payload_hold_s         = ARQ_PEER_PAYLOAD_HOLD_S_DEFAULT;
+_Atomic int arq_startup_max_s               = ARQ_STARTUP_MAX_S_DEFAULT;
 
 /* Include FreeDV mode constants */
 #include "../modem/freedv/freedv_api.h"

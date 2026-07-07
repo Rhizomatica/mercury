@@ -130,6 +130,16 @@ keepalive_interval_s = 20
 ; Missed keepalives before the link is dropped (default 5, range 2..20).
 keepalive_miss_limit = 5
 
+; Seconds to hold the peer's payload mode after activity before reverting
+; (default 15, range 1..120).  Reduce (e.g. 8-10) if you see long gaps between
+; turns; this also scales the IRS inactivity probe (hold x 5).
+peer_payload_hold_s = 15
+
+; Control-mode-only startup window in seconds (default 10, range 2..60).
+; Only DATAC16 is used until the link is proven stable; raise if the initial
+; handshake (e.g. UUCP) times out before the first data frames get through.
+startup_max_s = 10
+
 [tnc]
 ; IAMALIVE interval sent on the TNC control port to tell connected clients
 ; the TNC is still alive. Valid range: 5..600 seconds. (default: 60)

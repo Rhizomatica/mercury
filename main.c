@@ -259,6 +259,8 @@ int main(int argc, char *argv[])
             arq_set_iss_post_ack_guard_ms(mcfg.iss_post_ack_guard_ms);
             arq_set_keepalive_interval_s(mcfg.keepalive_interval_s);
             arq_set_keepalive_miss_limit(mcfg.keepalive_miss_limit);
+            arq_set_peer_payload_hold_s(mcfg.peer_payload_hold_s);
+            arq_set_startup_max_s(mcfg.startup_max_s);
             modem_set_tx_gain(powf(10.0f, mcfg.tx_gain_db / 20.0f));
         }
     }

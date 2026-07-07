@@ -556,8 +556,8 @@ the mode timing table in `arq_protocol.c`.
 |-----------------------------------------|-------------------------------------------|----------------------------------------|
 | Spurious retries despite good SNR       | `ack_timeout_s` too short                 | Increase by 1–2 s in mode table        |
 | Link stuck at DATAC15, no mode upgrade  | SNR not high enough, or backlog too small | Check `ARQ_BACKLOG_MIN_DATAC3`         |
-| UUCP handshake fails (timeout)          | First few data frames lost in startup     | Increase `ARQ_STARTUP_MAX_S` or reduce startup guard behaviour |
-| Long gaps between turns                 | `ARQ_PEER_PAYLOAD_HOLD_S` too large       | Reduce to 8–10 s                       |
+| UUCP handshake fails (timeout)          | First few data frames lost in startup     | Raise `startup_max_s` in the `[arq]` INI section (no recompile) |
+| Long gaps between turns                 | `peer_payload_hold_s` too large           | Lower `peer_payload_hold_s` (e.g. 8–10) in the `[arq]` INI section |
 | Keepalive disconnects on idle link      | Propagation gap > keepalive window        | Raise `keepalive_miss_limit` in the `[arq]` INI section (no recompile) |
 
 ### Timing constants quick reference
@@ -588,8 +588,9 @@ file (`mercury.ini`) rather than fixed at compile time — they are `_Atomic`
 globals seeded from the `_DEFAULT` value above and set once at startup:
 `channel_guard_ms`, `iss_post_ack_guard_ms`, `data_retry_slots`,
 `mode_hold_after_downgrade_s`, `ladder_up_successes`, `retry_downgrade_threshold`,
-`keepalive_interval_s`, `keepalive_miss_limit` (each clamped to a safe range).
-See `mercury.ini.example` for keys, defaults, and ranges.
+`keepalive_interval_s`, `keepalive_miss_limit`, `peer_payload_hold_s`,
+`startup_max_s` (each clamped to a safe range). See `mercury.ini.example`
+for keys, defaults, and ranges.
 
 ---
 

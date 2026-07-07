@@ -264,13 +264,17 @@ extern _Atomic int arq_keepalive_miss_limit;
 #define ARQ_KEEPALIVE_MISS_LIMIT  atomic_load(&arq_keepalive_miss_limit)
 #define ARQ_TURN_REQ_RETRIES          2
 #define ARQ_MODE_REQ_RETRIES          2
-#define ARQ_PEER_PAYLOAD_HOLD_S       15    /* hold peer payload mode after activity */
+#define ARQ_PEER_PAYLOAD_HOLD_S_DEFAULT  15    /* hold peer payload mode after activity */
+extern _Atomic int arq_peer_payload_hold_s;
+#define ARQ_PEER_PAYLOAD_HOLD_S  atomic_load(&arq_peer_payload_hold_s)
 #define ARQ_IRS_INACTIVITY_CYCLES     5     /* TIMER_PEER_BACKLOG cycles without
                                             * RX before IRS keepalive probe    */
 #define ARQ_IRS_INACTIVITY_S          (ARQ_PEER_PAYLOAD_HOLD_S * \
                                        ARQ_IRS_INACTIVITY_CYCLES)
 #define ARQ_MODE_SWITCH_HYST_COUNT    1     /* SNR provides stability gate; 1 = immediate */
-#define ARQ_STARTUP_MAX_S             10    /* control-mode-only startup window    */
+#define ARQ_STARTUP_MAX_S_DEFAULT     10    /* control-mode-only startup window    */
+extern _Atomic int arq_startup_max_s;
+#define ARQ_STARTUP_MAX_S  atomic_load(&arq_startup_max_s)
 #define ARQ_STARTUP_ACKS_REQUIRED     1
 #define ARQ_SNR_HYST_DB               5.0f
 #define ARQ_SNR_MIN_DATAC4_DB        -6.0f  /* entry threshold from the DATAC15

@@ -43,6 +43,8 @@ void test_defaults_match_constants(void)
     TEST_ASSERT_EQUAL_INT(900, c.iss_post_ack_guard_ms);
     TEST_ASSERT_EQUAL_INT(20,  c.keepalive_interval_s);
     TEST_ASSERT_EQUAL_INT(5,   c.keepalive_miss_limit);
+    TEST_ASSERT_EQUAL_INT(15,  c.peer_payload_hold_s);
+    TEST_ASSERT_EQUAL_INT(10,  c.startup_max_s);
 }
 
 /* Set non-default values, write, read back, assert preserved. */
@@ -58,6 +60,8 @@ void test_arq_tunables_roundtrip(void)
     w.iss_post_ack_guard_ms       = 1000;
     w.keepalive_interval_s        = 30;
     w.keepalive_miss_limit        = 8;
+    w.peer_payload_hold_s         = 25;
+    w.startup_max_s               = 20;
     TEST_ASSERT_TRUE(cfg_write(&w, TMP));
 
     mercury_config r;
@@ -71,6 +75,8 @@ void test_arq_tunables_roundtrip(void)
     TEST_ASSERT_EQUAL_INT(1000, r.iss_post_ack_guard_ms);
     TEST_ASSERT_EQUAL_INT(30,   r.keepalive_interval_s);
     TEST_ASSERT_EQUAL_INT(8,    r.keepalive_miss_limit);
+    TEST_ASSERT_EQUAL_INT(25,   r.peer_payload_hold_s);
+    TEST_ASSERT_EQUAL_INT(20,   r.startup_max_s);
 }
 
 /* Out-of-range INI values are rejected (field keeps its pre-read default). */
@@ -78,7 +84,8 @@ void test_arq_tunables_clamp_rejects_garbage(void)
 {
     FILE *f = fopen(TMP, "w");
     TEST_ASSERT_NOT_NULL(f);
-    fputs("[arq]\nchannel_guard_ms = 999999\nkeepalive_miss_limit = 0\n", f);
+    fputs("[arq]\nchannel_guard_ms = 999999\nkeepalive_miss_limit = 0\n"
+          "peer_payload_hold_s = 0\nstartup_max_s = 999\n", f);
     fclose(f);
 
     mercury_config r;
@@ -86,6 +93,8 @@ void test_arq_tunables_clamp_rejects_garbage(void)
     TEST_ASSERT_TRUE(cfg_read(&r, TMP));
     TEST_ASSERT_EQUAL_INT(700, r.channel_guard_ms);   /* out of 200..3000 -> default kept */
     TEST_ASSERT_EQUAL_INT(5,   r.keepalive_miss_limit);/* out of 2..20   -> default kept  */
+    TEST_ASSERT_EQUAL_INT(15,  r.peer_payload_hold_s); /* out of 1..120  -> default kept  */
+    TEST_ASSERT_EQUAL_INT(10,  r.startup_max_s);       /* out of 2..60   -> default kept  */
 }
 
 int main(void)

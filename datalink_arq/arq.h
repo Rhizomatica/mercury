@@ -337,6 +337,8 @@ void arq_set_keepalive_miss_limit(int n);
 void arq_set_ladder_up_successes(int n);
 void arq_set_retry_downgrade_threshold(int n);
 void arq_set_mode_hold_after_downgrade_s(int s);
+void arq_set_peer_payload_hold_s(int s);
+void arq_set_startup_max_s(int s);
 
 /**
  * @brief Trigger outgoing call attempt using current ARQ addresses.

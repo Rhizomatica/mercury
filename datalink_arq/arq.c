@@ -1173,6 +1173,22 @@ void arq_set_mode_hold_after_downgrade_s(int s)
     HLOGI(LOG_COMP, "mode_hold_after_downgrade_s = %d", atomic_load(&arq_mode_hold_after_downgrade_s));
 }
 
+void arq_set_peer_payload_hold_s(int s)
+{
+    if (s < 1)   s = (s <= 0) ? ARQ_PEER_PAYLOAD_HOLD_S_DEFAULT : 1;
+    if (s > 120) s = 120;
+    atomic_store(&arq_peer_payload_hold_s, s);
+    HLOGI(LOG_COMP, "peer_payload_hold_s = %d", atomic_load(&arq_peer_payload_hold_s));
+}
+
+void arq_set_startup_max_s(int s)
+{
+    if (s < 2)  s = (s <= 0) ? ARQ_STARTUP_MAX_S_DEFAULT : 2;
+    if (s > 60) s = 60;
+    atomic_store(&arq_startup_max_s, s);
+    HLOGI(LOG_COMP, "startup_max_s = %d", atomic_load(&arq_startup_max_s));
+}
+
 void reset_arq_info(arq_info *conn)
 {
     if (!conn) return;

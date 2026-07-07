@@ -62,6 +62,8 @@ void cfg_set_defaults(mercury_config *cfg)
     cfg->iss_post_ack_guard_ms       = ARQ_ISS_POST_ACK_GUARD_MS_DEFAULT;
     cfg->keepalive_interval_s        = ARQ_KEEPALIVE_INTERVAL_S_DEFAULT;
     cfg->keepalive_miss_limit        = ARQ_KEEPALIVE_MISS_LIMIT_DEFAULT;
+    cfg->peer_payload_hold_s         = ARQ_PEER_PAYLOAD_HOLD_S_DEFAULT;
+    cfg->startup_max_s               = ARQ_STARTUP_MAX_S_DEFAULT;
 }
 
 /* Map a sound-system name to the AUDIO_SUBSYSTEM_* constant.
@@ -208,6 +210,12 @@ bool cfg_read(mercury_config *cfg, const char *ini_path)
     i = iniparser_getint(ini, CFG_KEY_ARQ_KEEPALIVE_MISS_LIMIT, cfg->keepalive_miss_limit);
     if (i >= 2 && i <= 20)   cfg->keepalive_miss_limit = i;
 
+    i = iniparser_getint(ini, CFG_KEY_ARQ_PEER_PAYLOAD_HOLD_S, cfg->peer_payload_hold_s);
+    if (i >= 1 && i <= 120)  cfg->peer_payload_hold_s = i;
+
+    i = iniparser_getint(ini, CFG_KEY_ARQ_STARTUP_MAX_S, cfg->startup_max_s);
+    if (i >= 2 && i <= 60)   cfg->startup_max_s = i;
+
     double d = iniparser_getdouble(ini, CFG_KEY_TX_GAIN_DB, (double)cfg->tx_gain_db);
     if (!isfinite(d)) d = 0.0;  /* malformed/non-finite INI value -> default */
     if (d < -20.0) d = -20.0;
@@ -306,6 +314,8 @@ bool cfg_write(const mercury_config *cfg, const char *ini_path)
     fprintf(f, "iss_post_ack_guard_ms = %d\n", cfg->iss_post_ack_guard_ms);
     fprintf(f, "keepalive_interval_s = %d\n", cfg->keepalive_interval_s);
     fprintf(f, "keepalive_miss_limit = %d\n", cfg->keepalive_miss_limit);
+    fprintf(f, "peer_payload_hold_s = %d\n", cfg->peer_payload_hold_s);
+    fprintf(f, "startup_max_s = %d\n", cfg->startup_max_s);
 
     fprintf(f, "\n[audio]\n");
     fprintf(f, "tx_gain_db = %.2f\n", cfg->tx_gain_db);
