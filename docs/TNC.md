@@ -340,6 +340,8 @@ These are sent on the **control port** without a preceding command.
 | `PTT OFF\r`                                 | Radio transmitter unkeyed                    |
 | `BUFFER <bytes>\r`                          | TX buffer level update (periodic)            |
 | `SN <value>\r`                              | SNR update                                   |
+| `BUSY ON\r`                                 | Channel became occupied (busy detector)      |
+| `BUSY OFF\r`                                | Channel became clear (busy detector)         |
 | `BITRATE (<level>) <bps> BPS\r`            | Throughput update                            |
 | `IAMALIVE\r`                                | Heartbeat (sent periodically while idle)     |
 
@@ -375,6 +377,19 @@ the session, and `<destcall>` is always the station that was called.
 Sent when Mercury decodes a compact DATAC13 CQ frame on the air.
 `<sourcecall>` is the transmitting station and `<bandwidth>` is the BW token
 advertised inside that CQ frame (`500`, `2300`, or `2750`).
+
+### BUSY ON / BUSY OFF
+
+Emitted by the optional channel-busy (occupancy) detector when it observes the
+HF channel transition between clear and occupied, using VARA's exact wording so
+existing VARA-compatible hosts (VarAC, BPQ32, Winlink) act on them unchanged.
+Edge-triggered: `BUSY ON\r` on clear→busy, `BUSY OFF\r` on busy→clear.
+
+The detector is **disabled by default** and enabled via the `[channel]` section
+of `mercury.ini` (`busy_detect = true`); its sensitivity/timing knobs
+(`busy_threshold_db`, `busy_hysteresis_db`, `busy_on_debounce_ms`,
+`busy_hang_ms`) typically need on-air tuning per band/noise environment. When
+disabled, these notifications are never sent. See `mercury.ini.example`.
 
 ### DISCONNECTED
 

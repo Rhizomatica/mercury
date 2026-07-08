@@ -262,6 +262,11 @@ int main(int argc, char *argv[])
             arq_set_peer_payload_hold_s(mcfg.peer_payload_hold_s);
             arq_set_startup_max_s(mcfg.startup_max_s);
             modem_set_tx_gain(powf(10.0f, mcfg.tx_gain_db / 20.0f));
+            modem_set_busy_cfg((float)mcfg.busy_threshold_db,
+                               (float)mcfg.busy_hysteresis_db,
+                               (uint32_t)mcfg.busy_on_debounce_ms,
+                               (uint32_t)mcfg.busy_hang_ms);
+            modem_set_busy_detect_enabled(mcfg.busy_detect);
         }
     }
 

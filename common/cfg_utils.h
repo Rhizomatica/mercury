@@ -56,6 +56,11 @@
 #define CFG_KEY_ARQ_KEEPALIVE_MISS_LIMIT      "arq:keepalive_miss_limit"
 #define CFG_KEY_ARQ_PEER_PAYLOAD_HOLD_S       "arq:peer_payload_hold_s"
 #define CFG_KEY_ARQ_STARTUP_MAX_S             "arq:startup_max_s"
+#define CFG_KEY_BUSY_DETECT                   "channel:busy_detect"
+#define CFG_KEY_BUSY_THRESHOLD_DB             "channel:busy_threshold_db"
+#define CFG_KEY_BUSY_HYSTERESIS_DB            "channel:busy_hysteresis_db"
+#define CFG_KEY_BUSY_ON_DEBOUNCE_MS           "channel:busy_on_debounce_ms"
+#define CFG_KEY_BUSY_HANG_MS                  "channel:busy_hang_ms"
 
 /* Holds all values read from the init configuration file */
 typedef struct {
@@ -109,6 +114,16 @@ typedef struct {
     int      tnc_buffer_report_ms;  /* BUFFER report interval on the TNC
                                     * control port. Default 1000, clamped
                                     * 100..10000.                          */
+    bool     busy_detect;           /* Channel-busy detector on/off. Default
+                                    * false (opt-in). Emits VARA "BUSY ON/OFF". */
+    int      busy_threshold_db;     /* Passband peak dB above noise floor to
+                                    * call BUSY. Default 10, clamped 3..40.  */
+    int      busy_hysteresis_db;    /* Release hysteresis in dB. Default 3,
+                                    * clamped 0..20.                          */
+    int      busy_on_debounce_ms;   /* Sustain above threshold before BUSY.
+                                    * Default 300, clamped 0..5000.           */
+    int      busy_hang_ms;          /* Sustain below release before CLEAR.
+                                    * Default 1500, clamped 0..10000.         */
 } mercury_config;
 
 /* Load configuration from an INI file into |cfg|.

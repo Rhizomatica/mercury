@@ -64,6 +64,11 @@ void cfg_set_defaults(mercury_config *cfg)
     cfg->keepalive_miss_limit        = ARQ_KEEPALIVE_MISS_LIMIT_DEFAULT;
     cfg->peer_payload_hold_s         = ARQ_PEER_PAYLOAD_HOLD_S_DEFAULT;
     cfg->startup_max_s               = ARQ_STARTUP_MAX_S_DEFAULT;
+    cfg->busy_detect                 = false;
+    cfg->busy_threshold_db           = 10;
+    cfg->busy_hysteresis_db          = 3;
+    cfg->busy_on_debounce_ms         = 300;
+    cfg->busy_hang_ms                = 1500;
 }
 
 /* Map a sound-system name to the AUDIO_SUBSYSTEM_* constant.
@@ -216,6 +221,21 @@ bool cfg_read(mercury_config *cfg, const char *ini_path)
     i = iniparser_getint(ini, CFG_KEY_ARQ_STARTUP_MAX_S, cfg->startup_max_s);
     if (i >= 2 && i <= 60)   cfg->startup_max_s = i;
 
+    cfg->busy_detect = (bool) iniparser_getboolean(ini, CFG_KEY_BUSY_DETECT,
+                                                   cfg->busy_detect ? 1 : 0);
+
+    i = iniparser_getint(ini, CFG_KEY_BUSY_THRESHOLD_DB, cfg->busy_threshold_db);
+    if (i >= 3 && i <= 40)      cfg->busy_threshold_db = i;
+
+    i = iniparser_getint(ini, CFG_KEY_BUSY_HYSTERESIS_DB, cfg->busy_hysteresis_db);
+    if (i >= 0 && i <= 20)      cfg->busy_hysteresis_db = i;
+
+    i = iniparser_getint(ini, CFG_KEY_BUSY_ON_DEBOUNCE_MS, cfg->busy_on_debounce_ms);
+    if (i >= 0 && i <= 5000)    cfg->busy_on_debounce_ms = i;
+
+    i = iniparser_getint(ini, CFG_KEY_BUSY_HANG_MS, cfg->busy_hang_ms);
+    if (i >= 0 && i <= 10000)   cfg->busy_hang_ms = i;
+
     double d = iniparser_getdouble(ini, CFG_KEY_TX_GAIN_DB, (double)cfg->tx_gain_db);
     if (!isfinite(d)) d = 0.0;  /* malformed/non-finite INI value -> default */
     if (d < -20.0) d = -20.0;
@@ -316,6 +336,13 @@ bool cfg_write(const mercury_config *cfg, const char *ini_path)
     fprintf(f, "keepalive_miss_limit = %d\n", cfg->keepalive_miss_limit);
     fprintf(f, "peer_payload_hold_s = %d\n", cfg->peer_payload_hold_s);
     fprintf(f, "startup_max_s = %d\n", cfg->startup_max_s);
+
+    fprintf(f, "\n[channel]\n");
+    fprintf(f, "busy_detect = %s\n", cfg->busy_detect ? "true" : "false");
+    fprintf(f, "busy_threshold_db = %d\n", cfg->busy_threshold_db);
+    fprintf(f, "busy_hysteresis_db = %d\n", cfg->busy_hysteresis_db);
+    fprintf(f, "busy_on_debounce_ms = %d\n", cfg->busy_on_debounce_ms);
+    fprintf(f, "busy_hang_ms = %d\n", cfg->busy_hang_ms);
 
     fprintf(f, "\n[audio]\n");
     fprintf(f, "tx_gain_db = %.2f\n", cfg->tx_gain_db);

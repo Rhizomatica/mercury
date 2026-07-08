@@ -140,6 +140,29 @@ peer_payload_hold_s = 15
 ; handshake (e.g. UUCP) times out before the first data frames get through.
 startup_max_s = 10
 
+[channel]
+; Channel-busy (occupancy) detector.  When enabled, Mercury classifies the HF
+; channel as busy/clear from the RX spectrum and reports transitions to the host
+; with VARA-compatible "BUSY ON" / "BUSY OFF" notifications on the control port.
+; Disabled by default (opt-in); thresholds typically need on-air tuning.
+busy_detect = false
+
+; Passband peak level, in dB above the tracked noise floor, required to call the
+; channel BUSY (default 10, range 3..40).  Lower = more sensitive.
+busy_threshold_db = 10
+
+; Release hysteresis in dB: the channel is only declared CLEAR once the peak
+; falls below (busy_threshold_db - this) (default 3, range 0..20).
+busy_hysteresis_db = 3
+
+; Milliseconds the peak must stay above threshold before asserting BUSY
+; (debounce against transients; default 300, range 0..5000).
+busy_on_debounce_ms = 300
+
+; Milliseconds the peak must stay below the release level before declaring CLEAR
+; (hang time; default 1500, range 0..10000).
+busy_hang_ms = 1500
+
 [tnc]
 ; IAMALIVE interval sent on the TNC control port to tell connected clients
 ; the TNC is still alive. Valid range: 5..600 seconds. (default: 60)

@@ -23,6 +23,7 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include <stdbool.h>
 
 #define DEFAULT_ARQ_PORT 8300
 #define DEFAULT_BROADCAST_PORT 8100
@@ -53,6 +54,7 @@ void tnc_send_cqframe(const char *source_call, int bw_hz);
 void tnc_send_disconnected();
 void tnc_send_buffer(uint32_t bytes);
 void tnc_send_sn(float snr);
+void tnc_send_busy(bool busy);
 void tnc_send_bitrate(uint32_t speed_level, uint32_t bps);
 
 // Getters for cached telemetry (thread-safe reads of last reported values)

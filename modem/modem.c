@@ -37,6 +37,7 @@
 #include "../datalink_arq/arq_modem.h"
 #include "../datalink_arq/arq_protocol.h"
 #include "tcp_interfaces.h"
+#include "channel_busy.h"
 #include "freedv_api.h"
 #include "fsk.h"
 #include "ldpc_codes.h"
@@ -161,6 +162,44 @@ static atomic_bool g_spectrum_enabled = true;
 void modem_set_spectrum_enabled(bool enabled)
 {
     atomic_store_explicit(&g_spectrum_enabled, enabled, memory_order_relaxed);
+}
+
+/* --- Channel-busy (occupancy) detector --------------------------------------
+ * VARA-style "channel busy" detection off the RX spectrum FFT.  Opt-in
+ * (disabled by default); when enabled the RX worker classifies occupancy and
+ * emits VARA-compatible "BUSY ON"/"BUSY OFF" to the host on each transition.
+ * g_channel_busy is the latched debounced state for the TX-initiation gate. */
+static atomic_bool  g_busy_enabled = false;
+static atomic_bool  g_channel_busy = false;
+static busy_cfg_t   g_busy_cfg     = { .threshold_db = 10.0f, .hysteresis_db = 3.0f,
+                                       .on_debounce_ms = 300, .hang_ms = 1500 };
+static pthread_mutex_t g_busy_cfg_lock = PTHREAD_MUTEX_INITIALIZER;
+/* Owned solely by the RX worker thread — no lock needed. */
+static busy_state_t g_busy_state   = { .busy = false, .noise_floor_db = 0.0f,
+                                       .inited = false, .above_since_ms = 0,
+                                       .below_since_ms = 0 };
+
+void modem_set_busy_detect_enabled(bool enabled)
+{
+    atomic_store_explicit(&g_busy_enabled, enabled, memory_order_relaxed);
+    if (!enabled)
+        atomic_store_explicit(&g_channel_busy, false, memory_order_relaxed);
+}
+
+void modem_set_busy_cfg(float threshold_db, float hysteresis_db,
+                        uint32_t on_debounce_ms, uint32_t hang_ms)
+{
+    pthread_mutex_lock(&g_busy_cfg_lock);
+    g_busy_cfg.threshold_db   = threshold_db;
+    g_busy_cfg.hysteresis_db  = hysteresis_db;
+    g_busy_cfg.on_debounce_ms = on_debounce_ms;
+    g_busy_cfg.hang_ms        = hang_ms;
+    pthread_mutex_unlock(&g_busy_cfg_lock);
+}
+
+bool modem_channel_busy(void)
+{
+    return atomic_load_explicit(&g_channel_busy, memory_order_relaxed);
 }
 
 static uint64_t monotonic_ms(void)
@@ -1638,10 +1677,12 @@ void *rx_thread(void *g_modem)
                                     metrics.frame_decoded);
         }
 
-        /* --- Update spectrum buffer for UI waterfall display --- */
-        /* Throttle FFT to match the 50 ms publish interval (~20 fps);
-         * skip entirely when no UI consumer exists (-W or UI disabled). */
-        if (atomic_load_explicit(&g_spectrum_enabled, memory_order_relaxed))
+        /* --- Update spectrum buffer for UI waterfall + channel-busy detect --- */
+        /* Throttle FFT to match the 50 ms publish interval (~20 fps).  The FFT
+         * is computed when either the UI waterfall (-W/UI) OR the channel-busy
+         * detector needs it, so a headless station can still detect occupancy. */
+        bool busy_on = atomic_load_explicit(&g_busy_enabled, memory_order_relaxed);
+        if (atomic_load_explicit(&g_spectrum_enabled, memory_order_relaxed) || busy_on)
         {
             uint64_t now_ms = monotonic_ms();
             if (now_ms >= spectrum_next_ms)
@@ -1661,6 +1702,11 @@ void *rx_thread(void *g_modem)
                     rx_fdm[i].real = (float)capture_i16[i];
                     rx_fdm[i].imag = 0.0f;
                 }
+
+                /* Snapshot of the spectrum + sample rate for out-of-lock use by
+                 * the busy classifier (avoids holding g_spectrum_lock across it). */
+                float busy_spec[MODEM_STATS_NSPEC];
+                int   busy_sr = 8000;
 
                 pthread_mutex_lock(&g_spectrum_lock);
                 if (!g_spectrum_stats_inited)
@@ -1682,7 +1728,33 @@ void *rx_thread(void *g_modem)
                           spec_nin, g_spectrum_sample_rate, g_rx_spectrum_dB[0]);
                     spectrum_first_log = false;
                 }
+                if (busy_on)
+                {
+                    memcpy(busy_spec, g_rx_spectrum_dB, sizeof(busy_spec));
+                    busy_sr = g_spectrum_sample_rate;
+                }
                 pthread_mutex_unlock(&g_spectrum_lock);
+
+                /* Channel-busy classification (RX-only: never while we key). */
+                if (busy_on && arq_get_trx() != TX)
+                {
+                    busy_cfg_t cfg;
+                    pthread_mutex_lock(&g_busy_cfg_lock);
+                    cfg = g_busy_cfg;
+                    pthread_mutex_unlock(&g_busy_cfg_lock);
+
+                    bool now_busy = false;
+                    if (channel_busy_update(&g_busy_state, &cfg, busy_spec,
+                                            MODEM_STATS_NSPEC, busy_sr, now_ms,
+                                            &now_busy))
+                    {
+                        atomic_store_explicit(&g_channel_busy, now_busy,
+                                              memory_order_relaxed);
+                        tnc_send_busy(now_busy);
+                        HLOGI("modem-rx", "channel %s (floor=%.1f dB)",
+                              now_busy ? "BUSY" : "CLEAR", g_busy_state.noise_floor_db);
+                    }
+                }
             }
         }
 

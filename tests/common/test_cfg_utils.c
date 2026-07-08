@@ -45,6 +45,11 @@ void test_defaults_match_constants(void)
     TEST_ASSERT_EQUAL_INT(5,   c.keepalive_miss_limit);
     TEST_ASSERT_EQUAL_INT(15,  c.peer_payload_hold_s);
     TEST_ASSERT_EQUAL_INT(10,  c.startup_max_s);
+    TEST_ASSERT_FALSE(c.busy_detect);
+    TEST_ASSERT_EQUAL_INT(10,   c.busy_threshold_db);
+    TEST_ASSERT_EQUAL_INT(3,    c.busy_hysteresis_db);
+    TEST_ASSERT_EQUAL_INT(300,  c.busy_on_debounce_ms);
+    TEST_ASSERT_EQUAL_INT(1500, c.busy_hang_ms);
 }
 
 /* Set non-default values, write, read back, assert preserved. */
@@ -62,6 +67,11 @@ void test_arq_tunables_roundtrip(void)
     w.keepalive_miss_limit        = 8;
     w.peer_payload_hold_s         = 25;
     w.startup_max_s               = 20;
+    w.busy_detect                 = true;
+    w.busy_threshold_db           = 14;
+    w.busy_hysteresis_db          = 5;
+    w.busy_on_debounce_ms         = 500;
+    w.busy_hang_ms                = 2000;
     TEST_ASSERT_TRUE(cfg_write(&w, TMP));
 
     mercury_config r;
@@ -77,6 +87,11 @@ void test_arq_tunables_roundtrip(void)
     TEST_ASSERT_EQUAL_INT(8,    r.keepalive_miss_limit);
     TEST_ASSERT_EQUAL_INT(25,   r.peer_payload_hold_s);
     TEST_ASSERT_EQUAL_INT(20,   r.startup_max_s);
+    TEST_ASSERT_TRUE(r.busy_detect);
+    TEST_ASSERT_EQUAL_INT(14,   r.busy_threshold_db);
+    TEST_ASSERT_EQUAL_INT(5,    r.busy_hysteresis_db);
+    TEST_ASSERT_EQUAL_INT(500,  r.busy_on_debounce_ms);
+    TEST_ASSERT_EQUAL_INT(2000, r.busy_hang_ms);
 }
 
 /* Out-of-range INI values are rejected (field keeps its pre-read default). */

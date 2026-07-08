@@ -1294,6 +1294,15 @@ void tnc_send_sn(float snr)
     (void)tnc_queue_line(buffer);
 }
 
+void tnc_send_busy(bool busy)
+{
+    /* VARA-compatible channel-occupancy notification: hosts (VarAC, BPQ32,
+     * Winlink) already understand "BUSY ON" / "BUSY OFF".  Edge-triggered by
+     * the caller (the channel-busy detector), so this only fires on a real
+     * CLEAR<->BUSY transition. */
+    (void)tnc_queue_line(busy ? "BUSY ON\r" : "BUSY OFF\r");
+}
+
 void tnc_send_bitrate(uint32_t speed_level, uint32_t bps)
 {
     char buffer[64];

@@ -4,13 +4,16 @@ CFLAGS = $(COMMON_CFLAGS) -Wno-strict-overflow -fPIC -I. -I../common -I../modem 
 
 .PHONY: all freedv 
 
-all: freedv modem.o framer.o
+all: freedv modem.o framer.o channel_busy.o
 
 freedv:
 	$(MAKE) -C freedv
 
 modem.o: modem.c modem.h
 	$(CC) $(CFLAGS) -c modem.c
+
+channel_busy.o: channel_busy.c channel_busy.h
+	$(CC) $(CFLAGS) -c channel_busy.c
 
 framer.o: framer.c framer.h
 	$(CC) $(CFLAGS) -c framer.c

@@ -64,6 +64,15 @@ int modem_get_rx_spectrum(float *out_dB, int max_bins);
 /* Enable/disable the RX spectrum FFT (skipped when no UI consumes it). */
 void modem_set_spectrum_enabled(bool enabled);
 
+/* Channel-busy (occupancy) detector — VARA-style "BUSY ON"/"BUSY OFF".
+ * Opt-in: disabled by default.  When enabled, the RX worker classifies the
+ * channel from the spectrum FFT and reports transitions to the host. */
+void modem_set_busy_detect_enabled(bool enabled);
+void modem_set_busy_cfg(float threshold_db, float hysteresis_db,
+                        uint32_t on_debounce_ms, uint32_t hang_ms);
+/* Latched debounced occupancy state, for an optional TX-initiation gate. */
+bool modem_channel_busy(void);
+
 // TX audio gain (linear multiplier on modulator output samples).
 // Default 1.0f = no change. Hot-tunable from any thread; the modulator
 // reads it once per burst.  Applied with int32 saturation, so any value
