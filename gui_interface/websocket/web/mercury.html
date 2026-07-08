@@ -1074,8 +1074,12 @@ document.getElementById("wsPort").addEventListener("keydown", function(e) {
  * =========================================================================*/
 
 (function init() {
-  // Set default host from current location
-  document.getElementById("wsHost").value = "127.0.0.1";
+  // Default the host and port from the location this page was served from, so
+  // the WebSocket connects back to the same Mercury instance — including when
+  // the UI port was overridden on the command line (-U).  Fall back to the
+  // historical defaults only when the page is opened without a host/port.
+  document.getElementById("wsHost").value = location.hostname || "127.0.0.1";
+  document.getElementById("wsPort").value = location.port || "10000";
 
   // Auto-connect
   autoReconnect = true;
