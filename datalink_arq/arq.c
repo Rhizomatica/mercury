@@ -1117,6 +1117,20 @@ void arq_set_retry_slots(int slots)
           atomic_load(&arq_data_retry_slots), atomic_load(&arq_disconnect_retry_slots));
 }
 
+void arq_set_data_retry_slots(int slots)
+{
+    /* Data-plane only: how many times a DATA frame is retried before the
+     * mode-downgrade cycle.  Deliberately does NOT touch call/accept slots —
+     * connection setup wants to give up quickly (short CALL/ACCEPT defaults),
+     * whereas the data plane wants persistence.  The RETRIES TNC command
+     * (arq_set_retry_slots) is the explicit way to widen all three at runtime. */
+    if (slots <= 0)
+        atomic_store(&arq_data_retry_slots, ARQ_DATA_RETRY_SLOTS_DEFAULT);
+    else
+        atomic_store(&arq_data_retry_slots, slots);
+    HLOGI(LOG_COMP, "Data retry slots: %d", atomic_load(&arq_data_retry_slots));
+}
+
 void arq_set_channel_guard_ms(int ms)
 {
     if (ms < 200)  ms = (ms <= 0) ? ARQ_CHANNEL_GUARD_MS_DEFAULT : 200;

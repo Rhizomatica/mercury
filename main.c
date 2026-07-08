@@ -251,7 +251,7 @@ int main(int argc, char *argv[])
             radio_serial_speed = mcfg.radio_serial_speed;
             arq_set_no_progress_timeout_s(mcfg.no_progress_timeout_s);
             arq_set_disconnect_drain_timeout_s(mcfg.disconnect_drain_timeout_s);
-            arq_set_retry_slots(mcfg.data_retry_slots);
+            arq_set_data_retry_slots(mcfg.data_retry_slots);
             arq_set_mode_hold_after_downgrade_s(mcfg.mode_hold_after_downgrade_s);
             arq_set_ladder_up_successes(mcfg.ladder_up_successes);
             arq_set_retry_downgrade_threshold(mcfg.retry_downgrade_threshold);
