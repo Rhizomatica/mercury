@@ -18,7 +18,9 @@
   <script>
     var host = self.location.hostname;
     var scheme = self.location.protocol === "https:" ? "wss://" : "ws://";
-    document.getElementById("url").value = scheme + host + ":10000/websocket";
+    // Use the port this page was served from (matches Mercury's -U override).
+    var port = self.location.port || "10000";
+    document.getElementById("url").value = scheme + host + ":" + port + "/websocket";
 </script>
 
   <script>

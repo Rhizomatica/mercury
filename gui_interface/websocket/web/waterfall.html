@@ -293,7 +293,10 @@ function updateFreqAxis() {
 (function() {
   const host = location.hostname || "localhost";
   const scheme = location.protocol === "https:" ? "wss://" : "ws://";
-  document.getElementById("url").value = scheme + host + ":10000/websocket";
+  // Use the port this page was served from (matches Mercury's -U override),
+  // falling back to the default only when the page is opened without one.
+  const port = location.port || "10000";
+  document.getElementById("url").value = scheme + host + ":" + port + "/websocket";
 })();
 
 // --- Connect / Disconnect ---
