@@ -329,6 +329,11 @@ void reset_arq_info(arq_info *arq_conn);
  */
 void arq_set_retry_slots(int slots);
 
+/* Set only the DATA-frame retry slots (leaves CALL/ACCEPT/DISCONNECT alone).
+ * Used by the startup config so a large data_retry_slots does not also inflate
+ * connection-setup (CALL/ACCEPT) retries. */
+void arq_set_data_retry_slots(int slots);
+
 /* Setters for the newly-atomic ARQ timing/ladder tunables. */
 void arq_set_channel_guard_ms(int ms);
 void arq_set_iss_post_ack_guard_ms(int ms);

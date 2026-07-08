@@ -149,6 +149,77 @@ void test_incoming_call_transitions_to_accepting(void)
     TEST_ASSERT_GREATER_THAN(0, fake_notify_pending_fake.call_count);
 }
 
+/* Helper: drive LISTENING -> ACCEPTING via an incoming CALL. */
+static void enter_accepting(void)
+{
+    arq_event_t ev = make_event(ARQ_EV_APP_LISTEN);
+    arq_fsm_dispatch(&sess, &ev);
+    ev = make_event(ARQ_EV_RX_CALL);
+    ev.session_id = 0x42;
+    strncpy(ev.remote_call, "REMOTE1", CALLSIGN_MAX_SIZE);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_ACCEPTING, sess.conn_state);
+}
+
+/* An IRS in ACCEPTING must give up (return to LISTENING) after the ACCEPT
+ * retry budget is spent, so it does NOT linger long after the caller stops.
+ * Regression guard for the field report where the IRS sat in ACCEPTING ~90 s
+ * after the ISS gave up — caused by CALL/ACCEPT slots being inflated to the
+ * DATA default (10) at startup; connection-setup slots stay short (4). */
+void test_accepting_gives_up_after_budget(void)
+{
+    enter_accepting();
+
+    /* No further RX_CALL: exhaust the ACCEPT retries. */
+    for (int i = 0; i < ARQ_ACCEPT_RETRY_SLOTS + 2; i++) {
+        arq_event_t ev = make_event(ARQ_EV_TIMER_RETRY);
+        mock_set_uptime_ms(1000 + (uint64_t)(i + 1) * 10000);
+        arq_fsm_dispatch(&sess, &ev);
+        if (sess.conn_state == ARQ_CONN_LISTENING)
+            break;
+    }
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_LISTENING, sess.conn_state);
+}
+
+/* A fresh RX_CALL while ACCEPTING re-arms the retry budget (so the window
+ * stays open while the caller is still calling); the give-up is bounded by
+ * the ACCEPT budget measured from the LAST heard CALL. */
+void test_accepting_rx_call_rearms_budget(void)
+{
+    enter_accepting();
+
+    /* Spend the budget down to (but not past) exhaustion. */
+    for (int i = 0; i < ARQ_ACCEPT_RETRY_SLOTS; i++) {
+        arq_event_t ev = make_event(ARQ_EV_TIMER_RETRY);
+        mock_set_uptime_ms(1000 + (uint64_t)(i + 1) * 10000);
+        arq_fsm_dispatch(&sess, &ev);
+    }
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_ACCEPTING, sess.conn_state);
+
+    /* Caller still calling -> budget re-armed. */
+    arq_event_t call = make_event(ARQ_EV_RX_CALL);
+    call.session_id = 0x42;
+    strncpy(call.remote_call, "REMOTE1", CALLSIGN_MAX_SIZE);
+    arq_fsm_dispatch(&sess, &call);
+
+    /* Survives another near-full round of retries because of the re-arm. */
+    for (int i = 0; i < ARQ_ACCEPT_RETRY_SLOTS - 1; i++) {
+        arq_event_t ev = make_event(ARQ_EV_TIMER_RETRY);
+        mock_set_uptime_ms(1000 + (uint64_t)(ARQ_ACCEPT_RETRY_SLOTS + i + 2) * 10000);
+        arq_fsm_dispatch(&sess, &ev);
+    }
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_ACCEPTING, sess.conn_state);
+}
+
+/* Connection-setup slots must stay short by default (not the DATA default of
+ * 10) so a failed connect and its mirror ACCEPT window give up quickly. */
+void test_default_call_accept_slots_are_short(void)
+{
+    TEST_ASSERT_EQUAL_INT(ARQ_CALL_RETRY_SLOTS_DEFAULT,   ARQ_CALL_RETRY_SLOTS);
+    TEST_ASSERT_EQUAL_INT(ARQ_ACCEPT_RETRY_SLOTS_DEFAULT, ARQ_ACCEPT_RETRY_SLOTS);
+    TEST_ASSERT_TRUE(ARQ_ACCEPT_RETRY_SLOTS < ARQ_DATA_RETRY_SLOTS_DEFAULT);
+}
+
 /* RX_ACCEPT from CALLING transitions to CONNECTED */
 void test_accept_transitions_to_connected(void)
 {
@@ -587,6 +658,9 @@ int main(void)
     /* Timeout tests */
     RUN_TEST(test_call_timeout);
     RUN_TEST(test_call_timeout_no_listen);
+    RUN_TEST(test_accepting_gives_up_after_budget);
+    RUN_TEST(test_accepting_rx_call_rearms_budget);
+    RUN_TEST(test_default_call_accept_slots_are_short);
     RUN_TEST(test_stop_listen);
     RUN_TEST(test_timeout_ms_idle);
     return UNITY_END();

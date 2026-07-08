@@ -105,7 +105,9 @@ no_progress_timeout_s = 180
 disconnect_drain_timeout_s = 30
 
 ; Number of DATA-frame retries before a downgrade cycle (default 10, range 1..64).
-; Behaves like the RETRIES TNC command: also caps CALL/ACCEPT retries.
+; Affects the data plane only; connection-setup (CALL/ACCEPT) retries keep their
+; short defaults so a failed connect gives up quickly.  Use the RETRIES TNC
+; command at runtime to widen CALL/ACCEPT/DATA retries together.
 data_retry_slots = 10
 
 ; Seconds to hold the lower mode after a forced downgrade (default 6, range 0..60).
