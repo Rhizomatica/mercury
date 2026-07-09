@@ -6,7 +6,7 @@
 #define MyAppVersion "1.9.9"
 #define MyAppPublisher "© 2026 Rhizomatica Communications"
 #define MyAppURL "https://github.com/Rhizomatica/mercury"
-#define MyAppExeName "run_mercury.bat"
+#define MyAppExeName "mercury-ui.exe"
 
 [Setup]
 ; NOTE: The value of AppId uniquely identifies this application. Do not use the same AppId value in installers for other applications.
@@ -46,12 +46,12 @@ Source: "libgcc_s_seh-1.dll"; DestDir: "{app}"; Flags: ignoreversion
 Source: "libhamlib-4.dll"; DestDir: "{app}"; Flags: ignoreversion
 Source: "libusb-1.0.dll"; DestDir: "{app}"; Flags: ignoreversion
 Source: "libwinpthread-1.dll"; DestDir: "{app}"; Flags: ignoreversion
-; Include precompiled binary if mode is selected
-; Copy precompiled mercury.exe binary into installer
+; Include precompiled mercury.exe C backend and mercury-ui.exe GUI frontend
 Source: "mercury.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "mercury-ui.exe"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
-Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\mercury_icon.ico"; Comment: "Launch Mercury HF Modem"
+Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\mercury_icon.ico"; Comment: "Launch Mercury HF Modem (GUI)"
 Name: "{group}\Configure Hardware (mercury.ini)"; Filename: "notepad.exe"; Parameters: "{app}\mercury.ini"; Comment: "Edit Mercury Audio & PTT Configuration"
 ;Name: "{group}\Uninstall {#MyAppName}"; Filename: "{uninstexe}"; Comment: "Uninstall Mercury HF Modem"
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\mercury_icon.ico"; Tasks: desktopicon; Comment: "Launch Mercury HF Modem"

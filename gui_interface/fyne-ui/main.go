@@ -341,7 +341,8 @@ func main() {
 
 	// open UI log file for appending; if it fails, uiLog will be nil and logs go only to the UI
 	var uiLog *os.File
-	uiLog, _ = os.OpenFile("ui.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	uiLogPath := filepath.Join(getBaseDir(), "ui.log")
+	uiLog, _ = os.OpenFile(uiLogPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 
 	appendLog := func(msg string) {
 		// write only to file by default; UI log widget removed from layout
@@ -483,7 +484,9 @@ func main() {
 		state.backendCancel = cancel
 
 		binaryPath := resolveBackendBinary()
-		state.backendCmd = exec.CommandContext(ctx, binaryPath, "-G", "-v", "-L", "mercury_engine.log")
+		engineLogPath := filepath.Join(getBaseDir(), "mercury_engine.log")
+		state.backendCmd = exec.CommandContext(ctx, binaryPath, "-G", "-v", "-L", engineLogPath)
+		hideConsoleWindow(state.backendCmd)
 		stdout, err := state.backendCmd.StdoutPipe()
 		if err != nil {
 			appendLog(fmt.Sprintf("Failed to create stdout pipe: %v\n", err))
@@ -498,7 +501,7 @@ func main() {
 
 		state.backendActive = true
 		setBackendStatus("Backend: running")
-		appendLog("Mercury process started. Engine logs redirected to 'mercury_engine.log'.\n")
+		appendLog(fmt.Sprintf("Mercury process started. Engine logs -> %s\n", engineLogPath))
 
 		go func() {
 			scanner := bufio.NewScanner(stdout)
@@ -1159,6 +1162,15 @@ func backendBinaryName() string {
 		return "mercury.exe"
 	}
 	return "mercury"
+}
+
+func getBaseDir() string {
+	if runtime.GOOS == "windows" {
+		if exePath, err := os.Executable(); err == nil {
+			return filepath.Dir(exePath)
+		}
+	}
+	return "."
 }
 
 func isBackendRunning(binaryName string) bool {
