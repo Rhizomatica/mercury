@@ -70,7 +70,11 @@ include config.mk
 MINGW_CC  = x86_64-w64-mingw32-gcc
 MINGW_AR  = x86_64-w64-mingw32-ar
 
-.PHONY: all install internal_deps utils clean doxygen doxygen-clean windows windows-zip test integration-test FORCE
+FYNE_UI_DIR   = gui_interface/fyne-ui
+FYNE_UI_BIN   = mercury-ui.exe
+MINGW_GO_CC   = x86_64-w64-mingw32-gcc
+
+.PHONY: all install internal_deps utils clean doxygen doxygen-clean windows windows-zip fyne-ui-windows windows-installer test integration-test FORCE
 
 prefix ?= /usr
 bindir ?= $(prefix)/bin
@@ -163,10 +167,11 @@ MERCURY_VERSION ?= $(shell grep 'define VERSION__' main.c | head -1 | sed 's/.*"
 WINDOWS_DIR = mercury-$(MERCURY_VERSION)
 WINDOWS_ZIP = $(WINDOWS_DIR)-w64-$(GIT_HASH).zip
 
-windows-zip: windows
+windows-zip: windows fyne-ui-windows
 	rm -rf $(WINDOWS_DIR) $(WINDOWS_ZIP)
 	mkdir -p $(WINDOWS_DIR)
 	cp mercury.exe $(WINDOWS_DIR)/
+	cp $(WINDOWS_INSTALLER_DIR)/$(FYNE_UI_BIN) $(WINDOWS_DIR)/
 	cp mercury.ini.example $(WINDOWS_DIR)/
 	if ls $(HAMLIB_W64_DIR)/bin/*.dll >/dev/null 2>&1; then \
 		cp $(HAMLIB_W64_DIR)/bin/*.dll $(WINDOWS_DIR)/; \
@@ -177,17 +182,27 @@ windows-zip: windows
 
 WINDOWS_INSTALLER_DIR = windows-installer
 
-windows-installer: windows
+fyne-ui-windows:
+	@echo "Building Fyne UI for Windows..."
+	cd $(FYNE_UI_DIR) && \
+		CGO_ENABLED=1 GOOS=windows GOARCH=amd64 CC=$(MINGW_GO_CC) \
+		go build -ldflags="-s -w -H windowsgui" -o $(abspath $(WINDOWS_INSTALLER_DIR)/$(FYNE_UI_BIN)) .
+	@echo "  -> $(WINDOWS_INSTALLER_DIR)/$(FYNE_UI_BIN)"
+
+windows-installer: windows fyne-ui-windows
 	cp mercury.exe $(WINDOWS_INSTALLER_DIR)/
 	cp mercury.ini.example $(WINDOWS_INSTALLER_DIR)/mercury.ini
 	sed -i 's/ui_enabled = false/ui_enabled = true/g' $(WINDOWS_INSTALLER_DIR)/mercury.ini
+	sed -i 's/sound_system = auto/sound_system = dsound/g' $(WINDOWS_INSTALLER_DIR)/mercury.ini
 	if ls $(HAMLIB_W64_DIR)/bin/*.dll >/dev/null 2>&1; then \
 		cp $(HAMLIB_W64_DIR)/bin/*.dll $(WINDOWS_INSTALLER_DIR)/; \
 	fi
+	@echo "windows-installer ready: run Inno Setup on $(WINDOWS_INSTALLER_DIR)/installer.iss"
 
 clean:
 	rm -f mercury mercury.exe *.o .git_hash_stamp mercury-*.zip
 	rm -rf mercury-[0-9]*
+	rm -f $(WINDOWS_INSTALLER_DIR)/$(FYNE_UI_BIN)
 	$(MAKE) -C modem clean
 	$(MAKE) -C datalink_arq clean
 	$(MAKE) -C datalink_broadcast clean

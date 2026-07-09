@@ -27,7 +27,7 @@ jobs:
     name: Release Mercury v${{ inputs.version }}
     runs-on: ubuntu-latest
     container: debian:trixie
-    timeout-minutes: 20
+    timeout-minutes: 30
     permissions:
       contents: write
       pull-requests: read
@@ -49,6 +49,7 @@ jobs:
             build-essential \
             git \
             gh \
+            golang-go \
             gcc-mingw-w64-x86-64 \
             mingw-w64-x86-64-dev \
             mingw-w64-common \
@@ -140,8 +141,13 @@ jobs:
           git commit -m "Updates for release ${{ inputs.version }}"
           git push origin mercuryv2
 
-      - name: Build Windows zip
-        run: make windows-zip
+      - name: Build Windows zip and installer assets
+        run: |
+          make windows-zip
+          make windows-installer
+          INSTALLER_ZIP="mercury-${{ inputs.version }}-installer-assets-$(git rev-parse --short=8 HEAD).zip"
+          cd windows-installer && zip -9r "../${INSTALLER_ZIP}" . && cd ..
+          echo "INSTALLER_ZIP=${INSTALLER_ZIP}" >> "$GITHUB_ENV"
 
       - name: Create GitHub release
         env:
@@ -150,6 +156,7 @@ jobs:
           ZIP_FILE=$(ls mercury-${{ inputs.version }}-w64-*.zip)
           gh release create "v${{ inputs.version }}" \
             "./${ZIP_FILE}" \
+            "./${INSTALLER_ZIP}" \
             --repo Rhizomatica/mercury \
             --target mercuryv2 \
             --generate-notes \
