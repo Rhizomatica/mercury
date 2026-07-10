@@ -3,6 +3,6 @@
 package main
 
 /*
-#cgo LDFLAGS: -lhamlib -lpulse -lasound -lpthread -lrt -lm
+#cgo LDFLAGS: -L${SRCDIR}/../.. -lmercury_core -L${SRCDIR}/../../modem/freedv -lfreedvdata -L${SRCDIR}/../../audioio -l:audioio.a -lhamlib -lpulse -lasound -lpthread -lrt -lm
 */
 import "C"
