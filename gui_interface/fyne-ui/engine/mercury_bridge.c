@@ -141,7 +141,7 @@ int mercury_init(const char *config_path, const char *log_path, int verbose)
     /* ---- ARQ tuning from config ---- */
     arq_set_no_progress_timeout_s(g_mcfg.no_progress_timeout_s);
     arq_set_disconnect_drain_timeout_s(g_mcfg.disconnect_drain_timeout_s);
-    arq_set_retry_slots(g_mcfg.data_retry_slots);
+    arq_set_data_retry_slots(g_mcfg.data_retry_slots);
     arq_set_mode_hold_after_downgrade_s(g_mcfg.mode_hold_after_downgrade_s);
     arq_set_ladder_up_successes(g_mcfg.ladder_up_successes);
     arq_set_retry_downgrade_threshold(g_mcfg.retry_downgrade_threshold);
@@ -308,6 +308,7 @@ void mercury_shutdown(void)
     alarm(10);
 #endif
 
+    interfaces_shutdown();
     shutdown_modem(&g_modem);
 
     if (g_audio_system != AUDIO_SUBSYSTEM_SHM)
