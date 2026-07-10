@@ -3,6 +3,6 @@
 package main
 
 /*
-#cgo LDFLAGS: -L${SRCDIR}/../../radio_io/hamlib-w64/lib -lhamlib -lole32 -ldsound -ldxguid -lws2_32 -static-libgcc -static-libstdc++ -lwinpthread -lm
+#cgo LDFLAGS: -L${SRCDIR}/../.. -lmercury_core_w64 -L${SRCDIR}/../../modem/freedv -lfreedvdata -L${SRCDIR}/../../audioio -l:audioio.a -L${SRCDIR}/../../radio_io/hamlib-w64/lib -lhamlib -lole32 -ldsound -ldxguid -lws2_32 -static-libgcc -static-libstdc++ -lwinpthread -lm
 */
 import "C"

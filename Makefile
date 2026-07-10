@@ -74,7 +74,7 @@ FYNE_UI_DIR   = gui_interface/fyne-ui
 FYNE_UI_BIN   = mercury-ui.exe
 MINGW_GO_CC   = x86_64-w64-mingw32-gcc
 
-.PHONY: all install internal_deps utils clean doxygen doxygen-clean windows windows-zip fyne-ui-windows windows-installer test integration-test FORCE
+.PHONY: all install internal_deps utils clean doxygen doxygen-clean windows windows-zip fyne-ui fyne-ui-windows windows-installer test integration-test FORCE
 
 prefix ?= /usr
 bindir ?= $(prefix)/bin
@@ -192,16 +192,18 @@ MERCURY_CORE_OBJS_W64 = $(filter-out radio_io/sbitx_io.o radio_io/shm_utils.o,$(
 
 libmercury_core.a: internal_deps
 	$(CC) $(CFLAGS) -I. -c $(FYNE_UI_DIR)/engine/mercury_bridge.c -o $(FYNE_UI_DIR)/engine/mercury_bridge.o
-	(cd modem/freedv && $(AR) x libfreedvdata.a)
-	(cd audioio && $(AR) x audioio.a)
-	$(AR) rcs $@ $(MERCURY_CORE_OBJS) modem/freedv/*.o audioio/*.o $(FYNE_UI_DIR)/engine/mercury_bridge.o
+	$(AR) rcs $@ $(MERCURY_CORE_OBJS) $(FYNE_UI_DIR)/engine/mercury_bridge.o
 
 libmercury_core_w64.a:
+	$(MAKE) clean OS=Windows_NT CC=$(MINGW_CC) AR=$(MINGW_AR)
 	$(MAKE) internal_deps OS=Windows_NT CC=$(MINGW_CC) AR=$(MINGW_AR) HAVE_HERMES_SHM=0
-	$(MINGW_CC) $(CFLAGS) -I. -c $(FYNE_UI_DIR)/engine/mercury_bridge.c -o $(FYNE_UI_DIR)/engine/mercury_bridge.o
-	(cd modem/freedv && $(MINGW_AR) x libfreedvdata.a)
-	(cd audioio && $(MINGW_AR) x audioio.a)
-	$(MINGW_AR) rcs libmercury_core.a $(MERCURY_CORE_OBJS_W64) modem/freedv/*.o audioio/*.o $(FYNE_UI_DIR)/engine/mercury_bridge.o
+	$(MINGW_CC) $(CFLAGS) -I. -c $(FYNE_UI_DIR)/engine/mercury_bridge.c -o $(FYNE_UI_DIR)/engine/mercury_bridge_w64.o
+	$(MINGW_AR) rcs $@ $(MERCURY_CORE_OBJS_W64) $(FYNE_UI_DIR)/engine/mercury_bridge_w64.o
+
+fyne-ui: libmercury_core.a
+	@echo "Building Mercury UI for Linux..."
+	cd $(FYNE_UI_DIR) && CGO_ENABLED=1 go build -tags mercury_embedded -o mercury-ui .
+	@echo "  -> $(FYNE_UI_DIR)/mercury-ui"
 
 windows-zip: windows fyne-ui-windows
 	rm -rf $(WINDOWS_DIR) $(WINDOWS_ZIP)
@@ -238,7 +240,8 @@ clean:
 	rm -f mercury mercury.exe *.o .git_hash_stamp mercury-*.zip libmercury_core.a
 	rm -rf mercury-[0-9]*
 	rm -f $(WINDOWS_INSTALLER_DIR)/$(FYNE_UI_BIN)
-	rm -f modem/freedv/*.o audioio/*.o $(FYNE_UI_DIR)/engine/mercury_bridge.o
+	rm -f $(FYNE_UI_DIR)/engine/mercury_bridge.o $(FYNE_UI_DIR)/engine/mercury_bridge_w64.o
+	rm -f $(FYNE_UI_DIR)/mercury-ui
 	$(MAKE) -C modem clean
 	$(MAKE) -C datalink_arq clean
 	$(MAKE) -C datalink_broadcast clean
