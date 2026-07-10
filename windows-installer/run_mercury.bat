@@ -1,8 +1,7 @@
 @echo off
 title Mercury HF Modem
 :: =====================================================================
-:: Mercury HF Modem Launcher — starts the Fyne UI which manages the
-:: C backend automatically.
+:: Mercury HF Modem Launcher — single-binary: engine + UI in one.
 :: =====================================================================
 
 cd /d "%~dp0"
