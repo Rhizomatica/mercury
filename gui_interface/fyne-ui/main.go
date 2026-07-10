@@ -13,11 +13,13 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"runtime"
 	"sort"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"fyne.io/fyne/v2"
@@ -840,6 +842,14 @@ func main() {
 			_ = uiLog.Close()
 		}
 	})
+
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	go func() {
+		<-sigCh
+		appendLog("Signal received, shutting down...\n")
+		myWindow.Close()
+	}()
 
 	go func() {
 		time.Sleep(200 * time.Millisecond)

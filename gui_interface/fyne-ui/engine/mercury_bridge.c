@@ -14,7 +14,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <signal.h>
 #include <math.h>
 #include <unistd.h>
 
@@ -51,32 +50,6 @@ static mercury_config g_mcfg;
 
 volatile bool shutdown_ = false;
 
-static volatile sig_atomic_t g_signal_count = 0;
-
-static void handle_termination_signal(int sig)
-{
-    (void)sig;
-    if (g_signal_count)
-    {
-        static const char msg[] = "Caught second signal, forcing exit.\n";
-        if (write(STDERR_FILENO, msg, sizeof(msg) - 1)) {}
-        _exit(1);
-    }
-    g_signal_count = 1;
-    static const char msg[] = "Signal received, shutting down...\n";
-    if (write(STDERR_FILENO, msg, sizeof(msg) - 1)) {}
-    shutdown_ = true;
-}
-
-static int parse_rx_channel_layout(const char *value)
-{
-    if (!value) return -1;
-    if (!strcmp(value, "left") || !strcmp(value, "LEFT"))   return LEFT;
-    if (!strcmp(value, "right") || !strcmp(value, "RIGHT")) return RIGHT;
-    if (!strcmp(value, "stereo") || !strcmp(value, "STEREO")) return STEREO;
-    return -1;
-}
-
 /* ------------------------------------------------------------------ */
 /*  mercury_init(config_path, log_path, verbose)                      */
 /*                                                                     */
@@ -89,10 +62,6 @@ int mercury_init(const char *config_path, const char *log_path, int verbose)
     if (g_initialized) return 0;
 
     shutdown_ = false;
-    g_signal_count = 0;
-
-    signal(SIGINT,  handle_termination_signal);
-    signal(SIGTERM, handle_termination_signal);
 
 #ifdef _WIN32
     {
@@ -141,7 +110,7 @@ int mercury_init(const char *config_path, const char *log_path, int verbose)
     /* ---- ARQ tuning from config ---- */
     arq_set_no_progress_timeout_s(g_mcfg.no_progress_timeout_s);
     arq_set_disconnect_drain_timeout_s(g_mcfg.disconnect_drain_timeout_s);
-    arq_set_data_retry_slots(g_mcfg.data_retry_slots);
+    arq_set_retry_slots(g_mcfg.data_retry_slots);
     arq_set_mode_hold_after_downgrade_s(g_mcfg.mode_hold_after_downgrade_s);
     arq_set_ladder_up_successes(g_mcfg.ladder_up_successes);
     arq_set_retry_downgrade_threshold(g_mcfg.retry_downgrade_threshold);
@@ -303,10 +272,6 @@ void mercury_shutdown(void)
     HLOGI("bridge", "Shutting down Mercury engine");
 
     shutdown_ = true;
-
-#ifndef _WIN32
-    alarm(10);
-#endif
 
     interfaces_shutdown();
     shutdown_modem(&g_modem);
