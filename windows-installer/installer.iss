@@ -28,17 +28,17 @@ SolidCompression=yes
 WizardStyle=modern
 PrivilegesRequired=admin
 ChangesEnvironment=yes
+ArchitecturesInstallIn64BitMode=x64
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]
-Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
+Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"
 
 
 [Files]
 Source: "run_mercury.bat"; DestDir: "{app}"; Flags: ignoreversion
-Source: "install_mercury.bat"; DestDir: "{app}"; Flags: ignoreversion
 Source: "mercury.ini"; DestDir: "{app}"; Flags: ignoreversion
 Source: "../LICENSE"; DestDir: "{app}"; Flags: ignoreversion
 Source: "mercury_icon.ico"; DestDir: "{app}"; Flags: ignoreversion
@@ -46,8 +46,6 @@ Source: "libgcc_s_seh-1.dll"; DestDir: "{app}"; Flags: ignoreversion
 Source: "libhamlib-4.dll"; DestDir: "{app}"; Flags: ignoreversion
 Source: "libusb-1.0.dll"; DestDir: "{app}"; Flags: ignoreversion
 Source: "libwinpthread-1.dll"; DestDir: "{app}"; Flags: ignoreversion
-; Include precompiled mercury.exe C backend and mercury-ui.exe GUI frontend
-Source: "mercury.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "mercury-ui.exe"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
@@ -58,9 +56,6 @@ Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilen
 
 
 [Run]
-; Bootstrap/Compile Mercury C files during setup
-Filename: "{app}\install_mercury.bat"; StatusMsg: "Fetching and building source packages..."; Flags: runhidden
-
 ; Launch Mercury HF Modem after installation completes
 Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#StringChange(MyAppName, '&', '&&')}}"; Flags: shellexec postinstall nowait skipifsilent
 

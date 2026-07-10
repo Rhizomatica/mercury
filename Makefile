@@ -167,6 +167,42 @@ MERCURY_VERSION ?= $(shell grep 'define VERSION__' main.c | head -1 | sed 's/.*"
 WINDOWS_DIR = mercury-$(MERCURY_VERSION)
 WINDOWS_ZIP = $(WINDOWS_DIR)-w64-$(GIT_HASH).zip
 
+MERCURY_CORE_OBJS = \
+	common/cfg_utils.o common/iniparser/iniparser.o common/iniparser/dictionary.o \
+	datalink_arq/arq.o datalink_arq/arq_tnc.o datalink_arq/arith.o datalink_arq/arq_channels.o \
+	datalink_arq/arq_fsm.o datalink_arq/arq_protocol.o datalink_arq/arq_timing.o datalink_arq/arq_modem.o \
+	datalink_broadcast/broadcast.o datalink_broadcast/kiss.o \
+	modem/modem.o modem/framer.o modem/channel_busy.o \
+	common/os_interop.o common/ring_buffer_posix.o common/shm_posix.o common/crc6.o common/hermes_log.o \
+	common/chan.o common/queue.o \
+	data_interfaces/tcp_interfaces.o data_interfaces/net.o \
+	gui_interface/ui_communication.o \
+	gui_interface/websocket/mongoose.o gui_interface/websocket/mercury_websocket.o \
+	radio_io/radio_io.o
+
+ifeq ($(HAVE_HERMES_SHM),1)
+MERCURY_CORE_OBJS += radio_io/sbitx_io.o radio_io/shm_utils.o
+endif
+
+ifeq ($(HAVE_HAMLIB),1)
+MERCURY_CORE_OBJS += radio_io/rigctl_parse.o
+endif
+
+MERCURY_CORE_OBJS_W64 = $(filter-out radio_io/sbitx_io.o radio_io/shm_utils.o,$(MERCURY_CORE_OBJS))
+
+libmercury_core.a: internal_deps
+	$(CC) $(CFLAGS) -I. -c $(FYNE_UI_DIR)/engine/mercury_bridge.c -o $(FYNE_UI_DIR)/engine/mercury_bridge.o
+	(cd modem/freedv && $(AR) x libfreedvdata.a)
+	(cd audioio && $(AR) x audioio.a)
+	$(AR) rcs $@ $(MERCURY_CORE_OBJS) modem/freedv/*.o audioio/*.o $(FYNE_UI_DIR)/engine/mercury_bridge.o
+
+libmercury_core_w64.a:
+	$(MAKE) internal_deps OS=Windows_NT CC=$(MINGW_CC) AR=$(MINGW_AR) HAVE_HERMES_SHM=0
+	$(MINGW_CC) $(CFLAGS) -I. -c $(FYNE_UI_DIR)/engine/mercury_bridge.c -o $(FYNE_UI_DIR)/engine/mercury_bridge.o
+	(cd modem/freedv && $(MINGW_AR) x libfreedvdata.a)
+	(cd audioio && $(MINGW_AR) x audioio.a)
+	$(MINGW_AR) rcs libmercury_core.a $(MERCURY_CORE_OBJS_W64) modem/freedv/*.o audioio/*.o $(FYNE_UI_DIR)/engine/mercury_bridge.o
+
 windows-zip: windows fyne-ui-windows
 	rm -rf $(WINDOWS_DIR) $(WINDOWS_ZIP)
 	mkdir -p $(WINDOWS_DIR)
@@ -182,15 +218,14 @@ windows-zip: windows fyne-ui-windows
 
 WINDOWS_INSTALLER_DIR = windows-installer
 
-fyne-ui-windows:
-	@echo "Building Fyne UI for Windows..."
+fyne-ui-windows: libmercury_core_w64.a
+	@echo "Building single-binary Mercury UI for Windows..."
 	cd $(FYNE_UI_DIR) && \
 		CGO_ENABLED=1 GOOS=windows GOARCH=amd64 CC=$(MINGW_GO_CC) \
-		go build -ldflags="-s -w -H windowsgui" -o $(abspath $(WINDOWS_INSTALLER_DIR)/$(FYNE_UI_BIN)) .
+		go build -tags mercury_embedded -ldflags="-s -w -H windowsgui" -o $(abspath $(WINDOWS_INSTALLER_DIR)/$(FYNE_UI_BIN)) .
 	@echo "  -> $(WINDOWS_INSTALLER_DIR)/$(FYNE_UI_BIN)"
 
-windows-installer: windows fyne-ui-windows
-	cp mercury.exe $(WINDOWS_INSTALLER_DIR)/
+windows-installer: fyne-ui-windows
 	cp mercury.ini.example $(WINDOWS_INSTALLER_DIR)/mercury.ini
 	sed -i 's/ui_enabled = false/ui_enabled = true/g' $(WINDOWS_INSTALLER_DIR)/mercury.ini
 	sed -i 's/sound_system = auto/sound_system = dsound/g' $(WINDOWS_INSTALLER_DIR)/mercury.ini
@@ -200,9 +235,10 @@ windows-installer: windows fyne-ui-windows
 	@echo "windows-installer ready: run Inno Setup on $(WINDOWS_INSTALLER_DIR)/installer.iss"
 
 clean:
-	rm -f mercury mercury.exe *.o .git_hash_stamp mercury-*.zip
+	rm -f mercury mercury.exe *.o .git_hash_stamp mercury-*.zip libmercury_core.a
 	rm -rf mercury-[0-9]*
 	rm -f $(WINDOWS_INSTALLER_DIR)/$(FYNE_UI_BIN)
+	rm -f modem/freedv/*.o audioio/*.o $(FYNE_UI_DIR)/engine/mercury_bridge.o
 	$(MAKE) -C modem clean
 	$(MAKE) -C datalink_arq clean
 	$(MAKE) -C datalink_broadcast clean

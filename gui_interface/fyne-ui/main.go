@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"crypto/tls"
 	"encoding/binary"
@@ -14,9 +13,9 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -31,9 +30,6 @@ import (
 )
 
 type appState struct {
-	backendCmd       *exec.Cmd
-	backendCancel    context.CancelFunc
-	backendActive    bool
 	wsConn           *websocket.Conn
 	wsContext        context.Context
 	wsCancel         context.CancelFunc
@@ -196,7 +192,7 @@ func runOnUI(fn func()) {
 func main() {
 	myApp := app.New()
 	myWindow := myApp.NewWindow("Mercury Modem Controller")
-	myWindow.Resize(fyne.NewSize(1180, 680))
+	myWindow.Resize(fyne.NewSize(1280, 780))
 
 	state := &appState{wsScheme: "ws", wsHost: "127.0.0.1", wsPort: "10000"}
 	bindings := &uiBindings{}
@@ -241,8 +237,8 @@ func main() {
 	devicePathEntry := widget.NewEntry()
 	devicePathEntry.SetPlaceHolder("/dev/ttyUSB0 or 127.0.0.1:4532")
 	bindings.devicePathEntry = devicePathEntry
-	serialSpeedEntry := widget.NewSelect([]string{"0", "4800", "9600", "19200", "38400", "115200"}, func(string) {})
-	serialSpeedEntry.SetSelected("0")
+	serialSpeedEntry := widget.NewSelect([]string{"Auto", "4800", "9600", "19200", "38400", "115200"}, func(string) {})
+	serialSpeedEntry.SetSelected("Auto")
 	bindings.serialSpeedEntry = serialSpeedEntry
 
 	txGainSlider := widget.NewSlider(-20.0, 20.0)
@@ -341,7 +337,7 @@ func main() {
 
 	// open UI log file for appending; if it fails, uiLog will be nil and logs go only to the UI
 	var uiLog *os.File
-	uiLogPath := filepath.Join(getBaseDir(), "ui.log")
+	uiLogPath := filepath.Join(getLogDir(), "ui.log")
 	uiLog, _ = os.OpenFile(uiLogPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 
 	appendLog := func(msg string) {
@@ -355,8 +351,6 @@ func main() {
 			_, _ = uiLog.WriteString(msg)
 		}
 	}
-
-	setBackendStatus := func(text string) {}
 
 	setWSStatus := func(text string) {}
 
@@ -472,50 +466,6 @@ func main() {
 		if len(state.spectrumValues) > 0 {
 			refreshSpectrum()
 		}
-	}
-
-	launchBackend := func() {
-		if state.backendActive {
-			appendLog("Backend already running.\n")
-			return
-		}
-
-		ctx, cancel := context.WithCancel(context.Background())
-		state.backendCancel = cancel
-
-		binaryPath := resolveBackendBinary()
-		engineLogPath := filepath.Join(getBaseDir(), "mercury_engine.log")
-		state.backendCmd = exec.CommandContext(ctx, binaryPath, "-G", "-v", "-L", engineLogPath)
-		hideConsoleWindow(state.backendCmd)
-		stdout, err := state.backendCmd.StdoutPipe()
-		if err != nil {
-			appendLog(fmt.Sprintf("Failed to create stdout pipe: %v\n", err))
-			cancel()
-			return
-		}
-		if err := state.backendCmd.Start(); err != nil {
-			appendLog(fmt.Sprintf("Failed to launch %s: %v\n", binaryPath, err))
-			cancel()
-			return
-		}
-
-		state.backendActive = true
-		setBackendStatus("Backend: running")
-		appendLog(fmt.Sprintf("Mercury process started. Engine logs -> %s\n", engineLogPath))
-
-		go func() {
-			scanner := bufio.NewScanner(stdout)
-			for scanner.Scan() {
-				appendLog(scanner.Text() + "\n")
-			}
-			_ = state.backendCmd.Wait()
-			setBackendStatus("Backend: stopped")
-			appendLog("Mercury process terminated.\n")
-			state.backendActive = false
-			if state.wsCancel != nil {
-				state.wsCancel()
-			}
-		}()
 	}
 
 	var connectionButtonState = "connect"
@@ -660,6 +610,15 @@ func main() {
 							refreshSelect(bindings.channelSelect, items, selectedValue(raw, "selected"), false)
 						case "radio_list":
 							items := parseMenuItems(payload)
+							sort.Slice(items, func(i, j int) bool {
+								if items[i].Name == "None" {
+									return true
+								}
+								if items[j].Name == "None" {
+									return false
+								}
+								return strings.ToLower(items[i].Name) < strings.ToLower(items[j].Name)
+							})
 							state.radioItems = items
 							state.radioSelected = selectedValue(raw, "selected")
 							state.radioDevicePath = fmt.Sprint(raw["device_path"])
@@ -760,7 +719,7 @@ func main() {
 		}
 		devPath := bindings.devicePathEntry.Text
 		serialSpeed := bindings.serialSpeedEntry.Selected
-		if serialSpeed == "" {
+		if serialSpeed == "" || serialSpeed == "Auto" {
 			serialSpeed = "0"
 		}
 		if err := sendWSCommand("set_radio_config", modelID, devPath, serialSpeed); err != nil {
@@ -876,47 +835,31 @@ func main() {
 		if state.wsCancel != nil {
 			state.wsCancel()
 		}
-		if state.backendActive && state.backendCancel != nil {
-			state.backendCancel()
-		}
-		// close UI log file if open
-		// uiLog variable captured from outer scope
-		// (nil-check in case opening the file failed)
+		mercuryStop()
 		if uiLog != nil {
 			_ = uiLog.Close()
 		}
 	})
 
-	// On startup: if the mercury process is running, try to connect; otherwise start it and connect.
 	go func() {
 		time.Sleep(200 * time.Millisecond)
-		backendName := backendBinaryName()
-		if isBackendRunning(backendName) {
-			appendLog("Mercury process detected — attempting to connect...\n")
-			connectWS()
-			return
-		}
-		appendLog("Mercury not running — starting backend then connecting...\n")
-		// start backend and wait for it to be active
-		launchBackend()
-		// wait until backendActive or timeout
-		timeout := time.After(8 * time.Second)
-		ticker := time.NewTicker(200 * time.Millisecond)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-timeout:
-				appendLog("Timed out waiting for Mercury backend to start; attempting to connect anyway...\n")
-				connectWS()
-				return
-			case <-ticker.C:
-				if state.backendActive {
-					appendLog("Mercury backend started — connecting...\n")
-					connectWS()
-					return
-				}
+
+		writableConfig := filepath.Join(getLogDir(), "mercury.ini")
+		if _, err := os.Stat(writableConfig); os.IsNotExist(err) {
+			defaultConfig := filepath.Join(getBaseDir(), "mercury.ini")
+			if data, rerr := os.ReadFile(defaultConfig); rerr == nil {
+				os.WriteFile(writableConfig, data, 0644)
 			}
 		}
+
+		logPath := filepath.Join(getLogDir(), "mercury_engine.log")
+		appendLog("Starting Mercury engine...\n")
+		if err := mercuryStart(writableConfig, logPath, true); err != nil {
+			appendLog(fmt.Sprintf("Failed to start Mercury engine: %v\n", err))
+			return
+		}
+		appendLog("Mercury engine started — connecting...\n")
+		connectWS()
 	}()
 
 	myWindow.ShowAndRun()
@@ -1157,13 +1100,6 @@ func netJoinHostPort(host, port string) string {
 	return net.JoinHostPort(host, port)
 }
 
-func backendBinaryName() string {
-	if runtime.GOOS == "windows" {
-		return "mercury.exe"
-	}
-	return "mercury"
-}
-
 func getBaseDir() string {
 	if runtime.GOOS == "windows" {
 		if exePath, err := os.Executable(); err == nil {
@@ -1173,48 +1109,11 @@ func getBaseDir() string {
 	return "."
 }
 
-func isBackendRunning(binaryName string) bool {
+func getLogDir() string {
 	if runtime.GOOS == "windows" {
-		cmd := exec.Command("tasklist", "/FI", "IMAGENAME eq "+binaryName, "/NH")
-		output, err := cmd.Output()
-		if err != nil {
-			return false
-		}
-		return strings.Contains(string(output), binaryName)
+		dir := filepath.Join(os.Getenv("LOCALAPPDATA"), "MercuryHF")
+		os.MkdirAll(dir, 0755)
+		return dir
 	}
-	return exec.Command("pgrep", "-x", binaryName).Run() == nil
-}
-
-func resolveBackendBinary() string {
-	exeName := backendBinaryName()
-
-	exePath, err := os.Executable()
-	if err != nil {
-		if path, err := exec.LookPath(exeName); err == nil {
-			return path
-		}
-		return exeName
-	}
-
-	dir := filepath.Dir(exePath)
-
-	candidates := []string{
-		filepath.Join(dir, exeName),
-		filepath.Join(dir, "..", "..", exeName),
-	}
-
-	if runtime.GOOS == "windows" {
-		candidates = append(candidates, filepath.Join(dir, "..", exeName))
-	}
-
-	for _, candidate := range candidates {
-		if _, err := os.Stat(candidate); err == nil {
-			return candidate
-		}
-	}
-
-	if path, err := exec.LookPath(exeName); err == nil {
-		return path
-	}
-	return exeName
+	return "."
 }
