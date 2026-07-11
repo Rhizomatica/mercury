@@ -6,7 +6,7 @@ CFLAGS = $(COMMON_CFLAGS)
 CFG_CFLAGS = $(COMMON_CFLAGS) -I. -I../audioio/ffaudio -I../gui_interface -I../datalink_arq -I../data_interfaces -I../modem/freedv
 
 all: os_interop.o ring_buffer_posix.o shm_posix.o crc6.o hermes_log.o chan.o queue.o \
-     cfg_utils.o iniparser/iniparser.o iniparser/dictionary.o watterson.o
+     cfg_utils.o iniparser/iniparser.o iniparser/dictionary.o watterson.o mercury_engine.o
 
 os_interop.o: os_interop.c
 	$(CC) $(CFLAGS) -c os_interop.c
@@ -40,6 +40,9 @@ iniparser/dictionary.o: iniparser/dictionary.c iniparser/dictionary.h
 
 watterson.o: watterson.c watterson.h
 	$(CC) $(CFLAGS) -I.. -c watterson.c
+
+mercury_engine.o: mercury_engine.c mercury_engine.h
+	$(CC) $(CFG_CFLAGS) -I.. -I../modem -I../modem/freedv -I../datalink_broadcast -I../data_interfaces -I../datalink_arq -I../audioio -I../radio_io -c mercury_engine.c
 
 .PHONY: all clean
 

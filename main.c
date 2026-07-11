@@ -52,6 +52,7 @@
 #include "radio_io.h"
 #include "gui_interface/ui_communication.h"
 #include "cfg_utils.h"
+#include "mercury_engine.h"
 
 extern cbuf_handle_t capture_buffer;
 extern cbuf_handle_t playback_buffer;
@@ -80,7 +81,6 @@ char *freedv_mode_names[] = { "DATAC1",
                               "DATAC17",
                               "QAM16C2" };
 
-volatile bool shutdown_ = false; // global shutdown flag
 
 static volatile sig_atomic_t g_signal_count = 0;
 
@@ -549,68 +549,34 @@ int main(int argc, char *argv[])
 
     // set some defaults... in case the user did not select
     if (audio_system == -1)
-    {
         audio_system = audioio_pick_default_subsystem();
-    }
 
     printf("Audio System: ");
     switch(audio_system)
     {
     case AUDIO_SUBSYSTEM_ALSA:
-        if(input_dev[0] == 0)
-            strcpy(input_dev, "default");
-        if(output_dev[0] == 0)
-            strcpy(output_dev, "default");
+        if(input_dev[0] == 0) strcpy(input_dev, "default");
+        if(output_dev[0] == 0) strcpy(output_dev, "default");
         printf("Advanced Linux Sound Architecture (ALSA)\n");
         break;
     case AUDIO_SUBSYSTEM_PULSE:
-        if (input_dev[0] == 0)
-        {
-            free(input_dev);
-            input_dev = NULL;
-        }
-        if (output_dev[0] == 0)
-        {
-            free(output_dev);
-            output_dev = NULL;
-        }
+        if (input_dev[0] == 0) { free(input_dev); input_dev = NULL; }
+        if (output_dev[0] == 0) { free(output_dev); output_dev = NULL; }
         printf("PulseAudio\n");
         break;
     case AUDIO_SUBSYSTEM_WASAPI:
-        if (input_dev[0] == 0)
-        {
-            free(input_dev);
-            input_dev = NULL;
-        }
-        if (output_dev[0] == 0)
-        {
-            free(output_dev);
-            output_dev = NULL;
-        }
+        if (input_dev[0] == 0) { free(input_dev); input_dev = NULL; }
+        if (output_dev[0] == 0) { free(output_dev); output_dev = NULL; }
         printf("Windows Audio Session API (WASAPI)\n");
         break;
     case AUDIO_SUBSYSTEM_DSOUND:
-        if (input_dev[0] == 0)
-        {
-            free(input_dev);
-            input_dev = NULL;
-        }
-        if (output_dev[0] == 0)
-        {
-            free(output_dev);
-            output_dev = NULL;
-        }
+        if (input_dev[0] == 0) { free(input_dev); input_dev = NULL; }
+        if (output_dev[0] == 0) { free(output_dev); output_dev = NULL; }
         printf("Microsoft DirectSound (DSOUND)\n");
         break;
     case AUDIO_SUBSYSTEM_OSS:
-        if (input_dev[0] == 0)
-        {
-            snprintf(input_dev, MAX_PATH, "/dev/dsp");
-        }
-        if (output_dev[0] == 0)
-        {
-            snprintf(output_dev, MAX_PATH, "/dev/dsp");
-        }
+        if (input_dev[0] == 0) snprintf(input_dev, MAX_PATH, "/dev/dsp");
+        if (output_dev[0] == 0) snprintf(output_dev, MAX_PATH, "/dev/dsp");
         printf("Open Sound System (OSS)\n");
         break;
     case AUDIO_SUBSYSTEM_COREAUDIO:
@@ -631,17 +597,17 @@ int main(int argc, char *argv[])
     default:
         printf("Selected audio system not supported. Trying to continue.\n");
     }
-    
+
     if (list_sndcards)
     {
         list_soundcards(audio_system);
-        if (input_dev)
-            free(input_dev);
-        if (output_dev)
-            free(output_dev);
+        if (input_dev) free(input_dev);
+        if (output_dev) free(output_dev);
         return EXIT_SUCCESS;
-    }    
+    }
 
+    /* ---- fly the logging defaults here before engine_init so the printf
+     *      messages above land in the log file ---- */
     if (hermes_log_init(1024) == 0)
     {
         hermes_log_set_level(verbose ? HERMES_LOG_LEVEL_DEBUG : HERMES_LOG_LEVEL_INFO);
@@ -656,70 +622,8 @@ int main(int argc, char *argv[])
         fprintf(stderr, "Warning: async logger unavailable\n");
     }
 
-    generic_modem_t g_modem;
-    pthread_t radio_capture, radio_playback;
-    
-    if (audio_system != AUDIO_SUBSYSTEM_SHM)
-    {
-        HLOGI("main", "Initializing I/O from Sound Card");
-        if (audioio_init_internal(input_dev, output_dev, audio_system, rx_input_channel, &radio_capture, &radio_playback) != 0)
-        {
-            fprintf(stderr, "Failed to initialize audio I/O.\n");
-            hermes_log_shutdown();
-            return EXIT_FAILURE;
-        }
-    }
-
-    if (radio_io_init(radio_type, radio_device, hamlib_log_level, radio_serial_speed) != 0)
-    {
-        fprintf(stderr, "Failed to initialize radio control.\n");
-        /* item2: guard matches all sibling error-path calls.  Without it,
-         * SHM mode calls audioio_deinit() when audioio_init_internal was
-         * never run, so s_radio_capture/s_radio_playback are zero-
-         * initialized statics and pthread_join(0,NULL) joins the main
-         * thread or an invalid ID. */
-        if (audio_system != AUDIO_SUBSYSTEM_SHM)
-            audioio_deinit(&radio_capture, &radio_playback);
-        hermes_log_shutdown();
-        return EXIT_FAILURE;
-    }
-
-    HLOGI("main", "Initializing Modem");
-    init_modem(&g_modem, startup_payload_mode, 1, test_mode, freedv_verbosity); // frames per burst is 1 for now
-    /* The waterfall FFT only has a consumer when the UI is enabled and -W
-     * was not given — skip the per-50ms FFT otherwise. */
-    modem_set_spectrum_enabled(ui_enabled && waterfall_enabled);
-    tnc_set_intervals(mcfg.tnc_keepalive_s, mcfg.tnc_buffer_report_ms);
-    
-    if (arq_init(g_modem.payload_bytes_per_modem_frame, g_modem.mode) != EXIT_SUCCESS)
-    {
-        fprintf(stderr, "Failed to initialize ARQ subsystem.\n");
-        shutdown_ = true;
-        shutdown_modem(&g_modem); /* join modem threads before freeing audio rings */
-        if (audio_system != AUDIO_SUBSYSTEM_SHM)
-            audioio_deinit(&radio_capture, &radio_playback);
-        hermes_log_shutdown();
-        return EXIT_FAILURE;
-    }
-
-    broadcast_run(&g_modem);
-
-    HLOGI("main", "Initializing TCP interfaces with base port %d and broadcast port %d", base_tcp_port, broadcast_port);
-    if (interfaces_init(base_tcp_port, broadcast_port, g_modem.payload_bytes_per_modem_frame) != EXIT_SUCCESS)
-    {
-        fprintf(stderr, "Failed to initialize TCP interfaces.\n");
-        shutdown_ = true;
-        interfaces_shutdown();
-        shutdown_modem(&g_modem); /* join modem threads before freeing audio rings */
-        if (audio_system != AUDIO_SUBSYSTEM_SHM)
-            audioio_deinit(&radio_capture, &radio_playback);
-        HLOGI("main", "Shutting down");
-        hermes_log_shutdown();
-        return EXIT_FAILURE;
-    }
-
-    // ---- Initialize UI communication (WebSocket to mercury-qt) ----
-    // Sync mcfg with final runtime values (CLI may have overridden INI)
+    /* ---- merge CLI overrides into the config struct ---- */
+    mcfg.sound_system      = audio_system;
     mcfg.ui_enabled        = ui_enabled;
     mcfg.ui_port           = ui_port;
     mcfg.tls_enabled       = tls_enabled;
@@ -735,72 +639,29 @@ int main(int argc, char *argv[])
         strncpy(mcfg.output_device, output_dev, sizeof(mcfg.output_device) - 1);
         mcfg.output_device[sizeof(mcfg.output_device) - 1] = '\0';
     }
-    mcfg.capture_channel   = rx_input_channel;
-    mcfg.sound_system      = audio_system;
-    mcfg.arq_tcp_base_port = base_tcp_port;
+    mcfg.capture_channel    = rx_input_channel;
+    mcfg.arq_tcp_base_port  = base_tcp_port;
     mcfg.broadcast_tcp_port = broadcast_port;
-    mcfg.verbose           = verbose ? true : false;
-    mcfg.freedv_verbosity  = freedv_verbosity;
-    mcfg.hamlib_log_level  = hamlib_log_level;
+    mcfg.verbose            = verbose ? true : false;
+    mcfg.freedv_verbosity   = freedv_verbosity;
+    mcfg.hamlib_log_level   = hamlib_log_level;
     mcfg.radio_serial_speed = radio_serial_speed;
 
-    ui_ctx_t ui_ctx;
-    if (ui_enabled)
+    if (mercury_engine_init(&mcfg, cfg_path, log_file_path, log_file_jsonl,
+                             startup_payload_mode, test_mode) != 0)
     {
-        HLOGI("main", "Initializing UI communication (WebSocket port %u | TLS %s | Waterfall %s)",
-               ui_port, tls_enabled ? "WSS" : "WS", waterfall_enabled ? "enabled" : "disabled");
-        if (ui_comm_init(&ui_ctx, (uint16_t)ui_port, tls_enabled,
-                         waterfall_enabled ? 1 : 0,
-                         audio_system, input_dev, output_dev, rx_input_channel,
-                         &mcfg, cfg_path) != 0)
-        {
-            // Non-fatal: mercury can run without UI
-            HLOGW("main", "UI communication init failed. Running without GUI.");
-        }
-    }
-    else
-    {
-        memset(&ui_ctx, 0, sizeof(ui_ctx));
-        HLOGI("main", "UI communication disabled (use -G to enable).");
+        fprintf(stderr, "Mercury engine init failed.\n");
+        return EXIT_FAILURE;
     }
 
     while (!shutdown_)
         msleep(500);
 
 #ifndef _WIN32
-    /* Teardown watchdog: graceful shutdown normally completes well under a
-     * second.  If it ever wedges (a stuck join, a hung audio driver), the
-     * pending SIGALRM terminates the process bounded instead of leaving a
-     * zombie modem keying nothing on a headless station.  This replaces the
-     * old exit(0)-after-1.5s that lived (unsafely) inside the signal handler. */
     alarm(10);
 #endif
 
-    /* Teardown order matters: the modem rx/tx threads read/write the audio
-     * ring buffers, so they must be joined (shutdown_modem) BEFORE
-     * audioio_deinit frees those buffers.  The audio threads themselves exit
-     * on shutdown_ on their own; audioio_deinit afterwards only reaps them
-     * and releases the buffers.  The old order freed the rings under a
-     * still-running rx_thread — a use-after-free, and a shutdown hang when
-     * rx_thread was parked inside the freed ring's condition wait. */
-    shutdown_modem(&g_modem);
-
-    if (audio_system != AUDIO_SUBSYSTEM_SHM)
-    {
-        audioio_deinit(&radio_capture, &radio_playback);
-    }
-
-    if (ui_enabled)
-        ui_comm_shutdown(&ui_ctx);
-
-    radio_io_shutdown();
-    HLOGI("main", "Shutting down");
-    hermes_log_shutdown();
-
-#ifdef _WIN32
-    WSACleanup();
-#endif
+    mercury_engine_shutdown();
 
     return 0;
-
 }
