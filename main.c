@@ -249,24 +249,9 @@ int main(int argc, char *argv[])
             freedv_verbosity   = mcfg.freedv_verbosity;
             hamlib_log_level   = mcfg.hamlib_log_level;
             radio_serial_speed = mcfg.radio_serial_speed;
-            arq_set_no_progress_timeout_s(mcfg.no_progress_timeout_s);
-            arq_set_disconnect_drain_timeout_s(mcfg.disconnect_drain_timeout_s);
-            arq_set_data_retry_slots(mcfg.data_retry_slots);
-            arq_set_mode_hold_after_downgrade_s(mcfg.mode_hold_after_downgrade_s);
-            arq_set_ladder_up_successes(mcfg.ladder_up_successes);
-            arq_set_retry_downgrade_threshold(mcfg.retry_downgrade_threshold);
-            arq_set_channel_guard_ms(mcfg.channel_guard_ms);
-            arq_set_iss_post_ack_guard_ms(mcfg.iss_post_ack_guard_ms);
-            arq_set_keepalive_interval_s(mcfg.keepalive_interval_s);
-            arq_set_keepalive_miss_limit(mcfg.keepalive_miss_limit);
-            arq_set_peer_payload_hold_s(mcfg.peer_payload_hold_s);
-            arq_set_startup_max_s(mcfg.startup_max_s);
-            modem_set_tx_gain(powf(10.0f, mcfg.tx_gain_db / 20.0f));
-            modem_set_busy_cfg((float)mcfg.busy_threshold_db,
-                               (float)mcfg.busy_hysteresis_db,
-                               (uint32_t)mcfg.busy_on_debounce_ms,
-                               (uint32_t)mcfg.busy_hang_ms);
-            modem_set_busy_detect_enabled(mcfg.busy_detect);
+            /* ARQ / modem tuning from the config is applied once, centrally, by
+             * mercury_engine_init() below (it reads the same mcfg).  Applying it
+             * here too duplicated the sequence and let the two copies drift. */
         }
     }
 
