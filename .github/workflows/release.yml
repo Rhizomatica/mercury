@@ -135,9 +135,13 @@ jobs:
         run: |
           sed -i 's/"Mercury [0-9]*\.[0-9]*\.[0-9]*"/"Mercury ${{ inputs.version }}"/' mercury.1
 
+      - name: Update installer version
+        run: |
+          sed -i 's/#define MyAppVersion "[^"]*"/#define MyAppVersion "${{ inputs.version }}"/' windows-installer/installer.iss
+
       - name: Commit and push release files
         run: |
-          git add debian/changelog main.c mercury.1
+          git add debian/changelog main.c mercury.1 windows-installer/installer.iss
           git commit -m "Updates for release ${{ inputs.version }}"
           git push origin mercuryv2
 
