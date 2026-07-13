@@ -90,12 +90,12 @@ static void handle_termination_signal(int sig)
     if (g_signal_count)
     {
         static const char msg[] = "Caught second signal, forcing exit.\n";
-        write(STDERR_FILENO, msg, sizeof(msg) - 1);
+        (void)!write(STDERR_FILENO, msg, sizeof(msg) - 1);
         _exit(1);
     }
     g_signal_count = 1;
     static const char msg[] = "Signal received, shutting down...\n";
-    write(STDERR_FILENO, msg, sizeof(msg) - 1);
+    (void)!write(STDERR_FILENO, msg, sizeof(msg) - 1);
     shutdown_ = true;
 }
 
@@ -230,7 +230,7 @@ int main(int argc, char *argv[])
             waterfall_enabled  = mcfg.waterfall_enabled;
             radio_type         = mcfg.radio_type;
             if (mcfg.radio_device[0]) {
-                strncpy(radio_device, mcfg.radio_device, sizeof(radio_device) - 1);
+                memcpy(radio_device, mcfg.radio_device, sizeof(radio_device) - 1);
                 radio_device[sizeof(radio_device) - 1] = '\0';
             }
             if (mcfg.input_device[0]) {

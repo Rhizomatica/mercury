@@ -98,7 +98,7 @@ int mercury_engine_init(const mercury_config *cfg,
     bool waterfall_enabled = cfg->waterfall_enabled;
     int  radio_type       = cfg->radio_type;
     char radio_device[1024];
-    strncpy(radio_device, cfg->radio_device, sizeof(radio_device) - 1);
+    memcpy(radio_device, cfg->radio_device, sizeof(radio_device) - 1);
     radio_device[sizeof(radio_device) - 1] = '\0';
     int  radio_serial_speed = cfg->radio_serial_speed;
     int  freedv_verbosity   = cfg->freedv_verbosity;
@@ -107,9 +107,9 @@ int mercury_engine_init(const mercury_config *cfg,
     int  broadcast_port     = cfg->broadcast_tcp_port ? cfg->broadcast_tcp_port : 8100;
     bool verbose            = cfg->verbose;
 
-    strncpy(g_input_dev,  cfg->input_device,  sizeof(g_input_dev) - 1);
-    strncpy(g_output_dev, cfg->output_device, sizeof(g_output_dev) - 1);
+    memcpy(g_input_dev,  cfg->input_device,  sizeof(g_input_dev) - 1);
     g_input_dev[sizeof(g_input_dev) - 1]  = '\0';
+    memcpy(g_output_dev, cfg->output_device, sizeof(g_output_dev) - 1);
     g_output_dev[sizeof(g_output_dev) - 1] = '\0';
 
     int rx_input_channel = cfg->capture_channel;
@@ -227,10 +227,10 @@ int mercury_engine_init(const mercury_config *cfg,
     g_mcfg.tls_enabled       = tls_enabled;
     g_mcfg.waterfall_enabled = waterfall_enabled;
     g_mcfg.radio_type        = radio_type;
-    strncpy(g_mcfg.radio_device, radio_device, sizeof(g_mcfg.radio_device) - 1);
+    memcpy(g_mcfg.radio_device, radio_device, sizeof(g_mcfg.radio_device) - 1);
     g_mcfg.radio_device[sizeof(g_mcfg.radio_device) - 1] = '\0';
-    strncpy(g_mcfg.input_device,  g_input_dev,  sizeof(g_mcfg.input_device) - 1);
-    strncpy(g_mcfg.output_device, g_output_dev, sizeof(g_mcfg.output_device) - 1);
+    memcpy(g_mcfg.input_device,  g_input_dev,  sizeof(g_mcfg.input_device) - 1);
+    memcpy(g_mcfg.output_device, g_output_dev, sizeof(g_mcfg.output_device) - 1);
     g_mcfg.input_device[sizeof(g_mcfg.input_device) - 1]   = '\0';
     g_mcfg.output_device[sizeof(g_mcfg.output_device) - 1] = '\0';
     g_mcfg.capture_channel   = rx_input_channel;
