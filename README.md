@@ -118,6 +118,37 @@ Radio control notes:
 
    The FreeDV codec is vendored in-tree — no external FreeDV or codec2 packages are needed.
 
+### Build targets
+
+| Target | Description |
+|--------|-------------|
+| `make` / `make all` | Build the standalone CLI `mercury` binary |
+| `make libmercury_core.a` | Compile all Mercury C objects into a host-arch static library (used by `fyne-ui`) |
+| `make fyne-ui` | Build the single-binary native GUI (`mercury-ui`), embedding the engine via CGo. Requires `make libmercury_core.a` first. |
+| `make libmercury_core_w64.a` | Cross-compile Mercury C objects for Windows x64 (requires `gcc-mingw-w64-x86-64`) |
+| `make fyne-ui-windows` | Cross-compile the single-binary GUI to `mercury-ui.exe`. Depends on `libmercury_core_w64.a`. |
+| `make windows-installer` | Full Windows installer pipeline: cross-compile engine + GUI, copy DLLs, patch config. Output goes to `windows-installer/`. Requires MinGW + Go. |
+| `make windows-zip` | Build standalone CLI + GUI Windows binaries and zip them for distribution |
+
+### Build the Fyne GUI (Linux)
+
+```bash
+sudo apt install golang-go libhamlib-dev libpulse-dev libasound2-dev
+make fyne-ui
+./gui_interface/fyne-ui/mercury-ui
+```
+
+### Cross-compile the Windows installer (from Linux)
+
+```bash
+sudo apt install golang-go gcc-mingw-w64-x86-64 mingw-w64-x86-64-dev
+make windows-installer
+# → windows-installer/ contains mercury-ui.exe + DLLs + mercury.ini
+# Use Inno Setup Compiler on Windows to build the .exe installer from installer.iss
+```
+
+   The FreeDV codec is vendored in-tree — no external FreeDV or codec2 packages are needed.
+
 ### Install via Debian package on Linux
 
 For now just Debian 13 (Trixie) packages are built, for both arm64 (works on both RaspberryPi OS and Debian) and amd64.
@@ -151,12 +182,11 @@ For now just Debian 13 (Trixie) packages are built, for both arm64 (works on bot
 
 **Note:** Installation via Debian package requires Debian 13 (Trixie)
 
-### Install ZIP package on Windows
+### Install on Windows
 
-1. Navigate to the releases page on the official GitHub repository: https://github.com/Rhizomatica/mercury/releases
-2. Download the ZIP package for the latest version
-3. Go to Downloads folder (or the folder where you downloaded the Mercury ZIP) and extract the files
-4. Click on the `mercury` executable file (``mercury.exe``) to run Mercury HF modem
+**Via installer (recommended):** Download the `Mercury_HF_Modem_Setup.exe` from the releases page, run it, and the single-binary GUI (`mercury-ui.exe`) will be installed. The GUI launches the Mercury engine in-process — no separate backend needed. Desktop and Start Menu shortcuts are created automatically.
+
+**Via ZIP:** Download the ZIP package from the releases page, extract it, and run `mercury-ui.exe` for the GUI or `mercury.exe` for the headless CLI.
 
 ## Configuration File
 
@@ -193,7 +223,8 @@ Mercury v2 currently uses FreeDV modulator code developed by David Rowe. We plan
 
 ## Graphical Interfaces
 
-Mercury v2 has two interfaces:
+Mercury v2 has three interfaces:
+- **Built-in Fyne UI** — a single-binary GUI embedded in the engine via CGo (this repository, `gui_interface/fyne-ui/`). Shows waterfall/spectrum, telemetry, and controls. Build with `make fyne-ui` (Linux) or `make windows-installer` (Windows cross-compile).
 - **Mercury-qt** (desktop): https://github.com/Rhizomatica/mercury-qt
 - **Web-based**: located in `docs/app/` in this repository, and accessible via https://rhizomatica.github.io/mercury/app/
 
