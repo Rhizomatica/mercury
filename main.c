@@ -230,8 +230,7 @@ int main(int argc, char *argv[])
             waterfall_enabled  = mcfg.waterfall_enabled;
             radio_type         = mcfg.radio_type;
             if (mcfg.radio_device[0]) {
-                memcpy(radio_device, mcfg.radio_device, sizeof(radio_device) - 1);
-                radio_device[sizeof(radio_device) - 1] = '\0';
+                snprintf(radio_device, sizeof(radio_device), "%s", mcfg.radio_device);
             }
             if (mcfg.input_device[0]) {
                 strncpy(input_dev, mcfg.input_device, MAX_PATH - 1);
