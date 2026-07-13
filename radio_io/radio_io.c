@@ -27,13 +27,9 @@
 
 #ifdef HAVE_HAMLIB
 #include <hamlib/rig.h>
-#if defined(__has_include)
-#if __has_include(<hamlib/port.h>)
-#include <hamlib/port.h>
-#endif
-#else
-#include <hamlib/port.h>
-#endif
+/* hamlib >= 4.6 ships the port struct inside rig.h directly.
+ * Including the separate port.h alongside would redefine it.
+ * Skip port.h — rig.h alone is sufficient on any supported version. */
 #include "rigctl_parse.h"
 #endif
 
