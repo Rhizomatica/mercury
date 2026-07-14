@@ -16,7 +16,13 @@
 extern "C" {
 #endif
 
-int  mercury_init(const char *config_path, const char *log_path, int verbose);
+/* Start the engine.  argc/argv are the process args forwarded from Go so the
+ * same CLI parser the daemon uses applies here.  default_config is the config
+ * path used when -C is absent; log_path is the engine log file. */
+/* Handle -h/-l/-z/-K (print to terminal); call before creating the window.
+ * Returns non-zero if an info action was handled (the caller should exit). */
+int  mercury_precheck(int argc, char **argv, const char *default_config);
+int  mercury_init(int argc, char **argv, const char *default_config, const char *log_path);
 void mercury_shutdown(void);
 void mercury_request_shutdown(void);
 
