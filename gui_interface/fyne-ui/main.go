@@ -207,7 +207,7 @@ func main() {
 	}
 
 	myApp := app.New()
-	myWindow := myApp.NewWindow("Mercury Modem Controller")
+	myWindow := myApp.NewWindow("Mercury Modem")
 	myWindow.Resize(fyne.NewSize(1280, 780))
 
 	state := &appState{wsScheme: "ws", wsHost: "127.0.0.1", wsPort: "10000"}
