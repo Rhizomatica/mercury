@@ -21,6 +21,8 @@ extern "C" {
  * path used when -C is absent; log_path is the engine log file. */
 /* Handle -h/-l/-z/-K (print to terminal); call before creating the window.
  * Returns non-zero if an info action was handled (the caller should exit). */
+/* Print the startup version banner (same text the daemon prints). */
+void mercury_print_version(void);
 int  mercury_precheck(int argc, char **argv, const char *default_config);
 int  mercury_init(int argc, char **argv, const char *default_config, const char *log_path);
 void mercury_shutdown(void);

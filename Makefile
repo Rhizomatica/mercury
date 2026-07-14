@@ -163,7 +163,7 @@ windows:
 	$(MAKE) clean OS=Windows_NT CC=$(MINGW_CC) AR=$(MINGW_AR)
 	$(MAKE) -j$$(nproc) OS=Windows_NT CC=$(MINGW_CC) AR=$(MINGW_AR)
 
-MERCURY_VERSION ?= $(shell grep 'define VERSION__' main.c | head -1 | sed 's/.*"\(.*\)".*/\1/')
+MERCURY_VERSION ?= $(shell grep 'define MERCURY_VERSION "' common/mercury_version.h | head -1 | sed 's/.*"\(.*\)".*/\1/')
 WINDOWS_DIR = mercury-$(MERCURY_VERSION)
 WINDOWS_ZIP = $(WINDOWS_DIR)-w64-$(GIT_HASH).zip
 
@@ -204,8 +204,8 @@ fyne-ui: libmercury_core.a
 	@echo "Building Mercury UI for Linux..."
 	cd $(FYNE_UI_DIR) && CGO_ENABLED=1 go build -tags mercury_embedded \
 		-ldflags "-X main.coreBuildID=$$(cksum $(abspath libmercury_core.a) | cut -d' ' -f1)" \
-		-o mercury-ui .
-	@echo "  -> $(FYNE_UI_DIR)/mercury-ui"
+		-o $(abspath mercury-ui) .
+	@echo "  -> mercury-ui"
 
 windows-zip: windows fyne-ui-windows
 	rm -rf $(WINDOWS_DIR) $(WINDOWS_ZIP)
@@ -243,7 +243,7 @@ clean:
 	rm -rf mercury-[0-9]*
 	rm -f $(WINDOWS_INSTALLER_DIR)/$(FYNE_UI_BIN)
 	rm -f $(FYNE_UI_DIR)/engine/mercury_bridge.o $(FYNE_UI_DIR)/engine/mercury_bridge_w64.o
-	rm -f $(FYNE_UI_DIR)/mercury-ui
+	rm -f mercury-ui $(FYNE_UI_DIR)/mercury-ui $(FYNE_UI_DIR)/mercury-fyne-ui
 	$(MAKE) -C modem clean
 	$(MAKE) -C datalink_arq clean
 	$(MAKE) -C datalink_broadcast clean

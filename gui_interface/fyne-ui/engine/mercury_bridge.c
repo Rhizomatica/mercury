@@ -15,6 +15,16 @@
 #include "cfg_utils.h"
 #include "mercury_engine.h"
 #include "mercury_cli.h"
+#include "mercury_version.h"
+
+/* Print the startup version banner (same text the daemon prints), so the UI
+ * announces its version on the terminal too.  Resolved here, in a unit the
+ * libmercury_core.a rule recompiles every build, so the git hash stays fresh. */
+void mercury_print_version(void)
+{
+    mercury_print_version_banner();
+    fflush(stdout);
+}
 
 /* ------------------------------------------------------------------ */
 /*  mercury_init(argc, argv, default_config, log_path)                 */

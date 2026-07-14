@@ -18,6 +18,12 @@ import (
 	"unsafe"
 )
 
+// mercuryPrintVersion prints the engine's version banner to the terminal,
+// exactly as the standalone daemon does at startup.
+func mercuryPrintVersion() {
+	C.mercury_print_version()
+}
+
 // mercuryInfoCheck forwards the args to the engine's CLI parser and handles the
 // informational actions (-h/-l/-z/-K) by printing to the terminal. Returns true
 // if such an action was handled and the process should exit before the GUI.
