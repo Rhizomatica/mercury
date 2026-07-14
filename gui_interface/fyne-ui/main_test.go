@@ -2,9 +2,53 @@ package main
 
 import (
 	"encoding/binary"
+	"image"
 	"math"
 	"testing"
 )
+
+// TestConcurrentSpectrumAccessNoRace exercises the appState sharing between the
+// WebSocket reader goroutine (writer of spectrumValues/waterfallRows) and the
+// Fyne render goroutines (drawSpectrumImage/drawWaterfallImage). Run with -race:
+// without the appState mutex this reports a data race on the shared slices.
+func TestConcurrentSpectrumAccessNoRace(t *testing.T) {
+	state := &appState{}
+	img := image.NewNRGBA(image.Rect(0, 0, 64, 32))
+	done := make(chan struct{})
+
+	// Writer: mimic the reader goroutine publishing spectrum/waterfall frames.
+	go func() {
+		defer close(done)
+		for i := 0; i < 3000; i++ {
+			spectrum := make([]float32, 128)
+			for j := range spectrum {
+				spectrum[j] = float32(-100 + (i+j)%40)
+			}
+			row := make([]float32, len(spectrum))
+			copy(row, spectrum)
+			const maxWaterfallRows = 800
+			state.mu.Lock()
+			state.spectrumValues = spectrum
+			state.spectrumRate = 8000
+			state.waterfallRows = append(state.waterfallRows, row)
+			if len(state.waterfallRows) > maxWaterfallRows {
+				state.waterfallRows = state.waterfallRows[len(state.waterfallRows)-maxWaterfallRows:]
+			}
+			state.mu.Unlock()
+		}
+	}()
+
+	// Reader: mimic the canvas.Raster render callbacks running concurrently.
+	for {
+		select {
+		case <-done:
+			return
+		default:
+			drawSpectrumImage(img, 64, 32, state)
+			drawWaterfallImage(img, 64, 32, state)
+		}
+	}
+}
 
 func TestParseStatusMessage(t *testing.T) {
 	payload := []byte(`{"type":"status","bitrate":1200,"snr":6.5,"sync":true,"direction":"tx","client_tcp_connected":true,"bytes_transmitted":34,"bytes_received":900,"tx_gain_db":3.5,"tx_peak_dbfs":-2.1,"waterfall":true}`)

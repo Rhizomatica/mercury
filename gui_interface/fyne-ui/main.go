@@ -19,6 +19,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -32,6 +33,10 @@ import (
 )
 
 type appState struct {
+	// mu guards the fields shared between the WebSocket reader goroutine
+	// (writer) and the Fyne render/UI goroutines (readers): the connection
+	// state and the spectrum/waterfall buffers drawn by the canvas rasters.
+	mu               sync.RWMutex
 	wsConn           *websocket.Conn
 	wsContext        context.Context
 	wsCancel         context.CancelFunc
@@ -487,15 +492,21 @@ func main() {
 	}
 
 	disconnectWS := func(reason string) {
-		if state.wsConn != nil {
-			_ = state.wsConn.Close()
-			state.wsConn = nil
-		}
-		if state.wsCancel != nil {
-			state.wsCancel()
-			state.wsCancel = nil
-		}
+		// Grab the connection handles under the lock, clear the shared state,
+		// then Close()/cancel() outside the lock (no network calls held).
+		state.mu.Lock()
+		conn := state.wsConn
+		cancel := state.wsCancel
+		state.wsConn = nil
+		state.wsCancel = nil
 		state.wsConnected = false
+		state.mu.Unlock()
+		if conn != nil {
+			_ = conn.Close()
+		}
+		if cancel != nil {
+			cancel()
+		}
 		runOnUI(func() {
 			connectionButtonState = "connect"
 			updateConnectionButton()
@@ -507,18 +518,23 @@ func main() {
 	}
 
 	connectWS := func() {
+		state.mu.Lock()
 		if state.wsConnected && state.wsConn != nil {
+			state.mu.Unlock()
 			appendLog("WebSocket already connected.\n")
 			return
 		}
-		if state.wsCancel != nil {
-			state.wsCancel()
-		}
-		if state.wsConn != nil {
-			_ = state.wsConn.Close()
-			state.wsConn = nil
-		}
+		oldCancel := state.wsCancel
+		oldConn := state.wsConn
+		state.wsConn = nil
 		state.wsContext, state.wsCancel = context.WithCancel(context.Background())
+		state.mu.Unlock()
+		if oldCancel != nil {
+			oldCancel()
+		}
+		if oldConn != nil {
+			_ = oldConn.Close()
+		}
 		state.wsHost = hostEntry.Text
 		state.wsPort = portEntry.Text
 		hostEntry.SetText(state.wsHost)
@@ -558,8 +574,11 @@ func main() {
 				return
 			}
 
+			state.mu.Lock()
 			state.wsConn = conn
 			state.wsConnected = true
+			ctx := state.wsContext
+			state.mu.Unlock()
 			runOnUI(func() {
 				connectionButtonState = "disconnect"
 				updateConnectionButton()
@@ -568,13 +587,13 @@ func main() {
 			appendLog("Connected to Mercury WebSocket successfully!\n")
 
 			go func() {
-				<-state.wsContext.Done()
+				<-ctx.Done()
 				_ = conn.Close()
 			}()
 
 			for {
 				select {
-				case <-state.wsContext.Done():
+				case <-ctx.Done():
 					return
 				default:
 					messageType, payload, readErr := conn.ReadMessage()
@@ -640,18 +659,19 @@ func main() {
 						if parseErr != nil {
 							continue
 						}
-						state.spectrumValues = spectrum
-						state.spectrumRate = sampleRate
 						// append a copy of this spectrum to the waterfall buffer
 						row := make([]float32, len(spectrum))
 						copy(row, spectrum)
-						state.waterfallRows = append(state.waterfallRows, row)
-						// cap waterfall history to a reasonable number of rows
 						const maxWaterfallRows = 800
+						state.mu.Lock()
+						state.spectrumValues = spectrum
+						state.spectrumRate = sampleRate
+						state.waterfallRows = append(state.waterfallRows, row)
 						if len(state.waterfallRows) > maxWaterfallRows {
 							// drop oldest rows
 							state.waterfallRows = state.waterfallRows[len(state.waterfallRows)-maxWaterfallRows:]
 						}
+						state.mu.Unlock()
 						refreshSpectrum()
 					}
 				}
@@ -660,7 +680,11 @@ func main() {
 	}
 
 	sendWSCommand := func(command string, value string, value2 string, value3 string) error {
-		if state.wsConn == nil || !state.wsConnected {
+		state.mu.RLock()
+		conn := state.wsConn
+		connected := state.wsConnected
+		state.mu.RUnlock()
+		if conn == nil || !connected {
 			return fmt.Errorf("not connected")
 		}
 		payload := map[string]any{"command": command, "value": value}
@@ -670,7 +694,7 @@ func main() {
 		if value3 != "" {
 			payload["value3"] = value3
 		}
-		return state.wsConn.WriteJSON(payload)
+		return conn.WriteJSON(payload)
 	}
 
 	connectButton = widget.NewButton("Connect", func() {
@@ -682,7 +706,10 @@ func main() {
 			connectionButtonState = "connect"
 			updateConnectionButton()
 		default:
-			if state.wsConnected && state.wsConn != nil {
+			state.mu.RLock()
+			alreadyConnected := state.wsConnected && state.wsConn != nil
+			state.mu.RUnlock()
+			if alreadyConnected {
 				connectionButtonState = "disconnect"
 				updateConnectionButton()
 				return
@@ -793,13 +820,41 @@ func main() {
 		),
 	)
 	waterfallBottom := container.NewGridWithColumns(7,
-		func() fyne.CanvasObject { t := canvas.NewText("0", color.NRGBA{R: 0xCC, G: 0xCC, B: 0xCC, A: 0xFF}); t.TextSize = 8; return t }(),
-		func() fyne.CanvasObject { t := canvas.NewText("500", color.NRGBA{R: 0xCC, G: 0xCC, B: 0xCC, A: 0xFF}); t.TextSize = 8; return t }(),
-		func() fyne.CanvasObject { t := canvas.NewText("1000", color.NRGBA{R: 0xCC, G: 0xCC, B: 0xCC, A: 0xFF}); t.TextSize = 8; return t }(),
-		func() fyne.CanvasObject { t := canvas.NewText("1500", color.NRGBA{R: 0xCC, G: 0xCC, B: 0xCC, A: 0xFF}); t.TextSize = 8; return t }(),
-		func() fyne.CanvasObject { t := canvas.NewText("2000", color.NRGBA{R: 0xCC, G: 0xCC, B: 0xCC, A: 0xFF}); t.TextSize = 8; return t }(),
-		func() fyne.CanvasObject { t := canvas.NewText("2500", color.NRGBA{R: 0xCC, G: 0xCC, B: 0xCC, A: 0xFF}); t.TextSize = 8; return t }(),
-		func() fyne.CanvasObject { t := canvas.NewText("3000", color.NRGBA{R: 0xCC, G: 0xCC, B: 0xCC, A: 0xFF}); t.TextSize = 8; return t }(),
+		func() fyne.CanvasObject {
+			t := canvas.NewText("0", color.NRGBA{R: 0xCC, G: 0xCC, B: 0xCC, A: 0xFF})
+			t.TextSize = 8
+			return t
+		}(),
+		func() fyne.CanvasObject {
+			t := canvas.NewText("500", color.NRGBA{R: 0xCC, G: 0xCC, B: 0xCC, A: 0xFF})
+			t.TextSize = 8
+			return t
+		}(),
+		func() fyne.CanvasObject {
+			t := canvas.NewText("1000", color.NRGBA{R: 0xCC, G: 0xCC, B: 0xCC, A: 0xFF})
+			t.TextSize = 8
+			return t
+		}(),
+		func() fyne.CanvasObject {
+			t := canvas.NewText("1500", color.NRGBA{R: 0xCC, G: 0xCC, B: 0xCC, A: 0xFF})
+			t.TextSize = 8
+			return t
+		}(),
+		func() fyne.CanvasObject {
+			t := canvas.NewText("2000", color.NRGBA{R: 0xCC, G: 0xCC, B: 0xCC, A: 0xFF})
+			t.TextSize = 8
+			return t
+		}(),
+		func() fyne.CanvasObject {
+			t := canvas.NewText("2500", color.NRGBA{R: 0xCC, G: 0xCC, B: 0xCC, A: 0xFF})
+			t.TextSize = 8
+			return t
+		}(),
+		func() fyne.CanvasObject {
+			t := canvas.NewText("3000", color.NRGBA{R: 0xCC, G: 0xCC, B: 0xCC, A: 0xFF})
+			t.TextSize = 8
+			return t
+		}(),
 	)
 	waterfallContent := container.NewBorder(
 		waterfallTop,
@@ -831,11 +886,18 @@ func main() {
 	myWindow.SetContent(mainLayout)
 
 	myWindow.SetOnClosed(func() {
-		if state.wsConn != nil {
-			_ = state.wsConn.Close()
+		state.mu.Lock()
+		conn := state.wsConn
+		cancel := state.wsCancel
+		state.wsConn = nil
+		state.wsCancel = nil
+		state.wsConnected = false
+		state.mu.Unlock()
+		if conn != nil {
+			_ = conn.Close()
 		}
-		if state.wsCancel != nil {
-			state.wsCancel()
+		if cancel != nil {
+			cancel()
 		}
 		mercuryStop()
 		if uiLog != nil {
@@ -928,15 +990,21 @@ func drawSpectrumImage(img *image.NRGBA, w, h int, state *appState) {
 			img.SetNRGBA(x, y, bg)
 		}
 	}
-	if len(state.spectrumValues) == 0 {
+	// Snapshot the shared slice header under the lock; spectrumValues is
+	// replaced wholesale by the reader goroutine (never mutated in place),
+	// so the snapshot is safe to iterate after unlocking.
+	state.mu.RLock()
+	vals := state.spectrumValues
+	state.mu.RUnlock()
+	if len(vals) == 0 {
 		return
 	}
 	ctx := &spectrumContext{img: img, w: w, h: h}
 	ctx.drawGrid()
 	// draw the spectrum line with a bold cyan color
-	ctx.drawLine(state.spectrumValues)
+	ctx.drawLine(vals)
 	// draw a faint filled area under the line
-	ctx.fillUnderLine(state.spectrumValues)
+	ctx.fillUnderLine(vals)
 }
 
 func drawWaterfallImage(img *image.NRGBA, w, h int, state *appState) {
@@ -947,17 +1015,23 @@ func drawWaterfallImage(img *image.NRGBA, w, h int, state *appState) {
 			img.SetNRGBA(x, y, bg)
 		}
 	}
-	if len(state.waterfallRows) == 0 {
+	// Snapshot the outer slice header under the lock.  The reader goroutine
+	// appends/reslices waterfallRows, but each row is created once and never
+	// mutated, so iterating the snapshot after unlocking is safe.
+	state.mu.RLock()
+	rows := state.waterfallRows
+	state.mu.RUnlock()
+	if len(rows) == 0 {
 		return
 	}
 	// determine how many rows to draw (newest at top)
 	rowsToDraw := h
-	if len(state.waterfallRows) < rowsToDraw {
-		rowsToDraw = len(state.waterfallRows)
+	if len(rows) < rowsToDraw {
+		rowsToDraw = len(rows)
 	}
 	// draw newest row at the top (rowIdx 0 -> newest)
 	for rowIdx := 0; rowIdx < rowsToDraw; rowIdx++ {
-		row := state.waterfallRows[len(state.waterfallRows)-1-rowIdx]
+		row := rows[len(rows)-1-rowIdx]
 		destY := rowIdx
 		for x := 0; x < w; x++ {
 			if len(row) == 0 {
