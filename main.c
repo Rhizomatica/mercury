@@ -18,11 +18,6 @@
  *
  */
 
-#define VERSION__ "1.9.9"
-#ifndef GIT_HASH
-#define GIT_HASH "unknown000"
-#endif
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
@@ -54,6 +49,7 @@
 #include "cfg_utils.h"
 #include "mercury_engine.h"
 #include "mercury_cli.h"
+#include "mercury_version.h"
 
 extern cbuf_handle_t capture_buffer;
 extern cbuf_handle_t playback_buffer;
@@ -77,11 +73,7 @@ static void handle_termination_signal(int sig)
 
 int main(int argc, char *argv[])
 {
-#if defined(__linux__)
-    printf("\e[0;31mRhizomatica Mercury Version %s (git %.8s)\e[0m\n", VERSION__, GIT_HASH); // we go red
-#elif defined(_WIN32)
-    printf("Rhizomatica Mercury Version %s (git %.8s)\n", VERSION__, GIT_HASH);
-#endif
+    mercury_print_version_banner();
 
 #ifdef _WIN32
     WSADATA wsa_data;

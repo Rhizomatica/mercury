@@ -135,7 +135,7 @@ Radio control notes:
 ```bash
 sudo apt install golang-go libhamlib-dev libpulse-dev libasound2-dev
 make fyne-ui
-./gui_interface/fyne-ui/mercury-ui
+./mercury-ui
 ```
 
 ### Cross-compile the Windows installer (from Linux)
