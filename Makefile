@@ -95,7 +95,7 @@ else
 BINARY = mercury
 endif
 
-LDFLAGS=$(FFAUDIO_LINKFLAGS) -lm $(HAMLIB_LDFLAGS)
+LDFLAGS=$(FFAUDIO_LINKFLAGS) -lm $(HAMLIB_LDFLAGS) $(ATOMIC_LDFLAGS)
 
 MERCURY_LINK_INPUTS = \
 	main.o common/cfg_utils.o common/iniparser/iniparser.o common/iniparser/dictionary.o \

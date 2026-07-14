@@ -35,7 +35,7 @@ UNAME_S := $(shell uname -s)
 ifeq ($(UNAME_S),Darwin)
 LDFLAGS = -lpthread -lm $(SAN_LDFLAGS)
 else
-LDFLAGS = -lpthread -lrt -lm $(SAN_LDFLAGS)
+LDFLAGS = -lpthread -lrt -lm $(SAN_LDFLAGS) $(ATOMIC_LDFLAGS)
 endif
 
 # Shared mock stubs for ARQ tests

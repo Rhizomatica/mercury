@@ -50,6 +50,15 @@ ifneq ($(filter aarch64%,$(TARGET_MACHINE)),)
   endif
 endif
 
+# 32-bit ARM (armhf / armv7) has no native 64-bit atomic instructions, so GCC
+# lowers 64-bit _Atomic loads/stores to libatomic calls (__atomic_load_8,
+# __atomic_store_8, ...).  Link libatomic there.  64-bit targets inline these,
+# and libatomic is absent on some platforms (e.g. macOS), so keep it scoped.
+ATOMIC_LDFLAGS =
+ifneq ($(filter arm-% armv%,$(TARGET_MACHINE)),)
+  ATOMIC_LDFLAGS = -latomic
+endif
+
 GIT_HASH ?= $(shell git rev-parse --short=8 HEAD 2>/dev/null || echo unknown000)
 COMMON_CFLAGS += -DGIT_HASH=\"$(GIT_HASH)\"
 
