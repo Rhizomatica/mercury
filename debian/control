@@ -2,7 +2,8 @@ Source: mercury
 Section: comm
 Priority: optional
 Maintainer: Rafael Diniz <rafael@riseup.net>
-Build-Depends: debhelper-compat (= 13), libasound2-dev, libpulse-dev, libhamlib-dev
+Build-Depends: debhelper-compat (= 13), libasound2-dev, libpulse-dev, libhamlib-dev,
+ golang-go, libgl1-mesa-dev, xorg-dev
 Standards-Version: 4.6.2
 Homepage: https://github.com/Rhizomatica/mercury
 Vcs-Git: https://github.com/Rhizomatica/mercury.git
@@ -17,3 +18,17 @@ Description: HF modem for store-and-forward communication
  broadcast data links over HF radio using FreeDV OFDM waveforms
  (DATAC13/DATAC4/DATAC3/DATAC1) with adaptive gear-shifting, per-direction
  mode selection, and a VARA-compatible TCP TNC interface.
+
+Package: mercury-ui
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}
+Description: HF modem for store-and-forward communication (GUI)
+ Mercury is the modem component of the HERMES (High-Frequency Emergency
+ and Rural Multimedia Exchange System) project. It provides ARQ and
+ broadcast data links over HF radio using FreeDV OFDM waveforms
+ (DATAC13/DATAC4/DATAC3/DATAC1) with adaptive gear-shifting, per-direction
+ mode selection, and a VARA-compatible TCP TNC interface.
+ .
+ This is the same Mercury as the mercury package, built as a single binary
+ that links the C modem with a Fyne (Go) graphical user interface. Install
+ mercury for the command-line build, or mercury-ui for the build with the GUI.
