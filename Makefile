@@ -202,7 +202,9 @@ libmercury_core_w64.a:
 
 fyne-ui: libmercury_core.a
 	@echo "Building Mercury UI for Linux..."
-	cd $(FYNE_UI_DIR) && CGO_ENABLED=1 go build -tags mercury_embedded -o mercury-ui .
+	cd $(FYNE_UI_DIR) && CGO_ENABLED=1 go build -tags mercury_embedded \
+		-ldflags "-X main.coreBuildID=$$(cksum $(abspath libmercury_core.a) | cut -d' ' -f1)" \
+		-o mercury-ui .
 	@echo "  -> $(FYNE_UI_DIR)/mercury-ui"
 
 windows-zip: windows fyne-ui-windows
@@ -224,7 +226,7 @@ fyne-ui-windows: libmercury_core_w64.a
 	@echo "Building single-binary Mercury UI for Windows..."
 	cd $(FYNE_UI_DIR) && \
 		CGO_ENABLED=1 GOOS=windows GOARCH=amd64 CC=$(MINGW_GO_CC) \
-		go build -tags mercury_embedded -ldflags="-s -w -H windowsgui" -o $(abspath $(WINDOWS_INSTALLER_DIR)/$(FYNE_UI_BIN)) .
+		go build -tags mercury_embedded -ldflags="-s -w -H windowsgui -X main.coreBuildID=$$(cksum $(abspath libmercury_core_w64.a) | cut -d' ' -f1)" -o $(abspath $(WINDOWS_INSTALLER_DIR)/$(FYNE_UI_BIN)) .
 	@echo "  -> $(WINDOWS_INSTALLER_DIR)/$(FYNE_UI_BIN)"
 
 windows-installer: fyne-ui-windows
