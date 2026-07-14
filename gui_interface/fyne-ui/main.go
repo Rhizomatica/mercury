@@ -197,6 +197,12 @@ func runOnUI(fn func()) {
 }
 
 func main() {
+	// Handle informational CLI actions (-h/-l/-z/-K) before touching the GUI,
+	// so `mercury-ui -h` prints to the terminal and exits like the daemon.
+	if mercuryInfoCheck(os.Args) {
+		return
+	}
+
 	myApp := app.New()
 	myWindow := myApp.NewWindow("Mercury Modem Controller")
 	myWindow.Resize(fyne.NewSize(1280, 780))
@@ -916,17 +922,20 @@ func main() {
 	go func() {
 		time.Sleep(200 * time.Millisecond)
 
-		writableConfig := filepath.Join(getLogDir(), "mercury.ini")
-		if _, err := os.Stat(writableConfig); os.IsNotExist(err) {
-			defaultConfig := filepath.Join(getBaseDir(), "mercury.ini")
-			if data, rerr := os.ReadFile(defaultConfig); rerr == nil {
-				os.WriteFile(writableConfig, data, 0644)
+		// Per-user writable config used when no -C is passed (seeded from the
+		// bundled default the first time).  The C parser picks -C over this.
+		defaultConfig := filepath.Join(getLogDir(), "mercury.ini")
+		if _, err := os.Stat(defaultConfig); os.IsNotExist(err) {
+			bundled := filepath.Join(getBaseDir(), "mercury.ini")
+			if data, rerr := os.ReadFile(bundled); rerr == nil {
+				os.WriteFile(defaultConfig, data, 0644)
 			}
 		}
 
 		logPath := filepath.Join(getLogDir(), "mercury_engine.log")
 		appendLog("Starting Mercury engine...\n")
-		if err := mercuryStart(writableConfig, logPath, true); err != nil {
+		// Forward the process args so the engine's own CLI parser applies them.
+		if err := mercuryStart(defaultConfig, logPath, os.Args); err != nil {
 			appendLog(fmt.Sprintf("Failed to start Mercury engine: %v\n", err))
 			return
 		}

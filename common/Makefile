@@ -5,8 +5,18 @@ CFLAGS = $(COMMON_CFLAGS)
 # cfg_utils needs headers from several sibling directories
 CFG_CFLAGS = $(COMMON_CFLAGS) -I. -I../audioio/ffaudio -I../gui_interface -I../datalink_arq -I../data_interfaces -I../modem/freedv
 
+# -S (HERMES SHM radio control) is gated by HAVE_HERMES_SHM, exported by the
+# root Makefile (1 on Linux, 0 for the Windows cross-build) — mirror main.o.
+ifeq ($(HAVE_HERMES_SHM),1)
+CLI_SHM_CFLAGS = -DHAVE_HERMES_SHM
+endif
+
+# Shared engine + CLI parser need the sibling module headers.
+ENGINE_CFLAGS = $(CFG_CFLAGS) -I.. -I../modem -I../modem/freedv -I../datalink_broadcast -I../data_interfaces -I../datalink_arq -I../audioio -I../radio_io
+
 all: os_interop.o ring_buffer_posix.o shm_posix.o crc6.o hermes_log.o chan.o queue.o \
-     cfg_utils.o iniparser/iniparser.o iniparser/dictionary.o watterson.o mercury_engine.o
+     cfg_utils.o iniparser/iniparser.o iniparser/dictionary.o watterson.o mercury_engine.o \
+     mercury_cli.o
 
 os_interop.o: os_interop.c
 	$(CC) $(CFLAGS) -c os_interop.c
@@ -42,7 +52,10 @@ watterson.o: watterson.c watterson.h
 	$(CC) $(CFLAGS) -I.. -c watterson.c
 
 mercury_engine.o: mercury_engine.c mercury_engine.h
-	$(CC) $(CFG_CFLAGS) -I.. -I../modem -I../modem/freedv -I../datalink_broadcast -I../data_interfaces -I../datalink_arq -I../audioio -I../radio_io -c mercury_engine.c
+	$(CC) $(ENGINE_CFLAGS) -c mercury_engine.c
+
+mercury_cli.o: mercury_cli.c mercury_cli.h
+	$(CC) $(ENGINE_CFLAGS) $(CLI_SHM_CFLAGS) -c mercury_cli.c
 
 .PHONY: all clean
 

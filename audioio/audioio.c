@@ -259,8 +259,7 @@ static void *fifo_capture_thread(void *device_ptr)
     int fd = fifo_open_retry(path, O_RDONLY | O_NONBLOCK, "audio-fifo-cap");
     if (fd < 0)
     {
-        shutdown_ = true;
-        return NULL;
+        return NULL;   // audio failure ends this thread, not the engine
     }
 
     while (!shutdown_ && !audio_shutdown_)
@@ -333,8 +332,7 @@ static void *fifo_playback_thread(void *device_ptr)
     int fd = fifo_open_retry(path, O_WRONLY | O_NONBLOCK, "audio-fifo-play");
     if (fd < 0)
     {
-        shutdown_ = true;
-        return NULL;
+        return NULL;   // audio failure ends this thread, not the engine
     }
 
     while (!shutdown_ && !audio_shutdown_)
@@ -697,9 +695,10 @@ finish_play:
 
     HLOGI("audio-play", "radio_playback_thread exit");
 
-    // Only trigger global shutdown if this was NOT a restart-initiated stop
-    if (!audio_shutdown_)
-        shutdown_ = true;
+    // An audio-device failure (or a restart-initiated stop) ends only this
+    // thread; it does NOT take the engine down.  The control/websocket
+    // interfaces stay up so the operator can select a working device
+    // (audioio_restart), and a transient glitch no longer kills the modem.
 
     return NULL;
 }
@@ -1092,9 +1091,10 @@ cleanup_cap:
 finish_cap:
     HLOGI("audio-cap", "radio_capture_thread exit");
 
-    // Only trigger global shutdown if this was NOT a restart-initiated stop
-    if (!audio_shutdown_)
-        shutdown_ = true;
+    // An audio-device failure (or a restart-initiated stop) ends only this
+    // thread; it does NOT take the engine down.  The control/websocket
+    // interfaces stay up so the operator can select a working device
+    // (audioio_restart), and a transient glitch no longer kills the modem.
 
     return NULL;
 }

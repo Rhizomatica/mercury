@@ -4,7 +4,9 @@ package main
 
 import "fmt"
 
-func mercuryStart(configPath, logPath string, verbose bool) error {
+func mercuryInfoCheck(args []string) bool { return false }
+
+func mercuryStart(defaultConfig, logPath string, args []string) error {
 	return fmt.Errorf("mercury engine not embedded (build with -tags mercury_embedded)")
 }
 
