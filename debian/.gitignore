@@ -1,0 +1,10 @@
+# debhelper build artifacts
+/.debhelper/
+/debhelper-build-stamp
+/files
+/*.substvars
+/*.log
+# per-package staging dirs
+/mercury/
+/mercury-ui/
+/tmp/

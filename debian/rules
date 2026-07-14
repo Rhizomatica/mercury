@@ -5,8 +5,25 @@ export DEB_BUILD_MAINT_OPTIONS = hardening=+all
 %:
 	dh $@
 
+override_dh_auto_build:
+	dh_auto_build
+	$(MAKE) fyne-ui
+
 override_dh_auto_install:
+	# Daemon + man page + example config -> mercury package.
 	$(MAKE) install DESTDIR=$(CURDIR)/debian/mercury
+	# Standalone GUI (embeds the engine) + desktop entry + icon -> mercury-ui.
+	install -D -m 0755 mercury-ui \
+		$(CURDIR)/debian/mercury-ui/usr/bin/mercury-ui
+	install -D -m 0644 debian/mercury-ui.desktop \
+		$(CURDIR)/debian/mercury-ui/usr/share/applications/mercury-ui.desktop
+	install -D -m 0644 gui_interface/fyne-ui/mercury-ui.png \
+		$(CURDIR)/debian/mercury-ui/usr/share/icons/hicolor/128x128/apps/mercury-ui.png
 
 override_dh_auto_clean:
 	$(MAKE) clean
+
+# dwz cannot process the Go binary's DWARF (compressed sections); skip it for
+# mercury-ui while still compressing the C daemon's debug info.
+override_dh_dwz:
+	dh_dwz -Xmercury-ui

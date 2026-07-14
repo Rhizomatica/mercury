@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Mercury Modem
+GenericName=HF Modem
+Comment=HF radio modem
+Exec=mercury-ui
+Icon=mercury-ui
+Terminal=false
+Categories=Network;HamRadio;
+Keywords=HF;radio;modem;FreeDV;ARQ;HERMES;
+StartupNotify=true

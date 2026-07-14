@@ -1,3 +1,12 @@
+mercury (1.9.9-2) unstable; urgency=medium
+
+  * Add mercury-ui binary package: standalone Fyne desktop GUI that embeds
+    the modem engine in-process (no separate daemon required).
+  * Ship a desktop entry and application icon for mercury-ui.
+  * Build-Depends: add golang-go, libgl1-mesa-dev and xorg-dev for the GUI.
+
+ -- Rafael Diniz <rafael@riseup.net>  Wed, 15 Jul 2026 00:15:43 +0100
+
 mercury (1.9.9-1) unstable; urgency=medium
 
   * Release 1.9.9.
