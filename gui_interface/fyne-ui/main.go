@@ -906,36 +906,42 @@ func main() {
 	myWindow.SetContent(mainLayout)
 
 	// Single idempotent teardown, used by both the window-close handler and the
-	// signal handler.  mercury_engine_shutdown() joins the engine threads and
-	// can hang on a stuck join (the daemon guards this with alarm(10)); the
-	// watchdog goroutine is the UI's equivalent — it force-exits if teardown
-	// does not finish, so the process always dies.  We still call mercuryStop()
-	// first so the engine unkeys the radio and flushes on the way out.
+	// signal handler.  It runs entirely OFF the GL/main thread: SetOnClosed is
+	// invoked on the main thread, and mercury_engine_shutdown() joins the engine
+	// threads (audio/modem) which takes a moment — doing that inline would block
+	// the GL loop and leave the window half-closed, which some window managers
+	// dislike.  Instead shutdown() returns immediately (just kicks a goroutine)
+	// so the window closes at once, and teardown finishes in the background,
+	// then os.Exit.  A watchdog force-exits if a join ever wedges (the UI's
+	// equivalent of the daemon's alarm(10)).  mercuryStop() still runs first so
+	// the engine unkeys the radio and flushes on the way out.
 	var shutdownOnce sync.Once
 	shutdown := func() {
 		shutdownOnce.Do(func() {
 			go func() {
-				time.Sleep(8 * time.Second)
+				go func() {
+					time.Sleep(5 * time.Second)
+					os.Exit(0)
+				}()
+				state.mu.Lock()
+				conn := state.wsConn
+				cancel := state.wsCancel
+				state.wsConn = nil
+				state.wsCancel = nil
+				state.wsConnected = false
+				state.mu.Unlock()
+				if conn != nil {
+					_ = conn.Close()
+				}
+				if cancel != nil {
+					cancel()
+				}
+				mercuryStop()
+				if uiLog != nil {
+					_ = uiLog.Close()
+				}
 				os.Exit(0)
 			}()
-			state.mu.Lock()
-			conn := state.wsConn
-			cancel := state.wsCancel
-			state.wsConn = nil
-			state.wsCancel = nil
-			state.wsConnected = false
-			state.mu.Unlock()
-			if conn != nil {
-				_ = conn.Close()
-			}
-			if cancel != nil {
-				cancel()
-			}
-			mercuryStop()
-			if uiLog != nil {
-				_ = uiLog.Close()
-			}
-			os.Exit(0)
 		})
 	}
 
@@ -975,6 +981,14 @@ func main() {
 	}()
 
 	myWindow.ShowAndRun()
+
+	// ShowAndRun returns once the window has closed. Teardown now runs off the
+	// main thread, so make sure it has been kicked off (idempotent — SetOnClosed
+	// normally does) and then block: the teardown goroutine calls os.Exit when
+	// done (or the watchdog does), so main() must not return here and terminate
+	// the process before the engine has unkeyed the radio and stopped cleanly.
+	shutdown()
+	select {}
 }
 
 func parseMenuItems(payload []byte) []optionItem {
