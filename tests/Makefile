@@ -44,7 +44,7 @@ ARQ_STUBS = datalink_arq/arq_test_stubs.c
 # Test executables
 TEST_BINS = test_ring_buffer test_arq_protocol test_arq_timing test_arq_fsm \
             test_tcp_interfaces test_resampler test_pcm24 test_arq_olla test_arq_sim \
-            test_arq_conn test_cfg_utils test_arq_tnc test_channel_busy \
+            test_arq_conn test_cfg_utils test_arq_tnc test_channel_busy test_mfsk \
             test_freedv_harq test_sock_wire test_virtual_clock
 
 .PHONY: all test clean
@@ -147,6 +147,10 @@ test_virtual_clock: common/test_virtual_clock.c $(UNITY_SRC) ../common/virtual_c
 # UI status wire format (embedded struct vs remote JSON must not drift)
 test_ui_status: gui_interface/test_ui_status.c $(UNITY_SRC) ../gui_interface/ui_status.c
 	$(CC) $(CFLAGS) -I../gui_interface -I../datalink_arq -I../modem -I../common -o $@ $^ $(LDFLAGS)
+
+# MFSK codec test (mod/demod round-trip + modulation-order gain)
+test_mfsk: modem/test_mfsk.c $(UNITY_SRC) ../modem/mfsk.c
+	$(CC) $(CFLAGS) -I../modem -o $@ $^ $(LDFLAGS) -lm
 
 clean:
 	rm -f $(TEST_BINS)
