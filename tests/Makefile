@@ -124,8 +124,8 @@ test_arq_tnc: datalink_arq/test_arq_tnc.c $(UNITY_SRC) ../datalink_arq/arq_tnc.c
 test_channel_busy: modem/test_channel_busy.c $(UNITY_SRC) ../modem/channel_busy.c
 	$(CC) $(CFLAGS) -I../modem -o $@ $^ $(LDFLAGS) -lm
 
-# MFSK codec test (mod/demod round-trip + modulation-order gain)
-test_mfsk: modem/test_mfsk.c $(UNITY_SRC) ../modem/mfsk.c
+# MFSK codec test (mod/demod round-trip, modulation-order gain, OFDM framing)
+test_mfsk: modem/test_mfsk.c $(UNITY_SRC) ../modem/mfsk.c ../modem/mfsk_ofdm.c
 	$(CC) $(CFLAGS) -I../modem -o $@ $^ $(LDFLAGS) -lm
 
 clean:

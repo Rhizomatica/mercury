@@ -10,10 +10,12 @@
  */
 #include "unity.h"
 #include "mfsk.h"
+#include "mfsk_ofdm.h"
 
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
+#include <complex.h>
 
 #define NC       50
 #define NSYM     4000
@@ -99,11 +101,31 @@ void test_higher_M_more_robust_awgn(void)
     TEST_ASSERT_TRUE(err_m32 < err_m2);
 }
 
+void test_ofdm_framing_roundtrip(void)
+{
+    /* Nc bins -> zero-pad -> IFFT -> +CP -> -CP -> FFT -> depad recovers bins.
+     * (fft is 1/N-normalized, ifft unnormalized, so the pair is identity.) */
+    ofdm_frame_t o;
+    ofdm_frame_init(&o, 64, 50, 0.25, 0);
+    double complex bins[64], pad[64], t[64], cp[80], rmv[64], fftd[64], out[64];
+    for (int i = 0; i < o.Nc; i++)
+        bins[i] = (urand() - 0.5) + (urand() - 0.5) * I;
+    ofdm_zero_padder(&o, bins, pad);
+    ofdm_ifft(&o, pad, t);
+    ofdm_gi_adder(&o, t, cp);
+    ofdm_gi_remover(&o, cp, rmv);
+    ofdm_fft(&o, rmv, fftd);
+    ofdm_zero_depadder(&o, fftd, out);
+    for (int i = 0; i < o.Nc; i++)
+        TEST_ASSERT_TRUE(cabs(out[i] - bins[i]) < 1e-9);
+}
+
 int main(void)
 {
     UNITY_BEGIN();
     RUN_TEST(test_roundtrip_lossless);
     RUN_TEST(test_bits_per_symbol);
     RUN_TEST(test_higher_M_more_robust_awgn);
+    RUN_TEST(test_ofdm_framing_roundtrip);
     return UNITY_END();
 }
