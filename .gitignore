@@ -5,6 +5,7 @@ mercury
 /mercury-ui
 gui_interface/fyne-ui/mercury-ui
 gui_interface/fyne-ui/mercury-fyne-ui
+gui_interface/fyne-ui/*.app
 *.exe
 *.dll
 *.so
