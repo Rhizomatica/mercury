@@ -194,6 +194,17 @@ test.AssertImageMatches(t, "panel.png", w.Canvas().Capture())  // visual regress
 Use the GLFW patch when you need the *real interactive window* in the VM; use
 the software test canvas for automated snapshot/logic tests.
 
+## Upstreaming
+
+The same fix belongs in upstream GLFW (`glfw/glfw`), which `go-gl/glfw` vendors.
+A ready-to-send patch (upstream paths, targets `src/nsgl_context.m` in
+`_glfwCreateContextNSGL`) is kept alongside this doc:
+
+- `gui_interface/fyne-ui/glfw-nsgl-software-fallback.patch`
+
+If GLFW accepts it, `go-gl/glfw` inherits it on its next vendor sync and this
+repo's `third_party/` copy + `replace` can be dropped.
+
 ## References
 - go-gl/glfw source: `glfw/src/nsgl_context.m` (`createContextNSGL`)
 - [glfw#2080 — allow macOS OpenGL software renderer](https://github.com/glfw/glfw/issues/2080)
