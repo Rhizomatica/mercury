@@ -146,8 +146,43 @@ not decode failures). Bitrate at this config: ~8 bps info (rate 1/16, 25 sym/s,
 5 bits/sym); v1's WB geometry gives ~14 bps. Frame = 100 info bits (~10 B) per
 1600-bit codeword.
 
-Unit tests (`tests/modem/test_mfsk.c`): round-trip, modulation-order gain, OFDM
-framing round-trip, preamble acquisition, LDPC encode/decode — all in the suite.
+### Postamble (dual-ended acquisition) + full mode comparison
+
+Since the coded mode is acquisition-limited, a **postamble** was added
+(`mfsk_generate_postamble` + `mfsk_sync_build_postamble_template`): a second
+known-tone sequence (distinct tones) after the payload, so RX can sync on the
+preamble **or** the postamble. Coded MFSK, MPP fading, same rx file (valid A/B):
+
+| SNR3k | preamble-only | dual-ended (postamble) |
+|---|---|---|
+| −8.8 | 12/15 (80 %) | **15/15 (100 %)** |
+| −10.8 | 9/15 (60 %) | **13/15 (87 %)** |
+| −12.8 | 6/15 (40 %) | **10/15 (67 %)** |
+
+The postamble buys **~2 dB** of floor (a second, independently-faded chance to
+acquire).
+
+**Full mode comparison — delivered %, MPP fading, same `ch` pipeline:**
+
+| SNR3k | MFSK dual (coded) | DATAC16 | DATAC15 | DATAC1 / DATAC3 |
+|---|---|---|---|---|
+| −8.8 | **100 %** | 63 % | 50 % | 0 % |
+| −10.8 | **87 %** | 40 % | 33 % | 0 % |
+| −12.8 | **67 %** | 20 % | 3 % | 0 % |
+| −14.8 | **20 %** | — | — | 0 % |
+
+The MFSK weak-signal mode extends the usable floor **~3–4 dB below** the most
+robust OFDM modes (DATAC15/16), and DATAC1/DATAC3 fail entirely below −6.8 dB.
+The trade is bitrate: ~8 bps (this config) vs DATAC15's 68 — a deep-fringe
+bottom rung for when even DATAC15 can't get through.
+
+Caveats: MFSK measured /15 vs OFDM /30 (percentages comparable); the two go
+through separate but identical `ch`-MPP pipelines at the same No→SNR3k; MFSK is
+this study's HF-reasonable config, not v1's exact WB geometry.
+
+Unit tests (`tests/modem/test_mfsk.c`, all in the suite): mod/demod round-trip,
+modulation-order gain, OFDM framing round-trip, preamble acquisition, LDPC
+encode/decode, postamble (distinct tones + acquisition).
 
 ## Reproduce
 - Round-trip / gain unit test: `cd tests && make test_mfsk && ./test_mfsk`.

@@ -9,15 +9,16 @@
 
 #include <math.h>
 
-int mfsk_sync_build_template(const mfsk_t *m, const ofdm_frame_t *o,
-                             double complex *tmpl_out, double *sym_energy_out)
+static int build_tmpl(const mfsk_t *m, const ofdm_frame_t *o, int postamble,
+                      double complex *tmpl_out, double *sym_energy_out)
 {
     int Nofdm = ofdm_frame_nofdm(o);
-    int P = m->preamble_nSymb;
+    int P = postamble ? m->postamble_nSymb : m->preamble_nSymb;
 
-    /* preamble tone bins (frequency domain), P symbols x Nc */
+    /* known tone bins (frequency domain), P symbols x Nc */
     mfsk_cplx pbins[8 * 512];         /* P<=8, Nc<=512 */
-    mfsk_generate_preamble(m, pbins, P);
+    if (postamble) mfsk_generate_postamble(m, pbins, P);
+    else           mfsk_generate_preamble(m, pbins, P);
 
     for (int s = 0; s < P; s++)
     {
@@ -36,6 +37,19 @@ int mfsk_sync_build_template(const mfsk_t *m, const ofdm_frame_t *o,
         sym_energy_out[s] = e;
     }
     return P;
+}
+
+int mfsk_sync_build_template(const mfsk_t *m, const ofdm_frame_t *o,
+                             double complex *tmpl_out, double *sym_energy_out)
+{
+    return build_tmpl(m, o, 0, tmpl_out, sym_energy_out);
+}
+
+int mfsk_sync_build_postamble_template(const mfsk_t *m, const ofdm_frame_t *o,
+                                       double complex *tmpl_out,
+                                       double *sym_energy_out)
+{
+    return build_tmpl(m, o, 1, tmpl_out, sym_energy_out);
 }
 
 int mfsk_sync_search(const double complex *rx, int rx_len, int interp,
