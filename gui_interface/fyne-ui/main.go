@@ -903,32 +903,49 @@ func main() {
 	mainLayout := container.NewBorder(topBar, nil, nil, nil, content)
 	myWindow.SetContent(mainLayout)
 
-	myWindow.SetOnClosed(func() {
-		state.mu.Lock()
-		conn := state.wsConn
-		cancel := state.wsCancel
-		state.wsConn = nil
-		state.wsCancel = nil
-		state.wsConnected = false
-		state.mu.Unlock()
-		if conn != nil {
-			_ = conn.Close()
-		}
-		if cancel != nil {
-			cancel()
-		}
-		mercuryStop()
-		if uiLog != nil {
-			_ = uiLog.Close()
-		}
-	})
+	// Single idempotent teardown, used by both the window-close handler and the
+	// signal handler.  mercury_engine_shutdown() joins the engine threads and
+	// can hang on a stuck join (the daemon guards this with alarm(10)); the
+	// watchdog goroutine is the UI's equivalent — it force-exits if teardown
+	// does not finish, so the process always dies.  We still call mercuryStop()
+	// first so the engine unkeys the radio and flushes on the way out.
+	var shutdownOnce sync.Once
+	shutdown := func() {
+		shutdownOnce.Do(func() {
+			go func() {
+				time.Sleep(8 * time.Second)
+				os.Exit(0)
+			}()
+			state.mu.Lock()
+			conn := state.wsConn
+			cancel := state.wsCancel
+			state.wsConn = nil
+			state.wsCancel = nil
+			state.wsConnected = false
+			state.mu.Unlock()
+			if conn != nil {
+				_ = conn.Close()
+			}
+			if cancel != nil {
+				cancel()
+			}
+			mercuryStop()
+			if uiLog != nil {
+				_ = uiLog.Close()
+			}
+			os.Exit(0)
+		})
+	}
+
+	myWindow.SetOnClosed(shutdown)
 
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
 		<-sigCh
-		appendLog("Signal received, shutting down...\n")
-		runOnUI(func() { myWindow.Close() })
+		// Call the teardown directly rather than routing through the GL event
+		// loop, so Ctrl+C works even if the window/GL is wedged.
+		shutdown()
 	}()
 
 	go func() {
