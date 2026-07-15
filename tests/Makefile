@@ -165,7 +165,8 @@ test_mfsk: modem/test_mfsk.c $(UNITY_SRC) ../modem/mfsk.c
             ../common/virtual_clock.c $(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS) # \
             MFSK codec test (mod/demod round-trip + modulation-order gain) \
             test_mfsk: modem/test_mfsk.c $(UNITY_SRC) ../modem/mfsk.c \
-            round-trip, gain, OFDM framing) ../modem/mfsk_ofdm.c
+            round-trip, gain, OFDM framing) ../modem/mfsk_ofdm.c \
+            ../modem/mfsk_sync.c
 	$(CC) $(CFLAGS) -I../modem -o $@ $^ $(LDFLAGS) -lm
 
 clean:
