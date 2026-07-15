@@ -118,6 +118,37 @@ not v1's exact WB geometry; single noise realization per point (trend/margins
 are large). The remaining integration work is wiring this as an actual ARQ-ladder
 mode (LDPC + mode-pool + OLLA entry), not a question of whether it can acquire.
 
+### Coded floor (rate-1/16 LDPC wired in)
+
+v1's rate-1/16 LDPC (ROBUST_0's FEC, N=1600/K=100) is now ported
+(`modem/mfsk_ldpc.{c,h}` — systematic IRA encoder + min-sum decoder; encoder
+verified H·c=0, noiseless encode→decode lossless) and wired end-to-end: TX info
+→ encode → 32-MFSK → passband → `ch` → RX acquire → demod → LDPC decode. 15
+independent frames/point, delivered = fully-correct info frames:
+
+| Channel | SNR3k | delivered | DATAC15 (ref) |
+|---|---|---|---|
+| AWGN | −12.8 | 11/15 (73 %) | — |
+| MPP | −8.8 | 8/15 (53 %) | 47 |
+| MPP | −10.8 | 7/15 (47 %) | 22 |
+| MPP | −12.8 | 5/15 (33 %) | ~0 |
+
+**Key result: `delivered == acquired` at every point** — once a frame acquires,
+the rate-1/16 code *always* decodes it. So the coded mode is **acquisition-
+limited**, not decode-limited: the LDPC removed the decode floor. Coded MFSK
+delivers ~2–3 dB deeper than DATAC15 on fading (47 % at −10.8 dB vs DATAC15's
+22 %, and still 33 % at −12.8 where DATAC15 is ~0).
+
+**Design consequence:** the next robustness lever is **acquisition**, not the
+code — a postamble (dual-ended acquisition) or a longer/repeated preamble would
+lift the fading delivery directly (the ~50 % at −9 to −11 dB is preamble misses,
+not decode failures). Bitrate at this config: ~8 bps info (rate 1/16, 25 sym/s,
+5 bits/sym); v1's WB geometry gives ~14 bps. Frame = 100 info bits (~10 B) per
+1600-bit codeword.
+
+Unit tests (`tests/modem/test_mfsk.c`): round-trip, modulation-order gain, OFDM
+framing round-trip, preamble acquisition, LDPC encode/decode — all in the suite.
+
 ## Reproduce
 - Round-trip / gain unit test: `cd tests && make test_mfsk && ./test_mfsk`.
 - BER sweeps: the throwaway harness `mfsk_ber.c` (scratch) links `modem/mfsk.c`,

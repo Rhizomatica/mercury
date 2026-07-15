@@ -125,7 +125,7 @@ test_channel_busy: modem/test_channel_busy.c $(UNITY_SRC) ../modem/channel_busy.
 	$(CC) $(CFLAGS) -I../modem -o $@ $^ $(LDFLAGS) -lm
 
 # MFSK codec test (mod/demod round-trip, modulation-order gain, OFDM framing)
-test_mfsk: modem/test_mfsk.c $(UNITY_SRC) ../modem/mfsk.c ../modem/mfsk_ofdm.c ../modem/mfsk_sync.c
+test_mfsk: modem/test_mfsk.c $(UNITY_SRC) ../modem/mfsk.c ../modem/mfsk_ofdm.c ../modem/mfsk_sync.c ../modem/mfsk_ldpc.c ../modem/mfsk_ldpc_1_16.c
 	$(CC) $(CFLAGS) -I../modem -o $@ $^ $(LDFLAGS) -lm
 
 clean:
