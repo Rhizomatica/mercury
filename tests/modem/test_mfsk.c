@@ -12,6 +12,7 @@
 #include "mfsk.h"
 #include "mfsk_ofdm.h"
 #include "mfsk_sync.h"
+#include "mfsk_ldpc.h"
 
 #include <math.h>
 #include <stdlib.h>
@@ -150,6 +151,33 @@ void test_preamble_acquisition(void)
     TEST_ASSERT_EQUAL_INT(-1, off2);
 }
 
+void test_ldpc_encode_decode(void)
+{
+    /* Encoder produces valid codewords (H*c=0) and noiseless LLRs decode back
+     * to the info bits (converged). */
+    int info[MFSK_LDPC_K], coded[MFSK_LDPC_N], out[MFSK_LDPC_K];
+    float llr[MFSK_LDPC_N];
+    for (int i = 0; i < MFSK_LDPC_K; i++) info[i] = (int)(urand() < 0.5);
+    mfsk_ldpc_encode(info, coded);
+
+    for (int c = 0; c < MFSK_LDPC_P; c++)
+    {
+        int par = 0;
+        for (int j = 0; j < MFSK_LDPC_CWIDTH; j++)
+        {
+            int v = mfsk_ldpc_QCmatrixC[c][j];
+            if (v >= 0) par ^= coded[v];
+        }
+        TEST_ASSERT_EQUAL_INT(0, par);            /* H*c = 0 */
+    }
+
+    for (int i = 0; i < MFSK_LDPC_N; i++) llr[i] = coded[i] ? -10.0f : 10.0f;
+    int conv = mfsk_ldpc_decode(llr, out, 50);
+    TEST_ASSERT_TRUE(conv);
+    for (int i = 0; i < MFSK_LDPC_K; i++)
+        TEST_ASSERT_EQUAL_INT(info[i], out[i]);
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -158,5 +186,6 @@ int main(void)
     RUN_TEST(test_higher_M_more_robust_awgn);
     RUN_TEST(test_ofdm_framing_roundtrip);
     RUN_TEST(test_preamble_acquisition);
+    RUN_TEST(test_ldpc_encode_decode);
     return UNITY_END();
 }
