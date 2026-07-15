@@ -11,6 +11,7 @@
 #include "unity.h"
 #include "mfsk.h"
 #include "mfsk_ofdm.h"
+#include "mfsk_sync.h"
 
 #include <math.h>
 #include <stdlib.h>
@@ -120,6 +121,35 @@ void test_ofdm_framing_roundtrip(void)
         TEST_ASSERT_TRUE(cabs(out[i] - bins[i]) < 1e-9);
 }
 
+void test_preamble_acquisition(void)
+{
+    /* Plant the preamble template in a noise buffer at a known offset; the
+     * matched-filter search must find it (high SNR) and reject pure noise. */
+    mfsk_init(&m, 32, 50, 1);
+    ofdm_frame_t o; ofdm_frame_init(&o, 64, 50, 0.25, 0);
+    int Nofdm = ofdm_frame_nofdm(&o);
+    double complex tmpl[8 * 128]; double sym_e[8];
+    int P = mfsk_sync_build_template(&m, &o, tmpl, sym_e);
+
+    int gap = 3 * Nofdm, true_off = gap;
+    int L = gap + P * Nofdm + gap;
+    double complex rx[64 * 128];
+    double n = 0.02;                       /* small noise -> high SNR */
+    for (int i = 0; i < L; i++) rx[i] = n * (urand() - 0.5) + n * (urand() - 0.5) * I;
+    for (int i = 0; i < P * Nofdm; i++) rx[true_off + i] += tmpl[i];
+
+    double metric = 0;
+    int off = mfsk_sync_search(rx, L, 1, tmpl, sym_e, P, Nofdm, 0, &metric);
+    TEST_ASSERT_TRUE(off >= 0);                       /* detected */
+    TEST_ASSERT_TRUE(abs(off - true_off) <= Nofdm);   /* at the right place */
+    TEST_ASSERT_TRUE(metric > 0.5);
+
+    /* pure noise -> no detection */
+    for (int i = 0; i < L; i++) rx[i] = n * (urand() - 0.5) + n * (urand() - 0.5) * I;
+    int off2 = mfsk_sync_search(rx, L, 1, tmpl, sym_e, P, Nofdm, 0, &metric);
+    TEST_ASSERT_EQUAL_INT(-1, off2);
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -127,5 +157,6 @@ int main(void)
     RUN_TEST(test_bits_per_symbol);
     RUN_TEST(test_higher_M_more_robust_awgn);
     RUN_TEST(test_ofdm_framing_roundtrip);
+    RUN_TEST(test_preamble_acquisition);
     return UNITY_END();
 }
