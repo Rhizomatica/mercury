@@ -186,6 +186,12 @@ void mfsk_init(mfsk_t *m, int _M, int _Nc, int _nStreams)
             m->hail_tones[i] = (m->ack_tones[i] + m->M / 4) % m->M;
     }
 
+    /* Postamble tones: distinct from the preamble (+2 offset, mod M) so the
+     * two known sequences are distinguishable for dual-ended acquisition. */
+    m->postamble_nSymb = m->preamble_nSymb;
+    for (int i = 0; i < m->preamble_nSymb && i < MFSK_MAX_PREAMBLE_SYMB; i++)
+        m->postamble_tones[i] = (m->preamble_tones[i] + 2) % m->M;
+
     mfsk_clear_hail_target(m);
 }
 
@@ -264,6 +270,21 @@ void mfsk_generate_preamble(const mfsk_t *m, mfsk_cplx *out, int nSymb)
     {
         gen_zero_symbol(m, out, s);
         int tone = m->preamble_tones[s % m->preamble_nSymb];
+        for (int st = 0; st < m->nStreams; st++)
+            out[s * m->Nc + m->stream_offsets[st] + tone].re = amp;
+    }
+}
+
+void mfsk_generate_postamble(const mfsk_t *m, mfsk_cplx *out, int nSymb)
+{
+    if (m->M == 0 || m->Nc == 0 || m->nStreams == 0) return;
+
+    double amp = sqrt((double)m->Nc / m->nStreams);
+
+    for (int s = 0; s < nSymb; s++)
+    {
+        gen_zero_symbol(m, out, s);
+        int tone = m->postamble_tones[s % m->postamble_nSymb];
         for (int st = 0; st < m->nStreams; st++)
             out[s * m->Nc + m->stream_offsets[st] + tone].re = amp;
     }
