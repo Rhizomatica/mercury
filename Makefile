@@ -74,7 +74,7 @@ FYNE_UI_DIR   = gui_interface/fyne-ui
 FYNE_UI_BIN   = mercury-ui.exe
 MINGW_GO_CC   = x86_64-w64-mingw32-gcc
 
-.PHONY: all install internal_deps utils clean doxygen doxygen-clean windows windows-zip fyne-ui fyne-ui-windows windows-installer test integration-test FORCE
+.PHONY: all install internal_deps utils clean doxygen doxygen-clean windows windows-zip fyne-ui fyne-ui-macos fyne-ui-windows windows-installer test integration-test FORCE
 
 prefix ?= /usr
 bindir ?= $(prefix)/bin
@@ -207,6 +207,24 @@ fyne-ui: libmercury_core.a
 		-o $(abspath mercury-ui) .
 	@echo "  -> mercury-ui"
 
+# macOS .app bundle.  Fyne's packaging tool builds the binary (with the
+# mercury_embedded tag, so it links via mercury_link_darwin.go) and wraps it
+# in Mercury.app (Info.plist + .icns from the icon).  Run on macOS.
+# Requires the tool:  go install fyne.io/fyne/v2/cmd/fyne@latest
+FYNE           ?= fyne
+MACOS_APP_NAME ?= Mercury
+MACOS_APP_ID   ?= org.rhizomatica.mercury
+
+fyne-ui-macos: libmercury_core.a
+	@command -v $(FYNE) >/dev/null 2>&1 || { \
+		echo "error: '$(FYNE)' not found — install it with:"; \
+		echo "  go install fyne.io/fyne/v2/cmd/fyne@latest"; \
+		exit 1; }
+	@echo "Packaging $(MACOS_APP_NAME).app (macOS)..."
+	cd $(FYNE_UI_DIR) && $(FYNE) package -os darwin -tags mercury_embedded \
+		-name $(MACOS_APP_NAME) -appID $(MACOS_APP_ID) -icon mercury-ui.png
+	@echo "  -> $(FYNE_UI_DIR)/$(MACOS_APP_NAME).app"
+
 windows-zip: windows fyne-ui-windows
 	rm -rf $(WINDOWS_DIR) $(WINDOWS_ZIP)
 	mkdir -p $(WINDOWS_DIR)
@@ -244,6 +262,7 @@ clean:
 	rm -f $(WINDOWS_INSTALLER_DIR)/$(FYNE_UI_BIN)
 	rm -f $(FYNE_UI_DIR)/engine/mercury_bridge.o $(FYNE_UI_DIR)/engine/mercury_bridge_w64.o
 	rm -f mercury-ui $(FYNE_UI_DIR)/mercury-ui $(FYNE_UI_DIR)/mercury-fyne-ui
+	rm -rf $(FYNE_UI_DIR)/$(MACOS_APP_NAME).app
 	$(MAKE) -C modem clean
 	$(MAKE) -C datalink_arq clean
 	$(MAKE) -C datalink_broadcast clean
