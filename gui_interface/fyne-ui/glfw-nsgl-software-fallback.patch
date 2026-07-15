@@ -1,0 +1,46 @@
+From: Rhizomatica Mercury project
+Subject: [PATCH] Cocoa: fall back to the software OpenGL renderer when no
+ accelerated pixel format exists
+
+On a GPU-less macOS environment (e.g. a QEMU/KVM VM guest with no accelerated
+renderer), _glfwCreateContextNSGL() fails outright:
+
+    NSGL: Failed to find a suitable pixel format
+
+_glfwCreateContextNSGL() adds NSOpenGLPFAAccelerated as attribs[0], which
+*requires* a hardware renderer. A CGLQueryRendererInfo() probe on such a guest
+shows exactly one renderer, the Apple Software Renderer
+(id & kCGLRendererIDMatchingMask == kCGLRendererGenericFloatID, accelerated=0,
+window=1) — usable, but NSOpenGLPixelFormat never selects it because the
+accelerated attribute rules it out.
+
+If the accelerated pixel format is unavailable, retry once with attribs[0]
+(NSOpenGLPFAAccelerated) dropped, so macOS can return the software renderer
+instead of failing. Hardware stays strictly preferred: the accelerated attempt
+runs first, so machines with a GPU never reach the fallback and behavior there
+is unchanged.
+
+Refs: glfw/glfw#2080, go-gl/glfw#335, fyne-io/fyne#2373
+
+--- a/src/nsgl_context.m
++++ b/src/nsgl_context.m
+@@ -313,6 +313,19 @@ GLFWbool _glfwCreateContextNSGL(_GLFWwindow* window,
+         [[NSOpenGLPixelFormat alloc] initWithAttributes:attribs];
+     if (window->context.nsgl.pixelFormat == nil)
+     {
++        // Fall back to the software renderer on GPU-less systems (e.g. VM
++        // guests with no accelerated renderer). attribs[0] is always
++        // NSOpenGLPFAAccelerated (added at the top of this function); no pixel
++        // format can satisfy it without hardware acceleration. Retry once from
++        // attribs+1 so macOS returns its software (kCGLRendererGenericFloatID)
++        // renderer instead of failing. Hardware stays strictly preferred: the
++        // accelerated attempt runs first, so GPU machines never reach here.
++        assert(attribs[0] == NSOpenGLPFAAccelerated);
++        window->context.nsgl.pixelFormat =
++            [[NSOpenGLPixelFormat alloc] initWithAttributes:(attribs + 1)];
++    }
++    if (window->context.nsgl.pixelFormat == nil)
++    {
+         _glfwInputError(GLFW_FORMAT_UNAVAILABLE,
+                         "NSGL: Failed to find a suitable pixel format");
+         return GLFW_FALSE;
