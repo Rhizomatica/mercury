@@ -192,8 +192,11 @@ func toBool(v any) bool {
 	}
 }
 
+// runOnUI runs fn on Fyne's main goroutine. Fyne v2.6+ requires all widget
+// updates to happen there; fyne.Do queues fn when the event loop is running
+// and runs it inline during setup/shutdown, so it is safe from any goroutine.
 func runOnUI(fn func()) {
-	fn()
+	fyne.Do(fn)
 }
 
 func main() {
@@ -371,30 +374,32 @@ func main() {
 	setWSStatus := func(text string) {}
 
 	refreshSelect := func(selectWidget *widget.Select, items []optionItem, selectedID string, prependDefault bool) {
-		labels := make([]string, 0, len(items)+1)
-		if prependDefault {
-			labels = append(labels, "default")
-		}
-		for _, item := range items {
-			labels = append(labels, item.Name)
-		}
-		selectWidget.Options = labels
-		selectWidget.Refresh()
-		if selectedID != "" {
+		runOnUI(func() {
+			labels := make([]string, 0, len(items)+1)
+			if prependDefault {
+				labels = append(labels, "default")
+			}
 			for _, item := range items {
-				if item.ID == selectedID {
-					selectWidget.SetSelected(item.Name)
+				labels = append(labels, item.Name)
+			}
+			selectWidget.Options = labels
+			selectWidget.Refresh()
+			if selectedID != "" {
+				for _, item := range items {
+					if item.ID == selectedID {
+						selectWidget.SetSelected(item.Name)
+						return
+					}
+				}
+				if prependDefault && selectedID == "default" {
+					selectWidget.SetSelected("default")
 					return
 				}
 			}
-			if prependDefault && selectedID == "default" {
-				selectWidget.SetSelected("default")
-				return
+			if len(labels) > 0 {
+				selectWidget.SetSelected(labels[0])
 			}
-		}
-		if len(labels) > 0 {
-			selectWidget.SetSelected(labels[0])
-		}
+		})
 	}
 
 	selectedID := func(selectWidget *widget.Select, items []optionItem) string {
@@ -546,8 +551,10 @@ func main() {
 		}
 		state.wsHost = hostEntry.Text
 		state.wsPort = portEntry.Text
-		hostEntry.SetText(state.wsHost)
-		portEntry.SetText(state.wsPort)
+		runOnUI(func() {
+			hostEntry.SetText(state.wsHost)
+			portEntry.SetText(state.wsPort)
+		})
 		setWSStatus("WebSocket: connecting")
 		appendLog(fmt.Sprintf("Connecting to WebSocket at %s://%s:%s/websocket...\n", state.wsScheme, state.wsHost, state.wsPort))
 
@@ -653,12 +660,14 @@ func main() {
 							state.radioSelected = selectedValue(raw, "selected")
 							state.radioDevicePath = fmt.Sprint(raw["device_path"])
 							state.radioSerialSpeed = fmt.Sprint(raw["serial_speed"])
-							if state.radioDevicePath != "" {
-								bindings.devicePathEntry.SetText(state.radioDevicePath)
-							}
-							if state.radioSerialSpeed != "" {
-								bindings.serialSpeedEntry.SetSelected(state.radioSerialSpeed)
-							}
+							runOnUI(func() {
+								if state.radioDevicePath != "" {
+									bindings.devicePathEntry.SetText(state.radioDevicePath)
+								}
+								if state.radioSerialSpeed != "" {
+									bindings.serialSpeedEntry.SetSelected(state.radioSerialSpeed)
+								}
+							})
 							refreshSelect(bindings.radioSelect, items, state.radioSelected, false)
 						default:
 							appendLog(fmt.Sprintf("[Raw WS Msg]: %s\n", string(payload)))
@@ -919,7 +928,7 @@ func main() {
 	go func() {
 		<-sigCh
 		appendLog("Signal received, shutting down...\n")
-		myWindow.Close()
+		runOnUI(func() { myWindow.Close() })
 	}()
 
 	go func() {
