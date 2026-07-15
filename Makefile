@@ -201,7 +201,7 @@ libmercury_core_w64.a:
 	$(MINGW_AR) rcs $@ $(MERCURY_CORE_OBJS_W64) $(FYNE_UI_DIR)/engine/mercury_bridge_w64.o
 
 fyne-ui: libmercury_core.a
-	@echo "Building Mercury UI for Linux..."
+	@echo "Building Mercury UI (native: Linux or macOS)..."
 	cd $(FYNE_UI_DIR) && CGO_ENABLED=1 go build -tags mercury_embedded \
 		-ldflags "-X main.coreBuildID=$$(cksum $(abspath libmercury_core.a) | cut -d' ' -f1)" \
 		-o $(abspath mercury-ui) .
