@@ -56,6 +56,42 @@ demod assumes). Nc=50, 1 stream, 20 k symbols.
    mode (ARQ ladder bottom rung) — the OFDM framing (bins↔time FFT), preamble
    sync, and LDPC glue remain to wire it up as an actual mode (follow-up).
 
+## Acquisition — is the MFSK mode acquisition-limited? (the real question)
+
+A weak-signal *modulation* is pointless if the receiver can't **acquire** the
+burst at those SNRs — this is exactly the wall that caps DATAC15 (coherent OFDM
+preamble detection collapses below ~−7 dB SNR3k; see docs/LOW-SNR-FLOOR-PLAN.md).
+The MFSK mode is only worth wiring up if its acquisition floor sits *below* its
+decode floor.
+
+What we can say with confidence:
+- **v1's MFSK does not use OFDM coherent acquisition.** It brings its own
+  *non-coherent* preamble detector (`time_sync_mfsk_corr` in v1 `ofdm.cc`):
+  per-symbol energy matched-filter correlation, non-coherently combined over the
+  preamble symbols, with (per v1's notes) ~2000:1 noise discrimination vs ~4:1
+  for a plain FFT-energy method. Non-coherent detection needs no phase/frequency
+  lock, so it works well below the coherent-OFDM threshold.
+- **End-to-end evidence already backs this:** the codec2 `FSK_LDPC` figures in
+  docs/LOW-SNR-FLOOR-PLAN.md are *full-pipeline* (real acquisition + sync +
+  decode through `ch`), and non-coherent FSK still delivered 90 % at −6.8 dB MPP
+  vs DATAC15's 63 %. So a non-coherent-FSK acquisition path is empirically **not**
+  the wall that OFDM acquisition is.
+
+What we could **not** yet measure trustworthily: an isolated (out-of-pipeline)
+simulation of the ported MFSK preamble detector confirmed the detector mechanics
+(the correlator peaks at the true offset and degrades gracefully with SNR), but
+its absolute floor could not be cleanly calibrated to the SNR3k axis DATAC15 was
+measured on (per-sample vs per-bin vs 3 kHz-bandwidth energy bookkeeping). A
+trustworthy MFSK-specific acquisition floor requires **end-to-end integration**
+(v1's OFDM framing + `time_sync_mfsk_corr` + LDPC in the real `ch`/Watterson
+pipeline), which is the next step and the only fair way to compare to DATAC15.
+
+**Bottom line:** the port is *not* pointless — the MFSK mode carries its own
+non-coherent acquisition, and the non-coherent-FSK class is already shown
+(end-to-end) to acquire below the OFDM floor. But the payoff must be confirmed by
+integrating the full mode and measuring acquire+decode end-to-end, not by the
+modulation comparison alone.
+
 ## Reproduce
 - Round-trip / gain unit test: `cd tests && make test_mfsk && ./test_mfsk`.
 - BER sweeps: the throwaway harness `mfsk_ber.c` (scratch) links `modem/mfsk.c`,
