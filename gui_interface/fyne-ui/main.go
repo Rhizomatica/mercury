@@ -209,7 +209,9 @@ func main() {
 		return
 	}
 
-	myApp := app.New()
+	// Use a stable application ID (matches the .desktop / Mercury.app appID) so
+	// Fyne's preferences/storage have a unique identity instead of warning.
+	myApp := app.NewWithID("org.rhizomatica.mercury")
 	myWindow := myApp.NewWindow("Mercury Modem")
 	myWindow.Resize(fyne.NewSize(1280, 780))
 
