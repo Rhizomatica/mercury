@@ -25,6 +25,11 @@
 int mfsk_sync_build_template(const mfsk_t *m, const ofdm_frame_t *o,
                              double complex *tmpl_out, double *sym_energy_out);
 
+/* Same, for the postamble tone sequence (for dual-ended acquisition). */
+int mfsk_sync_build_postamble_template(const mfsk_t *m, const ofdm_frame_t *o,
+                                       double complex *tmpl_out,
+                                       double *sym_energy_out);
+
 /* Search baseband for the preamble. rx has rx_len complex samples at
  * interpolation_rate (use 1 for base-rate). Returns the detected start sample
  * offset (metric >= 0.5), or -1 if not found; *out_metric gets the best metric. */

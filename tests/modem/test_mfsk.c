@@ -178,6 +178,30 @@ void test_ldpc_encode_decode(void)
         TEST_ASSERT_EQUAL_INT(info[i], out[i]);
 }
 
+void test_postamble(void)
+{
+    /* Postamble tones are distinct from the preamble, and its own template
+     * acquires (dual-ended acquisition support). */
+    mfsk_init(&m, 32, 50, 1);
+    int differ = 0;
+    for (int i = 0; i < m.preamble_nSymb; i++)
+        if (m.postamble_tones[i] != m.preamble_tones[i]) differ = 1;
+    TEST_ASSERT_TRUE(differ);
+
+    ofdm_frame_t o; ofdm_frame_init(&o, 64, 50, 0.25, 0);
+    int Nofdm = ofdm_frame_nofdm(&o);
+    double complex tmpl[8 * 128]; double se[8];
+    int P = mfsk_sync_build_postamble_template(&m, &o, tmpl, se);
+    int gap = 3 * Nofdm, true_off = gap, L = gap + P * Nofdm + gap;
+    double complex rx[64 * 128];
+    for (int i = 0; i < L; i++) rx[i] = 0.02 * (urand() - 0.5) + 0.02 * (urand() - 0.5) * I;
+    for (int i = 0; i < P * Nofdm; i++) rx[true_off + i] += tmpl[i];
+    double metric = 0;
+    int off = mfsk_sync_search(rx, L, 1, tmpl, se, P, Nofdm, 0, &metric);
+    TEST_ASSERT_TRUE(off >= 0);
+    TEST_ASSERT_TRUE(abs(off - true_off) <= Nofdm);
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -187,5 +211,6 @@ int main(void)
     RUN_TEST(test_ofdm_framing_roundtrip);
     RUN_TEST(test_preamble_acquisition);
     RUN_TEST(test_ldpc_encode_decode);
+    RUN_TEST(test_postamble);
     return UNITY_END();
 }

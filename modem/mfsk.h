@@ -37,6 +37,12 @@ typedef struct
     int preamble_tones[MFSK_MAX_PREAMBLE_SYMB];
     int preamble_nSymb;
 
+    /* Postamble: a second known-tone sequence after the payload, enabling
+     * dual-ended acquisition (sync on preamble OR postamble). Distinct tones
+     * from the preamble so the two are told apart. */
+    int postamble_tones[MFSK_MAX_PREAMBLE_SYMB];
+    int postamble_nSymb;
+
     int ack_tones[MFSK_MAX_ACK_TONES];
     int break_tones[MFSK_MAX_ACK_TONES];
     int hail_tones[MFSK_MAX_ACK_TONES];
@@ -69,6 +75,7 @@ void mfsk_clear_hail_target(mfsk_t *m);
 
 /* Known-tone sequence generators. out holds <nSymb|pattern> * Nc bins. */
 void mfsk_generate_preamble(const mfsk_t *m, mfsk_cplx *out, int nSymb);
+void mfsk_generate_postamble(const mfsk_t *m, mfsk_cplx *out, int nSymb);
 void mfsk_generate_ack_pattern(const mfsk_t *m, mfsk_cplx *out);
 void mfsk_generate_break_pattern(const mfsk_t *m, mfsk_cplx *out);
 void mfsk_generate_hail_pattern(const mfsk_t *m, mfsk_cplx *out);
