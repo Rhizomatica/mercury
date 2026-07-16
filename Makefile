@@ -23,6 +23,12 @@
 HAMLIB_W64_DIR = radio_io/hamlib-w64
 HAMLIB_W64_LIBS = $(wildcard $(HAMLIB_W64_DIR)/lib/libhamlib*.a)
 
+# Vendored universal (x86_64+arm64) static hamlib+libusb for macOS, mirroring
+# hamlib-w64 for Windows — self-contained, no Homebrew dependency.
+HAMLIB_MACOS_DIR = radio_io/hamlib-macos
+HAMLIB_MACOS_LIBS = $(wildcard $(HAMLIB_MACOS_DIR)/lib/libhamlib*.a)
+MACOS_HAMLIB_FRAMEWORKS = -framework IOKit -framework CoreFoundation -framework Security
+
 HAVE_HERMES_SHM = 0
 
 ifeq ($(OS),Windows_NT)
@@ -52,13 +58,31 @@ else
     ifeq ($(UNAME_S),FreeBSD)
 	FFAUDIO_LINKFLAGS := -lm
     endif
+    ifeq ($(UNAME_S),Darwin)
+    # macOS: prefer the vendored universal static hamlib+libusb (self-contained,
+    # no Homebrew) when present, mirroring the Windows hamlib-w64 vendoring;
+    # otherwise fall back to pkg-config / Homebrew.
+    ifneq ($(strip $(HAMLIB_MACOS_LIBS)),)
+    HAVE_HAMLIB := 1
+    HAMLIB_CFLAGS := -I$(HAMLIB_MACOS_DIR)/include -DHAVE_HAMLIB
+    HAMLIB_LDFLAGS := $(HAMLIB_MACOS_DIR)/lib/libhamlib.a $(HAMLIB_MACOS_DIR)/lib/libusb-1.0.a $(MACOS_HAMLIB_FRAMEWORKS)
+    else
     HAVE_HAMLIB := $(shell pkg-config --exists hamlib 2>/dev/null && echo 1)
     ifeq ($(HAVE_HAMLIB),1)
-	HAMLIB_CFLAGS := $(shell pkg-config --cflags hamlib) -DHAVE_HAMLIB
-	HAMLIB_LDFLAGS := $(shell pkg-config --libs hamlib)
+    HAMLIB_CFLAGS := $(shell pkg-config --cflags hamlib) -DHAVE_HAMLIB
+    HAMLIB_LDFLAGS := $(shell pkg-config --libs hamlib)
+    endif
+    endif
     else
-	HAMLIB_CFLAGS =
-	HAMLIB_LDFLAGS =
+    # Linux / FreeBSD: pkg-config detection (unchanged).
+    HAVE_HAMLIB := $(shell pkg-config --exists hamlib 2>/dev/null && echo 1)
+    ifeq ($(HAVE_HAMLIB),1)
+    HAMLIB_CFLAGS := $(shell pkg-config --cflags hamlib) -DHAVE_HAMLIB
+    HAMLIB_LDFLAGS := $(shell pkg-config --libs hamlib)
+    else
+    HAMLIB_CFLAGS =
+    HAMLIB_LDFLAGS =
+    endif
     endif
 endif
 
@@ -74,7 +98,7 @@ FYNE_UI_DIR   = gui_interface/fyne-ui
 FYNE_UI_BIN   = mercury-ui.exe
 MINGW_GO_CC   = x86_64-w64-mingw32-gcc
 
-.PHONY: all install internal_deps utils clean doxygen doxygen-clean windows windows-zip fyne-ui fyne-ui-macos fyne-ui-macos-dmg fyne-ui-windows windows-installer test integration-test FORCE
+.PHONY: all install internal_deps utils clean doxygen doxygen-clean windows windows-zip fyne-ui fyne-ui-macos fyne-ui-macos-dmg macos-universal fyne-ui-macos-universal fyne-ui-macos-universal-dmg fyne-ui-windows windows-installer test integration-test FORCE
 
 prefix ?= /usr
 bindir ?= $(prefix)/bin
@@ -240,6 +264,64 @@ fyne-ui-macos-dmg: fyne-ui-macos
 		-ov -format UDZO "$(FYNE_UI_DIR)/$(MACOS_DMG)"
 	rm -rf $(FYNE_UI_DIR)/dmg-stage
 	@echo "  -> $(FYNE_UI_DIR)/$(MACOS_DMG)"
+
+# ---- Universal (x86_64 + arm64) macOS builds ----
+# Each arch is built separately (clang -arch A -> thin objects/binary) and the
+# two binaries are lipo-combined; a single -arch x86_64 -arch arm64 link fails
+# because intermediate ar archives would hold fat members. The vendored fat
+# static hamlib/libusb let ld pick the matching slice for each per-arch link.
+
+# Universal, self-contained mercury CLI (pure C).
+macos-universal:
+	@for A in x86_64 arm64; do \
+		echo "== building mercury slice: $$A =="; \
+		$(MAKE) clean >/dev/null; \
+		$(MAKE) $(BINARY) CC="clang -arch $$A" || exit 1; \
+		mv $(BINARY) mercury-$$A || exit 1; \
+	done
+	lipo -create mercury-x86_64 mercury-arm64 -output $(BINARY)
+	rm -f mercury-x86_64 mercury-arm64
+	@echo "  -> $(BINARY)  (universal)"
+	@lipo -archs $(BINARY)
+
+# Universal, self-contained Mercury.app: build each arch's mercury-ui against
+# the matching per-arch core, lipo the two, then package the prebuilt binary.
+fyne-ui-macos-universal:
+	@command -v $(FYNE) >/dev/null 2>&1 || { \
+		echo "error: '$(FYNE)' not found — install it with:"; \
+		echo "  go install fyne.io/tools/cmd/fyne@latest"; \
+		exit 1; }
+	@for A in x86_64 arm64; do \
+		case $$A in x86_64) GOA=amd64;; arm64) GOA=arm64;; esac; \
+		echo "== building mercury-ui slice: $$A =="; \
+		$(MAKE) clean >/dev/null; \
+		$(MAKE) libmercury_core.a CC="clang -arch $$A" || exit 1; \
+		( cd $(FYNE_UI_DIR) && CGO_ENABLED=1 GOOS=darwin GOARCH=$$GOA CC="clang -arch $$A" \
+			go build -tags mercury_embedded \
+			-ldflags "-X main.coreBuildID=$$(cksum $(abspath libmercury_core.a) | cut -d' ' -f1)" \
+			-o $(abspath mercury-ui-$$A) . ) || exit 1; \
+	done
+	lipo -create $(abspath mercury-ui-x86_64) $(abspath mercury-ui-arm64) -output $(abspath mercury-ui)
+	rm -f $(abspath mercury-ui-x86_64) $(abspath mercury-ui-arm64)
+	@echo "Packaging universal $(MACOS_APP_NAME).app..."
+	cd $(FYNE_UI_DIR) && $(FYNE) package -os darwin -tags mercury_embedded \
+		-name $(MACOS_APP_NAME) -appID $(MACOS_APP_ID) -icon mercury-ui.png \
+		-executable $(abspath mercury-ui)
+	@echo "  -> $(FYNE_UI_DIR)/$(MACOS_APP_NAME).app  (universal)"
+	@lipo -archs $(FYNE_UI_DIR)/$(MACOS_APP_NAME).app/Contents/MacOS/* || true
+
+# Universal .app wrapped in a drag-to-install .dmg.
+fyne-ui-macos-universal-dmg: fyne-ui-macos-universal
+	@echo "Building universal $(MACOS_DMG)..."
+	rm -f  $(FYNE_UI_DIR)/$(MACOS_DMG)
+	rm -rf $(FYNE_UI_DIR)/dmg-stage
+	mkdir -p $(FYNE_UI_DIR)/dmg-stage
+	cp -R $(FYNE_UI_DIR)/$(MACOS_APP_NAME).app $(FYNE_UI_DIR)/dmg-stage/
+	ln -s /Applications $(FYNE_UI_DIR)/dmg-stage/Applications
+	hdiutil create -volname "$(MACOS_APP_NAME)" -srcfolder $(FYNE_UI_DIR)/dmg-stage \
+		-ov -format UDZO "$(FYNE_UI_DIR)/$(MACOS_DMG)"
+	rm -rf $(FYNE_UI_DIR)/dmg-stage
+	@echo "  -> $(FYNE_UI_DIR)/$(MACOS_DMG)  (universal)"
 
 windows-zip: windows fyne-ui-windows
 	rm -rf $(WINDOWS_DIR) $(WINDOWS_ZIP)

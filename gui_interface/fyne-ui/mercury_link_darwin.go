@@ -11,7 +11,7 @@ package main
 // into the cgo preamble and the C compiler tries to compile these words.
 
 /*
-#cgo pkg-config: hamlib
-#cgo LDFLAGS: -L${SRCDIR}/../.. -lmercury_core -L${SRCDIR}/../../modem/freedv -lfreedvdata ${SRCDIR}/../../audioio/audioio.a -framework CoreFoundation -framework CoreAudio -lpthread -lm
+#cgo CFLAGS: -I${SRCDIR}/../../radio_io/hamlib-macos/include
+#cgo LDFLAGS: -L${SRCDIR}/../.. -lmercury_core -L${SRCDIR}/../../modem/freedv -lfreedvdata ${SRCDIR}/../../audioio/audioio.a ${SRCDIR}/../../radio_io/hamlib-macos/lib/libhamlib.a ${SRCDIR}/../../radio_io/hamlib-macos/lib/libusb-1.0.a -framework IOKit -framework CoreFoundation -framework CoreAudio -framework Security -lpthread -lm
 */
 import "C"
