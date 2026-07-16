@@ -74,7 +74,7 @@ FYNE_UI_DIR   = gui_interface/fyne-ui
 FYNE_UI_BIN   = mercury-ui.exe
 MINGW_GO_CC   = x86_64-w64-mingw32-gcc
 
-.PHONY: all install internal_deps utils clean doxygen doxygen-clean windows windows-zip fyne-ui fyne-ui-macos fyne-ui-windows windows-installer test integration-test FORCE
+.PHONY: all install internal_deps utils clean doxygen doxygen-clean windows windows-zip fyne-ui fyne-ui-macos fyne-ui-macos-dmg fyne-ui-windows windows-installer test integration-test FORCE
 
 prefix ?= /usr
 bindir ?= $(prefix)/bin
@@ -210,7 +210,7 @@ fyne-ui: libmercury_core.a
 # macOS .app bundle.  Fyne's packaging tool builds the binary (with the
 # mercury_embedded tag, so it links via mercury_link_darwin.go) and wraps it
 # in Mercury.app (Info.plist + .icns from the icon).  Run on macOS.
-# Requires the tool:  go install fyne.io/fyne/v2/cmd/fyne@latest
+# Requires the tool:  go install fyne.io/tools/cmd/fyne@latest
 FYNE           ?= fyne
 MACOS_APP_NAME ?= Mercury
 MACOS_APP_ID   ?= org.rhizomatica.mercury
@@ -218,12 +218,28 @@ MACOS_APP_ID   ?= org.rhizomatica.mercury
 fyne-ui-macos: libmercury_core.a
 	@command -v $(FYNE) >/dev/null 2>&1 || { \
 		echo "error: '$(FYNE)' not found — install it with:"; \
-		echo "  go install fyne.io/fyne/v2/cmd/fyne@latest"; \
+		echo "  go install fyne.io/tools/cmd/fyne@latest"; \
 		exit 1; }
 	@echo "Packaging $(MACOS_APP_NAME).app (macOS)..."
 	cd $(FYNE_UI_DIR) && $(FYNE) package -os darwin -tags mercury_embedded \
 		-name $(MACOS_APP_NAME) -appID $(MACOS_APP_ID) -icon mercury-ui.png
 	@echo "  -> $(FYNE_UI_DIR)/$(MACOS_APP_NAME).app"
+
+# Wrap the .app in a compressed, drag-to-install .dmg (Applications symlink).
+# Run on macOS after fyne-ui-macos.  Unsigned — Gatekeeper will warn on first
+# open (right-click → Open), which is expected for an unnotarised build.
+MACOS_DMG ?= $(MACOS_APP_NAME).dmg
+fyne-ui-macos-dmg: fyne-ui-macos
+	@echo "Building $(MACOS_DMG)..."
+	rm -f  $(FYNE_UI_DIR)/$(MACOS_DMG)
+	rm -rf $(FYNE_UI_DIR)/dmg-stage
+	mkdir -p $(FYNE_UI_DIR)/dmg-stage
+	cp -R $(FYNE_UI_DIR)/$(MACOS_APP_NAME).app $(FYNE_UI_DIR)/dmg-stage/
+	ln -s /Applications $(FYNE_UI_DIR)/dmg-stage/Applications
+	hdiutil create -volname "$(MACOS_APP_NAME)" -srcfolder $(FYNE_UI_DIR)/dmg-stage \
+		-ov -format UDZO "$(FYNE_UI_DIR)/$(MACOS_DMG)"
+	rm -rf $(FYNE_UI_DIR)/dmg-stage
+	@echo "  -> $(FYNE_UI_DIR)/$(MACOS_DMG)"
 
 windows-zip: windows fyne-ui-windows
 	rm -rf $(WINDOWS_DIR) $(WINDOWS_ZIP)
