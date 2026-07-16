@@ -129,6 +129,9 @@ Radio control notes:
 | `make fyne-ui-windows` | Cross-compile the single-binary GUI to `mercury-ui.exe`. Depends on `libmercury_core_w64.a`. |
 | `make windows-installer` | Full Windows installer pipeline: cross-compile engine + GUI, copy DLLs, patch config. Output goes to `windows-installer/`. Requires MinGW + Go. |
 | `make windows-zip` | Build standalone CLI + GUI Windows binaries and zip them for distribution |
+| `make fyne-ui-macos` | Package `Mercury.app` for the host architecture (run on macOS; needs the `fyne` tool). |
+| `make fyne-ui-macos-dmg` | Wrap the host-arch `Mercury.app` in a drag-to-install `Mercury.dmg` at the repo top level. |
+| `make fyne-ui-macos-universal-dmg` | **Distribution build:** universal (x86_64 + arm64) `Mercury.app` wrapped in `Mercury.dmg` at the repo top level. This is the artifact for the website. |
 
 ### Build the Fyne GUI (Linux)
 
@@ -148,6 +151,28 @@ make windows-installer
 ```
 
    The FreeDV codec is vendored in-tree — no external FreeDV or codec2 packages are needed.
+
+### Build the macOS app for distribution (universal .dmg)
+
+Run on macOS. This produces the self-contained, universal (Intel + Apple
+Silicon) `Mercury.dmg` used for the website — hamlib and libusb are vendored as
+static universal libraries in-tree, so no Homebrew dependencies are needed at
+build or run time.
+
+```bash
+# one-time tools:
+brew install go
+go install fyne.io/tools/cmd/fyne@latest
+export PATH="$PATH:$HOME/go/bin"        # so `fyne` is on PATH (add to ~/.bash_profile)
+
+make fyne-ui-macos-universal-dmg
+# → ./Mercury.dmg  (universal: x86_64 + arm64)
+```
+
+The finished `Mercury.dmg` lands at the repository top level, ready to upload.
+It is unsigned, so on first launch Gatekeeper warns — right-click the app →
+**Open** to run it. For a quick host-architecture-only build use
+`make fyne-ui-macos-dmg` (also emits `./Mercury.dmg`).
 
 ### Install via Debian package on Linux
 
@@ -187,6 +212,13 @@ For now just Debian 13 (Trixie) packages are built, for both arm64 (works on bot
 **Via installer (recommended):** Download the `Mercury_HF_Modem_Setup.exe` from the releases page, run it, and the single-binary GUI (`mercury-ui.exe`) will be installed. The GUI launches the Mercury engine in-process — no separate backend needed. Desktop and Start Menu shortcuts are created automatically.
 
 **Via ZIP:** Download the ZIP package from the releases page, extract it, and run `mercury-ui.exe` for the GUI or `mercury.exe` for the headless CLI.
+
+### Install on macOS
+
+Download `Mercury.dmg` from the website, open it, and drag **Mercury** into
+**Applications**. The build is universal (runs natively on Intel and Apple
+Silicon) and self-contained (no Homebrew needed). It is unsigned, so on first
+launch right-click **Mercury** → **Open** to get past Gatekeeper.
 
 ## Configuration File
 

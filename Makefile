@@ -216,6 +216,10 @@ MERCURY_CORE_OBJS_W64 = $(filter-out radio_io/sbitx_io.o radio_io/shm_utils.o,$(
 
 libmercury_core.a: internal_deps
 	$(CC) $(CFLAGS) -I. -c $(FYNE_UI_DIR)/engine/mercury_bridge.c -o $(FYNE_UI_DIR)/engine/mercury_bridge.o
+	# Remove a stale archive first: macOS ar (cctools) refuses to update an
+	# existing *fat* .a in place, so a leftover universal build would wedge the
+	# next native build ("is a fat file"). Fresh create is identical on Linux.
+	rm -f $@
 	$(AR) rcs $@ $(MERCURY_CORE_OBJS) $(FYNE_UI_DIR)/engine/mercury_bridge.o
 
 libmercury_core_w64.a:
@@ -255,15 +259,15 @@ fyne-ui-macos: libmercury_core.a
 MACOS_DMG ?= $(MACOS_APP_NAME).dmg
 fyne-ui-macos-dmg: fyne-ui-macos
 	@echo "Building $(MACOS_DMG)..."
-	rm -f  $(FYNE_UI_DIR)/$(MACOS_DMG)
+	rm -f $(abspath $(MACOS_DMG))
 	rm -rf $(FYNE_UI_DIR)/dmg-stage
 	mkdir -p $(FYNE_UI_DIR)/dmg-stage
 	cp -R $(FYNE_UI_DIR)/$(MACOS_APP_NAME).app $(FYNE_UI_DIR)/dmg-stage/
 	ln -s /Applications $(FYNE_UI_DIR)/dmg-stage/Applications
 	hdiutil create -volname "$(MACOS_APP_NAME)" -srcfolder $(FYNE_UI_DIR)/dmg-stage \
-		-ov -format UDZO "$(FYNE_UI_DIR)/$(MACOS_DMG)"
+		-ov -format UDZO "$(abspath $(MACOS_DMG))"
 	rm -rf $(FYNE_UI_DIR)/dmg-stage
-	@echo "  -> $(FYNE_UI_DIR)/$(MACOS_DMG)"
+	@echo "  -> $(abspath $(MACOS_DMG))"
 
 # ---- Universal (x86_64 + arm64) macOS builds ----
 # Each arch is built separately (clang -arch A -> thin objects/binary) and the
@@ -310,18 +314,19 @@ fyne-ui-macos-universal:
 	@echo "  -> $(FYNE_UI_DIR)/$(MACOS_APP_NAME).app  (universal)"
 	@lipo -archs $(FYNE_UI_DIR)/$(MACOS_APP_NAME).app/Contents/MacOS/* || true
 
-# Universal .app wrapped in a drag-to-install .dmg.
+# Universal .app wrapped in a drag-to-install .dmg.  The finished .dmg lands at
+# the repo top level (e.g. ./Mercury.dmg) — the distribution artifact to upload.
 fyne-ui-macos-universal-dmg: fyne-ui-macos-universal
 	@echo "Building universal $(MACOS_DMG)..."
-	rm -f  $(FYNE_UI_DIR)/$(MACOS_DMG)
+	rm -f $(abspath $(MACOS_DMG))
 	rm -rf $(FYNE_UI_DIR)/dmg-stage
 	mkdir -p $(FYNE_UI_DIR)/dmg-stage
 	cp -R $(FYNE_UI_DIR)/$(MACOS_APP_NAME).app $(FYNE_UI_DIR)/dmg-stage/
 	ln -s /Applications $(FYNE_UI_DIR)/dmg-stage/Applications
 	hdiutil create -volname "$(MACOS_APP_NAME)" -srcfolder $(FYNE_UI_DIR)/dmg-stage \
-		-ov -format UDZO "$(FYNE_UI_DIR)/$(MACOS_DMG)"
+		-ov -format UDZO "$(abspath $(MACOS_DMG))"
 	rm -rf $(FYNE_UI_DIR)/dmg-stage
-	@echo "  -> $(FYNE_UI_DIR)/$(MACOS_DMG)  (universal)"
+	@echo "  -> $(abspath $(MACOS_DMG))  (universal)"
 
 windows-zip: windows fyne-ui-windows
 	rm -rf $(WINDOWS_DIR) $(WINDOWS_ZIP)
@@ -360,7 +365,8 @@ clean:
 	rm -f $(WINDOWS_INSTALLER_DIR)/$(FYNE_UI_BIN)
 	rm -f $(FYNE_UI_DIR)/engine/mercury_bridge.o $(FYNE_UI_DIR)/engine/mercury_bridge_w64.o
 	rm -f mercury-ui $(FYNE_UI_DIR)/mercury-ui $(FYNE_UI_DIR)/mercury-fyne-ui
-	rm -rf $(FYNE_UI_DIR)/$(MACOS_APP_NAME).app
+	rm -f $(MACOS_DMG) $(FYNE_UI_DIR)/$(MACOS_DMG)
+	rm -rf $(FYNE_UI_DIR)/$(MACOS_APP_NAME).app $(FYNE_UI_DIR)/dmg-stage
 	$(MAKE) -C modem clean
 	$(MAKE) -C datalink_arq clean
 	$(MAKE) -C datalink_broadcast clean
