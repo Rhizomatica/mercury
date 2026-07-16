@@ -69,8 +69,18 @@ typedef enum
     ARQ_ACTION_NONE = 0,
     ARQ_ACTION_TX_CONTROL = 1,
     ARQ_ACTION_TX_PAYLOAD = 2,
-    ARQ_ACTION_MODE_SWITCH = 3
+    ARQ_ACTION_MODE_SWITCH = 3,
+    ARQ_ACTION_TX_PATTERN = 4  /* emit a Welch-Costas MFSK pattern ACK — no
+                                * coded frame; pattern_kind selects ACK vs
+                                * ACK+TURN (break).  Airtime ~0.64 s.        */
 } arq_action_type_t;
+
+/** @brief Pattern-ACK symbol kind (ARQ_ACTION_TX_PATTERN). */
+typedef enum
+{
+    ARQ_PATTERN_ACK   = 0,  /* plain ACK: "got your frame, keep the floor"   */
+    ARQ_PATTERN_BREAK = 1   /* ACK+TURN: "got it AND I have data" (HAS_DATA) */
+} arq_pattern_kind_t;
 
 /** @brief Single modem action item popped by modem TX worker. */
 typedef struct
@@ -81,6 +91,7 @@ typedef struct
     int frame_count;     /* frames in this PTT burst (>= 1); the modem reads
                           * frame_count * frame_size bytes and modulates them
                           * behind a single preamble                          */
+    int pattern_kind;    /* arq_pattern_kind_t, valid for ARQ_ACTION_TX_PATTERN */
 } arq_action_t;
 
 /** @brief Snapshot of current ARQ runtime state for telemetry/decision making. */
@@ -265,6 +276,17 @@ void arq_notify_cq_tx_complete(void);
  * @param rx_snr Local receive SNR at decode time (dB); 0.0 = unknown.
  */
 void arq_handle_incoming_frame(uint8_t *data, size_t frame_size, float rx_snr);
+
+/**
+ * @brief Post a synthesized pattern-ACK event (from the RX pattern detector).
+ *
+ * A Welch-Costas pattern ACK carries no coded header, so the modem RX worker
+ * synthesizes the FSM event directly.  In stop-and-wait only one frame is
+ * outstanding, so an ACK unambiguously acks it.
+ *
+ * @param is_break true = ACK+TURN (HAS_DATA piggyback), false = plain ACK.
+ */
+void arq_post_pattern_ack(bool is_break);
 
 /**
  * @brief Feed decoder/link metrics into ARQ adaptation.

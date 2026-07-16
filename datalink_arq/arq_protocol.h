@@ -92,7 +92,6 @@
  * Flags byte (byte 2)
  * ====================================================================== */
 
-#define ARQ_FLAG_TURN_REQ  0x80  /* bit 7: sender requests role turn          */
 #define ARQ_FLAG_HAS_DATA  0x40  /* bit 6: sender has data queued (IRS→ISS)   */
 #define ARQ_FLAG_LEN_HI    0x20  /* bit 5: DATA frames only — payload_valid    *
                                   * field carries bits [7:0] of valid byte     *
@@ -102,18 +101,6 @@
                                   * with LEN_HI/LEN_B9 allows counts up to     *
                                   * 2047 (DATAC17 carries 1172 user bytes,     *
                                   * QAM16C2 1205).                             */
-#define ARQ_FLAG_CTRL_ACKSEQ 0x02 /* bit 1: CONTROL frames — rx_ack_seq field
-                                   * carries the sender's valid rx_expected.
-                                   * Set on MODE_ACK so the ISS can resolve an
-                                   * unACKed TX window during a mode-change
-                                   * probe (S1 fade-cliff fix): rx_ack_seq
-                                   * tells it definitively whether the stuck
-                                   * frame was delivered (late/lost ACK) or
-                                   * never arrived. */
-#define ARQ_FLAG_BURST_END 0x04  /* bit 2: DATA frames only — last frame of a  *
-                                  * multi-frame burst; the IRS sends one       *
-                                  * cumulative ACK when it sees this (or when  *
-                                  * the burst fallback timer expires).         */
 
 /* ======================================================================
  * Frame subtypes
@@ -126,13 +113,9 @@ typedef enum
     ARQ_SUBTYPE_ACK           =  3,
     ARQ_SUBTYPE_DISCONNECT    =  4,
     ARQ_SUBTYPE_DATA          =  5,
-    ARQ_SUBTYPE_KEEPALIVE     =  6,
-    ARQ_SUBTYPE_KEEPALIVE_ACK =  7,
-    ARQ_SUBTYPE_MODE_REQ      =  8,
-    ARQ_SUBTYPE_MODE_ACK      =  9,
-    ARQ_SUBTYPE_TURN_REQ      = 10,
-    ARQ_SUBTYPE_TURN_ACK      = 11,
-    /* Subtype 12 (FLOW_HINT) removed in v3 — replaced by HAS_DATA flag */
+    /* Negotiation/keepalive/turn subtypes (6-11) removed: the delivery-driven
+     * ladder needs no MODE_REQ/ACK, turn handoff is piggyback-only, and the
+     * no-progress budget replaces keepalive. */
 } arq_subtype_t;
 
 /* ======================================================================
@@ -221,8 +204,6 @@ extern _Atomic int arq_channel_guard_ms;
                                                 * air before the DATAC1 preamble. */
 extern _Atomic int arq_iss_post_ack_guard_ms;
 #define ARQ_ISS_POST_ACK_GUARD_MS  atomic_load(&arq_iss_post_ack_guard_ms)
-#define ARQ_TURN_WAIT_AFTER_ACK_MS   5000  /* IRS post-ACK wait before TURN_REQ:
-                                            * ISS guard(900ms)+frame(3740ms)+margin */
 #define ARQ_ACCEPT_RX_WINDOW_MS      9000  /* ACCEPTING RX window after ACCEPT TX:
                                             * ISS_guard(900)+DATAC15(4400)+margin(3700)
                                             * Old value 7000 left only ~300ms margin
@@ -255,127 +236,44 @@ extern _Atomic float arq_callint_override_s;
 #define ARQ_DISCONNECT_RETRY_SLOTS atomic_load(&arq_disconnect_retry_slots)
 #define ARQ_CONNECT_GRACE_SLOTS       2     /* extra wait slots for ACCEPT         */
 #define ARQ_CONNECT_BUSY_EXT_S        2     /* busy-extension guard after CALL     */
-#define ARQ_KEEPALIVE_INTERVAL_S_DEFAULT  20    /* keepalive TX interval               */
-extern _Atomic int arq_keepalive_interval_s;
-#define ARQ_KEEPALIVE_INTERVAL_S  atomic_load(&arq_keepalive_interval_s)
-
-#define ARQ_KEEPALIVE_MISS_LIMIT_DEFAULT  5     /* missed keepalives before disconnect */
-extern _Atomic int arq_keepalive_miss_limit;
-#define ARQ_KEEPALIVE_MISS_LIMIT  atomic_load(&arq_keepalive_miss_limit)
-#define ARQ_TURN_REQ_RETRIES          2
-#define ARQ_MODE_REQ_RETRIES          2
-#define ARQ_PEER_PAYLOAD_HOLD_S_DEFAULT  15    /* hold peer payload mode after activity */
-extern _Atomic int arq_peer_payload_hold_s;
-#define ARQ_PEER_PAYLOAD_HOLD_S  atomic_load(&arq_peer_payload_hold_s)
-#define ARQ_IRS_INACTIVITY_CYCLES     5     /* TIMER_PEER_BACKLOG cycles without
-                                            * RX before IRS keepalive probe    */
-#define ARQ_IRS_INACTIVITY_S          (ARQ_PEER_PAYLOAD_HOLD_S * \
-                                       ARQ_IRS_INACTIVITY_CYCLES)
-#define ARQ_MODE_SWITCH_HYST_COUNT    1     /* SNR provides stability gate; 1 = immediate */
 #define ARQ_STARTUP_MAX_S_DEFAULT     10    /* control-mode-only startup window    */
 extern _Atomic int arq_startup_max_s;
 #define ARQ_STARTUP_MAX_S  atomic_load(&arq_startup_max_s)
-#define ARQ_STARTUP_ACKS_REQUIRED     1
-#define ARQ_SNR_HYST_DB               5.0f
-#define ARQ_SNR_MIN_DATAC15_DB      -11.0f  /* below this (OLLA-corrected) SNR the
-                                             * DATAC15 floor is no longer viable and
-                                             * the link drops to the MFSK fringe rung
-                                             * (~-13 dB non-coherent floor).  MFSK's
-                                             * ~13.5s frame is only worth it in deep
-                                             * fade; the +5 dB hysteresis (climb back
-                                             * to DATAC15 at -6) prevents oscillation,
-                                             * and OLLA — not a retry count — drives
-                                             * the corrected SNR here on sustained
-                                             * DATAC15 failure. */
-#define ARQ_SNR_MIN_DATAC4_DB        -6.0f  /* entry threshold from the DATAC15
-                                             * floor.  Bench (docs/MODES.md):
-                                             * DATAC15/DATAC4 goodput crossover
-                                             * incl. ACK overhead is ~-7.5 dB
-                                             * MPP / -8.5 dB AWGN; -6 (+1 dB
-                                             * hysteresis on upgrade) leaves
-                                             * 1.5 dB margin, and the 2-retry
-                                             * downgrade catches optimistic
-                                             * SNR estimates. */
-#define ARQ_SNR_MIN_DATAC3_DB        -1.0f
-#define ARQ_SNR_MIN_DATAC1_DB         3.0f
-#define ARQ_SNR_MIN_DATAC17_DB        7.0f  /* bench (docs/MODES.md): goodput
-                                             * crossover vs DATAC1 ~ +6 dB MPP;
-                                             * 89/100 delivery at +8 (entry
-                                             * threshold with hysteresis)    */
-#define ARQ_SNR_MIN_QAM16C2_DB       13.0f  /* bench: goodput crossover vs
-                                             * DATAC17 ~ +11 dB MPP, 84/100 at
-                                             * +13.7; upstream's published
-                                             * operating point is +15        */
-#define ARQ_BACKLOG_MIN_DATAC4        31    /* > DATAC15 payload capacity         */
-#define ARQ_BACKLOG_MIN_DATAC3        56
-#define ARQ_BACKLOG_MIN_DATAC1        126
-#define ARQ_BACKLOG_MIN_DATAC17       503   /* > DATAC1 usable payload (502) */
-#define ARQ_BACKLOG_MIN_QAM16C2       1173  /* > DATAC17 usable payload      */
-#define ARQ_LADDER_LEVELS             6     /* 0=DATAC15, 1=DATAC4, 2=DATAC3,
-                                             * 3=DATAC1, 4=DATAC17, 5=QAM16C2 */
-#define ARQ_LADDER_UP_SUCCESSES_DEFAULT        2     /* clean ACKs required to step up    */
+
+/* Config-compat tunables — no longer read by the delivery-driven FSM (the mode
+ * ladder needs no SNR/OLLA/keepalive), but retained as runtime storage so the
+ * existing [arq] mercury.ini knobs and their config accessors stay valid. */
+#define ARQ_KEEPALIVE_INTERVAL_S_DEFAULT        20
+extern _Atomic int arq_keepalive_interval_s;
+#define ARQ_KEEPALIVE_MISS_LIMIT_DEFAULT        5
+extern _Atomic int arq_keepalive_miss_limit;
+#define ARQ_PEER_PAYLOAD_HOLD_S_DEFAULT         15
+extern _Atomic int arq_peer_payload_hold_s;
+#define ARQ_RETRY_DOWNGRADE_THRESHOLD_DEFAULT   2
+extern _Atomic int arq_retry_downgrade_threshold;
+#define ARQ_MODE_HOLD_AFTER_DOWNGRADE_S_DEFAULT 6
+extern _Atomic int arq_mode_hold_after_downgrade_s;
+
+/* ---- Delivery-driven mode ladder (no SNR) ----
+ * Ordered by ARQ goodput, floor first: rank 0 = MFSK (start, most robust) →
+ * DATAC15 → DATAC4 → DATAC3 → DATAC1 → DATAC17 → QAM16C2 (rank 6).
+ * payload_mode = mode_ladder[speed_level]; sessions init speed_level = 0.
+ * Any retry steps the level down; a run of clean deliveries steps it up. */
+#define ARQ_LADDER_LEVELS             7     /* 0=MFSK, 1=DATAC15, 2=DATAC4,
+                                             * 3=DATAC3, 4=DATAC1, 5=DATAC17,
+                                             * 6=QAM16C2 */
+extern const int arq_mode_ladder[ARQ_LADDER_LEVELS];
+
+#define ARQ_LADDER_UP_SUCCESSES_DEFAULT        2     /* clean deliveries per step-up
+                                                      * once the fast ramp ends       */
 extern _Atomic int arq_ladder_up_successes;
 #define ARQ_LADDER_UP_SUCCESSES  atomic_load(&arq_ladder_up_successes)
-
-#define ARQ_RETRY_DOWNGRADE_THRESHOLD_DEFAULT  2     /* consecutive retries to force downgrade */
-extern _Atomic int arq_retry_downgrade_threshold;
-#define ARQ_RETRY_DOWNGRADE_THRESHOLD  atomic_load(&arq_retry_downgrade_threshold)
-
-#define ARQ_MODE_HOLD_AFTER_DOWNGRADE_S_DEFAULT 6   /* hold lower mode after forced downgrade */
-extern _Atomic int arq_mode_hold_after_downgrade_s;
-#define ARQ_MODE_HOLD_AFTER_DOWNGRADE_S  atomic_load(&arq_mode_hold_after_downgrade_s)
-/* Hard total-link-loss net: OLLA's offset handles normal per-fade dips (the old
- * 2-retry forced downgrade fought OLLA and oscillated badly at low SNR — see
- * test_olla_low_snr_no_collapse).  Only a long unbroken fail run drops straight
- * to the robust floor and lets OLLA climb back. */
-#define ARQ_HARD_LOSS_THRESHOLD       8     /* consecutive retries => drop to floor */
-/* Reverse-loss attribution bound (S1 fade-cliff fix).  The asymmetric-link
- * gate holds the forward mode on a retry when peer_snr says the forward link
- * comfortably supports it (retry = probably a lost ACK, not a decode fail).
- * But SNR can look healthy while frames die (fade clusters, interference,
- * sync loss), and an UNBOUNDED hold freezes OLLA and consecutive_retries,
- * making every downgrade path — including the hard-loss floor — unreachable:
- * the transfer stalls above the fade cliff.  Bound the run: after this many
- * CONSECUTIVE holds with no clean delivery in between, stop attributing
- * retries to reverse loss and let normal delivery feedback act.  3 matches
- * the adaptive-ACK escalation cap: an isolated reverse-path ACK-loss run of
- * <=3 stays protected (the bench-validated case). */
-#define ARQ_REVERSE_HOLD_MAX          3     /* consecutive reverse-loss holds */
-
-/* ---- Outer-loop link adaptation (OLLA) ----
- * A per-link SNR offset (dB) driven by delivery outcomes corrects the gap
- * between the peer's reported SNR and the SNR the link actually sustains
- * (fading margin, estimator bias).  Mode selection thresholds on
- * (peer_snr + olla_offset).  On a first-try success the offset rises a little;
- * on a failure it drops more.  At equilibrium the up/down ratio fixes the
- * first-try FER:  FER = up/(up+down).  This self-damps the gear-shift — a mode
- * that keeps failing drives the offset down and HOLDS it down (no fixed timer)
- * until clean delivery at the lower mode raises it again, so there is no
- * climb→fail→downgrade→re-climb oscillation. */
-#define ARQ_OLLA_TARGET_FER          0.30f  /* target first-try frame-error rate.
-                                            * NOT the cellular 10%: Mercury uses
-                                            * plain go-back-N (no HARQ soft-
-                                            * combining), so the throughput-
-                                            * optimal operating point tolerates a
-                                            * higher FER — the big-payload modes
-                                            * (DATAC1/17) win even with ~25-30%
-                                            * first-try loss.  Matches where the
-                                            * bench goodput crossovers / v1.9.9's
-                                            * stable DATAC1 operate. */
-#define ARQ_OLLA_STEP_DOWN_DB        1.0f   /* offset decrement per first-try failure */
-#define ARQ_OLLA_STEP_UP_DB   (ARQ_OLLA_STEP_DOWN_DB * ARQ_OLLA_TARGET_FER / (1.0f - ARQ_OLLA_TARGET_FER))
-                                            /* increment per success; ratio sets FER */
-#define ARQ_OLLA_OFFSET_MIN_DB     (-20.0f) /* clamp: never bias below this        */
-#define ARQ_OLLA_OFFSET_MAX_DB       (3.0f) /* clamp: small optimistic headroom    */
 
 /* No-progress disconnect budget (seconds).  When data retries exhaust we no
  * longer disconnect immediately — instead we reset the retry counter and keep
  * trying.  Disconnect only fires when wall-clock since the last forward
- * progress (an ACK that advanced tx_seq) exceeds this budget, OR when the
- * keepalive miss limit is reached.  Default sits just above the keepalive
- * timeout (5 * 20 = 100s) — keepalive is the normal disconnect path; this
- * is a safety net for the asymmetric case where peer keepalives still
- * arrive but our TX direction has gone one-way. */
+ * progress (an ACK that advanced tx_seq) exceeds this budget.  This is the
+ * liveness net that replaces keepalive. */
 #define ARQ_NO_PROGRESS_TIMEOUT_S_DEFAULT 180
 extern _Atomic int arq_no_progress_timeout_s;
 #define ARQ_NO_PROGRESS_TIMEOUT_S atomic_load(&arq_no_progress_timeout_s)
@@ -449,14 +347,6 @@ uint8_t arq_protocol_encode_snr(float snr_db);
 float arq_protocol_decode_snr(uint8_t snr_raw);
 
 /**
- * @brief OLLA: update the per-link SNR offset (dB) from one first-try delivery
- * outcome.  Returns the new, clamped offset.  Pure — no session state.
- * @param offset_db     current offset
- * @param first_try_ok  true = frame delivered on first try; false = needed a retry
- */
-float arq_olla_update(float offset_db, bool first_try_ok);
-
-/**
  * @brief Encode ack_delay_ms to the 8-bit wire value (10ms units, max 2.55s).
  */
 uint8_t arq_protocol_encode_ack_delay(uint32_t delay_ms);
@@ -510,49 +400,6 @@ int arq_protocol_build_ack(uint8_t *buf, size_t buf_len,
 int arq_protocol_build_disconnect(uint8_t *buf, size_t buf_len,
                                    uint8_t session_id, uint8_t snr_raw);
 
-/** KEEPALIVE frame. */
-int arq_protocol_build_keepalive(uint8_t *buf, size_t buf_len,
-                                  uint8_t session_id, uint8_t snr_raw);
-
-/** KEEPALIVE_ACK frame. */
-int arq_protocol_build_keepalive_ack(uint8_t *buf, size_t buf_len,
-                                      uint8_t session_id, uint8_t snr_raw);
-
-/**
- * TURN_REQ frame.
- * @param buf        Output buffer (caller-provided).
- * @param buf_len    Size of buf in bytes.
- * @param session_id ARQ session identifier.
- * @param rx_ack_seq  Last seq received from current ISS (so ISS can flush pending retries).
- * @param snr_raw    Local SNR encoded for wire.
- */
-int arq_protocol_build_turn_req(uint8_t *buf, size_t buf_len,
-                                 uint8_t session_id, uint8_t rx_ack_seq,
-                                 uint8_t snr_raw);
-
-/** TURN_ACK frame. */
-int arq_protocol_build_turn_ack(uint8_t *buf, size_t buf_len,
-                                 uint8_t session_id, uint8_t snr_raw);
-
-/**
- * MODE_REQ frame.
- * @param buf        Output buffer (caller-provided).
- * @param buf_len    Size of buf in bytes.
- * @param session_id ARQ session identifier.
- * @param snr_raw    Local SNR encoded for wire.
- * @param freedv_mode  Requested payload FreeDV mode (FREEDV_MODE_DATAC*).
- */
-int arq_protocol_build_mode_req(uint8_t *buf, size_t buf_len,
-                                 uint8_t session_id, uint8_t snr_raw,
-                                 int freedv_mode);
-
-/** MODE_ACK frame — accept peer's mode request.  Carries the responder's
- *  rx_expected (flagged ARQ_FLAG_CTRL_ACKSEQ) so a probing ISS can resolve
- *  its unACKed TX window before switching modes. */
-int arq_protocol_build_mode_ack(uint8_t *buf, size_t buf_len,
-                                 uint8_t session_id, uint8_t snr_raw,
-                                 int freedv_mode, uint8_t rx_ack_seq);
-
 /* --- Data frame (PACKET_TYPE_ARQ_DATA) --- */
 
 /**
@@ -562,7 +409,7 @@ int arq_protocol_build_mode_ack(uint8_t *buf, size_t buf_len,
  * @param session_id   ARQ session identifier.
  * @param tx_seq       TX sequence number.
  * @param rx_ack_seq   Last seq received from peer (piggybacked ACK).
- * @param flags        ARQ_FLAG_TURN_REQ | ARQ_FLAG_HAS_DATA (bitmask).
+ * @param flags        ARQ_FLAG_HAS_DATA | LEN_HI/LEN_B9/LEN_B10 (bitmask).
  * @param snr_raw      Local SNR encoded for wire.
  * @param payload_valid Number of valid bytes in the payload slot (low 8 bits
  *                      go on the wire here; bits 8-10 travel in the caller-

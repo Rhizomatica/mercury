@@ -17,6 +17,8 @@ typedef struct {
     int     mode;
     int     burst_remaining;
     bool    present;
+    bool    is_pattern;    /* true = Welch-Costas pattern ACK (no coded frame) */
+    int     pattern_kind;  /* arq_pattern_kind_t when is_pattern              */
 } sim_outframe_t;
 
 sim_endpoint_t            *sim_endpoint_create(const char *my_call, const char *peer_call);

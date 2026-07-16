@@ -92,7 +92,26 @@ static void cb_send_tx_frame(int packet_type, int mode, size_t frame_size,
     ep->outbox.packet_type   = packet_type;
     ep->outbox.mode          = mode;
     ep->outbox.burst_remaining = burst_remaining;
+    ep->outbox.is_pattern    = false;
+    ep->outbox.pattern_kind  = 0;
     ep->outbox.present       = true;
+}
+
+/* Pattern ACK: a degenerate outframe with no coded bytes.  sim_core schedules
+ * it with a short airtime and its own low erasure, and translates it straight
+ * to ARQ_EV_RX_ACK (HAS_DATA = break) on delivery. */
+static void cb_send_pattern_ack(int mode, int pattern_kind)
+{
+    sim_endpoint_t *ep = s_active;
+    assert(!ep->outbox.present &&
+           "send_pattern_ack fired with outbox full");
+    ep->outbox.len             = 0;
+    ep->outbox.packet_type     = -1;
+    ep->outbox.mode            = mode;
+    ep->outbox.burst_remaining = 0;
+    ep->outbox.is_pattern      = true;
+    ep->outbox.pattern_kind    = pattern_kind;
+    ep->outbox.present         = true;
 }
 
 static void cb_notify_connected(const char *remote_call, const char *local_call) { (void)remote_call; (void)local_call; }
@@ -130,6 +149,7 @@ const arq_fsm_callbacks_t *sim_endpoint_callbacks(void)
 {
     static const arq_fsm_callbacks_t cbs = {
         .send_tx_frame        = cb_send_tx_frame,
+        .send_pattern_ack     = cb_send_pattern_ack,
         .notify_connected     = cb_notify_connected,
         .notify_pending       = cb_notify_pending,
         .notify_cancelpending = cb_notify_cancelpending,

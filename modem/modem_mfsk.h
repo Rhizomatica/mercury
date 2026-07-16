@@ -24,4 +24,22 @@
 
 extern const modem_backend_t modem_backend_mfsk;
 
+/* ---- Pattern ACK (Welch-Costas tone burst) helpers ----
+ * A pattern ACK is a short tone burst — no preamble, no LDPC.  The datalink
+ * layer (ARQ) emits one via send_pattern_ack() and detects incoming ones in
+ * the RX baseband.  pattern_kind: 0 = plain ACK, 1 = ACK+TURN (break). */
+
+/* Number of pattern symbols (for buffer sizing / airtime). */
+int mfsk_pattern_nsymb(void);
+
+/* Max int16 passband samples a pattern TX produces (buffer sizing). */
+int mfsk_pattern_max_tx_samples(void);
+
+/* Generate the pattern as int16 passband; returns the sample count. */
+int mfsk_pattern_tx(int16_t *out, int pattern_kind);
+
+/* Detect a pattern ACK in an int16 passband chunk.  Returns 1 on a match and
+ * sets *is_break (1 = break/ACK+TURN, 0 = plain ACK); 0 if none. */
+int mfsk_pattern_detect(const int16_t *pb, int n, int *is_break);
+
 #endif /* MERCURY_MODEM_MFSK_H */

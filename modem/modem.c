@@ -1072,6 +1072,77 @@ int send_modulated_data(generic_modem_t *g_modem, uint8_t *bytes_in, int frames_
     return 0;
 }
 
+/* Emit a Welch-Costas MFSK pattern ACK.  Sibling of send_modulated_data:
+ * reuses the same head-silence / ptt_on / playback / ptt_off path so the
+ * TX_STARTED/TX_COMPLETE events fire identically to a coded frame.  The tone
+ * burst is generated at the MFSK passband geometry (8 kHz); the mode argument
+ * only names which payload mode the ARQ layer keyed at (for logging). */
+static int send_pattern_ack(generic_modem_t *g_modem, int mode, int pattern_kind)
+{
+    (void)mode;
+    int max_samp = mfsk_pattern_max_tx_samples();
+    if (max_samp <= 0)
+        return -1;
+
+    int16_t  *pat = (int16_t *)malloc((size_t)max_samp * sizeof(int16_t));
+    if (!pat)
+        return -1;
+    int n_pat = mfsk_pattern_tx(pat, pattern_kind);
+    if (n_pat <= 0)
+    {
+        free(pat);
+        return -1;
+    }
+
+    int samples_head = FREEDV_FS_8000 * 100 / 1000;   /* 100 ms head silence  */
+    int inter_burst  = 200;
+    int samples_tail = FREEDV_FS_8000 * inter_burst / 1000;
+    size_t total = (size_t)samples_head + (size_t)n_pat + (size_t)samples_tail;
+
+    int32_t *tx_buffer = (int32_t *)malloc(total * sizeof(int32_t));
+    if (!tx_buffer)
+    {
+        free(pat);
+        return -1;
+    }
+
+    size_t k = 0;
+    float tx_gain = atomic_load(&g_tx_gain);
+    float peak_fs = 0.0f;
+    for (int i = 0; i < samples_head; i++) tx_buffer[k++] = 0;
+    /* MFSK generator emits int16 passband; scale up to int32 with tx_gain. */
+    for (int i = 0; i < n_pat; i++)
+        tx_buffer[k++] = tx_sample_with_gain(pat[i], tx_gain, &peak_fs);
+    for (int i = 0; i < samples_tail; i++) tx_buffer[k++] = 0;
+    free(pat);
+
+    {
+        float dbfs = -120.0f;
+        if (peak_fs > 0.0f)
+        {
+            float lin = peak_fs / 2147483648.0f;
+            dbfs = 20.0f * log10f(lin);
+            if (dbfs < -120.0f) dbfs = -120.0f;
+        }
+        atomic_store(&g_tx_peak_dbfs, dbfs);
+    }
+
+    ptt_on();
+    arq_modem_ptt_on(MERCURY_MODE_MFSK, 0);
+    usleep(10000);
+    write_buffer(playback_buffer, (uint8_t *)tx_buffer, total * sizeof(int32_t));
+    uint64_t playback_duration_us = ((uint64_t)total * 1000000ULL) / FREEDV_FS_8000;
+    usleep((useconds_t)playback_duration_us);
+    usleep(TAIL_TIME_US);
+    ptt_off();
+    arq_modem_ptt_off();
+
+    free(tx_buffer);
+    HLOGD("modem-tx", "Pattern ACK sent (%s)",
+          pattern_kind == 1 ? "ACK+TURN" : "ACK");
+    return 0;
+}
+
 static int send_modulated_data_with_cq_status(generic_modem_t *g_modem,
                                               uint8_t *bytes_in,
                                               int frames_per_burst)
@@ -1622,7 +1693,16 @@ void *tx_thread(void *g_modem)
             have_action = arq_wait_dequeue_action(&action, ARQ_ACTION_WAIT_MS);
         }
 
-        if (have_action)
+        if (have_action && action.type == ARQ_ACTION_TX_PATTERN)
+        {
+            /* Pattern ACK: a self-contained MFSK tone burst.  Emit it directly
+             * without touching the codec/mode (it is not a coded frame). */
+            if (send_pattern_ack(modem, action.mode, action.pattern_kind) == 0)
+                sent_from_action = true;
+            else
+                HLOGW("modem-tx", "Failed to send pattern ACK");
+        }
+        else if (have_action)
         {
             cbuf_handle_t action_buffer = NULL;
             size_t action_frame_size = payload_bytes_per_modem_frame;
@@ -1893,6 +1973,59 @@ void *rx_thread(void *g_modem)
                                      payload_mode,
                                      bitrate_bps,
                                      &metrics);
+        }
+
+        /* --- Pattern ACK detector (3rd consumer) ---
+         * A Welch-Costas pattern ACK carries no coded header, so neither freedv
+         * decoder sees it.  Accumulate a sliding window of the 8 kHz passband
+         * chunk and run mfsk_pattern_detect (ack + break tables); on a match
+         * synthesize an ARQ_EV_RX_ACK (HAS_DATA = break).  In stop-and-wait
+         * only one frame is outstanding, so a heard ACK unambiguously acks it;
+         * a stale ACK outside WAIT_ACK is ignored by the FSM. */
+        if (arq_policy_ready)
+        {
+            static int16_t *pat_win = NULL;
+            static int      pat_cap = 0, pat_len = 0;
+            int burst = mfsk_pattern_max_tx_samples();
+            int need  = burst * 3;   /* hold ~3 bursts so one can't straddle out */
+            if (burst > 0)
+            {
+                if (pat_cap < need)
+                {
+                    int16_t *nw = (int16_t *)realloc(pat_win,
+                                                     (size_t)need * sizeof(int16_t));
+                    if (nw) { pat_win = nw; pat_cap = need; }
+                }
+                if (pat_win && pat_cap >= need)
+                {
+                    /* Slide in the new chunk (drop oldest if over capacity). */
+                    int add = chunk_samples;
+                    if (add > pat_cap) add = pat_cap;
+                    if (pat_len + add > pat_cap)
+                    {
+                        int drop = pat_len + add - pat_cap;
+                        memmove(pat_win, pat_win + drop,
+                                (size_t)(pat_len - drop) * sizeof(int16_t));
+                        pat_len -= drop;
+                    }
+                    memcpy(pat_win + pat_len,
+                           capture_i16 + (chunk_samples - add),
+                           (size_t)add * sizeof(int16_t));
+                    pat_len += add;
+
+                    if (pat_len >= burst)
+                    {
+                        int is_break = 0;
+                        if (mfsk_pattern_detect(pat_win, pat_len, &is_break))
+                        {
+                            HLOGD("modem-rx", "Pattern ACK detected (%s)",
+                                  is_break ? "ACK+TURN" : "ACK");
+                            arq_post_pattern_ack(is_break != 0);
+                            pat_len = 0;   /* consume the window */
+                        }
+                    }
+                }
+            }
         }
 
         if (arq_policy_ready)
