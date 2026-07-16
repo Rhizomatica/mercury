@@ -412,7 +412,8 @@ static bool is_supported_split_mode(int mode)
            mode == FREEDV_MODE_DATAC15 ||
            mode == FREEDV_MODE_DATAC16 ||
            mode == FREEDV_MODE_DATAC17 ||
-           mode == FREEDV_MODE_QAM16C2;
+           mode == FREEDV_MODE_QAM16C2 ||
+           mode == MERCURY_MODE_MFSK;
 }
 
 static bool is_payload_split_mode(int mode)
@@ -422,7 +423,8 @@ static bool is_payload_split_mode(int mode)
            mode == FREEDV_MODE_DATAC4 ||
            mode == FREEDV_MODE_DATAC15 ||
            mode == FREEDV_MODE_DATAC17 ||
-           mode == FREEDV_MODE_QAM16C2;
+           mode == FREEDV_MODE_QAM16C2 ||
+           mode == MERCURY_MODE_MFSK;
 }
 
 static const char *mode_name_from_enum(int mode)
@@ -440,6 +442,7 @@ static const char *mode_name_from_enum(int mode)
     case FREEDV_MODE_DATAC17: return "DATAC17";
     case FREEDV_MODE_QAM16C2: return "QAM16C2";
     case FREEDV_MODE_FSK_LDPC: return "FSK_LDPC";
+    case MERCURY_MODE_MFSK: return "MFSK";
     default: return "UNKNOWN";
     }
 }
@@ -488,7 +491,7 @@ static int init_mode_pool_locked(int frames_per_burst, int freedv_verbosity)
     static const int pool_modes[] = {
         FREEDV_MODE_DATAC16, FREEDV_MODE_DATAC15, FREEDV_MODE_DATAC13,
         FREEDV_MODE_DATAC4,  FREEDV_MODE_DATAC3,  FREEDV_MODE_DATAC1,
-        FREEDV_MODE_DATAC17, FREEDV_MODE_QAM16C2,
+        FREEDV_MODE_DATAC17, FREEDV_MODE_QAM16C2, MERCURY_MODE_MFSK,
     };
     clear_mode_pool_locked();
     for (size_t i = 0; i < sizeof(pool_modes) / sizeof(pool_modes[0]); i++)
@@ -555,6 +558,8 @@ static uint32_t bitrate_level_from_payload_mode(int mode)
         return 17;
     case FREEDV_MODE_QAM16C2:
         return 25;
+    case MERCURY_MODE_MFSK:
+        return 100;
     default:
         return 15;
     }

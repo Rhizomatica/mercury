@@ -20,6 +20,7 @@
 #include "../common/virtual_clock.h"
 #include "../modem/framer.h"
 #include "../modem/freedv/freedv_api.h"
+#include "../modem/modem_mfsk.h"   /* MERCURY_MODE_MFSK */
 
 #define LOG_COMP  "arq-fsm"
 #define INT_BUFFER_SIZE 4096
@@ -292,6 +293,7 @@ static int mode_rank(int mode)
     if (mode == FREEDV_MODE_DATAC1)  return 3;
     if (mode == FREEDV_MODE_DATAC3)  return 2;
     if (mode == FREEDV_MODE_DATAC4)  return 1;
+    if (mode == MERCURY_MODE_MFSK)   return -1; /* fringe rung, below DATAC15 */
     return 0; /* DATAC15 or any other conservative mode */
 }
 
@@ -323,6 +325,7 @@ static float mode_snr_floor_db(int mode)
     case FREEDV_MODE_DATAC1:  return ARQ_SNR_MIN_DATAC1_DB;
     case FREEDV_MODE_DATAC3:  return ARQ_SNR_MIN_DATAC3_DB;
     case FREEDV_MODE_DATAC4:  return ARQ_SNR_MIN_DATAC4_DB;
+    case MERCURY_MODE_MFSK:   return -100.0f;  /* MFSK is the fringe floor */
     default:                  return -100.0f;  /* DATAC15 floor / unknown */
     }
 }
@@ -579,7 +582,18 @@ static int select_best_mode(const arq_session_t *sess, int backlog)
     if (peer_snr >= c4_thresh && backlog >= ARQ_BACKLOG_MIN_DATAC4)
         return FREEDV_MODE_DATAC4;
 
-    return FREEDV_MODE_DATAC15;
+    /* DATAC15 is the normal robust floor; below its threshold the link drops to
+     * the MFSK weak-signal rung.  Stay in DATAC15 down to its base threshold;
+     * climb MFSK->DATAC15 only above threshold + hysteresis (no oscillation into
+     * the ~13.5s MFSK frame).  peer_snr is OLLA-corrected, so sustained DATAC15
+     * failure drives it below the threshold and selects MFSK. */
+    float c15_thresh = (cur_rank >= mode_rank(FREEDV_MODE_DATAC15))
+                       ? ARQ_SNR_MIN_DATAC15_DB
+                       : ARQ_SNR_MIN_DATAC15_DB + ARQ_SNR_HYST_DB;
+    if (peer_snr >= c15_thresh)
+        return FREEDV_MODE_DATAC15;
+
+    return MERCURY_MODE_MFSK;
 }
 
 /** Check whether a mode upgrade/downgrade is warranted.  If yes, send

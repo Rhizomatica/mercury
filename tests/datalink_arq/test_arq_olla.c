@@ -291,6 +291,38 @@ void test_olla_beats_oscillating_baseline(void)
     }
 }
 
+/* 5. MFSK fringe rung: below the DATAC15 floor the ladder drops to MFSK, and
+ *    climbs back only above threshold + hysteresis (no oscillation into the
+ *    ~13.5s MFSK frame).  Mirrors the DATAC15<->MFSK terminal of
+ *    select_best_mode() exactly, using the real constants. */
+enum { RUNG_MFSK = 0, RUNG_DATAC15 = 1 };
+static int pick_c15_or_mfsk(float eff_snr, int cur_rung)
+{
+    /* cur_rank>=rank(DATAC15) => base threshold; else +hysteresis (climb up). */
+    float thresh = (cur_rung >= RUNG_DATAC15)
+                   ? ARQ_SNR_MIN_DATAC15_DB
+                   : ARQ_SNR_MIN_DATAC15_DB + ARQ_SNR_HYST_DB;
+    return (eff_snr >= thresh) ? RUNG_DATAC15 : RUNG_MFSK;
+}
+
+void test_mfsk_fringe_rung_selection(void)
+{
+    /* On DATAC15, stay until the corrected SNR falls below the -11 dB floor. */
+    TEST_ASSERT_EQUAL_INT(RUNG_DATAC15, pick_c15_or_mfsk(-8.0f,  RUNG_DATAC15));
+    TEST_ASSERT_EQUAL_INT(RUNG_DATAC15, pick_c15_or_mfsk(-11.0f, RUNG_DATAC15));
+    TEST_ASSERT_EQUAL_INT(RUNG_MFSK,    pick_c15_or_mfsk(-12.0f, RUNG_DATAC15));
+
+    /* On MFSK, hysteresis: do NOT climb back to DATAC15 until threshold+5 dB. */
+    TEST_ASSERT_EQUAL_INT(RUNG_MFSK,    pick_c15_or_mfsk(-8.0f, RUNG_MFSK)); /* -11+5=-6 */
+    TEST_ASSERT_EQUAL_INT(RUNG_MFSK,    pick_c15_or_mfsk(-6.1f, RUNG_MFSK));
+    TEST_ASSERT_EQUAL_INT(RUNG_DATAC15, pick_c15_or_mfsk(-6.0f, RUNG_MFSK));
+    TEST_ASSERT_EQUAL_INT(RUNG_DATAC15, pick_c15_or_mfsk(-3.0f, RUNG_MFSK));
+
+    /* The drop point (-11) sits below the DATAC15 floor and its 5 dB hysteresis
+     * band keeps the link off the 13.5s MFSK frame until it is truly needed. */
+    TEST_ASSERT_TRUE(ARQ_SNR_MIN_DATAC15_DB < ARQ_SNR_MIN_DATAC4_DB);
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -300,5 +332,6 @@ int main(void)
     RUN_TEST(test_olla_low_snr_no_collapse);
     RUN_TEST(test_olla_floors_at_very_low_snr);
     RUN_TEST(test_olla_beats_oscillating_baseline);
+    RUN_TEST(test_mfsk_fringe_rung_selection);
     return UNITY_END();
 }
