@@ -1,10 +1,9 @@
-/* Mercury MFSK LDPC rate-1/16 matrix (N=1600, K=100) — from Mercury v1.
- * Original author Fadi Jerji.  Copyright (C) 2022-2024 Fadi Jerji;
- * (C) 2026 Rhizomatica.  SPDX-License-Identifier: GPL-3.0-or-later */
+/* Mercury MFSK LDPC rate 1/16 (N=1600, K=100) — from Mercury v1 (Fadi Jerji).
+ * Copyright (C) 2022-2024 Fadi Jerji; (C) 2026 Rhizomatica.
+ * SPDX-License-Identifier: GPL-3.0-or-later */
 #include "mfsk_ldpc.h"
 
-/* per parity-check -> variable-node indices (Tanner graph, -1 padded) */
-const int mfsk_ldpc_QCmatrixC[1500][4] = {
+static const int C_1_16[1500][4] = {
 {100,-1,-1,-1},
 {100,101,-1,-1},
 {101,102,-1,-1},
@@ -1505,8 +1504,7 @@ const int mfsk_ldpc_QCmatrixC[1500][4] = {
 {1596,1597,-1,-1},
 {1597,1598,-1,-1},
 {42,1598,1599,-1}};
-/* per parity-bit -> codeword indices to XOR (systematic IRA encode) */
-const int mfsk_ldpc_QCmatrixEnc[1500][3] = {
+static const int Enc_1_16[1500][3] = {
 {-1,-1,-1},
 {100,-1,-1},
 {101,-1,-1},
@@ -3007,3 +3005,7 @@ const int mfsk_ldpc_QCmatrixEnc[1500][3] = {
 {1596,-1,-1},
 {1597,-1,-1},
 {42,1598,-1}};
+
+const mfsk_ldpc_code_t mfsk_ldpc_1_16 = {
+    .N=1600, .K=100, .P=1500, .cwidth=4,
+    .C=(const int*)C_1_16, .Enc=(const int*)Enc_1_16, .name="1/16" };

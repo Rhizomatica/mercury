@@ -167,7 +167,9 @@ test_mfsk: modem/test_mfsk.c $(UNITY_SRC) ../modem/mfsk.c
             test_mfsk: modem/test_mfsk.c $(UNITY_SRC) ../modem/mfsk.c \
             round-trip, gain, OFDM framing) ../modem/mfsk_ofdm.c \
             ../modem/mfsk_sync.c ../modem/mfsk_ldpc.c \
-            ../modem/mfsk_ldpc_1_16.c
+            ../modem/mfsk_ldpc_1_16.c ../modem/mfsk_ldpc_2_16.c \
+            ../modem/mfsk_ldpc_3_16.c ../modem/mfsk_ldpc_5_16.c \
+            ../modem/mfsk_ldpc_8_16.c
 	$(CC) $(CFLAGS) -I../modem -o $@ $^ $(LDFLAGS) -lm
 
 clean:

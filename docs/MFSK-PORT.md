@@ -180,9 +180,44 @@ Caveats: MFSK measured /15 vs OFDM /30 (percentages comparable); the two go
 through separate but identical `ch`-MPP pipelines at the same No→SNR3k; MFSK is
 this study's HF-reasonable config, not v1's exact WB geometry.
 
+### LDPC rate ladder — rate is (almost) free; 1/16 is the wrong default
+
+The full v1 rate ladder is now ported (`mfsk_ldpc_{1,2,3,5,8}_16`, all N=1600 so
+**same airtime**; payload K grows with rate). Coded delivery, MPP fading,
+dual-ended, per rate:
+
+| SNR3k | 1/16 (12 B) | 5/16 (62 B) | 8/16=½ (100 B) |
+|---|---|---|---|
+| −10.8 | 13/15 | 13/15 | 13/15 |
+| −12.8 | 10/15 | 10/15 | 10/15 |
+| −13.8 | 6/15 | — | 6/15 |
+| −15.8 | 2/15 | — | 2/15 |
+
+**All rates deliver identically.** `delivered == acquired` for every rate, and
+even rate 1/2 decodes everything that acquires down to the acquisition floor —
+because the 32-MFSK demod (large FFT processing gain, non-coherent) hands the
+LDPC very clean LLRs. So the code rate barely affects the floor; it only sets
+the payload.
+
+**Consequences:**
+- **1/16 is the wrong default** — it carries 12.5 B/frame where 8/16 carries
+  100 B at the *same* floor and airtime. And 1/16 (~10 B usable) can't even hold
+  the 14-byte CONNECT frame; **8/16 (100 B) fits CONNECT + real payload.**
+- Pick the **highest** rate the demod supports; here that's 8/16 (rate ½).
+  Frame = 100 B / ~13 s ≈ **60 bps** — comparable to DATAC15's 68 bps but
+  ~3–4 dB more robust. So the mode is not merely a tiny bottom rung; at rate ½
+  it's a more-robust alternative at similar throughput.
+
+**Caveat (important):** this "rate is free" result is under idealised sim
+conditions — no carrier-frequency offset and no timing drift over the ~13 s
+frame. On real HF a residual freq offset smears tones across FFT bins over a long
+frame, which would favour shorter frames / lower rates; the practical rate
+ceiling must be set OTA (Pedro). Ship a small ladder (e.g. 5/16 and 8/16) so OLLA
+can adapt, rather than a single fixed rate.
+
 Unit tests (`tests/modem/test_mfsk.c`, all in the suite): mod/demod round-trip,
 modulation-order gain, OFDM framing round-trip, preamble acquisition, LDPC
-encode/decode, postamble (distinct tones + acquisition).
+encode/decode for **all five rates**, postamble (distinct tones + acquisition).
 
 ## Reproduce
 - Round-trip / gain unit test: `cd tests && make test_mfsk && ./test_mfsk`.
