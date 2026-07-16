@@ -157,3 +157,81 @@ int mfsk_sync_search(const double complex *rx, int rx_len, int interp,
     if (out_metric) *out_metric = best_fine_metric;
     return (best_fine_metric < 0.5) ? -1 : best_fine;
 }
+
+/* Pattern detection — port of v1 cl_ofdm::detect_ack_pattern (Phase 1).
+ *
+ * v1 slides a window and, per pattern symbol, counts it a match only when the
+ * expected (hopped) tone is the PEAK bin for every stream — order-aware, so the
+ * false-alarm rate is (1/M)^nStreams per symbol, not 1-(1-1/M)^nS. The decision
+ * statistic is that matched-symbol count (caller compares to m->*_match_threshold);
+ * E_target/E_total is a tie-break metric. Unlike v1 we depad first (same path as
+ * mfsk_demod) instead of hand-mapping raw FFT bins + carrier-image mirrors, since
+ * this pipeline's LPF+depad already rejects the image. */
+int mfsk_detect_pattern(const mfsk_t *m, const ofdm_frame_t *o,
+                        const double complex *rx, int rx_len,
+                        const int *tones, int pattern_len, int nsymb,
+                        int *out_pos)
+{
+    int Nofdm = ofdm_frame_nofdm(o);
+    if (rx_len < nsymb * Nofdm) { if (out_pos) *out_pos = -1; return 0; }
+
+    int step = Nofdm / 8;
+    if (step < 1) step = 1;
+    int last_base = rx_len - nsymb * Nofdm;
+
+    int best_matched = -1, best_pos = -1;
+    double best_metric = -1.0;
+
+    double complex blk[2048], rmv[2048], fftd[2048], bins[1024];
+
+    for (int base = 0; base <= last_base; base += step)
+    {
+        int matched = 0;
+        double metric = 0.0;
+
+        for (int p = 0; p < nsymb; p++)
+        {
+            int rbase = base + p * Nofdm;
+            for (int n = 0; n < Nofdm; n++) blk[n] = rx[rbase + n];
+            ofdm_gi_remover(o, blk, rmv);
+            ofdm_fft(o, rmv, fftd);
+            ofdm_zero_depadder(o, fftd, bins);
+
+            int actual_tone = (tones[p % pattern_len] + p * m->tone_hop_step) % m->M;
+
+            int streams_matched = 0;
+            double e_target = 0.0;
+            for (int st = 0; st < m->nStreams; st++)
+            {
+                int base_bin = m->stream_offsets[st];
+                double peak_e = -1.0; int peak_t = -1;
+                for (int t = 0; t < m->M; t++)
+                {
+                    double complex v = bins[base_bin + t];
+                    double e = creal(v) * creal(v) + cimag(v) * cimag(v);
+                    if (e > peak_e) { peak_e = e; peak_t = t; }
+                    if (t == actual_tone) e_target += e;
+                }
+                if (peak_e > 0.0 && peak_t == actual_tone) streams_matched++;
+            }
+            if (streams_matched == m->nStreams) matched++;
+
+            double e_total = 0.0;
+            for (int k = 0; k < o->Nc; k++)
+            {
+                double complex v = bins[k];
+                e_total += creal(v) * creal(v) + cimag(v) * cimag(v);
+            }
+            if (e_total > 0.0) metric += e_target / e_total;
+        }
+
+        if (matched > best_matched ||
+            (matched == best_matched && metric > best_metric))
+        {
+            best_matched = matched; best_metric = metric; best_pos = base;
+        }
+    }
+
+    if (out_pos) *out_pos = best_pos;
+    return (best_matched < 0) ? 0 : best_matched;
+}

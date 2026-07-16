@@ -211,6 +211,65 @@ void test_postamble(void)
     TEST_ASSERT_TRUE(abs(off - true_off) <= Nofdm);
 }
 
+void test_pattern_detect(void)
+{
+    /* Plant an ACK tone pattern in a noise buffer; detector must (a) match ~all
+     * symbols at the right offset, (b) score pure noise below threshold, and
+     * (c) not confuse the BREAK pattern for ACK (order-aware discrimination). */
+    mfsk_init(&m, 32, 50, 1);
+    ofdm_frame_t o; ofdm_frame_init(&o, 64, 50, 0.25, 0);
+    int Nofdm = ofdm_frame_nofdm(&o);
+    int ns = m.ack_pattern_nsymb;                 /* 16 for M=32 */
+
+    /* build the ACK burst time-domain (freq bins -> OFDM symbols) */
+    static mfsk_cplx abins[48 * 50];
+    mfsk_generate_ack_pattern(&m, abins);
+    int gap = 3 * Nofdm, true_off = gap, L = gap + ns * Nofdm + gap;
+    static double complex rx[64 * 128 * 20];
+    double n = 0.02;
+    for (int i = 0; i < L; i++) rx[i] = n * (urand() - 0.5) + n * (urand() - 0.5) * I;
+    for (int s = 0; s < ns; s++)
+    {
+        double complex bins[64], pad[64], t[64], cp[80];
+        for (int k = 0; k < o.Nc; k++)
+            bins[k] = abins[s * m.Nc + k].re + abins[s * m.Nc + k].im * I;
+        ofdm_zero_padder(&o, bins, pad);
+        ofdm_ifft(&o, pad, t);
+        ofdm_gi_adder(&o, t, cp);
+        for (int j = 0; j < Nofdm; j++) rx[true_off + s * Nofdm + j] += cp[j];
+    }
+
+    int pos = -2;
+    int matched = mfsk_detect_pattern(&m, &o, rx, L, m.ack_tones,
+                                      m.ack_pattern_len, ns, &pos);
+    TEST_ASSERT_TRUE(matched >= m.ack_match_threshold);   /* detected */
+    TEST_ASSERT_TRUE(abs(pos - true_off) <= Nofdm);       /* at the ACK */
+
+    /* pure noise -> below threshold */
+    for (int i = 0; i < L; i++) rx[i] = n * (urand() - 0.5) + n * (urand() - 0.5) * I;
+    int m2 = mfsk_detect_pattern(&m, &o, rx, L, m.ack_tones,
+                                 m.ack_pattern_len, ns, &pos);
+    TEST_ASSERT_TRUE(m2 < m.ack_match_threshold);
+
+    /* a BREAK burst must NOT be mistaken for ACK (different tone sequence) */
+    static mfsk_cplx bbins[48 * 50];
+    mfsk_generate_break_pattern(&m, bbins);
+    for (int i = 0; i < L; i++) rx[i] = n * (urand() - 0.5) + n * (urand() - 0.5) * I;
+    for (int s = 0; s < ns; s++)
+    {
+        double complex bins[64], pad[64], t[64], cp[80];
+        for (int k = 0; k < o.Nc; k++)
+            bins[k] = bbins[s * m.Nc + k].re + bbins[s * m.Nc + k].im * I;
+        ofdm_zero_padder(&o, bins, pad);
+        ofdm_ifft(&o, pad, t);
+        ofdm_gi_adder(&o, t, cp);
+        for (int j = 0; j < Nofdm; j++) rx[true_off + s * Nofdm + j] += cp[j];
+    }
+    int m3 = mfsk_detect_pattern(&m, &o, rx, L, m.ack_tones,
+                                 m.ack_pattern_len, ns, &pos);
+    TEST_ASSERT_TRUE(m3 < m.ack_match_threshold);         /* not an ACK */
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -221,5 +280,6 @@ int main(void)
     RUN_TEST(test_preamble_acquisition);
     RUN_TEST(test_ldpc_encode_decode);
     RUN_TEST(test_postamble);
+    RUN_TEST(test_pattern_detect);
     return UNITY_END();
 }

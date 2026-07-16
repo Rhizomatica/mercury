@@ -217,10 +217,59 @@ can adapt, rather than a single fixed rate.
 
 Unit tests (`tests/modem/test_mfsk.c`, all in the suite): mod/demod round-trip,
 modulation-order gain, OFDM framing round-trip, preamble acquisition, LDPC
-encode/decode for **all five rates**, postamble (distinct tones + acquisition).
+encode/decode for **all five rates**, postamble (distinct tones + acquisition),
+and pattern detection (planted ACK found, noise rejected, BREAK≠ACK).
+
+## Control plane — pattern-ACK vs coded (DATAC16) ACK
+
+The data plane above uses **coded MFSK frames** (rate ladder). But an ACK on a
+coded frame is slow: an MFSK coded frame is ~13 s, and even a codec2 **DATAC16**
+control frame is **3.74 s**. v1 instead signals fixed control events (ACK / BREAK
+/ keepalive) with **Welch-Costas tone patterns** — non-coherent energy detection,
+no LDPC, no coherent lock. Ported here as `mfsk_detect_pattern`
+(`modem/mfsk_sync.c`, from v1 `cl_ofdm::detect_ack_pattern`): slide the buffer
+and count pattern symbols whose expected hopped tone is the **peak bin** for every
+stream; detection = matched-symbol count ≥ threshold (8/16 for the M=32 ACK).
+
+An ACK burst is **16 symbols = 0.64 s** (matches v1's "~725 ms" claim), vs a
+3.74 s DATAC16 frame — **5.8× less airtime per ACK.** And it survives far deeper.
+Detection rate over 30 independent bursts through `ch`/Watterson (delivered/total):
+
+| SNR3k | pattern-ACK (AWGN) | pattern-ACK (moderate) | pattern-ACK (poor) | DATAC16 ACK (moderate) |
+|---|---|---|---|---|
+| −3 | 30/30 | 30/30 | 30/30 | ~7/15 |
+| −5 | 30/30 | 30/30 | 30/30 | 1/5 |
+| −9 | 30/30 | 30/30 | 29/30 | 0/1 |
+| −11 | 30/30 | 29/30 | 29/30 | 0/0 |
+| −13 | 30/30 | 25/30 | 23/30 | 0/0 |
+| −15 | 30/30 | 16/30 | 17/30 | 0/0 |
+| −22 | 30/30 | — | — | 0/0 |
+
+**Pattern-ACK holds 100 % to ~−9 dB on fading (to −22 dB on AWGN) and >75 % to
+~−13 dB, where a DATAC16 ACK has been dead since ~−5 dB — roughly 10–12 dB more
+fade margin, at a fraction of the airtime.** This is the FFT processing gain of
+non-coherent per-tone detection: it needs neither phase lock nor LDPC.
+
+**False-alarm gate (safety):** on pure noise (no burst planted) the detector
+scored **0/30** false ACKs *and* 0/30 false BREAKs at every level down to −26 dB.
+With M=32 the chance of 8 tone-peak coincidences is negligible, so lowering the
+operating SNR does not manufacture spurious control events.
+
+**Why this matters for the ARQ blocker:** the marginal-link failure Mercury keeps
+hitting is *ACK survival on the reverse path* — a fragile-mode ACK dies while the
+forward data still gets through, stalling the transfer. A pattern-ACK that
+survives ~10 dB below DATAC16 removes exactly that bottleneck, and its short burst
+keeps turnaround fast. Confirms v1's split: **coded MFSK frames for data +
+CONNECT/CQ; Welch-Costas patterns for ACK/BREAK/keepalive.** (`detect_ack_pattern`
+is now ported; wiring it into the ARQ FSM — pattern control below DATAC16, coded
+MFSK data below DATAC15 — is the remaining integration step, OTA-gated.)
 
 ## Reproduce
 - Round-trip / gain unit test: `cd tests && make test_mfsk && ./test_mfsk`.
 - BER sweeps: the throwaway harness `mfsk_ber.c` (scratch) links `modem/mfsk.c`,
   adds freq-domain AWGN/Rayleigh at a target Eb/N0, and counts hard-decision bit
   errors; swept over M∈{2,4,8,16,32}.
+- Pattern-ACK vs DATAC16 ACK: throwaway `mfsk_pat.c` + `ack_sweep.sh` (scratch)
+  — passband ACK bursts → `ch`/`watterson_test` → `mfsk_detect_pattern`, vs a
+  DATAC16 frame through the freedv raw tool, over an SNR3k grid (AWGN/moderate/
+  poor). Includes the pure-noise false-alarm gate.
