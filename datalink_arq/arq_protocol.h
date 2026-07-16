@@ -277,6 +277,16 @@ extern _Atomic int arq_startup_max_s;
 #define ARQ_STARTUP_MAX_S  atomic_load(&arq_startup_max_s)
 #define ARQ_STARTUP_ACKS_REQUIRED     1
 #define ARQ_SNR_HYST_DB               5.0f
+#define ARQ_SNR_MIN_DATAC15_DB      -11.0f  /* below this (OLLA-corrected) SNR the
+                                             * DATAC15 floor is no longer viable and
+                                             * the link drops to the MFSK fringe rung
+                                             * (~-13 dB non-coherent floor).  MFSK's
+                                             * ~13.5s frame is only worth it in deep
+                                             * fade; the +5 dB hysteresis (climb back
+                                             * to DATAC15 at -6) prevents oscillation,
+                                             * and OLLA — not a retry count — drives
+                                             * the corrected SNR here on sustained
+                                             * DATAC15 failure. */
 #define ARQ_SNR_MIN_DATAC4_DB        -6.0f  /* entry threshold from the DATAC15
                                              * floor.  Bench (docs/MODES.md):
                                              * DATAC15/DATAC4 goodput crossover

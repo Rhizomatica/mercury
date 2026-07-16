@@ -34,6 +34,7 @@ _Atomic int arq_startup_max_s               = ARQ_STARTUP_MAX_S_DEFAULT;
 
 /* Include FreeDV mode constants */
 #include "../modem/freedv/freedv_api.h"
+#include "../modem/modem_mfsk.h"   /* MERCURY_MODE_MFSK */
 
 /* Framer layer (write_frame_header, PACKET_TYPE_* constants) */
 #include "../modem/framer.h"
@@ -93,6 +94,11 @@ const arq_mode_timing_t arq_mode_table[] = {
     {  FREEDV_MODE_DATAC1,    4.81f,     1.0f,      12.0f,       13.0f,          510,   1 },
     {  FREEDV_MODE_DATAC17,   7.40f,     1.0f,      14.0f,       15.0f,          1180,   1 },
     {  FREEDV_MODE_QAM16C2,   3.70f,     1.0f,      11.0f,       12.0f,          1213,   1 },
+    /* MFSK weak-signal fringe rung (below DATAC15): non-coherent 32-MFSK, rate-1/2
+     * LDPC, ~13.5s burst carrying 98 payload bytes.  Reached only when the OLLA-
+     * corrected SNR drops below the DATAC15 floor (~-11 dB).  ack_timeout covers
+     * the peer's turnaround + a control ACK after our long burst completes. */
+    {  MERCURY_MODE_MFSK,     13.50f,    1.0f,      9.0f,        10.0f,          98,   1 },
 };
 
 const int arq_mode_table_count =
