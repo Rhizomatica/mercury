@@ -38,4 +38,14 @@ int mfsk_sync_search(const double complex *rx, int rx_len, int interpolation_rat
                      int template_nsymb, int Nofdm, int search_start_symb,
                      double *out_metric);
 
+/* Pattern (ACK/BREAK/HAIL) detection: slide the baseband buffer and, for each
+ * candidate start, count pattern symbols whose expected hopped tone is the peak
+ * bin (per stream). Returns the best matched-symbol count over the buffer;
+ * *out_pos gets that start (samples). Detection = return >= match threshold.
+ * `tones`/`pattern_len`/`nsymb` come from the mfsk_t (ack_/break_/hail_). */
+int mfsk_detect_pattern(const mfsk_t *m, const ofdm_frame_t *o,
+                        const double complex *rx, int rx_len,
+                        const int *tones, int pattern_len, int nsymb,
+                        int *out_pos);
+
 #endif /* MERCURY_MFSK_SYNC_H */
