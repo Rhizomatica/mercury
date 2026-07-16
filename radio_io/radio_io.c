@@ -45,25 +45,40 @@
 #endif
 
 #ifdef HAVE_HAMLIB
-static hamlib_port_t *radio_io_get_rig_port(RIG *radio)
+/* Configure the serial device path and speed through Hamlib's stable public
+ * conf API (rig_token_lookup + rig_set_conf) rather than writing the internal
+ * rig->state.rigport struct directly.
+ *
+ * Since Hamlib 4.6 the port struct is reached via the HAMLIB_RIGPORT macro,
+ * which expands to rig_data_pointer(rig, RIG_PTRX_RIGPORT).  That symbol is not
+ * exported by every Hamlib build (a Hamlib 5 header/library skew leaves
+ * rig_data_pointer undefined at link time), so depending on it is fragile.  The
+ * conf tokens "rig_pathname" and "serial_speed" are stable across 4.6/4.7/5.x
+ * and must be set before rig_open(). */
+static void radio_io_apply_serial_conf(RIG *radio, const char *device_path,
+                                       int serial_speed)
 {
-#if defined(HAMLIB_RIGPORT)
-    return HAMLIB_RIGPORT(radio);
-#elif defined(RIGPORT)
-    return RIGPORT(radio);
-#else
-    return &radio->state.rigport;
-#endif
-}
+    int rc;
 
-static int radio_io_set_rig_vfo_opt(RIG *radio, int opt)
-{
-#if defined(HAMLIB_RIGPORT)
-    return rig_set_vfo_opt(radio, opt);
-#else
-    radio->state.vfo_opt = opt;
-    return RIG_OK;
-#endif
+    if (device_path && device_path[0])
+    {
+        rc = rig_set_conf(radio, rig_token_lookup(radio, "rig_pathname"),
+                          device_path);
+        if (rc != RIG_OK)
+            HLOGW(RADIO_LOG_TAG, "rig_set_conf(rig_pathname) failed: %d", rc);
+    }
+
+    if (serial_speed > 0)
+    {
+        char rate[16];
+        snprintf(rate, sizeof(rate), "%d", serial_speed);
+        rc = rig_set_conf(radio, rig_token_lookup(radio, "serial_speed"), rate);
+        if (rc != RIG_OK)
+            HLOGW(RADIO_LOG_TAG, "rig_set_conf(serial_speed) failed: %d", rc);
+        else
+            HLOGI(RADIO_LOG_TAG, "Serial speed overridden to %d baud",
+                  serial_speed);
+    }
 }
 #endif
 
@@ -171,15 +186,7 @@ int radio_io_init(int radio_type, const char *device_path, int hamlib_log_level,
         return -1;
     }
 
-    hamlib_port_t *rigport = radio_io_get_rig_port(radio);
-    if (device_path && device_path[0] && rigport)
-        snprintf(rigport->pathname, HAMLIB_FILPATHLEN, "%s", device_path);
-
-    if (serial_speed > 0 && rigport)
-    {
-        rigport->parm.serial.rate = serial_speed;
-        HLOGI(RADIO_LOG_TAG, "Serial speed overridden to %d baud", serial_speed);
-    }
+    radio_io_apply_serial_conf(radio, device_path, serial_speed);
 
     HLOGD(RADIO_LOG_TAG, "Calling rig_open(device=%s)",
           device_path && device_path[0] ? device_path : "(default)");
@@ -198,7 +205,7 @@ int radio_io_init(int radio_type, const char *device_path, int hamlib_log_level,
     if (radio->caps->rig_model == RIG_MODEL_NETRIGCTL)
     {
         int rigctld_vfo_opt = netrigctl_get_vfo_mode(radio);
-        int rc = radio_io_set_rig_vfo_opt(radio, rigctld_vfo_opt);
+        int rc = rig_set_vfo_opt(radio, rigctld_vfo_opt);
         if (rc != RIG_OK)
         {
             HLOGW(RADIO_LOG_TAG, "Failed to set NetRigCtl VFO option: %d", rc);
