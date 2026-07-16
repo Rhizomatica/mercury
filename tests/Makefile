@@ -43,10 +43,9 @@ ARQ_STUBS = datalink_arq/arq_test_stubs.c
 
 # Test executables
 TEST_BINS = test_ring_buffer test_arq_protocol test_arq_timing test_arq_fsm \
-            test_tcp_interfaces test_resampler test_pcm24 test_arq_olla \
-            test_arq_sim test_arq_conn test_cfg_utils test_arq_tnc \
-            test_channel_busy test_mfsk test_freedv_harq test_sock_wire \
-            test_virtual_clock
+            test_tcp_interfaces test_resampler test_arq_olla test_arq_sim test_arq_conn test_cfg_utils \
+            test_arq_tnc test_channel_busy test_mfsk test_mfsk_modem test_pcm24 test_freedv_harq \
+            test_sock_wire test_virtual_clock
 
 .PHONY: all test clean
 
@@ -151,6 +150,13 @@ test_channel_busy: modem/test_channel_busy.c $(UNITY_SRC) ../modem/channel_busy.
             ../modem/mfsk_ldpc_3_16.c ../modem/mfsk_ldpc_5_16.c \
             ../modem/mfsk_ldpc_8_16.c
 	$(CC) $(CFLAGS) -I../modem -o $@ $^ $(LDFLAGS) -lm
+
+# MFSK modem backend (burst TX/RX through the vtable); links libfreedvdata for CRC16
+MFSK_SRC = ../modem/mfsk.c ../modem/mfsk_ofdm.c ../modem/mfsk_sync.c ../modem/mfsk_ldpc.c \
+           ../modem/mfsk_ldpc_1_16.c ../modem/mfsk_ldpc_2_16.c ../modem/mfsk_ldpc_3_16.c \
+           ../modem/mfsk_ldpc_5_16.c ../modem/mfsk_ldpc_8_16.c
+test_mfsk_modem: modem/test_mfsk_modem.c $(UNITY_SRC) ../modem/modem_mfsk.c $(MFSK_SRC)
+	$(CC) $(CFLAGS) -I../modem -I../modem/freedv -o $@ $^ ../modem/freedv/libfreedvdata.a $(LDFLAGS) -lm
 
 clean:
 	rm -f $(TEST_BINS)
