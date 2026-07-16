@@ -40,6 +40,7 @@
 #include "channel_busy.h"
 #include "freedv_api.h"
 #include "modem_freedv.h"
+#include "modem_mfsk.h"
 #include "fsk.h"
 #include "ldpc_codes.h"
 #include "ofdm_internal.h"
@@ -447,7 +448,8 @@ static const char *mode_name_from_enum(int mode)
  * fringe mode registers its own backend here (Stage 2). */
 static const modem_backend_t *backend_for_mode(int mode)
 {
-    (void)mode;
+    if (mode == MERCURY_MODE_MFSK)
+        return &modem_backend_mfsk;
     return &modem_backend_freedv;
 }
 
