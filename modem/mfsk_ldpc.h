@@ -1,10 +1,12 @@
-/* Mercury MFSK LDPC — rate-1/16 code from Mercury v1 (ROBUST_0's FEC)
+/* Mercury MFSK LDPC — v1 rate ladder (1/16 .. 8/16), all N=1600
  *
  * Systematic IRA encoder + normalized min-sum belief-propagation decoder over
- * the v1 quasi-cyclic Tanner graph. N=1600 coded bits, K=100 info bits.
+ * the v1 quasi-cyclic Tanner graphs.  A small ladder of rates lets the mode
+ * trade robustness (low rate, deep fringe) for payload (higher rate).  All
+ * codes share N=1600 coded bits (same airtime); K (info bits) grows with rate.
  * LLR convention (matches mfsk_demod): LLR > 0 favours bit 0.
  *
- * Copyright (C) 2022-2024 Fadi Jerji (original matrix/algorithm)
+ * Copyright (C) 2022-2024 Fadi Jerji (original matrices/algorithm)
  * Copyright (C) 2026 Rhizomatica (C port)
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
@@ -12,20 +14,32 @@
 #ifndef MERCURY_MFSK_LDPC_H
 #define MERCURY_MFSK_LDPC_H
 
-#define MFSK_LDPC_N       1600   /* codeword length            */
-#define MFSK_LDPC_K       100    /* info bits (rate 1/16)       */
-#define MFSK_LDPC_P       1500   /* parity bits (N-K)           */
-#define MFSK_LDPC_CWIDTH  4       /* max check-node degree      */
+#define MFSK_LDPC_MAXN 1600   /* largest codeword (all codes are N=1600)   */
+#define MFSK_LDPC_MAXK 800    /* largest info block (rate 8/16)            */
 
-extern const int mfsk_ldpc_QCmatrixC[MFSK_LDPC_P][MFSK_LDPC_CWIDTH];
-extern const int mfsk_ldpc_QCmatrixEnc[MFSK_LDPC_P][MFSK_LDPC_CWIDTH - 1];
+/* An LDPC code. C/Enc are flat row-major arrays (P rows).  A -1 entry is
+ * padding.  ewidth = cwidth - 1. */
+typedef struct
+{
+    int N, K, P, cwidth;
+    const int *C;    /* [P*cwidth]      per parity-check -> variable indices  */
+    const int *Enc;  /* [P*(cwidth-1)]  per parity-bit  -> codeword XOR set   */
+    const char *name;
+} mfsk_ldpc_code_t;
 
-/* Systematic encode: info[K] -> coded[N] (first K bits are the info bits). */
-void mfsk_ldpc_encode(const int info[MFSK_LDPC_K], int coded[MFSK_LDPC_N]);
+/* The v1 rate ladder (payload = K/8 bytes): 1/16≈12.5 B .. 8/16=100 B. */
+extern const mfsk_ldpc_code_t mfsk_ldpc_1_16;   /* K=100  ~12.5 B  deepest   */
+extern const mfsk_ldpc_code_t mfsk_ldpc_2_16;   /* K=200  25 B               */
+extern const mfsk_ldpc_code_t mfsk_ldpc_3_16;   /* K=300  37.5 B             */
+extern const mfsk_ldpc_code_t mfsk_ldpc_5_16;   /* K=500  62.5 B             */
+extern const mfsk_ldpc_code_t mfsk_ldpc_8_16;   /* K=800  100 B  (rate 1/2)  */
 
-/* Min-sum decode: channel LLRs for the N coded bits -> K info bits.
- * Returns 1 if all parity checks were satisfied (converged), 0 otherwise. */
-int mfsk_ldpc_decode(const float llr[MFSK_LDPC_N], int info_out[MFSK_LDPC_K],
-                     int max_iter);
+/* Systematic encode: info[c->K] -> coded[c->N] (first K bits are info). */
+void mfsk_ldpc_encode(const mfsk_ldpc_code_t *c, const int *info, int *coded);
+
+/* Min-sum decode: LLRs for the c->N coded bits -> c->K info bits.
+ * Returns 1 if all parity checks were satisfied (converged), else 0. */
+int mfsk_ldpc_decode(const mfsk_ldpc_code_t *c, const float *llr,
+                     int *info_out, int max_iter);
 
 #endif /* MERCURY_MFSK_LDPC_H */

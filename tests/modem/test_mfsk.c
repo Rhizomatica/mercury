@@ -153,29 +153,38 @@ void test_preamble_acquisition(void)
 
 void test_ldpc_encode_decode(void)
 {
-    /* Encoder produces valid codewords (H*c=0) and noiseless LLRs decode back
-     * to the info bits (converged). */
-    int info[MFSK_LDPC_K], coded[MFSK_LDPC_N], out[MFSK_LDPC_K];
-    float llr[MFSK_LDPC_N];
-    for (int i = 0; i < MFSK_LDPC_K; i++) info[i] = (int)(urand() < 0.5);
-    mfsk_ldpc_encode(info, coded);
+    /* For every rate in the ladder: encoder produces valid codewords (H*c=0)
+     * and noiseless LLRs decode back to the info bits (converged). */
+    const mfsk_ldpc_code_t *codes[] = {
+        &mfsk_ldpc_1_16, &mfsk_ldpc_2_16, &mfsk_ldpc_3_16,
+        &mfsk_ldpc_5_16, &mfsk_ldpc_8_16
+    };
+    static int info[MFSK_LDPC_MAXK], coded[MFSK_LDPC_MAXN], out[MFSK_LDPC_MAXK];
+    static float llr[MFSK_LDPC_MAXN];
 
-    for (int c = 0; c < MFSK_LDPC_P; c++)
+    for (int ci = 0; ci < 5; ci++)
     {
-        int par = 0;
-        for (int j = 0; j < MFSK_LDPC_CWIDTH; j++)
-        {
-            int v = mfsk_ldpc_QCmatrixC[c][j];
-            if (v >= 0) par ^= coded[v];
-        }
-        TEST_ASSERT_EQUAL_INT(0, par);            /* H*c = 0 */
-    }
+        const mfsk_ldpc_code_t *c = codes[ci];
+        for (int i = 0; i < c->K; i++) info[i] = (int)(urand() < 0.5);
+        mfsk_ldpc_encode(c, info, coded);
 
-    for (int i = 0; i < MFSK_LDPC_N; i++) llr[i] = coded[i] ? -10.0f : 10.0f;
-    int conv = mfsk_ldpc_decode(llr, out, 50);
-    TEST_ASSERT_TRUE(conv);
-    for (int i = 0; i < MFSK_LDPC_K; i++)
-        TEST_ASSERT_EQUAL_INT(info[i], out[i]);
+        for (int ch = 0; ch < c->P; ch++)
+        {
+            int par = 0;
+            for (int j = 0; j < c->cwidth; j++)
+            {
+                int v = c->C[ch * c->cwidth + j];
+                if (v >= 0) par ^= coded[v];
+            }
+            TEST_ASSERT_EQUAL_INT(0, par);            /* H*c = 0 */
+        }
+
+        for (int i = 0; i < c->N; i++) llr[i] = coded[i] ? -10.0f : 10.0f;
+        int conv = mfsk_ldpc_decode(c, llr, out, 50);
+        TEST_ASSERT_TRUE(conv);
+        for (int i = 0; i < c->K; i++)
+            TEST_ASSERT_EQUAL_INT(info[i], out[i]);
+    }
 }
 
 void test_postamble(void)
