@@ -18,7 +18,7 @@ override_dh_auto_install:
 	install -D -m 0644 debian/mercury-ui.desktop \
 		$(CURDIR)/debian/mercury-ui/usr/share/applications/mercury-ui.desktop
 	install -D -m 0644 gui_interface/fyne-ui/mercury-ui.png \
-		$(CURDIR)/debian/mercury-ui/usr/share/icons/hicolor/128x128/apps/mercury-ui.png
+		$(CURDIR)/debian/mercury-ui/usr/share/icons/hicolor/512x512/apps/mercury-ui.png
 
 override_dh_auto_clean:
 	$(MAKE) clean
