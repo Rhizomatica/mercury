@@ -343,6 +343,135 @@ static void mfsk_be_get_stats(void *ctx, int *sync, float *snr)
 
 static int mfsk_be_get_rx_status(void *ctx) { (void)ctx; return 0; }
 
+/* ======================================================================
+ * Pattern ACK (Welch-Costas tone burst) — TX and detect
+ *
+ * A pattern ACK is a short tone burst (ack_tones = plain ACK, break_tones =
+ * ACK+TURN) at the MFSK geometry.  No preamble, no LDPC: the detector slides a
+ * non-coherent matched filter over the baseband and counts matched symbols.
+ * These helpers own a lazily-initialised (mfsk_t, ofdm_frame_t) at the same
+ * geometry as the MFSK backend so the datalink layer can emit/detect patterns
+ * without holding a full mfsk_modem_t.
+ * ====================================================================== */
+
+static mfsk_t       g_pat_m;
+static ofdm_frame_t g_pat_o;
+static double       g_pat_lpf[MFSK_LPF_TAPS];
+static double       g_pat_w;
+static int          g_pat_nofdm;
+static bool         g_pat_ready = false;
+
+static void mfsk_pattern_lazy_init(void)
+{
+    if (g_pat_ready) return;
+    mfsk_init(&g_pat_m, MFSK_M, MFSK_NCAR, 1);
+    ofdm_frame_init(&g_pat_o, MFSK_NFFT, MFSK_NCAR, MFSK_GI, 0);
+    g_pat_nofdm = ofdm_frame_nofdm(&g_pat_o);
+    g_pat_w     = 2.0 * M_PI * MFSK_FC / MFSK_FS;
+    mklpf(g_pat_lpf, MFSK_LPF_FC);
+    g_pat_ready = true;
+}
+
+int mfsk_pattern_nsymb(void)
+{
+    mfsk_pattern_lazy_init();
+    return g_pat_m.ack_pattern_nsymb;
+}
+
+int mfsk_pattern_max_tx_samples(void)
+{
+    mfsk_pattern_lazy_init();
+    return g_pat_m.ack_pattern_nsymb * g_pat_nofdm;
+}
+
+/* Generate the ack/break pattern as int16 passband.  Returns sample count. */
+int mfsk_pattern_tx(int16_t *out, int pattern_kind)
+{
+    mfsk_pattern_lazy_init();
+    int ns = g_pat_m.ack_pattern_nsymb;
+
+    mfsk_cplx *bins = (mfsk_cplx *)calloc((size_t)ns * MFSK_NCAR, sizeof(mfsk_cplx));
+    if (!bins) return 0;
+    if (pattern_kind == 1)   /* ARQ_PATTERN_BREAK */
+        mfsk_generate_break_pattern(&g_pat_m, bins);
+    else
+        mfsk_generate_ack_pattern(&g_pat_m, bins);
+
+    int written = 0;
+    long tx_n = 0;
+    for (int s = 0; s < ns; s++)
+    {
+        double complex fb[MFSK_NCAR], pad[MFSK_NFFT], t[MFSK_NFFT], cp[MFSK_NFFT + 128];
+        for (int k = 0; k < MFSK_NCAR; k++)
+            fb[k] = bins[s * MFSK_NCAR + k].re + bins[s * MFSK_NCAR + k].im * I;
+        ofdm_zero_padder(&g_pat_o, fb, pad);
+        ofdm_ifft(&g_pat_o, pad, t);
+        ofdm_gi_adder(&g_pat_o, t, cp);
+        for (int n = 0; n < g_pat_nofdm; n++)
+        {
+            double ph = g_pat_w * (double)tx_n++;
+            double v = MFSK_TXAMP * (creal(cp[n]) * cos(ph) + cimag(cp[n]) * sin(ph));
+            if (v > 32767.0) v = 32767.0; else if (v < -32768.0) v = -32768.0;
+            out[written++] = (int16_t)lrint(v);
+        }
+    }
+    free(bins);
+    return written;
+}
+
+/* Detect a pattern ACK in an int16 passband chunk.  Returns 1 on a match and
+ * sets *is_break (1 = ACK+TURN break, 0 = plain ACK); 0 if none. */
+int mfsk_pattern_detect(const int16_t *pb, int n, int *is_break)
+{
+    mfsk_pattern_lazy_init();
+    if (!pb || n < g_pat_m.ack_pattern_nsymb * g_pat_nofdm)
+        return 0;
+
+    /* Downmix passband -> complex baseband + LPF (same as mfsk_downmix). */
+    double complex *bb = (double complex *)malloc((size_t)n * sizeof(double complex));
+    double complex *bf = (double complex *)malloc((size_t)n * sizeof(double complex));
+    if (!bb || !bf) { free(bb); free(bf); return 0; }
+    for (int i = 0; i < n; i++)
+    {
+        double x = (double)pb[i];
+        double ph = g_pat_w * (double)i;
+        bb[i] = 2.0 * x * cos(ph) + I * 2.0 * x * sin(ph);
+    }
+    for (int i = 0; i < n; i++)
+    {
+        double complex a = 0;
+        for (int k = 0; k < MFSK_LPF_TAPS; k++)
+        {
+            int j = i - k + MFSK_LPF_TAPS / 2;
+            if (j >= 0 && j < n) a += g_pat_lpf[k] * bb[j];
+        }
+        bf[i] = a;
+    }
+
+    int ns  = g_pat_m.ack_pattern_nsymb;
+    int pos = -1;
+    int ack_score = mfsk_detect_pattern(&g_pat_m, &g_pat_o, bf, n,
+                                        g_pat_m.ack_tones, g_pat_m.ack_pattern_len,
+                                        ns, &pos);
+    int brk_score = mfsk_detect_pattern(&g_pat_m, &g_pat_o, bf, n,
+                                        g_pat_m.break_tones, g_pat_m.ack_pattern_len,
+                                        ns, &pos);
+    free(bb); free(bf);
+
+    bool ack_hit = ack_score >= g_pat_m.ack_match_threshold;
+    bool brk_hit = brk_score >= g_pat_m.break_match_threshold;
+    if (!ack_hit && !brk_hit)
+        return 0;
+    /* Prefer the higher-scoring symbol so the two are told apart cleanly. */
+    if (brk_hit && (!ack_hit || brk_score >= ack_score))
+    {
+        if (is_break) *is_break = 1;
+        return 1;
+    }
+    if (is_break) *is_break = 0;
+    return 1;
+}
+
 const modem_backend_t modem_backend_mfsk = {
     .name             = "mfsk",
     .open             = mfsk_be_open,

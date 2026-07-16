@@ -9,6 +9,8 @@
 #include "sim_clock.h"
 #include "sim_translate.h"
 #include "arq_fsm.h"
+#include "arq_protocol.h"   /* ARQ_FLAG_HAS_DATA */
+#include "arq.h"            /* ARQ_PATTERN_BREAK */
 #include "arq_timing.h"
 
 #include <stdlib.h>
@@ -35,6 +37,8 @@ typedef struct {
     uint8_t            frame[1280];
     size_t             frame_len;
     float              rx_snr;
+    bool               is_pattern;    /* pattern ACK (no coded frame)       */
+    int                pattern_kind;  /* arq_pattern_kind_t when is_pattern  */
 } sim_pending_t;
 
 /* ======================================================================
@@ -74,7 +78,10 @@ static void drain_outframes_from(sim_t *s, sim_endpoint_t *sender,
     sim_outframe_t of;
     while (sim_endpoint_take_outframe(sender, &of))
     {
-        uint32_t airtime = sim_channel_airtime_ms(of.mode, of.len);
+        int dir = (sender == s->a) ? 0 : 1;
+        uint32_t airtime = of.is_pattern
+                           ? sim_channel_pattern_airtime_ms()
+                           : sim_channel_airtime_ms(of.mode, of.len);
         uint64_t tx_end  = now_ms + airtime;
 
         /* TX_COMPLETE back to sender at TX-end time. */
@@ -85,19 +92,25 @@ static void drain_outframes_from(sim_t *s, sim_endpoint_t *sender,
         };
         enqueue(s, &tx_done);
 
-        /* Frame delivery to peer (may be erased). */
+        /* Delivery to peer (may be erased). */
         uint64_t deliver_at = 0;
-        int dir = (sender == s->a) ? 0 : 1;
-        if (sim_channel_schedule(s->ch, now_ms, dir, of.mode, of.len, &deliver_at))
+        bool delivered = of.is_pattern
+                         ? sim_channel_pattern_schedule(s->ch, now_ms, dir, &deliver_at)
+                         : sim_channel_schedule(s->ch, now_ms, dir, of.mode, of.len,
+                                                &deliver_at);
+        if (delivered)
         {
             sim_pending_t frame_ev = {
-                .fire_at_ms = deliver_at,
-                .target     = peer,
-                .kind       = SIM_PENDING_FRAME,
-                .frame_len  = of.len,
-                .rx_snr     = s->rx_snr_db, /* default 12 dB; sim_set_rx_snr models fades */
+                .fire_at_ms   = deliver_at,
+                .target       = peer,
+                .kind         = SIM_PENDING_FRAME,
+                .frame_len    = of.len,
+                .rx_snr       = s->rx_snr_db, /* default 12 dB; sim_set_rx_snr models fades */
+                .is_pattern   = of.is_pattern,
+                .pattern_kind = of.pattern_kind,
             };
-            memcpy(frame_ev.frame, of.buf, of.len);
+            if (!of.is_pattern)
+                memcpy(frame_ev.frame, of.buf, of.len);
             enqueue(s, &frame_ev);
         }
     }
@@ -122,6 +135,16 @@ static void fire_pending(sim_t *s, sim_pending_t *p)
     }
 
     /* SIM_PENDING_FRAME */
+    if (p->is_pattern)
+    {
+        /* Pattern ACK -> ARQ_EV_RX_ACK (HAS_DATA = ACK+TURN break). */
+        arq_event_t ev = {0};
+        ev.id       = ARQ_EV_RX_ACK;
+        ev.rx_flags = (p->pattern_kind == ARQ_PATTERN_BREAK) ? ARQ_FLAG_HAS_DATA : 0;
+        arq_fsm_dispatch(sim_endpoint_session(p->target), &ev);
+        return;
+    }
+
     arq_event_t ev;
     bool ok = sim_translate_frame(p->frame, p->frame_len, p->rx_snr,
                                    sim_endpoint_call(p->target), &ev);
@@ -188,6 +211,11 @@ void sim_set_mode_per(sim_t *s, const sim_mode_per_t *table, int count,
 {
     sim_channel_set_mode_per(s->ch, table, count);
     s->rx_snr_db = rx_snr_db;
+}
+
+void sim_set_dir_snr(sim_t *s, int dir, double snr_db)
+{
+    sim_channel_set_dir_snr(s->ch, dir, snr_db);
 }
 
 void sim_inject(sim_t *s, sim_endpoint_t *ep, const arq_event_t *ev)

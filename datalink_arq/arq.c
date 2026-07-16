@@ -218,6 +218,22 @@ static void cb_send_tx_frame(int packet_type, int mode,
     arq_modem_enqueue(&action);
 }
 
+/* Enqueue a Welch-Costas MFSK pattern ACK for the modem TX worker.  Carries no
+ * coded frame — the modem synthesises the ack/break tone burst directly (see
+ * send_pattern_ack in modem.c).  `mode` is the current payload mode, used only
+ * so the worker can key at the right passband geometry. */
+static void cb_send_pattern_ack(int mode, int pattern_kind)
+{
+    arq_action_t action = {
+        .type         = ARQ_ACTION_TX_PATTERN,
+        .mode         = mode,
+        .frame_size   = 0,
+        .frame_count  = 1,
+        .pattern_kind = pattern_kind,
+    };
+    arq_modem_enqueue(&action);
+}
+
 static void cb_notify_connected(const char *remote_call, const char *local_call)
 {
     pthread_mutex_lock(&g_conn_lock);
@@ -851,22 +867,11 @@ void arq_handle_incoming_frame(uint8_t *data, size_t frame_size, float rx_snr)
     {
         switch (hdr.subtype)
         {
+        /* ACK: the coded DATAC16 ACK is used only for the post-ACCEPT connect
+         * confirmation now; in-session ACKs are the MFSK pattern (synthesised
+         * in modem.c), not a control frame here. */
         case ARQ_SUBTYPE_ACK:          ev.id = ARQ_EV_RX_ACK;           break;
         case ARQ_SUBTYPE_DISCONNECT:   ev.id = ARQ_EV_RX_DISCONNECT;    break;
-        case ARQ_SUBTYPE_TURN_REQ:     ev.id = ARQ_EV_RX_TURN_REQ;      break;
-        case ARQ_SUBTYPE_TURN_ACK:     ev.id = ARQ_EV_RX_TURN_ACK;      break;
-        case ARQ_SUBTYPE_KEEPALIVE:    ev.id = ARQ_EV_RX_KEEPALIVE;     break;
-        case ARQ_SUBTYPE_KEEPALIVE_ACK: ev.id = ARQ_EV_RX_KEEPALIVE_ACK; break;
-        case ARQ_SUBTYPE_MODE_REQ:
-            ev.id   = ARQ_EV_RX_MODE_REQ;
-            ev.mode = (frame_size > ARQ_FRAME_HDR_SIZE)
-                      ? (int)data[ARQ_FRAME_HDR_SIZE] : 0;
-            break;
-        case ARQ_SUBTYPE_MODE_ACK:
-            ev.id   = ARQ_EV_RX_MODE_ACK;
-            ev.mode = (frame_size > ARQ_FRAME_HDR_SIZE)
-                      ? (int)data[ARQ_FRAME_HDR_SIZE] : 0;
-            break;
         default:
             return;
         }
@@ -876,6 +881,16 @@ void arq_handle_incoming_frame(uint8_t *data, size_t frame_size, float rx_snr)
         return;
     }
 
+    evq_push(&ev);
+}
+
+void arq_post_pattern_ack(bool is_break)
+{
+    arq_event_t ev = {0};
+    ev.id       = ARQ_EV_RX_ACK;
+    ev.rx_flags = is_break ? ARQ_FLAG_HAS_DATA : 0;
+    /* session_id left 0: patterns carry none, and the dispatch session-ID
+     * gate treats 0 as "unknown/accept". */
     evq_push(&ev);
 }
 
@@ -918,6 +933,7 @@ int arq_init(size_t frame_size, int mode)
 
     static const arq_fsm_callbacks_t cbs = {
         .send_tx_frame       = cb_send_tx_frame,
+        .send_pattern_ack    = cb_send_pattern_ack,
         .notify_connected    = cb_notify_connected,
         .notify_pending      = cb_notify_pending,
         .notify_cancelpending = cb_notify_cancelpending,
@@ -1083,7 +1099,8 @@ bool arq_get_runtime_snapshot(arq_runtime_snapshot_t *snapshot)
     snapshot->initialized      = true;
     snapshot->connected        = (g_sess.conn_state == ARQ_CONN_CONNECTED);
     snapshot->trx              = trx;
-    snapshot->tx_backlog_bytes = backlog + g_sess.tx_inflight_bytes;
+    snapshot->tx_backlog_bytes = backlog +
+        (g_sess.tx_frame_present ? g_sess.tx_frame_len : 0);
     snapshot->speed_level      = g_sess.speed_level;
     snapshot->payload_mode      = g_sess.payload_mode;
     snapshot->peer_tx_mode      = g_sess.peer_tx_mode;

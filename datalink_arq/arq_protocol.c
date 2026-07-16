@@ -21,16 +21,18 @@ _Atomic int arq_disconnect_retry_slots = ARQ_DISCONNECT_RETRY_SLOTS_DEFAULT;
 _Atomic int arq_no_progress_timeout_s  = ARQ_NO_PROGRESS_TIMEOUT_S_DEFAULT;
 _Atomic int arq_disconnect_drain_timeout_s = ARQ_DISCONNECT_DRAIN_TIMEOUT_S_DEFAULT;
 
-/* Runtime-configurable guard/keepalive/ladder constants */
+/* Runtime-configurable guard/ladder constants */
 _Atomic int arq_channel_guard_ms            = ARQ_CHANNEL_GUARD_MS_DEFAULT;
 _Atomic int arq_iss_post_ack_guard_ms       = ARQ_ISS_POST_ACK_GUARD_MS_DEFAULT;
+_Atomic int arq_ladder_up_successes         = ARQ_LADDER_UP_SUCCESSES_DEFAULT;
+_Atomic int arq_startup_max_s               = ARQ_STARTUP_MAX_S_DEFAULT;
+
+/* Config-compat storage (see arq_protocol.h) — set by config, unused by FSM. */
 _Atomic int arq_keepalive_interval_s        = ARQ_KEEPALIVE_INTERVAL_S_DEFAULT;
 _Atomic int arq_keepalive_miss_limit        = ARQ_KEEPALIVE_MISS_LIMIT_DEFAULT;
-_Atomic int arq_ladder_up_successes         = ARQ_LADDER_UP_SUCCESSES_DEFAULT;
+_Atomic int arq_peer_payload_hold_s         = ARQ_PEER_PAYLOAD_HOLD_S_DEFAULT;
 _Atomic int arq_retry_downgrade_threshold   = ARQ_RETRY_DOWNGRADE_THRESHOLD_DEFAULT;
 _Atomic int arq_mode_hold_after_downgrade_s = ARQ_MODE_HOLD_AFTER_DOWNGRADE_S_DEFAULT;
-_Atomic int arq_peer_payload_hold_s         = ARQ_PEER_PAYLOAD_HOLD_S_DEFAULT;
-_Atomic int arq_startup_max_s               = ARQ_STARTUP_MAX_S_DEFAULT;
 
 /* Include FreeDV mode constants */
 #include "../modem/freedv/freedv_api.h"
@@ -85,24 +87,40 @@ extern int  arithmetic_decode(uint8_t *input, int max_len, char *output, int max
  * payload in the DATA-frame mode-inference loop (arq.c).
  * ====================================================================== */
 
+/* ack_timeout_s/retry_interval_s are sized for the 0.64 s Welch-Costas pattern
+ * ACK (was the 3.74 s DATAC16 coded ACK): ack_timeout >= frame_duration +
+ * channel_guard + pattern_ack(0.64) + margin (~1.5 s).  DATAC16 keeps its
+ * 3.74 s coded-frame budget because CALL/ACCEPT/DISCONNECT still ride it. */
 const arq_mode_timing_t arq_mode_table[] = {
     /*  freedv_mode           frame_dur  tx_period  ack_timeout  retry_interval  payload  burst */
     {  FREEDV_MODE_DATAC16,   3.74f,     1.0f,      7.0f,        8.0f,           14,   1 },
-    {  FREEDV_MODE_DATAC15,   4.40f,     1.0f,      11.0f,       12.0f,          30,   1 },
-    {  FREEDV_MODE_DATAC4,    5.80f,     1.0f,      13.0f,       14.0f,          54,   1 },
-    {  FREEDV_MODE_DATAC3,    3.82f,     1.0f,      11.0f,       12.0f,          126,   1 },
-    {  FREEDV_MODE_DATAC1,    4.81f,     1.0f,      12.0f,       13.0f,          510,   1 },
-    {  FREEDV_MODE_DATAC17,   7.40f,     1.0f,      14.0f,       15.0f,          1180,   1 },
-    {  FREEDV_MODE_QAM16C2,   3.70f,     1.0f,      11.0f,       12.0f,          1213,   1 },
-    /* MFSK weak-signal fringe rung (below DATAC15): non-coherent 32-MFSK, rate-1/2
-     * LDPC, ~13.5s burst carrying 98 payload bytes.  Reached only when the OLLA-
-     * corrected SNR drops below the DATAC15 floor (~-11 dB).  ack_timeout covers
-     * the peer's turnaround + a control ACK after our long burst completes. */
-    {  MERCURY_MODE_MFSK,     13.50f,    1.0f,      9.0f,        10.0f,          98,   1 },
+    {  FREEDV_MODE_DATAC15,   4.40f,     1.0f,      7.0f,        8.0f,           30,   1 },
+    {  FREEDV_MODE_DATAC4,    5.80f,     1.0f,      9.0f,        10.0f,          54,   1 },
+    {  FREEDV_MODE_DATAC3,    3.82f,     1.0f,      7.0f,        8.0f,           126,   1 },
+    {  FREEDV_MODE_DATAC1,    4.81f,     1.0f,      8.0f,        9.0f,           510,   1 },
+    {  FREEDV_MODE_DATAC17,   7.40f,     1.0f,      11.0f,       12.0f,          1180,   1 },
+    {  FREEDV_MODE_QAM16C2,   3.70f,     1.0f,      7.0f,        8.0f,           1213,   1 },
+    /* MFSK weak-signal fringe rung (ladder floor, rank 0 = start): non-coherent
+     * 32-MFSK, rate-1/2 LDPC, ~13.5s burst carrying 98 payload bytes.  Reached
+     * whenever delivery feedback drops the level to the floor.  ack_timeout
+     * covers the peer's turnaround + the pattern ACK after our long burst. */
+    {  MERCURY_MODE_MFSK,     13.50f,    1.0f,      17.0f,       18.0f,          98,   1 },
 };
 
 const int arq_mode_table_count =
     (int)(sizeof(arq_mode_table) / sizeof(arq_mode_table[0]));
+
+/* Delivery-driven ladder ordered by ARQ goodput, floor first (rank 0 = MFSK,
+ * the start).  arq_fsm derives payload_mode = arq_mode_ladder[speed_level]. */
+const int arq_mode_ladder[ARQ_LADDER_LEVELS] = {
+    MERCURY_MODE_MFSK,
+    FREEDV_MODE_DATAC15,
+    FREEDV_MODE_DATAC4,
+    FREEDV_MODE_DATAC3,
+    FREEDV_MODE_DATAC1,
+    FREEDV_MODE_DATAC17,
+    FREEDV_MODE_QAM16C2,
+};
 
 /* ======================================================================
  * Mode timing lookup
@@ -226,14 +244,6 @@ float arq_protocol_decode_snr(uint8_t snr_raw)
     return (float)((int)snr_raw - 128);
 }
 
-float arq_olla_update(float offset_db, bool first_try_ok)
-{
-    offset_db += first_try_ok ? ARQ_OLLA_STEP_UP_DB : -ARQ_OLLA_STEP_DOWN_DB;
-    if (offset_db < ARQ_OLLA_OFFSET_MIN_DB) offset_db = ARQ_OLLA_OFFSET_MIN_DB;
-    if (offset_db > ARQ_OLLA_OFFSET_MAX_DB) offset_db = ARQ_OLLA_OFFSET_MAX_DB;
-    return offset_db;
-}
-
 /* ======================================================================
  * ACK delay codec
  *
@@ -308,65 +318,6 @@ int arq_protocol_build_disconnect(uint8_t *buf, size_t buf_len,
                       ARQ_SUBTYPE_DISCONNECT, session_id,
                       0, 0, 0, snr_raw, 0,
                       NULL, 0);
-}
-
-int arq_protocol_build_keepalive(uint8_t *buf, size_t buf_len,
-                                  uint8_t session_id, uint8_t snr_raw)
-{
-    return build_ctrl(buf, buf_len,
-                      ARQ_SUBTYPE_KEEPALIVE, session_id,
-                      0, 0, 0, snr_raw, 0,
-                      NULL, 0);
-}
-
-int arq_protocol_build_keepalive_ack(uint8_t *buf, size_t buf_len,
-                                      uint8_t session_id, uint8_t snr_raw)
-{
-    return build_ctrl(buf, buf_len,
-                      ARQ_SUBTYPE_KEEPALIVE_ACK, session_id,
-                      0, 0, 0, snr_raw, 0,
-                      NULL, 0);
-}
-
-int arq_protocol_build_turn_req(uint8_t *buf, size_t buf_len,
-                                 uint8_t session_id, uint8_t rx_ack_seq,
-                                 uint8_t snr_raw)
-{
-    return build_ctrl(buf, buf_len,
-                      ARQ_SUBTYPE_TURN_REQ, session_id,
-                      0, rx_ack_seq, 0, snr_raw, 0,
-                      NULL, 0);
-}
-
-int arq_protocol_build_turn_ack(uint8_t *buf, size_t buf_len,
-                                 uint8_t session_id, uint8_t snr_raw)
-{
-    return build_ctrl(buf, buf_len,
-                      ARQ_SUBTYPE_TURN_ACK, session_id,
-                      0, 0, 0, snr_raw, 0,
-                      NULL, 0);
-}
-
-int arq_protocol_build_mode_req(uint8_t *buf, size_t buf_len,
-                                 uint8_t session_id, uint8_t snr_raw,
-                                 int freedv_mode)
-{
-    uint8_t payload[1] = { (uint8_t)freedv_mode };
-    return build_ctrl(buf, buf_len,
-                      ARQ_SUBTYPE_MODE_REQ, session_id,
-                      0, 0, 0, snr_raw, 0,
-                      payload, 1);
-}
-
-int arq_protocol_build_mode_ack(uint8_t *buf, size_t buf_len,
-                                 uint8_t session_id, uint8_t snr_raw,
-                                 int freedv_mode, uint8_t rx_ack_seq)
-{
-    uint8_t payload[1] = { (uint8_t)freedv_mode };
-    return build_ctrl(buf, buf_len,
-                      ARQ_SUBTYPE_MODE_ACK, session_id,
-                      0, rx_ack_seq, ARQ_FLAG_CTRL_ACKSEQ, snr_raw, 0,
-                      payload, 1);
 }
 
 int arq_protocol_build_data(uint8_t *buf, size_t buf_len,

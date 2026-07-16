@@ -22,6 +22,7 @@ DEFINE_FFF_GLOBALS;
 #include "arq_fsm.h"
 #include "arq_protocol.h"
 #include "freedv/freedv_api.h"
+#include "modem_mfsk.h"   /* MERCURY_MODE_MFSK */
 
 /* Provided by arq_test_stubs.c */
 extern void mock_set_uptime_ms(uint64_t ms);
@@ -29,6 +30,7 @@ extern void mock_set_uptime_ms(uint64_t ms);
 /* ---- FFF Fakes for arq_fsm_callbacks_t ---- */
 
 FAKE_VOID_FUNC(fake_send_tx_frame, int, int, size_t, const uint8_t *, int);
+FAKE_VOID_FUNC(fake_send_pattern_ack, int, int);
 FAKE_VOID_FUNC(fake_notify_connected, const char *, const char *);
 FAKE_VOID_FUNC(fake_notify_pending, const char *, const char *);
 FAKE_VOID_FUNC(fake_notify_cancelpending);
@@ -40,6 +42,7 @@ FAKE_VOID_FUNC(fake_send_buffer_status, int);
 
 static arq_fsm_callbacks_t test_callbacks = {
     .send_tx_frame       = fake_send_tx_frame,
+    .send_pattern_ack    = fake_send_pattern_ack,
     .notify_connected    = fake_notify_connected,
     .notify_pending      = fake_notify_pending,
     .notify_cancelpending = fake_notify_cancelpending,
@@ -68,6 +71,7 @@ void setUp(void)
 {
     /* Reset all FFF fakes */
     RESET_FAKE(fake_send_tx_frame);
+    RESET_FAKE(fake_send_pattern_ack);
     RESET_FAKE(fake_notify_connected);
     RESET_FAKE(fake_notify_pending);
     RESET_FAKE(fake_notify_cancelpending);
@@ -96,13 +100,13 @@ void test_init_state_disconnected(void)
     TEST_ASSERT_EQUAL_INT(ARQ_CONN_DISCONNECTED, sess.conn_state);
 }
 
-/* Initial modes: DATAC16 control plane, DATAC15 payload floor */
+/* Initial modes: DATAC16 control plane, MFSK payload floor (ladder rank 0) */
 void test_init_mode_defaults(void)
 {
     TEST_ASSERT_EQUAL_INT(FREEDV_MODE_DATAC16, sess.control_mode);
-    TEST_ASSERT_EQUAL_INT(FREEDV_MODE_DATAC15, sess.payload_mode);
-    TEST_ASSERT_EQUAL_INT(FREEDV_MODE_DATAC15, sess.peer_tx_mode);
-    TEST_ASSERT_EQUAL_INT(FREEDV_MODE_DATAC15, sess.initial_payload_mode);
+    TEST_ASSERT_EQUAL_INT(MERCURY_MODE_MFSK, sess.payload_mode);
+    TEST_ASSERT_EQUAL_INT(MERCURY_MODE_MFSK, sess.peer_tx_mode);
+    TEST_ASSERT_EQUAL_INT(MERCURY_MODE_MFSK, sess.initial_payload_mode);
     TEST_ASSERT_EQUAL_INT(0, sess.speed_level);
 }
 
@@ -376,9 +380,11 @@ void test_disconnect_drain_timeout_forces_teardown(void)
     arq_fsm_dispatch(&sess, &ev);
     TEST_ASSERT_EQUAL_INT(ARQ_CONN_CONNECTED, sess.conn_state);
 
-    /* Advance past the absolute drain budget and feed any CONNECTED event. */
+    /* Advance past the absolute drain budget and feed any CONNECTED event.
+     * (No keepalive timer any more — the peer-backlog timer is a benign
+     * CONNECTED event that triggers the drain-timeout fallback check.) */
     mock_set_uptime_ms(1000 + (uint64_t)ARQ_DISCONNECT_DRAIN_TIMEOUT_S * 1000 + 1000);
-    ev = make_event(ARQ_EV_TIMER_KEEPALIVE);
+    ev = make_event(ARQ_EV_TIMER_PEER_BACKLOG);
     arq_fsm_dispatch(&sess, &ev);
 
     TEST_ASSERT_EQUAL_INT(ARQ_CONN_DISCONNECTING, sess.conn_state);
@@ -493,62 +499,55 @@ void test_app_disconnect_defers_in_wait_ack(void)
     TEST_ASSERT_EQUAL_INT(ARQ_DFLOW_DATA_TX, sess.dflow_state);
 }
 
-/* Cumulative ACK with ack_seq == window base + 1 confirms the single
- * in-flight frame (the K=1 degenerate case of the burst window). */
-void test_wait_ack_cumulative_ack_advances_window(void)
+/* A pattern ACK (RX_ACK) confirms the single outstanding frame: stop-and-wait
+ * has at most one frame in flight, so a heard ACK acks it unambiguously.  The
+ * retained frame is cleared and the flow leaves WAIT_ACK. */
+void test_wait_ack_pattern_ack_confirms_frame(void)
 {
     goto_connected();
     goto_wait_ack();
-    TEST_ASSERT_EQUAL_INT(1, sess.tx_window_count);
+    TEST_ASSERT_TRUE(sess.tx_frame_present);
 
-    arq_event_t ev = make_event(ARQ_EV_RX_ACK);
-    ev.ack_seq = (uint8_t)(sess.tx_window[0].seq + 1);
+    arq_event_t ev = make_event(ARQ_EV_RX_ACK);   /* plain pattern ACK */
     arq_fsm_dispatch(&sess, &ev);
 
-    TEST_ASSERT_EQUAL_INT(0, sess.tx_window_count);
+    TEST_ASSERT_FALSE(sess.tx_frame_present);
     TEST_ASSERT_EQUAL_INT(ARQ_CONN_CONNECTED, sess.conn_state);
     TEST_ASSERT_NOT_EQUAL(ARQ_DFLOW_WAIT_ACK, sess.dflow_state);
 }
 
-/* A stale ACK (ack_seq == window base — peer still expects our oldest
- * frame) must confirm nothing: stay in WAIT_ACK with the window intact
- * so TIMER_ACK drives the retransmission. */
-void test_wait_ack_stale_ack_keeps_window(void)
+/* A pattern ACK+TURN (break: HAS_DATA set) confirms the frame AND, when the
+ * local side has drained its own backlog, yields the floor to the peer
+ * (piggyback turn) -> the ISS becomes IRS.  (With local backlog still present
+ * a role tiebreak applies instead; that is covered by the sim's bidirectional
+ * test.) */
+void test_wait_ack_break_yields_floor(void)
 {
     goto_connected();
     goto_wait_ack();
-    TEST_ASSERT_EQUAL_INT(1, sess.tx_window_count);
+    TEST_ASSERT_TRUE(sess.tx_frame_present);
+
+    /* Local side has no more data to send: the break must hand it the floor. */
+    fake_tx_backlog_fake.return_val = 0;
 
     arq_event_t ev = make_event(ARQ_EV_RX_ACK);
-    ev.ack_seq = sess.tx_window[0].seq;   /* nothing new received */
+    ev.rx_flags = ARQ_FLAG_HAS_DATA;   /* ACK+TURN break */
     arq_fsm_dispatch(&sess, &ev);
 
-    TEST_ASSERT_EQUAL_INT(1, sess.tx_window_count);
-    TEST_ASSERT_EQUAL_INT(ARQ_DFLOW_WAIT_ACK, sess.dflow_state);
+    TEST_ASSERT_FALSE(sess.tx_frame_present);
+    TEST_ASSERT_EQUAL_INT(ARQ_DFLOW_IDLE_IRS, sess.dflow_state);
 }
 
-/* Turn-coordination deadlock guard.  When the ISS is in WAIT_ACK (awaiting the
- * ACK of its last burst) and the peer — which has reverse data — requests the
- * floor via RX_TURN_REQ, the ISS must YIELD (-> TURN_ACK_TX), not ignore it.
- * The pre-fix bug ignored RX_TURN_REQ here, so the ISS sat out the full
- * ack-timeout and retransmitted while the peer kept re-sending TURN_REQ — a
- * mutual stall that hangs bidirectional traffic (observed: a 21-min uucp hang).
- * The unACKed window must survive so it is retransmitted (go-back-N) once the
- * turn is regained.  This is the case the one-way transfer harness can never
- * reach (its IRS never initiates data), so only a unit test guards it. */
-void test_wait_ack_yields_on_turn_req(void)
+/* A stale RX_ACK with no outstanding frame is ignored (no state churn). */
+void test_wait_ack_stale_ack_ignored(void)
 {
     goto_connected();
     goto_wait_ack();
-    TEST_ASSERT_EQUAL_INT(1, sess.tx_window_count);
-
-    arq_event_t ev = make_event(ARQ_EV_RX_TURN_REQ);
-    arq_fsm_dispatch(&sess, &ev);
-
-    /* Yielded the floor instead of deadlocking in WAIT_ACK. */
-    TEST_ASSERT_EQUAL_INT(ARQ_DFLOW_TURN_ACK_TX, sess.dflow_state);
-    /* In-flight frame retained for go-back-N retransmit on turn regain. */
-    TEST_ASSERT_EQUAL_INT(1, sess.tx_window_count);
+    /* Clear the frame with a first ACK, land in an idle ISS/DATA state. */
+    arq_event_t ack = make_event(ARQ_EV_RX_ACK);
+    arq_fsm_dispatch(&sess, &ack);
+    /* A second, spurious ACK must not crash or advance anything odd. */
+    arq_fsm_dispatch(&sess, &ack);
     TEST_ASSERT_EQUAL_INT(ARQ_CONN_CONNECTED, sess.conn_state);
 }
 
@@ -866,9 +865,9 @@ int main(void)
     RUN_TEST(test_app_disconnect_defers_with_backlog);
     RUN_TEST(test_pending_disconnect_retries_last_frame_before_teardown);
     RUN_TEST(test_app_disconnect_defers_in_wait_ack);
-    RUN_TEST(test_wait_ack_cumulative_ack_advances_window);
-    RUN_TEST(test_wait_ack_stale_ack_keeps_window);
-    RUN_TEST(test_wait_ack_yields_on_turn_req);
+    RUN_TEST(test_wait_ack_pattern_ack_confirms_frame);
+    RUN_TEST(test_wait_ack_break_yields_floor);
+    RUN_TEST(test_wait_ack_stale_ack_ignored);
     RUN_TEST(test_disconnect_drain_timeout_forces_teardown);
     RUN_TEST(test_retry_exhaustion_persists_then_disconnects);
     RUN_TEST(test_retry_exhaustion_disconnects_from_zero_uptime_baseline);
