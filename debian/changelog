@@ -1,3 +1,39 @@
+mercury (1.9.10-1) unstable; urgency=medium
+
+  * Release 1.9.10.
+  * docs: fix minor README typos / grammar.
+  * arq: fix WAIT_ACK pending-disconnect dropping last frame (Fix-14 regr….
+  * Added new more robust mores DATAC15 DATAC16.
+  * audioio: fix per-period click in TX upsampler (issue #81).
+  * audioio: right-size resampler scratch buffers (fixes #79).
+  * build: fix macOS (Apple clang) compilation.
+  * Fix incompatibility with Hamlib 5.X.
+  * Prevent integer overflow in playback duration calculation.
+  * arq: fix permanent deadlock when app TX ring fills during transfer.
+  * audioio: break on write error instead of corrupting the playback offset.
+  * audioio: fix channel-count overflow, pulse clamp, deinit routing, and SHM guard.
+  * common: async-signal-safe SIGINT handler, shm_map NULL, ring guard, diagnostics.
+  * fix: cfg_write [tnc] section, mg_ws_send length, device-list OOB, port strtol.
+  * docs: complete -h sound-system list, fix mercury.ini.example, remove dead #if 0.
+  * ci: add SANITIZE_TSAN and SANITIZE_ASAN_UBSAN build toggles and informational CI jobs.
+  * tests/fuzz: add libFuzzer targets for ARQ header, framer, KISS, and arith parsers.
+  * tests/sim: add two-FSM in-process ARQ simulation harness.
+  * arq: fix S4 CQ race — move pending_burst_frames to arq_session_t.
+  * radio_io: log PTT failures; net: remove dead tcp_open.
+  * arq: protect arq_conn with g_conn_lock (rebased #111 + complete FSM-thread reads).
+  * arq: fix S1 fade-cliff stall.
+  * arq: make ARQ timing constants INI-tunable (rebased #109).
+  * arq: replace extern-in-.c TNC coupling with arq_tnc_callbacks_t (rebased #110).
+  * ui: derive WebSocket URL port from the served page, not a hardcoded 10000.
+  * modem: add channel-busy detector with VARA-compatible BUSY ON/OFF.
+  * arq: don't let data_retry_slots inflate CALL/ACCEPT retries (fix ACCEPTING linger).
+  * Fyne UI with CGo + Windows Installer.
+  * Updates for new release.
+  * fyne-ui: guard shared appState with a mutex (fix data races).
+  * fyne-ui: keep engine alive on audio failure + share the CLI parser (full CLI via os.Args).
+
+ -- Rafael Diniz <rafael@riseup.net>  Fri, 17 Jul 2026 16:54:24 +0000
+
 mercury (1.9.9-2) unstable; urgency=medium
 
   * Add mercury-ui binary package: standalone Fyne desktop GUI that embeds
