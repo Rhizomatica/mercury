@@ -41,7 +41,7 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 Source: "run_mercury.bat"; DestDir: "{app}"; Flags: ignoreversion
 Source: "mercury.ini"; DestDir: "{app}"; Flags: ignoreversion
 Source: "../LICENSE"; DestDir: "{app}"; Flags: ignoreversion
-Source: "mercury_icon.ico"; DestDir: "{app}"; Flags: ignoreversion
+Source: "../assets/mercury_icon.ico"; DestDir: "{app}"; Flags: ignoreversion
 Source: "libgcc_s_seh-1.dll"; DestDir: "{app}"; Flags: ignoreversion
 Source: "libhamlib-4.dll"; DestDir: "{app}"; Flags: ignoreversion
 Source: "libusb-1.0.dll"; DestDir: "{app}"; Flags: ignoreversion
