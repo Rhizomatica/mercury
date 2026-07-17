@@ -213,6 +213,9 @@ MERCURY_CORE_OBJS += radio_io/rigctl_parse.o
 endif
 
 MERCURY_CORE_OBJS_W64 = $(filter-out radio_io/sbitx_io.o radio_io/shm_utils.o,$(MERCURY_CORE_OBJS))
+ifneq ($(strip $(HAMLIB_W64_LIBS)),)
+MERCURY_CORE_OBJS_W64 += radio_io/rigctl_parse.o
+endif
 
 libmercury_core.a: internal_deps
 	$(CC) $(CFLAGS) -I. -c $(FYNE_UI_DIR)/engine/mercury_bridge.c -o $(FYNE_UI_DIR)/engine/mercury_bridge.o
