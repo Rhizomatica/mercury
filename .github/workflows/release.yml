@@ -7,10 +7,11 @@
 #   1. Update debian/changelog with new section (version header, release bullets
 #      with all PR titles since the last tag, and maintainer/date footer)
 #   2. Bump VERSION__ macro in main.c
-#   3. Bump version string in mercury.1
-#   4. Commit and push those changes: "Updates for release X.Y.Z"
-#   5. Build the Windows x64 zip (make windows-zip)
-#   6. Create a GitHub release with the zip attached (gh release create)
+#   3. Bump MERCURY_VERSION in common/mercury_version.h
+#   4. Bump version string in mercury.1
+#   5. Commit and push those changes: "Updates for release X.Y.Z"
+#   6. Build the Windows x64 zip (make windows-zip)
+#   7. Create a GitHub release with the zip attached (gh release create)
 
 name: Release
 
@@ -131,6 +132,10 @@ jobs:
         run: |
           sed -i 's/#define VERSION__ "[^"]*"/#define VERSION__ "${{ inputs.version }}"/' main.c
 
+      - name: Update MERCURY_VERSION in common/mercury_version.h
+        run: |
+          sed -i 's/#define MERCURY_VERSION "[^"]*"/#define MERCURY_VERSION "${{ inputs.version }}"/' common/mercury_version.h
+
       - name: Update mercury.1
         run: |
           sed -i 's/"Mercury [0-9]*\.[0-9]*\.[0-9]*"/"Mercury ${{ inputs.version }}"/' mercury.1
@@ -141,7 +146,7 @@ jobs:
 
       - name: Commit and push release files
         run: |
-          git add debian/changelog main.c mercury.1 windows-installer/installer.iss
+          git add debian/changelog main.c common/mercury_version.h mercury.1 windows-installer/installer.iss
           git commit -m "Updates for release ${{ inputs.version }}"
           git push origin mercuryv2
 
