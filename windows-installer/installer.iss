@@ -8,6 +8,19 @@
 #define MyAppURL "https://github.com/Rhizomatica/mercury"
 #define MyAppExeName "mercury-ui.exe"
 
+; --- Optional Authenticode signing --------------------------------------
+; Compile signed with:
+;   ISCC /DSIGN /Smercury="signtool sign /f cert.pfx /p PW /fd sha256 \
+;         /tr http://timestamp.digicert.com /td sha256 $f" installer.iss
+; (register a sign tool named "mercury"; $f is the file to sign).  Without
+; /DSIGN the installer builds unsigned exactly as before.  A self-signed cert
+; only proves the mechanics — see docs/WINDOWS-SIGNING.md.
+#ifdef SIGN
+  #define ExeFlags "ignoreversion signonce"
+#else
+  #define ExeFlags "ignoreversion"
+#endif
+
 [Setup]
 ; NOTE: The value of AppId uniquely identifies this application. Do not use the same AppId value in installers for other applications.
 AppId={{D3B073A1-C8A5-42E1-BC9B-5A3445C555DF}
@@ -29,6 +42,10 @@ WizardStyle=modern
 PrivilegesRequired=admin
 ChangesEnvironment=yes
 ArchitecturesInstallIn64BitMode=x64
+#ifdef SIGN
+SignTool=mercury
+SignedUninstaller=yes
+#endif
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
@@ -49,7 +66,7 @@ Source: "libgcc_s_seh-1.dll"; DestDir: "{app}"; Flags: ignoreversion
 Source: "libhamlib-4.dll"; DestDir: "{app}"; Flags: ignoreversion
 Source: "libusb-1.0.dll"; DestDir: "{app}"; Flags: ignoreversion
 Source: "libwinpthread-1.dll"; DestDir: "{app}"; Flags: ignoreversion
-Source: "mercury-ui.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "mercury-ui.exe"; DestDir: "{app}"; Flags: {#ExeFlags}
 
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\mercury.ico"; Comment: "Launch Mercury HF Modem (GUI)"

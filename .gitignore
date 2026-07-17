@@ -8,6 +8,10 @@ gui_interface/fyne-ui/mercury-fyne-ui
 gui_interface/fyne-ui/*.app
 *.dmg
 *.exe
+# Code-signing test material / artifacts — never commit
+*.pfx
+*.p12
+*.signed
 *.dll
 *.so
 

@@ -330,11 +330,32 @@ fyne-ui-macos-universal-dmg: fyne-ui-macos-universal
 	rm -rf $(FYNE_UI_DIR)/dmg-stage
 	@echo "  -> $(abspath $(MACOS_DMG))  (universal)"
 
+# Optional Authenticode signing of the cross-built .exe (osslsigncode, on Linux).
+# Set WIN_SIGN_PFX (and WIN_SIGN_PASS) to sign; leave unset for an unsigned build
+# (default, no behaviour change). A self-signed cert only proves the mechanics —
+# it does not clear SmartScreen on untrusted machines. See docs/WINDOWS-SIGNING.md.
+WIN_SIGN_PFX  ?=
+WIN_SIGN_PASS ?=
+WIN_SIGN_TS   ?= http://timestamp.digicert.com
+WIN_SIGN_NAME ?= Mercury HF Modem
+WIN_SIGN_URL  ?= https://github.com/Rhizomatica/mercury
+# $(call win_sign,file) — sign in place iff WIN_SIGN_PFX is set.
+define win_sign
+	@if [ -n "$(WIN_SIGN_PFX)" ]; then \
+		echo "Signing (Authenticode): $(1)"; \
+		osslsigncode sign -pkcs12 "$(WIN_SIGN_PFX)" -pass "$(WIN_SIGN_PASS)" \
+			-n "$(WIN_SIGN_NAME)" -i "$(WIN_SIGN_URL)" -h sha256 -ts "$(WIN_SIGN_TS)" \
+			-in "$(1)" -out "$(1).signed" && mv -f "$(1).signed" "$(1)"; \
+	fi
+endef
+
 windows-zip: windows fyne-ui-windows
 	rm -rf $(WINDOWS_DIR) $(WINDOWS_ZIP)
 	mkdir -p $(WINDOWS_DIR)
 	cp mercury.exe $(WINDOWS_DIR)/
 	cp $(WINDOWS_INSTALLER_DIR)/$(FYNE_UI_BIN) $(WINDOWS_DIR)/
+	$(call win_sign,$(WINDOWS_DIR)/mercury.exe)
+	$(call win_sign,$(WINDOWS_DIR)/$(FYNE_UI_BIN))
 	cp mercury.ini.example $(WINDOWS_DIR)/
 	if ls $(HAMLIB_W64_DIR)/bin/*.dll >/dev/null 2>&1; then \
 		cp $(HAMLIB_W64_DIR)/bin/*.dll $(WINDOWS_DIR)/; \
