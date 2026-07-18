@@ -99,6 +99,12 @@ typedef struct
 {
     bool initialized;
     bool connected;
+    /* True when a Welch-Costas pattern ACK could legitimately arrive: the
+     * answerer awaiting the caller's connect-confirm (ACCEPTING) or an active
+     * session (CONNECTED).  The RX pattern detector runs its per-chunk
+     * correlation only when this is set — running it during CALLING/LISTENING/
+     * idle is pure overhead that slows the connect-critical DATAC16 decode. */
+    bool expect_pattern_ack;
     int trx;
     int tx_backlog_bytes;
     int speed_level;

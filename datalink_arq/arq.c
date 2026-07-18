@@ -1084,6 +1084,8 @@ bool arq_get_runtime_snapshot(arq_runtime_snapshot_t *snapshot)
     pthread_mutex_lock(&g_sess_lock);
     snapshot->initialized      = true;
     snapshot->connected        = (g_sess.conn_state == ARQ_CONN_CONNECTED);
+    snapshot->expect_pattern_ack = (g_sess.conn_state == ARQ_CONN_ACCEPTING ||
+                                    g_sess.conn_state == ARQ_CONN_CONNECTED);
     snapshot->trx              = trx;
     snapshot->tx_backlog_bytes = backlog +
         (g_sess.tx_frame_present ? g_sess.tx_frame_len : 0);

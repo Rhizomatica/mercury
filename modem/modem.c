@@ -1898,13 +1898,29 @@ void *rx_thread(void *g_modem)
          * audio is never past a deadline — and the transport backpressures the
          * sim to keep the backlog bounded, so flushing would just destroy
          * valid RX samples. */
+        /* The cap must not flush a burst that is still arriving: a slow payload
+         * mode (MFSK is a single ~13.5 s burst) needs the whole burst buffered
+         * before its sliding-window sync can decode it — the fixed 2 s cap chops
+         * it into fragments that never sync.  Size the cap to the active payload
+         * frame duration + guard so an in-flight burst is never dropped, while
+         * fast FreeDV frames keep the tight 2 s bound (latency stays bounded per
+         * mode, preserving the issue-#81 protection). */
+        int backlog_cap = RX_MAX_BACKLOG_SAMPLES;
+        {
+            const arq_mode_timing_t *ptm = arq_protocol_mode_timing(payload_mode);
+            if (ptm)
+            {
+                int need = (int)((ptm->frame_duration_s + 3.0f) * 8000.0f);
+                if (need > backlog_cap)
+                    backlog_cap = need;
+            }
+        }
         if (!virtual_clock_enabled() &&
-            size_buffer(capture_buffer) >
-            (size_t)RX_MAX_BACKLOG_SAMPLES * sizeof(int32_t))
+            size_buffer(capture_buffer) > (size_t)backlog_cap * sizeof(int32_t))
         {
             HLOGW("modem-rx",
                   "RX backlog exceeded ~%d s cap; flushing stale audio to catch up",
-                  RX_MAX_BACKLOG_SAMPLES / 8000);
+                  backlog_cap / 8000);
             clear_buffer(capture_buffer);
             control_decoder.demod_count = 0;
             payload_decoder.demod_count = 0;
@@ -1981,8 +1997,15 @@ void *rx_thread(void *g_modem)
          * chunk and run mfsk_pattern_detect (ack + break tables); on a match
          * synthesize an ARQ_EV_RX_ACK (HAS_DATA = break).  In stop-and-wait
          * only one frame is outstanding, so a heard ACK unambiguously acks it;
-         * a stale ACK outside WAIT_ACK is ignored by the FSM. */
-        if (arq_policy_ready)
+         * a stale ACK outside WAIT_ACK is ignored by the FSM.
+         *
+         * Gate on expect_pattern_ack (ACCEPTING or CONNECTED): a pattern ACK is
+         * only expected while the answerer awaits the connect-confirm or a live
+         * session awaits a data ACK.  Running this sliding-window correlation
+         * every chunk during CALLING/LISTENING/idle is pure overhead that slows
+         * the RX loop enough to miss the connect-critical DATAC16 ACCEPT and
+         * break the CALL/ACCEPT turnaround. */
+        if (arq_policy_ready && arq_snapshot.expect_pattern_ack)
         {
             static int16_t *pat_win = NULL;
             static int      pat_cap = 0, pat_len = 0;
