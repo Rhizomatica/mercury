@@ -41,7 +41,7 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 Source: "run_mercury.bat"; DestDir: "{app}"; Flags: ignoreversion
 Source: "mercury.ini"; DestDir: "{app}"; Flags: ignoreversion
 Source: "../LICENSE"; DestDir: "{app}"; Flags: ignoreversion
-Source: "../assets/mercury_icon.ico"; DestDir: "{app}"; Flags: ignoreversion
+Source: "../assets/mercury.ico"; DestDir: "{app}"; Flags: ignoreversion
 Source: "libgcc_s_seh-1.dll"; DestDir: "{app}"; Flags: ignoreversion
 Source: "libhamlib-4.dll"; DestDir: "{app}"; Flags: ignoreversion
 Source: "libusb-1.0.dll"; DestDir: "{app}"; Flags: ignoreversion
@@ -49,10 +49,10 @@ Source: "libwinpthread-1.dll"; DestDir: "{app}"; Flags: ignoreversion
 Source: "mercury-ui.exe"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
-Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\mercury_icon.ico"; Comment: "Launch Mercury HF Modem (GUI)"
+Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\mercury.ico"; Comment: "Launch Mercury HF Modem (GUI)"
 Name: "{group}\Configure Hardware (mercury.ini)"; Filename: "notepad.exe"; Parameters: "{app}\mercury.ini"; Comment: "Edit Mercury Audio & PTT Configuration"
 ;Name: "{group}\Uninstall {#MyAppName}"; Filename: "{uninstexe}"; Comment: "Uninstall Mercury HF Modem"
-Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\mercury_icon.ico"; Tasks: desktopicon; Comment: "Launch Mercury HF Modem"
+Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\mercury.ico"; Tasks: desktopicon; Comment: "Launch Mercury HF Modem"
 
 
 [Run]
