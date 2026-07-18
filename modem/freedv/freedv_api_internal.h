@@ -220,6 +220,7 @@ struct freedv {
   int harq_llr_nbits;
   int harq_enable;
   int harq_valid;
+  int harq_ncopies; /* number of copies summed into harq_llr (for LLR averaging) */
 };
 
 // open function for each mode

@@ -266,6 +266,7 @@ void freedv_ofdm_data_open(struct freedv *f, struct freedv_advanced *adv) {
   f->harq_llr_nbits = 0;
   f->harq_enable = 0;
   f->harq_valid = 0;
+  f->harq_ncopies = 0;
 }
 
 /* speech or raw data, complex OFDM modulation out */
@@ -588,8 +589,18 @@ int freedv_comp_short_rx_ofdm(struct freedv *f, void *demod_in_8kHz,
         if (!crc_ok && f->harq_enable && f->harq_valid &&
             f->harq_llr_nbits == Npayloadbitsperpacket) {
           float llr_comb[Npayloadbitsperpacket];
+          /* Average (normalize by copy count) — do NOT raw-sum.  codec2 derives
+           * LLRs from a fixed EsNodB (an uncalibrated scale), so summing N
+           * copies inflates the magnitude ~Nx and over-drives the scale-
+           * sensitive sum-product (phi0) LDPC decoder, losing combining gain on
+           * the large codes (H_256_768_22, H_16200_9720) that every Mercury ARQ
+           * mode uses.  Averaging keeps the magnitude in the decoder's
+           * calibrated range while the independent per-copy noise still averages
+           * down (~3 dB per doubling).  harq_llr holds the sum of harq_ncopies
+           * prior copies; llr_raw is this copy, so divide by ncopies + 1. */
+          float norm = 1.0f / (float)(f->harq_ncopies + 1);
           for (int i = 0; i < Npayloadbitsperpacket; i++)
-            llr_comb[i] = llr_raw[i] + f->harq_llr[i];
+            llr_comb[i] = (llr_raw[i] + f->harq_llr[i]) * norm;
           ldpc_decode_frame(ldpc, &parityCheckCount, &iter, decoded_codeword,
                             llr_comb);
           memcpy(f->rx_payload_bits, decoded_codeword, Ndatabitsperpacket);
@@ -641,16 +652,20 @@ int freedv_comp_short_rx_ofdm(struct freedv *f, void *demod_in_8kHz,
         if (f->harq_enable) {
           if (crc_ok) {
             f->harq_valid = 0;
+            f->harq_ncopies = 0;
           } else {
-            /* Retain the running SUM of single-shot LLRs across retries so the
-             * next attempt's fallback combines all prior copies of this frame. */
+            /* Retain the running SUM of single-shot LLRs plus the copy count, so
+             * the next attempt's fallback averages all prior copies of this
+             * frame (see the averaging rationale at the combine site above). */
             if (f->harq_valid && f->harq_llr_nbits == Npayloadbitsperpacket) {
               for (int i = 0; i < Npayloadbitsperpacket; i++)
                 f->harq_llr[i] += llr_raw[i];
+              f->harq_ncopies++;
             } else {
               memcpy(f->harq_llr, llr_raw,
                      sizeof(float) * Npayloadbitsperpacket);
               f->harq_llr_nbits = Npayloadbitsperpacket;
+              f->harq_ncopies = 1;
             }
             f->harq_valid = 1;
           }
