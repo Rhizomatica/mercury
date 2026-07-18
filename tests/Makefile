@@ -177,8 +177,13 @@ test_mfsk: modem/test_mfsk.c $(UNITY_SRC) ../modem/mfsk.c
 MFSK_SRC = ../modem/mfsk.c ../modem/mfsk_ofdm.c ../modem/mfsk_sync.c ../modem/mfsk_ldpc.c \
            ../modem/mfsk_ldpc_1_16.c ../modem/mfsk_ldpc_2_16.c ../modem/mfsk_ldpc_3_16.c \
            ../modem/mfsk_ldpc_5_16.c ../modem/mfsk_ldpc_8_16.c
-test_mfsk_modem: modem/test_mfsk_modem.c $(UNITY_SRC) ../modem/modem_mfsk.c $(MFSK_SRC)
-	$(CC) $(CFLAGS) -I../modem -I../modem/freedv -o $@ $^ ../modem/freedv/libfreedvdata.a $(LDFLAGS) -lm
+# libfreedvdata.a (CRC16 etc.) is produced by the freedv sub-build, not by this
+# Makefile — build it on demand so `make test` works from a clean checkout (CI).
+../modem/freedv/libfreedvdata.a:
+	$(MAKE) -C ../modem/freedv
+
+test_mfsk_modem: modem/test_mfsk_modem.c $(UNITY_SRC) ../modem/modem_mfsk.c $(MFSK_SRC) ../modem/freedv/libfreedvdata.a
+	$(CC) $(CFLAGS) -I../modem -I../modem/freedv -o $@ $^ $(LDFLAGS) -lm
 
 # Pattern ACK DSP test (mfsk_pattern_tx/detect: noise rejects, real detects)
 test_pattern_ack_detection: modem/test_pattern_ack_detection.c $(UNITY_SRC) \
