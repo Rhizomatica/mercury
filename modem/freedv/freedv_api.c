@@ -1345,9 +1345,9 @@ void freedv_set_test_frames(struct freedv *f, int val) { f->test_frames = val; }
  * payload rather than a retransmission of the failed one. */
 void freedv_set_harq(struct freedv *f, int enable) {
   f->harq_enable = enable ? 1 : 0;
-  if (!enable) f->harq_valid = 0;
+  if (!enable) { f->harq_valid = 0; f->harq_ncopies = 0; }
 }
-void freedv_harq_reset(struct freedv *f) { f->harq_valid = 0; }
+void freedv_harq_reset(struct freedv *f) { f->harq_valid = 0; f->harq_ncopies = 0; }
 void freedv_set_test_frames_diversity(struct freedv *f, int val) {
   f->test_frames_diversity = val;
 }
