@@ -29,8 +29,8 @@ extern void mock_set_uptime_ms(uint64_t ms);
 
 FAKE_VOID_FUNC(fake_send_tx_frame, int, int, size_t, const uint8_t *, int);
 FAKE_VOID_FUNC(fake_send_pattern_ack, int, int);
-FAKE_VOID_FUNC(fake_notify_connected, const char *);
-FAKE_VOID_FUNC(fake_notify_pending, const char *);
+FAKE_VOID_FUNC(fake_notify_connected, const char *, const char *);
+FAKE_VOID_FUNC(fake_notify_pending, const char *, const char *);
 FAKE_VOID_FUNC(fake_notify_cancelpending);
 FAKE_VOID_FUNC(fake_notify_disconnected, bool);
 FAKE_VOID_FUNC(fake_deliver_rx_data, const uint8_t *, size_t);
