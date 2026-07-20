@@ -205,13 +205,17 @@ static void cb_send_tx_frame(int packet_type, int mode,
     arq_modem_enqueue(&action);
 }
 
-static void cb_notify_connected(const char *remote_call)
+static void cb_notify_connected(const char *remote_call, const char *local_call)
 {
     pthread_mutex_lock(&g_conn_lock);
     if (arq_conn.src_addr[0] == '\0')
     {
+        /* Callee side: report the caller as src and the SSID they dialed as dst.
+         * local_call is the callsign (primary or secondary) whose DST CRC16
+         * matched the incoming CALL; fall back to the primary if unset. */
         snprintf(arq_conn.src_addr, CALLSIGN_MAX_SIZE, "%s", remote_call);
-        snprintf(arq_conn.dst_addr, CALLSIGN_MAX_SIZE, "%s", arq_conn.my_call_sign);
+        snprintf(arq_conn.dst_addr, CALLSIGN_MAX_SIZE, "%s",
+                 (local_call && local_call[0]) ? local_call : arq_conn.my_call_sign);
     }
     arq_conn.TRX = RX;
     pthread_mutex_unlock(&g_conn_lock);
@@ -224,10 +228,11 @@ static void cb_notify_connected(const char *remote_call)
     HLOGI(LOG_COMP, "Connected to %s", remote_call);
 }
 
-static void cb_notify_pending(const char *remote_call)
+static void cb_notify_pending(const char *remote_call, const char *local_call)
 {
     arq_tnc_send_pending();
-    HLOGI(LOG_COMP, "Incoming connection from %s (pending)", remote_call);
+    HLOGI(LOG_COMP, "Incoming connection from %s on %s (pending)",
+          remote_call, (local_call && local_call[0]) ? local_call : "(primary)");
 }
 
 static void cb_notify_cancelpending(void)
@@ -672,14 +677,24 @@ bool arq_handle_incoming_connect_frame(uint8_t *data, size_t frame_size)
     memcpy(sec, arq_conn.secondary_calls, sizeof(sec));
     pthread_mutex_unlock(&g_conn_lock);
 
-    /* Validate that DST CRC16 matches our own callsign or a secondary */
+    /* Validate that DST CRC16 matches our own callsign or a secondary.
+     * Record WHICH of our callsigns matched (the SSID the caller dialed) so the
+     * callee reports it as the local address — a station listening on several
+     * SSIDs must show the dialed one, not just the primary. */
+    const char *dialed_call = my_call;
     if (my_call[0] != 0)
     {
         uint16_t frame_crc = (uint16_t)data[ARQ_CONNECT_PAYLOAD_IDX]
                            | ((uint16_t)data[ARQ_CONNECT_PAYLOAD_IDX + 1] << 8);
         bool match = (frame_crc == arq_protocol_callsign_crc16(my_call));
         for (int i = 0; !match && i < sec_count; i++)
-            match = (frame_crc == arq_protocol_callsign_crc16(sec[i]));
+        {
+            if (frame_crc == arq_protocol_callsign_crc16(sec[i]))
+            {
+                match       = true;
+                dialed_call = sec[i];
+            }
+        }
         if (!match)
         {
             HLOGD(LOG_COMP, "CALL/ACCEPT not for us (DST CRC16 mismatch)");
@@ -692,6 +707,8 @@ bool arq_handle_incoming_connect_frame(uint8_t *data, size_t frame_size)
     ev.session_id = session_id;
     /* src = transmitting side's callsign */
     snprintf(ev.remote_call, CALLSIGN_MAX_SIZE, "%s", src);
+    /* local = the one of our callsigns the caller dialed (primary or secondary) */
+    snprintf(ev.local_call, CALLSIGN_MAX_SIZE, "%s", dialed_call);
     pthread_mutex_lock(&g_conn_lock);
     int local_bw = normalize_bandwidth_hz(arq_conn.bw);
     if (is_accept)

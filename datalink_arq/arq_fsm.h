@@ -143,6 +143,11 @@ typedef struct
 
     /* Call setup */
     char     remote_call[CALLSIGN_MAX_SIZE];
+    /* For an incoming CALL: which of OUR callsigns (primary or a secondary)
+     * the frame's DST CRC16 matched — i.e. the SSID the caller dialed.  Empty
+     * when not applicable; the callee reports this as the connection's local
+     * address so a station listening on multiple SSIDs shows the dialed one. */
+    char     local_call[CALLSIGN_MAX_SIZE];
 } arq_event_t;
 
 /* ======================================================================
@@ -162,6 +167,9 @@ typedef struct
     /* --- Identifiers --- */
     uint8_t  session_id;               /* random byte chosen by caller         */
     char     remote_call[CALLSIGN_MAX_SIZE];
+    char     local_call[CALLSIGN_MAX_SIZE];  /* our dialed callsign/SSID for an
+                                              * accepted incoming CALL (empty =>
+                                              * fall back to the primary)        */
 
     /* --- Sequence numbers --- */
     uint8_t  tx_seq;                   /* next seq we will send                */
@@ -306,11 +314,15 @@ typedef struct
                           size_t frame_size, const uint8_t *frame,
                           int burst_remaining);
 
-    /** Notify TCP interface that a connection is established. */
-    void (*notify_connected)(const char *remote_call);
+    /** Notify TCP interface that a connection is established.
+     *  @param remote_call  the peer (caller) callsign
+     *  @param local_call   our dialed callsign/SSID (empty => use primary) */
+    void (*notify_connected)(const char *remote_call, const char *local_call);
 
-    /** Notify TCP interface of an incoming call that is pending acceptance. */
-    void (*notify_pending)(const char *remote_call);
+    /** Notify TCP interface of an incoming call that is pending acceptance.
+     *  @param remote_call  the peer (caller) callsign
+     *  @param local_call   our dialed callsign/SSID (empty => use primary) */
+    void (*notify_pending)(const char *remote_call, const char *local_call);
 
     /** Notify TCP interface that a pending incoming call did not complete. */
     void (*notify_cancelpending)(void);

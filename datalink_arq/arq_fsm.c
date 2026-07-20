@@ -1044,6 +1044,7 @@ static void fsm_listening(arq_session_t *sess, const arq_event_t *ev)
     {
     case ARQ_EV_RX_CALL:
         snprintf(sess->remote_call, CALLSIGN_MAX_SIZE, "%s", ev->remote_call);
+        snprintf(sess->local_call, CALLSIGN_MAX_SIZE, "%s", ev->local_call);
         sess->session_id      = ev->session_id;
         sess->tx_retries_left = ARQ_ACCEPT_RETRY_SLOTS;
         /* Reset mode state so the payload decoder matches the new caller's
@@ -1064,7 +1065,7 @@ static void fsm_listening(arq_session_t *sess, const arq_event_t *ev)
                    hermes_uptime_ms() + ARQ_CHANNEL_GUARD_MS,
                    ARQ_EV_TIMER_RETRY);
         if (g_cbs.notify_pending)
-            g_cbs.notify_pending(ev->remote_call);
+            g_cbs.notify_pending(ev->remote_call, ev->local_call);
         break;
 
     case ARQ_EV_RX_ACCEPT:
@@ -1111,7 +1112,7 @@ static void fsm_listening(arq_session_t *sess, const arq_event_t *ev)
             sess->pending_disconnect = false;  /* clear stale deferred disconnect */
             sess->startup_deadline_ms = hermes_uptime_ms() + (ARQ_STARTUP_MAX_S * 1000ULL);
             if (g_cbs.notify_connected)
-                g_cbs.notify_connected(sess->remote_call);
+                g_cbs.notify_connected(sess->remote_call, sess->local_call);
             if (g_timing)
                 arq_timing_record_connect(g_timing, sess->control_mode);
             sess_enter(sess, ARQ_CONN_CONNECTED, UINT64_MAX, ARQ_EV_TIMER_RETRY);
@@ -1151,7 +1152,7 @@ static void fsm_calling(arq_session_t *sess, const arq_event_t *ev)
             sess->startup_deadline_ms =
                 hermes_uptime_ms() + (ARQ_STARTUP_MAX_S * 1000ULL);
             if (g_cbs.notify_connected)
-                g_cbs.notify_connected(sess->remote_call);
+                g_cbs.notify_connected(sess->remote_call, sess->local_call);
             if (g_timing)
                 arq_timing_record_connect(g_timing, sess->control_mode);
             /* The callee does not enter CONNECTED until it sees the caller's
@@ -1219,7 +1220,7 @@ static void fsm_accepting(arq_session_t *sess, const arq_event_t *ev)
         sess->startup_deadline_ms =
             hermes_uptime_ms() + (ARQ_STARTUP_MAX_S * 1000ULL);
         if (g_cbs.notify_connected)
-            g_cbs.notify_connected(sess->remote_call);
+            g_cbs.notify_connected(sess->remote_call, sess->local_call);
         if (g_timing)
             arq_timing_record_connect(g_timing, sess->control_mode);
         sess_enter(sess, ARQ_CONN_CONNECTED, UINT64_MAX, ARQ_EV_TIMER_RETRY);

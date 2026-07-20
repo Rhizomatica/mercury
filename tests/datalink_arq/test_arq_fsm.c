@@ -29,8 +29,8 @@ extern void mock_set_uptime_ms(uint64_t ms);
 /* ---- FFF Fakes for arq_fsm_callbacks_t ---- */
 
 FAKE_VOID_FUNC(fake_send_tx_frame, int, int, size_t, const uint8_t *, int);
-FAKE_VOID_FUNC(fake_notify_connected, const char *);
-FAKE_VOID_FUNC(fake_notify_pending, const char *);
+FAKE_VOID_FUNC(fake_notify_connected, const char *, const char *);
+FAKE_VOID_FUNC(fake_notify_pending, const char *, const char *);
 FAKE_VOID_FUNC(fake_notify_cancelpending);
 FAKE_VOID_FUNC(fake_notify_disconnected, bool);
 FAKE_VOID_FUNC(fake_deliver_rx_data, const uint8_t *, size_t);
@@ -147,6 +147,38 @@ void test_incoming_call_transitions_to_accepting(void)
     TEST_ASSERT_EQUAL_UINT8(0x42, sess.session_id);
     /* notify_pending should have been called */
     TEST_ASSERT_GREATER_THAN(0, fake_notify_pending_fake.call_count);
+}
+
+/* A station listening on a secondary SSID must attribute an incoming CALL that
+ * dialed that secondary to the *dialed* callsign, not the primary — so a
+ * multi-SSID station reports the SSID the caller actually reached.  The DST is
+ * not carried on the wire (only its CRC16), so arq.c resolves which of our
+ * callsigns matched and passes it as ev.local_call; this asserts the FSM stores
+ * it and surfaces it to the host on both pending and connected.
+ * Regression guard for the "-2 SSID dropped" field report. */
+void test_incoming_call_records_dialed_secondary(void)
+{
+    arq_event_t ev = make_event(ARQ_EV_APP_LISTEN);
+    arq_fsm_dispatch(&sess, &ev);
+
+    ev = make_event(ARQ_EV_RX_CALL);
+    ev.session_id = 0x21;
+    strncpy(ev.remote_call, "W1ABC", CALLSIGN_MAX_SIZE);
+    strncpy(ev.local_call,  "KO0OOO-2", CALLSIGN_MAX_SIZE);
+    arq_fsm_dispatch(&sess, &ev);
+
+    /* Dialed SSID stored on the session and reported on the pending notice. */
+    TEST_ASSERT_EQUAL_STRING("KO0OOO-2", sess.local_call);
+    TEST_ASSERT_GREATER_THAN(0, fake_notify_pending_fake.call_count);
+    TEST_ASSERT_EQUAL_STRING("KO0OOO-2", fake_notify_pending_fake.arg1_val);
+
+    /* On the caller's first ACK the callee connects and reports the same SSID. */
+    ev = make_event(ARQ_EV_RX_ACK);
+    ev.session_id = 0x21;
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_CONNECTED, sess.conn_state);
+    TEST_ASSERT_GREATER_THAN(0, fake_notify_connected_fake.call_count);
+    TEST_ASSERT_EQUAL_STRING("KO0OOO-2", fake_notify_connected_fake.arg1_val);
 }
 
 /* Helper: drive LISTENING -> ACCEPTING via an incoming CALL. */
@@ -642,6 +674,7 @@ int main(void)
     RUN_TEST(test_listen_transitions_to_listening);
     RUN_TEST(test_connect_transitions_to_calling);
     RUN_TEST(test_incoming_call_transitions_to_accepting);
+    RUN_TEST(test_incoming_call_records_dialed_secondary);
     RUN_TEST(test_accept_transitions_to_connected);
     RUN_TEST(test_disconnect_from_connected);
     RUN_TEST(test_rx_disconnect_from_connected);

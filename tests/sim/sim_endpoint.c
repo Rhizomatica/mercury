@@ -95,8 +95,8 @@ static void cb_send_tx_frame(int packet_type, int mode, size_t frame_size,
     ep->outbox.present       = true;
 }
 
-static void cb_notify_connected(const char *remote_call)    { (void)remote_call; }
-static void cb_notify_pending(const char *remote_call)      { (void)remote_call; }
+static void cb_notify_connected(const char *remote_call, const char *local_call) { (void)remote_call; (void)local_call; }
+static void cb_notify_pending(const char *remote_call, const char *local_call)    { (void)remote_call; (void)local_call; }
 static void cb_notify_cancelpending(void)                   { }
 static void cb_notify_disconnected(bool to_no_client)       { (void)to_no_client; }
 
