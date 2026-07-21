@@ -44,7 +44,8 @@ ARQ_STUBS = datalink_arq/arq_test_stubs.c
 # Test executables
 TEST_BINS = test_ring_buffer test_arq_protocol test_arq_timing test_arq_fsm \
             test_tcp_interfaces test_resampler test_arq_olla test_arq_sim \
-            test_arq_conn test_cfg_utils test_arq_tnc test_channel_busy
+            test_arq_conn test_cfg_utils test_arq_tnc test_channel_busy \
+            test_freedv_harq
 
 .PHONY: all test clean
 
@@ -123,6 +124,12 @@ test_arq_tnc: datalink_arq/test_arq_tnc.c $(UNITY_SRC) ../datalink_arq/arq_tnc.c
 # Channel-busy classifier test (pure state machine, virtual clock)
 test_channel_busy: modem/test_channel_busy.c $(UNITY_SRC) ../modem/channel_busy.c
 	$(CC) $(CFLAGS) -I../modem -o $@ $^ $(LDFLAGS) -lm
+
+# HARQ combined-decode acceptance gate (drives the real DATAC15 LDPC decoder)
+test_freedv_harq: modem/test_freedv_harq.c $(UNITY_SRC) \
+                  ../modem/freedv/mpdecode_core.c ../modem/freedv/phi0.c \
+                  ../modem/freedv/H_256_768_22.c
+	$(CC) $(CFLAGS) -I../modem/freedv -o $@ $^ $(LDFLAGS) -lm
 
 clean:
 	rm -f $(TEST_BINS)
