@@ -76,8 +76,8 @@ void mercury_cli_print_usage(const char *prog)
     printf(" -k [rx_input_channel]      Capture input channel: left, right, or stereo. Default is left.\n");
     printf(" -i [device]                Radio Capture device id (eg: \"plughw:0,0\").\n");
     printf(" -o [device]                Radio Playback device id (eg: \"plughw:0,0\").\n");
-    printf(" -x [sound_system]          Sets the sound system or IO API to use: alsa, pulse, oss, coreaudio, aaudio, dsound, wasapi, shm, null or fifo. Default is alsa on Linux, dsound on Windows.\n");
-    printf("                            null and fifo are developer/test backends; fifo uses raw s32le PCM at 8 kHz via -i/-o paths.\n");
+    printf(" -x [sound_system]          Sets the sound system or IO API to use: alsa, pulse, oss, coreaudio, aaudio, dsound, wasapi, shm, null, fifo or sock. Default is alsa on Linux, dsound on Windows.\n");
+    printf("                            null, fifo and sock are developer/test backends; fifo uses raw s32le PCM at 8 kHz via -i/-o paths; sock is a framed, virtual-clock lockstep transport (MERCURY_AUDIO_SOCK=<path>).\n");
     printf(" -p [arq_tcp_base_port]     Sets the ARQ TCP base port (control is base_port, data is base_port + 1). Default is 8300.\n");
     printf(" -b [broadcast_tcp_port]    Sets the broadcast TCP port. Default is 8100.\n");
     printf(" -U [ui_port]               Sets the UI port (WebSocket port). Default is 10000. Requires -G.\n");
@@ -270,6 +270,8 @@ int mercury_cli_parse(int argc, char **argv,
                 out->cfg.sound_system = AUDIO_SUBSYSTEM_NULL;
             if (!strcmp(optarg, "fifo"))
                 out->cfg.sound_system = AUDIO_SUBSYSTEM_FIFO;
+            if (!strcmp(optarg, "sock"))
+                out->cfg.sound_system = AUDIO_SUBSYSTEM_SOCK;
             break;
         case 'z':
             out->action = MERCURY_CLI_LIST_SNDCARDS;

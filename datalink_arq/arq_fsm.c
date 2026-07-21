@@ -17,6 +17,7 @@
 #include <stdio.h>
 
 #include "../common/hermes_log.h"
+#include "../common/virtual_clock.h"
 #include "../modem/framer.h"
 #include "../modem/freedv/freedv_api.h"
 
@@ -152,7 +153,7 @@ static void sess_enter(arq_session_t *sess, arq_conn_state_t new_state,
           arq_conn_state_name(sess->conn_state),
           arq_conn_state_name(new_state));
     sess->conn_state     = new_state;
-    sess->state_enter_ms = hermes_uptime_ms();
+    sess->state_enter_ms = time_now_ms();
     sess->deadline_ms    = deadline_ms;
     sess->deadline_event = deadline_event;
     if (new_state != ARQ_CONN_CONNECTED)
