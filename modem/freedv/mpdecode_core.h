@@ -58,4 +58,15 @@ void fsk_rx_filt_to_llrs(float llr[], float rx_filt[], float v_est,
 
 void ldpc_print_info(struct LDPC *ldpc);
 
+/* HARQ combined-decode acceptance gate.  A Chase-combined decode is trusted
+ * (subject to its CRC) only if it satisfied at least this fraction of the
+ * mother-code parity checks.  A converged decode clears essentially all of
+ * them; a non-converged one sits near the ~50% binomial floor, so 90%
+ * separates the two populations with margin.  Kept here as the single source
+ * of the threshold so freedv_comp_short_rx_ofdm() and its unit test agree. */
+static inline int ldpc_harq_combine_parity_ok(int parity_check_count,
+                                              int number_parity_bits) {
+  return parity_check_count >= (number_parity_bits * 9) / 10;
+}
+
 #endif

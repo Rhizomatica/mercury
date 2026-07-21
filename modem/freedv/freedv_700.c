@@ -603,9 +603,31 @@ int freedv_comp_short_rx_ofdm(struct freedv *f, void *demod_in_8kHz,
             llr_comb[i] = (llr_raw[i] + f->harq_llr[i]) * norm;
           ldpc_decode_frame(ldpc, &parityCheckCount, &iter, decoded_codeword,
                             llr_comb);
-          memcpy(f->rx_payload_bits, decoded_codeword, Ndatabitsperpacket);
-          crc_ok = freedv_check_crc16_unpacked(f->rx_payload_bits,
-                                               Ndatabitsperpacket);
+          /* Integrity gate on the COMBINED decode — do NOT accept on CRC16
+           * alone.  A Chase combine that has NOT converged still emits a
+           * codeword, and that codeword still has a ~2^-16 chance of passing
+           * CRC16 by itself.  On the single-shot path that stray pass is just a
+           * rare undetected bit-error; on the combine path it is reached on
+           * PURPOSE at the fade cliff (roughly half the combines fail to
+           * converge there by design), and once burst_frames>1 lets the RX
+           * admit more than one DATA frame per session such a forgery parses
+           * in-window and is delivered as new data rather than retransmitted.
+           * A converged LDPC decode satisfies essentially all of its
+           * mother-code parity checks; a non-converged one sits near the ~50%
+           * binomial floor.  So require the parity-check count to clear a wide
+           * margin (90% of NumberParityBits) IN ADDITION to CRC16 before
+           * adopting a combined result.  Deliberately NOT a strict all-checks
+           * gate: at the marginal combining point residual errors can live in
+           * parity bits, so a genuine decode need not reach 100% (measured e.g.
+           * 4094/4096 on the OpenARQ reference) — 90% cleanly separates the
+           * converged and garbage populations.  Single-shot decodes above are
+           * untouched, so clean-channel goodput is unchanged. */
+          if (ldpc_harq_combine_parity_ok(parityCheckCount,
+                                          ldpc->NumberParityBits)) {
+            memcpy(f->rx_payload_bits, decoded_codeword, Ndatabitsperpacket);
+            crc_ok = freedv_check_crc16_unpacked(f->rx_payload_bits,
+                                                 Ndatabitsperpacket);
+          }
         }
         if (!crc_ok && f->verbose) {
           int bytes_per_frame = (Ndatabitsperpacket + 7) / 8;
