@@ -27,6 +27,7 @@
 #include <stdatomic.h>
 
 #include "../common/hermes_log.h"
+#include "../common/virtual_clock.h"
 #include "../common/defines_modem.h"
 #include "../common/ring_buffer_posix.h"
 #include "../data_interfaces/tcp_interfaces.h"
@@ -597,7 +598,7 @@ static void *arq_event_loop_worker(void *arg)
 
     while (g_running)
     {
-        uint64_t now   = hermes_uptime_ms();
+        uint64_t now   = time_now_ms();
         pthread_mutex_lock(&g_sess_lock);
         int timeout_ms = arq_fsm_timeout_ms(&g_sess, now);
         pthread_mutex_unlock(&g_sess_lock);
@@ -629,7 +630,7 @@ static void *arq_event_loop_worker(void *arg)
             arq_fsm_dispatch(&g_sess, &events[i]);
 
         /* Fire deadline */
-        now = hermes_uptime_ms();
+        now = time_now_ms();
         if (g_sess.deadline_ms != UINT64_MAX && now >= g_sess.deadline_ms)
         {
             g_sess.deadline_ms = UINT64_MAX;
