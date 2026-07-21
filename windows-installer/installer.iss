@@ -37,9 +37,12 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"
 
 
+[Dirs]
+Name: "{app}"; Permissions: users-modify
+
 [Files]
 Source: "run_mercury.bat"; DestDir: "{app}"; Flags: ignoreversion
-Source: "mercury.ini"; DestDir: "{app}"; Flags: ignoreversion
+Source: "mercury.ini"; DestDir: "{app}"; Flags: ignoreversion; Permissions: users-modify
 Source: "../LICENSE"; DestDir: "{app}"; Flags: ignoreversion
 Source: "../assets/mercury.ico"; DestDir: "{app}"; Flags: ignoreversion
 Source: "libgcc_s_seh-1.dll"; DestDir: "{app}"; Flags: ignoreversion

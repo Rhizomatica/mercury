@@ -959,15 +959,7 @@ func main() {
 	go func() {
 		time.Sleep(200 * time.Millisecond)
 
-		// Per-user writable config used when no -C is passed (seeded from the
-		// bundled default the first time).  The C parser picks -C over this.
-		defaultConfig := filepath.Join(getLogDir(), "mercury.ini")
-		if _, err := os.Stat(defaultConfig); os.IsNotExist(err) {
-			bundled := filepath.Join(getBaseDir(), "mercury.ini")
-			if data, rerr := os.ReadFile(bundled); rerr == nil {
-				os.WriteFile(defaultConfig, data, 0644)
-			}
-		}
+		defaultConfig := filepath.Join(getBaseDir(), "mercury.ini")
 
 		logPath := filepath.Join(getLogDir(), "mercury_engine.log")
 		appendLog("Starting Mercury engine...\n")
@@ -1249,9 +1241,7 @@ func getBaseDir() string {
 
 func getLogDir() string {
 	if runtime.GOOS == "windows" {
-		dir := filepath.Join(os.Getenv("LOCALAPPDATA"), "MercuryHF")
-		os.MkdirAll(dir, 0755)
-		return dir
+		return getBaseDir()
 	}
 	return "."
 }
