@@ -431,7 +431,12 @@ static int maybe_switch_modem_mode(generic_modem_t *g_modem,
         pthread_mutex_unlock(&modem_freedv_lock);
         return 0;
     }
-    uint64_t now_ms = monotonic_ms();
+    /* Debounce in signal time under a virtual clock: the anti-thrash intent
+     * is relative to the audio timeline, and at a fast lockstep pace (10-60x
+     * wall) a 250 ms WALL debounce blocks mode switches for many virtual
+     * seconds -- long enough to starve the control<->payload ladder and stall
+     * the data phase. time_now_ms() == monotonic wall when virtual is off. */
+    uint64_t now_ms = virtual_clock_enabled() ? time_now_ms() : monotonic_ms();
     if (!force_now &&
         modem_last_switch_ms != 0 &&
         (now_ms - modem_last_switch_ms) < 250)
@@ -1613,7 +1618,17 @@ void *rx_thread(void *g_modem)
          * detection works immediately on real post-TX audio. */
         if (was_tx)
         {
-            clear_buffer(capture_buffer);
+            /* Under a virtual clock, the peer's reply can already be in the
+             * capture ring by the time this thread notices the TX->RX edge
+             * (the sim keeps stepping signal time while this wall-scheduled
+             * thread waits its turn), so flushing the ring here destroys the
+             * head of the reply -- observed as a data phase stuck retrying at
+             * control rate.  The TX-era backlog the flush exists for cannot
+             * build up there anyway: the drain path consumed it during TX and
+             * the sock transport backpressures the sim.  Keep the decoder
+             * accumulator resets (they only drop pre-TX partial input). */
+            if (!virtual_clock_enabled())
+                clear_buffer(capture_buffer);
             control_decoder.demod_count = 0;
             payload_decoder.demod_count = 0;
             was_tx = false;
