@@ -30,6 +30,7 @@
 #include "cfg_utils.h"
 #include "ui_communication.h"
 #include "mercury_engine.h"
+#include "virtual_clock.h"
 
 /* ---- shared globals ---- */
 volatile bool shutdown_ = false;
@@ -141,6 +142,12 @@ int mercury_engine_init(const mercury_config *cfg,
 
     apply_audio_defaults(g_audio_system, g_input_dev, sizeof(g_input_dev),
                          g_output_dev, sizeof(g_output_dev));
+
+    /* -x sock is the virtual-clock lockstep bench transport: switch the
+     * process time base BEFORE any modem/ARQ thread starts, so every
+     * time_now_ms() read in this run sees a single (virtual) clock. */
+    if (g_audio_system == AUDIO_SUBSYSTEM_SOCK)
+        virtual_clock_enable(VIRTUAL_CLOCK_EPOCH_MS);
 
     /* ---- logging ---- */
     if (hermes_log_init(1024) == 0)

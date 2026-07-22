@@ -133,6 +133,18 @@ static void evq_push(const arq_event_t *ev)
     pthread_mutex_unlock(&g_evq_lock);
 }
 
+/* Wake the event loop without queueing an event.  Called by the -x sock
+ * lockstep transport (audioio.c) after each virtual_clock_set(): the loop's
+ * pthread_cond_timedwait deadline is wall time, so in virtual mode it would
+ * otherwise sleep up to its 500 ms cap past a due FSM deadline.  A bare
+ * signal makes it re-read time_now_ms() and fire anything now due. */
+void arq_notify_virtual_time(void)
+{
+    pthread_mutex_lock(&g_evq_lock);
+    pthread_cond_signal(&g_evq_cond);
+    pthread_mutex_unlock(&g_evq_lock);
+}
+
 /* Must be called with g_evq_lock held */
 static bool evq_pop_locked(arq_event_t *ev)
 {

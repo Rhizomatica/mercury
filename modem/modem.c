@@ -43,6 +43,7 @@
 #include "ldpc_codes.h"
 #include "ofdm_internal.h"
 #include "hermes_log.h"
+#include "virtual_clock.h"
 
 #include "defines_modem.h"
 
@@ -1601,8 +1602,15 @@ void *rx_thread(void *g_modem)
          * (frames get decoded minutes after they arrived). Audio that stale is
          * already past every ARQ ack and turnaround deadline, so decoding it
          * cannot help the link. Drop it and reset the decoder accumulators, the
-         * same way the was_tx turnaround flush above does. */
-        if (size_buffer(capture_buffer) >
+         * same way the was_tx turnaround flush above does.
+         *
+         * Skipped under a virtual clock (-x sock): there, ARQ deadlines only
+         * advance as the lockstep transport delivers blocks, so backlogged
+         * audio is never past a deadline — and the transport backpressures the
+         * sim to keep the backlog bounded, so flushing would just destroy
+         * valid RX samples. */
+        if (!virtual_clock_enabled() &&
+            size_buffer(capture_buffer) >
             (size_t)RX_MAX_BACKLOG_SAMPLES * sizeof(int32_t))
         {
             HLOGW("modem-rx",

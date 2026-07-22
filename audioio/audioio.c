@@ -389,6 +389,396 @@ static void fifo_ignore_sigpipe(void)
 #endif
 }
 
+/* ------------------------------------------------------------------ */
+/*  Framed-socket lockstep backend (-x sock)                          */
+/* ------------------------------------------------------------------ */
+/*
+ * Virtual-clock bench transport: an AF_UNIX SOCK_STREAM connection to a
+ * channel simulator that owns time.  Wire format (little-endian; one
+ * frame per audio block; the contract is shared with the skywave bench,
+ * sock_frames.py):
+ *
+ *   u32 len                          bytes after this field
+ *   sim -> station:  u64 seq | u64 virtual_now_ms | u16 n | n i16 samples
+ *   station -> sim:  u64 seq | u8 ptt | u16 n | n i16 samples
+ *
+ * The sim SENDS the RX block first, then waits for the station's TX
+ * block (lockstep barrier), so this thread does recv -> send per block
+ * and cannot deadlock against it.  virtual_now_ms rides on every sim
+ * frame; after depositing the RX samples the thread advances the
+ * process virtual clock (common/virtual_clock.h) and wakes the ARQ
+ * event loop, so every ARQ timer runs in signal time -- there is no
+ * real-time pacing anywhere on this path.  Samples are mono i16 on the
+ * wire; the modem rings hold i32 (i16 << 16, as on the FIFO path).
+ */
+#ifndef _WIN32
+
+#include <sys/socket.h>
+#include <sys/un.h>
+
+#include "virtual_clock.h"
+
+#ifndef MSG_NOSIGNAL
+#define MSG_NOSIGNAL 0   /* macOS: SIGPIPE is ignored via fifo_ignore_sigpipe() */
+#endif
+
+#define SOCK_AUDIO_HDR_SIM_BYTES 18            /* u64 seq + u64 vnow_ms + u16 n */
+#define SOCK_AUDIO_HDR_STA_BYTES 11            /* u64 seq + u8 ptt + u16 n      */
+#define SOCK_AUDIO_MAX_SAMPLES   65535u        /* n is a u16                    */
+#define SOCK_AUDIO_IO_TIMEOUT_MS 200           /* recv/send slice, so the loop
+                                                  keeps seeing shutdown flags   */
+
+/* Demod backpressure: hold the station's reply frame (which is what releases
+ * the sim's next block) until the RX capture backlog is at most this many
+ * samples, so signal time never runs more than ~1 s ahead of the demod.
+ * Must stay below modem.c's RX_MAX_BACKLOG_SAMPLES stale-audio flush cap
+ * (which is additionally disabled under a virtual clock).  The wait is
+ * bounded so a wedged demod degrades to a warning, not a stalled sim. */
+#define SOCK_AUDIO_RX_HIGH_WATER_SAMPLES 8000
+#define SOCK_AUDIO_BACKPRESSURE_CAP_MS   30000
+
+/* From datalink_arq/arq.c.  Declared here instead of including arq.h so the
+ * audioio library keeps its narrow include surface (see audioio/Makefile).
+ * arq_get_trx() returns 0 = RX, 1 = TX (arq.h). */
+extern void arq_notify_virtual_time(void);
+extern int  arq_get_trx(void);
+
+static inline uint16_t sock_rd_u16(const uint8_t *p)
+{
+    return (uint16_t)(p[0] | ((uint16_t)p[1] << 8));
+}
+
+static inline uint32_t sock_rd_u32(const uint8_t *p)
+{
+    return (uint32_t)p[0] | ((uint32_t)p[1] << 8) |
+           ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
+}
+
+static inline uint64_t sock_rd_u64(const uint8_t *p)
+{
+    uint64_t v = 0;
+    for (int i = 7; i >= 0; i--)
+        v = (v << 8) | p[i];
+    return v;
+}
+
+static inline void sock_wr_u16(uint8_t *p, uint16_t v)
+{
+    p[0] = (uint8_t)(v & 0xff);
+    p[1] = (uint8_t)(v >> 8);
+}
+
+static inline void sock_wr_u32(uint8_t *p, uint32_t v)
+{
+    for (int i = 0; i < 4; i++)
+    {
+        p[i] = (uint8_t)(v & 0xff);
+        v >>= 8;
+    }
+}
+
+static inline void sock_wr_u64(uint8_t *p, uint64_t v)
+{
+    for (int i = 0; i < 8; i++)
+    {
+        p[i] = (uint8_t)(v & 0xff);
+        v >>= 8;
+    }
+}
+
+static int sock_connect_retry(const char *path)
+{
+    bool logged_wait = false;
+
+    if (!path || path[0] == '\0')
+    {
+        HLOGE("audio-sock", "missing socket path (MERCURY_AUDIO_SOCK)");
+        return -1;
+    }
+
+    while (!shutdown_ && !audio_shutdown_)
+    {
+        struct sockaddr_un addr;
+        memset(&addr, 0, sizeof(addr));
+        addr.sun_family = AF_UNIX;
+        if (strlen(path) >= sizeof(addr.sun_path))
+        {
+            HLOGE("audio-sock", "socket path too long (%zu >= %zu): %s",
+                  strlen(path), sizeof(addr.sun_path), path);
+            return -1;
+        }
+        memcpy(addr.sun_path, path, strlen(path) + 1);
+
+        int fd = socket(AF_UNIX, SOCK_STREAM, 0);
+        if (fd < 0)
+        {
+            HLOGE("audio-sock", "socket() failed: %s", strerror(errno));
+            return -1;
+        }
+
+        if (connect(fd, (struct sockaddr *) &addr, sizeof(addr)) == 0)
+        {
+            struct timeval tv = {
+                .tv_sec  = SOCK_AUDIO_IO_TIMEOUT_MS / 1000,
+                .tv_usec = (SOCK_AUDIO_IO_TIMEOUT_MS % 1000) * 1000,
+            };
+            setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+            setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+            HLOGI("audio-sock", "connected to %s", path);
+            return fd;
+        }
+
+        close(fd);
+        if (!logged_wait)
+        {
+            HLOGW("audio-sock", "waiting for sim socket %s: %s",
+                  path, strerror(errno));
+            logged_wait = true;
+        }
+        ffthread_sleep(FIFO_AUDIO_POLL_MS * 10);
+    }
+    return -1;
+}
+
+/* Read exactly len bytes.  1 = success, 0 = clean EOF at a frame boundary
+ * (only reported when nothing of this read was consumed), -1 = error or
+ * shutdown.  SO_RCVTIMEO keeps each recv() bounded so shutdown is seen. */
+static int sock_recv_full(int fd, uint8_t *buf, size_t len)
+{
+    size_t off = 0;
+    while (off < len)
+    {
+        if (shutdown_ || audio_shutdown_)
+            return -1;
+        ssize_t n = recv(fd, buf + off, len - off, 0);
+        if (n > 0)
+        {
+            off += (size_t)n;
+            continue;
+        }
+        if (n == 0)
+            return (off == 0) ? 0 : -1;
+        if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR)
+            continue;
+        return -1;
+    }
+    return 1;
+}
+
+static int sock_send_full(int fd, const uint8_t *buf, size_t len)
+{
+    size_t off = 0;
+    while (off < len)
+    {
+        if (shutdown_ || audio_shutdown_)
+            return -1;
+        ssize_t n = send(fd, buf + off, len - off, MSG_NOSIGNAL);
+        if (n > 0)
+        {
+            off += (size_t)n;
+            continue;
+        }
+        if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR))
+            continue;
+        return -1;
+    }
+    return 1;
+}
+
+/* The single lockstep worker: RX deposit, clock advance, TX drain -- one
+ * frame exchange per sim block.  Runs as the `radio_capture` thread; the
+ * paired `radio_playback` slot is sock_idle_thread (teardown joins both). */
+static void *sock_transport_thread(void *device_ptr)
+{
+    const char *path = (const char *) device_ptr;
+
+    uint8_t *payload = (uint8_t *) malloc(SOCK_AUDIO_MAX_SAMPLES * sizeof(int16_t));
+    int32_t *ring32  = (int32_t *) malloc(SOCK_AUDIO_MAX_SAMPLES * sizeof(int32_t));
+    uint8_t *txframe = (uint8_t *) malloc(4 + SOCK_AUDIO_HDR_STA_BYTES +
+                                          SOCK_AUDIO_MAX_SAMPLES * sizeof(int16_t));
+    if (!payload || !ring32 || !txframe)
+    {
+        HLOGE("audio-sock", "out of memory");
+        free(payload); free(ring32); free(txframe);
+        return NULL;
+    }
+
+    /* The virtual clock never runs backward, even across a sim reconnect
+     * (a fresh sim restarts virtual_now_ms at its first block). */
+    uint64_t clock_floor_ms = time_now_ms();
+
+    int fd = sock_connect_retry(path);
+
+    while (fd >= 0 && !shutdown_ && !audio_shutdown_)
+    {
+        /* ---- recv one sim frame ---- */
+        uint8_t hdr[SOCK_AUDIO_HDR_SIM_BYTES];
+        uint8_t lenbuf[4];
+        int rc = sock_recv_full(fd, lenbuf, sizeof(lenbuf));
+        uint32_t len = (rc == 1) ? sock_rd_u32(lenbuf) : 0;
+
+        uint16_t n = 0;
+        uint64_t seq = 0, vnow_ms = 0;
+        if (rc == 1)
+        {
+            if (len < SOCK_AUDIO_HDR_SIM_BYTES ||
+                len > SOCK_AUDIO_HDR_SIM_BYTES + SOCK_AUDIO_MAX_SAMPLES * sizeof(int16_t))
+            {
+                HLOGE("audio-sock", "bad sim frame length %u", len);
+                rc = -1;
+            }
+            else if ((rc = sock_recv_full(fd, hdr, sizeof(hdr))) == 1)
+            {
+                seq     = sock_rd_u64(hdr);
+                vnow_ms = sock_rd_u64(hdr + 8);
+                n       = sock_rd_u16(hdr + 16);
+                if ((uint32_t)(SOCK_AUDIO_HDR_SIM_BYTES + n * sizeof(int16_t)) != len)
+                {
+                    HLOGE("audio-sock", "sim frame length %u disagrees with n=%u", len, n);
+                    rc = -1;
+                }
+                else if (n > 0)
+                {
+                    rc = sock_recv_full(fd, payload, (size_t)n * sizeof(int16_t));
+                    if (rc == 0)
+                        rc = -1;   /* EOF inside a frame */
+                }
+            }
+            else if (rc == 0)
+            {
+                rc = -1;           /* EOF between len and header */
+            }
+        }
+
+        if (rc != 1)
+        {
+            close(fd);
+            fd = -1;
+            if (rc == 0)
+                HLOGI("audio-sock", "sim closed the socket; reconnecting");
+            else if (!shutdown_ && !audio_shutdown_)
+                HLOGW("audio-sock", "socket error; reconnecting");
+            if (!shutdown_ && !audio_shutdown_)
+                fd = sock_connect_retry(path);
+            continue;
+        }
+
+        /* ---- deposit RX samples (i16 -> i32) ---- */
+        for (uint16_t i = 0; i < n; i++)
+            ring32[i] = ((int32_t)(int16_t) sock_rd_u16(payload + (size_t)i * 2)) << 16;
+
+        size_t rx_bytes = (size_t)n * sizeof(int32_t);
+        while (rx_bytes > 0 && !shutdown_ && !audio_shutdown_)
+        {
+            if (circular_buf_free_size(capture_buffer) >= rx_bytes)
+            {
+                write_buffer(capture_buffer, (uint8_t *) ring32, rx_bytes);
+                break;
+            }
+            ffthread_sleep(1);
+        }
+
+        /* ---- advance signal time, wake the ARQ event loop ---- */
+        uint64_t t = VIRTUAL_CLOCK_EPOCH_MS + vnow_ms;
+        if (t < clock_floor_ms)
+            t = clock_floor_ms;
+        clock_floor_ms = t;
+        virtual_clock_set(t);
+        arq_notify_virtual_time();
+
+        /* ---- backpressure: let the demod catch up before releasing the
+         * sim's next block ---- */
+        uint64_t bp_start = audioio_monotonic_ms();
+        while (size_buffer(capture_buffer) >
+                   (size_t)SOCK_AUDIO_RX_HIGH_WATER_SAMPLES * sizeof(int32_t) &&
+               !shutdown_ && !audio_shutdown_)
+        {
+            if (audioio_monotonic_ms() - bp_start > SOCK_AUDIO_BACKPRESSURE_CAP_MS)
+            {
+                HLOGW("audio-sock",
+                      "demod did not drain below high water in %d ms; releasing block",
+                      SOCK_AUDIO_BACKPRESSURE_CAP_MS);
+                break;
+            }
+            ffthread_sleep(1);
+        }
+
+        /* ---- drain TX (i32 -> i16, silence-padded to n) ---- */
+        size_t want  = (size_t)n * sizeof(int32_t);
+        size_t avail = size_buffer(playback_buffer);
+        avail -= avail % sizeof(int32_t);
+        if (avail > want)
+            avail = want;
+        if (avail > 0)
+            read_buffer(playback_buffer, (uint8_t *) ring32, avail);
+        size_t have = avail / sizeof(int32_t);
+
+        uint8_t ptt = (arq_get_trx() == 1) ? 1 : 0;
+
+        sock_wr_u32(txframe, (uint32_t)(SOCK_AUDIO_HDR_STA_BYTES + (size_t)n * sizeof(int16_t)));
+        sock_wr_u64(txframe + 4, seq);
+        txframe[12] = ptt;
+        sock_wr_u16(txframe + 13, n);
+        uint8_t *txp = txframe + 4 + SOCK_AUDIO_HDR_STA_BYTES;
+        for (uint16_t i = 0; i < n; i++)
+        {
+            int16_t s = (i < have) ? (int16_t)(ring32[i] >> 16) : 0;
+            sock_wr_u16(txp + (size_t)i * 2, (uint16_t) s);
+        }
+
+        if (sock_send_full(fd, txframe,
+                           4 + SOCK_AUDIO_HDR_STA_BYTES + (size_t)n * sizeof(int16_t)) != 1)
+        {
+            close(fd);
+            fd = -1;
+            if (!shutdown_ && !audio_shutdown_)
+            {
+                HLOGW("audio-sock", "send failed; reconnecting");
+                fd = sock_connect_retry(path);
+            }
+        }
+    }
+
+    if (fd >= 0)
+        close(fd);
+    free(payload);
+    free(ring32);
+    free(txframe);
+    HLOGI("audio-sock", "lockstep transport thread exit");
+    return NULL;
+}
+
+/* Placeholder for the radio_playback slot: the lockstep thread owns both
+ * directions, but teardown (audioio_stop_threads/audioio_deinit) joins two
+ * threads, so both handles must be real. */
+static void *sock_idle_thread(void *unused)
+{
+    (void) unused;
+    while (!shutdown_ && !audio_shutdown_)
+        ffthread_sleep(FIFO_AUDIO_POLL_MS * 10);
+    return NULL;
+}
+
+/* Resolve the sim socket path into s_capture_dev: MERCURY_AUDIO_SOCK wins,
+ * else the -i capture device string.  Returns NULL if neither is set. */
+static const char *sock_resolve_path(void)
+{
+    const char *env = getenv("MERCURY_AUDIO_SOCK");
+    if (env && env[0] != '\0')
+    {
+        strncpy(s_capture_dev, env, sizeof(s_capture_dev) - 1);
+        s_capture_dev[sizeof(s_capture_dev) - 1] = '\0';
+    }
+    if (s_capture_dev[0] == '\0')
+    {
+        HLOGE("audio-sock", "no socket path: set MERCURY_AUDIO_SOCK (or -i <path>)");
+        return NULL;
+    }
+    return s_capture_dev;
+}
+
+#endif /* !_WIN32 */
+
 
 void *radio_playback_thread(void *device_ptr)
 {
@@ -1461,6 +1851,24 @@ int audioio_init_internal(char *capture_dev, char *playback_dev, int audio_subsy
         return 0;
     }
 
+    if (audio_subsystem == AUDIO_SUBSYSTEM_SOCK)
+    {
+#ifdef _WIN32
+        HLOGE("audio-sock", "-x sock is not supported on Windows");
+        return -1;
+#else
+        const char *sock_path = sock_resolve_path();
+        if (!sock_path)
+            return -1;
+        fifo_ignore_sigpipe();
+        pthread_create(radio_capture, NULL, sock_transport_thread, (void *) s_capture_dev);
+        pthread_create(radio_playback, NULL, sock_idle_thread, NULL);
+        s_radio_capture = *radio_capture;
+        s_radio_playback = *radio_playback;
+        return 0;
+#endif
+    }
+
     if (audio_subsystem == AUDIO_SUBSYSTEM_NULL)
     {
         pthread_create(radio_capture, NULL, null_capture_thread, NULL);
@@ -1561,6 +1969,19 @@ int audioio_restart(const char *capture_dev, const char *playback_dev,
         HLOGI("audio-restart", "FIFO audio threads restarted");
         return 0;
     }
+
+#ifndef _WIN32
+    if (audio_subsystem == AUDIO_SUBSYSTEM_SOCK)
+    {
+        if (!sock_resolve_path())
+            return -1;
+        fifo_ignore_sigpipe();
+        pthread_create(&s_radio_capture, NULL, sock_transport_thread, (void *) s_capture_dev);
+        pthread_create(&s_radio_playback, NULL, sock_idle_thread, NULL);
+        HLOGI("audio-restart", "sock lockstep threads restarted");
+        return 0;
+    }
+#endif
 
 #if defined(__linux__)
     if (audio_subsystem == AUDIO_SUBSYSTEM_PULSE)
