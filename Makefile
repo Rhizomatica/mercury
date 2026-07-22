@@ -355,7 +355,7 @@ fyne-ui-windows: libmercury_core_w64.a
 windows-installer: fyne-ui-windows
 	cp mercury.ini.example $(WINDOWS_INSTALLER_DIR)/mercury.ini
 	sed -i 's/ui_enabled = false/ui_enabled = true/g' $(WINDOWS_INSTALLER_DIR)/mercury.ini
-	sed -i 's/sound_system = auto/sound_system = dsound/g' $(WINDOWS_INSTALLER_DIR)/mercury.ini
+	sed -i 's/sound_system = auto/sound_system = wasapi/g' $(WINDOWS_INSTALLER_DIR)/mercury.ini
 	if ls $(HAMLIB_W64_DIR)/bin/*.dll >/dev/null 2>&1; then \
 		cp $(HAMLIB_W64_DIR)/bin/*.dll $(WINDOWS_INSTALLER_DIR)/; \
 	fi
