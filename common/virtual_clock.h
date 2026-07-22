@@ -20,6 +20,13 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+/* Virtual-time origin for the -x sock transport: the sim sends
+ * virtual_now_ms relative to run start; the transport publishes
+ * EPOCH + virtual_now_ms.  Any large constant works (timers only ever
+ * difference two reads); this one matches the armstrong bench so both
+ * modems log the same virtual timestamps under one sim. */
+#define VIRTUAL_CLOCK_EPOCH_MS 1700000000000ULL
+
 /* Switch the process to virtual time, starting at epoch_ms. Call before the ARQ
  * threads start so every time_now_ms() read sees one time base. One-way. */
 void virtual_clock_enable(uint64_t epoch_ms);
