@@ -855,19 +855,44 @@ int send_modulated_data(generic_modem_t *g_modem, uint8_t *bytes_in, int frames_
     ptt_on();
     arq_modem_ptt_on(freedv_get_mode(g_modem->freedv),
                      freedv_get_bits_per_modem_frame(g_modem->freedv) / 8);
-    
-    /* Wait for radio relay to switch (10ms for your radio) */
-    usleep(10000);
 
-    /* Write entire pre-generated buffer to playback */
-    write_buffer(playback_buffer, (uint8_t *)tx_buffer, total_samples * sizeof(int32_t));
+    if (virtual_clock_enabled())
+    {
+        /* Virtual clock (-x sock): the lockstep transport drains playback at
+         * the sim's pace and time_now_ms() advances with it, so PTT must span
+         * the burst IN SIGNAL TIME.  The wall-clock sleeps of the else-branch
+         * would tear the keyed window away from the audio actually on the
+         * virtual cable (observed: back-to-back CALL bursts with ~4 ms listen
+         * gaps -- the caller could never hear the ACCEPT).  Hold PTT until the
+         * ring is fully handed to the transport AND virtual time has passed
+         * the burst end plus the tail; the wall poll below only paces the
+         * check, progress itself is virtual. */
+        uint64_t t0_ms      = time_now_ms();
+        uint64_t burst_ms   = ((uint64_t)total_samples * 1000ULL) / FREEDV_FS_8000;
+        uint64_t tail_ms    = TAIL_TIME_US / 1000;
 
-    /* Wait for all samples to be played out */
-    uint64_t playback_duration_us = ((uint64_t)total_samples * 1000000ULL) / FREEDV_FS_8000;
-    usleep((useconds_t)playback_duration_us);
+        write_buffer(playback_buffer, (uint8_t *)tx_buffer, total_samples * sizeof(int32_t));
 
-    /* Give some tail time before turning off PTT */
-    usleep(TAIL_TIME_US);
+        while (!shutdown_ &&
+               (size_buffer(playback_buffer) > 0 ||
+                time_now_ms() < t0_ms + burst_ms + tail_ms))
+            usleep(1000);
+    }
+    else
+    {
+        /* Wait for radio relay to switch (10ms for your radio) */
+        usleep(10000);
+
+        /* Write entire pre-generated buffer to playback */
+        write_buffer(playback_buffer, (uint8_t *)tx_buffer, total_samples * sizeof(int32_t));
+
+        /* Wait for all samples to be played out */
+        uint64_t playback_duration_us = ((uint64_t)total_samples * 1000000ULL) / FREEDV_FS_8000;
+        usleep((useconds_t)playback_duration_us);
+
+        /* Give some tail time before turning off PTT */
+        usleep(TAIL_TIME_US);
+    }
 
     ptt_off();
     arq_modem_ptt_off();

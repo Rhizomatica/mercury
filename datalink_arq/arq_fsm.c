@@ -170,7 +170,7 @@ static void sess_enter(arq_session_t *sess, arq_conn_state_t new_state,
          * last_tx_progress_ms at 0 and persist forever after retry
          * exhaustion.  Advancing ACKs refresh this timestamp during data
          * flow (see fsm_dflow). */
-        sess->last_tx_progress_ms = hermes_uptime_ms();
+        sess->last_tx_progress_ms = time_now_ms();
     }
     /* Reset data-flow and mode state when returning to idle connection states.
      * Restore peer_tx_mode to initial_payload_mode (= broadcast mode) so the
@@ -221,7 +221,7 @@ static void send_frame(int ptype, int mode, size_t len, const uint8_t *frame,
 
 static uint64_t deadline_from_s(float seconds)
 {
-    return hermes_uptime_ms() + (uint64_t)(seconds * 1000.0f + 0.5f);
+    return time_now_ms() + (uint64_t)(seconds * 1000.0f + 0.5f);
 }
 
 /** Update local_snr_x10 EMA from the SNR carried in a received frame event.
@@ -581,7 +581,7 @@ static bool maybe_upgrade_mode(arq_session_t *sess)
      * (peer_snr should now be non-zero and the body should ride a fast mode). */
     {
         static uint64_t s_olla_log_ms = 0;
-        uint64_t now_ms = hermes_uptime_ms();
+        uint64_t now_ms = time_now_ms();
         if (now_ms - s_olla_log_ms >= 4000)
         {
             s_olla_log_ms = now_ms;
@@ -597,7 +597,7 @@ static bool maybe_upgrade_mode(arq_session_t *sess)
     }
 
     /* Hold the initial DATAC15 payload mode during the startup window. */
-    if (hermes_uptime_ms() < sess->startup_deadline_ms)
+    if (time_now_ms() < sess->startup_deadline_ms)
         return false;
 
     /* Never change the payload mode while unACKed frames are in flight.  Those
@@ -661,7 +661,7 @@ static bool maybe_upgrade_mode(arq_session_t *sess)
      * hold timer expires.  This prevents oscillation when stale SNR
      * says "upgrade" but the channel can't actually support it. */
     if (mode_rank(desired_mode) > mode_rank(sess->payload_mode) &&
-        hermes_uptime_ms() < sess->mode_hold_until_ms)
+        time_now_ms() < sess->mode_hold_until_ms)
         return false;
 
     /* Hysteresis: require ARQ_MODE_SWITCH_HYST_COUNT consecutive observations. */
@@ -675,7 +675,7 @@ static bool maybe_upgrade_mode(arq_session_t *sess)
         sess->consecutive_retries >= ARQ_HARD_LOSS_THRESHOLD)
     {
         sess->mode_hold_until_ms =
-            hermes_uptime_ms() + (ARQ_MODE_HOLD_AFTER_DOWNGRADE_S * 1000ULL);
+            time_now_ms() + (ARQ_MODE_HOLD_AFTER_DOWNGRADE_S * 1000ULL);
         sess->consecutive_retries = 0;
         HLOGI(LOG_COMP, "Hard-loss downgrade to floor: hold for %ds",
               ARQ_MODE_HOLD_AFTER_DOWNGRADE_S);
@@ -715,7 +715,7 @@ static void irs_arm_ack_deadline(arq_session_t *sess, const arq_event_t *ev)
         wait_ms = (uint64_t)(fd * 1500.0f);
     }
     dflow_enter(sess, ARQ_DFLOW_DATA_RX,
-                hermes_uptime_ms() + wait_ms, ARQ_EV_TIMER_ACK);
+                time_now_ms() + wait_ms, ARQ_EV_TIMER_ACK);
 }
 
 static bool deliver_rx_checked(arq_session_t *sess, const arq_event_t *ev)
@@ -820,7 +820,7 @@ static void send_data_burst(arq_session_t *sess)
     if (burst_max > ARQ_BURST_MAX) burst_max = ARQ_BURST_MAX;
     /* Keep the very first exchanges single-frame: the startup window is
      * about proving the link before spending long PTT bursts on it. */
-    if (hermes_uptime_ms() < sess->startup_deadline_ms)
+    if (time_now_ms() < sess->startup_deadline_ms)
         burst_max = 1;
 
     uint8_t payload[INT_BUFFER_SIZE];
@@ -921,7 +921,7 @@ static void enter_idle_iss(arq_session_t *sess, bool gained_turn)
         sess->pending_disconnect      = false;
         sess->tx_retries_left         = ARQ_DISCONNECT_RETRY_SLOTS;
         sess_enter(sess, ARQ_CONN_DISCONNECTING,
-                   hermes_uptime_ms() + ARQ_CHANNEL_GUARD_MS,
+                   time_now_ms() + ARQ_CHANNEL_GUARD_MS,
                    ARQ_EV_TIMER_ACK);
     }
     else
@@ -950,7 +950,7 @@ static void enter_idle_iss_guarded(arq_session_t *sess, bool gained_turn)
             return;
 
         dflow_enter(sess, ARQ_DFLOW_DATA_TX,
-                    hermes_uptime_ms() + ARQ_ISS_POST_ACK_GUARD_MS,
+                    time_now_ms() + ARQ_ISS_POST_ACK_GUARD_MS,
                     ARQ_EV_TIMER_ACK);
     }
     else if (sess->pending_disconnect)
@@ -961,7 +961,7 @@ static void enter_idle_iss_guarded(arq_session_t *sess, bool gained_turn)
         sess->pending_disconnect      = false;
         sess->tx_retries_left         = ARQ_DISCONNECT_RETRY_SLOTS;
         sess_enter(sess, ARQ_CONN_DISCONNECTING,
-                   hermes_uptime_ms() + ARQ_CHANNEL_GUARD_MS,
+                   time_now_ms() + ARQ_CHANNEL_GUARD_MS,
                    ARQ_EV_TIMER_ACK);
     }
     else
@@ -1008,7 +1008,7 @@ static void fsm_disconnected(arq_session_t *sess, const arq_event_t *ev)
 
     case ARQ_EV_APP_CONNECT:
         snprintf(sess->remote_call, CALLSIGN_MAX_SIZE, "%s", ev->remote_call);
-        sess->session_id      = (uint8_t)(hermes_uptime_ms() & 0x7F) | 0x01;
+        sess->session_id      = (uint8_t)(time_now_ms() & 0x7F) | 0x01;
         sess->tx_retries_left = ARQ_CALL_RETRY_SLOTS;
         sess->pending_disconnect = false;  /* clear stale deferred disconnect from prior session */
         sess->disconnect_deadline_ms = 0;
@@ -1035,7 +1035,7 @@ static void arm_connect_confirm(arq_session_t *sess)
 {
     sess->pending_connect_confirm = true;
     dflow_enter(sess, ARQ_DFLOW_ACK_TX,
-                hermes_uptime_ms() + ARQ_ISS_POST_ACK_GUARD_MS,
+                time_now_ms() + ARQ_ISS_POST_ACK_GUARD_MS,
                 ARQ_EV_TIMER_ACK);
 }
 
@@ -1063,7 +1063,7 @@ static void fsm_listening(arq_session_t *sess, const arq_event_t *ev)
          * happened yet when we decode the last samples of their CALL frame.
          * Wait ARQ_CHANNEL_GUARD_MS so their relay is in RX before we TX. */
         sess_enter(sess, ARQ_CONN_ACCEPTING,
-                   hermes_uptime_ms() + ARQ_CHANNEL_GUARD_MS,
+                   time_now_ms() + ARQ_CHANNEL_GUARD_MS,
                    ARQ_EV_TIMER_RETRY);
         if (g_cbs.notify_pending)
             g_cbs.notify_pending(ev->remote_call, ev->local_call);
@@ -1111,7 +1111,7 @@ static void fsm_listening(arq_session_t *sess, const arq_event_t *ev)
             sess->speed_level        = 0;
             sess->tx_success_count   = 0;
             sess->pending_disconnect = false;  /* clear stale deferred disconnect */
-            sess->startup_deadline_ms = hermes_uptime_ms() + (ARQ_STARTUP_MAX_S * 1000ULL);
+            sess->startup_deadline_ms = time_now_ms() + (ARQ_STARTUP_MAX_S * 1000ULL);
             if (g_cbs.notify_connected)
                 g_cbs.notify_connected(sess->remote_call, sess->local_call);
             if (g_timing)
@@ -1151,7 +1151,7 @@ static void fsm_calling(arq_session_t *sess, const arq_event_t *ev)
             sess->tx_success_count   = 0;
             sess->pending_disconnect = false;  /* clear stale deferred disconnect */
             sess->startup_deadline_ms =
-                hermes_uptime_ms() + (ARQ_STARTUP_MAX_S * 1000ULL);
+                time_now_ms() + (ARQ_STARTUP_MAX_S * 1000ULL);
             if (g_cbs.notify_connected)
                 g_cbs.notify_connected(sess->remote_call, sess->local_call);
             if (g_timing)
@@ -1219,7 +1219,7 @@ static void fsm_accepting(arq_session_t *sess, const arq_event_t *ev)
         sess->tx_success_count   = 0;
         sess->olla_offset_db     = 0.0f;
         sess->startup_deadline_ms =
-            hermes_uptime_ms() + (ARQ_STARTUP_MAX_S * 1000ULL);
+            time_now_ms() + (ARQ_STARTUP_MAX_S * 1000ULL);
         if (g_cbs.notify_connected)
             g_cbs.notify_connected(sess->remote_call, sess->local_call);
         if (g_timing)
@@ -1246,7 +1246,7 @@ static void fsm_accepting(arq_session_t *sess, const arq_event_t *ev)
          * one DATAC15 frame.  Reset the deadline here so we always have
          * a full ARQ_ACCEPT_RX_WINDOW_MS window (guard + DATAC15 frame +
          * margin) measured from the moment our TX actually ends. */
-        sess->deadline_ms = hermes_uptime_ms() + ARQ_ACCEPT_RX_WINDOW_MS;
+        sess->deadline_ms = time_now_ms() + ARQ_ACCEPT_RX_WINDOW_MS;
         break;
 
     case ARQ_EV_TIMER_RETRY:
@@ -1346,7 +1346,7 @@ static void fsm_connected(arq_session_t *sess, const arq_event_t *ev)
      * of role or backlog so the rig is never keyed indefinitely after the
      * host has disconnected (K7EK "Mercury kept hanging on"). */
     if (sess->pending_disconnect && sess->disconnect_deadline_ms != 0 &&
-        hermes_uptime_ms() >= sess->disconnect_deadline_ms)
+        time_now_ms() >= sess->disconnect_deadline_ms)
     {
         HLOGW(LOG_COMP,
               "Deferred DISCONNECT drain timeout (%ds) — forcing teardown",
@@ -1355,7 +1355,7 @@ static void fsm_connected(arq_session_t *sess, const arq_event_t *ev)
         sess->disconnect_deadline_ms  = 0;
         sess->tx_retries_left         = ARQ_DISCONNECT_RETRY_SLOTS;
         sess_enter(sess, ARQ_CONN_DISCONNECTING,
-                   hermes_uptime_ms() + ARQ_CHANNEL_GUARD_MS,
+                   time_now_ms() + ARQ_CHANNEL_GUARD_MS,
                    ARQ_EV_TIMER_ACK);
         return;
     }
@@ -1387,14 +1387,14 @@ static void fsm_connected(arq_session_t *sess, const arq_event_t *ev)
                   arq_dflow_state_name(sess->dflow_state));
             sess->pending_disconnect = true;
             sess->disconnect_deadline_ms =
-                hermes_uptime_ms() +
+                time_now_ms() +
                 (uint64_t)ARQ_DISCONNECT_DRAIN_TIMEOUT_S * 1000ULL;
             return;
         }
         sess->pending_disconnect      = false;
         sess->tx_retries_left         = ARQ_DISCONNECT_RETRY_SLOTS;
         sess_enter(sess, ARQ_CONN_DISCONNECTING,
-                   hermes_uptime_ms() + ARQ_CHANNEL_GUARD_MS,
+                   time_now_ms() + ARQ_CHANNEL_GUARD_MS,
                    ARQ_EV_TIMER_ACK);
         return;
 
@@ -1459,7 +1459,7 @@ static void fsm_connected(arq_session_t *sess, const arq_event_t *ev)
                 sess->keepalive_ack_from_irs =
                     (sess->dflow_state == ARQ_DFLOW_IDLE_IRS);
                 dflow_enter(sess, ARQ_DFLOW_KEEPALIVE_ACK_TX,
-                            hermes_uptime_ms() + ARQ_CHANNEL_GUARD_MS,
+                            time_now_ms() + ARQ_CHANNEL_GUARD_MS,
                             ARQ_EV_TIMER_ACK);
             }
             else
@@ -1498,7 +1498,7 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
                  * time to reset decoders from TX→RX before our preamble. */
                 sess->need_initial_guard = false;
                 dflow_enter(sess, ARQ_DFLOW_DATA_TX,
-                            hermes_uptime_ms() + ARQ_ISS_POST_ACK_GUARD_MS,
+                            time_now_ms() + ARQ_ISS_POST_ACK_GUARD_MS,
                             ARQ_EV_TIMER_ACK);
             }
             else
@@ -1518,7 +1518,7 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
                 arq_timing_record_data_rx(g_timing, (int)ev->seq,
                                           (int)ev->data_bytes,
                                           sess->local_snr_x10);
-            sess->last_rx_ms    = hermes_uptime_ms();
+            sess->last_rx_ms    = time_now_ms();
             /* A duplicate (new_frame=false) means the sender is still the
              * active ISS — it is retransmitting because it hasn't received
              * our ACK yet.  Force peer_has_data=true so ACK_TX→TX_COMPLETE
@@ -1536,7 +1536,7 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
              * (FreeDV decoder fires ~150ms before remote PTT-OFF). */
             if (g_timing) arq_timing_record_turn(g_timing, false, "turn_req");
             dflow_enter(sess, ARQ_DFLOW_TURN_ACK_TX,
-                        hermes_uptime_ms() + ARQ_CHANNEL_GUARD_MS,
+                        time_now_ms() + ARQ_CHANNEL_GUARD_MS,
                         ARQ_EV_TIMER_ACK);
         }
         break;
@@ -1573,7 +1573,7 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
             {
                 if (g_timing) arq_timing_record_turn(g_timing, false, "turn_req");
                 dflow_enter(sess, ARQ_DFLOW_TURN_ACK_TX,
-                            hermes_uptime_ms() + ARQ_CHANNEL_GUARD_MS,
+                            time_now_ms() + ARQ_CHANNEL_GUARD_MS,
                             ARQ_EV_TIMER_ACK);
             }
             /* else: TX is already queued/in-progress; ignore here and let
@@ -1632,7 +1632,7 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
             sess->tx_window_count -= n_acked;
 
             sess->tx_retries_left     = ARQ_DATA_RETRY_SLOTS;
-            sess->last_tx_progress_ms = hermes_uptime_ms();  /* forward progress */
+            sess->last_tx_progress_ms = time_now_ms();  /* forward progress */
             sess->peer_has_data = (ev->rx_flags & ARQ_FLAG_HAS_DATA) != 0;
             if (g_cbs.send_buffer_status)
                 g_cbs.send_buffer_status(session_tx_backlog(sess));
@@ -1645,7 +1645,7 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
                 sess->tx_window_retx = true;
                 record_tx_outcome(sess, false);
                 dflow_enter(sess, ARQ_DFLOW_DATA_TX,
-                            hermes_uptime_ms() + ARQ_ISS_POST_ACK_GUARD_MS,
+                            time_now_ms() + ARQ_ISS_POST_ACK_GUARD_MS,
                             ARQ_EV_TIMER_ACK);
                 break;
             }
@@ -1674,7 +1674,7 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
              * the turn, so no data is lost. */
             if (g_timing) arq_timing_record_turn(g_timing, false, "turn_req");
             dflow_enter(sess, ARQ_DFLOW_TURN_ACK_TX,
-                        hermes_uptime_ms() + ARQ_CHANNEL_GUARD_MS,
+                        time_now_ms() + ARQ_CHANNEL_GUARD_MS,
                         ARQ_EV_TIMER_ACK);
         }
         else if (ev->id == ARQ_EV_TIMER_ACK)
@@ -1726,7 +1726,7 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
                      * revert -> retry budget and consecutive_retries reset ->
                      * repeat every ~200 s, preempting the retry-exhaustion
                      * branch that owns the no-progress disconnect. */
-                    uint64_t np_now = hermes_uptime_ms();
+                    uint64_t np_now = time_now_ms();
                     bool budget_spent =
                         (np_now - sess->last_tx_progress_ms) >=
                         (uint64_t)ARQ_NO_PROGRESS_TIMEOUT_S * 1000ULL;
@@ -1756,7 +1756,7 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
                  * persistence beats Pactor-like give-up.  Bumping
                  * consecutive_retries lets select_best_mode pull us down to a
                  * more robust mode the next time a decision point runs. */
-                uint64_t now = hermes_uptime_ms();
+                uint64_t now = time_now_ms();
                 uint64_t budget_ms = (uint64_t)ARQ_NO_PROGRESS_TIMEOUT_S * 1000ULL;
                 bool no_progress_dead =
                     (now - sess->last_tx_progress_ms) >= budget_ms;
@@ -1838,7 +1838,7 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
             update_local_snr(sess, ev);
             update_peer_snr(sess, ev);
             sess->peer_tx_mode = ev->mode;
-            sess->last_rx_ms = hermes_uptime_ms();
+            sess->last_rx_ms = time_now_ms();
 
             if (ev->seq == sess->rx_expected)
             {
@@ -1854,7 +1854,7 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
                 sess->tx_window_retx    = false;
                 sess->tx_inflight_bytes = 0;
                 sess->tx_retries_left   = ARQ_DATA_RETRY_SLOTS;
-                sess->last_tx_progress_ms = hermes_uptime_ms();
+                sess->last_tx_progress_ms = time_now_ms();
                 sess->peer_has_data = (ev->rx_flags & ARQ_FLAG_HAS_DATA) != 0;
                 if (g_cbs.send_buffer_status)
                     g_cbs.send_buffer_status(session_tx_backlog(sess));
@@ -1909,7 +1909,7 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
                  * before our MODE_ACK preamble arrives (same guard used by
                  * DATA_RX and TURN_ACK_TX to avoid TX collisions). */
                 dflow_enter(sess, ARQ_DFLOW_MODE_ACK_TX,
-                            hermes_uptime_ms() + ARQ_CHANNEL_GUARD_MS,
+                            time_now_ms() + ARQ_CHANNEL_GUARD_MS,
                             ARQ_EV_TIMER_ACK);
             }
         }
@@ -1928,7 +1928,7 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
                 arq_timing_record_data_rx(g_timing, (int)ev->seq,
                                           (int)ev->data_bytes,
                                           sess->local_snr_x10);
-            sess->last_rx_ms    = hermes_uptime_ms();
+            sess->last_rx_ms    = time_now_ms();
             /* A duplicate (new_frame=false) means the sender is still the
              * active ISS — it is retransmitting because it hasn't received
              * our ACK yet.  Force peer_has_data=true so ACK_TX→TX_COMPLETE
@@ -1949,7 +1949,7 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
              * tx_backlog, otherwise TURN_REQ retries loop forever when
              * the peer disappears while we have pending data. */
             if (sess->last_rx_ms > 0 &&
-                hermes_uptime_ms() - sess->last_rx_ms >=
+                time_now_ms() - sess->last_rx_ms >=
                     (uint64_t)ARQ_IRS_INACTIVITY_S * 1000)
             {
                 /* Peer has been silent too long - probe with keepalive.
@@ -1957,7 +1957,7 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
                  * we return to IDLE_IRS.  If not, the keepalive retry
                  * loop disconnects after ARQ_KEEPALIVE_MISS_LIMIT misses. */
                 HLOGW(LOG_COMP, "IRS inactivity (%ds without RX) - sending keepalive",
-                      (int)((hermes_uptime_ms() - sess->last_rx_ms) / 1000));
+                      (int)((time_now_ms() - sess->last_rx_ms) / 1000));
                 sess->keepalive_miss_count = 0;
                 sess->keepalive_from_irs = true;  /* IRS-originated keepalive */
                 send_ctrl_frame(sess, ARQ_SUBTYPE_KEEPALIVE);
@@ -1993,7 +1993,7 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
         {
             /* Remote missed our TURN_ACK — re-send with channel guard. */
             dflow_enter(sess, ARQ_DFLOW_TURN_ACK_TX,
-                        hermes_uptime_ms() + ARQ_CHANNEL_GUARD_MS,
+                        time_now_ms() + ARQ_CHANNEL_GUARD_MS,
                         ARQ_EV_TIMER_ACK);
         }
         else if (ev->id == ARQ_EV_RX_MODE_REQ)
@@ -2011,7 +2011,7 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
                  * before our MODE_ACK preamble arrives (same guard used by
                  * DATA_RX and TURN_ACK_TX to avoid TX collisions). */
                 dflow_enter(sess, ARQ_DFLOW_MODE_ACK_TX,
-                            hermes_uptime_ms() + ARQ_CHANNEL_GUARD_MS,
+                            time_now_ms() + ARQ_CHANNEL_GUARD_MS,
                             ARQ_EV_TIMER_ACK);
             }
         }
@@ -2023,7 +2023,7 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
             /* Channel guard elapsed — now safe to transmit ACK.
              * Capture HAS_DATA state before sending so ACK_TX → TX_COMPLETE
              * knows whether a piggyback turn is valid. */
-            uint32_t delay_ms = (uint32_t)(hermes_uptime_ms() - sess->last_rx_ms);
+            uint32_t delay_ms = (uint32_t)(time_now_ms() - sess->last_rx_ms);
             sess->acktx_had_has_data = session_tx_backlog(sess) > 0;
             send_ack(sess, arq_protocol_encode_ack_delay(delay_ms));
             if (g_timing)
@@ -2041,7 +2041,7 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
                 arq_timing_record_data_rx(g_timing, (int)ev->seq,
                                           (int)ev->data_bytes,
                                           sess->local_snr_x10);
-            sess->last_rx_ms    = hermes_uptime_ms();
+            sess->last_rx_ms    = time_now_ms();
             /* A duplicate (new_frame=false) means the sender is still the
              * active ISS — it is retransmitting because it hasn't received
              * our ACK yet.  Force peer_has_data=true so ACK_TX→TX_COMPLETE
@@ -2091,7 +2091,7 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
                  * more data.  If no frame by then, ISS has nothing to send and
                  * it is safe to request the turn without colliding. */
                 dflow_enter(sess, ARQ_DFLOW_IDLE_IRS,
-                            hermes_uptime_ms() + ARQ_TURN_WAIT_AFTER_ACK_MS,
+                            time_now_ms() + ARQ_TURN_WAIT_AFTER_ACK_MS,
                             ARQ_EV_TIMER_PEER_BACKLOG);
             }
             else
@@ -2134,7 +2134,7 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
                 arq_timing_record_data_rx(g_timing, (int)ev->seq,
                                           (int)ev->data_bytes,
                                           sess->local_snr_x10);
-            sess->last_rx_ms = hermes_uptime_ms();
+            sess->last_rx_ms = time_now_ms();
             /* A duplicate (new_frame=false) means the sender is still the
              * active ISS — it is retransmitting because it hasn't received
              * our ACK yet.  Force peer_has_data=true so ACK_TX→TX_COMPLETE
@@ -2263,7 +2263,7 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
                 uint64_t guard_ms = tm ? (uint64_t)(tm->ack_timeout_s * 1000.0f) : 6000ULL;
                 if (session_tx_backlog(sess) > 0)
                     dflow_enter(sess, ARQ_DFLOW_DATA_TX,
-                                hermes_uptime_ms() + guard_ms,
+                                time_now_ms() + guard_ms,
                                 ARQ_EV_TIMER_ACK);
                 else
                     enter_idle_iss(sess, false);
@@ -2319,7 +2319,7 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
                         for (int i = n_acked; i < sess->tx_window_count; i++)
                             sess->tx_window[i - n_acked] = sess->tx_window[i];
                         sess->tx_window_count   -= n_acked;
-                        sess->last_tx_progress_ms = hermes_uptime_ms();
+                        sess->last_tx_progress_ms = time_now_ms();
                         record_tx_outcome(sess, false);  /* delivered, not clean */
                     }
                     if (sess->tx_window_count > 0)
@@ -2340,7 +2340,7 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
                     sess->mode_hold_until_ms != 0)
                 {
                     sess->mode_hold_until_ms =
-                        hermes_uptime_ms() + (ARQ_MODE_HOLD_AFTER_DOWNGRADE_S * 1000ULL);
+                        time_now_ms() + (ARQ_MODE_HOLD_AFTER_DOWNGRADE_S * 1000ULL);
                 }
                 HLOGI(LOG_COMP, "MODE_ACK: payload mode %d -> %d",
                       sess->payload_mode, ev->mode);
@@ -2415,7 +2415,7 @@ void arq_fsm_dispatch(arq_session_t *sess, const arq_event_t *ev)
     case ARQ_EV_RX_TURN_ACK:
     case ARQ_EV_RX_KEEPALIVE:
     case ARQ_EV_RX_KEEPALIVE_ACK:
-        sess->last_rx_ms = hermes_uptime_ms();
+        sess->last_rx_ms = time_now_ms();
         /* Session ID validation: drop frames from a different session when
          * we are in CONNECTED or DISCONNECTING state (CALL/ACCEPT frames
          * are handled separately and carry session_id in their own format). */

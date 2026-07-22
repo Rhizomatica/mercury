@@ -81,7 +81,8 @@ test_arq_olla: datalink_arq/test_arq_olla.c $(UNITY_SRC) $(ARQ_STUBS) \
 
 # ARQ timing tests (instrumentation recording)
 test_arq_timing: datalink_arq/test_arq_timing.c $(UNITY_SRC) $(ARQ_STUBS) \
-                 ../datalink_arq/arq_timing.c ../datalink_arq/arq_protocol.c \
+                 ../datalink_arq/arq_timing.c ../common/virtual_clock.c \
+                 ../datalink_arq/arq_protocol.c \
                  ../datalink_arq/arith.c
 	$(CC) $(CFLAGS) -I../modem/freedv -o $@ $^ $(LDFLAGS)
 

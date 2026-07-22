@@ -11,6 +11,7 @@
 #include <string.h>
 
 #include "../common/hermes_log.h"
+#include "../common/virtual_clock.h"
 #include "arq_protocol.h"
 
 #define LOG_COMP "arq-timing"
@@ -40,7 +41,7 @@ void arq_timing_init(arq_timing_ctx_t *ctx)
 void arq_timing_record_tx_queue(arq_timing_ctx_t *ctx, int seq, int mode,
                                 int backlog_bytes, int payload_bytes)
 {
-    ctx->tx_queue_ms = hermes_uptime_ms();
+    ctx->tx_queue_ms = time_now_ms();
     if (payload_bytes > 0)
         ctx->tx_bytes += (uint64_t)payload_bytes;
     HLOGT(LOG_COMP, "tx_queue seq=%d mode=%s backlog=%d bytes=%d tx_total=%llu",
@@ -51,7 +52,7 @@ void arq_timing_record_tx_queue(arq_timing_ctx_t *ctx, int seq, int mode,
 void arq_timing_record_tx_start(arq_timing_ctx_t *ctx, int seq, int mode,
                                 int backlog_bytes)
 {
-    ctx->tx_start_ms = hermes_uptime_ms();
+    ctx->tx_start_ms = time_now_ms();
     ctx->frames_tx++;
     HLOGT(LOG_COMP, "tx_start seq=%d mode=%s backlog=%d",
           seq, mode_name(mode), backlog_bytes);
@@ -59,7 +60,7 @@ void arq_timing_record_tx_start(arq_timing_ctx_t *ctx, int seq, int mode,
 
 void arq_timing_record_tx_end(arq_timing_ctx_t *ctx, int seq)
 {
-    ctx->tx_end_ms = hermes_uptime_ms();
+    ctx->tx_end_ms = time_now_ms();
     uint32_t dur = (uint32_t)(ctx->tx_end_ms - ctx->tx_start_ms);
     HLOGT(LOG_COMP, "tx_end seq=%d dur=%ums", seq, dur);
 }
@@ -67,7 +68,7 @@ void arq_timing_record_tx_end(arq_timing_ctx_t *ctx, int seq)
 void arq_timing_record_ack_rx(arq_timing_ctx_t *ctx, int seq,
                                uint8_t ack_delay_raw, int peer_snr_x10)
 {
-    ctx->ack_rx_ms       = hermes_uptime_ms();
+    ctx->ack_rx_ms       = time_now_ms();
     ctx->last_snr_peer_x10 = peer_snr_x10;
 
     uint32_t peer_delay = arq_protocol_decode_ack_delay(ack_delay_raw);
@@ -86,7 +87,7 @@ void arq_timing_record_ack_rx(arq_timing_ctx_t *ctx, int seq,
 void arq_timing_record_data_rx(arq_timing_ctx_t *ctx, int seq,
                                 int bytes, int snr_x10)
 {
-    ctx->data_rx_ms         = hermes_uptime_ms();
+    ctx->data_rx_ms         = time_now_ms();
     ctx->last_snr_local_x10 = snr_x10;
     ctx->rx_bytes          += (uint64_t)bytes;
     ctx->frames_rx++;
@@ -108,7 +109,7 @@ void arq_timing_record_data_rx(arq_timing_ctx_t *ctx, int seq,
 
 void arq_timing_record_ack_tx(arq_timing_ctx_t *ctx, int seq)
 {
-    ctx->ack_tx_start_ms = hermes_uptime_ms();
+    ctx->ack_tx_start_ms = time_now_ms();
     uint32_t delay = 0;
     if (ctx->data_rx_ms > 0)
         delay = (uint32_t)(ctx->ack_tx_start_ms - ctx->data_rx_ms);
