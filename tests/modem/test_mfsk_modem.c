@@ -72,6 +72,45 @@ void test_mfsk_modem_roundtrip(void)
     free(frame); free(pre); free(dat); free(post); free(pb); free(out);
 }
 
+/* Head-clip recovery: a burst whose PREAMBLE was lost (the fragile head of a
+ * half-duplex burst — far end still keyed / AGC settling / T-R turnaround) must
+ * still decode by anchoring on the POSTAMBLE at the tail.  Without the postamble
+ * fallback this returns 0 (the sole preamble anchor is gone), which stalled the
+ * -x sock transfer at the MFSK floor: the ISS's first data burst was clipped by
+ * the connect turnaround and lost to a full ACK-timeout retransmit. */
+void test_mfsk_modem_preamble_clipped_recovers_via_postamble(void)
+{
+    int bytes = be->bits_per_frame(ctx) / 8;
+    int nin   = be->nin(ctx);                     /* Nofdm */
+
+    uint8_t *frame = malloc(bytes);
+    for (int i = 0; i < bytes - 2; i++) frame[i] = (uint8_t)(i * 7 + 3);
+    uint16_t crc = freedv_gen_crc16(frame, bytes - 2);
+    frame[bytes - 2] = crc >> 8; frame[bytes - 1] = crc & 0xff;
+
+    int cap = be->n_tx_samples(ctx) * 2 + 40000;
+    int16_t *dat = calloc(cap, 2), *post = calloc(cap, 2);
+    int nd = be->rawdata_tx(ctx, dat, frame);     /* data symbols  */
+    int ns = be->postamble_tx(ctx, post);         /* postamble only — NO preamble */
+
+    /* [lead gap | data | postamble | trail gap] — preamble deliberately omitted.
+     * Kept within the RX window (rxcap ~ one burst + slack) so data+postamble
+     * are both resident when the search fires. */
+    int lead = 2 * nin, trail = 6 * nin;
+    int total = lead + nd + ns + trail;
+    int16_t *pb = calloc(total, 2);
+    int p = lead;
+    memcpy(pb + p, dat,  (size_t)nd * 2); p += nd;
+    memcpy(pb + p, post, (size_t)ns * 2); p += ns;
+
+    uint8_t *out = calloc(bytes, 1);
+    int n = feed_and_decode(pb, total, out);
+    TEST_ASSERT_EQUAL_INT(bytes, n);              /* recovered despite the clipped head */
+    TEST_ASSERT_EQUAL_MEMORY(frame, out, bytes);
+
+    free(frame); free(dat); free(post); free(pb); free(out);
+}
+
 void test_mfsk_modem_noise_no_false_decode(void)
 {
     int bytes = be->bits_per_frame(ctx) / 8;
@@ -88,6 +127,7 @@ int main(void)
 {
     UNITY_BEGIN();
     RUN_TEST(test_mfsk_modem_roundtrip);
+    RUN_TEST(test_mfsk_modem_preamble_clipped_recovers_via_postamble);
     RUN_TEST(test_mfsk_modem_noise_no_false_decode);
     return UNITY_END();
 }
