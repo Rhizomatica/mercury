@@ -43,9 +43,10 @@ ARQ_STUBS = datalink_arq/arq_test_stubs.c
 
 # Test executables
 TEST_BINS = test_ring_buffer test_arq_protocol test_arq_timing test_arq_fsm \
-            test_tcp_interfaces test_resampler test_arq_ladder test_arq_sim test_arq_conn test_cfg_utils \
-            test_arq_tnc test_channel_busy test_mfsk test_mfsk_modem test_pattern_ack_detection test_arq_olla \
-            test_pcm24 test_freedv_harq test_sock_wire test_virtual_clock
+            test_tcp_interfaces test_resampler test_arq_ladder test_arq_sim \
+            test_arq_conn test_cfg_utils test_arq_tnc test_channel_busy test_mfsk \
+            test_mfsk_modem test_pattern_ack_detection test_freedv_harq \
+            test_pcm24 test_sock_wire test_virtual_clock
 
 .PHONY: all test clean
 
@@ -80,7 +81,7 @@ test_arq_protocol: datalink_arq/test_arq_protocol.c $(UNITY_SRC) $(ARQ_STUBS) \
 
 # Delivery-driven ladder test (deterministic climb/drop, MFSK start, BW clamp)
 test_arq_ladder: datalink_arq/test_arq_ladder.c $(UNITY_SRC) $(ARQ_STUBS) \
-               ../datalink_arq/arq_fsm.c \
+               ../datalink_arq/arq_fsm.c ../common/virtual_clock.c \
                ../datalink_arq/arq_protocol.c ../datalink_arq/arq_timing.c \
                ../datalink_arq/arith.c
 	$(CC) $(CFLAGS) -I../modem/freedv -o $@ $^ $(LDFLAGS) -lm
@@ -133,24 +134,8 @@ test_arq_tnc: datalink_arq/test_arq_tnc.c $(UNITY_SRC) ../datalink_arq/arq_tnc.c
 test_channel_busy: modem/test_channel_busy.c $(UNITY_SRC) ../modem/channel_busy.c
 	$(CC) $(CFLAGS) -I../modem -o $@ $^ $(LDFLAGS) -lm
 
-            # HARQ combined-decode acceptance gate (drives the real DATAC15 \
-            LDPC decoder) test_freedv_harq: modem/test_freedv_harq.c \
-            $(UNITY_SRC) ../modem/freedv/mpdecode_core.c \
-            ../modem/freedv/phi0.c ../modem/freedv/H_256_768_22.c $(CC) \
-            $(CFLAGS) -I../modem/freedv -o $@ $^ $(LDFLAGS) -lm # -x sock \
-            wire codec: byte-exact pin of the lockstep frame layout \
-            test_sock_wire: audioio/test_sock_wire.c $(UNITY_SRC) $(CC) \
-            $(CFLAGS) -I../audioio -o $@ $^ $(LDFLAGS) # Virtual clock (time \
-            base for -x sock); hermes_uptime_ms stubbed in-test \
-            test_virtual_clock: common/test_virtual_clock.c $(UNITY_SRC) \
-            ../common/virtual_clock.c $(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS) # \
-            MFSK codec test (mod/demod round-trip + modulation-order gain) \
-            test_mfsk: modem/test_mfsk.c $(UNITY_SRC) ../modem/mfsk.c \
-            round-trip, gain, OFDM framing) ../modem/mfsk_ofdm.c \
-            ../modem/mfsk_sync.c ../modem/mfsk_ldpc.c \
-            ../modem/mfsk_ldpc_1_16.c ../modem/mfsk_ldpc_2_16.c \
-            ../modem/mfsk_ldpc_3_16.c ../modem/mfsk_ldpc_5_16.c \
-            ../modem/mfsk_ldpc_8_16.c
+# MFSK codec test (mod/demod round-trip, modulation-order gain, OFDM framing)
+test_mfsk: modem/test_mfsk.c $(UNITY_SRC) ../modem/mfsk.c ../modem/mfsk_ofdm.c ../modem/mfsk_sync.c ../modem/mfsk_ldpc.c ../modem/mfsk_ldpc_1_16.c ../modem/mfsk_ldpc_2_16.c ../modem/mfsk_ldpc_3_16.c ../modem/mfsk_ldpc_5_16.c ../modem/mfsk_ldpc_8_16.c
 	$(CC) $(CFLAGS) -I../modem -o $@ $^ $(LDFLAGS) -lm
 
 # MFSK modem backend (burst TX/RX through the vtable); links libfreedvdata for CRC16
@@ -169,6 +154,19 @@ test_mfsk_modem: modem/test_mfsk_modem.c $(UNITY_SRC) ../modem/modem_mfsk.c $(MF
 test_pattern_ack_detection: modem/test_pattern_ack_detection.c $(UNITY_SRC) \
            ../modem/modem_mfsk.c $(MFSK_SRC)
 	$(CC) $(CFLAGS) -I../modem -I../modem/freedv -o $@ $^ ../modem/freedv/libfreedvdata.a $(LDFLAGS) -lm
+
+# HARQ combined-decode acceptance gate (drives the real DATAC15 LDPC decoder)
+test_freedv_harq: modem/test_freedv_harq.c $(UNITY_SRC) \
+                  ../modem/freedv/mpdecode_core.c ../modem/freedv/phi0.c \
+                  ../modem/freedv/H_256_768_22.c
+	$(CC) $(CFLAGS) -I../modem/freedv -o $@ $^ $(LDFLAGS) -lm
+# -x sock wire codec: byte-exact pin of the lockstep frame layout
+test_sock_wire: audioio/test_sock_wire.c $(UNITY_SRC)
+	$(CC) $(CFLAGS) -I../audioio -o $@ $^ $(LDFLAGS)
+
+# Virtual clock (time base for -x sock); hermes_uptime_ms stubbed in-test
+test_virtual_clock: common/test_virtual_clock.c $(UNITY_SRC) ../common/virtual_clock.c
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
 clean:
 	rm -f $(TEST_BINS)
