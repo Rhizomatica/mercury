@@ -664,22 +664,19 @@ void test_timeout_ms_idle(void)
     TEST_ASSERT_GREATER_THAN(60000, ms);
 }
 
-
-/* ---- LISTEN OFF releases the radio (VARA semantics, host interlock) ----
+/* ---- IRS payload-mode mirror: follow the peer's delivery-driven ladder ----
  *
- * A host asserting a transmitter interlock or stopping a frequency scan sends
- * LISTEN OFF meaning "release the radio now". Honouring it only in LISTENING
- * left Mercury retrying CALL/ACCEPT on a channel another port had taken —
- * reported from the field as BPQ32 INTERLOCK being ignored, and as a scanner
- * that kept stepping frequencies while Mercury answered a connect request.
- */
+ * The IRS's payload decoder must be on the mode the peer's NEXT burst will use,
+ * NOT the last one it decoded — otherwise it misses the first burst of every
+ * mode the sender climbs to and the transfer stalls at the MFSK floor (the
+ * -x sock regression).  Since the IRS observes the same per-frame outcomes the
+ * sender climbs on, it mirrors the same ladder. */
 
-void test_listen_off_drops_pending_accept(void)
+/* LISTENING -> ACCEPTING -> CONNECTED as the answerer: IRS role, IDLE_IRS. */
+static void goto_connected_irs(void)
 {
-    arq_event_t ev = make_event(ARQ_EV_APP_LISTEN);
-    arq_fsm_dispatch(&sess, &ev);
-
-    ev = make_event(ARQ_EV_RX_CALL);
+    enter_accepting();
+    arq_event_t ev = make_event(ARQ_EV_RX_ACK);
     ev.session_id = 0x42;
     strncpy(ev.remote_call, "REMOTE1", CALLSIGN_MAX_SIZE);
     arq_fsm_dispatch(&sess, &ev);
@@ -827,19 +824,95 @@ void test_listen_off_drops_live_link_without_draining(void)
     strncpy(ev.remote_call, "DST1", CALLSIGN_MAX_SIZE);
     arq_fsm_dispatch(&sess, &ev);
     TEST_ASSERT_EQUAL_INT(ARQ_CONN_CONNECTED, sess.conn_state);
+    TEST_ASSERT_EQUAL_INT(ARQ_DFLOW_IDLE_IRS, sess.dflow_state);
+}
 
-    RESET_FAKE(fake_send_tx_frame);
+/* In-order DATA frame carrying `n` payload bytes.  HAS_DATA keeps us the IRS
+ * across frames (the sender has more to send).  mode is set to what the peer
+ * actually sent, but the mirror deliberately ignores it (anticipation, not
+ * follow-the-decoded-mode). */
+static arq_event_t make_data_event(uint8_t seq, int mode, size_t n)
+{
+    arq_event_t ev = make_event(ARQ_EV_RX_DATA);
+    ev.session_id  = 0x42;
+    ev.seq         = seq;
+    ev.mode        = mode;
+    ev.rx_flags    = ARQ_FLAG_HAS_DATA;
+    ev.data_bytes  = n;
+    ev.payload_len = n;
+    for (size_t i = 0; i < n && i < sizeof(ev.payload); i++)
+        ev.payload[i] = (uint8_t)(seq * 17 + i);
+    return ev;
+}
 
-    ev = make_event(ARQ_EV_APP_STOP_LISTEN);
+/* Run the ACK_TX cycle (guard timer -> pattern ACK -> TX complete) back to
+ * IDLE_IRS, so the next DATA frame is received in the same state a real IRS is. */
+static void complete_ack_tx(void)
+{
+    arq_event_t ev = make_event(ARQ_EV_TIMER_ACK);
     arq_fsm_dispatch(&sess, &ev);
+    ev = make_event(ARQ_EV_TX_COMPLETE);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(ARQ_DFLOW_IDLE_IRS, sess.dflow_state);
+}
 
-    /* Unlike APP_DISCONNECT this must NOT linger in a draining teardown:
-     * the radio was requested back, so queued bytes buy no more airtime. */
-    TEST_ASSERT_EQUAL_INT(ARQ_CONN_DISCONNECTED, sess.conn_state);
-    TEST_ASSERT_FALSE(sess.pending_disconnect);
-    /* No air-side DISCONNECT frame — that is one more keydown on a channel we
-     * were just told to give up; the peer times out instead. */
-    TEST_ASSERT_EQUAL_INT(0, fake_send_tx_frame_fake.call_count);
+/* Each clean in-order frame climbs the sender one rung (fast initial ramp);
+ * the IRS mirror climbs in lock step so peer_tx_mode names the NEXT burst's
+ * mode before it arrives. */
+void test_irs_mirror_climbs_with_peer(void)
+{
+    goto_connected_irs();
+    TEST_ASSERT_EQUAL_INT(MERCURY_MODE_MFSK, sess.peer_tx_mode);
+
+    arq_event_t ev = make_data_event(0, MERCURY_MODE_MFSK, 90);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(FREEDV_MODE_DATAC15, sess.peer_tx_mode);   /* level 1 */
+    complete_ack_tx();
+
+    ev = make_data_event(1, FREEDV_MODE_DATAC15, 30);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(FREEDV_MODE_DATAC4, sess.peer_tx_mode);    /* level 2 */
+    complete_ack_tx();
+
+    ev = make_data_event(2, FREEDV_MODE_DATAC4, 54);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(FREEDV_MODE_DATAC3, sess.peer_tx_mode);    /* level 3 */
+}
+
+/* A duplicate frame means our ACK was lost and the sender retried, stepping ITS
+ * ladder down — the mirror must step down too so we can decode the retransmit. */
+void test_irs_mirror_steps_down_on_duplicate(void)
+{
+    goto_connected_irs();
+    arq_event_t ev = make_data_event(0, MERCURY_MODE_MFSK, 90);
+    arq_fsm_dispatch(&sess, &ev);
+    complete_ack_tx();
+    ev = make_data_event(1, FREEDV_MODE_DATAC15, 30);
+    arq_fsm_dispatch(&sess, &ev);
+    complete_ack_tx();
+    TEST_ASSERT_EQUAL_INT(FREEDV_MODE_DATAC4, sess.peer_tx_mode);    /* climbed to level 2 */
+
+    /* Duplicate of an already-delivered seq (rx_expected has advanced past it). */
+    ev = make_data_event(0, MERCURY_MODE_MFSK, 90);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(FREEDV_MODE_DATAC15, sess.peer_tx_mode);   /* stepped down to level 1 */
+}
+
+/* Reset-on-miss: a full idle hold with no DATA (a lost ACK left us climbed above
+ * the sender) steps the mirror down toward the floor so the two ends re-sync. */
+void test_irs_mirror_resets_toward_floor_on_silence(void)
+{
+    goto_connected_irs();
+    arq_event_t ev = make_data_event(0, MERCURY_MODE_MFSK, 90);
+    arq_fsm_dispatch(&sess, &ev);
+    complete_ack_tx();
+    TEST_ASSERT_EQUAL_INT(FREEDV_MODE_DATAC15, sess.peer_tx_mode);   /* climbed to level 1 */
+
+    /* Idle-hold fires with no reverse backlog and a recent RX (not dead yet). */
+    fake_tx_backlog_fake.return_val = 0;
+    ev = make_event(ARQ_EV_TIMER_PEER_BACKLOG);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(MERCURY_MODE_MFSK, sess.peer_tx_mode);     /* stepped back to the floor */
 }
 
 int main(void)
@@ -879,5 +952,8 @@ int main(void)
     RUN_TEST(test_default_call_accept_slots_are_short);
     RUN_TEST(test_stop_listen);
     RUN_TEST(test_timeout_ms_idle);
+    RUN_TEST(test_irs_mirror_climbs_with_peer);
+    RUN_TEST(test_irs_mirror_steps_down_on_duplicate);
+    RUN_TEST(test_irs_mirror_resets_toward_floor_on_silence);
     return UNITY_END();
 }

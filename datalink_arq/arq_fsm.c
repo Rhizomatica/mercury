@@ -17,6 +17,7 @@
 #include <stdio.h>
 
 #include "../common/hermes_log.h"
+#include "../common/virtual_clock.h"
 #include "../modem/framer.h"
 #include "../modem/freedv/freedv_api.h"
 #include "../modem/modem_mfsk.h"   /* MERCURY_MODE_MFSK */
@@ -114,6 +115,9 @@ void arq_fsm_init(arq_session_t *sess)
     sess->speed_level    = 0;
     sess->tx_success_count = 0;
     sess->fast_ramp      = true;
+    sess->rx_speed_level = 0;
+    sess->rx_success_count = 0;
+    sess->rx_fast_ramp   = true;
 }
 
 int arq_fsm_timeout_ms(const arq_session_t *sess, uint64_t now)
@@ -150,6 +154,9 @@ static void reset_session_data_state(arq_session_t *sess)
     sess->speed_level        = 0;
     sess->tx_success_count   = 0;
     sess->fast_ramp          = true;
+    sess->rx_speed_level     = 0;
+    sess->rx_success_count   = 0;
+    sess->rx_fast_ramp       = true;
     sess->payload_mode       = arq_mode_ladder[0];   /* MFSK floor */
     sess->peer_tx_mode       = arq_mode_ladder[0];
     sess->pending_disconnect = false;
@@ -167,7 +174,7 @@ static void sess_enter(arq_session_t *sess, arq_conn_state_t new_state,
           arq_conn_state_name(sess->conn_state),
           arq_conn_state_name(new_state));
     sess->conn_state     = new_state;
-    sess->state_enter_ms = hermes_uptime_ms();
+    sess->state_enter_ms = time_now_ms();
     sess->deadline_ms    = deadline_ms;
     sess->deadline_event = deadline_event;
     /* A deferred LISTEN OFF must SURVIVE the transition that the grace period
@@ -193,7 +200,7 @@ static void sess_enter(arq_session_t *sess, arq_conn_state_t new_state,
          * last_tx_progress_ms at 0 and persist forever after retry
          * exhaustion.  Advancing ACKs refresh this timestamp during data
          * flow (see fsm_dflow). */
-        sess->last_tx_progress_ms = hermes_uptime_ms();
+        sess->last_tx_progress_ms = time_now_ms();
     }
     /* Reset data-flow and mode state when returning to idle connection states.
      * Restore peer_tx_mode to initial_payload_mode (= broadcast mode) so the
@@ -204,6 +211,9 @@ static void sess_enter(arq_session_t *sess, arq_conn_state_t new_state,
     {
         sess->dflow_state      = ARQ_DFLOW_IDLE_ISS;
         sess->peer_tx_mode     = sess->initial_payload_mode;
+        sess->rx_speed_level   = 0;   /* mirror back to the floor for a fresh session */
+        sess->rx_success_count = 0;
+        sess->rx_fast_ramp     = true;
         sess->tx_frame_present = false;
         sess->tx_frame_len     = 0;
         sess->tx_frame_retx    = false;
@@ -246,7 +256,7 @@ static void send_frame(int ptype, int mode, size_t len, const uint8_t *frame,
 
 static uint64_t deadline_from_s(float seconds)
 {
-    return hermes_uptime_ms() + (uint64_t)(seconds * 1000.0f + 0.5f);
+    return time_now_ms() + (uint64_t)(seconds * 1000.0f + 0.5f);
 }
 
 /** Update local_snr_x10 EMA from the SNR carried in a received frame event.
@@ -293,44 +303,70 @@ static void apply_speed_level(arq_session_t *sess)
         clamp_payload_mode_to_bandwidth(arq_mode_ladder[sess->speed_level]);
 }
 
-/** Record the outcome of the retained TX frame once its fate is known.
- *  Delivery-driven, no SNR/OLLA/reverse-hold: clean == the frame was delivered
- *  with no retransmission; else it needed at least one retry.  Any retry steps
- *  the ladder DOWN one rung immediately (toward MFSK) for reliability.  A run
- *  of clean deliveries steps it UP: the initial fast ramp climbs one rung per
- *  clean delivery until the first retry, after which it settles to
- *  ARQ_LADDER_UP_SUCCESSES clean deliveries per step. */
-static void record_tx_outcome(arq_session_t *sess, bool clean)
+/** Apply one delivery-driven ladder step to a (level, success_count, fast_ramp)
+ *  triple.  Shared by the ISS (TX outcomes) and the IRS mode mirror (RX
+ *  outcomes) so both ends climb/drop by exactly the same rule and stay locked
+ *  in step without any on-wire mode negotiation.
+ *
+ *  clean == the frame was delivered/received first try: a run of clean outcomes
+ *  climbs — the fast initial ramp climbs one rung per clean outcome until the
+ *  first miss, after which it settles to ARQ_LADDER_UP_SUCCESSES clean outcomes
+ *  per step.  A miss/retry steps DOWN one rung immediately (toward the MFSK
+ *  floor) and ends the fast ramp, so a deep fade parks at the floor with no
+ *  over-climb oscillation.  Returns the signed level change (for logging). */
+static int ladder_step(int *level, int *success_count, bool *fast_ramp, bool clean)
 {
+    int before = *level;
     if (!clean)
     {
-        sess->fast_ramp = false;   /* first retry ends the fast initial ramp */
-        if (sess->speed_level > 0)
-        {
-            sess->speed_level--;
-            HLOGD(LOG_COMP, "Ladder step-down to %d (retry)", sess->speed_level);
-        }
-        sess->tx_success_count = 0;
-        apply_speed_level(sess);
-        return;
+        *fast_ramp = false;
+        if (*level > 0)
+            (*level)--;
+        *success_count = 0;
     }
-
-    sess->tx_success_count++;
-    /* Step-up cadence (the single tuning knob, confirmed at OTA): the fast
-     * initial ramp climbs one rung per clean delivery until the first retry,
-     * after which it settles to ARQ_LADDER_UP_SUCCESSES clean deliveries per
-     * step.  A retry always steps down one rung, so a deep fade parks at the
-     * MFSK floor (no over-climb oscillation) while a clean link ramps quickly. */
-    int need = sess->fast_ramp ? 1 : ARQ_LADDER_UP_SUCCESSES;
-    if (sess->tx_success_count >= need &&
-        sess->speed_level < ARQ_LADDER_LEVELS - 1)
+    else
     {
-        sess->speed_level++;
-        sess->tx_success_count = 0;
-        HLOGD(LOG_COMP, "Ladder step-up to %d (%d clean%s)",
-              sess->speed_level, need, sess->fast_ramp ? ", fast ramp" : "");
+        (*success_count)++;
+        int need = *fast_ramp ? 1 : ARQ_LADDER_UP_SUCCESSES;
+        if (*success_count >= need && *level < ARQ_LADDER_LEVELS - 1)
+        {
+            (*level)++;
+            *success_count = 0;
+        }
     }
+    return *level - before;
+}
+
+/** Record the outcome of the retained TX frame once its fate is known.
+ *  Delivery-driven, no SNR/OLLA/reverse-hold: clean == the frame was delivered
+ *  with no retransmission; else it needed at least one retry. */
+static void record_tx_outcome(arq_session_t *sess, bool clean)
+{
+    int delta = ladder_step(&sess->speed_level, &sess->tx_success_count,
+                            &sess->fast_ramp, clean);
+    if (delta < 0)
+        HLOGD(LOG_COMP, "Ladder step-down to %d (retry)", sess->speed_level);
+    else if (delta > 0)
+        HLOGD(LOG_COMP, "Ladder step-up to %d", sess->speed_level);
     apply_speed_level(sess);
+}
+
+/** IRS: mirror the peer's (ISS) ladder from the outcome of a received DATA
+ *  frame so our payload decoder is already on the mode the peer's NEXT burst
+ *  will use.  clean_new == a new in-order frame decoded first try (mirrors the
+ *  sender's clean delivery); a duplicate (our ACK was lost, the sender retried
+ *  and stepped down) mirrors the sender's step-down.  Keeps peer_tx_mode ==
+ *  arq_mode_ladder[rx_speed_level]. */
+static void irs_mirror_peer_ladder(arq_session_t *sess, bool clean_new)
+{
+    int delta = ladder_step(&sess->rx_speed_level, &sess->rx_success_count,
+                            &sess->rx_fast_ramp, clean_new);
+    sess->peer_tx_mode =
+        clamp_payload_mode_to_bandwidth(arq_mode_ladder[sess->rx_speed_level]);
+    if (delta != 0)
+        HLOGD(LOG_COMP, "IRS RX-mode mirror %s to level %d (mode=%d)",
+              delta > 0 ? "climb" : "step-down",
+              sess->rx_speed_level, sess->peer_tx_mode);
 }
 
 /* IRS: arm the ACK deadline after a received DATA frame.  Stop-and-wait: one
@@ -340,7 +376,7 @@ static void irs_arm_ack_deadline(arq_session_t *sess, const arq_event_t *ev)
 {
     (void)ev;
     dflow_enter(sess, ARQ_DFLOW_ACK_TX,
-                hermes_uptime_ms() + ARQ_CHANNEL_GUARD_MS, ARQ_EV_TIMER_ACK);
+                time_now_ms() + ARQ_CHANNEL_GUARD_MS, ARQ_EV_TIMER_ACK);
 }
 
 static bool deliver_rx_checked(arq_session_t *sess, const arq_event_t *ev)
@@ -541,7 +577,7 @@ static void enter_idle_iss(arq_session_t *sess, bool gained_turn)
         sess->pending_disconnect      = false;
         sess->tx_retries_left         = ARQ_DISCONNECT_RETRY_SLOTS;
         sess_enter(sess, ARQ_CONN_DISCONNECTING,
-                   hermes_uptime_ms() + ARQ_CHANNEL_GUARD_MS,
+                   time_now_ms() + ARQ_CHANNEL_GUARD_MS,
                    ARQ_EV_TIMER_ACK);
     }
     else
@@ -567,7 +603,7 @@ static void enter_idle_iss_guarded(arq_session_t *sess, bool gained_turn)
          * TX->RX and re-sync before our preamble.  The mode is chosen purely
          * by delivery feedback (record_tx_outcome) — no negotiation. */
         dflow_enter(sess, ARQ_DFLOW_DATA_TX,
-                    hermes_uptime_ms() + ARQ_ISS_POST_ACK_GUARD_MS,
+                    time_now_ms() + ARQ_ISS_POST_ACK_GUARD_MS,
                     ARQ_EV_TIMER_ACK);
     }
     else if (sess->pending_disconnect)
@@ -578,7 +614,7 @@ static void enter_idle_iss_guarded(arq_session_t *sess, bool gained_turn)
         sess->pending_disconnect      = false;
         sess->tx_retries_left         = ARQ_DISCONNECT_RETRY_SLOTS;
         sess_enter(sess, ARQ_CONN_DISCONNECTING,
-                   hermes_uptime_ms() + ARQ_CHANNEL_GUARD_MS,
+                   time_now_ms() + ARQ_CHANNEL_GUARD_MS,
                    ARQ_EV_TIMER_ACK);
     }
     else
@@ -625,7 +661,7 @@ static void fsm_disconnected(arq_session_t *sess, const arq_event_t *ev)
 
     case ARQ_EV_APP_CONNECT:
         snprintf(sess->remote_call, CALLSIGN_MAX_SIZE, "%s", ev->remote_call);
-        sess->session_id      = (uint8_t)(hermes_uptime_ms() & 0x7F) | 0x01;
+        sess->session_id      = (uint8_t)(time_now_ms() & 0x7F) | 0x01;
         reset_session_data_state(sess);  /* MFSK-start ladder, clean retransmit */
         sess->tx_retries_left = ARQ_CALL_RETRY_SLOTS;
         sess->disconnect_deadline_ms = 0;
@@ -644,7 +680,7 @@ static void arm_connect_confirm(arq_session_t *sess)
 {
     sess->pending_connect_confirm = true;
     dflow_enter(sess, ARQ_DFLOW_ACK_TX,
-                hermes_uptime_ms() + ARQ_ISS_POST_ACK_GUARD_MS,
+                time_now_ms() + ARQ_ISS_POST_ACK_GUARD_MS,
                 ARQ_EV_TIMER_ACK);
 }
 
@@ -666,7 +702,7 @@ static void fsm_listening(arq_session_t *sess, const arq_event_t *ev)
          * happened yet when we decode the last samples of their CALL frame.
          * Wait ARQ_CHANNEL_GUARD_MS so their relay is in RX before we TX. */
         sess_enter(sess, ARQ_CONN_ACCEPTING,
-                   hermes_uptime_ms() + ARQ_CHANNEL_GUARD_MS,
+                   time_now_ms() + ARQ_CHANNEL_GUARD_MS,
                    ARQ_EV_TIMER_RETRY);
         if (g_cbs.notify_pending)
             g_cbs.notify_pending(ev->remote_call, ev->local_call);
@@ -702,7 +738,7 @@ static void fsm_listening(arq_session_t *sess, const arq_event_t *ev)
         {
             sess->role        = ARQ_ROLE_CALLEE;
             reset_session_data_state(sess);
-            sess->startup_deadline_ms = hermes_uptime_ms() + (ARQ_STARTUP_MAX_S * 1000ULL);
+            sess->startup_deadline_ms = time_now_ms() + (ARQ_STARTUP_MAX_S * 1000ULL);
             if (g_cbs.notify_connected)
                 g_cbs.notify_connected(sess->remote_call, sess->local_call);
             if (g_timing)
@@ -730,7 +766,7 @@ static void fsm_calling(arq_session_t *sess, const arq_event_t *ev)
             sess->role        = ARQ_ROLE_CALLER;
             reset_session_data_state(sess);  /* discard stale retransmit buf; MFSK-start */
             sess->startup_deadline_ms =
-                hermes_uptime_ms() + (ARQ_STARTUP_MAX_S * 1000ULL);
+                time_now_ms() + (ARQ_STARTUP_MAX_S * 1000ULL);
             if (g_cbs.notify_connected)
                 g_cbs.notify_connected(sess->remote_call, sess->local_call);
             if (g_timing)
@@ -786,7 +822,7 @@ static void fsm_accepting(arq_session_t *sess, const arq_event_t *ev)
         sess->role        = ARQ_ROLE_CALLEE;
         reset_session_data_state(sess);  /* discard stale retransmit buf; MFSK-start */
         sess->startup_deadline_ms =
-            hermes_uptime_ms() + (ARQ_STARTUP_MAX_S * 1000ULL);
+            time_now_ms() + (ARQ_STARTUP_MAX_S * 1000ULL);
         if (g_cbs.notify_connected)
             g_cbs.notify_connected(sess->remote_call, sess->local_call);
         if (g_timing)
@@ -826,7 +862,7 @@ static void fsm_accepting(arq_session_t *sess, const arq_event_t *ev)
          * one DATAC15 frame.  Reset the deadline here so we always have
          * a full ARQ_ACCEPT_RX_WINDOW_MS window (guard + DATAC15 frame +
          * margin) measured from the moment our TX actually ends. */
-        sess->deadline_ms = hermes_uptime_ms() + ARQ_ACCEPT_RX_WINDOW_MS;
+        sess->deadline_ms = time_now_ms() + ARQ_ACCEPT_RX_WINDOW_MS;
         break;
 
     case ARQ_EV_TIMER_RETRY:
@@ -934,7 +970,7 @@ static void fsm_connected(arq_session_t *sess, const arq_event_t *ev)
      * clean air-side teardown regardless of role or backlog so the rig is
      * never keyed indefinitely after the host has disconnected. */
     if (sess->pending_disconnect && sess->disconnect_deadline_ms != 0 &&
-        hermes_uptime_ms() >= sess->disconnect_deadline_ms)
+        time_now_ms() >= sess->disconnect_deadline_ms)
     {
         HLOGW(LOG_COMP,
               "Deferred DISCONNECT drain timeout (%ds) — forcing teardown",
@@ -943,7 +979,7 @@ static void fsm_connected(arq_session_t *sess, const arq_event_t *ev)
         sess->disconnect_deadline_ms  = 0;
         sess->tx_retries_left         = ARQ_DISCONNECT_RETRY_SLOTS;
         sess_enter(sess, ARQ_CONN_DISCONNECTING,
-                   hermes_uptime_ms() + ARQ_CHANNEL_GUARD_MS,
+                   time_now_ms() + ARQ_CHANNEL_GUARD_MS,
                    ARQ_EV_TIMER_ACK);
         return;
     }
@@ -969,14 +1005,14 @@ static void fsm_connected(arq_session_t *sess, const arq_event_t *ev)
                   arq_dflow_state_name(sess->dflow_state));
             sess->pending_disconnect = true;
             sess->disconnect_deadline_ms =
-                hermes_uptime_ms() +
+                time_now_ms() +
                 (uint64_t)ARQ_DISCONNECT_DRAIN_TIMEOUT_S * 1000ULL;
             return;
         }
         sess->pending_disconnect      = false;
         sess->tx_retries_left         = ARQ_DISCONNECT_RETRY_SLOTS;
         sess_enter(sess, ARQ_CONN_DISCONNECTING,
-                   hermes_uptime_ms() + ARQ_CHANNEL_GUARD_MS,
+                   time_now_ms() + ARQ_CHANNEL_GUARD_MS,
                    ARQ_EV_TIMER_ACK);
         return;
 
@@ -1031,12 +1067,16 @@ static void fsm_connected(arq_session_t *sess, const arq_event_t *ev)
 static void irs_receive_data(arq_session_t *sess, const arq_event_t *ev)
 {
     update_local_snr(sess, ev);
-    sess->peer_tx_mode = ev->mode;
     bool new_frame = deliver_rx_checked(sess, ev);
+    /* Follow the sender's delivery-driven ladder: a new in-order frame is a
+     * clean delivery on its side (climb); a duplicate means it retried and
+     * stepped down.  This sets peer_tx_mode to the mode of the peer's NEXT
+     * burst so the payload decoder is already there when it arrives. */
+    irs_mirror_peer_ladder(sess, new_frame);
     if (new_frame && g_timing)
         arq_timing_record_data_rx(g_timing, (int)ev->seq,
                                   (int)ev->data_bytes, sess->local_snr_x10);
-    sess->last_rx_ms = hermes_uptime_ms();
+    sess->last_rx_ms = time_now_ms();
     sess->peer_has_data = new_frame
                           ? (ev->rx_flags & ARQ_FLAG_HAS_DATA) != 0
                           : true;
@@ -1051,7 +1091,7 @@ static void iss_frame_delivered(arq_session_t *sess)
     sess->tx_frame_len     = 0;
     sess->tx_frame_retx    = false;
     sess->tx_seq           = (uint8_t)(sess->tx_frame_seq + 1);
-    sess->last_tx_progress_ms = hermes_uptime_ms();
+    sess->last_tx_progress_ms = time_now_ms();
     sess->tx_retries_left     = ARQ_DATA_RETRY_SLOTS;
     if (g_cbs.send_buffer_status)
         g_cbs.send_buffer_status(session_tx_backlog(sess));
@@ -1073,7 +1113,7 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
                  * time to reset decoders from TX→RX before our preamble. */
                 sess->need_initial_guard = false;
                 dflow_enter(sess, ARQ_DFLOW_DATA_TX,
-                            hermes_uptime_ms() + ARQ_ISS_POST_ACK_GUARD_MS,
+                            time_now_ms() + ARQ_ISS_POST_ACK_GUARD_MS,
                             ARQ_EV_TIMER_ACK);
             }
             else
@@ -1199,7 +1239,7 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
                  * budget (or when a disconnect is pending); otherwise reset the
                  * counter, step the mode down (this run of ACK timeouts is a
                  * definitive non-delivery), and keep trying. */
-                uint64_t now = hermes_uptime_ms();
+                uint64_t now = time_now_ms();
                 uint64_t budget_ms = (uint64_t)ARQ_NO_PROGRESS_TIMEOUT_S * 1000ULL;
                 bool no_progress_dead =
                     (now - sess->last_tx_progress_ms) >= budget_ms;
@@ -1240,8 +1280,7 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
         else if (ev->id == ARQ_EV_RX_DATA)
         {
             update_local_snr(sess, ev);
-            sess->peer_tx_mode = ev->mode;
-            sess->last_rx_ms = hermes_uptime_ms();
+            sess->last_rx_ms = time_now_ms();
 
             if (ev->seq == sess->rx_expected)
             {
@@ -1270,6 +1309,7 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
                       "RX_DATA in WAIT_ACK (dup seq=%d expected=%d) — re-TX our seq=%d",
                       (int)ev->seq, (int)sess->rx_expected, (int)sess->tx_frame_seq);
                 deliver_rx_checked(sess, ev);   /* logs dup; no delivery */
+                irs_mirror_peer_ladder(sess, false);  /* peer retried → mirror step-down */
                 sess->tx_frame_retx = true;
                 dflow_enter(sess, ARQ_DFLOW_DATA_TX, UINT64_MAX, ARQ_EV_TIMER_RETRY);
                 send_data_burst(sess);
@@ -1294,7 +1334,7 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
              * first got data so that silence window starts now (the peer may be
              * about to send — give it a full turn to bid). */
             if (sess->irs_data_wait_ms == 0)
-                sess->irs_data_wait_ms = hermes_uptime_ms();
+                sess->irs_data_wait_ms = time_now_ms();
             break;
         }
         else if (ev->id == ARQ_EV_TIMER_PEER_BACKLOG)
@@ -1315,7 +1355,7 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
                 uint64_t since = sess->last_rx_ms;
                 if (sess->irs_data_wait_ms > since) since = sess->irs_data_wait_ms;
                 if (since == 0 ||
-                    hermes_uptime_ms() - since <
+                    time_now_ms() - since <
                         (uint64_t)ARQ_IRS_SELFPROMOTE_S * 1000ULL)
                 {
                     enter_idle_irs(sess);   /* re-arm; not silent long enough yet */
@@ -1324,7 +1364,7 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
                 sess->irs_data_wait_ms = 0;
                 sess->tx_retries_left = ARQ_DATA_RETRY_SLOTS;
                 dflow_enter(sess, ARQ_DFLOW_DATA_TX,
-                            hermes_uptime_ms() + ARQ_ISS_POST_ACK_GUARD_MS,
+                            time_now_ms() + ARQ_ISS_POST_ACK_GUARD_MS,
                             ARQ_EV_TIMER_ACK);
             }
             else if (sess->pending_disconnect)
@@ -1332,12 +1372,12 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
                 sess->pending_disconnect = false;
                 sess->tx_retries_left    = ARQ_DISCONNECT_RETRY_SLOTS;
                 sess_enter(sess, ARQ_CONN_DISCONNECTING,
-                           hermes_uptime_ms() + ARQ_CHANNEL_GUARD_MS,
+                           time_now_ms() + ARQ_CHANNEL_GUARD_MS,
                            ARQ_EV_TIMER_ACK);
             }
             else if (ev->id == ARQ_EV_TIMER_PEER_BACKLOG &&
                      sess->last_rx_ms > 0 &&
-                     hermes_uptime_ms() - sess->last_rx_ms >=
+                     time_now_ms() - sess->last_rx_ms >=
                          (uint64_t)ARQ_NO_PROGRESS_TIMEOUT_S * 1000ULL)
             {
                 /* IRS liveness net (replaces keepalive): the peer has gone
@@ -1346,14 +1386,24 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
                  * instead of re-arming the idle hold forever. */
                 HLOGW(LOG_COMP,
                       "IRS inactivity (%llus without RX) — disconnecting",
-                      (unsigned long long)((hermes_uptime_ms() - sess->last_rx_ms) / 1000));
+                      (unsigned long long)((time_now_ms() - sess->last_rx_ms) / 1000));
                 sess->tx_retries_left = ARQ_DISCONNECT_RETRY_SLOTS;
                 sess_enter(sess, ARQ_CONN_DISCONNECTING,
-                           hermes_uptime_ms() + ARQ_CHANNEL_GUARD_MS,
+                           time_now_ms() + ARQ_CHANNEL_GUARD_MS,
                            ARQ_EV_TIMER_ACK);
             }
             else
             {
+                /* Reset-on-miss: a full idle hold passed with no DATA.  If a
+                 * lost ACK left our RX-mode mirror climbed ABOVE the sender
+                 * (which stepped down on its retry), we can no longer decode
+                 * its bursts — silently stalling.  Step the mirror down one
+                 * rung toward the floor so the two ends re-rendezvous; the
+                 * MFSK floor is the guaranteed common ground.  At faster modes
+                 * frames arrive well within the hold, so this only fires on a
+                 * genuine stall (at the floor a step-down is a harmless no-op). */
+                if (sess->rx_speed_level > 0)
+                    irs_mirror_peer_ladder(sess, false);
                 enter_idle_irs(sess);   /* re-arm the idle hold */
             }
         }
@@ -1467,7 +1517,7 @@ void arq_fsm_dispatch(arq_session_t *sess, const arq_event_t *ev)
     case ARQ_EV_RX_CALL:
     case ARQ_EV_RX_ACCEPT:
     case ARQ_EV_RX_DISCONNECT:
-        sess->last_rx_ms = hermes_uptime_ms();
+        sess->last_rx_ms = time_now_ms();
         /* Session ID validation: drop frames from a different session when
          * we are in CONNECTED or DISCONNECTING state (CALL/ACCEPT frames
          * are handled separately and carry session_id in their own format). */
