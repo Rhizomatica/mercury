@@ -75,7 +75,10 @@ static inline void sock_wire_wr_u64(uint8_t *p, uint64_t v)
 /* i16 wire sample <-> i32 modem-ring sample */
 static inline int32_t sock_wire_i16_to_ring(uint16_t raw)
 {
-    return ((int32_t)(int16_t) raw) << 16;
+    /* Shift in unsigned then convert back: a signed left-shift of a negative
+     * value (raw == 0x8000 -> -32768) is undefined behaviour (UBSan abort);
+     * the unsigned shift is well-defined and byte-identical on 2's-complement. */
+    return (int32_t)((uint32_t)(int16_t) raw << 16);
 }
 
 static inline int16_t sock_wire_ring_to_i16(int32_t s)
