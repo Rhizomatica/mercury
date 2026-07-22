@@ -317,21 +317,45 @@ static int mfsk_be_rawdata_rx(void *ctx, uint8_t *bytes_out, const int16_t *demo
 
     mfsk_downmix(h);
 
+    /* Primary sync anchor: the preamble at the burst head.  The payload's NPAY
+     * symbols start P symbols after it. */
     double metric = 0.0;
     int off = mfsk_sync_search(h->bf, h->rxlen, 1, h->preT, h->preE,
                                h->preN, h->Nofdm, 0, &metric);
-    h->last_sync = (off >= 0);
-    if (off < 0)
-        return 0;
+    int payoff = (off >= 0) ? off + h->P * h->Nofdm : -1;
+    int nbytes = (payoff >= 0) ? mfsk_try_payload(h, payoff, bytes_out) : 0;
 
-    int payoff = off + h->P * h->Nofdm;
-    int nbytes = mfsk_try_payload(h, payoff, bytes_out);
-    if (nbytes > 0)
+    /* Fallback anchor: the postamble at the burst tail.  On a half-duplex HF
+     * link the HEAD of a burst is the fragile part — the far end may still be
+     * keyed, releasing PTT, or the local AGC/turnaround is still settling — so a
+     * clipped preamble is common (seen directly over the -x sock virtual clock:
+     * the ISS starts data while the IRS is finishing its connect turnaround, and
+     * the ~13.5 s MFSK burst is then lost to a full ACK-timeout retransmit).
+     * The postamble is the same P known symbols emitted after the data, so it
+     * anchors the payload just as well: the NPAY data symbols immediately
+     * PRECEDE it.  Only used when the preamble path did not already decode. */
+    if (nbytes <= 0)
     {
-        h->rxlen = 0;   /* burst consumed */
-        return nbytes;
+        double pmetric = 0.0;
+        int poff = mfsk_sync_search(h->bf, h->rxlen, 1, h->pstT, h->pstE,
+                                    h->pstN, h->Nofdm, 0, &pmetric);
+        if (poff >= 0)
+        {
+            int ppayoff = poff - h->NPAY * h->Nofdm;
+            int pn = (ppayoff >= 0) ? mfsk_try_payload(h, ppayoff, bytes_out) : 0;
+            if (pn > 0)
+            {
+                off = poff;
+                nbytes = pn;
+            }
+        }
     }
-    return 0;
+
+    h->last_sync = (nbytes > 0) || (off >= 0);
+    if (nbytes <= 0)
+        return 0;
+    h->rxlen = 0;   /* burst consumed */
+    return nbytes;
 }
 
 static void mfsk_be_get_stats(void *ctx, int *sync, float *snr)
