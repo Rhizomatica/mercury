@@ -559,9 +559,19 @@ try_shm_connect2:
         run_tests_rx(g_modem);
     }
 
-    // Create TX and RX threads
-    pthread_create(&tx_thread_tid, NULL, tx_thread, (void *)g_modem);
-    pthread_create(&rx_thread_tid, NULL, rx_thread, (void *)g_modem);
+    // Create TX and RX threads.  Explicit 8 MB stacks: the codec2 OFDM
+    // mod/demod paths allocate large VLA buffers for the wide modes (e.g.
+    // DATAC16's LDPC interleaver), which overflows the macOS default pthread
+    // stack of 512 KB (SIGBUS in ofdm_ldpc_interleave_tx); glibc's default is
+    // 8 MB, so match it everywhere.
+    {
+        pthread_attr_t modem_thread_attr;
+        pthread_attr_init(&modem_thread_attr);
+        pthread_attr_setstacksize(&modem_thread_attr, 8 * 1024 * 1024);
+        pthread_create(&tx_thread_tid, &modem_thread_attr, tx_thread, (void *)g_modem);
+        pthread_create(&rx_thread_tid, &modem_thread_attr, rx_thread, (void *)g_modem);
+        pthread_attr_destroy(&modem_thread_attr);
+    }
 
     return 0;
 }
