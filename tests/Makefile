@@ -45,7 +45,7 @@ ARQ_STUBS = datalink_arq/arq_test_stubs.c
 TEST_BINS = test_ring_buffer test_arq_protocol test_arq_timing test_arq_fsm \
             test_tcp_interfaces test_resampler test_arq_olla test_arq_sim \
             test_arq_conn test_cfg_utils test_arq_tnc test_channel_busy \
-            test_freedv_harq
+            test_freedv_harq test_sock_wire test_virtual_clock
 
 .PHONY: all test clean
 
@@ -87,7 +87,7 @@ test_arq_timing: datalink_arq/test_arq_timing.c $(UNITY_SRC) $(ARQ_STUBS) \
 
 # ARQ FSM tests (state transitions, callback invocations)
 test_arq_fsm: datalink_arq/test_arq_fsm.c $(UNITY_SRC) $(ARQ_STUBS) \
-              ../datalink_arq/arq_fsm.c \
+              ../datalink_arq/arq_fsm.c ../common/virtual_clock.c \
               ../datalink_arq/arq_protocol.c ../datalink_arq/arq_timing.c \
               ../datalink_arq/arith.c
 	$(CC) $(CFLAGS) -I../modem/freedv -o $@ $^ $(LDFLAGS)
@@ -103,7 +103,8 @@ test_tcp_interfaces: data_interfaces/test_tcp_interfaces.c $(UNITY_SRC) ../modem
 SIM_SRC = sim/sim_clock.c sim/sim_channel.c sim/sim_endpoint.c \
           sim/sim_translate.c sim/sim_core.c sim/sim_props.c
 test_arq_sim: sim/test_arq_sim.c $(UNITY_SRC) $(ARQ_STUBS) $(SIM_SRC) \
-              ../datalink_arq/arq_fsm.c ../datalink_arq/arq_protocol.c \
+              ../datalink_arq/arq_fsm.c ../common/virtual_clock.c \
+              ../datalink_arq/arq_protocol.c \
               ../datalink_arq/arq_timing.c ../datalink_arq/arith.c
 	$(CC) $(CFLAGS) -Isim -I../modem/freedv -o $@ $^ $(LDFLAGS)
 
@@ -130,6 +131,13 @@ test_freedv_harq: modem/test_freedv_harq.c $(UNITY_SRC) \
                   ../modem/freedv/mpdecode_core.c ../modem/freedv/phi0.c \
                   ../modem/freedv/H_256_768_22.c
 	$(CC) $(CFLAGS) -I../modem/freedv -o $@ $^ $(LDFLAGS) -lm
+# -x sock wire codec: byte-exact pin of the lockstep frame layout
+test_sock_wire: audioio/test_sock_wire.c $(UNITY_SRC)
+	$(CC) $(CFLAGS) -I../audioio -o $@ $^ $(LDFLAGS)
+
+# Virtual clock (time base for -x sock); hermes_uptime_ms stubbed in-test
+test_virtual_clock: common/test_virtual_clock.c $(UNITY_SRC) ../common/virtual_clock.c
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
 clean:
 	rm -f $(TEST_BINS)

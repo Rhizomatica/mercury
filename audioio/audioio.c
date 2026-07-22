@@ -394,13 +394,10 @@ static void fifo_ignore_sigpipe(void)
 /* ------------------------------------------------------------------ */
 /*
  * Virtual-clock bench transport: an AF_UNIX SOCK_STREAM connection to a
- * channel simulator that owns time.  Wire format (little-endian; one
- * frame per audio block; the contract is shared with the skywave bench,
- * sock_frames.py):
- *
- *   u32 len                          bytes after this field
- *   sim -> station:  u64 seq | u64 virtual_now_ms | u16 n | n i16 samples
- *   station -> sim:  u64 seq | u8 ptt | u16 n | n i16 samples
+ * channel simulator that owns time.  The frame codec (layout, endianness,
+ * sample conversion) lives in sock_wire.h, pinned byte-exact by
+ * tests/audioio/test_sock_wire.c against the skywave sock_frames.py
+ * contract.
  *
  * The sim SENDS the RX block first, then waits for the station's TX
  * block (lockstep barrier), so this thread does recv -> send per block
@@ -408,8 +405,7 @@ static void fifo_ignore_sigpipe(void)
  * frame; after depositing the RX samples the thread advances the
  * process virtual clock (common/virtual_clock.h) and wakes the ARQ
  * event loop, so every ARQ timer runs in signal time -- there is no
- * real-time pacing anywhere on this path.  Samples are mono i16 on the
- * wire; the modem rings hold i32 (i16 << 16, as on the FIFO path).
+ * real-time pacing anywhere on this path.
  */
 #ifndef _WIN32
 
@@ -417,14 +413,12 @@ static void fifo_ignore_sigpipe(void)
 #include <sys/un.h>
 
 #include "virtual_clock.h"
+#include "sock_wire.h"
 
 #ifndef MSG_NOSIGNAL
 #define MSG_NOSIGNAL 0   /* macOS: SIGPIPE is ignored via fifo_ignore_sigpipe() */
 #endif
 
-#define SOCK_AUDIO_HDR_SIM_BYTES 18            /* u64 seq + u64 vnow_ms + u16 n */
-#define SOCK_AUDIO_HDR_STA_BYTES 11            /* u64 seq + u8 ptt + u16 n      */
-#define SOCK_AUDIO_MAX_SAMPLES   65535u        /* n is a u16                    */
 #define SOCK_AUDIO_IO_TIMEOUT_MS 200           /* recv/send slice, so the loop
                                                   keeps seeing shutdown flags   */
 
@@ -442,49 +436,6 @@ static void fifo_ignore_sigpipe(void)
  * arq_get_trx() returns 0 = RX, 1 = TX (arq.h). */
 extern void arq_notify_virtual_time(void);
 extern int  arq_get_trx(void);
-
-static inline uint16_t sock_rd_u16(const uint8_t *p)
-{
-    return (uint16_t)(p[0] | ((uint16_t)p[1] << 8));
-}
-
-static inline uint32_t sock_rd_u32(const uint8_t *p)
-{
-    return (uint32_t)p[0] | ((uint32_t)p[1] << 8) |
-           ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
-}
-
-static inline uint64_t sock_rd_u64(const uint8_t *p)
-{
-    uint64_t v = 0;
-    for (int i = 7; i >= 0; i--)
-        v = (v << 8) | p[i];
-    return v;
-}
-
-static inline void sock_wr_u16(uint8_t *p, uint16_t v)
-{
-    p[0] = (uint8_t)(v & 0xff);
-    p[1] = (uint8_t)(v >> 8);
-}
-
-static inline void sock_wr_u32(uint8_t *p, uint32_t v)
-{
-    for (int i = 0; i < 4; i++)
-    {
-        p[i] = (uint8_t)(v & 0xff);
-        v >>= 8;
-    }
-}
-
-static inline void sock_wr_u64(uint8_t *p, uint64_t v)
-{
-    for (int i = 0; i < 8; i++)
-    {
-        p[i] = (uint8_t)(v & 0xff);
-        v >>= 8;
-    }
-}
 
 static int sock_connect_retry(const char *path)
 {
@@ -592,10 +543,10 @@ static void *sock_transport_thread(void *device_ptr)
 {
     const char *path = (const char *) device_ptr;
 
-    uint8_t *payload = (uint8_t *) malloc(SOCK_AUDIO_MAX_SAMPLES * sizeof(int16_t));
-    int32_t *ring32  = (int32_t *) malloc(SOCK_AUDIO_MAX_SAMPLES * sizeof(int32_t));
-    uint8_t *txframe = (uint8_t *) malloc(4 + SOCK_AUDIO_HDR_STA_BYTES +
-                                          SOCK_AUDIO_MAX_SAMPLES * sizeof(int16_t));
+    uint8_t *payload = (uint8_t *) malloc(SOCK_WIRE_MAX_SAMPLES * sizeof(int16_t));
+    int32_t *ring32  = (int32_t *) malloc(SOCK_WIRE_MAX_SAMPLES * sizeof(int32_t));
+    uint8_t *txframe = (uint8_t *) malloc(4 + SOCK_WIRE_HDR_STA_BYTES +
+                                          SOCK_WIRE_MAX_SAMPLES * sizeof(int16_t));
     if (!payload || !ring32 || !txframe)
     {
         HLOGE("audio-sock", "out of memory");
@@ -612,29 +563,26 @@ static void *sock_transport_thread(void *device_ptr)
     while (fd >= 0 && !shutdown_ && !audio_shutdown_)
     {
         /* ---- recv one sim frame ---- */
-        uint8_t hdr[SOCK_AUDIO_HDR_SIM_BYTES];
+        uint8_t hdr[SOCK_WIRE_HDR_SIM_BYTES];
         uint8_t lenbuf[4];
         int rc = sock_recv_full(fd, lenbuf, sizeof(lenbuf));
-        uint32_t len = (rc == 1) ? sock_rd_u32(lenbuf) : 0;
+        uint32_t len = (rc == 1) ? sock_wire_rd_u32(lenbuf) : 0;
 
         uint16_t n = 0;
         uint64_t seq = 0, vnow_ms = 0;
         if (rc == 1)
         {
-            if (len < SOCK_AUDIO_HDR_SIM_BYTES ||
-                len > SOCK_AUDIO_HDR_SIM_BYTES + SOCK_AUDIO_MAX_SAMPLES * sizeof(int16_t))
+            if (len < SOCK_WIRE_HDR_SIM_BYTES ||
+                len > SOCK_WIRE_HDR_SIM_BYTES + SOCK_WIRE_MAX_SAMPLES * sizeof(int16_t))
             {
                 HLOGE("audio-sock", "bad sim frame length %u", len);
                 rc = -1;
             }
             else if ((rc = sock_recv_full(fd, hdr, sizeof(hdr))) == 1)
             {
-                seq     = sock_rd_u64(hdr);
-                vnow_ms = sock_rd_u64(hdr + 8);
-                n       = sock_rd_u16(hdr + 16);
-                if ((uint32_t)(SOCK_AUDIO_HDR_SIM_BYTES + n * sizeof(int16_t)) != len)
+                if (sock_wire_parse_sim(hdr, len, &seq, &vnow_ms, &n) != 0)
                 {
-                    HLOGE("audio-sock", "sim frame length %u disagrees with n=%u", len, n);
+                    HLOGE("audio-sock", "sim frame length %u disagrees with header", len);
                     rc = -1;
                 }
                 else if (n > 0)
@@ -665,7 +613,7 @@ static void *sock_transport_thread(void *device_ptr)
 
         /* ---- deposit RX samples (i16 -> i32) ---- */
         for (uint16_t i = 0; i < n; i++)
-            ring32[i] = ((int32_t)(int16_t) sock_rd_u16(payload + (size_t)i * 2)) << 16;
+            ring32[i] = sock_wire_i16_to_ring(sock_wire_rd_u16(payload + (size_t)i * 2));
 
         size_t rx_bytes = (size_t)n * sizeof(int32_t);
         while (rx_bytes > 0 && !shutdown_ && !audio_shutdown_)
@@ -711,23 +659,12 @@ static void *sock_transport_thread(void *device_ptr)
             avail = want;
         if (avail > 0)
             read_buffer(playback_buffer, (uint8_t *) ring32, avail);
-        size_t have = avail / sizeof(int32_t);
 
-        uint8_t ptt = (arq_get_trx() == 1) ? 1 : 0;
+        uint8_t ptt = (arq_get_trx() == 1) ? SOCK_WIRE_PTT_ON : SOCK_WIRE_PTT_OFF;
+        size_t frame_len = sock_wire_build_station(txframe, seq, ptt, n,
+                                                   ring32, avail / sizeof(int32_t));
 
-        sock_wr_u32(txframe, (uint32_t)(SOCK_AUDIO_HDR_STA_BYTES + (size_t)n * sizeof(int16_t)));
-        sock_wr_u64(txframe + 4, seq);
-        txframe[12] = ptt;
-        sock_wr_u16(txframe + 13, n);
-        uint8_t *txp = txframe + 4 + SOCK_AUDIO_HDR_STA_BYTES;
-        for (uint16_t i = 0; i < n; i++)
-        {
-            int16_t s = (i < have) ? (int16_t)(ring32[i] >> 16) : 0;
-            sock_wr_u16(txp + (size_t)i * 2, (uint16_t) s);
-        }
-
-        if (sock_send_full(fd, txframe,
-                           4 + SOCK_AUDIO_HDR_STA_BYTES + (size_t)n * sizeof(int16_t)) != 1)
+        if (sock_send_full(fd, txframe, frame_len) != 1)
         {
             close(fd);
             fd = -1;
