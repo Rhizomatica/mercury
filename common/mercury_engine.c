@@ -55,8 +55,6 @@ static int apply_audio_defaults(int audio_system, char *input_dev, size_t in_siz
     case AUDIO_SUBSYSTEM_PULSE:
     case AUDIO_SUBSYSTEM_WASAPI:
     case AUDIO_SUBSYSTEM_DSOUND:
-        input_dev[0] = '\0';
-        output_dev[0] = '\0';
         break;
     case AUDIO_SUBSYSTEM_OSS:
         if (input_dev[0] == 0)  snprintf(input_dev, in_size, "/dev/dsp");
