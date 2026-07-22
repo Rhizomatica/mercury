@@ -175,9 +175,22 @@ typedef struct
     bool     fast_ramp;                /* faster initial climb: 1 rung per clean
                                         * delivery until the first retry, then
                                         * ARQ_LADDER_UP_SUCCESSES-per-step       */
-    int      peer_tx_mode;             /* mode peer last TX'd in = my payload
-                                        * RX decoder mode when IRS; updated
-                                        * from ev->mode on every DATA frame    */
+    int      peer_tx_mode;             /* my payload RX decoder mode when IRS =
+                                        * arq_mode_ladder[rx_speed_level]; the
+                                        * mode the peer's NEXT DATA burst uses  */
+
+    /* --- IRS-side mirror of the peer's (ISS) delivery-driven ladder --------
+     * The IRS observes the same per-frame outcomes the sender climbs on (a
+     * clean new frame == a clean delivery; a duplicate == a sender retry), so
+     * applying the identical ladder rule keeps rx_speed_level == the sender's
+     * speed_level with no on-wire mode negotiation.  Without it the decoder can
+     * only ever track a mode it has ALREADY decoded, so it misses the first
+     * burst of every mode the sender climbs to (stalling the transfer at the
+     * MFSK floor).  A prolonged RX gap (a lost ACK left us above the sender)
+     * steps this back down toward the floor so the two ends re-rendezvous. */
+    int      rx_speed_level;           /* mirror of the peer's ladder index    */
+    int      rx_success_count;         /* clean receives toward a mirror step-up*/
+    bool     rx_fast_ramp;             /* mirror of the peer's fast initial ramp*/
 
     /* --- Retry/timeout bookkeeping --- */
     int      tx_retries_left;          /* retries remaining for current frame  */
