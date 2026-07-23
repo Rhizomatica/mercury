@@ -22,7 +22,7 @@
  * Pending event queue
  * ====================================================================== */
 
-#define SIM_PENDING_MAX 32
+#define SIM_PENDING_MAX 64   /* windowed bursts enqueue K deliveries + TX_COMPLETE */
 
 typedef enum {
     SIM_PENDING_FRAME,       /* deliver a translated frame to target */
@@ -75,44 +75,70 @@ static void enqueue(sim_t *s, const sim_pending_t *p)
 static void drain_outframes_from(sim_t *s, sim_endpoint_t *sender,
                                  sim_endpoint_t *peer, uint64_t now_ms)
 {
-    sim_outframe_t of;
-    while (sim_endpoint_take_outframe(sender, &of))
-    {
-        int dir = (sender == s->a) ? 0 : 1;
-        uint32_t airtime = of.is_pattern
-                           ? sim_channel_pattern_airtime_ms()
-                           : sim_channel_airtime_ms(of.mode, of.len);
-        uint64_t tx_end  = now_ms + airtime;
+    int dir = (sender == s->a) ? 0 : 1;
 
-        /* TX_COMPLETE back to sender at TX-end time. */
+    /* Pull everything the sender emitted in this dispatch into a local list so
+     * we can group it into KEYDOWNS.  A windowed sender emits K DATA frames of
+     * one keydown back-to-back (burst_remaining counts down to 0 on the last);
+     * they share one preamble/one TX↔RX turnaround, so the whole keydown gets a
+     * SINGLE TX_COMPLETE at the end and the frames deliver back-to-back — that
+     * is the throughput lever the leap exploits.  Stop-and-wait emits one frame
+     * (burst_remaining==0) and this degenerates to exactly the old behaviour. */
+    sim_outframe_t frames[SIM_OUTBOX_MAX];
+    int n = 0;
+    while (n < SIM_OUTBOX_MAX && sim_endpoint_take_outframe(sender, &frames[n]))
+        n++;
+
+    int i = 0;
+    while (i < n)
+    {
+        /* Keydown extent: a pattern ACK is a lone keydown; consecutive DATA
+         * frames form one keydown until burst_remaining hits 0. */
+        int j = i;
+        if (!frames[i].is_pattern)
+            while (j < n - 1 && frames[j].burst_remaining > 0) j++;
+
+        uint64_t tx_cursor = now_ms;   /* running airtime within the keydown */
+        for (int k = i; k <= j; k++)
+        {
+            uint32_t airtime = frames[k].is_pattern
+                               ? sim_channel_pattern_airtime_ms()
+                               : sim_channel_airtime_ms(frames[k].mode, frames[k].len);
+
+            /* Each frame in the burst is erased independently (shared keydown,
+             * per-frame FEC outcome). */
+            uint64_t deliver_at = 0;
+            bool delivered = frames[k].is_pattern
+                ? sim_channel_pattern_schedule(s->ch, tx_cursor, dir, &deliver_at)
+                : sim_channel_schedule(s->ch, tx_cursor, dir, frames[k].mode,
+                                       frames[k].len, &deliver_at);
+            if (delivered)
+            {
+                sim_pending_t frame_ev = {
+                    .fire_at_ms   = deliver_at,
+                    .target       = peer,
+                    .kind         = SIM_PENDING_FRAME,
+                    .frame_len    = frames[k].len,
+                    .rx_snr       = s->rx_snr_db,
+                    .is_pattern   = frames[k].is_pattern,
+                    .pattern_kind = frames[k].pattern_kind,
+                };
+                if (!frames[k].is_pattern)
+                    memcpy(frame_ev.frame, frames[k].buf, frames[k].len);
+                enqueue(s, &frame_ev);
+            }
+            tx_cursor += airtime;
+        }
+
+        /* One TX_COMPLETE for the whole keydown, at its end. */
         sim_pending_t tx_done = {
-            .fire_at_ms = tx_end,
+            .fire_at_ms = tx_cursor,
             .target     = sender,
             .kind       = SIM_PENDING_TX_COMPLETE,
         };
         enqueue(s, &tx_done);
 
-        /* Delivery to peer (may be erased). */
-        uint64_t deliver_at = 0;
-        bool delivered = of.is_pattern
-                         ? sim_channel_pattern_schedule(s->ch, now_ms, dir, &deliver_at)
-                         : sim_channel_schedule(s->ch, now_ms, dir, of.mode, of.len,
-                                                &deliver_at);
-        if (delivered)
-        {
-            sim_pending_t frame_ev = {
-                .fire_at_ms   = deliver_at,
-                .target       = peer,
-                .kind         = SIM_PENDING_FRAME,
-                .frame_len    = of.len,
-                .rx_snr       = s->rx_snr_db, /* default 12 dB; sim_set_rx_snr models fades */
-                .is_pattern   = of.is_pattern,
-                .pattern_kind = of.pattern_kind,
-            };
-            if (!of.is_pattern)
-                memcpy(frame_ev.frame, of.buf, of.len);
-            enqueue(s, &frame_ev);
-        }
+        i = j + 1;
     }
 }
 

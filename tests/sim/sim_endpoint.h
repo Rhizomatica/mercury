@@ -10,6 +10,8 @@
 
 typedef struct sim_endpoint sim_endpoint_t;
 
+#define SIM_OUTBOX_MAX 16   /* >= ARQ_BURST_MAX; frames buffered per dispatch */
+
 typedef struct {
     uint8_t buf[1280];
     size_t  len;

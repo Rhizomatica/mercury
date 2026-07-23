@@ -10,6 +10,7 @@
 
 #define SIM_TX_CAP   (256 * 1024)
 #define SIM_RX_CAP   (256 * 1024)
+/* SIM_OUTBOX_MAX lives in sim_endpoint.h (shared with the core). */
 
 struct sim_endpoint {
     arq_session_t sess;
@@ -19,8 +20,21 @@ struct sim_endpoint {
     uint8_t tx[SIM_TX_CAP]; size_t tx_head, tx_len;   /* app bytes to send   */
     uint8_t rx[SIM_RX_CAP]; size_t rx_len;            /* delivered app bytes */
 
-    sim_outframe_t outbox;   /* frame emitted by send_tx_frame, drained by core */
+    /* FIFO of frames emitted by send_tx_frame/send_pattern_ack in one dispatch,
+     * drained by the core. A windowed sender emits K DATA frames of one keydown
+     * back-to-back (burst_remaining counts down to 0 on the last); stop-and-wait
+     * emits a single frame (burst_remaining==0) — the degenerate case. */
+    sim_outframe_t outbox[SIM_OUTBOX_MAX];
+    int            outbox_head, outbox_count;
 };
+
+static void outbox_push(sim_endpoint_t *ep, const sim_outframe_t *of)
+{
+    assert(ep->outbox_count < SIM_OUTBOX_MAX && "sim outbox overflow");
+    int tail = (ep->outbox_head + ep->outbox_count) % SIM_OUTBOX_MAX;
+    ep->outbox[tail] = *of;
+    ep->outbox_count++;
+}
 
 /* v1 context: set before each arq_fsm_dispatch. Also updates arq_conn.my_call_sign
  * so send_call_accept() fills the correct SRC callsign in CALL/ACCEPT frames. */
@@ -69,9 +83,10 @@ size_t sim_endpoint_delivered(sim_endpoint_t *ep, uint8_t *out, size_t out_cap)
 
 bool sim_endpoint_take_outframe(sim_endpoint_t *ep, sim_outframe_t *out)
 {
-    if (!ep->outbox.present) return false;
-    *out = ep->outbox;
-    ep->outbox.present = false;
+    if (ep->outbox_count == 0) return false;
+    *out = ep->outbox[ep->outbox_head];
+    ep->outbox_head = (ep->outbox_head + 1) % SIM_OUTBOX_MAX;
+    ep->outbox_count--;
     return true;
 }
 
@@ -81,20 +96,22 @@ static void cb_send_tx_frame(int packet_type, int mode, size_t frame_size,
                               const uint8_t *frame, int burst_remaining)
 {
     sim_endpoint_t *ep = s_active;
-    /* Stop-and-wait: at most one outframe in flight at a time. The core drains
-     * the outbox before the next dispatch that can emit a frame, so if this
-     * fires while an outframe is present, the burst machinery has changed. */
-    assert(!ep->outbox.present &&
-           "send_tx_frame fired with outbox full: multi-frame burst detected");
-    assert(frame_size <= sizeof(ep->outbox.buf));
-    memcpy(ep->outbox.buf, frame, frame_size);
-    ep->outbox.len           = frame_size;
-    ep->outbox.packet_type   = packet_type;
-    ep->outbox.mode          = mode;
-    ep->outbox.burst_remaining = burst_remaining;
-    ep->outbox.is_pattern    = false;
-    ep->outbox.pattern_kind  = 0;
-    ep->outbox.present       = true;
+    /* Windowed sender: K DATA frames of one keydown are emitted back-to-back,
+     * burst_remaining counting down to 0 on the last; the core groups them into
+     * one keydown (one preamble/turnaround). Stop-and-wait emits one frame with
+     * burst_remaining==0 — the degenerate single-frame keydown. */
+    sim_outframe_t of;
+    memset(&of, 0, sizeof(of));
+    assert(frame_size <= sizeof(of.buf));
+    memcpy(of.buf, frame, frame_size);
+    of.len             = frame_size;
+    of.packet_type     = packet_type;
+    of.mode            = mode;
+    of.burst_remaining = burst_remaining;
+    of.is_pattern      = false;
+    of.pattern_kind    = 0;
+    of.present         = true;
+    outbox_push(ep, &of);
 }
 
 /* Pattern ACK: a degenerate outframe with no coded bytes.  sim_core schedules
@@ -103,15 +120,16 @@ static void cb_send_tx_frame(int packet_type, int mode, size_t frame_size,
 static void cb_send_pattern_ack(int mode, int pattern_kind)
 {
     sim_endpoint_t *ep = s_active;
-    assert(!ep->outbox.present &&
-           "send_pattern_ack fired with outbox full");
-    ep->outbox.len             = 0;
-    ep->outbox.packet_type     = -1;
-    ep->outbox.mode            = mode;
-    ep->outbox.burst_remaining = 0;
-    ep->outbox.is_pattern      = true;
-    ep->outbox.pattern_kind    = pattern_kind;
-    ep->outbox.present         = true;
+    sim_outframe_t of;
+    memset(&of, 0, sizeof(of));
+    of.len             = 0;
+    of.packet_type     = -1;
+    of.mode            = mode;
+    of.burst_remaining = 0;
+    of.is_pattern      = true;
+    of.pattern_kind    = pattern_kind;
+    of.present         = true;
+    outbox_push(ep, &of);
 }
 
 static void cb_notify_connected(const char *remote_call, const char *local_call) { (void)remote_call; (void)local_call; }
