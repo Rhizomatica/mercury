@@ -137,6 +137,10 @@ jobs:
 
       - name: Verify signatures
         run: |
+          # osslsigncode is not baked into the certum-signer image; install it
+          # for the verification pass (the signing itself uses jsign).
+          command -v osslsigncode >/dev/null || \
+            { apt-get update && apt-get install -y --no-install-recommends osslsigncode; }
           for f in mercury.exe windows-installer/mercury-ui.exe; do
             osslsigncode verify "$f" || { echo "::error::Signature verification failed for $f"; exit 1; }
           done
