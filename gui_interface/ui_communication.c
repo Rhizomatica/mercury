@@ -505,15 +505,17 @@ int ui_comm_init(ui_ctx_t *ctx, uint16_t ws_port, bool tls_enabled,
     }
 
     // Initialize WebSocket server (bidirectional: status TX + command RX)
-    // Serve static test page from websocket/web/ directory
+    // Serve static test page from websocket/web/ directory.
+    // connect callback is registered before the server thread starts to avoid
+    // a race on aarch64 where the callback ptr and data could be seen
+    // out-of-order by the server thread.
     if (ws_init(&ctx->ws, ws_port, "gui_interface/websocket/web",
-                ws_command_handler, ctx, tls_enabled) != 0) {
+                ws_command_handler, ctx,
+                ws_connect_handler, ctx,
+                tls_enabled) != 0) {
         HLOGE(UI_LOG_TAG, "Failed to init WebSocket server on port %u", ws_port);
         return -1;
     }
-    // Register connect callback - sends all device lists and radio list on each new UI connection
-    ctx->ws.connect_callback = ws_connect_handler;
-    ctx->ws.connect_callback_data = ctx;
     HLOGI(UI_LOG_TAG, "WebSocket server ready on port %u", ws_port);
 
     // Start publisher thread - periodic status broadcaster (via WebSocket)
