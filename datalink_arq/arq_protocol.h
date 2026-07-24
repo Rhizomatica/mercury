@@ -209,12 +209,26 @@ typedef struct
  * mod-256, and seq % N is collision-free over any window of N consecutive seqs
  * ONLY when N | 256 — otherwise a window straddling the 255->0 wrap aliases two
  * distinct in-flight seqs onto one slot (e.g. with N=48, seq 246 and seq 6 both
- * hit slot 6), silently clobbering one block.  32 divides 256, holds a healthy
- * burst, and its 4-byte SACK bitmap (covers base+1..+32) fits DATAC16's 14-byte
- * control frame (8 hdr + 4 = 12).  A larger window needs a wider SACK carrier
- * than DATAC16 — a Phase-2 fast-ACK lever, not a slot-count bump. */
-#define ARQ_WIN_SLOTS             32   /* MUST divide 256 (mod-256 seq space)  */
-#define ARQ_SACK_BITMAP_BYTES      4   /* covers base+1..+32; fits DATAC16     */
+ * hit slot 6), silently clobbering one block.
+ *
+ * 64 (Phase-2b) lets the adaptive depth send ~2 QAM16C2 frames per keydown
+ * (26 blocks/frame) so K>1 finally engages on GOOD channels — where the ladder
+ * fast-climbs to QAM16C2 and the old 32-slot window held barely one frame, so
+ * the turnaround-amortization leap never fired.  Target: QAM16C2 K=2 ≈ +28 %.
+ *
+ * The SACK bitmap stays 4 bytes (covers only base+1..+32, still fitting
+ * DATAC16's 14-byte frame) — the window can exceed the SACK coverage safely:
+ * a CLEAN burst retires fully via rcv_base (no bitmap needed, any window), and a
+ * hole beyond +32 is simply retransmitted (iss_apply_sack defaults "ahead of the
+ * bitmap" to not-delivered) — a duplicate the IRS suppresses, never a stall.
+ * This costs only redundant retransmits when a stuck base trails 32+ delivered
+ * blocks, which needs a mid-SNR channel with holes AND grown depth; a clean
+ * channel never stalls its base and a poor channel keeps depth 1.  Widening the
+ * SACK (RLE on DATAC16, or a DATAC15 carrier) to remove that waste is a later
+ * lever (docs/WINDOWED-ARQ.md Phase-2b options). */
+#define ARQ_WIN_SLOTS             64   /* MUST divide 256 (mod-256 seq space)  */
+#define ARQ_SACK_BITMAP_BYTES      4   /* covers base+1..+32; fits DATAC16;
+                                        * window may exceed this (see above)   */
 
 /* One block as passed to/from the DATA container codec.  On build, `data`
  * points at the caller's bytes; on parse, `data` points into the frame buf. */
