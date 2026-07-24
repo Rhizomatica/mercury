@@ -307,6 +307,16 @@ static inline int32_t tx_sample_with_gain(int16_t sample, float gain, float *pea
  * decode slower than real time (issue #81 follow-up). */
 #define RX_MAX_BACKLOG_SAMPLES 16000
 
+/* Windowed ARQ: RX burst ceiling for payload OFDM modes.  A windowed keydown
+ * carries up to this many DATA frames behind one preamble; the RX acquires
+ * with this ceiling and each decoded frame re-anchors the burst state machine
+ * to the sender's true (self-described) burst end (freedv_set_frames_remaining
+ * via arq burst_remaining).  Control (DATAC16) and the MFSK fringe floor keep
+ * one frame per keydown (see pool_open_mode_locked), so connect and weak-signal
+ * RX are unchanged.  Bounds the over-run when an ENTIRE burst fails to decode
+ * (nothing re-anchors): keep modest.  Matches ARQ_BURST_MAX (the TX cap). */
+#define MODEM_RX_BURST_CEILING 5
+
 /* Persistent per-mode codec pool.  One backend instance per mode, opened once
  * at init and kept alive; the active TX modem and each RX decoder point at a
  * pooled instance.  A generic slot array replaces the former hand-enumerated
@@ -452,8 +462,19 @@ static int pool_open_mode_locked(int mode, int frames_per_burst, int verbosity)
     void *ctx = be->open(mode);
     if (!ctx)
         return -1;
+    /* Payload OFDM modes RX a sender-owned multi-frame keydown, so they acquire
+     * with the burst ceiling and stay synced across the whole keydown; the
+     * per-frame self-describing re-anchor (rx_decoder_consume_chunk) exits sync
+     * at the true burst end.  Control (DATAC16) and the MFSK fringe floor stay
+     * at the caller's value (1 frame/keydown) — connect and weak-signal RX are
+     * byte-for-byte unchanged.  A burst-mode instance under single-frame TX
+     * still behaves as 1/keydown because every frame re-anchors to remaining. */
+    int fpb = frames_per_burst;
+    if (mode != ARQ_CONTROL_MODE && mode != MERCURY_MODE_MFSK &&
+        fpb < MODEM_RX_BURST_CEILING)
+        fpb = MODEM_RX_BURST_CEILING;
     if (be->configure)
-        be->configure(ctx, frames_per_burst, verbosity);
+        be->configure(ctx, fpb, verbosity);
     modem_pool_slot_t *s = &modem_mode_pool[modem_mode_pool_n++];
     s->mode = mode;
     s->codec.be = be;
@@ -1582,6 +1603,28 @@ static void rx_decoder_consume_chunk(rx_decoder_state_t *state,
                                    payload_mode,
                                    bitrate_bps,
                                    snr_est);
+
+            /* Windowed ARQ: re-anchor this decoder's burst state machine to the
+             * sender's self-described burst end.  A DATA frame carries
+             * frames-remaining-in-this-keydown; EVERY other frame type
+             * (control / broadcast / CQ / ACK) is a single-frame keydown, so
+             * remaining = 0 ends the burst now — byte-for-byte the pre-windowing
+             * one-frame-per-keydown behaviour.  Backends without multi-frame
+             * bursts (MFSK) leave the hook NULL and are untouched.  This is what
+             * lets a burst-mode payload instance stay synced across K frames
+             * yet never over-run a short/single burst into the next keydown. */
+            if (be->set_frames_remaining)
+            {
+                size_t hdr_len = (nbytes_out >= 2) ? nbytes_out - 2 : nbytes_out;
+                int remaining = 0;
+                if (parse_frame_header(state->bytes_out, (uint32_t)hdr_len, NULL)
+                        == PACKET_TYPE_ARQ_DATA)
+                    remaining = arq_protocol_data_burst_remaining(state->bytes_out,
+                                                                  hdr_len);
+                pthread_mutex_lock(&modem_freedv_lock);
+                be->set_frames_remaining(ctx, remaining);
+                pthread_mutex_unlock(&modem_freedv_lock);
+            }
         }
 
         /* Whole chunk fed and freedv produced nothing and wants no input
@@ -1652,16 +1695,18 @@ void *tx_thread(void *g_modem)
         }
 
         size_t payload_bytes_per_modem_frame = 0;
-        int frames_per_burst = 1;
-        int tx_frames_per_burst = 1;
+        /* The buffered TX paths (broadcast + the legacy ARQ fallback below)
+         * always send ONE frame per keydown.  Never derive a TX burst size
+         * from the codec's configured frames_per_burst: that is the RX-side
+         * acquisition ceiling (MODEM_RX_BURST_CEILING for payload modes under
+         * windowed ARQ), and sizing `required` by it would make broadcast wait
+         * for a multi-frame backlog that never comes.  Multi-frame TX keydowns
+         * are exclusively action-driven (arq_action_t.frame_count, capped to
+         * ARQ_BURST_MAX in the action path above). */
+        const int tx_frames_per_burst = 1;
         pthread_mutex_lock(&modem_freedv_lock);
         payload_bytes_per_modem_frame = modem->payload_bytes_per_modem_frame;
-        if (modem_codec_valid(&modem->codec))
-            frames_per_burst = modem->codec.be->frames_per_burst(modem->codec.ctx);
         pthread_mutex_unlock(&modem_freedv_lock);
-
-        if (payload_bytes_per_modem_frame != 14)
-            tx_frames_per_burst = frames_per_burst;
 
         size_t required = payload_bytes_per_modem_frame * (size_t)tx_frames_per_burst;
         if (required == 0)

@@ -72,6 +72,14 @@ struct modem_backend {
      * unsupported; the modem layer null-checks before calling). */
     void  (*harq_reset)(void *ctx);
     void  (*set_harq)(void *ctx, int enabled);
+
+    /* Windowed ARQ: re-anchor the burst RX state machine from a just-decoded
+     * frame's self-described "frames remaining in this keydown" (0 = burst
+     * ends now).  Called by the modem RX after every decoded frame on a
+     * burst-mode instance so a multi-frame keydown exits sync exactly at
+     * end-of-burst.  Optional: NULL for backends without multi-frame bursts
+     * (e.g. MFSK, which stays one frame per keydown). */
+    void  (*set_frames_remaining)(void *ctx, int remaining);
 };
 
 static inline bool modem_codec_valid(const modem_codec_t *c)
