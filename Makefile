@@ -330,24 +330,63 @@ fyne-ui-macos-universal-dmg: fyne-ui-macos-universal
 	rm -rf $(FYNE_UI_DIR)/dmg-stage
 	@echo "  -> $(abspath $(MACOS_DMG))  (universal)"
 
-# Optional Authenticode signing of the cross-built .exe (osslsigncode, on Linux).
-# Set WIN_SIGN_PFX (and WIN_SIGN_PASS) to sign; leave unset for an unsigned build
-# (default, no behaviour change). A self-signed cert only proves the mechanics —
-# it does not clear SmartScreen on untrusted machines. See docs/WINDOWS-SIGNING.md.
+# ---- Authenticode signing (Windows binaries) ----
+# Two modes:
+#   A) WIN_SIGN_PFX  set → sign with a local .pfx file via osslsigncode (self-signed test or OV/EV cert).
+#   B) WIN_SIGN_PFX  unset, sign script available → sign via Certum SimplySign cloud (PKCS#11).
+#   C) Neither → unsigned build (default, no behaviour change).
+#
+# For mode B, the script at SIGN_SCRIPT automates the SimplySign Desktop login
+# (Xvfb + xdotool + TOTP) and then calls osslsigncode over PKCS#11.
+# See docs/WINDOWS-SIGNING.md for details.
+#
 WIN_SIGN_PFX  ?=
 WIN_SIGN_PASS ?=
 WIN_SIGN_TS   ?= http://timestamp.digicert.com
 WIN_SIGN_NAME ?= Mercury HF Modem
 WIN_SIGN_URL  ?= https://github.com/Rhizomatica/mercury
-# $(call win_sign,file) — sign in place iff WIN_SIGN_PFX is set.
+SIGN_SCRIPT   ?= $(HOME)/files/MYSELF/code-signing/sign.sh
+
+# $(call win_sign,file) — sign in place if a signing method is available.
 define win_sign
 	@if [ -n "$(WIN_SIGN_PFX)" ]; then \
-		echo "Signing (Authenticode): $(1)"; \
+		echo "Signing (pfx): $(1)"; \
 		osslsigncode sign -pkcs12 "$(WIN_SIGN_PFX)" -pass "$(WIN_SIGN_PASS)" \
 			-n "$(WIN_SIGN_NAME)" -i "$(WIN_SIGN_URL)" -h sha256 -ts "$(WIN_SIGN_TS)" \
 			-in "$(1)" -out "$(1).signed" && mv -f "$(1).signed" "$(1)"; \
+	elif [ -x "$(SIGN_SCRIPT)" ]; then \
+		echo "Signing (SimplySign cloud): $(1)"; \
+		$(SIGN_SCRIPT) "$(1)"; \
+	else \
+		echo "WARNING: no signing method available — $(1) is unsigned"; \
 	fi
 endef
+
+# Sign the already-built mercury.exe (or any .exe).  Uses SimplySign cloud if
+# WIN_SIGN_PFX is not set (the common case for CI / developer workstations).
+# Requires: sign.sh script, xvfb, fluxbox, xdotool, opensc, osslsigncode.
+sign: mercury.exe
+	$(call win_sign,mercury.exe)
+
+# Sign an arbitrary binary (e.g. make sign BIN=mercury-ui.exe)
+sign-bin:
+	$(call win_sign,$(BIN))
+
+# Sign both the payload .exe and the GUI .exe for the Windows zip.
+windows-zip-signed: windows fyne-ui-windows
+	rm -rf $(WINDOWS_DIR) $(WINDOWS_ZIP)
+	mkdir -p $(WINDOWS_DIR)
+	cp mercury.exe $(WINDOWS_DIR)/
+	cp $(WINDOWS_INSTALLER_DIR)/$(FYNE_UI_BIN) $(WINDOWS_DIR)/
+	$(call win_sign,$(WINDOWS_DIR)/mercury.exe)
+	$(call win_sign,$(WINDOWS_DIR)/$(FYNE_UI_BIN))
+	cp mercury.ini.example $(WINDOWS_DIR)/
+	if ls $(HAMLIB_W64_DIR)/bin/*.dll >/dev/null 2>&1; then \
+		cp $(HAMLIB_W64_DIR)/bin/*.dll $(WINDOWS_DIR)/; \
+	fi
+	zip -9r $(WINDOWS_ZIP) $(WINDOWS_DIR)
+	rm -rf $(WINDOWS_DIR)
+	@echo "Created $(WINDOWS_ZIP) (signed)"
 
 windows-zip: windows fyne-ui-windows
 	rm -rf $(WINDOWS_DIR) $(WINDOWS_ZIP)
