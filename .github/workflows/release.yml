@@ -1,17 +1,12 @@
 # Mercury CD Pipeline - Generate Release
 #
-# Triggers:
-#   - Manually via workflow_dispatch (provide the new version to release)
+# Triggers: manual via workflow_dispatch (provide version).
 #
 # Steps:
-#   1. Update debian/changelog with new section (version header, release bullets
-#      with all PR titles since the last tag, and maintainer/date footer)
-#   2. Bump VERSION__ macro in main.c
-#   3. Bump MERCURY_VERSION in common/mercury_version.h
-#   4. Bump version string in mercury.1
-#   5. Commit and push those changes: "Updates for release X.Y.Z"
-#   6. Build the Windows x64 zip (make windows-zip)
-#   7. Create a GitHub release with the zip attached (gh release create)
+#   1. Bump version strings + changelog, commit, push
+#   2. Build unsigned Windows zip (debian container, mingw cross-compile)
+#   3. Authenticode-sign the binaries (certum-signer container, jsign + SimplySign)
+#   4. Create GitHub release with signed zip
 
 name: Release
 
@@ -24,144 +19,161 @@ on:
         type: string
 
 jobs:
-  release:
-    name: Release Mercury v${{ inputs.version }}
+  # ---- Version bump + commit ----
+  bump:
+    name: Bump version to v${{ inputs.version }}
     runs-on: ubuntu-latest
     container: debian:trixie
-    timeout-minutes: 30
-    permissions:
-      contents: write
-      pull-requests: read
-
+    timeout-minutes: 10
+    outputs:
+      version: ${{ inputs.version }}
     steps:
-      - name: Validate version format
+      - name: Validate version
         run: |
-          VERSION="${{ inputs.version }}"
-          if ! echo "$VERSION" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$'; then
-            echo "::error::Invalid version format: '${VERSION}' — expected X.Y.Z (e.g. 1.9.9)"
-            exit 1
-          fi
+          echo "${{ inputs.version }}" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$' || {
+            echo "::error::Invalid version: ${{ inputs.version }}"; exit 1; }
 
-      - name: Install dependencies
+      - name: Install deps
         run: |
-          apt-get update
-          apt-get install -y --no-install-recommends \
-            ca-certificates \
-            build-essential \
-            git \
-            gh \
-            golang-go \
-            gcc-mingw-w64-x86-64 \
-            mingw-w64-x86-64-dev \
-            mingw-w64-common \
-            mingw-w64-tools \
-            gcc-mingw-w64 \
-            zip
+          apt-get update && apt-get install -y --no-install-recommends ca-certificates git gh
 
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 0
           ref: mercuryv2
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Git safe directory
-        run: git config --global --add safe.directory /__w/mercury/mercury
-
-      - name: Configure git
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Git config
         run: |
+          git config --global --add safe.directory /__w/mercury/mercury
           git config user.name "GitHub Actions"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git remote set-url origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}.git"
 
       - name: Collect PR titles since last tag
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        shell: bash
+        env: { GH_TOKEN: "${{ secrets.GITHUB_TOKEN }}" }
         run: |
-          LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null) || {
-            echo "No tags found — falling back to initial commit"
-            LAST_TAG=$(git rev-list --max-parents=0 HEAD)
-          }
-          echo "Collecting PRs since: ${LAST_TAG}"
-
-          # Get the ISO timestamp of the tag's commit so we can query the API
+          LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || git rev-list --max-parents=0 HEAD)
           LAST_TAG_DATE=$(git log -1 --format="%cI" "${LAST_TAG}")
-          echo "Tag commit date: ${LAST_TAG_DATE}"
-
-          # Query GitHub directly for PRs merged into mercuryv2 after that date,
-          # sorted oldest-first so the changelog order matches the release history.
-          PR_TITLES=$(gh pr list \
-            --repo Rhizomatica/mercury \
-            --state merged \
-            --base mercuryv2 \
-            --search "merged:>${LAST_TAG_DATE}" \
-            --limit 200 \
-            --json title,mergedAt \
+          PR_TITLES=$(gh pr list --repo Rhizomatica/mercury --state merged --base mercuryv2 \
+            --search "merged:>${LAST_TAG_DATE}" --limit 200 --json title,mergedAt \
             --jq 'sort_by(.mergedAt) | .[].title')
-
           PR_ENTRIES=""
           while IFS= read -r title; do
             [[ -z "$title" ]] && continue
-            title="${title%.}"  # strip trailing period if present
-            PR_ENTRIES="${PR_ENTRIES}  * ${title}.\n"
+            PR_ENTRIES="${PR_ENTRIES}  * ${title%.}.\n"
           done <<< "$PR_TITLES"
+          { echo 'PR_ENTRIES<<EOF'; printf '%b' "$PR_ENTRIES"; echo 'EOF'; } >> "$GITHUB_ENV"
 
-          {
-            echo 'PR_ENTRIES<<EOF'
-            printf '%b' "$PR_ENTRIES"
-            echo 'EOF'
-          } >> "$GITHUB_ENV"
-
-      - name: Update debian/changelog
+      - name: Bump version files
         run: |
-          VERSION="${{ inputs.version }}"
-          DATE=$(date -R)
+          V="${{ inputs.version }}"
+          D=$(date -R)
+          { printf 'mercury (%s-1) unstable; urgency=medium\n\n  * Release %s.\n%b\n\n -- Rafael Diniz <rafael@riseup.net>  %s\n\n' "$V" "$V" "$PR_ENTRIES" "$D"; } | cat - debian/changelog > t && mv t debian/changelog
+          sed -i 's/#define VERSION__ "[^"]*"/#define VERSION__ "'"$V"'"/' main.c
+          sed -i 's/#define MERCURY_VERSION "[^"]*"/#define MERCURY_VERSION "'"$V"'"/' common/mercury_version.h
+          sed -i 's/"Mercury [0-9]*\.[0-9]*\.[0-9]*"/"Mercury '"$V"'"/' mercury.1
+          sed -i 's/#define MyAppVersion "[^"]*"/#define MyAppVersion "'"$V"'"/' windows-installer/installer.iss
 
-          {
-            printf 'mercury (%s-1) unstable; urgency=medium\n\n' "$VERSION"
-            printf '  * Release %s.\n' "$VERSION"
-            printf '%b' "$PR_ENTRIES"
-            printf '\n\n -- Rafael Diniz <rafael@riseup.net>  %s\n\n' "$DATE"
-          } | cat - debian/changelog > debian/changelog.tmp
-          mv debian/changelog.tmp debian/changelog
-
-      - name: Update VERSION__ in main.c
+      - name: Commit and push
+        env: { GITHUB_TOKEN: "${{ secrets.GITHUB_TOKEN }}" }
         run: |
-          sed -i 's/#define VERSION__ "[^"]*"/#define VERSION__ "${{ inputs.version }}"/' main.c
-
-      - name: Update MERCURY_VERSION in common/mercury_version.h
-        run: |
-          sed -i 's/#define MERCURY_VERSION "[^"]*"/#define MERCURY_VERSION "${{ inputs.version }}"/' common/mercury_version.h
-
-      - name: Update mercury.1
-        run: |
-          sed -i 's/"Mercury [0-9]*\.[0-9]*\.[0-9]*"/"Mercury ${{ inputs.version }}"/' mercury.1
-
-      - name: Update installer version
-        run: |
-          sed -i 's/#define MyAppVersion "[^"]*"/#define MyAppVersion "${{ inputs.version }}"/' windows-installer/installer.iss
-
-      - name: Commit and push release files
-        run: |
+          git remote set-url origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}.git"
           git add debian/changelog main.c common/mercury_version.h mercury.1 windows-installer/installer.iss
           git commit -m "Updates for release ${{ inputs.version }}"
           git push origin mercuryv2
 
+  # ---- Build unsigned Windows zip ----
+  build:
+    name: Build Windows zip
+    needs: bump
+    runs-on: ubuntu-latest
+    container: debian:trixie
+    timeout-minutes: 20
+    steps:
+      - name: Install deps
+        run: |
+          apt-get update && apt-get install -y --no-install-recommends \
+            ca-certificates build-essential git golang-go \
+            gcc-mingw-w64-x86-64 mingw-w64-x86-64-dev mingw-w64-common zip
+
+      - uses: actions/checkout@v4
+        with: { ref: mercuryv2, fetch-depth: 1 }
+
       - name: Build Windows zip
         run: make windows-zip
 
-      - name: Create GitHub release
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          ZIP_FILE=$(ls mercury-${{ inputs.version }}-w64-*.zip)
-          gh release create "v${{ inputs.version }}" \
-            "./${ZIP_FILE}" \
-            --repo Rhizomatica/mercury \
-            --target mercuryv2 \
-            --generate-notes \
-            --title "Mercury ${{ inputs.version }}"
+      - name: Upload unsigned binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-unsigned
+          path: |
+            mercury.exe
+            windows-installer/mercury-ui.exe
+            mercury-${{ inputs.version }}-w64-*.zip
 
+  # ---- Sign Windows binaries (Certum SimplySign) ----
+  sign:
+    name: Sign Windows binaries
+    needs: build
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/reactiveui/certum-signer:latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with: { ref: mercuryv2, sparse-checkout: code-signing }
+
+      - name: Download unsigned binaries
+        uses: actions/download-artifact@v4
+        with: { name: windows-unsigned }
+
+      - name: Sign binaries
+        env:
+          CERTUM_EMAIL:   ${{ secrets.CERTUM_EMAIL }}
+          CERTUM_OTP_URI: ${{ secrets.CERTUM_OTP_URI }}
+        run: |
+          code-signing/sign.sh mercury.exe windows-installer/mercury-ui.exe
+          code-signing/sign-logout.sh
+
+      - name: Verify signatures
+        run: |
+          for f in mercury.exe windows-installer/mercury-ui.exe; do
+            osslsigncode verify "$f" || { echo "::error::Signature verification failed for $f"; exit 1; }
+          done
+
+      - name: Re-pack signed zip
+        run: |
+          ZIP=$(ls mercury-${{ inputs.version }}-w64-*.zip | head -1)
+          mkdir -p dist/mercury-${{ inputs.version }}
+          cp mercury.exe dist/mercury-${{ inputs.version }}/
+          cp windows-installer/mercury-ui.exe dist/mercury-${{ inputs.version }}/
+          cp mercury.ini.example dist/mercury-${{ inputs.version }}/
+          cd dist && zip -9r "../${ZIP}" "mercury-${{ inputs.version }}" && cd ..
+          rm -rf dist
+
+      - name: Upload signed zip
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-signed
+          path: mercury-${{ inputs.version }}-w64-*.zip
+
+  # ---- Create GitHub release ----
+  release:
+    name: Create GitHub release
+    needs: sign
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - name: Download signed zip
+        uses: actions/download-artifact@v4
+        with: { name: windows-signed }
+
+      - name: Create release
+        env: { GH_TOKEN: "${{ secrets.GITHUB_TOKEN }}" }
+        run: |
+          ZIP=$(ls mercury-${{ inputs.version }}-w64-*.zip)
+          gh release create "v${{ inputs.version }}" "./${ZIP}" \
+            --repo Rhizomatica/mercury --target mercuryv2 --generate-notes \
+            --title "Mercury ${{ inputs.version }}"
