@@ -8,27 +8,24 @@
 #define MyAppURL "https://github.com/Rhizomatica/mercury"
 #define MyAppExeName "mercury-ui.exe"
 
-; --- Optional Authenticode signing --------------------------------------
-; The SimplySign cert lives in Certum's cloud HSM — no .pfx file exists.
-; The SimplySign Desktop app injects the cert into the Windows cert store.
-; Once SimplySign Desktop is running and authenticated, sign with:
+; --- Authenticode signing ----------------------------------------------
+; The EXE files (payload + installer) are signed with osslsigncode on Linux,
+; not with Inno's SignTool. The SimplySign cert has no .pfx — signing uses
+; the cloud HSM via PKCS#11. See docs/WINDOWS-SIGNING.md.
 ;
+; Build unsigned, then sign afterward:
+;   1. ISCC installer.iss                         (builds Mercury_*.exe)
+;   2. make sign BIN=Mercury_$(VERSION)_Setup.exe  (signs it on Linux)
+;
+; If you prefer Inno-side signing on Windows (requires SimplySign Desktop):
 ;   ISCC /DSIGN /Smercury="signtool sign /a /fd sha256 \
 ;         /tr http://time.certum.pl /td sha256 $f" installer.iss
 ;
-; The /a flag auto-selects the cert from the Windows cert store.
-; Without /DSIGN the installer builds unsigned exactly as before.
-;
-; For a local .pfx (self-signed test or OV/EV token), use:
+; Old local-.pfx path (self-signed test / OV/EV token):
 ;   ISCC /DSIGN /Smercury="signtool sign /f cert.pfx /p PW /fd sha256 \
 ;         /tr http://timestamp.digicert.com /td sha256 $f" installer.iss
-;
-; See docs/WINDOWS-SIGNING.md for the full signing workflow.
-#ifdef SIGN
-  #define ExeFlags "ignoreversion signonce"
-#else
-  #define ExeFlags "ignoreversion"
-#endif
+#undef SIGN
+#define ExeFlags "ignoreversion"
 
 [Setup]
 ; NOTE: The value of AppId uniquely identifies this application. Do not use the same AppId value in installers for other applications.
@@ -51,10 +48,6 @@ WizardStyle=modern
 PrivilegesRequired=admin
 ChangesEnvironment=yes
 ArchitecturesInstallIn64BitMode=x64
-#ifdef SIGN
-SignTool=mercury
-SignedUninstaller=yes
-#endif
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"

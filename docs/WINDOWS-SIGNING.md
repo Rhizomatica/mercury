@@ -53,13 +53,15 @@ Under the hood this runs `~/files/MYSELF/code-signing/sign.sh`, which:
 
 ## What can be signed, and where
 
-| Artifact | Built on | Sign with |
-|---|---|---|
-| `mercury.exe`, `mercury-ui.exe` | Linux (mingw cross-build) | `make sign` (SimplySign cloud via PKCS#11), or `osslsigncode -pkcs12` (local .pfx) |
-| `Mercury_HF_Modem_Setup.exe` (installer) | Windows (Inno Setup) | `signtool.exe` on Windows VM with SimplySign Desktop installed (`/a` auto-selects cert) |
+| Artifact | Built on | Signed on | Tool |
+|---|---|---|---|
+| `mercury.exe`, `mercury-ui.exe` | Linux (mingw) | Linux | `osslsigncode` via PKCS#11 (`make sign`) |
+| `Mercury_*_Setup.exe` (installer) | Windows or Wine (Inno Setup ISCC) | Linux | `osslsigncode` via PKCS#11 (`make sign-bin BIN=Setup.exe`) |
 
-For the payload `.exe` files: sign on Linux. The installer must be signed on
-Windows (Inno Setup's `SignTool` directive needs native `signtool.exe`).
+Everything is signed on Linux with `osslsigncode` + PKCS#11. The Inno Setup
+compiler (ISCC) builds the installer unsigned — then the resulting `.exe` is
+signed afterward, exactly like the payload binaries. The Inno `SignTool`
+directive is not used; post-build signing is simpler and works from CI.>
 
 ## Setup: SimplySign Desktop + signing scripts
 
@@ -111,24 +113,26 @@ osslsigncode verify mercury-signed.exe
 
 `.pfx` / `.p12` files are git-ignored — never commit a signing key.
 
-## Mode C: Sign the installer on Windows
+## Mode C: Sign the installer
 
-`installer.iss` gates signing behind the `SIGN` preprocessor define. On a
-Windows machine with SimplySign Desktop installed and authenticated:
+The Inno Setup compiler (ISCC) builds `Mercury_$(VERSION)_Setup.exe`. That `.exe`
+is then signed with the same `osslsigncode` PKCS#11 path as the payload binaries:
 
-```bat
-ISCC.exe /DSIGN ^
-  /Smercury="signtool sign /a /fd sha256 /tr http://time.certum.pl /td sha256 $f" ^
-  windows-installer\installer.iss
+```bash
+# On Linux (or Windows with Inno):
+ISCC windows-installer/installer.iss          # builds Mercury_1.9.10_Setup.exe
+
+# Then sign it on Linux:
+make sign-bin BIN=Mercury_1.9.10_Setup.exe
 ```
 
-The `/a` flag auto-selects the SimplySign cert from the Windows cert store
-(SimplySign Desktop injects it there). No `.pfx` file or password needed.
+If you prefer Inno-side signing on Windows (with SimplySign Desktop installed):
+```bat
+ISCC /DSIGN /Smercury="signtool sign /a /fd sha256 /tr http://time.certum.pl /td sha256 $f" installer.iss
+```
 
-With `/DSIGN` Inno:
-- signs `mercury-ui.exe` inside the installer (`signonce` flag), and
-- signs the generated `Mercury_HF_Modem_Setup.exe` and its uninstaller
-  (`SignTool` / `SignedUninstaller`).
+The `/a` flag auto-selects the cert from the Windows cert store. But the
+recommended path is post-build signing on Linux — same tooling, same CI.
 
 ## Certificate details
 
