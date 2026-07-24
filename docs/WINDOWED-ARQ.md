@@ -351,3 +351,61 @@ the last big good-channel lever (est. +15% on top of the +47.6%).
 4. MFSK floor unchanged; 5. skywave A/B vs VARA/Armstrong/v1.9.9 across an
    SNR×fade grid (success: > stop-and-wait everywhere, ≥ VARA on the large
    majority of cells, fringe ≥ today).
+
+## Phase 5 — beat-VARA A/B: baseline, honest target, and how to run it
+
+The reference is the **frozen v2 skywave bakeoff** (`skywave/SKYWAVE-BAKEOFF-
+REPORT-2026-07-23-v2.pdf`): all five modems (armstrong, Mercury 1.9.9/1.9.10,
+VARA HF, FreeDATA, ARDOP) measured head-to-head on one machine, identical
+seeds, equal-PEP drive, ALSA-loopback real-time audio. Its Mercury column is
+the **pre-windowing stop-and-wait baseline**, so Phase 5 = re-run only the
+Mercury column with the `arq-windowed` binary (fast-ACK on) and drop it into
+the frozen table. (We do NOT run VARA — its numbers are already in the report.)
+
+**Frozen Tier-2 bulk (32 KB), B/s:**
+
+| cell            | VARA | armstrong | freedata | ardop | Mercury 1.9.9 |
+|-----------------|------|-----------|----------|-------|---------------|
+| clean           | 464  | 292       | 161      | 148   | **111**       |
+| mid-SNR AWGN    | 283  | 146       | 160      | 86    | 98            |
+| moderate fade   | 155  | 118       | 131      | 62    | 82            |
+
+**Honest target (do not overclaim).** The windowed leap removes the stop-and-
+wait *turnaround tax* (deterministic + `-x sock` proof: +47.6% window-128,
++12% fast-ACK, block-packing trap and fade-drain fixed). It does NOT change the
+codec2-OFDM *modem ceiling*. So on clean/light-fade bulk, VARA's high-order QAM
+(464 B/s at equal PEP) is out of reach for ANY ARQ change — even armstrong, the
+robustness leader, concedes that cell at 292. The contestable ground vs VARA is
+exactly the report's finding: **fading + low SNR**, where VARA's QAM gears
+collapse and armstrong beats it in 9 of 14 faded cells. The defensible Phase-5
+claim is therefore: *the leap lifts Mercury from ~half-the-field to competitive
+with armstrong/FreeDATA on bulk, strictly beats stop-and-wait everywhere, and
+contests VARA in the fade/low-SNR cells* — not "beats VARA everywhere."
+
+**Rig requirement (why it is not run in the dev sandbox).** The bakeoff's
+`mercury` adapter uses the **4-card `snd-aloop` ALSA rig** + a per-modem
+equal-PEP TXGAIN calibration (`results/mercury_txgain.txt`) + a CPU-headroom
+validity gate on a controlled machine. A bare `modprobe snd-aloop` gives only
+one Loopback card, so channel_sim's 4-device relay map has nowhere to bind and
+every connect fails (`NOCONN`) — a transport-setup gap, not a Mercury result.
+Apples-to-apples numbers must come from the report's rig (or an equivalently
+configured, quiet host).
+
+**Ready-to-run recipe (on the configured rig):**
+```
+# 1. equal-PEP calibration (writes results/mercury_txgain.txt)
+MERCURY_BIN=/path/to/mercury-arq-windowed MERCURY_FAST_ACK=1 \
+  python3 -m skywave.sweep_runner --calibrate-pep mercury
+
+# 2. Tier-2 bulk cells (matches the frozen report)
+cat > cells-bulk.json <<'EOF'
+[{"sigma":0,"watterson":"off","payload":32768,"timeout":600,"reps":2},
+ {"sigma":4000,"watterson":"off","payload":32768,"timeout":600,"reps":2},
+ {"sigma":4000,"watterson":"moderate","payload":32768,"timeout":600,"reps":2}]
+EOF
+MERCURY_BIN=/path/to/mercury-arq-windowed MERCURY_FAST_ACK=1 \
+  python3 -m skywave.sweep_runner mercury cells-bulk.json out-windowed.csv windowed
+# then paste the goodput column next to the frozen VARA/armstrong columns above.
+```
+The fade/low-SNR tiers (the anti-VARA cells) use the same runner with the
+report's Tier-1/Tier-3 cell lists.
