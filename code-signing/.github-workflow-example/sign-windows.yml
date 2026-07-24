@@ -1,0 +1,61 @@
+# Example GitHub Actions workflow: Authenticode-sign the Windows binaries with
+# the Certum SimplySign cloud certificate.
+#
+# TO USE: move this file to .github/workflows/sign-windows.yml and add two repo
+# secrets (Settings -> Secrets and variables -> Actions):
+#   CERTUM_EMAIL     the SimplySign account e-mail
+#   CERTUM_OTP_URI   the otpauth:// URI (TOTP seed)  <-- treat as a password
+# Nothing secret is committed; the job reads both from the encrypted secrets.
+#
+# The job runs inside reactiveui's prebuilt image, which already contains
+# SimplySign Desktop + jsign + Xvfb/fluxbox/xdotool + OpenSC — the same stack
+# code-signing/sign.sh expects, so no per-run install is needed.  (That image is
+# the maintained upstream of this whole approach:
+# https://github.com/reactiveui/actions-common/tree/main/.github/actions/certum-sign)
+
+name: sign-windows
+
+on:
+  workflow_dispatch:
+  workflow_call:
+    secrets:
+      CERTUM_EMAIL:   { required: true }
+      CERTUM_OTP_URI: { required: true }
+
+jobs:
+  sign:
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/reactiveui/certum-signer:latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Bring the unsigned Windows binaries into the workspace.  Either build
+      # them here (make windows fyne-ui-windows) or download them from an
+      # earlier build job:
+      - name: Fetch unsigned binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: windows-unsigned
+          path: dist
+
+      - name: Sign (Certum SimplySign, one login for all binaries)
+        env:
+          CERTUM_EMAIL:   ${{ secrets.CERTUM_EMAIL }}
+          CERTUM_OTP_URI: ${{ secrets.CERTUM_OTP_URI }}   # sign.sh reads the URI directly
+          # The image ships jsign + SimplySign Desktop; point the lib at them if
+          # the paths differ from its defaults:
+          # JSIGN_JAR: /opt/jsign/jsign.jar
+          # SS_DIST:   /opt/SimplySignDesktop
+        run: |
+          set -e
+          code-signing/sign.sh dist/mercury.exe dist/mercury-ui.exe
+          code-signing/sign-logout.sh
+          # verify
+          for f in dist/*.exe; do osslsigncode verify "$f"; done
+
+      - name: Upload signed binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-signed
+          path: dist/*.exe

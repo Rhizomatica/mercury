@@ -8,6 +8,15 @@ gui_interface/fyne-ui/mercury-fyne-ui
 gui_interface/fyne-ui/*.app
 *.dmg
 *.exe
+# Code-signing test material / artifacts / SECRETS — never commit
+*.pfx
+*.p12
+*.signed
+# Certum SimplySign secrets + local artifacts (keep the real ones OUTSIDE the repo)
+*otpauth*
+pass.txt
+*sunpkcs11*.conf
+jsign*.jar
 *.dll
 *.so
 

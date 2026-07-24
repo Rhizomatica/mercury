@@ -8,6 +8,25 @@
 #define MyAppURL "https://github.com/Rhizomatica/mercury"
 #define MyAppExeName "mercury-ui.exe"
 
+; --- Authenticode signing ----------------------------------------------
+; The EXE files (payload + installer) are signed with osslsigncode on Linux,
+; not with Inno's SignTool. The SimplySign cert has no .pfx — signing uses
+; the cloud HSM via PKCS#11. See docs/WINDOWS-SIGNING.md.
+;
+; Build unsigned, then sign afterward:
+;   1. ISCC installer.iss                         (builds Mercury_*.exe)
+;   2. make sign-windows-bin BIN=Mercury_$(VERSION)_Setup.exe  (signs it on Linux)
+;
+; If you prefer Inno-side signing on Windows (requires SimplySign Desktop):
+;   ISCC /DSIGN /Smercury="signtool sign /a /fd sha256 \
+;         /tr http://time.certum.pl /td sha256 $f" installer.iss
+;
+; Old local-.pfx path (self-signed test / OV/EV token):
+;   ISCC /DSIGN /Smercury="signtool sign /f cert.pfx /p PW /fd sha256 \
+;         /tr http://timestamp.digicert.com /td sha256 $f" installer.iss
+#undef SIGN
+#define ExeFlags "ignoreversion"
+
 [Setup]
 ; NOTE: The value of AppId uniquely identifies this application. Do not use the same AppId value in installers for other applications.
 AppId={{D3B073A1-C8A5-42E1-BC9B-5A3445C555DF}
@@ -49,7 +68,7 @@ Source: "libgcc_s_seh-1.dll"; DestDir: "{app}"; Flags: ignoreversion
 Source: "libhamlib-4.dll"; DestDir: "{app}"; Flags: ignoreversion
 Source: "libusb-1.0.dll"; DestDir: "{app}"; Flags: ignoreversion
 Source: "libwinpthread-1.dll"; DestDir: "{app}"; Flags: ignoreversion
-Source: "mercury-ui.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "mercury-ui.exe"; DestDir: "{app}"; Flags: {#ExeFlags}
 
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\mercury.ico"; Comment: "Launch Mercury HF Modem (GUI)"
