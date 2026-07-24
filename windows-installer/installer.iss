@@ -9,12 +9,21 @@
 #define MyAppExeName "mercury-ui.exe"
 
 ; --- Optional Authenticode signing --------------------------------------
-; Compile signed with:
+; The SimplySign cert lives in Certum's cloud HSM — no .pfx file exists.
+; The SimplySign Desktop app injects the cert into the Windows cert store.
+; Once SimplySign Desktop is running and authenticated, sign with:
+;
+;   ISCC /DSIGN /Smercury="signtool sign /a /fd sha256 \
+;         /tr http://time.certum.pl /td sha256 $f" installer.iss
+;
+; The /a flag auto-selects the cert from the Windows cert store.
+; Without /DSIGN the installer builds unsigned exactly as before.
+;
+; For a local .pfx (self-signed test or OV/EV token), use:
 ;   ISCC /DSIGN /Smercury="signtool sign /f cert.pfx /p PW /fd sha256 \
 ;         /tr http://timestamp.digicert.com /td sha256 $f" installer.iss
-; (register a sign tool named "mercury"; $f is the file to sign).  Without
-; /DSIGN the installer builds unsigned exactly as before.  A self-signed cert
-; only proves the mechanics — see docs/WINDOWS-SIGNING.md.
+;
+; See docs/WINDOWS-SIGNING.md for the full signing workflow.
 #ifdef SIGN
   #define ExeFlags "ignoreversion signonce"
 #else

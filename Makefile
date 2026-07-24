@@ -420,6 +420,13 @@ windows-installer: fyne-ui-windows
 		cp $(HAMLIB_W64_DIR)/bin/*.dll $(WINDOWS_INSTALLER_DIR)/; \
 	fi
 	@echo "windows-installer ready: run Inno Setup on $(WINDOWS_INSTALLER_DIR)/installer.iss"
+	@echo ""
+	@echo "Full release pipeline:"
+	@echo "  1. make sign                     # sign mercury.exe on Linux (SimplySign cloud)"
+	@echo "  2. make windows-installer        # prepare Inno Setup files"
+	@echo "  3. On Windows VM with SimplySign Desktop running:"
+	@echo "     ISCC /DSIGN /Smercury=\"signtool sign /a /fd sha256 /tr http://time.certum.pl /td sha256 \044f\" installer.iss"
+	@echo ""
 
 clean:
 	rm -f mercury mercury.exe *.o .git_hash_stamp mercury-*.zip libmercury_core.a libmercury_core_w64.a
