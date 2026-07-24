@@ -120,26 +120,29 @@ directive is not used; post-build signing is simpler and works from CI.>
 
 ## Setup: SimplySign Desktop + signing scripts
 
-The SimplySign Desktop binary is bundled at `/opt/SimplySignDesktop`. The
-signing scripts live in `~/files/MYSELF/code-signing/`:
+The SimplySign Desktop binary is installed at `/opt/SimplySignDesktop`. The
+signing scripts are **in the repo** at `code-signing/` (see its `README.md`);
+the **secrets stay outside** the repo (see "Secrets" above):
 
-| File | Purpose |
-|---|---|
-| `sign.sh` | Main entry — Xvfb + xdotool + TOTP automation + `osslsigncode` |
-| `otpauthuri.txt` → `~/files/documents/windows_certum/otpauthuri.txt` | TOTP secret seed |
-| `219d71faf992d043051392dc77eb705b.pem` | Public certificate (in `~/files/documents/windows_certum/`) |
-| `SIGNING.md` | Full reference doc (in `~/files/MYSELF/code-signing/`) |
+| File | Where | Purpose |
+|---|---|---|
+| `sign-lib.sh` / `sign.sh` / `sign-logout.sh` | `code-signing/` (repo) | login-once + jsign sign + teardown |
+| otpauth URI (TOTP seed) | `~/.config/mercury-signing/otpauth.txt` (**secret**) | `CERTUM_OTP_URI_FILE` |
+| account e-mail | shell env (**secret**) | `CERTUM_EMAIL` |
+| jsign jar | `~/.local/share/jsign.jar` | `JSIGN_JAR` |
+| public certificate | `~/files/documents/windows_certum/*.pem` | verification only (not secret) |
 
 ## Parameters reference (Makefile)
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `WIN_SIGN_PFX` | *(empty)* | Path to a local PKCS#12 (`.pfx`) cert+key. **When set**: uses `osslsigncode -pkcs12`. **When empty**: uses SimplySign cloud via `sign.sh` (default). |
+| `WIN_SIGN_PFX` | *(empty)* | Path to a local PKCS#12 (`.pfx`) cert+key. **When set**: uses `osslsigncode -pkcs12` (Mode B, test only). **When empty**: uses SimplySign cloud via `SIGN_SCRIPT` (Mode A). |
 | `WIN_SIGN_PASS` | *(empty)* | Password for the `.pfx` (only used when `WIN_SIGN_PFX` is set). |
-| `WIN_SIGN_TS` | `http://timestamp.digicert.com` | RFC-3161 timestamp authority URL. Certum's timestamp server: `http://time.certum.pl` |
-| `WIN_SIGN_NAME` | `Mercury HF Modem` | Signature description (`-n`). |
-| `WIN_SIGN_URL` | `https://github.com/Rhizomatica/mercury` | Signature info URL (`-i`). |
-| `SIGN_SCRIPT` | `$(HOME)/files/MYSELF/code-signing/sign.sh` | Path to the SimplySign automation script. |
+| `WIN_SIGN_TS` | `http://timestamp.digicert.com` | RFC-3161 TSA (Mode B). Certum's TSA is `http://time.certum.pl` (Mode A uses `CERTUM_TSA`, same default). |
+| `WIN_SIGN_NAME` | `Mercury HF Modem` | Signature description (`-n`, Mode B). |
+| `WIN_SIGN_URL` | `https://github.com/Rhizomatica/mercury` | Signature info URL (`-i`, Mode B). |
+| `SIGN_SCRIPT` | `$(CURDIR)/code-signing/sign.sh` | In-repo SimplySign automation. Mode A runs it **only when `CERTUM_EMAIL` is set** (opt-in), so plain builds stay unsigned. |
+| `SIGN_LOGOUT` | `$(CURDIR)/code-signing/sign-logout.sh` | Session teardown, run after `windows-zip-signed`. |
 
 ## Mode B: Local .pfx (self-signed test or OV/EV token)
 
