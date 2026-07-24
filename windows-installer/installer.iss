@@ -15,7 +15,7 @@
 ;
 ; Build unsigned, then sign afterward:
 ;   1. ISCC installer.iss                         (builds Mercury_*.exe)
-;   2. make sign BIN=Mercury_$(VERSION)_Setup.exe  (signs it on Linux)
+;   2. make sign-windows-bin BIN=Mercury_$(VERSION)_Setup.exe  (signs it on Linux)
 ;
 ; If you prefer Inno-side signing on Windows (requires SimplySign Desktop):
 ;   ISCC /DSIGN /Smercury="signtool sign /a /fd sha256 \

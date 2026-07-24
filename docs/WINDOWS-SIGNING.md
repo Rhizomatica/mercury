@@ -32,10 +32,10 @@ The Makefile automatically uses this when `WIN_SIGN_PFX` is unset and the
 
 ```bash
 # Sign mercury.exe (already built)
-make sign
+make sign-windows
 
 # Sign an arbitrary binary
-make sign-bin BIN=mercury-ui.exe
+make sign-windows-bin BIN=mercury-ui.exe
 
 # Build + sign + zip in one step
 make windows-zip-signed
@@ -55,8 +55,8 @@ Under the hood this runs `~/files/MYSELF/code-signing/sign.sh`, which:
 
 | Artifact | Built on | Signed on | Tool |
 |---|---|---|---|
-| `mercury.exe`, `mercury-ui.exe` | Linux (mingw) | Linux | `osslsigncode` via PKCS#11 (`make sign`) |
-| `Mercury_*_Setup.exe` (installer) | Windows or Wine (Inno Setup ISCC) | Linux | `osslsigncode` via PKCS#11 (`make sign-bin BIN=Setup.exe`) |
+| `mercury.exe`, `mercury-ui.exe` | Linux (mingw) | Linux | `osslsigncode` via PKCS#11 (`make sign-windows`) |
+| `Mercury_*_Setup.exe` (installer) | Windows or Wine (Inno Setup ISCC) | Linux | `osslsigncode` via PKCS#11 (`make sign-windows-bin BIN=Setup.exe`) |
 
 Everything is signed on Linux with `osslsigncode` + PKCS#11. The Inno Setup
 compiler (ISCC) builds the installer unsigned — then the resulting `.exe` is
@@ -123,7 +123,7 @@ is then signed with the same `osslsigncode` PKCS#11 path as the payload binaries
 ISCC windows-installer/installer.iss          # builds Mercury_1.9.10_Setup.exe
 
 # Then sign it on Linux:
-make sign-bin BIN=Mercury_1.9.10_Setup.exe
+make sign-windows-bin BIN=Mercury_1.9.10_Setup.exe
 ```
 
 If you prefer Inno-side signing on Windows (with SimplySign Desktop installed):

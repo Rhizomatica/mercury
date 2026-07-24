@@ -362,17 +362,17 @@ define win_sign
 	fi
 endef
 
-# Sign the already-built mercury.exe (or any .exe).  Uses SimplySign cloud if
-# WIN_SIGN_PFX is not set (the common case for CI / developer workstations).
+# ---- Windows Authenticode signing targets ----
+# Sign the already-built mercury.exe (SimplySign cloud via PKCS#11).
 # Requires: sign.sh script, xvfb, fluxbox, xdotool, opensc, osslsigncode.
-sign: mercury.exe
+sign-windows: mercury.exe
 	$(call win_sign,mercury.exe)
 
-# Sign an arbitrary binary (e.g. make sign BIN=mercury-ui.exe)
-sign-bin:
+# Sign an arbitrary .exe (e.g. make sign-windows-bin BIN=mercury-ui.exe)
+sign-windows-bin:
 	$(call win_sign,$(BIN))
 
-# Sign both the payload .exe and the GUI .exe for the Windows zip.
+# Build + sign both payload .exe files + zip.
 windows-zip-signed: windows fyne-ui-windows
 	rm -rf $(WINDOWS_DIR) $(WINDOWS_ZIP)
 	mkdir -p $(WINDOWS_DIR)
@@ -425,7 +425,7 @@ windows-installer: fyne-ui-windows
 	@echo "  ISCC $(WINDOWS_INSTALLER_DIR)/installer.iss"
 	@echo ""
 	@echo "Then sign the resulting .exe on Linux:"
-	@echo "  make sign-bin BIN=Mercury_\$$(VERSION)_Setup.exe"
+	@echo "  make sign-windows-bin BIN=Mercury_\$$(VERSION)_Setup.exe"
 	@echo ""
 
 clean:
