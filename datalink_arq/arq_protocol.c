@@ -91,6 +91,19 @@ extern int  arithmetic_decode(uint8_t *input, int max_len, char *output, int max
  * ACK (was the 3.74 s DATAC16 coded ACK): ack_timeout >= frame_duration +
  * channel_guard + pattern_ack(0.64) + margin (~1.5 s).  DATAC16 keeps its
  * 3.74 s coded-frame budget because CALL/ACCEPT/DISCONNECT still ride it. */
+/* burst_frames: DATA frames per keydown (windowed selective repeat).  >1
+ * amortizes the per-keydown preamble+postamble+turnaround (~600-660 ms + the
+ * ~2.5-3 s ACK turnaround) across K frames — the beat-VARA throughput lever.
+ * The IRS re-anchors its decoder per self-described frame and sends ONE
+ * consolidated ack per burst (fast pattern when clean, SACK for holes).
+ *  - DATAC16 (control): 1 — connect/coded-ACK are single frames.
+ *  - MFSK (floor): 1 — a 13.5 s burst already dwarfs the turnaround, and the
+ *    fringe path stays exactly today's proven stop-and-wait (low-SNR sacred).
+ *  - DATAC15: 1 — 30 B/frame, so a burst is tiny; the turnaround already
+ *    dominates and windowing it buys little while adding SACK exposure at the
+ *    weak end of the ladder.  Kept at 1 for robustness.
+ *  - DATAC4..QAM16C2: K=3 — the goodput win, capped by ARQ_BURST_MAX and the
+ *    ~12 s on-air burst budget (3 * frame_dur stays within it for every mode). */
 const arq_mode_timing_t arq_mode_table[] = {
     /*  freedv_mode           frame_dur  tx_period  ack_timeout  retry_interval  payload  burst */
     {  FREEDV_MODE_DATAC16,   3.74f,     1.0f,      7.0f,        8.0f,           14,   1 },

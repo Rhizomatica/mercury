@@ -149,6 +149,7 @@ static void reset_session_data_state(arq_session_t *sess)
     sess->rx_expected        = 0;
     sess->tx_base            = 0;
     sess->tx_burst_retx      = false;
+    sess->tx_burst_count     = 0;
     for (int i = 0; i < ARQ_BURST_MAX; i++)
     {
         sess->tx_win[i].present = false;
@@ -160,6 +161,7 @@ static void reset_session_data_state(arq_session_t *sess)
     sess->rx_burst_complete  = false;
     sess->rx_burst_dup       = false;
     sess->rx_burst_new       = false;
+    sess->rx_burst_frames    = 0;
     sess->tx_retries_left    = ARQ_DATA_RETRY_SLOTS;
     sess->speed_level        = 0;
     sess->tx_success_count   = 0;
@@ -217,6 +219,7 @@ static void sess_enter(arq_session_t *sess, arq_conn_state_t new_state,
         sess->rx_fast_ramp     = true;
         sess->tx_base          = sess->tx_seq;
         sess->tx_burst_retx    = false;
+        sess->tx_burst_count   = 0;
         for (int i = 0; i < ARQ_BURST_MAX; i++)
         {
             sess->tx_win[i].present = false;
@@ -228,6 +231,7 @@ static void sess_enter(arq_session_t *sess, arq_conn_state_t new_state,
         sess->rx_burst_complete = false;
         sess->rx_burst_dup      = false;
         sess->rx_burst_new      = false;
+        sess->rx_burst_frames   = 0;
     }
 }
 
@@ -324,7 +328,9 @@ static void apply_speed_level(arq_session_t *sess)
  *  first miss, after which it settles to ARQ_LADDER_UP_SUCCESSES clean outcomes
  *  per step.  A miss/retry steps DOWN one rung immediately (toward the MFSK
  *  floor) and ends the fast ramp, so a deep fade parks at the floor with no
- *  over-climb oscillation.  Returns the signed level change (for logging). */
+ *  over-climb oscillation.  Evaluated once PER BURST (a whole keydown is one
+ *  clean/dirty outcome), so windowing does not change the ladder dynamics.
+ *  Returns the signed level change (for logging). */
 static int ladder_step(int *level, int *success_count, bool *fast_ramp, bool clean)
 {
     int before = *level;
@@ -334,16 +340,14 @@ static int ladder_step(int *level, int *success_count, bool *fast_ramp, bool cle
         if (*level > 0)
             (*level)--;
         *success_count = 0;
+        return *level - before;
     }
-    else
+    (*success_count)++;
+    int need = *fast_ramp ? 1 : ARQ_LADDER_UP_SUCCESSES;
+    if (*success_count >= need && *level < ARQ_LADDER_LEVELS - 1)
     {
-        (*success_count)++;
-        int need = *fast_ramp ? 1 : ARQ_LADDER_UP_SUCCESSES;
-        if (*success_count >= need && *level < ARQ_LADDER_LEVELS - 1)
-        {
-            (*level)++;
-            *success_count = 0;
-        }
+        (*level)++;
+        *success_count = 0;
     }
     return *level - before;
 }
@@ -379,6 +383,7 @@ static void irs_mirror_peer_ladder(arq_session_t *sess, bool clean_new)
               delta > 0 ? "climb" : "step-down",
               sess->rx_speed_level, sess->peer_tx_mode);
 }
+
 
 /* IRS: arm the consolidated per-burst ACK deadline after a received DATA
  * frame.  The frame's self-described burst_remaining says how many frames of
@@ -434,8 +439,8 @@ static bool deliver_rx_checked(arq_session_t *sess, const arq_event_t *ev)
         {
             struct arq_rxslot *sl =
                 &sess->rx_win[sess->rx_expected % ARQ_BURST_MAX];
-            if (!sl->present)
-                break;
+            if (!sl->present || sl->seq != sess->rx_expected)
+                break;   /* stored-seq check: never mis-deliver an aliased slot */
             if (sl->len > 0 && g_cbs.deliver_rx_data)
                 g_cbs.deliver_rx_data(sl->data, sl->len);
             sl->present = false;
@@ -446,17 +451,20 @@ static bool deliver_rx_checked(arq_session_t *sess, const arq_event_t *ev)
         return true;
     }
 
-    /* Out of order above the base: hold it for reassembly. */
+    /* Out of order above the base: hold it for reassembly (validated by seq). */
     struct arq_rxslot *sl = &sess->rx_win[ev->seq % ARQ_BURST_MAX];
-    if (sl->present)
+    if (sl->present && sl->seq == ev->seq)
     {
         sess->rx_burst_dup = true;   /* duplicate of a held slot */
         return false;
     }
+    if (sl->present)
+        return false;   /* slot busy with a different live seq — treat as lost */
     if (ev->payload_len > sizeof(sl->data))
         return false;                 /* cannot hold — treated as lost */
     memcpy(sl->data, ev->payload, ev->payload_len);
     sl->len     = ev->payload_len;
+    sl->seq     = ev->seq;
     sl->present = true;
     sess->rx_burst_new = true;
     return true;
@@ -533,15 +541,24 @@ static void irs_send_burst_ack(arq_session_t *sess)
     uint8_t bitmap = 0;
     for (int off = 1; off < ARQ_BURST_MAX; off++)
     {
-        uint8_t s = (uint8_t)(sess->rx_expected + off);
-        if (sess->rx_win[s % ARQ_BURST_MAX].present)
+        uint8_t sq = (uint8_t)(sess->rx_expected + off);
+        struct arq_rxslot *sl = &sess->rx_win[sq % ARQ_BURST_MAX];
+        if (sl->present && sl->seq == sq)
             bitmap |= (uint8_t)(1u << (off - 1));
     }
     bool holes = !sess->rx_burst_complete || bitmap != 0;
 
-    if (!holes)
+    /* A bare pattern ACK carries no sequence, so the ISS cannot tell WHICH
+     * burst it acks — safe only for a single-frame burst (stop-and-wait: the
+     * one outstanding frame).  For a multi-frame burst a stale pattern would
+     * wrongly retire the ISS's whole current window, so a CLEAN multi-frame
+     * burst is acked by a coded ACK carrying rcv_base + an all-delivered
+     * bitmap (base-driven retirement is idempotent and stale-safe). */
+    bool multi = (sess->rx_burst_frames > 1);
+
+    if (!holes && !multi)
     {
-        send_ack(sess, 0);
+        send_ack(sess, 0);                 /* fast pattern: 1-frame burst */
     }
     else
     {
@@ -575,6 +592,7 @@ static void irs_send_burst_ack(arq_session_t *sess)
     sess->rx_burst_complete = false;
     sess->rx_burst_dup      = false;
     sess->rx_burst_new      = false;
+    sess->rx_burst_frames   = 0;
 }
 
 /* Smallest ladder mode whose usable payload can carry `len` user bytes, at or
@@ -638,7 +656,7 @@ static void send_data_burst(arq_session_t *sess)
         {
             uint8_t s = (uint8_t)(sess->tx_base + d);
             struct arq_txslot *sl = &sess->tx_win[s % ARQ_BURST_MAX];
-            if (sl->present)
+            if (sl->present && sl->seq == s)
             {
                 sl->retx = true;
                 seqs[count++] = s;
@@ -660,6 +678,7 @@ static void send_data_burst(arq_session_t *sess)
             if (got <= 0)
                 break;               /* backlog drained */
             sl->len     = got;
+            sl->seq     = sess->tx_seq;
             sl->present = true;
             sl->retx    = false;
             seqs[count++] = sess->tx_seq;
@@ -668,7 +687,8 @@ static void send_data_burst(arq_session_t *sess)
     }
     if (count == 0)
         return;
-    sess->tx_burst_retx = retx_burst;
+    sess->tx_burst_retx  = retx_burst;
+    sess->tx_burst_count = count;   /* frames in this keydown (ladder credit) */
 
     /* --- One mode for the whole keydown: must fit the largest frame --- */
     int max_len = 0;
@@ -1254,6 +1274,7 @@ static void fsm_connected(arq_session_t *sess, const arq_event_t *ev)
 static void irs_receive_data(arq_session_t *sess, const arq_event_t *ev)
 {
     update_local_snr(sess, ev);
+    sess->rx_burst_frames++;               /* frames seen in the current burst */
     bool was_dup   = sess->rx_burst_dup;
     bool new_frame = deliver_rx_checked(sess, ev);
     uint8_t rem    = ev->rx_flags & ARQ_FLAG_BURST_REM_MASK;
@@ -1272,10 +1293,15 @@ static void irs_receive_data(arq_session_t *sess, const arq_event_t *ev)
     {
         bool holes = false;
         for (int off = 1; off < ARQ_BURST_MAX; off++)
-            if (sess->rx_win[(uint8_t)(sess->rx_expected + off)
-                             % ARQ_BURST_MAX].present)
+        {
+            uint8_t sq = (uint8_t)(sess->rx_expected + off);
+            struct arq_rxslot *sl = &sess->rx_win[sq % ARQ_BURST_MAX];
+            if (sl->present && sl->seq == sq)
                 holes = true;
+        }
         if (!holes)
+            /* Clean complete burst: mirror the sender's climb, crediting the
+             * burst's frame count so the mirror stays locked to the ISS. */
             irs_mirror_peer_ladder(sess, true);
     }
 
@@ -1288,9 +1314,41 @@ static void irs_receive_data(arq_session_t *sess, const arq_event_t *ev)
                           : true;
 }
 
-/* ISS: the WHOLE outstanding burst was delivered (bare pattern ACK, or an
- * implicit ACK carried by the peer's reverse DATA).  Every frame is an
- * immutable unit, so clear all slots and advance the window base. */
+/* ISS: a bare pattern ACK carries no sequence, so it can only mean "the frame
+ * my last keydown just sent arrived".  A K==1 keydown sends exactly one frame —
+ * the oldest outstanding, tx_base (fresh frame or oldest hole, retransmit is
+ * oldest-first).  Retire THAT ONE and advance tx_base to the next present slot;
+ * never the whole window (older holes from a K>1-era burst being drained one
+ * per MFSK keydown must survive).  Returns true if the window is now empty. */
+static bool iss_retire_one(arq_session_t *sess)
+{
+    struct arq_txslot *sl = &sess->tx_win[sess->tx_base % ARQ_BURST_MAX];
+    if (sl->present && sl->seq == sess->tx_base)
+    {
+        sl->present = false;
+        sl->len     = 0;
+        sl->retx    = false;
+    }
+    /* Advance base to the next still-present seq (or tx_seq if drained). */
+    while (sess->tx_base != sess->tx_seq &&
+           !sess->tx_win[sess->tx_base % ARQ_BURST_MAX].present)
+        sess->tx_base = (uint8_t)(sess->tx_base + 1);
+
+    sess->last_tx_progress_ms = time_now_ms();
+    if (!arq_win_nonempty(sess))
+    {
+        sess->tx_base         = sess->tx_seq;
+        sess->tx_burst_retx   = false;
+        sess->tx_retries_left = ARQ_DATA_RETRY_SLOTS;
+    }
+    if (g_cbs.send_buffer_status)
+        g_cbs.send_buffer_status(session_tx_backlog(sess));
+    return !arq_win_nonempty(sess);
+}
+
+/* ISS: the WHOLE outstanding burst was delivered (an implicit ACK carried by
+ * the peer's reverse DATA — the peer would not send new data before acking
+ * ours).  Every frame is an immutable unit, so clear all slots and advance. */
 static void iss_retire_all(arq_session_t *sess)
 {
     for (int i = 0; i < ARQ_BURST_MAX; i++)
@@ -1317,21 +1375,22 @@ static int iss_apply_sack(arq_session_t *sess, uint8_t base, uint8_t bitmap)
     uint8_t lowest_hole = 0;
     bool    progressed = false;
 
-    for (int d = 0; d < ARQ_BURST_MAX; d++)
+    for (int i = 0; i < ARQ_BURST_MAX; i++)
     {
-        uint8_t s = (uint8_t)(sess->tx_base + d);
-        struct arq_txslot *sl = &sess->tx_win[s % ARQ_BURST_MAX];
+        struct arq_txslot *sl = &sess->tx_win[i];
         if (!sl->present)
             continue;
 
-        uint8_t diff = (uint8_t)(s - base);
+        int8_t rel = (int8_t)(sl->seq - base);   /* signed distance from base */
         bool delivered;
-        if (diff == 0)
-            delivered = false;                       /* base = next expected  */
-        else if (diff <= 8)
-            delivered = (bitmap >> (diff - 1)) & 1;  /* out-of-order above it */
+        if (rel < 0)
+            delivered = true;                    /* strictly before base      */
+        else if (rel == 0)
+            delivered = false;                   /* base itself = the hole    */
+        else if (rel <= 8)
+            delivered = (bitmap >> (rel - 1)) & 1;
         else
-            delivered = true;                        /* behind base (mod-256) */
+            delivered = false;                   /* ahead of the bitmap: hole */
 
         if (delivered)
         {
@@ -1343,9 +1402,9 @@ static int iss_apply_sack(arq_session_t *sess, uint8_t base, uint8_t bitmap)
         else
         {
             holes++;
-            if (!have_hole)
+            if (!have_hole || (int8_t)(sl->seq - lowest_hole) < 0)
             {
-                lowest_hole = s;
+                lowest_hole = sl->seq;
                 have_hole   = true;
             }
         }
@@ -1464,17 +1523,35 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
                  * the delivered path below with a non-clean outcome. */
             }
 
-            bool clean = !ev->sack_present &&
-                         !sess->tx_burst_retx &&
+            /* A clean delivery == the last keydown's frames all arrived first
+             * try: no holes on this ack (a coded ACK that retired everything,
+             * or a pattern that emptied the window) AND the burst carried no
+             * retransmission AND the full retry budget is intact.  A dirty
+             * outcome already stepped the ladder down (SACK holes / TIMER_ACK
+             * retransmit), so it must not be re-penalised here. */
+            bool clean = !sess->tx_burst_retx &&
                          sess->tx_retries_left == ARQ_DATA_RETRY_SLOTS;
             if (g_timing)
                 arq_timing_record_ack_rx(g_timing, (int)sess->tx_base,
                                          (uint8_t)ev->ack_delay_raw,
                                          sess->local_snr_x10);
-            iss_retire_all(sess);
-            /* Only a CLEAN delivery feeds the ladder here; a dirty one already
-             * stepped down once per TIMER_ACK retransmit / SACK, so
-             * re-penalising it would double-count. */
+
+            /* Bare pattern ACK: retires ONLY the single frame the last keydown
+             * sent (tx_base); a SACK that fell through here retired via its
+             * base+bitmap already.  If holes remain (older seqs still
+             * outstanding after a 1-at-a-time floor retransmit), retransmit
+             * them instead of yielding the turn — no ladder credit yet. */
+            if (!ev->sack_present)
+                iss_retire_one(sess);
+            if (arq_win_nonempty(sess))
+            {
+                dflow_enter(sess, ARQ_DFLOW_DATA_TX,
+                            time_now_ms() + ARQ_ISS_POST_ACK_GUARD_MS,
+                            ARQ_EV_TIMER_ACK);
+                break;
+            }
+
+            /* Window fully drained — credit the clean burst (K deliveries). */
             if (clean)
                 record_tx_outcome(sess, true);
             sess->peer_has_data = (ev->rx_flags & ARQ_FLAG_HAS_DATA) != 0;

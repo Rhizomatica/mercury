@@ -128,10 +128,18 @@ bool sim_translate_frame(const uint8_t *frame, size_t frame_size, float rx_snr,
     {
         switch (hdr.subtype)
         {
-        /* ACK: only the coded post-ACCEPT connect confirmation reaches here;
-         * in-session ACKs are the MFSK pattern (modelled as a pattern outframe
-         * translated directly in sim_core, not through sim_translate_frame). */
-        case ARQ_SUBTYPE_ACK:           out_ev->id = ARQ_EV_RX_ACK;           break;
+        /* ACK: the coded post-ACCEPT connect confirmation, and the windowed
+         * selective ACK (SACK: rcv_base in rx_ack_seq + one bitmap byte after
+         * the header).  A CLEAN burst is acked by the MFSK pattern (a pattern
+         * outframe translated directly in sim_core, not here). */
+        case ARQ_SUBTYPE_ACK:
+            out_ev->id = ARQ_EV_RX_ACK;
+            if ((hdr.flags & ARQ_FLAG_SACK) && frame_size > ARQ_FRAME_HDR_SIZE)
+            {
+                out_ev->sack_present = true;
+                out_ev->sack_bitmap  = frame[ARQ_FRAME_HDR_SIZE];
+            }
+            break;
         case ARQ_SUBTYPE_DISCONNECT:    out_ev->id = ARQ_EV_RX_DISCONNECT;    break;
         default:
             return false;

@@ -134,10 +134,16 @@ static void goto_wait_ack(void)
     TEST_ASSERT_EQUAL_INT(ARQ_DFLOW_WAIT_ACK, sess.dflow_state);
 }
 
-/* Deliver a clean pattern ACK; then re-enter WAIT_ACK for the next frame. */
+/* Deliver a clean ACK that retires the WHOLE outstanding window (a coded ACK
+ * with rcv_base past every sent seq, no holes) so the burst is one clean
+ * delivery regardless of the mode's burst_frames; then re-enter WAIT_ACK. */
 static void clean_ack_cycle(void)
 {
-    arq_event_t ev = make_event(ARQ_EV_RX_ACK);   /* plain ACK, no HAS_DATA */
+    arq_event_t ev = make_event(ARQ_EV_RX_ACK);
+    ev.session_id   = sess.session_id;
+    ev.sack_present = true;
+    ev.ack_seq      = sess.tx_seq;   /* rcv_base = next new seq => all delivered */
+    ev.sack_bitmap  = 0;
     arq_fsm_dispatch(&sess, &ev);
     /* ISS retains the turn (no HAS_DATA) -> enter_idle_iss_guarded -> DATA_TX
      * after a guard.  Advance to WAIT_ACK again. */

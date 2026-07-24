@@ -919,9 +919,28 @@ void test_win_rx_hole_emits_sack(void)
     TEST_ASSERT_EQUAL_UINT(8, g_rx_capture_len);           /* only seq0 delivered */
 }
 
-/* A clean, in-order, complete burst (remaining hits 0, no gaps) is acked by the
- * fast pattern — no coded frame. */
-void test_win_rx_clean_burst_pattern_ack(void)
+/* A clean SINGLE-frame burst (remaining==0 on the only frame) is acked by the
+ * fast Welch-Costas pattern — the seq-less pattern is unambiguous for a 1-frame
+ * burst (stop-and-wait). */
+void test_win_rx_clean_single_frame_pattern_ack(void)
+{
+    goto_connected_irs();
+    RESET_FAKE(fake_send_tx_frame);
+    RESET_FAKE(fake_send_pattern_ack);
+
+    arq_event_t e0 = win_data(0, 8, 0); arq_fsm_dispatch(&sess, &e0);  /* lone frame */
+
+    arq_event_t tack = make_event(ARQ_EV_TIMER_ACK);
+    arq_fsm_dispatch(&sess, &tack);
+
+    TEST_ASSERT_GREATER_THAN(0, fake_send_pattern_ack_fake.call_count);
+    TEST_ASSERT_EQUAL_UINT(0, fake_send_tx_frame_fake.call_count);  /* no coded ack */
+}
+
+/* A clean MULTI-frame burst is acked by a CODED ACK carrying rcv_base (not a
+ * bare pattern): a seq-less pattern would be ambiguous across the sender's
+ * window, so a stale one could wrongly retire live frames. */
+void test_win_rx_clean_multi_frame_coded_ack(void)
 {
     goto_connected_irs();
     RESET_FAKE(fake_send_tx_frame);
@@ -933,8 +952,14 @@ void test_win_rx_clean_burst_pattern_ack(void)
     arq_event_t tack = make_event(ARQ_EV_TIMER_ACK);
     arq_fsm_dispatch(&sess, &tack);
 
-    TEST_ASSERT_GREATER_THAN(0, fake_send_pattern_ack_fake.call_count);
-    TEST_ASSERT_EQUAL_UINT(0, fake_send_tx_frame_fake.call_count);  /* no coded ack */
+    TEST_ASSERT_EQUAL_UINT(0, fake_send_pattern_ack_fake.call_count);   /* no pattern */
+    TEST_ASSERT_GREATER_THAN(0, fake_send_tx_frame_fake.call_count);    /* coded ack */
+    const uint8_t *f = fake_send_tx_frame_fake.arg3_val;
+    arq_frame_hdr_t hdr;
+    TEST_ASSERT_EQUAL_INT(0, arq_protocol_decode_hdr(f, ARQ_FRAME_HDR_SIZE + 1, &hdr));
+    TEST_ASSERT_EQUAL_UINT8(ARQ_SUBTYPE_ACK, hdr.subtype);
+    TEST_ASSERT_TRUE(hdr.flags & ARQ_FLAG_SACK);
+    TEST_ASSERT_EQUAL_UINT8(2, hdr.rx_ack_seq);   /* rcv_base = 2 (both delivered) */
 }
 
 /* ISS: a SACK naming a subset retires those seqs and retransmits ONLY the
@@ -1003,7 +1028,8 @@ int main(void)
     RUN_TEST(test_irs_mirror_resets_toward_floor_on_silence);
     RUN_TEST(test_win_rx_reassembles_out_of_order);
     RUN_TEST(test_win_rx_hole_emits_sack);
-    RUN_TEST(test_win_rx_clean_burst_pattern_ack);
+    RUN_TEST(test_win_rx_clean_single_frame_pattern_ack);
+    RUN_TEST(test_win_rx_clean_multi_frame_coded_ack);
     RUN_TEST(test_win_iss_sack_retransmits_holes_only);
     return UNITY_END();
 }

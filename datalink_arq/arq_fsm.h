@@ -257,17 +257,24 @@ typedef struct
     struct arq_txslot {
         uint8_t data[1213];            /* raw user bytes (QAM16C2 max 1205)    */
         int     len;                   /* valid bytes (0 with !present)        */
+        uint8_t seq;                   /* the seq this slot holds (mod 256)    */
         bool    present;               /* un-acked, awaiting delivery          */
         bool    retx;                  /* retransmitted at least once          */
     } tx_win[ARQ_BURST_MAX];
     uint8_t  tx_base;                  /* oldest un-acked seq (window base)    */
     bool     tx_burst_retx;            /* current outgoing burst contains any
                                         * retransmission (ladder: not clean)   */
+    int      tx_burst_count;           /* frames in the last keydown (a clean
+                                        * K-frame burst credits K ladder steps)*/
 
-    /* --- IRS reassembly window + per-burst ACK consolidation --- */
+    /* --- IRS reassembly window + per-burst ACK consolidation ---
+     * Slots are indexed by seq % ARQ_BURST_MAX but ALSO store the seq, so a
+     * later seq that aliases a still-held earlier slot is never mistaken for
+     * it (the invariant that a small mod-N array must enforce by hand). */
     struct arq_rxslot {
         uint8_t data[1213];            /* out-of-order user bytes above base   */
         size_t  len;
+        uint8_t seq;                   /* the seq this slot holds (mod 256)    */
         bool    present;
     } rx_win[ARQ_BURST_MAX];
     bool     rx_burst_complete;        /* a frame with burst_remaining==0 was
@@ -278,6 +285,10 @@ typedef struct
     bool     rx_burst_dup;             /* burst contained a duplicate (peer is
                                         * retransmitting; mirror steps down)   */
     bool     rx_burst_new;             /* burst delivered at least 1 new frame */
+    int      rx_burst_frames;          /* frames seen in the current burst: a
+                                        * bare pattern ack is sent only for a
+                                        * 1-frame burst (seq-less pattern is
+                                        * ambiguous across a multi-frame window)*/
 
     uint64_t last_rx_ms;              /* last successful frame decode time     */
     uint64_t irs_data_wait_ms;        /* when this IRS first had data queued
