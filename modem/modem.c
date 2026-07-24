@@ -2084,8 +2084,17 @@ void *rx_thread(void *g_modem)
 
                     if (pat_len >= burst)
                     {
+                        /* Enable the epoch-wait (return 2) only when tagged fast
+                         * ACKs are possible, so the bare-only path is unchanged. */
+                        static int fast_ack = -1;
+                        if (fast_ack < 0)
+                        {
+                            const char *e = getenv("MERCURY_FAST_ACK");
+                            fast_ack = (e && e[0] == '1') ? 1 : 0;
+                        }
                         int kind = 0;
-                        if (mfsk_pattern_detect(pat_win, pat_len, &kind))
+                        int rc = mfsk_pattern_detect(pat_win, pat_len, fast_ack, &kind);
+                        if (rc == 1)
                         {
                             int is_break = kind & 1;
                             int epoch    = (kind & MFSK_PATTERN_TAGGED)
@@ -2095,6 +2104,8 @@ void *rx_thread(void *g_modem)
                             arq_post_pattern_ack(is_break != 0, epoch);
                             pat_len = 0;   /* consume the window */
                         }
+                        /* rc == 2: base found, epoch mini-pattern still arriving —
+                         * keep the window and accumulate more (do NOT consume). */
                     }
                 }
             }

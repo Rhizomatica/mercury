@@ -511,10 +511,9 @@ int mfsk_pattern_tx(int16_t *out, int pattern_kind)
     return written;
 }
 
-/* Detect a pattern ACK in an int16 passband chunk.  Returns 1 on a match and
- * sets *out_kind: 0/1 for a bare ACK/break, or MFSK_PAT_TAGGED|epoch<<1|brk
- * when a valid epoch symbol follows the base pattern; 0 (no match) otherwise. */
-int mfsk_pattern_detect(const int16_t *pb, int n, int *out_kind)
+/* Detect a pattern ACK in an int16 passband chunk.  See the header for the
+ * 0/1/2 return contract (2 = base found, epoch region still arriving -> WAIT). */
+int mfsk_pattern_detect(const int16_t *pb, int n, int expect_epoch, int *out_kind)
 {
     mfsk_pattern_lazy_init();
     if (out_kind) *out_kind = 0;
@@ -576,10 +575,24 @@ int mfsk_pattern_detect(const int16_t *pb, int n, int *out_kind)
     int step = g_pat_nofdm / 8; if (step < 1) step = 1;
     int rstart = epos - 2 * step;                 /* small slack for a slightly-late base */
     if (rstart < 0) rstart = 0;
+    int rneed = MFSK_EPOCH_LEN * g_pat_nofdm;      /* min trailing samples to score an epoch */
     int rlen = (MFSK_EPOCH_LEN + 4) * g_pat_nofdm; /* + slack for base-locate error */
     if (rstart + rlen > n) rlen = n - rstart;
 
-    if (pos >= 0 && rlen >= MFSK_EPOCH_LEN * g_pat_nofdm)
+    /* WAIT: base matched but the epoch mini-pattern's samples have not all
+     * arrived (base sits late in the sliding window, its 6 trailing epoch
+     * symbols still streaming in).  Deciding now would consume the window and
+     * mis-read a real tagged ACK as bare — the exact live-modem stall the sim
+     * can't see.  Signal the caller to accumulate more instead of consuming.
+     * Only when tagged ACKs are possible (expect_epoch): the bare-only path is
+     * unchanged (no added latency). */
+    if (expect_epoch && pos >= 0 && rlen < rneed)
+    {
+        free(bb); free(bf);
+        return 2;
+    }
+
+    if (pos >= 0 && rlen >= rneed)
     {
         int best_e = -1, best_sc = -1, second_sc = -1;
         for (int e = 0; e < MFSK_PAT_EPOCHS; e++)

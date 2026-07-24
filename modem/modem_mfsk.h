@@ -48,10 +48,17 @@ int mfsk_pattern_max_tx_samples(void);
 /* Generate the pattern as int16 passband; returns the sample count. */
 int mfsk_pattern_tx(int16_t *out, int pattern_kind);
 
-/* Detect a pattern ACK in an int16 passband chunk.  Returns 1 on a match and
- * sets *out_kind to the decoded pattern_kind (0/1 bare, or
- * MFSK_PATTERN_TAGGED|epoch<<1|break when a valid epoch symbol follows); 0 if
- * no pattern is found. */
-int mfsk_pattern_detect(const int16_t *pb, int n, int *out_kind);
+/* Detect a pattern ACK in an int16 passband chunk.
+ *   returns 0 = no pattern found;
+ *   returns 1 = decided: *out_kind is the pattern_kind (0/1 bare, or
+ *               MFSK_PATTERN_TAGGED|epoch<<1|break) — caller consumes the window;
+ *   returns 2 = base pattern found but its trailing epoch mini-pattern has not
+ *               fully arrived in the window yet (only when expect_epoch != 0) —
+ *               caller must WAIT (accumulate more, do NOT consume): deciding now
+ *               would mis-read a still-arriving tagged ACK as bare.
+ * expect_epoch: 1 when epoch-tagged fast ACKs are possible (MERCURY_FAST_ACK) —
+ * enables the return-2 wait.  0 keeps the legacy immediate decision (no added
+ * latency on the bare-only fringe path). */
+int mfsk_pattern_detect(const int16_t *pb, int n, int expect_epoch, int *out_kind);
 
 #endif /* MERCURY_MODEM_MFSK_H */

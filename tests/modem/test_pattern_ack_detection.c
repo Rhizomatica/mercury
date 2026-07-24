@@ -51,7 +51,7 @@ void test_noise_no_false_ack(void)
         for (int i = 0; i < L; i++)
             pb[i] = (int16_t)((urand() - 0.5) * 4000.0);  /* moderate noise */
         int is_break = -1;
-        if (mfsk_pattern_detect(pb, L, &is_break))
+        if (mfsk_pattern_detect(pb, L, 1, &is_break))
             false_alarms++;
     }
     TEST_ASSERT_EQUAL_INT(0, false_alarms);
@@ -77,7 +77,7 @@ void test_real_ack_detects(void)
         pb[gap + i] = (int16_t)(pb[gap + i] + tone[i]);
 
     int is_break = -1;
-    int hit = mfsk_pattern_detect(pb, L, &is_break);
+    int hit = mfsk_pattern_detect(pb, L, 1, &is_break);
     TEST_ASSERT_TRUE(hit);
     TEST_ASSERT_EQUAL_INT(0, is_break);   /* ACK, not break */
 
@@ -104,7 +104,7 @@ void test_real_break_detects(void)
         pb[gap + i] = (int16_t)(pb[gap + i] + tone[i]);
 
     int is_break = -1;
-    int hit = mfsk_pattern_detect(pb, L, &is_break);
+    int hit = mfsk_pattern_detect(pb, L, 1, &is_break);
     TEST_ASSERT_TRUE(hit);
     TEST_ASSERT_EQUAL_INT(1, is_break);   /* break, not plain ACK */
 
@@ -134,7 +134,7 @@ void test_epoch_tagged_roundtrip(void)
                 pb[gap + i] = (int16_t)(pb[gap + i] + tone[i]);
 
             int got = -1;
-            TEST_ASSERT_TRUE(mfsk_pattern_detect(pb, L, &got));
+            TEST_ASSERT_TRUE(mfsk_pattern_detect(pb, L, 1, &got));
             TEST_ASSERT_TRUE_MESSAGE(got & MFSK_PATTERN_TAGGED, "epoch symbol not detected");
             TEST_ASSERT_EQUAL_INT(brk,   got & 1);
             TEST_ASSERT_EQUAL_INT(epoch, (got >> 1) & 3);
@@ -160,7 +160,7 @@ void test_bare_not_misread_as_tagged(void)
             pb[gap + i] = (int16_t)(pb[gap + i] + tone[i]);
 
         int got = -1;
-        TEST_ASSERT_TRUE(mfsk_pattern_detect(pb, L, &got));
+        TEST_ASSERT_TRUE(mfsk_pattern_detect(pb, L, 1, &got));
         TEST_ASSERT_FALSE_MESSAGE(got & MFSK_PATTERN_TAGGED, "bare pattern misread as tagged");
         TEST_ASSERT_EQUAL_INT(brk, got & 1);
         free(tone); free(pb);

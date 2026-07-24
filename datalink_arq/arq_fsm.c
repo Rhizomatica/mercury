@@ -638,6 +638,8 @@ static void irs_send_burst_ack(arq_session_t *sess)
     }
     else if (clean_new && multi && fast_ack_enabled())
     {
+        HLOGD(LOG_COMP, "IRS -> tagged pattern ACK epoch=%d (clean multi %d blocks)",
+              sess->rx_burst_epoch, sess->rx_burst_blocks);
         /* Fast windowed ACK: a clean, complete, all-new MULTI-block burst.
          * Echo its keydown epoch in a tagged pattern — the ISS validates the
          * epoch against the outstanding keydown and retires the WHOLE window on
@@ -1725,6 +1727,8 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
                               ev->ack_epoch, (int)sess->tx_burst_epoch);
                         break;
                     }
+                    HLOGD(LOG_COMP, "Fast windowed ACK epoch=%d -> retire_all [%d..%d)",
+                          ev->ack_epoch, (int)sess->tx_base, (int)sess->tx_seq);
                     iss_retire_all(sess);   /* fast windowed ACK: whole burst clean */
                 }
                 else
