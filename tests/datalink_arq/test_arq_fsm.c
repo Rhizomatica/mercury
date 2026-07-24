@@ -568,12 +568,12 @@ void test_wait_ack_pattern_ack_confirms_frame(void)
 {
     goto_connected();
     goto_wait_ack();
-    TEST_ASSERT_TRUE(sess.tx_frame_present);
+    TEST_ASSERT_TRUE(arq_win_nonempty(&sess));
 
     arq_event_t ev = make_event(ARQ_EV_RX_ACK);   /* plain pattern ACK */
     arq_fsm_dispatch(&sess, &ev);
 
-    TEST_ASSERT_FALSE(sess.tx_frame_present);
+    TEST_ASSERT_FALSE(arq_win_nonempty(&sess));
     TEST_ASSERT_EQUAL_INT(ARQ_CONN_CONNECTED, sess.conn_state);
     TEST_ASSERT_NOT_EQUAL(ARQ_DFLOW_WAIT_ACK, sess.dflow_state);
 }
@@ -587,7 +587,7 @@ void test_wait_ack_break_yields_floor(void)
 {
     goto_connected();
     goto_wait_ack();
-    TEST_ASSERT_TRUE(sess.tx_frame_present);
+    TEST_ASSERT_TRUE(arq_win_nonempty(&sess));
 
     /* Local side has no more data to send: the break must hand it the floor. */
     fake_tx_backlog_fake.return_val = 0;
@@ -596,7 +596,7 @@ void test_wait_ack_break_yields_floor(void)
     ev.rx_flags = ARQ_FLAG_HAS_DATA;   /* ACK+TURN break */
     arq_fsm_dispatch(&sess, &ev);
 
-    TEST_ASSERT_FALSE(sess.tx_frame_present);
+    TEST_ASSERT_FALSE(arq_win_nonempty(&sess));
     TEST_ASSERT_EQUAL_INT(ARQ_DFLOW_IDLE_IRS, sess.dflow_state);
 }
 
@@ -833,6 +833,137 @@ void test_irs_mirror_resets_toward_floor_on_silence(void)
     TEST_ASSERT_EQUAL_INT(MERCURY_MODE_MFSK, sess.peer_tx_mode);     /* stepped back to the floor */
 }
 
+/* ---- Windowed selective-repeat primitives (Step C) ----------------------
+ * These drive the new window code directly via injected events, independent of
+ * the mode table's burst_frames (still 1), so the SACK/reassembly paths are
+ * covered before K>1 is switched on. */
+
+/* Capture delivered RX bytes so reassembly order can be asserted. */
+static uint8_t  g_rx_capture[4096];
+static size_t   g_rx_capture_len;
+static void capture_rx(const uint8_t *d, size_t n)
+{
+    if (g_rx_capture_len + n <= sizeof(g_rx_capture))
+    {
+        memcpy(g_rx_capture + g_rx_capture_len, d, n);
+        g_rx_capture_len += n;
+    }
+}
+
+/* One DATA event with a distinct payload byte per seq + explicit burst_remaining. */
+static arq_event_t win_data(uint8_t seq, size_t n, uint8_t remaining)
+{
+    arq_event_t ev = make_event(ARQ_EV_RX_DATA);
+    ev.session_id  = 0x42;
+    ev.seq         = seq;
+    ev.mode        = MERCURY_MODE_MFSK;
+    ev.rx_flags    = (uint8_t)(remaining & ARQ_FLAG_BURST_REM_MASK);
+    ev.data_bytes  = n;
+    ev.payload_len = n;
+    for (size_t i = 0; i < n && i < sizeof(ev.payload); i++)
+        ev.payload[i] = (uint8_t)(seq + 1);   /* seq-distinct fill */
+    return ev;
+}
+
+/* Out-of-order frames within one burst are held and delivered in seq order once
+ * the gap fills — proves the IRS reassembly window. */
+void test_win_rx_reassembles_out_of_order(void)
+{
+    goto_connected_irs();
+    g_rx_capture_len = 0;
+    fake_deliver_rx_data_fake.custom_fake = capture_rx;
+
+    /* Burst of 3: seq 0, then 2 (out of order, held), then 1 (fills the gap,
+     * releasing 1 and 2).  remaining counts down 2,1,0. */
+    arq_event_t e0 = win_data(0, 8, 2); arq_fsm_dispatch(&sess, &e0);
+    arq_event_t e2 = win_data(2, 8, 1); arq_fsm_dispatch(&sess, &e2);
+    arq_event_t e1 = win_data(1, 8, 0); arq_fsm_dispatch(&sess, &e1);
+
+    /* Delivered in order 0,1,2 => payload fills 1,2,3 each x8. */
+    TEST_ASSERT_EQUAL_UINT(24, g_rx_capture_len);
+    TEST_ASSERT_EQUAL_UINT8(1, g_rx_capture[0]);    /* seq0 */
+    TEST_ASSERT_EQUAL_UINT8(2, g_rx_capture[8]);    /* seq1 */
+    TEST_ASSERT_EQUAL_UINT8(3, g_rx_capture[16]);   /* seq2 */
+    TEST_ASSERT_EQUAL_UINT8(3, sess.rx_expected);   /* base advanced past all */
+}
+
+/* A burst with a hole (seq 1 lost) delivers 0, holds 2, and the burst-final
+ * frame arrives with a gap => the consolidated ACK must be a coded SACK, not a
+ * bare pattern.  Assert a coded control frame is emitted with ARQ_FLAG_SACK and
+ * the correct base+bitmap. */
+void test_win_rx_hole_emits_sack(void)
+{
+    goto_connected_irs();
+    g_rx_capture_len = 0;
+    fake_deliver_rx_data_fake.custom_fake = capture_rx;
+    RESET_FAKE(fake_send_tx_frame);
+    RESET_FAKE(fake_send_pattern_ack);
+
+    arq_event_t e0 = win_data(0, 8, 2); arq_fsm_dispatch(&sess, &e0);  /* delivered */
+    arq_event_t e2 = win_data(2, 8, 0); arq_fsm_dispatch(&sess, &e2);  /* held; burst end, gap at 1 */
+
+    /* ACK guard/tail deadline -> emit consolidated ack. */
+    arq_event_t tack = make_event(ARQ_EV_TIMER_ACK);
+    arq_fsm_dispatch(&sess, &tack);
+
+    /* Hole present => coded SACK frame, NOT a pattern ACK. */
+    TEST_ASSERT_EQUAL_UINT(0, fake_send_pattern_ack_fake.call_count);
+    TEST_ASSERT_GREATER_THAN(0, fake_send_tx_frame_fake.call_count);
+    const uint8_t *f = fake_send_tx_frame_fake.arg3_val;   /* frame bytes */
+    arq_frame_hdr_t hdr;
+    TEST_ASSERT_EQUAL_INT(0, arq_protocol_decode_hdr(f, ARQ_FRAME_HDR_SIZE + 1, &hdr));
+    TEST_ASSERT_EQUAL_UINT8(ARQ_SUBTYPE_ACK, hdr.subtype);
+    TEST_ASSERT_TRUE(hdr.flags & ARQ_FLAG_SACK);
+    TEST_ASSERT_EQUAL_UINT8(1, hdr.rx_ack_seq);            /* rcv_base = 1 (hole) */
+    TEST_ASSERT_EQUAL_UINT8(0x01, f[ARQ_FRAME_HDR_SIZE]);  /* bit0 = seq 2 held  */
+    TEST_ASSERT_EQUAL_UINT(8, g_rx_capture_len);           /* only seq0 delivered */
+}
+
+/* A clean, in-order, complete burst (remaining hits 0, no gaps) is acked by the
+ * fast pattern — no coded frame. */
+void test_win_rx_clean_burst_pattern_ack(void)
+{
+    goto_connected_irs();
+    RESET_FAKE(fake_send_tx_frame);
+    RESET_FAKE(fake_send_pattern_ack);
+
+    arq_event_t e0 = win_data(0, 8, 1); arq_fsm_dispatch(&sess, &e0);
+    arq_event_t e1 = win_data(1, 8, 0); arq_fsm_dispatch(&sess, &e1);
+
+    arq_event_t tack = make_event(ARQ_EV_TIMER_ACK);
+    arq_fsm_dispatch(&sess, &tack);
+
+    TEST_ASSERT_GREATER_THAN(0, fake_send_pattern_ack_fake.call_count);
+    TEST_ASSERT_EQUAL_UINT(0, fake_send_tx_frame_fake.call_count);  /* no coded ack */
+}
+
+/* ISS: a SACK naming a subset retires those seqs and retransmits ONLY the
+ * holes.  Drive to WAIT_ACK with a window, then feed a SACK. */
+void test_win_iss_sack_retransmits_holes_only(void)
+{
+    goto_connected();
+    goto_wait_ack();                       /* one frame (seq 0) in flight       */
+    TEST_ASSERT_TRUE(arq_win_nonempty(&sess));
+    TEST_ASSERT_EQUAL_UINT8(0, sess.tx_base);
+
+    /* SACK with base=0 and empty bitmap => seq 0 is a hole (nothing delivered).
+     * The ISS must go back to DATA_TX and re-send seq 0. */
+    RESET_FAKE(fake_send_tx_frame);
+    arq_event_t sack = make_event(ARQ_EV_RX_ACK);
+    sack.session_id  = sess.session_id;   /* caller generated its own id */
+    sack.ack_seq     = 0;       /* rcv_base */
+    sack.sack_present = true;
+    sack.sack_bitmap  = 0x00;   /* nothing above base delivered */
+    arq_fsm_dispatch(&sess, &sack);
+
+    TEST_ASSERT_TRUE(arq_win_nonempty(&sess));         /* seq 0 still outstanding */
+    TEST_ASSERT_EQUAL_INT(ARQ_DFLOW_DATA_TX, sess.dflow_state);
+    /* Guard timer fires the actual retransmit. */
+    arq_event_t t = make_event(ARQ_EV_TIMER_ACK);
+    arq_fsm_dispatch(&sess, &t);
+    TEST_ASSERT_GREATER_THAN(0, fake_send_tx_frame_fake.call_count);
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -870,5 +1001,9 @@ int main(void)
     RUN_TEST(test_irs_mirror_climbs_with_peer);
     RUN_TEST(test_irs_mirror_steps_down_on_duplicate);
     RUN_TEST(test_irs_mirror_resets_toward_floor_on_silence);
+    RUN_TEST(test_win_rx_reassembles_out_of_order);
+    RUN_TEST(test_win_rx_hole_emits_sack);
+    RUN_TEST(test_win_rx_clean_burst_pattern_ack);
+    RUN_TEST(test_win_iss_sack_retransmits_holes_only);
     return UNITY_END();
 }

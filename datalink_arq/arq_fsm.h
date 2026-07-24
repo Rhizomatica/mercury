@@ -241,17 +241,43 @@ typedef struct
                                         * transmitting before IRS resets its
                                         * decoders from TX→RX)               */
 
-    /* --- Retransmit: one retained frame (stop-and-wait, no window/restage) ---
-     * Holds the RAW USER bytes of the single outstanding frame (read once from
-     * the app ring when the frame is created).  A retransmit re-frames these
-     * bytes at the CURRENT payload_mode; a mode drop to a smaller payload sends
-     * the head now and retains the tail via a memmove on this one buffer.
-     * Sized to the largest user payload (QAM16C2: 1213 - 8 = 1205). */
-    uint8_t  tx_frame[1213];
-    int      tx_frame_len;             /* valid user bytes in tx_frame (0=none)*/
-    uint8_t  tx_frame_seq;             /* seq assigned to the retained frame   */
-    bool     tx_frame_present;         /* a frame is outstanding (awaiting ACK)*/
-    bool     tx_frame_retx;            /* it was retransmitted at least once   */
+    /* --- Windowed selective repeat (burst = window, ARQ_WIN_SLOTS deep) ---
+     *
+     * The ISS sends up to burst_frames (mode table) DATA frames per keydown;
+     * each frame is an IMMUTABLE unit of raw user bytes keyed by seq (read
+     * once from the app ring at creation, never resized — a retransmit
+     * re-frames the same bytes at a mode that fits).  One consolidated ACK
+     * per burst: a bare pattern ACK retires every outstanding slot (the IRS
+     * only sends it when the whole burst arrived); a SACK (rcv_base + bitmap)
+     * retires the named seqs and the un-set ones are retransmitted — holes
+     * ONLY, oldest first, so the window drains monotonically under loss.
+     * Slot index = seq % ARQ_WIN_SLOTS; a seq s is in-window iff
+     * (uint8_t)(s - tx_base) < ARQ_WIN_SLOTS.  With burst_frames == 1 (MFSK
+     * floor) all of this degenerates to the proven stop-and-wait path. */
+    struct arq_txslot {
+        uint8_t data[1213];            /* raw user bytes (QAM16C2 max 1205)    */
+        int     len;                   /* valid bytes (0 with !present)        */
+        bool    present;               /* un-acked, awaiting delivery          */
+        bool    retx;                  /* retransmitted at least once          */
+    } tx_win[ARQ_BURST_MAX];
+    uint8_t  tx_base;                  /* oldest un-acked seq (window base)    */
+    bool     tx_burst_retx;            /* current outgoing burst contains any
+                                        * retransmission (ladder: not clean)   */
+
+    /* --- IRS reassembly window + per-burst ACK consolidation --- */
+    struct arq_rxslot {
+        uint8_t data[1213];            /* out-of-order user bytes above base   */
+        size_t  len;
+        bool    present;
+    } rx_win[ARQ_BURST_MAX];
+    bool     rx_burst_complete;        /* a frame with burst_remaining==0 was
+                                        * received in the current burst — only
+                                        * then may a bare pattern ACK be sent
+                                        * (else the burst tail may be lost and
+                                        * a pattern would falsely retire it)   */
+    bool     rx_burst_dup;             /* burst contained a duplicate (peer is
+                                        * retransmitting; mirror steps down)   */
+    bool     rx_burst_new;             /* burst delivered at least 1 new frame */
 
     uint64_t last_rx_ms;              /* last successful frame decode time     */
     uint64_t irs_data_wait_ms;        /* when this IRS first had data queued
@@ -267,6 +293,25 @@ typedef struct
     uint64_t       deadline_ms;       /* absolute monotonic deadline           */
     arq_event_id_t deadline_event;   /* event to fire when deadline fires     */
 } arq_session_t;
+
+/* ---- Selective-repeat window helpers (shared with arq.c + tests) ---- */
+
+/* Any un-acked frame outstanding? (windowed successor of tx_frame_present) */
+static inline bool arq_win_nonempty(const arq_session_t *s)
+{
+    for (int i = 0; i < ARQ_BURST_MAX; i++)
+        if (s->tx_win[i].present) return true;
+    return false;
+}
+
+/* Total un-acked user bytes held in the window (backlog accounting). */
+static inline int arq_win_bytes(const arq_session_t *s)
+{
+    int n = 0;
+    for (int i = 0; i < ARQ_BURST_MAX; i++)
+        if (s->tx_win[i].present) n += s->tx_win[i].len;
+    return n;
+}
 
 /* ======================================================================
  * FSM action callbacks

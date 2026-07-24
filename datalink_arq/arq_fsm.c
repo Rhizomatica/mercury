@@ -147,9 +147,19 @@ static void reset_session_data_state(arq_session_t *sess)
 {
     sess->tx_seq             = 0;
     sess->rx_expected        = 0;
-    sess->tx_frame_present   = false;
-    sess->tx_frame_len       = 0;
-    sess->tx_frame_retx      = false;
+    sess->tx_base            = 0;
+    sess->tx_burst_retx      = false;
+    for (int i = 0; i < ARQ_BURST_MAX; i++)
+    {
+        sess->tx_win[i].present = false;
+        sess->tx_win[i].len     = 0;
+        sess->tx_win[i].retx    = false;
+        sess->rx_win[i].present = false;
+        sess->rx_win[i].len     = 0;
+    }
+    sess->rx_burst_complete  = false;
+    sess->rx_burst_dup       = false;
+    sess->rx_burst_new       = false;
     sess->tx_retries_left    = ARQ_DATA_RETRY_SLOTS;
     sess->speed_level        = 0;
     sess->tx_success_count   = 0;
@@ -205,9 +215,19 @@ static void sess_enter(arq_session_t *sess, arq_conn_state_t new_state,
         sess->rx_speed_level   = 0;   /* mirror back to the floor for a fresh session */
         sess->rx_success_count = 0;
         sess->rx_fast_ramp     = true;
-        sess->tx_frame_present = false;
-        sess->tx_frame_len     = 0;
-        sess->tx_frame_retx    = false;
+        sess->tx_base          = sess->tx_seq;
+        sess->tx_burst_retx    = false;
+        for (int i = 0; i < ARQ_BURST_MAX; i++)
+        {
+            sess->tx_win[i].present = false;
+            sess->tx_win[i].len     = 0;
+            sess->tx_win[i].retx    = false;
+            sess->rx_win[i].present = false;
+            sess->rx_win[i].len     = 0;
+        }
+        sess->rx_burst_complete = false;
+        sess->rx_burst_dup      = false;
+        sess->rx_burst_new      = false;
     }
 }
 
@@ -360,27 +380,85 @@ static void irs_mirror_peer_ladder(arq_session_t *sess, bool clean_new)
               sess->rx_speed_level, sess->peer_tx_mode);
 }
 
-/* IRS: arm the ACK deadline after a received DATA frame.  Stop-and-wait: one
- * frame per burst, so we always wait the channel guard before emitting the
- * pattern ACK (lets the ISS relay switch TX->RX before our tones arrive). */
+/* IRS: arm the consolidated per-burst ACK deadline after a received DATA
+ * frame.  The frame's self-described burst_remaining says how many frames of
+ * this keydown are still on the air:
+ *   0  -> the burst is over; ack after the channel guard (the ISS relay needs
+ *         the guard to switch TX->RX before our tones/frame arrive).
+ *   R>0-> R more frames coming; wait their airtime (+guard+decode margin)
+ *         before acking, so ONE ack covers the whole burst.  If the tail is
+ *         lost this deadline still fires and the ack (then a SACK) names the
+ *         holes — the tail-loss safety net.
+ * Each further frame of the burst re-arms this with its own remaining count,
+ * so the deadline converges on the true end of burst. */
 static void irs_arm_ack_deadline(arq_session_t *sess, const arq_event_t *ev)
 {
-    (void)ev;
-    dflow_enter(sess, ARQ_DFLOW_ACK_TX,
-                time_now_ms() + ARQ_CHANNEL_GUARD_MS, ARQ_EV_TIMER_ACK);
+    uint8_t rem = ev->rx_flags & ARQ_FLAG_BURST_REM_MASK;
+    uint64_t dl = time_now_ms() + ARQ_CHANNEL_GUARD_MS;
+    if (rem > 0)
+    {
+        const arq_mode_timing_t *tm = arq_protocol_mode_timing(ev->mode);
+        float dur_s = tm ? tm->frame_duration_s : 5.0f;
+        /* frame_duration_s is a whole single-frame keydown (preamble incl.),
+         * so rem*dur over-estimates the tail airtime — safe (waits longer). */
+        dl += (uint64_t)(dur_s * 1000.0f) * rem + 1500 /* decode margin */;
+    }
+    dflow_enter(sess, ARQ_DFLOW_ACK_TX, dl, ARQ_EV_TIMER_ACK);
 }
 
+/* Windowed receive: insert a DATA frame into the reassembly window and deliver
+ * the in-order prefix.  Returns true for a NEW frame (in-order or stored out of
+ * order), false for a duplicate/out-of-range one.  Tracks the per-burst flags
+ * that the consolidated ACK decision and the mode mirror consume. */
 static bool deliver_rx_checked(arq_session_t *sess, const arq_event_t *ev)
 {
-    if (ev->seq != sess->rx_expected)
+    uint8_t d = (uint8_t)(ev->seq - sess->rx_expected);
+
+    if (d >= ARQ_BURST_MAX)
     {
+        /* Behind the window base (peer retransmitting — our ack was lost) or
+         * absurdly far ahead (corrupt header): not new either way. */
         HLOGD(LOG_COMP, "Duplicate data seq=%d (expected=%d) — suppressed",
               (int)ev->seq, (int)sess->rx_expected);
+        sess->rx_burst_dup = true;
         return false;
     }
-    if (ev->payload_len > 0 && g_cbs.deliver_rx_data)
-        g_cbs.deliver_rx_data(ev->payload, ev->payload_len);
-    sess->rx_expected = ev->seq + 1;
+
+    if (d == 0)
+    {
+        /* In order: deliver it and drain any contiguous run it unblocks. */
+        if (ev->payload_len > 0 && g_cbs.deliver_rx_data)
+            g_cbs.deliver_rx_data(ev->payload, ev->payload_len);
+        sess->rx_expected = (uint8_t)(ev->seq + 1);
+        for (;;)
+        {
+            struct arq_rxslot *sl =
+                &sess->rx_win[sess->rx_expected % ARQ_BURST_MAX];
+            if (!sl->present)
+                break;
+            if (sl->len > 0 && g_cbs.deliver_rx_data)
+                g_cbs.deliver_rx_data(sl->data, sl->len);
+            sl->present = false;
+            sl->len = 0;
+            sess->rx_expected = (uint8_t)(sess->rx_expected + 1);
+        }
+        sess->rx_burst_new = true;
+        return true;
+    }
+
+    /* Out of order above the base: hold it for reassembly. */
+    struct arq_rxslot *sl = &sess->rx_win[ev->seq % ARQ_BURST_MAX];
+    if (sl->present)
+    {
+        sess->rx_burst_dup = true;   /* duplicate of a held slot */
+        return false;
+    }
+    if (ev->payload_len > sizeof(sl->data))
+        return false;                 /* cannot hold — treated as lost */
+    memcpy(sl->data, ev->payload, ev->payload_len);
+    sl->len     = ev->payload_len;
+    sl->present = true;
+    sess->rx_burst_new = true;
     return true;
 }
 
@@ -425,9 +503,10 @@ static void send_ctrl_frame(arq_session_t *sess, arq_subtype_t subtype)
 }
 
 /* Emit the pattern ACK.  ACK+TURN (break) when we have reverse data queued
- * (== HAS_DATA piggyback), else a plain ACK.  No coded frame, no seq: in
- * stop-and-wait only one frame is outstanding, so "an ACK was heard" ACKs it
- * unambiguously.  ack_delay_raw is unused (kept for the DATA_RX call site). */
+ * (== HAS_DATA piggyback), else a plain ACK.  No coded frame, no seq: a bare
+ * pattern is only ever sent when the WHOLE outstanding burst arrived, so "an
+ * ACK was heard" retires it unambiguously.  ack_delay_raw is unused (kept for
+ * the DATA_RX call site). */
 static void send_ack(arq_session_t *sess, uint8_t ack_delay_raw)
 {
     (void)ack_delay_raw;
@@ -436,6 +515,66 @@ static void send_ack(arq_session_t *sess, uint8_t ack_delay_raw)
     sess->acktx_had_has_data = (kind == ARQ_PATTERN_BREAK);
     if (g_cbs.send_pattern_ack)
         g_cbs.send_pattern_ack(sess->payload_mode, kind);
+}
+
+/* IRS: emit the consolidated per-burst acknowledgement and reset the burst
+ * tracking.  Split by outcome:
+ *   - CLEAN (the burst-final frame arrived and no out-of-order holes are
+ *     held): the fast Welch-Costas pattern — 0.64 s, ~10 dB more robust than
+ *     a coded frame, and it needs no bits ("everything you sent arrived").
+ *   - HOLES (missing frames below the highest received, or the burst tail
+ *     never arrived): a coded SACK on the control mode — rcv_base + a bitmap
+ *     of the out-of-order seqs held above it; the ISS retransmits exactly the
+ *     un-named ones.  Carries HAS_DATA for the piggyback turn bid, like the
+ *     pattern break.  The mirror steps down once here (unless the dup path
+ *     already did): the ISS steps its ladder down on receiving the SACK. */
+static void irs_send_burst_ack(arq_session_t *sess)
+{
+    uint8_t bitmap = 0;
+    for (int off = 1; off < ARQ_BURST_MAX; off++)
+    {
+        uint8_t s = (uint8_t)(sess->rx_expected + off);
+        if (sess->rx_win[s % ARQ_BURST_MAX].present)
+            bitmap |= (uint8_t)(1u << (off - 1));
+    }
+    bool holes = !sess->rx_burst_complete || bitmap != 0;
+
+    if (!holes)
+    {
+        send_ack(sess, 0);
+    }
+    else
+    {
+        uint8_t flags = 0;
+        if (session_tx_backlog(sess) > 0)
+            flags |= ARQ_FLAG_HAS_DATA;
+        sess->acktx_had_has_data = (flags & ARQ_FLAG_HAS_DATA) != 0;
+
+        uint8_t snr_raw = 0;
+        if (sess->local_snr_x10 != 0)
+            snr_raw = arq_protocol_encode_snr((float)sess->local_snr_x10 / 10.0f);
+
+        uint8_t frame[INT_BUFFER_SIZE];
+        int n = arq_protocol_build_sack(frame, sizeof(frame), sess->session_id,
+                                        sess->rx_expected, flags, snr_raw,
+                                        bitmap);
+        if (n > 0)
+            send_frame(PACKET_TYPE_ARQ_CONTROL, sess->control_mode,
+                       (size_t)n, frame, 0);
+        HLOGD(LOG_COMP, "SACK: base=%d bitmap=0x%02x%s",
+              (int)sess->rx_expected, bitmap,
+              sess->rx_burst_complete ? "" : " (burst tail missing)");
+
+        /* The peer will retransmit (its ladder steps down on this SACK);
+         * mirror once unless a duplicate already stepped us this burst. */
+        if (!sess->rx_burst_dup)
+            irs_mirror_peer_ladder(sess, false);
+    }
+
+    /* Fresh tracking for the next burst. */
+    sess->rx_burst_complete = false;
+    sess->rx_burst_dup      = false;
+    sess->rx_burst_new      = false;
 }
 
 /* Smallest ladder mode whose usable payload can carry `len` user bytes, at or
@@ -456,101 +595,149 @@ static int mode_that_fits(int from_level, int len)
     return clamp_payload_mode_to_bandwidth(arq_mode_ladder[ARQ_LADDER_LEVELS - 1]);
 }
 
-/* Build and transmit the single retained DATA frame.  A FRESH frame reads raw
- * user bytes from the app ring once, sized to the current payload_mode, and
- * caches them in sess->tx_frame with a fixed seq.  A retransmit re-frames the
- * SAME cached bytes under the SAME seq — never resized — so the seq<->content
- * mapping is immutable and a duplicate is idempotent on the peer.  If the mode
- * dropped below the retained frame's length, we transmit at the smallest mode
- * that still fits it (mode_that_fits) rather than splitting it.  No window,
- * no restage. */
+/* Build and transmit one KEYDOWN of DATA frames (the windowed burst).
+ *
+ * Selection (selective repeat; the window drains monotonically under loss):
+ *  - If un-acked slots are outstanding (holes after a SACK, or the whole
+ *    window after an ACK timeout / duplicate), retransmit THOSE, oldest
+ *    first — never mixed with new frames.
+ *  - Else fill up to the mode's burst_frames fresh slots from the app ring,
+ *    each an IMMUTABLE unit (raw user bytes read once, fixed seq, never
+ *    resized) so a duplicate is idempotent on the peer.
+ *
+ * One keydown = one mode (the modem action carries a single codec): a fresh
+ * burst uses payload_mode; a retransmit burst uses the smallest mode that
+ * fits its LARGEST frame (mode_that_fits — never re-framed smaller).  Frames
+ * go out via send_tx_frame with burst_remaining counting down to 0; the arq.c
+ * accumulator turns them into ONE modem action (one preamble/keydown), and
+ * the same count rides the DATA header so the IRS re-anchors its decoder and
+ * consolidates its ACK per burst.  burst_frames==1 (MFSK floor) reduces all
+ * of this to the proven stop-and-wait path. */
 static void send_data_burst(arq_session_t *sess)
 {
     if (!g_cbs.tx_read || !g_cbs.tx_backlog)
         return;
 
     const arq_mode_timing_t *tm = arq_protocol_mode_timing(sess->payload_mode);
-    if (!tm)
+    if (!tm || (int)tm->payload_bytes <= ARQ_FRAME_HDR_SIZE)
         return;
-    if ((int)tm->payload_bytes <= ARQ_FRAME_HDR_SIZE)
-        return;
-    size_t user_bytes = (size_t)tm->payload_bytes - ARQ_FRAME_HDR_SIZE;
 
-    /* Fetch a new frame's worth of user bytes iff none is outstanding. */
-    if (!sess->tx_frame_present)
+    int K = tm->burst_frames;
+    if (K < 1) K = 1;
+    if (K > ARQ_BURST_MAX) K = ARQ_BURST_MAX;
+
+    /* --- Select this keydown's frames --- */
+    uint8_t seqs[ARQ_BURST_MAX];
+    int     count = 0;
+    bool    retx_burst = arq_win_nonempty(sess);
+
+    if (retx_burst)
     {
-        size_t want = user_bytes;
-        if (want > sizeof(sess->tx_frame))
-            want = sizeof(sess->tx_frame);
-        int got = g_cbs.tx_read(sess->tx_frame, want);
-        if (got <= 0)
-            return;  /* backlog drained */
-        sess->tx_frame_len     = got;
-        sess->tx_frame_seq     = sess->tx_seq;
-        sess->tx_frame_present = true;
-        sess->tx_frame_retx    = false;
+        /* Holes only, oldest first. */
+        for (int d = 0; d < ARQ_BURST_MAX && count < K; d++)
+        {
+            uint8_t s = (uint8_t)(sess->tx_base + d);
+            struct arq_txslot *sl = &sess->tx_win[s % ARQ_BURST_MAX];
+            if (sl->present)
+            {
+                sl->retx = true;
+                seqs[count++] = s;
+            }
+        }
     }
+    else
+    {
+        size_t slot_new = (size_t)tm->payload_bytes - ARQ_FRAME_HDR_SIZE;
+        sess->tx_base = sess->tx_seq;   /* window empty: base tracks next new */
+        while (count < K)
+        {
+            struct arq_txslot *sl =
+                &sess->tx_win[sess->tx_seq % ARQ_BURST_MAX];
+            size_t want = slot_new;
+            if (want > sizeof(sl->data))
+                want = sizeof(sl->data);
+            int got = g_cbs.tx_read(sl->data, want);
+            if (got <= 0)
+                break;               /* backlog drained */
+            sl->len     = got;
+            sl->present = true;
+            sl->retx    = false;
+            seqs[count++] = sess->tx_seq;
+            sess->tx_seq  = (uint8_t)(sess->tx_seq + 1);
+        }
+    }
+    if (count == 0)
+        return;
+    sess->tx_burst_retx = retx_burst;
 
-    /* Choose the TX mode: the current mode if the (immutable) retained frame
-     * fits, else the smallest mode that does — the frame is never resized. */
+    /* --- One mode for the whole keydown: must fit the largest frame --- */
+    int max_len = 0;
+    for (int i = 0; i < count; i++)
+    {
+        int l = sess->tx_win[seqs[i] % ARQ_BURST_MAX].len;
+        if (l > max_len) max_len = l;
+    }
     int tx_mode = sess->payload_mode;
     const arq_mode_timing_t *tmm = arq_protocol_mode_timing(tx_mode);
     size_t slot = (tmm && (int)tmm->payload_bytes > ARQ_FRAME_HDR_SIZE)
                   ? (size_t)tmm->payload_bytes - ARQ_FRAME_HDR_SIZE : 0;
-    if (sess->tx_frame_len > (int)slot)
+    if (max_len > (int)slot)
     {
-        tx_mode = mode_that_fits(sess->speed_level, sess->tx_frame_len);
+        tx_mode = mode_that_fits(sess->speed_level, max_len);
         tmm  = arq_protocol_mode_timing(tx_mode);
         slot = (tmm && (int)tmm->payload_bytes > ARQ_FRAME_HDR_SIZE)
                ? (size_t)tmm->payload_bytes - ARQ_FRAME_HDR_SIZE : slot;
     }
 
-    int this_len = sess->tx_frame_len;
-    uint8_t payload[INT_BUFFER_SIZE];
-    memset(payload, 0, slot);
-    memcpy(payload, sess->tx_frame, (size_t)this_len);
-
-    uint16_t payload_valid;
-    uint8_t  data_flags = 0;
-    if ((size_t)this_len == slot)
-    {
-        payload_valid = ARQ_DATA_LEN_FULL;
-    }
-    else
-    {
-        payload_valid = (uint16_t)this_len;
-        if (this_len & 0x100) data_flags |= ARQ_FLAG_LEN_HI;
-        if (this_len & 0x200) data_flags |= ARQ_FLAG_LEN_B9;
-        if (this_len & 0x400) data_flags |= ARQ_FLAG_LEN_B10;
-    }
-    /* HAS_DATA piggyback: more app bytes are queued behind this frame. */
-    if (session_tx_backlog(sess) > 0)
-        data_flags |= ARQ_FLAG_HAS_DATA;
-
-    /* Frames still to come in THIS keydown (flags bits [2:0]).  Stop-and-wait
-     * sends one frame per keydown, so 0 = last (and only) frame; the windowed
-     * FSM (a later phase) sets this to K-1-i so the IRS re-anchors the burst
-     * state machine per frame.  0 keeps the current single-frame behaviour. */
-    uint8_t burst_remaining = 0;
-    data_flags |= (burst_remaining & ARQ_FLAG_BURST_REM_MASK);
-
     uint8_t snr_raw = 0;
     if (sess->local_snr_x10 != 0)
         snr_raw = arq_protocol_encode_snr((float)sess->local_snr_x10 / 10.0f);
 
-    uint8_t frame[INT_BUFFER_SIZE];
-    int n = arq_protocol_build_data(frame, sizeof(frame),
-                                    sess->session_id, sess->tx_frame_seq,
-                                    sess->rx_expected, data_flags, snr_raw,
-                                    payload_valid, payload, slot);
-    if (n <= 0)
-        return;
+    /* --- Emit the frames back-to-back (one action, one preamble) --- */
+    for (int i = 0; i < count; i++)
+    {
+        struct arq_txslot *sl = &sess->tx_win[seqs[i] % ARQ_BURST_MAX];
+        int this_len = sl->len;
 
-    send_frame(PACKET_TYPE_ARQ_DATA, tx_mode, (size_t)n, frame, 0);
-    if (g_timing)
-        arq_timing_record_tx_queue(g_timing, (int)sess->tx_frame_seq,
-                                   tx_mode,
-                                   session_tx_backlog(sess), this_len);
+        uint8_t payload[INT_BUFFER_SIZE];
+        memset(payload, 0, slot);
+        memcpy(payload, sl->data, (size_t)this_len);
+
+        uint16_t payload_valid;
+        uint8_t  data_flags = 0;
+        if ((size_t)this_len == slot)
+        {
+            payload_valid = ARQ_DATA_LEN_FULL;
+        }
+        else
+        {
+            payload_valid = (uint16_t)this_len;
+            if (this_len & 0x100) data_flags |= ARQ_FLAG_LEN_HI;
+            if (this_len & 0x200) data_flags |= ARQ_FLAG_LEN_B9;
+            if (this_len & 0x400) data_flags |= ARQ_FLAG_LEN_B10;
+        }
+        /* HAS_DATA piggyback: more app bytes queued behind this burst. */
+        if (session_tx_backlog(sess) > 0)
+            data_flags |= ARQ_FLAG_HAS_DATA;
+
+        /* Self-describing burst: frames still to come in THIS keydown. */
+        uint8_t burst_remaining = (uint8_t)(count - 1 - i);
+        data_flags |= (burst_remaining & ARQ_FLAG_BURST_REM_MASK);
+
+        uint8_t frame[INT_BUFFER_SIZE];
+        int n = arq_protocol_build_data(frame, sizeof(frame),
+                                        sess->session_id, seqs[i],
+                                        sess->rx_expected, data_flags, snr_raw,
+                                        payload_valid, payload, slot);
+        if (n <= 0)
+            return;
+
+        send_frame(PACKET_TYPE_ARQ_DATA, tx_mode, (size_t)n, frame,
+                   (int)burst_remaining);
+        if (g_timing)
+            arq_timing_record_tx_queue(g_timing, (int)seqs[i], tx_mode,
+                                       session_tx_backlog(sess), this_len);
+    }
 }
 
 /* ======================================================================
@@ -563,7 +750,7 @@ static void enter_idle_iss(arq_session_t *sess, bool gained_turn)
 {
     (void)gained_turn;  /* per-direction mode: my TX mode evolves independently */
     sess->tx_retries_left = ARQ_DATA_RETRY_SLOTS;  /* fresh counter on ISS role entry */
-    if (session_tx_backlog(sess) > 0 || sess->tx_frame_present)
+    if (session_tx_backlog(sess) > 0 || arq_win_nonempty(sess))
     {
         dflow_enter(sess, ARQ_DFLOW_DATA_TX, UINT64_MAX, ARQ_EV_TIMER_RETRY);
         send_data_burst(sess);
@@ -595,7 +782,7 @@ static void enter_idle_iss_guarded(arq_session_t *sess, bool gained_turn)
 {
     (void)gained_turn;  /* per-direction mode: my TX mode evolves independently */
     sess->tx_retries_left = ARQ_DATA_RETRY_SLOTS;  /* fresh counter on ISS role entry */
-    if (session_tx_backlog(sess) > 0 || sess->tx_frame_present)
+    if (session_tx_backlog(sess) > 0 || arq_win_nonempty(sess))
     {
         /* Guard before resuming DATA TX so the peer's decoder can switch
          * TX->RX and re-sync before our preamble.  The mode is chosen purely
@@ -995,7 +1182,7 @@ static void fsm_connected(arq_session_t *sess, const arq_event_t *ev)
          * armed here forces teardown regardless of state, (3) a drained buffer
          * fires the deferred disconnect at the next idle-ISS entry. */
         if ((session_tx_backlog(sess) > 0) ||
-            sess->tx_frame_present ||
+            arq_win_nonempty(sess) ||
             sess->dflow_state == ARQ_DFLOW_DATA_TX ||
             sess->dflow_state == ARQ_DFLOW_WAIT_ACK)
         {
@@ -1067,12 +1254,31 @@ static void fsm_connected(arq_session_t *sess, const arq_event_t *ev)
 static void irs_receive_data(arq_session_t *sess, const arq_event_t *ev)
 {
     update_local_snr(sess, ev);
+    bool was_dup   = sess->rx_burst_dup;
     bool new_frame = deliver_rx_checked(sess, ev);
-    /* Follow the sender's delivery-driven ladder: a new in-order frame is a
-     * clean delivery on its side (climb); a duplicate means it retried and
-     * stepped down.  This sets peer_tx_mode to the mode of the peer's NEXT
-     * burst so the payload decoder is already there when it arrives. */
-    irs_mirror_peer_ladder(sess, new_frame);
+    uint8_t rem    = ev->rx_flags & ARQ_FLAG_BURST_REM_MASK;
+    if (rem == 0)
+        sess->rx_burst_complete = true;
+
+    /* Mode mirror, PER BURST (matches the sender's per-burst ladder):
+     *  - the first duplicate of a burst = the peer is retransmitting (it
+     *    stepped down at its ACK timeout / SACK) -> mirror one step down;
+     *  - the final frame (remaining==0) of an all-clean burst (no dup, no
+     *    out-of-order holes held) = a clean delivery on the sender's side ->
+     *    mirror the climb.  Mid-burst frames never touch the mirror. */
+    if (sess->rx_burst_dup && !was_dup)
+        irs_mirror_peer_ladder(sess, false);
+    else if (rem == 0 && new_frame && !sess->rx_burst_dup)
+    {
+        bool holes = false;
+        for (int off = 1; off < ARQ_BURST_MAX; off++)
+            if (sess->rx_win[(uint8_t)(sess->rx_expected + off)
+                             % ARQ_BURST_MAX].present)
+                holes = true;
+        if (!holes)
+            irs_mirror_peer_ladder(sess, true);
+    }
+
     if (new_frame && g_timing)
         arq_timing_record_data_rx(g_timing, (int)ev->seq,
                                   (int)ev->data_bytes, sess->local_snr_x10);
@@ -1082,19 +1288,80 @@ static void irs_receive_data(arq_session_t *sess, const arq_event_t *ev)
                           : true;
 }
 
-/* ISS: the retained frame was delivered (explicit pattern ACK or an implicit
- * ACK carried by the peer's reverse DATA).  The frame is an immutable unit
- * (fixed seq + byte range), so clear it whole and advance tx_seq. */
-static void iss_frame_delivered(arq_session_t *sess)
+/* ISS: the WHOLE outstanding burst was delivered (bare pattern ACK, or an
+ * implicit ACK carried by the peer's reverse DATA).  Every frame is an
+ * immutable unit, so clear all slots and advance the window base. */
+static void iss_retire_all(arq_session_t *sess)
 {
-    sess->tx_frame_present = false;
-    sess->tx_frame_len     = 0;
-    sess->tx_frame_retx    = false;
-    sess->tx_seq           = (uint8_t)(sess->tx_frame_seq + 1);
+    for (int i = 0; i < ARQ_BURST_MAX; i++)
+    {
+        sess->tx_win[i].present = false;
+        sess->tx_win[i].len     = 0;
+        sess->tx_win[i].retx    = false;
+    }
+    sess->tx_base             = sess->tx_seq;
+    sess->tx_burst_retx       = false;
     sess->last_tx_progress_ms = time_now_ms();
     sess->tx_retries_left     = ARQ_DATA_RETRY_SLOTS;
     if (g_cbs.send_buffer_status)
         g_cbs.send_buffer_status(session_tx_backlog(sess));
+}
+
+/* ISS: apply a selective ACK.  Seqs behind rcv_base and seqs named in the
+ * bitmap are delivered; the rest stay present (the holes).  Advances tx_base
+ * to the lowest still-outstanding seq.  Returns the hole count. */
+static int iss_apply_sack(arq_session_t *sess, uint8_t base, uint8_t bitmap)
+{
+    int     holes = 0;
+    bool    have_hole = false;
+    uint8_t lowest_hole = 0;
+    bool    progressed = false;
+
+    for (int d = 0; d < ARQ_BURST_MAX; d++)
+    {
+        uint8_t s = (uint8_t)(sess->tx_base + d);
+        struct arq_txslot *sl = &sess->tx_win[s % ARQ_BURST_MAX];
+        if (!sl->present)
+            continue;
+
+        uint8_t diff = (uint8_t)(s - base);
+        bool delivered;
+        if (diff == 0)
+            delivered = false;                       /* base = next expected  */
+        else if (diff <= 8)
+            delivered = (bitmap >> (diff - 1)) & 1;  /* out-of-order above it */
+        else
+            delivered = true;                        /* behind base (mod-256) */
+
+        if (delivered)
+        {
+            sl->present = false;
+            sl->len     = 0;
+            sl->retx    = false;
+            progressed  = true;
+        }
+        else
+        {
+            holes++;
+            if (!have_hole)
+            {
+                lowest_hole = s;
+                have_hole   = true;
+            }
+        }
+    }
+
+    sess->tx_base = have_hole ? lowest_hole : sess->tx_seq;
+    if (progressed)
+        sess->last_tx_progress_ms = time_now_ms();
+    if (!have_hole)
+    {
+        sess->tx_burst_retx   = false;
+        sess->tx_retries_left = ARQ_DATA_RETRY_SLOTS;
+    }
+    if (g_cbs.send_buffer_status)
+        g_cbs.send_buffer_status(session_tx_backlog(sess));
+    return holes;
 }
 
 static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
@@ -1105,7 +1372,7 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
     {
     case ARQ_DFLOW_IDLE_ISS:
         if (ev->id == ARQ_EV_APP_DATA_READY &&
-            (session_tx_backlog(sess) > 0 || sess->tx_frame_present))
+            (session_tx_backlog(sess) > 0 || arq_win_nonempty(sess)))
         {
             if (sess->need_initial_guard)
             {
@@ -1140,14 +1407,14 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
         else if (ev->id == ARQ_EV_TX_STARTED)
         {
             if (g_timing)
-                arq_timing_record_tx_start(g_timing, (int)sess->tx_frame_seq,
+                arq_timing_record_tx_start(g_timing, (int)sess->tx_base,
                                            sess->payload_mode,
                                            session_tx_backlog(sess));
         }
         else if (ev->id == ARQ_EV_TX_COMPLETE)
         {
             if (g_timing)
-                arq_timing_record_tx_end(g_timing, (int)sess->tx_frame_seq);
+                arq_timing_record_tx_end(g_timing, (int)sess->tx_base);
             tm = arq_protocol_mode_timing(sess->payload_mode);
             dflow_enter(sess, ARQ_DFLOW_WAIT_ACK,
                         deadline_from_s(tm ? tm->ack_timeout_s : 9.0f),
@@ -1158,28 +1425,60 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
     case ARQ_DFLOW_WAIT_ACK:
         if (ev->id == ARQ_EV_RX_ACK)
         {
-            /* Pattern ACK: in stop-and-wait only one frame is outstanding, so
-             * an ACK unambiguously confirms it.  A stale ACK with no frame
-             * present is ignored. */
-            if (!sess->tx_frame_present)
+            /* Consolidated per-burst ACK.  A bare pattern ACK is only sent by
+             * the IRS when the WHOLE burst arrived, so it retires every
+             * outstanding slot; a SACK names the delivered seqs and the rest
+             * are holes to retransmit NOW (ACK-driven, no timer wait).  A
+             * stale ACK with nothing outstanding is ignored. */
+            if (!arq_win_nonempty(sess))
             {
                 HLOGD(LOG_COMP, "ACK with no outstanding frame — ignored");
                 break;
             }
-            bool clean = !sess->tx_frame_retx &&
+
+            if (ev->sack_present)
+            {
+                int holes = iss_apply_sack(sess, ev->ack_seq, ev->sack_bitmap);
+                sess->peer_has_data = (ev->rx_flags & ARQ_FLAG_HAS_DATA) != 0;
+                if (holes > 0)
+                {
+                    /* The burst lost frames: one ladder step down per SACK
+                     * (delivery-driven, same rule as an ACK-timeout retry),
+                     * one retry slot consumed, and the holes go straight back
+                     * out after the post-ACK guard (the IRS just keyed). */
+                    HLOGD(LOG_COMP, "SACK: %d hole(s), retransmitting", holes);
+                    record_tx_outcome(sess, false);
+                    if (sess->tx_retries_left > 0)
+                        sess->tx_retries_left--;
+                    if (g_timing)
+                        arq_timing_record_retry(g_timing, (int)sess->tx_base,
+                                                ARQ_DATA_RETRY_SLOTS -
+                                                    (int)sess->tx_retries_left,
+                                                "sack_holes");
+                    dflow_enter(sess, ARQ_DFLOW_DATA_TX,
+                                time_now_ms() + ARQ_ISS_POST_ACK_GUARD_MS,
+                                ARQ_EV_TIMER_ACK);
+                    break;
+                }
+                /* SACK retired everything (stale/racy tail) — fall through to
+                 * the delivered path below with a non-clean outcome. */
+            }
+
+            bool clean = !ev->sack_present &&
+                         !sess->tx_burst_retx &&
                          sess->tx_retries_left == ARQ_DATA_RETRY_SLOTS;
             if (g_timing)
-                arq_timing_record_ack_rx(g_timing, (int)sess->tx_frame_seq,
+                arq_timing_record_ack_rx(g_timing, (int)sess->tx_base,
                                          (uint8_t)ev->ack_delay_raw,
                                          sess->local_snr_x10);
-            iss_frame_delivered(sess);
+            iss_retire_all(sess);
             /* Only a CLEAN delivery feeds the ladder here; a dirty one already
-             * stepped down once per TIMER_ACK retransmit below, so re-penalising
-             * it would double-count. */
+             * stepped down once per TIMER_ACK retransmit / SACK, so
+             * re-penalising it would double-count. */
             if (clean)
                 record_tx_outcome(sess, true);
             sess->peer_has_data = (ev->rx_flags & ARQ_FLAG_HAS_DATA) != 0;
-            bool i_have_data = session_tx_backlog(sess) > 0 || sess->tx_frame_present;
+            bool i_have_data = session_tx_backlog(sess) > 0 || arq_win_nonempty(sess);
 
             if (sess->peer_has_data && i_have_data)
             {
@@ -1216,18 +1515,18 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
                 {
                     HLOGD(LOG_COMP,
                           "Pending DISCONNECT: capping retries to 1 for seq=%d",
-                          (int)sess->tx_frame_seq);
+                          (int)sess->tx_base);
                     sess->tx_retries_left = 1;
                 }
                 sess->tx_retries_left--;
-                sess->tx_frame_retx = true;   /* retransmit ends "clean" */
+                sess->tx_burst_retx = true;   /* retransmit ends "clean" */
                 /* Any retry steps the ladder down one rung (delivery-driven):
                  * a fade descends quickly toward the robust floor rather than
                  * burning the whole retry budget at a mode the channel can no
                  * longer carry.  The eventual (dirty) ACK does NOT re-penalise. */
                 record_tx_outcome(sess, false);
                 if (g_timing)
-                    arq_timing_record_retry(g_timing, (int)sess->tx_frame_seq,
+                    arq_timing_record_retry(g_timing, (int)sess->tx_base,
                                             ARQ_DATA_RETRY_SLOTS - retries_before_cap + 1,
                                             "ack_timeout");
                 dflow_enter(sess, ARQ_DFLOW_DATA_TX, UINT64_MAX, ARQ_EV_TIMER_RETRY);
@@ -1247,7 +1546,7 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
                 {
                     HLOGW(LOG_COMP,
                           "Data retry exhausted seq=%d (%s) — disconnecting",
-                          (int)sess->tx_frame_seq,
+                          (int)sess->tx_base,
                           sess->pending_disconnect ? "app disconnect pending"
                                                    : "no forward progress");
                     sess->pending_disconnect = false;
@@ -1264,9 +1563,9 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
                         (unsigned long long)((now - sess->last_tx_progress_ms) / 1000);
                     HLOGI(LOG_COMP,
                           "Data retry exhausted seq=%d, persisting (%llus / %ds budget)",
-                          (int)sess->tx_frame_seq, since_s, ARQ_NO_PROGRESS_TIMEOUT_S);
+                          (int)sess->tx_base, since_s, ARQ_NO_PROGRESS_TIMEOUT_S);
                     if (g_timing)
-                        arq_timing_record_retry(g_timing, (int)sess->tx_frame_seq,
+                        arq_timing_record_retry(g_timing, (int)sess->tx_base,
                                                 ARQ_DATA_RETRY_SLOTS,
                                                 "persist_after_exhaust");
                     sess->tx_retries_left = ARQ_DATA_RETRY_SLOTS;
@@ -1279,22 +1578,24 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
         }
         else if (ev->id == ARQ_EV_RX_DATA)
         {
-            update_local_snr(sess, ev);
-            sess->last_rx_ms = time_now_ms();
-
-            if (ev->seq == sess->rx_expected)
+            /* In-window classification: any NEW frame (in order or an
+             * out-of-order member of the peer's burst whose earlier frames
+             * were lost) means the peer moved on to sending fresh data — it
+             * would not do that before acknowledging ours, so it is an
+             * implicit ACK of the whole outstanding burst.  A frame BEHIND
+             * the window base is a duplicate (our ack was lost; the peer is
+             * retransmitting): re-send our burst so it can ack it. */
+            uint8_t d = (uint8_t)(ev->seq - sess->rx_expected);
+            if (d < ARQ_BURST_MAX)
             {
-                /* Peer sent new DATA while we await our ACK — implicit ACK:
-                 * the peer would not send new DATA unless it received ours.
-                 * Consume our frame, receive theirs, and ACK (yield to IRS). */
                 HLOGD(LOG_COMP,
-                      "RX_DATA in WAIT_ACK (new seq=%d) — implicit ACK for tx_seq=%d",
-                      (int)ev->seq, (int)sess->tx_frame_seq);
-                bool clean = !sess->tx_frame_retx &&
+                      "RX_DATA in WAIT_ACK (new seq=%d) — implicit ACK for base=%d",
+                      (int)ev->seq, (int)sess->tx_base);
+                bool clean = !sess->tx_burst_retx &&
                              sess->tx_retries_left == ARQ_DATA_RETRY_SLOTS;
-                if (sess->tx_frame_present)
+                if (arq_win_nonempty(sess))
                 {
-                    iss_frame_delivered(sess);
+                    iss_retire_all(sess);
                     record_tx_outcome(sess, clean);
                 }
                 irs_receive_data(sess, ev);
@@ -1302,15 +1603,11 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
             }
             else
             {
-                /* Duplicate frame (our ACK was lost; peer retransmitting).
-                 * Not an implicit ACK of our own frame.  Retransmit our frame
-                 * so the peer can ACK it; do NOT advance our seq. */
                 HLOGD(LOG_COMP,
-                      "RX_DATA in WAIT_ACK (dup seq=%d expected=%d) — re-TX our seq=%d",
-                      (int)ev->seq, (int)sess->rx_expected, (int)sess->tx_frame_seq);
-                deliver_rx_checked(sess, ev);   /* logs dup; no delivery */
-                irs_mirror_peer_ladder(sess, false);  /* peer retried → mirror step-down */
-                sess->tx_frame_retx = true;
+                      "RX_DATA in WAIT_ACK (dup seq=%d expected=%d) — re-TX base=%d",
+                      (int)ev->seq, (int)sess->rx_expected, (int)sess->tx_base);
+                irs_receive_data(sess, ev);   /* records dup + mirror step   */
+                sess->tx_burst_retx = true;
                 dflow_enter(sess, ARQ_DFLOW_DATA_TX, UINT64_MAX, ARQ_EV_TIMER_RETRY);
                 send_data_burst(sess);
             }
@@ -1344,7 +1641,7 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
              * and the peer has been silent for a full idle hold, self-promote
              * to ISS after the post-ACK guard: an idle peer will just receive.
              * If the peer resumes sending, our RX_DATA path handles it. */
-            if (session_tx_backlog(sess) > 0 || sess->tx_frame_present)
+            if (session_tx_backlog(sess) > 0 || arq_win_nonempty(sess))
             {
                 /* Only self-promote once the peer has been silent long enough
                  * that it clearly has nothing to send.  The silence window runs
@@ -1428,8 +1725,10 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
             }
             else
             {
-                /* Guard elapsed — emit the pattern ACK (break if we have data). */
-                send_ack(sess, 0);
+                /* Guard/burst-tail deadline elapsed — emit the consolidated
+                 * per-burst ack: fast pattern when the burst arrived clean, a
+                 * coded SACK naming the holes otherwise. */
+                irs_send_burst_ack(sess);
                 if (g_timing)
                     arq_timing_record_ack_tx(g_timing, (int)sess->rx_expected - 1);
             }
