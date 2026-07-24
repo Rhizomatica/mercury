@@ -216,6 +216,31 @@ void test_data_valid_length_over_511(void)
     }
 }
 
+/* Windowed ARQ: burst_remaining (flags bits [2:0]) round-trips and coexists
+ * with the LEN_* bits and HAS_DATA in the same flags byte. */
+void test_data_burst_remaining_roundtrip(void)
+{
+    uint8_t payload[8] = {0xA5};
+    for (uint8_t rem = 0; rem <= ARQ_BURST_REM_MAX; rem++)
+    {
+        /* Mix in HAS_DATA + a >511 length so all flag bits are exercised. */
+        uint8_t flags = ARQ_FLAG_HAS_DATA | ARQ_FLAG_LEN_HI | rem;
+        uint8_t buf[64];
+        int size = arq_protocol_build_data(buf, sizeof(buf), 0x42, 1, 0,
+                                           flags, 0, 300, payload, sizeof(payload));
+        TEST_ASSERT_GREATER_THAN(0, size);
+
+        arq_frame_hdr_t hdr;
+        TEST_ASSERT_EQUAL_INT(0, arq_protocol_decode_hdr(buf, (size_t)size, &hdr));
+        TEST_ASSERT_EQUAL_UINT8(rem, hdr.burst_remaining);
+        TEST_ASSERT_EQUAL_UINT8(rem, arq_protocol_data_burst_remaining(buf, (size_t)size));
+        /* burst_remaining bits must not corrupt HAS_DATA or the length bits. */
+        TEST_ASSERT_TRUE(hdr.flags & ARQ_FLAG_HAS_DATA);
+        size_t valid = (size_t)hdr.ack_delay_raw | 0x100u;
+        TEST_ASSERT_EQUAL_UINT(300, valid);
+    }
+}
+
 /* ---- Mode timing lookup ---- */
 
 void test_mode_timing_datac4(void)
@@ -336,6 +361,7 @@ int main(void)
     RUN_TEST(test_build_ack);
     RUN_TEST(test_build_disconnect);
     RUN_TEST(test_data_valid_length_over_511);
+    RUN_TEST(test_data_burst_remaining_roundtrip);
     /* Mode timing */
     RUN_TEST(test_mode_timing_datac4);
     RUN_TEST(test_mode_timing_datac15);

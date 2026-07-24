@@ -527,6 +527,13 @@ static void send_data_burst(arq_session_t *sess)
     if (session_tx_backlog(sess) > 0)
         data_flags |= ARQ_FLAG_HAS_DATA;
 
+    /* Frames still to come in THIS keydown (flags bits [2:0]).  Stop-and-wait
+     * sends one frame per keydown, so 0 = last (and only) frame; the windowed
+     * FSM (a later phase) sets this to K-1-i so the IRS re-anchors the burst
+     * state machine per frame.  0 keeps the current single-frame behaviour. */
+    uint8_t burst_remaining = 0;
+    data_flags |= (burst_remaining & ARQ_FLAG_BURST_REM_MASK);
+
     uint8_t snr_raw = 0;
     if (sess->local_snr_x10 != 0)
         snr_raw = arq_protocol_encode_snr((float)sess->local_snr_x10 / 10.0f);

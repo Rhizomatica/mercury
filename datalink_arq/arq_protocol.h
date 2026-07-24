@@ -101,6 +101,15 @@
                                   * with LEN_HI/LEN_B9 allows counts up to     *
                                   * 2047 (DATAC17 carries 1172 user bytes,     *
                                   * QAM16C2 1205).                             */
+#define ARQ_FLAG_BURST_REM_MASK 0x07 /* bits [2:0], DATA frames only: frames  *
+                                  * still to come in THIS keydown (0 = last    *
+                                  * frame of the burst).  Lets the IRS re-anchor*
+                                  * the OFDM burst state machine per frame      *
+                                  * (freedv_set_frames_remaining) so a          *
+                                  * variable-length windowed burst exits sync   *
+                                  * exactly at end-of-burst.  0 for a           *
+                                  * single-frame (stop-and-wait) keydown.       */
+#define ARQ_BURST_REM_MAX  ARQ_FLAG_BURST_REM_MASK /* max frames/keydown-1 = 7 */
 
 /* ======================================================================
  * Frame subtypes
@@ -133,6 +142,7 @@ typedef struct
     uint8_t  rx_ack_seq;
     uint8_t  snr_raw;       /* 0=unknown; decode via arq_protocol_decode_snr         */
     uint8_t  ack_delay_raw; /* 0=unknown; 10ms units; decode via _decode_ack_delay   */
+    uint8_t  burst_remaining; /* DATA frames: frames still to come in this keydown   */
 } arq_frame_hdr_t;
 
 /* ======================================================================
@@ -321,6 +331,11 @@ int arq_protocol_encode_hdr(uint8_t *buf, size_t buf_len, const arq_frame_hdr_t 
  * @return 0 on success, -1 if buf too short.
  */
 int arq_protocol_decode_hdr(const uint8_t *buf, size_t buf_len, arq_frame_hdr_t *hdr);
+
+/* Frames-remaining-in-this-keydown for a DATA frame (flags bits [2:0]); read
+ * straight from the wire so the modem RX can re-anchor the burst state machine
+ * per frame without decoding the whole header.  Caller must know it is DATA. */
+uint8_t arq_protocol_data_burst_remaining(const uint8_t *buf, size_t buf_len);
 
 /**
  * @brief Map a configured bandwidth in Hz to an on-air BW token.

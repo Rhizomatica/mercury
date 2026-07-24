@@ -186,7 +186,19 @@ int arq_protocol_decode_hdr(const uint8_t *buf, size_t buf_len, arq_frame_hdr_t 
     hdr->rx_ack_seq    = buf[ARQ_HDR_ACK_IDX];
     hdr->snr_raw       = buf[ARQ_HDR_SNR_IDX];
     hdr->ack_delay_raw = buf[ARQ_HDR_DELAY_IDX];
+    hdr->burst_remaining = buf[ARQ_HDR_FLAGS_IDX] & ARQ_FLAG_BURST_REM_MASK;
     return 0;
+}
+
+/* Frames-remaining-in-this-keydown for a DATA frame, read straight from the
+ * flags byte.  Lets the modem RX re-anchor the burst state machine per decoded
+ * frame without a full header decode or knowledge of ARQ semantics.  Caller
+ * must already know this is a DATA frame (framer packet_type). */
+uint8_t arq_protocol_data_burst_remaining(const uint8_t *buf, size_t buf_len)
+{
+    if (!buf || buf_len <= ARQ_HDR_FLAGS_IDX)
+        return 0;
+    return buf[ARQ_HDR_FLAGS_IDX] & ARQ_FLAG_BURST_REM_MASK;
 }
 
 uint8_t arq_protocol_bw_token_from_hz(int bw_hz)
