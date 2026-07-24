@@ -156,6 +156,11 @@ struct OFDM {
   int edge_pilots;     /* insert pilots at 1 and Nc+2, to support low bandwidth
                           phase est */
   char *data_mode;     /* "", "streaming", "burst"  */
+  int packetsperburst_ceiling; /* acquisition-time packetsperburst, restored at
+                                  each burst end; a decoded frame's
+                                  self-describing "packets remaining" may lower
+                                  packetsperburst for the burst in progress
+                                  (ofdm_set_packets_remaining, windowed ARQ) */
   int packetsperburst; /* for OFDM data modes, how many packets before we reset
                           state machine */
   int amp_est_mode;    /* amplitude estimtor algorithm */

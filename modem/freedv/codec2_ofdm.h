@@ -99,6 +99,9 @@ void ofdm_set_sync(struct OFDM *, int);
 void ofdm_set_tx_bpf(struct OFDM *, bool);
 void ofdm_set_dpsk(struct OFDM *ofdm, bool val);
 void ofdm_set_packets_per_burst(struct OFDM *ofdm, int packetsperburst);
+/* Windowed ARQ: re-anchor the burst state machine from a decoded frame's
+ * self-describing "packets remaining in this burst" (0 = force burst end). */
+void ofdm_set_packets_remaining(struct OFDM *ofdm, int remaining);
 
 void ofdm_print_info(struct OFDM *);
 

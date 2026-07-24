@@ -310,6 +310,7 @@ void freedv_set_ext_vco(struct freedv *f, int val);
 void freedv_set_phase_est_bandwidth_mode(struct freedv *f, int val);
 void freedv_set_eq(struct freedv *f, bool val);
 void freedv_set_frames_per_burst(struct freedv *f, int framesperburst);
+void freedv_set_frames_remaining(struct freedv *f, int remaining);
 int freedv_get_frames_per_burst(struct freedv *freedv);
 void freedv_passthrough_gain(struct freedv *f, float g);
 int freedv_set_tuning_range(struct freedv *freedv, float val_fmin,

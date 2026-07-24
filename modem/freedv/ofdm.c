@@ -422,6 +422,7 @@ struct OFDM *ofdm_create(const struct OFDM_CONFIG *config) {
   ofdm->phase_est_bandwidth = high_bw;
   ofdm->phase_est_bandwidth_mode = AUTO_PHASE_EST;
   ofdm->packetsperburst = 0;  // default: never lose syn in raw data mode
+  ofdm->packetsperburst_ceiling = 0;
 
   ofdm->coarse_foff_est_hz = 0.0f;
   ofdm->foff_est_gain = 0.1f;
@@ -1176,7 +1177,30 @@ void ofdm_set_dpsk(struct OFDM *ofdm, bool val) { ofdm->dpsk_en = val; }
 void ofdm_set_packets_per_burst(struct OFDM *ofdm, int packetsperburst) {
   ofdm->data_mode = "burst";
   ofdm->packetsperburst = packetsperburst;
+  ofdm->packetsperburst_ceiling = packetsperburst;
   ofdm->postambledetectoren = true;
+}
+
+/* Windowed-ARQ self-describing bursts: re-anchor the burst state machine from
+ * a decoded frame's "packets remaining in this burst" count.  The RX acquires
+ * with a ceiling packetsperburst (it cannot know the sender-owned burst size
+ * in advance); every decoded frame then names the true burst end, so the
+ * machine exits to search exactly at end-of-burst instead of overrunning into
+ * the following keydown (the synced state has no UW check — its only exit is
+ * the packet count).  remaining == 0 forces the burst-end transition
+ * immediately, identical to the packet_count >= packetsperburst exit in
+ * ofdm_sync_state_machine_data_burst(). */
+void ofdm_set_packets_remaining(struct OFDM *ofdm, int remaining) {
+  if (remaining <= 0) {
+    if (ofdm->sync_state != search) {
+      ofdm->sync_state = ofdm->last_sync_state = search;
+      ofdm->rxbufst = ofdm->nrxbufhistory;
+      for (int i = 0; i < ofdm->nrxbuf; i++) ofdm->rxbuf[i] = 0;
+    }
+    ofdm->packetsperburst = ofdm->packetsperburst_ceiling;
+  } else {
+    ofdm->packetsperburst = ofdm->packet_count + remaining;
+  }
 }
 
 /*
@@ -2135,7 +2159,10 @@ void ofdm_sync_state_machine_data_streaming(struct OFDM *ofdm, uint8_t *rx_uw) {
       ofdm->modem_frame = 0;
       ofdm->packet_count++;
       if (ofdm->packetsperburst) {
-        if (ofdm->packet_count >= ofdm->packetsperburst) next_state = search;
+        if (ofdm->packet_count >= ofdm->packetsperburst) {
+          next_state = search;
+          ofdm->packetsperburst = ofdm->packetsperburst_ceiling;
+        }
       }
     }
   }
@@ -2195,6 +2222,7 @@ void ofdm_sync_state_machine_data_burst(struct OFDM *ofdm, uint8_t *rx_uw) {
       if (ofdm->packetsperburst) {
         if (ofdm->packet_count >= ofdm->packetsperburst) {
           next_state = search;
+          ofdm->packetsperburst = ofdm->packetsperburst_ceiling;
           // reset rxbuf to make sure we only ever do a postamble loop once
           // through same samples
           ofdm->rxbufst = ofdm->nrxbufhistory;

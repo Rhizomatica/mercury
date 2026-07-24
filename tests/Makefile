@@ -46,7 +46,7 @@ TEST_BINS = test_ring_buffer test_arq_protocol test_arq_timing test_arq_fsm \
             test_tcp_interfaces test_resampler test_arq_ladder test_arq_sim \
             test_arq_conn test_cfg_utils test_arq_tnc test_channel_busy test_mfsk \
             test_mfsk_modem test_pattern_ack_detection test_freedv_harq \
-            test_pcm24 test_sock_wire test_virtual_clock
+            test_sock_wire test_virtual_clock test_burst_selfdescribe test_pcm24
 
 .PHONY: all test clean
 
@@ -160,6 +160,10 @@ test_freedv_harq: modem/test_freedv_harq.c $(UNITY_SRC) \
                   ../modem/freedv/mpdecode_core.c ../modem/freedv/phi0.c \
                   ../modem/freedv/H_256_768_22.c
 	$(CC) $(CFLAGS) -I../modem/freedv -o $@ $^ $(LDFLAGS) -lm
+# Windowed-ARQ self-describing burst re-anchor (drives the real DATAC3 modem)
+test_burst_selfdescribe: modem/test_burst_selfdescribe.c $(UNITY_SRC)
+	$(CC) $(CFLAGS) -I../modem/freedv -o $@ $^ ../modem/freedv/libfreedvdata.a $(LDFLAGS) -lm
+
 # -x sock wire codec: byte-exact pin of the lockstep frame layout
 test_sock_wire: audioio/test_sock_wire.c $(UNITY_SRC)
 	$(CC) $(CFLAGS) -I../audioio -o $@ $^ $(LDFLAGS)

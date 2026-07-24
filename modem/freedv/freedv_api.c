@@ -1466,6 +1466,17 @@ void freedv_set_frames_per_burst(struct freedv *freedv, int framesperburst) {
   }
 }
 
+/* Windowed ARQ self-describing bursts: after decoding a frame that names how
+ * many frames of its burst are still to come, re-anchor the RX burst state
+ * machine so it returns to search exactly at end-of-burst (0 = the burst is
+ * over now).  See ofdm_set_packets_remaining(). */
+void freedv_set_frames_remaining(struct freedv *freedv, int remaining) {
+  assert(freedv != NULL);
+  if (freedv->ofdm != NULL) {
+    ofdm_set_packets_remaining(freedv->ofdm, remaining);
+  }
+}
+
 // get frames per burst
 int freedv_get_frames_per_burst(struct freedv *freedv) {
   assert(freedv != NULL);
