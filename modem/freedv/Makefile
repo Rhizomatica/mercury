@@ -1,6 +1,6 @@
 include ../../config.mk
 
-CFLAGS = $(COMMON_CFLAGS) -Wno-strict-overflow -I.
+CFLAGS = -MMD -MP $(COMMON_CFLAGS) -Wno-strict-overflow -I.
 
 LIBNAME = libfreedvdata.a
 
@@ -230,3 +230,6 @@ clean:
 	rm -f *.o *.a
 
 .PHONY: all clean
+
+# Auto header dependencies (see top-level Makefile note): stay at END.
+-include $(wildcard *.d */*.d)

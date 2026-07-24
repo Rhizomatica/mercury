@@ -21,11 +21,11 @@
 
 include ../config.mk
 
-CFLAGS_COMMON = $(COMMON_CFLAGS) -Wno-stringop-truncation -I../datalink_arq -I../data_interfaces -I../common -I../modem/freedv
+CFLAGS_COMMON = -MMD -MP $(COMMON_CFLAGS) -Wno-stringop-truncation -I../datalink_arq -I../data_interfaces -I../common -I../modem/freedv
 
 # Mongoose / WebSocket flags
 # Use mongoose built-in TLS backend.
-WS_CFLAGS = $(COMMON_CFLAGS) -Iwebsocket -DMG_TLS=MG_TLS_BUILTIN
+WS_CFLAGS = -MMD -MP $(COMMON_CFLAGS) -Iwebsocket -DMG_TLS=MG_TLS_BUILTIN
 
 # Objects
 OBJS = ui_communication.o
@@ -46,3 +46,6 @@ clean:
 	rm -f $(OBJS) $(WS_OBJS)
 
 .PHONY: all clean
+
+# Auto header dependencies (see top-level Makefile note): stay at END.
+-include $(wildcard *.d */*.d)

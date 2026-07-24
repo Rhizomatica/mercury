@@ -21,7 +21,7 @@
 
 include ../config.mk
 
-CFLAGS = $(COMMON_CFLAGS) -I../modem/freedv -I../modem -I../datalink_broadcast -I.. -I../audioio/ffaudio -I../common -I../data_interfaces
+CFLAGS = -MMD -MP $(COMMON_CFLAGS) -I../modem/freedv -I../modem -I../datalink_broadcast -I.. -I../audioio/ffaudio -I../common -I../data_interfaces
 
 LDFLAGS=$(FFAUDIO_LINKFLAGS) -lm
 
@@ -54,3 +54,6 @@ arq_modem.o: arq_modem.c arq_modem.h arq_fsm.h arq.h
 
 clean:
 	rm -f *.o
+
+# Auto header dependencies (see top-level Makefile note): stay at END.
+-include $(wildcard *.d */*.d)

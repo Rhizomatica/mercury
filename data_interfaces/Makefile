@@ -21,7 +21,7 @@
 
 include ../config.mk
 
-CFLAGS = $(COMMON_CFLAGS) -I../modem -I../modem/freedv -I../common -I../datalink_arq -I../datalink_broadcast -I../third_party/chan -I../radio_io
+CFLAGS = -MMD -MP $(COMMON_CFLAGS) -I../modem -I../modem/freedv -I../common -I../datalink_arq -I../datalink_broadcast -I../third_party/chan -I../radio_io
 
 all: tcp_interfaces.o net.o
 
@@ -34,3 +34,6 @@ net.o: net.c net.h
 
 clean:
 	rm -f *.o
+
+# Auto header dependencies (see top-level Makefile note): stay at END.
+-include $(wildcard *.d */*.d)

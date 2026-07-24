@@ -111,7 +111,7 @@ ifeq ($(HAVE_HERMES_SHM),1)
 HERMES_SHM_CFLAGS = -DHAVE_HERMES_SHM
 endif
 
-CFLAGS = $(COMMON_CFLAGS) -I. -Imodem/freedv -Imodem -Idatalink_broadcast -Idata_interfaces -Idatalink_arq -Iaudioio -Iaudioio/ffaudio -Icommon -Igui_interface -Iradio_io $(HAMLIB_CFLAGS) $(HERMES_SHM_CFLAGS)
+CFLAGS = $(COMMON_CFLAGS) -MMD -MP -I. -Imodem/freedv -Imodem -Idatalink_broadcast -Idata_interfaces -Idatalink_arq -Iaudioio -Iaudioio/ffaudio -Icommon -Igui_interface -Iradio_io $(HAMLIB_CFLAGS) $(HERMES_SHM_CFLAGS)
 
 ifeq ($(OS),Windows_NT)
 BINARY = mercury.exe
@@ -551,3 +551,12 @@ test:
 
 integration-test:
 	cd tests/integration && go test -v ./...
+
+# Auto header dependencies (-MMD in CFLAGS): a header edit rebuilds every
+# object that includes it.  Without this, editing a shared struct header (e.g.
+# modem_backend.h) left stale .o files with the OLD struct layout linked into
+# the binary — freshly rebuilt readers then dereference fields past the end of
+# stale const vtables (garbage function pointers, SIGSEGV).  Bit the project
+# repeatedly (arq_fsm.h, modem_backend.h).  MUST stay at the END of the
+# Makefile: included .d rules would otherwise become the default goal.
+-include $(patsubst %.o,%.d,$(filter %.o,$(MERCURY_LINK_INPUTS)))

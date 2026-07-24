@@ -21,7 +21,7 @@
 
 include ../config.mk
 
-CFLAGS = $(COMMON_CFLAGS) -I../modem -I../modem/freedv -I../common -I../datalink_arq -I../data_interfaces
+CFLAGS = -MMD -MP $(COMMON_CFLAGS) -I../modem -I../modem/freedv -I../common -I../datalink_arq -I../data_interfaces
 all: broadcast.o kiss.o
 
 kiss.o: kiss.c
@@ -33,3 +33,6 @@ broadcast.o: broadcast.c
 
 clean:
 	rm -f *.o
+
+# Auto header dependencies (see top-level Makefile note): stay at END.
+-include $(wildcard *.d */*.d)

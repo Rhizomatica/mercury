@@ -39,7 +39,7 @@ else
 endif
 
 
-CFLAGS = $(COMMON_CFLAGS) -Wno-unused -I./ffbase/ -I./ffaudio/ -I../common
+CFLAGS = -MMD -MP $(COMMON_CFLAGS) -Wno-unused -I./ffbase/ -I./ffaudio/ -I../common
 
 LDFLAGS=$(FFAUDIO_LINKFLAGS)
 
@@ -74,3 +74,6 @@ audioio.a: audioio.o resampler.o $(OBJS)
 .PHONY: clean
 clean:
 	rm -f *.o *.a ffaudio/ffaudio/*.o
+
+# Auto header dependencies (see top-level Makefile note): stay at END.
+-include $(wildcard *.d */*.d)

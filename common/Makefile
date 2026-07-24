@@ -1,6 +1,6 @@
 include ../config.mk
 
-CFLAGS = $(COMMON_CFLAGS)
+CFLAGS = -MMD -MP $(COMMON_CFLAGS)
 
 # cfg_utils needs headers from several sibling directories
 CFG_CFLAGS = $(COMMON_CFLAGS) -I. -I../audioio/ffaudio -I../gui_interface -I../datalink_arq -I../data_interfaces -I../modem/freedv
@@ -64,3 +64,6 @@ mercury_cli.o: mercury_cli.c mercury_cli.h
 
 clean:
 	rm -f *.o iniparser/*.o
+
+# Auto header dependencies (see top-level Makefile note): stay at END.
+-include $(wildcard *.d */*.d)

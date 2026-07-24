@@ -1,6 +1,6 @@
 include ../config.mk
 
-CFLAGS = $(COMMON_CFLAGS) -Wno-strict-overflow -fPIC -I. -I../common -I../modem -I../modem/freedv -I../datalink_arq -I../data_interfaces
+CFLAGS = -MMD -MP $(COMMON_CFLAGS) -Wno-strict-overflow -fPIC -I. -I../common -I../modem -I../modem/freedv -I../datalink_arq -I../data_interfaces
 
 .PHONY: all freedv 
 
@@ -21,3 +21,6 @@ framer.o: framer.c framer.h
 clean:
 	$(MAKE) -C freedv clean
 	rm -f *.o
+
+# Auto header dependencies (see top-level Makefile note): stay at END.
+-include $(wildcard *.d */*.d)

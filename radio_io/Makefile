@@ -50,7 +50,7 @@ ifeq ($(HAVE_HERMES_SHM),1)
 HERMES_SHM_CFLAGS_LOCAL = -DHAVE_HERMES_SHM
 endif
 
-CFLAGS = $(COMMON_CFLAGS) $(HAMLIB_CFLAGS_LOCAL) $(HERMES_SHM_CFLAGS_LOCAL)
+CFLAGS = -MMD -MP $(COMMON_CFLAGS) $(HAMLIB_CFLAGS_LOCAL) $(HERMES_SHM_CFLAGS_LOCAL)
 
 OBJS = radio_io.o
 
@@ -78,3 +78,6 @@ rigctl_parse.o: rigctl_parse.c rigctl_parse.h
 
 clean:
 	rm -f *.o
+
+# Auto header dependencies (see top-level Makefile note): stay at END.
+-include $(wildcard *.d */*.d)
