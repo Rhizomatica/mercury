@@ -226,7 +226,7 @@ typedef struct
  * channel never stalls its base and a poor channel keeps depth 1.  Widening the
  * SACK (RLE on DATAC16, or a DATAC15 carrier) to remove that waste is a later
  * lever (docs/WINDOWED-ARQ.md Phase-2b options). */
-#define ARQ_WIN_SLOTS             64   /* MUST divide 256 (mod-256 seq space)  */
+#define ARQ_WIN_SLOTS             128  /* MUST divide 256 (mod-256 seq space)  */
 #define ARQ_SACK_BITMAP_BYTES      4   /* covers base+1..+32; fits DATAC16;
                                         * window may exceed this (see above)   */
 

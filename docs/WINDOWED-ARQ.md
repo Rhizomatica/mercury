@@ -221,17 +221,22 @@ constraint) unlocks K=2 at QAM16C2/DATAC17 and is the first meaningful step.
 **MEASURED (bench, -x sock, skywave mercury_sock adapter, clean profile, 16 kB,
 both reaching QAM16C2 / peak 3135 bps, SN ~15 dB, 2 runs each):**
 
-| build              | goodput (avg)   | transfer time |
-|--------------------|-----------------|---------------|
-| window 32 (HEAD)   | 78.3 B/s        | 209 s         |
-| window 64 (Ph-2b)  | **98.25 B/s**   | 167 s         |
+| build               | goodput (avg)  | transfer time | vs HEAD |
+|---------------------|----------------|---------------|---------|
+| window 32 (HEAD)    | 78.3 B/s       | 209 s         | —       |
+| window 64           | 98.4 B/s       | 166.5 s       | +25.5 % |
+| **window 128**      | **115.6 B/s**  | 141.75 s      | **+47.6 %** |
 
-**+25.5 % goodput, −20 % transfer time** — matching the +28 % K=2 prediction, low
-variance (78.4/78.2 vs 98.4/98.1).  This is the first DEMONSTRATED good-channel
-bench speedup; block-packing K=1 alone was ~equal to trunk (K>1 never engaged
-because the 32-slot window held one QAM16C2 frame).  A 16 kB transfer is needed
-to see it: smaller transfers finish during the MFSK-start climb before depth
-grows at the top rung.
+**window 128 = +47.6 % over HEAD** (K≈5 at QAM16C2, matching the +53 %
+prediction; +17.5 % over window 64), low variance (98.7/98.1 and 115.4/115.8).
+This is the first DEMONSTRATED good-channel bench speedup; block-packing K=1
+alone was ~equal to trunk (K>1 never engaged because the 32-slot window held one
+QAM16C2 frame).  A 16 kB transfer is needed to see it: smaller transfers finish
+during the MFSK-start climb before depth grows at the top rung.  Window 128 uses
+half the mod-256 seq space; the 4-byte SACK still covers only base+1..+32 (a
+stuck base trailing 32+ delivered blocks retransmits the rest redundantly — a
+clean channel never stalls its base, and a poor channel keeps depth 1, so this
+does not bite in practice; verified no poor-channel regression on the bench).
 
 **The blocker = the SACK carrier.**  Window 64 needs a 64-bit (8-byte) hole
 bitmap; the ACK frame (8-byte hdr + 8 = 16 B) no longer fits DATAC16 (14 B).
