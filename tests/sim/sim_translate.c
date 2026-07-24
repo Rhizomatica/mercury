@@ -81,8 +81,9 @@ bool sim_translate_frame(const uint8_t *frame, size_t frame_size, float rx_snr,
         out_ev->id   = ARQ_EV_RX_DATA;
         out_ev->rx_snr = rx_snr;
 
-        /* Infer the FreeDV mode from frame_size by matching the mode table.
-         * This mirrors arq_handle_incoming_frame (arq.c:674-682). */
+        /* Infer the FreeDV mode from frame_size by matching the mode table
+         * (DATA frames are zero-padded to the mode's full payload_bytes).
+         * Mirrors arq_handle_incoming_frame in arq.c. */
         out_ev->mode = FREEDV_MODE_DATAC15;   /* safe default */
         for (int i = 0; i < arq_mode_table_count; i++)
         {
@@ -93,34 +94,27 @@ bool sim_translate_frame(const uint8_t *frame, size_t frame_size, float rx_snr,
             }
         }
 
-        size_t slot_bytes = (frame_size > ARQ_FRAME_HDR_SIZE)
-                            ? (frame_size - ARQ_FRAME_HDR_SIZE) : 0;
-
-        /* ack_delay_raw is repurposed in DATA frames: 0 = full frame;
-         * else = bits [7:0] of the valid byte count.  Bits 8-10 travel in
-         * the flags byte (ARQ_FLAG_LEN_HI / LEN_B9 / LEN_B10). */
-        const uint8_t len_flags = ARQ_FLAG_LEN_HI | ARQ_FLAG_LEN_B9 | ARQ_FLAG_LEN_B10;
-        size_t valid_bytes;
-        if (hdr.ack_delay_raw == ARQ_DATA_LEN_FULL && !(hdr.flags & len_flags))
+        /* Unpack the block container: block_count blocks [seq|len|data]. */
+        arq_block_t blk[ARQ_MAX_BLOCKS_PER_FRAME];
+        int nb = arq_protocol_parse_data_blocks(frame, frame_size, &hdr,
+                                                blk, ARQ_MAX_BLOCKS_PER_FRAME);
+        if (nb < 1)
+            return false;
+        out_ev->nblocks = nb;
+        out_ev->seq     = blk[0].seq;   /* legacy in-window classification key */
+        size_t off = 0;
+        for (int i = 0; i < nb; i++)
         {
-            valid_bytes = slot_bytes;
+            if (off + blk[i].len > sizeof(out_ev->payload))
+                break;
+            memcpy(out_ev->payload + off, blk[i].data, blk[i].len);
+            out_ev->blocks[i].seq = blk[i].seq;
+            out_ev->blocks[i].off = (uint16_t)off;
+            out_ev->blocks[i].len = blk[i].len;
+            off += blk[i].len;
         }
-        else
-        {
-            valid_bytes = (size_t)hdr.ack_delay_raw;
-            if (hdr.flags & ARQ_FLAG_LEN_HI) valid_bytes |= 0x100u;
-            if (hdr.flags & ARQ_FLAG_LEN_B9)  valid_bytes |= 0x200u;
-            if (hdr.flags & ARQ_FLAG_LEN_B10) valid_bytes |= 0x400u;
-        }
-        if (valid_bytes > slot_bytes)
-            valid_bytes = slot_bytes;   /* sanity cap */
-
-        out_ev->data_bytes = valid_bytes;
-        if (valid_bytes > 0 && valid_bytes <= sizeof(out_ev->payload))
-        {
-            memcpy(out_ev->payload, frame + ARQ_FRAME_HDR_SIZE, valid_bytes);
-            out_ev->payload_len = valid_bytes;
-        }
+        out_ev->payload_len = off;
+        out_ev->data_bytes  = off;
         return true;
     }
 
@@ -134,10 +128,12 @@ bool sim_translate_frame(const uint8_t *frame, size_t frame_size, float rx_snr,
          * outframe translated directly in sim_core, not here). */
         case ARQ_SUBTYPE_ACK:
             out_ev->id = ARQ_EV_RX_ACK;
-            if ((hdr.flags & ARQ_FLAG_SACK) && frame_size > ARQ_FRAME_HDR_SIZE)
+            if ((hdr.flags & ARQ_FLAG_SACK) &&
+                frame_size >= ARQ_FRAME_HDR_SIZE + ARQ_SACK_BITMAP_BYTES)
             {
                 out_ev->sack_present = true;
-                out_ev->sack_bitmap  = frame[ARQ_FRAME_HDR_SIZE];
+                memcpy(out_ev->sack_bitmap, frame + ARQ_FRAME_HDR_SIZE,
+                       ARQ_SACK_BITMAP_BYTES);
             }
             break;
         case ARQ_SUBTYPE_DISCONNECT:    out_ev->id = ARQ_EV_RX_DISCONNECT;    break;

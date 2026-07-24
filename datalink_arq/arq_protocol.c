@@ -91,28 +91,28 @@ extern int  arithmetic_decode(uint8_t *input, int max_len, char *output, int max
  * ACK (was the 3.74 s DATAC16 coded ACK): ack_timeout >= frame_duration +
  * channel_guard + pattern_ack(0.64) + margin (~1.5 s).  DATAC16 keeps its
  * 3.74 s coded-frame budget because CALL/ACCEPT/DISCONNECT still ride it. */
-/* burst_frames: DATA frames per keydown (windowed selective repeat).  >1
- * amortizes the per-keydown preamble+postamble+turnaround (~600-660 ms + the
- * ~2.5-3 s ACK turnaround) across K frames — the beat-VARA throughput lever.
- * The IRS re-anchors its decoder per self-described frame and sends ONE
- * consolidated ack per burst (fast pattern when clean, SACK for holes).
- *  - DATAC16 (control): 1 — connect/coded-ACK are single frames.
- *  - MFSK (floor): 1 — a 13.5 s burst already dwarfs the turnaround, and the
- *    fringe path stays exactly today's proven stop-and-wait (low-SNR sacred).
- *  - DATAC15: 1 — 30 B/frame, so a burst is tiny; the turnaround already
- *    dominates and windowing it buys little while adding SACK exposure at the
- *    weak end of the ladder.  Kept at 1 for robustness.
- *  - DATAC4..QAM16C2: K=3 — the goodput win, capped by ARQ_BURST_MAX and the
- *    ~12 s on-air burst budget (3 * frame_dur stays within it for every mode). */
+/* burst_frames: the CAP on modem frames per keydown for this mode.  The actual
+ * depth is ADAPTIVE (arq_session_t.burst_depth): a session starts at 1 (one
+ * frame/keydown) for a FAST delivery-driven climb — long K>1 keydowns would
+ * otherwise crawl up the ladder (each rung costs a whole ~20-30 s burst) and
+ * never reach the fast modes — and grows depth toward this cap only once the
+ * ladder has SETTLED at a mode (a clean burst that no longer climbs), shrinking
+ * back to 1 on any hole/retry or mode change.  So a good channel fast-climbs at
+ * K=1 to QAM16C2 (already ~1.1 kB/keydown), and a marginal channel that settles
+ * at DATAC3/DATAC4 grows K>1 there (5 frames amortize the ~2.5-3 s turnaround
+ * ~2-3x — the beat-VARA lever where it helps most).  Caps chosen so K*frame_dur
+ * bounds a keydown to ~15-19 s; the ARQ_WIN_SLOTS block window bounds the fast
+ * modes further (a wider SACK carrier to grow the window is a later lever).
+ *  - DATAC16/MFSK/DATAC15: 1 (control / fringe floor / dropped-from-ladder). */
 const arq_mode_timing_t arq_mode_table[] = {
-    /*  freedv_mode           frame_dur  tx_period  ack_timeout  retry_interval  payload  burst */
+    /*  freedv_mode           frame_dur  tx_period  ack_timeout  retry_interval  payload  cap */
     {  FREEDV_MODE_DATAC16,   3.74f,     1.0f,      7.0f,        8.0f,           14,   1 },
     {  FREEDV_MODE_DATAC15,   4.40f,     1.0f,      7.0f,        8.0f,           30,   1 },
-    {  FREEDV_MODE_DATAC4,    5.80f,     1.0f,      9.0f,        10.0f,          54,   1 },
-    {  FREEDV_MODE_DATAC3,    3.82f,     1.0f,      7.0f,        8.0f,           126,   1 },
-    {  FREEDV_MODE_DATAC1,    4.81f,     1.0f,      8.0f,        9.0f,           510,   1 },
-    {  FREEDV_MODE_DATAC17,   7.40f,     1.0f,      11.0f,       12.0f,          1180,   1 },
-    {  FREEDV_MODE_QAM16C2,   3.70f,     1.0f,      7.0f,        8.0f,           1213,   1 },
+    {  FREEDV_MODE_DATAC4,    5.80f,     1.0f,      9.0f,        10.0f,          54,   3 },
+    {  FREEDV_MODE_DATAC3,    3.82f,     1.0f,      7.0f,        8.0f,           126,   5 },
+    {  FREEDV_MODE_DATAC1,    4.81f,     1.0f,      8.0f,        9.0f,           510,   4 },
+    {  FREEDV_MODE_DATAC17,   7.40f,     1.0f,      11.0f,       12.0f,          1180,   2 },
+    {  FREEDV_MODE_QAM16C2,   3.70f,     1.0f,      7.0f,        8.0f,           1213,   5 },
     /* MFSK weak-signal fringe rung (ladder floor, rank 0 = start): non-coherent
      * 32-MFSK, rate-1/2 LDPC, ~13.5s burst carrying 98 payload bytes.  Reached
      * whenever delivery feedback drops the level to the floor.  ack_timeout
@@ -127,7 +127,6 @@ const int arq_mode_table_count =
  * the start).  arq_fsm derives payload_mode = arq_mode_ladder[speed_level]. */
 const int arq_mode_ladder[ARQ_LADDER_LEVELS] = {
     MERCURY_MODE_MFSK,
-    FREEDV_MODE_DATAC15,
     FREEDV_MODE_DATAC4,
     FREEDV_MODE_DATAC3,
     FREEDV_MODE_DATAC1,
@@ -339,13 +338,13 @@ int arq_protocol_build_ack(uint8_t *buf, size_t buf_len,
 int arq_protocol_build_sack(uint8_t *buf, size_t buf_len,
                             uint8_t session_id, uint8_t rcv_base,
                             uint8_t flags, uint8_t snr_raw,
-                            uint8_t sack_bitmap)
+                            const uint8_t sack_bitmap[ARQ_SACK_BITMAP_BYTES])
 {
     return build_ctrl(buf, buf_len,
                       ARQ_SUBTYPE_ACK, session_id,
                       0, rcv_base, (uint8_t)(flags | ARQ_FLAG_SACK),
                       snr_raw, 0,
-                      &sack_bitmap, 1);
+                      sack_bitmap, ARQ_SACK_BITMAP_BYTES);
 }
 
 int arq_protocol_build_disconnect(uint8_t *buf, size_t buf_len,
@@ -380,6 +379,77 @@ int arq_protocol_build_data(uint8_t *buf, size_t buf_len,
     memcpy(buf + ARQ_FRAME_HDR_SIZE, payload, payload_len);
     write_frame_header(buf, PACKET_TYPE_ARQ_DATA, 0);
     return (int)total;
+}
+
+int arq_protocol_build_data_blocks(uint8_t *buf, size_t buf_len,
+                                   uint8_t session_id, uint8_t rx_ack_seq,
+                                   uint8_t flags, uint8_t snr_raw,
+                                   const arq_block_t *blocks, int nblocks)
+{
+    if (!buf || !blocks || nblocks < 1 || nblocks > ARQ_MAX_BLOCKS_PER_FRAME)
+        return -1;
+
+    /* Pre-compute the total so we never partially write on overflow. */
+    size_t total = ARQ_FRAME_HDR_SIZE;
+    for (int i = 0; i < nblocks; i++)
+    {
+        if (!blocks[i].data ||
+            blocks[i].len < 1 || blocks[i].len > ARQ_BLOCK_DATA_FLOOR)
+            return -1;   /* FLOOR (88) is the largest a rung-0 block may be */
+        total += ARQ_BLOCK_HDR_SIZE + blocks[i].len;
+    }
+    if (buf_len < total)
+        return -1;
+
+    memset(buf, 0, ARQ_FRAME_HDR_SIZE);
+    buf[ARQ_HDR_SUBTYPE_IDX]  = ARQ_SUBTYPE_DATA;
+    buf[ARQ_HDR_FLAGS_IDX]    = flags;
+    buf[ARQ_HDR_SESSION_IDX]  = session_id;
+    buf[ARQ_HDR_BLKCOUNT_IDX] = (uint8_t)nblocks;
+    buf[ARQ_HDR_ACK_IDX]      = rx_ack_seq;
+    buf[ARQ_HDR_SNR_IDX]      = snr_raw;
+    buf[ARQ_HDR_DELAY_IDX]    = 0;   /* per-block len replaces payload_valid */
+
+    size_t off = ARQ_FRAME_HDR_SIZE;
+    for (int i = 0; i < nblocks; i++)
+    {
+        buf[off++] = blocks[i].seq;
+        buf[off++] = (uint8_t)blocks[i].len;
+        memcpy(buf + off, blocks[i].data, blocks[i].len);
+        off += blocks[i].len;
+    }
+    write_frame_header(buf, PACKET_TYPE_ARQ_DATA, 0);
+    return (int)total;
+}
+
+int arq_protocol_parse_data_blocks(const uint8_t *buf, size_t buf_len,
+                                   arq_frame_hdr_t *hdr,
+                                   arq_block_t *out, int max_blocks)
+{
+    if (!buf || !hdr || !out || buf_len < ARQ_FRAME_HDR_SIZE)
+        return -1;
+    if (arq_protocol_decode_hdr(buf, buf_len, hdr) != 0)
+        return -1;
+
+    int nblocks = buf[ARQ_HDR_BLKCOUNT_IDX];
+    if (nblocks < 1 || nblocks > ARQ_MAX_BLOCKS_PER_FRAME || nblocks > max_blocks)
+        return -1;
+
+    size_t off = ARQ_FRAME_HDR_SIZE;
+    for (int i = 0; i < nblocks; i++)
+    {
+        if (off + ARQ_BLOCK_HDR_SIZE > buf_len)
+            return -1;
+        uint8_t seq = buf[off++];
+        uint8_t len = buf[off++];
+        if (len < 1 || len > ARQ_BLOCK_DATA_FLOOR || off + len > buf_len)
+            return -1;   /* FLOOR (88) is the largest a rung-0 block may be */
+        out[i].seq  = seq;
+        out[i].len  = len;
+        out[i].data = buf + off;
+        off += len;
+    }
+    return nblocks;
 }
 
 /* ======================================================================

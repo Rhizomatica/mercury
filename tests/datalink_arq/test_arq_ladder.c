@@ -143,7 +143,7 @@ static void clean_ack_cycle(void)
     ev.session_id   = sess.session_id;
     ev.sack_present = true;
     ev.ack_seq      = sess.tx_seq;   /* rcv_base = next new seq => all delivered */
-    ev.sack_bitmap  = 0;
+    memset(ev.sack_bitmap, 0, sizeof(ev.sack_bitmap));
     arq_fsm_dispatch(&sess, &ev);
     /* ISS retains the turn (no HAS_DATA) -> enter_idle_iss_guarded -> DATA_TX
      * after a guard.  Advance to WAIT_ACK again. */
@@ -171,14 +171,13 @@ void test_ladder_starts_at_mfsk(void)
 
 void test_ladder_table_ordered_and_sized(void)
 {
-    TEST_ASSERT_EQUAL_INT(7, ARQ_LADDER_LEVELS);
+    TEST_ASSERT_EQUAL_INT(6, ARQ_LADDER_LEVELS);
     TEST_ASSERT_EQUAL_INT(MERCURY_MODE_MFSK,   arq_mode_ladder[0]);
-    TEST_ASSERT_EQUAL_INT(FREEDV_MODE_DATAC15, arq_mode_ladder[1]);
-    TEST_ASSERT_EQUAL_INT(FREEDV_MODE_DATAC4,  arq_mode_ladder[2]);
-    TEST_ASSERT_EQUAL_INT(FREEDV_MODE_DATAC3,  arq_mode_ladder[3]);
-    TEST_ASSERT_EQUAL_INT(FREEDV_MODE_DATAC1,  arq_mode_ladder[4]);
-    TEST_ASSERT_EQUAL_INT(FREEDV_MODE_DATAC17, arq_mode_ladder[5]);
-    TEST_ASSERT_EQUAL_INT(FREEDV_MODE_QAM16C2, arq_mode_ladder[6]);
+    TEST_ASSERT_EQUAL_INT(FREEDV_MODE_DATAC4,  arq_mode_ladder[1]);
+    TEST_ASSERT_EQUAL_INT(FREEDV_MODE_DATAC3,  arq_mode_ladder[2]);
+    TEST_ASSERT_EQUAL_INT(FREEDV_MODE_DATAC1,  arq_mode_ladder[3]);
+    TEST_ASSERT_EQUAL_INT(FREEDV_MODE_DATAC17, arq_mode_ladder[4]);
+    TEST_ASSERT_EQUAL_INT(FREEDV_MODE_QAM16C2, arq_mode_ladder[5]);
 }
 
 /* Fast initial ramp: one rung per clean delivery until the ladder tops out. */
@@ -284,6 +283,43 @@ void test_ladder_floor_holds_at_mfsk(void)
     }
 }
 
+/* Adaptive burst depth: stays 1 while the ladder is CLIMBING (so the climb is
+ * fast — long K>1 keydowns must not slow the ramp), grows one frame per clean
+ * burst once the mode SETTLES at the top, and resets to 1 on a dirty (step-down)
+ * outcome.  This is the fix for fixed-K>1 crawling up the ladder. */
+void test_burst_depth_adaptive(void)
+{
+    goto_connected();
+    goto_wait_ack();
+    TEST_ASSERT_EQUAL_INT(1, sess.burst_depth);       /* starts at 1 */
+
+    /* While fast-ramp climbing (each clean burst steps the mode up) depth
+     * stays 1 — a mode change resets it. */
+    for (int expect = 1; expect < ARQ_LADDER_LEVELS; expect++)
+    {
+        clean_ack_cycle();
+        TEST_ASSERT_EQUAL_INT(expect, sess.speed_level);
+        TEST_ASSERT_EQUAL_INT(1, sess.burst_depth);   /* held at 1 during climb */
+    }
+    TEST_ASSERT_EQUAL_INT(ARQ_LADDER_LEVELS - 1, sess.speed_level);
+
+    /* Settled at the top (QAM16C2, cap 5): each further clean burst grows depth
+     * by one, up to the mode's cap, then holds. */
+    const arq_mode_timing_t *tm = arq_protocol_mode_timing(FREEDV_MODE_QAM16C2);
+    int qcap = tm->burst_frames;
+    for (int d = 2; d <= qcap; d++)
+    {
+        clean_ack_cycle();
+        TEST_ASSERT_EQUAL_INT(d, sess.burst_depth);
+    }
+    clean_ack_cycle();
+    TEST_ASSERT_EQUAL_INT(qcap, sess.burst_depth);    /* capped */
+
+    /* A dirty (step-down) outcome resets depth to 1. */
+    dirty_ack_cycle();
+    TEST_ASSERT_EQUAL_INT(1, sess.burst_depth);
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -292,6 +328,7 @@ int main(void)
     RUN_TEST(test_ladder_fast_ramp_climbs_one_per_clean);
     RUN_TEST(test_ladder_retry_steps_down_then_slow_ramp);
     RUN_TEST(test_ladder_floor_holds_at_mfsk);
+    RUN_TEST(test_burst_depth_adaptive);
     UNITY_END();
     return 0;
 }

@@ -116,17 +116,26 @@ typedef struct
      * holes to retransmit.  A bare pattern ACK never sets this: it means the
      * whole burst was received clean. */
     bool     sack_present;
-    uint8_t  sack_bitmap;
+    uint8_t  sack_bitmap[ARQ_SACK_BITMAP_BYTES];
 
     /* Mode negotiation */
     int      mode;            /* requested/applied FreeDV mode                */
-    size_t   data_bytes;      /* payload byte count (DATA frames)             */
+    size_t   data_bytes;      /* total user byte count (all blocks, DATA)     */
 
-    /* Received data payload — carried through event queue so the FSM can
-     * validate sequence numbers before delivering to the application. */
-    uint8_t  payload[1280];           /* >= largest user payload: QAM16C2
-                                       * carries 1213 - 8 = 1205 bytes      */
-    size_t   payload_len;
+    /* Received data payload — one DECODED MODEM FRAME's blocks, carried
+     * through the event queue.  A block-packed DATA frame holds nblocks blocks;
+     * blocks[i] describes seq + a [off,len) window into payload[].  For a
+     * single-block frame nblocks==1.  ev->seq mirrors blocks[0].seq so the
+     * legacy in-window classification in fsm_dflow still works. */
+    int      nblocks;
+    struct {
+        uint8_t  seq;
+        uint16_t off;         /* offset into payload[]                        */
+        uint16_t len;
+    } blocks[ARQ_MAX_BLOCKS_PER_FRAME];
+    uint8_t  payload[1280];           /* one modem frame's block data: QAM16C2
+                                       * ~= 26 blocks * 44 = 1144 bytes        */
+    size_t   payload_len;             /* total block bytes packed in payload[] */
 
     /* Local receive SNR at the time the frame was decoded (dB, 0 = unknown).
      * Carried in-band so the FSM can update local_snr_x10 without relying on
@@ -241,54 +250,62 @@ typedef struct
                                         * transmitting before IRS resets its
                                         * decoders from TX→RX)               */
 
-    /* --- Windowed selective repeat (burst = window, ARQ_WIN_SLOTS deep) ---
+    /* --- Windowed selective repeat over BLOCKS (window = ARQ_WIN_SLOTS) ---
      *
-     * The ISS sends up to burst_frames (mode table) DATA frames per keydown;
-     * each frame is an IMMUTABLE unit of raw user bytes keyed by seq (read
-     * once from the app ring at creation, never resized — a retransmit
-     * re-frames the same bytes at a mode that fits).  One consolidated ACK
-     * per burst: a bare pattern ACK retires every outstanding slot (the IRS
-     * only sends it when the whole burst arrived); a SACK (rcv_base + bitmap)
-     * retires the named seqs and the un-set ones are retransmitted — holes
-     * ONLY, oldest first, so the window drains monotonically under loss.
-     * Slot index = seq % ARQ_WIN_SLOTS; a seq s is in-window iff
-     * (uint8_t)(s - tx_base) < ARQ_WIN_SLOTS.  With burst_frames == 1 (MFSK
-     * floor) all of this degenerates to the proven stop-and-wait path. */
+     * The ISS packs up to ARQ_WIN_SLOTS in-flight BLOCKS (<=ARQ_BLOCK_DATA_MAX
+     * user bytes each, own seq) into up to burst_frames modem frames per
+     * keydown.  A block is IMMUTABLE (raw user bytes read once, fixed seq) and
+     * — being <= 44 bytes — fits EVERY ladder rung down to the MFSK floor, so
+     * a retransmit needs no mode bump and the peer can decode it at whatever
+     * robust mode the fade forced (no immutable-frame-too-big trap).  One
+     * consolidated ACK per burst: a bare pattern ACK retires the single block
+     * of a 1-block floor keydown (the IRS only sends it then); a SACK
+     * (rcv_base + 6-byte bitmap) retires the named block seqs and the un-set
+     * ones are retransmitted — holes ONLY, oldest first, so the window drains
+     * monotonically under loss.  Slot index = seq % ARQ_WIN_SLOTS; a seq s is
+     * in-window iff (uint8_t)(s - tx_base) < ARQ_WIN_SLOTS. */
     struct arq_txslot {
-        uint8_t data[1213];            /* raw user bytes (QAM16C2 max 1205)    */
+        uint8_t data[ARQ_BLOCK_DATA_FLOOR]; /* raw user bytes (<=44 at rung>=1,
+                                             * <=88 for a rung-0 floor block)  */
         int     len;                   /* valid bytes (0 with !present)        */
         uint8_t seq;                   /* the seq this slot holds (mod 256)    */
         bool    present;               /* un-acked, awaiting delivery          */
         bool    retx;                  /* retransmitted at least once          */
-    } tx_win[ARQ_BURST_MAX];
+    } tx_win[ARQ_WIN_SLOTS];
     uint8_t  tx_base;                  /* oldest un-acked seq (window base)    */
     bool     tx_burst_retx;            /* current outgoing burst contains any
                                         * retransmission (ladder: not clean)   */
-    int      tx_burst_count;           /* frames in the last keydown (a clean
-                                        * K-frame burst credits K ladder steps)*/
+    int      tx_burst_count;           /* blocks in the last keydown (a clean
+                                        * K-block burst credits the ladder)    */
+    int      burst_depth;              /* ADAPTIVE modem-frames/keydown: starts
+                                        * at 1 (fast climb), grows toward the
+                                        * mode's burst_frames cap once the
+                                        * ladder settles, resets to 1 on any
+                                        * hole/retry or mode change.  min with
+                                        * the mode cap bounds send_data_burst.  */
 
     /* --- IRS reassembly window + per-burst ACK consolidation ---
-     * Slots are indexed by seq % ARQ_BURST_MAX but ALSO store the seq, so a
+     * Slots are indexed by seq % ARQ_WIN_SLOTS but ALSO store the seq, so a
      * later seq that aliases a still-held earlier slot is never mistaken for
      * it (the invariant that a small mod-N array must enforce by hand). */
     struct arq_rxslot {
-        uint8_t data[1213];            /* out-of-order user bytes above base   */
+        uint8_t data[ARQ_BLOCK_DATA_FLOOR]; /* out-of-order block above base
+                                             * (<=44 at rung>=1, <=88 at floor)*/
         size_t  len;
         uint8_t seq;                   /* the seq this slot holds (mod 256)    */
         bool    present;
-    } rx_win[ARQ_BURST_MAX];
-    bool     rx_burst_complete;        /* a frame with burst_remaining==0 was
-                                        * received in the current burst — only
-                                        * then may a bare pattern ACK be sent
-                                        * (else the burst tail may be lost and
-                                        * a pattern would falsely retire it)   */
-    bool     rx_burst_dup;             /* burst contained a duplicate (peer is
-                                        * retransmitting; mirror steps down)   */
-    bool     rx_burst_new;             /* burst delivered at least 1 new frame */
-    int      rx_burst_frames;          /* frames seen in the current burst: a
+    } rx_win[ARQ_WIN_SLOTS];
+    bool     rx_burst_complete;        /* a modem frame with burst_remaining==0
+                                        * was received in the current burst —
+                                        * only then may a bare pattern ACK be
+                                        * sent (else the burst tail may be lost
+                                        * and a pattern would falsely retire it)*/
+    bool     rx_burst_dup;             /* burst contained a duplicate block    */
+    bool     rx_burst_new;             /* burst delivered at least 1 new block */
+    int      rx_burst_blocks;          /* blocks seen in the current burst: a
                                         * bare pattern ack is sent only for a
-                                        * 1-frame burst (seq-less pattern is
-                                        * ambiguous across a multi-frame window)*/
+                                        * 1-block burst (seq-less pattern is
+                                        * ambiguous across a multi-block window)*/
 
     uint64_t last_rx_ms;              /* last successful frame decode time     */
     uint64_t irs_data_wait_ms;        /* when this IRS first had data queued
@@ -307,10 +324,10 @@ typedef struct
 
 /* ---- Selective-repeat window helpers (shared with arq.c + tests) ---- */
 
-/* Any un-acked frame outstanding? (windowed successor of tx_frame_present) */
+/* Any un-acked block outstanding? (windowed successor of tx_frame_present) */
 static inline bool arq_win_nonempty(const arq_session_t *s)
 {
-    for (int i = 0; i < ARQ_BURST_MAX; i++)
+    for (int i = 0; i < ARQ_WIN_SLOTS; i++)
         if (s->tx_win[i].present) return true;
     return false;
 }
@@ -319,7 +336,7 @@ static inline bool arq_win_nonempty(const arq_session_t *s)
 static inline int arq_win_bytes(const arq_session_t *s)
 {
     int n = 0;
-    for (int i = 0; i < ARQ_BURST_MAX; i++)
+    for (int i = 0; i < ARQ_WIN_SLOTS; i++)
         if (s->tx_win[i].present) n += s->tx_win[i].len;
     return n;
 }

@@ -50,6 +50,7 @@
 #define ARQ_HDR_FLAGS_IDX     2
 #define ARQ_HDR_SESSION_IDX   3
 #define ARQ_HDR_SEQ_IDX       4
+#define ARQ_HDR_BLKCOUNT_IDX  4   /* DATA frames: block_count (aliases SEQ) */
 #define ARQ_HDR_ACK_IDX       5
 #define ARQ_HDR_SNR_IDX       6
 #define ARQ_HDR_DELAY_IDX     7
@@ -112,13 +113,13 @@
 #define ARQ_BURST_REM_MAX  ARQ_FLAG_BURST_REM_MASK /* max frames/keydown-1 = 7 */
 #define ARQ_FLAG_SACK      0x20  /* bit 5, ACK frames only (bit 5 is LEN_HI on *
                                   * DATA frames — flag meaning is subtype-      *
-                                  * scoped): a selective-ACK bitmap byte        *
-                                  * follows the header.  rx_ack_seq = rcv_base  *
-                                  * (next in-order seq expected); bitmap bit i  *
-                                  * = seq (rcv_base+1+i) was received out of    *
-                                  * order.  Sent by the IRS when a windowed     *
-                                  * burst left holes; a clean burst is acked by *
-                                  * the Welch-Costas pattern instead (fast).    */
+                                  * scoped): an ARQ_SACK_BITMAP_BYTES-byte      *
+                                  * bitmap follows the header.  rx_ack_seq =    *
+                                  * rcv_base (next in-order seq expected);      *
+                                  * bitmap bit i = seq (rcv_base+1+i) received  *
+                                  * out of order.  Sent by the IRS when a       *
+                                  * windowed burst left holes; a clean burst is *
+                                  * acked by the pattern/coded ACK instead.     */
 
 /* ======================================================================
  * Frame subtypes
@@ -170,8 +171,59 @@ typedef struct
  * payload_bytes:    usable data bytes per frame.
  * ====================================================================== */
 
-/* Upper bound on frames per TX burst (sizes the go-back-N window). */
+/* Upper bound on MODEM FRAMES per TX keydown (matches MODEM_RX_BURST_CEILING;
+ * bounds the OFDM burst state machine's re-anchor range). */
 #define ARQ_BURST_MAX 5
+
+/* ======================================================================
+ * Block-packing (selective repeat over small blocks, not mode-sized frames)
+ *
+ * The ARQ retransmission unit is a BLOCK of at most ARQ_BLOCK_DATA_MAX user
+ * bytes, each keyed by its own mod-256 seq.  44 bytes is the largest block
+ * that fits a DATAC4 modem frame (54 payload - 8 frame hdr - 2 block hdr), so
+ * EVERY ladder rung down to the MFSK floor can carry a whole block — a block
+ * created at a fast mode is always re-sendable at a robust one (no "immutable
+ * frame too big to reframe" trap) and low-SNR degradation is preserved.
+ *
+ * A DATA modem frame is a container: 8-byte frame header (byte 4 = block_count
+ * instead of tx_seq) followed by block_count blocks, each [seq|len|data].  A
+ * fast mode packs many blocks (QAM16C2 ~= 26); MFSK carries 1.
+ * ====================================================================== */
+#define ARQ_BLOCK_DATA_MAX        44   /* user bytes per block at rung >=1     *
+                                        * (fits DATAC4, the narrowest OFDM     *
+                                        * rung: 54 payload - 8 - 2 = 44).      */
+/* Floor exception: a block created at the MFSK floor (rung 0) is only ever
+ * retransmitted at the floor — we climb off rung 0 only AFTER the block is
+ * acked and retired, so a floor block never needs to fit the narrow DATAC4.
+ * It may therefore fill the whole MFSK frame (98 payload - 8 frame hdr - 2
+ * block hdr = 88 user bytes) as ONE block, which keeps the fringe on the fast
+ * Welch-Costas pattern ACK (a multi-block floor keydown would force the coded
+ * DATAC16 ACK, whose ~-7 dB cliff cannot close the loop at the -13 dB floor)
+ * AND preserves the floor's full 88-byte goodput (no low-SNR penalty).  The
+ * ring slots are sized to hold it. */
+#define ARQ_BLOCK_DATA_FLOOR      88   /* user bytes for a rung-0 (MFSK) block */
+#define ARQ_BLOCK_HDR_SIZE         2   /* per-block wire header: seq(1)+len(1) */
+#define ARQ_MAX_BLOCKS_PER_FRAME  32   /* QAM16C2 ~= 26 blocks/frame; headroom */
+/* ARQ_WIN_SLOTS: selective-repeat block window depth AND the rx/tx ring slot
+ * count (slot index = seq % ARQ_WIN_SLOTS).  It MUST DIVIDE 256: seqs are
+ * mod-256, and seq % N is collision-free over any window of N consecutive seqs
+ * ONLY when N | 256 — otherwise a window straddling the 255->0 wrap aliases two
+ * distinct in-flight seqs onto one slot (e.g. with N=48, seq 246 and seq 6 both
+ * hit slot 6), silently clobbering one block.  32 divides 256, holds a healthy
+ * burst, and its 4-byte SACK bitmap (covers base+1..+32) fits DATAC16's 14-byte
+ * control frame (8 hdr + 4 = 12).  A larger window needs a wider SACK carrier
+ * than DATAC16 — a Phase-2 fast-ACK lever, not a slot-count bump. */
+#define ARQ_WIN_SLOTS             32   /* MUST divide 256 (mod-256 seq space)  */
+#define ARQ_SACK_BITMAP_BYTES      4   /* covers base+1..+32; fits DATAC16     */
+
+/* One block as passed to/from the DATA container codec.  On build, `data`
+ * points at the caller's bytes; on parse, `data` points into the frame buf. */
+typedef struct
+{
+    uint8_t        seq;
+    uint16_t       len;   /* 1..ARQ_BLOCK_DATA_MAX */
+    const uint8_t *data;
+} arq_block_t;
 
 typedef struct
 {
@@ -275,12 +327,17 @@ extern _Atomic int arq_mode_hold_after_downgrade_s;
 
 /* ---- Delivery-driven mode ladder (no SNR) ----
  * Ordered by ARQ goodput, floor first: rank 0 = MFSK (start, most robust) →
- * DATAC15 → DATAC4 → DATAC3 → DATAC1 → DATAC17 → QAM16C2 (rank 6).
+ * DATAC4 → DATAC3 → DATAC1 → DATAC17 → QAM16C2 (rank 5).
+ * DATAC15 was dropped from the ladder for block-packing: with a 44-byte block
+ * it is strictly dominated by MFSK (MFSK is both more robust, -13 vs -7 dB, and
+ * higher-goodput, 6.7 vs 5 B/s).  DATAC4 is kept — genuinely faster than MFSK
+ * in the -4..0 dB band, so the marginal-signal path is not penalized.  Every
+ * rung holds a whole 44-byte block, so tx mode = ladder[speed_level] directly
+ * (no mode_that_fits bump; the IRS decode-mode mirror always matches).
  * payload_mode = mode_ladder[speed_level]; sessions init speed_level = 0.
  * Any retry steps the level down; a run of clean deliveries steps it up. */
-#define ARQ_LADDER_LEVELS             7     /* 0=MFSK, 1=DATAC15, 2=DATAC4,
-                                             * 3=DATAC3, 4=DATAC1, 5=DATAC17,
-                                             * 6=QAM16C2 */
+#define ARQ_LADDER_LEVELS             6     /* 0=MFSK, 1=DATAC4, 2=DATAC3,
+                                             * 3=DATAC1, 4=DATAC17, 5=QAM16C2 */
 extern const int arq_mode_ladder[ARQ_LADDER_LEVELS];
 
 #define ARQ_LADDER_UP_SUCCESSES_DEFAULT        2     /* clean deliveries per step-up
@@ -357,7 +414,7 @@ uint8_t arq_protocol_data_burst_remaining(const uint8_t *buf, size_t buf_len);
 int arq_protocol_build_sack(uint8_t *buf, size_t buf_len,
                             uint8_t session_id, uint8_t rcv_base,
                             uint8_t flags, uint8_t snr_raw,
-                            uint8_t sack_bitmap);
+                            const uint8_t sack_bitmap[ARQ_SACK_BITMAP_BYTES]);
 
 /**
  * @brief Map a configured bandwidth in Hz to an on-air BW token.
@@ -459,6 +516,28 @@ int arq_protocol_build_data(uint8_t *buf, size_t buf_len,
                              uint8_t rx_ack_seq, uint8_t flags,
                              uint8_t snr_raw, uint16_t payload_valid,
                              const uint8_t *payload, size_t payload_len);
+
+/* --- Block-packed DATA frame (container of ARQ blocks) --- */
+
+/**
+ * Build a DATA modem frame packing `nblocks` blocks (each [seq|len|data]).
+ * Byte 4 carries block_count; blocks carry their own seq (no frame tx_seq).
+ * @param flags   HAS_DATA | burst_remaining[2:0] (frame-level frames-remaining).
+ * @return total frame bytes on success, -1 on error (buf too small, bad args).
+ */
+int arq_protocol_build_data_blocks(uint8_t *buf, size_t buf_len,
+                                   uint8_t session_id, uint8_t rx_ack_seq,
+                                   uint8_t flags, uint8_t snr_raw,
+                                   const arq_block_t *blocks, int nblocks);
+
+/**
+ * Parse a block-packed DATA frame.  Fills hdr (block_count in hdr->tx_seq) and
+ * up to max_blocks descriptors whose `data` points INTO buf.
+ * @return number of blocks parsed on success, -1 on malformed frame.
+ */
+int arq_protocol_parse_data_blocks(const uint8_t *buf, size_t buf_len,
+                                   arq_frame_hdr_t *hdr,
+                                   arq_block_t *out, int max_blocks);
 
 /* --- CALL/ACCEPT compact frames (PACKET_TYPE_ARQ_CALL) --- */
 

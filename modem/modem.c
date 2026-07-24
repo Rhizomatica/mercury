@@ -1328,21 +1328,23 @@ static void rx_metrics_update(rx_metrics_accum_t *metrics, int sync, float snr, 
         metrics->frame_decoded = true;
 }
 
-/* HARQ Chase soft-combining switch (default ON).  Set MERCURY_HARQ=0 to disable.
+/* HARQ Chase soft-combining switch (default OFF under block-packing).  Set
+ * MERCURY_HARQ=1 to force on (Phase-3b experiments).
  *
- * Default returned to ON (2026-06-18) after the combining was made a
- * non-destructive fallback (freedv_700.c): the RX now decodes the single-shot
- * LLRs FIRST and only adds the retained LLRs and retries on failure, so stale /
- * cross-frame soft info can never corrupt an otherwise-good frame.  Previously
- * combining ran before the decode and broke DATAC15 (synced but 0/227 decode;
- * HARQ-off worked).  Validated on-air with HARQ on: DATAC15 decodes and a uucp
- * transfer reaches Login/Handshake/Sending like HARQ-off / v1.9.9.  The fading
- * Es/No gain (the point of HARQ) is realised when retransmissions of the same
- * frame accumulate; confirm the magnitude on a fading link (Watterson / OTA). */
+ * HARQ Chase-combining requires every retransmission of a given codeword to be
+ * BIT-IDENTICAL so the RX may accumulate LLRs across attempts.  That held while
+ * every ARQ mode was burst_frames==1 (one in-flight frame, re-sent verbatim).
+ * Block-packing (windowed selective repeat, K>1) breaks it: a retransmitted
+ * modem frame repacks a DIFFERENT set of holes and may drop to a more robust
+ * mode, so its codeword bytes differ from the original — combining them would
+ * corrupt the soft info.  HARQ is therefore off by default here; Phase 3b
+ * restores it by front-loading the lowest un-acked hole as a bit-identical
+ * burst frame-0 (the only frame safe to combine).  The MFSK floor carries no
+ * freedv HARQ hook, so the fringe path is unaffected either way. */
 static int harq_enabled(void)
 {
     const char *e = getenv("MERCURY_HARQ");
-    return !(e && e[0] == '0');
+    return (e && e[0] == '1');
 }
 
 static int rx_decoder_bind_mode(rx_decoder_state_t *state, int mode)
@@ -1373,15 +1375,14 @@ static int rx_decoder_bind_mode(rx_decoder_state_t *state, int mode)
              * conditioned. */
             state->demod_count = 0;
 
-            /* HARQ Chase soft-combining on the RX decoder.  Every ARQ mode is
-             * burst_frames==1 (one DATA frame per preamble), so each
-             * retransmission the IRS sees is a fresh, bit-identical copy of the
-             * single in-flight frame — the decoder accumulates their LLRs and
-             * auto-clears the residual on CRC success.  Enabled for data modes
-             * only (the DATAC16 control plane carries non-identical frames).
-             * Reset on every bind so a pooled instance never combines a stale
-             * failed frame with a different payload after a mode excursion.
-             * Backends without HARQ leave these hooks NULL. */
+            /* HARQ Chase soft-combining on the RX decoder.  Under block-packing
+             * (windowed selective repeat) a retransmitted modem frame is NOT a
+             * bit-identical copy — it repacks different holes and may change
+             * mode — so combining is off by default (harq_enabled() defaults
+             * OFF; see above).  Reset on every bind regardless so a pooled
+             * instance never combines a stale failed frame with a different
+             * payload after a mode excursion.  Backends without HARQ leave
+             * these hooks NULL. */
             if (codec.be->harq_reset)
                 codec.be->harq_reset(codec.ctx);
             if (codec.be->set_harq)

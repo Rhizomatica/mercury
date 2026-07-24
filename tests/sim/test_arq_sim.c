@@ -88,35 +88,42 @@ void test_endpoint_tx_read_backlog(void)
 
 void test_translate_data_roundtrip(void)
 {
-    /* DATAC15 user bytes = payload_bytes - ARQ_FRAME_HDR_SIZE = 30 - 8 = 22.
-     * Build a properly-sized frame so frame_size==30 matches DATAC15 in the
-     * mode table and sim_translate_frame infers FREEDV_MODE_DATAC15. */
-    const size_t USER_BYTES = 22;
-    uint8_t payload[22];
-    for (int i = 0; i < (int)USER_BYTES; i++) payload[i] = (uint8_t)(0xA0 + i);
+    /* Block-packed DATA: two blocks (seq 5 len 10, seq 6 len 8) in one frame,
+     * zero-padded to the DATAC4 payload (54) so frame_size infers DATAC4. */
+    uint8_t b0[10], b1[8];
+    for (int i = 0; i < 10; i++) b0[i] = (uint8_t)(0xA0 + i);
+    for (int i = 0; i < 8;  i++) b1[i] = (uint8_t)(0x50 + i);
+    arq_block_t blk[2] = {
+        { .seq = 5, .len = 10, .data = b0 },
+        { .seq = 6, .len = 8,  .data = b1 },
+    };
 
     uint8_t frame[1280];
-    int fs = arq_protocol_build_data(frame, sizeof(frame),
-                                     /*session_id*/  0x42,
-                                     /*tx_seq*/      5,
-                                     /*rx_ack_seq*/  3,
-                                     /*flags*/       0,
-                                     /*snr_raw*/     0,
-                                     /*payload_valid*/ 0,   /* 0 = full frame */
-                                     payload, USER_BYTES);
+    int fs = arq_protocol_build_data_blocks(frame, sizeof(frame),
+                                            /*session_id*/ 0x42,
+                                            /*rx_ack_seq*/ 3,
+                                            /*flags*/      0,
+                                            /*snr_raw*/    0,
+                                            blk, 2);
     TEST_ASSERT_TRUE(fs > 0);
-    TEST_ASSERT_EQUAL_INT(ARQ_FRAME_HDR_SIZE + (int)USER_BYTES, fs);
+    /* pad to DATAC4's 54-byte modem payload (as send_data_burst does) */
+    const int FULL = 54;
+    for (int i = fs; i < FULL; i++) frame[i] = 0;
 
     arq_event_t ev = {0};
-    bool ok = sim_translate_frame(frame, (size_t)fs, 12.0f, "B0BBB", &ev);
+    bool ok = sim_translate_frame(frame, (size_t)FULL, 12.0f, "B0BBB", &ev);
     TEST_ASSERT_TRUE(ok);
     TEST_ASSERT_EQUAL_INT(ARQ_EV_RX_DATA, ev.id);
     TEST_ASSERT_EQUAL_UINT8(0x42, ev.session_id);
-    TEST_ASSERT_EQUAL_UINT8(5, ev.seq);
+    TEST_ASSERT_EQUAL_INT(2, ev.nblocks);
+    TEST_ASSERT_EQUAL_UINT8(5, ev.blocks[0].seq);
+    TEST_ASSERT_EQUAL_UINT8(6, ev.blocks[1].seq);
+    TEST_ASSERT_EQUAL_UINT8(5, ev.seq);   /* legacy key = blocks[0].seq */
     TEST_ASSERT_EQUAL_UINT8(3, ev.ack_seq);
-    TEST_ASSERT_EQUAL_INT((int)USER_BYTES, (int)ev.payload_len);
-    TEST_ASSERT_EQUAL_UINT8_ARRAY(payload, ev.payload, USER_BYTES);
-    TEST_ASSERT_EQUAL_INT(FREEDV_MODE_DATAC15, ev.mode);
+    TEST_ASSERT_EQUAL_INT(18, (int)ev.payload_len);
+    TEST_ASSERT_EQUAL_UINT8_ARRAY(b0, ev.payload + ev.blocks[0].off, 10);
+    TEST_ASSERT_EQUAL_UINT8_ARRAY(b1, ev.payload + ev.blocks[1].off, 8);
+    TEST_ASSERT_EQUAL_INT(FREEDV_MODE_DATAC4, ev.mode);
 }
 
 void test_translate_ack(void)
@@ -281,7 +288,7 @@ void test_sim_transfer_lossy_per20(void)
 }
 
 /* Fade cliff: on a good band the mode climbs to a fast rung; a deep fade
- * drives it down to the robust floor (MFSK / DATAC15 region); when the band
+ * drives it down to the robust floor (MFSK / DATAC4 region); when the band
  * clears it recovers to a fast mode.  Because the ladder is delivery-driven
  * with no SNR memory, the fade-time mode oscillates near the boundary, so we
  * assert the MINIMUM level observed during the fade reached the robust floor
@@ -307,16 +314,31 @@ void test_sim_fade_cliff_downgrades(void)
     arq_event_t dready = { .id = ARQ_EV_APP_DATA_READY };
     sim_inject(s, sim_a(s), &dready);
 
-    sim_run_until_idle(s, 45000);   /* climb on the good band (partial xfer) */
-    TEST_ASSERT_TRUE_MESSAGE(sim_endpoint_session(sim_a(s))->speed_level >= 3,
+    /* Climb on the good band.  With block-packing (K>1) each keydown is a
+     * multi-frame burst, so the ladder needs several bursts (not one 45 s
+     * window) to ramp from the MFSK floor up to a fast rung. */
+    int climb_max = 0;
+    for (int k = 0; k < 4; k++)
+    {
+        sim_run_until_idle(s, 45000);
+        int lvl = sim_endpoint_session(sim_a(s))->speed_level;
+        if (lvl > climb_max) climb_max = lvl;
+    }
+    TEST_ASSERT_TRUE_MESSAGE(climb_max >= 3,
                              "did not climb on the good band");
 
     /* Deep fade: only the robust floor survives.  Sample the level repeatedly
      * as the delivery-driven ladder descends (one rung per failed frame, each
-     * costing a full ack-timeout) and track the minimum reached. */
+     * costing a full ack-timeout) and track the minimum reached.  The fade must
+     * stay WITHIN the no-progress disconnect budget (ARQ_NO_PROGRESS_TIMEOUT_S,
+     * 180 s): a longer dead-air stretch correctly tears the session down (a -12
+     * dB link makes no forward progress once the ladder can't deliver), which
+     * is liveness working as designed, not a recoverable fade.  6 * 20 s =
+     * 120 s plunges the ladder to the floor and leaves the session alive to
+     * recover when the band clears. */
     sim_set_snr(s, -12.0);
     int min_level = 99;
-    for (int k = 0; k < 40; k++)
+    for (int k = 0; k < 6; k++)
     {
         sim_run_until_idle(s, 20000);
         int lvl = sim_endpoint_session(sim_a(s))->speed_level;

@@ -222,11 +222,13 @@ void test_build_sack_roundtrip(void)
 {
     for (int bm = 0; bm <= 0xFF; bm += 0x33)
     {
+        uint8_t bitmap[ARQ_SACK_BITMAP_BYTES];
+        for (int i = 0; i < ARQ_SACK_BITMAP_BYTES; i++)
+            bitmap[i] = (uint8_t)(bm ^ (i * 0x11));
         uint8_t buf[64];
         int size = arq_protocol_build_sack(buf, sizeof(buf), 0x42, 7,
-                                           ARQ_FLAG_HAS_DATA, 0,
-                                           (uint8_t)bm);
-        TEST_ASSERT_GREATER_THAN(ARQ_FRAME_HDR_SIZE, size);
+                                           ARQ_FLAG_HAS_DATA, 0, bitmap);
+        TEST_ASSERT_EQUAL_INT(ARQ_FRAME_HDR_SIZE + ARQ_SACK_BITMAP_BYTES, size);
 
         arq_frame_hdr_t hdr;
         TEST_ASSERT_EQUAL_INT(0, arq_protocol_decode_hdr(buf, (size_t)size, &hdr));
@@ -234,7 +236,8 @@ void test_build_sack_roundtrip(void)
         TEST_ASSERT_EQUAL_UINT8(7, hdr.rx_ack_seq);           /* rcv_base */
         TEST_ASSERT_TRUE(hdr.flags & ARQ_FLAG_SACK);
         TEST_ASSERT_TRUE(hdr.flags & ARQ_FLAG_HAS_DATA);
-        TEST_ASSERT_EQUAL_UINT8((uint8_t)bm, buf[ARQ_FRAME_HDR_SIZE]);
+        TEST_ASSERT_EQUAL_UINT8_ARRAY(bitmap, buf + ARQ_FRAME_HDR_SIZE,
+                                      ARQ_SACK_BITMAP_BYTES);
     }
 }
 
@@ -261,6 +264,59 @@ void test_data_burst_remaining_roundtrip(void)
         size_t valid = (size_t)hdr.ack_delay_raw | 0x100u;
         TEST_ASSERT_EQUAL_UINT(300, valid);
     }
+}
+
+/* Block-packing: a container of N blocks round-trips through
+ * build_data_blocks -> parse_data_blocks with each block's seq/len/data intact,
+ * even when the frame is zero-padded to a full mode payload (as on the wire). */
+void test_data_blocks_roundtrip(void)
+{
+    uint8_t d0[44], d1[1], d2[20];
+    for (int i = 0; i < 44; i++) d0[i] = (uint8_t)(0x10 + i);
+    d1[0] = 0x99;
+    for (int i = 0; i < 20; i++) d2[i] = (uint8_t)(0xC0 + i);
+    arq_block_t in[3] = {
+        { .seq = 200, .len = 44, .data = d0 },   /* max-size block          */
+        { .seq = 201, .len = 1,  .data = d1 },   /* min-size block          */
+        { .seq = 202, .len = 20, .data = d2 },
+    };
+
+    uint8_t buf[1280];
+    int fs = arq_protocol_build_data_blocks(buf, sizeof(buf), 0x7E, 9,
+                                            ARQ_FLAG_HAS_DATA | 2, 0, in, 3);
+    TEST_ASSERT_EQUAL_INT(ARQ_FRAME_HDR_SIZE + (2 + 44) + (2 + 1) + (2 + 20), fs);
+    /* pad to DATAC1's payload (510) as send_data_burst does; parse must ignore it */
+    for (int i = fs; i < 510; i++) buf[i] = 0xEE;
+
+    arq_frame_hdr_t hdr;
+    arq_block_t out[ARQ_MAX_BLOCKS_PER_FRAME];
+    int nb = arq_protocol_parse_data_blocks(buf, 510, &hdr, out,
+                                            ARQ_MAX_BLOCKS_PER_FRAME);
+    TEST_ASSERT_EQUAL_INT(3, nb);
+    TEST_ASSERT_EQUAL_UINT8(ARQ_SUBTYPE_DATA, hdr.subtype);
+    TEST_ASSERT_EQUAL_UINT8(9, hdr.rx_ack_seq);
+    TEST_ASSERT_EQUAL_UINT8(2, hdr.burst_remaining);
+    TEST_ASSERT_TRUE(hdr.flags & ARQ_FLAG_HAS_DATA);
+    TEST_ASSERT_EQUAL_UINT8(200, out[0].seq);
+    TEST_ASSERT_EQUAL_INT(44, out[0].len);
+    TEST_ASSERT_EQUAL_UINT8_ARRAY(d0, out[0].data, 44);
+    TEST_ASSERT_EQUAL_UINT8(201, out[1].seq);
+    TEST_ASSERT_EQUAL_INT(1, out[1].len);
+    TEST_ASSERT_EQUAL_UINT8(0x99, out[1].data[0]);
+    TEST_ASSERT_EQUAL_UINT8(202, out[2].seq);
+    TEST_ASSERT_EQUAL_INT(20, out[2].len);
+    TEST_ASSERT_EQUAL_UINT8_ARRAY(d2, out[2].data, 20);
+}
+
+/* A block with len > ARQ_BLOCK_DATA_FLOOR (the largest a rung-0 floor block may
+ * be) must be rejected by the builder. */
+void test_data_blocks_rejects_oversize(void)
+{
+    uint8_t big[128] = {0};
+    arq_block_t in = { .seq = 1, .len = ARQ_BLOCK_DATA_FLOOR + 1, .data = big };
+    uint8_t buf[1280];
+    TEST_ASSERT_EQUAL_INT(-1,
+        arq_protocol_build_data_blocks(buf, sizeof(buf), 0x1, 0, 0, 0, &in, 1));
 }
 
 /* ---- Mode timing lookup ---- */
@@ -385,6 +441,8 @@ int main(void)
     RUN_TEST(test_data_valid_length_over_511);
     RUN_TEST(test_data_burst_remaining_roundtrip);
     RUN_TEST(test_build_sack_roundtrip);
+    RUN_TEST(test_data_blocks_roundtrip);
+    RUN_TEST(test_data_blocks_rejects_oversize);
     /* Mode timing */
     RUN_TEST(test_mode_timing_datac4);
     RUN_TEST(test_mode_timing_datac15);

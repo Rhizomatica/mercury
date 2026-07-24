@@ -755,7 +755,13 @@ static arq_event_t make_data_event(uint8_t seq, int mode, size_t n)
     ev.session_id  = 0x42;
     ev.seq         = seq;
     ev.mode        = mode;
-    ev.rx_flags    = ARQ_FLAG_HAS_DATA;
+    ev.rx_flags    = ARQ_FLAG_HAS_DATA;   /* burst_remaining==0 => burst end */
+    /* Block-packed RX: one block per event (<= ARQ_BLOCK_DATA_MAX bytes). */
+    if (n > ARQ_BLOCK_DATA_MAX) n = ARQ_BLOCK_DATA_MAX;
+    ev.nblocks       = 1;
+    ev.blocks[0].seq = seq;
+    ev.blocks[0].off = 0;
+    ev.blocks[0].len = (uint16_t)n;
     ev.data_bytes  = n;
     ev.payload_len = n;
     for (size_t i = 0; i < n && i < sizeof(ev.payload); i++)
@@ -782,19 +788,19 @@ void test_irs_mirror_climbs_with_peer(void)
     goto_connected_irs();
     TEST_ASSERT_EQUAL_INT(MERCURY_MODE_MFSK, sess.peer_tx_mode);
 
-    arq_event_t ev = make_data_event(0, MERCURY_MODE_MFSK, 90);
+    arq_event_t ev = make_data_event(0, MERCURY_MODE_MFSK, 44);
     arq_fsm_dispatch(&sess, &ev);
-    TEST_ASSERT_EQUAL_INT(FREEDV_MODE_DATAC15, sess.peer_tx_mode);   /* level 1 */
+    TEST_ASSERT_EQUAL_INT(FREEDV_MODE_DATAC4, sess.peer_tx_mode);    /* level 1 */
     complete_ack_tx();
 
-    ev = make_data_event(1, FREEDV_MODE_DATAC15, 30);
+    ev = make_data_event(1, FREEDV_MODE_DATAC4, 44);
     arq_fsm_dispatch(&sess, &ev);
-    TEST_ASSERT_EQUAL_INT(FREEDV_MODE_DATAC4, sess.peer_tx_mode);    /* level 2 */
+    TEST_ASSERT_EQUAL_INT(FREEDV_MODE_DATAC3, sess.peer_tx_mode);    /* level 2 */
     complete_ack_tx();
 
-    ev = make_data_event(2, FREEDV_MODE_DATAC4, 54);
+    ev = make_data_event(2, FREEDV_MODE_DATAC3, 44);
     arq_fsm_dispatch(&sess, &ev);
-    TEST_ASSERT_EQUAL_INT(FREEDV_MODE_DATAC3, sess.peer_tx_mode);    /* level 3 */
+    TEST_ASSERT_EQUAL_INT(FREEDV_MODE_DATAC1, sess.peer_tx_mode);    /* level 3 */
 }
 
 /* A duplicate frame means our ACK was lost and the sender retried, stepping ITS
@@ -802,18 +808,18 @@ void test_irs_mirror_climbs_with_peer(void)
 void test_irs_mirror_steps_down_on_duplicate(void)
 {
     goto_connected_irs();
-    arq_event_t ev = make_data_event(0, MERCURY_MODE_MFSK, 90);
+    arq_event_t ev = make_data_event(0, MERCURY_MODE_MFSK, 44);
     arq_fsm_dispatch(&sess, &ev);
     complete_ack_tx();
-    ev = make_data_event(1, FREEDV_MODE_DATAC15, 30);
+    ev = make_data_event(1, FREEDV_MODE_DATAC4, 44);
     arq_fsm_dispatch(&sess, &ev);
     complete_ack_tx();
-    TEST_ASSERT_EQUAL_INT(FREEDV_MODE_DATAC4, sess.peer_tx_mode);    /* climbed to level 2 */
+    TEST_ASSERT_EQUAL_INT(FREEDV_MODE_DATAC3, sess.peer_tx_mode);    /* climbed to level 2 */
 
     /* Duplicate of an already-delivered seq (rx_expected has advanced past it). */
-    ev = make_data_event(0, MERCURY_MODE_MFSK, 90);
+    ev = make_data_event(0, MERCURY_MODE_MFSK, 44);
     arq_fsm_dispatch(&sess, &ev);
-    TEST_ASSERT_EQUAL_INT(FREEDV_MODE_DATAC15, sess.peer_tx_mode);   /* stepped down to level 1 */
+    TEST_ASSERT_EQUAL_INT(FREEDV_MODE_DATAC4, sess.peer_tx_mode);    /* stepped down to level 1 */
 }
 
 /* Reset-on-miss: a full idle hold with no DATA (a lost ACK left us climbed above
@@ -821,10 +827,10 @@ void test_irs_mirror_steps_down_on_duplicate(void)
 void test_irs_mirror_resets_toward_floor_on_silence(void)
 {
     goto_connected_irs();
-    arq_event_t ev = make_data_event(0, MERCURY_MODE_MFSK, 90);
+    arq_event_t ev = make_data_event(0, MERCURY_MODE_MFSK, 44);
     arq_fsm_dispatch(&sess, &ev);
     complete_ack_tx();
-    TEST_ASSERT_EQUAL_INT(FREEDV_MODE_DATAC15, sess.peer_tx_mode);   /* climbed to level 1 */
+    TEST_ASSERT_EQUAL_INT(FREEDV_MODE_DATAC4, sess.peer_tx_mode);    /* climbed to level 1 */
 
     /* Idle-hold fires with no reverse backlog and a recent RX (not dead yet). */
     fake_tx_backlog_fake.return_val = 0;
@@ -978,7 +984,7 @@ void test_win_iss_sack_retransmits_holes_only(void)
     sack.session_id  = sess.session_id;   /* caller generated its own id */
     sack.ack_seq     = 0;       /* rcv_base */
     sack.sack_present = true;
-    sack.sack_bitmap  = 0x00;   /* nothing above base delivered */
+    memset(sack.sack_bitmap, 0, sizeof(sack.sack_bitmap));   /* nothing above base */
     arq_fsm_dispatch(&sess, &sack);
 
     TEST_ASSERT_TRUE(arq_win_nonempty(&sess));         /* seq 0 still outstanding */

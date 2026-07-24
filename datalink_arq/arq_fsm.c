@@ -150,7 +150,8 @@ static void reset_session_data_state(arq_session_t *sess)
     sess->tx_base            = 0;
     sess->tx_burst_retx      = false;
     sess->tx_burst_count     = 0;
-    for (int i = 0; i < ARQ_BURST_MAX; i++)
+    sess->burst_depth        = 1;
+    for (int i = 0; i < ARQ_WIN_SLOTS; i++)
     {
         sess->tx_win[i].present = false;
         sess->tx_win[i].len     = 0;
@@ -161,7 +162,7 @@ static void reset_session_data_state(arq_session_t *sess)
     sess->rx_burst_complete  = false;
     sess->rx_burst_dup       = false;
     sess->rx_burst_new       = false;
-    sess->rx_burst_frames    = 0;
+    sess->rx_burst_blocks    = 0;
     sess->tx_retries_left    = ARQ_DATA_RETRY_SLOTS;
     sess->speed_level        = 0;
     sess->tx_success_count   = 0;
@@ -220,7 +221,8 @@ static void sess_enter(arq_session_t *sess, arq_conn_state_t new_state,
         sess->tx_base          = sess->tx_seq;
         sess->tx_burst_retx    = false;
         sess->tx_burst_count   = 0;
-        for (int i = 0; i < ARQ_BURST_MAX; i++)
+        sess->burst_depth      = 1;
+        for (int i = 0; i < ARQ_WIN_SLOTS; i++)
         {
             sess->tx_win[i].present = false;
             sess->tx_win[i].len     = 0;
@@ -231,7 +233,7 @@ static void sess_enter(arq_session_t *sess, arq_conn_state_t new_state,
         sess->rx_burst_complete = false;
         sess->rx_burst_dup      = false;
         sess->rx_burst_new      = false;
-        sess->rx_burst_frames   = 0;
+        sess->rx_burst_blocks   = 0;
     }
 }
 
@@ -364,6 +366,31 @@ static void record_tx_outcome(arq_session_t *sess, bool clean)
     else if (delta > 0)
         HLOGD(LOG_COMP, "Ladder step-up to %d", sess->speed_level);
     apply_speed_level(sess);
+
+    /* Adaptive burst depth (see arq_session_t.burst_depth): keep the climb fast
+     * by holding depth at 1 while the mode is still moving (a clean burst that
+     * climbs, or any dirty burst that steps down), then grow one frame per clean
+     * burst once the mode has SETTLED (clean, no rung change) up to the mode's
+     * cap.  Long K>1 keydowns must never slow the ladder climb — that was the
+     * fixed-K>1 regression (crawls up the ladder, never reaches the fast modes).*/
+    if (!clean || delta != 0)
+    {
+        sess->burst_depth = 1;                 /* loss or mode change: back to 1 */
+    }
+    else
+    {
+        const arq_mode_timing_t *tm =
+            arq_protocol_mode_timing(clamp_payload_mode_to_bandwidth(
+                arq_mode_ladder[sess->speed_level]));
+        int cap = (tm && tm->burst_frames > 0) ? tm->burst_frames : 1;
+        if (cap > ARQ_BURST_MAX) cap = ARQ_BURST_MAX;
+        if (sess->burst_depth < cap)
+        {
+            sess->burst_depth++;
+            HLOGD(LOG_COMP, "Burst depth grow to %d (mode settled at level %d)",
+                  sess->burst_depth, sess->speed_level);
+        }
+    }
 }
 
 /** IRS: mirror the peer's (ISS) ladder from the outcome of a received DATA
@@ -415,16 +442,21 @@ static void irs_arm_ack_deadline(arq_session_t *sess, const arq_event_t *ev)
  * the in-order prefix.  Returns true for a NEW frame (in-order or stored out of
  * order), false for a duplicate/out-of-range one.  Tracks the per-burst flags
  * that the consolidated ACK decision and the mode mirror consume. */
-static bool deliver_rx_checked(arq_session_t *sess, const arq_event_t *ev)
+/* Reassemble ONE received block (seq + data) into the IRS window, delivering
+ * the in-order prefix.  Returns true if the block was new (delivered now or
+ * held for later), false if duplicate/undeliverable.  Called once per block of
+ * a decoded modem frame. */
+static bool deliver_rx_checked(arq_session_t *sess, uint8_t seq,
+                               const uint8_t *data, size_t len)
 {
-    uint8_t d = (uint8_t)(ev->seq - sess->rx_expected);
+    uint8_t d = (uint8_t)(seq - sess->rx_expected);
 
-    if (d >= ARQ_BURST_MAX)
+    if (d >= ARQ_WIN_SLOTS)
     {
         /* Behind the window base (peer retransmitting — our ack was lost) or
          * absurdly far ahead (corrupt header): not new either way. */
         HLOGD(LOG_COMP, "Duplicate data seq=%d (expected=%d) — suppressed",
-              (int)ev->seq, (int)sess->rx_expected);
+              (int)seq, (int)sess->rx_expected);
         sess->rx_burst_dup = true;
         return false;
     }
@@ -432,13 +464,13 @@ static bool deliver_rx_checked(arq_session_t *sess, const arq_event_t *ev)
     if (d == 0)
     {
         /* In order: deliver it and drain any contiguous run it unblocks. */
-        if (ev->payload_len > 0 && g_cbs.deliver_rx_data)
-            g_cbs.deliver_rx_data(ev->payload, ev->payload_len);
-        sess->rx_expected = (uint8_t)(ev->seq + 1);
+        if (len > 0 && g_cbs.deliver_rx_data)
+            g_cbs.deliver_rx_data(data, len);
+        sess->rx_expected = (uint8_t)(seq + 1);
         for (;;)
         {
             struct arq_rxslot *sl =
-                &sess->rx_win[sess->rx_expected % ARQ_BURST_MAX];
+                &sess->rx_win[sess->rx_expected % ARQ_WIN_SLOTS];
             if (!sl->present || sl->seq != sess->rx_expected)
                 break;   /* stored-seq check: never mis-deliver an aliased slot */
             if (sl->len > 0 && g_cbs.deliver_rx_data)
@@ -452,19 +484,19 @@ static bool deliver_rx_checked(arq_session_t *sess, const arq_event_t *ev)
     }
 
     /* Out of order above the base: hold it for reassembly (validated by seq). */
-    struct arq_rxslot *sl = &sess->rx_win[ev->seq % ARQ_BURST_MAX];
-    if (sl->present && sl->seq == ev->seq)
+    struct arq_rxslot *sl = &sess->rx_win[seq % ARQ_WIN_SLOTS];
+    if (sl->present && sl->seq == seq)
     {
         sess->rx_burst_dup = true;   /* duplicate of a held slot */
         return false;
     }
     if (sl->present)
         return false;   /* slot busy with a different live seq — treat as lost */
-    if (ev->payload_len > sizeof(sl->data))
+    if (len > sizeof(sl->data))
         return false;                 /* cannot hold — treated as lost */
-    memcpy(sl->data, ev->payload, ev->payload_len);
-    sl->len     = ev->payload_len;
-    sl->seq     = ev->seq;
+    memcpy(sl->data, data, len);
+    sl->len     = len;
+    sl->seq     = seq;
     sl->present = true;
     sess->rx_burst_new = true;
     return true;
@@ -538,27 +570,36 @@ static void send_ack(arq_session_t *sess, uint8_t ack_delay_raw)
  *     already did): the ISS steps its ladder down on receiving the SACK. */
 static void irs_send_burst_ack(arq_session_t *sess)
 {
-    uint8_t bitmap = 0;
-    for (int off = 1; off < ARQ_BURST_MAX; off++)
+    uint8_t bitmap[ARQ_SACK_BITMAP_BYTES] = {0};
+    bool    any_bit = false;
+    for (int off = 1; off <= ARQ_SACK_BITMAP_BYTES * 8; off++)
     {
         uint8_t sq = (uint8_t)(sess->rx_expected + off);
-        struct arq_rxslot *sl = &sess->rx_win[sq % ARQ_BURST_MAX];
+        struct arq_rxslot *sl = &sess->rx_win[sq % ARQ_WIN_SLOTS];
         if (sl->present && sl->seq == sq)
-            bitmap |= (uint8_t)(1u << (off - 1));
+        {
+            bitmap[(off - 1) / 8] |= (uint8_t)(1u << ((off - 1) % 8));
+            any_bit = true;
+        }
     }
-    bool holes = !sess->rx_burst_complete || bitmap != 0;
+    bool holes = !sess->rx_burst_complete || any_bit;
 
-    /* A bare pattern ACK carries no sequence, so the ISS cannot tell WHICH
-     * burst it acks — safe only for a single-frame burst (stop-and-wait: the
-     * one outstanding frame).  For a multi-frame burst a stale pattern would
-     * wrongly retire the ISS's whole current window, so a CLEAN multi-frame
-     * burst is acked by a coded ACK carrying rcv_base + an all-delivered
-     * bitmap (base-driven retirement is idempotent and stale-safe). */
-    bool multi = (sess->rx_burst_frames > 1);
+    /* A bare pattern ACK carries no sequence, so the ISS can only read it as
+     * "the block I am waiting for arrived" — it retires tx_base.  That is safe
+     * ONLY for a single-block burst that delivered a genuinely NEW block:
+     *   - multi-block bursts -> a stale pattern would retire the whole window;
+     *   - a DUPLICATE-only burst (our earlier ACK was lost, the peer retried a
+     *     block we already delivered) must NOT pattern-ACK: the peer may have
+     *     pipelined on to a new tx_base, and the seq-less pattern would retire
+     *     that not-yet-delivered block (a selective-repeat over-retirement ->
+     *     stranded hole -> stall).
+     * Both cases are acked instead by a coded ACK carrying rcv_base (base-
+     * driven retirement is idempotent and stale-safe). */
+    bool multi = (sess->rx_burst_blocks > 1);
 
-    if (!holes && !multi)
+    if (!holes && !multi && !sess->rx_burst_dup)
     {
-        send_ack(sess, 0);                 /* fast pattern: 1-frame burst */
+        send_ack(sess, 0);                 /* fast pattern: clean new 1-block */
     }
     else
     {
@@ -578,13 +619,16 @@ static void irs_send_burst_ack(arq_session_t *sess)
         if (n > 0)
             send_frame(PACKET_TYPE_ARQ_CONTROL, sess->control_mode,
                        (size_t)n, frame, 0);
-        HLOGD(LOG_COMP, "SACK: base=%d bitmap=0x%02x%s",
-              (int)sess->rx_expected, bitmap,
+        HLOGD(LOG_COMP, "SACK: base=%d bitmap=0x%02x%02x%02x%02x%02x%02x%s",
+              (int)sess->rx_expected, bitmap[0], bitmap[1], bitmap[2],
+              bitmap[3], bitmap[4], bitmap[5],
               sess->rx_burst_complete ? "" : " (burst tail missing)");
 
-        /* The peer will retransmit (its ladder steps down on this SACK);
-         * mirror once unless a duplicate already stepped us this burst. */
-        if (!sess->rx_burst_dup)
+        /* Only a genuine-hole SACK makes the peer retransmit and step its
+         * ladder down; mirror once unless a duplicate already stepped us this
+         * burst.  A clean multi-block burst acked here (no holes) already had
+         * its climb credited per burst in irs_receive_data — don't re-credit. */
+        if (holes && !sess->rx_burst_dup)
             irs_mirror_peer_ladder(sess, false);
     }
 
@@ -592,171 +636,189 @@ static void irs_send_burst_ack(arq_session_t *sess)
     sess->rx_burst_complete = false;
     sess->rx_burst_dup      = false;
     sess->rx_burst_new      = false;
-    sess->rx_burst_frames   = 0;
+    sess->rx_burst_blocks   = 0;
 }
 
-/* Smallest ladder mode whose usable payload can carry `len` user bytes, at or
- * above the current speed_level.  Used so an already-outstanding frame (whose
- * seq<->bytes identity is immutable) is never re-framed too small after a mode
- * drop — which would double-deliver on the peer.  Falls back to the fastest
- * mode if none fits (should not happen: reads are sized to the mode at
- * creation, so len always fits some mode >= the creation mode). */
-static int mode_that_fits(int from_level, int len)
-{
-    for (int lvl = from_level; lvl < ARQ_LADDER_LEVELS; lvl++)
-    {
-        int m = clamp_payload_mode_to_bandwidth(arq_mode_ladder[lvl]);
-        const arq_mode_timing_t *tm = arq_protocol_mode_timing(m);
-        if (tm && (int)tm->payload_bytes - ARQ_FRAME_HDR_SIZE >= len)
-            return m;
-    }
-    return clamp_payload_mode_to_bandwidth(arq_mode_ladder[ARQ_LADDER_LEVELS - 1]);
-}
-
-/* Build and transmit one KEYDOWN of DATA frames (the windowed burst).
+/* Build and transmit one KEYDOWN as block-packed DATA frames (windowed burst).
  *
- * Selection (selective repeat; the window drains monotonically under loss):
- *  - If un-acked slots are outstanding (holes after a SACK, or the whole
- *    window after an ACK timeout / duplicate), retransmit THOSE, oldest
- *    first — never mixed with new frames.
- *  - Else fill up to the mode's burst_frames fresh slots from the app ring,
- *    each an IMMUTABLE unit (raw user bytes read once, fixed seq, never
- *    resized) so a duplicate is idempotent on the peer.
+ * Block selection (selective repeat; the window drains monotonically under
+ * loss):
+ *  - If un-acked blocks are outstanding (holes after a SACK, or the whole
+ *    window after an ACK timeout / duplicate), retransmit THOSE, oldest first
+ *    — never mixed with fresh blocks.
+ *  - Else read fresh <=44-byte blocks from the app ring, each an IMMUTABLE
+ *    unit (raw bytes read once, fixed seq) so a duplicate is idempotent.
  *
- * One keydown = one mode (the modem action carries a single codec): a fresh
- * burst uses payload_mode; a retransmit burst uses the smallest mode that
- * fits its LARGEST frame (mode_that_fits — never re-framed smaller).  Frames
- * go out via send_tx_frame with burst_remaining counting down to 0; the arq.c
- * accumulator turns them into ONE modem action (one preamble/keydown), and
- * the same count rides the DATA header so the IRS re-anchors its decoder and
- * consolidates its ACK per burst.  burst_frames==1 (MFSK floor) reduces all
- * of this to the proven stop-and-wait path. */
+ * Blocks are packed into up to burst_frames modem frames at ONE mode =
+ * ladder[speed_level], filling each frame to its payload BYTE BUDGET with
+ * <=44-byte blocks (the last block of a frame is sized to the remaining
+ * budget).  Byte-budget packing matters at the floor: a single 44-byte block
+ * would waste half of MFSK's 90-byte frame (a low-SNR goodput penalty), so the
+ * wide MFSK frame carries two blocks (44 + 42 = 86 user bytes) instead.  Every
+ * block stays <=44 bytes, so it still fits DATAC4 (the narrowest ladder rung,
+ * 46-byte payload) on a retransmit — no mode bump, and the peer decodes it at
+ * whatever robust mode the fade forced.  Frames go out via send_tx_frame with
+ * frame-level burst_remaining counting down to 0; the arq.c accumulator turns
+ * them into ONE modem action (one preamble/keydown) and the IRS re-anchors per
+ * frame + consolidates its ACK per burst. */
 static void send_data_burst(arq_session_t *sess)
 {
     if (!g_cbs.tx_read || !g_cbs.tx_backlog)
         return;
 
-    const arq_mode_timing_t *tm = arq_protocol_mode_timing(sess->payload_mode);
+    int tx_mode = clamp_payload_mode_to_bandwidth(arq_mode_ladder[sess->speed_level]);
+    const arq_mode_timing_t *tm = arq_protocol_mode_timing(tx_mode);
     if (!tm || (int)tm->payload_bytes <= ARQ_FRAME_HDR_SIZE)
         return;
 
-    int K = tm->burst_frames;
-    if (K < 1) K = 1;
-    if (K > ARQ_BURST_MAX) K = ARQ_BURST_MAX;
+    int cap = (int)tm->payload_bytes - ARQ_FRAME_HDR_SIZE;   /* block-area bytes/frame */
+    /* Adaptive depth: the mode's burst_frames is only a CAP; the live depth
+     * (grown from 1 as the ladder settles, see record_tx_outcome) is what
+     * bounds this keydown so the climb stays fast. */
+    int depth = sess->burst_depth;
+    if (depth < 1) depth = 1;
+    int max_frames = tm->burst_frames;
+    if (max_frames > depth) max_frames = depth;
+    if (max_frames < 1) max_frames = 1;
+    if (max_frames > ARQ_BURST_MAX) max_frames = ARQ_BURST_MAX;
 
-    /* --- Select this keydown's frames --- */
-    uint8_t seqs[ARQ_BURST_MAX];
-    int     count = 0;
-    bool    retx_burst = arq_win_nonempty(sess);
+    /* Floor (rung 0) sends EXACTLY ONE block per keydown, sized to fill the
+     * MFSK frame (<=88 user bytes).  Structurally 1 block => the fringe keeps
+     * the fast Welch-Costas pattern ACK (a multi-block burst forces the coded
+     * DATAC16 ACK, whose ~-7 dB cliff cannot close the loop at the -13 dB
+     * floor) AND the floor keeps its full goodput.  Every other rung packs
+     * <=44-byte blocks (so a retransmit fits DATAC4) up to the frame's byte
+     * budget.  Structural safety for the >44 floor block: it is only ever
+     * created and retransmitted at rung 0 — we climb only after retiring it —
+     * so an oversize block never reaches a narrow rung. */
+    bool is_floor    = (sess->speed_level == 0);
+    int  blk_max     = is_floor ? ARQ_BLOCK_DATA_FLOOR : ARQ_BLOCK_DATA_MAX;
+    int  max_blk_pf  = is_floor ? 1 : ARQ_MAX_BLOCKS_PER_FRAME;
+
+    bool retx_burst = arq_win_nonempty(sess);
+
+    /* Selection fills per-frame block lists, each frame packed to <= cap bytes
+     * with <=44-byte blocks (byte-budget packing, so a wide floor frame is not
+     * wasted by a single small block).  A block always fits an empty frame: the
+     * narrowest rung (DATAC4) has cap 46 >= 2 + 44. */
+    uint8_t fseq[ARQ_BURST_MAX][ARQ_MAX_BLOCKS_PER_FRAME];
+    int     fcnt[ARQ_BURST_MAX] = {0};
+    int     total   = 0;   /* total blocks selected this keydown */
+    int     nframes = 0;
 
     if (retx_burst)
     {
-        /* Holes only, oldest first. */
-        for (int d = 0; d < ARQ_BURST_MAX && count < K; d++)
+        /* Holes only, oldest first, greedily packed by byte budget. */
+        int d = 0;
+        for (int f = 0; f < max_frames && total < ARQ_WIN_SLOTS; f++)
         {
-            uint8_t s = (uint8_t)(sess->tx_base + d);
-            struct arq_txslot *sl = &sess->tx_win[s % ARQ_BURST_MAX];
-            if (sl->present && sl->seq == s)
+            int used = 0;
+            for (; d < ARQ_WIN_SLOTS && total < ARQ_WIN_SLOTS &&
+                   fcnt[f] < max_blk_pf; d++)
             {
+                uint8_t s = (uint8_t)(sess->tx_base + d);
+                struct arq_txslot *sl = &sess->tx_win[s % ARQ_WIN_SLOTS];
+                if (!(sl->present && sl->seq == s))
+                    continue;
+                if (fcnt[f] > 0 &&
+                    used + ARQ_BLOCK_HDR_SIZE + sl->len > cap)
+                    break;   /* doesn't fit this frame — leave for the next one */
                 sl->retx = true;
-                seqs[count++] = s;
+                fseq[f][fcnt[f]++] = s;
+                used += ARQ_BLOCK_HDR_SIZE + sl->len;
+                total++;
             }
+            if (fcnt[f] == 0)
+                break;                 /* no more holes to place */
+            nframes = f + 1;
         }
     }
     else
     {
-        size_t slot_new = (size_t)tm->payload_bytes - ARQ_FRAME_HDR_SIZE;
         sess->tx_base = sess->tx_seq;   /* window empty: base tracks next new */
-        while (count < K)
+        for (int f = 0; f < max_frames && total < ARQ_WIN_SLOTS; f++)
         {
-            struct arq_txslot *sl =
-                &sess->tx_win[sess->tx_seq % ARQ_BURST_MAX];
-            size_t want = slot_new;
-            if (want > sizeof(sl->data))
-                want = sizeof(sl->data);
-            int got = g_cbs.tx_read(sl->data, want);
-            if (got <= 0)
-                break;               /* backlog drained */
-            sl->len     = got;
-            sl->seq     = sess->tx_seq;
-            sl->present = true;
-            sl->retx    = false;
-            seqs[count++] = sess->tx_seq;
-            sess->tx_seq  = (uint8_t)(sess->tx_seq + 1);
+            int used = 0;
+            while (total < ARQ_WIN_SLOTS &&
+                   fcnt[f] < max_blk_pf &&
+                   cap - used >= ARQ_BLOCK_HDR_SIZE + 1)
+            {
+                int want = blk_max;
+                int room = cap - used - ARQ_BLOCK_HDR_SIZE;
+                if (want > room) want = room;
+                struct arq_txslot *sl =
+                    &sess->tx_win[sess->tx_seq % ARQ_WIN_SLOTS];
+                int got = g_cbs.tx_read(sl->data, (size_t)want);
+                if (got <= 0)
+                    break;             /* backlog drained */
+                sl->len     = got;
+                sl->seq     = sess->tx_seq;
+                sl->present = true;
+                sl->retx    = false;
+                fseq[f][fcnt[f]++] = sess->tx_seq;
+                used += ARQ_BLOCK_HDR_SIZE + got;
+                total++;
+                sess->tx_seq = (uint8_t)(sess->tx_seq + 1);
+            }
+            if (fcnt[f] == 0)
+                break;                 /* backlog drained */
+            nframes = f + 1;
         }
     }
-    if (count == 0)
+    if (total == 0)
         return;
     sess->tx_burst_retx  = retx_burst;
-    sess->tx_burst_count = count;   /* frames in this keydown (ladder credit) */
-
-    /* --- One mode for the whole keydown: must fit the largest frame --- */
-    int max_len = 0;
-    for (int i = 0; i < count; i++)
-    {
-        int l = sess->tx_win[seqs[i] % ARQ_BURST_MAX].len;
-        if (l > max_len) max_len = l;
-    }
-    int tx_mode = sess->payload_mode;
-    const arq_mode_timing_t *tmm = arq_protocol_mode_timing(tx_mode);
-    size_t slot = (tmm && (int)tmm->payload_bytes > ARQ_FRAME_HDR_SIZE)
-                  ? (size_t)tmm->payload_bytes - ARQ_FRAME_HDR_SIZE : 0;
-    if (max_len > (int)slot)
-    {
-        tx_mode = mode_that_fits(sess->speed_level, max_len);
-        tmm  = arq_protocol_mode_timing(tx_mode);
-        slot = (tmm && (int)tmm->payload_bytes > ARQ_FRAME_HDR_SIZE)
-               ? (size_t)tmm->payload_bytes - ARQ_FRAME_HDR_SIZE : slot;
-    }
+    sess->tx_burst_count = total;   /* blocks in this keydown (ladder credit) */
 
     uint8_t snr_raw = 0;
     if (sess->local_snr_x10 != 0)
         snr_raw = arq_protocol_encode_snr((float)sess->local_snr_x10 / 10.0f);
 
-    /* --- Emit the frames back-to-back (one action, one preamble) --- */
-    for (int i = 0; i < count; i++)
+    /* --- Emit each frame (one action, one preamble for the whole keydown) --- */
+    for (int f = 0; f < nframes; f++)
     {
-        struct arq_txslot *sl = &sess->tx_win[seqs[i] % ARQ_BURST_MAX];
-        int this_len = sl->len;
-
-        uint8_t payload[INT_BUFFER_SIZE];
-        memset(payload, 0, slot);
-        memcpy(payload, sl->data, (size_t)this_len);
-
-        uint16_t payload_valid;
-        uint8_t  data_flags = 0;
-        if ((size_t)this_len == slot)
+        arq_block_t blk[ARQ_MAX_BLOCKS_PER_FRAME];
+        int frame_bytes = 0;
+        for (int j = 0; j < fcnt[f]; j++)
         {
-            payload_valid = ARQ_DATA_LEN_FULL;
+            struct arq_txslot *sl = &sess->tx_win[fseq[f][j] % ARQ_WIN_SLOTS];
+            blk[j].seq  = fseq[f][j];
+            blk[j].len  = (uint16_t)sl->len;
+            blk[j].data = sl->data;
+            frame_bytes += sl->len;
         }
-        else
-        {
-            payload_valid = (uint16_t)this_len;
-            if (this_len & 0x100) data_flags |= ARQ_FLAG_LEN_HI;
-            if (this_len & 0x200) data_flags |= ARQ_FLAG_LEN_B9;
-            if (this_len & 0x400) data_flags |= ARQ_FLAG_LEN_B10;
-        }
-        /* HAS_DATA piggyback: more app bytes queued behind this burst. */
+
+        uint8_t data_flags = 0;
         if (session_tx_backlog(sess) > 0)
             data_flags |= ARQ_FLAG_HAS_DATA;
-
-        /* Self-describing burst: frames still to come in THIS keydown. */
-        uint8_t burst_remaining = (uint8_t)(count - 1 - i);
+        /* Self-describing burst: modem frames still to come in THIS keydown. */
+        uint8_t burst_remaining = (uint8_t)(nframes - 1 - f);
         data_flags |= (burst_remaining & ARQ_FLAG_BURST_REM_MASK);
 
         uint8_t frame[INT_BUFFER_SIZE];
-        int n = arq_protocol_build_data(frame, sizeof(frame),
-                                        sess->session_id, seqs[i],
-                                        sess->rx_expected, data_flags, snr_raw,
-                                        payload_valid, payload, slot);
+        int n = arq_protocol_build_data_blocks(frame, sizeof(frame),
+                                               sess->session_id,
+                                               sess->rx_expected, data_flags,
+                                               snr_raw, blk, fcnt[f]);
         if (n <= 0)
             return;
+
+        /* Zero-pad to the mode's full modem-frame payload: codec2 raw-data
+         * modes carry a fixed byte count per frame, and a constant frame_size
+         * keeps the RX mode-inference (by frame_size) unambiguous.  block_count
+         * bounds the parse, so the padding is ignored on RX. */
+        int full = (int)tm->payload_bytes;
+        if (n < full && full <= (int)sizeof(frame))
+        {
+            memset(frame + n, 0, (size_t)(full - n));
+            n = full;
+        }
 
         send_frame(PACKET_TYPE_ARQ_DATA, tx_mode, (size_t)n, frame,
                    (int)burst_remaining);
         if (g_timing)
-            arq_timing_record_tx_queue(g_timing, (int)seqs[i], tx_mode,
-                                       session_tx_backlog(sess), this_len);
+            arq_timing_record_tx_queue(g_timing, (int)blk[0].seq, tx_mode,
+                                       session_tx_backlog(sess), frame_bytes);
     }
 }
 
@@ -1274,10 +1336,36 @@ static void fsm_connected(arq_session_t *sess, const arq_event_t *ev)
 static void irs_receive_data(arq_session_t *sess, const arq_event_t *ev)
 {
     update_local_snr(sess, ev);
-    sess->rx_burst_frames++;               /* frames seen in the current burst */
     bool was_dup   = sess->rx_burst_dup;
-    bool new_frame = deliver_rx_checked(sess, ev);
-    uint8_t rem    = ev->rx_flags & ARQ_FLAG_BURST_REM_MASK;
+
+    /* One decoded modem frame carries nblocks blocks; reassemble each into the
+     * IRS window.  A single-block frame (nblocks<=0 legacy) falls back to the
+     * whole-payload path. */
+    bool any_new = false;
+    int  nb = ev->nblocks > 0 ? ev->nblocks : 1;
+    for (int i = 0; i < nb; i++)
+    {
+        uint8_t        bseq;
+        const uint8_t *bdata;
+        size_t         blen;
+        if (ev->nblocks > 0)
+        {
+            bseq  = ev->blocks[i].seq;
+            bdata = ev->payload + ev->blocks[i].off;
+            blen  = ev->blocks[i].len;
+        }
+        else
+        {
+            bseq  = ev->seq;
+            bdata = ev->payload;
+            blen  = ev->payload_len;
+        }
+        sess->rx_burst_blocks++;           /* blocks seen in the current burst */
+        if (deliver_rx_checked(sess, bseq, bdata, blen))
+            any_new = true;
+    }
+
+    uint8_t rem = ev->rx_flags & ARQ_FLAG_BURST_REM_MASK;
     if (rem == 0)
         sess->rx_burst_complete = true;
 
@@ -1289,40 +1377,39 @@ static void irs_receive_data(arq_session_t *sess, const arq_event_t *ev)
      *    mirror the climb.  Mid-burst frames never touch the mirror. */
     if (sess->rx_burst_dup && !was_dup)
         irs_mirror_peer_ladder(sess, false);
-    else if (rem == 0 && new_frame && !sess->rx_burst_dup)
+    else if (rem == 0 && any_new && !sess->rx_burst_dup)
     {
         bool holes = false;
-        for (int off = 1; off < ARQ_BURST_MAX; off++)
+        for (int off = 1; off <= ARQ_SACK_BITMAP_BYTES * 8; off++)
         {
             uint8_t sq = (uint8_t)(sess->rx_expected + off);
-            struct arq_rxslot *sl = &sess->rx_win[sq % ARQ_BURST_MAX];
+            struct arq_rxslot *sl = &sess->rx_win[sq % ARQ_WIN_SLOTS];
             if (sl->present && sl->seq == sq)
                 holes = true;
         }
         if (!holes)
-            /* Clean complete burst: mirror the sender's climb, crediting the
-             * burst's frame count so the mirror stays locked to the ISS. */
+            /* Clean complete burst: mirror the sender's climb. */
             irs_mirror_peer_ladder(sess, true);
     }
 
-    if (new_frame && g_timing)
+    if (any_new && g_timing)
         arq_timing_record_data_rx(g_timing, (int)ev->seq,
                                   (int)ev->data_bytes, sess->local_snr_x10);
     sess->last_rx_ms = time_now_ms();
-    sess->peer_has_data = new_frame
+    sess->peer_has_data = any_new
                           ? (ev->rx_flags & ARQ_FLAG_HAS_DATA) != 0
                           : true;
 }
 
-/* ISS: a bare pattern ACK carries no sequence, so it can only mean "the frame
- * my last keydown just sent arrived".  A K==1 keydown sends exactly one frame —
- * the oldest outstanding, tx_base (fresh frame or oldest hole, retransmit is
- * oldest-first).  Retire THAT ONE and advance tx_base to the next present slot;
- * never the whole window (older holes from a K>1-era burst being drained one
- * per MFSK keydown must survive).  Returns true if the window is now empty. */
+/* ISS: a bare pattern ACK carries no sequence, so it can only mean "the block
+ * my last keydown just sent arrived".  A pattern is only sent for a 1-block
+ * keydown (the MFSK floor) — the oldest outstanding block, tx_base.  Retire
+ * THAT ONE and advance tx_base to the next present slot; never the whole
+ * window (older holes still being drained one per floor keydown must survive).
+ * Returns true if the window is now empty. */
 static bool iss_retire_one(arq_session_t *sess)
 {
-    struct arq_txslot *sl = &sess->tx_win[sess->tx_base % ARQ_BURST_MAX];
+    struct arq_txslot *sl = &sess->tx_win[sess->tx_base % ARQ_WIN_SLOTS];
     if (sl->present && sl->seq == sess->tx_base)
     {
         sl->present = false;
@@ -1331,7 +1418,7 @@ static bool iss_retire_one(arq_session_t *sess)
     }
     /* Advance base to the next still-present seq (or tx_seq if drained). */
     while (sess->tx_base != sess->tx_seq &&
-           !sess->tx_win[sess->tx_base % ARQ_BURST_MAX].present)
+           !sess->tx_win[sess->tx_base % ARQ_WIN_SLOTS].present)
         sess->tx_base = (uint8_t)(sess->tx_base + 1);
 
     sess->last_tx_progress_ms = time_now_ms();
@@ -1351,7 +1438,7 @@ static bool iss_retire_one(arq_session_t *sess)
  * ours).  Every frame is an immutable unit, so clear all slots and advance. */
 static void iss_retire_all(arq_session_t *sess)
 {
-    for (int i = 0; i < ARQ_BURST_MAX; i++)
+    for (int i = 0; i < ARQ_WIN_SLOTS; i++)
     {
         sess->tx_win[i].present = false;
         sess->tx_win[i].len     = 0;
@@ -1368,14 +1455,27 @@ static void iss_retire_all(arq_session_t *sess)
 /* ISS: apply a selective ACK.  Seqs behind rcv_base and seqs named in the
  * bitmap are delivered; the rest stay present (the holes).  Advances tx_base
  * to the lowest still-outstanding seq.  Returns the hole count. */
-static int iss_apply_sack(arq_session_t *sess, uint8_t base, uint8_t bitmap)
+static int iss_apply_sack(arq_session_t *sess, uint8_t base,
+                          const uint8_t bitmap[ARQ_SACK_BITMAP_BYTES])
 {
     int     holes = 0;
     bool    have_hole = false;
     uint8_t lowest_hole = 0;
     bool    progressed = false;
 
-    for (int i = 0; i < ARQ_BURST_MAX; i++)
+    /* Stale/aliased-base guard.  rcv_base MUST lie within the live window
+     * [tx_base, tx_seq]: a peer can only ack seqs the ISS actually sent, and
+     * its rx_expected never runs ahead of tx_seq.  A delayed or echoed ACK
+     * from an EARLIER mod-256 generation aliases to a base far outside the
+     * window; the signed "rel < 0 => delivered" rule below would then classify
+     * live blocks as "before base" and falsely retire them.  Reject it (-1):
+     * the caller ignores this ACK and keeps waiting for a live one.  A
+     * legitimate ACK is never rejected (0 <= base-tx_base <= tx_seq-tx_base). */
+    uint8_t span = (uint8_t)(sess->tx_seq - sess->tx_base);
+    if ((uint8_t)(base - sess->tx_base) > span)
+        return -1;
+
+    for (int i = 0; i < ARQ_WIN_SLOTS; i++)
     {
         struct arq_txslot *sl = &sess->tx_win[i];
         if (!sl->present)
@@ -1387,8 +1487,8 @@ static int iss_apply_sack(arq_session_t *sess, uint8_t base, uint8_t bitmap)
             delivered = true;                    /* strictly before base      */
         else if (rel == 0)
             delivered = false;                   /* base itself = the hole    */
-        else if (rel <= 8)
-            delivered = (bitmap >> (rel - 1)) & 1;
+        else if (rel <= ARQ_SACK_BITMAP_BYTES * 8)
+            delivered = (bitmap[(rel - 1) / 8] >> ((rel - 1) % 8)) & 1;
         else
             delivered = false;                   /* ahead of the bitmap: hole */
 
@@ -1498,6 +1598,15 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
             if (ev->sack_present)
             {
                 int holes = iss_apply_sack(sess, ev->ack_seq, ev->sack_bitmap);
+                if (holes < 0)
+                {
+                    /* Stale/aliased ACK base outside the live window — ignore
+                     * and keep waiting for a live ACK (or the retry timer),
+                     * rather than falsely retiring the window. */
+                    HLOGD(LOG_COMP, "Stale SACK base=%d (win %d..%d) — ignored",
+                          (int)ev->ack_seq, (int)sess->tx_base, (int)sess->tx_seq);
+                    break;
+                }
                 sess->peer_has_data = (ev->rx_flags & ARQ_FLAG_HAS_DATA) != 0;
                 if (holes > 0)
                 {
@@ -1663,7 +1772,7 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
              * the window base is a duplicate (our ack was lost; the peer is
              * retransmitting): re-send our burst so it can ack it. */
             uint8_t d = (uint8_t)(ev->seq - sess->rx_expected);
-            if (d < ARQ_BURST_MAX)
+            if (d < ARQ_WIN_SLOTS)
             {
                 HLOGD(LOG_COMP,
                       "RX_DATA in WAIT_ACK (new seq=%d) — implicit ACK for base=%d",

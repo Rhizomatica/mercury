@@ -803,8 +803,8 @@ void arq_handle_incoming_frame(uint8_t *data, size_t frame_size, float rx_snr)
     {
         ev.id = ARQ_EV_RX_DATA;
         /* Infer the FreeDV mode from frame_size by matching the mode table.
-         * This lets the FSM track what mode the peer was actually transmitting
-         * in (for decoder-sync enforcement on role switch). */
+         * DATA frames are zero-padded to the mode's full payload_bytes, so the
+         * frame_size is a constant per mode and this match is unambiguous. */
         ev.mode = FREEDV_MODE_DATAC15;   /* safe default */
         for (int i = 0; i < arq_mode_table_count; i++)
         {
@@ -814,40 +814,34 @@ void arq_handle_incoming_frame(uint8_t *data, size_t frame_size, float rx_snr)
                 break;
             }
         }
-        size_t slot_bytes = (frame_size > ARQ_FRAME_HDR_SIZE)
-                            ? (frame_size - ARQ_FRAME_HDR_SIZE) : 0;
-        /* ack_delay_raw is repurposed in DATA frames: 0 = full frame (all
-         * slot_bytes are valid), else = bits [7:0] of the valid byte count.
-         * Bits 8-10 travel in the flags byte (ARQ_FLAG_LEN_HI / LEN_B9 /
-         * LEN_B10), allowing counts up to 2047 (QAM16C2 carries 1205 user
-         * bytes).  See ARQ_DATA_LEN_FULL in arq_protocol.h. */
-        const uint8_t len_flags =
-            ARQ_FLAG_LEN_HI | ARQ_FLAG_LEN_B9 | ARQ_FLAG_LEN_B10;
-        size_t valid_bytes;
-        if (hdr.ack_delay_raw == ARQ_DATA_LEN_FULL &&
-            !(hdr.flags & len_flags))
+        ev.rx_snr = rx_snr;
+
+        /* Unpack the block container: block_count blocks, each [seq|len|data],
+         * concatenated into ev.payload with per-block descriptors.  The FSM
+         * reassembles each block by its own seq. */
+        arq_block_t blk[ARQ_MAX_BLOCKS_PER_FRAME];
+        int nb = arq_protocol_parse_data_blocks(data, frame_size, &hdr,
+                                                blk, ARQ_MAX_BLOCKS_PER_FRAME);
+        if (nb < 1)
         {
-            valid_bytes = slot_bytes;
+            HLOGD(LOG_COMP, "DATA block parse failed (frame_size=%zu)", frame_size);
+            return;
         }
-        else
+        ev.nblocks = nb;
+        ev.seq     = blk[0].seq;   /* legacy in-window classification key */
+        size_t off = 0;
+        for (int i = 0; i < nb; i++)
         {
-            valid_bytes = (size_t)hdr.ack_delay_raw;
-            if (hdr.flags & ARQ_FLAG_LEN_HI)
-                valid_bytes |= 0x100u;
-            if (hdr.flags & ARQ_FLAG_LEN_B9)
-                valid_bytes |= 0x200u;
-            if (hdr.flags & ARQ_FLAG_LEN_B10)
-                valid_bytes |= 0x400u;
+            if (off + blk[i].len > sizeof(ev.payload))
+                break;             /* payload pool full — drop the tail */
+            memcpy(ev.payload + off, blk[i].data, blk[i].len);
+            ev.blocks[i].seq = blk[i].seq;
+            ev.blocks[i].off = (uint16_t)off;
+            ev.blocks[i].len = blk[i].len;
+            off += blk[i].len;
         }
-        if (valid_bytes > slot_bytes)
-            valid_bytes = slot_bytes;   /* sanity cap */
-        ev.data_bytes = valid_bytes;
-        ev.rx_snr     = rx_snr;
-        if (valid_bytes > 0 && valid_bytes <= sizeof(ev.payload))
-        {
-            memcpy(ev.payload, data + ARQ_FRAME_HDR_SIZE, valid_bytes);
-            ev.payload_len = valid_bytes;
-        }
+        ev.payload_len = off;
+        ev.data_bytes  = off;
     }
     else if (hdr.packet_type == PACKET_TYPE_ARQ_CONTROL)
     {
@@ -860,10 +854,12 @@ void arq_handle_incoming_frame(uint8_t *data, size_t frame_size, float rx_snr)
          * modem.c), never a control frame here. */
         case ARQ_SUBTYPE_ACK:
             ev.id = ARQ_EV_RX_ACK;
-            if ((hdr.flags & ARQ_FLAG_SACK) && frame_size > ARQ_FRAME_HDR_SIZE)
+            if ((hdr.flags & ARQ_FLAG_SACK) &&
+                frame_size >= ARQ_FRAME_HDR_SIZE + ARQ_SACK_BITMAP_BYTES)
             {
                 ev.sack_present = true;
-                ev.sack_bitmap  = data[ARQ_FRAME_HDR_SIZE];
+                memcpy(ev.sack_bitmap, data + ARQ_FRAME_HDR_SIZE,
+                       ARQ_SACK_BITMAP_BYTES);
             }
             break;
         case ARQ_SUBTYPE_DISCONNECT:   ev.id = ARQ_EV_RX_DISCONNECT;    break;

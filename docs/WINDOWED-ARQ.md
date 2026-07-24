@@ -70,6 +70,182 @@ selective-repeat gain. VARA (many blocks per cycle + block ACK) and mercuryv1
   shared modem pool change is gated by `utils/burst_rx_sweep.sh` + a broadcast
   RX/TX check.
 
+## Root-cause finding (task #91): frame size must be decoupled from mode
+
+Activating K>1 (`burst_frames`=3 on the OFDM modes) exposed a fundamental flaw
+that also latently exists at K=1: **one ARQ frame == one modem frame, sized to
+the current mode's payload**, so a frame created at a fast mode is too large to
+retransmit at a robust one.  Concretely (reproduced with `tests/sim/win_repro.c`
+on a clean 12 dB channel, 20 kB transfer): the ladder climbs to QAM16C2, reads
+a 1205-byte frame, QAM16C2 fails (its sim cliff is 13 dB), and `mode_that_fits`
+can never place that 1205-byte frame in any smaller mode (DATAC17 tops out at
+1172 user bytes).  The frame is **trapped at QAM16C2** — the delivery-driven
+step-down is powerless, it retransmits until the retry budget + no-progress
+timer expire, and the link disconnects mid-transfer (stalls at ~5.6 kB/20 kB).
+
+This directly violates the low-SNR constraint: a large frame cannot degrade to
+the MFSK floor.  A modem frame is a fixed-size LDPC codeword per mode (QAM16C2
+is always 1213 bytes), so the only design that gives BOTH fast-mode throughput
+AND re-sendability-at-the-floor is **block-packing**: a fixed small ARQ block
+(re-sendable at any mode, down to the MFSK floor), with a fast-mode modem frame
+carrying MANY blocks (a count + length-prefixed blocks).  This is exactly what
+v1 (`send_batch`), VARA, and OpenARQ do — the ARQ block is decoupled from the
+modem frame.  It is the core enabler of the leap and a wire-format change.
+
+The Step-C windowed FSM (selective repeat, SACK, per-burst ACK, mode mirror) is
+the right machinery and stays; block-packing changes the UNIT it operates on
+(block, not mode-sized frame).
+
+### Block-packing wire design (the fix, this branch)
+
+**ARQ block = the retransmission unit**, `ARQ_BLOCK_DATA_MAX = 44` user bytes,
+own mod-256 seq.  44 is the largest block that fits a DATAC4 modem frame
+(54 payload − 8 frame hdr − 2 block hdr), so a block is re-sendable at EVERY
+ladder rung down to the MFSK floor — the trap is gone and low-SNR degradation
+is preserved.  A DATA modem frame is now a **container**:
+
+```
+[0] framer byte (PACKET_TYPE_ARQ_DATA)
+[1] subtype = DATA
+[2] flags: HAS_DATA(6) | burst_remaining[2:0]   (frame-level: modem frames left in keydown)
+[3] session_id
+[4] block_count (1..N)                            (was tx_seq — blocks carry their own seq)
+[5] rx_ack_seq (piggyback cumulative ACK)
+[6] snr_raw
+[7] 0 (was payload_valid low byte — per-block len replaces it)
+[8..] block_count × { seq(1) | len(1, 1..44) | data(len) }
+```
+
+A fast mode packs many blocks (QAM16C2 ≈ 26); MFSK carries 1.  The IRS unpacks
+the container into per-block reassembly and re-anchors the OFDM burst state
+machine per MODEM FRAME exactly as before (`burst_remaining` is unchanged,
+frame-level).
+
+**Ladder change (user-visible, documented for review):** with a 44-byte block,
+DATAC15 (22 user bytes/frame, cliff ≈ −7 dB) is **strictly dominated by MFSK**
+— MFSK is both more robust (−13 dB) AND higher-goodput (90 B/13.5 s = 6.7 B/s
+vs DATAC15's 5 B/s) — so it is **dropped from the ARQ ladder** (kept in the
+mode table for control/broadcast/compat).  DATAC4 (−4 dB, 7.9 B/s) is **kept**:
+it is genuinely faster than MFSK in the −4..0 dB band, so the marginal-signal
+path is not penalized.  New ladder (`ARQ_LADDER_LEVELS = 6`):
+`MFSK → DATAC4 → DATAC3 → DATAC1 → DATAC17 → QAM16C2`.  tx mode =
+`ladder[speed_level]` directly (every rung holds a 44 B block, so the old
+`mode_that_fits` bump — and the mode/mirror mismatch it caused — is gone).
+
+**Window + ACK:** `ARQ_WIN_SLOTS = 32` blocks in flight (selective repeat);
+SACK bitmap = 4 bytes (covers base+1..+32), which fits the DATAC16 14-byte
+control frame (8 hdr + 4).  **`ARQ_WIN_SLOTS` MUST divide 256** — the slot index
+is `seq % ARQ_WIN_SLOTS` and seqs are mod-256, so a window straddling the
+255→0 wrap aliases two live seqs onto one slot unless N | 256 (see the bug
+below).  Keydown blocks = min(32, `MODEM_RX_BURST_CEILING`×blocks-per-frame).
+Clean *new* multi-block burst → coded ACK(rcv_base); degenerate 1-block
+MFSK-floor burst → fast Welch-Costas pattern; a burst with holes OR a
+duplicate → coded SACK.  A **fast pattern-with-bits carrier** and a **larger
+window** (both gated today by DATAC16's 14 bytes) are the Phase-2 lever —
+correctness/floor first.  `MFSK stays 1 modem frame/keydown` (floor unchanged).
+
+**HARQ:** Chase soft-combining requires bit-identical retransmits; block-packing
+selective repeat repacks holes / changes mode, so HARQ is **default-off** for
+the block-packing branch (env `MERCURY_HARQ=1` forces on).  Phase 3b restores it
+by front-loading the lowest un-acked hole as a bit-identical burst frame-0.
+
+**Validation.**  Full unit suite green (20/20 binaries, incl. block-codec
+round-trip + all windowed FSM/ladder/sim tests); `tests/sim/win_repro.c` drains
+20 kB through climb→deep-fade→recover at 100 % integrity across 11 seeds × 3
+fade depths (the exact scenario that stalled pre-block-packing).  Two subtle
+selective-repeat bugs the sim caught and that are now fixed:
+ 1. **Slot aliasing at the seq-wrap** (the deterministic stall at block 246):
+    `ARQ_WIN_SLOTS` was 48, which does not divide 256, so a wrapping window
+    aliased seq 246 and seq 6 onto slot 6 — creating block 262 silently
+    clobbered block 246.  Fixed by `ARQ_WIN_SLOTS = 32` (divides 256).
+ 2. **Bare pattern ACK on a duplicate** over-retired: a seq-less pattern re-sent
+    for an already-delivered 1-block burst (our earlier ACK was lost) was read
+    by a pipelined ISS as "my current tx_base arrived", retiring a block the
+    peer never got.  Fixed: a duplicate (or any hole/multi-block) burst is acked
+    by a coded `rcv_base`, never a bare pattern.  A stale/aliased coded-ACK base
+    outside the live [tx_base, tx_seq] window is also now rejected (mod-256
+    generation aliasing from a delayed/echoed ACK).
+
+## Real-modem finding (-x sock): K=1 fast-climbs; fixed K>1 is SLOWER → adaptive depth
+
+Block-packing validated end-to-end on the real modem over the virtual-clock
+`-x sock` transport (skywave `mercury_sock` adapter, clean profile, SN~16 dB):
+
+| config | 2048 B | peak bitrate | notes |
+|---|---|---|---|
+| block-packing, **K=1** frame/keydown | 3/3 complete | **3135 bps** | fast-ramps to QAM16C2 in ~35 s |
+| block-packing, **fixed K>1** (DATAC4=3…QAM16C2=5) | completes but SLOW | 980 bps | crawls; never reaches QAM16C2 |
+
+**Fixed high K>1 is *slower* than K=1**, not broken.  An instrumented K>1 run
+completed (2048/2048) but the timeline showed the killer: K>1 keydowns are
+21–32 s, and the delivery-driven ladder climbs one rung per clean burst, so it
+crawls MFSK→DATAC4→DATAC3→DATAC1 over ~130 s and never reaches QAM16C2 — while
+K=1's short ~7 s keydowns fast-ramp to QAM16C2 in ~35 s.  Long keydowns cripple
+the climb.  (The earlier "2024/2048 stall" was an *intermittent* tail retransmit
+loss, not the core problem.)
+
+**Fix = adaptive burst depth** (`arq_session_t.burst_depth`, driven in
+`record_tx_outcome`): a session starts at depth 1 for the fast climb, holds at 1
+while the mode is still moving (a clean burst that climbs, or any dirty burst
+that steps down), and grows one frame per clean burst — up to the mode's
+`burst_frames` cap — only once the ladder SETTLES.  So a good channel fast-climbs
+at K=1 to QAM16C2 (already ~1.1 kB/keydown), and a marginal channel that settles
+at DATAC3/DATAC4 grows K>1 there, where 5 frames amortize the ~2.5-3 s turnaround
+~2-3× — the beat-VARA lever exactly where it helps most, and where the block
+window is NOT binding.  Unit-gated by `test_burst_depth_adaptive` (starts 1,
+holds 1 climbing, grows to cap when settled, resets to 1 on loss).
+
+**Window binding (a separate later lever).**  At the FAST modes the 32-block
+window (capped by the DATAC16 4-byte SACK) holds only ~1 frame
+(QAM16C2 = 26 blocks/frame, DATAC17 = 25, DATAC1 = 10), so K>1 can't send
+multiple full frames there.  This costs little today (good channels reach those
+modes and are already fast at K=1), so it's deferred: growing the window needs a
+**wider/faster SACK carrier than DATAC16's 14 bytes** — the "faster compact
+windowed ACK" — a Phase-2b optimization for squeezing more at the very top.
+
+## Phase 2b — the real good-channel speed leap (bigger window + wider SACK)
+
+**Why it's needed.** On a good channel the ladder fast-climbs to QAM16C2, where
+the throughput leap must come from K>1 amortizing the ~2.5–3 s turnaround across
+frames.  But at QAM16C2 one frame already holds 26 blocks, and the current
+window is 32 blocks — so K is capped at ~1.2 frames: **K>1 does not engage on
+good channels.**  Bench A/B confirmed block-packing ≈ trunk on clean/poor (the
+K>1 lever never fires); the win only appears where trunk's trap stalls (SN~11).
+To beat VARA on good channels the window must hold ≥ K full fast-mode frames.
+
+**Throughput target.** At QAM16C2, K=1 ≈ 163 B/s (1144 B / ~7 s incl.
+turnaround); K=2 (window ≥ 52) ≈ 208 B/s (+28 %); K=5 (window ≥ 130) ≈ 249 B/s
+(+53 %).  Window **64** (next divisor of 256 — the mod-256 slot-aliasing
+constraint) unlocks K=2 at QAM16C2/DATAC17 and is the first meaningful step.
+
+**The blocker = the SACK carrier.**  Window 64 needs a 64-bit (8-byte) hole
+bitmap; the ACK frame (8-byte hdr + 8 = 16 B) no longer fits DATAC16 (14 B).
+Design options (mapped; pick on the bench):
+  1. **RLE / run-length SACK on DATAC16** (recommended first try).  A burst's
+     holes are usually a whole failed frame's worth of CONTIGUOUS blocks, so
+     encode `rcv_base` + runs of (delivered,missing) lengths.  A single failed
+     QAM16C2 frame = one 26-long missing run = ~2 bytes.  Fits DATAC16's 6 spare
+     bytes for the common case; a `>N runs` overflow marker falls back to
+     go-back-N for that one burst.  No modem plumbing — stays on the robust
+     control mode.  Only real cost: RLE encode/decode + `iss_apply_sack` rewrite.
+  2. **SACK on DATAC15** (30-byte payload → 176-bit window bitmap).  DATAC15's
+     cliff == DATAC16's (both ~−7 dB), so it is equally robust.  Cost: the ISS
+     must also decode DATAC15 in WAIT_ACK (dual-mode ACK RX — modem plumbing).
+  3. **Bigger blocks at fast modes** — REJECTED: a >44-byte block cannot fit
+     DATAC4/DATAC3 on retransmit, re-introducing a (smaller) immutable-frame trap.
+
+Adaptive depth (already landed) then grows into the bigger window automatically;
+the mode caps and the depth controller need no change.
+
+**MUST be bench/OTA-validated.**  Phase 2b is a wire-format change whose only
+payoff is throughput, and the deterministic two-FSM sim is BLIND to the
+real-modem behavior that decides it (it passed fixed-K>1 that the bench then
+showed crawling).  So implement it against a WORKING `-x sock` bench (or OTA) and
+A/B every step — do NOT ship on sim-green alone.  (The `-x sock` rig degrades
+after ~20-25 transfers in one session — empty output / connect-fail — so this
+needs a fresh session; deterministic tests gate correctness, the bench gates the
+speed claim.)
+
 ## Phases
 
 0. Deterministic instruments: burst-capable two-FSM sim (done — sim outbox
