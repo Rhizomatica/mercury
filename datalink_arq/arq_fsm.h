@@ -110,6 +110,14 @@ typedef struct
     int8_t   snr_encoded;     /* as received from frame header                */
     uint16_t ack_delay_raw;   /* as received (10ms units, 0=unknown)          */
 
+    /* Selective ACK (windowed ARQ): a coded ACK frame carried ARQ_FLAG_SACK —
+     * ack_seq is rcv_base and sack_bitmap bit i means seq (rcv_base+1+i) was
+     * received out of order; the un-set seqs below the highest sent are the
+     * holes to retransmit.  A bare pattern ACK never sets this: it means the
+     * whole burst was received clean. */
+    bool     sack_present;
+    uint8_t  sack_bitmap;
+
     /* Mode negotiation */
     int      mode;            /* requested/applied FreeDV mode                */
     size_t   data_bytes;      /* payload byte count (DATA frames)             */

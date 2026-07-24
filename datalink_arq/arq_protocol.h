@@ -110,6 +110,15 @@
                                   * exactly at end-of-burst.  0 for a           *
                                   * single-frame (stop-and-wait) keydown.       */
 #define ARQ_BURST_REM_MAX  ARQ_FLAG_BURST_REM_MASK /* max frames/keydown-1 = 7 */
+#define ARQ_FLAG_SACK      0x20  /* bit 5, ACK frames only (bit 5 is LEN_HI on *
+                                  * DATA frames — flag meaning is subtype-      *
+                                  * scoped): a selective-ACK bitmap byte        *
+                                  * follows the header.  rx_ack_seq = rcv_base  *
+                                  * (next in-order seq expected); bitmap bit i  *
+                                  * = seq (rcv_base+1+i) was received out of    *
+                                  * order.  Sent by the IRS when a windowed     *
+                                  * burst left holes; a clean burst is acked by *
+                                  * the Welch-Costas pattern instead (fast).    */
 
 /* ======================================================================
  * Frame subtypes
@@ -336,6 +345,19 @@ int arq_protocol_decode_hdr(const uint8_t *buf, size_t buf_len, arq_frame_hdr_t 
  * straight from the wire so the modem RX can re-anchor the burst state machine
  * per frame without decoding the whole header.  Caller must know it is DATA. */
 uint8_t arq_protocol_data_burst_remaining(const uint8_t *buf, size_t buf_len);
+
+/**
+ * Build a selective-ACK (SACK) frame: an ACK carrying rcv_base in rx_ack_seq
+ * plus one bitmap byte after the header (bit i = seq rcv_base+1+i received).
+ * Sent on the control mode when a windowed burst left holes — the ISS
+ * retransmits exactly the un-set seqs.  flags may carry ARQ_FLAG_HAS_DATA
+ * (reverse-backlog piggyback turn bid); ARQ_FLAG_SACK is set here.
+ * Returns frame size or -1.
+ */
+int arq_protocol_build_sack(uint8_t *buf, size_t buf_len,
+                            uint8_t session_id, uint8_t rcv_base,
+                            uint8_t flags, uint8_t snr_raw,
+                            uint8_t sack_bitmap);
 
 /**
  * @brief Map a configured bandwidth in Hz to an on-air BW token.

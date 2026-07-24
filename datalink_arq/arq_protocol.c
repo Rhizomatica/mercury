@@ -323,6 +323,18 @@ int arq_protocol_build_ack(uint8_t *buf, size_t buf_len,
                       NULL, 0);
 }
 
+int arq_protocol_build_sack(uint8_t *buf, size_t buf_len,
+                            uint8_t session_id, uint8_t rcv_base,
+                            uint8_t flags, uint8_t snr_raw,
+                            uint8_t sack_bitmap)
+{
+    return build_ctrl(buf, buf_len,
+                      ARQ_SUBTYPE_ACK, session_id,
+                      0, rcv_base, (uint8_t)(flags | ARQ_FLAG_SACK),
+                      snr_raw, 0,
+                      &sack_bitmap, 1);
+}
+
 int arq_protocol_build_disconnect(uint8_t *buf, size_t buf_len,
                                    uint8_t session_id, uint8_t snr_raw)
 {

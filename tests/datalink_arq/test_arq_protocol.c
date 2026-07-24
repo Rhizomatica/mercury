@@ -216,6 +216,28 @@ void test_data_valid_length_over_511(void)
     }
 }
 
+/* Windowed ARQ: the SACK ACK frame round-trips — rcv_base in rx_ack_seq,
+ * ARQ_FLAG_SACK set, bitmap byte right after the header, HAS_DATA preserved. */
+void test_build_sack_roundtrip(void)
+{
+    for (int bm = 0; bm <= 0xFF; bm += 0x33)
+    {
+        uint8_t buf[64];
+        int size = arq_protocol_build_sack(buf, sizeof(buf), 0x42, 7,
+                                           ARQ_FLAG_HAS_DATA, 0,
+                                           (uint8_t)bm);
+        TEST_ASSERT_GREATER_THAN(ARQ_FRAME_HDR_SIZE, size);
+
+        arq_frame_hdr_t hdr;
+        TEST_ASSERT_EQUAL_INT(0, arq_protocol_decode_hdr(buf, (size_t)size, &hdr));
+        TEST_ASSERT_EQUAL_UINT8(ARQ_SUBTYPE_ACK, hdr.subtype);
+        TEST_ASSERT_EQUAL_UINT8(7, hdr.rx_ack_seq);           /* rcv_base */
+        TEST_ASSERT_TRUE(hdr.flags & ARQ_FLAG_SACK);
+        TEST_ASSERT_TRUE(hdr.flags & ARQ_FLAG_HAS_DATA);
+        TEST_ASSERT_EQUAL_UINT8((uint8_t)bm, buf[ARQ_FRAME_HDR_SIZE]);
+    }
+}
+
 /* Windowed ARQ: burst_remaining (flags bits [2:0]) round-trips and coexists
  * with the LEN_* bits and HAS_DATA in the same flags byte. */
 void test_data_burst_remaining_roundtrip(void)
@@ -362,6 +384,7 @@ int main(void)
     RUN_TEST(test_build_disconnect);
     RUN_TEST(test_data_valid_length_over_511);
     RUN_TEST(test_data_burst_remaining_roundtrip);
+    RUN_TEST(test_build_sack_roundtrip);
     /* Mode timing */
     RUN_TEST(test_mode_timing_datac4);
     RUN_TEST(test_mode_timing_datac15);

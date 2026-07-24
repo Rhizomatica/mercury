@@ -853,10 +853,19 @@ void arq_handle_incoming_frame(uint8_t *data, size_t frame_size, float rx_snr)
     {
         switch (hdr.subtype)
         {
-        /* ACK: the coded DATAC16 ACK is used only for the post-ACCEPT connect
-         * confirmation now; in-session ACKs are the MFSK pattern (synthesised
-         * in modem.c), not a control frame here. */
-        case ARQ_SUBTYPE_ACK:          ev.id = ARQ_EV_RX_ACK;           break;
+        /* ACK: the coded DATAC16 ACK carries the post-ACCEPT connect
+         * confirmation and, in a windowed session, the selective ACK (a burst
+         * left holes: rx_ack_seq = rcv_base + one bitmap byte after the
+         * header).  A CLEAN burst is acked by the MFSK pattern (synthesised in
+         * modem.c), never a control frame here. */
+        case ARQ_SUBTYPE_ACK:
+            ev.id = ARQ_EV_RX_ACK;
+            if ((hdr.flags & ARQ_FLAG_SACK) && frame_size > ARQ_FRAME_HDR_SIZE)
+            {
+                ev.sack_present = true;
+                ev.sack_bitmap  = data[ARQ_FRAME_HDR_SIZE];
+            }
+            break;
         case ARQ_SUBTYPE_DISCONNECT:   ev.id = ARQ_EV_RX_DISCONNECT;    break;
         default:
             return;
