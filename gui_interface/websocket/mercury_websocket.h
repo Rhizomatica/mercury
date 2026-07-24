@@ -100,6 +100,8 @@ int ws_init(ws_ctx_t *ctx,
             const char *web_root,
             ws_command_callback_t cmd_callback,
             void *cb_data,
+            ws_connect_callback_t connect_callback,
+            void *connect_cb_data,
             bool tls_enabled);
 
 /**
