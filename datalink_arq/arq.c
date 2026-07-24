@@ -798,10 +798,13 @@ void arq_handle_incoming_frame(uint8_t *data, size_t frame_size, float rx_snr)
     ev.rx_flags      = hdr.flags;
     ev.snr_encoded   = (int8_t)hdr.snr_raw;
     ev.ack_delay_raw = hdr.ack_delay_raw;
+    ev.ack_epoch     = -1;   /* coded frames carry no epoch (only tagged patterns do) */
+    ev.data_epoch    = -1;
 
     if (hdr.packet_type == PACKET_TYPE_ARQ_DATA)
     {
         ev.id = ARQ_EV_RX_DATA;
+        ev.data_epoch = hdr.ack_delay_raw & 0x3;   /* keydown epoch (byte 7) */
         /* Infer the FreeDV mode from frame_size by matching the mode table.
          * DATA frames are zero-padded to the mode's full payload_bytes, so the
          * frame_size is a constant per mode and this match is unambiguous. */

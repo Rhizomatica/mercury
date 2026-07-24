@@ -36,4 +36,8 @@ const arq_fsm_callbacks_t *sim_endpoint_callbacks(void);
 void                       sim_endpoint_set_active(sim_endpoint_t *ep);
 sim_endpoint_t            *sim_endpoint_active(void);
 bool                       sim_endpoint_take_outframe(sim_endpoint_t *ep, sim_outframe_t *out);
+
+/* Fast windowed ACK instrumentation: total epoch-tagged pattern ACKs emitted. */
+int                        sim_tagged_pattern_count(void);
+void                       sim_tagged_pattern_reset(void);
 #endif

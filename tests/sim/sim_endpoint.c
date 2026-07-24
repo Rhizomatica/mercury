@@ -114,6 +114,13 @@ static void cb_send_tx_frame(int packet_type, int mode, size_t frame_size,
     outbox_push(ep, &of);
 }
 
+/* Count of epoch-TAGGED (fast windowed) pattern ACKs emitted across all
+ * endpoints — lets a test confirm the fast-ACK path was actually exercised
+ * (vs the coded-SACK fallback), not merely that the transfer completed. */
+static int s_tagged_pattern_count = 0;
+int  sim_tagged_pattern_count(void) { return s_tagged_pattern_count; }
+void sim_tagged_pattern_reset(void) { s_tagged_pattern_count = 0; }
+
 /* Pattern ACK: a degenerate outframe with no coded bytes.  sim_core schedules
  * it with a short airtime and its own low erasure, and translates it straight
  * to ARQ_EV_RX_ACK (HAS_DATA = break) on delivery. */
@@ -129,6 +136,8 @@ static void cb_send_pattern_ack(int mode, int pattern_kind)
     of.is_pattern      = true;
     of.pattern_kind    = pattern_kind;
     of.present         = true;
+    if (pattern_kind & ARQ_PATTERN_TAGGED)
+        s_tagged_pattern_count++;
     outbox_push(ep, &of);
 }
 

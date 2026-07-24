@@ -62,6 +62,11 @@ static arq_event_t make_event(arq_event_id_t id)
     arq_event_t ev;
     memset(&ev, 0, sizeof(ev));
     ev.id = id;
+    /* Match the production default: a coded/bare RX event carries no fast-ACK
+     * epoch.  Only an epoch-tagged pattern sets these >= 0, so leaving them 0
+     * (a valid epoch) would spuriously trip the tagged-ACK path. */
+    ev.ack_epoch  = -1;
+    ev.data_epoch = -1;
     return ev;
 }
 

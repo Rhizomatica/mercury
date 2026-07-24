@@ -104,6 +104,7 @@ void test_translate_data_roundtrip(void)
                                             /*rx_ack_seq*/ 3,
                                             /*flags*/      0,
                                             /*snr_raw*/    0,
+                                            /*epoch*/      0,
                                             blk, 2);
     TEST_ASSERT_TRUE(fs > 0);
     /* pad to DATAC4's 54-byte modem payload (as send_data_burst does) */
@@ -417,6 +418,65 @@ void test_sim_pattern_ack_roundtrip(void)
     sim_destroy(s);
 }
 
+/* Fast windowed ACK (MERCURY_FAST_ACK): a clean multi-block transfer must
+ * complete byte-exact AND actually use the epoch-tagged pattern (not the coded
+ * SACK fallback).  On a clean channel the ladder climbs into fast modes that
+ * pack several blocks per keydown; each such clean burst is acked by a tagged
+ * pattern whose epoch retires the whole window on the ISS.  Proves the whole
+ * chain: ISS epoch stamp -> IRS clean-multi echo -> ISS validate + retire_all. */
+void test_sim_fast_windowed_ack(void)
+{
+    setenv("MERCURY_FAST_ACK", "1", 1);
+    sim_tagged_pattern_reset();
+
+    sim_channel_cfg_t chan = { .seed = 7, .per = 0.0, .guard_ms = 100 };
+    sim_t *s = make_connected(&chan);
+    TEST_ASSERT_NOT_NULL(s);
+
+    static uint8_t blob[3000];
+    for (int i = 0; i < (int)sizeof(blob); i++) blob[i] = (uint8_t)((i * 7) & 0xFF);
+    sim_endpoint_queue_tx(sim_a(s), blob, sizeof(blob));
+    arq_event_t dready = { .id = ARQ_EV_APP_DATA_READY };
+    sim_inject(s, sim_a(s), &dready);
+
+    sim_run_until_idle(s, 600000);
+
+    sim_verdict_t v = sim_prop_integrity(s, sim_a(s), sim_b(s), blob, sizeof(blob));
+    TEST_ASSERT_TRUE_MESSAGE(v.ok, v.detail);          /* delivered byte-exact */
+    /* The fast path was genuinely exercised (clean multi-block bursts acked by
+     * a tagged pattern), not just the coded fallback. */
+    TEST_ASSERT_TRUE_MESSAGE(sim_tagged_pattern_count() > 0,
+                             "no epoch-tagged pattern ACK was emitted");
+    sim_destroy(s);
+    unsetenv("MERCURY_FAST_ACK");
+}
+
+/* Regression: with the fast ACK OFF (default), a clean multi-block transfer
+ * still completes byte-exact and emits ZERO tagged patterns (the coded SACK
+ * path is unchanged). */
+void test_sim_fast_ack_off_no_tagged(void)
+{
+    unsetenv("MERCURY_FAST_ACK");
+    sim_tagged_pattern_reset();
+
+    sim_channel_cfg_t chan = { .seed = 7, .per = 0.0, .guard_ms = 100 };
+    sim_t *s = make_connected(&chan);
+    TEST_ASSERT_NOT_NULL(s);
+
+    static uint8_t blob[3000];
+    for (int i = 0; i < (int)sizeof(blob); i++) blob[i] = (uint8_t)((i * 7) & 0xFF);
+    sim_endpoint_queue_tx(sim_a(s), blob, sizeof(blob));
+    arq_event_t dready = { .id = ARQ_EV_APP_DATA_READY };
+    sim_inject(s, sim_a(s), &dready);
+
+    sim_run_until_idle(s, 600000);
+
+    sim_verdict_t v = sim_prop_integrity(s, sim_a(s), sim_b(s), blob, sizeof(blob));
+    TEST_ASSERT_TRUE_MESSAGE(v.ok, v.detail);
+    TEST_ASSERT_EQUAL_INT(0, sim_tagged_pattern_count());
+    sim_destroy(s);
+}
+
 /* Bidirectional (uucp-style) transfer with piggyback turn handoff: both ends
  * queue data before flow starts, so each ACK carries the ACK+TURN "break" and
  * the floor ping-pongs without deadlock.  Both byte streams arrive intact. */
@@ -702,6 +762,8 @@ int main(void)
     RUN_TEST(test_sim_fade_cliff_downgrades);
     RUN_TEST(test_sim_peer_loss_disconnects);
     RUN_TEST(test_sim_pattern_ack_roundtrip);
+    RUN_TEST(test_sim_fast_windowed_ack);
+    RUN_TEST(test_sim_fast_ack_off_no_tagged);
     RUN_TEST(test_sim_bidirectional_piggyback);
     RUN_TEST(test_sim_lost_ack_idempotent);
     RUN_TEST(test_sim_asymmetric_strong_forward);

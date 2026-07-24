@@ -537,11 +537,16 @@ int arq_protocol_build_data(uint8_t *buf, size_t buf_len,
  * Build a DATA modem frame packing `nblocks` blocks (each [seq|len|data]).
  * Byte 4 carries block_count; blocks carry their own seq (no frame tx_seq).
  * @param flags   HAS_DATA | burst_remaining[2:0] (frame-level frames-remaining).
+ * @param epoch   2-bit per-keydown ACK epoch, written to byte 7 (the ack_delay
+ *                slot, which is IRS->ISS and so unused on DATA).  The IRS echoes
+ *                it in a fast epoch-tagged pattern ACK so the ISS can confirm
+ *                WHICH keydown a seq-less pattern acknowledges (fast windowed
+ *                ACK); only bits [1:0] are significant.
  * @return total frame bytes on success, -1 on error (buf too small, bad args).
  */
 int arq_protocol_build_data_blocks(uint8_t *buf, size_t buf_len,
                                    uint8_t session_id, uint8_t rx_ack_seq,
-                                   uint8_t flags, uint8_t snr_raw,
+                                   uint8_t flags, uint8_t snr_raw, uint8_t epoch,
                                    const arq_block_t *blocks, int nblocks);
 
 /**

@@ -383,7 +383,7 @@ int arq_protocol_build_data(uint8_t *buf, size_t buf_len,
 
 int arq_protocol_build_data_blocks(uint8_t *buf, size_t buf_len,
                                    uint8_t session_id, uint8_t rx_ack_seq,
-                                   uint8_t flags, uint8_t snr_raw,
+                                   uint8_t flags, uint8_t snr_raw, uint8_t epoch,
                                    const arq_block_t *blocks, int nblocks)
 {
     if (!buf || !blocks || nblocks < 1 || nblocks > ARQ_MAX_BLOCKS_PER_FRAME)
@@ -408,7 +408,9 @@ int arq_protocol_build_data_blocks(uint8_t *buf, size_t buf_len,
     buf[ARQ_HDR_BLKCOUNT_IDX] = (uint8_t)nblocks;
     buf[ARQ_HDR_ACK_IDX]      = rx_ack_seq;
     buf[ARQ_HDR_SNR_IDX]      = snr_raw;
-    buf[ARQ_HDR_DELAY_IDX]    = 0;   /* per-block len replaces payload_valid */
+    buf[ARQ_HDR_DELAY_IDX]    = (uint8_t)(epoch & 0x3);  /* fast-ACK keydown epoch
+                                                          * (ack_delay is unused
+                                                          * on DATA: it's IRS->ISS) */
 
     size_t off = ARQ_FRAME_HDR_SIZE;
     for (int i = 0; i < nblocks; i++)

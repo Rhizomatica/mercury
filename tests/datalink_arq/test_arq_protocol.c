@@ -283,7 +283,8 @@ void test_data_blocks_roundtrip(void)
 
     uint8_t buf[1280];
     int fs = arq_protocol_build_data_blocks(buf, sizeof(buf), 0x7E, 9,
-                                            ARQ_FLAG_HAS_DATA | 2, 0, in, 3);
+                                            ARQ_FLAG_HAS_DATA | 2, 0, /*epoch*/ 3,
+                                            in, 3);
     TEST_ASSERT_EQUAL_INT(ARQ_FRAME_HDR_SIZE + (2 + 44) + (2 + 1) + (2 + 20), fs);
     /* pad to DATAC1's payload (510) as send_data_burst does; parse must ignore it */
     for (int i = fs; i < 510; i++) buf[i] = 0xEE;
@@ -296,6 +297,7 @@ void test_data_blocks_roundtrip(void)
     TEST_ASSERT_EQUAL_UINT8(ARQ_SUBTYPE_DATA, hdr.subtype);
     TEST_ASSERT_EQUAL_UINT8(9, hdr.rx_ack_seq);
     TEST_ASSERT_EQUAL_UINT8(2, hdr.burst_remaining);
+    TEST_ASSERT_EQUAL_UINT8(3, hdr.ack_delay_raw);   /* fast-ACK keydown epoch (byte 7) */
     TEST_ASSERT_TRUE(hdr.flags & ARQ_FLAG_HAS_DATA);
     TEST_ASSERT_EQUAL_UINT8(200, out[0].seq);
     TEST_ASSERT_EQUAL_INT(44, out[0].len);
@@ -316,7 +318,7 @@ void test_data_blocks_rejects_oversize(void)
     arq_block_t in = { .seq = 1, .len = ARQ_BLOCK_DATA_FLOOR + 1, .data = big };
     uint8_t buf[1280];
     TEST_ASSERT_EQUAL_INT(-1,
-        arq_protocol_build_data_blocks(buf, sizeof(buf), 0x1, 0, 0, 0, &in, 1));
+        arq_protocol_build_data_blocks(buf, sizeof(buf), 0x1, 0, 0, 0, 0, &in, 1));
 }
 
 /* ---- Mode timing lookup ---- */

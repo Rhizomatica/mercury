@@ -23,6 +23,8 @@ bool sim_translate_frame(const uint8_t *frame, size_t frame_size, float rx_snr,
         return false;
 
     memset(out_ev, 0, sizeof(*out_ev));
+    out_ev->ack_epoch  = -1;   /* coded frames carry no epoch (tagged patterns do) */
+    out_ev->data_epoch = -1;
 
     uint8_t ptype = frame_header_packet_type(frame[0]);
 
@@ -80,6 +82,7 @@ bool sim_translate_frame(const uint8_t *frame, size_t frame_size, float rx_snr,
     {
         out_ev->id   = ARQ_EV_RX_DATA;
         out_ev->rx_snr = rx_snr;
+        out_ev->data_epoch = hdr.ack_delay_raw & 0x3;   /* keydown epoch (byte 7) */
 
         /* Infer the FreeDV mode from frame_size by matching the mode table
          * (DATA frames are zero-padded to the mode's full payload_bytes).

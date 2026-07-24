@@ -82,6 +82,13 @@ typedef enum
     ARQ_PATTERN_BREAK = 1   /* ACK+TURN: "got it AND I have data" (HAS_DATA) */
 } arq_pattern_kind_t;
 
+/* Fast windowed ACK: OR this bit into a pattern kind and place the 2-bit epoch
+ * in bits [2:1] (break stays bit 0) to request an epoch-tagged pattern — the
+ * modem appends a Welch-Costas mini-pattern encoding the epoch, letting a clean
+ * MULTI-block burst retire on the fast pattern.  MUST match MFSK_PATTERN_TAGGED
+ * in modem/modem_mfsk.h (the modem decodes the kind with the same layout). */
+#define ARQ_PATTERN_TAGGED  0x80
+
 /** @brief Single modem action item popped by modem TX worker. */
 typedef struct
 {

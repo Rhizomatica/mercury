@@ -305,23 +305,37 @@ the last big good-channel lever (est. +15% on top of the +47.6%).
   detector only sets TAGGED when a real mini-pattern is on-air, so current
   behaviour is unchanged.
 
-### Protocol/FSM layer — REMAINING
+### Protocol/FSM layer — DONE + sim-validated (behind MERCURY_FAST_ACK)
 
-- **Epoch carrier.** The plan's "DATA flags[5:4]" is NOT available — under the
+- **Epoch carrier.** The plan's "DATA flags[5:4]" was NOT available — under the
   fast-modes 11-bit valid-length change those bits are LEN_HI/LEN_B9/LEN_B10.
-  The 2-bit per-keydown `ack_epoch` must ride elsewhere (a header byte / spare
-  field), TBD when wiring.
-- **Flow.** ISS stamps a per-keydown `ack_epoch` (mod 4 counter) in each DATA
-  burst.  IRS, on a CLEAN multi-block burst, sends the epoch-tagged pattern
-  echoing that epoch instead of the coded SACK.  ISS in WAIT_ACK: epoch ==
-  current keydown's epoch → retire the whole outstanding window; mismatch →
-  ignore (stale).  Holes still → coded SACK.
+  The 2-bit per-keydown `ack_epoch` rides **DATA byte 7** (the `ack_delay` slot,
+  which is IRS→ISS and so unused on a DATA frame).  `arq_protocol_build_data_blocks`
+  gained an `epoch` param; the parser exposes it as `ev.data_epoch`.
+- **Flow (wired).** ISS increments `sess->tx_burst_epoch` (mod 4) per keydown and
+  stamps it in every DATA frame; the IRS records it (`rx_burst_epoch`).  On a
+  CLEAN, complete, all-new MULTI-block burst the IRS sends an epoch-tagged
+  pattern echoing that epoch (`send_ack(sess, rx_burst_epoch)`) instead of the
+  coded SACK.  The ISS in WAIT_ACK, on a tagged pattern (`ev.ack_epoch >= 0`):
+  epoch == `tx_burst_epoch` → `iss_retire_all` (whole window); mismatch → stale,
+  ignored (retry timer covers a genuinely lost ACK).  Bare pattern (epoch -1) →
+  `iss_retire_one` (single-block, unchanged); holes → coded SACK.
 - **Fail-safe + fringe-safe.** The fast ACK fires ONLY for clean multi-block
   bursts (fast modes, good SNR) — the MFSK floor stays K=1 with the plain
   2-pattern ACK, untouched.  A misread/stale epoch fails the match → ISS falls
   back to retry/coded-ACK: never an over-retirement, only a missed speedup.
-- **Gate.** `MERCURY_FAST_ACK` default-off until a healthy `-x sock` bench (or
-  OTA) confirms the on-air false-classification rate and the +15% gain.
+  `ack_epoch`/`data_epoch` default to -1 at every event producer (arq.c, the
+  sim, the FSM test harness), so a coded ACK is never mistaken for epoch 0.
+- **Gate.** `MERCURY_FAST_ACK` (getenv) default-OFF: when off the IRS never
+  emits a tagged pattern, so the feature is fully inert and behaviour is exactly
+  today's.  Stays off until a healthy `-x sock` bench (or OTA) confirms the
+  on-air epoch false-classification rate and the +15% gain.
+- **Deterministic tests.** `tests/sim/test_arq_sim.c`:
+  `test_sim_fast_windowed_ack` (flag on: clean 3 kB transfer completes
+  byte-exact AND emits >0 tagged patterns — proves the whole chain) and
+  `test_sim_fast_ack_off_no_tagged` (flag off: byte-exact, ZERO tagged — the
+  regression guard).  Plus the DATA byte-7 epoch round-trip in
+  `test_arq_protocol.c`.
 
 ## Phases
 

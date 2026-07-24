@@ -124,6 +124,11 @@ typedef struct
      * burst retire on the fast 0.64 s pattern instead of the coded ACK. */
     int      ack_epoch;
 
+    /* Fast windowed ACK, other direction: the 2-bit keydown epoch stamped in a
+     * received DATA frame (byte 7), which the IRS echoes in its epoch-tagged
+     * pattern ACK.  Set on RX_DATA events only. */
+    int      data_epoch;
+
     /* Mode negotiation */
     int      mode;            /* requested/applied FreeDV mode                */
     size_t   data_bytes;      /* total user byte count (all blocks, DATA)     */
@@ -289,6 +294,11 @@ typedef struct
                                         * ladder settles, resets to 1 on any
                                         * hole/retry or mode change.  min with
                                         * the mode cap bounds send_data_burst.  */
+    uint8_t  tx_burst_epoch;           /* fast windowed ACK: 2-bit epoch stamped
+                                        * in the CURRENT outstanding keydown's
+                                        * DATA frames; a tagged pattern ACK
+                                        * echoing this epoch retires the whole
+                                        * window.  Incremented per keydown.      */
 
     /* --- IRS reassembly window + per-burst ACK consolidation ---
      * Slots are indexed by seq % ARQ_WIN_SLOTS but ALSO store the seq, so a
@@ -312,6 +322,10 @@ typedef struct
                                         * bare pattern ack is sent only for a
                                         * 1-block burst (seq-less pattern is
                                         * ambiguous across a multi-block window)*/
+    int      rx_burst_epoch;           /* fast windowed ACK: 2-bit epoch of the
+                                        * DATA frames in the current burst (from
+                                        * byte 7), echoed in the epoch-tagged
+                                        * pattern ACK; -1 until a DATA frame sets*/
 
     uint64_t last_rx_ms;              /* last successful frame decode time     */
     uint64_t irs_data_wait_ms;        /* when this IRS first had data queued

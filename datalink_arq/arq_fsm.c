@@ -15,6 +15,7 @@
 #include <string.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>   /* getenv (MERCURY_FAST_ACK) */
 
 #include "../common/hermes_log.h"
 #include "../common/virtual_clock.h"
@@ -24,6 +25,23 @@
 
 #define LOG_COMP  "arq-fsm"
 #define INT_BUFFER_SIZE 4096
+
+/* The ARQ-layer and modem-layer tagged-pattern bit must agree (they name the
+ * same on-wire encoding from opposite sides of the send_pattern_ack seam). */
+_Static_assert(ARQ_PATTERN_TAGGED == MFSK_PATTERN_TAGGED,
+               "ARQ/MFSK tagged-pattern bit mismatch");
+
+/* Fast windowed ACK (epoch-tagged pattern): OFF by default until a healthy
+ * bench / OTA run confirms the on-air epoch false-classification rate and the
+ * throughput gain.  When off, the IRS never emits a tagged pattern, so the
+ * whole feature is inert and behaviour is exactly today's.  (getenv per burst
+ * ACK is cheap and lets tests toggle it; the env is set once at startup in
+ * production.) */
+static bool fast_ack_enabled(void)
+{
+    const char *e = getenv("MERCURY_FAST_ACK");
+    return e && e[0] == '1';
+}
 
 /* ======================================================================
  * State/event name tables
@@ -163,6 +181,8 @@ static void reset_session_data_state(arq_session_t *sess)
     sess->rx_burst_dup       = false;
     sess->rx_burst_new       = false;
     sess->rx_burst_blocks    = 0;
+    sess->rx_burst_epoch     = -1;
+    sess->tx_burst_epoch     = 0;
     sess->tx_retries_left    = ARQ_DATA_RETRY_SLOTS;
     sess->speed_level        = 0;
     sess->tx_success_count   = 0;
@@ -234,6 +254,7 @@ static void sess_enter(arq_session_t *sess, arq_conn_state_t new_state,
         sess->rx_burst_dup      = false;
         sess->rx_burst_new      = false;
         sess->rx_burst_blocks   = 0;
+        sess->rx_burst_epoch    = -1;
     }
 }
 
@@ -553,14 +574,19 @@ static void send_ctrl_frame(arq_session_t *sess, arq_subtype_t subtype)
 /* Emit the pattern ACK.  ACK+TURN (break) when we have reverse data queued
  * (== HAS_DATA piggyback), else a plain ACK.  No coded frame, no seq: a bare
  * pattern is only ever sent when the WHOLE outstanding burst arrived, so "an
- * ACK was heard" retires it unambiguously.  ack_delay_raw is unused (kept for
- * the DATA_RX call site). */
-static void send_ack(arq_session_t *sess, uint8_t ack_delay_raw)
+ * ACK was heard" retires it unambiguously.
+ *
+ * `epoch` >= 0 requests the fast windowed ACK: the modem appends a mini-pattern
+ * encoding that 2-bit keydown epoch, so the ISS can safely retire a whole
+ * MULTI-block window on the pattern (the epoch confirms WHICH keydown).  -1 =
+ * bare pattern (the untouched single-block / fringe path). */
+static void send_ack(arq_session_t *sess, int epoch)
 {
-    (void)ack_delay_raw;
     int kind = (session_tx_backlog(sess) > 0) ? ARQ_PATTERN_BREAK
                                                : ARQ_PATTERN_ACK;
-    sess->acktx_had_has_data = (kind == ARQ_PATTERN_BREAK);
+    sess->acktx_had_has_data = (kind & 1) != 0;
+    if (epoch >= 0)
+        kind |= ARQ_PATTERN_TAGGED | ((epoch & 0x3) << 1);
     if (g_cbs.send_pattern_ack)
         g_cbs.send_pattern_ack(sess->payload_mode, kind);
 }
@@ -603,11 +629,24 @@ static void irs_send_burst_ack(arq_session_t *sess)
      *     stranded hole -> stall).
      * Both cases are acked instead by a coded ACK carrying rcv_base (base-
      * driven retirement is idempotent and stale-safe). */
-    bool multi = (sess->rx_burst_blocks > 1);
+    bool multi     = (sess->rx_burst_blocks > 1);
+    bool clean_new = !holes && !sess->rx_burst_dup;
 
-    if (!holes && !multi && !sess->rx_burst_dup)
+    if (clean_new && !multi)
     {
-        send_ack(sess, 0);                 /* fast pattern: clean new 1-block */
+        send_ack(sess, -1);                /* bare pattern: clean new 1-block */
+    }
+    else if (clean_new && multi && fast_ack_enabled())
+    {
+        /* Fast windowed ACK: a clean, complete, all-new MULTI-block burst.
+         * Echo its keydown epoch in a tagged pattern — the ISS validates the
+         * epoch against the outstanding keydown and retires the WHOLE window on
+         * the ~0.64 s pattern instead of the 3.74 s coded SACK.  A stale/misread
+         * epoch just fails that check → coded/retry fallback (never an
+         * over-retirement).  rx_expected has advanced past the whole burst here
+         * (no holes), so "retire all" is exactly right.  Credit the climb like
+         * the coded clean-multi path does (below) — done in irs_receive_data. */
+        send_ack(sess, sess->rx_burst_epoch);
     }
     else
     {
@@ -627,9 +666,9 @@ static void irs_send_burst_ack(arq_session_t *sess)
         if (n > 0)
             send_frame(PACKET_TYPE_ARQ_CONTROL, sess->control_mode,
                        (size_t)n, frame, 0);
-        HLOGD(LOG_COMP, "SACK: base=%d bitmap=0x%02x%02x%02x%02x%02x%02x%s",
+        HLOGD(LOG_COMP, "SACK: base=%d bitmap=0x%02x%02x%02x%02x%s",
               (int)sess->rx_expected, bitmap[0], bitmap[1], bitmap[2],
-              bitmap[3], bitmap[4], bitmap[5],
+              bitmap[3],   /* ARQ_SACK_BITMAP_BYTES == 4 */
               sess->rx_burst_complete ? "" : " (burst tail missing)");
 
         /* Only a genuine-hole SACK makes the peer retransmit and step its
@@ -645,6 +684,7 @@ static void irs_send_burst_ack(arq_session_t *sess)
     sess->rx_burst_dup      = false;
     sess->rx_burst_new      = false;
     sess->rx_burst_blocks   = 0;
+    sess->rx_burst_epoch    = -1;
 }
 
 /* Build and transmit one KEYDOWN as block-packed DATA frames (windowed burst).
@@ -778,6 +818,13 @@ static void send_data_burst(arq_session_t *sess)
     sess->tx_burst_retx  = retx_burst;
     sess->tx_burst_count = total;   /* blocks in this keydown (ladder credit) */
 
+    /* Fast windowed ACK: advance the 2-bit keydown epoch so a tagged pattern
+     * ACK for THIS burst is distinguishable from a stale echo of the previous
+     * one.  Stamped into every DATA frame of the burst; the ISS remembers it to
+     * validate the echo in WAIT_ACK.  Harmless (byte 7 is unused on DATA) when
+     * the feature is off. */
+    sess->tx_burst_epoch = (uint8_t)((sess->tx_burst_epoch + 1) & 0x3);
+
     uint8_t snr_raw = 0;
     if (sess->local_snr_x10 != 0)
         snr_raw = arq_protocol_encode_snr((float)sess->local_snr_x10 / 10.0f);
@@ -807,7 +854,8 @@ static void send_data_burst(arq_session_t *sess)
         int n = arq_protocol_build_data_blocks(frame, sizeof(frame),
                                                sess->session_id,
                                                sess->rx_expected, data_flags,
-                                               snr_raw, blk, fcnt[f]);
+                                               snr_raw, sess->tx_burst_epoch,
+                                               blk, fcnt[f]);
         if (n <= 0)
             return;
 
@@ -1346,6 +1394,11 @@ static void irs_receive_data(arq_session_t *sess, const arq_event_t *ev)
     update_local_snr(sess, ev);
     bool was_dup   = sess->rx_burst_dup;
 
+    /* Fast windowed ACK: remember this burst's keydown epoch (every DATA frame
+     * of a keydown carries the same one) so a clean burst can echo it. */
+    if (ev->data_epoch >= 0)
+        sess->rx_burst_epoch = ev->data_epoch;
+
     /* One decoded modem frame carries nblocks blocks; reassemble each into the
      * IRS window.  A single-block frame (nblocks<=0 legacy) falls back to the
      * whole-payload path. */
@@ -1653,13 +1706,30 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
                                          (uint8_t)ev->ack_delay_raw,
                                          sess->local_snr_x10);
 
-            /* Bare pattern ACK: retires ONLY the single frame the last keydown
-             * sent (tx_base); a SACK that fell through here retired via its
-             * base+bitmap already.  If holes remain (older seqs still
-             * outstanding after a 1-at-a-time floor retransmit), retransmit
-             * them instead of yielding the turn — no ladder credit yet. */
+            /* Pattern ACK.  A TAGGED pattern (fast windowed ACK) echoes the
+             * keydown epoch: if it matches the outstanding burst, the WHOLE
+             * clean multi-block window arrived — retire it all; a mismatch is a
+             * stale echo of a previous keydown -> ignore and keep waiting (the
+             * retry timer covers a genuinely lost ACK), never a false retire.
+             * A BARE pattern (epoch -1) retires ONLY tx_base (the single-block
+             * / fringe path, unchanged).  A SACK that fell through here already
+             * retired via its base+bitmap.  If holes remain after retiring,
+             * retransmit them instead of yielding the turn (no ladder credit). */
             if (!ev->sack_present)
-                iss_retire_one(sess);
+            {
+                if (ev->ack_epoch >= 0)
+                {
+                    if (ev->ack_epoch != (int)sess->tx_burst_epoch)
+                    {
+                        HLOGD(LOG_COMP, "Stale tagged ACK epoch=%d (want %d) — ignored",
+                              ev->ack_epoch, (int)sess->tx_burst_epoch);
+                        break;
+                    }
+                    iss_retire_all(sess);   /* fast windowed ACK: whole burst clean */
+                }
+                else
+                    iss_retire_one(sess);
+            }
             if (arq_win_nonempty(sess))
             {
                 dflow_enter(sess, ARQ_DFLOW_DATA_TX,

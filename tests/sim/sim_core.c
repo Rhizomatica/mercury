@@ -163,10 +163,14 @@ static void fire_pending(sim_t *s, sim_pending_t *p)
     /* SIM_PENDING_FRAME */
     if (p->is_pattern)
     {
-        /* Pattern ACK -> ARQ_EV_RX_ACK (HAS_DATA = ACK+TURN break). */
+        /* Pattern ACK -> ARQ_EV_RX_ACK.  Break = bit 0 (HAS_DATA = ACK+TURN);
+         * a TAGGED kind (fast windowed ACK) carries the 2-bit epoch in bits
+         * [2:1], else bare (epoch -1).  Mirrors modem.c's detect caller. */
+        int kind = p->pattern_kind;
         arq_event_t ev = {0};
-        ev.id       = ARQ_EV_RX_ACK;
-        ev.rx_flags = (p->pattern_kind == ARQ_PATTERN_BREAK) ? ARQ_FLAG_HAS_DATA : 0;
+        ev.id        = ARQ_EV_RX_ACK;
+        ev.rx_flags  = (kind & 1) ? ARQ_FLAG_HAS_DATA : 0;
+        ev.ack_epoch = (kind & ARQ_PATTERN_TAGGED) ? ((kind >> 1) & 3) : -1;
         arq_fsm_dispatch(sim_endpoint_session(p->target), &ev);
         return;
     }
