@@ -367,12 +367,18 @@ static void record_tx_outcome(arq_session_t *sess, bool clean)
         HLOGD(LOG_COMP, "Ladder step-up to %d", sess->speed_level);
     apply_speed_level(sess);
 
-    /* Adaptive burst depth (see arq_session_t.burst_depth): keep the climb fast
-     * by holding depth at 1 while the mode is still moving (a clean burst that
-     * climbs, or any dirty burst that steps down), then grow one frame per clean
-     * burst once the mode has SETTLED (clean, no rung change) up to the mode's
-     * cap.  Long K>1 keydowns must never slow the ladder climb — that was the
-     * fixed-K>1 regression (crawls up the ladder, never reaches the fast modes).*/
+    /* Adaptive burst depth (see arq_session_t.burst_depth): hold depth at 1
+     * while the mode is still moving (a clean burst that climbs, or any dirty
+     * burst that steps down), then grow once the mode has SETTLED (clean, no
+     * rung change) up to the mode's cap.  Growth is GEOMETRIC (slow-start
+     * double), not +1: a good-channel transfer is dominated by the ramp itself
+     * (at QAM16C2 the additive ramp 1+2+3+4+5 = 15 frames ~= 17 kB is spent
+     * before steady K=5 is ever reached), so doubling reaches the cap in
+     * ceil(log2(cap)) settled bursts instead of cap-1, banking the K=5 rate far
+     * sooner.  Any loss/mode-change resets to 1 (multiplicative decrease), so an
+     * over-shoot self-corrects and a fade re-ramps quickly — AIMD-with-
+     * slow-start, the anti-oscillation invariant preserved (depth reacts to
+     * loss, mode reacts to delivery; they never co-react). */
     if (!clean || delta != 0)
     {
         sess->burst_depth = 1;                 /* loss or mode change: back to 1 */
@@ -386,7 +392,9 @@ static void record_tx_outcome(arq_session_t *sess, bool clean)
         if (cap > ARQ_BURST_MAX) cap = ARQ_BURST_MAX;
         if (sess->burst_depth < cap)
         {
-            sess->burst_depth++;
+            int nd = sess->burst_depth * 2;    /* slow-start double */
+            if (nd > cap) nd = cap;
+            sess->burst_depth = nd;
             HLOGD(LOG_COMP, "Burst depth grow to %d (mode settled at level %d)",
                   sess->burst_depth, sess->speed_level);
         }

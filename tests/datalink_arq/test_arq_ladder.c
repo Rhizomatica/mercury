@@ -303,17 +303,14 @@ void test_burst_depth_adaptive(void)
     }
     TEST_ASSERT_EQUAL_INT(ARQ_LADDER_LEVELS - 1, sess.speed_level);
 
-    /* Settled at the top (QAM16C2, cap 5): each further clean burst grows depth
-     * by one, up to the mode's cap, then holds. */
+    /* Settled at the top (QAM16C2, cap 5): each further clean burst DOUBLES the
+     * depth (slow-start) up to the mode's cap, then holds: 1 -> 2 -> 4 -> 5. */
     const arq_mode_timing_t *tm = arq_protocol_mode_timing(FREEDV_MODE_QAM16C2);
-    int qcap = tm->burst_frames;
-    for (int d = 2; d <= qcap; d++)
-    {
-        clean_ack_cycle();
-        TEST_ASSERT_EQUAL_INT(d, sess.burst_depth);
-    }
-    clean_ack_cycle();
-    TEST_ASSERT_EQUAL_INT(qcap, sess.burst_depth);    /* capped */
+    int qcap = tm->burst_frames;                      /* 5 */
+    clean_ack_cycle(); TEST_ASSERT_EQUAL_INT(2, sess.burst_depth);       /* 1->2  */
+    clean_ack_cycle(); TEST_ASSERT_EQUAL_INT(4, sess.burst_depth);       /* 2->4  */
+    clean_ack_cycle(); TEST_ASSERT_EQUAL_INT(qcap, sess.burst_depth);    /* 4->8 capped 5 */
+    clean_ack_cycle(); TEST_ASSERT_EQUAL_INT(qcap, sess.burst_depth);    /* holds */
 
     /* A dirty (step-down) outcome resets depth to 1. */
     dirty_ack_cycle();
