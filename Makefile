@@ -336,16 +336,20 @@ fyne-ui-macos-universal-dmg: fyne-ui-macos-universal
 #   B) WIN_SIGN_PFX  unset, sign script available → sign via Certum SimplySign cloud (PKCS#11).
 #   C) Neither → unsigned build (default, no behaviour change).
 #
-# For mode B, the script at SIGN_SCRIPT automates the SimplySign Desktop login
-# (Xvfb + xdotool + TOTP) and then calls osslsigncode over PKCS#11.
-# See docs/WINDOWS-SIGNING.md for details.
+# For mode B, the in-repo script at SIGN_SCRIPT (code-signing/sign.sh) automates
+# the SimplySign Desktop login (Xvfb + xdotool + TOTP) and signs over PKCS#11
+# with jsign (SunPKCS11 — the SimplySign module is not enumerable by OpenSC).
+# It is OPT-IN: it only runs when CERTUM_EMAIL is set in the environment
+# (together with CERTUM_OTP_URI_FILE), so plain `windows-zip` stays unsigned by
+# default even though the script is present.  See docs/WINDOWS-SIGNING.md.
 #
 WIN_SIGN_PFX  ?=
 WIN_SIGN_PASS ?=
 WIN_SIGN_TS   ?= http://timestamp.digicert.com
 WIN_SIGN_NAME ?= Mercury HF Modem
 WIN_SIGN_URL  ?= https://github.com/Rhizomatica/mercury
-SIGN_SCRIPT   ?= $(HOME)/files/MYSELF/code-signing/sign.sh
+SIGN_SCRIPT   ?= $(CURDIR)/code-signing/sign.sh
+SIGN_LOGOUT   ?= $(CURDIR)/code-signing/sign-logout.sh
 
 # $(call win_sign,file) — sign in place if a signing method is available.
 define win_sign
@@ -354,7 +358,7 @@ define win_sign
 		osslsigncode sign -pkcs12 "$(WIN_SIGN_PFX)" -pass "$(WIN_SIGN_PASS)" \
 			-n "$(WIN_SIGN_NAME)" -i "$(WIN_SIGN_URL)" -h sha256 -ts "$(WIN_SIGN_TS)" \
 			-in "$(1)" -out "$(1).signed" && mv -f "$(1).signed" "$(1)"; \
-	elif [ -x "$(SIGN_SCRIPT)" ]; then \
+	elif [ -x "$(SIGN_SCRIPT)" ] && [ -n "$$CERTUM_EMAIL" ]; then \
 		echo "Signing (SimplySign cloud): $(1)"; \
 		$(SIGN_SCRIPT) "$(1)"; \
 	else \
@@ -380,6 +384,7 @@ windows-zip-signed: windows fyne-ui-windows
 	cp $(WINDOWS_INSTALLER_DIR)/$(FYNE_UI_BIN) $(WINDOWS_DIR)/
 	$(call win_sign,$(WINDOWS_DIR)/mercury.exe)
 	$(call win_sign,$(WINDOWS_DIR)/$(FYNE_UI_BIN))
+	@[ -x "$(SIGN_LOGOUT)" ] && [ -n "$$CERTUM_EMAIL" ] && $(SIGN_LOGOUT) || true
 	cp mercury.ini.example $(WINDOWS_DIR)/
 	if ls $(HAMLIB_W64_DIR)/bin/*.dll >/dev/null 2>&1; then \
 		cp $(HAMLIB_W64_DIR)/bin/*.dll $(WINDOWS_DIR)/; \

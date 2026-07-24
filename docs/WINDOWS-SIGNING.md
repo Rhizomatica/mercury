@@ -1,55 +1,110 @@
 # Windows code signing (Authenticode)
 
-Mercury's Windows binaries and installer can be Authenticode-signed. Two
+Mercury's Windows binaries and installer can be Authenticode-signed. Three
 approaches:
 
 | Mode | Tool | When |
 |---|---|---|
-| **A) SimplySign cloud** | `sign.sh` (Xvfb + xdotool + PKCS#11) | Default for CI / developer workstations — no `.pfx` file needed |
-| **B) Local .pfx** | `osslsigncode -pkcs12` | Self-signed test cert or OV/EV hardware token |
-| **C) Inno Setup** | `signtool.exe` on Windows | Signing the installer (requires Windows VM or physical machine) |
+| **A) SimplySign cloud** | `code-signing/sign.sh` (Xvfb + xdotool login; **jsign** over PKCS#11) | **Production path** — the real Certum cert, no `.pfx` file |
+| **B) Local .pfx** | `osslsigncode -pkcs12` | Self-signed test cert only (see below) |
+| **C) Inno Setup** | `signtool.exe` on Windows | Signing the installer (Windows VM / physical machine) |
 
-**Mode A (SimplySign cloud) is the production path.** The certificate lives in
-Certum's cloud HSM; there is no `.pfx` file. The `sign.sh` script automates the
-SimplySign Desktop GUI (Xvfb + xdotool), types the TOTP code into the login form,
-waits for the PKCS#11 token to activate, then signs with `osslsigncode -pkcs11`.
+**Mode A (SimplySign cloud) is the production path.** The certificate is a
+*Certum Open Source Developer* cert whose private key lives in Certum's cloud
+HSM — there is no `.pfx` to export. The in-repo scripts under `code-signing/`
+open a SimplySign session by automating the SimplySign Desktop GUI on a virtual
+X server, then sign with **jsign**. See `code-signing/README.md` for the
+quickstart; this document is the full reference.
+
+### Three facts that make (or break) this — learned the hard way
+
+1. **The signer is `jsign` (Java), not `osslsigncode`.** This SimplySign PKCS#11
+   module (`SimplySignPKCS_64-MS-1.0.20.so`, shipped with SimplySign Desktop
+   2.9.14) does **not** expose its objects to OpenSC's `C_FindObjects`:
+   `pkcs11-tool -O`, `p11tool`, and therefore `osslsigncode -pkcs11module`
+   all see an **empty** object list, so osslsigncode cannot even find the key
+   (and crashes if pushed via the OpenSSL `pkcs11` engine — see below). Java's
+   **SunPKCS11** provider *does* enumerate the key by alias, so `jsign`
+   (and `keytool`) work where osslsigncode cannot. osslsigncode is kept **only
+   to verify** the result (nice human-readable summary). This matches the
+   upstream reactiveui `certum-sign` action, which also uses jsign.
+2. **`USER` must be set.** The SimplySign module bundles an ancient OpenSSL that
+   NULL-derefs (SIGSEGV, exit 139) when `$USER` is empty — so **every** process
+   that loads the module (SimplySign Desktop, `keytool`, `jsign`) needs `USER`
+   set. Non-login shells and CI runners often have it empty. `sign-lib.sh`
+   exports it (`export USER="${USER:-$(id -un)}"`).
+3. **Login once, sign many.** The authenticated session and the per-file signing
+   are separate lifecycles: `ss_login` is idempotent + persistent, `ss_sign_file`
+   only signs, `ss_logout` tears down. A slow cloud round-trip therefore can
+   never be killed by a cleanup — the failure the old monolithic script hit.
+
+> Do **not** install `libengine-pkcs11-openssl` / use the OpenSSL `pkcs11`
+> engine for this cert — loading the OpenSSL-1.0.0-based module into an
+> OpenSSL-3.x process segfaults. jsign (separate JVM) avoids the ABI clash.
+
+## Secrets — where they live (NEVER in the repo)
+
+Signing needs two account secrets. **Keep them OUTSIDE the git tree** and point
+env vars at them. `.gitignore` also blocks `*otpauth* pass.txt *.pfx *.p12
+*sunpkcs11*.conf jsign*.jar` as a backstop, but the rule is: secrets live in
+your home, not in the repo.
+
+| Secret | What it is | Suggested location (mode 600) | Env var |
+|---|---|---|---|
+| otpauth URI | TOTP seed `otpauth://totp/...?secret=...` — 2FA-equivalent | `~/.config/mercury-signing/otpauth.txt` | `CERTUM_OTP_URI_FILE` (or `CERTUM_OTP_URI`) |
+| account e-mail | SimplySign login e-mail | shell env | `CERTUM_EMAIL` |
+
+The public certificate, the PKCS#11 module and the SimplySign Desktop install
+are **not** secret. The maintainer's copies live under
+`~/files/documents/windows_certum/` (outside the repo).
 
 ## Prerequisites
 
 ```bash
-# 6 packages (Debian 13):
-sudo apt-get install -y xvfb fluxbox xdotool opensc osslsigncode stalonetray
+# headless X + PKCS#11 + verify + Java (for jsign)
+sudo apt-get install -y xvfb fluxbox xdotool opensc osslsigncode default-jre-headless
+
+# jsign — the signer (single jar); point JSIGN_JAR at it (or put `jsign` on PATH)
+curl -fsSLo ~/.local/share/jsign.jar \
+  https://repo1.maven.org/maven2/net/jsign/jsign/7.1/jsign-7.1.jar
 ```
 
-SimplySign Desktop must be installed at `/opt/SimplySignDesktop` (pre-built
-binary from Certum; bundles its own Qt 5.9.2 + OpenSSL 1.0.0 — no system Qt
-or OpenSSL packages needed).
+SimplySign Desktop must be installed at `/opt/SimplySignDesktop` (Certum's
+bundle; ships its own Qt 5.9.2 + OpenSSL 1.0.0 — no system Qt/OpenSSL needed).
+It runs fine on Xvfb (software GL); on a real GPU display its old Qt hangs.
 
-## Mode A: SimplySign cloud signing (default)
-
-The Makefile automatically uses this when `WIN_SIGN_PFX` is unset and the
-`sign.sh` script is available:
+## Mode A: SimplySign cloud signing (production)
 
 ```bash
-# Sign mercury.exe (already built)
-make sign-windows
+export CERTUM_EMAIL="you@example.org"
+export CERTUM_OTP_URI_FILE="$HOME/.config/mercury-signing/otpauth.txt"
+export JSIGN_JAR="$HOME/.local/share/jsign.jar"
 
-# Sign an arbitrary binary
+make sign-windows                       # sign mercury.exe
 make sign-windows-bin BIN=mercury-ui.exe
-
-# Build + sign + zip in one step
-make windows-zip-signed
+make windows-zip-signed                 # build + sign both + zip (one login)
 ```
 
-Under the hood this runs `~/files/MYSELF/code-signing/sign.sh`, which:
-1. Starts Xvfb :99 + fluxbox (virtual display for the GUI)
-2. Launches SimplySign Desktop with `USER=rafael2k` (prevents OpenSSL crash)
-3. Waits for the "SimplySign Desktop" login window to appear
-4. Generates a fresh TOTP code from `otpauthuri.txt`
-5. Uses xdotool to type email + TOTP + click Login
-6. Handles the "Logon successful" dialog
-7. Signs with `osslsigncode` via PKCS#11
-8. Verifies the signature
+The Makefile calls `code-signing/sign.sh`, which:
+1. Starts Xvfb `:99` + fluxbox (virtual display) with `USER` set
+2. Launches SimplySign Desktop, waits for the login window
+3. Generates a fresh TOTP from the otpauth URI, types e-mail + TOTP, clicks Login
+4. Dismisses the "Logon successful" dialog; waits for the PKCS#11 token
+5. Signs each file **in place** with `jsign` via SunPKCS11 (alias auto-detected)
+6. Verifies with `osslsigncode`
+7. `sign-logout.sh` tears the session down at the end of `windows-zip-signed`
+
+Signing is **opt-in**: `make windows-zip` (and the whole flow) stays *unsigned*
+unless `CERTUM_EMAIL` is set in the environment, so ordinary builds never touch
+the cloud.
+
+## CI
+
+A ready-to-adapt GitHub Actions workflow is in
+`code-signing/.github-workflow-example/sign-windows.yml`. It runs inside
+reactiveui's prebuilt `ghcr.io/reactiveui/certum-signer` image (SimplySign +
+jsign + X11 already installed) and reads `CERTUM_EMAIL` / `CERTUM_OTP_URI` from
+GitHub Actions secrets. Move it to `.github/workflows/` and add the two secrets.
 
 ## What can be signed, and where
 
