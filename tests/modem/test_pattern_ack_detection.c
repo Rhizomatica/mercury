@@ -112,11 +112,68 @@ void test_real_break_detects(void)
     free(pb);
 }
 
+/* Fast windowed ACK: an epoch-tagged pattern (base + 1 epoch symbol) must
+ * round-trip the 2-bit epoch AND the break bit, for every (epoch, break) combo,
+ * planted in low noise. */
+void test_epoch_tagged_roundtrip(void)
+{
+    int burst = mfsk_pattern_max_tx_samples();
+    for (int epoch = 0; epoch < 4; epoch++)
+        for (int brk = 0; brk < 2; brk++)
+        {
+            int kind = MFSK_PATTERN_TAGGED | (epoch << 1) | brk;
+            int16_t *tone = (int16_t *)malloc((size_t)burst * sizeof(int16_t));
+            int n = mfsk_pattern_tx(tone, kind);
+            TEST_ASSERT_TRUE(n > 0);
+
+            int gap = burst, L = gap + n + burst;
+            int16_t *pb = (int16_t *)malloc((size_t)L * sizeof(int16_t));
+            for (int i = 0; i < L; i++)
+                pb[i] = (int16_t)((urand() - 0.5) * 200.0);
+            for (int i = 0; i < n; i++)
+                pb[gap + i] = (int16_t)(pb[gap + i] + tone[i]);
+
+            int got = -1;
+            TEST_ASSERT_TRUE(mfsk_pattern_detect(pb, L, &got));
+            TEST_ASSERT_TRUE_MESSAGE(got & MFSK_PATTERN_TAGGED, "epoch symbol not detected");
+            TEST_ASSERT_EQUAL_INT(brk,   got & 1);
+            TEST_ASSERT_EQUAL_INT(epoch, (got >> 1) & 3);
+            free(tone); free(pb);
+        }
+}
+
+/* A BARE pattern (no epoch symbol) must NOT be misread as epoch-tagged: the
+ * trailing noise after the 16 base symbols must stay below the epoch-present
+ * threshold (fail-safe — a bare fringe ACK keeps its exact meaning). */
+void test_bare_not_misread_as_tagged(void)
+{
+    int burst = mfsk_pattern_max_tx_samples();
+    for (int brk = 0; brk < 2; brk++)
+    {
+        int16_t *tone = (int16_t *)malloc((size_t)burst * sizeof(int16_t));
+        int n = mfsk_pattern_tx(tone, brk);          /* bare: 0 or 1 */
+        int gap = burst, L = gap + n + burst;
+        int16_t *pb = (int16_t *)malloc((size_t)L * sizeof(int16_t));
+        for (int i = 0; i < L; i++)
+            pb[i] = (int16_t)((urand() - 0.5) * 200.0);
+        for (int i = 0; i < n; i++)
+            pb[gap + i] = (int16_t)(pb[gap + i] + tone[i]);
+
+        int got = -1;
+        TEST_ASSERT_TRUE(mfsk_pattern_detect(pb, L, &got));
+        TEST_ASSERT_FALSE_MESSAGE(got & MFSK_PATTERN_TAGGED, "bare pattern misread as tagged");
+        TEST_ASSERT_EQUAL_INT(brk, got & 1);
+        free(tone); free(pb);
+    }
+}
+
 int main(void)
 {
     UNITY_BEGIN();
     RUN_TEST(test_noise_no_false_ack);
     RUN_TEST(test_real_ack_detects);
     RUN_TEST(test_real_break_detects);
+    RUN_TEST(test_epoch_tagged_roundtrip);
+    RUN_TEST(test_bare_not_misread_as_tagged);
     return UNITY_END();
 }

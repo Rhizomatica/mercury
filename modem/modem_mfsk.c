@@ -396,47 +396,115 @@ static void mfsk_pattern_lazy_init(void)
     g_pat_ready = true;
 }
 
+/* Fast windowed ACK (Phase 2c): a clean multi-block burst is acked by the
+ * 0.64 s pattern instead of the 3.74 s coded frame, disambiguated from a stale
+ * pattern by a 2-bit epoch.  The epoch rides ONE extra 4-ary tone symbol
+ * appended after the (unchanged) 16-symbol base ack/break pattern — tones
+ * 0 / M/4 / M/2 / 3M/4 (for M=32: 0,8,16,24).  pattern_kind:
+ *   0 / 1                       = bare ACK / break (byte-identical to before;
+ *                                 the MFSK-floor fringe path is UNTOUCHED)
+ *   MFSK_PAT_TAGGED|epoch<<1|brk = epoch-tagged fast ACK (16 base + 1 epoch sym)
+ * A misread epoch fails the ISS's epoch==keydown check -> retry/coded fallback
+ * (fail-safe: never an over-retirement, only a missed speedup). */
+#define MFSK_PAT_TAGGED    0x80
+#define MFSK_PAT_EPOCHS    4
+#define MFSK_EPOCH_LEN     6    /* the 2-bit epoch rides a short Welch-Costas
+                                 * mini-pattern of this many symbols, appended
+                                 * after the base pattern and detected by the SAME
+                                 * robust matched filter (mfsk_detect_pattern) —
+                                 * NOT a raw FFT read, which the coarse base
+                                 * locate + OFDM ICI make hopeless to align */
+#define MFSK_EPOCH_MIN_MATCH 4  /* accept an epoch only if its mini-pattern matches
+                                 * >= this many of MFSK_EPOCH_LEN symbols (tolerates
+                                 * two symbol errors); a bare pattern's trailing
+                                 * noise matches ~0-2, so this cleanly rejects it */
+#define MFSK_EPOCH_MARGIN    2  /* ...and only if it beats the runner-up epoch by
+                                 * this many matched symbols (guards a lucky near
+                                 * miss on an alias/adjacent sequence) */
+
+/* The 4 epoch mini-patterns (M=32): a spread Welch-Costas base sequence shifted
+ * by 2*e tones, so every epoch differs from every other in EVERY symbol (by 2,4
+ * or 6 tones — never M/2, which would alias) while each sequence itself hops
+ * across the band.  mfsk_detect_pattern applies its own +j*tone_hop_step, so
+ * these are the pre-hop table entries. */
+static const int MFSK_EPOCH_BASE_SEQ[MFSK_EPOCH_LEN] = { 4, 20, 12, 28, 8, 24 };
+static void mfsk_epoch_tones(int e, int *tones)
+{
+    for (int j = 0; j < MFSK_EPOCH_LEN; j++)
+        tones[j] = (MFSK_EPOCH_BASE_SEQ[j] + 2 * (e % MFSK_PAT_EPOCHS)) % g_pat_m.M;
+}
+
 int mfsk_pattern_nsymb(void)
 {
     mfsk_pattern_lazy_init();
-    return g_pat_m.ack_pattern_nsymb;
+    return g_pat_m.ack_pattern_nsymb;          /* base symbols (detect anchor) */
 }
 
 int mfsk_pattern_max_tx_samples(void)
 {
     mfsk_pattern_lazy_init();
-    return g_pat_m.ack_pattern_nsymb * g_pat_nofdm;
+    /* + the appended epoch mini-pattern so RX windows/buffers fit the tagged form. */
+    return (g_pat_m.ack_pattern_nsymb + MFSK_EPOCH_LEN) * g_pat_nofdm;
 }
 
-/* Generate the ack/break pattern as int16 passband.  Returns sample count. */
+/* Synthesise one OFDM symbol from frequency bins fb[] into out[] (int16
+ * passband), advancing the upconvert phase counter *tx_n.  Returns samples. */
+static int mfsk_pat_emit_symbol(const double complex *fb, int16_t *out, long *tx_n)
+{
+    double complex pad[MFSK_NFFT], t[MFSK_NFFT], cp[MFSK_NFFT + 128];
+    ofdm_zero_padder(&g_pat_o, (double complex *)fb, pad);
+    ofdm_ifft(&g_pat_o, pad, t);
+    ofdm_gi_adder(&g_pat_o, t, cp);
+    for (int n = 0; n < g_pat_nofdm; n++)
+    {
+        double ph = g_pat_w * (double)(*tx_n)++;
+        double v = MFSK_TXAMP * (creal(cp[n]) * cos(ph) + cimag(cp[n]) * sin(ph));
+        if (v > 32767.0) v = 32767.0; else if (v < -32768.0) v = -32768.0;
+        out[n] = (int16_t)lrint(v);
+    }
+    return g_pat_nofdm;
+}
+
+/* Generate the ack/break (+ optional epoch) pattern as int16 passband. */
 int mfsk_pattern_tx(int16_t *out, int pattern_kind)
 {
     mfsk_pattern_lazy_init();
-    int ns = g_pat_m.ack_pattern_nsymb;
+    int ns      = g_pat_m.ack_pattern_nsymb;
+    bool tagged = (pattern_kind & MFSK_PAT_TAGGED) != 0;
+    int  brk    = pattern_kind & 1;
+    int  epoch  = (pattern_kind >> 1) & (MFSK_PAT_EPOCHS - 1);
 
     mfsk_cplx *bins = (mfsk_cplx *)calloc((size_t)ns * MFSK_NCAR, sizeof(mfsk_cplx));
     if (!bins) return 0;
-    if (pattern_kind == 1)   /* ARQ_PATTERN_BREAK */
-        mfsk_generate_break_pattern(&g_pat_m, bins);
-    else
-        mfsk_generate_ack_pattern(&g_pat_m, bins);
+    if (brk) mfsk_generate_break_pattern(&g_pat_m, bins);
+    else     mfsk_generate_ack_pattern(&g_pat_m, bins);
 
-    int written = 0;
-    long tx_n = 0;
+    int  written = 0;
+    long tx_n    = 0;
     for (int s = 0; s < ns; s++)
     {
-        double complex fb[MFSK_NCAR], pad[MFSK_NFFT], t[MFSK_NFFT], cp[MFSK_NFFT + 128];
+        double complex fb[MFSK_NCAR];
         for (int k = 0; k < MFSK_NCAR; k++)
             fb[k] = bins[s * MFSK_NCAR + k].re + bins[s * MFSK_NCAR + k].im * I;
-        ofdm_zero_padder(&g_pat_o, fb, pad);
-        ofdm_ifft(&g_pat_o, pad, t);
-        ofdm_gi_adder(&g_pat_o, t, cp);
-        for (int n = 0; n < g_pat_nofdm; n++)
+        written += mfsk_pat_emit_symbol(fb, out + written, &tx_n);
+    }
+    if (tagged)
+    {
+        /* Append the epoch's Welch-Costas mini-pattern: symbol j carries the
+         * (internally hopped) epoch tone at base-symbol amplitude, on every
+         * stream — a standalone sub-pattern (hop index restarts at 0) so the RX
+         * detects it with mfsk_detect_pattern exactly like the base pattern. */
+        double amp = sqrt((double)g_pat_m.Nc / g_pat_m.nStreams);
+        int etones[MFSK_EPOCH_LEN];
+        mfsk_epoch_tones(epoch, etones);
+        for (int j = 0; j < MFSK_EPOCH_LEN; j++)
         {
-            double ph = g_pat_w * (double)tx_n++;
-            double v = MFSK_TXAMP * (creal(cp[n]) * cos(ph) + cimag(cp[n]) * sin(ph));
-            if (v > 32767.0) v = 32767.0; else if (v < -32768.0) v = -32768.0;
-            out[written++] = (int16_t)lrint(v);
+            double complex fb[MFSK_NCAR];
+            for (int k = 0; k < MFSK_NCAR; k++) fb[k] = 0;
+            int actual = (etones[j] + j * g_pat_m.tone_hop_step) % g_pat_m.M;
+            for (int st = 0; st < g_pat_m.nStreams; st++)
+                fb[g_pat_m.stream_offsets[st] + actual] = amp;
+            written += mfsk_pat_emit_symbol(fb, out + written, &tx_n);
         }
     }
     free(bins);
@@ -444,10 +512,12 @@ int mfsk_pattern_tx(int16_t *out, int pattern_kind)
 }
 
 /* Detect a pattern ACK in an int16 passband chunk.  Returns 1 on a match and
- * sets *is_break (1 = ACK+TURN break, 0 = plain ACK); 0 if none. */
-int mfsk_pattern_detect(const int16_t *pb, int n, int *is_break)
+ * sets *out_kind: 0/1 for a bare ACK/break, or MFSK_PAT_TAGGED|epoch<<1|brk
+ * when a valid epoch symbol follows the base pattern; 0 (no match) otherwise. */
+int mfsk_pattern_detect(const int16_t *pb, int n, int *out_kind)
 {
     mfsk_pattern_lazy_init();
+    if (out_kind) *out_kind = 0;
     if (!pb || n < g_pat_m.ack_pattern_nsymb * g_pat_nofdm)
         return 0;
 
@@ -472,27 +542,62 @@ int mfsk_pattern_detect(const int16_t *pb, int n, int *is_break)
         bf[i] = a;
     }
 
-    int ns  = g_pat_m.ack_pattern_nsymb;
-    int pos = -1;
+    int ns   = g_pat_m.ack_pattern_nsymb;
+    int apos = -1, bpos = -1;
     int ack_score = mfsk_detect_pattern(&g_pat_m, &g_pat_o, bf, n,
                                         g_pat_m.ack_tones, g_pat_m.ack_pattern_len,
-                                        ns, &pos);
+                                        ns, &apos);
     int brk_score = mfsk_detect_pattern(&g_pat_m, &g_pat_o, bf, n,
                                         g_pat_m.break_tones, g_pat_m.ack_pattern_len,
-                                        ns, &pos);
-    free(bb); free(bf);
+                                        ns, &bpos);
 
     bool ack_hit = ack_score >= g_pat_m.ack_match_threshold;
     bool brk_hit = brk_score >= g_pat_m.break_match_threshold;
-    if (!ack_hit && !brk_hit)
-        return 0;
-    /* Prefer the higher-scoring symbol so the two are told apart cleanly. */
-    if (brk_hit && (!ack_hit || brk_score >= ack_score))
+    if (!ack_hit && !brk_hit) { free(bb); free(bf); return 0; }
+
+    int brk = 0, pos = apos;
+    if (brk_hit && (!ack_hit || brk_score >= ack_score)) { brk = 1; pos = bpos; }
+
+    int kind = brk;
+
+    /* Optional epoch mini-pattern after the base pattern (Phase-2c fast ACK).
+     *
+     * The 2-bit epoch rides a short Welch-Costas sub-pattern appended right
+     * after the base pattern.  We recover it with the SAME robust matched filter
+     * used for the base (mfsk_detect_pattern): score each of the 4 candidate
+     * epoch sequences over the region just past the base pattern and take the
+     * best — but only if it clears MFSK_EPOCH_MIN_MATCH symbols AND beats the
+     * runner-up by MFSK_EPOCH_MARGIN.  mfsk_detect_pattern slides its own fine
+     * timing search and uses per-symbol peak-tone matching, so it tolerates the
+     * coarse base locate and OFDM ICI that defeat a fixed-offset FFT read.  A
+     * bare pattern (no mini-pattern -> trailing noise) scores ~0-1 for every
+     * candidate, so it stays bare — fail-safe (a miss only costs the fast ACK). */
+    int epos = pos + ns * g_pat_nofdm;
+    int step = g_pat_nofdm / 8; if (step < 1) step = 1;
+    int rstart = epos - 2 * step;                 /* small slack for a slightly-late base */
+    if (rstart < 0) rstart = 0;
+    int rlen = (MFSK_EPOCH_LEN + 4) * g_pat_nofdm; /* + slack for base-locate error */
+    if (rstart + rlen > n) rlen = n - rstart;
+
+    if (pos >= 0 && rlen >= MFSK_EPOCH_LEN * g_pat_nofdm)
     {
-        if (is_break) *is_break = 1;
-        return 1;
+        int best_e = -1, best_sc = -1, second_sc = -1;
+        for (int e = 0; e < MFSK_PAT_EPOCHS; e++)
+        {
+            int etones[MFSK_EPOCH_LEN], ep = -1;
+            mfsk_epoch_tones(e, etones);
+            int sc = mfsk_detect_pattern(&g_pat_m, &g_pat_o, bf + rstart, rlen,
+                                         etones, MFSK_EPOCH_LEN, MFSK_EPOCH_LEN, &ep);
+            if (sc > best_sc) { second_sc = best_sc; best_sc = sc; best_e = e; }
+            else if (sc > second_sc) { second_sc = sc; }
+        }
+        if (best_e >= 0 && best_sc >= MFSK_EPOCH_MIN_MATCH &&
+            best_sc - second_sc >= MFSK_EPOCH_MARGIN)
+            kind = MFSK_PAT_TAGGED | (best_e << 1) | brk;
     }
-    if (is_break) *is_break = 0;
+
+    free(bb); free(bf);
+    if (out_kind) *out_kind = kind;
     return 1;
 }
 

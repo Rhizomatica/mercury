@@ -292,7 +292,7 @@ void arq_handle_incoming_frame(uint8_t *data, size_t frame_size, float rx_snr);
  *
  * @param is_break true = ACK+TURN (HAS_DATA piggyback), false = plain ACK.
  */
-void arq_post_pattern_ack(bool is_break);
+void arq_post_pattern_ack(bool is_break, int epoch);
 
 /**
  * @brief Feed decoder/link metrics into ARQ adaptation.

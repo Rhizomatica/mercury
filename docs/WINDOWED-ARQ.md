@@ -266,6 +266,63 @@ after ~20-25 transfers in one session — empty output / connect-fail — so thi
 needs a fresh session; deterministic tests gate correctness, the bench gates the
 speed claim.)
 
+## Phase 2c — fast windowed ACK (epoch-tagged pattern)
+
+**Why (measured critical path).** On a clean K=5 QAM16C2 keydown the ACK is a
+3.74 s coded DATAC16 frame (a multi-block burst can't use the seq-less pattern —
+a stale pattern would over-retire the window), vs the 0.64 s Welch-Costas
+pattern used at the floor.  That coded ACK is ~3 s of the ~21 s cycle — **~15%,
+serial, every keydown.**  Letting clean multi-block bursts use a pattern ACK is
+the last big good-channel lever (est. +15% on top of the +47.6%).
+
+### Modem-codec layer — DONE + unit-validated
+
+- **Epoch-tagged pattern = base ack/break pattern (16 symbols, UNCHANGED) + a
+  short appended Welch-Costas MINI-PATTERN** (`MFSK_EPOCH_LEN`=6 symbols)
+  encoding a 2-bit epoch.  The mini-pattern is one of 4 spread sequences
+  (`MFSK_EPOCH_BASE_SEQ` shifted by 2·epoch, so any two epochs differ in every
+  symbol by 2/4/6 tones — never M/2, which would alias under an FFT-window
+  timing error).
+- **Detected by the SAME robust matched filter as the base pattern**
+  (`mfsk_detect_pattern`), NOT a raw fixed-offset FFT read.  The earlier
+  single-4-ary-symbol design was abandoned: the base pattern only locates the
+  burst to a Nofdm/8 grid (and can be >GI off after the RX LPF), so a single
+  appended symbol demodulated at a fixed offset smears energy across carriers
+  (M/2 image + adjacent-carrier ICI) and the epoch value is unrecoverable.  The
+  matched filter slides its own fine timing search and does per-symbol peak-tone
+  matching, so it tolerates that error — the reason the 16-symbol base pattern
+  is robust to −13 dB in the first place.
+- **Decision:** score all 4 candidate sequences over the region past the base
+  pattern; accept the best only if it matches ≥ `MFSK_EPOCH_MIN_MATCH`(=4) of 6
+  symbols AND beats the runner-up by ≥ `MFSK_EPOCH_MARGIN`(=2).  Measured
+  (`tests/modem/test_pattern_ack_detection.c`, noise-injection): real epoch
+  scores 5–6/6, wrong candidates ≤3, a bare pattern's trailing region ≤2 → a
+  bare ACK is NEVER misread as tagged (fringe path byte-identical + safe).
+- **`pattern_kind` encoding** (no callback-signature change): `0/1` = bare
+  ACK/break (byte-identical to today — the FRINGE path is untouched);
+  `MFSK_PATTERN_TAGGED(0x80) | epoch<<1 | break` = epoch-tagged (fast ACK).
+- **Inert until the FSM uses it:** the FSM still emits bare patterns, and the
+  detector only sets TAGGED when a real mini-pattern is on-air, so current
+  behaviour is unchanged.
+
+### Protocol/FSM layer — REMAINING
+
+- **Epoch carrier.** The plan's "DATA flags[5:4]" is NOT available — under the
+  fast-modes 11-bit valid-length change those bits are LEN_HI/LEN_B9/LEN_B10.
+  The 2-bit per-keydown `ack_epoch` must ride elsewhere (a header byte / spare
+  field), TBD when wiring.
+- **Flow.** ISS stamps a per-keydown `ack_epoch` (mod 4 counter) in each DATA
+  burst.  IRS, on a CLEAN multi-block burst, sends the epoch-tagged pattern
+  echoing that epoch instead of the coded SACK.  ISS in WAIT_ACK: epoch ==
+  current keydown's epoch → retire the whole outstanding window; mismatch →
+  ignore (stale).  Holes still → coded SACK.
+- **Fail-safe + fringe-safe.** The fast ACK fires ONLY for clean multi-block
+  bursts (fast modes, good SNR) — the MFSK floor stays K=1 with the plain
+  2-pattern ACK, untouched.  A misread/stale epoch fails the match → ISS falls
+  back to retry/coded-ACK: never an over-retirement, only a missed speedup.
+- **Gate.** `MERCURY_FAST_ACK` default-off until a healthy `-x sock` bench (or
+  OTA) confirms the on-air false-classification rate and the +15% gain.
+
 ## Phases
 
 0. Deterministic instruments: burst-capable two-FSM sim (done — sim outbox

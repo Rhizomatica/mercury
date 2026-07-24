@@ -27,19 +27,31 @@ extern const modem_backend_t modem_backend_mfsk;
 /* ---- Pattern ACK (Welch-Costas tone burst) helpers ----
  * A pattern ACK is a short tone burst — no preamble, no LDPC.  The datalink
  * layer (ARQ) emits one via send_pattern_ack() and detects incoming ones in
- * the RX baseband.  pattern_kind: 0 = plain ACK, 1 = ACK+TURN (break). */
+ * the RX baseband.  pattern_kind (bit-packed):
+ *   0                              = plain ACK (bare, fringe path — unchanged)
+ *   1                              = ACK+TURN break (bare)
+ *   MFSK_PATTERN_TAGGED|epoch<<1|b = fast windowed ACK: base ACK/break (bit b)
+ *                                    + a short appended Welch-Costas mini-pattern
+ *                                    encoding the 2-bit epoch, so a clean
+ *                                    multi-block burst can be acked by the fast
+ *                                    pattern instead of the 3.74 s coded frame
+ *                                    (Phase 2c). */
+#define MFSK_PATTERN_TAGGED 0x80
 
-/* Number of pattern symbols (for buffer sizing / airtime). */
+/* Number of BASE pattern symbols (detect anchor; airtime of a bare pattern). */
 int mfsk_pattern_nsymb(void);
 
-/* Max int16 passband samples a pattern TX produces (buffer sizing). */
+/* Max int16 passband samples a pattern TX produces — includes the optional
+ * epoch symbol, so RX windows sized by this always contain it (buffer sizing). */
 int mfsk_pattern_max_tx_samples(void);
 
 /* Generate the pattern as int16 passband; returns the sample count. */
 int mfsk_pattern_tx(int16_t *out, int pattern_kind);
 
 /* Detect a pattern ACK in an int16 passband chunk.  Returns 1 on a match and
- * sets *is_break (1 = break/ACK+TURN, 0 = plain ACK); 0 if none. */
-int mfsk_pattern_detect(const int16_t *pb, int n, int *is_break);
+ * sets *out_kind to the decoded pattern_kind (0/1 bare, or
+ * MFSK_PATTERN_TAGGED|epoch<<1|break when a valid epoch symbol follows); 0 if
+ * no pattern is found. */
+int mfsk_pattern_detect(const int16_t *pb, int n, int *out_kind);
 
 #endif /* MERCURY_MODEM_MFSK_H */

@@ -118,6 +118,12 @@ typedef struct
     bool     sack_present;
     uint8_t  sack_bitmap[ARQ_SACK_BITMAP_BYTES];
 
+    /* Fast windowed ACK (epoch-tagged pattern): the 2-bit ack_epoch echoed by
+     * an epoch-tagged pattern ACK, or -1 for a bare pattern / no epoch.  A
+     * match against the ISS's current keydown epoch lets a clean multi-block
+     * burst retire on the fast 0.64 s pattern instead of the coded ACK. */
+    int      ack_epoch;
+
     /* Mode negotiation */
     int      mode;            /* requested/applied FreeDV mode                */
     size_t   data_bytes;      /* total user byte count (all blocks, DATA)     */

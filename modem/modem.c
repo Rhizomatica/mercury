@@ -2084,12 +2084,15 @@ void *rx_thread(void *g_modem)
 
                     if (pat_len >= burst)
                     {
-                        int is_break = 0;
-                        if (mfsk_pattern_detect(pat_win, pat_len, &is_break))
+                        int kind = 0;
+                        if (mfsk_pattern_detect(pat_win, pat_len, &kind))
                         {
-                            HLOGD("modem-rx", "Pattern ACK detected (%s)",
-                                  is_break ? "ACK+TURN" : "ACK");
-                            arq_post_pattern_ack(is_break != 0);
+                            int is_break = kind & 1;
+                            int epoch    = (kind & MFSK_PATTERN_TAGGED)
+                                           ? ((kind >> 1) & 3) : -1;
+                            HLOGD("modem-rx", "Pattern ACK detected (%s epoch=%d)",
+                                  is_break ? "ACK+TURN" : "ACK", epoch);
+                            arq_post_pattern_ack(is_break != 0, epoch);
                             pat_len = 0;   /* consume the window */
                         }
                     }

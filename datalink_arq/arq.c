@@ -875,11 +875,12 @@ void arq_handle_incoming_frame(uint8_t *data, size_t frame_size, float rx_snr)
     evq_push(&ev);
 }
 
-void arq_post_pattern_ack(bool is_break)
+void arq_post_pattern_ack(bool is_break, int epoch)
 {
     arq_event_t ev = {0};
-    ev.id       = ARQ_EV_RX_ACK;
-    ev.rx_flags = is_break ? ARQ_FLAG_HAS_DATA : 0;
+    ev.id        = ARQ_EV_RX_ACK;
+    ev.rx_flags  = is_break ? ARQ_FLAG_HAS_DATA : 0;
+    ev.ack_epoch = epoch;   /* 0..3 from an epoch-tagged pattern; -1 if bare */
     /* session_id left 0: patterns carry none, and the dispatch session-ID
      * gate treats 0 as "unknown/accept". */
     evq_push(&ev);
