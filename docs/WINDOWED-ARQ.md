@@ -409,3 +409,72 @@ MERCURY_BIN=/path/to/mercury-arq-windowed MERCURY_FAST_ACK=1 \
 ```
 The fade/low-SNR tiers (the anti-VARA cells) use the same runner with the
 report's Tier-1/Tier-3 cell lists.
+
+## Phase 2c — fast-ACK fade & fringe validation (Watterson), pre-OTA
+
+Robustness + speed validation of `MERCURY_FAST_ACK` before the OTA flip, using
+our Watterson tooling.  Tools committed under `utils/` (re-runnable on any rig):
+`pattern_fade_probe.c` + `fastack_fade_phy.sh` (deterministic PHY), and
+`fastack_fade_ab.sh` / `fastack_lowsnr_ab.sh` (end-to-end sock A/B).
+
+**Leg A — deterministic PHY (epoch signal under Watterson 'poor' 2 ms/1 Hz fade,
+N=200/point, `utils/watterson_test` channel).** The two decisive rates:
+
+| SNR3k* | tagged_ok | misdecode | miss | **false_tag** |
+|--------|-----------|-----------|------|---------------|
+| +21 dB | 100%      | 0%        | 0%   | **0%**        |
+| +13 dB | 100%      | 0%        | 0%   | **0%**        |
+| +7 dB  | 100%      | 0%        | 0%   | **0%**        |
+| +1 dB  | 100%      | 0%        | 0%   | **0%**        |
+| −1 dB  | 99.9%     | 0%        | 0%   | **0%**        |
+| −5 dB  | 99.1%     | 0%        | 0%   | **0%**        |
+| −9 dB  | 96.1%     | 0%        | 0%   | **0%**        |
+| −11 dB | 89.5%     | 0%        | 0.5% | **0%**        |
+| −13 dB | 81.8%     | 0%        | 1.0% | **0%**        |
+| **−15 dB** | 60.0% | 0%        | 9.2% | **0%**        |
+
+*File-averaged, and the tone pattern reads ~6 dB hotter than a spread modem
+frame, so the absolute axis is soft; the shape is the point.  Three ideal
+results across the WHOLE range down to −15 dB:
+(1) **false_tag = 0% at every SNR** — a bare pattern is never mis-read as
+tagged, so a false `retire_all` (over-retirement / data loss) cannot happen at
+any SNR.
+(2) **misdecode = 0% at every SNR** — when the epoch is detected it is never the
+*wrong* epoch; the only failure mode is "not detected" (safe fallback to coded
+ACK / retry), never a wrong answer.
+(3) **The tag adds zero robustness penalty** — `miss` tracks `bare_miss`
+one-to-one (0.5/0.5, 1.0/1.0, 9.2/9.5), i.e. the epoch fails ONLY when the base
+ACK pattern itself fails to detect.  It survives right down to the pattern-ACK's
+own cliff (~−13/−15 dB, where even the plain ACK is at 60%), inheriting the
+Welch-Costas matched-filter robustness that works to ~−13 dB.
+
+**Leg B — end-to-end sock A/B (fast-ACK OFF→ON, 16 kB, virtual clock).**
+
+| channel | OFF | ON | Δ |
+|---------|-----|----|----|
+| clean   | 115.4 | 129.0 | **+11.8%** |
+| mid11 (mid-SNR, K>1 sweet spot) | 114.6 | 128.5 | **+12.1%** |
+
+Byte-exact both arms; the speed win holds on the audio-ish transport, not just
+`-x sock`.  ('poor' Watterson at 16 kB / 500 s timed out on BOTH arms — a
+channel-vs-payload limit, not a fast-ACK regression: under heavy fade the ladder
+sits at robust modes where the fast ACK doesn't fire at all.)
+
+**Fringe no-regression — by construction (not by measurement).** The tagged
+pattern is gated `clean_new && multi && fast_ack_enabled()` with
+`multi = rx_burst_blocks > 1` (`arq_fsm.c` ~636).  At the low-SNR fringe the
+ladder is at the 1-block MFSK/DATAC4 floor → `multi == false` → the code takes
+the **bare** path, byte-identical to OFF.  So **ON ≡ OFF at the fringe** — the
+sacred low-SNR path is untouched, provably, without a measurement.
+
+**What still needs the dummy-load / OTA.** Reliable sub-zero-dB *end-to-end*
+5 kB numbers could not be produced on the dev sock rig: its σ→SNR is uncalibrated
+here (connects fail below an uncertain cliff; NP stats not written), and the
+host is load-flaky.  That measurement belongs on the calibrated dummy-load /
+São Roque↔BH OTA — `utils/fastack_lowsnr_ab.sh` (5 kB, σ sweep, reads true
+snr3k) is ready to run there.
+
+**Verdict for the flag.** Safe (false_tag 0% under fade), faster where it engages
+(+12%), and provably neutral at the fringe.  The one remaining gate before
+default-on is the OTA confirmation that the epoch survives a *real* HF reverse
+path at the rate needed to realise the +12% (vs falling back to coded ACK).
