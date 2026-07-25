@@ -92,6 +92,9 @@ bool sim_endpoint_take_outframe(sim_endpoint_t *ep, sim_outframe_t *out)
 
 /* ---- the nine shared FSM callbacks: all operate on s_active ---- */
 
+/* Total PTT keydowns emitted (defined here so cb_send_tx_frame can see it). */
+static int s_keydown_count = 0;
+
 static void cb_send_tx_frame(int packet_type, int mode, size_t frame_size,
                               const uint8_t *frame, int burst_remaining)
 {
@@ -111,6 +114,8 @@ static void cb_send_tx_frame(int packet_type, int mode, size_t frame_size,
     of.is_pattern      = false;
     of.pattern_kind    = 0;
     of.present         = true;
+    if (burst_remaining == 0)   /* last frame of the keydown = one PTT keydown */
+        s_keydown_count++;
     outbox_push(ep, &of);
 }
 
@@ -120,6 +125,13 @@ static void cb_send_tx_frame(int packet_type, int mode, size_t frame_size,
 static int s_tagged_pattern_count = 0;
 int  sim_tagged_pattern_count(void) { return s_tagged_pattern_count; }
 void sim_tagged_pattern_reset(void) { s_tagged_pattern_count = 0; }
+
+/* Total PTT keydowns emitted across all endpoints: one per data keydown
+ * (counted on burst_remaining==0) plus one per pattern ACK.  Lets a test show
+ * the piggyback-ACK collapses a request/response round-trip from ~4 keydowns
+ * to ~2 (the standalone-ACK keydown becomes the reply-that-acks). */
+int  sim_keydown_count(void) { return s_keydown_count; }
+void sim_keydown_reset(void) { s_keydown_count = 0; }
 
 /* Pattern ACK: a degenerate outframe with no coded bytes.  sim_core schedules
  * it with a short airtime and its own low erasure, and translates it straight
@@ -138,6 +150,7 @@ static void cb_send_pattern_ack(int mode, int pattern_kind)
     of.present         = true;
     if (pattern_kind & ARQ_PATTERN_TAGGED)
         s_tagged_pattern_count++;
+    s_keydown_count++;
     outbox_push(ep, &of);
 }
 

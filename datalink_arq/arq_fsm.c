@@ -43,6 +43,20 @@ static bool fast_ack_enabled(void)
     return e && e[0] == '1';
 }
 
+/* Piggyback ACK (chatty-handshake latency cut, e.g. uucp): OFF by default until
+ * a dummy-load / OTA A/B confirms the turn/keydown reduction on a real link.
+ * When ON, the IRS — on a CLEAN complete forward burst with a reply already
+ * queued — sends the reply DATA (which carries rx_ack_seq acking the forward)
+ * INSTEAD of a standalone ACK, collapsing the standalone-ACK keydown + the
+ * reverse-data keydown into one.  The peer's WAIT_ACK already treats a reverse
+ * DATA frame as an implicit ACK + turn, so this needs no receive-side change.
+ * When off, behaviour is exactly today's. */
+static bool piggyback_enabled(void)
+{
+    const char *e = getenv("MERCURY_PIGGYBACK_ACK");
+    return e && e[0] == '1';
+}
+
 /* ======================================================================
  * State/event name tables
  * ====================================================================== */
@@ -602,6 +616,36 @@ static void send_ack(arq_session_t *sess, int epoch)
  *     un-named ones.  Carries HAS_DATA for the piggyback turn bid, like the
  *     pattern break.  The mirror steps down once here (unless the dup path
  *     already did): the ISS steps its ladder down on receiving the SACK. */
+/* Clear per-burst IRS tracking so the next received burst starts fresh. */
+static void irs_reset_burst_tracking(arq_session_t *sess)
+{
+    sess->rx_burst_complete = false;
+    sess->rx_burst_dup      = false;
+    sess->rx_burst_new      = false;
+    sess->rx_burst_blocks   = 0;
+    sess->rx_burst_epoch    = -1;
+}
+
+/* Piggyback ACK eligibility: the IRS may reply with DATA (which acks the forward
+ * burst via rx_ack_seq) instead of a standalone ACK only when the forward burst
+ * arrived CLEAN and COMPLETE, a reply is already queued, and no special
+ * connect/disconnect handling is pending.  Holes above rx_expected need a coded
+ * SACK bitmap that a single DATA rx_ack_seq cannot carry, so those fall back. */
+static bool irs_can_piggyback(arq_session_t *sess)
+{
+    if (!piggyback_enabled())                       return false;
+    if (!sess->rx_burst_complete || sess->rx_burst_dup) return false;
+    if (session_tx_backlog(sess) <= 0)              return false;
+    if (sess->pending_disconnect || sess->pending_connect_confirm) return false;
+    for (int off = 1; off <= ARQ_SACK_BITMAP_BYTES * 8; off++)
+    {
+        uint8_t sq = (uint8_t)(sess->rx_expected + off);
+        struct arq_rxslot *sl = &sess->rx_win[sq % ARQ_WIN_SLOTS];
+        if (sl->present && sl->seq == sq)           return false;  /* held hole */
+    }
+    return true;
+}
+
 static void irs_send_burst_ack(arq_session_t *sess)
 {
     uint8_t bitmap[ARQ_SACK_BITMAP_BYTES] = {0};
@@ -682,11 +726,7 @@ static void irs_send_burst_ack(arq_session_t *sess)
     }
 
     /* Fresh tracking for the next burst. */
-    sess->rx_burst_complete = false;
-    sess->rx_burst_dup      = false;
-    sess->rx_burst_new      = false;
-    sess->rx_burst_blocks   = 0;
-    sess->rx_burst_epoch    = -1;
+    irs_reset_burst_tracking(sess);
 }
 
 /* Build and transmit one KEYDOWN as block-packed DATA frames (windowed burst).
@@ -1990,6 +2030,21 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
                 if (n > 0)
                     send_frame(PACKET_TYPE_ARQ_CONTROL, sess->control_mode,
                                (size_t)n, frame, 0);
+                dflow_enter(sess, ARQ_DFLOW_ACK_TX, UINT64_MAX, ARQ_EV_TIMER_RETRY);
+            }
+            else if (irs_can_piggyback(sess))
+            {
+                /* Piggyback ACK: a reply is queued and the forward burst arrived
+                 * clean+complete — send the reply DATA (whose rx_ack_seq acks the
+                 * forward) INSTEAD of a standalone ACK.  The peer is in WAIT_ACK
+                 * (it just sent us a complete burst, now in RX awaiting the ack)
+                 * and already treats a reverse DATA frame as an implicit ACK +
+                 * turn, so this collapses the standalone-ACK keydown and the
+                 * reverse-data keydown into ONE.  The clean-burst RX-mirror climb
+                 * was already credited in irs_receive_data. */
+                irs_reset_burst_tracking(sess);
+                if (g_timing) arq_timing_record_turn(g_timing, true, "piggyback-data");
+                enter_idle_iss(sess, true);   /* -> DATA_TX now; leaves ACK_TX */
             }
             else
             {
@@ -1999,8 +2054,8 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
                 irs_send_burst_ack(sess);
                 if (g_timing)
                     arq_timing_record_ack_tx(g_timing, (int)sess->rx_expected - 1);
+                dflow_enter(sess, ARQ_DFLOW_ACK_TX, UINT64_MAX, ARQ_EV_TIMER_RETRY);
             }
-            dflow_enter(sess, ARQ_DFLOW_ACK_TX, UINT64_MAX, ARQ_EV_TIMER_RETRY);
         }
         else if (ev->id == ARQ_EV_TX_COMPLETE)
         {

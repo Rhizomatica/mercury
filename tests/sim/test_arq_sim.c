@@ -504,6 +504,53 @@ void test_sim_bidirectional_piggyback(void)
     sim_destroy(s);
 }
 
+/* One arm of the piggyback A/B: run a bidirectional (both-ends-hold-data,
+ * uucp-like) exchange with MERCURY_PIGGYBACK_ACK = `setting`, assert both byte
+ * streams intact + the exchange completes, and return the data/ack-phase
+ * keydown count (connect handshake excluded via the reset below). */
+static int piggyback_arm(const char *setting)
+{
+    setenv("MERCURY_PIGGYBACK_ACK", setting, 1);
+    sim_channel_cfg_t chan = { .seed = 9, .per = 0.0, .guard_ms = 100 };
+    sim_t *s = make_connected(&chan);
+    TEST_ASSERT_NOT_NULL(s);
+
+    uint8_t a2b[400], b2a[400];
+    for (int i = 0; i < 400; i++) { a2b[i] = (uint8_t)(i & 0xFF); b2a[i] = (uint8_t)((255 - i) & 0xFF); }
+    sim_endpoint_queue_tx(sim_a(s), a2b, sizeof(a2b));
+    sim_endpoint_queue_tx(sim_b(s), b2a, sizeof(b2a));
+
+    sim_keydown_reset();   /* count only the data/ack phase (connect is identical) */
+    arq_event_t da = { .id = ARQ_EV_APP_DATA_READY };
+    sim_inject(s, sim_a(s), &da);
+    sim_inject(s, sim_b(s), &da);
+    sim_run_until_idle(s, 1200000);
+
+    sim_verdict_t va = sim_prop_integrity(s, sim_a(s), sim_b(s), a2b, sizeof(a2b));
+    TEST_ASSERT_TRUE_MESSAGE(va.ok, va.detail);   /* A -> B intact (no deadlock) */
+    sim_verdict_t vb = sim_prop_integrity(s, sim_b(s), sim_a(s), b2a, sizeof(b2a));
+    TEST_ASSERT_TRUE_MESSAGE(vb.ok, vb.detail);   /* B -> A intact */
+    int kd = sim_keydown_count();
+    sim_destroy(s);
+    return kd;
+}
+
+/* Piggyback ACK: a bidirectional (uucp-like) exchange completes in STRICTLY
+ * FEWER keydowns with MERCURY_PIGGYBACK_ACK on — the IRS sends its reply DATA
+ * (which acks the forward) instead of a standalone-ACK keydown — while both
+ * byte streams stay intact and the exchange completes in both modes. */
+void test_sim_piggyback_fewer_keydowns(void)
+{
+    int off = piggyback_arm("0");
+    int on  = piggyback_arm("1");
+    unsetenv("MERCURY_PIGGYBACK_ACK");
+    fprintf(stderr, "[piggyback] keydowns: off=%d on=%d (%.0f%% fewer)\n",
+            off, on, off > 0 ? 100.0 * (off - on) / off : 0.0);
+    char msg[96];
+    snprintf(msg, sizeof(msg), "piggyback keydowns: on=%d off=%d (want on<off)", on, off);
+    TEST_ASSERT_TRUE_MESSAGE(on < off, msg);
+}
+
 /* Lost-ACK idempotency: pattern ACKs are lost on the reverse path, so the ISS
  * retransmits already-delivered frames.  The IRS must drop the duplicates (the
  * seq<->content mapping is immutable), so the delivered stream is byte-exact
@@ -765,6 +812,7 @@ int main(void)
     RUN_TEST(test_sim_fast_windowed_ack);
     RUN_TEST(test_sim_fast_ack_off_no_tagged);
     RUN_TEST(test_sim_bidirectional_piggyback);
+    RUN_TEST(test_sim_piggyback_fewer_keydowns);
     RUN_TEST(test_sim_lost_ack_idempotent);
     RUN_TEST(test_sim_asymmetric_strong_forward);
 

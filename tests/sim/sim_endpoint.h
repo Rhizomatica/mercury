@@ -40,4 +40,9 @@ bool                       sim_endpoint_take_outframe(sim_endpoint_t *ep, sim_ou
 /* Fast windowed ACK instrumentation: total epoch-tagged pattern ACKs emitted. */
 int                        sim_tagged_pattern_count(void);
 void                       sim_tagged_pattern_reset(void);
+
+/* Piggyback-ACK instrumentation: total PTT keydowns emitted (data keydowns +
+ * pattern ACKs), to show the round-trip keydown reduction. */
+int                        sim_keydown_count(void);
+void                       sim_keydown_reset(void);
 #endif

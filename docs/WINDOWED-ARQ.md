@@ -478,3 +478,37 @@ snr3k) is ready to run there.
 (+12%), and provably neutral at the fringe.  The one remaining gate before
 default-on is the OTA confirmation that the epoch survives a *real* HF reverse
 path at the rate needed to realise the +12% (vs falling back to coded ACK).
+
+## Phase 2d — piggyback ACK (chatty-handshake latency, e.g. uucp)
+
+**Why.** uucp is a request/response protocol; over the ~2 s-turnaround HF link
+every logical round-trip cost **two IRS keydowns + two turns**, because the IRS
+always sent a *standalone* ACK for the forward message and only then — after a
+role flip + guards — sent its reply in a separate keydown. A verbose uucp
+handshake (~8–12 reversals) burned ~20–30 s of pure turnaround.
+
+**Change (one-sided, `MERCURY_PIGGYBACK_ACK`, default OFF).** When the IRS has a
+reply queued and the forward burst arrived clean+complete, it sends the reply
+DATA — whose `rx_ack_seq` already acks the forward — *instead of* a standalone
+ACK. This is the classic TCP piggyback-ACK: it collapses the standalone-ACK
+keydown and the reverse-data keydown into ONE. Gated behind
+`MERCURY_PIGGYBACK_ACK` (`arq_fsm.c` `piggyback_enabled()` / `irs_can_piggyback`),
+inert when off.
+
+**Why safe / no receive-side change.** The peer in `WAIT_ACK` already treats a
+reverse `RX_DATA` as an **implicit ACK + turn flip** (`arq_fsm.c` ~1822:
+`iss_retire_all` + `irs_receive_data`). We promote only against a peer in
+`WAIT_ACK` — it just sent us a complete burst and is now in RX awaiting the ack
+— so the double-ISS-deadlock case guarded elsewhere does not apply. Holes fall
+back to the coded SACK (a single `rx_ack_seq` can't carry a bitmap); no-backlog
+falls back to the standalone pattern ACK; fringe/floor is untouched.
+
+**Validated (deterministic sim):** `test_sim_piggyback_fewer_keydowns` — a
+bidirectional (uucp-like) exchange completes byte-exact in **39% fewer keydowns
+with piggyback on (18 → 11)**, both directions intact, no deadlock. Full unit +
+sim + integration suite green with the flag OFF (default) and the whole sim
+suite (incl. lossy-per20, lost-ACK, asymmetric, fuzz) green with it forced ON.
+
+**Remaining gate:** dummy-load / OTA A/B (`MERCURY_PIGGYBACK_ACK=1` vs `=0`) on a
+real uucp transfer — wall time + turn count from `manual.log` — before any
+default-on decision. Composes with (independent of) `MERCURY_FAST_ACK`.
