@@ -30,7 +30,7 @@ sum_field(){ grep -oE "$1=[0-9]+" | grep -oE '[0-9]+$' | paste -sd+ | bc; }
 echo "# fast-ACK epoch pattern — Watterson '$PRESET' fade, N=$N per point"
 printf "%-9s %-9s | %-9s %-10s %-8s | %-10s %-8s\n" \
        "No" "SNR3k" "tagged_ok" "misdecode" "miss" "false_tag" "bare_miss"
-for No in -30 -26 -22 -20 -18 -16 -14 -12 -10 -8; do
+for No in ${NO_LIST:- -30 -26 -22 -20 -18 -16 -14 -12 -10 -8}; do
   # tagged: pool the 4 epochs
   tot=0; ok=0; mis=0; tmiss=0
   for k in "${TAGGED_KINDS[@]}"; do
