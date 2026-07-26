@@ -451,12 +451,12 @@ void test_sim_fast_windowed_ack(void)
     unsetenv("MERCURY_FAST_ACK");
 }
 
-/* Regression: with the fast ACK OFF (default), a clean multi-block transfer
- * still completes byte-exact and emits ZERO tagged patterns (the coded SACK
- * path is unchanged). */
+/* Regression: with the fast ACK explicitly disabled (MERCURY_FAST_ACK=0), a
+ * clean multi-block transfer still completes byte-exact and emits ZERO tagged
+ * patterns (the coded SACK path is unchanged — the disable override works). */
 void test_sim_fast_ack_off_no_tagged(void)
 {
-    unsetenv("MERCURY_FAST_ACK");
+    setenv("MERCURY_FAST_ACK", "0", 1);
     sim_tagged_pattern_reset();
 
     sim_channel_cfg_t chan = { .seed = 7, .per = 0.0, .guard_ms = 100 };

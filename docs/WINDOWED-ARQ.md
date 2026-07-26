@@ -326,16 +326,40 @@ the last big good-channel lever (est. +15% on top of the +47.6%).
   back to retry/coded-ACK: never an over-retirement, only a missed speedup.
   `ack_epoch`/`data_epoch` default to -1 at every event producer (arq.c, the
   sim, the FSM test harness), so a coded ACK is never mistaken for epoch 0.
-- **Gate.** `MERCURY_FAST_ACK` (getenv) default-OFF: when off the IRS never
-  emits a tagged pattern, so the feature is fully inert and behaviour is exactly
-  today's.  Stays off until a healthy `-x sock` bench (or OTA) confirms the
-  on-air epoch false-classification rate and the +15% gain.
+- **Gate.** `MERCURY_FAST_ACK` (getenv) **default-ON** as of the deterministic
+  fade/fringe validation below (false_tag 0% under Watterson to <-15 dB, +12%
+  bench).  Set `MERCURY_FAST_ACK=0` to disable — then the IRS never emits a
+  tagged pattern, the feature is fully inert, and behaviour is exactly the coded
+  path (kept as an A/B baseline and roll-back).  A misread epoch fails the ISS
+  check and falls back to retry/coded ACK, never an over-retirement, so on-by-
+  default carries no correctness risk; the remaining unknown is only the on-air
+  gain, which the OTA A/B measures.
+- **Whole-window over-retirement fix (found by the default-on flip).**  Turning
+  the fast ACK on by default exposed a latent bug in `test_sim_fade_cliff_
+  downgrades` (fade + 2 % erasure at high ladder rungs): a tagged ACK caused
+  `iss_retire_all` to clear the ENTIRE `[tx_base, tx_seq)` window, but a capped
+  RETRANSMIT keydown re-sends only a SUBSET of the window (selective repeat, e.g.
+  it re-sent seq 42..66 of an outstanding 42..68).  The IRS legitimately tagged
+  that sub-burst "clean complete", the ISS retired 42..68, and the two un-resent
+  frames (67, 68) were silently discarded — the IRS then held every later frame
+  as out-of-order, SACKed base=67 forever, and the ISS rejected it as stale
+  (behind its window).  Permanent wedge → throughput collapse.  Fixed by
+  retiring only THROUGH `tx_burst_hi` (the highest seq the last keydown actually
+  sent, recorded in `send_data_burst`); the un-resent tail stays outstanding and
+  is retransmitted next keydown.  The bound is exact — the IRS tags a burst only
+  when it received it up to its highest seq, so `rx_expected-1 >= tx_burst_hi`.
+  The SAME `iss_retire_all` premise backed the piggyback implicit-ACK path
+  (reverse `RX_DATA` in `WAIT_ACK`), so that now also retires through
+  `tx_burst_hi` and only credits the ladder climb when the whole window drained.
 - **Deterministic tests.** `tests/sim/test_arq_sim.c`:
   `test_sim_fast_windowed_ack` (flag on: clean 3 kB transfer completes
-  byte-exact AND emits >0 tagged patterns — proves the whole chain) and
-  `test_sim_fast_ack_off_no_tagged` (flag off: byte-exact, ZERO tagged — the
-  regression guard).  Plus the DATA byte-7 epoch round-trip in
-  `test_arq_protocol.c`.
+  byte-exact AND emits >0 tagged patterns — proves the whole chain),
+  `test_sim_fast_ack_off_no_tagged` (`MERCURY_FAST_ACK=0`: byte-exact, ZERO
+  tagged — the disable-override guard), and `test_sim_fade_cliff_downgrades`
+  (the over-retirement regression guard: full byte-exact recovery through a
+  fade at high rungs).  Full sim suite green across all four
+  fast-ACK×piggyback on/off combinations.  Plus the DATA byte-7 epoch
+  round-trip in `test_arq_protocol.c`.
 
 ## Phases
 
@@ -487,13 +511,14 @@ always sent a *standalone* ACK for the forward message and only then — after a
 role flip + guards — sent its reply in a separate keydown. A verbose uucp
 handshake (~8–12 reversals) burned ~20–30 s of pure turnaround.
 
-**Change (one-sided, `MERCURY_PIGGYBACK_ACK`, default OFF).** When the IRS has a
+**Change (one-sided, `MERCURY_PIGGYBACK_ACK`, default ON).** When the IRS has a
 reply queued and the forward burst arrived clean+complete, it sends the reply
 DATA — whose `rx_ack_seq` already acks the forward — *instead of* a standalone
 ACK. This is the classic TCP piggyback-ACK: it collapses the standalone-ACK
 keydown and the reverse-data keydown into ONE. Gated behind
-`MERCURY_PIGGYBACK_ACK` (`arq_fsm.c` `piggyback_enabled()` / `irs_can_piggyback`),
-inert when off.
+`MERCURY_PIGGYBACK_ACK` (`arq_fsm.c` `piggyback_enabled()` / `irs_can_piggyback`);
+set `MERCURY_PIGGYBACK_ACK=0` to disable it back to the standalone-ACK path (A/B
+baseline / roll-back).
 
 **Why safe / no receive-side change.** The peer in `WAIT_ACK` already treats a
 reverse `RX_DATA` as an **implicit ACK + turn flip** (`arq_fsm.c` ~1822:
@@ -506,9 +531,13 @@ falls back to the standalone pattern ACK; fringe/floor is untouched.
 **Validated (deterministic sim):** `test_sim_piggyback_fewer_keydowns` — a
 bidirectional (uucp-like) exchange completes byte-exact in **39% fewer keydowns
 with piggyback on (18 → 11)**, both directions intact, no deadlock. Full unit +
-sim + integration suite green with the flag OFF (default) and the whole sim
-suite (incl. lossy-per20, lost-ACK, asymmetric, fuzz) green with it forced ON.
+sim + integration suite green with the default (now ON), and the whole sim suite
+(incl. lossy-per20, lost-ACK, asymmetric, fuzz) green with it explicitly forced
+`=0` and `=1` — a lost piggyback degrades to the normal lost-ACK → retransmit
+path, so on-by-default adds no failure mode.
 
-**Remaining gate:** dummy-load / OTA A/B (`MERCURY_PIGGYBACK_ACK=1` vs `=0`) on a
-real uucp transfer — wall time + turn count from `manual.log` — before any
-default-on decision. Composes with (independent of) `MERCURY_FAST_ACK`.
+**Remaining gate:** on-air confirmation of the *magnitude* of the gain — a
+dummy-load / OTA A/B (`MERCURY_PIGGYBACK_ACK=1` vs `=0`) on a real uucp
+transfer, wall time + turn count from `manual.log`. On by default so Pedro's
+clone-and-test measures the win directly; `=0` reproduces the old path for the
+A/B. Composes with (independent of) `MERCURY_FAST_ACK`.

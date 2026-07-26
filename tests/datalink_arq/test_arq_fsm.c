@@ -13,6 +13,7 @@
 
 #include <string.h>
 #include <stdint.h>
+#include <stdlib.h>   /* setenv / unsetenv (fast-ACK default toggle) */
 
 #include "unity.h"
 #include "fff.h"
@@ -948,11 +949,14 @@ void test_win_rx_clean_single_frame_pattern_ack(void)
     TEST_ASSERT_EQUAL_UINT(0, fake_send_tx_frame_fake.call_count);  /* no coded ack */
 }
 
-/* A clean MULTI-frame burst is acked by a CODED ACK carrying rcv_base (not a
- * bare pattern): a seq-less pattern would be ambiguous across the sender's
- * window, so a stale one could wrongly retire live frames. */
+/* With the fast windowed ACK disabled (MERCURY_FAST_ACK=0), a clean MULTI-frame
+ * burst is acked by a CODED ACK carrying rcv_base (not a bare pattern): a
+ * seq-less bare pattern would be ambiguous across the sender's window, so a
+ * stale one could wrongly retire live frames.  This is the coded fallback the
+ * disable override selects (and the whole path when fast ACK is off). */
 void test_win_rx_clean_multi_frame_coded_ack(void)
 {
+    setenv("MERCURY_FAST_ACK", "0", 1);
     goto_connected_irs();
     RESET_FAKE(fake_send_tx_frame);
     RESET_FAKE(fake_send_pattern_ack);
@@ -971,7 +975,9 @@ void test_win_rx_clean_multi_frame_coded_ack(void)
     TEST_ASSERT_EQUAL_UINT8(ARQ_SUBTYPE_ACK, hdr.subtype);
     TEST_ASSERT_TRUE(hdr.flags & ARQ_FLAG_SACK);
     TEST_ASSERT_EQUAL_UINT8(2, hdr.rx_ack_seq);   /* rcv_base = 2 (both delivered) */
+    unsetenv("MERCURY_FAST_ACK");
 }
+
 
 /* ISS: a SACK naming a subset retires those seqs and retransmits ONLY the
  * holes.  Drive to WAIT_ACK with a window, then feed a SACK. */

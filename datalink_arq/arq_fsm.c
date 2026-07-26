@@ -31,30 +31,30 @@
 _Static_assert(ARQ_PATTERN_TAGGED == MFSK_PATTERN_TAGGED,
                "ARQ/MFSK tagged-pattern bit mismatch");
 
-/* Fast windowed ACK (epoch-tagged pattern): OFF by default until a healthy
- * bench / OTA run confirms the on-air epoch false-classification rate and the
- * throughput gain.  When off, the IRS never emits a tagged pattern, so the
- * whole feature is inert and behaviour is exactly today's.  (getenv per burst
- * ACK is cheap and lets tests toggle it; the env is set once at startup in
- * production.) */
+/* Fast windowed ACK (epoch-tagged pattern): ON by default (deterministically
+ * validated — false_tag 0% under Watterson fade to <-15 dB, +12% bench; a
+ * misread epoch fails the ISS check and falls back to coded/retry, never an
+ * over-retirement).  Set MERCURY_FAST_ACK=0 to disable (e.g. for an A/B or a
+ * roll-back).  getenv per burst ACK is cheap and lets tests toggle it. */
 static bool fast_ack_enabled(void)
 {
     const char *e = getenv("MERCURY_FAST_ACK");
-    return e && e[0] == '1';
+    return !(e && e[0] == '0');
 }
 
-/* Piggyback ACK (chatty-handshake latency cut, e.g. uucp): OFF by default until
- * a dummy-load / OTA A/B confirms the turn/keydown reduction on a real link.
- * When ON, the IRS — on a CLEAN complete forward burst with a reply already
- * queued — sends the reply DATA (which carries rx_ack_seq acking the forward)
- * INSTEAD of a standalone ACK, collapsing the standalone-ACK keydown + the
- * reverse-data keydown into one.  The peer's WAIT_ACK already treats a reverse
- * DATA frame as an implicit ACK + turn, so this needs no receive-side change.
- * When off, behaviour is exactly today's. */
+/* Piggyback ACK (chatty-handshake latency cut, e.g. uucp): ON by default.  On a
+ * CLEAN complete forward burst with a reply already queued, the IRS sends the
+ * reply DATA (whose rx_ack_seq acks the forward) INSTEAD of a standalone ACK,
+ * collapsing the standalone-ACK keydown + the reverse-data keydown into one (39%
+ * fewer keydowns in the bidirectional sim).  No receive-side change — the peer's
+ * WAIT_ACK already treats a reverse DATA frame as an implicit ACK + turn, and a
+ * lost piggyback degrades to the normal lost-ACK -> retransmit path (validated
+ * by the lost-ACK / lossy / fuzz sim tests).  Set MERCURY_PIGGYBACK_ACK=0 to
+ * disable (A/B or roll-back). */
 static bool piggyback_enabled(void)
 {
     const char *e = getenv("MERCURY_PIGGYBACK_ACK");
-    return e && e[0] == '1';
+    return !(e && e[0] == '0');
 }
 
 /* ======================================================================
@@ -860,6 +860,13 @@ static void send_data_burst(arq_session_t *sess)
     sess->tx_burst_retx  = retx_burst;
     sess->tx_burst_count = total;   /* blocks in this keydown (ladder credit) */
 
+    /* Highest block seq emitted in THIS keydown.  A whole-window ACK retires
+     * only through it, so a capped retransmit (which re-sends a subset of the
+     * window) never causes the ISS to discard the un-resent tail.  The seqs a
+     * keydown packs are monotonic within the window, so the last block of the
+     * last frame is the maximum. */
+    sess->tx_burst_hi = fseq[nframes - 1][fcnt[nframes - 1] - 1];
+
     /* Fast windowed ACK: advance the 2-bit keydown epoch so a tagged pattern
      * ACK for THIS burst is distinguishable from a stale echo of the previous
      * one.  Stamped into every DATA frame of the burst; the ISS remembers it to
@@ -1536,21 +1543,53 @@ static bool iss_retire_one(arq_session_t *sess)
     return !arq_win_nonempty(sess);
 }
 
-/* ISS: the WHOLE outstanding burst was delivered (an implicit ACK carried by
- * the peer's reverse DATA — the peer would not send new data before acking
- * ours).  Every frame is an immutable unit, so clear all slots and advance. */
-static void iss_retire_all(arq_session_t *sess)
+/* ISS: a whole-keydown ACK arrived — a tagged fast-ACK (the IRS echoed our
+ * keydown epoch after a clean, complete, hole-free reception), or an implicit
+ * ACK carried by the peer's reverse DATA (it would not send new data before
+ * acking ours).  Both are seq-LESS as to *how much* they cover, so the ISS
+ * retires only THROUGH `through` = the highest seq the last keydown actually
+ * sent (sess->tx_burst_hi).
+ *
+ * This bound is exact, not conservative: the IRS emits a tagged pattern only
+ * when it received the whole burst up to and including its highest seq (a lost
+ * tail frame would leave no rem==0 completion, or a held out-of-order hole —
+ * either way it would coded-SACK instead), so rx_expected-1 >= tx_burst_hi and
+ * every seq <= tx_burst_hi is genuinely delivered.  A capped RETRANSMIT keydown
+ * re-sends only a subset of the window (selective repeat); the un-resent tail
+ * above tx_burst_hi stays outstanding and is retransmitted next keydown, rather
+ * than being silently discarded (which stalls the peer forever waiting for
+ * frames the ISS believes it delivered). */
+static void iss_retire_through(arq_session_t *sess, uint8_t through)
 {
+    uint8_t span = (uint8_t)(sess->tx_seq - sess->tx_base);   /* outstanding seqs */
+    if (span == 0)
+        return;                                    /* nothing outstanding */
+    uint8_t rel = (uint8_t)(through - sess->tx_base);
+    if (rel >= span)                               /* whole-window keydown */
+        rel = (uint8_t)(span - 1);
+
     for (int i = 0; i < ARQ_WIN_SLOTS; i++)
     {
-        sess->tx_win[i].present = false;
-        sess->tx_win[i].len     = 0;
-        sess->tx_win[i].retx    = false;
+        struct arq_txslot *sl = &sess->tx_win[i];
+        if (sl->present && (uint8_t)(sl->seq - sess->tx_base) <= rel)
+        {
+            sl->present = false;
+            sl->len     = 0;
+            sl->retx    = false;
+        }
     }
-    sess->tx_base             = sess->tx_seq;
-    sess->tx_burst_retx       = false;
+    /* Advance base over the retired (contiguous) prefix to the next live seq. */
+    while (sess->tx_base != sess->tx_seq &&
+           !sess->tx_win[sess->tx_base % ARQ_WIN_SLOTS].present)
+        sess->tx_base = (uint8_t)(sess->tx_base + 1);
+
     sess->last_tx_progress_ms = time_now_ms();
-    sess->tx_retries_left     = ARQ_DATA_RETRY_SLOTS;
+    if (!arq_win_nonempty(sess))
+    {
+        sess->tx_base         = sess->tx_seq;
+        sess->tx_burst_retx   = false;
+        sess->tx_retries_left = ARQ_DATA_RETRY_SLOTS;
+    }
     if (g_cbs.send_buffer_status)
         g_cbs.send_buffer_status(session_tx_backlog(sess));
 }
@@ -1767,9 +1806,11 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
                               ev->ack_epoch, (int)sess->tx_burst_epoch);
                         break;
                     }
-                    HLOGD(LOG_COMP, "Fast windowed ACK epoch=%d -> retire_all [%d..%d)",
-                          ev->ack_epoch, (int)sess->tx_base, (int)sess->tx_seq);
-                    iss_retire_all(sess);   /* fast windowed ACK: whole burst clean */
+                    HLOGD(LOG_COMP,
+                          "Fast windowed ACK epoch=%d -> retire through %d (win %d..%d)",
+                          ev->ack_epoch, (int)sess->tx_burst_hi,
+                          (int)sess->tx_base, (int)sess->tx_seq);
+                    iss_retire_through(sess, sess->tx_burst_hi);
                 }
                 else
                     iss_retire_one(sess);
@@ -1903,8 +1944,16 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
                              sess->tx_retries_left == ARQ_DATA_RETRY_SLOTS;
                 if (arq_win_nonempty(sess))
                 {
-                    iss_retire_all(sess);
-                    record_tx_outcome(sess, clean);
+                    /* Implicit ACK: the peer received our last keydown up to at
+                     * least its highest seq (it moved on to sending), so retire
+                     * only through tx_burst_hi — a capped retransmit's un-resent
+                     * tail must survive (see iss_retire_through). */
+                    iss_retire_through(sess, sess->tx_burst_hi);
+                    /* Credit the climb only if the whole window drained (the
+                     * keydown covered everything outstanding); a surviving tail
+                     * means the burst was partial — no clean credit yet. */
+                    if (!arq_win_nonempty(sess))
+                        record_tx_outcome(sess, clean);
                 }
                 irs_receive_data(sess, ev);
                 irs_arm_ack_deadline(sess, ev);

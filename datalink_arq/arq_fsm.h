@@ -186,6 +186,15 @@ typedef struct
 
     /* --- Sequence numbers --- */
     uint8_t  tx_seq;                   /* next seq we will send                */
+    uint8_t  tx_burst_hi;              /* highest block seq sent in the LAST
+                                        * keydown.  A whole-window ACK (tagged
+                                        * fast-ACK or an implicit reverse-DATA
+                                        * ACK) retires only THROUGH this seq: a
+                                        * retransmit keydown re-sends only a
+                                        * subset of the window (selective repeat),
+                                        * so the un-resent tail above it must
+                                        * survive or the peer stalls waiting for
+                                        * frames the ISS thinks it delivered.   */
     uint8_t  rx_expected;              /* next seq we expect from peer         */
 
     /* --- Mode / speed --- */
