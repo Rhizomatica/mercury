@@ -61,8 +61,8 @@ are **not** secret. The maintainer's copies live under
 ## Prerequisites
 
 ```bash
-# headless X + PKCS#11 + verify + Java (for jsign)
-sudo apt-get install -y xvfb fluxbox xdotool opensc osslsigncode default-jre-headless
+# headless X + PKCS#11 + verify + Java (for jsign) + screenshots (diagnostics)
+sudo apt-get install -y xvfb fluxbox xdotool opensc osslsigncode default-jre-headless imagemagick
 
 # jsign — the signer (single jar); point JSIGN_JAR at it (or put `jsign` on PATH)
 curl -fsSLo ~/.local/share/jsign.jar \
@@ -97,6 +97,56 @@ The Makefile calls `code-signing/sign.sh`, which:
 Signing is **opt-in**: `make windows-zip` (and the whole flow) stays *unsigned*
 unless `CERTUM_EMAIL` is set in the environment, so ordinary builds never touch
 the cloud.
+
+## Troubleshooting
+
+**Check the machine first — it takes two seconds and touches no cloud service:**
+
+```bash
+code-signing/sign-diag.sh            # environment report (tools, creds, clock, display)
+code-signing/sign-diag.sh --login    # ...and attempt a real login, snapshotting every step
+```
+
+It never prints a secret: the e-mail is masked and the TOTP is only
+shape-checked (a printed code would be a live 2FA credential).
+
+### `ERROR: token did not come online (login likely failed)`
+
+Step 4 timed out: 60 s after the login click, no PKCS#11 token appeared. The
+message names *a* symptom, not the cause — **five** unrelated faults land here,
+so do not assume the password is wrong:
+
+| Cause | How to confirm | Fix |
+|---|---|---|
+| **`opensc` not installed** — `pkcs11-tool` is what asks "is a token there?". Without it the probe can never succeed *even though the login worked*. | `command -v pkcs11-tool` | `sudo apt-get install -y opensc` |
+| **Clock skew > 30 s** — the TOTP is time-based, so every code typed is stale. | `timedatectl` → `System clock synchronized: yes` | `sudo timedatectl set-ntp true` |
+| **Wrong account / no certificate** — the login succeeds but that account holds no cloud cert, so no token ever appears. | screenshot shows a normal logged-in window | use the account the cert was issued to |
+| **Stale or malformed otpauth seed** — the file must hold the `otpauth://totp/...?secret=...` **URI**, not a password. | `sign-diag.sh` → "TOTP generates" | re-export the seed from the SimplySign enrolment QR |
+| **SimplySign Desktop ≠ 2.9.14** — the login is a *blind GUI drive*; the clicks land at fixed fractions (39 % / 76 % / 94 %) of the dialog. A different build moves the fields, so the credentials go into the wrong widget. | screenshot shows a dialog with fields still empty / a different layout | install 2.9.14, or re-calibrate the percentages in `ss_login` |
+
+Since the login is blind, **the screenshot is the diagnostic**. Every failure
+now writes one, plus a window inventory, to `$SS_DIAG_DIR`
+(default `/tmp/mercury-signing-diag`):
+
+```bash
+SS_DEBUG=1 make windows-zip-signed     # snapshot every step, not just the failure
+ls /tmp/mercury-signing-diag/          # 01-login-window.png, 02-filled.png, ...
+```
+
+`02-filled.png` is the one that settles it: if the e-mail and code are sitting
+in the right fields, the credentials are being *delivered* and the fault is the
+account or the clock; if they are not, it is the GUI layout.
+
+### Other failures
+
+| Symptom | Cause |
+|---|---|
+| `missing required tool(s): …` | Preflight — install the named packages (the whole list is in Prerequisites). |
+| `display :99 is already in use by another X server` | Something else owns `:99`; the login refuses to type credentials into a session it does not own. Use `SS_DISPLAY=:98`. |
+| `Xvfb did not come up on :99` | Stale lock: `rm -f /tmp/.X99-lock`. |
+| `the token probe never ran` | `pkcs11-tool` itself failed — usually `opensc` missing, or an empty `$USER` (the bundled OpenSSL NULL-derefs; `sign-lib.sh` exports it). |
+| `no signing key visible via SunPKCS11` | The session is live but the cert is not on this account — or `keytool`/Java is missing. |
+| `WARNING: no signing method available — X is unsigned` | `CERTUM_EMAIL` is unset, so signing was skipped (this is the opt-in default, not an error). |
 
 ## CI
 
