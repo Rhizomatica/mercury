@@ -8,7 +8,15 @@ troubleshooting and CI in [`../docs/WINDOWS-SIGNING.md`](../docs/WINDOWS-SIGNING
 sign-lib.sh      signing primitives (sourced): login-once, sign, logout
 sign.sh          sign one or more .exe IN PLACE (reuses one login)
 sign-logout.sh   tear the SimplySign session down
+sign-diag.sh     "why won't this work here?" — environment report, no cloud call
 ```
+
+**Signing failed? Run `./sign-diag.sh` first.** The login is a blind GUI drive,
+so a missing package, a skewed clock, a busy display and a genuinely rejected
+password all used to surface as the same unhelpful `token did not come online`.
+`sign-diag.sh` checks each separately and names the one that is wrong; add
+`--login` to attempt the real login with a screenshot of every step. See the
+Troubleshooting section of [`../docs/WINDOWS-SIGNING.md`](../docs/WINDOWS-SIGNING.md).
 
 ## Secrets — where they go (NEVER in the repo)
 
