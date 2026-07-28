@@ -158,15 +158,39 @@ GitHub Actions secrets. Move it to `.github/workflows/` and add the two secrets.
 
 ## What can be signed, and where
 
-| Artifact | Built on | Signed on | Tool |
+| Artifact | Ships in | Built on | Signed by |
 |---|---|---|---|
-| `mercury.exe`, `mercury-ui.exe` | Linux (mingw) | Linux | `osslsigncode` via PKCS#11 (`make sign-windows`) |
-| `Mercury_*_Setup.exe` (installer) | Windows or Wine (Inno Setup ISCC) | Linux | `osslsigncode` via PKCS#11 (`make sign-windows-bin BIN=Setup.exe`) |
+| `mercury.exe` (console) | ZIP | Linux (mingw) | `make windows-zip-signed` |
+| `mercury-ui.exe` (GUI, core embedded) | ZIP **and** installer | Linux (mingw) | `make windows-zip-signed` / `make windows-installer-signed` |
+| `Mercury_*_Setup.exe` (installer) | — | Windows or Wine (Inno Setup ISCC) | `make windows-installer-signed` (or `make sign-windows-bin BIN=…`) |
 
-Everything is signed on Linux with `osslsigncode` + PKCS#11. The Inno Setup
-compiler (ISCC) builds the installer unsigned — then the resulting `.exe` is
-signed afterward, exactly like the payload binaries. The Inno `SignTool`
-directive is not used; post-build signing is simpler and works from CI.>
+Everything is signed on Linux with **jsign** over PKCS#11 (see "Three facts"
+above); `osslsigncode` only verifies. The Inno `SignTool` directive is not
+used — post-build signing is simpler and works from CI.
+
+> **Sign the payload BEFORE building the installer.** ISCC packs whatever is
+> sitting in `windows-installer/`, so signing only the finished `Setup.exe`
+> ships a signed installer that installs an **unsigned** program: the publisher
+> shows on the download and then disappears the moment the user runs it.
+> `make windows-installer-signed` enforces the order — payload, then ISCC, then
+> installer — in a single SimplySign session.
+
+```bash
+# One command, one cloud login: signs mercury-ui.exe, builds the installer,
+# signs the installer.  ISCC is a Windows tool; point at it via Wine, or leave
+# ISCC unset to stop after the payload and get the two remaining commands.
+make windows-installer-signed \
+     ISCC='wine ~/.wine/drive_c/Program Files (x86)/Inno Setup 6/ISCC.exe'
+```
+
+Note the installer packs **only `mercury-ui.exe`** — it is the single-binary
+build with the modem core linked in (`-tags mercury_embedded`), so there is no
+separate console `mercury.exe` inside the installer. The console binary ships
+in the ZIP.
+
+`installer.iss` carries its own `MyAppVersion`; keep it in step with
+`MERCURY_VERSION` in `common/mercury_version.h` or the artifact name and the
+build will disagree.>
 
 ## Setup: SimplySign Desktop + signing scripts
 
