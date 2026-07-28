@@ -50,6 +50,7 @@
 #include "framer.h"
 #include "hermes_log.h"
 #include "radio_io.h"
+#include "modem.h"
 
 static pthread_t tid[7];
 static bool tid_started[7];
@@ -403,6 +404,48 @@ static void execute_control_command(char *buffer)
 
     if (!strncmp(buffer, "P2P", strlen("P2P")))
     {
+        tcp_write(CTL_TCP_PORT, (uint8_t *)"OK\r", 3);
+        return;
+    }
+
+    if (!strncmp(buffer, "TUNE", strlen("TUNE")))
+    {
+        /* VARA-compatible tuning carrier, so an ATU can find a match:
+         *   TUNE -<dB>   key TX and hold a ~1 kHz tone at that drive level
+         *   TUNE ?       report the current drive level
+         *   TUNE OFF     unkey
+         * The carrier also stops on its own after modem.c's hard safety
+         * deadline — a keyed tone has no protocol underneath it, so a host
+         * that dies or forgets TUNE OFF must not leave the radio keyed. */
+        char arg[16] = {0};
+        if (sscanf(buffer, "TUNE %15s", arg) != 1)
+        {
+            tcp_write(CTL_TCP_PORT, (uint8_t *)"WRONG\r", 6);
+            return;
+        }
+
+        if (!strncasecmp(arg, "OFF", strlen("OFF")))
+        {
+            modem_tune_stop();
+            tcp_write(CTL_TCP_PORT, (uint8_t *)"OK\r", 3);
+            return;
+        }
+
+        if (arg[0] == '?')
+        {
+            char reply[32];
+            int n = snprintf(reply, sizeof(reply), "TUNE %g\r",
+                             (double)modem_tune_level_dbfs());
+            tcp_write(CTL_TCP_PORT, (uint8_t *)reply, (size_t)n);
+            return;
+        }
+
+        float dbfs = 0.0f;
+        if (sscanf(arg, "%f", &dbfs) != 1 || modem_tune_start(dbfs) != 0)
+        {
+            tcp_write(CTL_TCP_PORT, (uint8_t *)"WRONG\r", 6);
+            return;
+        }
         tcp_write(CTL_TCP_PORT, (uint8_t *)"OK\r", 3);
         return;
     }

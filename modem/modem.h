@@ -87,4 +87,26 @@ float modem_get_tx_gain(void);
 // silent.
 float modem_get_tx_peak_dbfs(void);
 
+// --- ATU tuning carrier (host "TUNE" command) ---
+// Key the transmitter and emit a steady ~1 kHz tone so an antenna tuner can
+// find a match, VARA-style. `dbfs` is the absolute level at the sound card in
+// dBFS and must be in [-60, 0]; the modulator TX gain is deliberately NOT
+// applied, so "TUNE -15" really is -15 dBFS.
+//
+// The carrier ALWAYS stops on its own after a hard safety deadline (see
+// MODEM_TUNE_MAX_S in modem.c) even if the host never sends TUNE OFF, dies, or
+// drops the control socket — nothing else bounds a keyed carrier. Re-issuing
+// while tuning retunes the level and restarts that deadline.
+//
+// Returns 0 on success, -1 if the level is out of range, -2 if a link is up or
+// a burst is in flight (the two never key together), -3 if the thread failed.
+int   modem_tune_start(float dbfs);
+// Stop the carrier and unkey. Safe to call when not tuning; blocks until the
+// tuning thread has unkeyed.
+void  modem_tune_stop(void);
+// True while the carrier is keyed.
+bool  modem_tune_active(void);
+// Most recently requested tuning level in dBFS (what "TUNE ?" reports).
+float modem_tune_level_dbfs(void);
+
 #endif // MODEM_H

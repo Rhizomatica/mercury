@@ -322,6 +322,30 @@ Query the current signal-to-noise ratio.
 .B BITRATE
 Query the current bitrate.
 .TP
+.BI "TUNE " -dB
+Key the transmitter and hold a steady 1000 Hz tone at the given level in dBFS,
+so an antenna tuner can find a match (for example
+.BR "TUNE -15" ).
+Accepted levels are \-60 to 0 dBFS.
+The level is absolute at the sound card: the modulator TX gain is deliberately
+not applied, so
+.B TUNE -15
+really is \-15 dBFS.
+Re-issuing while tuning changes the level and restarts the safety timer.
+Refused while a link is connected or a burst is in flight.
+.IP
+The carrier
+.B always
+stops by itself after 60 seconds, even if the host never sends
+.BR "TUNE OFF" ,
+crashes, or drops the control socket \(em nothing else bounds a keyed carrier.
+.TP
+.B TUNE ?
+Query the current tuning drive level.
+.TP
+.B TUNE OFF
+Stop the tuning carrier and unkey.
+.TP
 .BI "CQFRAME " "callsign " bandwidth
 Transmit a CQ broadcast frame.
 .I bandwidth

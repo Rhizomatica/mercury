@@ -31,7 +31,7 @@ over HF radio links in rural and emergency scenarios.
 - **Adaptive payload "gear-shifting"** (DATAC4/DATAC3/DATAC1) driven by link quality and backlog, with DATAC13 used for control signaling.
 - **Per-direction mode selection**: each path (A→B and B→A) negotiates its mode independently based on local SNR.
 - **Broadcast data mode** in parallel to ARQ, with dedicated broadcast framing and TCP ingress port.
-- **VARA-style TCP TNC interface** with separate control and data sockets (base port and base+1), including commands/status like `MYCALL`, `LISTEN`, `CONNECT`, `BUFFER`, `SN`, and `BITRATE`.
+- **VARA-style TCP TNC interface** with separate control and data sockets (base port and base+1), including commands/status like `MYCALL`, `LISTEN`, `CONNECT`, `BUFFER`, `SN`, `BITRATE`, and `TUNE` (a 1 kHz ATU tuning carrier at a requested dBFS level, with a hard 60 s unkey timer).
 - **Audio modem operation over multiple backends** (`alsa`, `pulse`, `oss`, `coreaudio`, `aaudio`, `dsound`, `wasapi`, `shm`, `null`, `fifo`) with split RX/TX modem orchestration.
 - **Direct radio control** via HAMLIB or HERMES shared-memory interface for direct PTT keying.
 
