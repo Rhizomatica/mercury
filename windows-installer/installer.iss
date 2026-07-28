@@ -60,7 +60,6 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 Name: "{app}"; Permissions: users-modify
 
 [Files]
-Source: "run_mercury.bat"; DestDir: "{app}"; Flags: ignoreversion
 Source: "mercury.ini"; DestDir: "{app}"; Flags: ignoreversion; Permissions: users-modify
 Source: "../LICENSE"; DestDir: "{app}"; Flags: ignoreversion
 Source: "../assets/mercury.ico"; DestDir: "{app}"; Flags: ignoreversion
