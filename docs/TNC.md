@@ -324,6 +324,50 @@ CALLINT 0\r
 
 ---
 
+### TUNE
+
+Key the transmitter and hold a steady **1000 Hz tone**, so an antenna tuner
+can find a match — and so an operator has a known reference to set drive
+against.  Same syntax as VARA HF / VARA SAT.
+
+```
+TUNE -15\r      key TX, tone at -15 dBFS
+TUNE ?\r        report the current drive level
+TUNE OFF\r      stop the tone and unkey
+```
+
+The level is **absolute dBFS at the sound card**, in the range `-60` to `0`.
+It deliberately does *not* pass through the modulator TX gain (`tx_gain`):
+`TUNE -15` means −15 dBFS, not −15 dBFS scaled by whatever the modulator gain
+happens to be — otherwise it would be useless as a reference for setting that
+very gain.
+
+Re-issuing `TUNE <level>` while a carrier is already running changes the level
+and restarts the safety timer, which is what adjusting drive on a live tuner
+requires.
+
+> **The carrier always stops by itself after 60 seconds.**
+> A tuning carrier is the one transmission with no protocol underneath it, so
+> nothing else bounds it: a host that crashes, forgets `TUNE OFF`, or simply
+> drops the control socket would otherwise leave the radio keyed — cooking the
+> finals and jamming the channel.  Do not rely on the timer for normal
+> operation; send `TUNE OFF` when the tuner is done.
+
+`TUNE` is **refused** (`WRONG\r`) when:
+
+- the level is outside `-60 .. 0` dBFS, or is not a number;
+- an ARQ link is currently connected, or a burst is in flight — a tuning
+  carrier and a data burst must never key the radio at the same time.
+
+While the carrier is up, ARQ transmissions are suppressed; `TUNE OFF` (or the
+timer) restores normal operation.  The usual `PTT ON\r` / `PTT OFF\r`
+asynchronous lines bracket the carrier exactly as they do a data burst.
+
+**Response:** `OK\r` on success, `WRONG\r` on error.
+`TUNE ?` replies `TUNE <level>\r` (for example `TUNE -15\r`).
+
+---
+
 
 ## Asynchronous Responses (Mercury → Client)
 
