@@ -195,8 +195,8 @@ curl -fsSLO https://github.com/jrsoftware/issrc/releases/download/is-6_7_3/innos
 wine innosetup-6.7.3.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP-
 ```
 
-ISCC writes the installer to `windows-installer/Output/` (the script sets no
-`OutputDir`).
+ISCC writes the installer to the **project root** (`OutputDir=..` in the
+script), beside the release ZIP.
 
 The installer packs **both** binaries and signs both before ISCC runs:
 `mercury-ui.exe` (the single-binary GUI, modem core linked in via

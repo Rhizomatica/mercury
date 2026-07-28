@@ -41,6 +41,10 @@ DisableDirPage=no
 DefaultGroupName=Mercury HF Modem
 DisableProgramGroupPage=no
 LicenseFile=../LICENSE
+; Emit the installer in the project root, next to the release ZIP, rather than
+; in a windows-installer/Output/ subdirectory nobody thinks to look in.
+; Relative to this script's directory.  Root *.exe is already gitignored.
+OutputDir=..
 OutputBaseFilename=Mercury_{#MyAppVersion}_Setup
 Compression=lzma
 SolidCompression=yes
