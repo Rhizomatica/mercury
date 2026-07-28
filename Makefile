@@ -415,10 +415,11 @@ windows-zip-signed: windows fyne-ui-windows
 # to finish on a Windows box.
 ISCC     ?=
 ISCC_RUN ?=
-# installer.iss sets no OutputDir, so Inno writes next to the script in Output/.
-# Located by glob after the build rather than hardcoded, so a future OutputDir
-# or version change cannot leave us signing a stale file — or nothing at all.
-WINDOWS_SETUP_GLOB = $(WINDOWS_INSTALLER_DIR)/Output/Mercury_*_Setup.exe
+# installer.iss sets OutputDir=.. so the installer lands in the project root,
+# beside the release ZIP.  Located by glob after the build rather than
+# hardcoded, so a version change cannot leave us signing a stale file — or
+# nothing at all.
+WINDOWS_SETUP_GLOB = Mercury_*_Setup.exe
 
 windows-installer-signed: windows-installer
 	$(call win_sign,$(WINDOWS_INSTALLER_DIR)/$(FYNE_UI_BIN))
@@ -430,7 +431,7 @@ windows-installer-signed: windows-installer
 		echo "Payloads $(FYNE_UI_BIN) + mercury.exe staged in $(WINDOWS_INSTALLER_DIR)/ (see the signing results above)."; \
 		echo "ISCC is not set, so the installer itself was not built.  Finish with:"; \
 		echo "  ISCC $(WINDOWS_INSTALLER_DIR)/installer.iss"; \
-		echo "  make sign-windows-bin BIN=$(WINDOWS_INSTALLER_DIR)/Output/Mercury_$(MERCURY_VERSION)_Setup.exe"; \
+		echo "  make sign-windows-bin BIN=Mercury_\$$(VERSION)_Setup.exe"; \
 		echo ""; \
 	else \
 		echo "Building installer with ISCC..."; \
@@ -491,7 +492,7 @@ windows-installer: windows fyne-ui-windows
 	@echo "  ISCC $(WINDOWS_INSTALLER_DIR)/installer.iss"
 	@echo ""
 	@echo "Then sign the resulting .exe on Linux:"
-	@echo "  make sign-windows-bin BIN=$(WINDOWS_INSTALLER_DIR)/Output/Mercury_$(MERCURY_VERSION)_Setup.exe"
+	@echo "  make sign-windows-bin BIN=Mercury_\$$(VERSION)_Setup.exe"
 	@echo ""
 
 clean:
