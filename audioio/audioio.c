@@ -27,6 +27,7 @@
 #include "audioio.h"
 #include "hermes_log.h"
 #include "resampler.h"
+#include "pcm24.h"
 
 extern volatile bool shutdown_;
 
@@ -907,8 +908,14 @@ void *radio_playback_thread(void *device_ptr)
      * garbage and only part of each period is written. */
     bool playback_is_float = (cfg->format == FFAUDIO_F_FLOAT32);
     bool playback_is_int16 = (cfg->format == FFAUDIO_F_INT16);
+    /* FFAUDIO_F_INT24 is 24 bits PACKED into 3 bytes — the 24-bit format ALSA
+     * and PulseAudio expose (SND_PCM_FORMAT_S24_3LE).  It is not the same as
+     * FFAUDIO_F_INT24_4, which carries a 24-bit sample in a 4-byte container
+     * and is what WASAPI negotiates on Windows.  Handling only the latter left
+     * 24-bit playback working on Windows but rejected on Linux. */
+    bool playback_is_int24 = (cfg->format == FFAUDIO_F_INT24);
 
-    if (!playback_is_float && !playback_is_int16 &&
+    if (!playback_is_float && !playback_is_int16 && !playback_is_int24 &&
         cfg->format != FFAUDIO_F_INT32 && cfg->format != FFAUDIO_F_INT24_4)
     {
         HLOGE("audio-play", "Unsupported playback format %d, aborting", cfg->format);
@@ -978,6 +985,20 @@ void *radio_playback_thread(void *device_ptr)
                 o[idx] = (int16_t)(left >> 16);
                 if (cfg->channels > 1)
                     o[idx + 1] = (int16_t)(right >> 16);
+            }
+            else if (playback_is_int24)
+            {
+                /* 3 bytes per sample, little-endian, sample value scaled from
+                 * int32 full scale down to 24-bit (/256 — the exact inverse of
+                 * the capture side's *256).  Division, not >>8: it is defined
+                 * for negatives, and the byte extraction goes through an
+                 * unsigned copy because right-shifting a negative int is
+                 * implementation-defined. */
+                uint8_t *o = (uint8_t *) buffer_output_stereo;
+                size_t off = (size_t) idx * PCM24_BYTES;
+                pcm24_wr_le(o + off, left);
+                if (cfg->channels > 1)
+                    pcm24_wr_le(o + off + PCM24_BYTES, right);
             }
             else if (playback_is_float)
             {
@@ -1186,9 +1207,11 @@ void *radio_capture_thread(void *device_ptr)
 
     bool capture_is_float = (cfg->format == FFAUDIO_F_FLOAT32);
     bool capture_is_int16 = (cfg->format == FFAUDIO_F_INT16);
+    /* 24-bit packed in 3 bytes — see the matching note in the playback path. */
+    bool capture_is_int24 = (cfg->format == FFAUDIO_F_INT24);
     int  capture_channels = cfg->channels;
 
-    if (!capture_is_float && !capture_is_int16 &&
+    if (!capture_is_float && !capture_is_int16 && !capture_is_int24 &&
         cfg->format != FFAUDIO_F_INT32 && cfg->format != FFAUDIO_F_INT24_4)
     {
         HLOGE("audio-cap", "Unsupported capture format %d, aborting", cfg->format);
@@ -1347,6 +1370,10 @@ void *radio_capture_thread(void *device_ptr)
                 {
                     sample = (int32_t)((int16_t *)buffer)[i] * 65536;
                 }
+                else if (capture_is_int24)
+                {
+                    sample = pcm24_rd_le((const uint8_t *)buffer + (size_t)i * PCM24_BYTES);
+                }
                 else
                 {
                     sample = buffer[i];
@@ -1380,6 +1407,20 @@ void *radio_capture_thread(void *device_ptr)
                         sample = (int32_t)i16buf[i*2 + 1] * 65536;
                     else
                         sample = ((int32_t)i16buf[i*2] + (int32_t)i16buf[i*2 + 1]) * 32768;
+                }
+                else if (capture_is_int24)
+                {
+                    /* 6 bytes per stereo frame: L then R, 3 bytes each. */
+                    const uint8_t *p = (const uint8_t *)buffer + (size_t)i * 2u * PCM24_BYTES;
+                    if (ch_layout == LEFT)
+                        sample = pcm24_rd_le(p);
+                    else if (ch_layout == RIGHT)
+                        sample = pcm24_rd_le(p + PCM24_BYTES);
+                    else
+                        /* Widen before adding, as in the int32 branch below:
+                         * two full-scale int32 values sum past INT32_MAX. */
+                        sample = (int32_t)(((int64_t)pcm24_rd_le(p) +
+                                            (int64_t)pcm24_rd_le(p + PCM24_BYTES)) / 2);
                 }
                 else
                 {
