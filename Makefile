@@ -422,11 +422,12 @@ WINDOWS_SETUP_GLOB = $(WINDOWS_INSTALLER_DIR)/Output/Mercury_*_Setup.exe
 
 windows-installer-signed: windows-installer
 	$(call win_sign,$(WINDOWS_INSTALLER_DIR)/$(FYNE_UI_BIN))
+	$(call win_sign,$(WINDOWS_INSTALLER_DIR)/mercury.exe)
 	@rm -f $(WINDOWS_SETUP_GLOB)
 	@if [ -z "$(ISCC)" ]; then \
 		[ -x "$(SIGN_LOGOUT)" ] && [ -n "$$CERTUM_EMAIL" ] && $(SIGN_LOGOUT) || true; \
 		echo ""; \
-		echo "Payload $(FYNE_UI_BIN) staged in $(WINDOWS_INSTALLER_DIR)/ (see the signing result above)."; \
+		echo "Payloads $(FYNE_UI_BIN) + mercury.exe staged in $(WINDOWS_INSTALLER_DIR)/ (see the signing results above)."; \
 		echo "ISCC is not set, so the installer itself was not built.  Finish with:"; \
 		echo "  ISCC $(WINDOWS_INSTALLER_DIR)/installer.iss"; \
 		echo "  make sign-windows-bin BIN=$(WINDOWS_INSTALLER_DIR)/Output/Mercury_$(MERCURY_VERSION)_Setup.exe"; \
@@ -476,7 +477,8 @@ fyne-ui-windows: libmercury_core_w64.a
 		go build -tags mercury_embedded -ldflags="-s -w -H windowsgui -X main.coreBuildID=$$(cksum $(abspath libmercury_core_w64.a) | cut -d' ' -f1)" -o $(abspath $(WINDOWS_INSTALLER_DIR)/$(FYNE_UI_BIN)) .
 	@echo "  -> $(WINDOWS_INSTALLER_DIR)/$(FYNE_UI_BIN)"
 
-windows-installer: fyne-ui-windows
+windows-installer: windows fyne-ui-windows
+	cp mercury.exe $(WINDOWS_INSTALLER_DIR)/
 	cp mercury.ini.example $(WINDOWS_INSTALLER_DIR)/mercury.ini
 	sed -i 's/ui_enabled = false/ui_enabled = true/g' $(WINDOWS_INSTALLER_DIR)/mercury.ini
 	sed -i 's/sound_system = auto/sound_system = wasapi/g' $(WINDOWS_INSTALLER_DIR)/mercury.ini

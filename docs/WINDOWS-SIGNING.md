@@ -198,10 +198,17 @@ wine innosetup-6.7.3.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP-
 ISCC writes the installer to `windows-installer/Output/` (the script sets no
 `OutputDir`).
 
-Note the installer packs **only `mercury-ui.exe`** — it is the single-binary
-build with the modem core linked in (`-tags mercury_embedded`), so there is no
-separate console `mercury.exe` inside the installer. The console binary ships
-in the ZIP.
+The installer packs **both** binaries and signs both before ISCC runs:
+`mercury-ui.exe` (the single-binary GUI, modem core linked in via
+`-tags mercury_embedded`) and `mercury.exe` (the console/TNC build).
+
+The console binary is installed unconditionally but kept out of a first-time
+user's way — no desktop icon, and its Start Menu entry lives under
+**Advanced → Mercury Console (headless / TNC)**, which opens a command prompt
+in the install folder showing the usage text. It is deliberately not an
+optional component: an extra wizard checkbox is exactly the decision a newcomer
+cannot make, and choosing wrong leaves them without the tool at the moment
+support asks them to run it.
 
 `installer.iss` carries its own `MyAppVersion`; keep it in step with
 `MERCURY_VERSION` in `common/mercury_version.h` or the artifact name and the
