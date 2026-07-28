@@ -126,8 +126,19 @@ ss_token_live() {
     local out rc
     out=$(timeout 15 pkcs11-tool --module "$PKCS11" -L 2>&1); rc=$?
     printf '%s' "$out" | grep -qi 'token label' && { SS_PROBE_ERR=""; return 0; }
-    # 124 = timeout(1) kill, 127 = command not found, >128 = killed by a signal
-    if [ "$rc" -ge 124 ]; then
+    # Distinguish the probe HANGING from the probe being absent — they point at
+    # completely different causes and the wrong hint sends the operator digging
+    # in the wrong place.
+    #   124  timeout(1) killed it: the module blocked.  In practice this means
+    #        SimplySign is running but NOT authenticated, so the module sits
+    #        waiting on it — i.e. evidence the LOGIN failed, not a broken probe.
+    #   127  command not found: opensc is not installed.
+    #  >128  killed by a signal, e.g. the empty-$USER SIGSEGV.
+    if [ "$rc" = 124 ]; then
+        SS_PROBE_ERR="pkcs11-tool timed out after 15 s (module blocked)"
+        return 3
+    fi
+    if [ "$rc" -ge 127 ]; then
         SS_PROBE_ERR="pkcs11-tool exited $rc: $(printf '%s' "$out" | head -2 | tr '\n' ' ')"
         return 2
     fi
@@ -275,10 +286,19 @@ ss_login() {
     fi
 
     ss_log "waiting for PKCS#11 token to come online..."
-    local rc=1
+    local rc=1 blocked=0
     for i in $(seq 1 30); do
         ss_token_live; rc=$?
         [ "$rc" = 0 ] && { ss_log "session live"; return 0; }
+        # A module that blocks is waiting on an unauthenticated daemon; it will
+        # not free up by being asked again.  Three strikes and report, instead
+        # of burning 30 x 15 s of timeouts (~8 min) to reach the same answer.
+        if [ "$rc" = 3 ]; then
+            blocked=$((blocked + 1))
+            [ "$blocked" -ge 3 ] && break
+        else
+            blocked=0
+        fi
         sleep 2
     done
 
@@ -289,6 +309,18 @@ ss_login() {
         ss_log "       This is NOT a rejected login: we could not ask whether a token is there."
         ss_log "       Check 'opensc' is installed, and that USER is set (an empty \$USER"
         ss_log "       SIGSEGVs the OpenSSL bundled with the SimplySign module)."
+        return 1
+    fi
+    if [ "$rc" = 3 ]; then
+        ss_log "ERROR: ${SS_PROBE_ERR:-the PKCS#11 module blocked}."
+        ss_log "       The module blocks when SimplySign Desktop is running but NOT"
+        ss_log "       authenticated, so this points at the GUI LOGIN, not at opensc."
+        ss_log "       Look at the screenshot above: if the login dialog is still on"
+        ss_log "       screen, or shows an error, the credentials never took."
+        ss_log "       Most likely: wrong e-mail / otpauth seed, a clock skew > 30 s"
+        ss_log "       (the code is time-based), or an account with no cloud cert."
+        ss_log "       Re-run with SS_DEBUG=1 to capture 02-filled.png, which shows"
+        ss_log "       whether the credentials landed in the right fields."
         return 1
     fi
     ss_log "ERROR: the GUI login did not take (no token after 60 s). Screen captured above."
