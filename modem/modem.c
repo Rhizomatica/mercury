@@ -104,6 +104,175 @@ float modem_get_tx_peak_dbfs(void)
     return atomic_load(&g_tx_peak_dbfs);
 }
 
+/* --- ATU tuning carrier (host "TUNE" command) ------------------------
+ *
+ * A steady single tone with the transmitter keyed, so an antenna tuner can
+ * find a match.  VARA HF drives its TUNE button the same way (~1 kHz), and
+ * the host syntax mirrors VARA's: TUNE -<dB> / TUNE ? / TUNE OFF.
+ *
+ * SAFETY IS THE WHOLE DESIGN HERE.  Unlike every other transmission Mercury
+ * makes, this one has no protocol underneath it: nothing bounds it except us.
+ * A carrier left keyed cooks a finals stage and jams the channel, so:
+ *   * a hard deadline (MODEM_TUNE_MAX_S) unkeys even if the host never sends
+ *     TUNE OFF, dies, or drops the control socket;
+ *   * the loop tops the playback ring up in short chunks and never blocks on
+ *     a full ring, so a stalled audio consumer cannot pin PTT on;
+ *   * send_modulated_data() refuses while tuning, and tuning refuses while a
+ *     link is up or a burst is in flight — the two can never key together.
+ *
+ * The requested level is absolute dBFS at the sound card and deliberately
+ * does NOT go through g_tx_gain: "TUNE -15" must mean -15 dBFS, not -15 dBFS
+ * times whatever the modulator gain happens to be.
+ */
+#define MODEM_TUNE_TONE_HZ       1000.0   /* VARA-compatible tuning tone      */
+#define MODEM_TUNE_MAX_S         60       /* hard unkey deadline (seconds)    */
+#define MODEM_TUNE_MIN_DBFS      (-60.0f)
+#define MODEM_TUNE_MAX_DBFS      (0.0f)   /* above 0 dBFS would just clip     */
+#define MODEM_TUNE_CHUNK_SAMPLES 800      /* 100 ms @ 8 kHz                   */
+/* Keep at most this much audio queued, so TUNE OFF and the deadline both take
+ * effect within ~one chunk instead of after the whole ring drains. */
+#define MODEM_TUNE_RING_HIGH_BYTES (4800 * (int)sizeof(int32_t))   /* 600 ms */
+
+static _Atomic bool     g_tune_active      = false;
+static _Atomic bool     g_tune_stop        = false;
+static _Atomic int      g_tune_dbfs_milli  = -15000;  /* dBFS * 1000 */
+static _Atomic uint64_t g_tune_deadline_ms = 0;
+static pthread_t        g_tune_tid;
+static pthread_mutex_t  g_tune_lock = PTHREAD_MUTEX_INITIALIZER;
+static bool             g_tune_running = false;   /* guarded by g_tune_lock */
+
+bool modem_tune_active(void)
+{
+    return atomic_load(&g_tune_active);
+}
+
+float modem_tune_level_dbfs(void)
+{
+    return (float)atomic_load(&g_tune_dbfs_milli) / 1000.0f;
+}
+
+static void *tune_thread(void *unused)
+{
+    (void)unused;
+    static const double TWO_PI = 6.283185307179586476925286766559;
+    const double dphi = TWO_PI * MODEM_TUNE_TONE_HZ / (double)FREEDV_FS_8000;
+    int32_t chunk[MODEM_TUNE_CHUNK_SAMPLES];
+    double phase = 0.0;
+    bool timed_out = false;
+
+    ptt_on();
+
+    while (!shutdown_ && !atomic_load(&g_tune_stop))
+    {
+        if (time_now_ms() >= atomic_load(&g_tune_deadline_ms))
+        {
+            timed_out = true;
+            break;
+        }
+
+        /* Never block on a full ring while keyed — poll instead, so the
+         * deadline above is always reachable. */
+        if ((int)size_buffer(playback_buffer) >= MODEM_TUNE_RING_HIGH_BYTES)
+        {
+            usleep(10000);
+            continue;
+        }
+
+        float dbfs = modem_tune_level_dbfs();
+        double amp = pow(10.0, (double)dbfs / 20.0) * 2147483648.0;
+        for (int i = 0; i < MODEM_TUNE_CHUNK_SAMPLES; i++)
+        {
+            double v = sin(phase) * amp;
+            phase += dphi;
+            if (phase >= TWO_PI) phase -= TWO_PI;
+            if (v >=  2147483647.0)      chunk[i] = INT32_MAX;
+            else if (v <= -2147483648.0) chunk[i] = INT32_MIN;
+            else                         chunk[i] = (int32_t)v;
+        }
+        write_buffer(playback_buffer, (uint8_t *)chunk, sizeof(chunk));
+        atomic_store(&g_tx_peak_dbfs, dbfs);
+    }
+
+    /* Let what is already queued play out before unkeying, but bound the
+     * wait: a wedged consumer must not hold the transmitter up. */
+    uint64_t tail_deadline = time_now_ms() + 2000;
+    while (!shutdown_ && size_buffer(playback_buffer) > 0 &&
+           time_now_ms() < tail_deadline)
+        usleep(1000);
+    usleep(TAIL_TIME_US);
+
+    ptt_off();
+    atomic_store(&g_tune_active, false);
+
+    if (timed_out)
+        HLOGW("tune", "tuning carrier stopped: %d s safety limit reached",
+              MODEM_TUNE_MAX_S);
+    else
+        HLOGI("tune", "tuning carrier stopped");
+    return NULL;
+}
+
+int modem_tune_start(float dbfs)
+{
+    if (!isfinite(dbfs) || dbfs < MODEM_TUNE_MIN_DBFS || dbfs > MODEM_TUNE_MAX_DBFS)
+    {
+        HLOGW("tune", "refused: level %.1f dBFS outside [%.0f, %.0f]",
+              (double)dbfs, (double)MODEM_TUNE_MIN_DBFS, (double)MODEM_TUNE_MAX_DBFS);
+        return -1;
+    }
+
+    pthread_mutex_lock(&g_tune_lock);
+
+    /* A tuning carrier on top of a live link would key over the session and
+     * trash it; an in-flight burst already owns the transmitter. */
+    if (arq_is_link_connected() || arq_get_trx() == TX)
+    {
+        pthread_mutex_unlock(&g_tune_lock);
+        HLOGW("tune", "refused: link connected or transmit in progress");
+        return -2;
+    }
+
+    atomic_store(&g_tune_dbfs_milli, (int)lrintf(dbfs * 1000.0f));
+    atomic_store(&g_tune_deadline_ms, time_now_ms() + MODEM_TUNE_MAX_S * 1000ULL);
+
+    if (g_tune_running)
+    {
+        /* Re-issuing TUNE while tuning retunes the level and restarts the
+         * safety timer — what an operator adjusting drive expects. */
+        pthread_mutex_unlock(&g_tune_lock);
+        HLOGI("tune", "tuning carrier level set to %.1f dBFS", (double)dbfs);
+        return 0;
+    }
+
+    atomic_store(&g_tune_stop, false);
+    atomic_store(&g_tune_active, true);
+    if (pthread_create(&g_tune_tid, NULL, tune_thread, NULL) != 0)
+    {
+        atomic_store(&g_tune_active, false);
+        pthread_mutex_unlock(&g_tune_lock);
+        HLOGE("tune", "could not start tuning thread");
+        return -3;
+    }
+    g_tune_running = true;
+    pthread_mutex_unlock(&g_tune_lock);
+
+    HLOGI("tune", "tuning carrier ON: %.0f Hz at %.1f dBFS, max %d s",
+          MODEM_TUNE_TONE_HZ, (double)dbfs, MODEM_TUNE_MAX_S);
+    return 0;
+}
+
+void modem_tune_stop(void)
+{
+    pthread_mutex_lock(&g_tune_lock);
+    if (g_tune_running)
+    {
+        atomic_store(&g_tune_stop, true);
+        pthread_join(g_tune_tid, NULL);
+        g_tune_running = false;
+    }
+    pthread_mutex_unlock(&g_tune_lock);
+}
+
 /* Convert a 16-bit modulator sample to a 32-bit playback sample with gain
  * and saturation.  At gain == 1.0 this matches the historical behavior of
  * mapping int16 into the upper bits of int32 — but via a multiply by 65536,
@@ -690,6 +859,11 @@ int run_tests_rx(generic_modem_t *g_modem)
 
 int shutdown_modem(generic_modem_t *g_modem)
 {
+    /* Unkey and join the tuning thread first: it owns PTT and writes into the
+     * playback ring, so tearing the rings down under it would both leave the
+     * transmitter keyed and use freed memory. */
+    modem_tune_stop();
+
     /* rx_thread reads the capture ring with a BLOCKING read_buffer() sized to
      * the decoder chunk.  By the time we get here the audio capture thread
      * has already exited, so if rx_thread parked on an empty ring after its
@@ -791,6 +965,17 @@ int send_modulated_data(generic_modem_t *g_modem, uint8_t *bytes_in, int frames_
     size_t total_samples = 0;
     float tx_gain = atomic_load(&g_tx_gain);
     float peak_fs = 0.0f;  /* pre-saturation peak magnitude across this burst */
+
+    /* Never modulate on top of a tuning carrier: the tune thread owns PTT and
+     * the playback ring until TUNE OFF or its safety deadline. */
+    if (atomic_load(&g_tune_active))
+    {
+        HLOGW("modem", "TX suppressed: tuning carrier active (send TUNE OFF)");
+        free(tx_buffer);
+        free(mod_out_short);
+        pthread_mutex_unlock(&modem_freedv_lock);
+        return -1;
+    }
 
 
     /* === STEP 1: Generate all modulated audio into temp buffer === */

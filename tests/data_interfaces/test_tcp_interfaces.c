@@ -135,6 +135,24 @@ bool radio_io_enabled(void) { return false; }
 void radio_io_key_on(void) { }
 void radio_io_key_off(void) { }
 
+/* ---- modem tuning-carrier stubs ---- */
+
+static float mock_tune_start_dbfs  = 0.0f;
+static int   mock_tune_start_calls = 0;
+static int   mock_tune_start_rc    = 0;     /* what modem_tune_start returns */
+static int   mock_tune_stop_calls  = 0;
+static float mock_tune_level_dbfs  = -15.0f;
+
+int modem_tune_start(float dbfs)
+{
+    mock_tune_start_dbfs = dbfs;
+    mock_tune_start_calls++;
+    return mock_tune_start_rc;
+}
+void  modem_tune_stop(void)        { mock_tune_stop_calls++; }
+bool  modem_tune_active(void)      { return false; }
+float modem_tune_level_dbfs(void)  { return mock_tune_level_dbfs; }
+
 /* ---- ring_buffer stubs ---- */
 
 size_t size_buffer(cbuf_handle_t cbuf) { (void)cbuf; return 0; }
@@ -251,6 +269,13 @@ void setUp(void)
 
     /* Reset dedup */
     atomic_store_explicit(&tnc_last_buffer_sent, -1, memory_order_relaxed);
+
+    /* Tuning carrier */
+    mock_tune_start_dbfs  = 0.0f;
+    mock_tune_start_calls = 0;
+    mock_tune_start_rc    = 0;
+    mock_tune_stop_calls  = 0;
+    mock_tune_level_dbfs  = -15.0f;
 }
 
 void tearDown(void) { }
@@ -316,6 +341,83 @@ void test_cmd_compression(void)
 
     assert_ok_response();
     TEST_ASSERT_EQUAL(0, captured_cmd_count);
+}
+
+/* ---- TUNE: the ATU tuning carrier (VARA syntax) ----
+ * This command keys the transmitter with no protocol underneath it, so the
+ * parser boundary is safety-relevant: a level must reach the modem verbatim,
+ * a refusal must NOT be reported as success, and OFF must always stop. */
+
+void test_cmd_tune_on(void)
+{
+    char cmd[] = "TUNE -15";
+    execute_control_command(cmd);
+
+    assert_ok_response();
+    TEST_ASSERT_EQUAL_INT(1, mock_tune_start_calls);
+    TEST_ASSERT_EQUAL_FLOAT(-15.0f, mock_tune_start_dbfs);
+}
+
+void test_cmd_tune_on_fractional_level(void)
+{
+    char cmd[] = "TUNE -12.5";
+    execute_control_command(cmd);
+
+    assert_ok_response();
+    TEST_ASSERT_EQUAL_FLOAT(-12.5f, mock_tune_start_dbfs);
+}
+
+void test_cmd_tune_off(void)
+{
+    char cmd[] = "TUNE OFF";
+    execute_control_command(cmd);
+
+    assert_ok_response();
+    TEST_ASSERT_EQUAL_INT(1, mock_tune_stop_calls);
+    TEST_ASSERT_EQUAL_INT(0, mock_tune_start_calls);
+}
+
+void test_cmd_tune_query_reports_level(void)
+{
+    mock_tune_level_dbfs = -15.0f;
+    char cmd[] = "TUNE ?";
+    execute_control_command(cmd);
+
+    TEST_ASSERT_EQUAL(1, tcp_write_call_count);
+    TEST_ASSERT_EQUAL_STRING("TUNE -15\r", (char *)last_tcp_write_buf);
+    /* A query must not key anything. */
+    TEST_ASSERT_EQUAL_INT(0, mock_tune_start_calls);
+    TEST_ASSERT_EQUAL_INT(0, mock_tune_stop_calls);
+}
+
+void test_cmd_tune_refusal_is_not_ok(void)
+{
+    /* modem_tune_start rejects out-of-range levels and refuses while a link
+     * is up; the host must see WRONG, never OK. */
+    mock_tune_start_rc = -2;
+    char cmd[] = "TUNE -15";
+    execute_control_command(cmd);
+
+    assert_wrong_response();
+    TEST_ASSERT_EQUAL_INT(1, mock_tune_start_calls);
+}
+
+void test_cmd_tune_missing_argument(void)
+{
+    char cmd[] = "TUNE";
+    execute_control_command(cmd);
+
+    assert_wrong_response();
+    TEST_ASSERT_EQUAL_INT(0, mock_tune_start_calls);
+}
+
+void test_cmd_tune_garbage_argument(void)
+{
+    char cmd[] = "TUNE loud";
+    execute_control_command(cmd);
+
+    assert_wrong_response();
+    TEST_ASSERT_EQUAL_INT(0, mock_tune_start_calls);
 }
 
 void test_cmd_chat_on(void)
@@ -888,6 +990,13 @@ int main(void)
     RUN_TEST(test_cmd_listen_off);
     RUN_TEST(test_cmd_public_on);
     RUN_TEST(test_cmd_compression);
+    RUN_TEST(test_cmd_tune_on);
+    RUN_TEST(test_cmd_tune_on_fractional_level);
+    RUN_TEST(test_cmd_tune_off);
+    RUN_TEST(test_cmd_tune_query_reports_level);
+    RUN_TEST(test_cmd_tune_refusal_is_not_ok);
+    RUN_TEST(test_cmd_tune_missing_argument);
+    RUN_TEST(test_cmd_tune_garbage_argument);
     RUN_TEST(test_cmd_chat_on);
     RUN_TEST(test_cmd_bw500);
     RUN_TEST(test_cmd_bw2300);
