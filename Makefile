@@ -98,7 +98,7 @@ FYNE_UI_DIR   = gui_interface/fyne-ui
 FYNE_UI_BIN   = mercury-ui.exe
 MINGW_GO_CC   = x86_64-w64-mingw32-gcc
 
-.PHONY: all install internal_deps utils clean doxygen doxygen-clean windows windows-zip fyne-ui fyne-ui-macos fyne-ui-macos-dmg macos-universal fyne-ui-macos-universal fyne-ui-macos-universal-dmg fyne-ui-windows windows-installer test integration-test FORCE
+.PHONY: all install internal_deps utils clean doxygen doxygen-clean windows windows-zip windows-installer-signed fyne-ui fyne-ui-macos fyne-ui-macos-dmg macos-universal fyne-ui-macos-universal fyne-ui-macos-universal-dmg fyne-ui-windows windows-installer test integration-test FORCE
 
 prefix ?= /usr
 bindir ?= $(prefix)/bin
@@ -392,6 +392,48 @@ windows-zip-signed: windows fyne-ui-windows
 	zip -9r $(WINDOWS_ZIP) $(WINDOWS_DIR)
 	rm -rf $(WINDOWS_DIR)
 	@echo "Created $(WINDOWS_ZIP) (signed)"
+
+# Build + sign the installer, PAYLOAD FIRST.
+#
+# The order is the whole point.  windows-installer stages mercury-ui.exe into
+# $(WINDOWS_INSTALLER_DIR) and ISCC packs whatever is sitting there, so signing
+# only the finished Setup.exe ships a signed installer that installs an
+# UNSIGNED program: the publisher shows on the download, then disappears at the
+# moment the user actually runs the thing.  Sign the payload, then build, then
+# sign the installer — and do it in one SimplySign session.
+#
+# ISCC is a Windows tool.  Point ISCC at it if you have Inno Setup under Wine
+# (ISCC='wine ~/.wine/drive_c/Program Files (x86)/Inno Setup 6/ISCC.exe'), or
+# leave it unset to have this target stop after signing the payload and print
+# the two commands to finish on a Windows box.
+ISCC ?=
+# installer.iss sets no OutputDir, so Inno writes next to the script in Output/.
+# Located by glob after the build rather than hardcoded, so a future OutputDir
+# or version change cannot leave us signing a stale file — or nothing at all.
+WINDOWS_SETUP_GLOB = $(WINDOWS_INSTALLER_DIR)/Output/Mercury_*_Setup.exe
+
+windows-installer-signed: windows-installer
+	$(call win_sign,$(WINDOWS_INSTALLER_DIR)/$(FYNE_UI_BIN))
+	@rm -f $(WINDOWS_SETUP_GLOB)
+	@if [ -z "$(ISCC)" ]; then \
+		[ -x "$(SIGN_LOGOUT)" ] && [ -n "$$CERTUM_EMAIL" ] && $(SIGN_LOGOUT) || true; \
+		echo ""; \
+		echo "Payload $(FYNE_UI_BIN) staged in $(WINDOWS_INSTALLER_DIR)/ (see the signing result above)."; \
+		echo "ISCC is not set, so the installer itself was not built.  Finish with:"; \
+		echo "  ISCC $(WINDOWS_INSTALLER_DIR)/installer.iss"; \
+		echo "  make sign-windows-bin BIN=$(WINDOWS_INSTALLER_DIR)/Output/Mercury_$(MERCURY_VERSION)_Setup.exe"; \
+		echo ""; \
+	else \
+		echo "Building installer with ISCC..."; \
+		$(ISCC) $(WINDOWS_INSTALLER_DIR)/installer.iss || exit 1; \
+		setup=$$(ls $(WINDOWS_SETUP_GLOB) 2>/dev/null | head -1); \
+		if [ -z "$$setup" ]; then \
+			echo "ERROR: ISCC produced no $(WINDOWS_SETUP_GLOB)"; exit 1; \
+		fi; \
+		$(MAKE) --no-print-directory sign-windows-bin BIN="$$setup" || exit 1; \
+		[ -x "$(SIGN_LOGOUT)" ] && [ -n "$$CERTUM_EMAIL" ] && $(SIGN_LOGOUT) || true; \
+		echo "Created $$setup (installer and payload both signed)"; \
+	fi
 
 windows-zip: windows fyne-ui-windows
 	rm -rf $(WINDOWS_DIR) $(WINDOWS_ZIP)
