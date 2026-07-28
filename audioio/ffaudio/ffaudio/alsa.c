@@ -9,6 +9,7 @@
 
 #include <alsa/asoundlib.h>
 #include <time.h>
+#include <alloca.h>
 
 
 int ffalsa_init(ffaudio_init_conf *conf)

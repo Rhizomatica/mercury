@@ -22,7 +22,7 @@ struct ffaudio_buf {
 	AAudioStream *as;
 	ffring *ring;
 	ffring_head rhead;
-	ffstr buf_locked;
+	ffstr buf1, buf2;
 	ffuint frame_size;
 	ffuint capture :1;
 	ffuint notify_unsync :1;
@@ -37,6 +37,8 @@ struct ffaudio_buf {
 	const char *err;
 	int errcode;
 	char *errmsg;
+
+	u_char fragment[4 * 8]; // int32|float32 * 8chan
 };
 
 static ffaudio_buf* ffaaudio_alloc()
@@ -310,24 +312,58 @@ static aaudio_data_callback_result_t on_capture(AAudioStream *stream, void *user
 {
 	ffaudio_buf *b = userData;
 	ffuint n = numFrames * b->frame_size;
-	ffuint r = ffring_write(b->ring, audioData, n);
-	if (r != n) {
-		r += ffring_write(b->ring, (char*)audioData + r, n - r);
-		b->overrun = (r != n);
+	ffstr d1, d2;
+	ffring_head wh = ffring_write_all_begin(b->ring, n, &d1, &d2, NULL);
+	if (n <= d1.len + d2.len) {
+		ffmem_copy(d1.ptr, audioData, d1.len);
+		if (d2.len)
+			ffmem_copy(d2.ptr, (char*)audioData + d1.len, d2.len);
+	} else {
+		b->overrun = 1;
 	}
+	ffring_write_finish(b->ring, wh, NULL);
+
 	b->on_event(b->udata);
 	return 0;
 }
 
-static int aaudio_readsome(ffaudio_buf *b, const void **buffer)
+static int aaudio_read_some(ffaudio_buf *b, const void **buffer)
 {
-	if (b->buf_locked.len != 0) {
+	ffstr d1 = b->buf1, d2 = b->buf2;
+
+	if (!d1.len) {
 		ffring_read_finish(b->ring, b->rhead);
+		b->rhead = ffring_read_min_begin(b->ring, b->frame_size, &d1, &d2, NULL);
 	}
 
-	b->rhead = ffring_read_begin(b->ring, -1, &b->buf_locked, NULL);
-	*buffer = b->buf_locked.ptr;
-	return b->buf_locked.len;
+	ffuint n = ffint_align_floor(d1.len, b->frame_size);
+	if (n) {
+		*buffer = d1.ptr;
+		ffstr_shift(&d1, n);
+		b->buf1 = d2;
+		if (d1.len) {
+			// Fragmented sample head: "xx....112233xxxx"
+			b->buf1 = d1;
+			b->buf2 = d2;
+		}
+		return n;
+	}
+
+	if (d1.len) {
+		// Fragmented sample tail: "33xxxxxx....1122" -> collect "112233"
+		ffmem_copy(b->fragment, d1.ptr, d1.len);
+		n = b->frame_size - d1.len;
+		FF_ASSERT(d2.len >= n);
+		ffmem_copy(b->fragment + d1.len, d2.ptr, n);
+		ffstr_shift(&d2, n);
+		b->buf1 = d2;
+		b->buf2.len = 0;
+		// Collected full sample in `fragment`
+		*buffer = b->fragment;
+		return b->frame_size;
+	}
+
+	return 0;
 }
 
 static aaudio_data_callback_result_t on_play(AAudioStream *stream, void *userData, void *audioData, int32_t numFrames)
@@ -335,29 +371,14 @@ static aaudio_data_callback_result_t on_play(AAudioStream *stream, void *userDat
 	ffaudio_buf *b = userData;
 	b->on_event(b->udata);
 
-	u_char *d = audioData;
 	unsigned n = numFrames * b->frame_size;
-	ffstr s;
-	ffring_head h = ffring_read_begin(b->ring, n, &s, NULL);
-	if (s.len == 0)
-		goto end;
-	ffmem_copy(d, s.ptr, s.len);
+	ffstr d1, d2;
+	ffring_head h = ffring_read_max_begin(b->ring, n, &d1, &d2, NULL);
+	ffmem_copy(audioData, d1.ptr, d1.len);
+	ffmem_copy((char*)audioData + d1.len, d2.ptr, d2.len);
 	ffring_read_finish(b->ring, h);
-
-	d += s.len;
-	n -= s.len;
-	if (n != 0) {
-		h = ffring_read_begin(b->ring, n, &s, NULL);
-		if (s.len == 0)
-			goto end;
-		ffmem_copy(d, s.ptr, s.len);
-		ffring_read_finish(b->ring, h);
-	}
-	return 0;
-
-end:
-	if (n != 0) {
-		ffmem_fill(d, 0, n);
+	if (n < d1.len + d2.len) {
+		ffmem_fill((char*)audioData + d1.len + d2.len, 0, n - (d1.len + d2.len));
 		b->overrun = 1;
 	}
 	return 0;
@@ -365,11 +386,19 @@ end:
 
 static int aaudio_write_some(ffaudio_buf *b, const void *data, size_t len)
 {
-	unsigned r = ffring_write(b->ring, data, len);
-	if (r != len) {
-		r += ffring_write(b->ring, (char*)data + r, len - r);
+	ffstr d1, d2;
+	size_t free;
+	ffring_head wh = ffring_write_all_begin(b->ring, len, &d1, &d2, &free);
+	if (!d1.len) {
+		len = ffint_align_floor(free, b->frame_size);
+		if (!len)
+			return 0;
+		wh = ffring_write_all_begin(b->ring, len, &d1, &d2, NULL);
 	}
-	return r;
+	ffmem_copy(d1.ptr, data, d1.len);
+	ffmem_copy(d2.ptr, (char*)data + d1.len, d2.len);
+	ffring_write_finish(b->ring, wh, NULL);
+	return d1.len + d2.len;
 }
 
 static int sleep_msec(unsigned msec)
@@ -450,7 +479,7 @@ static int ffaaudio_drain(ffaudio_buf *b)
 static int ffaaudio_read(ffaudio_buf *b, const void **buffer)
 {
 	for (;;) {
-		int r = aaudio_readsome(b, buffer);
+		int r = aaudio_read_some(b, buffer);
 		if (r != 0)
 			return r;
 
