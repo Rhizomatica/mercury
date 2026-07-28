@@ -179,6 +179,127 @@ void test_downsample_chunking_invariant(void)
     free(in); free(whole); free(chunk);
 }
 
+
+/* ---- Runtime ratio selection ---- */
+/* Mercury asks for 48 kHz but takes what the device gives.  Resampling by the
+ * ratio we WANTED rather than the one we GOT transmits off-frequency with no
+ * other symptom, so the mapping itself is worth pinning. */
+void test_ratio_for_rate_supported(void)
+{
+    TEST_ASSERT_EQUAL_INT(1,  resampler_ratio_for_rate(8000));
+    TEST_ASSERT_EQUAL_INT(2,  resampler_ratio_for_rate(16000));
+    TEST_ASSERT_EQUAL_INT(3,  resampler_ratio_for_rate(24000));
+    TEST_ASSERT_EQUAL_INT(4,  resampler_ratio_for_rate(32000));
+    TEST_ASSERT_EQUAL_INT(6,  resampler_ratio_for_rate(48000));
+    TEST_ASSERT_EQUAL_INT(12, resampler_ratio_for_rate(96000));
+}
+
+void test_ratio_for_rate_rejected(void)
+{
+    /* 44.1 kHz is not an integer multiple of 8 kHz — it needs a rational
+     * (441/80) resampler, so it must be refused, not approximated. */
+    TEST_ASSERT_EQUAL_INT(0, resampler_ratio_for_rate(44100));
+    TEST_ASSERT_EQUAL_INT(0, resampler_ratio_for_rate(22050));
+    TEST_ASSERT_EQUAL_INT(0, resampler_ratio_for_rate(192000));  /* L=24 > max */
+    TEST_ASSERT_EQUAL_INT(0, resampler_ratio_for_rate(0));
+    TEST_ASSERT_EQUAL_INT(0, resampler_ratio_for_rate(-48000));
+}
+
+/* A tone must come back at the SAME frequency at every supported ratio.
+ * This is the regression for the measured failure: with a hardcoded 1:6, a
+ * device at 8 kHz turned a 1000 Hz tone into 166.8 Hz. */
+static void assert_roundtrip_preserves_tone(int L)
+{
+    const int fs_dev = FS8 * L;
+    const double f    = 1000.0;
+    const int n8      = 8000;                 /* 1 s of modem audio */
+    int32_t *in   = malloc(sizeof(int32_t) * n8);
+    int32_t *up   = malloc(sizeof(int32_t) * (size_t)n8 * L);
+    int32_t *down = malloc(sizeof(int32_t) * (n8 + 8));
+    TEST_ASSERT_NOT_NULL(in); TEST_ASSERT_NOT_NULL(up); TEST_ASSERT_NOT_NULL(down);
+
+    for (int i = 0; i < n8; i++)
+        in[i] = (int32_t)(AMP * sin(2.0 * M_PI * f * i / FS8));
+
+    resampler_init_up(L);
+    resampler_init_down(L);
+
+    resamp_up_t u; resamp_up_reset(&u);
+    int nu = resamp_up_process(&u, in, n8, up);
+    TEST_ASSERT_EQUAL_INT(n8 * L, nu);
+
+    resamp_down_t d; resamp_down_reset(&d);
+    int nd = resamp_down_process(&d, up, nu, down);
+    TEST_ASSERT_INT_WITHIN(2, n8, nd);
+
+    /* Skip the filter transient at both ends, then confirm the tone is at f
+     * and that no strong component sits at the frequency a wrong ratio would
+     * have produced (f/L or f*L). */
+    int skip = RESAMP_NTAPS_MAX / L + 64;
+    int nmeas = nd - 2 * skip;
+    TEST_ASSERT_TRUE(nmeas > 1000);
+    double at_f = goertzel(down + skip, nmeas, FS8, f);
+    TEST_ASSERT_TRUE_MESSAGE(at_f > 0.5 * AMP, "tone lost or attenuated");
+    if (L > 1) {
+        double wrong = goertzel(down + skip, nmeas, FS8, f / L);
+        TEST_ASSERT_TRUE_MESSAGE(db(wrong, at_f) < -40.0,
+                                 "energy at f/L — ratio mismatch");
+    }
+    (void)fs_dev;
+    free(in); free(up); free(down);
+}
+
+void test_roundtrip_ratio_1(void)  { assert_roundtrip_preserves_tone(1);  }
+void test_roundtrip_ratio_2(void)  { assert_roundtrip_preserves_tone(2);  }
+void test_roundtrip_ratio_4(void)  { assert_roundtrip_preserves_tone(4);  }
+void test_roundtrip_ratio_6(void)  { assert_roundtrip_preserves_tone(6);  }
+void test_roundtrip_ratio_12(void) { assert_roundtrip_preserves_tone(12); }
+
+/* L == 1 (device already at the modem rate) must be a bit-exact pass-through:
+ * filtering there would only add delay and droop. */
+void test_ratio_1_is_passthrough(void)
+{
+    const int n = 512;
+    int32_t in[512], out[512];
+    for (int i = 0; i < n; i++)
+        in[i] = (int32_t)(AMP * sin(2.0 * M_PI * 1000.0 * i / FS8));
+
+    resampler_init_up(1);
+    resamp_up_t u; resamp_up_reset(&u);
+    TEST_ASSERT_EQUAL_INT(n, resamp_up_process(&u, in, n, out));
+    TEST_ASSERT_EQUAL_INT32_ARRAY(in, out, n);
+
+    resampler_init_down(1);
+    resamp_down_t d; resamp_down_reset(&d);
+    TEST_ASSERT_EQUAL_INT(n, resamp_down_process(&d, in, n, out));
+    TEST_ASSERT_EQUAL_INT32_ARRAY(in, out, n);
+}
+
+/* Playback and capture can land on DIFFERENT device rates; the two directions
+ * keep separate tables, so setting one must not disturb the other. */
+void test_up_and_down_ratios_are_independent(void)
+{
+    resampler_init_up(2);
+    resampler_init_down(6);
+
+    const int n8 = 2048;
+    int32_t *in  = malloc(sizeof(int32_t) * n8);
+    int32_t *up  = malloc(sizeof(int32_t) * (size_t)n8 * 2);
+    for (int i = 0; i < n8; i++)
+        in[i] = (int32_t)(AMP * sin(2.0 * M_PI * 1000.0 * i / FS8));
+
+    resamp_up_t u; resamp_up_reset(&u);
+    TEST_ASSERT_EQUAL_INT(n8 * 2, resamp_up_process(&u, in, n8, up));   /* still 1:2 */
+
+    int32_t *dn = malloc(sizeof(int32_t) * (n8 / 6 + 4));
+    resamp_down_t d; resamp_down_reset(&d);
+    int nd = resamp_down_process(&d, in, n8, dn);                        /* still 6:1 */
+    TEST_ASSERT_INT_WITHIN(2, n8 / 6, nd);
+
+    free(in); free(up); free(dn);
+    resampler_global_init();   /* restore the default for later tests */
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -188,5 +309,14 @@ int main(void)
     RUN_TEST(test_downsample_passband_flat);
     RUN_TEST(test_upsample_chunking_invariant);
     RUN_TEST(test_downsample_chunking_invariant);
+    RUN_TEST(test_ratio_for_rate_supported);
+    RUN_TEST(test_ratio_for_rate_rejected);
+    RUN_TEST(test_roundtrip_ratio_1);
+    RUN_TEST(test_roundtrip_ratio_2);
+    RUN_TEST(test_roundtrip_ratio_4);
+    RUN_TEST(test_roundtrip_ratio_6);
+    RUN_TEST(test_roundtrip_ratio_12);
+    RUN_TEST(test_ratio_1_is_passthrough);
+    RUN_TEST(test_up_and_down_ratios_are_independent);
     return UNITY_END();
 }

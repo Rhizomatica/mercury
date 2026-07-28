@@ -788,11 +788,13 @@ void *radio_playback_thread(void *device_ptr)
     // input is int32_t (8kHz samples from playback_buffer)
     int32_t *input_buffer = (int32_t *) malloc(period_scratch_bytes);
 
-    // upsampled buffer (48kHz mono), 1:6 upsample
-    int32_t *buffer_upsampled = (int32_t *) malloc(period_scratch_bytes * 6);
+    /* Upsampled mono scratch.  Sized for the WIDEST supported ratio, not the
+     * expected one: the device rate is not known until open() below, and a
+     * 96 kHz negotiation would overrun a buffer sized for 1:6. */
+    int32_t *buffer_upsampled = (int32_t *) malloc(period_scratch_bytes * RESAMP_L_MAX);
 
-    // output is int32_t stereo (48kHz)
-    int32_t *buffer_output_stereo = (int32_t *) malloc(period_scratch_bytes * 2 * 6);
+    // output is int32_t, up to stereo, at the device rate
+    int32_t *buffer_output_stereo = (int32_t *) malloc(period_scratch_bytes * 2 * RESAMP_L_MAX);
 
     if (!input_buffer || !buffer_upsampled || !buffer_output_stereo)
     {
@@ -803,8 +805,9 @@ void *radio_playback_thread(void *device_ptr)
     ffuint total_written = 0;
     int ch_layout = STEREO;
 
-    // Resampling ratio: 8kHz -> 48kHz = 1:6
-    const int resample_ratio = 6;
+    /* Resampling ratio: set once the device has told us its real rate (below,
+     * after open()), never assumed. */
+    int resample_ratio = RESAMP_L;
 
     /* PulseAudio uses a single global context (gconn in pulse.c).
      * If init() returns "already initialized" it means the capture thread
@@ -872,6 +875,26 @@ void *radio_playback_thread(void *device_ptr)
         goto cleanup_play;
     }
 
+    /* Rate safety, same reasoning as the channel/format guards: resample by
+     * what the device ACTUALLY negotiated, never by the 48 kHz we asked for.
+     * A device already locked to another rate by a second client hands that
+     * rate back, and a fixed 1:6 then transmits everything off-frequency by
+     * rate/48000 with no other symptom — measured, a 1 kHz tone came out at
+     * 166.8 Hz on a device pinned to 8 kHz: right level, spectrally pure,
+     * wrong frequency.  Refuse rather than key the radio with that. */
+    resample_ratio = resampler_ratio_for_rate((int)cfg->sample_rate);
+    if (resample_ratio == 0)
+    {
+        HLOGE("audio-play",
+              "Device negotiated %u Hz, not an integer multiple of %d Hz "
+              "(supported: 8k/16k/24k/32k/48k/96k), aborting",
+              cfg->sample_rate, RESAMP_MODEM_FS);
+        goto cleanup_play;
+    }
+    if (cfg->sample_rate != 48000)
+        HLOGW("audio-play", "device negotiated %u Hz (not the requested 48000); "
+              "resampling 1:%d", cfg->sample_rate, resample_ratio);
+
     frame_size = cfg->channels * (cfg->format & 0xff) / 8;
     msec_bytes = cfg->sample_rate * frame_size / 1000;
 
@@ -900,8 +923,11 @@ void *radio_playback_thread(void *device_ptr)
     uint32_t period_bytes_8k = 8000u * sizeof(int32_t) * period_ms / 1000u;
 
     /* Polyphase anti-imaging upsampler, stateful across periods (its filter
-     * history bridges read boundaries, so no per-period click — issue #81). */
-    resampler_global_init();
+     * history bridges read boundaries, so no per-period click — issue #81).
+     * Built for the rate the device ACTUALLY negotiated: resampling by the
+     * requested 48 kHz ratio when the device came back at some other rate
+     * transmits everything off-frequency, silently and convincingly. */
+    resampler_init_up(resample_ratio);
     resamp_up_t up_rs;
     resamp_up_reset(&up_rs);
 
@@ -1103,8 +1129,9 @@ void *radio_capture_thread(void *device_ptr)
     int32_t *buffer_output = NULL;
     int32_t *buffer_downsampled = NULL;
 
-    // Resampling ratio: 48kHz -> 8kHz = 6:1
-    const int resample_ratio = 6;
+    /* Resampling ratio: set once the device reports its real rate (below,
+     * after open()), never assumed. */
+    int resample_ratio = RESAMP_L;
 
     /* PulseAudio uses a single global context (gconn in pulse.c).
      * If init() returns "already initialized" it means the playback thread
@@ -1169,15 +1196,32 @@ void *radio_capture_thread(void *device_ptr)
         return NULL;
     }
 
+    /* Decimate by what the device ACTUALLY negotiated — see the matching
+     * comment in the playback path.  On capture a wrong ratio detunes
+     * everything we try to demodulate, so RX simply stops working. */
+    resample_ratio = resampler_ratio_for_rate((int)cfg->sample_rate);
+    if (resample_ratio == 0)
+    {
+        HLOGE("audio-cap",
+              "Device negotiated %u Hz, not an integer multiple of %d Hz "
+              "(supported: 8k/16k/24k/32k/48k/96k), aborting",
+              cfg->sample_rate, RESAMP_MODEM_FS);
+        audio->free(b);
+        return NULL;
+    }
+    if (cfg->sample_rate != 48000)
+        HLOGW("audio-cap", "device negotiated %u Hz (not the requested 48000); "
+              "decimating %d:1", cfg->sample_rate, resample_ratio);
+
     /* Per-read resampler scratch, sized from the device buffer length (was
      * SIGNAL_BUFFER_SIZE — same ~1 GB oversizing as the playback path,
-     * issue #79).  buffer_output holds one device read of mono 48 kHz samples;
-     * buffer_downsampled its 6:1 decimation. */
+     * issue #79).  buffer_output holds one device read of mono device-rate
+     * samples; buffer_downsampled its resample_ratio:1 decimation. */
     size_t cap_frames_max = (size_t) cfg->sample_rate * cfg->buffer_length_msec / 1000;
     cap_frames_max += cap_frames_max / 2 + 64;   /* margin over one read */
 
     buffer_output = (int32_t *) malloc(cap_frames_max * sizeof(int32_t));
-    buffer_downsampled = (int32_t *) malloc((cap_frames_max / 6 + 2) * sizeof(int32_t));
+    buffer_downsampled = (int32_t *) malloc((cap_frames_max / resample_ratio + 2) * sizeof(int32_t));
     if (!buffer_output || !buffer_downsampled)
     {
         HLOGE("audio-cap", "Failed to allocate capture buffers");
@@ -1191,7 +1235,7 @@ void *radio_capture_thread(void *device_ptr)
     ch_layout = capture_input_channel_layout;
 
     /* Polyphase anti-aliasing downsampler, stateful across reads. */
-    resampler_global_init();
+    resampler_init_down(resample_ratio);
     resamp_down_t down_rs;
     resamp_down_reset(&down_rs);
 
@@ -1344,7 +1388,14 @@ void *radio_capture_thread(void *device_ptr)
                     else if (ch_layout == RIGHT)
                         sample = buffer[i*2 + 1];
                     else
-                        sample = (buffer[i*2] + buffer[i*2 + 1]) / 2;
+                        /* Widen BEFORE adding: two int32 samples sum past
+                         * INT32_MAX as soon as both pass half scale, and the
+                         * signed overflow (UB) wraps to the opposite sign — a
+                         * loud correlated stereo input came out sign-flipped.
+                         * The int16 branch above is safe only because int16
+                         * operands promote to int; this one has no headroom. */
+                        sample = (int32_t)(((int64_t)buffer[i*2] +
+                                            (int64_t)buffer[i*2 + 1]) / 2);
                 }
             }
 
