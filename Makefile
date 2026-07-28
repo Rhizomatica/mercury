@@ -402,11 +402,19 @@ windows-zip-signed: windows fyne-ui-windows
 # moment the user actually runs the thing.  Sign the payload, then build, then
 # sign the installer — and do it in one SimplySign session.
 #
-# ISCC is a Windows tool.  Point ISCC at it if you have Inno Setup under Wine
-# (ISCC='wine ~/.wine/drive_c/Program Files (x86)/Inno Setup 6/ISCC.exe'), or
-# leave it unset to have this target stop after signing the payload and print
-# the two commands to finish on a Windows box.
-ISCC ?=
+# ISCC is the Inno Setup compiler, a Windows program: on Linux set ISCC_RUN=wine
+# alongside it.  Both are quoted at the point of use, so the default install
+# path — which contains a space AND parentheses, "Program Files (x86)" — works
+# without the caller escaping anything.  (Passing one combined command string
+# does not: the unquoted parens are a shell syntax error.)
+#
+#   make windows-installer-signed ISCC_RUN=wine \
+#        ISCC="$HOME/.wine/drive_c/Program Files (x86)/Inno Setup 6/ISCC.exe"
+#
+# Leave ISCC unset to stop after signing the payload and print the two commands
+# to finish on a Windows box.
+ISCC     ?=
+ISCC_RUN ?=
 # installer.iss sets no OutputDir, so Inno writes next to the script in Output/.
 # Located by glob after the build rather than hardcoded, so a future OutputDir
 # or version change cannot leave us signing a stale file — or nothing at all.
@@ -425,14 +433,23 @@ windows-installer-signed: windows-installer
 		echo ""; \
 	else \
 		echo "Building installer with ISCC..."; \
-		$(ISCC) $(WINDOWS_INSTALLER_DIR)/installer.iss || exit 1; \
+		if [ -n "$(ISCC_RUN)" ]; then \
+			"$(ISCC_RUN)" "$(ISCC)" "$(WINDOWS_INSTALLER_DIR)/installer.iss" || exit 1; \
+		else \
+			"$(ISCC)" "$(WINDOWS_INSTALLER_DIR)/installer.iss" || exit 1; \
+		fi; \
 		setup=$$(ls $(WINDOWS_SETUP_GLOB) 2>/dev/null | head -1); \
 		if [ -z "$$setup" ]; then \
 			echo "ERROR: ISCC produced no $(WINDOWS_SETUP_GLOB)"; exit 1; \
 		fi; \
 		$(MAKE) --no-print-directory sign-windows-bin BIN="$$setup" || exit 1; \
 		[ -x "$(SIGN_LOGOUT)" ] && [ -n "$$CERTUM_EMAIL" ] && $(SIGN_LOGOUT) || true; \
-		echo "Created $$setup (installer and payload both signed)"; \
+		if [ -n "$$CERTUM_EMAIL" ] || [ -n "$(WIN_SIGN_PFX)" ]; then \
+			echo "Created $$setup (payload and installer signed)"; \
+		else \
+			echo "Created $$setup — UNSIGNED: no signing method configured"; \
+			echo "  (set CERTUM_EMAIL for SimplySign, or WIN_SIGN_PFX for a local .pfx)"; \
+		fi; \
 	fi
 
 windows-zip: windows fyne-ui-windows
@@ -472,7 +489,7 @@ windows-installer: fyne-ui-windows
 	@echo "  ISCC $(WINDOWS_INSTALLER_DIR)/installer.iss"
 	@echo ""
 	@echo "Then sign the resulting .exe on Linux:"
-	@echo "  make sign-windows-bin BIN=Mercury_\$$(VERSION)_Setup.exe"
+	@echo "  make sign-windows-bin BIN=$(WINDOWS_INSTALLER_DIR)/Output/Mercury_$(MERCURY_VERSION)_Setup.exe"
 	@echo ""
 
 clean:

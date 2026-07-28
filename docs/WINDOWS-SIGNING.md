@@ -177,11 +177,26 @@ used — post-build signing is simpler and works from CI.
 
 ```bash
 # One command, one cloud login: signs mercury-ui.exe, builds the installer,
-# signs the installer.  ISCC is a Windows tool; point at it via Wine, or leave
-# ISCC unset to stop after the payload and get the two remaining commands.
-make windows-installer-signed \
-     ISCC='wine ~/.wine/drive_c/Program Files (x86)/Inno Setup 6/ISCC.exe'
+# signs the installer.  ISCC is a Windows program, so on Linux set ISCC_RUN=wine
+# next to it.  Leave ISCC unset to stop after the payload and get the two
+# remaining commands to run on a Windows box.
+make windows-installer-signed ISCC_RUN=wine \
+     ISCC="$HOME/.wine/drive_c/Program Files (x86)/Inno Setup 6/ISCC.exe"
 ```
+
+Keep the compiler path and the launcher in **separate** variables: the default
+Inno install path contains both a space and parentheses (`Program Files (x86)`),
+and passing one combined command string makes the shell fail on the parens.
+
+Installing Inno Setup under Wine (validated with 6.7.3 on wine 11.0):
+
+```bash
+curl -fsSLO https://github.com/jrsoftware/issrc/releases/download/is-6_7_3/innosetup-6.7.3.exe
+wine innosetup-6.7.3.exe /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP-
+```
+
+ISCC writes the installer to `windows-installer/Output/` (the script sets no
+`OutputDir`).
 
 Note the installer packs **only `mercury-ui.exe`** — it is the single-binary
 build with the modem core linked in (`-tags mercury_embedded`), so there is no
