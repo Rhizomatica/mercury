@@ -172,18 +172,12 @@ jobs:
           # half-succeed, and the exact same compiler every time.  ISCC is a
           # console program and needs no registry state — the tree alone is
           # enough (verified by compiling from a virgin WINEPREFIX).
-          # -k: the host currently serves only its leaf certificate, no
-          # intermediate, so verification fails ("unable to get local issuer
-          # certificate"). TEMPORARY — drop the -k once the server sends its
-          # full chain.
-          #
-          # What is and is not covered meanwhile: the sha256 below pins the
-          # exact bytes, so a tampered or swapped tarball cannot build a
-          # release. What -k gives up is authentication of the HOST, i.e. an
-          # attacker who can intercept the connection could serve a different
-          # file — and the checksum would reject it. So the failure mode is a
-          # failed build, not a poisoned installer.
-          curl -fsSLko /tmp/inno.tar.gz "$INNO_URL"
+          # TLS is verified (the host serves its full chain) and the sha256
+          # pins the exact bytes: the transport says where the tarball came
+          # from, the checksum says it is the one this workflow was built
+          # against. A mismatch fails the build rather than signing whatever
+          # turned up.
+          curl -fsSLo /tmp/inno.tar.gz "$INNO_URL"
           echo "${INNO_SHA256}  /tmp/inno.tar.gz" | sha256sum -c -
           wineboot -i
           PF="$HOME/.wine/drive_c/Program Files (x86)"
