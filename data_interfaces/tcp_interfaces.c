@@ -183,7 +183,7 @@ static int tnc_queue_line_critical(const char *line)
     {
         if (tnc_queue_line(line) == 0)
             return 0;
-        usleep(TNC_CRITICAL_SLEEP_US);
+        hermes_usleep(TNC_CRITICAL_SLEEP_US);
     }
     HLOGE("tcp-ctl", "DROPPED host state notification '%s' — the TNC channel "
           "stayed full for %d ms; a host relying on this for interlock or "

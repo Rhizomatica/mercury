@@ -33,12 +33,6 @@
 
 #include "../common/os_interop.h"
 
-/* Cross-platform microsecond sleep */
-#ifdef _WIN32
-#define hermes_usleep(us) Sleep((DWORD)((us) / 1000))
-#else
-#define hermes_usleep(us) usleep(us)
-#endif
 
 #include "ui_communication.h"
 

@@ -175,6 +175,13 @@ static inline int sock_errno(void) { return errno; }
 
 #endif
 
+/* Cross-platform microsecond sleep. mingw has no usleep(). */
+#if defined(_WIN32)
+#define hermes_usleep(us) Sleep((DWORD)((us) / 1000))
+#else
+#define hermes_usleep(us) usleep(us)
+#endif
+
 #ifdef __cplusplus
 };
 #endif
