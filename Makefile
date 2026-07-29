@@ -98,7 +98,7 @@ FYNE_UI_DIR   = gui_interface/fyne-ui
 FYNE_UI_BIN   = mercury-ui.exe
 MINGW_GO_CC   = x86_64-w64-mingw32-gcc
 
-.PHONY: all install internal_deps utils clean doxygen doxygen-clean windows windows-zip windows-installer-signed fyne-ui fyne-ui-macos fyne-ui-macos-dmg macos-universal fyne-ui-macos-universal fyne-ui-macos-universal-dmg fyne-ui-windows windows-installer test integration-test FORCE
+.PHONY: all install internal_deps utils clean doxygen doxygen-clean windows windows-zip windows-installer-signed windows-installer-stage fyne-ui fyne-ui-macos fyne-ui-macos-dmg macos-universal fyne-ui-macos-universal fyne-ui-macos-universal-dmg fyne-ui-windows windows-installer test integration-test FORCE
 
 prefix ?= /usr
 bindir ?= $(prefix)/bin
@@ -478,7 +478,12 @@ fyne-ui-windows: libmercury_core_w64.a
 		go build -tags mercury_embedded -ldflags="-s -w -H windowsgui -X main.coreBuildID=$$(cksum $(abspath libmercury_core_w64.a) | cut -d' ' -f1)" -o $(abspath $(WINDOWS_INSTALLER_DIR)/$(FYNE_UI_BIN)) .
 	@echo "  -> $(WINDOWS_INSTALLER_DIR)/$(FYNE_UI_BIN)"
 
-windows-installer: windows fyne-ui-windows
+# Stage everything the installer packs, WITHOUT rebuilding the binaries.
+# Split out so a signing environment can reuse payloads it has just signed:
+# the release pipeline signs in a container that has the certificate but no
+# mingw/Go toolchain, so it must be able to pack without triggering a rebuild
+# (which would also discard the signatures it just applied).
+windows-installer-stage:
 	cp mercury.exe $(WINDOWS_INSTALLER_DIR)/
 	cp mercury.ini.example $(WINDOWS_INSTALLER_DIR)/mercury.ini
 	sed -i 's/ui_enabled = false/ui_enabled = true/g' $(WINDOWS_INSTALLER_DIR)/mercury.ini
@@ -486,6 +491,9 @@ windows-installer: windows fyne-ui-windows
 	if ls $(HAMLIB_W64_DIR)/bin/*.dll >/dev/null 2>&1; then \
 		cp $(HAMLIB_W64_DIR)/bin/*.dll $(WINDOWS_INSTALLER_DIR)/; \
 	fi
+	@echo "windows-installer staged."
+
+windows-installer: windows fyne-ui-windows windows-installer-stage
 	@echo "windows-installer ready."
 	@echo ""
 	@echo "Build the installer (Windows or Wine):"
