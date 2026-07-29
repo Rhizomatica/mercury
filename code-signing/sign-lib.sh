@@ -201,6 +201,77 @@ ss_find_window() {
 }
 
 # --- bring up (or reuse) an authenticated session. Idempotent. No teardown. ---
+
+# --- wait for the FORM, not merely for a window ------------------------------
+# SimplySign shows a spinner while the dialog loads, in a window that already
+# satisfies any size check.  Gating on "a window exists" therefore starts typing
+# into a dialog that has no fields yet.  Observed in the field: the e-mail went
+# nowhere and the one-time code ended up in the E-MAIL box, because the form
+# auto-focused its first field only after the typing had already begun — then
+# the login failed with "There are errors in the form".
+#
+# There is no accessibility hook to ask "is the form up?", so use the next best
+# signal: the window stops changing size.  The spinner and the rendered form
+# have different geometries, so N consecutive identical samples plus a settle
+# period means the layout has come to rest.
+SS_FORM_SETTLE_MS="${SS_FORM_SETTLE_MS:-3000}"
+ss_wait_form_ready() {
+    local stable=0 last="" now i
+    for i in $(seq 1 60); do
+        if ss_find_window && [ "${BW:-0}" -ge 300 ] && [ "${BH:-0}" -ge 200 ]; then
+            now="${BW}x${BH}+${BX}+${BY}"
+            if [ "$now" = "$last" ]; then
+                stable=$((stable + 1))
+            else
+                stable=0; last="$now"
+            fi
+            if [ "$stable" -ge 3 ]; then
+                # Settle: geometry can stop moving a beat before the widgets are
+                # interactive.  Cheap insurance against the same race.
+                usleep $((SS_FORM_SETTLE_MS * 1000)) 2>/dev/null ||                     sleep $(( (SS_FORM_SETTLE_MS + 999) / 1000 ))
+                return 0
+            fi
+        else
+            stable=0; last=""
+        fi
+        sleep 1
+    done
+    return 1
+}
+
+# --- one attempt at filling and submitting the login form --------------------
+# Clicks are at fixed fractions of the window, so they are only valid on a
+# freshly rendered dialog: once SimplySign adds its "There are errors in the
+# form" banner the fields shift down and these coordinates miss.  That is why a
+# retry relaunches the app instead of reusing the errored dialog.
+ss_fill_login() {
+    local totp="$1"
+    DISPLAY=$DISPLAY_NR xdotool windowactivate --sync "$WID" 2>/dev/null || true
+    DISPLAY=$DISPLAY_NR xdotool windowraise "$WID" 2>/dev/null || true; sleep 1
+    DISPLAY=$DISPLAY_NR xdotool mousemove $((BX + BW/2)) $((BY + BH*39/100)) click 1; sleep 1
+    DISPLAY=$DISPLAY_NR xdotool key --clearmodifiers ctrl+a
+    DISPLAY=$DISPLAY_NR xdotool type --clearmodifiers --delay 50 "$CERTUM_EMAIL"; sleep 1
+    DISPLAY=$DISPLAY_NR xdotool key Tab; sleep 1
+    DISPLAY=$DISPLAY_NR xdotool type --clearmodifiers --delay 50 "$totp"; sleep 1
+    ss_snap_debug "02-filled"
+    DISPLAY=$DISPLAY_NR xdotool mousemove $((BX + BW/2)) $((BY + BH*76/100)) click 1; sleep 8
+    ss_snap_debug "03-after-login-click"
+    # dismiss the "Logon successful" dialog (Close button, bottom-centre)
+    if ss_find_window; then
+        DISPLAY=$DISPLAY_NR xdotool windowactivate --sync "$WID" 2>/dev/null || true
+        DISPLAY=$DISPLAY_NR xdotool mousemove $((BX + BW/2)) $((BY + BH*94/100)) click 1
+    fi
+}
+
+# --- (re)launch SimplySign Desktop on our display ----------------------------
+ss_launch_desktop() {
+    cp "$SS_DIST/SimplySignDesktop.xml" ~/ 2>/dev/null || true
+    mkdir -p ~/.config
+    printf '[General]\nCacheUserIdAtLogon=Yes\nShowLogonDialogAfterApplicationStartup=Yes\nShowLogonDialogWhenAnyAppRequestsAccess=Yes\n' > ~/.config/"Unknown Organization.conf"
+    DISPLAY=$DISPLAY_NR LD_LIBRARY_PATH=$SS_DIST QT_QPA_PLATFORM_PLUGIN_PATH=$SS_DIST/plugins \
+        "$SS_DIST/SimplySignDesktop_start" &>/dev/null &
+}
+
 ss_login() {
     ss_require || return 1
     if ss_token_live; then ss_log "session already live — reusing"; return 0; fi
@@ -240,28 +311,9 @@ ss_login() {
     DISPLAY=$DISPLAY_NR fluxbox &>/dev/null &
     echo $! > "$SS_RUN_DIR/fluxbox.pid" 2>/dev/null || true
     sleep 2
-    cp "$SS_DIST/SimplySignDesktop.xml" ~/ 2>/dev/null || true
-    mkdir -p ~/.config
-    printf '[General]\nCacheUserIdAtLogon=Yes\nShowLogonDialogAfterApplicationStartup=Yes\nShowLogonDialogWhenAnyAppRequestsAccess=Yes\n' > ~/.config/"Unknown Organization.conf"
-    DISPLAY=$DISPLAY_NR LD_LIBRARY_PATH=$SS_DIST QT_QPA_PLATFORM_PLUGIN_PATH=$SS_DIST/plugins \
-        "$SS_DIST/SimplySignDesktop_start" &>/dev/null &
+    ss_launch_desktop
 
-    ss_log "waiting for login window..."
-    ok=""
-    for i in $(seq 1 60); do
-        if ss_find_window && [ "${BW:-0}" -ge 300 ] && [ "${BH:-0}" -ge 200 ]; then ok=1; break; fi
-        sleep 2
-    done
-    [ -z "$ok" ] && { ss_log "ERROR: login window did not appear"; ss_snap "no-login-window"; return 1; }
-    ss_snap_debug "01-login-window"
-
-    local totp; totp=$(ss_totp)
-    case "$totp" in
-        ''|*[!0-9]*)
-            ss_log "ERROR: could not derive a TOTP from the otpauth:// seed"
-            ss_log "       check that ${CERTUM_OTP_URI_FILE:-\$CERTUM_OTP_URI} holds otpauth://totp/...?secret=..."
-            return 1 ;;
-    esac
+    local totp
     # TOTP is time-based: a skewed clock invalidates every code we type, and the
     # only symptom is a login that silently does not take.
     if ss_have timedatectl && \
@@ -269,37 +321,53 @@ ss_login() {
         ss_log "WARNING: system clock is not NTP-synchronised — TOTP codes will be rejected if it has drifted"
     fi
 
-    DISPLAY=$DISPLAY_NR xdotool windowactivate --sync "$WID" 2>/dev/null || true
-    DISPLAY=$DISPLAY_NR xdotool windowraise "$WID" 2>/dev/null || true; sleep 1
-    DISPLAY=$DISPLAY_NR xdotool mousemove $((BX + BW/2)) $((BY + BH*39/100)) click 1; sleep 1
-    DISPLAY=$DISPLAY_NR xdotool key --clearmodifiers ctrl+a
-    DISPLAY=$DISPLAY_NR xdotool type --clearmodifiers --delay 50 "$CERTUM_EMAIL"; sleep 1
-    DISPLAY=$DISPLAY_NR xdotool key Tab; sleep 1
-    DISPLAY=$DISPLAY_NR xdotool type --clearmodifiers --delay 50 "$totp"; sleep 1
-    ss_snap_debug "02-filled"
-    DISPLAY=$DISPLAY_NR xdotool mousemove $((BX + BW/2)) $((BY + BH*76/100)) click 1; sleep 8
-    ss_snap_debug "03-after-login-click"
-    # dismiss the "Logon successful" dialog (Close button, bottom-centre)
-    if ss_find_window; then
-        DISPLAY=$DISPLAY_NR xdotool windowactivate --sync "$WID" 2>/dev/null || true
-        DISPLAY=$DISPLAY_NR xdotool mousemove $((BX + BW/2)) $((BY + BH*94/100)) click 1
-    fi
-
-    ss_log "waiting for PKCS#11 token to come online..."
-    local rc=1 blocked=0
-    for i in $(seq 1 30); do
-        ss_token_live; rc=$?
-        [ "$rc" = 0 ] && { ss_log "session live"; return 0; }
-        # A module that blocks is waiting on an unauthenticated daemon; it will
-        # not free up by being asked again.  Three strikes and report, instead
-        # of burning 30 x 15 s of timeouts (~8 min) to reach the same answer.
-        if [ "$rc" = 3 ]; then
-            blocked=$((blocked + 1))
-            [ "$blocked" -ge 3 ] && break
-        else
-            blocked=0
+    # Each attempt gets a FRESH dialog.  Retrying into an errored one would miss:
+    # the "There are errors in the form" banner pushes the fields down, and the
+    # click fractions below assume the clean layout.
+    local attempt rc=1 blocked=0
+    for attempt in $(seq 1 "${SS_LOGIN_TRIES:-3}"); do
+        if [ "$attempt" -gt 1 ]; then
+            ss_log "login attempt $attempt: restarting SimplySign for a clean form"
+            ss_pkill_safe "$SS_DIST/SimplySign"
+            sleep 2
+            ss_launch_desktop
         fi
-        sleep 2
+
+        ss_log "waiting for the login form to finish rendering..."
+        if ! ss_wait_form_ready; then
+            ss_log "ERROR: login window did not appear"; ss_snap "no-login-window"
+            return 1
+        fi
+        ss_snap_debug "01-login-window"
+
+        # Derive the code AFTER the form is ready: it is only valid ~30 s, so
+        # generating it before a slow render can hand the dialog a stale one.
+        totp=$(ss_totp)
+        case "$totp" in
+            ''|*[!0-9]*)
+                ss_log "ERROR: could not derive a TOTP from the otpauth:// seed"
+                ss_log "       check that ${CERTUM_OTP_URI_FILE:-\$CERTUM_OTP_URI} holds otpauth://totp/...?secret=..."
+                return 1 ;;
+        esac
+
+        ss_fill_login "$totp"
+
+        ss_log "waiting for PKCS#11 token to come online..."
+        local i
+        blocked=0
+        for i in $(seq 1 15); do
+            ss_token_live; rc=$?
+            [ "$rc" = 0 ] && { ss_log "session live"; return 0; }
+            if [ "$rc" = 3 ]; then
+                blocked=$((blocked + 1))
+                [ "$blocked" -ge 3 ] && break
+            else
+                blocked=0
+            fi
+            sleep 2
+        done
+        ss_snap "attempt-$attempt-failed"
+        ss_log "login attempt $attempt did not take"
     done
 
     # --- failure: say WHICH failure, and show the screen ---
@@ -323,12 +391,15 @@ ss_login() {
         ss_log "       whether the credentials landed in the right fields."
         return 1
     fi
-    ss_log "ERROR: the GUI login did not take (no token after 60 s). Screen captured above."
+    ss_log "ERROR: the GUI login did not take after ${SS_LOGIN_TRIES:-3} attempts, each"
+    ss_log "       against a freshly rendered form. Screens captured above."
     ss_log "       Usual causes, in order:"
     ss_log "        1. wrong e-mail, wrong/stale otpauth seed, or a clock skew > 30 s"
     ss_log "        2. the account holds no cloud certificate (right password, wrong account)"
     ss_log "        3. a SimplySign Desktop other than 2.9.14: the dialog layout moved, so the"
     ss_log "           blind clicks at 39%/76%/94% of the window hit the wrong widgets"
+    ss_log "       Compare the attempt-*.png frames: if the e-mail and the code are NOT in"
+    ss_log "       their own boxes, it is the layout (3); if they are, it is (1) or (2)."
     ss_log "       Re-run with SS_DEBUG=1 to capture every step into $SS_DIAG_DIR,"
     ss_log "       or run code-signing/sign-diag.sh for a full environment report."
     return 1
