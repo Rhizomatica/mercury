@@ -134,6 +134,16 @@ jobs:
         uses: actions/download-artifact@v4
         with: { name: windows-unsigned }
 
+      # The SimplySign login is driven through a headless GUI, so when it fails
+      # the only useful evidence is a screenshot of the dialog — that is how the
+      # last field failure (a TOTP typed into the e-mail field) was diagnosed.
+      # The signer image has no screenshot tool, and without one the scripts fall
+      # back to a bare window list.
+      - name: Install screenshot tool for login diagnostics
+        run: |
+          command -v import >/dev/null || \
+            { apt-get update && apt-get install -y --no-install-recommends imagemagick; }
+
       - name: Sign binaries
         env:
           CERTUM_EMAIL:   ${{ secrets.CERTUM_EMAIL }}
@@ -227,6 +237,16 @@ jobs:
           name: windows-signed
           path: mercury-${{ inputs.version }}-w64-*.zip
 
+      # Screenshots and window lists live on the runner; without this they are
+      # thrown away with the container, which is exactly when they are wanted.
+      - name: Upload signing diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: signing-diagnostics
+          path: /tmp/mercury-signing-diag
+          if-no-files-found: ignore
+
   # ---- Create GitHub release ----
   release:
     name: Create GitHub release
@@ -253,7 +273,9 @@ jobs:
           # The installer is opt-in (build_installer); attach it only if present,
           # so a release without it still publishes cleanly.
           SETUP=$(ls Mercury_*_Setup.exe 2>/dev/null | head -1 || true)
-          [ -n "$SETUP" ] && ASSETS="$ASSETS ./${SETUP}"
+          # Not `[ -n ... ] && ASSETS=...`: the runner shell has -e, so the
+          # false test would end the step and no release would be created.
+          if [ -n "$SETUP" ]; then ASSETS="$ASSETS ./${SETUP}"; fi
           gh release create "v${{ inputs.version }}" $ASSETS \
             --repo Rhizomatica/mercury --target mercuryv2 --generate-notes \
             --title "Mercury ${{ inputs.version }}"
