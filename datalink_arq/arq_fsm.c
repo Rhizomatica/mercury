@@ -1188,6 +1188,12 @@ static void fsm_calling(arq_session_t *sess, const arq_event_t *ev)
         }
         break;
 
+    /* VARA-compatible: LISTEN OFF drops the link, it does not merely stop
+     * accepting new ones.  A host asserting a transmitter interlock (BPQ32
+     * INTERLOCK, frequency scanners) sends LISTEN OFF to mean "release the
+     * radio now" — honouring it only in LISTENING left us retrying CALL/ACCEPT
+     * over another port that had already taken the channel. */
+    case ARQ_EV_APP_STOP_LISTEN:
     case ARQ_EV_APP_DISCONNECT:
         if (g_cbs.notify_disconnected) g_cbs.notify_disconnected(false);
         enter_idle_after_call(sess);
@@ -1278,6 +1284,10 @@ static void fsm_accepting(arq_session_t *sess, const arq_event_t *ev)
         fsm_disconnected(sess, ev);
         break;
 
+    /* See fsm_calling: LISTEN OFF releases the radio.  This is the state the
+     * BPQ32 interlock report lands in — an inbound CALL we are answering with
+     * ACCEPT retries. */
+    case ARQ_EV_APP_STOP_LISTEN:
     case ARQ_EV_APP_DISCONNECT:
         if (g_cbs.notify_cancelpending)
             g_cbs.notify_cancelpending();
@@ -1296,6 +1306,12 @@ static void fsm_disconnecting(arq_session_t *sess, const arq_event_t *ev)
 
     switch (ev->id)
     {
+    case ARQ_EV_APP_STOP_LISTEN:
+        /* Stop retransmitting DISCONNECT frames: the host wants the radio
+         * free, and the peer will time out without them. */
+        enter_idle_after_call(sess);
+        return;
+
     case ARQ_EV_TIMER_ACK:
         /* Initial DISCONNECT send after channel guard. */
         send_ctrl_frame(sess, ARQ_SUBTYPE_DISCONNECT);
@@ -1362,6 +1378,21 @@ static void fsm_connected(arq_session_t *sess, const arq_event_t *ev)
 
     switch (ev->id)
     {
+    case ARQ_EV_APP_STOP_LISTEN:
+        /* LISTEN OFF on a live link means "release the radio", so unlike
+         * APP_DISCONNECT below we do NOT drain the TX backlog: the host is
+         * telling us another port needs the channel, and queued bytes must not
+         * buy more airtime.  No air-side DISCONNECT frame either — that is one
+         * more keydown on a channel we were just told to give up, and the peer
+         * times out on its own (same reasoning as a dirty ABORT).  A frame
+         * already in the air finishes; truncating a keydown mid-frame only
+         * leaves the peer decoding garbage, since the transmitter is keyed
+         * either way. */
+        sess->pending_disconnect = false;
+        if (g_cbs.notify_disconnected) g_cbs.notify_disconnected(false);
+        enter_idle_after_call(sess);
+        return;
+
     case ARQ_EV_APP_DISCONNECT:
         /* Defer DISCONNECT while a frame is physically being transmitted
          * (PTT on, DATA_TX), still awaiting its ACK (WAIT_ACK), or the TX

@@ -159,6 +159,39 @@ static int tnc_queue_line(const char *line)
     return 0;
 }
 
+/* Queue a line that the HOST NEEDS FOR CORRECTNESS, not just for display.
+ *
+ * tnc_queue_line() is deliberately lossy: it drops rather than block a modem
+ * thread when the channel backs up.  That is right for telemetry (BUFFER, SN,
+ * BITRATE arrive continuously — a lost one is replaced a moment later), and
+ * wrong for state changes.  A host driving a transmitter interlock or a
+ * frequency scanner (BPQ32 INTERLOCK, VARA-style scanning) decides whether the
+ * radio is busy from PENDING / PTT ON / PTT OFF; a dropped PTT ON leaves it
+ * believing we are receiving while we are keyed, and it will hand the antenna
+ * to another port on top of us.
+ *
+ * So retry briefly before giving up, and if it still fails say so loudly
+ * instead of incrementing a counter nobody reads.  The bound is small: a full
+ * channel means the consumer is already stalled, and delaying a modem thread
+ * further helps nobody. */
+#define TNC_CRITICAL_RETRIES   10
+#define TNC_CRITICAL_SLEEP_US  5000   /* 10 x 5 ms = 50 ms worst case */
+
+static int tnc_queue_line_critical(const char *line)
+{
+    for (int i = 0; i < TNC_CRITICAL_RETRIES; i++)
+    {
+        if (tnc_queue_line(line) == 0)
+            return 0;
+        hermes_usleep(TNC_CRITICAL_SLEEP_US);
+    }
+    HLOGE("tcp-ctl", "DROPPED host state notification '%s' — the TNC channel "
+          "stayed full for %d ms; a host relying on this for interlock or "
+          "scanning is now out of sync",
+          line, (TNC_CRITICAL_RETRIES * TNC_CRITICAL_SLEEP_US) / 1000);
+    return -1;
+}
+
 static uint64_t monotonic_ms(void)
 {
     struct timespec ts;
@@ -1243,7 +1276,7 @@ void ptt_on()
      * The PTT state change (arq_set_trx(TX)) is already synchronous and
      * is what the modem RX thread actually polls; the TCP notification to
      * uucpd is informational only. */
-    (void)tnc_queue_line("PTT ON\r");
+    (void)tnc_queue_line_critical("PTT ON\r");
     HLOGI("radio", "TX enabled (PTT ON)");
 }
 
@@ -1253,7 +1286,7 @@ void ptt_off()
     if (radio_io_enabled())
         radio_io_key_off();
     /* Same reasoning as ptt_on(): queue asynchronously. */
-    (void)tnc_queue_line("PTT OFF\r");
+    (void)tnc_queue_line_critical("PTT OFF\r");
     HLOGI("radio", "TX disabled (PTT OFF)");
 }
 
@@ -1267,7 +1300,7 @@ void tnc_send_connected()
     int bw = arq_reported_bandwidth_hz();   /* separate locked call, AFTER the getter returns */
     snprintf(buffer, sizeof(buffer), "CONNECTED %s %s %d\r",
              source_call, dest_call, bw);
-    if (tnc_queue_line(buffer) < 0)
+    if (tnc_queue_line_critical(buffer) < 0)
         HLOGW("tcp-ctl", "Error queuing connected message");
 }
 
@@ -1285,13 +1318,13 @@ void tnc_send_cqframe(const char *source_call, int bw_hz)
 
 void tnc_send_pending()
 {
-    if (tnc_queue_line("PENDING\r") < 0)
+    if (tnc_queue_line_critical("PENDING\r") < 0)
         HLOGW("tcp-ctl", "Error queuing pending message");
 }
 
 void tnc_send_cancelpending()
 {
-    if (tnc_queue_line("CANCELPENDING\r") < 0)
+    if (tnc_queue_line_critical("CANCELPENDING\r") < 0)
         HLOGW("tcp-ctl", "Error queuing cancelpending message");
 }
 
@@ -1299,7 +1332,7 @@ void tnc_send_disconnected()
 {
     char buffer[128];
     snprintf(buffer, sizeof(buffer), "DISCONNECTED\r");
-    if (tnc_queue_line(buffer) < 0)
+    if (tnc_queue_line_critical(buffer) < 0)
         HLOGW("tcp-ctl", "Error queuing disconnected message");
 }
 
