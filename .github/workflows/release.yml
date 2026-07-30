@@ -62,12 +62,11 @@ jobs:
           PR_TITLES=$(gh pr list --repo Rhizomatica/mercury --state merged --base mercuryv2 \
             --search "merged:>${LAST_TAG_DATE}" --limit 200 --json title,mergedAt \
             --jq 'sort_by(.mergedAt) | .[].title')
-          PR_ENTRIES=""
-          while IFS= read -r title; do
-            [[ -z "$title" ]] && continue
-            PR_ENTRIES="${PR_ENTRIES}  * ${title%.}.\n"
-          done <<< "$PR_TITLES"
-          { echo 'PR_ENTRIES<<EOF'; printf '%b' "$PR_ENTRIES"; echo 'EOF'; } >> "$GITHUB_ENV"
+          PR_ENTRIES=$(printf '%s\n' "$PR_TITLES" | while IFS= read -r title; do
+            [ -z "$title" ] && continue
+            printf '  * %s.\n' "${title%.}"
+          done)
+          { echo 'PR_ENTRIES<<EOF'; printf '%s' "$PR_ENTRIES"; echo 'EOF'; } >> "$GITHUB_ENV"
 
       - name: Bump version files
         run: |
