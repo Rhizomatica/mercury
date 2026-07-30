@@ -134,15 +134,23 @@ jobs:
         uses: actions/download-artifact@v4
         with: { name: windows-unsigned }
 
-      # The SimplySign login is driven through a headless GUI, so when it fails
-      # the only useful evidence is a screenshot of the dialog — that is how the
-      # last field failure (a TOTP typed into the e-mail field) was diagnosed.
-      # The signer image has no screenshot tool, and without one the scripts fall
-      # back to a bare window list.
-      - name: Install screenshot tool for login diagnostics
+      # The signer image (Ubuntu 24.04 + SimplySign + jsign) ships unzip but not
+      # zip, and no make or screenshot tool. Every one of those is used AFTER a
+      # successful signing session — re-packing the zip, staging the installer,
+      # photographing a failed login — so a missing one would burn the session
+      # and fail the release at the last step. Install them before signing.
+      - name: Install tools the signer image lacks
         run: |
-          command -v import >/dev/null || \
-            { apt-get update && apt-get install -y --no-install-recommends imagemagick; }
+          set -eu
+          PKGS=""
+          command -v zip    >/dev/null || PKGS="$PKGS zip"
+          command -v make   >/dev/null || PKGS="$PKGS make"
+          command -v import >/dev/null || PKGS="$PKGS imagemagick"
+          if [ -n "$PKGS" ]; then
+            apt-get update
+            # shellcheck disable=SC2086
+            apt-get install -y --no-install-recommends $PKGS
+          fi
 
       - name: Sign binaries
         env:
