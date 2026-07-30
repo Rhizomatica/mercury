@@ -46,6 +46,11 @@ jobs:
 
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          # Honour the dispatch input; it was advertised but ignored, so a manual
+          # run against another branch silently tested mercuryv2. github.ref keeps
+          # the automatic behaviour unchanged (PR merge ref / pushed branch).
+          ref: ${{ github.event.inputs.branch || github.ref }}
 
       - name: Git Safe Directory
         run: git config --global --add safe.directory /__w/mercury/mercury
