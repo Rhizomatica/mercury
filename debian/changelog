@@ -1,3 +1,25 @@
+mercury (1.9.11-1) unstable; urgency=medium
+
+  * Release 1.9.11.
+  * freedv/HARQ: average combined LLRs by copy count (not raw-sum).
+  * freedv/HARQ: gate combined-decode acceptance on parity count, not CRC16 alone.
+  * modem: 8 MB stacks for TX/RX threads — fixes macOS crash on wide OFDM modes.
+  * audio: -x sock — a virtual-clock lockstep backend for device-free testing.
+  * Store config, logs in install dir on Windows and fix audio device persistence on restart.
+  * build(windows): Authenticode signing via Certum SimplySign (jsign) — validated, +CI.
+  * docs(windows-signing): finish de-personalising the reference tables.
+  * fix: race condition in WebSocket connect callback on aarch64.
+  * modem: TUNE command — a 1 kHz ATU tuning carrier with a hard unkey timer.
+  * docs(TNC): document the TUNE command in the host command reference.
+  * audioio: fix int32 stereo mix overflow, resample by the device's real rate.
+  * audioio: support 24-bit packed (S24_3LE) cards on Linux.
+  * windows: sign the installer and its payloads; ship the console binary.
+  * arq+tnc: honour LISTEN OFF in every state; make host state notifications reliable.
+  * ci(release): build and sign the Windows installer from a prepared Inno tree.
+  * ci: install the tools the signer image lacks; honour Integration's branch input.
+
+ -- Rafael Diniz <rafael@riseup.net>  Thu, 30 Jul 2026 19:05:53 +0000
+
 mercury (1.9.10-1) unstable; urgency=medium
 
   * Release 1.9.10.
