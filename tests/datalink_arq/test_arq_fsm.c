@@ -343,6 +343,68 @@ static void goto_connected(void)
     TEST_ASSERT_EQUAL_INT(ARQ_CONN_CONNECTED, sess.conn_state);
 }
 
+/* ---- LISTEN OFF releases the radio (VARA semantics, host interlock) ----
+ *
+ * A host asserting a transmitter interlock or stopping a frequency scan sends
+ * LISTEN OFF meaning "release the radio now". Honouring it only in LISTENING
+ * left Mercury retrying CALL/ACCEPT on a channel another port had taken —
+ * reported from the field as BPQ32 INTERLOCK being ignored, and as a scanner
+ * that kept stepping frequencies while Mercury answered a connect request.
+ */
+
+void test_listen_off_drops_pending_accept(void)
+{
+    enter_accepting();
+
+    RESET_FAKE(fake_send_tx_frame);
+    RESET_FAKE(fake_notify_cancelpending);
+
+    arq_event_t ev = make_event(ARQ_EV_APP_STOP_LISTEN);
+    arq_fsm_dispatch(&sess, &ev);
+
+    /* Must leave ACCEPTING: staying there keeps retrying ACCEPT on the air. */
+    TEST_ASSERT_NOT_EQUAL_INT(ARQ_CONN_ACCEPTING, sess.conn_state);
+    /* The host must learn the pending connection is gone. */
+    TEST_ASSERT_GREATER_THAN(0, fake_notify_cancelpending_fake.call_count);
+    /* And listen intent is cleared, so we do not fall back into LISTENING. */
+    TEST_ASSERT_FALSE(sess.listen_enabled);
+}
+
+void test_listen_off_drops_outgoing_call(void)
+{
+    arq_event_t ev = make_event(ARQ_EV_APP_LISTEN);
+    arq_fsm_dispatch(&sess, &ev);
+    ev = make_event(ARQ_EV_APP_CONNECT);
+    strncpy(ev.remote_call, "DST1", CALLSIGN_MAX_SIZE);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_CALLING, sess.conn_state);
+
+    ev = make_event(ARQ_EV_APP_STOP_LISTEN);
+    arq_fsm_dispatch(&sess, &ev);
+
+    TEST_ASSERT_NOT_EQUAL_INT(ARQ_CONN_CALLING, sess.conn_state);
+}
+
+void test_listen_off_drops_live_link_without_draining(void)
+{
+    goto_connected();
+    fake_tx_backlog_fake.return_val = 256;  /* bytes still queued */
+
+    RESET_FAKE(fake_send_tx_frame);
+
+    arq_event_t ev = make_event(ARQ_EV_APP_STOP_LISTEN);
+    arq_fsm_dispatch(&sess, &ev);
+
+    /* Unlike APP_DISCONNECT (see test_app_disconnect_defers_with_backlog),
+     * a backlog must NOT hold the link up: the radio was requested back, so
+     * queued bytes buy no more airtime. */
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_DISCONNECTED, sess.conn_state);
+    TEST_ASSERT_FALSE(sess.pending_disconnect);
+    /* No air-side DISCONNECT frame — that is one more keydown on a channel we
+     * were just told to give up; the peer times out instead. */
+    TEST_ASSERT_EQUAL_INT(0, fake_send_tx_frame_fake.call_count);
+}
+
 /* ---- Disconnect teardown tests (K7EK field regressions) ---- */
 
 /* Entering CONNECTED seeds the no-progress clock so the wall-clock budget
@@ -786,6 +848,9 @@ int main(void)
     RUN_TEST(test_rx_disconnect_from_connected);
     RUN_TEST(test_connected_seeds_no_progress_clock);
     RUN_TEST(test_app_disconnect_defers_with_backlog);
+    RUN_TEST(test_listen_off_drops_pending_accept);
+    RUN_TEST(test_listen_off_drops_outgoing_call);
+    RUN_TEST(test_listen_off_drops_live_link_without_draining);
     RUN_TEST(test_pending_disconnect_retries_last_frame_before_teardown);
     RUN_TEST(test_app_disconnect_defers_in_wait_ack);
     RUN_TEST(test_wait_ack_pattern_ack_confirms_frame);
