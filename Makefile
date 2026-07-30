@@ -98,7 +98,7 @@ FYNE_UI_DIR   = gui_interface/fyne-ui
 FYNE_UI_BIN   = mercury-ui.exe
 MINGW_GO_CC   = x86_64-w64-mingw32-gcc
 
-.PHONY: all install internal_deps utils clean doxygen doxygen-clean windows windows-zip windows-installer-signed windows-installer-stage fyne-ui fyne-ui-macos fyne-ui-macos-dmg macos-universal fyne-ui-macos-universal fyne-ui-macos-universal-dmg fyne-ui-windows windows-installer test integration-test FORCE
+.PHONY: all install internal_deps utils clean doxygen doxygen-clean windows windows-zip windows-installer-signed windows-installer-stage check-installer-names fyne-ui fyne-ui-macos fyne-ui-macos-dmg macos-universal fyne-ui-macos-universal fyne-ui-macos-universal-dmg fyne-ui-windows windows-installer test integration-test FORCE
 
 prefix ?= /usr
 bindir ?= $(prefix)/bin
@@ -483,7 +483,19 @@ fyne-ui-windows: libmercury_core_w64.a
 # the release pipeline signs in a container that has the certificate but no
 # mingw/Go toolchain, so it must be able to pack without triggering a rebuild
 # (which would also discard the signatures it just applied).
-windows-installer-stage:
+# Windows rejects \ / : * ? " < > | in file names, and Inno Setup only finds
+# out at INSTALL time — ISCC compiles a bad shortcut name happily and the user
+# gets "IPersistFile::Save failed; code 0x80070003" halfway through Setup.
+# Nothing in CI installs the installer, so check the names statically.
+check-installer-names:
+	@awk -F'"' '/^Name: "\{(group|autodesktop|commondesktop|userdesktop)\}/ { \
+		n = $$2; sub(/.*\\/, "", n); \
+		if (n ~ /[\/:*?<>|]/) { \
+			printf("%s:%d: illegal character in shortcut name: %s\n", FILENAME, NR, n); \
+			rc = 1 } } \
+	    END { exit rc }' $(WINDOWS_INSTALLER_DIR)/installer.iss
+
+windows-installer-stage: check-installer-names
 	cp mercury.exe $(WINDOWS_INSTALLER_DIR)/
 	cp mercury.ini.example $(WINDOWS_INSTALLER_DIR)/mercury.ini
 	sed -i 's/ui_enabled = false/ui_enabled = true/g' $(WINDOWS_INSTALLER_DIR)/mercury.ini
