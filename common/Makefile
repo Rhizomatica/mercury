@@ -15,7 +15,7 @@ endif
 ENGINE_CFLAGS = $(CFG_CFLAGS) -I.. -I../modem -I../modem/freedv -I../datalink_broadcast -I../data_interfaces -I../datalink_arq -I../audioio -I../radio_io
 
 all: os_interop.o ring_buffer_posix.o shm_posix.o crc6.o hermes_log.o chan.o queue.o \
-     cfg_utils.o iniparser/iniparser.o iniparser/dictionary.o watterson.o mercury_engine.o \
+     virtual_clock.o cfg_utils.o iniparser/iniparser.o iniparser/dictionary.o watterson.o mercury_engine.o \
      mercury_cli.o
 
 os_interop.o: os_interop.c
@@ -29,6 +29,9 @@ shm_posix.o: shm_posix.c
 
 crc6.o: crc6.c
 	$(CC) $(CFLAGS) -c crc6.c
+
+virtual_clock.o: virtual_clock.c virtual_clock.h
+	$(CC) $(CFLAGS) -c virtual_clock.c
 
 hermes_log.o: hermes_log.c hermes_log.h
 	$(CC) $(CFLAGS) -c hermes_log.c
