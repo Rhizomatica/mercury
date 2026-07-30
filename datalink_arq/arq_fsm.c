@@ -803,6 +803,7 @@ static void fsm_calling(arq_session_t *sess, const arq_event_t *ev)
         }
         break;
 
+    case ARQ_EV_APP_STOP_LISTEN:  /* host wants the radio back — abandon the call */
     case ARQ_EV_APP_DISCONNECT:
         if (g_cbs.notify_disconnected) g_cbs.notify_disconnected(false);
         enter_idle_after_call(sess);
@@ -904,6 +905,7 @@ static void fsm_accepting(arq_session_t *sess, const arq_event_t *ev)
         fsm_disconnected(sess, ev);
         break;
 
+    case ARQ_EV_APP_STOP_LISTEN:  /* host wants the radio back — stop answering */
     case ARQ_EV_APP_DISCONNECT:
         if (g_cbs.notify_cancelpending)
             g_cbs.notify_cancelpending();
@@ -935,6 +937,15 @@ static void fsm_disconnecting(arq_session_t *sess, const arq_event_t *ev)
         HLOGI(LOG_COMP, "Disconnect finalized (peer ack)");
         if (g_cbs.notify_disconnected) g_cbs.notify_disconnected(false);
         if (g_timing) arq_timing_record_disconnect(g_timing, "peer_ack");
+        enter_idle_after_call(sess);
+        break;
+
+    case ARQ_EV_APP_STOP_LISTEN:
+        /* The radio was asked for back mid-teardown: stop retransmitting
+         * DISCONNECT.  The peer times out on its own. */
+        HLOGI(LOG_COMP, "LISTEN OFF while disconnecting — stopping retransmits");
+        if (g_cbs.notify_disconnected) g_cbs.notify_disconnected(false);
+        if (g_timing) arq_timing_record_disconnect(g_timing, "listen_off");
         enter_idle_after_call(sess);
         break;
 
@@ -986,6 +997,20 @@ static void fsm_connected(arq_session_t *sess, const arq_event_t *ev)
 
     switch (ev->id)
     {
+    case ARQ_EV_APP_STOP_LISTEN:
+        /* LISTEN OFF is a host interlock ("release the radio now"), not a
+         * polite disconnect: drop the link without draining the TX backlog and
+         * without a DISCONNECT frame on the air.  Queued bytes buy no more
+         * airtime on a channel we were just told to give up, and the peer
+         * times out normally.  A frame already in flight finishes; nothing new
+         * is keyed.  Contrast APP_DISCONNECT below, which defers to drain. */
+        HLOGI(LOG_COMP, "LISTEN OFF while connected — releasing the radio");
+        sess->pending_disconnect = false;
+        if (g_timing) arq_timing_record_disconnect(g_timing, "listen_off");
+        if (g_cbs.notify_disconnected) g_cbs.notify_disconnected(false);
+        enter_idle_after_call(sess);
+        return;
+
     case ARQ_EV_APP_DISCONNECT:
         /* Defer DISCONNECT while a frame is physically being transmitted
          * (DATA_TX), still awaiting its ACK (WAIT_ACK), or the TX buffer has
