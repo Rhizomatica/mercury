@@ -91,7 +91,7 @@ Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilen
 ; running the modem: a bare double-click would flash a window and vanish, which
 ; looks broken.  This lands an advanced user (or someone being talked through a
 ; problem) at a prompt with mercury.exe on hand.
-Name: "{group}\Advanced\Mercury Console (headless / TNC)"; Filename: "{cmd}"; Parameters: "/K mercury.exe -h"; WorkingDir: "{app}"; IconFilename: "{app}\mercury.ico"; Comment: "Command-line modem for headless, TNC and scripted use - advanced users"
+Name: "{group}\Advanced\Mercury Console (headless, TNC)"; Filename: "{cmd}"; Parameters: "/K mercury.exe -h"; WorkingDir: "{app}"; IconFilename: "{app}\mercury.ico"; Comment: "Command-line modem for headless, TNC and scripted use - advanced users"
 
 
 [Run]
