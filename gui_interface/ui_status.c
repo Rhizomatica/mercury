@@ -47,3 +47,29 @@ int ui_status_to_json(const ui_status_t *st, char *buf, size_t buflen)
         return -1;
     return n;
 }
+
+int ui_device_list_to_json(const char *type_name, const ui_device_t *devs, int count,
+                           const char *selected, char *buf, size_t buflen)
+{
+    if (!type_name || !buf || buflen == 0 || (count > 0 && !devs))
+        return -1;
+
+    int pos = snprintf(buf, buflen, "{\"type\":\"%s\",\"selected\":\"%s\",\"list\":[",
+                       type_name, selected ? selected : "");
+    if (pos < 0 || (size_t)pos >= buflen)
+        return -1;
+
+    for (int i = 0; i < count; i++)
+    {
+        int n = snprintf(buf + pos, buflen - pos, "%s{\"name\":\"%s\",\"id\":\"%s\"}",
+                         i ? "," : "", devs[i].name, devs[i].id);
+        if (n < 0 || (size_t)(pos + n) >= buflen)
+            return -1;   /* truncated JSON is worse than none — see the status path */
+        pos += n;
+    }
+
+    int n = snprintf(buf + pos, buflen - pos, "]}");
+    if (n < 0 || (size_t)(pos + n) >= buflen)
+        return -1;
+    return pos + n;
+}

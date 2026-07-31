@@ -134,3 +134,25 @@ int mercury_ui_command(const char *command, const char *value,
 {
     return ui_comm_command(command, value, value2, value3);
 }
+
+int mercury_ui_get_audio_devices(int kind, ui_device_t *out, int max,
+                                 char *selected, int selected_len)
+{
+    return ui_comm_get_audio_devices((ui_device_kind_t)kind, out, max,
+                                     selected, (size_t)selected_len);
+}
+
+int mercury_ui_get_radio_list(ui_device_t *out, int max,
+                              char *selected, int selected_len,
+                              char *device_path, int device_path_len,
+                              int *serial_speed)
+{
+    return ui_comm_get_radio_list(out, max, selected, (size_t)selected_len,
+                                  device_path, (size_t)device_path_len,
+                                  serial_speed);
+}
+
+int mercury_ui_get_input_channel(void)
+{
+    return ui_comm_get_input_channel();
+}

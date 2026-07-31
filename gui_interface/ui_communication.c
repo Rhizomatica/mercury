@@ -201,6 +201,101 @@ int ui_comm_handle_command(ui_ctx_t *ctx, const ws_command_t *cmd)
 // ---------------- UI PUBLISHER THREAD ----------------
 // Periodically gathers modem/ARQ/network status and sends it to the UI.
 
+/* ---- Device enumeration ----------------------------------------------------
+ * One implementation per list, used by the websocket publisher and by the
+ * embedded UI through the bridge.  The websocket path used to build its JSON
+ * inline from get_soundcard_list(); routing both through here is what keeps a
+ * local UI and a remote one showing the same devices and the same selection. */
+
+int ui_comm_get_audio_devices(ui_device_kind_t kind, ui_device_t *out, int max,
+                              char *selected, size_t sel_len)
+{
+    ui_ctx_t *ctx = g_ui_ctx;
+    if (!ctx || !out || max <= 0)
+        return 0;
+
+    /* get_soundcard_list() takes mode 1 = capture, 0 = playback. */
+    int mode = (kind == UI_DEV_CAPTURE) ? 1 : 0;
+
+    char ids[32][64], names[32][64];
+    int cap = (max < 32) ? max : 32;
+    int count = get_soundcard_list(ctx->audio_system, mode, ids, names, cap);
+    if (count < 0)
+        count = 0;
+
+    for (int i = 0; i < count; i++)
+    {
+        /* Bound the read as well as the write: if a backend ever handed back
+         * an unterminated row, "%s" would run on into the next one. */
+        snprintf(out[i].id,   sizeof(out[i].id),   "%.*s", (int)sizeof(ids[i]) - 1, ids[i]);
+        snprintf(out[i].name, sizeof(out[i].name), "%.*s", (int)sizeof(names[i]) - 1, names[i]);
+    }
+
+    if (selected && sel_len)
+        snprintf(selected, sel_len, "%s",
+                 (kind == UI_DEV_CAPTURE) ? ctx->selected_capture_dev
+                                          : ctx->selected_playback_dev);
+    return count;
+}
+
+int ui_comm_get_radio_list(ui_device_t *out, int max, char *selected, size_t sel_len,
+                           char *device_path, size_t dev_len, int *serial_speed)
+{
+    ui_ctx_t *ctx = g_ui_ctx;
+    if (!ctx || !out || max <= 0)
+        return 0;
+
+    if (selected && sel_len)
+    {
+        int cur_type = radio_io_get_radio_type();
+        if (cur_type > 0)
+            snprintf(selected, sel_len, "%d", cur_type);
+        else
+            selected[0] = '\0';
+    }
+    if (device_path && dev_len)
+    {
+        const char *cur_dev = radio_io_get_device_path();
+        snprintf(device_path, dev_len, "%s", cur_dev ? cur_dev : "");
+    }
+    if (serial_speed)
+        *serial_speed = radio_io_get_serial_speed();
+
+    /* "None" is always first: switching the radio off is a choice, not the
+     * absence of one. */
+    int n = 0;
+    snprintf(out[n].name, sizeof(out[n].name), "None");
+    snprintf(out[n].id,   sizeof(out[n].id),   "%d", RADIO_TYPE_NONE);
+    n++;
+
+    char (*radio_ids)[16]   = malloc(sizeof(*radio_ids)   * 512);
+    char (*radio_names)[64] = malloc(sizeof(*radio_names) * 512);
+    if (!radio_ids || !radio_names)
+    {
+        HLOGE(UI_LOG_TAG, "Failed to allocate radio list arrays");
+        free(radio_ids);
+        free(radio_names);
+        return n;
+    }
+
+    int count = radio_io_get_radio_list(radio_ids, radio_names, 512);
+    for (int i = 0; i < count && n < max; i++, n++)
+    {
+        snprintf(out[n].id,   sizeof(out[n].id),   "%s", radio_ids[i]);
+        snprintf(out[n].name, sizeof(out[n].name), "%s", radio_names[i]);
+    }
+
+    free(radio_ids);
+    free(radio_names);
+    return n;
+}
+
+int ui_comm_get_input_channel(void)
+{
+    ui_ctx_t *ctx = g_ui_ctx;
+    return ctx ? ctx->rx_input_channel : 0;
+}
+
 /* Gather everything the UI shows into one typed snapshot.  This is the only
  * place that reads the engine for status; the websocket JSON and the embedded
  * UI both render THIS struct, so the two views cannot drift apart. */
@@ -329,43 +424,20 @@ void *ui_publisher_thread(void *arg)
         {
             ctx->soundcard_list_pending = 0;
 
-            // Capture (input) devices - mode 1 = FFAUDIO_DEV_CAPTURE
-            char cap_ids[32][64], cap_names[32][64];
-            int cap_count = get_soundcard_list(ctx->audio_system, 1, cap_ids, cap_names, 32);
-            if (cap_count > 0)
-            {
-                char buf[4096];
-                int pos = 0;
-                pos += snprintf(buf + pos, sizeof(buf) - pos,
-                    "{\"type\":\"capture_dev_list\",\"selected\":\"%s\",\"list\":[",
-                    ctx->selected_capture_dev);
-                for (int i = 0; i < cap_count && pos < (int)sizeof(buf) - 160; i++) {
-                    if (i > 0) buf[pos++] = ',';
-                    pos += snprintf(buf + pos, sizeof(buf) - pos,
-                        "{\"name\":\"%s\",\"id\":\"%s\"}", cap_names[i], cap_ids[i]);
-                }
-                pos += snprintf(buf + pos, sizeof(buf) - pos, "]}");
-                ws_broadcast_json(&ctx->ws, buf);
-            }
+            /* Same enumerator the embedded UI calls, rendered as JSON. */
+            ui_device_t devs[32];
+            char sel[64];
+            char buf[8192];
 
-            // Playback (output) devices - mode 0 = FFAUDIO_DEV_PLAYBACK
-            char pb_ids[32][64], pb_names[32][64];
-            int pb_count = get_soundcard_list(ctx->audio_system, 0, pb_ids, pb_names, 32);
-            if (pb_count > 0)
-            {
-                char buf[4096];
-                int pos = 0;
-                pos += snprintf(buf + pos, sizeof(buf) - pos,
-                    "{\"type\":\"playback_dev_list\",\"selected\":\"%s\",\"list\":[",
-                    ctx->selected_playback_dev);
-                for (int i = 0; i < pb_count && pos < (int)sizeof(buf) - 160; i++) {
-                    if (i > 0) buf[pos++] = ',';
-                    pos += snprintf(buf + pos, sizeof(buf) - pos,
-                        "{\"name\":\"%s\",\"id\":\"%s\"}", pb_names[i], pb_ids[i]);
-                }
-                pos += snprintf(buf + pos, sizeof(buf) - pos, "]}");
+            int cap_count = ui_comm_get_audio_devices(UI_DEV_CAPTURE, devs, 32, sel, sizeof(sel));
+            if (cap_count > 0 &&
+                ui_device_list_to_json("capture_dev_list", devs, cap_count, sel, buf, sizeof(buf)) > 0)
                 ws_broadcast_json(&ctx->ws, buf);
-            }
+
+            int pb_count = ui_comm_get_audio_devices(UI_DEV_PLAYBACK, devs, 32, sel, sizeof(sel));
+            if (pb_count > 0 &&
+                ui_device_list_to_json("playback_dev_list", devs, pb_count, sel, buf, sizeof(buf)) > 0)
+                ws_broadcast_json(&ctx->ws, buf);
 
             // Input channel selection
             const char *ch_str;
@@ -385,51 +457,40 @@ void *ui_publisher_thread(void *arg)
         if (ctx->radio_list_pending)
         {
             ctx->radio_list_pending = 0;
-            char (*radio_ids)[16] = malloc(sizeof(*radio_ids) * 512);
-            char (*radio_names)[64] = malloc(sizeof(*radio_names) * 512);
-            if (!radio_ids || !radio_names)
-            {
-                HLOGE(UI_LOG_TAG, "Failed to allocate radio list arrays");
-                free(radio_ids);
-                free(radio_names);
-                continue;
-            }
-            int radio_count = radio_io_get_radio_list(radio_ids, radio_names, 512);
-            if (radio_count > 0)
-            {
-                char sel_buf[16] = "";
-                int cur_type = radio_io_get_radio_type();
-                if (cur_type > 0)
-                    snprintf(sel_buf, sizeof(sel_buf), "%d", cur_type);
-                const char *cur_dev = radio_io_get_device_path();
-                int cur_serial_speed = radio_io_get_serial_speed();
 
-                const size_t buf_size = 65536;
-                char *buf = malloc(buf_size);
-                if (!buf) {
-                    HLOGE(UI_LOG_TAG, "Failed to allocate radio_list buffer");
-                    free(radio_ids);
-                    free(radio_names);
-                    continue;
-                }
-                int pos = 0;
-                pos += snprintf(buf + pos, buf_size - pos,
-                    "{\"type\":\"radio_list\",\"selected\":\"%s\",\"device_path\":\"%s\",\"serial_speed\":%d,\"list\":[",
-                    sel_buf, cur_dev ? cur_dev : "", cur_serial_speed);
-                // First entry always "None"
-                pos += snprintf(buf + pos, buf_size - pos,
-                    "{\"name\":\"None\",\"id\":\"%d\"}", RADIO_TYPE_NONE);
-                for (int i = 0; i < radio_count && pos < (int)buf_size - 128; i++) {
-                    buf[pos++] = ',';
-                    pos += snprintf(buf + pos, buf_size - pos,
-                        "{\"name\":\"%s\",\"id\":\"%s\"}", radio_names[i], radio_ids[i]);
-                }
-                pos += snprintf(buf + pos, buf_size - pos, "]}");
-                ws_broadcast_json(&ctx->ws, buf);
+            /* Same enumerator the embedded UI calls (hamlib's list is long, so
+             * this one is heap-allocated), rendered as JSON. */
+            const int   max_radios = 513;          /* 512 rigs + "None" */
+            ui_device_t *radios = malloc(sizeof(*radios) * max_radios);
+            char        *buf    = malloc(65536);
+            if (!radios || !buf)
+            {
+                HLOGE(UI_LOG_TAG, "Failed to allocate radio list buffers");
+                free(radios);
                 free(buf);
             }
-            free(radio_ids);
-            free(radio_names);
+            else
+            {
+                char sel[16] = "", dev_path[512] = "";
+                int  serial_speed = 0;
+                int  count = ui_comm_get_radio_list(radios, max_radios, sel, sizeof(sel),
+                                                    dev_path, sizeof(dev_path), &serial_speed);
+                if (count > 0)
+                {
+                    /* radio_list carries two fields no other list has, so it
+                     * gets the shared body plus its own preamble. */
+                    int pos = snprintf(buf, 65536,
+                        "{\"type\":\"radio_list\",\"selected\":\"%s\",\"device_path\":\"%s\","
+                        "\"serial_speed\":%d,\"list\":[", sel, dev_path, serial_speed);
+                    for (int i2 = 0; i2 < count && pos < 65536 - 160; i2++)
+                        pos += snprintf(buf + pos, 65536 - pos, "%s{\"name\":\"%s\",\"id\":\"%s\"}",
+                                        i2 ? "," : "", radios[i2].name, radios[i2].id);
+                    pos += snprintf(buf + pos, 65536 - pos, "]}");
+                    ws_broadcast_json(&ctx->ws, buf);
+                }
+                free(radios);
+                free(buf);
+            }
         }
 
         hermes_usleep(UI_PUBLISH_INTERVAL_US);

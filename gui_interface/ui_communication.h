@@ -130,4 +130,17 @@ int  ui_comm_command(const char *command, const char *value,
 /* Copy the most recent status snapshot.  False until the first publish. */
 bool ui_comm_get_status(ui_status_t *out);
 
+/* Enumerate audio devices of one kind.  Returns how many were written and, if
+ * `selected` is non-NULL, the id currently in use. */
+int  ui_comm_get_audio_devices(ui_device_kind_t kind, ui_device_t *out, int max,
+                               char *selected, size_t sel_len);
+
+/* Enumerate radios ("None" first), plus the current selection, device path and
+ * serial speed.  Returns how many entries were written. */
+int  ui_comm_get_radio_list(ui_device_t *out, int max, char *selected, size_t sel_len,
+                            char *device_path, size_t dev_len, int *serial_speed);
+
+/* Current RX input channel: 0 = left, 1 = right, 2 = stereo. */
+int  ui_comm_get_input_channel(void);
+
 #endif

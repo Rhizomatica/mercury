@@ -54,6 +54,17 @@ int mercury_ui_get_spectrum(float *out, int max_bins, int *sample_rate_hz);
 int mercury_ui_command(const char *command, const char *value,
                        const char *value2, const char *value3);
 
+/* Device pickers.  The websocket path pushes these to a client when it
+ * connects; a local UI asks for them instead.  Both read the same enumerators,
+ * so the two see the same devices and the same selection. */
+int mercury_ui_get_audio_devices(int kind, ui_device_t *out, int max,
+                                 char *selected, int selected_len);
+int mercury_ui_get_radio_list(ui_device_t *out, int max,
+                              char *selected, int selected_len,
+                              char *device_path, int device_path_len,
+                              int *serial_speed);
+int mercury_ui_get_input_channel(void);
+
 #ifdef __cplusplus
 }
 #endif

@@ -27,6 +27,10 @@ import (
 type engineLink struct {
 	statusEvery   time.Duration
 	spectrumEvery time.Duration
+
+	// Signalled after a command that changes what the pickers should show, so
+	// the lists are re-read instead of going stale.
+	refresh chan struct{}
 }
 
 const (
@@ -40,6 +44,7 @@ func newEngineLink() *engineLink {
 	return &engineLink{
 		statusEvery:   engineStatusInterval,
 		spectrumEvery: engineSpectrumInterval,
+		refresh:       make(chan struct{}, 1),
 	}
 }
 
@@ -62,6 +67,10 @@ func (l *engineLink) Start(ctx context.Context) (<-chan Event, error) {
 
 		emit(ctx, events, LinkStateEvent{Up: true, Detail: "Engine running in-process (no socket)."})
 
+		// The websocket path pushes the pickers when a client connects; here
+		// there is no connect event, so read them once up front.
+		l.emitDeviceLists(ctx, events)
+
 		// Reused across polls: the bridge copies into it, so one allocation
 		// serves the whole session for status.
 		var cst C.ui_status_t
@@ -83,6 +92,12 @@ func (l *engineLink) Start(ctx context.Context) (<-chan Event, error) {
 					continue
 				}
 				emit(ctx, events, SpectrumEvent{Bins: bins, SampleRate: rate})
+
+			case <-l.refresh:
+				// A device or radio change was just applied; re-read so the
+				// pickers show what the engine actually ended up using, which
+				// is not always what was asked for.
+				l.emitDeviceLists(ctx, events)
 			}
 		}
 	}()
@@ -105,7 +120,109 @@ func (l *engineLink) Send(cmd Command) error {
 	if rc := C.mercury_ui_command(cName, cV1, cV2, cV3); rc != 0 {
 		return fmt.Errorf("engine rejected command %q (rc=%d)", cmd.Name, int(rc))
 	}
+
+	switch cmd.Name {
+	case "set_audio_config", "set_radio_config":
+		select {
+		case l.refresh <- struct{}{}:
+		default: // a refresh is already pending; one is enough
+		}
+	}
 	return nil
+}
+
+// emitDeviceLists reads the audio, channel and radio pickers out of the engine
+// and publishes them as the same events the websocket path produces.
+func (l *engineLink) emitDeviceLists(ctx context.Context, events chan<- Event) {
+	if items, selected, ok := readAudioDevices(C.UI_DEV_CAPTURE); ok {
+		emit(ctx, events, DeviceListEvent{Kind: DeviceCapture, Items: items, Selected: selected})
+	}
+	if items, selected, ok := readAudioDevices(C.UI_DEV_PLAYBACK); ok {
+		emit(ctx, events, DeviceListEvent{Kind: DevicePlayback, Items: items, Selected: selected})
+	}
+
+	// The channel list is fixed; only the selection comes from the engine.
+	channels := []optionItem{
+		{Name: "Left", ID: "left"},
+		{Name: "Right", ID: "right"},
+		{Name: "Stereo", ID: "stereo"},
+	}
+	selectedChannel := "left"
+	switch int(C.mercury_ui_get_input_channel()) {
+	case 1:
+		selectedChannel = "right"
+	case 2:
+		selectedChannel = "stereo"
+	}
+	emit(ctx, events, DeviceListEvent{
+		Kind: DeviceInputChannel, Items: channels, Selected: selectedChannel,
+	})
+
+	if ev, ok := readRadioList(); ok {
+		emit(ctx, events, ev)
+	}
+}
+
+// maxAudioDevices matches the engine-side cap in ui_comm_get_audio_devices().
+const maxAudioDevices = 32
+
+// maxRadios covers hamlib's catalogue plus the leading "None".
+const maxRadios = 513
+
+func readAudioDevices(kind C.ui_device_kind_t) ([]optionItem, string, bool) {
+	devs := make([]C.ui_device_t, maxAudioDevices)
+	sel := make([]C.char, 64)
+
+	n := C.mercury_ui_get_audio_devices(C.int(kind), &devs[0], C.int(len(devs)),
+		&sel[0], C.int(len(sel)))
+	if n <= 0 {
+		return nil, "", false
+	}
+
+	items := make([]optionItem, 0, int(n))
+	for i := 0; i < int(n); i++ {
+		items = append(items, optionItem{
+			ID:   C.GoString(&devs[i].id[0]),
+			Name: C.GoString(&devs[i].name[0]),
+		})
+	}
+	return items, C.GoString(&sel[0]), true
+}
+
+func readRadioList() (RadioListEvent, bool) {
+	devs := make([]C.ui_device_t, maxRadios)
+	sel := make([]C.char, 16)
+	devPath := make([]C.char, 512)
+	var speed C.int
+
+	n := C.mercury_ui_get_radio_list(&devs[0], C.int(len(devs)),
+		&sel[0], C.int(len(sel)),
+		&devPath[0], C.int(len(devPath)), &speed)
+	if n <= 0 {
+		return RadioListEvent{}, false
+	}
+
+	items := make([]optionItem, 0, int(n))
+	for i := 0; i < int(n); i++ {
+		items = append(items, optionItem{
+			ID:   C.GoString(&devs[i].id[0]),
+			Name: C.GoString(&devs[i].name[0]),
+		})
+	}
+	// "None" already leads the list; the rest keep hamlib order, matching what
+	// the websocket path sends before the UI sorts it.
+	sortRadioItems(items)
+
+	serial := ""
+	if speed > 0 {
+		serial = fmt.Sprintf("%d", int(speed))
+	}
+	return RadioListEvent{
+		Items:       items,
+		Selected:    C.GoString(&sel[0]),
+		DevicePath:  C.GoString(&devPath[0]),
+		SerialSpeed: serial,
+	}, true
 }
 
 func (l *engineLink) Close() {}

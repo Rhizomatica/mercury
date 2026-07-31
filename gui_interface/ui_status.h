@@ -43,4 +43,29 @@ typedef struct {
  * buffer is too small.  Pure function: no locks, no globals, unit-testable. */
 int ui_status_to_json(const ui_status_t *st, char *buf, size_t buflen);
 
+/* ---- Device enumeration ----------------------------------------------------
+ * Audio and radio choices, in one shape for both consumers: the websocket path
+ * renders them as JSON, the embedded UI copies the array out over CGo.  Same
+ * reason as the status struct — the two must not be able to disagree about
+ * what is on the list or which entry is selected. */
+
+#define UI_DEV_ID_MAX   64
+#define UI_DEV_NAME_MAX 64
+
+typedef struct {
+    char id[UI_DEV_ID_MAX];     /* device id / hamlib model number as text */
+    char name[UI_DEV_NAME_MAX]; /* what the operator sees                  */
+} ui_device_t;
+
+typedef enum {
+    UI_DEV_CAPTURE  = 0,
+    UI_DEV_PLAYBACK = 1,
+} ui_device_kind_t;
+
+/* Render a device list as the JSON a remote client expects.  `type_name` is
+ * the message type ("capture_dev_list", "playback_dev_list", "radio_list").
+ * Returns bytes written, or -1 if the buffer is too small. */
+int ui_device_list_to_json(const char *type_name, const ui_device_t *devs, int count,
+                           const char *selected, char *buf, size_t buflen);
+
 #endif /* UI_STATUS_H */
