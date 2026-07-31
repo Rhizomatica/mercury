@@ -238,6 +238,16 @@ func main() {
 	schemeSelect.SetSelected(state.wsScheme)
 	schemeSelect.Resize(fyne.NewSize(90, 34))
 
+	// Declared here because the Engine selector below drives them, while they
+	// are built further down with the rest of the UI.
+	var (
+		connectionButtonState  = "connect"
+		connectButton          *widget.Button
+		updateConnectionButton func()
+		connectLink            func()
+		disconnectLink         func(reason string)
+	)
+
 	// Where the engine runs. "Local" drives the engine inside this binary
 	// through CGo and opens no socket at all; "Remote" reaches a Mercury on
 	// another machine over the websocket, using the fields beside it. The
@@ -256,18 +266,38 @@ func main() {
 	}
 
 	engineSelect := widget.NewSelect([]string{"Local", "Remote"}, func(selected string) {
+		wasRemote := state.useRemote
 		state.useRemote = selected == "Remote"
 		setRemoteFieldsEnabled(state.useRemote)
+
+		// SetSelected() fires this during construction, before the link
+		// helpers further down exist — hence the nil checks.
+		if state.useRemote {
+			// Leaving Local: drop the in-process link, then wait for the
+			// operator to dial the remote one.
+			if !wasRemote && disconnectLink != nil {
+				disconnectLink("Switched to a remote engine.")
+			}
+			connectionButtonState = "connect"
+			if updateConnectionButton != nil {
+				updateConnectionButton()
+			}
+			return
+		}
+
+		// Entering Local: the engine is right here, so attach to it rather
+		// than making the operator press a button to reach their own modem.
+		if wasRemote && disconnectLink != nil {
+			disconnectLink("Switched to the local engine.")
+		}
+		if updateConnectionButton != nil {
+			updateConnectionButton()
+		}
+		if connectLink != nil {
+			connectLink()
+		}
 	})
 	engineSelect.Resize(fyne.NewSize(110, 34))
-	// Default to the embedded engine when this build has one; without it the
-	// only way to reach a Mercury is over the network, so Remote is the honest
-	// default and the fields must stay usable.
-	if _, err := newEngineLink().probe(); err == nil {
-		engineSelect.SetSelected("Local")
-	} else {
-		engineSelect.SetSelected("Remote")
-	}
 
 	logBox := widget.NewMultiLineEntry()
 	logBox.SetMinRowsVisible(8)
@@ -519,12 +549,19 @@ func main() {
 		}
 	}
 
-	var connectionButtonState = "connect"
-	var connectButton *widget.Button
-	updateConnectionButton := func() {
+	updateConnectionButton = func() {
 		if connectButton == nil {
 			return
 		}
+		// In Local mode there is nothing to dial: the engine is already
+		// running inside this process, started before the window opened, and
+		// "Disconnect" would only blind the UI while the modem carried on
+		// transmitting. The button belongs to the remote session.
+		if !state.useRemote {
+			connectButton.Hide()
+			return
+		}
+		connectButton.Show()
 		switch connectionButtonState {
 		case "connecting":
 			connectButton.SetText("Connecting")
@@ -535,7 +572,7 @@ func main() {
 		}
 	}
 
-	disconnectWS := func(reason string) {
+	disconnectLink = func(reason string) {
 		// Grab the connection handles under the lock, clear the shared state,
 		// then Close()/cancel() outside the lock (no network calls held).
 		state.mu.Lock()
@@ -561,7 +598,7 @@ func main() {
 		}
 	}
 
-	connectWS := func() {
+	connectLink = func() {
 		state.mu.Lock()
 		if state.wsConnected && state.link != nil {
 			state.mu.Unlock()
@@ -683,7 +720,7 @@ func main() {
 
 				case LinkStateEvent:
 					if !e.Up {
-						disconnectWS(e.Detail)
+						disconnectLink(e.Detail)
 						return
 					}
 					appendLog(e.Detail + "\n")
@@ -693,7 +730,7 @@ func main() {
 				}
 			}
 
-			disconnectWS("Link closed.")
+			disconnectLink("Link closed.")
 		}()
 	}
 
@@ -715,7 +752,7 @@ func main() {
 		case "connecting":
 			return
 		case "disconnect":
-			disconnectWS("Disconnect requested by user.")
+			disconnectLink("Disconnect requested by user.")
 			connectionButtonState = "connect"
 			updateConnectionButton()
 		default:
@@ -729,7 +766,7 @@ func main() {
 			}
 			connectionButtonState = "connecting"
 			updateConnectionButton()
-			connectWS()
+			connectLink()
 		}
 	})
 
@@ -950,6 +987,15 @@ func main() {
 		shutdown()
 	}()
 
+	// Pick the starting mode now that the link helpers exist. Local when this
+	// build carries an engine; otherwise the network is the only way to reach
+	// one, so Remote is the honest default and its fields stay usable.
+	if _, err := newEngineLink().probe(); err == nil {
+		engineSelect.SetSelected("Local")
+	} else {
+		engineSelect.SetSelected("Remote")
+	}
+
 	go func() {
 		time.Sleep(200 * time.Millisecond)
 
@@ -963,7 +1009,7 @@ func main() {
 			return
 		}
 		appendLog("Mercury engine started — connecting...\n")
-		connectWS()
+		connectLink()
 	}()
 
 	myWindow.ShowAndRun()
