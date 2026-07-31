@@ -1359,6 +1359,17 @@ static int rx_decoder_bind_mode(rx_decoder_state_t *state, int mode)
 
     pthread_mutex_lock(&modem_freedv_lock);
     codec = pooled_codec_for_mode_locked(mode, NULL);
+    if (!modem_codec_valid(&codec))
+    {
+        /* Not in the pool.  Returning success here left the decoder bound to
+         * its PREVIOUS mode while the caller believed it had switched: the peer
+         * transmits MFSK, this decoder stays on DATAC15, every burst is missed,
+         * and nothing anywhere reports a fault.  A mode we cannot bind is an
+         * error, not a silent no-op. */
+        pthread_mutex_unlock(&modem_freedv_lock);
+        HLOGE("modem-rx", "RX decoder cannot bind mode %d: not in the codec pool", mode);
+        return -1;
+    }
     if (modem_codec_valid(&codec))
     {
         max_samples = codec.be->n_max_rx_samples(codec.ctx);
