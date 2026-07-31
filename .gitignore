@@ -70,3 +70,6 @@ claude_context.txt
 context-*.txt
 copilot-*.txt
 screen.jpg
+
+# testbench run outputs (logs, CSVs, per-run binaries)
+results/
