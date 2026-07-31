@@ -35,6 +35,7 @@
 
 
 #include "ui_communication.h"
+#include "ui_status.h"
 
 #include "../datalink_arq/arq.h"
 #include "../data_interfaces/net.h"
@@ -66,11 +67,31 @@ static void ws_connect_handler(void *user_data)
     }
 }
 
+/* Latest gathered status, published by ui_publisher_thread and read by the
+ * embedded UI across the CGo bridge.  The publisher owns the gathering; the
+ * bridge only ever copies out, so a slow or stopped UI can never hold up the
+ * engine. */
+static pthread_mutex_t g_status_lock = PTHREAD_MUTEX_INITIALIZER;
+static ui_status_t     g_status;
+static bool            g_status_valid = false;
+
+/* The running UI context, so the CGo bridge can route commands through the
+ * same handler the websocket uses.  Set by ui_comm_init(), cleared by
+ * ui_comm_shutdown(). */
+static ui_ctx_t       *g_ui_ctx = NULL;
+
 // ---------------- WS COMMAND CALLBACK ----------------
 // Called by the websocket server thread when a command JSON arrives from UI.
 static int ws_command_handler(const ws_command_t *cmd, void *user_data)
 {
-    ui_ctx_t *ctx = (ui_ctx_t *)user_data;
+    return ui_comm_handle_command((ui_ctx_t *)user_data, cmd);
+}
+
+/* Every UI command lands here, whether it arrived as websocket JSON from a
+ * remote client or as a direct call from the embedded UI.  One implementation
+ * means local and remote cannot diverge in behaviour. */
+int ui_comm_handle_command(ui_ctx_t *ctx, const ws_command_t *cmd)
+{
     if (!ctx || !cmd)
         return -1;
 
@@ -180,6 +201,66 @@ static int ws_command_handler(const ws_command_t *cmd, void *user_data)
 // ---------------- UI PUBLISHER THREAD ----------------
 // Periodically gathers modem/ARQ/network status and sends it to the UI.
 
+/* Gather everything the UI shows into one typed snapshot.  This is the only
+ * place that reads the engine for status; the websocket JSON and the embedded
+ * UI both render THIS struct, so the two views cannot drift apart. */
+static void ui_gather_status(ui_ctx_t *ctx, ui_status_t *out)
+{
+    memset(out, 0, sizeof(*out));
+
+    arq_runtime_snapshot_t snap;
+    int have_snap = arq_get_runtime_snapshot(&snap);
+
+    char my_call[CALLSIGN_MAX_SIZE], src_call[CALLSIGN_MAX_SIZE], dst_call[CALLSIGN_MAX_SIZE];
+    arq_conn_get_calls(my_call, src_call, dst_call, CALLSIGN_MAX_SIZE);
+
+    /* src_addr/dst_addr follow the TNC convention (initiator/target):
+     *   ISS (caller):   src = self,   dst = remote
+     *   IRS (receiver): src = remote, dst = self
+     * The peer is whichever is not us. */
+    const char *dest_call = (dst_call[0] != '\0' && strcmp(dst_call, my_call) != 0)
+                            ? dst_call : src_call;
+
+    snprintf(out->user_callsign, sizeof(out->user_callsign), "%s", my_call);
+    snprintf(out->dest_callsign, sizeof(out->dest_callsign), "%s", dest_call);
+
+    out->bitrate_bps = (int)tnc_get_last_bitrate_bps();
+    out->snr_db      = (double)tnc_get_last_snr();
+
+    if (have_snap && snap.initialized)
+    {
+        out->transmitting      = (snap.trx == 1);
+        out->sync              = snap.connected ? true : false;
+        out->bytes_transmitted = (long)snap.tx_bytes;
+        out->bytes_received    = (long)snap.rx_bytes;
+    }
+
+    int ctl_status  = net_get_status(CTL_TCP_PORT);
+    int data_status = net_get_status(DATA_TCP_PORT);
+    out->client_tcp_connected =
+        (ctl_status == NET_CONNECTED || data_status == NET_CONNECTED);
+
+    float tx_gain_linear = modem_get_tx_gain();
+    out->tx_gain_db   = (tx_gain_linear > 0.0f) ? 20.0f * log10f(tx_gain_linear) : -120.0f;
+    out->tx_peak_dbfs = modem_get_tx_peak_dbfs();
+
+    out->waterfall_enabled = ctx->waterfall_enabled ? true : false;
+}
+
+/* Copy the latest gathered status out for the embedded UI.  Returns false
+ * until the publisher has produced its first snapshot. */
+bool ui_comm_get_status(ui_status_t *out)
+{
+    if (!out)
+        return false;
+    pthread_mutex_lock(&g_status_lock);
+    bool ok = g_status_valid;
+    if (ok)
+        *out = g_status;
+    pthread_mutex_unlock(&g_status_lock);
+    return ok;
+}
+
 void *ui_publisher_thread(void *arg)
 {
     ui_ctx_t *ctx = (ui_ctx_t *)arg;
@@ -189,43 +270,25 @@ void *ui_publisher_thread(void *arg)
 
     while (!shutdown_)
     {
-        // --- Gather status from ARQ snapshot ---
-        arq_runtime_snapshot_t snap;
-        int have_snap = arq_get_runtime_snapshot(&snap);
+        /* One gather, published two ways: struct to the embedded UI, JSON to
+         * remote clients. */
+        ui_status_t st;
+        ui_gather_status(ctx, &st);
 
-        int bitrate = (int)tnc_get_last_bitrate_bps();
-        double snr = (double)tnc_get_last_snr();
-        char my_call[CALLSIGN_MAX_SIZE], src_call[CALLSIGN_MAX_SIZE], dst_call[CALLSIGN_MAX_SIZE];
-        arq_conn_get_calls(my_call, src_call, dst_call, CALLSIGN_MAX_SIZE);
-        const char *user_call = my_call;
-        /* Determine remote peer for UI display.
-         * src_addr/dst_addr follow TNC convention (initiator/target):
-         *   ISS (caller):   src_addr = self,   dst_addr = remote
-         *   IRS (receiver): src_addr = remote,  dst_addr = self
-         * Pick whichever is NOT our own callsign. */
-        const char *dest_call;
-        if (dst_call[0] != '\0' && strcmp(dst_call, my_call) != 0)
-            dest_call = dst_call;   /* ISS: dst is remote */
-        else
-            dest_call = src_call;   /* IRS: src is remote */
-        int sync = 0;
-        modem_direction_t dir = DIR_RX;
-        int tcp_connected = 0;
-        long bytes_tx = 0;
-        long bytes_rx = 0;
+        pthread_mutex_lock(&g_status_lock);
+        g_status       = st;
+        g_status_valid = true;
+        pthread_mutex_unlock(&g_status_lock);
 
-        if (have_snap && snap.initialized)
-        {
-            dir = (snap.trx == 1) ? DIR_TX : DIR_RX;
-            sync = snap.connected ? 1 : 0;
-            bytes_tx = (long)snap.tx_bytes;
-            bytes_rx = (long)snap.rx_bytes;
-        }
-
-        // --- Check TCP client connected status ---
-        int ctl_status = net_get_status(CTL_TCP_PORT);
-        int data_status = net_get_status(DATA_TCP_PORT);
-        tcp_connected = (ctl_status == NET_CONNECTED || data_status == NET_CONNECTED) ? 1 : 0;
+        int    bitrate       = st.bitrate_bps;
+        double snr           = st.snr_db;
+        int    sync          = st.sync ? 1 : 0;
+        modem_direction_t dir = st.transmitting ? DIR_TX : DIR_RX;
+        int    tcp_connected = st.client_tcp_connected ? 1 : 0;
+        long   bytes_tx      = st.bytes_transmitted;
+        long   bytes_rx      = st.bytes_received;
+        const char *user_call = st.user_callsign;
+        const char *dest_call = st.dest_callsign;
 
         // --- Log only if something meaningful changed ---
         if (bitrate != ctx->last_sent_status.bitrate ||
@@ -254,40 +317,11 @@ void *ui_publisher_thread(void *arg)
             if (dest_call) strncpy(ctx->last_sent_status.dest_callsign, dest_call, sizeof(ctx->last_sent_status.dest_callsign)-1);
         }
 
-        // --- Build and broadcast status JSON via WebSocket ---
+        // --- Render the same snapshot as JSON for remote clients ---
         {
-            float tx_gain_linear = modem_get_tx_gain();
-            float tx_gain_db = (tx_gain_linear > 0.0f)
-                                ? 20.0f * log10f(tx_gain_linear)
-                                : -120.0f;
-            float tx_peak_dbfs = modem_get_tx_peak_dbfs();
             char buf[4096];
-            int pos = 0;
-            pos += snprintf(buf + pos, sizeof(buf) - pos,
-                "{\"type\":\"status\","
-                "\"bitrate\":%d,"
-                "\"snr\":%.1f,"
-                "\"user_callsign\":\"%s\","
-                "\"dest_callsign\":\"%s\","
-                "\"sync\":%s,"
-                "\"direction\":\"%s\","
-                "\"client_tcp_connected\":%s,"
-                "\"bytes_transmitted\":%ld,"
-                "\"bytes_received\":%ld,"
-                "\"tx_gain_db\":%.1f,"
-                "\"tx_peak_dbfs\":%.1f,"
-                "\"waterfall\":%s}",
-                bitrate, snr,
-                user_call ? user_call : "",
-                dest_call ? dest_call : "",
-                sync ? "true" : "false",
-                dir == DIR_TX ? "tx" : "rx",
-                tcp_connected ? "true" : "false",
-                bytes_tx, bytes_rx,
-                tx_gain_db, tx_peak_dbfs,
-                ctx->waterfall_enabled ? "true" : "false");
-
-            ws_broadcast_json(&ctx->ws, buf);
+            if (ui_status_to_json(&st, buf, sizeof(buf)) > 0)
+                ws_broadcast_json(&ctx->ws, buf);
         }
 
         // --- Send capture/playback device lists and input channel when a new UI client connects ---
@@ -458,6 +492,25 @@ void *spectrum_publisher_thread(void *arg)
     return NULL;
 }
 
+/* Command entry point for the embedded UI: builds the same ws_command_t the
+ * websocket path builds, then runs the shared handler. */
+int ui_comm_command(const char *command, const char *value,
+                    const char *value2, const char *value3)
+{
+    ui_ctx_t *ctx = g_ui_ctx;
+    if (!ctx || !command)
+        return -1;
+
+    ws_command_t cmd;
+    memset(&cmd, 0, sizeof(cmd));
+    snprintf(cmd.command, sizeof(cmd.command), "%s", command);
+    if (value)  snprintf(cmd.value,  sizeof(cmd.value),  "%s", value);
+    if (value2) snprintf(cmd.value2, sizeof(cmd.value2), "%s", value2);
+    if (value3) snprintf(cmd.value3, sizeof(cmd.value3), "%s", value3);
+
+    return ui_comm_handle_command(ctx, &cmd);
+}
+
 // ---------------- HIGH-LEVEL INIT / SHUTDOWN ----------------
 
 int ui_comm_init(ui_ctx_t *ctx, uint16_t ws_port, bool tls_enabled,
@@ -466,6 +519,8 @@ int ui_comm_init(ui_ctx_t *ctx, uint16_t ws_port, bool tls_enabled,
                  int rx_input_channel,
                  const mercury_config *initial_cfg, const char *cfg_path)
 {
+    g_ui_ctx = ctx;
+
     memset(ctx, 0, sizeof(*ctx));
 
     ctx->waterfall_enabled = waterfall_enabled;
@@ -537,6 +592,8 @@ int ui_comm_init(ui_ctx_t *ctx, uint16_t ws_port, bool tls_enabled,
 
 void ui_comm_shutdown(ui_ctx_t *ctx)
 {
+    g_ui_ctx = NULL;
+
     // Threads check shutdown_ flag and will exit on their own.
     // Shut down the WebSocket server.
     ws_shutdown(&ctx->ws);

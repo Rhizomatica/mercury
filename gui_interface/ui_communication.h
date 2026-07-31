@@ -29,6 +29,7 @@
 
 #include "websocket/mercury_websocket.h"
 #include "cfg_utils.h"
+#include "ui_status.h"
 
 // ---- Default ports for UI <-> backend communication ----
 // WebSocket server port = UI_DEFAULT_PORT (single bidirectional channel)
@@ -111,5 +112,22 @@ int ui_comm_init(ui_ctx_t *ctx, uint16_t ws_port, bool tls_enabled,
                  int rx_input_channel,
                  const mercury_config *initial_cfg, const char *cfg_path);
 void ui_comm_shutdown(ui_ctx_t *ctx);
+
+/* ---- Local (in-process) UI access -----------------------------------------
+ * The embedded Fyne UI drives the engine through these instead of opening a
+ * websocket to itself.  Remote clients keep using the websocket; both end up
+ * in the same gatherer and the same command handler. */
+
+/* Handle one UI command.  Shared by the websocket callback and the CGo bridge
+ * so local and remote behave identically. */
+int  ui_comm_handle_command(ui_ctx_t *ctx, const ws_command_t *cmd);
+
+/* Same, addressed to the running engine (no ctx to hand around from Go).
+ * Returns -1 if no UI context is running. */
+int  ui_comm_command(const char *command, const char *value,
+                     const char *value2, const char *value3);
+
+/* Copy the most recent status snapshot.  False until the first publish. */
+bool ui_comm_get_status(ui_status_t *out);
 
 #endif

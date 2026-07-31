@@ -144,5 +144,9 @@ test_sock_wire: audioio/test_sock_wire.c $(UNITY_SRC)
 test_virtual_clock: common/test_virtual_clock.c $(UNITY_SRC) ../common/virtual_clock.c
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
+# UI status wire format (embedded struct vs remote JSON must not drift)
+test_ui_status: gui_interface/test_ui_status.c $(UNITY_SRC) ../gui_interface/ui_status.c
+	$(CC) $(CFLAGS) -I../gui_interface -I../datalink_arq -I../modem -I../common -o $@ $^ $(LDFLAGS)
+
 clean:
 	rm -f $(TEST_BINS)

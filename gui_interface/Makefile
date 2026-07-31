@@ -28,13 +28,16 @@ CFLAGS_COMMON = $(COMMON_CFLAGS) -Wno-stringop-truncation -I../datalink_arq -I..
 WS_CFLAGS = $(COMMON_CFLAGS) -Iwebsocket -DMG_TLS=MG_TLS_BUILTIN
 
 # Objects
-OBJS = ui_communication.o
+OBJS = ui_communication.o ui_status.o
 WS_OBJS = websocket/mongoose.o websocket/mercury_websocket.o
 
 all: $(OBJS) $(WS_OBJS)
 
-ui_communication.o: ui_communication.c ui_communication.h
+ui_communication.o: ui_communication.c ui_communication.h ui_status.h
 	$(CC) $(CFLAGS_COMMON) -c ui_communication.c -o ui_communication.o
+
+ui_status.o: ui_status.c ui_status.h
+	$(CC) $(CFLAGS_COMMON) -c ui_status.c -o ui_status.o
 
 websocket/mongoose.o: websocket/mongoose.c websocket/mongoose.h
 	$(CC) $(WS_CFLAGS) -Wno-maybe-uninitialized -c websocket/mongoose.c -o websocket/mongoose.o
