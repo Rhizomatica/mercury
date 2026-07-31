@@ -1,6 +1,9 @@
 package main
 
-import "context"
+import (
+	"context"
+	"fmt"
+)
 
 // A Link is where the UI gets engine state and where it sends commands. It
 // exists so the rest of the UI never knows, or cares, whether Mercury is
@@ -113,29 +116,21 @@ func emit(ctx context.Context, ch chan<- Event, ev Event) bool {
 	}
 }
 
-// openLink chooses the transport for a session. The embedded engine wins when
-// it is available and the user has not pointed the UI at another machine, so
-// the desktop app talks to its own engine directly and never opens a socket to
-// itself. Naming a remote host keeps the websocket path — that is how one
-// desktop UI drives a Mercury on a Pi at the antenna.
-func openLink(host, port, scheme string) (Link, error) {
-	if isLocalHost(host) {
+// openLink builds the transport for a session. The choice is the operator's,
+// made in the UI, not inferred from a hostname: "127.0.0.1" is a perfectly
+// reasonable thing to type when you really do want to reach a separate Mercury
+// process on this machine over the network.
+//
+// Local means the engine linked into this binary, driven through CGo with no
+// socket involved. Remote means the websocket, which is how one desktop UI
+// drives a Mercury on a Pi at the antenna.
+func openLink(remote bool, host, port, scheme string) (Link, error) {
+	if !remote {
 		l := newEngineLink()
-		if _, err := l.probe(); err == nil {
-			return l, nil
+		if _, err := l.probe(); err != nil {
+			return nil, fmt.Errorf("no engine in this build: %w", err)
 		}
-		// No engine in this build: fall through to the websocket, which still
-		// reaches a Mercury running as a separate process on this machine.
+		return l, nil
 	}
 	return newWSLink(scheme, host, port), nil
-}
-
-// isLocalHost reports whether the host field names this machine (or is empty,
-// the default), in which case the embedded engine is preferred.
-func isLocalHost(host string) bool {
-	switch host {
-	case "", "localhost", "127.0.0.1", "::1":
-		return true
-	}
-	return false
 }

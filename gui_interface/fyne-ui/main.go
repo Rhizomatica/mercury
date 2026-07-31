@@ -38,6 +38,7 @@ type appState struct {
 	wsCancel         context.CancelFunc
 	wsConnected      bool
 	wsScheme         string
+	useRemote        bool
 	wsHost           string
 	wsPort           string
 	captureItems     []optionItem
@@ -236,6 +237,37 @@ func main() {
 	})
 	schemeSelect.SetSelected(state.wsScheme)
 	schemeSelect.Resize(fyne.NewSize(90, 34))
+
+	// Where the engine runs. "Local" drives the engine inside this binary
+	// through CGo and opens no socket at all; "Remote" reaches a Mercury on
+	// another machine over the websocket, using the fields beside it. The
+	// fields stay visible either way so it is obvious what Remote would use,
+	// but they are only editable when they apply.
+	setRemoteFieldsEnabled := func(enabled bool) {
+		if enabled {
+			hostEntry.Enable()
+			portEntry.Enable()
+			schemeSelect.Enable()
+			return
+		}
+		hostEntry.Disable()
+		portEntry.Disable()
+		schemeSelect.Disable()
+	}
+
+	engineSelect := widget.NewSelect([]string{"Local", "Remote"}, func(selected string) {
+		state.useRemote = selected == "Remote"
+		setRemoteFieldsEnabled(state.useRemote)
+	})
+	engineSelect.Resize(fyne.NewSize(110, 34))
+	// Default to the embedded engine when this build has one; without it the
+	// only way to reach a Mercury is over the network, so Remote is the honest
+	// default and the fields must stay usable.
+	if _, err := newEngineLink().probe(); err == nil {
+		engineSelect.SetSelected("Local")
+	} else {
+		engineSelect.SetSelected("Remote")
+	}
 
 	logBox := widget.NewMultiLineEntry()
 	logBox.SetMinRowsVisible(8)
@@ -523,7 +555,7 @@ func main() {
 			connectionButtonState = "connect"
 			updateConnectionButton()
 		})
-		setWSStatus("WebSocket: disconnected")
+		setWSStatus("Engine: disconnected")
 		if reason != "" {
 			appendLog(reason + "\n")
 		}
@@ -533,7 +565,7 @@ func main() {
 		state.mu.Lock()
 		if state.wsConnected && state.link != nil {
 			state.mu.Unlock()
-			appendLog("WebSocket already connected.\n")
+			appendLog("Engine already connected.\n")
 			return
 		}
 		oldCancel := state.wsCancel
@@ -553,14 +585,14 @@ func main() {
 			hostEntry.SetText(state.wsHost)
 			portEntry.SetText(state.wsPort)
 		})
-		setWSStatus("WebSocket: connecting")
+		setWSStatus("Engine: connecting")
 		appendLog(fmt.Sprintf("Connecting to WebSocket at %s://%s:%s/websocket...\n", state.wsScheme, state.wsHost, state.wsPort))
 
 		go func() {
 			// Pick the transport: the engine linked into this binary when we
 			// have one and no remote host was given, otherwise the websocket.
 			// Everything below this point is transport-agnostic — see link.go.
-			link, err := openLink(state.wsHost, state.wsPort, state.wsScheme)
+			link, err := openLink(state.useRemote, state.wsHost, state.wsPort, state.wsScheme)
 			if err != nil {
 				runOnUI(func() {
 					connectionButtonState = "connect"
@@ -749,6 +781,7 @@ func main() {
 	topBar := container.NewHBox()
 
 	connectionCard := widget.NewCard("", "", container.NewHBox(
+		container.NewVBox(widget.NewLabel("Engine"), engineSelect),
 		container.NewVBox(widget.NewLabel("Host"), hostEntryBox),
 		container.NewVBox(widget.NewLabel("Port"), portEntryBox),
 		container.NewVBox(widget.NewLabel("Scheme"), schemeSelect),
