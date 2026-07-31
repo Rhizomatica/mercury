@@ -37,6 +37,10 @@ AF="-f S32_LE -r 48000 -c 2"
 aplay -l 2>/dev/null | grep -qi "card $CARD: Loopback" || {
     echo "snd-aloop card $CARD not found — sudo modprobe snd-aloop"; exit 1; }
 
+# -x matches the process name exactly, so a renamed binary (MERCURY=mercury-1.9.10,
+# as any A/B uses) survives the kill, keeps the ports and the loopback, and
+# corrupts the run that follows. Kill by path as well.
+pkill -9 -f "$MERCURY" 2>/dev/null
 pkill -9 -x mercury 2>/dev/null
 pkill -9 -f "$NB" 2>/dev/null
 pkill -9 -f "arecord -D plughw:$CARD,1" 2>/dev/null

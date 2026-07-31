@@ -152,6 +152,11 @@ fi
 # sock stage. Do not run it alongside anything heavy.
 # ---------------------------------------------------------------------------
 loopsim_cleanup() {
+    # -x matches the process NAME exactly, and testbench runs per-build binaries
+    # called mercury-<ref>, so `pkill -x mercury` silently spared every one of
+    # them. A survivor keeps the data port and the loopback, and its leftover
+    # bytes surface in the NEXT run's transfer.
+    pkill -9 -f "$BINS/mercury-"   >/dev/null 2>&1
     pkill -9 -x mercury            >/dev/null 2>&1
     pkill -9 -f loopsim/noisebridge >/dev/null 2>&1
     pkill -9 -f 'arecord -D plughw' >/dev/null 2>&1
