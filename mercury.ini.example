@@ -143,11 +143,15 @@ peer_payload_hold_s = 15
 startup_max_s = 10
 
 [channel]
-; Channel-busy (occupancy) detector.  When enabled, Mercury classifies the HF
-; channel as busy/clear from the RX spectrum and reports transitions to the host
-; with VARA-compatible "BUSY ON" / "BUSY OFF" notifications on the control port.
-; Disabled by default (opt-in); thresholds typically need on-air tuning.
-busy_detect = false
+; Channel-busy (occupancy) detector.  Mercury classifies the HF channel as
+; busy/clear from the RX spectrum and reports transitions to the host with
+; VARA-compatible "BUSY ON" / "BUSY OFF" notifications on the control port.
+; Enabled by default: it is report-only (it never gates transmission), and it is
+; the ONLY early warning a host gets — everything else waits for a full frame to
+; decode, which is 3.7 s for a connect request.  A scanning host cannot hold its
+; dwell that long, so with the detector off it steps over incoming calls.
+; Thresholds below typically need on-air tuning per band/noise environment.
+busy_detect = true
 
 ; Passband peak level, in dB above the tracked noise floor, required to call the
 ; channel BUSY (default 10, range 3..40).  Lower = more sensitive.
