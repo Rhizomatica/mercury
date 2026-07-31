@@ -115,17 +115,21 @@ int mercury_ui_get_status(ui_status_t *out)
     return ui_comm_get_status(out) ? 1 : 0;
 }
 
-int mercury_ui_get_spectrum(float *out, int max_bins, int *sample_rate_hz)
+int mercury_ui_get_spectrum(float *out, int max_bins, int *sample_rate_hz,
+                            unsigned long long *seq)
 {
     if (!out || max_bins <= 0)
         return 0;
 
     int nbins = (max_bins < MODEM_STATS_NSPEC) ? max_bins : MODEM_STATS_NSPEC;
-    int sr = modem_get_rx_spectrum(out, nbins);
+    uint64_t s = 0;
+    int sr = modem_get_rx_spectrum_seq(out, nbins, &s);
     if (sr <= 0)
         return 0;
     if (sample_rate_hz)
         *sample_rate_hz = sr;
+    if (seq)
+        *seq = (unsigned long long)s;
     return nbins;
 }
 

@@ -61,6 +61,11 @@ void *rx_thread(void *g_modem);
 // Returns the sample rate on success, 0 if no spectrum is available yet.
 int modem_get_rx_spectrum(float *out_dB, int max_bins);
 
+/* Same, plus the frame's sequence number.  Copying is non-destructive, so each
+ * consumer keeps its own last-seen value and skips a frame it already has;
+ * that is how a local UI and a remote one can both run at full rate. */
+int modem_get_rx_spectrum_seq(float *out_dB, int max_bins, uint64_t *seq_out);
+
 /* Enable/disable the RX spectrum FFT (skipped when no UI consumes it). */
 void modem_set_spectrum_enabled(bool enabled);
 

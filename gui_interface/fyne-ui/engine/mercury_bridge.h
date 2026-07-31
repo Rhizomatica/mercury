@@ -46,8 +46,12 @@ void mercury_request_shutdown(void);
 int mercury_ui_get_status(ui_status_t *out);
 
 /* Copy the current RX power spectrum (dB).  Returns the number of bins written
- * (0 if none available yet) and sets *sample_rate_hz when non-NULL. */
-int mercury_ui_get_spectrum(float *out, int max_bins, int *sample_rate_hz);
+ * (0 if none available yet), and sets *sample_rate_hz and *seq when non-NULL.
+ * `seq` counts FFT frames: poll faster than they are produced and skip the
+ * ones already seen, and the waterfall gets each frame exactly once instead of
+ * aliasing two independent ~20 Hz clocks against each other. */
+int mercury_ui_get_spectrum(float *out, int max_bins, int *sample_rate_hz,
+                            unsigned long long *seq);
 
 /* Run a UI command through the same handler the websocket path uses.
  * Unused values may be NULL.  Returns 0 on success. */

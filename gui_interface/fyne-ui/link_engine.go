@@ -34,8 +34,13 @@ type engineLink struct {
 }
 
 const (
-	engineStatusInterval   = 500 * time.Millisecond
-	engineSpectrumInterval = 50 * time.Millisecond
+	engineStatusInterval = 500 * time.Millisecond
+	// The engine produces FFT frames at ~20 Hz on its own clock. Polling at
+	// the same rate on a different clock aliases: some ticks see the frame
+	// twice, others miss one, and the waterfall stutters however fast the
+	// machine is. Poll faster and let the sequence number decide, so each
+	// frame is taken exactly once, promptly.
+	engineSpectrumInterval = 20 * time.Millisecond
 	// Matches MODEM_STATS_NSPEC; the bridge clamps to its own size anyway.
 	engineSpectrumBins = 512
 )
@@ -75,6 +80,8 @@ func (l *engineLink) Start(ctx context.Context) (<-chan Event, error) {
 		// serves the whole session for status.
 		var cst C.ui_status_t
 
+		var lastSpectrumSeq uint64
+
 		for {
 			select {
 			case <-ctx.Done():
@@ -87,10 +94,11 @@ func (l *engineLink) Start(ctx context.Context) (<-chan Event, error) {
 				emit(ctx, events, StatusEvent{Status: statusFromC(&cst)})
 
 			case <-specTick.C:
-				bins, rate, ok := pollSpectrum()
-				if !ok {
-					continue
+				bins, rate, seq, ok := pollSpectrum()
+				if !ok || seq == lastSpectrumSeq {
+					continue // nothing new since the last poll
 				}
+				lastSpectrumSeq = seq
 				emit(ctx, events, SpectrumEvent{Bins: bins, SampleRate: rate})
 
 			case <-l.refresh:
@@ -251,15 +259,17 @@ func statusFromC(cst *C.ui_status_t) telemetryState {
 	}
 }
 
-// pollSpectrum copies one FFT frame out of the engine. A fresh slice per frame
-// because the waterfall keeps the rows.
-func pollSpectrum() ([]float32, int, bool) {
+// pollSpectrum copies one FFT frame out of the engine, with the sequence number
+// that says whether it is new. A fresh slice per frame because the waterfall
+// keeps the rows.
+func pollSpectrum() ([]float32, int, uint64, bool) {
 	buf := make([]float32, engineSpectrumBins)
 	var rate C.int
+	var seq C.ulonglong
 	n := C.mercury_ui_get_spectrum((*C.float)(unsafe.Pointer(&buf[0])),
-		C.int(len(buf)), &rate)
+		C.int(len(buf)), &rate, &seq)
 	if n <= 0 {
-		return nil, 0, false
+		return nil, 0, 0, false
 	}
-	return buf[:int(n)], int(rate), true
+	return buf[:int(n)], int(rate), uint64(seq), true
 }

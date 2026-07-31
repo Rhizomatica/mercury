@@ -511,12 +511,18 @@ void *spectrum_publisher_thread(void *arg)
     HLOGI(UI_LOG_TAG, "Spectrum publisher started - sending spectrum every %d ms via WebSocket",
           SPECTRUM_PUBLISH_INTERVAL_US / 1000);
 
+    uint64_t last_seq = 0;
+
     while (!shutdown_)
     {
         float spec_dB[MODEM_STATS_NSPEC];
-        int sr = modem_get_rx_spectrum(spec_dB, MODEM_STATS_NSPEC);
-        if (sr > 0)
+        uint64_t seq = 0;
+        int sr = modem_get_rx_spectrum_seq(spec_dB, MODEM_STATS_NSPEC, &seq);
+        /* Skip frames already sent: the read no longer consumes, so this
+         * thread and any embedded UI each see every frame. */
+        if (sr > 0 && seq != last_seq)
         {
+            last_seq = seq;
             // Build binary spectrum frame: magic(4) + fft_size(2) + sample_rate(2) + floats
             uint8_t frame[8 + MODEM_STATS_NSPEC * sizeof(float)];
             uint16_t fft_size = (uint16_t)MODEM_STATS_NSPEC;

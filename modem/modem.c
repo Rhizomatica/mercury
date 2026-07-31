@@ -80,6 +80,11 @@ static float g_rx_spectrum_dB[MODEM_STATS_NSPEC];
 static pthread_mutex_t g_spectrum_lock = PTHREAD_MUTEX_INITIALIZER;
 static int g_spectrum_sample_rate = 8000;
 static bool g_spectrum_valid = false;
+/* Bumped on every new FFT frame.  Readers compare it against what they last
+ * saw, which lets several of them (the websocket publisher, an embedded UI,
+ * both at once) each take every frame exactly once — a destructive read would
+ * have them stealing frames from each other. */
+static uint64_t g_spectrum_seq = 0;
 static struct MODEM_STATS g_spectrum_stats;
 static bool g_spectrum_stats_inited = false;
 
@@ -1960,6 +1965,7 @@ void *rx_thread(void *g_modem)
                 modem_stats_get_rx_spectrum(&g_spectrum_stats, g_rx_spectrum_dB,
                                             rx_fdm, spec_nin);
                 g_spectrum_valid = true;
+                g_spectrum_seq++;
                 /* Determine sample rate from the modem */
                 pthread_mutex_lock(&modem_freedv_lock);
                 if (modem->freedv)
@@ -2044,7 +2050,7 @@ void *rx_thread(void *g_modem)
 }
 
 /* --- Public API: get latest rx spectrum for UI waterfall --- */
-int modem_get_rx_spectrum(float *out_dB, int max_bins)
+int modem_get_rx_spectrum_seq(float *out_dB, int max_bins, uint64_t *seq_out)
 {
     int sr = 0;
         /* Validate output buffer and requested number of bins */
@@ -2065,9 +2071,15 @@ int modem_get_rx_spectrum(float *out_dB, int max_bins)
         {
             memcpy(out_dB, g_rx_spectrum_dB, (size_t)n * sizeof(float));
             sr = g_spectrum_sample_rate;
-            g_spectrum_valid = false;
+            if (seq_out)
+                *seq_out = g_spectrum_seq;
         }
     }
     pthread_mutex_unlock(&g_spectrum_lock);
     return sr;
+}
+
+int modem_get_rx_spectrum(float *out_dB, int max_bins)
+{
+    return modem_get_rx_spectrum_seq(out_dB, max_bins, NULL);
 }
