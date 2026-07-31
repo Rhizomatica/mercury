@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"crypto/tls"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
@@ -10,13 +9,11 @@ import (
 	"image/color"
 	"math"
 	"net"
-	"net/http"
 	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"runtime"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -29,7 +26,6 @@ import (
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/layout"
 	"fyne.io/fyne/v2/widget"
-	"github.com/gorilla/websocket"
 )
 
 type appState struct {
@@ -37,7 +33,7 @@ type appState struct {
 	// (writer) and the Fyne render/UI goroutines (readers): the connection
 	// state and the spectrum/waterfall buffers drawn by the canvas rasters.
 	mu               sync.RWMutex
-	wsConn           *websocket.Conn
+	link             Link
 	wsContext        context.Context
 	wsCancel         context.CancelFunc
 	wsConnected      bool
@@ -511,14 +507,14 @@ func main() {
 		// Grab the connection handles under the lock, clear the shared state,
 		// then Close()/cancel() outside the lock (no network calls held).
 		state.mu.Lock()
-		conn := state.wsConn
+		link := state.link
 		cancel := state.wsCancel
-		state.wsConn = nil
+		state.link = nil
 		state.wsCancel = nil
 		state.wsConnected = false
 		state.mu.Unlock()
-		if conn != nil {
-			_ = conn.Close()
+		if link != nil {
+			link.Close()
 		}
 		if cancel != nil {
 			cancel()
@@ -535,21 +531,21 @@ func main() {
 
 	connectWS := func() {
 		state.mu.Lock()
-		if state.wsConnected && state.wsConn != nil {
+		if state.wsConnected && state.link != nil {
 			state.mu.Unlock()
 			appendLog("WebSocket already connected.\n")
 			return
 		}
 		oldCancel := state.wsCancel
-		oldConn := state.wsConn
-		state.wsConn = nil
+		oldLink := state.link
+		state.link = nil
 		state.wsContext, state.wsCancel = context.WithCancel(context.Background())
 		state.mu.Unlock()
 		if oldCancel != nil {
 			oldCancel()
 		}
-		if oldConn != nil {
-			_ = oldConn.Close()
+		if oldLink != nil {
+			oldLink.Close()
 		}
 		state.wsHost = hostEntry.Text
 		state.wsPort = portEntry.Text
@@ -561,160 +557,125 @@ func main() {
 		appendLog(fmt.Sprintf("Connecting to WebSocket at %s://%s:%s/websocket...\n", state.wsScheme, state.wsHost, state.wsPort))
 
 		go func() {
-			var schemes []string
-			if state.wsScheme == "wss" {
-				schemes = []string{"wss", "ws"}
-			} else {
-				schemes = []string{"ws", "wss"}
-			}
-			var conn *websocket.Conn
-			var err error
-			for _, scheme := range schemes {
-				wsURL := buildWebSocketURL(scheme, state.wsHost, state.wsPort)
-				dialer := &websocket.Dialer{
-					Proxy:            http.ProxyFromEnvironment,
-					HandshakeTimeout: 5 * time.Second,
-					TLSClientConfig:  &tls.Config{InsecureSkipVerify: true},
-				}
-				conn, _, err = dialer.Dial(wsURL, nil)
-				if err == nil {
-					state.wsScheme = scheme
-					break
-				}
-			}
+			// Pick the transport: the engine linked into this binary when we
+			// have one and no remote host was given, otherwise the websocket.
+			// Everything below this point is transport-agnostic — see link.go.
+			link, err := openLink(state.wsHost, state.wsPort, state.wsScheme)
 			if err != nil {
 				runOnUI(func() {
 					connectionButtonState = "connect"
 					updateConnectionButton()
 				})
-				setWSStatus("WebSocket: disconnected")
-				appendLog(fmt.Sprintf("WebSocket connection failed: %v\n", err))
+				setWSStatus("Engine: disconnected")
+				appendLog(fmt.Sprintf("Link failed: %v\n", err))
 				return
 			}
 
 			state.mu.Lock()
-			state.wsConn = conn
+			state.link = link
 			state.wsConnected = true
 			ctx := state.wsContext
 			state.mu.Unlock()
+
+			events, err := link.Start(ctx)
+			if err != nil {
+				link.Close()
+				state.mu.Lock()
+				state.link = nil
+				state.wsConnected = false
+				state.mu.Unlock()
+				runOnUI(func() {
+					connectionButtonState = "connect"
+					updateConnectionButton()
+				})
+				setWSStatus("Engine: disconnected")
+				appendLog(fmt.Sprintf("Link failed: %v\n", err))
+				return
+			}
+
 			runOnUI(func() {
 				connectionButtonState = "disconnect"
 				updateConnectionButton()
 			})
-			setWSStatus("WebSocket: connected")
-			appendLog("Connected to Mercury WebSocket successfully!\n")
+			setWSStatus("Engine: " + link.Name())
+			appendLog("Connected to " + link.Name() + "\n")
 
-			go func() {
-				<-ctx.Done()
-				_ = conn.Close()
-			}()
+			for ev := range events {
+				switch e := ev.(type) {
+				case StatusEvent:
+					applyStatus(e.Status)
 
-			for {
-				select {
-				case <-ctx.Done():
-					return
-				default:
-					messageType, payload, readErr := conn.ReadMessage()
-					if readErr != nil {
-						disconnectWS(fmt.Sprintf("WebSocket read error: %v", readErr))
+				case SpectrumEvent:
+					// Keep a copy: the waterfall holds rows well past this frame.
+					row := make([]float32, len(e.Bins))
+					copy(row, e.Bins)
+					const maxWaterfallRows = 800
+					state.mu.Lock()
+					state.spectrumValues = e.Bins
+					state.spectrumRate = e.SampleRate
+					state.waterfallRows = append(state.waterfallRows, row)
+					if len(state.waterfallRows) > maxWaterfallRows {
+						state.waterfallRows = state.waterfallRows[len(state.waterfallRows)-maxWaterfallRows:]
+					}
+					state.mu.Unlock()
+					refreshSpectrum()
+
+				case DeviceListEvent:
+					switch e.Kind {
+					case DeviceCapture:
+						state.captureItems = e.Items
+						state.captureSelected = e.Selected
+						refreshSelect(bindings.captureSelect, e.Items, e.Selected, true)
+					case DevicePlayback:
+						state.playbackItems = e.Items
+						state.playbackSelected = e.Selected
+						refreshSelect(bindings.playbackSelect, e.Items, e.Selected, true)
+					case DeviceInputChannel:
+						refreshSelect(bindings.channelSelect, e.Items, e.Selected, false)
+					}
+
+				case RadioListEvent:
+					state.radioItems = e.Items
+					state.radioSelected = e.Selected
+					state.radioDevicePath = e.DevicePath
+					state.radioSerialSpeed = e.SerialSpeed
+					runOnUI(func() {
+						if e.DevicePath != "" {
+							bindings.devicePathEntry.SetText(e.DevicePath)
+						}
+						if e.SerialSpeed != "" {
+							bindings.serialSpeedEntry.SetSelected(e.SerialSpeed)
+						}
+					})
+					refreshSelect(bindings.radioSelect, e.Items, e.Selected, false)
+
+				case LinkStateEvent:
+					if !e.Up {
+						disconnectWS(e.Detail)
 						return
 					}
-					switch messageType {
-					case websocket.TextMessage:
-						var raw map[string]any
-						if err := json.Unmarshal(payload, &raw); err != nil {
-							appendLog(fmt.Sprintf("[Raw WS Msg]: %s\n", string(payload)))
-							continue
-						}
-						switch raw["type"] {
-						case "status":
-							status, parseErr := parseStatusMessage(payload)
-							if parseErr != nil {
-								appendLog(fmt.Sprintf("Failed to parse status: %v\n", parseErr))
-								continue
-							}
-							applyStatus(status)
-						case "capture_dev_list":
-							items := parseMenuItems(payload)
-							state.captureItems = items
-							state.captureSelected = selectedValue(raw, "selected")
-							refreshSelect(bindings.captureSelect, items, state.captureSelected, true)
-						case "playback_dev_list":
-							items := parseMenuItems(payload)
-							state.playbackItems = items
-							state.playbackSelected = selectedValue(raw, "selected")
-							refreshSelect(bindings.playbackSelect, items, state.playbackSelected, true)
-						case "input_channel":
-							items := parseChannelItems(payload)
-							refreshSelect(bindings.channelSelect, items, selectedValue(raw, "selected"), false)
-						case "radio_list":
-							items := parseMenuItems(payload)
-							sort.Slice(items, func(i, j int) bool {
-								if items[i].Name == "None" {
-									return true
-								}
-								if items[j].Name == "None" {
-									return false
-								}
-								return strings.ToLower(items[i].Name) < strings.ToLower(items[j].Name)
-							})
-							state.radioItems = items
-							state.radioSelected = selectedValue(raw, "selected")
-							state.radioDevicePath = fmt.Sprint(raw["device_path"])
-							state.radioSerialSpeed = fmt.Sprint(raw["serial_speed"])
-							runOnUI(func() {
-								if state.radioDevicePath != "" {
-									bindings.devicePathEntry.SetText(state.radioDevicePath)
-								}
-								if state.radioSerialSpeed != "" {
-									bindings.serialSpeedEntry.SetSelected(state.radioSerialSpeed)
-								}
-							})
-							refreshSelect(bindings.radioSelect, items, state.radioSelected, false)
-						default:
-							appendLog(fmt.Sprintf("[Raw WS Msg]: %s\n", string(payload)))
-						}
-					case websocket.BinaryMessage:
-						spectrum, sampleRate, parseErr := parseSpectrumFrame(payload)
-						if parseErr != nil {
-							continue
-						}
-						// append a copy of this spectrum to the waterfall buffer
-						row := make([]float32, len(spectrum))
-						copy(row, spectrum)
-						const maxWaterfallRows = 800
-						state.mu.Lock()
-						state.spectrumValues = spectrum
-						state.spectrumRate = sampleRate
-						state.waterfallRows = append(state.waterfallRows, row)
-						if len(state.waterfallRows) > maxWaterfallRows {
-							// drop oldest rows
-							state.waterfallRows = state.waterfallRows[len(state.waterfallRows)-maxWaterfallRows:]
-						}
-						state.mu.Unlock()
-						refreshSpectrum()
-					}
+					appendLog(e.Detail + "\n")
+
+				case LogEvent:
+					appendLog(e.Text)
 				}
 			}
+
+			disconnectWS("Link closed.")
 		}()
 	}
 
+	// One command path for both transports: in-process call or websocket
+	// frame, decided by whichever Link is open.
 	sendWSCommand := func(command string, value string, value2 string, value3 string) error {
 		state.mu.RLock()
-		conn := state.wsConn
+		link := state.link
 		connected := state.wsConnected
 		state.mu.RUnlock()
-		if conn == nil || !connected {
+		if link == nil || !connected {
 			return fmt.Errorf("not connected")
 		}
-		payload := map[string]any{"command": command, "value": value}
-		if value2 != "" {
-			payload["value2"] = value2
-		}
-		if value3 != "" {
-			payload["value3"] = value3
-		}
-		return conn.WriteJSON(payload)
+		return link.Send(Command{Name: command, Value: value, Value2: value2, Value3: value3})
 	}
 
 	connectButton = widget.NewButton("Connect", func() {
@@ -727,7 +688,7 @@ func main() {
 			updateConnectionButton()
 		default:
 			state.mu.RLock()
-			alreadyConnected := state.wsConnected && state.wsConn != nil
+			alreadyConnected := state.wsConnected && state.link != nil
 			state.mu.RUnlock()
 			if alreadyConnected {
 				connectionButtonState = "disconnect"
@@ -924,14 +885,14 @@ func main() {
 					os.Exit(0)
 				}()
 				state.mu.Lock()
-				conn := state.wsConn
+				link := state.link
 				cancel := state.wsCancel
-				state.wsConn = nil
+				state.link = nil
 				state.wsCancel = nil
 				state.wsConnected = false
 				state.mu.Unlock()
-				if conn != nil {
-					_ = conn.Close()
+				if link != nil {
+					link.Close()
 				}
 				if cancel != nil {
 					cancel()

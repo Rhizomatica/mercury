@@ -128,7 +128,7 @@ MERCURY_LINK_INPUTS = \
 	datalink_broadcast/broadcast.o datalink_broadcast/kiss.o modem/modem.o modem/framer.o modem/channel_busy.o modem/freedv/libfreedvdata.a \
 	audioio/audioio.a common/os_interop.o common/ring_buffer_posix.o common/shm_posix.o common/crc6.o common/hermes_log.o common/virtual_clock.o \
 	common/chan.o common/queue.o common/mercury_engine.o common/mercury_cli.o data_interfaces/tcp_interfaces.o data_interfaces/net.o \
-	gui_interface/ui_communication.o \
+	gui_interface/ui_communication.o gui_interface/ui_status.o \
 	gui_interface/websocket/mongoose.o gui_interface/websocket/mercury_websocket.o \
 	radio_io/radio_io.o
 
@@ -200,7 +200,7 @@ MERCURY_CORE_OBJS = \
 	common/os_interop.o common/ring_buffer_posix.o common/shm_posix.o common/crc6.o common/hermes_log.o common/virtual_clock.o \
 	common/chan.o common/queue.o common/mercury_engine.o common/mercury_cli.o \
 	data_interfaces/tcp_interfaces.o data_interfaces/net.o \
-	gui_interface/ui_communication.o \
+	gui_interface/ui_communication.o gui_interface/ui_status.o \
 	gui_interface/websocket/mongoose.o gui_interface/websocket/mercury_websocket.o \
 	radio_io/radio_io.o
 

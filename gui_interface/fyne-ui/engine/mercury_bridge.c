@@ -16,6 +16,9 @@
 #include "mercury_engine.h"
 #include "mercury_cli.h"
 #include "mercury_version.h"
+#include "ui_communication.h"
+#include "modem.h"
+#include "modem_stats.h"   /* MODEM_STATS_NSPEC */
 
 /* Print the startup version banner (same text the daemon prints), so the UI
  * announces its version on the terminal too.  Resolved here, in a unit the
@@ -99,4 +102,35 @@ void mercury_request_shutdown(void)
 void mercury_shutdown(void)
 {
     mercury_engine_shutdown();
+}
+
+/* ------------------------------------------------------------------ */
+/*  In-process UI link                                                 */
+/*                                                                     */
+/*  Thin forwarders: the engine owns the state and the command          */
+/*  handling, so local and remote clients cannot drift apart.           */
+/* ------------------------------------------------------------------ */
+int mercury_ui_get_status(ui_status_t *out)
+{
+    return ui_comm_get_status(out) ? 1 : 0;
+}
+
+int mercury_ui_get_spectrum(float *out, int max_bins, int *sample_rate_hz)
+{
+    if (!out || max_bins <= 0)
+        return 0;
+
+    int nbins = (max_bins < MODEM_STATS_NSPEC) ? max_bins : MODEM_STATS_NSPEC;
+    int sr = modem_get_rx_spectrum(out, nbins);
+    if (sr <= 0)
+        return 0;
+    if (sample_rate_hz)
+        *sample_rate_hz = sr;
+    return nbins;
+}
+
+int mercury_ui_command(const char *command, const char *value,
+                       const char *value2, const char *value3)
+{
+    return ui_comm_command(command, value, value2, value3);
 }

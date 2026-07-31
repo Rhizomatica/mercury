@@ -12,6 +12,10 @@
 
 #include <stdbool.h>
 
+/* The UI status struct is defined once, in the engine — the bridge hands out
+ * that same type rather than declaring a parallel copy. */
+#include "ui_status.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -27,6 +31,28 @@ int  mercury_precheck(int argc, char **argv, const char *default_config);
 int  mercury_init(int argc, char **argv, const char *default_config, const char *log_path);
 void mercury_shutdown(void);
 void mercury_request_shutdown(void);
+
+/* ---- In-process UI link ----------------------------------------------------
+ * The embedded UI pulls state and pushes commands through these calls instead
+ * of opening a websocket back to its own process.  The websocket server keeps
+ * running for remote clients (HERMES web UI, a desktop UI on another machine).
+ *
+ * Pull, not callbacks: the engine's publisher threads never call into Go, so a
+ * busy or stopped UI can never stall the modem, and there is no cgocallback on
+ * the audio-adjacent threads. */
+
+/* Copy the latest status snapshot.  Returns 1 on success, 0 before the engine
+ * has published its first one. */
+int mercury_ui_get_status(ui_status_t *out);
+
+/* Copy the current RX power spectrum (dB).  Returns the number of bins written
+ * (0 if none available yet) and sets *sample_rate_hz when non-NULL. */
+int mercury_ui_get_spectrum(float *out, int max_bins, int *sample_rate_hz);
+
+/* Run a UI command through the same handler the websocket path uses.
+ * Unused values may be NULL.  Returns 0 on success. */
+int mercury_ui_command(const char *command, const char *value,
+                       const char *value2, const char *value3);
 
 #ifdef __cplusplus
 }
