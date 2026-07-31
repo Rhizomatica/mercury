@@ -156,6 +156,7 @@ static void sess_enter(arq_session_t *sess, arq_conn_state_t new_state,
     sess->state_enter_ms = time_now_ms();
     sess->deadline_ms    = deadline_ms;
     sess->deadline_event = deadline_event;
+    sess->deferred_listen_off = false;  /* stale across state transitions */
     if (new_state != ARQ_CONN_CONNECTED)
     {
         sess->pending_connect_confirm = false;
@@ -1175,6 +1176,14 @@ static void fsm_calling(arq_session_t *sess, const arq_event_t *ev)
         break;
 
     case ARQ_EV_TIMER_RETRY:
+        if (sess->deferred_listen_off &&
+            time_now_ms() - sess->state_enter_ms >= ARQ_LISTEN_OFF_GRACE_MS)
+        {
+            sess->deferred_listen_off = false;
+            if (g_cbs.notify_disconnected) g_cbs.notify_disconnected(false);
+            enter_idle_after_call(sess);
+            break;
+        }
         if (sess->tx_retries_left > 0)
         {
             sess->tx_retries_left--;
@@ -1192,8 +1201,21 @@ static void fsm_calling(arq_session_t *sess, const arq_event_t *ev)
      * accepting new ones.  A host asserting a transmitter interlock (BPQ32
      * INTERLOCK, frequency scanners) sends LISTEN OFF to mean "release the
      * radio now" — honouring it only in LISTENING left us retrying CALL/ACCEPT
-     * over another port that had already taken the channel. */
+     * over another port that had already taken the channel.
+     *
+     * During the grace window after PENDING is sent the event is deferred rather
+     * than acted on immediately: a scanning host may have sent LISTEN OFF just
+     * before processing PENDING, and a premature teardown would move the host to
+     * the next channel, steering the reply onto the wrong frequency.  The grace
+     * period gives the host time to cancel its own dwell timer. */
     case ARQ_EV_APP_STOP_LISTEN:
+        if (time_now_ms() - sess->state_enter_ms < ARQ_LISTEN_OFF_GRACE_MS)
+        {
+            sess->deferred_listen_off = true;
+            sess->deadline_ms = sess->state_enter_ms + ARQ_LISTEN_OFF_GRACE_MS;
+            break;
+        }
+        /* fall through */
     case ARQ_EV_APP_DISCONNECT:
         if (g_cbs.notify_disconnected) g_cbs.notify_disconnected(false);
         enter_idle_after_call(sess);
@@ -1256,6 +1278,16 @@ static void fsm_accepting(arq_session_t *sess, const arq_event_t *ev)
         break;
 
     case ARQ_EV_TIMER_RETRY:
+        if (sess->deferred_listen_off &&
+            time_now_ms() - sess->state_enter_ms >= ARQ_LISTEN_OFF_GRACE_MS)
+        {
+            sess->deferred_listen_off = false;
+            if (g_cbs.notify_cancelpending)
+                g_cbs.notify_cancelpending();
+            if (g_cbs.notify_disconnected) g_cbs.notify_disconnected(false);
+            enter_idle_after_call(sess);
+            break;
+        }
         if (sess->tx_retries_left > 0)
         {
             sess->tx_retries_left--;
@@ -1288,6 +1320,13 @@ static void fsm_accepting(arq_session_t *sess, const arq_event_t *ev)
      * BPQ32 interlock report lands in — an inbound CALL we are answering with
      * ACCEPT retries. */
     case ARQ_EV_APP_STOP_LISTEN:
+        if (time_now_ms() - sess->state_enter_ms < ARQ_LISTEN_OFF_GRACE_MS)
+        {
+            sess->deferred_listen_off = true;
+            sess->deadline_ms = sess->state_enter_ms + ARQ_LISTEN_OFF_GRACE_MS;
+            break;
+        }
+        /* fall through */
     case ARQ_EV_APP_DISCONNECT:
         if (g_cbs.notify_cancelpending)
             g_cbs.notify_cancelpending();

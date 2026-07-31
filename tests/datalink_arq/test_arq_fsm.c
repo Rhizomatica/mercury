@@ -689,6 +689,10 @@ void test_listen_off_drops_pending_accept(void)
     RESET_FAKE(fake_send_tx_frame);
     RESET_FAKE(fake_notify_cancelpending);
 
+    /* Advance time past the LISTEN OFF grace period so the event is
+     * acted on immediately rather than deferred (see ARQ_LISTEN_OFF_GRACE_MS). */
+    mock_set_uptime_ms(4000);
+
     ev = make_event(ARQ_EV_APP_STOP_LISTEN);
     arq_fsm_dispatch(&sess, &ev);
 
@@ -709,10 +713,74 @@ void test_listen_off_drops_outgoing_call(void)
     arq_fsm_dispatch(&sess, &ev);
     TEST_ASSERT_EQUAL_INT(ARQ_CONN_CALLING, sess.conn_state);
 
+    /* Advance time past the LISTEN OFF grace period. */
+    mock_set_uptime_ms(4000);
+
     ev = make_event(ARQ_EV_APP_STOP_LISTEN);
     arq_fsm_dispatch(&sess, &ev);
 
     TEST_ASSERT_NOT_EQUAL_INT(ARQ_CONN_CALLING, sess.conn_state);
+}
+
+/* LISTEN OFF received within ARQ_LISTEN_OFF_GRACE_MS of entering ACCEPTING
+ * must be deferred, not acted on immediately — a scanning host (BPQ32) sends
+ * LISTEN OFF at dwell expiry and needs time to process the just-sent PENDING
+ * and cancel its own timer.  Once the grace expires, the deferred event is
+ * honoured on the next TIMER_RETRY. */
+void test_listen_off_deferred_within_grace_accepting(void)
+{
+    arq_event_t ev = make_event(ARQ_EV_APP_LISTEN);
+    arq_fsm_dispatch(&sess, &ev);
+    mock_set_uptime_ms(1010);
+    ev = make_event(ARQ_EV_RX_CALL);
+    ev.session_id = 0x42;
+    strncpy(ev.remote_call, "REMOTE1", CALLSIGN_MAX_SIZE);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_ACCEPTING, sess.conn_state);
+
+    /* LISTEN OFF at 1010 ms (just after state enter at 1010) — inside grace. */
+    ev = make_event(ARQ_EV_APP_STOP_LISTEN);
+    arq_fsm_dispatch(&sess, &ev);
+
+    /* Must still be in ACCEPTING: grace deferred the teardown. */
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_ACCEPTING, sess.conn_state);
+    TEST_ASSERT_TRUE(sess.deferred_listen_off);
+
+    /* Advance past the grace period and fire TIMER_RETRY. */
+    mock_set_uptime_ms(4000);
+    ev = make_event(ARQ_EV_TIMER_RETRY);
+    arq_fsm_dispatch(&sess, &ev);
+
+    /* Now the deferred LISTEN OFF should have been processed. */
+    TEST_ASSERT_NOT_EQUAL_INT(ARQ_CONN_ACCEPTING, sess.conn_state);
+    TEST_ASSERT_FALSE(sess.deferred_listen_off);
+    TEST_ASSERT_GREATER_THAN(0, fake_notify_cancelpending_fake.call_count);
+}
+
+void test_listen_off_deferred_within_grace_calling(void)
+{
+    arq_event_t ev = make_event(ARQ_EV_APP_LISTEN);
+    arq_fsm_dispatch(&sess, &ev);
+    mock_set_uptime_ms(1010);
+    ev = make_event(ARQ_EV_APP_CONNECT);
+    strncpy(ev.remote_call, "DST1", CALLSIGN_MAX_SIZE);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_CALLING, sess.conn_state);
+
+    /* LISTEN OFF within grace. */
+    ev = make_event(ARQ_EV_APP_STOP_LISTEN);
+    arq_fsm_dispatch(&sess, &ev);
+
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_CALLING, sess.conn_state);
+    TEST_ASSERT_TRUE(sess.deferred_listen_off);
+
+    /* Advance past grace; TIMER_RETRY honours the deferred event. */
+    mock_set_uptime_ms(4000);
+    ev = make_event(ARQ_EV_TIMER_RETRY);
+    arq_fsm_dispatch(&sess, &ev);
+
+    TEST_ASSERT_NOT_EQUAL_INT(ARQ_CONN_CALLING, sess.conn_state);
+    TEST_ASSERT_FALSE(sess.deferred_listen_off);
 }
 
 void test_listen_off_drops_live_link_without_draining(void)
@@ -756,6 +824,8 @@ int main(void)
     RUN_TEST(test_disconnect_from_connected);
     RUN_TEST(test_listen_off_drops_pending_accept);
     RUN_TEST(test_listen_off_drops_outgoing_call);
+    RUN_TEST(test_listen_off_deferred_within_grace_accepting);
+    RUN_TEST(test_listen_off_deferred_within_grace_calling);
     RUN_TEST(test_listen_off_drops_live_link_without_draining);
     RUN_TEST(test_rx_disconnect_from_connected);
     RUN_TEST(test_connected_seeds_no_progress_clock);
