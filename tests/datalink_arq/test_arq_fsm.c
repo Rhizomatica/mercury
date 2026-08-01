@@ -757,7 +757,10 @@ void test_listen_off_deferred_within_grace_accepting(void)
     TEST_ASSERT_GREATER_THAN(0, fake_notify_cancelpending_fake.call_count);
 }
 
-void test_listen_off_deferred_within_grace_calling(void)
+/* CALLING has no grace period: PENDING announces an INCOMING call, so it is
+ * never sent while we are the caller and there is no race to protect. The host
+ * asked for the radio; it gets it at once. */
+void test_listen_off_in_calling_is_immediate(void)
 {
     arq_event_t ev = make_event(ARQ_EV_APP_LISTEN);
     arq_fsm_dispatch(&sess, &ev);
@@ -767,20 +770,50 @@ void test_listen_off_deferred_within_grace_calling(void)
     arq_fsm_dispatch(&sess, &ev);
     TEST_ASSERT_EQUAL_INT(ARQ_CONN_CALLING, sess.conn_state);
 
-    /* LISTEN OFF within grace. */
+    /* Well inside what used to be the grace window. */
     ev = make_event(ARQ_EV_APP_STOP_LISTEN);
     arq_fsm_dispatch(&sess, &ev);
 
-    TEST_ASSERT_EQUAL_INT(ARQ_CONN_CALLING, sess.conn_state);
-    TEST_ASSERT_TRUE(sess.deferred_listen_off);
-
-    /* Advance past grace; TIMER_RETRY honours the deferred event. */
-    mock_set_uptime_ms(4000);
-    ev = make_event(ARQ_EV_TIMER_RETRY);
-    arq_fsm_dispatch(&sess, &ev);
-
+    /* Released straight away — not deferred. */
     TEST_ASSERT_NOT_EQUAL_INT(ARQ_CONN_CALLING, sess.conn_state);
     TEST_ASSERT_FALSE(sess.deferred_listen_off);
+}
+
+/* The case the grace period is FOR, and the one that decides whether the
+ * interlock still means anything: LISTEN OFF arrives during the grace, and the
+ * handshake then SUCCEEDS. The release must survive the transition into
+ * CONNECTED and be honoured there. Clearing the flag on every state change made
+ * a successful answer swallow the host's request entirely — the interlock was
+ * respected only when the call failed anyway. */
+void test_deferred_listen_off_survives_connect(void)
+{
+    arq_event_t ev = make_event(ARQ_EV_APP_LISTEN);
+    arq_fsm_dispatch(&sess, &ev);
+    mock_set_uptime_ms(1010);
+
+    ev = make_event(ARQ_EV_RX_CALL);
+    ev.session_id = 0x42;
+    strncpy(ev.remote_call, "REMOTE1", CALLSIGN_MAX_SIZE);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_ACCEPTING, sess.conn_state);
+
+    /* Host releases the channel inside the grace window: deferred, not acted on. */
+    ev = make_event(ARQ_EV_APP_STOP_LISTEN);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_ACCEPTING, sess.conn_state);
+    TEST_ASSERT_TRUE(sess.deferred_listen_off);
+
+    RESET_FAKE(fake_notify_disconnected);
+
+    /* The caller answers our ACCEPT and the session would come up. */
+    ev = make_event(ARQ_EV_RX_ACK);
+    ev.session_id = sess.session_id;
+    arq_fsm_dispatch(&sess, &ev);
+
+    /* We must NOT settle into a session on a channel we were told to release. */
+    TEST_ASSERT_NOT_EQUAL_INT(ARQ_CONN_CONNECTED, sess.conn_state);
+    TEST_ASSERT_FALSE(sess.deferred_listen_off);
+    TEST_ASSERT_GREATER_THAN(0, fake_notify_disconnected_fake.call_count);
 }
 
 void test_listen_off_drops_live_link_without_draining(void)
@@ -825,7 +858,8 @@ int main(void)
     RUN_TEST(test_listen_off_drops_pending_accept);
     RUN_TEST(test_listen_off_drops_outgoing_call);
     RUN_TEST(test_listen_off_deferred_within_grace_accepting);
-    RUN_TEST(test_listen_off_deferred_within_grace_calling);
+    RUN_TEST(test_listen_off_in_calling_is_immediate);
+    RUN_TEST(test_deferred_listen_off_survives_connect);
     RUN_TEST(test_listen_off_drops_live_link_without_draining);
     RUN_TEST(test_rx_disconnect_from_connected);
     RUN_TEST(test_connected_seeds_no_progress_clock);
