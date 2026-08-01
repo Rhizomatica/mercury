@@ -286,8 +286,17 @@ int ffcoreaudio_open(ffaudio_buf *b, ffaudio_conf *conf, ffuint flags)
 	b->nonblock = !!(flags & FFAUDIO_O_NONBLOCK);
 
 	int dev = -1;
-	if (conf->device_id != NULL)
-		dev = (int)strtoul(conf->device_id, NULL, 10);
+	if (conf->device_id != NULL) {
+		/* Validate the parse: strtoul() returns 0 on a string it cannot read,
+		 * which would silently select device 0 instead of falling back to the
+		 * default. A config written by an older build holds exactly such an
+		 * unparsable id (it stored the raw AudioDeviceID bytes), so this is the
+		 * upgrade path, not a hypothetical. */
+		char *end = NULL;
+		unsigned long v = strtoul(conf->device_id, &end, 10);
+		if (end != conf->device_id && *end == '\0' && v <= 0x7fffffffUL)
+			dev = (int)v;
+	}
 	if (dev < 0) {
 		dev = coreaudio_dev_default(capture);
 		if (dev < 0) {
