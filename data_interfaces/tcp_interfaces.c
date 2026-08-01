@@ -1375,8 +1375,11 @@ void tnc_send_busy(bool busy)
     /* VARA-compatible channel-occupancy notification: hosts (VarAC, BPQ32,
      * Winlink) already understand "BUSY ON" / "BUSY OFF".  Edge-triggered by
      * the caller (the channel-busy detector), so this only fires on a real
-     * CLEAR<->BUSY transition. */
-    (void)tnc_queue_line(busy ? "BUSY ON\r" : "BUSY OFF\r");
+     * CLEAR<->BUSY transition — which is why it goes out on the critical path
+     * with the other state notifications.  There is no periodic refresh: a
+     * dropped "BUSY ON" leaves a scanning host stepping over an occupied
+     * channel until the next transition, which may be a whole QSO away. */
+    (void)tnc_queue_line_critical(busy ? "BUSY ON\r" : "BUSY OFF\r");
 }
 
 void tnc_send_bitrate(uint32_t speed_level, uint32_t bps)
