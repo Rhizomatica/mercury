@@ -152,12 +152,20 @@ fi
 # sock stage. Do not run it alongside anything heavy.
 # ---------------------------------------------------------------------------
 loopsim_cleanup() {
-    # -x matches the process NAME exactly, and testbench runs per-build binaries
-    # called mercury-<ref>, so `pkill -x mercury` silently spared every one of
-    # them. A survivor keeps the data port and the loopback, and its leftover
-    # bytes surface in the NEXT run's transfer.
-    pkill -9 -f "$BINS/mercury-"   >/dev/null 2>&1
-    pkill -9 -x mercury            >/dev/null 2>&1
+    # Kill by EXECUTABLE (/proc/PID/exe). Three narrower forms were each wrong:
+    #   -x mercury      spares renamed per-build binaries (mercury-<ref>);
+    #   -f "$BINS/..."  also matches THIS script's own command line, so the
+    #                   cleanup killed its caller and runs appeared to hang;
+    #   -x <basename>   kills only the binary being launched, leaving earlier
+    #                   runs' binaries alive — two were found still running
+    #                   after six hours, still writing the log being read.
+    local p_ exe_
+    for p_ in /proc/[0-9]*; do
+        exe_=$(readlink "$p_/exe" 2>/dev/null) || continue
+        case "$exe_" in
+            */mercury|*/mercury-*) kill -9 "${p_#/proc/}" 2>/dev/null ;;
+        esac
+    done
     pkill -9 -f loopsim/noisebridge >/dev/null 2>&1
     pkill -9 -f 'arecord -D plughw' >/dev/null 2>&1
     sleep 1
