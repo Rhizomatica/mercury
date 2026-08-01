@@ -40,8 +40,21 @@ aplay -l 2>/dev/null | grep -qi "card $CARD: Loopback" || {
 # -x matches the process name exactly, so a renamed binary (MERCURY=mercury-1.9.10,
 # as any A/B uses) survives the kill, keeps the ports and the loopback, and
 # corrupts the run that follows. Kill by path as well.
-pkill -9 -f "$MERCURY" 2>/dev/null
-pkill -9 -x mercury 2>/dev/null
+# Kill every mercury by its EXECUTABLE, read from /proc/PID/exe. Three narrower
+# forms were each tried and each was wrong:
+#   -x mercury        spares renamed binaries (mercury-1.9.10) used by every A/B;
+#   -f "$MERCURY"     also matches the shell that ran `MERCURY=<path> ./run…`,
+#                     so the script killed its own caller and runs "hung";
+#   -x <basename>     kills only the binary being launched, leaving EARLIER
+#                     runs' binaries alive — two were found still running after
+#                     six hours, holding the loopback and corrupting results.
+# The executable link matches every mercury and never matches a shell.
+for _p in /proc/[0-9]*; do
+    _exe=$(readlink "$_p/exe" 2>/dev/null) || continue
+    case "$_exe" in
+        */mercury|*/mercury-*) kill -9 "${_p#/proc/}" 2>/dev/null ;;
+    esac
+done
 pkill -9 -f "$NB" 2>/dev/null
 pkill -9 -f "arecord -D plughw:$CARD,1" 2>/dev/null
 sleep 1

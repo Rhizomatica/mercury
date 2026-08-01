@@ -345,8 +345,41 @@ static int session_tx_backlog(const arq_session_t *sess)
 }
 
 /* Set payload_mode from the current speed_level (clamped to the active BW). */
+/* TEST HOOK, off unless MERCURY_PIN_LADDER is set: pin the ladder to one rung
+ * so a chosen payload mode is exercised on EVERY run.
+ *
+ * Not a tuning knob and deliberately not in mercury.ini. It exists because the
+ * modes at the ends of the ladder are reached only when the channel happens to
+ * take the link there — on the bench the MFSK floor came up in roughly one run
+ * in three, which is no way to test the receive path that only MFSK uses.
+ * Pinning turns "wait for the right conditions" into "run the test". */
+static int ladder_pin_level(void)
+{
+    static int cached = -2;   /* -2 = not looked up yet, -1 = no pin */
+    if (cached == -2)
+    {
+        const char *e = getenv("MERCURY_PIN_LADDER");
+        cached = -1;
+        if (e && *e)
+        {
+            int v = atoi(e);
+            if (v >= 0 && v < ARQ_LADDER_LEVELS)
+            {
+                cached = v;
+                HLOGW(LOG_COMP, "TEST HOOK: ladder pinned to level %d (mode %d) "
+                      "— climb/drop disabled", v, arq_mode_ladder[v]);
+            }
+        }
+    }
+    return cached;
+}
+
 static void apply_speed_level(arq_session_t *sess)
 {
+    int pin = ladder_pin_level();
+    if (pin >= 0)
+        sess->speed_level = pin;
+
     if (sess->speed_level < 0)
         sess->speed_level = 0;
     if (sess->speed_level > ARQ_LADDER_LEVELS - 1)
@@ -444,6 +477,16 @@ static void record_tx_outcome(arq_session_t *sess, bool clean)
  *  arq_mode_ladder[rx_speed_level]. */
 static void irs_mirror_peer_ladder(arq_session_t *sess, bool clean_new)
 {
+    int pin = ladder_pin_level();
+    if (pin >= 0)
+    {
+        /* Pinned: the sender cannot climb, so the mirror must not either, or
+         * the two ends decode on different modes. */
+        sess->rx_speed_level = pin;
+        sess->peer_tx_mode = clamp_payload_mode_to_bandwidth(arq_mode_ladder[pin]);
+        return;
+    }
+
     int delta = ladder_step(&sess->rx_speed_level, &sess->rx_success_count,
                             &sess->rx_fast_ramp, clean_new);
     sess->peer_tx_mode =
