@@ -7,6 +7,8 @@
 #include <ffbase/ring.h>
 #include <CoreAudio/CoreAudio.h>
 #include <CoreFoundation/CFString.h>
+#include <stdlib.h>
+#include <stdio.h>
 
 
 int ffcoreaudio_init(ffaudio_init_conf *conf)
@@ -28,6 +30,7 @@ struct ffaudio_dev {
 
 	ffuint err;
 	char *errmsg;
+	char id_str[16];
 };
 
 ffaudio_dev* ffcoreaudio_dev_alloc(ffuint mode)
@@ -191,7 +194,8 @@ const char* ffcoreaudio_dev_info(ffaudio_dev *d, ffuint i)
 		if (d->idev == 0)
 			return NULL;
 
-		return (char*)&d->devs[d->idev - 1];
+		snprintf(d->id_str, sizeof(d->id_str), "%u", (unsigned)d->devs[d->idev - 1]);
+		return d->id_str;
 
 	case FFAUDIO_DEV_NAME:
 		return d->name;
@@ -283,7 +287,7 @@ int ffcoreaudio_open(ffaudio_buf *b, ffaudio_conf *conf, ffuint flags)
 
 	int dev = -1;
 	if (conf->device_id != NULL)
-		dev = *(int*)conf->device_id;
+		dev = (int)strtoul(conf->device_id, NULL, 10);
 	if (dev < 0) {
 		dev = coreaudio_dev_default(capture);
 		if (dev < 0) {
