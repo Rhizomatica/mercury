@@ -156,6 +156,15 @@ static void sess_enter(arq_session_t *sess, arq_conn_state_t new_state,
     sess->state_enter_ms = time_now_ms();
     sess->deadline_ms    = deadline_ms;
     sess->deadline_event = deadline_event;
+    /* A deferred LISTEN OFF must SURVIVE the transition that the grace period
+     * exists to protect.  Clearing it here meant the successful case — the
+     * handshake completes and we enter CONNECTED — silently swallowed the
+     * host's channel release: the interlock was honoured only when the call
+     * failed anyway.  Carry it into CONNECTED and act on it there; drop it only
+     * when the session is already going idle, where it has nothing left to
+     * release. */
+    if (new_state == ARQ_CONN_DISCONNECTED || new_state == ARQ_CONN_LISTENING)
+        sess->deferred_listen_off = false;
     if (new_state != ARQ_CONN_CONNECTED)
     {
         sess->pending_connect_confirm = false;
@@ -1192,7 +1201,14 @@ static void fsm_calling(arq_session_t *sess, const arq_event_t *ev)
      * accepting new ones.  A host asserting a transmitter interlock (BPQ32
      * INTERLOCK, frequency scanners) sends LISTEN OFF to mean "release the
      * radio now" — honouring it only in LISTENING left us retrying CALL/ACCEPT
-     * over another port that had already taken the channel. */
+     * over another port that had already taken the channel.
+     *
+     * Acted on immediately here, with no grace period.  The grace in ACCEPTING
+     * exists for one specific race: a scanning host can send LISTEN OFF just
+     * before it processes the PENDING we sent it.  PENDING announces an INCOMING
+     * call, so it is never sent while we are CALLING — there is nothing for the
+     * host to be racing against, and delaying its channel release would only
+     * keep a radio it asked for. */
     case ARQ_EV_APP_STOP_LISTEN:
     case ARQ_EV_APP_DISCONNECT:
         if (g_cbs.notify_disconnected) g_cbs.notify_disconnected(false);
@@ -1232,6 +1248,19 @@ static void fsm_accepting(arq_session_t *sess, const arq_event_t *ev)
             arq_timing_record_connect(g_timing, sess->control_mode);
         sess_enter(sess, ARQ_CONN_CONNECTED, UINT64_MAX, ARQ_EV_TIMER_RETRY);
         enter_idle_irs(sess);       /* callee receives first; process incoming data */
+        if (sess->deferred_listen_off)
+        {
+            /* The host asked for the radio back while we were answering, and
+             * the answer then succeeded.  Honour the request now rather than
+             * starting a session on a channel we were told to give up. */
+            HLOGI(LOG_COMP, "connected with a deferred LISTEN OFF — releasing the radio");
+            sess->deferred_listen_off = false;
+            sess->pending_disconnect  = false;
+            if (g_timing) arq_timing_record_disconnect(g_timing, "listen_off");
+            if (g_cbs.notify_disconnected) g_cbs.notify_disconnected(false);
+            enter_idle_after_call(sess);
+            break;
+        }
         if (ev->id == ARQ_EV_RX_DATA)
             fsm_dflow(sess, ev);
         break;
@@ -1256,6 +1285,16 @@ static void fsm_accepting(arq_session_t *sess, const arq_event_t *ev)
         break;
 
     case ARQ_EV_TIMER_RETRY:
+        if (sess->deferred_listen_off &&
+            time_now_ms() - sess->state_enter_ms >= ARQ_LISTEN_OFF_GRACE_MS)
+        {
+            sess->deferred_listen_off = false;
+            if (g_cbs.notify_cancelpending)
+                g_cbs.notify_cancelpending();
+            if (g_cbs.notify_disconnected) g_cbs.notify_disconnected(false);
+            enter_idle_after_call(sess);
+            break;
+        }
         if (sess->tx_retries_left > 0)
         {
             sess->tx_retries_left--;
@@ -1288,6 +1327,13 @@ static void fsm_accepting(arq_session_t *sess, const arq_event_t *ev)
      * BPQ32 interlock report lands in — an inbound CALL we are answering with
      * ACCEPT retries. */
     case ARQ_EV_APP_STOP_LISTEN:
+        if (time_now_ms() - sess->state_enter_ms < ARQ_LISTEN_OFF_GRACE_MS)
+        {
+            sess->deferred_listen_off = true;
+            sess->deadline_ms = sess->state_enter_ms + ARQ_LISTEN_OFF_GRACE_MS;
+            break;
+        }
+        /* fall through */
     case ARQ_EV_APP_DISCONNECT:
         if (g_cbs.notify_cancelpending)
             g_cbs.notify_cancelpending();

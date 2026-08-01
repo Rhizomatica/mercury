@@ -229,6 +229,13 @@ extern _Atomic int arq_iss_post_ack_guard_ms;
                                             * and raced with TIMER_RETRY, causing
                                             * 3-4 wasted ACCEPT retries (~28s).    */
 #define ARQ_ACK_GUARD_S               1     /* extra slack added to retry interval */
+/* Grace period after entering CALLING/ACCEPTING (i.e. after PENDING is sent)
+ * during which LISTEN OFF is deferred.  Scanning hosts (BPQ32) need a moment to
+ * process PENDING and cancel their own dwell timers; without this grace, a
+ * LISTEN OFF that crosses PENDING on the wire cancels the handshake — the host
+ * moves to the next channel and the reply goes out on the wrong frequency.
+ * 2 s is conservative: ~0.5 s of TCP+host processing with headroom. */
+#define ARQ_LISTEN_OFF_GRACE_MS       2000
 #define ARQ_CALL_RETRY_SLOTS_DEFAULT       4    /* CALL retries before giving up       */
 #define ARQ_ACCEPT_RETRY_SLOTS_DEFAULT     4    /* ACCEPT retries before returning     */
 #define ARQ_DATA_RETRY_SLOTS_DEFAULT      10    /* DATA retries before disconnect      */

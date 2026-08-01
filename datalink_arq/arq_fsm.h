@@ -225,6 +225,8 @@ typedef struct
                                         * call always returns to where it was   */
 
     /* --- Teardown flags --- */
+    bool     deferred_listen_off;      /* LISTEN OFF received during grace period;
+                                        * will be honoured once the grace expires    */
     bool     pending_disconnect_notify;/* defer notify_disconnected until TX done */
     bool     pending_disconnect;       /* APP_DISCONNECT deferred until TX buf empty */
     uint64_t disconnect_deadline_ms;   /* absolute time by which a deferred
