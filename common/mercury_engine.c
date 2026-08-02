@@ -165,7 +165,9 @@ int mercury_engine_init(const mercury_config *cfg,
     /* ---- audio I/O ---- */
     if (g_audio_system != AUDIO_SUBSYSTEM_SHM)
     {
-        HLOGI("engine", "Initialising audio I/O (subsystem=%d)", g_audio_system);
+        HLOGI("engine", "Initialising audio I/O (subsystem=%d, capture='%s', playback='%s')",
+              g_audio_system, g_input_dev[0] ? g_input_dev : "default",
+              g_output_dev[0] ? g_output_dev : "default");
         if (audioio_init_internal(g_input_dev, g_output_dev, g_audio_system,
                                   rx_input_channel,
                                   &g_radio_capture, &g_radio_playback) != 0)
