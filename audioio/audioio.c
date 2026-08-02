@@ -13,6 +13,8 @@
 #include <limits.h>
 #include <errno.h>
 #include <signal.h>
+#include <string.h>
+#include <ffbase/stringz.h>
 #include "os_interop.h"
 #include <ffaudio/audio.h>
 #include "std.h"
@@ -82,6 +84,8 @@ static char s_capture_dev[256];
 static char s_playback_dev[256];
 static int s_buffers_initialized = 0;
 static volatile bool audio_shutdown_ = false;  // local stop flag for audio threads
+
+static void format_device_display(int audio_subsys, int mode, const char *id, char *out, size_t outsz);
 
 #define NULL_AUDIO_PERIOD_MS 20
 #define NULL_AUDIO_SAMPLES_PER_PERIOD 160
@@ -851,8 +855,12 @@ void *radio_playback_thread(void *device_ptr)
         goto cleanup_play;
     }
 
+    char play_dev_display[96];
+    format_device_display(audio_subsystem, FFAUDIO_DEV_PLAYBACK,
+                           device_ptr ? (const char *)device_ptr : NULL,
+                           play_dev_display, sizeof(play_dev_display));
     HLOGI("audio-play", "I/O playback (%s) %s / %dHz / %dch / %dms buffer",
-          device_ptr ? (const char *)device_ptr : "default",
+          play_dev_display,
           cfg->format == FFAUDIO_F_FLOAT32 ? "float32" :
           cfg->format == FFAUDIO_F_INT32   ? "int32"   :
           cfg->format == FFAUDIO_F_INT24_4 ? "int24in32" :
@@ -1195,8 +1203,12 @@ void *radio_capture_thread(void *device_ptr)
         goto cleanup_cap;
     }
 
+    char cap_dev_display[96];
+    format_device_display(audio_subsystem, FFAUDIO_DEV_CAPTURE,
+                           device_ptr ? (const char *)device_ptr : NULL,
+                           cap_dev_display, sizeof(cap_dev_display));
     HLOGI("audio-cap", "I/O capture (%s) %s / %dHz / %dch / %dms buffer",
-          device_ptr ? (const char *)device_ptr : "default",
+          cap_dev_display,
           cfg->format == FFAUDIO_F_FLOAT32 ? "float32" :
           cfg->format == FFAUDIO_F_INT32   ? "int32"   :
           cfg->format == FFAUDIO_F_INT24_4 ? "int24in32" :
@@ -1619,6 +1631,95 @@ int get_soundcard_list(int audio_system, int mode,
     return count;
 }
 
+#define DEVICE_RESOLVE_MAX 64
+
+/* Resolve a user/config-supplied capture or playback device string to the
+ * native device id the active backend expects, in place.
+ *
+ * Priority order:
+ *   1. exact id match (e.g. "149", or a WASAPI/DSound GUID) -- left as-is,
+ *      this is already what audio->open() wants, and is the fast path for
+ *      anything already using -z output or an existing config.
+ *   2. exact device name match, case-insensitive.
+ *   3. a single, unambiguous case-insensitive substring match against a
+ *      device name (e.g. "blackhole 2ch" or "usb").
+ *
+ * If the string is empty (default device), the subsystem has no
+ * enumerable devices (NULL/FIFO/SOCK/SHM), enumeration fails, or a
+ * substring match is ambiguous, buf is left untouched -- callers get
+ * exactly today's behavior. */
+static void resolve_device_string(int audio_subsys, int mode, char *buf, size_t bufsz, const char *log_tag)
+{
+    if (buf[0] == '\0')
+        return;
+
+    if (audio_subsys == AUDIO_SUBSYSTEM_SHM || audio_subsys == AUDIO_SUBSYSTEM_NULL ||
+        audio_subsys == AUDIO_SUBSYSTEM_FIFO || audio_subsys == AUDIO_SUBSYSTEM_SOCK)
+        return;
+
+    char ids[DEVICE_RESOLVE_MAX][64];
+    char names[DEVICE_RESOLVE_MAX][64];
+    int n = get_soundcard_list(audio_subsys, mode, ids, names, DEVICE_RESOLVE_MAX);
+    if (n <= 0)
+        return;
+
+    for (int i = 0; i < n; i++) {
+        if (strcmp(buf, ids[i]) == 0)
+            return;  // already a valid native id
+    }
+
+    int match = -1, matches = 0;
+    for (int i = 0; i < n; i++) {
+        if (ffsz_ieq(buf, names[i])) {
+            match = i;
+            matches = 1;
+            break;
+        }
+    }
+
+    if (matches == 0) {
+        size_t buf_len = strlen(buf);
+        for (int i = 0; i < n; i++) {
+            if (ffs_ifindstr(names[i], strlen(names[i]), buf, buf_len) >= 0) {
+                match = i;
+                matches++;
+            }
+        }
+    }
+
+    if (matches == 1) {
+        HLOGI(log_tag, "device '%s' matched by name to '%s' (id=%s)", buf, names[match], ids[match]);
+        strncpy(buf, ids[match], bufsz - 1);
+        buf[bufsz - 1] = '\0';
+    } else if (matches > 1) {
+        HLOGW(log_tag, "device name '%s' is ambiguous (%d matches) -- use an exact id from -z instead", buf, matches);
+    }
+}
+
+/* Format "<id> '<name>'" for a resolved native device id, for display in
+ * startup logs. Falls back to just the id if the id isn't found in the
+ * current device list (e.g. subsystem without enumeration support), and to
+ * "default" if no id was requested. out is always NUL-terminated. */
+static void format_device_display(int audio_subsys, int mode, const char *id, char *out, size_t outsz)
+{
+    if (id == NULL || id[0] == '\0') {
+        snprintf(out, outsz, "default");
+        return;
+    }
+
+    char ids[DEVICE_RESOLVE_MAX][64];
+    char names[DEVICE_RESOLVE_MAX][64];
+    int n = get_soundcard_list(audio_subsys, mode, ids, names, DEVICE_RESOLVE_MAX);
+    for (int i = 0; i < n; i++) {
+        if (strcmp(id, ids[i]) == 0) {
+            snprintf(out, outsz, "%s '%s'", id, names[i]);
+            return;
+        }
+    }
+
+    snprintf(out, outsz, "%s", id);
+}
+
 void list_soundcards(int audio_system)
 {
     ffaudio_interface *audio = NULL;
@@ -1879,6 +1980,9 @@ int audioio_init_internal(char *capture_dev, char *playback_dev, int audio_subsy
     else
         s_playback_dev[0] = '\0';
 
+    resolve_device_string(audio_subsystem, FFAUDIO_DEV_CAPTURE, s_capture_dev, sizeof(s_capture_dev), "audio-cap");
+    resolve_device_string(audio_subsystem, FFAUDIO_DEV_PLAYBACK, s_playback_dev, sizeof(s_playback_dev), "audio-play");
+
     // Create buffers if not already created
     if (audioio_init_buffers() != 0)
         return -1;
@@ -1987,6 +2091,9 @@ int audioio_restart(const char *capture_dev, const char *playback_dev,
         strncpy(s_playback_dev, playback_dev, sizeof(s_playback_dev) - 1);
         s_playback_dev[sizeof(s_playback_dev) - 1] = '\0';
     }
+
+    resolve_device_string(audio_subsystem, FFAUDIO_DEV_CAPTURE, s_capture_dev, sizeof(s_capture_dev), "audio-cap");
+    resolve_device_string(audio_subsystem, FFAUDIO_DEV_PLAYBACK, s_playback_dev, sizeof(s_playback_dev), "audio-play");
 
     // Clear buffers (NEVER destroy/recreate them)
     clear_buffer(capture_buffer);
