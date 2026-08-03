@@ -125,6 +125,8 @@ static inline uint64_t audioio_monotonic_ms(void)
 }
 
 #if defined(__linux__)
+static pthread_mutex_t s_pulse_lock = PTHREAD_MUTEX_INITIALIZER;
+
 static bool pulse_init_already_initialized(const ffaudio_init_conf *aconf)
 {
     return aconf && aconf->error && strcmp(aconf->error, "already initialized") == 0;
@@ -1557,8 +1559,12 @@ int get_soundcard_list(int audio_system, int mode,
 #if defined(__linux__)
     if (audio_system == AUDIO_SUBSYSTEM_PULSE)
     {
+        pthread_mutex_lock(&s_pulse_lock);
         if (pulse_shared_init(&did_init) != 0)
+        {
+            pthread_mutex_unlock(&s_pulse_lock);
             return 0;
+        }
     }
     else
 #endif
@@ -1569,12 +1575,15 @@ int get_soundcard_list(int audio_system, int mode,
         did_init = true;
     }
 
-    // mode: FFAUDIO_DEV_PLAYBACK (0) or FFAUDIO_DEV_CAPTURE (1)
     ffaudio_dev *d = audio->dev_alloc(mode);
     if (d == NULL)
     {
         if (did_init)
             audio->uninit();
+#if defined(__linux__)
+        if (audio_system == AUDIO_SUBSYSTEM_PULSE)
+            pthread_mutex_unlock(&s_pulse_lock);
+#endif
         return 0;
     }
 
@@ -1603,6 +1612,10 @@ int get_soundcard_list(int audio_system, int mode,
     audio->dev_free(d);
     if (did_init)
         audio->uninit();
+#if defined(__linux__)
+    if (audio_system == AUDIO_SUBSYSTEM_PULSE)
+        pthread_mutex_unlock(&s_pulse_lock);
+#endif
     return count;
 }
 
@@ -1932,16 +1945,10 @@ int audioio_init_internal(char *capture_dev, char *playback_dev, int audio_subsy
 
 static void audioio_stop_threads(void)
 {
-    // Signal audio threads to exit their loops
     audio_shutdown_ = true;
     pthread_join(s_radio_capture, NULL);
     pthread_join(s_radio_playback, NULL);
     audio_shutdown_ = false;
-
-#if defined(__linux__)
-    if (audio_subsystem == AUDIO_SUBSYSTEM_PULSE)
-        pulse_shared_uninit();
-#endif
 
     HLOGI("audio-stop", "audioio threads stopped");
 }
@@ -1951,6 +1958,14 @@ int audioio_restart(const char *capture_dev, const char *playback_dev,
 {
     HLOGI("audio-restart", "stopping audio threads...");
     audioio_stop_threads();
+
+#if defined(__linux__)
+    if (audio_subsystem == AUDIO_SUBSYSTEM_PULSE || audio_subsys == AUDIO_SUBSYSTEM_PULSE)
+        pthread_mutex_lock(&s_pulse_lock);
+    bool was_pulse = (audio_subsystem == AUDIO_SUBSYSTEM_PULSE);
+    if (was_pulse)
+        pulse_shared_uninit();
+#endif
 
     // Update stored parameters
     audio_subsystem = audio_subsys;
@@ -1984,6 +1999,10 @@ int audioio_restart(const char *capture_dev, const char *playback_dev,
 
     if (audio_subsystem == AUDIO_SUBSYSTEM_NULL)
     {
+#if defined(__linux__)
+        if (was_pulse || audio_subsystem == AUDIO_SUBSYSTEM_PULSE)
+            pthread_mutex_unlock(&s_pulse_lock);
+#endif
         pthread_create(&s_radio_capture, NULL, null_capture_thread, NULL);
         pthread_create(&s_radio_playback, NULL, null_playback_thread, NULL);
         HLOGI("audio-restart", "null audio threads restarted");
@@ -1992,6 +2011,10 @@ int audioio_restart(const char *capture_dev, const char *playback_dev,
 
     if (audio_subsystem == AUDIO_SUBSYSTEM_FIFO)
     {
+#if defined(__linux__)
+        if (was_pulse || audio_subsystem == AUDIO_SUBSYSTEM_PULSE)
+            pthread_mutex_unlock(&s_pulse_lock);
+#endif
         fifo_ignore_sigpipe();
         pthread_create(&s_radio_capture, NULL, fifo_capture_thread, (void *) s_capture_dev);
         pthread_create(&s_radio_playback, NULL, fifo_playback_thread, (void *) s_playback_dev);
@@ -2002,6 +2025,10 @@ int audioio_restart(const char *capture_dev, const char *playback_dev,
 #ifndef _WIN32
     if (audio_subsystem == AUDIO_SUBSYSTEM_SOCK)
     {
+#if defined(__linux__)
+        if (was_pulse || audio_subsystem == AUDIO_SUBSYSTEM_PULSE)
+            pthread_mutex_unlock(&s_pulse_lock);
+#endif
         if (!sock_resolve_path())
             return -1;
         fifo_ignore_sigpipe();
@@ -2022,6 +2049,11 @@ int audioio_restart(const char *capture_dev, const char *playback_dev,
     pthread_create(&s_radio_capture, NULL, radio_capture_thread, (void *) s_capture_dev);
     pthread_create(&s_radio_playback, NULL, radio_playback_thread, (void *) s_playback_dev);
 
+#if defined(__linux__)
+    if (audio_subsystem == AUDIO_SUBSYSTEM_PULSE)
+        pthread_mutex_unlock(&s_pulse_lock);
+#endif
+
     HLOGI("audio-restart", "audio threads restarted");
     return 0;
 }
@@ -2036,7 +2068,11 @@ int audioio_deinit(pthread_t *radio_capture, pthread_t *radio_playback)
 
 #if defined(__linux__)
     if (audio_subsystem == AUDIO_SUBSYSTEM_PULSE)
+    {
+        pthread_mutex_lock(&s_pulse_lock);
         pulse_shared_uninit();
+        pthread_mutex_unlock(&s_pulse_lock);
+    }
 #endif
 
     audioio_deinit_buffers();
