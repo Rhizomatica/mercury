@@ -6,6 +6,9 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
+#include <stdlib.h>   /* getenv/atoi for the MERCURY_PIN_LADDER test hook */
+
+static int ladder_pin_level(void);   /* MERCURY_PIN_LADDER test hook */
 #include "arq_fsm.h"
 #include "arq_protocol.h"
 #include "arq_timing.h"
@@ -109,9 +112,15 @@ void arq_fsm_init(arq_session_t *sess)
     sess->deadline_ms    = UINT64_MAX;
     sess->deadline_event = ARQ_EV_TIMER_RETRY;
     sess->control_mode        = ARQ_CONTROL_MODE;
-    sess->payload_mode        = arq_mode_ladder[0];   /* ladder floor = MFSK */
-    sess->peer_tx_mode        = arq_mode_ladder[0];   /* RX decoder starts at floor */
-    sess->initial_payload_mode = arq_mode_ladder[0];  /* overwritten by arq_set_initial_mode */
+    {
+        int pin_ = ladder_pin_level();
+        int start_ = (pin_ >= 0) ? pin_ : 0;
+        sess->speed_level          = start_;
+        sess->rx_speed_level       = start_;
+        sess->payload_mode         = arq_mode_ladder[start_];  /* ladder floor = MFSK */
+        sess->peer_tx_mode         = arq_mode_ladder[start_];  /* RX decoder starts at floor */
+        sess->initial_payload_mode = arq_mode_ladder[start_];
+    }
     sess->speed_level    = 0;
     sess->tx_success_count = 0;
     sess->fast_ramp      = true;
@@ -157,8 +166,14 @@ static void reset_session_data_state(arq_session_t *sess)
     sess->rx_speed_level     = 0;
     sess->rx_success_count   = 0;
     sess->rx_fast_ramp       = true;
-    sess->payload_mode       = arq_mode_ladder[0];   /* MFSK floor */
-    sess->peer_tx_mode       = arq_mode_ladder[0];
+    {
+        int pin_ = ladder_pin_level();
+        int start_ = (pin_ >= 0) ? pin_ : 0;
+        sess->speed_level    = start_;
+        sess->rx_speed_level = start_;
+        sess->payload_mode   = arq_mode_ladder[start_];   /* MFSK floor */
+        sess->peer_tx_mode   = arq_mode_ladder[start_];
+    }
     sess->pending_disconnect = false;
     sess->irs_data_wait_ms   = 0;
 }
@@ -293,8 +308,35 @@ static int session_tx_backlog(const arq_session_t *sess)
 }
 
 /* Set payload_mode from the current speed_level (clamped to the active BW). */
+/* TEST HOOK (MERCURY_PIN_LADDER): pin the ladder to one rung so a chosen
+ * payload mode is exercised on every run. Used here to ask a single question:
+ * does the data plane work with MFSK out of the picture? */
+static int ladder_pin_level(void)
+{
+    static int cached = -2;
+    if (cached == -2)
+    {
+        const char *e = getenv("MERCURY_PIN_LADDER");
+        cached = -1;
+        if (e && *e)
+        {
+            int v = atoi(e);
+            if (v >= 0 && v < ARQ_LADDER_LEVELS)
+            {
+                cached = v;
+                HLOGW(LOG_COMP, "TEST HOOK: ladder pinned to level %d (mode %d)",
+                      v, arq_mode_ladder[v]);
+            }
+        }
+    }
+    return cached;
+}
+
 static void apply_speed_level(arq_session_t *sess)
 {
+    int pin = ladder_pin_level();
+    if (pin >= 0)
+        sess->speed_level = pin;
     if (sess->speed_level < 0)
         sess->speed_level = 0;
     if (sess->speed_level > ARQ_LADDER_LEVELS - 1)
@@ -359,6 +401,14 @@ static void record_tx_outcome(arq_session_t *sess, bool clean)
  *  arq_mode_ladder[rx_speed_level]. */
 static void irs_mirror_peer_ladder(arq_session_t *sess, bool clean_new)
 {
+    int pin = ladder_pin_level();
+    if (pin >= 0)
+    {
+        sess->rx_speed_level = pin;
+        sess->peer_tx_mode = clamp_payload_mode_to_bandwidth(arq_mode_ladder[pin]);
+        return;
+    }
+
     int delta = ladder_step(&sess->rx_speed_level, &sess->rx_success_count,
                             &sess->rx_fast_ramp, clean_new);
     sess->peer_tx_mode =
