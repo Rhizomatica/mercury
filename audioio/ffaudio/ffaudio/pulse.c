@@ -253,8 +253,18 @@ static void pulse_dev_on_next_sink(pa_context *c, const pa_sink_info *info, int 
 		d->err = errno;
 		return;
 	}
+	/* A device may carry no name and/or no description: PipeWire's PulseAudio
+	 * shim omits them for nodes that have no node.description, and so do some
+	 * PA modules.  ffsz_dup() is strlen()-based, so a NULL here killed the
+	 * whole modem on the libpulse thread the moment a UI client connected and
+	 * triggered enumeration (issue #150).  Skip a device with no id, and fall
+	 * back to the id when only the description is missing. */
+	if (info->name == NULL) {
+		ffmem_free(p);
+		return;
+	}
 	p->id = ffsz_dup(info->name);
-	p->name = ffsz_dup(info->description);
+	p->name = ffsz_dup(info->description != NULL ? info->description : info->name);
 	if (p->id == NULL || p->name == NULL) {
 		d->errfunc = "mem alloc";
 		d->err = errno;
@@ -285,8 +295,18 @@ static void pulse_dev_on_next_source(pa_context *c, const pa_source_info *info, 
 		d->err = errno;
 		return;
 	}
+	/* A device may carry no name and/or no description: PipeWire's PulseAudio
+	 * shim omits them for nodes that have no node.description, and so do some
+	 * PA modules.  ffsz_dup() is strlen()-based, so a NULL here killed the
+	 * whole modem on the libpulse thread the moment a UI client connected and
+	 * triggered enumeration (issue #150).  Skip a device with no id, and fall
+	 * back to the id when only the description is missing. */
+	if (info->name == NULL) {
+		ffmem_free(p);
+		return;
+	}
 	p->id = ffsz_dup(info->name);
-	p->name = ffsz_dup(info->description);
+	p->name = ffsz_dup(info->description != NULL ? info->description : info->name);
 	if (p->id == NULL || p->name == NULL) {
 		d->errfunc = "mem alloc";
 		d->err = errno;
