@@ -2050,7 +2050,7 @@ int audioio_restart(const char *capture_dev, const char *playback_dev,
     pthread_create(&s_radio_playback, NULL, radio_playback_thread, (void *) s_playback_dev);
 
 #if defined(__linux__)
-    if (audio_subsystem == AUDIO_SUBSYSTEM_PULSE)
+    if (was_pulse || audio_subsystem == AUDIO_SUBSYSTEM_PULSE)
         pthread_mutex_unlock(&s_pulse_lock);
 #endif
 
