@@ -104,6 +104,25 @@ float modem_get_tx_gain(void)
     return atomic_load(&g_tx_gain);
 }
 
+/* --- TX keying delay (ms), waited after PTT ON before audio is handed to
+ * the playback device. Covers the local radio relay's switch time and,
+ * beyond that, gives a slow external PTT (host app driving a serial/CAT
+ * relay off the "PTT ON" TNC notification) time to actually key the radio
+ * before the signal starts. Default 10ms is the relay-switch baseline. */
+static _Atomic int g_tx_delay_ms = 10;
+
+void modem_set_tx_delay_ms(int delay_ms)
+{
+    if (delay_ms < 0)    delay_ms = 0;
+    if (delay_ms > 2000) delay_ms = 2000;
+    atomic_store(&g_tx_delay_ms, delay_ms);
+}
+
+int modem_get_tx_delay_ms(void)
+{
+    return atomic_load(&g_tx_delay_ms);
+}
+
 float modem_get_tx_peak_dbfs(void)
 {
     return atomic_load(&g_tx_peak_dbfs);
@@ -1075,8 +1094,9 @@ int send_modulated_data(generic_modem_t *g_modem, uint8_t *bytes_in, int frames_
     }
     else
     {
-        /* Wait for radio relay to switch (10ms for your radio) */
-        usleep(10000);
+        /* Wait for radio relay to switch, plus any extra keying delay
+         * configured for a slower external PTT path. */
+        usleep((useconds_t)modem_get_tx_delay_ms() * 1000);
 
         /* Write entire pre-generated buffer to playback */
         write_buffer(playback_buffer, (uint8_t *)tx_buffer, total_samples * sizeof(int32_t));

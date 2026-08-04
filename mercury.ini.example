@@ -81,6 +81,15 @@ hamlib_log_level = 0
 ; Range: -20.0 .. +20.0 (values outside are clamped).
 tx_gain_db = 0.0
 
+; TX keying delay in milliseconds (default: 10), waited after PTT ON before
+; audio is written to the playback device on TX. The default covers the
+; local radio relay's switch time. Increase this if your host app drives
+; PTT off Mercury's "PTT ON" TNC notification and needs more time to
+; actually key the radio (e.g. a slow serial/CAT relay) — otherwise the
+; start of the transmission can be clipped before the radio is keyed.
+; Range: 0 .. 2000 (values outside are clamped).
+tx_delay_ms = 10
+
 [arq]
 
 ; ARQ link no-progress disconnect budget (seconds, default: 180).

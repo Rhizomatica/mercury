@@ -54,6 +54,7 @@ void cfg_set_defaults(mercury_config *cfg)
     cfg->tnc_keepalive_s = 60;
     cfg->tnc_buffer_report_ms = 1000;
     cfg->tx_gain_db            = 0.0f;
+    cfg->tx_delay_ms           = 10;
     cfg->data_retry_slots            = ARQ_DATA_RETRY_SLOTS_DEFAULT;
     cfg->mode_hold_after_downgrade_s = ARQ_MODE_HOLD_AFTER_DOWNGRADE_S_DEFAULT;
     cfg->ladder_up_successes         = ARQ_LADDER_UP_SUCCESSES_DEFAULT;
@@ -243,6 +244,9 @@ bool cfg_read(mercury_config *cfg, const char *ini_path)
     if (d >  20.0) d =  20.0;
     cfg->tx_gain_db = (float)d;
 
+    i = iniparser_getint(ini, CFG_KEY_TX_DELAY_MS, cfg->tx_delay_ms);
+    if (i >= 0 && i <= 2000) cfg->tx_delay_ms = i;
+
     iniparser_freedict(ini);
     return true;
 }
@@ -348,6 +352,7 @@ bool cfg_write(const mercury_config *cfg, const char *ini_path)
 
     fprintf(f, "\n[audio]\n");
     fprintf(f, "tx_gain_db = %.2f\n", cfg->tx_gain_db);
+    fprintf(f, "tx_delay_ms = %d\n", cfg->tx_delay_ms);
 
     fprintf(f, "\n[tnc]\n");
     fprintf(f, "keepalive_s = %d\n", cfg->tnc_keepalive_s);
