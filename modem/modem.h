@@ -80,6 +80,12 @@ bool modem_channel_busy(void);
 void  modem_set_tx_gain(float linear);
 float modem_get_tx_gain(void);
 
+/* TX keying delay (ms, clamped 0..2000) waited after PTT ON before audio is
+ * written to the playback device. Default 10ms covers the local radio
+ * relay's switch time; raise it for a slower external PTT path. */
+void modem_set_tx_delay_ms(int delay_ms);
+int  modem_get_tx_delay_ms(void);
+
 // Most recent TX burst peak amplitude in dBFS (0 dBFS = INT32 full-scale,
 // i.e. the clip ceiling).  Measured post-gain but pre-saturation, once per
 // burst, so a return value above 0 dBFS means the burst clipped by that many
