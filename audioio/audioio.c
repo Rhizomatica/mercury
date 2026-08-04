@@ -86,6 +86,9 @@ static int s_buffers_initialized = 0;
 static volatile bool audio_shutdown_ = false;  // local stop flag for audio threads
 
 static void format_device_display(int audio_subsys, int mode, const char *id, char *out, size_t outsz);
+static int get_soundcard_list_int(int audio_system, int mode,
+                                  char ids[][64], char dev_names[][64], int max_count,
+                                  bool pulse_lock_held);
 
 #define NULL_AUDIO_PERIOD_MS 20
 #define NULL_AUDIO_SAMPLES_PER_PERIOD 160
@@ -1532,10 +1535,15 @@ finish_cap:
     return NULL;
 }
 
-int get_soundcard_list(int audio_system, int mode,
-                       char ids[][64], char dev_names[][64], int max_count)
+/* Enumerate devices.  `pulse_lock_held` is for the one caller that already
+ * owns s_pulse_lock (audioio_restart): that mutex is NOT recursive, so
+ * re-taking it here self-deadlocks the process with audio already stopped. */
+static int get_soundcard_list_int(int audio_system, int mode,
+                                  char ids[][64], char dev_names[][64], int max_count,
+                                  bool pulse_lock_held)
 {
     ffaudio_interface *audio = NULL;
+    (void) pulse_lock_held;
     int count = 0;
     bool did_init = false;
 
@@ -1571,10 +1579,12 @@ int get_soundcard_list(int audio_system, int mode,
 #if defined(__linux__)
     if (audio_system == AUDIO_SUBSYSTEM_PULSE)
     {
-        pthread_mutex_lock(&s_pulse_lock);
+        if (!pulse_lock_held)
+            pthread_mutex_lock(&s_pulse_lock);
         if (pulse_shared_init(&did_init) != 0)
         {
-            pthread_mutex_unlock(&s_pulse_lock);
+            if (!pulse_lock_held)
+                pthread_mutex_unlock(&s_pulse_lock);
             return 0;
         }
     }
@@ -1593,7 +1603,7 @@ int get_soundcard_list(int audio_system, int mode,
         if (did_init)
             audio->uninit();
 #if defined(__linux__)
-        if (audio_system == AUDIO_SUBSYSTEM_PULSE)
+        if (audio_system == AUDIO_SUBSYSTEM_PULSE && !pulse_lock_held)
             pthread_mutex_unlock(&s_pulse_lock);
 #endif
         return 0;
@@ -1625,10 +1635,16 @@ int get_soundcard_list(int audio_system, int mode,
     if (did_init)
         audio->uninit();
 #if defined(__linux__)
-    if (audio_system == AUDIO_SUBSYSTEM_PULSE)
+    if (audio_system == AUDIO_SUBSYSTEM_PULSE && !pulse_lock_held)
         pthread_mutex_unlock(&s_pulse_lock);
 #endif
     return count;
+}
+
+int get_soundcard_list(int audio_system, int mode,
+                       char ids[][64], char dev_names[][64], int max_count)
+{
+    return get_soundcard_list_int(audio_system, mode, ids, dev_names, max_count, false);
 }
 
 #define DEVICE_RESOLVE_MAX 64
@@ -1648,7 +1664,8 @@ int get_soundcard_list(int audio_system, int mode,
  * enumerable devices (NULL/FIFO/SOCK/SHM), enumeration fails, or a
  * substring match is ambiguous, buf is left untouched -- callers get
  * exactly today's behavior. */
-static void resolve_device_string(int audio_subsys, int mode, char *buf, size_t bufsz, const char *log_tag)
+static void resolve_device_string(int audio_subsys, int mode, char *buf, size_t bufsz,
+                                  const char *log_tag, bool pulse_lock_held)
 {
     if (buf[0] == '\0')
         return;
@@ -1659,7 +1676,7 @@ static void resolve_device_string(int audio_subsys, int mode, char *buf, size_t 
 
     char ids[DEVICE_RESOLVE_MAX][64];
     char names[DEVICE_RESOLVE_MAX][64];
-    int n = get_soundcard_list(audio_subsys, mode, ids, names, DEVICE_RESOLVE_MAX);
+    int n = get_soundcard_list_int(audio_subsys, mode, ids, names, DEVICE_RESOLVE_MAX, pulse_lock_held);
     if (n <= 0)
         return;
 
@@ -1668,12 +1685,16 @@ static void resolve_device_string(int audio_subsys, int mode, char *buf, size_t 
             return;  // already a valid native id
     }
 
+    /* Count ALL exact matches rather than stopping at the first: identical
+     * display names are common (two of the same USB codec, or a card and its
+     * loopback), and silently binding whichever enumerates first can key the
+     * wrong radio -- in a feature whose whole premise is that ids move. */
     int match = -1, matches = 0;
     for (int i = 0; i < n; i++) {
         if (ffsz_ieq(buf, names[i])) {
-            match = i;
-            matches = 1;
-            break;
+            if (matches == 0)
+                match = i;
+            matches++;
         }
     }
 
@@ -1980,8 +2001,8 @@ int audioio_init_internal(char *capture_dev, char *playback_dev, int audio_subsy
     else
         s_playback_dev[0] = '\0';
 
-    resolve_device_string(audio_subsystem, FFAUDIO_DEV_CAPTURE, s_capture_dev, sizeof(s_capture_dev), "audio-cap");
-    resolve_device_string(audio_subsystem, FFAUDIO_DEV_PLAYBACK, s_playback_dev, sizeof(s_playback_dev), "audio-play");
+    resolve_device_string(audio_subsystem, FFAUDIO_DEV_CAPTURE, s_capture_dev, sizeof(s_capture_dev), "audio-cap", false);
+    resolve_device_string(audio_subsystem, FFAUDIO_DEV_PLAYBACK, s_playback_dev, sizeof(s_playback_dev), "audio-play", false);
 
     // Create buffers if not already created
     if (audioio_init_buffers() != 0)
@@ -2092,8 +2113,8 @@ int audioio_restart(const char *capture_dev, const char *playback_dev,
         s_playback_dev[sizeof(s_playback_dev) - 1] = '\0';
     }
 
-    resolve_device_string(audio_subsystem, FFAUDIO_DEV_CAPTURE, s_capture_dev, sizeof(s_capture_dev), "audio-cap");
-    resolve_device_string(audio_subsystem, FFAUDIO_DEV_PLAYBACK, s_playback_dev, sizeof(s_playback_dev), "audio-play");
+    resolve_device_string(audio_subsystem, FFAUDIO_DEV_CAPTURE, s_capture_dev, sizeof(s_capture_dev), "audio-cap", true);
+    resolve_device_string(audio_subsystem, FFAUDIO_DEV_PLAYBACK, s_playback_dev, sizeof(s_playback_dev), "audio-play", true);
 
     // Clear buffers (NEVER destroy/recreate them)
     clear_buffer(capture_buffer);
