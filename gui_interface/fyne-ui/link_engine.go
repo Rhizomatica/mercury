@@ -74,7 +74,15 @@ func (l *engineLink) Start(ctx context.Context) (<-chan Event, error) {
 
 		// The websocket path pushes the pickers when a client connects; here
 		// there is no connect event, so read them once up front.
-		l.emitDeviceLists(ctx, events)
+		listsOK := l.emitDeviceLists(ctx, events)
+
+		// If the engine was not ready yet the lists come back empty. Retry for
+		// a few seconds rather than leaving the pickers on "(Select one)" for
+		// the rest of the session -- enumeration is slower on a Pi, and this is
+		// the only chance the local path gets.
+		listRetry := time.NewTicker(500 * time.Millisecond)
+		defer listRetry.Stop()
+		listRetriesLeft := 20
 
 		// Reused across polls: the bridge copies into it, so one allocation
 		// serves the whole session for status.
@@ -101,11 +109,19 @@ func (l *engineLink) Start(ctx context.Context) (<-chan Event, error) {
 				lastSpectrumSeq = seq
 				emit(ctx, events, SpectrumEvent{Bins: bins, SampleRate: rate})
 
+			case <-listRetry.C:
+				if listsOK || listRetriesLeft == 0 {
+					listRetry.Stop()
+					continue
+				}
+				listRetriesLeft--
+				listsOK = l.emitDeviceLists(ctx, events)
+
 			case <-l.refresh:
 				// A device or radio change was just applied; re-read so the
 				// pickers show what the engine actually ended up using, which
 				// is not always what was asked for.
-				l.emitDeviceLists(ctx, events)
+				_ = l.emitDeviceLists(ctx, events)
 			}
 		}
 	}()
@@ -141,8 +157,10 @@ func (l *engineLink) Send(cmd Command) error {
 
 // emitDeviceLists reads the audio, channel and radio pickers out of the engine
 // and publishes them as the same events the websocket path produces.
-func (l *engineLink) emitDeviceLists(ctx context.Context, events chan<- Event) {
+func (l *engineLink) emitDeviceLists(ctx context.Context, events chan<- Event) bool {
+	gotAudio, gotRadio := false, false
 	if items, selected, ok := readAudioDevices(C.UI_DEV_CAPTURE); ok {
+		gotAudio = true
 		emit(ctx, events, DeviceListEvent{Kind: DeviceCapture, Items: items, Selected: selected})
 	}
 	if items, selected, ok := readAudioDevices(C.UI_DEV_PLAYBACK); ok {
@@ -167,8 +185,10 @@ func (l *engineLink) emitDeviceLists(ctx context.Context, events chan<- Event) {
 	})
 
 	if ev, ok := readRadioList(); ok {
+		gotRadio = true
 		emit(ctx, events, ev)
 	}
+	return gotAudio && gotRadio
 }
 
 // maxAudioDevices matches the engine-side cap in ui_comm_get_audio_devices().

@@ -17,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -196,6 +197,17 @@ func runOnUI(fn func()) {
 	fyne.Do(fn)
 }
 
+const (
+	// Minimum heights for the two plots. Kept low deliberately: they are floors
+	// that must fit an 800x480 panel, not the size the plots are drawn at --
+	// the split below stretches them to fill a desktop window.
+	spectrumMinHeight  = 60
+	waterfallMinHeight = 90
+	// Share of the window given to the controls above the plots. Roughly
+	// matches the previous desktop proportions.
+	waterfallSplitOffset = 0.60
+)
+
 func main() {
 	// Announce the version on the terminal, just like the standalone daemon.
 	mercuryPrintVersion()
@@ -237,6 +249,12 @@ func main() {
 	})
 	schemeSelect.SetSelected(state.wsScheme)
 	schemeSelect.Resize(fyne.NewSize(90, 34))
+
+	// Set once mercuryStart() has returned. Until then the embedded engine's
+	// getters have no context to read (g_ui_ctx is still NULL), so a link
+	// opened before that point comes up with empty device and radio lists and
+	// never retries -- the pickers stay stuck on "(Select one)".
+	var engineReady atomic.Bool
 
 	// Declared here because the Engine selector below drives them, while they
 	// are built further down with the rest of the UI.
@@ -293,7 +311,10 @@ func main() {
 		if updateConnectionButton != nil {
 			updateConnectionButton()
 		}
-		if connectLink != nil {
+		// At startup this fires before the engine has been started; the
+		// goroutine that starts it connects afterwards. Connecting here too
+		// would win the race and pin empty pickers for the whole session.
+		if connectLink != nil && engineReady.Load() {
 			connectLink()
 		}
 	})
@@ -398,20 +419,23 @@ func main() {
 	})
 	bindings.waterfallCanvas = waterfallCanvas
 
-	waterfallHeight := 180
-	if myWindow.Canvas().Size().Width >= 1920 && myWindow.Canvas().Size().Height >= 1080 {
-		waterfallHeight = int(myWindow.Canvas().Size().Height / 4)
-	}
+	// Floor, not the display size: the split below hands the waterfall a share
+	// of whatever the window has, so it is large on a desktop without this
+	// number claiming space. It has to stay small enough that a 800x480 panel
+	// (a Pi with the official display) still has room for the controls --
+	// at 180 the spectrum card's minimum alone swallowed the whole window and
+	// the pickers, radio fields and telemetry vanished entirely.
+	waterfallHeight := waterfallMinHeight
 	waterfallBackground := canvas.NewRectangle(color.Transparent)
 	waterfallBackground.SetMinSize(fyne.NewSize(0, float32(waterfallHeight)))
 	waterfallCanvasBox := container.NewMax(waterfallBackground, waterfallCanvas)
 
 	spectrumBackground := canvas.NewRectangle(color.Transparent)
-	spectrumBackground.SetMinSize(fyne.NewSize(0, 90))
+	spectrumBackground.SetMinSize(fyne.NewSize(0, spectrumMinHeight))
 	spectrumCanvasBox := container.NewMax(spectrumBackground, spectrumCanvas)
 
-	// set fixed spectrum and waterfall sizes so the display remains consistent
-	spectrumCanvas.SetMinSize(fyne.NewSize(0, 90))
+	// Minimums only; the split decides how much each actually gets.
+	spectrumCanvas.SetMinSize(fyne.NewSize(0, spectrumMinHeight))
 	waterfallCanvas.SetMinSize(fyne.NewSize(0, float32(waterfallHeight)))
 
 	// open UI log file for appending; if it fails, uiLog will be nil and logs go only to the UI
@@ -476,34 +500,41 @@ func main() {
 
 	refreshTelemetry := func() {
 		runOnUI(func() {
+			// Snapshot once, under the lock, then render from the copy: this
+			// closure runs on the GL thread while the link goroutine is still
+			// publishing new status.
+			state.mu.Lock()
+			telemetry := state.telemetry
+			state.mu.Unlock()
+
 			// update compact telemetry texts
 			if bindings.bitrateText != nil {
-				bindings.bitrateText.Text = fmt.Sprintf("%d", state.telemetry.Bitrate)
+				bindings.bitrateText.Text = fmt.Sprintf("%d", telemetry.Bitrate)
 				bindings.bitrateText.Refresh()
 			}
 			if bindings.snrText != nil {
-				bindings.snrText.Text = fmt.Sprintf("%.1f dB", state.telemetry.SNR)
+				bindings.snrText.Text = fmt.Sprintf("%.1f dB", telemetry.SNR)
 				bindings.snrText.Refresh()
 			}
 			if bindings.directionText != nil {
-				bindings.directionText.Text = strings.ToUpper(state.telemetry.Direction)
+				bindings.directionText.Text = strings.ToUpper(telemetry.Direction)
 				bindings.directionText.Refresh()
 			}
 			if bindings.userCallsText != nil {
-				bindings.userCallsText.Text = state.telemetry.UserCallsign
+				bindings.userCallsText.Text = telemetry.UserCallsign
 				bindings.userCallsText.Refresh()
 			}
 			if bindings.destCallsText != nil {
-				bindings.destCallsText.Text = state.telemetry.DestCallsign
+				bindings.destCallsText.Text = telemetry.DestCallsign
 				bindings.destCallsText.Refresh()
 			}
 			if bindings.waterfallSNRText != nil {
-				bindings.waterfallSNRText.Text = fmt.Sprintf("SNR: %.1f dB", state.telemetry.SNR)
-				bindings.waterfallSNRText.Color = waterfallSNRColor(state.telemetry.SNR)
+				bindings.waterfallSNRText.Text = fmt.Sprintf("SNR: %.1f dB", telemetry.SNR)
+				bindings.waterfallSNRText.Color = waterfallSNRColor(telemetry.SNR)
 				bindings.waterfallSNRText.Refresh()
 			}
 			if bindings.waterfallSyncText != nil {
-				if state.telemetry.Sync {
+				if telemetry.Sync {
 					bindings.waterfallSyncText.Text = "SYNC"
 					bindings.waterfallSyncText.Color = color.NRGBA{R: 0x66, G: 0xFF, B: 0x66, A: 0xFF}
 				} else {
@@ -512,7 +543,7 @@ func main() {
 				bindings.waterfallSyncText.Refresh()
 			}
 			if bindings.tcpText != nil {
-				if state.telemetry.ClientTCPConnected {
+				if telemetry.ClientTCPConnected {
 					bindings.tcpText.Text = "On"
 					bindings.tcpText.Color = color.NRGBA{R: 0x66, G: 0xFF, B: 0x66, A: 0xFF}
 				} else {
@@ -522,15 +553,15 @@ func main() {
 				bindings.tcpText.Refresh()
 			}
 			if bindings.txBytesText != nil {
-				bindings.txBytesText.Text = fmt.Sprintf("%d", state.telemetry.BytesTransmitted)
+				bindings.txBytesText.Text = fmt.Sprintf("%d", telemetry.BytesTransmitted)
 				bindings.txBytesText.Refresh()
 			}
 			if bindings.rxBytesText != nil {
-				bindings.rxBytesText.Text = fmt.Sprintf("%d", state.telemetry.BytesReceived)
+				bindings.rxBytesText.Text = fmt.Sprintf("%d", telemetry.BytesReceived)
 				bindings.rxBytesText.Refresh()
 			}
-			bindings.txGainLabel.SetText(fmt.Sprintf("TX gain: %.1f dB", state.telemetry.TXGainDB))
-			bindings.txPeakLabel.SetText(fmt.Sprintf("TX peak: %.1f dBFS", state.telemetry.TXPeakDBFS))
+			bindings.txGainLabel.SetText(fmt.Sprintf("TX gain: %.1f dB", telemetry.TXGainDB))
+			bindings.txPeakLabel.SetText(fmt.Sprintf("TX peak: %.1f dBFS", telemetry.TXPeakDBFS))
 		})
 	}
 
@@ -542,9 +573,16 @@ func main() {
 	}
 
 	applyStatus := func(status telemetryState) {
+		// Under the lock: the link goroutine writes this while the GL thread
+		// reads it in refreshTelemetry(). telemetryState holds strings, so an
+		// unsynchronised write can hand the reader a torn string header and
+		// segfault the app -- the race detector flags every field of it.
+		state.mu.Lock()
 		state.telemetry = status
+		haveSpectrum := len(state.spectrumValues) > 0
+		state.mu.Unlock()
 		refreshTelemetry()
-		if len(state.spectrumValues) > 0 {
+		if haveSpectrum {
 			refreshSpectrum()
 		}
 	}
@@ -921,8 +959,6 @@ func main() {
 		nil,
 		waterfallContent,
 	))
-	const fixedWaterfallHeight = 310
-	spectrumCard.Resize(fyne.NewSize(0, fixedWaterfallHeight))
 
 	topPanel := container.NewVBox(
 		connectionCard,
@@ -931,7 +967,13 @@ func main() {
 			container.NewVBox(txCard, telemetryCard),
 		),
 	)
-	content := container.NewBorder(nil, spectrumCard, nil, nil, container.NewVScroll(topPanel))
+	// A split, not a border: with the spectrum as a border's bottom edge it was
+	// handed its full minimum height before anything else, so on a short screen
+	// it took the lot and the controls above it collapsed to a sliver. A split
+	// gives each side a proportion of the window and lets the operator drag the
+	// divider, which is the only way a 480px-tall panel can show both.
+	content := container.NewVSplit(container.NewVScroll(topPanel), spectrumCard)
+	content.SetOffset(waterfallSplitOffset)
 
 	mainLayout := container.NewBorder(topBar, nil, nil, nil, content)
 	myWindow.SetContent(mainLayout)
@@ -1009,6 +1051,7 @@ func main() {
 			return
 		}
 		appendLog("Mercury engine started — connecting...\n")
+		engineReady.Store(true)
 		connectLink()
 	}()
 
