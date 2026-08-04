@@ -34,6 +34,11 @@ void list_models(void);
  * Returns the number of entries written (up to max_count). */
 int get_radio_list(char ids[][16], char names[][64], int max_count);
 
+/* Force-load backends and build the model cache from the main thread,
+ * before any CGo goroutine touches hamlib.  Safe to call multiple times
+ * (subsequent calls are no-ops). */
+void preload_radio_list(void);
+
 #endif /* HAVE_HAMLIB */
 
 #endif  /* RIGCTL_PARSE_H */

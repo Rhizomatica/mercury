@@ -58,6 +58,13 @@ int mercury_ui_get_spectrum(float *out, int max_bins, int *sample_rate_hz,
 int mercury_ui_command(const char *command, const char *value,
                        const char *value2, const char *value3);
 
+/* Pre-load device enumerations from the main thread during engine init.
+ * hamlib backend loading uses a global registry that must be initialised
+ * on a "normal" POSIX thread (not a CGo goroutine which has a different
+ * signal mask and TLS setup).  Calling this from mercury_init() ensures
+ * the radio list is ready before any UI goroutine asks for it. */
+void mercury_ui_preload_device_lists(void);
+
 /* Device pickers.  The websocket path pushes these to a client when it
  * connects; a local UI asks for them instead.  Both read the same enumerators,
  * so the two see the same devices and the same selection. */

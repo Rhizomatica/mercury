@@ -44,6 +44,7 @@
 #include "../modem/freedv/modem_stats.h"
 #include "../modem/modem.h"
 #include "../radio_io/radio_io.h"  /* RADIO_TYPE_NONE */
+#include "../radio_io/rigctl_parse.h"  /* preload_radio_list */
 
 extern int get_soundcard_list(int audio_system, int mode,
                               char ids[][64], char dev_names[][64], int max_count);
@@ -294,6 +295,13 @@ int ui_comm_get_input_channel(void)
 {
     ui_ctx_t *ctx = g_ui_ctx;
     return ctx ? ctx->rx_input_channel : 0;
+}
+
+void ui_comm_preload_radio_list(void)
+{
+#ifdef HAVE_HAMLIB
+    preload_radio_list();
+#endif
 }
 
 /* Gather everything the UI shows into one typed snapshot.  This is the only
