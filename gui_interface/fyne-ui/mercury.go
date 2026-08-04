@@ -72,6 +72,7 @@ func mercuryStart(defaultConfig, logPath string, args []string) error {
 	if C.mercury_init(C.int(len(args)), argv, cDefault, cLog) != 0 {
 		return fmt.Errorf("mercury engine init failed")
 	}
+	C.mercury_ui_preload_device_lists()
 	return nil
 }
 

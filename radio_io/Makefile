@@ -37,8 +37,12 @@ endif
 ifeq ($(HAVE_HAMLIB),1)
 ifeq ($(OS),Windows_NT)
 HAMLIB_CFLAGS_LOCAL = -Ihamlib-w64/include -DHAVE_HAMLIB
-else ifneq ($(wildcard hamlib-macos/lib/libhamlib*.a),)
+else ifeq ($(UNAME_S),Darwin)
+ifneq ($(wildcard hamlib-macos/lib/libhamlib*.a),)
 HAMLIB_CFLAGS_LOCAL = -Ihamlib-macos/include -DHAVE_HAMLIB
+else
+HAMLIB_CFLAGS_LOCAL = $(shell pkg-config --cflags hamlib) -DHAVE_HAMLIB
+endif
 else
 HAMLIB_CFLAGS_LOCAL = $(shell pkg-config --cflags hamlib) -DHAVE_HAMLIB
 endif

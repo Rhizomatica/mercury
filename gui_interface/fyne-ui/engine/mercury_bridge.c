@@ -105,6 +105,18 @@ void mercury_shutdown(void)
 }
 
 /* ------------------------------------------------------------------ */
+/*  mercury_ui_preload_device_lists()                                  */
+/*                                                                     */
+/*  Trigger radio-enumeration during engine init, on the main thread,   */
+/*  so the Go goroutine that later reads the list never enters hamlib's */
+/*  backend-loading path inside a CGo context.                          */
+/* ------------------------------------------------------------------ */
+void mercury_ui_preload_device_lists(void)
+{
+    ui_comm_preload_radio_list();
+}
+
+/* ------------------------------------------------------------------ */
 /*  In-process UI link                                                 */
 /*                                                                     */
 /*  Thin forwarders: the engine owns the state and the command          */

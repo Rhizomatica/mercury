@@ -29,6 +29,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <pthread.h>
 #include <hamlib/rig.h>
 
 #ifndef _WIN32
@@ -70,13 +71,13 @@ static int collect_model(const struct rig_caps *caps, void *data)
 
     struct mod_entry *e = &g_models[g_count++];
     e->id = caps->rig_model;
-    snprintf(e->mfg_name, sizeof(e->mfg_name), "%s", caps->mfg_name);
-    snprintf(e->model_name, sizeof(e->model_name), "%s", caps->model_name);
-    snprintf(e->version, sizeof(e->version), "%s", caps->version);
-    snprintf(e->macro_name, sizeof(e->macro_name), "%s", caps->macro_name);
+    snprintf(e->mfg_name, sizeof(e->mfg_name), "%s", caps->mfg_name ? caps->mfg_name : "");
+    snprintf(e->model_name, sizeof(e->model_name), "%s", caps->model_name ? caps->model_name : "");
+    snprintf(e->version, sizeof(e->version), "%s", caps->version ? caps->version : "");
+    snprintf(e->macro_name, sizeof(e->macro_name), "%s", caps->macro_name ? caps->macro_name : "");
     snprintf(e->status, sizeof(e->status), "%s", rig_strstatus(caps->status));
 
-    return 1;  /* !=0, we want them all */
+    return 1;
 }
 
 static int cmp_model_id(const void *a, const void *b)
@@ -84,6 +85,74 @@ static int cmp_model_id(const void *a, const void *b)
     const struct mod_entry *ea = a;
     const struct mod_entry *eb = b;
     return (ea->id > eb->id) - (ea->id < eb->id);
+}
+
+static void do_load_backends(void)
+{
+    rig_load_all_backends();
+    int status = rig_list_foreach(collect_model, NULL);
+    if (status != RIG_OK)
+        fprintf(stderr, "rig_list_foreach: error = %s\n", rigerror(status));
+    else
+        qsort(g_models, g_count, sizeof(struct mod_entry), cmp_model_id);
+}
+
+#ifndef _WIN32
+static int redirect_stdio(const char *path)
+{
+    fflush(stdout);
+    fflush(stderr);
+    int saved_stdout = dup(STDOUT_FILENO);
+    int saved_stderr = dup(STDERR_FILENO);
+    int devnull = open(path, O_WRONLY);
+    if (devnull >= 0) {
+        dup2(devnull, STDOUT_FILENO);
+        dup2(devnull, STDERR_FILENO);
+        close(devnull);
+    }
+    return (saved_stdout << 16) | (saved_stderr & 0xffff);
+}
+
+static void restore_stdio(int saved)
+{
+    int saved_stdout = saved >> 16;
+    int saved_stderr = saved & 0xffff;
+    fflush(stdout);
+    fflush(stderr);
+    dup2(saved_stdout, STDOUT_FILENO);
+    dup2(saved_stderr, STDERR_FILENO);
+    close(saved_stdout);
+    close(saved_stderr);
+}
+#else
+static int redirect_stdio(const char *path) { (void)path; return 0; }
+static void restore_stdio(int saved) { (void)saved; }
+#endif
+
+static void *load_thread(void *arg)
+{
+    (void)arg;
+    int saved = redirect_stdio("/dev/null");
+    do_load_backends();
+    restore_stdio(saved);
+    return NULL;
+}
+
+static void ensure_backends_loaded(void)
+{
+    if (g_count > 0)
+        return;
+
+    /* Hammer: use a real POSIX thread (full 8 MiB stack) to load hamlib
+     * backends.  CGo goroutines run on g0's scheduling stack which is too
+     * small for the recursive init calls some backends make. */
+    pthread_t tid;
+    int rc = pthread_create(&tid, NULL, load_thread, NULL);
+    if (rc != 0) {
+        fprintf(stderr, "pthread_create for radio list failed: %d\n", rc);
+        return;
+    }
+    pthread_join(tid, NULL);
 }
 
 void list_models(void)
@@ -146,44 +215,7 @@ void list_models(void)
 
 int get_radio_list(char ids[][16], char names[][64], int max_count)
 {
-    /* Load backends quietly — redirect stdout & stderr to /dev/null
-     * so the hamlib "initrigs4_*" messages don't pollute the console. */
-    if (g_count == 0)
-    {
-#ifndef _WIN32
-        fflush(stdout);
-        fflush(stderr);
-        int saved_stdout = dup(STDOUT_FILENO);
-        int saved_stderr = dup(STDERR_FILENO);
-        int devnull = open("/dev/null", O_WRONLY);
-        if (devnull >= 0)
-        {
-            dup2(devnull, STDOUT_FILENO);
-            dup2(devnull, STDERR_FILENO);
-            close(devnull);
-        }
-#endif
-
-        rig_load_all_backends();
-
-#ifndef _WIN32
-        /* Restore original stdout / stderr */
-        fflush(stdout);
-        fflush(stderr);
-        dup2(saved_stdout, STDOUT_FILENO);
-        dup2(saved_stderr, STDERR_FILENO);
-        close(saved_stdout);
-        close(saved_stderr);
-#endif
-        int status = rig_list_foreach(collect_model, NULL);
-        if (status != RIG_OK)
-        {
-            fprintf(stderr, "rig_list_foreach: error = %s\n", rigerror(status));
-            return 0;
-        }
-
-        qsort(g_models, g_count, sizeof(struct mod_entry), cmp_model_id);
-    }
+    ensure_backends_loaded();
 
     int n = g_count < max_count ? g_count : max_count;
     for (int i = 0; i < n; i++)
@@ -193,6 +225,11 @@ int get_radio_list(char ids[][16], char names[][64], int max_count)
         snprintf(names[i], 64, "%s %s", e->mfg_name, e->model_name);
     }
     return n;
+}
+
+void preload_radio_list(void)
+{
+    ensure_backends_loaded();
 }
 
 #endif /* HAVE_HAMLIB */
