@@ -16,6 +16,7 @@
 #include <stdint.h>
 
 #include "unity.h"
+#include <stdio.h>
 #include "fff.h"
 
 DEFINE_FFF_GLOBALS;
@@ -278,9 +279,47 @@ void test_ladder_floor_holds_at_mfsk(void)
     }
 }
 
+/* The IRS holds its RX window open after ACCEPT waiting for the ISS's first
+ * data frame.  If that window is shorter than the burst, the IRS gives up
+ * mid-burst and retransmits ACCEPT on top of it -- and while it transmits it is
+ * deaf, so it destroys the very frame that would have told it to stop, then
+ * does it again to the retransmission.  Measured on loopsim before the fix: a
+ * 9000 ms window against a 13530 ms MFSK burst, retrying every 12.7 s, 0 bytes
+ * delivered.  The window must outlast the LONGEST rung on the ladder. */
+void test_accept_rx_window_outlasts_longest_ladder_burst(void)
+{
+    float longest_s = 0.0f;
+    int   longest_mode = -1;
+    for (int i = 0; i < ARQ_LADDER_LEVELS; i++)
+    {
+        const arq_mode_timing_t *tm = arq_protocol_mode_timing(arq_mode_ladder[i]);
+        TEST_ASSERT_NOT_NULL(tm);
+        if (tm->frame_duration_s > longest_s)
+        {
+            longest_s   = tm->frame_duration_s;
+            longest_mode = arq_mode_ladder[i];
+        }
+    }
+    TEST_ASSERT_TRUE(longest_s > 0.0f);
+
+    uint32_t window_ms = arq_protocol_accept_rx_window_ms();
+    uint32_t burst_ms  = (uint32_t)(longest_s * 1000.0f);
+
+    printf("  longest ladder burst: mode %d, %.2f s; ACCEPT RX window %.2f s\n",
+           longest_mode, (double)longest_s, window_ms / 1000.0);
+
+    /* Strictly longer, with room for the ISS's turnaround before it keys. */
+    TEST_ASSERT_TRUE_MESSAGE(window_ms > burst_ms,
+        "ACCEPT RX window is shorter than the slowest ladder burst: the IRS "
+        "will key up inside the ISS's data and go deaf for its own transmission");
+    TEST_ASSERT_TRUE_MESSAGE(window_ms >= burst_ms + (uint32_t)ARQ_ISS_POST_ACK_GUARD_MS,
+        "ACCEPT RX window leaves no room for the ISS post-ACK guard");
+}
+
 int main(void)
 {
     UNITY_BEGIN();
+    RUN_TEST(test_accept_rx_window_outlasts_longest_ladder_burst);
     RUN_TEST(test_ladder_starts_at_mfsk);
     RUN_TEST(test_ladder_table_ordered_and_sized);
     RUN_TEST(test_ladder_fast_ramp_climbs_one_per_clean);

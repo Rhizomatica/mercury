@@ -142,6 +142,35 @@ const arq_mode_timing_t *arq_protocol_mode_timing(int freedv_mode)
     return NULL;
 }
 
+/* RX window the IRS holds open after sending ACCEPT, waiting for the ISS's
+ * first data frame.
+ *
+ * Derived from the ladder, never hand-picked: it must outlast the LONGEST burst
+ * the ISS can send, which is the floor rung (the slowest, most robust mode).
+ * The old fixed 9000 ms was computed for a DATAC15 first frame (4.4 s); when
+ * MFSK became the floor at 13.5 s the window was shorter than the burst, so the
+ * IRS gave up mid-burst and retransmitted ACCEPT on top of it -- keying up
+ * inside every data burst, going deaf for the 3.7 s of its own transmission,
+ * and destroying the frame that would have told it to stop.  The ISS then
+ * retried into the same collision.  Deriving it means a future rung cannot
+ * reintroduce that by being slower than a constant nobody remembered to bump. */
+uint32_t arq_protocol_accept_rx_window_ms(void)
+{
+    float longest_s = 0.0f;
+    for (int i = 0; i < ARQ_LADDER_LEVELS; i++)
+    {
+        const arq_mode_timing_t *tm = arq_protocol_mode_timing(arq_mode_ladder[i]);
+        if (tm && tm->frame_duration_s > longest_s)
+            longest_s = tm->frame_duration_s;
+    }
+    if (longest_s <= 0.0f)
+        longest_s = 13.5f;   /* ladder unreadable: assume the slowest rung */
+
+    return (uint32_t)ARQ_ISS_POST_ACK_GUARD_MS
+         + (uint32_t)(longest_s * 1000.0f)
+         + ARQ_ACCEPT_RX_WINDOW_MARGIN_MS;
+}
+
 float arq_protocol_call_interval_s(void)
 {
     float override = atomic_load(&arq_callint_override_s);

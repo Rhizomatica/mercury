@@ -204,11 +204,14 @@ extern _Atomic int arq_channel_guard_ms;
                                                 * air before the DATAC1 preamble. */
 extern _Atomic int arq_iss_post_ack_guard_ms;
 #define ARQ_ISS_POST_ACK_GUARD_MS  atomic_load(&arq_iss_post_ack_guard_ms)
-#define ARQ_ACCEPT_RX_WINDOW_MS      9000  /* ACCEPTING RX window after ACCEPT TX:
-                                            * ISS_guard(900)+DATAC15(4400)+margin(3700)
-                                            * Old value 7000 left only ~300ms margin
-                                            * and raced with TIMER_RETRY, causing
-                                            * 3-4 wasted ACCEPT retries (~28s).    */
+/* Slack on top of guard + longest ladder burst, covering the ISS's turnaround
+ * and decode before it keys.  The window itself is computed, not fixed: see
+ * arq_protocol_accept_rx_window_ms().  (A fixed 9000 ms here was sized for a
+ * DATAC15 first frame and became shorter than the MFSK floor burst, which made
+ * the IRS retransmit ACCEPT into the ISS's data.) */
+#define ARQ_ACCEPT_RX_WINDOW_MARGIN_MS 3700
+uint32_t arq_protocol_accept_rx_window_ms(void);
+#define ARQ_ACCEPT_RX_WINDOW_MS      (arq_protocol_accept_rx_window_ms())
 #define ARQ_ACK_GUARD_S               1     /* extra slack added to retry interval */
 /* Grace period after entering CALLING/ACCEPTING (i.e. after PENDING is sent)
  * during which LISTEN OFF is deferred.  Scanning hosts (BPQ32) need a moment to
