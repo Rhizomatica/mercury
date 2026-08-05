@@ -982,7 +982,11 @@ func main() {
 			applyBtn,
 		)
 
-		dialog.ShowCustom("Radio Config", "Close", content, myWindow)
+		bg := canvas.NewRectangle(color.Transparent)
+		bg.SetMinSize(fyne.NewSize(500, 0))
+		padded := container.NewStack(bg, container.NewPadded(content))
+
+		dialog.ShowCustom("Radio Config", "Close", padded, myWindow)
 	}
 
 	soundcardsItem := fyne.NewMenuItem("Soundcards", showSoundcardDialog)
