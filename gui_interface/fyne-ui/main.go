@@ -809,24 +809,6 @@ func main() {
 		}
 	})
 
-	radioApplyButton := widget.NewButton("Apply", func() {
-		modelID := selectedID(bindings.radioSelect, state.radioItems)
-		if modelID == "" {
-			appendLog("Select a radio model before applying.\n")
-			return
-		}
-		devPath := bindings.devicePathEntry.Text
-		serialSpeed := bindings.serialSpeedEntry.Selected
-		if serialSpeed == "" || serialSpeed == "Auto" {
-			serialSpeed = "0"
-		}
-		if err := sendWSCommand("set_radio_config", modelID, devPath, serialSpeed); err != nil {
-			appendLog(fmt.Sprintf("Failed to send radio config: %v\n", err))
-		} else {
-			appendLog(fmt.Sprintf("Sent radio config: model=%s path=%s baud=%s\n", modelID, devPath, serialSpeed))
-		}
-	})
-
 	txGainSlider.OnChanged = func(value float64) {
 		bindings.txGainLabel.SetText(fmt.Sprintf("TX gain: %.1f dB", value))
 		if err := sendWSCommand("set_tx_gain", fmt.Sprintf("%.2f", value), "", ""); err != nil {
@@ -843,15 +825,6 @@ func main() {
 		container.NewVBox(widget.NewLabel("Scheme"), schemeSelect),
 		layout.NewSpacer(),
 		connectButton,
-	))
-
-	radioCard := widget.NewCard("", "", container.NewVBox(
-		container.NewGridWithColumns(2,
-			widget.NewLabel("Radio model"), radioSelect,
-			widget.NewLabel("Device path"), devicePathEntry,
-			widget.NewLabel("Baud Rate"), serialSpeedEntry,
-		),
-		radioApplyButton,
 	))
 
 	txCard := widget.NewCard("", "", container.NewVBox(
@@ -934,10 +907,7 @@ func main() {
 
 	topPanel := container.NewVBox(
 		connectionCard,
-		container.NewGridWithColumns(2,
-			container.NewVBox(radioCard),
-			container.NewVBox(txCard, telemetryCard),
-		),
+		container.NewVBox(txCard, telemetryCard),
 	)
 	// A split, not a border: with the spectrum as a border's bottom edge it was
 	// handed its full minimum height before anything else, so on a short screen
@@ -984,8 +954,40 @@ func main() {
 		dialog.ShowCustom("Soundcards", "Close", content, myWindow)
 	}
 
+	showRadioDialog := func() {
+		applyBtn := widget.NewButton("Apply", func() {
+			modelID := selectedID(bindings.radioSelect, state.radioItems)
+			if modelID == "" {
+				appendLog("Select a radio model before applying.\n")
+				return
+			}
+			devPath := bindings.devicePathEntry.Text
+			serialSpeed := bindings.serialSpeedEntry.Selected
+			if serialSpeed == "" || serialSpeed == "Auto" {
+				serialSpeed = "0"
+			}
+			if err := sendWSCommand("set_radio_config", modelID, devPath, serialSpeed); err != nil {
+				appendLog(fmt.Sprintf("Failed to send radio config: %v\n", err))
+			} else {
+				appendLog(fmt.Sprintf("Sent radio config: model=%s path=%s baud=%s\n", modelID, devPath, serialSpeed))
+			}
+		})
+
+		content := container.NewVBox(
+			container.NewGridWithColumns(2,
+				widget.NewLabel("Radio Model"), bindings.radioSelect,
+				widget.NewLabel("Device Path"), bindings.devicePathEntry,
+				widget.NewLabel("Baud Rate"), bindings.serialSpeedEntry,
+			),
+			applyBtn,
+		)
+
+		dialog.ShowCustom("Radio Config", "Close", content, myWindow)
+	}
+
 	soundcardsItem := fyne.NewMenuItem("Soundcards", showSoundcardDialog)
-	configMenu := fyne.NewMenu("Configuration", soundcardsItem)
+	radioConfigItem := fyne.NewMenuItem("Radio Config", showRadioDialog)
+	configMenu := fyne.NewMenu("Settings", soundcardsItem, radioConfigItem)
 	myWindow.SetMainMenu(fyne.NewMainMenu(configMenu))
 
 	// Single idempotent teardown, used by both the window-close handler and the
