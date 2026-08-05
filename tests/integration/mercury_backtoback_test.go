@@ -92,16 +92,17 @@ func TestMercuryBackToBackFIFO(t *testing.T) {
 	rwB := bufio.NewReadWriter(bufio.NewReader(connB), bufio.NewWriter(connB))
 
 	for _, tc := range []struct {
-		name    string
-		conn    net.Conn
-		rw      *bufio.ReadWriter
-		command string
-		want    string
+		name       string
+		conn       net.Conn
+		rw         *bufio.ReadWriter
+		command    string
+		want       string
+		drainAfter string
 	}{
 		{name: "A MYCALL", conn: connA, rw: rwA, command: "MYCALL TESTA", want: "OK"},
 		{name: "B MYCALL", conn: connB, rw: rwB, command: "MYCALL TESTB", want: "OK"},
-		{name: "A LISTEN ON", conn: connA, rw: rwA, command: "LISTEN ON", want: "OK"},
-		{name: "B LISTEN ON", conn: connB, rw: rwB, command: "LISTEN ON", want: "OK"},
+		{name: "A LISTEN ON", conn: connA, rw: rwA, command: "LISTEN ON", want: "OK", drainAfter: "REGISTERED TESTA"},
+		{name: "B LISTEN ON", conn: connB, rw: rwB, command: "LISTEN ON", want: "OK", drainAfter: "REGISTERED TESTB"},
 		{name: "A BUFFER", conn: connA, rw: rwA, command: "BUFFER", want: "BUFFER"},
 		{name: "B BUFFER", conn: connB, rw: rwB, command: "BUFFER", want: "BUFFER"},
 		{name: "A SN", conn: connA, rw: rwA, command: "SN", want: "SN"},
@@ -120,6 +121,21 @@ func TestMercuryBackToBackFIFO(t *testing.T) {
 				printLogs(t, outA.Name(), errA.Name())
 				printLogs(t, outB.Name(), errB.Name())
 				t.Fatalf("%q response = %q, want prefix %q", tc.command, got, tc.want)
+			}
+			if tc.drainAfter != "" {
+				if err := tc.conn.SetDeadline(time.Now().Add(commandTimeout)); err != nil {
+					t.Fatal(err)
+				}
+				line, err := tc.rw.ReadString('\r')
+				if err != nil {
+					t.Fatalf("drain after %q: %v", tc.command, err)
+				}
+				line = strings.TrimSuffix(line, "\r")
+				if !strings.HasPrefix(line, tc.drainAfter) {
+					printLogs(t, outA.Name(), errA.Name())
+					printLogs(t, outB.Name(), errB.Name())
+					t.Fatalf("unsolicited after %q: got %q, want prefix %q", tc.command, line, tc.drainAfter)
+				}
 			}
 			t.Logf("%s: %s -> %s", tc.name, tc.command, got)
 		})
