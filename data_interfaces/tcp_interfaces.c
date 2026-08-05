@@ -1336,6 +1336,14 @@ void tnc_send_disconnected()
         HLOGW("tcp-ctl", "Error queuing disconnected message");
 }
 
+void tnc_send_registered(const char *callsign)
+{
+    char buffer[128];
+    snprintf(buffer, sizeof(buffer), "REGISTERED %s\r", callsign);
+    if (tnc_queue_line_critical(buffer) < 0)
+        HLOGW("tcp-ctl", "Error queuing registered message");
+}
+
 void tnc_send_buffer(uint32_t bytes)
 {
     char buffer[64];
@@ -1358,6 +1366,7 @@ static const arq_tnc_callbacks_t g_arq_tnc_cbs = {
     .send_cqframe       = tnc_send_cqframe,
     .send_disconnected  = tnc_send_disconnected,
     .send_buffer        = tnc_send_buffer,
+    .send_registered    = tnc_send_registered,
 };
 
 void tnc_send_sn(float snr)

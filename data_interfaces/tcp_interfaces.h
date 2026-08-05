@@ -53,6 +53,7 @@ void tnc_send_connected();
 void tnc_send_cqframe(const char *source_call, int bw_hz);
 void tnc_send_disconnected();
 void tnc_send_buffer(uint32_t bytes);
+void tnc_send_registered(const char *callsign);
 void tnc_send_sn(float snr);
 void tnc_send_busy(bool busy);
 void tnc_send_bitrate(uint32_t speed_level, uint32_t bps);
