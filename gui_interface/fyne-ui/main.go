@@ -819,10 +819,6 @@ func main() {
 	topBar := container.NewHBox()
 
 	connectionCard := widget.NewCard("", "", container.NewHBox(
-		container.NewVBox(widget.NewLabel("Engine"), engineSelect),
-		container.NewVBox(widget.NewLabel("Host"), hostEntryBox),
-		container.NewVBox(widget.NewLabel("Port"), portEntryBox),
-		container.NewVBox(widget.NewLabel("Scheme"), schemeSelect),
 		layout.NewSpacer(),
 		connectButton,
 	))
@@ -989,9 +985,27 @@ func main() {
 		dialog.ShowCustom("Radio Config", "Close", padded, myWindow)
 	}
 
+	showRemoteControlDialog := func() {
+		content := container.NewVBox(
+			container.NewGridWithColumns(2,
+				widget.NewLabel("Engine"), engineSelect,
+				widget.NewLabel("Host"), hostEntryBox,
+				widget.NewLabel("Port"), portEntryBox,
+				widget.NewLabel("Scheme"), schemeSelect,
+			),
+		)
+
+		bg := canvas.NewRectangle(color.Transparent)
+		bg.SetMinSize(fyne.NewSize(420, 0))
+		padded := container.NewStack(bg, container.NewPadded(content))
+
+		dialog.ShowCustom("Remote Control", "Close", padded, myWindow)
+	}
+
 	soundcardsItem := fyne.NewMenuItem("Soundcards", showSoundcardDialog)
 	radioConfigItem := fyne.NewMenuItem("Radio Config", showRadioDialog)
-	configMenu := fyne.NewMenu("Settings", soundcardsItem, radioConfigItem)
+	remoteControlItem := fyne.NewMenuItem("Remote Control", showRemoteControlDialog)
+	configMenu := fyne.NewMenu("Settings", soundcardsItem, radioConfigItem, remoteControlItem)
 	myWindow.SetMainMenu(fyne.NewMainMenu(configMenu))
 
 	// Single idempotent teardown, used by both the window-close handler and the
