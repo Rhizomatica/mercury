@@ -25,7 +25,23 @@
 #define MFSK_NCAR     50
 #define MFSK_GI       0.25
 #define MFSK_M        32
-#define MFSK_TXAMP    6000.0     /* int16 passband peak (normalised later by tx_gain) */
+/* Passband amplitude.
+ *
+ * 32-carrier OFDM has a high peak-to-average ratio, and this scale is applied
+ * to the IFFT output directly: at 6000 the true peak came to 42426 against a
+ * 32767 rail, so mfsk_emit() hard-clipped 45% of its own payload samples before
+ * the signal ever reached the radio.  PAPR measured 1.9 dB -- the burst was
+ * closer to a square wave than to OFDM.  Sync survived that (correlation is
+ * robust to clipping, the preamble still peaked at 0.889) but the subcarriers
+ * lost orthogonality and the LDPC payload never passed CRC on the air, while
+ * the offline round-trip still "passed" because both ends saw the same
+ * deterministic distortion.
+ *
+ * 2200 puts the true peak at ~15.5k, about -6.5 dBFS, which leaves room for the
+ * operator's TX gain (up to +6 dB) before the rail.  Do not raise this without
+ * re-measuring the peak: the clamp below hides the damage instead of reporting
+ * it. */
+#define MFSK_TXAMP    2200.0
 #define MFSK_LPF_TAPS 63
 #define MFSK_LPF_FC   1000.0
 
@@ -102,7 +118,16 @@ static void *mfsk_be_open(int mode)
     mklpf(h->lpf, MFSK_LPF_FC);
 
     /* RX window: one full burst (pre + data + post) plus a few symbols slack. */
-    h->rxcap = (h->P + h->NPAY + h->P + 8) * h->Nofdm;
+    /* Two bursts of window, not one.
+     *
+     * A payload can only be demodulated while its whole burst is resident, i.e.
+     * off + (P+NPAY)*Nofdm <= bf_len.  With a one-burst window that is true only
+     * for the ~0.48 s between the data ending and the preamble sliding out the
+     * front -- a razor-thin catch that the search, running every 4 symbols, kept
+     * missing: measured, `off` never even reached 8000.  Sizing for two bursts
+     * makes the burst decodable for a whole burst-length of slide instead, which
+     * is the difference between "usually" and "reliably". */
+    h->rxcap = (2 * (h->P + h->NPAY) + h->P + 8) * h->Nofdm;
     h->rxbuf = (int16_t *)malloc((size_t)h->rxcap * sizeof(int16_t));
     h->bf    = (double complex *)malloc((size_t)h->rxcap * sizeof(double complex));
     h->bb    = (double complex *)malloc((size_t)h->rxcap * sizeof(double complex));

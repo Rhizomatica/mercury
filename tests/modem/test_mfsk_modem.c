@@ -232,6 +232,51 @@ void test_mfsk_modem_decodes_with_short_preroll(void)
     free(frame); free(out);
 }
 
+/* The modulator must not clip its own output.
+ *
+ * 32-carrier OFDM has a high peak-to-average ratio and MFSK_TXAMP is applied
+ * straight to the IFFT output, so a value chosen by eye put the true peak at
+ * 42426 against a 32767 rail: mfsk_emit() hard-clipped 45% of every payload and
+ * PAPR collapsed to 1.9 dB.  The round-trip test still passed, because TX and
+ * RX both saw the same deterministic distortion -- but on the air the burst
+ * never decoded.  Assert headroom on the SAMPLES, which is the thing that was
+ * actually wrong, and leave room for the operator's TX gain on top. */
+void test_mfsk_modem_tx_does_not_clip(void)
+{
+    int bytes = be->bits_per_frame(ctx) / 8;
+    int cap   = be->n_tx_samples(ctx) + 40000;
+
+    uint8_t *frame = malloc(bytes);
+    for (int i = 0; i < bytes - 2; i++) frame[i] = (uint8_t)(i * 13 + 7);
+    uint16_t crc = freedv_gen_crc16(frame, bytes - 2);
+    frame[bytes - 2] = crc >> 8; frame[bytes - 1] = crc & 0xff;
+
+    int16_t *pre = calloc(cap, 2), *dat = calloc(cap, 2), *post = calloc(cap, 2);
+    int np = be->preamble_tx(ctx, pre);
+    int nd = be->rawdata_tx(ctx, dat, frame);
+    int ns = be->postamble_tx(ctx, post);
+
+    const int16_t *parts[3] = { pre, dat, post };
+    const int      lens[3]  = { np,  nd,  ns  };
+    for (int p = 0; p < 3; p++)
+    {
+        long clipped = 0;
+        int  peak = 0;
+        for (int i = 0; i < lens[p]; i++)
+        {
+            int v = abs(parts[p][i]);
+            if (v > peak) peak = v;
+            if (v >= 32700) clipped++;
+        }
+        TEST_ASSERT_EQUAL_INT_MESSAGE(0, (int)clipped,
+            "MFSK TX clipped its own samples: lower MFSK_TXAMP");
+        /* >=6 dB of headroom so a +6 dB operator gain still fits. */
+        TEST_ASSERT_TRUE_MESSAGE(peak <= 16384,
+            "MFSK TX peak leaves no headroom for the operator's TX gain");
+    }
+    free(frame); free(pre); free(dat); free(post);
+}
+
 void test_mfsk_modem_noise_no_false_decode(void)
 {
     int bytes = be->bits_per_frame(ctx) / 8;
@@ -251,6 +296,7 @@ int main(void)
     RUN_TEST(test_mfsk_modem_preamble_clipped_recovers_via_postamble);
     RUN_TEST(test_mfsk_modem_decodes_with_short_preroll);
     RUN_TEST(test_mfsk_modem_decodes_after_long_preroll);
+    RUN_TEST(test_mfsk_modem_tx_does_not_clip);
     RUN_TEST(test_mfsk_modem_noise_no_false_decode);
     return UNITY_END();
 }
