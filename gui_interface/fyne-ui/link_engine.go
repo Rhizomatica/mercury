@@ -147,10 +147,12 @@ func (l *engineLink) Send(cmd Command) error {
 
 	switch cmd.Name {
 	case "set_audio_config", "set_radio_config":
-		select {
-		case l.refresh <- struct{}{}:
-		default: // a refresh is already pending; one is enough
-		}
+		time.AfterFunc(100*time.Millisecond, func() {
+			select {
+			case l.refresh <- struct{}{}:
+			default:
+			}
+		})
 	}
 	return nil
 }
@@ -169,9 +171,9 @@ func (l *engineLink) emitDeviceLists(ctx context.Context, events chan<- Event) b
 
 	// The channel list is fixed; only the selection comes from the engine.
 	channels := []optionItem{
-		{Name: "Left", ID: "left"},
-		{Name: "Right", ID: "right"},
-		{Name: "Stereo", ID: "stereo"},
+		{Name: "left", ID: "left"},
+		{Name: "right", ID: "right"},
+		{Name: "stereo", ID: "stereo"},
 	}
 	selectedChannel := "left"
 	switch int(C.mercury_ui_get_input_channel()) {
