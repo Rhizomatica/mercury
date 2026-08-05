@@ -88,17 +88,33 @@ func runSingleProcessControlTest(t *testing.T, audioArgs []string, backendName s
 
 	rw := bufio.NewReadWriter(bufio.NewReader(conn), bufio.NewWriter(conn))
 	for _, tc := range []struct {
-		command string
-		want    string
+		command    string
+		want       string
+		drainAfter string // if non-empty, read one more CR-terminated line and check prefix
 	}{
 		{command: "MYCALL TESTA", want: "OK"},
-		{command: "LISTEN ON", want: "OK"},
+		{command: "LISTEN ON", want: "OK", drainAfter: "REGISTERED TESTA"},
 		{command: "BUFFER", want: "BUFFER"},
 	} {
 		got := sendControlCommand(t, conn, rw, tc.command)
 		if !strings.HasPrefix(got, tc.want) {
 			printLogs(t, stdout.Name(), stderr.Name())
 			t.Fatalf("%q response = %q, want prefix %q", tc.command, got, tc.want)
+		}
+		if tc.drainAfter != "" {
+			if err := conn.SetDeadline(time.Now().Add(commandTimeout)); err != nil {
+				t.Fatal(err)
+			}
+			line, err := rw.ReadString('\r')
+			if err != nil {
+				printLogs(t, stdout.Name(), stderr.Name())
+				t.Fatalf("drain after %q: %v", tc.command, err)
+			}
+			line = strings.TrimSuffix(line, "\r")
+			if !strings.HasPrefix(line, tc.drainAfter) {
+				printLogs(t, stdout.Name(), stderr.Name())
+				t.Fatalf("unsolicited after %q: got %q, want prefix %q", tc.command, line, tc.drainAfter)
+			}
 		}
 	}
 
