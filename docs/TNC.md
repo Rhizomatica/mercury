@@ -432,8 +432,11 @@ HF channel transition between clear and occupied, using VARA's exact wording so
 existing VARA-compatible hosts (VarAC, BPQ32, Winlink) act on them unchanged.
 Edge-triggered: `BUSY ON\r` on clear→busy, `BUSY OFF\r` on busy→clear.
 
-The detector is **enabled by default** and can be turned off via the `[channel]`
-section of `mercury.ini` (`busy_detect = false`); its sensitivity/timing knobs
+The detector is **disabled by default** and is enabled via the `[channel]`
+section of `mercury.ini` (`busy_detect = true`).  It is off because the hosts
+that consume these notifications act on them: BPQ32 and Winlink hold
+transmissions while BUSY is asserted, so a false or over-eager BUSY stops the
+station transmitting.  Enable it if your host scans.  Its sensitivity/timing knobs
 (`busy_threshold_db`, `busy_hysteresis_db`, `busy_on_debounce_ms`,
 `busy_hang_ms`) typically need on-air tuning per band/noise environment. When
 disabled, these notifications are never sent. See `mercury.ini.example`.

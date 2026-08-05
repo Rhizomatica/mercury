@@ -45,7 +45,9 @@ void test_defaults_match_constants(void)
     TEST_ASSERT_EQUAL_INT(5,   c.keepalive_miss_limit);
     TEST_ASSERT_EQUAL_INT(15,  c.peer_payload_hold_s);
     TEST_ASSERT_EQUAL_INT(10,  c.startup_max_s);
-    TEST_ASSERT_TRUE(c.busy_detect);   /* report-only, and the only early warning a host gets */
+    /* Opt-in: hosts hold transmissions while BUSY is asserted, so this must
+     * never switch on under a station that did not ask for it. */
+    TEST_ASSERT_FALSE(c.busy_detect);
     TEST_ASSERT_EQUAL_INT(10,   c.busy_threshold_db);
     TEST_ASSERT_EQUAL_INT(3,    c.busy_hysteresis_db);
     TEST_ASSERT_EQUAL_INT(300,  c.busy_on_debounce_ms);
@@ -67,7 +69,7 @@ void test_arq_tunables_roundtrip(void)
     w.keepalive_miss_limit        = 8;
     w.peer_payload_hold_s         = 25;
     w.startup_max_s               = 20;
-    w.busy_detect                 = false;  /* non-default: proves it round-trips */
+    w.busy_detect                 = true;   /* non-default: proves it round-trips */
     w.busy_threshold_db           = 14;
     w.busy_hysteresis_db          = 5;
     w.busy_on_debounce_ms         = 500;
@@ -87,7 +89,7 @@ void test_arq_tunables_roundtrip(void)
     TEST_ASSERT_EQUAL_INT(8,    r.keepalive_miss_limit);
     TEST_ASSERT_EQUAL_INT(25,   r.peer_payload_hold_s);
     TEST_ASSERT_EQUAL_INT(20,   r.startup_max_s);
-    TEST_ASSERT_FALSE(r.busy_detect);
+    TEST_ASSERT_TRUE(r.busy_detect);
     TEST_ASSERT_EQUAL_INT(14,   r.busy_threshold_db);
     TEST_ASSERT_EQUAL_INT(5,    r.busy_hysteresis_db);
     TEST_ASSERT_EQUAL_INT(500,  r.busy_on_debounce_ms);

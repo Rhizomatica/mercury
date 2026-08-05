@@ -146,12 +146,19 @@ startup_max_s = 10
 ; Channel-busy (occupancy) detector.  Mercury classifies the HF channel as
 ; busy/clear from the RX spectrum and reports transitions to the host with
 ; VARA-compatible "BUSY ON" / "BUSY OFF" notifications on the control port.
-; Enabled by default: it is report-only (it never gates transmission), and it is
-; the ONLY early warning a host gets — everything else waits for a full frame to
-; decode, which is 3.7 s for a connect request.  A scanning host cannot hold its
-; dwell that long, so with the detector off it steps over incoming calls.
-; Thresholds below typically need on-air tuning per band/noise environment.
-busy_detect = true
+;
+; OFF by default, deliberately.  Mercury itself never gates transmission on it,
+; but the hosts that consume these notifications do: BPQ32 and Winlink hold
+; transmissions while BUSY is asserted, so a detector that fires on noise, or on
+; a station you are already in QSO with, stops the station transmitting and
+; strands traffic in the queue.  That is field experience on HF, not theory, and
+; it is why VARA ships with busy detection off as well.
+;
+; Turn it on if you scan: it is then the only early warning a host gets, since
+; everything else waits for a full frame to decode (3.7 s for a connect request)
+; and a scanning host cannot hold its dwell that long.  Expect to tune the
+; thresholds below per band and noise environment before trusting it.
+busy_detect = false
 
 ; Passband peak level, in dB above the tracked noise floor, required to call the
 ; channel BUSY (default 10, range 3..40).  Lower = more sensitive.
