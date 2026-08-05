@@ -25,6 +25,7 @@ import (
 	"fyne.io/fyne/v2/app"
 	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
+	"fyne.io/fyne/v2/dialog"
 	"fyne.io/fyne/v2/layout"
 	"fyne.io/fyne/v2/widget"
 )
@@ -808,26 +809,6 @@ func main() {
 		}
 	})
 
-	audioApplyButton := widget.NewButton("Apply", func() {
-		captureID := selectedID(bindings.captureSelect, state.captureItems)
-		playbackID := selectedID(bindings.playbackSelect, state.playbackItems)
-		channel := bindings.channelSelect.Selected
-		if captureID == "" {
-			captureID = "default"
-		}
-		if playbackID == "" {
-			playbackID = "default"
-		}
-		if channel == "" {
-			channel = "left"
-		}
-		if err := sendWSCommand("set_audio_config", captureID, playbackID, channel); err != nil {
-			appendLog(fmt.Sprintf("Failed to send audio config: %v\n", err))
-		} else {
-			appendLog(fmt.Sprintf("Sent audio config: capture=%s playback=%s channel=%s\n", captureID, playbackID, channel))
-		}
-	})
-
 	radioApplyButton := widget.NewButton("Apply", func() {
 		modelID := selectedID(bindings.radioSelect, state.radioItems)
 		if modelID == "" {
@@ -862,15 +843,6 @@ func main() {
 		container.NewVBox(widget.NewLabel("Scheme"), schemeSelect),
 		layout.NewSpacer(),
 		connectButton,
-	))
-
-	audioCard := widget.NewCard("", "", container.NewVBox(
-		container.NewGridWithColumns(2,
-			widget.NewLabel("Capture Device"), captureSelect,
-			widget.NewLabel("Playback Device"), playbackSelect,
-			widget.NewLabel("Capture Input Channel"), channelSelect,
-		),
-		audioApplyButton,
 	))
 
 	radioCard := widget.NewCard("", "", container.NewVBox(
@@ -963,7 +935,7 @@ func main() {
 	topPanel := container.NewVBox(
 		connectionCard,
 		container.NewGridWithColumns(2,
-			container.NewVBox(audioCard, radioCard),
+			container.NewVBox(radioCard),
 			container.NewVBox(txCard, telemetryCard),
 		),
 	)
@@ -977,6 +949,44 @@ func main() {
 
 	mainLayout := container.NewBorder(topBar, nil, nil, nil, content)
 	myWindow.SetContent(mainLayout)
+
+	showSoundcardDialog := func() {
+		applyBtn := widget.NewButton("Apply", func() {
+			captureID := selectedID(bindings.captureSelect, state.captureItems)
+			playbackID := selectedID(bindings.playbackSelect, state.playbackItems)
+			channel := bindings.channelSelect.Selected
+			if captureID == "" {
+				captureID = "default"
+			}
+			if playbackID == "" {
+				playbackID = "default"
+			}
+			if channel == "" {
+				channel = "left"
+			}
+			if err := sendWSCommand("set_audio_config", captureID, playbackID, channel); err != nil {
+				appendLog(fmt.Sprintf("Failed to send audio config: %v\n", err))
+			} else {
+				appendLog(fmt.Sprintf("Sent audio config: capture=%s playback=%s channel=%s\n",
+					captureID, playbackID, channel))
+			}
+		})
+
+		content := container.NewVBox(
+			container.NewGridWithColumns(2,
+				widget.NewLabel("Capture Device"), bindings.captureSelect,
+				widget.NewLabel("Playback Device"), bindings.playbackSelect,
+				widget.NewLabel("Capture Input Channel"), bindings.channelSelect,
+			),
+			applyBtn,
+		)
+
+		dialog.ShowCustom("Soundcards", "Close", content, myWindow)
+	}
+
+	soundcardsItem := fyne.NewMenuItem("Soundcards", showSoundcardDialog)
+	configMenu := fyne.NewMenu("Configuration", soundcardsItem)
+	myWindow.SetMainMenu(fyne.NewMainMenu(configMenu))
 
 	// Single idempotent teardown, used by both the window-close handler and the
 	// signal handler.  It runs entirely OFF the GL/main thread: SetOnClosed is
