@@ -383,9 +383,17 @@ static int mfsk_be_rawdata_rx(void *ctx, uint8_t *bytes_out, const int16_t *demo
 
     /* Primary sync anchor: the preamble at the burst head.  The payload's NPAY
      * symbols start P symbols after it. */
+    /* Only search offsets whose payload could still be resident.  A preamble
+     * found beyond bf_len - (P+NPAY)*Nofdm cannot be demodulated yet, so
+     * correlating out there is pure cost -- and with a two-burst window that is
+     * half the buffer.  Trimming the range keeps the search proportional to
+     * what is actually decodable. */
     double metric = 0.0;
-    int off = mfsk_sync_search(h->bf, h->bf_len, 1, h->preT, h->preE,
-                               h->preN, h->Nofdm, 0, &metric);
+    int search_len = h->bf_len - h->NPAY * h->Nofdm;
+    int off = (search_len > h->P * h->Nofdm)
+            ? mfsk_sync_search(h->bf, search_len, 1, h->preT, h->preE,
+                               h->preN, h->Nofdm, 0, &metric)
+            : -1;
     int payoff = (off >= 0) ? off + h->P * h->Nofdm : -1;
     int nbytes = (payoff >= 0) ? mfsk_try_payload(h, payoff, bytes_out) : 0;
 
@@ -398,7 +406,14 @@ static int mfsk_be_rawdata_rx(void *ctx, uint8_t *bytes_out, const int16_t *demo
      * The postamble is the same P known symbols emitted after the data, so it
      * anchors the payload just as well: the NPAY data symbols immediately
      * PRECEDE it.  Only used when the preamble path did not already decode. */
-    if (nbytes <= 0)
+    /* Only worth the second correlation when the preamble anchor genuinely had
+     * nothing to offer: either it found no preamble at all, or it found one
+     * whose payload was present and still failed.  While the burst is merely
+     * incomplete there is nothing for this to recover, and running it on every
+     * such attempt doubled the search cost for no chance of a frame. */
+    int payload_was_resident = (payoff >= 0) &&
+                               (payoff + h->NPAY * h->Nofdm <= h->bf_len);
+    if (nbytes <= 0 && (off < 0 || payload_was_resident))
     {
         double pmetric = 0.0;
         int poff = mfsk_sync_search(h->bf, h->bf_len, 1, h->pstT, h->pstE,
