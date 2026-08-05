@@ -948,7 +948,7 @@ func main() {
 				widget.NewLabel("Playback Device"), bindings.playbackSelect,
 				widget.NewLabel("Capture Input Channel"), bindings.channelSelect,
 			),
-			applyBtn,
+			container.NewHBox(layout.NewSpacer(), applyBtn, layout.NewSpacer()),
 		)
 
 		dialog.ShowCustom("Soundcards", "Close", content, myWindow)
@@ -979,7 +979,7 @@ func main() {
 				widget.NewLabel("Device Path"), bindings.devicePathEntry,
 				widget.NewLabel("Baud Rate"), bindings.serialSpeedEntry,
 			),
-			applyBtn,
+			container.NewHBox(layout.NewSpacer(), applyBtn, layout.NewSpacer()),
 		)
 
 		bg := canvas.NewRectangle(color.Transparent)
