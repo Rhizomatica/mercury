@@ -143,8 +143,8 @@ static int feed_live_shaped(int16_t *pb, int total, uint8_t *out, int chunk)
 
 /* Build [preroll | preamble | data | postamble | trail] and try to decode.
  * preroll_syms is the prior audio ahead of the burst, in OFDM symbols. */
-static int decode_with_preroll(int preroll_syms, int chunk, uint8_t **frame_out,
-                               uint8_t **out_out)
+static int decode_with_preroll(int preroll_syms, int trail_syms, int chunk,
+                               uint8_t **frame_out, uint8_t **out_out)
 {
     int bytes = be->bits_per_frame(ctx) / 8;
     int nin   = be->nin(ctx);
@@ -162,7 +162,14 @@ static int decode_with_preroll(int preroll_syms, int chunk, uint8_t **frame_out,
     int ns = be->postamble_tx(ctx, post);
 
     int preroll = preroll_syms * nin;
-    int trail   = 8 * nin;
+    /* Trailing audio matters as much as leading.  A radio does not stop
+     * feeding the decoder when the burst ends -- silence keeps arriving and
+     * keeps sliding the window, which is exactly what the ALSA/PulseAudio
+     * paths do and what the FIFO harness does NOT (it only moves bytes while
+     * someone transmits, so a burst sits in an otherwise empty window).  Feed
+     * a burst's worth of trailing audio so the decoder has to hold the burst
+     * while the window walks past it. */
+    int trail   = trail_syms * nin;
     int total   = preroll + np + nd + ns + trail;
     int16_t *pb = calloc((size_t)total, 2);
     /* Prior audio is quiet but not digitally silent — a real receiver is never
@@ -208,7 +215,7 @@ void test_mfsk_modem_decodes_after_long_preroll(void)
         TEST_ASSERT_NOT_NULL(ctx);
 
         uint8_t *frame = NULL, *out = NULL;
-        int n = decode_with_preroll(preroll_syms[i], 880, &frame, &out);
+        int n = decode_with_preroll(preroll_syms[i], 8, 880, &frame, &out);
         int ok = (n == bytes) && (memcmp(frame, out, (size_t)bytes) == 0);
         if (!ok) failures++;
         printf("  preroll %4d symbols (%6.2f s): %s\n", preroll_syms[i],
@@ -226,7 +233,7 @@ void test_mfsk_modem_decodes_with_short_preroll(void)
 {
     uint8_t *frame = NULL, *out = NULL;
     int bytes = be->bits_per_frame(ctx) / 8;
-    int n = decode_with_preroll(2, 880, &frame, &out);
+    int n = decode_with_preroll(2, 8, 880, &frame, &out);
     TEST_ASSERT_EQUAL_INT(bytes, n);
     TEST_ASSERT_EQUAL_MEMORY(frame, out, bytes);
     free(frame); free(out);
@@ -241,6 +248,35 @@ void test_mfsk_modem_decodes_with_short_preroll(void)
  * RX both saw the same deterministic distortion -- but on the air the burst
  * never decoded.  Assert headroom on the SAMPLES, which is the thing that was
  * actually wrong, and leave room for the operator's TX gain on top. */
+/* THE RADIO CASE: a burst arrives in the middle of continuously flowing audio.
+ * Silence before it AND after it, so the window keeps sliding once the burst is
+ * complete.  On the air (ALSA, PulseAudio) this is the normal situation and the
+ * transfer stalls after a single frame; the FIFO harness never exercises it
+ * because it carries no idle audio at all. */
+void test_mfsk_modem_decodes_burst_in_continuous_audio(void)
+{
+    static const int trail_syms[] = { 8, 40, 120, 240, 400 };
+    int bytes = be->bits_per_frame(ctx) / 8;
+    int failures = 0;
+
+    for (unsigned i = 0; i < sizeof(trail_syms)/sizeof(trail_syms[0]); i++)
+    {
+        be->close(ctx);
+        ctx = be->open(MERCURY_MODE_MFSK);
+        TEST_ASSERT_NOT_NULL(ctx);
+
+        uint8_t *frame = NULL, *out = NULL;
+        int n = decode_with_preroll(40, trail_syms[i], 880, &frame, &out);
+        int ok = (n == bytes) && (memcmp(frame, out, (size_t)bytes) == 0);
+        if (!ok) failures++;
+        printf("  trailing audio %4d symbols (%6.2f s): %s\n", trail_syms[i],
+               trail_syms[i] * (double)be->nin(ctx) / 8000.0,
+               ok ? "decoded" : "NO DECODE");
+        free(frame); free(out);
+    }
+    TEST_ASSERT_EQUAL_INT(0, failures);
+}
+
 void test_mfsk_modem_tx_does_not_clip(void)
 {
     int bytes = be->bits_per_frame(ctx) / 8;
@@ -296,6 +332,7 @@ int main(void)
     RUN_TEST(test_mfsk_modem_preamble_clipped_recovers_via_postamble);
     RUN_TEST(test_mfsk_modem_decodes_with_short_preroll);
     RUN_TEST(test_mfsk_modem_decodes_after_long_preroll);
+    RUN_TEST(test_mfsk_modem_decodes_burst_in_continuous_audio);
     RUN_TEST(test_mfsk_modem_tx_does_not_clip);
     RUN_TEST(test_mfsk_modem_noise_no_false_decode);
     return UNITY_END();
