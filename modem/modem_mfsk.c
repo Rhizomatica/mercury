@@ -13,7 +13,9 @@
 
 #include <complex.h>
 #include <math.h>
+#include <stdio.h>
 #include <stdlib.h>
+#include <time.h>
 #include <string.h>
 
 /* Passband geometry — matches the validated offline harness (docs/MFSK-PORT.md). */
@@ -46,6 +48,14 @@ typedef struct {
 
     /* RX scratch (preallocated) */
     double complex *bf;             /* downmixed+filtered baseband, rxcap long */
+    double complex *bb;             /* downmixed, pre-LPF, rxcap long (persistent:
+                                     * the downmix+FIR is incremental, see
+                                     * mfsk_downmix) */
+    int      bb_len;                /* samples of bb that are downmixed        */
+    int      bf_len;                /* samples of bf that are FINAL (filtered) */
+    long     n_abs;                 /* absolute index of rxbuf[0] — keeps the
+                                     * carrier phase tied to the sample, not to
+                                     * its position in a sliding buffer        */
     mfsk_cplx      *rb;             /* NPAY*NCAR depadded bins */
     float          *llr;            /* N LLRs */
     int            *info;           /* K info bits */
@@ -95,6 +105,9 @@ static void *mfsk_be_open(int mode)
     h->rxcap = (h->P + h->NPAY + h->P + 8) * h->Nofdm;
     h->rxbuf = (int16_t *)malloc((size_t)h->rxcap * sizeof(int16_t));
     h->bf    = (double complex *)malloc((size_t)h->rxcap * sizeof(double complex));
+    h->bb    = (double complex *)malloc((size_t)h->rxcap * sizeof(double complex));
+    h->bb_len = h->bf_len = 0;
+    h->n_abs  = 0;
     h->rb    = (mfsk_cplx *)calloc((size_t)h->NPAY * MFSK_NCAR, sizeof(mfsk_cplx));
     h->llr   = (float *)malloc((size_t)h->code->N * sizeof(float));
     h->info  = (int *)malloc((size_t)h->code->K * sizeof(int));
@@ -221,33 +234,50 @@ static int mfsk_be_nin(void *ctx) { return ((mfsk_modem_t *)ctx)->Nofdm; }
  * demod/sync are invariant to the (arbitrary) carrier phase origin. */
 static void mfsk_downmix(mfsk_modem_t *h)
 {
-    int L = h->rxlen;
-    double complex *bb = (double complex *)malloc((size_t)L * sizeof(double complex));
-    if (!bb) { h->rxlen = 0; return; }
-    for (int i = 0; i < L; i++)
+    /* Incremental: downmix and filter only what arrived since the last call.
+     *
+     * This used to malloc the whole window and recompute it end to end on every
+     * search: 107520 samples, a 1.7 MB allocation, 215k trig calls and a
+     * 63-tap FIR over the lot -- 6.8M complex MACs, ~6 times a second.  The RX
+     * thread could not keep up, ran at ~42% of real time, and the capture ring
+     * dropped audio, so a 13.5 s burst was never contiguous in the window and
+     * could not be demodulated however the buffer was sized.  Cost is now
+     * proportional to the new samples, not the window (~84x less work here),
+     * which is also what makes this viable on 32-bit ARM.
+     *
+     * The carrier phase is taken from the ABSOLUTE sample index (n_abs), so
+     * sliding the buffer does not rotate previously computed samples. */
+    for (int i = h->bb_len; i < h->rxlen; i++)
     {
-        double x = (double)h->rxbuf[i];
-        double ph = h->w * (double)i;
-        bb[i] = 2.0 * x * cos(ph) + I * 2.0 * x * sin(ph);
+        double x  = (double)h->rxbuf[i];
+        double ph = h->w * (double)(h->n_abs + (long)i);
+        h->bb[i] = 2.0 * x * cos(ph) + I * 2.0 * x * sin(ph);
     }
-    for (int i = 0; i < L; i++)
+    h->bb_len = h->rxlen;
+
+    /* bf[i] needs bb up to i + TAPS/2, so it is final only once that has
+     * arrived.  Everything below bf_len is already final and is never
+     * recomputed. */
+    int last = h->bb_len - MFSK_LPF_TAPS / 2;
+    if (last > h->rxlen) last = h->rxlen;
+    for (int i = h->bf_len; i < last; i++)
     {
         double complex a = 0;
         for (int k = 0; k < MFSK_LPF_TAPS; k++)
         {
             int j = i - k + MFSK_LPF_TAPS / 2;
-            if (j >= 0 && j < L) a += h->lpf[k] * bb[j];
+            if (j >= 0 && j < h->bb_len) a += h->lpf[k] * h->bb[j];
         }
         h->bf[i] = a;
     }
-    free(bb);
+    if (last > h->bf_len) h->bf_len = last;
 }
 
 /* Demod one MFSK burst whose payload symbols start at bf[payoff], decode LDPC,
  * verify CRC16. Returns frame_bytes on success (bytes_out filled), else 0. */
 static int mfsk_try_payload(mfsk_modem_t *h, int payoff, uint8_t *bytes_out)
 {
-    if (payoff < 0 || payoff + h->NPAY * h->Nofdm > h->rxlen)
+    if (payoff < 0 || payoff + h->NPAY * h->Nofdm > h->bf_len)
         return 0;
 
     double sig = 0.0, noise = 0.0;   /* coarse SNR accumulators */
@@ -302,6 +332,15 @@ static int mfsk_be_rawdata_rx(void *ctx, uint8_t *bytes_out, const int16_t *demo
     {
         int drop = h->rxlen + chunk - h->rxcap;
         memmove(h->rxbuf, h->rxbuf + drop, (size_t)(h->rxlen - drop) * sizeof(int16_t));
+        /* Keep the derived buffers aligned with the raw one, or the incremental
+         * downmix would recompute the wrong region. */
+        if (h->bb_len > drop)
+            memmove(h->bb, h->bb + drop, (size_t)(h->bb_len - drop) * sizeof(double complex));
+        if (h->bf_len > drop)
+            memmove(h->bf, h->bf + drop, (size_t)(h->bf_len - drop) * sizeof(double complex));
+        h->bb_len = (h->bb_len > drop) ? h->bb_len - drop : 0;
+        h->bf_len = (h->bf_len > drop) ? h->bf_len - drop : 0;
+        h->n_abs += drop;
         h->rxlen -= drop;
     }
     memcpy(h->rxbuf + h->rxlen, demod_in, (size_t)chunk * sizeof(int16_t));
@@ -320,7 +359,7 @@ static int mfsk_be_rawdata_rx(void *ctx, uint8_t *bytes_out, const int16_t *demo
     /* Primary sync anchor: the preamble at the burst head.  The payload's NPAY
      * symbols start P symbols after it. */
     double metric = 0.0;
-    int off = mfsk_sync_search(h->bf, h->rxlen, 1, h->preT, h->preE,
+    int off = mfsk_sync_search(h->bf, h->bf_len, 1, h->preT, h->preE,
                                h->preN, h->Nofdm, 0, &metric);
     int payoff = (off >= 0) ? off + h->P * h->Nofdm : -1;
     int nbytes = (payoff >= 0) ? mfsk_try_payload(h, payoff, bytes_out) : 0;
@@ -337,7 +376,7 @@ static int mfsk_be_rawdata_rx(void *ctx, uint8_t *bytes_out, const int16_t *demo
     if (nbytes <= 0)
     {
         double pmetric = 0.0;
-        int poff = mfsk_sync_search(h->bf, h->rxlen, 1, h->pstT, h->pstE,
+        int poff = mfsk_sync_search(h->bf, h->bf_len, 1, h->pstT, h->pstE,
                                     h->pstN, h->Nofdm, 0, &pmetric);
         if (poff >= 0)
         {
@@ -354,7 +393,8 @@ static int mfsk_be_rawdata_rx(void *ctx, uint8_t *bytes_out, const int16_t *demo
     h->last_sync = (nbytes > 0) || (off >= 0);
     if (nbytes <= 0)
         return 0;
-    h->rxlen = 0;   /* burst consumed */
+    h->n_abs += h->rxlen;
+    h->rxlen = h->bb_len = h->bf_len = 0;   /* burst consumed */
     return nbytes;
 }
 
