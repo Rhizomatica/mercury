@@ -1984,8 +1984,27 @@ void *rx_thread(void *g_modem)
                 }
                 pthread_mutex_unlock(&g_spectrum_lock);
 
-                /* Channel-busy classification (RX-only: never while we key). */
-                if (busy_on && arq_get_trx() != TX)
+                /* Channel-busy classification (RX-only: never while we key).
+                 *
+                 * Also never during a session.  The energy we would classify
+                 * there is our own peer answering us, and the hosts that
+                 * consume BUSY act on it -- BPQ32 and Winlink hold
+                 * transmissions while it is asserted -- so reporting it would
+                 * stall the very link that is running.  Clear a latched BUSY
+                 * on the way in, or a host is left holding one for the whole
+                 * QSO with no BUSY OFF to release it. */
+                if (busy_on && arq_get_trx() != TX && arq_is_link_connected())
+                {
+                    if (atomic_exchange_explicit(&g_channel_busy, false,
+                                                 memory_order_relaxed))
+                    {
+                        channel_busy_init(&g_busy_state);
+                        tnc_send_busy(false);
+                        HLOGI("modem-rx", "channel CLEAR (in session: peer "
+                              "traffic is not occupancy)");
+                    }
+                }
+                else if (busy_on && arq_get_trx() != TX)
                 {
                     busy_cfg_t cfg;
                     pthread_mutex_lock(&g_busy_cfg_lock);

@@ -64,7 +64,7 @@ void cfg_set_defaults(mercury_config *cfg)
     cfg->keepalive_miss_limit        = ARQ_KEEPALIVE_MISS_LIMIT_DEFAULT;
     cfg->peer_payload_hold_s         = ARQ_PEER_PAYLOAD_HOLD_S_DEFAULT;
     cfg->startup_max_s               = ARQ_STARTUP_MAX_S_DEFAULT;
-    cfg->busy_detect                 = true;
+    cfg->busy_detect                 = false;
     cfg->busy_threshold_db           = 10;
     cfg->busy_hysteresis_db          = 3;
     cfg->busy_on_debounce_ms         = 300;
