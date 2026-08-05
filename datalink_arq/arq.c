@@ -1098,8 +1098,24 @@ bool arq_get_runtime_snapshot(arq_runtime_snapshot_t *snapshot)
     pthread_mutex_lock(&g_sess_lock);
     snapshot->initialized      = true;
     snapshot->connected        = (g_sess.conn_state == ARQ_CONN_CONNECTED);
-    snapshot->expect_pattern_ack = (g_sess.conn_state == ARQ_CONN_ACCEPTING ||
-                                    g_sess.conn_state == ARQ_CONN_CONNECTED);
+    /* Only while a pattern ACK could actually arrive.
+     *
+     * This gates a correlation that modem.c runs over a ~3-burst window on
+     * EVERY capture chunk, so leaving it on for all of CONNECTED cost about
+     * half the RX budget for the whole session: measured 3.5k samp/s consumed
+     * against 8k arriving, the capture ring growing to ~400 kB, and the backlog
+     * guard then flushing bursts that were still arriving.  Trunk, which has no
+     * pattern ACK, holds 7.99k samp/s on the same bench.
+     *
+     * WAIT_ACK is by definition the only in-session state where the peer's
+     * pattern ACK is due (see ARQ_DFLOW_WAIT_ACK), and ACCEPTING is the
+     * handshake equivalent.  Everywhere else -- above all IDLE_IRS, where the
+     * receiver is busy demodulating a 13.5 s burst -- there is nothing to
+     * detect and the CPU is needed elsewhere. */
+    snapshot->expect_pattern_ack =
+        (g_sess.conn_state == ARQ_CONN_ACCEPTING) ||
+        (g_sess.conn_state == ARQ_CONN_CONNECTED &&
+         g_sess.dflow_state == ARQ_DFLOW_WAIT_ACK);
     snapshot->trx              = trx;
     snapshot->tx_backlog_bytes = backlog +
         (g_sess.tx_frame_present ? g_sess.tx_frame_len : 0);
