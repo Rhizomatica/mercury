@@ -188,6 +188,9 @@ uint8_t kiss_last_command(void) { return mock_kiss_last_command_val; }
 
 static char last_queued_line[256];
 static int chan_select_call_count = 0;
+/* How many tcp_write() calls had already happened when a line was queued.
+ * Lets a test pin the ORDER of a direct write against a queued notification. */
+static int queued_after_tcp_writes = -1;
 
 chan_t *chan_init(size_t capacity)
 {
@@ -219,6 +222,7 @@ int chan_select(chan_t *recv_chans[], int recv_count, void **recv_out,
         memset(last_queued_line, 0, sizeof(last_queued_line));
         if (len < sizeof(last_queued_line))
             memcpy(last_queued_line, data_ptr, len);
+        queued_after_tcp_writes = tcp_write_call_count;
         /* Returning 0 signals the message was accepted by the channel, so
          * tnc_queue_line() transfers ownership and does not free it (in
          * production the send_thread consumer frees each msg).  This mock is
@@ -253,6 +257,7 @@ void setUp(void)
     arq_submit_return = 0;
     memset(last_queued_line, 0, sizeof(last_queued_line));
     chan_select_call_count = 0;
+    queued_after_tcp_writes = -1;
     memset(&arq_conn, 0, sizeof(arq_conn));
     mock_bandwidth_hz = 2300;
 
@@ -304,6 +309,21 @@ void test_cmd_mycall(void)
     assert_ok_response();
     TEST_ASSERT_EQUAL_INT(ARQ_CMD_SET_CALLSIGN, captured_cmd.type);
     TEST_ASSERT_EQUAL_STRING("TEST1", captured_cmd.arg0);
+}
+
+/* REGISTERED answers MYCALL, so the host must not see it before the OK.
+ * OK is a direct tcp_write() while notifications are queued for another
+ * thread, so emitting REGISTERED from the ARQ event loop could put it on the
+ * wire first -- secondary callsigns widen that window, hence the extra tokens
+ * here.  Pin the order, not just the content. */
+void test_cmd_mycall_registered_follows_ok(void)
+{
+    char cmd[] = "MYCALL TEST1 SEC1 SEC2";
+    execute_control_command(cmd);
+
+    assert_ok_response();
+    TEST_ASSERT_EQUAL_STRING("REGISTERED TEST1\r", last_queued_line);
+    TEST_ASSERT_GREATER_THAN_INT(0, queued_after_tcp_writes);
 }
 
 void test_cmd_listen_on(void)
@@ -992,6 +1012,7 @@ int main(void)
     UNITY_BEGIN();
     /* Command parser tests */
     RUN_TEST(test_cmd_mycall);
+    RUN_TEST(test_cmd_mycall_registered_follows_ok);
     RUN_TEST(test_cmd_listen_on);
     RUN_TEST(test_cmd_listen_off);
     RUN_TEST(test_cmd_public_on);

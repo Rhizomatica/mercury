@@ -292,6 +292,10 @@ static void execute_control_command(char *buffer)
         memset(&cmd, 0, sizeof(cmd));
         cmd.type = ARQ_CMD_SET_CALLSIGN;
         snprintf(cmd.arg0, sizeof(cmd.arg0), "%s", tok);
+        /* Kept for the REGISTERED notification below: the secondary loop
+         * reuses cmd, and strtok_r advances past this token. */
+        char primary_call[sizeof(cmd.arg0)];
+        snprintf(primary_call, sizeof(primary_call), "%s", tok);
         if (arq_submit_tcp_cmd(&cmd) != 0)
         {
             tcp_write(CTL_TCP_PORT, (uint8_t *)"WRONG\r", 6);
@@ -308,6 +312,15 @@ static void execute_control_command(char *buffer)
         }
 
         tcp_write(CTL_TCP_PORT, (uint8_t *)"OK\r", 3);
+
+        /* REGISTERED is emitted here, on this thread, rather than from the ARQ
+         * event loop: OK goes straight out through tcp_write() while queued
+         * lines are flushed by the TNC writer thread, so a REGISTERED produced
+         * over there could reach the host BEFORE this OK -- the more secondary
+         * callsigns MYCALL carries, the wider that window gets.  Sending it
+         * after the write makes the order documented in docs/TNC.md hold by
+         * construction instead of by timing. */
+        tnc_send_registered(primary_call);
         return;
     }
 
