@@ -92,8 +92,8 @@ func runSingleProcessControlTest(t *testing.T, audioArgs []string, backendName s
 		want       string
 		drainAfter string // if non-empty, read one more CR-terminated line and check prefix
 	}{
-		{command: "MYCALL TESTA", want: "OK"},
-		{command: "LISTEN ON", want: "OK", drainAfter: "REGISTERED TESTA"},
+		{command: "MYCALL TESTA", want: "OK", drainAfter: "REGISTERED TESTA"},
+		{command: "LISTEN ON", want: "OK"},
 		{command: "BUFFER", want: "BUFFER"},
 	} {
 		got := sendControlCommand(t, conn, rw, tc.command)

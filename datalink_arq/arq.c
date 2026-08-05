@@ -414,22 +414,16 @@ static void handle_cmd(const arq_cmd_msg_t *msg)
     {
     case ARQ_CMD_SET_CALLSIGN:
     {
-        bool should_register = false;
         char call_copy[CALLSIGN_MAX_SIZE];
         pthread_mutex_lock(&g_conn_lock);
         snprintf(arq_conn.my_call_sign, CALLSIGN_MAX_SIZE, "%s", msg->arg0);
         /* Setting a new primary callsign clears all secondary callsigns */
         memset(arq_conn.secondary_calls, 0, sizeof(arq_conn.secondary_calls));
         arq_conn.secondary_call_count = 0;
-        if (arq_conn.listen)
-        {
-            should_register = true;
-            snprintf(call_copy, sizeof(call_copy), "%s", msg->arg0);
-        }
+        snprintf(call_copy, sizeof(call_copy), "%s", msg->arg0);
         pthread_mutex_unlock(&g_conn_lock);
         HLOGI(LOG_COMP, "My callsign: %s", msg->arg0);   /* log msg->arg0, not the shared field */
-        if (should_register)
-            arq_tnc_send_registered(call_copy);
+        arq_tnc_send_registered(call_copy);
         return;
     }
 
@@ -493,22 +487,11 @@ static void handle_cmd(const arq_cmd_msg_t *msg)
         return;
 
     case ARQ_CMD_LISTEN_ON:
-    {
-        bool has_callsign = false;
-        char call_copy[CALLSIGN_MAX_SIZE];
         pthread_mutex_lock(&g_conn_lock);
         arq_conn.listen = true;
-        if (arq_conn.my_call_sign[0] != '\0')
-        {
-            has_callsign = true;
-            snprintf(call_copy, sizeof(call_copy), "%s", arq_conn.my_call_sign);
-        }
         pthread_mutex_unlock(&g_conn_lock);
-        if (has_callsign)
-            arq_tnc_send_registered(call_copy);
         ev.id = ARQ_EV_APP_LISTEN;
         break;
-    }
 
     case ARQ_CMD_LISTEN_OFF:
         pthread_mutex_lock(&g_conn_lock);
@@ -581,17 +564,15 @@ static void handle_cmd(const arq_cmd_msg_t *msg)
 
     case ARQ_CMD_CLIENT_CONNECT:
     {
-        bool should_register = false;
         char call_copy[CALLSIGN_MAX_SIZE];
+        bool has_callsign;
         HLOGD(LOG_COMP, "Client (re)connected");
         pthread_mutex_lock(&g_conn_lock);
-        if (arq_conn.listen && arq_conn.my_call_sign[0] != '\0')
-        {
-            should_register = true;
+        has_callsign = (arq_conn.my_call_sign[0] != '\0');
+        if (has_callsign)
             snprintf(call_copy, sizeof(call_copy), "%s", arq_conn.my_call_sign);
-        }
         pthread_mutex_unlock(&g_conn_lock);
-        if (should_register)
+        if (has_callsign)
             arq_tnc_send_registered(call_copy);
         return;
     }

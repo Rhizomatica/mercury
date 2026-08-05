@@ -99,10 +99,10 @@ func TestMercuryBackToBackFIFO(t *testing.T) {
 		want       string
 		drainAfter string
 	}{
-		{name: "A MYCALL", conn: connA, rw: rwA, command: "MYCALL TESTA", want: "OK"},
-		{name: "B MYCALL", conn: connB, rw: rwB, command: "MYCALL TESTB", want: "OK"},
-		{name: "A LISTEN ON", conn: connA, rw: rwA, command: "LISTEN ON", want: "OK", drainAfter: "REGISTERED TESTA"},
-		{name: "B LISTEN ON", conn: connB, rw: rwB, command: "LISTEN ON", want: "OK", drainAfter: "REGISTERED TESTB"},
+		{name: "A MYCALL", conn: connA, rw: rwA, command: "MYCALL TESTA", want: "OK", drainAfter: "REGISTERED TESTA"},
+		{name: "B MYCALL", conn: connB, rw: rwB, command: "MYCALL TESTB", want: "OK", drainAfter: "REGISTERED TESTB"},
+		{name: "A LISTEN ON", conn: connA, rw: rwA, command: "LISTEN ON", want: "OK"},
+		{name: "B LISTEN ON", conn: connB, rw: rwB, command: "LISTEN ON", want: "OK"},
 		{name: "A BUFFER", conn: connA, rw: rwA, command: "BUFFER", want: "BUFFER"},
 		{name: "B BUFFER", conn: connB, rw: rwB, command: "BUFFER", want: "BUFFER"},
 		{name: "A SN", conn: connA, rw: rwA, command: "SN", want: "SN"},

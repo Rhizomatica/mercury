@@ -29,7 +29,9 @@ Set the local station callsign and optional secondary callsigns.
 MYCALL <callsign> [<secondary1> <secondary2> ...]\r
 ```
 
-**Response:** `OK\r` on success, `WRONG\r` on error.
+**Response:** `OK\r` on success, `WRONG\r` on error.  After `OK`, an
+asynchronous `REGISTERED <callsign>\r` notification confirms the callsign is
+recognised (VARA compatibility).
 
 The first token is the **primary callsign** (up to 15 characters), used as the
 source address for outgoing `CALL` and `ACCEPT` frames.  Any additional
@@ -388,6 +390,7 @@ These are sent on the **control port** without a preceding command.
 | `BUSY OFF\r`                                | Channel became clear (busy detector)         |
 | `BITRATE (<level>) <bps> BPS\r`            | Throughput update                            |
 | `IAMALIVE\r`                                | Heartbeat (sent periodically while idle)     |
+| `REGISTERED <callsign>\r`                  | Callsign registration confirmed (after MYCALL) |
 
 ### PENDING
 
@@ -457,6 +460,14 @@ data has been acknowledged by the peer.
 Sent periodically on the control port as a keepalive to detect broken
 TCP connections.
 
+### REGISTERED
+
+Sent when a callsign is set via `MYCALL`, confirming the callsign is
+licensed (VARA compatibility).  Arrives after the `OK\r` response to
+`MYCALL`.  Also sent on client reconnect if a callsign is already set.
+
+The `<callsign>` is the primary callsign exactly as accepted by `MYCALL`.
+
 ---
 
 ## Data Port
@@ -506,6 +517,7 @@ Client                          Mercury
   |                                |
   |--- MYCALL AAAA\r ------------>|
   |<-- OK\r ----------------------|
+  |<-- REGISTERED AAAA\r ---------|
   |                                |
   |--- LISTEN ON\r -------------->|
   |<-- OK\r ----------------------|

@@ -102,16 +102,27 @@ func TestMercuryARQLargeQueueNoWedge(t *testing.T) {
 	rwB := bufio.NewReadWriter(bufio.NewReader(connB), bufio.NewWriter(connB))
 
 	for _, c := range []struct {
-		conn net.Conn
-		rw   *bufio.ReadWriter
-		cmd  string
+		conn       net.Conn
+		rw         *bufio.ReadWriter
+		cmd        string
+		drainAfter string
 	}{
-		{connA, rwA, "MYCALL TESTA"},
-		{connB, rwB, "MYCALL TESTB"},
-		{connB, rwB, "LISTEN ON"},
+		{connA, rwA, "MYCALL TESTA", "REGISTERED TESTA"},
+		{connB, rwB, "MYCALL TESTB", "REGISTERED TESTB"},
+		{connB, rwB, "LISTEN ON", ""},
 	} {
 		if got := sendControlCommand(t, c.conn, c.rw, c.cmd); !strings.HasPrefix(got, "OK") {
 			failWithLogs("%q -> %q, want OK", c.cmd, got)
+		}
+		if c.drainAfter != "" {
+			line, err := c.rw.ReadString('\r')
+			if err != nil {
+				failWithLogs("drain after %q: %v", c.cmd, err)
+			}
+			line = strings.TrimSuffix(line, "\r")
+			if !strings.HasPrefix(line, c.drainAfter) {
+				failWithLogs("unsolicited after %q: got %q, want prefix %q", c.cmd, line, c.drainAfter)
+			}
 		}
 	}
 
