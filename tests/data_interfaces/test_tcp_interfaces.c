@@ -589,6 +589,12 @@ void test_tnc_send_cqframe(void)
     TEST_ASSERT_EQUAL_STRING("CQFRAME CALL1 500\r", last_queued_line);
 }
 
+void test_tnc_send_registered(void)
+{
+    tnc_send_registered("TESTA");
+    TEST_ASSERT_EQUAL_STRING("REGISTERED TESTA\r", last_queued_line);
+}
+
 /* ---- VARA compatibility command tests ---- */
 
 void test_cmd_abort(void)
@@ -1029,6 +1035,7 @@ int main(void)
     RUN_TEST(test_tnc_send_bitrate);
     RUN_TEST(test_tnc_send_connected);
     RUN_TEST(test_tnc_send_cqframe);
+    RUN_TEST(test_tnc_send_registered);
     /* Broadcast framing helper tests */
     RUN_TEST(test_bcast_rx_cmd_data_exact_size);
     RUN_TEST(test_bcast_rx_cmd_data_short_padded);
