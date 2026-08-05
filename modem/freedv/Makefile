@@ -21,16 +21,16 @@ $(LIBNAME): $(OBJS_COMMON)
 
 
 freedv_data_tx: freedv_data_tx.o $(LIBNAME)
-	$(CC) $(CFLAGS) -o $@ freedv_data_tx.o $(LIBNAME) $(SAN_LDFLAGS) -lm
+	$(CC) $(CFLAGS) -o $@ freedv_data_tx.o $(LIBNAME) -lm
 
 freedv_data_rx: freedv_data_rx.o $(LIBNAME)
-	$(CC) $(CFLAGS) -o $@ freedv_data_rx.o $(LIBNAME) $(SAN_LDFLAGS) -lm
+	$(CC) $(CFLAGS) -o $@ freedv_data_rx.o $(LIBNAME) -lm
 
 freedv_data_raw_tx: freedv_data_raw_tx.o modem_stats.o $(LIBNAME)
-	$(CC) $(CFLAGS) -o $@ freedv_data_raw_tx.o modem_stats.o $(LIBNAME) $(SAN_LDFLAGS) -lm
+	$(CC) $(CFLAGS) -o $@ freedv_data_raw_tx.o modem_stats.o $(LIBNAME) -lm
 
 freedv_data_raw_rx: freedv_data_raw_rx.o modem_stats.o octave.o $(LIBNAME)
-	$(CC) $(CFLAGS) -o $@ freedv_data_raw_rx.o modem_stats.o octave.o $(LIBNAME) $(SAN_LDFLAGS) -lm
+	$(CC) $(CFLAGS) -o $@ freedv_data_raw_rx.o modem_stats.o octave.o $(LIBNAME) -lm
 
 
 freedv_data_tx.o: freedv_data_tx.c freedv_api.h

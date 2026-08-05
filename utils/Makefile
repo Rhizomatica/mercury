@@ -14,16 +14,16 @@ OUT = broadcast_test broadcast_diag_tx broadcast_diag_rx watterson_test
 all: $(OUT)
 
 broadcast_test: broadcast_test.c ../datalink_broadcast/kiss.c
-	$(CC) $(CFLAGS) -I../datalink_broadcast -o $@ $^ $(LDFLAGS) $(SAN_LDFLAGS)
+	$(CC) $(CFLAGS) -I../datalink_broadcast -o $@ $^ $(LDFLAGS)
 
 broadcast_diag_tx: broadcast_diag_tx.c ../datalink_broadcast/kiss.c ../modem/framer.c
-	$(CC) $(CFLAGS) -I../datalink_broadcast -o $@ $^ $(LDFLAGS) $(SAN_LDFLAGS)
+	$(CC) $(CFLAGS) -I../datalink_broadcast -o $@ $^ $(LDFLAGS)
 
 broadcast_diag_rx: broadcast_diag_rx.c ../datalink_broadcast/kiss.c ../modem/framer.c
-	$(CC) $(CFLAGS) -I../datalink_broadcast -o $@ $^ $(LDFLAGS) $(SAN_LDFLAGS)
+	$(CC) $(CFLAGS) -I../datalink_broadcast -o $@ $^ $(LDFLAGS)
 
 watterson_test: watterson_test.c ../common/watterson.c
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS) $(SAN_LDFLAGS) -lm
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS) -lm
 
 # Clean up build artifacts
 clean:
