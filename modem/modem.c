@@ -1930,15 +1930,24 @@ void *rx_thread(void *g_modem)
          * frame duration + guard so an in-flight burst is never dropped, while
          * fast FreeDV frames keep the tight 2 s bound (latency stays bounded per
          * mode, preserving the issue-#81 protection). */
+        /* Size the cap from the SLOWEST rung the session can use, not from the
+         * mode selected right now.  payload_mode is recomputed every iteration
+         * from the ARQ snapshot, so deriving the cap from it made the cap move:
+         * observed firing at "~16 s" and then "~7 s" within twenty seconds of
+         * each other.  When it briefly shrank to a fast mode's value, a 13.5 s
+         * MFSK burst that was legitimately still arriving looked like a
+         * backlog and was flushed MID-BURST -- an independent recording of the
+         * receiver's own input proved the whole burst arrived, while the
+         * decoder was left holding about 1.5 s of fragment, and the audio layer
+         * reported drops=0 because the discard happens here, above it.
+         *
+         * The ladder's longest burst is stable, so the guard can no longer
+         * shrink below the thing it exists to protect. */
         int backlog_cap = RX_MAX_BACKLOG_SAMPLES;
         {
-            const arq_mode_timing_t *ptm = arq_protocol_mode_timing(payload_mode);
-            if (ptm)
-            {
-                int need = (int)((ptm->frame_duration_s + 3.0f) * 8000.0f);
-                if (need > backlog_cap)
-                    backlog_cap = need;
-            }
+            int need = (int)((arq_protocol_longest_burst_s() + 3.0f) * 8000.0f);
+            if (need > backlog_cap)
+                backlog_cap = need;
         }
         if (!virtual_clock_enabled() &&
             size_buffer(capture_buffer) > (size_t)backlog_cap * sizeof(int32_t))

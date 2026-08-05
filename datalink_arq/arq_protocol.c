@@ -154,7 +154,14 @@ const arq_mode_timing_t *arq_protocol_mode_timing(int freedv_mode)
  * and destroying the frame that would have told it to stop.  The ISS then
  * retried into the same collision.  Deriving it means a future rung cannot
  * reintroduce that by being slower than a constant nobody remembered to bump. */
-uint32_t arq_protocol_accept_rx_window_ms(void)
+/* Longest burst any rung of the ladder can put on the air.
+ *
+ * Anything that has to survive "a burst is in flight" must be sized from THIS,
+ * not from whichever mode happens to be selected at the instant it is asked.
+ * The payload mode moves around during a session, so a guard derived from the
+ * current mode silently shrinks -- and a guard that shrinks below the burst it
+ * is protecting destroys that burst. */
+float arq_protocol_longest_burst_s(void)
 {
     float longest_s = 0.0f;
     for (int i = 0; i < ARQ_LADDER_LEVELS; i++)
@@ -163,8 +170,12 @@ uint32_t arq_protocol_accept_rx_window_ms(void)
         if (tm && tm->frame_duration_s > longest_s)
             longest_s = tm->frame_duration_s;
     }
-    if (longest_s <= 0.0f)
-        longest_s = 13.5f;   /* ladder unreadable: assume the slowest rung */
+    return (longest_s > 0.0f) ? longest_s : 13.5f;  /* unreadable: slowest rung */
+}
+
+uint32_t arq_protocol_accept_rx_window_ms(void)
+{
+    float longest_s = arq_protocol_longest_burst_s();
 
     return (uint32_t)ARQ_ISS_POST_ACK_GUARD_MS
          + (uint32_t)(longest_s * 1000.0f)

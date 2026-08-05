@@ -277,6 +277,71 @@ void test_mfsk_modem_decodes_burst_in_continuous_audio(void)
     TEST_ASSERT_EQUAL_INT(0, failures);
 }
 
+/* A SECOND burst, after the window has filled and started sliding.
+ *
+ * Live, the first burst decodes and every retransmission after it fails: the
+ * successes all have a partly-filled window (bf_len 154849), the failures all
+ * have a full one (bf_len 211169, i.e. sliding).  Everything the decoder
+ * reports looks right on the failures -- preamble found, metric 0.891, payload
+ * resident -- and the CRC still fails, which is the signature of the buffer
+ * bookkeeping being wrong once samples start being dropped off the front, not
+ * of a channel problem.
+ *
+ * One burst is never enough to catch that.  This feeds two, with enough audio
+ * between them to fill and wrap the window. */
+void test_mfsk_modem_decodes_second_burst_after_window_wraps(void)
+{
+    int bytes = be->bits_per_frame(ctx) / 8;
+    int nin   = be->nin(ctx);
+    int cap   = be->n_tx_samples(ctx) + 40000;
+
+    uint8_t *frame = malloc(bytes);
+    for (int i = 0; i < bytes - 2; i++) frame[i] = (uint8_t)(i * 23 + 9);
+    uint16_t crc = freedv_gen_crc16(frame, bytes - 2);
+    frame[bytes - 2] = crc >> 8; frame[bytes - 1] = crc & 0xff;
+
+    int16_t *pre = calloc(cap,2), *dat = calloc(cap,2), *post = calloc(cap,2);
+    int np = be->preamble_tx(ctx, pre);
+    int nd = be->rawdata_tx(ctx, dat, frame);
+    int ns = be->postamble_tx(ctx, post);
+    int blen = np + nd + ns;
+
+    /* [burst][idle][burst][idle] — the second must decode too. */
+    int idle  = 400 * nin;               /* 16 s, comfortably wraps the window */
+    int total = blen + idle + blen + idle;
+    int16_t *pb = calloc((size_t)total, 2);
+    int p = 0;
+    for (int rep = 0; rep < 2; rep++)
+    {
+        memcpy(pb + p, pre,  (size_t)np * 2); p += np;
+        memcpy(pb + p, dat,  (size_t)nd * 2); p += nd;
+        memcpy(pb + p, post, (size_t)ns * 2); p += ns;
+        for (int i = 0; i < idle; i++) pb[p + i] = (int16_t)(coin() ? 9 : -9);
+        p += idle;
+    }
+
+    /* Count how many of the two bursts decode. */
+    int chunk = 880, held = 0, decodes = 0;
+    int16_t *acc = calloc((size_t)chunk + nin, 2);
+    uint8_t *out = calloc((size_t)bytes, 1);
+    for (int off = 0; off + chunk <= total; off += chunk)
+    {
+        memcpy(acc + held, &pb[off], (size_t)chunk * 2);
+        held += chunk;
+        while (held >= nin)
+        {
+            if (be->rawdata_rx(ctx, out, acc) > 0) decodes++;
+            held -= nin;
+            if (held > 0) memmove(acc, acc + nin, (size_t)held * 2);
+        }
+    }
+    printf("  bursts decoded: %d of 2\n", decodes);
+    free(acc); free(out); free(frame); free(pre); free(dat); free(post); free(pb);
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(2, decodes,
+        "a burst after the RX window wrapped did not decode");
+}
+
 void test_mfsk_modem_tx_does_not_clip(void)
 {
     int bytes = be->bits_per_frame(ctx) / 8;
@@ -333,6 +398,7 @@ int main(void)
     RUN_TEST(test_mfsk_modem_decodes_with_short_preroll);
     RUN_TEST(test_mfsk_modem_decodes_after_long_preroll);
     RUN_TEST(test_mfsk_modem_decodes_burst_in_continuous_audio);
+    RUN_TEST(test_mfsk_modem_decodes_second_burst_after_window_wraps);
     RUN_TEST(test_mfsk_modem_tx_does_not_clip);
     RUN_TEST(test_mfsk_modem_noise_no_false_decode);
     return UNITY_END();

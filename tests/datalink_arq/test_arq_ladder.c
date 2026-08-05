@@ -286,6 +286,37 @@ void test_ladder_floor_holds_at_mfsk(void)
  * does it again to the retransmission.  Measured on loopsim before the fix: a
  * 9000 ms window against a 13530 ms MFSK burst, retrying every 12.7 s, 0 bytes
  * delivered.  The window must outlast the LONGEST rung on the ladder. */
+/* Everything that has to survive an in-flight burst must be sized from the
+ * ladder's slowest rung, never from whichever mode is selected at the moment
+ * the question is asked -- the payload mode moves during a session, and a
+ * guard derived from it shrinks with it.  That is what chopped a 13.5 s MFSK
+ * burst: the RX backlog cap briefly recomputed itself for a fast mode (~7 s)
+ * and flushed a burst that was still arriving. */
+void test_longest_ladder_burst_is_the_slowest_rung(void)
+{
+    float longest = arq_protocol_longest_burst_s();
+    float slowest = 0.0f;
+    for (int i = 0; i < ARQ_LADDER_LEVELS; i++)
+    {
+        const arq_mode_timing_t *tm = arq_protocol_mode_timing(arq_mode_ladder[i]);
+        TEST_ASSERT_NOT_NULL(tm);
+        if (tm->frame_duration_s > slowest)
+            slowest = tm->frame_duration_s;
+    }
+    printf("  slowest ladder rung: %.2f s; longest_burst_s reports %.2f s\n",
+           (double)slowest, (double)longest);
+    TEST_ASSERT_TRUE(longest >= slowest);
+
+    /* And it must not collapse to a fast rung's duration just because some
+     * other mode is momentarily active. */
+    for (int i = 0; i < ARQ_LADDER_LEVELS; i++)
+    {
+        const arq_mode_timing_t *tm = arq_protocol_mode_timing(arq_mode_ladder[i]);
+        TEST_ASSERT_TRUE_MESSAGE(longest >= tm->frame_duration_s,
+            "longest burst is shorter than a rung the session can select");
+    }
+}
+
 void test_accept_rx_window_outlasts_longest_ladder_burst(void)
 {
     float longest_s = 0.0f;
@@ -319,6 +350,7 @@ void test_accept_rx_window_outlasts_longest_ladder_burst(void)
 int main(void)
 {
     UNITY_BEGIN();
+    RUN_TEST(test_longest_ladder_burst_is_the_slowest_rung);
     RUN_TEST(test_accept_rx_window_outlasts_longest_ladder_burst);
     RUN_TEST(test_ladder_starts_at_mfsk);
     RUN_TEST(test_ladder_table_ordered_and_sized);

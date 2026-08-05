@@ -210,6 +210,7 @@ extern _Atomic int arq_iss_post_ack_guard_ms;
  * DATAC15 first frame and became shorter than the MFSK floor burst, which made
  * the IRS retransmit ACCEPT into the ISS's data.) */
 #define ARQ_ACCEPT_RX_WINDOW_MARGIN_MS 3700
+float    arq_protocol_longest_burst_s(void);
 uint32_t arq_protocol_accept_rx_window_ms(void);
 #define ARQ_ACCEPT_RX_WINDOW_MS      (arq_protocol_accept_rx_window_ms())
 #define ARQ_ACK_GUARD_S               1     /* extra slack added to retry interval */
