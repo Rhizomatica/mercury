@@ -302,13 +302,21 @@ static void execute_control_command(char *buffer)
             return;
         }
 
-        /* Secondary callsigns (remaining tokens) */
+        /* Secondary callsigns (remaining tokens).  Accepted ones are kept so
+         * each can be acknowledged below: "REGISTERED <Call>" is per call
+         * sign in VARA, and Mercury answers for every one of these. */
+        char accepted_secondaries[CALLSIGN_MAX_SECONDARY][CALLSIGN_MAX_SIZE];
+        int  accepted_count = 0;
         while ((tok = strtok_r(NULL, " \t\r\n", &saveptr)) != NULL)
         {
             memset(&cmd, 0, sizeof(cmd));
             cmd.type = ARQ_CMD_ADD_SECONDARY_CALLSIGN;
             snprintf(cmd.arg0, sizeof(cmd.arg0), "%s", tok);
-            arq_submit_tcp_cmd(&cmd);   /* best-effort; overflow is logged in arq.c */
+            if (arq_submit_tcp_cmd(&cmd) != 0)  /* best-effort; overflow is logged in arq.c */
+                continue;
+            if (accepted_count < CALLSIGN_MAX_SECONDARY)
+                snprintf(accepted_secondaries[accepted_count++],
+                         CALLSIGN_MAX_SIZE, "%s", tok);
         }
 
         tcp_write(CTL_TCP_PORT, (uint8_t *)"OK\r", 3);
@@ -321,6 +329,12 @@ static void execute_control_command(char *buffer)
          * after the write makes the order documented in docs/TNC.md hold by
          * construction instead of by timing. */
         tnc_send_registered(primary_call);
+        /* One line per callsign the station now answers for.  Only the ones
+         * the ARQ layer actually took: past CALLSIGN_MAX_SECONDARY it drops
+         * them, and claiming a registration we did not accept would leave the
+         * host addressing a callsign we will never answer. */
+        for (int i = 0; i < accepted_count; i++)
+            tnc_send_registered(accepted_secondaries[i]);
         return;
     }
 

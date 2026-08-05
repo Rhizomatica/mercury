@@ -466,7 +466,20 @@ Sent when a callsign is set via `MYCALL`, confirming the callsign is
 licensed (VARA compatibility).  Arrives after the `OK\r` response to
 `MYCALL`.  Also sent on client reconnect if a callsign is already set.
 
-The `<callsign>` is the primary callsign exactly as accepted by `MYCALL`.
+`REGISTERED` is **per call sign**, so `MYCALL` emits one line for the primary
+and one for each secondary it accepted, in the order given:
+
+```
+MYCALL AAAA BBBB CCCC\r
+OK\r
+REGISTERED AAAA\r
+REGISTERED BBBB\r
+REGISTERED CCCC\r
+```
+
+Secondaries beyond the four Mercury can hold are dropped, and dropped ones are
+not acknowledged — the host would otherwise address a callsign this station
+never answers.
 
 ---
 
