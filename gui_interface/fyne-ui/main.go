@@ -818,11 +818,6 @@ func main() {
 
 	topBar := container.NewHBox()
 
-	connectionCard := widget.NewCard("", "", container.NewHBox(
-		layout.NewSpacer(),
-		connectButton,
-	))
-
 	txCard := widget.NewCard("", "", container.NewVBox(
 		bindings.txGainLabel,
 		txGainSlider,
@@ -902,7 +897,6 @@ func main() {
 	))
 
 	topPanel := container.NewVBox(
-		connectionCard,
 		container.NewVBox(txCard, telemetryCard),
 	)
 	// A split, not a border: with the spectrum as a border's bottom edge it was
@@ -987,12 +981,13 @@ func main() {
 
 	showRemoteControlDialog := func() {
 		content := container.NewVBox(
+			engineSelect,
 			container.NewGridWithColumns(2,
-				widget.NewLabel("Engine"), engineSelect,
-				widget.NewLabel("Host"), hostEntryBox,
-				widget.NewLabel("Port"), portEntryBox,
+				widget.NewLabel("IP/Host"), hostEntryBox,
+				widget.NewLabel("UI Port"), portEntryBox,
 				widget.NewLabel("Scheme"), schemeSelect,
 			),
+			container.NewPadded(connectButton),
 		)
 
 		bg := canvas.NewRectangle(color.Transparent)
