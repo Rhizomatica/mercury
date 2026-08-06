@@ -214,6 +214,36 @@ int radio_io_init(int radio_type, const char *device_path, int hamlib_log_level,
 
     HLOGI(RADIO_LOG_TAG, "Radio control: HAMLIB (model %d, device %s)",
           radio_type, device_path && device_path[0] ? device_path : "(default)");
+
+    /* Report what hamlib thinks this rig needs after keying, for reference only.
+     *
+     * Mercury does NOT derive its TX timing from this. The relay wait before
+     * audio and the ARQ guards were tuned for our main hardware, the sbitx,
+     * which keys over the SHM interface (RADIO_TYPE_SHM) and never reaches this
+     * function at all. Logging it lets us compare what a hamlib-controlled rig
+     * claims it needs against what we actually wait, before deciding whether
+     * honouring it is worth anything.
+     *
+     * Access to rig_state moved across the hamlib versions we support (4.6..5):
+     * newer hamlib reaches it through rig_data_pointer(), older ones expose the
+     * member directly. Prefer the accessor so this survives the struct being
+     * hidden. The hamlib version string goes on the same line because the field
+     * only means anything once you know which hamlib produced it. */
+    {
+#if defined(HAMLIB_STATE)
+        const struct rig_state *rs = HAMLIB_STATE(radio);
+#elif defined(STATE)
+        const struct rig_state *rs = STATE(radio);
+#else
+        const struct rig_state *rs = &radio->state;
+#endif
+        HLOGI(RADIO_LOG_TAG, "hamlib runtime: %s",
+              hamlib_version2 ? hamlib_version2 : "version unknown");
+        HLOGI(RADIO_LOG_TAG,
+              "rig reports post_ptt_delay=%d ms (informational -- mercury's "
+              "keying wait is independent of it)",
+              rs ? rs->post_ptt_delay : -1);
+    }
     pthread_mutex_unlock(&g_radio_mutex);
     return 0;
 #else
