@@ -1714,6 +1714,9 @@ static void resolve_device_string(int audio_subsys, int mode, char *buf, size_t 
         buf[bufsz - 1] = '\0';
     } else if (matches > 1) {
         HLOGW(log_tag, "device name '%s' is ambiguous (%d matches) -- use an exact id from -z instead", buf, matches);
+    } else {
+        HLOGW(log_tag, "device '%s' matches no known id or name -- passing it through as-is, "
+                       "open will likely fail; run with -z to list valid devices", buf);
     }
 }
 
