@@ -365,6 +365,22 @@ void mfsk_mod(const mfsk_t *m, const int *bits_in, int total_bits,
 
 /* --- demodulator (non-coherent energy detection -> soft LLRs) ----------- */
 
+void mfsk_interleave_init(int *perm, int n)
+{
+    if (n <= 0) return;
+    for (int i = 0; i < n; i++) perm[i] = i;
+
+    /* xorshift64*, seeded by a constant: the table must come out bit-identical
+     * on every build and platform, so no rand(), no floating point. */
+    unsigned long long st = 0x9E3779B97F4A7C15ULL;
+    for (int i = n - 1; i > 0; i--)
+    {
+        st ^= st << 13; st ^= st >> 7; st ^= st << 17;
+        int j = (int)(st % (unsigned long long)(i + 1));
+        int t = perm[i]; perm[i] = perm[j]; perm[j] = t;
+    }
+}
+
 void mfsk_demod(const mfsk_t *m, const mfsk_cplx *fft_in, int total_bits,
                 float *llr_out)
 {

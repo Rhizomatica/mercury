@@ -73,7 +73,10 @@ typedef struct {
                                      * carrier phase tied to the sample, not to
                                      * its position in a sliding buffer        */
     mfsk_cplx      *rb;             /* NPAY*NCAR depadded bins */
-    float          *llr;            /* N LLRs */
+    int             nb;             /* NPAY*bps transmitted bit slots (>= N) */
+    int            *ilv;            /* interleaver: coded index per tx slot   */
+    float          *llr;            /* nb LLRs, in transmitted order          */
+    float          *llr_di;         /* N LLRs, deinterleaved into code order  */
     int            *info;           /* K info bits */
     double complex *preT, *pstT;
     double          preE[MFSK_MAX_PREAMBLE_SYMB], pstE[MFSK_MAX_PREAMBLE_SYMB];
@@ -150,16 +153,23 @@ static void *mfsk_be_open(int mode)
     h->tried_abs  = -1;
     h->reject_abs = -1;
     h->rb    = (mfsk_cplx *)calloc((size_t)h->NPAY * MFSK_NCAR, sizeof(mfsk_cplx));
-    h->llr   = (float *)malloc((size_t)h->code->N * sizeof(float));
+    /* NPAY*bps, not N: mfsk_demod emits one LLR per transmitted bit slot, and
+     * bps need not divide N (M=8 gives 1602 slots for a 1600-bit codeword). */
+    h->nb    = h->NPAY * h->bps;
+    h->ilv   = (int *)malloc((size_t)h->nb * sizeof(int));
+    h->llr   = (float *)malloc((size_t)h->nb * sizeof(float));
+    h->llr_di= (float *)malloc((size_t)h->code->N * sizeof(float));
     h->info  = (int *)malloc((size_t)h->code->K * sizeof(int));
     h->preT  = (double complex *)malloc((size_t)h->P * h->Nofdm * sizeof(double complex));
     h->pstT  = (double complex *)malloc((size_t)h->P * h->Nofdm * sizeof(double complex));
-    if (!h->rxbuf || !h->bf || !h->rb || !h->llr || !h->info || !h->preT || !h->pstT)
+    if (!h->rxbuf || !h->bf || !h->rb || !h->llr || !h->llr_di || !h->ilv ||
+        !h->info || !h->preT || !h->pstT)
     {
-        free(h->rxbuf); free(h->bf); free(h->rb); free(h->llr);
-        free(h->info); free(h->preT); free(h->pstT); free(h);
+        free(h->rxbuf); free(h->bf); free(h->rb); free(h->llr); free(h->llr_di);
+        free(h->ilv); free(h->info); free(h->preT); free(h->pstT); free(h);
         return NULL;
     }
+    mfsk_interleave_init(h->ilv, h->nb);
     h->preN = mfsk_sync_build_template(&h->m, &h->o, h->preT, h->preE);
     h->pstN = mfsk_sync_build_postamble_template(&h->m, &h->o, h->pstT, h->pstE);
     return h;
@@ -169,7 +179,10 @@ static void mfsk_be_close(void *ctx)
 {
     mfsk_modem_t *h = (mfsk_modem_t *)ctx;
     if (!h) return;
-    free(h->rxbuf); free(h->bf); free(h->rb); free(h->llr);
+    /* bb was never freed here: it is rxcap complex doubles (~3.4 MB), leaked on
+     * every open/close cycle. */
+    free(h->rxbuf); free(h->bf); free(h->bb); free(h->rb);
+    free(h->llr); free(h->llr_di); free(h->ilv);
     free(h->info); free(h->preT); free(h->pstT); free(h);
 }
 
@@ -243,10 +256,19 @@ static int mfsk_be_rawdata_tx(void *ctx, int16_t *out, const uint8_t *frame)
     static int coded[MFSK_LDPC_MAXN];
     mfsk_ldpc_encode(h->code, info, coded);
 
-    int nb = h->NPAY * h->bps;
+    /* Scatter the codeword across the burst.  Transmitted slot t carries coded
+     * bit ilv[t], so a fade that wipes a run of consecutive symbols damages
+     * codeword positions spread over the whole block instead of one contiguous
+     * stretch -- which is the difference between "the LDPC fixes it" and "the
+     * frame is lost". Slots past N are padding and carry nothing. */
+    int nb = h->nb;
     int *cbits = (int *)malloc((size_t)nb * sizeof(int));
     if (!cbits) return 0;
-    for (int i = 0; i < nb; i++) cbits[i] = (i < h->code->N) ? coded[i] : 0;
+    for (int t = 0; t < nb; t++)
+    {
+        int j = h->ilv[t];
+        cbits[t] = (j < h->code->N) ? coded[j] : 0;
+    }
 
     mfsk_cplx *dat = (mfsk_cplx *)calloc((size_t)h->NPAY * MFSK_NCAR, sizeof(mfsk_cplx));
     if (!dat) { free(cbits); return 0; }
@@ -335,12 +357,17 @@ static int mfsk_try_payload(mfsk_modem_t *h, int payoff, uint8_t *bytes_out)
             h->rb[s * MFSK_NCAR + k].im = cimag(dep[k]);
         }
     }
-    mfsk_demod(&h->m, h->rb, h->NPAY * h->bps, h->llr);
-    for (int i = 0; i < h->code->N; i++) sig += fabs(h->llr[i]);   /* proxy */
+    mfsk_demod(&h->m, h->rb, h->nb, h->llr);
+    for (int t = 0; t < h->nb; t++)
+    {
+        int j = h->ilv[t];
+        if (j < h->code->N) h->llr_di[j] = h->llr[t];   /* undo the scatter */
+    }
+    for (int i = 0; i < h->code->N; i++) sig += fabs(h->llr_di[i]);   /* proxy */
     (void)noise;
 
     static int out_bits[MFSK_LDPC_MAXK];
-    mfsk_ldpc_decode(h->code, h->llr, out_bits, 50);
+    mfsk_ldpc_decode(h->code, h->llr_di, out_bits, 50);
 
     /* pack info bits -> bytes (MSB-first, matching TX) */
     size_t nbytes = h->frame_bytes;

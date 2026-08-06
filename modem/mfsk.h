@@ -86,6 +86,21 @@ void mfsk_mod(const mfsk_t *m, const int *bits_in, int total_bits,
               mfsk_cplx *symbols_out);
 
 /* RX: non-coherent energy detection -> soft LLRs (clamped to +/-5). */
+/* Build a deterministic interleaver permutation over n transmitted bit slots.
+ *
+ * perm[t] is the coded-bit index carried by transmitted slot t.  An LDPC code
+ * corrects scattered errors far better than a contiguous block, but a fading
+ * HF channel produces exactly the contiguous case: a burst is many seconds
+ * long, so a deep fade wipes a run of consecutive symbols and, without
+ * interleaving, a run of consecutive codeword bits with it.
+ *
+ * Fisher-Yates driven by a fixed xorshift seed, integer arithmetic only, so
+ * both ends derive an identical table on any platform with nothing sent over
+ * the air.  Pseudo-random rather than a fixed stride: these are quasi-cyclic
+ * codes (N=1600, circulant 100), and an arithmetic progression risks aligning
+ * damage onto the same check nodes. */
+void mfsk_interleave_init(int *perm, int n);
+
 void mfsk_demod(const mfsk_t *m, const mfsk_cplx *fft_in, int total_bits,
                 float *llr_out);
 

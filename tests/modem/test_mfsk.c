@@ -243,6 +243,45 @@ void test_ldpc_encode_decode(void)
     }
 }
 
+void test_interleaver(void)
+{
+    /* The interleaver has to be a true permutation (nothing lost, nothing
+     * duplicated), identical on both ends without anything being sent, and it
+     * has to actually SPREAD: consecutive transmitted slots must land far apart
+     * in the codeword, or a fade that wipes a run of symbols still takes out a
+     * contiguous block of coded bits and the LDPC cannot recover it. */
+    enum { N = 1600 };
+    static int perm[N], seen[N], perm2[N];
+
+    mfsk_interleave_init(perm, N);
+
+    for (int i = 0; i < N; i++) seen[i] = 0;
+    for (int t = 0; t < N; t++)
+    {
+        TEST_ASSERT_TRUE(perm[t] >= 0 && perm[t] < N);
+        seen[perm[t]]++;
+    }
+    for (int i = 0; i < N; i++)
+        TEST_ASSERT_EQUAL_INT_MESSAGE(1, seen[i], "interleaver is not a permutation");
+
+    /* Deterministic: the far end derives the same table from the same code. */
+    mfsk_interleave_init(perm2, N);
+    for (int i = 0; i < N; i++) TEST_ASSERT_EQUAL_INT(perm[i], perm2[i]);
+
+    /* Spread: mean jump between neighbouring slots should be a large fraction
+     * of the block.  For a random permutation the expectation is N/3; identity
+     * would give 1. */
+    double jump = 0.0;
+    for (int t = 1; t < N; t++) jump += abs(perm[t] - perm[t-1]);
+    jump /= (N - 1);
+    TEST_ASSERT_TRUE_MESSAGE(jump > N / 8, "interleaver does not spread the codeword");
+
+    /* No short run of slots may map to a run of consecutive codeword bits. */
+    int adjacent = 0;
+    for (int t = 1; t < N; t++) if (abs(perm[t] - perm[t-1]) == 1) adjacent++;
+    TEST_ASSERT_TRUE_MESSAGE(adjacent < N / 100, "too many adjacent pairs survive");
+}
+
 void test_postamble(void)
 {
     /* Postamble tones are distinct from the preamble, and its own template
@@ -336,6 +375,7 @@ int main(void)
     RUN_TEST(test_preamble_acquisition);
     RUN_TEST(test_weak_preamble_acquisition);
     RUN_TEST(test_ldpc_encode_decode);
+    RUN_TEST(test_interleaver);
     RUN_TEST(test_postamble);
     RUN_TEST(test_pattern_detect);
     return UNITY_END();
