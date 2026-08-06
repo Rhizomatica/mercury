@@ -69,3 +69,6 @@ claude_context.txt
 context-*.txt
 copilot-*.txt
 screen.jpg
+
+# dependency files from -MMD
+*.d

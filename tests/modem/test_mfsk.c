@@ -151,6 +151,62 @@ void test_preamble_acquisition(void)
     TEST_ASSERT_EQUAL_INT(-1, off2);
 }
 
+void test_weak_preamble_acquisition(void)
+{
+    /* The acceptance threshold -- not the LDPC -- set the MFSK fringe floor.
+     * The per-symbol statistic is SNR_sym/(1+SNR_sym), so the original 0.5 gate
+     * demanded SNR_sym >= 0 dB and every code rate from 1/2 to 1/16 produced an
+     * identical FER curve, because nothing weaker ever reached the decoder.
+     * Plant a preamble well under that gate: it must be found, and pure noise at
+     * the same level must not be. */
+    mfsk_init(&m, 32, 50, 1);
+    ofdm_frame_t o; ofdm_frame_init(&o, 64, 50, 0.25, 0);
+    int Nofdm = ofdm_frame_nofdm(&o);
+    double complex tmpl[8 * 128]; double sym_e[8];
+    int P = mfsk_sync_build_template(&m, &o, tmpl, sym_e);
+
+    int gap = 3 * Nofdm, true_off = gap;
+    int L = gap + P * Nofdm + gap;
+    static double complex rx[64 * 128];
+
+    /* (urand()-0.5) has variance 1/12 per component, so the complex noise
+     * variance is n^2/6; pick n for a per-symbol SNR of 0.25 (~ -6 dB), which
+     * lands the correlation metric near 0.2. */
+    const double target_snr = 0.25;
+    double n = sqrt(6.0 * sym_e[0] / (Nofdm * target_snr));
+
+    int found = 0; double weak_metric = 1.0;
+    for (int t = 0; t < 10; t++)
+    {
+        for (int i = 0; i < L; i++)
+            rx[i] = n * (urand() - 0.5) + n * (urand() - 0.5) * I;
+        for (int i = 0; i < P * Nofdm; i++) rx[true_off + i] += tmpl[i];
+        double metric = 0;
+        int off = mfsk_sync_search(rx, L, 1, tmpl, sym_e, P, Nofdm, 0, &metric);
+        if (off >= 0 && abs(off - true_off) <= Nofdm)
+        {
+            found++;
+            if (metric < weak_metric) weak_metric = metric;
+        }
+    }
+    TEST_ASSERT_TRUE_MESSAGE(found >= 8,
+        "weak preamble not acquired -- has the accept threshold been raised?");
+    TEST_ASSERT_TRUE_MESSAGE(weak_metric < 0.5,
+        "test signal was not actually weak: the old 0.5 gate would have taken it");
+
+    /* Same noise, no signal: the lower threshold must not invent a preamble. */
+    int falsehits = 0;
+    for (int t = 0; t < 10; t++)
+    {
+        for (int i = 0; i < L; i++)
+            rx[i] = n * (urand() - 0.5) + n * (urand() - 0.5) * I;
+        double metric = 0;
+        if (mfsk_sync_search(rx, L, 1, tmpl, sym_e, P, Nofdm, 0, &metric) >= 0)
+            falsehits++;
+    }
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, falsehits, "false preamble detected in noise");
+}
+
 void test_ldpc_encode_decode(void)
 {
     /* For every rate in the ladder: encoder produces valid codewords (H*c=0)
@@ -278,6 +334,7 @@ int main(void)
     RUN_TEST(test_higher_M_more_robust_awgn);
     RUN_TEST(test_ofdm_framing_roundtrip);
     RUN_TEST(test_preamble_acquisition);
+    RUN_TEST(test_weak_preamble_acquisition);
     RUN_TEST(test_ldpc_encode_decode);
     RUN_TEST(test_postamble);
     RUN_TEST(test_pattern_detect);

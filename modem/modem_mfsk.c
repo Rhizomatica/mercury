@@ -79,6 +79,13 @@ typedef struct {
     double          preE[MFSK_MAX_PREAMBLE_SYMB], pstE[MFSK_MAX_PREAMBLE_SYMB];
     int             preN, pstN;
 
+    long  tried_abs;       /* anchor whose payload we have already decoded once */
+    long  reject_abs;      /* furthest anchor whose resident payload failed CRC;
+                            * the next search restarts past it so one false peak
+                            * cannot mask the real burst behind it */
+    long  anchor_abs;      /* absolute sample index of a located preamble, or
+                            * -1: lets a burst be tracked without re-correlating
+                            * the whole window on every attempt */
     int   last_sync;
     float last_snr;
 } mfsk_modem_t;
@@ -108,6 +115,12 @@ static void *mfsk_be_open(int mode)
     h->mode = mode;
     mfsk_init(&h->m, MFSK_M, MFSK_NCAR, 1);
     ofdm_frame_init(&h->o, MFSK_NFFT, MFSK_NCAR, MFSK_GI, 0);
+    /* Code rate.  All five ported codes share N=1600, so the burst is 13.5 s
+     * whatever the rate -- a lower rate costs payload, not airtime.  Measured
+     * anyway: with acquisition fixed, rate 1/8 buys only ~0.5 dB over rate 1/2
+     * (4/20 vs 0/20 at SNR3k -12.1 dB) because the limit there is the preamble
+     * detector reaching its own noise floor, not the code.  Not worth 4x the
+     * airtime per byte, so the fringe rung stays at rate 1/2. */
     h->code  = &mfsk_ldpc_8_16;          /* rate 1/2: 100-byte frame */
     h->Nofdm = ofdm_frame_nofdm(&h->o);
     h->P     = h->m.preamble_nSymb;
@@ -133,6 +146,9 @@ static void *mfsk_be_open(int mode)
     h->bb    = (double complex *)malloc((size_t)h->rxcap * sizeof(double complex));
     h->bb_len = h->bf_len = 0;
     h->n_abs  = 0;
+    h->anchor_abs = -1;
+    h->tried_abs  = -1;
+    h->reject_abs = -1;
     h->rb    = (mfsk_cplx *)calloc((size_t)h->NPAY * MFSK_NCAR, sizeof(mfsk_cplx));
     h->llr   = (float *)malloc((size_t)h->code->N * sizeof(float));
     h->info  = (int *)malloc((size_t)h->code->K * sizeof(int));
@@ -388,14 +404,84 @@ static int mfsk_be_rawdata_rx(void *ctx, uint8_t *bytes_out, const int16_t *demo
      * correlating out there is pure cost -- and with a two-burst window that is
      * half the buffer.  Trimming the range keeps the search proportional to
      * what is actually decodable. */
+    /* Re-use a preamble we have already located rather than correlating for it
+     * again.  The burst does not move: only the window slides under it, and
+     * n_abs tracks exactly how far.  Searching afresh every 4 symbols meant
+     * re-finding the same peak six times a second over a multi-second window,
+     * which is most of this decoder's CPU -- and CPU is what decides whether it
+     * keeps up on a lossy real-time capture (ALSA drops on overrun; the FIFO
+     * path, which blocks instead, decodes the same burst fine) and whether it
+     * runs at all on a 32-bit Pi. */
     double metric = 0.0;
+    int off = -1;
     int search_len = h->bf_len - h->NPAY * h->Nofdm;
-    int off = (search_len > h->P * h->Nofdm)
-            ? mfsk_sync_search(h->bf, search_len, 1, h->preT, h->preE,
-                               h->preN, h->Nofdm, 0, &metric)
-            : -1;
+
+    if (h->anchor_abs >= 0)
+    {
+        long rel = h->anchor_abs - h->n_abs;
+        if (rel >= 0 && rel <= (long)search_len)
+        {
+            off = (int)rel;          /* still in view: no correlation needed */
+            metric = 1.0;
+        }
+        else
+        {
+            h->anchor_abs = -1;      /* slid out of the window */
+        }
+    }
+
+    if (off < 0 && search_len > h->P * h->Nofdm)
+    {
+        /* Resume past a peak we already proved wrong.  The search returns the
+         * EARLIEST offset above threshold, so a rejected peak at X means there
+         * is nothing above threshold before X -- restarting after it cannot
+         * skip the real burst, and without this a single false peak is re-found
+         * and re-rejected forever while the true preamble sits behind it. */
+        int start_symb = 0;
+        if (h->reject_abs >= 0)
+        {
+            long rel = h->reject_abs - h->n_abs;
+            if (rel < 0) h->reject_abs = -1;                 /* slid out */
+            else start_symb = (int)(rel / h->Nofdm) + 1;
+        }
+        off = mfsk_sync_search(h->bf, search_len, 1, h->preT, h->preE,
+                               h->preN, h->Nofdm, start_symb, &metric);
+        if (off >= 0)
+            h->anchor_abs = h->n_abs + (long)off;
+    }
     int payoff = (off >= 0) ? off + h->P * h->Nofdm : -1;
-    int nbytes = (payoff >= 0) ? mfsk_try_payload(h, payoff, bytes_out) : 0;
+    /* Decode a given burst ONCE.  Once the anchor is fixed and the payload is
+     * fully resident, the samples feeding the demod no longer change, so
+     * re-running a 50-iteration LDPC decode every 4 symbols cannot produce a
+     * different answer -- it just burns CPU in bursts, and a spike is exactly
+     * what makes a real-time capture overrun and lose the NEXT burst.  (The
+     * FIFO path blocks instead of dropping, which is why it completes transfers
+     * while ALSA and PulseAudio both stall after one frame.) */
+    int payload_resident = (payoff >= 0) &&
+                           (payoff + h->NPAY * h->Nofdm <= h->bf_len);
+    int already_tried = (h->anchor_abs >= 0) && (h->tried_abs == h->anchor_abs);
+    int nbytes = 0;
+    if (payoff >= 0 && !already_tried)
+    {
+        nbytes = mfsk_try_payload(h, payoff, bytes_out);
+        if (payload_resident && h->anchor_abs >= 0)
+        {
+            if (nbytes > 0)
+            {
+                h->tried_abs = h->anchor_abs;  /* settled: do not redo this burst */
+            }
+            else
+            {
+                /* A fully-resident payload that fails CRC is either a false
+                 * peak or an undecodable burst.  Either way this anchor has
+                 * nothing left to give: release it and let the search move on,
+                 * rather than caching it and going blind until it slides out. */
+                if (h->anchor_abs > h->reject_abs) h->reject_abs = h->anchor_abs;
+                h->tried_abs  = h->anchor_abs;
+                h->anchor_abs = -1;
+            }
+        }
+    }
 
     /* Fallback anchor: the postamble at the burst tail.  On a half-duplex HF
      * link the HEAD of a burst is the fragile part — the far end may still be
@@ -435,6 +521,9 @@ static int mfsk_be_rawdata_rx(void *ctx, uint8_t *bytes_out, const int16_t *demo
         return 0;
     h->n_abs += h->rxlen;
     h->rxlen = h->bb_len = h->bf_len = 0;   /* burst consumed */
+    h->anchor_abs = -1;
+    h->tried_abs  = -1;
+    h->reject_abs = -1;                     /* next burst searches from the top */
     return nbytes;
 }
 

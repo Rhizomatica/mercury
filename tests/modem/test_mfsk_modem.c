@@ -342,6 +342,72 @@ void test_mfsk_modem_decodes_second_burst_after_window_wraps(void)
         "a burst after the RX window wrapped did not decode");
 }
 
+void test_mfsk_modem_decodes_burst_behind_a_failed_anchor(void)
+{
+    /* A located preamble whose payload is resident but fails CRC must NOT stay
+     * cached as the anchor.  The decoder keeps the anchor to avoid re-running
+     * the correlation over the whole window, so settling on a dead one blinds it
+     * until that anchor slides out -- long enough, with a two-burst window, to
+     * lose the real burst sitting behind it.  This matters more the lower the
+     * accept threshold goes, since weak-signal detection admits more bad
+     * anchors by construction.
+     *
+     * Neither burst carries a postamble: the postamble fallback is a second,
+     * full-window correlation that would otherwise mask the defect here, and on
+     * a real half-duplex link the burst tail is not guaranteed either. */
+    int bytes = be->bits_per_frame(ctx) / 8;
+    int nin   = be->nin(ctx);
+    int cap   = be->n_tx_samples(ctx) + 40000;
+
+    uint8_t *frame = malloc(bytes);
+    for (int i = 0; i < bytes - 2; i++) frame[i] = (uint8_t)(i * 17 + 5);
+    uint16_t crc = freedv_gen_crc16(frame, bytes - 2);
+    frame[bytes - 2] = crc >> 8; frame[bytes - 1] = crc & 0xff;
+
+    int16_t *pre = calloc(cap,2), *dat = calloc(cap,2);
+    int np = be->preamble_tx(ctx, pre);
+    int nd = be->rawdata_tx(ctx, dat, frame);
+
+    int gap   = 4 * nin;
+    int trail = 12 * nin;                 /* room for the real payload to become resident */
+    int total = (np + nd) * 2 + gap + trail;
+    int16_t *pb = calloc((size_t)total, 2);
+    int p = 0;
+
+    /* decoy: a genuine preamble with garbage where the payload belongs */
+    memcpy(pb + p, pre, (size_t)np * 2); p += np;
+    for (int i = 0; i < nd; i++) pb[p + i] = (int16_t)(coin() ? 2200 : -2200);
+    p += nd;
+    for (int i = 0; i < gap; i++) pb[p + i] = (int16_t)(coin() ? 9 : -9);
+    p += gap;
+
+    /* the real burst, close enough behind that the decoy anchor is still in view */
+    memcpy(pb + p, pre, (size_t)np * 2); p += np;
+    memcpy(pb + p, dat, (size_t)nd * 2); p += nd;
+    for (int i = 0; i < trail; i++) pb[p + i] = (int16_t)(coin() ? 9 : -9);
+
+    int chunk = 880, held = 0, match = 0;
+    int16_t *acc = calloc((size_t)chunk + nin, 2);
+    uint8_t *out = calloc((size_t)bytes, 1);
+    for (int off = 0; off + chunk <= total; off += chunk)
+    {
+        memcpy(acc + held, &pb[off], (size_t)chunk * 2);
+        held += chunk;
+        while (held >= nin)
+        {
+            if (be->rawdata_rx(ctx, out, acc) > 0 &&
+                memcmp(out, frame, (size_t)bytes) == 0) match++;
+            held -= nin;
+            if (held > 0) memmove(acc, acc + nin, (size_t)held * 2);
+        }
+    }
+    printf("  payload-match=%d\n", match);
+    free(acc); free(out); free(frame); free(pre); free(dat); free(pb);
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, match,
+        "burst behind a failed anchor was lost -- is the dead anchor still cached?");
+}
+
 void test_mfsk_modem_tx_does_not_clip(void)
 {
     int bytes = be->bits_per_frame(ctx) / 8;
@@ -399,6 +465,7 @@ int main(void)
     RUN_TEST(test_mfsk_modem_decodes_after_long_preroll);
     RUN_TEST(test_mfsk_modem_decodes_burst_in_continuous_audio);
     RUN_TEST(test_mfsk_modem_decodes_second_burst_after_window_wraps);
+    RUN_TEST(test_mfsk_modem_decodes_burst_behind_a_failed_anchor);
     RUN_TEST(test_mfsk_modem_tx_does_not_clip);
     RUN_TEST(test_mfsk_modem_noise_no_false_decode);
     return UNITY_END();

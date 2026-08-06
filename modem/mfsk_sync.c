@@ -9,6 +9,43 @@
 
 #include <math.h>
 
+/* Acceptance threshold for the normalised preamble correlation.
+ *
+ * The per-symbol statistic is |corr|^2/(E_tmpl * E_rx) = SNR_sym/(1+SNR_sym),
+ * so a threshold T only admits SNR_sym >= T/(1-T).  The original 0.5 therefore
+ * demanded SNR_sym >= 0 dB, and THAT was the fringe floor of the entire MFSK
+ * mode -- not the code.  Sweeping all five LDPC rates (1/2 down to 1/16) gave
+ * byte-identical FER curves, because below 0 dB nothing ever reached the
+ * decoder.
+ *
+ * Measured on AWGN over the real two-burst (~104k sample) window with the
+ * 4-symbol preamble:
+ *
+ *     noise-only max metric    0.037 - 0.049   (flat vs SNR -- it is normalised)
+ *     signal @ SNR3k  -5.1 dB  0.219
+ *     signal @ SNR3k  -9.1 dB  0.091
+ *
+ * 0.08 sits ~1.6x above the measured noise maximum (0 false syncs in 600
+ * noise-only searches) and moves the 50% FER point from -0.6 dB to about
+ * -11.4 dB SNR3k.  Below roughly -12 dB the signal metric reaches the noise
+ * floor itself, which no threshold can recover: that needs a detector which
+ * COMBINES the preamble symbols rather than averaging per-symbol normalised
+ * ratios, since averaging gains nothing from preamble length.
+ *
+ * Overridable at build time (-DMFSK_SYNC_ACCEPT=...) for sweeps. */
+#ifndef MFSK_SYNC_ACCEPT
+#define MFSK_SYNC_ACCEPT 0.08
+#endif
+
+/* Per-symbol floor, applied as an AND across the preamble: one symbol below it
+ * discards the whole candidate.  It must stay well under the accept threshold,
+ * because at the fringe individual symbols scatter around the mean and a floor
+ * close to the threshold throws away genuine preambles for a single weak
+ * symbol.  (The old 0.05 was 62% of the old 0.5 gate.) */
+#ifndef MFSK_SYNC_SYM_FLOOR
+#define MFSK_SYNC_SYM_FLOOR (MFSK_SYNC_ACCEPT / 3.0)
+#endif
+
 static int build_tmpl(const mfsk_t *m, const ofdm_frame_t *o, int postamble,
                       double complex *tmpl_out, double *sym_energy_out)
 {
@@ -63,6 +100,9 @@ int mfsk_sync_search(const double complex *rx, int rx_len, int interp,
     int p1_start = (search_start_symb > 0) ? search_start_symb * sym_period : 0;
     int p1_end = (buffer_nsymb - template_nsymb) * sym_period;
 
+    const double accept_thresh = MFSK_SYNC_ACCEPT;
+    const double floor_thresh  = MFSK_SYNC_SYM_FLOOR;
+
     enum { P1_OVERSAMPLE = 4, P1_TOP_K = 8 };
     int p1_step = sym_period / P1_OVERSAMPLE;
     if (p1_step < 1) p1_step = 1;
@@ -70,7 +110,7 @@ int mfsk_sync_search(const double complex *rx, int rx_len, int interp,
     struct { int pos; double metric; } cand[P1_TOP_K];
     int n_cand = 0;
     double best_p1 = -1.0; int best_p1_pos = -1;
-    const double per_sym_floor = 0.05;
+    const double per_sym_floor = floor_thresh;
 
     for (int base = p1_start; base <= p1_end; base += p1_step)
     {
@@ -114,7 +154,7 @@ int mfsk_sync_search(const double complex *rx, int rx_len, int interp,
             if (n_cand < P1_TOP_K) n_cand++;
         }
         if (metric > best_p1) { best_p1 = metric; best_p1_pos = base; }
-        if (metric > 0.5) break;      /* earliest strong preamble */
+        if (metric > accept_thresh) break;  /* earliest strong preamble */
     }
 
     if (best_p1_pos < 0) { if (out_metric) *out_metric = best_p1; return -1; }
@@ -151,11 +191,11 @@ int mfsk_sync_search(const double complex *rx, int rx_len, int interp,
             double metric = (valid > 0) ? total / valid : 0.0;
             if (metric > best_fine_metric) { best_fine_metric = metric; best_fine = d; }
         }
-        if (best_fine_metric > 0.5) break;
+        if (best_fine_metric > accept_thresh) break;
     }
 
     if (out_metric) *out_metric = best_fine_metric;
-    return (best_fine_metric < 0.5) ? -1 : best_fine;
+    return (best_fine_metric < accept_thresh) ? -1 : best_fine;
 }
 
 /* Pattern detection — port of v1 cl_ofdm::detect_ack_pattern (Phase 1).
