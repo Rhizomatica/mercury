@@ -990,18 +990,15 @@ func main() {
 			container.NewPadded(connectButton),
 		)
 
-		bg := canvas.NewRectangle(color.Transparent)
-		bg.SetMinSize(fyne.NewSize(420, 0))
-		padded := container.NewStack(bg, container.NewPadded(content))
-
-		dialog.ShowCustom("Remote Control", "Close", padded, myWindow)
+		dialog.ShowCustom("Remote Control", "Close", content, myWindow)
 	}
 
+	remoteItem := fyne.NewMenuItem("Connect to remote host", showRemoteControlDialog)
+	remoteMenu := fyne.NewMenu("Remote Control", remoteItem)
 	soundcardsItem := fyne.NewMenuItem("Soundcards", showSoundcardDialog)
 	radioConfigItem := fyne.NewMenuItem("Radio Config", showRadioDialog)
-	remoteControlItem := fyne.NewMenuItem("Remote Control", showRemoteControlDialog)
-	configMenu := fyne.NewMenu("Settings", soundcardsItem, radioConfigItem, remoteControlItem)
-	myWindow.SetMainMenu(fyne.NewMainMenu(configMenu))
+	configMenu := fyne.NewMenu("Settings", soundcardsItem, radioConfigItem)
+	myWindow.SetMainMenu(fyne.NewMainMenu(remoteMenu, configMenu))
 
 	// Single idempotent teardown, used by both the window-close handler and the
 	// signal handler.  It runs entirely OFF the GL/main thread: SetOnClosed is
