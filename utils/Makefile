@@ -8,7 +8,7 @@ ifeq ($(OS),Windows_NT)
 LDFLAGS += -lws2_32
 endif
 
-OUT = broadcast_test broadcast_diag_tx broadcast_diag_rx watterson_test
+OUT = broadcast_test broadcast_diag_tx broadcast_diag_rx watterson_test shortframe_sweep
 
 # Default target
 all: $(OUT)
@@ -24,6 +24,11 @@ broadcast_diag_rx: broadcast_diag_rx.c ../datalink_broadcast/kiss.c ../modem/fra
 
 watterson_test: watterson_test.c ../common/watterson.c
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS) -lm
+
+# Needs the freedv LDPC decoder and its vendored parity matrices.
+shortframe_sweep: shortframe_sweep.c ../modem/mfsk.c ../modem/freedv/mpdecode_core.c \
+                  ../modem/freedv/ldpc_codes.c ../modem/freedv/phi0.c
+	$(CC) $(CFLAGS) -o $@ $^ ../modem/freedv/libfreedvdata.a $(LDFLAGS) -lm
 
 # Clean up build artifacts
 clean:

@@ -166,6 +166,51 @@ rather than left in the tree as a dead mode.  DATAC13 vs DATAC16 splits by
 Doppler: fast fading favours DATAC13, slow fading (the measured OTA regime)
 favours DATAC16.
 
+### Fourth attempt: a short MFSK control frame (rejected, 2026-08)
+
+A fourth run at the same target — replace the 3.74 s DATAC16 CALL/ACCEPT with
+something shorter — this time carrying the existing 14-byte control frame plus
+a CRC16 over the project's own non-coherent 32-MFSK waveform with a short
+vendored LDPC code (`H_128_256_5`, K=128, N=256).  Geometry: 52 payload symbols
+at 40 ms = 2.08 s, plus the MFSK 8+8 preamble/postamble = **2.72 s on air**
+against DATAC16's 3.74 s.
+
+The interesting part is that it wins convincingly on AWGN and still loses.
+Measured with `utils/shortframe_sweep`:
+
+| channel | Eb/N0 for FER ≲ 0.02 |
+|---|---|
+| AWGN, 52-sym short frame | 5 dB |
+| flat Rayleigh 1.0 Hz, 52-sym short frame | 12 dB |
+| flat Rayleigh 1.0 Hz, 410-sym long frame (same rate 1/2) | 8 dB |
+| flat Rayleigh 0.2 Hz, 52-sym short frame | 16–18 dB |
+
+On AWGN that is SNR3k ≈ −11.9 dB, about **2.6 dB better than DATAC16's −9.3 dB
+floor and a second shorter** — which is exactly why this idea keeps coming
+back.  Then fading removes it: shortening costs **~4 dB of time diversity** at
+1 Hz, more than the 2.6 dB the shorter frame had won, and it is *worse again on
+a calm channel* (0.2 Hz), where a 2.08 s burst spans roughly a single fade and
+has no time diversity at all.  Slow fading is the measured OTA regime.
+
+Two things are worth keeping from this:
+
+- **Airtime is diversity.**  On a fading channel a control frame cannot be made
+  both shorter and more robust by re-coding it; the time-diversity term is not
+  something a better code recovers.  This is the same wall DATAC13, DATAC14 and
+  DATAC18 hit, and the reason is now a number rather than a recollection.
+- **DATAC15/16 are acquisition-limited, not decode-limited** (as
+  `docs/MFSK-PORT.md` already found).  DATAC16's floor implies Eb/N0 ≈ 9.9 dB
+  while its class of code needs 3–4 dB; the gap is the preamble detector.  That
+  is why DATAC18 died at acquisition, and it is the one lever on this frame
+  that is *not* exhausted.
+
+What does work is not re-coding the frame but **not sending it**: the
+post-ACCEPT connect confirm carries one bit of information and now rides a
+0.64 s Welch-Costas pattern instead of a coded frame (−3.1 s, measured; see
+`tests/sim/connect_bench`).  Correlating a known sequence is a detection
+problem, not a decoding one, so it does not pay the energy-per-bit price that
+sinks every short coded frame.
+
 ## Reproducing the measurements
 
 ```sh
