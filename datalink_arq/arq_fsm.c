@@ -461,6 +461,14 @@ static void send_call_accept(arq_session_t *sess, bool is_accept)
                                     my_call, sess->remote_call, bw_hz);
     if (n > 0)
         send_frame(PACKET_TYPE_ARQ_CALL, sess->control_mode, (size_t)n, frame, 0);
+    else
+        /* Almost always an over-long callsign: the 10-byte SRC slot holds ~14
+         * characters at ~5.25 bits each.  The encoder refuses rather than
+         * truncating (a truncated arithmetic code decodes to a different
+         * string), so say why — otherwise this is a CALL that never goes out
+         * and a session that retries against silence. */
+        HLOGW(LOG_COMP, "%s not sent: cannot encode callsign '%s' (too long?)",
+              is_accept ? "ACCEPT" : "CALL", my_call);
 }
 
 static void send_ctrl_frame(arq_session_t *sess, arq_subtype_t subtype)
@@ -788,7 +796,6 @@ static void fsm_listening(arq_session_t *sess, const arq_event_t *ev)
         {
             sess->role        = ARQ_ROLE_CALLEE;
             reset_session_data_state(sess);
-            sess->startup_deadline_ms = time_now_ms() + (ARQ_STARTUP_MAX_S * 1000ULL);
             if (g_cbs.notify_connected)
                 g_cbs.notify_connected(sess->remote_call, sess->local_call);
             if (g_timing)
@@ -815,8 +822,6 @@ static void fsm_calling(arq_session_t *sess, const arq_event_t *ev)
             bool has_tx_backlog = session_tx_backlog(sess) > 0;
             sess->role        = ARQ_ROLE_CALLER;
             reset_session_data_state(sess);  /* discard stale retransmit buf; MFSK-start */
-            sess->startup_deadline_ms =
-                time_now_ms() + (ARQ_STARTUP_MAX_S * 1000ULL);
             if (g_cbs.notify_connected)
                 g_cbs.notify_connected(sess->remote_call, sess->local_call);
             if (g_timing)
@@ -889,8 +894,6 @@ static void fsm_accepting(arq_session_t *sess, const arq_event_t *ev)
     case ARQ_EV_RX_ACK:
         sess->role        = ARQ_ROLE_CALLEE;
         reset_session_data_state(sess);  /* discard stale retransmit buf; MFSK-start */
-        sess->startup_deadline_ms =
-            time_now_ms() + (ARQ_STARTUP_MAX_S * 1000ULL);
         if (g_cbs.notify_connected)
             g_cbs.notify_connected(sess->remote_call, sess->local_call);
         if (g_timing)

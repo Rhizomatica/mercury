@@ -245,8 +245,6 @@ extern _Atomic float arq_callint_override_s;
 #define ARQ_ACCEPT_RETRY_SLOTS     atomic_load(&arq_accept_retry_slots)
 #define ARQ_DATA_RETRY_SLOTS       atomic_load(&arq_data_retry_slots)
 #define ARQ_DISCONNECT_RETRY_SLOTS atomic_load(&arq_disconnect_retry_slots)
-#define ARQ_CONNECT_GRACE_SLOTS       2     /* extra wait slots for ACCEPT         */
-#define ARQ_CONNECT_BUSY_EXT_S        2     /* busy-extension guard after CALL     */
 #define ARQ_STARTUP_MAX_S_DEFAULT     10    /* control-mode-only startup window    */
 extern _Atomic int arq_startup_max_s;
 #define ARQ_STARTUP_MAX_S  atomic_load(&arq_startup_max_s)

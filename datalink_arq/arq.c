@@ -1107,13 +1107,20 @@ bool arq_get_runtime_snapshot(arq_runtime_snapshot_t *snapshot)
      * guard then flushing bursts that were still arriving.  Trunk, which has no
      * pattern ACK, holds 7.99k samp/s on the same bench.
      *
-     * WAIT_ACK is by definition the only in-session state where the peer's
-     * pattern ACK is due (see ARQ_DFLOW_WAIT_ACK), and ACCEPTING is the
-     * handshake equivalent.  Everywhere else -- above all IDLE_IRS, where the
-     * receiver is busy demodulating a 13.5 s burst -- there is nothing to
-     * detect and the CPU is needed elsewhere. */
+     * WAIT_ACK is by definition the only state where a pattern ACK is due
+     * (see ARQ_DFLOW_WAIT_ACK).  Everywhere else -- above all IDLE_IRS, where
+     * the receiver is busy demodulating a 13.5 s burst -- there is nothing to
+     * detect and the CPU is needed elsewhere.
+     *
+     * ACCEPTING used to be included as "the handshake equivalent".  It is not:
+     * no pattern can arrive there.  The caller answers an ACCEPT with either a
+     * coded DATAC16 confirm (send_call_accept -> ARQ_DFLOW_ACK_TX with
+     * pending_connect_confirm, arq_fsm.c) or a first MFSK DATA burst -- never a
+     * pattern, which send_ack() emits only once the session is CONNECTED.  So
+     * the correlator ran for the whole ~18 s ACCEPT window and spent roughly
+     * half the RX budget precisely while the answerer had to decode the frames
+     * that complete the connect. */
     snapshot->expect_pattern_ack =
-        (g_sess.conn_state == ARQ_CONN_ACCEPTING) ||
         (g_sess.conn_state == ARQ_CONN_CONNECTED &&
          g_sess.dflow_state == ARQ_DFLOW_WAIT_ACK);
     snapshot->trx              = trx;
