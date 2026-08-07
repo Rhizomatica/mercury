@@ -190,6 +190,11 @@ static void sess_enter(arq_session_t *sess, arq_conn_state_t new_state,
           arq_conn_state_name(new_state));
     sess->conn_state     = new_state;
     sess->state_enter_ms = time_now_ms();
+    /* The confirm correlator belongs to ACCEPTING and nothing else: any state
+     * change closes it, including the successful one into CONNECTED, where the
+     * caller's first data burst wants the whole sample budget. */
+    if (new_state != ARQ_CONN_ACCEPTING)
+        sess->confirm_listen_until_ms = 0;
     sess->deadline_ms    = deadline_ms;
     sess->deadline_event = deadline_event;
     /* A deferred LISTEN OFF must SURVIVE the transition that the grace period
@@ -893,6 +898,16 @@ static void fsm_accepting(arq_session_t *sess, const arq_event_t *ev)
     case ARQ_EV_RX_DATA:
     case ARQ_EV_RX_ACK:
         sess->role        = ARQ_ROLE_CALLEE;
+        /* Which of the two legs finished the handshake is worth a line in the
+         * log: "confirm" means the caller's 0.64 s pattern was heard inside the
+         * bounded correlator window (the fast path), "first data" means it was
+         * not and we fell through to the caller's first burst — costing the
+         * time the pattern exists to save.  On a real link the ratio between
+         * these two is the measurement that says whether the fast path is
+         * carrying its weight. */
+        HLOGI(LOG_COMP, "handshake completed on %s",
+              ev->id == ARQ_EV_RX_ACK ? "connect confirm (pattern)"
+                                      : "first data frame");
         reset_session_data_state(sess);  /* discard stale retransmit buf; MFSK-start */
         if (g_cbs.notify_connected)
             g_cbs.notify_connected(sess->remote_call, sess->local_call);
@@ -934,6 +949,12 @@ static void fsm_accepting(arq_session_t *sess, const arq_event_t *ev)
          * a full ARQ_ACCEPT_RX_WINDOW_MS window (guard + DATAC15 frame +
          * margin) measured from the moment our TX actually ends. */
         sess->deadline_ms = time_now_ms() + ARQ_ACCEPT_RX_WINDOW_MS;
+        /* If the caller has nothing queued it answers with a 0.64 s pattern
+         * rather than a DATA burst.  Nothing else decodes a pattern, so open
+         * the correlator here — and only here, for a bounded few seconds, so
+         * it is shut again well before the caller's first data burst needs the
+         * whole sample budget. */
+        sess->confirm_listen_until_ms = time_now_ms() + ARQ_CONNECT_CONFIRM_LISTEN_MS;
         break;
 
     case ARQ_EV_TIMER_RETRY:
@@ -1522,27 +1543,20 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
     case ARQ_DFLOW_ACK_TX:
         if (ev->id == ARQ_EV_TIMER_ACK)
         {
-            if (sess->pending_connect_confirm)
-            {
-                /* Post-ACCEPT connect confirmation still rides the coded ACK. */
-                uint8_t frame[INT_BUFFER_SIZE];
-                uint8_t snr_raw = 0;
-                if (sess->local_snr_x10 != 0)
-                    snr_raw = arq_protocol_encode_snr((float)sess->local_snr_x10 / 10.0f);
-                int n = arq_protocol_build_ack(frame, sizeof(frame),
-                                               sess->session_id, sess->rx_expected,
-                                               0, snr_raw, 0);
-                if (n > 0)
-                    send_frame(PACKET_TYPE_ARQ_CONTROL, sess->control_mode,
-                               (size_t)n, frame, 0);
-            }
-            else
-            {
-                /* Guard elapsed — emit the pattern ACK (break if we have data). */
-                send_ack(sess, 0);
-                if (g_timing)
-                    arq_timing_record_ack_tx(g_timing, (int)sess->rx_expected - 1);
-            }
+            /* Guard elapsed — emit the pattern ACK (break if we have data).
+             *
+             * The post-ACCEPT connect confirmation takes this same path.  It
+             * used to build a coded DATAC16 ACK, which cost 3.74 s on the air
+             * to say one thing the answerer already has every other bit of:
+             * "I heard your ACCEPT".  The pattern says it in 0.64 s and, being
+             * a full-energy Welch-Costas correlation rather than a coded
+             * frame, says it roughly 10 dB further down — so the third leg of
+             * the handshake stops being the most fragile one.  It carries no
+             * session id, but none is needed: the answerer is in ACCEPTING
+             * with exactly one call outstanding. */
+            send_ack(sess, 0);
+            if (g_timing && !sess->pending_connect_confirm)
+                arq_timing_record_ack_tx(g_timing, (int)sess->rx_expected - 1);
             dflow_enter(sess, ARQ_DFLOW_ACK_TX, UINT64_MAX, ARQ_EV_TIMER_RETRY);
         }
         else if (ev->id == ARQ_EV_TX_COMPLETE)

@@ -1112,17 +1112,19 @@ bool arq_get_runtime_snapshot(arq_runtime_snapshot_t *snapshot)
      * the receiver is busy demodulating a 13.5 s burst -- there is nothing to
      * detect and the CPU is needed elsewhere.
      *
-     * ACCEPTING used to be included as "the handshake equivalent".  It is not:
-     * no pattern can arrive there.  The caller answers an ACCEPT with either a
-     * coded DATAC16 confirm (send_call_accept -> ARQ_DFLOW_ACK_TX with
-     * pending_connect_confirm, arq_fsm.c) or a first MFSK DATA burst -- never a
-     * pattern, which send_ack() emits only once the session is CONNECTED.  So
-     * the correlator ran for the whole ~18 s ACCEPT window and spent roughly
-     * half the RX budget precisely while the answerer had to decode the frames
-     * that complete the connect. */
+     * ACCEPTING is the one other state where a pattern is due -- the caller's
+     * connect confirm -- but it is emphatically NOT the whole ~18 s ACCEPT
+     * window, which is how this was first written and what cost the RX budget
+     * at exactly the wrong moment.  The confirm's arrival time is predictable
+     * (one ISS post-ACK guard after our ACCEPT leaves the air), so the FSM opens
+     * a bounded few-second window at ACCEPT PTT-OFF and closes it on any state
+     * change: see confirm_listen_until_ms / ARQ_CONNECT_CONFIRM_LISTEN_MS. */
     snapshot->expect_pattern_ack =
         (g_sess.conn_state == ARQ_CONN_CONNECTED &&
-         g_sess.dflow_state == ARQ_DFLOW_WAIT_ACK);
+         g_sess.dflow_state == ARQ_DFLOW_WAIT_ACK) ||
+        (g_sess.conn_state == ARQ_CONN_ACCEPTING &&
+         g_sess.confirm_listen_until_ms != 0 &&
+         time_now_ms() < g_sess.confirm_listen_until_ms);
     snapshot->trx              = trx;
     snapshot->tx_backlog_bytes = backlog +
         (g_sess.tx_frame_present ? g_sess.tx_frame_len : 0);

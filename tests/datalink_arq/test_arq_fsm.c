@@ -245,6 +245,41 @@ void test_accepting_rx_call_rearms_budget(void)
     TEST_ASSERT_EQUAL_INT(ARQ_CONN_ACCEPTING, sess.conn_state);
 }
 
+/* The caller confirms an ACCEPT with a 0.64 s Welch-Costas pattern, and nothing
+ * but the pattern correlator can decode one -- so the answerer has to run that
+ * correlator or the connect never completes.  It is also expensive (measured
+ * 3.5k samp/s consumed against 8k arriving), so it must NOT stay on for the
+ * whole ~18 s ACCEPT window, which is what starves the decoders that handle the
+ * caller's first data burst.
+ *
+ * The contract is therefore a bounded window: opened when our ACCEPT leaves the
+ * air (TX_COMPLETE), closed on any state change.  Both halves matter -- an
+ * always-off window breaks the handshake, an always-on one costs sensitivity
+ * exactly where we cannot afford it. */
+void test_connect_confirm_listen_window_is_bounded(void)
+{
+    enter_accepting();
+
+    /* Not yet keyed off: nothing to listen for. */
+    TEST_ASSERT_EQUAL_UINT64(0, sess.confirm_listen_until_ms);
+
+    mock_set_uptime_ms(5000);
+    arq_event_t done = make_event(ARQ_EV_TX_COMPLETE);
+    arq_fsm_dispatch(&sess, &done);
+
+    /* Opened at PTT-OFF, and bounded -- emphatically shorter than the ACCEPT
+     * RX window it used to be conflated with. */
+    TEST_ASSERT_EQUAL_UINT64(5000 + ARQ_CONNECT_CONFIRM_LISTEN_MS,
+                             sess.confirm_listen_until_ms);
+    TEST_ASSERT_TRUE(ARQ_CONNECT_CONFIRM_LISTEN_MS < ARQ_ACCEPT_RX_WINDOW_MS);
+
+    /* The confirm arrives; ACCEPTING is over and so is the correlator. */
+    arq_event_t ack = make_event(ARQ_EV_RX_ACK);
+    arq_fsm_dispatch(&sess, &ack);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_CONNECTED, sess.conn_state);
+    TEST_ASSERT_EQUAL_UINT64(0, sess.confirm_listen_until_ms);
+}
+
 /* Connection-setup slots must stay short by default (not the DATA default of
  * 10) so a failed connect and its mirror ACCEPT window give up quickly. */
 void test_default_call_accept_slots_are_short(void)
@@ -996,6 +1031,7 @@ int main(void)
     RUN_TEST(test_call_timeout_no_listen);
     RUN_TEST(test_accepting_gives_up_after_budget);
     RUN_TEST(test_accepting_rx_call_rearms_budget);
+    RUN_TEST(test_connect_confirm_listen_window_is_bounded);
     RUN_TEST(test_default_call_accept_slots_are_short);
     RUN_TEST(test_stop_listen);
     RUN_TEST(test_timeout_ms_idle);

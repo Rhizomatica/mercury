@@ -210,6 +210,18 @@ extern _Atomic int arq_iss_post_ack_guard_ms;
  * DATAC15 first frame and became shorter than the MFSK floor burst, which made
  * the IRS retransmit ACCEPT into the ISS's data.) */
 #define ARQ_ACCEPT_RX_WINDOW_MARGIN_MS 3700
+/* How long the answerer keeps the pattern correlator live after its ACCEPT
+ * stops transmitting, waiting for the caller's 0.64 s connect confirm.
+ *
+ * This is deliberately NOT the full ACCEPT RX window (~18 s).  The correlator
+ * is expensive — measured at 3.5k samp/s consumed against 8k arriving — so
+ * running it for the whole window starves the decoders that must handle the
+ * caller's first DATA burst.  The confirm, unlike a data ACK, arrives in a
+ * window we can predict: the caller keys it one ISS post-ACK guard after it
+ * finishes decoding our ACCEPT, and our ACCEPT finishes on the air at the same
+ * instant it does.  Guard + the caller's decode turnaround + the burst itself
+ * + slack fits well inside 4 s. */
+#define ARQ_CONNECT_CONFIRM_LISTEN_MS  4000
 float    arq_protocol_longest_burst_s(void);
 uint32_t arq_protocol_accept_rx_window_ms(void);
 #define ARQ_ACCEPT_RX_WINDOW_MS      (arq_protocol_accept_rx_window_ms())

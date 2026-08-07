@@ -220,5 +220,12 @@ test_sock_wire: audioio/test_sock_wire.c $(UNITY_SRC)
 test_virtual_clock: common/test_virtual_clock.c $(UNITY_SRC) ../common/virtual_clock.c
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
+# The benches are not part of `all` (they are instruments, not pass/fail gates),
+# but they MUST be removed by clean.  Leaving connect_bench behind meant a
+# `make clean && make` cycle silently served a binary built from the previous
+# tree -- an A/B that read byte-identical before and after a change that had in
+# fact moved the number by 3.1 s.
+BENCH_BINS = connect_bench
+
 clean:
-	rm -f $(TEST_BINS)
+	rm -f $(TEST_BINS) $(BENCH_BINS)

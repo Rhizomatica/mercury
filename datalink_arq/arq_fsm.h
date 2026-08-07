@@ -229,6 +229,11 @@ typedef struct
     bool     pending_connect_confirm;  /* caller must ACK ACCEPT when no initial
                                         * DATA is queued, otherwise callee stays
                                         * in ACCEPTING waiting for first traffic */
+    uint64_t confirm_listen_until_ms;  /* answerer only: run the pattern
+                                        * correlator until this instant, waiting
+                                        * for the caller's connect confirm.
+                                        * 0 = do not run it.  Bounded on purpose;
+                                        * see ARQ_CONNECT_CONFIRM_LISTEN_MS      */
     bool     need_initial_guard;       /* ISS must apply channel guard before
                                         * first DATA after connect (prevents
                                         * transmitting before IRS resets its
