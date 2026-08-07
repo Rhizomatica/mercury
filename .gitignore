@@ -80,3 +80,4 @@ tests/connect_bench
 
 utils/shortframe_sweep
 utils/acquire_vs_decode
+utils/hail_suffix_sweep

@@ -8,7 +8,7 @@ ifeq ($(OS),Windows_NT)
 LDFLAGS += -lws2_32
 endif
 
-OUT = broadcast_test broadcast_diag_tx broadcast_diag_rx watterson_test shortframe_sweep acquire_vs_decode
+OUT = broadcast_test broadcast_diag_tx broadcast_diag_rx watterson_test shortframe_sweep acquire_vs_decode hail_suffix_sweep
 
 # Default target
 all: $(OUT)
@@ -39,6 +39,9 @@ run: broadcast_test
 	./broadcast_test 127.0.0.1 8300
 
 # Links the whole freedv library: drives the real OFDM modems, not a model.
+hail_suffix_sweep: hail_suffix_sweep.c ../modem/mfsk.c ../modem/mfsk_sync.c ../modem/mfsk_ofdm.c
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS) -lm
+
 acquire_vs_decode: acquire_vs_decode.c
 	$(CC) $(CFLAGS) -o $@ $^ ../modem/freedv/libfreedvdata.a $(LDFLAGS) -lm
 

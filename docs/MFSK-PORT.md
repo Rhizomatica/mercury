@@ -389,3 +389,52 @@ vs our 13.1 s), independently confirming the fade-diversity result above. Their
 Caveats: RFDM points are 5–12 trials against 20–60 for ours, one fading
 profile, and faded cross-rate figures carry the ~1.5 dB two-path offset
 documented in `watterson_model.md`.
+
+## Directed patterns: the suffix only addresses if the threshold forces it
+
+A Welch-Costas pattern plus a few session-derived suffix symbols is an
+attractive replacement for a coded ACCEPT — it is a *correlation against an
+expected sequence*, not a decode, so it escapes the energy-per-bit wall that
+sinks every short coded control frame (`docs/MODES.md`, "Fourth attempt").
+`mfsk_set_hail_target()` already builds exactly this shape: the 16-symbol
+pattern followed by 4 symbols derived from an FNV-1a hash.
+
+There is an arithmetic trap in it. The detector scores matched symbols over the
+whole 20-symbol sequence against one threshold, and **16 of those 20 symbols
+are the shared pattern**. So any threshold ≤ 16 can be satisfied without a
+single suffix symbol matching, and the suffix addresses nobody.
+`mfsk_set_hail_target()` sets `hail_detect_threshold = hail_match_threshold +
+MFSK_HAIL_SUFFIX_LEN` = **12 of 20**, which is in exactly that régime.
+
+Measured with `utils/hail_suffix_sweep` (AWGN, 100 trials, one wrong-session
+key), transmitting session A's directed pattern and asking whether session B's
+detector accepts it:
+
+| SNR3k | detect (thr 12) | wrong-session (thr 12) | detect (thr 18) | wrong-session (thr 18) |
+|---|---|---|---|---|
+| −12 dB | 96/100 | **73/100** | 12/100 | 0/100 |
+| −10 dB | 100/100 | **100/100** | 86/100 | 0/100 |
+| −8 dB | 100/100 | **100/100** | 100/100 | 0/100 |
+
+At the hail threshold a directed pattern is accepted by the wrong station
+essentially always.  This is latent rather than shipping —
+`mfsk_set_hail_target()` is not wired into any live path — but fix the
+threshold before wiring it: it must exceed `ack_pattern_nsymb`, so that
+`threshold − ack_pattern_nsymb` suffix symbols are *forced* to match.
+
+Selectivity is not free.  Requiring ≥2 of 4 suffix symbols (threshold 18/20)
+gives 0/100 wrong-session acceptance here, and a residual structural rate
+against a *random* other session of C(4,2)(1/32)²(31/32)² + … ≈ **0.56 %**
+(≈1 in 178); ≥3 of 4 (threshold 19) drops that to 0.012 % but costs
+sensitivity.  The dB bought back by the threshold is the whole trade:
+
+- plain 16-symbol pattern, threshold 8/16 — usable to about **−15 dB**, but
+  addresses nobody.  Fine for the in-session connect confirm, which is what
+  ships: the session already exists and the correlator window is bounded.
+- directed 20-symbol pattern, threshold 18/20 — usable to about **−10.5 dB**,
+  i.e. comparable to DATAC16's −9.5 dB, in **800 ms against 3740 ms**.
+
+So a directed pattern is a credible ACCEPT: about a dB better than the coded
+frame and ~2.9 s shorter.  Before wiring it, measure the false-accept rate over
+*many* random session keys rather than the single pair used here — the binomial
+above is an estimate, not a measurement.
