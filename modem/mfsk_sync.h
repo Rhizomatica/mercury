@@ -48,4 +48,25 @@ int mfsk_detect_pattern(const mfsk_t *m, const ofdm_frame_t *o,
                         const int *tones, int pattern_len, int nsymb,
                         int *out_pos);
 
+/* Score SEVERAL tone lists over one pass of the buffer.
+ *
+ * Identical results to calling mfsk_detect_pattern() once per list, at close to
+ * the cost of one: the expensive part -- a GI removal, an FFT and a depad for
+ * every (candidate start, symbol) pair -- depends only on the buffer, not on
+ * which tones are expected, so it is done once and every list scored against
+ * the same bins.
+ *
+ * This matters because the correlator is not cheap.  It was measured consuming
+ * 3.5k samp/s against 8k arriving, which is why the ARQ layer only runs it
+ * inside bounded windows (see expect_pattern_ack in arq.c).  The shipped
+ * ack/break detection was paying that twice over the same samples.
+ *
+ * scores_out[i] and pos_out[i] (pos_out may be NULL) receive list i's result.
+ * All lists share pattern_len and nsymb. */
+void mfsk_detect_patterns(const mfsk_t *m, const ofdm_frame_t *o,
+                          const double complex *rx, int rx_len,
+                          const int *const *tone_lists, int nlists,
+                          int pattern_len, int nsymb,
+                          int *scores_out, int *pos_out);
+
 #endif /* MERCURY_MFSK_SYNC_H */

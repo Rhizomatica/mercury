@@ -422,11 +422,37 @@ essentially always.  This is latent rather than shipping —
 threshold before wiring it: it must exceed `ack_pattern_nsymb`, so that
 `threshold − ack_pattern_nsymb` suffix symbols are *forced* to match.
 
-Selectivity is not free.  Requiring ≥2 of 4 suffix symbols (threshold 18/20)
-gives 0/100 wrong-session acceptance here, and a residual structural rate
-against a *random* other session of C(4,2)(1/32)²(31/32)² + … ≈ **0.56 %**
-(≈1 in 178); ≥3 of 4 (threshold 19) drops that to 0.012 % but costs
-sensitivity.  The dB bought back by the threshold is the whole trade:
+**Four suffix symbols is the wrong length.**  Selectivity comes from how many
+suffix symbols the threshold *forces* to match, so with only 4 available, a
+1-in-10 000 false-accept demands all 20 symbols match — 100 % of them, which is
+punishing at the fringe.  Lengthening the suffix buys selectivity far more
+cheaply than tightening the threshold does:
+
+| suffix | on air | forced matches for <0.01 % | threshold | % of symbols |
+|---|---|---|---|---|
+| 4 | 800 ms | ≥4 of 4 | 20/20 | 100 % |
+| 8 | 960 ms | ≥4 of 8 | 20/24 | **83 %** |
+| 12 | 1120 ms | ≥5 of 12 | 21/28 | 75 % |
+
+**Eight suffix symbols at threshold 20/24 is the recommended geometry.**
+Measured over a realistic 3-burst search window with the burst at a random
+offset (as the RX loop sees it), 150 trials at −10 dB: **150/150 detected,
+0/150 accepted from a random other session, 0/150 false alarms on noise.**
+On a 1 dB grid against the DATAC16 ACCEPT it replaces (`utils/acquire_vs_decode`
+figures, same AWGN, same axis):
+
+| SNR3k | DATAC16 ACCEPT (3740 ms) | directed pattern (960 ms) |
+|---|---|---|
+| −9 dB | 95/100 | 100 % |
+| −10 dB | 72/100 | 98 % |
+| −11 dB | 36/100 | 83 % |
+| −12 dB | 12/100 | 33 % |
+
+About **2 dB more sensitive and 2.78 s shorter**.  Note `MFSK_HAIL_SUFFIX_LEN`
+is currently 4 and would have to grow, and the FNV-1a derivation only yields 6
+symbols per 32-bit hash, so it must be rehashed for longer suffixes.
+
+The dB bought back by the threshold is the whole trade:
 
 - plain 16-symbol pattern, threshold 8/16 — usable to about **−15 dB**, but
   addresses nobody.  Fine for the in-session connect confirm, which is what

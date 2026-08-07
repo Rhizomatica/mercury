@@ -51,7 +51,7 @@
 #define TXAMP     2200.0
 #define LPF_TAPS  63
 #define LPF_FC    1000.0
-#define SUFFIX_LEN 4
+#define SUFFIX_MAX 16
 
 static unsigned long long rng = 99887766554433ULL;
 
@@ -85,8 +85,13 @@ static void mklpf(double *h, double fc)
 
 /* Same FNV-1a derivation mfsk_set_hail_target uses, over an arbitrary key so
  * the suffix can be bound to (session id, callsigns, bandwidth token). */
-static void suffix_from_key(const char *key, int M, int *suffix)
+static void suffix_from_key(const char *key, int M, int *suffix, int len)
 {
+    /* FNV-1a as mfsk_set_hail_target does, but rehashed per 6 symbols so the
+     * suffix can be longer than the 32 bits of one hash.  A 4-symbol suffix
+     * cannot reach a 1-in-10000 false-accept without demanding that all 20
+     * symbols match, which costs far more sensitivity than the extra symbols
+     * do -- see the table in docs/MFSK-PORT.md. */
     uint32_t hash = 2166136261u;
     for (const char *p = key; *p; p++)
     {
@@ -95,16 +100,22 @@ static void suffix_from_key(const char *key, int M, int *suffix)
         hash ^= (uint8_t)c;
         hash *= 16777619u;
     }
-    for (int i = 0; i < SUFFIX_LEN; i++)
-        suffix[i] = (int)((hash >> (i * 5)) & 0x1F) % M;
+    uint32_t h = hash;
+    for (int i = 0; i < len; i++)
+    {
+        if (i > 0 && (i % 6) == 0) { h ^= (uint32_t)i; h *= 16777619u; }
+        suffix[i] = (int)((h >> ((i % 6) * 5)) & 0x1F) % M;
+    }
 }
 
 int main(int argc, char **argv)
 {
     int    trials = (argc > 1) ? atoi(argv[1]) : 200;
-    double snr_lo = (argc > 2) ? atof(argv[2]) : -22.0;
-    double snr_hi = (argc > 3) ? atof(argv[3]) : -6.0;
-    if (trials <= 0) { fprintf(stderr, "usage: %s [trials] [snr_lo] [snr_hi]\n", argv[0]); return 1; }
+    int    sufflen= (argc > 2) ? atoi(argv[2]) : 8;
+    double snr_lo = (argc > 3) ? atof(argv[3]) : -20.0;
+    double snr_hi = (argc > 4) ? atof(argv[4]) : -6.0;
+    if (trials <= 0 || sufflen <= 0 || sufflen > SUFFIX_MAX)
+    { fprintf(stderr, "usage: %s [trials] [suffix_len] [snr_lo] [snr_hi]\n", argv[0]); return 1; }
 
     mfsk_t m;
     ofdm_frame_t o;
@@ -116,51 +127,79 @@ int main(int argc, char **argv)
     mklpf(lpf, LPF_FC);
 
     int base_ns  = m.ack_pattern_nsymb;          /* plain pattern, as shipped */
-    int dir_ns   = base_ns + SUFFIX_LEN;         /* directed = pattern+suffix */
+    int dir_ns   = base_ns + sufflen;            /* directed = pattern+suffix */
     int nsamp    = dir_ns * Nofdm;
+    /* Production slides the correlator over ~3 bursts of mostly noise
+     * (see the pattern detector in modem.c), so search over the same span:
+     * a one-burst window understates both the search difficulty and the
+     * false-alarm rate. */
+    int nwin     = nsamp * 3;
 
     printf("M=%d  plain pattern %d sym (%.0f ms, threshold %d/%d)\n",
            m.M, base_ns, base_ns * Nofdm * 1000.0 / FS,
            m.ack_match_threshold, base_ns);
     printf("      directed      %d sym (%.0f ms) = pattern + %d suffix symbols\n\n",
-           dir_ns, dir_ns * Nofdm * 1000.0 / FS, SUFFIX_LEN);
+           dir_ns, dir_ns * Nofdm * 1000.0 / FS, sufflen);
 
     /* Expected tone list for OUR session, and for somebody else's. */
-    int tones_mine[64], tones_other[64], suf_mine[SUFFIX_LEN], suf_other[SUFFIX_LEN];
-    suffix_from_key("PU2UIT-2>PU2UIT-3:42:2300", m.M, suf_mine);
-    suffix_from_key("DL9ABC>W1XYZ:17:500",       m.M, suf_other);
+    int tones_mine[64], tones_other[64];
+    int suf_mine[SUFFIX_MAX], suf_other[SUFFIX_MAX];
+    suffix_from_key("PU2UIT-2>PU2UIT-3:42:2300", m.M, suf_mine, sufflen);
     for (int s = 0; s < base_ns; s++)
         tones_mine[s] = tones_other[s] = m.ack_tones[s % m.ack_pattern_len];
-    for (int s = 0; s < SUFFIX_LEN; s++)
-    {
-        tones_mine[base_ns + s]  = suf_mine[s];
-        tones_other[base_ns + s] = suf_other[s];
-    }
+    for (int s = 0; s < sufflen; s++)
+        tones_mine[base_ns + s] = suf_mine[s];
 
     /* Thresholds worth testing, all out of dir_ns.  Anything <= base_ns can be
      * met by the SHARED Costas prefix alone, so the suffix contributes no
      * selectivity there -- which includes hail's own
-     * hail_match_threshold + SUFFIX_LEN. */
+     * hail_match_threshold + MFSK_HAIL_SUFFIX_LEN. */
+    /* Only thresholds ABOVE base_ns force suffix matches; at or below it the
+     * shared Costas prefix alone satisfies the detector and the suffix
+     * addresses nobody. */
     int nthr = 6;
-    int thr[6] = { m.hail_match_threshold + SUFFIX_LEN, base_ns,
-                   base_ns + 1, base_ns + 2, base_ns + 3, base_ns + 4 };
+    int thr[6];
+    for (int i = 0; i < nthr; i++)
+    {
+        thr[i] = base_ns + 1 + i;
+        if (thr[i] > dir_ns) thr[i] = dir_ns;
+    }
+    int thr_op = base_ns + 4;                    /* the >=4-suffix operating point */
+    if (thr_op > dir_ns) thr_op = dir_ns;
 
     printf("  SNR3k |");
     for (int i = 0; i < nthr; i++) printf("  detect@%2d ", thr[i]);
-    printf("|  false-accept (wrong/noise) at thr=%d and thr=%d\n", thr[0], thr[3]);
+    printf("| false-accept vs RANDOM sessions at thr=%d\n", thr_op);
 
+    printf("  (thresholds above %d force suffix matches; %d = all symbols)\n",
+           base_ns, dir_ns);
     mfsk_cplx *bins = calloc((size_t)dir_ns * NCAR, sizeof(mfsk_cplx));
     int16_t   *pb   = malloc(sizeof(int16_t) * (size_t)nsamp);
-    double complex *bb = malloc(sizeof(double complex) * (size_t)nsamp);
-    double complex *bf = malloc(sizeof(double complex) * (size_t)nsamp);
+    double complex *bb = malloc(sizeof(double complex) * (size_t)nwin);
+    double complex *bf = malloc(sizeof(double complex) * (size_t)nwin);
     if (!bins || !pb || !bb || !bf) return 1;
 
-    for (double snr = snr_lo; snr <= snr_hi + 0.01; snr += 2.0)
+    for (double snr = snr_lo; snr <= snr_hi + 0.01; snr += 1.0)
     {
-        int hit[6] = {0}, wrong = 0, wrong_hi = 0, noise_fa = 0;
+        int hit[6] = {0}, wrong = 0, noise_fa = 0;
 
         for (int t = 0; t < trials; t++)
         {
+            /* A fresh random peer session each trial: the false-accept rate
+             * we care about is against the population of other sessions, not
+             * against one arbitrary key. */
+            char okey[64];
+            snprintf(okey, sizeof(okey), "%c%c%d%c%c>%c%c%d:%d:%d",
+                     'A' + (int)(urand() * 26), 'A' + (int)(urand() * 26),
+                     (int)(urand() * 10),
+                     'A' + (int)(urand() * 26), 'A' + (int)(urand() * 26),
+                     'A' + (int)(urand() * 26), 'A' + (int)(urand() * 26),
+                     (int)(urand() * 10), (int)(urand() * 128),
+                     (int)(urand() * 4));
+            suffix_from_key(okey, m.M, suf_other, sufflen);
+            for (int s2 = 0; s2 < sufflen; s2++)
+                tones_other[base_ns + s2] = suf_other[s2];
+
             /* --- transmit our directed pattern --- */
             memset(bins, 0, (size_t)dir_ns * NCAR * sizeof(mfsk_cplx));
             double amp = sqrt((double)NCAR);
@@ -194,41 +233,46 @@ int main(int argc, char **argv)
             ps /= written;
             double sigma = sqrt(ps / (pow(10.0, snr / 10.0) * (3000.0 / (FS / 2.0))));
 
+            /* Random placement inside the window, as on the air. */
+            int off = (int)(urand() * (double)(nwin - written));
+
             for (int pass = 0; pass < 2; pass++)
             {
                 /* pass 0: signal + noise.  pass 1: noise only (false alarm). */
-                for (int i = 0; i < written; i++)
+                for (int i = 0; i < nwin; i++)
                 {
-                    double v = (pass == 0 ? (double)pb[i] : 0.0) + sigma * gauss();
+                    int k2 = i - off;
+                    double sig = (pass == 0 && k2 >= 0 && k2 < written)
+                                 ? (double)pb[k2] : 0.0;
+                    double v  = sig + sigma * gauss();
                     double ph = w * (double)i;
                     bb[i] = 2.0 * v * cos(ph) + I * 2.0 * v * sin(ph);
                 }
-                for (int i = 0; i < written; i++)
+                for (int i = 0; i < nwin; i++)
                 {
                     double complex a = 0;
                     for (int k = 0; k < LPF_TAPS; k++)
                     {
                         int j = i - k + LPF_TAPS / 2;
-                        if (j >= 0 && j < written) a += lpf[k] * bb[j];
+                        if (j >= 0 && j < nwin) a += lpf[k] * bb[j];
                     }
                     bf[i] = a;
                 }
 
                 int pos = -1;
-                int s_mine  = mfsk_detect_pattern(&m, &o, bf, written,
+                int s_mine  = mfsk_detect_pattern(&m, &o, bf, nwin,
                                                   tones_mine, dir_ns, dir_ns, &pos);
-                int s_other = mfsk_detect_pattern(&m, &o, bf, written,
+                int s_other = mfsk_detect_pattern(&m, &o, bf, nwin,
                                                   tones_other, dir_ns, dir_ns, &pos);
                 if (pass == 0)
                 {
                     for (int i = 0; i < nthr; i++)
                         if (s_mine >= thr[i]) hit[i]++;
-                    if (s_other >= thr[0]) wrong++;        /* at hail's own threshold */
-                    if (s_other >= thr[3]) wrong_hi++;     /* at a suffix-forcing one */
+                    if (s_other >= thr_op) wrong++;
                 }
                 else
                 {
-                    if (s_mine >= thr[0]) noise_fa++;
+                    if (s_mine >= thr_op) noise_fa++;
                 }
             }
         }
@@ -236,8 +280,7 @@ int main(int argc, char **argv)
         printf("  %+5.1f |", snr);
         for (int i = 0; i < nthr; i++)
             printf("   %3d/%-3d ", hit[i], trials);
-        printf("|  %3d/%-3d and %3d/%-3d wrong-session, %d noise\n",
-               wrong, trials, wrong_hi, trials, noise_fa);
+        printf("|  %3d/%-4d wrong-session, %d noise\n", wrong, trials, noise_fa);
     }
 
     free(bins); free(pb); free(bb); free(bf);

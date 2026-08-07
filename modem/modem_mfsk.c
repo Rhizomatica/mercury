@@ -781,14 +781,18 @@ int mfsk_pattern_detect(const int16_t *pb, int n, int *is_break)
         bf[i] = a;
     }
 
+    /* Score ack and break in ONE pass.  These two calls used to redo every
+     * FFT over the same samples for the sake of a different tone list, which
+     * doubled the cost of the most expensive thing in the RX loop (measured
+     * 3.5k samp/s against 8k arriving — the reason arq.c only runs this inside
+     * bounded windows). */
     int ns  = g_pat_m.ack_pattern_nsymb;
-    int pos = -1;
-    int ack_score = mfsk_detect_pattern(&g_pat_m, &g_pat_o, bf, n,
-                                        g_pat_m.ack_tones, g_pat_m.ack_pattern_len,
-                                        ns, &pos);
-    int brk_score = mfsk_detect_pattern(&g_pat_m, &g_pat_o, bf, n,
-                                        g_pat_m.break_tones, g_pat_m.ack_pattern_len,
-                                        ns, &pos);
+    const int *lists[2] = { g_pat_m.ack_tones, g_pat_m.break_tones };
+    int scores[2] = {0, 0};
+    mfsk_detect_patterns(&g_pat_m, &g_pat_o, bf, n, lists, 2,
+                         g_pat_m.ack_pattern_len, ns, scores, NULL);
+    int ack_score = scores[0];
+    int brk_score = scores[1];
     free(bb); free(bf);
 
     bool ack_hit = ack_score >= g_pat_m.ack_match_threshold;

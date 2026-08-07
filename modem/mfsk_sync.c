@@ -207,6 +207,107 @@ int mfsk_sync_search(const double complex *rx, int rx_len, int interp,
  * E_target/E_total is a tie-break metric. Unlike v1 we depad first (same path as
  * mfsk_demod) instead of hand-mapping raw FFT bins + carrier-image mirrors, since
  * this pipeline's LPF+depad already rejects the image. */
+#define MFSK_DETECT_MAX_LISTS 8
+
+void mfsk_detect_patterns(const mfsk_t *m, const ofdm_frame_t *o,
+                          const double complex *rx, int rx_len,
+                          const int *const *tone_lists, int nlists,
+                          int pattern_len, int nsymb,
+                          int *scores_out, int *pos_out)
+{
+    if (nlists > MFSK_DETECT_MAX_LISTS) nlists = MFSK_DETECT_MAX_LISTS;
+
+    int Nofdm = ofdm_frame_nofdm(o);
+    if (rx_len < nsymb * Nofdm || nlists <= 0)
+    {
+        for (int l = 0; l < nlists; l++)
+        {
+            scores_out[l] = 0;
+            if (pos_out) pos_out[l] = -1;
+        }
+        return;
+    }
+
+    int step = Nofdm / 8;
+    if (step < 1) step = 1;
+    int last_base = rx_len - nsymb * Nofdm;
+
+    int    best_matched[MFSK_DETECT_MAX_LISTS];
+    int    best_pos[MFSK_DETECT_MAX_LISTS];
+    double best_metric[MFSK_DETECT_MAX_LISTS];
+    for (int l = 0; l < nlists; l++)
+    {
+        best_matched[l] = -1; best_pos[l] = -1; best_metric[l] = -1.0;
+    }
+
+    double complex blk[2048], rmv[2048], fftd[2048], bins[1024];
+
+    for (int base = 0; base <= last_base; base += step)
+    {
+        int    matched[MFSK_DETECT_MAX_LISTS] = {0};
+        double metric[MFSK_DETECT_MAX_LISTS]  = {0.0};
+
+        for (int p = 0; p < nsymb; p++)
+        {
+            /* The costly part, and the whole reason this function exists: it
+             * depends only on (base, p), never on which tones we hoped for. */
+            int rbase = base + p * Nofdm;
+            for (int n = 0; n < Nofdm; n++) blk[n] = rx[rbase + n];
+            ofdm_gi_remover(o, blk, rmv);
+            ofdm_fft(o, rmv, fftd);
+            ofdm_zero_depadder(o, fftd, bins);
+
+            double e_total = 0.0;
+            for (int k = 0; k < o->Nc; k++)
+            {
+                double complex v = bins[k];
+                e_total += creal(v) * creal(v) + cimag(v) * cimag(v);
+            }
+
+            for (int l = 0; l < nlists; l++)
+            {
+                int actual_tone =
+                    (tone_lists[l][p % pattern_len] + p * m->tone_hop_step) % m->M;
+
+                int    streams_matched = 0;
+                double e_target = 0.0;
+                for (int st = 0; st < m->nStreams; st++)
+                {
+                    int base_bin = m->stream_offsets[st];
+                    double peak_e = -1.0; int peak_t = -1;
+                    for (int t = 0; t < m->M; t++)
+                    {
+                        double complex v = bins[base_bin + t];
+                        double e = creal(v) * creal(v) + cimag(v) * cimag(v);
+                        if (e > peak_e) { peak_e = e; peak_t = t; }
+                        if (t == actual_tone) e_target += e;
+                    }
+                    if (peak_e > 0.0 && peak_t == actual_tone) streams_matched++;
+                }
+                if (streams_matched == m->nStreams) matched[l]++;
+                if (e_total > 0.0) metric[l] += e_target / e_total;
+            }
+        }
+
+        for (int l = 0; l < nlists; l++)
+        {
+            if (matched[l] > best_matched[l] ||
+                (matched[l] == best_matched[l] && metric[l] > best_metric[l]))
+            {
+                best_matched[l] = matched[l];
+                best_metric[l]  = metric[l];
+                best_pos[l]     = base;
+            }
+        }
+    }
+
+    for (int l = 0; l < nlists; l++)
+    {
+        scores_out[l] = (best_matched[l] < 0) ? 0 : best_matched[l];
+        if (pos_out) pos_out[l] = best_pos[l];
+    }
+}
+
 int mfsk_detect_pattern(const mfsk_t *m, const ofdm_frame_t *o,
                         const double complex *rx, int rx_len,
                         const int *tones, int pattern_len, int nsymb,
