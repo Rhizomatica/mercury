@@ -932,6 +932,39 @@ void test_irs_mirror_resets_toward_floor_on_silence(void)
     TEST_ASSERT_EQUAL_INT(MERCURY_MODE_MFSK, sess.peer_tx_mode);     /* stepped back to the floor */
 }
 
+/* The CALL retry clock must start when the burst leaves the air, not when it
+ * was queued.  A CALL spends ~3.8 s modulating, so anchoring at enqueue spent
+ * that airtime out of the 8 s retry interval and fired the retransmission at
+ * t~8.0 s — while the peer's ACCEPT was still arriving at t~8.1 s.  That cost
+ * a fourth transmission on a channel that had lost nothing (measured: 4.0
+ * frames for a 3-frame handshake on a clean link). */
+void test_calling_reanchors_retry_on_tx_complete(void)
+{
+    arq_event_t ev = make_event(ARQ_EV_APP_LISTEN);
+    arq_fsm_dispatch(&sess, &ev);
+
+    mock_set_uptime_ms(1000);
+    ev = make_event(ARQ_EV_APP_CONNECT);
+    strncpy(ev.remote_call, "DST1", CALLSIGN_MAX_SIZE);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_CALLING, sess.conn_state);
+    uint64_t deadline_at_enqueue = sess.deadline_ms;
+
+    /* The burst occupies the channel, then PTT drops. */
+    mock_set_uptime_ms(1000 + 3840);
+    ev = make_event(ARQ_EV_TX_COMPLETE);
+    arq_fsm_dispatch(&sess, &ev);
+
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_CALLING, sess.conn_state);
+    TEST_ASSERT_TRUE_MESSAGE(sess.deadline_ms > deadline_at_enqueue,
+        "CALL retry still anchored at enqueue: it will collide with the ACCEPT");
+    /* A full retry interval measured from PTT-OFF. */
+    TEST_ASSERT_UINT64_WITHIN(50,
+        (uint64_t)(1000 + 3840) +
+            (uint64_t)(arq_protocol_call_interval_s() * 1000.0f),
+        sess.deadline_ms);
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -972,5 +1005,6 @@ int main(void)
     RUN_TEST(test_irs_mirror_climbs_with_peer);
     RUN_TEST(test_irs_mirror_steps_down_on_duplicate);
     RUN_TEST(test_irs_mirror_resets_toward_floor_on_silence);
+    RUN_TEST(test_calling_reanchors_retry_on_tx_complete);
     return UNITY_END();
 }

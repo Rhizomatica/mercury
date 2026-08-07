@@ -76,17 +76,23 @@ int main(int argc, char **argv)
     int trials = (argc > 1) ? atoi(argv[1]) : 8;
 
     printf("Connect latency (virtual time, %d seeds per point)\n\n", trials);
-    printf("%8s %9s %12s %12s %10s\n",
-           "PER", "connects", "caller(ms)", "callee(ms)", "frames");
+    printf("%8s %9s %12s %12s %10s %12s\n",
+           "PER", "connects", "caller(ms)", "callee(ms)", "frames", "censored");
 
     const double pers[] = { 0.0, 0.1, 0.2, 0.3, 0.5 };
     for (unsigned p = 0; p < sizeof pers / sizeof pers[0]; p++)
     {
         unsigned ok = 0, fr = 0;
-        uint64_t sum_caller = 0, sum_callee = 0;
+        uint64_t sum_caller = 0, sum_callee = 0, sum_censored = 0;
         for (int t = 0; t < trials; t++)
         {
             run_t r = one_connect(pers[p], 1000u + (uint64_t)t * 7919u);
+            /* Censored mean: a failure counts as the cap, so improving the
+             * success rate cannot masquerade as a latency regression. Means
+             * over successes ALONE are survivor-biased — when a change makes
+             * previously-hopeless connects succeed, those slow successes pull
+             * the success-only mean up while the link actually got better. */
+            sum_censored += r.ok ? r.callee_ms : CONNECT_CAP_MS;
             if (!r.ok) continue;
             ok++;
             sum_caller += r.caller_ms;
@@ -94,13 +100,14 @@ int main(int argc, char **argv)
             fr         += r.frames_a + r.frames_b;
         }
         if (ok)
-            printf("%8.2f %6u/%-3d %12.0f %12.0f %10.1f\n",
+            printf("%8.2f %6u/%-3d %12.0f %12.0f %10.1f %12.0f\n",
                    pers[p], ok, trials,
                    (double)sum_caller / ok, (double)sum_callee / ok,
-                   (double)fr / ok);
+                   (double)fr / ok, (double)sum_censored / trials);
         else
-            printf("%8.2f %6u/%-3d %12s %12s %10s\n",
-                   pers[p], ok, trials, "-", "-", "-");
+            printf("%8.2f %6u/%-3d %12s %12s %10s %12.0f\n",
+                   pers[p], ok, trials, "-", "-", "-",
+                   (double)sum_censored / trials);
         fflush(stdout);
     }
     return 0;
