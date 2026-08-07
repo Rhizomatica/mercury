@@ -123,6 +123,14 @@ test_arq_conn: datalink_arq/test_arq_conn.c $(UNITY_SRC) \
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
 # -I.. : watterson.h includes "modem/freedv/comp.h" relative to the repo root
+# Connect-latency instrument (not a pass/fail test — run it by hand).
+# Mirrors test_arq_sim's link line, minus Unity.
+connect_bench: sim/connect_bench.c $(ARQ_STUBS) $(SIM_SRC) \
+               ../datalink_arq/arq_fsm.c ../common/virtual_clock.c \
+               ../datalink_arq/arq_protocol.c \
+               ../datalink_arq/arq_timing.c ../datalink_arq/arith.c
+	$(CC) $(CFLAGS) -Isim -I../modem/freedv -o $@ $^ $(LDFLAGS)
+
 test_watterson: common/test_watterson.c $(UNITY_SRC) ../common/watterson.c
 	$(CC) $(CFLAGS) -I.. -o $@ $^ $(LDFLAGS)
 
