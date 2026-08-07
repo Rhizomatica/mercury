@@ -25,11 +25,8 @@ _Atomic int arq_disconnect_drain_timeout_s = ARQ_DISCONNECT_DRAIN_TIMEOUT_S_DEFA
 _Atomic int arq_channel_guard_ms            = ARQ_CHANNEL_GUARD_MS_DEFAULT;
 _Atomic int arq_iss_post_ack_guard_ms       = ARQ_ISS_POST_ACK_GUARD_MS_DEFAULT;
 _Atomic int arq_ladder_up_successes         = ARQ_LADDER_UP_SUCCESSES_DEFAULT;
-_Atomic int arq_startup_max_s               = ARQ_STARTUP_MAX_S_DEFAULT;
 
 /* Config-compat storage (see arq_protocol.h) — set by config, unused by FSM. */
-_Atomic int arq_keepalive_interval_s        = ARQ_KEEPALIVE_INTERVAL_S_DEFAULT;
-_Atomic int arq_keepalive_miss_limit        = ARQ_KEEPALIVE_MISS_LIMIT_DEFAULT;
 _Atomic int arq_peer_payload_hold_s         = ARQ_PEER_PAYLOAD_HOLD_S_DEFAULT;
 _Atomic int arq_retry_downgrade_threshold   = ARQ_RETRY_DOWNGRADE_THRESHOLD_DEFAULT;
 _Atomic int arq_mode_hold_after_downgrade_s = ARQ_MODE_HOLD_AFTER_DOWNGRADE_S_DEFAULT;

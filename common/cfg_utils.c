@@ -61,10 +61,7 @@ void cfg_set_defaults(mercury_config *cfg)
     cfg->retry_downgrade_threshold   = ARQ_RETRY_DOWNGRADE_THRESHOLD_DEFAULT;
     cfg->channel_guard_ms            = ARQ_CHANNEL_GUARD_MS_DEFAULT;
     cfg->iss_post_ack_guard_ms       = ARQ_ISS_POST_ACK_GUARD_MS_DEFAULT;
-    cfg->keepalive_interval_s        = ARQ_KEEPALIVE_INTERVAL_S_DEFAULT;
-    cfg->keepalive_miss_limit        = ARQ_KEEPALIVE_MISS_LIMIT_DEFAULT;
     cfg->peer_payload_hold_s         = ARQ_PEER_PAYLOAD_HOLD_S_DEFAULT;
-    cfg->startup_max_s               = ARQ_STARTUP_MAX_S_DEFAULT;
     cfg->busy_detect                 = false;
     cfg->busy_threshold_db           = 10;
     cfg->busy_hysteresis_db          = 3;
@@ -211,17 +208,11 @@ bool cfg_read(mercury_config *cfg, const char *ini_path)
     i = iniparser_getint(ini, CFG_KEY_ARQ_ISS_POST_ACK_GUARD_MS, cfg->iss_post_ack_guard_ms);
     if (i >= 200 && i <= 3000) cfg->iss_post_ack_guard_ms = i;
 
-    i = iniparser_getint(ini, CFG_KEY_ARQ_KEEPALIVE_INTERVAL_S, cfg->keepalive_interval_s);
-    if (i >= 5 && i <= 120)  cfg->keepalive_interval_s = i;
 
-    i = iniparser_getint(ini, CFG_KEY_ARQ_KEEPALIVE_MISS_LIMIT, cfg->keepalive_miss_limit);
-    if (i >= 2 && i <= 20)   cfg->keepalive_miss_limit = i;
 
     i = iniparser_getint(ini, CFG_KEY_ARQ_PEER_PAYLOAD_HOLD_S, cfg->peer_payload_hold_s);
     if (i >= 1 && i <= 120)  cfg->peer_payload_hold_s = i;
 
-    i = iniparser_getint(ini, CFG_KEY_ARQ_STARTUP_MAX_S, cfg->startup_max_s);
-    if (i >= 2 && i <= 60)   cfg->startup_max_s = i;
 
     cfg->busy_detect = (bool) iniparser_getboolean(ini, CFG_KEY_BUSY_DETECT,
                                                    cfg->busy_detect ? 1 : 0);
@@ -338,10 +329,7 @@ bool cfg_write(const mercury_config *cfg, const char *ini_path)
     fprintf(f, "retry_downgrade_threshold = %d\n", cfg->retry_downgrade_threshold);
     fprintf(f, "channel_guard_ms = %d\n", cfg->channel_guard_ms);
     fprintf(f, "iss_post_ack_guard_ms = %d\n", cfg->iss_post_ack_guard_ms);
-    fprintf(f, "keepalive_interval_s = %d\n", cfg->keepalive_interval_s);
-    fprintf(f, "keepalive_miss_limit = %d\n", cfg->keepalive_miss_limit);
     fprintf(f, "peer_payload_hold_s = %d\n", cfg->peer_payload_hold_s);
-    fprintf(f, "startup_max_s = %d\n", cfg->startup_max_s);
 
     fprintf(f, "\n[channel]\n");
     fprintf(f, "busy_detect = %s\n", cfg->busy_detect ? "true" : "false");

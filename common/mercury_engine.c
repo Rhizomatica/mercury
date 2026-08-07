@@ -122,10 +122,7 @@ int mercury_engine_init(const mercury_config *cfg,
     arq_set_retry_downgrade_threshold(cfg->retry_downgrade_threshold);
     arq_set_channel_guard_ms(cfg->channel_guard_ms);
     arq_set_iss_post_ack_guard_ms(cfg->iss_post_ack_guard_ms);
-    arq_set_keepalive_interval_s(cfg->keepalive_interval_s);
-    arq_set_keepalive_miss_limit(cfg->keepalive_miss_limit);
     arq_set_peer_payload_hold_s(cfg->peer_payload_hold_s);
-    arq_set_startup_max_s(cfg->startup_max_s);
     modem_set_tx_gain(powf(10.0f, cfg->tx_gain_db / 20.0f));
     modem_set_tx_delay_ms(cfg->tx_delay_ms);
     modem_set_busy_cfg((float)cfg->busy_threshold_db,

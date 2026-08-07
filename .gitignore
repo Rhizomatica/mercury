@@ -72,3 +72,8 @@ screen.jpg
 
 # dependency files from -MMD
 *.d
+
+# test/bench binaries and their output dirs
+utils/watterson_test
+tests/connect_bench
+/results/

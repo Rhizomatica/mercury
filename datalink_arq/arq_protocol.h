@@ -245,17 +245,10 @@ extern _Atomic float arq_callint_override_s;
 #define ARQ_ACCEPT_RETRY_SLOTS     atomic_load(&arq_accept_retry_slots)
 #define ARQ_DATA_RETRY_SLOTS       atomic_load(&arq_data_retry_slots)
 #define ARQ_DISCONNECT_RETRY_SLOTS atomic_load(&arq_disconnect_retry_slots)
-#define ARQ_STARTUP_MAX_S_DEFAULT     10    /* control-mode-only startup window    */
-extern _Atomic int arq_startup_max_s;
-#define ARQ_STARTUP_MAX_S  atomic_load(&arq_startup_max_s)
 
 /* Config-compat tunables — no longer read by the delivery-driven FSM (the mode
  * ladder needs no SNR/OLLA/keepalive), but retained as runtime storage so the
  * existing [arq] mercury.ini knobs and their config accessors stay valid. */
-#define ARQ_KEEPALIVE_INTERVAL_S_DEFAULT        20
-extern _Atomic int arq_keepalive_interval_s;
-#define ARQ_KEEPALIVE_MISS_LIMIT_DEFAULT        5
-extern _Atomic int arq_keepalive_miss_limit;
 #define ARQ_PEER_PAYLOAD_HOLD_S_DEFAULT         15
 extern _Atomic int arq_peer_payload_hold_s;
 #define ARQ_RETRY_DOWNGRADE_THRESHOLD_DEFAULT   2

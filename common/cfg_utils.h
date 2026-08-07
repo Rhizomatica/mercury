@@ -53,10 +53,7 @@
 #define CFG_KEY_ARQ_RETRY_DOWNGRADE_THRESHOLD "arq:retry_downgrade_threshold"
 #define CFG_KEY_ARQ_CHANNEL_GUARD_MS          "arq:channel_guard_ms"
 #define CFG_KEY_ARQ_ISS_POST_ACK_GUARD_MS     "arq:iss_post_ack_guard_ms"
-#define CFG_KEY_ARQ_KEEPALIVE_INTERVAL_S      "arq:keepalive_interval_s"
-#define CFG_KEY_ARQ_KEEPALIVE_MISS_LIMIT      "arq:keepalive_miss_limit"
 #define CFG_KEY_ARQ_PEER_PAYLOAD_HOLD_S       "arq:peer_payload_hold_s"
-#define CFG_KEY_ARQ_STARTUP_MAX_S             "arq:startup_max_s"
 #define CFG_KEY_BUSY_DETECT                   "channel:busy_detect"
 #define CFG_KEY_BUSY_THRESHOLD_DB             "channel:busy_threshold_db"
 #define CFG_KEY_BUSY_HYSTERESIS_DB            "channel:busy_hysteresis_db"
@@ -99,14 +96,8 @@ typedef struct {
                                          * Default 700, clamped 200..3000.      */
     int      iss_post_ack_guard_ms;     /* ARQ: ISS guard before resuming DATA
                                          * TX after ACK. Default 900, 200..3000.*/
-    int      keepalive_interval_s;      /* ARQ: keepalive TX interval. Default
-                                         * 20, clamped 5..120.                  */
-    int      keepalive_miss_limit;      /* ARQ: missed keepalives before drop.
-                                         * Default 5, clamped 2..20.            */
     int      peer_payload_hold_s;       /* ARQ: hold peer payload mode after
                                          * activity. Default 15, clamped 1..120.*/
-    int      startup_max_s;             /* ARQ: control-mode-only startup
-                                         * window. Default 10, clamped 2..60.   */
     float    tx_gain_db;            /* Linear-equivalent gain on the modulator
                                     * TX samples, in dB. 0.0 = no change.
                                     * Range -20.0 .. +20.0 (clamped). */

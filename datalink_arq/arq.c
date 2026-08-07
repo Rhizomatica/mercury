@@ -1233,22 +1233,6 @@ void arq_set_iss_post_ack_guard_ms(int ms)
     HLOGI(LOG_COMP, "iss_post_ack_guard_ms = %d", atomic_load(&arq_iss_post_ack_guard_ms));
 }
 
-void arq_set_keepalive_interval_s(int s)
-{
-    if (s < 5)   s = (s <= 0) ? ARQ_KEEPALIVE_INTERVAL_S_DEFAULT : 5;
-    if (s > 120) s = 120;
-    atomic_store(&arq_keepalive_interval_s, s);
-    HLOGI(LOG_COMP, "keepalive_interval_s = %d", atomic_load(&arq_keepalive_interval_s));
-}
-
-void arq_set_keepalive_miss_limit(int n)
-{
-    if (n < 2)  n = (n <= 0) ? ARQ_KEEPALIVE_MISS_LIMIT_DEFAULT : 2;
-    if (n > 20) n = 20;
-    atomic_store(&arq_keepalive_miss_limit, n);
-    HLOGI(LOG_COMP, "keepalive_miss_limit = %d", atomic_load(&arq_keepalive_miss_limit));
-}
-
 void arq_set_ladder_up_successes(int n)
 {
     if (n < 1)  n = (n <= 0) ? ARQ_LADDER_UP_SUCCESSES_DEFAULT : 1;
@@ -1279,14 +1263,6 @@ void arq_set_peer_payload_hold_s(int s)
     if (s > 120) s = 120;
     atomic_store(&arq_peer_payload_hold_s, s);
     HLOGI(LOG_COMP, "peer_payload_hold_s = %d", atomic_load(&arq_peer_payload_hold_s));
-}
-
-void arq_set_startup_max_s(int s)
-{
-    if (s < 2)  s = (s <= 0) ? ARQ_STARTUP_MAX_S_DEFAULT : 2;
-    if (s > 60) s = 60;
-    atomic_store(&arq_startup_max_s, s);
-    HLOGI(LOG_COMP, "startup_max_s = %d", atomic_load(&arq_startup_max_s));
 }
 
 void reset_arq_info(arq_info *conn)
