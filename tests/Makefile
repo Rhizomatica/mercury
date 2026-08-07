@@ -45,6 +45,7 @@ ARQ_STUBS = datalink_arq/arq_test_stubs.c
 TEST_BINS = test_ring_buffer test_arq_protocol test_arq_timing test_arq_fsm \
             test_tcp_interfaces test_resampler test_arq_ladder test_arq_sim \
             test_arq_conn test_cfg_utils test_arq_tnc test_channel_busy test_mfsk \
+            test_watterson \
             test_mfsk_modem test_pattern_ack_detection test_freedv_harq \
             test_pcm24 test_sock_wire test_virtual_clock
 
@@ -120,6 +121,10 @@ test_arq_sim: sim/test_arq_sim.c $(UNITY_SRC) $(ARQ_STUBS) $(SIM_SRC) \
 test_arq_conn: datalink_arq/test_arq_conn.c $(UNITY_SRC) \
                datalink_arq/arq_conn_accessors.c
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
+# -I.. : watterson.h includes "modem/freedv/comp.h" relative to the repo root
+test_watterson: common/test_watterson.c $(UNITY_SRC) ../common/watterson.c
+	$(CC) $(CFLAGS) -I.. -o $@ $^ $(LDFLAGS)
 
 test_cfg_utils: common/test_cfg_utils.c $(UNITY_SRC) \
                 ../common/cfg_utils.c \
