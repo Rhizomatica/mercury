@@ -79,3 +79,4 @@ tests/connect_bench
 /results/
 
 utils/shortframe_sweep
+utils/acquire_vs_decode

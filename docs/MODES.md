@@ -198,11 +198,31 @@ Two things are worth keeping from this:
   both shorter and more robust by re-coding it; the time-diversity term is not
   something a better code recovers.  This is the same wall DATAC13, DATAC14 and
   DATAC18 hit, and the reason is now a number rather than a recollection.
-- **DATAC15/16 are acquisition-limited, not decode-limited** (as
-  `docs/MFSK-PORT.md` already found).  DATAC16's floor implies Eb/N0 ≈ 9.9 dB
-  while its class of code needs 3–4 dB; the gap is the preamble detector.  That
-  is why DATAC18 died at acquisition, and it is the one lever on this frame
-  that is *not* exhausted.
+- **DATAC16's fringe floor is set by acquisition, not by the decoder** —
+  measured, not inferred (`utils/acquire_vs_decode DATAC16 100 -13 -7`, AWGN):
+
+  | SNR3k | acquired | delivered | decode given sync |
+  |---|---|---|---|
+  | −8 dB | 100/100 | 99/100 | 99 % |
+  | −9 dB | 99/100 | 95/100 | 96 % |
+  | −10 dB | 76/100 | 72/100 | 95 % |
+  | −11 dB | 42/100 | 36/100 | 86 % |
+  | −12 dB | 13/100 | 12/100 | 92 % |
+
+  Below −9 dB the acquisition rate collapses while frames that do sync still
+  decode 86–96 % of the time: the mode is losing bursts at the preamble
+  detector.  (The harness agrees with the independent 100-trial figures above:
+  95/100 delivered at −9 dB vs 96/100.)  That is why DATAC18 died at
+  acquisition, and acquisition is the one lever on this frame not yet
+  exhausted.
+
+  Resist settling this from an energy budget.  DATAC16's floor implies Eb/N0
+  ≈ 9.3 dB against ~1–2 dB for a rate-0.2 code near capacity, which looks like
+  a damning ~7 dB of acquisition deficit — until cyclic prefix (~1.3 dB),
+  pilots (~1.3 dB), channel-estimation and implementation loss (~1.5 dB) and
+  short-code loss at N=640 (~2.5 dB) are subtracted, leaving ~1 dB, i.e.
+  nothing conclusive.  The budget cannot answer this question; the split above
+  can.
 
 What does work is not re-coding the frame but **not sending it**: the
 post-ACCEPT connect confirm carries one bit of information and now rides a
