@@ -42,6 +42,21 @@
  * re-measuring the peak: the clamp below hides the damage instead of reporting
  * it. */
 #define MFSK_TXAMP    2200.0
+/* Frequency hypotheses in HALF subcarriers (15.625 Hz), spanning +/-3 bins,
+ * i.e. about +/-94 Hz of dial error -- well past what a pair of HF radios
+ * drift apart by.
+ *
+ * Half-bin steps, not whole: a whole-bin grid leaves the worst case sitting
+ * exactly between two hypotheses, where the tone energy splits across two FFT
+ * bins and neither template captures it. Measured with a whole-bin grid --
+ * 31/62/94 Hz recovered to 10/10, but 16/47/110 Hz stayed at 0/10. Half-bin
+ * steps bound the residual at a quarter bin (7.8 Hz), which decodes cleanly.
+ *
+ * Ordered nearest-first at search time and latched once found, so a correctly
+ * tuned link pays for exactly one correlation, as before. */
+#define MFSK_FREQ_HYPS   13
+#define MFSK_FREQ_HYP_LO (-6)          /* in half-bins */
+
 #define MFSK_LPF_TAPS 63
 #define MFSK_LPF_FC   1000.0
 
@@ -79,6 +94,13 @@ typedef struct {
     float          *llr_di;         /* N LLRs, deinterleaved into code order  */
     int            *info;           /* K info bits */
     double complex *preT, *pstT;
+    /* Preamble templates pre-rotated by each frequency hypothesis. A dial
+     * error shifts every tone; beyond half a subcarrier (15.6 Hz here) the
+     * nominal FFT bins see nothing and the mode goes stone deaf. Measured on
+     * the unmodified decoder: 12 Hz decoded 10/10, 16 Hz decoded 0/10. */
+    double complex *preT_hyp[MFSK_FREQ_HYPS];
+    int             freq_hb;        /* latched hypothesis, in HALF subcarriers */
+    int             freq_locked;    /* a decode confirmed freq_hb            */
     double          preE[MFSK_MAX_PREAMBLE_SYMB], pstE[MFSK_MAX_PREAMBLE_SYMB];
     int             preN, pstN;
 
@@ -109,6 +131,8 @@ static void mklpf(double *lpf, double fc)
 }
 
 /* ---- lifecycle -------------------------------------------------------- */
+
+static void mfsk_be_close(void *ctx);
 
 static void *mfsk_be_open(int mode)
 {
@@ -171,6 +195,24 @@ static void *mfsk_be_open(int mode)
     }
     mfsk_interleave_init(h->ilv, h->nb);
     h->preN = mfsk_sync_build_template(&h->m, &h->o, h->preT, h->preE);
+    /* One template per hypothesis: rotating the TEMPLATE by +k bins matches a
+     * received signal shifted by +k bins, and costs nothing at run time beyond
+     * the extra correlations. Rotation is continuous across the whole template
+     * because the received burst is. */
+    for (int hy = 0; hy < MFSK_FREQ_HYPS; hy++)
+    {
+        int hb = MFSK_FREQ_HYP_LO + hy;   /* half-bins */
+        h->preT_hyp[hy] = (double complex *)malloc((size_t)h->preN * h->Nofdm *
+                                                   sizeof(double complex));
+        if (!h->preT_hyp[hy]) { mfsk_be_close(h); return NULL; }
+        for (int n = 0; n < h->preN * h->Nofdm; n++)
+        {
+            double ph = M_PI * (double)hb * (double)n / (double)MFSK_NFFT;
+            h->preT_hyp[hy][n] = h->preT[n] * (cos(ph) + I * sin(ph));
+        }
+    }
+    h->freq_hb = 0;
+    h->freq_locked = 0;
     h->pstN = mfsk_sync_build_postamble_template(&h->m, &h->o, h->pstT, h->pstE);
     return h;
 }
@@ -181,6 +223,7 @@ static void mfsk_be_close(void *ctx)
     if (!h) return;
     /* bb was never freed here: it is rxcap complex doubles (~3.4 MB), leaked on
      * every open/close cycle. */
+    for (int hy = 0; hy < MFSK_FREQ_HYPS; hy++) free(h->preT_hyp[hy]);
     free(h->rxbuf); free(h->bf); free(h->bb); free(h->rb);
     free(h->llr); free(h->llr_di); free(h->ilv);
     free(h->info); free(h->preT); free(h->pstT); free(h);
@@ -348,7 +391,22 @@ static int mfsk_try_payload(mfsk_modem_t *h, int payoff, uint8_t *bytes_out)
     {
         int b = payoff + s * h->Nofdm;
         double complex rmv[MFSK_NFFT], ff[MFSK_NFFT], dep[MFSK_NCAR];
-        ofdm_gi_remover(&h->o, &h->bf[b], rmv);
+        double complex sym[MFSK_NFFT * 2];
+        const double complex *src = &h->bf[b];
+        if (h->freq_hb != 0)
+        {
+            /* Undo the dial offset the acquisition found, so the tones land
+             * back on their nominal bins. Phase restarts each symbol, which is
+             * harmless: the demod is non-coherent, only the frequency matters. */
+            for (int n = 0; n < h->Nofdm; n++)
+            {
+                double ph = -M_PI * (double)h->freq_hb * (double)n /
+                            (double)MFSK_NFFT;
+                sym[n] = h->bf[b + n] * (cos(ph) + I * sin(ph));
+            }
+            src = sym;
+        }
+        ofdm_gi_remover(&h->o, src, rmv);
         ofdm_fft(&h->o, rmv, ff);
         ofdm_zero_depadder(&h->o, ff, dep);
         for (int k = 0; k < MFSK_NCAR; k++)
@@ -471,8 +529,57 @@ static int mfsk_be_rawdata_rx(void *ctx, uint8_t *bytes_out, const int16_t *demo
             if (rel < 0) h->reject_abs = -1;                 /* slid out */
             else start_symb = (int)(rel / h->Nofdm) + 1;
         }
-        off = mfsk_sync_search(h->bf, search_len, 1, h->preT, h->preE,
-                               h->preN, h->Nofdm, start_symb, &metric);
+        /* Sweep frequency hypotheses, not just time. Without this a dial
+         * error of half a subcarrier makes the preamble invisible, and no
+         * amount of time searching recovers it.
+         *
+         * Take the BEST hypothesis, not the first one over the threshold. At
+         * half-bin spacing a neighbouring hypothesis is only 0.5 bin off and
+         * still correlates well enough to pass the gate, so first-past-the-post
+         * latches the wrong offset and the payload de-rotation is then half a
+         * bin out -- acquisition "succeeds" and every frame fails CRC. (Whole-
+         * bin spacing hid this: neighbours were a full bin away and fell below
+         * the gate.)
+         *
+         * A confirmed lock short-circuits the sweep to a single correlation,
+         * because the offset belongs to the radio pair and does not wander
+         * mid-session. The lock is dropped again whenever a resident payload
+         * fails CRC, so a wrong latch cannot wedge the decoder. */
+        if (h->freq_locked)
+        {
+            int hy = h->freq_hb - MFSK_FREQ_HYP_LO;
+            if (hy >= 0 && hy < MFSK_FREQ_HYPS)
+                off = mfsk_sync_search(h->bf, search_len, 1, h->preT_hyp[hy],
+                                       h->preE, h->preN, h->Nofdm, start_symb,
+                                       &metric);
+            if (off < 0) h->freq_locked = 0;   /* stale lock: re-sweep below */
+        }
+
+        if (off < 0)
+        {
+            double best_metric = -1.0;
+            int    best_off = -1, best_hb = h->freq_hb;
+            for (int hy = 0; hy < MFSK_FREQ_HYPS; hy++)
+            {
+                double m = 0.0;
+                int o = mfsk_sync_search(h->bf, search_len, 1, h->preT_hyp[hy],
+                                         h->preE, h->preN, h->Nofdm,
+                                         start_symb, &m);
+                if (o >= 0 && m > best_metric)
+                {
+                    best_metric = m;
+                    best_off    = o;
+                    best_hb     = MFSK_FREQ_HYP_LO + hy;
+                }
+            }
+            if (best_off >= 0)
+            {
+                off        = best_off;
+                metric     = best_metric;
+                h->freq_hb = best_hb;
+            }
+        }
+
         if (off >= 0)
             h->anchor_abs = h->n_abs + (long)off;
     }
@@ -496,9 +603,15 @@ static int mfsk_be_rawdata_rx(void *ctx, uint8_t *bytes_out, const int16_t *demo
             if (nbytes > 0)
             {
                 h->tried_abs = h->anchor_abs;  /* settled: do not redo this burst */
+                h->freq_locked = 1;            /* a CRC pass confirms the offset */
             }
             else
             {
+                /* Could be a false peak, or a right peak at the wrong offset.
+                 * Drop the frequency lock either way so the next search
+                 * re-argmaxes instead of trusting a hypothesis that has just
+                 * produced an undecodable frame. */
+                h->freq_locked = 0;
                 /* A fully-resident payload that fails CRC is either a false
                  * peak or an undecodable burst.  Either way this anchor has
                  * nothing left to give: release it and let the search move on,

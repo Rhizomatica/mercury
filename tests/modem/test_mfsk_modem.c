@@ -408,6 +408,105 @@ void test_mfsk_modem_decodes_burst_behind_a_failed_anchor(void)
         "burst behind a failed anchor was lost -- is the dead anchor still cached?");
 }
 
+/* True single-sideband frequency shift of a real passband signal: form the
+ * analytic signal with a Hilbert FIR, rotate, take the real part. Multiplying
+ * by a cosine would make two sidebands, which is not what a mistuned radio
+ * does. */
+static void shift_hz(int16_t *x, int n, double df, double fs)
+{
+    enum { HT = 101 };
+    double h[HT];
+    for (int i = 0; i < HT; i++) {
+        int k = i - HT / 2;
+        if (k == 0 || (k % 2) == 0) { h[i] = 0.0; continue; }
+        double w = 0.54 - 0.46 * cos(2.0 * M_PI * i / (HT - 1));
+        h[i] = (2.0 / (M_PI * k)) * w;
+    }
+    double *q = calloc((size_t)n, sizeof(double));
+    for (int i = 0; i < n; i++) {
+        double acc = 0.0;
+        for (int j = 0; j < HT; j++) {
+            int idx = i - HT / 2 + j;
+            if (idx >= 0 && idx < n) acc += h[j] * (double)x[idx];
+        }
+        q[i] = acc;
+    }
+    for (int i = 0; i < n; i++) {
+        double ph = 2.0 * M_PI * df * (double)i / fs;
+        double v  = (double)x[i] * cos(ph) - q[i] * sin(ph);
+        if (v >  32767.0) v =  32767.0;
+        if (v < -32768.0) v = -32768.0;
+        x[i] = (int16_t)lrint(v);
+    }
+    free(q);
+}
+
+void test_mfsk_modem_decodes_with_dial_offset(void)
+{
+    /* A mistuned radio shifts every tone. Beyond half a subcarrier (15.6 Hz
+     * here) the nominal FFT bins see nothing and the mode goes deaf: measured
+     * on the pre-fix decoder, 12 Hz decoded 10/10 and 16 Hz decoded 0/10.
+     * Acquisition therefore has to search frequency as well as time.
+     *
+     * 47 Hz is deliberately 1.5 subcarriers -- an offset that defeats both the
+     * original decoder AND a whole-bin-only hypothesis grid, since it sits
+     * exactly between two whole-bin hypotheses. */
+    const double offsets[] = { 0.0, 16.0, 47.0, 94.0 };
+
+    for (unsigned oi = 0; oi < sizeof(offsets)/sizeof(offsets[0]); oi++)
+    {
+        be->close(ctx);
+        ctx = be->open(MERCURY_MODE_MFSK);
+        TEST_ASSERT_NOT_NULL(ctx);
+        if (be->configure) be->configure(ctx, 1, 0);
+
+        int bytes = be->bits_per_frame(ctx) / 8;
+        int nin   = be->nin(ctx);
+        int cap   = be->n_tx_samples(ctx) + 40000;
+
+        uint8_t *frame = malloc(bytes);
+        for (int i = 0; i < bytes - 2; i++) frame[i] = (uint8_t)(i * 31 + 7);
+        uint16_t crc = freedv_gen_crc16(frame, bytes - 2);
+        frame[bytes - 2] = crc >> 8; frame[bytes - 1] = crc & 0xff;
+
+        int16_t *pre = calloc(cap,2), *dat = calloc(cap,2), *post = calloc(cap,2);
+        int np = be->preamble_tx(ctx, pre);
+        int nd = be->rawdata_tx(ctx, dat, frame);
+        int ns = be->postamble_tx(ctx, post);
+
+        int lead = 2 * nin, trail = 8 * nin;
+        int total = lead + np + nd + ns + trail;
+        int16_t *pb = calloc((size_t)total, 2);
+        int p = lead;
+        memcpy(pb + p, pre,  (size_t)np * 2); p += np;
+        memcpy(pb + p, dat,  (size_t)nd * 2); p += nd;
+        memcpy(pb + p, post, (size_t)ns * 2);
+
+        if (offsets[oi] != 0.0) shift_hz(pb, total, offsets[oi], 8000.0);
+
+        int chunk = 880, held = 0, match = 0;
+        int16_t *acc = calloc((size_t)chunk + nin, 2);
+        uint8_t *out = calloc((size_t)bytes, 1);
+        for (int off = 0; off + chunk <= total; off += chunk) {
+            memcpy(acc + held, &pb[off], (size_t)chunk * 2);
+            held += chunk;
+            while (held >= nin) {
+                if (be->rawdata_rx(ctx, out, acc) > 0 &&
+                    memcmp(out, frame, (size_t)bytes) == 0) match++;
+                held -= nin;
+                if (held > 0) memmove(acc, acc + nin, (size_t)held * 2);
+            }
+        }
+        printf("  dial offset %+6.1f Hz (%.2f bins): %s\n", offsets[oi],
+               offsets[oi] / (8000.0 / 256.0), match ? "decoded" : "LOST");
+        free(acc); free(out); free(frame); free(pre); free(dat); free(post); free(pb);
+
+        char msg[96];
+        snprintf(msg, sizeof msg, "burst lost at a %.0f Hz dial offset", offsets[oi]);
+        TEST_ASSERT_TRUE_MESSAGE(match >= 1, msg);
+    }
+}
+
 void test_mfsk_modem_tx_does_not_clip(void)
 {
     int bytes = be->bits_per_frame(ctx) / 8;
@@ -466,6 +565,7 @@ int main(void)
     RUN_TEST(test_mfsk_modem_decodes_burst_in_continuous_audio);
     RUN_TEST(test_mfsk_modem_decodes_second_burst_after_window_wraps);
     RUN_TEST(test_mfsk_modem_decodes_burst_behind_a_failed_anchor);
+    RUN_TEST(test_mfsk_modem_decodes_with_dial_offset);
     RUN_TEST(test_mfsk_modem_tx_does_not_clip);
     RUN_TEST(test_mfsk_modem_noise_no_false_decode);
     return UNITY_END();
