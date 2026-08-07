@@ -109,3 +109,44 @@ cd ../utils && make watterson_test
 - Standard C99 + `-lm`
 
 No external libraries beyond what the project already uses.
+
+## Sample rates above 8 kHz — the Doppler filter must run in double
+
+The fading tap is a 2nd-order Butterworth driven by white noise (see *Design*).
+As the cutoff ratio `fc/fs` shrinks its poles crowd the unit circle: at 48 kHz
+with 1 Hz Doppler the ratio is 2e-5 and the poles sit within ~1e-4 of the
+circle, where `float`'s ~6e-8 of relative resolution is enough to place one
+**outside** it. The filter then diverges instead of fading, and the "measured
+signal power" is the blow-up rather than the signal:
+
+    fs= 8000  2 paths  1 Hz  ->  SNR3k  -8.37 dB   sane
+    fs=48000  1 path   0 Hz  ->  SNR3k  -8.24 dB   sane (no Doppler filter)
+    fs=48000  2 paths  1 Hz  ->  SNR3k +65.76 dB   diverged
+
+Coefficients and filter state are therefore `double` (`watterson.h`, the
+`x_i/y_i/x_q/y_q` history and `b0..a2`). After the change the same case reads
+−6.43 dB and 8 kHz is unmoved (−8.37 → −8.32, inside the scatter of a 2 s
+window of slow fading). Mercury runs at 8 kHz, which is why this sat unnoticed:
+8 kHz is 6× further from the cliff and stayed marginally stable. It surfaced
+only when driving a 48 kHz modem through the same channel, and it matters for
+any move to wider bandwidth.
+
+`tests/common/test_watterson.c` pins two properties and was verified to fail on
+the old code:
+
+- fading stays finite and in range over 8/16/24/48/96 kHz × 0.1..2 Hz. The band
+  is deliberately wide — it is there to catch divergence, not to pin a value.
+- **a single static path is rate-invariant** to 0.5 dB (measured: 0.04 dB).
+  That is the property that lets an 8 kHz result be compared with a 48 kHz one.
+
+### Known wart: two-path measurements are not rate-invariant
+
+A *single* static path agrees across rates to 0.04 dB, but adding a delayed
+second path introduces a multipath interference term that genuinely varies with
+sample rate — measured **+1.56 dB at 48 kHz vs 8 kHz** for an identical static
+two-path channel (2 ms delay, 1500 Hz tone, 8 s window). The test therefore
+asserts rate-invariance only for the single-path case.
+
+Consequence for cross-rate comparisons: absolute *faded* SNR3k figures measured
+at different sample rates carry a ~1.5 dB systematic offset and should be
+corrected or compared like-for-like. Single-path/AWGN comparisons are unaffected.

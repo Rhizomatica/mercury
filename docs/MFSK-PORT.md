@@ -273,3 +273,119 @@ MFSK data below DATAC15 — is the remaining integration step, OTA-gated.)
   — passband ACK bursts → `ch`/`watterson_test` → `mfsk_detect_pattern`, vs a
   DATAC16 frame through the freedv raw tool, over an SNR3k grid (AWGN/moderate/
   poor). Includes the pure-noise false-alarm gate.
+
+---
+
+## The fringe floor was the sync accept threshold, not the code
+
+`mfsk_sync_search` ended with a magic constant, `return (best_fine_metric <
+0.5) ? -1 : best_fine`. The per-symbol statistic is
+`|corr|²/(E_tmpl·E_rx) = SNR_sym/(1+SNR_sym)`, so a 0.5 gate demands
+**SNR_sym ≥ 0 dB** — and that one number, not the LDPC, was the weak-signal
+limit of the whole mode.
+
+The proof is that the code does not matter: sweeping all five ported rates
+(8/16 down to 1/16, a 16× difference in strength) gave **byte-identical** FER
+curves. Instrumenting the search confirmed it — at SNR3k −3.1 dB it returns
+`off=-1, metric=0.344`, payload never attempted.
+
+Measured on AWGN over the real two-burst (~104k sample) window:
+
+    noise-only MAX metric    0.037 - 0.049   (flat vs SNR — it is normalised)
+    signal @ SNR3k  -5.1 dB  0.219
+    signal @ SNR3k  -9.1 dB  0.091
+
+The signal stood ~10× above the noise floor while the gate sat *above the
+signal*. `MFSK_SYNC_ACCEPT` is now 0.08 (~1.6× the measured noise maximum,
+0 false syncs in 600 noise-only searches):
+
+| | before | after |
+|---|---|---|
+| AWGN 50% FER | −0.6 dB | **−11.2 dB** |
+| Watterson 2 ms/1 Hz 50% FER | +5.0 dB | **−3.7 dB** |
+| Watterson error floor | 0.25–0.30 | **gone** |
+
+That floor was sync failing during fades, not the decoder. DATAC15 measures
+−10.3 dB on the same harness, so the ladder floor finally sits below the rung
+above it.
+
+A lower threshold needs false anchors to be survivable, and they were not:
+`modem_mfsk` cached the located anchor and marked it tried, so a false peak
+whose payload failed CRC left the decoder blind until it slid out of the
+window. A resident payload that fails CRC now releases the anchor and the
+search restarts one symbol past it (safe: the search returns the *earliest*
+peak above threshold, so nothing decodable hides before it).
+
+### Interleaving
+
+The codeword is scattered across the burst (Fisher-Yates, fixed xorshift seed,
+integer-only so both ends derive the same table). 60 trials/point:
+
+    Watterson 2ms/1Hz    -3.1 dB   FER 0.35 -> 0.20
+    Watterson 2ms/0.2Hz  -4.4 dB   FER 0.58 -> 0.47
+    AWGN                 unchanged (as expected)
+
+~19% more ARQ throughput at the fringe for no airtime. The gain is moderate
+because at 1 Hz a 13.5 s burst already spans ~26 fades; it helps most when one
+fade covers a large fraction of the burst.
+
+### Frequency search — the defect the whole test suite was blind to
+
+There was **no frequency tolerance at all**. Measured on the pre-fix decoder:
+12 Hz dial offset decoded 10/10, **16 Hz decoded 0/10** — half a subcarrier
+(31.25 Hz spacing) and the mode is deaf. Every sensitivity number here had been
+measured on a perfectly tuned simulator.
+
+Acquisition now correlates against preamble templates pre-rotated to 13
+hypotheses spanning ±3 subcarriers (±94 Hz) in **half-bin** steps. Tolerance:
+±12 Hz → **±100 Hz**. Two non-obvious requirements:
+
+- **Half-bin steps, not whole.** A whole-bin grid leaves the worst case exactly
+  between two hypotheses; it recovered 31/62/94 Hz but left 16/47/110 Hz at 0/10.
+- **Argmax, not first-past-the-gate.** At half-bin spacing a neighbour 0.5 bin
+  off still clears the threshold, latches the wrong offset, and every frame then
+  fails CRC. The tell was 94 Hz going 10/10 → 0/10 when the grid got *finer*.
+
+Latched on a CRC pass and dropped on a CRC failure: +21% decode CPU with signal
+present, none idle, AWGN cliff and 0/200 false alarms unchanged.
+
+## Measured and deliberately NOT shipped
+
+- **codec2's non-coherent LLR model** (log-I₀ of amplitude + `max*`, replacing
+  an energy difference with a ±5 clamp): byte-identical FER over 30
+  trials/point at both the old and new threshold, ~6% more decode time.
+- **Goertzel tone detection.** Profiled: the whole decoder is **0.23% of real
+  time** (0.18 s CPU per 78.7 s of audio; idle sync 0.002 s over 156 calls).
+  The old "RX runs at half real time" was real but is fixed. Nothing to optimise.
+- **Shorter frames.** Needs a shorter codeword (all five codes are N=1600), and
+  the premise fails: FER vs Doppler at fixed SNR shows the burst *relies* on
+  fade diversity — 2.6 fades/burst → FER 1.00, 26 fades → 0.17. Cutting the
+  burst 3× takes 0.2 Hz from 5.2 to 1.7 fades, i.e. a dead link.
+- **Lower code rates.** 9 dB of rate reduction (1/2 → 1/16) buys 2.1 dB; with
+  acquisition fixed the limit is elsewhere. Lowering the tone count is the
+  better trade at equal sensitivity, but it too loses under fading.
+
+## Cross-check against modem73 RFDM (coherent QPSK OFDM + polar)
+
+modem73's ROBUST family was measured through **our** Watterson with **our**
+SNR3k, which removes the usual calibration ambiguity. Per bit:
+
+    channel                mode                     50% FER   per bit @149bps
+    AWGN                   our MFSK (60 bps)        -11.2 dB      -7.2 dB
+    AWGN                   RFDM RDMN-150 (149 bps)   -4.5 dB      -4.5 dB
+    Watterson 2ms/1Hz      our MFSK                  -4.5 dB      -0.5 dB
+    Watterson 2ms/1Hz      RFDM RDMN-150              0.0 dB       0.0 dB
+
+**We win on AWGN by 2.7 dB per bit and tie under fading.** Their pilots (25%)
+and cyclic prefix (33%) are dead weight against white noise and earn their keep
+in fading. Conclusion: no sensitivity case for porting RFDM — and the earlier
+hypothesis that coherent, pilot-aided modulation is what closes our gap to
+capacity is **not supported**; that estimate ignored those overheads.
+
+Their robust modes also use *long* frames (RDMN-150 = 27.5 s, RDM-300 = 13.8 s
+vs our 13.1 s), independently confirming the fade-diversity result above. Their
+4.42 s MFSK is a backup mode, not the robust one.
+
+Caveats: RFDM points are 5–12 trials against 20–60 for ours, one fading
+profile, and faded cross-rate figures carry the ~1.5 dB two-path offset
+documented in `watterson_model.md`.
