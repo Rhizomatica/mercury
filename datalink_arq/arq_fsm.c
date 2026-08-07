@@ -955,7 +955,22 @@ static void fsm_accepting(arq_session_t *sess, const arq_event_t *ev)
         fsm_disconnected(sess, ev);
         break;
 
-    case ARQ_EV_APP_STOP_LISTEN:  /* host wants the radio back — stop answering */
+    /* LISTEN OFF releases the radio — but not instantly in this one state.
+     * A scanning host (BPQ32 interlock) sends LISTEN OFF at dwell expiry and
+     * needs a moment to process the PENDING we just sent it and cancel its own
+     * timer; acting immediately turns that race into a dropped inbound call.
+     * Defer inside the grace window and honour it on the next TIMER_RETRY, or
+     * on reaching CONNECTED (both handled above).  CALLING has no such grace:
+     * PENDING announces an INCOMING call, so it is never sent while we are the
+     * caller and there is nothing to race against. */
+    case ARQ_EV_APP_STOP_LISTEN:
+        if (time_now_ms() - sess->state_enter_ms < ARQ_LISTEN_OFF_GRACE_MS)
+        {
+            sess->deferred_listen_off = true;
+            sess->deadline_ms = sess->state_enter_ms + ARQ_LISTEN_OFF_GRACE_MS;
+            break;
+        }
+        /* fall through */
     case ARQ_EV_APP_DISCONNECT:
         if (g_cbs.notify_cancelpending)
             g_cbs.notify_cancelpending();

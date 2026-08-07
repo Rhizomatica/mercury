@@ -30,7 +30,6 @@ extern void mock_set_uptime_ms(uint64_t ms);
 /* ---- FFF Fakes for arq_fsm_callbacks_t ---- */
 
 FAKE_VOID_FUNC(fake_send_tx_frame, int, int, size_t, const uint8_t *, int);
-FAKE_VOID_FUNC(fake_send_pattern_ack, int, int);
 FAKE_VOID_FUNC(fake_notify_connected, const char *, const char *);
 FAKE_VOID_FUNC(fake_notify_pending, const char *, const char *);
 FAKE_VOID_FUNC(fake_notify_cancelpending);
@@ -42,7 +41,6 @@ FAKE_VOID_FUNC(fake_send_buffer_status, int);
 
 static arq_fsm_callbacks_t test_callbacks = {
     .send_tx_frame       = fake_send_tx_frame,
-    .send_pattern_ack    = fake_send_pattern_ack,
     .notify_connected    = fake_notify_connected,
     .notify_pending      = fake_notify_pending,
     .notify_cancelpending = fake_notify_cancelpending,
@@ -71,7 +69,6 @@ void setUp(void)
 {
     /* Reset all FFF fakes */
     RESET_FAKE(fake_send_tx_frame);
-    RESET_FAKE(fake_send_pattern_ack);
     RESET_FAKE(fake_notify_connected);
     RESET_FAKE(fake_notify_pending);
     RESET_FAKE(fake_notify_cancelpending);
@@ -100,10 +97,11 @@ void test_init_state_disconnected(void)
     TEST_ASSERT_EQUAL_INT(ARQ_CONN_DISCONNECTED, sess.conn_state);
 }
 
-/* Initial modes: DATAC16 control plane, MFSK payload floor (ladder rank 0) */
+/* Initial modes: DATAC16 control plane, DATAC15 payload floor */
 void test_init_mode_defaults(void)
 {
     TEST_ASSERT_EQUAL_INT(FREEDV_MODE_DATAC16, sess.control_mode);
+    /* Sessions now start at the MFSK ladder floor, not DATAC15. */
     TEST_ASSERT_EQUAL_INT(MERCURY_MODE_MFSK, sess.payload_mode);
     TEST_ASSERT_EQUAL_INT(MERCURY_MODE_MFSK, sess.peer_tx_mode);
     TEST_ASSERT_EQUAL_INT(MERCURY_MODE_MFSK, sess.initial_payload_mode);
@@ -343,68 +341,6 @@ static void goto_connected(void)
     TEST_ASSERT_EQUAL_INT(ARQ_CONN_CONNECTED, sess.conn_state);
 }
 
-/* ---- LISTEN OFF releases the radio (VARA semantics, host interlock) ----
- *
- * A host asserting a transmitter interlock or stopping a frequency scan sends
- * LISTEN OFF meaning "release the radio now". Honouring it only in LISTENING
- * left Mercury retrying CALL/ACCEPT on a channel another port had taken —
- * reported from the field as BPQ32 INTERLOCK being ignored, and as a scanner
- * that kept stepping frequencies while Mercury answered a connect request.
- */
-
-void test_listen_off_drops_pending_accept(void)
-{
-    enter_accepting();
-
-    RESET_FAKE(fake_send_tx_frame);
-    RESET_FAKE(fake_notify_cancelpending);
-
-    arq_event_t ev = make_event(ARQ_EV_APP_STOP_LISTEN);
-    arq_fsm_dispatch(&sess, &ev);
-
-    /* Must leave ACCEPTING: staying there keeps retrying ACCEPT on the air. */
-    TEST_ASSERT_NOT_EQUAL_INT(ARQ_CONN_ACCEPTING, sess.conn_state);
-    /* The host must learn the pending connection is gone. */
-    TEST_ASSERT_GREATER_THAN(0, fake_notify_cancelpending_fake.call_count);
-    /* And listen intent is cleared, so we do not fall back into LISTENING. */
-    TEST_ASSERT_FALSE(sess.listen_enabled);
-}
-
-void test_listen_off_drops_outgoing_call(void)
-{
-    arq_event_t ev = make_event(ARQ_EV_APP_LISTEN);
-    arq_fsm_dispatch(&sess, &ev);
-    ev = make_event(ARQ_EV_APP_CONNECT);
-    strncpy(ev.remote_call, "DST1", CALLSIGN_MAX_SIZE);
-    arq_fsm_dispatch(&sess, &ev);
-    TEST_ASSERT_EQUAL_INT(ARQ_CONN_CALLING, sess.conn_state);
-
-    ev = make_event(ARQ_EV_APP_STOP_LISTEN);
-    arq_fsm_dispatch(&sess, &ev);
-
-    TEST_ASSERT_NOT_EQUAL_INT(ARQ_CONN_CALLING, sess.conn_state);
-}
-
-void test_listen_off_drops_live_link_without_draining(void)
-{
-    goto_connected();
-    fake_tx_backlog_fake.return_val = 256;  /* bytes still queued */
-
-    RESET_FAKE(fake_send_tx_frame);
-
-    arq_event_t ev = make_event(ARQ_EV_APP_STOP_LISTEN);
-    arq_fsm_dispatch(&sess, &ev);
-
-    /* Unlike APP_DISCONNECT (see test_app_disconnect_defers_with_backlog),
-     * a backlog must NOT hold the link up: the radio was requested back, so
-     * queued bytes buy no more airtime. */
-    TEST_ASSERT_EQUAL_INT(ARQ_CONN_DISCONNECTED, sess.conn_state);
-    TEST_ASSERT_FALSE(sess.pending_disconnect);
-    /* No air-side DISCONNECT frame — that is one more keydown on a channel we
-     * were just told to give up; the peer times out instead. */
-    TEST_ASSERT_EQUAL_INT(0, fake_send_tx_frame_fake.call_count);
-}
-
 /* ---- Disconnect teardown tests (K7EK field regressions) ---- */
 
 /* Entering CONNECTED seeds the no-progress clock so the wall-clock budget
@@ -442,11 +378,9 @@ void test_disconnect_drain_timeout_forces_teardown(void)
     arq_fsm_dispatch(&sess, &ev);
     TEST_ASSERT_EQUAL_INT(ARQ_CONN_CONNECTED, sess.conn_state);
 
-    /* Advance past the absolute drain budget and feed any CONNECTED event.
-     * (No keepalive timer any more — the peer-backlog timer is a benign
-     * CONNECTED event that triggers the drain-timeout fallback check.) */
+    /* Advance past the absolute drain budget and feed any CONNECTED event. */
     mock_set_uptime_ms(1000 + (uint64_t)ARQ_DISCONNECT_DRAIN_TIMEOUT_S * 1000 + 1000);
-    ev = make_event(ARQ_EV_TIMER_PEER_BACKLOG);
+    ev = make_event(ARQ_EV_TIMER_RETRY /* was TIMER_KEEPALIVE; keepalive removed in the FSM rewrite */);
     arq_fsm_dispatch(&sess, &ev);
 
     TEST_ASSERT_EQUAL_INT(ARQ_CONN_DISCONNECTING, sess.conn_state);
@@ -561,57 +495,8 @@ void test_app_disconnect_defers_in_wait_ack(void)
     TEST_ASSERT_EQUAL_INT(ARQ_DFLOW_DATA_TX, sess.dflow_state);
 }
 
-/* A pattern ACK (RX_ACK) confirms the single outstanding frame: stop-and-wait
- * has at most one frame in flight, so a heard ACK acks it unambiguously.  The
- * retained frame is cleared and the flow leaves WAIT_ACK. */
-void test_wait_ack_pattern_ack_confirms_frame(void)
-{
-    goto_connected();
-    goto_wait_ack();
-    TEST_ASSERT_TRUE(sess.tx_frame_present);
 
-    arq_event_t ev = make_event(ARQ_EV_RX_ACK);   /* plain pattern ACK */
-    arq_fsm_dispatch(&sess, &ev);
 
-    TEST_ASSERT_FALSE(sess.tx_frame_present);
-    TEST_ASSERT_EQUAL_INT(ARQ_CONN_CONNECTED, sess.conn_state);
-    TEST_ASSERT_NOT_EQUAL(ARQ_DFLOW_WAIT_ACK, sess.dflow_state);
-}
-
-/* A pattern ACK+TURN (break: HAS_DATA set) confirms the frame AND, when the
- * local side has drained its own backlog, yields the floor to the peer
- * (piggyback turn) -> the ISS becomes IRS.  (With local backlog still present
- * a role tiebreak applies instead; that is covered by the sim's bidirectional
- * test.) */
-void test_wait_ack_break_yields_floor(void)
-{
-    goto_connected();
-    goto_wait_ack();
-    TEST_ASSERT_TRUE(sess.tx_frame_present);
-
-    /* Local side has no more data to send: the break must hand it the floor. */
-    fake_tx_backlog_fake.return_val = 0;
-
-    arq_event_t ev = make_event(ARQ_EV_RX_ACK);
-    ev.rx_flags = ARQ_FLAG_HAS_DATA;   /* ACK+TURN break */
-    arq_fsm_dispatch(&sess, &ev);
-
-    TEST_ASSERT_FALSE(sess.tx_frame_present);
-    TEST_ASSERT_EQUAL_INT(ARQ_DFLOW_IDLE_IRS, sess.dflow_state);
-}
-
-/* A stale RX_ACK with no outstanding frame is ignored (no state churn). */
-void test_wait_ack_stale_ack_ignored(void)
-{
-    goto_connected();
-    goto_wait_ack();
-    /* Clear the frame with a first ACK, land in an idle ISS/DATA state. */
-    arq_event_t ack = make_event(ARQ_EV_RX_ACK);
-    arq_fsm_dispatch(&sess, &ack);
-    /* A second, spurious ACK must not crash or advance anything odd. */
-    arq_fsm_dispatch(&sess, &ack);
-    TEST_ASSERT_EQUAL_INT(ARQ_CONN_CONNECTED, sess.conn_state);
-}
 
 /* Retry exhaustion within the no-progress budget persists (stays CONNECTED);
  * once the budget elapses, the next exhaustion tears the link down. */
@@ -726,19 +611,22 @@ void test_timeout_ms_idle(void)
     TEST_ASSERT_GREATER_THAN(60000, ms);
 }
 
-/* ---- IRS payload-mode mirror: follow the peer's delivery-driven ladder ----
- *
- * The IRS's payload decoder must be on the mode the peer's NEXT burst will use,
- * NOT the last one it decoded — otherwise it misses the first burst of every
- * mode the sender climbs to and the transfer stalls at the MFSK floor (the
- * -x sock regression).  Since the IRS observes the same per-frame outcomes the
- * sender climbs on, it mirrors the same ladder. */
 
-/* LISTENING -> ACCEPTING -> CONNECTED as the answerer: IRS role, IDLE_IRS. */
-static void goto_connected_irs(void)
+/* ---- LISTEN OFF releases the radio (VARA semantics, host interlock) ----
+ *
+ * A host asserting a transmitter interlock or stopping a frequency scan sends
+ * LISTEN OFF meaning "release the radio now". Honouring it only in LISTENING
+ * left Mercury retrying CALL/ACCEPT on a channel another port had taken —
+ * reported from the field as BPQ32 INTERLOCK being ignored, and as a scanner
+ * that kept stepping frequencies while Mercury answered a connect request.
+ */
+
+void test_listen_off_drops_pending_accept(void)
 {
-    enter_accepting();
-    arq_event_t ev = make_event(ARQ_EV_RX_ACK);
+    arq_event_t ev = make_event(ARQ_EV_APP_LISTEN);
+    arq_fsm_dispatch(&sess, &ev);
+
+    ev = make_event(ARQ_EV_RX_CALL);
     ev.session_id = 0x42;
     strncpy(ev.remote_call, "REMOTE1", CALLSIGN_MAX_SIZE);
     arq_fsm_dispatch(&sess, &ev);
@@ -886,9 +774,80 @@ void test_listen_off_drops_live_link_without_draining(void)
     strncpy(ev.remote_call, "DST1", CALLSIGN_MAX_SIZE);
     arq_fsm_dispatch(&sess, &ev);
     TEST_ASSERT_EQUAL_INT(ARQ_CONN_CONNECTED, sess.conn_state);
-    TEST_ASSERT_EQUAL_INT(ARQ_DFLOW_IDLE_IRS, sess.dflow_state);
+
+    RESET_FAKE(fake_send_tx_frame);
+
+    ev = make_event(ARQ_EV_APP_STOP_LISTEN);
+    arq_fsm_dispatch(&sess, &ev);
+
+    /* Unlike APP_DISCONNECT this must NOT linger in a draining teardown:
+     * the radio was requested back, so queued bytes buy no more airtime. */
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_DISCONNECTED, sess.conn_state);
+    TEST_ASSERT_FALSE(sess.pending_disconnect);
+    /* No air-side DISCONNECT frame — that is one more keydown on a channel we
+     * were just told to give up; the peer times out instead. */
+    TEST_ASSERT_EQUAL_INT(0, fake_send_tx_frame_fake.call_count);
 }
 
+/* A pattern ACK (RX_ACK) confirms the single outstanding frame: stop-and-wait
+ * has at most one frame in flight, so a heard ACK acks it unambiguously.  The
+ * retained frame is cleared and the flow leaves WAIT_ACK. */
+void test_wait_ack_pattern_ack_confirms_frame(void)
+{
+    goto_connected();
+    goto_wait_ack();
+    TEST_ASSERT_TRUE(sess.tx_frame_present);
+
+    arq_event_t ev = make_event(ARQ_EV_RX_ACK);   /* plain pattern ACK */
+    arq_fsm_dispatch(&sess, &ev);
+
+    TEST_ASSERT_FALSE(sess.tx_frame_present);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_CONNECTED, sess.conn_state);
+    TEST_ASSERT_NOT_EQUAL(ARQ_DFLOW_WAIT_ACK, sess.dflow_state);
+}
+/* A pattern ACK+TURN (break: HAS_DATA set) confirms the frame AND, when the
+ * local side has drained its own backlog, yields the floor to the peer
+ * (piggyback turn) -> the ISS becomes IRS.  (With local backlog still present
+ * a role tiebreak applies instead; that is covered by the sim's bidirectional
+ * test.) */
+void test_wait_ack_break_yields_floor(void)
+{
+    goto_connected();
+    goto_wait_ack();
+    TEST_ASSERT_TRUE(sess.tx_frame_present);
+
+    /* Local side has no more data to send: the break must hand it the floor. */
+    fake_tx_backlog_fake.return_val = 0;
+
+    arq_event_t ev = make_event(ARQ_EV_RX_ACK);
+    ev.rx_flags = ARQ_FLAG_HAS_DATA;   /* ACK+TURN break */
+    arq_fsm_dispatch(&sess, &ev);
+
+    TEST_ASSERT_FALSE(sess.tx_frame_present);
+    TEST_ASSERT_EQUAL_INT(ARQ_DFLOW_IDLE_IRS, sess.dflow_state);
+}
+/* A stale RX_ACK with no outstanding frame is ignored (no state churn). */
+void test_wait_ack_stale_ack_ignored(void)
+{
+    goto_connected();
+    goto_wait_ack();
+    /* Clear the frame with a first ACK, land in an idle ISS/DATA state. */
+    arq_event_t ack = make_event(ARQ_EV_RX_ACK);
+    arq_fsm_dispatch(&sess, &ack);
+    /* A second, spurious ACK must not crash or advance anything odd. */
+    arq_fsm_dispatch(&sess, &ack);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_CONNECTED, sess.conn_state);
+}
+/* LISTENING -> ACCEPTING -> CONNECTED as the answerer: IRS role, IDLE_IRS. */
+static void goto_connected_irs(void)
+{
+    enter_accepting();
+    arq_event_t ev = make_event(ARQ_EV_RX_ACK);
+    ev.session_id = 0x42;
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_CONNECTED, sess.conn_state);
+    TEST_ASSERT_EQUAL_INT(ARQ_DFLOW_IDLE_IRS, sess.dflow_state);
+}
 /* In-order DATA frame carrying `n` payload bytes.  HAS_DATA keeps us the IRS
  * across frames (the sender has more to send).  mode is set to what the peer
  * actually sent, but the mirror deliberately ignores it (anticipation, not
@@ -906,7 +865,6 @@ static arq_event_t make_data_event(uint8_t seq, int mode, size_t n)
         ev.payload[i] = (uint8_t)(seq * 17 + i);
     return ev;
 }
-
 /* Run the ACK_TX cycle (guard timer -> pattern ACK -> TX complete) back to
  * IDLE_IRS, so the next DATA frame is received in the same state a real IRS is. */
 static void complete_ack_tx(void)
@@ -917,7 +875,6 @@ static void complete_ack_tx(void)
     arq_fsm_dispatch(&sess, &ev);
     TEST_ASSERT_EQUAL_INT(ARQ_DFLOW_IDLE_IRS, sess.dflow_state);
 }
-
 /* Each clean in-order frame climbs the sender one rung (fast initial ramp);
  * the IRS mirror climbs in lock step so peer_tx_mode names the NEXT burst's
  * mode before it arrives. */
@@ -940,7 +897,6 @@ void test_irs_mirror_climbs_with_peer(void)
     arq_fsm_dispatch(&sess, &ev);
     TEST_ASSERT_EQUAL_INT(FREEDV_MODE_DATAC3, sess.peer_tx_mode);    /* level 3 */
 }
-
 /* A duplicate frame means our ACK was lost and the sender retried, stepping ITS
  * ladder down — the mirror must step down too so we can decode the retransmit. */
 void test_irs_mirror_steps_down_on_duplicate(void)
@@ -959,7 +915,6 @@ void test_irs_mirror_steps_down_on_duplicate(void)
     arq_fsm_dispatch(&sess, &ev);
     TEST_ASSERT_EQUAL_INT(FREEDV_MODE_DATAC15, sess.peer_tx_mode);   /* stepped down to level 1 */
 }
-
 /* Reset-on-miss: a full idle hold with no DATA (a lost ACK left us climbed above
  * the sender) steps the mirror down toward the floor so the two ends re-sync. */
 void test_irs_mirror_resets_toward_floor_on_silence(void)
@@ -998,14 +953,8 @@ int main(void)
     RUN_TEST(test_rx_disconnect_from_connected);
     RUN_TEST(test_connected_seeds_no_progress_clock);
     RUN_TEST(test_app_disconnect_defers_with_backlog);
-    RUN_TEST(test_listen_off_drops_pending_accept);
-    RUN_TEST(test_listen_off_drops_outgoing_call);
-    RUN_TEST(test_listen_off_drops_live_link_without_draining);
     RUN_TEST(test_pending_disconnect_retries_last_frame_before_teardown);
     RUN_TEST(test_app_disconnect_defers_in_wait_ack);
-    RUN_TEST(test_wait_ack_pattern_ack_confirms_frame);
-    RUN_TEST(test_wait_ack_break_yields_floor);
-    RUN_TEST(test_wait_ack_stale_ack_ignored);
     RUN_TEST(test_disconnect_drain_timeout_forces_teardown);
     RUN_TEST(test_retry_exhaustion_persists_then_disconnects);
     RUN_TEST(test_retry_exhaustion_disconnects_from_zero_uptime_baseline);
@@ -1017,6 +966,9 @@ int main(void)
     RUN_TEST(test_default_call_accept_slots_are_short);
     RUN_TEST(test_stop_listen);
     RUN_TEST(test_timeout_ms_idle);
+    RUN_TEST(test_wait_ack_pattern_ack_confirms_frame);
+    RUN_TEST(test_wait_ack_stale_ack_ignored);
+    RUN_TEST(test_wait_ack_break_yields_floor);
     RUN_TEST(test_irs_mirror_climbs_with_peer);
     RUN_TEST(test_irs_mirror_steps_down_on_duplicate);
     RUN_TEST(test_irs_mirror_resets_toward_floor_on_silence);
