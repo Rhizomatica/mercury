@@ -69,3 +69,7 @@ claude_context.txt
 context-*.txt
 copilot-*.txt
 screen.jpg
+
+# utils build outputs
+utils/watterson_test
+utils/acquire_vs_decode
