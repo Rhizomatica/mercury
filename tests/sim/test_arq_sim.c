@@ -320,8 +320,17 @@ void test_sim_fade_cliff_downgrades(void)
     sim_set_snr(s, -5.5);
 
     /* The floor moves ~22 user bytes per ~11 s cycle; give the remainder
-     * ample virtual time.  Before the fix this starved above the cliff. */
-    sim_run_until_idle(s, 3600000); /* up to 1 virtual hour */
+     * ample virtual time.  Before the fix this starved above the cliff.
+     *
+     * Two virtual hours, not one.  At one hour this test was fitted to
+     * seed 42: on unmodified trunk, seeds 43/44/45 all failed the integrity
+     * check with 13-15 kB of the 16 kB delivered, because 2 % frame loss over
+     * a floor that moves ~22 B per ~11 s cycle simply needs more time than the
+     * budget allowed for most draws.  Any change that shifts event timing
+     * reshuffles the channel's RNG sequence and tips it over, which makes the
+     * test read as a regression in whatever moved -- rather than as a budget
+     * that had no margin.  At two hours seeds 42-45 all pass. */
+    sim_run_until_idle(s, 7200000); /* up to 2 virtual hours */
 
     sim_verdict_t floor_v =
         sim_prop_mode_floor_reached(sim_a(s), FREEDV_MODE_DATAC15, 0);
