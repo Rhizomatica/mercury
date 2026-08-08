@@ -53,6 +53,17 @@
 #define LPF_TAPS  63
 #define LPF_FC    1000.0
 #define SUFFIX_MAX 16
+#define HEADROOM_PEAK 4000.0        /* AWGN path: fixed signal peak, swept noise */
+
+/* Fading level management.
+ *
+ * int16 cannot hold signal+noise at fringe SNRs if the signal level is fixed:
+ * the noise alone overflows (measured 60-80 % of samples clipped).  So hold the
+ * NOISE at a level that comfortably fits -- 4 sigma inside the rail -- and set
+ * the SNR by scaling the SIGNAL instead.  The channel's own measured SNR is
+ * still what gets reported, so the axis stays honest. */
+#define FADE_NO_DBHZ   (-19.0f)      /* -> real noise rms ~6-7k at Fs=8000 */
+#define FADE_NOISE_RMS 6800.0
 
 static unsigned long long rng = 99887766554433ULL;
 
@@ -119,6 +130,13 @@ int main(int argc, char **argv)
      * and the achieved SNR3k is measured per row, exactly as in
      * acquire_vs_decode -- so the two instruments can be read side by side. */
     int    chan   = (argc > 5) ? chanutil_preset_from_name(argv[5]) : CHAN_AWGN;
+    /* Search-window width in bursts.  3 mirrors the RX loop and is what the
+     * false-alarm numbers need; it also costs ~9x the correlation work, which
+     * is unaffordable on a fading sweep.  Detection rate barely depends on it,
+     * so a fading run may use 1 -- but then do NOT quote its false-alarm
+     * column, which is why the header says which was used. */
+    int    winmult = (argc > 6) ? atoi(argv[6]) : 3;
+    if (winmult < 1) winmult = 1;
     if (chan < 0) { fprintf(stderr, "unknown channel (awgn|mpg|mpp|mpd)\n"); return 1; }
     if (trials <= 0 || sufflen <= 0 || sufflen > SUFFIX_MAX)
     { fprintf(stderr, "usage: %s [trials] [suffix_len] [snr_lo] [snr_hi]\n", argv[0]); return 1; }
@@ -139,7 +157,7 @@ int main(int argc, char **argv)
      * (see the pattern detector in modem.c), so search over the same span:
      * a one-burst window understates both the search difficulty and the
      * false-alarm rate. */
-    int nwin     = nsamp * 3;
+    int nwin     = nsamp * winmult;
 
     printf("M=%d  plain pattern %d sym (%.0f ms, threshold %d/%d)\n",
            m.M, base_ns, base_ns * Nofdm * 1000.0 / FS,
@@ -173,7 +191,9 @@ int main(int argc, char **argv)
     int thr_op = base_ns + 4;                    /* the >=4-suffix operating point */
     if (thr_op > dir_ns) thr_op = dir_ns;
 
-    printf("channel: %s\n", chanutil_preset_name(chan));
+    printf("channel: %s   search window %d burst(s)%s\n",
+           chanutil_preset_name(chan), winmult,
+           winmult < 3 ? "  [narrow: false-alarm column NOT comparable]" : "");
     printf("%s |", chan == CHAN_AWGN ? "  SNR3k " : "  No/meas");
     for (int i = 0; i < nthr; i++) printf("  detect@%2d ", thr[i]);
     printf("| false-accept vs RANDOM sessions at thr=%d\n", thr_op);
@@ -189,7 +209,17 @@ int main(int argc, char **argv)
     for (double snr = snr_lo; snr <= snr_hi + 0.01; snr += 1.0)
     {
         int hit[6] = {0}, wrong = 0, noise_fa = 0;
+        long clipped = 0, tot_samp = 0;
         double snr_meas_sum = 0.0; int snr_meas_cnt = 0;
+
+        /* One warmed channel per SNR point, shared by every burst -- see the
+         * note in acquire_vs_decode. */
+        chanutil_t *ch = NULL;
+        if (chan != CHAN_AWGN)
+        {
+            ch = chanutil_open(chan, FADE_NO_DBHZ, 1234u);
+            if (!ch) { fprintf(stderr, "chanutil_open failed\n"); return 1; }
+        }
 
         for (int t = 0; t < trials; t++)
         {
@@ -236,18 +266,46 @@ int main(int argc, char **argv)
                 }
             }
 
-            double ps = 0.0;
-            for (int i = 0; i < written; i++) ps += (double)pb[i] * pb[i];
+            double ps = 0.0, pkv = 0.0;
+            for (int i = 0; i < written; i++)
+            {
+                ps += (double)pb[i] * pb[i];
+                if (fabs((double)pb[i]) > pkv) pkv = fabs((double)pb[i]);
+            }
             ps /= written;
+
+            /* HEADROOM, same reason as acquire_vs_decode: the pattern leaves
+             * mfsk_pattern_tx at ~15.5k peak, and at fringe SNRs the noise rms
+             * is several times the signal, so signal+noise clips against the
+             * int16 rail and the delivered SNR quietly rises while distortion
+             * eats the gain.  Scale to a fixed peak first. */
+            if (pkv > 0.0)
+            {
+                double gnorm = HEADROOM_PEAK / pkv;
+                for (int i = 0; i < written; i++)
+                    pb[i] = (int16_t)lrint((double)pb[i] * gnorm);
+                ps *= gnorm * gnorm;
+            }
             double sigma = sqrt(ps / (pow(10.0, snr / 10.0) * (3000.0 / (FS / 2.0))));
 
             if (chan != CHAN_AWGN)
             {
+                /* Scale the burst so that, against the fixed channel noise, the
+                 * 3 kHz SNR lands on the requested value. */
+                double want_rms = FADE_NOISE_RMS * sqrt(3000.0 / (FS / 2.0))
+                                  * pow(10.0, snr / 20.0);
+                double cur_rms  = sqrt(ps);
+                if (cur_rms > 0.0)
+                {
+                    double gs2 = want_rms / cur_rms;
+                    for (int i = 0; i < written; i++)
+                        pb[i] = (int16_t)lrint((double)pb[i] * gs2);
+                    ps *= gs2 * gs2;
+                }
                 /* Fade the burst itself; the surrounding window stays plain
                  * noise at the level the channel actually delivered. */
                 float meas = 0.0f;
-                chanutil_fade(pb, written, chan, (float)snr,
-                              (unsigned)(t + 1), &meas);
+                chanutil_run(ch, pb, written, &meas);
                 snr_meas_sum += meas; snr_meas_cnt++;
                 sigma = sqrt(ps / (pow(10.0, meas / 10.0) * (3000.0 / (FS / 2.0))));
             }
@@ -287,6 +345,13 @@ int main(int argc, char **argv)
                     bf[i] = a;
                 }
 
+                if (pass == 0)
+                {
+                    for (int i = 0; i < written; i++)
+                        if (pb[i] >= 32767 || pb[i] <= -32768) clipped++;
+                    tot_samp += written;
+                }
+
                 int pos = -1;
                 int s_mine  = mfsk_detect_pattern(&m, &o, bf, nwin,
                                                   tones_mine, dir_ns, dir_ns, &pos);
@@ -305,11 +370,13 @@ int main(int argc, char **argv)
             }
         }
 
+        if (ch) chanutil_close(ch);
         printf("  %+5.1f |", chan == CHAN_AWGN ? snr
                : (snr_meas_cnt ? snr_meas_sum / snr_meas_cnt : 0.0));
         for (int i = 0; i < nthr; i++)
             printf("   %3d/%-3d ", hit[i], trials);
-        printf("|  %3d/%-4d wrong-session, %d noise\n", wrong, trials, noise_fa);
+        printf("|  %3d/%-4d wrong, %d noise, clip %.2f%%\n", wrong, trials, noise_fa,
+               tot_samp ? 100.0 * (double)clipped / (double)tot_samp : 0.0);
     }
 
     free(bins); free(pb); free(bb); free(bf);

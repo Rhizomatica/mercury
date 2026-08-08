@@ -460,7 +460,43 @@ The dB bought back by the threshold is the whole trade:
 - directed 20-symbol pattern, threshold 18/20 — usable to about **−10.5 dB**,
   i.e. comparable to DATAC16's −9.5 dB, in **800 ms against 3740 ms**.
 
-So a directed pattern is a credible ACCEPT: about a dB better than the coded
-frame and ~2.9 s shorter.  Before wiring it, measure the false-accept rate over
-*many* random session keys rather than the single pair used here — the binomial
-above is an estimate, not a measurement.
+### …and it loses under fading, so it is not the ACCEPT (2026-08)
+
+On AWGN the directed pattern is about 2 dB better than the DATAC16 ACCEPT in a
+quarter of the airtime, which is why it looked like the answer.  Measured on
+the project's own Watterson MPP channel (2 path, 1 ms, 1 Hz) with both sides on
+the same instrument family (`utils/hail_suffix_sweep … mpp`,
+`utils/acquire_vs_decode DATAC16 … mpp`), 0 % clipped:
+
+| SNR3k | DATAC16 ACCEPT (3740 ms) | directed pattern (960 ms, thr 20/24) |
+|---|---|---|
+| −7 dB | **80 %** | 56 % |
+| −9 dB | **50 %** | 28 % |
+| −11 dB | **20 %** | 8 % |
+
+The DATAC16 column reproduces the independent MPP table in `docs/MODES.md`
+(50 % at −9 dB against the documented 50), which is what licenses the
+comparison.
+
+**The directed pattern loses by roughly 3 dB under fading** — a ~5 dB swing
+from its AWGN advantage — for the same reason every short control frame has:
+960 ms spans about one fade at 1 Hz Doppler where DATAC16's 3.74 s spans four.
+This is worth stating plainly because it generalises the earlier finding: the
+diversity wall is **not** about coding.  A pure correlation detector, which
+pays no energy-per-bit price at all, hits it just as hard.  Airtime is
+diversity, full stop.
+
+Dropping the threshold to 17/24 does beat DATAC16 (88 % vs 80 % at −7 dB, 68 %
+vs 50 % at −9) — but 17/24 forces only one of eight suffix symbols to match, so
+roughly a fifth of random other sessions are accepted.  The detection is only
+competitive when the addressing that makes it safe is given away.
+
+This also explains why the *shipped* 0.64 s connect confirm is fine where an
+ACCEPT is not: the confirm needs no addressing at all (the session already
+exists and the correlator window is bounded), so it runs at threshold 8/16 and
+keeps its ~10 dB margin.  Selectivity is what costs the dB, and only the ACCEPT
+has to pay for it.
+
+**Verdict: the ACCEPT stays a coded DATAC16 frame.**  Connect optimisation
+stops at the CALL-retry anchor and the pattern confirm (12.8 s → 9.7 s
+bilateral).

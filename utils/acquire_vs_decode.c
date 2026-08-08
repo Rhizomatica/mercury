@@ -124,6 +124,18 @@ int main(int argc, char **argv)
         double snr_meas_sum = 0.0; int snr_meas_cnt = 0;
         long clipped = 0, tot_samp = 0;
 
+        /* One channel per SNR point, warmed once, shared by every burst: the
+         * tap warm-up costs seconds of audio and doing it per burst made a
+         * sweep of this size take longer than it was worth.  It is also the
+         * more faithful model -- a real link is one continuous fading process,
+         * not an independent one per transmission. */
+        chanutil_t *ch = NULL;
+        if (chan != CHAN_AWGN)
+        {
+            ch = chanutil_open(chan, (float)snr, 1234u);
+            if (!ch) { fprintf(stderr, "chanutil_open failed\n"); return 1; }
+        }
+
         for (int t = 0; t < trials; t++)
         {
             /* The raw-data API does not generate the CRC: the caller owns the
@@ -192,8 +204,7 @@ int main(int argc, char **argv)
                 /* `snr` is the noise density No here; the channel adds its own
                  * noise on top of the already-normalised burst. */
                 float meas = 0.0f;
-                chanutil_fade((int16_t *)burst, n, chan, (float)snr,
-                              (unsigned)(t + 1), &meas);
+                chanutil_run(ch, (int16_t *)burst, n, &meas);
                 for (int i = 0; i < n; i++)
                     if (burst[i] >= 32767 || burst[i] <= -32768) clipped++;
                 snr_meas_sum += meas;
@@ -236,6 +247,8 @@ int main(int argc, char **argv)
             if (saw_sync) acquired++;
             if (got)      delivered++;
         }
+
+        if (ch) chanutil_close(ch);
 
         if (chan == CHAN_AWGN)
         {
