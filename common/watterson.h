@@ -44,14 +44,21 @@ typedef struct watterson_path
 
     /* IIR filter state for Doppler shaping (2nd-order Butterworth LPF)
      * Separate filters are used for the I and Q components */
-    float x_i[3];        /* Input history, I component */
-    float y_i[3];        /* Output history, I component */
-    float x_q[3];        /* Input history, Q component */
-    float y_q[3];        /* Output history, Q component */
+    /* double, not float: at a high sample rate with a slow Doppler the
+     * cutoff ratio fc/fs becomes tiny and the Butterworth poles sit within
+     * ~1e-4 of the unit circle. float carries only ~6e-8 of relative
+     * resolution there, which is enough to push a pole OUTSIDE the circle:
+     * the filter then diverges instead of fading. Measured before the change,
+     * 2 paths at 1 Hz: 8 kHz gave a sane SNR3k of -8.37 dB but 48 kHz gave
+     * +65.76 dB, i.e. the "signal" was the filter blowing up. */
+    double x_i[3];       /* Input history, I component */
+    double y_i[3];       /* Output history, I component */
+    double x_q[3];       /* Input history, Q component */
+    double y_q[3];       /* Output history, Q component */
 
     /* IIR filter coefficients (a0 is normalised to 1.0) */
-    float b0, b1, b2;    /* Numerator */
-    float a1, a2;        /* Denominator (a0 = 1) */
+    double b0, b1, b2;   /* Numerator   (double: see the history arrays) */
+    double a1, a2;       /* Denominator (a0 = 1) */
 
     /* Frequency offset state */
     float phase;          /* Current phase accumulator for rotation */
