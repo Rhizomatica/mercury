@@ -315,6 +315,64 @@ void test_mode_timing_datac16_unaffected_by_override(void)
     TEST_ASSERT_FLOAT_WITHIN(0.01f, 8.0f, t->retry_interval_s);
 }
 
+/* A callsign that does not fit the 10-byte SRC slot must be REFUSED, not
+ * truncated.  The slot holds an arithmetic code, and a truncated arithmetic
+ * code does not decode to a shortened callsign -- it decodes to a different
+ * one.  Truncating therefore puts a station on the air under a callsign that
+ * is not its own, and the peer either answers a call from a station that does
+ * not exist or drops one that does.  Refusing makes the misconfiguration
+ * visible instead.
+ *
+ * Guards both encoders: the CALL/ACCEPT payload (SRC + DST CRC16) and the CQ
+ * payload (SRC only). */
+void test_callsign_too_long_is_refused_not_truncated(void)
+{
+    uint8_t frame[INT_BUFFER_SIZE];
+
+    /* 15 chars: inside CALLSIGN_MAX_SIZE (16) so it is NOT truncated by the
+     * buffer copy, but past what ~5.25 bits/char fits in the 10-byte encoded
+     * SRC slot.  High-entropy characters so the arithmetic coder cannot pack
+     * it -- the boundary is bits, not characters, so a run of 'A's would still
+     * fit at this length. */
+    const char *too_long = "QZXJW9876543210";
+
+    TEST_ASSERT_LESS_THAN_INT(0, arq_protocol_build_call(frame, sizeof(frame),
+                                                         0x42, too_long,
+                                                         "PU2UIT-3", 2300));
+    TEST_ASSERT_LESS_THAN_INT(0, arq_protocol_build_accept(frame, sizeof(frame),
+                                                           0x42, too_long,
+                                                           "PU2UIT-3", 2300));
+    /* Not asserted for CQ: its SRC slot is 13 bytes (ARQ_CQ_SRC_MAX_ENCODED)
+     * against CALL/ACCEPT's 10, and the longest callsign that fits
+     * CALLSIGN_MAX_SIZE encodes to about 10 bytes -- so the CQ encoder cannot
+     * overflow for any input a caller can actually pass.  The refusal there is
+     * defensive, and asserting it would only pin an unreachable branch. */
+}
+
+/* Realistic callsigns must still round-trip exactly -- the refusal above must
+ * not have narrowed what legitimately fits. */
+void test_callsign_roundtrip_realistic(void)
+{
+    static const char *calls[] = { "PU2UIT", "PU2UIT-2", "DL9ABC-15",
+                                   "W1AW", "VK3ABC-9", "KO0OOO-2" };
+
+    for (unsigned i = 0; i < sizeof(calls) / sizeof(calls[0]); i++)
+    {
+        uint8_t frame[INT_BUFFER_SIZE];
+        int n = arq_protocol_build_call(frame, sizeof(frame), 0x21,
+                                        calls[i], "PU2UIT-3", 2300);
+        TEST_ASSERT_GREATER_THAN_INT(0, n);
+
+        uint8_t sid = 0;
+        char src[CALLSIGN_MAX_SIZE] = {0}, dst[CALLSIGN_MAX_SIZE] = {0};
+        int bw = 0;
+        TEST_ASSERT_GREATER_OR_EQUAL_INT(0,
+            arq_protocol_parse_call(frame, (size_t)n, &sid, src, dst, &bw));
+        TEST_ASSERT_EQUAL_UINT8(0x21, sid);
+        TEST_ASSERT_EQUAL_STRING(calls[i], src);
+    }
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -348,5 +406,8 @@ int main(void)
     RUN_TEST(test_call_interval_override);
     RUN_TEST(test_call_interval_reset);
     RUN_TEST(test_mode_timing_datac16_unaffected_by_override);
+
+    RUN_TEST(test_callsign_too_long_is_refused_not_truncated);
+    RUN_TEST(test_callsign_roundtrip_realistic);
     return UNITY_END();
 }

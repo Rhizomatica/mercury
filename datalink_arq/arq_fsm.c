@@ -759,6 +759,14 @@ static void send_call_accept(arq_session_t *sess, bool is_accept)
                                     my_call, sess->remote_call, bw_hz);
     if (n > 0)
         send_frame(PACKET_TYPE_ARQ_CALL, sess->control_mode, (size_t)n, frame, 0);
+    else
+        /* Almost always an over-long callsign: the 10-byte SRC slot holds ~14
+         * characters at ~5.25 bits each.  The encoder refuses rather than
+         * truncating (a truncated arithmetic code decodes to a DIFFERENT
+         * callsign), so say why — otherwise this is a CALL that never goes out
+         * and a session that retries against silence. */
+        HLOGW(LOG_COMP, "%s not sent: cannot encode callsign '%s' (too long?)",
+              is_accept ? "ACCEPT" : "CALL", my_call);
 }
 
 static void send_ctrl_frame(arq_session_t *sess, arq_subtype_t subtype)
