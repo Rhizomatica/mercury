@@ -199,37 +199,40 @@ Two things are worth keeping from this:
   something a better code recovers.  This is the same wall DATAC13, DATAC14 and
   DATAC18 hit, and the reason is now a number rather than a recollection.
 - **DATAC16's fringe floor is set by acquisition, not by the decoder** —
-  measured, not inferred (`utils/acquire_vs_decode DATAC16 100 -13 -7`, AWGN):
+  measured, not inferred (`utils/acquire_vs_decode DATAC16 100 -13 -8`, AWGN,
+  0 % clipped):
 
   | SNR3k | acquired | delivered | decode given sync |
   |---|---|---|---|
   | −8 dB | 100/100 | 99/100 | 99 % |
-  | −9 dB | 99/100 | 95/100 | 96 % |
-  | −10 dB | 76/100 | 72/100 | 95 % |
-  | −11 dB | 42/100 | 36/100 | 86 % |
-  | −12 dB | 13/100 | 12/100 | 92 % |
+  | −9 dB | 99/100 | 98/100 | 99 % |
+  | −10 dB | 84/100 | 78/100 | 93 % |
+  | −11 dB | 52/100 | 48/100 | 92 % |
+  | −12 dB | 26/100 | 19/100 | 73 % |
+  | −13 dB | 7/100 | 2/100 | 29 % |
 
-  Below −9 dB the acquisition rate collapses while frames that do sync still
-  decode 86–96 % of the time: the mode is losing bursts at the preamble
-  detector.  (The harness agrees with the independent 100-trial figures above:
-  95/100 delivered at −9 dB vs 96/100.)  That is why DATAC18 died at
-  acquisition, and acquisition is the one lever on this frame not yet
-  exhausted.
+  Acquisition falls away far faster than decoding does — 99 → 52 → 7 between
+  −9 and −13 dB, while frames that do sync still decode 92–99 % of the time
+  down to −11 dB.  The decoder does eventually join in below that, so the
+  honest statement is that acquisition is the *first-order* limiter, not the
+  only one.  This agrees with the independent 100-trial AWGN figures earlier in
+  this document (98 vs 96 delivered at −9 dB, 78 vs 82 at −10, 48 vs 52 at −11).
 
-  Resist settling this from an energy budget.  DATAC16's floor implies Eb/N0
-  ≈ 9.3 dB against ~1–2 dB for a rate-0.2 code near capacity, which looks like
-  a damning ~7 dB of acquisition deficit — until cyclic prefix (~1.3 dB),
-  pilots (~1.3 dB), channel-estimation and implementation loss (~1.5 dB) and
-  short-code loss at N=640 (~2.5 dB) are subtracted, leaving ~1 dB, i.e.
-  nothing conclusive.  The budget cannot answer this question; the split above
-  can.
+  Two traps, both of which produced confident and wrong tables first:
 
-What does work is not re-coding the frame but **not sending it**: the
-post-ACCEPT connect confirm carries one bit of information and now rides a
-0.64 s Welch-Costas pattern instead of a coded frame (−3.1 s, measured; see
-`tests/sim/connect_bench`).  Correlating a known sequence is a detection
-problem, not a decoding one, so it does not pay the energy-per-bit price that
-sinks every short coded frame.
+  - **Level.**  freedv emits DATAC16 at rms ~8000 / peak ~16400.  At fringe
+    SNRs the noise rms is a couple of times that, so signal+noise hits the
+    int16 rail: 23 % of samples clipped, delivering −7.1 dB when −9.0 was
+    asked for, and costing about a dB net.  The harness now normalises the
+    burst to a fixed peak before adding noise and prints the clipped
+    percentage on every row.
+  - **Do not settle this from an energy budget.**  DATAC16's floor implies
+    Eb/N0 ≈ 9.3 dB against ~1–2 dB for a rate-0.2 code near capacity, which
+    looks like ~7 dB of acquisition deficit — until cyclic prefix (~1.3 dB),
+    pilots (~1.3 dB), channel-estimation and implementation loss (~1.5 dB) and
+    short-code loss at N=640 (~2.5 dB) are subtracted, leaving ~1 dB, i.e.
+    nothing conclusive.  The budget cannot answer this question; the split
+    above can.
 
 ## Reproducing the measurements
 

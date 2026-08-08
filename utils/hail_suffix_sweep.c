@@ -41,6 +41,7 @@
 #include "mfsk.h"
 #include "mfsk_sync.h"
 #include "mfsk_ofdm.h"
+#include "chanutil.h"
 
 #define FS        8000.0
 #define FC        2000.0
@@ -114,6 +115,11 @@ int main(int argc, char **argv)
     int    sufflen= (argc > 2) ? atoi(argv[2]) : 8;
     double snr_lo = (argc > 3) ? atof(argv[3]) : -20.0;
     double snr_hi = (argc > 4) ? atof(argv[4]) : -6.0;
+    /* Optional channel preset.  Under fading the axis becomes noise density
+     * and the achieved SNR3k is measured per row, exactly as in
+     * acquire_vs_decode -- so the two instruments can be read side by side. */
+    int    chan   = (argc > 5) ? chanutil_preset_from_name(argv[5]) : CHAN_AWGN;
+    if (chan < 0) { fprintf(stderr, "unknown channel (awgn|mpg|mpp|mpd)\n"); return 1; }
     if (trials <= 0 || sufflen <= 0 || sufflen > SUFFIX_MAX)
     { fprintf(stderr, "usage: %s [trials] [suffix_len] [snr_lo] [snr_hi]\n", argv[0]); return 1; }
 
@@ -167,7 +173,8 @@ int main(int argc, char **argv)
     int thr_op = base_ns + 4;                    /* the >=4-suffix operating point */
     if (thr_op > dir_ns) thr_op = dir_ns;
 
-    printf("  SNR3k |");
+    printf("channel: %s\n", chanutil_preset_name(chan));
+    printf("%s |", chan == CHAN_AWGN ? "  SNR3k " : "  No/meas");
     for (int i = 0; i < nthr; i++) printf("  detect@%2d ", thr[i]);
     printf("| false-accept vs RANDOM sessions at thr=%d\n", thr_op);
 
@@ -182,6 +189,7 @@ int main(int argc, char **argv)
     for (double snr = snr_lo; snr <= snr_hi + 0.01; snr += 1.0)
     {
         int hit[6] = {0}, wrong = 0, noise_fa = 0;
+        double snr_meas_sum = 0.0; int snr_meas_cnt = 0;
 
         for (int t = 0; t < trials; t++)
         {
@@ -233,6 +241,17 @@ int main(int argc, char **argv)
             ps /= written;
             double sigma = sqrt(ps / (pow(10.0, snr / 10.0) * (3000.0 / (FS / 2.0))));
 
+            if (chan != CHAN_AWGN)
+            {
+                /* Fade the burst itself; the surrounding window stays plain
+                 * noise at the level the channel actually delivered. */
+                float meas = 0.0f;
+                chanutil_fade(pb, written, chan, (float)snr,
+                              (unsigned)(t + 1), &meas);
+                snr_meas_sum += meas; snr_meas_cnt++;
+                sigma = sqrt(ps / (pow(10.0, meas / 10.0) * (3000.0 / (FS / 2.0))));
+            }
+
             /* Random placement inside the window, as on the air. */
             int off = (int)(urand() * (double)(nwin - written));
 
@@ -242,9 +261,18 @@ int main(int argc, char **argv)
                 for (int i = 0; i < nwin; i++)
                 {
                     int k2 = i - off;
-                    double sig = (pass == 0 && k2 >= 0 && k2 < written)
-                                 ? (double)pb[k2] : 0.0;
-                    double v  = sig + sigma * gauss();
+                    int in_burst = (pass == 0 && k2 >= 0 && k2 < written);
+                    /* Under fading the burst ALREADY carries the channel's own
+                     * AWGN (chanutil_fade added it), so adding sigma on top of
+                     * it here would count the noise twice and read ~3 dB
+                     * pessimistic.  Outside the burst there is no channel
+                     * output, so the window is filled with noise at the level
+                     * the channel actually delivered. */
+                    double v;
+                    if (in_burst)
+                        v = (double)pb[k2] + (chan == CHAN_AWGN ? sigma * gauss() : 0.0);
+                    else
+                        v = sigma * gauss();
                     double ph = w * (double)i;
                     bb[i] = 2.0 * v * cos(ph) + I * 2.0 * v * sin(ph);
                 }
@@ -277,7 +305,8 @@ int main(int argc, char **argv)
             }
         }
 
-        printf("  %+5.1f |", snr);
+        printf("  %+5.1f |", chan == CHAN_AWGN ? snr
+               : (snr_meas_cnt ? snr_meas_sum / snr_meas_cnt : 0.0));
         for (int i = 0; i < nthr; i++)
             printf("   %3d/%-3d ", hit[i], trials);
         printf("|  %3d/%-4d wrong-session, %d noise\n", wrong, trials, noise_fa);

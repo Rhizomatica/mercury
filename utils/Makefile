@@ -39,10 +39,11 @@ run: broadcast_test
 	./broadcast_test 127.0.0.1 8300
 
 # Links the whole freedv library: drives the real OFDM modems, not a model.
-hail_suffix_sweep: hail_suffix_sweep.c ../modem/mfsk.c ../modem/mfsk_sync.c ../modem/mfsk_ofdm.c
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS) -lm
+hail_suffix_sweep: hail_suffix_sweep.c chanutil.c ../common/watterson.c \
+                   ../modem/mfsk.c ../modem/mfsk_sync.c ../modem/mfsk_ofdm.c
+	$(CC) $(CFLAGS) -o $@ $^ ../modem/freedv/libfreedvdata.a $(LDFLAGS) -lm
 
-acquire_vs_decode: acquire_vs_decode.c
+acquire_vs_decode: acquire_vs_decode.c chanutil.c ../common/watterson.c
 	$(CC) $(CFLAGS) -o $@ $^ ../modem/freedv/libfreedvdata.a $(LDFLAGS) -lm
 
 .PHONY: all clean run

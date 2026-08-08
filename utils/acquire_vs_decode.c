@@ -37,8 +37,13 @@
 #include <math.h>
 
 #include "freedv_api.h"
+#include "chanutil.h"
 
 #define FS 8000.0
+
+/* Peak the burst is normalised to before noise is added, leaving the rest of
+ * the int16 range as noise headroom.  ~18 dB below full scale. */
+#define HEADROOM_PEAK 4000.0
 
 static unsigned long long rng = 1357911131517ULL;
 
@@ -73,6 +78,11 @@ int main(int argc, char **argv)
     int    trials  = (argc > 2) ? atoi(argv[2]) : 100;
     double snr_lo  = (argc > 3) ? atof(argv[3]) : -14.0;
     double snr_hi  = (argc > 4) ? atof(argv[4]) : -4.0;
+    /* Optional 5th arg: a fading preset.  Under fading the delivered SNR is an
+     * OUTPUT of the channel, so the sweep axis becomes noise density and the
+     * achieved SNR3k is measured and reported per row. */
+    int    chan    = (argc > 5) ? chanutil_preset_from_name(argv[5]) : CHAN_AWGN;
+    if (chan < 0) { fprintf(stderr, "unknown channel '%s' (awgn|mpg|mpp|mpd)\n", argv[5]); return 1; }
 
     int mode = mode_from_name(modename);
     if (mode < 0 || trials <= 0)
@@ -96,8 +106,12 @@ int main(int argc, char **argv)
 
     printf("%s: %d byte frame, burst %d samples (%.2f s at %.0f Hz)\n",
            modename, nbytes, nburst, nburst / FS, FS);
+    printf("channel: %s\n", chanutil_preset_name(chan));
     printf("acquired = reached FREEDV_RX_SYNC;  delivered = frame out with CRC ok\n\n");
-    printf("  SNR3k    acquired   delivered   decoded|acquired\n");
+    if (chan == CHAN_AWGN)
+        printf("  SNR3k    acquired   delivered   decoded|acquired\n");
+    else
+        printf("   No     SNR3k(meas)  acquired   delivered\n");
 
     short *burst = malloc(sizeof(short) * (size_t)(nburst + 4));
     unsigned char *payload = malloc((size_t)nbytes);
@@ -107,6 +121,8 @@ int main(int argc, char **argv)
     for (double snr = snr_lo; snr <= snr_hi + 0.01; snr += 1.0)
     {
         int acquired = 0, delivered = 0;
+        double snr_meas_sum = 0.0; int snr_meas_cnt = 0;
+        long clipped = 0, tot_samp = 0;
 
         for (int t = 0; t < trials; t++)
         {
@@ -128,18 +144,62 @@ int main(int argc, char **argv)
 
             /* Signal power over the burst, then the noise sigma that puts the
              * 3 kHz-referenced SNR where we want it. */
-            double ps = 0.0;
-            for (int i = 0; i < n; i++) ps += (double)burst[i] * burst[i];
+            double ps = 0.0, pk = 0.0;
+            for (int i = 0; i < n; i++)
+            {
+                ps += (double)burst[i] * burst[i];
+                if (fabs((double)burst[i]) > pk) pk = fabs((double)burst[i]);
+            }
             ps /= n;
             /* SNR3k = ps / (sigma^2 * 3000/(FS/2)) */
             double sigma = sqrt(ps / (pow(10.0, snr / 10.0) * (3000.0 / (FS / 2.0))));
 
-            for (int i = 0; i < n; i++)
+            /* HEADROOM.  freedv emits DATAC16 at rms ~8000 / peak ~16400, so at
+             * fringe SNRs -- where the noise rms is a couple of times the
+             * signal -- signal+noise runs straight into the int16 rail.
+             * Measured 23 % of samples clipped, which quietly delivered
+             * -7.1 dB when -9.0 was asked for, and cost more in distortion
+             * than the extra SNR gave back.
+             *
+             * Normalise the burst to a fixed low level and leave the rest of
+             * the int16 range for noise.  Deliberately NOT a gain derived from
+             * the noise level: that feeds back (the gain changes the noise
+             * setting, which changes the gain) and pinned the measured SNR
+             * regardless of what was asked for. */
             {
-                double v = burst[i] + sigma * gauss();
-                if (v >  32767.0) v =  32767.0;
-                if (v < -32768.0) v = -32768.0;
-                burst[i] = (short)lrint(v);
+                double gnorm = (pk > 0.0) ? (HEADROOM_PEAK / pk) : 1.0;
+                for (int i = 0; i < n; i++)
+                    burst[i] = (short)lrint((double)burst[i] * gnorm);
+                ps    *= gnorm * gnorm;
+                sigma *= gnorm;
+            }
+
+            if (chan == CHAN_AWGN)
+            {
+                for (int i = 0; i < n; i++)
+                {
+                    double v = burst[i] + sigma * gauss();
+                    if (v >  32767.0) v =  32767.0;
+                    else if (v < -32768.0) v = -32768.0;
+                    else goto no_clip;
+                    clipped++;
+                no_clip:
+                    burst[i] = (short)lrint(v);
+                }
+            }
+            else
+            {
+                /* `snr` is the noise density No here; the channel adds its own
+                 * noise on top of the already-normalised burst. */
+                float meas = 0.0f;
+                chanutil_fade((int16_t *)burst, n, chan, (float)snr,
+                              (unsigned)(t + 1), &meas);
+                for (int i = 0; i < n; i++)
+                    if (burst[i] >= 32767 || burst[i] <= -32768) clipped++;
+                snr_meas_sum += meas;
+                snr_meas_cnt++;
+                /* The tail is plain noise at a comparable level. */
+                sigma = sqrt(ps / (pow(10.0, meas / 10.0) * (3000.0 / (FS / 2.0))));
             }
 
             /* Feed the burst plus a tail of pure noise, honouring nin. */
@@ -172,16 +232,28 @@ int main(int argc, char **argv)
                 if (nb > 0 && !(st & FREEDV_RX_BIT_ERRORS)) got = 1;
             }
 
+            tot_samp += n;
             if (saw_sync) acquired++;
             if (got)      delivered++;
         }
 
-        printf("  %+5.1f     %3d/%-3d     %3d/%-3d      %s\n",
-               snr, acquired, trials, delivered, trials,
-               acquired ? (delivered == acquired ? "1.00 (all)" : "") : "-");
-        if (delivered != acquired && acquired)
-            printf("            ^ %d burst(s) acquired but failed the CRC\n",
-                   acquired - delivered);
+        if (chan == CHAN_AWGN)
+        {
+            printf("  %+5.1f     %3d/%-3d     %3d/%-3d      %s  clip %.2f%%\n",
+                   snr, acquired, trials, delivered, trials,
+                   acquired ? (delivered == acquired ? "1.00 (all)" : "") : "-",
+                   tot_samp ? 100.0 * (double)clipped / (double)tot_samp : 0.0);
+            if (delivered != acquired && acquired)
+                printf("            ^ %d burst(s) acquired but failed the CRC\n",
+                       acquired - delivered);
+        }
+        else
+        {
+            printf("  %+6.1f    %+6.2f     %3d/%-3d     %3d/%-3d   clip %.2f%%\n",
+                   snr, snr_meas_cnt ? snr_meas_sum / snr_meas_cnt : 0.0,
+                   acquired, trials, delivered, trials,
+                   tot_samp ? 100.0 * (double)clipped / (double)tot_samp : 0.0);
+        }
     }
 
     freedv_close(tx);
