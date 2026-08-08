@@ -1191,11 +1191,29 @@ static void fsm_calling(arq_session_t *sess, const arq_event_t *ev)
         }
         break;
 
+    case ARQ_EV_TX_COMPLETE:
+        /* CALL frame just finished transmitting: re-anchor the retry deadline
+         * to PTT-OFF rather than to whenever the frame was queued.
+         *
+         * fsm_accepting already does this for ACCEPT; CALLING never got the
+         * same treatment, and the arithmetic is unforgiving.  The retry
+         * interval is measured from the TIMER_RETRY that *queued* the CALL,
+         * but the CALL itself occupies ~3.7 s of DATAC16 airtime, and the peer
+         * cannot even begin its ACCEPT until our PTT drops.  With the default
+         * interval that leaves the retransmission firing at roughly the same
+         * moment the ACCEPT is arriving -- so the retry keys the transmitter on
+         * top of the reply it was waiting for, on essentially every connect.
+         * Measuring the interval from here gives the peer a full turnaround. */
+        sess->deadline_ms = deadline_from_s(arq_protocol_call_interval_s());
+        break;
+
     case ARQ_EV_TIMER_RETRY:
         if (sess->tx_retries_left > 0)
         {
             sess->tx_retries_left--;
             send_call_accept(sess, false);
+            /* Deadline is re-anchored on TX_COMPLETE above; this is the
+             * fallback if that event is ever missed. */
             sess->deadline_ms = deadline_from_s(arq_protocol_call_interval_s());
         }
         else
