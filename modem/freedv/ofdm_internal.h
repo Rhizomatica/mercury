@@ -255,6 +255,18 @@ struct OFDM {
   char *codename;
   float EsNodB; /* EsNo est used for LDPC decoder */
   char *state_machine;
+
+  /* --- FFT-accelerated burst acquisition search (Mercury) ---
+   * The coarse timing/frequency search is a cross-correlation of the receive
+   * window against the frequency-shifted preamble, and doing it by brute force
+   * dominated idle RX CPU (measured 90 % of it).  Done by FFT instead; these
+   * are allocated lazily on first use and sized to acq_nfft.  NULL/0 means the
+   * brute-force path is in use, which is always a valid fallback. */
+  void *acq_fwd;              /* kiss_fft_cfg, forward                    */
+  void *acq_inv;              /* kiss_fft_cfg, inverse                    */
+  int   acq_nfft;             /* transform length, 0 = not initialised    */
+  void *acq_buf;              /* one block: a, A, b, B, C, c (6 * nfft)   */
+  bool  acq_fft_en;           /* false forces the brute-force search      */
 };
 
 /* Prototypes */
