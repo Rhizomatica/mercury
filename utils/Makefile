@@ -8,7 +8,16 @@ ifeq ($(OS),Windows_NT)
 LDFLAGS += -lws2_32
 endif
 
-OUT = broadcast_test broadcast_diag_tx broadcast_diag_rx watterson_test acquire_vs_decode resampler_bench rxcost_bench
+OUT = broadcast_test broadcast_diag_tx broadcast_diag_rx watterson_test acquire_vs_decode
+
+# CPU-cost instruments.  Linux/macOS only: they time with
+# clock_gettime(CLOCK_PROCESS_CPUTIME_ID), which mingw-w64 does not provide
+# (undefined reference to clock_gettime at link).  They are development tools
+# for profiling the RX path, so there is nothing to gain from porting them to
+# the Windows build -- just exclude them and keep the cross-compile green.
+ifneq ($(OS),Windows_NT)
+OUT += resampler_bench rxcost_bench
+endif
 
 # Default target
 all: $(OUT)
