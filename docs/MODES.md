@@ -118,7 +118,36 @@ Operational consequences, reflected in the ARQ design (see `docs/ARQ.md`):
   is small.  See the control-mode comparison table below.
 - Acquisition (preamble/UW detection) is the dominant loss for both new modes
   above −5 dB MPP — a future tuning candidate (`timing_mx_thresh`, UW length)
-  independent of the FEC design.
+  independent of the FEC design.  It is also what sets the *fringe* floor, which
+  is measurable rather than inferred (`utils/acquire_vs_decode DATAC16 100 -13 -8`,
+  AWGN, 0 % clipped):
+
+  | SNR3k | acquired | delivered | decode given sync |
+  |---|---|---|---|
+  | −8 dB | 100/100 | 99/100 | 99 % |
+  | −9 dB | 99/100 | 98/100 | 99 % |
+  | −10 dB | 84/100 | 78/100 | 93 % |
+  | −11 dB | 52/100 | 48/100 | 92 % |
+  | −12 dB | 26/100 | 19/100 | 73 % |
+  | −13 dB | 7/100 | 2/100 | 29 % |
+
+  Acquisition falls away far faster than decoding: 99 → 52 → 7 between −9 and
+  −13 dB, while frames that do sync still decode 92–99 % of the time down to
+  −11 dB.  The decoder does eventually join in below that, so acquisition is the
+  *first-order* limiter rather than the only one.  These figures agree with the
+  independent AWGN table above (98 vs 96 delivered at −9 dB, 78 vs 82 at −10,
+  48 vs 52 at −11), which is what licenses trusting them.
+
+  Two traps, both of which produced confident and wrong tables first.  **Level:**
+  freedv emits DATAC16 at rms ~8000 / peak ~16400, so at fringe SNRs
+  signal+noise hits the int16 rail — 23 % of samples clipped, delivering −7.1 dB
+  when −9.0 was asked for.  The tool normalises the burst before adding noise and
+  prints the clipped percentage on every row.  **Budget arithmetic:** DATAC16's
+  floor implies Eb/N0 ≈ 9.3 dB against ~1–2 dB for a rate-0.2 code near
+  capacity, which looks like ~7 dB of acquisition deficit — until cyclic prefix
+  (~1.3 dB), pilots (~1.3 dB), channel-estimation and implementation loss
+  (~1.5 dB) and short-code loss at N=640 (~2.5 dB) are subtracted, leaving ~1 dB.
+  The budget cannot answer this question; the split above can.
 
 ## Control-mode comparison: DATAC13 vs DATAC16 vs DATAC18
 

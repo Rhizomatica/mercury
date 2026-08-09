@@ -47,23 +47,23 @@ static float gaussian()
  *
  * Result: H(z) = (b0 + b1·z⁻¹ + b2·z⁻²) / (1 + a1·z⁻¹ + a2·z⁻²)
  */
-static void butterworth_2nd_lp(float fc, float fs,
-                                float *b0, float *b1, float *b2,
-                                float *a1, float *a2)
+static void butterworth_2nd_lp(double fc, double fs,
+                                double *b0, double *b1, double *b2,
+                                double *a1, double *a2)
 {
     /* Pre-warp cutoff frequency */
-    float c = tanf(M_PI * fc / fs);
-    float c2 = c * c;
-    float sqrt2c = 1.41421356237f * c;  /* √2 */
+    double c = tan(M_PI * fc / fs);
+    double c2 = c * c;
+    double sqrt2c = 1.41421356237309505 * c;  /* sqrt(2) */
 
-    float den0 = 1.0f + sqrt2c + c2;
+    double den0 = 1.0 + sqrt2c + c2;
 
     *b0 = c2 / den0;
-    *b1 = 2.0f * c2 / den0;
+    *b1 = 2.0 * c2 / den0;
     *b2 = c2 / den0;
 
-    *a1 = 2.0f * (c2 - 1.0f) / den0;
-    *a2 = (1.0f - sqrt2c + c2) / den0;
+    *a1 = 2.0 * (c2 - 1.0) / den0;
+    *a2 = (1.0 - sqrt2c + c2) / den0;
 }
 
 /* Apply a 2nd-order IIR filter to one scalar sample.
@@ -73,9 +73,9 @@ static void butterworth_2nd_lp(float fc, float fs,
  *
  * The x[3] and y[3] arrays hold {x[n-2], x[n-1], x[n]}.
  */
-static float iir_tick(float xn, float x[3], float y[3],
-                      float b0, float b1, float b2,
-                      float a1, float a2)
+static double iir_tick(double xn, double x[3], double y[3],
+                       double b0, double b1, double b2,
+                       double a1, double a2)
 {
     /* shift input history */
     x[0] = x[1];
@@ -178,9 +178,9 @@ int watterson_add_path(watterson_t *w, float delay_ms, float doppler_hz,
         /* The filter bandwidth is matched to the Doppler spread.
          * A Butterworth LPF with fc = σ provides a reasonable
          * approximation of the Gaussian spectrum. */
-        float fc = p->doppler_hz;
+        double fc = p->doppler_hz;
 
-        butterworth_2nd_lp(fc, (float)w->sample_rate,
+        butterworth_2nd_lp(fc, (double)w->sample_rate,
                            &p->b0, &p->b1, &p->b2,
                            &p->a1, &p->a2);
 
@@ -196,15 +196,15 @@ int watterson_add_path(watterson_t *w, float delay_ms, float doppler_hz,
          * narrow Doppler: the fade is ~constant over any short window, so it
          * would normalise to a single fade realisation, not the ensemble.) */
         {
-            float xh[3] = {0,0,0}, yh[3] = {0,0,0};
+            double xh[3] = {0,0,0}, yh[3] = {0,0,0};
             double e_h = 0.0;
-            float in = 1.0f;        /* unit impulse at n=0, zero thereafter */
+            double in = 1.0;        /* unit impulse at n=0, zero thereafter */
             int n;
             for (n = 0; n < 2000000; n++)
             {
-                float y = iir_tick(in, xh, yh, p->b0, p->b1, p->b2, p->a1, p->a2);
-                in = 0.0f;
-                e_h += (double)y * y;
+                double y = iir_tick(in, xh, yh, p->b0, p->b1, p->b2, p->a1, p->a2);
+                in = 0.0;
+                e_h += y * y;
                 if (n > 2000 && (double)y * y < e_h * 1e-13)
                     break;          /* impulse-response tail is negligible */
             }

@@ -45,7 +45,7 @@ ARQ_STUBS = datalink_arq/arq_test_stubs.c
 TEST_BINS = test_ring_buffer test_arq_protocol test_arq_timing test_arq_fsm \
             test_tcp_interfaces test_resampler test_pcm24 test_arq_olla test_arq_sim \
             test_arq_conn test_cfg_utils test_arq_tnc test_channel_busy \
-            test_freedv_harq test_sock_wire test_virtual_clock
+            test_freedv_harq test_sock_wire test_virtual_clock test_watterson
 
 .PHONY: all test clean
 
@@ -143,6 +143,11 @@ test_sock_wire: audioio/test_sock_wire.c $(UNITY_SRC)
 # Virtual clock (time base for -x sock); hermes_uptime_ms stubbed in-test
 test_virtual_clock: common/test_virtual_clock.c $(UNITY_SRC) ../common/virtual_clock.c
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+
+# Channel model: pins that fading stays finite across sample rates (-I.. because
+# the test includes common/watterson.h by path).
+test_watterson: common/test_watterson.c $(UNITY_SRC) ../common/watterson.c
+	$(CC) $(CFLAGS) -I.. -o $@ $^ $(LDFLAGS)
 
 # UI status wire format (embedded struct vs remote JSON must not drift)
 test_ui_status: gui_interface/test_ui_status.c $(UNITY_SRC) ../gui_interface/ui_status.c

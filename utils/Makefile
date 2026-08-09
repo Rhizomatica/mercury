@@ -8,7 +8,16 @@ ifeq ($(OS),Windows_NT)
 LDFLAGS += -lws2_32
 endif
 
-OUT = broadcast_test broadcast_diag_tx broadcast_diag_rx watterson_test
+OUT = broadcast_test broadcast_diag_tx broadcast_diag_rx watterson_test acquire_vs_decode
+
+# CPU-cost instruments.  Linux/macOS only: they time with
+# clock_gettime(CLOCK_PROCESS_CPUTIME_ID), which mingw-w64 does not provide
+# (undefined reference to clock_gettime at link).  They are development tools
+# for profiling the RX path, so there is nothing to gain from porting them to
+# the Windows build -- just exclude them and keep the cross-compile green.
+ifneq ($(OS),Windows_NT)
+OUT += resampler_bench rxcost_bench
+endif
 
 # Default target
 all: $(OUT)
@@ -32,5 +41,18 @@ clean:
 # Run the program
 run: broadcast_test
 	./broadcast_test 127.0.0.1 8300
+
+# Drives the real freedv OFDM modems (not a model) to separate acquisition
+# failures from decode failures.  chanutil puts it on the project's own
+# Watterson channel so its numbers are comparable with other instruments'.
+acquire_vs_decode: acquire_vs_decode.c chanutil.c ../common/watterson.c
+	$(CC) $(CFLAGS) -o $@ $^ ../modem/freedv/libfreedvdata.a $(LDFLAGS) -lm
+
+# Perf instruments for issue #162 (idle CPU on a 48 kHz Pi 4).
+resampler_bench: resampler_bench.c ../audioio/resampler.c
+	$(CC) $(CFLAGS) -I../audioio -o $@ $^ $(LDFLAGS) -lm
+
+rxcost_bench: rxcost_bench.c
+	$(CC) $(CFLAGS) -o $@ $^ ../modem/freedv/libfreedvdata.a $(LDFLAGS) -lm
 
 .PHONY: all clean run

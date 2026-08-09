@@ -124,6 +124,7 @@ void resampler_global_init(void)
 void resamp_up_reset(resamp_up_t *r)
 {
     memset(r->hist, 0, sizeof(r->hist));
+    r->w = RESAMP_TAPS_PER_PHASE - 1;
 }
 
 int resamp_up_process(resamp_up_t *r, const int32_t *in, int n_in, int32_t *out)
@@ -136,18 +137,23 @@ int resamp_up_process(resamp_up_t *r, const int32_t *in, int n_in, int32_t *out)
         return n_in;
     }
 
+    const int K = RESAMP_TAPS_PER_PHASE;
     int o = 0;
     for (int i = 0; i < n_in; i++) {
-        /* Shift newest input into hist[0]. */
-        for (int t = RESAMP_TAPS_PER_PHASE - 1; t > 0; t--)
-            r->hist[t] = r->hist[t - 1];
-        r->hist[0] = in[i];
+        /* Advance the circular head and write the sample at both mirrors. */
+        if (++r->w >= K) r->w = 0;
+        r->hist[r->w]     = in[i];
+        r->hist[r->w + K] = in[i];
 
+        /* hist_logical[t] (t=0 newest) == hist[w + K - t]: a contiguous run,
+         * walked in the SAME order as the old shift version so the
+         * accumulation is bit-identical. */
+        const int32_t *win = &r->hist[r->w + K];
         for (int p = 0; p < L; p++) {
             double acc = 0.0;
             const float *hp = h_up[p];
-            for (int t = 0; t < RESAMP_TAPS_PER_PHASE; t++)
-                acc += (double)hp[t] * (double)r->hist[t];
+            for (int t = 0; t < K; t++)
+                acc += (double)hp[t] * (double)win[-t];
             out[o++] = clamp_i32(acc);
         }
     }
@@ -159,6 +165,7 @@ int resamp_up_process(resamp_up_t *r, const int32_t *in, int n_in, int32_t *out)
 void resamp_down_reset(resamp_down_t *r)
 {
     memset(r->hist, 0, sizeof(r->hist));
+    r->w     = 0;
     r->phase = 0;
 }
 
@@ -176,18 +183,30 @@ int resamp_down_process(resamp_down_t *r, const int32_t *in, int n_in,
     const int ntaps = L * RESAMP_TAPS_PER_PHASE;
     int o = 0;
     for (int i = 0; i < n_in; i++) {
-        /* Shift newest input into hist[0]. */
-        for (int t = ntaps - 1; t > 0; t--)
-            r->hist[t] = r->hist[t - 1];
-        r->hist[0] = in[i];
+        /* Advance the circular head and write the sample at both mirrors.
+         * The old code shifted all `ntaps` words here for every input sample;
+         * at a 48 kHz device rate that was 8.6 M word-moves a second to feed a
+         * filter that only fires once every L samples. */
+        if (++r->w >= ntaps) r->w = 0;
+        r->hist[r->w]         = in[i];
+        r->hist[r->w + ntaps] = in[i];
 
         if (++r->phase >= L) {
             r->phase = 0;
+            /* hist_logical[t] (t=0 newest) == hist[w + ntaps - t]; same walk
+             * order as before, so the sum is bit-identical. */
+            const int32_t *win = &r->hist[r->w + ntaps];
             double acc = 0.0;
             for (int t = 0; t < ntaps; t++)
-                acc += (double)h_down[t] * (double)r->hist[t];
+                acc += (double)h_down[t] * (double)win[-t];
             out[o++] = clamp_i32(acc);
         }
     }
     return o;
+}
+
+float resampler_down_tap(int t)
+{
+    if (t < 0 || t >= RESAMP_NTAPS_MAX) return 0.0f;
+    return h_down[t];
 }
