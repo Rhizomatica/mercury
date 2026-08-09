@@ -73,3 +73,5 @@ screen.jpg
 # utils build outputs
 utils/watterson_test
 utils/acquire_vs_decode
+utils/resampler_bench
+utils/rxcost_bench

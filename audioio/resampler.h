@@ -61,8 +61,14 @@ void resampler_init_down(int L);   /* 8000*L -> 8 kHz (capture)  */
 void resampler_global_init(void);
 
 /* --- Upsampler: 8 kHz -> 8000*L (anti-imaging) --- */
+/* The history is a circular buffer stored DOUBLED: every sample is written at
+ * both `w` and `w + K`, so the K-sample window ending at the newest sample is
+ * always a contiguous descending run and the filter loop needs no modulo and
+ * no per-sample shuffling.  Costs K extra words; saves shifting the whole
+ * history once per input sample. */
 typedef struct {
-    int32_t hist[RESAMP_TAPS_PER_PHASE];  /* last K input samples (8 kHz)  */
+    int32_t hist[2 * RESAMP_TAPS_PER_PHASE];
+    int     w;                            /* index of the newest sample    */
 } resamp_up_t;
 
 void resamp_up_reset(resamp_up_t *r);
@@ -73,8 +79,12 @@ int  resamp_up_process(resamp_up_t *r, const int32_t *in, int n_in,
                        int32_t *out);
 
 /* --- Downsampler: 8000*L -> 8 kHz (anti-aliasing) --- */
+/* Doubled circular history, as above.  This is the direction that matters:
+ * it runs on every captured sample at the DEVICE rate, so at 48 kHz the old
+ * shift moved 180 words 48000 times a second. */
 typedef struct {
-    int32_t hist[RESAMP_NTAPS_MAX];       /* last N input samples (device) */
+    int32_t hist[2 * RESAMP_NTAPS_MAX];
+    int     w;                            /* index of the newest sample    */
     int     phase;                        /* 0..L-1 decimation phase       */
 } resamp_down_t;
 
@@ -84,5 +94,10 @@ void resamp_down_reset(resamp_down_t *r);
  * (8 kHz) to out (must hold at least n_in/L + 1 samples).  Returns the count. */
 int  resamp_down_process(resamp_down_t *r, const int32_t *in, int n_in,
                          int32_t *out);
+
+/* One decimation-filter coefficient.  Exposed so a test can reimplement the
+ * FIR and prove the fast history representation did not change any output
+ * sample; not part of the audio path.  Returns 0 for out-of-range t. */
+float resampler_down_tap(int t);
 
 #endif /* AUDIOIO_RESAMPLER_H */
