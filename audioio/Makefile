@@ -29,7 +29,19 @@ else
     ifeq ($(UNAME_S),Linux)
                OBJS += ffaudio/ffaudio/pulse.o
                OBJS += ffaudio/ffaudio/alsa.o
+               # ffaudio's OSS backend needs the OSSv4 API (oss_audioinfo,
+               # SNDCTL_AUDIOINFO_EX, SNDCTL_DSP_HALT ...).  Stock Linux ships
+               # only the OSS3 stub in linux/soundcard.h, which lacks all of
+               # them -- oss.c cannot compile there.  The OSSv4 headers arrive
+               # with 4Front OSS (oss4-dev on Debian, which *diverts*
+               # linux/soundcard.h), so probe for the API instead of guessing
+               # from the OS.  No OSSv4 -> no OSS backend, and audioio.c
+               # reports the subsystem as unavailable at runtime.
+               HAVE_OSS4 := $(shell $(CC) -fsyntax-only oss4-probe.c >/dev/null 2>&1 && echo 1)
+        ifeq ($(HAVE_OSS4),1)
                OBJS += ffaudio/ffaudio/oss.o
+               OSS_CFLAGS = -DHAVE_OSS4
+        endif
     endif
     ifeq ($(UNAME_S),Darwin)
                OBJS=ffaudio/ffaudio/coreaudio.o
@@ -40,7 +52,7 @@ else
 endif
 
 
-CFLAGS = $(COMMON_CFLAGS) -Wno-unused -I./ffbase/ -I./ffaudio/ -I../common
+CFLAGS = $(COMMON_CFLAGS) -Wno-unused -I./ffbase/ -I./ffaudio/ -I../common $(OSS_CFLAGS)
 
 LDFLAGS=$(FFAUDIO_LINKFLAGS)
 

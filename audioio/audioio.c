@@ -75,6 +75,18 @@ cbuf_handle_t capture_buffer;
 cbuf_handle_t playback_buffer;
 
 int audio_subsystem;
+
+/* ffaudio's OSS backend is only compiled where the OSSv4 API exists (see the
+ * HAVE_OSS4 probe in audioio/Makefile).  Stock Linux ships only the OSS3 stub,
+ * where oss.c does not compile, so &ffoss must not even be referenced there --
+ * it is declared unconditionally in ffaudio/audio.h and would fail at link.
+ * Selecting -x oss on such a build leaves `audio` NULL and is reported as an
+ * unavailable subsystem. */
+#if defined(HAVE_OSS4) || defined(__FreeBSD__)
+#define OSS_IFACE ((ffaudio_interface *) &ffoss)
+#else
+#define OSS_IFACE NULL
+#endif
 static int capture_input_channel_layout = LEFT;
 
 // Internal state for restart support
@@ -762,13 +774,13 @@ void *radio_playback_thread(void *device_ptr)
          * (observed here as 170 ms playback / 10 ms capture). */
         conf.buf.buffer_length_msec = 40;
         period_ms = conf.buf.buffer_length_msec / 4;
-        audio = (ffaudio_interface *) &ffoss;
+        audio = OSS_IFACE;
     }
 #elif defined(__FreeBSD__)
     conf.buf.buffer_length_msec = 40;
     period_ms = conf.buf.buffer_length_msec / 4;
     if (audio_subsystem == AUDIO_SUBSYSTEM_OSS)
-        audio = (ffaudio_interface *) &ffoss;
+        audio = OSS_IFACE;
 #elif defined(__APPLE__)
     conf.buf.buffer_length_msec = 40;
     period_ms = conf.buf.buffer_length_msec / 4;
@@ -1140,12 +1152,12 @@ void *radio_capture_thread(void *device_ptr)
     if (audio_subsystem == AUDIO_SUBSYSTEM_OSS)
     {
         conf.buf.buffer_length_msec = 40;
-        audio = (ffaudio_interface *) &ffoss;
+        audio = OSS_IFACE;
     }
 #elif defined(__FreeBSD__)
     conf.buf.buffer_length_msec = 40;
     if (audio_subsystem == AUDIO_SUBSYSTEM_OSS)
-        audio = (ffaudio_interface *) &ffoss;
+        audio = OSS_IFACE;
 #elif defined(__APPLE__)
     conf.buf.buffer_length_msec = 40;
     if (audio_subsystem == AUDIO_SUBSYSTEM_COREAUDIO)
@@ -1592,10 +1604,10 @@ static int get_soundcard_list_int(int audio_system, int mode,
     if (audio_system == AUDIO_SUBSYSTEM_PULSE)
         audio = (ffaudio_interface *) &ffpulse;
     if (audio_system == AUDIO_SUBSYSTEM_OSS)
-        audio = (ffaudio_interface *) &ffoss;
+        audio = OSS_IFACE;
 #elif defined(__FreeBSD__)
     if (audio_system == AUDIO_SUBSYSTEM_OSS)
-        audio = (ffaudio_interface *) &ffoss;
+        audio = OSS_IFACE;
 #elif defined(__APPLE__)
     if (audio_system == AUDIO_SUBSYSTEM_COREAUDIO)
         audio = (ffaudio_interface *) &ffcoreaudio;
@@ -1816,12 +1828,13 @@ void list_soundcards(int audio_system)
         audio = (ffaudio_interface *) &ffpulse;
     if (audio_subsystem == AUDIO_SUBSYSTEM_OSS)
     {
-        printf("Listing OSS soundcards:\n");
-        audio = (ffaudio_interface *) &ffoss;
+        audio = OSS_IFACE;
+        if (audio)
+            printf("Listing OSS soundcards:\n");
     }
 #elif defined(__FreeBSD__)
     if (audio_subsystem == AUDIO_SUBSYSTEM_OSS)
-        audio = (ffaudio_interface *) &ffoss;
+        audio = OSS_IFACE;
 #elif defined(__APPLE__)
     if (audio_subsystem == AUDIO_SUBSYSTEM_COREAUDIO)
         audio = (ffaudio_interface *) &ffcoreaudio;
@@ -1831,7 +1844,11 @@ void list_soundcards(int audio_system)
 #endif
 
     if (!audio)
+    {
+        printf("Sound system %d is not available in this build.\n",
+               audio_subsystem);
         return;
+    }
 
 #if defined(__linux__)
     if (audio_subsystem == AUDIO_SUBSYSTEM_PULSE)
