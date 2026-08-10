@@ -33,7 +33,7 @@
 #include "virtual_clock.h"
 
 /* ---- shared globals ---- */
-volatile bool shutdown_ = false;
+_Atomic bool shutdown_ = false;
 static generic_modem_t g_modem;
 static pthread_t g_radio_capture, g_radio_playback;
 static int g_audio_system = -1;

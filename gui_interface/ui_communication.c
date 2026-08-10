@@ -29,6 +29,7 @@
 #include <time.h>
 #include <errno.h>
 #include <stdbool.h>
+#include <stdatomic.h>
 #include <math.h>
 
 #include "../common/os_interop.h"
@@ -53,7 +54,12 @@ extern int audioio_restart(const char *capture_dev, const char *playback_dev,
                            int audio_subsys, int capture_channel_layout);
 
 // global shutdown flag from main.c
-extern volatile bool shutdown_;
+/* Must match the definition in common/mercury_engine.c: _Atomic, not
+ * volatile.  This global is written from the termination signal handler and
+ * polled by every worker loop; volatile orders nothing between threads, and
+ * declaring the same object differently in different translation units is
+ * undefined behaviour on top of that.  Plain assignment and test still work. */
+extern _Atomic bool shutdown_;
 
 #define UI_LOG_TAG "ui-comm"
 
