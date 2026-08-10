@@ -10,6 +10,7 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include <stdatomic.h>
 #include <limits.h>
 #include <errno.h>
 #include <signal.h>
@@ -32,7 +33,12 @@
 #include "resampler.h"
 #include "pcm24.h"
 
-extern volatile bool shutdown_;
+/* Must match the definition in common/mercury_engine.c: _Atomic, not
+ * volatile.  This global is written from the termination signal handler and
+ * polled by every worker loop; volatile orders nothing between threads, and
+ * declaring the same object differently in different translation units is
+ * undefined behaviour on top of that.  Plain assignment and test still work. */
+extern _Atomic bool shutdown_;
 
 /* ------------------------------------------------------------------ */
 /*  DirectSound GUID ↔ string helpers (Windows only)                  */

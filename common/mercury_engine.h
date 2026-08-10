@@ -11,6 +11,7 @@
 #define MERCURY_ENGINE_H
 
 #include <stdbool.h>
+#include <stdatomic.h>
 #include <stdint.h>
 #include <pthread.h>
 
@@ -18,7 +19,12 @@
 #include "ui_communication.h"
 #include "modem.h"
 
-extern volatile bool shutdown_;
+/* Set by the termination signal handler, polled by main and by every worker
+ * loop.  _Atomic rather than volatile: volatile provides no inter-thread
+ * ordering, and the handler-write/thread-read pair is a data race in the
+ * formal sense (ThreadSanitizer reports it at main.c's handler).  Plain
+ * assignment and test still work -- C11 atomics overload them. */
+extern _Atomic bool shutdown_;
 
 /* ------------------------------------------------------------------ */
 /*  mercury_engine_init()                                              */

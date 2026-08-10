@@ -82,7 +82,12 @@ extern cbuf_handle_t data_rx_buffer_arq;
 extern cbuf_handle_t data_tx_buffer_broadcast;
 extern cbuf_handle_t data_rx_buffer_broadcast;
 
-extern volatile bool shutdown_;
+/* Must match the definition in common/mercury_engine.c: _Atomic, not
+ * volatile.  This global is written from the termination signal handler and
+ * polled by every worker loop; volatile orders nothing between threads, and
+ * declaring the same object differently in different translation units is
+ * undefined behaviour on top of that.  Plain assignment and test still work. */
+extern _Atomic bool shutdown_;
 
 extern arq_info arq_conn;
 

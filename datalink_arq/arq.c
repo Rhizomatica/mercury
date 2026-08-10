@@ -108,8 +108,14 @@ static pthread_t g_loop_tid;
 static pthread_t g_cmd_tid;
 static pthread_t g_payload_tid;
 
-static volatile bool g_running;
-static volatile bool g_initialized;
+/* Read by the modem RX/TX and TCP threads while the main thread writes them
+ * at init/teardown.  `volatile` orders nothing between threads and is not
+ * atomic in C -- formally a data race, and ThreadSanitizer flags exactly that
+ * (arq_init writing g_initialized against arq_get_runtime_snapshot reading it
+ * from the RX thread).  C11 atomics keep the plain read/write syntax, so only
+ * the declaration changes. */
+static _Atomic bool g_running;
+static _Atomic bool g_initialized;
 
 /* ======================================================================
  * Event queue helpers

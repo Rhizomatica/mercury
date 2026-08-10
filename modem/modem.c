@@ -53,7 +53,12 @@
 /* The buffers can be connected to an external software (eg. sbitx_controller)  */
 /* or to the audioio subsystem which connects to a sound card. */
 
-extern volatile bool shutdown_; // global shutdown flag
+/* Must match the definition in common/mercury_engine.c: _Atomic, not
+ * volatile.  This global is written from the termination signal handler and
+ * polled by every worker loop; volatile orders nothing between threads, and
+ * declaring the same object differently in different translation units is
+ * undefined behaviour on top of that.  Plain assignment and test still work. */
+extern _Atomic bool shutdown_;
 
 extern cbuf_handle_t capture_buffer;
 extern cbuf_handle_t playback_buffer;
