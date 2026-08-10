@@ -7,6 +7,7 @@
 #include <ffbase/stringz.h>
 
 #include <sys/soundcard.h>
+#include <sys/ioctl.h> /* FreeBSD gets ioctl() via soundcard.h, Linux does not */
 #include <fcntl.h>
 #include <errno.h>
 #include <math.h>

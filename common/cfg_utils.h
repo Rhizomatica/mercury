@@ -146,4 +146,8 @@ bool cfg_write(const mercury_config *cfg, const char *ini_path);
 /* Populate |cfg| with compile/runtime defaults. Call before cfg_read(). */
 void cfg_set_defaults(mercury_config *cfg);
 
+/* Map an AUDIO_SUBSYSTEM_* constant back to its CLI name ("alsa", "oss", ...).
+ * Returns a static string; never NULL. */
+const char *cfg_sound_system_name(int sys);
+
 #endif /* CFG_UTILS_H_ */
