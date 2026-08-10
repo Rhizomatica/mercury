@@ -112,6 +112,7 @@ struct ffaudio_buf {
 	int fd;
 	void *data;
 	ffsize data_cap;
+	ffuint frag_size;
 	int nonblock;
 
 	int err;
@@ -278,6 +279,7 @@ int ffoss_open(ffaudio_buf *b, ffaudio_conf *conf, ffuint flags)
 	}
 	ffuint bufsize = 16*1024;
 	if (r == 0) {
+		b->frag_size = (info.fragsize > 0) ? (ffuint)info.fragsize : 0;
 		conf->buffer_length_msec = _ffau_buf_size_to_msec(conf, info.fragstotal * info.fragsize);
 		bufsize = info.fragstotal * info.fragsize;
 	}
@@ -345,7 +347,21 @@ int ffoss_drain(ffaudio_buf *b)
 
 static int oss_readonce(ffaudio_buf *b, const void **buffer)
 {
-	int r = read(b->fd, b->data, b->data_cap);
+	/* Read one fragment, not the whole buffer.
+	 *
+	 * Asking for data_cap makes the driver hand back whatever happens to be
+	 * queued, which is almost always a ragged partial fragment -- and osscore's
+	 * copy_to_user() fails intermittently on exactly those (dmesg shows
+	 * copy_to_user(4032/3960/3408) against a 1024-byte fragment, while the one
+	 * fragment-aligned size, 4096, is the exception).  PulseAudio and the other
+	 * OSS clients ask a fragment at a time and never take that path.
+	 *
+	 * A fragment is also the granularity the driver signals at, so this costs
+	 * no latency: it returns as soon as one is ready, rather than after the
+	 * driver has scraped together a partial buffer. */
+	ffsize want = (b->frag_size != 0 && b->frag_size <= b->data_cap)
+		? b->frag_size : b->data_cap;
+	int r = read(b->fd, b->data, want);
 	if (r < 0) {
 		if (errno == EAGAIN)
 			return 0;
