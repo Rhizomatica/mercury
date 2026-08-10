@@ -367,6 +367,9 @@ static inline int32_t tx_sample_with_gain(int16_t sample, float gain, float *pea
  * decode latency and stops an unbounded backlog on low-power cores that
  * decode slower than real time (issue #81 follow-up). */
 #define RX_MAX_BACKLOG_SAMPLES 16000
+/* Per-plane decoder ring: 2 s of 8 kHz int16, matching the capture backlog cap
+ * above so a stalled worker is bounded by its own ring, not by the dispatcher. */
+#define RX_WORKER_RING_BYTES   (16000 * (int)sizeof(int16_t))
 
 typedef struct {
     struct freedv *datac1;
@@ -1528,6 +1531,137 @@ static void process_received_frame(const uint8_t *data,
 }
 
 static void rx_decoder_consume_chunk(rx_decoder_state_t *state,
+                                     const int16_t *samples, int sample_count,
+                                     bool arq_policy_ready, int payload_mode,
+                                     uint32_t bitrate_bps,
+                                     rx_metrics_accum_t *metrics);
+
+/* --- Parallel decode: one worker per plane ------------------------------
+ *
+ * The control and payload decoders hold different freedv instances (control is
+ * DATAC16; the payload ladder never includes it), and since the pool lock was
+ * split they no longer exclude each other -- so there is no reason to run them
+ * one after the other on a single core.  rx_thread now dispatches: it reads
+ * capture_buffer once and writes the SAME samples into a ring per plane, and
+ * these workers drain their own ring.
+ *
+ * The fan-out is here rather than in audioio because capture_buffer has four
+ * writers (null/fifo/sock/ALSA) plus a SHM mode whose writer is another
+ * process entirely -- there is no single place down there to tee.
+ *
+ * Rings are cbuf_handle_t like every other audio path in the tree. */
+typedef struct {
+    rx_decoder_state_t  state;
+    cbuf_handle_t       ring;         /* int16 samples from the dispatcher   */
+    pthread_t           tid;
+    _Atomic int         mode;         /* plane's mode, set by the dispatcher */
+    _Atomic bool        running;
+    _Atomic bool        flush_req;    /* dispatcher asks: drop what you hold  */
+    /* Metrics this plane observed since the dispatcher last drained them.
+     * Merged with max() exactly as the single-threaded path did -- an unsynced
+     * decoder reports a low estimate, so max() naturally reports whichever
+     * plane is actually hearing something. */
+    pthread_mutex_t     mlock;
+    rx_metrics_accum_t  metrics;
+    /* Set by the dispatcher each chunk; read by the worker. */
+    _Atomic int         payload_mode;
+    _Atomic bool        policy_ready;
+    _Atomic uint32_t    bitrate_bps;
+    _Atomic long        dropped_samples;  /* ring overflow, logged not fatal */
+} rx_worker_t;
+
+static void rx_worker_publish_metrics(rx_worker_t *w, const rx_metrics_accum_t *m)
+{
+    pthread_mutex_lock(&w->mlock);
+    if (m->sync) w->metrics.sync = 1;
+    w->metrics.rx_status |= m->rx_status;
+    if (m->snr_valid && (!w->metrics.snr_valid || m->snr_est > w->metrics.snr_est))
+    {
+        w->metrics.snr_est = m->snr_est;
+        w->metrics.snr_valid = true;
+    }
+    if (m->frame_decoded) w->metrics.frame_decoded = true;
+    pthread_mutex_unlock(&w->mlock);
+}
+
+/* Drain this plane's metrics into `out` (max() merge), then reset. */
+static void rx_worker_take_metrics(rx_worker_t *w, rx_metrics_accum_t *out)
+{
+    pthread_mutex_lock(&w->mlock);
+    if (w->metrics.sync) out->sync = 1;
+    out->rx_status |= w->metrics.rx_status;
+    if (w->metrics.snr_valid && (!out->snr_valid || w->metrics.snr_est > out->snr_est))
+    {
+        out->snr_est = w->metrics.snr_est;
+        out->snr_valid = true;
+    }
+    if (w->metrics.frame_decoded) out->frame_decoded = true;
+    memset(&w->metrics, 0, sizeof(w->metrics));
+    pthread_mutex_unlock(&w->mlock);
+}
+
+static void *rx_worker_thread(void *arg)
+{
+    rx_worker_t *w = (rx_worker_t *)arg;
+    int16_t *buf = NULL;
+    int cap = 0;
+
+    while (atomic_load(&w->running) && !shutdown_)
+    {
+        if (atomic_load(&w->flush_req))
+        {
+            clear_buffer(w->ring);
+            w->state.demod_count = 0;   /* owned by this thread */
+            atomic_store(&w->flush_req, false);
+        }
+
+        int mode = atomic_load(&w->mode);
+        if (rx_decoder_bind_mode(&w->state, mode) < 0)
+        {
+            usleep(100000);
+            continue;
+        }
+
+        int want = rx_decoder_target_chunk_samples(&w->state);
+        size_t have = size_buffer(w->ring) / sizeof(int16_t);
+        if (have < (size_t)want)
+        {
+            /* read_buffer blocks when empty, so this only spins while the
+             * dispatcher is mid-write; keep it cheap. */
+            usleep(2000);
+            continue;
+        }
+
+        if (cap < want)
+        {
+            int16_t *nb = (int16_t *)realloc(buf, sizeof(int16_t) * (size_t)want);
+            if (!nb)
+            {
+                HLOGE("modem-rx", "decoder worker: out of memory for %d samples", want);
+                usleep(100000);
+                continue;
+            }
+            buf = nb;
+            cap = want;
+        }
+
+        read_buffer(w->ring, (uint8_t *)buf, sizeof(int16_t) * (size_t)want);
+
+        rx_metrics_accum_t m = {0};
+        rx_decoder_consume_chunk(&w->state, buf, want,
+                                 atomic_load(&w->policy_ready),
+                                 atomic_load(&w->payload_mode),
+                                 atomic_load(&w->bitrate_bps),
+                                 &m);
+        rx_worker_publish_metrics(w, &m);
+    }
+
+    free(buf);
+    HLOGI("modem-rx", "decoder worker exit (mode=%d)", atomic_load(&w->mode));
+    return NULL;
+}
+
+static void rx_decoder_consume_chunk(rx_decoder_state_t *state,
                                      const int16_t *samples,
                                      int sample_count,
                                      bool arq_policy_ready,
@@ -1841,8 +1975,30 @@ void *rx_thread(void *g_modem)
     int32_t *capture_i32 = NULL;
     int16_t *capture_i16 = NULL;
     int capture_cap = 0;
-    rx_decoder_state_t control_decoder = {0};
-    rx_decoder_state_t payload_decoder = {0};
+    /* One worker per plane.  rx_thread keeps ownership of reading
+     * capture_buffer, the flush policy and the spectrum/busy work; the workers
+     * only decode. */
+    static rx_worker_t w_ctrl, w_pay;
+    memset(&w_ctrl, 0, sizeof(w_ctrl));
+    memset(&w_pay,  0, sizeof(w_pay));
+    pthread_mutex_init(&w_ctrl.mlock, NULL);
+    pthread_mutex_init(&w_pay.mlock,  NULL);
+    /* Two seconds of 8 kHz int16 per plane: the same order as the capture
+     * backlog cap, so a stalled worker is bounded by its own ring rather than
+     * by starving the other plane. */
+    w_ctrl.ring = circular_buf_init((uint8_t *)malloc(RX_WORKER_RING_BYTES), RX_WORKER_RING_BYTES);
+    w_pay.ring  = circular_buf_init((uint8_t *)malloc(RX_WORKER_RING_BYTES), RX_WORKER_RING_BYTES);
+    if (!w_ctrl.ring || !w_pay.ring)
+    {
+        HLOGE("modem-rx", "could not allocate decoder rings; RX disabled");
+        return NULL;
+    }
+    atomic_store(&w_ctrl.mode, ARQ_CONTROL_MODE);
+    atomic_store(&w_pay.mode,  FREEDV_MODE_DATAC15);
+    atomic_store(&w_ctrl.running, true);
+    atomic_store(&w_pay.running,  true);
+    pthread_create(&w_ctrl.tid, NULL, rx_worker_thread, &w_ctrl);
+    pthread_create(&w_pay.tid,  NULL, rx_worker_thread, &w_pay);
     int last_pref_rx_mode = -1;
     int last_pref_tx_mode = -1;
     bool was_tx = false;
@@ -1924,8 +2080,10 @@ void *rx_thread(void *g_modem)
              * accumulator resets (they only drop pre-TX partial input). */
             if (!virtual_clock_enabled())
                 clear_buffer(capture_buffer);
-            control_decoder.demod_count = 0;
-            payload_decoder.demod_count = 0;
+            /* The workers own their demod accumulators, so ask them to drop
+             * what they hold rather than reaching into their state. */
+            atomic_store(&w_ctrl.flush_req, true);
+            atomic_store(&w_pay.flush_req, true);
             was_tx = false;
         }
 
@@ -1952,21 +2110,23 @@ void *rx_thread(void *g_modem)
                   "RX backlog exceeded ~%d s cap; flushing stale audio to catch up",
                   RX_MAX_BACKLOG_SAMPLES / 8000);
             clear_buffer(capture_buffer);
-            control_decoder.demod_count = 0;
-            payload_decoder.demod_count = 0;
+            /* A flush must reach the workers' rings too, or stale audio the
+             * dispatcher already handed on would still be decoded -- the S1
+             * was_tx bug, one level further down the pipe.  The workers reset
+             * their own demod_count, since they own it. */
+            atomic_store(&w_ctrl.flush_req, true);
+            atomic_store(&w_pay.flush_req, true);
         }
 
-        if (rx_decoder_bind_mode(&control_decoder, ARQ_CONTROL_MODE) < 0 ||
-            rx_decoder_bind_mode(&payload_decoder, payload_mode) < 0)
-        {
-            usleep(100000);
-            continue;
-        }
+        atomic_store(&w_pay.mode, payload_mode);
+        atomic_store(&w_ctrl.payload_mode, payload_mode);
+        atomic_store(&w_pay.payload_mode,  payload_mode);
+        atomic_store(&w_ctrl.policy_ready, arq_policy_ready);
+        atomic_store(&w_pay.policy_ready,  arq_policy_ready);
+        atomic_store(&w_ctrl.bitrate_bps, bitrate_bps);
+        atomic_store(&w_pay.bitrate_bps,  bitrate_bps);
 
-        int chunk_samples = rx_decoder_target_chunk_samples(&control_decoder);
-        int payload_chunk = rx_decoder_target_chunk_samples(&payload_decoder);
-        if (payload_chunk > chunk_samples)
-            chunk_samples = payload_chunk;
+        int chunk_samples = RX_DECODE_CHUNK_SAMPLES;
 
         if (capture_cap < chunk_samples)
         {
@@ -2001,25 +2161,30 @@ void *rx_thread(void *g_modem)
             capture_i16[i] = (int16_t)(capture_i32[i] >> 16);
         }
 
-        rx_metrics_accum_t metrics = {0};
-        rx_decoder_consume_chunk(&control_decoder,
-                                 capture_i16,
-                                 chunk_samples,
-                                 arq_policy_ready,
-                                 payload_mode,
-                                 bitrate_bps,
-                                 &metrics);
-
-        if (payload_decoder.freedv != control_decoder.freedv)
+        /* Tee the chunk to both planes.  A worker that has fallen behind
+         * overflows its own ring: drop there and log, never block the
+         * dispatcher (that would let a slow payload decoder starve control,
+         * which is the failure this whole split exists to avoid). */
+        size_t tee_bytes = sizeof(int16_t) * (size_t)chunk_samples;
+        rx_worker_t *tee[2] = { &w_ctrl, &w_pay };
+        for (int t = 0; t < 2; t++)
         {
-            rx_decoder_consume_chunk(&payload_decoder,
-                                     capture_i16,
-                                     chunk_samples,
-                                     arq_policy_ready,
-                                     payload_mode,
-                                     bitrate_bps,
-                                     &metrics);
+            if (circular_buf_free_size(tee[t]->ring) < tee_bytes)
+            {
+                long d = atomic_fetch_add(&tee[t]->dropped_samples, chunk_samples)
+                         + chunk_samples;
+                if ((d / chunk_samples) % 64 == 1)
+                    HLOGW("modem-rx",
+                          "decoder ring full (mode=%d): dropped %ld samples so far",
+                          atomic_load(&tee[t]->mode), d);
+                continue;
+            }
+            write_buffer(tee[t]->ring, (uint8_t *)capture_i16, tee_bytes);
         }
+
+        rx_metrics_accum_t metrics = {0};
+        rx_worker_take_metrics(&w_ctrl, &metrics);
+        rx_worker_take_metrics(&w_pay,  &metrics);
 
         if (arq_policy_ready)
         {
@@ -2156,8 +2321,20 @@ void *rx_thread(void *g_modem)
         }
     }
 
-    rx_decoder_dispose(&control_decoder);
-    rx_decoder_dispose(&payload_decoder);
+    /* Stop and join the workers BEFORE releasing anything they touch.  Teardown
+     * order is not cosmetic here: freeing a ring under a live worker is the
+     * use-after-free class this project has hit before. */
+    atomic_store(&w_ctrl.running, false);
+    atomic_store(&w_pay.running,  false);
+    pthread_join(w_ctrl.tid, NULL);
+    pthread_join(w_pay.tid,  NULL);
+    rx_decoder_dispose(&w_ctrl.state);
+    rx_decoder_dispose(&w_pay.state);
+    if (w_ctrl.ring) { free(w_ctrl.ring->buffer); circular_buf_free(w_ctrl.ring); }
+    if (w_pay.ring)  { free(w_pay.ring->buffer);  circular_buf_free(w_pay.ring);  }
+    pthread_mutex_destroy(&w_ctrl.mlock);
+    pthread_mutex_destroy(&w_pay.mlock);
+
     free(capture_i32);
     free(capture_i16);
 
