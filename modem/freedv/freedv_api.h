@@ -263,6 +263,11 @@ int freedv_rawdata_from_codec_frames(struct freedv *freedv,
                                      unsigned char *rawdata,
                                      unsigned char *codec_frames);
 unsigned short freedv_gen_crc16(unsigned char *bytes, int nbytes);
+
+/* OFDM burst acquisition: enable/disable the FFT-accelerated joint
+ * timing/frequency search (default enabled).  Both paths select the same
+ * argmax; exposed so the two can be compared and so a station can fall back. */
+void freedv_set_acq_fft_enable(struct freedv *freedv, bool val);
 void freedv_pack(unsigned char *bytes, unsigned char *bits, int nbits);
 void freedv_unpack(unsigned char *bits, unsigned char *bytes, int nbits);
 unsigned short freedv_crc16_unpacked(unsigned char *bits, int nbits);

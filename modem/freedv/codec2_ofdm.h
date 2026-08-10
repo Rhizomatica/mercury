@@ -95,6 +95,12 @@ void ofdm_set_foff_est_enable(struct OFDM *, bool);
 void ofdm_set_phase_est_enable(struct OFDM *, bool);
 void ofdm_set_phase_est_bandwidth_mode(struct OFDM *ofdm, int val);
 void ofdm_set_off_est_hz(struct OFDM *, float);
+
+/* Enable/disable the FFT-accelerated burst acquisition search (default on).
+ * Both paths compute the same joint timing/frequency argmax; this exists so
+ * the two can be compared directly, and so a station can fall back if the
+ * fast path is ever suspected.  See est_timing_and_freq_fft() in ofdm.c. */
+void ofdm_set_acq_fft_enable(struct OFDM *, bool);
 void ofdm_set_sync(struct OFDM *, int);
 void ofdm_set_tx_bpf(struct OFDM *, bool);
 void ofdm_set_dpsk(struct OFDM *ofdm, bool val);

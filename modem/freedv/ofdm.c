@@ -39,6 +39,7 @@
 #include "comp.h"
 #include "debug_alloc.h"
 #include "filter.h"
+#include "kiss_fft.h"
 #include "machdep.h"
 #include "ofdm_internal.h"
 #include "wval.h"
@@ -252,6 +253,8 @@ struct OFDM *ofdm_create(const struct OFDM_CONFIG *config) {
     ofdm->fmax =
         config->fmax; /* frequency maximum for ofdm acquisition range */
   }
+
+  ofdm->acq_fft_en = true; /* FFT acquisition search on by default */
 
   ofdm->rs = (1.0f / ofdm->ts);            /* Modulation Symbol Rate */
   ofdm->m = (int)(ofdm->fs / ofdm->rs);    /* 700D: 144 */
@@ -626,6 +629,9 @@ void ofdm_destroy(struct OFDM *ofdm) {
   if (ofdm->rx_bpf) {
     deallocate_rx_bpf(ofdm);
   }
+  if (ofdm->acq_fwd) KISS_FFT_FREE(ofdm->acq_fwd);
+  if (ofdm->acq_inv) KISS_FFT_FREE(ofdm->acq_inv);
+  if (ofdm->acq_buf) FREE(ofdm->acq_buf);
 
   FREE(ofdm->pilot_samples);
   FREE(ofdm->rxbuf);
@@ -1154,6 +1160,10 @@ void ofdm_set_phase_est_enable(struct OFDM *ofdm, bool val) {
   ofdm->phase_est_en = val;
 }
 
+void ofdm_set_acq_fft_enable(struct OFDM *ofdm, bool val) {
+  ofdm->acq_fft_en = val;
+}
+
 void ofdm_set_off_est_hz(struct OFDM *ofdm, float val) {
   ofdm->foff_est_hz = val;
 }
@@ -1249,6 +1259,153 @@ int ofdm_sync_search_shorts(struct OFDM *ofdm, short *rxbuf_in, float gain) {
   return ofdm_sync_search_core(ofdm);
 }
 
+/* ---- FFT-accelerated joint timing/frequency search (Mercury) ----------
+ *
+ * est_timing_and_freq() below evaluates, for every frequency hypothesis w and
+ * every timing offset t,
+ *
+ *     c_w[t] = sum_i rx[t+i] * conj(known[i] * e^{jwi})
+ *
+ * by direct dot product.  That is Nfreq * (Ncorr/tstep) * Npsam complex MACs,
+ * and on an idle receiver -- searching continuously for a preamble that is not
+ * there -- it measured 90 % of all RX CPU (issue #162: 100 % of a Pi 4 core,
+ * with the audio backlog starting before any session existed).
+ *
+ * The inner expression is a cross-correlation, so for each hypothesis
+ *
+ *     c_w = IFFT( FFT(rx) . conj(FFT(g_w)) ),    g_w[i] = known[i] * e^{jwi}
+ *
+ * and multiplying by e^{jwi} in time is a rotation in frequency, so FFT(g_w)
+ * is FFT(known) rotated by w's bin index.  One template transform therefore
+ * serves every hypothesis.
+ *
+ * The transform length is not free.  It must be >= Nrx (so no correlation lag
+ * wraps onto real data) AND must make fstep an exact number of bins (or the
+ * rotation is not a rotation).  fs/fstep = 1600 for the coarse stage but
+ * Nrx = 1760, so the smallest workable length is 3200, where 5 Hz is exactly
+ * two bins.  Across every mode in ofdm_mode.c this lands on 1600 or 3200, both
+ * of which factor into 2s and 5s -- comfortable for kiss_fft's mixed radix.
+ *
+ * Returns false when no suitable length exists (fstep not dividing fs, or the
+ * transform getting silly), and the caller falls back to brute force.  The
+ * fine stage does that: its fstep of 1 Hz would demand an 8000-point transform
+ * to save 35 dot products.
+ */
+
+/* Minimum brute-force work before the transforms are worth their overhead. */
+#define OFDM_ACQ_FFT_MIN_DOTS 512
+/* Refuse to allocate a silly transform. */
+#define OFDM_ACQ_FFT_MAX 16384
+
+static bool acq_fft_len(struct OFDM *ofdm, int Nrx, float fstep, int *nfft_out) {
+  if (fstep <= 0.0f) return false;
+  double per = (double)ofdm->fs / (double)fstep; /* samples for one fstep bin */
+  int base = (int)lrint(per);
+  if (base <= 0 || fabs(per - (double)base) > 1e-6) return false; /* not exact */
+  long n = (long)base * ((Nrx + base - 1) / base);
+  if (n < Nrx || n > OFDM_ACQ_FFT_MAX) return false;
+  *nfft_out = (int)n;
+  return true;
+}
+
+static bool acq_fft_prepare(struct OFDM *ofdm, int nfft) {
+  if (ofdm->acq_nfft == nfft && ofdm->acq_fwd && ofdm->acq_inv && ofdm->acq_buf)
+    return true;
+
+  if (ofdm->acq_fwd) { KISS_FFT_FREE(ofdm->acq_fwd); ofdm->acq_fwd = NULL; }
+  if (ofdm->acq_inv) { KISS_FFT_FREE(ofdm->acq_inv); ofdm->acq_inv = NULL; }
+  if (ofdm->acq_buf) { FREE(ofdm->acq_buf); ofdm->acq_buf = NULL; }
+  ofdm->acq_nfft = 0;
+
+  kiss_fft_cfg fwd = kiss_fft_alloc(nfft, 0, NULL, NULL);
+  kiss_fft_cfg inv = kiss_fft_alloc(nfft, 1, NULL, NULL);
+  kiss_fft_cpx *buf = (kiss_fft_cpx *)MALLOC(sizeof(kiss_fft_cpx) * 6 * nfft);
+  if (!fwd || !inv || !buf) {
+    if (fwd) KISS_FFT_FREE(fwd);
+    if (inv) KISS_FFT_FREE(inv);
+    if (buf) FREE(buf);
+    return false;                       /* caller falls back to brute force */
+  }
+  ofdm->acq_fwd = fwd;
+  ofdm->acq_inv = inv;
+  ofdm->acq_buf = buf;
+  ofdm->acq_nfft = nfft;
+  return true;
+}
+
+static bool est_timing_and_freq_fft(struct OFDM *ofdm, int *t_est,
+                                    float *foff_est, float *mx_out,
+                                    complex float *rx, int Nrx,
+                                    complex float *known_samples, int Npsam,
+                                    int tstep, float fmin, float fmax,
+                                    float fstep) {
+  if (!ofdm->acq_fft_en) return false;
+  int Ncorr = Nrx - Npsam + 1;
+  if (Ncorr <= 0) return false;
+
+  /* Only worth it when the brute-force grid is big; the fine stage is not. */
+  int nfreq = (int)floorf((fmax - fmin) / fstep) + 1;
+  int nt = (Ncorr + tstep - 1) / tstep;
+  if ((long)nfreq * nt < OFDM_ACQ_FFT_MIN_DOTS) return false;
+
+  int nfft;
+  if (!acq_fft_len(ofdm, Nrx, fstep, &nfft)) return false;
+  if (!acq_fft_prepare(ofdm, nfft)) return false;
+
+  kiss_fft_cpx *a = (kiss_fft_cpx *)ofdm->acq_buf;
+  kiss_fft_cpx *A = a + nfft;
+  kiss_fft_cpx *b = A + nfft;
+  kiss_fft_cpx *B = b + nfft;
+  kiss_fft_cpx *C = B + nfft;
+  kiss_fft_cpx *c = C + nfft;
+
+  memset(a, 0, sizeof(kiss_fft_cpx) * nfft);
+  memset(b, 0, sizeof(kiss_fft_cpx) * nfft);
+  for (int i = 0; i < Nrx; i++) {
+    a[i].r = crealf(rx[i]);
+    a[i].i = cimagf(rx[i]);
+  }
+  for (int i = 0; i < Npsam; i++) {
+    b[i].r = crealf(known_samples[i]);
+    b[i].i = cimagf(known_samples[i]);
+  }
+  kiss_fft((kiss_fft_cfg)ofdm->acq_fwd, a, A);
+  kiss_fft((kiss_fft_cfg)ofdm->acq_fwd, b, B);
+
+  float max_corr_sq = 0.0f;
+  *t_est = 0;
+  *foff_est = 0.0f;
+
+  for (float afcoarse = fmin; afcoarse <= fmax; afcoarse += fstep) {
+    int k0 = (int)lrint((double)nfft * (double)afcoarse / (double)ofdm->fs);
+    /* C = FFT(rx) * conj(FFT(known) rotated by k0) */
+    for (int k = 0; k < nfft; k++) {
+      int ks = (k - k0) % nfft;
+      if (ks < 0) ks += nfft;
+      float br = B[ks].r, bi = B[ks].i;
+      C[k].r = A[k].r * br + A[k].i * bi;
+      C[k].i = A[k].i * br - A[k].r * bi;
+    }
+    kiss_fft((kiss_fft_cfg)ofdm->acq_inv, C, c);
+
+    /* Compare on magnitude SQUARED: monotonic in |corr|, so the argmax is the
+     * same one the brute-force loop finds, without a sqrt per candidate. */
+    for (int t = 0; t < Ncorr; t += tstep) {
+      float re = c[t].r, im = c[t].i;
+      float m2 = re * re + im * im;
+      if (m2 > max_corr_sq) {
+        max_corr_sq = m2;
+        *t_est = t;
+        *foff_est = afcoarse;
+      }
+    }
+  }
+
+  /* kiss_fft's inverse is unnormalised; undo the 1/N here, once. */
+  *mx_out = sqrtf(max_corr_sq) / (float)nfft;
+  return true;
+}
+
 /* Joint estimation of timing and freq used for burst data acquisition */
 
 static float est_timing_and_freq(struct OFDM *ofdm, int *t_est, float *foff_est,
@@ -1256,6 +1413,23 @@ static float est_timing_and_freq(struct OFDM *ofdm, int *t_est, float *foff_est,
                                  complex float *known_samples, int Npsam,
                                  int tstep, float fmin, float fmax,
                                  float fstep) {
+  /* Same search by FFT when the grid is big enough to pay for the transforms
+   * and an exact-bin length exists; identical (t_est, foff_est, timing_mx).
+   * Falls through to the direct loop below otherwise. */
+  {
+    float mx_fft;
+    if (est_timing_and_freq_fft(ofdm, t_est, foff_est, &mx_fft, rx, Nrx,
+                                known_samples, Npsam, tstep, fmin, fmax,
+                                fstep)) {
+      float mag1 = 0, mag2 = 0;
+      for (int i = 0; i < Npsam; i++) {
+        mag1 += cabsf(known_samples[i] * conjf(known_samples[i]));
+        mag2 += cabsf(rx[i + *t_est] * conjf(rx[i + *t_est]));
+      }
+      return mx_fft * mx_fft / (mag1 * mag2 + 1E-12);
+    }
+  }
+
   int Ncorr = Nrx - Npsam + 1;
   float max_corr = 0;
   *t_est = 0;

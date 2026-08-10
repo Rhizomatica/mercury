@@ -45,7 +45,8 @@ ARQ_STUBS = datalink_arq/arq_test_stubs.c
 TEST_BINS = test_ring_buffer test_arq_protocol test_arq_timing test_arq_fsm \
             test_tcp_interfaces test_resampler test_pcm24 test_arq_olla test_arq_sim \
             test_arq_conn test_cfg_utils test_arq_tnc test_channel_busy \
-            test_freedv_harq test_sock_wire test_virtual_clock test_watterson
+            test_freedv_harq test_sock_wire test_virtual_clock test_watterson \
+            test_ofdm_acq
 
 .PHONY: all test clean
 
@@ -148,6 +149,23 @@ test_virtual_clock: common/test_virtual_clock.c $(UNITY_SRC) ../common/virtual_c
 # the test includes common/watterson.h by path).
 test_watterson: common/test_watterson.c $(UNITY_SRC) ../common/watterson.c
 	$(CC) $(CFLAGS) -I.. -o $@ $^ $(LDFLAGS)
+
+# OFDM acquisition: the FFT search must agree with brute force, fringe included.
+# libfreedvdata.a is a PREREQUISITE, not just a link argument: leave it off the
+# left-hand side and make will not relink when the library changes, which
+# silently tests the previous build.
+FREEDV_LIB = ../modem/freedv/libfreedvdata.a
+
+# ...and it needs a rule, because CI runs `make -C tests test` on a clean tree
+# without building the main project first.  Without this, the prerequisite above
+# is unbuildable there ("No rule to make target") even though it resolves on a
+# developer box that has already run the top-level make.
+.PHONY: $(FREEDV_LIB)
+$(FREEDV_LIB):
+	$(MAKE) -C ../modem/freedv
+
+test_ofdm_acq: modem/test_ofdm_acq.c $(UNITY_SRC) $(FREEDV_LIB)
+	$(CC) $(CFLAGS) -I../modem/freedv -o $@ modem/test_ofdm_acq.c $(UNITY_SRC) $(FREEDV_LIB) $(LDFLAGS) -lm
 
 # UI status wire format (embedded struct vs remote JSON must not drift)
 test_ui_status: gui_interface/test_ui_status.c $(UNITY_SRC) ../gui_interface/ui_status.c
