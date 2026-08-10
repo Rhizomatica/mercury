@@ -28,6 +28,7 @@
 
 #include "audioio.h"
 #include "hermes_log.h"
+#include "cfg_utils.h"
 #include "resampler.h"
 #include "pcm24.h"
 
@@ -800,8 +801,8 @@ void *radio_playback_thread(void *device_ptr)
 
     if (audio == NULL)
     {
-        HLOGE("audio-playback", "audio subsystem %d is not available in this build",
-              audio_subsystem);
+        HLOGE("audio-playback", "sound system '%s' is not available in this build",
+              cfg_sound_system_name(audio_subsystem));
         return NULL;
     }
 
@@ -1175,8 +1176,8 @@ void *radio_capture_thread(void *device_ptr)
 
     if (audio == NULL)
     {
-        HLOGE("audio-capture", "audio subsystem %d is not available in this build",
-              audio_subsystem);
+        HLOGE("audio-capture", "sound system '%s' is not available in this build",
+              cfg_sound_system_name(audio_subsystem));
         return NULL;
     }
 
@@ -1710,7 +1711,14 @@ int get_soundcard_list(int audio_system, int mode,
 static void resolve_device_string(int audio_subsys, int mode, char *buf, size_t bufsz,
                                   const char *log_tag, bool pulse_lock_held)
 {
-    if (buf[0] == '\0')
+    /* An empty device means "the default".  Most backends take that as NULL and
+     * choose sensibly, but OSS cannot: ffaudio falls back to /dev/dsp for BOTH
+     * directions, and on OSSv4 /dev/dsp is one node -- commonly playback-only.
+     * Capture then opens a playback device and spins on EACCES/EBUSY.  So for
+     * OSS resolve an empty device to the first one enumerated for THIS
+     * direction. */
+    bool want_default = (buf[0] == '\0');
+    if (want_default && audio_subsys != AUDIO_SUBSYSTEM_OSS)
         return;
 
     if (audio_subsys == AUDIO_SUBSYSTEM_SHM || audio_subsys == AUDIO_SUBSYSTEM_NULL ||
@@ -1722,6 +1730,13 @@ static void resolve_device_string(int audio_subsys, int mode, char *buf, size_t 
     int n = get_soundcard_list_int(audio_subsys, mode, ids, names, DEVICE_RESOLVE_MAX, pulse_lock_held);
     if (n <= 0)
         return;
+
+    if (want_default) {
+        snprintf(buf, bufsz, "%s", ids[0]);
+        HLOGI(log_tag, "using default %s device '%s' (%s)",
+              (mode == FFAUDIO_DEV_CAPTURE) ? "capture" : "playback", ids[0], names[0]);
+        return;
+    }
 
     for (int i = 0; i < n; i++) {
         if (strcmp(buf, ids[i]) == 0)
@@ -1758,8 +1773,13 @@ static void resolve_device_string(int audio_subsys, int mode, char *buf, size_t 
     } else if (matches > 1) {
         HLOGW(log_tag, "device name '%s' is ambiguous (%d matches) -- use an exact id from -z instead", buf, matches);
     } else {
-        HLOGW(log_tag, "device '%s' matches no known id or name -- passing it through as-is, "
-                       "open will likely fail; run with -z to list valid devices", buf);
+        /* Not a prediction of failure: enumeration does not see every valid
+         * node.  Every /dev/dsp* symlink is a working OSS device that never
+         * appears in SNDCTL_AUDIOINFO_EX under that name, and ALSA takes
+         * plughw:/hw: strings that are absent from the list too.  If the open
+         * really does fail, that is reported with the driver's own reason. */
+        HLOGI(log_tag, "device '%s' is not in the enumerated list -- passing it to the "
+                       "driver as given (-z lists the enumerated devices)", buf);
     }
 }
 
@@ -1845,8 +1865,8 @@ void list_soundcards(int audio_system)
 
     if (!audio)
     {
-        printf("Sound system %d is not available in this build.\n",
-               audio_subsystem);
+        printf("Sound system '%s' is not available in this build.\n",
+               cfg_sound_system_name(audio_subsystem));
         return;
     }
 
