@@ -8,6 +8,7 @@
 
 #include <sys/soundcard.h>
 #include <sys/ioctl.h> /* FreeBSD gets ioctl() via soundcard.h, Linux does not */
+#include <unistd.h>   /* sysconf(_SC_PAGESIZE) for the pre-fault below */
 #include <fcntl.h>
 #include <errno.h>
 #include <math.h>
@@ -275,9 +276,33 @@ int ffoss_open(ffaudio_buf *b, ffaudio_conf *conf, ffuint flags)
 		bufsize = info.fragstotal * info.fragsize;
 	}
 
+	/* open() is retried on the same buffer (audioio.c), so release any
+	 * allocation from a previous attempt instead of leaking it. */
+	ffmem_free(b->data);
+	b->data = NULL;
+
 	if (NULL == (b->data = ffmem_alloc(bufsize))) {
 		b->errfunc = "malloc";
 		goto end;
+	}
+	/* Pre-fault the buffer.  osscore copies into it from an atomic context, so
+	 * it cannot service a page fault: an untouched page makes the driver's
+	 * copy_to_user() fail and read() return EFAULT ("Bad address"), with
+	 * "osscore: audio: uiomove(UIO_READ) failed" in dmesg.
+	 *
+	 * The write must be volatile and per-page.  A plain memset() here is fused
+	 * by the compiler into calloc(), and calloc() is free to skip the store on
+	 * freshly-mapped memory that is already zero -- which leaves exactly the
+	 * untouched pages this is meant to eliminate. */
+	{
+		volatile unsigned char *p = (volatile unsigned char *)b->data;
+		long pgsz = sysconf(_SC_PAGESIZE);
+		if (pgsz <= 0)
+			pgsz = 4096;
+		for (ffsize off = 0; off < bufsize; off += (ffsize)pgsz)
+			p[off] = 0;
+		if (bufsize != 0)
+			p[bufsize - 1] = 0;
 	}
 	b->data_cap = bufsize;
 
