@@ -155,6 +155,15 @@ test_watterson: common/test_watterson.c $(UNITY_SRC) ../common/watterson.c
 # left-hand side and make will not relink when the library changes, which
 # silently tests the previous build.
 FREEDV_LIB = ../modem/freedv/libfreedvdata.a
+
+# ...and it needs a rule, because CI runs `make -C tests test` on a clean tree
+# without building the main project first.  Without this, the prerequisite above
+# is unbuildable there ("No rule to make target") even though it resolves on a
+# developer box that has already run the top-level make.
+.PHONY: $(FREEDV_LIB)
+$(FREEDV_LIB):
+	$(MAKE) -C ../modem/freedv
+
 test_ofdm_acq: modem/test_ofdm_acq.c $(UNITY_SRC) $(FREEDV_LIB)
 	$(CC) $(CFLAGS) -I../modem/freedv -o $@ modem/test_ofdm_acq.c $(UNITY_SRC) $(FREEDV_LIB) $(LDFLAGS) -lm
 
