@@ -29,6 +29,7 @@ else
     ifeq ($(UNAME_S),Linux)
                OBJS += ffaudio/ffaudio/pulse.o
                OBJS += ffaudio/ffaudio/alsa.o
+               OBJS += ffaudio/ffaudio/oss.o
     endif
     ifeq ($(UNAME_S),Darwin)
                OBJS=ffaudio/ffaudio/coreaudio.o
@@ -61,6 +62,9 @@ ffaudio/ffaudio/wasapi.o: ffaudio/ffaudio/wasapi.c
 
 ffaudio/ffaudio/alsa.o: ffaudio/ffaudio/alsa.c
 	$(CC) $(CFLAGS) -std=gnu11 -c ffaudio/ffaudio/alsa.c -o ffaudio/ffaudio/alsa.o
+
+ffaudio/ffaudio/oss.o: ffaudio/ffaudio/oss.c
+	$(CC) $(CFLAGS) -std=gnu11 -c ffaudio/ffaudio/oss.c -o ffaudio/ffaudio/oss.o
 
 audioio.o: audioio.c std.h $(OBJS)
 	$(CC) $(CFLAGS) -std=gnu11 -c audioio.c -o audioio.o

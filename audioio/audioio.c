@@ -174,7 +174,7 @@ int audioio_pick_default_subsystem(void)
     return AUDIO_SUBSYSTEM_ALSA;
 #elif defined(_WIN32)
     return AUDIO_SUBSYSTEM_WASAPI;
-#elif defined(__FREEBSD__)
+#elif defined(__FreeBSD__)
     return AUDIO_SUBSYSTEM_OSS;
 #elif defined(__APPLE__)
     return AUDIO_SUBSYSTEM_COREAUDIO;
@@ -729,7 +729,7 @@ static const char *sock_resolve_path(void)
 
 void *radio_playback_thread(void *device_ptr)
 {
-    ffaudio_interface *audio;
+    ffaudio_interface *audio = NULL;
     struct conf conf = {};
     conf.buf.app_name = "mercury_playback";
     conf.buf.format = FFAUDIO_F_INT32;
@@ -754,7 +754,17 @@ void *radio_playback_thread(void *device_ptr)
         audio = (ffaudio_interface *) &ffalsa;
     if (audio_subsystem == AUDIO_SUBSYSTEM_PULSE)
         audio = (ffaudio_interface *) &ffpulse;
-#elif defined(__FREEBSD__)
+    if (audio_subsystem == AUDIO_SUBSYSTEM_OSS)
+    {
+        /* Buffer sizing follows the backend, not the OS, so use the same
+         * request FreeBSD does.  OSS only treats this as a hint: it rounds to
+         * the driver's fragment geometry and writes back what it really got
+         * (observed here as 170 ms playback / 10 ms capture). */
+        conf.buf.buffer_length_msec = 40;
+        period_ms = conf.buf.buffer_length_msec / 4;
+        audio = (ffaudio_interface *) &ffoss;
+    }
+#elif defined(__FreeBSD__)
     conf.buf.buffer_length_msec = 40;
     period_ms = conf.buf.buffer_length_msec / 4;
     if (audio_subsystem == AUDIO_SUBSYSTEM_OSS)
@@ -775,6 +785,13 @@ void *radio_playback_thread(void *device_ptr)
         conf.buf.device_id[0] == '{' && str_to_guid(conf.buf.device_id, &play_guid) == 0)
         conf.buf.device_id = (const char *)&play_guid;
 #endif
+
+    if (audio == NULL)
+    {
+        HLOGE("audio-playback", "audio subsystem %d is not available in this build",
+              audio_subsystem);
+        return NULL;
+    }
 
     conf.flags = FFAUDIO_PLAYBACK;
     ffaudio_init_conf aconf = {};
@@ -1093,7 +1110,7 @@ finish_play:
 
 void *radio_capture_thread(void *device_ptr)
 {
-    ffaudio_interface *audio;
+    ffaudio_interface *audio = NULL;
     struct conf conf = {};
     conf.buf.app_name = "mercury_capture";
     conf.buf.format = FFAUDIO_F_INT32;
@@ -1120,7 +1137,12 @@ void *radio_capture_thread(void *device_ptr)
         audio = (ffaudio_interface *) &ffalsa;
     if (audio_subsystem == AUDIO_SUBSYSTEM_PULSE)
         audio = (ffaudio_interface *) &ffpulse;
-#elif defined(__FREEBSD__)
+    if (audio_subsystem == AUDIO_SUBSYSTEM_OSS)
+    {
+        conf.buf.buffer_length_msec = 40;
+        audio = (ffaudio_interface *) &ffoss;
+    }
+#elif defined(__FreeBSD__)
     conf.buf.buffer_length_msec = 40;
     if (audio_subsystem == AUDIO_SUBSYSTEM_OSS)
         audio = (ffaudio_interface *) &ffoss;
@@ -1138,6 +1160,13 @@ void *radio_capture_thread(void *device_ptr)
         conf.buf.device_id[0] == '{' && str_to_guid(conf.buf.device_id, &cap_guid) == 0)
         conf.buf.device_id = (const char *)&cap_guid;
 #endif
+
+    if (audio == NULL)
+    {
+        HLOGE("audio-capture", "audio subsystem %d is not available in this build",
+              audio_subsystem);
+        return NULL;
+    }
 
     /* Open non-blocking.  A blocking ffalsa_read() spins internally on
      * readonce->start->sleep forever once the device stops producing samples
@@ -1562,7 +1591,9 @@ static int get_soundcard_list_int(int audio_system, int mode,
         audio = (ffaudio_interface *) &ffalsa;
     if (audio_system == AUDIO_SUBSYSTEM_PULSE)
         audio = (ffaudio_interface *) &ffpulse;
-#elif defined(__FREEBSD__)
+    if (audio_system == AUDIO_SUBSYSTEM_OSS)
+        audio = (ffaudio_interface *) &ffoss;
+#elif defined(__FreeBSD__)
     if (audio_system == AUDIO_SUBSYSTEM_OSS)
         audio = (ffaudio_interface *) &ffoss;
 #elif defined(__APPLE__)
@@ -1783,7 +1814,12 @@ void list_soundcards(int audio_system)
     }
     if (audio_subsystem == AUDIO_SUBSYSTEM_PULSE)
         audio = (ffaudio_interface *) &ffpulse;
-#elif defined(__FREEBSD__)
+    if (audio_subsystem == AUDIO_SUBSYSTEM_OSS)
+    {
+        printf("Listing OSS soundcards:\n");
+        audio = (ffaudio_interface *) &ffoss;
+    }
+#elif defined(__FreeBSD__)
     if (audio_subsystem == AUDIO_SUBSYSTEM_OSS)
         audio = (ffaudio_interface *) &ffoss;
 #elif defined(__APPLE__)
