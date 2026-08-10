@@ -50,6 +50,10 @@
 extern int get_soundcard_list(int audio_system, int mode,
                               char ids[][64], char dev_names[][64], int max_count);
 
+/* Audio path health; see audioio.h.  Declared here rather than included for
+ * the same reason audioio_restart is: audioio.h drags in ffbase. */
+extern bool audioio_health_ok(char *reason, size_t reasonlen);
+
 extern int audioio_restart(const char *capture_dev, const char *playback_dev,
                            int audio_subsys, int capture_channel_layout);
 
@@ -390,6 +394,14 @@ static void ui_gather_status(ui_ctx_t *ctx, ui_status_t *out)
     out->tx_peak_dbfs = modem_get_tx_peak_dbfs();
 
     out->waterfall_enabled = ctx->waterfall_enabled ? true : false;
+
+    /* Audio health.  A card that cannot be opened, or that negotiates a rate
+     * the modem cannot use, kills only its own thread -- mercury stays up so
+     * the operator can pick a different device.  That is the right behaviour,
+     * but it means this status is the ONLY place the failure becomes visible:
+     * without it the UI shows a perfectly healthy station that happens to hear
+     * nothing. */
+    out->audio_ok = audioio_health_ok(out->audio_error, sizeof(out->audio_error));
 }
 
 /* Copy the latest gathered status out for the embedded UI.  Returns false

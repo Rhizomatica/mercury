@@ -29,7 +29,9 @@ int ui_status_to_json(const ui_status_t *st, char *buf, size_t buflen)
         "\"bytes_received\":%ld,"
         "\"tx_gain_db\":%.1f,"
         "\"tx_peak_dbfs\":%.1f,"
-        "\"waterfall\":%s}",
+        "\"waterfall\":%s,"
+        "\"audio_ok\":%s,"
+        "\"audio_error\":\"%s\"}",
         st->bitrate_bps,
         st->snr_db,
         st->user_callsign,
@@ -41,7 +43,9 @@ int ui_status_to_json(const ui_status_t *st, char *buf, size_t buflen)
         st->bytes_received,
         (double)st->tx_gain_db,
         (double)st->tx_peak_dbfs,
-        st->waterfall_enabled ? "true" : "false");
+        st->waterfall_enabled ? "true" : "false",
+        st->audio_ok ? "true" : "false",
+        st->audio_error);
 
     if (n < 0 || (size_t)n >= buflen)
         return -1;
