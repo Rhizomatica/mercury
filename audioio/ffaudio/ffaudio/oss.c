@@ -236,33 +236,40 @@ int ffoss_open(ffaudio_buf *b, ffaudio_conf *conf, ffuint flags)
 		goto end;
 	}
 
+	/* Ask for the buffer geometry BEFORE the format is set.
+	 *
+	 * OSS allocates its DMA buffer when the format/channels/rate are set, and
+	 * SNDCTL_DSP_SETFRAGMENT is silently ignored after that point.  Issuing it
+	 * afterwards -- as this did -- meant the request never took effect and the
+	 * device default was used instead: asking for 40 ms of capture returned
+	 * 4 x 1024 = 10 ms, far too little for a process doing heavy DSP, where one
+	 * scheduling delay past 10 ms drops samples.
+	 *
+	 * Size is derived from the requested format, which is what we want: the
+	 * post-hoc GETISPACE the old code used could not run this early, and its
+	 * integer division could also ask for zero fragments when the device
+	 * fragment was larger than the whole request.
+	 *
+	 * Advisory: a device that refuses the hint still works with its own
+	 * geometry, so a failure here is not fatal. */
+	if (conf->buffer_length_msec != 0) {
+		ffuint total = _ffau_buf_msec_to_size(conf, conf->buffer_length_msec);
+		ffuint frag = 1024;
+		while (frag * 8 < total && frag < 65536)
+			frag <<= 1;
+		ffuint num = total / frag;
+		if (num < 4)
+			num = 4;
+		ffuint fr = (num << 16) | (ffuint)log2((double)frag);
+		ioctl(b->fd, SNDCTL_DSP_SETFRAGMENT, &fr);
+	}
+
 	if (0 != (r = oss_set_format(b, conf))) {
 		rc = r;
 		goto end;
 	}
 
 	audio_buf_info info = {};
-	if (conf->buffer_length_msec != 0) {
-		if (capture) {
-			if (0 > ioctl(b->fd, SNDCTL_DSP_GETISPACE, &info)) {
-				b->errfunc = "ioctl(SNDCTL_DSP_GETISPACE)";
-				goto end;
-			}
-		} else {
-			if (0 > ioctl(b->fd, SNDCTL_DSP_GETOSPACE, &info)) {
-				b->errfunc = "ioctl(SNDCTL_DSP_GETOSPACE)";
-				goto end;
-			}
-		}
-
-		ffuint frag_num = _ffau_buf_msec_to_size(conf, conf->buffer_length_msec) / info.fragsize;
-		ffuint fr = (frag_num << 16) | (ffuint)log2(info.fragsize); //buf_size = frag_num * 2^n
-		if (0 > ioctl(b->fd, SNDCTL_DSP_SETFRAGMENT, &fr)) {
-			b->errfunc = "ioctl(SNDCTL_DSP_SETFRAGMENT)";
-			goto end;
-		}
-	}
-
 	ffmem_zero_obj(&info);
 	if (capture) {
 		r = ioctl(b->fd, SNDCTL_DSP_GETISPACE, &info);
