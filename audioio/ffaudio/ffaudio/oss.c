@@ -284,6 +284,12 @@ int ffoss_open(ffaudio_buf *b, ffaudio_conf *conf, ffuint flags)
 		bufsize = info.fragstotal * info.fragsize;
 	}
 
+	/* audioio.c retries audio->open() on the same buffer after a failed first
+	 * attempt, which reached here a second time and overwrote b->data -- leaking
+	 * the first allocation.  Release it before allocating again. */
+	ffmem_free(b->data);
+	b->data = NULL;
+
 	if (NULL == (b->data = ffmem_alloc(bufsize))) {
 		b->errfunc = "malloc";
 		goto end;
