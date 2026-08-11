@@ -2,7 +2,6 @@
 *.o
 *.a
 mercury
-mercury-client
 /mercury-ui
 gui_interface/fyne-ui/mercury-ui
 gui_interface/fyne-ui/mercury-fyne-ui

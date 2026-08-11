@@ -124,9 +124,9 @@ Radio control notes:
 |--------|-------------|
 | `make` / `make all` | Build the standalone CLI `mercury` binary |
 | `make libmercury_core.a` | Compile all Mercury C objects into a host-arch static library (used by `fyne-ui`) |
-| `make fyne-ui` | Build the single-binary native GUI (`mercury-ui`), embedding the engine via CGo, plus the `mercury-client` chat companion next to it. Requires `make libmercury_core.a` first. **Needs Go** ([setup](#gui-build-prerequisites-go--fyne)). |
+| `make fyne-ui` | Build the single-binary native GUI (`mercury-ui`), embedding the engine via CGo. Requires `make libmercury_core.a` first. **Needs Go** ([setup](#gui-build-prerequisites-go--fyne)). |
 | `make libmercury_core_w64.a` | Cross-compile Mercury C objects for Windows x64 (requires `gcc-mingw-w64-x86-64`) |
-| `make fyne-ui-windows` | Cross-compile the single-binary GUI to `mercury-ui.exe` and the chat companion to `mercury-client.exe`. Depends on `libmercury_core_w64.a`. **Needs Go** ([setup](#gui-build-prerequisites-go--fyne)). |
+| `make fyne-ui-windows` | Cross-compile the single-binary GUI to `mercury-ui.exe`. Depends on `libmercury_core_w64.a`. **Needs Go** ([setup](#gui-build-prerequisites-go--fyne)). |
 | `make windows-installer` | Full Windows installer pipeline: cross-compile engine + GUI, copy DLLs, patch config. Output goes to `windows-installer/`. Requires MinGW + Go. |
 | `make windows-zip` | Build standalone CLI + GUI Windows binaries and zip them for distribution |
 | `make fyne-ui-macos` | Package `Mercury.app` for the host architecture (run on macOS). **Needs Go + the `fyne` CLI** ([setup](#gui-build-prerequisites-go--fyne)). |
@@ -139,15 +139,6 @@ Radio control notes:
 sudo apt install golang-go libhamlib-dev libpulse-dev libasound2-dev
 make fyne-ui
 ./mercury-ui
-```
-
-`make fyne-ui` also builds the `mercury-client` chat companion and places it
-next to `mercury-ui`, so the UI's **Launch client** button finds it. The
-mercury-client module is expected one level above this repo (the `mercury/`
-submodule checkout); if it lives elsewhere, set `MERCURY_CLIENT_DIR`:
-
-```bash
-make fyne-ui MERCURY_CLIENT_DIR=/path/to/mercury-client
 ```
 
 ### Cross-compile the Windows installer (from Linux)
@@ -290,13 +281,9 @@ Mercury v2 has three interfaces:
 - **Mercury-qt** (desktop): https://github.com/Rhizomatica/mercury-qt
 - **Web-based**: located in `docs/app/` in this repository, and accessible via https://rhizomatica.github.io/mercury/app/
 
-The built-in Fyne UI's **Launch client** button launches the standalone
-[Mercury Client](https://github.com/Rhizomatica/mercury-client) chat application
-in its own window (it talks to Mercury HF modem ARQ/broadcast TCP ports). The
-`mercury-client` binary is looked up in `$MERCURY_CLIENT`, then next to the UI
-executable, then on `PATH` — build it with `go build ./cmd/mercury-client` in
-the Mercury Client repository and ship it alongside `mercury-ui`. If it cannot
-be found, the UI asks the operator to locate it once and remembers the choice.
+The built-in Fyne UI's **Launch Mercury Client** button opens a chat window for
+ARQ and broadcast messaging over the modem's TCP interfaces.  The Mercury Client
+is vendored as a Go module and compiled directly into `mercury-ui` — no external binary is needed.
 
 Also, community interfaces also exist:
 - **Mercury-tk**: https://github.com/odorajbotoj/mercury-tk/

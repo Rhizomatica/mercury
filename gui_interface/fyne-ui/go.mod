@@ -5,6 +5,7 @@ go 1.26.5
 require (
 	fyne.io/fyne/v2 v2.8.0
 	github.com/gorilla/websocket v1.5.3
+	mercury-client v0.0.0-00010101000000-000000000000
 )
 
 require (
@@ -46,3 +47,5 @@ require (
 )
 
 replace github.com/go-gl/glfw/v3.4/glfw => ./third_party/glfw-v3.4
+
+replace mercury-client => ../mercury-client
