@@ -816,7 +816,68 @@ func main() {
 		}
 	}
 
-	topBar := container.NewHBox()
+	// Launches the standalone Mercury Client in its own window: the modem's
+	// ARQ/broadcast chat companion, which connects to this engine's TCP ports.
+	mercuryClientButton := widget.NewButton("Launch client", func() {
+		launchFrom := ""
+		if p := myApp.Preferences().String(prefMercuryClientPath); p != "" && isNativeExecutable(p) {
+			launchFrom = p
+		}
+		if launchFrom == "" {
+			launchFrom, _ = findMercuryClientBinary()
+		}
+		if launchFrom != "" {
+			if err := launchMercuryClient(launchFrom, appendLog); err != nil {
+				dialog.ShowError(err, myWindow)
+				appendLog(fmt.Sprintf("Mercury Client: %v\n", err))
+			} else {
+				myApp.Preferences().SetString(prefMercuryClientPath, launchFrom)
+				appendLog(fmt.Sprintf("Launched Mercury Client in its own window (%s).\n", launchFrom))
+			}
+			return
+		}
+
+		// Not found anywhere: ask the operator to point us at it once, and
+		// remember the choice so the next click just works.
+		appendLog("Mercury Client: binary not found; asking the operator to locate it.\n")
+		dialog.ShowConfirm("Mercury Client",
+			"Could not find the mercury-client executable.\n\n"+
+				"Looked in $MERCURY_CLIENT, next to this executable, and on PATH.\n"+
+				"Locate the mercury-client binary to launch it (your choice is remembered).",
+			func(ok bool) {
+				if !ok {
+					return
+				}
+				dialog.ShowFileOpen(func(reader fyne.URIReadCloser, err error) {
+					if err != nil {
+						dialog.ShowError(err, myWindow)
+						return
+					}
+					if reader == nil {
+						return
+					}
+					path := reader.URI().Path()
+					if !isNativeExecutable(path) {
+						dialog.ShowInformation("Mercury Client",
+							"Selected file is not a native mercury-client executable for this operating system.",
+							myWindow)
+						return
+					}
+					myApp.Preferences().SetString(prefMercuryClientPath, path)
+					if err := launchMercuryClient(path, appendLog); err != nil {
+						dialog.ShowError(err, myWindow)
+						return
+					}
+					appendLog(fmt.Sprintf("Launched Mercury Client in its own window (%s).\n", path))
+				}, myWindow)
+			},
+			myWindow)
+	})
+
+	topBar := container.NewHBox(
+		layout.NewSpacer(),
+		mercuryClientButton,
+	)
 
 	txCard := widget.NewCard("", "", container.NewVBox(
 		bindings.txGainLabel,

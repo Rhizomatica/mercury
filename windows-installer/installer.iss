@@ -72,6 +72,8 @@ Source: "libhamlib-4.dll"; DestDir: "{app}"; Flags: ignoreversion
 Source: "libusb-1.0.dll"; DestDir: "{app}"; Flags: ignoreversion
 Source: "libwinpthread-1.dll"; DestDir: "{app}"; Flags: ignoreversion
 Source: "mercury-ui.exe"; DestDir: "{app}"; Flags: {#ExeFlags}
+; ARQ/broadcast chat companion launched from the "Launch client" button.
+Source: "mercury-client.exe"; DestDir: "{app}"; Flags: {#ExeFlags}
 ; Console/TNC build of the same modem.  Always installed — it costs ~2 MB and
 ; it is what makes remote support possible ("open the console shortcut and send
 ; me what it prints").  Deliberately NOT a component checkbox: an extra wizard

@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"image"
 	"math"
+	"runtime"
 	"testing"
 )
 
@@ -79,6 +80,33 @@ func TestBuildWebSocketURLUsesWebsocketPath(t *testing.T) {
 	want := "ws://127.0.0.1:10000/websocket"
 	if got != want {
 		t.Fatalf("expected %q, got %q", want, got)
+	}
+}
+
+func TestFindMercuryClientBinaryPrefersEnvVar(t *testing.T) {
+	dir := t.TempDir()
+	name := "mercury-client"
+	if runtime.GOOS == "windows" {
+		name = "mercury-client.exe"
+	}
+	bin := buildFakeBinary(t, dir, name, `func main() {}`)
+	t.Setenv("MERCURY_CLIENT", bin)
+	t.Setenv("PATH", dir)
+
+	got, err := findMercuryClientBinary()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != bin {
+		t.Fatalf("expected %q, got %q", bin, got)
+	}
+}
+
+func TestFindMercuryClientBinaryNotFound(t *testing.T) {
+	t.Setenv("MERCURY_CLIENT", "")
+	t.Setenv("PATH", t.TempDir())
+	if _, err := findMercuryClientBinary(); err == nil {
+		t.Fatal("expected error when the binary is nowhere to be found")
 	}
 }
 
