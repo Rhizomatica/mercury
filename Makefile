@@ -98,7 +98,13 @@ FYNE_UI_DIR   = gui_interface/fyne-ui
 FYNE_UI_BIN   = mercury-ui.exe
 MINGW_GO_CC   = x86_64-w64-mingw32-gcc
 
-.PHONY: all install internal_deps utils clean doxygen doxygen-clean windows windows-zip windows-installer-signed windows-installer-stage check-installer-names fyne-ui fyne-ui-macos fyne-ui-macos-dmg macos-universal fyne-ui-macos-universal fyne-ui-macos-universal-dmg fyne-ui-windows windows-installer test integration-test FORCE
+# Mercury Client companion app (ARQ/broadcast chat GUI).  It lives in its own
+# Go module, github.com/Rhizomatica/mercury-client; in the usual checkout this
+# repo is that module's submodule, so the module root is one level up.  Point
+# MERCURY_CLIENT_DIR at the mercury-client checkout if it lives elsewhere.
+MERCURY_CLIENT_DIR ?= $(abspath $(CURDIR)/..)
+
+.PHONY: all install internal_deps utils clean doxygen doxygen-clean windows windows-zip windows-installer-signed windows-installer-stage check-installer-names fyne-ui fyne-ui-mercury-client fyne-ui-macos fyne-ui-macos-dmg macos-universal fyne-ui-macos-universal fyne-ui-macos-universal-dmg fyne-ui-windows windows-installer test integration-test FORCE
 
 prefix ?= /usr
 bindir ?= $(prefix)/bin
@@ -230,7 +236,22 @@ libmercury_core_w64.a:
 	$(MINGW_CC) $(CFLAGS) -I. -c $(FYNE_UI_DIR)/engine/mercury_bridge.c -o $(FYNE_UI_DIR)/engine/mercury_bridge_w64.o
 	$(MINGW_AR) rcs $@ $(MERCURY_CORE_OBJS_W64) $(FYNE_UI_DIR)/engine/mercury_bridge_w64.o
 
-fyne-ui: libmercury_core.a
+# Build the Mercury Client companion app next to mercury-ui, so the UI's
+# "Mercury Client" button can find it (the UI also checks $MERCURY_CLIENT and
+# PATH).  The Windows build is part of fyne-ui-windows below.
+fyne-ui-mercury-client:
+	@if [ ! -f "$(MERCURY_CLIENT_DIR)/go.mod" ]; then \
+		echo "ERROR: mercury-client module not found at $(MERCURY_CLIENT_DIR)"; \
+		echo "       set MERCURY_CLIENT_DIR to the mercury-client checkout, e.g.:"; \
+		echo "       make fyne-ui MERCURY_CLIENT_DIR=/path/to/mercury-client"; \
+		exit 1; \
+	fi
+	@rm -f $(abspath mercury-client) $(abspath mercury-client.exe)
+	@echo "Building Mercury Client (ARQ/broadcast chat GUI)..."
+	cd $(MERCURY_CLIENT_DIR) && CGO_ENABLED=1 go build -o $(abspath mercury-client) ./cmd/mercury-client
+	@echo "  -> mercury-client"
+
+fyne-ui: libmercury_core.a fyne-ui-mercury-client
 	@echo "Building Mercury UI (native: Linux or macOS)..."
 	cd $(FYNE_UI_DIR) && CGO_ENABLED=1 go build -tags mercury_embedded \
 		-ldflags "-X main.coreBuildID=$$(cksum $(abspath libmercury_core.a) | cut -d' ' -f1)" \
@@ -382,8 +403,10 @@ windows-zip-signed: windows fyne-ui-windows
 	mkdir -p $(WINDOWS_DIR)
 	cp mercury.exe $(WINDOWS_DIR)/
 	cp $(WINDOWS_INSTALLER_DIR)/$(FYNE_UI_BIN) $(WINDOWS_DIR)/
+	cp $(WINDOWS_INSTALLER_DIR)/mercury-client.exe $(WINDOWS_DIR)/
 	$(call win_sign,$(WINDOWS_DIR)/mercury.exe)
 	$(call win_sign,$(WINDOWS_DIR)/$(FYNE_UI_BIN))
+	$(call win_sign,$(WINDOWS_DIR)/mercury-client.exe)
 	@[ -x "$(SIGN_LOGOUT)" ] && [ -n "$$CERTUM_EMAIL" ] && $(SIGN_LOGOUT) || true
 	cp mercury.ini.example $(WINDOWS_DIR)/
 	if ls $(HAMLIB_W64_DIR)/bin/*.dll >/dev/null 2>&1; then \
@@ -424,6 +447,7 @@ WINDOWS_SETUP_GLOB = Mercury_*_Setup.exe
 windows-installer-signed: windows-installer
 	$(call win_sign,$(WINDOWS_INSTALLER_DIR)/$(FYNE_UI_BIN))
 	$(call win_sign,$(WINDOWS_INSTALLER_DIR)/mercury.exe)
+	$(call win_sign,$(WINDOWS_INSTALLER_DIR)/mercury-client.exe)
 	@rm -f $(WINDOWS_SETUP_GLOB)
 	@if [ -z "$(ISCC)" ]; then \
 		[ -x "$(SIGN_LOGOUT)" ] && [ -n "$$CERTUM_EMAIL" ] && $(SIGN_LOGOUT) || true; \
@@ -459,6 +483,7 @@ windows-zip: windows fyne-ui-windows
 	mkdir -p $(WINDOWS_DIR)
 	cp mercury.exe $(WINDOWS_DIR)/
 	cp $(WINDOWS_INSTALLER_DIR)/$(FYNE_UI_BIN) $(WINDOWS_DIR)/
+	cp $(WINDOWS_INSTALLER_DIR)/mercury-client.exe $(WINDOWS_DIR)/
 	$(call win_sign,$(WINDOWS_DIR)/mercury.exe)
 	$(call win_sign,$(WINDOWS_DIR)/$(FYNE_UI_BIN))
 	cp mercury.ini.example $(WINDOWS_DIR)/
@@ -476,7 +501,13 @@ fyne-ui-windows: libmercury_core_w64.a
 	cd $(FYNE_UI_DIR) && \
 		CGO_ENABLED=1 GOOS=windows GOARCH=amd64 CC=$(MINGW_GO_CC) \
 		go build -tags mercury_embedded -buildvcs=false -ldflags="-s -w -H windowsgui -X main.coreBuildID=$$(cksum $(abspath libmercury_core_w64.a) | cut -d' ' -f1)" -o $(abspath $(WINDOWS_INSTALLER_DIR)/$(FYNE_UI_BIN)) .
+	@echo "Building Mercury Client for Windows..."
+	cd $(MERCURY_CLIENT_DIR) && \
+		CGO_ENABLED=1 GOOS=windows GOARCH=amd64 CC=$(MINGW_GO_CC) \
+		go build -buildvcs=false -ldflags="-s -w -H windowsgui" \
+		-o $(abspath $(WINDOWS_INSTALLER_DIR)/mercury-client.exe) ./cmd/mercury-client
 	@echo "  -> $(WINDOWS_INSTALLER_DIR)/$(FYNE_UI_BIN)"
+	@echo "  -> $(WINDOWS_INSTALLER_DIR)/mercury-client.exe"
 
 # Stage everything the installer packs, WITHOUT rebuilding the binaries.
 # Split out so a signing environment can reuse payloads it has just signed:
@@ -516,9 +547,10 @@ windows-installer: windows fyne-ui-windows windows-installer-stage
 	@echo ""
 
 clean:
-	rm -f mercury mercury.exe *.o .git_hash_stamp mercury-*.zip libmercury_core.a libmercury_core_w64.a
+	rm -f mercury mercury.exe mercury-client mercury-client.exe *.o .git_hash_stamp mercury-*.zip libmercury_core.a libmercury_core_w64.a
 	rm -rf mercury-[0-9]*
 	rm -f $(WINDOWS_INSTALLER_DIR)/$(FYNE_UI_BIN)
+	rm -f $(WINDOWS_INSTALLER_DIR)/mercury-client.exe
 	rm -f $(FYNE_UI_DIR)/engine/mercury_bridge.o $(FYNE_UI_DIR)/engine/mercury_bridge_w64.o
 	rm -f mercury-ui $(FYNE_UI_DIR)/mercury-ui $(FYNE_UI_DIR)/mercury-fyne-ui
 	rm -f $(MACOS_DMG) $(FYNE_UI_DIR)/$(MACOS_DMG)
