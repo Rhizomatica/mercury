@@ -48,7 +48,7 @@ type chatWindow struct {
 }
 
 func (cw *chatWindow) build(app fyne.App, telemetry telemetryState) {
-	cw.win = app.NewWindow("Mercury Client - Chat")
+	cw.win = app.NewWindow("Mercury Client")
 
 	cw.myCall = widget.NewEntry()
 	cw.myCall.SetText(defaultCall(telemetry.UserCallsign, "NOCALL"))
