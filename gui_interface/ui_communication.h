@@ -84,6 +84,7 @@ struct ui_ctx {
     volatile int soundcard_list_pending;  // 1 = need to send capture/playback/input_channel to UI
 
     // Persistent configuration (written back to INI on UI changes)
+    pthread_mutex_t cfg_mutex;
     mercury_config cfg;
     char cfg_path[1024];
 
