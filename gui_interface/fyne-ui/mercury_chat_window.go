@@ -21,9 +21,10 @@ func openMercuryClientWindow(app fyne.App, telemetry telemetryState) {
 }
 
 type chatWindow struct {
-	win fyne.Window
-	mc  *client.Client
-	log *widget.Entry
+	win  fyne.Window
+	mc   *client.Client
+	done chan struct{}
+	log  *widget.Entry
 
 	arqBox      *fyne.Container
 	arqScroll   *container.Scroll
@@ -143,6 +144,9 @@ func (cw *chatWindow) build(app fyne.App, telemetry telemetryState) {
 		if cw.mc != nil {
 			cw.mc.Disconnect()
 		}
+		if cw.done != nil {
+			close(cw.done)
+		}
 	})
 	cw.win.Show()
 }
@@ -245,8 +249,12 @@ func (cw *chatWindow) onConnect() {
 		cw.logMsg("connect: %v", err)
 		return
 	}
+	if cw.done != nil {
+		close(cw.done)
+	}
 	cw.mc = mc
 	cw.setTCP(true)
+	cw.done = make(chan struct{})
 
 	go cw.forwardLog()
 	go cw.forwardARQChat()
@@ -255,9 +263,14 @@ func (cw *chatWindow) onConnect() {
 }
 
 func (cw *chatWindow) onDisconnect() {
-	if cw.mc != nil {
-		cw.mc.Disconnect()
+	mc := cw.mc
+	if mc != nil {
+		mc.Disconnect()
 		cw.mc = nil
+	}
+	if cw.done != nil {
+		close(cw.done)
+		cw.done = nil
 	}
 	cw.setTCP(false)
 	cw.setARQ(false)
@@ -322,32 +335,84 @@ func (cw *chatWindow) onSendBroadcast() {
 }
 
 func (cw *chatWindow) forwardLog() {
-	for m := range cw.mc.LogCh {
-		cw.logMsg("%s", m)
+	mc := cw.mc
+	done := cw.done
+	if mc == nil || done == nil {
+		return
+	}
+	for {
+		select {
+		case m, ok := <-mc.LogCh:
+			if !ok {
+				return
+			}
+			cw.logMsg("%s", m)
+		case <-done:
+			return
+		}
 	}
 }
 
 func (cw *chatWindow) forwardARQChat() {
-	for m := range cw.mc.ARQChatCh {
-		cw.appendRichChat(cw.arqBox, m.Call, m.Text)
+	mc := cw.mc
+	done := cw.done
+	if mc == nil || done == nil {
+		return
+	}
+	for {
+		select {
+		case m, ok := <-mc.ARQChatCh:
+			if !ok {
+				return
+			}
+			cw.appendRichChat(cw.arqBox, m.Call, m.Text)
+		case <-done:
+			return
+		}
 	}
 }
 
 func (cw *chatWindow) forwardBroadcastChat() {
-	for m := range cw.mc.BroadcastChatCh {
-		call, text := splitCallText(m.Text)
-		cw.appendRichChat(cw.bcastBox, call, text)
+	mc := cw.mc
+	done := cw.done
+	if mc == nil || done == nil {
+		return
+	}
+	for {
+		select {
+		case m, ok := <-mc.BroadcastChatCh:
+			if !ok {
+				return
+			}
+			call, text := splitCallText(m.Text)
+			cw.appendRichChat(cw.bcastBox, call, text)
+		case <-done:
+			return
+		}
 	}
 }
 
 func (cw *chatWindow) forwardStatus() {
-	for s := range cw.mc.StatusCh {
-		cw.logMsg("TNC Status: %s", s)
-		switch s {
-		case "CONNECTED":
-			cw.setARQ(true)
-		case "DISCONNECTED":
-			cw.setARQ(false)
+	mc := cw.mc
+	done := cw.done
+	if mc == nil || done == nil {
+		return
+	}
+	for {
+		select {
+		case s, ok := <-mc.StatusCh:
+			if !ok {
+				return
+			}
+			cw.logMsg("TNC Status: %s", s)
+			switch s {
+			case "CONNECTED":
+				cw.setARQ(true)
+			case "DISCONNECTED":
+				cw.setARQ(false)
+			}
+		case <-done:
+			return
 		}
 	}
 }
