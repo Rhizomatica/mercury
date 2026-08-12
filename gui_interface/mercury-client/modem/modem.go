@@ -390,8 +390,13 @@ func (mc *ModemClient) Disconnect() {
 }
 
 func (mc *ModemClient) readARQControl() {
+	mc.mu.Lock()
 	conn := mc.ARQControlConn
 	quit := mc.quit
+	mc.mu.Unlock()
+	if conn == nil {
+		return
+	}
 	reader := bufio.NewReader(conn)
 	for {
 		select {
@@ -457,9 +462,12 @@ func (mc *ModemClient) dispatchControlLine(line string) {
 }
 
 func (mc *ModemClient) readARQData() {
+	mc.mu.Lock()
 	conn := mc.ARQDataConn
 	quit := mc.quit
-	if conn == nil || conn == mc.ARQControlConn {
+	arqControlConn := mc.ARQControlConn
+	mc.mu.Unlock()
+	if conn == nil || conn == arqControlConn {
 		return
 	}
 
@@ -489,8 +497,13 @@ func (mc *ModemClient) readBroadcast() {
 	buffer := make([]byte, 4096)
 	frameBuffer := &bytes.Buffer{}
 	inFrame := false
+	mc.mu.Lock()
 	conn := mc.BroadcastConn
 	quit := mc.quit
+	mc.mu.Unlock()
+	if conn == nil {
+		return
+	}
 
 	for {
 		select {
