@@ -84,8 +84,8 @@ func (cw *chatWindow) build(app fyne.App, telemetry telemetryState) {
 	cw.arqDisconnect = widget.NewButton("Disconnect ARQ", cw.onARQDisconnect)
 	cw.arqDisconnect.Disable()
 	cw.arqAbort = widget.NewButton("Abort", func() {
-		if cw.mc != nil {
-			cw.mc.AbortARQ()
+		if mc := cw.mc; mc != nil {
+			mc.AbortARQ()
 		}
 	})
 	cw.arqAbort.Disable()
@@ -265,12 +265,13 @@ func (cw *chatWindow) onDisconnect() {
 }
 
 func (cw *chatWindow) onARQConnect() {
-	if cw.mc == nil || !cw.mc.IsConnected() {
+	mc := cw.mc
+	if mc == nil || !mc.IsConnected() {
 		return
 	}
 	cw.logMsg("Connecting ARQ: %s -> %s", cw.myCall.Text, cw.target.Text)
 	go func() {
-		if err := cw.mc.ConnectARQ(); err != nil {
+		if err := mc.ConnectARQ(); err != nil {
 			cw.logMsg("ARQ connect: %v", err)
 			cw.setARQ(false)
 			return
@@ -289,14 +290,15 @@ func (cw *chatWindow) onARQDisconnect() {
 }
 
 func (cw *chatWindow) onSendARQ() {
-	if cw.mc == nil || !cw.mc.IsConnected() {
+	mc := cw.mc
+	if mc == nil || !mc.IsConnected() {
 		return
 	}
 	msg := strings.TrimSpace(cw.arqMsg.Text)
 	if msg == "" {
 		return
 	}
-	if err := cw.mc.SendARQMessage(msg); err != nil {
+	if err := mc.SendARQMessage(msg); err != nil {
 		dialog.ShowError(err, cw.win)
 		return
 	}
@@ -304,14 +306,15 @@ func (cw *chatWindow) onSendARQ() {
 }
 
 func (cw *chatWindow) onSendBroadcast() {
-	if cw.mc == nil || !cw.mc.IsConnected() {
+	mc := cw.mc
+	if mc == nil || !mc.IsConnected() {
 		return
 	}
 	msg := strings.TrimSpace(cw.bcastMsg.Text)
 	if msg == "" {
 		return
 	}
-	if err := cw.mc.SendBroadcast(msg); err != nil {
+	if err := mc.SendBroadcast(msg); err != nil {
 		dialog.ShowError(err, cw.win)
 		return
 	}
