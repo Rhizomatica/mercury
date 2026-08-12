@@ -337,37 +337,43 @@ func (mc *ModemClient) IsConnected() bool {
 }
 
 func (mc *ModemClient) Disconnect() {
-	mc.mu.Lock()
-	defer mc.mu.Unlock()
+	var disconnected []string
 
+	mc.mu.Lock()
 	if mc.ARQControlConn != nil {
 		mc.ARQControlConn.Close()
 		mc.ARQControlConn = nil
-		mc.LogCh <- "Disconnected from ARQ Control."
+		disconnected = append(disconnected, "Disconnected from ARQ Control.")
 	}
 	if mc.ARQDataConn != nil && mc.ARQDataConn != mc.ARQControlConn {
 		mc.ARQDataConn.Close()
 		mc.ARQDataConn = nil
-		mc.LogCh <- "Disconnected from ARQ Data."
+		disconnected = append(disconnected, "Disconnected from ARQ Data.")
 	}
 	if mc.BroadcastConn != nil {
 		mc.BroadcastConn.Close()
 		mc.BroadcastConn = nil
-		mc.LogCh <- "Disconnected from Broadcast."
+		disconnected = append(disconnected, "Disconnected from Broadcast.")
 	}
 
 	mc.arqConnected = false
 
 	close(mc.quit)
 	mc.quit = make(chan struct{})
+	mc.mu.Unlock()
+
+	for _, msg := range disconnected {
+		mc.LogCh <- msg
+	}
 }
 
 func (mc *ModemClient) readARQControl() {
 	conn := mc.ARQControlConn
+	quit := mc.quit
 	reader := bufio.NewReader(conn)
 	for {
 		select {
-		case <-mc.quit:
+		case <-quit:
 			return
 		default:
 			line, err := reader.ReadString('\r')
@@ -430,6 +436,7 @@ func (mc *ModemClient) dispatchControlLine(line string) {
 
 func (mc *ModemClient) readARQData() {
 	conn := mc.ARQDataConn
+	quit := mc.quit
 	if conn == nil || conn == mc.ARQControlConn {
 		return
 	}
@@ -437,7 +444,7 @@ func (mc *ModemClient) readARQData() {
 	buf := make([]byte, 4096)
 	for {
 		select {
-		case <-mc.quit:
+		case <-quit:
 			return
 		default:
 			n, err := conn.Read(buf)
@@ -461,10 +468,11 @@ func (mc *ModemClient) readBroadcast() {
 	frameBuffer := &bytes.Buffer{}
 	inFrame := false
 	conn := mc.BroadcastConn
+	quit := mc.quit
 
 	for {
 		select {
-		case <-mc.quit:
+		case <-quit:
 			return
 		default:
 			n, err := conn.Read(buffer)
