@@ -429,7 +429,8 @@ func (mc *ModemClient) dispatchControlLine(line string) {
 }
 
 func (mc *ModemClient) readARQData() {
-	if mc.ARQDataConn == nil || mc.ARQDataConn == mc.ARQControlConn {
+	conn := mc.ARQDataConn
+	if conn == nil || conn == mc.ARQControlConn {
 		return
 	}
 
@@ -439,7 +440,7 @@ func (mc *ModemClient) readARQData() {
 		case <-mc.quit:
 			return
 		default:
-			n, err := mc.ARQDataConn.Read(buf)
+			n, err := conn.Read(buf)
 			if err != nil {
 				if err != io.EOF {
 					mc.LogCh <- fmt.Sprintf("ARQ Data read error: %v", err)
@@ -459,13 +460,14 @@ func (mc *ModemClient) readBroadcast() {
 	buffer := make([]byte, 4096)
 	frameBuffer := &bytes.Buffer{}
 	inFrame := false
+	conn := mc.BroadcastConn
 
 	for {
 		select {
 		case <-mc.quit:
 			return
 		default:
-			n, err := mc.BroadcastConn.Read(buffer)
+			n, err := conn.Read(buffer)
 			if err != nil {
 				if err != io.EOF {
 					mc.LogCh <- fmt.Sprintf("Broadcast read error: %v", err)
