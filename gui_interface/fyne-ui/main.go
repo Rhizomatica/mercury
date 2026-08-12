@@ -1011,7 +1011,11 @@ func main() {
 		}
 		paletteSelect.SetSelected(lowerToUpper[state.waterfallPalette])
 
-		enabledCheck := widget.NewCheck("Waterfall enabled", func(on bool) {
+		enabledCheck := widget.NewCheck("Waterfall enabled", nil)
+		state.mu.RLock()
+		enabledCheck.Checked = state.telemetry.Waterfall
+		state.mu.RUnlock()
+		enabledCheck.OnChanged = func(on bool) {
 			val := "on"
 			if !on {
 				val = "off"
@@ -1024,10 +1028,7 @@ func main() {
 			if err := sendWSCommand("set_waterfall", val, "", ""); err != nil {
 				appendLog(fmt.Sprintf("Failed to toggle waterfall: %v\n", err))
 			}
-		})
-		state.mu.RLock()
-		enabledCheck.SetChecked(state.telemetry.Waterfall)
-		state.mu.RUnlock()
+		}
 
 		applyBtn := widget.NewButton("Apply", func() {
 			sel := paletteSelect.Selected
