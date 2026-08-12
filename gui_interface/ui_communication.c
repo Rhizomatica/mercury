@@ -139,6 +139,7 @@ int ui_comm_handle_command(ui_ctx_t *ctx, const ws_command_t *cmd)
         HLOGI(UI_LOG_TAG, "Audioio subsystem restarted successfully");
 
         // Persist audio config to INI
+        pthread_mutex_lock(&ctx->cfg_mutex);
         strncpy(ctx->cfg.input_device, ctx->selected_capture_dev,
                 sizeof(ctx->cfg.input_device) - 1);
         ctx->cfg.input_device[sizeof(ctx->cfg.input_device) - 1] = '\0';
@@ -148,6 +149,7 @@ int ui_comm_handle_command(ui_ctx_t *ctx, const ws_command_t *cmd)
         ctx->cfg.capture_channel = ctx->rx_input_channel;
         if (ctx->cfg_path[0] && cfg_write(&ctx->cfg, ctx->cfg_path))
             HLOGI(UI_LOG_TAG, "Config saved to %s", ctx->cfg_path);
+        pthread_mutex_unlock(&ctx->cfg_mutex);
 
     } else if (strcmp(cmd->command, "set_radio_config") == 0) {
         int new_radio_type = atoi(cmd->value);
@@ -174,6 +176,7 @@ int ui_comm_handle_command(ui_ctx_t *ctx, const ws_command_t *cmd)
         }
 
         // Persist radio config to INI
+        pthread_mutex_lock(&ctx->cfg_mutex);
         ctx->cfg.radio_type = new_radio_type;
         strncpy(ctx->cfg.radio_device, dev_path ? dev_path : "",
                 sizeof(ctx->cfg.radio_device) - 1);
@@ -181,6 +184,7 @@ int ui_comm_handle_command(ui_ctx_t *ctx, const ws_command_t *cmd)
         ctx->cfg.radio_serial_speed = new_serial_speed;
         if (ctx->cfg_path[0] && cfg_write(&ctx->cfg, ctx->cfg_path))
             HLOGI(UI_LOG_TAG, "Config saved to %s", ctx->cfg_path);
+        pthread_mutex_unlock(&ctx->cfg_mutex);
 
     } else if (strcmp(cmd->command, "set_waterfall") == 0) {
         bool enable = (strcmp(cmd->value, "off") != 0);
@@ -199,8 +203,10 @@ int ui_comm_handle_command(ui_ctx_t *ctx, const ws_command_t *cmd)
         modem_set_tx_gain(linear);
         ctx->cfg.tx_gain_db = db;
         HLOGI(UI_LOG_TAG, "TX gain set to %.2f dB (linear=%.4f)", db, linear);
+        pthread_mutex_lock(&ctx->cfg_mutex);
         if (ctx->cfg_path[0] && cfg_write(&ctx->cfg, ctx->cfg_path))
             HLOGI(UI_LOG_TAG, "Config saved to %s", ctx->cfg_path);
+        pthread_mutex_unlock(&ctx->cfg_mutex);
 
     } else {
         HLOGW(UI_LOG_TAG, "Unknown UI command: %s", cmd->command);
@@ -217,12 +223,11 @@ void ui_comm_set_waterfall(bool enabled)
         return;
     modem_set_spectrum_enabled(enabled);
     ctx->waterfall_enabled = enabled;
+
+    pthread_mutex_lock(&ctx->cfg_mutex);
     ctx->cfg.waterfall_enabled = enabled;
 
     if (enabled && ctx->spec_tid == 0) {
-        // Thread wasn't started at boot (waterfall_enabled was false);
-        // start it now so remote clients (web UI, mercury-qt) receive
-        // spectrum frames.
         if (pthread_create(&ctx->spec_tid, NULL, spectrum_publisher_thread, ctx) != 0) {
             HLOGE(UI_LOG_TAG, "pthread_create(spec) failed: %s", strerror(errno));
         } else {
@@ -233,6 +238,7 @@ void ui_comm_set_waterfall(bool enabled)
 
     if (ctx->cfg_path[0] && cfg_write(&ctx->cfg, ctx->cfg_path))
         HLOGI(UI_LOG_TAG, "Config saved to %s", ctx->cfg_path);
+    pthread_mutex_unlock(&ctx->cfg_mutex);
 }
 
 // ---------------- UI PUBLISHER THREAD ----------------
@@ -634,6 +640,8 @@ int ui_comm_init(ui_ctx_t *ctx, uint16_t ws_port, bool tls_enabled,
 
     memset(ctx, 0, sizeof(*ctx));
 
+    pthread_mutex_init(&ctx->cfg_mutex, NULL);
+
     ctx->waterfall_enabled = waterfall_enabled;
     ctx->audio_system = audio_system;
     ctx->rx_input_channel = rx_input_channel;
@@ -705,8 +713,7 @@ void ui_comm_shutdown(ui_ctx_t *ctx)
 {
     g_ui_ctx = NULL;
 
-    // Threads check shutdown_ flag and will exit on their own.
-    // Shut down the WebSocket server.
     ws_shutdown(&ctx->ws);
+    pthread_mutex_destroy(&ctx->cfg_mutex);
     HLOGI(UI_LOG_TAG, "Shut down");
 }
