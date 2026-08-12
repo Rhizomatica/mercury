@@ -1020,7 +1020,10 @@ func main() {
 			if !on {
 				val = "off"
 			}
-			if engLink, ok := state.link.(*engineLink); ok {
+			state.mu.RLock()
+			engLink, isEngine := state.link.(*engineLink)
+			state.mu.RUnlock()
+			if isEngine {
 				engLink.SetWaterfall(on)
 				appendLog(fmt.Sprintf("Waterfall turned %s.\n", val))
 				return
