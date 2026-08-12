@@ -172,3 +172,8 @@ int mercury_ui_get_input_channel(void)
 {
     return ui_comm_get_input_channel();
 }
+
+void mercury_ui_set_waterfall(bool enabled)
+{
+    ui_comm_set_waterfall(enabled);
+}

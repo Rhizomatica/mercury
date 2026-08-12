@@ -29,3 +29,5 @@ func (l *engineLink) Send(cmd Command) error {
 }
 
 func (l *engineLink) Close() {}
+
+func (l *engineLink) SetWaterfall(enabled bool) {}

@@ -255,6 +255,11 @@ func readRadioList() (RadioListEvent, bool) {
 	}, true
 }
 
+func (l *engineLink) SetWaterfall(enabled bool) {
+	cEn := C.bool(enabled)
+	C.mercury_ui_set_waterfall(cEn)
+}
+
 func (l *engineLink) Close() {}
 
 // statusFromC converts the engine's status struct into the UI's own type. This

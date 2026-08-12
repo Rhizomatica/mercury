@@ -127,6 +127,10 @@ int  ui_comm_handle_command(ui_ctx_t *ctx, const ws_command_t *cmd);
 int  ui_comm_command(const char *command, const char *value,
                      const char *value2, const char *value3);
 
+/* Enable / disable the waterfall/spectrum FFT pipeline at runtime.  Saves the
+ * choice to mercury.ini so it survives restarts. */
+void ui_comm_set_waterfall(bool enabled);
+
 /* Copy the most recent status snapshot.  False until the first publish. */
 bool ui_comm_get_status(ui_status_t *out);
 
