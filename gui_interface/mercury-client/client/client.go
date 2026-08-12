@@ -34,6 +34,7 @@ type ChatMessage struct {
 type Client struct {
 	mu    sync.Mutex
 	modem *modem.ModemClient
+	done  chan struct{}
 	cfg   Config
 
 	// LogCh receives human-readable activity lines.
@@ -84,6 +85,10 @@ func (c *Client) Connect() error {
 	}
 
 	c.mu.Lock()
+	if c.done != nil {
+		close(c.done)
+	}
+	c.done = make(chan struct{})
 	c.modem = mc
 	c.mu.Unlock()
 
@@ -108,10 +113,15 @@ func (c *Client) Disconnect() {
 	c.mu.Lock()
 	mc := c.modem
 	c.modem = nil
+	done := c.done
+	c.done = nil
 	c.mu.Unlock()
 
 	if mc != nil {
 		mc.Disconnect()
+	}
+	if done != nil {
+		close(done)
 	}
 	c.LogCh <- "Disconnected from modem."
 }
@@ -231,12 +241,21 @@ func (c *Client) SendBroadcast(msg string) error {
 func (c *Client) updateLog() {
 	c.mu.Lock()
 	mc := c.modem
+	done := c.done
 	c.mu.Unlock()
-	if mc == nil {
+	if mc == nil || done == nil {
 		return
 	}
-	for logMsg := range mc.LogCh {
-		c.LogCh <- logMsg
+	for {
+		select {
+		case logMsg, ok := <-mc.LogCh:
+			if !ok {
+				return
+			}
+			c.LogCh <- logMsg
+		case <-done:
+			return
+		}
 	}
 }
 
@@ -244,14 +263,23 @@ func (c *Client) updateLog() {
 func (c *Client) handleIncomingARQ() {
 	c.mu.Lock()
 	mc := c.modem
+	done := c.done
 	c.mu.Unlock()
-	if mc == nil {
+	if mc == nil || done == nil {
 		return
 	}
-	for arqMsg := range mc.IncomingARQCh {
-		c.LogCh <- fmt.Sprintf("ARQ Control: %s", arqMsg)
-		if strings.HasPrefix(arqMsg, "CONNECTED") {
-			c.updateRemoteCall(arqMsg)
+	for {
+		select {
+		case arqMsg, ok := <-mc.IncomingARQCh:
+			if !ok {
+				return
+			}
+			c.LogCh <- fmt.Sprintf("ARQ Control: %s", arqMsg)
+			if strings.HasPrefix(arqMsg, "CONNECTED") {
+				c.updateRemoteCall(arqMsg)
+			}
+		case <-done:
+			return
 		}
 	}
 }
@@ -286,36 +314,45 @@ func (c *Client) updateRemoteCall(connectedLine string) {
 func (c *Client) handleIncomingARQData() {
 	c.mu.Lock()
 	mc := c.modem
+	done := c.done
 	c.mu.Unlock()
-	if mc == nil {
+	if mc == nil || done == nil {
 		return
 	}
-	for data := range mc.IncomingARQDataCh {
-		c.LogCh <- fmt.Sprintf("ARQ Data RX: %d bytes: %q", len(data), string(data))
-		c.mu.Lock()
-		c.chatRxBuffer += string(data)
-		var lines []ChatMessage
-		for {
-			idx := strings.IndexByte(c.chatRxBuffer, '\n')
-			if idx < 0 {
-				break
+	for {
+		select {
+		case data, ok := <-mc.IncomingARQDataCh:
+			if !ok {
+				return
 			}
-			line := strings.TrimRight(c.chatRxBuffer[:idx], "\r")
-			c.chatRxBuffer = c.chatRxBuffer[idx+1:]
-			if strings.TrimSpace(line) != "" {
-				call := c.remoteCall
-				if call == "" {
-					call = c.cfg.TargetCallsign
+			c.LogCh <- fmt.Sprintf("ARQ Data RX: %d bytes: %q", len(data), string(data))
+			c.mu.Lock()
+			c.chatRxBuffer += string(data)
+			var lines []ChatMessage
+			for {
+				idx := strings.IndexByte(c.chatRxBuffer, '\n')
+				if idx < 0 {
+					break
 				}
-				lines = append(lines, ChatMessage{Call: call, Text: line})
+				line := strings.TrimRight(c.chatRxBuffer[:idx], "\r")
+				c.chatRxBuffer = c.chatRxBuffer[idx+1:]
+				if strings.TrimSpace(line) != "" {
+					call := c.remoteCall
+					if call == "" {
+						call = c.cfg.TargetCallsign
+					}
+					lines = append(lines, ChatMessage{Call: call, Text: line})
+				}
 			}
-		}
-		if len(c.chatRxBuffer) > 65536 {
-			c.chatRxBuffer = c.chatRxBuffer[len(c.chatRxBuffer)-4096:]
-		}
-		c.mu.Unlock()
-		for _, msg := range lines {
-			c.ARQChatCh <- msg
+			if len(c.chatRxBuffer) > 65536 {
+				c.chatRxBuffer = c.chatRxBuffer[len(c.chatRxBuffer)-4096:]
+			}
+			c.mu.Unlock()
+			for _, msg := range lines {
+				c.ARQChatCh <- msg
+			}
+		case <-done:
+			return
 		}
 	}
 }
@@ -326,32 +363,41 @@ func (c *Client) handleIncomingARQData() {
 func (c *Client) handleIncomingBroadcast() {
 	c.mu.Lock()
 	mc := c.modem
+	done := c.done
 	c.mu.Unlock()
-	if mc == nil {
+	if mc == nil || done == nil {
 		return
 	}
-	for data := range mc.IncomingBcastCh {
-		c.LogCh <- fmt.Sprintf("Broadcast RX (Decoded): %s", string(data))
-		c.mu.Lock()
-		c.broadcastRxBuffer += string(data)
-		var lines []ChatMessage
-		for {
-			idx := strings.IndexByte(c.broadcastRxBuffer, '\n')
-			if idx < 0 {
-				break
+	for {
+		select {
+		case data, ok := <-mc.IncomingBcastCh:
+			if !ok {
+				return
 			}
-			line := strings.TrimRight(c.broadcastRxBuffer[:idx], "\r")
-			c.broadcastRxBuffer = c.broadcastRxBuffer[idx+1:]
-			if strings.TrimSpace(line) != "" {
-				lines = append(lines, ChatMessage{Text: line, Broadcast: true})
+			c.LogCh <- fmt.Sprintf("Broadcast RX (Decoded): %s", string(data))
+			c.mu.Lock()
+			c.broadcastRxBuffer += string(data)
+			var lines []ChatMessage
+			for {
+				idx := strings.IndexByte(c.broadcastRxBuffer, '\n')
+				if idx < 0 {
+					break
+				}
+				line := strings.TrimRight(c.broadcastRxBuffer[:idx], "\r")
+				c.broadcastRxBuffer = c.broadcastRxBuffer[idx+1:]
+				if strings.TrimSpace(line) != "" {
+					lines = append(lines, ChatMessage{Text: line, Broadcast: true})
+				}
 			}
-		}
-		if len(c.broadcastRxBuffer) > 65536 {
-			c.broadcastRxBuffer = c.broadcastRxBuffer[len(c.broadcastRxBuffer)-4096:]
-		}
-		c.mu.Unlock()
-		for _, msg := range lines {
-			c.BroadcastChatCh <- msg
+			if len(c.broadcastRxBuffer) > 65536 {
+				c.broadcastRxBuffer = c.broadcastRxBuffer[len(c.broadcastRxBuffer)-4096:]
+			}
+			c.mu.Unlock()
+			for _, msg := range lines {
+				c.BroadcastChatCh <- msg
+			}
+		case <-done:
+			return
 		}
 	}
 }
@@ -361,19 +407,28 @@ func (c *Client) handleIncomingBroadcast() {
 func (c *Client) handleStatus() {
 	c.mu.Lock()
 	mc := c.modem
+	done := c.done
 	c.mu.Unlock()
-	if mc == nil {
+	if mc == nil || done == nil {
 		return
 	}
-	for status := range mc.StatusCh {
-		c.LogCh <- fmt.Sprintf("TNC Status: %s", status)
-		c.StatusCh <- status
-		if status == "DISCONNECTED" {
-			c.mu.Lock()
-			c.remoteCall = ""
-			c.chatRxBuffer = ""
-			c.broadcastRxBuffer = ""
-			c.mu.Unlock()
+	for {
+		select {
+		case status, ok := <-mc.StatusCh:
+			if !ok {
+				return
+			}
+			c.LogCh <- fmt.Sprintf("TNC Status: %s", status)
+			c.StatusCh <- status
+			if status == "DISCONNECTED" {
+				c.mu.Lock()
+				c.remoteCall = ""
+				c.chatRxBuffer = ""
+				c.broadcastRxBuffer = ""
+				c.mu.Unlock()
+			}
+		case <-done:
+			return
 		}
 	}
 }
