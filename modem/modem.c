@@ -400,6 +400,65 @@ void modem_set_spectrum_enabled(bool enabled)
     atomic_store_explicit(&g_spectrum_enabled, enabled, memory_order_relaxed);
 }
 
+/* ---- TX waterfall -------------------------------------------------------
+ * A radio shows your own signal while you transmit.  Mercury froze the display
+ * on key-up, because the spectrum slot was fed only from the capture path.
+ * Feed it from the transmitted burst too.
+ *
+ * Same slot, same lock, same sequence counter as RX, so the publisher thread
+ * and the wire format need no change at all.  Only one writer is ever active:
+ * the link is half duplex, so RX decode and TX modulation do not overlap.  The
+ * FFT runs inline under the lock exactly as the RX path does.
+ *
+ * Samples are at modem rate -- what g_spectrum_sample_rate already reports --
+ * so the frequency axis matches RX and the display does not jump on key-up.
+ *
+ * Gated by g_spectrum_enabled, the same switch the RX FFT above uses: one
+ * waterfall control for both directions, so turning it off in the UI stops the
+ * work rather than computing frames nobody consumes.  Unlike RX, there is no
+ * channel-busy consumer to keep it alive -- occupancy is meaningless while we
+ * are the ones occupying the channel. */
+
+/* Publish one slice of a burst, `pos` samples in.  Called repeatedly while the
+ * burst drains, so the waterfall scrolls in step with the audio actually going
+ * out instead of painting a single line per burst. */
+static void publish_tx_spectrum_at(const int32_t *buf, size_t total,
+                                   size_t pos, int sample_rate)
+{
+    if (!atomic_load_explicit(&g_spectrum_enabled, memory_order_relaxed)
+        || buf == NULL || pos >= total)
+        return;
+
+    size_t n = total - pos;
+    if (n > MODEM_STATS_NSPEC)
+        n = MODEM_STATS_NSPEC;
+
+    static COMP tx_fdm[MODEM_STATS_NSPEC];
+    for (size_t i = 0; i < n; i++) {
+        /* tx_sample_with_gain() emits int32 full scale; the spectrum code wants
+         * raw i16 amplitude and normalises that itself. */
+        tx_fdm[i].real = (float)(buf[pos + i] >> 16);
+        tx_fdm[i].imag = 0.0f;
+    }
+
+    pthread_mutex_lock(&g_spectrum_lock);
+    /* The stats struct is opened lazily, and TX gets there first: mercury sends
+     * CALL before it has decoded anything, so without this the very first burst
+     * of a connect runs the FFT over an unopened MODEM_STATS. */
+    if (!g_spectrum_stats_inited)
+    {
+        modem_stats_open(&g_spectrum_stats);
+        g_spectrum_stats_inited = true;
+    }
+    modem_stats_get_rx_spectrum(&g_spectrum_stats, g_rx_spectrum_dB, tx_fdm, (int)n);
+    g_spectrum_sample_rate = sample_rate;
+    g_spectrum_seq++;
+    pthread_mutex_unlock(&g_spectrum_lock);
+}
+
+/* One line per publisher tick; faster is wasted, the UI runs at 20 fps. */
+#define TX_SPECTRUM_STEP_MS 50
+
 /* --- Channel-busy (occupancy) detector --------------------------------------
  * VARA-style "channel busy" detection off the RX spectrum FFT.  Opt-in
  * (disabled by default); when enabled the RX worker classifies occupancy and
@@ -1157,10 +1216,22 @@ int send_modulated_data(generic_modem_t *g_modem, uint8_t *bytes_in, int frames_
 
         write_buffer(playback_buffer, (uint8_t *)tx_buffer, total_samples * sizeof(int32_t));
 
+        uint64_t next_spec_ms = t0_ms;
         while (!shutdown_ &&
                (size_buffer(playback_buffer) > 0 ||
                 time_now_ms() < t0_ms + burst_ms + tail_ms))
+        {
+            uint64_t now = time_now_ms();
+            if (now >= next_spec_ms)
+            {
+                /* Paced by elapsed playout, not by write progress: the ring is
+                 * filled far faster than it drains. */
+                size_t pos = (size_t)(((now - t0_ms) * FREEDV_FS_8000) / 1000ULL);
+                publish_tx_spectrum_at(tx_buffer, total_samples, pos, FREEDV_FS_8000);
+                next_spec_ms = now + TX_SPECTRUM_STEP_MS;
+            }
             usleep(1000);
+        }
     }
     else
     {
@@ -1171,9 +1242,22 @@ int send_modulated_data(generic_modem_t *g_modem, uint8_t *bytes_in, int frames_
         /* Write entire pre-generated buffer to playback */
         write_buffer(playback_buffer, (uint8_t *)tx_buffer, total_samples * sizeof(int32_t));
 
-        /* Wait for all samples to be played out */
+        /* Wait for all samples to be played out, publishing the waterfall as we
+         * go so the UI scrolls during the burst rather than after it. */
         uint64_t playback_duration_us = ((uint64_t)total_samples * 1000000ULL) / FREEDV_FS_8000;
-        usleep((useconds_t)playback_duration_us);
+        uint64_t waited_us = 0;
+        while (waited_us < playback_duration_us)
+        {
+            uint64_t step_us = (uint64_t)TX_SPECTRUM_STEP_MS * 1000ULL;
+            if (step_us > playback_duration_us - waited_us)
+                step_us = playback_duration_us - waited_us;
+
+            size_t pos = (size_t)((waited_us * FREEDV_FS_8000) / 1000000ULL);
+            publish_tx_spectrum_at(tx_buffer, total_samples, pos, FREEDV_FS_8000);
+
+            usleep((useconds_t)step_us);
+            waited_us += step_us;
+        }
 
         /* Give some tail time before turning off PTT */
         usleep(TAIL_TIME_US);
