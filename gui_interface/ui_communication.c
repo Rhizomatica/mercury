@@ -218,6 +218,19 @@ void ui_comm_set_waterfall(bool enabled)
     modem_set_spectrum_enabled(enabled);
     ctx->waterfall_enabled = enabled;
     ctx->cfg.waterfall_enabled = enabled;
+
+    if (enabled && ctx->spec_tid == 0) {
+        // Thread wasn't started at boot (waterfall_enabled was false);
+        // start it now so remote clients (web UI, mercury-qt) receive
+        // spectrum frames.
+        if (pthread_create(&ctx->spec_tid, NULL, spectrum_publisher_thread, ctx) != 0) {
+            HLOGE(UI_LOG_TAG, "pthread_create(spec) failed: %s", strerror(errno));
+        } else {
+            pthread_detach(ctx->spec_tid);
+            HLOGI(UI_LOG_TAG, "Spectrum publisher thread started (delayed start)");
+        }
+    }
+
     if (ctx->cfg_path[0] && cfg_write(&ctx->cfg, ctx->cfg_path))
         HLOGI(UI_LOG_TAG, "Config saved to %s", ctx->cfg_path);
 }
