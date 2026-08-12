@@ -110,13 +110,31 @@ func NewModemClient(arqControlAddr, arqDataAddr, broadcastAddr string) *ModemCli
 	}
 }
 
-func (mc *ModemClient) Connect() error {
+func (mc *ModemClient) Connect() (err error) {
 	mc.mu.Lock()
 	defer mc.mu.Unlock()
 
 	if mc.ARQControlConn != nil || mc.ARQDataConn != nil || mc.BroadcastConn != nil {
 		return fmt.Errorf("already connected")
 	}
+
+	defer func() {
+		if err == nil {
+			return
+		}
+		if mc.ARQControlConn != nil {
+			mc.ARQControlConn.Close()
+			mc.ARQControlConn = nil
+		}
+		if mc.ARQDataConn != nil && mc.ARQDataConn != mc.ARQControlConn {
+			mc.ARQDataConn.Close()
+			mc.ARQDataConn = nil
+		}
+		if mc.BroadcastConn != nil {
+			mc.BroadcastConn.Close()
+			mc.BroadcastConn = nil
+		}
+	}()
 
 	arqControlTCPAddr, err := net.ResolveTCPAddr("tcp", mc.ARQControlAddr)
 	if err != nil {
