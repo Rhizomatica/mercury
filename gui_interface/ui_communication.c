@@ -182,6 +182,11 @@ int ui_comm_handle_command(ui_ctx_t *ctx, const ws_command_t *cmd)
         if (ctx->cfg_path[0] && cfg_write(&ctx->cfg, ctx->cfg_path))
             HLOGI(UI_LOG_TAG, "Config saved to %s", ctx->cfg_path);
 
+    } else if (strcmp(cmd->command, "set_waterfall") == 0) {
+        bool enable = (strcmp(cmd->value, "off") != 0);
+        ui_comm_set_waterfall(enable);
+        HLOGI(UI_LOG_TAG, "Waterfall %s by UI command", enable ? "enabled" : "disabled");
+
     } else if (strcmp(cmd->command, "set_tx_gain") == 0) {
         /* value carries the dB string; clamp to plan range and convert to
          * linear before pushing to the modulator.  Persist to INI so the
@@ -203,6 +208,18 @@ int ui_comm_handle_command(ui_ctx_t *ctx, const ws_command_t *cmd)
     }
 
     return 0;
+}
+
+void ui_comm_set_waterfall(bool enabled)
+{
+    ui_ctx_t *ctx = g_ui_ctx;
+    if (!ctx)
+        return;
+    modem_set_spectrum_enabled(enabled);
+    ctx->waterfall_enabled = enabled;
+    ctx->cfg.waterfall_enabled = enabled;
+    if (ctx->cfg_path[0] && cfg_write(&ctx->cfg, ctx->cfg_path))
+        HLOGI(UI_LOG_TAG, "Config saved to %s", ctx->cfg_path);
 }
 
 // ---------------- UI PUBLISHER THREAD ----------------

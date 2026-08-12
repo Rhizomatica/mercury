@@ -110,6 +110,7 @@ type uiBindings struct {
 	rxBytesText       *canvas.Text
 	spectrumCanvas    *canvas.Raster
 	waterfallCanvas   *canvas.Raster
+	waterfallCard     *widget.Card
 }
 
 func parseStatusMessage(payload []byte) (telemetryState, error) {
@@ -565,6 +566,13 @@ func main() {
 			}
 			bindings.txGainLabel.SetText(fmt.Sprintf("TX gain: %.1f dB", telemetry.TXGainDB))
 			bindings.txPeakLabel.SetText(fmt.Sprintf("TX peak: %.1f dBFS", telemetry.TXPeakDBFS))
+			if bindings.waterfallCard != nil {
+				if telemetry.Waterfall {
+					bindings.waterfallCard.Show()
+				} else {
+					bindings.waterfallCard.Hide()
+				}
+			}
 		})
 	}
 
@@ -907,6 +915,7 @@ func main() {
 		nil,
 		waterfallContent,
 	))
+	bindings.waterfallCard = spectrumCard
 
 	topPanel := container.NewVBox(
 		container.NewVBox(txCard, telemetryCard),
@@ -1002,6 +1011,24 @@ func main() {
 		}
 		paletteSelect.SetSelected(lowerToUpper[state.waterfallPalette])
 
+		enabledCheck := widget.NewCheck("Waterfall enabled", func(on bool) {
+			val := "on"
+			if !on {
+				val = "off"
+			}
+			if engLink, ok := state.link.(*engineLink); ok {
+				engLink.SetWaterfall(on)
+				appendLog(fmt.Sprintf("Waterfall turned %s.\n", val))
+				return
+			}
+			if err := sendWSCommand("set_waterfall", val, "", ""); err != nil {
+				appendLog(fmt.Sprintf("Failed to toggle waterfall: %v\n", err))
+			}
+		})
+		state.mu.RLock()
+		enabledCheck.SetChecked(state.telemetry.Waterfall)
+		state.mu.RUnlock()
+
 		applyBtn := widget.NewButton("Apply", func() {
 			sel := paletteSelect.Selected
 			if sel == "" {
@@ -1016,6 +1043,8 @@ func main() {
 		})
 
 		content := container.NewVBox(
+			enabledCheck,
+			widget.NewSeparator(),
 			container.NewGridWithColumns(2,
 				widget.NewLabel("Color Palette"), paletteSelect,
 			),

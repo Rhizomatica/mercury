@@ -76,6 +76,9 @@ int mercury_ui_get_radio_list(ui_device_t *out, int max,
                               int *serial_speed);
 int mercury_ui_get_input_channel(void);
 
+/* Enable / disable waterfall/spectrum at runtime.  Saves to mercury.ini. */
+void mercury_ui_set_waterfall(bool enabled);
+
 #ifdef __cplusplus
 }
 #endif
