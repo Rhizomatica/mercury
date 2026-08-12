@@ -185,6 +185,10 @@ func (mc *ModemClient) ConnectARQ(src, dst string) error {
 		mc.mu.Unlock()
 		return fmt.Errorf("not connected")
 	}
+	if mc.connectRespCh != nil {
+		mc.mu.Unlock()
+		return fmt.Errorf("ARQ connection already in progress")
+	}
 
 	mc.connectRespCh = make(chan string, 4)
 	respCh := mc.connectRespCh

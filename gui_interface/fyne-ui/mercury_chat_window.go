@@ -282,6 +282,7 @@ func (cw *chatWindow) onARQConnect() {
 	if mc == nil || !mc.IsConnected() {
 		return
 	}
+	cw.arqConnect.Disable()
 	cw.logMsg("Connecting ARQ: %s -> %s", cw.myCall.Text, cw.target.Text)
 	go func() {
 		if err := mc.ConnectARQ(); err != nil {
