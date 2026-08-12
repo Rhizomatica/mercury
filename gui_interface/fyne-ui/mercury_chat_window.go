@@ -15,6 +15,14 @@ import (
 	"mercury-client/client"
 )
 
+// Ring-buffer caps so the log and chat panes stay bounded during long
+// transfers: each append would otherwise rebuild a growing string / prepend a
+// new widget forever, making the window unusable.
+const (
+	maxLogLines     = 1000
+	maxChatMessages = 200
+)
+
 func openMercuryClientWindow(app fyne.App, telemetry telemetryState) {
 	cw := &chatWindow{}
 	cw.build(app, telemetry)
@@ -159,7 +167,12 @@ func (cw *chatWindow) logMsg(format string, args ...any) {
 		if cur == "" {
 			cw.log.SetText(line)
 		} else {
-			cw.log.SetText(fmt.Sprintf("%s\n%s", line, cur))
+			newText := fmt.Sprintf("%s\n%s", line, cur)
+			lines := strings.Split(newText, "\n")
+			if len(lines) > maxLogLines {
+				lines = lines[:maxLogLines]
+			}
+			cw.log.SetText(strings.Join(lines, "\n"))
 		}
 		cw.log.Refresh()
 	})
@@ -187,6 +200,9 @@ func (cw *chatWindow) appendRichChat(box *fyne.Container, call, text string) {
 		}
 		rt.Wrapping = fyne.TextWrapBreak
 		box.Objects = append([]fyne.CanvasObject{rt}, box.Objects...)
+		if len(box.Objects) > maxChatMessages {
+			box.Objects = box.Objects[:maxChatMessages]
+		}
 		box.Refresh()
 	})
 }
