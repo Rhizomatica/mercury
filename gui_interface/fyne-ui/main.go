@@ -56,6 +56,7 @@ type appState struct {
 	spectrumRate     int
 	spectrumHistory  []float32
 	waterfallRows    [][]float32
+	waterfallPalette string
 }
 
 type optionItem struct {
@@ -225,7 +226,8 @@ func main() {
 	myWindow := myApp.NewWindow("Mercury Modem")
 	myWindow.Resize(fyne.NewSize(1280, 780))
 
-	state := &appState{wsScheme: "ws", wsHost: "127.0.0.1", wsPort: "10000"}
+	state := &appState{wsScheme: "ws", wsHost: "127.0.0.1", wsPort: "10000",
+		waterfallPalette: myApp.Preferences().StringWithFallback("waterfallPalette", "blackblue")}
 	bindings := &uiBindings{}
 
 	statusLabel := widget.NewLabel("")
@@ -989,6 +991,43 @@ func main() {
 		dialog.ShowCustom("Radio Config", "Close", padded, myWindow)
 	}
 
+	showWaterfallDialog := func() {
+		paletteOpts := []string{"Turbo", "Hot", "Grayscale", "Blackblue"}
+		paletteSelect := widget.NewSelect(paletteOpts, nil)
+		upperToLower := map[string]string{
+			"Turbo": "turbo", "Hot": "hot", "Grayscale": "grayscale", "Blackblue": "blackblue",
+		}
+		lowerToUpper := map[string]string{
+			"turbo": "Turbo", "hot": "Hot", "grayscale": "Grayscale", "blackblue": "Blackblue",
+		}
+		paletteSelect.SetSelected(lowerToUpper[state.waterfallPalette])
+
+		applyBtn := widget.NewButton("Apply", func() {
+			sel := paletteSelect.Selected
+			if sel == "" {
+				return
+			}
+			internal := upperToLower[sel]
+			state.mu.Lock()
+			state.waterfallPalette = internal
+			state.mu.Unlock()
+			myApp.Preferences().SetString("waterfallPalette", internal)
+			appendLog(fmt.Sprintf("Waterfall palette: %s\n", sel))
+		})
+
+		content := container.NewVBox(
+			container.NewGridWithColumns(2,
+				widget.NewLabel("Color Palette"), paletteSelect,
+			),
+			container.NewHBox(layout.NewSpacer(), applyBtn, layout.NewSpacer()),
+		)
+
+		bg := canvas.NewRectangle(color.Transparent)
+		bg.SetMinSize(fyne.NewSize(400, 0))
+		padded := container.NewStack(bg, container.NewPadded(content))
+		dialog.ShowCustom("Waterfall", "Close", padded, myWindow)
+	}
+
 	showRemoteControlDialog := func() {
 		content := container.NewVBox(
 			engineSelect,
@@ -1007,7 +1046,8 @@ func main() {
 	remoteMenu := fyne.NewMenu("Remote Control", remoteItem)
 	soundcardsItem := fyne.NewMenuItem("Soundcards", showSoundcardDialog)
 	radioConfigItem := fyne.NewMenuItem("Radio Config", showRadioDialog)
-	configMenu := fyne.NewMenu("Settings", soundcardsItem, radioConfigItem)
+	waterfallItem := fyne.NewMenuItem("Waterfall", showWaterfallDialog)
+	configMenu := fyne.NewMenu("Settings", soundcardsItem, radioConfigItem, waterfallItem)
 	myWindow.SetMainMenu(fyne.NewMainMenu(remoteMenu, configMenu))
 
 	// Single idempotent teardown, used by both the window-close handler and the
@@ -1181,6 +1221,7 @@ func drawWaterfallImage(img *image.NRGBA, w, h int, state *appState) {
 	// mutated, so iterating the snapshot after unlocking is safe.
 	state.mu.RLock()
 	rows := state.waterfallRows
+	palette := state.waterfallPalette
 	state.mu.RUnlock()
 	if len(rows) == 0 {
 		return
@@ -1203,14 +1244,13 @@ func drawWaterfallImage(img *image.NRGBA, w, h int, state *appState) {
 			if math.IsNaN(v) {
 				continue
 			}
-			c := waterfallColorForDB(v)
+			c := waterfallColorForDB(v, palette)
 			img.SetNRGBA(x, destY, c)
 		}
 	}
 }
 
-func waterfallColorForDB(v float64) color.NRGBA {
-	// normalize roughly from -100..0 dB into 0..1
+func waterfallColorForDB(v float64, palette string) color.NRGBA {
 	t := (v + 70.0) / 70.0
 	if t < 0 {
 		t = 0
@@ -1218,12 +1258,42 @@ func waterfallColorForDB(v float64) color.NRGBA {
 	if t > 1 {
 		t = 1
 	}
-	// gradient: dark blue -> blue -> cyan -> green -> yellow
+	switch palette {
+	case "turbo":
+		return turboColor(t)
+	case "hot":
+		return hotColor(t)
+	case "grayscale":
+		return grayscaleColor(t)
+	default:
+		return blackblueColor(t)
+	}
+}
+
+func turboColor(t float64) color.NRGBA {
+	r := clamp(34.61+t*(1172.33+t*(-10793.56+t*(33300.12+t*(-38394.49+t*14825.05)))), 0, 255)
+	g := clamp(23.31+t*(557.33+t*(1225.33+t*(-5765.73+t*(8240.07+t*(-3832.07))))), 0, 255)
+	b := clamp(27.2+t*(3211.1+t*(-15327.97+t*(27814.0+t*(-22569.18+t*6838.66)))), 0, 255)
+	return color.NRGBA{R: uint8(r), G: uint8(g), B: uint8(b), A: 0xFF}
+}
+
+func hotColor(t float64) color.NRGBA {
+	r := clamp(t*3*255, 0, 255)
+	g := clamp((t-0.33)*3*255, 0, 255)
+	b := clamp((t-0.67)*3*255, 0, 255)
+	return color.NRGBA{R: uint8(r), G: uint8(g), B: uint8(b), A: 0xFF}
+}
+
+func grayscaleColor(t float64) color.NRGBA {
+	v := uint8(t * 255)
+	return color.NRGBA{R: v, G: v, B: v, A: 0xFF}
+}
+
+func blackblueColor(t float64) color.NRGBA {
 	switch {
 	case t < 0.25:
-		// deep blue
 		f := t / 0.25
-		return color.NRGBA{R: uint8(0x00 * (1 - f)), G: uint8(0x00 * (1 - f)), B: uint8(0x20 + int(200*f)), A: 0xFF}
+		return color.NRGBA{R: 0x00, G: 0x00, B: uint8(0x20 + int(200*f)), A: 0xFF}
 	case t < 0.5:
 		f := (t - 0.25) / 0.25
 		return color.NRGBA{R: 0x00, G: uint8(0x20 * f), B: 0xFF, A: 0xFF}
