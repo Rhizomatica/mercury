@@ -15,20 +15,20 @@ import (
 	"mercury-client/client"
 )
 
-// openMercuryClientWindow creates and shows a chat window backed by the
-// vendored mercury-client library.  The engine's telemetry is used to
-// pre-fill the callsign fields.
 func openMercuryClientWindow(app fyne.App, telemetry telemetryState) {
 	cw := &chatWindow{}
 	cw.build(app, telemetry)
 }
 
 type chatWindow struct {
-	win   fyne.Window
-	mc    *client.Client
-	log   *widget.Entry
-	arq   *widget.Entry
-	bcast *widget.Entry
+	win fyne.Window
+	mc  *client.Client
+	log *widget.Entry
+
+	arqBox      *fyne.Container
+	arqScroll   *container.Scroll
+	bcastBox    *fyne.Container
+	bcastScroll *container.Scroll
 
 	myCall    *widget.Entry
 	target    *widget.Entry
@@ -62,27 +62,22 @@ func (cw *chatWindow) build(app fyne.App, telemetry telemetryState) {
 	cw.bcastPort.SetText("8100")
 
 	cw.arqMsg = widget.NewEntry()
-	cw.arqMsg.SetPlaceHolder("ARQ message...")
+	cw.arqMsg.SetPlaceHolder("Type message to be sent...")
 	cw.bcastMsg = widget.NewEntry()
-	cw.bcastMsg.SetPlaceHolder("Broadcast message...")
+	cw.bcastMsg.SetPlaceHolder("Type broadcast message...")
 
 	cw.log = widget.NewMultiLineEntry()
 	cw.log.SetPlaceHolder("Activity log...")
 	cw.log.Wrapping = fyne.TextWrapBreak
 	cw.log.Disable()
 
-	cw.arq = widget.NewMultiLineEntry()
-	cw.arq.SetPlaceHolder("ARQ chat")
-	cw.arq.Wrapping = fyne.TextWrapBreak
-	cw.arq.Disable()
+	cw.arqBox = container.NewVBox()
+	cw.arqScroll = container.NewScroll(cw.arqBox)
+	cw.bcastBox = container.NewVBox()
+	cw.bcastScroll = container.NewScroll(cw.bcastBox)
 
-	cw.bcast = widget.NewMultiLineEntry()
-	cw.bcast.SetPlaceHolder("Broadcast chat")
-	cw.bcast.Wrapping = fyne.TextWrapBreak
-	cw.bcast.Disable()
-
-	cw.connectBtn = widget.NewButton("Connect TCP", cw.onConnect)
-	cw.disconnectBtn = widget.NewButton("Disconnect TCP", cw.onDisconnect)
+	cw.connectBtn = widget.NewButton("Connect modem", cw.onConnect)
+	cw.disconnectBtn = widget.NewButton("Disconnect modem", cw.onDisconnect)
 	cw.disconnectBtn.Disable()
 	cw.arqConnect = widget.NewButton("Connect ARQ", cw.onARQConnect)
 	cw.arqConnect.Disable()
@@ -94,9 +89,9 @@ func (cw *chatWindow) build(app fyne.App, telemetry telemetryState) {
 		}
 	})
 	cw.arqAbort.Disable()
-	cw.sendARQ = widget.NewButton("Send ARQ", cw.onSendARQ)
+	cw.sendARQ = widget.NewButton("Send message", cw.onSendARQ)
 	cw.sendARQ.Disable()
-	cw.sendBcast = widget.NewButton("Send Broadcast", cw.onSendBroadcast)
+	cw.sendBcast = widget.NewButton("Broadcast message", cw.onSendBroadcast)
 	cw.sendBcast.Disable()
 
 	cfgForm := widget.NewForm(
@@ -107,13 +102,13 @@ func (cw *chatWindow) build(app fyne.App, telemetry telemetryState) {
 		&widget.FormItem{Text: "Broadcast Port", Widget: cw.bcastPort},
 	)
 
-	tcpRow := container.NewHBox(cw.connectBtn, cw.disconnectBtn)
-	arqRow := container.NewHBox(cw.arqConnect, cw.arqDisconnect, cw.arqAbort)
+	modemRow := container.NewHBox(cw.connectBtn, cw.disconnectBtn)
+	sessionRow := container.NewHBox(cw.arqConnect, cw.arqDisconnect, cw.arqAbort)
 
 	controls := container.NewVBox(
 		cfgForm,
-		widget.NewLabel("TCP:"), tcpRow,
-		widget.NewLabel("ARQ:"), arqRow,
+		modemRow,
+		widget.NewLabel("Session"), sessionRow,
 		widget.NewSeparator(),
 		cw.arqMsg, cw.sendARQ,
 		widget.NewSeparator(),
@@ -122,13 +117,13 @@ func (cw *chatWindow) build(app fyne.App, telemetry telemetryState) {
 
 	left := container.NewVBox(controls, layout.NewSpacer())
 
-	arqBox := container.NewBorder(
-		widget.NewLabelWithStyle("ARQ Chat", fyne.TextAlignCenter, fyne.TextStyle{Bold: true}),
-		nil, nil, nil, container.NewScroll(cw.arq),
+	arqChatBox := container.NewBorder(
+		widget.NewLabelWithStyle("Chat messages", fyne.TextAlignCenter, fyne.TextStyle{Bold: true}),
+		nil, nil, nil, cw.arqScroll,
 	)
-	bcastBox := container.NewBorder(
-		widget.NewLabelWithStyle("Broadcast Chat", fyne.TextAlignCenter, fyne.TextStyle{Bold: true}),
-		nil, nil, nil, container.NewScroll(cw.bcast),
+	bcastChatBox := container.NewBorder(
+		widget.NewLabelWithStyle("Broadcast Messages", fyne.TextAlignCenter, fyne.TextStyle{Bold: true}),
+		nil, nil, nil, cw.bcastScroll,
 	)
 	logBox := container.NewBorder(
 		widget.NewLabelWithStyle("Activity Log", fyne.TextAlignCenter, fyne.TextStyle{Bold: true}),
@@ -137,7 +132,7 @@ func (cw *chatWindow) build(app fyne.App, telemetry telemetryState) {
 
 	right := container.NewBorder(nil, nil, nil, nil,
 		container.NewVSplit(
-			container.NewVSplit(bcastBox, arqBox),
+			container.NewVSplit(bcastChatBox, arqChatBox),
 			logBox,
 		),
 	)
@@ -166,16 +161,37 @@ func (cw *chatWindow) logMsg(format string, args ...any) {
 	})
 }
 
-func (cw *chatWindow) appendChat(entry *widget.Entry, line string) {
+func (cw *chatWindow) appendRichChat(box *fyne.Container, call, text string) {
 	fyne.Do(func() {
-		cur := entry.Text
-		if cur == "" {
-			entry.SetText(line)
+		var rt *widget.RichText
+		if call != "" {
+			rt = widget.NewRichText(
+				&widget.TextSegment{
+					Text: call + ": ",
+					Style: widget.RichTextStyle{
+						TextStyle: fyne.TextStyle{Bold: true},
+					},
+				},
+				&widget.TextSegment{
+					Text: text,
+				},
+			)
 		} else {
-			entry.SetText(fmt.Sprintf("%s\n%s", line, cur))
+			rt = widget.NewRichText(
+				&widget.TextSegment{Text: text},
+			)
 		}
-		entry.Refresh()
+		rt.Wrapping = fyne.TextWrapBreak
+		box.Objects = append([]fyne.CanvasObject{rt}, box.Objects...)
+		box.Refresh()
 	})
+}
+
+func splitCallText(line string) (call, text string) {
+	if idx := strings.Index(line, ": "); idx >= 0 {
+		return line[:idx], line[idx+2:]
+	}
+	return "", line
 }
 
 func (cw *chatWindow) setTCP(on bool) {
@@ -310,13 +326,14 @@ func (cw *chatWindow) forwardLog() {
 
 func (cw *chatWindow) forwardARQChat() {
 	for m := range cw.mc.ARQChatCh {
-		cw.appendChat(cw.arq, fmt.Sprintf("%s: %s", m.Call, m.Text))
+		cw.appendRichChat(cw.arqBox, m.Call, m.Text)
 	}
 }
 
 func (cw *chatWindow) forwardBroadcastChat() {
 	for m := range cw.mc.BroadcastChatCh {
-		cw.appendChat(cw.bcast, fmt.Sprintf("%s: %s", m.Call, m.Text))
+		call, text := splitCallText(m.Text)
+		cw.appendRichChat(cw.bcastBox, call, text)
 	}
 }
 
