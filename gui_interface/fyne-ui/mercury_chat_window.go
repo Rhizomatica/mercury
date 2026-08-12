@@ -23,9 +23,19 @@ const (
 	maxChatMessages = 200
 )
 
+// mercuryClientSingleton holds the single open chat window.  The engine only
+// accepts one control client at a time; opening a second window would evict
+// the first and tear down its ARQ session.  Reuse the window instead.
+var mercuryClientSingleton *chatWindow
+
 func openMercuryClientWindow(app fyne.App, telemetry telemetryState) {
+	if mercuryClientSingleton != nil {
+		mercuryClientSingleton.win.RequestFocus()
+		return
+	}
 	cw := &chatWindow{}
 	cw.build(app, telemetry)
+	mercuryClientSingleton = cw
 }
 
 type chatWindow struct {
@@ -154,6 +164,9 @@ func (cw *chatWindow) build(app fyne.App, telemetry telemetryState) {
 		}
 		if cw.done != nil {
 			close(cw.done)
+		}
+		if mercuryClientSingleton == cw {
+			mercuryClientSingleton = nil
 		}
 	})
 	cw.win.Show()
