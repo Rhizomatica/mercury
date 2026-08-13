@@ -154,13 +154,21 @@ func (c *Client) RemoteCallsign() string {
 // blocks until the session is established or fails, so callers should run it
 // in a goroutine.
 func (c *Client) ConnectARQ() error {
+	return c.ConnectARQWith(c.cfg.MyCallsign, c.cfg.TargetCallsign)
+}
+
+// ConnectARQWith starts an ARQ session using explicit source and target
+// callsigns, overriding whatever was captured in the config at New() time.
+// It blocks until the session is established or fails, so callers should run
+// it in a goroutine.
+func (c *Client) ConnectARQWith(src, dst string) error {
 	c.mu.Lock()
 	mc := c.modem
 	c.mu.Unlock()
 	if mc == nil || !mc.IsConnected() {
 		return fmt.Errorf("not connected to modem")
 	}
-	return mc.ConnectARQ(c.cfg.MyCallsign, c.cfg.TargetCallsign)
+	return mc.ConnectARQ(src, dst)
 }
 
 // DisconnectARQ sends a clean DISCONNECT to the remote station.

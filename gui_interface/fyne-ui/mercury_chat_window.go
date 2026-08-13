@@ -331,10 +331,12 @@ func (cw *chatWindow) onARQConnect() {
 	if mc == nil || !mc.IsConnected() {
 		return
 	}
+	src := cw.myCall.Text
+	dst := cw.target.Text
 	cw.arqConnect.Disable()
-	cw.logMsg("Connecting ARQ: %s -> %s", cw.myCall.Text, cw.target.Text)
+	cw.logMsg("Connecting ARQ: %s -> %s", src, dst)
 	go func() {
-		if err := mc.ConnectARQ(); err != nil {
+		if err := mc.ConnectARQWith(src, dst); err != nil {
 			cw.logMsg("ARQ connect: %v", err)
 			// Only re-enable the button if the modem is still up: a
 			// disconnect mid-handshake leaves cw.mc nil.
