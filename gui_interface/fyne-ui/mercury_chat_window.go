@@ -28,13 +28,13 @@ const (
 // the first and tear down its ARQ session.  Reuse the window instead.
 var mercuryClientSingleton *chatWindow
 
-func openMercuryClientWindow(app fyne.App, telemetry telemetryState) {
+func openMercuryClientWindow(app fyne.App, telemetry telemetryState, arqPort, broadcastPort int) {
 	if mercuryClientSingleton != nil {
 		mercuryClientSingleton.win.RequestFocus()
 		return
 	}
 	cw := &chatWindow{}
-	cw.build(app, telemetry)
+	cw.build(app, telemetry, arqPort, broadcastPort)
 	mercuryClientSingleton = cw
 }
 
@@ -69,7 +69,7 @@ type chatWindow struct {
 	bcastMsg      *widget.Entry
 }
 
-func (cw *chatWindow) build(app fyne.App, telemetry telemetryState) {
+func (cw *chatWindow) build(app fyne.App, telemetry telemetryState, arqPort, broadcastPort int) {
 	cw.win = app.NewWindow("Mercury Client")
 
 	cw.myCall = widget.NewEntry()
@@ -79,9 +79,9 @@ func (cw *chatWindow) build(app fyne.App, telemetry telemetryState) {
 	cw.ip = widget.NewEntry()
 	cw.ip.SetText("127.0.0.1")
 	cw.arqPort = widget.NewEntry()
-	cw.arqPort.SetText("8300")
+	cw.arqPort.SetText(strconv.Itoa(arqPort))
 	cw.bcastPort = widget.NewEntry()
-	cw.bcastPort.SetText("8100")
+	cw.bcastPort.SetText(strconv.Itoa(broadcastPort))
 
 	cw.arqMsg = widget.NewEntry()
 	cw.arqMsg.SetPlaceHolder("Type message to be sent...")
@@ -275,8 +275,18 @@ func (cw *chatWindow) onConnect() {
 		cw.done = nil
 	}
 
-	arqPort, _ := strconv.Atoi(cw.arqPort.Text)
-	bcastPort, _ := strconv.Atoi(cw.bcastPort.Text)
+	arqPort, err := strconv.Atoi(cw.arqPort.Text)
+	if err != nil {
+		dialog.ShowError(fmt.Errorf("invalid ARQ port: %v", err), cw.win)
+		cw.connectBtn.Enable()
+		return
+	}
+	bcastPort, err := strconv.Atoi(cw.bcastPort.Text)
+	if err != nil {
+		dialog.ShowError(fmt.Errorf("invalid broadcast port: %v", err), cw.win)
+		cw.connectBtn.Enable()
+		return
+	}
 	cfg := client.Config{
 		MyCallsign:     cw.myCall.Text,
 		TargetCallsign: cw.target.Text,

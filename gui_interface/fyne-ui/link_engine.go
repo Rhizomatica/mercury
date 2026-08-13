@@ -276,6 +276,14 @@ func (l *engineLink) SetWaterfall(enabled bool) {
 	C.mercury_ui_set_waterfall(cEn)
 }
 
+// TCPPorts returns the ARQ base and broadcast TCP ports the engine is
+// actually listening on (from its config).
+func (l *engineLink) TCPPorts() (arqBase, broadcast int) {
+	var a, b C.int
+	C.mercury_ui_get_tcp_ports(&a, &b)
+	return int(a), int(b)
+}
+
 func (l *engineLink) Close() {}
 
 // statusFromC converts the engine's status struct into the UI's own type. This

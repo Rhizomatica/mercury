@@ -132,6 +132,10 @@ int  ui_comm_command(const char *command, const char *value,
  * choice to mercury.ini so it survives restarts. */
 void ui_comm_set_waterfall(bool enabled);
 
+/* Read the TNC TCP ports the engine actually listens on (arq_tcp_base_port
+ * and broadcast_tcp_port from the config). */
+void ui_comm_get_tcp_ports(int *arq_base_port, int *broadcast_port);
+
 /* Copy the most recent status snapshot.  False until the first publish. */
 bool ui_comm_get_status(ui_status_t *out);
 

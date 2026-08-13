@@ -79,6 +79,9 @@ int mercury_ui_get_input_channel(void);
 /* Enable / disable waterfall/spectrum at runtime.  Saves to mercury.ini. */
 void mercury_ui_set_waterfall(bool enabled);
 
+/* Read the TNC TCP ports the engine listens on. */
+void mercury_ui_get_tcp_ports(int *arq_base_port, int *broadcast_port);
+
 #ifdef __cplusplus
 }
 #endif

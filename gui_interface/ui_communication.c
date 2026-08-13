@@ -241,6 +241,20 @@ void ui_comm_set_waterfall(bool enabled)
     pthread_mutex_unlock(&ctx->cfg_mutex);
 }
 
+void ui_comm_get_tcp_ports(int *arq_base_port, int *broadcast_port)
+{
+    ui_ctx_t *ctx = g_ui_ctx;
+    if (!ctx) {
+        if (arq_base_port) *arq_base_port = 8300;
+        if (broadcast_port) *broadcast_port = 8100;
+        return;
+    }
+    pthread_mutex_lock(&ctx->cfg_mutex);
+    if (arq_base_port) *arq_base_port = ctx->cfg.arq_tcp_base_port;
+    if (broadcast_port) *broadcast_port = ctx->cfg.broadcast_tcp_port;
+    pthread_mutex_unlock(&ctx->cfg_mutex);
+}
+
 // ---------------- UI PUBLISHER THREAD ----------------
 // Periodically gathers modem/ARQ/network status and sends it to the UI.
 

@@ -827,10 +827,15 @@ func main() {
 	}
 
 	mercuryClientButton := widget.NewButton("Launch Mercury Client", func() {
-		state.mu.Lock()
+		state.mu.RLock()
 		tel := state.telemetry
-		state.mu.Unlock()
-		openMercuryClientWindow(myApp, tel)
+		link := state.link
+		state.mu.RUnlock()
+		arqPort, broadcastPort := 8300, 8100
+		if engLink, ok := link.(*engineLink); ok {
+			arqPort, broadcastPort = engLink.TCPPorts()
+		}
+		openMercuryClientWindow(myApp, tel, arqPort, broadcastPort)
 	})
 
 	topBar := container.NewHBox(
