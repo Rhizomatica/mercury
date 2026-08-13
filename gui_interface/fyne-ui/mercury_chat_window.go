@@ -263,6 +263,21 @@ func (cw *chatWindow) setARQ(on bool) {
 }
 
 func (cw *chatWindow) onConnect() {
+	// Synchronous guard: a double-tap (or key-repeat on a focused button)
+	// can fire this twice in one poll batch before setTCP's fyne.Do runs.
+	cw.connectBtn.Disable()
+
+	// Disconnect any existing client before opening a new one, so a stale
+	// control client is not left open to be evicted by the new connection.
+	if cw.mc != nil {
+		cw.mc.Disconnect()
+		cw.mc = nil
+	}
+	if cw.done != nil {
+		close(cw.done)
+		cw.done = nil
+	}
+
 	arqPort, _ := strconv.Atoi(cw.arqPort.Text)
 	bcastPort, _ := strconv.Atoi(cw.bcastPort.Text)
 	cfg := client.Config{
@@ -276,10 +291,8 @@ func (cw *chatWindow) onConnect() {
 	if err := mc.Connect(); err != nil {
 		dialog.ShowError(err, cw.win)
 		cw.logMsg("connect: %v", err)
+		cw.connectBtn.Enable()
 		return
-	}
-	if cw.done != nil {
-		close(cw.done)
 	}
 	cw.mc = mc
 	cw.setTCP(true)
