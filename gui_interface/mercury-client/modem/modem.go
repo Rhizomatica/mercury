@@ -221,6 +221,7 @@ func (mc *ModemClient) ConnectARQ(src, dst string) error {
 
 	mc.connectRespCh = make(chan string, 4)
 	respCh := mc.connectRespCh
+	quit := mc.quit
 	mc.mu.Unlock()
 
 	defer func() {
@@ -263,6 +264,8 @@ func (mc *ModemClient) ConnectARQ(src, dst string) error {
 				mc.StatusCh <- "DISCONNECTED"
 				return fmt.Errorf("disconnected before connection established")
 			}
+		case <-quit:
+			return fmt.Errorf("disconnected")
 		case <-timeout:
 			return fmt.Errorf("connect timeout waiting for CONNECTED")
 		}

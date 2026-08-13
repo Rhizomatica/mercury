@@ -326,11 +326,17 @@ func (cw *chatWindow) onARQConnect() {
 	go func() {
 		if err := mc.ConnectARQ(); err != nil {
 			cw.logMsg("ARQ connect: %v", err)
-			cw.setARQ(false)
+			// Only re-enable the button if the modem is still up: a
+			// disconnect mid-handshake leaves cw.mc nil.
+			if cw.mc == mc {
+				cw.setARQ(false)
+			}
 			return
 		}
 		cw.logMsg("ARQ connected.")
-		cw.setARQ(true)
+		if cw.mc == mc {
+			cw.setARQ(true)
+		}
 	}()
 }
 
