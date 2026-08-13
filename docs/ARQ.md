@@ -370,6 +370,21 @@ globals seeded from the `_DEFAULT` value above and set once at startup:
 (each clamped to a safe range). See `mercury.ini.example`
 for keys, defaults, and ranges.
 
+### Diagnostic environment variables
+
+Not operator settings — deliberately env-only, off by default, and not written
+to the INI, because each one disables an adaptive behaviour and would be a
+foot-gun as a config key. They exist so a single question can be asked of a
+live link (including on air) without building a special binary.
+
+| Variable | Effect |
+|---|---|
+| `MERCURY_HARQ=0` | Kill-switch for HARQ Chase soft-combining (`harq_enabled()`). Combining is otherwise on for data modes. |
+| `MERCURY_PIN_LADDER=<n>` | Pin the payload ladder to rung `n` (`0..ARQ_LADDER_LEVELS-1`) so one mode is exercised on every burst, instead of the delivery-driven climb. Out-of-range values are ignored; when it takes effect it logs `TEST HOOK: ladder pinned to level <n>` at WARN so a pinned run can never be mistaken for a normal one. |
+
+Rung numbering follows `arq_mode_ladder` (0 = MFSK floor, 1 = DATAC4,
+2 = DATAC3, 3 = DATAC1, 4 = DATAC17, 5 = QAM16C2).
+
 ---
 
 ## Source Files
