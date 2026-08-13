@@ -132,11 +132,12 @@ func (mc *ModemClient) Connect() (err error) {
 		if err == nil {
 			return
 		}
-		if mc.ARQControlConn != nil {
-			mc.ARQControlConn.Close()
+		control := mc.ARQControlConn
+		if control != nil {
+			control.Close()
 			mc.ARQControlConn = nil
 		}
-		if mc.ARQDataConn != nil && mc.ARQDataConn != mc.ARQControlConn {
+		if mc.ARQDataConn != nil && mc.ARQDataConn != control {
 			mc.ARQDataConn.Close()
 			mc.ARQDataConn = nil
 		}
@@ -376,12 +377,13 @@ func (mc *ModemClient) Disconnect() {
 	var disconnected []string
 
 	mc.mu.Lock()
-	if mc.ARQControlConn != nil {
-		mc.ARQControlConn.Close()
+	control := mc.ARQControlConn
+	if control != nil {
+		control.Close()
 		mc.ARQControlConn = nil
 		disconnected = append(disconnected, "Disconnected from ARQ Control.")
 	}
-	if mc.ARQDataConn != nil && mc.ARQDataConn != mc.ARQControlConn {
+	if mc.ARQDataConn != nil && mc.ARQDataConn != control {
 		mc.ARQDataConn.Close()
 		mc.ARQDataConn = nil
 		disconnected = append(disconnected, "Disconnected from ARQ Data.")
