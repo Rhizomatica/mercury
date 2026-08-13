@@ -44,6 +44,37 @@ int audioio_init_internal(char *capture_dev, char *playback_dev, int audio_subsy
 int audioio_init_buffers(void);
 void audioio_deinit_buffers(void);
 
+/* --- Audio path health -------------------------------------------------
+ *
+ * A bad device choice must NOT take the process down: the operator may well be
+ * about to pick a different card (audioio_restart, or the UI device list), and
+ * a mercury that exits leaves them nothing to pick with.  So the capture and
+ * playback threads report their state here instead, and the UI surfaces it.
+ *
+ * Without this the failure is invisible: the thread logs, returns, and the
+ * status the UI publishes still describes a perfectly healthy mercury while
+ * nothing is being heard or transmitted. */
+typedef enum {
+    AUDIO_HEALTH_STOPPED = 0,  /* not started, or shut down cleanly        */
+    AUDIO_HEALTH_RUNNING,      /* stream is up                             */
+    AUDIO_HEALTH_FAILED        /* could not start / died; reason is set    */
+} audio_health_t;
+
+audio_health_t audioio_capture_health(void);
+audio_health_t audioio_playback_health(void);
+
+/* Human-readable reason for the most recent failure on either path, e.g.
+ * "capture: device negotiated 44100 Hz (try plughw:...)".  Empty when
+ * nothing has failed.  Copies into buf; always NUL-terminates. */
+void audioio_health_reason(char *buf, size_t buflen);
+
+/* Convenience for status reporting: true when NEITHER path has failed.  On
+ * failure `reason` receives the message.  Primitive types only, so a caller
+ * can declare it extern rather than include this header (which drags in
+ * ffbase) -- the convention ui_communication.c already uses for
+ * audioio_restart. */
+bool audioio_health_ok(char *reason, size_t reasonlen);
+
 int audioio_restart(const char *capture_dev, const char *playback_dev,
                     int audio_subsys, int capture_channel_layout);
 

@@ -23,6 +23,8 @@
 
 #include "arq.h"   /* CALLSIGN_MAX_SIZE */
 
+#define UI_AUDIO_ERR_MAX 192
+
 typedef struct {
     int    bitrate_bps;
     double snr_db;
@@ -36,6 +38,12 @@ typedef struct {
     float  tx_gain_db;
     float  tx_peak_dbfs;
     bool   waterfall_enabled;
+    /* Audio path health.  A bad device choice does not stop mercury -- the
+     * operator needs it alive to pick another card -- so the only way they
+     * learn the card is wrong is if the UI says so.  Empty audio_error means
+     * healthy; otherwise it carries the reason, e.g. an unsupported rate. */
+    bool   audio_ok;
+    char   audio_error[UI_AUDIO_ERR_MAX];
 } ui_status_t;
 
 /* Render the snapshot as the status JSON remote clients already expect.

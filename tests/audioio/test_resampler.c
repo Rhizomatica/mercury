@@ -197,10 +197,23 @@ void test_ratio_for_rate_supported(void)
 
 void test_ratio_for_rate_rejected(void)
 {
-    /* 44.1 kHz is not an integer multiple of 8 kHz — it needs a rational
-     * (441/80) resampler, so it must be refused, not approximated. */
+    /* The 44.1 kHz family is not an integer multiple of 8 kHz — it needs a
+     * rational (441/80) resampler, so it must be refused, not approximated.
+     *
+     * These two are not hypothetical: 44100 and 22050 are what consumer USB
+     * codecs report natively, so this is the rejection real operators hit.
+     * Approximating with the nearest integer ratio would transmit
+     * off-frequency at the correct level and spectrally pure — the failure
+     * mode that looks like nothing is wrong until you count cycles (a 1 kHz
+     * tone measured 166.8 Hz on a device pinned to 8 kHz).  Refusing is the
+     * whole point; the operator's fix is plughw:X,Y, which lets ALSA convert.
+     *
+     * If support for these is ever wanted, it means a genuine rational
+     * resampler, not relaxing this check. */
     TEST_ASSERT_EQUAL_INT(0, resampler_ratio_for_rate(44100));
     TEST_ASSERT_EQUAL_INT(0, resampler_ratio_for_rate(22050));
+    TEST_ASSERT_EQUAL_INT(0, resampler_ratio_for_rate(11025));
+    TEST_ASSERT_EQUAL_INT(0, resampler_ratio_for_rate(88200));
     TEST_ASSERT_EQUAL_INT(0, resampler_ratio_for_rate(192000));  /* L=24 > max */
     TEST_ASSERT_EQUAL_INT(0, resampler_ratio_for_rate(0));
     TEST_ASSERT_EQUAL_INT(0, resampler_ratio_for_rate(-48000));

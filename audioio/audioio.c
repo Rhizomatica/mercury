@@ -104,6 +104,60 @@ static char s_playback_dev[256];
 static int s_buffers_initialized = 0;
 static volatile bool audio_shutdown_ = false;  // local stop flag for audio threads
 
+/* Audio path health, reported to the UI so a bad device choice is visible.
+ * Deliberately does NOT stop the process: the operator needs mercury alive to
+ * pick a different card.  See audioio.h. */
+static pthread_mutex_t s_health_lock = PTHREAD_MUTEX_INITIALIZER;
+static audio_health_t  s_cap_health  = AUDIO_HEALTH_STOPPED;
+static audio_health_t  s_play_health = AUDIO_HEALTH_STOPPED;
+static char            s_health_reason[192];
+
+static void audio_health_set(bool capture, audio_health_t st, const char *reason)
+{
+    pthread_mutex_lock(&s_health_lock);
+    if (capture) s_cap_health = st; else s_play_health = st;
+    if (st == AUDIO_HEALTH_FAILED && reason)
+        snprintf(s_health_reason, sizeof(s_health_reason), "%s: %s",
+                 capture ? "capture" : "playback", reason);
+    else if (st == AUDIO_HEALTH_RUNNING)
+        s_health_reason[0] = '\0';
+    pthread_mutex_unlock(&s_health_lock);
+}
+
+audio_health_t audioio_capture_health(void)
+{
+    pthread_mutex_lock(&s_health_lock);
+    audio_health_t v = s_cap_health;
+    pthread_mutex_unlock(&s_health_lock);
+    return v;
+}
+
+audio_health_t audioio_playback_health(void)
+{
+    pthread_mutex_lock(&s_health_lock);
+    audio_health_t v = s_play_health;
+    pthread_mutex_unlock(&s_health_lock);
+    return v;
+}
+
+void audioio_health_reason(char *buf, size_t buflen)
+{
+    if (!buf || buflen == 0) return;
+    pthread_mutex_lock(&s_health_lock);
+    snprintf(buf, buflen, "%s", s_health_reason);
+    pthread_mutex_unlock(&s_health_lock);
+}
+
+bool audioio_health_ok(char *reason, size_t reasonlen)
+{
+    pthread_mutex_lock(&s_health_lock);
+    bool ok = (s_cap_health != AUDIO_HEALTH_FAILED) &&
+              (s_play_health != AUDIO_HEALTH_FAILED);
+    if (reason && reasonlen) snprintf(reason, reasonlen, "%s", s_health_reason);
+    pthread_mutex_unlock(&s_health_lock);
+    return ok;
+}
+
 static void format_device_display(int audio_subsys, int mode, const char *id, char *out, size_t outsz);
 static int get_soundcard_list_int(int audio_system, int mode,
                                   char ids[][64], char dev_names[][64], int max_count,
@@ -891,6 +945,7 @@ void *radio_playback_thread(void *device_ptr)
     if (r != 0)
     {
         HLOGE("audio-play", "error in audio->open(): %d: %s", r, audio->error(b));
+        audio_health_set(false, AUDIO_HEALTH_FAILED, audio->error(b));
         goto cleanup_play;
     }
 
@@ -898,6 +953,7 @@ void *radio_playback_thread(void *device_ptr)
     format_device_display(audio_subsystem, FFAUDIO_DEV_PLAYBACK,
                            device_ptr ? (const char *)device_ptr : NULL,
                            play_dev_display, sizeof(play_dev_display));
+    audio_health_set(false, AUDIO_HEALTH_RUNNING, NULL);
     HLOGI("audio-play", "I/O playback (%s) %s / %dHz / %dch / %dms buffer",
           play_dev_display,
           cfg->format == FFAUDIO_F_FLOAT32 ? "float32" :
@@ -935,10 +991,14 @@ void *radio_playback_thread(void *device_ptr)
     resample_ratio = resampler_ratio_for_rate((int)cfg->sample_rate);
     if (resample_ratio == 0)
     {
-        HLOGE("audio-play",
-              "Device negotiated %u Hz, not an integer multiple of %d Hz "
-              "(supported: 8k/16k/24k/32k/48k/96k), aborting",
-              cfg->sample_rate, RESAMP_MODEM_FS);
+        char why[160];
+        snprintf(why, sizeof(why),
+                 "device negotiated %u Hz, not a multiple of %d Hz "
+                 "(supported 8k/16k/24k/32k/48k/96k) -- try plughw:X,Y instead "
+                 "of hw:X,Y so ALSA converts",
+                 cfg->sample_rate, RESAMP_MODEM_FS);
+        HLOGE("audio-play", "%s", why);
+        audio_health_set(false, AUDIO_HEALTH_FAILED, why);
         goto cleanup_play;
     }
     if (cfg->sample_rate != 48000)
@@ -1251,6 +1311,7 @@ void *radio_capture_thread(void *device_ptr)
     if (r != 0)
     {
         HLOGE("audio-cap", "error in audio->open(): %d: %s", r, audio->error(b));
+        audio_health_set(true, AUDIO_HEALTH_FAILED, audio->error(b));
         goto cleanup_cap;
     }
 
@@ -1258,6 +1319,7 @@ void *radio_capture_thread(void *device_ptr)
     format_device_display(audio_subsystem, FFAUDIO_DEV_CAPTURE,
                            device_ptr ? (const char *)device_ptr : NULL,
                            cap_dev_display, sizeof(cap_dev_display));
+    audio_health_set(true, AUDIO_HEALTH_RUNNING, NULL);
     HLOGI("audio-cap", "I/O capture (%s) %s / %dHz / %dch / %dms buffer",
           cap_dev_display,
           cfg->format == FFAUDIO_F_FLOAT32 ? "float32" :
@@ -1290,10 +1352,19 @@ void *radio_capture_thread(void *device_ptr)
     resample_ratio = resampler_ratio_for_rate((int)cfg->sample_rate);
     if (resample_ratio == 0)
     {
-        HLOGE("audio-cap",
-              "Device negotiated %u Hz, not an integer multiple of %d Hz "
-              "(supported: 8k/16k/24k/32k/48k/96k), aborting",
-              cfg->sample_rate, RESAMP_MODEM_FS);
+        /* 44100 and 22050 are the common ones here: both are what a consumer
+         * USB codec reports natively, and neither is an integer multiple of
+         * the modem rate.  Naming plughw matters -- ALSA's plug layer converts
+         * transparently and is what mercury.ini.example already recommends, so
+         * the operator's fix is a device string, not a different sound card. */
+        char why[160];
+        snprintf(why, sizeof(why),
+                 "device negotiated %u Hz, not a multiple of %d Hz "
+                 "(supported 8k/16k/24k/32k/48k/96k) -- try plughw:X,Y instead "
+                 "of hw:X,Y so ALSA converts",
+                 cfg->sample_rate, RESAMP_MODEM_FS);
+        HLOGE("audio-cap", "%s", why);
+        audio_health_set(true, AUDIO_HEALTH_FAILED, why);
         audio->free(b);
         return NULL;
     }
