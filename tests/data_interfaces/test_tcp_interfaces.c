@@ -242,7 +242,9 @@ cbuf_handle_t data_rx_buffer_arq = NULL;
 cbuf_handle_t data_tx_buffer_broadcast = NULL;
 cbuf_handle_t data_rx_buffer_broadcast = NULL;
 
-volatile bool shutdown_ = false;
+/* Matches the _Atomic definition in common/mercury_engine.c; a plain
+ * volatile here is a conflicting declaration of the same object. */
+_Atomic bool shutdown_ = false;
 arq_info arq_conn = {0};
 
 /* ---- setUp / tearDown ---- */

@@ -7,6 +7,7 @@
 #include <ffbase/stringz.h>
 
 #include <sys/soundcard.h>
+#include <sys/ioctl.h> /* FreeBSD gets ioctl() via soundcard.h, Linux does not */
 #include <fcntl.h>
 #include <errno.h>
 #include <math.h>
@@ -111,6 +112,7 @@ struct ffaudio_buf {
 	int fd;
 	void *data;
 	ffsize data_cap;
+	ffuint frag_size;
 	int nonblock;
 
 	int err;
@@ -235,33 +237,40 @@ int ffoss_open(ffaudio_buf *b, ffaudio_conf *conf, ffuint flags)
 		goto end;
 	}
 
+	/* Ask for the buffer geometry BEFORE the format is set.
+	 *
+	 * OSS allocates its DMA buffer when the format/channels/rate are set, and
+	 * SNDCTL_DSP_SETFRAGMENT is silently ignored after that point.  Issuing it
+	 * afterwards -- as this did -- meant the request never took effect and the
+	 * device default was used instead: asking for 40 ms of capture returned
+	 * 4 x 1024 = 10 ms, far too little for a process doing heavy DSP, where one
+	 * scheduling delay past 10 ms drops samples.
+	 *
+	 * Size is derived from the requested format, which is what we want: the
+	 * post-hoc GETISPACE the old code used could not run this early, and its
+	 * integer division could also ask for zero fragments when the device
+	 * fragment was larger than the whole request.
+	 *
+	 * Advisory: a device that refuses the hint still works with its own
+	 * geometry, so a failure here is not fatal. */
+	if (conf->buffer_length_msec != 0) {
+		ffuint total = _ffau_buf_msec_to_size(conf, conf->buffer_length_msec);
+		ffuint frag = 1024;
+		while (frag * 8 < total && frag < 65536)
+			frag <<= 1;
+		ffuint num = total / frag;
+		if (num < 4)
+			num = 4;
+		ffuint fr = (num << 16) | (ffuint)log2((double)frag);
+		ioctl(b->fd, SNDCTL_DSP_SETFRAGMENT, &fr);
+	}
+
 	if (0 != (r = oss_set_format(b, conf))) {
 		rc = r;
 		goto end;
 	}
 
 	audio_buf_info info = {};
-	if (conf->buffer_length_msec != 0) {
-		if (capture) {
-			if (0 > ioctl(b->fd, SNDCTL_DSP_GETISPACE, &info)) {
-				b->errfunc = "ioctl(SNDCTL_DSP_GETISPACE)";
-				goto end;
-			}
-		} else {
-			if (0 > ioctl(b->fd, SNDCTL_DSP_GETOSPACE, &info)) {
-				b->errfunc = "ioctl(SNDCTL_DSP_GETOSPACE)";
-				goto end;
-			}
-		}
-
-		ffuint frag_num = _ffau_buf_msec_to_size(conf, conf->buffer_length_msec) / info.fragsize;
-		ffuint fr = (frag_num << 16) | (ffuint)log2(info.fragsize); //buf_size = frag_num * 2^n
-		if (0 > ioctl(b->fd, SNDCTL_DSP_SETFRAGMENT, &fr)) {
-			b->errfunc = "ioctl(SNDCTL_DSP_SETFRAGMENT)";
-			goto end;
-		}
-	}
-
 	ffmem_zero_obj(&info);
 	if (capture) {
 		r = ioctl(b->fd, SNDCTL_DSP_GETISPACE, &info);
@@ -270,9 +279,16 @@ int ffoss_open(ffaudio_buf *b, ffaudio_conf *conf, ffuint flags)
 	}
 	ffuint bufsize = 16*1024;
 	if (r == 0) {
+		b->frag_size = (info.fragsize > 0) ? (ffuint)info.fragsize : 0;
 		conf->buffer_length_msec = _ffau_buf_size_to_msec(conf, info.fragstotal * info.fragsize);
 		bufsize = info.fragstotal * info.fragsize;
 	}
+
+	/* audioio.c retries audio->open() on the same buffer after a failed first
+	 * attempt, which reached here a second time and overwrote b->data -- leaking
+	 * the first allocation.  Release it before allocating again. */
+	ffmem_free(b->data);
+	b->data = NULL;
 
 	if (NULL == (b->data = ffmem_alloc(bufsize))) {
 		b->errfunc = "malloc";
@@ -337,7 +353,21 @@ int ffoss_drain(ffaudio_buf *b)
 
 static int oss_readonce(ffaudio_buf *b, const void **buffer)
 {
-	int r = read(b->fd, b->data, b->data_cap);
+	/* Read one fragment, not the whole buffer.
+	 *
+	 * Asking for data_cap makes the driver hand back whatever happens to be
+	 * queued, which is almost always a ragged partial fragment -- and osscore's
+	 * copy_to_user() fails intermittently on exactly those (dmesg shows
+	 * copy_to_user(4032/3960/3408) against a 1024-byte fragment, while the one
+	 * fragment-aligned size, 4096, is the exception).  PulseAudio and the other
+	 * OSS clients ask a fragment at a time and never take that path.
+	 *
+	 * A fragment is also the granularity the driver signals at, so this costs
+	 * no latency: it returns as soon as one is ready, rather than after the
+	 * driver has scraped together a partial buffer. */
+	ffsize want = (b->frag_size != 0 && b->frag_size <= b->data_cap)
+		? b->frag_size : b->data_cap;
+	int r = read(b->fd, b->data, want);
 	if (r < 0) {
 		if (errno == EAGAIN)
 			return 0;

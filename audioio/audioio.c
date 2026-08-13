@@ -10,6 +10,7 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include <stdatomic.h>
 #include <limits.h>
 #include <errno.h>
 #include <signal.h>
@@ -28,10 +29,16 @@
 
 #include "audioio.h"
 #include "hermes_log.h"
+#include "cfg_utils.h"
 #include "resampler.h"
 #include "pcm24.h"
 
-extern volatile bool shutdown_;
+/* Must match the definition in common/mercury_engine.c: _Atomic, not
+ * volatile.  This global is written from the termination signal handler and
+ * polled by every worker loop; volatile orders nothing between threads, and
+ * declaring the same object differently in different translation units is
+ * undefined behaviour on top of that.  Plain assignment and test still work. */
+extern _Atomic bool shutdown_;
 
 /* ------------------------------------------------------------------ */
 /*  DirectSound GUID ↔ string helpers (Windows only)                  */
@@ -75,6 +82,18 @@ cbuf_handle_t capture_buffer;
 cbuf_handle_t playback_buffer;
 
 int audio_subsystem;
+
+/* ffaudio's OSS backend is only compiled where the OSSv4 API exists (see the
+ * HAVE_OSS4 probe in audioio/Makefile).  Stock Linux ships only the OSS3 stub,
+ * where oss.c does not compile, so &ffoss must not even be referenced there --
+ * it is declared unconditionally in ffaudio/audio.h and would fail at link.
+ * Selecting -x oss on such a build leaves `audio` NULL and is reported as an
+ * unavailable subsystem. */
+#if defined(HAVE_OSS4) || defined(__FreeBSD__)
+#define OSS_IFACE ((ffaudio_interface *) &ffoss)
+#else
+#define OSS_IFACE NULL
+#endif
 static int capture_input_channel_layout = LEFT;
 
 // Internal state for restart support
@@ -84,6 +103,60 @@ static char s_capture_dev[256];
 static char s_playback_dev[256];
 static int s_buffers_initialized = 0;
 static volatile bool audio_shutdown_ = false;  // local stop flag for audio threads
+
+/* Audio path health, reported to the UI so a bad device choice is visible.
+ * Deliberately does NOT stop the process: the operator needs mercury alive to
+ * pick a different card.  See audioio.h. */
+static pthread_mutex_t s_health_lock = PTHREAD_MUTEX_INITIALIZER;
+static audio_health_t  s_cap_health  = AUDIO_HEALTH_STOPPED;
+static audio_health_t  s_play_health = AUDIO_HEALTH_STOPPED;
+static char            s_health_reason[192];
+
+static void audio_health_set(bool capture, audio_health_t st, const char *reason)
+{
+    pthread_mutex_lock(&s_health_lock);
+    if (capture) s_cap_health = st; else s_play_health = st;
+    if (st == AUDIO_HEALTH_FAILED && reason)
+        snprintf(s_health_reason, sizeof(s_health_reason), "%s: %s",
+                 capture ? "capture" : "playback", reason);
+    else if (st == AUDIO_HEALTH_RUNNING)
+        s_health_reason[0] = '\0';
+    pthread_mutex_unlock(&s_health_lock);
+}
+
+audio_health_t audioio_capture_health(void)
+{
+    pthread_mutex_lock(&s_health_lock);
+    audio_health_t v = s_cap_health;
+    pthread_mutex_unlock(&s_health_lock);
+    return v;
+}
+
+audio_health_t audioio_playback_health(void)
+{
+    pthread_mutex_lock(&s_health_lock);
+    audio_health_t v = s_play_health;
+    pthread_mutex_unlock(&s_health_lock);
+    return v;
+}
+
+void audioio_health_reason(char *buf, size_t buflen)
+{
+    if (!buf || buflen == 0) return;
+    pthread_mutex_lock(&s_health_lock);
+    snprintf(buf, buflen, "%s", s_health_reason);
+    pthread_mutex_unlock(&s_health_lock);
+}
+
+bool audioio_health_ok(char *reason, size_t reasonlen)
+{
+    pthread_mutex_lock(&s_health_lock);
+    bool ok = (s_cap_health != AUDIO_HEALTH_FAILED) &&
+              (s_play_health != AUDIO_HEALTH_FAILED);
+    if (reason && reasonlen) snprintf(reason, reasonlen, "%s", s_health_reason);
+    pthread_mutex_unlock(&s_health_lock);
+    return ok;
+}
 
 static void format_device_display(int audio_subsys, int mode, const char *id, char *out, size_t outsz);
 static int get_soundcard_list_int(int audio_system, int mode,
@@ -174,7 +247,7 @@ int audioio_pick_default_subsystem(void)
     return AUDIO_SUBSYSTEM_ALSA;
 #elif defined(_WIN32)
     return AUDIO_SUBSYSTEM_WASAPI;
-#elif defined(__FREEBSD__)
+#elif defined(__FreeBSD__)
     return AUDIO_SUBSYSTEM_OSS;
 #elif defined(__APPLE__)
     return AUDIO_SUBSYSTEM_COREAUDIO;
@@ -729,7 +802,7 @@ static const char *sock_resolve_path(void)
 
 void *radio_playback_thread(void *device_ptr)
 {
-    ffaudio_interface *audio;
+    ffaudio_interface *audio = NULL;
     struct conf conf = {};
     conf.buf.app_name = "mercury_playback";
     conf.buf.format = FFAUDIO_F_INT32;
@@ -754,11 +827,21 @@ void *radio_playback_thread(void *device_ptr)
         audio = (ffaudio_interface *) &ffalsa;
     if (audio_subsystem == AUDIO_SUBSYSTEM_PULSE)
         audio = (ffaudio_interface *) &ffpulse;
-#elif defined(__FREEBSD__)
+    if (audio_subsystem == AUDIO_SUBSYSTEM_OSS)
+    {
+        /* Buffer sizing follows the backend, not the OS, so use the same
+         * request FreeBSD does.  OSS only treats this as a hint: it rounds to
+         * the driver's fragment geometry and writes back what it really got
+         * (observed here as 170 ms playback / 10 ms capture). */
+        conf.buf.buffer_length_msec = 40;
+        period_ms = conf.buf.buffer_length_msec / 4;
+        audio = OSS_IFACE;
+    }
+#elif defined(__FreeBSD__)
     conf.buf.buffer_length_msec = 40;
     period_ms = conf.buf.buffer_length_msec / 4;
     if (audio_subsystem == AUDIO_SUBSYSTEM_OSS)
-        audio = (ffaudio_interface *) &ffoss;
+        audio = OSS_IFACE;
 #elif defined(__APPLE__)
     conf.buf.buffer_length_msec = 40;
     period_ms = conf.buf.buffer_length_msec / 4;
@@ -775,6 +858,13 @@ void *radio_playback_thread(void *device_ptr)
         conf.buf.device_id[0] == '{' && str_to_guid(conf.buf.device_id, &play_guid) == 0)
         conf.buf.device_id = (const char *)&play_guid;
 #endif
+
+    if (audio == NULL)
+    {
+        HLOGE("audio-playback", "sound system '%s' is not available in this build",
+              cfg_sound_system_name(audio_subsystem));
+        return NULL;
+    }
 
     conf.flags = FFAUDIO_PLAYBACK;
     ffaudio_init_conf aconf = {};
@@ -855,6 +945,7 @@ void *radio_playback_thread(void *device_ptr)
     if (r != 0)
     {
         HLOGE("audio-play", "error in audio->open(): %d: %s", r, audio->error(b));
+        audio_health_set(false, AUDIO_HEALTH_FAILED, audio->error(b));
         goto cleanup_play;
     }
 
@@ -862,6 +953,7 @@ void *radio_playback_thread(void *device_ptr)
     format_device_display(audio_subsystem, FFAUDIO_DEV_PLAYBACK,
                            device_ptr ? (const char *)device_ptr : NULL,
                            play_dev_display, sizeof(play_dev_display));
+    audio_health_set(false, AUDIO_HEALTH_RUNNING, NULL);
     HLOGI("audio-play", "I/O playback (%s) %s / %dHz / %dch / %dms buffer",
           play_dev_display,
           cfg->format == FFAUDIO_F_FLOAT32 ? "float32" :
@@ -899,10 +991,14 @@ void *radio_playback_thread(void *device_ptr)
     resample_ratio = resampler_ratio_for_rate((int)cfg->sample_rate);
     if (resample_ratio == 0)
     {
-        HLOGE("audio-play",
-              "Device negotiated %u Hz, not an integer multiple of %d Hz "
-              "(supported: 8k/16k/24k/32k/48k/96k), aborting",
-              cfg->sample_rate, RESAMP_MODEM_FS);
+        char why[160];
+        snprintf(why, sizeof(why),
+                 "device negotiated %u Hz, not a multiple of %d Hz "
+                 "(supported 8k/16k/24k/32k/48k/96k) -- try plughw:X,Y instead "
+                 "of hw:X,Y so ALSA converts",
+                 cfg->sample_rate, RESAMP_MODEM_FS);
+        HLOGE("audio-play", "%s", why);
+        audio_health_set(false, AUDIO_HEALTH_FAILED, why);
         goto cleanup_play;
     }
     if (cfg->sample_rate != 48000)
@@ -1093,7 +1189,7 @@ finish_play:
 
 void *radio_capture_thread(void *device_ptr)
 {
-    ffaudio_interface *audio;
+    ffaudio_interface *audio = NULL;
     struct conf conf = {};
     conf.buf.app_name = "mercury_capture";
     conf.buf.format = FFAUDIO_F_INT32;
@@ -1120,10 +1216,15 @@ void *radio_capture_thread(void *device_ptr)
         audio = (ffaudio_interface *) &ffalsa;
     if (audio_subsystem == AUDIO_SUBSYSTEM_PULSE)
         audio = (ffaudio_interface *) &ffpulse;
-#elif defined(__FREEBSD__)
+    if (audio_subsystem == AUDIO_SUBSYSTEM_OSS)
+    {
+        conf.buf.buffer_length_msec = 40;
+        audio = OSS_IFACE;
+    }
+#elif defined(__FreeBSD__)
     conf.buf.buffer_length_msec = 40;
     if (audio_subsystem == AUDIO_SUBSYSTEM_OSS)
-        audio = (ffaudio_interface *) &ffoss;
+        audio = OSS_IFACE;
 #elif defined(__APPLE__)
     conf.buf.buffer_length_msec = 40;
     if (audio_subsystem == AUDIO_SUBSYSTEM_COREAUDIO)
@@ -1138,6 +1239,13 @@ void *radio_capture_thread(void *device_ptr)
         conf.buf.device_id[0] == '{' && str_to_guid(conf.buf.device_id, &cap_guid) == 0)
         conf.buf.device_id = (const char *)&cap_guid;
 #endif
+
+    if (audio == NULL)
+    {
+        HLOGE("audio-capture", "sound system '%s' is not available in this build",
+              cfg_sound_system_name(audio_subsystem));
+        return NULL;
+    }
 
     /* Open non-blocking.  A blocking ffalsa_read() spins internally on
      * readonce->start->sleep forever once the device stops producing samples
@@ -1203,6 +1311,7 @@ void *radio_capture_thread(void *device_ptr)
     if (r != 0)
     {
         HLOGE("audio-cap", "error in audio->open(): %d: %s", r, audio->error(b));
+        audio_health_set(true, AUDIO_HEALTH_FAILED, audio->error(b));
         goto cleanup_cap;
     }
 
@@ -1210,6 +1319,7 @@ void *radio_capture_thread(void *device_ptr)
     format_device_display(audio_subsystem, FFAUDIO_DEV_CAPTURE,
                            device_ptr ? (const char *)device_ptr : NULL,
                            cap_dev_display, sizeof(cap_dev_display));
+    audio_health_set(true, AUDIO_HEALTH_RUNNING, NULL);
     HLOGI("audio-cap", "I/O capture (%s) %s / %dHz / %dch / %dms buffer",
           cap_dev_display,
           cfg->format == FFAUDIO_F_FLOAT32 ? "float32" :
@@ -1242,10 +1352,19 @@ void *radio_capture_thread(void *device_ptr)
     resample_ratio = resampler_ratio_for_rate((int)cfg->sample_rate);
     if (resample_ratio == 0)
     {
-        HLOGE("audio-cap",
-              "Device negotiated %u Hz, not an integer multiple of %d Hz "
-              "(supported: 8k/16k/24k/32k/48k/96k), aborting",
-              cfg->sample_rate, RESAMP_MODEM_FS);
+        /* 44100 and 22050 are the common ones here: both are what a consumer
+         * USB codec reports natively, and neither is an integer multiple of
+         * the modem rate.  Naming plughw matters -- ALSA's plug layer converts
+         * transparently and is what mercury.ini.example already recommends, so
+         * the operator's fix is a device string, not a different sound card. */
+        char why[160];
+        snprintf(why, sizeof(why),
+                 "device negotiated %u Hz, not a multiple of %d Hz "
+                 "(supported 8k/16k/24k/32k/48k/96k) -- try plughw:X,Y instead "
+                 "of hw:X,Y so ALSA converts",
+                 cfg->sample_rate, RESAMP_MODEM_FS);
+        HLOGE("audio-cap", "%s", why);
+        audio_health_set(true, AUDIO_HEALTH_FAILED, why);
         audio->free(b);
         return NULL;
     }
@@ -1562,9 +1681,11 @@ static int get_soundcard_list_int(int audio_system, int mode,
         audio = (ffaudio_interface *) &ffalsa;
     if (audio_system == AUDIO_SUBSYSTEM_PULSE)
         audio = (ffaudio_interface *) &ffpulse;
-#elif defined(__FREEBSD__)
     if (audio_system == AUDIO_SUBSYSTEM_OSS)
-        audio = (ffaudio_interface *) &ffoss;
+        audio = OSS_IFACE;
+#elif defined(__FreeBSD__)
+    if (audio_system == AUDIO_SUBSYSTEM_OSS)
+        audio = OSS_IFACE;
 #elif defined(__APPLE__)
     if (audio_system == AUDIO_SUBSYSTEM_COREAUDIO)
         audio = (ffaudio_interface *) &ffcoreaudio;
@@ -1667,7 +1788,14 @@ int get_soundcard_list(int audio_system, int mode,
 static void resolve_device_string(int audio_subsys, int mode, char *buf, size_t bufsz,
                                   const char *log_tag, bool pulse_lock_held)
 {
-    if (buf[0] == '\0')
+    /* An empty device means "the default".  Most backends take that as NULL and
+     * choose sensibly, but OSS cannot: ffaudio falls back to /dev/dsp for BOTH
+     * directions, and on OSSv4 /dev/dsp is one node -- commonly playback-only.
+     * Capture then opens a playback device and spins on EACCES/EBUSY.  So for
+     * OSS resolve an empty device to the first one enumerated for THIS
+     * direction. */
+    bool want_default = (buf[0] == '\0');
+    if (want_default && audio_subsys != AUDIO_SUBSYSTEM_OSS)
         return;
 
     if (audio_subsys == AUDIO_SUBSYSTEM_SHM || audio_subsys == AUDIO_SUBSYSTEM_NULL ||
@@ -1679,6 +1807,13 @@ static void resolve_device_string(int audio_subsys, int mode, char *buf, size_t 
     int n = get_soundcard_list_int(audio_subsys, mode, ids, names, DEVICE_RESOLVE_MAX, pulse_lock_held);
     if (n <= 0)
         return;
+
+    if (want_default) {
+        snprintf(buf, bufsz, "%s", ids[0]);
+        HLOGI(log_tag, "using default %s device '%s' (%s)",
+              (mode == FFAUDIO_DEV_CAPTURE) ? "capture" : "playback", ids[0], names[0]);
+        return;
+    }
 
     for (int i = 0; i < n; i++) {
         if (strcmp(buf, ids[i]) == 0)
@@ -1715,8 +1850,13 @@ static void resolve_device_string(int audio_subsys, int mode, char *buf, size_t 
     } else if (matches > 1) {
         HLOGW(log_tag, "device name '%s' is ambiguous (%d matches) -- use an exact id from -z instead", buf, matches);
     } else {
-        HLOGW(log_tag, "device '%s' matches no known id or name -- passing it through as-is, "
-                       "open will likely fail; run with -z to list valid devices", buf);
+        /* Not a prediction of failure: enumeration does not see every valid
+         * node.  Every /dev/dsp* symlink is a working OSS device that never
+         * appears in SNDCTL_AUDIOINFO_EX under that name, and ALSA takes
+         * plughw:/hw: strings that are absent from the list too.  If the open
+         * really does fail, that is reported with the driver's own reason. */
+        HLOGI(log_tag, "device '%s' is not in the enumerated list -- passing it to the "
+                       "driver as given (-z lists the enumerated devices)", buf);
     }
 }
 
@@ -1783,9 +1923,15 @@ void list_soundcards(int audio_system)
     }
     if (audio_subsystem == AUDIO_SUBSYSTEM_PULSE)
         audio = (ffaudio_interface *) &ffpulse;
-#elif defined(__FREEBSD__)
     if (audio_subsystem == AUDIO_SUBSYSTEM_OSS)
-        audio = (ffaudio_interface *) &ffoss;
+    {
+        audio = OSS_IFACE;
+        if (audio)
+            printf("Listing OSS soundcards:\n");
+    }
+#elif defined(__FreeBSD__)
+    if (audio_subsystem == AUDIO_SUBSYSTEM_OSS)
+        audio = OSS_IFACE;
 #elif defined(__APPLE__)
     if (audio_subsystem == AUDIO_SUBSYSTEM_COREAUDIO)
         audio = (ffaudio_interface *) &ffcoreaudio;
@@ -1795,7 +1941,11 @@ void list_soundcards(int audio_system)
 #endif
 
     if (!audio)
+    {
+        printf("Sound system '%s' is not available in this build.\n",
+               cfg_sound_system_name(audio_subsystem));
         return;
+    }
 
 #if defined(__linux__)
     if (audio_subsystem == AUDIO_SUBSYSTEM_PULSE)

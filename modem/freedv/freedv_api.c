@@ -1682,3 +1682,7 @@ unsigned short freedv_gen_crc16(unsigned char *data_p, int length) {
 void freedv_ofdm_print_info(struct freedv *freedv) {
   ofdm_print_info(freedv->ofdm);
 }
+
+void freedv_set_acq_fft_enable(struct freedv *f, bool val) {
+  if (f != NULL && f->ofdm != NULL) ofdm_set_acq_fft_enable(f->ofdm, val);
+}

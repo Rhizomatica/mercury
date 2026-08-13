@@ -67,7 +67,8 @@ int modem_get_rx_spectrum(float *out_dB, int max_bins);
  * that is how a local UI and a remote one can both run at full rate. */
 int modem_get_rx_spectrum_seq(float *out_dB, int max_bins, uint64_t *seq_out);
 
-/* Enable/disable the RX spectrum FFT (skipped when no UI consumes it). */
+/* Enable/disable the spectrum FFT, both the received and the transmitted one
+ * (skipped when no UI consumes it). */
 void modem_set_spectrum_enabled(bool enabled);
 
 /* Channel-busy (occupancy) detector — VARA-style "BUSY ON"/"BUSY OFF".

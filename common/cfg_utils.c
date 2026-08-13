@@ -243,7 +243,7 @@ bool cfg_read(mercury_config *cfg, const char *ini_path)
 }
 
 /* Map an AUDIO_SUBSYSTEM_* constant back to a name string. */
-static const char *sound_system_name(int sys)
+const char *cfg_sound_system_name(int sys)
 {
     switch (sys) {
     case AUDIO_SUBSYSTEM_ALSA:      return "alsa";
@@ -312,7 +312,7 @@ bool cfg_write(const mercury_config *cfg, const char *ini_path)
     fprintf(f, "output_device = \"%s\"\n", escaped);
 
     fprintf(f, "capture_channel = %s\n",  capture_channel_name(cfg->capture_channel));
-    fprintf(f, "sound_system = %s\n",     sound_system_name(cfg->sound_system));
+    fprintf(f, "sound_system = %s\n",     cfg_sound_system_name(cfg->sound_system));
     fprintf(f, "arq_tcp_base_port = %d\n", cfg->arq_tcp_base_port);
     fprintf(f, "broadcast_tcp_port = %d\n", cfg->broadcast_tcp_port);
     fprintf(f, "verbose = %s\n",           cfg->verbose ? "true" : "false");

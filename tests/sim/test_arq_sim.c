@@ -326,7 +326,16 @@ void test_sim_fade_cliff_downgrades(void)
                              "fade did not drive the mode to the robust floor");
 
     /* Band clears: the mode must recover to a fast rung (with backlog still to
-     * send), and the whole transfer must complete intact. */
+     * send), and the whole transfer must complete intact.
+     *
+     * Trunk asserted sim_prop_mode_floor_reached(FREEDV_MODE_DATAC15) here and
+     * rode out the fade for two virtual hours instead.  Neither carries over:
+     * the delivery-driven ladder puts MERCURY_MODE_MFSK below DATAC15, so that
+     * constant no longer names the floor, and the min_level assertion above
+     * already pins the descent.  Trunk's two-hour budget existed because the
+     * transfer had to drain at the floor's ~22 B per ~11 s; here the band
+     * recovers first, so the remainder drains at a fast rung and an hour is
+     * ample. */
     sim_set_snr(s, 12.0);
     int max_level = 0;
     for (int k = 0; k < 30; k++)

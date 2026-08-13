@@ -33,7 +33,7 @@
 #include "virtual_clock.h"
 
 /* ---- shared globals ---- */
-volatile bool shutdown_ = false;
+_Atomic bool shutdown_ = false;
 static generic_modem_t g_modem;
 static pthread_t g_radio_capture, g_radio_playback;
 static int g_audio_system = -1;
@@ -57,8 +57,11 @@ static int apply_audio_defaults(int audio_system, char *input_dev, size_t in_siz
     case AUDIO_SUBSYSTEM_DSOUND:
         break;
     case AUDIO_SUBSYSTEM_OSS:
-        if (input_dev[0] == 0)  snprintf(input_dev, in_size, "/dev/dsp");
-        if (output_dev[0] == 0) snprintf(output_dev, out_size, "/dev/dsp");
+        /* Left empty on purpose: /dev/dsp is a single node and is often
+         * playback-only, so it cannot serve both directions.  audioio's
+         * resolve_device_string() picks the first device enumerated for each
+         * direction, and ffaudio still falls back to /dev/dsp if OSS reports
+         * no devices at all. */
         break;
     default:
         break;

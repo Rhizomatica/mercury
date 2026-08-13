@@ -14,6 +14,7 @@
 #include <math.h>
 #include <stdint.h>
 #include <stdlib.h>
+#include <string.h>
 
 #define FS8   8000
 #define FS48  48000
@@ -196,10 +197,23 @@ void test_ratio_for_rate_supported(void)
 
 void test_ratio_for_rate_rejected(void)
 {
-    /* 44.1 kHz is not an integer multiple of 8 kHz — it needs a rational
-     * (441/80) resampler, so it must be refused, not approximated. */
+    /* The 44.1 kHz family is not an integer multiple of 8 kHz — it needs a
+     * rational (441/80) resampler, so it must be refused, not approximated.
+     *
+     * These two are not hypothetical: 44100 and 22050 are what consumer USB
+     * codecs report natively, so this is the rejection real operators hit.
+     * Approximating with the nearest integer ratio would transmit
+     * off-frequency at the correct level and spectrally pure — the failure
+     * mode that looks like nothing is wrong until you count cycles (a 1 kHz
+     * tone measured 166.8 Hz on a device pinned to 8 kHz).  Refusing is the
+     * whole point; the operator's fix is plughw:X,Y, which lets ALSA convert.
+     *
+     * If support for these is ever wanted, it means a genuine rational
+     * resampler, not relaxing this check. */
     TEST_ASSERT_EQUAL_INT(0, resampler_ratio_for_rate(44100));
     TEST_ASSERT_EQUAL_INT(0, resampler_ratio_for_rate(22050));
+    TEST_ASSERT_EQUAL_INT(0, resampler_ratio_for_rate(11025));
+    TEST_ASSERT_EQUAL_INT(0, resampler_ratio_for_rate(88200));
     TEST_ASSERT_EQUAL_INT(0, resampler_ratio_for_rate(192000));  /* L=24 > max */
     TEST_ASSERT_EQUAL_INT(0, resampler_ratio_for_rate(0));
     TEST_ASSERT_EQUAL_INT(0, resampler_ratio_for_rate(-48000));
@@ -300,6 +314,82 @@ void test_up_and_down_ratios_are_independent(void)
     resampler_global_init();   /* restore the default for later tests */
 }
 
+/* ---- circular history must be bit-identical to the naive shift ----
+ *
+ * The history used to be shifted one word at a time for every input sample --
+ * at a 48 kHz device rate, 180 words moved 48000 times a second to feed a
+ * filter that fires once every 6 samples.  It is now a doubled circular
+ * buffer.  That is a pure representation change and MUST NOT alter a single
+ * output sample: these are audio paths feeding a demodulator, and a resampler
+ * that quietly rounds differently is far worse than a slow one.
+ *
+ * Floating-point addition is not associative, so the fast path deliberately
+ * walks the taps in the same order the shift version did.  The references
+ * below are the original implementations, kept verbatim. */
+
+static int ref_down_process(int L, const int32_t *in, int n_in, int32_t *out,
+                            int32_t *hist, int *phase)
+{
+    const int ntaps = L * RESAMP_TAPS_PER_PHASE;
+    int o = 0;
+    for (int i = 0; i < n_in; i++) {
+        for (int t = ntaps - 1; t > 0; t--)
+            hist[t] = hist[t - 1];
+        hist[0] = in[i];
+        if (++(*phase) >= L) {
+            *phase = 0;
+            double acc = 0.0;
+            for (int t = 0; t < ntaps; t++)
+                acc += (double)resampler_down_tap(t) * (double)hist[t];
+            double v = acc;
+            if (v >  2147483647.0) v =  2147483647.0;
+            if (v < -2147483648.0) v = -2147483648.0;
+            out[o++] = (int32_t)v;
+        }
+    }
+    return o;
+}
+
+void test_circular_history_matches_naive_shift(void)
+{
+    const int rates[] = { 16000, 24000, 48000, 96000 };
+
+    for (unsigned k = 0; k < sizeof(rates) / sizeof(rates[0]); k++)
+    {
+        int L = resampler_ratio_for_rate(rates[k]);
+        TEST_ASSERT_GREATER_THAN_INT(0, L);
+        resampler_init_down(L);
+
+        resamp_down_t fast;
+        resamp_down_reset(&fast);
+
+        static int32_t ref_hist[2 * RESAMP_NTAPS_MAX];
+        memset(ref_hist, 0, sizeof(ref_hist));
+        int ref_phase = 0;
+
+        /* Several chunks, so the comparison also covers state carried across
+         * call boundaries -- the whole reason the history exists. */
+        uint32_t rng = 0xC0FFEEu;
+        for (int chunk = 0; chunk < 8; chunk++)
+        {
+            int n = 137 + chunk * 53;          /* deliberately not a multiple of L */
+            static int32_t in[4096], a[4096], b[4096];
+            for (int i = 0; i < n; i++) {
+                rng = rng * 1664525u + 1013904223u;
+                in[i] = (int32_t)((int)(rng >> 8) % 2000000) - 1000000;
+            }
+
+            int na = resamp_down_process(&fast, in, n, a);
+            int nb = ref_down_process(L, in, n, b, ref_hist, &ref_phase);
+
+            TEST_ASSERT_EQUAL_INT(nb, na);
+            for (int i = 0; i < na; i++)
+                TEST_ASSERT_EQUAL_INT32_MESSAGE(b[i], a[i],
+                    "circular history changed an output sample");
+        }
+    }
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -318,5 +408,6 @@ int main(void)
     RUN_TEST(test_roundtrip_ratio_12);
     RUN_TEST(test_ratio_1_is_passthrough);
     RUN_TEST(test_up_and_down_ratios_are_independent);
+    RUN_TEST(test_circular_history_matches_naive_shift);
     return UNITY_END();
 }

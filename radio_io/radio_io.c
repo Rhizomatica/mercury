@@ -239,10 +239,6 @@ int radio_io_init(int radio_type, const char *device_path, int hamlib_log_level,
 #endif
         HLOGI(RADIO_LOG_TAG, "hamlib runtime: %s",
               hamlib_version2 ? hamlib_version2 : "version unknown");
-        HLOGI(RADIO_LOG_TAG,
-              "rig reports post_ptt_delay=%d ms (informational -- mercury's "
-              "keying wait is independent of it)",
-              rs ? rs->post_ptt_delay : -1);
     }
     pthread_mutex_unlock(&g_radio_mutex);
     return 0;

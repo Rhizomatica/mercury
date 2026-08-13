@@ -29,6 +29,7 @@
 #include <time.h>
 #include <errno.h>
 #include <stdbool.h>
+#include <stdatomic.h>
 #include <math.h>
 
 #include "../common/os_interop.h"
@@ -49,11 +50,20 @@
 extern int get_soundcard_list(int audio_system, int mode,
                               char ids[][64], char dev_names[][64], int max_count);
 
+/* Audio path health; see audioio.h.  Declared here rather than included for
+ * the same reason audioio_restart is: audioio.h drags in ffbase. */
+extern bool audioio_health_ok(char *reason, size_t reasonlen);
+
 extern int audioio_restart(const char *capture_dev, const char *playback_dev,
                            int audio_subsys, int capture_channel_layout);
 
 // global shutdown flag from main.c
-extern volatile bool shutdown_;
+/* Must match the definition in common/mercury_engine.c: _Atomic, not
+ * volatile.  This global is written from the termination signal handler and
+ * polled by every worker loop; volatile orders nothing between threads, and
+ * declaring the same object differently in different translation units is
+ * undefined behaviour on top of that.  Plain assignment and test still work. */
+extern _Atomic bool shutdown_;
 
 #define UI_LOG_TAG "ui-comm"
 
@@ -133,6 +143,7 @@ int ui_comm_handle_command(ui_ctx_t *ctx, const ws_command_t *cmd)
         HLOGI(UI_LOG_TAG, "Audioio subsystem restarted successfully");
 
         // Persist audio config to INI
+        pthread_mutex_lock(&ctx->cfg_mutex);
         strncpy(ctx->cfg.input_device, ctx->selected_capture_dev,
                 sizeof(ctx->cfg.input_device) - 1);
         ctx->cfg.input_device[sizeof(ctx->cfg.input_device) - 1] = '\0';
@@ -142,6 +153,7 @@ int ui_comm_handle_command(ui_ctx_t *ctx, const ws_command_t *cmd)
         ctx->cfg.capture_channel = ctx->rx_input_channel;
         if (ctx->cfg_path[0] && cfg_write(&ctx->cfg, ctx->cfg_path))
             HLOGI(UI_LOG_TAG, "Config saved to %s", ctx->cfg_path);
+        pthread_mutex_unlock(&ctx->cfg_mutex);
 
     } else if (strcmp(cmd->command, "set_radio_config") == 0) {
         int new_radio_type = atoi(cmd->value);
@@ -168,6 +180,7 @@ int ui_comm_handle_command(ui_ctx_t *ctx, const ws_command_t *cmd)
         }
 
         // Persist radio config to INI
+        pthread_mutex_lock(&ctx->cfg_mutex);
         ctx->cfg.radio_type = new_radio_type;
         strncpy(ctx->cfg.radio_device, dev_path ? dev_path : "",
                 sizeof(ctx->cfg.radio_device) - 1);
@@ -175,6 +188,12 @@ int ui_comm_handle_command(ui_ctx_t *ctx, const ws_command_t *cmd)
         ctx->cfg.radio_serial_speed = new_serial_speed;
         if (ctx->cfg_path[0] && cfg_write(&ctx->cfg, ctx->cfg_path))
             HLOGI(UI_LOG_TAG, "Config saved to %s", ctx->cfg_path);
+        pthread_mutex_unlock(&ctx->cfg_mutex);
+
+    } else if (strcmp(cmd->command, "set_waterfall") == 0) {
+        bool enable = (strcmp(cmd->value, "off") != 0);
+        ui_comm_set_waterfall(enable);
+        HLOGI(UI_LOG_TAG, "Waterfall %s by UI command", enable ? "enabled" : "disabled");
 
     } else if (strcmp(cmd->command, "set_tx_gain") == 0) {
         /* value carries the dB string; clamp to plan range and convert to
@@ -186,10 +205,12 @@ int ui_comm_handle_command(ui_ctx_t *ctx, const ws_command_t *cmd)
         if (db >  20.0f) db =  20.0f;
         float linear = powf(10.0f, db / 20.0f);
         modem_set_tx_gain(linear);
-        ctx->cfg.tx_gain_db = db;
         HLOGI(UI_LOG_TAG, "TX gain set to %.2f dB (linear=%.4f)", db, linear);
+        pthread_mutex_lock(&ctx->cfg_mutex);
+        ctx->cfg.tx_gain_db = db;
         if (ctx->cfg_path[0] && cfg_write(&ctx->cfg, ctx->cfg_path))
             HLOGI(UI_LOG_TAG, "Config saved to %s", ctx->cfg_path);
+        pthread_mutex_unlock(&ctx->cfg_mutex);
 
     } else {
         HLOGW(UI_LOG_TAG, "Unknown UI command: %s", cmd->command);
@@ -197,6 +218,56 @@ int ui_comm_handle_command(ui_ctx_t *ctx, const ws_command_t *cmd)
     }
 
     return 0;
+}
+
+void ui_comm_set_waterfall(bool enabled)
+{
+    ui_ctx_t *ctx = g_ui_ctx;
+    if (!ctx)
+        return;
+    modem_set_spectrum_enabled(enabled);
+
+    pthread_mutex_lock(&ctx->cfg_mutex);
+    ctx->waterfall_enabled = enabled;
+    ctx->cfg.waterfall_enabled = enabled;
+
+    if (enabled) {
+        if (ctx->spec_tid == 0) {
+            atomic_store_explicit(&ctx->spec_run, true, memory_order_relaxed);
+            if (pthread_create(&ctx->spec_tid, NULL, spectrum_publisher_thread, ctx) != 0) {
+                atomic_store_explicit(&ctx->spec_run, false, memory_order_relaxed);
+                ctx->spec_tid = 0;
+                HLOGE(UI_LOG_TAG, "pthread_create(spec) failed: %s", strerror(errno));
+            } else {
+                HLOGI(UI_LOG_TAG, "Spectrum publisher thread started (delayed start)");
+            }
+        }
+    } else {
+        if (ctx->spec_tid != 0) {
+            atomic_store_explicit(&ctx->spec_run, false, memory_order_relaxed);
+            pthread_join(ctx->spec_tid, NULL);
+            ctx->spec_tid = 0;
+            HLOGI(UI_LOG_TAG, "Spectrum publisher thread stopped");
+        }
+    }
+
+    if (ctx->cfg_path[0] && cfg_write(&ctx->cfg, ctx->cfg_path))
+        HLOGI(UI_LOG_TAG, "Config saved to %s", ctx->cfg_path);
+    pthread_mutex_unlock(&ctx->cfg_mutex);
+}
+
+void ui_comm_get_tcp_ports(int *arq_base_port, int *broadcast_port)
+{
+    ui_ctx_t *ctx = g_ui_ctx;
+    if (!ctx) {
+        if (arq_base_port) *arq_base_port = 8300;
+        if (broadcast_port) *broadcast_port = 8100;
+        return;
+    }
+    pthread_mutex_lock(&ctx->cfg_mutex);
+    if (arq_base_port) *arq_base_port = ctx->cfg.arq_tcp_base_port;
+    if (broadcast_port) *broadcast_port = ctx->cfg.broadcast_tcp_port;
+    pthread_mutex_unlock(&ctx->cfg_mutex);
 }
 
 // ---------------- UI PUBLISHER THREAD ----------------
@@ -348,6 +419,14 @@ static void ui_gather_status(ui_ctx_t *ctx, ui_status_t *out)
     out->tx_peak_dbfs = modem_get_tx_peak_dbfs();
 
     out->waterfall_enabled = ctx->waterfall_enabled ? true : false;
+
+    /* Audio health.  A card that cannot be opened, or that negotiates a rate
+     * the modem cannot use, kills only its own thread -- mercury stays up so
+     * the operator can pick a different device.  That is the right behaviour,
+     * but it means this status is the ONLY place the failure becomes visible:
+     * without it the UI shows a perfectly healthy station that happens to hear
+     * nothing. */
+    out->audio_ok = audioio_health_ok(out->audio_error, sizeof(out->audio_error));
 }
 
 /* Copy the latest gathered status out for the embedded UI.  Returns false
@@ -521,7 +600,7 @@ void *spectrum_publisher_thread(void *arg)
 
     uint64_t last_seq = 0;
 
-    while (!shutdown_)
+    while (!shutdown_ && atomic_load_explicit(&ctx->spec_run, memory_order_relaxed))
     {
         float spec_dB[MODEM_STATS_NSPEC];
         uint64_t seq = 0;
@@ -598,6 +677,8 @@ int ui_comm_init(ui_ctx_t *ctx, uint16_t ws_port, bool tls_enabled,
 
     memset(ctx, 0, sizeof(*ctx));
 
+    pthread_mutex_init(&ctx->cfg_mutex, NULL);
+
     ctx->waterfall_enabled = waterfall_enabled;
     ctx->audio_system = audio_system;
     ctx->rx_input_channel = rx_input_channel;
@@ -653,11 +734,13 @@ int ui_comm_init(ui_ctx_t *ctx, uint16_t ws_port, bool tls_enabled,
 
     if (waterfall_enabled) {
         // Start spectrum publisher thread - high-rate FFT/waterfall broadcaster (via WebSocket)
+        atomic_store_explicit(&ctx->spec_run, true, memory_order_relaxed);
         if (pthread_create(&ctx->spec_tid, NULL, spectrum_publisher_thread, ctx) != 0) {
+            atomic_store_explicit(&ctx->spec_run, false, memory_order_relaxed);
+            ctx->spec_tid = 0;
             HLOGE(UI_LOG_TAG, "pthread_create(spec) failed: %s", strerror(errno));
             HLOGW(UI_LOG_TAG, "Spectrum publisher thread not started (waterfall may not update)");
         } else {
-            pthread_detach(ctx->spec_tid);
             HLOGI(UI_LOG_TAG, "Spectrum publisher thread started");
         }
     }
@@ -669,8 +752,10 @@ void ui_comm_shutdown(ui_ctx_t *ctx)
 {
     g_ui_ctx = NULL;
 
-    // Threads check shutdown_ flag and will exit on their own.
-    // Shut down the WebSocket server.
     ws_shutdown(&ctx->ws);
+    // NOTE: cfg_mutex is deliberately NOT destroyed.  ui_comm_set_waterfall
+    // may have already read g_ui_ctx before the NULL above and could still
+    // lock it, so destroying it here would race a live user.  The process is
+    // exiting anyway.
     HLOGI(UI_LOG_TAG, "Shut down");
 }

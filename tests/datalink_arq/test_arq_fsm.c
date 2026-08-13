@@ -1000,6 +1000,42 @@ void test_calling_reanchors_retry_on_tx_complete(void)
         sess.deadline_ms);
 }
 
+/* The CALL retry interval must be measured from PTT-OFF, not from the moment
+ * the CALL was queued.
+ *
+ * The CALL occupies ~3.7 s of DATAC16 airtime and the peer cannot start its
+ * ACCEPT until our transmitter releases, so anchoring the retry at enqueue
+ * spends most of the interval on our own transmission and fires the retry into
+ * the arriving ACCEPT.  fsm_accepting already anchors on TX_COMPLETE; this pins
+ * the same behaviour for CALLING.
+ *
+ * Asserts the deadline strictly ADVANCES on TX_COMPLETE -- that is the whole
+ * property, and it fails if the handler is absent. */
+void test_call_retry_deadline_anchored_to_ptt_off(void)
+{
+    arq_event_t ev = make_event(ARQ_EV_APP_LISTEN);
+    arq_fsm_dispatch(&sess, &ev);
+    ev = make_event(ARQ_EV_APP_CONNECT);
+    strncpy(ev.remote_call, "TEST1", CALLSIGN_MAX_SIZE);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_CALLING, sess.conn_state);
+
+    uint64_t at_enqueue = sess.deadline_ms;
+
+    /* Time passes while the CALL is actually on the air, then PTT drops. */
+    mock_set_uptime_ms(1000 + 3700);
+    arq_event_t done = make_event(ARQ_EV_TX_COMPLETE);
+    arq_fsm_dispatch(&sess, &done);
+
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_CALLING, sess.conn_state);
+    TEST_ASSERT_TRUE_MESSAGE(sess.deadline_ms > at_enqueue,
+        "CALL retry deadline must be re-anchored to PTT-OFF");
+    /* And it must be a full interval from PTT-OFF, not a partial remainder. */
+    TEST_ASSERT_EQUAL_UINT64((uint64_t)(1000 + 3700) +
+                             (uint64_t)arq_protocol_call_interval_s() * 1000ULL,
+                             sess.deadline_ms);
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -1008,6 +1044,7 @@ int main(void)
     RUN_TEST(test_init_mode_defaults);
     RUN_TEST(test_listen_transitions_to_listening);
     RUN_TEST(test_connect_transitions_to_calling);
+    RUN_TEST(test_call_retry_deadline_anchored_to_ptt_off);
     RUN_TEST(test_incoming_call_transitions_to_accepting);
     RUN_TEST(test_incoming_call_records_dialed_secondary);
     RUN_TEST(test_accept_transitions_to_connected);

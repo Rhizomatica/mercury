@@ -172,3 +172,13 @@ int mercury_ui_get_input_channel(void)
 {
     return ui_comm_get_input_channel();
 }
+
+void mercury_ui_set_waterfall(bool enabled)
+{
+    ui_comm_set_waterfall(enabled);
+}
+
+void mercury_ui_get_tcp_ports(int *arq_base_port, int *broadcast_port)
+{
+    ui_comm_get_tcp_ports(arq_base_port, broadcast_port);
+}

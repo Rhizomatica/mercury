@@ -469,8 +469,8 @@ static void send_call_accept(arq_session_t *sess, bool is_accept)
     else
         /* Almost always an over-long callsign: the 10-byte SRC slot holds ~14
          * characters at ~5.25 bits each.  The encoder refuses rather than
-         * truncating (a truncated arithmetic code decodes to a different
-         * string), so say why — otherwise this is a CALL that never goes out
+         * truncating (a truncated arithmetic code decodes to a DIFFERENT
+         * callsign), so say why — otherwise this is a CALL that never goes out
          * and a session that retries against silence. */
         HLOGW(LOG_COMP, "%s not sent: cannot encode callsign '%s' (too long?)",
               is_accept ? "ACCEPT" : "CALL", my_call);
@@ -850,19 +850,18 @@ static void fsm_calling(arq_session_t *sess, const arq_event_t *ev)
         break;
 
     case ARQ_EV_TX_COMPLETE:
-        /* Re-anchor the retry clock to PTT-OFF, not to when the frame was
-         * queued.
+        /* CALL frame just finished transmitting: re-anchor the retry deadline
+         * to PTT-OFF rather than to whenever the frame was queued.
          *
-         * A CALL spends ~3.8 s modulating (DATAC16), and the retry deadline
-         * was set when the frame was ENQUEUED — so that airtime came straight
-         * out of the 8 s retry interval. The peer cannot even begin its ACCEPT
-         * until our PTT drops, and its own ACCEPT takes another ~3.8 s, so the
-         * retransmission fired at t~8.0 s while the ACCEPT was still arriving
-         * at t~8.1 s: a collision on essentially every connect, costing a
-         * fourth transmission on a channel that lost nothing.
-         *
-         * fsm_accepting already anchors ACCEPT this way (see its TX_COMPLETE);
-         * CALLING never got the same treatment. */
+         * fsm_accepting already does this for ACCEPT; CALLING never got the
+         * same treatment, and the arithmetic is unforgiving.  The retry
+         * interval is measured from the TIMER_RETRY that *queued* the CALL,
+         * but the CALL itself occupies ~3.7 s of DATAC16 airtime, and the peer
+         * cannot even begin its ACCEPT until our PTT drops.  With the default
+         * interval that leaves the retransmission firing at roughly the same
+         * moment the ACCEPT is arriving -- so the retry keys the transmitter on
+         * top of the reply it was waiting for, on essentially every connect.
+         * Measuring the interval from here gives the peer a full turnaround. */
         sess->deadline_ms = deadline_from_s(arq_protocol_call_interval_s());
         break;
 
@@ -871,6 +870,8 @@ static void fsm_calling(arq_session_t *sess, const arq_event_t *ev)
         {
             sess->tx_retries_left--;
             send_call_accept(sess, false);
+            /* Deadline is re-anchored on TX_COMPLETE above; this is the
+             * fallback if that event is ever missed. */
             sess->deadline_ms = deadline_from_s(arq_protocol_call_interval_s());
         }
         else

@@ -443,6 +443,11 @@ static int encode_callsign_payload(const char *src, const char *dst,
      * silently drops one that does.  Failing here makes the operator's
      * over-long callsign visible instead of turning it into a wrong one. */
     size_t src_cap = out_cap - ARQ_CONNECT_DST_CRC_SIZE;
+    /* Refuse rather than truncate.  A truncated arithmetic code is not a
+     * shortened callsign -- it decodes to a DIFFERENT string at the far end,
+     * so the peer either answers a call from a station that does not exist or
+     * silently drops one that does.  Failing here makes the operator's
+     * over-long callsign visible instead of turning it into a wrong one. */
     if ((size_t)enc_len > src_cap)
         return -1;
     memcpy(out + ARQ_CONNECT_DST_CRC_SIZE, tmp, (size_t)enc_len);
@@ -491,8 +496,8 @@ static int encode_callsign_only_payload(const char *src, uint8_t *out, size_t ou
     if (enc_len <= 0)
         return -1;
 
-    /* Same reasoning as encode_callsign_payload: truncation corrupts, it does
-     * not shorten. */
+    /* Same reasoning as encode_callsign_payload: a truncated arithmetic code
+     * decodes to a different callsign, so refuse it. */
     if ((size_t)enc_len > out_cap)
         return -1;
     memcpy(out, tmp, (size_t)enc_len);

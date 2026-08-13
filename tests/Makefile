@@ -47,7 +47,8 @@ TEST_BINS = test_ring_buffer test_arq_protocol test_arq_timing test_arq_fsm \
             test_arq_conn test_cfg_utils test_arq_tnc test_channel_busy test_mfsk \
             test_watterson \
             test_mfsk_modem test_pattern_ack_detection test_freedv_harq \
-            test_pcm24 test_sock_wire test_virtual_clock
+            test_pcm24 test_sock_wire test_virtual_clock \
+            test_ofdm_acq test_ui_status
 
 .PHONY: all test clean
 
@@ -122,7 +123,6 @@ test_arq_conn: datalink_arq/test_arq_conn.c $(UNITY_SRC) \
                datalink_arq/arq_conn_accessors.c
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
-# -I.. : watterson.h includes "modem/freedv/comp.h" relative to the repo root
 # Connect-latency instrument (not a pass/fail test — run it by hand).
 # Mirrors test_arq_sim's link line, minus Unity.
 connect_bench: sim/connect_bench.c $(ARQ_STUBS) $(SIM_SRC) \
@@ -130,9 +130,6 @@ connect_bench: sim/connect_bench.c $(ARQ_STUBS) $(SIM_SRC) \
                ../datalink_arq/arq_protocol.c \
                ../datalink_arq/arq_timing.c ../datalink_arq/arith.c
 	$(CC) $(CFLAGS) -Isim -I../modem/freedv -o $@ $^ $(LDFLAGS)
-
-test_watterson: common/test_watterson.c $(UNITY_SRC) ../common/watterson.c
-	$(CC) $(CFLAGS) -I.. -o $@ $^ $(LDFLAGS)
 
 test_cfg_utils: common/test_cfg_utils.c $(UNITY_SRC) \
                 ../common/cfg_utils.c \
@@ -160,31 +157,31 @@ test_sock_wire: audioio/test_sock_wire.c $(UNITY_SRC)
 test_virtual_clock: common/test_virtual_clock.c $(UNITY_SRC) ../common/virtual_clock.c
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
+# Channel model: pins that fading stays finite across sample rates (-I.. because
+# the test includes common/watterson.h by path).
+test_watterson: common/test_watterson.c $(UNITY_SRC) ../common/watterson.c
+	$(CC) $(CFLAGS) -I.. -o $@ $^ $(LDFLAGS)
+
+# OFDM acquisition: the FFT search must agree with brute force, fringe included.
+# libfreedvdata.a is a PREREQUISITE, not just a link argument: leave it off the
+# left-hand side and make will not relink when the library changes, which
+# silently tests the previous build.
+FREEDV_LIB = ../modem/freedv/libfreedvdata.a
+
+# ...and it needs a rule, because CI runs `make -C tests test` on a clean tree
+# without building the main project first.  Without this, the prerequisite above
+# is unbuildable there ("No rule to make target") even though it resolves on a
+# developer box that has already run the top-level make.
+.PHONY: $(FREEDV_LIB)
+$(FREEDV_LIB):
+	$(MAKE) -C ../modem/freedv
+
+test_ofdm_acq: modem/test_ofdm_acq.c $(UNITY_SRC) $(FREEDV_LIB)
+	$(CC) $(CFLAGS) -I../modem/freedv -o $@ modem/test_ofdm_acq.c $(UNITY_SRC) $(FREEDV_LIB) $(LDFLAGS) -lm
+
 # UI status wire format (embedded struct vs remote JSON must not drift)
 test_ui_status: gui_interface/test_ui_status.c $(UNITY_SRC) ../gui_interface/ui_status.c
 	$(CC) $(CFLAGS) -I../gui_interface -I../datalink_arq -I../modem -I../common -o $@ $^ $(LDFLAGS)
-
-# MFSK codec test (mod/demod round-trip + modulation-order gain)
-test_mfsk: modem/test_mfsk.c $(UNITY_SRC) ../modem/mfsk.c
-
-            # HARQ combined-decode acceptance gate (drives the real DATAC15 \
-            LDPC decoder) test_freedv_harq: modem/test_freedv_harq.c \
-            $(UNITY_SRC) ../modem/freedv/mpdecode_core.c \
-            ../modem/freedv/phi0.c ../modem/freedv/H_256_768_22.c $(CC) \
-            $(CFLAGS) -I../modem/freedv -o $@ $^ $(LDFLAGS) -lm # -x sock \
-            wire codec: byte-exact pin of the lockstep frame layout \
-            test_sock_wire: audioio/test_sock_wire.c $(UNITY_SRC) $(CC) \
-            $(CFLAGS) -I../audioio -o $@ $^ $(LDFLAGS) # Virtual clock (time \
-            base for -x sock); hermes_uptime_ms stubbed in-test \
-            test_virtual_clock: common/test_virtual_clock.c $(UNITY_SRC) \
-            ../common/virtual_clock.c $(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS) # \
-            MFSK codec test (mod/demod round-trip + modulation-order gain) \
-            test_mfsk: modem/test_mfsk.c $(UNITY_SRC) ../modem/mfsk.c \
-            round-trip, gain, OFDM framing) ../modem/mfsk_ofdm.c \
-            ../modem/mfsk_sync.c ../modem/mfsk_ldpc.c \
-            ../modem/mfsk_ldpc_1_16.c ../modem/mfsk_ldpc_2_16.c \
-            ../modem/mfsk_ldpc_3_16.c ../modem/mfsk_ldpc_5_16.c \
-            ../modem/mfsk_ldpc_8_16.c
 
 # MFSK codec test (mod/demod round-trip, modulation-order gain, OFDM framing)
 test_mfsk: modem/test_mfsk.c $(UNITY_SRC) ../modem/mfsk.c ../modem/mfsk_ofdm.c ../modem/mfsk_sync.c ../modem/mfsk_ldpc.c ../modem/mfsk_ldpc_1_16.c ../modem/mfsk_ldpc_2_16.c ../modem/mfsk_ldpc_3_16.c ../modem/mfsk_ldpc_5_16.c ../modem/mfsk_ldpc_8_16.c
@@ -194,10 +191,6 @@ test_mfsk: modem/test_mfsk.c $(UNITY_SRC) ../modem/mfsk.c ../modem/mfsk_ofdm.c .
 MFSK_SRC = ../modem/mfsk.c ../modem/mfsk_ofdm.c ../modem/mfsk_sync.c ../modem/mfsk_ldpc.c \
            ../modem/mfsk_ldpc_1_16.c ../modem/mfsk_ldpc_2_16.c ../modem/mfsk_ldpc_3_16.c \
            ../modem/mfsk_ldpc_5_16.c ../modem/mfsk_ldpc_8_16.c
-# libfreedvdata.a (CRC16 etc.) is produced by the freedv sub-build, not by this
-# Makefile — build it on demand so `make test` works from a clean checkout (CI).
-../modem/freedv/libfreedvdata.a:
-	$(MAKE) -C ../modem/freedv
 
 test_mfsk_modem: modem/test_mfsk_modem.c $(UNITY_SRC) ../modem/modem_mfsk.c $(MFSK_SRC) ../modem/freedv/libfreedvdata.a
 	$(CC) $(CFLAGS) -I../modem -I../modem/freedv -o $@ $^ $(LDFLAGS) -lm
@@ -206,19 +199,6 @@ test_mfsk_modem: modem/test_mfsk_modem.c $(UNITY_SRC) ../modem/modem_mfsk.c $(MF
 test_pattern_ack_detection: modem/test_pattern_ack_detection.c $(UNITY_SRC) \
            ../modem/modem_mfsk.c $(MFSK_SRC)
 	$(CC) $(CFLAGS) -I../modem -I../modem/freedv -o $@ $^ ../modem/freedv/libfreedvdata.a $(LDFLAGS) -lm
-
-# HARQ combined-decode acceptance gate (drives the real DATAC15 LDPC decoder)
-test_freedv_harq: modem/test_freedv_harq.c $(UNITY_SRC) \
-                  ../modem/freedv/mpdecode_core.c ../modem/freedv/phi0.c \
-                  ../modem/freedv/H_256_768_22.c
-	$(CC) $(CFLAGS) -I../modem/freedv -o $@ $^ $(LDFLAGS) -lm
-# -x sock wire codec: byte-exact pin of the lockstep frame layout
-test_sock_wire: audioio/test_sock_wire.c $(UNITY_SRC)
-	$(CC) $(CFLAGS) -I../audioio -o $@ $^ $(LDFLAGS)
-
-# Virtual clock (time base for -x sock); hermes_uptime_ms stubbed in-test
-test_virtual_clock: common/test_virtual_clock.c $(UNITY_SRC) ../common/virtual_clock.c
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
 # The benches are not part of `all` (they are instruments, not pass/fail gates),
 # but they MUST be removed by clean.  Leaving connect_bench behind meant a

@@ -139,6 +139,12 @@ int mercury_cli_parse(int argc, char **argv,
             printf("Loaded configuration from %s\n", out->cfg_path);
     }
 
+    /* Device names are meaningful only to the sound system they came from, so
+     * remember what the config asked for before the CLI gets a chance to
+     * change it. */
+    int cfg_sound_system = out->cfg.sound_system;
+    bool cli_set_sound_system = false, cli_set_input = false, cli_set_output = false;
+
     /* Second pass: CLI arguments override config-file values. */
     optind = 1;
     while ((opt = getopt(argc, argv, optstring)) != -1)
@@ -175,11 +181,17 @@ int mercury_cli_parse(int argc, char **argv,
             break;
         case 'i':
             if (optarg)
+            {
                 snprintf(out->cfg.input_device, sizeof(out->cfg.input_device), "%s", optarg);
+                cli_set_input = true;
+            }
             break;
         case 'o':
             if (optarg)
+            {
                 snprintf(out->cfg.output_device, sizeof(out->cfg.output_device), "%s", optarg);
+                cli_set_output = true;
+            }
             break;
         case 'c':
             if (optarg)
@@ -250,6 +262,7 @@ int mercury_cli_parse(int argc, char **argv,
             }
             break;
         case 'x':
+            cli_set_sound_system = true;
             if (!strcmp(optarg, "alsa"))
                 out->cfg.sound_system = AUDIO_SUBSYSTEM_ALSA;
             if (!strcmp(optarg, "pulse"))
@@ -340,6 +353,32 @@ int mercury_cli_parse(int argc, char **argv,
         default:
             mercury_cli_print_usage(argv[0]);
             return -1;
+        }
+    }
+
+    /* -x selected a different sound system than the config file's, and the
+     * matching device was not given on the command line.  A PulseAudio sink
+     * name means nothing to OSS, so keeping it guarantees a failed open;
+     * fall back to that sound system's default device instead. */
+    if (cli_set_sound_system && out->cfg.sound_system != cfg_sound_system)
+    {
+        if (!cli_set_input && out->cfg.input_device[0])
+        {
+            printf("Ignoring input_device '%s' from %s: it belongs to sound system '%s', "
+                   "not '%s'; using the default device.\n",
+                   out->cfg.input_device, out->cfg_path,
+                   cfg_sound_system_name(cfg_sound_system),
+                   cfg_sound_system_name(out->cfg.sound_system));
+            out->cfg.input_device[0] = '\0';
+        }
+        if (!cli_set_output && out->cfg.output_device[0])
+        {
+            printf("Ignoring output_device '%s' from %s: it belongs to sound system '%s', "
+                   "not '%s'; using the default device.\n",
+                   out->cfg.output_device, out->cfg_path,
+                   cfg_sound_system_name(cfg_sound_system),
+                   cfg_sound_system_name(out->cfg.sound_system));
+            out->cfg.output_device[0] = '\0';
         }
     }
 

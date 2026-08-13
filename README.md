@@ -124,14 +124,14 @@ Radio control notes:
 |--------|-------------|
 | `make` / `make all` | Build the standalone CLI `mercury` binary |
 | `make libmercury_core.a` | Compile all Mercury C objects into a host-arch static library (used by `fyne-ui`) |
-| `make fyne-ui` | Build the single-binary native GUI (`mercury-ui`), embedding the engine via CGo. Requires `make libmercury_core.a` first. |
+| `make fyne-ui` | Build the single-binary native GUI (`mercury-ui`), embedding the engine via CGo. Requires `make libmercury_core.a` first. **Needs Go** ([setup](#gui-build-prerequisites-go--fyne)). |
 | `make libmercury_core_w64.a` | Cross-compile Mercury C objects for Windows x64 (requires `gcc-mingw-w64-x86-64`) |
-| `make fyne-ui-windows` | Cross-compile the single-binary GUI to `mercury-ui.exe`. Depends on `libmercury_core_w64.a`. |
+| `make fyne-ui-windows` | Cross-compile the single-binary GUI to `mercury-ui.exe`. Depends on `libmercury_core_w64.a`. **Needs Go** ([setup](#gui-build-prerequisites-go--fyne)). |
 | `make windows-installer` | Full Windows installer pipeline: cross-compile engine + GUI, copy DLLs, patch config. Output goes to `windows-installer/`. Requires MinGW + Go. |
 | `make windows-zip` | Build standalone CLI + GUI Windows binaries and zip them for distribution |
-| `make fyne-ui-macos` | Package `Mercury.app` for the host architecture (run on macOS; needs the `fyne` tool). |
-| `make fyne-ui-macos-dmg` | Wrap the host-arch `Mercury.app` in a drag-to-install `Mercury.dmg` at the repo top level. |
-| `make fyne-ui-macos-universal-dmg` | **Distribution build:** universal (x86_64 + arm64) `Mercury.app` wrapped in `Mercury.dmg` at the repo top level. This is the artifact for the website. |
+| `make fyne-ui-macos` | Package `Mercury.app` for the host architecture (run on macOS). **Needs Go + the `fyne` CLI** ([setup](#gui-build-prerequisites-go--fyne)). |
+| `make fyne-ui-macos-dmg` | Wrap the host-arch `Mercury.app` in a drag-to-install `Mercury.dmg` at the repo top level. **Needs Go + the `fyne` CLI** ([setup](#gui-build-prerequisites-go--fyne)). |
+| `make fyne-ui-macos-universal-dmg` | **Distribution build:** universal (x86_64 + arm64) `Mercury.app` wrapped in `Mercury.dmg` at the repo top level. This is the artifact for the website. **Needs Go + the `fyne` CLI** ([setup](#gui-build-prerequisites-go--fyne)). |
 
 ### Build the Fyne GUI (Linux)
 
@@ -151,6 +151,27 @@ make windows-installer
 ```
 
    The FreeDV codec is vendored in-tree — no external FreeDV or codec2 packages are needed.
+
+### GUI build prerequisites (Go + fyne)
+
+Every `fyne-ui*` target builds a Go program, so **Go is required** — the CLI
+`mercury` binary needs none of this. The macOS packaging targets additionally
+need the `fyne` command-line tool:
+
+```bash
+# Go: https://go.dev/dl/  (or `brew install go` on macOS, `apt install golang` on Debian)
+go install fyne.io/tools/cmd/fyne@latest
+
+# `go install` drops binaries in $(go env GOPATH)/bin, which is NOT on PATH by
+# default.  Without this you get: error: 'fyne' not found
+export PATH="$PATH:$(go env GOPATH)/bin"     # add to ~/.zshrc or ~/.bash_profile
+```
+
+Check both are visible before building:
+
+```bash
+go version && fyne version
+```
 
 ### Build the macOS app for distribution (universal .dmg)
 
@@ -259,6 +280,10 @@ Mercury v2 has three interfaces:
 - **Built-in Fyne UI** — a single-binary GUI embedded in the engine via CGo (this repository, `gui_interface/fyne-ui/`). Shows waterfall/spectrum, telemetry, and controls. Build with `make fyne-ui` (Linux) or `make windows-installer` (Windows cross-compile).
 - **Mercury-qt** (desktop): https://github.com/Rhizomatica/mercury-qt
 - **Web-based**: located in `docs/app/` in this repository, and accessible via https://rhizomatica.github.io/mercury/app/
+
+The built-in Fyne UI's **Launch Mercury Client** button opens a chat window for
+ARQ and broadcast messaging over the modem's TCP interfaces.  The Mercury Client
+is vendored as a Go module and compiled directly into `mercury-ui` — no external binary is needed.
 
 Also, community interfaces also exist:
 - **Mercury-tk**: https://github.com/odorajbotoj/mercury-tk/
