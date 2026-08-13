@@ -752,6 +752,15 @@ void ui_comm_shutdown(ui_ctx_t *ctx)
 {
     g_ui_ctx = NULL;
 
+    // Stop and join the spectrum publisher thread before the websocket server
+    // goes down: it was made joinable for the runtime disable path, so leave
+    // no joinable thread unjoined at teardown.
+    atomic_store_explicit(&ctx->spec_run, false, memory_order_relaxed);
+    if (ctx->spec_tid != 0) {
+        pthread_join(ctx->spec_tid, NULL);
+        ctx->spec_tid = 0;
+    }
+
     ws_shutdown(&ctx->ws);
     // NOTE: cfg_mutex is deliberately NOT destroyed.  ui_comm_set_waterfall
     // may have already read g_ui_ctx before the NULL above and could still
