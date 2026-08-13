@@ -82,6 +82,10 @@ void mercury_ui_set_waterfall(bool enabled);
 /* Read the TNC TCP ports the engine listens on. */
 void mercury_ui_get_tcp_ports(int *arq_base_port, int *broadcast_port);
 
+/* Copy the release version string and git hash into the provided buffers. */
+void mercury_ui_get_version(char *version, int version_len,
+                            char *git_hash, int git_hash_len);
+
 #ifdef __cplusplus
 }
 #endif
