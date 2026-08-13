@@ -351,8 +351,8 @@ func (cw *chatWindow) onARQConnect() {
 }
 
 func (cw *chatWindow) onARQDisconnect() {
-	if cw.mc != nil {
-		cw.mc.DisconnectARQ()
+	if mc := cw.mc; mc != nil {
+		mc.DisconnectARQ()
 	}
 	cw.setARQ(false)
 	cw.logMsg("ARQ disconnected.")
