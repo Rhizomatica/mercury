@@ -117,9 +117,14 @@ func (mc *ModemClient) Connect() (err error) {
 
 	// Runs last: release the mutex, then flush the collected log lines.
 	defer func() {
+		quit := mc.quit
 		mc.mu.Unlock()
 		for _, line := range logLines {
-			mc.LogCh <- line
+			select {
+			case mc.LogCh <- line:
+			case <-quit:
+				return
+			}
 		}
 	}()
 
@@ -192,11 +197,16 @@ func (mc *ModemClient) Connect() (err error) {
 func (mc *ModemClient) SendCommand(cmd string) error {
 	mc.mu.Lock()
 	conn := mc.ARQControlConn
+	quit := mc.quit
 	mc.mu.Unlock()
 	if conn == nil {
 		return fmt.Errorf("not connected")
 	}
-	mc.LogCh <- fmt.Sprintf("TX Command: %s", cmd)
+	select {
+	case mc.LogCh <- fmt.Sprintf("TX Command: %s", cmd):
+	case <-quit:
+		return fmt.Errorf("disconnected")
+	}
 	_, err := conn.Write([]byte(cmd + "\r"))
 	return err
 }
