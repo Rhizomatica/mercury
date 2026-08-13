@@ -1086,7 +1086,40 @@ func main() {
 	radioConfigItem := fyne.NewMenuItem("Radio Config", showRadioDialog)
 	waterfallItem := fyne.NewMenuItem("Waterfall", showWaterfallDialog)
 	configMenu := fyne.NewMenu("Settings", soundcardsItem, radioConfigItem, waterfallItem)
-	myWindow.SetMainMenu(fyne.NewMainMenu(remoteMenu, configMenu))
+
+	openExternalURL := func(raw string) {
+		u, err := url.Parse(raw)
+		if err != nil {
+			appendLog(fmt.Sprintf("Invalid URL: %v\n", err))
+			return
+		}
+		if err := myApp.OpenURL(u); err != nil {
+			appendLog(fmt.Sprintf("Failed to open %s: %v\n", raw, err))
+		}
+	}
+
+	showVersionDialog := func() {
+		version, gitHash := "unknown", "unknown000"
+		state.mu.RLock()
+		engLink, isEngine := state.link.(*engineLink)
+		state.mu.RUnlock()
+		if isEngine {
+			version, gitHash = engLink.Version()
+		}
+		dialog.ShowInformation("Version",
+			fmt.Sprintf("Mercury Version: %s\nGit Commit: %s", version, gitHash), myWindow)
+	}
+
+	versionItem := fyne.NewMenuItem("Version", showVersionDialog)
+	supportItem := fyne.NewMenuItem("Support Us", func() {
+		openExternalURL("https://www.paypal.com/donate?token=5o5I4hPcSb6wMT0DDjGR_7anIgtR6sLFYEbwOnUswVAHe0_wK-F8BwMuW2Lo7SogT_aLwqb6IXEkvYhH")
+	})
+	mailingItem := fyne.NewMenuItem("Join our mailing list", func() {
+		openExternalURL("https://lists.riseup.net/www/info/hermes-general")
+	})
+	infosMenu := fyne.NewMenu("Infos", versionItem, supportItem, mailingItem)
+
+	myWindow.SetMainMenu(fyne.NewMainMenu(remoteMenu, configMenu, infosMenu))
 
 	// Single idempotent teardown, used by both the window-close handler and the
 	// signal handler.  It runs entirely OFF the GL/main thread: SetOnClosed is

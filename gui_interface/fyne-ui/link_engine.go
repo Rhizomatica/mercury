@@ -284,6 +284,25 @@ func (l *engineLink) TCPPorts() (arqBase, broadcast int) {
 	return int(a), int(b)
 }
 
+// Version returns the engine's release version and git hash.
+func (l *engineLink) Version() (version, gitHash string) {
+	cv := make([]byte, 64)
+	cg := make([]byte, 64)
+	C.mercury_ui_get_version((*C.char)(unsafe.Pointer(&cv[0])), C.int(len(cv)),
+		(*C.char)(unsafe.Pointer(&cg[0])), C.int(len(cg)))
+	return cString(cv), cString(cg)
+}
+
+// cString converts a C buffer to a Go string, truncating at the first NUL.
+func cString(b []byte) string {
+	for i, c := range b {
+		if c == 0 {
+			return string(b[:i])
+		}
+	}
+	return string(b)
+}
+
 func (l *engineLink) Close() {}
 
 // statusFromC converts the engine's status struct into the UI's own type. This
