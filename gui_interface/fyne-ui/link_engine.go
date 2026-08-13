@@ -43,6 +43,11 @@ const (
 	engineSpectrumInterval = 20 * time.Millisecond
 	// Matches MODEM_STATS_NSPEC; the bridge clamps to its own size anyway.
 	engineSpectrumBins = 512
+	// After a config change that restarts a subsystem (audioio, hamlib),
+	// re-read the device lists several times so a slow restart is not
+	// reported as the stale pre-change selection.
+	refreshRetryInterval = 200 * time.Millisecond
+	refreshRetries       = 5
 )
 
 func newEngineLink() *engineLink {
@@ -119,9 +124,20 @@ func (l *engineLink) Start(ctx context.Context) (<-chan Event, error) {
 
 			case <-l.refresh:
 				// A device or radio change was just applied; re-read so the
-				// pickers show what the engine actually ended up using, which
-				// is not always what was asked for.
-				_ = l.emitDeviceLists(ctx, events)
+				// pickers show what the engine actually ended up using, which is
+				// not always what was asked for.  Retry a few times because the
+				// restart it triggered may take longer than one read to settle.
+				for i := 0; i <= refreshRetries; i++ {
+					_ = l.emitDeviceLists(ctx, events)
+					if i == refreshRetries {
+						break
+					}
+					select {
+					case <-ctx.Done():
+						return
+					case <-time.After(refreshRetryInterval):
+					}
+				}
 			}
 		}
 	}()
@@ -147,12 +163,12 @@ func (l *engineLink) Send(cmd Command) error {
 
 	switch cmd.Name {
 	case "set_audio_config", "set_radio_config":
-		time.AfterFunc(100*time.Millisecond, func() {
-			select {
-			case l.refresh <- struct{}{}:
-			default:
-			}
-		})
+		// The Start goroutine owns the retry timing (cancellable via ctx),
+		// so no bare time.AfterFunc here that would outlive Close().
+		select {
+		case l.refresh <- struct{}{}:
+		default:
+		}
 	}
 	return nil
 }
@@ -258,6 +274,14 @@ func readRadioList() (RadioListEvent, bool) {
 func (l *engineLink) SetWaterfall(enabled bool) {
 	cEn := C.bool(enabled)
 	C.mercury_ui_set_waterfall(cEn)
+}
+
+// TCPPorts returns the ARQ base and broadcast TCP ports the engine is
+// actually listening on (from its config).
+func (l *engineLink) TCPPorts() (arqBase, broadcast int) {
+	var a, b C.int
+	C.mercury_ui_get_tcp_ports(&a, &b)
+	return int(a), int(b)
 }
 
 func (l *engineLink) Close() {}

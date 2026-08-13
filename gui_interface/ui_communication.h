@@ -25,6 +25,7 @@
 #define UI_COMMUNICATION_H
 
 #include <stdint.h>
+#include <stdatomic.h>
 #include <pthread.h>
 
 #include "websocket/mercury_websocket.h"
@@ -69,6 +70,7 @@ struct ui_ctx {
 
     pthread_t pub_tid;
     pthread_t spec_tid;         // dedicated spectrum publisher thread (20 fps)
+    _Atomic bool spec_run;      // drives the spectrum publisher loop (0 = stop)
     int waterfall_enabled;      // 1 = send spectrum data to UI, 0 = disabled
 
     // Audio subsystem info for soundcard enumeration
@@ -131,6 +133,10 @@ int  ui_comm_command(const char *command, const char *value,
 /* Enable / disable the waterfall/spectrum FFT pipeline at runtime.  Saves the
  * choice to mercury.ini so it survives restarts. */
 void ui_comm_set_waterfall(bool enabled);
+
+/* Read the TNC TCP ports the engine actually listens on (arq_tcp_base_port
+ * and broadcast_tcp_port from the config). */
+void ui_comm_get_tcp_ports(int *arq_base_port, int *broadcast_port);
 
 /* Copy the most recent status snapshot.  False until the first publish. */
 bool ui_comm_get_status(ui_status_t *out);

@@ -237,6 +237,18 @@ func (c *Client) SendBroadcast(msg string) error {
 	return nil
 }
 
+// sendOrStop forwards v to ch unless done is closed first.  It returns false
+// when the goroutine should stop instead of blocking forever on a full channel
+// whose only drainer has already exited.
+func sendOrStop[T any](ch chan<- T, v T, done <-chan struct{}) bool {
+	select {
+	case ch <- v:
+		return true
+	case <-done:
+		return false
+	}
+}
+
 // updateLog forwards modem log lines to LogCh.
 func (c *Client) updateLog() {
 	c.mu.Lock()
@@ -252,7 +264,9 @@ func (c *Client) updateLog() {
 			if !ok {
 				return
 			}
-			c.LogCh <- logMsg
+			if !sendOrStop(c.LogCh, logMsg, done) {
+				return
+			}
 		case <-done:
 			return
 		}
@@ -274,9 +288,13 @@ func (c *Client) handleIncomingARQ() {
 			if !ok {
 				return
 			}
-			c.LogCh <- fmt.Sprintf("ARQ Control: %s", arqMsg)
+			if !sendOrStop(c.LogCh, fmt.Sprintf("ARQ Control: %s", arqMsg), done) {
+				return
+			}
 			if strings.HasPrefix(arqMsg, "CONNECTED") {
-				c.updateRemoteCall(arqMsg)
+				if !c.updateRemoteCall(arqMsg, done) {
+					return
+				}
 			}
 		case <-done:
 			return
@@ -286,10 +304,10 @@ func (c *Client) handleIncomingARQ() {
 
 // updateRemoteCall derives the remote callsign from a "CONNECTED <src> <dst> ..."
 // line by matching against the local callsign.
-func (c *Client) updateRemoteCall(connectedLine string) {
+func (c *Client) updateRemoteCall(connectedLine string, done <-chan struct{}) bool {
 	fields := strings.Fields(connectedLine)
 	if len(fields) < 3 {
-		return
+		return true
 	}
 	myCall := strings.ToUpper(strings.TrimSpace(c.cfg.MyCallsign))
 	callA := fields[1]
@@ -306,7 +324,7 @@ func (c *Client) updateRemoteCall(connectedLine string) {
 	c.mu.Lock()
 	c.remoteCall = call
 	c.mu.Unlock()
-	c.LogCh <- fmt.Sprintf("Remote ARQ callsign set to: %s", call)
+	return sendOrStop(c.LogCh, fmt.Sprintf("Remote ARQ callsign set to: %s", call), done)
 }
 
 // handleIncomingARQData buffers incoming ARQ data and emits complete
@@ -325,7 +343,9 @@ func (c *Client) handleIncomingARQData() {
 			if !ok {
 				return
 			}
-			c.LogCh <- fmt.Sprintf("ARQ Data RX: %d bytes: %q", len(data), string(data))
+			if !sendOrStop(c.LogCh, fmt.Sprintf("ARQ Data RX: %d bytes: %q", len(data), string(data)), done) {
+				return
+			}
 			c.mu.Lock()
 			c.chatRxBuffer += string(data)
 			var lines []ChatMessage
@@ -349,7 +369,9 @@ func (c *Client) handleIncomingARQData() {
 			}
 			c.mu.Unlock()
 			for _, msg := range lines {
-				c.ARQChatCh <- msg
+				if !sendOrStop(c.ARQChatCh, msg, done) {
+					return
+				}
 			}
 		case <-done:
 			return
@@ -374,7 +396,9 @@ func (c *Client) handleIncomingBroadcast() {
 			if !ok {
 				return
 			}
-			c.LogCh <- fmt.Sprintf("Broadcast RX (Decoded): %s", string(data))
+			if !sendOrStop(c.LogCh, fmt.Sprintf("Broadcast RX (Decoded): %s", string(data)), done) {
+				return
+			}
 			c.mu.Lock()
 			c.broadcastRxBuffer += string(data)
 			var lines []ChatMessage
@@ -394,7 +418,9 @@ func (c *Client) handleIncomingBroadcast() {
 			}
 			c.mu.Unlock()
 			for _, msg := range lines {
-				c.BroadcastChatCh <- msg
+				if !sendOrStop(c.BroadcastChatCh, msg, done) {
+					return
+				}
 			}
 		case <-done:
 			return
@@ -418,8 +444,12 @@ func (c *Client) handleStatus() {
 			if !ok {
 				return
 			}
-			c.LogCh <- fmt.Sprintf("TNC Status: %s", status)
-			c.StatusCh <- status
+			if !sendOrStop(c.LogCh, fmt.Sprintf("TNC Status: %s", status), done) {
+				return
+			}
+			if !sendOrStop(c.StatusCh, status, done) {
+				return
+			}
 			if status == "DISCONNECTED" {
 				c.mu.Lock()
 				c.remoteCall = ""

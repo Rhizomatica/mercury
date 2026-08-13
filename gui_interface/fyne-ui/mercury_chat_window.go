@@ -19,7 +19,7 @@ import (
 // transfers: each append would otherwise rebuild a growing string / prepend a
 // new widget forever, making the window unusable.
 const (
-	maxLogLines     = 1000
+	maxLogLines     = 200
 	maxChatMessages = 200
 )
 
@@ -28,13 +28,13 @@ const (
 // the first and tear down its ARQ session.  Reuse the window instead.
 var mercuryClientSingleton *chatWindow
 
-func openMercuryClientWindow(app fyne.App, telemetry telemetryState) {
+func openMercuryClientWindow(app fyne.App, telemetry telemetryState, arqPort, broadcastPort int) {
 	if mercuryClientSingleton != nil {
 		mercuryClientSingleton.win.RequestFocus()
 		return
 	}
 	cw := &chatWindow{}
-	cw.build(app, telemetry)
+	cw.build(app, telemetry, arqPort, broadcastPort)
 	mercuryClientSingleton = cw
 }
 
@@ -43,6 +43,9 @@ type chatWindow struct {
 	mc   *client.Client
 	done chan struct{}
 	log  *widget.Entry
+	// logLines is the bounded ring (newest first) backing the log Entry,
+	// so appending never re-splits the widget's own text.
+	logLines []string
 
 	arqBox      *fyne.Container
 	arqScroll   *container.Scroll
@@ -66,7 +69,7 @@ type chatWindow struct {
 	bcastMsg      *widget.Entry
 }
 
-func (cw *chatWindow) build(app fyne.App, telemetry telemetryState) {
+func (cw *chatWindow) build(app fyne.App, telemetry telemetryState, arqPort, broadcastPort int) {
 	cw.win = app.NewWindow("Mercury Client")
 
 	cw.myCall = widget.NewEntry()
@@ -76,9 +79,9 @@ func (cw *chatWindow) build(app fyne.App, telemetry telemetryState) {
 	cw.ip = widget.NewEntry()
 	cw.ip.SetText("127.0.0.1")
 	cw.arqPort = widget.NewEntry()
-	cw.arqPort.SetText("8300")
+	cw.arqPort.SetText(strconv.Itoa(arqPort))
 	cw.bcastPort = widget.NewEntry()
-	cw.bcastPort.SetText("8100")
+	cw.bcastPort.SetText(strconv.Itoa(broadcastPort))
 
 	cw.arqMsg = widget.NewEntry()
 	cw.arqMsg.SetPlaceHolder("Type message to be sent...")
@@ -176,17 +179,11 @@ func (cw *chatWindow) logMsg(format string, args ...any) {
 	fyne.Do(func() {
 		ts := time.Now().Format("15:04:05")
 		line := fmt.Sprintf("[%s] "+format, append([]any{ts}, args...)...)
-		cur := cw.log.Text
-		if cur == "" {
-			cw.log.SetText(line)
-		} else {
-			newText := fmt.Sprintf("%s\n%s", line, cur)
-			lines := strings.Split(newText, "\n")
-			if len(lines) > maxLogLines {
-				lines = lines[:maxLogLines]
-			}
-			cw.log.SetText(strings.Join(lines, "\n"))
+		cw.logLines = append([]string{line}, cw.logLines...)
+		if len(cw.logLines) > maxLogLines {
+			cw.logLines = cw.logLines[:maxLogLines]
 		}
+		cw.log.SetText(strings.Join(cw.logLines, "\n"))
 		cw.log.Refresh()
 	})
 }
@@ -263,8 +260,33 @@ func (cw *chatWindow) setARQ(on bool) {
 }
 
 func (cw *chatWindow) onConnect() {
-	arqPort, _ := strconv.Atoi(cw.arqPort.Text)
-	bcastPort, _ := strconv.Atoi(cw.bcastPort.Text)
+	// Synchronous guard: a double-tap (or key-repeat on a focused button)
+	// can fire this twice in one poll batch before setTCP's fyne.Do runs.
+	cw.connectBtn.Disable()
+
+	// Disconnect any existing client before opening a new one, so a stale
+	// control client is not left open to be evicted by the new connection.
+	if cw.mc != nil {
+		cw.mc.Disconnect()
+		cw.mc = nil
+	}
+	if cw.done != nil {
+		close(cw.done)
+		cw.done = nil
+	}
+
+	arqPort, err := strconv.Atoi(cw.arqPort.Text)
+	if err != nil {
+		dialog.ShowError(fmt.Errorf("invalid ARQ port: %v", err), cw.win)
+		cw.connectBtn.Enable()
+		return
+	}
+	bcastPort, err := strconv.Atoi(cw.bcastPort.Text)
+	if err != nil {
+		dialog.ShowError(fmt.Errorf("invalid broadcast port: %v", err), cw.win)
+		cw.connectBtn.Enable()
+		return
+	}
 	cfg := client.Config{
 		MyCallsign:     cw.myCall.Text,
 		TargetCallsign: cw.target.Text,
@@ -276,10 +298,8 @@ func (cw *chatWindow) onConnect() {
 	if err := mc.Connect(); err != nil {
 		dialog.ShowError(err, cw.win)
 		cw.logMsg("connect: %v", err)
+		cw.connectBtn.Enable()
 		return
-	}
-	if cw.done != nil {
-		close(cw.done)
 	}
 	cw.mc = mc
 	cw.setTCP(true)
@@ -316,17 +336,23 @@ func (cw *chatWindow) onARQConnect() {
 	go func() {
 		if err := mc.ConnectARQ(); err != nil {
 			cw.logMsg("ARQ connect: %v", err)
-			cw.setARQ(false)
+			// Only re-enable the button if the modem is still up: a
+			// disconnect mid-handshake leaves cw.mc nil.
+			if cw.mc == mc {
+				cw.setARQ(false)
+			}
 			return
 		}
 		cw.logMsg("ARQ connected.")
-		cw.setARQ(true)
+		if cw.mc == mc {
+			cw.setARQ(true)
+		}
 	}()
 }
 
 func (cw *chatWindow) onARQDisconnect() {
-	if cw.mc != nil {
-		cw.mc.DisconnectARQ()
+	if mc := cw.mc; mc != nil {
+		mc.DisconnectARQ()
 	}
 	cw.setARQ(false)
 	cw.logMsg("ARQ disconnected.")

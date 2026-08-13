@@ -112,21 +112,32 @@ func NewModemClient(arqControlAddr, arqDataAddr, broadcastAddr string) *ModemCli
 
 func (mc *ModemClient) Connect() (err error) {
 	mc.mu.Lock()
-	defer mc.mu.Unlock()
+
+	var logLines []string
+
+	// Runs last: release the mutex, then flush the collected log lines.
+	defer func() {
+		mc.mu.Unlock()
+		for _, line := range logLines {
+			mc.LogCh <- line
+		}
+	}()
 
 	if mc.ARQControlConn != nil || mc.ARQDataConn != nil || mc.BroadcastConn != nil {
 		return fmt.Errorf("already connected")
 	}
 
+	// Runs first: on failure, close any conns opened up to this point.
 	defer func() {
 		if err == nil {
 			return
 		}
-		if mc.ARQControlConn != nil {
-			mc.ARQControlConn.Close()
+		control := mc.ARQControlConn
+		if control != nil {
+			control.Close()
 			mc.ARQControlConn = nil
 		}
-		if mc.ARQDataConn != nil && mc.ARQDataConn != mc.ARQControlConn {
+		if mc.ARQDataConn != nil && mc.ARQDataConn != control {
 			mc.ARQDataConn.Close()
 			mc.ARQDataConn = nil
 		}
@@ -144,7 +155,7 @@ func (mc *ModemClient) Connect() (err error) {
 	if err != nil {
 		return fmt.Errorf("connect to ARQ control port %s: %w", mc.ARQControlAddr, err)
 	}
-	mc.LogCh <- fmt.Sprintf("Connected to ARQ Control: %s", mc.ARQControlAddr)
+	logLines = append(logLines, fmt.Sprintf("Connected to ARQ Control: %s", mc.ARQControlAddr))
 
 	if mc.ARQDataAddr != "" && mc.ARQDataAddr != mc.ARQControlAddr {
 		arqDataTCPAddr, err := net.ResolveTCPAddr("tcp", mc.ARQDataAddr)
@@ -155,9 +166,9 @@ func (mc *ModemClient) Connect() (err error) {
 		if err != nil {
 			return fmt.Errorf("connect to ARQ data port %s: %w", mc.ARQDataAddr, err)
 		}
-		mc.LogCh <- fmt.Sprintf("Connected to ARQ Data: %s", mc.ARQDataAddr)
+		logLines = append(logLines, fmt.Sprintf("Connected to ARQ Data: %s", mc.ARQDataAddr))
 	} else {
-		mc.LogCh <- "ARQ Data port not specified or same as control, using control for data."
+		logLines = append(logLines, "ARQ Data port not specified or same as control, using control for data.")
 		mc.ARQDataConn = mc.ARQControlConn
 	}
 
@@ -169,7 +180,7 @@ func (mc *ModemClient) Connect() (err error) {
 	if err != nil {
 		return fmt.Errorf("connect to Broadcast port %s: %w", mc.BroadcastAddr, err)
 	}
-	mc.LogCh <- fmt.Sprintf("Connected to Broadcast: %s", mc.BroadcastAddr)
+	logLines = append(logLines, fmt.Sprintf("Connected to Broadcast: %s", mc.BroadcastAddr))
 
 	go mc.readARQControl()
 	go mc.readARQData()
@@ -180,12 +191,13 @@ func (mc *ModemClient) Connect() (err error) {
 
 func (mc *ModemClient) SendCommand(cmd string) error {
 	mc.mu.Lock()
-	defer mc.mu.Unlock()
-	if mc.ARQControlConn == nil {
+	conn := mc.ARQControlConn
+	mc.mu.Unlock()
+	if conn == nil {
 		return fmt.Errorf("not connected")
 	}
 	mc.LogCh <- fmt.Sprintf("TX Command: %s", cmd)
-	_, err := mc.ARQControlConn.Write([]byte(cmd + "\r"))
+	_, err := conn.Write([]byte(cmd + "\r"))
 	return err
 }
 
@@ -210,6 +222,7 @@ func (mc *ModemClient) ConnectARQ(src, dst string) error {
 
 	mc.connectRespCh = make(chan string, 4)
 	respCh := mc.connectRespCh
+	quit := mc.quit
 	mc.mu.Unlock()
 
 	defer func() {
@@ -252,6 +265,8 @@ func (mc *ModemClient) ConnectARQ(src, dst string) error {
 				mc.StatusCh <- "DISCONNECTED"
 				return fmt.Errorf("disconnected before connection established")
 			}
+		case <-quit:
+			return fmt.Errorf("disconnected")
 		case <-timeout:
 			return fmt.Errorf("connect timeout waiting for CONNECTED")
 		}
@@ -362,12 +377,13 @@ func (mc *ModemClient) Disconnect() {
 	var disconnected []string
 
 	mc.mu.Lock()
-	if mc.ARQControlConn != nil {
-		mc.ARQControlConn.Close()
+	control := mc.ARQControlConn
+	if control != nil {
+		control.Close()
 		mc.ARQControlConn = nil
 		disconnected = append(disconnected, "Disconnected from ARQ Control.")
 	}
-	if mc.ARQDataConn != nil && mc.ARQDataConn != mc.ARQControlConn {
+	if mc.ARQDataConn != nil && mc.ARQDataConn != control {
 		mc.ARQDataConn.Close()
 		mc.ARQDataConn = nil
 		disconnected = append(disconnected, "Disconnected from ARQ Data.")

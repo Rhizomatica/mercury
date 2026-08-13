@@ -201,9 +201,9 @@ int ui_comm_handle_command(ui_ctx_t *ctx, const ws_command_t *cmd)
         if (db >  20.0f) db =  20.0f;
         float linear = powf(10.0f, db / 20.0f);
         modem_set_tx_gain(linear);
-        ctx->cfg.tx_gain_db = db;
         HLOGI(UI_LOG_TAG, "TX gain set to %.2f dB (linear=%.4f)", db, linear);
         pthread_mutex_lock(&ctx->cfg_mutex);
+        ctx->cfg.tx_gain_db = db;
         if (ctx->cfg_path[0] && cfg_write(&ctx->cfg, ctx->cfg_path))
             HLOGI(UI_LOG_TAG, "Config saved to %s", ctx->cfg_path);
         pthread_mutex_unlock(&ctx->cfg_mutex);
@@ -222,22 +222,47 @@ void ui_comm_set_waterfall(bool enabled)
     if (!ctx)
         return;
     modem_set_spectrum_enabled(enabled);
-    ctx->waterfall_enabled = enabled;
 
     pthread_mutex_lock(&ctx->cfg_mutex);
+    ctx->waterfall_enabled = enabled;
     ctx->cfg.waterfall_enabled = enabled;
 
-    if (enabled && ctx->spec_tid == 0) {
-        if (pthread_create(&ctx->spec_tid, NULL, spectrum_publisher_thread, ctx) != 0) {
-            HLOGE(UI_LOG_TAG, "pthread_create(spec) failed: %s", strerror(errno));
-        } else {
-            pthread_detach(ctx->spec_tid);
-            HLOGI(UI_LOG_TAG, "Spectrum publisher thread started (delayed start)");
+    if (enabled) {
+        if (ctx->spec_tid == 0) {
+            atomic_store_explicit(&ctx->spec_run, true, memory_order_relaxed);
+            if (pthread_create(&ctx->spec_tid, NULL, spectrum_publisher_thread, ctx) != 0) {
+                atomic_store_explicit(&ctx->spec_run, false, memory_order_relaxed);
+                ctx->spec_tid = 0;
+                HLOGE(UI_LOG_TAG, "pthread_create(spec) failed: %s", strerror(errno));
+            } else {
+                HLOGI(UI_LOG_TAG, "Spectrum publisher thread started (delayed start)");
+            }
+        }
+    } else {
+        if (ctx->spec_tid != 0) {
+            atomic_store_explicit(&ctx->spec_run, false, memory_order_relaxed);
+            pthread_join(ctx->spec_tid, NULL);
+            ctx->spec_tid = 0;
+            HLOGI(UI_LOG_TAG, "Spectrum publisher thread stopped");
         }
     }
 
     if (ctx->cfg_path[0] && cfg_write(&ctx->cfg, ctx->cfg_path))
         HLOGI(UI_LOG_TAG, "Config saved to %s", ctx->cfg_path);
+    pthread_mutex_unlock(&ctx->cfg_mutex);
+}
+
+void ui_comm_get_tcp_ports(int *arq_base_port, int *broadcast_port)
+{
+    ui_ctx_t *ctx = g_ui_ctx;
+    if (!ctx) {
+        if (arq_base_port) *arq_base_port = 8300;
+        if (broadcast_port) *broadcast_port = 8100;
+        return;
+    }
+    pthread_mutex_lock(&ctx->cfg_mutex);
+    if (arq_base_port) *arq_base_port = ctx->cfg.arq_tcp_base_port;
+    if (broadcast_port) *broadcast_port = ctx->cfg.broadcast_tcp_port;
     pthread_mutex_unlock(&ctx->cfg_mutex);
 }
 
@@ -563,7 +588,7 @@ void *spectrum_publisher_thread(void *arg)
 
     uint64_t last_seq = 0;
 
-    while (!shutdown_)
+    while (!shutdown_ && atomic_load_explicit(&ctx->spec_run, memory_order_relaxed))
     {
         float spec_dB[MODEM_STATS_NSPEC];
         uint64_t seq = 0;
@@ -697,11 +722,13 @@ int ui_comm_init(ui_ctx_t *ctx, uint16_t ws_port, bool tls_enabled,
 
     if (waterfall_enabled) {
         // Start spectrum publisher thread - high-rate FFT/waterfall broadcaster (via WebSocket)
+        atomic_store_explicit(&ctx->spec_run, true, memory_order_relaxed);
         if (pthread_create(&ctx->spec_tid, NULL, spectrum_publisher_thread, ctx) != 0) {
+            atomic_store_explicit(&ctx->spec_run, false, memory_order_relaxed);
+            ctx->spec_tid = 0;
             HLOGE(UI_LOG_TAG, "pthread_create(spec) failed: %s", strerror(errno));
             HLOGW(UI_LOG_TAG, "Spectrum publisher thread not started (waterfall may not update)");
         } else {
-            pthread_detach(ctx->spec_tid);
             HLOGI(UI_LOG_TAG, "Spectrum publisher thread started");
         }
     }
@@ -714,6 +741,9 @@ void ui_comm_shutdown(ui_ctx_t *ctx)
     g_ui_ctx = NULL;
 
     ws_shutdown(&ctx->ws);
-    pthread_mutex_destroy(&ctx->cfg_mutex);
+    // NOTE: cfg_mutex is deliberately NOT destroyed.  ui_comm_set_waterfall
+    // may have already read g_ui_ctx before the NULL above and could still
+    // lock it, so destroying it here would race a live user.  The process is
+    // exiting anyway.
     HLOGI(UI_LOG_TAG, "Shut down");
 }
