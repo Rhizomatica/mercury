@@ -19,7 +19,7 @@ import (
 // transfers: each append would otherwise rebuild a growing string / prepend a
 // new widget forever, making the window unusable.
 const (
-	maxLogLines     = 1000
+	maxLogLines     = 200
 	maxChatMessages = 200
 )
 
@@ -43,6 +43,9 @@ type chatWindow struct {
 	mc   *client.Client
 	done chan struct{}
 	log  *widget.Entry
+	// logLines is the bounded ring (newest first) backing the log Entry,
+	// so appending never re-splits the widget's own text.
+	logLines []string
 
 	arqBox      *fyne.Container
 	arqScroll   *container.Scroll
@@ -176,17 +179,11 @@ func (cw *chatWindow) logMsg(format string, args ...any) {
 	fyne.Do(func() {
 		ts := time.Now().Format("15:04:05")
 		line := fmt.Sprintf("[%s] "+format, append([]any{ts}, args...)...)
-		cur := cw.log.Text
-		if cur == "" {
-			cw.log.SetText(line)
-		} else {
-			newText := fmt.Sprintf("%s\n%s", line, cur)
-			lines := strings.Split(newText, "\n")
-			if len(lines) > maxLogLines {
-				lines = lines[:maxLogLines]
-			}
-			cw.log.SetText(strings.Join(lines, "\n"))
+		cw.logLines = append([]string{line}, cw.logLines...)
+		if len(cw.logLines) > maxLogLines {
+			cw.logLines = cw.logLines[:maxLogLines]
 		}
+		cw.log.SetText(strings.Join(cw.logLines, "\n"))
 		cw.log.Refresh()
 	})
 }
