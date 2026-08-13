@@ -24,13 +24,17 @@ type hoverTooltipButton struct {
 	btn     *widget.Button
 	overlay *hoverCatcher
 	tooltip func() string
+	canvas  fyne.Canvas
 	popup   *widget.PopUp
 }
 
-func newHoverTooltipButton(btn *widget.Button, tooltip func() string) *hoverTooltipButton {
-	h := &hoverTooltipButton{btn: btn, tooltip: tooltip}
+func newHoverTooltipButton(btn *widget.Button, canvas fyne.Canvas, tooltip func() string) *hoverTooltipButton {
+	h := &hoverTooltipButton{btn: btn, canvas: canvas, tooltip: tooltip}
 	h.ExtendBaseWidget(h)
-	h.overlay = newHoverCatcher(func() { h.show() }, func() { h.hide() })
+	h.overlay = newHoverCatcher(
+		func(pos fyne.Position) { h.show(pos) },
+		func() { h.hide() },
+	)
 	if btn.Disabled() {
 		h.overlay.Show()
 	} else {
@@ -59,7 +63,7 @@ func (h *hoverTooltipButton) Disabled() bool {
 	return h.btn.Disabled()
 }
 
-func (h *hoverTooltipButton) show() {
+func (h *hoverTooltipButton) show(pos fyne.Position) {
 	text := h.tooltip()
 	if text == "" {
 		h.hide()
@@ -69,8 +73,8 @@ func (h *hoverTooltipButton) show() {
 		h.popup.Hide()
 	}
 	label := widget.NewLabel(text)
-	h.popup = widget.NewPopUp(label, fyne.CurrentApp().Driver().CanvasForObject(h.btn))
-	h.popup.ShowAtRelativePosition(fyne.NewPos(0, h.btn.Size().Height), h.btn)
+	h.popup = widget.NewPopUp(label, h.canvas)
+	h.popup.ShowAtPosition(fyne.NewPos(pos.X, pos.Y+24))
 }
 
 func (h *hoverTooltipButton) hide() {
@@ -83,11 +87,11 @@ func (h *hoverTooltipButton) hide() {
 // hoverCatcher is an invisible widget that only reports hover enter/leave.
 type hoverCatcher struct {
 	widget.BaseWidget
-	onIn  func()
+	onIn  func(fyne.Position)
 	onOut func()
 }
 
-func newHoverCatcher(onIn, onOut func()) *hoverCatcher {
+func newHoverCatcher(onIn func(fyne.Position), onOut func()) *hoverCatcher {
 	c := &hoverCatcher{onIn: onIn, onOut: onOut}
 	c.ExtendBaseWidget(c)
 	return c
@@ -97,8 +101,14 @@ func (c *hoverCatcher) CreateRenderer() fyne.WidgetRenderer {
 	return widget.NewSimpleRenderer(canvas.NewRectangle(color.Transparent))
 }
 
-func (c *hoverCatcher) MouseIn(*desktop.MouseEvent) { c.onIn() }
+func (c *hoverCatcher) MouseIn(ev *desktop.MouseEvent) {
+	c.onIn(ev.AbsolutePosition)
+}
 
-func (c *hoverCatcher) MouseMoved(*desktop.MouseEvent) {}
+func (c *hoverCatcher) MouseMoved(ev *desktop.MouseEvent) {
+	c.onIn(ev.AbsolutePosition)
+}
 
-func (c *hoverCatcher) MouseOut() { c.onOut() }
+func (c *hoverCatcher) MouseOut() {
+	c.onOut()
+}

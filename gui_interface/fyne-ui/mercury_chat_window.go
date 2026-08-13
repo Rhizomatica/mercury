@@ -119,7 +119,7 @@ func (cw *chatWindow) build(app fyne.App, telemetry telemetryState, arqPort, bro
 	cw.sendARQ = widget.NewButton("Send message", cw.onSendARQ)
 	cw.sendARQ.Disable()
 	cw.sendBcast = widget.NewButton("Broadcast message", cw.onSendBroadcast)
-	cw.sendBcastWrap = newHoverTooltipButton(cw.sendBcast, func() string {
+	cw.sendBcastWrap = newHoverTooltipButton(cw.sendBcast, cw.win.Canvas(), func() string {
 		return cw.bcastDisabledReason
 	})
 	cw.sendBcastWrap.Disable()
