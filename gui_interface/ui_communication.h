@@ -25,6 +25,7 @@
 #define UI_COMMUNICATION_H
 
 #include <stdint.h>
+#include <stdatomic.h>
 #include <pthread.h>
 
 #include "websocket/mercury_websocket.h"
@@ -69,6 +70,7 @@ struct ui_ctx {
 
     pthread_t pub_tid;
     pthread_t spec_tid;         // dedicated spectrum publisher thread (20 fps)
+    _Atomic bool spec_run;      // drives the spectrum publisher loop (0 = stop)
     int waterfall_enabled;      // 1 = send spectrum data to UI, 0 = disabled
 
     // Audio subsystem info for soundcard enumeration
