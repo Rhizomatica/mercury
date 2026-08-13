@@ -65,8 +65,13 @@ type chatWindow struct {
 	arqAbort      *widget.Button
 	sendARQ       *widget.Button
 	sendBcast     *widget.Button
+	sendBcastWrap *hoverTooltipButton
 	arqMsg        *widget.Entry
 	bcastMsg      *widget.Entry
+
+	// bcastDisabledReason is shown as a hover tooltip on the Broadcast
+	// message button while it is disabled (e.g. during an ARQ session).
+	bcastDisabledReason string
 }
 
 func (cw *chatWindow) build(app fyne.App, telemetry telemetryState, arqPort, broadcastPort int) {
@@ -114,12 +119,15 @@ func (cw *chatWindow) build(app fyne.App, telemetry telemetryState, arqPort, bro
 	cw.sendARQ = widget.NewButton("Send message", cw.onSendARQ)
 	cw.sendARQ.Disable()
 	cw.sendBcast = widget.NewButton("Broadcast message", cw.onSendBroadcast)
-	cw.sendBcast.Disable()
+	cw.sendBcastWrap = newHoverTooltipButton(cw.sendBcast, func() string {
+		return cw.bcastDisabledReason
+	})
+	cw.sendBcastWrap.Disable()
 
 	cfgForm := widget.NewForm(
 		&widget.FormItem{Text: "My Callsign", Widget: cw.myCall},
 		&widget.FormItem{Text: "Target Callsign", Widget: cw.target},
-		&widget.FormItem{Text: "IP", Widget: cw.ip},
+		&widget.FormItem{Text: "IP/Host", Widget: cw.ip},
 		&widget.FormItem{Text: "ARQ Port", Widget: cw.arqPort},
 		&widget.FormItem{Text: "Broadcast Port", Widget: cw.bcastPort},
 	)
@@ -134,7 +142,7 @@ func (cw *chatWindow) build(app fyne.App, telemetry telemetryState, arqPort, bro
 		widget.NewSeparator(),
 		cw.arqMsg, cw.sendARQ,
 		widget.NewSeparator(),
-		cw.bcastMsg, cw.sendBcast,
+		cw.bcastMsg, cw.sendBcastWrap,
 	)
 
 	left := container.NewVBox(controls, layout.NewSpacer())
@@ -230,7 +238,7 @@ func (cw *chatWindow) setTCP(on bool) {
 			cw.connectBtn.Disable()
 			cw.disconnectBtn.Enable()
 			cw.arqConnect.Enable()
-			cw.sendBcast.Enable()
+			cw.sendBcastWrap.Enable()
 		} else {
 			cw.connectBtn.Enable()
 			cw.disconnectBtn.Disable()
@@ -238,7 +246,7 @@ func (cw *chatWindow) setTCP(on bool) {
 			cw.arqDisconnect.Disable()
 			cw.arqAbort.Disable()
 			cw.sendARQ.Disable()
-			cw.sendBcast.Disable()
+			cw.sendBcastWrap.Disable()
 		}
 	})
 }
@@ -250,11 +258,17 @@ func (cw *chatWindow) setARQ(on bool) {
 			cw.arqDisconnect.Enable()
 			cw.arqAbort.Enable()
 			cw.sendARQ.Enable()
+			cw.sendBcastWrap.Disable()
+			cw.bcastDisabledReason = "Broadcast is disabled while an ARQ session is active."
 		} else {
 			cw.arqConnect.Enable()
 			cw.arqDisconnect.Disable()
 			cw.arqAbort.Disable()
 			cw.sendARQ.Disable()
+			cw.bcastDisabledReason = ""
+			if cw.mc != nil && cw.mc.IsConnected() {
+				cw.sendBcastWrap.Enable()
+			}
 		}
 	})
 }
