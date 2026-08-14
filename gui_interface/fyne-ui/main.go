@@ -102,6 +102,7 @@ type uiBindings struct {
 	// canvas texts for compact telemetry display
 	bitrateText       *canvas.Text
 	snrText           *canvas.Text
+	snrRowLabel       *canvas.Text
 	directionText     *canvas.Text
 	userCallsText     *canvas.Text
 	destCallsText     *canvas.Text
@@ -452,6 +453,11 @@ func main() {
 	snrText.TextSize = 14
 	bindings.snrText = snrText
 
+	// SNR row in the Telemetry card, shown only when the waterfall (which
+	// carries its own SNR overlay) is disabled.
+	snrRowLabel := canvas.NewText("SNR", color.NRGBA{R: 0xAA, G: 0xAA, B: 0xAA, A: 0xFF})
+	bindings.snrRowLabel = snrRowLabel
+
 	directionText := canvas.NewText("--", color.NRGBA{R: 0xDD, G: 0xDD, B: 0xDD, A: 0xFF})
 	directionText.TextSize = 13
 	bindings.directionText = directionText
@@ -594,6 +600,7 @@ func main() {
 			}
 			if bindings.snrText != nil {
 				bindings.snrText.Text = fmt.Sprintf("%.1f dB", telemetry.SNR)
+				bindings.snrText.Color = waterfallSNRColor(telemetry.SNR)
 				bindings.snrText.Refresh()
 			}
 			if bindings.directionText != nil {
@@ -647,6 +654,17 @@ func main() {
 					bindings.waterfallCard.Show()
 				} else {
 					bindings.waterfallCard.Hide()
+				}
+			}
+			// The waterfall carries its own SNR overlay, so the Telemetry SNR row
+			// is only shown when the waterfall is disabled (and thus hidden).
+			if bindings.snrRowLabel != nil && bindings.snrText != nil {
+				if telemetry.Waterfall {
+					bindings.snrRowLabel.Hide()
+					bindings.snrText.Hide()
+				} else {
+					bindings.snrRowLabel.Show()
+					bindings.snrText.Show()
 				}
 			}
 		})
@@ -928,6 +946,7 @@ func main() {
 	// compact telemetry layout matching screenshot: left labels small, right values small-bold
 	telemetryGrid := container.NewGridWithColumns(2,
 		canvas.NewText("Bitrate", color.NRGBA{R: 0xAA, G: 0xAA, B: 0xAA, A: 0xFF}), bindings.bitrateText,
+		bindings.snrRowLabel, bindings.snrText,
 		canvas.NewText("Direction", color.NRGBA{R: 0xAA, G: 0xAA, B: 0xAA, A: 0xFF}), bindings.directionText,
 		canvas.NewText("My callsign", color.NRGBA{R: 0xAA, G: 0xAA, B: 0xAA, A: 0xFF}), bindings.userCallsText,
 		canvas.NewText("Target callsign", color.NRGBA{R: 0xAA, G: 0xAA, B: 0xAA, A: 0xFF}), bindings.destCallsText,
