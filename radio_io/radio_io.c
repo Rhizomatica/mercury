@@ -34,6 +34,7 @@
 #endif
 
 #include "radio_io.h"
+#include "radio_port.h"
 #include "../common/hermes_log.h"
 
 #define RADIO_LOG_TAG "radio-io"
@@ -45,8 +46,35 @@
 #endif
 
 #ifdef HAVE_HAMLIB
-/* Configure the serial device path and speed through Hamlib's stable public
- * conf API (rig_token_lookup + rig_set_conf) rather than writing the internal
+/* Which sort of port does this rig speak?  Hamlib knows; the user should not
+ * have to guess.  See radio_port.h for why this matters (issue #179).
+ *
+ * Read through rig_get_caps_int() rather than rig->caps->port_type for the same
+ * reason the conf tokens are preferred below: it is an accessor keyed on the
+ * model number, so it does not depend on the layout of a struct that Hamlib 5
+ * is progressively closing off. */
+static radio_port_kind_t radio_io_port_kind(rig_model_t model)
+{
+    switch ((rig_port_t)rig_get_caps_int(model, RIG_CAPS_PORT_TYPE))
+    {
+    case RIG_PORT_SERIAL:
+        return RADIO_PORT_KIND_SERIAL;
+    case RIG_PORT_NETWORK:
+    case RIG_PORT_UDP_NETWORK:
+        return RADIO_PORT_KIND_NETWORK;
+    default:
+        return RADIO_PORT_KIND_OTHER;
+    }
+}
+
+static const char *radio_io_model_name(rig_model_t model)
+{
+    const char *name = rig_get_caps_cptr(model, RIG_CAPS_MODEL_NAME_CPTR);
+    return name ? name : "this rig";
+}
+
+/* Configure the device path and speed through Hamlib's stable public conf API
+ * (rig_token_lookup + rig_set_conf) rather than writing the internal
  * rig->state.rigport struct directly.
  *
  * Since Hamlib 4.6 the port struct is reached via the HAMLIB_RIGPORT macro,
@@ -55,7 +83,8 @@
  * rig_data_pointer undefined at link time), so depending on it is fragile.  The
  * conf tokens "rig_pathname" and "serial_speed" are stable across 4.6/4.7/5.x
  * and must be set before rig_open(). */
-static void radio_io_apply_serial_conf(RIG *radio, const char *device_path,
+static void radio_io_apply_serial_conf(RIG *radio, rig_model_t model,
+                                       const char *device_path,
                                        int serial_speed)
 {
     int rc;
@@ -70,6 +99,18 @@ static void radio_io_apply_serial_conf(RIG *radio, const char *device_path,
 
     if (serial_speed > 0)
     {
+        /* Only serial rigs have a baud rate.  Pushing serial_speed at a network
+         * rig makes Hamlib reject a token it does not own, and the resulting
+         * "rig_set_conf(serial_speed) failed: -1" reads like a fault when it is
+         * really just a setting that does not apply here. */
+        if (radio_io_port_kind(model) != RADIO_PORT_KIND_SERIAL)
+        {
+            HLOGI(RADIO_LOG_TAG,
+                  "radio_serial_speed=%d ignored: %s is not a serial rig",
+                  serial_speed, radio_io_model_name(model));
+            return;
+        }
+
         char rate[16];
         snprintf(rate, sizeof(rate), "%d", serial_speed);
         rc = rig_set_conf(radio, rig_token_lookup(radio, "serial_speed"), rate);
@@ -79,6 +120,19 @@ static void radio_io_apply_serial_conf(RIG *radio, const char *device_path,
             HLOGI(RADIO_LOG_TAG, "Serial speed overridden to %d baud",
                   serial_speed);
     }
+}
+
+/* Say plainly when radio_device does not match the kind of port the rig uses.
+ * Advisory only -- Hamlib still gets to try, because a shape heuristic must
+ * never veto a configuration that would have worked. */
+static void radio_io_warn_port_mismatch(rig_model_t model, const char *device_path)
+{
+    radio_port_verdict_t v = radio_port_check(radio_io_port_kind(model), device_path);
+    const char *advice = radio_port_advice(v);
+
+    if (advice)
+        HLOGW(RADIO_LOG_TAG, "radio_device='%s' looks wrong for %s -- %s",
+              device_path, radio_io_model_name(model), advice);
 }
 #endif
 
@@ -186,15 +240,30 @@ int radio_io_init(int radio_type, const char *device_path, int hamlib_log_level,
         return -1;
     }
 
-    radio_io_apply_serial_conf(radio, device_path, serial_speed);
+    radio_io_apply_serial_conf(radio, radio_type, device_path, serial_speed);
+    radio_io_warn_port_mismatch(radio_type, device_path);
 
     HLOGD(RADIO_LOG_TAG, "Calling rig_open(device=%s)",
           device_path && device_path[0] ? device_path : "(default)");
     int ret = rig_open(radio);
     if (ret != RIG_OK)
     {
-        HLOGE(RADIO_LOG_TAG, "rig_open: error = %s %s",
-              device_path ? device_path : "(default)", rigerror(ret));
+        /* rigerror() returns Hamlib's debug ring buffer appended to the message,
+         * so at any log level above 0 the actual reason is buried in backend
+         * chatter.  rigerror2() is the plain string; keep the numeric code too,
+         * since that is what is greppable in a bug report. */
+        HLOGE(RADIO_LOG_TAG, "rig_open(%s) failed: %s (%d)",
+              device_path && device_path[0] ? device_path : "(default)",
+              rigerror2(ret), ret);
+
+        /* Repeat the advice next to the failure: the pre-flight warning above
+         * is easily lost in Hamlib's own debug output, and this line is the one
+         * the user will paste into a bug report. */
+        const char *advice =
+            radio_port_advice(radio_port_check(radio_io_port_kind(radio_type),
+                                               device_path));
+        if (advice)
+            HLOGE(RADIO_LOG_TAG, "%s", advice);
         rig_cleanup(radio);
         radio = NULL;
         g_radio_type = RADIO_TYPE_NONE;
