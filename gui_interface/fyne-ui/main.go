@@ -1112,7 +1112,7 @@ func main() {
 
 	versionItem := fyne.NewMenuItem("Version", showVersionDialog)
 	supportItem := fyne.NewMenuItem("Support Us", func() {
-		openExternalURL("https://www.paypal.com/donate?token=5o5I4hPcSb6wMT0DDjGR_7anIgtR6sLFYEbwOnUswVAHe0_wK-F8BwMuW2Lo7SogT_aLwqb6IXEkvYhH")
+		openExternalURL("https://www.paypal.com/donate/?hosted_button_id=EKY4LRAH64Z9S")
 	})
 	mailingItem := fyne.NewMenuItem("Join our mailing list", func() {
 		openExternalURL("https://lists.riseup.net/www/info/hermes-general")
