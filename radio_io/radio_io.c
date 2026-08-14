@@ -298,17 +298,8 @@ int radio_io_init(int radio_type, const char *device_path, int hamlib_log_level,
      * member directly. Prefer the accessor so this survives the struct being
      * hidden. The hamlib version string goes on the same line because the field
      * only means anything once you know which hamlib produced it. */
-    {
-#if defined(HAMLIB_STATE)
-        const struct rig_state *rs = HAMLIB_STATE(radio);
-#elif defined(STATE)
-        const struct rig_state *rs = STATE(radio);
-#else
-        const struct rig_state *rs = &radio->state;
-#endif
-        HLOGI(RADIO_LOG_TAG, "hamlib runtime: %s",
-              hamlib_version2 ? hamlib_version2 : "version unknown");
-    }
+    HLOGI(RADIO_LOG_TAG, "hamlib runtime: %s",
+          hamlib_version2 ? hamlib_version2 : "version unknown");
     pthread_mutex_unlock(&g_radio_mutex);
     return 0;
 #else
