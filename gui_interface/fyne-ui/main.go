@@ -1212,9 +1212,9 @@ func main() {
 	mailingItem := fyne.NewMenuItem("Join our mailing list", func() {
 		openExternalURL("https://lists.riseup.net/www/info/hermes-general")
 	})
-	infosMenu := fyne.NewMenu("Infos", versionItem, supportItem, mailingItem)
+	helpMenu := fyne.NewMenu("Help", versionItem, supportItem, mailingItem)
 
-	myWindow.SetMainMenu(fyne.NewMainMenu(remoteMenu, configMenu, infosMenu))
+	myWindow.SetMainMenu(fyne.NewMainMenu(remoteMenu, configMenu, helpMenu))
 
 	// Single idempotent teardown, used by both the window-close handler and the
 	// signal handler.  It runs entirely OFF the GL/main thread: SetOnClosed is
