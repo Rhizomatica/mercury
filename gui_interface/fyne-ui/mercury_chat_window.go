@@ -57,6 +57,7 @@ type chatWindow struct {
 	ip        *widget.Entry
 	arqPort   *widget.Entry
 	bcastPort *widget.Entry
+	bandwidth *widget.Select
 
 	connectBtn    *widget.Button
 	disconnectBtn *widget.Button
@@ -87,6 +88,9 @@ func (cw *chatWindow) build(app fyne.App, telemetry telemetryState, arqPort, bro
 	cw.arqPort.SetText(strconv.Itoa(arqPort))
 	cw.bcastPort = widget.NewEntry()
 	cw.bcastPort.SetText(strconv.Itoa(broadcastPort))
+
+	cw.bandwidth = widget.NewSelect([]string{"2300 Hz", "500 Hz"}, cw.onBandwidthChange)
+	cw.bandwidth.SetSelected("2300 Hz")
 
 	cw.arqMsg = widget.NewEntry()
 	cw.arqMsg.SetPlaceHolder("Type message to be sent...")
@@ -130,6 +134,7 @@ func (cw *chatWindow) build(app fyne.App, telemetry telemetryState, arqPort, bro
 		&widget.FormItem{Text: "IP/Host", Widget: cw.ip},
 		&widget.FormItem{Text: "ARQ Port", Widget: cw.arqPort},
 		&widget.FormItem{Text: "Broadcast Port", Widget: cw.bcastPort},
+		&widget.FormItem{Text: "Bandwidth", Widget: cw.bandwidth},
 	)
 
 	modemRow := container.NewHBox(cw.connectBtn, cw.disconnectBtn)
@@ -307,6 +312,7 @@ func (cw *chatWindow) onConnect() {
 		IP:             cw.ip.Text,
 		ARQPort:        arqPort,
 		BroadcastPort:  bcastPort,
+		BandwidthHz:    bandwidthFromLabel(cw.bandwidth.Selected),
 	}
 	mc := client.New(cfg)
 	if err := mc.Connect(); err != nil {
@@ -388,6 +394,20 @@ func (cw *chatWindow) onSendARQ() {
 		return
 	}
 	cw.arqMsg.SetText("")
+}
+
+func (cw *chatWindow) onBandwidthChange(sel string) {
+	hz := bandwidthFromLabel(sel)
+	if hz == 0 {
+		return
+	}
+	if mc := cw.mc; mc != nil && mc.IsConnected() {
+		if err := mc.SetBandwidth(hz); err != nil {
+			cw.logMsg("set bandwidth: %v", err)
+		} else {
+			cw.logMsg("Bandwidth set to %d Hz.", hz)
+		}
+	}
 }
 
 func (cw *chatWindow) onSendBroadcast() {
@@ -494,4 +514,15 @@ func defaultCall(call, fallback string) string {
 		return call
 	}
 	return fallback
+}
+
+func bandwidthFromLabel(label string) int {
+	switch strings.TrimSpace(label) {
+	case "500 Hz":
+		return 500
+	case "2300 Hz":
+		return 2300
+	default:
+		return 0
+	}
 }
