@@ -8,9 +8,7 @@
 <artifact-configuration xmlns="http://signpath.io/artifact-configuration/v1">
   <zip-file>
     <pe-file path="mercury-setup.exe">
-      <authenticode-sign hash-algorithm="sha256"
-                         description="Mercury HF Modem Installer"
-                         description-url="https://mercury.hermes.radio/" />
+      <authenticode-sign hash-algorithm="sha256" />
     </pe-file>
   </zip-file>
 </artifact-configuration>

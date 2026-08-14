@@ -10,7 +10,7 @@
 #     system + artifact configurations 'mercury-windows' and 'mercury-setup'
 #     (XML in code-signing/signpath/artifact-configs/).
 #   * Repo secret SIGNPATH_API_TOKEN (SignPath API token of a submitter user).
-#   * Replace the <ORGANIZATION_ID>, <PROJECT_SLUG> and <POLICY_SLUG>
+#   * Replace the d1c3b645-94b2-48ac-95fa-b72a652f3578, mercury and test-signing
 #     placeholders below with the real portal values.
 
 name: SignPath test
@@ -74,9 +74,9 @@ jobs:
         uses: signpath/github-action-submit-signing-request@v2
         with:
           api-token: '${{ secrets.SIGNPATH_API_TOKEN }}'
-          organization-id: '<ORGANIZATION_ID>'
-          project-slug: '<PROJECT_SLUG>'
-          signing-policy-slug: '<POLICY_SLUG>'
+          organization-id: 'd1c3b645-94b2-48ac-95fa-b72a652f3578'
+          project-slug: 'mercury'
+          signing-policy-slug: 'test-signing'
           artifact-configuration-slug: 'mercury-windows'
           github-artifact-id: '${{ needs.build.outputs.artifact-id }}'
           wait-for-completion: true
@@ -175,9 +175,9 @@ jobs:
         uses: signpath/github-action-submit-signing-request@v2
         with:
           api-token: '${{ secrets.SIGNPATH_API_TOKEN }}'
-          organization-id: '<ORGANIZATION_ID>'
-          project-slug: '<PROJECT_SLUG>'
-          signing-policy-slug: '<POLICY_SLUG>'
+          organization-id: 'd1c3b645-94b2-48ac-95fa-b72a652f3578'
+          project-slug: 'mercury'
+          signing-policy-slug: 'test-signing'
           artifact-configuration-slug: 'mercury-setup'
           github-artifact-id: '${{ needs.installer.outputs.artifact-id }}'
           wait-for-completion: true
