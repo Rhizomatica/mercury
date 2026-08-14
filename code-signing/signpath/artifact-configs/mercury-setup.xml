@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  SignPath artifact configuration: Inno Setup installer.
+  The Setup.exe is renamed to a fixed mercury-setup.exe before upload so the
+  path never changes between releases. Portal: paste this XML when creating
+  the artifact configuration 'mercury-setup'.
+-->
+<artifact-configuration xmlns="http://signpath.io/artifact-configuration/v1">
+  <zip-file>
+    <pe-file path="mercury-setup.exe">
+      <authenticode-sign hash-algorithm="sha256" />
+    </pe-file>
+  </zip-file>
+</artifact-configuration>
