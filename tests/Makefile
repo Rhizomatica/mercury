@@ -46,7 +46,7 @@ TEST_BINS = test_ring_buffer test_arq_protocol test_arq_timing test_arq_fsm \
             test_tcp_interfaces test_resampler test_pcm24 test_arq_olla test_arq_sim \
             test_arq_conn test_cfg_utils test_arq_tnc test_channel_busy \
             test_freedv_harq test_sock_wire test_virtual_clock test_watterson \
-            test_ofdm_acq test_ui_status
+            test_ofdm_acq test_ui_status test_tx_pacing
 
 .PHONY: all test clean
 
@@ -166,6 +166,13 @@ $(FREEDV_LIB):
 
 test_ofdm_acq: modem/test_ofdm_acq.c $(UNITY_SRC) $(FREEDV_LIB)
 	$(CC) $(CFLAGS) -I../modem/freedv -o $@ modem/test_ofdm_acq.c $(UNITY_SRC) $(FREEDV_LIB) $(LDFLAGS) -lm
+
+# TX burst pacing (pure header; simulated coarse timer, no sleeping).
+# tx_pacing.h is a PREREQUISITE: the logic under test lives entirely in the
+# header, so without it make will not relink and the mutation check silently
+# re-runs the previous binary.
+test_tx_pacing: modem/test_tx_pacing.c $(UNITY_SRC) ../modem/tx_pacing.h
+	$(CC) $(CFLAGS) -I../modem -o $@ modem/test_tx_pacing.c $(UNITY_SRC) $(LDFLAGS)
 
 # UI status wire format (embedded struct vs remote JSON must not drift)
 test_ui_status: gui_interface/test_ui_status.c $(UNITY_SRC) ../gui_interface/ui_status.c

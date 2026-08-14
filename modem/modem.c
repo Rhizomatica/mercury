@@ -38,6 +38,7 @@
 #include "../datalink_arq/arq_protocol.h"
 #include "tcp_interfaces.h"
 #include "channel_busy.h"
+#include "tx_pacing.h"
 #include "freedv_api.h"
 #include "fsk.h"
 #include "ldpc_codes.h"
@@ -1243,20 +1244,33 @@ int send_modulated_data(generic_modem_t *g_modem, uint8_t *bytes_in, int frames_
         write_buffer(playback_buffer, (uint8_t *)tx_buffer, total_samples * sizeof(int32_t));
 
         /* Wait for all samples to be played out, publishing the waterfall as we
-         * go so the UI scrolls during the burst rather than after it. */
+         * go so the UI scrolls during the burst rather than after it.
+         *
+         * Sleep to an ABSOLUTE deadline, never `usleep(step)` in a loop.  usleep
+         * may return late but never early, so relative steps accumulate their
+         * overshoot: on a host with a coarse scheduler tick (Windows defaults to
+         * ~15.6 ms) a 4.41 s burst paced in 50 ms steps holds PTT for ~5.5 s.
+         * That 1.1 s of dead carrier lands exactly where the peer's ACK is —
+         * the IRS answers 700 ms after decoding — so every ACK collided with our
+         * own tail and the link stalled at ack_timeout/retry forever, while the
+         * Linux station (7 ms of drift over the same burst) looked fine.
+         * Re-deriving the sleep from elapsed time each pass keeps the total
+         * bounded by one tick however coarse the tick is. */
         uint64_t playback_duration_us = ((uint64_t)total_samples * 1000000ULL) / FREEDV_FS_8000;
+        uint64_t t_start_ms = hermes_uptime_ms();
         uint64_t waited_us = 0;
         while (waited_us < playback_duration_us)
         {
-            uint64_t step_us = (uint64_t)TX_SPECTRUM_STEP_MS * 1000ULL;
-            if (step_us > playback_duration_us - waited_us)
-                step_us = playback_duration_us - waited_us;
-
             size_t pos = (size_t)((waited_us * FREEDV_FS_8000) / 1000000ULL);
             publish_tx_spectrum_at(tx_buffer, total_samples, pos, FREEDV_FS_8000);
 
-            usleep((useconds_t)step_us);
-            waited_us += step_us;
+            uint64_t elapsed_us = (hermes_uptime_ms() - t_start_ms) * 1000ULL;
+            uint64_t sleep_us = tx_pace_sleep_us(waited_us, elapsed_us,
+                                                 playback_duration_us,
+                                                 (uint64_t)TX_SPECTRUM_STEP_MS * 1000ULL,
+                                                 &waited_us);
+            if (sleep_us)
+                usleep((useconds_t)sleep_us);
         }
 
         /* Give some tail time before turning off PTT */
