@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strconv"
 	"strings"
@@ -26,6 +27,7 @@ import (
 	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/dialog"
+	"fyne.io/fyne/v2/driver/desktop"
 	"fyne.io/fyne/v2/layout"
 	"fyne.io/fyne/v2/widget"
 )
@@ -211,6 +213,80 @@ const (
 	waterfallSplitOffset = 0.60
 )
 
+const (
+	windowWidthKey  = "window.width"
+	windowHeightKey = "window.height"
+	windowXKey      = "window.x"
+	windowYKey      = "window.y"
+	windowPosSetKey = "window.positionSaved"
+
+	// defaultWindowWidth/Height match the previous hard-coded launch size and
+	// are used until the operator has resized the window once.
+	defaultWindowWidth  = 1280
+	defaultWindowHeight = 780
+)
+
+// saveWindowGeometry records the current window size and position in the app
+// preferences so the next launch can restore them.
+func saveWindowGeometry(win fyne.Window, prefs fyne.Preferences) {
+	if prefs == nil {
+		return
+	}
+	size := win.Canvas().Size()
+	if size.Width > 0 && size.Height > 0 {
+		prefs.SetFloat(windowWidthKey, float64(size.Width))
+		prefs.SetFloat(windowHeightKey, float64(size.Height))
+	}
+	if x, y, ok := windowPosition(win); ok {
+		prefs.SetInt(windowXKey, x)
+		prefs.SetInt(windowYKey, y)
+		prefs.SetBool(windowPosSetKey, true)
+	}
+}
+
+// restoreWindowGeometry applies a previously saved window size and position.
+func restoreWindowGeometry(win fyne.Window, prefs fyne.Preferences) {
+	if prefs == nil {
+		return
+	}
+	width := prefs.FloatWithFallback(windowWidthKey, defaultWindowWidth)
+	height := prefs.FloatWithFallback(windowHeightKey, defaultWindowHeight)
+	if width <= 0 {
+		width = defaultWindowWidth
+	}
+	if height <= 0 {
+		height = defaultWindowHeight
+	}
+	win.Resize(fyne.NewSize(float32(width), float32(height)))
+
+	if prefs.BoolWithFallback(windowPosSetKey, false) {
+		if dw, ok := win.(desktop.Window); ok {
+			dw.RequestPosition(prefs.Int(windowXKey), prefs.Int(windowYKey))
+		}
+	}
+}
+
+// windowPosition reads the native window position from the desktop driver's
+// concrete window. Fyne's public Window interface exposes no position getter,
+// so this reaches into the (pinned) driver struct via reflection.
+func windowPosition(win fyne.Window) (int, int, bool) {
+	v := reflect.ValueOf(win)
+	if v.Kind() != reflect.Ptr {
+		return 0, 0, false
+	}
+	v = v.Elem()
+	if v.Kind() != reflect.Struct {
+		return 0, 0, false
+	}
+	xField := v.FieldByName("xpos")
+	yField := v.FieldByName("ypos")
+	if !xField.IsValid() || !yField.IsValid() ||
+		xField.Kind() != reflect.Int || yField.Kind() != reflect.Int {
+		return 0, 0, false
+	}
+	return int(xField.Int()), int(yField.Int()), true
+}
+
 func main() {
 	// Announce the version on the terminal, just like the standalone daemon.
 	mercuryPrintVersion()
@@ -225,7 +301,7 @@ func main() {
 	// Fyne's preferences/storage have a unique identity instead of warning.
 	myApp := app.NewWithID("org.rhizomatica.mercury")
 	myWindow := myApp.NewWindow("Mercury Modem")
-	myWindow.Resize(fyne.NewSize(1280, 780))
+	restoreWindowGeometry(myWindow, myApp.Preferences())
 
 	state := &appState{wsScheme: "ws", wsHost: "127.0.0.1", wsPort: "10000",
 		waterfallPalette: myApp.Preferences().StringWithFallback("waterfallPalette", "blackblue")}
@@ -1133,6 +1209,10 @@ func main() {
 	// the engine unkeys the radio and flushes on the way out.
 	var shutdownOnce sync.Once
 	shutdown := func() {
+		// Remember where and how large the window is so the next launch opens
+		// in the same place. Read before teardown: the window is still alive
+		// when SetOnClosed runs.
+		saveWindowGeometry(myWindow, myApp.Preferences())
 		shutdownOnce.Do(func() {
 			go func() {
 				go func() {
