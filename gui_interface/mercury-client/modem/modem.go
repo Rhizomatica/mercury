@@ -219,6 +219,12 @@ func (mc *ModemClient) ListenOff() error {
 	return mc.SendCommand("LISTEN OFF")
 }
 
+// SendCQFrame queues a one-shot CQ frame advertising the source callsign and
+// the given bandwidth (Hz).
+func (mc *ModemClient) SendCQFrame(src string, bwHz int) error {
+	return mc.SendCommand(fmt.Sprintf("CQFRAME %s %d", src, bwHz))
+}
+
 func (mc *ModemClient) ConnectARQ(src, dst string) error {
 	mc.mu.Lock()
 	if mc.ARQControlConn == nil {
