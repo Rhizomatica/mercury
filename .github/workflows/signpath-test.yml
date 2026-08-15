@@ -135,8 +135,11 @@ jobs:
           INNO_SHA256: 4c9c92249663f201a33bf194c0cd37e01c60540e299c771f3626411ef463c884
         run: |
           set -eu
+          # ISCC.exe is 32-bit; wine on the runner ships without i386, so
+          # enable multiarch and pull wine32 to get syswow64 working.
+          sudo dpkg --add-architecture i386
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends wine ca-certificates curl zip
+          sudo apt-get install -y --no-install-recommends wine wine32:i386 ca-certificates curl zip
           curl -fsSLo /tmp/inno.tar.gz "$INNO_URL"
           echo "${INNO_SHA256}  /tmp/inno.tar.gz" | sha256sum -c -
           wineboot -i
@@ -152,9 +155,17 @@ jobs:
           set -eu
           # Payloads here are the SIGNED binaries from the previous job;
           # windows-installer-stage only copies, it does not rebuild.
-          cp signed/mercury.exe windows-installer/
-          cp signed/mercury-ui.exe windows-installer/
+          # upload-artifact v4 strips the common base dir, so the signed
+          # payloads arrive either at the root or under signed/; handle both.
+          if [ -f mercury.exe ]; then SRC=.; else SRC=signed; fi
+          cp "$SRC/mercury.exe" windows-installer/
+          cp "$SRC/mercury-ui.exe" windows-installer/
           cp mercury.ini.example windows-installer/mercury.ini
+          # The installer.iss Sources expect the hamlib + MinGW runtime DLLs
+          # next to it (same as make windows-installer-stage).
+          if ls radio_io/hamlib-w64/bin/*.dll >/dev/null 2>&1; then
+            cp radio_io/hamlib-w64/bin/*.dll windows-installer/
+          fi
           sed -i 's/ui_enabled = false/ui_enabled = true/g' windows-installer/mercury.ini
           sed -i 's/sound_system = auto/sound_system = wasapi/g' windows-installer/mercury.ini
           wine "$ISCC_PATH" windows-installer/installer.iss
