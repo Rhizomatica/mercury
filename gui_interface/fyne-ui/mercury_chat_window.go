@@ -452,8 +452,8 @@ func (cw *chatWindow) setCQBusy(on bool) {
 			return
 		}
 		cw.sendCQ.Enable()
-		cw.arqConnect.Enable()
 		if cw.mc != nil && cw.mc.IsConnected() && !cw.mc.IsARQConnected() {
+			cw.arqConnect.Enable()
 			cw.sendBcastWrap.Enable()
 			cw.bcastDisabledReason = ""
 		}
