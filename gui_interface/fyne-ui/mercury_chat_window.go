@@ -552,7 +552,10 @@ func (cw *chatWindow) forwardStatus() {
 				cw.setARQ(true)
 			case "DISCONNECTED":
 				cw.setARQ(false)
-			case "CANCELPENDING":
+			case "PTT OFF":
+				// The true end of a CQ transmission: an incoming connection's
+				// PENDING/CANCELPENDING never keys the radio, so PTT OFF is the
+				// unambiguous "CQ is off the air" signal.
 				if cw.cqSending {
 					cw.cqSending = false
 					cw.setCQBusy(false)
