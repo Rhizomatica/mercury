@@ -77,6 +77,7 @@ type chatWindow struct {
 
 	// cqSending is set while a CQ frame is being transmitted; broadcast and
 	// ARQ connect are blocked until the engine reports the transmission done.
+	// Owned by setCQBusy and touched only from the UI thread.
 	cqSending bool
 }
 
@@ -435,22 +436,29 @@ func (cw *chatWindow) onSendCQ() {
 		dialog.ShowError(err, cw.win)
 		return
 	}
-	cw.cqSending = true
+	cw.sendCQ.Disable()
 	cw.setCQBusy(true)
 	cw.logMsg("CQ frame sent.")
 }
 
 // setCQBusy disables broadcast and ARQ connect while a CQ frame is on the air
-// and restores them once the engine reports the transmission finished.
+// and restores them once the engine reports the transmission finished. It owns
+// the cqSending flag and every widget it touches, all inside fyne.Do, so the
+// flag is only ever accessed from the UI thread.
 func (cw *chatWindow) setCQBusy(on bool) {
 	fyne.Do(func() {
 		if on {
+			cw.cqSending = true
 			cw.sendCQ.Disable()
 			cw.arqConnect.Disable()
 			cw.sendBcastWrap.Disable()
 			cw.bcastDisabledReason = "CQ frame transmission in progress."
 			return
 		}
+		if !cw.cqSending {
+			return
+		}
+		cw.cqSending = false
 		cw.sendCQ.Enable()
 		if cw.mc != nil && cw.mc.IsConnected() && !cw.mc.IsARQConnected() {
 			cw.arqConnect.Enable()
@@ -555,11 +563,10 @@ func (cw *chatWindow) forwardStatus() {
 			case "PTT OFF":
 				// The true end of a CQ transmission: an incoming connection's
 				// PENDING/CANCELPENDING never keys the radio, so PTT OFF is the
-				// unambiguous "CQ is off the air" signal.
-				if cw.cqSending {
-					cw.cqSending = false
-					cw.setCQBusy(false)
-				}
+				// unambiguous "CQ is off the air" signal. setCQBusy owns the
+				// cqSending flag and only clears it when one is actually in
+				// flight, marshalling the work onto the UI thread.
+				cw.setCQBusy(false)
 			}
 		case <-done:
 			return
