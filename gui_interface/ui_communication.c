@@ -754,12 +754,17 @@ void ui_comm_shutdown(ui_ctx_t *ctx)
 
     // Stop and join the spectrum publisher thread before the websocket server
     // goes down: it was made joinable for the runtime disable path, so leave
-    // no joinable thread unjoined at teardown.
+    // no joinable thread unjoined at teardown.  Take cfg_mutex so this cannot
+    // race ui_comm_set_waterfall()'s disable path, which joins the same thread
+    // under the same lock — two pthread_join calls on one tid is undefined
+    // behaviour.  This closes the window the NOTE below describes.
+    pthread_mutex_lock(&ctx->cfg_mutex);
     atomic_store_explicit(&ctx->spec_run, false, memory_order_relaxed);
     if (ctx->spec_tid != 0) {
         pthread_join(ctx->spec_tid, NULL);
         ctx->spec_tid = 0;
     }
+    pthread_mutex_unlock(&ctx->cfg_mutex);
 
     ws_shutdown(&ctx->ws);
     // NOTE: cfg_mutex is deliberately NOT destroyed.  ui_comm_set_waterfall
