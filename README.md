@@ -260,7 +260,17 @@ See the included [mercury.ini.example](mercury.ini.example) for all available se
 
 ## Documentation
 
-Online HTML docs: https://rhizomatica.github.io/mercury/
+**[docs/](docs/README.md)** — the full index, sorted into reference (how Mercury
+works today), guides (building, signing, Reticulum, sanitizers) and findings
+(dated records of investigations and why decisions were made).
+
+The three you are most likely to want:
+
+- [docs/ARQ.md](docs/ARQ.md) — the ARQ data link, end to end
+- [docs/TNC.md](docs/TNC.md) — every TNC command, for driving Mercury from your own software
+- [docs/MODES.md](docs/MODES.md) — all modes with measured performance
+
+Rendered HTML: https://rhizomatica.github.io/mercury/
 
 ## Logging and timing traces
 
