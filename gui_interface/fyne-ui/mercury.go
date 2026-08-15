@@ -1,8 +1,13 @@
 //go:build mercury_embedded
 
 // CGo bridge to the Mercury C engine.
-// mercury_bridge.c is compiled alongside this file by CGo.
-// Pre-built Mercury objects live in libmercury_core.a.
+//
+// mercury_bridge.c is NOT compiled by CGo: the Makefile's libmercury_core.a
+// rule compiles it (engine/mercury_bridge.c -> mercury_bridge.o) with the
+// engine's own CFLAGS — including -DGIT_HASH — and archives it. CGo only
+// links that archive (-lmercury_core), so the symbols below (and the git hash
+// mercury_ui_get_version reports) come from the Makefile-built object, not
+// from these #cgo CFLAGS.
 
 package main
 
