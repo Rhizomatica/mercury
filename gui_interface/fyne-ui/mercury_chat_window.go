@@ -280,6 +280,11 @@ func (cw *chatWindow) setARQ(on bool) {
 			cw.sendARQ.Enable()
 			cw.sendBcastWrap.Disable()
 			cw.bcastDisabledReason = "Broadcast is disabled while an ARQ session is active."
+			// A CQ is an unsolicited transmission; firing one mid-session puts
+			// it on the air on top of the session. The engine will not stop us
+			// -- ARQ_CMD_SEND_CQ (arq.c) builds and queues the frame with no
+			// conn_state guard -- so the block has to be here.
+			cw.sendCQ.Disable()
 		} else {
 			cw.arqConnect.Enable()
 			cw.arqDisconnect.Disable()
@@ -288,6 +293,11 @@ func (cw *chatWindow) setARQ(on bool) {
 			cw.bcastDisabledReason = ""
 			if cw.mc != nil && cw.mc.IsConnected() {
 				cw.sendBcastWrap.Enable()
+				// Not while a CQ of our own is still on the air: setCQBusy
+				// owns that case and re-enables when PTT drops.
+				if !cw.cqSending {
+					cw.sendCQ.Enable()
+				}
 			}
 		}
 	})
@@ -459,8 +469,11 @@ func (cw *chatWindow) setCQBusy(on bool) {
 			return
 		}
 		cw.cqSending = false
-		cw.sendCQ.Enable()
+		// sendCQ is re-enabled under the same session test as the rest: a
+		// session can come up while our CQ is still on the air, and enabling
+		// it unconditionally here would undo setARQ's block.
 		if cw.mc != nil && cw.mc.IsConnected() && !cw.mc.IsARQConnected() {
+			cw.sendCQ.Enable()
 			cw.arqConnect.Enable()
 			cw.sendBcastWrap.Enable()
 			cw.bcastDisabledReason = ""
