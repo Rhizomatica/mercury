@@ -1284,7 +1284,10 @@ func main() {
 	mailingItem := fyne.NewMenuItem("Join our mailing list", func() {
 		openExternalURL("https://lists.riseup.net/www/info/hermes-general")
 	})
-	helpMenu := fyne.NewMenu("Help", versionItem, supportItem, mailingItem)
+	submitIssueItem := fyne.NewMenuItem("Submit issue", func() {
+		openExternalURL("https://github.com/Rhizomatica/mercury/issues/new")
+	})
+	helpMenu := fyne.NewMenu("Help", versionItem, supportItem, mailingItem, submitIssueItem)
 
 	myWindow.SetMainMenu(fyne.NewMainMenu(remoteMenu, configMenu, helpMenu))
 
