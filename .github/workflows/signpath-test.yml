@@ -82,18 +82,24 @@ jobs:
           wait-for-completion: true
           output-artifact-directory: signed
 
-      - name: Verify signatures (best effort with test cert)
+      - name: Verify signatures
         run: |
           sudo apt-get update && sudo apt-get install -y --no-install-recommends osslsigncode
           for f in signed/mercury.exe signed/mercury-ui.exe; do
             [ -f "$f" ] || { echo "::error::missing signed file $f"; exit 1; }
-            # The OSS test certificate is self-signed, so chain validation
-            # cannot succeed; we confirm a signature is present and readable.
-            if osslsigncode verify "$f"; then
-              echo "verified: $f"
+            # Chain validation fails for the self-signed OSS test cert, but the
+            # signature itself is cryptographically verified: osslsigncode
+            # reports "Number of verified signatures: 1" for a valid one.
+            OUT="$(osslsigncode verify "$f" 2>&1 || true)"
+            printf '%s\n' "$OUT"
+            if printf '%s\n' "$OUT" | grep -q "Number of verified signatures: 1"; then
+              echo "OK: valid Authenticode signature present in $f"
             else
-              echo "::warning::chain validation failed for $f (expected with test cert); signature details:"
-              osslsigncode extract-signature -pem "$f" >/dev/null && echo "signature present in $f"
+              echo "::error::no valid signature found in $f"
+              exit 1
+            fi
+            if printf '%s\n' "$OUT" | grep -q "self-signed certificate"; then
+              echo "::warning::self-signed test certificate (expected until production cert)"
             fi
           done
 
@@ -146,8 +152,8 @@ jobs:
           set -eu
           # Payloads here are the SIGNED binaries from the previous job;
           # windows-installer-stage only copies, it does not rebuild.
-          cp mercury.exe windows-installer/
-          cp mercury-ui.exe windows-installer/
+          cp signed/mercury.exe windows-installer/
+          cp signed/mercury-ui.exe windows-installer/
           cp mercury.ini.example windows-installer/mercury.ini
           sed -i 's/ui_enabled = false/ui_enabled = true/g' windows-installer/mercury.ini
           sed -i 's/sound_system = auto/sound_system = wasapi/g' windows-installer/mercury.ini
@@ -183,13 +189,22 @@ jobs:
           wait-for-completion: true
           output-artifact-directory: signed-setup
 
-      - name: Verify installer signature (best effort with test cert)
+      - name: Verify installer signature
         run: |
           sudo apt-get update && sudo apt-get install -y --no-install-recommends osslsigncode
-          osslsigncode verify signed-setup/mercury-setup.exe || \
-            { echo "::warning::chain validation failed (expected with test cert)"; \
-              osslsigncode extract-signature -pem signed-setup/mercury-setup.exe >/dev/null \
-              && echo "signature present"; }
+          f=signed-setup/mercury-setup.exe
+          [ -f "$f" ] || { echo "::error::missing signed installer"; exit 1; }
+          OUT="$(osslsigncode verify "$f" 2>&1 || true)"
+          printf '%s\n' "$OUT"
+          if printf '%s\n' "$OUT" | grep -q "Number of verified signatures: 1"; then
+            echo "OK: valid Authenticode signature present in installer"
+          else
+            echo "::error::no valid signature found in installer"
+            exit 1
+          fi
+          if printf '%s\n' "$OUT" | grep -q "self-signed certificate"; then
+            echo "::warning::self-signed test certificate (expected until production cert)"
+          fi
 
       - name: Upload signed installer
         uses: actions/upload-artifact@v4
