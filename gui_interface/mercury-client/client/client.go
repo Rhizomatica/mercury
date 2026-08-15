@@ -247,6 +247,22 @@ func (c *Client) SetBandwidth(hz int) error {
 	return nil
 }
 
+// SendCQFrame queues a one-shot CQ frame advertising the local callsign and
+// the currently configured bandwidth.
+func (c *Client) SendCQFrame() error {
+	c.mu.Lock()
+	mc := c.modem
+	c.mu.Unlock()
+	if mc == nil || !mc.IsConnected() {
+		return fmt.Errorf("not connected to modem")
+	}
+	if err := mc.SendCQFrame(c.cfg.MyCallsign, c.cfg.BandwidthHz); err != nil {
+		return err
+	}
+	c.LogCh <- fmt.Sprintf("CQ Frame TX: %s (%d Hz)", c.cfg.MyCallsign, c.cfg.BandwidthHz)
+	return nil
+}
+
 // SendBroadcast sends a broadcast message. The local callsign is prefixed to
 // the payload because the Mercury broadcast plane carries no callsign, so
 // receiving stations can attribute the message.
