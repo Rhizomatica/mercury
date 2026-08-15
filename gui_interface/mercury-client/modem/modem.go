@@ -481,6 +481,12 @@ func (mc *ModemClient) dispatchControlLine(line string) {
 
 	case strings.HasPrefix(upper, "CQFRAME"):
 		mc.StatusCh <- "CQFRAME"
+
+	case strings.HasPrefix(upper, "PTT ON"):
+		mc.StatusCh <- "PTT ON"
+
+	case strings.HasPrefix(upper, "PTT OFF"):
+		mc.StatusCh <- "PTT OFF"
 	}
 
 	mc.mu.Lock()
