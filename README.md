@@ -5,35 +5,42 @@ Mercury is part of the [HERMES project](https://www.rhizomatica.org/hermes/)
 [Rhizomatica](https://www.rhizomatica.org/), funded by
 [ARDC](https://www.ardc.net/) and others.
 
+Mercury is a software modem for sending email, files and messages over HF
+radio — the kind of link you have when there is no internet, no phone network
+and no power grid worth speaking of.
+
+**Start here:** [Getting Started](#getting-started-with-mercury) ·
+[Graphical interfaces](#graphical-interfaces) · [Configuration](#configuration-file) ·
+[Docs](https://rhizomatica.github.io/mercury/) ·
+[Mailing list](https://lists.riseup.net/www/info/hermes-general)
+
 There are currently two versions:
 
 - **Mercury v2** (this branch) — a complete rewrite in C with a new ARQ data link. **This is the recommended version.**
 - **[Mercury v1](https://github.com/Rhizomatica/mercury/tree/mercuryv1)** — the original Mercury modem written in C++. Legacy; use only if you know what you are doing.
 
-A Qt-based GUI is available: [mercury-qt](https://github.com/Rhizomatica/mercury-qt)
-
-Mailing list: https://lists.riseup.net/www/info/hermes-general
-
-## Mercury v2
-
-Mercury v2 is a complete rewrite of the HERMES modem ARQ data link,
-replacing the monolithic state machine with a modular reactor
-architecture featuring per-direction mode selection, hybrid
-SNR + delivery-feedback gear-shifting, split control/data channel
-design (DATAC13 for signaling, DATAC4/DATAC3/DATAC1 for payload),
-and a persistent FreeDV mode pool eliminating codec re-initialization
-overhead. Built for reliable store-and-forward email and file transfer
-over HF radio links in rural and emergency scenarios.
-
 ## What this software does
 
-- **ARQ data link for P2P sessions** with connect/accept handshake, ACK/retry logic, keepalive, and controlled disconnect.
-- **Adaptive payload "gear-shifting"** (DATAC4/DATAC3/DATAC1) driven by link quality and backlog, with DATAC13 used for control signaling.
-- **Per-direction mode selection**: each path (A→B and B→A) negotiates its mode independently based on local SNR.
-- **Broadcast data mode** in parallel to ARQ, with dedicated broadcast framing and TCP ingress port.
-- **VARA-style TCP TNC interface** with separate control and data sockets (base port and base+1), including commands/status like `MYCALL`, `LISTEN`, `CONNECT`, `BUFFER`, `SN`, `BITRATE`, and `TUNE` (a 1 kHz ATU tuning carrier at a requested dBFS level, with a hard 60 s unkey timer).
-- **Audio modem operation over multiple backends** (`alsa`, `pulse`, `oss`, `coreaudio`, `aaudio`, `dsound`, `wasapi`, `shm`, `null`, `fifo`) with split RX/TX modem orchestration.
-- **Direct radio control** via HAMLIB or HERMES shared-memory interface for direct PTT keying.
+Mercury turns a single-sideband radio into a data link. It handles the
+waveform, the error correction, the retransmissions and the radio keying, and
+presents the result to your application as an ordinary TCP connection.
+
+- **ARQ data link for point-to-point sessions** — connect/accept handshake, ACK and retry logic, and controlled disconnect, so a file either arrives intact or you are told it did not.
+- **Adaptive speed** — the link starts robust and climbs through six payload modes as conditions allow (DATAC15 → DATAC4 → DATAC3 → DATAC1 → DATAC17 → QAM16C2), stepping back down when the channel fades. Control frames always ride the most robust mode, DATAC16, so signalling survives when payload cannot.
+- **Broadcast mode** alongside ARQ, with its own framing and TCP ingress port — used for one-to-many traffic and for [Reticulum](#reticulum) mesh networking.
+- **VARA-style TCP TNC interface** on two sockets (control on the base port, data on base+1), speaking `MYCALL`, `LISTEN`, `CONNECT`, `BUFFER`, `SN`, `BITRATE` and `TUNE` (a 1 kHz ATU tuning carrier with a hard 60 s unkey timer). Existing VARA-aware software can generally talk to Mercury unchanged.
+- **Runs on the audio hardware you have** — `alsa`, `pulse`, `oss`, `coreaudio`, `aaudio`, `dsound`, `wasapi`, plus `shm`, `null` and `fifo` for embedded and test use.
+- **Keys the radio for you** via Hamlib CAT or the HERMES shared-memory interface — or stays out of the way and lets your client do it.
+
+Mercury runs on Linux, Windows and macOS, including Raspberry Pi.
+
+## Command-line reference
+
+Most settings live in `mercury.ini` (see [Configuration File](#configuration-file));
+command-line flags override it. Run `./mercury -h` for this list at any time.
+
+<details>
+<summary><b>All command-line options</b> (click to expand)</summary>
 
 ```
 Usage modes:
@@ -72,11 +79,15 @@ Options:
  -h                         Prints this help.
 ```
 
+</details>
+
 Mode behavior notes:
 - `-m` / `-s` affects **broadcast** and **test** modes only.
-- During an active ARQ link, control frames use DATAC13 and ARQ payload starts in DATAC4 (then may adapt to DATAC3/DATAC1).
-- VARA `BW500` blocks DATAC1; `BW2300` and `BW2750` both allow the full Mercury
-  payload-mode ladder.
+- During an active ARQ link, control frames always use DATAC16, and the payload
+  starts at the robust end of the ladder (DATAC15), climbing through DATAC4,
+  DATAC3, DATAC1, DATAC17 and QAM16C2 as the channel allows.
+- VARA `BW500` keeps the link narrow; `BW2300` and `BW2750` allow the full
+  Mercury payload-mode ladder.
 - `CALL` advertises the local BW token and `ACCEPT` returns the negotiated
   session token. If either side uses `BW500`, the link stays narrow; `BW2750`
   is preserved in `CONNECTED ... BW` only when both peers advertise it.
@@ -249,7 +260,17 @@ See the included [mercury.ini.example](mercury.ini.example) for all available se
 
 ## Documentation
 
-Online HTML docs: https://rhizomatica.github.io/mercury/
+**[docs/](docs/README.md)** — the full index, sorted into reference (how Mercury
+works today), guides (building, signing, Reticulum, sanitizers) and findings
+(dated records of investigations and why decisions were made).
+
+The three you are most likely to want:
+
+- [docs/ARQ.md](docs/ARQ.md) — the ARQ data link, end to end
+- [docs/TNC.md](docs/TNC.md) — every TNC command, for driving Mercury from your own software
+- [docs/MODES.md](docs/MODES.md) — all modes with measured performance
+
+Rendered HTML: https://rhizomatica.github.io/mercury/
 
 ## Logging and timing traces
 
@@ -272,20 +293,59 @@ the integration architectures and configuration.
 
 ## Physical Layer
 
-Mercury v2 currently uses FreeDV modulator code developed by David Rowe. We plan to introduce other modulator modes present in Mercury v1.
+Mercury builds on the FreeDV / codec2 OFDM data modes developed by David Rowe
+and contributors, and **extends them with waveforms and link-layer techniques
+developed by Rhizomatica** for the conditions HERMES actually operates in:
+long NVIS and regional paths, marginal signal levels, and fading.
+
+Four of the modes Mercury uses are ours, not upstream:
+
+| Mode | Bandwidth | Payload | What it is for |
+|---|---|---|---|
+| **DATAC15** | 200 Hz | 30 B | Fringe data. Rate-1/3 LDPC, 3 carriers — reaches below the floor of any stock data mode |
+| **DATAC16** | 200 Hz | 14 B | Control and ACK at the fringe; the mode the whole session depends on |
+| **DATAC17** | 2100 Hz | 1180 B | Intermediate SNR, roughly 2× the goodput of DATAC1 |
+| **QAM16C2** | 2100 Hz | 1213 B | Good channels, roughly 2.9× DATAC1 |
+
+Beyond the waveforms, the link layer adds:
+
+- **HARQ with Chase combining** — a failed frame is not thrown away. Repeats are soft-combined with the original, so a frame that fails twice can still decode from the pair. At the fading cliff, where a single-shot link delivers essentially nothing, this recovers around half the frames ([measured](docs/HARQ-FINDINGS.md): 0/130 → 61/130 at −5.8 dB).
+- **Outer-loop link adaptation (OLLA)** — closes the loop on observed delivery rather than SNR estimates alone, which stops the mode ladder oscillating on a fading path.
+- **Per-mode SNR calibration**, so gear-shifting decisions are made on numbers that mean the same thing across modes.
+
+Every mode figure above is measured on a calibrated bench (Watterson fading
+channel, 100-burst trials) that reproduces the published upstream numbers
+before it is trusted for ours. See [docs/MODES.md](docs/MODES.md) for the full
+tables, methodology, and the negative results.
+
+Work continues on porting the remaining Mercury v1 modulators, including a
+32-tone MFSK mode for the deepest fringe conditions.
 
 ## Graphical Interfaces
 
-Mercury v2 has three interfaces:
-- **Built-in Fyne UI** — a single-binary GUI embedded in the engine via CGo (this repository, `gui_interface/fyne-ui/`). Shows waterfall/spectrum, telemetry, and controls. Build with `make fyne-ui` (Linux) or `make windows-installer` (Windows cross-compile).
-- **Mercury-qt** (desktop): https://github.com/Rhizomatica/mercury-qt
-- **Web-based**: located in `docs/app/` in this repository, and accessible via https://rhizomatica.github.io/mercury/app/
+Mercury has three **fully supported** interfaces. All three are maintained by
+the HERMES team and all three are first-class — pick whichever suits how you
+operate.
 
-The built-in Fyne UI's **Launch Mercury Client** button opens a chat window for
-ARQ and broadcast messaging over the modem's TCP interfaces.  The Mercury Client
-is vendored as a Go module and compiled directly into `mercury-ui` — no external binary is needed.
+**Built-in GUI (Go / Fyne)** — *the simplest way to run Mercury.*
+The engine and the interface are one binary: no separate modem process to
+start, no ports to wire up. Waterfall and spectrum, telemetry, radio and audio
+settings, and a **Mercury Client** chat window for ARQ and broadcast messaging
+built straight in. Ships as an installer on Windows, a universal `.dmg` on
+macOS, and `make fyne-ui` on Linux.
 
-Also, community interfaces also exist:
+**Web interface** — runs in a browser, nothing to install, and works against a
+Mercury running on another machine (a Raspberry Pi at the antenna, say).
+Included in `docs/app/`, or use it directly at
+https://rhizomatica.github.io/mercury/app/
+
+**Mercury-qt** — the native Qt desktop client:
+https://github.com/Rhizomatica/mercury-qt
+
+The web and Qt interfaces talk to the engine over its WebSocket interface
+(`-G`); the built-in GUI links the engine directly, so it needs no flags.
+
+Community interfaces also exist:
 - **Mercury-tk**: https://github.com/odorajbotoj/mercury-tk/
 
 ## About
