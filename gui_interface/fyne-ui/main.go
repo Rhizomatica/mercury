@@ -550,7 +550,9 @@ func main() {
 
 	// open UI log file for appending; if it fails, uiLog will be nil and logs go only to the UI
 	var uiLog *os.File
-	uiLogPath := filepath.Join(getLogDir(), "ui.log")
+	logDir := getLogDir()
+	_ = os.MkdirAll(logDir, 0755)
+	uiLogPath := filepath.Join(logDir, "ui.log")
 	uiLog, _ = os.OpenFile(uiLogPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 
 	appendLog := func(msg string) {
@@ -1265,6 +1267,17 @@ func main() {
 		}
 	}
 
+	openLogsDir := func() {
+		dir := getLogDir()
+		p := filepath.ToSlash(dir)
+		if runtime.GOOS == "windows" && !strings.HasPrefix(p, "/") {
+			p = "/" + p
+		}
+		if err := myApp.OpenURL(&url.URL{Scheme: "file", Path: p}); err != nil {
+			appendLog(fmt.Sprintf("Failed to open logs directory %s: %v\n", dir, err))
+		}
+	}
+
 	showVersionDialog := func() {
 		version, gitHash := "unknown", "unknown000"
 		state.mu.RLock()
@@ -1289,7 +1302,10 @@ func main() {
 	})
 	helpMenu := fyne.NewMenu("Help", versionItem, supportItem, mailingItem, submitIssueItem)
 
-	myWindow.SetMainMenu(fyne.NewMainMenu(remoteMenu, configMenu, helpMenu))
+	logsItem := fyne.NewMenuItem("Open logs directory", openLogsDir)
+	logsMenu := fyne.NewMenu("Logs", logsItem)
+
+	myWindow.SetMainMenu(fyne.NewMainMenu(remoteMenu, configMenu, logsMenu, helpMenu))
 
 	// Single idempotent teardown, used by both the window-close handler and the
 	// signal handler.  It runs entirely OFF the GL/main thread: SetOnClosed is
@@ -1698,18 +1714,23 @@ func netJoinHostPort(host, port string) string {
 	return net.JoinHostPort(host, port)
 }
 
+func getExeDir() string {
+	if exePath, err := os.Executable(); err == nil {
+		return filepath.Dir(exePath)
+	}
+	return "."
+}
+
 func getBaseDir() string {
 	if runtime.GOOS == "windows" {
-		if exePath, err := os.Executable(); err == nil {
-			return filepath.Dir(exePath)
-		}
+		return getExeDir()
 	}
 	return "."
 }
 
 func getLogDir() string {
-	if runtime.GOOS == "windows" {
-		return getBaseDir()
+	if runtime.GOOS == "linux" || runtime.GOOS == "windows" {
+		return filepath.Join(getExeDir(), "logs")
 	}
 	return "."
 }

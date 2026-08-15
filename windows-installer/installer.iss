@@ -62,6 +62,8 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 
 [Dirs]
 Name: "{app}"; Permissions: users-modify
+; Writable logs sub-directory: the GUI writes ui.log and mercury_engine.log here.
+Name: "{app}\logs"; Permissions: users-modify
 
 [Files]
 Source: "mercury.ini"; DestDir: "{app}"; Flags: ignoreversion; Permissions: users-modify
