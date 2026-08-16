@@ -180,8 +180,13 @@ test_radio_port: radio_io/test_radio_port.c $(UNITY_SRC) ../radio_io/radio_port.
 	$(CC) $(CFLAGS) -I../radio_io -o $@ radio_io/test_radio_port.c $(UNITY_SRC) $(LDFLAGS)
 
 # UI status wire format (embedded struct vs remote JSON must not drift)
-test_ui_status: gui_interface/test_ui_status.c $(UNITY_SRC) ../gui_interface/ui_status.c
-	$(CC) $(CFLAGS) -I../gui_interface -I../datalink_arq -I../modem -I../common -o $@ $^ $(LDFLAGS)
+# ui_status.h is a PREREQUISITE: the device-id widths under test are #defines
+# in the header, so without it make will not rebuild and the test silently
+# re-runs the previous binary (which is exactly how a mutation check passes
+# when it should fail).
+test_ui_status: gui_interface/test_ui_status.c $(UNITY_SRC) ../gui_interface/ui_status.c ../gui_interface/ui_status.h
+	$(CC) $(CFLAGS) -I../gui_interface -I../datalink_arq -I../modem -I../common -o $@ \
+	    gui_interface/test_ui_status.c $(UNITY_SRC) ../gui_interface/ui_status.c $(LDFLAGS)
 
 clean:
 	rm -f $(TEST_BINS)

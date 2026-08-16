@@ -217,7 +217,10 @@ const maxRadios = 513
 
 func readAudioDevices(kind C.ui_device_kind_t) ([]optionItem, string, bool) {
 	devs := make([]C.ui_device_t, maxAudioDevices)
-	sel := make([]C.char, 64)
+	// Sized from the engine's own constant: a device id that does not fit here
+	// is silently truncated, which is how issue #185 lost a PulseAudio node
+	// name and left the modem bound to the default card.
+	sel := make([]C.char, C.UI_DEV_ID_MAX)
 
 	n := C.mercury_ui_get_audio_devices(C.int(kind), &devs[0], C.int(len(devs)),
 		&sel[0], C.int(len(sel)))
