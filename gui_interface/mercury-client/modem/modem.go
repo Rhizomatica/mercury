@@ -117,9 +117,14 @@ func (mc *ModemClient) Connect() (err error) {
 
 	// Runs last: release the mutex, then flush the collected log lines.
 	defer func() {
+		quit := mc.quit
 		mc.mu.Unlock()
 		for _, line := range logLines {
-			mc.LogCh <- line
+			select {
+			case mc.LogCh <- line:
+			case <-quit:
+				return
+			}
 		}
 	}()
 
@@ -192,11 +197,16 @@ func (mc *ModemClient) Connect() (err error) {
 func (mc *ModemClient) SendCommand(cmd string) error {
 	mc.mu.Lock()
 	conn := mc.ARQControlConn
+	quit := mc.quit
 	mc.mu.Unlock()
 	if conn == nil {
 		return fmt.Errorf("not connected")
 	}
-	mc.LogCh <- fmt.Sprintf("TX Command: %s", cmd)
+	select {
+	case mc.LogCh <- fmt.Sprintf("TX Command: %s", cmd):
+	case <-quit:
+		return fmt.Errorf("disconnected")
+	}
 	_, err := conn.Write([]byte(cmd + "\r"))
 	return err
 }
@@ -207,6 +217,12 @@ func (mc *ModemClient) ListenOn() error {
 
 func (mc *ModemClient) ListenOff() error {
 	return mc.SendCommand("LISTEN OFF")
+}
+
+// SendCQFrame queues a one-shot CQ frame advertising the source callsign and
+// the given bandwidth (Hz).
+func (mc *ModemClient) SendCQFrame(src string, bwHz int) error {
+	return mc.SendCommand(fmt.Sprintf("CQFRAME %s %d", src, bwHz))
 }
 
 func (mc *ModemClient) ConnectARQ(src, dst string) error {
@@ -465,6 +481,12 @@ func (mc *ModemClient) dispatchControlLine(line string) {
 
 	case strings.HasPrefix(upper, "CQFRAME"):
 		mc.StatusCh <- "CQFRAME"
+
+	case strings.HasPrefix(upper, "PTT ON"):
+		mc.StatusCh <- "PTT ON"
+
+	case strings.HasPrefix(upper, "PTT OFF"):
+		mc.StatusCh <- "PTT OFF"
 	}
 
 	mc.mu.Lock()

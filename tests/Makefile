@@ -46,7 +46,7 @@ TEST_BINS = test_ring_buffer test_arq_protocol test_arq_timing test_arq_fsm \
             test_tcp_interfaces test_resampler test_pcm24 test_arq_olla test_arq_sim \
             test_arq_conn test_cfg_utils test_arq_tnc test_channel_busy \
             test_freedv_harq test_sock_wire test_virtual_clock test_watterson \
-            test_ofdm_acq test_ui_status
+            test_ofdm_acq test_ui_status test_tx_pacing test_radio_port
 
 .PHONY: all test clean
 
@@ -167,9 +167,26 @@ $(FREEDV_LIB):
 test_ofdm_acq: modem/test_ofdm_acq.c $(UNITY_SRC) $(FREEDV_LIB)
 	$(CC) $(CFLAGS) -I../modem/freedv -o $@ modem/test_ofdm_acq.c $(UNITY_SRC) $(FREEDV_LIB) $(LDFLAGS) -lm
 
+# TX burst pacing (pure header; simulated coarse timer, no sleeping).
+# tx_pacing.h is a PREREQUISITE: the logic under test lives entirely in the
+# header, so without it make will not relink and the mutation check silently
+# re-runs the previous binary.
+test_tx_pacing: modem/test_tx_pacing.c $(UNITY_SRC) ../modem/tx_pacing.h
+	$(CC) $(CFLAGS) -I../modem -o $@ modem/test_tx_pacing.c $(UNITY_SRC) $(LDFLAGS)
+
+# radio_device vs the rig's port type (pure header; no hamlib needed).
+# radio_port.h is a PREREQUISITE -- the logic under test lives in the header.
+test_radio_port: radio_io/test_radio_port.c $(UNITY_SRC) ../radio_io/radio_port.h
+	$(CC) $(CFLAGS) -I../radio_io -o $@ radio_io/test_radio_port.c $(UNITY_SRC) $(LDFLAGS)
+
 # UI status wire format (embedded struct vs remote JSON must not drift)
-test_ui_status: gui_interface/test_ui_status.c $(UNITY_SRC) ../gui_interface/ui_status.c
-	$(CC) $(CFLAGS) -I../gui_interface -I../datalink_arq -I../modem -I../common -o $@ $^ $(LDFLAGS)
+# ui_status.h is a PREREQUISITE: the device-id widths under test are #defines
+# in the header, so without it make will not rebuild and the test silently
+# re-runs the previous binary (which is exactly how a mutation check passes
+# when it should fail).
+test_ui_status: gui_interface/test_ui_status.c $(UNITY_SRC) ../gui_interface/ui_status.c ../gui_interface/ui_status.h
+	$(CC) $(CFLAGS) -I../gui_interface -I../datalink_arq -I../modem -I../common -o $@ \
+	    gui_interface/test_ui_status.c $(UNITY_SRC) ../gui_interface/ui_status.c $(LDFLAGS)
 
 clean:
 	rm -f $(TEST_BINS)

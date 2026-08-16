@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strconv"
 	"strings"
@@ -26,6 +27,7 @@ import (
 	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/dialog"
+	"fyne.io/fyne/v2/driver/desktop"
 	"fyne.io/fyne/v2/layout"
 	"fyne.io/fyne/v2/widget"
 )
@@ -100,6 +102,7 @@ type uiBindings struct {
 	// canvas texts for compact telemetry display
 	bitrateText       *canvas.Text
 	snrText           *canvas.Text
+	snrRowLabel       *canvas.Text
 	directionText     *canvas.Text
 	userCallsText     *canvas.Text
 	destCallsText     *canvas.Text
@@ -211,6 +214,80 @@ const (
 	waterfallSplitOffset = 0.60
 )
 
+const (
+	windowWidthKey  = "window.width"
+	windowHeightKey = "window.height"
+	windowXKey      = "window.x"
+	windowYKey      = "window.y"
+	windowPosSetKey = "window.positionSaved"
+
+	// defaultWindowWidth/Height match the previous hard-coded launch size and
+	// are used until the operator has resized the window once.
+	defaultWindowWidth  = 1280
+	defaultWindowHeight = 780
+)
+
+// saveWindowGeometry records the current window size and position in the app
+// preferences so the next launch can restore them.
+func saveWindowGeometry(win fyne.Window, prefs fyne.Preferences) {
+	if prefs == nil {
+		return
+	}
+	size := win.Canvas().Size()
+	if size.Width > 0 && size.Height > 0 {
+		prefs.SetFloat(windowWidthKey, float64(size.Width))
+		prefs.SetFloat(windowHeightKey, float64(size.Height))
+	}
+	if x, y, ok := windowPosition(win); ok {
+		prefs.SetInt(windowXKey, x)
+		prefs.SetInt(windowYKey, y)
+		prefs.SetBool(windowPosSetKey, true)
+	}
+}
+
+// restoreWindowGeometry applies a previously saved window size and position.
+func restoreWindowGeometry(win fyne.Window, prefs fyne.Preferences) {
+	if prefs == nil {
+		return
+	}
+	width := prefs.FloatWithFallback(windowWidthKey, defaultWindowWidth)
+	height := prefs.FloatWithFallback(windowHeightKey, defaultWindowHeight)
+	if width <= 0 {
+		width = defaultWindowWidth
+	}
+	if height <= 0 {
+		height = defaultWindowHeight
+	}
+	win.Resize(fyne.NewSize(float32(width), float32(height)))
+
+	if prefs.BoolWithFallback(windowPosSetKey, false) {
+		if dw, ok := win.(desktop.Window); ok {
+			dw.RequestPosition(prefs.Int(windowXKey), prefs.Int(windowYKey))
+		}
+	}
+}
+
+// windowPosition reads the native window position from the desktop driver's
+// concrete window. Fyne's public Window interface exposes no position getter,
+// so this reaches into the (pinned) driver struct via reflection.
+func windowPosition(win fyne.Window) (int, int, bool) {
+	v := reflect.ValueOf(win)
+	if v.Kind() != reflect.Ptr {
+		return 0, 0, false
+	}
+	v = v.Elem()
+	if v.Kind() != reflect.Struct {
+		return 0, 0, false
+	}
+	xField := v.FieldByName("xpos")
+	yField := v.FieldByName("ypos")
+	if !xField.IsValid() || !yField.IsValid() ||
+		xField.Kind() != reflect.Int || yField.Kind() != reflect.Int {
+		return 0, 0, false
+	}
+	return int(xField.Int()), int(yField.Int()), true
+}
+
 func main() {
 	// Announce the version on the terminal, just like the standalone daemon.
 	mercuryPrintVersion()
@@ -225,7 +302,7 @@ func main() {
 	// Fyne's preferences/storage have a unique identity instead of warning.
 	myApp := app.NewWithID("org.rhizomatica.mercury")
 	myWindow := myApp.NewWindow("Mercury Modem")
-	myWindow.Resize(fyne.NewSize(1280, 780))
+	restoreWindowGeometry(myWindow, myApp.Preferences())
 
 	state := &appState{wsScheme: "ws", wsHost: "127.0.0.1", wsPort: "10000",
 		waterfallPalette: myApp.Preferences().StringWithFallback("waterfallPalette", "blackblue")}
@@ -376,6 +453,11 @@ func main() {
 	snrText.TextSize = 14
 	bindings.snrText = snrText
 
+	// SNR row in the Telemetry card, shown only when the waterfall (which
+	// carries its own SNR overlay) is disabled.
+	snrRowLabel := canvas.NewText("SNR", color.NRGBA{R: 0xAA, G: 0xAA, B: 0xAA, A: 0xFF})
+	bindings.snrRowLabel = snrRowLabel
+
 	directionText := canvas.NewText("--", color.NRGBA{R: 0xDD, G: 0xDD, B: 0xDD, A: 0xFF})
 	directionText.TextSize = 13
 	bindings.directionText = directionText
@@ -518,6 +600,7 @@ func main() {
 			}
 			if bindings.snrText != nil {
 				bindings.snrText.Text = fmt.Sprintf("%.1f dB", telemetry.SNR)
+				bindings.snrText.Color = waterfallSNRColor(telemetry.SNR)
 				bindings.snrText.Refresh()
 			}
 			if bindings.directionText != nil {
@@ -571,6 +654,17 @@ func main() {
 					bindings.waterfallCard.Show()
 				} else {
 					bindings.waterfallCard.Hide()
+				}
+			}
+			// The waterfall carries its own SNR overlay, so the Telemetry SNR row
+			// is only shown when the waterfall is disabled (and thus hidden).
+			if bindings.snrRowLabel != nil && bindings.snrText != nil {
+				if telemetry.Waterfall {
+					bindings.snrRowLabel.Hide()
+					bindings.snrText.Hide()
+				} else {
+					bindings.snrRowLabel.Show()
+					bindings.snrText.Show()
 				}
 			}
 		})
@@ -852,6 +946,7 @@ func main() {
 	// compact telemetry layout matching screenshot: left labels small, right values small-bold
 	telemetryGrid := container.NewGridWithColumns(2,
 		canvas.NewText("Bitrate", color.NRGBA{R: 0xAA, G: 0xAA, B: 0xAA, A: 0xFF}), bindings.bitrateText,
+		bindings.snrRowLabel, bindings.snrText,
 		canvas.NewText("Direction", color.NRGBA{R: 0xAA, G: 0xAA, B: 0xAA, A: 0xFF}), bindings.directionText,
 		canvas.NewText("My callsign", color.NRGBA{R: 0xAA, G: 0xAA, B: 0xAA, A: 0xFF}), bindings.userCallsText,
 		canvas.NewText("Target callsign", color.NRGBA{R: 0xAA, G: 0xAA, B: 0xAA, A: 0xFF}), bindings.destCallsText,
@@ -1086,7 +1181,40 @@ func main() {
 	radioConfigItem := fyne.NewMenuItem("Radio Config", showRadioDialog)
 	waterfallItem := fyne.NewMenuItem("Waterfall", showWaterfallDialog)
 	configMenu := fyne.NewMenu("Settings", soundcardsItem, radioConfigItem, waterfallItem)
-	myWindow.SetMainMenu(fyne.NewMainMenu(remoteMenu, configMenu))
+
+	openExternalURL := func(raw string) {
+		u, err := url.Parse(raw)
+		if err != nil {
+			appendLog(fmt.Sprintf("Invalid URL: %v\n", err))
+			return
+		}
+		if err := myApp.OpenURL(u); err != nil {
+			appendLog(fmt.Sprintf("Failed to open %s: %v\n", raw, err))
+		}
+	}
+
+	showVersionDialog := func() {
+		version, gitHash := "unknown", "unknown000"
+		state.mu.RLock()
+		engLink, isEngine := state.link.(*engineLink)
+		state.mu.RUnlock()
+		if isEngine {
+			version, gitHash = engLink.Version()
+		}
+		dialog.ShowInformation("Version",
+			fmt.Sprintf("Mercury Version: %s\nGit Commit: %s", version, gitHash), myWindow)
+	}
+
+	versionItem := fyne.NewMenuItem("Version", showVersionDialog)
+	supportItem := fyne.NewMenuItem("Support Us", func() {
+		openExternalURL("https://www.paypal.com/donate/?hosted_button_id=EKY4LRAH64Z9S")
+	})
+	mailingItem := fyne.NewMenuItem("Join our mailing list", func() {
+		openExternalURL("https://lists.riseup.net/www/info/hermes-general")
+	})
+	helpMenu := fyne.NewMenu("Help", versionItem, supportItem, mailingItem)
+
+	myWindow.SetMainMenu(fyne.NewMainMenu(remoteMenu, configMenu, helpMenu))
 
 	// Single idempotent teardown, used by both the window-close handler and the
 	// signal handler.  It runs entirely OFF the GL/main thread: SetOnClosed is
@@ -1100,6 +1228,10 @@ func main() {
 	// the engine unkeys the radio and flushes on the way out.
 	var shutdownOnce sync.Once
 	shutdown := func() {
+		// Remember where and how large the window is so the next launch opens
+		// in the same place. Read before teardown: the window is still alive
+		// when SetOnClosed runs.
+		saveWindowGeometry(myWindow, myApp.Preferences())
 		shutdownOnce.Do(func() {
 			go func() {
 				go func() {

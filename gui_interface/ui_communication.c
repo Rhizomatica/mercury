@@ -47,8 +47,19 @@
 #include "../radio_io/radio_io.h"  /* RADIO_TYPE_NONE */
 #include "../radio_io/rigctl_parse.h"  /* preload_radio_list */
 
+#include "../audioio/audio_dev_limits.h"   /* AUDIO_DEV_STR_MAX */
+
+/* Hand-written rather than #include "audioio.h": that header pulls in ffbase,
+ * which is not on this file's include path. */
 extern int get_soundcard_list(int audio_system, int mode,
-                              char ids[][64], char dev_names[][64], int max_count);
+                              char ids[][AUDIO_DEV_STR_MAX], char dev_names[][AUDIO_DEV_STR_MAX],
+                              int max_count);
+
+/* The enumerator writes rows this wide and we copy them straight into
+ * ui_device_t; if the UI struct were ever the narrower of the two, long
+ * PulseAudio node names would be cut again exactly as in issue #185. */
+_Static_assert(AUDIO_DEV_STR_MAX >= UI_DEV_ID_MAX,
+               "device id rows must not be narrower than ui_device_t.id");
 
 /* Audio path health; see audioio.h.  Declared here rather than included for
  * the same reason audioio_restart is: audioio.h drags in ffbase. */
@@ -289,7 +300,7 @@ int ui_comm_get_audio_devices(ui_device_kind_t kind, ui_device_t *out, int max,
     /* get_soundcard_list() takes mode 1 = capture, 0 = playback. */
     int mode = (kind == UI_DEV_CAPTURE) ? 1 : 0;
 
-    char ids[32][64], names[32][64];
+    char ids[32][AUDIO_DEV_STR_MAX], names[32][AUDIO_DEV_STR_MAX];
     int cap = (max < 32) ? max : 32;
     int count = get_soundcard_list(ctx->audio_system, mode, ids, names, cap);
     if (count < 0)
@@ -513,7 +524,7 @@ void *ui_publisher_thread(void *arg)
 
             /* Same enumerator the embedded UI calls, rendered as JSON. */
             ui_device_t devs[32];
-            char sel[64];
+            char sel[UI_DEV_ID_MAX];
             char buf[8192];
 
             int cap_count = ui_comm_get_audio_devices(UI_DEV_CAPTURE, devs, 32, sel, sizeof(sel));
@@ -751,6 +762,20 @@ int ui_comm_init(ui_ctx_t *ctx, uint16_t ws_port, bool tls_enabled,
 void ui_comm_shutdown(ui_ctx_t *ctx)
 {
     g_ui_ctx = NULL;
+
+    // Stop and join the spectrum publisher thread before the websocket server
+    // goes down: it was made joinable for the runtime disable path, so leave
+    // no joinable thread unjoined at teardown.  Take cfg_mutex so this cannot
+    // race ui_comm_set_waterfall()'s disable path, which joins the same thread
+    // under the same lock — two pthread_join calls on one tid is undefined
+    // behaviour.  This closes the window the NOTE below describes.
+    pthread_mutex_lock(&ctx->cfg_mutex);
+    atomic_store_explicit(&ctx->spec_run, false, memory_order_relaxed);
+    if (ctx->spec_tid != 0) {
+        pthread_join(ctx->spec_tid, NULL);
+        ctx->spec_tid = 0;
+    }
+    pthread_mutex_unlock(&ctx->cfg_mutex);
 
     ws_shutdown(&ctx->ws);
     // NOTE: cfg_mutex is deliberately NOT destroyed.  ui_comm_set_waterfall

@@ -217,7 +217,10 @@ const maxRadios = 513
 
 func readAudioDevices(kind C.ui_device_kind_t) ([]optionItem, string, bool) {
 	devs := make([]C.ui_device_t, maxAudioDevices)
-	sel := make([]C.char, 64)
+	// Sized from the engine's own constant: a device id that does not fit here
+	// is silently truncated, which is how issue #185 lost a PulseAudio node
+	// name and left the modem bound to the default card.
+	sel := make([]C.char, C.UI_DEV_ID_MAX)
 
 	n := C.mercury_ui_get_audio_devices(C.int(kind), &devs[0], C.int(len(devs)),
 		&sel[0], C.int(len(sel)))
@@ -282,6 +285,25 @@ func (l *engineLink) TCPPorts() (arqBase, broadcast int) {
 	var a, b C.int
 	C.mercury_ui_get_tcp_ports(&a, &b)
 	return int(a), int(b)
+}
+
+// Version returns the engine's release version and git hash.
+func (l *engineLink) Version() (version, gitHash string) {
+	cv := make([]byte, 64)
+	cg := make([]byte, 64)
+	C.mercury_ui_get_version((*C.char)(unsafe.Pointer(&cv[0])), C.int(len(cv)),
+		(*C.char)(unsafe.Pointer(&cg[0])), C.int(len(cg)))
+	return cString(cv), cString(cg)
+}
+
+// cString converts a C buffer to a Go string, truncating at the first NUL.
+func cString(b []byte) string {
+	for i, c := range b {
+		if c == 0 {
+			return string(b[:i])
+		}
+	}
+	return string(b)
 }
 
 func (l *engineLink) Close() {}

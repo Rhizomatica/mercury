@@ -10,6 +10,7 @@
 #pragma once
 
 #include <ffbase/string.h>
+#include "audio_dev_limits.h"
 
 #include <stdio.h>
 #include <sys/types.h>
@@ -92,4 +93,4 @@ void list_soundcards(int audio_system);
 // Returns the number of devices found (up to max_count).
 // Each entry in ids[] and dev_names[] will be a NUL-terminated string.
 int get_soundcard_list(int audio_system, int mode,
-                       char ids[][64], char dev_names[][64], int max_count);
+                       char ids[][AUDIO_DEV_STR_MAX], char dev_names[][AUDIO_DEV_STR_MAX], int max_count);

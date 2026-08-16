@@ -75,8 +75,8 @@ struct ui_ctx {
 
     // Audio subsystem info for soundcard enumeration
     int audio_system;                // AUDIO_SUBSYSTEM_* constant
-    char selected_capture_dev[64];   // currently active capture (input) device
-    char selected_playback_dev[64];  // currently active playback (output) device
+    char selected_capture_dev[UI_DEV_ID_MAX];   // currently active capture (input) device
+    char selected_playback_dev[UI_DEV_ID_MAX];  // currently active playback (output) device
     int rx_input_channel;            // LEFT=0, RIGHT=1, STEREO=2
 
     // Radio list is sent once at startup and again after set_radio_config

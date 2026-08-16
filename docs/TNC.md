@@ -171,7 +171,8 @@ CONNECT <mycall> <theircall>\r
 
 **Response:** `OK\r` if the command was accepted, `WRONG\r` on error.
 
-Mercury will transmit CALL frames on DATAC13, advertising the local BW token,
+Mercury will transmit CALL frames on DATAC16 (the control mode), advertising
+the local BW token,
 and wait for an ACCEPT carrying the negotiated session BW.
 On success, the asynchronous response
 `CONNECTED <sourcecall> <destcall> <bandwidth>\r` is sent on the control port,
@@ -186,7 +187,7 @@ CONNECT AAAA BBBB\r
 
 ### CQFRAME
 
-Transmit a compact DATAC13 CQ frame.
+Transmit a compact CQ frame on the control mode (DATAC16).
 
 ```
 CQFRAME <sourcecall> <bandwidth>\r
@@ -421,7 +422,7 @@ the session, and `<destcall>` is always the station that was called.
 
 ### CQFRAME
 
-Sent when Mercury decodes a compact DATAC13 CQ frame on the air.
+Sent when Mercury decodes a compact CQ frame on the air.
 `<sourcecall>` is the transmitting station and `<bandwidth>` is the BW token
 advertised inside that CQ frame (`500`, `2300`, or `2750`).
 
