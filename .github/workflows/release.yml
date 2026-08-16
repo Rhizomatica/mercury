@@ -18,9 +18,9 @@ on:
         required: true
         type: string
       build_installer:
-        description: 'Also build+sign the Windows installer (needs Wine+Inno in the signer container)'
+        description: 'Build+sign the Windows installer (untick to ship the zip only)'
         required: false
-        default: false
+        default: true
         type: boolean
 
 jobs:
