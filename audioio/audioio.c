@@ -160,7 +160,7 @@ bool audioio_health_ok(char *reason, size_t reasonlen)
 
 static void format_device_display(int audio_subsys, int mode, const char *id, char *out, size_t outsz);
 static int get_soundcard_list_int(int audio_system, int mode,
-                                  char ids[][64], char dev_names[][64], int max_count,
+                                  char ids[][AUDIO_DEV_STR_MAX], char dev_names[][AUDIO_DEV_STR_MAX], int max_count,
                                   bool pulse_lock_held);
 
 #define NULL_AUDIO_PERIOD_MS 20
@@ -1658,7 +1658,7 @@ finish_cap:
  * owns s_pulse_lock (audioio_restart): that mutex is NOT recursive, so
  * re-taking it here self-deadlocks the process with audio already stopped. */
 static int get_soundcard_list_int(int audio_system, int mode,
-                                  char ids[][64], char dev_names[][64], int max_count,
+                                  char ids[][AUDIO_DEV_STR_MAX], char dev_names[][AUDIO_DEV_STR_MAX], int max_count,
                                   bool pulse_lock_held)
 {
     ffaudio_interface *audio = NULL;
@@ -1739,14 +1739,14 @@ static int get_soundcard_list_int(int audio_system, int mode,
         const char *name = audio->dev_info(d, FFAUDIO_DEV_NAME);
         if (id && count < max_count)
         {
-            strncpy(ids[count], id, 63);
-            ids[count][63] = '\0';
+            strncpy(ids[count], id, AUDIO_DEV_STR_MAX - 1);
+            ids[count][AUDIO_DEV_STR_MAX - 1] = '\0';
             if (name) {
-                strncpy(dev_names[count], name, 63);
-                dev_names[count][63] = '\0';
+                strncpy(dev_names[count], name, AUDIO_DEV_STR_MAX - 1);
+                dev_names[count][AUDIO_DEV_STR_MAX - 1] = '\0';
             } else {
-                strncpy(dev_names[count], id, 63);
-                dev_names[count][63] = '\0';
+                strncpy(dev_names[count], id, AUDIO_DEV_STR_MAX - 1);
+                dev_names[count][AUDIO_DEV_STR_MAX - 1] = '\0';
             }
             count++;
         }
@@ -1763,7 +1763,7 @@ static int get_soundcard_list_int(int audio_system, int mode,
 }
 
 int get_soundcard_list(int audio_system, int mode,
-                       char ids[][64], char dev_names[][64], int max_count)
+                       char ids[][AUDIO_DEV_STR_MAX], char dev_names[][AUDIO_DEV_STR_MAX], int max_count)
 {
     return get_soundcard_list_int(audio_system, mode, ids, dev_names, max_count, false);
 }
@@ -1802,8 +1802,8 @@ static void resolve_device_string(int audio_subsys, int mode, char *buf, size_t 
         audio_subsys == AUDIO_SUBSYSTEM_FIFO || audio_subsys == AUDIO_SUBSYSTEM_SOCK)
         return;
 
-    char ids[DEVICE_RESOLVE_MAX][64];
-    char names[DEVICE_RESOLVE_MAX][64];
+    char ids[DEVICE_RESOLVE_MAX][AUDIO_DEV_STR_MAX];
+    char names[DEVICE_RESOLVE_MAX][AUDIO_DEV_STR_MAX];
     int n = get_soundcard_list_int(audio_subsys, mode, ids, names, DEVICE_RESOLVE_MAX, pulse_lock_held);
     if (n <= 0)
         return;
@@ -1871,8 +1871,8 @@ static void format_device_display(int audio_subsys, int mode, const char *id, ch
         return;
     }
 
-    char ids[DEVICE_RESOLVE_MAX][64];
-    char names[DEVICE_RESOLVE_MAX][64];
+    char ids[DEVICE_RESOLVE_MAX][AUDIO_DEV_STR_MAX];
+    char names[DEVICE_RESOLVE_MAX][AUDIO_DEV_STR_MAX];
     int n = get_soundcard_list(audio_subsys, mode, ids, names, DEVICE_RESOLVE_MAX);
     for (int i = 0; i < n; i++) {
         if (strcmp(id, ids[i]) == 0) {
