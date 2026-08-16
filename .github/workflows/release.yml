@@ -18,9 +18,9 @@ on:
         required: true
         type: string
       build_installer:
-        description: 'Also build+sign the Windows installer (needs Wine+Inno in the signer container)'
+        description: 'Build+sign the Windows installer (untick to ship the zip only)'
         required: false
-        default: false
+        default: true
         type: boolean
 
 jobs:
@@ -163,30 +163,6 @@ jobs:
             apt-get install -y --no-install-recommends $PKGS
           fi
 
-      - name: Sign binaries
-        env:
-          CERTUM_EMAIL:   ${{ secrets.CERTUM_EMAIL }}
-          CERTUM_OTP_URI: ${{ secrets.CERTUM_OTP_URI }}
-        run: |
-          code-signing/sign.sh mercury.exe windows-installer/mercury-ui.exe
-          code-signing/sign-logout.sh
-
-      - name: Verify signatures
-        run: |
-          # osslsigncode is not baked into the certum-signer image; install it
-          # for the verification pass (the signing itself uses jsign).
-          command -v osslsigncode >/dev/null || \
-            { apt-get update && apt-get install -y --no-install-recommends osslsigncode; }
-          for f in mercury.exe windows-installer/mercury-ui.exe; do
-            osslsigncode verify "$f" || { echo "::error::Signature verification failed for $f"; exit 1; }
-          done
-
-      # ---- Installer: pack the SIGNED payloads, then sign the installer ----
-      # Order matters. ISCC packs whatever is staged, so signing only the
-      # finished Setup.exe would ship a signed installer that installs unsigned
-      # programs. The payloads above are already signed; stage them without
-      # rebuilding (windows-installer-stage has no toolchain dependency, and a
-      # rebuild here would discard those signatures anyway).
       - name: Install Inno Setup (Wine)
         if: ${{ inputs.build_installer }}
         env:
@@ -225,6 +201,36 @@ jobs:
           [ -f "$ISCC_PATH" ] || { echo "::error::Inno Setup tree missing ISCC.exe"; exit 1; }
           echo "ISCC_PATH=$ISCC_PATH" >> "$GITHUB_ENV"
 
+      - name: Sign binaries
+        env:
+          CERTUM_EMAIL:   ${{ secrets.CERTUM_EMAIL }}
+          CERTUM_OTP_URI: ${{ secrets.CERTUM_OTP_URI }}
+        run: |
+          # No logout here.  sign.sh reuses a live session ("session already
+          # live -- reusing"), and the installer is signed later in this same
+          # job.  Logging out in between forced a SECOND SimplySign login,
+          # which is what failed on the 1.9.12 attempt: the first login worked,
+          # the second never rendered its form ("login window did not appear",
+          # with a Critical error dialog left on :99).  One login per job.
+          # The teardown is the always() step at the end.
+          code-signing/sign.sh mercury.exe windows-installer/mercury-ui.exe
+
+      - name: Verify signatures
+        run: |
+          # osslsigncode is not baked into the certum-signer image; install it
+          # for the verification pass (the signing itself uses jsign).
+          command -v osslsigncode >/dev/null || \
+            { apt-get update && apt-get install -y --no-install-recommends osslsigncode; }
+          for f in mercury.exe windows-installer/mercury-ui.exe; do
+            osslsigncode verify "$f" || { echo "::error::Signature verification failed for $f"; exit 1; }
+          done
+
+      # ---- Installer: pack the SIGNED payloads, then sign the installer ----
+      # Order matters. ISCC packs whatever is staged, so signing only the
+      # finished Setup.exe would ship a signed installer that installs unsigned
+      # programs. The payloads above are already signed; stage them without
+      # rebuilding (windows-installer-stage has no toolchain dependency, and a
+      # rebuild here would discard those signatures anyway).
       - name: Build and sign the installer
         if: ${{ inputs.build_installer }}
         env:
@@ -236,8 +242,7 @@ jobs:
           wine "$ISCC_PATH" windows-installer/installer.iss
           SETUP=$(ls Mercury_*_Setup.exe | head -1)
           [ -n "$SETUP" ] || { echo "::error::ISCC produced no installer"; exit 1; }
-          code-signing/sign.sh "$SETUP"
-          code-signing/sign-logout.sh
+          code-signing/sign.sh "$SETUP"   # reuses the session opened above
           osslsigncode verify "$SETUP" || {
             echo "::error::Installer signature verification failed"; exit 1; }
           echo "SETUP_EXE=$SETUP" >> "$GITHUB_ENV"
@@ -264,6 +269,16 @@ jobs:
         with:
           name: windows-signed
           path: mercury-${{ inputs.version }}-w64-*.zip
+
+      # One login per job means one logout, and it has to happen even when a
+      # step above failed -- otherwise a failed run leaves the cloud session
+      # open.  always(), and never fail the job on the teardown itself.
+      - name: Close the SimplySign session
+        if: always()
+        env:
+          CERTUM_EMAIL:   ${{ secrets.CERTUM_EMAIL }}
+          CERTUM_OTP_URI: ${{ secrets.CERTUM_OTP_URI }}
+        run: code-signing/sign-logout.sh || true
 
       # Screenshots and window lists live on the runner; without this they are
       # thrown away with the container, which is exactly when they are wanted.
