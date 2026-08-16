@@ -92,7 +92,7 @@ func TestMercuryARQTransfer(t *testing.T) {
 
 	startInstance := func(name, rxPath, txPath string, port, bcastPort int) (*exec.Cmd, *processWait, *os.File, *os.File) {
 		stdout, stderr := tempLogFilesNamed(t, name)
-		cmd := exec.CommandContext(ctx, bin,
+		args := []string{
 			"-x", "fifo",
 			"-i", rxPath,
 			"-o", txPath,
@@ -100,7 +100,14 @@ func TestMercuryARQTransfer(t *testing.T) {
 			"-b", fmt.Sprint(bcastPort),
 			"-m", "1",
 			"-C", filepath.Join(t.TempDir(), "missing-mercury.ini"),
-		)
+		}
+		// MERCURY_TEST_VERBOSE=1 runs both peers at DEBUG.  Off by default:
+		// the ARQ/modem traces are what you need to see which mode a stalled
+		// transfer died on, but they are far too noisy for a normal CI run.
+		if os.Getenv("MERCURY_TEST_VERBOSE") == "1" {
+			args = append(args, "-v")
+		}
+		cmd := exec.CommandContext(ctx, bin, args...)
 		cmd.Dir = repoRoot
 		cmd.Stdout = stdout
 		cmd.Stderr = stderr
