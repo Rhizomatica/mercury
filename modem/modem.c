@@ -364,13 +364,31 @@ static inline int32_t tx_sample_with_gain(int16_t sample, float gain, float *pea
 #define RX_TX_DRAIN_SAMPLES 160
 #define RX_DECODE_CHUNK_SAMPLES 160
 #define RX_IDLE_SLEEP_US 5000
-/* Max RX capture backlog before flushing stale audio (~2 s @ 8 kHz). Caps
- * decode latency and stops an unbounded backlog on low-power cores that
- * decode slower than real time (issue #81 follow-up). */
-#define RX_MAX_BACKLOG_SAMPLES 16000
-/* Per-plane decoder ring: 2 s of 8 kHz int16, matching the capture backlog cap
- * above so a stalled worker is bounded by its own ring, not by the dispatcher. */
-#define RX_WORKER_RING_BYTES   (16000 * (int)sizeof(int16_t))
+/* Floor for the RX capture backlog cap and the per-plane decoder rings: 2 s of
+ * 8 kHz audio.  Both are raised at runtime to hold the ladder's longest burst
+ * (see rx_burst_capacity_samples) -- 2 s alone is SHORTER THAN A SINGLE FRAME
+ * of every payload mode we ship (DATAC15 4.4 s, DATAC4 5.8 s, DATAC17 7.4 s),
+ * so a decoder that fell even slightly behind had its burst truncated and
+ * could never resync on it.  Only DATAC16 control frames (3.74 s) came close
+ * to fitting, which is why an affected link shows healthy control traffic and
+ * a dead payload plane.
+ *
+ * The cap still exists for the reason it was added (issue #81: unbounded
+ * decode latency on cores slower than real time) -- it is now just set to the
+ * smallest value that cannot destroy a burst that is still arriving. */
+#define RX_BACKLOG_FLOOR_SAMPLES 16000
+/* Margin over the longest burst: covers the inter-burst guard plus scheduling
+ * jitter, so a burst that arrives while the worker is briefly descheduled is
+ * still held whole. */
+#define RX_BURST_GUARD_S 3.0f
+
+/* Samples the RX side must be able to hold: the ladder's longest burst plus
+ * guard, never less than the 2 s floor. */
+static int rx_burst_capacity_samples(void)
+{
+    int need = (int)((arq_protocol_longest_burst_s() + RX_BURST_GUARD_S) * 8000.0f);
+    return (need > RX_BACKLOG_FLOOR_SAMPLES) ? need : RX_BACKLOG_FLOOR_SAMPLES;
+}
 
 typedef struct {
     struct freedv *datac1;
@@ -2084,8 +2102,9 @@ void *rx_thread(void *g_modem)
     /* Two seconds of 8 kHz int16 per plane: the same order as the capture
      * backlog cap, so a stalled worker is bounded by its own ring rather than
      * by starving the other plane. */
-    w_ctrl.ring = circular_buf_init((uint8_t *)malloc(RX_WORKER_RING_BYTES), RX_WORKER_RING_BYTES);
-    w_pay.ring  = circular_buf_init((uint8_t *)malloc(RX_WORKER_RING_BYTES), RX_WORKER_RING_BYTES);
+    int ring_bytes = rx_burst_capacity_samples() * (int)sizeof(int16_t);
+    w_ctrl.ring = circular_buf_init((uint8_t *)malloc(ring_bytes), ring_bytes);
+    w_pay.ring  = circular_buf_init((uint8_t *)malloc(ring_bytes), ring_bytes);
     if (!w_ctrl.ring || !w_pay.ring)
     {
         HLOGE("modem-rx", "could not allocate decoder rings; RX disabled");
@@ -2200,13 +2219,14 @@ void *rx_thread(void *g_modem)
          * audio is never past a deadline — and the transport backpressures the
          * sim to keep the backlog bounded, so flushing would just destroy
          * valid RX samples. */
+        int backlog_cap = rx_burst_capacity_samples();
         if (!virtual_clock_enabled() &&
             size_buffer(capture_buffer) >
-            (size_t)RX_MAX_BACKLOG_SAMPLES * sizeof(int32_t))
+            (size_t)backlog_cap * sizeof(int32_t))
         {
             HLOGW("modem-rx",
                   "RX backlog exceeded ~%d s cap; flushing stale audio to catch up",
-                  RX_MAX_BACKLOG_SAMPLES / 8000);
+                  backlog_cap / 8000);
             clear_buffer(capture_buffer);
             /* A flush must reach the workers' rings too, or stale audio the
              * dispatcher already handed on would still be decoded -- the S1

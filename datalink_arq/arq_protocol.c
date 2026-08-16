@@ -118,6 +118,19 @@ const arq_mode_timing_t *arq_protocol_mode_timing(int freedv_mode)
     return NULL;
 }
 
+float arq_protocol_longest_burst_s(void)
+{
+    float longest_s = 0.0f;
+    for (int i = 0; i < arq_mode_table_count; i++)
+    {
+        float burst_s = arq_mode_table[i].frame_duration_s;
+        if (burst_s > longest_s)
+            longest_s = burst_s;
+    }
+    /* Unreadable table: fall back to the slowest rung we ship (DATAC17). */
+    return (longest_s > 0.0f) ? longest_s : 7.4f;
+}
+
 float arq_protocol_call_interval_s(void)
 {
     float override = atomic_load(&arq_callint_override_s);
