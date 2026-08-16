@@ -35,6 +35,47 @@ mercury (1.9.12-1) unstable; urgency=medium
   * audioio/ui: move the device-enumeration arrays off the stack.
   * modem: size the RX buffers from the ladder, not a fixed 2 s.
   * release: make the Windows installer step actually work.
+  * release: one SimplySign session per job, and build the installer by default.
+
+ -- Rafael Diniz <rafael@riseup.net>  Sun, 16 Aug 2026 18:59:27 +0000
+
+mercury (1.9.12-1) unstable; urgency=medium
+
+  * Release 1.9.12.
+  * installer: shortcut name cannot contain "/" — it aborts Setup on Windows.
+  * Fix coreaudio device id mismatch on macOS.
+  * channel: enable the busy detector by default, deliver BUSY like other state.
+  * arq/fsm: defer LISTEN OFF during grace period after PENDING.
+  * audioio: add mutex for PulseAudio to avoid race conditions.
+  * audioio: fix segfault on UI connect when a PulseAudio device has no description (#150).
+  * gui: drive the embedded UI through CGo, behind a transport-agnostic Link.
+  * arq/tnc: send REGISTERED <callsign> when both callsign set and listening.
+  * build: drop the redundant SAN_LDFLAGS from freedv and utils link lines.
+  * channel: busy detector back to opt-in, and never during a session.
+  * Add configurable tx_delay_ms.
+  * 1.9.12: callsign truncation, CALL retry anchor, Watterson double, acquire/decode instrument.
+  * audioio: enable the OSS backend on Linux (OSSv4), and fix device selection around it.
+  * audioio: pre-fault the OSS capture buffer (fixes sporadic EFAULT from osscore).
+  * Revert #166: the OSS EFAULT pre-fault was based on a wrong diagnosis.
+  * audioio: ask OSS for the buffer geometry before setting the format.
+  * audioio: read OSS capture a fragment at a time.
+  * ofdm: FFT-based burst acquisition — 2.2x less idle RX CPU, identical sensitivity (#162).
+  * modem: run the two OFDM decoders in parallel, one thread each.
+  * audioio: do not leak the OSS buffer when open() is retried.
+  * fyne-ui-v2: Mercury Client chat window, waterfall palette & toggle, UI polish.
+  * Follow-up fixes for fyne-ui-v2 (PR #174 review comments).
+  * modem: show the waterfall while transmitting.
+  * audioio: report a failed sound card instead of dying quietly.
+  * macos: version-stamp the .dmg, ship the CLI in it, and sign with rcodesign.
+  * Add SignPath trial workflow and update artifact configurations.
+  * radio_io: say when radio_device is the wrong kind of port for the rig (#179).
+  * Fyne UI refinements: window geometry persistence, Telemetry SNR, menu & chat window polish.
+  * Mercury client: bandwidth toggle and Send CQ Frame.
+  * docs: lead with what Mercury is, add a docs index, and correct the control mode.
+  * audioio: stop cutting long audio device names at 63 characters (#185).
+  * audioio/ui: move the device-enumeration arrays off the stack.
+  * modem: size the RX buffers from the ladder, not a fixed 2 s.
+  * release: make the Windows installer step actually work.
 
  -- Rafael Diniz <rafael@riseup.net>  Sun, 16 Aug 2026 18:15:22 +0000
 
