@@ -12,7 +12,7 @@
 /* The release version string.  The Makefile also reads this line
  * (grep 'define MERCURY_VERSION') to name release artifacts, so keep the
  * "..." form on one line. */
-#define MERCURY_VERSION "1.9.11"
+#define MERCURY_VERSION "1.9.12"
 
 /* GIT_HASH is injected by the build via -DGIT_HASH (see config.mk).  It is
  * resolved in the including translation unit, so any unit that is rebuilt when
