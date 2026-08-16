@@ -85,8 +85,15 @@ jobs:
         run: |
           git remote set-url origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}.git"
           git add debian/changelog main.c common/mercury_version.h mercury.1 windows-installer/installer.iss
-          git commit -m "Updates for release ${{ inputs.version }}"
-          git push origin mercuryv2
+          # Idempotent: a re-run after a later job failed finds the bump already
+          # committed, and `git commit` with nothing staged exits non-zero and
+          # would fail the whole release for no reason.
+          if git diff --cached --quiet; then
+            echo "version files already at ${{ inputs.version }}; nothing to commit"
+          else
+            git commit -m "Updates for release ${{ inputs.version }}"
+            git push origin mercuryv2
+          fi
 
   # ---- Build unsigned Windows zip ----
   build:
@@ -187,8 +194,12 @@ jobs:
           INNO_SHA256: 4c9c92249663f201a33bf194c0cd37e01c60540e299c771f3626411ef463c884
         run: |
           set -eu
+          # ISCC.exe is a 32-bit program: without wine32 the loader reports
+          # "it looks like wine32 is missing" and exits non-zero.  We are root
+          # inside the signer container, so no sudo.
+          dpkg --add-architecture i386
           apt-get update
-          apt-get install -y --no-install-recommends wine ca-certificates curl
+          apt-get install -y --no-install-recommends wine wine32:i386 ca-certificates curl
           # A prepared Inno Setup tree rather than running its GUI installer under
           # Wine on every release: no display needed, no silent-install that can
           # half-succeed, and the exact same compiler every time.  ISCC is a
@@ -201,8 +212,13 @@ jobs:
           # turned up.
           curl -fsSLo /tmp/inno.tar.gz "$INNO_URL"
           echo "${INNO_SHA256}  /tmp/inno.tar.gz" | sha256sum -c -
+          # $HOME is /github/home in a container job and is not owned by the
+          # user wine runs as ("refusing to create a configuration directory
+          # there"), so give wine a prefix it owns.
+          export WINEPREFIX=/tmp/wineprefix
+          echo "WINEPREFIX=$WINEPREFIX" >> "$GITHUB_ENV"
           wineboot -i
-          PF="$HOME/.wine/drive_c/Program Files (x86)"
+          PF="$WINEPREFIX/drive_c/Program Files (x86)"
           mkdir -p "$PF"
           tar xzf /tmp/inno.tar.gz -C "$PF/"
           ISCC_PATH="$PF/Inno Setup 6/ISCC.exe"
