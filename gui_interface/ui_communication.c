@@ -300,7 +300,17 @@ int ui_comm_get_audio_devices(ui_device_kind_t kind, ui_device_t *out, int max,
     /* get_soundcard_list() takes mode 1 = capture, 0 = playback. */
     int mode = (kind == UI_DEV_CAPTURE) ? 1 : 0;
 
-    char ids[32][AUDIO_DEV_STR_MAX], names[32][AUDIO_DEV_STR_MAX];
+    /* Heap: 32 rows x AUDIO_DEV_STR_MAX x 2 arrays is 16 KB, and this is
+     * called from the websocket publisher thread, whose stack is 512 KB by
+     * default on macOS. */
+    char (*ids)[AUDIO_DEV_STR_MAX]   = malloc(sizeof(*ids)   * 32);
+    char (*names)[AUDIO_DEV_STR_MAX] = malloc(sizeof(*names) * 32);
+    if (!ids || !names) {
+        free(ids); free(names);
+        HLOGE(UI_LOG_TAG, "out of memory enumerating audio devices");
+        return 0;
+    }
+
     int cap = (max < 32) ? max : 32;
     int count = get_soundcard_list(ctx->audio_system, mode, ids, names, cap);
     if (count < 0)
@@ -318,6 +328,9 @@ int ui_comm_get_audio_devices(ui_device_kind_t kind, ui_device_t *out, int max,
         snprintf(selected, sel_len, "%s",
                  (kind == UI_DEV_CAPTURE) ? ctx->selected_capture_dev
                                           : ctx->selected_playback_dev);
+
+    free(ids);
+    free(names);
     return count;
 }
 
@@ -522,20 +535,32 @@ void *ui_publisher_thread(void *arg)
         {
             ctx->soundcard_list_pending = 0;
 
-            /* Same enumerator the embedded UI calls, rendered as JSON. */
-            ui_device_t devs[32];
+            /* Same enumerator the embedded UI calls, rendered as JSON.
+             * devs[] and the JSON scratch go on the heap: 32 ui_device_t is
+             * 16 KB and buf another 8 KB, which is a lot to put on a thread
+             * stack that is 512 KB by default on macOS. */
+            ui_device_t *devs = malloc(sizeof(*devs) * 32);
+            char *buf = malloc(8192);
             char sel[UI_DEV_ID_MAX];
-            char buf[8192];
 
-            int cap_count = ui_comm_get_audio_devices(UI_DEV_CAPTURE, devs, 32, sel, sizeof(sel));
-            if (cap_count > 0 &&
-                ui_device_list_to_json("capture_dev_list", devs, cap_count, sel, buf, sizeof(buf)) > 0)
-                ws_broadcast_json(&ctx->ws, buf);
+            if (devs && buf)
+            {
+                int cap_count = ui_comm_get_audio_devices(UI_DEV_CAPTURE, devs, 32, sel, sizeof(sel));
+                if (cap_count > 0 &&
+                    ui_device_list_to_json("capture_dev_list", devs, cap_count, sel, buf, 8192) > 0)
+                    ws_broadcast_json(&ctx->ws, buf);
 
-            int pb_count = ui_comm_get_audio_devices(UI_DEV_PLAYBACK, devs, 32, sel, sizeof(sel));
-            if (pb_count > 0 &&
-                ui_device_list_to_json("playback_dev_list", devs, pb_count, sel, buf, sizeof(buf)) > 0)
-                ws_broadcast_json(&ctx->ws, buf);
+                int pb_count = ui_comm_get_audio_devices(UI_DEV_PLAYBACK, devs, 32, sel, sizeof(sel));
+                if (pb_count > 0 &&
+                    ui_device_list_to_json("playback_dev_list", devs, pb_count, sel, buf, 8192) > 0)
+                    ws_broadcast_json(&ctx->ws, buf);
+            }
+            else
+            {
+                HLOGE(UI_LOG_TAG, "out of memory building the audio device list");
+            }
+            free(devs);
+            free(buf);
 
             // Input channel selection
             const char *ch_str;

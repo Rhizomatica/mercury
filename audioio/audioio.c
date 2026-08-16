@@ -1802,23 +1802,39 @@ static void resolve_device_string(int audio_subsys, int mode, char *buf, size_t 
         audio_subsys == AUDIO_SUBSYSTEM_FIFO || audio_subsys == AUDIO_SUBSYSTEM_SOCK)
         return;
 
-    char ids[DEVICE_RESOLVE_MAX][AUDIO_DEV_STR_MAX];
-    char names[DEVICE_RESOLVE_MAX][AUDIO_DEV_STR_MAX];
-    int n = get_soundcard_list_int(audio_subsys, mode, ids, names, DEVICE_RESOLVE_MAX, pulse_lock_held);
-    if (n <= 0)
+    /* Heap, not stack: DEVICE_RESOLVE_MAX x AUDIO_DEV_STR_MAX is 16 KB per
+     * array, and this runs on secondary threads whose default stack is only
+     * 512 KB on macOS.  Two 16 KB frames are survivable but pointless -- the
+     * enumeration allocates far more internally anyway. */
+    char (*ids)[AUDIO_DEV_STR_MAX]   = malloc(sizeof(*ids)   * DEVICE_RESOLVE_MAX);
+    char (*names)[AUDIO_DEV_STR_MAX] = malloc(sizeof(*names) * DEVICE_RESOLVE_MAX);
+    if (!ids || !names) {
+        free(ids); free(names);
+        HLOGE(log_tag, "out of memory enumerating audio devices");
         return;
+    }
+    int n = get_soundcard_list_int(audio_subsys, mode, ids, names, DEVICE_RESOLVE_MAX, pulse_lock_held);
+    if (n <= 0) {
+        free(ids); free(names);
+        return;
+    }
 
     if (want_default) {
         snprintf(buf, bufsz, "%s", ids[0]);
         HLOGI(log_tag, "using default %s device '%s' (%s)",
               (mode == FFAUDIO_DEV_CAPTURE) ? "capture" : "playback", ids[0], names[0]);
-        return;
+        goto done;
     }
 
+    bool already_native = false;
     for (int i = 0; i < n; i++) {
-        if (strcmp(buf, ids[i]) == 0)
-            return;  // already a valid native id
+        if (strcmp(buf, ids[i]) == 0) {
+            already_native = true;   // already a valid native id
+            break;
+        }
     }
+    if (already_native)
+        goto done;
 
     /* Count ALL exact matches rather than stopping at the first: identical
      * display names are common (two of the same USB codec, or a card and its
@@ -1858,6 +1874,10 @@ static void resolve_device_string(int audio_subsys, int mode, char *buf, size_t 
         HLOGI(log_tag, "device '%s' is not in the enumerated list -- passing it to the "
                        "driver as given (-z lists the enumerated devices)", buf);
     }
+
+done:
+    free(ids);
+    free(names);
 }
 
 /* Format "<id> '<name>'" for a resolved native device id, for display in
@@ -1871,16 +1891,25 @@ static void format_device_display(int audio_subsys, int mode, const char *id, ch
         return;
     }
 
-    char ids[DEVICE_RESOLVE_MAX][AUDIO_DEV_STR_MAX];
-    char names[DEVICE_RESOLVE_MAX][AUDIO_DEV_STR_MAX];
+    /* Heap for the same reason as resolve_device_string() above. */
+    char (*ids)[AUDIO_DEV_STR_MAX]   = malloc(sizeof(*ids)   * DEVICE_RESOLVE_MAX);
+    char (*names)[AUDIO_DEV_STR_MAX] = malloc(sizeof(*names) * DEVICE_RESOLVE_MAX);
+    if (!ids || !names) {
+        free(ids); free(names);
+        snprintf(out, outsz, "%s", id);
+        return;
+    }
+
     int n = get_soundcard_list(audio_subsys, mode, ids, names, DEVICE_RESOLVE_MAX);
     for (int i = 0; i < n; i++) {
         if (strcmp(id, ids[i]) == 0) {
             snprintf(out, outsz, "%s '%s'", id, names[i]);
+            free(ids); free(names);
             return;
         }
     }
 
+    free(ids); free(names);
     snprintf(out, outsz, "%s", id);
 }
 
