@@ -46,7 +46,7 @@ TEST_BINS = test_ring_buffer test_arq_protocol test_arq_timing test_arq_fsm \
             test_tcp_interfaces test_resampler test_pcm24 test_arq_olla test_arq_sim \
             test_arq_conn test_cfg_utils test_arq_tnc test_channel_busy \
             test_freedv_harq test_sock_wire test_virtual_clock test_watterson \
-            test_ofdm_acq test_ui_status test_tx_pacing test_radio_port
+            test_ofdm_acq test_ui_status test_ui_devices test_tx_pacing test_radio_port
 
 .PHONY: all test clean
 
@@ -187,6 +187,16 @@ test_radio_port: radio_io/test_radio_port.c $(UNITY_SRC) ../radio_io/radio_port.
 test_ui_status: gui_interface/test_ui_status.c $(UNITY_SRC) ../gui_interface/ui_status.c ../gui_interface/ui_status.h
 	$(CC) $(CFLAGS) -I../gui_interface -I../datalink_arq -I../modem -I../common -o $@ \
 	    gui_interface/test_ui_status.c $(UNITY_SRC) ../gui_interface/ui_status.c $(LDFLAGS)
+
+# UI device labelling (issue #189: two identical-looking USB codecs).
+# ui_communication.h/ui_status.h are PREREQUISITES: the behaviour under test is
+# in ui_devices.c but the types are in the headers, and without them make will
+# not relink and a mutation check silently re-runs the previous binary.
+test_ui_devices: gui_interface/test_ui_devices.c $(UNITY_SRC) \
+                 ../gui_interface/ui_devices.c ../gui_interface/ui_communication.h \
+                 ../gui_interface/ui_status.h
+	$(CC) $(CFLAGS) -I../gui_interface -I../datalink_arq -I../modem -I../common -o $@ \
+	    gui_interface/test_ui_devices.c $(UNITY_SRC) ../gui_interface/ui_devices.c $(LDFLAGS)
 
 clean:
 	rm -f $(TEST_BINS)
