@@ -61,10 +61,29 @@ void ui_devices_disambiguate(ui_device_t *devs, int count)
         if (!needs_id[i] || devs[i].id[0] == '\0')
             continue;
 
-        /* Distinct ids can share a long prefix, so the id goes on whole and
-         * snprintf bounds it. */
+        /* The id is the part that distinguishes these entries, so it is the
+         * part that must survive.  Appending it and letting snprintf trim the
+         * result would truncate from the RIGHT, cutting the id — and two ids
+         * that differ only past the cut then produce byte-identical labels
+         * again, silently undoing this whole function.  Give the id its full
+         * width and spend whatever is left on the name. */
         char label[UI_DEV_NAME_MAX];
-        snprintf(label, sizeof(label), "%s [%s]", devs[i].name, devs[i].id);
+        const size_t cap = sizeof(label);          /* includes the NUL */
+        const size_t idl = strlen(devs[i].id);
+        const size_t deco = 3;                      /* " [" and "]" */
+
+        if (idl + deco + 1 <= cap)
+        {
+            snprintf(label, cap, "%.*s [%s]",
+                     (int)(cap - 1 - deco - idl), devs[i].name, devs[i].id);
+        }
+        else
+        {
+            /* Pathological: the id alone overflows the field.  Drop the name
+             * entirely and keep the id's TAIL — a truncated head is what ids
+             * share, a tail is where they differ. */
+            snprintf(label, cap, "[%s]", devs[i].id + (idl - (cap - deco)));
+        }
         snprintf(devs[i].name, sizeof(devs[i].name), "%s", label);
     }
 
