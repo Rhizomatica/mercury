@@ -147,7 +147,7 @@ func parseStatusMessage(payload []byte) (telemetryState, error) {
 		// than nagging with a spurious "device error" popup.
 		status.AudioOk = true
 	}
-	status.AudioError = fmt.Sprint(raw["audio_error"])
+	status.AudioError = toString(raw["audio_error"])
 	return status, nil
 }
 
@@ -204,6 +204,16 @@ func toBool(v any) bool {
 	default:
 		return false
 	}
+}
+
+// toString renders a JSON value as a string, but unlike fmt.Sprint it maps a
+// missing field (nil) to "" rather than "<nil>" — the caller wants an empty
+// string when the field is absent, not a literal "<nil>" to show the operator.
+func toString(v any) string {
+	if v == nil {
+		return ""
+	}
+	return fmt.Sprint(v)
 }
 
 // runOnUI runs fn on Fyne's main goroutine. Fyne v2.6+ requires all widget
