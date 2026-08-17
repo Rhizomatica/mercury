@@ -208,8 +208,10 @@ void test_ratio_for_rate_rejected(void)
      * tone measured 166.8 Hz on a device pinned to 8 kHz).  Refusing is the
      * whole point; the operator's fix is plughw:X,Y, which lets ALSA convert.
      *
-     * If support for these is ever wanted, it means a genuine rational
-     * resampler, not relaxing this check. */
+     * These rates ARE supported now, by the rational engine (resamp_rat_*),
+     * which is the "genuine rational resampler" this comment used to ask for.
+     * The integer engine must still refuse them: relaxing this check is what
+     * would approximate the ratio, and that is the failure above. */
     TEST_ASSERT_EQUAL_INT(0, resampler_ratio_for_rate(44100));
     TEST_ASSERT_EQUAL_INT(0, resampler_ratio_for_rate(22050));
     TEST_ASSERT_EQUAL_INT(0, resampler_ratio_for_rate(11025));
@@ -390,6 +392,201 @@ void test_circular_history_matches_naive_shift(void)
     }
 }
 
+/* ======================================================================
+ * Rational engine (issue #193)
+ * ====================================================================== */
+
+/* Correlate against a probe tone; returns amplitude at that frequency. */
+static double tone_amp(const int32_t *x, int n, double f, double fs)
+{
+    double re = 0, im = 0;
+    for (int i = 0; i < n; i++) {
+        double a = 2.0 * M_PI * f * i / fs;
+        re += x[i] * cos(a);
+        im -= x[i] * sin(a);
+    }
+    return 2.0 * sqrt(re * re + im * im) / n;
+}
+
+static void fill_tone(int32_t *x, int n, double f, double fs, double amp)
+{
+    for (int i = 0; i < n; i++)
+        x[i] = (int32_t)(amp * sin(2.0 * M_PI * f * i / fs));
+}
+
+/* The rates a sound card actually reports.  44.1 kHz is the one from #193:
+ * a Windows card left at 44100 could not be used at all, because Windows has
+ * no equivalent of ALSA's plug layer to convert on the way in. */
+void test_rational_rate_support(void)
+{
+    TEST_ASSERT_TRUE(resampler_rate_supported(44100));
+    TEST_ASSERT_TRUE(resampler_rate_supported(22050));
+    TEST_ASSERT_TRUE(resampler_rate_supported(11025));
+    TEST_ASSERT_TRUE(resampler_rate_supported(88200));
+    TEST_ASSERT_TRUE(resampler_rate_supported(176400));
+    TEST_ASSERT_TRUE(resampler_rate_supported(192000));  /* integer, but L=24 */
+    TEST_ASSERT_TRUE(resampler_rate_supported(48000));
+
+    TEST_ASSERT_FALSE(resampler_rate_supported(44101));
+    TEST_ASSERT_FALSE(resampler_rate_supported(0));
+    TEST_ASSERT_FALSE(resampler_rate_supported(-48000));
+}
+
+/* The whole 44.1 kHz family reduces to M = 441 against the 8 kHz modem. */
+void test_rational_ratios_are_lowest_terms(void)
+{
+    int L = 0, M = 0;
+    TEST_ASSERT_TRUE(resampler_rational_for(44100, 8000, &L, &M));
+    TEST_ASSERT_EQUAL_INT(80, L);   TEST_ASSERT_EQUAL_INT(441, M);
+
+    TEST_ASSERT_TRUE(resampler_rational_for(8000, 44100, &L, &M));
+    TEST_ASSERT_EQUAL_INT(441, L);  TEST_ASSERT_EQUAL_INT(80, M);
+
+    TEST_ASSERT_TRUE(resampler_rational_for(22050, 8000, &L, &M));
+    TEST_ASSERT_EQUAL_INT(160, L);  TEST_ASSERT_EQUAL_INT(441, M);
+
+    /* An integer rate still reduces, it just lands on M == 1. */
+    TEST_ASSERT_TRUE(resampler_rational_for(8000, 48000, &L, &M));
+    TEST_ASSERT_EQUAL_INT(6, L);    TEST_ASSERT_EQUAL_INT(1, M);
+
+    TEST_ASSERT_FALSE(resampler_rational_for(44101, 8000, &L, &M));
+}
+
+/* THE property.  A ratio that is close but wrong produces audio at the wrong
+ * frequency, at the right level and spectrally pure — nothing looks broken
+ * until you count cycles (a 1 kHz tone came out at 166.8 Hz on a device pinned
+ * to 8 kHz).  Assert the tone lands where it went in, not merely that samples
+ * came out. */
+void test_rational_preserves_tone_frequency(void)
+{
+    const int rates[] = { 44100, 22050, 11025, 88200, 176400, 192000 };
+
+    for (size_t k = 0; k < sizeof(rates)/sizeof(rates[0]); k++) {
+        const int fs_in = rates[k];
+        resamp_rat_t *r = resamp_rat_create(fs_in, 8000);
+        TEST_ASSERT_NOT_NULL(r);
+
+        int n_in = fs_in;                       /* one second */
+        int32_t *in  = malloc((size_t)n_in * sizeof(int32_t));
+        int32_t *out = malloc((size_t)resamp_rat_max_out(r, n_in) * sizeof(int32_t));
+        TEST_ASSERT_NOT_NULL(in); TEST_ASSERT_NOT_NULL(out);
+        fill_tone(in, n_in, 1000.0, fs_in, 2.0e8);
+
+        int n_out = resamp_rat_process(r, in, n_in, out);
+
+        /* Skip the filter's warm-up before measuring. */
+        const int skip = 800, win = 4000;
+        TEST_ASSERT_TRUE(n_out > skip + win);
+        double at_1k = tone_amp(out + skip, win, 1000.0, 8000.0);
+        double at_wrong = tone_amp(out + skip, win, 1000.0 * 8000.0 / fs_in, 8000.0);
+
+        char msg[128];
+        snprintf(msg, sizeof(msg), "%d Hz: tone did not survive at 1 kHz", fs_in);
+        TEST_ASSERT_TRUE_MESSAGE(at_1k > 0.8 * 2.0e8, msg);
+        snprintf(msg, sizeof(msg), "%d Hz: energy at the WRONG (ratio-scaled) frequency", fs_in);
+        TEST_ASSERT_TRUE_MESSAGE(at_wrong < 0.05 * at_1k, msg);
+
+        free(in); free(out); resamp_rat_free(r);
+    }
+}
+
+/* Out-of-band energy must be filtered, not folded down into the passband. */
+void test_rational_rejects_out_of_band(void)
+{
+    resamp_rat_t *r = resamp_rat_create(44100, 8000);
+    TEST_ASSERT_NOT_NULL(r);
+
+    int n_in = 44100;
+    int32_t *in  = malloc((size_t)n_in * sizeof(int32_t));
+    int32_t *out = malloc((size_t)resamp_rat_max_out(r, n_in) * sizeof(int32_t));
+    TEST_ASSERT_NOT_NULL(in); TEST_ASSERT_NOT_NULL(out);
+
+    /* 9 kHz at 44.1 kHz would alias to 1 kHz in an 8 kHz stream. */
+    fill_tone(in, n_in, 9000.0, 44100.0, 2.0e8);
+    int n_out = resamp_rat_process(r, in, n_in, out);
+    TEST_ASSERT_TRUE(n_out > 5000);
+
+    double alias = tone_amp(out + 800, 4000, 1000.0, 8000.0);
+    TEST_ASSERT_TRUE_MESSAGE(alias < 0.01 * 2.0e8,
+        "a 9 kHz tone folded into the passband: anti-aliasing is not working");
+
+    free(in); free(out); resamp_rat_free(r);
+}
+
+/* Rate exactness: the ratio is integer arithmetic, so a long stream must not
+ * drift by even one sample.  A float cursor accumulates error and eventually
+ * slips a sample, which on the air is a click and a phase step. */
+void test_rational_output_count_does_not_drift(void)
+{
+    resamp_rat_t *r = resamp_rat_create(44100, 8000);
+    TEST_ASSERT_NOT_NULL(r);
+
+    const int block = 441;                 /* 10 ms */
+    int32_t in[441];
+    memset(in, 0, sizeof(in));
+    int32_t out[64];
+
+    long total = 0;
+    for (int b = 0; b < 6000; b++)         /* 60 s */
+        total += resamp_rat_process(r, in, block, out);
+
+    /* 60 s of 44.1 kHz in is exactly 480000 samples of 8 kHz out. */
+    TEST_ASSERT_EQUAL_INT(480000, (int)total);
+    resamp_rat_free(r);
+}
+
+/* Block boundaries must not be discontinuities: the filter state carries, so
+ * chunked processing has to equal one big call, sample for sample. */
+void test_rational_chunking_invariant(void)
+{
+    const int n_in = 4410;
+    int32_t *in = malloc((size_t)n_in * sizeof(int32_t));
+    TEST_ASSERT_NOT_NULL(in);
+    fill_tone(in, n_in, 1500.0, 44100.0, 1.0e8);
+
+    resamp_rat_t *a = resamp_rat_create(44100, 8000);
+    resamp_rat_t *b = resamp_rat_create(44100, 8000);
+    TEST_ASSERT_NOT_NULL(a); TEST_ASSERT_NOT_NULL(b);
+
+    int cap = resamp_rat_max_out(a, n_in);
+    int32_t *one = malloc((size_t)cap * sizeof(int32_t));
+    int32_t *many = malloc((size_t)cap * sizeof(int32_t));
+    TEST_ASSERT_NOT_NULL(one); TEST_ASSERT_NOT_NULL(many);
+
+    int n1 = resamp_rat_process(a, in, n_in, one);
+
+    int n2 = 0, pos = 0, k = 0;
+    while (pos < n_in) {                    /* awkward, varying block sizes */
+        int n = (k % 13) + 7;
+        if (pos + n > n_in) n = n_in - pos;
+        n2 += resamp_rat_process(b, in + pos, n, many + n2);
+        pos += n; k++;
+    }
+
+    TEST_ASSERT_EQUAL_INT(n1, n2);
+    TEST_ASSERT_EQUAL_INT32_ARRAY(one, many, n1);
+
+    free(in); free(one); free(many);
+    resamp_rat_free(a); resamp_rat_free(b);
+}
+
+/* Unsupported pairs and degenerate arguments must fail cleanly, not crash:
+ * this runs on a thread that is already handling a device that misbehaved. */
+void test_rational_degenerate_inputs(void)
+{
+    TEST_ASSERT_NULL(resamp_rat_create(44101, 8000));
+    TEST_ASSERT_NULL(resamp_rat_create(0, 8000));
+
+    resamp_rat_t *r = resamp_rat_create(44100, 8000);
+    TEST_ASSERT_NOT_NULL(r);
+    int32_t in[8] = {0}, out[8] = {0};
+    TEST_ASSERT_EQUAL_INT(0, resamp_rat_process(r, in, 0, out));
+    TEST_ASSERT_EQUAL_INT(0, resamp_rat_process(NULL, in, 8, out));
+    TEST_ASSERT_EQUAL_INT(0, resamp_rat_process(r, NULL, 8, out));
+    resamp_rat_free(r);
+    resamp_rat_free(NULL);          /* must be a no-op */
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -409,5 +606,12 @@ int main(void)
     RUN_TEST(test_ratio_1_is_passthrough);
     RUN_TEST(test_up_and_down_ratios_are_independent);
     RUN_TEST(test_circular_history_matches_naive_shift);
+    RUN_TEST(test_rational_rate_support);
+    RUN_TEST(test_rational_ratios_are_lowest_terms);
+    RUN_TEST(test_rational_preserves_tone_frequency);
+    RUN_TEST(test_rational_rejects_out_of_band);
+    RUN_TEST(test_rational_output_count_does_not_drift);
+    RUN_TEST(test_rational_chunking_invariant);
+    RUN_TEST(test_rational_degenerate_inputs);
     return UNITY_END();
 }
