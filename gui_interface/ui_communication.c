@@ -324,6 +324,8 @@ int ui_comm_get_audio_devices(ui_device_kind_t kind, ui_device_t *out, int max,
         snprintf(out[i].name, sizeof(out[i].name), "%.*s", (int)sizeof(names[i]) - 1, names[i]);
     }
 
+    ui_devices_disambiguate(out, count);
+
     if (selected && sel_len)
         snprintf(selected, sel_len, "%s",
                  (kind == UI_DEV_CAPTURE) ? ctx->selected_capture_dev

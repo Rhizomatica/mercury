@@ -143,6 +143,11 @@ bool ui_comm_get_status(ui_status_t *out);
 
 /* Enumerate audio devices of one kind.  Returns how many were written and, if
  * `selected` is non-NULL, the id currently in use. */
+/* Append the device id to any display name shared by more than one device, so
+ * a label-driven UI can tell two identical-looking sound cards apart.  Names
+ * that do not collide are left alone. */
+void ui_devices_disambiguate(ui_device_t *devs, int count);
+
 int  ui_comm_get_audio_devices(ui_device_kind_t kind, ui_device_t *out, int max,
                                char *selected, size_t sel_len);
 
