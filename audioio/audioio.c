@@ -158,6 +158,22 @@ bool audioio_health_ok(char *reason, size_t reasonlen)
     return ok;
 }
 
+/* What the operator can actually do about a rate the modem cannot use.  ALSA
+ * has a plug layer that converts when the device is named plughw: instead of
+ * hw:; Windows and macOS have no such indirection, so the fix there is the OS
+ * sound settings.  Telling a Windows user to try plughw: is worse than saying
+ * nothing. */
+static const char *audio_rate_advice(void)
+{
+    switch (audio_subsystem)
+    {
+    case AUDIO_SUBSYSTEM_ALSA:
+        return "try plughw:X,Y instead of hw:X,Y so ALSA converts";
+    default:
+        return "set the device to a supported rate in the OS sound settings";
+    }
+}
+
 static void format_device_display(int audio_subsys, int mode, const char *id, char *out, size_t outsz);
 static int get_soundcard_list_int(int audio_system, int mode,
                                   char ids[][AUDIO_DEV_STR_MAX], char dev_names[][AUDIO_DEV_STR_MAX], int max_count,
@@ -908,6 +924,9 @@ void *radio_playback_thread(void *device_ptr)
     /* Resampling ratio: set once the device has told us its real rate (below,
      * after open()), never assumed. */
     int resample_ratio = RESAMP_L;
+    /* Non-NULL when the device rate is not an integer multiple of 8 kHz and
+     * the rational engine is doing the conversion instead. */
+    resamp_rat_t *rat_up = NULL;
 
     /* PulseAudio uses a single global context (gconn in pulse.c).
      * If init() returns "already initialized" it means the capture thread
@@ -991,15 +1010,27 @@ void *radio_playback_thread(void *device_ptr)
     resample_ratio = resampler_ratio_for_rate((int)cfg->sample_rate);
     if (resample_ratio == 0)
     {
-        char why[160];
-        snprintf(why, sizeof(why),
-                 "device negotiated %u Hz, not a multiple of %d Hz "
-                 "(supported 8k/16k/24k/32k/48k/96k) -- try plughw:X,Y instead "
-                 "of hw:X,Y so ALSA converts",
-                 cfg->sample_rate, RESAMP_MODEM_FS);
-        HLOGE("audio-play", "%s", why);
-        audio_health_set(false, AUDIO_HEALTH_FAILED, why);
-        goto cleanup_play;
+        /* Not an integer multiple of 8 kHz: convert by L/M instead (8000 ->
+         * 44100 is 441/80).  Only a rate outside the supported set is fatal. */
+        if (resampler_rate_supported((int)cfg->sample_rate))
+            rat_up = resamp_rat_create(RESAMP_MODEM_FS, (int)cfg->sample_rate);
+
+        if (!rat_up)
+        {
+            char why[220];
+            snprintf(why, sizeof(why),
+                     "device negotiated %u Hz, which the modem cannot resample "
+                     "(supported 8k/11.025k/16k/22.05k/24k/32k/44.1k/48k/"
+                     "88.2k/96k/176.4k/192k) -- %s",
+                     cfg->sample_rate, audio_rate_advice());
+            HLOGE("audio-play", "%s", why);
+            audio_health_set(false, AUDIO_HEALTH_FAILED, why);
+            goto cleanup_play;
+        }
+        int rl = 0, rm = 0;
+        resamp_rat_ratio(rat_up, &rl, &rm);
+        HLOGI("audio-play", "device negotiated %u Hz; resampling %d/%d",
+              cfg->sample_rate, rl, rm);
     }
     if (cfg->sample_rate != 48000)
         HLOGW("audio-play", "device negotiated %u Hz (not the requested 48000); "
@@ -1043,9 +1074,12 @@ void *radio_playback_thread(void *device_ptr)
      * Built for the rate the device ACTUALLY negotiated: resampling by the
      * requested 48 kHz ratio when the device came back at some other rate
      * transmits everything off-frequency, silently and convincingly. */
-    resampler_init_up(resample_ratio);
     resamp_up_t up_rs;
-    resamp_up_reset(&up_rs);
+    if (!rat_up)
+    {
+        resampler_init_up(resample_ratio);
+        resamp_up_reset(&up_rs);
+    }
 
     while (!shutdown_ && !audio_shutdown_)
     {
@@ -1074,9 +1108,14 @@ void *radio_playback_thread(void *device_ptr)
 
         int samples_read_8k = n / sizeof(int32_t);
 
-        // Upsample 8kHz -> 48kHz through the polyphase anti-imaging FIR.
+        /* Upsample 8 kHz -> the device rate through the polyphase anti-imaging
+         * FIR: integer ratio where the rate allows it, rational L/M otherwise
+         * (the 44.1 kHz family). */
         int samples_upsampled =
-            resamp_up_process(&up_rs, input_buffer, samples_read_8k, buffer_upsampled);
+            rat_up ? resamp_rat_process(rat_up, input_buffer, samples_read_8k,
+                                        buffer_upsampled)
+                   : resamp_up_process(&up_rs, input_buffer, samples_read_8k,
+                                       buffer_upsampled);
 
         /* Expand the upsampled mono modem signal into the device's negotiated
          * channel/format layout.  cfg->channels is 1 or 2; cfg->format is what
@@ -1163,6 +1202,8 @@ void *radio_playback_thread(void *device_ptr)
         HLOGE("audio-play", "ffaudio.clear: %s", audio->error(b));
 
 cleanup_play:
+    resamp_rat_free(rat_up);
+    rat_up = NULL;
 
     audio->free(b);
 
@@ -1274,6 +1315,7 @@ void *radio_capture_thread(void *device_ptr)
     /* Resampling ratio: set once the device reports its real rate (below,
      * after open()), never assumed. */
     int resample_ratio = RESAMP_L;
+    resamp_rat_t *rat_down = NULL;
 
     /* PulseAudio uses a single global context (gconn in pulse.c).
      * If init() returns "already initialized" it means the playback thread
@@ -1354,19 +1396,29 @@ void *radio_capture_thread(void *device_ptr)
     {
         /* 44100 and 22050 are the common ones here: both are what a consumer
          * USB codec reports natively, and neither is an integer multiple of
-         * the modem rate.  Naming plughw matters -- ALSA's plug layer converts
-         * transparently and is what mercury.ini.example already recommends, so
-         * the operator's fix is a device string, not a different sound card. */
-        char why[160];
-        snprintf(why, sizeof(why),
-                 "device negotiated %u Hz, not a multiple of %d Hz "
-                 "(supported 8k/16k/24k/32k/48k/96k) -- try plughw:X,Y instead "
-                 "of hw:X,Y so ALSA converts",
-                 cfg->sample_rate, RESAMP_MODEM_FS);
-        HLOGE("audio-cap", "%s", why);
-        audio_health_set(true, AUDIO_HEALTH_FAILED, why);
-        audio->free(b);
-        return NULL;
+         * the modem rate.  They are converted by L/M rather than refused --
+         * on Windows and macOS there is no plug layer to fall back on, so
+         * refusing meant the card simply could not be used (issue #193). */
+        if (resampler_rate_supported((int)cfg->sample_rate))
+            rat_down = resamp_rat_create((int)cfg->sample_rate, RESAMP_MODEM_FS);
+
+        if (!rat_down)
+        {
+            char why[220];
+            snprintf(why, sizeof(why),
+                     "device negotiated %u Hz, which the modem cannot resample "
+                     "(supported 8k/11.025k/16k/22.05k/24k/32k/44.1k/48k/"
+                     "88.2k/96k/176.4k/192k) -- %s",
+                     cfg->sample_rate, audio_rate_advice());
+            HLOGE("audio-cap", "%s", why);
+            audio_health_set(true, AUDIO_HEALTH_FAILED, why);
+            audio->free(b);
+            return NULL;
+        }
+        int rl = 0, rm = 0;
+        resamp_rat_ratio(rat_down, &rl, &rm);
+        HLOGI("audio-cap", "device negotiated %u Hz; resampling %d/%d",
+              cfg->sample_rate, rl, rm);
     }
     if (cfg->sample_rate != 48000)
         HLOGW("audio-cap", "device negotiated %u Hz (not the requested 48000); "
@@ -1380,7 +1432,9 @@ void *radio_capture_thread(void *device_ptr)
     cap_frames_max += cap_frames_max / 2 + 64;   /* margin over one read */
 
     buffer_output = (int32_t *) malloc(cap_frames_max * sizeof(int32_t));
-    buffer_downsampled = (int32_t *) malloc((cap_frames_max / resample_ratio + 2) * sizeof(int32_t));
+    buffer_downsampled = (int32_t *) malloc(
+        (rat_down ? (size_t)resamp_rat_max_out(rat_down, (int)cap_frames_max)
+                  : cap_frames_max / resample_ratio + 2) * sizeof(int32_t));
     if (!buffer_output || !buffer_downsampled)
     {
         HLOGE("audio-cap", "Failed to allocate capture buffers");
@@ -1394,9 +1448,12 @@ void *radio_capture_thread(void *device_ptr)
     ch_layout = capture_input_channel_layout;
 
     /* Polyphase anti-aliasing downsampler, stateful across reads. */
-    resampler_init_down(resample_ratio);
     resamp_down_t down_rs;
-    resamp_down_reset(&down_rs);
+    if (!rat_down)
+    {
+        resampler_init_down(resample_ratio);
+        if (rat_down) resamp_rat_reset(rat_down); else resamp_down_reset(&down_rs);
+    }
 
     /* --- Capture rate diagnostics (prints every ~5 seconds) --- */
     uint64_t diag_start_ms = audioio_monotonic_ms();
@@ -1456,7 +1513,7 @@ void *radio_capture_thread(void *device_ptr)
                     free(buffer_downsampled);
                     goto finish_cap;
                 }
-                resamp_down_reset(&down_rs);
+                if (rat_down) resamp_rat_reset(rat_down); else resamp_down_reset(&down_rs);
                 cap_last_data_ms = audioio_monotonic_ms();
             }
             ffthread_sleep(CAP_POLL_MS);
@@ -1580,8 +1637,10 @@ void *radio_capture_thread(void *device_ptr)
         }
 
         int downsampled_frames =
-            resamp_down_process(&down_rs, buffer_output, frames_to_write,
-                                buffer_downsampled);
+            rat_down ? resamp_rat_process(rat_down, buffer_output,
+                                          frames_to_write, buffer_downsampled)
+                     : resamp_down_process(&down_rs, buffer_output,
+                                           frames_to_write, buffer_downsampled);
 
         if (downsampled_frames > 0)
         {
@@ -1644,6 +1703,8 @@ cleanup_cap:
         audio->uninit();
 
 finish_cap:
+    resamp_rat_free(rat_down);
+    rat_down = NULL;
     HLOGI("audio-cap", "radio_capture_thread exit");
 
     // An audio-device failure (or a restart-initiated stop) ends only this

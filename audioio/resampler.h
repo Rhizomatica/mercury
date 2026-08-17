@@ -15,12 +15,18 @@
  * and spectrally pure.  Nothing about that failure looks like a bug until you
  * count cycles, so the ratio is derived and unsupported rates are refused.
  *
- * Supported device rates are the integer multiples of 8 kHz up to 96 kHz
- * (8/16/24/32/48/96); resampler_ratio_for_rate() reports which.  A caller
- * that gets 0 back must refuse to run that direction rather than transmit
- * off-frequency audio.  44.1 kHz is deliberately NOT supported: it is not an
- * integer multiple of the modem rate and would need a rational (441/80)
- * resampler.
+ * Two engines live here.
+ *
+ * The INTEGER one (resampler_ratio_for_rate, resamp_up_*, resamp_down_*)
+ * handles device rates that are integer multiples of 8 kHz, and is the path
+ * every ordinary sound card takes.
+ *
+ * The RATIONAL one (resamp_rat_*) handles any supported rate by converting
+ * L/M in lowest terms, which is what the 44.1 kHz family needs: 44100 -> 8000
+ * is 80/441, and 11025/22050/88200/176400 all reduce to the same M = 441 with
+ * a different L.  Windows and macOS have no equivalent of ALSA's plug layer,
+ * so a card left at 44.1 kHz in the OS sound settings simply could not be
+ * used before (issue #193).
  *
  * Upsample (playback) and downsample (capture) ratios are INDEPENDENT — the
  * two directions can land on different device rates, so they keep separate
@@ -36,6 +42,7 @@
 #ifndef AUDIOIO_RESAMPLER_H
 #define AUDIOIO_RESAMPLER_H
 
+#include <stdbool.h>
 #include <stdint.h>
 
 #define RESAMP_MODEM_FS         8000   /* the modem's native rate            */
@@ -94,6 +101,40 @@ void resamp_down_reset(resamp_down_t *r);
  * (8 kHz) to out (must hold at least n_in/L + 1 samples).  Returns the count. */
 int  resamp_down_process(resamp_down_t *r, const int32_t *in, int n_in,
                          int32_t *out);
+
+/* ======================================================================
+ * Rational resampler: any in_rate -> any out_rate among the supported set
+ * ====================================================================== */
+
+/* True if the modem can drive a device at this rate, by either engine. */
+bool resampler_rate_supported(int device_rate_hz);
+
+/* Conversion ratio out/in as L/M in lowest terms.  Returns false if either
+ * rate is unsupported.  M == 1 means the integer engine can do it. */
+bool resampler_rational_for(int in_rate_hz, int out_rate_hz, int *L, int *M);
+
+/* Opaque: the coefficient table is sized from the ratio, so it is heap
+ * allocated rather than a worst-case static (44.1 kHz capture needs ~53 KB,
+ * which has no business on a thread stack). */
+typedef struct resamp_rat resamp_rat_t;
+
+/* NULL if the pair is unsupported or out of memory. */
+resamp_rat_t *resamp_rat_create(int in_rate_hz, int out_rate_hz);
+void          resamp_rat_free(resamp_rat_t *r);
+void          resamp_rat_reset(resamp_rat_t *r);
+
+/* Upper bound on the outputs n_in inputs can produce, for buffer sizing.
+ * The true count varies by one between calls: the ratio is not an integer,
+ * so a fixed n_in*L/M would be wrong on some blocks. */
+int  resamp_rat_max_out(const resamp_rat_t *r, int n_in);
+
+/* Streaming: state carries across calls, so block boundaries are not
+ * discontinuities.  Returns the number of samples written to out. */
+int  resamp_rat_process(resamp_rat_t *r, const int32_t *in, int n_in,
+                        int32_t *out);
+
+/* Ratio actually in use, for logging and tests. */
+void resamp_rat_ratio(const resamp_rat_t *r, int *L, int *M);
 
 /* One decimation-filter coefficient.  Exposed so a test can reimplement the
  * FIR and prove the fast history representation did not change any output
