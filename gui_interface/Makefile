@@ -49,3 +49,7 @@ clean:
 	rm -f $(OBJS) $(WS_OBJS)
 
 .PHONY: all clean
+
+# Pull in the header dependencies emitted by -MMD (see config.mk).  Leading
+# dash: absent on a first build, which is correct.
+-include $(wildcard *.d */*.d */*/*.d)

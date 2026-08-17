@@ -159,6 +159,19 @@ install: all
 	install -D -m 644 mercury.1 $(DESTDIR)$(mandir)/man1/mercury.1
 	install -D -m 644 mercury.ini.example $(DESTDIR)$(docdir)/mercury.ini.example
 
+# Header dependency tracking.
+#
+# Every object outside main.o is built by make's IMPLICIT %.o: %.c rule, which
+# knows nothing about headers: editing arq_protocol.h rebuilt nothing, and the
+# link happily reused objects compiled against the previous definitions.  That
+# is not a slow build, it is a wrong one — a stale object silently produced a
+# bench number 18% off, and a struct-layout change compiled half the program
+# against each layout.  -MMD emits a .d per object and -MP keeps a removed
+# header from breaking the build; -include pulls them in (leading dash: absent
+# on the first build, which is correct).
+MERCURY_DEPS = $(patsubst %.o,%.d,$(filter %.o,$(MERCURY_LINK_INPUTS)))
+-include $(MERCURY_DEPS)
+
 $(BINARY): $(MERCURY_LINK_INPUTS)
 	$(CC) -o $(BINARY)  \
 		$(MERCURY_LINK_INPUTS) $(LDFLAGS) $(SAN_LDFLAGS)
@@ -521,7 +534,8 @@ windows-installer: windows fyne-ui-windows windows-installer-stage
 	@echo ""
 
 clean:
-	rm -f mercury mercury.exe *.o .git_hash_stamp mercury-*.zip libmercury_core.a libmercury_core_w64.a
+	rm -f $(MERCURY_DEPS)
+	rm -f mercury mercury.exe *.o *.d .git_hash_stamp mercury-*.zip libmercury_core.a libmercury_core_w64.a
 	rm -rf mercury-[0-9]*
 	rm -f $(WINDOWS_INSTALLER_DIR)/$(FYNE_UI_BIN)
 	rm -f $(FYNE_UI_DIR)/engine/mercury_bridge.o $(FYNE_UI_DIR)/engine/mercury_bridge_w64.o
