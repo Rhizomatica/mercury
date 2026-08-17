@@ -910,6 +910,8 @@ static void fsm_calling(arq_session_t *sess, const arq_event_t *ev)
          * top of the reply it was waiting for, on essentially every connect.
          * Measuring the interval from here gives the peer a full turnaround. */
         sess->deadline_ms = deadline_from_s(arq_protocol_call_interval_s());
+        HLOGD(LOG_COMP, "CALL retry re-anchored: +%.2fs, retries_left=%d",
+              (double)arq_protocol_call_interval_s(), (int)sess->tx_retries_left);
         break;
 
     case ARQ_EV_TIMER_RETRY:
