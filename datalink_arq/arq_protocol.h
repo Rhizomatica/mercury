@@ -278,19 +278,21 @@ extern _Atomic int arq_mode_hold_after_downgrade_s;
                                              * 6=QAM16C2 */
 extern const int arq_mode_ladder[ARQ_LADDER_LEVELS];
 
-/* Rung a session starts on.
+/* Rung a session starts on: the MFSK floor.
  *
- * Not the floor.  A session only exists because a CALL and an ACCEPT got
- * through on DATAC16, and MERCURY_MODE_MFSK sits roughly 10-12 dB below
- * DATAC16 — so opening at the floor spends the first keydown, 13.5 s of it,
- * proving something the handshake has already proved, and carries 90 bytes
- * while doing it.  Starting one rung up costs at most one failed burst on a
- * link too weak for DATAC15, after which the ordinary retry rule steps down
- * to the floor and the fringe behaviour is unchanged.
+ * Opening one rung up (DATAC15) is tempting and was tried — a session only
+ * exists because DATAC16 was carried both ways, and MFSK sits 10-12 dB below
+ * that, so the first keydown spends 13.5 s re-proving what the handshake
+ * proved.  It is worth 12% on a clean link (1054 B: 81.2 s -> 71.6 s) and
+ * costs 2x at the fringe (102 B at SNR3k = -12 dB: 50.4 s -> 101.7 s), because
+ * every probe the channel cannot carry is a burst plus a full ACK timeout, and
+ * at the fringe the ladder pays that over and over.  Both cells still deliver
+ * in full; it is a speed trade, and it is the wrong way round for the rung
+ * that exists to work when nothing else does.
  *
- * Both ends derive this from the same constant, so the ISS ladder and the IRS
- * mirror still open in lockstep with nothing on the wire to say so. */
-#define ARQ_LADDER_START_LEVEL        1
+ * Measure both cells before changing this.  The clean-link cell alone will
+ * happily tell you it is an improvement. */
+#define ARQ_LADDER_START_LEVEL        0
 
 #define ARQ_LADDER_UP_SUCCESSES_DEFAULT        2     /* clean deliveries per step-up
                                                       * once the fast ramp ends       */

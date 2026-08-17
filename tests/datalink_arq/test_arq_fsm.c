@@ -97,19 +97,15 @@ void test_init_state_disconnected(void)
     TEST_ASSERT_EQUAL_INT(ARQ_CONN_DISCONNECTED, sess.conn_state);
 }
 
-/* Initial modes: DATAC16 control plane, and the payload ladder opens on
- * ARQ_LADDER_START_LEVEL — one rung above the MFSK floor, because a session
- * only exists once DATAC16 has been carried in both directions. */
+/* Initial modes: DATAC16 control plane, DATAC15 payload floor */
 void test_init_mode_defaults(void)
 {
     TEST_ASSERT_EQUAL_INT(FREEDV_MODE_DATAC16, sess.control_mode);
-    TEST_ASSERT_EQUAL_INT(arq_mode_ladder[ARQ_LADDER_START_LEVEL],
-                          sess.payload_mode);
-    TEST_ASSERT_EQUAL_INT(arq_mode_ladder[ARQ_LADDER_START_LEVEL],
-                          sess.peer_tx_mode);
-    TEST_ASSERT_EQUAL_INT(arq_mode_ladder[ARQ_LADDER_START_LEVEL],
-                          sess.initial_payload_mode);
-    TEST_ASSERT_EQUAL_INT(ARQ_LADDER_START_LEVEL, sess.speed_level);
+    /* Sessions now start at the MFSK ladder floor, not DATAC15. */
+    TEST_ASSERT_EQUAL_INT(MERCURY_MODE_MFSK, sess.payload_mode);
+    TEST_ASSERT_EQUAL_INT(MERCURY_MODE_MFSK, sess.peer_tx_mode);
+    TEST_ASSERT_EQUAL_INT(MERCURY_MODE_MFSK, sess.initial_payload_mode);
+    TEST_ASSERT_EQUAL_INT(0, sess.speed_level);
 }
 
 /* APP_LISTEN transitions to LISTENING */
@@ -920,62 +916,55 @@ static void complete_ack_tx(void)
 void test_irs_mirror_climbs_with_peer(void)
 {
     goto_connected_irs();
-    TEST_ASSERT_EQUAL_INT(FREEDV_MODE_DATAC15, sess.peer_tx_mode);   /* start rung */
+    TEST_ASSERT_EQUAL_INT(MERCURY_MODE_MFSK, sess.peer_tx_mode);
 
-    arq_event_t ev = make_data_event(0, FREEDV_MODE_DATAC15, 30);
+    arq_event_t ev = make_data_event(0, MERCURY_MODE_MFSK, 90);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(FREEDV_MODE_DATAC15, sess.peer_tx_mode);   /* level 1 */
+    complete_ack_tx();
+
+    ev = make_data_event(1, FREEDV_MODE_DATAC15, 30);
     arq_fsm_dispatch(&sess, &ev);
     TEST_ASSERT_EQUAL_INT(FREEDV_MODE_DATAC4, sess.peer_tx_mode);    /* level 2 */
     complete_ack_tx();
 
-    ev = make_data_event(1, FREEDV_MODE_DATAC4, 54);
+    ev = make_data_event(2, FREEDV_MODE_DATAC4, 54);
     arq_fsm_dispatch(&sess, &ev);
     TEST_ASSERT_EQUAL_INT(FREEDV_MODE_DATAC3, sess.peer_tx_mode);    /* level 3 */
-    complete_ack_tx();
-
-    ev = make_data_event(2, FREEDV_MODE_DATAC3, 126);
-    arq_fsm_dispatch(&sess, &ev);
-    TEST_ASSERT_EQUAL_INT(FREEDV_MODE_DATAC1, sess.peer_tx_mode);    /* level 4 */
 }
 /* A duplicate frame means our ACK was lost and the sender retried, stepping ITS
  * ladder down — the mirror must step down too so we can decode the retransmit. */
 void test_irs_mirror_steps_down_on_duplicate(void)
 {
     goto_connected_irs();
-    arq_event_t ev = make_data_event(0, FREEDV_MODE_DATAC15, 30);
+    arq_event_t ev = make_data_event(0, MERCURY_MODE_MFSK, 90);
     arq_fsm_dispatch(&sess, &ev);
     complete_ack_tx();
-    ev = make_data_event(1, FREEDV_MODE_DATAC4, 54);
+    ev = make_data_event(1, FREEDV_MODE_DATAC15, 30);
     arq_fsm_dispatch(&sess, &ev);
     complete_ack_tx();
-    TEST_ASSERT_EQUAL_INT(FREEDV_MODE_DATAC3, sess.peer_tx_mode);    /* climbed to level 3 */
+    TEST_ASSERT_EQUAL_INT(FREEDV_MODE_DATAC4, sess.peer_tx_mode);    /* climbed to level 2 */
 
     /* Duplicate of an already-delivered seq (rx_expected has advanced past it). */
-    ev = make_data_event(0, FREEDV_MODE_DATAC15, 30);
+    ev = make_data_event(0, MERCURY_MODE_MFSK, 90);
     arq_fsm_dispatch(&sess, &ev);
-    TEST_ASSERT_EQUAL_INT(FREEDV_MODE_DATAC4, sess.peer_tx_mode);    /* stepped down to level 2 */
+    TEST_ASSERT_EQUAL_INT(FREEDV_MODE_DATAC15, sess.peer_tx_mode);   /* stepped down to level 1 */
 }
 /* Reset-on-miss: a full idle hold with no DATA (a lost ACK left us climbed above
  * the sender) steps the mirror down toward the floor so the two ends re-sync. */
 void test_irs_mirror_resets_toward_floor_on_silence(void)
 {
     goto_connected_irs();
-    arq_event_t ev = make_data_event(0, FREEDV_MODE_DATAC15, 30);
+    arq_event_t ev = make_data_event(0, MERCURY_MODE_MFSK, 90);
     arq_fsm_dispatch(&sess, &ev);
     complete_ack_tx();
-    TEST_ASSERT_EQUAL_INT(FREEDV_MODE_DATAC4, sess.peer_tx_mode);    /* climbed to level 2 */
+    TEST_ASSERT_EQUAL_INT(FREEDV_MODE_DATAC15, sess.peer_tx_mode);   /* climbed to level 1 */
 
     /* Idle-hold fires with no reverse backlog and a recent RX (not dead yet). */
     fake_tx_backlog_fake.return_val = 0;
     ev = make_event(ARQ_EV_TIMER_PEER_BACKLOG);
     arq_fsm_dispatch(&sess, &ev);
-    TEST_ASSERT_EQUAL_INT(FREEDV_MODE_DATAC15, sess.peer_tx_mode);   /* one rung down per hold */
-
-    /* ...and it keeps walking down, a rung per hold, until it reaches the
-     * MFSK floor, which is where a sender that has retried its way down the
-     * ladder ends up. */
-    ev = make_event(ARQ_EV_TIMER_PEER_BACKLOG);
-    arq_fsm_dispatch(&sess, &ev);
-    TEST_ASSERT_EQUAL_INT(MERCURY_MODE_MFSK, sess.peer_tx_mode);
+    TEST_ASSERT_EQUAL_INT(MERCURY_MODE_MFSK, sess.peer_tx_mode);     /* stepped back to the floor */
 }
 
 /* The CALL retry clock must start when the burst leaves the air, not when it

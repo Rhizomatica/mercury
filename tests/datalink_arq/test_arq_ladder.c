@@ -236,17 +236,15 @@ void test_failed_probe_retreats_on_the_air(void)
         "but the transmitter did not");
 }
 
-void test_ladder_starts_one_rung_above_the_floor(void)
+void test_ladder_starts_at_the_configured_rung(void)
 {
-    /* MFSK is still the floor — it is just not where a session opens.  The
-     * handshake has already carried DATAC16 both ways, and MFSK sits about
-     * 10-12 dB below that, so the floor is reached by stepping DOWN when a
-     * burst is actually lost rather than assumed at the start. */
+    /* Sessions open at ARQ_LADDER_START_LEVEL, which is the MFSK floor.
+     * Starting higher was measured and is a fringe regression — see the
+     * constant's comment before changing it. */
     TEST_ASSERT_EQUAL_INT(MERCURY_MODE_MFSK, arq_mode_ladder[0]);
     TEST_ASSERT_EQUAL_INT(ARQ_LADDER_START_LEVEL, sess.speed_level);
     TEST_ASSERT_EQUAL_INT(arq_mode_ladder[ARQ_LADDER_START_LEVEL],
                           sess.payload_mode);
-    TEST_ASSERT_TRUE(ARQ_LADDER_START_LEVEL > 0);
 }
 
 void test_ladder_table_ordered_and_sized(void)
@@ -445,7 +443,7 @@ int main(void)
     RUN_TEST(test_accept_rx_window_outlasts_longest_ladder_burst);
     RUN_TEST(test_probe_frame_fits_the_rung_below);
     RUN_TEST(test_failed_probe_retreats_on_the_air);
-    RUN_TEST(test_ladder_starts_one_rung_above_the_floor);
+    RUN_TEST(test_ladder_starts_at_the_configured_rung);
     RUN_TEST(test_ladder_table_ordered_and_sized);
     RUN_TEST(test_ladder_fast_ramp_climbs_one_per_clean);
     RUN_TEST(test_ladder_retry_steps_down_then_slow_ramp);
