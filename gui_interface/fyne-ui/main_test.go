@@ -107,6 +107,23 @@ func TestParseStatusMessageMissingAudioDefaultsHealthy(t *testing.T) {
 	}
 }
 
+// audio_ok:false with no audio_error must parse to an empty string, so the
+// dialog's fallback message fires instead of showing the literal "<nil>".
+func TestParseStatusMessageAudioFailureWithoutErrorDefaultsEmpty(t *testing.T) {
+	payload := []byte(`{"type":"status","audio_ok":false}`)
+
+	status, err := parseStatusMessage(payload)
+	if err != nil {
+		t.Fatalf("parseStatusMessage returned error: %v", err)
+	}
+	if status.AudioOk {
+		t.Fatal("expected audio_ok to be false")
+	}
+	if status.AudioError != "" {
+		t.Fatalf("expected missing audio_error to parse as empty, got %q", status.AudioError)
+	}
+}
+
 func TestBuildWebSocketURLUsesWebsocketPath(t *testing.T) {
 	got := buildWebSocketURL("ws", "127.0.0.1", "10000")
 	want := "ws://127.0.0.1:10000/websocket"
