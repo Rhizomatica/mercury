@@ -113,6 +113,50 @@ void test_missing_id_is_left_alone(void)
     TEST_ASSERT_NOT_NULL(strstr(devs[1].name, "real-id"));
 }
 
+/* Long names must not eat the id.  UI_DEV_NAME_MAX is 256 and the label is
+ * "<name> [<id>]", so a wordy product string plus a long PulseAudio node name
+ * overflows the field.  Truncating from the right cuts the id, and two ids
+ * that differ only past the cut collapse to the same label — the fix undoing
+ * itself, silently.  The id has to survive; the name is what gives way. */
+void test_long_name_does_not_truncate_the_id(void)
+{
+    char longname[200];
+    memset(longname, 'X', sizeof(longname) - 1);
+    longname[sizeof(longname) - 1] = '\0';
+    memcpy(longname, "USB Audio CODEC ", 16);
+
+    char id1[240], id2[242];
+    snprintf(id1, sizeof(id1), "alsa_input.usb-vendor_%0*d-00.analog-stereo", 200, 0);
+    snprintf(id2, sizeof(id2), "alsa_input.usb-vendor_%0*d-00.2.analog-stereo", 200, 0);
+
+    ui_device_t devs[2];
+    set_dev(&devs[0], id1, longname);
+    set_dev(&devs[1], id2, longname);
+
+    ui_devices_disambiguate(devs, 2);
+
+    TEST_ASSERT_TRUE_MESSAGE(strcmp(devs[0].name, devs[1].name) != 0,
+        "labels collapsed to the same string: the id was truncated away");
+}
+
+/* Whatever happens, the label must stay inside the field and NUL-terminated. */
+void test_label_always_fits_the_field(void)
+{
+    char maxid[UI_DEV_ID_MAX];
+    memset(maxid, 'z', sizeof(maxid) - 1);
+    maxid[sizeof(maxid) - 1] = '\0';
+
+    ui_device_t devs[2];
+    set_dev(&devs[0], maxid, "Same Name");
+    maxid[0] = 'a';
+    set_dev(&devs[1], maxid, "Same Name");
+
+    ui_devices_disambiguate(devs, 2);
+
+    TEST_ASSERT_TRUE(strlen(devs[0].name) < UI_DEV_NAME_MAX);
+    TEST_ASSERT_TRUE(strlen(devs[1].name) < UI_DEV_NAME_MAX);
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -122,5 +166,7 @@ int main(void)
     RUN_TEST(test_three_way_collision);
     RUN_TEST(test_degenerate_inputs);
     RUN_TEST(test_missing_id_is_left_alone);
+    RUN_TEST(test_long_name_does_not_truncate_the_id);
+    RUN_TEST(test_label_always_fits_the_field);
     return UNITY_END();
 }
