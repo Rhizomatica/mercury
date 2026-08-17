@@ -142,10 +142,29 @@ const blockSamples = 160
 const blockS32 = blockSamples * 4 // 640 bytes s32le
 const blockS16 = blockSamples * 2 // 320 bytes int16 s16le
 
+// runChannelDir keeps one direction of the link alive for the whole test.
+//
+// runChannelDirOnce completes normally many times a second (each pass owns one
+// ch process and one pair of FIFO opens), so this loop is the steady state,
+// not an error path.  It used to `return` on the first error, which silently
+// retired that direction for the rest of the run — and a retired direction is
+// not a partial failure: in FIFO mode each peer's clock advances with the audio
+// it captures, so one dead direction freezes BOTH processes with their event
+// loops healthy and every timer stopped.  That looks exactly like a connect
+// bug in Mercury (CALL sent, no ACCEPT, no retry, forever) and cost a long
+// detour to tell apart from one.  Transient open/pipe errors are expected here
+// — the peer closes its end between bursts — so retry, and let ctx be the only
+// thing that ends the direction.
 func runChannelDir(ctx context.Context, chBin, txPath, rxPath string, params ChannelParams) {
 	for {
 		if err := runChannelDirOnce(ctx, chBin, txPath, rxPath, params); err != nil {
-			return
+			select {
+			case <-ctx.Done():
+				return
+			default:
+			}
+			// Back off briefly so a persistent failure cannot spin a core.
+			time.Sleep(5 * time.Millisecond)
 		}
 		select {
 		case <-ctx.Done():
