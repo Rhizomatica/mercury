@@ -175,15 +175,10 @@ typedef struct
     bool     fast_ramp;                /* faster initial climb: 1 rung per clean
                                         * delivery until the first retry, then
                                         * ARQ_LADDER_UP_SUCCESSES-per-step       */
-    int      proven_level;             /* highest rung that has actually
-                                        * delivered a frame this session.  A
-                                        * fresh frame is never read larger than
-                                        * this rung's slot, so a failed probe at
-                                        * the rung above can always retreat to
-                                        * it: the retained frame is immutable,
-                                        * and one sized for a rung the channel
-                                        * cannot carry can never be sent at all
-                                        * (see send_data_burst).                 */
+    int      tx_last_good_level;       /* highest rung that has delivered: a
+                                        * miss falls back here in one step
+                                        * rather than walking down rung by
+                                        * rung, each costing an ACK timeout  */
     int      peer_tx_mode;             /* my payload RX decoder mode when IRS =
                                         * arq_mode_ladder[rx_speed_level]; the
                                         * mode the peer's NEXT DATA burst uses  */
@@ -198,6 +193,7 @@ typedef struct
      * MFSK floor).  A prolonged RX gap (a lost ACK left us above the sender)
      * steps this back down toward the floor so the two ends re-rendezvous. */
     int      rx_speed_level;           /* mirror of the peer's ladder index    */
+    int      rx_last_good_level;       /* mirror of tx_last_good_level        */
     int      rx_success_count;         /* clean receives toward a mirror step-up*/
     bool     rx_fast_ramp;             /* mirror of the peer's fast initial ramp*/
 
