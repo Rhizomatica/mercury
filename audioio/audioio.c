@@ -158,19 +158,27 @@ bool audioio_health_ok(char *reason, size_t reasonlen)
     return ok;
 }
 
-/* What the operator can actually do about a rate the modem cannot use.  ALSA
- * has a plug layer that converts when the device is named plughw: instead of
- * hw:; Windows and macOS have no such indirection, so the fix there is the OS
- * sound settings.  Telling a Windows user to try plughw: is worse than saying
- * nothing. */
-static const char *audio_rate_advice(void)
+/* Operator-facing fix for a rate the modem cannot use.  ALSA's plug layer
+ * resamples when the device is named plughw: instead of hw:, but the Windows
+ * and macOS backends have no such indirection: the device itself must be set
+ * to a supported rate in the OS sound settings.  Telling a Windows user to
+ * try plughw: is worse than saying nothing.
+ *
+ * Reaching this at all now means the rate is outside the supported set
+ * entirely -- the 44.1 kHz family is resampled rather than refused -- so the
+ * advice names a rate that is certain to work. */
+static const char *audio_rate_mismatch_hint(void)
 {
     switch (audio_subsystem)
     {
     case AUDIO_SUBSYSTEM_ALSA:
         return "try plughw:X,Y instead of hw:X,Y so ALSA converts";
+    case AUDIO_SUBSYSTEM_WASAPI:
+    case AUDIO_SUBSYSTEM_DSOUND:
+    case AUDIO_SUBSYSTEM_COREAUDIO:
+        return "set the device sample rate to 48000 Hz in the OS sound settings";
     default:
-        return "set the device to a supported rate in the OS sound settings";
+        return "set the device sample rate to a supported value";
     }
 }
 
@@ -1022,7 +1030,7 @@ void *radio_playback_thread(void *device_ptr)
                      "device negotiated %u Hz, which the modem cannot resample "
                      "(supported 8k/11.025k/16k/22.05k/24k/32k/44.1k/48k/"
                      "88.2k/96k/176.4k/192k) -- %s",
-                     cfg->sample_rate, audio_rate_advice());
+                     cfg->sample_rate, audio_rate_mismatch_hint());
             HLOGE("audio-play", "%s", why);
             audio_health_set(false, AUDIO_HEALTH_FAILED, why);
             goto cleanup_play;
@@ -1409,7 +1417,7 @@ void *radio_capture_thread(void *device_ptr)
                      "device negotiated %u Hz, which the modem cannot resample "
                      "(supported 8k/11.025k/16k/22.05k/24k/32k/44.1k/48k/"
                      "88.2k/96k/176.4k/192k) -- %s",
-                     cfg->sample_rate, audio_rate_advice());
+                     cfg->sample_rate, audio_rate_mismatch_hint());
             HLOGE("audio-cap", "%s", why);
             audio_health_set(true, AUDIO_HEALTH_FAILED, why);
             audio->free(b);

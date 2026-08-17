@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"image"
 	"math"
+	"strings"
 	"testing"
 )
 
@@ -51,7 +52,7 @@ func TestConcurrentSpectrumAccessNoRace(t *testing.T) {
 }
 
 func TestParseStatusMessage(t *testing.T) {
-	payload := []byte(`{"type":"status","bitrate":1200,"snr":6.5,"sync":true,"direction":"tx","client_tcp_connected":true,"bytes_transmitted":34,"bytes_received":900,"tx_gain_db":3.5,"tx_peak_dbfs":-2.1,"waterfall":true}`)
+	payload := []byte(`{"type":"status","bitrate":1200,"snr":6.5,"sync":true,"direction":"tx","client_tcp_connected":true,"bytes_transmitted":34,"bytes_received":900,"tx_gain_db":3.5,"tx_peak_dbfs":-2.1,"waterfall":true,"audio_ok":true,"audio_error":""}`)
 
 	status, err := parseStatusMessage(payload)
 	if err != nil {
@@ -71,6 +72,38 @@ func TestParseStatusMessage(t *testing.T) {
 	}
 	if status.Waterfall != true {
 		t.Fatal("expected waterfall to be true")
+	}
+	if !status.AudioOk {
+		t.Fatal("expected audio_ok to be true")
+	}
+}
+
+func TestParseStatusMessageReportsAudioFailure(t *testing.T) {
+	payload := []byte(`{"type":"status","audio_ok":false,"audio_error":"capture: device negotiated 44100 Hz, not a multiple of 8000 Hz"}`)
+
+	status, err := parseStatusMessage(payload)
+	if err != nil {
+		t.Fatalf("parseStatusMessage returned error: %v", err)
+	}
+	if status.AudioOk {
+		t.Fatal("expected audio_ok to be false")
+	}
+	if !strings.Contains(status.AudioError, "44100 Hz") {
+		t.Fatalf("expected audio_error to mention the rate, got %q", status.AudioError)
+	}
+}
+
+// A status from an older engine without the audio fields must not be treated
+// as an audio failure (which would pop a spurious error dialog).
+func TestParseStatusMessageMissingAudioDefaultsHealthy(t *testing.T) {
+	payload := []byte(`{"type":"status","bitrate":1200}`)
+
+	status, err := parseStatusMessage(payload)
+	if err != nil {
+		t.Fatalf("parseStatusMessage returned error: %v", err)
+	}
+	if !status.AudioOk {
+		t.Fatal("expected missing audio_ok to default to healthy")
 	}
 }
 

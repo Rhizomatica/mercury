@@ -77,6 +77,8 @@ type telemetryState struct {
 	TXGainDB           float64
 	TXPeakDBFS         float64
 	Waterfall          bool
+	AudioOk            bool
+	AudioError         string
 }
 
 type uiBindings struct {
@@ -135,6 +137,14 @@ func parseStatusMessage(payload []byte) (telemetryState, error) {
 	status.TXGainDB = toFloat64(raw["tx_gain_db"])
 	status.TXPeakDBFS = toFloat64(raw["tx_peak_dbfs"])
 	status.Waterfall = toBool(raw["waterfall"])
+	if v, present := raw["audio_ok"]; present {
+		status.AudioOk = toBool(v)
+	} else {
+		// An older engine does not send the field; treat it as healthy rather
+		// than nagging with a spurious "device error" popup.
+		status.AudioOk = true
+	}
+	status.AudioError = fmt.Sprint(raw["audio_error"])
 	return status, nil
 }
 
@@ -583,6 +593,12 @@ func main() {
 		})
 	}
 
+	// Audio health popup state. applyStatus runs on the single link goroutine,
+	// so plain captured booleans are safe here; they track the previous status
+	// so the dialog fires once per failure, not on every 500 ms poll.
+	var prevAudioOk bool
+	var seenStatus bool
+
 	applyStatus := func(status telemetryState) {
 		// Under the lock: the link goroutine writes this while the GL thread
 		// reads it in refreshTelemetry(). telemetryState holds strings, so an
@@ -596,6 +612,21 @@ func main() {
 		if haveSpectrum {
 			refreshSpectrum()
 		}
+
+		// A device that fails to open, or negotiates a rate the modem cannot
+		// use, otherwise leaves the UI showing a healthy station that hears
+		// nothing -- so surface it as a dialog on the transition to failure.
+		if !status.AudioOk && (!seenStatus || prevAudioOk) {
+			msg := status.AudioError
+			if msg == "" {
+				msg = "The audio device could not be started."
+			}
+			runOnUI(func() {
+				dialog.ShowInformation("Audio Device Error", msg, myWindow)
+			})
+		}
+		prevAudioOk = status.AudioOk
+		seenStatus = true
 	}
 
 	updateConnectionButton = func() {
