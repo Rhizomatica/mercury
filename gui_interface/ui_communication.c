@@ -539,7 +539,7 @@ void *ui_publisher_thread(void *arg)
 
             /* Same enumerator the embedded UI calls, rendered as JSON.
              * devs[] and the JSON scratch go on the heap: 32 ui_device_t is
-             * 16 KB and buf another 8 KB, which is a lot to put on a thread
+             * 16 KB and buf another 18 KB, which is far too much for a thread
              * stack that is 512 KB by default on macOS. */
             ui_device_t *devs = malloc(sizeof(*devs) * 32);
             /* Big enough that 32 rows cannot overflow it even at the widest
