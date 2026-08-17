@@ -64,6 +64,22 @@ static int tx_read_small(uint8_t *buf, size_t n)
     return (int)k;
 }
 
+/* tx_read fake for the retreat tests: hands back everything asked for, the way
+ * a ring with plenty of backlog does.  tx_read_small() always returns 16 bytes,
+ * which fits every rung and so can never show a frame stranded above the
+ * ladder — the bug these tests pin needs full-width reads. */
+static int tx_read_full(uint8_t *buf, size_t n)
+{
+    memset(buf, 0x5A, n);
+    return (int)n;
+}
+
+/* Payload mode of the last DATA frame actually handed to the modem. */
+static int last_tx_mode(void)
+{
+    return fake_send_tx_frame_fake.arg1_val;
+}
+
 static arq_event_t make_event(arq_event_id_t id)
 {
     arq_event_t ev; memset(&ev, 0, sizeof(ev)); ev.id = id; return ev;
@@ -156,6 +172,69 @@ static void clean_ack_cycle(void)
 }
 
 /* ---- tests ---- */
+
+/* A rung is probed with a frame the rung BELOW can still carry.
+ *
+ * The retained frame is immutable: it is never re-framed smaller, so its size
+ * decides, once and for all, which modes can ever transmit it.  Read it at the
+ * full width of a rung the channel has not carried yet and a failed probe
+ * strands it — mode_that_fits() pins every retransmission to that rung while
+ * the ladder steps down beneath it, and the peer's mirror follows the ladder
+ * away from the mode that is actually on the air.  Sizing the read to a rung
+ * that has already delivered keeps the retreat open. */
+void test_probe_frame_fits_the_rung_below(void)
+{
+    fake_tx_read_fake.custom_fake = tx_read_full;
+    goto_connected();
+    goto_wait_ack();
+
+    /* Climb to DATAC1 (level 4).  Each clean delivery proves the rung that
+     * carried it, so the frame sent while probing level 4 is sized for the
+     * proven level 3. */
+    for (int expect = 1; expect <= 4; expect++)
+    {
+        clean_ack_cycle();
+        TEST_ASSERT_EQUAL_INT(expect, sess.speed_level);
+    }
+    TEST_ASSERT_EQUAL_INT(FREEDV_MODE_DATAC1, sess.payload_mode);
+    TEST_ASSERT_EQUAL_INT(FREEDV_MODE_DATAC1, last_tx_mode());
+
+    const arq_mode_timing_t *below = arq_protocol_mode_timing(arq_mode_ladder[3]);
+    TEST_ASSERT_NOT_NULL(below);
+    TEST_ASSERT_TRUE_MESSAGE(
+        sess.tx_frame_len <= (int)below->payload_bytes - ARQ_FRAME_HDR_SIZE,
+        "probe frame is too big for the rung the ladder retreats to");
+}
+
+/* ...and because it fits, a failed probe actually retreats ON THE AIR.
+ *
+ * This is the property the 0 dB bench cell was failing: the ladder stepped
+ * 4->3->2->1->0 while every retransmission went out on DATAC1 at an identical
+ * 4.817 s keydown, because no lower rung could carry the frame.  The step-down
+ * was pure bookkeeping; the only thing it moved was the peer's decoder, away
+ * from the mode being transmitted.  Assert the transmitted mode, not the
+ * ladder index — the ladder index was never the thing that was wrong. */
+void test_failed_probe_retreats_on_the_air(void)
+{
+    fake_tx_read_fake.custom_fake = tx_read_full;
+    goto_connected();
+    goto_wait_ack();
+    for (int expect = 1; expect <= 4; expect++)
+    {
+        clean_ack_cycle();
+        TEST_ASSERT_EQUAL_INT(expect, sess.speed_level);
+    }
+    TEST_ASSERT_EQUAL_INT(FREEDV_MODE_DATAC1, last_tx_mode());
+
+    /* The probe is not acknowledged: one retry steps the ladder down a rung
+     * and retransmits.  The frame must follow the ladder down. */
+    arq_event_t ev = make_event(ARQ_EV_TIMER_ACK);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(3, sess.speed_level);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(FREEDV_MODE_DATAC3, last_tx_mode(),
+        "retransmission stayed on the probed rung: the ladder stepped down "
+        "but the transmitter did not");
+}
 
 void test_ladder_starts_at_mfsk(void)
 {
@@ -352,6 +431,8 @@ int main(void)
     UNITY_BEGIN();
     RUN_TEST(test_longest_ladder_burst_is_the_slowest_rung);
     RUN_TEST(test_accept_rx_window_outlasts_longest_ladder_burst);
+    RUN_TEST(test_probe_frame_fits_the_rung_below);
+    RUN_TEST(test_failed_probe_retreats_on_the_air);
     RUN_TEST(test_ladder_starts_at_mfsk);
     RUN_TEST(test_ladder_table_ordered_and_sized);
     RUN_TEST(test_ladder_fast_ramp_climbs_one_per_clean);

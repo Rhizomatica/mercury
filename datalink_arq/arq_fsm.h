@@ -175,6 +175,15 @@ typedef struct
     bool     fast_ramp;                /* faster initial climb: 1 rung per clean
                                         * delivery until the first retry, then
                                         * ARQ_LADDER_UP_SUCCESSES-per-step       */
+    int      proven_level;             /* highest rung that has actually
+                                        * delivered a frame this session.  A
+                                        * fresh frame is never read larger than
+                                        * this rung's slot, so a failed probe at
+                                        * the rung above can always retreat to
+                                        * it: the retained frame is immutable,
+                                        * and one sized for a rung the channel
+                                        * cannot carry can never be sent at all
+                                        * (see send_data_burst).                 */
     int      peer_tx_mode;             /* my payload RX decoder mode when IRS =
                                         * arq_mode_ladder[rx_speed_level]; the
                                         * mode the peer's NEXT DATA burst uses  */

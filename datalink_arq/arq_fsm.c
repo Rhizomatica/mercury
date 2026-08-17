@@ -124,6 +124,7 @@ void arq_fsm_init(arq_session_t *sess)
     sess->speed_level    = 0;
     sess->tx_success_count = 0;
     sess->fast_ramp      = true;
+    sess->proven_level   = 0;
     sess->rx_speed_level = 0;
     sess->rx_success_count = 0;
     sess->rx_fast_ramp   = true;
@@ -163,6 +164,7 @@ static void reset_session_data_state(arq_session_t *sess)
     sess->speed_level        = 0;
     sess->tx_success_count   = 0;
     sess->fast_ramp          = true;
+    sess->proven_level       = 0;
     sess->rx_speed_level     = 0;
     sess->rx_success_count   = 0;
     sess->rx_fast_ramp       = true;
@@ -389,8 +391,26 @@ static int ladder_step(int *level, int *success_count, bool *fast_ramp, bool cle
  *  with no retransmission; else it needed at least one retry. */
 static void record_tx_outcome(arq_session_t *sess, bool clean)
 {
+    /* A rung is "proven" once it has actually put a frame across.  Captured
+     * before the step, so a clean delivery proves the rung that carried it and
+     * not the one we are about to climb to.  Fresh frames are sized to the
+     * proven rung (send_data_burst), which is what makes a failed probe
+     * recoverable: the retained frame is immutable, so one read at the size of
+     * an unproven rung can be stranded there with no smaller mode able to
+     * carry it. */
+    if (clean)
+    {
+        if (sess->speed_level > sess->proven_level)
+            sess->proven_level = sess->speed_level;
+    }
+
     int delta = ladder_step(&sess->speed_level, &sess->tx_success_count,
                             &sess->fast_ramp, clean);
+
+    /* Shrink the size budget with the ladder: a rung that just failed is no
+     * longer evidence that the next frame may be read that large. */
+    if (sess->proven_level > sess->speed_level)
+        sess->proven_level = sess->speed_level;
     if (delta < 0)
         HLOGD(LOG_COMP, "Ladder step-down to %d (retry)", sess->speed_level);
     else if (delta > 0)
@@ -547,6 +567,37 @@ static void send_data_burst(arq_session_t *sess)
     if ((int)tm->payload_bytes <= ARQ_FRAME_HDR_SIZE)
         return;
     size_t user_bytes = (size_t)tm->payload_bytes - ARQ_FRAME_HDR_SIZE;
+
+    /* Cap a FRESH read at the proven rung's slot.  The retained frame is
+     * immutable — it is never re-framed smaller, because the seq<->bytes
+     * identity has to stay fixed for a duplicate to be idempotent on the peer.
+     * That makes an oversized read a trap: read 502 bytes while probing DATAC1
+     * and no lower rung's slot can hold them, so mode_that_fits() pins every
+     * retransmission to DATAC1 even as the ladder steps down.  If the channel
+     * cannot carry that rung, the session transmits the same undecodable burst
+     * until the no-progress timeout, while the peer's mirror follows the
+     * (purely notional) step-downs away from the mode actually on the air.
+     * Sizing the read to a rung that has already delivered keeps the retreat
+     * open: the frame always fits the rung we fall back to.
+     *
+     * Only while PROBING above the proven rung.  Slot sizes are not monotonic
+     * along the ladder (MFSK carries 90 user bytes, DATAC15 22), so capping
+     * unconditionally would shrink a floor frame to a fifth of its payload
+     * during exactly the deep fade the floor exists for. */
+    if (!sess->tx_frame_present && sess->speed_level > sess->proven_level)
+    {
+        int pl = sess->proven_level;
+        if (pl < 0) pl = 0;
+        if (pl > ARQ_LADDER_LEVELS - 1) pl = ARQ_LADDER_LEVELS - 1;
+        const arq_mode_timing_t *tp = arq_protocol_mode_timing(
+            clamp_payload_mode_to_bandwidth(arq_mode_ladder[pl]));
+        if (tp && (int)tp->payload_bytes > ARQ_FRAME_HDR_SIZE)
+        {
+            size_t proven_slot = (size_t)tp->payload_bytes - ARQ_FRAME_HDR_SIZE;
+            if (proven_slot < user_bytes)
+                user_bytes = proven_slot;
+        }
+    }
 
     /* Fetch a new frame's worth of user bytes iff none is outstanding. */
     if (!sess->tx_frame_present)
@@ -1526,14 +1577,21 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
             }
             else
             {
-                /* Reset-on-miss: a full idle hold passed with no DATA.  If a
-                 * lost ACK left our RX-mode mirror climbed ABOVE the sender
-                 * (which stepped down on its retry), we can no longer decode
-                 * its bursts — silently stalling.  Step the mirror down one
-                 * rung toward the floor so the two ends re-rendezvous; the
-                 * MFSK floor is the guaranteed common ground.  At faster modes
-                 * frames arrive well within the hold, so this only fires on a
-                 * genuine stall (at the floor a step-down is a harmless no-op). */
+                /* Reset-on-miss: a full idle hold passed with no DATA, so our
+                 * RX-mode mirror and the mode actually on the air have come
+                 * apart and we are deaf until they meet again.  Only one
+                 * payload decoder runs at a time, so a one-rung disagreement
+                 * is total deafness — there is no partial decode to steer by.
+                 *
+                 * Walk DOWN a rung per hold and PARK at the floor.  Parking is
+                 * right because the sender ends up at the floor too: a retry
+                 * steps it down a rung at a time and, now that a frame is never
+                 * read larger than a rung that has already delivered
+                 * (send_data_burst), it can always follow the ladder all the
+                 * way down.  Cycling back up instead was measured on the 0 dB
+                 * cell and is worse: it puts the mirror on the sender's actual
+                 * rung for 15 s in every 75 while the sender sits at the floor
+                 * transmitting into a decoder that has wandered off. */
                 if (sess->rx_speed_level > 0)
                     irs_mirror_peer_ladder(sess, false);
                 enter_idle_irs(sess);   /* re-arm the idle hold */
