@@ -542,38 +542,20 @@ void *ui_publisher_thread(void *arg)
              * 16 KB and buf another 8 KB, which is a lot to put on a thread
              * stack that is 512 KB by default on macOS. */
             ui_device_t *devs = malloc(sizeof(*devs) * 32);
-            /* Big enough that 32 rows cannot overflow it even at the widest
-             * name and id the struct allows, plus the JSON scaffolding.  It
-             * used to be 8 KB, which was comfortable only while names were
-             * short: ui_devices_disambiguate() appends the id to any name two
-             * devices share, and ui_device_list_to_json() refuses to emit
-             * truncated JSON — so an overflow does not corrupt the list, it
-             * silently publishes no list at all. */
-            const size_t json_cap = 32 * (UI_DEV_NAME_MAX + UI_DEV_ID_MAX + 32) + 256;
-            char *buf = malloc(json_cap);
+            char *buf = malloc(8192);
             char sel[UI_DEV_ID_MAX];
 
             if (devs && buf)
             {
                 int cap_count = ui_comm_get_audio_devices(UI_DEV_CAPTURE, devs, 32, sel, sizeof(sel));
-                if (cap_count > 0)
-                {
-                    if (ui_device_list_to_json("capture_dev_list", devs, cap_count, sel, buf, json_cap) > 0)
-                        ws_broadcast_json(&ctx->ws, buf);
-                    else
-                        HLOGW(UI_LOG_TAG, "capture device list did not fit its JSON buffer "
-                                          "(%d devices) — not published", cap_count);
-                }
+                if (cap_count > 0 &&
+                    ui_device_list_to_json("capture_dev_list", devs, cap_count, sel, buf, 8192) > 0)
+                    ws_broadcast_json(&ctx->ws, buf);
 
                 int pb_count = ui_comm_get_audio_devices(UI_DEV_PLAYBACK, devs, 32, sel, sizeof(sel));
-                if (pb_count > 0)
-                {
-                    if (ui_device_list_to_json("playback_dev_list", devs, pb_count, sel, buf, json_cap) > 0)
-                        ws_broadcast_json(&ctx->ws, buf);
-                    else
-                        HLOGW(UI_LOG_TAG, "playback device list did not fit its JSON buffer "
-                                          "(%d devices) — not published", pb_count);
-                }
+                if (pb_count > 0 &&
+                    ui_device_list_to_json("playback_dev_list", devs, pb_count, sel, buf, 8192) > 0)
+                    ws_broadcast_json(&ctx->ws, buf);
             }
             else
             {
