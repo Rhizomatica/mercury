@@ -114,18 +114,16 @@ void arq_fsm_init(arq_session_t *sess)
     sess->control_mode        = ARQ_CONTROL_MODE;
     {
         int pin_ = ladder_pin_level();
-        int start_ = (pin_ >= 0) ? pin_ : 0;
+        int start_ = (pin_ >= 0) ? pin_ : ARQ_LADDER_START_LEVEL;
         sess->speed_level          = start_;
         sess->rx_speed_level       = start_;
-        sess->payload_mode         = arq_mode_ladder[start_];  /* ladder floor = MFSK */
-        sess->peer_tx_mode         = arq_mode_ladder[start_];  /* RX decoder starts at floor */
+        sess->proven_level         = start_;
+        sess->payload_mode         = arq_mode_ladder[start_];
+        sess->peer_tx_mode         = arq_mode_ladder[start_];
         sess->initial_payload_mode = arq_mode_ladder[start_];
     }
-    sess->speed_level    = 0;
     sess->tx_success_count = 0;
     sess->fast_ramp      = true;
-    sess->proven_level   = 0;
-    sess->rx_speed_level = 0;
     sess->rx_success_count = 0;
     sess->rx_fast_ramp   = true;
 }
@@ -161,19 +159,17 @@ static void reset_session_data_state(arq_session_t *sess)
     sess->tx_frame_len       = 0;
     sess->tx_frame_retx      = false;
     sess->tx_retries_left    = ARQ_DATA_RETRY_SLOTS;
-    sess->speed_level        = 0;
     sess->tx_success_count   = 0;
     sess->fast_ramp          = true;
-    sess->proven_level       = 0;
-    sess->rx_speed_level     = 0;
     sess->rx_success_count   = 0;
     sess->rx_fast_ramp       = true;
     {
         int pin_ = ladder_pin_level();
-        int start_ = (pin_ >= 0) ? pin_ : 0;
+        int start_ = (pin_ >= 0) ? pin_ : ARQ_LADDER_START_LEVEL;
         sess->speed_level    = start_;
         sess->rx_speed_level = start_;
-        sess->payload_mode   = arq_mode_ladder[start_];   /* MFSK floor */
+        sess->proven_level   = start_;
+        sess->payload_mode   = arq_mode_ladder[start_];
         sess->peer_tx_mode   = arq_mode_ladder[start_];
     }
     sess->pending_disconnect = false;

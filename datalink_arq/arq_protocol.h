@@ -278,6 +278,20 @@ extern _Atomic int arq_mode_hold_after_downgrade_s;
                                              * 6=QAM16C2 */
 extern const int arq_mode_ladder[ARQ_LADDER_LEVELS];
 
+/* Rung a session starts on.
+ *
+ * Not the floor.  A session only exists because a CALL and an ACCEPT got
+ * through on DATAC16, and MERCURY_MODE_MFSK sits roughly 10-12 dB below
+ * DATAC16 — so opening at the floor spends the first keydown, 13.5 s of it,
+ * proving something the handshake has already proved, and carries 90 bytes
+ * while doing it.  Starting one rung up costs at most one failed burst on a
+ * link too weak for DATAC15, after which the ordinary retry rule steps down
+ * to the floor and the fringe behaviour is unchanged.
+ *
+ * Both ends derive this from the same constant, so the ISS ladder and the IRS
+ * mirror still open in lockstep with nothing on the wire to say so. */
+#define ARQ_LADDER_START_LEVEL        1
+
 #define ARQ_LADDER_UP_SUCCESSES_DEFAULT        2     /* clean deliveries per step-up
                                                       * once the fast ramp ends       */
 extern _Atomic int arq_ladder_up_successes;

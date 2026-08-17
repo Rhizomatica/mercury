@@ -191,7 +191,7 @@ void test_probe_frame_fits_the_rung_below(void)
     /* Climb to DATAC1 (level 4).  Each clean delivery proves the rung that
      * carried it, so the frame sent while probing level 4 is sized for the
      * proven level 3. */
-    for (int expect = 1; expect <= 4; expect++)
+    for (int expect = ARQ_LADDER_START_LEVEL + 1; expect <= 4; expect++)
     {
         clean_ack_cycle();
         TEST_ASSERT_EQUAL_INT(expect, sess.speed_level);
@@ -219,7 +219,7 @@ void test_failed_probe_retreats_on_the_air(void)
     fake_tx_read_fake.custom_fake = tx_read_full;
     goto_connected();
     goto_wait_ack();
-    for (int expect = 1; expect <= 4; expect++)
+    for (int expect = ARQ_LADDER_START_LEVEL + 1; expect <= 4; expect++)
     {
         clean_ack_cycle();
         TEST_ASSERT_EQUAL_INT(expect, sess.speed_level);
@@ -236,11 +236,17 @@ void test_failed_probe_retreats_on_the_air(void)
         "but the transmitter did not");
 }
 
-void test_ladder_starts_at_mfsk(void)
+void test_ladder_starts_one_rung_above_the_floor(void)
 {
-    TEST_ASSERT_EQUAL_INT(0, sess.speed_level);
-    TEST_ASSERT_EQUAL_INT(MERCURY_MODE_MFSK, sess.payload_mode);
+    /* MFSK is still the floor — it is just not where a session opens.  The
+     * handshake has already carried DATAC16 both ways, and MFSK sits about
+     * 10-12 dB below that, so the floor is reached by stepping DOWN when a
+     * burst is actually lost rather than assumed at the start. */
     TEST_ASSERT_EQUAL_INT(MERCURY_MODE_MFSK, arq_mode_ladder[0]);
+    TEST_ASSERT_EQUAL_INT(ARQ_LADDER_START_LEVEL, sess.speed_level);
+    TEST_ASSERT_EQUAL_INT(arq_mode_ladder[ARQ_LADDER_START_LEVEL],
+                          sess.payload_mode);
+    TEST_ASSERT_TRUE(ARQ_LADDER_START_LEVEL > 0);
 }
 
 void test_ladder_table_ordered_and_sized(void)
@@ -260,9 +266,9 @@ void test_ladder_fast_ramp_climbs_one_per_clean(void)
 {
     goto_connected();
     goto_wait_ack();
-    TEST_ASSERT_EQUAL_INT(0, sess.speed_level);
+    TEST_ASSERT_EQUAL_INT(ARQ_LADDER_START_LEVEL, sess.speed_level);
 
-    for (int expect = 1; expect < ARQ_LADDER_LEVELS; expect++)
+    for (int expect = ARQ_LADDER_START_LEVEL + 1; expect < ARQ_LADDER_LEVELS; expect++)
     {
         clean_ack_cycle();
         TEST_ASSERT_EQUAL_INT(expect, sess.speed_level);
@@ -280,10 +286,10 @@ void test_ladder_retry_steps_down_then_slow_ramp(void)
     goto_connected();
     goto_wait_ack();
 
-    /* Climb to level 3 via the fast ramp. */
-    clean_ack_cycle();   /* 1 */
-    clean_ack_cycle();   /* 2 */
-    clean_ack_cycle();   /* 3 */
+    /* Climb to level 3 via the fast ramp (one rung per clean delivery from
+     * the start rung). */
+    while (sess.speed_level < 3)
+        clean_ack_cycle();
     TEST_ASSERT_EQUAL_INT(3, sess.speed_level);
 
     /* A retransmission (ACK timeout) steps the mode down and ends fast ramp. */
@@ -343,12 +349,18 @@ static void dirty_ack_cycle(void)
     }
 }
 
-/* Ladder never drops below the MFSK floor no matter how many retries. */
+/* Ladder never drops below the MFSK floor no matter how many retries — and a
+ * session that opens above the floor still reaches it by stepping down. */
 void test_ladder_floor_holds_at_mfsk(void)
 {
     goto_connected();
     goto_wait_ack();
+    TEST_ASSERT_EQUAL_INT(ARQ_LADDER_START_LEVEL, sess.speed_level);
+
+    for (int i = 0; i < ARQ_LADDER_START_LEVEL; i++)
+        dirty_ack_cycle();
     TEST_ASSERT_EQUAL_INT(0, sess.speed_level);
+    TEST_ASSERT_EQUAL_INT(MERCURY_MODE_MFSK, sess.payload_mode);
 
     for (int i = 0; i < 5; i++)
     {
@@ -433,7 +445,7 @@ int main(void)
     RUN_TEST(test_accept_rx_window_outlasts_longest_ladder_burst);
     RUN_TEST(test_probe_frame_fits_the_rung_below);
     RUN_TEST(test_failed_probe_retreats_on_the_air);
-    RUN_TEST(test_ladder_starts_at_mfsk);
+    RUN_TEST(test_ladder_starts_one_rung_above_the_floor);
     RUN_TEST(test_ladder_table_ordered_and_sized);
     RUN_TEST(test_ladder_fast_ramp_climbs_one_per_clean);
     RUN_TEST(test_ladder_retry_steps_down_then_slow_ramp);
