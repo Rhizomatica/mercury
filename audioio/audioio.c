@@ -158,6 +158,25 @@ bool audioio_health_ok(char *reason, size_t reasonlen)
     return ok;
 }
 
+/* Operator-facing fix for a rate the modem cannot use.  ALSA's plug layer
+ * resamples when the device is named plughw: instead of hw:, but the Windows
+ * and macOS backends have no such indirection: the device itself must be set
+ * to a supported rate in the OS sound settings. */
+static const char *audio_rate_mismatch_hint(void)
+{
+    switch (audio_subsystem)
+    {
+    case AUDIO_SUBSYSTEM_ALSA:
+        return "try plughw:X,Y instead of hw:X,Y so ALSA converts";
+    case AUDIO_SUBSYSTEM_WASAPI:
+    case AUDIO_SUBSYSTEM_DSOUND:
+    case AUDIO_SUBSYSTEM_COREAUDIO:
+        return "set the device sample rate to 48000 Hz in the OS sound settings";
+    default:
+        return "set the device sample rate to a supported value";
+    }
+}
+
 static void format_device_display(int audio_subsys, int mode, const char *id, char *out, size_t outsz);
 static int get_soundcard_list_int(int audio_system, int mode,
                                   char ids[][AUDIO_DEV_STR_MAX], char dev_names[][AUDIO_DEV_STR_MAX], int max_count,
@@ -994,9 +1013,8 @@ void *radio_playback_thread(void *device_ptr)
         char why[160];
         snprintf(why, sizeof(why),
                  "device negotiated %u Hz, not a multiple of %d Hz "
-                 "(supported 8k/16k/24k/32k/48k/96k) -- try plughw:X,Y instead "
-                 "of hw:X,Y so ALSA converts",
-                 cfg->sample_rate, RESAMP_MODEM_FS);
+                 "(supported 8k/16k/24k/32k/48k/96k) -- %s",
+                 cfg->sample_rate, RESAMP_MODEM_FS, audio_rate_mismatch_hint());
         HLOGE("audio-play", "%s", why);
         audio_health_set(false, AUDIO_HEALTH_FAILED, why);
         goto cleanup_play;
@@ -1360,9 +1378,8 @@ void *radio_capture_thread(void *device_ptr)
         char why[160];
         snprintf(why, sizeof(why),
                  "device negotiated %u Hz, not a multiple of %d Hz "
-                 "(supported 8k/16k/24k/32k/48k/96k) -- try plughw:X,Y instead "
-                 "of hw:X,Y so ALSA converts",
-                 cfg->sample_rate, RESAMP_MODEM_FS);
+                 "(supported 8k/16k/24k/32k/48k/96k) -- %s",
+                 cfg->sample_rate, RESAMP_MODEM_FS, audio_rate_mismatch_hint());
         HLOGE("audio-cap", "%s", why);
         audio_health_set(true, AUDIO_HEALTH_FAILED, why);
         audio->free(b);
