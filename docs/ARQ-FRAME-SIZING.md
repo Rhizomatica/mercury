@@ -83,10 +83,29 @@ exists for.
 
 Measured:
 
+All arms are `make clean` builds — an incremental build silently kept a stale
+object here and produced a number that was wrong by 18%, so rebuild from
+scratch before trusting any of this.
+
 | | before | after |
 |---|---|---|
-| 0 dB bench, 1054 B payload | 276/1054, wedged, 3/3 | 552/1054 and still delivering at the harness deadline |
+| 0 dB bench, 1054 B payload | 276/1054, wedged, 3/3 | **912/1054** and still delivering when the harness deadline expired |
+| clean bench, 1054 B payload | 81.18 s | 87.09 s (**~7% slower**) |
 | sim fade cycle, full delivery, 100 seeds | 72/100 fail | 48/100 fail |
+
+The 7% is the cost of the cap and it is real: one frame per rung climbed goes
+out under-filled.  That buys immunity to a wedge that costs the *entire
+session* when it fires, so the trade is worth making — but it is a trade, not
+a free win.
+
+### A start rung above the floor is not the way to win it back
+
+Opening at DATAC15 instead of MFSK recovers the 7% and more — 81.18 s ->
+71.57 s on the clean cell.  It also doubles the fringe: 102 B at SNR3k =
+-12 dB goes 50.44 s -> 101.71 s, because every probe the channel cannot carry
+costs a burst plus a full ACK timeout and at the fringe the ladder pays that
+over and over.  Reach is unaffected (both arms deliver every byte).  Measured
+and reverted; see ARQ_LADDER_START_LEVEL.
 
 **The residual 48% is a different instance of the same defect.** A frame read
 at a rung that *has* delivered can still be stranded if the band collapses
