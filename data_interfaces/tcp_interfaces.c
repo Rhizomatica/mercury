@@ -64,6 +64,12 @@ static size_t broadcast_frame_size_cfg = 0;
 static _Atomic uint32_t last_sn_bits = 0;        /* float bits, relaxed */
 static _Atomic uint32_t last_bitrate_sl = 0;
 static _Atomic uint32_t last_bitrate_bps = 0;
+/* Last time an unsolicited SN/BITRATE line was pushed to the control port.
+ * These are telemetry — refreshed continuously and queryable on demand via the
+ * SN/BITRATE commands — so they are throttled to keep them from flooding the
+ * bounded control queue and starving the host state notifications. */
+static _Atomic uint64_t last_sn_emit_ms = 0;
+static _Atomic uint64_t last_bitrate_emit_ms = 0;
 /* Read by the modem/ARQ threads on every host state notification and written
  * by the init/teardown thread.  Atomic for the same reason as its neighbours:
  * a plain pointer here is a data race, and on a weakly-ordered target (armhf,
@@ -189,6 +195,10 @@ static int tnc_queue_line(const char *line)
  * further helps nobody. */
 #define TNC_CRITICAL_RETRIES   10
 #define TNC_CRITICAL_SLEEP_US  5000   /* 10 x 5 ms = 50 ms worst case */
+/* Unsolicited SN/BITRATE are telemetry, not state: the host can poll them with
+ * the SN/BITRATE commands whenever it wants.  Pushing them faster than this
+ * buys nothing and only competes with PTT/DISCONNECTED for queue slots. */
+#define TNC_TELEMETRY_MIN_INTERVAL_MS 1000
 
 static int tnc_queue_line_critical(const char *line)
 {
@@ -198,10 +208,24 @@ static int tnc_queue_line_critical(const char *line)
             return 0;
         hermes_usleep(TNC_CRITICAL_SLEEP_US);
     }
+    /* The queued line ends in "\r"; echoing it verbatim into the log makes the
+     * terminal overwrite the start of the message (that stray "\r" is what
+     * turns the report into "' — the TNC channel stayed full...").  Strip CR/LF
+     * so the diagnostic is actually readable. */
+    char clean[64] = {0};
+    if (line)
+    {
+        size_t len = strlen(line);
+        if (len >= sizeof(clean))
+            len = sizeof(clean) - 1;
+        memcpy(clean, line, len);
+        while (len > 0 && (clean[len - 1] == '\r' || clean[len - 1] == '\n'))
+            clean[--len] = '\0';
+    }
     HLOGE("tcp-ctl", "DROPPED host state notification '%s' — the TNC channel "
           "stayed full for %d ms; a host relying on this for interlock or "
           "scanning is now out of sync",
-          line, (TNC_CRITICAL_RETRIES * TNC_CRITICAL_SLEEP_US) / 1000);
+          clean, (TNC_CRITICAL_RETRIES * TNC_CRITICAL_SLEEP_US) / 1000);
     return -1;
 }
 
@@ -1359,7 +1383,16 @@ void tnc_send_disconnected()
     char buffer[128];
     snprintf(buffer, sizeof(buffer), "DISCONNECTED\r");
     if (tnc_queue_line_critical(buffer) < 0)
+    {
         HLOGW("tcp-ctl", "Error queuing disconnected message");
+        /* A lost DISCONNECTED is unrecoverable for the host: Pat/Winlink sit
+         * there forever waiting for a connect result.  The queue path is
+         * lossy by design (telemetry must not block a modem thread), so when
+         * it is backed up, deliver this one state change straight to the
+         * control socket instead of dropping it.  tcp_write() is mutex-guarded
+         * and non-blocking, so this cannot stall the ARQ event loop. */
+        (void)tcp_write(CTL_TCP_PORT, (uint8_t *)buffer, strlen(buffer));
+    }
 }
 
 void tnc_send_registered(const char *callsign)
@@ -1400,7 +1433,16 @@ void tnc_send_sn(float snr)
     char buffer[64];
     uint32_t bits;
     memcpy(&bits, &snr, sizeof bits);
+    /* Always cache the latest value: the UI and the on-demand SN command read
+     * it regardless of whether an unsolicited line is pushed. */
     atomic_store_explicit(&last_sn_bits, bits, memory_order_relaxed);
+
+    uint64_t now = monotonic_ms();
+    uint64_t last = atomic_load_explicit(&last_sn_emit_ms, memory_order_relaxed);
+    if (now - last < TNC_TELEMETRY_MIN_INTERVAL_MS)
+        return;
+    atomic_store_explicit(&last_sn_emit_ms, now, memory_order_relaxed);
+
     snprintf(buffer, sizeof(buffer), "SN %.1f\r", snr);
     (void)tnc_queue_line(buffer);
 }
@@ -1422,6 +1464,13 @@ void tnc_send_bitrate(uint32_t speed_level, uint32_t bps)
     char buffer[64];
     atomic_store_explicit(&last_bitrate_sl, speed_level, memory_order_relaxed);
     atomic_store_explicit(&last_bitrate_bps, bps, memory_order_relaxed);
+
+    uint64_t now = monotonic_ms();
+    uint64_t last = atomic_load_explicit(&last_bitrate_emit_ms, memory_order_relaxed);
+    if (now - last < TNC_TELEMETRY_MIN_INTERVAL_MS)
+        return;
+    atomic_store_explicit(&last_bitrate_emit_ms, now, memory_order_relaxed);
+
     snprintf(buffer, sizeof(buffer), "BITRATE (%u) %u BPS\r", speed_level, bps);
     (void)tnc_queue_line(buffer);
 }
