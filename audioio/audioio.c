@@ -1044,7 +1044,10 @@ void *radio_playback_thread(void *device_ptr)
         HLOGI("audio-play", "device negotiated %u Hz; resampling %d/%d",
               cfg->sample_rate, rl, rm);
     }
-    if (cfg->sample_rate != 48000)
+    /* Only for the integer engine: on the rational path resample_ratio is 0
+     * and the L/M actually in use was logged above, so this would print
+     * "resampling 1:0". */
+    if (!rat_up && cfg->sample_rate != 48000)
         HLOGW("audio-play", "device negotiated %u Hz (not the requested 48000); "
               "resampling 1:%d", cfg->sample_rate, resample_ratio);
 
@@ -1448,7 +1451,9 @@ void *radio_capture_thread(void *device_ptr)
         HLOGI("audio-cap", "device negotiated %u Hz; resampling %d/%d",
               cfg->sample_rate, rl, rm);
     }
-    if (cfg->sample_rate != 48000)
+    /* Integer engine only -- see the playback path; this would otherwise
+     * print "decimating 0:1" for every 44.1 kHz card. */
+    if (!rat_down && cfg->sample_rate != 48000)
         HLOGW("audio-cap", "device negotiated %u Hz (not the requested 48000); "
               "decimating %d:1", cfg->sample_rate, resample_ratio);
 
