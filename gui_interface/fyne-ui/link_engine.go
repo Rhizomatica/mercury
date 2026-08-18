@@ -329,6 +329,8 @@ func statusFromC(cst *C.ui_status_t) telemetryState {
 		TXGainDB:           float64(cst.tx_gain_db),
 		TXPeakDBFS:         float64(cst.tx_peak_dbfs),
 		Waterfall:          bool(cst.waterfall_enabled),
+		AudioOk:            bool(cst.audio_ok),
+		AudioError:         C.GoString(&cst.audio_error[0]),
 	}
 }
 
