@@ -207,3 +207,56 @@ This is the third speedup measured and rejected for the same reason (see also
 the start rung and the two-rung ramp): **anything that makes the ladder
 climb more aggressively wins on a channel that never needed the help and
 loses on the one that does.**
+
+
+### Rejected: halving the Welch-Costas ACK
+
+The ACK keydown is the largest single piece of the turnaround (1.05 s of
+2.47 s), and 640 ms of it is the pattern itself: for the 32-MFSK geometry an
+8-tone Welch-Costas array sent **twice**, accepted at 8 matched symbols.
+Sending it once would cut ~13% off the turnaround, ~4% end to end.
+
+`utils/ackpat_sweep` drives the shipped `mfsk_pattern_tx`/`mfsk_pattern_detect`
+(not a reimplementation) against AWGN.  SNR here is burst-band signal RMS
+against noise RMS over the same samples — **not** SNR3k, so compare these
+numbers only with each other:
+
+```
+   SNR    detect   false-accept   detect(one repetition, pessimistic)
+   -6.0   100.0%      0.0%         100.0%
+  -10.0   100.0%      0.0%          78.0%
+  -12.0   100.0%      0.0%          29.5%
+  -14.0    87.0%      0.0%           2.5%
+  -16.0    23.5%      0.0%           0.0%
+  -18.0     1.5%      0.0%           0.0%
+```
+
+Two things stand out.
+
+**False accepts are zero everywhere**, down to -30 dB where the pattern is
+buried. The 8-of-16 threshold is not being paid for in false-alarm immunity;
+there is none to reclaim.
+
+**The second repetition buys 4-6 dB.** The one-repetition column is a
+pessimistic bound — it replaces the second half with noise while the detector
+still demands 8 matches, so all 8 signal symbols must land, which is stricter
+than a purpose-built 8-symbol pattern with a relaxed threshold would be. Allow
+that design 1-2 dB back and halving still costs about 3 dB, which is what
+halving the integration time is worth in theory.
+
+That is the wrong 3 dB to spend. The ACK is the reverse path, and it has to
+outlive the data mode it acknowledges: a link that carries data forward but
+drops ACKs stalls exactly as dead as one that carries nothing, and it stalls
+in the confusing way, with the sender retransmitting into a receiver that
+already has the frame. This project has been bitten by precisely that
+asymmetry before (see the in-session ACK on DATAC18, which killed 5 kB uucp
+transfers around 2 kB).
+
+So: 4% end to end, paid for out of the margin that keeps the reverse path
+alive at the SNRs the MFSK rung exists for. Rejected — and this is the fourth
+speedup to fail the same test.
+
+If it is ever revisited, the measurement that would justify it is the ACK's
+cliff against the *data* cliff in the same units: the pattern only needs to be
+robust enough to outlive the slowest rung, and the sweep above cannot say how
+much of the gap it currently has because it does not put the two on one axis.
