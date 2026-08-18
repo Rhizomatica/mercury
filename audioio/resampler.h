@@ -47,7 +47,22 @@
 
 #define RESAMP_MODEM_FS         8000   /* the modem's native rate            */
 #define RESAMP_L                6      /* default ratio: 8 kHz <-> 48 kHz    */
-#define RESAMP_L_MAX            12     /* widest supported: 8 kHz <-> 96 kHz */
+#define RESAMP_L_MAX            12     /* widest INTEGER ratio: 8 kHz <-> 96 kHz */
+
+/* Widest out/in ratio ANY engine can produce, integer or rational: 8 kHz ->
+ * 192 kHz is 24.  Callers that must size a buffer before the device rate is
+ * known (the playback scratch is allocated before open()) have to use this,
+ * not RESAMP_L_MAX -- the rational engine is reached precisely when the ratio
+ * exceeds what the integer one handles, so sizing by RESAMP_L_MAX would be
+ * too small for exactly the rates that need it.
+ * resampler_ratio_max_covers_all_rates() in the tests pins the two together. */
+#define RESAMP_RATIO_MAX        24
+
+/* resamp_rat_max_out() can exceed n_in*ratio by this much: the ratio is not an
+ * integer, so a block can carry one extra output, plus one for the output that
+ * may already be due when the block starts.  A buffer sized from
+ * RESAMP_RATIO_MAX alone is short by exactly this. */
+#define RESAMP_RAT_OUT_SLACK    2
 #define RESAMP_TAPS_PER_PHASE   30
 #define RESAMP_NTAPS            (RESAMP_L * RESAMP_TAPS_PER_PHASE)      /* 180 */
 #define RESAMP_NTAPS_MAX        (RESAMP_L_MAX * RESAMP_TAPS_PER_PHASE)  /* 360 */

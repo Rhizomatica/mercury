@@ -524,7 +524,10 @@ void test_rational_output_count_does_not_drift(void)
     const int block = 441;                 /* 10 ms */
     int32_t in[441];
     memset(in, 0, sizeof(in));
-    int32_t out[64];
+    /* 441 inputs at 80/441 is exactly 80 outputs -- size from the API, never
+     * by eye.  A hand-picked 64 here overran the buffer and ASan caught it. */
+    int32_t out[128];
+    TEST_ASSERT_TRUE(resamp_rat_max_out(r, block) <= (int)(sizeof(out)/sizeof(out[0])));
 
     long total = 0;
     for (int b = 0; b < 6000; b++)         /* 60 s */
@@ -587,6 +590,33 @@ void test_rational_degenerate_inputs(void)
     resamp_rat_free(NULL);          /* must be a no-op */
 }
 
+/* The playback scratch is allocated BEFORE the device rate is known, from a
+ * compile-time maximum ratio.  If any supported rate needs more than that, the
+ * live audio path overruns the heap -- and it would do so only on the rates
+ * the rational engine exists for, which is the worst possible place for it to
+ * be wrong.  Pin the constant against the rate table. */
+void test_ratio_max_covers_every_supported_rate(void)
+{
+    const int rates[] = { 8000, 11025, 16000, 22050, 24000, 32000,
+                          44100, 48000, 88200, 96000, 176400, 192000 };
+
+    for (size_t i = 0; i < sizeof(rates)/sizeof(rates[0]); i++) {
+        resamp_rat_t *r = resamp_rat_create(RESAMP_MODEM_FS, rates[i]);   /* playback */
+        TEST_ASSERT_NOT_NULL(r);
+
+        /* Outputs a 1000-input period can produce must fit a buffer sized
+         * 1000 * RESAMP_RATIO_MAX. */
+        int worst = resamp_rat_max_out(r, 1000);
+        int budget = 1000 * RESAMP_RATIO_MAX + RESAMP_RAT_OUT_SLACK;
+        char msg[128];
+        snprintf(msg, sizeof(msg),
+                 "8000 -> %d needs %d outputs per 1000 inputs, buffer holds %d",
+                 rates[i], worst, budget);
+        TEST_ASSERT_TRUE_MESSAGE(worst <= budget, msg);
+        resamp_rat_free(r);
+    }
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -613,5 +643,6 @@ int main(void)
     RUN_TEST(test_rational_output_count_does_not_drift);
     RUN_TEST(test_rational_chunking_invariant);
     RUN_TEST(test_rational_degenerate_inputs);
+    RUN_TEST(test_ratio_max_covers_every_supported_rate);
     return UNITY_END();
 }

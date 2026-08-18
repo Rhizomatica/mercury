@@ -912,13 +912,21 @@ void *radio_playback_thread(void *device_ptr)
     // input is int32_t (8kHz samples from playback_buffer)
     int32_t *input_buffer = (int32_t *) malloc(period_scratch_bytes);
 
-    /* Upsampled mono scratch.  Sized for the WIDEST supported ratio, not the
-     * expected one: the device rate is not known until open() below, and a
-     * 96 kHz negotiation would overrun a buffer sized for 1:6. */
-    int32_t *buffer_upsampled = (int32_t *) malloc(period_scratch_bytes * RESAMP_L_MAX);
+    /* Upsampled mono scratch.  Sized for the WIDEST ratio any engine can
+     * produce, not the expected one: the device rate is not known until open()
+     * below, and a 96 kHz negotiation would overrun a buffer sized for 1:6.
+     *
+     * RESAMP_RATIO_MAX, not RESAMP_L_MAX: the rational engine runs exactly
+     * when the ratio is outside what the integer one handles, so 8 kHz ->
+     * 192 kHz is 24x where RESAMP_L_MAX is 12 -- sizing by the integer maximum
+     * overruns the heap on precisely the rates the rational path exists for. */
+    const size_t up_slack_bytes = RESAMP_RAT_OUT_SLACK * sizeof(int32_t);
+    int32_t *buffer_upsampled =
+        (int32_t *) malloc(period_scratch_bytes * RESAMP_RATIO_MAX + up_slack_bytes);
 
     // output is int32_t, up to stereo, at the device rate
-    int32_t *buffer_output_stereo = (int32_t *) malloc(period_scratch_bytes * 2 * RESAMP_L_MAX);
+    int32_t *buffer_output_stereo =
+        (int32_t *) malloc(period_scratch_bytes * 2 * RESAMP_RATIO_MAX + 2 * up_slack_bytes);
 
     if (!input_buffer || !buffer_upsampled || !buffer_output_stereo)
     {
