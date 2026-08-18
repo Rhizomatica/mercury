@@ -75,3 +75,6 @@ utils/watterson_test
 utils/acquire_vs_decode
 utils/resampler_bench
 utils/rxcost_bench
+
+# Compiler-generated header dependency files (-MMD)
+*.d
