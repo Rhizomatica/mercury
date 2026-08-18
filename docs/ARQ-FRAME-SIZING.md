@@ -144,3 +144,66 @@ it captures, so one dead direction freezes *both* processes: event loops
 healthy, sockets responsive, every timer stopped. The symptom is a CALL sent
 once and never retried while the peer sits in ACCEPTING — indistinguishable
 from an FSM bug until you take a backtrace. It now retries.
+
+
+## Where the time actually goes, and why the obvious speedups fail
+
+Measured on the clean bench cell, 5 KB and 8 KB payloads (sender-side PTT
+edges, both peers' logs):
+
+| | 5 KB | 8 KB |
+|---|---|---|
+| keydowns | 13 | 16 |
+| airtime | 66.7 s (67%) | 77.9 s (67%) |
+| **turnaround** | **32.6 s (33%)** | **39.2 s (33%)** |
+| goodput | 51.7 B/s (414 bps) | 70.0 B/s (560 bps) |
+
+The turnaround is rung-independent — 2.47 s, every burst, whatever mode it
+was — and decomposes as:
+
+```
+A PTT-off -> B PTT-on   0.46 s   (channel guard + decode)
+B ACK keydown           1.05 s   (100 ms silence + 640 ms pattern + 200 ms silence)
+B PTT-off -> A PTT-on   0.68 s   (post-ACK guard)
+```
+
+Every keydown carries 300 ms of deliberate silence (100 ms head, 200 ms tail,
+the same for data bursts and pattern ACKs). Across 23 keydowns that is 7% of a
+5 KB transfer. Trimming it is tempting and NOT safe to do from the simulator:
+the tail exists so the audio backend flushes the last samples before PTT
+drops, and that behaviour has not been measured on real hardware.
+
+**The ceiling is one ACK per data frame.** Stop-and-wait pays 2.47 s per
+frame regardless of how fast the mode is, so at the top rung a 3.70 s
+QAM16C2 burst spends 40% of its cycle not transmitting. Only more data per
+keydown changes that:
+
+| frames per keydown | cycle | goodput at QAM16C2 |
+|---|---|---|
+| 1 (today) | 6.17 s | 195 B/s |
+| 2 | 9.87 s | 244 B/s (+25%) |
+| 4 | 17.27 s | 279 B/s (+43%) |
+
+### Rejected: dropping the two "dominated" rungs
+
+Per-rung goodput with the measured turnaround says rungs 1 and 2 are
+pointless — DATAC15 moves 22 user bytes per 6.87 s cycle (3.2 B/s) and DATAC4
+46 per 8.27 s (5.6 B/s), against the MFSK floor's 90 per 15.97 s (5.6 B/s).
+Same or worse, and both are less robust than MFSK. A five-rung ladder
+(MFSK, DATAC3, DATAC1, DATAC17, QAM16C2) is **13.9% faster** on the clean
+cell: 104.81 s -> 90.20 s for 5 KB.
+
+It is **3.2x slower at the fringe**: 102 B at SNR3k = -12 dB goes
+50.45 s -> 162.09 s.
+
+Those rungs are not there for throughput. They are intermediate steps that can
+actually *succeed*: at -12 dB the ladder can sit on DATAC15, whereas with the
+gap widened every climb attempt probes DATAC3, fails, and burns a full ACK
+timeout. Goodput-per-rung is the wrong metric because it ignores the
+probability that a probe lands — the ladder's granularity is protective, and
+the cost of that protection is paid only on links fast enough not to care.
+
+This is the third speedup measured and rejected for the same reason (see also
+the start rung and the two-rung ramp): **anything that makes the ladder
+climb more aggressively wins on a channel that never needed the help and
+loses on the one that does.**
