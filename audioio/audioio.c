@@ -923,6 +923,8 @@ void *radio_playback_thread(void *device_ptr)
     if (!input_buffer || !buffer_upsampled || !buffer_output_stereo)
     {
         HLOGE("audio-play", "Failed to allocate playback buffers");
+        audio_health_set(false, AUDIO_HEALTH_FAILED,
+                         "out of memory allocating the playback buffers");
         goto finish_play;
     }
 
@@ -962,6 +964,8 @@ void *radio_playback_thread(void *device_ptr)
     if (b == NULL)
     {
         HLOGE("audio-play", "Error in audio->alloc()");
+        audio_health_set(false, AUDIO_HEALTH_FAILED,
+                         "out of memory allocating the playback device");
         goto finish_play;
     }
 
@@ -1066,7 +1070,14 @@ void *radio_playback_thread(void *device_ptr)
     if (!playback_is_float && !playback_is_int16 && !playback_is_int24 &&
         cfg->format != FFAUDIO_F_INT32 && cfg->format != FFAUDIO_F_INT24_4)
     {
-        HLOGE("audio-play", "Unsupported playback format %d, aborting", cfg->format);
+        {
+            char why[128];
+            snprintf(why, sizeof(why),
+                     "device negotiated an unsupported playback sample format (%d)",
+                     cfg->format);
+            HLOGE("audio-play", "%s", why);
+            audio_health_set(false, AUDIO_HEALTH_FAILED, why);
+        }
         goto cleanup_play;
     }
 
@@ -1351,6 +1362,8 @@ void *radio_capture_thread(void *device_ptr)
     if (b == NULL)
     {
         HLOGE("audio-cap", "Error in audio->alloc()");
+        audio_health_set(true, AUDIO_HEALTH_FAILED,
+                         "out of memory allocating the capture device");
         goto finish_cap;
     }
 
@@ -1391,7 +1404,14 @@ void *radio_capture_thread(void *device_ptr)
     if (!capture_is_float && !capture_is_int16 && !capture_is_int24 &&
         cfg->format != FFAUDIO_F_INT32 && cfg->format != FFAUDIO_F_INT24_4)
     {
-        HLOGE("audio-cap", "Unsupported capture format %d, aborting", cfg->format);
+        {
+            char why[128];
+            snprintf(why, sizeof(why),
+                     "device negotiated an unsupported capture sample format (%d)",
+                     cfg->format);
+            HLOGE("audio-cap", "%s", why);
+            audio_health_set(true, AUDIO_HEALTH_FAILED, why);
+        }
         audio->free(b);
         return NULL;
     }
@@ -1446,6 +1466,8 @@ void *radio_capture_thread(void *device_ptr)
     if (!buffer_output || !buffer_downsampled)
     {
         HLOGE("audio-cap", "Failed to allocate capture buffers");
+        audio_health_set(true, AUDIO_HEALTH_FAILED,
+                         "out of memory allocating the capture buffers");
         free(buffer_output);
         free(buffer_downsampled);
         buffer_output = NULL;
