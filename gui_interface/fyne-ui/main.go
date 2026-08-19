@@ -106,6 +106,7 @@ type uiBindings struct {
 	snrText           *canvas.Text
 	snrRowLabel       *canvas.Text
 	directionText     *canvas.Text
+	directionDot      *canvas.Circle
 	userCallsText     *canvas.Text
 	destCallsText     *canvas.Text
 	waterfallSNRText  *canvas.Text
@@ -479,8 +480,11 @@ func main() {
 	bindings.snrRowLabel = snrRowLabel
 
 	directionText := canvas.NewText("--", color.NRGBA{R: 0xDD, G: 0xDD, B: 0xDD, A: 0xFF})
-	directionText.TextSize = 13
+	directionText.TextSize = 20
 	bindings.directionText = directionText
+
+	directionDot := canvas.NewCircle(color.NRGBA{R: 0xDD, G: 0xDD, B: 0xDD, A: 0xFF})
+	bindings.directionDot = directionDot
 
 	userCallsText := canvas.NewText("", color.NRGBA{R: 0xDD, G: 0xDD, B: 0xDD, A: 0xFF})
 	userCallsText.TextSize = 13
@@ -625,6 +629,27 @@ func main() {
 			}
 			if bindings.directionText != nil {
 				bindings.directionText.Text = strings.ToUpper(telemetry.Direction)
+				txRed := color.NRGBA{R: 0xFF, G: 0x44, B: 0x44, A: 0xFF}
+				rxGreen := color.NRGBA{R: 0x44, G: 0xFF, B: 0x44, A: 0xFF}
+				switch strings.ToUpper(telemetry.Direction) {
+				case "TX":
+					bindings.directionText.Color = txRed
+					if bindings.directionDot != nil {
+						bindings.directionDot.FillColor = txRed
+						bindings.directionDot.Show()
+					}
+				case "RX":
+					bindings.directionText.Color = rxGreen
+					if bindings.directionDot != nil {
+						bindings.directionDot.FillColor = rxGreen
+						bindings.directionDot.Show()
+					}
+				default:
+					bindings.directionText.Color = color.NRGBA{R: 0xDD, G: 0xDD, B: 0xDD, A: 0xFF}
+					if bindings.directionDot != nil {
+						bindings.directionDot.Hide()
+					}
+				}
 				bindings.directionText.Refresh()
 			}
 			if bindings.userCallsText != nil {
@@ -985,10 +1010,16 @@ func main() {
 	))
 
 	// compact telemetry layout matching screenshot: left labels small, right values small-bold
+	txrxLabel := canvas.NewText("TX/RX", color.NRGBA{R: 0xAA, G: 0xAA, B: 0xAA, A: 0xFF})
+	txrxLabel.TextSize = directionText.TextSize
 	telemetryGrid := container.NewGridWithColumns(2,
+		txrxLabel,
+		container.NewHBox(
+			container.NewVBox(layout.NewSpacer(), container.NewGridWrap(fyne.NewSize(directionText.TextSize, directionText.TextSize), bindings.directionDot), layout.NewSpacer()),
+			bindings.directionText,
+		),
 		canvas.NewText("Bitrate", color.NRGBA{R: 0xAA, G: 0xAA, B: 0xAA, A: 0xFF}), bindings.bitrateText,
 		bindings.snrRowLabel, bindings.snrText,
-		canvas.NewText("Direction", color.NRGBA{R: 0xAA, G: 0xAA, B: 0xAA, A: 0xFF}), bindings.directionText,
 		canvas.NewText("My callsign", color.NRGBA{R: 0xAA, G: 0xAA, B: 0xAA, A: 0xFF}), bindings.userCallsText,
 		canvas.NewText("Target callsign", color.NRGBA{R: 0xAA, G: 0xAA, B: 0xAA, A: 0xFF}), bindings.destCallsText,
 		canvas.NewText("Client TCP Connected", color.NRGBA{R: 0xAA, G: 0xAA, B: 0xAA, A: 0xFF}), bindings.tcpText,
