@@ -1009,6 +1009,43 @@ void test_bcast_std_kiss_roundtrip(void)
     TEST_ASSERT_EQUAL_HEX8_ARRAY(orig, payload, orig_len);
 }
 
+/* A host that ASKS for telemetry must be answered, every time.
+ *
+ * This guards a rate-limit that was briefly added to tnc_send_sn()/
+ * tnc_send_bitrate() to stop them "flooding" the control queue.  The on-demand
+ * SN and BITRATE commands are answered by calling those same functions, so the
+ * limiter swallowed the reply -- and since the decoder holds the window open on
+ * a live link, the host was answered essentially never.  VARA hosts poll these.
+ *
+ * The limiter was unnecessary anyway: SN/BITRATE are emitted from
+ * process_received_frame(), i.e. only on a successfully DECODED frame, so at
+ * most a couple per frame and well under 1/s.  Overflowing the 256-slot queue,
+ * drained every 100 ms, needs ~2560/s.  The queue only fills when the drain
+ * stops, which was the real bug. */
+void test_sn_query_is_always_answered(void)
+{
+    memset(last_queued_line, 0, sizeof(last_queued_line));
+
+    char cmd[] = "SN";
+    execute_control_command(cmd);
+
+    /* Assert that a line came back, not which value: the cached SN depends on
+     * whatever ran before this test. */
+    TEST_ASSERT_TRUE_MESSAGE(strncmp(last_queued_line, "SN ", 3) == 0,
+        "host asked for SN and got nothing: is the reply rate-limited?");
+}
+
+void test_bitrate_query_is_always_answered(void)
+{
+    memset(last_queued_line, 0, sizeof(last_queued_line));
+
+    char cmd[] = "BITRATE";
+    execute_control_command(cmd);
+
+    TEST_ASSERT_TRUE_MESSAGE(strncmp(last_queued_line, "BITRATE ", 8) == 0,
+        "host asked for BITRATE and got nothing: is the reply rate-limited?");
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -1071,5 +1108,7 @@ int main(void)
     RUN_TEST(test_bcast_vara_length_roundtrip);
     RUN_TEST(test_bcast_tx_lenprefix_ignores_reply_cmd_default);
     RUN_TEST(test_bcast_std_kiss_roundtrip);
+    RUN_TEST(test_sn_query_is_always_answered);
+    RUN_TEST(test_bitrate_query_is_always_answered);
     return UNITY_END();
 }
