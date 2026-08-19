@@ -8,7 +8,7 @@ ifeq ($(OS),Windows_NT)
 LDFLAGS += -lws2_32
 endif
 
-OUT = broadcast_test broadcast_diag_tx broadcast_diag_rx watterson_test shortframe_sweep acquire_vs_decode hail_suffix_sweep ackpat_sweep
+OUT = broadcast_test broadcast_diag_tx broadcast_diag_rx watterson_test shortframe_sweep acquire_vs_decode hail_suffix_sweep ackpat_sweep mfsk_puncture_sweep mfsk_floor_sweep
 
 # CPU-cost instruments.  Linux/macOS only: they time with
 # clock_gettime(CLOCK_PROCESS_CPUTIME_ID), which mingw-w64 does not provide
@@ -48,6 +48,17 @@ run: broadcast_test
 	./broadcast_test 127.0.0.1 8300
 
 # Links the whole freedv library: drives the real OFDM modems, not a model.
+# Is the MFSK floor set by acquisition or by the code?  Sweeps noise over the
+# whole burst and over the payload alone; the gap is the code's slack.
+mfsk_floor_sweep: mfsk_floor_sweep.c chanutil.c ../common/watterson.c \
+                  ../modem/modem_mfsk.c ../modem/mfsk.c ../modem/mfsk_sync.c \
+                  ../modem/mfsk_ofdm.c ../modem/mfsk_ldpc.c ../modem/mfsk_ldpc_8_16.c
+	$(CC) $(CFLAGS) -o $@ $^ ../modem/freedv/libfreedvdata.a $(LDFLAGS) -lm
+
+# Coding cost of shortening the MFSK floor burst by puncturing parity.
+mfsk_puncture_sweep: mfsk_puncture_sweep.c ../modem/mfsk_ldpc.c ../modem/mfsk_ldpc_8_16.c
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS) -lm
+
 # What the pattern ACK's second repetition buys: detection vs SNR and
 # false-accept on noise, for one repetition and two, at every threshold.
 ackpat_sweep: ackpat_sweep.c ../modem/modem_mfsk.c ../modem/mfsk.c \
