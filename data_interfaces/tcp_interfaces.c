@@ -64,12 +64,6 @@ static size_t broadcast_frame_size_cfg = 0;
 static _Atomic uint32_t last_sn_bits = 0;        /* float bits, relaxed */
 static _Atomic uint32_t last_bitrate_sl = 0;
 static _Atomic uint32_t last_bitrate_bps = 0;
-/* Last time an unsolicited SN/BITRATE line was pushed to the control port.
- * These are telemetry — refreshed continuously and queryable on demand via the
- * SN/BITRATE commands — so they are throttled to keep them from flooding the
- * bounded control queue and starving the host state notifications. */
-static _Atomic uint64_t last_sn_emit_ms = 0;
-static _Atomic uint64_t last_bitrate_emit_ms = 0;
 /* Read by the modem/ARQ threads on every host state notification and written
  * by the init/teardown thread.  Atomic for the same reason as its neighbours:
  * a plain pointer here is a data race, and on a weakly-ordered target (armhf,
