@@ -64,7 +64,15 @@ static size_t broadcast_frame_size_cfg = 0;
 static _Atomic uint32_t last_sn_bits = 0;        /* float bits, relaxed */
 static _Atomic uint32_t last_bitrate_sl = 0;
 static _Atomic uint32_t last_bitrate_bps = 0;
-static chan_t *tnc_tx_chan = NULL;
+/* Read by the modem/ARQ threads on every host state notification and written
+ * by the init/teardown thread.  Atomic for the same reason as its neighbours:
+ * a plain pointer here is a data race, and on a weakly-ordered target (armhf,
+ * the Pi 3 in issue #200) a notifying thread can observe a stale NULL long
+ * after init.  tnc_queue_line() then fails instantly, and the critical path
+ * above it burns its whole 50 ms retry budget and logs a DROPPED host state
+ * notification -- for every PTT edge, and for DISCONNECTED, which is what
+ * leaves a host waiting forever for a session that already ended. */
+static chan_t *_Atomic tnc_tx_chan = NULL;
 static atomic_ulong tnc_tx_drop_count = 0;
 static atomic_int tnc_last_buffer_sent = -1;
 static atomic_bool bcast_client_done = false;
@@ -1433,6 +1441,32 @@ uint32_t tnc_get_last_bitrate_bps(void)
 
 int interfaces_init(int arq_tcp_base_port, int broadcast_tcp_port, size_t broadcast_frame_size)
 {
+    /* Refuse an unusable base port here, where it can be reported, rather than
+     * downstream where it cannot.  Port 0 is the trap: bind(0) SUCCEEDS and the
+     * kernel hands back an ephemeral port, so the control listener comes up on
+     * a port no host was told about, and the data listener then tries port 1 --
+     * privileged, fails -- and sets shutdown_, taking the whole process down.
+     * The operator sees "Listening on TCP port 0", "Could not open TCP port 1"
+     * and an uncommanded exit, with nothing naming the cause (issue #200).
+     *
+     * 65535 is rejected for the mirror-image reason: the data port is base+1,
+     * and htons(65536) truncates to 0, which lands on the same trap. */
+    if (arq_tcp_base_port <= 0 || arq_tcp_base_port >= 65535)
+    {
+        HLOGE("tcp", "ARQ TCP base port %d is unusable -- valid range is 1..65534 "
+                     "(the data port is base+1, so 65535 has no room). "
+                     "Check -p and arq_tcp_base_port in mercury.ini.",
+              arq_tcp_base_port);
+        return EXIT_FAILURE;
+    }
+    if (broadcast_tcp_port <= 0 || broadcast_tcp_port > 65535)
+    {
+        HLOGE("tcp", "Broadcast TCP port %d is unusable -- valid range is 1..65535. "
+                     "Check -b and broadcast_tcp_port in mercury.ini.",
+              broadcast_tcp_port);
+        return EXIT_FAILURE;
+    }
+
     arq_set_tnc_callbacks(&g_arq_tnc_cbs);
     arq_tcp_base_port_cfg = arq_tcp_base_port;
     broadcast_tcp_port_cfg = broadcast_tcp_port;

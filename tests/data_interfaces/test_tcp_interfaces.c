@@ -1009,6 +1009,33 @@ void test_bcast_std_kiss_roundtrip(void)
     TEST_ASSERT_EQUAL_HEX8_ARRAY(orig, payload, orig_len);
 }
 
+/* An unusable ARQ base port must be refused where it can be reported.
+ *
+ * Port 0 is the trap this guards: bind(0) SUCCEEDS and the kernel returns an
+ * ephemeral port, so the control listener comes up somewhere no host was told
+ * about, the data listener then tries port 1 (privileged, fails) and sets
+ * shutdown_, and the whole process exits with nothing naming the cause — the
+ * "Listening on TCP port 0 / Could not open TCP port 1 / Shutting down"
+ * sequence from issue #200.
+ *
+ * These return before any thread or socket is created, so the test is cheap
+ * and does not leave listeners behind. */
+void test_interfaces_init_rejects_unusable_ports(void)
+{
+    TEST_ASSERT_EQUAL_INT_MESSAGE(EXIT_FAILURE, interfaces_init(0, 8100, 512),
+        "port 0 accepted: bind() succeeds on it and the data port then kills the process");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(EXIT_FAILURE, interfaces_init(-1, 8100, 512),
+        "negative base port accepted");
+    /* 65535 has no room for base+1: htons(65536) truncates to 0, which is the
+     * same trap by another route. */
+    TEST_ASSERT_EQUAL_INT_MESSAGE(EXIT_FAILURE, interfaces_init(65535, 8100, 512),
+        "65535 accepted: the data port would be 65536, which truncates to 0");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(EXIT_FAILURE, interfaces_init(8300, 0, 512),
+        "broadcast port 0 accepted");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(EXIT_FAILURE, interfaces_init(8300, 70000, 512),
+        "out-of-range broadcast port accepted");
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -1071,5 +1098,6 @@ int main(void)
     RUN_TEST(test_bcast_vara_length_roundtrip);
     RUN_TEST(test_bcast_tx_lenprefix_ignores_reply_cmd_default);
     RUN_TEST(test_bcast_std_kiss_roundtrip);
+    RUN_TEST(test_interfaces_init_rejects_unusable_ports);
     return UNITY_END();
 }
