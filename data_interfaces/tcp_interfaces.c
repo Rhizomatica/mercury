@@ -1518,6 +1518,26 @@ int interfaces_init(int arq_tcp_base_port, int broadcast_tcp_port, size_t broadc
     }
     tid_started[0] = true;
 
+    /* The reactor opens its two listeners asynchronously.  Wait for both to
+     * reach LISTENING so a bind failure (bad base port, port already in use,
+     * privileged port) is reported here as an init failure, not as a
+     * background shutdown_ that tears the process down *after*
+     * mercury_engine_init() has already returned success — the confusing
+     * "Mercury engine initialised" immediately followed by "Shutting down"
+     * and an alarm-killed shutdown. */
+    int ctl_status  = net_wait_for_status(CTL_TCP_PORT, NET_LISTENING, 3000);
+    int data_status = net_wait_for_status(DATA_TCP_PORT, NET_LISTENING, 3000);
+    if (ctl_status != NET_LISTENING || data_status != NET_LISTENING)
+    {
+        HLOGE("tcp", "ARQ listeners failed to start (ctl=%d data=%d)",
+              ctl_status, data_status);
+        shutdown_ = true;
+        pthread_join(tid[0], NULL);
+        tid_started[0] = false;
+        dispose_tnc_tx_queue();
+        return EXIT_FAILURE;
+    }
+
 
     /*************** BROADCAST TCP ports **************/
     // Create TCP BROADCAST server thread

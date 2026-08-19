@@ -390,10 +390,15 @@ static void *ws_server_thread(void *arg)
         ws_drain_queue();
     }
 
-    // Send any remaining queued messages, then close connections.
+    // Force-close remaining connections instead of draining.  A browser tab
+    // left open on the UI keeps its websocket alive; if we let mongoose drain
+    // it, shutdown stalls long enough to trip main()'s alarm(10) watchdog and
+    // the process dies with SIGALRM ("Alarm clock").  Clearing is_draining
+    // makes the close immediate.
     ws_drain_queue();
     for (struct mg_connection *c = s_mgr.conns; c != NULL; c = c->next)
     {
+        c->is_draining = 0;
         c->is_closing = 1;
     }
     mg_mgr_poll(&s_mgr, WS_POLL_INTERVAL_MS);

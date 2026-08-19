@@ -104,8 +104,16 @@ int mercury_engine_init(const mercury_config *cfg,
     int  radio_serial_speed = cfg->radio_serial_speed;
     int  freedv_verbosity   = cfg->freedv_verbosity;
     int  hamlib_log_level   = cfg->hamlib_log_level;
-    int  base_tcp_port      = cfg->arq_tcp_base_port ? cfg->arq_tcp_base_port : 8300;
-    int  broadcast_port     = cfg->broadcast_tcp_port ? cfg->broadcast_tcp_port : 8100;
+    int  base_tcp_port      = cfg->arq_tcp_base_port;
+    int  broadcast_port     = cfg->broadcast_tcp_port;
+    /* An unset or corrupt value here resolves to 0, which makes the control
+     * listener bind an ephemeral port and the data listener bind port 1 — a
+     * privileged port a normal user cannot open, so the modem tears itself
+     * down.  Treat any unusable value as "use the default". */
+    if (base_tcp_port < 1 || base_tcp_port > 65534)
+        base_tcp_port = DEFAULT_ARQ_PORT;
+    if (broadcast_port < 1 || broadcast_port > 65535)
+        broadcast_port = DEFAULT_BROADCAST_PORT;
     bool verbose            = cfg->verbose;
 
     snprintf(g_input_dev,  sizeof(g_input_dev),  "%s", cfg->input_device);
