@@ -1433,6 +1433,7 @@ func drawWaterfallImage(img *image.NRGBA, w, h int, state *appState) {
 	state.mu.RLock()
 	rows := state.waterfallRows
 	palette := state.waterfallPalette
+	sr := state.spectrumRate
 	state.mu.RUnlock()
 	if len(rows) == 0 {
 		return
@@ -1446,11 +1447,29 @@ func drawWaterfallImage(img *image.NRGBA, w, h int, state *appState) {
 	for rowIdx := 0; rowIdx < rowsToDraw; rowIdx++ {
 		row := rows[len(rows)-1-rowIdx]
 		destY := rowIdx
-		for x := 0; x < w; x++ {
-			if len(row) == 0 {
-				continue
+		if len(row) == 0 {
+			continue
+		}
+		// Determine how many bins to use so the waterfall shows 0..3000 Hz
+		binsToUse := len(row)
+		if sr > 0 {
+			nyq := float64(sr) / 2.0
+			const maxDisplayHz = 3000.0
+			if nyq > maxDisplayHz {
+				// scale down the number of bins to cover only up to maxDisplayHz
+				scaled := int(float64(len(row)) * (maxDisplayHz / nyq))
+				if scaled >= 1 {
+					binsToUse = scaled
+				} else {
+					binsToUse = 1
+				}
 			}
-			srcIdx := (x * len(row)) / w
+		}
+		for x := 0; x < w; x++ {
+			srcIdx := (x * binsToUse) / w
+			if srcIdx >= len(row) {
+				srcIdx = len(row) - 1
+			}
 			v := float64(row[srcIdx])
 			if math.IsNaN(v) {
 				continue
