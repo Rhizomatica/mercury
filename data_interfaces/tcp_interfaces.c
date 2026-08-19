@@ -195,10 +195,6 @@ static int tnc_queue_line(const char *line)
  * further helps nobody. */
 #define TNC_CRITICAL_RETRIES   10
 #define TNC_CRITICAL_SLEEP_US  5000   /* 10 x 5 ms = 50 ms worst case */
-/* Unsolicited SN/BITRATE are telemetry, not state: the host can poll them with
- * the SN/BITRATE commands whenever it wants.  Pushing them faster than this
- * buys nothing and only competes with PTT/DISCONNECTED for queue slots. */
-#define TNC_TELEMETRY_MIN_INTERVAL_MS 1000
 
 static int tnc_queue_line_critical(const char *line)
 {
@@ -1433,16 +1429,7 @@ void tnc_send_sn(float snr)
     char buffer[64];
     uint32_t bits;
     memcpy(&bits, &snr, sizeof bits);
-    /* Always cache the latest value: the UI and the on-demand SN command read
-     * it regardless of whether an unsolicited line is pushed. */
     atomic_store_explicit(&last_sn_bits, bits, memory_order_relaxed);
-
-    uint64_t now = monotonic_ms();
-    uint64_t last = atomic_load_explicit(&last_sn_emit_ms, memory_order_relaxed);
-    if (now - last < TNC_TELEMETRY_MIN_INTERVAL_MS)
-        return;
-    atomic_store_explicit(&last_sn_emit_ms, now, memory_order_relaxed);
-
     snprintf(buffer, sizeof(buffer), "SN %.1f\r", snr);
     (void)tnc_queue_line(buffer);
 }
@@ -1464,13 +1451,6 @@ void tnc_send_bitrate(uint32_t speed_level, uint32_t bps)
     char buffer[64];
     atomic_store_explicit(&last_bitrate_sl, speed_level, memory_order_relaxed);
     atomic_store_explicit(&last_bitrate_bps, bps, memory_order_relaxed);
-
-    uint64_t now = monotonic_ms();
-    uint64_t last = atomic_load_explicit(&last_bitrate_emit_ms, memory_order_relaxed);
-    if (now - last < TNC_TELEMETRY_MIN_INTERVAL_MS)
-        return;
-    atomic_store_explicit(&last_bitrate_emit_ms, now, memory_order_relaxed);
-
     snprintf(buffer, sizeof(buffer), "BITRATE (%u) %u BPS\r", speed_level, bps);
     (void)tnc_queue_line(buffer);
 }
