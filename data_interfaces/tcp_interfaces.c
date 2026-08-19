@@ -64,7 +64,15 @@ static size_t broadcast_frame_size_cfg = 0;
 static _Atomic uint32_t last_sn_bits = 0;        /* float bits, relaxed */
 static _Atomic uint32_t last_bitrate_sl = 0;
 static _Atomic uint32_t last_bitrate_bps = 0;
-static chan_t *tnc_tx_chan = NULL;
+/* Read by the modem/ARQ threads on every host state notification and written
+ * by the init/teardown thread.  Atomic for the same reason as its neighbours:
+ * a plain pointer here is a data race, and on a weakly-ordered target (armhf,
+ * the Pi 3 in issue #200) a notifying thread can observe a stale NULL long
+ * after init.  tnc_queue_line() then fails instantly, and the critical path
+ * above it burns its whole 50 ms retry budget and logs a DROPPED host state
+ * notification -- for every PTT edge, and for DISCONNECTED, which is what
+ * leaves a host waiting forever for a session that already ended. */
+static chan_t *_Atomic tnc_tx_chan = NULL;
 static atomic_ulong tnc_tx_drop_count = 0;
 static atomic_int tnc_last_buffer_sent = -1;
 static atomic_bool bcast_client_done = false;

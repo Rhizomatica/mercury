@@ -50,12 +50,20 @@ ifneq ($(filter aarch64%,$(TARGET_MACHINE)),)
   endif
 endif
 
-# 32-bit ARM (armhf / armv7) has no native 64-bit atomic instructions, so GCC
-# lowers 64-bit _Atomic loads/stores to libatomic calls (__atomic_load_8,
-# __atomic_store_8, ...).  Link libatomic there.  64-bit targets inline these,
-# and libatomic is absent on some platforms (e.g. macOS), so keep it scoped.
+# 32-bit ARM (armhf / armv7) has no native 64-bit atomic instructions on the
+# baseline this ships for, so GCC lowers 64-bit _Atomic loads/stores to
+# libatomic calls (__atomic_load_8, __atomic_store_8, ...).  Link libatomic
+# there.  64-bit targets inline these, and libatomic is absent on some
+# platforms (e.g. macOS), so keep it scoped.
+#
+# Match arm% rather than the narrower "arm-% armv%": the value here is normally
+# $(CC) -dumpmachine (arm-linux-gnueabihf), but anyone who overrides it by hand
+# reaches for the name of the port -- "armhf" -- which matched NEITHER this rule
+# nor the aarch64 one above, silently dropping -latomic on the one target that
+# needs it (issue #200).  aarch64 does not begin with "arm", so it is still
+# excluded.
 ATOMIC_LDFLAGS =
-ifneq ($(filter arm-% armv%,$(TARGET_MACHINE)),)
+ifneq ($(filter arm%,$(TARGET_MACHINE)),)
   ATOMIC_LDFLAGS = -latomic
 endif
 
