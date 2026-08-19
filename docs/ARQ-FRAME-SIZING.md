@@ -91,7 +91,7 @@ scratch before trusting any of this.
 |---|---|---|
 | 0 dB bench, 1054 B payload | 276/1054, wedged, 3/3 | **912/1054** and still delivering when the harness deadline expired |
 | clean bench, 1054 B payload | 81.18 s | 87.09 s (**~7% slower**) |
-| sim fade cycle, full delivery, 100 seeds | 72/100 fail | 48/100 fail |
+| sim fade cycle, 100 seeds (this branch's test, both arms) | 72/100 fail | 48/100 fail |
 
 The 7% is the cost of the cap and it is real: one frame per rung climbed goes
 out under-filled.  That buys immunity to a wedge that costs the *entire
@@ -107,7 +107,9 @@ costs a burst plus a full ACK timeout and at the fringe the ladder pays that
 over and over.  Reach is unaffected (both arms deliver every byte).  Measured
 and reverted; see ARQ_LADDER_START_LEVEL.
 
-**The residual 48% is a different instance of the same defect.** A frame read
+**The residual 48% is a different instance of the same defect.** (Both arms of
+that row are this branch's test; neither is a trunk number — see the traps
+section.) A frame read
 at a rung that *has* delivered can still be stranded if the band collapses
 afterwards. The cap cannot prevent that — the rung really had carried a frame.
 On the sim's fade scenario that variant is unchanged (42/100 before, 43/100
@@ -128,14 +130,42 @@ doing together rather than separately.
 
 ## Two traps this cost time in
 
-**The sim's fade test is a seed lottery.** `test_sim_fade_cliff_downgrades`
-asserted full delivery and passes on its hardcoded seed 42 — while failing 72
-of 100 other seeds on trunk. A green run there carried no information, and the
-first change to shift the trajectory would have been blamed for a defect that
-was already present. It now asserts prefix integrity (nothing duplicated or
-reordered, which is what an unsafe re-framing fix would break) and takes
-`SIMSEED` so the rate can be *measured* by sweeping rather than sampled by one
-run.
+**A budget with no margin looks exactly like a seed lottery — measure before
+blaming it.** An earlier revision of this document claimed
+`test_sim_fade_cliff_downgrades` "fails 72 of 100 seeds on trunk". That was
+wrong, and the error is worth recording: the baseline arm was *this branch's*
+rewritten test on *this branch's* rewritten FSM, and the number was then
+labelled as trunk's.
+
+Swept properly — trunk at `f79a28e`, only the seed and the time budget
+parameterised, 100 seeds:
+
+| arm | budget | assertion | pass |
+|---|---|---|---|
+| trunk, as it ships | 2 h | full delivery | **100 / 100** |
+| trunk, budget cut to 1 h | 1 h | full delivery | 12 / 100 |
+| this branch, as it stands | 1 h | prefix integrity | 59 / 100 |
+
+Trunk is not a lottery; it passes every seed. The lottery is a property of the
+*one-hour* budget, which is exactly what trunk's own comment says it found and
+fixed by doubling it. This branch shortens the budget again — with a stated
+reason, since the band is restored to 12 dB and the remainder drains at a fast
+rung instead of the floor's ~22 B per ~11 s — and weakens the assertion from
+full delivery to prefix integrity.
+
+Its 41 failures split by cause, and the split is the point:
+
+| failure | count |
+|---|---|
+| "did not recover to a fast mode after the fade" | 31 |
+| "did not climb on the good band" | 10 |
+| **prefix integrity (correctness)** | **0** |
+
+No seed produced duplicated or reordered bytes, so the property this test was
+rewritten to protect — that re-framing can never corrupt the delivered stream —
+holds on every draw. What remains seed-sensitive are the two ladder assertions
+(`max_level >= 3`), fitted the same way the old delivery assertion was, and due
+the same treatment: margin, or a swept threshold instead of a fitted one.
 
 **A dead bridge direction looks exactly like a connect bug.** In the integration
 harness, `runChannelDir` returned on the first error, retiring that direction
