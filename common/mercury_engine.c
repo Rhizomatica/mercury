@@ -109,7 +109,15 @@ int mercury_engine_init(const mercury_config *cfg,
     /* An unset or corrupt value here resolves to 0, which makes the control
      * listener bind an ephemeral port and the data listener bind port 1 — a
      * privileged port a normal user cannot open, so the modem tears itself
-     * down.  Treat any unusable value as "use the default". */
+     * down.  Treat any unusable value as "use the default".
+     *
+     * Remember what was asked for so the substitution can be reported once the
+     * logger exists (a few lines below).  Doing it silently is how #200 became
+     * hard to diagnose in the first place: the host connects to the configured
+     * port, finds nothing there, and the log says only that Mercury is
+     * listening somewhere else. */
+    const int requested_base_tcp_port  = base_tcp_port;
+    const int requested_broadcast_port = broadcast_port;
     if (base_tcp_port < 1 || base_tcp_port > 65534)
         base_tcp_port = DEFAULT_ARQ_PORT;
     if (broadcast_port < 1 || broadcast_port > 65535)
@@ -168,6 +176,18 @@ int mercury_engine_init(const mercury_config *cfg,
                                 verbose ? HERMES_LOG_LEVEL_DEBUG : HERMES_LOG_LEVEL_TIMING,
                                 log_jsonl);
         HLOGI("engine", "Logger initialised (min_level=%s)", verbose ? "DEBUG" : "INFO");
+
+        /* Report any port substitution now that there is somewhere to report
+         * it.  Warned, not silent: a host told to use the configured port will
+         * find nothing listening there. */
+        if (requested_base_tcp_port != base_tcp_port)
+            HLOGW("engine", "arq_tcp_base_port %d is unusable (need 1..65534 — the "
+                            "data port is base+1); using %d instead",
+                  requested_base_tcp_port, base_tcp_port);
+        if (requested_broadcast_port != broadcast_port)
+            HLOGW("engine", "broadcast_tcp_port %d is unusable (need 1..65535); "
+                            "using %d instead",
+                  requested_broadcast_port, broadcast_port);
     }
     else
     {
