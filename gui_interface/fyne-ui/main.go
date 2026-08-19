@@ -1438,16 +1438,35 @@ func drawSpectrumImage(img *image.NRGBA, w, h int, state *appState) {
 	// so the snapshot is safe to iterate after unlocking.
 	state.mu.RLock()
 	vals := state.spectrumValues
+	sr := state.spectrumRate
 	state.mu.RUnlock()
 	if len(vals) == 0 {
 		return
 	}
+	// Limit the drawn bins so the spectrum lines up with the waterfall's
+	// 0..3000 Hz display. If the sample-rate's Nyquist exceeds 3 kHz,
+	// scale the number of bins used accordingly.
+	binsToUse := len(vals)
+	if sr > 0 {
+		nyq := float64(sr) / 2.0
+		const maxDisplayHz = 3000.0
+		if nyq > maxDisplayHz {
+			scaled := int(float64(len(vals)) * (maxDisplayHz / nyq))
+			if scaled >= 1 {
+				binsToUse = scaled
+			} else {
+				binsToUse = 1
+			}
+		}
+	}
+	valsToDraw := vals[:binsToUse]
+
 	ctx := &spectrumContext{img: img, w: w, h: h}
 	ctx.drawGrid()
 	// draw the spectrum line with a bold cyan color
-	ctx.drawLine(vals)
+	ctx.drawLine(valsToDraw)
 	// draw a faint filled area under the line
-	ctx.fillUnderLine(vals)
+	ctx.fillUnderLine(valsToDraw)
 }
 
 func drawWaterfallImage(img *image.NRGBA, w, h int, state *appState) {
