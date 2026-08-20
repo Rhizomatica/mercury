@@ -1729,7 +1729,16 @@ func getBaseDir() string {
 }
 
 func getLogDir() string {
-	if runtime.GOOS == "linux" || runtime.GOOS == "windows" {
+	if runtime.GOOS == "linux" {
+		if dir := os.Getenv("XDG_STATE_HOME"); dir != "" {
+			return filepath.Join(dir, "mercury", "logs")
+		}
+		if home, err := os.UserHomeDir(); err == nil {
+			return filepath.Join(home, ".local", "state", "mercury", "logs")
+		}
+		return "."
+	}
+	if runtime.GOOS == "windows" {
 		return filepath.Join(getExeDir(), "logs")
 	}
 	return "."
