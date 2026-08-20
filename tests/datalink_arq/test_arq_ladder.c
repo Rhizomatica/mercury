@@ -173,15 +173,56 @@ static void clean_ack_cycle(void)
 
 /* ---- tests ---- */
 
-/* A rung is probed with a frame the rung BELOW can still carry.
+/* A rung that has ALREADY delivered is not given up on a single miss.
  *
- * The retained frame is immutable: it is never re-framed smaller, so its size
- * decides, once and for all, which modes can ever transmit it.  Read it at the
- * full width of a rung the channel has not carried yet and a failed probe
- * strands it — mode_that_fits() pins every retransmission to that rung while
- * the ladder steps down beneath it, and the peer's mirror follows the ladder
- * away from the mode that is actually on the air.  Sizing the read to a rung
- * that has already delivered keeps the retreat open. */
+ * Note the two distinct descent rules.  While climbing, the current rung is an
+ * untested probe and last_good sits one below it, so a miss there is an
+ * OVERSHOOT and falls back immediately.  Only once a descent has equalised the
+ * two is the ladder sitting ON a rung that actually delivered — and descending
+ * from there also lowers last_good, erasing the evidence that the rung works.
+ * If one miss did that, ordinary loss would ratchet a healthy link down to the
+ * MFSK floor and anchor it.  Measured on the 0 dB bench cell before this rule:
+ * 12 of 21 bursts went out on MFSK (90 B per 13.5 s burst) on a channel that
+ * carries DATAC3 (118 B per 3.82 s), and the transfer hit the harness deadline
+ * at exactly 952 of 1054 bytes on ten consecutive runs.  With it, all 1054. */
+void test_proven_rung_survives_a_single_miss(void)
+{
+    goto_connected();
+    goto_wait_ack();
+
+    while (sess.speed_level < 3)
+        clean_ack_cycle();
+
+    /* One miss on the probe: overshoot, so it falls back at once and now the
+     * ladder sits ON a rung that has delivered (level == last_good). */
+    arq_event_t ev = make_event(ARQ_EV_TIMER_ACK);
+    arq_fsm_dispatch(&sess, &ev);
+    ev = make_event(ARQ_EV_TX_COMPLETE);
+    arq_fsm_dispatch(&sess, &ev);
+    int proven = sess.speed_level;
+    TEST_ASSERT_EQUAL_INT_MESSAGE(proven, sess.tx_last_good_level,
+        "overshoot fallback should leave the ladder on a proven rung");
+
+    /* Further misses below the threshold must not move it, and must not
+     * quietly lower last_good either. */
+    for (int miss = 1; miss < ARQ_RETRY_DOWNGRADE_THRESHOLD; miss++)
+    {
+        ev = make_event(ARQ_EV_TIMER_ACK);
+        arq_fsm_dispatch(&sess, &ev);
+        ev = make_event(ARQ_EV_TX_COMPLETE);
+        arq_fsm_dispatch(&sess, &ev);
+        TEST_ASSERT_EQUAL_INT_MESSAGE(proven, sess.speed_level,
+            "gave up a rung that had delivered after a single miss");
+        TEST_ASSERT_EQUAL_INT_MESSAGE(proven, sess.tx_last_good_level,
+            "last_good was lowered before the rung was actually abandoned");
+    }
+
+    /* The threshold'th consecutive miss does abandon it. */
+    ev = make_event(ARQ_EV_TIMER_ACK);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(proven - 1, sess.speed_level);
+}
+
 void test_probe_frame_fits_the_rung_below(void)
 {
     fake_tx_read_fake.custom_fake = tx_read_full;
@@ -448,6 +489,7 @@ int main(void)
     RUN_TEST(test_ladder_fast_ramp_climbs_one_per_clean);
     RUN_TEST(test_ladder_retry_steps_down_then_slow_ramp);
     RUN_TEST(test_ladder_floor_holds_at_mfsk);
+    RUN_TEST(test_proven_rung_survives_a_single_miss);
     UNITY_END();
     return 0;
 }

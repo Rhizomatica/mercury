@@ -127,6 +127,8 @@ void arq_fsm_init(arq_session_t *sess)
     sess->rx_last_good_level = 0;
     sess->rx_success_count = 0;
     sess->rx_fast_ramp   = true;
+    sess->tx_below_good_misses = 0;
+    sess->rx_below_good_misses = 0;
 }
 
 int arq_fsm_timeout_ms(const arq_session_t *sess, uint64_t now)
@@ -166,6 +168,8 @@ static void reset_session_data_state(arq_session_t *sess)
     sess->rx_last_good_level = 0;
     sess->rx_success_count   = 0;
     sess->rx_fast_ramp       = true;
+    sess->tx_below_good_misses = 0;
+    sess->rx_below_good_misses = 0;
     {
         int pin_ = ladder_pin_level();
         int start_ = (pin_ >= 0) ? pin_ : ARQ_LADDER_START_LEVEL;
@@ -358,11 +362,20 @@ static void apply_speed_level(arq_session_t *sess)
  *  clean == the frame was delivered/received first try: a run of clean outcomes
  *  climbs — the fast initial ramp climbs one rung per clean outcome until the
  *  first miss, after which it settles to ARQ_LADDER_UP_SUCCESSES clean outcomes
- *  per step.  A miss/retry steps DOWN one rung immediately (toward the MFSK
- *  floor) and ends the fast ramp, so a deep fade parks at the floor with no
- *  over-climb oscillation.  Returns the signed level change (for logging). */
+ *  per step.
+ *
+ *  A miss ends the fast ramp, and descends by one of two rules:
+ *    - ABOVE the last rung that delivered (an overshot probe): fall straight
+ *      back to it, immediately.  This is the escape hatch and is never delayed.
+ *    - AT the last rung that delivered: descend only after
+ *      ARQ_RETRY_DOWNGRADE_THRESHOLD consecutive misses.  Descending here also
+ *      lowers last_good, erasing the evidence that this rung works, so a single
+ *      miss must not do it — otherwise ordinary loss ratchets a healthy link
+ *      down to the floor and anchors it there.
+ *
+ *  Returns the signed level change (for logging). */
 static int ladder_step(int *level, int *success_count, bool *fast_ramp,
-                       int *last_good, bool clean)
+                       int *last_good, int *below_good_misses, bool clean)
 {
     int before = *level;
     if (!clean)
@@ -374,13 +387,37 @@ static int ladder_step(int *level, int *success_count, bool *fast_ramp,
          * toll once per rung: climbing two rungs and stepping back one at a
          * time turned a single failed probe into two, which measured as 2.3x
          * on the fringe cell.  The rung below the overshoot was never tried;
-         * the last rung that delivered is the one we know the channel takes.
-         * Once we are already there, keep descending a rung at a time — the
-         * channel has genuinely dropped below what it used to carry. */
+         * the last rung that delivered is the one we know the channel takes. */
         if (*level > *last_good)
+        {
+            /* Overshoot: drop straight back to the rung we know delivers.
+             * Immediate and unconditional — this is the escape from a probe the
+             * channel cannot carry, and delaying it strands the session there
+             * burning its retry budget (measured: a threshold on THIS branch
+             * exhausted seq=4's ten retries and disconnected at 248/1054). */
             *level = *last_good;
+            *below_good_misses = 0;
+        }
         else if (*level > 0)
         {
+            /* We are AT a rung that has actually delivered.  One miss is not
+             * enough to give it up: dropping a rung here also lowers
+             * last_good, which destroys the memory that this rung works, and
+             * the next miss lowers it again.  With ordinary loss that ratchet
+             * walks a healthy link all the way to the MFSK floor and anchors
+             * it there — measured on the 0 dB cell, where 12 of 21 bursts went
+             * out on MFSK (90 B per 13.5 s burst) on a channel that carries
+             * DATAC3 (118 B per 3.82 s, ~5x the airtime efficiency, and what
+             * trunk uses to finish the same transfer in 189 s).
+             *
+             * Require corroboration before abandoning a proven rung.  A real
+             * fade still descends, one extra miss later. */
+            if (++(*below_good_misses) < ARQ_RETRY_DOWNGRADE_THRESHOLD)
+            {
+                *success_count = 0;
+                return 0;
+            }
+            *below_good_misses = 0;
             (*level)--;
             *last_good = *level;
         }
@@ -388,6 +425,7 @@ static int ladder_step(int *level, int *success_count, bool *fast_ramp,
     }
     else
     {
+        *below_good_misses = 0;
         (*success_count)++;
         int need = *fast_ramp ? 1 : ARQ_LADDER_UP_SUCCESSES;
         if (*success_count >= need && *level < ARQ_LADDER_LEVELS - 1)
@@ -416,7 +454,8 @@ static int ladder_step(int *level, int *success_count, bool *fast_ramp,
 static void record_tx_outcome(arq_session_t *sess, bool clean)
 {
     int delta = ladder_step(&sess->speed_level, &sess->tx_success_count,
-                            &sess->fast_ramp, &sess->tx_last_good_level, clean);
+                            &sess->fast_ramp, &sess->tx_last_good_level,
+                            &sess->tx_below_good_misses, clean);
     if (delta < 0)
         HLOGD(LOG_COMP, "Ladder step-down to %d (retry)", sess->speed_level);
     else if (delta > 0)
@@ -442,7 +481,7 @@ static void irs_mirror_peer_ladder(arq_session_t *sess, bool clean_new)
 
     int delta = ladder_step(&sess->rx_speed_level, &sess->rx_success_count,
                             &sess->rx_fast_ramp, &sess->rx_last_good_level,
-                            clean_new);
+                            &sess->rx_below_good_misses, clean_new);
     sess->peer_tx_mode =
         clamp_payload_mode_to_bandwidth(arq_mode_ladder[sess->rx_speed_level]);
     if (delta != 0)
@@ -662,6 +701,12 @@ static void send_data_burst(arq_session_t *sess)
     /* HAS_DATA piggyback: more app bytes are queued behind this frame. */
     if (session_tx_backlog(sess) > 0)
         data_flags |= ARQ_FLAG_HAS_DATA;
+    /* Tell the peer this is a retransmission so its mirror scores the SAME
+     * outcome we did.  A lost burst is invisible on that side — the retry is
+     * the first copy it sees — so without this it climbs while we descend, and
+     * with one payload decoder that split is total deafness. */
+    if (sess->tx_frame_retx)
+        data_flags |= ARQ_FLAG_RETX;
 
     uint8_t snr_raw = 0;
     if (sess->local_snr_x10 != 0)
@@ -1269,8 +1314,14 @@ static void irs_receive_data(arq_session_t *sess, const arq_event_t *ev)
     /* Follow the sender's delivery-driven ladder: a new in-order frame is a
      * clean delivery on its side (climb); a duplicate means it retried and
      * stepped down.  This sets peer_tx_mode to the mode of the peer's NEXT
-     * burst so the payload decoder is already there when it arrives. */
-    irs_mirror_peer_ladder(sess, new_frame);
+     * burst so the payload decoder is already there when it arrives.
+     *
+     * A frame carrying ARQ_FLAG_RETX is new to US but was a RETRY for the
+     * sender — the copies we missed never reached us.  Score it the way the
+     * sender scored it, or our ladder climbs while its ladder descends and the
+     * decoder ends up on a rung nothing is transmitting on. */
+    bool sender_clean = new_frame && !(ev->rx_flags & ARQ_FLAG_RETX);
+    irs_mirror_peer_ladder(sess, sender_clean);
     if (new_frame && g_timing)
         arq_timing_record_data_rx(g_timing, (int)ev->seq,
                                   (int)ev->data_bytes, sess->local_snr_x10);

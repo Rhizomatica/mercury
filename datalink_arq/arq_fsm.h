@@ -179,6 +179,11 @@ typedef struct
                                         * miss falls back here in one step
                                         * rather than walking down rung by
                                         * rung, each costing an ACK timeout  */
+    int      tx_below_good_misses;     /* consecutive misses while ALREADY at
+                                        * tx_last_good_level; abandoning a rung
+                                        * that has delivered takes more than one
+                                        * miss, or occasional loss ratchets the
+                                        * session down to the floor            */
     int      peer_tx_mode;             /* my payload RX decoder mode when IRS =
                                         * arq_mode_ladder[rx_speed_level]; the
                                         * mode the peer's NEXT DATA burst uses  */
@@ -196,6 +201,7 @@ typedef struct
     int      rx_last_good_level;       /* mirror of tx_last_good_level        */
     int      rx_success_count;         /* clean receives toward a mirror step-up*/
     bool     rx_fast_ramp;             /* mirror of the peer's fast initial ramp*/
+    int      rx_below_good_misses;     /* mirror of tx_below_good_misses        */
 
     /* --- Retry/timeout bookkeeping --- */
     int      tx_retries_left;          /* retries remaining for current frame  */

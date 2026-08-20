@@ -101,6 +101,27 @@
                                   * with LEN_HI/LEN_B9 allows counts up to     *
                                   * 2047 (DATAC17 carries 1172 user bytes,     *
                                   * QAM16C2 1205).                             */
+#define ARQ_FLAG_RETX      0x04  /* bit 2: DATA frames only — this burst is a  *
+                                  * RETRANSMISSION of a frame already sent at  *
+                                  * least once.                                *
+                                  *                                            *
+                                  * Without it the two ends' mode ladders      *
+                                  * diverge under forward loss, which is fatal *
+                                  * because only ONE payload decoder runs at a *
+                                  * time.  A lost burst is invisible to the    *
+                                  * receiver: the retransmission is the first  *
+                                  * copy it ever sees, so it scores a clean    *
+                                  * delivery and CLIMBS, while the sender      *
+                                  * scored a retry and DESCENDED.  The decoder *
+                                  * is then on a rung the sender is not using  *
+                                  * and goes fully deaf, which loses the next  *
+                                  * burst, which widens the split further.     *
+                                  * Measured on the 0 dB bench cell: the       *
+                                  * receiver's mirror oscillated 0 -> 1 -> 0   *
+                                  * against a sender parked at the floor, and  *
+                                  * only 12 of 23 bursts were ever decoded.    *
+                                  * This bit lets the receiver apply the same  *
+                                  * outcome the sender applied.                */
 
 /* ======================================================================
  * Frame subtypes
@@ -265,6 +286,10 @@ extern _Atomic float arq_callint_override_s;
 extern _Atomic int arq_peer_payload_hold_s;
 #define ARQ_RETRY_DOWNGRADE_THRESHOLD_DEFAULT   2
 extern _Atomic int arq_retry_downgrade_threshold;
+/* Consecutive misses required to abandon a rung that has ALREADY delivered.
+ * Does NOT gate the fallback from an overshoot — that stays immediate, because
+ * it is the escape from a probe the channel cannot carry.  See ladder_step(). */
+#define ARQ_RETRY_DOWNGRADE_THRESHOLD  atomic_load(&arq_retry_downgrade_threshold)
 #define ARQ_MODE_HOLD_AFTER_DOWNGRADE_S_DEFAULT 6
 extern _Atomic int arq_mode_hold_after_downgrade_s;
 

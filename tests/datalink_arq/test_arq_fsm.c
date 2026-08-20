@@ -950,6 +950,35 @@ void test_irs_mirror_steps_down_on_duplicate(void)
     arq_fsm_dispatch(&sess, &ev);
     TEST_ASSERT_EQUAL_INT(FREEDV_MODE_DATAC15, sess.peer_tx_mode);   /* stepped down to level 1 */
 }
+/* A frame the sender marks as a RETRANSMISSION must not climb the mirror.
+ *
+ * A lost burst is invisible on the receiving side: the retry is the first copy
+ * it ever sees, so without ARQ_FLAG_RETX it scores a clean delivery and CLIMBS
+ * while the sender scored a retry and DESCENDED.  Only one payload decoder runs
+ * at a time, so that split is total deafness — which loses the next burst and
+ * widens the split.  Measured on the 0 dB bench cell: the mirror oscillated
+ * 0 -> 1 -> 0 against a sender parked at the floor and only 12 of 23 bursts
+ * were ever decoded. */
+void test_retx_flagged_frame_does_not_climb_the_mirror(void)
+{
+    goto_connected_irs();
+    arq_event_t ev = make_data_event(0, MERCURY_MODE_MFSK, 90);
+    arq_fsm_dispatch(&sess, &ev);
+    complete_ack_tx();
+    int climbed = sess.rx_speed_level;
+    TEST_ASSERT_GREATER_THAN_INT(0, climbed);   /* a clean first copy climbs */
+
+    /* The next frame is NEW to us, but the sender says it is a retransmission:
+     * score it the way the sender did, so the two ladders stay in step. */
+    ev = make_data_event(1, arq_mode_ladder[sess.rx_speed_level], 22);
+    ev.rx_flags |= ARQ_FLAG_RETX;
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_LESS_OR_EQUAL_INT_MESSAGE(climbed, sess.rx_speed_level,
+        "mirror climbed on a frame the sender had to retransmit: the sender "
+        "stepped down for that frame, so the two ends are now on different "
+        "rungs and only one payload decoder is running");
+}
+
 /* Reset-on-miss: a full idle hold with no DATA (a lost ACK left us climbed above
  * the sender) steps the mirror down toward the floor so the two ends re-sync. */
 void test_irs_mirror_resets_toward_floor_on_silence(void)
@@ -1077,6 +1106,7 @@ int main(void)
     RUN_TEST(test_wait_ack_break_yields_floor);
     RUN_TEST(test_irs_mirror_climbs_with_peer);
     RUN_TEST(test_irs_mirror_steps_down_on_duplicate);
+    RUN_TEST(test_retx_flagged_frame_does_not_climb_the_mirror);
     RUN_TEST(test_irs_mirror_resets_toward_floor_on_silence);
     RUN_TEST(test_calling_reanchors_retry_on_tx_complete);
     return UNITY_END();
