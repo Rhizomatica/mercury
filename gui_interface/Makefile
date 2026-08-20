@@ -25,11 +25,11 @@ CFLAGS_COMMON = $(COMMON_CFLAGS) -Wno-stringop-truncation -I../datalink_arq -I..
 
 # Mongoose / WebSocket flags
 # Use mongoose built-in TLS backend.
-WS_CFLAGS = $(COMMON_CFLAGS) -Iwebsocket -DMG_TLS=MG_TLS_BUILTIN
+WS_CFLAGS = $(COMMON_CFLAGS) -Iwebsocket -DMG_TLS=MG_TLS_BUILTIN -DMG_ENABLE_PACKED_FS=1
 
 # Objects
 OBJS = ui_communication.o ui_status.o ui_devices.o
-WS_OBJS = websocket/mongoose.o websocket/mercury_websocket.o
+WS_OBJS = websocket/mongoose.o websocket/mercury_websocket.o websocket/web_packed.o
 
 all: $(OBJS) $(WS_OBJS)
 
@@ -48,7 +48,22 @@ websocket/mongoose.o: websocket/mongoose.c websocket/mongoose.h
 websocket/mercury_websocket.o: websocket/mercury_websocket.c websocket/mercury_websocket.h
 	$(CC) $(WS_CFLAGS) -c websocket/mercury_websocket.c -o websocket/mercury_websocket.o
 
+# The UI pages are compiled INTO the binary.  Generated at build time from
+# websocket/web/ and never committed: a checked-in generated file drifts from
+# the pages it came from, and the point of embedding is that the served UI
+# cannot disagree with the shipped one.  Depends on every file in web/, so
+# editing a page rebuilds it.
+#
+# The generator is POSIX sh + od + tr, with no interpreter dependency: the
+# Windows x64 cross-compile image has no python3, so a python generator breaks
+# that target and only that target.
+websocket/web_packed.c: websocket/pack_web.sh $(wildcard websocket/web/*)
+	sh websocket/pack_web.sh websocket/web websocket/web_packed.c
+
+websocket/web_packed.o: websocket/web_packed.c
+	$(CC) $(WS_CFLAGS) -c websocket/web_packed.c -o websocket/web_packed.o
+
 clean:
-	rm -f $(OBJS) $(WS_OBJS)
+	rm -f $(OBJS) $(WS_OBJS) websocket/web_packed.c
 
 .PHONY: all clean

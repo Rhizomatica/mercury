@@ -78,3 +78,6 @@ utils/rxcost_bench
 
 # Compiler-generated header dependency files (-MMD)
 *.d
+
+# Generated at build time from gui_interface/websocket/web/ (issue #204).
+gui_interface/websocket/web_packed.c
