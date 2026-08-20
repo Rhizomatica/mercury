@@ -337,15 +337,28 @@ static void ws_event_handler(struct mg_connection *c, int ev, void *ev_data)
             if (s_ws_ctx && s_ws_ctx->connect_callback)
                 s_ws_ctx->connect_callback(s_ws_ctx->connect_callback_data);
         }
-        else if (s_ws_ctx && s_ws_ctx->web_root[0])
-        {
-            // Serve static files from web_root (e.g. test.html)
-            struct mg_http_serve_opts opts = { .root_dir = s_ws_ctx->web_root };
-            mg_http_serve_dir(c, hm, &opts);
-        }
         else
         {
-            mg_http_reply(c, 404, "", "Not Found\n");
+            /* The UI pages are compiled into the binary (websocket/web_packed.c,
+             * generated at build time from websocket/web/) and served from
+             * mongoose's packed filesystem.
+             *
+             * They used to be served from a path relative to the process's
+             * working directory, which meant the bundled UI only appeared if
+             * mercury happened to be started from inside the source tree.  Run
+             * from anywhere else -- which is every real installation, and what
+             * `make install` produces, since it never shipped these files at
+             * all -- the browser got an empty Mongoose directory index instead
+             * of the UI, with nothing to indicate why (issue #204).
+             *
+             * Packed instead of installed: there is no path to get wrong, no
+             * install step to forget, and an appliance image cannot end up with
+             * a binary and pages from different builds. */
+            struct mg_http_serve_opts opts = {
+                .root_dir = "/web",
+                .fs = &mg_fs_packed,
+            };
+            mg_http_serve_dir(c, hm, &opts);
         }
     }
     else if (ev == MG_EV_WS_MSG)

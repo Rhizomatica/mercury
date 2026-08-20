@@ -130,6 +130,7 @@ MERCURY_LINK_INPUTS = \
 	common/chan.o common/queue.o common/mercury_engine.o common/mercury_cli.o data_interfaces/tcp_interfaces.o data_interfaces/net.o \
 	gui_interface/ui_communication.o gui_interface/ui_status.o gui_interface/ui_devices.o \
 	gui_interface/websocket/mongoose.o gui_interface/websocket/mercury_websocket.o \
+	gui_interface/websocket/web_packed.o \
 	radio_io/radio_io.o
 
 ifeq ($(HAVE_HERMES_SHM),1)
@@ -202,6 +203,7 @@ MERCURY_CORE_OBJS = \
 	data_interfaces/tcp_interfaces.o data_interfaces/net.o \
 	gui_interface/ui_communication.o gui_interface/ui_status.o gui_interface/ui_devices.o \
 	gui_interface/websocket/mongoose.o gui_interface/websocket/mercury_websocket.o \
+	gui_interface/websocket/web_packed.o \
 	radio_io/radio_io.o
 
 ifeq ($(HAVE_HERMES_SHM),1)
