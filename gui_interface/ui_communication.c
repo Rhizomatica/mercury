@@ -770,7 +770,7 @@ int ui_comm_init(ui_ctx_t *ctx, uint16_t ws_port, bool tls_enabled,
     // connect callback is registered before the server thread starts to avoid
     // a race on aarch64 where the callback ptr and data could be seen
     // out-of-order by the server thread.
-    if (ws_init(&ctx->ws, ws_port, "gui_interface/websocket/web",
+    if (ws_init(&ctx->ws, ws_port,
                 ws_command_handler, ctx,
                 ws_connect_handler, ctx,
                 tls_enabled) != 0) {

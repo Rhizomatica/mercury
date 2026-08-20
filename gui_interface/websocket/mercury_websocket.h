@@ -76,7 +76,6 @@ typedef struct {
     char listen_url[128];
 
     // Web root for serving static files (e.g. test.html)
-    char web_root[256];
 } ws_ctx_t;
 
 // ---- Public API ----
@@ -86,7 +85,6 @@ typedef struct {
  *
  * @param ctx            WebSocket context (caller-allocated, zeroed before call).
  * @param port           WebSocket listen port (e.g. 10000). Listens on 0.0.0.0.
- * @param web_root       Path to directory with static files to serve (e.g. test.html).
  *                       Pass NULL to disable static file serving.
  * @param cmd_callback   Function called when a command is received from the UI.
  *                       May be NULL if no command handling is needed yet.
@@ -97,7 +95,6 @@ typedef struct {
  */
 int ws_init(ws_ctx_t *ctx,
             uint16_t port,
-            const char *web_root,
             ws_command_callback_t cmd_callback,
             void *cb_data,
             ws_connect_callback_t connect_callback,

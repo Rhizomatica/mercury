@@ -426,7 +426,6 @@ static void *ws_server_thread(void *arg)
 
 int ws_init(ws_ctx_t *ctx,
             uint16_t port,
-            const char *web_root,
             ws_command_callback_t cmd_callback,
             void *cb_data,
             ws_connect_callback_t connect_callback,
@@ -446,11 +445,6 @@ int ws_init(ws_ctx_t *ctx,
 
     snprintf(ctx->listen_url, sizeof(ctx->listen_url),
              "%s://0.0.0.0:%u", tls_enabled ? "wss" : "ws", port);
-
-    if (web_root)
-        strncpy(ctx->web_root, web_root, sizeof(ctx->web_root) - 1);
-    else
-        ctx->web_root[0] = '\0';
 
 #if MG_TLS != MG_TLS_NONE
     if (tls_enabled) {
