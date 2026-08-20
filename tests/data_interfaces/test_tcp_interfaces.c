@@ -191,6 +191,11 @@ static int chan_select_call_count = 0;
 /* How many tcp_write() calls had already happened when a line was queued.
  * Lets a test pin the ORDER of a direct write against a queued notification. */
 static int queued_after_tcp_writes = -1;
+/* Full sequence, not just the last line: MYCALL acknowledges every callsign
+ * it accepted, so a test has to see all of them and in order. */
+#define MAX_QUEUED_LINES 8
+static char queued_lines[MAX_QUEUED_LINES][256];
+static int  queued_line_count = 0;
 
 chan_t *chan_init(size_t capacity)
 {
@@ -223,6 +228,12 @@ int chan_select(chan_t *recv_chans[], int recv_count, void **recv_out,
         if (len < sizeof(last_queued_line))
             memcpy(last_queued_line, data_ptr, len);
         queued_after_tcp_writes = tcp_write_call_count;
+        if (queued_line_count < MAX_QUEUED_LINES && len < sizeof(queued_lines[0]))
+        {
+            memset(queued_lines[queued_line_count], 0, sizeof(queued_lines[0]));
+            memcpy(queued_lines[queued_line_count], data_ptr, len);
+            queued_line_count++;
+        }
         /* Returning 0 signals the message was accepted by the channel, so
          * tnc_queue_line() transfers ownership and does not free it (in
          * production the send_thread consumer frees each msg).  This mock is
@@ -260,6 +271,8 @@ void setUp(void)
     memset(last_queued_line, 0, sizeof(last_queued_line));
     chan_select_call_count = 0;
     queued_after_tcp_writes = -1;
+    memset(queued_lines, 0, sizeof(queued_lines));
+    queued_line_count = 0;
     memset(&arq_conn, 0, sizeof(arq_conn));
     mock_bandwidth_hz = 2300;
 
@@ -324,8 +337,36 @@ void test_cmd_mycall_registered_follows_ok(void)
     execute_control_command(cmd);
 
     assert_ok_response();
-    TEST_ASSERT_EQUAL_STRING("REGISTERED TEST1\r", last_queued_line);
+    /* First line out is the primary; the secondaries follow it. */
+    TEST_ASSERT_EQUAL_STRING("REGISTERED TEST1\r", queued_lines[0]);
     TEST_ASSERT_GREATER_THAN_INT(0, queued_after_tcp_writes);
+}
+
+/* "REGISTERED <Call>" is per call sign in VARA, and MYCALL can carry
+ * secondaries that Mercury will answer for, so each accepted one is
+ * acknowledged -- in the order given, primary first. */
+void test_cmd_mycall_registers_every_callsign(void)
+{
+    char cmd[] = "MYCALL TEST1 SEC1 SEC2";
+    execute_control_command(cmd);
+
+    assert_ok_response();
+    TEST_ASSERT_EQUAL_INT(3, queued_line_count);
+    TEST_ASSERT_EQUAL_STRING("REGISTERED TEST1\r", queued_lines[0]);
+    TEST_ASSERT_EQUAL_STRING("REGISTERED SEC1\r",  queued_lines[1]);
+    TEST_ASSERT_EQUAL_STRING("REGISTERED SEC2\r",  queued_lines[2]);
+}
+
+/* Past CALLSIGN_MAX_SECONDARY the ARQ layer drops the extras, so the host
+ * must not be told they are registered -- it would address a callsign this
+ * station never answers. */
+void test_cmd_mycall_does_not_register_dropped_secondaries(void)
+{
+    char cmd[] = "MYCALL TEST1 S1 S2 S3 S4 S5 S6";
+    execute_control_command(cmd);
+
+    assert_ok_response();
+    TEST_ASSERT_EQUAL_INT(1 + CALLSIGN_MAX_SECONDARY, queued_line_count);
 }
 
 void test_cmd_listen_on(void)
@@ -1052,6 +1093,8 @@ int main(void)
     /* Command parser tests */
     RUN_TEST(test_cmd_mycall);
     RUN_TEST(test_cmd_mycall_registered_follows_ok);
+    RUN_TEST(test_cmd_mycall_registers_every_callsign);
+    RUN_TEST(test_cmd_mycall_does_not_register_dropped_secondaries);
     RUN_TEST(test_cmd_listen_on);
     RUN_TEST(test_cmd_listen_off);
     RUN_TEST(test_cmd_public_on);
