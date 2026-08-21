@@ -86,8 +86,30 @@ else
     endif
 endif
 
+# hidapi: OPTIONAL, and preferred when present.  It is what gives the CM108
+# GPIO PTT backend Windows and macOS support; without it the backend falls back
+# to talking to /dev/hidraw directly, which works on Linux only.  Deliberately
+# not a hard dependency -- a minimal Raspberry Pi build should not need another
+# package to key a radio.  hidraw first: on Linux it needs no libusb detach and
+# co-exists with the kernel's own driver.
+HAVE_HIDAPI :=
+HIDAPI_CFLAGS =
+HIDAPI_LDFLAGS =
+ifneq ($(OS),Windows_NT)
+  HIDAPI_PC := $(firstword $(foreach m,hidapi-hidraw hidapi-libusb hidapi,\
+                 $(shell pkg-config --exists $(m) 2>/dev/null && echo $(m))))
+  ifneq ($(strip $(HIDAPI_PC)),)
+    HAVE_HIDAPI := 1
+    HIDAPI_CFLAGS := $(shell pkg-config --cflags $(HIDAPI_PC)) -DHAVE_HIDAPI
+    HIDAPI_LDFLAGS := $(shell pkg-config --libs $(HIDAPI_PC))
+  endif
+endif
+
 export HAVE_HAMLIB
 export HAVE_HERMES_SHM
+export HAVE_HIDAPI
+export HIDAPI_CFLAGS
+export HIDAPI_LDFLAGS
 
 include config.mk
 
@@ -119,7 +141,7 @@ else
 BINARY = mercury
 endif
 
-LDFLAGS=$(FFAUDIO_LINKFLAGS) -lm $(HAMLIB_LDFLAGS) $(ATOMIC_LDFLAGS)
+LDFLAGS=$(FFAUDIO_LINKFLAGS) -lm $(HAMLIB_LDFLAGS) $(HIDAPI_LDFLAGS) $(ATOMIC_LDFLAGS)
 
 MERCURY_LINK_INPUTS = \
 	main.o common/cfg_utils.o common/iniparser/iniparser.o common/iniparser/dictionary.o \

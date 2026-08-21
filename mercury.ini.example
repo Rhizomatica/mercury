@@ -58,7 +58,7 @@ freedv_verbosity = 0
 ; PTT backend: none, hamlib, serial, cm108, or hermes_shm (default: none).
 ; "serial" keys a modem-control line on a serial port -- DigiRig, the
 ; All-In-One Cable (AIOC) and most home-brew interfaces.  "cm108" keys a GPIO
-; pin on a CM108/CM119-class USB sound chip (Linux only); the AIOC does this
+; pin on a CM108/CM119-class USB sound chip; the AIOC does this
 ; too, so it is a second way in if the CDC serial port is awkward.
 ; "serial_rts" is still accepted and means method=serial with line=rts.
 method = none
