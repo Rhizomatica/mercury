@@ -550,10 +550,6 @@ func main() {
 
 	// open UI log file for appending; if it fails, uiLog will be nil and logs go only to the UI
 	var uiLog *os.File
-	logDir := getLogDir()
-	_ = os.MkdirAll(logDir, 0755)
-	uiLogPath := filepath.Join(logDir, "ui.log")
-	uiLog, _ = os.OpenFile(uiLogPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 
 	appendLog := func(msg string) {
 		// write only to file by default; UI log widget removed from layout
@@ -565,6 +561,17 @@ func main() {
 		if uiLog != nil {
 			_, _ = uiLog.WriteString(msg)
 		}
+	}
+
+	logDir := getLogDir()
+	if err := os.MkdirAll(logDir, 0755); err != nil {
+		appendLog(fmt.Sprintf("Failed to create logs directory %s: %v\n", logDir, err))
+	}
+	uiLogPath := filepath.Join(logDir, "ui.log")
+	if f, err := os.OpenFile(uiLogPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644); err != nil {
+		appendLog(fmt.Sprintf("Failed to open log file %s: %v\n", uiLogPath, err))
+	} else {
+		uiLog = f
 	}
 
 	setWSStatus := func(text string) {}
