@@ -10,6 +10,7 @@
 #   - Linux arm64 (cross-compile, Debian 13)
 #   - Linux armhf (cross-compile, Debian 13)
 #   - Windows x64 (cross-compile via MinGW, Debian 13)
+#   - macOS arm64 (native, Apple Silicon runner)
 
 name: Build
 
@@ -35,6 +36,10 @@ on:
         default: true
       build_linux_armhf:
         description: 'Build Linux armhf (cross-compile)'
+        type: boolean
+        default: true
+      build_macos_arm64:
+        description: 'Build macOS arm64 (Apple Silicon)'
         type: boolean
         default: true
       build_windows:
@@ -255,3 +260,69 @@ jobs:
             exit 1
           fi
           echo "Windows x64 cross-compile succeeded"
+
+  # macOS arm64 (Apple Silicon), native.
+  #
+  # Exists because a macOS-only build break reached mercuryv2 unnoticed: the
+  # -latomic rule was widened to 'arm%' for a hand-edited armhf target (#200),
+  # and Apple Clang reports arm64-apple-darwin, which that pattern matches.
+  # macOS has no libatomic, so Apple Silicon builds failed to link until #209.
+  # Nothing in CI built macOS, so nothing caught it -- while the repo does ship
+  # macOS artifacts (make fyne-ui-macos-universal-dmg).
+  #
+  # Build-only on purpose: tests/Makefile links -lrt, which does not exist on
+  # macOS, so `make -C tests test` cannot run here without a separate change.
+  # A build is enough for this class of bug, which fails at link time.
+  #
+  # Note the plain checkout, unlike the four jobs above: they pass
+  # ssh-key: secrets.SSH_PRIVATE_KEY, and secrets are not available to pull
+  # requests from forks -- exactly the contributor whose macOS build we most
+  # want covered.
+  build-macos-arm64:
+    name: Build macOS arm64 (Apple Silicon)
+    runs-on: macos-14
+    if: >-
+      github.event_name == 'pull_request' ||
+      github.event_name == 'push' ||
+      github.event.inputs.build_macos_arm64 == 'true'
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.inputs.branch || github.event.pull_request.head.sha || github.sha }}
+
+      - name: Toolchain and target detection
+        run: |
+          clang --version | head -1
+          echo "dumpmachine: $(clang -dumpmachine)"
+
+      - name: Guard - no -latomic on arm64
+        run: |
+          set -eu
+          # Read the value config.mk actually computes rather than asserting the
+          # pattern by eye.  macOS ships no libatomic, so anything here is a
+          # link failure waiting to happen.
+          printf 'include config.mk\nprint:\n\t@echo "[$(ATOMIC_LDFLAGS)]"\n' > /tmp/atomic.mk
+          ATOMIC=$(make -s -f /tmp/atomic.mk print)
+          echo "ATOMIC_LDFLAGS = $ATOMIC"
+          if [ "$ATOMIC" != "[]" ]; then
+            echo "::error::config.mk wants $ATOMIC on $(clang -dumpmachine);"
+            echo "::error::macOS provides no libatomic and the link will fail."
+            exit 1
+          fi
+
+      - name: Build Mercury (macOS arm64)
+        run: make -j"$(sysctl -n hw.ncpu)"
+
+      - name: Verify the binary
+        run: |
+          set -eu
+          [ -f mercury ] || { echo "::error::no mercury binary produced"; exit 1; }
+          file mercury
+          lipo -archs mercury
+          lipo -archs mercury | grep -q arm64 || {
+            echo "::error::binary is not arm64"; exit 1; }
+          echo "OK: macOS arm64 build"
