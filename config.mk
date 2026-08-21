@@ -60,11 +60,13 @@ endif
 # $(CC) -dumpmachine (arm-linux-gnueabihf), but anyone who overrides it by hand
 # reaches for the name of the port -- "armhf" -- which matched NEITHER this rule
 # nor the aarch64 one above, silently dropping -latomic on the one target that
-# needs it (issue #200).  aarch64 does not begin with "arm", so it is still
-# excluded.
+# needs it (issue #200).  Exclude arm64 explicitly: Apple Clang reports targets
+# such as arm64-apple-darwin, and macOS does not provide a separate libatomic.
 ATOMIC_LDFLAGS =
 ifneq ($(filter arm%,$(TARGET_MACHINE)),)
+ifeq ($(filter arm64%,$(TARGET_MACHINE)),)
   ATOMIC_LDFLAGS = -latomic
+endif
 endif
 
 GIT_HASH ?= $(shell git rev-parse --short=8 HEAD 2>/dev/null || echo unknown000)
