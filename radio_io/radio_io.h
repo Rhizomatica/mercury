@@ -23,21 +23,38 @@
 
 #include <stdbool.h>
 
+/* Legacy radio_model values, retained for INI/CLI compatibility. */
 #define RADIO_TYPE_NONE (-1)
 #define RADIO_TYPE_SHM  0
 
-/* Initialize radio control.
- * radio_type: RADIO_TYPE_NONE (disabled), RADIO_TYPE_SHM, or hamlib model ID (>0).
- * device_path: hamlib device file or ip:port (ignored for SHM/NONE).
- * hamlib_log_level: hamlib debug level (0-6). 0=NONE, 1=BUG, 2=ERR, 3=WARN, 4=VERBOSE, 5=TRACE, 6=CACHE.
- * serial_speed: serial baud rate (0 = use hamlib default for the model).
- * Returns 0 on success, -1 on failure. */
-int radio_io_init(int radio_type, const char *device_path, int hamlib_log_level, int serial_speed);
+#define PTT_DEVICE_PATH_MAX 1024
 
-/* Shutdown radio control and release resources. */
+typedef enum {
+    PTT_METHOD_NONE = 0,
+    PTT_METHOD_HAMLIB,
+    PTT_METHOD_SERIAL_RTS,
+    PTT_METHOD_HERMES_SHM
+} ptt_method_t;
+
+/* Configuration for the one active PTT backend.  Hamlib-specific fields are
+ * kept here so configuration, runtime restart and UI transport all pass one
+ * coherent value instead of overloading the rig model as the backend type. */
+typedef struct {
+    ptt_method_t method;
+    char device[PTT_DEVICE_PATH_MAX];
+    int hamlib_model;
+    int hamlib_serial_speed; /* 0 = use Hamlib model default */
+    int hamlib_log_level;    /* 0..6 */
+} ptt_config_t;
+
+/* Initialize the selected PTT backend.
+ * Returns 0 on success, -1 on failure. */
+int radio_io_init(const ptt_config_t *config);
+
+/* Shutdown direct PTT control and release resources. */
 void radio_io_shutdown(void);
 
-/* Returns true if radio control is active (SHM or hamlib). */
+/* Returns true if a PTT backend is active. */
 bool radio_io_enabled(void);
 
 /* Key transmitter on (PTT ON). */
@@ -54,17 +71,24 @@ void radio_io_list_models(void);
  * is not compiled in. */
 int radio_io_get_radio_list(char ids[][16], char names[][64], int max_count);
 
-/* Restart radio subsystem with a new radio type.
+/* Restart the PTT subsystem with a new configuration.
  * Thread-safe — blocks key_on / key_off during the restart cycle.
- * hamlib_log_level: hamlib debug level (0-6).
- * serial_speed: serial baud rate (0 = use hamlib default).
  * Returns 0 on success, -1 on failure. */
-int radio_io_restart(int new_radio_type, const char *device_path, int hamlib_log_level, int serial_speed);
+int radio_io_restart(const ptt_config_t *config);
 
-/* Return the device path used by the current (or last) init. */
+/* Copy the current runtime PTT configuration.  Shutdown or a failed backend
+ * open changes the method to NONE while retaining backend-specific settings. */
+void radio_io_get_config(ptt_config_t *config);
+
+/* Return the currently selected PTT method. */
+ptt_method_t radio_io_get_ptt_method(void);
+
+/* Return a thread-local snapshot of the device path.  The pointer remains
+ * valid until this function is called again on the same thread. */
 const char *radio_io_get_device_path(void);
 
-/* Return the current radio type (RADIO_TYPE_NONE, RADIO_TYPE_SHM, or hamlib model ID). */
+/* Legacy view of the current config: RADIO_TYPE_NONE, RADIO_TYPE_SHM, or the
+ * Hamlib model ID.  Serial RTS has no legacy representation and returns NONE. */
 int radio_io_get_radio_type(void);
 
 /* Return the hamlib debug level used by the current (or last) init. */

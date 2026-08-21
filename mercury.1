@@ -163,27 +163,31 @@ Requires
 .TP
 .B \-W
 Disable waterfall/spectrum data sent to the UI (saves CPU).
-.SS "Radio control options"
+.SS "PTT control options"
+.TP
+.BI \-P " method"
+Select the PTT method:
+.BR none ,
+.BR hamlib ,
+.BR serial_rts ,
+or
+.BR hermes_shm .
 .TP
 .BI \-R " model"
-Set Hamlib radio model (numeric ID).
+Set Hamlib radio model (numeric ID) and select the Hamlib PTT method.
 Use
 .B \-K
 to list available models.
 .TP
-.BI \-A " address"
-Set Hamlib radio device file or ip:port address (e.g.,
+.BI \-A " device"
+Set the selected PTT method's serial device or Hamlib ip:port endpoint (e.g.,
 .IR /dev/ttyUSB0 ,
 .IR COM3 ,
 or
 .IR localhost:4532 ).
 .TP
 .B \-S
-Use HERMES shared memory interface for PTT control instead of Hamlib.
-Mutually exclusive with
-.B \-R
-and
-.BR \-A .
+Select the HERMES shared-memory PTT method.
 Available only on Linux builds.
 .TP
 .B \-K
@@ -229,10 +233,11 @@ in the current working directory; use
 to specify an alternative path.
 Command-line arguments take priority over file values.
 .PP
-All settings are under the
-.B [main]
-section.
-The recognized keys are:
+General settings are under
+.BR [main] ;
+PTT settings are under
+.BR [ptt] .
+The principal recognized keys are:
 .PP
 .TS
 l l l.
@@ -242,9 +247,6 @@ ui_enabled	false	Enable WebSocket UI server
 ui_port	10000	WebSocket port
 ui_protocol	ws	ws (plain) or wss (TLS)
 waterfall_enabled	true	Send waterfall/spectrum data to UI
-radio_model	\-1	Hamlib model ID (\-1=none, 0=SHM)
-radio_device	(empty)	Serial device or ip:port
-radio_serial_speed	0	Serial baud rate (0=hamlib default)
 input_device	(empty)	Audio capture device
 output_device	(empty)	Audio playback device
 capture_channel	left	left, right, or stereo
@@ -253,15 +255,27 @@ arq_tcp_base_port	8300	ARQ TCP base port
 broadcast_tcp_port	8100	Broadcast TCP port
 verbose	false	Enable debug logging
 freedv_verbosity	0	FreeDV modem verbosity (0\-3)
-hamlib_log_level	0	Hamlib debug level (0\-6)
+ptt:method	none	none, hamlib, serial_rts, or hermes_shm
+ptt:device	(empty)	Serial device or Hamlib endpoint
+ptt:hamlib_model	\-1	Hamlib model ID
+ptt:hamlib_serial_speed	0	Serial baud rate (0=Hamlib default)
+ptt:hamlib_log_level	0	Hamlib debug level (0\-6)
 .TE
 .PP
 The
-.B radio_serial_speed
+.B ptt:hamlib_serial_speed
 setting overrides the compiled-in hamlib default baud rate for the
 selected radio model.
 It must match the CAT Rate configured on the radio.
 Common values are 4800, 9600, 19200, 38400, and 115200.
+.PP
+The legacy main-section keys
+.BR radio_model ,
+.BR radio_device ,
+.BR radio_serial_speed ,
+and
+.B hamlib_log_level
+remain accepted and are mapped to the equivalent PTT configuration.
 .SH TNC INTERFACE
 Mercury provides a VARA-compatible TCP TNC interface for ARQ operations.
 The control port accepts text commands terminated by a carriage return,
@@ -475,6 +489,14 @@ Start with Hamlib radio control on a serial port (Yaesu FT-710 on Windows):
 .RS
 .nf
 mercury \-i dsound \-o dsound \-R 1049 \-A COM3
+.fi
+.RE
+.PP
+Start with serial RTS PTT (for example DigiRig on Windows):
+.PP
+.RS
+.nf
+mercury \-i dsound \-o dsound \-P serial_rts \-A COM7
 .fi
 .RE
 .PP

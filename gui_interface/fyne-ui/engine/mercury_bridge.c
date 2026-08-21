@@ -146,9 +146,10 @@ int mercury_ui_get_spectrum(float *out, int max_bins, int *sample_rate_hz,
 }
 
 int mercury_ui_command(const char *command, const char *value,
-                       const char *value2, const char *value3)
+                       const char *value2, const char *value3,
+                       const char *value4)
 {
-    return ui_comm_command(command, value, value2, value3);
+    return ui_comm_command(command, value, value2, value3, value4);
 }
 
 int mercury_ui_get_audio_devices(int kind, ui_device_t *out, int max,
@@ -161,11 +162,13 @@ int mercury_ui_get_audio_devices(int kind, ui_device_t *out, int max,
 int mercury_ui_get_radio_list(ui_device_t *out, int max,
                               char *selected, int selected_len,
                               char *device_path, int device_path_len,
-                              int *serial_speed)
+                              int *serial_speed,
+                              char *ptt_method, int method_len)
 {
     return ui_comm_get_radio_list(out, max, selected, (size_t)selected_len,
                                   device_path, (size_t)device_path_len,
-                                  serial_speed);
+                                  serial_speed, ptt_method,
+                                  (size_t)method_len);
 }
 
 int mercury_ui_get_input_channel(void)

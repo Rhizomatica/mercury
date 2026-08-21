@@ -248,8 +248,8 @@ static int json_find_key(const char *json, size_t json_len,
 }
 
 // ---- Parse incoming JSON command from UI ----
-// Expected format: {"command":"<cmd>","value":"<val>","value2":"<val2>","value3":"<val3>"}
-// "command" is mandatory, "value", "value2" and "value3" are optional
+// Expected format: {"command":"<cmd>","value":"<val>",...,"value4":"<val4>"}
+// "command" is mandatory; value fields are optional.
 static int parse_ws_command(const char *json, size_t len, ws_command_t *cmd)
 {
     memset(cmd, 0, sizeof(*cmd));
@@ -261,6 +261,7 @@ static int parse_ws_command(const char *json, size_t len, ws_command_t *cmd)
     json_find_key(json, len, "value",  cmd->value,  sizeof(cmd->value));
     json_find_key(json, len, "value2", cmd->value2, sizeof(cmd->value2));
     json_find_key(json, len, "value3", cmd->value3, sizeof(cmd->value3));
+    json_find_key(json, len, "value4", cmd->value4, sizeof(cmd->value4));
 
     return 0;
 }
@@ -291,8 +292,8 @@ static void ws_handle_message(struct mg_connection *c, struct mg_ws_message *wm)
         return;
     }
 
-    HLOGI(WS_LOG_TAG, "RX command=\"%s\" value=\"%s\" value2=\"%s\" value3=\"%s\"",
-           cmd.command, cmd.value, cmd.value2, cmd.value3);
+    HLOGI(WS_LOG_TAG, "RX command=\"%s\" value=\"%s\" value2=\"%s\" value3=\"%s\" value4=\"%s\"",
+           cmd.command, cmd.value, cmd.value2, cmd.value3, cmd.value4);
 
     int rc = s_ws_ctx->cmd_callback(&cmd, s_ws_ctx->cmd_callback_data);
     if (rc == 0)

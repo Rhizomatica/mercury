@@ -37,8 +37,11 @@ void cfg_set_defaults(mercury_config *cfg)
     cfg->ui_port            = UI_DEFAULT_PORT;       /* 10000  */
     cfg->tls_enabled        = false;                 /* ws     */
     cfg->waterfall_enabled  = true;
-    cfg->radio_type         = RADIO_TYPE_NONE;       /* -1     */
-    cfg->radio_device[0]    = '\0';
+    cfg->ptt.method         = PTT_METHOD_NONE;
+    cfg->ptt.device[0]      = '\0';
+    cfg->ptt.hamlib_model   = RADIO_TYPE_NONE;
+    cfg->ptt.hamlib_log_level = 0;
+    cfg->ptt.hamlib_serial_speed = 0;
     cfg->input_device[0]    = '\0';
     cfg->output_device[0]   = '\0';
     cfg->capture_channel    = LEFT;
@@ -47,8 +50,6 @@ void cfg_set_defaults(mercury_config *cfg)
     cfg->broadcast_tcp_port = DEFAULT_BROADCAST_PORT; /* 8100  */
     cfg->verbose            = false;
     cfg->freedv_verbosity   = 0;
-    cfg->hamlib_log_level   = 0;
-    cfg->radio_serial_speed = 0;  /* 0 = use hamlib default */
     cfg->no_progress_timeout_s = ARQ_NO_PROGRESS_TIMEOUT_S_DEFAULT;
     cfg->disconnect_drain_timeout_s = ARQ_DISCONNECT_DRAIN_TIMEOUT_S_DEFAULT;
     cfg->tnc_keepalive_s = 60;
@@ -103,6 +104,28 @@ static int parse_capture_channel(const char *s)
     return LEFT;
 }
 
+const char *cfg_ptt_method_name(ptt_method_t method)
+{
+    switch (method) {
+    case PTT_METHOD_NONE:       return "none";
+    case PTT_METHOD_HAMLIB:     return "hamlib";
+    case PTT_METHOD_SERIAL_RTS: return "serial_rts";
+    case PTT_METHOD_HERMES_SHM: return "hermes_shm";
+    default:                    return "unknown";
+    }
+}
+
+bool cfg_ptt_method_parse(const char *name, ptt_method_t *method)
+{
+    if (!name || !method) return false;
+    if (!strcmp(name, "none"))       *method = PTT_METHOD_NONE;
+    else if (!strcmp(name, "hamlib"))     *method = PTT_METHOD_HAMLIB;
+    else if (!strcmp(name, "serial_rts")) *method = PTT_METHOD_SERIAL_RTS;
+    else if (!strcmp(name, "hermes_shm")) *method = PTT_METHOD_HERMES_SHM;
+    else return false;
+    return true;
+}
+
 bool cfg_read(mercury_config *cfg, const char *ini_path)
 {
     dictionary *ini = iniparser_load(ini_path);
@@ -127,14 +150,63 @@ bool cfg_read(mercury_config *cfg, const char *ini_path)
     b = iniparser_getboolean(ini, CFG_KEY_WATERFALL_ENABLED, cfg->waterfall_enabled ? 1 : 0);
     cfg->waterfall_enabled = (bool) b;
 
-    i = iniparser_getint(ini, CFG_KEY_RADIO_MODEL, cfg->radio_type);
-    cfg->radio_type = i;
+    /* Read the legacy radio-oriented keys first, then let an explicit [ptt]
+     * section override them.  This supports old files as well as a simple
+     * migration where only ptt.method was added by hand. */
+    s = iniparser_getstring(ini, CFG_KEY_RADIO_MODEL, NULL);
+    if (s) {
+        i = iniparser_getint(ini, CFG_KEY_RADIO_MODEL, cfg->ptt.hamlib_model);
+        cfg->ptt.hamlib_model = i;
+        if (i == RADIO_TYPE_SHM)
+            cfg->ptt.method = PTT_METHOD_HERMES_SHM;
+        else if (i > 0)
+            cfg->ptt.method = PTT_METHOD_HAMLIB;
+        else
+            cfg->ptt.method = PTT_METHOD_NONE;
+    }
 
     s = iniparser_getstring(ini, CFG_KEY_RADIO_DEVICE, NULL);
     if (s) {
-        strncpy(cfg->radio_device, s, sizeof(cfg->radio_device) - 1);
-        cfg->radio_device[sizeof(cfg->radio_device) - 1] = '\0';
+        strncpy(cfg->ptt.device, s, sizeof(cfg->ptt.device) - 1);
+        cfg->ptt.device[sizeof(cfg->ptt.device) - 1] = '\0';
     }
+
+    i = iniparser_getint(ini, CFG_KEY_HAMLIB_LOG_LEVEL,
+                         cfg->ptt.hamlib_log_level);
+    if (i >= 0 && i <= 6)
+        cfg->ptt.hamlib_log_level = i;
+
+    i = iniparser_getint(ini, CFG_KEY_RADIO_SERIAL_SPEED,
+                         cfg->ptt.hamlib_serial_speed);
+    if (i >= 0)
+        cfg->ptt.hamlib_serial_speed = i;
+
+    s = iniparser_getstring(ini, CFG_KEY_PTT_METHOD, NULL);
+    if (s && !cfg_ptt_method_parse(s, &cfg->ptt.method)) {
+        fprintf(stderr, "cfg_read: invalid PTT method '%s'\n", s);
+        iniparser_freedict(ini);
+        return false;
+    }
+
+    s = iniparser_getstring(ini, CFG_KEY_PTT_DEVICE, NULL);
+    if (s) {
+        strncpy(cfg->ptt.device, s, sizeof(cfg->ptt.device) - 1);
+        cfg->ptt.device[sizeof(cfg->ptt.device) - 1] = '\0';
+    }
+
+    i = iniparser_getint(ini, CFG_KEY_PTT_HAMLIB_MODEL,
+                         cfg->ptt.hamlib_model);
+    cfg->ptt.hamlib_model = i;
+
+    i = iniparser_getint(ini, CFG_KEY_PTT_HAMLIB_LOG,
+                         cfg->ptt.hamlib_log_level);
+    if (i >= 0 && i <= 6)
+        cfg->ptt.hamlib_log_level = i;
+
+    i = iniparser_getint(ini, CFG_KEY_PTT_HAMLIB_SPEED,
+                         cfg->ptt.hamlib_serial_speed);
+    if (i >= 0)
+        cfg->ptt.hamlib_serial_speed = i;
 
     s = iniparser_getstring(ini, CFG_KEY_INPUT_DEVICE, NULL);
     if (s) {
@@ -168,14 +240,6 @@ bool cfg_read(mercury_config *cfg, const char *ini_path)
     i = iniparser_getint(ini, CFG_KEY_FREEDV_VERBOSITY, cfg->freedv_verbosity);
     if (i >= 0 && i <= 3)
         cfg->freedv_verbosity = i;
-
-    i = iniparser_getint(ini, CFG_KEY_HAMLIB_LOG_LEVEL, cfg->hamlib_log_level);
-    if (i >= 0 && i <= 6)
-        cfg->hamlib_log_level = i;
-
-    i = iniparser_getint(ini, CFG_KEY_RADIO_SERIAL_SPEED, cfg->radio_serial_speed);
-    if (i >= 0)
-        cfg->radio_serial_speed = i;
 
     i = iniparser_getint(ini, CFG_KEY_NO_PROGRESS_TIMEOUT_S, cfg->no_progress_timeout_s);
     if (i > 0)
@@ -309,11 +373,6 @@ bool cfg_write(const mercury_config *cfg, const char *ini_path)
     fprintf(f, "ui_port = %d\n",          cfg->ui_port);
     fprintf(f, "ui_protocol = %s\n",      cfg->tls_enabled ? "wss" : "ws");
     fprintf(f, "waterfall_enabled = %s\n", cfg->waterfall_enabled ? "true" : "false");
-    fprintf(f, "radio_model = %d\n",      cfg->radio_type);
-
-    cfg_escape_str(escaped, sizeof(escaped), cfg->radio_device);
-    fprintf(f, "radio_device = \"%s\"\n",  escaped);
-
     cfg_escape_str(escaped, sizeof(escaped), cfg->input_device);
     fprintf(f, "input_device = \"%s\"\n",  escaped);
 
@@ -326,8 +385,13 @@ bool cfg_write(const mercury_config *cfg, const char *ini_path)
     fprintf(f, "broadcast_tcp_port = %d\n", cfg->broadcast_tcp_port);
     fprintf(f, "verbose = %s\n",           cfg->verbose ? "true" : "false");
     fprintf(f, "freedv_verbosity = %d\n",  cfg->freedv_verbosity);
-    fprintf(f, "hamlib_log_level = %d\n",  cfg->hamlib_log_level);
-    fprintf(f, "radio_serial_speed = %d\n", cfg->radio_serial_speed);
+    fprintf(f, "\n[ptt]\n");
+    fprintf(f, "method = %s\n", cfg_ptt_method_name(cfg->ptt.method));
+    cfg_escape_str(escaped, sizeof(escaped), cfg->ptt.device);
+    fprintf(f, "device = \"%s\"\n", escaped);
+    fprintf(f, "hamlib_model = %d\n", cfg->ptt.hamlib_model);
+    fprintf(f, "hamlib_serial_speed = %d\n", cfg->ptt.hamlib_serial_speed);
+    fprintf(f, "hamlib_log_level = %d\n", cfg->ptt.hamlib_log_level);
 
     fprintf(f, "\n[arq]\n");
     fprintf(f, "no_progress_timeout_s = %d\n", cfg->no_progress_timeout_s);

@@ -23,20 +23,6 @@ ui_protocol = ws
 ; Enable waterfall / spectrum data sent to the UI (default: true)
 waterfall_enabled = true
 
-; HAMLIB radio model ID. Use -1 for none, 0 for HERMES SHM, or a
-; positive integer for a HAMLIB model (run mercury -K to see the list).
-; (default: -1)
-radio_model = -1
-
-; HAMLIB radio device file or ip:port address
-; Examples: /dev/ttyUSB0 (Linux), COM3 (Windows), 127.0.0.1:4532 (rigctld)
-radio_device =
-
-; Serial baud rate for HAMLIB radio (0 = use hamlib default for the model).
-; Must match the CAT Rate configured on your radio.
-; Common values: 4800, 9600, 19200, 38400, 115200
-radio_serial_speed = 0
-
 ; Audio capture (input) device id (e.g. "plughw:0,0")
 ; Run mercury -z to list available devices.
 input_device =
@@ -67,7 +53,23 @@ verbose = false
 ; FreeDV modem verbosity level, 0 to 3 (default: 0)
 freedv_verbosity = 0
 
-; Hamlib radio log level, 0 to 6 (default: 0)
+[ptt]
+
+; PTT backend: none, hamlib, serial_rts, or hermes_shm (default: none).
+; serial_rts is suitable for DigiRig Mobile and other RTS-keyed interfaces.
+method = none
+
+; Backend endpoint. For serial_rts use a serial device (for example COM7 or
+; /dev/ttyUSB0). For Hamlib use its serial device or ip:port endpoint.
+device =
+
+; The remaining settings are used only by method=hamlib.
+; Run mercury -K to list supported model IDs.
+hamlib_model = -1
+
+; 0 uses the Hamlib model default. Must match the radio's CAT rate when set.
+hamlib_serial_speed = 0
+
 ; 0=NONE, 1=BUG, 2=ERR, 3=WARN, 4=VERBOSE, 5=TRACE, 6=CACHE
 hamlib_log_level = 0
 
