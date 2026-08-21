@@ -1,0 +1,277 @@
+# SignPath production signing — Windows binaries with the OSS release certificate.
+#
+# Differs from signpath-test.yml in one way that matters: signing requests
+# against the PRODUCTION certificate require a human to approve them in the
+# SignPath UI (expected behaviour for SignPath Foundation OSS certificates —
+# they verify what is signed and from which build).  Everything downstream of
+# that is unchanged, because the trial workflow's shape — build unsigned, sign,
+# build the installer from SIGNED payloads, sign the installer — is already the
+# "separate build and signing steps" arrangement SignPath recommends.
+#
+# The approval changes two practical things:
+#
+#   * The action waits for a person, not a service.  Its default wait is 600 s
+#     (10 minutes), which will expire on most real releases.  approval_timeout_s
+#     below raises it; the job cap is left at the 6 h GitHub maximum so the
+#     ACTION's timeout is what actually fires, with a clear error, rather than
+#     the runner being killed mid-wait.
+#
+#   * A release needs TWO approvals (binaries, then installer), because the
+#     installer must contain already-signed payloads.  SignPath emails the
+#     approvers for each; the request URLs are also written to the job summary.
+#     If a single approval per release is wanted, ask SignPath whether one
+#     artifact configuration can cover the installer and its embedded exes.
+#
+# Prerequisites: as in code-signing/signpath/README.md, plus a signing policy
+# bound to the PRODUCTION certificate (default slug 'release-signing').
+
+name: SignPath release
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_installer:
+        description: 'Also build + sign the Windows installer (Wine + Inno)'
+        required: false
+        default: true
+        type: boolean
+      signing_policy:
+        description: 'SignPath signing policy slug (production certificate)'
+        required: false
+        default: 'release-signing'
+        type: string
+      approval_timeout_s:
+        description: 'Seconds to wait for manual approval in the SignPath UI'
+        required: false
+        default: '7200'
+        type: string
+
+env:
+  SIGNPATH_ORG: 'd1c3b645-94b2-48ac-95fa-b72a652f3578'
+  SIGNPATH_PROJECT: 'mercury'
+
+jobs:
+  # ---- Build unsigned Windows binaries ----
+  build:
+    name: Build unsigned binaries
+    runs-on: ubuntu-latest
+    container: debian:trixie
+    timeout-minutes: 20
+    outputs:
+      artifact-id: ${{ steps.upload.outputs.artifact-id }}
+    steps:
+      - name: Install deps
+        run: |
+          apt-get update && apt-get install -y --no-install-recommends \
+            ca-certificates build-essential git golang-go \
+            gcc-mingw-w64-x86-64 mingw-w64-x86-64-dev mingw-w64-common zip
+
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 1 }
+
+      - name: Git config
+        run: git config --global --add safe.directory /__w/mercury/mercury
+
+      - name: Build binaries
+        run: |
+          make windows
+          make fyne-ui-windows
+          mkdir -p dist
+          cp mercury.exe dist/
+          cp windows-installer/mercury-ui.exe dist/
+
+      - name: Upload unsigned binaries
+        id: upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: signpath-unsigned
+          path: |
+            dist/mercury.exe
+            dist/mercury-ui.exe
+
+  # ---- Sign the binaries (manual approval happens here) ----
+  sign:
+    name: Sign via SignPath (awaits approval)
+    needs: build
+    runs-on: ubuntu-latest
+    # Deliberately the 6 h maximum: the ACTION's own timeout below is the real
+    # control and fails with a usable message.  A tight job cap here would kill
+    # the runner mid-wait and report only "job exceeded the timeout".
+    timeout-minutes: 360
+    steps:
+      - name: Submit signing request
+        id: sign
+        uses: signpath/github-action-submit-signing-request@v2
+        with:
+          api-token: '${{ secrets.SIGNPATH_API_TOKEN }}'
+          organization-id: ${{ env.SIGNPATH_ORG }}
+          project-slug: ${{ env.SIGNPATH_PROJECT }}
+          signing-policy-slug: ${{ inputs.signing_policy }}
+          artifact-configuration-slug: 'mercury-windows'
+          github-artifact-id: '${{ needs.build.outputs.artifact-id }}'
+          wait-for-completion: true
+          wait-for-completion-timeout-in-seconds: ${{ inputs.approval_timeout_s }}
+          output-artifact-directory: signed
+
+      - name: Record the signing request
+        if: always()
+        run: |
+          {
+            echo "### SignPath signing request — binaries"
+            echo ""
+            echo "- policy: \`${{ inputs.signing_policy }}\`"
+            echo "- request: ${{ steps.sign.outputs.signing-request-web-url }}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Verify signatures
+        run: |
+          sudo apt-get update && sudo apt-get install -y --no-install-recommends osslsigncode
+          for f in signed/mercury.exe signed/mercury-ui.exe; do
+            [ -f "$f" ] || { echo "::error::missing signed file $f"; exit 1; }
+            OUT="$(osslsigncode verify "$f" 2>&1 || true)"
+            printf '%s\n' "$OUT"
+            printf '%s\n' "$OUT" | grep -q "Number of verified signatures: 1" || {
+              echo "::error::no valid signature found in $f"; exit 1; }
+            # Production guard: a self-signed chain here means the run used the
+            # TEST certificate, i.e. signing_policy still points at the trial
+            # policy.  That would ship a release Windows will refuse to trust,
+            # and it is invisible unless something checks for it.
+            if printf '%s\n' "$OUT" | grep -q "self-signed certificate"; then
+              echo "::error::$f is signed with a SELF-SIGNED certificate — the"
+              echo "::error::signing policy '${{ inputs.signing_policy }}' is not"
+              echo "::error::bound to the production certificate."
+              exit 1
+            fi
+            echo "OK: production-signed $f"
+          done
+
+      - name: Upload signed binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: signpath-signed
+          path: |
+            signed/mercury.exe
+            signed/mercury-ui.exe
+
+  # ---- Installer built from SIGNED payloads ----
+  installer:
+    name: Build installer from signed payloads
+    if: ${{ inputs.build_installer }}
+    needs: sign
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    outputs:
+      artifact-id: ${{ steps.upload-setup.outputs.artifact-id }}
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 1 }
+
+      - name: Download signed binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: signpath-signed
+
+      - name: Install Inno Setup (Wine)
+        env:
+          INNO_URL:    https://wiki.hermes.radio/reports/inno-setup-6.7.3-wine.tar.gz
+          INNO_SHA256: 4c9c92249663f201a33bf194c0cd37e01c60540e299c771f3626411ef463c884
+        run: |
+          set -eu
+          # ISCC.exe is 32-bit; wine on the runner ships without i386, so
+          # enable multiarch and pull wine32 to get syswow64 working.
+          sudo dpkg --add-architecture i386
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends wine wine32:i386 ca-certificates curl zip
+          curl -fsSLo /tmp/inno.tar.gz "$INNO_URL"
+          echo "${INNO_SHA256}  /tmp/inno.tar.gz" | sha256sum -c -
+          wineboot -i
+          PF="$HOME/.wine/drive_c/Program Files (x86)"
+          mkdir -p "$PF"
+          tar xzf /tmp/inno.tar.gz -C "$PF/"
+          ISCC_PATH="$PF/Inno Setup 6/ISCC.exe"
+          [ -f "$ISCC_PATH" ] || { echo "::error::Inno Setup tree missing ISCC.exe"; exit 1; }
+          echo "ISCC_PATH=$ISCC_PATH" >> "$GITHUB_ENV"
+
+      - name: Stage signed payloads and build installer
+        run: |
+          set -eu
+          # Payloads here are the SIGNED binaries from the previous job;
+          # windows-installer-stage only copies, it does not rebuild.
+          # upload-artifact v4 strips the common base dir, so the signed
+          # payloads arrive either at the root or under signed/; handle both.
+          if [ -f mercury.exe ]; then SRC=.; else SRC=signed; fi
+          cp "$SRC/mercury.exe" windows-installer/
+          cp "$SRC/mercury-ui.exe" windows-installer/
+          cp mercury.ini.example windows-installer/mercury.ini
+          # The installer.iss Sources expect the hamlib + MinGW runtime DLLs
+          # next to it (same as make windows-installer-stage).
+          if ls radio_io/hamlib-w64/bin/*.dll >/dev/null 2>&1; then
+            cp radio_io/hamlib-w64/bin/*.dll windows-installer/
+          fi
+          sed -i 's/ui_enabled = false/ui_enabled = true/g' windows-installer/mercury.ini
+          sed -i 's/sound_system = auto/sound_system = wasapi/g' windows-installer/mercury.ini
+          wine "$ISCC_PATH" windows-installer/installer.iss
+          SETUP=$(ls Mercury_*_Setup.exe | head -1)
+          [ -n "$SETUP" ] || { echo "::error::ISCC produced no installer"; exit 1; }
+          cp "$SETUP" mercury-setup.exe
+
+      - name: Upload unsigned installer
+        id: upload-setup
+        uses: actions/upload-artifact@v4
+        with:
+          name: signpath-setup-unsigned
+          path: mercury-setup.exe
+
+  # ---- Sign the installer (second manual approval) ----
+  sign-setup:
+    name: Sign installer via SignPath (awaits approval)
+    if: ${{ inputs.build_installer }}
+    needs: installer
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - name: Submit signing request (installer)
+        id: sign-setup
+        uses: signpath/github-action-submit-signing-request@v2
+        with:
+          api-token: '${{ secrets.SIGNPATH_API_TOKEN }}'
+          organization-id: ${{ env.SIGNPATH_ORG }}
+          project-slug: ${{ env.SIGNPATH_PROJECT }}
+          signing-policy-slug: ${{ inputs.signing_policy }}
+          artifact-configuration-slug: 'mercury-setup'
+          github-artifact-id: '${{ needs.installer.outputs.artifact-id }}'
+          wait-for-completion: true
+          wait-for-completion-timeout-in-seconds: ${{ inputs.approval_timeout_s }}
+          output-artifact-directory: signed-setup
+
+      - name: Record the signing request
+        if: always()
+        run: |
+          {
+            echo "### SignPath signing request — installer"
+            echo ""
+            echo "- policy: \`${{ inputs.signing_policy }}\`"
+            echo "- request: ${{ steps.sign-setup.outputs.signing-request-web-url }}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Verify installer signature
+        run: |
+          sudo apt-get update && sudo apt-get install -y --no-install-recommends osslsigncode
+          f=signed-setup/mercury-setup.exe
+          [ -f "$f" ] || { echo "::error::missing signed installer"; exit 1; }
+          OUT="$(osslsigncode verify "$f" 2>&1 || true)"
+          printf '%s\n' "$OUT"
+          printf '%s\n' "$OUT" | grep -q "Number of verified signatures: 1" || {
+            echo "::error::no valid signature found in $f"; exit 1; }
+          if printf '%s\n' "$OUT" | grep -q "self-signed certificate"; then
+            echo "::error::installer signed with a SELF-SIGNED certificate — the"
+            echo "::error::signing policy is not bound to the production certificate."
+            exit 1
+          fi
+          echo "OK: production-signed installer"
+
+      - name: Upload signed installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: signpath-setup-signed
+          path: signed-setup/mercury-setup.exe

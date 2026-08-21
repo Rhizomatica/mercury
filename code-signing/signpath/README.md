@@ -60,12 +60,41 @@ artifact-configs/mercury-setup.xml     artifact configuration: ZIP with mercury-
 ## Production certificate
 
 After SignPath reviews the setup (origin verification), they import the real
-release certificate into the organization. At that point:
+release certificate into the organization.
 
-1. Point the release signing policy at the production certificate.
-2. Port the `sign` / `sign-setup` jobs from `signpath-test.yml` into
-   `.github/workflows/release.yml`, replacing the Certum jobs.
-3. Keep `code-signing/sign.sh` + the Certum secrets as a manual fallback.
+**Production signing requests require manual approval in the SignPath UI.**
+This is expected for SignPath Foundation OSS certificates — they verify what is
+being signed and from which build — and it is the one behavioural difference
+from the test certificate, which signs unattended. Two consequences:
+
+* The action waits for a *person*. Its default
+  `wait-for-completion-timeout-in-seconds` is **600** (10 minutes), which will
+  expire on most real releases. `.github/workflows/signpath-release.yml` raises
+  it via the `approval_timeout_s` input (default 7200) and leaves the job cap at
+  the 6 h GitHub maximum, so the action's own timeout is what fires — with a
+  usable error — rather than the runner being killed mid-wait.
+
+* A release needs **two approvals**: the binaries, then the installer, because
+  the installer has to contain already-signed payloads. SignPath emails the
+  approvers for each, and the request URLs are written to the job summary.
+  Worth asking SignPath whether one artifact configuration can cover the
+  installer *and* its embedded exes, which would halve that.
+
+`signpath-release.yml` is the production variant of `signpath-test.yml`. Same
+proven shape — build unsigned, sign, build the installer from signed payloads,
+sign the installer — with the approval-related timeouts, the policy slug as an
+input (default `release-signing`), and one extra guard: the verify step **fails**
+if the resulting signature is self-signed, since that means the policy is still
+pointed at the trial certificate and the release would ship untrusted.
+
+Remaining steps once the certificate lands:
+
+1. Create a signing policy bound to the production certificate (slug
+   `release-signing`, or pass `signing_policy`).
+2. Run *SignPath release* manually and approve both requests; confirm the
+   artifacts verify.
+3. Then wire it into `.github/workflows/release.yml`, replacing the Certum jobs.
+4. Keep `code-signing/sign.sh` + the Certum secrets as a manual fallback.
 
 See [SignPath docs](https://about.signpath.io/documentation/) — the GitHub
 integration page and the artifact-configuration reference.
