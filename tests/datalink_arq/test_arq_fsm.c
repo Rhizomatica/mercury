@@ -531,6 +531,33 @@ void test_app_disconnect_defers_in_wait_ack(void)
 
 /* Cumulative ACK with ack_seq == window base + 1 confirms the single
  * in-flight frame (the K=1 degenerate case of the burst window). */
+/* A foreign MODE_REQ arriving in WAIT_ACK is treated as an IMPLICIT ACK: it
+ * retires the whole TX window, resets the retry budget and repoints the RX
+ * decoder.  That is the state where session-ID validation actually bites, and
+ * it is silent DATA LOSS rather than just a mode change.
+ *
+ * test_connected_rejects_foreign_mode_request above cannot show this: MODE_REQ
+ * is only handled inside ARQ_DFLOW_WAIT_ACK, so from an idle CONNECTED session
+ * it reaches no handler and that test passes with or without the check. */
+void test_wait_ack_rejects_foreign_mode_request(void)
+{
+    goto_connected();
+    goto_wait_ack();
+    TEST_ASSERT_EQUAL_INT(1, sess.tx_window_count);
+    int peer_tx_mode = sess.peer_tx_mode;
+
+    arq_event_t ev = make_event(ARQ_EV_RX_MODE_REQ);
+    ev.session_id = (uint8_t)(sess.session_id + 1);   /* another session */
+    ev.mode = FREEDV_MODE_DATAC4;
+    arq_fsm_dispatch(&sess, &ev);
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, sess.tx_window_count,
+        "a foreign MODE_REQ retired our outstanding frame as an implicit ACK");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(peer_tx_mode, sess.peer_tx_mode,
+        "a foreign MODE_REQ repointed our payload decoder");
+    TEST_ASSERT_EQUAL_INT(ARQ_DFLOW_WAIT_ACK, sess.dflow_state);
+}
+
 void test_wait_ack_cumulative_ack_advances_window(void)
 {
     goto_connected();
@@ -940,6 +967,7 @@ int main(void)
     RUN_TEST(test_rx_disconnect_from_connected);
     RUN_TEST(test_connected_rejects_zero_session_id);
     RUN_TEST(test_connected_rejects_foreign_mode_request);
+    RUN_TEST(test_wait_ack_rejects_foreign_mode_request);
     RUN_TEST(test_connected_seeds_no_progress_clock);
     RUN_TEST(test_app_disconnect_defers_with_backlog);
     RUN_TEST(test_pending_disconnect_retries_last_frame_before_teardown);
