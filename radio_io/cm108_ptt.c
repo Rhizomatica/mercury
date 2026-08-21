@@ -8,12 +8,17 @@
  * too (1209:7388), which matters because it gives an AIOC user a second way in
  * when their kernel enumerates the CDC serial port awkwardly.
  *
- * Deliberately talks to /dev/hidraw directly instead of linking hidapi.  The
- * report is five bytes and enumeration is a sysfs walk, so the dependency would
- * buy nothing but another thing to install on a Raspberry Pi -- and hamlib
- * drives CM108 the same way.  The cost is that this is Linux-only; Windows
- * users have the serial and hamlib backends, and cm108_ptt_open() says so
- * rather than failing obscurely.
+ * Two transports, chosen at build time:
+ *
+ *   HAVE_HIDAPI  - hidapi, when pkg-config finds it.  Preferred, because it is
+ *                  what makes this backend work on Windows and macOS as well.
+ *   __linux__    - otherwise, talk to /dev/hidraw directly.  The report is five
+ *                  bytes and enumeration is a sysfs walk, so a Raspberry Pi
+ *                  build needs no extra package to key a radio; hamlib drives
+ *                  CM108 the same way.
+ *
+ * Neither is a hard dependency.  On a platform with neither, cm108_ptt_open()
+ * says so rather than failing obscurely.
  *
  * Permissions: /dev/hidraw* is usually root-only.  Mercury already runs as
  * root on the field stations; elsewhere a udev rule is needed, so the open
@@ -25,6 +30,7 @@
 #include <errno.h>
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
 
 #include "../common/hermes_log.h"
 
@@ -81,7 +87,159 @@ int cm108_ptt_report(bool on, int gpio, unsigned char out[5])
     return 0;
 }
 
-#ifdef __linux__
+#if defined(HAVE_HIDAPI)
+
+#include <hidapi.h>
+
+static hid_device *g_hid = NULL;
+static int g_gpio = PTT_CM108_GPIO_DEFAULT;
+
+int cm108_ptt_list(char *buf, size_t buf_size)
+{
+    if (buf && buf_size)
+        buf[0] = '\0';
+
+    if (hid_init() != 0)
+        return 0;
+
+    int found = 0;
+    struct hid_device_info *devs = hid_enumerate(0x0, 0x0);
+    for (struct hid_device_info *d = devs; d; d = d->next)
+    {
+        const char *chip = variant_name(d->vendor_id, d->product_id);
+        if (!chip)
+            continue;
+        found++;
+        if (buf && buf_size)
+        {
+            size_t used = strlen(buf);
+            snprintf(buf + used, buf_size > used ? buf_size - used : 0,
+                     "%s  %04x:%04x  %s\n",
+                     d->path ? d->path : "?", d->vendor_id, d->product_id, chip);
+        }
+    }
+    hid_free_enumeration(devs);
+    return found;
+}
+
+/* config->device, when set, is matched against the hidapi path or the USB
+ * serial number -- a path is stable per port, a serial number per cable. */
+static hid_device *open_selected(const ptt_config_t *config)
+{
+    if (hid_init() != 0)
+    {
+        HLOGE(CM108_LOG_TAG, "hid_init() failed");
+        return NULL;
+    }
+
+    struct hid_device_info *devs = hid_enumerate(0x0, 0x0);
+    struct hid_device_info *chosen = NULL;
+    for (struct hid_device_info *d = devs; d; d = d->next)
+    {
+        if (!variant_name(d->vendor_id, d->product_id))
+            continue;
+        if (!config->device[0])
+        {
+            chosen = d;
+            break;
+        }
+        if (d->path && !strcmp(d->path, config->device))
+        {
+            chosen = d;
+            break;
+        }
+        if (d->serial_number)
+        {
+            char sn[128];
+            if (wcstombs(sn, d->serial_number, sizeof(sn)) != (size_t)-1 &&
+                !strcmp(sn, config->device))
+            {
+                chosen = d;
+                break;
+            }
+        }
+    }
+
+    hid_device *h = NULL;
+    if (chosen)
+    {
+        HLOGI(CM108_LOG_TAG, "Using %s (%04x:%04x %s)",
+              chosen->path ? chosen->path : "?", chosen->vendor_id,
+              chosen->product_id,
+              variant_name(chosen->vendor_id, chosen->product_id));
+        h = hid_open_path(chosen->path);
+        if (!h)
+            HLOGE(CM108_LOG_TAG, "Cannot open the CM108 HID endpoint. "
+                                 "It is usually root-only; run as root or add "
+                                 "a udev rule.");
+    }
+    else if (config->device[0])
+        HLOGE(CM108_LOG_TAG, "CM108 device '%s' not found", config->device);
+    else
+        HLOGE(CM108_LOG_TAG, "No CM108-class PTT device found "
+                             "(set ptt.device to a path or USB serial to override)");
+
+    hid_free_enumeration(devs);
+    return h;
+}
+
+static int write_report(bool on)
+{
+    if (!g_hid)
+        return -1;
+    unsigned char report[5];
+    if (cm108_ptt_report(on, g_gpio, report) != 0)
+        return -1;
+    if (hid_write(g_hid, report, sizeof(report)) < 0)
+    {
+        HLOGE(CM108_LOG_TAG, "HID write failed");
+        return -1;
+    }
+    return 0;
+}
+
+int cm108_ptt_open(const ptt_config_t *config)
+{
+    if (!config)
+        return -1;
+
+    g_gpio = config->cm108_gpio;
+    if (g_gpio < 1 || g_gpio > 4)
+    {
+        HLOGW(CM108_LOG_TAG, "cm108_gpio=%d out of range 1..4; using %d",
+              g_gpio, PTT_CM108_GPIO_DEFAULT);
+        g_gpio = PTT_CM108_GPIO_DEFAULT;
+    }
+
+    g_hid = open_selected(config);
+    if (!g_hid)
+        return -1;
+
+    HLOGI(CM108_LOG_TAG, "CM108 PTT via hidapi, GPIO%d", g_gpio);
+    if (write_report(false) != 0)   /* park un-keyed */
+    {
+        cm108_ptt_close();
+        return -1;
+    }
+    return 0;
+}
+
+int cm108_ptt_set(bool on)
+{
+    return write_report(on);
+}
+
+void cm108_ptt_close(void)
+{
+    if (!g_hid)
+        return;
+    (void)write_report(false);
+    hid_close(g_hid);
+    g_hid = NULL;
+    hid_exit();
+}
+
+#elif defined(__linux__)
 
 #include <dirent.h>
 #include <fcntl.h>

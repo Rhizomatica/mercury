@@ -84,7 +84,7 @@ serial_ptt.o: serial_ptt.c serial_ptt.h radio_io.h
 	$(CC) $(CFLAGS) -c serial_ptt.c
 
 cm108_ptt.o: cm108_ptt.c cm108_ptt.h radio_io.h
-	$(CC) $(CFLAGS) -c cm108_ptt.c
+	$(CC) $(CFLAGS) $(HIDAPI_CFLAGS) -c cm108_ptt.c
 
 sbitx_io.o: sbitx_io.c sbitx_io.h radio_cmds.h
 	$(CC) $(CFLAGS) -c sbitx_io.c

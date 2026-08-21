@@ -97,7 +97,7 @@ Mode behavior notes:
 PTT control notes:
 - The default method is `none`; Mercury then leaves radio keying to the TCP client.
 - `-P serial -A COM7` (or a POSIX device such as `/dev/ttyUSB0`) keys a serial modem-control line. No baud rate is used. Which line, and whether it is inverted, comes from `[ptt] line` and `[ptt] invert` — RTS non-inverted by default.
-- `-P cm108` keys a GPIO pin on a CM108/CM119-class USB sound chip (Linux only). The device is auto-detected; `[ptt] cm108_gpio` selects the pin (default 3).
+- `-P cm108` keys a GPIO pin on a CM108/CM119-class USB sound chip. The device is auto-detected; `[ptt] cm108_gpio` selects the pin (default 3).
 - `-R` is the compatible Hamlib shorthand: it selects the model and the `hamlib` PTT method. `-A` supplies its device or `ip:port`, and `-K` lists models.
 - `-S` is the compatible shorthand for `hermes_shm` and is unavailable on Windows builds.
 
@@ -285,9 +285,15 @@ keys are still read and mapped to the equivalent PTT configuration.
 | sBitx | `hermes_shm` | — (or `-S`) |
 
 The AIOC exposes both a CDC serial port and a CM108-compatible HID endpoint, so
-either method works. `cm108` needs no device path — Mercury finds it — but
-`/dev/hidraw*` is root-only by default, so it needs a udev rule if Mercury is
-not running as root.
+either method works. `cm108` needs no device path — Mercury finds it — but the
+HID endpoint is root-only by default, so it needs a udev rule if Mercury is not
+running as root.
+
+`cm108` uses **hidapi** when `pkg-config` finds it (`libhidapi-dev` on Debian),
+and otherwise talks to `/dev/hidraw` directly. hidapi is optional on purpose: a
+minimal Raspberry Pi build should not need another package to key a radio. The
+practical difference is portability — the direct path is Linux-only, so a
+Windows build would need hidapi vendored for the target the way hamlib is.
 
 ## Documentation
 
