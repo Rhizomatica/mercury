@@ -89,7 +89,7 @@ void mercury_cli_print_usage(const char *prog)
     printf(" -v                         Verbose mode. Prints more information during execution.\n");
     printf(" -L <path>                  Write log to file (TIMING level and above).\n");
     printf(" -J                         Use JSONL format for log file (requires -L).\n");
-    printf(" -P [ptt_method]            PTT method: none, hamlib, serial_rts, or hermes_shm.\n");
+    printf(" -P [ptt_method]            PTT method: none, hamlib, serial, cm108, or hermes_shm.\n");
     printf(" -R [radio_model]           Sets HAMLIB radio model and selects Hamlib PTT.\n");
     printf(" -A [ptt_device]            PTT serial device or HAMLIB device/ip:port endpoint.\n");
 #ifdef HAVE_HERMES_SHM
@@ -337,7 +337,7 @@ int mercury_cli_parse(int argc, char **argv,
                 ptt_method_t method;
                 if (!cfg_ptt_method_parse(optarg, &method))
                 {
-                    fprintf(stderr, "Invalid PTT method '%s'. Use none, hamlib, serial_rts, or hermes_shm.\n",
+                    fprintf(stderr, "Invalid PTT method '%s'. Use none, hamlib, serial, cm108, or hermes_shm.\n",
                             optarg);
                     return -1;
                 }
@@ -410,7 +410,7 @@ int mercury_cli_parse(int argc, char **argv,
         return -1;
     }
 
-    if (out->cfg.ptt.method == PTT_METHOD_SERIAL_RTS && !out->cfg.ptt.device[0])
+    if (out->cfg.ptt.method == PTT_METHOD_SERIAL && !out->cfg.ptt.device[0])
     {
         fprintf(stderr, "Error: serial_rts PTT requires a device path (-A).\n");
         return -1;

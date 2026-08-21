@@ -69,7 +69,7 @@ Options:
  -v                         Verbose mode. Prints more information during execution.
  -L [path]                  Write log to file (TIMING level and above).
  -J                         Write log file in JSONL format (requires -L).
- -P [ptt_method]            PTT method: none, hamlib, serial_rts, or hermes_shm.
+ -P [ptt_method]            PTT method: none, hamlib, serial, cm108, or hermes_shm.
  -R [radio_model]           Sets HAMLIB radio model and selects Hamlib PTT.
  -A [ptt_device]            PTT serial device or HAMLIB device/ip:port endpoint.
  -S                         Select HERMES shared-memory PTT (Linux shorthand for -P hermes_shm).
@@ -96,7 +96,8 @@ Mode behavior notes:
 
 PTT control notes:
 - The default method is `none`; Mercury then leaves radio keying to the TCP client.
-- `-P serial_rts -A COM7` (or a POSIX device such as `/dev/ttyUSB0`) selects hardware RTS keying. No baud rate is used for this method.
+- `-P serial -A COM7` (or a POSIX device such as `/dev/ttyUSB0`) keys a serial modem-control line. No baud rate is used. Which line, and whether it is inverted, comes from `[ptt] line` and `[ptt] invert` — RTS non-inverted by default.
+- `-P cm108` keys a GPIO pin on a CM108/CM119-class USB sound chip (Linux only). The device is auto-detected; `[ptt] cm108_gpio` selects the pin (default 3).
 - `-R` is the compatible Hamlib shorthand: it selects the model and the `hamlib` PTT method. `-A` supplies its device or `ip:port`, and `-K` lists models.
 - `-S` is the compatible shorthand for `hermes_shm` and is unavailable on Windows builds.
 
@@ -264,13 +265,29 @@ PTT is configured independently of CAT-oriented radio settings:
 
 ```ini
 [ptt]
-method = serial_rts
+method = serial
 device = COM7
 ```
 
-Valid methods are `none`, `hamlib`, `serial_rts`, and `hermes_shm`. Legacy
+Valid methods are `none`, `hamlib`, `serial`, `cm108`, and `hermes_shm` (`serial_rts` is still accepted and means `serial` with `line = rts`). Legacy
 `radio_model`, `radio_device`, `radio_serial_speed`, and `hamlib_log_level`
 keys are still read and mapped to the equivalent PTT configuration.
+
+#### Common interfaces
+
+| Interface | Method | Settings |
+|---|---|---|
+| DigiRig Mobile | `serial` | `line = rts` (default) |
+| All-In-One Cable (AIOC) | `serial` | `line = both`, `invert = rts` |
+| All-In-One Cable (AIOC) | `cm108` | auto-detected, `cm108_gpio = 3` |
+| CM108/CM119 USB dongles | `cm108` | `cm108_gpio = 3` (some use 1 or 4) |
+| CAT-controlled HF rig | `hamlib` | `hamlib_model`, `device` |
+| sBitx | `hermes_shm` | — (or `-S`) |
+
+The AIOC exposes both a CDC serial port and a CM108-compatible HID endpoint, so
+either method works. `cm108` needs no device path — Mercury finds it — but
+`/dev/hidraw*` is root-only by default, so it needs a udev rule if Mercury is
+not running as root.
 
 ## Documentation
 

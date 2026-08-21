@@ -210,7 +210,7 @@ int ui_comm_handle_command(ui_ctx_t *ctx, const ws_command_t *cmd)
             HLOGE(UI_LOG_TAG, "Hamlib PTT requires a positive model ID");
             return -1;
         }
-        if (config.method == PTT_METHOD_SERIAL_RTS && !config.device[0]) {
+        if (config.method == PTT_METHOD_SERIAL && !config.device[0]) {
             HLOGE(UI_LOG_TAG, "Serial RTS PTT requires a device path");
             return -1;
         }

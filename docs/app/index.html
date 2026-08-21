@@ -222,7 +222,8 @@ input[type="range"] {
           <select id="pttMethodSelect">
             <option value="none">None</option>
             <option value="hamlib">Hamlib</option>
-            <option value="serial_rts">Serial RTS</option>
+            <option value="serial">Serial (RTS/DTR)</option>
+            <option value="cm108">CM108 GPIO</option>
             <option value="hermes_shm">HERMES SHM</option>
           </select>
           <label for="radioModelSelect">HAMLIB Model</label>
@@ -782,7 +783,7 @@ function restoreRadioSelection() {
 function updatePTTFieldState() {
   const method = getSelectValue(document.getElementById("pttMethodSelect")) || "none";
   const hamlib = method === "hamlib";
-  const serial = method === "serial_rts";
+  const serial = method === "serial" || method === "cm108";
   document.getElementById("radioModelSelect").disabled = !hamlib;
   document.getElementById("baudRateSelect").disabled = !hamlib;
   document.getElementById("devicePathInput").disabled = !(hamlib || serial);
@@ -1087,7 +1088,7 @@ document.getElementById("radioApplyBtn").addEventListener("click", function() {
   const devPath = document.getElementById("devicePathInput").value.trim();
   const baudRate = document.getElementById("baudRateSelect").value;
   if (method === "hamlib" && (!modelId || modelId === "-1")) return;
-  if (method === "serial_rts" && !devPath) return;
+  if (method === "serial" && !devPath) return;
   appliedPTTMethod = method;
   appliedRadioModel = modelId;
   appliedDevicePath = devPath;

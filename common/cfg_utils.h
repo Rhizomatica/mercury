@@ -45,6 +45,9 @@
 #define CFG_KEY_RADIO_SERIAL_SPEED  "main:radio_serial_speed"
 #define CFG_KEY_PTT_METHOD          "ptt:method"
 #define CFG_KEY_PTT_DEVICE          "ptt:device"
+#define CFG_KEY_PTT_LINE            "ptt:line"
+#define CFG_KEY_PTT_INVERT          "ptt:invert"
+#define CFG_KEY_PTT_CM108_GPIO      "ptt:cm108_gpio"
 #define CFG_KEY_PTT_HAMLIB_MODEL    "ptt:hamlib_model"
 #define CFG_KEY_PTT_HAMLIB_SPEED    "ptt:hamlib_serial_speed"
 #define CFG_KEY_PTT_HAMLIB_LOG      "ptt:hamlib_log_level"
@@ -158,5 +161,9 @@ const char *cfg_sound_system_name(int sys);
 /* Canonical string conversion for PTT methods used by INI, CLI and UI. */
 const char *cfg_ptt_method_name(ptt_method_t method);
 bool cfg_ptt_method_parse(const char *name, ptt_method_t *method);
+const char *cfg_ptt_line_name(ptt_line_t line);
+bool cfg_ptt_line_parse(const char *name, ptt_line_t *line);
+const char *cfg_ptt_invert_name(bool invert_rts, bool invert_dtr);
+bool cfg_ptt_invert_parse(const char *name, bool *invert_rts, bool *invert_dtr);
 
 #endif /* CFG_UTILS_H_ */
