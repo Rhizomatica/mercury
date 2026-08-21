@@ -767,8 +767,10 @@ void test_cmd_callint_negative(void)
 #define BCAST_LEN_SIZE       2
 #define BCAST_EXT_LEN_PREFIX 0x01
 #define BCAST_EXT_KISS_STD   0x02
+#define BCAST_EXT_KISS_DATA  0x04
 #define BCAST_HDR_BYTE_LEN   (BCAST_HDR_BYTE | BCAST_EXT_LEN_PREFIX)
 #define BCAST_HDR_BYTE_STD   (BCAST_HDR_BYTE | BCAST_EXT_LEN_PREFIX | BCAST_EXT_KISS_STD)
+#define BCAST_HDR_BYTE_DATA  (BCAST_HDR_BYTE | BCAST_EXT_LEN_PREFIX | BCAST_EXT_KISS_DATA)
 
 /* CMD_DATA, exact frame_size: queued unchanged, bcast_reply_cmd = CMD_DATA */
 void test_bcast_rx_cmd_data_exact_size(void)
@@ -813,7 +815,8 @@ void test_bcast_rx_cmd_data_short_padded(void)
         atomic_load_explicit(&bcast_reply_cmd, memory_order_relaxed));
 }
 
-/* CMD_DATA, oversized: discarded, write_buffer never called */
+/* CMD_DATA, oversized, with a real Mercury broadcast header (hermes-broadcast):
+ * discarded, write_buffer never called */
 void test_bcast_rx_cmd_data_oversized_discarded(void)
 {
     const size_t fsz = 10;
@@ -821,6 +824,7 @@ void test_bcast_rx_cmd_data_oversized_discarded(void)
 
     uint8_t frame[MAX_PAYLOAD];
     memset(frame, 0x11, sizeof(frame));
+    frame[0] = BCAST_HDR_BYTE; /* PACKET_TYPE_BROADCAST_DATA header already in place */
 
     bool ok = bcast_process_decoded_frame(frame, (int)fsz + 5, CMD_DATA, fsz);
 
@@ -1050,6 +1054,71 @@ void test_bcast_std_kiss_roundtrip(void)
     TEST_ASSERT_EQUAL_HEX8_ARRAY(orig, payload, orig_len);
 }
 
+/* CMD_DATA with no Mercury header (VarAC beacon/ping): the frame must be
+ * wrapped with the broadcast header + length prefix, flagged with the
+ * BCAST_EXT_KISS_DATA bit so the far side mirrors the 0x02 framing.  This is
+ * the regression for the bug where a VarAC beacon was queued raw (its first
+ * byte collided with an ARQ packet type) and dropped on the receiver. */
+void test_bcast_rx_cmd_data_varac_beacon_wrapped(void)
+{
+    const size_t fsz = 10;
+    broadcast_frame_size_cfg = fsz;
+
+    uint8_t frame[MAX_PAYLOAD];
+    memset(frame, 0, sizeof(frame));
+    /* VarAC beacon body: first byte 0x2E decodes as an ARQ type, i.e. NOT a
+     * broadcast header, so it must be treated as an unformatted client frame. */
+    for (int i = 0; i < 5; i++) frame[i] = (uint8_t)(0x20 + i);
+
+    bool ok = bcast_process_decoded_frame(frame, 5, CMD_DATA, fsz);
+
+    TEST_ASSERT_TRUE(ok);
+    TEST_ASSERT_EQUAL(1, write_buffer_call_count);
+    TEST_ASSERT_EQUAL_size_t(fsz, last_write_buffer_len);
+    TEST_ASSERT_EQUAL_HEX8(BCAST_HDR_BYTE_DATA, last_write_buffer_data[0]);
+    TEST_ASSERT_EQUAL_HEX8(0x00, last_write_buffer_data[1]);
+    TEST_ASSERT_EQUAL_HEX8(0x05, last_write_buffer_data[2]);
+    for (int i = 0; i < 5; i++)
+        TEST_ASSERT_EQUAL_HEX8((uint8_t)(0x20 + i),
+            last_write_buffer_data[HEADER_SIZE + BCAST_LEN_SIZE + i]);
+    TEST_ASSERT_EQUAL_HEX8(CMD_DATA,
+        atomic_load_explicit(&bcast_reply_cmd, memory_order_relaxed));
+}
+
+/* Round-trip: a CMD_DATA unformatted frame (VarAC beacon) run through TX
+ * framing then RX extraction must be delivered as CMD_DATA with the exact
+ * original length, even on a receive-only station (reply_cmd at its default). */
+void test_bcast_data_lenprefix_roundtrip(void)
+{
+    const size_t fsz = 32;
+    broadcast_frame_size_cfg = fsz;
+
+    const int orig_len = 11;
+    uint8_t orig[32];
+    for (int i = 0; i < orig_len; i++) orig[i] = (uint8_t)(0x20 + i);
+
+    uint8_t txframe[MAX_PAYLOAD];
+    memset(txframe, 0, sizeof(txframe));
+    memcpy(txframe, orig, orig_len);
+    bool ok = bcast_process_decoded_frame(txframe, orig_len, CMD_DATA, fsz);
+    TEST_ASSERT_TRUE(ok);
+    TEST_ASSERT_EQUAL_size_t(fsz, last_write_buffer_len);
+    TEST_ASSERT_EQUAL_HEX8(BCAST_HDR_BYTE_DATA, last_write_buffer_data[0]);
+
+    uint8_t rxframe[MAX_PAYLOAD];
+    memcpy(rxframe, last_write_buffer_data, fsz);
+    atomic_store_explicit(&bcast_reply_cmd, CMD_DATA, memory_order_relaxed);
+
+    uint8_t *payload = NULL;
+    int plen = 0;
+    uint8_t cmd = bcast_get_tx_payload(rxframe, fsz, &payload, &plen);
+
+    TEST_ASSERT_EQUAL_HEX8(CMD_DATA, cmd);               /* 0x02, mirrored */
+    TEST_ASSERT_EQUAL_INT(orig_len, plen);
+    TEST_ASSERT_EQUAL_PTR(rxframe + HEADER_SIZE + BCAST_LEN_SIZE, payload);
+    TEST_ASSERT_EQUAL_HEX8_ARRAY(orig, payload, orig_len);
+}
+
 /* A host that ASKS for telemetry must be answered, every time.
  *
  * This guards a rate-limit that was briefly added to tnc_send_sn()/
@@ -1151,6 +1220,8 @@ int main(void)
     RUN_TEST(test_bcast_vara_length_roundtrip);
     RUN_TEST(test_bcast_tx_lenprefix_ignores_reply_cmd_default);
     RUN_TEST(test_bcast_std_kiss_roundtrip);
+    RUN_TEST(test_bcast_rx_cmd_data_varac_beacon_wrapped);
+    RUN_TEST(test_bcast_data_lenprefix_roundtrip);
     RUN_TEST(test_sn_query_is_always_answered);
     RUN_TEST(test_bitrate_query_is_always_answered);
     return UNITY_END();
