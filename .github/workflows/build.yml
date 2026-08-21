@@ -227,6 +227,7 @@ jobs:
           apt-get install -y --no-install-recommends \
             build-essential \
             git \
+            ca-certificates \
             openssh-client \
             gcc-mingw-w64-x86-64
 
