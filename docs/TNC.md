@@ -514,13 +514,20 @@ Three client framings are accepted, distinguished by the KISS command byte:
   delivers exactly the original payload with the **sender's** command byte
   — so VarAC↔VarAC traffic stays `0x01` and standard-KISS clients
   (e.g. Reticulum, see [RETICULUM.md](RETICULUM.md)) get `0x00`.
-- `0x02` (`CMD_DATA`, used by hermes-broadcast): the frame is passed raw —
-  the client supplies its own broadcast header, and receivers with a
-  `CMD_DATA` client get the full unmodified frame back.
+- `0x02` (`CMD_DATA`) is used by two different clients and is distinguished
+  by the frame content:
+  - **hermes-broadcast**: the frame already carries a Mercury broadcast
+    header (`PACKET_TYPE_BROADCAST_CONTROL`/`PACKET_TYPE_BROADCAST_DATA`),
+    so it is passed raw and receivers get the full unmodified frame back.
+  - **VarAC beacons/pings** (and any other unformatted `CMD_DATA` payload
+    without a Mercury header): Mercury wraps it exactly like `0x00`/`0x01`
+    and records the framing in a `BCAST_EXT_KISS_DATA` extension bit, so the
+    receiver delivers the original payload back as `0x02`.  Without this the
+    beacon's first byte could decode as an ARQ packet type and be dropped.
 
 Payloads larger than the modem frame (minus 3 bytes of header+length)
-are truncated (`0x00`/`0x01`) or discarded (`0x02`) — the broadcast plane
-does not fragment.
+are truncated (`0x00`/`0x01`/unformatted-`0x02`) or discarded (raw
+hermes-broadcast `0x02`) — the broadcast plane does not fragment.
 
 ---
 
