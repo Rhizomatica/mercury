@@ -150,19 +150,21 @@ func (l *engineLink) Send(cmd Command) error {
 	cV1 := C.CString(cmd.Value)
 	cV2 := C.CString(cmd.Value2)
 	cV3 := C.CString(cmd.Value3)
+	cV4 := C.CString(cmd.Value4)
 	defer func() {
 		C.free(unsafe.Pointer(cName))
 		C.free(unsafe.Pointer(cV1))
 		C.free(unsafe.Pointer(cV2))
 		C.free(unsafe.Pointer(cV3))
+		C.free(unsafe.Pointer(cV4))
 	}()
 
-	if rc := C.mercury_ui_command(cName, cV1, cV2, cV3); rc != 0 {
+	if rc := C.mercury_ui_command(cName, cV1, cV2, cV3, cV4); rc != 0 {
 		return fmt.Errorf("engine rejected command %q (rc=%d)", cmd.Name, int(rc))
 	}
 
 	switch cmd.Name {
-	case "set_audio_config", "set_radio_config":
+	case "set_audio_config", "set_radio_config", "set_ptt_config":
 		// The Start goroutine owns the retry timing (cancellable via ctx),
 		// so no bare time.AfterFunc here that would outlive Close().
 		select {
@@ -242,11 +244,13 @@ func readRadioList() (RadioListEvent, bool) {
 	devs := make([]C.ui_device_t, maxRadios)
 	sel := make([]C.char, 16)
 	devPath := make([]C.char, 512)
+	method := make([]C.char, 32)
 	var speed C.int
 
 	n := C.mercury_ui_get_radio_list(&devs[0], C.int(len(devs)),
 		&sel[0], C.int(len(sel)),
-		&devPath[0], C.int(len(devPath)), &speed)
+		&devPath[0], C.int(len(devPath)), &speed,
+		&method[0], C.int(len(method)))
 	if n <= 0 {
 		return RadioListEvent{}, false
 	}
@@ -271,6 +275,7 @@ func readRadioList() (RadioListEvent, bool) {
 		Selected:    C.GoString(&sel[0]),
 		DevicePath:  C.GoString(&devPath[0]),
 		SerialSpeed: serial,
+		PTTMethod:   C.GoString(&method[0]),
 	}, true
 }
 

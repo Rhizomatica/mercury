@@ -105,6 +105,9 @@ func (l *wsLink) Send(cmd Command) error {
 	if cmd.Value3 != "" {
 		payload["value3"] = cmd.Value3
 	}
+	if cmd.Value4 != "" {
+		payload["value4"] = cmd.Value4
+	}
 	return conn.WriteJSON(payload)
 }
 
@@ -167,11 +170,21 @@ func decodeWSMessage(msgType int, payload []byte) []Event {
 		case "radio_list":
 			items := parseMenuItems(payload)
 			sortRadioItems(items)
+			selected := selectedValue(raw, "selected")
+			method, _ := raw["ptt_method"].(string)
+			if method == "" {
+				if selected != "" && selected != "-1" {
+					method = "hamlib" // Backward-compatible old server inference.
+				} else {
+					method = "none"
+				}
+			}
 			return []Event{RadioListEvent{
 				Items:       items,
-				Selected:    selectedValue(raw, "selected"),
+				Selected:    selected,
 				DevicePath:  fmt.Sprint(raw["device_path"]),
 				SerialSpeed: fmt.Sprint(raw["serial_speed"]),
+				PTTMethod:   method,
 			}}
 		}
 		return []Event{LogEvent{Text: fmt.Sprintf("[Raw WS Msg]: %s\n", string(payload))}}

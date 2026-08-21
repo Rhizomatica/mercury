@@ -65,7 +65,7 @@ static int parse_rx_channel_layout(const char *value)
 void mercury_cli_print_usage(const char *prog)
 {
     printf("Usage modes: \n");
-    printf("%s -m [mode_index] -i [device] -o [device] -x [sound_system] -p [arq_tcp_base_port] -b [broadcast_tcp_port] -f [freedv_verbosity] -H [hamlib_log_level] -k [rx_input_channel] [-G] [-T] [-U ui_port] [-W]\n", prog);
+    printf("%s -m [mode_index] -i [device] -o [device] -x [sound_system] -p [arq_tcp_base_port] -b [broadcast_tcp_port] -f [freedv_verbosity] -H [hamlib_log_level] -k [rx_input_channel] [-P ptt_method] [-A ptt_device] [-G] [-T] [-U ui_port] [-W]\n", prog);
     printf("%s [-h -l -z]\n", prog);
     printf("\nOptions:\n");
     printf(" -c [cpu_nr]                Run on CPU [cpu_nr]. Use -1 to disable CPU selection, which is the default.\n");
@@ -89,12 +89,13 @@ void mercury_cli_print_usage(const char *prog)
     printf(" -v                         Verbose mode. Prints more information during execution.\n");
     printf(" -L <path>                  Write log to file (TIMING level and above).\n");
     printf(" -J                         Use JSONL format for log file (requires -L).\n");
-    printf(" -R [radio_model]           Sets HAMLIB radio model.\n");
-    printf(" -A [radio_address]         Sets HAMLIB radio device file or ip:port address.\n");
+    printf(" -P [ptt_method]            PTT method: none, hamlib, serial_rts, or hermes_shm.\n");
+    printf(" -R [radio_model]           Sets HAMLIB radio model and selects Hamlib PTT.\n");
+    printf(" -A [ptt_device]            PTT serial device or HAMLIB device/ip:port endpoint.\n");
 #ifdef HAVE_HERMES_SHM
-    printf(" -S                         Use HERMES's shared memory interface instead of HAMLIB (Do not use -R and -A in this case).\n");
+    printf(" -S                         Select HERMES shared-memory PTT (Linux shorthand for -P hermes_shm).\n");
 #else
-    printf(" -S                         HERMES shared memory radio control (Linux-only; unavailable in this build).\n");
+    printf(" -S                         HERMES shared-memory PTT (Linux-only; unavailable in this build).\n");
 #endif
     printf(" -C [config_file]           Path to init configuration file (INI format). Default is mercury.ini in the current directory.\n");
     printf(" -K                         List HAMLIB supported radio models.\n");
@@ -110,7 +111,7 @@ int mercury_cli_parse(int argc, char **argv,
         return -1;
 
     const int mode_count = mercury_cli_mode_count();
-    const char *optstring = "hc:s:m:f:H:k:li:o:x:p:b:zvtrL:JR:U:A:C:SKWGT";
+    const char *optstring = "hc:s:m:f:H:k:li:o:x:p:b:zvtrL:JP:R:U:A:C:SKWGT";
 
     memset(out, 0, sizeof(*out));
     cfg_set_defaults(&out->cfg);
@@ -220,7 +221,7 @@ int mercury_cli_parse(int argc, char **argv,
                     fprintf(stderr, "Invalid Hamlib log level '%s'. Valid range is 0..6.\n", optarg);
                     return -1;
                 }
-                out->cfg.hamlib_log_level = (int)log_level;
+                out->cfg.ptt.hamlib_log_level = (int)log_level;
             }
             break;
         case 'k':
@@ -326,16 +327,37 @@ int mercury_cli_parse(int argc, char **argv,
                     fprintf(stderr, "Invalid radio model '%s'. Expected a positive integer HAMLIB model ID (>0).\n", optarg);
                     return -1;
                 }
-                out->cfg.radio_type = (int)parsed_radio_type;
+                out->cfg.ptt.method = PTT_METHOD_HAMLIB;
+                out->cfg.ptt.hamlib_model = (int)parsed_radio_type;
+            }
+            break;
+        case 'P':
+            if (optarg)
+            {
+                ptt_method_t method;
+                if (!cfg_ptt_method_parse(optarg, &method))
+                {
+                    fprintf(stderr, "Invalid PTT method '%s'. Use none, hamlib, serial_rts, or hermes_shm.\n",
+                            optarg);
+                    return -1;
+                }
+#ifndef HAVE_HERMES_SHM
+                if (method == PTT_METHOD_HERMES_SHM)
+                {
+                    fprintf(stderr, "Error: HERMES shared-memory PTT is unavailable in this build.\n");
+                    return -1;
+                }
+#endif
+                out->cfg.ptt.method = method;
             }
             break;
         case 'A':
             if (optarg)
-                snprintf(out->cfg.radio_device, sizeof(out->cfg.radio_device), "%s", optarg);
+                snprintf(out->cfg.ptt.device, sizeof(out->cfg.ptt.device), "%s", optarg);
             break;
         case 'S':
 #ifdef HAVE_HERMES_SHM
-            out->cfg.radio_type = RADIO_TYPE_SHM;
+            out->cfg.ptt.method = PTT_METHOD_HERMES_SHM;
 #else
             fprintf(stderr, "Error: -S (HERMES shared memory radio control) is only available on Linux builds.\n");
             return -1;
@@ -382,9 +404,15 @@ int mercury_cli_parse(int argc, char **argv,
         }
     }
 
-    if (out->cfg.radio_type == RADIO_TYPE_SHM && out->cfg.radio_device[0])
+    if (out->cfg.ptt.method == PTT_METHOD_HAMLIB && out->cfg.ptt.hamlib_model <= 0)
     {
-        fprintf(stderr, "Error: -S (HERMES SHM) and -A (HAMLIB device) are mutually exclusive.\n");
+        fprintf(stderr, "Error: Hamlib PTT requires a positive radio model (-R).\n");
+        return -1;
+    }
+
+    if (out->cfg.ptt.method == PTT_METHOD_SERIAL_RTS && !out->cfg.ptt.device[0])
+    {
+        fprintf(stderr, "Error: serial_rts PTT requires a device path (-A).\n");
         return -1;
     }
 
