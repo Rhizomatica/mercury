@@ -30,7 +30,8 @@
 
 #include "radio_io.h"
 #include "radio_port.h"
-#include "serial_rts.h"
+#include "serial_ptt.h"
+#include "cm108_ptt.h"
 #include "../common/hermes_log.h"
 
 #define RADIO_LOG_TAG "radio-io"
@@ -65,7 +66,8 @@ static const char *ptt_method_name(ptt_method_t method)
     {
     case PTT_METHOD_NONE:        return "none";
     case PTT_METHOD_HAMLIB:      return "hamlib";
-    case PTT_METHOD_SERIAL_RTS:  return "serial_rts";
+    case PTT_METHOD_SERIAL:      return "serial";
+    case PTT_METHOD_CM108:       return "cm108";
     case PTT_METHOD_HERMES_SHM:  return "hermes_shm";
     default:                     return "unknown";
     }
@@ -295,35 +297,78 @@ static void shm_ptt_close(void) { }
 #endif
 
 /* ------------------------------------------------------------------------- */
-/* Serial RTS backend                                                        */
+/* Serial modem-control-line backend                                         */
 
-static int rts_ptt_open(const ptt_config_t *config)
+static const char *line_name(ptt_line_t line)
 {
-    if (serial_rts_open(config->device) != 0)
+    switch (line)
+    {
+    case PTT_LINE_DTR:  return "DTR";
+    case PTT_LINE_BOTH: return "RTS+DTR";
+    case PTT_LINE_RTS:
+    default:            return "RTS";
+    }
+}
+
+static int serial_backend_open(const ptt_config_t *config)
+{
+    if (serial_ptt_open(config) != 0)
         return -1;
-    HLOGI(RADIO_LOG_TAG, "PTT method: serial RTS (device %s)",
+    HLOGI(RADIO_LOG_TAG, "PTT method: serial %s%s%s (device %s)",
+          line_name(config->serial_line),
+          (config->serial_invert_rts || config->serial_invert_dtr) ? ", inverted " : "",
+          config->serial_invert_rts
+              ? (config->serial_invert_dtr ? "RTS+DTR" : "RTS")
+              : (config->serial_invert_dtr ? "DTR" : ""),
           config->device);
     return 0;
 }
 
-static int rts_ptt_set(bool on)
+static int serial_backend_set(bool on)
 {
-    int rc = serial_rts_set(on);
+    int rc = serial_ptt_set(on);
     if (rc == 0)
-        HLOGD(RADIO_LOG_TAG, "PTT %s via serial RTS", on ? "ON" : "OFF");
+        HLOGD(RADIO_LOG_TAG, "PTT %s via serial", on ? "ON" : "OFF");
     return rc;
 }
 
-static void rts_ptt_close(void)
+static void serial_backend_close(void)
 {
-    serial_rts_close();
+    serial_ptt_close();
+}
+
+/* ------------------------------------------------------------------------- */
+/* CM108 GPIO backend                                                        */
+
+static int cm108_backend_open(const ptt_config_t *config)
+{
+    if (cm108_ptt_open(config) != 0)
+        return -1;
+    HLOGI(RADIO_LOG_TAG, "PTT method: CM108 GPIO%d", config->cm108_gpio);
+    return 0;
+}
+
+static int cm108_backend_set(bool on)
+{
+    int rc = cm108_ptt_set(on);
+    if (rc == 0)
+        HLOGD(RADIO_LOG_TAG, "PTT %s via CM108 GPIO", on ? "ON" : "OFF");
+    return rc;
+}
+
+static void cm108_backend_close(void)
+{
+    cm108_ptt_close();
 }
 
 static const ptt_backend_t HAMLIB_BACKEND = {
     hamlib_open, hamlib_set, hamlib_close
 };
-static const ptt_backend_t SERIAL_RTS_BACKEND = {
-    rts_ptt_open, rts_ptt_set, rts_ptt_close
+static const ptt_backend_t SERIAL_BACKEND = {
+    serial_backend_open, serial_backend_set, serial_backend_close
+};
+static const ptt_backend_t CM108_BACKEND = {
+    cm108_backend_open, cm108_backend_set, cm108_backend_close
 };
 static const ptt_backend_t HERMES_SHM_BACKEND = {
     shm_ptt_open, shm_ptt_set, shm_ptt_close
@@ -334,7 +379,8 @@ static const ptt_backend_t *backend_for_method(ptt_method_t method)
     switch (method)
     {
     case PTT_METHOD_HAMLIB:     return &HAMLIB_BACKEND;
-    case PTT_METHOD_SERIAL_RTS: return &SERIAL_RTS_BACKEND;
+    case PTT_METHOD_SERIAL:     return &SERIAL_BACKEND;
+    case PTT_METHOD_CM108:      return &CM108_BACKEND;
     case PTT_METHOD_HERMES_SHM: return &HERMES_SHM_BACKEND;
     case PTT_METHOD_NONE:       return NULL;
     default:                    return NULL;

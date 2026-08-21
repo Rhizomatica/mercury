@@ -131,7 +131,7 @@ MERCURY_LINK_INPUTS = \
 	gui_interface/ui_communication.o gui_interface/ui_status.o gui_interface/ui_devices.o \
 	gui_interface/websocket/mongoose.o gui_interface/websocket/mercury_websocket.o \
 	gui_interface/websocket/web_packed.o \
-	radio_io/radio_io.o radio_io/serial_rts.o
+	radio_io/radio_io.o radio_io/serial_ptt.o radio_io/cm108_ptt.o
 
 ifeq ($(HAVE_HERMES_SHM),1)
 MERCURY_LINK_INPUTS += radio_io/sbitx_io.o radio_io/shm_utils.o
@@ -204,7 +204,7 @@ MERCURY_CORE_OBJS = \
 	gui_interface/ui_communication.o gui_interface/ui_status.o gui_interface/ui_devices.o \
 	gui_interface/websocket/mongoose.o gui_interface/websocket/mercury_websocket.o \
 	gui_interface/websocket/web_packed.o \
-	radio_io/radio_io.o radio_io/serial_rts.o
+	radio_io/radio_io.o radio_io/serial_ptt.o radio_io/cm108_ptt.o
 
 ifeq ($(HAVE_HERMES_SHM),1)
 MERCURY_CORE_OBJS += radio_io/sbitx_io.o radio_io/shm_utils.o

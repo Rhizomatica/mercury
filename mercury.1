@@ -169,7 +169,8 @@ Disable waterfall/spectrum data sent to the UI (saves CPU).
 Select the PTT method:
 .BR none ,
 .BR hamlib ,
-.BR serial_rts ,
+.BR serial ,
+.BR cm108 ,
 or
 .BR hermes_shm .
 .TP
@@ -255,7 +256,10 @@ arq_tcp_base_port	8300	ARQ TCP base port
 broadcast_tcp_port	8100	Broadcast TCP port
 verbose	false	Enable debug logging
 freedv_verbosity	0	FreeDV modem verbosity (0\-3)
-ptt:method	none	none, hamlib, serial_rts, or hermes_shm
+ptt:method	none	none, hamlib, serial, cm108, or hermes_shm
+ptt:line	rts	rts, dtr, or both (serial method)
+ptt:invert	none	none, rts, dtr, or both (serial method)
+ptt:cm108_gpio	3	CM108 GPIO pin 1..4
 ptt:device	(empty)	Serial device or Hamlib endpoint
 ptt:hamlib_model	\-1	Hamlib model ID
 ptt:hamlib_serial_speed	0	Serial baud rate (0=Hamlib default)
@@ -496,7 +500,7 @@ Start with serial RTS PTT (for example DigiRig on Windows):
 .PP
 .RS
 .nf
-mercury \-i dsound \-o dsound \-P serial_rts \-A COM7
+mercury \-i dsound \-o dsound \-P serial \-A COM7
 .fi
 .RE
 .PP

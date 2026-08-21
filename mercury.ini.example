@@ -55,16 +55,31 @@ freedv_verbosity = 0
 
 [ptt]
 
-; PTT backend: none, hamlib, serial_rts, or hermes_shm (default: none).
-; serial_rts is suitable for DigiRig Mobile and other RTS-keyed interfaces.
+; PTT backend: none, hamlib, serial, cm108, or hermes_shm (default: none).
+; "serial" keys a modem-control line on a serial port -- DigiRig, the
+; All-In-One Cable (AIOC) and most home-brew interfaces.  "cm108" keys a GPIO
+; pin on a CM108/CM119-class USB sound chip (Linux only); the AIOC does this
+; too, so it is a second way in if the CDC serial port is awkward.
+; "serial_rts" is still accepted and means method=serial with line=rts.
 method = none
 
-; Backend endpoint. For serial_rts use a serial device (for example COM7 or
+; Backend endpoint. For serial use a serial device (for example COM7 or
 ; /dev/ttyUSB0). For Hamlib use its serial device or ip:port endpoint.
 device =
 
 ; The remaining settings are used only by method=hamlib.
 ; Run mercury -K to list supported model IDs.
+; Which modem-control line keys the radio: rts (default), dtr, or both.
+; Several interfaces, the AIOC included, need BOTH driven together.
+;line = rts
+
+; Cable keys on the LOW state of a line: none (default), rts, dtr, or both.
+; An AIOC is line = both with invert = rts.
+;invert = none
+
+; CM108 GPIO pin, 1..4.  GPIO3 is the de-facto standard.
+;cm108_gpio = 3
+
 hamlib_model = -1
 
 ; 0 uses the Hamlib model default. Must match the radio's CAT rate when set.

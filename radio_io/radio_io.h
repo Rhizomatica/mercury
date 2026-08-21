@@ -32,20 +32,45 @@
 typedef enum {
     PTT_METHOD_NONE = 0,
     PTT_METHOD_HAMLIB,
-    PTT_METHOD_SERIAL_RTS,
-    PTT_METHOD_HERMES_SHM
+    PTT_METHOD_SERIAL,      /* modem-control lines on a serial port */
+    PTT_METHOD_HERMES_SHM,
+    PTT_METHOD_CM108        /* GPIO on a CM108-class USB sound chip */
 } ptt_method_t;
 
-/* Configuration for the one active PTT backend.  Hamlib-specific fields are
+/* Which modem-control line(s) key the transmitter.
+ *
+ * BOTH is not redundancy: several interfaces (the All-In-One Cable among them)
+ * expect RTS and DTR driven together, and keying only one leaves them silent. */
+typedef enum {
+    PTT_LINE_RTS = 0,
+    PTT_LINE_DTR,
+    PTT_LINE_BOTH
+} ptt_line_t;
+
+/* Configuration for the one active PTT backend.  Backend-specific fields are
  * kept here so configuration, runtime restart and UI transport all pass one
- * coherent value instead of overloading the rig model as the backend type. */
+ * coherent value instead of overloading the rig model as the backend type.
+ * Settings for the inactive backends are retained, so an operator can switch
+ * method and back without re-entering them. */
 typedef struct {
     ptt_method_t method;
     char device[PTT_DEVICE_PATH_MAX];
+
+    /* serial */
+    ptt_line_t serial_line;
+    bool serial_invert_rts;  /* cable keys on the LOW state of the line */
+    bool serial_invert_dtr;
+
+    /* cm108: GPIO pin 1..4.  GPIO3 is the de-facto standard and the default. */
+    int cm108_gpio;
+
+    /* hamlib */
     int hamlib_model;
     int hamlib_serial_speed; /* 0 = use Hamlib model default */
     int hamlib_log_level;    /* 0..6 */
 } ptt_config_t;
+
+#define PTT_CM108_GPIO_DEFAULT 3
 
 /* Initialize the selected PTT backend.
  * Returns 0 on success, -1 on failure. */

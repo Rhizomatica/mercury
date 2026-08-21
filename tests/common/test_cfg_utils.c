@@ -24,6 +24,7 @@
 
 #include "unity.h"
 #include "cfg_utils.h"
+#include "cm108_ptt.h"
 
 static const char *TMP = "test_cfg_roundtrip.ini";
 
@@ -138,7 +139,7 @@ void test_explicit_ptt_method_overrides_legacy_backend(void)
     mercury_config r;
     cfg_set_defaults(&r);
     TEST_ASSERT_TRUE(cfg_read(&r, TMP));
-    TEST_ASSERT_EQUAL_INT(PTT_METHOD_SERIAL_RTS, r.ptt.method);
+    TEST_ASSERT_EQUAL_INT(PTT_METHOD_SERIAL, r.ptt.method);
     TEST_ASSERT_EQUAL_STRING("COM7", r.ptt.device);
     /* Backend-specific settings survive method switches. */
     TEST_ASSERT_EQUAL_INT(1049, r.ptt.hamlib_model);
@@ -165,14 +166,116 @@ void test_partial_config_preserves_preselected_ptt_method(void)
 
     mercury_config r;
     cfg_set_defaults(&r);
-    r.ptt.method = PTT_METHOD_SERIAL_RTS;
+    r.ptt.method = PTT_METHOD_SERIAL;
     snprintf(r.ptt.device, sizeof(r.ptt.device), "COM9");
     TEST_ASSERT_TRUE(cfg_read(&r, TMP));
-    TEST_ASSERT_EQUAL_INT(PTT_METHOD_SERIAL_RTS, r.ptt.method);
+    TEST_ASSERT_EQUAL_INT(PTT_METHOD_SERIAL, r.ptt.method);
     TEST_ASSERT_EQUAL_STRING("COM9", r.ptt.device);
 }
 
 /* Out-of-range INI values are rejected (field keeps its pre-read default). */
+/* The sbitx field stations run on legacy [main] radio_model = 0.  If that ever
+ * stops mapping to hermes_shm they simply never key, silently, on air. */
+void test_legacy_radio_model_zero_maps_to_hermes_shm(void)
+{
+    FILE *f = fopen(TMP, "w");
+    TEST_ASSERT_NOT_NULL(f);
+    fputs("[main]\nradio_model = 0\n", f);
+    fclose(f);
+
+    mercury_config r;
+    cfg_set_defaults(&r);
+    TEST_ASSERT_TRUE(cfg_read(&r, TMP));
+    TEST_ASSERT_EQUAL_INT(PTT_METHOD_HERMES_SHM, r.ptt.method);
+}
+
+/* "serial_rts" shipped as a method name before DTR and inversion existed and
+ * is already in people's mercury.ini.  It has to keep meaning plain RTS. */
+void test_serial_rts_alias_still_parses(void)
+{
+    ptt_method_t m = PTT_METHOD_NONE;
+    TEST_ASSERT_TRUE(cfg_ptt_method_parse("serial_rts", &m));
+    TEST_ASSERT_EQUAL_INT(PTT_METHOD_SERIAL, m);
+
+    TEST_ASSERT_TRUE(cfg_ptt_method_parse("serial", &m));
+    TEST_ASSERT_EQUAL_INT(PTT_METHOD_SERIAL, m);
+    TEST_ASSERT_TRUE(cfg_ptt_method_parse("cm108", &m));
+    TEST_ASSERT_EQUAL_INT(PTT_METHOD_CM108, m);
+    TEST_ASSERT_FALSE(cfg_ptt_method_parse("nonsense", &m));
+}
+
+/* An AIOC needs both lines driven with RTS inverted; this is the exact config
+ * from the AIOC documentation, round-tripped through the INI. */
+void test_aioc_serial_config_roundtrips(void)
+{
+    FILE *f = fopen(TMP, "w");
+    TEST_ASSERT_NOT_NULL(f);
+    fputs("[ptt]\nmethod = serial\ndevice = /dev/ttyACM0\n"
+          "line = both\ninvert = rts\n", f);
+    fclose(f);
+
+    mercury_config r;
+    cfg_set_defaults(&r);
+    TEST_ASSERT_TRUE(cfg_read(&r, TMP));
+    TEST_ASSERT_EQUAL_INT(PTT_METHOD_SERIAL, r.ptt.method);
+    TEST_ASSERT_EQUAL_STRING("/dev/ttyACM0", r.ptt.device);
+    TEST_ASSERT_EQUAL_INT(PTT_LINE_BOTH, r.ptt.serial_line);
+    TEST_ASSERT_TRUE(r.ptt.serial_invert_rts);
+    TEST_ASSERT_FALSE(r.ptt.serial_invert_dtr);
+}
+
+/* Defaults must be the safe/common case: RTS, not inverted, GPIO3. */
+void test_ptt_defaults_are_rts_noninverted_gpio3(void)
+{
+    mercury_config r;
+    cfg_set_defaults(&r);
+    TEST_ASSERT_EQUAL_INT(PTT_LINE_RTS, r.ptt.serial_line);
+    TEST_ASSERT_FALSE(r.ptt.serial_invert_rts);
+    TEST_ASSERT_FALSE(r.ptt.serial_invert_dtr);
+    TEST_ASSERT_EQUAL_INT(PTT_CM108_GPIO_DEFAULT, r.ptt.cm108_gpio);
+    TEST_ASSERT_EQUAL_INT(3, r.ptt.cm108_gpio);
+}
+
+void test_invalid_line_and_invert_are_rejected(void)
+{
+    ptt_line_t line = PTT_LINE_RTS;
+    TEST_ASSERT_TRUE(cfg_ptt_line_parse("dtr", &line));
+    TEST_ASSERT_EQUAL_INT(PTT_LINE_DTR, line);
+    TEST_ASSERT_FALSE(cfg_ptt_line_parse("cts", &line));
+
+    bool ir = false, id = false;
+    TEST_ASSERT_TRUE(cfg_ptt_invert_parse("both", &ir, &id));
+    TEST_ASSERT_TRUE(ir); TEST_ASSERT_TRUE(id);
+    TEST_ASSERT_FALSE(cfg_ptt_invert_parse("sometimes", &ir, &id));
+}
+
+/* The CM108 wire bytes.  GPIO n is bit n-1, carried in BOTH byte 2 and 3;
+ * getting this wrong keys a different pin and is invisible without hardware. */
+void test_cm108_report_encoding(void)
+{
+    unsigned char r[5];
+
+    TEST_ASSERT_EQUAL_INT(0, cm108_ptt_report(true, 3, r));
+    TEST_ASSERT_EQUAL_HEX8(0x00, r[0]);
+    TEST_ASSERT_EQUAL_HEX8(0x00, r[1]);
+    TEST_ASSERT_EQUAL_HEX8(0x04, r[2]);   /* GPIO3 -> bit 2 */
+    TEST_ASSERT_EQUAL_HEX8(0x04, r[3]);
+    TEST_ASSERT_EQUAL_HEX8(0x00, r[4]);
+
+    TEST_ASSERT_EQUAL_INT(0, cm108_ptt_report(false, 3, r));
+    TEST_ASSERT_EQUAL_HEX8(0x00, r[2]);
+    TEST_ASSERT_EQUAL_HEX8(0x00, r[3]);
+
+    TEST_ASSERT_EQUAL_INT(0, cm108_ptt_report(true, 1, r));
+    TEST_ASSERT_EQUAL_HEX8(0x01, r[2]);
+    TEST_ASSERT_EQUAL_INT(0, cm108_ptt_report(true, 4, r));
+    TEST_ASSERT_EQUAL_HEX8(0x08, r[2]);
+
+    /* Out of range must be refused, not silently clamped. */
+    TEST_ASSERT_EQUAL_INT(-1, cm108_ptt_report(true, 0, r));
+    TEST_ASSERT_EQUAL_INT(-1, cm108_ptt_report(true, 5, r));
+}
+
 void test_arq_tunables_clamp_rejects_garbage(void)
 {
     FILE *f = fopen(TMP, "w");
@@ -200,5 +303,11 @@ int main(void)
     RUN_TEST(test_explicit_ptt_method_overrides_legacy_backend);
     RUN_TEST(test_invalid_ptt_method_rejects_config);
     RUN_TEST(test_partial_config_preserves_preselected_ptt_method);
+    RUN_TEST(test_legacy_radio_model_zero_maps_to_hermes_shm);
+    RUN_TEST(test_serial_rts_alias_still_parses);
+    RUN_TEST(test_aioc_serial_config_roundtrips);
+    RUN_TEST(test_ptt_defaults_are_rts_noninverted_gpio3);
+    RUN_TEST(test_invalid_line_and_invert_are_rejected);
+    RUN_TEST(test_cm108_report_encoding);
     return UNITY_END();
 }

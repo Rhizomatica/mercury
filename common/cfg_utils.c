@@ -39,6 +39,10 @@ void cfg_set_defaults(mercury_config *cfg)
     cfg->waterfall_enabled  = true;
     cfg->ptt.method         = PTT_METHOD_NONE;
     cfg->ptt.device[0]      = '\0';
+    cfg->ptt.serial_line       = PTT_LINE_RTS;
+    cfg->ptt.serial_invert_rts = false;
+    cfg->ptt.serial_invert_dtr = false;
+    cfg->ptt.cm108_gpio        = PTT_CM108_GPIO_DEFAULT;
     cfg->ptt.hamlib_model   = RADIO_TYPE_NONE;
     cfg->ptt.hamlib_log_level = 0;
     cfg->ptt.hamlib_serial_speed = 0;
@@ -109,7 +113,8 @@ const char *cfg_ptt_method_name(ptt_method_t method)
     switch (method) {
     case PTT_METHOD_NONE:       return "none";
     case PTT_METHOD_HAMLIB:     return "hamlib";
-    case PTT_METHOD_SERIAL_RTS: return "serial_rts";
+    case PTT_METHOD_SERIAL:     return "serial";
+    case PTT_METHOD_CM108:      return "cm108";
     case PTT_METHOD_HERMES_SHM: return "hermes_shm";
     default:                    return "unknown";
     }
@@ -118,10 +123,55 @@ const char *cfg_ptt_method_name(ptt_method_t method)
 bool cfg_ptt_method_parse(const char *name, ptt_method_t *method)
 {
     if (!name || !method) return false;
-    if (!strcmp(name, "none"))       *method = PTT_METHOD_NONE;
+    if (!strcmp(name, "none"))            *method = PTT_METHOD_NONE;
     else if (!strcmp(name, "hamlib"))     *method = PTT_METHOD_HAMLIB;
-    else if (!strcmp(name, "serial_rts")) *method = PTT_METHOD_SERIAL_RTS;
+    else if (!strcmp(name, "serial"))     *method = PTT_METHOD_SERIAL;
+    else if (!strcmp(name, "cm108"))      *method = PTT_METHOD_CM108;
     else if (!strcmp(name, "hermes_shm")) *method = PTT_METHOD_HERMES_SHM;
+    /* "serial_rts" was the name before DTR and inversion existed.  Keep it
+     * working -- it is already in people's mercury.ini -- as plain RTS. */
+    else if (!strcmp(name, "serial_rts")) *method = PTT_METHOD_SERIAL;
+    else return false;
+    return true;
+}
+
+const char *cfg_ptt_line_name(ptt_line_t line)
+{
+    switch (line) {
+    case PTT_LINE_DTR:  return "dtr";
+    case PTT_LINE_BOTH: return "both";
+    case PTT_LINE_RTS:
+    default:            return "rts";
+    }
+}
+
+bool cfg_ptt_line_parse(const char *name, ptt_line_t *line)
+{
+    if (!name || !line) return false;
+    if (!strcmp(name, "rts"))       *line = PTT_LINE_RTS;
+    else if (!strcmp(name, "dtr"))  *line = PTT_LINE_DTR;
+    else if (!strcmp(name, "both")) *line = PTT_LINE_BOTH;
+    else return false;
+    return true;
+}
+
+/* invert = none | rts | dtr | both -- one key rather than two booleans,
+ * because that is how the operator thinks about a cable. */
+const char *cfg_ptt_invert_name(bool invert_rts, bool invert_dtr)
+{
+    if (invert_rts && invert_dtr) return "both";
+    if (invert_rts)               return "rts";
+    if (invert_dtr)               return "dtr";
+    return "none";
+}
+
+bool cfg_ptt_invert_parse(const char *name, bool *invert_rts, bool *invert_dtr)
+{
+    if (!name || !invert_rts || !invert_dtr) return false;
+    if (!strcmp(name, "none"))      { *invert_rts = false; *invert_dtr = false; }
+    else if (!strcmp(name, "rts"))  { *invert_rts = true;  *invert_dtr = false; }
+    else if (!strcmp(name, "dtr"))  { *invert_rts = false; *invert_dtr = true;  }
+    else if (!strcmp(name, "both")) { *invert_rts = true;  *invert_dtr = true;  }
     else return false;
     return true;
 }
@@ -193,6 +243,27 @@ bool cfg_read(mercury_config *cfg, const char *ini_path)
         strncpy(cfg->ptt.device, s, sizeof(cfg->ptt.device) - 1);
         cfg->ptt.device[sizeof(cfg->ptt.device) - 1] = '\0';
     }
+
+    s = iniparser_getstring(ini, CFG_KEY_PTT_LINE, NULL);
+    if (s && !cfg_ptt_line_parse(s, &cfg->ptt.serial_line)) {
+        fprintf(stderr, "Invalid ptt.line '%s' in %s. Use rts, dtr, or both.\n",
+                s, ini_path);
+        iniparser_freedict(ini);
+        return false;
+    }
+
+    s = iniparser_getstring(ini, CFG_KEY_PTT_INVERT, NULL);
+    if (s && !cfg_ptt_invert_parse(s, &cfg->ptt.serial_invert_rts,
+                                      &cfg->ptt.serial_invert_dtr)) {
+        fprintf(stderr, "Invalid ptt.invert '%s' in %s. Use none, rts, dtr, or both.\n",
+                s, ini_path);
+        iniparser_freedict(ini);
+        return false;
+    }
+
+    i = iniparser_getint(ini, CFG_KEY_PTT_CM108_GPIO, cfg->ptt.cm108_gpio);
+    if (i >= 1 && i <= 4)
+        cfg->ptt.cm108_gpio = i;
 
     i = iniparser_getint(ini, CFG_KEY_PTT_HAMLIB_MODEL,
                          cfg->ptt.hamlib_model);
@@ -389,6 +460,11 @@ bool cfg_write(const mercury_config *cfg, const char *ini_path)
     fprintf(f, "method = %s\n", cfg_ptt_method_name(cfg->ptt.method));
     cfg_escape_str(escaped, sizeof(escaped), cfg->ptt.device);
     fprintf(f, "device = \"%s\"\n", escaped);
+    fprintf(f, "line = %s\n", cfg_ptt_line_name(cfg->ptt.serial_line));
+    fprintf(f, "invert = %s\n",
+            cfg_ptt_invert_name(cfg->ptt.serial_invert_rts,
+                                cfg->ptt.serial_invert_dtr));
+    fprintf(f, "cm108_gpio = %d\n", cfg->ptt.cm108_gpio);
     fprintf(f, "hamlib_model = %d\n", cfg->ptt.hamlib_model);
     fprintf(f, "hamlib_serial_speed = %d\n", cfg->ptt.hamlib_serial_speed);
     fprintf(f, "hamlib_log_level = %d\n", cfg->ptt.hamlib_log_level);

@@ -70,7 +70,8 @@ type optionItem struct {
 var pttMethodLabels = map[string]string{
 	"none":       "None",
 	"hamlib":     "Hamlib",
-	"serial_rts": "Serial RTS",
+	"serial":     "Serial (RTS/DTR)",
+	"cm108":      "CM108 GPIO",
 	"hermes_shm": "HERMES SHM",
 }
 
@@ -1176,7 +1177,7 @@ func main() {
 				return
 			}
 			devPath := bindings.devicePathEntry.Text
-			if method == "serial_rts" && devPath == "" {
+			if method == "serial" && devPath == "" {
 				appendLog("Enter the serial device used for RTS PTT.\n")
 				return
 			}
@@ -1204,7 +1205,13 @@ func main() {
 				deviceRow.Show()
 				modelRow.Show()
 				baudRow.Show()
-			case "serial_rts":
+			case "serial":
+				deviceRow.Show()
+				modelRow.Hide()
+				baudRow.Hide()
+			case "cm108":
+				// Device is auto-detected; an explicit /dev/hidrawN is the
+				// override, so the field stays available but is not required.
 				deviceRow.Show()
 				modelRow.Hide()
 				baudRow.Hide()
