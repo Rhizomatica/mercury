@@ -130,12 +130,19 @@ int serial_ptt_open(const ptt_config_t *config)
         return -1;
     }
 
-    /* Hand the lines to us: with flow control enabled the driver owns RTS/DTR
-     * and would fight every keying. */
-    dcb.fOutxCtsFlow = FALSE;
-    dcb.fOutxDsrFlow = FALSE;
-    dcb.fRtsControl  = RTS_CONTROL_DISABLE;
-    dcb.fDtrControl  = DTR_CONTROL_DISABLE;
+    /* Hand only the configured lines to us.  Preserve the other line's DCB
+     * settings so, for example, an RTS-only PTT cannot disturb DTR when the
+     * updated state is applied. */
+    if (uses_rts(&g_cfg))
+    {
+        dcb.fOutxCtsFlow = FALSE;
+        dcb.fRtsControl  = RTS_CONTROL_DISABLE;
+    }
+    if (uses_dtr(&g_cfg))
+    {
+        dcb.fOutxDsrFlow = FALSE;
+        dcb.fDtrControl  = DTR_CONTROL_DISABLE;
+    }
     if (!SetCommState(g_serial, &dcb))
     {
         HLOGE(PTT_LOG_TAG, "SetCommState(%s) failed (Windows error %lu)",

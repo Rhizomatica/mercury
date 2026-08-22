@@ -11,8 +11,9 @@
 
 #include "radio_io.h"
 
-/* Open the serial device and drive both modem-control lines to their idle
- * (un-keyed) state, honouring inversion.  Returns 0 on success, -1 on error. */
+/* Open the serial device and drive the configured modem-control line(s) to
+ * their idle (un-keyed) state, honouring inversion.  Unconfigured lines are
+ * left untouched.  Returns 0 on success, -1 on error. */
 int serial_ptt_open(const ptt_config_t *config);
 
 /* Assert or release PTT on the configured line(s).  0 on success, -1 on error. */
