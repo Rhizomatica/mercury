@@ -42,7 +42,7 @@ void mercury_print_version(void)
 /* ------------------------------------------------------------------ */
 /*  mercury_precheck(argc, argv, default_config)                       */
 /*                                                                     */
-/*  Handle the informational CLI actions (-h/-l/-z/-K) exactly as the  */
+/*  Handle exit-only CLI actions (-h/-l/-z/-K/-Q) exactly as the       */
 /*  daemon does — print to the terminal.  Called from Go BEFORE the    */
 /*  window is created so `mercury-ui -h` shows help instead of opening */
 /*  the GUI.  Returns non-zero if handled (Go should exit), 0 to run.  */
@@ -61,6 +61,10 @@ int mercury_precheck(int argc, char **argv, const char *default_config)
     }
     int handled = mercury_cli_run_info_action(&cli,
                       (argc > 0 && argv) ? argv[0] : "mercury-ui") ? 1 : 0;
+    if (cli.action == MERCURY_CLI_TEST_PTT) {
+        (void)mercury_cli_run_ptt_test(&cli);
+        handled = 1;
+    }
     fflush(stdout);
     fflush(stderr);
     return handled;

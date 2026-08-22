@@ -132,8 +132,8 @@ int tcp_close(int pt) { (void)pt; return 0; }
 /* ---- radio_io stubs ---- */
 
 bool radio_io_enabled(void) { return false; }
-void radio_io_key_on(void) { }
-void radio_io_key_off(void) { }
+int radio_io_key_on(void) { return 0; }
+int radio_io_key_off(void) { return 0; }
 
 /* ---- modem tuning-carrier stubs ---- */
 

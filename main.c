@@ -89,6 +89,14 @@ int main(int argc, char *argv[])
     if (mercury_cli_parse(argc, argv, "mercury.ini", &cli) != 0)
         return EXIT_FAILURE;
 
+    if (cli.action == MERCURY_CLI_TEST_PTT)
+    {
+        signal(SIGINT, handle_termination_signal);
+        signal(SIGTERM, handle_termination_signal);
+        return mercury_cli_run_ptt_test(&cli) == 0
+                   ? EXIT_SUCCESS : EXIT_FAILURE;
+    }
+
     /* -h/-l/-z/-K print and exit. */
     if (mercury_cli_run_info_action(&cli, argv[0]))
         return EXIT_SUCCESS;

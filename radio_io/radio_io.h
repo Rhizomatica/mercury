@@ -82,11 +82,11 @@ void radio_io_shutdown(void);
 /* Returns true if a PTT backend is active. */
 bool radio_io_enabled(void);
 
-/* Key transmitter on (PTT ON). */
-void radio_io_key_on(void);
+/* Key transmitter on (PTT ON). Returns 0 on success, -1 on failure. */
+int radio_io_key_on(void);
 
-/* Key transmitter off (PTT OFF). */
-void radio_io_key_off(void);
+/* Key transmitter off (PTT OFF). Returns 0 on success, -1 on failure. */
+int radio_io_key_off(void);
 
 /* List all hamlib-supported radio models and exit. */
 void radio_io_list_models(void);

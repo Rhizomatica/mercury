@@ -29,7 +29,7 @@ mercury \- HF radio modem with ARQ and broadcast data links
 .RB [ options ]
 .br
 .B mercury
-.RB [ \-l " | " \-z " | " \-K " | " \-h ]
+.RB [ \-l " | " \-z " | " \-K " | " \-Q " | " \-h ]
 .SH DESCRIPTION
 .B mercury
 is the modem component of the HERMES (High-Frequency Emergency and Rural
@@ -193,6 +193,15 @@ Available only on Linux builds.
 .TP
 .B \-K
 List Hamlib supported radio models and exit.
+.TP
+.B \-Q
+Open the configured PTT backend, key it for one second, release it, and exit
+without starting the modem or audio devices. This can be combined with
+.BR \-C ,
+.BR \-P ,
+.BR \-A ,
+and the serial settings in
+.BR mercury.ini .
 .SS "Logging options"
 .TP
 .BI \-L " path"

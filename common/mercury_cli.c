@@ -17,6 +17,7 @@
 #include "ldpc_codes.h"
 #include "audioio/audioio.h"
 #include "radio_io.h"
+#include "hermes_log.h"
 
 /* Startup-mode table (index -> FreeDV mode).  Non-static: shared with the
  * modem, and referenced by main()'s -l listing. */
@@ -66,7 +67,7 @@ void mercury_cli_print_usage(const char *prog)
 {
     printf("Usage modes: \n");
     printf("%s -m [mode_index] -i [device] -o [device] -x [sound_system] -p [arq_tcp_base_port] -b [broadcast_tcp_port] -f [freedv_verbosity] -H [hamlib_log_level] -k [rx_input_channel] [-P ptt_method] [-A ptt_device] [-G] [-T] [-U ui_port] [-W]\n", prog);
-    printf("%s [-h -l -z]\n", prog);
+    printf("%s [-h -l -z -K -Q]\n", prog);
     printf("\nOptions:\n");
     printf(" -c [cpu_nr]                Run on CPU [cpu_nr]. Use -1 to disable CPU selection, which is the default.\n");
     printf(" -m [mode_index]            Startup payload mode index shown in \"-l\" output. Used for broadcast and idle/disconnected ARQ decode. Default is 1 (DATAC3)\n");
@@ -99,6 +100,7 @@ void mercury_cli_print_usage(const char *prog)
 #endif
     printf(" -C [config_file]           Path to init configuration file (INI format). Default is mercury.ini in the current directory.\n");
     printf(" -K                         List HAMLIB supported radio models.\n");
+    printf(" -Q                         Test PTT: key the configured backend for one second, release it, and exit.\n");
     printf(" -t                         Test TX mode.\n");
     printf(" -r                         Test RX mode.\n");
     printf(" -h                         Prints this help.\n");
@@ -111,7 +113,7 @@ int mercury_cli_parse(int argc, char **argv,
         return -1;
 
     const int mode_count = mercury_cli_mode_count();
-    const char *optstring = "hc:s:m:f:H:k:li:o:x:p:b:zvtrL:JP:R:U:A:C:SKWGT";
+    const char *optstring = "hc:s:m:f:H:k:li:o:x:p:b:zvtrL:JP:R:U:A:C:SKWGQT";
 
     memset(out, 0, sizeof(*out));
     cfg_set_defaults(&out->cfg);
@@ -367,6 +369,9 @@ int mercury_cli_parse(int argc, char **argv,
         case 'K':
             out->action = MERCURY_CLI_LIST_RADIOS;
             break;
+        case 'Q':
+            out->action = MERCURY_CLI_TEST_PTT;
+            break;
         case 'h':
             out->action = MERCURY_CLI_HELP;
             break;
@@ -414,6 +419,61 @@ int mercury_cli_parse(int argc, char **argv,
         return -1;
     }
 
+    if (out->action == MERCURY_CLI_TEST_PTT &&
+        out->cfg.ptt.method == PTT_METHOD_NONE)
+    {
+        fprintf(stderr, "Error: -Q requires a configured PTT method (not 'none').\n");
+        return -1;
+    }
+
+    return 0;
+}
+
+int mercury_cli_run_ptt_test(const mercury_cli_t *cli)
+{
+    if (!cli || cli->action != MERCURY_CLI_TEST_PTT)
+        return -1;
+
+    bool log_ready = (hermes_log_init(256) == 0);
+    if (log_ready)
+        hermes_log_set_level(cli->cfg.verbose ? HERMES_LOG_LEVEL_DEBUG
+                                              : HERMES_LOG_LEVEL_INFO);
+
+    printf("Opening configured PTT backend...\n");
+    fflush(stdout);
+    if (radio_io_init(&cli->cfg.ptt) != 0)
+    {
+        fprintf(stderr, "PTT test failed: could not open the configured backend.\n");
+        radio_io_shutdown();
+        if (log_ready)
+            hermes_log_shutdown();
+        return -1;
+    }
+
+    printf("PTT ON for one second...\n");
+    fflush(stdout);
+    if (radio_io_key_on() != 0)
+    {
+        fprintf(stderr, "PTT test failed: could not key the transmitter.\n");
+        radio_io_shutdown();
+        if (log_ready)
+            hermes_log_shutdown();
+        return -1;
+    }
+
+    sleep(1);
+
+    int rc = radio_io_key_off();
+    radio_io_shutdown();
+    if (log_ready)
+        hermes_log_shutdown();
+    if (rc != 0)
+    {
+        fprintf(stderr, "PTT test failed: could not release the transmitter.\n");
+        return -1;
+    }
+
+    printf("PTT OFF. Test complete.\n");
     return 0;
 }
 
@@ -482,6 +542,9 @@ bool mercury_cli_run_info_action(const mercury_cli_t *cli, const char *prog)
         list_soundcards(audio_system);
         return true;
     }
+    case MERCURY_CLI_TEST_PTT:
+        /* Executed separately so the daemon can preserve a failure exit code. */
+        return false;
     case MERCURY_CLI_RUN:
     default:
         return false;

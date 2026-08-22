@@ -74,6 +74,7 @@ Options:
  -A [ptt_device]            PTT serial device or HAMLIB device/ip:port endpoint.
  -S                         Select HERMES shared-memory PTT (Linux shorthand for -P hermes_shm).
  -K                         List HAMLIB supported radio models.
+ -Q                         Test PTT: key the configured backend for one second, release it, and exit.
  -C [path]                  Path to INI configuration file (default: mercury.ini in the current directory).
  -t                         Test TX mode.
  -r                         Test RX mode.
@@ -100,6 +101,7 @@ PTT control notes:
 - `-P cm108` keys a GPIO pin on a CM108/CM119-class USB sound chip. The device is auto-detected; `[ptt] cm108_gpio` selects the pin (default 3).
 - `-R` is the compatible Hamlib shorthand: it selects the model and the `hamlib` PTT method. `-A` supplies its device or `ip:port`, and `-K` lists models.
 - `-S` is the compatible shorthand for `hermes_shm` and is unavailable on Windows builds.
+- `-Q` opens the configured backend, keys it for one second, releases it, and exits without starting the modem or audio devices. For example: `mercury -C mercury.ini -Q`.
 
 ## Getting Started with Mercury
 

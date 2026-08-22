@@ -467,7 +467,7 @@ bool radio_io_enabled(void)
     return enabled;
 }
 
-static void radio_io_key(bool on)
+static int radio_io_key(bool on)
 {
     pthread_mutex_lock(&g_radio_mutex);
     if (!g_backend)
@@ -475,14 +475,15 @@ static void radio_io_key(bool on)
         HLOGD(RADIO_LOG_TAG, "PTT %s requested while direct PTT is disabled",
               on ? "ON" : "OFF");
         pthread_mutex_unlock(&g_radio_mutex);
-        return;
+        return -1;
     }
-    (void)g_backend->set(on);
+    int rc = g_backend->set(on);
     pthread_mutex_unlock(&g_radio_mutex);
+    return rc;
 }
 
-void radio_io_key_on(void)  { radio_io_key(true); }
-void radio_io_key_off(void) { radio_io_key(false); }
+int radio_io_key_on(void)  { return radio_io_key(true); }
+int radio_io_key_off(void) { return radio_io_key(false); }
 
 void radio_io_list_models(void)
 {
