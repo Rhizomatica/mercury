@@ -70,18 +70,18 @@ static const char *variant_name(unsigned vid, unsigned pid)
     return NULL;
 }
 
-/* GPIO n is bit n-1 of the mask byte.  Byte 2 and byte 3 both carry the mask:
- * byte 2 is the "GPIO output" register and byte 3 the "GPIO direction/enable",
- * and the CM108 family wants both driven for the pin to actually move. */
+/* GPIO n is bit n-1 of the mask byte.  Byte 2 carries the GPIO output value,
+ * while byte 3 selects which GPIO output is being updated.  The selection must
+ * remain set when clearing the output or the transmitter may stay keyed. */
 int cm108_ptt_report(bool on, int gpio, unsigned char out[5])
 {
     if (!out || gpio < 1 || gpio > 4)
         return -1;
 
-    unsigned char mask = on ? (unsigned char)(1u << (gpio - 1)) : 0x00;
+    unsigned char mask = (unsigned char)(1u << (gpio - 1));
     out[0] = 0x00;
     out[1] = 0x00;
-    out[2] = mask;
+    out[2] = on ? mask : 0x00;
     out[3] = mask;
     out[4] = 0x00;
     return 0;

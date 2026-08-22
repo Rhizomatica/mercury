@@ -267,8 +267,8 @@ void test_invalid_line_and_invert_are_rejected(void)
     TEST_ASSERT_FALSE(cfg_ptt_invert_parse("sometimes", &ir, &id));
 }
 
-/* The CM108 wire bytes.  GPIO n is bit n-1, carried in BOTH byte 2 and 3;
- * getting this wrong keys a different pin and is invisible without hardware. */
+/* The CM108 wire bytes.  GPIO n is bit n-1: byte 2 is its output value and
+ * byte 3 is the output mask, which must remain set when unkeying. */
 void test_cm108_report_encoding(void)
 {
     unsigned char r[5];
@@ -281,8 +281,11 @@ void test_cm108_report_encoding(void)
     TEST_ASSERT_EQUAL_HEX8(0x00, r[4]);
 
     TEST_ASSERT_EQUAL_INT(0, cm108_ptt_report(false, 3, r));
+    TEST_ASSERT_EQUAL_HEX8(0x00, r[0]);
+    TEST_ASSERT_EQUAL_HEX8(0x00, r[1]);
     TEST_ASSERT_EQUAL_HEX8(0x00, r[2]);
-    TEST_ASSERT_EQUAL_HEX8(0x00, r[3]);
+    TEST_ASSERT_EQUAL_HEX8(0x04, r[3]);   /* still select GPIO3 for update */
+    TEST_ASSERT_EQUAL_HEX8(0x00, r[4]);
 
     TEST_ASSERT_EQUAL_INT(0, cm108_ptt_report(true, 1, r));
     TEST_ASSERT_EQUAL_HEX8(0x01, r[2]);
