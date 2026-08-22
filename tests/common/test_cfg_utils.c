@@ -138,8 +138,14 @@ void test_explicit_ptt_method_overrides_legacy_backend(void)
 
     mercury_config r;
     cfg_set_defaults(&r);
+    r.ptt.serial_line = PTT_LINE_BOTH;
+    r.ptt.serial_invert_rts = true;
+    r.ptt.serial_invert_dtr = true;
     TEST_ASSERT_TRUE(cfg_read(&r, TMP));
     TEST_ASSERT_EQUAL_INT(PTT_METHOD_SERIAL, r.ptt.method);
+    TEST_ASSERT_EQUAL_INT(PTT_LINE_RTS, r.ptt.serial_line);
+    TEST_ASSERT_FALSE(r.ptt.serial_invert_rts);
+    TEST_ASSERT_FALSE(r.ptt.serial_invert_dtr);
     TEST_ASSERT_EQUAL_STRING("COM7", r.ptt.device);
     /* Backend-specific settings survive method switches. */
     TEST_ASSERT_EQUAL_INT(1049, r.ptt.hamlib_model);
@@ -187,6 +193,7 @@ void test_legacy_radio_model_zero_maps_to_hermes_shm(void)
     cfg_set_defaults(&r);
     TEST_ASSERT_TRUE(cfg_read(&r, TMP));
     TEST_ASSERT_EQUAL_INT(PTT_METHOD_HERMES_SHM, r.ptt.method);
+    TEST_ASSERT_EQUAL_INT(RADIO_TYPE_NONE, r.ptt.hamlib_model);
 }
 
 /* "serial_rts" shipped as a method name before DTR and inversion existed and
@@ -202,6 +209,17 @@ void test_serial_rts_alias_still_parses(void)
     TEST_ASSERT_TRUE(cfg_ptt_method_parse("cm108", &m));
     TEST_ASSERT_EQUAL_INT(PTT_METHOD_CM108, m);
     TEST_ASSERT_FALSE(cfg_ptt_method_parse("nonsense", &m));
+
+    ptt_config_t config;
+    memset(&config, 0, sizeof(config));
+    config.serial_line = PTT_LINE_BOTH;
+    config.serial_invert_rts = true;
+    config.serial_invert_dtr = true;
+    TEST_ASSERT_TRUE(cfg_ptt_config_set_method(&config, "serial_rts"));
+    TEST_ASSERT_EQUAL_INT(PTT_METHOD_SERIAL, config.method);
+    TEST_ASSERT_EQUAL_INT(PTT_LINE_RTS, config.serial_line);
+    TEST_ASSERT_FALSE(config.serial_invert_rts);
+    TEST_ASSERT_FALSE(config.serial_invert_dtr);
 }
 
 /* An AIOC needs both lines driven with RTS inverted; this is the exact config

@@ -334,21 +334,19 @@ int mercury_cli_parse(int argc, char **argv,
         case 'P':
             if (optarg)
             {
-                ptt_method_t method;
-                if (!cfg_ptt_method_parse(optarg, &method))
+                if (!cfg_ptt_config_set_method(&out->cfg.ptt, optarg))
                 {
                     fprintf(stderr, "Invalid PTT method '%s'. Use none, hamlib, serial, cm108, or hermes_shm.\n",
                             optarg);
                     return -1;
                 }
 #ifndef HAVE_HERMES_SHM
-                if (method == PTT_METHOD_HERMES_SHM)
+                if (out->cfg.ptt.method == PTT_METHOD_HERMES_SHM)
                 {
                     fprintf(stderr, "Error: HERMES shared-memory PTT is unavailable in this build.\n");
                     return -1;
                 }
 #endif
-                out->cfg.ptt.method = method;
             }
             break;
         case 'A':

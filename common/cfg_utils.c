@@ -135,6 +135,20 @@ bool cfg_ptt_method_parse(const char *name, ptt_method_t *method)
     return true;
 }
 
+bool cfg_ptt_config_set_method(ptt_config_t *config, const char *name)
+{
+    if (!config || !cfg_ptt_method_parse(name, &config->method))
+        return false;
+
+    if (!strcmp(name, "serial_rts"))
+    {
+        config->serial_line = PTT_LINE_RTS;
+        config->serial_invert_rts = false;
+        config->serial_invert_dtr = false;
+    }
+    return true;
+}
+
 const char *cfg_ptt_line_name(ptt_line_t line)
 {
     switch (line) {
@@ -206,13 +220,21 @@ bool cfg_read(mercury_config *cfg, const char *ini_path)
     s = iniparser_getstring(ini, CFG_KEY_RADIO_MODEL, NULL);
     if (s) {
         i = iniparser_getint(ini, CFG_KEY_RADIO_MODEL, cfg->ptt.hamlib_model);
-        cfg->ptt.hamlib_model = i;
         if (i == RADIO_TYPE_SHM)
+        {
             cfg->ptt.method = PTT_METHOD_HERMES_SHM;
+            cfg->ptt.hamlib_model = RADIO_TYPE_NONE;
+        }
         else if (i > 0)
+        {
             cfg->ptt.method = PTT_METHOD_HAMLIB;
+            cfg->ptt.hamlib_model = i;
+        }
         else
+        {
             cfg->ptt.method = PTT_METHOD_NONE;
+            cfg->ptt.hamlib_model = RADIO_TYPE_NONE;
+        }
     }
 
     s = iniparser_getstring(ini, CFG_KEY_RADIO_DEVICE, NULL);
@@ -232,7 +254,7 @@ bool cfg_read(mercury_config *cfg, const char *ini_path)
         cfg->ptt.hamlib_serial_speed = i;
 
     s = iniparser_getstring(ini, CFG_KEY_PTT_METHOD, NULL);
-    if (s && !cfg_ptt_method_parse(s, &cfg->ptt.method)) {
+    if (s && !cfg_ptt_config_set_method(&cfg->ptt, s)) {
         fprintf(stderr, "cfg_read: invalid PTT method '%s'\n", s);
         iniparser_freedict(ini);
         return false;

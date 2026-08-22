@@ -515,7 +515,10 @@ int radio_io_restart(const ptt_config_t *config)
           config->device[0] ? config->device : "none");
 
     /* radio_io_init() closes the previous backend and opens the requested one
-     * while holding g_radio_mutex, so keying cannot slip between the two. */
+     * while holding g_radio_mutex, so keying cannot slip between the two.
+     * Some opens (notably Hamlib rig_open()) can take seconds, so callers must
+     * not reconfigure PTT during a live ARQ session: modem keying deliberately
+     * blocks for the entire restart to avoid touching a half-open backend. */
     return radio_io_init(config);
 }
 

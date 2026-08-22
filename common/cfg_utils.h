@@ -161,6 +161,10 @@ const char *cfg_sound_system_name(int sys);
 /* Canonical string conversion for PTT methods used by INI, CLI and UI. */
 const char *cfg_ptt_method_name(ptt_method_t method);
 bool cfg_ptt_method_parse(const char *name, ptt_method_t *method);
+/* Select a method on a complete config.  In addition to parsing the method,
+ * the legacy serial_rts alias restores its historical RTS/non-inverted
+ * behavior so stale settings from another serial configuration cannot leak. */
+bool cfg_ptt_config_set_method(ptt_config_t *config, const char *name);
 const char *cfg_ptt_line_name(ptt_line_t line);
 bool cfg_ptt_line_parse(const char *name, ptt_line_t *line);
 const char *cfg_ptt_invert_name(bool invert_rts, bool invert_dtr);

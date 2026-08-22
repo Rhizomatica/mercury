@@ -193,7 +193,7 @@ int ui_comm_handle_command(ui_ctx_t *ctx, const ws_command_t *cmd)
         ptt_config_t config;
         radio_io_get_config(&config);
 
-        if (!cfg_ptt_method_parse(cmd->value, &config.method)) {
+        if (!cfg_ptt_config_set_method(&config, cmd->value)) {
             HLOGE(UI_LOG_TAG, "Invalid PTT method from UI: %s", cmd->value);
             return -1;
         }
