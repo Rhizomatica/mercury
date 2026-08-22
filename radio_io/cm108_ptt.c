@@ -17,7 +17,7 @@
  *                  build needs no extra package to key a radio; hamlib drives
  *                  CM108 the same way.
  *
- * Neither is a hard dependency.  On a platform with neither, cm108_ptt_open()
+ * Neither is a hard dependency.  On a platform with neither, mercury_cm108_open()
  * says so rather than failing obscurely.
  *
  * Permissions: /dev/hidraw* is usually root-only.  Mercury already runs as
@@ -73,7 +73,7 @@ static const char *variant_name(unsigned vid, unsigned pid)
 /* GPIO n is bit n-1 of the mask byte.  Byte 2 carries the GPIO output value,
  * while byte 3 selects which GPIO output is being updated.  The selection must
  * remain set when clearing the output or the transmitter may stay keyed. */
-int cm108_ptt_report(bool on, int gpio, unsigned char out[5])
+int mercury_cm108_report(bool on, int gpio, unsigned char out[5])
 {
     if (!out || gpio < 1 || gpio > 4)
         return -1;
@@ -87,7 +87,7 @@ int cm108_ptt_report(bool on, int gpio, unsigned char out[5])
     return 0;
 }
 
-bool cm108_ptt_is_linux_hidraw_path(const char *path)
+bool mercury_cm108_is_hidraw_path(const char *path)
 {
     static const char prefix[] = "/dev/hidraw";
 
@@ -110,7 +110,7 @@ bool cm108_ptt_is_linux_hidraw_path(const char *path)
 static hid_device *g_hid = NULL;
 static int g_gpio = PTT_CM108_GPIO_DEFAULT;
 
-int cm108_ptt_list(char *buf, size_t buf_size)
+int mercury_cm108_list(char *buf, size_t buf_size)
 {
     if (buf && buf_size)
         buf[0] = '\0';
@@ -204,7 +204,7 @@ static int write_report(bool on)
     if (!g_hid)
         return -1;
     unsigned char report[5];
-    if (cm108_ptt_report(on, g_gpio, report) != 0)
+    if (mercury_cm108_report(on, g_gpio, report) != 0)
         return -1;
     if (hid_write(g_hid, report, sizeof(report)) < 0)
     {
@@ -214,7 +214,7 @@ static int write_report(bool on)
     return 0;
 }
 
-int cm108_ptt_open(const ptt_config_t *config)
+int mercury_cm108_open(const ptt_config_t *config)
 {
     if (!config)
         return -1;
@@ -234,18 +234,18 @@ int cm108_ptt_open(const ptt_config_t *config)
     HLOGI(CM108_LOG_TAG, "CM108 PTT via hidapi, GPIO%d", g_gpio);
     if (write_report(false) != 0)   /* park un-keyed */
     {
-        cm108_ptt_close();
+        mercury_cm108_close();
         return -1;
     }
     return 0;
 }
 
-int cm108_ptt_set(bool on)
+int mercury_cm108_set(bool on)
 {
     return write_report(on);
 }
 
-void cm108_ptt_close(void)
+void mercury_cm108_close(void)
 {
     if (!g_hid)
         return;
@@ -293,7 +293,7 @@ static bool hidraw_ids(const char *name, unsigned *vid, unsigned *pid,
     return got;
 }
 
-int cm108_ptt_list(char *buf, size_t buf_size)
+int mercury_cm108_list(char *buf, size_t buf_size)
 {
     if (buf && buf_size)
         buf[0] = '\0';
@@ -333,7 +333,7 @@ static int resolve_device(const ptt_config_t *config, char *out, size_t out_size
 {
     if (config->device[0])
     {
-        if (!cm108_ptt_is_linux_hidraw_path(config->device))
+        if (!mercury_cm108_is_hidraw_path(config->device))
         {
             HLOGE(CM108_LOG_TAG,
                   "Refusing CM108 device '%s': the Linux hidraw transport "
@@ -383,7 +383,7 @@ static int write_report(bool on)
         return -1;
 
     unsigned char report[5];
-    if (cm108_ptt_report(on, g_gpio, report) != 0)
+    if (mercury_cm108_report(on, g_gpio, report) != 0)
         return -1;
 
     ssize_t n = write(g_hid_fd, report, sizeof(report));
@@ -395,7 +395,7 @@ static int write_report(bool on)
     return 0;
 }
 
-int cm108_ptt_open(const ptt_config_t *config)
+int mercury_cm108_open(const ptt_config_t *config)
 {
     if (!config)
         return -1;
@@ -427,18 +427,18 @@ int cm108_ptt_open(const ptt_config_t *config)
     HLOGI(CM108_LOG_TAG, "CM108 PTT on %s, GPIO%d", path, g_gpio);
     if (write_report(false) != 0)   /* park un-keyed */
     {
-        cm108_ptt_close();
+        mercury_cm108_close();
         return -1;
     }
     return 0;
 }
 
-int cm108_ptt_set(bool on)
+int mercury_cm108_set(bool on)
 {
     return write_report(on);
 }
 
-void cm108_ptt_close(void)
+void mercury_cm108_close(void)
 {
     if (g_hid_fd < 0)
         return;
@@ -449,7 +449,7 @@ void cm108_ptt_close(void)
 
 #else  /* !__linux__ */
 
-int cm108_ptt_open(const ptt_config_t *config)
+int mercury_cm108_open(const ptt_config_t *config)
 {
     (void)config;
     HLOGE(CM108_LOG_TAG,
@@ -458,9 +458,9 @@ int cm108_ptt_open(const ptt_config_t *config)
     return -1;
 }
 
-int cm108_ptt_set(bool on)      { (void)on; return -1; }
-void cm108_ptt_close(void)      { }
-int cm108_ptt_list(char *buf, size_t buf_size)
+int mercury_cm108_set(bool on)      { (void)on; return -1; }
+void mercury_cm108_close(void)      { }
+int mercury_cm108_list(char *buf, size_t buf_size)
 {
     if (buf && buf_size) buf[0] = '\0';
     return 0;

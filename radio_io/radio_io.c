@@ -342,7 +342,7 @@ static void serial_backend_close(void)
 
 static int cm108_backend_open(const ptt_config_t *config)
 {
-    if (cm108_ptt_open(config) != 0)
+    if (mercury_cm108_open(config) != 0)
         return -1;
     HLOGI(RADIO_LOG_TAG, "PTT method: CM108 GPIO%d", config->cm108_gpio);
     return 0;
@@ -350,7 +350,7 @@ static int cm108_backend_open(const ptt_config_t *config)
 
 static int cm108_backend_set(bool on)
 {
-    int rc = cm108_ptt_set(on);
+    int rc = mercury_cm108_set(on);
     if (rc == 0)
         HLOGD(RADIO_LOG_TAG, "PTT %s via CM108 GPIO", on ? "ON" : "OFF");
     return rc;
@@ -358,7 +358,7 @@ static int cm108_backend_set(bool on)
 
 static void cm108_backend_close(void)
 {
-    cm108_ptt_close();
+    mercury_cm108_close();
 }
 
 static const ptt_backend_t HAMLIB_BACKEND = {

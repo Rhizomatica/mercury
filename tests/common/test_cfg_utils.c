@@ -289,41 +289,41 @@ void test_cm108_report_encoding(void)
 {
     unsigned char r[5];
 
-    TEST_ASSERT_EQUAL_INT(0, cm108_ptt_report(true, 3, r));
+    TEST_ASSERT_EQUAL_INT(0, mercury_cm108_report(true, 3, r));
     TEST_ASSERT_EQUAL_HEX8(0x00, r[0]);
     TEST_ASSERT_EQUAL_HEX8(0x00, r[1]);
     TEST_ASSERT_EQUAL_HEX8(0x04, r[2]);   /* GPIO3 -> bit 2 */
     TEST_ASSERT_EQUAL_HEX8(0x04, r[3]);
     TEST_ASSERT_EQUAL_HEX8(0x00, r[4]);
 
-    TEST_ASSERT_EQUAL_INT(0, cm108_ptt_report(false, 3, r));
+    TEST_ASSERT_EQUAL_INT(0, mercury_cm108_report(false, 3, r));
     TEST_ASSERT_EQUAL_HEX8(0x00, r[0]);
     TEST_ASSERT_EQUAL_HEX8(0x00, r[1]);
     TEST_ASSERT_EQUAL_HEX8(0x00, r[2]);
     TEST_ASSERT_EQUAL_HEX8(0x04, r[3]);   /* still select GPIO3 for update */
     TEST_ASSERT_EQUAL_HEX8(0x00, r[4]);
 
-    TEST_ASSERT_EQUAL_INT(0, cm108_ptt_report(true, 1, r));
+    TEST_ASSERT_EQUAL_INT(0, mercury_cm108_report(true, 1, r));
     TEST_ASSERT_EQUAL_HEX8(0x01, r[2]);
-    TEST_ASSERT_EQUAL_INT(0, cm108_ptt_report(true, 4, r));
+    TEST_ASSERT_EQUAL_INT(0, mercury_cm108_report(true, 4, r));
     TEST_ASSERT_EQUAL_HEX8(0x08, r[2]);
 
     /* Out of range must be refused, not silently clamped. */
-    TEST_ASSERT_EQUAL_INT(-1, cm108_ptt_report(true, 0, r));
-    TEST_ASSERT_EQUAL_INT(-1, cm108_ptt_report(true, 5, r));
+    TEST_ASSERT_EQUAL_INT(-1, mercury_cm108_report(true, 0, r));
+    TEST_ASSERT_EQUAL_INT(-1, mercury_cm108_report(true, 5, r));
 }
 
 void test_cm108_linux_device_path_validation(void)
 {
-    TEST_ASSERT_TRUE(cm108_ptt_is_linux_hidraw_path("/dev/hidraw0"));
-    TEST_ASSERT_TRUE(cm108_ptt_is_linux_hidraw_path("/dev/hidraw123"));
+    TEST_ASSERT_TRUE(mercury_cm108_is_hidraw_path("/dev/hidraw0"));
+    TEST_ASSERT_TRUE(mercury_cm108_is_hidraw_path("/dev/hidraw123"));
 
-    TEST_ASSERT_FALSE(cm108_ptt_is_linux_hidraw_path(NULL));
-    TEST_ASSERT_FALSE(cm108_ptt_is_linux_hidraw_path(""));
-    TEST_ASSERT_FALSE(cm108_ptt_is_linux_hidraw_path("/dev/ttyUSB0"));
-    TEST_ASSERT_FALSE(cm108_ptt_is_linux_hidraw_path("/dev/hidraw"));
-    TEST_ASSERT_FALSE(cm108_ptt_is_linux_hidraw_path("/dev/hidraw0/extra"));
-    TEST_ASSERT_FALSE(cm108_ptt_is_linux_hidraw_path("/tmp/hidraw0"));
+    TEST_ASSERT_FALSE(mercury_cm108_is_hidraw_path(NULL));
+    TEST_ASSERT_FALSE(mercury_cm108_is_hidraw_path(""));
+    TEST_ASSERT_FALSE(mercury_cm108_is_hidraw_path("/dev/ttyUSB0"));
+    TEST_ASSERT_FALSE(mercury_cm108_is_hidraw_path("/dev/hidraw"));
+    TEST_ASSERT_FALSE(mercury_cm108_is_hidraw_path("/dev/hidraw0/extra"));
+    TEST_ASSERT_FALSE(mercury_cm108_is_hidraw_path("/tmp/hidraw0"));
 }
 
 void test_arq_tunables_clamp_rejects_garbage(void)
