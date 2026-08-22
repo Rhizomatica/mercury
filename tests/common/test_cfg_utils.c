@@ -222,6 +222,22 @@ void test_serial_rts_alias_still_parses(void)
     TEST_ASSERT_FALSE(config.serial_invert_dtr);
 }
 
+void test_serial_rts_alias_overrides_serial_options(void)
+{
+    FILE *f = fopen(TMP, "w");
+    TEST_ASSERT_NOT_NULL(f);
+    fputs("[ptt]\nmethod = serial_rts\nline = both\ninvert = both\n", f);
+    fclose(f);
+
+    mercury_config r;
+    cfg_set_defaults(&r);
+    TEST_ASSERT_TRUE(cfg_read(&r, TMP));
+    TEST_ASSERT_EQUAL_INT(PTT_METHOD_SERIAL, r.ptt.method);
+    TEST_ASSERT_EQUAL_INT(PTT_LINE_RTS, r.ptt.serial_line);
+    TEST_ASSERT_FALSE(r.ptt.serial_invert_rts);
+    TEST_ASSERT_FALSE(r.ptt.serial_invert_dtr);
+}
+
 /* An AIOC needs both lines driven with RTS inverted; this is the exact config
  * from the AIOC documentation, round-tripped through the INI. */
 void test_aioc_serial_config_roundtrips(void)
@@ -326,6 +342,7 @@ int main(void)
     RUN_TEST(test_partial_config_preserves_preselected_ptt_method);
     RUN_TEST(test_legacy_radio_model_zero_maps_to_hermes_shm);
     RUN_TEST(test_serial_rts_alias_still_parses);
+    RUN_TEST(test_serial_rts_alias_overrides_serial_options);
     RUN_TEST(test_aioc_serial_config_roundtrips);
     RUN_TEST(test_ptt_defaults_are_rts_noninverted_gpio3);
     RUN_TEST(test_invalid_line_and_invert_are_rejected);

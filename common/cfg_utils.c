@@ -253,13 +253,6 @@ bool cfg_read(mercury_config *cfg, const char *ini_path)
     if (i >= 0)
         cfg->ptt.hamlib_serial_speed = i;
 
-    s = iniparser_getstring(ini, CFG_KEY_PTT_METHOD, NULL);
-    if (s && !cfg_ptt_config_set_method(&cfg->ptt, s)) {
-        fprintf(stderr, "cfg_read: invalid PTT method '%s'\n", s);
-        iniparser_freedict(ini);
-        return false;
-    }
-
     s = iniparser_getstring(ini, CFG_KEY_PTT_DEVICE, NULL);
     if (s) {
         strncpy(cfg->ptt.device, s, sizeof(cfg->ptt.device) - 1);
@@ -276,9 +269,18 @@ bool cfg_read(mercury_config *cfg, const char *ini_path)
 
     s = iniparser_getstring(ini, CFG_KEY_PTT_INVERT, NULL);
     if (s && !cfg_ptt_invert_parse(s, &cfg->ptt.serial_invert_rts,
-                                      &cfg->ptt.serial_invert_dtr)) {
+                                       &cfg->ptt.serial_invert_dtr)) {
         fprintf(stderr, "Invalid ptt.invert '%s' in %s. Use none, rts, dtr, or both.\n",
                 s, ini_path);
+        iniparser_freedict(ini);
+        return false;
+    }
+
+    /* Parse the method after its serial options so the legacy serial_rts
+     * spelling retains its fixed meaning: RTS only, not inverted. */
+    s = iniparser_getstring(ini, CFG_KEY_PTT_METHOD, NULL);
+    if (s && !cfg_ptt_config_set_method(&cfg->ptt, s)) {
+        fprintf(stderr, "cfg_read: invalid PTT method '%s'\n", s);
         iniparser_freedict(ini);
         return false;
     }
