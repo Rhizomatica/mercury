@@ -313,6 +313,19 @@ void test_cm108_report_encoding(void)
     TEST_ASSERT_EQUAL_INT(-1, cm108_ptt_report(true, 5, r));
 }
 
+void test_cm108_linux_device_path_validation(void)
+{
+    TEST_ASSERT_TRUE(cm108_ptt_is_linux_hidraw_path("/dev/hidraw0"));
+    TEST_ASSERT_TRUE(cm108_ptt_is_linux_hidraw_path("/dev/hidraw123"));
+
+    TEST_ASSERT_FALSE(cm108_ptt_is_linux_hidraw_path(NULL));
+    TEST_ASSERT_FALSE(cm108_ptt_is_linux_hidraw_path(""));
+    TEST_ASSERT_FALSE(cm108_ptt_is_linux_hidraw_path("/dev/ttyUSB0"));
+    TEST_ASSERT_FALSE(cm108_ptt_is_linux_hidraw_path("/dev/hidraw"));
+    TEST_ASSERT_FALSE(cm108_ptt_is_linux_hidraw_path("/dev/hidraw0/extra"));
+    TEST_ASSERT_FALSE(cm108_ptt_is_linux_hidraw_path("/tmp/hidraw0"));
+}
+
 void test_arq_tunables_clamp_rejects_garbage(void)
 {
     FILE *f = fopen(TMP, "w");
@@ -347,5 +360,6 @@ int main(void)
     RUN_TEST(test_ptt_defaults_are_rts_noninverted_gpio3);
     RUN_TEST(test_invalid_line_and_invert_are_rejected);
     RUN_TEST(test_cm108_report_encoding);
+    RUN_TEST(test_cm108_linux_device_path_validation);
     return UNITY_END();
 }

@@ -320,6 +320,7 @@ let appliedBaudRate = "";
 let appliedPTTLine = "";
 let appliedPTTInvert = "";
 let appliedCM108GPIO = "";
+let previousPTTMethod = "none";
 
 /* ===========================================================================
  *  VARA Colormap (from waterfall_widget.py _build_vara_colormap)
@@ -789,6 +790,7 @@ function restoreRadioSelection() {
   setSelectValue(document.getElementById("pttLineSelect"), appliedPTTLine || "rts");
   setSelectValue(document.getElementById("pttInvertSelect"), appliedPTTInvert || "none");
   setSelectValue(document.getElementById("cm108GPIOSelect"), appliedCM108GPIO || "3");
+  previousPTTMethod = getSelectValue(document.getElementById("pttMethodSelect")) || "none";
   updatePTTFieldState();
 }
 
@@ -1126,7 +1128,14 @@ document.getElementById("radioApplyBtn").addEventListener("click", function() {
              value6: pttInvert, value7: cm108GPIO });
 });
 
-document.getElementById("pttMethodSelect").addEventListener("change", updatePTTFieldState);
+document.getElementById("pttMethodSelect").addEventListener("change", function() {
+  const method = getSelectValue(this) || "none";
+  if (method === "cm108" && (previousPTTMethod === "serial" || previousPTTMethod === "hamlib")) {
+    document.getElementById("devicePathInput").value = "";
+  }
+  previousPTTMethod = method;
+  updatePTTFieldState();
+});
 
 // Enter key on device path triggers radio apply
 document.getElementById("devicePathInput").addEventListener("keydown", function(e) {

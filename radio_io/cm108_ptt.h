@@ -29,6 +29,11 @@ void cm108_ptt_close(void);
  * Returns 0 on success, -1 if gpio is outside 1..4. */
 int cm108_ptt_report(bool on, int gpio, unsigned char out[5]);
 
+/* Return true only for canonical Linux hidraw device paths (/dev/hidrawN).
+ * The raw Linux transport uses this before opening an explicit path so a
+ * stale serial/Hamlib device cannot receive a CM108 HID report. */
+bool cm108_ptt_is_linux_hidraw_path(const char *path);
+
 /* Describe the CM108-class devices present, one line per device, into buf.
  * Returns the number found (which may exceed what fits in buf). */
 int cm108_ptt_list(char *buf, size_t buf_size);

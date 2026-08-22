@@ -87,6 +87,22 @@ int cm108_ptt_report(bool on, int gpio, unsigned char out[5])
     return 0;
 }
 
+bool cm108_ptt_is_linux_hidraw_path(const char *path)
+{
+    static const char prefix[] = "/dev/hidraw";
+
+    if (!path || strncmp(path, prefix, sizeof(prefix) - 1) != 0)
+        return false;
+
+    path += sizeof(prefix) - 1;
+    if (*path < '0' || *path > '9')
+        return false;
+    do {
+        path++;
+    } while (*path >= '0' && *path <= '9');
+    return *path == '\0';
+}
+
 #if defined(HAVE_HIDAPI)
 
 #include <hidapi.h>
@@ -317,6 +333,14 @@ static int resolve_device(const ptt_config_t *config, char *out, size_t out_size
 {
     if (config->device[0])
     {
+        if (!cm108_ptt_is_linux_hidraw_path(config->device))
+        {
+            HLOGE(CM108_LOG_TAG,
+                  "Refusing CM108 device '%s': the Linux hidraw transport "
+                  "requires /dev/hidrawN (leave it empty for discovery)",
+                  config->device);
+            return -1;
+        }
         snprintf(out, out_size, "%s", config->device);
         return 0;
     }

@@ -1242,11 +1242,17 @@ func main() {
 			widget.NewLabel("Invert Line"), bindings.pttInvertSelect)
 		gpioRow := container.NewGridWithColumns(2,
 			widget.NewLabel("CM108 GPIO"), bindings.cm108GPIOSelect)
+		previousMethod := pttMethodID(bindings.pttMethodSelect.Selected)
 		updateMethodFields := func(label string) {
+			method := pttMethodID(label)
+			if method == "cm108" && (previousMethod == "serial" || previousMethod == "hamlib") {
+				bindings.devicePathEntry.SetText("")
+			}
+			previousMethod = method
 			lineRow.Hide()
 			invertRow.Hide()
 			gpioRow.Hide()
-			switch pttMethodID(label) {
+			switch method {
 			case "hamlib":
 				deviceRow.Show()
 				modelRow.Show()
