@@ -4,9 +4,23 @@ import (
 	"encoding/binary"
 	"image"
 	"math"
+	"reflect"
 	"strings"
 	"testing"
 )
+
+func TestPTTMethodOptions(t *testing.T) {
+	want := []string{"None", "Hamlib", "Serial (RTS/DTR)", "CM108 GPIO", "HERMES SHM"}
+	if got := pttMethodOptions(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("pttMethodOptions() = %v, want %v", got, want)
+	}
+
+	for _, method := range pttMethodOrder {
+		if got := pttMethodID(pttMethodLabel(method)); got != method {
+			t.Errorf("PTT method %q round-tripped to %q", method, got)
+		}
+	}
+}
 
 // TestConcurrentSpectrumAccessNoRace exercises the appState sharing between the
 // WebSocket reader goroutine (writer of spectrumValues/waterfallRows) and the

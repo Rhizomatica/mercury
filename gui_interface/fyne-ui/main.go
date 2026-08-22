@@ -75,6 +75,16 @@ var pttMethodLabels = map[string]string{
 	"hermes_shm": "HERMES SHM",
 }
 
+var pttMethodOrder = []string{"none", "hamlib", "serial", "cm108", "hermes_shm"}
+
+func pttMethodOptions() []string {
+	options := make([]string, 0, len(pttMethodOrder))
+	for _, method := range pttMethodOrder {
+		options = append(options, pttMethodLabel(method))
+	}
+	return options
+}
+
 func pttMethodLabel(method string) string {
 	if label, ok := pttMethodLabels[method]; ok {
 		return label
@@ -460,8 +470,8 @@ func main() {
 	channelSelect := widget.NewSelect([]string{"left", "right", "stereo"}, func(string) {})
 	channelSelect.SetSelected("left")
 	bindings.channelSelect = channelSelect
-	pttMethodSelect := widget.NewSelect([]string{"None", "Hamlib", "Serial RTS", "HERMES SHM"}, func(string) {})
-	pttMethodSelect.SetSelected("None")
+	pttMethodSelect := widget.NewSelect(pttMethodOptions(), func(string) {})
+	pttMethodSelect.SetSelected(pttMethodLabel("none"))
 	bindings.pttMethodSelect = pttMethodSelect
 	radioSelect := widget.NewSelect([]string{}, func(string) {})
 	bindings.radioSelect = radioSelect
