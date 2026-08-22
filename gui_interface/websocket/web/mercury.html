@@ -226,6 +226,26 @@ input[type="range"] {
             <option value="38400">38400</option>
             <option value="115200">115200</option>
           </select>
+          <label for="pttLineSelect">PTT Line</label>
+          <select id="pttLineSelect">
+            <option value="rts" selected>RTS</option>
+            <option value="dtr">DTR</option>
+            <option value="both">RTS + DTR</option>
+          </select>
+          <label for="pttInvertSelect">Invert Line</label>
+          <select id="pttInvertSelect">
+            <option value="none" selected>None</option>
+            <option value="rts">RTS</option>
+            <option value="dtr">DTR</option>
+            <option value="both">RTS + DTR</option>
+          </select>
+          <label for="cm108GPIOSelect">CM108 GPIO</label>
+          <select id="cm108GPIOSelect">
+            <option value="1">GPIO 1</option>
+            <option value="2">GPIO 2</option>
+            <option value="3" selected>GPIO 3</option>
+            <option value="4">GPIO 4</option>
+          </select>
           <button class="apply-btn" id="radioApplyBtn">Apply</button>
         </div>
         <!-- WebSocket Connection -->
@@ -297,6 +317,9 @@ let appliedPTTMethod = "";
 let appliedRadioModel = "";
 let appliedDevicePath = "";
 let appliedBaudRate = "";
+let appliedPTTLine = "";
+let appliedPTTInvert = "";
+let appliedCM108GPIO = "";
 
 /* ===========================================================================
  *  VARA Colormap (from waterfall_widget.py _build_vara_colormap)
@@ -763,6 +786,9 @@ function restoreRadioSelection() {
   if (appliedRadioModel) setSelectValue(document.getElementById("radioModelSelect"), appliedRadioModel);
   if (appliedDevicePath) document.getElementById("devicePathInput").value = appliedDevicePath;
   if (appliedBaudRate) setSelectValue(document.getElementById("baudRateSelect"), appliedBaudRate);
+  setSelectValue(document.getElementById("pttLineSelect"), appliedPTTLine || "rts");
+  setSelectValue(document.getElementById("pttInvertSelect"), appliedPTTInvert || "none");
+  setSelectValue(document.getElementById("cm108GPIOSelect"), appliedCM108GPIO || "3");
   updatePTTFieldState();
 }
 
@@ -773,11 +799,15 @@ function updatePTTFieldState() {
   document.getElementById("radioModelSelect").disabled = !hamlib;
   document.getElementById("baudRateSelect").disabled = !hamlib;
   document.getElementById("devicePathInput").disabled = !(hamlib || serial);
+  document.getElementById("pttLineSelect").disabled = method !== "serial";
+  document.getElementById("pttInvertSelect").disabled = method !== "serial";
+  document.getElementById("cm108GPIOSelect").disabled = method !== "cm108";
 }
 
 function clearAppliedState() {
   appliedCapture = ""; appliedPlayback = ""; appliedChannel = "";
   appliedPTTMethod = ""; appliedRadioModel = ""; appliedDevicePath = ""; appliedBaudRate = "";
+  appliedPTTLine = ""; appliedPTTInvert = ""; appliedCM108GPIO = "";
 }
 
 function resetControls() {
@@ -788,6 +818,9 @@ function resetControls() {
   document.getElementById("pttMethodSelect").value = "none";
   document.getElementById("devicePathInput").value = "";
   document.getElementById("baudRateSelect").value = "0";
+  document.getElementById("pttLineSelect").value = "rts";
+  document.getElementById("pttInvertSelect").value = "none";
+  document.getElementById("cm108GPIOSelect").value = "3";
   updatePTTFieldState();
 }
 
@@ -823,6 +856,9 @@ function handleRadioList(msg) {
     if (!setSelectValue(document.getElementById("baudRateSelect"), baud))
       setSelectValue(document.getElementById("baudRateSelect"), "0");
   }
+  if (!appliedPTTLine) appliedPTTLine = msg.ptt_line || "rts";
+  if (!appliedPTTInvert) appliedPTTInvert = msg.ptt_invert || "none";
+  if (!appliedCM108GPIO) appliedCM108GPIO = String(msg.cm108_gpio || 3);
   restoreRadioSelection();
   updatePTTFieldState();
 }
@@ -1073,14 +1109,21 @@ document.getElementById("radioApplyBtn").addEventListener("click", function() {
   const modelId = getSelectValue(document.getElementById("radioModelSelect"));
   const devPath = document.getElementById("devicePathInput").value.trim();
   const baudRate = document.getElementById("baudRateSelect").value;
+  const pttLine = document.getElementById("pttLineSelect").value;
+  const pttInvert = document.getElementById("pttInvertSelect").value;
+  const cm108GPIO = document.getElementById("cm108GPIOSelect").value;
   if (method === "hamlib" && (!modelId || modelId === "-1")) return;
   if (method === "serial" && !devPath) return;
   appliedPTTMethod = method;
   appliedRadioModel = modelId;
   appliedDevicePath = devPath;
   appliedBaudRate = baudRate;
+  appliedPTTLine = pttLine;
+  appliedPTTInvert = pttInvert;
+  appliedCM108GPIO = cm108GPIO;
   sendJson({ command: "set_ptt_config", value: method, value2: devPath,
-             value3: modelId, value4: baudRate });
+             value3: modelId, value4: baudRate, value5: pttLine,
+             value6: pttInvert, value7: cm108GPIO });
 });
 
 document.getElementById("pttMethodSelect").addEventListener("change", updatePTTFieldState);

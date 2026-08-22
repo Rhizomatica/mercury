@@ -22,6 +22,32 @@ func TestPTTMethodOptions(t *testing.T) {
 	}
 }
 
+func TestRadioListAdvancedPTTSettings(t *testing.T) {
+	payload := []byte(`{"type":"radio_list","selected":"1","device_path":"COM4","serial_speed":9600,"ptt_method":"serial","ptt_line":"both","ptt_invert":"rts","cm108_gpio":4,"list":[]}`)
+	events := decodeWSMessage(1, payload)
+	if len(events) != 1 {
+		t.Fatalf("decodeWSMessage returned %d events, want 1", len(events))
+	}
+	event, ok := events[0].(RadioListEvent)
+	if !ok {
+		t.Fatalf("event has type %T, want RadioListEvent", events[0])
+	}
+	if event.PTTLine != "both" || event.PTTInvert != "rts" || event.CM108GPIO != "4" {
+		t.Fatalf("advanced PTT settings = line %q, invert %q, gpio %q",
+			event.PTTLine, event.PTTInvert, event.CM108GPIO)
+	}
+}
+
+func TestRadioListAdvancedPTTSettingsDefaultForOlderServer(t *testing.T) {
+	payload := []byte(`{"type":"radio_list","ptt_method":"serial","list":[]}`)
+	events := decodeWSMessage(1, payload)
+	event := events[0].(RadioListEvent)
+	if event.PTTLine != "rts" || event.PTTInvert != "none" || event.CM108GPIO != "3" {
+		t.Fatalf("legacy defaults = line %q, invert %q, gpio %q",
+			event.PTTLine, event.PTTInvert, event.CM108GPIO)
+	}
+}
+
 // TestConcurrentSpectrumAccessNoRace exercises the appState sharing between the
 // WebSocket reader goroutine (writer of spectrumValues/waterfallRows) and the
 // Fyne render goroutines (drawSpectrumImage/drawWaterfallImage). Run with -race:

@@ -129,7 +129,8 @@ int  ui_comm_handle_command(ui_ctx_t *ctx, const ws_command_t *cmd);
  * Returns -1 if no UI context is running. */
 int  ui_comm_command(const char *command, const char *value,
                      const char *value2, const char *value3,
-                     const char *value4);
+                     const char *value4, const char *value5,
+                     const char *value6, const char *value7);
 
 /* Enable / disable the waterfall/spectrum FFT pipeline at runtime.  Saves the
  * choice to mercury.ini so it survives restarts. */
@@ -156,7 +157,10 @@ int  ui_comm_get_audio_devices(ui_device_kind_t kind, ui_device_t *out, int max,
  * PTT device, Hamlib serial speed and active PTT method. */
 int  ui_comm_get_radio_list(ui_device_t *out, int max, char *selected, size_t sel_len,
                             char *device_path, size_t dev_len, int *serial_speed,
-                            char *ptt_method, size_t method_len);
+                            char *ptt_method, size_t method_len,
+                            char *ptt_line, size_t line_len,
+                            char *ptt_invert, size_t invert_len,
+                            int *cm108_gpio);
 
 /* Current RX input channel: 0 = left, 1 = right, 2 = stereo. */
 int  ui_comm_get_input_channel(void);

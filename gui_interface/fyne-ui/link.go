@@ -43,6 +43,9 @@ type Command struct {
 	Value2 string
 	Value3 string
 	Value4 string
+	Value5 string
+	Value6 string
+	Value7 string
 }
 
 // DeviceKind identifies which selector a device list belongs to.
@@ -83,6 +86,9 @@ type RadioListEvent struct {
 	DevicePath  string
 	SerialSpeed string
 	PTTMethod   string
+	PTTLine     string
+	PTTInvert   string
+	CM108GPIO   string
 }
 
 // LinkStateEvent reports the transport coming up or going down, with a
