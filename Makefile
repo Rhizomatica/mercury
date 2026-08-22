@@ -95,7 +95,22 @@ endif
 HAVE_HIDAPI :=
 HIDAPI_CFLAGS =
 HIDAPI_LDFLAGS =
-ifneq ($(OS),Windows_NT)
+HIDAPI_OBJS =
+HIDAPI_W64_DIR = radio_io/hidapi-w64
+ifeq ($(OS),Windows_NT)
+  # Vendored, like hamlib-w64: pkg-config on a cross-build would find the HOST
+  # hidapi and link something that cannot run on the target.  hidapi's Windows
+  # backend is self-contained source over setupapi/cfgmgr32, so it builds with
+  # the rest of the tree rather than needing a prebuilt library.
+  ifneq ($(wildcard $(HIDAPI_W64_DIR)/src/hid.c),)
+    HAVE_HIDAPI := 1
+    HIDAPI_CFLAGS := -I$(HIDAPI_W64_DIR)/include -DHAVE_HIDAPI
+    HIDAPI_LDFLAGS := -lsetupapi -lcfgmgr32 -lhid
+    HIDAPI_OBJS := $(HIDAPI_W64_DIR)/hid.o
+  endif
+else
+  # Linux and macOS: system package.  On macOS that is Homebrew's hidapi;
+  # without it the CM108 backend falls back to /dev/hidraw, which is Linux-only.
   HIDAPI_PC := $(firstword $(foreach m,hidapi-hidraw hidapi-libusb hidapi,\
                  $(shell pkg-config --exists $(m) 2>/dev/null && echo $(m))))
   ifneq ($(strip $(HIDAPI_PC)),)
@@ -105,11 +120,13 @@ ifneq ($(OS),Windows_NT)
   endif
 endif
 
+
 export HAVE_HAMLIB
 export HAVE_HERMES_SHM
 export HAVE_HIDAPI
 export HIDAPI_CFLAGS
 export HIDAPI_LDFLAGS
+export HIDAPI_OBJS
 
 include config.mk
 
@@ -153,7 +170,7 @@ MERCURY_LINK_INPUTS = \
 	gui_interface/ui_communication.o gui_interface/ui_status.o gui_interface/ui_devices.o \
 	gui_interface/websocket/mongoose.o gui_interface/websocket/mercury_websocket.o \
 	gui_interface/websocket/web_packed.o \
-	radio_io/radio_io.o radio_io/serial_ptt.o radio_io/cm108_ptt.o
+	radio_io/radio_io.o radio_io/serial_ptt.o radio_io/cm108_ptt.o $(HIDAPI_OBJS)
 
 ifeq ($(HAVE_HERMES_SHM),1)
 MERCURY_LINK_INPUTS += radio_io/sbitx_io.o radio_io/shm_utils.o
@@ -196,6 +213,10 @@ FORCE:
 main.o: main.c .git_hash_stamp
 	$(CC) $(CFLAGS) -c main.c
 
+# Vendored hidapi for the Windows cross-build (see the detection block above).
+$(HIDAPI_W64_DIR)/hid.o: $(HIDAPI_W64_DIR)/src/hid.c
+	$(CC) -O2 -I$(HIDAPI_W64_DIR)/include -I$(HIDAPI_W64_DIR)/src -c $< -o $@
+
 internal_deps:
 	$(MAKE) -C modem
 	$(MAKE) -C datalink_arq
@@ -226,7 +247,7 @@ MERCURY_CORE_OBJS = \
 	gui_interface/ui_communication.o gui_interface/ui_status.o gui_interface/ui_devices.o \
 	gui_interface/websocket/mongoose.o gui_interface/websocket/mercury_websocket.o \
 	gui_interface/websocket/web_packed.o \
-	radio_io/radio_io.o radio_io/serial_ptt.o radio_io/cm108_ptt.o
+	radio_io/radio_io.o radio_io/serial_ptt.o radio_io/cm108_ptt.o $(HIDAPI_OBJS)
 
 ifeq ($(HAVE_HERMES_SHM),1)
 MERCURY_CORE_OBJS += radio_io/sbitx_io.o radio_io/shm_utils.o

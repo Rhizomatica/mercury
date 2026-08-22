@@ -291,11 +291,16 @@ either method works. `cm108` needs no device path — Mercury finds it — but t
 HID endpoint is root-only by default, so it needs a udev rule if Mercury is not
 running as root.
 
-`cm108` uses **hidapi** when `pkg-config` finds it (`libhidapi-dev` on Debian),
-and otherwise talks to `/dev/hidraw` directly. hidapi is optional on purpose: a
-minimal Raspberry Pi build should not need another package to key a radio. The
-practical difference is portability — the direct path is Linux-only, so a
-Windows build would need hidapi vendored for the target the way hamlib is.
+`cm108` works on all three supported platforms, via hidapi:
+
+| Platform | hidapi source | Notes |
+|---|---|---|
+| Linux | `libhidapi-dev` (`pkg-config`) | Optional — without it Mercury talks to `/dev/hidraw` directly, so a minimal Raspberry Pi build needs no extra package |
+| macOS | `brew install hidapi` | |
+| Windows | vendored in `radio_io/hidapi-w64` | Built from source with the rest of the tree, like `hamlib-w64`; no prebuilt library needed |
+
+`pkg-config` detection is deliberately skipped for the Windows cross-build: it
+would find the *host* hidapi and link something that cannot run on the target.
 
 ## Documentation
 
