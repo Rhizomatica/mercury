@@ -43,6 +43,9 @@ struct cm108_variant {
     const char *name;
 };
 
+/* Only the hidapi and hidraw backends below identify the chip; the fallback
+ * branch for platforms with neither has no use for the table. */
+#if defined(HAVE_HIDAPI) || defined(__linux__)
 static const struct cm108_variant CM108_VARIANTS[] = {
     { 0x0D8C, 0x0008, "CM108/109/119 (legacy)" },
     { 0x0D8C, 0x0009, "CM108/109/119 (legacy)" },
@@ -69,6 +72,7 @@ static const char *variant_name(unsigned vid, unsigned pid)
             return CM108_VARIANTS[i].name;
     return NULL;
 }
+#endif /* HAVE_HIDAPI || __linux__ */
 
 /* GPIO n is bit n-1 of the mask byte.  Byte 2 carries the GPIO output value,
  * while byte 3 selects which GPIO output is being updated.  The selection must

@@ -97,6 +97,7 @@ HIDAPI_CFLAGS =
 HIDAPI_LDFLAGS =
 HIDAPI_OBJS =
 HIDAPI_W64_DIR = radio_io/hidapi-w64
+HIDAPI_MACOS_DIR = radio_io/hidapi-macos
 ifeq ($(OS),Windows_NT)
   # Vendored, like hamlib-w64: pkg-config on a cross-build would find the HOST
   # hidapi and link something that cannot run on the target.  hidapi's Windows
@@ -109,14 +110,28 @@ ifeq ($(OS),Windows_NT)
     HIDAPI_OBJS := $(HIDAPI_W64_DIR)/hid.o
   endif
 else
-  # Linux and macOS: system package.  On macOS that is Homebrew's hidapi;
-  # without it the CM108 backend falls back to /dev/hidraw, which is Linux-only.
-  HIDAPI_PC := $(firstword $(foreach m,hidapi-hidraw hidapi-libusb hidapi,\
-                 $(shell pkg-config --exists $(m) 2>/dev/null && echo $(m))))
-  ifneq ($(strip $(HIDAPI_PC)),)
-    HAVE_HIDAPI := 1
-    HIDAPI_CFLAGS := $(shell pkg-config --cflags $(HIDAPI_PC)) -DHAVE_HIDAPI
-    HIDAPI_LDFLAGS := $(shell pkg-config --libs $(HIDAPI_PC))
+  # macOS: vendored first, like hamlib-macos.  A stock macOS has neither
+  # Homebrew nor pkg-config, so a pkg-config-only probe silently compiles the
+  # CM108 backend out, and the binary then tells the user CM108 is "Linux only"
+  # -- on a platform we claim to support.  hidapi's macOS backend is
+  # self-contained source over IOKit, so it builds with the rest of the tree.
+  ifeq ($(UNAME_S),Darwin)
+    ifneq ($(wildcard $(HIDAPI_MACOS_DIR)/src/hid.c),)
+      HAVE_HIDAPI := 1
+      HIDAPI_CFLAGS := -I$(HIDAPI_MACOS_DIR)/include -DHAVE_HIDAPI
+      HIDAPI_LDFLAGS := -framework IOKit -framework CoreFoundation -framework AppKit
+      HIDAPI_OBJS := $(HIDAPI_MACOS_DIR)/hid.o
+    endif
+  endif
+  # Linux, and macOS without the vendored copy: system package via pkg-config.
+  ifneq ($(HAVE_HIDAPI),1)
+    HIDAPI_PC := $(firstword $(foreach m,hidapi-hidraw hidapi-libusb hidapi,\
+                   $(shell pkg-config --exists $(m) 2>/dev/null && echo $(m))))
+    ifneq ($(strip $(HIDAPI_PC)),)
+      HAVE_HIDAPI := 1
+      HIDAPI_CFLAGS := $(shell pkg-config --cflags $(HIDAPI_PC)) -DHAVE_HIDAPI
+      HIDAPI_LDFLAGS := $(shell pkg-config --libs $(HIDAPI_PC))
+    endif
   endif
 endif
 
@@ -216,6 +231,11 @@ main.o: main.c .git_hash_stamp
 # Vendored hidapi for the Windows cross-build (see the detection block above).
 $(HIDAPI_W64_DIR)/hid.o: $(HIDAPI_W64_DIR)/src/hid.c
 	$(CC) -O2 -I$(HIDAPI_W64_DIR)/include -I$(HIDAPI_W64_DIR)/src -c $< -o $@
+
+# Vendored hidapi for macOS: the IOKit backend, built from source so a stock
+# macOS with only the Xcode command line tools still gets CM108 PTT.
+$(HIDAPI_MACOS_DIR)/hid.o: $(HIDAPI_MACOS_DIR)/src/hid.c
+	$(CC) -O2 -I$(HIDAPI_MACOS_DIR)/include -c $< -o $@
 
 internal_deps:
 	$(MAKE) -C modem
