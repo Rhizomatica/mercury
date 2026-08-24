@@ -1015,16 +1015,33 @@ static bool bcast_process_decoded_frame(uint8_t *decoded_frame, int frame_len,
         memory_order_relaxed);
 
     /* CMD_DATA is used by two very different clients:
-     *   - hermes-broadcast: a full modem frame with a Mercury broadcast header
+     *   - hermes-broadcast: a modem frame with a Mercury broadcast header
      *     already in place (PACKET_TYPE_BROADCAST_CONTROL/_DATA) → pass raw.
-     *   - VarAC beacons/pings: a short unformatted KISS payload with no Mercury
-     *     header, whose first byte is arbitrary (it can even land in the
-     *     broadcast-type range — e.g. a lowercase letter) → wrap it like an
-     *     AX.25 frame so the receiver routes it to broadcast.
-     * Distinguishing by the header bits alone misclassifies ~25% of arbitrary
-     * first bytes, so require the frame to also be exactly frame_size: a real
-     * hermes-broadcast frame always fills the modem frame, while a 20-byte
-     * beacon can never satisfy that. */
+     *   - VarAC beacons/pings: an unformatted KISS payload with no Mercury
+     *     header, whose first byte is arbitrary → wrap it like an AX.25 frame
+     *     so the receiver routes it to broadcast.
+     *
+     * The type bits alone are not enough: they are the top 3 of the first
+     * byte, so 64 of 256 arbitrary first bytes look like a broadcast type --
+     * 25%, including the whole lowercase alphabet.  A beacon starting with a
+     * lowercase letter would be passed raw and lost.
+     *
+     * Frame LENGTH cannot be the second test either, tempting as it is.
+     * hermes-broadcast does not always fill the modem frame: transmitter.c
+     * sends payload frames as packet_size + RQ_HEADER_SIZE (== frame_size) but
+     * CONFIG frames as packet_size alone, i.e. RQ_HEADER_SIZE short, and
+     * relies on the zero-padding below to bring them up.  Requiring
+     * frame_len == frame_size drops every config packet, and since its
+     * receiver discards anything that is not exactly frame_size, the far end
+     * never gets the RaptorQ configuration and can never start decoding.
+     *
+     * So validate the WHOLE header byte instead.  hermes-broadcast writes both
+     * of its frame kinds with extension 0 (hermes_write_frame_header(...,
+     * PACKET_RQ_CONFIG/PACKET_RQ_PAYLOAD, 0)), while a beacon's extension bits
+     * are as arbitrary as the rest of its first byte.  Type plus a zero
+     * extension takes the false-positive space from 64/256 to 2/256 (0.8%),
+     * and to ZERO across a-z: the only printable ASCII that still collides is
+     * a leading backtick. */
     bool is_raw_modem_frame = false;
     if (kiss_cmd == CMD_DATA)
     {
@@ -1032,7 +1049,7 @@ static bool bcast_process_decoded_frame(uint8_t *decoded_frame, int frame_len,
         is_raw_modem_frame =
             (pt == PACKET_TYPE_BROADCAST_CONTROL ||
              pt == PACKET_TYPE_BROADCAST_DATA) &&
-            (size_t)frame_len == frame_size;
+            frame_header_extension(decoded_frame[0]) == 0;
     }
 
     /* hermes-broadcast / unformatted CMD_DATA frames never fragment: anything
