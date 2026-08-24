@@ -71,12 +71,12 @@ FSM transmits CALLs unconditionally. So Mercury has ARDOP's *sensor* but not its
   VARA and is friendlier on a shared channel than failing instantly.
 - **Config-gated.** New knob (e.g. `busy_gate_tx`), default *on* when the busy
   detector is enabled; document it beside the existing `busy_*` knobs in
-  `docs/TNC.md`. Interaction is benign: a host (uucp/VarAC) may also gate on the
+  `docs/TNC.md`. Interaction is benign: a host (uucp, or a VARA client) may also gate on the
   `BUSY` report — TNC-level LBT is just a politeness backstop, and double-gating
   does no harm.
 
 **Why it matters now.** Mercury increasingly shares channels with Winlink,
-VarAC and BPQ stations (e.g. the 14.110 neighbourhood). Gating our own CALLs on a
+VARA and BPQ stations (e.g. the 14.110 neighbourhood). Gating our own CALLs on a
 busy channel is basic good-neighbour behaviour and costs us almost nothing to
 add given the detector is already built and tuned.
 

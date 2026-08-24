@@ -967,7 +967,7 @@ void *server_worker_thread_ctl(void *port)
  * The broadcast datalink uses fixed-size modem frames, so a short VARA/AX.25
  * frame is zero-padded up to frame_size for TX. Without recording the original
  * length, the receiver can only hand the client the whole padded frame, and a
- * VARA client (e.g. VarAC) then rejects it because the trailing zeros corrupt
+ * VARA client then rejects it because the trailing zeros corrupt
  * its payload. To fix this we store the real payload length in a 2-byte
  * big-endian prefix right after the Mercury header and flag it with a header
  * extension bit, so the receiver delivers the exact original frame. Receivers
@@ -979,10 +979,10 @@ void *server_worker_thread_ctl(void *port)
                                       standard KISS CMD_DATA/CMD_AX25 (0x00), so
                                       deliver with 0x00 (e.g. Reticulum). Clear =
                                       VARA compressed-callsign framing, deliver
-                                      with CMD_AX25CALLSIGN (VarAC). */
+                                      with CMD_AX25CALLSIGN (VARA). */
 #define BCAST_EXT_KISS_DATA  0x04  /* header extension bit: sender framed with
                                       unformatted KISS CMD_DATA (0x02, e.g. a
-                                      VarAC beacon/ping), so deliver with 0x02.
+                                      VARA beacon/ping), so deliver with 0x02.
                                       Mutually exclusive with _KISS_STD. */
 
 /*
@@ -990,7 +990,7 @@ void *server_worker_thread_ctl(void *port)
  * data_tx_buffer_broadcast.
  *
  * VARA clients (CMD_AX25 / CMD_AX25CALLSIGN, and CMD_DATA frames that do not
- * already carry a Mercury header — e.g. a VarAC beacon): inject the 1-byte
+ * already carry a Mercury header — e.g. a VARA beacon): inject the 1-byte
  * Mercury PACKET_TYPE_BROADCAST_DATA header plus a 2-byte length prefix
  * (flagged with BCAST_EXT_LEN_PREFIX), truncate if the payload would overflow,
  * then zero-pad to frame_size.  The sender's KISS framing is recorded in the
@@ -1017,7 +1017,7 @@ static bool bcast_process_decoded_frame(uint8_t *decoded_frame, int frame_len,
     /* CMD_DATA is used by two very different clients:
      *   - hermes-broadcast: a modem frame with a Mercury broadcast header
      *     already in place (PACKET_TYPE_BROADCAST_CONTROL/_DATA) → pass raw.
-     *   - VarAC beacons/pings: an unformatted KISS payload with no Mercury
+     *   - VARA beacons/pings: an unformatted KISS payload with no Mercury
      *     header, whose first byte is arbitrary → wrap it like an AX.25 frame
      *     so the receiver routes it to broadcast.
      *
@@ -1122,14 +1122,14 @@ static bool bcast_process_decoded_frame(uint8_t *decoded_frame, int frame_len,
  * padding dropped) and reply with the sender's own KISS framing, carried in
  * the BCAST_EXT_KISS_STD / BCAST_EXT_KISS_DATA header bits: standard 0x00
  * (CMD_AX25, e.g. Reticulum) when _KISS_STD set, unformatted 0x02 (CMD_DATA,
- * e.g. a VarAC beacon) when _KISS_DATA set, else CMD_AX25CALLSIGN (VarAC) —
+ * e.g. a VARA beacon) when _KISS_DATA set, else CMD_AX25CALLSIGN (VARA) —
  * which is also what frames from pre-extension senders yield. This is detected
  * from the received frame itself, so it works on a receive-only station
  * regardless of the latched bcast_reply_cmd.
  *
  * Otherwise mirror the latched bcast_reply_cmd:
  *   CMD_DATA (hermes-broadcast): forward the full frame including the header.
- *   else (VarAC/VARA legacy): strip the 1-byte Mercury header only.
+ *   else (VARA legacy): strip the 1-byte Mercury header only.
  *
  * Sets *payload_out and *payload_len_out; returns the reply command byte.
  */
@@ -1141,7 +1141,7 @@ static uint8_t bcast_get_tx_payload(uint8_t *frame_buffer, size_t frame_size,
      * transmitted (bcast_reply_cmd defaults to CMD_DATA and is reset on every
      * client connect, so a receive-only station would otherwise forward the raw
      * padded frame). Deliver exactly the original payload and reply with the
-     * sender's KISS command so a VARA client (VarAC) accepts it. */
+     * sender's KISS command so a VARA client accepts it. */
     if (frame_size >= HEADER_SIZE + BCAST_LEN_SIZE &&
         frame_header_packet_type(frame_buffer[0]) == PACKET_TYPE_BROADCAST_DATA &&
         (frame_header_extension(frame_buffer[0]) & BCAST_EXT_LEN_PREFIX))
@@ -1510,7 +1510,7 @@ void tnc_send_sn(float snr)
 
 void tnc_send_busy(bool busy)
 {
-    /* VARA-compatible channel-occupancy notification: hosts (VarAC, BPQ32,
+    /* VARA-compatible channel-occupancy notification: hosts (BPQ32,
      * Winlink) already understand "BUSY ON" / "BUSY OFF".  Edge-triggered by
      * the caller (the channel-busy detector), so this only fires on a real
      * CLEAR<->BUSY transition — which is why it goes out on the critical path
