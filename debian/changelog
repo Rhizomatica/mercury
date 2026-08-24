@@ -1,3 +1,26 @@
+mercury (1.9.13-1) unstable; urgency=medium
+
+  * Release 1.9.13.
+  * release: bank the signed zip before attempting the installer.
+  * gui: tell two identical-looking sound cards apart (#189).
+  * gui: keep the device id whole when the label will not fit (#189 follow-up).
+  * audioio: support the 44.1 kHz family, and report the failures that remain (#193).
+  * build+tests: -latomic on armhf, and a stale-test-binary hazard (#200).
+  * Fix VARA/Pat connect-disconnect hangs and uncommanded exit (#200).
+  * UI: highlight TX/RX direction and align spectrum/waterfall to 0-3000 Hz.
+  * ui: compile the web pages into the binary so they are actually reachable (#204).
+  * freedv: honor configured archiver.
+  * arq/tnc: acknowledge every callsign MYCALL accepts, not just the primary.
+  * ci: let the Windows job check out on pull requests from forks.
+  * Avoid libatomic on macOS arm64 build.
+  * ci: build macOS arm64, the target that had no coverage at all.
+  * fix(arq): strictly validate session IDs.
+  * fix(tests): avoid integration test port collisions.
+  * Add Logs menu, Submit issue item, and logs directory handling.
+  * Support VarAC Beacon.
+
+ -- Rafael Diniz <rafael@riseup.net>  Mon, 24 Aug 2026 19:58:26 +0000
+
 mercury (1.9.12-1) unstable; urgency=medium
 
   * Release 1.9.12.

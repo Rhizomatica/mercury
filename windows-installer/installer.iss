@@ -3,7 +3,7 @@
 ; =====================================================================
 
 #define MyAppName "Mercury HF Modem"
-#define MyAppVersion "1.9.12"
+#define MyAppVersion "1.9.13"
 #define MyAppPublisher "© 2026 Rhizomatica Communications"
 #define MyAppURL "https://github.com/Rhizomatica/mercury"
 #define MyAppExeName "mercury-ui.exe"
