@@ -68,7 +68,7 @@ LISTEN CQ\r
 When enabled, Mercury enters the LISTENING state and will accept incoming
 CALL frames addressed to the local callsign (or any callsign if PUBLIC is ON).
 
-`LISTEN CQ` is treated as `LISTEN ON` (VarAC compatibility).
+`LISTEN CQ` is treated as `LISTEN ON` (VARA compatibility).
 
 ---
 
@@ -125,7 +125,7 @@ COMPRESSION OFF\r
 **Response:** `OK\r` (always).
 
 Mercury does not use compression; this command exists so VARA-compatible
-clients (e.g., Pat, VarAC) can connect without errors.
+clients can connect without errors.
 
 ---
 
@@ -141,8 +141,8 @@ CHAT OFF\r
 **Response:** `OK\r` on success, `WRONG\r` on error.
 
 `CHAT ON` implicitly enables `LISTEN ON`, placing Mercury in the LISTENING
-state.  This matches VARA behavior where chat applications (VarAC, VARA Chat)
-expect the modem to be ready for incoming connections after `CHAT ON`.
+state.  This matches VARA behavior, where chat applications expect the modem
+to be ready for incoming connections after `CHAT ON`.
 
 `CHAT OFF` is acknowledged but has no effect — Mercury does not currently
 differentiate chat and file-transfer timing.
@@ -243,8 +243,8 @@ VERSION\r
 
 **Response:** A VARA-compatible version string on the control port.
 
-This command exists for VARA-compatible clients (e.g., VarAC) that check
-the modem version at startup.
+This command exists for VARA-compatible clients that check the modem version
+at startup.
 
 ---
 
@@ -430,7 +430,7 @@ advertised inside that CQ frame (`500`, `2300`, or `2750`).
 
 Emitted by the optional channel-busy (occupancy) detector when it observes the
 HF channel transition between clear and occupied, using VARA's exact wording so
-existing VARA-compatible hosts (VarAC, BPQ32, Winlink) act on them unchanged.
+existing VARA-compatible hosts (BPQ32, Winlink) act on them unchanged.
 Edge-triggered: `BUSY ON\r` on clear→busy, `BUSY OFF\r` on busy→clear.
 
 The detector is **disabled by default** and is enabled via the `[channel]`
@@ -507,12 +507,12 @@ fixed-size KISS-encoded packets matching the modem's payload size.
 Three client framings are accepted, distinguished by the KISS command byte:
 
 - `0x00` (standard KISS data / VARA "AX.25 standard") and `0x01` (VARA
-  "AX.25 7-char callsign", used by VarAC): Mercury injects its 1-byte
+  "AX.25 7-char callsign", used by VARA): Mercury injects its 1-byte
   broadcast header plus a 2-byte payload-length prefix, zero-pads to the
   modem frame size, and records which of the two framings the sender used
   in a header extension bit (`BCAST_EXT_KISS_STD`).  The receiving side
   delivers exactly the original payload with the **sender's** command byte
-  — so VarAC↔VarAC traffic stays `0x01` and standard-KISS clients
+  — so VARA↔VARA traffic stays `0x01` and standard-KISS clients
   (e.g. Reticulum, see [RETICULUM.md](RETICULUM.md)) get `0x00`.
 - `0x02` (`CMD_DATA`) is used by two different clients and is distinguished
   by the whole first byte:
@@ -521,7 +521,7 @@ Three client framings are accepted, distinguished by the KISS command byte:
     `PACKET_TYPE_BROADCAST_DATA`) **and** a zero extension, which is what
     hermes-broadcast writes for both its config and payload frames.  Passed
     raw; zero-padded if short, discarded if oversized.
-  - **VarAC beacons/pings** (and any other unformatted `CMD_DATA` payload):
+  - **VARA beacons/pings** (and any other unformatted `CMD_DATA` payload):
     Mercury wraps it exactly like `0x00`/`0x01` and records the framing in a
     `BCAST_EXT_KISS_DATA` extension bit, so the receiver delivers the original
     payload back as `0x02`.

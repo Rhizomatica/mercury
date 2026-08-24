@@ -800,7 +800,7 @@ void test_bcast_rx_cmd_data_exact_size(void)
 
 /* CMD_DATA, short frame with a broadcast-header-looking first byte (0x60): NOT
  * hermes-broadcast, which always fills frame_size, so it must be wrapped like
- * an unformatted VarAC frame rather than passed through raw. */
+ * an unformatted VARA frame rather than passed through raw. */
 /* 0x60 is the one genuinely ambiguous first byte: it is
  * PACKET_TYPE_BROADCAST_CONTROL with a zero extension, i.e. byte-for-byte what
  * hermes-broadcast puts on a config frame -- and also a printable backtick that
@@ -1074,7 +1074,7 @@ void test_bcast_tx_lenprefix_ignores_reply_cmd_default(void)
 /* Standard-KISS roundtrip: a frame the client transmitted with KISS cmd 0x00
  * (CMD_AX25, e.g. Reticulum) must carry the BCAST_EXT_KISS_STD header bit on
  * the air and be delivered on the far side with cmd 0x00 — even on a
- * receive-only station (reply_cmd still at its default). VarAC-framed frames
+ * receive-only station (reply_cmd still at its default). VARA-framed frames
  * (cmd 0x01) must NOT carry the bit and keep being delivered as 0x01, which
  * test_bcast_vara_length_roundtrip guards. */
 void test_bcast_std_kiss_roundtrip(void)
@@ -1111,19 +1111,19 @@ void test_bcast_std_kiss_roundtrip(void)
     TEST_ASSERT_EQUAL_HEX8_ARRAY(orig, payload, orig_len);
 }
 
-/* CMD_DATA with no Mercury header (VarAC beacon/ping): the frame must be
+/* CMD_DATA with no Mercury header (VARA beacon/ping): the frame must be
  * wrapped with the broadcast header + length prefix, flagged with the
  * BCAST_EXT_KISS_DATA bit so the far side mirrors the 0x02 framing.  This is
- * the regression for the bug where a VarAC beacon was queued raw (its first
+ * the regression for the bug where a VARA beacon was queued raw (its first
  * byte collided with an ARQ packet type) and dropped on the receiver. */
-void test_bcast_rx_cmd_data_varac_beacon_wrapped(void)
+void test_bcast_rx_cmd_data_vara_beacon_wrapped(void)
 {
     const size_t fsz = 10;
     broadcast_frame_size_cfg = fsz;
 
     uint8_t frame[MAX_PAYLOAD];
     memset(frame, 0, sizeof(frame));
-    /* VarAC beacon body: first byte 0x20 decodes as an ARQ type, i.e. NOT a
+    /* VARA beacon body: first byte 0x20 decodes as an ARQ type, i.e. NOT a
      * broadcast header, so it must be treated as an unformatted client frame. */
     for (int i = 0; i < 5; i++) frame[i] = (uint8_t)(0x20 + i);
 
@@ -1142,7 +1142,7 @@ void test_bcast_rx_cmd_data_varac_beacon_wrapped(void)
         atomic_load_explicit(&bcast_reply_cmd, memory_order_relaxed));
 }
 
-/* Round-trip: a CMD_DATA unformatted frame (VarAC beacon) run through TX
+/* Round-trip: a CMD_DATA unformatted frame (VARA beacon) run through TX
  * framing then RX extraction must be delivered as CMD_DATA with the exact
  * original length, even on a receive-only station (reply_cmd at its default). */
 /* hermes-broadcast sends CONFIG frames RQ_HEADER_SIZE short of a full modem
@@ -1334,7 +1334,7 @@ int main(void)
     RUN_TEST(test_bcast_vara_length_roundtrip);
     RUN_TEST(test_bcast_tx_lenprefix_ignores_reply_cmd_default);
     RUN_TEST(test_bcast_std_kiss_roundtrip);
-    RUN_TEST(test_bcast_rx_cmd_data_varac_beacon_wrapped);
+    RUN_TEST(test_bcast_rx_cmd_data_vara_beacon_wrapped);
     RUN_TEST(test_bcast_short_hermes_config_passed_raw);
     RUN_TEST(test_bcast_beacon_broadcast_type_nonzero_ext_wrapped);
     RUN_TEST(test_bcast_data_lenprefix_roundtrip);
