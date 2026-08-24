@@ -792,27 +792,69 @@ void test_bcast_rx_cmd_data_exact_size(void)
         atomic_load_explicit(&bcast_reply_cmd, memory_order_relaxed));
 }
 
-/* CMD_DATA, short frame: zero-padded to frame_size */
-void test_bcast_rx_cmd_data_short_padded(void)
+/* CMD_DATA, short frame with a broadcast-header-looking first byte (0x60): NOT
+ * hermes-broadcast, which always fills frame_size, so it must be wrapped like
+ * an unformatted VarAC frame rather than passed through raw. */
+void test_bcast_rx_cmd_data_short_wrapped(void)
 {
     const size_t fsz = 10;
     broadcast_frame_size_cfg = fsz;
 
     uint8_t frame[MAX_PAYLOAD];
     memset(frame, 0, sizeof(frame));
-    frame[0] = 0x60;
-    memset(frame + 1, 0xBB, 4); /* 5 bytes total */
+    frame[0] = 0x60;                 /* PACKET_TYPE_BROADCAST_CONTROL header byte */
+    memset(frame + 1, 0xBB, 4);      /* 5 bytes total */
 
     bool ok = bcast_process_decoded_frame(frame, 5, CMD_DATA, fsz);
 
     TEST_ASSERT_TRUE(ok);
     TEST_ASSERT_EQUAL(1, write_buffer_call_count);
     TEST_ASSERT_EQUAL_size_t(fsz, last_write_buffer_len);
-    /* Tail must be zero-filled */
-    for (size_t i = 5; i < fsz; i++)
+    /* Wrapped: header + 2-byte length prefix, original payload shifted. */
+    TEST_ASSERT_EQUAL_HEX8(BCAST_HDR_BYTE_DATA, last_write_buffer_data[0]);
+    TEST_ASSERT_EQUAL_HEX8(0x00, last_write_buffer_data[1]);
+    TEST_ASSERT_EQUAL_HEX8(0x05, last_write_buffer_data[2]);
+    TEST_ASSERT_EQUAL_HEX8(0x60, last_write_buffer_data[3]);
+    for (int i = 1; i < 5; i++)
+        TEST_ASSERT_EQUAL_HEX8(0xBB, last_write_buffer_data[3 + i]);
+    /* Tail zero-filled */
+    for (size_t i = 8; i < fsz; i++)
         TEST_ASSERT_EQUAL_HEX8(0x00, last_write_buffer_data[i]);
     TEST_ASSERT_EQUAL_HEX8(CMD_DATA,
         atomic_load_explicit(&bcast_reply_cmd, memory_order_relaxed));
+}
+
+/* A short beacon whose body begins with a lowercase letter ('a'=0x61, 'z'=0x7A)
+ * decodes as PACKET_TYPE_BROADCAST_CONTROL (0x60-0x7F first-byte range).  It
+ * must still be wrapped — the length check, not just the header bits, is what
+ * keeps it from being mistaken for a full hermes-broadcast frame. */
+void test_bcast_rx_cmd_data_short_lowercase_wrapped(void)
+{
+    const size_t fsz = 126;
+    broadcast_frame_size_cfg = fsz;
+
+    const uint8_t firsts[] = { 'a', 'z' };  /* 0x61, 0x7A → packet type 3 */
+    for (size_t k = 0; k < sizeof(firsts) / sizeof(firsts[0]); k++)
+    {
+        uint8_t frame[MAX_PAYLOAD];
+        memset(frame, 0, sizeof(frame));
+        frame[0] = firsts[k];
+        memset(frame + 1, 0xCC, 19);        /* 20 bytes total, like a beacon */
+
+        write_buffer_call_count = 0;
+        memset(last_write_buffer_data, 0, sizeof(last_write_buffer_data));
+
+        bool ok = bcast_process_decoded_frame(frame, 20, CMD_DATA, fsz);
+
+        TEST_ASSERT_TRUE(ok);
+        TEST_ASSERT_EQUAL(1, write_buffer_call_count);
+        TEST_ASSERT_EQUAL_size_t(fsz, last_write_buffer_len);
+        TEST_ASSERT_EQUAL_HEX8(BCAST_HDR_BYTE_DATA, last_write_buffer_data[0]);
+        TEST_ASSERT_EQUAL_HEX8(0x00, last_write_buffer_data[1]);
+        TEST_ASSERT_EQUAL_HEX8(0x14, last_write_buffer_data[2]); /* len = 20 */
+        TEST_ASSERT_EQUAL_HEX8(firsts[k], last_write_buffer_data[3]);
+        TEST_ASSERT_EQUAL_HEX8(0xCC, last_write_buffer_data[4]);
+    }
 }
 
 /* CMD_DATA, oversized, with a real Mercury broadcast header (hermes-broadcast):
@@ -1066,7 +1108,7 @@ void test_bcast_rx_cmd_data_varac_beacon_wrapped(void)
 
     uint8_t frame[MAX_PAYLOAD];
     memset(frame, 0, sizeof(frame));
-    /* VarAC beacon body: first byte 0x2E decodes as an ARQ type, i.e. NOT a
+    /* VarAC beacon body: first byte 0x20 decodes as an ARQ type, i.e. NOT a
      * broadcast header, so it must be treated as an unformatted client frame. */
     for (int i = 0; i < 5; i++) frame[i] = (uint8_t)(0x20 + i);
 
@@ -1210,7 +1252,8 @@ int main(void)
     RUN_TEST(test_tnc_send_registered);
     /* Broadcast framing helper tests */
     RUN_TEST(test_bcast_rx_cmd_data_exact_size);
-    RUN_TEST(test_bcast_rx_cmd_data_short_padded);
+    RUN_TEST(test_bcast_rx_cmd_data_short_wrapped);
+    RUN_TEST(test_bcast_rx_cmd_data_short_lowercase_wrapped);
     RUN_TEST(test_bcast_rx_cmd_data_oversized_discarded);
     RUN_TEST(test_bcast_rx_vara_header_injected);
     RUN_TEST(test_bcast_rx_cmd_ax25_reply_cmd);

@@ -997,8 +997,9 @@ void *server_worker_thread_ctl(void *port)
  * header extension (BCAST_EXT_KISS_STD for 0x00, BCAST_EXT_KISS_DATA for 0x02,
  * neither for 0x01) so the receiving side can mirror it.
  *
- * hermes-broadcast (CMD_DATA with an existing Mercury broadcast header): the
- * frame is passed raw — zero-pad if short, discard if oversized.
+ * hermes-broadcast (CMD_DATA): a full modem frame (frame_len == frame_size)
+ * with a Mercury broadcast header already in place — passed raw.  Oversized
+ * CMD_DATA frames are discarded.
  *
  * Also latches bcast_reply_cmd so send_thread mirrors the client's framing.
  *
@@ -1014,18 +1015,33 @@ static bool bcast_process_decoded_frame(uint8_t *decoded_frame, int frame_len,
         memory_order_relaxed);
 
     /* CMD_DATA is used by two very different clients:
-     *   - hermes-broadcast: full modem frame with a Mercury broadcast header
+     *   - hermes-broadcast: a full modem frame with a Mercury broadcast header
      *     already in place (PACKET_TYPE_BROADCAST_CONTROL/_DATA) → pass raw.
-     *   - VarAC beacons/pings: unformatted KISS payload with no Mercury header
-     *     (its first byte is arbitrary and may even decode as an ARQ type) →
-     *     wrap it like an AX.25 frame so the receiver routes it to broadcast.
-     * Distinguish by the header byte already being a broadcast type. */
+     *   - VarAC beacons/pings: a short unformatted KISS payload with no Mercury
+     *     header, whose first byte is arbitrary (it can even land in the
+     *     broadcast-type range — e.g. a lowercase letter) → wrap it like an
+     *     AX.25 frame so the receiver routes it to broadcast.
+     * Distinguishing by the header bits alone misclassifies ~25% of arbitrary
+     * first bytes, so require the frame to also be exactly frame_size: a real
+     * hermes-broadcast frame always fills the modem frame, while a 20-byte
+     * beacon can never satisfy that. */
     bool is_raw_modem_frame = false;
     if (kiss_cmd == CMD_DATA)
     {
         uint8_t pt = frame_header_packet_type(decoded_frame[0]);
-        is_raw_modem_frame = (pt == PACKET_TYPE_BROADCAST_CONTROL ||
-                              pt == PACKET_TYPE_BROADCAST_DATA);
+        is_raw_modem_frame =
+            (pt == PACKET_TYPE_BROADCAST_CONTROL ||
+             pt == PACKET_TYPE_BROADCAST_DATA) &&
+            (size_t)frame_len == frame_size;
+    }
+
+    /* hermes-broadcast / unformatted CMD_DATA frames never fragment: anything
+     * larger than one modem frame is discarded (0x00/0x01 truncate instead). */
+    if (kiss_cmd == CMD_DATA && (size_t)frame_len > frame_size)
+    {
+        HLOGW("tcp-bcast", "Discarding broadcast frame: size %d exceeds modem frame size %zu",
+              frame_len, frame_size);
+        return false;
     }
 
     bool needs_wrap = (kiss_cmd == CMD_AX25 || kiss_cmd == CMD_AX25CALLSIGN) ||
