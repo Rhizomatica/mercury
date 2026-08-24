@@ -515,17 +515,27 @@ Three client framings are accepted, distinguished by the KISS command byte:
   — so VarAC↔VarAC traffic stays `0x01` and standard-KISS clients
   (e.g. Reticulum, see [RETICULUM.md](RETICULUM.md)) get `0x00`.
 - `0x02` (`CMD_DATA`) is used by two different clients and is distinguished
-  by the frame length *and* content:
-  - **hermes-broadcast**: a **full** modem frame (`frame_len == frame_size`)
-    that carries a Mercury broadcast header
-    (`PACKET_TYPE_BROADCAST_CONTROL`/`PACKET_TYPE_BROADCAST_DATA`), so it is
-    passed raw and receivers get the full unmodified frame back.
-  - **VarAC beacons/pings** (and any other short unformatted `CMD_DATA`
-    payload): Mercury wraps it exactly like `0x00`/`0x01` and records the
-    framing in a `BCAST_EXT_KISS_DATA` extension bit, so the receiver
-    delivers the original payload back as `0x02`.  Without the length check
-    a short beacon whose first byte happened to be e.g. a lowercase letter
-    would be mistaken for a hermes-broadcast header and dropped.
+  by the whole first byte:
+  - **hermes-broadcast**: the frame carries a Mercury broadcast header — a
+    broadcast packet type (`PACKET_TYPE_BROADCAST_CONTROL`/
+    `PACKET_TYPE_BROADCAST_DATA`) **and** a zero extension, which is what
+    hermes-broadcast writes for both its config and payload frames.  Passed
+    raw; zero-padded if short, discarded if oversized.
+  - **VarAC beacons/pings** (and any other unformatted `CMD_DATA` payload):
+    Mercury wraps it exactly like `0x00`/`0x01` and records the framing in a
+    `BCAST_EXT_KISS_DATA` extension bit, so the receiver delivers the original
+    payload back as `0x02`.
+
+  Testing only the packet-type bits is not sufficient — they are the top 3
+  bits, so 25% of arbitrary first bytes look like a broadcast type, including
+  every lowercase letter, and such a beacon would be passed raw and lost.
+  Requiring a zero extension as well cuts that to 0.8%, and to nothing across
+  `a`–`z`.
+
+  Frame length must **not** be used as the discriminator: hermes-broadcast
+  sends its config frames `RQ_HEADER_SIZE` short of a full modem frame and
+  relies on Mercury's zero-padding, so a `frame_len == frame_size` test drops
+  every config packet and the far side never starts decoding.
 
 Payloads larger than the modem frame (minus 3 bytes of header+length)
 are truncated (`0x00`/`0x01`/unformatted-`0x02`) or discarded (raw

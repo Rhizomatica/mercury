@@ -771,6 +771,12 @@ void test_cmd_callint_negative(void)
 #define BCAST_HDR_BYTE_LEN   (BCAST_HDR_BYTE | BCAST_EXT_LEN_PREFIX)
 #define BCAST_HDR_BYTE_STD   (BCAST_HDR_BYTE | BCAST_EXT_LEN_PREFIX | BCAST_EXT_KISS_STD)
 #define BCAST_HDR_BYTE_DATA  (BCAST_HDR_BYTE | BCAST_EXT_LEN_PREFIX | BCAST_EXT_KISS_DATA)
+/* A RAW hermes-broadcast header: broadcast packet type with a ZERO extension,
+ * which is what hermes_write_frame_header(..., PACKET_RQ_CONFIG, 0) produces.
+ * Distinct from BCAST_HDR_BYTE_DATA above, which is the header Mercury writes
+ * when it WRAPS a client payload. */
+#define BCAST_HDR_RAW_CONTROL \
+    ((uint8_t)(PACKET_TYPE_BROADCAST_CONTROL << PACKET_TYPE_SHIFT))
 
 /* CMD_DATA, exact frame_size: queued unchanged, bcast_reply_cmd = CMD_DATA */
 void test_bcast_rx_cmd_data_exact_size(void)
@@ -795,30 +801,39 @@ void test_bcast_rx_cmd_data_exact_size(void)
 /* CMD_DATA, short frame with a broadcast-header-looking first byte (0x60): NOT
  * hermes-broadcast, which always fills frame_size, so it must be wrapped like
  * an unformatted VarAC frame rather than passed through raw. */
-void test_bcast_rx_cmd_data_short_wrapped(void)
+/* 0x60 is the one genuinely ambiguous first byte: it is
+ * PACKET_TYPE_BROADCAST_CONTROL with a zero extension, i.e. byte-for-byte what
+ * hermes-broadcast puts on a config frame -- and also a printable backtick that
+ * a beacon could in principle start with.  Nothing in the frame distinguishes
+ * them.
+ *
+ * Resolve it in favour of hermes-broadcast: that is a protocol in daily use
+ * whose config frames arrive short by RQ_HEADER_SIZE, and whose receiver
+ * discards anything that is not exactly frame_size, so guessing "beacon" here
+ * silently kills the broadcast stream.  A beacon whose payload begins with a
+ * literal backtick is hypothetical by comparison, and every other printable
+ * first byte -- including all of a-z -- is wrapped correctly because its
+ * extension bits are non-zero. */
+void test_bcast_rx_cmd_data_ambiguous_0x60_treated_as_hermes(void)
 {
     const size_t fsz = 10;
     broadcast_frame_size_cfg = fsz;
 
     uint8_t frame[MAX_PAYLOAD];
     memset(frame, 0, sizeof(frame));
-    frame[0] = 0x60;                 /* PACKET_TYPE_BROADCAST_CONTROL header byte */
-    memset(frame + 1, 0xBB, 4);      /* 5 bytes total */
+    frame[0] = 0x60;                 /* BROADCAST_CONTROL, extension 0 */
+    memset(frame + 1, 0xBB, 4);      /* 5 bytes total, short */
 
     bool ok = bcast_process_decoded_frame(frame, 5, CMD_DATA, fsz);
 
     TEST_ASSERT_TRUE(ok);
     TEST_ASSERT_EQUAL(1, write_buffer_call_count);
     TEST_ASSERT_EQUAL_size_t(fsz, last_write_buffer_len);
-    /* Wrapped: header + 2-byte length prefix, original payload shifted. */
-    TEST_ASSERT_EQUAL_HEX8(BCAST_HDR_BYTE_DATA, last_write_buffer_data[0]);
-    TEST_ASSERT_EQUAL_HEX8(0x00, last_write_buffer_data[1]);
-    TEST_ASSERT_EQUAL_HEX8(0x05, last_write_buffer_data[2]);
-    TEST_ASSERT_EQUAL_HEX8(0x60, last_write_buffer_data[3]);
+    /* Passed raw and zero-padded -- no wrapper, no length prefix. */
+    TEST_ASSERT_EQUAL_HEX8(0x60, last_write_buffer_data[0]);
     for (int i = 1; i < 5; i++)
-        TEST_ASSERT_EQUAL_HEX8(0xBB, last_write_buffer_data[3 + i]);
-    /* Tail zero-filled */
-    for (size_t i = 8; i < fsz; i++)
+        TEST_ASSERT_EQUAL_HEX8(0xBB, last_write_buffer_data[i]);
+    for (size_t i = 5; i < fsz; i++)
         TEST_ASSERT_EQUAL_HEX8(0x00, last_write_buffer_data[i]);
     TEST_ASSERT_EQUAL_HEX8(CMD_DATA,
         atomic_load_explicit(&bcast_reply_cmd, memory_order_relaxed));
@@ -1130,6 +1145,62 @@ void test_bcast_rx_cmd_data_varac_beacon_wrapped(void)
 /* Round-trip: a CMD_DATA unformatted frame (VarAC beacon) run through TX
  * framing then RX extraction must be delivered as CMD_DATA with the exact
  * original length, even on a receive-only station (reply_cmd at its default). */
+/* hermes-broadcast sends CONFIG frames RQ_HEADER_SIZE short of a full modem
+ * frame (transmitter.c: payload is packet_size + RQ_HEADER_SIZE, config is
+ * packet_size alone) and relies on Mercury zero-padding them back up.  Its
+ * receiver then discards anything that is not exactly frame_size, so if
+ * Mercury wraps a short config frame instead of passing it raw, the far side
+ * never receives the RaptorQ configuration and can never start decoding.
+ *
+ * This is why frame length cannot be the hermes-broadcast discriminator. */
+void test_bcast_short_hermes_config_passed_raw(void)
+{
+    const size_t fsz = 10;
+    broadcast_frame_size_cfg = fsz;
+
+    uint8_t frame[MAX_PAYLOAD];
+    memset(frame, 0, sizeof(frame));
+    frame[0] = BCAST_HDR_RAW_CONTROL;   /* PACKET_RQ_CONFIG, extension 0 */
+    frame[1] = 0xAA;
+    frame[2] = 0xBB;
+
+    bool ok = bcast_process_decoded_frame(frame, 3, CMD_DATA, fsz);  /* 3 < fsz */
+
+    TEST_ASSERT_TRUE(ok);
+    TEST_ASSERT_EQUAL_size_t(fsz, last_write_buffer_len);
+    /* Passed raw and zero-padded: the client's own header stays at byte 0 and
+     * no length prefix is injected. */
+    TEST_ASSERT_EQUAL_HEX8(BCAST_HDR_RAW_CONTROL, last_write_buffer_data[0]);
+    TEST_ASSERT_EQUAL_HEX8(0xAA, last_write_buffer_data[1]);
+    TEST_ASSERT_EQUAL_HEX8(0xBB, last_write_buffer_data[2]);
+    for (size_t i = 3; i < fsz; i++)
+        TEST_ASSERT_EQUAL_HEX8(0x00, last_write_buffer_data[i]);
+}
+
+/* A beacon whose first byte lands in the broadcast-type range but carries a
+ * non-zero extension is still an unformatted payload and must be wrapped.
+ * 'a' (0x61) is type 3 with extension 1 -- the case the type-bits-only test
+ * got wrong, and the one a text beacon is most likely to hit. */
+void test_bcast_beacon_broadcast_type_nonzero_ext_wrapped(void)
+{
+    const size_t fsz = 10;
+    broadcast_frame_size_cfg = fsz;
+
+    uint8_t frame[MAX_PAYLOAD];
+    memset(frame, 0, sizeof(frame));
+    frame[0] = 0x61;   /* 'a' : type 3, extension 1 */
+    frame[1] = 'b';
+    frame[2] = 'c';
+
+    bool ok = bcast_process_decoded_frame(frame, 3, CMD_DATA, fsz);
+
+    TEST_ASSERT_TRUE(ok);
+    TEST_ASSERT_EQUAL_HEX8(BCAST_HDR_BYTE_DATA, last_write_buffer_data[0]);
+    TEST_ASSERT_EQUAL_HEX8(0x00, last_write_buffer_data[1]);
+    TEST_ASSERT_EQUAL_HEX8(0x03, last_write_buffer_data[2]);
+    TEST_ASSERT_EQUAL_HEX8(0x61, last_write_buffer_data[HEADER_SIZE + BCAST_LEN_SIZE]);
+}
+
 void test_bcast_data_lenprefix_roundtrip(void)
 {
     const size_t fsz = 32;
@@ -1252,7 +1323,7 @@ int main(void)
     RUN_TEST(test_tnc_send_registered);
     /* Broadcast framing helper tests */
     RUN_TEST(test_bcast_rx_cmd_data_exact_size);
-    RUN_TEST(test_bcast_rx_cmd_data_short_wrapped);
+    RUN_TEST(test_bcast_rx_cmd_data_ambiguous_0x60_treated_as_hermes);
     RUN_TEST(test_bcast_rx_cmd_data_short_lowercase_wrapped);
     RUN_TEST(test_bcast_rx_cmd_data_oversized_discarded);
     RUN_TEST(test_bcast_rx_vara_header_injected);
@@ -1264,6 +1335,8 @@ int main(void)
     RUN_TEST(test_bcast_tx_lenprefix_ignores_reply_cmd_default);
     RUN_TEST(test_bcast_std_kiss_roundtrip);
     RUN_TEST(test_bcast_rx_cmd_data_varac_beacon_wrapped);
+    RUN_TEST(test_bcast_short_hermes_config_passed_raw);
+    RUN_TEST(test_bcast_beacon_broadcast_type_nonzero_ext_wrapped);
     RUN_TEST(test_bcast_data_lenprefix_roundtrip);
     RUN_TEST(test_sn_query_is_always_answered);
     RUN_TEST(test_bitrate_query_is_always_answered);
