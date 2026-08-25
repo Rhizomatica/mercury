@@ -1748,6 +1748,38 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
  * Top-level dispatch
  * ====================================================================== */
 
+static bool is_session_bound_rx_event(arq_event_id_t id)
+{
+    switch (id)
+    {
+    case ARQ_EV_RX_DATA:
+    case ARQ_EV_RX_ACK:
+    case ARQ_EV_RX_DISCONNECT:
+        return true;
+    default:
+        return false;
+    }
+}
+
+/* An in-session ACK is a Welch-Costas PATTERN, not a framed packet: it has no
+ * header, so it cannot carry a session ID and arq_post_pattern_ack() leaves it
+ * zero.  Everything else session-bound is framed and always carries a real ID.
+ *
+ * So zero stays non-wildcard for framed events -- which is the hardening the
+ * gate exists for -- and is accepted only for an ACK, where it is the sole
+ * value a pattern can have.  Dropping it instead would discard every in-session
+ * ACK and stall the data plane outright.
+ *
+ * The cost is that a pattern ACK is not attributable to a session; that is
+ * inherent to signalling with a bare pattern, and predates this gate. */
+static bool session_id_is_acceptable(const arq_session_t *sess,
+                                     const arq_event_t *ev)
+{
+    if (ev->session_id == sess->session_id)
+        return true;
+    return ev->session_id == 0 && ev->id == ARQ_EV_RX_ACK;
+}
+
 void arq_fsm_dispatch(arq_session_t *sess, const arq_event_t *ev)
 {
     if (!sess || !ev)
@@ -1758,6 +1790,21 @@ void arq_fsm_dispatch(arq_session_t *sess, const arq_event_t *ev)
           arq_dflow_state_name(sess->dflow_state),
           arq_event_name(ev->id));
 
+    /* Once a session is established, every session-bound frame must carry
+     * exactly its ID.  In particular, zero is not a wildcard: transmitters
+     * never create a zero session ID, and accepting one would let a malformed
+     * or stale frame affect the active link.  Validate before updating
+     * last_rx_ms so foreign traffic cannot keep the session alive. */
+    if ((sess->conn_state == ARQ_CONN_CONNECTED ||
+         sess->conn_state == ARQ_CONN_DISCONNECTING) &&
+        is_session_bound_rx_event(ev->id) &&
+        !session_id_is_acceptable(sess, ev))
+    {
+        HLOGD(LOG_COMP, "Session ID mismatch: got %d expected %d — dropped",
+              (int)ev->session_id, (int)sess->session_id);
+        return;
+    }
+
     /* Track last RX time from any received frame */
     switch (ev->id)
     {
@@ -1767,18 +1814,6 @@ void arq_fsm_dispatch(arq_session_t *sess, const arq_event_t *ev)
     case ARQ_EV_RX_ACCEPT:
     case ARQ_EV_RX_DISCONNECT:
         sess->last_rx_ms = time_now_ms();
-        /* Session ID validation: drop frames from a different session when
-         * we are in CONNECTED or DISCONNECTING state (CALL/ACCEPT frames
-         * are handled separately and carry session_id in their own format). */
-        if ((sess->conn_state == ARQ_CONN_CONNECTED ||
-             sess->conn_state == ARQ_CONN_DISCONNECTING) &&
-            ev->id != ARQ_EV_RX_CALL && ev->id != ARQ_EV_RX_ACCEPT &&
-            ev->session_id != 0 && ev->session_id != sess->session_id)
-        {
-            HLOGD(LOG_COMP, "Session ID mismatch: got %d expected %d — dropped",
-                  (int)ev->session_id, (int)sess->session_id);
-            return;
-        }
         break;
     default:
         break;

@@ -17,7 +17,7 @@ OBJS_COMMON = freedv_api.o ofdm.o freedv_fsk.o cohpsk.o fsk.o kiss_fft.o freedv_
 all: freedv_data_tx freedv_data_rx freedv_data_raw_tx freedv_data_raw_rx
 
 $(LIBNAME): $(OBJS_COMMON)
-	ar rcs $(LIBNAME) $(OBJS_COMMON)
+	$(AR) rcs $(LIBNAME) $(OBJS_COMMON)
 
 
 freedv_data_tx: freedv_data_tx.o $(LIBNAME)

@@ -182,3 +182,14 @@ void mercury_ui_get_tcp_ports(int *arq_base_port, int *broadcast_port)
 {
     ui_comm_get_tcp_ports(arq_base_port, broadcast_port);
 }
+
+void mercury_ui_get_version(char *version, int version_len,
+                            char *git_hash, int git_hash_len)
+{
+    if (version && version_len > 0) {
+        snprintf(version, (size_t)version_len, "%s", MERCURY_VERSION);
+    }
+    if (git_hash && git_hash_len > 0) {
+        snprintf(git_hash, (size_t)git_hash_len, "%s", GIT_HASH);
+    }
+}

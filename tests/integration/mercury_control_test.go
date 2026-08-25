@@ -12,9 +12,15 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
+)
+
+var (
+	portAllocMu sync.Mutex
+	usedPorts   = make(map[int]struct{})
 )
 
 const (
@@ -247,28 +253,75 @@ func tempLogFiles(t *testing.T) (*os.File, *os.File) {
 
 func freePort(t *testing.T) int {
 	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
+	portAllocMu.Lock()
+	defer portAllocMu.Unlock()
+
+	for i := 0; i < 50; i++ {
+		ln, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		port := ln.Addr().(*net.TCPAddr).Port
+		_ = ln.Close()
+		if _, used := usedPorts[port]; used {
+			continue
+		}
+		usedPorts[port] = struct{}{}
+		return port
 	}
-	defer ln.Close()
-	return ln.Addr().(*net.TCPAddr).Port
+	t.Fatal("could not allocate a unique TCP port")
+	return 0
 }
 
 func freePortPair(t *testing.T) int {
 	t.Helper()
+	portAllocMu.Lock()
+	defer portAllocMu.Unlock()
+
 	for i := 0; i < 50; i++ {
-		base := freePort(t)
-		if base >= 65535 {
+		baseLn, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		base := baseLn.Addr().(*net.TCPAddr).Port
+		if base > 65435 {
+			_ = baseLn.Close()
 			continue
 		}
-		ln, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", base+1))
-		if err == nil {
-			_ = ln.Close()
-			return base
+
+		ports := []int{base, base + 1, base + 100}
+		alreadyUsed := false
+		for _, port := range ports {
+			if _, used := usedPorts[port]; used {
+				alreadyUsed = true
+				break
+			}
 		}
+		if alreadyUsed {
+			_ = baseLn.Close()
+			continue
+		}
+
+		dataLn, dataErr := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", base+1))
+		bcastLn, bcastErr := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", base+100))
+		_ = baseLn.Close()
+		if dataErr != nil || bcastErr != nil {
+			if dataLn != nil {
+				_ = dataLn.Close()
+			}
+			if bcastLn != nil {
+				_ = bcastLn.Close()
+			}
+			continue
+		}
+		_ = dataLn.Close()
+		_ = bcastLn.Close()
+		for _, port := range ports {
+			usedPorts[port] = struct{}{}
+		}
+		return base
 	}
-	t.Fatal("could not reserve adjacent TCP ports")
+	t.Fatal("could not allocate Mercury control/data/broadcast ports")
 	return 0
 }
 

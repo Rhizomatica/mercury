@@ -20,6 +20,7 @@ type Config struct {
 	IP             string
 	ARQPort        int
 	BroadcastPort  int
+	BandwidthHz    int
 }
 
 // ChatMessage is a single chat line emitted for display.
@@ -62,6 +63,9 @@ func New(cfg Config) *Client {
 	if cfg.BroadcastPort == 0 {
 		cfg.BroadcastPort = 8100
 	}
+	if cfg.BandwidthHz == 0 {
+		cfg.BandwidthHz = 2300
+	}
 	return &Client{
 		cfg:             cfg,
 		LogCh:           make(chan string, 256),
@@ -97,7 +101,7 @@ func (c *Client) Connect() error {
 	mc.SendCommand("LISTEN ON")
 	mc.SendCommand("PUBLIC OFF")
 	mc.SendCommand("COMPRESSION OFF")
-	mc.SendCommand("BW2750")
+	mc.SendCommand(fmt.Sprintf("BW%d", c.cfg.BandwidthHz))
 
 	go c.updateLog()
 	go c.handleIncomingARQ()
@@ -154,13 +158,21 @@ func (c *Client) RemoteCallsign() string {
 // blocks until the session is established or fails, so callers should run it
 // in a goroutine.
 func (c *Client) ConnectARQ() error {
+	return c.ConnectARQWith(c.cfg.MyCallsign, c.cfg.TargetCallsign)
+}
+
+// ConnectARQWith starts an ARQ session using explicit source and target
+// callsigns, overriding whatever was captured in the config at New() time.
+// It blocks until the session is established or fails, so callers should run
+// it in a goroutine.
+func (c *Client) ConnectARQWith(src, dst string) error {
 	c.mu.Lock()
 	mc := c.modem
 	c.mu.Unlock()
 	if mc == nil || !mc.IsConnected() {
 		return fmt.Errorf("not connected to modem")
 	}
-	return mc.ConnectARQ(c.cfg.MyCallsign, c.cfg.TargetCallsign)
+	return mc.ConnectARQ(src, dst)
 }
 
 // DisconnectARQ sends a clean DISCONNECT to the remote station.
@@ -214,6 +226,41 @@ func (c *Client) SendARQFile(filePath string) error {
 		return fmt.Errorf("not connected to modem")
 	}
 	return mc.SendARQFile(filePath)
+}
+
+// SetBandwidth updates the modem's bandwidth and stores it for the next
+// connection. Supported values are 500 and 2300 (Hz).
+func (c *Client) SetBandwidth(hz int) error {
+	if hz != 500 && hz != 2300 {
+		return fmt.Errorf("unsupported bandwidth: %d Hz", hz)
+	}
+	c.mu.Lock()
+	mc := c.modem
+	c.mu.Unlock()
+	if mc == nil || !mc.IsConnected() {
+		return fmt.Errorf("not connected to modem")
+	}
+	if err := mc.SendCommand(fmt.Sprintf("BW%d", hz)); err != nil {
+		return err
+	}
+	c.cfg.BandwidthHz = hz
+	return nil
+}
+
+// SendCQFrame queues a one-shot CQ frame advertising the local callsign and
+// the currently configured bandwidth.
+func (c *Client) SendCQFrame() error {
+	c.mu.Lock()
+	mc := c.modem
+	c.mu.Unlock()
+	if mc == nil || !mc.IsConnected() {
+		return fmt.Errorf("not connected to modem")
+	}
+	if err := mc.SendCQFrame(c.cfg.MyCallsign, c.cfg.BandwidthHz); err != nil {
+		return err
+	}
+	c.LogCh <- fmt.Sprintf("CQ Frame TX: %s (%d Hz)", c.cfg.MyCallsign, c.cfg.BandwidthHz)
+	return nil
 }
 
 // SendBroadcast sends a broadcast message. The local callsign is prefixed to

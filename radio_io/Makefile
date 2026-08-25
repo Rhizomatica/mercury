@@ -21,11 +21,20 @@
 
 include ../config.mk
 
+# Always define UNAME_S.  It used to be assigned only inside the
+# HAVE_HERMES_SHM probe below -- a block the top-level Makefile skips, because
+# it exports HAVE_HERMES_SHM, so $(origin ...) is "environment" rather than
+# "undefined".  UNAME_S was therefore EMPTY on every build driven from the top
+# level, and the "else ifeq ($(UNAME_S),Darwin)" arm of the hamlib block could
+# never be taken: macOS silently fell through to pkg-config, ignored the
+# vendored radio_io/hamlib-macos, and failed with "hamlib/rig.h file not found".
+# Building this directory on its own worked, which is what hid it.
+UNAME_S := $(shell uname -s)
+
 ifeq ($(origin HAVE_HERMES_SHM), undefined)
 ifeq ($(OS),Windows_NT)
 HAVE_HERMES_SHM = 0
 else
-UNAME_S := $(shell uname -s)
 ifeq ($(UNAME_S),Linux)
 HAVE_HERMES_SHM = 1
 else

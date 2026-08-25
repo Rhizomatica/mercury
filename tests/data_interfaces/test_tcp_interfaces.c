@@ -191,6 +191,11 @@ static int chan_select_call_count = 0;
 /* How many tcp_write() calls had already happened when a line was queued.
  * Lets a test pin the ORDER of a direct write against a queued notification. */
 static int queued_after_tcp_writes = -1;
+/* Full sequence, not just the last line: MYCALL acknowledges every callsign
+ * it accepted, so a test has to see all of them and in order. */
+#define MAX_QUEUED_LINES 8
+static char queued_lines[MAX_QUEUED_LINES][256];
+static int  queued_line_count = 0;
 
 chan_t *chan_init(size_t capacity)
 {
@@ -223,6 +228,12 @@ int chan_select(chan_t *recv_chans[], int recv_count, void **recv_out,
         if (len < sizeof(last_queued_line))
             memcpy(last_queued_line, data_ptr, len);
         queued_after_tcp_writes = tcp_write_call_count;
+        if (queued_line_count < MAX_QUEUED_LINES && len < sizeof(queued_lines[0]))
+        {
+            memset(queued_lines[queued_line_count], 0, sizeof(queued_lines[0]));
+            memcpy(queued_lines[queued_line_count], data_ptr, len);
+            queued_line_count++;
+        }
         /* Returning 0 signals the message was accepted by the channel, so
          * tnc_queue_line() transfers ownership and does not free it (in
          * production the send_thread consumer frees each msg).  This mock is
@@ -260,6 +271,8 @@ void setUp(void)
     memset(last_queued_line, 0, sizeof(last_queued_line));
     chan_select_call_count = 0;
     queued_after_tcp_writes = -1;
+    memset(queued_lines, 0, sizeof(queued_lines));
+    queued_line_count = 0;
     memset(&arq_conn, 0, sizeof(arq_conn));
     mock_bandwidth_hz = 2300;
 
@@ -324,8 +337,36 @@ void test_cmd_mycall_registered_follows_ok(void)
     execute_control_command(cmd);
 
     assert_ok_response();
-    TEST_ASSERT_EQUAL_STRING("REGISTERED TEST1\r", last_queued_line);
+    /* First line out is the primary; the secondaries follow it. */
+    TEST_ASSERT_EQUAL_STRING("REGISTERED TEST1\r", queued_lines[0]);
     TEST_ASSERT_GREATER_THAN_INT(0, queued_after_tcp_writes);
+}
+
+/* "REGISTERED <Call>" is per call sign in VARA, and MYCALL can carry
+ * secondaries that Mercury will answer for, so each accepted one is
+ * acknowledged -- in the order given, primary first. */
+void test_cmd_mycall_registers_every_callsign(void)
+{
+    char cmd[] = "MYCALL TEST1 SEC1 SEC2";
+    execute_control_command(cmd);
+
+    assert_ok_response();
+    TEST_ASSERT_EQUAL_INT(3, queued_line_count);
+    TEST_ASSERT_EQUAL_STRING("REGISTERED TEST1\r", queued_lines[0]);
+    TEST_ASSERT_EQUAL_STRING("REGISTERED SEC1\r",  queued_lines[1]);
+    TEST_ASSERT_EQUAL_STRING("REGISTERED SEC2\r",  queued_lines[2]);
+}
+
+/* Past CALLSIGN_MAX_SECONDARY the ARQ layer drops the extras, so the host
+ * must not be told they are registered -- it would address a callsign this
+ * station never answers. */
+void test_cmd_mycall_does_not_register_dropped_secondaries(void)
+{
+    char cmd[] = "MYCALL TEST1 S1 S2 S3 S4 S5 S6";
+    execute_control_command(cmd);
+
+    assert_ok_response();
+    TEST_ASSERT_EQUAL_INT(1 + CALLSIGN_MAX_SECONDARY, queued_line_count);
 }
 
 void test_cmd_listen_on(void)
@@ -726,8 +767,16 @@ void test_cmd_callint_negative(void)
 #define BCAST_LEN_SIZE       2
 #define BCAST_EXT_LEN_PREFIX 0x01
 #define BCAST_EXT_KISS_STD   0x02
+#define BCAST_EXT_KISS_DATA  0x04
 #define BCAST_HDR_BYTE_LEN   (BCAST_HDR_BYTE | BCAST_EXT_LEN_PREFIX)
 #define BCAST_HDR_BYTE_STD   (BCAST_HDR_BYTE | BCAST_EXT_LEN_PREFIX | BCAST_EXT_KISS_STD)
+#define BCAST_HDR_BYTE_DATA  (BCAST_HDR_BYTE | BCAST_EXT_LEN_PREFIX | BCAST_EXT_KISS_DATA)
+/* A RAW hermes-broadcast header: broadcast packet type with a ZERO extension,
+ * which is what hermes_write_frame_header(..., PACKET_RQ_CONFIG, 0) produces.
+ * Distinct from BCAST_HDR_BYTE_DATA above, which is the header Mercury writes
+ * when it WRAPS a client payload. */
+#define BCAST_HDR_RAW_CONTROL \
+    ((uint8_t)(PACKET_TYPE_BROADCAST_CONTROL << PACKET_TYPE_SHIFT))
 
 /* CMD_DATA, exact frame_size: queued unchanged, bcast_reply_cmd = CMD_DATA */
 void test_bcast_rx_cmd_data_exact_size(void)
@@ -749,30 +798,82 @@ void test_bcast_rx_cmd_data_exact_size(void)
         atomic_load_explicit(&bcast_reply_cmd, memory_order_relaxed));
 }
 
-/* CMD_DATA, short frame: zero-padded to frame_size */
-void test_bcast_rx_cmd_data_short_padded(void)
+/* CMD_DATA, short frame with a broadcast-header-looking first byte (0x60): NOT
+ * hermes-broadcast, which always fills frame_size, so it must be wrapped like
+ * an unformatted VARA frame rather than passed through raw. */
+/* 0x60 is the one genuinely ambiguous first byte: it is
+ * PACKET_TYPE_BROADCAST_CONTROL with a zero extension, i.e. byte-for-byte what
+ * hermes-broadcast puts on a config frame -- and also a printable backtick that
+ * a beacon could in principle start with.  Nothing in the frame distinguishes
+ * them.
+ *
+ * Resolve it in favour of hermes-broadcast: that is a protocol in daily use
+ * whose config frames arrive short by RQ_HEADER_SIZE, and whose receiver
+ * discards anything that is not exactly frame_size, so guessing "beacon" here
+ * silently kills the broadcast stream.  A beacon whose payload begins with a
+ * literal backtick is hypothetical by comparison, and every other printable
+ * first byte -- including all of a-z -- is wrapped correctly because its
+ * extension bits are non-zero. */
+void test_bcast_rx_cmd_data_ambiguous_0x60_treated_as_hermes(void)
 {
     const size_t fsz = 10;
     broadcast_frame_size_cfg = fsz;
 
     uint8_t frame[MAX_PAYLOAD];
     memset(frame, 0, sizeof(frame));
-    frame[0] = 0x60;
-    memset(frame + 1, 0xBB, 4); /* 5 bytes total */
+    frame[0] = 0x60;                 /* BROADCAST_CONTROL, extension 0 */
+    memset(frame + 1, 0xBB, 4);      /* 5 bytes total, short */
 
     bool ok = bcast_process_decoded_frame(frame, 5, CMD_DATA, fsz);
 
     TEST_ASSERT_TRUE(ok);
     TEST_ASSERT_EQUAL(1, write_buffer_call_count);
     TEST_ASSERT_EQUAL_size_t(fsz, last_write_buffer_len);
-    /* Tail must be zero-filled */
+    /* Passed raw and zero-padded -- no wrapper, no length prefix. */
+    TEST_ASSERT_EQUAL_HEX8(0x60, last_write_buffer_data[0]);
+    for (int i = 1; i < 5; i++)
+        TEST_ASSERT_EQUAL_HEX8(0xBB, last_write_buffer_data[i]);
     for (size_t i = 5; i < fsz; i++)
         TEST_ASSERT_EQUAL_HEX8(0x00, last_write_buffer_data[i]);
     TEST_ASSERT_EQUAL_HEX8(CMD_DATA,
         atomic_load_explicit(&bcast_reply_cmd, memory_order_relaxed));
 }
 
-/* CMD_DATA, oversized: discarded, write_buffer never called */
+/* A short beacon whose body begins with a lowercase letter ('a'=0x61, 'z'=0x7A)
+ * decodes as PACKET_TYPE_BROADCAST_CONTROL (0x60-0x7F first-byte range).  It
+ * must still be wrapped — the length check, not just the header bits, is what
+ * keeps it from being mistaken for a full hermes-broadcast frame. */
+void test_bcast_rx_cmd_data_short_lowercase_wrapped(void)
+{
+    const size_t fsz = 126;
+    broadcast_frame_size_cfg = fsz;
+
+    const uint8_t firsts[] = { 'a', 'z' };  /* 0x61, 0x7A → packet type 3 */
+    for (size_t k = 0; k < sizeof(firsts) / sizeof(firsts[0]); k++)
+    {
+        uint8_t frame[MAX_PAYLOAD];
+        memset(frame, 0, sizeof(frame));
+        frame[0] = firsts[k];
+        memset(frame + 1, 0xCC, 19);        /* 20 bytes total, like a beacon */
+
+        write_buffer_call_count = 0;
+        memset(last_write_buffer_data, 0, sizeof(last_write_buffer_data));
+
+        bool ok = bcast_process_decoded_frame(frame, 20, CMD_DATA, fsz);
+
+        TEST_ASSERT_TRUE(ok);
+        TEST_ASSERT_EQUAL(1, write_buffer_call_count);
+        TEST_ASSERT_EQUAL_size_t(fsz, last_write_buffer_len);
+        TEST_ASSERT_EQUAL_HEX8(BCAST_HDR_BYTE_DATA, last_write_buffer_data[0]);
+        TEST_ASSERT_EQUAL_HEX8(0x00, last_write_buffer_data[1]);
+        TEST_ASSERT_EQUAL_HEX8(0x14, last_write_buffer_data[2]); /* len = 20 */
+        TEST_ASSERT_EQUAL_HEX8(firsts[k], last_write_buffer_data[3]);
+        TEST_ASSERT_EQUAL_HEX8(0xCC, last_write_buffer_data[4]);
+    }
+}
+
+/* CMD_DATA, oversized, with a real Mercury broadcast header (hermes-broadcast):
+ * discarded, write_buffer never called */
 void test_bcast_rx_cmd_data_oversized_discarded(void)
 {
     const size_t fsz = 10;
@@ -780,6 +881,7 @@ void test_bcast_rx_cmd_data_oversized_discarded(void)
 
     uint8_t frame[MAX_PAYLOAD];
     memset(frame, 0x11, sizeof(frame));
+    frame[0] = BCAST_HDR_BYTE; /* PACKET_TYPE_BROADCAST_DATA header already in place */
 
     bool ok = bcast_process_decoded_frame(frame, (int)fsz + 5, CMD_DATA, fsz);
 
@@ -972,7 +1074,7 @@ void test_bcast_tx_lenprefix_ignores_reply_cmd_default(void)
 /* Standard-KISS roundtrip: a frame the client transmitted with KISS cmd 0x00
  * (CMD_AX25, e.g. Reticulum) must carry the BCAST_EXT_KISS_STD header bit on
  * the air and be delivered on the far side with cmd 0x00 — even on a
- * receive-only station (reply_cmd still at its default). VarAC-framed frames
+ * receive-only station (reply_cmd still at its default). VARA-framed frames
  * (cmd 0x01) must NOT carry the bit and keep being delivered as 0x01, which
  * test_bcast_vara_length_roundtrip guards. */
 void test_bcast_std_kiss_roundtrip(void)
@@ -1009,12 +1111,172 @@ void test_bcast_std_kiss_roundtrip(void)
     TEST_ASSERT_EQUAL_HEX8_ARRAY(orig, payload, orig_len);
 }
 
+/* CMD_DATA with no Mercury header (VARA beacon/ping): the frame must be
+ * wrapped with the broadcast header + length prefix, flagged with the
+ * BCAST_EXT_KISS_DATA bit so the far side mirrors the 0x02 framing.  This is
+ * the regression for the bug where a VARA beacon was queued raw (its first
+ * byte collided with an ARQ packet type) and dropped on the receiver. */
+void test_bcast_rx_cmd_data_vara_beacon_wrapped(void)
+{
+    const size_t fsz = 10;
+    broadcast_frame_size_cfg = fsz;
+
+    uint8_t frame[MAX_PAYLOAD];
+    memset(frame, 0, sizeof(frame));
+    /* VARA beacon body: first byte 0x20 decodes as an ARQ type, i.e. NOT a
+     * broadcast header, so it must be treated as an unformatted client frame. */
+    for (int i = 0; i < 5; i++) frame[i] = (uint8_t)(0x20 + i);
+
+    bool ok = bcast_process_decoded_frame(frame, 5, CMD_DATA, fsz);
+
+    TEST_ASSERT_TRUE(ok);
+    TEST_ASSERT_EQUAL(1, write_buffer_call_count);
+    TEST_ASSERT_EQUAL_size_t(fsz, last_write_buffer_len);
+    TEST_ASSERT_EQUAL_HEX8(BCAST_HDR_BYTE_DATA, last_write_buffer_data[0]);
+    TEST_ASSERT_EQUAL_HEX8(0x00, last_write_buffer_data[1]);
+    TEST_ASSERT_EQUAL_HEX8(0x05, last_write_buffer_data[2]);
+    for (int i = 0; i < 5; i++)
+        TEST_ASSERT_EQUAL_HEX8((uint8_t)(0x20 + i),
+            last_write_buffer_data[HEADER_SIZE + BCAST_LEN_SIZE + i]);
+    TEST_ASSERT_EQUAL_HEX8(CMD_DATA,
+        atomic_load_explicit(&bcast_reply_cmd, memory_order_relaxed));
+}
+
+/* Round-trip: a CMD_DATA unformatted frame (VARA beacon) run through TX
+ * framing then RX extraction must be delivered as CMD_DATA with the exact
+ * original length, even on a receive-only station (reply_cmd at its default). */
+/* hermes-broadcast sends CONFIG frames RQ_HEADER_SIZE short of a full modem
+ * frame (transmitter.c: payload is packet_size + RQ_HEADER_SIZE, config is
+ * packet_size alone) and relies on Mercury zero-padding them back up.  Its
+ * receiver then discards anything that is not exactly frame_size, so if
+ * Mercury wraps a short config frame instead of passing it raw, the far side
+ * never receives the RaptorQ configuration and can never start decoding.
+ *
+ * This is why frame length cannot be the hermes-broadcast discriminator. */
+void test_bcast_short_hermes_config_passed_raw(void)
+{
+    const size_t fsz = 10;
+    broadcast_frame_size_cfg = fsz;
+
+    uint8_t frame[MAX_PAYLOAD];
+    memset(frame, 0, sizeof(frame));
+    frame[0] = BCAST_HDR_RAW_CONTROL;   /* PACKET_RQ_CONFIG, extension 0 */
+    frame[1] = 0xAA;
+    frame[2] = 0xBB;
+
+    bool ok = bcast_process_decoded_frame(frame, 3, CMD_DATA, fsz);  /* 3 < fsz */
+
+    TEST_ASSERT_TRUE(ok);
+    TEST_ASSERT_EQUAL_size_t(fsz, last_write_buffer_len);
+    /* Passed raw and zero-padded: the client's own header stays at byte 0 and
+     * no length prefix is injected. */
+    TEST_ASSERT_EQUAL_HEX8(BCAST_HDR_RAW_CONTROL, last_write_buffer_data[0]);
+    TEST_ASSERT_EQUAL_HEX8(0xAA, last_write_buffer_data[1]);
+    TEST_ASSERT_EQUAL_HEX8(0xBB, last_write_buffer_data[2]);
+    for (size_t i = 3; i < fsz; i++)
+        TEST_ASSERT_EQUAL_HEX8(0x00, last_write_buffer_data[i]);
+}
+
+/* A beacon whose first byte lands in the broadcast-type range but carries a
+ * non-zero extension is still an unformatted payload and must be wrapped.
+ * 'a' (0x61) is type 3 with extension 1 -- the case the type-bits-only test
+ * got wrong, and the one a text beacon is most likely to hit. */
+void test_bcast_beacon_broadcast_type_nonzero_ext_wrapped(void)
+{
+    const size_t fsz = 10;
+    broadcast_frame_size_cfg = fsz;
+
+    uint8_t frame[MAX_PAYLOAD];
+    memset(frame, 0, sizeof(frame));
+    frame[0] = 0x61;   /* 'a' : type 3, extension 1 */
+    frame[1] = 'b';
+    frame[2] = 'c';
+
+    bool ok = bcast_process_decoded_frame(frame, 3, CMD_DATA, fsz);
+
+    TEST_ASSERT_TRUE(ok);
+    TEST_ASSERT_EQUAL_HEX8(BCAST_HDR_BYTE_DATA, last_write_buffer_data[0]);
+    TEST_ASSERT_EQUAL_HEX8(0x00, last_write_buffer_data[1]);
+    TEST_ASSERT_EQUAL_HEX8(0x03, last_write_buffer_data[2]);
+    TEST_ASSERT_EQUAL_HEX8(0x61, last_write_buffer_data[HEADER_SIZE + BCAST_LEN_SIZE]);
+}
+
+void test_bcast_data_lenprefix_roundtrip(void)
+{
+    const size_t fsz = 32;
+    broadcast_frame_size_cfg = fsz;
+
+    const int orig_len = 11;
+    uint8_t orig[32];
+    for (int i = 0; i < orig_len; i++) orig[i] = (uint8_t)(0x20 + i);
+
+    uint8_t txframe[MAX_PAYLOAD];
+    memset(txframe, 0, sizeof(txframe));
+    memcpy(txframe, orig, orig_len);
+    bool ok = bcast_process_decoded_frame(txframe, orig_len, CMD_DATA, fsz);
+    TEST_ASSERT_TRUE(ok);
+    TEST_ASSERT_EQUAL_size_t(fsz, last_write_buffer_len);
+    TEST_ASSERT_EQUAL_HEX8(BCAST_HDR_BYTE_DATA, last_write_buffer_data[0]);
+
+    uint8_t rxframe[MAX_PAYLOAD];
+    memcpy(rxframe, last_write_buffer_data, fsz);
+    atomic_store_explicit(&bcast_reply_cmd, CMD_DATA, memory_order_relaxed);
+
+    uint8_t *payload = NULL;
+    int plen = 0;
+    uint8_t cmd = bcast_get_tx_payload(rxframe, fsz, &payload, &plen);
+
+    TEST_ASSERT_EQUAL_HEX8(CMD_DATA, cmd);               /* 0x02, mirrored */
+    TEST_ASSERT_EQUAL_INT(orig_len, plen);
+    TEST_ASSERT_EQUAL_PTR(rxframe + HEADER_SIZE + BCAST_LEN_SIZE, payload);
+    TEST_ASSERT_EQUAL_HEX8_ARRAY(orig, payload, orig_len);
+}
+
+/* A host that ASKS for telemetry must be answered, every time.
+ *
+ * This guards a rate-limit that was briefly added to tnc_send_sn()/
+ * tnc_send_bitrate() to stop them "flooding" the control queue.  The on-demand
+ * SN and BITRATE commands are answered by calling those same functions, so the
+ * limiter swallowed the reply -- and since the decoder holds the window open on
+ * a live link, the host was answered essentially never.  VARA hosts poll these.
+ *
+ * The limiter was unnecessary anyway: SN/BITRATE are emitted from
+ * process_received_frame(), i.e. only on a successfully DECODED frame, so at
+ * most a couple per frame and well under 1/s.  Overflowing the 256-slot queue,
+ * drained every 100 ms, needs ~2560/s.  The queue only fills when the drain
+ * stops, which was the real bug. */
+void test_sn_query_is_always_answered(void)
+{
+    memset(last_queued_line, 0, sizeof(last_queued_line));
+
+    char cmd[] = "SN";
+    execute_control_command(cmd);
+
+    /* Assert that a line came back, not which value: the cached SN depends on
+     * whatever ran before this test. */
+    TEST_ASSERT_TRUE_MESSAGE(strncmp(last_queued_line, "SN ", 3) == 0,
+        "host asked for SN and got nothing: is the reply rate-limited?");
+}
+
+void test_bitrate_query_is_always_answered(void)
+{
+    memset(last_queued_line, 0, sizeof(last_queued_line));
+
+    char cmd[] = "BITRATE";
+    execute_control_command(cmd);
+
+    TEST_ASSERT_TRUE_MESSAGE(strncmp(last_queued_line, "BITRATE ", 8) == 0,
+        "host asked for BITRATE and got nothing: is the reply rate-limited?");
+}
+
 int main(void)
 {
     UNITY_BEGIN();
     /* Command parser tests */
     RUN_TEST(test_cmd_mycall);
     RUN_TEST(test_cmd_mycall_registered_follows_ok);
+    RUN_TEST(test_cmd_mycall_registers_every_callsign);
+    RUN_TEST(test_cmd_mycall_does_not_register_dropped_secondaries);
     RUN_TEST(test_cmd_listen_on);
     RUN_TEST(test_cmd_listen_off);
     RUN_TEST(test_cmd_public_on);
@@ -1061,7 +1323,8 @@ int main(void)
     RUN_TEST(test_tnc_send_registered);
     /* Broadcast framing helper tests */
     RUN_TEST(test_bcast_rx_cmd_data_exact_size);
-    RUN_TEST(test_bcast_rx_cmd_data_short_padded);
+    RUN_TEST(test_bcast_rx_cmd_data_ambiguous_0x60_treated_as_hermes);
+    RUN_TEST(test_bcast_rx_cmd_data_short_lowercase_wrapped);
     RUN_TEST(test_bcast_rx_cmd_data_oversized_discarded);
     RUN_TEST(test_bcast_rx_vara_header_injected);
     RUN_TEST(test_bcast_rx_cmd_ax25_reply_cmd);
@@ -1071,5 +1334,11 @@ int main(void)
     RUN_TEST(test_bcast_vara_length_roundtrip);
     RUN_TEST(test_bcast_tx_lenprefix_ignores_reply_cmd_default);
     RUN_TEST(test_bcast_std_kiss_roundtrip);
+    RUN_TEST(test_bcast_rx_cmd_data_vara_beacon_wrapped);
+    RUN_TEST(test_bcast_short_hermes_config_passed_raw);
+    RUN_TEST(test_bcast_beacon_broadcast_type_nonzero_ext_wrapped);
+    RUN_TEST(test_bcast_data_lenprefix_roundtrip);
+    RUN_TEST(test_sn_query_is_always_answered);
+    RUN_TEST(test_bitrate_query_is_always_answered);
     return UNITY_END();
 }

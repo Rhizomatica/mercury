@@ -47,8 +47,19 @@
 #include "../radio_io/radio_io.h"  /* RADIO_TYPE_NONE */
 #include "../radio_io/rigctl_parse.h"  /* preload_radio_list */
 
+#include "../audioio/audio_dev_limits.h"   /* AUDIO_DEV_STR_MAX */
+
+/* Hand-written rather than #include "audioio.h": that header pulls in ffbase,
+ * which is not on this file's include path. */
 extern int get_soundcard_list(int audio_system, int mode,
-                              char ids[][64], char dev_names[][64], int max_count);
+                              char ids[][AUDIO_DEV_STR_MAX], char dev_names[][AUDIO_DEV_STR_MAX],
+                              int max_count);
+
+/* The enumerator writes rows this wide and we copy them straight into
+ * ui_device_t; if the UI struct were ever the narrower of the two, long
+ * PulseAudio node names would be cut again exactly as in issue #185. */
+_Static_assert(AUDIO_DEV_STR_MAX >= UI_DEV_ID_MAX,
+               "device id rows must not be narrower than ui_device_t.id");
 
 /* Audio path health; see audioio.h.  Declared here rather than included for
  * the same reason audioio_restart is: audioio.h drags in ffbase. */
@@ -289,7 +300,17 @@ int ui_comm_get_audio_devices(ui_device_kind_t kind, ui_device_t *out, int max,
     /* get_soundcard_list() takes mode 1 = capture, 0 = playback. */
     int mode = (kind == UI_DEV_CAPTURE) ? 1 : 0;
 
-    char ids[32][64], names[32][64];
+    /* Heap: 32 rows x AUDIO_DEV_STR_MAX x 2 arrays is 16 KB, and this is
+     * called from the websocket publisher thread, whose stack is 512 KB by
+     * default on macOS. */
+    char (*ids)[AUDIO_DEV_STR_MAX]   = malloc(sizeof(*ids)   * 32);
+    char (*names)[AUDIO_DEV_STR_MAX] = malloc(sizeof(*names) * 32);
+    if (!ids || !names) {
+        free(ids); free(names);
+        HLOGE(UI_LOG_TAG, "out of memory enumerating audio devices");
+        return 0;
+    }
+
     int cap = (max < 32) ? max : 32;
     int count = get_soundcard_list(ctx->audio_system, mode, ids, names, cap);
     if (count < 0)
@@ -303,10 +324,15 @@ int ui_comm_get_audio_devices(ui_device_kind_t kind, ui_device_t *out, int max,
         snprintf(out[i].name, sizeof(out[i].name), "%.*s", (int)sizeof(names[i]) - 1, names[i]);
     }
 
+    ui_devices_disambiguate(out, count);
+
     if (selected && sel_len)
         snprintf(selected, sel_len, "%s",
                  (kind == UI_DEV_CAPTURE) ? ctx->selected_capture_dev
                                           : ctx->selected_playback_dev);
+
+    free(ids);
+    free(names);
     return count;
 }
 
@@ -511,20 +537,50 @@ void *ui_publisher_thread(void *arg)
         {
             ctx->soundcard_list_pending = 0;
 
-            /* Same enumerator the embedded UI calls, rendered as JSON. */
-            ui_device_t devs[32];
-            char sel[64];
-            char buf[8192];
+            /* Same enumerator the embedded UI calls, rendered as JSON.
+             * devs[] and the JSON scratch go on the heap: 32 ui_device_t is
+             * 16 KB and buf another 18 KB, which is far too much for a thread
+             * stack that is 512 KB by default on macOS. */
+            ui_device_t *devs = malloc(sizeof(*devs) * 32);
+            /* Big enough that 32 rows cannot overflow it even at the widest
+             * name and id the struct allows, plus the JSON scaffolding.  It
+             * used to be 8 KB, which was comfortable only while names were
+             * short: ui_devices_disambiguate() appends the id to any name two
+             * devices share, and ui_device_list_to_json() refuses to emit
+             * truncated JSON — so an overflow does not corrupt the list, it
+             * silently publishes no list at all. */
+            const size_t json_cap = 32 * (UI_DEV_NAME_MAX + UI_DEV_ID_MAX + 32) + 256;
+            char *buf = malloc(json_cap);
+            char sel[UI_DEV_ID_MAX];
 
-            int cap_count = ui_comm_get_audio_devices(UI_DEV_CAPTURE, devs, 32, sel, sizeof(sel));
-            if (cap_count > 0 &&
-                ui_device_list_to_json("capture_dev_list", devs, cap_count, sel, buf, sizeof(buf)) > 0)
-                ws_broadcast_json(&ctx->ws, buf);
+            if (devs && buf)
+            {
+                int cap_count = ui_comm_get_audio_devices(UI_DEV_CAPTURE, devs, 32, sel, sizeof(sel));
+                if (cap_count > 0)
+                {
+                    if (ui_device_list_to_json("capture_dev_list", devs, cap_count, sel, buf, json_cap) > 0)
+                        ws_broadcast_json(&ctx->ws, buf);
+                    else
+                        HLOGW(UI_LOG_TAG, "capture device list did not fit its JSON buffer "
+                                          "(%d devices) — not published", cap_count);
+                }
 
-            int pb_count = ui_comm_get_audio_devices(UI_DEV_PLAYBACK, devs, 32, sel, sizeof(sel));
-            if (pb_count > 0 &&
-                ui_device_list_to_json("playback_dev_list", devs, pb_count, sel, buf, sizeof(buf)) > 0)
-                ws_broadcast_json(&ctx->ws, buf);
+                int pb_count = ui_comm_get_audio_devices(UI_DEV_PLAYBACK, devs, 32, sel, sizeof(sel));
+                if (pb_count > 0)
+                {
+                    if (ui_device_list_to_json("playback_dev_list", devs, pb_count, sel, buf, json_cap) > 0)
+                        ws_broadcast_json(&ctx->ws, buf);
+                    else
+                        HLOGW(UI_LOG_TAG, "playback device list did not fit its JSON buffer "
+                                          "(%d devices) — not published", pb_count);
+                }
+            }
+            else
+            {
+                HLOGE(UI_LOG_TAG, "out of memory building the audio device list");
+            }
+            free(devs);
+            free(buf);
 
             // Input channel selection
             const char *ch_str;
@@ -714,7 +770,7 @@ int ui_comm_init(ui_ctx_t *ctx, uint16_t ws_port, bool tls_enabled,
     // connect callback is registered before the server thread starts to avoid
     // a race on aarch64 where the callback ptr and data could be seen
     // out-of-order by the server thread.
-    if (ws_init(&ctx->ws, ws_port, "gui_interface/websocket/web",
+    if (ws_init(&ctx->ws, ws_port,
                 ws_command_handler, ctx,
                 ws_connect_handler, ctx,
                 tls_enabled) != 0) {
@@ -751,6 +807,20 @@ int ui_comm_init(ui_ctx_t *ctx, uint16_t ws_port, bool tls_enabled,
 void ui_comm_shutdown(ui_ctx_t *ctx)
 {
     g_ui_ctx = NULL;
+
+    // Stop and join the spectrum publisher thread before the websocket server
+    // goes down: it was made joinable for the runtime disable path, so leave
+    // no joinable thread unjoined at teardown.  Take cfg_mutex so this cannot
+    // race ui_comm_set_waterfall()'s disable path, which joins the same thread
+    // under the same lock — two pthread_join calls on one tid is undefined
+    // behaviour.  This closes the window the NOTE below describes.
+    pthread_mutex_lock(&ctx->cfg_mutex);
+    atomic_store_explicit(&ctx->spec_run, false, memory_order_relaxed);
+    if (ctx->spec_tid != 0) {
+        pthread_join(ctx->spec_tid, NULL);
+        ctx->spec_tid = 0;
+    }
+    pthread_mutex_unlock(&ctx->cfg_mutex);
 
     ws_shutdown(&ctx->ws);
     // NOTE: cfg_mutex is deliberately NOT destroyed.  ui_comm_set_waterfall

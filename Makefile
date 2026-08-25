@@ -98,7 +98,7 @@ FYNE_UI_DIR   = gui_interface/fyne-ui
 FYNE_UI_BIN   = mercury-ui.exe
 MINGW_GO_CC   = x86_64-w64-mingw32-gcc
 
-.PHONY: all install internal_deps utils clean doxygen doxygen-clean windows windows-zip windows-installer-signed windows-installer-stage check-installer-names fyne-ui fyne-ui-macos fyne-ui-macos-dmg macos-universal fyne-ui-macos-universal fyne-ui-macos-universal-dmg fyne-ui-windows windows-installer test integration-test FORCE
+.PHONY: all install internal_deps utils clean doxygen doxygen-clean windows windows-zip windows-installer-signed windows-installer-stage check-installer-names fyne-ui fyne-ui-macos fyne-ui-macos-dmg macos-universal fyne-ui-macos-universal fyne-ui-macos-universal-dmg sign-macos-bin macos-notarize-dmg fyne-ui-windows windows-installer test integration-test FORCE
 
 prefix ?= /usr
 bindir ?= $(prefix)/bin
@@ -131,8 +131,9 @@ MERCURY_LINK_INPUTS = \
 	modem/channel_busy.o modem/freedv/libfreedvdata.a audioio/audioio.a common/os_interop.o \
 	common/ring_buffer_posix.o common/shm_posix.o common/crc6.o common/hermes_log.o common/virtual_clock.o \
 	common/chan.o common/queue.o common/mercury_engine.o common/mercury_cli.o data_interfaces/tcp_interfaces.o data_interfaces/net.o \
-	gui_interface/ui_communication.o gui_interface/ui_status.o \
+	gui_interface/ui_communication.o gui_interface/ui_status.o gui_interface/ui_devices.o \
 	gui_interface/websocket/mongoose.o gui_interface/websocket/mercury_websocket.o \
+	gui_interface/websocket/web_packed.o \
 	radio_io/radio_io.o
 
 ifeq ($(HAVE_HERMES_SHM),1)
@@ -218,8 +219,9 @@ MERCURY_CORE_OBJS = \
 	common/ring_buffer_posix.o common/shm_posix.o common/crc6.o common/hermes_log.o common/virtual_clock.o \
 	common/chan.o common/queue.o common/mercury_engine.o common/mercury_cli.o \
 	data_interfaces/tcp_interfaces.o data_interfaces/net.o \
-	gui_interface/ui_communication.o gui_interface/ui_status.o \
+	gui_interface/ui_communication.o gui_interface/ui_status.o gui_interface/ui_devices.o \
 	gui_interface/websocket/mongoose.o gui_interface/websocket/mercury_websocket.o \
+	gui_interface/websocket/web_packed.o \
 	radio_io/radio_io.o
 
 ifeq ($(HAVE_HERMES_SHM),1)
@@ -276,7 +278,61 @@ fyne-ui-macos: libmercury_core.a
 # Wrap the .app in a compressed, drag-to-install .dmg (Applications symlink).
 # Run on macOS after fyne-ui-macos.  Unsigned — Gatekeeper will warn on first
 # open (right-click → Open), which is expected for an unnotarised build.
-MACOS_DMG ?= $(MACOS_APP_NAME).dmg
+# Version-stamped, like the Windows artifacts (mercury-$(MERCURY_VERSION)-w64-*.zip
+# and Mercury_$(MERCURY_VERSION)_Setup.exe).  A bare Mercury.dmg is impossible to
+# tell apart from the previous one in a downloads folder or on a release page.
+MACOS_DMG           ?= $(MACOS_APP_NAME)-$(MERCURY_VERSION).dmg
+MACOS_DMG_UNIVERSAL ?= $(MACOS_APP_NAME)-$(MERCURY_VERSION)-universal.dmg
+MACOS_CLI_PARK       = mercury-cli-universal
+
+# ---- macOS code signing (rcodesign) --------------------------------------
+# github.com/indygreg/apple-platform-rs -- a pure-Rust reimplementation that
+# signs Mach-O binaries, BUNDLES, .dmg images and .pkg archives, and notarizes
+# and staples, with no Mac, no Xcode and no keychain.  Used instead of Apple's
+# codesign so the signing certificate never has to reach a macOS runner, and
+# instead of anchore/quill, which cannot sign bundles or disk images at all
+# (anchore/quill#815, #550, both open) -- the two things Gatekeeper judges.
+#
+# Verified: a Mercury.app signed by rcodesign 0.28.0 on Linux passes Apple's
+# own `codesign --verify --deep --strict` on macOS 15.7.7 ("valid on disk",
+# "satisfies its Designated Requirement"), with CodeResources written and the
+# universal Mach-O sealed.
+#
+# NOTE this does not remove macOS from the release entirely: hdiutil builds the
+# .dmg and is Apple-only.  What moves off the Mac is signing and notarization.
+#
+#   MACOS_SIGN_P12 / MACOS_SIGN_P12_PASSWORD    Developer ID cert
+#
+# Opt-in, same shape as win_sign: with no certificate the build still completes
+# and says so, keeping developer builds unchanged.  0.28.0 is the version
+# pinned by indygreg/apple-code-sign-action.
+RCODESIGN ?= rcodesign
+
+# $(call macos_sign,<mach-o | bundle dir | dmg>)
+# --code-signature-flags runtime is the hardened runtime, which notarization
+# requires; Apple rejects the upload without it.
+define macos_sign
+	@if [ -n "$(MACOS_SIGN_P12)" ]; then \
+		command -v $(RCODESIGN) >/dev/null 2>&1 || { \
+			echo "error: MACOS_SIGN_P12 is set but '$(RCODESIGN)' is not installed"; \
+			echo "  https://github.com/indygreg/apple-platform-rs/releases"; \
+			exit 1; }; \
+		echo "Signing (rcodesign): $(1)"; \
+		$(RCODESIGN) sign \
+			--p12-file "$(MACOS_SIGN_P12)" \
+			--p12-password "$(MACOS_SIGN_P12_PASSWORD)" \
+			--code-signature-flags runtime \
+			$(if $(2),--binary-identifier "$(2)",) \
+			"$(1)" || exit 1; \
+	else \
+		echo "WARNING: MACOS_SIGN_P12 unset — $(1) is unsigned"; \
+	fi
+endef
+
+# Sign an already-built artifact by hand (binary, .app or .dmg):
+#   make sign-macos-bin BIN=mercury MACOS_SIGN_P12=cert.p12 MACOS_SIGN_P12_PASSWORD=...
+sign-macos-bin:
+	$(call macos_sign,$(BIN))
 fyne-ui-macos-dmg: fyne-ui-macos
 	@echo "Building $(MACOS_DMG)..."
 	rm -f $(abspath $(MACOS_DMG))
@@ -300,6 +356,7 @@ macos-universal:
 	@for A in x86_64 arm64; do \
 		echo "== building mercury slice: $$A =="; \
 		$(MAKE) clean >/dev/null; \
+		$(MAKE) internal_deps CC="clang -arch $$A" || exit 1; \
 		$(MAKE) $(BINARY) CC="clang -arch $$A" || exit 1; \
 		mv $(BINARY) mercury-$$A || exit 1; \
 	done
@@ -335,18 +392,88 @@ fyne-ui-macos-universal:
 	@lipo -archs $(FYNE_UI_DIR)/$(MACOS_APP_NAME).app/Contents/MacOS/* || true
 
 # Universal .app wrapped in a drag-to-install .dmg.  The finished .dmg lands at
-# the repo top level (e.g. ./Mercury.dmg) — the distribution artifact to upload.
-fyne-ui-macos-universal-dmg: fyne-ui-macos-universal
-	@echo "Building universal $(MACOS_DMG)..."
-	rm -f $(abspath $(MACOS_DMG))
+# the repo top level (e.g. ./Mercury-1.9.11-universal.dmg) — the artifact to
+# upload.
+#
+# The image also carries the headless CLI, which it did not before: the Windows
+# zip has always shipped mercury.exe next to the GUI, but the Mac image held
+# only Mercury.app, so a Mac operator wanting a TNC/uucp station had nothing to
+# install.  The GUI is built -tags mercury_embedded (the modem is linked into
+# it), so the CLI is a genuinely separate artifact, not a duplicate of it.
+#
+# It is staged NEXT TO the .app rather than inside Contents/MacOS: a drag-install
+# still copies exactly one thing, and stray executables inside a bundle are the
+# kind of thing that complicates signing/notarisation later.
+#
+# Ordering here is deliberate and cannot be expressed as prerequisites: BOTH
+# universal targets run `make clean` between their two arch slices, and clean
+# removes `mercury` AND Mercury.app — so whichever ran second would delete what
+# the first produced.  Build the CLI first, park it under a name clean does not
+# match, then package the .app.
+fyne-ui-macos-universal-dmg:
+	rm -f $(MACOS_CLI_PARK)
+	$(MAKE) macos-universal
+	mv $(BINARY) $(MACOS_CLI_PARK)
+	$(MAKE) fyne-ui-macos-universal
+	@echo "Building universal $(MACOS_DMG_UNIVERSAL)..."
+	rm -f $(abspath $(MACOS_DMG_UNIVERSAL))
 	rm -rf $(FYNE_UI_DIR)/dmg-stage
 	mkdir -p $(FYNE_UI_DIR)/dmg-stage
 	cp -R $(FYNE_UI_DIR)/$(MACOS_APP_NAME).app $(FYNE_UI_DIR)/dmg-stage/
 	ln -s /Applications $(FYNE_UI_DIR)/dmg-stage/Applications
-	hdiutil create -volname "$(MACOS_APP_NAME)" -srcfolder $(FYNE_UI_DIR)/dmg-stage \
-		-ov -format UDZO "$(abspath $(MACOS_DMG))"
+	mkdir -p "$(FYNE_UI_DIR)/dmg-stage/Command Line"
+	cp $(abspath $(MACOS_CLI_PARK)) "$(FYNE_UI_DIR)/dmg-stage/Command Line/$(BINARY)"
+	$(call macos_sign,$(FYNE_UI_DIR)/dmg-stage/Command Line/$(BINARY))
+	cp mercury.ini.example "$(FYNE_UI_DIR)/dmg-stage/Command Line/"
+	printf '%s\n' \
+	  'Mercury $(MERCURY_VERSION) - command-line (headless) modem' \
+	  '' \
+	  'Mercury.app next to this folder is the GUI and needs nothing else.' \
+	  'This folder is for running Mercury headless: as a TNC for Winlink/BPQ32,' \
+	  'or under uucp.' \
+	  '' \
+	  'Install:' \
+	  '  sudo cp mercury /usr/local/bin/' \
+	  '  cp mercury.ini.example ~/.mercury.ini    # then edit for your radio' \
+	  '  mercury -h                               # options' \
+	  '' \
+	  'Universal binary (Intel + Apple Silicon).  If this build is unsigned, the' \
+	  'first run needs:  xattr -d com.apple.quarantine /usr/local/bin/mercury' \
+	  > "$(FYNE_UI_DIR)/dmg-stage/Command Line/README.txt"
+	@# Seal the bundle before it goes into the image: rcodesign recurses into
+	@# nested Mach-Os and writes Contents/_CodeSignature/CodeResources.
+	@# Signing the image afterwards does NOT sign what is inside it.
+	$(call macos_sign,$(FYNE_UI_DIR)/dmg-stage/$(MACOS_APP_NAME).app)
+	hdiutil create -volname "$(MACOS_APP_NAME) $(MERCURY_VERSION)" \
+		-srcfolder $(FYNE_UI_DIR)/dmg-stage \
+		-ov -format UDZO "$(abspath $(MACOS_DMG_UNIVERSAL))"
+	$(call macos_sign,$(abspath $(MACOS_DMG_UNIVERSAL)),$(MACOS_APP_ID))
 	rm -rf $(FYNE_UI_DIR)/dmg-stage
-	@echo "  -> $(abspath $(MACOS_DMG))  (universal)"
+	rm -f $(abspath $(MACOS_CLI_PARK))
+	@echo "  -> $(abspath $(MACOS_DMG_UNIVERSAL))  (universal, GUI + CLI)"
+
+# ---- Notarization (rcodesign; network, no Mac) ---------------------------
+# Separate from signing on purpose: signing is local and offline, this uploads
+# to Apple, waits for the verdict and staples the ticket into the image so
+# Gatekeeper accepts it offline afterwards.
+#
+# Credentials are an App Store Connect API key, encoded once into a JSON file:
+#   rcodesign encode-app-store-connect-api-key -o ~/.mercury-notary.json \
+#       <issuer-id> <key-id> /path/to/AuthKey_<key-id>.p8
+#
+# then:  make macos-notarize-dmg MACOS_NOTARY_KEY=~/.mercury-notary.json
+MACOS_NOTARY_KEY ?=
+macos-notarize-dmg:
+	@[ -n "$(MACOS_NOTARY_KEY)" ] || { \
+		echo "error: set MACOS_NOTARY_KEY to an encoded App Store Connect key"; \
+		echo "  rcodesign encode-app-store-connect-api-key -o key.json <issuer> <key-id> AuthKey.p8"; \
+		exit 1; }
+	@[ -f "$(MACOS_DMG_UNIVERSAL)" ] || { \
+		echo "error: $(MACOS_DMG_UNIVERSAL) not built yet"; exit 1; }
+	$(RCODESIGN) notary-submit \
+		--api-key-file "$(MACOS_NOTARY_KEY)" --staple \
+		"$(MACOS_DMG_UNIVERSAL)"
+	@echo "  -> $(abspath $(MACOS_DMG_UNIVERSAL))  (notarized + stapled)"
 
 # ---- Authenticode signing (Windows binaries) ----
 # Two modes:
@@ -541,6 +668,12 @@ clean:
 	rm -f $(FYNE_UI_DIR)/engine/mercury_bridge.o $(FYNE_UI_DIR)/engine/mercury_bridge_w64.o
 	rm -f mercury-ui $(FYNE_UI_DIR)/mercury-ui $(FYNE_UI_DIR)/mercury-fyne-ui
 	rm -f $(MACOS_DMG) $(FYNE_UI_DIR)/$(MACOS_DMG)
+	rm -f $(MACOS_DMG_UNIVERSAL) $(FYNE_UI_DIR)/$(MACOS_DMG_UNIVERSAL)
+	@# NOT $(MACOS_CLI_PARK): the dmg recipe parks the CLI there precisely so it
+	@# survives the `clean` that fyne-ui-macos-universal runs between its arch
+	@# slices.  Cleaning it here deletes the binary mid-build.  The recipe removes
+	@# it itself on success, and clears it before starting so a leftover from a
+	@# failed run can never be staged as if it were fresh.
 	rm -rf $(FYNE_UI_DIR)/$(MACOS_APP_NAME).app $(FYNE_UI_DIR)/dmg-stage
 	$(MAKE) -C modem clean
 	$(MAKE) -C datalink_arq clean

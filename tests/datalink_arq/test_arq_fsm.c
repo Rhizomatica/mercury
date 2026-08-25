@@ -376,6 +376,43 @@ static void goto_connected(void)
     TEST_ASSERT_EQUAL_INT(ARQ_CONN_CONNECTED, sess.conn_state);
 }
 
+/* Session ID zero is invalid, not a wildcard.  A zero-ID DISCONNECT used to
+ * bypass the mismatch check and tear down an unrelated active session. */
+void test_connected_rejects_zero_session_id(void)
+{
+    goto_connected();
+    uint64_t last_rx = sess.last_rx_ms;
+
+    mock_set_uptime_ms(5000);
+    arq_event_t ev = make_event(ARQ_EV_RX_DISCONNECT);
+    ev.session_id = 0;
+    arq_fsm_dispatch(&sess, &ev);
+
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_CONNECTED, sess.conn_state);
+    TEST_ASSERT_EQUAL_UINT64(last_rx, sess.last_rx_ms);
+}
+
+/* The other half of the zero-session rule, and the reason it is not a blanket
+ * ban.  An in-session ACK is a bare Welch-Costas pattern: it has no header, so
+ * it cannot carry a session ID and is posted with zero.  Tightening the gate to
+ * reject every zero-ID event -- which is correct for framed events, as the test
+ * above shows -- would discard every in-session ACK and stall the data plane
+ * with no visible error.  This pins the asymmetry so the two cannot drift. */
+void test_connected_accepts_zero_session_pattern_ack(void)
+{
+    goto_connected();
+    mock_set_uptime_ms(5000);
+    uint64_t before = sess.last_rx_ms;
+
+    arq_event_t ev = make_event(ARQ_EV_RX_ACK);
+    ev.session_id = 0;                 /* what a pattern ACK always carries */
+    arq_fsm_dispatch(&sess, &ev);
+
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_CONNECTED, sess.conn_state);
+    TEST_ASSERT_NOT_EQUAL_MESSAGE(before, sess.last_rx_ms,
+        "a zero-session pattern ACK was dropped by the session-ID gate");
+}
+
 /* ---- Disconnect teardown tests (K7EK field regressions) ---- */
 
 /* Entering CONNECTED seeds the no-progress clock so the wall-clock budget
@@ -1085,6 +1122,8 @@ int main(void)
     RUN_TEST(test_deferred_listen_off_survives_connect);
     RUN_TEST(test_listen_off_drops_live_link_without_draining);
     RUN_TEST(test_rx_disconnect_from_connected);
+    RUN_TEST(test_connected_rejects_zero_session_id);
+    RUN_TEST(test_connected_accepts_zero_session_pattern_ack);
     RUN_TEST(test_connected_seeds_no_progress_clock);
     RUN_TEST(test_app_disconnect_defers_with_backlog);
     RUN_TEST(test_pending_disconnect_retries_last_frame_before_teardown);

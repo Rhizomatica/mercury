@@ -14,6 +14,53 @@
 #include "unity.h"
 #include "ui_status.h"
 
+
+/* ---- long audio device ids (issue #185) --------------------------------- */
+
+/* The reporter's IC-7300 as PulseAudio names it.  66 and 67 characters: at the
+ * old 64-byte width these were cut to 63, which both wrote a broken device
+ * into mercury.ini and stopped the id matching a real device on the next open,
+ * so the modem silently fell back to the default card. */
+#define IC7300_CAPTURE  "alsa_input.usb-Burr-Brown_from_TI_USB_Audio_CODEC-00.analog-stereo"
+#define IC7300_PLAYBACK "alsa_output.usb-Burr-Brown_from_TI_USB_Audio_CODEC-00.analog-stereo"
+
+void test_pulseaudio_device_id_survives_the_ui_struct(void)
+{
+    /* The struct has to hold the name AND its NUL, or the round trip through
+     * the UI silently shortens what the operator picked. */
+    TEST_ASSERT_TRUE_MESSAGE(sizeof(((ui_device_t *)0)->id) > strlen(IC7300_CAPTURE),
+                             "ui_device_t.id too small for a plain USB codec's PulseAudio node");
+    TEST_ASSERT_TRUE_MESSAGE(sizeof(((ui_device_t *)0)->id) > strlen(IC7300_PLAYBACK),
+                             "ui_device_t.id too small for a plain USB codec's PulseAudio node");
+
+    ui_device_t d;
+    memset(&d, 0, sizeof(d));
+    snprintf(d.id, sizeof(d.id), "%s", IC7300_CAPTURE);
+    TEST_ASSERT_EQUAL_STRING(IC7300_CAPTURE, d.id);
+}
+
+/* The id has to come back out of the JSON intact too -- that is the path the
+ * web UI and the Fyne UI both read the device list through. */
+void test_long_device_id_round_trips_through_json(void)
+{
+    ui_device_t devs[2];
+    memset(devs, 0, sizeof(devs));
+    snprintf(devs[0].id,   sizeof(devs[0].id),   "%s", IC7300_CAPTURE);
+    snprintf(devs[0].name, sizeof(devs[0].name), "%s", "USB Audio CODEC Analog Stereo");
+    snprintf(devs[1].id,   sizeof(devs[1].id),   "%s", IC7300_PLAYBACK);
+    snprintf(devs[1].name, sizeof(devs[1].name), "%s", "USB Audio CODEC Analog Stereo");
+
+    char buf[2048];
+    int n = ui_device_list_to_json("capture", devs, 2, IC7300_CAPTURE, buf, sizeof(buf));
+    TEST_ASSERT_TRUE(n > 0);
+
+    /* Whole string present, not a 63-character prefix of it. */
+    TEST_ASSERT_NOT_NULL_MESSAGE(strstr(buf, IC7300_CAPTURE),
+                                 "capture id truncated in the device-list JSON");
+    TEST_ASSERT_NOT_NULL_MESSAGE(strstr(buf, IC7300_PLAYBACK),
+                                 "playback id truncated in the device-list JSON");
+}
+
 void setUp(void) {}
 void tearDown(void) {}
 
@@ -143,5 +190,7 @@ int main(void)
     RUN_TEST(test_booleans_render_as_json_literals);
     RUN_TEST(test_truncation_is_reported_not_emitted);
     RUN_TEST(test_null_arguments_are_rejected);
+    RUN_TEST(test_pulseaudio_device_id_survives_the_ui_struct);
+    RUN_TEST(test_long_device_id_round_trips_through_json);
     return UNITY_END();
 }
