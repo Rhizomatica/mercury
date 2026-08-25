@@ -413,6 +413,43 @@ void test_connected_accepts_zero_session_pattern_ack(void)
         "a zero-session pattern ACK was dropped by the session-ID gate");
 }
 
+/* A repeated CALL while ACCEPTING is proof our ACCEPT was lost AND that the
+ * caller has not started a data burst.  The deadline set at ACCEPT TX_COMPLETE
+ * holds the RX window open for that burst -- ~18 s once MFSK is the ladder
+ * floor -- so waiting it out drifts our retransmitted ACCEPT into the middle of
+ * the caller's next CALL, where it is deaf over its own transmission.  Answer
+ * one channel guard later instead, in the gap the caller just opened. */
+void test_accepting_reanchors_accept_retry_on_repeated_call(void)
+{
+    arq_event_t ev = make_event(ARQ_EV_APP_LISTEN);
+    arq_fsm_dispatch(&sess, &ev);
+    ev = make_event(ARQ_EV_RX_CALL);
+    ev.session_id = 0x42;
+    strncpy(ev.remote_call, "REMOTE1", CALLSIGN_MAX_SIZE);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_ACCEPTING, sess.conn_state);
+
+    /* Our ACCEPT goes out; the long data-burst window is armed here. */
+    mock_set_uptime_ms(1000);
+    ev = make_event(ARQ_EV_TX_COMPLETE);
+    arq_fsm_dispatch(&sess, &ev);
+    uint64_t long_window = sess.deadline_ms;
+    TEST_ASSERT_GREATER_THAN_UINT64(1000 + ARQ_CHANNEL_GUARD_MS, long_window);
+
+    /* The caller retries CALL: it never heard the ACCEPT. */
+    mock_set_uptime_ms(5000);
+    ev = make_event(ARQ_EV_RX_CALL);
+    ev.session_id = 0x42;
+    strncpy(ev.remote_call, "REMOTE1", CALLSIGN_MAX_SIZE);
+    arq_fsm_dispatch(&sess, &ev);
+
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_ACCEPTING, sess.conn_state);
+    TEST_ASSERT_EQUAL_UINT64_MESSAGE(5000 + ARQ_CHANNEL_GUARD_MS, sess.deadline_ms,
+        "a repeated CALL must re-anchor the ACCEPT retry to one channel guard "
+        "from now, not leave the data-burst window running");
+    TEST_ASSERT_EQUAL_INT(ARQ_EV_TIMER_RETRY, sess.deadline_event);
+}
+
 /* ---- Disconnect teardown tests (K7EK field regressions) ---- */
 
 /* Entering CONNECTED seeds the no-progress clock so the wall-clock budget
@@ -1112,6 +1149,7 @@ int main(void)
     RUN_TEST(test_connect_transitions_to_calling);
     RUN_TEST(test_call_retry_deadline_anchored_to_ptt_off);
     RUN_TEST(test_incoming_call_transitions_to_accepting);
+    RUN_TEST(test_accepting_reanchors_accept_retry_on_repeated_call);
     RUN_TEST(test_incoming_call_records_dialed_secondary);
     RUN_TEST(test_accept_transitions_to_connected);
     RUN_TEST(test_disconnect_from_connected);

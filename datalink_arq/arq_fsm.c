@@ -1045,10 +1045,37 @@ static void fsm_accepting(arq_session_t *sess, const arq_event_t *ev)
         break;
 
     case ARQ_EV_RX_CALL:
-        /* Caller is still retrying CALL (our previous ACCEPT was lost). Reset
-         * the retry counter so the ACCEPTING window stays open long enough for
-         * the caller to decode the next ACCEPT and start sending data. */
+        /* Caller is still retrying CALL, so our previous ACCEPT was lost.
+         * Reset the retry counter so the ACCEPTING window stays open long
+         * enough for the caller to decode the next ACCEPT and start sending
+         * data.
+         *
+         * ...and re-anchor the retry to NOW, rather than letting the deadline
+         * set at TX_COMPLETE run its full course.  That deadline is sized to
+         * hold the RX window open for the caller's first DATA burst -- the
+         * ladder's longest, so ARQ_ACCEPT_RX_WINDOW_MS is ~18 s once MFSK is
+         * the floor.  Waiting it out here is wrong twice over:
+         *
+         *   - It is the wrong question.  A CALL just arrived, which is proof
+         *     the caller is still in CALLING and has NOT begun a data burst,
+         *     so there is nothing for the long window to protect.  The window
+         *     answers "how long might a data burst be?" when the evidence in
+         *     hand answers "there is no data burst".
+         *   - It desynchronises us from the caller.  The caller retries CALL
+         *     every arq_protocol_call_interval_s() (8 s for DATAC16); holding
+         *     ~18 s means our retransmitted ACCEPT drifts into the middle of a
+         *     CALL, and the caller is deaf over its own transmission.
+         *     Measured on a faded reverse path: ACCEPT#2 went out at +26.19 s
+         *     while the caller transmitted CALL#3 from +23.62 to +27.33 s, so
+         *     the reply landed inside the caller's own burst on every attempt
+         *     and the connect never completed.
+         *
+         * Answering one channel guard after the CALL puts the ACCEPT in the
+         * gap the caller has just opened by dropping PTT -- the same schedule
+         * fsm_listening uses for the first ACCEPT, and for the same reason. */
         sess->tx_retries_left = ARQ_ACCEPT_RETRY_SLOTS;
+        sess->deadline_ms     = time_now_ms() + ARQ_CHANNEL_GUARD_MS;
+        sess->deadline_event  = ARQ_EV_TIMER_RETRY;
         break;
 
     case ARQ_EV_TX_COMPLETE:
