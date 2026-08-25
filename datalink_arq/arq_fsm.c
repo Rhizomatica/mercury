@@ -233,6 +233,14 @@ static uint64_t deadline_from_s(float seconds)
     return time_now_ms() + (uint64_t)(seconds * 1000.0f + 0.5f);
 }
 
+static uint64_t retry_deadline_from_s(const arq_session_t *sess, float seconds)
+{
+    char my_call[CALLSIGN_MAX_SIZE];
+    arq_conn_get_calls(my_call, NULL, NULL, sizeof(my_call));
+    uint32_t salt = arq_protocol_node_salt(sess->session_id, my_call);
+    return arq_protocol_retry_deadline_ms(seconds, salt);
+}
+
 /** Update local_snr_x10 EMA from the SNR carried in a received frame event.
  *  Called in all RX_DATA handlers to avoid cross-thread race with the modem
  *  thread's arq_update_link_metrics() call. */
@@ -1204,7 +1212,7 @@ static void fsm_calling(arq_session_t *sess, const arq_event_t *ev)
          * moment the ACCEPT is arriving -- so the retry keys the transmitter on
          * top of the reply it was waiting for, on essentially every connect.
          * Measuring the interval from here gives the peer a full turnaround. */
-        sess->deadline_ms = deadline_from_s(arq_protocol_call_interval_s());
+        sess->deadline_ms = retry_deadline_from_s(sess, arq_protocol_call_interval_s());
         break;
 
     case ARQ_EV_TIMER_RETRY:
@@ -1214,7 +1222,7 @@ static void fsm_calling(arq_session_t *sess, const arq_event_t *ev)
             send_call_accept(sess, false);
             /* Deadline is re-anchored on TX_COMPLETE above; this is the
              * fallback if that event is ever missed. */
-            sess->deadline_ms = deadline_from_s(arq_protocol_call_interval_s());
+            sess->deadline_ms = retry_deadline_from_s(sess, arq_protocol_call_interval_s());
         }
         else
         {
@@ -1327,7 +1335,7 @@ static void fsm_accepting(arq_session_t *sess, const arq_event_t *ev)
             send_call_accept(sess, true);
             /* deadline is now managed via TX_COMPLETE above; set a generous
              * fallback here in case TX_COMPLETE is missed for any reason */
-            sess->deadline_ms = deadline_from_s(arq_protocol_call_interval_s());
+            sess->deadline_ms = retry_deadline_from_s(sess, arq_protocol_call_interval_s());
         }
         else
         {
@@ -1388,7 +1396,7 @@ static void fsm_disconnecting(arq_session_t *sess, const arq_event_t *ev)
         /* Initial DISCONNECT send after channel guard. */
         send_ctrl_frame(sess, ARQ_SUBTYPE_DISCONNECT);
         tm = arq_protocol_mode_timing(sess->control_mode);
-        sess->deadline_ms    = deadline_from_s(tm ? tm->retry_interval_s : 7.0f);
+        sess->deadline_ms    = retry_deadline_from_s(sess, tm ? tm->retry_interval_s : 7.0f);
         sess->deadline_event = ARQ_EV_TIMER_RETRY;
         HLOGD(LOG_COMP, "Disconnect tx (initial, after guard)");
         break;
@@ -1406,7 +1414,7 @@ static void fsm_disconnecting(arq_session_t *sess, const arq_event_t *ev)
             sess->tx_retries_left--;
             send_ctrl_frame(sess, ARQ_SUBTYPE_DISCONNECT);
             tm = arq_protocol_mode_timing(sess->control_mode);
-            sess->deadline_ms = deadline_from_s(tm ? tm->retry_interval_s : 7.0f);
+            sess->deadline_ms = retry_deadline_from_s(sess, tm ? tm->retry_interval_s : 7.0f);
             HLOGD(LOG_COMP, "Disconnect tx retry=%d", sess->tx_retries_left);
         }
         else
@@ -1531,7 +1539,7 @@ static void fsm_connected(arq_session_t *sess, const arq_event_t *ev)
         send_ctrl_frame(sess, ARQ_SUBTYPE_KEEPALIVE);
         tm = arq_protocol_mode_timing(sess->control_mode);
         dflow_enter(sess, ARQ_DFLOW_KEEPALIVE_TX,
-                    deadline_from_s(tm ? tm->retry_interval_s : 7.0f),
+                    retry_deadline_from_s(sess, tm ? tm->retry_interval_s : 7.0f),
                     ARQ_EV_TIMER_RETRY);
         return;
 
@@ -1885,7 +1893,7 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
                     sess->tx_retries_left = ARQ_DISCONNECT_RETRY_SLOTS;
                     tm = arq_protocol_mode_timing(sess->control_mode);
                     sess_enter(sess, ARQ_CONN_DISCONNECTING,
-                               deadline_from_s(tm ? tm->retry_interval_s : 7.0f),
+                               retry_deadline_from_s(sess, tm ? tm->retry_interval_s : 7.0f),
                                ARQ_EV_TIMER_RETRY);
                 }
                 else
@@ -2066,7 +2074,7 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
                 send_ctrl_frame(sess, ARQ_SUBTYPE_KEEPALIVE);
                 tm = arq_protocol_mode_timing(sess->control_mode);
                 dflow_enter(sess, ARQ_DFLOW_KEEPALIVE_TX,
-                            deadline_from_s(tm ? tm->retry_interval_s : 7.0f),
+                            retry_deadline_from_s(sess, tm ? tm->retry_interval_s : 7.0f),
                             ARQ_EV_TIMER_RETRY);
             }
             else if (session_tx_backlog(sess) > 0)
@@ -2075,7 +2083,7 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
                 sess->tx_retries_left = ARQ_TURN_REQ_RETRIES;
                 tm = arq_protocol_mode_timing(sess->control_mode);
                 dflow_enter(sess, ARQ_DFLOW_TURN_REQ_TX,
-                            deadline_from_s(tm ? tm->retry_interval_s : 7.0f),
+                            retry_deadline_from_s(sess, tm ? tm->retry_interval_s : 7.0f),
                             ARQ_EV_TIMER_RETRY);
             }
             else
@@ -2089,7 +2097,7 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
             sess->tx_retries_left = ARQ_TURN_REQ_RETRIES;
             tm = arq_protocol_mode_timing(sess->control_mode);
             dflow_enter(sess, ARQ_DFLOW_TURN_REQ_TX,
-                        deadline_from_s(tm ? tm->retry_interval_s : 7.0f),
+                        retry_deadline_from_s(sess, tm ? tm->retry_interval_s : 7.0f),
                         ARQ_EV_TIMER_RETRY);
         }
         else if (ev->id == ARQ_EV_RX_TURN_REQ)
@@ -2212,7 +2220,7 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
         {
             tm = arq_protocol_mode_timing(sess->control_mode);
             dflow_enter(sess, ARQ_DFLOW_TURN_REQ_WAIT,
-                        deadline_from_s(tm ? tm->retry_interval_s : 7.0f),
+                        retry_deadline_from_s(sess, tm ? tm->retry_interval_s : 7.0f),
                         ARQ_EV_TIMER_RETRY);
         }
         break;
@@ -2259,7 +2267,7 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
                 send_ctrl_frame(sess, ARQ_SUBTYPE_TURN_REQ);
                 tm = arq_protocol_mode_timing(sess->control_mode);
                 dflow_enter(sess, ARQ_DFLOW_TURN_REQ_TX,
-                            deadline_from_s(tm ? tm->retry_interval_s : 7.0f),
+                            retry_deadline_from_s(sess, tm ? tm->retry_interval_s : 7.0f),
                             ARQ_EV_TIMER_RETRY);
             }
             else
@@ -2281,7 +2289,7 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
         {
             tm = arq_protocol_mode_timing(sess->control_mode);
             dflow_enter(sess, ARQ_DFLOW_KEEPALIVE_WAIT,
-                        deadline_from_s(tm ? tm->retry_interval_s : 7.0f),
+                        retry_deadline_from_s(sess, tm ? tm->retry_interval_s : 7.0f),
                         ARQ_EV_TIMER_RETRY);
         }
         break;
@@ -2316,7 +2324,7 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
                 sess->tx_retries_left = ARQ_DISCONNECT_RETRY_SLOTS;
                 tm = arq_protocol_mode_timing(sess->control_mode);
                 sess_enter(sess, ARQ_CONN_DISCONNECTING,
-                           deadline_from_s(tm ? tm->retry_interval_s : 7.0f),
+                           retry_deadline_from_s(sess, tm ? tm->retry_interval_s : 7.0f),
                            ARQ_EV_TIMER_RETRY);
             }
             else
@@ -2324,7 +2332,7 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
                 send_ctrl_frame(sess, ARQ_SUBTYPE_KEEPALIVE);
                 tm = arq_protocol_mode_timing(sess->control_mode);
                 dflow_enter(sess, ARQ_DFLOW_KEEPALIVE_TX,
-                            deadline_from_s(tm ? tm->retry_interval_s : 7.0f),
+                            retry_deadline_from_s(sess, tm ? tm->retry_interval_s : 7.0f),
                             ARQ_EV_TIMER_RETRY);
             }
         }
@@ -2374,7 +2382,7 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
             else
             {
                 dflow_enter(sess, ARQ_DFLOW_MODE_REQ_WAIT,
-                            deadline_from_s(tm ? tm->retry_interval_s : 7.0f),
+                            retry_deadline_from_s(sess, tm ? tm->retry_interval_s : 7.0f),
                             ARQ_EV_TIMER_RETRY);
             }
         }

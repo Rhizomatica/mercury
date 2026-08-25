@@ -256,6 +256,19 @@ extern _Atomic int arq_disconnect_retry_slots;
 #define ARQ_CALLINT_DEFAULT_S  0.0f   /* 0 = use table default */
 extern _Atomic float arq_callint_override_s;
 
+/* Bounded random delay (ms) added to retry deadlines.  Compile-time default;
+ * tunable only by direct atomic store (no TCP command). */
+#define ARQ_RETRY_JITTER_MS_DEFAULT 2000
+extern _Atomic int arq_retry_jitter_ms;
+
+/* Per-node retry-jitter salt: mixes the shared session_id with the local
+ * callsign so the two peers of a session derive different jitter even when
+ * their clocks read the same instant (session_id alone is identical on both
+ * sides — the callee adopts the caller's byte). */
+uint32_t arq_protocol_node_salt(uint8_t session_id, const char *local_callsign);
+
+uint64_t arq_protocol_retry_deadline_ms(float seconds, uint32_t salt);
+
 #define ARQ_CALL_RETRY_SLOTS       atomic_load(&arq_call_retry_slots)
 #define ARQ_ACCEPT_RETRY_SLOTS     atomic_load(&arq_accept_retry_slots)
 #define ARQ_DATA_RETRY_SLOTS       atomic_load(&arq_data_retry_slots)

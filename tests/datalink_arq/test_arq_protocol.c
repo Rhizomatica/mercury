@@ -18,10 +18,13 @@
 #include "framer.h"
 #include "freedv/freedv_api.h"
 
+extern void mock_set_uptime_ms(uint64_t ms);
+
 void setUp(void)
 {
     /* Reset CALLINT override before each test so tests are isolated */
     atomic_store(&arq_callint_override_s, 0.0f);
+    mock_set_uptime_ms(1000);
 }
 
 void tearDown(void) { }
@@ -96,6 +99,53 @@ void test_decode_snr_zero_is_unknown(void)
 {
     float out = arq_protocol_decode_snr(0);
     TEST_ASSERT_FLOAT_WITHIN(0.01f, 0.0f, out);
+}
+
+void test_retry_deadline_includes_bounded_jitter(void)
+{
+    mock_set_uptime_ms(1000);
+    uint64_t first = arq_protocol_retry_deadline_ms(7.0f, 0x42);
+    mock_set_uptime_ms(1001);
+    uint64_t second = arq_protocol_retry_deadline_ms(7.0f, 0x42);
+
+    TEST_ASSERT_TRUE(first >= 1000 + 7000ULL);
+    TEST_ASSERT_TRUE(second >= 1001 + 7000ULL);
+    TEST_ASSERT_TRUE(first <= 1000 + 7000ULL + ARQ_RETRY_JITTER_MS_DEFAULT);
+    TEST_ASSERT_TRUE(second <= 1001 + 7000ULL + ARQ_RETRY_JITTER_MS_DEFAULT);
+    TEST_ASSERT_NOT_EQUAL_UINT64(first, second);
+}
+
+void test_retry_deadline_jitter_differs_by_node_salt(void)
+{
+    /* Two stations sharing a clock and a session_id must still desynchronise:
+     * the callsign-derived salt is the only input that differs. */
+    uint32_t salt_a = arq_protocol_node_salt(0x42, "NODE_A");
+    uint32_t salt_b = arq_protocol_node_salt(0x42, "NODE_B");
+    TEST_ASSERT_NOT_EQUAL_UINT32(salt_a, salt_b);
+
+    mock_set_uptime_ms(1000);
+    uint64_t a = arq_protocol_retry_deadline_ms(7.0f, salt_a);
+    mock_set_uptime_ms(1000); /* same instant */
+    uint64_t b = arq_protocol_retry_deadline_ms(7.0f, salt_b);
+    TEST_ASSERT_NOT_EQUAL_UINT64(a, b);
+}
+
+void test_retry_deadline_salt_is_deterministic(void)
+{
+    /* Same callsign + session_id must hash to the same salt every time, so a
+     * node's retry cadence is stable across the session. */
+    uint32_t a = arq_protocol_node_salt(0x42, "NODE_A");
+    uint32_t b = arq_protocol_node_salt(0x42, "NODE_A");
+    TEST_ASSERT_EQUAL_UINT32(a, b);
+}
+
+void test_retry_deadline_jitter_disabled_is_exact(void)
+{
+    mock_set_uptime_ms(1000);
+    atomic_store(&arq_retry_jitter_ms, 0);
+    uint64_t d = arq_protocol_retry_deadline_ms(7.0f, 0x42);
+    TEST_ASSERT_EQUAL_UINT64(1000 + 7000ULL, d);
+    atomic_store(&arq_retry_jitter_ms, ARQ_RETRY_JITTER_MS_DEFAULT);
 }
 
 /* ---- Bandwidth token roundtrip ---- */
@@ -422,6 +472,11 @@ int main(void)
     RUN_TEST(test_encode_decode_snr_positive);
     RUN_TEST(test_encode_decode_snr_negative);
     RUN_TEST(test_decode_snr_zero_is_unknown);
+    /* Retry jitter */
+    RUN_TEST(test_retry_deadline_includes_bounded_jitter);
+    RUN_TEST(test_retry_deadline_jitter_differs_by_node_salt);
+    RUN_TEST(test_retry_deadline_salt_is_deterministic);
+    RUN_TEST(test_retry_deadline_jitter_disabled_is_exact);
     /* Bandwidth */
     RUN_TEST(test_bw_token_500hz);
     RUN_TEST(test_bw_token_2300hz);

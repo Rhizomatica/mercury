@@ -76,12 +76,12 @@ test_pcm24: audioio/test_pcm24.c $(UNITY_SRC)
 
 # ARQ protocol tests (frame encode/decode, utilities)
 test_arq_protocol: datalink_arq/test_arq_protocol.c $(UNITY_SRC) $(ARQ_STUBS) \
-                   ../datalink_arq/arq_protocol.c ../datalink_arq/arith.c
+                   ../common/virtual_clock.c ../datalink_arq/arq_protocol.c ../datalink_arq/arith.c
 	$(CC) $(CFLAGS) -I../modem/freedv -o $@ $^ $(LDFLAGS)
 
 # OLLA control-loop test (closed-loop gear-shift convergence)
 test_arq_olla: datalink_arq/test_arq_olla.c $(UNITY_SRC) $(ARQ_STUBS) \
-               ../datalink_arq/arq_protocol.c ../datalink_arq/arith.c
+               ../common/virtual_clock.c ../datalink_arq/arq_protocol.c ../datalink_arq/arith.c
 	$(CC) $(CFLAGS) -I../modem/freedv -o $@ $^ $(LDFLAGS) -lm
 
 # ARQ timing tests (instrumentation recording)

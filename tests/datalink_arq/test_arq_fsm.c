@@ -939,10 +939,15 @@ void test_call_retry_deadline_anchored_to_ptt_off(void)
     TEST_ASSERT_EQUAL_INT(ARQ_CONN_CALLING, sess.conn_state);
     TEST_ASSERT_TRUE_MESSAGE(sess.deadline_ms > at_enqueue,
         "CALL retry deadline must be re-anchored to PTT-OFF");
-    /* And it must be a full interval from PTT-OFF, not a partial remainder. */
-    TEST_ASSERT_EQUAL_UINT64((uint64_t)(1000 + 3700) +
-                             (uint64_t)arq_protocol_call_interval_s() * 1000ULL,
-                             sess.deadline_ms);
+    /* And it must be a full interval from PTT-OFF, with bounded jitter added
+     * on top of the retry cadence so the next retry does not phase-lock with
+     * the peer. */
+    uint64_t ptt_off_ms = (uint64_t)(1000 + 3700);
+    uint64_t base_deadline_ms = ptt_off_ms +
+                               (uint64_t)arq_protocol_call_interval_s() * 1000ULL;
+    TEST_ASSERT_TRUE(sess.deadline_ms >= base_deadline_ms);
+    TEST_ASSERT_TRUE(sess.deadline_ms <=
+                    base_deadline_ms + ARQ_RETRY_JITTER_MS_DEFAULT);
 }
 
 int main(void)
