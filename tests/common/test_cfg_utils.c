@@ -45,7 +45,7 @@ void test_defaults_match_constants(void)
     TEST_ASSERT_EQUAL_INT(5,   c.keepalive_miss_limit);
     TEST_ASSERT_EQUAL_INT(15,  c.peer_payload_hold_s);
     TEST_ASSERT_EQUAL_INT(10,  c.startup_max_s);
-    TEST_ASSERT_EQUAL_INT(2000, c.retry_jitter_ms);
+    TEST_ASSERT_EQUAL_INT(2000, c.retry_stagger_ms);
     /* Opt-in: hosts hold transmissions while BUSY is asserted, so this must
      * never switch on under a station that did not ask for it. */
     TEST_ASSERT_FALSE(c.busy_detect);
@@ -70,7 +70,7 @@ void test_arq_tunables_roundtrip(void)
     w.keepalive_miss_limit        = 8;
     w.peer_payload_hold_s         = 25;
     w.startup_max_s               = 20;
-    w.retry_jitter_ms             = 0;      /* off-switch must round-trip */
+    w.retry_stagger_ms             = 0;      /* off-switch must round-trip */
     w.busy_detect                 = true;   /* non-default: proves it round-trips */
     w.busy_threshold_db           = 14;
     w.busy_hysteresis_db          = 5;
@@ -91,7 +91,7 @@ void test_arq_tunables_roundtrip(void)
     TEST_ASSERT_EQUAL_INT(8,    r.keepalive_miss_limit);
     TEST_ASSERT_EQUAL_INT(25,   r.peer_payload_hold_s);
     TEST_ASSERT_EQUAL_INT(20,   r.startup_max_s);
-    TEST_ASSERT_EQUAL_INT(0,    r.retry_jitter_ms);   /* 0 (off) preserved */
+    TEST_ASSERT_EQUAL_INT(0,    r.retry_stagger_ms);   /* 0 (off) preserved */
     TEST_ASSERT_TRUE(r.busy_detect);
     TEST_ASSERT_EQUAL_INT(14,   r.busy_threshold_db);
     TEST_ASSERT_EQUAL_INT(5,    r.busy_hysteresis_db);
@@ -106,7 +106,7 @@ void test_arq_tunables_clamp_rejects_garbage(void)
     TEST_ASSERT_NOT_NULL(f);
     fputs("[arq]\nchannel_guard_ms = 999999\nkeepalive_miss_limit = 0\n"
           "peer_payload_hold_s = 0\nstartup_max_s = 999\n"
-          "retry_jitter_ms = 999999\n", f);
+          "retry_stagger_ms = 999999\n", f);
     fclose(f);
 
     mercury_config r;
@@ -116,7 +116,7 @@ void test_arq_tunables_clamp_rejects_garbage(void)
     TEST_ASSERT_EQUAL_INT(5,   r.keepalive_miss_limit);/* out of 2..20   -> default kept  */
     TEST_ASSERT_EQUAL_INT(15,  r.peer_payload_hold_s); /* out of 1..120  -> default kept  */
     TEST_ASSERT_EQUAL_INT(10,  r.startup_max_s);       /* out of 2..60   -> default kept  */
-    TEST_ASSERT_EQUAL_INT(2000, r.retry_jitter_ms);    /* out of 0..5000 -> default kept  */
+    TEST_ASSERT_EQUAL_INT(2000, r.retry_stagger_ms);    /* out of 0..5000 -> default kept  */
 }
 
 int main(void)

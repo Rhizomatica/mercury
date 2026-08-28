@@ -589,7 +589,7 @@ globals seeded from the `_DEFAULT` value above and set once at startup:
 `channel_guard_ms`, `iss_post_ack_guard_ms`, `data_retry_slots`,
 `mode_hold_after_downgrade_s`, `ladder_up_successes`, `retry_downgrade_threshold`,
 `keepalive_interval_s`, `keepalive_miss_limit`, `peer_payload_hold_s`,
-`startup_max_s`, `retry_jitter_ms` (each clamped to a safe range). See
+`startup_max_s`, `retry_stagger_ms` (each clamped to a safe range). See
 `mercury.ini.example` for keys, defaults, and ranges.
 
 ---

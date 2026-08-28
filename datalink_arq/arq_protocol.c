@@ -20,7 +20,7 @@ _Atomic int arq_call_retry_slots       = ARQ_CALL_RETRY_SLOTS_DEFAULT;
 _Atomic int arq_accept_retry_slots     = ARQ_ACCEPT_RETRY_SLOTS_DEFAULT;
 _Atomic int arq_data_retry_slots       = ARQ_DATA_RETRY_SLOTS_DEFAULT;
 _Atomic int arq_disconnect_retry_slots = ARQ_DISCONNECT_RETRY_SLOTS_DEFAULT;
-_Atomic int arq_retry_jitter_ms        = ARQ_RETRY_JITTER_MS_DEFAULT;
+_Atomic int arq_retry_stagger_ms       = ARQ_RETRY_STAGGER_MS_DEFAULT;
 _Atomic int arq_no_progress_timeout_s  = ARQ_NO_PROGRESS_TIMEOUT_S_DEFAULT;
 _Atomic int arq_disconnect_drain_timeout_s = ARQ_DISCONNECT_DRAIN_TIMEOUT_S_DEFAULT;
 
@@ -144,41 +144,36 @@ float arq_protocol_call_interval_s(void)
     return tm ? tm->retry_interval_s : 8.0f;
 }
 
-uint32_t arq_protocol_node_salt(uint8_t session_id, const char *local_callsign)
+int arq_protocol_retry_rank(const char *local_call, const char *remote_call)
 {
-    uint64_t x = 0x9E3779B97F4A7C15ULL;
-    for (const unsigned char *p = (const unsigned char *)local_callsign;
-         p && *p; p++)
-    {
-        x ^= *p;
-        x *= 0x100000001B3ULL; /* FNV-1a 64-bit prime */
-    }
-    x ^= (uint64_t)session_id;
-    /* Final avalanche so distinct callsign/session pairs land far apart. */
-    x ^= x >> 33;
-    x *= 0xFF51AFD7ED558CCDULL;
-    x ^= x >> 33;
-    x *= 0xC4CEB9FE1A85EC53ULL;
-    x ^= x >> 33;
-    return (uint32_t)x;
+    if (!local_call || !remote_call || !local_call[0] || !remote_call[0])
+        return -1;  /* missing identity — cannot decide, random fallback */
+    int c = strcmp(local_call, remote_call);
+    if (c == 0)
+        return -1;  /* identical callsigns — misconfigured pair, random fallback */
+    return (c > 0) ? 1 : 0;
 }
 
-uint64_t arq_protocol_retry_deadline_ms(float seconds, uint32_t salt)
+uint64_t arq_protocol_retry_deadline_ms(float seconds, int rank)
 {
     uint64_t now_ms = time_now_ms();
     uint64_t base_ms = (uint64_t)(seconds * 1000.0f + 0.5f);
-    int jitter_ms = atomic_load(&arq_retry_jitter_ms);
-    if (jitter_ms <= 0)
+    int stagger_ms = atomic_load(&arq_retry_stagger_ms);
+    if (stagger_ms <= 0 || rank == 0)
         return now_ms + base_ms;
 
-    uint64_t x = ((uint64_t)salt << 32) ^ now_ms ^ 0x9E3779B97F4A7C15ULL;
+    if (rank == 1)
+        return now_ms + base_ms + (uint64_t)stagger_ms;
+
+    /* rank < 0: degenerate pair — random fallback over [0, stagger_ms). */
+    uint64_t x = now_ms ^ 0x9E3779B97F4A7C15ULL;
     x ^= x >> 30;
     x *= 0xBF58476D1CE4E5B9ULL;
     x ^= x >> 27;
     x *= 0x94D049BB133111EBULL;
     x ^= x >> 31;
 
-    return now_ms + base_ms + (x % (uint64_t)jitter_ms);
+    return now_ms + base_ms + (x % (uint64_t)stagger_ms);
 }
 
 /* ======================================================================

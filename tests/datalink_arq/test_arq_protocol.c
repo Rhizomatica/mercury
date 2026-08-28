@@ -101,67 +101,52 @@ void test_decode_snr_zero_is_unknown(void)
     TEST_ASSERT_FLOAT_WITHIN(0.01f, 0.0f, out);
 }
 
-void test_retry_deadline_includes_bounded_jitter(void)
+void test_retry_rank_is_antisymmetric_and_deterministic(void)
 {
-    /* Jitter is uniform in [0, jitter_ms): every deadline must stay within
-     * [base, base + jitter_ms) and, over many instants, must actually vary.
-     * Sampling 100 instants rather than one pair keeps this robust to a change
-     * in the hash constants, the default jitter, or the seed timestamps. */
-    uint64_t first = 0;
-    int differing = 0;
-    for (uint64_t i = 0; i < 100; i++)
-    {
-        mock_set_uptime_ms(1000 + i);
-        uint64_t d = arq_protocol_retry_deadline_ms(7.0f, 0x42);
-        uint64_t base = 1000 + i + 7000ULL;
-        TEST_ASSERT_TRUE(d >= base);
-        TEST_ASSERT_TRUE(d <= base + ARQ_RETRY_JITTER_MS_DEFAULT);
-        if (i == 0)
-            first = d;
-        else if (d != first)
-            differing++;
-    }
-    TEST_ASSERT_TRUE(differing >= 5);
+    /* The two peers compare the SAME pair of callsigns, so exactly one defers
+     * (rank 1) and the other sends first (rank 0). */
+    int a = arq_protocol_retry_rank("NODE_A", "NODE_B");
+    int b = arq_protocol_retry_rank("NODE_B", "NODE_A");
+    TEST_ASSERT_TRUE(a == 0 || a == 1);
+    TEST_ASSERT_TRUE(b == 0 || b == 1);
+    TEST_ASSERT_EQUAL_INT(1, a + b);   /* they always disagree */
+    /* Stable across the session. */
+    TEST_ASSERT_EQUAL_INT(a, arq_protocol_retry_rank("NODE_A", "NODE_B"));
+    TEST_ASSERT_EQUAL_INT(b, arq_protocol_retry_rank("NODE_B", "NODE_A"));
 }
 
-void test_retry_deadline_jitter_differs_by_node_salt(void)
+void test_retry_rank_degenerate_pair_falls_back(void)
 {
-    /* Two stations sharing a clock and a session_id must still desynchronise:
-     * the callsign-derived salt is the only input that differs.  Check over
-     * many shared instants so a single hash collision cannot mask a broken
-     * salt. */
-    uint32_t salt_a = arq_protocol_node_salt(0x42, "NODE_A");
-    uint32_t salt_b = arq_protocol_node_salt(0x42, "NODE_B");
-    TEST_ASSERT_NOT_EQUAL_UINT32(salt_a, salt_b);
-
-    int differing = 0;
-    for (uint64_t i = 0; i < 100; i++)
-    {
-        mock_set_uptime_ms(1000 + i);
-        uint64_t a = arq_protocol_retry_deadline_ms(7.0f, salt_a);
-        uint64_t b = arq_protocol_retry_deadline_ms(7.0f, salt_b);
-        if (a != b)
-            differing++;
-    }
-    TEST_ASSERT_TRUE(differing >= 5);
+    TEST_ASSERT_EQUAL_INT(-1, arq_protocol_retry_rank("NODE_A", "NODE_A"));
+    TEST_ASSERT_EQUAL_INT(-1, arq_protocol_retry_rank("", "NODE_A"));
+    TEST_ASSERT_EQUAL_INT(-1, arq_protocol_retry_rank("NODE_A", ""));
+    TEST_ASSERT_EQUAL_INT(-1, arq_protocol_retry_rank(NULL, "NODE_A"));
+    TEST_ASSERT_EQUAL_INT(-1, arq_protocol_retry_rank("NODE_A", NULL));
 }
 
-void test_retry_deadline_salt_is_deterministic(void)
-{
-    /* Same callsign + session_id must hash to the same salt every time, so a
-     * node's retry cadence is stable across the session. */
-    uint32_t a = arq_protocol_node_salt(0x42, "NODE_A");
-    uint32_t b = arq_protocol_node_salt(0x42, "NODE_A");
-    TEST_ASSERT_EQUAL_UINT32(a, b);
-}
-
-void test_retry_deadline_jitter_disabled_is_exact(void)
+void test_retry_deadline_stagger_is_exact(void)
 {
     mock_set_uptime_ms(1000);
-    atomic_store(&arq_retry_jitter_ms, 0);
-    uint64_t d = arq_protocol_retry_deadline_ms(7.0f, 0x42);
-    TEST_ASSERT_EQUAL_UINT64(1000 + 7000ULL, d);
-    atomic_store(&arq_retry_jitter_ms, ARQ_RETRY_JITTER_MS_DEFAULT);
+    uint64_t base = 1000 + 7000ULL;
+    TEST_ASSERT_EQUAL_UINT64(base, arq_protocol_retry_deadline_ms(7.0f, 0));
+    TEST_ASSERT_EQUAL_UINT64(base + ARQ_RETRY_STAGGER_MS_DEFAULT,
+                             arq_protocol_retry_deadline_ms(7.0f, 1));
+}
+
+void test_retry_deadline_stagger_disabled_is_exact(void)
+{
+    mock_set_uptime_ms(1000);
+    atomic_store(&arq_retry_stagger_ms, 0);
+    TEST_ASSERT_EQUAL_UINT64(1000 + 7000ULL, arq_protocol_retry_deadline_ms(7.0f, 1));
+    atomic_store(&arq_retry_stagger_ms, ARQ_RETRY_STAGGER_MS_DEFAULT);
+}
+
+void test_retry_deadline_fallback_is_bounded(void)
+{
+    mock_set_uptime_ms(1000);
+    uint64_t d = arq_protocol_retry_deadline_ms(7.0f, -1);
+    TEST_ASSERT_TRUE(d >= 1000 + 7000ULL);
+    TEST_ASSERT_TRUE(d <= 1000 + 7000ULL + ARQ_RETRY_STAGGER_MS_DEFAULT);
 }
 
 /* ---- Bandwidth token roundtrip ---- */
@@ -488,11 +473,12 @@ int main(void)
     RUN_TEST(test_encode_decode_snr_positive);
     RUN_TEST(test_encode_decode_snr_negative);
     RUN_TEST(test_decode_snr_zero_is_unknown);
-    /* Retry jitter */
-    RUN_TEST(test_retry_deadline_includes_bounded_jitter);
-    RUN_TEST(test_retry_deadline_jitter_differs_by_node_salt);
-    RUN_TEST(test_retry_deadline_salt_is_deterministic);
-    RUN_TEST(test_retry_deadline_jitter_disabled_is_exact);
+    /* Retry stagger */
+    RUN_TEST(test_retry_rank_is_antisymmetric_and_deterministic);
+    RUN_TEST(test_retry_rank_degenerate_pair_falls_back);
+    RUN_TEST(test_retry_deadline_stagger_is_exact);
+    RUN_TEST(test_retry_deadline_stagger_disabled_is_exact);
+    RUN_TEST(test_retry_deadline_fallback_is_bounded);
     /* Bandwidth */
     RUN_TEST(test_bw_token_500hz);
     RUN_TEST(test_bw_token_2300hz);

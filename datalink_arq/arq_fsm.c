@@ -237,8 +237,9 @@ static uint64_t retry_deadline_from_s(const arq_session_t *sess, float seconds)
 {
     char my_call[CALLSIGN_MAX_SIZE];
     arq_conn_get_calls(my_call, NULL, NULL, sizeof(my_call));
-    uint32_t salt = arq_protocol_node_salt(sess->session_id, my_call);
-    return arq_protocol_retry_deadline_ms(seconds, salt);
+    const char *local = sess->local_call[0] ? sess->local_call : my_call;
+    int rank = arq_protocol_retry_rank(local, sess->remote_call);
+    return arq_protocol_retry_deadline_ms(seconds, rank);
 }
 
 /** Update local_snr_x10 EMA from the SNR carried in a received frame event.

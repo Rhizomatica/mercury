@@ -256,19 +256,22 @@ extern _Atomic int arq_disconnect_retry_slots;
 #define ARQ_CALLINT_DEFAULT_S  0.0f   /* 0 = use table default */
 extern _Atomic float arq_callint_override_s;
 
-/* Bounded random delay (ms) added to retry deadlines.  0 disables jitter
- * (an explicit off-switch); tunable via the arq:retry_jitter_ms INI key. */
-#define ARQ_RETRY_JITTER_MS_DEFAULT 2000
-#define ARQ_RETRY_JITTER_MS_MAX     5000
-extern _Atomic int arq_retry_jitter_ms;
+/* Deterministic retry stagger (ms).  The two peers of a session compare the
+ * same pair of exchanged callsigns, so exactly one of them defers by this
+ * fixed offset on every retry — no random draw, no tail.  0 disables the
+ * stagger (an explicit off-switch); tunable via arq:retry_stagger_ms. */
+#define ARQ_RETRY_STAGGER_MS_DEFAULT 2000
+#define ARQ_RETRY_STAGGER_MS_MAX     5000
+extern _Atomic int arq_retry_stagger_ms;
 
-/* Per-node retry-jitter salt: mixes the shared session_id with the local
- * callsign so the two peers of a session derive different jitter even when
- * their clocks read the same instant (session_id alone is identical on both
- * sides — the callee adopts the caller's byte). */
-uint32_t arq_protocol_node_salt(uint8_t session_id, const char *local_callsign);
+/* Deterministic per-node retry rank from the exchanged callsign pair.
+ * strcmp() is antisymmetric, so the two peers always disagree: one returns 0
+ * (send first) and the other 1 (defer).  Returns -1 when the pair is
+ * degenerate (identical or missing callsigns) — a misconfiguration that falls
+ * back to a random draw. */
+int arq_protocol_retry_rank(const char *local_call, const char *remote_call);
 
-uint64_t arq_protocol_retry_deadline_ms(float seconds, uint32_t salt);
+uint64_t arq_protocol_retry_deadline_ms(float seconds, int rank);
 
 #define ARQ_CALL_RETRY_SLOTS       atomic_load(&arq_call_retry_slots)
 #define ARQ_ACCEPT_RETRY_SLOTS     atomic_load(&arq_accept_retry_slots)
