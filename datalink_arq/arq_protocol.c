@@ -111,7 +111,6 @@ const int arq_mode_table_count =
  * the start).  arq_fsm derives payload_mode = arq_mode_ladder[speed_level]. */
 const int arq_mode_ladder[ARQ_LADDER_LEVELS] = {
     MERCURY_MODE_MFSK,
-    FREEDV_MODE_DATAC15,
     FREEDV_MODE_DATAC4,
     FREEDV_MODE_DATAC3,
     FREEDV_MODE_DATAC1,

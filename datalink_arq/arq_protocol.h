@@ -311,12 +311,22 @@ extern _Atomic int arq_mode_hold_after_downgrade_s;
 
 /* ---- Delivery-driven mode ladder (no SNR) ----
  * Ordered by ARQ goodput, floor first: rank 0 = MFSK (start, most robust) →
- * DATAC15 → DATAC4 → DATAC3 → DATAC1 → DATAC17 → QAM16C2 (rank 6).
+ * DATAC4 → DATAC3 → DATAC1 → DATAC17 → QAM16C2 (rank 5).
  * payload_mode = mode_ladder[speed_level]; sessions init speed_level = 0.
- * Any retry steps the level down; a run of clean deliveries steps it up. */
-#define ARQ_LADDER_LEVELS             7     /* 0=MFSK, 1=DATAC15, 2=DATAC4,
-                                             * 3=DATAC3, 4=DATAC1, 5=DATAC17,
-                                             * 6=QAM16C2 */
+ * Any retry steps the level down; a run of clean deliveries steps it up.
+ *
+ * DATAC15 is NOT a rung, though it was one: it is dominated on both axes the
+ * ladder is ordered by.  Goodput 30 B / 4.40 s = 6.8 B/s against the MFSK
+ * floor's 98 B / 13.50 s = 7.3 B/s, and MFSK is also the more robust of the
+ * two -- it is the fringe floor, and DATAC15 is only 70/100 at -7 dB.  A rung
+ * that is never the best choice at any SNR still costs a burst and a full
+ * turnaround to climb through, and the opening climb is what this branch pays
+ * against trunk on a good link.  DATAC15 keeps its place in arq_mode_table for
+ * broadcast and as the initial decode mode; it is just not a step on the way
+ * up. */
+#define ARQ_LADDER_LEVELS             6     /* 0=MFSK, 1=DATAC4, 2=DATAC3,
+                                             * 3=DATAC1, 4=DATAC17,
+                                             * 5=QAM16C2 */
 extern const int arq_mode_ladder[ARQ_LADDER_LEVELS];
 
 /* Rung a session starts on: the MFSK floor.

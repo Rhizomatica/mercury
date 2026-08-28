@@ -185,6 +185,16 @@ static void clean_ack_cycle(void)
  * 12 of 21 bursts went out on MFSK (90 B per 13.5 s burst) on a channel that
  * carries DATAC3 (118 B per 3.82 s), and the transfer hit the harness deadline
  * at exactly 952 of 1054 bytes on ten consecutive runs.  With it, all 1054. */
+/* Rung carrying a given mode, so these tests do not hardcode ladder indices. */
+static int ladder_rung_of(int mode)
+{
+    for (int i = 0; i < ARQ_LADDER_LEVELS; i++)
+        if (arq_mode_ladder[i] == mode)
+            return i;
+    TEST_FAIL_MESSAGE("mode is not on the ladder");
+    return -1;
+}
+
 void test_proven_rung_survives_a_single_miss(void)
 {
     goto_connected();
@@ -229,10 +239,12 @@ void test_probe_frame_fits_the_rung_below(void)
     goto_connected();
     goto_wait_ack();
 
-    /* Climb to DATAC1 (level 4).  Each clean delivery proves the rung that
-     * carried it, so the frame sent while probing level 4 is sized for the
-     * proven level 3. */
-    for (int expect = ARQ_LADDER_START_LEVEL + 1; expect <= 4; expect++)
+    /* Climb to DATAC1.  Each clean delivery proves the rung that carried it,
+     * so the frame sent while probing DATAC1's rung is sized for the proven
+     * rung below it.  Found by search, not hardcoded: the ladder's contents
+     * are a tuning decision and this property holds whatever they are. */
+    const int c1 = ladder_rung_of(FREEDV_MODE_DATAC1);
+    for (int expect = ARQ_LADDER_START_LEVEL + 1; expect <= c1; expect++)
     {
         clean_ack_cycle();
         TEST_ASSERT_EQUAL_INT(expect, sess.speed_level);
@@ -240,7 +252,7 @@ void test_probe_frame_fits_the_rung_below(void)
     TEST_ASSERT_EQUAL_INT(FREEDV_MODE_DATAC1, sess.payload_mode);
     TEST_ASSERT_EQUAL_INT(FREEDV_MODE_DATAC1, last_tx_mode());
 
-    const arq_mode_timing_t *below = arq_protocol_mode_timing(arq_mode_ladder[3]);
+    const arq_mode_timing_t *below = arq_protocol_mode_timing(arq_mode_ladder[c1 - 1]);
     TEST_ASSERT_NOT_NULL(below);
     TEST_ASSERT_TRUE_MESSAGE(
         sess.tx_frame_len <= (int)below->payload_bytes - ARQ_FRAME_HDR_SIZE,
@@ -260,7 +272,8 @@ void test_failed_probe_retreats_on_the_air(void)
     fake_tx_read_fake.custom_fake = tx_read_full;
     goto_connected();
     goto_wait_ack();
-    for (int expect = ARQ_LADDER_START_LEVEL + 1; expect <= 4; expect++)
+    const int c1 = ladder_rung_of(FREEDV_MODE_DATAC1);
+    for (int expect = ARQ_LADDER_START_LEVEL + 1; expect <= c1; expect++)
     {
         clean_ack_cycle();
         TEST_ASSERT_EQUAL_INT(expect, sess.speed_level);
@@ -271,8 +284,8 @@ void test_failed_probe_retreats_on_the_air(void)
      * and retransmits.  The frame must follow the ladder down. */
     arq_event_t ev = make_event(ARQ_EV_TIMER_ACK);
     arq_fsm_dispatch(&sess, &ev);
-    TEST_ASSERT_EQUAL_INT(3, sess.speed_level);
-    TEST_ASSERT_EQUAL_INT_MESSAGE(FREEDV_MODE_DATAC3, last_tx_mode(),
+    TEST_ASSERT_EQUAL_INT(c1 - 1, sess.speed_level);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(arq_mode_ladder[c1 - 1], last_tx_mode(),
         "retransmission stayed on the probed rung: the ladder stepped down "
         "but the transmitter did not");
 }
@@ -290,14 +303,30 @@ void test_ladder_starts_at_the_configured_rung(void)
 
 void test_ladder_table_ordered_and_sized(void)
 {
-    TEST_ASSERT_EQUAL_INT(7, ARQ_LADDER_LEVELS);
+    TEST_ASSERT_EQUAL_INT(6, ARQ_LADDER_LEVELS);
     TEST_ASSERT_EQUAL_INT(MERCURY_MODE_MFSK,   arq_mode_ladder[0]);
-    TEST_ASSERT_EQUAL_INT(FREEDV_MODE_DATAC15, arq_mode_ladder[1]);
-    TEST_ASSERT_EQUAL_INT(FREEDV_MODE_DATAC4,  arq_mode_ladder[2]);
-    TEST_ASSERT_EQUAL_INT(FREEDV_MODE_DATAC3,  arq_mode_ladder[3]);
-    TEST_ASSERT_EQUAL_INT(FREEDV_MODE_DATAC1,  arq_mode_ladder[4]);
-    TEST_ASSERT_EQUAL_INT(FREEDV_MODE_DATAC17, arq_mode_ladder[5]);
-    TEST_ASSERT_EQUAL_INT(FREEDV_MODE_QAM16C2, arq_mode_ladder[6]);
+    TEST_ASSERT_EQUAL_INT(FREEDV_MODE_DATAC4,  arq_mode_ladder[1]);
+    TEST_ASSERT_EQUAL_INT(FREEDV_MODE_DATAC3,  arq_mode_ladder[2]);
+    TEST_ASSERT_EQUAL_INT(FREEDV_MODE_DATAC1,  arq_mode_ladder[3]);
+    TEST_ASSERT_EQUAL_INT(FREEDV_MODE_DATAC17, arq_mode_ladder[4]);
+    TEST_ASSERT_EQUAL_INT(FREEDV_MODE_QAM16C2, arq_mode_ladder[5]);
+
+    /* The ordering claim itself: goodput must increase with the rung.  A rung
+     * that does not carry more per second than the one below it is never the
+     * best choice at any SNR (the lower rung is also the more robust), so it
+     * would only ever cost a burst and a turnaround to climb through.  This is
+     * what disqualified DATAC15: 30 B / 4.40 s = 6.8 B/s against the MFSK
+     * floor's 98 B / 13.50 s = 7.3 B/s. */
+    float prev = 0.0f;
+    for (int i = 0; i < ARQ_LADDER_LEVELS; i++)
+    {
+        const arq_mode_timing_t *tm = arq_protocol_mode_timing(arq_mode_ladder[i]);
+        TEST_ASSERT_NOT_NULL(tm);
+        float goodput = (float)tm->payload_bytes / tm->frame_duration_s;
+        TEST_ASSERT_TRUE_MESSAGE(goodput > prev,
+            "ladder rung carries no more per second than the rung below it");
+        prev = goodput;
+    }
 }
 
 /* Fast initial ramp: one rung per clean delivery until the ladder tops out. */

@@ -994,17 +994,17 @@ void test_irs_mirror_climbs_with_peer(void)
 
     arq_event_t ev = make_data_event(0, MERCURY_MODE_MFSK, 90);
     arq_fsm_dispatch(&sess, &ev);
-    TEST_ASSERT_EQUAL_INT(FREEDV_MODE_DATAC15, sess.peer_tx_mode);   /* level 1 */
+    TEST_ASSERT_EQUAL_INT(arq_mode_ladder[1], sess.peer_tx_mode);
     complete_ack_tx();
 
-    ev = make_data_event(1, FREEDV_MODE_DATAC15, 30);
+    ev = make_data_event(1, FREEDV_MODE_DATAC4, 54);
     arq_fsm_dispatch(&sess, &ev);
-    TEST_ASSERT_EQUAL_INT(FREEDV_MODE_DATAC4, sess.peer_tx_mode);    /* level 2 */
+    TEST_ASSERT_EQUAL_INT(arq_mode_ladder[2], sess.peer_tx_mode);
     complete_ack_tx();
 
-    ev = make_data_event(2, FREEDV_MODE_DATAC4, 54);
+    ev = make_data_event(2, FREEDV_MODE_DATAC3, 126);
     arq_fsm_dispatch(&sess, &ev);
-    TEST_ASSERT_EQUAL_INT(FREEDV_MODE_DATAC3, sess.peer_tx_mode);    /* level 3 */
+    TEST_ASSERT_EQUAL_INT(arq_mode_ladder[3], sess.peer_tx_mode);    /* level 3 */
 }
 /* A duplicate frame means our ACK was lost and the sender retried, stepping ITS
  * ladder down — the mirror must step down too so we can decode the retransmit. */
@@ -1014,15 +1014,15 @@ void test_irs_mirror_steps_down_on_duplicate(void)
     arq_event_t ev = make_data_event(0, MERCURY_MODE_MFSK, 90);
     arq_fsm_dispatch(&sess, &ev);
     complete_ack_tx();
-    ev = make_data_event(1, FREEDV_MODE_DATAC15, 30);
+    ev = make_data_event(1, FREEDV_MODE_DATAC4, 54);
     arq_fsm_dispatch(&sess, &ev);
     complete_ack_tx();
-    TEST_ASSERT_EQUAL_INT(FREEDV_MODE_DATAC4, sess.peer_tx_mode);    /* climbed to level 2 */
+    TEST_ASSERT_EQUAL_INT(arq_mode_ladder[2], sess.peer_tx_mode);    /* climbed two rungs */
 
     /* Duplicate of an already-delivered seq (rx_expected has advanced past it). */
     ev = make_data_event(0, MERCURY_MODE_MFSK, 90);
     arq_fsm_dispatch(&sess, &ev);
-    TEST_ASSERT_EQUAL_INT(FREEDV_MODE_DATAC15, sess.peer_tx_mode);   /* stepped down to level 1 */
+    TEST_ASSERT_EQUAL_INT(arq_mode_ladder[1], sess.peer_tx_mode);    /* stepped down one rung */
 }
 /* A frame the sender marks as a RETRANSMISSION must not climb the mirror.
  *
@@ -1061,7 +1061,7 @@ void test_irs_mirror_resets_toward_floor_on_silence(void)
     arq_event_t ev = make_data_event(0, MERCURY_MODE_MFSK, 90);
     arq_fsm_dispatch(&sess, &ev);
     complete_ack_tx();
-    TEST_ASSERT_EQUAL_INT(FREEDV_MODE_DATAC15, sess.peer_tx_mode);   /* climbed to level 1 */
+    TEST_ASSERT_EQUAL_INT(arq_mode_ladder[1], sess.peer_tx_mode);    /* climbed to level 1 */
 
     /* Idle-hold fires with no reverse backlog and a recent RX (not dead yet). */
     fake_tx_backlog_fake.return_val = 0;
