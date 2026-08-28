@@ -38,7 +38,7 @@ void test_defaults_match_constants(void)
     TEST_ASSERT_EQUAL_INT(10,  c.data_retry_slots);
     TEST_ASSERT_EQUAL_INT(6,   c.mode_hold_after_downgrade_s);
     TEST_ASSERT_EQUAL_INT(2,   c.ladder_up_successes);
-    TEST_ASSERT_EQUAL_INT(2,   c.retry_downgrade_threshold);
+    TEST_ASSERT_EQUAL_INT(4,   c.retry_downgrade_threshold);
     TEST_ASSERT_EQUAL_INT(700, c.channel_guard_ms);
     TEST_ASSERT_EQUAL_INT(900, c.iss_post_ack_guard_ms);
     TEST_ASSERT_EQUAL_INT(15,  c.peer_payload_hold_s);

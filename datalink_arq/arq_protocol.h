@@ -284,11 +284,27 @@ extern _Atomic float arq_callint_override_s;
  * existing [arq] mercury.ini knobs and their config accessors stay valid. */
 #define ARQ_PEER_PAYLOAD_HOLD_S_DEFAULT         15
 extern _Atomic int arq_peer_payload_hold_s;
-#define ARQ_RETRY_DOWNGRADE_THRESHOLD_DEFAULT   2
-extern _Atomic int arq_retry_downgrade_threshold;
 /* Consecutive misses required to abandon a rung that has ALREADY delivered.
- * Does NOT gate the fallback from an overshoot — that stays immediate, because
+ *
+ * Was 2.  The right value follows from the PAYLOAD RATIO between neighbouring
+ * rungs, not from how bad a miss feels: descending only pays when the lower
+ * rung's guaranteed payload beats the higher rung's payload times its success
+ * rate.  DATAC1 carries 510 B and DATAC3 carries 126 -- a factor of 4 -- so
+ * DATAC1 keeps winning until it is missing roughly three bursts in four.  Two
+ * consecutive misses is nowhere near that, and it costs the session 4x the
+ * bursts to carry the same bytes.
+ *
+ * Measured at 5.2 dB SNR3k, 1 KB: trunk held DATAC1 and finished in 4 bursts /
+ * 100 s; this ladder spent 8 of 15 bursts on DATAC3 and took 234 s.  It had
+ * reached DATAC1 and was knocked off it.
+ *
+ * Four is the ratio-justified value for the DATAC1/DATAC3 step, which is the
+ * one that dominates a mid-SNR link.
+ *
+ * Does NOT gate the fallback from an overshoot -- that stays immediate, because
  * it is the escape from a probe the channel cannot carry.  See ladder_step(). */
+#define ARQ_RETRY_DOWNGRADE_THRESHOLD_DEFAULT   4
+extern _Atomic int arq_retry_downgrade_threshold;
 #define ARQ_RETRY_DOWNGRADE_THRESHOLD  atomic_load(&arq_retry_downgrade_threshold)
 #define ARQ_MODE_HOLD_AFTER_DOWNGRADE_S_DEFAULT 6
 extern _Atomic int arq_mode_hold_after_downgrade_s;

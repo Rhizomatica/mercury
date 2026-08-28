@@ -122,8 +122,11 @@ mode_hold_after_downgrade_s = 6
 ; Clean ACKs required to step the speed ladder up one level (default 2, range 1..16).
 ladder_up_successes = 2
 
-; Consecutive retries that force a one-step downgrade (default 2, range 1..16).
-retry_downgrade_threshold = 2
+; Consecutive retries that force a one-step downgrade (default 4, range 1..16).
+; Sized from the payload ratio between neighbouring ladder rungs, not from how
+; bad a retry feels: DATAC1 carries 4x DATAC3's payload, so it keeps winning
+; until it misses roughly three bursts in four.
+retry_downgrade_threshold = 4
 
 ; IRS response guard after decoding a frame, in ms (default 700, range 200..3000).
 ; Raise if your radio's TX-to-RX switch is slow and you lose ACKs.
