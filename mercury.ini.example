@@ -151,6 +151,12 @@ peer_payload_hold_s = 15
 ; handshake (e.g. UUCP) times out before the first data frames get through.
 startup_max_s = 10
 
+; Bounded random delay added to retry deadlines, in ms (default 2000, range 0..5000).
+; Breaks the phase-lock where two stations on a fixed retry schedule transmit
+; simultaneously and neither can hear the other (issue #217).  Set to 0 to
+; disable jitter entirely and revert to the old fixed retry cadence.
+retry_jitter_ms = 2000
+
 [channel]
 ; Channel-busy (occupancy) detector.  Mercury classifies the HF channel as
 ; busy/clear from the RX spectrum and reports transitions to the host with

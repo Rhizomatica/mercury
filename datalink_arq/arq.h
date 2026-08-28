@@ -349,6 +349,7 @@ void arq_set_retry_downgrade_threshold(int n);
 void arq_set_mode_hold_after_downgrade_s(int s);
 void arq_set_peer_payload_hold_s(int s);
 void arq_set_startup_max_s(int s);
+void arq_set_retry_jitter_ms(int ms);
 
 /**
  * @brief Trigger outgoing call attempt using current ARQ addresses.

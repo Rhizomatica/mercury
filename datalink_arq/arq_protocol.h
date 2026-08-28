@@ -256,9 +256,10 @@ extern _Atomic int arq_disconnect_retry_slots;
 #define ARQ_CALLINT_DEFAULT_S  0.0f   /* 0 = use table default */
 extern _Atomic float arq_callint_override_s;
 
-/* Bounded random delay (ms) added to retry deadlines.  Compile-time default;
- * tunable only by direct atomic store (no TCP command). */
+/* Bounded random delay (ms) added to retry deadlines.  0 disables jitter
+ * (an explicit off-switch); tunable via the arq:retry_jitter_ms INI key. */
 #define ARQ_RETRY_JITTER_MS_DEFAULT 2000
+#define ARQ_RETRY_JITTER_MS_MAX     5000
 extern _Atomic int arq_retry_jitter_ms;
 
 /* Per-node retry-jitter salt: mixes the shared session_id with the local
