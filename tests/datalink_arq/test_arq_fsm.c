@@ -950,6 +950,23 @@ void test_call_retry_deadline_anchored_to_ptt_off(void)
                     base_deadline_ms + ARQ_RETRY_JITTER_MS_DEFAULT);
 }
 
+/* The DATA retransmit (ack_timeout_s) is the load-bearing timer for the
+ * #217 deadlock: two connected stations that submit data simultaneously both
+ * transmit, both land in WAIT_ACK, and both would retransmit on the same fixed
+ * schedule without jitter.  ack_timeout_s is a lower bound (must cover the
+ * peer's ACK), so a bounded positive jitter only ever delays the retransmit. */
+void test_wait_ack_deadline_includes_bounded_jitter(void)
+{
+    goto_connected();
+    goto_wait_ack();
+    TEST_ASSERT_EQUAL_INT(ARQ_DFLOW_WAIT_ACK, sess.dflow_state);
+
+    const arq_mode_timing_t *tm = arq_protocol_mode_timing(sess.payload_mode);
+    uint64_t base = 1000 + (uint64_t)(tm->ack_timeout_s * 1000.0f + 0.5f);
+    TEST_ASSERT_TRUE(sess.deadline_ms >= base);
+    TEST_ASSERT_TRUE(sess.deadline_ms <= base + ARQ_RETRY_JITTER_MS_DEFAULT);
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -959,6 +976,7 @@ int main(void)
     RUN_TEST(test_listen_transitions_to_listening);
     RUN_TEST(test_connect_transitions_to_calling);
     RUN_TEST(test_call_retry_deadline_anchored_to_ptt_off);
+    RUN_TEST(test_wait_ack_deadline_includes_bounded_jitter);
     RUN_TEST(test_incoming_call_transitions_to_accepting);
     RUN_TEST(test_incoming_call_records_dialed_secondary);
     RUN_TEST(test_accept_transitions_to_connected);

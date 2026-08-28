@@ -1670,8 +1670,13 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
             if (g_timing)
                 arq_timing_record_tx_end(g_timing, (int)sess->tx_seq);
             tm = arq_protocol_mode_timing(sess->payload_mode);
+            /* ack_timeout_s is a lower bound (must cover the peer's ACK), so a
+             * bounded positive jitter only ever waits longer and never violates
+             * the margin.  Jitter here is load-bearing: when two connected
+             * stations submit data simultaneously, both send and both land in
+             * WAIT_ACK, and only a jittered retransmit can break the lock. */
             dflow_enter(sess, ARQ_DFLOW_WAIT_ACK,
-                        deadline_from_s(tm ? tm->ack_timeout_s : 9.0f),
+                        retry_deadline_from_s(sess, tm ? tm->ack_timeout_s : 9.0f),
                         ARQ_EV_TIMER_ACK);
         }
         else if (ev->id == ARQ_EV_RX_TURN_REQ)
