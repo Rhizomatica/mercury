@@ -43,6 +43,11 @@ const (
 	engineSpectrumInterval = 20 * time.Millisecond
 	// Matches MODEM_STATS_NSPEC; the bridge clamps to its own size anyway.
 	engineSpectrumBins = 512
+	// After a config change that restarts a subsystem (audioio, hamlib),
+	// re-read the device lists several times so a slow restart is not
+	// reported as the stale pre-change selection.
+	refreshRetryInterval = 200 * time.Millisecond
+	refreshRetries       = 5
 )
 
 func newEngineLink() *engineLink {
@@ -119,9 +124,20 @@ func (l *engineLink) Start(ctx context.Context) (<-chan Event, error) {
 
 			case <-l.refresh:
 				// A device or radio change was just applied; re-read so the
-				// pickers show what the engine actually ended up using, which
-				// is not always what was asked for.
-				_ = l.emitDeviceLists(ctx, events)
+				// pickers show what the engine actually ended up using, which is
+				// not always what was asked for.  Retry a few times because the
+				// restart it triggered may take longer than one read to settle.
+				for i := 0; i <= refreshRetries; i++ {
+					_ = l.emitDeviceLists(ctx, events)
+					if i == refreshRetries {
+						break
+					}
+					select {
+					case <-ctx.Done():
+						return
+					case <-time.After(refreshRetryInterval):
+					}
+				}
 			}
 		}
 	}()
@@ -134,25 +150,33 @@ func (l *engineLink) Send(cmd Command) error {
 	cV1 := C.CString(cmd.Value)
 	cV2 := C.CString(cmd.Value2)
 	cV3 := C.CString(cmd.Value3)
+	cV4 := C.CString(cmd.Value4)
+	cV5 := C.CString(cmd.Value5)
+	cV6 := C.CString(cmd.Value6)
+	cV7 := C.CString(cmd.Value7)
 	defer func() {
 		C.free(unsafe.Pointer(cName))
 		C.free(unsafe.Pointer(cV1))
 		C.free(unsafe.Pointer(cV2))
 		C.free(unsafe.Pointer(cV3))
+		C.free(unsafe.Pointer(cV4))
+		C.free(unsafe.Pointer(cV5))
+		C.free(unsafe.Pointer(cV6))
+		C.free(unsafe.Pointer(cV7))
 	}()
 
-	if rc := C.mercury_ui_command(cName, cV1, cV2, cV3); rc != 0 {
+	if rc := C.mercury_ui_command(cName, cV1, cV2, cV3, cV4, cV5, cV6, cV7); rc != 0 {
 		return fmt.Errorf("engine rejected command %q (rc=%d)", cmd.Name, int(rc))
 	}
 
 	switch cmd.Name {
-	case "set_audio_config", "set_radio_config":
-		time.AfterFunc(100*time.Millisecond, func() {
-			select {
-			case l.refresh <- struct{}{}:
-			default:
-			}
-		})
+	case "set_audio_config", "set_radio_config", "set_ptt_config":
+		// The Start goroutine owns the retry timing (cancellable via ctx),
+		// so no bare time.AfterFunc here that would outlive Close().
+		select {
+		case l.refresh <- struct{}{}:
+		default:
+		}
 	}
 	return nil
 }
@@ -201,7 +225,10 @@ const maxRadios = 513
 
 func readAudioDevices(kind C.ui_device_kind_t) ([]optionItem, string, bool) {
 	devs := make([]C.ui_device_t, maxAudioDevices)
-	sel := make([]C.char, 64)
+	// Sized from the engine's own constant: a device id that does not fit here
+	// is silently truncated, which is how issue #185 lost a PulseAudio node
+	// name and left the modem bound to the default card.
+	sel := make([]C.char, C.UI_DEV_ID_MAX)
 
 	n := C.mercury_ui_get_audio_devices(C.int(kind), &devs[0], C.int(len(devs)),
 		&sel[0], C.int(len(sel)))
@@ -223,11 +250,18 @@ func readRadioList() (RadioListEvent, bool) {
 	devs := make([]C.ui_device_t, maxRadios)
 	sel := make([]C.char, 16)
 	devPath := make([]C.char, 512)
+	method := make([]C.char, 32)
+	line := make([]C.char, 16)
+	invert := make([]C.char, 16)
 	var speed C.int
+	var gpio C.int
 
 	n := C.mercury_ui_get_radio_list(&devs[0], C.int(len(devs)),
 		&sel[0], C.int(len(sel)),
-		&devPath[0], C.int(len(devPath)), &speed)
+		&devPath[0], C.int(len(devPath)), &speed,
+		&method[0], C.int(len(method)),
+		&line[0], C.int(len(line)),
+		&invert[0], C.int(len(invert)), &gpio)
 	if n <= 0 {
 		return RadioListEvent{}, false
 	}
@@ -252,12 +286,43 @@ func readRadioList() (RadioListEvent, bool) {
 		Selected:    C.GoString(&sel[0]),
 		DevicePath:  C.GoString(&devPath[0]),
 		SerialSpeed: serial,
+		PTTMethod:   C.GoString(&method[0]),
+		PTTLine:     C.GoString(&line[0]),
+		PTTInvert:   C.GoString(&invert[0]),
+		CM108GPIO:   fmt.Sprintf("%d", int(gpio)),
 	}, true
 }
 
 func (l *engineLink) SetWaterfall(enabled bool) {
 	cEn := C.bool(enabled)
 	C.mercury_ui_set_waterfall(cEn)
+}
+
+// TCPPorts returns the ARQ base and broadcast TCP ports the engine is
+// actually listening on (from its config).
+func (l *engineLink) TCPPorts() (arqBase, broadcast int) {
+	var a, b C.int
+	C.mercury_ui_get_tcp_ports(&a, &b)
+	return int(a), int(b)
+}
+
+// Version returns the engine's release version and git hash.
+func (l *engineLink) Version() (version, gitHash string) {
+	cv := make([]byte, 64)
+	cg := make([]byte, 64)
+	C.mercury_ui_get_version((*C.char)(unsafe.Pointer(&cv[0])), C.int(len(cv)),
+		(*C.char)(unsafe.Pointer(&cg[0])), C.int(len(cg)))
+	return cString(cv), cString(cg)
+}
+
+// cString converts a C buffer to a Go string, truncating at the first NUL.
+func cString(b []byte) string {
+	for i, c := range b {
+		if c == 0 {
+			return string(b[:i])
+		}
+	}
+	return string(b)
 }
 
 func (l *engineLink) Close() {}
@@ -283,6 +348,8 @@ func statusFromC(cst *C.ui_status_t) telemetryState {
 		TXGainDB:           float64(cst.tx_gain_db),
 		TXPeakDBFS:         float64(cst.tx_peak_dbfs),
 		Waterfall:          bool(cst.waterfall_enabled),
+		AudioOk:            bool(cst.audio_ok),
+		AudioError:         C.GoString(&cst.audio_error[0]),
 	}
 }
 

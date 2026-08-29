@@ -31,3 +31,11 @@ func (l *engineLink) Send(cmd Command) error {
 func (l *engineLink) Close() {}
 
 func (l *engineLink) SetWaterfall(enabled bool) {}
+
+func (l *engineLink) TCPPorts() (arqBase, broadcast int) {
+	return 8300, 8100
+}
+
+func (l *engineLink) Version() (version, gitHash string) {
+	return "unknown", "unknown000"
+}

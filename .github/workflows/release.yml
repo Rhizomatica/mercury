@@ -18,9 +18,9 @@ on:
         required: true
         type: string
       build_installer:
-        description: 'Also build+sign the Windows installer (needs Wine+Inno in the signer container)'
+        description: 'Build+sign the Windows installer (untick to ship the zip only)'
         required: false
-        default: false
+        default: true
         type: boolean
 
 jobs:
@@ -85,8 +85,15 @@ jobs:
         run: |
           git remote set-url origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}.git"
           git add debian/changelog main.c common/mercury_version.h mercury.1 windows-installer/installer.iss
-          git commit -m "Updates for release ${{ inputs.version }}"
-          git push origin mercuryv2
+          # Idempotent: a re-run after a later job failed finds the bump already
+          # committed, and `git commit` with nothing staged exits non-zero and
+          # would fail the whole release for no reason.
+          if git diff --cached --quiet; then
+            echo "version files already at ${{ inputs.version }}; nothing to commit"
+          else
+            git commit -m "Updates for release ${{ inputs.version }}"
+            git push origin mercuryv2
+          fi
 
   # ---- Build unsigned Windows zip ----
   build:
@@ -161,8 +168,28 @@ jobs:
           CERTUM_EMAIL:   ${{ secrets.CERTUM_EMAIL }}
           CERTUM_OTP_URI: ${{ secrets.CERTUM_OTP_URI }}
         run: |
-          code-signing/sign.sh mercury.exe windows-installer/mercury-ui.exe
-          code-signing/sign-logout.sh
+          # No logout here.  sign.sh reuses a live session ("session already
+          # live -- reusing"), and the installer is signed later in this same
+          # job.  Logging out in between forced a SECOND SimplySign login,
+          # which is what failed on the 1.9.12 attempt: the first login worked,
+          # the second never rendered its form ("login window did not appear",
+          # with a Critical error dialog left on :99).  One login per job.
+          # The teardown is the always() step at the end.
+          # Retry per file: the SimplySign login is intermittently flaky --
+          # "login window did not appear", with a Critical error dialog left
+          # on :99 -- and a second attempt has been observed to come up
+          # cleanly.  sign.sh records a failure for the file it was on, so
+          # retry that file rather than the whole set (re-running a file that
+          # already signed would add a second signature).
+          for f in mercury.exe windows-installer/mercury-ui.exe; do
+            ok=0
+            for attempt in 1 2 3; do
+              if code-signing/sign.sh "$f"; then ok=1; break; fi
+              echo "::warning::signing $f failed (attempt $attempt), retrying"
+              sleep 15
+            done
+            [ "$ok" = 1 ] || { echo "::error::could not sign $f"; exit 1; }
+          done
 
       - name: Verify signatures
         run: |
@@ -173,6 +200,29 @@ jobs:
           for f in mercury.exe windows-installer/mercury-ui.exe; do
             osslsigncode verify "$f" || { echo "::error::Signature verification failed for $f"; exit 1; }
           done
+
+      # The zip is finished and banked BEFORE the installer is attempted.  The
+      # two are independent (the installer stage reads mercury.exe and the
+      # hamlib DLLs, never the zip or dist/), and the installer half is by far
+      # the more fragile: it needs wine, a downloaded Inno tree and a second
+      # use of the signing session.  Ordered this way, a failed installer
+      # leaves a downloadable signed zip to release by hand instead of taking
+      # the whole run's output down with it.
+      - name: Re-pack signed zip
+        run: |
+          ZIP=$(ls mercury-${{ inputs.version }}-w64-*.zip | head -1)
+          mkdir -p dist/mercury-${{ inputs.version }}
+          cp mercury.exe dist/mercury-${{ inputs.version }}/
+          cp windows-installer/mercury-ui.exe dist/mercury-${{ inputs.version }}/
+          cp mercury.ini.example dist/mercury-${{ inputs.version }}/
+          cd dist && zip -9r "../${ZIP}" "mercury-${{ inputs.version }}" && cd ..
+          rm -rf dist
+
+      - name: Upload signed zip
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-signed
+          path: mercury-${{ inputs.version }}-w64-*.zip
 
       # ---- Installer: pack the SIGNED payloads, then sign the installer ----
       # Order matters. ISCC packs whatever is staged, so signing only the
@@ -187,8 +237,12 @@ jobs:
           INNO_SHA256: 4c9c92249663f201a33bf194c0cd37e01c60540e299c771f3626411ef463c884
         run: |
           set -eu
+          # ISCC.exe is a 32-bit program: without wine32 the loader reports
+          # "it looks like wine32 is missing" and exits non-zero.  We are root
+          # inside the signer container, so no sudo.
+          dpkg --add-architecture i386
           apt-get update
-          apt-get install -y --no-install-recommends wine ca-certificates curl
+          apt-get install -y --no-install-recommends wine wine32:i386 ca-certificates curl
           # A prepared Inno Setup tree rather than running its GUI installer under
           # Wine on every release: no display needed, no silent-install that can
           # half-succeed, and the exact same compiler every time.  ISCC is a
@@ -201,8 +255,13 @@ jobs:
           # turned up.
           curl -fsSLo /tmp/inno.tar.gz "$INNO_URL"
           echo "${INNO_SHA256}  /tmp/inno.tar.gz" | sha256sum -c -
+          # $HOME is /github/home in a container job and is not owned by the
+          # user wine runs as ("refusing to create a configuration directory
+          # there"), so give wine a prefix it owns.
+          export WINEPREFIX=/tmp/wineprefix
+          echo "WINEPREFIX=$WINEPREFIX" >> "$GITHUB_ENV"
           wineboot -i
-          PF="$HOME/.wine/drive_c/Program Files (x86)"
+          PF="$WINEPREFIX/drive_c/Program Files (x86)"
           mkdir -p "$PF"
           tar xzf /tmp/inno.tar.gz -C "$PF/"
           ISCC_PATH="$PF/Inno Setup 6/ISCC.exe"
@@ -220,8 +279,7 @@ jobs:
           wine "$ISCC_PATH" windows-installer/installer.iss
           SETUP=$(ls Mercury_*_Setup.exe | head -1)
           [ -n "$SETUP" ] || { echo "::error::ISCC produced no installer"; exit 1; }
-          code-signing/sign.sh "$SETUP"
-          code-signing/sign-logout.sh
+          code-signing/sign.sh "$SETUP"   # reuses the session opened above
           osslsigncode verify "$SETUP" || {
             echo "::error::Installer signature verification failed"; exit 1; }
           echo "SETUP_EXE=$SETUP" >> "$GITHUB_ENV"
@@ -233,21 +291,15 @@ jobs:
           name: windows-installer-signed
           path: Mercury_*_Setup.exe
 
-      - name: Re-pack signed zip
-        run: |
-          ZIP=$(ls mercury-${{ inputs.version }}-w64-*.zip | head -1)
-          mkdir -p dist/mercury-${{ inputs.version }}
-          cp mercury.exe dist/mercury-${{ inputs.version }}/
-          cp windows-installer/mercury-ui.exe dist/mercury-${{ inputs.version }}/
-          cp mercury.ini.example dist/mercury-${{ inputs.version }}/
-          cd dist && zip -9r "../${ZIP}" "mercury-${{ inputs.version }}" && cd ..
-          rm -rf dist
-
-      - name: Upload signed zip
-        uses: actions/upload-artifact@v4
-        with:
-          name: windows-signed
-          path: mercury-${{ inputs.version }}-w64-*.zip
+      # One login per job means one logout, and it has to happen even when a
+      # step above failed -- otherwise a failed run leaves the cloud session
+      # open.  always(), and never fail the job on the teardown itself.
+      - name: Close the SimplySign session
+        if: always()
+        env:
+          CERTUM_EMAIL:   ${{ secrets.CERTUM_EMAIL }}
+          CERTUM_OTP_URI: ${{ secrets.CERTUM_OTP_URI }}
+        run: code-signing/sign-logout.sh || true
 
       # Screenshots and window lists live on the runner; without this they are
       # thrown away with the container, which is exactly when they are wanted.

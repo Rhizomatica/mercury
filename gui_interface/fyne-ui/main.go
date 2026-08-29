@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strconv"
 	"strings"
@@ -26,6 +27,7 @@ import (
 	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/dialog"
+	"fyne.io/fyne/v2/driver/desktop"
 	"fyne.io/fyne/v2/layout"
 	"fyne.io/fyne/v2/widget"
 )
@@ -51,6 +53,10 @@ type appState struct {
 	radioSelected    string
 	radioDevicePath  string
 	radioSerialSpeed string
+	pttMethod        string
+	pttLine          string
+	pttInvert        string
+	cm108GPIO        string
 	telemetry        telemetryState
 	spectrumValues   []float32
 	spectrumRate     int
@@ -62,6 +68,40 @@ type appState struct {
 type optionItem struct {
 	ID   string
 	Name string
+}
+
+var pttMethodLabels = map[string]string{
+	"none":       "None",
+	"hamlib":     "Hamlib",
+	"serial":     "Serial (RTS/DTR)",
+	"cm108":      "CM108 GPIO",
+	"hermes_shm": "HERMES SHM",
+}
+
+var pttMethodOrder = []string{"none", "hamlib", "serial", "cm108", "hermes_shm"}
+
+func pttMethodOptions() []string {
+	options := make([]string, 0, len(pttMethodOrder))
+	for _, method := range pttMethodOrder {
+		options = append(options, pttMethodLabel(method))
+	}
+	return options
+}
+
+func pttMethodLabel(method string) string {
+	if label, ok := pttMethodLabels[method]; ok {
+		return label
+	}
+	return pttMethodLabels["none"]
+}
+
+func pttMethodID(label string) string {
+	for method, candidate := range pttMethodLabels {
+		if candidate == label {
+			return method
+		}
+	}
+	return "none"
 }
 
 type telemetryState struct {
@@ -77,6 +117,8 @@ type telemetryState struct {
 	TXGainDB           float64
 	TXPeakDBFS         float64
 	Waterfall          bool
+	AudioOk            bool
+	AudioError         string
 }
 
 type uiBindings struct {
@@ -86,9 +128,13 @@ type uiBindings struct {
 	captureSelect    *widget.Select
 	playbackSelect   *widget.Select
 	channelSelect    *widget.Select
+	pttMethodSelect  *widget.Select
 	radioSelect      *widget.Select
 	devicePathEntry  *widget.Entry
 	serialSpeedEntry *widget.Select
+	pttLineSelect    *widget.Select
+	pttInvertSelect  *widget.Select
+	cm108GPIOSelect  *widget.Select
 	txGainLabel      *widget.Label
 	txPeakLabel      *widget.Label
 	bitrateLabel     *widget.Label
@@ -100,7 +146,9 @@ type uiBindings struct {
 	// canvas texts for compact telemetry display
 	bitrateText       *canvas.Text
 	snrText           *canvas.Text
+	snrRowLabel       *canvas.Text
 	directionText     *canvas.Text
+	directionDot      *canvas.Circle
 	userCallsText     *canvas.Text
 	destCallsText     *canvas.Text
 	waterfallSNRText  *canvas.Text
@@ -135,6 +183,14 @@ func parseStatusMessage(payload []byte) (telemetryState, error) {
 	status.TXGainDB = toFloat64(raw["tx_gain_db"])
 	status.TXPeakDBFS = toFloat64(raw["tx_peak_dbfs"])
 	status.Waterfall = toBool(raw["waterfall"])
+	if v, present := raw["audio_ok"]; present {
+		status.AudioOk = toBool(v)
+	} else {
+		// An older engine does not send the field; treat it as healthy rather
+		// than nagging with a spurious "device error" popup.
+		status.AudioOk = true
+	}
+	status.AudioError = toString(raw["audio_error"])
 	return status, nil
 }
 
@@ -193,6 +249,16 @@ func toBool(v any) bool {
 	}
 }
 
+// toString renders a JSON value as a string, but unlike fmt.Sprint it maps a
+// missing field (nil) to "" rather than "<nil>" — the caller wants an empty
+// string when the field is absent, not a literal "<nil>" to show the operator.
+func toString(v any) string {
+	if v == nil {
+		return ""
+	}
+	return fmt.Sprint(v)
+}
+
 // runOnUI runs fn on Fyne's main goroutine. Fyne v2.6+ requires all widget
 // updates to happen there; fyne.Do queues fn when the event loop is running
 // and runs it inline during setup/shutdown, so it is safe from any goroutine.
@@ -211,6 +277,80 @@ const (
 	waterfallSplitOffset = 0.60
 )
 
+const (
+	windowWidthKey  = "window.width"
+	windowHeightKey = "window.height"
+	windowXKey      = "window.x"
+	windowYKey      = "window.y"
+	windowPosSetKey = "window.positionSaved"
+
+	// defaultWindowWidth/Height match the previous hard-coded launch size and
+	// are used until the operator has resized the window once.
+	defaultWindowWidth  = 1280
+	defaultWindowHeight = 780
+)
+
+// saveWindowGeometry records the current window size and position in the app
+// preferences so the next launch can restore them.
+func saveWindowGeometry(win fyne.Window, prefs fyne.Preferences) {
+	if prefs == nil {
+		return
+	}
+	size := win.Canvas().Size()
+	if size.Width > 0 && size.Height > 0 {
+		prefs.SetFloat(windowWidthKey, float64(size.Width))
+		prefs.SetFloat(windowHeightKey, float64(size.Height))
+	}
+	if x, y, ok := windowPosition(win); ok {
+		prefs.SetInt(windowXKey, x)
+		prefs.SetInt(windowYKey, y)
+		prefs.SetBool(windowPosSetKey, true)
+	}
+}
+
+// restoreWindowGeometry applies a previously saved window size and position.
+func restoreWindowGeometry(win fyne.Window, prefs fyne.Preferences) {
+	if prefs == nil {
+		return
+	}
+	width := prefs.FloatWithFallback(windowWidthKey, defaultWindowWidth)
+	height := prefs.FloatWithFallback(windowHeightKey, defaultWindowHeight)
+	if width <= 0 {
+		width = defaultWindowWidth
+	}
+	if height <= 0 {
+		height = defaultWindowHeight
+	}
+	win.Resize(fyne.NewSize(float32(width), float32(height)))
+
+	if prefs.BoolWithFallback(windowPosSetKey, false) {
+		if dw, ok := win.(desktop.Window); ok {
+			dw.RequestPosition(prefs.Int(windowXKey), prefs.Int(windowYKey))
+		}
+	}
+}
+
+// windowPosition reads the native window position from the desktop driver's
+// concrete window. Fyne's public Window interface exposes no position getter,
+// so this reaches into the (pinned) driver struct via reflection.
+func windowPosition(win fyne.Window) (int, int, bool) {
+	v := reflect.ValueOf(win)
+	if v.Kind() != reflect.Ptr {
+		return 0, 0, false
+	}
+	v = v.Elem()
+	if v.Kind() != reflect.Struct {
+		return 0, 0, false
+	}
+	xField := v.FieldByName("xpos")
+	yField := v.FieldByName("ypos")
+	if !xField.IsValid() || !yField.IsValid() ||
+		xField.Kind() != reflect.Int || yField.Kind() != reflect.Int {
+		return 0, 0, false
+	}
+	return int(xField.Int()), int(yField.Int()), true
+}
+
 func main() {
 	// Announce the version on the terminal, just like the standalone daemon.
 	mercuryPrintVersion()
@@ -225,7 +365,7 @@ func main() {
 	// Fyne's preferences/storage have a unique identity instead of warning.
 	myApp := app.NewWithID("org.rhizomatica.mercury")
 	myWindow := myApp.NewWindow("Mercury Modem")
-	myWindow.Resize(fyne.NewSize(1280, 780))
+	restoreWindowGeometry(myWindow, myApp.Preferences())
 
 	state := &appState{wsScheme: "ws", wsHost: "127.0.0.1", wsPort: "10000",
 		waterfallPalette: myApp.Preferences().StringWithFallback("waterfallPalette", "blackblue")}
@@ -336,6 +476,9 @@ func main() {
 	channelSelect := widget.NewSelect([]string{"left", "right", "stereo"}, func(string) {})
 	channelSelect.SetSelected("left")
 	bindings.channelSelect = channelSelect
+	pttMethodSelect := widget.NewSelect(pttMethodOptions(), func(string) {})
+	pttMethodSelect.SetSelected(pttMethodLabel("none"))
+	bindings.pttMethodSelect = pttMethodSelect
 	radioSelect := widget.NewSelect([]string{}, func(string) {})
 	bindings.radioSelect = radioSelect
 	devicePathEntry := widget.NewEntry()
@@ -344,6 +487,15 @@ func main() {
 	serialSpeedEntry := widget.NewSelect([]string{"Auto", "4800", "9600", "19200", "38400", "115200"}, func(string) {})
 	serialSpeedEntry.SetSelected("Auto")
 	bindings.serialSpeedEntry = serialSpeedEntry
+	pttLineSelect := widget.NewSelect([]string{"rts", "dtr", "both"}, func(string) {})
+	pttLineSelect.SetSelected("rts")
+	bindings.pttLineSelect = pttLineSelect
+	pttInvertSelect := widget.NewSelect([]string{"none", "rts", "dtr", "both"}, func(string) {})
+	pttInvertSelect.SetSelected("none")
+	bindings.pttInvertSelect = pttInvertSelect
+	cm108GPIOSelect := widget.NewSelect([]string{"1", "2", "3", "4"}, func(string) {})
+	cm108GPIOSelect.SetSelected("3")
+	bindings.cm108GPIOSelect = cm108GPIOSelect
 
 	txGainSlider := widget.NewSlider(-20.0, 20.0)
 	txGainSlider.Step = 0.5
@@ -376,9 +528,17 @@ func main() {
 	snrText.TextSize = 14
 	bindings.snrText = snrText
 
+	// SNR row in the Telemetry card, shown only when the waterfall (which
+	// carries its own SNR overlay) is disabled.
+	snrRowLabel := canvas.NewText("SNR", color.NRGBA{R: 0xAA, G: 0xAA, B: 0xAA, A: 0xFF})
+	bindings.snrRowLabel = snrRowLabel
+
 	directionText := canvas.NewText("--", color.NRGBA{R: 0xDD, G: 0xDD, B: 0xDD, A: 0xFF})
-	directionText.TextSize = 13
+	directionText.TextSize = 20
 	bindings.directionText = directionText
+
+	directionDot := canvas.NewCircle(color.NRGBA{R: 0xDD, G: 0xDD, B: 0xDD, A: 0xFF})
+	bindings.directionDot = directionDot
 
 	userCallsText := canvas.NewText("", color.NRGBA{R: 0xDD, G: 0xDD, B: 0xDD, A: 0xFF})
 	userCallsText.TextSize = 13
@@ -444,8 +604,6 @@ func main() {
 
 	// open UI log file for appending; if it fails, uiLog will be nil and logs go only to the UI
 	var uiLog *os.File
-	uiLogPath := filepath.Join(getLogDir(), "ui.log")
-	uiLog, _ = os.OpenFile(uiLogPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 
 	appendLog := func(msg string) {
 		// write only to file by default; UI log widget removed from layout
@@ -457,6 +615,17 @@ func main() {
 		if uiLog != nil {
 			_, _ = uiLog.WriteString(msg)
 		}
+	}
+
+	logDir := getLogDir()
+	if err := os.MkdirAll(logDir, 0755); err != nil {
+		appendLog(fmt.Sprintf("Failed to create logs directory %s: %v\n", logDir, err))
+	}
+	uiLogPath := filepath.Join(logDir, "ui.log")
+	if f, err := os.OpenFile(uiLogPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644); err != nil {
+		appendLog(fmt.Sprintf("Failed to open log file %s: %v\n", uiLogPath, err))
+	} else {
+		uiLog = f
 	}
 
 	setWSStatus := func(text string) {}
@@ -518,10 +687,32 @@ func main() {
 			}
 			if bindings.snrText != nil {
 				bindings.snrText.Text = fmt.Sprintf("%.1f dB", telemetry.SNR)
+				bindings.snrText.Color = waterfallSNRColor(telemetry.SNR)
 				bindings.snrText.Refresh()
 			}
 			if bindings.directionText != nil {
 				bindings.directionText.Text = strings.ToUpper(telemetry.Direction)
+				txRed := color.NRGBA{R: 0xFF, G: 0x44, B: 0x44, A: 0xFF}
+				rxGreen := color.NRGBA{R: 0x44, G: 0xFF, B: 0x44, A: 0xFF}
+				switch strings.ToUpper(telemetry.Direction) {
+				case "TX":
+					bindings.directionText.Color = txRed
+					if bindings.directionDot != nil {
+						bindings.directionDot.FillColor = txRed
+						bindings.directionDot.Show()
+					}
+				case "RX":
+					bindings.directionText.Color = rxGreen
+					if bindings.directionDot != nil {
+						bindings.directionDot.FillColor = rxGreen
+						bindings.directionDot.Show()
+					}
+				default:
+					bindings.directionText.Color = color.NRGBA{R: 0xDD, G: 0xDD, B: 0xDD, A: 0xFF}
+					if bindings.directionDot != nil {
+						bindings.directionDot.Hide()
+					}
+				}
 				bindings.directionText.Refresh()
 			}
 			if bindings.userCallsText != nil {
@@ -573,6 +764,17 @@ func main() {
 					bindings.waterfallCard.Hide()
 				}
 			}
+			// The waterfall carries its own SNR overlay, so the Telemetry SNR row
+			// is only shown when the waterfall is disabled (and thus hidden).
+			if bindings.snrRowLabel != nil && bindings.snrText != nil {
+				if telemetry.Waterfall {
+					bindings.snrRowLabel.Hide()
+					bindings.snrText.Hide()
+				} else {
+					bindings.snrRowLabel.Show()
+					bindings.snrText.Show()
+				}
+			}
 		})
 	}
 
@@ -582,6 +784,12 @@ func main() {
 			bindings.waterfallCanvas.Refresh()
 		})
 	}
+
+	// Audio health popup state. applyStatus runs on the single link goroutine,
+	// so plain captured booleans are safe here; they track the previous status
+	// so the dialog fires once per failure, not on every 500 ms poll.
+	var prevAudioOk bool
+	var seenStatus bool
 
 	applyStatus := func(status telemetryState) {
 		// Under the lock: the link goroutine writes this while the GL thread
@@ -596,6 +804,21 @@ func main() {
 		if haveSpectrum {
 			refreshSpectrum()
 		}
+
+		// A device that fails to open, or negotiates a rate the modem cannot
+		// use, otherwise leaves the UI showing a healthy station that hears
+		// nothing -- so surface it as a dialog on the transition to failure.
+		if !status.AudioOk && (!seenStatus || prevAudioOk) {
+			msg := status.AudioError
+			if msg == "" {
+				msg = "The audio device could not be started."
+			}
+			runOnUI(func() {
+				dialog.ShowInformation("Audio Device Error", msg, myWindow)
+			})
+		}
+		prevAudioOk = status.AudioOk
+		seenStatus = true
 	}
 
 	updateConnectionButton = func() {
@@ -757,13 +980,21 @@ func main() {
 					state.radioSelected = e.Selected
 					state.radioDevicePath = e.DevicePath
 					state.radioSerialSpeed = e.SerialSpeed
+					state.pttMethod = e.PTTMethod
+					state.pttLine = e.PTTLine
+					state.pttInvert = e.PTTInvert
+					state.cm108GPIO = e.CM108GPIO
 					runOnUI(func() {
+						bindings.pttMethodSelect.SetSelected(pttMethodLabel(e.PTTMethod))
 						if e.DevicePath != "" {
 							bindings.devicePathEntry.SetText(e.DevicePath)
 						}
 						if e.SerialSpeed != "" {
 							bindings.serialSpeedEntry.SetSelected(e.SerialSpeed)
 						}
+						bindings.pttLineSelect.SetSelected(e.PTTLine)
+						bindings.pttInvertSelect.SetSelected(e.PTTInvert)
+						bindings.cm108GPIOSelect.SetSelected(e.CM108GPIO)
 					})
 					refreshSelect(bindings.radioSelect, e.Items, e.Selected, false)
 
@@ -785,7 +1016,8 @@ func main() {
 
 	// One command path for both transports: in-process call or websocket
 	// frame, decided by whichever Link is open.
-	sendWSCommand := func(command string, value string, value2 string, value3 string) error {
+	sendWSCommand := func(command string, value string, value2 string, value3 string, value4 string,
+		value5 string, value6 string, value7 string) error {
 		state.mu.RLock()
 		link := state.link
 		connected := state.wsConnected
@@ -793,7 +1025,8 @@ func main() {
 		if link == nil || !connected {
 			return fmt.Errorf("not connected")
 		}
-		return link.Send(Command{Name: command, Value: value, Value2: value2, Value3: value3})
+		return link.Send(Command{Name: command, Value: value, Value2: value2, Value3: value3,
+			Value4: value4, Value5: value5, Value6: value6, Value7: value7})
 	}
 
 	connectButton = widget.NewButton("Connect", func() {
@@ -821,16 +1054,21 @@ func main() {
 
 	txGainSlider.OnChanged = func(value float64) {
 		bindings.txGainLabel.SetText(fmt.Sprintf("TX gain: %.1f dB", value))
-		if err := sendWSCommand("set_tx_gain", fmt.Sprintf("%.2f", value), "", ""); err != nil {
+		if err := sendWSCommand("set_tx_gain", fmt.Sprintf("%.2f", value), "", "", "", "", "", ""); err != nil {
 			appendLog(fmt.Sprintf("Failed to send TX gain: %v\n", err))
 		}
 	}
 
 	mercuryClientButton := widget.NewButton("Launch Mercury Client", func() {
-		state.mu.Lock()
+		state.mu.RLock()
 		tel := state.telemetry
-		state.mu.Unlock()
-		openMercuryClientWindow(myApp, tel)
+		link := state.link
+		state.mu.RUnlock()
+		arqPort, broadcastPort := 8300, 8100
+		if engLink, ok := link.(*engineLink); ok {
+			arqPort, broadcastPort = engLink.TCPPorts()
+		}
+		openMercuryClientWindow(myApp, tel, arqPort, broadcastPort)
 	})
 
 	topBar := container.NewHBox(
@@ -845,9 +1083,16 @@ func main() {
 	))
 
 	// compact telemetry layout matching screenshot: left labels small, right values small-bold
+	txrxLabel := canvas.NewText("TX/RX", color.NRGBA{R: 0xAA, G: 0xAA, B: 0xAA, A: 0xFF})
+	txrxLabel.TextSize = directionText.TextSize
 	telemetryGrid := container.NewGridWithColumns(2,
+		txrxLabel,
+		container.NewHBox(
+			container.NewVBox(layout.NewSpacer(), container.NewGridWrap(fyne.NewSize(directionText.TextSize, directionText.TextSize), bindings.directionDot), layout.NewSpacer()),
+			bindings.directionText,
+		),
 		canvas.NewText("Bitrate", color.NRGBA{R: 0xAA, G: 0xAA, B: 0xAA, A: 0xFF}), bindings.bitrateText,
-		canvas.NewText("Direction", color.NRGBA{R: 0xAA, G: 0xAA, B: 0xAA, A: 0xFF}), bindings.directionText,
+		bindings.snrRowLabel, bindings.snrText,
 		canvas.NewText("My callsign", color.NRGBA{R: 0xAA, G: 0xAA, B: 0xAA, A: 0xFF}), bindings.userCallsText,
 		canvas.NewText("Target callsign", color.NRGBA{R: 0xAA, G: 0xAA, B: 0xAA, A: 0xFF}), bindings.destCallsText,
 		canvas.NewText("Client TCP Connected", color.NRGBA{R: 0xAA, G: 0xAA, B: 0xAA, A: 0xFF}), bindings.tcpText,
@@ -945,7 +1190,7 @@ func main() {
 			if channel == "" {
 				channel = "left"
 			}
-			if err := sendWSCommand("set_audio_config", captureID, playbackID, channel); err != nil {
+			if err := sendWSCommand("set_audio_config", captureID, playbackID, channel, "", "", "", ""); err != nil {
 				appendLog(fmt.Sprintf("Failed to send audio config: %v\n", err))
 			} else {
 				appendLog(fmt.Sprintf("Sent audio config: capture=%s playback=%s channel=%s\n",
@@ -967,37 +1212,99 @@ func main() {
 
 	showRadioDialog := func() {
 		applyBtn := widget.NewButton("Apply", func() {
+			method := pttMethodID(bindings.pttMethodSelect.Selected)
 			modelID := selectedID(bindings.radioSelect, state.radioItems)
-			if modelID == "" {
-				appendLog("Select a radio model before applying.\n")
+			if method == "hamlib" && (modelID == "" || modelID == "-1") {
+				appendLog("Select a Hamlib radio model before applying.\n")
 				return
 			}
 			devPath := bindings.devicePathEntry.Text
+			if method == "serial" && devPath == "" {
+				appendLog("Enter the serial device used for RTS PTT.\n")
+				return
+			}
 			serialSpeed := bindings.serialSpeedEntry.Selected
 			if serialSpeed == "" || serialSpeed == "Auto" {
 				serialSpeed = "0"
 			}
-			if err := sendWSCommand("set_radio_config", modelID, devPath, serialSpeed); err != nil {
-				appendLog(fmt.Sprintf("Failed to send radio config: %v\n", err))
+			pttLine := bindings.pttLineSelect.Selected
+			pttInvert := bindings.pttInvertSelect.Selected
+			cm108GPIO := bindings.cm108GPIOSelect.Selected
+			if err := sendWSCommand("set_ptt_config", method, devPath, modelID, serialSpeed,
+				pttLine, pttInvert, cm108GPIO); err != nil {
+				appendLog(fmt.Sprintf("Failed to send PTT config: %v\n", err))
 			} else {
-				appendLog(fmt.Sprintf("Sent radio config: model=%s path=%s baud=%s\n", modelID, devPath, serialSpeed))
+				appendLog(fmt.Sprintf("Sent PTT config: method=%s model=%s path=%s baud=%s line=%s invert=%s gpio=%s\n",
+					method, modelID, devPath, serialSpeed, pttLine, pttInvert, cm108GPIO))
 			}
 		})
 
+		deviceRow := container.NewGridWithColumns(2,
+			widget.NewLabel("Device Path"), bindings.devicePathEntry)
+		modelRow := container.NewGridWithColumns(2,
+			widget.NewLabel("Hamlib Model"), bindings.radioSelect)
+		baudRow := container.NewGridWithColumns(2,
+			widget.NewLabel("Hamlib Baud Rate"), bindings.serialSpeedEntry)
+		lineRow := container.NewGridWithColumns(2,
+			widget.NewLabel("PTT Line"), bindings.pttLineSelect)
+		invertRow := container.NewGridWithColumns(2,
+			widget.NewLabel("Invert Line"), bindings.pttInvertSelect)
+		gpioRow := container.NewGridWithColumns(2,
+			widget.NewLabel("CM108 GPIO"), bindings.cm108GPIOSelect)
+		previousMethod := pttMethodID(bindings.pttMethodSelect.Selected)
+		updateMethodFields := func(label string) {
+			method := pttMethodID(label)
+			if method == "cm108" && (previousMethod == "serial" || previousMethod == "hamlib") {
+				bindings.devicePathEntry.SetText("")
+			}
+			previousMethod = method
+			lineRow.Hide()
+			invertRow.Hide()
+			gpioRow.Hide()
+			switch method {
+			case "hamlib":
+				deviceRow.Show()
+				modelRow.Show()
+				baudRow.Show()
+			case "serial":
+				deviceRow.Show()
+				modelRow.Hide()
+				baudRow.Hide()
+				lineRow.Show()
+				invertRow.Show()
+			case "cm108":
+				// Device is auto-detected; an explicit /dev/hidrawN is the
+				// override, so the field stays available but is not required.
+				deviceRow.Show()
+				modelRow.Hide()
+				baudRow.Hide()
+				gpioRow.Show()
+			default:
+				deviceRow.Hide()
+				modelRow.Hide()
+				baudRow.Hide()
+			}
+		}
+		bindings.pttMethodSelect.OnChanged = updateMethodFields
+
 		content := container.NewVBox(
 			container.NewGridWithColumns(2,
-				widget.NewLabel("Radio Model"), bindings.radioSelect,
-				widget.NewLabel("Device Path"), bindings.devicePathEntry,
-				widget.NewLabel("Baud Rate"), bindings.serialSpeedEntry,
-			),
+				widget.NewLabel("PTT Method"), bindings.pttMethodSelect),
+			deviceRow,
+			modelRow,
+			baudRow,
+			lineRow,
+			invertRow,
+			gpioRow,
 			container.NewHBox(layout.NewSpacer(), applyBtn, layout.NewSpacer()),
 		)
+		updateMethodFields(bindings.pttMethodSelect.Selected)
 
 		bg := canvas.NewRectangle(color.Transparent)
 		bg.SetMinSize(fyne.NewSize(500, 0))
 		padded := container.NewStack(bg, container.NewPadded(content))
 
-		dialog.ShowCustom("Radio Config", "Close", padded, myWindow)
+		dialog.ShowCustom("PTT Configuration", "Close", padded, myWindow)
 	}
 
 	showWaterfallDialog := func() {
@@ -1028,7 +1335,7 @@ func main() {
 				appendLog(fmt.Sprintf("Waterfall turned %s.\n", val))
 				return
 			}
-			if err := sendWSCommand("set_waterfall", val, "", ""); err != nil {
+			if err := sendWSCommand("set_waterfall", val, "", "", "", "", "", ""); err != nil {
 				appendLog(fmt.Sprintf("Failed to toggle waterfall: %v\n", err))
 			}
 		}
@@ -1081,7 +1388,57 @@ func main() {
 	radioConfigItem := fyne.NewMenuItem("Radio Config", showRadioDialog)
 	waterfallItem := fyne.NewMenuItem("Waterfall", showWaterfallDialog)
 	configMenu := fyne.NewMenu("Settings", soundcardsItem, radioConfigItem, waterfallItem)
-	myWindow.SetMainMenu(fyne.NewMainMenu(remoteMenu, configMenu))
+
+	openExternalURL := func(raw string) {
+		u, err := url.Parse(raw)
+		if err != nil {
+			appendLog(fmt.Sprintf("Invalid URL: %v\n", err))
+			return
+		}
+		if err := myApp.OpenURL(u); err != nil {
+			appendLog(fmt.Sprintf("Failed to open %s: %v\n", raw, err))
+		}
+	}
+
+	openLogsDir := func() {
+		dir := getLogDir()
+		p := filepath.ToSlash(dir)
+		if runtime.GOOS == "windows" && !strings.HasPrefix(p, "/") {
+			p = "/" + p
+		}
+		if err := myApp.OpenURL(&url.URL{Scheme: "file", Path: p}); err != nil {
+			appendLog(fmt.Sprintf("Failed to open logs directory %s: %v\n", dir, err))
+		}
+	}
+
+	showVersionDialog := func() {
+		version, gitHash := "unknown", "unknown000"
+		state.mu.RLock()
+		engLink, isEngine := state.link.(*engineLink)
+		state.mu.RUnlock()
+		if isEngine {
+			version, gitHash = engLink.Version()
+		}
+		dialog.ShowInformation("Version",
+			fmt.Sprintf("Mercury Version: %s\nGit Commit: %s", version, gitHash), myWindow)
+	}
+
+	versionItem := fyne.NewMenuItem("Version", showVersionDialog)
+	supportItem := fyne.NewMenuItem("Support Us", func() {
+		openExternalURL("https://www.paypal.com/donate/?hosted_button_id=EKY4LRAH64Z9S")
+	})
+	mailingItem := fyne.NewMenuItem("Join our mailing list", func() {
+		openExternalURL("https://lists.riseup.net/www/info/hermes-general")
+	})
+	submitIssueItem := fyne.NewMenuItem("Submit issue", func() {
+		openExternalURL("https://github.com/Rhizomatica/mercury/issues/new")
+	})
+	helpMenu := fyne.NewMenu("Help", versionItem, supportItem, mailingItem, submitIssueItem)
+
+	logsItem := fyne.NewMenuItem("Open logs directory", openLogsDir)
+	logsMenu := fyne.NewMenu("Logs", logsItem)
+
+	myWindow.SetMainMenu(fyne.NewMainMenu(remoteMenu, configMenu, logsMenu, helpMenu))
 
 	// Single idempotent teardown, used by both the window-close handler and the
 	// signal handler.  It runs entirely OFF the GL/main thread: SetOnClosed is
@@ -1095,6 +1452,10 @@ func main() {
 	// the engine unkeys the radio and flushes on the way out.
 	var shutdownOnce sync.Once
 	shutdown := func() {
+		// Remember where and how large the window is so the next launch opens
+		// in the same place. Read before teardown: the window is still alive
+		// when SetOnClosed runs.
+		saveWindowGeometry(myWindow, myApp.Preferences())
 		shutdownOnce.Do(func() {
 			go func() {
 				go func() {
@@ -1229,16 +1590,35 @@ func drawSpectrumImage(img *image.NRGBA, w, h int, state *appState) {
 	// so the snapshot is safe to iterate after unlocking.
 	state.mu.RLock()
 	vals := state.spectrumValues
+	sr := state.spectrumRate
 	state.mu.RUnlock()
 	if len(vals) == 0 {
 		return
 	}
+	// Limit the drawn bins so the spectrum lines up with the waterfall's
+	// 0..3000 Hz display. If the sample-rate's Nyquist exceeds 3 kHz,
+	// scale the number of bins used accordingly.
+	binsToUse := len(vals)
+	if sr > 0 {
+		nyq := float64(sr) / 2.0
+		const maxDisplayHz = 3000.0
+		if nyq > maxDisplayHz {
+			scaled := int(float64(len(vals)) * (maxDisplayHz / nyq))
+			if scaled >= 1 {
+				binsToUse = scaled
+			} else {
+				binsToUse = 1
+			}
+		}
+	}
+	valsToDraw := vals[:binsToUse]
+
 	ctx := &spectrumContext{img: img, w: w, h: h}
 	ctx.drawGrid()
 	// draw the spectrum line with a bold cyan color
-	ctx.drawLine(vals)
+	ctx.drawLine(valsToDraw)
 	// draw a faint filled area under the line
-	ctx.fillUnderLine(vals)
+	ctx.fillUnderLine(valsToDraw)
 }
 
 func drawWaterfallImage(img *image.NRGBA, w, h int, state *appState) {
@@ -1255,6 +1635,7 @@ func drawWaterfallImage(img *image.NRGBA, w, h int, state *appState) {
 	state.mu.RLock()
 	rows := state.waterfallRows
 	palette := state.waterfallPalette
+	sr := state.spectrumRate
 	state.mu.RUnlock()
 	if len(rows) == 0 {
 		return
@@ -1268,11 +1649,29 @@ func drawWaterfallImage(img *image.NRGBA, w, h int, state *appState) {
 	for rowIdx := 0; rowIdx < rowsToDraw; rowIdx++ {
 		row := rows[len(rows)-1-rowIdx]
 		destY := rowIdx
-		for x := 0; x < w; x++ {
-			if len(row) == 0 {
-				continue
+		if len(row) == 0 {
+			continue
+		}
+		// Determine how many bins to use so the waterfall shows 0..3000 Hz
+		binsToUse := len(row)
+		if sr > 0 {
+			nyq := float64(sr) / 2.0
+			const maxDisplayHz = 3000.0
+			if nyq > maxDisplayHz {
+				// scale down the number of bins to cover only up to maxDisplayHz
+				scaled := int(float64(len(row)) * (maxDisplayHz / nyq))
+				if scaled >= 1 {
+					binsToUse = scaled
+				} else {
+					binsToUse = 1
+				}
 			}
-			srcIdx := (x * len(row)) / w
+		}
+		for x := 0; x < w; x++ {
+			srcIdx := (x * binsToUse) / w
+			if srcIdx >= len(row) {
+				srcIdx = len(row) - 1
+			}
 			v := float64(row[srcIdx])
 			if math.IsNaN(v) {
 				continue
@@ -1448,18 +1847,32 @@ func netJoinHostPort(host, port string) string {
 	return net.JoinHostPort(host, port)
 }
 
+func getExeDir() string {
+	if exePath, err := os.Executable(); err == nil {
+		return filepath.Dir(exePath)
+	}
+	return "."
+}
+
 func getBaseDir() string {
 	if runtime.GOOS == "windows" {
-		if exePath, err := os.Executable(); err == nil {
-			return filepath.Dir(exePath)
-		}
+		return getExeDir()
 	}
 	return "."
 }
 
 func getLogDir() string {
+	if runtime.GOOS == "linux" {
+		if dir := os.Getenv("XDG_STATE_HOME"); dir != "" {
+			return filepath.Join(dir, "mercury", "logs")
+		}
+		if home, err := os.UserHomeDir(); err == nil {
+			return filepath.Join(home, ".local", "state", "mercury", "logs")
+		}
+		return "."
+	}
 	if runtime.GOOS == "windows" {
-		return getBaseDir()
+		return filepath.Join(getExeDir(), "logs")
 	}
 	return "."
 }

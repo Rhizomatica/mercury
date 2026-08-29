@@ -4,8 +4,49 @@ import (
 	"encoding/binary"
 	"image"
 	"math"
+	"reflect"
+	"strings"
 	"testing"
 )
+
+func TestPTTMethodOptions(t *testing.T) {
+	want := []string{"None", "Hamlib", "Serial (RTS/DTR)", "CM108 GPIO", "HERMES SHM"}
+	if got := pttMethodOptions(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("pttMethodOptions() = %v, want %v", got, want)
+	}
+
+	for _, method := range pttMethodOrder {
+		if got := pttMethodID(pttMethodLabel(method)); got != method {
+			t.Errorf("PTT method %q round-tripped to %q", method, got)
+		}
+	}
+}
+
+func TestRadioListAdvancedPTTSettings(t *testing.T) {
+	payload := []byte(`{"type":"radio_list","selected":"1","device_path":"COM4","serial_speed":9600,"ptt_method":"serial","ptt_line":"both","ptt_invert":"rts","cm108_gpio":4,"list":[]}`)
+	events := decodeWSMessage(1, payload)
+	if len(events) != 1 {
+		t.Fatalf("decodeWSMessage returned %d events, want 1", len(events))
+	}
+	event, ok := events[0].(RadioListEvent)
+	if !ok {
+		t.Fatalf("event has type %T, want RadioListEvent", events[0])
+	}
+	if event.PTTLine != "both" || event.PTTInvert != "rts" || event.CM108GPIO != "4" {
+		t.Fatalf("advanced PTT settings = line %q, invert %q, gpio %q",
+			event.PTTLine, event.PTTInvert, event.CM108GPIO)
+	}
+}
+
+func TestRadioListAdvancedPTTSettingsDefaultForOlderServer(t *testing.T) {
+	payload := []byte(`{"type":"radio_list","ptt_method":"serial","list":[]}`)
+	events := decodeWSMessage(1, payload)
+	event := events[0].(RadioListEvent)
+	if event.PTTLine != "rts" || event.PTTInvert != "none" || event.CM108GPIO != "3" {
+		t.Fatalf("legacy defaults = line %q, invert %q, gpio %q",
+			event.PTTLine, event.PTTInvert, event.CM108GPIO)
+	}
+}
 
 // TestConcurrentSpectrumAccessNoRace exercises the appState sharing between the
 // WebSocket reader goroutine (writer of spectrumValues/waterfallRows) and the
@@ -51,7 +92,7 @@ func TestConcurrentSpectrumAccessNoRace(t *testing.T) {
 }
 
 func TestParseStatusMessage(t *testing.T) {
-	payload := []byte(`{"type":"status","bitrate":1200,"snr":6.5,"sync":true,"direction":"tx","client_tcp_connected":true,"bytes_transmitted":34,"bytes_received":900,"tx_gain_db":3.5,"tx_peak_dbfs":-2.1,"waterfall":true}`)
+	payload := []byte(`{"type":"status","bitrate":1200,"snr":6.5,"sync":true,"direction":"tx","client_tcp_connected":true,"bytes_transmitted":34,"bytes_received":900,"tx_gain_db":3.5,"tx_peak_dbfs":-2.1,"waterfall":true,"audio_ok":true,"audio_error":""}`)
 
 	status, err := parseStatusMessage(payload)
 	if err != nil {
@@ -71,6 +112,55 @@ func TestParseStatusMessage(t *testing.T) {
 	}
 	if status.Waterfall != true {
 		t.Fatal("expected waterfall to be true")
+	}
+	if !status.AudioOk {
+		t.Fatal("expected audio_ok to be true")
+	}
+}
+
+func TestParseStatusMessageReportsAudioFailure(t *testing.T) {
+	payload := []byte(`{"type":"status","audio_ok":false,"audio_error":"capture: device negotiated 44100 Hz, not a multiple of 8000 Hz"}`)
+
+	status, err := parseStatusMessage(payload)
+	if err != nil {
+		t.Fatalf("parseStatusMessage returned error: %v", err)
+	}
+	if status.AudioOk {
+		t.Fatal("expected audio_ok to be false")
+	}
+	if !strings.Contains(status.AudioError, "44100 Hz") {
+		t.Fatalf("expected audio_error to mention the rate, got %q", status.AudioError)
+	}
+}
+
+// A status from an older engine without the audio fields must not be treated
+// as an audio failure (which would pop a spurious error dialog).
+func TestParseStatusMessageMissingAudioDefaultsHealthy(t *testing.T) {
+	payload := []byte(`{"type":"status","bitrate":1200}`)
+
+	status, err := parseStatusMessage(payload)
+	if err != nil {
+		t.Fatalf("parseStatusMessage returned error: %v", err)
+	}
+	if !status.AudioOk {
+		t.Fatal("expected missing audio_ok to default to healthy")
+	}
+}
+
+// audio_ok:false with no audio_error must parse to an empty string, so the
+// dialog's fallback message fires instead of showing the literal "<nil>".
+func TestParseStatusMessageAudioFailureWithoutErrorDefaultsEmpty(t *testing.T) {
+	payload := []byte(`{"type":"status","audio_ok":false}`)
+
+	status, err := parseStatusMessage(payload)
+	if err != nil {
+		t.Fatalf("parseStatusMessage returned error: %v", err)
+	}
+	if status.AudioOk {
+		t.Fatal("expected audio_ok to be false")
+	}
+	if status.AudioError != "" {
+		t.Fatalf("expected missing audio_error to parse as empty, got %q", status.AudioError)
 	}
 }
 

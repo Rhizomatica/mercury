@@ -248,8 +248,8 @@ static int json_find_key(const char *json, size_t json_len,
 }
 
 // ---- Parse incoming JSON command from UI ----
-// Expected format: {"command":"<cmd>","value":"<val>","value2":"<val2>","value3":"<val3>"}
-// "command" is mandatory, "value", "value2" and "value3" are optional
+// Expected format: {"command":"<cmd>","value":"<val>",...,"value7":"<val7>"}
+// "command" is mandatory; value fields are optional.
 static int parse_ws_command(const char *json, size_t len, ws_command_t *cmd)
 {
     memset(cmd, 0, sizeof(*cmd));
@@ -261,6 +261,10 @@ static int parse_ws_command(const char *json, size_t len, ws_command_t *cmd)
     json_find_key(json, len, "value",  cmd->value,  sizeof(cmd->value));
     json_find_key(json, len, "value2", cmd->value2, sizeof(cmd->value2));
     json_find_key(json, len, "value3", cmd->value3, sizeof(cmd->value3));
+    json_find_key(json, len, "value4", cmd->value4, sizeof(cmd->value4));
+    json_find_key(json, len, "value5", cmd->value5, sizeof(cmd->value5));
+    json_find_key(json, len, "value6", cmd->value6, sizeof(cmd->value6));
+    json_find_key(json, len, "value7", cmd->value7, sizeof(cmd->value7));
 
     return 0;
 }
@@ -291,8 +295,9 @@ static void ws_handle_message(struct mg_connection *c, struct mg_ws_message *wm)
         return;
     }
 
-    HLOGI(WS_LOG_TAG, "RX command=\"%s\" value=\"%s\" value2=\"%s\" value3=\"%s\"",
-           cmd.command, cmd.value, cmd.value2, cmd.value3);
+    HLOGI(WS_LOG_TAG, "RX command=\"%s\" value=\"%s\" value2=\"%s\" value3=\"%s\" value4=\"%s\" value5=\"%s\" value6=\"%s\" value7=\"%s\"",
+           cmd.command, cmd.value, cmd.value2, cmd.value3, cmd.value4,
+           cmd.value5, cmd.value6, cmd.value7);
 
     int rc = s_ws_ctx->cmd_callback(&cmd, s_ws_ctx->cmd_callback_data);
     if (rc == 0)
@@ -337,15 +342,28 @@ static void ws_event_handler(struct mg_connection *c, int ev, void *ev_data)
             if (s_ws_ctx && s_ws_ctx->connect_callback)
                 s_ws_ctx->connect_callback(s_ws_ctx->connect_callback_data);
         }
-        else if (s_ws_ctx && s_ws_ctx->web_root[0])
-        {
-            // Serve static files from web_root (e.g. test.html)
-            struct mg_http_serve_opts opts = { .root_dir = s_ws_ctx->web_root };
-            mg_http_serve_dir(c, hm, &opts);
-        }
         else
         {
-            mg_http_reply(c, 404, "", "Not Found\n");
+            /* The UI pages are compiled into the binary (websocket/web_packed.c,
+             * generated at build time from websocket/web/) and served from
+             * mongoose's packed filesystem.
+             *
+             * They used to be served from a path relative to the process's
+             * working directory, which meant the bundled UI only appeared if
+             * mercury happened to be started from inside the source tree.  Run
+             * from anywhere else -- which is every real installation, and what
+             * `make install` produces, since it never shipped these files at
+             * all -- the browser got an empty Mongoose directory index instead
+             * of the UI, with nothing to indicate why (issue #204).
+             *
+             * Packed instead of installed: there is no path to get wrong, no
+             * install step to forget, and an appliance image cannot end up with
+             * a binary and pages from different builds. */
+            struct mg_http_serve_opts opts = {
+                .root_dir = "/web",
+                .fs = &mg_fs_packed,
+            };
+            mg_http_serve_dir(c, hm, &opts);
         }
     }
     else if (ev == MG_EV_WS_MSG)
@@ -390,10 +408,15 @@ static void *ws_server_thread(void *arg)
         ws_drain_queue();
     }
 
-    // Send any remaining queued messages, then close connections.
+    // Force-close remaining connections instead of draining.  A browser tab
+    // left open on the UI keeps its websocket alive; if we let mongoose drain
+    // it, shutdown stalls long enough to trip main()'s alarm(10) watchdog and
+    // the process dies with SIGALRM ("Alarm clock").  Clearing is_draining
+    // makes the close immediate.
     ws_drain_queue();
     for (struct mg_connection *c = s_mgr.conns; c != NULL; c = c->next)
     {
+        c->is_draining = 0;
         c->is_closing = 1;
     }
     mg_mgr_poll(&s_mgr, WS_POLL_INTERVAL_MS);
@@ -408,7 +431,6 @@ static void *ws_server_thread(void *arg)
 
 int ws_init(ws_ctx_t *ctx,
             uint16_t port,
-            const char *web_root,
             ws_command_callback_t cmd_callback,
             void *cb_data,
             ws_connect_callback_t connect_callback,
@@ -428,11 +450,6 @@ int ws_init(ws_ctx_t *ctx,
 
     snprintf(ctx->listen_url, sizeof(ctx->listen_url),
              "%s://0.0.0.0:%u", tls_enabled ? "wss" : "ws", port);
-
-    if (web_root)
-        strncpy(ctx->web_root, web_root, sizeof(ctx->web_root) - 1);
-    else
-        ctx->web_root[0] = '\0';
 
 #if MG_TLS != MG_TLS_NONE
     if (tls_enabled) {

@@ -68,7 +68,7 @@ LISTEN CQ\r
 When enabled, Mercury enters the LISTENING state and will accept incoming
 CALL frames addressed to the local callsign (or any callsign if PUBLIC is ON).
 
-`LISTEN CQ` is treated as `LISTEN ON` (VarAC compatibility).
+`LISTEN CQ` is treated as `LISTEN ON` (VARA compatibility).
 
 ---
 
@@ -125,7 +125,7 @@ COMPRESSION OFF\r
 **Response:** `OK\r` (always).
 
 Mercury does not use compression; this command exists so VARA-compatible
-clients (e.g., Pat, VarAC) can connect without errors.
+clients can connect without errors.
 
 ---
 
@@ -141,8 +141,8 @@ CHAT OFF\r
 **Response:** `OK\r` on success, `WRONG\r` on error.
 
 `CHAT ON` implicitly enables `LISTEN ON`, placing Mercury in the LISTENING
-state.  This matches VARA behavior where chat applications (VarAC, VARA Chat)
-expect the modem to be ready for incoming connections after `CHAT ON`.
+state.  This matches VARA behavior, where chat applications expect the modem
+to be ready for incoming connections after `CHAT ON`.
 
 `CHAT OFF` is acknowledged but has no effect — Mercury does not currently
 differentiate chat and file-transfer timing.
@@ -171,7 +171,8 @@ CONNECT <mycall> <theircall>\r
 
 **Response:** `OK\r` if the command was accepted, `WRONG\r` on error.
 
-Mercury will transmit CALL frames on DATAC13, advertising the local BW token,
+Mercury will transmit CALL frames on DATAC16 (the control mode), advertising
+the local BW token,
 and wait for an ACCEPT carrying the negotiated session BW.
 On success, the asynchronous response
 `CONNECTED <sourcecall> <destcall> <bandwidth>\r` is sent on the control port,
@@ -186,7 +187,7 @@ CONNECT AAAA BBBB\r
 
 ### CQFRAME
 
-Transmit a compact DATAC13 CQ frame.
+Transmit a compact CQ frame on the control mode (DATAC16).
 
 ```
 CQFRAME <sourcecall> <bandwidth>\r
@@ -242,8 +243,8 @@ VERSION\r
 
 **Response:** A VARA-compatible version string on the control port.
 
-This command exists for VARA-compatible clients (e.g., VarAC) that check
-the modem version at startup.
+This command exists for VARA-compatible clients that check the modem version
+at startup.
 
 ---
 
@@ -421,7 +422,7 @@ the session, and `<destcall>` is always the station that was called.
 
 ### CQFRAME
 
-Sent when Mercury decodes a compact DATAC13 CQ frame on the air.
+Sent when Mercury decodes a compact CQ frame on the air.
 `<sourcecall>` is the transmitting station and `<bandwidth>` is the BW token
 advertised inside that CQ frame (`500`, `2300`, or `2750`).
 
@@ -429,7 +430,7 @@ advertised inside that CQ frame (`500`, `2300`, or `2750`).
 
 Emitted by the optional channel-busy (occupancy) detector when it observes the
 HF channel transition between clear and occupied, using VARA's exact wording so
-existing VARA-compatible hosts (VarAC, BPQ32, Winlink) act on them unchanged.
+existing VARA-compatible hosts (BPQ32, Winlink) act on them unchanged.
 Edge-triggered: `BUSY ON\r` on clear→busy, `BUSY OFF\r` on busy→clear.
 
 The detector is **disabled by default** and is enabled via the `[channel]`
@@ -469,7 +470,20 @@ Sent when a callsign is set via `MYCALL`, confirming the callsign is
 licensed (VARA compatibility).  Arrives after the `OK\r` response to
 `MYCALL`.  Also sent on client reconnect if a callsign is already set.
 
-The `<callsign>` is the primary callsign exactly as accepted by `MYCALL`.
+`REGISTERED` is **per call sign**, so `MYCALL` emits one line for the primary
+and one for each secondary it accepted, in the order given:
+
+```
+MYCALL AAAA BBBB CCCC\r
+OK\r
+REGISTERED AAAA\r
+REGISTERED BBBB\r
+REGISTERED CCCC\r
+```
+
+Secondaries beyond the four Mercury can hold are dropped, and dropped ones are
+not acknowledged — the host would otherwise address a callsign this station
+never answers.
 
 ---
 
@@ -493,20 +507,39 @@ fixed-size KISS-encoded packets matching the modem's payload size.
 Three client framings are accepted, distinguished by the KISS command byte:
 
 - `0x00` (standard KISS data / VARA "AX.25 standard") and `0x01` (VARA
-  "AX.25 7-char callsign", used by VarAC): Mercury injects its 1-byte
+  "AX.25 7-char callsign", used by VARA): Mercury injects its 1-byte
   broadcast header plus a 2-byte payload-length prefix, zero-pads to the
   modem frame size, and records which of the two framings the sender used
   in a header extension bit (`BCAST_EXT_KISS_STD`).  The receiving side
   delivers exactly the original payload with the **sender's** command byte
-  — so VarAC↔VarAC traffic stays `0x01` and standard-KISS clients
+  — so VARA↔VARA traffic stays `0x01` and standard-KISS clients
   (e.g. Reticulum, see [RETICULUM.md](RETICULUM.md)) get `0x00`.
-- `0x02` (`CMD_DATA`, used by hermes-broadcast): the frame is passed raw —
-  the client supplies its own broadcast header, and receivers with a
-  `CMD_DATA` client get the full unmodified frame back.
+- `0x02` (`CMD_DATA`) is used by two different clients and is distinguished
+  by the whole first byte:
+  - **hermes-broadcast**: the frame carries a Mercury broadcast header — a
+    broadcast packet type (`PACKET_TYPE_BROADCAST_CONTROL`/
+    `PACKET_TYPE_BROADCAST_DATA`) **and** a zero extension, which is what
+    hermes-broadcast writes for both its config and payload frames.  Passed
+    raw; zero-padded if short, discarded if oversized.
+  - **VARA beacons/pings** (and any other unformatted `CMD_DATA` payload):
+    Mercury wraps it exactly like `0x00`/`0x01` and records the framing in a
+    `BCAST_EXT_KISS_DATA` extension bit, so the receiver delivers the original
+    payload back as `0x02`.
+
+  Testing only the packet-type bits is not sufficient — they are the top 3
+  bits, so 25% of arbitrary first bytes look like a broadcast type, including
+  every lowercase letter, and such a beacon would be passed raw and lost.
+  Requiring a zero extension as well cuts that to 0.8%, and to nothing across
+  `a`–`z`.
+
+  Frame length must **not** be used as the discriminator: hermes-broadcast
+  sends its config frames `RQ_HEADER_SIZE` short of a full modem frame and
+  relies on Mercury's zero-padding, so a `frame_len == frame_size` test drops
+  every config packet and the far side never starts decoding.
 
 Payloads larger than the modem frame (minus 3 bytes of header+length)
-are truncated (`0x00`/`0x01`) or discarded (`0x02`) — the broadcast plane
-does not fragment.
+are truncated (`0x00`/`0x01`/unformatted-`0x02`) or discarded (raw
+hermes-broadcast `0x02`) — the broadcast plane does not fragment.
 
 ---
 

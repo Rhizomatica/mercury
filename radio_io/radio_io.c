@@ -1,4 +1,4 @@
-/* HERMES Modem - Radio I/O abstraction
+/* HERMES Modem - PTT-oriented radio I/O abstraction
  *
  * Copyright (C) 2025 Rhizomatica
  * Author: Rafael Diniz <rafael@riseup.net>
@@ -15,25 +15,23 @@
  *
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
- *
  */
 
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
+#include <pthread.h>
 #include <stdbool.h>
 #include <stdint.h>
-#include <pthread.h>
+#include <stdio.h>
+#include <string.h>
 
 #ifdef HAVE_HAMLIB
 #include <hamlib/rig.h>
-/* hamlib >= 4.6 ships the port struct inside rig.h directly.
- * Including the separate port.h alongside would redefine it.
- * Skip port.h — rig.h alone is sufficient on any supported version. */
 #include "rigctl_parse.h"
 #endif
 
 #include "radio_io.h"
+#include "radio_port.h"
+#include "serial_ptt.h"
+#include "cm108_ptt.h"
 #include "../common/hermes_log.h"
 
 #define RADIO_LOG_TAG "radio-io"
@@ -44,18 +42,65 @@
 #include "shm_utils.h"
 #endif
 
+typedef struct {
+    int  (*open)(const ptt_config_t *config);
+    int  (*set)(bool on);
+    void (*close)(void);
+} ptt_backend_t;
+
+/* One process owns one PTT endpoint.  The mutex serializes UI restarts against
+ * modem keying and also protects the selected config/backend pointer. */
+static pthread_mutex_t g_radio_mutex = PTHREAD_MUTEX_INITIALIZER;
+static ptt_config_t g_config = {
+    .method = PTT_METHOD_NONE,
+    .device = {0},
+    .hamlib_model = RADIO_TYPE_NONE,
+    .hamlib_serial_speed = 0,
+    .hamlib_log_level = 0
+};
+static const ptt_backend_t *g_backend = NULL;
+
+static const char *ptt_method_name(ptt_method_t method)
+{
+    switch (method)
+    {
+    case PTT_METHOD_NONE:        return "none";
+    case PTT_METHOD_HAMLIB:      return "hamlib";
+    case PTT_METHOD_SERIAL:      return "serial";
+    case PTT_METHOD_CM108:       return "cm108";
+    case PTT_METHOD_HERMES_SHM:  return "hermes_shm";
+    default:                     return "unknown";
+    }
+}
+
+/* ------------------------------------------------------------------------- */
+/* Hamlib backend                                                            */
+
 #ifdef HAVE_HAMLIB
-/* Configure the serial device path and speed through Hamlib's stable public
- * conf API (rig_token_lookup + rig_set_conf) rather than writing the internal
- * rig->state.rigport struct directly.
- *
- * Since Hamlib 4.6 the port struct is reached via the HAMLIB_RIGPORT macro,
- * which expands to rig_data_pointer(rig, RIG_PTRX_RIGPORT).  That symbol is not
- * exported by every Hamlib build (a Hamlib 5 header/library skew leaves
- * rig_data_pointer undefined at link time), so depending on it is fragile.  The
- * conf tokens "rig_pathname" and "serial_speed" are stable across 4.6/4.7/5.x
- * and must be set before rig_open(). */
-static void radio_io_apply_serial_conf(RIG *radio, const char *device_path,
+static RIG *g_radio = NULL;
+
+static radio_port_kind_t radio_io_port_kind(rig_model_t model)
+{
+    switch ((rig_port_t)rig_get_caps_int(model, RIG_CAPS_PORT_TYPE))
+    {
+    case RIG_PORT_SERIAL:
+        return RADIO_PORT_KIND_SERIAL;
+    case RIG_PORT_NETWORK:
+    case RIG_PORT_UDP_NETWORK:
+        return RADIO_PORT_KIND_NETWORK;
+    default:
+        return RADIO_PORT_KIND_OTHER;
+    }
+}
+
+static const char *radio_io_model_name(rig_model_t model)
+{
+    const char *name = rig_get_caps_cptr(model, RIG_CAPS_MODEL_NAME_CPTR);
+    return name ? name : "this rig";
+}
+
+static void radio_io_apply_hamlib_conf(RIG *radio, rig_model_t model,
+                                       const char *device_path,
                                        int serial_speed)
 {
     int rc;
@@ -68,323 +113,385 @@ static void radio_io_apply_serial_conf(RIG *radio, const char *device_path,
             HLOGW(RADIO_LOG_TAG, "rig_set_conf(rig_pathname) failed: %d", rc);
     }
 
-    if (serial_speed > 0)
+    if (serial_speed <= 0)
+        return;
+
+    if (radio_io_port_kind(model) != RADIO_PORT_KIND_SERIAL)
     {
-        char rate[16];
-        snprintf(rate, sizeof(rate), "%d", serial_speed);
-        rc = rig_set_conf(radio, rig_token_lookup(radio, "serial_speed"), rate);
-        if (rc != RIG_OK)
-            HLOGW(RADIO_LOG_TAG, "rig_set_conf(serial_speed) failed: %d", rc);
-        else
-            HLOGI(RADIO_LOG_TAG, "Serial speed overridden to %d baud",
-                  serial_speed);
-    }
-}
-#endif
-
-/* Global mutex — protects radio state (g_radio_type, radio pointer,
- * sbitx_connector) so that key_on / key_off cannot race with a
- * shutdown / restart cycle triggered from the UI thread. */
-static pthread_mutex_t g_radio_mutex = PTHREAD_MUTEX_INITIALIZER;
-
-static int g_radio_type = RADIO_TYPE_NONE;
-static char g_device_path[256] = {0};
-static int g_hamlib_log_level = 0; /* hamlib debug level (0-6) */
-static int g_serial_speed = 0;    /* serial baud rate (0 = hamlib default) */
-#ifdef HAVE_HAMLIB
-static RIG *radio = NULL;
-#endif
-
-#ifdef HAVE_HERMES_SHM
-static controller_conn *sbitx_connector = NULL;
-#endif
-
-int radio_io_init(int radio_type, const char *device_path, int hamlib_log_level, int serial_speed)
-{
-    pthread_mutex_lock(&g_radio_mutex);
-    HLOGI(RADIO_LOG_TAG, "Initializing radio (type=%d, device=%s, hamlib_log_level=%d, serial_speed=%d)",
-          radio_type, device_path && device_path[0] ? device_path : "(none)", hamlib_log_level, serial_speed);
-
-    g_serial_speed = serial_speed;
-
-    /* Validate/clamp hamlib_log_level so that g_hamlib_log_level always
-     * reflects a value that can actually be applied (valid range 0-6). */
-    int effective_log_level = hamlib_log_level;
-    if (effective_log_level < 0 || effective_log_level > 6)
-    {
-        HLOGW(RADIO_LOG_TAG,
-              "Invalid hamlib_log_level=%d; clamping to 0 (valid range is 0-6)",
-              hamlib_log_level);
-        effective_log_level = 0;
-    }
-    g_hamlib_log_level = effective_log_level;
-
-    if (radio_type == RADIO_TYPE_NONE)
-    {
-        g_radio_type = RADIO_TYPE_NONE;
-        g_device_path[0] = '\0';
-        HLOGI(RADIO_LOG_TAG, "Radio control disabled (type=NONE)");
-        pthread_mutex_unlock(&g_radio_mutex);
-        return 0;
+        HLOGI(RADIO_LOG_TAG,
+              "hamlib_serial_speed=%d ignored: %s is not a serial rig",
+              serial_speed, radio_io_model_name(model));
+        return;
     }
 
-    g_radio_type = radio_type;
-    if (device_path && device_path[0])
-        snprintf(g_device_path, sizeof(g_device_path), "%s", device_path);
+    char rate[16];
+    snprintf(rate, sizeof(rate), "%d", serial_speed);
+    rc = rig_set_conf(radio, rig_token_lookup(radio, "serial_speed"), rate);
+    if (rc != RIG_OK)
+        HLOGW(RADIO_LOG_TAG, "rig_set_conf(serial_speed) failed: %d", rc);
     else
-        g_device_path[0] = '\0';
+        HLOGI(RADIO_LOG_TAG, "Hamlib serial speed overridden to %d baud",
+              serial_speed);
+}
 
-    if (radio_type == RADIO_TYPE_SHM)
+static void radio_io_warn_port_mismatch(rig_model_t model,
+                                        const char *device_path)
+{
+    radio_port_verdict_t verdict =
+        radio_port_check(radio_io_port_kind(model), device_path);
+    const char *advice = radio_port_advice(verdict);
+    if (advice)
+        HLOGW(RADIO_LOG_TAG, "PTT device '%s' looks wrong for %s -- %s",
+              device_path, radio_io_model_name(model), advice);
+}
+
+static int hamlib_open(const ptt_config_t *config)
+{
+    if (config->hamlib_model <= 0)
     {
-#ifdef HAVE_HERMES_SHM
-        if (!shm_is_created(SYSV_SHM_CONTROLLER_KEY_STR, sizeof(controller_conn)))
-        {
-            HLOGE(RADIO_LOG_TAG, "Radio SHM not created. Is sbitx_controller running?");
-            g_radio_type = RADIO_TYPE_NONE;
-            pthread_mutex_unlock(&g_radio_mutex);
-            return -1;
-        }
-
-        sbitx_connector = (controller_conn *) shm_attach(SYSV_SHM_CONTROLLER_KEY_STR,
-                                                          sizeof(controller_conn));
-        if (!sbitx_connector)
-        {
-            HLOGE(RADIO_LOG_TAG, "Failed to attach to radio SHM");
-            g_radio_type = RADIO_TYPE_NONE;
-            pthread_mutex_unlock(&g_radio_mutex);
-            return -1;
-        }
-
-        HLOGI(RADIO_LOG_TAG, "Radio control: HERMES shared memory interface");
-        pthread_mutex_unlock(&g_radio_mutex);
-        return 0;
-#else
-        HLOGE(RADIO_LOG_TAG, "HERMES SHM radio control is only available on Linux builds");
-        g_radio_type = RADIO_TYPE_NONE;
-        pthread_mutex_unlock(&g_radio_mutex);
-        return -1;
-#endif
-    }
-
-#ifdef HAVE_HAMLIB
-    /* Hamlib path */
-    /* Set hamlib debug level before rig_init so it takes effect immediately */
-    if (hamlib_log_level >= 0 && hamlib_log_level <= 6)
-    {
-        rig_set_debug((enum rig_debug_level_e)hamlib_log_level);
-        HLOGD(RADIO_LOG_TAG, "Set hamlib debug level to %d", hamlib_log_level);
-    }
-
-    HLOGD(RADIO_LOG_TAG, "Calling rig_init(model=%d)", radio_type);
-    radio = rig_init(radio_type);
-    if (!radio)
-    {
-        HLOGE(RADIO_LOG_TAG, "Unknown rig num %d, or initialization error.", radio_type);
-        HLOGE(RADIO_LOG_TAG, "Please check available radios with -K option.");
-        g_radio_type = RADIO_TYPE_NONE;
-        pthread_mutex_unlock(&g_radio_mutex);
+        HLOGE(RADIO_LOG_TAG, "Hamlib PTT requires a positive model ID");
         return -1;
     }
 
-    radio_io_apply_serial_conf(radio, device_path, serial_speed);
+    rig_set_debug((enum rig_debug_level_e)config->hamlib_log_level);
+    g_radio = rig_init(config->hamlib_model);
+    if (!g_radio)
+    {
+        HLOGE(RADIO_LOG_TAG, "Unknown Hamlib rig model %d or initialization error",
+              config->hamlib_model);
+        HLOGE(RADIO_LOG_TAG, "Check available radios with -K");
+        return -1;
+    }
 
-    HLOGD(RADIO_LOG_TAG, "Calling rig_open(device=%s)",
-          device_path && device_path[0] ? device_path : "(default)");
-    int ret = rig_open(radio);
+    radio_io_apply_hamlib_conf(g_radio, config->hamlib_model,
+                               config->device,
+                               config->hamlib_serial_speed);
+    radio_io_warn_port_mismatch(config->hamlib_model, config->device);
+
+    int ret = rig_open(g_radio);
     if (ret != RIG_OK)
     {
-        HLOGE(RADIO_LOG_TAG, "rig_open: error = %s %s",
-              device_path ? device_path : "(default)", rigerror(ret));
-        rig_cleanup(radio);
-        radio = NULL;
-        g_radio_type = RADIO_TYPE_NONE;
+        HLOGE(RADIO_LOG_TAG, "rig_open(%s) failed: %s (%d)",
+              config->device[0] ? config->device : "default",
+              rigerror2(ret), ret);
+        const char *advice = radio_port_advice(
+            radio_port_check(radio_io_port_kind(config->hamlib_model),
+                             config->device));
+        if (advice)
+            HLOGE(RADIO_LOG_TAG, "%s", advice);
+        rig_cleanup(g_radio);
+        g_radio = NULL;
+        return -1;
+    }
+
+    if (g_radio->caps->rig_model == RIG_MODEL_NETRIGCTL)
+    {
+        int rc = rig_set_vfo_opt(g_radio, netrigctl_get_vfo_mode(g_radio));
+        if (rc != RIG_OK)
+            HLOGW(RADIO_LOG_TAG, "Failed to set NetRigCtl VFO option: %d", rc);
+    }
+
+    HLOGI(RADIO_LOG_TAG, "PTT method: Hamlib (model %d, device %s)",
+          config->hamlib_model,
+          config->device[0] ? config->device : "default");
+    HLOGI(RADIO_LOG_TAG, "Hamlib runtime: %s",
+          hamlib_version2 ? hamlib_version2 : "version unknown");
+    return 0;
+}
+
+static int hamlib_set(bool on)
+{
+    if (!g_radio)
+        return -1;
+    int ret = rig_set_ptt(g_radio, RIG_VFO_CURR,
+                          on ? RIG_PTT_ON : RIG_PTT_OFF);
+    if (ret != RIG_OK)
+    {
+        HLOGW(RADIO_LOG_TAG, "PTT %s failed (Hamlib model %d): %s",
+              on ? "ON" : "OFF", g_config.hamlib_model, rigerror(ret));
+        return -1;
+    }
+    HLOGD(RADIO_LOG_TAG, "PTT %s via Hamlib (model %d)",
+          on ? "ON" : "OFF", g_config.hamlib_model);
+    return 0;
+}
+
+static void hamlib_close(void)
+{
+    if (!g_radio)
+        return;
+    (void)rig_set_ptt(g_radio, RIG_VFO_CURR, RIG_PTT_OFF);
+    rig_close(g_radio);
+    rig_cleanup(g_radio);
+    g_radio = NULL;
+}
+#else
+static int hamlib_open(const ptt_config_t *config)
+{
+    (void)config;
+    HLOGE(RADIO_LOG_TAG,
+          "Hamlib support not compiled in. Install libhamlib-dev and rebuild.");
+    return -1;
+}
+static int hamlib_set(bool on) { (void)on; return -1; }
+static void hamlib_close(void) { }
+#endif
+
+/* ------------------------------------------------------------------------- */
+/* HERMES shared-memory backend                                               */
+
+#ifdef HAVE_HERMES_SHM
+static controller_conn *g_sbitx_connector = NULL;
+
+static int shm_ptt_open(const ptt_config_t *config)
+{
+    (void)config;
+    if (!shm_is_created(SYSV_SHM_CONTROLLER_KEY_STR, sizeof(controller_conn)))
+    {
+        HLOGE(RADIO_LOG_TAG,
+              "Radio SHM not created. Is sbitx_controller running?");
+        return -1;
+    }
+    g_sbitx_connector = (controller_conn *)shm_attach(
+        SYSV_SHM_CONTROLLER_KEY_STR, sizeof(controller_conn));
+    if (!g_sbitx_connector)
+    {
+        HLOGE(RADIO_LOG_TAG, "Failed to attach to radio SHM");
+        return -1;
+    }
+    HLOGI(RADIO_LOG_TAG, "PTT method: HERMES shared memory");
+    return 0;
+}
+
+static int shm_ptt_set(bool on)
+{
+    if (!g_sbitx_connector)
+        return -1;
+    uint8_t command[5] = {0};
+    uint8_t response[5] = {0};
+    command[4] = on ? CMD_PTT_ON : CMD_PTT_OFF;
+    radio_cmd(g_sbitx_connector, command, response);
+    HLOGD(RADIO_LOG_TAG, "PTT %s via HERMES SHM", on ? "ON" : "OFF");
+    return 0;
+}
+
+static void shm_ptt_close(void)
+{
+    if (!g_sbitx_connector)
+        return;
+    (void)shm_ptt_set(false);
+    shm_dettach(SYSV_SHM_CONTROLLER_KEY_STR,
+                sizeof(controller_conn), g_sbitx_connector);
+    g_sbitx_connector = NULL;
+}
+#else
+static int shm_ptt_open(const ptt_config_t *config)
+{
+    (void)config;
+    HLOGE(RADIO_LOG_TAG,
+          "HERMES SHM PTT is only available on supported Linux builds");
+    return -1;
+}
+static int shm_ptt_set(bool on) { (void)on; return -1; }
+static void shm_ptt_close(void) { }
+#endif
+
+/* ------------------------------------------------------------------------- */
+/* Serial modem-control-line backend                                         */
+
+static const char *line_name(ptt_line_t line)
+{
+    switch (line)
+    {
+    case PTT_LINE_DTR:  return "DTR";
+    case PTT_LINE_BOTH: return "RTS+DTR";
+    case PTT_LINE_RTS:
+    default:            return "RTS";
+    }
+}
+
+static int serial_backend_open(const ptt_config_t *config)
+{
+    if (serial_ptt_open(config) != 0)
+        return -1;
+    HLOGI(RADIO_LOG_TAG, "PTT method: serial %s%s%s (device %s)",
+          line_name(config->serial_line),
+          (config->serial_invert_rts || config->serial_invert_dtr) ? ", inverted " : "",
+          config->serial_invert_rts
+              ? (config->serial_invert_dtr ? "RTS+DTR" : "RTS")
+              : (config->serial_invert_dtr ? "DTR" : ""),
+          config->device);
+    return 0;
+}
+
+static int serial_backend_set(bool on)
+{
+    int rc = serial_ptt_set(on);
+    if (rc == 0)
+        HLOGD(RADIO_LOG_TAG, "PTT %s via serial", on ? "ON" : "OFF");
+    return rc;
+}
+
+static void serial_backend_close(void)
+{
+    serial_ptt_close();
+}
+
+/* ------------------------------------------------------------------------- */
+/* CM108 GPIO backend                                                        */
+
+static int cm108_backend_open(const ptt_config_t *config)
+{
+    if (mercury_cm108_open(config) != 0)
+        return -1;
+    HLOGI(RADIO_LOG_TAG, "PTT method: CM108 GPIO%d", config->cm108_gpio);
+    return 0;
+}
+
+static int cm108_backend_set(bool on)
+{
+    int rc = mercury_cm108_set(on);
+    if (rc == 0)
+        HLOGD(RADIO_LOG_TAG, "PTT %s via CM108 GPIO", on ? "ON" : "OFF");
+    return rc;
+}
+
+static void cm108_backend_close(void)
+{
+    mercury_cm108_close();
+}
+
+static const ptt_backend_t HAMLIB_BACKEND = {
+    hamlib_open, hamlib_set, hamlib_close
+};
+static const ptt_backend_t SERIAL_BACKEND = {
+    serial_backend_open, serial_backend_set, serial_backend_close
+};
+static const ptt_backend_t CM108_BACKEND = {
+    cm108_backend_open, cm108_backend_set, cm108_backend_close
+};
+static const ptt_backend_t HERMES_SHM_BACKEND = {
+    shm_ptt_open, shm_ptt_set, shm_ptt_close
+};
+
+static const ptt_backend_t *backend_for_method(ptt_method_t method)
+{
+    switch (method)
+    {
+    case PTT_METHOD_HAMLIB:     return &HAMLIB_BACKEND;
+    case PTT_METHOD_SERIAL:     return &SERIAL_BACKEND;
+    case PTT_METHOD_CM108:      return &CM108_BACKEND;
+    case PTT_METHOD_HERMES_SHM: return &HERMES_SHM_BACKEND;
+    case PTT_METHOD_NONE:       return NULL;
+    default:                    return NULL;
+    }
+}
+
+static void radio_io_shutdown_locked(void)
+{
+    if (g_backend)
+        g_backend->close();
+    g_backend = NULL;
+    g_config.method = PTT_METHOD_NONE;
+}
+
+int radio_io_init(const ptt_config_t *config)
+{
+    if (!config)
+        return -1;
+
+    pthread_mutex_lock(&g_radio_mutex);
+
+    if (g_backend)
+        radio_io_shutdown_locked();
+
+    g_config = *config;
+    g_config.device[sizeof(g_config.device) - 1] = '\0';
+    if (g_config.hamlib_log_level < 0 || g_config.hamlib_log_level > 6)
+    {
+        HLOGW(RADIO_LOG_TAG,
+              "Invalid hamlib_log_level=%d; using 0 (valid range 0..6)",
+              g_config.hamlib_log_level);
+        g_config.hamlib_log_level = 0;
+    }
+    if (g_config.hamlib_serial_speed < 0)
+        g_config.hamlib_serial_speed = 0;
+
+    HLOGI(RADIO_LOG_TAG, "Initializing PTT (method=%s, device=%s)",
+          ptt_method_name(g_config.method),
+          g_config.device[0] ? g_config.device : "none");
+
+    if (g_config.method == PTT_METHOD_NONE)
+    {
+        HLOGI(RADIO_LOG_TAG, "Direct PTT control disabled");
+        pthread_mutex_unlock(&g_radio_mutex);
+        return 0;
+    }
+
+    const ptt_backend_t *backend = backend_for_method(g_config.method);
+    if (!backend)
+    {
+        HLOGE(RADIO_LOG_TAG, "Unknown PTT method %d", (int)g_config.method);
+        g_config.method = PTT_METHOD_NONE;
         pthread_mutex_unlock(&g_radio_mutex);
         return -1;
     }
 
-    if (radio->caps->rig_model == RIG_MODEL_NETRIGCTL)
+    if (backend->open(&g_config) != 0)
     {
-        int rigctld_vfo_opt = netrigctl_get_vfo_mode(radio);
-        int rc = rig_set_vfo_opt(radio, rigctld_vfo_opt);
-        if (rc != RIG_OK)
-        {
-            HLOGW(RADIO_LOG_TAG, "Failed to set NetRigCtl VFO option: %d", rc);
-        }
+        backend->close();
+        g_config.method = PTT_METHOD_NONE;
+        pthread_mutex_unlock(&g_radio_mutex);
+        return -1;
     }
 
-    HLOGI(RADIO_LOG_TAG, "Radio control: HAMLIB (model %d, device %s)",
-          radio_type, device_path && device_path[0] ? device_path : "(default)");
-
-    /* Report what hamlib thinks this rig needs after keying, for reference only.
-     *
-     * Mercury does NOT derive its TX timing from this. The relay wait before
-     * audio and the ARQ guards were tuned for our main hardware, the sbitx,
-     * which keys over the SHM interface (RADIO_TYPE_SHM) and never reaches this
-     * function at all. Logging it lets us compare what a hamlib-controlled rig
-     * claims it needs against what we actually wait, before deciding whether
-     * honouring it is worth anything.
-     *
-     * Access to rig_state moved across the hamlib versions we support (4.6..5):
-     * newer hamlib reaches it through rig_data_pointer(), older ones expose the
-     * member directly. Prefer the accessor so this survives the struct being
-     * hidden. The hamlib version string goes on the same line because the field
-     * only means anything once you know which hamlib produced it. */
-    {
-#if defined(HAMLIB_STATE)
-        const struct rig_state *rs = HAMLIB_STATE(radio);
-#elif defined(STATE)
-        const struct rig_state *rs = STATE(radio);
-#else
-        const struct rig_state *rs = &radio->state;
-#endif
-        HLOGI(RADIO_LOG_TAG, "hamlib runtime: %s",
-              hamlib_version2 ? hamlib_version2 : "version unknown");
-    }
+    g_backend = backend;
     pthread_mutex_unlock(&g_radio_mutex);
     return 0;
-#else
-    HLOGE(RADIO_LOG_TAG, "HAMLIB support not compiled in. Install libhamlib-dev and rebuild.");
-    g_radio_type = RADIO_TYPE_NONE;
-    pthread_mutex_unlock(&g_radio_mutex);
-    return -1;
-#endif
 }
 
 void radio_io_shutdown(void)
 {
     pthread_mutex_lock(&g_radio_mutex);
-    HLOGI(RADIO_LOG_TAG, "Shutting down radio (type=%d)", g_radio_type);
-
-#ifdef HAVE_HERMES_SHM
-    if (g_radio_type == RADIO_TYPE_SHM)
-    {
-        if (sbitx_connector)
-        {
-            shm_dettach(SYSV_SHM_CONTROLLER_KEY_STR,
-                        sizeof(controller_conn), sbitx_connector);
-            sbitx_connector = NULL;
-        }
-
-        g_radio_type = RADIO_TYPE_NONE;
-        HLOGI(RADIO_LOG_TAG, "Radio shutdown complete (SHM)");
-        pthread_mutex_unlock(&g_radio_mutex);
-        return;
-    }
-#endif
-
-#ifdef HAVE_HAMLIB
-    if (g_radio_type > 0 && radio)
-    {
-        HLOGD(RADIO_LOG_TAG, "Sending PTT OFF before closing rig");
-        rig_set_ptt(radio, RIG_VFO_CURR, RIG_PTT_OFF);
-        rig_close(radio);
-        rig_cleanup(radio);
-        radio = NULL;
-    }
-#endif
-
-    g_radio_type = RADIO_TYPE_NONE;
-    HLOGI(RADIO_LOG_TAG, "Radio shutdown complete");
+    HLOGI(RADIO_LOG_TAG, "Shutting down PTT method %s",
+          ptt_method_name(g_config.method));
+    radio_io_shutdown_locked();
     pthread_mutex_unlock(&g_radio_mutex);
 }
 
 bool radio_io_enabled(void)
 {
-    return g_radio_type != RADIO_TYPE_NONE;
+    pthread_mutex_lock(&g_radio_mutex);
+    bool enabled = (g_backend != NULL);
+    pthread_mutex_unlock(&g_radio_mutex);
+    return enabled;
 }
 
-void radio_io_key_on(void)
+static int radio_io_key(bool on)
 {
     pthread_mutex_lock(&g_radio_mutex);
-
-    if (g_radio_type == RADIO_TYPE_NONE)
+    if (!g_backend)
     {
-        HLOGD(RADIO_LOG_TAG, "key_on called but radio is disabled, ignoring");
+        HLOGD(RADIO_LOG_TAG, "PTT %s requested while direct PTT is disabled",
+              on ? "ON" : "OFF");
         pthread_mutex_unlock(&g_radio_mutex);
-        return;
+        return -1;
     }
-
-#ifdef HAVE_HERMES_SHM
-    if (g_radio_type == RADIO_TYPE_SHM)
-    {
-        uint8_t srv_cmd[5];
-        uint8_t response[5];
-
-        memset(srv_cmd, 0, 5);
-        memset(response, 0, 5);
-
-        srv_cmd[4] = CMD_PTT_ON;
-        radio_cmd(sbitx_connector, srv_cmd, response);
-
-        HLOGD(RADIO_LOG_TAG, "PTT ON via SHM");
-        pthread_mutex_unlock(&g_radio_mutex);
-        return;
-    }
-#endif
-
-#ifdef HAVE_HAMLIB
-    if (g_radio_type > 0 && radio)
-    {
-        int ret = rig_set_ptt(radio, RIG_VFO_CURR, RIG_PTT_ON);
-        if (ret != RIG_OK)
-            HLOGW(RADIO_LOG_TAG, "PTT ON failed (model %d): %s", g_radio_type, rigerror(ret));
-        else
-            HLOGD(RADIO_LOG_TAG, "PTT ON via HAMLIB (model %d)", g_radio_type);
-    }
-#endif
-
+    int rc = g_backend->set(on);
     pthread_mutex_unlock(&g_radio_mutex);
+    return rc;
 }
 
-void radio_io_key_off(void)
-{
-    pthread_mutex_lock(&g_radio_mutex);
-
-    if (g_radio_type == RADIO_TYPE_NONE)
-    {
-        HLOGD(RADIO_LOG_TAG, "key_off called but radio is disabled, ignoring");
-        pthread_mutex_unlock(&g_radio_mutex);
-        return;
-    }
-
-#ifdef HAVE_HERMES_SHM
-    if (g_radio_type == RADIO_TYPE_SHM)
-    {
-        uint8_t srv_cmd[5];
-        uint8_t response[5];
-
-        memset(srv_cmd, 0, 5);
-        memset(response, 0, 5);
-
-        srv_cmd[4] = CMD_PTT_OFF;
-        radio_cmd(sbitx_connector, srv_cmd, response);
-
-        HLOGD(RADIO_LOG_TAG, "PTT OFF via SHM");
-        pthread_mutex_unlock(&g_radio_mutex);
-        return;
-    }
-#endif
-
-#ifdef HAVE_HAMLIB
-    if (g_radio_type > 0 && radio)
-    {
-        int ret = rig_set_ptt(radio, RIG_VFO_CURR, RIG_PTT_OFF);
-        if (ret != RIG_OK)
-            HLOGW(RADIO_LOG_TAG, "PTT OFF failed (model %d): %s", g_radio_type, rigerror(ret));
-        else
-            HLOGD(RADIO_LOG_TAG, "PTT OFF via HAMLIB (model %d)", g_radio_type);
-    }
-#endif
-
-    pthread_mutex_unlock(&g_radio_mutex);
-}
+int radio_io_key_on(void)  { return radio_io_key(true); }
+int radio_io_key_off(void) { return radio_io_key(false); }
 
 void radio_io_list_models(void)
 {
 #ifdef HAVE_HAMLIB
     list_models();
 #else
-    fprintf(stderr, "HAMLIB support not compiled in. Install libhamlib-dev and rebuild.\n");
+    fprintf(stderr,
+            "HAMLIB support not compiled in. Install libhamlib-dev and rebuild.\n");
 #endif
 }
 
@@ -393,38 +500,79 @@ int radio_io_get_radio_list(char ids[][16], char names[][64], int max_count)
 #ifdef HAVE_HAMLIB
     return get_radio_list(ids, names, max_count);
 #else
-    (void)ids; (void)names; (void)max_count;
+    (void)ids;
+    (void)names;
+    (void)max_count;
     return 0;
 #endif
 }
 
-int radio_io_restart(int new_radio_type, const char *device_path, int hamlib_log_level, int serial_speed)
+int radio_io_restart(const ptt_config_t *config)
 {
-    HLOGI(RADIO_LOG_TAG, "Restart requested (new_type=%d, device=%s, hamlib_log_level=%d, serial_speed=%d)",
-          new_radio_type, device_path && device_path[0] ? device_path : "(none)", hamlib_log_level, serial_speed);
+    if (!config)
+        return -1;
+    HLOGI(RADIO_LOG_TAG, "PTT restart requested (method=%s, device=%s)",
+          ptt_method_name(config->method),
+          config->device[0] ? config->device : "none");
 
-    /* radio_io_shutdown / radio_io_init both acquire the mutex internally
-     * which serialises this restart against any concurrent key_on/key_off. */
-    radio_io_shutdown();
-    return radio_io_init(new_radio_type, device_path, hamlib_log_level, serial_speed);
+    /* radio_io_init() closes the previous backend and opens the requested one
+     * while holding g_radio_mutex, so keying cannot slip between the two.
+     * Some opens (notably Hamlib rig_open()) can take seconds, so callers must
+     * not reconfigure PTT during a live ARQ session: modem keying deliberately
+     * blocks for the entire restart to avoid touching a half-open backend. */
+    return radio_io_init(config);
+}
+
+void radio_io_get_config(ptt_config_t *config)
+{
+    if (!config)
+        return;
+    pthread_mutex_lock(&g_radio_mutex);
+    *config = g_config;
+    pthread_mutex_unlock(&g_radio_mutex);
+}
+
+ptt_method_t radio_io_get_ptt_method(void)
+{
+    pthread_mutex_lock(&g_radio_mutex);
+    ptt_method_t method = g_config.method;
+    pthread_mutex_unlock(&g_radio_mutex);
+    return method;
 }
 
 const char *radio_io_get_device_path(void)
 {
-    return g_device_path;
+    static _Thread_local char device[PTT_DEVICE_PATH_MAX];
+    pthread_mutex_lock(&g_radio_mutex);
+    snprintf(device, sizeof(device), "%s", g_config.device);
+    pthread_mutex_unlock(&g_radio_mutex);
+    return device;
 }
 
 int radio_io_get_radio_type(void)
 {
-    return g_radio_type;
+    pthread_mutex_lock(&g_radio_mutex);
+    int type = RADIO_TYPE_NONE;
+    if (g_config.method == PTT_METHOD_HAMLIB)
+        type = g_config.hamlib_model;
+    else if (g_config.method == PTT_METHOD_HERMES_SHM)
+        type = RADIO_TYPE_SHM;
+    pthread_mutex_unlock(&g_radio_mutex);
+    return type;
 }
 
 int radio_io_get_hamlib_log_level(void)
 {
-    return g_hamlib_log_level;
+    pthread_mutex_lock(&g_radio_mutex);
+    int level = g_config.hamlib_log_level;
+    pthread_mutex_unlock(&g_radio_mutex);
+    return level;
 }
 
 int radio_io_get_serial_speed(void)
 {
-    return g_serial_speed;
+    pthread_mutex_lock(&g_radio_mutex);
+    int speed = g_config.hamlib_serial_speed;
+    pthread_mutex_unlock(&g_radio_mutex);
+    return speed;
 }

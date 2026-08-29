@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  SignPath artifact configuration: Windows release ZIP payloads.
+  The artifact submitted from GitHub Actions is a ZIP (upload-artifact)
+  containing both PE files at the root. Both are deep-signed in place.
+  Portal: paste this XML when creating the artifact configuration
+  'mercury-windows' in the SignPath project.
+-->
+<artifact-configuration xmlns="http://signpath.io/artifact-configuration/v1">
+  <zip-file>
+    <pe-file path="mercury.exe">
+      <authenticode-sign hash-algorithm="sha256" />
+    </pe-file>
+    <pe-file path="mercury-ui.exe">
+      <authenticode-sign hash-algorithm="sha256" />
+    </pe-file>
+  </zip-file>
+</artifact-configuration>

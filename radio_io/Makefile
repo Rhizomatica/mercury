@@ -21,11 +21,20 @@
 
 include ../config.mk
 
+# Always define UNAME_S.  It used to be assigned only inside the
+# HAVE_HERMES_SHM probe below -- a block the top-level Makefile skips, because
+# it exports HAVE_HERMES_SHM, so $(origin ...) is "environment" rather than
+# "undefined".  UNAME_S was therefore EMPTY on every build driven from the top
+# level, and the "else ifeq ($(UNAME_S),Darwin)" arm of the hamlib block could
+# never be taken: macOS silently fell through to pkg-config, ignored the
+# vendored radio_io/hamlib-macos, and failed with "hamlib/rig.h file not found".
+# Building this directory on its own worked, which is what hid it.
+UNAME_S := $(shell uname -s)
+
 ifeq ($(origin HAVE_HERMES_SHM), undefined)
 ifeq ($(OS),Windows_NT)
 HAVE_HERMES_SHM = 0
 else
-UNAME_S := $(shell uname -s)
 ifeq ($(UNAME_S),Linux)
 HAVE_HERMES_SHM = 1
 else
@@ -56,7 +65,7 @@ endif
 
 CFLAGS = $(COMMON_CFLAGS) $(HAMLIB_CFLAGS_LOCAL) $(HERMES_SHM_CFLAGS_LOCAL)
 
-OBJS = radio_io.o
+OBJS = radio_io.o serial_ptt.o cm108_ptt.o
 
 ifeq ($(HAVE_HERMES_SHM),1)
 OBJS += sbitx_io.o shm_utils.o
@@ -68,8 +77,27 @@ endif
 
 all: $(OBJS)
 
-radio_io.o: radio_io.c radio_io.h sbitx_io.h radio_cmds.h shm_utils.h rigctl_parse.h
+radio_io.o: radio_io.c radio_io.h serial_ptt.h cm108_ptt.h sbitx_io.h radio_cmds.h shm_utils.h rigctl_parse.h
 	$(CC) $(CFLAGS) -c radio_io.c
+
+serial_ptt.o: serial_ptt.c serial_ptt.h radio_io.h
+	$(CC) $(CFLAGS) -c serial_ptt.c
+
+# hidapi include path, resolved from THIS directory.  The top-level
+# HIDAPI_CFLAGS points at radio_io/hidapi-w64, which is correct there and wrong
+# here -- the same trap hamlib-w64 has, handled the same way.
+ifeq ($(HAVE_HIDAPI),1)
+ifeq ($(OS),Windows_NT)
+HIDAPI_CFLAGS_LOCAL = -Ihidapi-w64/include -DHAVE_HIDAPI
+else
+HIDAPI_CFLAGS_LOCAL = $(HIDAPI_CFLAGS)
+endif
+else
+HIDAPI_CFLAGS_LOCAL =
+endif
+
+cm108_ptt.o: cm108_ptt.c cm108_ptt.h radio_io.h
+	$(CC) $(CFLAGS) $(HIDAPI_CFLAGS_LOCAL) -c cm108_ptt.c
 
 sbitx_io.o: sbitx_io.c sbitx_io.h radio_cmds.h
 	$(CC) $(CFLAGS) -c sbitx_io.c

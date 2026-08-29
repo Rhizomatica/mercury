@@ -283,11 +283,28 @@ ssize_t tcp_write(int port_type, uint8_t *buffer, size_t tx_size)
     return n;
 }
 
+/* How long the lossless DATA writer may sit in send() backpressure before it
+ * gives up and marks the port for restart.  The reactor thread that drives
+ * this is also the one draining the control queue and answering control
+ * commands, so a peer that stops reading its DATA socket must not be allowed
+ * to block it forever — that would starve PTT/DISCONNECTED handling on the
+ * control port.  The timer is reset by any progress, so a slow-but-draining
+ * peer is unaffected; only a stalled peer (zero bytes accepted) trips it. */
+#define DATA_WRITE_BACKPRESSURE_TIMEOUT_MS 5000
+
+static uint64_t net_mono_ms(void)
+{
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (uint64_t)ts.tv_sec * 1000ULL + (uint64_t)(ts.tv_nsec / 1000000L);
+}
+
 /* Lossless variant for the bulk DATA stream: loops until every byte is
- * accepted by the kernel (sockets are blocking; partial send() is rare but
- * possible).  On hard error marks the port for restart and returns -1.
- * Control lines keep using tcp_write() — they are periodic status messages
- * where dropping one beats blocking the reactor. */
+ * accepted by the kernel (sockets are non-blocking; partial send() is rare but
+ * possible).  On hard error, or if the peer stalls for longer than
+ * DATA_WRITE_BACKPRESSURE_TIMEOUT_MS, marks the port for restart and returns
+ * -1.  Control lines keep using tcp_write() — they are periodic status
+ * messages where dropping one beats blocking the reactor. */
 ssize_t tcp_write_all(int port_type, uint8_t *buffer, size_t tx_size)
 {
     if (port_type != DATA_TCP_PORT)
@@ -301,6 +318,7 @@ ssize_t tcp_write_all(int port_type, uint8_t *buffer, size_t tx_size)
         return 0;
     }
 
+    uint64_t backpressure_start_ms = 0;
     size_t total = 0;
     while (total < tx_size)
     {
@@ -309,6 +327,7 @@ ssize_t tcp_write_all(int port_type, uint8_t *buffer, size_t tx_size)
         if (n > 0)
         {
             total += (size_t)n;
+            backpressure_start_ms = 0;  /* progress: reset the stall timer */
             continue;
         }
         if (n < 0 && (sock_errno() == SOCK_EAGAIN ||
@@ -316,6 +335,16 @@ ssize_t tcp_write_all(int port_type, uint8_t *buffer, size_t tx_size)
         {
             /* Transient backpressure on a (normally blocking) socket —
              * yield briefly and retry rather than dropping session bytes. */
+            uint64_t now = net_mono_ms();
+            if (backpressure_start_ms == 0)
+                backpressure_start_ms = now;
+            else if (now - backpressure_start_ms >
+                     DATA_WRITE_BACKPRESSURE_TIMEOUT_MS)
+            {
+                net_set_status(DATA_TCP_PORT, NET_RESTART);
+                pthread_mutex_unlock(&write_mutex[port_type]);
+                return -1;
+            }
             msleep(5);
             continue;
         }

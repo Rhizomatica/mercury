@@ -23,12 +23,14 @@
 
 #include <stdbool.h>
 #include <stdint.h>
+#include "../radio_io/radio_io.h"
 
 /* Configuration keys (section:key) */
 #define CFG_KEY_UI_ENABLED          "main:ui_enabled"
 #define CFG_KEY_UI_PORT             "main:ui_port"
 #define CFG_KEY_UI_PROTOCOL         "main:ui_protocol"
 #define CFG_KEY_WATERFALL_ENABLED   "main:waterfall_enabled"
+/* Legacy radio keys.  Read indefinitely, but cfg_write emits [ptt]. */
 #define CFG_KEY_RADIO_MODEL         "main:radio_model"
 #define CFG_KEY_RADIO_DEVICE        "main:radio_device"
 #define CFG_KEY_INPUT_DEVICE        "main:input_device"
@@ -41,6 +43,14 @@
 #define CFG_KEY_FREEDV_VERBOSITY    "main:freedv_verbosity"
 #define CFG_KEY_HAMLIB_LOG_LEVEL    "main:hamlib_log_level"
 #define CFG_KEY_RADIO_SERIAL_SPEED  "main:radio_serial_speed"
+#define CFG_KEY_PTT_METHOD          "ptt:method"
+#define CFG_KEY_PTT_DEVICE          "ptt:device"
+#define CFG_KEY_PTT_LINE            "ptt:line"
+#define CFG_KEY_PTT_INVERT          "ptt:invert"
+#define CFG_KEY_PTT_CM108_GPIO      "ptt:cm108_gpio"
+#define CFG_KEY_PTT_HAMLIB_MODEL    "ptt:hamlib_model"
+#define CFG_KEY_PTT_HAMLIB_SPEED    "ptt:hamlib_serial_speed"
+#define CFG_KEY_PTT_HAMLIB_LOG      "ptt:hamlib_log_level"
 #define CFG_KEY_NO_PROGRESS_TIMEOUT_S "arq:no_progress_timeout_s"
 #define CFG_KEY_DISCONNECT_DRAIN_TIMEOUT_S "arq:disconnect_drain_timeout_s"
 #define CFG_KEY_TX_GAIN_DB          "audio:tx_gain_db"
@@ -69,8 +79,7 @@ typedef struct {
     uint16_t ui_port;
     bool     tls_enabled;           /* false = ws, true = wss */
     bool     waterfall_enabled;
-    int      radio_type;            /* RADIO_TYPE_NONE by default */
-    char     radio_device[1024];
+    ptt_config_t ptt;               /* selected PTT method and backend config */
     char     input_device[512];
     char     output_device[512];
     int      capture_channel;       /* LEFT / RIGHT / STEREO */
@@ -79,8 +88,6 @@ typedef struct {
     int      broadcast_tcp_port;
     bool     verbose;
     int      freedv_verbosity;      /* 0..3 */
-    int      hamlib_log_level;      /* 0..6 */
-    int      radio_serial_speed;   /* 0 = use hamlib default */
     int      no_progress_timeout_s;/* ARQ: disconnect when no forward progress
                                     * (no advancing ACK) for this many seconds
                                     * after data-retry exhaustion. Default 180. */
@@ -135,7 +142,8 @@ typedef struct {
 } mercury_config;
 
 /* Load configuration from an INI file into |cfg|.
- * Fields not present in the file keep their default values.
+ * Fields not present in the file keep their existing values (normally the
+ * defaults installed by cfg_set_defaults()).
  * Returns true on success, false if the file cannot be parsed. */
 bool cfg_read(mercury_config *cfg, const char *ini_path);
 
@@ -149,5 +157,17 @@ void cfg_set_defaults(mercury_config *cfg);
 /* Map an AUDIO_SUBSYSTEM_* constant back to its CLI name ("alsa", "oss", ...).
  * Returns a static string; never NULL. */
 const char *cfg_sound_system_name(int sys);
+
+/* Canonical string conversion for PTT methods used by INI, CLI and UI. */
+const char *cfg_ptt_method_name(ptt_method_t method);
+bool cfg_ptt_method_parse(const char *name, ptt_method_t *method);
+/* Select a method on a complete config.  In addition to parsing the method,
+ * the legacy serial_rts alias restores its historical RTS/non-inverted
+ * behavior so stale settings from another serial configuration cannot leak. */
+bool cfg_ptt_config_set_method(ptt_config_t *config, const char *name);
+const char *cfg_ptt_line_name(ptt_line_t line);
+bool cfg_ptt_line_parse(const char *name, ptt_line_t *line);
+const char *cfg_ptt_invert_name(bool invert_rts, bool invert_dtr);
+bool cfg_ptt_invert_parse(const char *name, bool *invert_rts, bool *invert_dtr);
 
 #endif /* CFG_UTILS_H_ */

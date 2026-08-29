@@ -64,7 +64,15 @@ static size_t broadcast_frame_size_cfg = 0;
 static _Atomic uint32_t last_sn_bits = 0;        /* float bits, relaxed */
 static _Atomic uint32_t last_bitrate_sl = 0;
 static _Atomic uint32_t last_bitrate_bps = 0;
-static chan_t *tnc_tx_chan = NULL;
+/* Read by the modem/ARQ threads on every host state notification and written
+ * by the init/teardown thread.  Atomic for the same reason as its neighbours:
+ * a plain pointer here is a data race, and on a weakly-ordered target (armhf,
+ * the Pi 3 in issue #200) a notifying thread can observe a stale NULL long
+ * after init.  tnc_queue_line() then fails instantly, and the critical path
+ * above it burns its whole 50 ms retry budget and logs a DROPPED host state
+ * notification -- for every PTT edge, and for DISCONNECTED, which is what
+ * leaves a host waiting forever for a session that already ended. */
+static chan_t *_Atomic tnc_tx_chan = NULL;
 static atomic_ulong tnc_tx_drop_count = 0;
 static atomic_int tnc_last_buffer_sent = -1;
 static atomic_bool bcast_client_done = false;
@@ -190,10 +198,24 @@ static int tnc_queue_line_critical(const char *line)
             return 0;
         hermes_usleep(TNC_CRITICAL_SLEEP_US);
     }
+    /* The queued line ends in "\r"; echoing it verbatim into the log makes the
+     * terminal overwrite the start of the message (that stray "\r" is what
+     * turns the report into "' — the TNC channel stayed full...").  Strip CR/LF
+     * so the diagnostic is actually readable. */
+    char clean[64] = {0};
+    if (line)
+    {
+        size_t len = strlen(line);
+        if (len >= sizeof(clean))
+            len = sizeof(clean) - 1;
+        memcpy(clean, line, len);
+        while (len > 0 && (clean[len - 1] == '\r' || clean[len - 1] == '\n'))
+            clean[--len] = '\0';
+    }
     HLOGE("tcp-ctl", "DROPPED host state notification '%s' — the TNC channel "
           "stayed full for %d ms; a host relying on this for interlock or "
           "scanning is now out of sync",
-          line, (TNC_CRITICAL_RETRIES * TNC_CRITICAL_SLEEP_US) / 1000);
+          clean, (TNC_CRITICAL_RETRIES * TNC_CRITICAL_SLEEP_US) / 1000);
     return -1;
 }
 
@@ -307,13 +329,21 @@ static void execute_control_command(char *buffer)
             return;
         }
 
-        /* Secondary callsigns (remaining tokens) */
+        /* Secondary callsigns (remaining tokens).  Accepted ones are kept so
+         * each can be acknowledged below: "REGISTERED <Call>" is per call
+         * sign in VARA, and Mercury answers for every one of these. */
+        char accepted_secondaries[CALLSIGN_MAX_SECONDARY][CALLSIGN_MAX_SIZE];
+        int  accepted_count = 0;
         while ((tok = strtok_r(NULL, " \t\r\n", &saveptr)) != NULL)
         {
             memset(&cmd, 0, sizeof(cmd));
             cmd.type = ARQ_CMD_ADD_SECONDARY_CALLSIGN;
             snprintf(cmd.arg0, sizeof(cmd.arg0), "%s", tok);
-            arq_submit_tcp_cmd(&cmd);   /* best-effort; overflow is logged in arq.c */
+            if (arq_submit_tcp_cmd(&cmd) != 0)  /* best-effort; overflow is logged in arq.c */
+                continue;
+            if (accepted_count < CALLSIGN_MAX_SECONDARY)
+                snprintf(accepted_secondaries[accepted_count++],
+                         CALLSIGN_MAX_SIZE, "%s", tok);
         }
 
         tcp_write(CTL_TCP_PORT, (uint8_t *)"OK\r", 3);
@@ -326,6 +356,12 @@ static void execute_control_command(char *buffer)
          * after the write makes the order documented in docs/TNC.md hold by
          * construction instead of by timing. */
         tnc_send_registered(primary_call);
+        /* One line per callsign the station now answers for.  Only the ones
+         * the ARQ layer actually took: past CALLSIGN_MAX_SECONDARY it drops
+         * them, and claiming a registration we did not accept would leave the
+         * host addressing a callsign we will never answer. */
+        for (int i = 0; i < accepted_count; i++)
+            tnc_send_registered(accepted_secondaries[i]);
         return;
     }
 
@@ -931,7 +967,7 @@ void *server_worker_thread_ctl(void *port)
  * The broadcast datalink uses fixed-size modem frames, so a short VARA/AX.25
  * frame is zero-padded up to frame_size for TX. Without recording the original
  * length, the receiver can only hand the client the whole padded frame, and a
- * VARA client (e.g. VarAC) then rejects it because the trailing zeros corrupt
+ * VARA client then rejects it because the trailing zeros corrupt
  * its payload. To fix this we store the real payload length in a 2-byte
  * big-endian prefix right after the Mercury header and flag it with a header
  * extension bit, so the receiver delivers the exact original frame. Receivers
@@ -943,19 +979,27 @@ void *server_worker_thread_ctl(void *port)
                                       standard KISS CMD_DATA/CMD_AX25 (0x00), so
                                       deliver with 0x00 (e.g. Reticulum). Clear =
                                       VARA compressed-callsign framing, deliver
-                                      with CMD_AX25CALLSIGN (VarAC). */
+                                      with CMD_AX25CALLSIGN (VARA). */
+#define BCAST_EXT_KISS_DATA  0x04  /* header extension bit: sender framed with
+                                      unformatted KISS CMD_DATA (0x02, e.g. a
+                                      VARA beacon/ping), so deliver with 0x02.
+                                      Mutually exclusive with _KISS_STD. */
 
 /*
  * Normalises a decoded KISS broadcast frame and queues it to
  * data_tx_buffer_broadcast.
  *
- * VARA clients (CMD_AX25 / CMD_AX25CALLSIGN): inject the 1-byte Mercury
- * PACKET_TYPE_BROADCAST_DATA header plus a 2-byte length prefix (flagged with
- * BCAST_EXT_LEN_PREFIX), truncate if the payload would overflow, then zero-pad
- * to frame_size.
+ * VARA clients (CMD_AX25 / CMD_AX25CALLSIGN, and CMD_DATA frames that do not
+ * already carry a Mercury header — e.g. a VARA beacon): inject the 1-byte
+ * Mercury PACKET_TYPE_BROADCAST_DATA header plus a 2-byte length prefix
+ * (flagged with BCAST_EXT_LEN_PREFIX), truncate if the payload would overflow,
+ * then zero-pad to frame_size.  The sender's KISS framing is recorded in the
+ * header extension (BCAST_EXT_KISS_STD for 0x00, BCAST_EXT_KISS_DATA for 0x02,
+ * neither for 0x01) so the receiving side can mirror it.
  *
- * hermes-broadcast (CMD_DATA): the frame already carries the Mercury header;
- * zero-pad if short, discard if oversized.
+ * hermes-broadcast (CMD_DATA): a full modem frame (frame_len == frame_size)
+ * with a Mercury broadcast header already in place — passed raw.  Oversized
+ * CMD_DATA frames are discarded.
  *
  * Also latches bcast_reply_cmd so send_thread mirrors the client's framing.
  *
@@ -970,13 +1014,64 @@ static bool bcast_process_decoded_frame(uint8_t *decoded_frame, int frame_len,
             ? CMD_AX25CALLSIGN : CMD_DATA,
         memory_order_relaxed);
 
-    if (kiss_cmd == CMD_AX25 || kiss_cmd == CMD_AX25CALLSIGN)
+    /* CMD_DATA is used by two very different clients:
+     *   - hermes-broadcast: a modem frame with a Mercury broadcast header
+     *     already in place (PACKET_TYPE_BROADCAST_CONTROL/_DATA) → pass raw.
+     *   - VARA beacons/pings: an unformatted KISS payload with no Mercury
+     *     header, whose first byte is arbitrary → wrap it like an AX.25 frame
+     *     so the receiver routes it to broadcast.
+     *
+     * The type bits alone are not enough: they are the top 3 of the first
+     * byte, so 64 of 256 arbitrary first bytes look like a broadcast type --
+     * 25%, including the whole lowercase alphabet.  A beacon starting with a
+     * lowercase letter would be passed raw and lost.
+     *
+     * Frame LENGTH cannot be the second test either, tempting as it is.
+     * hermes-broadcast does not always fill the modem frame: transmitter.c
+     * sends payload frames as packet_size + RQ_HEADER_SIZE (== frame_size) but
+     * CONFIG frames as packet_size alone, i.e. RQ_HEADER_SIZE short, and
+     * relies on the zero-padding below to bring them up.  Requiring
+     * frame_len == frame_size drops every config packet, and since its
+     * receiver discards anything that is not exactly frame_size, the far end
+     * never gets the RaptorQ configuration and can never start decoding.
+     *
+     * So validate the WHOLE header byte instead.  hermes-broadcast writes both
+     * of its frame kinds with extension 0 (hermes_write_frame_header(...,
+     * PACKET_RQ_CONFIG/PACKET_RQ_PAYLOAD, 0)), while a beacon's extension bits
+     * are as arbitrary as the rest of its first byte.  Type plus a zero
+     * extension takes the false-positive space from 64/256 to 2/256 (0.8%),
+     * and to ZERO across a-z: the only printable ASCII that still collides is
+     * a leading backtick. */
+    bool is_raw_modem_frame = false;
+    if (kiss_cmd == CMD_DATA)
     {
-        /* Inject Mercury header + 2-byte payload-length prefix before the AX.25
-         * payload, so the receiver can recover the exact frame length (the modem
-         * zero-pads to frame_size). The length prefix is flagged in the header,
-         * along with the sender's KISS framing (0x00 standard vs 0x01 VARA
-         * callsign-compressed) so the receiving side can mirror it. */
+        uint8_t pt = frame_header_packet_type(decoded_frame[0]);
+        is_raw_modem_frame =
+            (pt == PACKET_TYPE_BROADCAST_CONTROL ||
+             pt == PACKET_TYPE_BROADCAST_DATA) &&
+            frame_header_extension(decoded_frame[0]) == 0;
+    }
+
+    /* hermes-broadcast / unformatted CMD_DATA frames never fragment: anything
+     * larger than one modem frame is discarded (0x00/0x01 truncate instead). */
+    if (kiss_cmd == CMD_DATA && (size_t)frame_len > frame_size)
+    {
+        HLOGW("tcp-bcast", "Discarding broadcast frame: size %d exceeds modem frame size %zu",
+              frame_len, frame_size);
+        return false;
+    }
+
+    bool needs_wrap = (kiss_cmd == CMD_AX25 || kiss_cmd == CMD_AX25CALLSIGN) ||
+                      (kiss_cmd == CMD_DATA && !is_raw_modem_frame);
+
+    if (needs_wrap)
+    {
+        /* Inject Mercury header + 2-byte payload-length prefix before the
+         * payload, so the receiver can recover the exact frame length (the
+         * modem zero-pads to frame_size). The length prefix is flagged in the
+         * header, along with the sender's KISS framing (0x00 standard, 0x01
+         * VARA callsign-compressed, 0x02 unformatted) so the receiving side can
+         * mirror it. */
         size_t max_payload = frame_size - HEADER_SIZE - BCAST_LEN_SIZE;
         if ((size_t)frame_len > max_payload)
         {
@@ -987,6 +1082,8 @@ static bool bcast_process_decoded_frame(uint8_t *decoded_frame, int frame_len,
         uint8_t ext = BCAST_EXT_LEN_PREFIX;
         if (kiss_cmd == CMD_AX25)
             ext |= BCAST_EXT_KISS_STD;
+        else if (kiss_cmd == CMD_DATA)
+            ext |= BCAST_EXT_KISS_DATA;
         memmove(decoded_frame + HEADER_SIZE + BCAST_LEN_SIZE, decoded_frame, (size_t)frame_len);
         write_frame_header(decoded_frame, PACKET_TYPE_BROADCAST_DATA, ext);
         decoded_frame[HEADER_SIZE]     = (uint8_t)(((unsigned)frame_len >> 8) & 0xFF);
@@ -1021,17 +1118,18 @@ static bool bcast_process_decoded_frame(uint8_t *decoded_frame, int frame_len,
  * client.
  *
  * Length-prefixed frame (BCAST_EXT_LEN_PREFIX set in a BROADCAST_DATA header):
- * return exactly the original AX.25 payload (header + 2-byte length stripped,
+ * return exactly the original payload (header + 2-byte length stripped,
  * padding dropped) and reply with the sender's own KISS framing, carried in
- * the BCAST_EXT_KISS_STD header bit: standard 0x00 (CMD_AX25, e.g. Reticulum)
- * when set, CMD_AX25CALLSIGN (VarAC) when clear — which is also what frames
- * from pre-extension senders yield. This is detected from the received frame
- * itself, so it works on a receive-only station regardless of the latched
- * bcast_reply_cmd.
+ * the BCAST_EXT_KISS_STD / BCAST_EXT_KISS_DATA header bits: standard 0x00
+ * (CMD_AX25, e.g. Reticulum) when _KISS_STD set, unformatted 0x02 (CMD_DATA,
+ * e.g. a VARA beacon) when _KISS_DATA set, else CMD_AX25CALLSIGN (VARA) —
+ * which is also what frames from pre-extension senders yield. This is detected
+ * from the received frame itself, so it works on a receive-only station
+ * regardless of the latched bcast_reply_cmd.
  *
  * Otherwise mirror the latched bcast_reply_cmd:
  *   CMD_DATA (hermes-broadcast): forward the full frame including the header.
- *   else (VarAC/VARA legacy): strip the 1-byte Mercury header only.
+ *   else (VARA legacy): strip the 1-byte Mercury header only.
  *
  * Sets *payload_out and *payload_len_out; returns the reply command byte.
  */
@@ -1042,8 +1140,8 @@ static uint8_t bcast_get_tx_payload(uint8_t *frame_buffer, size_t frame_size,
      * received frame's own header, independent of what the local client last
      * transmitted (bcast_reply_cmd defaults to CMD_DATA and is reset on every
      * client connect, so a receive-only station would otherwise forward the raw
-     * padded frame). Deliver exactly the original AX.25 payload and reply with
-     * the AX.25/CALLSIGN KISS command so a VARA client (VarAC) accepts it. */
+     * padded frame). Deliver exactly the original payload and reply with the
+     * sender's KISS command so a VARA client accepts it. */
     if (frame_size >= HEADER_SIZE + BCAST_LEN_SIZE &&
         frame_header_packet_type(frame_buffer[0]) == PACKET_TYPE_BROADCAST_DATA &&
         (frame_header_extension(frame_buffer[0]) & BCAST_EXT_LEN_PREFIX))
@@ -1054,8 +1152,12 @@ static uint8_t bcast_get_tx_payload(uint8_t *frame_buffer, size_t frame_size,
         if (len > max_len) len = max_len;
         *payload_out     = frame_buffer + HEADER_SIZE + BCAST_LEN_SIZE;
         *payload_len_out = len;
-        return (frame_header_extension(frame_buffer[0]) & BCAST_EXT_KISS_STD)
-                   ? CMD_AX25 : CMD_AX25CALLSIGN;
+        uint8_t ext = frame_header_extension(frame_buffer[0]);
+        if (ext & BCAST_EXT_KISS_STD)
+            return CMD_AX25;
+        if (ext & BCAST_EXT_KISS_DATA)
+            return CMD_DATA;
+        return CMD_AX25CALLSIGN;
     }
 
     /* Legacy / hermes-broadcast frames: mirror the latched client framing. */
@@ -1351,7 +1453,16 @@ void tnc_send_disconnected()
     char buffer[128];
     snprintf(buffer, sizeof(buffer), "DISCONNECTED\r");
     if (tnc_queue_line_critical(buffer) < 0)
+    {
         HLOGW("tcp-ctl", "Error queuing disconnected message");
+        /* A lost DISCONNECTED is unrecoverable for the host: Pat/Winlink sit
+         * there forever waiting for a connect result.  The queue path is
+         * lossy by design (telemetry must not block a modem thread), so when
+         * it is backed up, deliver this one state change straight to the
+         * control socket instead of dropping it.  tcp_write() is mutex-guarded
+         * and non-blocking, so this cannot stall the ARQ event loop. */
+        (void)tcp_write(CTL_TCP_PORT, (uint8_t *)buffer, strlen(buffer));
+    }
 }
 
 void tnc_send_registered(const char *callsign)
@@ -1399,7 +1510,7 @@ void tnc_send_sn(float snr)
 
 void tnc_send_busy(bool busy)
 {
-    /* VARA-compatible channel-occupancy notification: hosts (VarAC, BPQ32,
+    /* VARA-compatible channel-occupancy notification: hosts (BPQ32,
      * Winlink) already understand "BUSY ON" / "BUSY OFF".  Edge-triggered by
      * the caller (the channel-busy detector), so this only fires on a real
      * CLEAR<->BUSY transition — which is why it goes out on the critical path
@@ -1460,6 +1571,26 @@ int interfaces_init(int arq_tcp_base_port, int broadcast_tcp_port, size_t broadc
         return EXIT_FAILURE;
     }
     tid_started[0] = true;
+
+    /* The reactor opens its two listeners asynchronously.  Wait for both to
+     * reach LISTENING so a bind failure (bad base port, port already in use,
+     * privileged port) is reported here as an init failure, not as a
+     * background shutdown_ that tears the process down *after*
+     * mercury_engine_init() has already returned success — the confusing
+     * "Mercury engine initialised" immediately followed by "Shutting down"
+     * and an alarm-killed shutdown. */
+    int ctl_status  = net_wait_for_status(CTL_TCP_PORT, NET_LISTENING, 3000);
+    int data_status = net_wait_for_status(DATA_TCP_PORT, NET_LISTENING, 3000);
+    if (ctl_status != NET_LISTENING || data_status != NET_LISTENING)
+    {
+        HLOGE("tcp", "ARQ listeners failed to start (ctl=%d data=%d)",
+              ctl_status, data_status);
+        shutdown_ = true;
+        pthread_join(tid[0], NULL);
+        tid_started[0] = false;
+        dispose_tnc_tx_queue();
+        return EXIT_FAILURE;
+    }
 
 
     /*************** BROADCAST TCP ports **************/

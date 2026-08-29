@@ -470,6 +470,16 @@ uint32_t arq_protocol_decode_ack_delay(uint8_t raw);
 const arq_mode_timing_t *arq_protocol_mode_timing(int freedv_mode);
 
 /**
+ * @brief Longest single-burst airtime across the whole mode table, in seconds.
+ *
+ * The RX side must be able to hold a burst of ANY mode the peer might send,
+ * not just the one currently selected — the peer can change rung between our
+ * bursts, and the first frame of the new rung arrives before we know about it.
+ * Buffers sized from the active mode are therefore always one step behind.
+ */
+float arq_protocol_longest_burst_s(void);
+
+/**
  * Return the CALL/ACCEPT retry interval in seconds, applying any
  * CALLINT override.  Falls back to the DATAC16 table default (8.0s).
  */

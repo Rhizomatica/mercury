@@ -46,7 +46,7 @@ TEST_BINS = test_ring_buffer test_arq_protocol test_arq_timing test_arq_fsm \
             test_tcp_interfaces test_resampler test_pcm24 test_arq_olla test_arq_sim \
             test_arq_conn test_cfg_utils test_arq_tnc test_channel_busy \
             test_freedv_harq test_sock_wire test_virtual_clock test_watterson \
-            test_ofdm_acq
+            test_ofdm_acq test_ui_status test_ui_devices test_tx_pacing test_radio_port
 
 .PHONY: all test clean
 
@@ -101,9 +101,16 @@ test_arq_fsm: datalink_arq/test_arq_fsm.c $(UNITY_SRC) $(ARQ_STUBS) \
 # TCP TNC interface tests (command parsing, status emitters, broadcast framing)
 # Uses #include "tcp_interfaces.c" — framer.c provides write_frame_header
 # arq_tnc.c needed because interfaces_init() calls arq_set_tnc_callbacks()
+# ../data_interfaces/tcp_interfaces.c is a PREREQUISITE, not a link argument:
+# the test #includes it directly (see the top of the .c), so without it here
+# make does not relink when the implementation changes and the suite silently
+# re-runs the previous binary -- which is exactly how a mutation check passes
+# when it should fail.  It stays off the link line ($^ would compile it twice).
 test_tcp_interfaces: data_interfaces/test_tcp_interfaces.c $(UNITY_SRC) ../modem/framer.c \
-                     ../datalink_arq/arq_tnc.c
-	$(CC) $(CFLAGS) -I../modem/freedv -o $@ $^ $(LDFLAGS)
+                     ../datalink_arq/arq_tnc.c ../data_interfaces/tcp_interfaces.c
+	$(CC) $(CFLAGS) -I../modem/freedv -o $@ \
+	    data_interfaces/test_tcp_interfaces.c $(UNITY_SRC) ../modem/framer.c \
+	    ../datalink_arq/arq_tnc.c $(LDFLAGS)
 
 # Two-FSM ARQ simulation harness
 SIM_SRC = sim/sim_clock.c sim/sim_channel.c sim/sim_endpoint.c \
@@ -120,9 +127,10 @@ test_arq_conn: datalink_arq/test_arq_conn.c $(UNITY_SRC) \
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
 test_cfg_utils: common/test_cfg_utils.c $(UNITY_SRC) \
-                ../common/cfg_utils.c \
+                ../common/cfg_utils.c ../radio_io/cm108_ptt.c \
+                ../common/hermes_log.c \
                 ../common/iniparser/iniparser.c ../common/iniparser/dictionary.c
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+	$(CC) $(CFLAGS) -I../radio_io -o $@ $^ $(LDFLAGS)
 
 # ARQ→TNC seam test (standalone TU, no threads/bus)
 test_arq_tnc: datalink_arq/test_arq_tnc.c $(UNITY_SRC) ../datalink_arq/arq_tnc.c
@@ -167,9 +175,36 @@ $(FREEDV_LIB):
 test_ofdm_acq: modem/test_ofdm_acq.c $(UNITY_SRC) $(FREEDV_LIB)
 	$(CC) $(CFLAGS) -I../modem/freedv -o $@ modem/test_ofdm_acq.c $(UNITY_SRC) $(FREEDV_LIB) $(LDFLAGS) -lm
 
+# TX burst pacing (pure header; simulated coarse timer, no sleeping).
+# tx_pacing.h is a PREREQUISITE: the logic under test lives entirely in the
+# header, so without it make will not relink and the mutation check silently
+# re-runs the previous binary.
+test_tx_pacing: modem/test_tx_pacing.c $(UNITY_SRC) ../modem/tx_pacing.h
+	$(CC) $(CFLAGS) -I../modem -o $@ modem/test_tx_pacing.c $(UNITY_SRC) $(LDFLAGS)
+
+# radio_device vs the rig's port type (pure header; no hamlib needed).
+# radio_port.h is a PREREQUISITE -- the logic under test lives in the header.
+test_radio_port: radio_io/test_radio_port.c $(UNITY_SRC) ../radio_io/radio_port.h
+	$(CC) $(CFLAGS) -I../radio_io -o $@ radio_io/test_radio_port.c $(UNITY_SRC) $(LDFLAGS)
+
 # UI status wire format (embedded struct vs remote JSON must not drift)
-test_ui_status: gui_interface/test_ui_status.c $(UNITY_SRC) ../gui_interface/ui_status.c
-	$(CC) $(CFLAGS) -I../gui_interface -I../datalink_arq -I../modem -I../common -o $@ $^ $(LDFLAGS)
+# ui_status.h is a PREREQUISITE: the device-id widths under test are #defines
+# in the header, so without it make will not rebuild and the test silently
+# re-runs the previous binary (which is exactly how a mutation check passes
+# when it should fail).
+test_ui_status: gui_interface/test_ui_status.c $(UNITY_SRC) ../gui_interface/ui_status.c ../gui_interface/ui_status.h
+	$(CC) $(CFLAGS) -I../gui_interface -I../datalink_arq -I../modem -I../common -o $@ \
+	    gui_interface/test_ui_status.c $(UNITY_SRC) ../gui_interface/ui_status.c $(LDFLAGS)
+
+# UI device labelling (issue #189: two identical-looking USB codecs).
+# ui_communication.h/ui_status.h are PREREQUISITES: the behaviour under test is
+# in ui_devices.c but the types are in the headers, and without them make will
+# not relink and a mutation check silently re-runs the previous binary.
+test_ui_devices: gui_interface/test_ui_devices.c $(UNITY_SRC) \
+                 ../gui_interface/ui_devices.c ../gui_interface/ui_communication.h \
+                 ../gui_interface/ui_status.h
+	$(CC) $(CFLAGS) -I../gui_interface -I../datalink_arq -I../modem -I../common -o $@ \
+	    gui_interface/test_ui_devices.c $(UNITY_SRC) ../gui_interface/ui_devices.c $(LDFLAGS)
 
 clean:
 	rm -f $(TEST_BINS)

@@ -82,11 +82,11 @@ react to the `PTT ON`/`PTT OFF` control-port lines.
 ### KISS command-byte compatibility (older Mercury builds)
 
 Reticulum frames broadcasts with the standard KISS data command byte
-(`0x00`), while VarAC uses VARA's compressed-callsign framing (`0x01`).
+(`0x00`), while VARA clients use VARA's compressed-callsign framing (`0x01`).
 Current Mercury carries the sender's framing over the air in a broadcast
 header extension bit (`BCAST_EXT_KISS_STD`) and delivers each received
 frame to the local client with the **sender's own command byte** — so
-stock Reticulum works against the broadcast port directly, and VarAC
+stock Reticulum works against the broadcast port directly, and VARA
 behavior is unchanged.  Both stations must run a Mercury build with this
 feature (newer than 1.9.10).
 

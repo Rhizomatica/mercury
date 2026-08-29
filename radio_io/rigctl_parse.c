@@ -48,6 +48,7 @@ struct mod_entry
     char version[32];
     char status[32];
     char macro_name[32];
+    char port[8];
 };
 
 static struct mod_entry *g_models = NULL;
@@ -76,6 +77,20 @@ static int collect_model(const struct rig_caps *caps, void *data)
     snprintf(e->version, sizeof(e->version), "%s", caps->version ? caps->version : "");
     snprintf(e->macro_name, sizeof(e->macro_name), "%s", caps->macro_name ? caps->macro_name : "");
     snprintf(e->status, sizeof(e->status), "%s", rig_strstatus(caps->status));
+
+    /* Which port this rig speaks is the one fact you need before setting
+     * radio_device, and it was previously invisible here (issue #179: a
+     * FlexRadio was configured with a COM port because the listing gave no
+     * hint it is a network rig). */
+    switch (caps->port_type)
+    {
+    case RIG_PORT_SERIAL:                 snprintf(e->port, sizeof(e->port), "serial"); break;
+    case RIG_PORT_NETWORK:
+    case RIG_PORT_UDP_NETWORK:            snprintf(e->port, sizeof(e->port), "net");    break;
+    case RIG_PORT_USB:                    snprintf(e->port, sizeof(e->port), "usb");    break;
+    case RIG_PORT_NONE:                   snprintf(e->port, sizeof(e->port), "-");      break;
+    default:                              snprintf(e->port, sizeof(e->port), "other");  break;
+    }
 
     return 1;
 }
@@ -184,7 +199,7 @@ void list_models(void)
     close(saved_stderr);
 #endif
 
-    printf(" Rig #  Mfg                    Model                   Version         Status      Macro\n");
+    printf(" Rig #  Mfg                    Model                   Version         Status      Port    Macro\n");
     status = rig_list_foreach(collect_model, NULL);
 
     if (status != RIG_OK)
@@ -198,12 +213,13 @@ void list_models(void)
     for (int i = 0; i < g_count; i++)
     {
         struct mod_entry *e = &g_models[i];
-        printf("%6d  %-23s%-24s%-16s%-12s%s\n",
+        printf("%6d  %-23s%-24s%-16s%-12s%-8s%s\n",
                e->id,
                e->mfg_name,
                e->model_name,
                e->version,
                e->status,
+               e->port,
                e->macro_name);
     }
 

@@ -38,6 +38,7 @@
 #include "../datalink_arq/arq_protocol.h"
 #include "tcp_interfaces.h"
 #include "channel_busy.h"
+#include "tx_pacing.h"
 #include "freedv_api.h"
 #include "fsk.h"
 #include "ldpc_codes.h"
@@ -363,13 +364,31 @@ static inline int32_t tx_sample_with_gain(int16_t sample, float gain, float *pea
 #define RX_TX_DRAIN_SAMPLES 160
 #define RX_DECODE_CHUNK_SAMPLES 160
 #define RX_IDLE_SLEEP_US 5000
-/* Max RX capture backlog before flushing stale audio (~2 s @ 8 kHz). Caps
- * decode latency and stops an unbounded backlog on low-power cores that
- * decode slower than real time (issue #81 follow-up). */
-#define RX_MAX_BACKLOG_SAMPLES 16000
-/* Per-plane decoder ring: 2 s of 8 kHz int16, matching the capture backlog cap
- * above so a stalled worker is bounded by its own ring, not by the dispatcher. */
-#define RX_WORKER_RING_BYTES   (16000 * (int)sizeof(int16_t))
+/* Floor for the RX capture backlog cap and the per-plane decoder rings: 2 s of
+ * 8 kHz audio.  Both are raised at runtime to hold the ladder's longest burst
+ * (see rx_burst_capacity_samples) -- 2 s alone is SHORTER THAN A SINGLE FRAME
+ * of every payload mode we ship (DATAC15 4.4 s, DATAC4 5.8 s, DATAC17 7.4 s),
+ * so a decoder that fell even slightly behind had its burst truncated and
+ * could never resync on it.  Only DATAC16 control frames (3.74 s) came close
+ * to fitting, which is why an affected link shows healthy control traffic and
+ * a dead payload plane.
+ *
+ * The cap still exists for the reason it was added (issue #81: unbounded
+ * decode latency on cores slower than real time) -- it is now just set to the
+ * smallest value that cannot destroy a burst that is still arriving. */
+#define RX_BACKLOG_FLOOR_SAMPLES 16000
+/* Margin over the longest burst: covers the inter-burst guard plus scheduling
+ * jitter, so a burst that arrives while the worker is briefly descheduled is
+ * still held whole. */
+#define RX_BURST_GUARD_S 3.0f
+
+/* Samples the RX side must be able to hold: the ladder's longest burst plus
+ * guard, never less than the 2 s floor. */
+static int rx_burst_capacity_samples(void)
+{
+    int need = (int)((arq_protocol_longest_burst_s() + RX_BURST_GUARD_S) * 8000.0f);
+    return (need > RX_BACKLOG_FLOOR_SAMPLES) ? need : RX_BACKLOG_FLOOR_SAMPLES;
+}
 
 typedef struct {
     struct freedv *datac1;
@@ -399,6 +418,65 @@ void modem_set_spectrum_enabled(bool enabled)
 {
     atomic_store_explicit(&g_spectrum_enabled, enabled, memory_order_relaxed);
 }
+
+/* ---- TX waterfall -------------------------------------------------------
+ * A radio shows your own signal while you transmit.  Mercury froze the display
+ * on key-up, because the spectrum slot was fed only from the capture path.
+ * Feed it from the transmitted burst too.
+ *
+ * Same slot, same lock, same sequence counter as RX, so the publisher thread
+ * and the wire format need no change at all.  Only one writer is ever active:
+ * the link is half duplex, so RX decode and TX modulation do not overlap.  The
+ * FFT runs inline under the lock exactly as the RX path does.
+ *
+ * Samples are at modem rate -- what g_spectrum_sample_rate already reports --
+ * so the frequency axis matches RX and the display does not jump on key-up.
+ *
+ * Gated by g_spectrum_enabled, the same switch the RX FFT above uses: one
+ * waterfall control for both directions, so turning it off in the UI stops the
+ * work rather than computing frames nobody consumes.  Unlike RX, there is no
+ * channel-busy consumer to keep it alive -- occupancy is meaningless while we
+ * are the ones occupying the channel. */
+
+/* Publish one slice of a burst, `pos` samples in.  Called repeatedly while the
+ * burst drains, so the waterfall scrolls in step with the audio actually going
+ * out instead of painting a single line per burst. */
+static void publish_tx_spectrum_at(const int32_t *buf, size_t total,
+                                   size_t pos, int sample_rate)
+{
+    if (!atomic_load_explicit(&g_spectrum_enabled, memory_order_relaxed)
+        || buf == NULL || pos >= total)
+        return;
+
+    size_t n = total - pos;
+    if (n > MODEM_STATS_NSPEC)
+        n = MODEM_STATS_NSPEC;
+
+    static COMP tx_fdm[MODEM_STATS_NSPEC];
+    for (size_t i = 0; i < n; i++) {
+        /* tx_sample_with_gain() emits int32 full scale; the spectrum code wants
+         * raw i16 amplitude and normalises that itself. */
+        tx_fdm[i].real = (float)(buf[pos + i] >> 16);
+        tx_fdm[i].imag = 0.0f;
+    }
+
+    pthread_mutex_lock(&g_spectrum_lock);
+    /* The stats struct is opened lazily, and TX gets there first: mercury sends
+     * CALL before it has decoded anything, so without this the very first burst
+     * of a connect runs the FFT over an unopened MODEM_STATS. */
+    if (!g_spectrum_stats_inited)
+    {
+        modem_stats_open(&g_spectrum_stats);
+        g_spectrum_stats_inited = true;
+    }
+    modem_stats_get_rx_spectrum(&g_spectrum_stats, g_rx_spectrum_dB, tx_fdm, (int)n);
+    g_spectrum_sample_rate = sample_rate;
+    g_spectrum_seq++;
+    pthread_mutex_unlock(&g_spectrum_lock);
+}
+
+/* One line per publisher tick; faster is wasted, the UI runs at 20 fps. */
+#define TX_SPECTRUM_STEP_MS 50
 
 /* --- Channel-busy (occupancy) detector --------------------------------------
  * VARA-style "channel busy" detection off the RX spectrum FFT.  Opt-in
@@ -1157,10 +1235,22 @@ int send_modulated_data(generic_modem_t *g_modem, uint8_t *bytes_in, int frames_
 
         write_buffer(playback_buffer, (uint8_t *)tx_buffer, total_samples * sizeof(int32_t));
 
+        uint64_t next_spec_ms = t0_ms;
         while (!shutdown_ &&
                (size_buffer(playback_buffer) > 0 ||
                 time_now_ms() < t0_ms + burst_ms + tail_ms))
+        {
+            uint64_t now = time_now_ms();
+            if (now >= next_spec_ms)
+            {
+                /* Paced by elapsed playout, not by write progress: the ring is
+                 * filled far faster than it drains. */
+                size_t pos = (size_t)(((now - t0_ms) * FREEDV_FS_8000) / 1000ULL);
+                publish_tx_spectrum_at(tx_buffer, total_samples, pos, FREEDV_FS_8000);
+                next_spec_ms = now + TX_SPECTRUM_STEP_MS;
+            }
             usleep(1000);
+        }
     }
     else
     {
@@ -1171,9 +1261,35 @@ int send_modulated_data(generic_modem_t *g_modem, uint8_t *bytes_in, int frames_
         /* Write entire pre-generated buffer to playback */
         write_buffer(playback_buffer, (uint8_t *)tx_buffer, total_samples * sizeof(int32_t));
 
-        /* Wait for all samples to be played out */
+        /* Wait for all samples to be played out, publishing the waterfall as we
+         * go so the UI scrolls during the burst rather than after it.
+         *
+         * Sleep to an ABSOLUTE deadline, never `usleep(step)` in a loop.  usleep
+         * may return late but never early, so relative steps accumulate their
+         * overshoot: on a host with a coarse scheduler tick (Windows defaults to
+         * ~15.6 ms) a 4.41 s burst paced in 50 ms steps holds PTT for ~5.5 s.
+         * That 1.1 s of dead carrier lands exactly where the peer's ACK is —
+         * the IRS answers 700 ms after decoding — so every ACK collided with our
+         * own tail and the link stalled at ack_timeout/retry forever, while the
+         * Linux station (7 ms of drift over the same burst) looked fine.
+         * Re-deriving the sleep from elapsed time each pass keeps the total
+         * bounded by one tick however coarse the tick is. */
         uint64_t playback_duration_us = ((uint64_t)total_samples * 1000000ULL) / FREEDV_FS_8000;
-        usleep((useconds_t)playback_duration_us);
+        uint64_t t_start_ms = hermes_uptime_ms();
+        uint64_t waited_us = 0;
+        while (waited_us < playback_duration_us)
+        {
+            size_t pos = (size_t)((waited_us * FREEDV_FS_8000) / 1000000ULL);
+            publish_tx_spectrum_at(tx_buffer, total_samples, pos, FREEDV_FS_8000);
+
+            uint64_t elapsed_us = (hermes_uptime_ms() - t_start_ms) * 1000ULL;
+            uint64_t sleep_us = tx_pace_sleep_us(waited_us, elapsed_us,
+                                                 playback_duration_us,
+                                                 (uint64_t)TX_SPECTRUM_STEP_MS * 1000ULL,
+                                                 &waited_us);
+            if (sleep_us)
+                usleep((useconds_t)sleep_us);
+        }
 
         /* Give some tail time before turning off PTT */
         usleep(TAIL_TIME_US);
@@ -1986,8 +2102,9 @@ void *rx_thread(void *g_modem)
     /* Two seconds of 8 kHz int16 per plane: the same order as the capture
      * backlog cap, so a stalled worker is bounded by its own ring rather than
      * by starving the other plane. */
-    w_ctrl.ring = circular_buf_init((uint8_t *)malloc(RX_WORKER_RING_BYTES), RX_WORKER_RING_BYTES);
-    w_pay.ring  = circular_buf_init((uint8_t *)malloc(RX_WORKER_RING_BYTES), RX_WORKER_RING_BYTES);
+    int ring_bytes = rx_burst_capacity_samples() * (int)sizeof(int16_t);
+    w_ctrl.ring = circular_buf_init((uint8_t *)malloc(ring_bytes), ring_bytes);
+    w_pay.ring  = circular_buf_init((uint8_t *)malloc(ring_bytes), ring_bytes);
     if (!w_ctrl.ring || !w_pay.ring)
     {
         HLOGE("modem-rx", "could not allocate decoder rings; RX disabled");
@@ -2102,13 +2219,14 @@ void *rx_thread(void *g_modem)
          * audio is never past a deadline — and the transport backpressures the
          * sim to keep the backlog bounded, so flushing would just destroy
          * valid RX samples. */
+        int backlog_cap = rx_burst_capacity_samples();
         if (!virtual_clock_enabled() &&
             size_buffer(capture_buffer) >
-            (size_t)RX_MAX_BACKLOG_SAMPLES * sizeof(int32_t))
+            (size_t)backlog_cap * sizeof(int32_t))
         {
             HLOGW("modem-rx",
                   "RX backlog exceeded ~%d s cap; flushing stale audio to catch up",
-                  RX_MAX_BACKLOG_SAMPLES / 8000);
+                  backlog_cap / 8000);
             clear_buffer(capture_buffer);
             /* A flush must reach the workers' rings too, or stale audio the
              * dispatcher already handed on would still be decoded -- the S1

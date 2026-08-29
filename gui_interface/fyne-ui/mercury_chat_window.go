@@ -19,7 +19,7 @@ import (
 // transfers: each append would otherwise rebuild a growing string / prepend a
 // new widget forever, making the window unusable.
 const (
-	maxLogLines     = 1000
+	maxLogLines     = 200
 	maxChatMessages = 200
 )
 
@@ -28,13 +28,13 @@ const (
 // the first and tear down its ARQ session.  Reuse the window instead.
 var mercuryClientSingleton *chatWindow
 
-func openMercuryClientWindow(app fyne.App, telemetry telemetryState) {
+func openMercuryClientWindow(app fyne.App, telemetry telemetryState, arqPort, broadcastPort int) {
 	if mercuryClientSingleton != nil {
 		mercuryClientSingleton.win.RequestFocus()
 		return
 	}
 	cw := &chatWindow{}
-	cw.build(app, telemetry)
+	cw.build(app, telemetry, arqPort, broadcastPort)
 	mercuryClientSingleton = cw
 }
 
@@ -43,6 +43,9 @@ type chatWindow struct {
 	mc   *client.Client
 	done chan struct{}
 	log  *widget.Entry
+	// logLines is the bounded ring (newest first) backing the log Entry,
+	// so appending never re-splits the widget's own text.
+	logLines []string
 
 	arqBox      *fyne.Container
 	arqScroll   *container.Scroll
@@ -54,6 +57,7 @@ type chatWindow struct {
 	ip        *widget.Entry
 	arqPort   *widget.Entry
 	bcastPort *widget.Entry
+	bandwidth *widget.Select
 
 	connectBtn    *widget.Button
 	disconnectBtn *widget.Button
@@ -62,11 +66,22 @@ type chatWindow struct {
 	arqAbort      *widget.Button
 	sendARQ       *widget.Button
 	sendBcast     *widget.Button
+	sendBcastWrap *hoverTooltipButton
+	sendCQ        *widget.Button
 	arqMsg        *widget.Entry
 	bcastMsg      *widget.Entry
+
+	// bcastDisabledReason is shown as a hover tooltip on the Broadcast
+	// message button while it is disabled (e.g. during an ARQ session).
+	bcastDisabledReason string
+
+	// cqSending is set while a CQ frame is being transmitted; broadcast and
+	// ARQ connect are blocked until the engine reports the transmission done.
+	// Owned by setCQBusy and touched only from the UI thread.
+	cqSending bool
 }
 
-func (cw *chatWindow) build(app fyne.App, telemetry telemetryState) {
+func (cw *chatWindow) build(app fyne.App, telemetry telemetryState, arqPort, broadcastPort int) {
 	cw.win = app.NewWindow("Mercury Client")
 
 	cw.myCall = widget.NewEntry()
@@ -76,9 +91,12 @@ func (cw *chatWindow) build(app fyne.App, telemetry telemetryState) {
 	cw.ip = widget.NewEntry()
 	cw.ip.SetText("127.0.0.1")
 	cw.arqPort = widget.NewEntry()
-	cw.arqPort.SetText("8300")
+	cw.arqPort.SetText(strconv.Itoa(arqPort))
 	cw.bcastPort = widget.NewEntry()
-	cw.bcastPort.SetText("8100")
+	cw.bcastPort.SetText(strconv.Itoa(broadcastPort))
+
+	cw.bandwidth = widget.NewSelect([]string{"2300 Hz", "500 Hz"}, cw.onBandwidthChange)
+	cw.bandwidth.SetSelected("2300 Hz")
 
 	cw.arqMsg = widget.NewEntry()
 	cw.arqMsg.SetPlaceHolder("Type message to be sent...")
@@ -111,18 +129,29 @@ func (cw *chatWindow) build(app fyne.App, telemetry telemetryState) {
 	cw.sendARQ = widget.NewButton("Send message", cw.onSendARQ)
 	cw.sendARQ.Disable()
 	cw.sendBcast = widget.NewButton("Broadcast message", cw.onSendBroadcast)
-	cw.sendBcast.Disable()
+	cw.sendBcastWrap = newHoverTooltipButton(cw.sendBcast, cw.win.Canvas(), func() string {
+		return cw.bcastDisabledReason
+	})
+	cw.sendBcastWrap.Disable()
+	cw.sendCQ = widget.NewButton("Send CQ Frame", cw.onSendCQ)
+	cw.sendCQ.Disable()
 
 	cfgForm := widget.NewForm(
 		&widget.FormItem{Text: "My Callsign", Widget: cw.myCall},
 		&widget.FormItem{Text: "Target Callsign", Widget: cw.target},
-		&widget.FormItem{Text: "IP", Widget: cw.ip},
+		&widget.FormItem{Text: "IP/Host", Widget: cw.ip},
 		&widget.FormItem{Text: "ARQ Port", Widget: cw.arqPort},
 		&widget.FormItem{Text: "Broadcast Port", Widget: cw.bcastPort},
+		&widget.FormItem{Text: "Bandwidth", Widget: cw.bandwidth},
 	)
 
 	modemRow := container.NewHBox(cw.connectBtn, cw.disconnectBtn)
-	sessionRow := container.NewHBox(cw.arqConnect, cw.arqDisconnect, cw.arqAbort)
+	sessionRow := container.NewGridWithColumns(4,
+		cw.arqConnect,
+		cw.arqDisconnect,
+		cw.arqAbort,
+		cw.sendCQ,
+	)
 
 	controls := container.NewVBox(
 		cfgForm,
@@ -131,7 +160,7 @@ func (cw *chatWindow) build(app fyne.App, telemetry telemetryState) {
 		widget.NewSeparator(),
 		cw.arqMsg, cw.sendARQ,
 		widget.NewSeparator(),
-		cw.bcastMsg, cw.sendBcast,
+		cw.bcastMsg, cw.sendBcastWrap,
 	)
 
 	left := container.NewVBox(controls, layout.NewSpacer())
@@ -176,17 +205,11 @@ func (cw *chatWindow) logMsg(format string, args ...any) {
 	fyne.Do(func() {
 		ts := time.Now().Format("15:04:05")
 		line := fmt.Sprintf("[%s] "+format, append([]any{ts}, args...)...)
-		cur := cw.log.Text
-		if cur == "" {
-			cw.log.SetText(line)
-		} else {
-			newText := fmt.Sprintf("%s\n%s", line, cur)
-			lines := strings.Split(newText, "\n")
-			if len(lines) > maxLogLines {
-				lines = lines[:maxLogLines]
-			}
-			cw.log.SetText(strings.Join(lines, "\n"))
+		cw.logLines = append([]string{line}, cw.logLines...)
+		if len(cw.logLines) > maxLogLines {
+			cw.logLines = cw.logLines[:maxLogLines]
 		}
+		cw.log.SetText(strings.Join(cw.logLines, "\n"))
 		cw.log.Refresh()
 	})
 }
@@ -233,7 +256,8 @@ func (cw *chatWindow) setTCP(on bool) {
 			cw.connectBtn.Disable()
 			cw.disconnectBtn.Enable()
 			cw.arqConnect.Enable()
-			cw.sendBcast.Enable()
+			cw.sendBcastWrap.Enable()
+			cw.sendCQ.Enable()
 		} else {
 			cw.connectBtn.Enable()
 			cw.disconnectBtn.Disable()
@@ -241,7 +265,8 @@ func (cw *chatWindow) setTCP(on bool) {
 			cw.arqDisconnect.Disable()
 			cw.arqAbort.Disable()
 			cw.sendARQ.Disable()
-			cw.sendBcast.Disable()
+			cw.sendBcastWrap.Disable()
+			cw.sendCQ.Disable()
 		}
 	})
 }
@@ -253,35 +278,76 @@ func (cw *chatWindow) setARQ(on bool) {
 			cw.arqDisconnect.Enable()
 			cw.arqAbort.Enable()
 			cw.sendARQ.Enable()
+			cw.sendBcastWrap.Disable()
+			cw.bcastDisabledReason = "Broadcast is disabled while an ARQ session is active."
+			// A CQ is an unsolicited transmission; firing one mid-session puts
+			// it on the air on top of the session. The engine will not stop us
+			// -- ARQ_CMD_SEND_CQ (arq.c) builds and queues the frame with no
+			// conn_state guard -- so the block has to be here.
+			cw.sendCQ.Disable()
 		} else {
 			cw.arqConnect.Enable()
 			cw.arqDisconnect.Disable()
 			cw.arqAbort.Disable()
 			cw.sendARQ.Disable()
+			cw.bcastDisabledReason = ""
+			if cw.mc != nil && cw.mc.IsConnected() {
+				cw.sendBcastWrap.Enable()
+				// Not while a CQ of our own is still on the air: setCQBusy
+				// owns that case and re-enables when PTT drops.
+				if !cw.cqSending {
+					cw.sendCQ.Enable()
+				}
+			}
 		}
 	})
 }
 
 func (cw *chatWindow) onConnect() {
-	arqPort, _ := strconv.Atoi(cw.arqPort.Text)
-	bcastPort, _ := strconv.Atoi(cw.bcastPort.Text)
+	// Synchronous guard: a double-tap (or key-repeat on a focused button)
+	// can fire this twice in one poll batch before setTCP's fyne.Do runs.
+	cw.connectBtn.Disable()
+
+	// Disconnect any existing client before opening a new one, so a stale
+	// control client is not left open to be evicted by the new connection.
+	if cw.mc != nil {
+		cw.mc.Disconnect()
+		cw.mc = nil
+	}
+	if cw.done != nil {
+		close(cw.done)
+		cw.done = nil
+	}
+
+	arqPort, err := strconv.Atoi(cw.arqPort.Text)
+	if err != nil {
+		dialog.ShowError(fmt.Errorf("invalid ARQ port: %v", err), cw.win)
+		cw.connectBtn.Enable()
+		return
+	}
+	bcastPort, err := strconv.Atoi(cw.bcastPort.Text)
+	if err != nil {
+		dialog.ShowError(fmt.Errorf("invalid broadcast port: %v", err), cw.win)
+		cw.connectBtn.Enable()
+		return
+	}
 	cfg := client.Config{
 		MyCallsign:     cw.myCall.Text,
 		TargetCallsign: cw.target.Text,
 		IP:             cw.ip.Text,
 		ARQPort:        arqPort,
 		BroadcastPort:  bcastPort,
+		BandwidthHz:    bandwidthFromLabel(cw.bandwidth.Selected),
 	}
 	mc := client.New(cfg)
 	if err := mc.Connect(); err != nil {
 		dialog.ShowError(err, cw.win)
 		cw.logMsg("connect: %v", err)
+		cw.connectBtn.Enable()
 		return
 	}
-	if cw.done != nil {
-		close(cw.done)
-	}
 	cw.mc = mc
+	cw.cqSending = false
 	cw.setTCP(true)
 	cw.done = make(chan struct{})
 
@@ -303,6 +369,7 @@ func (cw *chatWindow) onDisconnect() {
 	}
 	cw.setTCP(false)
 	cw.setARQ(false)
+	cw.cqSending = false
 	cw.logMsg("Disconnected.")
 }
 
@@ -311,22 +378,30 @@ func (cw *chatWindow) onARQConnect() {
 	if mc == nil || !mc.IsConnected() {
 		return
 	}
+	src := cw.myCall.Text
+	dst := cw.target.Text
 	cw.arqConnect.Disable()
-	cw.logMsg("Connecting ARQ: %s -> %s", cw.myCall.Text, cw.target.Text)
+	cw.logMsg("Connecting ARQ: %s -> %s", src, dst)
 	go func() {
-		if err := mc.ConnectARQ(); err != nil {
+		if err := mc.ConnectARQWith(src, dst); err != nil {
 			cw.logMsg("ARQ connect: %v", err)
-			cw.setARQ(false)
+			// Only re-enable the button if the modem is still up: a
+			// disconnect mid-handshake leaves cw.mc nil.
+			if cw.mc == mc {
+				cw.setARQ(false)
+			}
 			return
 		}
 		cw.logMsg("ARQ connected.")
-		cw.setARQ(true)
+		if cw.mc == mc {
+			cw.setARQ(true)
+		}
 	}()
 }
 
 func (cw *chatWindow) onARQDisconnect() {
-	if cw.mc != nil {
-		cw.mc.DisconnectARQ()
+	if mc := cw.mc; mc != nil {
+		mc.DisconnectARQ()
 	}
 	cw.setARQ(false)
 	cw.logMsg("ARQ disconnected.")
@@ -346,6 +421,64 @@ func (cw *chatWindow) onSendARQ() {
 		return
 	}
 	cw.arqMsg.SetText("")
+}
+
+func (cw *chatWindow) onBandwidthChange(sel string) {
+	hz := bandwidthFromLabel(sel)
+	if hz == 0 {
+		return
+	}
+	if mc := cw.mc; mc != nil && mc.IsConnected() {
+		if err := mc.SetBandwidth(hz); err != nil {
+			cw.logMsg("set bandwidth: %v", err)
+		} else {
+			cw.logMsg("Bandwidth set to %d Hz.", hz)
+		}
+	}
+}
+
+func (cw *chatWindow) onSendCQ() {
+	mc := cw.mc
+	if mc == nil || !mc.IsConnected() || cw.cqSending {
+		return
+	}
+	if err := mc.SendCQFrame(); err != nil {
+		dialog.ShowError(err, cw.win)
+		return
+	}
+	cw.sendCQ.Disable()
+	cw.setCQBusy(true)
+	cw.logMsg("CQ frame sent.")
+}
+
+// setCQBusy disables broadcast and ARQ connect while a CQ frame is on the air
+// and restores them once the engine reports the transmission finished. It owns
+// the cqSending flag and every widget it touches, all inside fyne.Do, so the
+// flag is only ever accessed from the UI thread.
+func (cw *chatWindow) setCQBusy(on bool) {
+	fyne.Do(func() {
+		if on {
+			cw.cqSending = true
+			cw.sendCQ.Disable()
+			cw.arqConnect.Disable()
+			cw.sendBcastWrap.Disable()
+			cw.bcastDisabledReason = "CQ frame transmission in progress."
+			return
+		}
+		if !cw.cqSending {
+			return
+		}
+		cw.cqSending = false
+		// sendCQ is re-enabled under the same session test as the rest: a
+		// session can come up while our CQ is still on the air, and enabling
+		// it unconditionally here would undo setARQ's block.
+		if cw.mc != nil && cw.mc.IsConnected() && !cw.mc.IsARQConnected() {
+			cw.sendCQ.Enable()
+			cw.arqConnect.Enable()
+			cw.sendBcastWrap.Enable()
+			cw.bcastDisabledReason = ""
+		}
+	})
 }
 
 func (cw *chatWindow) onSendBroadcast() {
@@ -440,6 +573,13 @@ func (cw *chatWindow) forwardStatus() {
 				cw.setARQ(true)
 			case "DISCONNECTED":
 				cw.setARQ(false)
+			case "PTT OFF":
+				// The true end of a CQ transmission: an incoming connection's
+				// PENDING/CANCELPENDING never keys the radio, so PTT OFF is the
+				// unambiguous "CQ is off the air" signal. setCQBusy owns the
+				// cqSending flag and only clears it when one is actually in
+				// flight, marshalling the work onto the UI thread.
+				cw.setCQBusy(false)
 			}
 		case <-done:
 			return
@@ -452,4 +592,15 @@ func defaultCall(call, fallback string) string {
 		return call
 	}
 	return fallback
+}
+
+func bandwidthFromLabel(label string) int {
+	switch strings.TrimSpace(label) {
+	case "500 Hz":
+		return 500
+	case "2300 Hz":
+		return 2300
+	default:
+		return 0
+	}
 }

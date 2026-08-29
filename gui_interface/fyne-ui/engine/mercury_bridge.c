@@ -42,7 +42,7 @@ void mercury_print_version(void)
 /* ------------------------------------------------------------------ */
 /*  mercury_precheck(argc, argv, default_config)                       */
 /*                                                                     */
-/*  Handle the informational CLI actions (-h/-l/-z/-K) exactly as the  */
+/*  Handle exit-only CLI actions (-h/-l/-z/-K/-Q) exactly as the       */
 /*  daemon does — print to the terminal.  Called from Go BEFORE the    */
 /*  window is created so `mercury-ui -h` shows help instead of opening */
 /*  the GUI.  Returns non-zero if handled (Go should exit), 0 to run.  */
@@ -61,6 +61,10 @@ int mercury_precheck(int argc, char **argv, const char *default_config)
     }
     int handled = mercury_cli_run_info_action(&cli,
                       (argc > 0 && argv) ? argv[0] : "mercury-ui") ? 1 : 0;
+    if (cli.action == MERCURY_CLI_TEST_PTT) {
+        (void)mercury_cli_run_ptt_test(&cli);
+        handled = 1;
+    }
     fflush(stdout);
     fflush(stderr);
     return handled;
@@ -146,9 +150,12 @@ int mercury_ui_get_spectrum(float *out, int max_bins, int *sample_rate_hz,
 }
 
 int mercury_ui_command(const char *command, const char *value,
-                       const char *value2, const char *value3)
+                       const char *value2, const char *value3,
+                       const char *value4, const char *value5,
+                       const char *value6, const char *value7)
 {
-    return ui_comm_command(command, value, value2, value3);
+    return ui_comm_command(command, value, value2, value3, value4,
+                           value5, value6, value7);
 }
 
 int mercury_ui_get_audio_devices(int kind, ui_device_t *out, int max,
@@ -161,11 +168,17 @@ int mercury_ui_get_audio_devices(int kind, ui_device_t *out, int max,
 int mercury_ui_get_radio_list(ui_device_t *out, int max,
                               char *selected, int selected_len,
                               char *device_path, int device_path_len,
-                              int *serial_speed)
+                              int *serial_speed,
+                              char *ptt_method, int method_len,
+                              char *ptt_line, int line_len,
+                              char *ptt_invert, int invert_len,
+                              int *cm108_gpio)
 {
     return ui_comm_get_radio_list(out, max, selected, (size_t)selected_len,
                                   device_path, (size_t)device_path_len,
-                                  serial_speed);
+                                  serial_speed, ptt_method, (size_t)method_len,
+                                  ptt_line, (size_t)line_len,
+                                  ptt_invert, (size_t)invert_len, cm108_gpio);
 }
 
 int mercury_ui_get_input_channel(void)
@@ -176,4 +189,20 @@ int mercury_ui_get_input_channel(void)
 void mercury_ui_set_waterfall(bool enabled)
 {
     ui_comm_set_waterfall(enabled);
+}
+
+void mercury_ui_get_tcp_ports(int *arq_base_port, int *broadcast_port)
+{
+    ui_comm_get_tcp_ports(arq_base_port, broadcast_port);
+}
+
+void mercury_ui_get_version(char *version, int version_len,
+                            char *git_hash, int git_hash_len)
+{
+    if (version && version_len > 0) {
+        snprintf(version, (size_t)version_len, "%s", MERCURY_VERSION);
+    }
+    if (git_hash && git_hash_len > 0) {
+        snprintf(git_hash, (size_t)git_hash_len, "%s", GIT_HASH);
+    }
 }

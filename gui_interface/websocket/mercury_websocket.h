@@ -43,10 +43,14 @@
 
 // ---- Incoming command from UI (parsed from JSON) ----
 typedef struct {
-    char command[64];   // e.g. "set_capture_dev", "set_input_channel", "set_radio_config"
+    char command[64];   // e.g. "set_audio_config", "set_ptt_config"
     char value[256];    // primary value (e.g. device id, channel name)
     char value2[256];   // optional second value (e.g. device path for radio config)
     char value3[256];   // optional third value (e.g. input channel for audio config)
+    char value4[256];   // optional fourth value (e.g. Hamlib speed for PTT config)
+    char value5[256];   // optional fifth value (e.g. serial PTT line)
+    char value6[256];   // optional sixth value (e.g. serial PTT inversion)
+    char value7[256];   // optional seventh value (e.g. CM108 GPIO pin)
 } ws_command_t;
 
 // Callback invoked on the websocket thread when the UI sends a command.
@@ -76,7 +80,6 @@ typedef struct {
     char listen_url[128];
 
     // Web root for serving static files (e.g. test.html)
-    char web_root[256];
 } ws_ctx_t;
 
 // ---- Public API ----
@@ -86,7 +89,6 @@ typedef struct {
  *
  * @param ctx            WebSocket context (caller-allocated, zeroed before call).
  * @param port           WebSocket listen port (e.g. 10000). Listens on 0.0.0.0.
- * @param web_root       Path to directory with static files to serve (e.g. test.html).
  *                       Pass NULL to disable static file serving.
  * @param cmd_callback   Function called when a command is received from the UI.
  *                       May be NULL if no command handling is needed yet.
@@ -97,7 +99,6 @@ typedef struct {
  */
 int ws_init(ws_ctx_t *ctx,
             uint16_t port,
-            const char *web_root,
             ws_command_callback_t cmd_callback,
             void *cb_data,
             ws_connect_callback_t connect_callback,

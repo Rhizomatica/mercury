@@ -23,6 +23,8 @@
 
 #include "arq.h"   /* CALLSIGN_MAX_SIZE */
 
+#define UI_AUDIO_ERR_MAX 192
+
 typedef struct {
     int    bitrate_bps;
     double snr_db;
@@ -36,6 +38,12 @@ typedef struct {
     float  tx_gain_db;
     float  tx_peak_dbfs;
     bool   waterfall_enabled;
+    /* Audio path health.  A bad device choice does not stop mercury -- the
+     * operator needs it alive to pick another card -- so the only way they
+     * learn the card is wrong is if the UI says so.  Empty audio_error means
+     * healthy; otherwise it carries the reason, e.g. an unsupported rate. */
+    bool   audio_ok;
+    char   audio_error[UI_AUDIO_ERR_MAX];
 } ui_status_t;
 
 /* Render the snapshot as the status JSON remote clients already expect.
@@ -49,8 +57,15 @@ int ui_status_to_json(const ui_status_t *st, char *buf, size_t buflen);
  * reason as the status struct — the two must not be able to disagree about
  * what is on the list or which entry is selected. */
 
-#define UI_DEV_ID_MAX   64
-#define UI_DEV_NAME_MAX 64
+/* PulseAudio/PipeWire node names are long: an IC-7300 enumerates as
+ * "alsa_input.usb-Burr-Brown_from_TI_USB_Audio_CODEC-00.analog-stereo",
+ * 66 characters.  At 64 these were silently cut to 63, which both wrote a
+ * broken device into mercury.ini and stopped the id ever matching a real
+ * device on the next open -- so the backend fell back to the default card
+ * and the radio went deaf (issue #185).  ALSA "plughw:CARD=..." names and
+ * WASAPI GUID+description strings run long too. */
+#define UI_DEV_ID_MAX   256
+#define UI_DEV_NAME_MAX 256
 
 typedef struct {
     char id[UI_DEV_ID_MAX];     /* device id / hamlib model number as text */

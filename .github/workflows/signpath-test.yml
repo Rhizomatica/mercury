@@ -1,0 +1,224 @@
+# SignPath OSS signing test — Windows binaries via SignPath.
+#
+# This workflow is the SignPath trial run: it signs the Windows binaries with
+# the OSS organization's self-signed TEST certificate. It does NOT touch the
+# Certum SimplySign release flow (release.yml) yet — once SignPath is proven
+# and the production certificate is imported, the release workflow will switch.
+#
+# Prerequisites (one-time, see code-signing/signpath/README.md):
+#   * SignPath portal: project + signing policy + 'GitHub.com' trusted build
+#     system + artifact configurations 'mercury-windows' and 'mercury-setup'
+#     (XML in code-signing/signpath/artifact-configs/).
+#   * Repo secret SIGNPATH_API_TOKEN (SignPath API token of a submitter user).
+#   * Replace the d1c3b645-94b2-48ac-95fa-b72a652f3578, mercury and test-signing
+#     placeholders below with the real portal values.
+
+name: SignPath test
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_installer:
+        description: 'Also build + sign the Windows installer (Wine + Inno)'
+        required: false
+        default: false
+        type: boolean
+
+jobs:
+  # ---- Build unsigned Windows binaries (GitHub-hosted agent) ----
+  build:
+    name: Build unsigned binaries
+    runs-on: ubuntu-latest
+    container: debian:trixie
+    timeout-minutes: 20
+    outputs:
+      artifact-id: ${{ steps.upload.outputs.artifact-id }}
+    steps:
+      - name: Install deps
+        run: |
+          apt-get update && apt-get install -y --no-install-recommends \
+            ca-certificates build-essential git golang-go \
+            gcc-mingw-w64-x86-64 mingw-w64-x86-64-dev mingw-w64-common zip
+
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 1 }
+
+      - name: Git config
+        run: git config --global --add safe.directory /__w/mercury/mercury
+
+      - name: Build binaries
+        run: |
+          make windows
+          make fyne-ui-windows
+          mkdir -p dist
+          cp mercury.exe dist/
+          cp windows-installer/mercury-ui.exe dist/
+
+      - name: Upload unsigned binaries
+        id: upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: signpath-unsigned
+          path: |
+            dist/mercury.exe
+            dist/mercury-ui.exe
+
+  # ---- Submit to SignPath (test certificate) ----
+  sign:
+    name: Sign via SignPath
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Submit signing request
+        uses: signpath/github-action-submit-signing-request@v2
+        with:
+          api-token: '${{ secrets.SIGNPATH_API_TOKEN }}'
+          organization-id: 'd1c3b645-94b2-48ac-95fa-b72a652f3578'
+          project-slug: 'mercury'
+          signing-policy-slug: 'test-signing'
+          artifact-configuration-slug: 'mercury-windows'
+          github-artifact-id: '${{ needs.build.outputs.artifact-id }}'
+          wait-for-completion: true
+          output-artifact-directory: signed
+
+      - name: Verify signatures
+        run: |
+          sudo apt-get update && sudo apt-get install -y --no-install-recommends osslsigncode
+          for f in signed/mercury.exe signed/mercury-ui.exe; do
+            [ -f "$f" ] || { echo "::error::missing signed file $f"; exit 1; }
+            # Chain validation fails for the self-signed OSS test cert, but the
+            # signature itself is cryptographically verified: osslsigncode
+            # reports "Number of verified signatures: 1" for a valid one.
+            OUT="$(osslsigncode verify "$f" 2>&1 || true)"
+            printf '%s\n' "$OUT"
+            if printf '%s\n' "$OUT" | grep -q "Number of verified signatures: 1"; then
+              echo "OK: valid Authenticode signature present in $f"
+            else
+              echo "::error::no valid signature found in $f"
+              exit 1
+            fi
+            if printf '%s\n' "$OUT" | grep -q "self-signed certificate"; then
+              echo "::warning::self-signed test certificate (expected until production cert)"
+            fi
+          done
+
+      - name: Upload signed binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: signpath-signed
+          path: |
+            signed/mercury.exe
+            signed/mercury-ui.exe
+
+  # ---- Installer: build with SIGNED payloads, then sign the Setup.exe ----
+  installer:
+    name: Build installer from signed payloads
+    if: ${{ inputs.build_installer }}
+    needs: sign
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    outputs:
+      artifact-id: ${{ steps.upload-setup.outputs.artifact-id }}
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 1 }
+
+      - name: Download signed binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: signpath-signed
+
+      - name: Install Inno Setup (Wine)
+        env:
+          INNO_URL:    https://wiki.hermes.radio/reports/inno-setup-6.7.3-wine.tar.gz
+          INNO_SHA256: 4c9c92249663f201a33bf194c0cd37e01c60540e299c771f3626411ef463c884
+        run: |
+          set -eu
+          # ISCC.exe is 32-bit; wine on the runner ships without i386, so
+          # enable multiarch and pull wine32 to get syswow64 working.
+          sudo dpkg --add-architecture i386
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends wine wine32:i386 ca-certificates curl zip
+          curl -fsSLo /tmp/inno.tar.gz "$INNO_URL"
+          echo "${INNO_SHA256}  /tmp/inno.tar.gz" | sha256sum -c -
+          wineboot -i
+          PF="$HOME/.wine/drive_c/Program Files (x86)"
+          mkdir -p "$PF"
+          tar xzf /tmp/inno.tar.gz -C "$PF/"
+          ISCC_PATH="$PF/Inno Setup 6/ISCC.exe"
+          [ -f "$ISCC_PATH" ] || { echo "::error::Inno Setup tree missing ISCC.exe"; exit 1; }
+          echo "ISCC_PATH=$ISCC_PATH" >> "$GITHUB_ENV"
+
+      - name: Stage signed payloads and build installer
+        run: |
+          set -eu
+          # Payloads here are the SIGNED binaries from the previous job;
+          # windows-installer-stage only copies, it does not rebuild.
+          # upload-artifact v4 strips the common base dir, so the signed
+          # payloads arrive either at the root or under signed/; handle both.
+          if [ -f mercury.exe ]; then SRC=.; else SRC=signed; fi
+          cp "$SRC/mercury.exe" windows-installer/
+          cp "$SRC/mercury-ui.exe" windows-installer/
+          cp mercury.ini.example windows-installer/mercury.ini
+          # The installer.iss Sources expect the hamlib + MinGW runtime DLLs
+          # next to it (same as make windows-installer-stage).
+          if ls radio_io/hamlib-w64/bin/*.dll >/dev/null 2>&1; then
+            cp radio_io/hamlib-w64/bin/*.dll windows-installer/
+          fi
+          sed -i 's/ui_enabled = false/ui_enabled = true/g' windows-installer/mercury.ini
+          sed -i 's/sound_system = auto/sound_system = wasapi/g' windows-installer/mercury.ini
+          wine "$ISCC_PATH" windows-installer/installer.iss
+          SETUP=$(ls Mercury_*_Setup.exe | head -1)
+          [ -n "$SETUP" ] || { echo "::error::ISCC produced no installer"; exit 1; }
+          cp "$SETUP" mercury-setup.exe
+
+      - name: Upload unsigned installer
+        id: upload-setup
+        uses: actions/upload-artifact@v4
+        with:
+          name: signpath-setup-unsigned
+          path: mercury-setup.exe
+
+  # ---- Sign the installer via SignPath ----
+  sign-setup:
+    name: Sign installer via SignPath
+    if: ${{ inputs.build_installer }}
+    needs: installer
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Submit signing request (installer)
+        uses: signpath/github-action-submit-signing-request@v2
+        with:
+          api-token: '${{ secrets.SIGNPATH_API_TOKEN }}'
+          organization-id: 'd1c3b645-94b2-48ac-95fa-b72a652f3578'
+          project-slug: 'mercury'
+          signing-policy-slug: 'test-signing'
+          artifact-configuration-slug: 'mercury-setup'
+          github-artifact-id: '${{ needs.installer.outputs.artifact-id }}'
+          wait-for-completion: true
+          output-artifact-directory: signed-setup
+
+      - name: Verify installer signature
+        run: |
+          sudo apt-get update && sudo apt-get install -y --no-install-recommends osslsigncode
+          f=signed-setup/mercury-setup.exe
+          [ -f "$f" ] || { echo "::error::missing signed installer"; exit 1; }
+          OUT="$(osslsigncode verify "$f" 2>&1 || true)"
+          printf '%s\n' "$OUT"
+          if printf '%s\n' "$OUT" | grep -q "Number of verified signatures: 1"; then
+            echo "OK: valid Authenticode signature present in installer"
+          else
+            echo "::error::no valid signature found in installer"
+            exit 1
+          fi
+          if printf '%s\n' "$OUT" | grep -q "self-signed certificate"; then
+            echo "::warning::self-signed test certificate (expected until production cert)"
+          fi
+
+      - name: Upload signed installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: signpath-setup-signed
+          path: signed-setup/mercury-setup.exe

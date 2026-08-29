@@ -373,6 +373,45 @@ void test_callsign_roundtrip_realistic(void)
     }
 }
 
+/* ---- RX buffer sizing: a burst must fit whole ------------------------- */
+
+/* arq_protocol_longest_burst_s() must cover EVERY mode in the table, not just
+ * the one currently selected: the peer can change rung between our bursts, and
+ * the first frame of the new rung lands before we learn about it. */
+void test_longest_burst_covers_every_mode(void)
+{
+    float longest = arq_protocol_longest_burst_s();
+    TEST_ASSERT_GREATER_THAN_FLOAT(0.0f, longest);
+    for (int i = 0; i < arq_mode_table_count; i++)
+    {
+        char msg[96];
+        snprintf(msg, sizeof msg, "mode %d burst %.2fs exceeds reported longest %.2fs",
+                 arq_mode_table[i].freedv_mode,
+                 (double)arq_mode_table[i].frame_duration_s, (double)longest);
+        TEST_ASSERT_TRUE_MESSAGE(arq_mode_table[i].frame_duration_s <= longest, msg);
+    }
+}
+
+/* The RX capture cap and the per-plane decoder rings were a fixed 2 s, which is
+ * SHORTER THAN ONE FRAME of every payload mode we ship.  A decoder that fell
+ * even slightly behind had the rest of its burst discarded and could never
+ * resync on it -- and because DATAC16 control frames (3.74 s) are the shortest
+ * thing on the air, an affected link looks healthy on control and dead on data.
+ *
+ * This pins the property that made 2 s wrong, so nobody reintroduces a fixed
+ * size below a burst. */
+void test_two_second_buffer_cannot_hold_a_burst(void)
+{
+    const float old_fixed_s = 16000.0f / 8000.0f;   /* the old RX_MAX_BACKLOG_SAMPLES */
+    TEST_ASSERT_TRUE_MESSAGE(arq_protocol_longest_burst_s() > old_fixed_s,
+        "a 2 s buffer is no longer undersized -- did the mode table change?");
+
+    /* And the sizing rule actually used must clear the longest burst. */
+    float capacity_s = arq_protocol_longest_burst_s() + 3.0f;
+    TEST_ASSERT_TRUE_MESSAGE(capacity_s > arq_protocol_longest_burst_s(),
+        "RX capacity must exceed the longest burst, not merely equal it");
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -406,6 +445,8 @@ int main(void)
     RUN_TEST(test_call_interval_override);
     RUN_TEST(test_call_interval_reset);
     RUN_TEST(test_mode_timing_datac16_unaffected_by_override);
+    RUN_TEST(test_longest_burst_covers_every_mode);
+    RUN_TEST(test_two_second_buffer_cannot_hold_a_burst);
 
     RUN_TEST(test_callsign_too_long_is_refused_not_truncated);
     RUN_TEST(test_callsign_roundtrip_realistic);
