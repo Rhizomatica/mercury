@@ -90,7 +90,18 @@ ifeq ($(HAVE_HIDAPI),1)
 ifeq ($(OS),Windows_NT)
 HIDAPI_CFLAGS_LOCAL = -Ihidapi-w64/include -DHAVE_HIDAPI
 else
+# Same trap on macOS when hidapi is vendored rather than installed: the
+# top-level path is relative to the tree root, not to this directory.
+RADIO_IO_UNAME_S := $(shell uname -s)
+ifeq ($(RADIO_IO_UNAME_S),Darwin)
+ifneq ($(wildcard hidapi-macos/src/hid.c),)
+HIDAPI_CFLAGS_LOCAL = -Ihidapi-macos/include -DHAVE_HIDAPI
+else
 HIDAPI_CFLAGS_LOCAL = $(HIDAPI_CFLAGS)
+endif
+else
+HIDAPI_CFLAGS_LOCAL = $(HIDAPI_CFLAGS)
+endif
 endif
 else
 HIDAPI_CFLAGS_LOCAL =
