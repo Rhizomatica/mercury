@@ -17,6 +17,7 @@
 #include "ldpc_codes.h"
 #include "audioio/audioio.h"
 #include "radio_io.h"
+#include "hermes_log.h"
 
 /* Startup-mode table (index -> FreeDV mode).  Non-static: shared with the
  * modem, and referenced by main()'s -l listing. */
@@ -65,8 +66,8 @@ static int parse_rx_channel_layout(const char *value)
 void mercury_cli_print_usage(const char *prog)
 {
     printf("Usage modes: \n");
-    printf("%s -m [mode_index] -i [device] -o [device] -x [sound_system] -p [arq_tcp_base_port] -b [broadcast_tcp_port] -f [freedv_verbosity] -H [hamlib_log_level] -k [rx_input_channel] [-G] [-T] [-U ui_port] [-W]\n", prog);
-    printf("%s [-h -l -z]\n", prog);
+    printf("%s -m [mode_index] -i [device] -o [device] -x [sound_system] -p [arq_tcp_base_port] -b [broadcast_tcp_port] -f [freedv_verbosity] -H [hamlib_log_level] -k [rx_input_channel] [-P ptt_method] [-A ptt_device] [-G] [-T] [-U ui_port] [-W]\n", prog);
+    printf("%s [-h -l -z -K -Q]\n", prog);
     printf("\nOptions:\n");
     printf(" -c [cpu_nr]                Run on CPU [cpu_nr]. Use -1 to disable CPU selection, which is the default.\n");
     printf(" -m [mode_index]            Startup payload mode index shown in \"-l\" output. Used for broadcast and idle/disconnected ARQ decode. Default is 1 (DATAC3)\n");
@@ -89,15 +90,17 @@ void mercury_cli_print_usage(const char *prog)
     printf(" -v                         Verbose mode. Prints more information during execution.\n");
     printf(" -L <path>                  Write log to file (TIMING level and above).\n");
     printf(" -J                         Use JSONL format for log file (requires -L).\n");
-    printf(" -R [radio_model]           Sets HAMLIB radio model.\n");
-    printf(" -A [radio_address]         Sets HAMLIB radio device file or ip:port address.\n");
+    printf(" -P [ptt_method]            PTT method: none, hamlib, serial, cm108, or hermes_shm.\n");
+    printf(" -R [radio_model]           Sets HAMLIB radio model and selects Hamlib PTT.\n");
+    printf(" -A [ptt_device]            PTT serial device or HAMLIB device/ip:port endpoint.\n");
 #ifdef HAVE_HERMES_SHM
-    printf(" -S                         Use HERMES's shared memory interface instead of HAMLIB (Do not use -R and -A in this case).\n");
+    printf(" -S                         Select HERMES shared-memory PTT (Linux shorthand for -P hermes_shm).\n");
 #else
-    printf(" -S                         HERMES shared memory radio control (Linux-only; unavailable in this build).\n");
+    printf(" -S                         HERMES shared-memory PTT (Linux-only; unavailable in this build).\n");
 #endif
     printf(" -C [config_file]           Path to init configuration file (INI format). Default is mercury.ini in the current directory.\n");
     printf(" -K                         List HAMLIB supported radio models.\n");
+    printf(" -Q                         Test PTT: key the configured backend for one second, release it, and exit.\n");
     printf(" -t                         Test TX mode.\n");
     printf(" -r                         Test RX mode.\n");
     printf(" -h                         Prints this help.\n");
@@ -110,7 +113,7 @@ int mercury_cli_parse(int argc, char **argv,
         return -1;
 
     const int mode_count = mercury_cli_mode_count();
-    const char *optstring = "hc:s:m:f:H:k:li:o:x:p:b:zvtrL:JR:U:A:C:SKWGT";
+    const char *optstring = "hc:s:m:f:H:k:li:o:x:p:b:zvtrL:JP:R:U:A:C:SKWGQT";
 
     memset(out, 0, sizeof(*out));
     cfg_set_defaults(&out->cfg);
@@ -220,7 +223,7 @@ int mercury_cli_parse(int argc, char **argv,
                     fprintf(stderr, "Invalid Hamlib log level '%s'. Valid range is 0..6.\n", optarg);
                     return -1;
                 }
-                out->cfg.hamlib_log_level = (int)log_level;
+                out->cfg.ptt.hamlib_log_level = (int)log_level;
             }
             break;
         case 'k':
@@ -326,16 +329,35 @@ int mercury_cli_parse(int argc, char **argv,
                     fprintf(stderr, "Invalid radio model '%s'. Expected a positive integer HAMLIB model ID (>0).\n", optarg);
                     return -1;
                 }
-                out->cfg.radio_type = (int)parsed_radio_type;
+                out->cfg.ptt.method = PTT_METHOD_HAMLIB;
+                out->cfg.ptt.hamlib_model = (int)parsed_radio_type;
+            }
+            break;
+        case 'P':
+            if (optarg)
+            {
+                if (!cfg_ptt_config_set_method(&out->cfg.ptt, optarg))
+                {
+                    fprintf(stderr, "Invalid PTT method '%s'. Use none, hamlib, serial, cm108, or hermes_shm.\n",
+                            optarg);
+                    return -1;
+                }
+#ifndef HAVE_HERMES_SHM
+                if (out->cfg.ptt.method == PTT_METHOD_HERMES_SHM)
+                {
+                    fprintf(stderr, "Error: HERMES shared-memory PTT is unavailable in this build.\n");
+                    return -1;
+                }
+#endif
             }
             break;
         case 'A':
             if (optarg)
-                snprintf(out->cfg.radio_device, sizeof(out->cfg.radio_device), "%s", optarg);
+                snprintf(out->cfg.ptt.device, sizeof(out->cfg.ptt.device), "%s", optarg);
             break;
         case 'S':
 #ifdef HAVE_HERMES_SHM
-            out->cfg.radio_type = RADIO_TYPE_SHM;
+            out->cfg.ptt.method = PTT_METHOD_HERMES_SHM;
 #else
             fprintf(stderr, "Error: -S (HERMES shared memory radio control) is only available on Linux builds.\n");
             return -1;
@@ -346,6 +368,9 @@ int mercury_cli_parse(int argc, char **argv,
             break;
         case 'K':
             out->action = MERCURY_CLI_LIST_RADIOS;
+            break;
+        case 'Q':
+            out->action = MERCURY_CLI_TEST_PTT;
             break;
         case 'h':
             out->action = MERCURY_CLI_HELP;
@@ -382,12 +407,73 @@ int mercury_cli_parse(int argc, char **argv,
         }
     }
 
-    if (out->cfg.radio_type == RADIO_TYPE_SHM && out->cfg.radio_device[0])
+    if (out->cfg.ptt.method == PTT_METHOD_HAMLIB && out->cfg.ptt.hamlib_model <= 0)
     {
-        fprintf(stderr, "Error: -S (HERMES SHM) and -A (HAMLIB device) are mutually exclusive.\n");
+        fprintf(stderr, "Error: Hamlib PTT requires a positive radio model (-R).\n");
         return -1;
     }
 
+    if (out->cfg.ptt.method == PTT_METHOD_SERIAL && !out->cfg.ptt.device[0])
+    {
+        fprintf(stderr, "Error: serial_rts PTT requires a device path (-A).\n");
+        return -1;
+    }
+
+    if (out->action == MERCURY_CLI_TEST_PTT &&
+        out->cfg.ptt.method == PTT_METHOD_NONE)
+    {
+        fprintf(stderr, "Error: -Q requires a configured PTT method (not 'none').\n");
+        return -1;
+    }
+
+    return 0;
+}
+
+int mercury_cli_run_ptt_test(const mercury_cli_t *cli)
+{
+    if (!cli || cli->action != MERCURY_CLI_TEST_PTT)
+        return -1;
+
+    bool log_ready = (hermes_log_init(256) == 0);
+    if (log_ready)
+        hermes_log_set_level(cli->cfg.verbose ? HERMES_LOG_LEVEL_DEBUG
+                                              : HERMES_LOG_LEVEL_INFO);
+
+    printf("Opening configured PTT backend...\n");
+    fflush(stdout);
+    if (radio_io_init(&cli->cfg.ptt) != 0)
+    {
+        fprintf(stderr, "PTT test failed: could not open the configured backend.\n");
+        radio_io_shutdown();
+        if (log_ready)
+            hermes_log_shutdown();
+        return -1;
+    }
+
+    printf("PTT ON for one second...\n");
+    fflush(stdout);
+    if (radio_io_key_on() != 0)
+    {
+        fprintf(stderr, "PTT test failed: could not key the transmitter.\n");
+        radio_io_shutdown();
+        if (log_ready)
+            hermes_log_shutdown();
+        return -1;
+    }
+
+    sleep(1);
+
+    int rc = radio_io_key_off();
+    radio_io_shutdown();
+    if (log_ready)
+        hermes_log_shutdown();
+    if (rc != 0)
+    {
+        fprintf(stderr, "PTT test failed: could not release the transmitter.\n");
+        return -1;
+    }
+
+    printf("PTT OFF. Test complete.\n");
     return 0;
 }
 
@@ -456,6 +542,9 @@ bool mercury_cli_run_info_action(const mercury_cli_t *cli, const char *prog)
         list_soundcards(audio_system);
         return true;
     }
+    case MERCURY_CLI_TEST_PTT:
+        /* Executed separately so the daemon can preserve a failure exit code. */
+        return false;
     case MERCURY_CLI_RUN:
     default:
         return false;

@@ -43,10 +43,14 @@
 
 // ---- Incoming command from UI (parsed from JSON) ----
 typedef struct {
-    char command[64];   // e.g. "set_capture_dev", "set_input_channel", "set_radio_config"
+    char command[64];   // e.g. "set_audio_config", "set_ptt_config"
     char value[256];    // primary value (e.g. device id, channel name)
     char value2[256];   // optional second value (e.g. device path for radio config)
     char value3[256];   // optional third value (e.g. input channel for audio config)
+    char value4[256];   // optional fourth value (e.g. Hamlib speed for PTT config)
+    char value5[256];   // optional fifth value (e.g. serial PTT line)
+    char value6[256];   // optional sixth value (e.g. serial PTT inversion)
+    char value7[256];   // optional seventh value (e.g. CM108 GPIO pin)
 } ws_command_t;
 
 // Callback invoked on the websocket thread when the UI sends a command.

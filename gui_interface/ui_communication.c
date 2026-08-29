@@ -102,6 +102,29 @@ static bool            g_status_valid = false;
  * ui_comm_shutdown(). */
 static ui_ctx_t       *g_ui_ctx = NULL;
 
+static int ui_apply_ptt_config(ui_ctx_t *ctx, const ptt_config_t *config)
+{
+    int rc = radio_io_restart(config);
+    if (rc != 0)
+    {
+        HLOGE(UI_LOG_TAG, "PTT restart failed (method=%s device=%s rc=%d)",
+              cfg_ptt_method_name(config->method), config->device, rc);
+        return rc;
+    }
+
+    pthread_mutex_lock(&ctx->cfg_mutex);
+    ctx->cfg.ptt = *config;
+    if (ctx->cfg_path[0] && cfg_write(&ctx->cfg, ctx->cfg_path))
+        HLOGI(UI_LOG_TAG, "Config saved to %s", ctx->cfg_path);
+    pthread_mutex_unlock(&ctx->cfg_mutex);
+
+    ctx->radio_list_pending = 1;
+    HLOGI(UI_LOG_TAG, "PTT restarted (method=%s device=%s)",
+          cfg_ptt_method_name(config->method),
+          config->device[0] ? config->device : "none");
+    return 0;
+}
+
 // ---------------- WS COMMAND CALLBACK ----------------
 // Called by the websocket server thread when a command JSON arrives from UI.
 static int ws_command_handler(const ws_command_t *cmd, void *user_data)
@@ -117,8 +140,9 @@ int ui_comm_handle_command(ui_ctx_t *ctx, const ws_command_t *cmd)
     if (!ctx || !cmd)
         return -1;
 
-    HLOGI(UI_LOG_TAG, "WS CMD from UI: command=\"%s\" value=\"%s\" value2=\"%s\"",
-          cmd->command, cmd->value, cmd->value2);
+    HLOGI(UI_LOG_TAG, "WS CMD from UI: command=\"%s\" value=\"%s\" value2=\"%s\" value3=\"%s\" value4=\"%s\" value5=\"%s\" value6=\"%s\" value7=\"%s\"",
+          cmd->command, cmd->value, cmd->value2, cmd->value3, cmd->value4,
+          cmd->value5, cmd->value6, cmd->value7);
 
     if (strcmp(cmd->command, "set_audio_config") == 0) {
         // value = capture_dev, value2 = playback_dev, value3 = input_channel
@@ -166,40 +190,78 @@ int ui_comm_handle_command(ui_ctx_t *ctx, const ws_command_t *cmd)
             HLOGI(UI_LOG_TAG, "Config saved to %s", ctx->cfg_path);
         pthread_mutex_unlock(&ctx->cfg_mutex);
 
+    } else if (strcmp(cmd->command, "set_ptt_config") == 0) {
+        ptt_config_t config;
+        radio_io_get_config(&config);
+
+        if (!cfg_ptt_config_set_method(&config, cmd->value)) {
+            HLOGE(UI_LOG_TAG, "Invalid PTT method from UI: %s", cmd->value);
+            return -1;
+        }
+
+        snprintf(config.device, sizeof(config.device), "%s", cmd->value2);
+        if (cmd->value3[0])
+            config.hamlib_model = atoi(cmd->value3);
+        if (cmd->value4[0])
+            config.hamlib_serial_speed = atoi(cmd->value4);
+        if (config.hamlib_serial_speed < 0)
+            config.hamlib_serial_speed = 0;
+
+        /* Older clients omit the advanced fields; retain their current
+         * values in that case so applying an unrelated PTT change is safe. */
+        if (cmd->value5[0] &&
+            !cfg_ptt_line_parse(cmd->value5, &config.serial_line)) {
+            HLOGE(UI_LOG_TAG, "Invalid serial PTT line from UI: %s", cmd->value5);
+            return -1;
+        }
+        if (cmd->value6[0] &&
+            !cfg_ptt_invert_parse(cmd->value6, &config.serial_invert_rts,
+                                  &config.serial_invert_dtr)) {
+            HLOGE(UI_LOG_TAG, "Invalid serial PTT inversion from UI: %s", cmd->value6);
+            return -1;
+        }
+        if (cmd->value7[0]) {
+            char *end = NULL;
+            long gpio = strtol(cmd->value7, &end, 10);
+            if (!end || *end != '\0' || gpio < 1 || gpio > 4) {
+                HLOGE(UI_LOG_TAG, "Invalid CM108 GPIO from UI: %s", cmd->value7);
+                return -1;
+            }
+            config.cm108_gpio = (int)gpio;
+        }
+
+        if (config.method == PTT_METHOD_HAMLIB && config.hamlib_model <= 0) {
+            HLOGE(UI_LOG_TAG, "Hamlib PTT requires a positive model ID");
+            return -1;
+        }
+        if (config.method == PTT_METHOD_SERIAL && !config.device[0]) {
+            HLOGE(UI_LOG_TAG, "Serial RTS PTT requires a device path");
+            return -1;
+        }
+        return ui_apply_ptt_config(ctx, &config);
+
     } else if (strcmp(cmd->command, "set_radio_config") == 0) {
+        /* Legacy UI command: the old model selector also selected the backend.
+         * Keep accepting it so older remote web/Qt clients remain compatible. */
         int new_radio_type = atoi(cmd->value);
         const char *dev_path = cmd->value2;
         int new_serial_speed = cmd->value3[0] ? atoi(cmd->value3) : radio_io_get_serial_speed();
         if (new_serial_speed < 0) new_serial_speed = 0;
-        HLOGI(UI_LOG_TAG, "Radio set_radio_config command: model_id=%d device_path=\"%s\" baud_rate=%d",
-              new_radio_type, dev_path, new_serial_speed);
-        if (new_radio_type == RADIO_TYPE_NONE) {
-            radio_io_restart(RADIO_TYPE_NONE, NULL, radio_io_get_hamlib_log_level(), new_serial_speed);
-            HLOGI(UI_LOG_TAG, "Radio type set to NONE - radio subsystem shut down");
-            ctx->radio_list_pending = 1;
-        } else {
-            int rc = radio_io_restart(new_radio_type, dev_path, radio_io_get_hamlib_log_level(), new_serial_speed);
-            if (rc == 0) {
-                HLOGI(UI_LOG_TAG, "Radioio subsystem restarted (model=%d, path=%s, baud=%d)",
-                      new_radio_type, dev_path, new_serial_speed);
-                ctx->radio_list_pending = 1;
-            } else {
-                HLOGE(UI_LOG_TAG, "Radioio subsystem restart FAILED (model=%d, path=%s, baud=%d, rc=%d)",
-                      new_radio_type, dev_path, new_serial_speed, rc);
-                return rc;
-            }
-        }
 
-        // Persist radio config to INI
-        pthread_mutex_lock(&ctx->cfg_mutex);
-        ctx->cfg.radio_type = new_radio_type;
-        strncpy(ctx->cfg.radio_device, dev_path ? dev_path : "",
-                sizeof(ctx->cfg.radio_device) - 1);
-        ctx->cfg.radio_device[sizeof(ctx->cfg.radio_device) - 1] = '\0';
-        ctx->cfg.radio_serial_speed = new_serial_speed;
-        if (ctx->cfg_path[0] && cfg_write(&ctx->cfg, ctx->cfg_path))
-            HLOGI(UI_LOG_TAG, "Config saved to %s", ctx->cfg_path);
-        pthread_mutex_unlock(&ctx->cfg_mutex);
+        ptt_config_t config;
+        radio_io_get_config(&config);
+        config.hamlib_serial_speed = new_serial_speed;
+        snprintf(config.device, sizeof(config.device), "%s",
+                 dev_path ? dev_path : "");
+        if (new_radio_type == RADIO_TYPE_NONE)
+            config.method = PTT_METHOD_NONE;
+        else if (new_radio_type == RADIO_TYPE_SHM)
+            config.method = PTT_METHOD_HERMES_SHM;
+        else {
+            config.method = PTT_METHOD_HAMLIB;
+            config.hamlib_model = new_radio_type;
+        }
+        return ui_apply_ptt_config(ctx, &config);
 
     } else if (strcmp(cmd->command, "set_waterfall") == 0) {
         bool enable = (strcmp(cmd->value, "off") != 0);
@@ -337,27 +399,44 @@ int ui_comm_get_audio_devices(ui_device_kind_t kind, ui_device_t *out, int max,
 }
 
 int ui_comm_get_radio_list(ui_device_t *out, int max, char *selected, size_t sel_len,
-                           char *device_path, size_t dev_len, int *serial_speed)
+                           char *device_path, size_t dev_len, int *serial_speed,
+                           char *ptt_method, size_t method_len,
+                           char *ptt_line, size_t line_len,
+                           char *ptt_invert, size_t invert_len,
+                           int *cm108_gpio)
 {
     ui_ctx_t *ctx = g_ui_ctx;
     if (!ctx || !out || max <= 0)
         return 0;
 
+    ptt_config_t config;
+    radio_io_get_config(&config);
+
     if (selected && sel_len)
     {
-        int cur_type = radio_io_get_radio_type();
-        if (cur_type > 0)
-            snprintf(selected, sel_len, "%d", cur_type);
+        if (config.hamlib_model > 0)
+            snprintf(selected, sel_len, "%d", config.hamlib_model);
         else
             selected[0] = '\0';
     }
     if (device_path && dev_len)
     {
-        const char *cur_dev = radio_io_get_device_path();
-        snprintf(device_path, dev_len, "%s", cur_dev ? cur_dev : "");
+        snprintf(device_path, dev_len, "%s", config.device);
     }
     if (serial_speed)
-        *serial_speed = radio_io_get_serial_speed();
+        *serial_speed = config.hamlib_serial_speed;
+    if (ptt_method && method_len)
+        snprintf(ptt_method, method_len, "%s",
+                 cfg_ptt_method_name(config.method));
+    if (ptt_line && line_len)
+        snprintf(ptt_line, line_len, "%s",
+                 cfg_ptt_line_name(config.serial_line));
+    if (ptt_invert && invert_len)
+        snprintf(ptt_invert, invert_len, "%s",
+                 cfg_ptt_invert_name(config.serial_invert_rts,
+                                     config.serial_invert_dtr));
+    if (cm108_gpio)
+        *cm108_gpio = config.cm108_gpio;
 
     /* "None" is always first: switching the radio off is a choice, not the
      * absence of one. */
@@ -596,7 +675,7 @@ void *ui_publisher_thread(void *arg)
             ws_broadcast_json(&ctx->ws, ch_buf);
         }
 
-        // --- Send radio list to UI (once at startup, and after set_radio_config) ---
+        // --- Send PTT/Hamlib choices at startup and after config changes ---
         if (ctx->radio_list_pending)
         {
             ctx->radio_list_pending = 0;
@@ -614,17 +693,26 @@ void *ui_publisher_thread(void *arg)
             }
             else
             {
-                char sel[16] = "", dev_path[512] = "";
-                int  serial_speed = 0;
+                char sel[16] = "", dev_path[512] = "", ptt_method[32] = "none";
+                char ptt_line[16] = "rts", ptt_invert[16] = "none";
+                int  serial_speed = 0, cm108_gpio = PTT_CM108_GPIO_DEFAULT;
                 int  count = ui_comm_get_radio_list(radios, max_radios, sel, sizeof(sel),
-                                                    dev_path, sizeof(dev_path), &serial_speed);
+                                                    dev_path, sizeof(dev_path), &serial_speed,
+                                                    ptt_method, sizeof(ptt_method),
+                                                    ptt_line, sizeof(ptt_line),
+                                                    ptt_invert, sizeof(ptt_invert),
+                                                    &cm108_gpio);
                 if (count > 0)
                 {
-                    /* radio_list carries two fields no other list has, so it
-                     * gets the shared body plus its own preamble. */
+                    /* radio_list carries PTT-specific state no other list has,
+                     * so it gets the shared body plus its own preamble. */
                     int pos = snprintf(buf, 65536,
                         "{\"type\":\"radio_list\",\"selected\":\"%s\",\"device_path\":\"%s\","
-                        "\"serial_speed\":%d,\"list\":[", sel, dev_path, serial_speed);
+                        "\"serial_speed\":%d,\"ptt_method\":\"%s\","
+                        "\"ptt_line\":\"%s\",\"ptt_invert\":\"%s\","
+                        "\"cm108_gpio\":%d,\"list\":[",
+                        sel, dev_path, serial_speed, ptt_method, ptt_line,
+                        ptt_invert, cm108_gpio);
                     for (int i2 = 0; i2 < count && pos < 65536 - 160; i2++)
                         pos += snprintf(buf + pos, 65536 - pos, "%s{\"name\":\"%s\",\"id\":\"%s\"}",
                                         i2 ? "," : "", radios[i2].name, radios[i2].id);
@@ -705,7 +793,9 @@ void *spectrum_publisher_thread(void *arg)
 /* Command entry point for the embedded UI: builds the same ws_command_t the
  * websocket path builds, then runs the shared handler. */
 int ui_comm_command(const char *command, const char *value,
-                    const char *value2, const char *value3)
+                    const char *value2, const char *value3,
+                    const char *value4, const char *value5,
+                    const char *value6, const char *value7)
 {
     ui_ctx_t *ctx = g_ui_ctx;
     if (!ctx || !command)
@@ -717,6 +807,10 @@ int ui_comm_command(const char *command, const char *value,
     if (value)  snprintf(cmd.value,  sizeof(cmd.value),  "%s", value);
     if (value2) snprintf(cmd.value2, sizeof(cmd.value2), "%s", value2);
     if (value3) snprintf(cmd.value3, sizeof(cmd.value3), "%s", value3);
+    if (value4) snprintf(cmd.value4, sizeof(cmd.value4), "%s", value4);
+    if (value5) snprintf(cmd.value5, sizeof(cmd.value5), "%s", value5);
+    if (value6) snprintf(cmd.value6, sizeof(cmd.value6), "%s", value6);
+    if (value7) snprintf(cmd.value7, sizeof(cmd.value7), "%s", value7);
 
     return ui_comm_handle_command(ctx, &cmd);
 }

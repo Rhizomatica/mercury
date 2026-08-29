@@ -56,7 +56,9 @@ int mercury_ui_get_spectrum(float *out, int max_bins, int *sample_rate_hz,
 /* Run a UI command through the same handler the websocket path uses.
  * Unused values may be NULL.  Returns 0 on success. */
 int mercury_ui_command(const char *command, const char *value,
-                       const char *value2, const char *value3);
+                       const char *value2, const char *value3,
+                       const char *value4, const char *value5,
+                       const char *value6, const char *value7);
 
 /* Pre-load device enumerations from the main thread during engine init.
  * hamlib backend loading uses a global registry that must be initialised
@@ -73,7 +75,11 @@ int mercury_ui_get_audio_devices(int kind, ui_device_t *out, int max,
 int mercury_ui_get_radio_list(ui_device_t *out, int max,
                               char *selected, int selected_len,
                               char *device_path, int device_path_len,
-                              int *serial_speed);
+                              int *serial_speed,
+                              char *ptt_method, int method_len,
+                              char *ptt_line, int line_len,
+                              char *ptt_invert, int invert_len,
+                              int *cm108_gpio);
 int mercury_ui_get_input_channel(void);
 
 /* Enable / disable waterfall/spectrum at runtime.  Saves to mercury.ini. */

@@ -37,8 +37,15 @@ void cfg_set_defaults(mercury_config *cfg)
     cfg->ui_port            = UI_DEFAULT_PORT;       /* 10000  */
     cfg->tls_enabled        = false;                 /* ws     */
     cfg->waterfall_enabled  = true;
-    cfg->radio_type         = RADIO_TYPE_NONE;       /* -1     */
-    cfg->radio_device[0]    = '\0';
+    cfg->ptt.method         = PTT_METHOD_NONE;
+    cfg->ptt.device[0]      = '\0';
+    cfg->ptt.serial_line       = PTT_LINE_RTS;
+    cfg->ptt.serial_invert_rts = false;
+    cfg->ptt.serial_invert_dtr = false;
+    cfg->ptt.cm108_gpio        = PTT_CM108_GPIO_DEFAULT;
+    cfg->ptt.hamlib_model   = RADIO_TYPE_NONE;
+    cfg->ptt.hamlib_log_level = 0;
+    cfg->ptt.hamlib_serial_speed = 0;
     cfg->input_device[0]    = '\0';
     cfg->output_device[0]   = '\0';
     cfg->capture_channel    = LEFT;
@@ -47,8 +54,6 @@ void cfg_set_defaults(mercury_config *cfg)
     cfg->broadcast_tcp_port = DEFAULT_BROADCAST_PORT; /* 8100  */
     cfg->verbose            = false;
     cfg->freedv_verbosity   = 0;
-    cfg->hamlib_log_level   = 0;
-    cfg->radio_serial_speed = 0;  /* 0 = use hamlib default */
     cfg->no_progress_timeout_s = ARQ_NO_PROGRESS_TIMEOUT_S_DEFAULT;
     cfg->disconnect_drain_timeout_s = ARQ_DISCONNECT_DRAIN_TIMEOUT_S_DEFAULT;
     cfg->tnc_keepalive_s = 60;
@@ -104,6 +109,88 @@ static int parse_capture_channel(const char *s)
     return LEFT;
 }
 
+const char *cfg_ptt_method_name(ptt_method_t method)
+{
+    switch (method) {
+    case PTT_METHOD_NONE:       return "none";
+    case PTT_METHOD_HAMLIB:     return "hamlib";
+    case PTT_METHOD_SERIAL:     return "serial";
+    case PTT_METHOD_CM108:      return "cm108";
+    case PTT_METHOD_HERMES_SHM: return "hermes_shm";
+    default:                    return "unknown";
+    }
+}
+
+bool cfg_ptt_method_parse(const char *name, ptt_method_t *method)
+{
+    if (!name || !method) return false;
+    if (!strcmp(name, "none"))            *method = PTT_METHOD_NONE;
+    else if (!strcmp(name, "hamlib"))     *method = PTT_METHOD_HAMLIB;
+    else if (!strcmp(name, "serial"))     *method = PTT_METHOD_SERIAL;
+    else if (!strcmp(name, "cm108"))      *method = PTT_METHOD_CM108;
+    else if (!strcmp(name, "hermes_shm")) *method = PTT_METHOD_HERMES_SHM;
+    /* "serial_rts" was the name before DTR and inversion existed.  Keep it
+     * working -- it is already in people's mercury.ini -- as plain RTS. */
+    else if (!strcmp(name, "serial_rts")) *method = PTT_METHOD_SERIAL;
+    else return false;
+    return true;
+}
+
+bool cfg_ptt_config_set_method(ptt_config_t *config, const char *name)
+{
+    if (!config || !cfg_ptt_method_parse(name, &config->method))
+        return false;
+
+    if (!strcmp(name, "serial_rts"))
+    {
+        config->serial_line = PTT_LINE_RTS;
+        config->serial_invert_rts = false;
+        config->serial_invert_dtr = false;
+    }
+    return true;
+}
+
+const char *cfg_ptt_line_name(ptt_line_t line)
+{
+    switch (line) {
+    case PTT_LINE_DTR:  return "dtr";
+    case PTT_LINE_BOTH: return "both";
+    case PTT_LINE_RTS:
+    default:            return "rts";
+    }
+}
+
+bool cfg_ptt_line_parse(const char *name, ptt_line_t *line)
+{
+    if (!name || !line) return false;
+    if (!strcmp(name, "rts"))       *line = PTT_LINE_RTS;
+    else if (!strcmp(name, "dtr"))  *line = PTT_LINE_DTR;
+    else if (!strcmp(name, "both")) *line = PTT_LINE_BOTH;
+    else return false;
+    return true;
+}
+
+/* invert = none | rts | dtr | both -- one key rather than two booleans,
+ * because that is how the operator thinks about a cable. */
+const char *cfg_ptt_invert_name(bool invert_rts, bool invert_dtr)
+{
+    if (invert_rts && invert_dtr) return "both";
+    if (invert_rts)               return "rts";
+    if (invert_dtr)               return "dtr";
+    return "none";
+}
+
+bool cfg_ptt_invert_parse(const char *name, bool *invert_rts, bool *invert_dtr)
+{
+    if (!name || !invert_rts || !invert_dtr) return false;
+    if (!strcmp(name, "none"))      { *invert_rts = false; *invert_dtr = false; }
+    else if (!strcmp(name, "rts"))  { *invert_rts = true;  *invert_dtr = false; }
+    else if (!strcmp(name, "dtr"))  { *invert_rts = false; *invert_dtr = true;  }
+    else if (!strcmp(name, "both")) { *invert_rts = true;  *invert_dtr = true;  }
+    else return false;
+    return true;
+}
+
 bool cfg_read(mercury_config *cfg, const char *ini_path)
 {
     dictionary *ini = iniparser_load(ini_path);
@@ -128,14 +215,94 @@ bool cfg_read(mercury_config *cfg, const char *ini_path)
     b = iniparser_getboolean(ini, CFG_KEY_WATERFALL_ENABLED, cfg->waterfall_enabled ? 1 : 0);
     cfg->waterfall_enabled = (bool) b;
 
-    i = iniparser_getint(ini, CFG_KEY_RADIO_MODEL, cfg->radio_type);
-    cfg->radio_type = i;
+    /* Read the legacy radio-oriented keys first, then let an explicit [ptt]
+     * section override them.  This supports old files as well as a simple
+     * migration where only ptt.method was added by hand. */
+    s = iniparser_getstring(ini, CFG_KEY_RADIO_MODEL, NULL);
+    if (s) {
+        i = iniparser_getint(ini, CFG_KEY_RADIO_MODEL, cfg->ptt.hamlib_model);
+        if (i == RADIO_TYPE_SHM)
+        {
+            cfg->ptt.method = PTT_METHOD_HERMES_SHM;
+            cfg->ptt.hamlib_model = RADIO_TYPE_NONE;
+        }
+        else if (i > 0)
+        {
+            cfg->ptt.method = PTT_METHOD_HAMLIB;
+            cfg->ptt.hamlib_model = i;
+        }
+        else
+        {
+            cfg->ptt.method = PTT_METHOD_NONE;
+            cfg->ptt.hamlib_model = RADIO_TYPE_NONE;
+        }
+    }
 
     s = iniparser_getstring(ini, CFG_KEY_RADIO_DEVICE, NULL);
     if (s) {
-        strncpy(cfg->radio_device, s, sizeof(cfg->radio_device) - 1);
-        cfg->radio_device[sizeof(cfg->radio_device) - 1] = '\0';
+        strncpy(cfg->ptt.device, s, sizeof(cfg->ptt.device) - 1);
+        cfg->ptt.device[sizeof(cfg->ptt.device) - 1] = '\0';
     }
+
+    i = iniparser_getint(ini, CFG_KEY_HAMLIB_LOG_LEVEL,
+                         cfg->ptt.hamlib_log_level);
+    if (i >= 0 && i <= 6)
+        cfg->ptt.hamlib_log_level = i;
+
+    i = iniparser_getint(ini, CFG_KEY_RADIO_SERIAL_SPEED,
+                         cfg->ptt.hamlib_serial_speed);
+    if (i >= 0)
+        cfg->ptt.hamlib_serial_speed = i;
+
+    s = iniparser_getstring(ini, CFG_KEY_PTT_DEVICE, NULL);
+    if (s) {
+        strncpy(cfg->ptt.device, s, sizeof(cfg->ptt.device) - 1);
+        cfg->ptt.device[sizeof(cfg->ptt.device) - 1] = '\0';
+    }
+
+    s = iniparser_getstring(ini, CFG_KEY_PTT_LINE, NULL);
+    if (s && !cfg_ptt_line_parse(s, &cfg->ptt.serial_line)) {
+        fprintf(stderr, "Invalid ptt.line '%s' in %s. Use rts, dtr, or both.\n",
+                s, ini_path);
+        iniparser_freedict(ini);
+        return false;
+    }
+
+    s = iniparser_getstring(ini, CFG_KEY_PTT_INVERT, NULL);
+    if (s && !cfg_ptt_invert_parse(s, &cfg->ptt.serial_invert_rts,
+                                       &cfg->ptt.serial_invert_dtr)) {
+        fprintf(stderr, "Invalid ptt.invert '%s' in %s. Use none, rts, dtr, or both.\n",
+                s, ini_path);
+        iniparser_freedict(ini);
+        return false;
+    }
+
+    /* Parse the method after its serial options so the legacy serial_rts
+     * spelling retains its fixed meaning: RTS only, not inverted. */
+    s = iniparser_getstring(ini, CFG_KEY_PTT_METHOD, NULL);
+    if (s && !cfg_ptt_config_set_method(&cfg->ptt, s)) {
+        fprintf(stderr, "cfg_read: invalid PTT method '%s'\n", s);
+        iniparser_freedict(ini);
+        return false;
+    }
+
+    i = iniparser_getint(ini, CFG_KEY_PTT_CM108_GPIO, cfg->ptt.cm108_gpio);
+    if (i >= 1 && i <= 4)
+        cfg->ptt.cm108_gpio = i;
+
+    i = iniparser_getint(ini, CFG_KEY_PTT_HAMLIB_MODEL,
+                         cfg->ptt.hamlib_model);
+    cfg->ptt.hamlib_model = i;
+
+    i = iniparser_getint(ini, CFG_KEY_PTT_HAMLIB_LOG,
+                         cfg->ptt.hamlib_log_level);
+    if (i >= 0 && i <= 6)
+        cfg->ptt.hamlib_log_level = i;
+
+    i = iniparser_getint(ini, CFG_KEY_PTT_HAMLIB_SPEED,
+                         cfg->ptt.hamlib_serial_speed);
+    if (i >= 0)
+        cfg->ptt.hamlib_serial_speed = i;
 
     s = iniparser_getstring(ini, CFG_KEY_INPUT_DEVICE, NULL);
     if (s) {
@@ -169,14 +336,6 @@ bool cfg_read(mercury_config *cfg, const char *ini_path)
     i = iniparser_getint(ini, CFG_KEY_FREEDV_VERBOSITY, cfg->freedv_verbosity);
     if (i >= 0 && i <= 3)
         cfg->freedv_verbosity = i;
-
-    i = iniparser_getint(ini, CFG_KEY_HAMLIB_LOG_LEVEL, cfg->hamlib_log_level);
-    if (i >= 0 && i <= 6)
-        cfg->hamlib_log_level = i;
-
-    i = iniparser_getint(ini, CFG_KEY_RADIO_SERIAL_SPEED, cfg->radio_serial_speed);
-    if (i >= 0)
-        cfg->radio_serial_speed = i;
 
     i = iniparser_getint(ini, CFG_KEY_NO_PROGRESS_TIMEOUT_S, cfg->no_progress_timeout_s);
     if (i > 0)
@@ -313,11 +472,6 @@ bool cfg_write(const mercury_config *cfg, const char *ini_path)
     fprintf(f, "ui_port = %d\n",          cfg->ui_port);
     fprintf(f, "ui_protocol = %s\n",      cfg->tls_enabled ? "wss" : "ws");
     fprintf(f, "waterfall_enabled = %s\n", cfg->waterfall_enabled ? "true" : "false");
-    fprintf(f, "radio_model = %d\n",      cfg->radio_type);
-
-    cfg_escape_str(escaped, sizeof(escaped), cfg->radio_device);
-    fprintf(f, "radio_device = \"%s\"\n",  escaped);
-
     cfg_escape_str(escaped, sizeof(escaped), cfg->input_device);
     fprintf(f, "input_device = \"%s\"\n",  escaped);
 
@@ -330,8 +484,18 @@ bool cfg_write(const mercury_config *cfg, const char *ini_path)
     fprintf(f, "broadcast_tcp_port = %d\n", cfg->broadcast_tcp_port);
     fprintf(f, "verbose = %s\n",           cfg->verbose ? "true" : "false");
     fprintf(f, "freedv_verbosity = %d\n",  cfg->freedv_verbosity);
-    fprintf(f, "hamlib_log_level = %d\n",  cfg->hamlib_log_level);
-    fprintf(f, "radio_serial_speed = %d\n", cfg->radio_serial_speed);
+    fprintf(f, "\n[ptt]\n");
+    fprintf(f, "method = %s\n", cfg_ptt_method_name(cfg->ptt.method));
+    cfg_escape_str(escaped, sizeof(escaped), cfg->ptt.device);
+    fprintf(f, "device = \"%s\"\n", escaped);
+    fprintf(f, "line = %s\n", cfg_ptt_line_name(cfg->ptt.serial_line));
+    fprintf(f, "invert = %s\n",
+            cfg_ptt_invert_name(cfg->ptt.serial_invert_rts,
+                                cfg->ptt.serial_invert_dtr));
+    fprintf(f, "cm108_gpio = %d\n", cfg->ptt.cm108_gpio);
+    fprintf(f, "hamlib_model = %d\n", cfg->ptt.hamlib_model);
+    fprintf(f, "hamlib_serial_speed = %d\n", cfg->ptt.hamlib_serial_speed);
+    fprintf(f, "hamlib_log_level = %d\n", cfg->ptt.hamlib_log_level);
 
     fprintf(f, "\n[arq]\n");
     fprintf(f, "no_progress_timeout_s = %d\n", cfg->no_progress_timeout_s);

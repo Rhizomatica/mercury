@@ -79,7 +79,7 @@ struct ui_ctx {
     char selected_playback_dev[UI_DEV_ID_MAX];  // currently active playback (output) device
     int rx_input_channel;            // LEFT=0, RIGHT=1, STEREO=2
 
-    // Radio list is sent once at startup and again after set_radio_config
+    // Radio list is sent once at startup and again after a PTT config change
     volatile int radio_list_pending;      // 1 = need to (re-)send radio list to UI
 
     // Soundcard lists and input_channel are sent when a new UI client connects
@@ -128,7 +128,9 @@ int  ui_comm_handle_command(ui_ctx_t *ctx, const ws_command_t *cmd);
 /* Same, addressed to the running engine (no ctx to hand around from Go).
  * Returns -1 if no UI context is running. */
 int  ui_comm_command(const char *command, const char *value,
-                     const char *value2, const char *value3);
+                     const char *value2, const char *value3,
+                     const char *value4, const char *value5,
+                     const char *value6, const char *value7);
 
 /* Enable / disable the waterfall/spectrum FFT pipeline at runtime.  Saves the
  * choice to mercury.ini so it survives restarts. */
@@ -151,10 +153,14 @@ void ui_devices_disambiguate(ui_device_t *devs, int count);
 int  ui_comm_get_audio_devices(ui_device_kind_t kind, ui_device_t *out, int max,
                                char *selected, size_t sel_len);
 
-/* Enumerate radios ("None" first), plus the current selection, device path and
- * serial speed.  Returns how many entries were written. */
+/* Enumerate Hamlib models ("None" first), plus the retained model selection,
+ * PTT device, Hamlib serial speed and active PTT method. */
 int  ui_comm_get_radio_list(ui_device_t *out, int max, char *selected, size_t sel_len,
-                            char *device_path, size_t dev_len, int *serial_speed);
+                            char *device_path, size_t dev_len, int *serial_speed,
+                            char *ptt_method, size_t method_len,
+                            char *ptt_line, size_t line_len,
+                            char *ptt_invert, size_t invert_len,
+                            int *cm108_gpio);
 
 /* Current RX input channel: 0 = left, 1 = right, 2 = stereo. */
 int  ui_comm_get_input_channel(void);
