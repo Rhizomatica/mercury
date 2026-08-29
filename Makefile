@@ -306,6 +306,7 @@ fyne-ui: libmercury_core.a
 # mercury_embedded tag, so it links via mercury_link_darwin.go) and wraps it
 # in Mercury.app (Info.plist + .icns from the icon).  Run on macOS.
 # Requires the tool:  go install fyne.io/tools/cmd/fyne@latest
+PLIST_BUDDY    ?= /usr/libexec/PlistBuddy
 FYNE           ?= fyne
 MACOS_APP_NAME ?= Mercury
 MACOS_APP_ID   ?= org.rhizomatica.mercury
@@ -318,6 +319,7 @@ fyne-ui-macos: libmercury_core.a
 	@echo "Packaging $(MACOS_APP_NAME).app (macOS)..."
 	cd $(FYNE_UI_DIR) && $(FYNE) package -os darwin -tags mercury_embedded \
 		-name $(MACOS_APP_NAME) -appID $(MACOS_APP_ID) -icon mercury-ui.png
+	$(PLIST_BUDDY) -c "Add :NSMicrophoneUsageDescription string 'Mercury needs access to the radio audio to listen for data signals'" $(FYNE_UI_DIR)/$(MACOS_APP_NAME).app/Contents/Info.plist
 	@echo "  -> $(FYNE_UI_DIR)/$(MACOS_APP_NAME).app"
 
 # Wrap the .app in a compressed, drag-to-install .dmg (Applications symlink).
@@ -433,6 +435,7 @@ fyne-ui-macos-universal:
 	cd $(FYNE_UI_DIR) && $(FYNE) package -os darwin -tags mercury_embedded \
 		-name $(MACOS_APP_NAME) -appID $(MACOS_APP_ID) -icon mercury-ui.png \
 		-executable $(abspath mercury-ui)
+	$(PLIST_BUDDY) -c "Add :NSMicrophoneUsageDescription string 'Mercury needs access to the radio audio to listen for data signals'" $(FYNE_UI_DIR)/$(MACOS_APP_NAME).app/Contents/Info.plist
 	@echo "  -> $(FYNE_UI_DIR)/$(MACOS_APP_NAME).app  (universal)"
 	@lipo -archs $(FYNE_UI_DIR)/$(MACOS_APP_NAME).app/Contents/MacOS/* || true
 
