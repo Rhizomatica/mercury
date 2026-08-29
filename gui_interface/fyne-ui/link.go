@@ -35,13 +35,17 @@ type Link interface {
 	Close()
 }
 
-// Command is a UI action on its way to the engine — the same four fields the
+// Command is a UI action on its way to the engine — the same fields the
 // websocket protocol carries, so neither transport has to translate.
 type Command struct {
 	Name   string
 	Value  string
 	Value2 string
 	Value3 string
+	Value4 string
+	Value5 string
+	Value6 string
+	Value7 string
 }
 
 // DeviceKind identifies which selector a device list belongs to.
@@ -81,6 +85,10 @@ type RadioListEvent struct {
 	Selected    string
 	DevicePath  string
 	SerialSpeed string
+	PTTMethod   string
+	PTTLine     string
+	PTTInvert   string
+	CM108GPIO   string
 }
 
 // LinkStateEvent reports the transport coming up or going down, with a

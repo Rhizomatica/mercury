@@ -127,9 +127,10 @@ test_arq_conn: datalink_arq/test_arq_conn.c $(UNITY_SRC) \
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
 test_cfg_utils: common/test_cfg_utils.c $(UNITY_SRC) \
-                ../common/cfg_utils.c \
+                ../common/cfg_utils.c ../radio_io/cm108_ptt.c \
+                ../common/hermes_log.c \
                 ../common/iniparser/iniparser.c ../common/iniparser/dictionary.c
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+	$(CC) $(CFLAGS) -I../radio_io -o $@ $^ $(LDFLAGS)
 
 # ARQ→TNC seam test (standalone TU, no threads/bus)
 test_arq_tnc: datalink_arq/test_arq_tnc.c $(UNITY_SRC) ../datalink_arq/arq_tnc.c

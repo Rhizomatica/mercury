@@ -105,6 +105,18 @@ func (l *wsLink) Send(cmd Command) error {
 	if cmd.Value3 != "" {
 		payload["value3"] = cmd.Value3
 	}
+	if cmd.Value4 != "" {
+		payload["value4"] = cmd.Value4
+	}
+	if cmd.Value5 != "" {
+		payload["value5"] = cmd.Value5
+	}
+	if cmd.Value6 != "" {
+		payload["value6"] = cmd.Value6
+	}
+	if cmd.Value7 != "" {
+		payload["value7"] = cmd.Value7
+	}
 	return conn.WriteJSON(payload)
 }
 
@@ -167,16 +179,36 @@ func decodeWSMessage(msgType int, payload []byte) []Event {
 		case "radio_list":
 			items := parseMenuItems(payload)
 			sortRadioItems(items)
+			selected := selectedValue(raw, "selected")
+			method, _ := raw["ptt_method"].(string)
+			if method == "" {
+				if selected != "" && selected != "-1" {
+					method = "hamlib" // Backward-compatible old server inference.
+				} else {
+					method = "none"
+				}
+			}
 			return []Event{RadioListEvent{
 				Items:       items,
-				Selected:    selectedValue(raw, "selected"),
+				Selected:    selected,
 				DevicePath:  fmt.Sprint(raw["device_path"]),
 				SerialSpeed: fmt.Sprint(raw["serial_speed"]),
+				PTTMethod:   method,
+				PTTLine:     stringValue(raw, "ptt_line", "rts"),
+				PTTInvert:   stringValue(raw, "ptt_invert", "none"),
+				CM108GPIO:   stringValue(raw, "cm108_gpio", "3"),
 			}}
 		}
 		return []Event{LogEvent{Text: fmt.Sprintf("[Raw WS Msg]: %s\n", string(payload))}}
 	}
 	return nil
+}
+
+func stringValue(raw map[string]any, key, fallback string) string {
+	if value, ok := raw[key]; ok && value != nil {
+		return fmt.Sprint(value)
+	}
+	return fallback
 }
 
 // sortRadioItems puts "None" first and the rest alphabetically — hamlib's own

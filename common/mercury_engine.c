@@ -98,12 +98,8 @@ int mercury_engine_init(const mercury_config *cfg,
     uint16_t ui_port      = cfg->ui_port ? cfg->ui_port : 10000;
     bool tls_enabled      = cfg->tls_enabled;
     bool waterfall_enabled = cfg->waterfall_enabled;
-    int  radio_type       = cfg->radio_type;
-    char radio_device[1024];
-    snprintf(radio_device, sizeof(radio_device), "%s", cfg->radio_device);
-    int  radio_serial_speed = cfg->radio_serial_speed;
+    ptt_config_t ptt_config = cfg->ptt;
     int  freedv_verbosity   = cfg->freedv_verbosity;
-    int  hamlib_log_level   = cfg->hamlib_log_level;
     int  base_tcp_port      = cfg->arq_tcp_base_port;
     int  broadcast_port     = cfg->broadcast_tcp_port;
     /* An unset or corrupt value here resolves to 0, which makes the control
@@ -208,8 +204,8 @@ int mercury_engine_init(const mercury_config *cfg,
         }
     }
 
-    /* ---- radio I/O ---- */
-    if (radio_io_init(radio_type, radio_device, hamlib_log_level, radio_serial_speed) != 0)
+    /* ---- PTT I/O ---- */
+    if (radio_io_init(&ptt_config) != 0)
     {
         fprintf(stderr, "mercury_engine: radio init failed\n");
         if (g_audio_system != AUDIO_SUBSYSTEM_SHM)
@@ -260,8 +256,7 @@ int mercury_engine_init(const mercury_config *cfg,
     g_mcfg.ui_port           = ui_port;
     g_mcfg.tls_enabled       = tls_enabled;
     g_mcfg.waterfall_enabled = waterfall_enabled;
-    g_mcfg.radio_type        = radio_type;
-    snprintf(g_mcfg.radio_device,  sizeof(g_mcfg.radio_device),  "%s", radio_device);
+    g_mcfg.ptt               = ptt_config;
     snprintf(g_mcfg.input_device,  sizeof(g_mcfg.input_device),  "%s", g_input_dev);
     snprintf(g_mcfg.output_device, sizeof(g_mcfg.output_device), "%s", g_output_dev);
     g_mcfg.capture_channel   = rx_input_channel;
@@ -270,8 +265,6 @@ int mercury_engine_init(const mercury_config *cfg,
     g_mcfg.broadcast_tcp_port = broadcast_port;
     g_mcfg.verbose           = verbose;
     g_mcfg.freedv_verbosity  = freedv_verbosity;
-    g_mcfg.hamlib_log_level  = hamlib_log_level;
-    g_mcfg.radio_serial_speed = radio_serial_speed;
 
     /* ---- UI / WebSocket ---- */
     if (ui_enabled)

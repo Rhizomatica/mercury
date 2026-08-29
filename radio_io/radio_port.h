@@ -104,11 +104,11 @@ static inline const char *radio_port_advice(radio_port_verdict_t v)
     {
     case RADIO_PORT_WANTS_NETWORK:
         return "this rig is reached over the NETWORK, not a serial port: set "
-               "radio_device to the radio's address (e.g. 192.168.1.50, or "
-               "192.168.1.50:4992 to override the port). radio_serial_speed "
-               "does not apply.";
+               "ptt.device to the radio's address (e.g. 192.168.1.50, or "
+               "192.168.1.50:4992 to override the port). "
+               "ptt.hamlib_serial_speed does not apply.";
     case RADIO_PORT_WANTS_SERIAL:
-        return "this rig is reached over a SERIAL port: set radio_device to a "
+        return "this rig is reached over a SERIAL port: set ptt.device to a "
                "port name (e.g. COM4 on Windows, /dev/ttyUSB0 on Linux).";
     case RADIO_PORT_OK:
     default:

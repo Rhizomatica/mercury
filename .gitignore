@@ -81,3 +81,6 @@ utils/rxcost_bench
 
 # Generated at build time from gui_interface/websocket/web/ (issue #204).
 gui_interface/websocket/web_packed.c
+
+# Vendored hidapi builds with the tree; keep its object out of git.
+radio_io/hidapi-w64/*.o
