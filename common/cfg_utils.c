@@ -70,6 +70,7 @@ void cfg_set_defaults(mercury_config *cfg)
     cfg->keepalive_miss_limit        = ARQ_KEEPALIVE_MISS_LIMIT_DEFAULT;
     cfg->peer_payload_hold_s         = ARQ_PEER_PAYLOAD_HOLD_S_DEFAULT;
     cfg->startup_max_s               = ARQ_STARTUP_MAX_S_DEFAULT;
+    cfg->retry_stagger_ms            = ARQ_RETRY_STAGGER_MS_DEFAULT;
     cfg->busy_detect                 = false;
     cfg->busy_threshold_db           = 10;
     cfg->busy_hysteresis_db          = 3;
@@ -382,6 +383,9 @@ bool cfg_read(mercury_config *cfg, const char *ini_path)
     i = iniparser_getint(ini, CFG_KEY_ARQ_STARTUP_MAX_S, cfg->startup_max_s);
     if (i >= 2 && i <= 60)   cfg->startup_max_s = i;
 
+    i = iniparser_getint(ini, CFG_KEY_ARQ_RETRY_STAGGER_MS, cfg->retry_stagger_ms);
+    if (i >= 0 && i <= ARQ_RETRY_STAGGER_MS_MAX) cfg->retry_stagger_ms = i;
+
     cfg->busy_detect = (bool) iniparser_getboolean(ini, CFG_KEY_BUSY_DETECT,
                                                    cfg->busy_detect ? 1 : 0);
 
@@ -506,6 +510,7 @@ bool cfg_write(const mercury_config *cfg, const char *ini_path)
     fprintf(f, "keepalive_miss_limit = %d\n", cfg->keepalive_miss_limit);
     fprintf(f, "peer_payload_hold_s = %d\n", cfg->peer_payload_hold_s);
     fprintf(f, "startup_max_s = %d\n", cfg->startup_max_s);
+    fprintf(f, "retry_stagger_ms = %d\n", cfg->retry_stagger_ms);
 
     fprintf(f, "\n[channel]\n");
     fprintf(f, "busy_detect = %s\n", cfg->busy_detect ? "true" : "false");

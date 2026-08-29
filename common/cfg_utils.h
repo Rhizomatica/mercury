@@ -67,6 +67,7 @@
 #define CFG_KEY_ARQ_KEEPALIVE_MISS_LIMIT      "arq:keepalive_miss_limit"
 #define CFG_KEY_ARQ_PEER_PAYLOAD_HOLD_S       "arq:peer_payload_hold_s"
 #define CFG_KEY_ARQ_STARTUP_MAX_S             "arq:startup_max_s"
+#define CFG_KEY_ARQ_RETRY_STAGGER_MS          "arq:retry_stagger_ms"
 #define CFG_KEY_BUSY_DETECT                   "channel:busy_detect"
 #define CFG_KEY_BUSY_THRESHOLD_DB             "channel:busy_threshold_db"
 #define CFG_KEY_BUSY_HYSTERESIS_DB            "channel:busy_hysteresis_db"
@@ -114,6 +115,9 @@ typedef struct {
                                          * activity. Default 15, clamped 1..120.*/
     int      startup_max_s;             /* ARQ: control-mode-only startup
                                          * window. Default 10, clamped 2..60.   */
+    int      retry_stagger_ms;          /* ARQ: deterministic per-node retry
+                                         * offset. 0 disables. Default 2000,
+                                         * clamped 0..5000.                  */
     float    tx_gain_db;            /* Linear-equivalent gain on the modulator
                                     * TX samples, in dB. 0.0 = no change.
                                     * Range -20.0 .. +20.0 (clamped). */

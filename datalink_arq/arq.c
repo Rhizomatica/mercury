@@ -1253,6 +1253,15 @@ void arq_set_startup_max_s(int s)
     HLOGI(LOG_COMP, "startup_max_s = %d", atomic_load(&arq_startup_max_s));
 }
 
+void arq_set_retry_stagger_ms(int ms)
+{
+    /* 0 is a valid (and useful) value: it disables the retry stagger entirely. */
+    if (ms < 0) ms = 0;
+    if (ms > ARQ_RETRY_STAGGER_MS_MAX) ms = ARQ_RETRY_STAGGER_MS_MAX;
+    atomic_store(&arq_retry_stagger_ms, ms);
+    HLOGI(LOG_COMP, "retry_stagger_ms = %d", atomic_load(&arq_retry_stagger_ms));
+}
+
 void reset_arq_info(arq_info *conn)
 {
     if (!conn) return;

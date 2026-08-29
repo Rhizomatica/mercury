@@ -13,11 +13,14 @@
 #include <stdatomic.h>
 #include <math.h>
 
+#include "../common/virtual_clock.h"
+
 /* Runtime-configurable retry counts, initialised from compile-time defaults */
 _Atomic int arq_call_retry_slots       = ARQ_CALL_RETRY_SLOTS_DEFAULT;
 _Atomic int arq_accept_retry_slots     = ARQ_ACCEPT_RETRY_SLOTS_DEFAULT;
 _Atomic int arq_data_retry_slots       = ARQ_DATA_RETRY_SLOTS_DEFAULT;
 _Atomic int arq_disconnect_retry_slots = ARQ_DISCONNECT_RETRY_SLOTS_DEFAULT;
+_Atomic int arq_retry_stagger_ms       = ARQ_RETRY_STAGGER_MS_DEFAULT;
 _Atomic int arq_no_progress_timeout_s  = ARQ_NO_PROGRESS_TIMEOUT_S_DEFAULT;
 _Atomic int arq_disconnect_drain_timeout_s = ARQ_DISCONNECT_DRAIN_TIMEOUT_S_DEFAULT;
 
@@ -139,6 +142,38 @@ float arq_protocol_call_interval_s(void)
 
     const arq_mode_timing_t *tm = arq_protocol_mode_timing(ARQ_CONTROL_MODE);
     return tm ? tm->retry_interval_s : 8.0f;
+}
+
+int arq_protocol_retry_rank(const char *local_call, const char *remote_call)
+{
+    if (!local_call || !remote_call || !local_call[0] || !remote_call[0])
+        return -1;  /* missing identity — cannot decide, random fallback */
+    int c = strcmp(local_call, remote_call);
+    if (c == 0)
+        return -1;  /* identical callsigns — misconfigured pair, random fallback */
+    return (c > 0) ? 1 : 0;
+}
+
+uint64_t arq_protocol_retry_deadline_ms(float seconds, int rank)
+{
+    uint64_t now_ms = time_now_ms();
+    uint64_t base_ms = (uint64_t)(seconds * 1000.0f + 0.5f);
+    int stagger_ms = atomic_load(&arq_retry_stagger_ms);
+    if (stagger_ms <= 0 || rank == 0)
+        return now_ms + base_ms;
+
+    if (rank == 1)
+        return now_ms + base_ms + (uint64_t)stagger_ms;
+
+    /* rank < 0: degenerate pair — random fallback over [0, stagger_ms). */
+    uint64_t x = now_ms ^ 0x9E3779B97F4A7C15ULL;
+    x ^= x >> 30;
+    x *= 0xBF58476D1CE4E5B9ULL;
+    x ^= x >> 27;
+    x *= 0x94D049BB133111EBULL;
+    x ^= x >> 31;
+
+    return now_ms + base_ms + (x % (uint64_t)stagger_ms);
 }
 
 /* ======================================================================

@@ -168,6 +168,14 @@ peer_payload_hold_s = 15
 ; handshake (e.g. UUCP) times out before the first data frames get through.
 startup_max_s = 10
 
+; Deterministic per-node retry stagger, in ms (default 2000, range 0..5000).
+; The two peers compare the same pair of exchanged callsigns, so exactly one of
+; them defers by this fixed offset on every retry — breaking the phase-lock
+; where two stations on a fixed schedule transmit simultaneously and neither
+; can hear the other (issue #217), without any random draw or latency tail.
+; Set to 0 to disable and revert to the old fixed retry cadence.
+retry_stagger_ms = 2000
+
 [channel]
 ; Channel-busy (occupancy) detector.  Mercury classifies the HF channel as
 ; busy/clear from the RX spectrum and reports transitions to the host with
