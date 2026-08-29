@@ -75,6 +75,13 @@ body {
 
 label { color: #dcdcdc; font-size: 13px; padding: 2px 0; }
 
+/* One PTT settings row (its label plus its control).  Wrapping the pair lets a
+ * row be hidden as a unit; the parent .control-section is a column flexbox with
+ * the same gap, so the rendered spacing is unchanged.  The explicit
+ * [hidden] rule is required because display:flex overrides the UA default. */
+.ptt-row { display: flex; flex-direction: column; gap: 5px; }
+.ptt-row[hidden] { display: none; }
+
 select, input[type="text"] {
   background: #2d2d2d; color: #e6e6e6; border: 1px solid #464646;
   border-radius: 6px; padding: 5px 8px; font-size: 13px;
@@ -226,39 +233,51 @@ input[type="range"] {
             <option value="cm108">CM108 GPIO</option>
             <option value="hermes_shm">HERMES SHM</option>
           </select>
-          <label for="radioModelSelect">HAMLIB Model</label>
-          <select id="radioModelSelect"><option value="">--</option></select>
-          <label for="devicePathInput">Device Path</label>
-          <input type="text" id="devicePathInput" placeholder="/dev/ttyUSB0 or 127.0.0.1:4532" />
-          <label for="baudRateSelect">Hamlib Baud Rate</label>
-          <select id="baudRateSelect">
-            <option value="0" selected>Auto</option>
-            <option value="4800">4800</option>
-            <option value="9600">9600</option>
-            <option value="19200">19200</option>
-            <option value="38400">38400</option>
-            <option value="115200">115200</option>
-          </select>
-          <label for="pttLineSelect">PTT Line</label>
-          <select id="pttLineSelect">
-            <option value="rts" selected>RTS</option>
-            <option value="dtr">DTR</option>
-            <option value="both">RTS + DTR</option>
-          </select>
-          <label for="pttInvertSelect">Invert Line</label>
-          <select id="pttInvertSelect">
-            <option value="none" selected>None</option>
-            <option value="rts">RTS</option>
-            <option value="dtr">DTR</option>
-            <option value="both">RTS + DTR</option>
-          </select>
-          <label for="cm108GPIOSelect">CM108 GPIO</label>
-          <select id="cm108GPIOSelect">
-            <option value="1">GPIO 1</option>
-            <option value="2">GPIO 2</option>
-            <option value="3" selected>GPIO 3</option>
-            <option value="4">GPIO 4</option>
-          </select>
+          <div class="ptt-row" id="pttRowDevice">
+            <label for="devicePathInput">Device Path</label>
+            <input type="text" id="devicePathInput" placeholder="/dev/ttyUSB0 or 127.0.0.1:4532" />
+          </div>
+          <div class="ptt-row" id="pttRowModel">
+            <label for="radioModelSelect">Hamlib Model</label>
+            <select id="radioModelSelect"><option value="">--</option></select>
+          </div>
+          <div class="ptt-row" id="pttRowBaud">
+            <label for="baudRateSelect">Hamlib Baud Rate</label>
+            <select id="baudRateSelect">
+              <option value="0" selected>Auto</option>
+              <option value="4800">4800</option>
+              <option value="9600">9600</option>
+              <option value="19200">19200</option>
+              <option value="38400">38400</option>
+              <option value="115200">115200</option>
+            </select>
+          </div>
+          <div class="ptt-row" id="pttRowLine">
+            <label for="pttLineSelect">PTT Line</label>
+            <select id="pttLineSelect">
+              <option value="rts" selected>RTS</option>
+              <option value="dtr">DTR</option>
+              <option value="both">RTS + DTR</option>
+            </select>
+          </div>
+          <div class="ptt-row" id="pttRowInvert">
+            <label for="pttInvertSelect">Invert Line</label>
+            <select id="pttInvertSelect">
+              <option value="none" selected>None</option>
+              <option value="rts">RTS</option>
+              <option value="dtr">DTR</option>
+              <option value="both">RTS + DTR</option>
+            </select>
+          </div>
+          <div class="ptt-row" id="pttRowGPIO">
+            <label for="cm108GPIOSelect">CM108 GPIO</label>
+            <select id="cm108GPIOSelect">
+              <option value="1">GPIO 1</option>
+              <option value="2">GPIO 2</option>
+              <option value="3" selected>GPIO 3</option>
+              <option value="4">GPIO 4</option>
+            </select>
+          </div>
           <button class="apply-btn" id="radioApplyBtn">Apply</button>
         </div>
         <!-- WebSocket Connection -->
@@ -333,6 +352,7 @@ let appliedBaudRate = "";
 let appliedPTTLine = "";
 let appliedPTTInvert = "";
 let appliedCM108GPIO = "";
+let previousPTTMethod = "none";
 
 /* ===========================================================================
  *  VARA Colormap (from waterfall_widget.py _build_vara_colormap)
@@ -803,19 +823,33 @@ function restoreRadioSelection() {
   setSelectValue(document.getElementById("pttLineSelect"), appliedPTTLine || "rts");
   setSelectValue(document.getElementById("pttInvertSelect"), appliedPTTInvert || "none");
   setSelectValue(document.getElementById("cm108GPIOSelect"), appliedCM108GPIO || "3");
+  previousPTTMethod = getSelectValue(document.getElementById("pttMethodSelect")) || "none";
   updatePTTFieldState();
 }
 
 function updatePTTFieldState() {
   const method = getSelectValue(document.getElementById("pttMethodSelect")) || "none";
-  const hamlib = method === "hamlib";
-  const serial = method === "serial" || method === "cm108";
-  document.getElementById("radioModelSelect").disabled = !hamlib;
-  document.getElementById("baudRateSelect").disabled = !hamlib;
-  document.getElementById("devicePathInput").disabled = !(hamlib || serial);
-  document.getElementById("pttLineSelect").disabled = method !== "serial";
-  document.getElementById("pttInvertSelect").disabled = method !== "serial";
-  document.getElementById("cm108GPIOSelect").disabled = method !== "cm108";
+  /* Which rows each method actually uses.  Mirrors updateMethodFields() in the
+   * Fyne dialog (gui_interface/fyne-ui/main.go) -- keep the two in step. */
+  const rows = {
+    hamlib: ["pttRowDevice", "pttRowModel", "pttRowBaud"],
+    serial: ["pttRowDevice", "pttRowLine", "pttRowInvert"],
+    /* CM108 auto-detects the HID node; the device path stays available as an
+     * explicit override, so it is shown but never required. */
+    cm108:  ["pttRowDevice", "pttRowGPIO"],
+  };
+  const shown = rows[method] || [];
+  ["pttRowDevice", "pttRowModel", "pttRowBaud",
+   "pttRowLine", "pttRowInvert", "pttRowGPIO"].forEach(function(id) {
+    const row = document.getElementById(id);
+    const visible = shown.indexOf(id) !== -1;
+    row.hidden = !visible;
+    /* Disabled as well as hidden: a control that is not on screen must not be
+     * reachable by keyboard or announced by a screen reader. */
+    row.querySelectorAll("select, input").forEach(function(el) {
+      el.disabled = !visible;
+    });
+  });
 }
 
 function clearAppliedState() {
@@ -1140,7 +1174,14 @@ document.getElementById("radioApplyBtn").addEventListener("click", function() {
              value6: pttInvert, value7: cm108GPIO });
 });
 
-document.getElementById("pttMethodSelect").addEventListener("change", updatePTTFieldState);
+document.getElementById("pttMethodSelect").addEventListener("change", function() {
+  const method = getSelectValue(this) || "none";
+  if (method === "cm108" && (previousPTTMethod === "serial" || previousPTTMethod === "hamlib")) {
+    document.getElementById("devicePathInput").value = "";
+  }
+  previousPTTMethod = method;
+  updatePTTFieldState();
+});
 
 // Enter key on device path triggers radio apply
 document.getElementById("devicePathInput").addEventListener("keydown", function(e) {
