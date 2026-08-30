@@ -701,15 +701,29 @@ static bool maybe_upgrade_mode(arq_session_t *sess)
 
     sess->mode_upgrade_count = 0;
     sess->pending_tx_mode = desired_mode;
-    sess->tx_retries_left = ARQ_MODE_REQ_RETRIES;
 
     HLOGI(LOG_COMP, "Mode negotiation: %d -> %d (peer_snr=%.1f olla=%+.1f eff=%.1f dB, backlog=%d)",
           sess->payload_mode, desired_mode,
           (float)sess->peer_snr_x10 / 10.0f, sess->olla_offset_db,
           (float)sess->peer_snr_x10 / 10.0f + sess->olla_offset_db, backlog);
 
-    send_mode_negotiation(sess, ARQ_SUBTYPE_MODE_REQ, desired_mode);
-    dflow_enter(sess, ARQ_DFLOW_MODE_REQ_TX, UINT64_MAX, ARQ_EV_TIMER_RETRY);
+    /* Do NOT transmit here.  Negotiation starts on RX_ACK, and ack_rx fires
+     * ~168 ms before the peer's ACK PTT actually drops (see
+     * enter_idle_iss_guarded) -- so an immediate MODE_REQ lands on the tail of
+     * the peer's own transmission and is lost, exactly like an unguarded
+     * DATA_TX.  Observed as: ACK decoded at +21.805, MODE_REQ keyed at +21.839
+     * (34 ms later), peer still transmitting until +22.020, MODE_REQ never
+     * decoded -- costing a full MODE_REQ retry interval on every mode change
+     * that happens to be triggered by an ACK (issue #223).
+     *
+     * Wait out the same guard every other post-ACK transmission uses, then let
+     * the MODE_REQ_WAIT retry path do the actual send.  tx_retries_left gets
+     * one extra slot because that path decrements before sending, so the
+     * number of MODE_REQs on the air is unchanged. */
+    sess->tx_retries_left = ARQ_MODE_REQ_RETRIES + 1;
+    dflow_enter(sess, ARQ_DFLOW_MODE_REQ_WAIT,
+                time_now_ms() + ARQ_ISS_POST_ACK_GUARD_MS,
+                ARQ_EV_TIMER_RETRY);
     return true;
 }
 
