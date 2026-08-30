@@ -1479,6 +1479,10 @@ static void rx_metrics_update(rx_metrics_accum_t *metrics, int sync, float snr, 
  * transfer reaches Login/Handshake/Sending like HARQ-off / v1.9.9.  The fading
  * Es/No gain (the point of HARQ) is realised when retransmissions of the same
  * frame accumulate; confirm the magnitude on a fading link (Watterson / OTA). */
+/* Set by the control plane when it decodes a DATAC16 frame; consumed by the
+ * payload plane.  See rx_worker_thread for why. */
+static _Atomic bool g_payload_resync_req = false;
+
 static int harq_enabled(void)
 {
     const char *e = getenv("MERCURY_HARQ");
@@ -1738,6 +1742,36 @@ static void *rx_worker_thread(void *arg)
             continue;
         }
 
+        /* Drop a sync the payload decoder picked up off a control burst.
+         *
+         * Both planes are fed the same audio, so while the peer transmits
+         * DATAC16 the payload (DATAC15) correlator can trial-sync on it and
+         * stay latched.  When the peer's first real DATA burst then arrives,
+         * the decoder demodulates it against that stale estimate: measured as
+         * rx_status=SYNC|BIT_ERRORS with an SNR estimate of ~5 dB on a burst
+         * that reads ~18 dB once the decoder acquires it cleanly (issue #223).
+         * The answerer therefore missed the caller's first DATA burst on most
+         * transfers, and enough in a row to fail outright ~8% of the time.
+         *
+         * Only the control plane raises this, and only on a frame it actually
+         * decoded, so a burst the payload decoder is legitimately mid-way
+         * through is never interrupted: a real DATA burst does not decode as
+         * DATAC16.  UNSYNC also zeroes freedv's rxbuf, which the comments in
+         * rx_decoder_bind_mode warn starves the preamble normalizer -- but
+         * that costs ~770 ms of audio to refill and the peer's data burst
+         * follows its control burst by longer than that (it has to key up,
+         * and the ARQ guard interval sits in between). */
+        if (w->state.mode != FREEDV_MODE_DATAC16 &&
+            atomic_exchange(&g_payload_resync_req, false))
+        {
+            pthread_mutex_t *rl = modem_inst_lock_for(w->state.freedv);
+            pthread_mutex_lock(rl);
+            if (w->state.freedv)
+                freedv_set_sync(w->state.freedv, FREEDV_SYNC_UNSYNC);
+            pthread_mutex_unlock(rl);
+            w->state.demod_count = 0;
+        }
+
         int want = rx_decoder_target_chunk_samples(&w->state);
         size_t have = size_buffer(w->ring) / sizeof(int16_t);
         if (have < (size_t)want)
@@ -1875,6 +1909,15 @@ static void rx_decoder_consume_chunk(rx_decoder_state_t *state,
 
         if (nbytes_out > 0)
         {
+            /* A decoded control frame proves the audio just consumed was a
+             * DATAC16 burst, not payload.  The payload decoder was fed the
+             * same audio and may have trial-synced on it (its correlator can
+             * latch a control preamble), and a stale sync makes it decode the
+             * NEXT real payload burst with the wrong timing/frequency
+             * estimate.  Ask it to drop that sync -- see rx_worker_thread. */
+            if (state->mode == FREEDV_MODE_DATAC16)
+                atomic_store(&g_payload_resync_req, true);
+
             HLOGD("modem-rx", "Decoded frame mode=%d (%s) bytes=%zu snr=%.2f",
                   state->mode,
                   mode_name_from_enum(state->mode),
