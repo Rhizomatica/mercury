@@ -56,3 +56,17 @@ rxcost_bench: rxcost_bench.c
 	$(CC) $(CFLAGS) -o $@ $^ ../modem/freedv/libfreedvdata.a $(LDFLAGS) -lm
 
 .PHONY: all clean run
+
+# MFSK waveform sweeps (pure DSP; no modem vtable, no ARQ)
+MFSK_DSP_SRC = ../modem/mfsk.c ../modem/mfsk_ofdm.c ../modem/mfsk_sync.c \
+               ../modem/mfsk_ldpc.c ../modem/mfsk_ldpc_1_16.c ../modem/mfsk_ldpc_2_16.c \
+               ../modem/mfsk_ldpc_3_16.c ../modem/mfsk_ldpc_5_16.c ../modem/mfsk_ldpc_8_16.c
+
+shortframe_sweep: shortframe_sweep.c ../modem/mfsk.c
+	$(CC) $(CFLAGS) -I../modem -o $@ $^ -lm
+
+hail_suffix_sweep: hail_suffix_sweep.c ../modem/mfsk.c ../modem/mfsk_ofdm.c ../modem/mfsk_sync.c
+	$(CC) $(CFLAGS) -I../modem -o $@ $^ -lm
+
+mfsk_puncture_sweep: mfsk_puncture_sweep.c ../modem/mfsk_ldpc.c ../modem/mfsk_ldpc_8_16.c
+	$(CC) $(CFLAGS) -I../modem -o $@ $^ -lm

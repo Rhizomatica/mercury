@@ -46,7 +46,8 @@ TEST_BINS = test_ring_buffer test_arq_protocol test_arq_timing test_arq_fsm \
             test_tcp_interfaces test_resampler test_pcm24 test_arq_olla test_arq_sim \
             test_arq_conn test_cfg_utils test_arq_tnc test_channel_busy \
             test_freedv_harq test_sock_wire test_virtual_clock test_watterson \
-            test_ofdm_acq test_ui_status test_ui_devices test_tx_pacing test_radio_port
+            test_ofdm_acq test_ui_status test_ui_devices test_tx_pacing test_radio_port \
+            test_mfsk
 
 .PHONY: all test clean
 
@@ -63,6 +64,9 @@ test: $(TEST_BINS)
 	@echo "\n=== All Tests Passed ===\n"
 
 # Common module tests
+test_mfsk: modem/test_mfsk.c $(UNITY_SRC) ../modem/mfsk.c ../modem/mfsk_ofdm.c ../modem/mfsk_sync.c ../modem/mfsk_ldpc.c ../modem/mfsk_ldpc_1_16.c ../modem/mfsk_ldpc_2_16.c ../modem/mfsk_ldpc_3_16.c ../modem/mfsk_ldpc_5_16.c ../modem/mfsk_ldpc_8_16.c
+	$(CC) $(CFLAGS) -I../modem -o $@ $^ $(LDFLAGS) -lm
+
 test_ring_buffer: common/test_ring_buffer.c $(UNITY_SRC) ../common/ring_buffer_posix.c ../common/os_interop.c ../common/shm_posix.c
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
