@@ -182,9 +182,12 @@ int arq_modem_preferred_tx_mode(const arq_session_t *sess)
      * on.  The modem's TX mode has to follow, or the frame is merely SIZED for
      * MFSK and still keyed as DATAC16 -- which is what happened first time
      * round: the escalation logged, and the burst was still 3.71 s. */
-    if (sess->conn_state == ARQ_CONN_CALLING &&
-        sess->tx_retries_left < ARQ_CALL_RETRY_SLOTS - ARQ_CALL_FAST_SLOTS)
-        return MERCURY_MODE_MFSK;
+    /* Use the carrier LATCHED when the CALL was built, not a fresh evaluation:
+     * this runs on the modem thread after send_call_accept() has already
+     * advanced the send counter, so recomputing disagrees with how the frame
+     * was sized. */
+    if (sess->conn_state == ARQ_CONN_CALLING && sess->call_carrier > 0)
+        return sess->call_carrier;
 
     if (sess->conn_state == ARQ_CONN_ACCEPTING && sess->call_rx_mode > 0)
         return sess->call_rx_mode;

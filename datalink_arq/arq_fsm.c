@@ -542,9 +542,10 @@ static bool deliver_rx_checked(arq_session_t *sess, const arq_event_t *ev)
 /* Carrier the next CALL will key on: fast control mode until the fast slots
  * are spent, then the MFSK floor.  Shared by the sender and the retry timer so
  * the wait is always sized for the burst actually going out. */
-static int call_tx_mode(const arq_session_t *sess)
+int arq_call_carrier(const arq_session_t *sess)
 {
-    if (sess->tx_retries_left < ARQ_CALL_RETRY_SLOTS - ARQ_CALL_FAST_SLOTS)
+    if (!sess) return ARQ_CONTROL_MODE;
+    if (sess->call_sends_done >= ARQ_CALL_FAST_SLOTS)
         return MERCURY_MODE_MFSK;
     return sess->control_mode;
 }
@@ -570,20 +571,23 @@ static void send_call_accept(arq_session_t *sess, bool is_accept)
         /* A CALL escalates to the MFSK floor once the fast slots are spent;
          * an ACCEPT answers on whatever the CALL arrived on, so the two ends
          * never disagree about the carrier.  See ARQ_CALL_FAST_SLOTS. */
-        int mode = sess->control_mode;
-        if (is_accept)
-        {
-            if (sess->call_rx_mode > 0)
-                mode = sess->call_rx_mode;
-        }
-        else if (sess->tx_retries_left < ARQ_CALL_RETRY_SLOTS - ARQ_CALL_FAST_SLOTS)
-        {
-            mode = MERCURY_MODE_MFSK;
-        }
+        int mode = is_accept
+                 ? (sess->call_rx_mode > 0 ? sess->call_rx_mode : sess->control_mode)
+                 : arq_call_carrier(sess);
+        /* Latch it: send_frame() only SIZES the frame, and the modem asks for
+         * the carrier later, on its own thread.  Deriving it twice let the send
+         * counter advance in between and keyed the very first CALL on MFSK. */
+        sess->call_carrier = mode;
         if (mode != sess->control_mode)
-            HLOGI(LOG_COMP, "%s on the MFSK floor (fast slots spent, retries_left=%d)",
-                  is_accept ? "ACCEPT" : "CALL", (int)sess->tx_retries_left);
+            HLOGI(LOG_COMP, "%s on the MFSK floor (%s)",
+                  is_accept ? "ACCEPT" : "CALL",
+                  is_accept ? "answering on the carrier the CALL arrived on"
+                            : "fast slots spent");
         send_frame(PACKET_TYPE_ARQ_CALL, mode, (size_t)n, frame, 0);
+        /* Count CALL transmissions (not ACCEPTs): arq_call_carrier() escalates
+         * once ARQ_CALL_FAST_SLOTS of them have gone out. */
+        if (!is_accept)
+            sess->call_sends_done++;
     }
     else
         /* Almost always an over-long callsign: the 10-byte SRC slot holds ~14
@@ -889,6 +893,8 @@ static void fsm_disconnected(arq_session_t *sess, const arq_event_t *ev)
         sess->session_id      = (uint8_t)(time_now_ms() & 0x7F) | 0x01;
         reset_session_data_state(sess);  /* MFSK-start ladder, clean retransmit */
         sess->tx_retries_left = ARQ_CALL_RETRY_SLOTS;
+        sess->call_sends_done = 0;      /* fresh attempt: start on the fast mode */
+        sess->call_carrier    = 0;
         sess->disconnect_deadline_ms = 0;
         send_call_accept(sess, false);
         sess_enter(sess, ARQ_CONN_CALLING,
@@ -1041,7 +1047,7 @@ static void fsm_calling(arq_session_t *sess, const arq_event_t *ev)
          * fallback -- would blur precisely the quantity being measured.  The
          * stagger belongs on the retry scheduling below, not here. */
         sess->deadline_ms =
-            deadline_from_s(arq_protocol_call_interval_for_mode_s(call_tx_mode(sess)));
+            deadline_from_s(arq_protocol_call_interval_for_mode_s(arq_call_carrier(sess)));
         HLOGD(LOG_COMP, "CALL retry re-anchored: +%.2fs, retries_left=%d",
               (double)arq_protocol_call_interval_s(), (int)sess->tx_retries_left);
         break;
@@ -1054,7 +1060,7 @@ static void fsm_calling(arq_session_t *sess, const arq_event_t *ev)
             /* Deadline is re-anchored on TX_COMPLETE above; this is the
              * fallback if that event is ever missed. */
             sess->deadline_ms = retry_deadline_from_s(sess,
-                                    arq_protocol_call_interval_for_mode_s(call_tx_mode(sess)));
+                                    arq_protocol_call_interval_for_mode_s(arq_call_carrier(sess)));
         }
         else
         {
