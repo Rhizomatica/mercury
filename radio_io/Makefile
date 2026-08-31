@@ -121,3 +121,12 @@ rigctl_parse.o: rigctl_parse.c rigctl_parse.h
 
 clean:
 	rm -f *.o
+	@# The vendored hidapi objects live one directory down, so a bare *.o
+	@# misses them.  They MUST go: macos-universal and fyne-ui-macos-universal
+	@# build one arch slice after another with a `clean` in between, and a
+	@# surviving hid.o from the previous slice is silently reused --
+	@# "ld: warning: ignoring file radio_io/hidapi-macos/hid.o: found
+	@# architecture 'x86_64', required architecture 'arm64'" followed by every
+	@# hid_* symbol undefined.  The Windows copy has the same shape, so clean
+	@# both rather than leaving the next cross-build to trip over it.
+	rm -f hidapi-macos/hid.o hidapi-w64/hid.o
