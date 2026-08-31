@@ -539,6 +539,16 @@ static bool deliver_rx_checked(arq_session_t *sess, const arq_event_t *ev)
     return true;
 }
 
+/* Carrier the next CALL will key on: fast control mode until the fast slots
+ * are spent, then the MFSK floor.  Shared by the sender and the retry timer so
+ * the wait is always sized for the burst actually going out. */
+static int call_tx_mode(const arq_session_t *sess)
+{
+    if (sess->tx_retries_left < ARQ_CALL_RETRY_SLOTS - ARQ_CALL_FAST_SLOTS)
+        return MERCURY_MODE_MFSK;
+    return sess->control_mode;
+}
+
 static void send_call_accept(arq_session_t *sess, bool is_accept)
 {
     uint8_t frame[INT_BUFFER_SIZE];
@@ -556,7 +566,25 @@ static void send_call_accept(arq_session_t *sess, bool is_accept)
         n = arq_protocol_build_call(frame, sizeof(frame), sess->session_id,
                                     my_call, sess->remote_call, bw_hz);
     if (n > 0)
-        send_frame(PACKET_TYPE_ARQ_CALL, sess->control_mode, (size_t)n, frame, 0);
+    {
+        /* A CALL escalates to the MFSK floor once the fast slots are spent;
+         * an ACCEPT answers on whatever the CALL arrived on, so the two ends
+         * never disagree about the carrier.  See ARQ_CALL_FAST_SLOTS. */
+        int mode = sess->control_mode;
+        if (is_accept)
+        {
+            if (sess->call_rx_mode > 0)
+                mode = sess->call_rx_mode;
+        }
+        else if (sess->tx_retries_left < ARQ_CALL_RETRY_SLOTS - ARQ_CALL_FAST_SLOTS)
+        {
+            mode = MERCURY_MODE_MFSK;
+        }
+        if (mode != sess->control_mode)
+            HLOGI(LOG_COMP, "%s on the MFSK floor (fast slots spent, retries_left=%d)",
+                  is_accept ? "ACCEPT" : "CALL", (int)sess->tx_retries_left);
+        send_frame(PACKET_TYPE_ARQ_CALL, mode, (size_t)n, frame, 0);
+    }
     else
         /* Almost always an over-long callsign: the 10-byte SRC slot holds ~14
          * characters at ~5.25 bits each.  The encoder refuses rather than
@@ -886,6 +914,10 @@ static void fsm_listening(arq_session_t *sess, const arq_event_t *ev)
     switch (ev->id)
     {
     case ARQ_EV_RX_CALL:
+        /* Answer on the carrier the CALL came in on: a caller that escalated
+         * to the MFSK floor cannot hear a DATAC16 ACCEPT. */
+        sess->call_rx_mode = ev->mode;
+
         snprintf(sess->remote_call, CALLSIGN_MAX_SIZE, "%s", ev->remote_call);
         snprintf(sess->local_call, CALLSIGN_MAX_SIZE, "%s", ev->local_call);
         sess->session_id      = ev->session_id;
@@ -1008,7 +1040,8 @@ static void fsm_calling(arq_session_t *sess, const arq_event_t *ev)
          * or, for a pair whose callsigns are not yet known, its random
          * fallback -- would blur precisely the quantity being measured.  The
          * stagger belongs on the retry scheduling below, not here. */
-        sess->deadline_ms = deadline_from_s(arq_protocol_call_interval_s());
+        sess->deadline_ms =
+            deadline_from_s(arq_protocol_call_interval_for_mode_s(call_tx_mode(sess)));
         HLOGD(LOG_COMP, "CALL retry re-anchored: +%.2fs, retries_left=%d",
               (double)arq_protocol_call_interval_s(), (int)sess->tx_retries_left);
         break;
@@ -1020,7 +1053,8 @@ static void fsm_calling(arq_session_t *sess, const arq_event_t *ev)
             send_call_accept(sess, false);
             /* Deadline is re-anchored on TX_COMPLETE above; this is the
              * fallback if that event is ever missed. */
-            sess->deadline_ms = retry_deadline_from_s(sess, arq_protocol_call_interval_s());
+            sess->deadline_ms = retry_deadline_from_s(sess,
+                                    arq_protocol_call_interval_for_mode_s(call_tx_mode(sess)));
         }
         else
         {

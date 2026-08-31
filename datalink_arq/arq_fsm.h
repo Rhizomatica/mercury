@@ -187,6 +187,9 @@ typedef struct
     int      peer_tx_mode;             /* my payload RX decoder mode when IRS =
                                         * arq_mode_ladder[rx_speed_level]; the
                                         * mode the peer's NEXT DATA burst uses  */
+    int      call_rx_mode;             /* carrier the incoming CALL decoded on,
+                                        * so the ACCEPT answers on the same one.
+                                        * 0 = answer on the control mode        */
 
     /* --- IRS-side mirror of the peer's (ISS) delivery-driven ladder --------
      * The IRS observes the same per-frame outcomes the sender climbs on (a
