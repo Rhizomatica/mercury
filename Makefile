@@ -282,7 +282,15 @@ ifneq ($(strip $(HAMLIB_W64_LIBS)),)
 MERCURY_CORE_OBJS_W64 += radio_io/rigctl_parse.o
 endif
 
-libmercury_core.a: internal_deps
+# $(HIDAPI_OBJS) is listed in MERCURY_CORE_OBJS but is NOT built by
+# internal_deps -- the vendored hidapi object has its own top-level rule, and
+# radio_io's sub-make does not build it either.  Without it as a prerequisite
+# the archive step just assumed the file was lying around from an earlier
+# build, which it was until `clean` started removing it properly:
+#     ar: radio_io/hidapi-macos/hid.o: No such file or directory
+# $(BINARY) already declares it via MERCURY_LINK_INPUTS, which is why the CLI
+# build was unaffected and only the .app/.dmg packaging path broke.
+libmercury_core.a: internal_deps $(HIDAPI_OBJS)
 	$(CC) $(CFLAGS) -I. -c $(FYNE_UI_DIR)/engine/mercury_bridge.c -o $(FYNE_UI_DIR)/engine/mercury_bridge.o
 	# Remove a stale archive first: macOS ar (cctools) refuses to update an
 	# existing *fat* .a in place, so a leftover universal build would wedge the
