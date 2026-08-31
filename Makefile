@@ -86,8 +86,62 @@ else
     endif
 endif
 
+# hidapi: OPTIONAL, and preferred when present.  It is what gives the CM108
+# GPIO PTT backend Windows and macOS support; without it the backend falls back
+# to talking to /dev/hidraw directly, which works on Linux only.  Deliberately
+# not a hard dependency -- a minimal Raspberry Pi build should not need another
+# package to key a radio.  hidraw first: on Linux it needs no libusb detach and
+# co-exists with the kernel's own driver.
+HAVE_HIDAPI :=
+HIDAPI_CFLAGS =
+HIDAPI_LDFLAGS =
+HIDAPI_OBJS =
+HIDAPI_W64_DIR = radio_io/hidapi-w64
+HIDAPI_MACOS_DIR = radio_io/hidapi-macos
+ifeq ($(OS),Windows_NT)
+  # Vendored, like hamlib-w64: pkg-config on a cross-build would find the HOST
+  # hidapi and link something that cannot run on the target.  hidapi's Windows
+  # backend is self-contained source over setupapi/cfgmgr32, so it builds with
+  # the rest of the tree rather than needing a prebuilt library.
+  ifneq ($(wildcard $(HIDAPI_W64_DIR)/src/hid.c),)
+    HAVE_HIDAPI := 1
+    HIDAPI_CFLAGS := -I$(HIDAPI_W64_DIR)/include -DHAVE_HIDAPI
+    HIDAPI_LDFLAGS := -lsetupapi -lcfgmgr32 -lhid
+    HIDAPI_OBJS := $(HIDAPI_W64_DIR)/hid.o
+  endif
+else
+  # macOS: vendored first, like hamlib-macos.  A stock macOS has neither
+  # Homebrew nor pkg-config, so a pkg-config-only probe silently compiles the
+  # CM108 backend out, and the binary then tells the user CM108 is "Linux only"
+  # -- on a platform we claim to support.  hidapi's macOS backend is
+  # self-contained source over IOKit, so it builds with the rest of the tree.
+  ifeq ($(UNAME_S),Darwin)
+    ifneq ($(wildcard $(HIDAPI_MACOS_DIR)/src/hid.c),)
+      HAVE_HIDAPI := 1
+      HIDAPI_CFLAGS := -I$(HIDAPI_MACOS_DIR)/include -DHAVE_HIDAPI
+      HIDAPI_LDFLAGS := -framework IOKit -framework CoreFoundation -framework AppKit
+      HIDAPI_OBJS := $(HIDAPI_MACOS_DIR)/hid.o
+    endif
+  endif
+  # Linux, and macOS without the vendored copy: system package via pkg-config.
+  ifneq ($(HAVE_HIDAPI),1)
+    HIDAPI_PC := $(firstword $(foreach m,hidapi-hidraw hidapi-libusb hidapi,\
+                   $(shell pkg-config --exists $(m) 2>/dev/null && echo $(m))))
+    ifneq ($(strip $(HIDAPI_PC)),)
+      HAVE_HIDAPI := 1
+      HIDAPI_CFLAGS := $(shell pkg-config --cflags $(HIDAPI_PC)) -DHAVE_HIDAPI
+      HIDAPI_LDFLAGS := $(shell pkg-config --libs $(HIDAPI_PC))
+    endif
+  endif
+endif
+
+
 export HAVE_HAMLIB
 export HAVE_HERMES_SHM
+export HAVE_HIDAPI
+export HIDAPI_CFLAGS
+export HIDAPI_LDFLAGS
+export HIDAPI_OBJS
 
 include config.mk
 
@@ -119,7 +173,7 @@ else
 BINARY = mercury
 endif
 
-LDFLAGS=$(FFAUDIO_LINKFLAGS) -lm $(HAMLIB_LDFLAGS) $(ATOMIC_LDFLAGS)
+LDFLAGS=$(FFAUDIO_LINKFLAGS) -lm $(HAMLIB_LDFLAGS) $(HIDAPI_LDFLAGS) $(ATOMIC_LDFLAGS)
 
 MERCURY_LINK_INPUTS = \
 	main.o common/cfg_utils.o common/iniparser/iniparser.o common/iniparser/dictionary.o \
@@ -134,7 +188,7 @@ MERCURY_LINK_INPUTS = \
 	gui_interface/ui_communication.o gui_interface/ui_status.o gui_interface/ui_devices.o \
 	gui_interface/websocket/mongoose.o gui_interface/websocket/mercury_websocket.o \
 	gui_interface/websocket/web_packed.o \
-	radio_io/radio_io.o
+	radio_io/radio_io.o radio_io/serial_ptt.o radio_io/cm108_ptt.o $(HIDAPI_OBJS)
 
 ifeq ($(HAVE_HERMES_SHM),1)
 MERCURY_LINK_INPUTS += radio_io/sbitx_io.o radio_io/shm_utils.o
@@ -190,6 +244,15 @@ FORCE:
 main.o: main.c .git_hash_stamp
 	$(CC) $(CFLAGS) -c main.c
 
+# Vendored hidapi for the Windows cross-build (see the detection block above).
+$(HIDAPI_W64_DIR)/hid.o: $(HIDAPI_W64_DIR)/src/hid.c
+	$(CC) -O2 -I$(HIDAPI_W64_DIR)/include -I$(HIDAPI_W64_DIR)/src -c $< -o $@
+
+# Vendored hidapi for macOS: the IOKit backend, built from source so a stock
+# macOS with only the Xcode command line tools still gets CM108 PTT.
+$(HIDAPI_MACOS_DIR)/hid.o: $(HIDAPI_MACOS_DIR)/src/hid.c
+	$(CC) -O2 -I$(HIDAPI_MACOS_DIR)/include -c $< -o $@
+
 internal_deps:
 	$(MAKE) -C modem
 	$(MAKE) -C datalink_arq
@@ -222,7 +285,7 @@ MERCURY_CORE_OBJS = \
 	gui_interface/ui_communication.o gui_interface/ui_status.o gui_interface/ui_devices.o \
 	gui_interface/websocket/mongoose.o gui_interface/websocket/mercury_websocket.o \
 	gui_interface/websocket/web_packed.o \
-	radio_io/radio_io.o
+	radio_io/radio_io.o radio_io/serial_ptt.o radio_io/cm108_ptt.o $(HIDAPI_OBJS)
 
 ifeq ($(HAVE_HERMES_SHM),1)
 MERCURY_CORE_OBJS += radio_io/sbitx_io.o radio_io/shm_utils.o
@@ -237,7 +300,15 @@ ifneq ($(strip $(HAMLIB_W64_LIBS)),)
 MERCURY_CORE_OBJS_W64 += radio_io/rigctl_parse.o
 endif
 
-libmercury_core.a: internal_deps
+# $(HIDAPI_OBJS) is listed in MERCURY_CORE_OBJS but is NOT built by
+# internal_deps -- the vendored hidapi object has its own top-level rule, and
+# radio_io's sub-make does not build it either.  Without it as a prerequisite
+# the archive step just assumed the file was lying around from an earlier
+# build, which it was until `clean` started removing it properly:
+#     ar: radio_io/hidapi-macos/hid.o: No such file or directory
+# $(BINARY) already declares it via MERCURY_LINK_INPUTS, which is why the CLI
+# build was unaffected and only the .app/.dmg packaging path broke.
+libmercury_core.a: internal_deps $(HIDAPI_OBJS)
 	$(CC) $(CFLAGS) -I. -c $(FYNE_UI_DIR)/engine/mercury_bridge.c -o $(FYNE_UI_DIR)/engine/mercury_bridge.o
 	# Remove a stale archive first: macOS ar (cctools) refuses to update an
 	# existing *fat* .a in place, so a leftover universal build would wedge the
@@ -261,6 +332,7 @@ fyne-ui: libmercury_core.a
 # mercury_embedded tag, so it links via mercury_link_darwin.go) and wraps it
 # in Mercury.app (Info.plist + .icns from the icon).  Run on macOS.
 # Requires the tool:  go install fyne.io/tools/cmd/fyne@latest
+PLIST_BUDDY    ?= /usr/libexec/PlistBuddy
 FYNE           ?= fyne
 MACOS_APP_NAME ?= Mercury
 MACOS_APP_ID   ?= org.rhizomatica.mercury
@@ -273,6 +345,7 @@ fyne-ui-macos: libmercury_core.a
 	@echo "Packaging $(MACOS_APP_NAME).app (macOS)..."
 	cd $(FYNE_UI_DIR) && $(FYNE) package -os darwin -tags mercury_embedded \
 		-name $(MACOS_APP_NAME) -appID $(MACOS_APP_ID) -icon mercury-ui.png
+	$(PLIST_BUDDY) -c "Add :NSMicrophoneUsageDescription string 'Mercury needs access to the radio audio to listen for data signals'" $(FYNE_UI_DIR)/$(MACOS_APP_NAME).app/Contents/Info.plist
 	@echo "  -> $(FYNE_UI_DIR)/$(MACOS_APP_NAME).app"
 
 # Wrap the .app in a compressed, drag-to-install .dmg (Applications symlink).
@@ -388,6 +461,7 @@ fyne-ui-macos-universal:
 	cd $(FYNE_UI_DIR) && $(FYNE) package -os darwin -tags mercury_embedded \
 		-name $(MACOS_APP_NAME) -appID $(MACOS_APP_ID) -icon mercury-ui.png \
 		-executable $(abspath mercury-ui)
+	$(PLIST_BUDDY) -c "Add :NSMicrophoneUsageDescription string 'Mercury needs access to the radio audio to listen for data signals'" $(FYNE_UI_DIR)/$(MACOS_APP_NAME).app/Contents/Info.plist
 	@echo "  -> $(FYNE_UI_DIR)/$(MACOS_APP_NAME).app  (universal)"
 	@lipo -archs $(FYNE_UI_DIR)/$(MACOS_APP_NAME).app/Contents/MacOS/* || true
 

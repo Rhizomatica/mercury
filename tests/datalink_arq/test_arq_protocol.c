@@ -18,10 +18,13 @@
 #include "framer.h"
 #include "freedv/freedv_api.h"
 
+extern void mock_set_uptime_ms(uint64_t ms);
+
 void setUp(void)
 {
     /* Reset CALLINT override before each test so tests are isolated */
     atomic_store(&arq_callint_override_s, 0.0f);
+    mock_set_uptime_ms(1000);
 }
 
 void tearDown(void) { }
@@ -96,6 +99,54 @@ void test_decode_snr_zero_is_unknown(void)
 {
     float out = arq_protocol_decode_snr(0);
     TEST_ASSERT_FLOAT_WITHIN(0.01f, 0.0f, out);
+}
+
+void test_retry_rank_is_antisymmetric_and_deterministic(void)
+{
+    /* The two peers compare the SAME pair of callsigns, so exactly one defers
+     * (rank 1) and the other sends first (rank 0). */
+    int a = arq_protocol_retry_rank("NODE_A", "NODE_B");
+    int b = arq_protocol_retry_rank("NODE_B", "NODE_A");
+    TEST_ASSERT_TRUE(a == 0 || a == 1);
+    TEST_ASSERT_TRUE(b == 0 || b == 1);
+    TEST_ASSERT_EQUAL_INT(1, a + b);   /* they always disagree */
+    /* Stable across the session. */
+    TEST_ASSERT_EQUAL_INT(a, arq_protocol_retry_rank("NODE_A", "NODE_B"));
+    TEST_ASSERT_EQUAL_INT(b, arq_protocol_retry_rank("NODE_B", "NODE_A"));
+}
+
+void test_retry_rank_degenerate_pair_falls_back(void)
+{
+    TEST_ASSERT_EQUAL_INT(-1, arq_protocol_retry_rank("NODE_A", "NODE_A"));
+    TEST_ASSERT_EQUAL_INT(-1, arq_protocol_retry_rank("", "NODE_A"));
+    TEST_ASSERT_EQUAL_INT(-1, arq_protocol_retry_rank("NODE_A", ""));
+    TEST_ASSERT_EQUAL_INT(-1, arq_protocol_retry_rank(NULL, "NODE_A"));
+    TEST_ASSERT_EQUAL_INT(-1, arq_protocol_retry_rank("NODE_A", NULL));
+}
+
+void test_retry_deadline_stagger_is_exact(void)
+{
+    mock_set_uptime_ms(1000);
+    uint64_t base = 1000 + 7000ULL;
+    TEST_ASSERT_EQUAL_UINT64(base, arq_protocol_retry_deadline_ms(7.0f, 0));
+    TEST_ASSERT_EQUAL_UINT64(base + ARQ_RETRY_STAGGER_MS_DEFAULT,
+                             arq_protocol_retry_deadline_ms(7.0f, 1));
+}
+
+void test_retry_deadline_stagger_disabled_is_exact(void)
+{
+    mock_set_uptime_ms(1000);
+    atomic_store(&arq_retry_stagger_ms, 0);
+    TEST_ASSERT_EQUAL_UINT64(1000 + 7000ULL, arq_protocol_retry_deadline_ms(7.0f, 1));
+    atomic_store(&arq_retry_stagger_ms, ARQ_RETRY_STAGGER_MS_DEFAULT);
+}
+
+void test_retry_deadline_fallback_is_bounded(void)
+{
+    mock_set_uptime_ms(1000);
+    uint64_t d = arq_protocol_retry_deadline_ms(7.0f, -1);
+    TEST_ASSERT_TRUE(d >= 1000 + 7000ULL);
+    TEST_ASSERT_TRUE(d <= 1000 + 7000ULL + ARQ_RETRY_STAGGER_MS_DEFAULT);
 }
 
 /* ---- Bandwidth token roundtrip ---- */
@@ -422,6 +473,12 @@ int main(void)
     RUN_TEST(test_encode_decode_snr_positive);
     RUN_TEST(test_encode_decode_snr_negative);
     RUN_TEST(test_decode_snr_zero_is_unknown);
+    /* Retry stagger */
+    RUN_TEST(test_retry_rank_is_antisymmetric_and_deterministic);
+    RUN_TEST(test_retry_rank_degenerate_pair_falls_back);
+    RUN_TEST(test_retry_deadline_stagger_is_exact);
+    RUN_TEST(test_retry_deadline_stagger_disabled_is_exact);
+    RUN_TEST(test_retry_deadline_fallback_is_bounded);
     /* Bandwidth */
     RUN_TEST(test_bw_token_500hz);
     RUN_TEST(test_bw_token_2300hz);

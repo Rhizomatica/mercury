@@ -53,6 +53,10 @@ type appState struct {
 	radioSelected    string
 	radioDevicePath  string
 	radioSerialSpeed string
+	pttMethod        string
+	pttLine          string
+	pttInvert        string
+	cm108GPIO        string
 	telemetry        telemetryState
 	spectrumValues   []float32
 	spectrumRate     int
@@ -64,6 +68,40 @@ type appState struct {
 type optionItem struct {
 	ID   string
 	Name string
+}
+
+var pttMethodLabels = map[string]string{
+	"none":       "None",
+	"hamlib":     "Hamlib",
+	"serial":     "Serial (RTS/DTR)",
+	"cm108":      "CM108 GPIO",
+	"hermes_shm": "HERMES SHM",
+}
+
+var pttMethodOrder = []string{"none", "hamlib", "serial", "cm108", "hermes_shm"}
+
+func pttMethodOptions() []string {
+	options := make([]string, 0, len(pttMethodOrder))
+	for _, method := range pttMethodOrder {
+		options = append(options, pttMethodLabel(method))
+	}
+	return options
+}
+
+func pttMethodLabel(method string) string {
+	if label, ok := pttMethodLabels[method]; ok {
+		return label
+	}
+	return pttMethodLabels["none"]
+}
+
+func pttMethodID(label string) string {
+	for method, candidate := range pttMethodLabels {
+		if candidate == label {
+			return method
+		}
+	}
+	return "none"
 }
 
 type telemetryState struct {
@@ -90,9 +128,13 @@ type uiBindings struct {
 	captureSelect    *widget.Select
 	playbackSelect   *widget.Select
 	channelSelect    *widget.Select
+	pttMethodSelect  *widget.Select
 	radioSelect      *widget.Select
 	devicePathEntry  *widget.Entry
 	serialSpeedEntry *widget.Select
+	pttLineSelect    *widget.Select
+	pttInvertSelect  *widget.Select
+	cm108GPIOSelect  *widget.Select
 	txGainLabel      *widget.Label
 	txPeakLabel      *widget.Label
 	bitrateLabel     *widget.Label
@@ -434,6 +476,9 @@ func main() {
 	channelSelect := widget.NewSelect([]string{"left", "right", "stereo"}, func(string) {})
 	channelSelect.SetSelected("left")
 	bindings.channelSelect = channelSelect
+	pttMethodSelect := widget.NewSelect(pttMethodOptions(), func(string) {})
+	pttMethodSelect.SetSelected(pttMethodLabel("none"))
+	bindings.pttMethodSelect = pttMethodSelect
 	radioSelect := widget.NewSelect([]string{}, func(string) {})
 	bindings.radioSelect = radioSelect
 	devicePathEntry := widget.NewEntry()
@@ -442,6 +487,15 @@ func main() {
 	serialSpeedEntry := widget.NewSelect([]string{"Auto", "4800", "9600", "19200", "38400", "115200"}, func(string) {})
 	serialSpeedEntry.SetSelected("Auto")
 	bindings.serialSpeedEntry = serialSpeedEntry
+	pttLineSelect := widget.NewSelect([]string{"rts", "dtr", "both"}, func(string) {})
+	pttLineSelect.SetSelected("rts")
+	bindings.pttLineSelect = pttLineSelect
+	pttInvertSelect := widget.NewSelect([]string{"none", "rts", "dtr", "both"}, func(string) {})
+	pttInvertSelect.SetSelected("none")
+	bindings.pttInvertSelect = pttInvertSelect
+	cm108GPIOSelect := widget.NewSelect([]string{"1", "2", "3", "4"}, func(string) {})
+	cm108GPIOSelect.SetSelected("3")
+	bindings.cm108GPIOSelect = cm108GPIOSelect
 
 	txGainSlider := widget.NewSlider(-20.0, 20.0)
 	txGainSlider.Step = 0.5
@@ -926,13 +980,21 @@ func main() {
 					state.radioSelected = e.Selected
 					state.radioDevicePath = e.DevicePath
 					state.radioSerialSpeed = e.SerialSpeed
+					state.pttMethod = e.PTTMethod
+					state.pttLine = e.PTTLine
+					state.pttInvert = e.PTTInvert
+					state.cm108GPIO = e.CM108GPIO
 					runOnUI(func() {
+						bindings.pttMethodSelect.SetSelected(pttMethodLabel(e.PTTMethod))
 						if e.DevicePath != "" {
 							bindings.devicePathEntry.SetText(e.DevicePath)
 						}
 						if e.SerialSpeed != "" {
 							bindings.serialSpeedEntry.SetSelected(e.SerialSpeed)
 						}
+						bindings.pttLineSelect.SetSelected(e.PTTLine)
+						bindings.pttInvertSelect.SetSelected(e.PTTInvert)
+						bindings.cm108GPIOSelect.SetSelected(e.CM108GPIO)
 					})
 					refreshSelect(bindings.radioSelect, e.Items, e.Selected, false)
 
@@ -954,7 +1016,8 @@ func main() {
 
 	// One command path for both transports: in-process call or websocket
 	// frame, decided by whichever Link is open.
-	sendWSCommand := func(command string, value string, value2 string, value3 string) error {
+	sendWSCommand := func(command string, value string, value2 string, value3 string, value4 string,
+		value5 string, value6 string, value7 string) error {
 		state.mu.RLock()
 		link := state.link
 		connected := state.wsConnected
@@ -962,7 +1025,8 @@ func main() {
 		if link == nil || !connected {
 			return fmt.Errorf("not connected")
 		}
-		return link.Send(Command{Name: command, Value: value, Value2: value2, Value3: value3})
+		return link.Send(Command{Name: command, Value: value, Value2: value2, Value3: value3,
+			Value4: value4, Value5: value5, Value6: value6, Value7: value7})
 	}
 
 	connectButton = widget.NewButton("Connect", func() {
@@ -990,7 +1054,7 @@ func main() {
 
 	txGainSlider.OnChanged = func(value float64) {
 		bindings.txGainLabel.SetText(fmt.Sprintf("TX gain: %.1f dB", value))
-		if err := sendWSCommand("set_tx_gain", fmt.Sprintf("%.2f", value), "", ""); err != nil {
+		if err := sendWSCommand("set_tx_gain", fmt.Sprintf("%.2f", value), "", "", "", "", "", ""); err != nil {
 			appendLog(fmt.Sprintf("Failed to send TX gain: %v\n", err))
 		}
 	}
@@ -1126,7 +1190,7 @@ func main() {
 			if channel == "" {
 				channel = "left"
 			}
-			if err := sendWSCommand("set_audio_config", captureID, playbackID, channel); err != nil {
+			if err := sendWSCommand("set_audio_config", captureID, playbackID, channel, "", "", "", ""); err != nil {
 				appendLog(fmt.Sprintf("Failed to send audio config: %v\n", err))
 			} else {
 				appendLog(fmt.Sprintf("Sent audio config: capture=%s playback=%s channel=%s\n",
@@ -1148,37 +1212,99 @@ func main() {
 
 	showRadioDialog := func() {
 		applyBtn := widget.NewButton("Apply", func() {
+			method := pttMethodID(bindings.pttMethodSelect.Selected)
 			modelID := selectedID(bindings.radioSelect, state.radioItems)
-			if modelID == "" {
-				appendLog("Select a radio model before applying.\n")
+			if method == "hamlib" && (modelID == "" || modelID == "-1") {
+				appendLog("Select a Hamlib radio model before applying.\n")
 				return
 			}
 			devPath := bindings.devicePathEntry.Text
+			if method == "serial" && devPath == "" {
+				appendLog("Enter the serial device used for RTS PTT.\n")
+				return
+			}
 			serialSpeed := bindings.serialSpeedEntry.Selected
 			if serialSpeed == "" || serialSpeed == "Auto" {
 				serialSpeed = "0"
 			}
-			if err := sendWSCommand("set_radio_config", modelID, devPath, serialSpeed); err != nil {
-				appendLog(fmt.Sprintf("Failed to send radio config: %v\n", err))
+			pttLine := bindings.pttLineSelect.Selected
+			pttInvert := bindings.pttInvertSelect.Selected
+			cm108GPIO := bindings.cm108GPIOSelect.Selected
+			if err := sendWSCommand("set_ptt_config", method, devPath, modelID, serialSpeed,
+				pttLine, pttInvert, cm108GPIO); err != nil {
+				appendLog(fmt.Sprintf("Failed to send PTT config: %v\n", err))
 			} else {
-				appendLog(fmt.Sprintf("Sent radio config: model=%s path=%s baud=%s\n", modelID, devPath, serialSpeed))
+				appendLog(fmt.Sprintf("Sent PTT config: method=%s model=%s path=%s baud=%s line=%s invert=%s gpio=%s\n",
+					method, modelID, devPath, serialSpeed, pttLine, pttInvert, cm108GPIO))
 			}
 		})
 
+		deviceRow := container.NewGridWithColumns(2,
+			widget.NewLabel("Device Path"), bindings.devicePathEntry)
+		modelRow := container.NewGridWithColumns(2,
+			widget.NewLabel("Hamlib Model"), bindings.radioSelect)
+		baudRow := container.NewGridWithColumns(2,
+			widget.NewLabel("Hamlib Baud Rate"), bindings.serialSpeedEntry)
+		lineRow := container.NewGridWithColumns(2,
+			widget.NewLabel("PTT Line"), bindings.pttLineSelect)
+		invertRow := container.NewGridWithColumns(2,
+			widget.NewLabel("Invert Line"), bindings.pttInvertSelect)
+		gpioRow := container.NewGridWithColumns(2,
+			widget.NewLabel("CM108 GPIO"), bindings.cm108GPIOSelect)
+		previousMethod := pttMethodID(bindings.pttMethodSelect.Selected)
+		updateMethodFields := func(label string) {
+			method := pttMethodID(label)
+			if method == "cm108" && (previousMethod == "serial" || previousMethod == "hamlib") {
+				bindings.devicePathEntry.SetText("")
+			}
+			previousMethod = method
+			lineRow.Hide()
+			invertRow.Hide()
+			gpioRow.Hide()
+			switch method {
+			case "hamlib":
+				deviceRow.Show()
+				modelRow.Show()
+				baudRow.Show()
+			case "serial":
+				deviceRow.Show()
+				modelRow.Hide()
+				baudRow.Hide()
+				lineRow.Show()
+				invertRow.Show()
+			case "cm108":
+				// Device is auto-detected; an explicit /dev/hidrawN is the
+				// override, so the field stays available but is not required.
+				deviceRow.Show()
+				modelRow.Hide()
+				baudRow.Hide()
+				gpioRow.Show()
+			default:
+				deviceRow.Hide()
+				modelRow.Hide()
+				baudRow.Hide()
+			}
+		}
+		bindings.pttMethodSelect.OnChanged = updateMethodFields
+
 		content := container.NewVBox(
 			container.NewGridWithColumns(2,
-				widget.NewLabel("Radio Model"), bindings.radioSelect,
-				widget.NewLabel("Device Path"), bindings.devicePathEntry,
-				widget.NewLabel("Baud Rate"), bindings.serialSpeedEntry,
-			),
+				widget.NewLabel("PTT Method"), bindings.pttMethodSelect),
+			deviceRow,
+			modelRow,
+			baudRow,
+			lineRow,
+			invertRow,
+			gpioRow,
 			container.NewHBox(layout.NewSpacer(), applyBtn, layout.NewSpacer()),
 		)
+		updateMethodFields(bindings.pttMethodSelect.Selected)
 
 		bg := canvas.NewRectangle(color.Transparent)
 		bg.SetMinSize(fyne.NewSize(500, 0))
 		padded := container.NewStack(bg, container.NewPadded(content))
 
-		dialog.ShowCustom("Radio Config", "Close", padded, myWindow)
+		dialog.ShowCustom("PTT Configuration", "Close", padded, myWindow)
 	}
 
 	showWaterfallDialog := func() {
@@ -1209,7 +1335,7 @@ func main() {
 				appendLog(fmt.Sprintf("Waterfall turned %s.\n", val))
 				return
 			}
-			if err := sendWSCommand("set_waterfall", val, "", ""); err != nil {
+			if err := sendWSCommand("set_waterfall", val, "", "", "", "", "", ""); err != nil {
 				appendLog(fmt.Sprintf("Failed to toggle waterfall: %v\n", err))
 			}
 		}

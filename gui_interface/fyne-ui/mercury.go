@@ -30,8 +30,8 @@ func mercuryPrintVersion() {
 }
 
 // mercuryInfoCheck forwards the args to the engine's CLI parser and handles the
-// informational actions (-h/-l/-z/-K) by printing to the terminal. Returns true
-// if such an action was handled and the process should exit before the GUI.
+// exit-only actions (-h/-l/-z/-K/-Q) before the GUI starts. Returns true if
+// such an action was handled and the process should exit before opening a window.
 func mercuryInfoCheck(args []string) bool {
 	cArgs := make([]*C.char, len(args))
 	for i, a := range args {

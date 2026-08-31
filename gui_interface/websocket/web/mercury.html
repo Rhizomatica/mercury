@@ -62,6 +62,13 @@ body {
 
 label { color: #dcdcdc; font-size: 13px; padding: 2px 0; }
 
+/* One PTT settings row (its label plus its control).  Wrapping the pair lets a
+ * row be hidden as a unit; the parent .control-section is a column flexbox with
+ * the same gap, so the rendered spacing is unchanged.  The explicit
+ * [hidden] rule is required because display:flex overrides the UA default. */
+.ptt-row { display: flex; flex-direction: column; gap: 5px; }
+.ptt-row[hidden] { display: none; }
+
 select, input[type="text"] {
   background: #2d2d2d; color: #e6e6e6; border: 1px solid #464646;
   border-radius: 6px; padding: 5px 8px; font-size: 13px;
@@ -203,12 +210,61 @@ input[type="range"] {
           </div>
           <div class="tx-meter-label">TX peak: <span id="txPeakValue">—</span> dBFS</div>
         </div>
-        <!-- HAMLIB Radio -->
+        <!-- PTT configuration -->
         <div class="control-section">
-          <label for="radioModelSelect">HAMLIB Model</label>
-          <select id="radioModelSelect"><option value="">--</option></select>
-          <label for="devicePathInput">Device Path</label>
-          <input type="text" id="devicePathInput" placeholder="/dev/ttyUSB0 or 127.0.0.1:4532" />
+          <label for="pttMethodSelect">PTT Method</label>
+          <select id="pttMethodSelect">
+            <option value="none">None</option>
+            <option value="hamlib">Hamlib</option>
+            <option value="serial">Serial (RTS/DTR)</option>
+            <option value="cm108">CM108 GPIO</option>
+            <option value="hermes_shm">HERMES SHM</option>
+          </select>
+          <div class="ptt-row" id="pttRowDevice">
+            <label for="devicePathInput">Device Path</label>
+            <input type="text" id="devicePathInput" placeholder="/dev/ttyUSB0 or 127.0.0.1:4532" />
+          </div>
+          <div class="ptt-row" id="pttRowModel">
+            <label for="radioModelSelect">Hamlib Model</label>
+            <select id="radioModelSelect"><option value="">--</option></select>
+          </div>
+          <div class="ptt-row" id="pttRowBaud">
+            <label for="baudRateSelect">Hamlib Baud Rate</label>
+            <select id="baudRateSelect">
+              <option value="0" selected>Auto</option>
+              <option value="4800">4800</option>
+              <option value="9600">9600</option>
+              <option value="19200">19200</option>
+              <option value="38400">38400</option>
+              <option value="115200">115200</option>
+            </select>
+          </div>
+          <div class="ptt-row" id="pttRowLine">
+            <label for="pttLineSelect">PTT Line</label>
+            <select id="pttLineSelect">
+              <option value="rts" selected>RTS</option>
+              <option value="dtr">DTR</option>
+              <option value="both">RTS + DTR</option>
+            </select>
+          </div>
+          <div class="ptt-row" id="pttRowInvert">
+            <label for="pttInvertSelect">Invert Line</label>
+            <select id="pttInvertSelect">
+              <option value="none" selected>None</option>
+              <option value="rts">RTS</option>
+              <option value="dtr">DTR</option>
+              <option value="both">RTS + DTR</option>
+            </select>
+          </div>
+          <div class="ptt-row" id="pttRowGPIO">
+            <label for="cm108GPIOSelect">CM108 GPIO</label>
+            <select id="cm108GPIOSelect">
+              <option value="1">GPIO 1</option>
+              <option value="2">GPIO 2</option>
+              <option value="3" selected>GPIO 3</option>
+              <option value="4">GPIO 4</option>
+            </select>
+          </div>
           <button class="apply-btn" id="radioApplyBtn">Apply</button>
         </div>
         <!-- WebSocket Connection -->
@@ -276,8 +332,14 @@ let autoReconnect = true;
 let appliedCapture  = "";
 let appliedPlayback = "";
 let appliedChannel  = "";
+let appliedPTTMethod = "";
 let appliedRadioModel = "";
 let appliedDevicePath = "";
+let appliedBaudRate = "";
+let appliedPTTLine = "";
+let appliedPTTInvert = "";
+let appliedCM108GPIO = "";
+let previousPTTMethod = "none";
 
 /* ===========================================================================
  *  VARA Colormap (from waterfall_widget.py _build_vara_colormap)
@@ -725,8 +787,9 @@ function populateSelect(sel, items, selected, prependDefault) {
 
 function setSelectValue(sel, val) {
   for (let i = 0; i < sel.options.length; i++) {
-    if (sel.options[i].value === val) { sel.selectedIndex = i; return; }
+    if (sel.options[i].value === val) { sel.selectedIndex = i; return true; }
   }
+  return false;
 }
 
 function getSelectValue(sel) {
@@ -740,13 +803,46 @@ function restoreAudioSelection() {
 }
 
 function restoreRadioSelection() {
+  setSelectValue(document.getElementById("pttMethodSelect"), appliedPTTMethod || "none");
   if (appliedRadioModel) setSelectValue(document.getElementById("radioModelSelect"), appliedRadioModel);
   if (appliedDevicePath) document.getElementById("devicePathInput").value = appliedDevicePath;
+  if (appliedBaudRate) setSelectValue(document.getElementById("baudRateSelect"), appliedBaudRate);
+  setSelectValue(document.getElementById("pttLineSelect"), appliedPTTLine || "rts");
+  setSelectValue(document.getElementById("pttInvertSelect"), appliedPTTInvert || "none");
+  setSelectValue(document.getElementById("cm108GPIOSelect"), appliedCM108GPIO || "3");
+  previousPTTMethod = getSelectValue(document.getElementById("pttMethodSelect")) || "none";
+  updatePTTFieldState();
+}
+
+function updatePTTFieldState() {
+  const method = getSelectValue(document.getElementById("pttMethodSelect")) || "none";
+  /* Which rows each method actually uses.  Mirrors updateMethodFields() in the
+   * Fyne dialog (gui_interface/fyne-ui/main.go) -- keep the two in step. */
+  const rows = {
+    hamlib: ["pttRowDevice", "pttRowModel", "pttRowBaud"],
+    serial: ["pttRowDevice", "pttRowLine", "pttRowInvert"],
+    /* CM108 auto-detects the HID node; the device path stays available as an
+     * explicit override, so it is shown but never required. */
+    cm108:  ["pttRowDevice", "pttRowGPIO"],
+  };
+  const shown = rows[method] || [];
+  ["pttRowDevice", "pttRowModel", "pttRowBaud",
+   "pttRowLine", "pttRowInvert", "pttRowGPIO"].forEach(function(id) {
+    const row = document.getElementById(id);
+    const visible = shown.indexOf(id) !== -1;
+    row.hidden = !visible;
+    /* Disabled as well as hidden: a control that is not on screen must not be
+     * reachable by keyboard or announced by a screen reader. */
+    row.querySelectorAll("select, input").forEach(function(el) {
+      el.disabled = !visible;
+    });
+  });
 }
 
 function clearAppliedState() {
   appliedCapture = ""; appliedPlayback = ""; appliedChannel = "";
-  appliedRadioModel = ""; appliedDevicePath = "";
+  appliedPTTMethod = ""; appliedRadioModel = ""; appliedDevicePath = ""; appliedBaudRate = "";
+  appliedPTTLine = ""; appliedPTTInvert = ""; appliedCM108GPIO = "";
 }
 
 function resetControls() {
@@ -754,7 +850,13 @@ function resetControls() {
   document.getElementById("playbackDevSelect").innerHTML  = '<option value="">--</option>';
   document.getElementById("inputChannelSelect").innerHTML = '<option value="">--</option>';
   document.getElementById("radioModelSelect").innerHTML   = '<option value="">--</option>';
+  document.getElementById("pttMethodSelect").value = "none";
   document.getElementById("devicePathInput").value = "";
+  document.getElementById("baudRateSelect").value = "0";
+  document.getElementById("pttLineSelect").value = "rts";
+  document.getElementById("pttInvertSelect").value = "none";
+  document.getElementById("cm108GPIOSelect").value = "3";
+  updatePTTFieldState();
 }
 
 /* ===========================================================================
@@ -778,10 +880,22 @@ function handleInputChannel(msg) {
 
 function handleRadioList(msg) {
   populateSelect(document.getElementById("radioModelSelect"), msg.list || [], msg.selected || "", false);
+  const method = msg.ptt_method || (msg.selected ? "hamlib" : "none");
+  if (!appliedPTTMethod) appliedPTTMethod = method;
+  setSelectValue(document.getElementById("pttMethodSelect"), appliedPTTMethod || method);
   if (msg.device_path && !appliedDevicePath) {
     document.getElementById("devicePathInput").value = msg.device_path;
   }
+  if (msg.serial_speed != null && !appliedBaudRate) {
+    const baud = String(msg.serial_speed);
+    if (!setSelectValue(document.getElementById("baudRateSelect"), baud))
+      setSelectValue(document.getElementById("baudRateSelect"), "0");
+  }
+  if (!appliedPTTLine) appliedPTTLine = msg.ptt_line || "rts";
+  if (!appliedPTTInvert) appliedPTTInvert = msg.ptt_invert || "none";
+  if (!appliedCM108GPIO) appliedCM108GPIO = String(msg.cm108_gpio || 3);
   restoreRadioSelection();
+  updatePTTFieldState();
 }
 
 function handleStatus(msg) {
@@ -1026,13 +1140,34 @@ document.getElementById("audioApplyBtn").addEventListener("click", function() {
 });
 
 document.getElementById("radioApplyBtn").addEventListener("click", function() {
+  const method = getSelectValue(document.getElementById("pttMethodSelect")) || "none";
   const modelId = getSelectValue(document.getElementById("radioModelSelect"));
   const devPath = document.getElementById("devicePathInput").value.trim();
-  if (!modelId) return;
+  const baudRate = document.getElementById("baudRateSelect").value;
+  const pttLine = document.getElementById("pttLineSelect").value;
+  const pttInvert = document.getElementById("pttInvertSelect").value;
+  const cm108GPIO = document.getElementById("cm108GPIOSelect").value;
+  if (method === "hamlib" && (!modelId || modelId === "-1")) return;
+  if (method === "serial" && !devPath) return;
+  appliedPTTMethod = method;
   appliedRadioModel = modelId;
   appliedDevicePath = devPath;
-  if (modelId === "-1") document.getElementById("devicePathInput").value = "";
-  sendJson({ command: "set_radio_config", value: modelId, value2: devPath });
+  appliedBaudRate = baudRate;
+  appliedPTTLine = pttLine;
+  appliedPTTInvert = pttInvert;
+  appliedCM108GPIO = cm108GPIO;
+  sendJson({ command: "set_ptt_config", value: method, value2: devPath,
+             value3: modelId, value4: baudRate, value5: pttLine,
+             value6: pttInvert, value7: cm108GPIO });
+});
+
+document.getElementById("pttMethodSelect").addEventListener("change", function() {
+  const method = getSelectValue(this) || "none";
+  if (method === "cm108" && (previousPTTMethod === "serial" || previousPTTMethod === "hamlib")) {
+    document.getElementById("devicePathInput").value = "";
+  }
+  previousPTTMethod = method;
+  updatePTTFieldState();
 });
 
 // Enter key on device path triggers radio apply

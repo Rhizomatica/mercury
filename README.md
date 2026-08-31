@@ -30,7 +30,7 @@ presents the result to your application as an ordinary TCP connection.
 - **Broadcast mode** alongside ARQ, with its own framing and TCP ingress port — used for one-to-many traffic and for [Reticulum](#reticulum) mesh networking.
 - **VARA-style TCP TNC interface** on two sockets (control on the base port, data on base+1), speaking `MYCALL`, `LISTEN`, `CONNECT`, `BUFFER`, `SN`, `BITRATE` and `TUNE` (a 1 kHz ATU tuning carrier with a hard 60 s unkey timer). Existing VARA-aware software can generally talk to Mercury unchanged.
 - **Runs on the audio hardware you have** — `alsa`, `pulse`, `oss`, `coreaudio`, `aaudio`, `dsound`, `wasapi`, plus `shm`, `null` and `fifo` for embedded and test use.
-- **Keys the radio for you** via Hamlib CAT or the HERMES shared-memory interface — or stays out of the way and lets your client do it.
+- **Keys the radio for you** via Hamlib, serial RTS (including DigiRig), or the HERMES shared-memory interface — or stays out of the way and lets your client do it.
 
 Mercury runs on Linux, Windows and macOS, including Raspberry Pi.
 
@@ -44,7 +44,7 @@ command-line flags override it. Run `./mercury -h` for this list at any time.
 
 ```
 Usage modes:
-./mercury -m [mode_index] -i [device] -o [device] -x [sound_system] -p [arq_tcp_base_port] -b [broadcast_tcp_port] -f [freedv_verbosity] -H [hamlib_log_level] -k [rx_input_channel] [-G] [-T] [-U ui_port] [-W] [-C config_file]
+./mercury -m [mode_index] -i [device] -o [device] -x [sound_system] -p [arq_tcp_base_port] -b [broadcast_tcp_port] -f [freedv_verbosity] -H [hamlib_log_level] -k [rx_input_channel] [-P ptt_method] [-A ptt_device] [-G] [-T] [-U ui_port] [-W] [-C config_file]
 ./mercury [-h -l -z]
 
 Options:
@@ -69,10 +69,12 @@ Options:
  -v                         Verbose mode. Prints more information during execution.
  -L [path]                  Write log to file (TIMING level and above).
  -J                         Write log file in JSONL format (requires -L).
- -R [radio_model]           Sets HAMLIB radio model.
- -A [radio_address]         Sets HAMLIB radio device file or ip:port address.
- -S                         Use HERMES shared memory radio control (Linux-only; do not use with -R and -A).
+ -P [ptt_method]            PTT method: none, hamlib, serial, cm108, or hermes_shm.
+ -R [radio_model]           Sets HAMLIB radio model and selects Hamlib PTT.
+ -A [ptt_device]            PTT serial device or HAMLIB device/ip:port endpoint.
+ -S                         Select HERMES shared-memory PTT (Linux shorthand for -P hermes_shm).
  -K                         List HAMLIB supported radio models.
+ -Q                         Test PTT: key the configured backend for one second, release it, and exit.
  -C [path]                  Path to INI configuration file (default: mercury.ini in the current directory).
  -t                         Test TX mode.
  -r                         Test RX mode.
@@ -93,10 +95,13 @@ Mode behavior notes:
   is preserved in `CONNECTED ... BW` only when both peers advertise it.
 - `FSK_LDPC` is currently **experimental** (mainly for lab/test usage), may have longer decode/sync latency depending on setup, and is not recommended for production links yet.
 
-Radio control notes:
-- With no `-R`, `-A`, or `-S`, Mercury does **not** key the radio directly; it leaves the radio keying task to the TCP client.
-- `-R` selects a HAMLIB model ID, `-A` optionally points HAMLIB at a device path or `ip:port`, and `-K` prints the available HAMLIB models.
-- `-S` selects the HERMES shared-memory controller interface, is mutually exclusive with `-A`, and is unavailable on Windows builds.
+PTT control notes:
+- The default method is `none`; Mercury then leaves radio keying to the TCP client.
+- `-P serial -A COM7` (or a POSIX device such as `/dev/ttyUSB0`) keys a serial modem-control line. No baud rate is used. Which line, and whether it is inverted, comes from `[ptt] line` and `[ptt] invert` — RTS non-inverted by default.
+- `-P cm108` keys a GPIO pin on a CM108/CM119-class USB sound chip. The device is auto-detected; `[ptt] cm108_gpio` selects the pin (default 3).
+- `-R` is the compatible Hamlib shorthand: it selects the model and the `hamlib` PTT method. `-A` supplies its device or `ip:port`, and `-K` lists models.
+- `-S` is the compatible shorthand for `hermes_shm` and is unavailable on Windows builds.
+- `-Q` opens the configured backend, keys it for one second, releases it, and exits without starting the modem or audio devices. For example: `mercury -C mercury.ini -Q`.
 
 ## Getting Started with Mercury
 
@@ -257,6 +262,45 @@ launch right-click **Mercury** → **Open** to get past Gatekeeper.
 Mercury reads an INI-format configuration file at startup. The default path is `mercury.ini` in the current working directory; use `-C` to specify an alternative path. Command-line arguments take priority over values from the file.
 
 See the included [mercury.ini.example](mercury.ini.example) for all available settings and their default values — copy it to `mercury.ini` and edit as needed.
+
+PTT is configured independently of CAT-oriented radio settings:
+
+```ini
+[ptt]
+method = serial
+device = COM7
+```
+
+Valid methods are `none`, `hamlib`, `serial`, `cm108`, and `hermes_shm` (`serial_rts` is still accepted and means `serial` with `line = rts`). Legacy
+`radio_model`, `radio_device`, `radio_serial_speed`, and `hamlib_log_level`
+keys are still read and mapped to the equivalent PTT configuration.
+
+#### Common interfaces
+
+| Interface | Method | Settings |
+|---|---|---|
+| DigiRig Mobile | `serial` | `line = rts` (default) |
+| All-In-One Cable (AIOC) | `serial` | `line = both`, `invert = rts` |
+| All-In-One Cable (AIOC) | `cm108` | auto-detected, `cm108_gpio = 3` |
+| CM108/CM119 USB dongles | `cm108` | `cm108_gpio = 3` (some use 1 or 4) |
+| CAT-controlled HF rig | `hamlib` | `hamlib_model`, `device` |
+| sBitx | `hermes_shm` | — (or `-S`) |
+
+The AIOC exposes both a CDC serial port and a CM108-compatible HID endpoint, so
+either method works. `cm108` needs no device path — Mercury finds it — but the
+HID endpoint is root-only by default, so it needs a udev rule if Mercury is not
+running as root.
+
+`cm108` works on all three supported platforms, via hidapi:
+
+| Platform | hidapi source | Notes |
+|---|---|---|
+| Linux | `libhidapi-dev` (`pkg-config`) | Optional — without it Mercury talks to `/dev/hidraw` directly, so a minimal Raspberry Pi build needs no extra package |
+| macOS | `brew install hidapi` | |
+| Windows | vendored in `radio_io/hidapi-w64` | Built from source with the rest of the tree, like `hamlib-w64`; no prebuilt library needed |
+
+`pkg-config` detection is deliberately skipped for the Windows cross-build: it
+would find the *host* hidapi and link something that cannot run on the target.
 
 ## Documentation
 

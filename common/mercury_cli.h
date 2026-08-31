@@ -16,6 +16,7 @@ typedef enum {
     MERCURY_CLI_LIST_MODES,     /* -l : list modulation modes      */
     MERCURY_CLI_LIST_SNDCARDS,  /* -z : list sound cards           */
     MERCURY_CLI_LIST_RADIOS,    /* -K : list HAMLIB radio models   */
+    MERCURY_CLI_TEST_PTT,       /* -Q : pulse configured PTT       */
     MERCURY_CLI_HELP,           /* -h : print usage                */
 } mercury_cli_action_t;
 
@@ -43,8 +44,12 @@ void mercury_cli_print_usage(const char *prog);
 
 /* Execute an informational action (-h/-l/-z/-K): print usage / list modes /
  * list sound cards / list radio models.  Returns true if such an action was
- * handled (the caller should exit), false for MERCURY_CLI_RUN. */
+ * handled (the caller should exit), false for MERCURY_CLI_RUN or -Q. */
 bool mercury_cli_run_info_action(const mercury_cli_t *cli, const char *prog);
+
+/* Open the configured backend, key for one second, unkey, close and exit.
+ * Returns 0 on success, -1 if opening or changing PTT state fails. */
+int mercury_cli_run_ptt_test(const mercury_cli_t *cli);
 
 /* Startup-mode table (index -> FreeDV mode); freedv_mode_names is also
  * referenced by the modem. */

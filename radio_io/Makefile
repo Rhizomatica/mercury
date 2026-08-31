@@ -65,7 +65,7 @@ endif
 
 CFLAGS = $(COMMON_CFLAGS) $(HAMLIB_CFLAGS_LOCAL) $(HERMES_SHM_CFLAGS_LOCAL)
 
-OBJS = radio_io.o
+OBJS = radio_io.o serial_ptt.o cm108_ptt.o
 
 ifeq ($(HAVE_HERMES_SHM),1)
 OBJS += sbitx_io.o shm_utils.o
@@ -77,8 +77,38 @@ endif
 
 all: $(OBJS)
 
-radio_io.o: radio_io.c radio_io.h sbitx_io.h radio_cmds.h shm_utils.h rigctl_parse.h
+radio_io.o: radio_io.c radio_io.h serial_ptt.h cm108_ptt.h sbitx_io.h radio_cmds.h shm_utils.h rigctl_parse.h
 	$(CC) $(CFLAGS) -c radio_io.c
+
+serial_ptt.o: serial_ptt.c serial_ptt.h radio_io.h
+	$(CC) $(CFLAGS) -c serial_ptt.c
+
+# hidapi include path, resolved from THIS directory.  The top-level
+# HIDAPI_CFLAGS points at radio_io/hidapi-w64, which is correct there and wrong
+# here -- the same trap hamlib-w64 has, handled the same way.
+ifeq ($(HAVE_HIDAPI),1)
+ifeq ($(OS),Windows_NT)
+HIDAPI_CFLAGS_LOCAL = -Ihidapi-w64/include -DHAVE_HIDAPI
+else
+# Same trap on macOS when hidapi is vendored rather than installed: the
+# top-level path is relative to the tree root, not to this directory.
+RADIO_IO_UNAME_S := $(shell uname -s)
+ifeq ($(RADIO_IO_UNAME_S),Darwin)
+ifneq ($(wildcard hidapi-macos/src/hid.c),)
+HIDAPI_CFLAGS_LOCAL = -Ihidapi-macos/include -DHAVE_HIDAPI
+else
+HIDAPI_CFLAGS_LOCAL = $(HIDAPI_CFLAGS)
+endif
+else
+HIDAPI_CFLAGS_LOCAL = $(HIDAPI_CFLAGS)
+endif
+endif
+else
+HIDAPI_CFLAGS_LOCAL =
+endif
+
+cm108_ptt.o: cm108_ptt.c cm108_ptt.h radio_io.h
+	$(CC) $(CFLAGS) $(HIDAPI_CFLAGS_LOCAL) -c cm108_ptt.c
 
 sbitx_io.o: sbitx_io.c sbitx_io.h radio_cmds.h
 	$(CC) $(CFLAGS) -c sbitx_io.c
@@ -91,6 +121,15 @@ rigctl_parse.o: rigctl_parse.c rigctl_parse.h
 
 clean:
 	rm -f *.o
+	@# The vendored hidapi objects live one directory down, so a bare *.o
+	@# misses them.  They MUST go: macos-universal and fyne-ui-macos-universal
+	@# build one arch slice after another with a `clean` in between, and a
+	@# surviving hid.o from the previous slice is silently reused --
+	@# "ld: warning: ignoring file radio_io/hidapi-macos/hid.o: found
+	@# architecture 'x86_64', required architecture 'arm64'" followed by every
+	@# hid_* symbol undefined.  The Windows copy has the same shape, so clean
+	@# both rather than leaving the next cross-build to trip over it.
+	rm -f hidapi-macos/hid.o hidapi-w64/hid.o
 
 # Pull in the header dependencies emitted by -MMD (see config.mk).  Leading
 # dash: absent on a first build, which is correct.

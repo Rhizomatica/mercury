@@ -23,20 +23,6 @@ ui_protocol = ws
 ; Enable waterfall / spectrum data sent to the UI (default: true)
 waterfall_enabled = true
 
-; HAMLIB radio model ID. Use -1 for none, 0 for HERMES SHM, or a
-; positive integer for a HAMLIB model (run mercury -K to see the list).
-; (default: -1)
-radio_model = -1
-
-; HAMLIB radio device file or ip:port address
-; Examples: /dev/ttyUSB0 (Linux), COM3 (Windows), 127.0.0.1:4532 (rigctld)
-radio_device =
-
-; Serial baud rate for HAMLIB radio (0 = use hamlib default for the model).
-; Must match the CAT Rate configured on your radio.
-; Common values: 4800, 9600, 19200, 38400, 115200
-radio_serial_speed = 0
-
 ; Audio capture (input) device id (e.g. "plughw:0,0")
 ; Run mercury -z to list available devices.
 input_device =
@@ -67,7 +53,38 @@ verbose = false
 ; FreeDV modem verbosity level, 0 to 3 (default: 0)
 freedv_verbosity = 0
 
-; Hamlib radio log level, 0 to 6 (default: 0)
+[ptt]
+
+; PTT backend: none, hamlib, serial, cm108, or hermes_shm (default: none).
+; "serial" keys a modem-control line on a serial port -- DigiRig, the
+; All-In-One Cable (AIOC) and most home-brew interfaces.  "cm108" keys a GPIO
+; pin on a CM108/CM119-class USB sound chip; the AIOC does this
+; too, so it is a second way in if the CDC serial port is awkward.
+; "serial_rts" is still accepted and means method=serial with line=rts.
+method = none
+
+; Backend endpoint. For serial use a serial device (for example COM7 or
+; /dev/ttyUSB0). For Hamlib use its serial device or ip:port endpoint.
+device =
+
+; The remaining settings are used only by method=hamlib.
+; Run mercury -K to list supported model IDs.
+; Which modem-control line keys the radio: rts (default), dtr, or both.
+; Several interfaces, the AIOC included, need BOTH driven together.
+;line = rts
+
+; Cable keys on the LOW state of a line: none (default), rts, dtr, or both.
+; An AIOC is line = both with invert = rts.
+;invert = none
+
+; CM108 GPIO pin, 1..4.  GPIO3 is the de-facto standard.
+;cm108_gpio = 3
+
+hamlib_model = -1
+
+; 0 uses the Hamlib model default. Must match the radio's CAT rate when set.
+hamlib_serial_speed = 0
+
 ; 0=NONE, 1=BUG, 2=ERR, 3=WARN, 4=VERBOSE, 5=TRACE, 6=CACHE
 hamlib_log_level = 0
 
@@ -143,6 +160,14 @@ peer_payload_hold_s = 15
 ; Control-mode-only startup window in seconds (default 10, range 2..60).
 ; Only DATAC16 is used until the link is proven stable; raise if the initial
 ; handshake (e.g. UUCP) times out before the first data frames get through.
+
+; Deterministic per-node retry stagger, in ms (default 2000, range 0..5000).
+; The two peers compare the same pair of exchanged callsigns, so exactly one of
+; them defers by this fixed offset on every retry — breaking the phase-lock
+; where two stations on a fixed schedule transmit simultaneously and neither
+; can hear the other (issue #217), without any random draw or latency tail.
+; Set to 0 to disable and revert to the old fixed retry cadence.
+retry_stagger_ms = 2000
 
 [channel]
 ; Channel-busy (occupancy) detector.  Mercury classifies the HF channel as

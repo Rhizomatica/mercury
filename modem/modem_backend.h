@@ -72,6 +72,11 @@ struct modem_backend {
      * unsupported; the modem layer null-checks before calling). */
     void  (*harq_reset)(void *ctx);
     void  (*set_harq)(void *ctx, int enabled);
+
+    /* Drop any sync the decoder currently holds, so the next burst is
+     * acquired cold (optional; null-checked).  Used to release a sync the
+     * payload plane picked up off a control burst -- see rx_worker_thread. */
+    void  (*unsync)(void *ctx);
 };
 
 static inline bool modem_codec_valid(const modem_codec_t *c)

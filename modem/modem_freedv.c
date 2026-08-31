@@ -70,6 +70,7 @@ static void fdv_get_stats(void *ctx, int *sync, float *snr)
 static int  fdv_get_rx_status(void *ctx)      { return freedv_get_rx_status(FDV(ctx)); }
 static void fdv_harq_reset(void *ctx)         { freedv_harq_reset(FDV(ctx)); }
 static void fdv_set_harq(void *ctx, int on)   { freedv_set_harq(FDV(ctx), on); }
+static void fdv_unsync(void *ctx)             { freedv_set_sync(FDV(ctx), FREEDV_SYNC_UNSYNC); }
 
 const modem_backend_t modem_backend_freedv = {
     .name             = "freedv",
@@ -92,4 +93,5 @@ const modem_backend_t modem_backend_freedv = {
     .get_rx_status    = fdv_get_rx_status,
     .harq_reset       = fdv_harq_reset,
     .set_harq         = fdv_set_harq,
+    .unsync           = fdv_unsync,
 };

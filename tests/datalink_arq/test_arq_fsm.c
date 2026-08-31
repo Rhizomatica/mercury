@@ -81,6 +81,7 @@ void setUp(void)
 
     /* Init session and register callbacks */
     mock_set_uptime_ms(1000);
+    arq_conn.my_call_sign[0] = '\0';
     arq_timing_init(&timing);
     arq_fsm_set_timing(&timing);
     arq_fsm_set_callbacks(&test_callbacks);
@@ -1116,6 +1117,10 @@ void test_calling_reanchors_retry_on_tx_complete(void)
  * property, and it fails if the handler is absent. */
 void test_call_retry_deadline_anchored_to_ptt_off(void)
 {
+    /* Deterministic stagger ranks us against "TEST1" (we rank first), so the
+     * deadline is exact — no random draw. */
+    snprintf(arq_conn.my_call_sign, CALLSIGN_MAX_SIZE, "%s", "AAA");
+
     arq_event_t ev = make_event(ARQ_EV_APP_LISTEN);
     arq_fsm_dispatch(&sess, &ev);
     ev = make_event(ARQ_EV_APP_CONNECT);
@@ -1134,9 +1139,28 @@ void test_call_retry_deadline_anchored_to_ptt_off(void)
     TEST_ASSERT_TRUE_MESSAGE(sess.deadline_ms > at_enqueue,
         "CALL retry deadline must be re-anchored to PTT-OFF");
     /* And it must be a full interval from PTT-OFF, not a partial remainder. */
-    TEST_ASSERT_EQUAL_UINT64((uint64_t)(1000 + 3700) +
-                             (uint64_t)arq_protocol_call_interval_s() * 1000ULL,
-                             sess.deadline_ms);
+    uint64_t ptt_off_ms = (uint64_t)(1000 + 3700);
+    uint64_t base_deadline_ms = ptt_off_ms +
+                               (uint64_t)arq_protocol_call_interval_s() * 1000ULL;
+    TEST_ASSERT_EQUAL_UINT64(base_deadline_ms, sess.deadline_ms);
+}
+
+/* The DATA retransmit (ack_timeout_s) is the load-bearing timer for the #217
+ * deadlock: two connected stations that submit data simultaneously both
+ * transmit, both land in WAIT_ACK, and would retransmit on the same fixed
+ * schedule without a stagger.  ack_timeout_s is a lower bound (must cover the
+ * peer's ACK), so a deterministic positive stagger only ever delays it. */
+void test_wait_ack_deadline_stagger_is_exact(void)
+{
+    snprintf(arq_conn.my_call_sign, CALLSIGN_MAX_SIZE, "%s", "AAA");
+
+    goto_connected();
+    goto_wait_ack();
+    TEST_ASSERT_EQUAL_INT(ARQ_DFLOW_WAIT_ACK, sess.dflow_state);
+
+    const arq_mode_timing_t *tm = arq_protocol_mode_timing(sess.payload_mode);
+    uint64_t base = 1000 + (uint64_t)(tm->ack_timeout_s * 1000.0f + 0.5f);
+    TEST_ASSERT_EQUAL_UINT64(base, sess.deadline_ms);
 }
 
 int main(void)
@@ -1148,6 +1172,7 @@ int main(void)
     RUN_TEST(test_listen_transitions_to_listening);
     RUN_TEST(test_connect_transitions_to_calling);
     RUN_TEST(test_call_retry_deadline_anchored_to_ptt_off);
+    RUN_TEST(test_wait_ack_deadline_stagger_is_exact);
     RUN_TEST(test_incoming_call_transitions_to_accepting);
     RUN_TEST(test_accepting_reanchors_accept_retry_on_repeated_call);
     RUN_TEST(test_incoming_call_records_dialed_secondary);

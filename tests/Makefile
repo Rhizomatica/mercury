@@ -78,7 +78,7 @@ test_pcm24: audioio/test_pcm24.c $(UNITY_SRC)
 
 # ARQ protocol tests (frame encode/decode, utilities)
 test_arq_protocol: datalink_arq/test_arq_protocol.c $(UNITY_SRC) $(ARQ_STUBS) \
-                   ../datalink_arq/arq_protocol.c ../datalink_arq/arith.c
+                   ../common/virtual_clock.c ../datalink_arq/arq_protocol.c ../datalink_arq/arith.c
 	$(CC) $(CFLAGS) -I../modem/freedv -o $@ $^ $(LDFLAGS)
 
 # Delivery-driven ladder test (deterministic climb/drop, MFSK start, BW clamp)
@@ -139,9 +139,10 @@ connect_bench: sim/connect_bench.c $(ARQ_STUBS) $(SIM_SRC) \
 	$(CC) $(CFLAGS) -Isim -I../modem/freedv -o $@ $^ $(LDFLAGS)
 
 test_cfg_utils: common/test_cfg_utils.c $(UNITY_SRC) \
-                ../common/cfg_utils.c \
+                ../common/cfg_utils.c ../radio_io/cm108_ptt.c \
+                ../common/hermes_log.c \
                 ../common/iniparser/iniparser.c ../common/iniparser/dictionary.c
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+	$(CC) $(CFLAGS) -I../radio_io -o $@ $^ $(LDFLAGS)
 
 # ARQ→TNC seam test (standalone TU, no threads/bus)
 test_arq_tnc: datalink_arq/test_arq_tnc.c $(UNITY_SRC) ../datalink_arq/arq_tnc.c
