@@ -232,6 +232,16 @@ int main(int argc, char *argv[])
     if (!watterson_configured)
         watterson_init(&watterson, Fs);
 
+    /* Report the fading seed on stderr (stdout may be the sample stream).
+     *
+     * watterson_init() has already seeded the model -- from
+     * MERCURY_WATTERSON_SEED if set, otherwise the clock and pid.  Printing it
+     * is what makes an unpinned run reproducible after the fact: re-run with
+     * MERCURY_WATTERSON_SEED set to this value and the fade replays exactly. */
+    fprintf(stderr, "watterson: fading seed %u%s\n",
+            watterson_get_seed(&watterson),
+            getenv("MERCURY_WATTERSON_SEED") ? " (pinned)" : "");
+
     /* Apply the AWGN level ONCE, after all options are parsed — so --No takes
      * effect regardless of its position relative to a preset/--path (getopt
      * may permute argv, and presets must not bake in a stale No). */

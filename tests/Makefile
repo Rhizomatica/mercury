@@ -46,6 +46,7 @@ TEST_BINS = test_ring_buffer test_arq_protocol test_arq_timing test_arq_fsm \
             test_tcp_interfaces test_resampler test_pcm24 test_arq_olla test_arq_sim \
             test_arq_conn test_cfg_utils test_arq_tnc test_channel_busy \
             test_freedv_harq test_sock_wire test_virtual_clock test_watterson \
+            test_mercury_prng \
             test_ofdm_acq test_ui_status test_ui_devices test_tx_pacing test_radio_port \
             test_radio_io_frequency
 
@@ -156,7 +157,12 @@ test_virtual_clock: common/test_virtual_clock.c $(UNITY_SRC) ../common/virtual_c
 
 # Channel model: pins that fading stays finite across sample rates (-I.. because
 # the test includes common/watterson.h by path).
-test_watterson: common/test_watterson.c $(UNITY_SRC) ../common/watterson.c
+test_watterson: common/test_watterson.c $(UNITY_SRC) ../common/watterson.c ../common/mercury_prng.c
+	$(CC) $(CFLAGS) -I.. -o $@ $^ $(LDFLAGS)
+
+# The channel's random source.  Pins actual output values, because the whole
+# point is that a seed means the same fade on every platform.
+test_mercury_prng: common/test_mercury_prng.c $(UNITY_SRC) ../common/mercury_prng.c
 	$(CC) $(CFLAGS) -I.. -o $@ $^ $(LDFLAGS)
 
 # OFDM acquisition: the FFT search must agree with brute force, fringe included.
