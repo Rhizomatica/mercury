@@ -22,6 +22,7 @@
 #define RADIO_IO_H_
 
 #include <stdbool.h>
+#include <stdint.h>
 
 /* Legacy radio_model values, retained for INI/CLI compatibility. */
 #define RADIO_TYPE_NONE (-1)
@@ -121,5 +122,11 @@ int radio_io_get_hamlib_log_level(void);
 
 /* Return the serial speed used by the current (or last) init (0 = hamlib default). */
 int radio_io_get_serial_speed(void);
+
+/* Return the last successfully read Hamlib frequency and its age.  A refresh
+ * is attempted only when allow_poll is true and the radio mutex is immediately
+ * available; telemetry never waits behind PTT or another radio operation. */
+bool radio_io_get_frequency(bool allow_poll, uint64_t *frequency_hz,
+                            uint64_t *age_ms);
 
 #endif /* RADIO_IO_H_ */

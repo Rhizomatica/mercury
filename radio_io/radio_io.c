@@ -22,6 +22,8 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
+#include <errno.h>
+#include <stdatomic.h>
 
 #ifdef HAVE_HAMLIB
 #include <hamlib/rig.h>
@@ -35,6 +37,9 @@
 #include "../common/hermes_log.h"
 
 #define RADIO_LOG_TAG "radio-io"
+#define FREQUENCY_POLL_INTERVAL_MS 5000U
+#define FREQUENCY_POST_PTT_QUIET_MS 2000U
+#define FREQUENCY_SLOW_READ_MS 100U
 
 #ifdef HAVE_HERMES_SHM
 #include "sbitx_io.h"
@@ -59,6 +64,12 @@ static ptt_config_t g_config = {
     .hamlib_log_level = 0
 };
 static const ptt_backend_t *g_backend = NULL;
+static bool g_ptt_active = false;
+static uint64_t g_last_ptt_off_ms = 0;
+static uint64_t g_frequency_attempt_ms = 0;
+static atomic_uint_fast64_t g_frequency_hz = 0;
+static atomic_uint_fast64_t g_frequency_read_ms = 0;
+static atomic_bool g_frequency_valid = false;
 
 static const char *ptt_method_name(ptt_method_t method)
 {
@@ -393,6 +404,8 @@ static void radio_io_shutdown_locked(void)
         g_backend->close();
     g_backend = NULL;
     g_config.method = PTT_METHOD_NONE;
+    g_ptt_active = false;
+    atomic_store_explicit(&g_frequency_valid, false, memory_order_release);
 }
 
 int radio_io_init(const ptt_config_t *config)
@@ -404,6 +417,13 @@ int radio_io_init(const ptt_config_t *config)
 
     if (g_backend)
         radio_io_shutdown_locked();
+
+    g_ptt_active = false;
+    g_last_ptt_off_ms = hermes_uptime_ms();
+    g_frequency_attempt_ms = 0;
+    atomic_store_explicit(&g_frequency_hz, 0, memory_order_relaxed);
+    atomic_store_explicit(&g_frequency_read_ms, 0, memory_order_relaxed);
+    atomic_store_explicit(&g_frequency_valid, false, memory_order_release);
 
     g_config = *config;
     g_config.device[sizeof(g_config.device) - 1] = '\0';
@@ -477,7 +497,20 @@ static int radio_io_key(bool on)
         pthread_mutex_unlock(&g_radio_mutex);
         return -1;
     }
+    /* Track PTT at the common dispatch point so every backend participates in
+     * the CAT quiet-window contract.  Mark ON before the potentially slow
+     * call, but undo it if the backend fails to key. */
+    if (on)
+        g_ptt_active = true;
+
     int rc = g_backend->set(on);
+    if (on && rc != 0)
+        g_ptt_active = false;
+    else if (!on)
+    {
+        g_ptt_active = false;
+        g_last_ptt_off_ms = hermes_uptime_ms();
+    }
     pthread_mutex_unlock(&g_radio_mutex);
     return rc;
 }
@@ -576,3 +609,159 @@ int radio_io_get_serial_speed(void)
     pthread_mutex_unlock(&g_radio_mutex);
     return speed;
 }
+
+static bool radio_io_copy_frequency_cache(uint64_t *frequency_hz,
+                                          uint64_t *age_ms)
+{
+    if (!atomic_load_explicit(&g_frequency_valid, memory_order_acquire))
+        return false;
+
+    uint64_t read_ms = atomic_load_explicit(&g_frequency_read_ms,
+                                             memory_order_relaxed);
+    uint64_t now = hermes_uptime_ms();
+    *frequency_hz = atomic_load_explicit(&g_frequency_hz,
+                                         memory_order_relaxed);
+    *age_ms = now >= read_ms ? now - read_ms : 0;
+    return true;
+}
+
+bool radio_io_get_frequency(bool allow_poll, uint64_t *frequency_hz,
+                            uint64_t *age_ms)
+{
+    if (!frequency_hz || !age_ms)
+        return false;
+
+    /* Optional telemetry must never queue behind PTT, shutdown, or another
+     * radio operation.  A skipped refresh is harmless because cache age is
+     * returned with the value. */
+    int lock_rc = pthread_mutex_trylock(&g_radio_mutex);
+    if (lock_rc != 0)
+    {
+        if (lock_rc != EBUSY)
+            HLOGW(RADIO_LOG_TAG, "Frequency poll lock failed: %d", lock_rc);
+        return radio_io_copy_frequency_cache(frequency_hz, age_ms);
+    }
+
+#ifdef HAVE_HAMLIB
+    uint64_t now = hermes_uptime_ms();
+    bool poll_due = g_frequency_attempt_ms == 0 ||
+                    now - g_frequency_attempt_ms >= FREQUENCY_POLL_INTERVAL_MS;
+    bool post_ptt_quiet =
+        now - g_last_ptt_off_ms < FREQUENCY_POST_PTT_QUIET_MS;
+    if (allow_poll && poll_due && !g_ptt_active && !post_ptt_quiet &&
+        g_backend == &HAMLIB_BACKEND && g_radio)
+    {
+        freq_t freq = 0;
+        uint64_t started_ms = now;
+        g_frequency_attempt_ms = now;
+        int ret = rig_get_freq(g_radio, RIG_VFO_CURR, &freq);
+        if (ret != RIG_OK)
+        {
+            vfo_t current_vfo = RIG_VFO_NONE;
+            int vfo_ret = rig_get_vfo(g_radio, &current_vfo);
+            if (vfo_ret == RIG_OK && current_vfo != RIG_VFO_NONE &&
+                current_vfo != RIG_VFO_CURR)
+            {
+                freq = 0;
+                ret = rig_get_freq(g_radio, current_vfo, &freq);
+            }
+        }
+
+        now = hermes_uptime_ms();
+        uint64_t elapsed_ms = now >= started_ms ? now - started_ms : 0;
+        if (elapsed_ms >= FREQUENCY_SLOW_READ_MS)
+            HLOGW(RADIO_LOG_TAG, "Frequency CAT read took %llu ms",
+                  (unsigned long long)elapsed_ms);
+        else
+            HLOGD(RADIO_LOG_TAG, "Frequency CAT read took %llu ms",
+                  (unsigned long long)elapsed_ms);
+
+        if (ret == RIG_OK && freq > 0)
+        {
+            atomic_store_explicit(&g_frequency_hz, (uint64_t)(freq + 0.5),
+                                  memory_order_relaxed);
+            atomic_store_explicit(&g_frequency_read_ms, now,
+                                  memory_order_relaxed);
+            atomic_store_explicit(&g_frequency_valid, true,
+                                  memory_order_release);
+        }
+        else if (ret != RIG_OK)
+        {
+            HLOGD(RADIO_LOG_TAG, "Frequency read failed (model %d): %s",
+                  g_config.hamlib_model, rigerror(ret));
+        }
+    }
+#else
+    (void)allow_poll;
+#endif
+
+    pthread_mutex_unlock(&g_radio_mutex);
+    return radio_io_copy_frequency_cache(frequency_hz, age_ms);
+}
+
+#ifdef RADIO_IO_TEST
+static int g_test_backend_result = 0;
+
+static int radio_io_test_backend_open(const ptt_config_t *config)
+{
+    (void)config;
+    return 0;
+}
+
+static int radio_io_test_backend_set(bool on)
+{
+    (void)on;
+    return g_test_backend_result;
+}
+
+static void radio_io_test_backend_close(void) { }
+
+static const ptt_backend_t RADIO_IO_TEST_BACKEND = {
+    radio_io_test_backend_open,
+    radio_io_test_backend_set,
+    radio_io_test_backend_close
+};
+
+void radio_io_test_lock(void)
+{
+    pthread_mutex_lock(&g_radio_mutex);
+}
+
+void radio_io_test_unlock(void)
+{
+    pthread_mutex_unlock(&g_radio_mutex);
+}
+
+void radio_io_test_seed_frequency(uint64_t frequency_hz, uint64_t read_ms)
+{
+    atomic_store_explicit(&g_frequency_hz, frequency_hz, memory_order_relaxed);
+    atomic_store_explicit(&g_frequency_read_ms, read_ms, memory_order_relaxed);
+    atomic_store_explicit(&g_frequency_valid, true, memory_order_release);
+}
+
+void radio_io_test_install_backend(int set_result)
+{
+    pthread_mutex_lock(&g_radio_mutex);
+    g_backend = &RADIO_IO_TEST_BACKEND;
+    g_test_backend_result = set_result;
+    g_ptt_active = false;
+    g_last_ptt_off_ms = UINT64_MAX;
+    pthread_mutex_unlock(&g_radio_mutex);
+}
+
+bool radio_io_test_ptt_active(void)
+{
+    pthread_mutex_lock(&g_radio_mutex);
+    bool active = g_ptt_active;
+    pthread_mutex_unlock(&g_radio_mutex);
+    return active;
+}
+
+uint64_t radio_io_test_last_ptt_off_ms(void)
+{
+    pthread_mutex_lock(&g_radio_mutex);
+    uint64_t off_ms = g_last_ptt_off_ms;
+    pthread_mutex_unlock(&g_radio_mutex);
+    return off_ms;
+}
+#endif

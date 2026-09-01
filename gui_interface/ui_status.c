@@ -16,6 +16,21 @@ int ui_status_to_json(const ui_status_t *st, char *buf, size_t buflen)
     /* Field order and formatting are the established wire format — remote
      * clients parse this. Keep it byte-for-byte stable; test_ui_status.c
      * fails if it drifts. */
+    char frequency[32];
+    char age[32];
+    if (st->radio_frequency_valid)
+    {
+        snprintf(frequency, sizeof(frequency), "%llu",
+                 (unsigned long long)st->radio_frequency_hz);
+        snprintf(age, sizeof(age), "%llu",
+                 (unsigned long long)st->radio_frequency_age_ms);
+    }
+    else
+    {
+        snprintf(frequency, sizeof(frequency), "null");
+        snprintf(age, sizeof(age), "null");
+    }
+
     int n = snprintf(buf, buflen,
         "{\"type\":\"status\","
         "\"bitrate\":%d,"
@@ -31,7 +46,11 @@ int ui_status_to_json(const ui_status_t *st, char *buf, size_t buflen)
         "\"tx_peak_dbfs\":%.1f,"
         "\"waterfall\":%s,"
         "\"audio_ok\":%s,"
-        "\"audio_error\":\"%s\"}",
+        "\"audio_error\":\"%s\","
+        "\"arq_tx_mode\":\"%s\","
+        "\"arq_rx_mode\":\"%s\","
+        "\"radio_frequency_hz\":%s,"
+        "\"radio_frequency_age_ms\":%s}",
         st->bitrate_bps,
         st->snr_db,
         st->user_callsign,
@@ -45,7 +64,11 @@ int ui_status_to_json(const ui_status_t *st, char *buf, size_t buflen)
         (double)st->tx_peak_dbfs,
         st->waterfall_enabled ? "true" : "false",
         st->audio_ok ? "true" : "false",
-        st->audio_error);
+        st->audio_error,
+        st->arq_tx_mode,
+        st->arq_rx_mode,
+        frequency,
+        age);
 
     if (n < 0 || (size_t)n >= buflen)
         return -1;
