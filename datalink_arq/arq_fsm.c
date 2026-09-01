@@ -295,8 +295,24 @@ static uint64_t retry_deadline_from_s(const arq_session_t *sess, float seconds)
 /** Update local_snr_x10 EMA from the SNR carried in a received frame event.
  *  Called in all RX_DATA handlers to avoid cross-thread race with the modem
  *  thread's arq_update_link_metrics() call. */
+/** Record the peer's SNR report for display.  See arq_session_t.peer_snr_x10:
+ *  telemetry only, deliberately not fed back into mode selection. */
+static void update_peer_snr(arq_session_t *sess, const arq_event_t *ev)
+{
+    /* snr_raw == 0 is the wire's "unknown", so it must not become a reading. */
+    if (ev->snr_encoded == 0)
+        return;
+    float db = arq_protocol_decode_snr((uint8_t)ev->snr_encoded);
+    if (db <= -100.0f || db >= 100.0f)
+        return;
+    sess->peer_snr_x10   = (int)(db * 10.0f);
+    sess->peer_snr_valid = true;
+}
+
 static void update_local_snr(arq_session_t *sess, const arq_event_t *ev)
 {
+    update_peer_snr(sess, ev);
+
     if (ev->rx_snr <= -100.0f || ev->rx_snr >= 100.0f || ev->rx_snr == 0.0f)
         return;
     int snr_x10 = (int)(ev->rx_snr * 10.0f);
@@ -943,6 +959,12 @@ static void fsm_calling(arq_session_t *sess, const arq_event_t *ev)
         if (ev->session_id == sess->session_id)
         {
             bool has_tx_backlog = session_tx_backlog(sess) > 0;
+            /* The caller's ONLY chance at a peer SNR reading.  In-session ACKs
+             * on this branch are Welch-Costas patterns with no header, so the
+             * ACCEPT is the one framed packet an ISS receives -- and it answers
+             * exactly the question an operator setting TX drive is asking:
+             * did the far side hear my CALL, and how well? */
+            update_peer_snr(sess, ev);
             sess->role        = ARQ_ROLE_CALLER;
             reset_session_data_state(sess);  /* discard stale retransmit buf; MFSK-start */
             if (g_cbs.notify_connected)
@@ -1060,6 +1082,7 @@ static void fsm_accepting(arq_session_t *sess, const arq_event_t *ev)
         break;
 
     case ARQ_EV_RX_CALL:
+        update_peer_snr(sess, ev);
         /* Caller is still retrying CALL, so our previous ACCEPT was lost.
          * Reset the retry counter so the ACCEPTING window stays open long
          * enough for the caller to decode the next ACCEPT and start sending

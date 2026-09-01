@@ -210,6 +210,20 @@ typedef struct
     /* --- Peer state observed from frames --- */
     bool     peer_has_data;            /* peer's HAS_DATA flag in last frame   */
     bool     acktx_had_has_data;       /* HAS_DATA was set in the last ACK sent */
+    /* Peer-reported SNR for OUR signal, * 10.  TELEMETRY ONLY.
+     *
+     * This branch's data plane is delivery-driven: it does NOT adapt on SNR,
+     * and must not start doing so here (that was the gear-shift oscillation
+     * the rethink removed).  The peer's reading is still on the wire in every
+     * frame header, though, and an operator setting TX drive needs it -- it is
+     * the only number that says whether the far side can hear us.  So it is
+     * kept purely so the UI can show it.
+     *
+     * peer_snr_valid stays false until a reading actually arrives, so the UI
+     * can say "--" rather than a 0.0 dB that reads as "they hear us at zero". */
+    int      peer_snr_x10;
+    bool     peer_snr_valid;
+
     int      local_snr_x10;           /* local RX SNR EMA * 10 — host display
                                        * only (from decoded DATA frames); not
                                        * used for mode control                 */

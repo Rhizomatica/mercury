@@ -1049,6 +1049,13 @@ int arq_get_tx_backlog_bytes(void)  { return cb_tx_backlog(); }
         return _v; \
     } while (0)
 
+/* Telemetry only -- see arq_session_t.peer_snr_x10.
+ *
+ * On this branch a reading arrives from the framed packets only: the CALL and
+ * ACCEPT of the handshake, and DATA frames.  The in-session ACK is a
+ * Welch-Costas pattern with no header, so a caller with nothing left to receive
+ * gets its reading at connect time and it then ages.  peer_snr_valid says
+ * whether one has arrived at all; it is deliberately not a freshness claim. */
 bool arq_get_peer_snr_x10(int *snr_x10)
 {
     bool valid;
