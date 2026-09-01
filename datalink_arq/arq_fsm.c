@@ -542,6 +542,17 @@ static bool deliver_rx_checked(arq_session_t *sess, const arq_event_t *ev)
 /* Carrier the next CALL will key on: fast control mode until the fast slots
  * are spent, then the MFSK floor.  Shared by the sender and the retry timer so
  * the wait is always sized for the burst actually going out. */
+/* Carrier of the CALL currently in flight (the one just keyed), for sizing how
+ * long to wait for its reply.  The ACCEPT comes back on the carrier the CALL
+ * arrived on, so the wait must match what was SENT -- not what the next CALL
+ * will use.  Sizing it from arq_call_carrier() instead made a 3.7 s DATAC16
+ * CALL wait MFSK's 18 s, which spends a fringe link's budget twice over. */
+static int call_inflight_carrier(const arq_session_t *sess)
+{
+    if (sess->call_carrier > 0) return sess->call_carrier;
+    return sess->control_mode;
+}
+
 int arq_call_carrier(const arq_session_t *sess)
 {
     if (!sess) return ARQ_CONTROL_MODE;
@@ -1047,7 +1058,7 @@ static void fsm_calling(arq_session_t *sess, const arq_event_t *ev)
          * fallback -- would blur precisely the quantity being measured.  The
          * stagger belongs on the retry scheduling below, not here. */
         sess->deadline_ms =
-            deadline_from_s(arq_protocol_call_interval_for_mode_s(arq_call_carrier(sess)));
+            deadline_from_s(arq_protocol_call_interval_for_mode_s(call_inflight_carrier(sess)));
         HLOGD(LOG_COMP, "CALL retry re-anchored: +%.2fs, retries_left=%d",
               (double)arq_protocol_call_interval_s(), (int)sess->tx_retries_left);
         break;
@@ -1060,7 +1071,7 @@ static void fsm_calling(arq_session_t *sess, const arq_event_t *ev)
             /* Deadline is re-anchored on TX_COMPLETE above; this is the
              * fallback if that event is ever missed. */
             sess->deadline_ms = retry_deadline_from_s(sess,
-                                    arq_protocol_call_interval_for_mode_s(arq_call_carrier(sess)));
+                                    arq_protocol_call_interval_for_mode_s(call_inflight_carrier(sess)));
         }
         else
         {
