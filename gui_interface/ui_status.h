@@ -26,9 +26,21 @@
 
 #define UI_AUDIO_ERR_MAX 192
 
+/* Reported for peer_snr when the far side has not sent a reading yet.
+ * A sentinel rather than 0.0 because 0.0 fails DANGEROUSLY -- it looks like a
+ * real measurement ("they hear us at 0 dB") to any client that does not check
+ * peer_snr_valid.  -99.9 cannot be mistaken for one.  The explicit flag is
+ * kept as well, so clients that do check need no magic number. */
+#define UI_SNR_UNKNOWN_DB (-99.9)
+
 typedef struct {
     int    bitrate_bps;
-    double snr_db;
+    double snr_db;             /* SNR of what WE hear                     */
+    /* SNR the far side reports for OUR signal.  peer_snr_valid is false
+     * until a reading actually arrives, so the UI can show "--" rather than
+     * a 0.0 dB that reads as "they hear us at zero" (issue #230). */
+    double peer_snr_db;
+    bool   peer_snr_valid;
     char   user_callsign[CALLSIGN_MAX_SIZE];
     char   dest_callsign[CALLSIGN_MAX_SIZE];
     bool   sync;                 /* ARQ session established               */

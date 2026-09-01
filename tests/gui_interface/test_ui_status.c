@@ -87,7 +87,35 @@ static ui_status_t sample(void)
     st.radio_frequency_valid = true;
     st.radio_frequency_hz = 14074000;
     st.radio_frequency_age_ms = 750;
+    st.peer_snr_db         = -3.75;  /* renders at one decimal */
+    st.peer_snr_valid      = true;
     return st;
+}
+
+/* A peer SNR of 0.0 dB is a real, meaningful reading; "nothing heard yet" is
+ * not.  Conflating them would show a newcomer "they hear us at 0 dB" before
+ * the far side has said anything at all -- the opposite of the reassurance
+ * issue #230 asks for.  peer_snr_valid is what keeps them apart. */
+void test_peer_snr_unknown_is_flagged_not_zero(void)
+{
+    ui_status_t st = sample();
+    st.peer_snr_db    = UI_SNR_UNKNOWN_DB;
+    st.peer_snr_valid = false;
+
+    char buf[1024];
+    TEST_ASSERT_TRUE(ui_status_to_json(&st, buf, sizeof(buf)) > 0);
+    TEST_ASSERT_NOT_NULL(strstr(buf, "\"peer_snr_valid\":false"));
+    /* The value must ALSO be unmistakable, so a client that ignores the flag
+     * cannot render "0.0 dB" as if the far side had reported it. */
+    TEST_ASSERT_NOT_NULL(strstr(buf, "\"peer_snr\":-99.9"));
+    TEST_ASSERT_NULL(strstr(buf, "\"peer_snr\":0.0"));
+
+    /* and a genuine 0 dB report is NOT flagged unknown */
+    st.peer_snr_db    = 0.0;
+    st.peer_snr_valid = true;
+    TEST_ASSERT_TRUE(ui_status_to_json(&st, buf, sizeof(buf)) > 0);
+    TEST_ASSERT_NOT_NULL(strstr(buf, "\"peer_snr\":0.0"));
+    TEST_ASSERT_NOT_NULL(strstr(buf, "\"peer_snr_valid\":true"));
 }
 
 /* The exact bytes a remote client receives. */
@@ -116,7 +144,9 @@ void test_status_json_is_byte_exact(void)
         "\"arq_tx_mode\":\"DATAC3\","
         "\"arq_rx_mode\":\"DATAC4\","
         "\"radio_frequency_hz\":14074000,"
-        "\"radio_frequency_age_ms\":750}";
+        "\"radio_frequency_age_ms\":750,"
+        "\"peer_snr\":-3.8,"
+        "\"peer_snr_valid\":true}";
 
     TEST_ASSERT_EQUAL_STRING(expect, buf);
     TEST_ASSERT_EQUAL_INT((int)strlen(expect), n);
@@ -217,6 +247,7 @@ int main(void)
 {
     UNITY_BEGIN();
     RUN_TEST(test_status_json_is_byte_exact);
+    RUN_TEST(test_peer_snr_unknown_is_flagged_not_zero);
     RUN_TEST(test_audio_failure_is_reported);
     RUN_TEST(test_unavailable_frequency_is_explicit_null);
     RUN_TEST(test_arq_payload_modes_are_independent);

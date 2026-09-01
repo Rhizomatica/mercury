@@ -50,7 +50,11 @@ int ui_status_to_json(const ui_status_t *st, char *buf, size_t buflen)
         "\"arq_tx_mode\":\"%s\","
         "\"arq_rx_mode\":\"%s\","
         "\"radio_frequency_hz\":%s,"
-        "\"radio_frequency_age_ms\":%s}",
+        "\"radio_frequency_age_ms\":%s,"
+        /* Appended, not inserted: the field order above is the wire format
+         * that remote clients parse. */
+        "\"peer_snr\":%.1f,"
+        "\"peer_snr_valid\":%s}",
         st->bitrate_bps,
         st->snr_db,
         st->user_callsign,
@@ -68,7 +72,9 @@ int ui_status_to_json(const ui_status_t *st, char *buf, size_t buflen)
         st->arq_tx_mode,
         st->arq_rx_mode,
         frequency,
-        age);
+        age,
+        st->peer_snr_db,
+        st->peer_snr_valid ? "true" : "false");
 
     if (n < 0 || (size_t)n >= buflen)
         return -1;

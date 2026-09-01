@@ -1033,6 +1033,16 @@ int arq_get_tx_backlog_bytes(void)  { return cb_tx_backlog(); }
         return _v; \
     } while (0)
 
+bool arq_get_peer_snr_x10(int *snr_x10)
+{
+    bool valid;
+    pthread_mutex_lock(&g_sess_lock);
+    valid = g_sess.peer_snr_valid;
+    if (snr_x10) *snr_x10 = g_sess.peer_snr_x10;
+    pthread_mutex_unlock(&g_sess_lock);
+    return valid;
+}
+
 int arq_get_speed_level(void)       { SESS_READ(g_sess.speed_level); }
 int arq_get_payload_mode(void)      { SESS_READ(g_sess.payload_mode); }
 int arq_get_control_mode(void)      { SESS_READ(g_sess.control_mode); }
