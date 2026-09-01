@@ -255,6 +255,19 @@ MERCURY_VERSION ?= $(shell grep 'define MERCURY_VERSION "' common/mercury_versio
 WINDOWS_DIR = mercury-$(MERCURY_VERSION)
 WINDOWS_ZIP = $(WINDOWS_DIR)-w64-$(GIT_HASH).zip
 
+# RaptorQ (vendored nanorq) and the broadcast file carousel.  Only
+# libmercury_core needs these -- the standalone daemon does not transmit files.
+RAPTORQ_OBJS = $(patsubst %.c,%.o,$(wildcard datalink_broadcast/raptorq/lib/*.c)) \
+               $(patsubst %.c,%.o,$(wildcard datalink_broadcast/raptorq/deps/obl/*.c))
+BCAST_FILE_OBJS = datalink_broadcast/bcast_file.o $(RAPTORQ_OBJS)
+RAPTORQ_CFLAGS = -Idatalink_broadcast/raptorq/include -Idatalink_broadcast/raptorq/deps
+
+$(RAPTORQ_OBJS): %.o: %.c
+	$(CC) $(CFLAGS) $(RAPTORQ_CFLAGS) -c $< -o $@
+
+datalink_broadcast/bcast_file.o: datalink_broadcast/bcast_file.c
+	$(CC) $(CFLAGS) $(RAPTORQ_CFLAGS) -c $< -o $@
+
 MERCURY_CORE_OBJS = \
 	common/cfg_utils.o common/iniparser/iniparser.o common/iniparser/dictionary.o \
 	datalink_arq/arq.o datalink_arq/arq_tnc.o datalink_arq/arith.o datalink_arq/arq_channels.o \
@@ -290,13 +303,13 @@ endif
 #     ar: radio_io/hidapi-macos/hid.o: No such file or directory
 # $(BINARY) already declares it via MERCURY_LINK_INPUTS, which is why the CLI
 # build was unaffected and only the .app/.dmg packaging path broke.
-libmercury_core.a: internal_deps $(HIDAPI_OBJS)
-	$(CC) $(CFLAGS) -I. -c $(FYNE_UI_DIR)/engine/mercury_bridge.c -o $(FYNE_UI_DIR)/engine/mercury_bridge.o
+libmercury_core.a: internal_deps $(HIDAPI_OBJS) $(BCAST_FILE_OBJS)
+	$(CC) $(CFLAGS) $(RAPTORQ_CFLAGS) -I. -c $(FYNE_UI_DIR)/engine/mercury_bridge.c -o $(FYNE_UI_DIR)/engine/mercury_bridge.o
 	# Remove a stale archive first: macOS ar (cctools) refuses to update an
 	# existing *fat* .a in place, so a leftover universal build would wedge the
 	# next native build ("is a fat file"). Fresh create is identical on Linux.
 	rm -f $@
-	$(AR) rcs $@ $(MERCURY_CORE_OBJS) $(FYNE_UI_DIR)/engine/mercury_bridge.o
+	$(AR) rcs $@ $(MERCURY_CORE_OBJS) $(BCAST_FILE_OBJS) $(FYNE_UI_DIR)/engine/mercury_bridge.o
 
 libmercury_core_w64.a:
 	$(MAKE) internal_deps OS=Windows_NT CC=$(MINGW_CC) AR=$(MINGW_AR) HAVE_HERMES_SHM=0
