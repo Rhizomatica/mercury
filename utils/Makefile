@@ -31,7 +31,7 @@ broadcast_diag_tx: broadcast_diag_tx.c ../datalink_broadcast/kiss.c ../modem/fra
 broadcast_diag_rx: broadcast_diag_rx.c ../datalink_broadcast/kiss.c ../modem/framer.c
 	$(CC) $(CFLAGS) -I../datalink_broadcast -o $@ $^ $(LDFLAGS)
 
-watterson_test: watterson_test.c ../common/watterson.c
+watterson_test: watterson_test.c ../common/watterson.c ../common/mercury_prng.c
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS) -lm
 
 # Needs the freedv LDPC decoder and its vendored parity matrices.
@@ -50,7 +50,7 @@ run: broadcast_test
 # Links the whole freedv library: drives the real OFDM modems, not a model.
 # Is the MFSK floor set by acquisition or by the code?  Sweeps noise over the
 # whole burst and over the payload alone; the gap is the code's slack.
-mfsk_floor_sweep: mfsk_floor_sweep.c chanutil.c ../common/watterson.c \
+mfsk_floor_sweep: mfsk_floor_sweep.c chanutil.c ../common/watterson.c ../common/mercury_prng.c \
                   ../modem/modem_mfsk.c ../modem/mfsk.c ../modem/mfsk_sync.c \
                   ../modem/mfsk_ofdm.c ../modem/mfsk_ldpc.c ../modem/mfsk_ldpc_8_16.c
 	$(CC) $(CFLAGS) -o $@ $^ ../modem/freedv/libfreedvdata.a $(LDFLAGS) -lm
@@ -65,14 +65,14 @@ ackpat_sweep: ackpat_sweep.c ../modem/modem_mfsk.c ../modem/mfsk.c \
               ../modem/mfsk_sync.c ../modem/mfsk_ofdm.c ../modem/mfsk_ldpc.c ../modem/mfsk_ldpc_8_16.c
 	$(CC) $(CFLAGS) -o $@ $^ ../modem/freedv/libfreedvdata.a $(LDFLAGS) -lm
 
-hail_suffix_sweep: hail_suffix_sweep.c chanutil.c ../common/watterson.c \
+hail_suffix_sweep: hail_suffix_sweep.c chanutil.c ../common/watterson.c ../common/mercury_prng.c \
                    ../modem/mfsk.c ../modem/mfsk_sync.c ../modem/mfsk_ofdm.c
 	$(CC) $(CFLAGS) -o $@ $^ ../modem/freedv/libfreedvdata.a $(LDFLAGS) -lm
 
 # Drives the real freedv OFDM modems (not a model) to separate acquisition
 # failures from decode failures.  chanutil puts it on the project's own
 # Watterson channel so its numbers are comparable with other instruments'.
-acquire_vs_decode: acquire_vs_decode.c chanutil.c ../common/watterson.c
+acquire_vs_decode: acquire_vs_decode.c chanutil.c ../common/watterson.c ../common/mercury_prng.c
 	$(CC) $(CFLAGS) -o $@ $^ ../modem/freedv/libfreedvdata.a $(LDFLAGS) -lm
 
 # Perf instruments for issue #162 (idle CPU on a 48 kHz Pi 4).

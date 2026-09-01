@@ -220,6 +220,15 @@ void arq_set_disconnect_drain_timeout_s(int seconds);
 int arq_get_speed_level(void);
 
 /**
+ * @brief Get the SNR the peer reports for OUR signal (dB * 10).
+ *
+ * @param snr_x10 Receives the reading; untouched meaning only when false.
+ * @return false until the far side has actually reported, so a UI can show
+ *         "--" rather than a 0.0 dB that reads as "they hear us at zero".
+ */
+bool arq_get_peer_snr_x10(int *snr_x10);
+
+/**
  * @brief Get active ARQ payload mode.
  * @return FreeDV payload mode value.
  */

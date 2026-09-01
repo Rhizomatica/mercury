@@ -119,9 +119,11 @@ chanutil_t *chanutil_open(int preset, float no_dbhz, unsigned seed)
     watterson_set_noise(&c->w, no_dbhz);
     watterson_reset_meas(&c->w);
 
-    /* The fading realisation is driven by the model's own RNG; seeding here
-     * makes a sweep reproducible. */
-    srand(seed);
+    /* The fading realisation is driven by the model's own RNG, which is
+     * per-instance -- so seed THAT, not libc's global rand().  srand() here
+     * used to work only by accident, and stopped controlling the channel the
+     * moment anything else in the process drew a number. */
+    watterson_seed(&c->w, seed);
     warm_up(&c->w);
     return c;
 }

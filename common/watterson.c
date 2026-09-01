@@ -26,15 +26,9 @@
 
 /* Box-Muller transform: converts uniform [0,1) random numbers to Gaussian.
  * Returns a sample from N(0, 1). */
-static float gaussian()
+static float gaussian(watterson_t *w)
 {
-    float x = (float)rand() / RAND_MAX;
-    float y = (float)rand() / RAND_MAX;
-
-    /* avoid log(0) — extremely unlikely but safe */
-    if (x <= 0.0f) x = 1e-9f;
-
-    return sqrtf(-2.0f * logf(x)) * cosf(2.0f * M_PI * y);
+    return mercury_prng_gaussian(&w->rng);
 }
 
 /* Compute 2nd-order Butterworth LPF IIR coefficients via bilinear transform.
@@ -108,8 +102,29 @@ int watterson_init(watterson_t *w, int sample_rate)
     w->awgn_en = 0;
     w->noise_var = 0.0f;
     w->chan_norm = 1.0f;
+    watterson_seed_auto(w);
 
     return 0;
+}
+
+void watterson_seed(watterson_t *w, unsigned int seed)
+{
+    assert(w != NULL);
+    mercury_prng_seed(&w->rng, seed);
+    w->seed = seed;
+}
+
+unsigned int watterson_seed_auto(watterson_t *w)
+{
+    assert(w != NULL);
+    w->seed = mercury_prng_seed_auto(&w->rng, "MERCURY_WATTERSON_SEED");
+    return w->seed;
+}
+
+unsigned int watterson_get_seed(const watterson_t *w)
+{
+    assert(w != NULL);
+    return w->seed;
 }
 
 void watterson_dispose(watterson_t *w)
@@ -217,8 +232,8 @@ int watterson_add_path(watterson_t *w, float delay_ms, float doppler_hz,
             int k;
             for (k = 0; k < 1000; k++)
             {
-                iir_tick(gaussian(), p->x_i, p->y_i, p->b0, p->b1, p->b2, p->a1, p->a2);
-                iir_tick(gaussian(), p->x_q, p->y_q, p->b0, p->b1, p->b2, p->a1, p->a2);
+                iir_tick(gaussian(w), p->x_i, p->y_i, p->b0, p->b1, p->b2, p->a1, p->a2);
+                iir_tick(gaussian(w), p->x_q, p->y_q, p->b0, p->b1, p->b2, p->a1, p->a2);
             }
         }
     }
@@ -311,8 +326,8 @@ void watterson_process(watterson_t *w, COMP *samples, int n)
                  * the sqrt(1/2)).  Our gaussian() is unit-variance, so apply the
                  * 1/2 here — otherwise the channel is 3 dB hotter than ch and the
                  * SNR<->No calibration (and the mode thresholds) shift by 3 dB. */
-                noise.real = gaussian() * sqrtf(w->noise_var * 0.5f);
-                noise.imag = gaussian() * sqrtf(w->noise_var * 0.5f);
+                noise.real = gaussian(w) * sqrtf(w->noise_var * 0.5f);
+                noise.imag = gaussian(w) * sqrtf(w->noise_var * 0.5f);
                 w->sig_pwr_acc   += (double)samples[i].real * samples[i].real +
                                     (double)samples[i].imag * samples[i].imag;
                 w->noise_pwr_acc += (double)noise.real * noise.real +
@@ -343,8 +358,8 @@ void watterson_process(watterson_t *w, COMP *samples, int n)
              * coefficients are set so the output is 1.0 + j0.0. */
             if (wp->doppler_hz > 0.0f)
             {
-                float xn_i = gaussian();
-                float xn_q = gaussian();
+                float xn_i = gaussian(w);
+                float xn_q = gaussian(w);
                 tap.real = iir_tick(xn_i, wp->x_i, wp->y_i,
                                     wp->b0, wp->b1, wp->b2,
                                     wp->a1, wp->a2);
@@ -419,8 +434,8 @@ void watterson_process(watterson_t *w, COMP *samples, int n)
             COMP noise;
             /* per-component variance noise_var/2 => complex noise power = Fs*No,
              * matching ch.c (see the no-paths branch above). */
-            noise.real = gaussian() * sqrtf(w->noise_var * 0.5f);
-            noise.imag = gaussian() * sqrtf(w->noise_var * 0.5f);
+            noise.real = gaussian(w) * sqrtf(w->noise_var * 0.5f);
+            noise.imag = gaussian(w) * sqrtf(w->noise_var * 0.5f);
             w->sig_pwr_acc   += (double)out.real * out.real +
                                 (double)out.imag * out.imag;
             w->noise_pwr_acc += (double)noise.real * noise.real +

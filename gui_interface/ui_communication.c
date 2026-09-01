@@ -43,6 +43,7 @@
 #include "../data_interfaces/tcp_interfaces.h"
 #include "../common/hermes_log.h"
 #include "../modem/freedv/modem_stats.h"
+#include "../modem/freedv/freedv_api.h"
 #include "../modem/modem.h"
 #include "../radio_io/radio_io.h"  /* RADIO_TYPE_NONE */
 #include "../radio_io/rigctl_parse.h"  /* preload_radio_list */
@@ -77,6 +78,20 @@ extern int audioio_restart(const char *capture_dev, const char *playback_dev,
 extern _Atomic bool shutdown_;
 
 #define UI_LOG_TAG "ui-comm"
+
+static const char *ui_arq_mode_name(int mode)
+{
+    switch (mode)
+    {
+    case FREEDV_MODE_DATAC1: return "DATAC1";
+    case FREEDV_MODE_DATAC3: return "DATAC3";
+    case FREEDV_MODE_DATAC4: return "DATAC4";
+    case FREEDV_MODE_DATAC15: return "DATAC15";
+    case FREEDV_MODE_DATAC17: return "DATAC17";
+    case FREEDV_MODE_QAM16C2: return "QAM16C2";
+    default: return "";
+    }
+}
 
 // Called by the WebSocket server thread when a new UI client connects.
 // Sets pending flags so the publisher sends device lists and radio list.
@@ -505,6 +520,12 @@ static void ui_gather_status(ui_ctx_t *ctx, ui_status_t *out)
 
     out->bitrate_bps = (int)tnc_get_last_bitrate_bps();
     out->snr_db      = (double)tnc_get_last_snr();
+    {
+        int peer_x10 = 0;
+        out->peer_snr_valid = arq_get_peer_snr_x10(&peer_x10);
+        out->peer_snr_db    = out->peer_snr_valid ? (double)peer_x10 / 10.0
+                                                  : UI_SNR_UNKNOWN_DB;
+    }
 
     if (have_snap && snap.initialized)
     {
@@ -512,6 +533,10 @@ static void ui_gather_status(ui_ctx_t *ctx, ui_status_t *out)
         out->sync              = snap.connected ? true : false;
         out->bytes_transmitted = (long)snap.tx_bytes;
         out->bytes_received    = (long)snap.rx_bytes;
+        snprintf(out->arq_tx_mode, sizeof(out->arq_tx_mode), "%s",
+                 ui_arq_mode_name(snap.payload_mode));
+        snprintf(out->arq_rx_mode, sizeof(out->arq_rx_mode), "%s",
+                 ui_arq_mode_name(snap.peer_tx_mode));
     }
 
     int ctl_status  = net_get_status(CTL_TCP_PORT);
@@ -532,6 +557,12 @@ static void ui_gather_status(ui_ctx_t *ctx, ui_status_t *out)
      * without it the UI shows a perfectly healthy station that happens to hear
      * nothing. */
     out->audio_ok = audioio_health_ok(out->audio_error, sizeof(out->audio_error));
+
+    bool allow_frequency_poll = !(have_snap && snap.initialized &&
+                                  (snap.connected || snap.trx == 1));
+    out->radio_frequency_valid =
+        radio_io_get_frequency(allow_frequency_poll, &out->radio_frequency_hz,
+                               &out->radio_frequency_age_ms);
 }
 
 /* Copy the latest gathered status out for the embedded UI.  Returns false

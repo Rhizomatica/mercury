@@ -338,6 +338,8 @@ func statusFromC(cst *C.ui_status_t) telemetryState {
 	return telemetryState{
 		Bitrate:            int(cst.bitrate_bps),
 		SNR:                float64(cst.snr_db),
+		PeerSNR:            float64(cst.peer_snr_db),
+		PeerSNRValid:       bool(cst.peer_snr_valid),
 		UserCallsign:       C.GoString(&cst.user_callsign[0]),
 		DestCallsign:       C.GoString(&cst.dest_callsign[0]),
 		Sync:               bool(cst.sync),
