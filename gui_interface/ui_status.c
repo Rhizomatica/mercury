@@ -31,7 +31,11 @@ int ui_status_to_json(const ui_status_t *st, char *buf, size_t buflen)
         "\"tx_peak_dbfs\":%.1f,"
         "\"waterfall\":%s,"
         "\"audio_ok\":%s,"
-        "\"audio_error\":\"%s\"}",
+        "\"audio_error\":\"%s\","
+        /* Appended, not inserted: the field order above is the wire format
+         * that remote clients parse. */
+        "\"peer_snr\":%.1f,"
+        "\"peer_snr_valid\":%s}",
         st->bitrate_bps,
         st->snr_db,
         st->user_callsign,
@@ -45,7 +49,9 @@ int ui_status_to_json(const ui_status_t *st, char *buf, size_t buflen)
         (double)st->tx_peak_dbfs,
         st->waterfall_enabled ? "true" : "false",
         st->audio_ok ? "true" : "false",
-        st->audio_error);
+        st->audio_error,
+        st->peer_snr_db,
+        st->peer_snr_valid ? "true" : "false");
 
     if (n < 0 || (size_t)n >= buflen)
         return -1;

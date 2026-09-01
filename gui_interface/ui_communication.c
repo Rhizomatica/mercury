@@ -505,6 +505,12 @@ static void ui_gather_status(ui_ctx_t *ctx, ui_status_t *out)
 
     out->bitrate_bps = (int)tnc_get_last_bitrate_bps();
     out->snr_db      = (double)tnc_get_last_snr();
+    {
+        int peer_x10 = 0;
+        out->peer_snr_valid = arq_get_peer_snr_x10(&peer_x10);
+        out->peer_snr_db    = out->peer_snr_valid ? (double)peer_x10 / 10.0
+                                                  : UI_SNR_UNKNOWN_DB;
+    }
 
     if (have_snap && snap.initialized)
     {

@@ -322,6 +322,9 @@ let fftSize = 512;
 let nBins = 256;
 let currentSpectrum = null;
 let snrValue = 0.0;
+const SNR_UNKNOWN_DB = -99.9; /* mirrors UI_SNR_UNKNOWN_DB in ui_status.h */
+let peerSnrValue = SNR_UNKNOWN_DB; /* SNR the far side reports for OUR signal */
+let peerSnrValid = false; /* false until they have actually reported (issue #230) */
 let syncState = false;
 let waterfallOn = false;
 let waterfallConfigured = false;
@@ -481,8 +484,19 @@ function drawSnrBar() {
   ctx.font = "bold 10px monospace";
   ctx.fillStyle = "#ddd";
   ctx.textBaseline = "middle";
-  const snrText = "SNR: " + (snrValue >= 0 ? "+" : "") + snrValue.toFixed(1) + " dB";
+  /* Two numbers, labelled by direction.  RX is what we hear; THEM is what the
+   * far side reports hearing from us -- the one that tells an operator whether
+   * their TX audio level is right (issue #230).  Until they report, show "--"
+   * rather than 0.0, which would read as "they hear us at zero". */
+  const snrText = "RX: " + (snrValue >= 0 ? "+" : "") + snrValue.toFixed(1) + " dB";
   ctx.fillText(snrText, barW + 8, h / 2);
+
+  const peerText = "THEM: " + (peerSnrValid
+      ? (peerSnrValue >= 0 ? "+" : "") + peerSnrValue.toFixed(1) + " dB"
+      : "--");
+  const pw = ctx.measureText(peerText).width;
+  ctx.fillStyle = peerSnrValid ? "#ddd" : "#777";
+  ctx.fillText(peerText, w - pw - 70, h / 2);
 
   const syncText = syncState ? "SYNC" : "NO SYNC";
   ctx.fillStyle = syncState ? "#00ff64" : "#a03232";
@@ -933,6 +947,10 @@ function handleStatus(msg) {
 
   // Update SNR/sync for waterfall overlay
   if (msg.snr != null) snrValue = msg.snr;
+  /* Only adopt the number when it is flagged real -- the server sends the
+     -99.9 sentinel otherwise, and it must never reach the display. */
+  peerSnrValid = !!msg.peer_snr_valid;
+  peerSnrValue = peerSnrValid && msg.peer_snr != null ? msg.peer_snr : SNR_UNKNOWN_DB;
   syncState = !!msg.sync;
 
   // TX gain slider — only echo from backend when the user isn't dragging
@@ -1108,6 +1126,7 @@ function onDisconnected() {
 
   // Reset display
   snrValue = 0; syncState = false;
+  peerSnrValue = SNR_UNKNOWN_DB; peerSnrValid = false;
   updateConnectionInfo({ bitrate: null, direction: null, user_callsign: "", dest_callsign: "", client_tcp_connected: false, bytes_transmitted: 0, bytes_received: 0 });
   dirty = true;
 }

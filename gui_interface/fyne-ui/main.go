@@ -104,9 +104,16 @@ func pttMethodID(label string) string {
 	return "none"
 }
 
+// Mirrors UI_SNR_UNKNOWN_DB in gui_interface/ui_status.h.
+const snrUnknownDB = -99.9
+
 type telemetryState struct {
-	Bitrate            int
-	SNR                float64
+	Bitrate int
+	SNR     float64
+	// SNR the far side reports for OUR signal.  PeerSNRValid is false until
+	// a reading has actually arrived (issue #230).
+	PeerSNR            float64
+	PeerSNRValid       bool
 	Sync               bool
 	Direction          string
 	UserCallsign       string
@@ -146,7 +153,9 @@ type uiBindings struct {
 	// canvas texts for compact telemetry display
 	bitrateText       *canvas.Text
 	snrText           *canvas.Text
+	peerSnrText       *canvas.Text
 	snrRowLabel       *canvas.Text
+	peerSnrRowLabel   *canvas.Text
 	directionText     *canvas.Text
 	directionDot      *canvas.Circle
 	userCallsText     *canvas.Text
@@ -173,6 +182,14 @@ func parseStatusMessage(payload []byte) (telemetryState, error) {
 	status := telemetryState{}
 	status.Bitrate = int(toFloat64(raw["bitrate"]))
 	status.SNR = toFloat64(raw["snr"])
+	// Default to the sentinel, not 0.0: a server that predates issue #230 sends
+	// neither field, and 0.0 would render as a real "they hear us at 0 dB".
+	status.PeerSNR = snrUnknownDB
+	status.PeerSNRValid = false
+	if v, ok := raw["peer_snr_valid"].(bool); ok && v {
+		status.PeerSNRValid = true
+		status.PeerSNR = toFloat64(raw["peer_snr"])
+	}
 	status.Sync = toBool(raw["sync"])
 	status.Direction = strings.ToLower(fmt.Sprint(raw["direction"]))
 	status.UserCallsign = fmt.Sprint(raw["user_callsign"])
@@ -528,10 +545,20 @@ func main() {
 	snrText.TextSize = 14
 	bindings.snrText = snrText
 
+	// What the far side reports hearing from us.  This is the number that
+	// tells an operator whether their TX audio level is right: lower the
+	// drive and watch it go UP if the rig was over-driven (issue #230).
+	peerSnrText := canvas.NewText("-- dB", color.NRGBA{R: 0x88, G: 0x88, B: 0x88, A: 0xFF})
+	peerSnrText.TextSize = 14
+	bindings.peerSnrText = peerSnrText
+
 	// SNR row in the Telemetry card, shown only when the waterfall (which
 	// carries its own SNR overlay) is disabled.
 	snrRowLabel := canvas.NewText("SNR", color.NRGBA{R: 0xAA, G: 0xAA, B: 0xAA, A: 0xFF})
 	bindings.snrRowLabel = snrRowLabel
+
+	peerSnrRowLabel := canvas.NewText("SNR (them)", color.NRGBA{R: 0xAA, G: 0xAA, B: 0xAA, A: 0xFF})
+	bindings.peerSnrRowLabel = peerSnrRowLabel
 
 	directionText := canvas.NewText("--", color.NRGBA{R: 0xDD, G: 0xDD, B: 0xDD, A: 0xFF})
 	directionText.TextSize = 20
@@ -687,6 +714,16 @@ func main() {
 			}
 			if bindings.snrText != nil {
 				bindings.snrText.Text = fmt.Sprintf("%.1f dB", telemetry.SNR)
+				// "--" until they have reported: a literal 0.0 would read as
+				// "they hear us at zero", which is the opposite of the truth.
+				if telemetry.PeerSNRValid {
+					bindings.peerSnrText.Text = fmt.Sprintf("%.1f dB", telemetry.PeerSNR)
+					bindings.peerSnrText.Color = color.NRGBA{R: 0xEE, G: 0xEE, B: 0xEE, A: 0xFF}
+				} else {
+					bindings.peerSnrText.Text = "-- dB"
+					bindings.peerSnrText.Color = color.NRGBA{R: 0x88, G: 0x88, B: 0x88, A: 0xFF}
+				}
+				bindings.peerSnrText.Refresh()
 				bindings.snrText.Color = waterfallSNRColor(telemetry.SNR)
 				bindings.snrText.Refresh()
 			}
@@ -724,7 +761,11 @@ func main() {
 				bindings.destCallsText.Refresh()
 			}
 			if bindings.waterfallSNRText != nil {
-				bindings.waterfallSNRText.Text = fmt.Sprintf("SNR: %.1f dB", telemetry.SNR)
+				peer := "--"
+				if telemetry.PeerSNRValid {
+					peer = fmt.Sprintf("%.1f dB", telemetry.PeerSNR)
+				}
+				bindings.waterfallSNRText.Text = fmt.Sprintf("SNR: %.1f dB  them: %s", telemetry.SNR, peer)
 				bindings.waterfallSNRText.Color = waterfallSNRColor(telemetry.SNR)
 				bindings.waterfallSNRText.Refresh()
 			}
@@ -770,9 +811,13 @@ func main() {
 				if telemetry.Waterfall {
 					bindings.snrRowLabel.Hide()
 					bindings.snrText.Hide()
+					bindings.peerSnrRowLabel.Hide()
+					bindings.peerSnrText.Hide()
 				} else {
 					bindings.snrRowLabel.Show()
 					bindings.snrText.Show()
+					bindings.peerSnrRowLabel.Show()
+					bindings.peerSnrText.Show()
 				}
 			}
 		})
@@ -1093,6 +1138,7 @@ func main() {
 		),
 		canvas.NewText("Bitrate", color.NRGBA{R: 0xAA, G: 0xAA, B: 0xAA, A: 0xFF}), bindings.bitrateText,
 		bindings.snrRowLabel, bindings.snrText,
+		bindings.peerSnrRowLabel, bindings.peerSnrText,
 		canvas.NewText("My callsign", color.NRGBA{R: 0xAA, G: 0xAA, B: 0xAA, A: 0xFF}), bindings.userCallsText,
 		canvas.NewText("Target callsign", color.NRGBA{R: 0xAA, G: 0xAA, B: 0xAA, A: 0xFF}), bindings.destCallsText,
 		canvas.NewText("Client TCP Connected", color.NRGBA{R: 0xAA, G: 0xAA, B: 0xAA, A: 0xFF}), bindings.tcpText,
