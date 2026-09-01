@@ -407,6 +407,27 @@ func (cw *chatWindow) onConnect() {
 	// can fire this twice in one poll batch before setTCP's fyne.Do runs.
 	cw.connectBtn.Disable()
 
+	// THE INTERLOCK.
+	//
+	// The TNC keeps exactly one control and one data client, and a new accept()
+	// EVICTS the incumbent -- closing its sockets and submitting
+	// ARQ_CMD_CLIENT_DISCONNECT, which tears down any live ARQ session
+	// (data_interfaces/tcp_interfaces.c:799, arq.c:565).  So pressing Connect
+	// here would silently kill an in-progress uucp or VarAC transfer, and the
+	// operator's only clue would be the transfer failing.
+	//
+	// Refuse instead.  Only when we do not already hold the port: if cw.mc is
+	// non-nil the attached client IS us, and reconnecting is our own business.
+	if currentTelemetry != nil {
+		if ok, why := embeddedClientMayConnect(cw.mc != nil, currentTelemetry()); !ok {
+			dialog.ShowError(fmt.Errorf("%s\n\nConnecting here would disconnect it and abort any "+
+				"transfer in progress. Stop the other client first.", why), cw.win)
+			cw.logMsg("connect refused: %s", why)
+			cw.connectBtn.Enable()
+			return
+		}
+	}
+
 	// Disconnect any existing client before opening a new one, so a stale
 	// control client is not left open to be evicted by the new connection.
 	if cw.mc != nil {
@@ -454,6 +475,7 @@ func (cw *chatWindow) onConnect() {
 	go cw.forwardARQChat()
 	go cw.forwardBroadcastChat()
 	go cw.forwardStatus()
+	go cw.watchLink()
 
 	// The persisted history was handed over at launch time (from the UI data
 	// path, not the TNC control channel); populate the panes now.
@@ -685,6 +707,37 @@ func (cw *chatWindow) forwardBroadcastChat() {
 			call, text := splitCallText(m.Text)
 			cw.appendRichChat(cw.bcastBox, call, text)
 		case <-done:
+			return
+		}
+	}
+}
+
+// watchLink notices when the TNC hangs up on us.
+//
+// The other direction of the same hazard the connect interlock guards: the TNC
+// evicts its control client whenever a new one connects, so starting uucp or
+// VarAC silently takes the ports away from here.  Nothing else observes that --
+// the reader goroutines just return -- so without this the window keeps showing
+// "connected" and its buttons keep pretending to work.
+func (cw *chatWindow) watchLink() {
+	mc := cw.mc
+	done := cw.done
+	if mc == nil || done == nil {
+		return
+	}
+	tick := time.NewTicker(time.Second)
+	defer tick.Stop()
+	for {
+		select {
+		case <-done:
+			return
+		case <-tick.C:
+			if mc.IsConnected() {
+				continue
+			}
+			cw.logMsg("Disconnected by the modem: another client has taken the TNC ports.")
+			cw.setTCP(false)
+			cw.setARQ(false)
 			return
 		}
 	}
