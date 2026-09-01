@@ -82,6 +82,11 @@ static ui_status_t sample(void)
     st.waterfall_enabled   = true;
     st.audio_ok            = true;
     st.audio_error[0]      = '\0';
+    snprintf(st.arq_tx_mode, sizeof(st.arq_tx_mode), "DATAC3");
+    snprintf(st.arq_rx_mode, sizeof(st.arq_rx_mode), "DATAC4");
+    st.radio_frequency_valid = true;
+    st.radio_frequency_hz = 14074000;
+    st.radio_frequency_age_ms = 750;
     st.peer_snr_db         = -3.75;  /* renders at one decimal */
     st.peer_snr_valid      = true;
     return st;
@@ -136,6 +141,10 @@ void test_status_json_is_byte_exact(void)
         "\"waterfall\":true,"
         "\"audio_ok\":true,"
         "\"audio_error\":\"\","
+        "\"arq_tx_mode\":\"DATAC3\","
+        "\"arq_rx_mode\":\"DATAC4\","
+        "\"radio_frequency_hz\":14074000,"
+        "\"radio_frequency_age_ms\":750,"
         "\"peer_snr\":-3.8,"
         "\"peer_snr_valid\":true}";
 
@@ -211,12 +220,37 @@ void test_audio_failure_is_reported(void)
     TEST_ASSERT_NOT_NULL(strstr(buf, "44100 Hz"));
 }
 
+void test_unavailable_frequency_is_explicit_null(void)
+{
+    ui_status_t st = sample();
+    char buf[512];
+
+    st.radio_frequency_valid = false;
+    TEST_ASSERT_TRUE(ui_status_to_json(&st, buf, sizeof(buf)) > 0);
+    TEST_ASSERT_NOT_NULL(strstr(buf, "\"radio_frequency_hz\":null"));
+    TEST_ASSERT_NOT_NULL(strstr(buf, "\"radio_frequency_age_ms\":null"));
+}
+
+void test_arq_payload_modes_are_independent(void)
+{
+    ui_status_t st = sample();
+    char buf[512];
+
+    snprintf(st.arq_tx_mode, sizeof(st.arq_tx_mode), "DATAC1");
+    snprintf(st.arq_rx_mode, sizeof(st.arq_rx_mode), "DATAC15");
+    TEST_ASSERT_TRUE(ui_status_to_json(&st, buf, sizeof(buf)) > 0);
+    TEST_ASSERT_NOT_NULL(strstr(buf, "\"arq_tx_mode\":\"DATAC1\""));
+    TEST_ASSERT_NOT_NULL(strstr(buf, "\"arq_rx_mode\":\"DATAC15\""));
+}
+
 int main(void)
 {
     UNITY_BEGIN();
     RUN_TEST(test_status_json_is_byte_exact);
     RUN_TEST(test_peer_snr_unknown_is_flagged_not_zero);
     RUN_TEST(test_audio_failure_is_reported);
+    RUN_TEST(test_unavailable_frequency_is_explicit_null);
+    RUN_TEST(test_arq_payload_modes_are_independent);
     RUN_TEST(test_direction_follows_ptt);
     RUN_TEST(test_booleans_render_as_json_literals);
     RUN_TEST(test_truncation_is_reported_not_emitted);
