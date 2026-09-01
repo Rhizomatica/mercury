@@ -31,7 +31,7 @@ broadcast_diag_tx: broadcast_diag_tx.c ../datalink_broadcast/kiss.c ../modem/fra
 broadcast_diag_rx: broadcast_diag_rx.c ../datalink_broadcast/kiss.c ../modem/framer.c
 	$(CC) $(CFLAGS) -I../datalink_broadcast -o $@ $^ $(LDFLAGS)
 
-watterson_test: watterson_test.c ../common/watterson.c
+watterson_test: watterson_test.c ../common/watterson.c ../common/mercury_prng.c
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS) -lm
 
 # Clean up build artifacts
@@ -45,7 +45,7 @@ run: broadcast_test
 # Drives the real freedv OFDM modems (not a model) to separate acquisition
 # failures from decode failures.  chanutil puts it on the project's own
 # Watterson channel so its numbers are comparable with other instruments'.
-acquire_vs_decode: acquire_vs_decode.c chanutil.c ../common/watterson.c
+acquire_vs_decode: acquire_vs_decode.c chanutil.c ../common/watterson.c ../common/mercury_prng.c
 	$(CC) $(CFLAGS) -o $@ $^ ../modem/freedv/libfreedvdata.a $(LDFLAGS) -lm
 
 # Perf instruments for issue #162 (idle CPU on a 48 kHz Pi 4).
