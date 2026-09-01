@@ -20,6 +20,7 @@
 
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdint.h>
 
 #include "arq.h"   /* CALLSIGN_MAX_SIZE */
 
@@ -44,6 +45,11 @@ typedef struct {
      * healthy; otherwise it carries the reason, e.g. an unsupported rate. */
     bool   audio_ok;
     char   audio_error[UI_AUDIO_ERR_MAX];
+    char   arq_tx_mode[16];     /* local ARQ payload mode                  */
+    char   arq_rx_mode[16];     /* peer payload mode used by local decoder */
+    bool   radio_frequency_valid;
+    uint64_t radio_frequency_hz;
+    uint64_t radio_frequency_age_ms;
 } ui_status_t;
 
 /* Render the snapshot as the status JSON remote clients already expect.
