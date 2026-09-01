@@ -284,6 +284,10 @@ const (
 	windowYKey      = "window.y"
 	windowPosSetKey = "window.positionSaved"
 
+	// Master switch for the embedded chat client (top bar).  Persisted, so a
+	// gateway station that turned it off stays safe across restarts.
+	embeddedClientPrefKey = "embeddedClient.enabled"
+
 	// defaultWindowWidth/Height match the previous hard-coded launch size and
 	// are used until the operator has resized the window once.
 	defaultWindowWidth  = 1280
@@ -1059,6 +1063,14 @@ func main() {
 		}
 	}
 
+	// Give the embedded client a live view of the engine, so its interlock can
+	// see whether some other client already holds the TNC ports.
+	currentTelemetry = func() telemetryState {
+		state.mu.RLock()
+		defer state.mu.RUnlock()
+		return state.telemetry
+	}
+
 	mercuryClientButton := widget.NewButton("Launch Mercury Client", func() {
 		state.mu.RLock()
 		tel := state.telemetry
@@ -1071,8 +1083,38 @@ func main() {
 		openMercuryClientWindow(myApp, tel, arqPort, broadcastPort)
 	})
 
+	// The master switch for the embedded client.
+	//
+	// The embedded client is an ordinary TCP client of our own TNC ports, and
+	// the TNC accepts one control client at a time, evicting the incumbent.  On
+	// a station that exists to serve uucp or VarAC, the chat client is not just
+	// unused -- it is a hazard someone can trip by clicking the wrong button.
+	// Turning it off here makes that impossible rather than merely unlikely.
+	//
+	// Defaults ON, so nothing changes for anyone who has not asked for it; the
+	// interlock in onConnect() is what removes the surprise in that case.
+	embeddedClientEnabled := myApp.Preferences().BoolWithFallback(embeddedClientPrefKey, true)
+	embeddedClientCheck := widget.NewCheck("Embedded client", nil)
+	embeddedClientCheck.SetChecked(embeddedClientEnabled)
+	applyEmbeddedClientEnabled := func(on bool) {
+		if on {
+			mercuryClientButton.Enable()
+			return
+		}
+		mercuryClientButton.Disable()
+		// Disabling must also RELEASE the ports, or "off" would only mean
+		// "cannot be opened again" while a connected client kept holding them.
+		closeMercuryClientWindow()
+	}
+	embeddedClientCheck.OnChanged = func(on bool) {
+		myApp.Preferences().SetBool(embeddedClientPrefKey, on)
+		applyEmbeddedClientEnabled(on)
+	}
+	applyEmbeddedClientEnabled(embeddedClientEnabled)
+
 	topBar := container.NewHBox(
 		layout.NewSpacer(),
+		embeddedClientCheck,
 		mercuryClientButton,
 	)
 

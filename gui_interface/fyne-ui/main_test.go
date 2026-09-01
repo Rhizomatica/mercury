@@ -199,3 +199,46 @@ func TestParseSpectrumFrame(t *testing.T) {
 		t.Fatalf("expected first bin 1.0, got %v", spectrum[0])
 	}
 }
+
+// The embedded client shares the TNC ports with every other client, and the TNC
+// evicts the incumbent on a new accept -- tearing down any live ARQ session.
+// These pin the rule that stops a click from killing someone's transfer.
+func TestEmbeddedClientMayConnect(t *testing.T) {
+	cases := []struct {
+		name        string
+		alreadyOurs bool
+		tel         telemetryState
+		wantOK      bool
+	}{
+		{"free ports", false, telemetryState{}, true},
+		{"another client attached", false,
+			telemetryState{ClientTCPConnected: true}, false},
+		{"another client mid-session", false,
+			telemetryState{ClientTCPConnected: true, Sync: true}, false},
+		// Reconnecting our own client must stay possible: the attached client
+		// is us, so there is nobody else to evict.
+		{"the attached client is us", true,
+			telemetryState{ClientTCPConnected: true}, true},
+		{"the attached client is us, mid-session", true,
+			telemetryState{ClientTCPConnected: true, Sync: true}, true},
+		// A session cannot be live with nothing attached, but if the engine
+		// ever reports it, an empty port is still free to take.
+		{"session flag without a client", false,
+			telemetryState{Sync: true}, true},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ok, why := embeddedClientMayConnect(tc.alreadyOurs, tc.tel)
+			if ok != tc.wantOK {
+				t.Fatalf("got ok=%v, want %v (reason %q)", ok, tc.wantOK, why)
+			}
+			if !ok && why == "" {
+				t.Fatal("refused without telling the operator why")
+			}
+			if ok && why != "" {
+				t.Fatalf("allowed but gave a reason %q", why)
+			}
+		})
+	}
+}

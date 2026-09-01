@@ -9,6 +9,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -91,6 +92,13 @@ type ModemClient struct {
 	arqConnected bool
 
 	connectRespCh chan string
+
+	// linkDown is set when the modem closes the control link under us -- which
+	// the TNC does whenever ANOTHER client connects, because it keeps only one
+	// control client and evicts the incumbent.  Without it, IsConnected() keeps
+	// answering true off conn objects that are merely non-nil, and the UI goes
+	// on claiming it is attached to ports it lost.
+	linkDown atomic.Bool
 
 	mu   sync.Mutex
 	quit chan struct{}
@@ -384,6 +392,9 @@ func (mc *ModemClient) SendBroadcast(data []byte) error {
 }
 
 func (mc *ModemClient) IsConnected() bool {
+	if mc.linkDown.Load() {
+		return false
+	}
 	mc.mu.Lock()
 	defer mc.mu.Unlock()
 	return mc.ARQControlConn != nil && mc.BroadcastConn != nil
@@ -439,6 +450,12 @@ func (mc *ModemClient) readARQControl() {
 			if err != nil {
 				if err != io.EOF {
 					mc.LogCh <- fmt.Sprintf("ARQ Control read error: %v", err)
+				}
+				// EOF here is not "nothing more to read", it is the modem
+				// hanging up on us.  Say so, and stop claiming to be connected.
+				if !mc.linkDown.Swap(true) {
+					mc.LogCh <- "ARQ control link closed by the modem " +
+						"(another client may have taken the TNC ports)."
 				}
 				return
 			}
