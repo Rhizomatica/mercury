@@ -31,6 +31,7 @@
 #include "ui_communication.h"
 #include "mercury_engine.h"
 #include "virtual_clock.h"
+#include "message_store.h"
 
 /* ---- shared globals ---- */
 _Atomic bool shutdown_ = false;
@@ -247,6 +248,13 @@ int mercury_engine_init(const mercury_config *cfg,
 
     tnc_set_intervals(cfg->tnc_keepalive_s, cfg->tnc_buffer_report_ms);
 
+    /* ---- persistent message store ---- */
+    if (cfg->store_enabled)
+    {
+        if (msg_store_init(cfg->store_path, cfg->store_max_messages) != 0)
+            HLOGW("engine", "Message store init failed — chat history will not persist");
+    }
+
     /* ---- ARQ ---- */
     if (arq_init(g_modem.payload_bytes_per_modem_frame, g_modem.mode) != EXIT_SUCCESS)
     {
@@ -332,6 +340,8 @@ void mercury_engine_shutdown(void)
 
     ui_comm_shutdown(&g_ui_ctx);
     radio_io_shutdown();
+
+    msg_store_shutdown();
 
     HLOGI("engine", "Mercury engine shut down");
     hermes_log_shutdown();

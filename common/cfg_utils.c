@@ -30,6 +30,7 @@
 #include "../data_interfaces/tcp_interfaces.h"
 #include "../gui_interface/ui_communication.h"
 #include "../datalink_arq/arq_protocol.h"
+#include "message_store.h"
 
 void cfg_set_defaults(mercury_config *cfg)
 {
@@ -76,6 +77,9 @@ void cfg_set_defaults(mercury_config *cfg)
     cfg->busy_hysteresis_db          = 3;
     cfg->busy_on_debounce_ms         = 300;
     cfg->busy_hang_ms                = 1500;
+    cfg->store_enabled               = true;
+    cfg->store_path[0]               = '\0';
+    cfg->store_max_messages          = MSG_STORE_DEFAULT_MAX_LINES;
 }
 
 /* Map a sound-system name to the AUDIO_SUBSYSTEM_* constant.
@@ -410,6 +414,18 @@ bool cfg_read(mercury_config *cfg, const char *ini_path)
     i = iniparser_getint(ini, CFG_KEY_TX_DELAY_MS, cfg->tx_delay_ms);
     if (i >= 0 && i <= 2000) cfg->tx_delay_ms = i;
 
+    cfg->store_enabled = (bool) iniparser_getboolean(ini, CFG_KEY_STORE_ENABLED,
+                                                     cfg->store_enabled ? 1 : 0);
+
+    s = iniparser_getstring(ini, CFG_KEY_STORE_PATH, NULL);
+    if (s) {
+        strncpy(cfg->store_path, s, sizeof(cfg->store_path) - 1);
+        cfg->store_path[sizeof(cfg->store_path) - 1] = '\0';
+    }
+
+    i = iniparser_getint(ini, CFG_KEY_STORE_MAX_MESSAGES, cfg->store_max_messages);
+    if (i >= 1 && i <= 10000) cfg->store_max_messages = i;
+
     iniparser_freedict(ini);
     return true;
 }
@@ -526,6 +542,12 @@ bool cfg_write(const mercury_config *cfg, const char *ini_path)
     fprintf(f, "\n[tnc]\n");
     fprintf(f, "keepalive_s = %d\n", cfg->tnc_keepalive_s);
     fprintf(f, "buffer_report_ms = %d\n", cfg->tnc_buffer_report_ms);
+
+    fprintf(f, "\n[store]\n");
+    fprintf(f, "enabled = %s\n", cfg->store_enabled ? "true" : "false");
+    cfg_escape_str(escaped, sizeof(escaped), cfg->store_path);
+    fprintf(f, "path = \"%s\"\n", escaped);
+    fprintf(f, "max_messages = %d\n", cfg->store_max_messages);
 
     fclose(f);
     return true;
