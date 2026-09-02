@@ -1040,6 +1040,83 @@ void test_bcast_vara_length_roundtrip(void)
     TEST_ASSERT_EQUAL_HEX8_ARRAY(orig, payload, orig_len); /* exact original bytes */
 }
 
+/* What happens to a broadcast message that is EXACTLY one frame long?
+ *
+ * The raw-vs-wrap heuristic keys on the first byte: bits 7:5 == 3 or 4 look
+ * like a broadcast packet type, and 0x60..0x7F is backtick plus every lowercase
+ * letter.  So "hello ..." padded to the frame size presents a broadcast-looking
+ * header.  These pin what each kind of sender actually gets, because the answer
+ * differs and the difference is the whole safety argument. */
+
+/* Chat (CMD_AX25) is ALWAYS wrapped, whatever it contains: needs_wrap is true
+ * for CMD_AX25 unconditionally, so the heuristic never applies to it.  A
+ * full-length chat line survives intact with its exact length. */
+void test_bcast_tx_full_size_chat_is_still_wrapped(void)
+{
+    const size_t fsz = 32;
+    uint8_t orig[32];
+    memset(orig, 'x', sizeof(orig));
+    orig[0] = 'h';                     /* 0x68 -> looks like packet type 3 */
+
+    uint8_t txframe[MAX_PAYLOAD];
+    memset(txframe, 0, sizeof(txframe));
+    memcpy(txframe, orig, fsz);
+
+    /* Exactly one frame of chat.  It cannot fit a header+len prefix as well, so
+     * the wrap path truncates to make room -- lossy, but it is delivered as a
+     * message rather than misread as a modem frame. */
+    bool ok = bcast_process_decoded_frame(txframe, (int)fsz, CMD_AX25, fsz);
+    TEST_ASSERT_TRUE(ok);
+
+    uint8_t rxframe[MAX_PAYLOAD];
+    memcpy(rxframe, last_write_buffer_data, fsz);
+    uint8_t *payload = NULL;
+    int plen = 0;
+    uint8_t cmd = bcast_get_tx_payload(rxframe, fsz, &payload, &plen);
+
+    /* Framed and delivered as chat, not passed through as a raw modem frame. */
+    TEST_ASSERT_EQUAL_HEX8(CMD_AX25, cmd);
+    TEST_ASSERT_EQUAL_INT((int)(fsz - HEADER_SIZE - BCAST_LEN_SIZE), plen);
+    TEST_ASSERT_EQUAL_HEX8_ARRAY(orig, payload, plen);
+}
+
+/* CMD_DATA is the case the heuristic exists for, and the case it can get wrong.
+ * A full-size CMD_DATA payload whose first byte looks like a broadcast type is
+ * passed through UNWRAPPED -- correct for hermes-broadcast's modem frames,
+ * which is the point, but it means a CMD_DATA sender of ordinary data gets no
+ * length prefix.  Here that is lossless only because the payload already fills
+ * the frame exactly; a shorter one would still be wrapped. */
+void test_bcast_tx_full_size_cmd_data_passes_through_raw(void)
+{
+    const size_t fsz = 32;
+    uint8_t orig[32];
+    for (size_t i = 0; i < fsz; i++) orig[i] = (uint8_t)(0x40 + i);
+    orig[0] = 'h';                     /* 0x68 -> packet type 3, ext 8 */
+
+    uint8_t txframe[MAX_PAYLOAD];
+    memset(txframe, 0, sizeof(txframe));
+    memcpy(txframe, orig, fsz);
+
+    bool ok = bcast_process_decoded_frame(txframe, (int)fsz, CMD_DATA, fsz);
+    TEST_ASSERT_TRUE(ok);
+
+    /* Untouched: no header injected, no truncation. */
+    TEST_ASSERT_EQUAL_size_t(fsz, last_write_buffer_len);
+    TEST_ASSERT_EQUAL_HEX8_ARRAY(orig, last_write_buffer_data, fsz);
+
+    uint8_t rxframe[MAX_PAYLOAD];
+    memcpy(rxframe, last_write_buffer_data, fsz);
+    uint8_t *payload = NULL;
+    int plen = 0;
+    uint8_t cmd = bcast_get_tx_payload(rxframe, fsz, &payload, &plen);
+
+    /* Delivered whole, so the bytes survive -- but only because it filled the
+     * frame.  The receiver learned nothing about the true length. */
+    TEST_ASSERT_EQUAL_HEX8(CMD_DATA, cmd);
+    TEST_ASSERT_EQUAL_INT((int)fsz, plen);
+    TEST_ASSERT_EQUAL_HEX8_ARRAY(orig, payload, fsz);
+}
+
 /* Receive-only station: a length-prefixed frame must be delivered as the exact
  * AX.25 payload with CMD_AX25CALLSIGN even when bcast_reply_cmd is still the
  * default CMD_DATA (local client has not transmitted). Regression for the bug
@@ -1332,6 +1409,8 @@ int main(void)
     RUN_TEST(test_bcast_tx_cmd_data_full_frame);
     RUN_TEST(test_bcast_tx_vara_strips_header);
     RUN_TEST(test_bcast_vara_length_roundtrip);
+    RUN_TEST(test_bcast_tx_full_size_chat_is_still_wrapped);
+    RUN_TEST(test_bcast_tx_full_size_cmd_data_passes_through_raw);
     RUN_TEST(test_bcast_tx_lenprefix_ignores_reply_cmd_default);
     RUN_TEST(test_bcast_std_kiss_roundtrip);
     RUN_TEST(test_bcast_rx_cmd_data_vara_beacon_wrapped);
