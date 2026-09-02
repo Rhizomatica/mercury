@@ -63,13 +63,14 @@ extern "C" {
  * A sender that knows what it is sending should say so.  0x03 was already
  * reserved and unused as a KISS command, so it costs nothing.
  *
- * CMD_DATA keeps its heuristic for compatibility with deployed
- * hermes-broadcast, which predates this. */
+ * CMD_DATA keeps its inference and stays fully supported -- it is what older
+ * builds send.  CMD_AX25 and CMD_AX25CALLSIGN are untouched: they always mean
+ * "a message, frame it", which is what VARA clients depend on. */
 #define CMD_MODEM_FRAME 0x03
 
-#define CMD_RQ_CONFIG 0x03 // legacy alias for CMD_MODEM_FRAME's value; the
-                           // RaptorQ packet type lives in the frame's own
-                           // header byte, not in the KISS command
+/* The RaptorQ packet type lives in the FRAME's header byte, never in the KISS
+ * command.  Kept so older code referring to these names still compiles. */
+#define CMD_RQ_CONFIG 0x03
 #define CMD_RQ_PAYLOAD 0x04 // Reserved/legacy KISS command value; current TCP framing does not use it for RaptorQ payload
 
 #define MAX_PAYLOAD 1213 // largest broadcast frame we can select (QAM16C2)

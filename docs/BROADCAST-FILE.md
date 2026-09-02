@@ -114,6 +114,17 @@ Bigger frames carry more per transmission but need a better signal to decode at
 all. The UI reports the running mode, its bit rate and its bandwidth, computed
 from the modem itself rather than this table.
 
+## Talking to Mercury's broadcast port
+
+Anything sending modem frames — a file transmitter, a relay — must use KISS
+command `0x03` (`CMD_MODEM_FRAME`), which tells Mercury the payload is already
+a modem frame and must go out untouched. Any other command means "a message",
+and Mercury adds a header and length prefix, costing 3 bytes and corrupting a
+frame that was already the right size.
+
+Mercury does not guess from the payload's contents. See
+[BROADCAST-WIRE-FORMAT.md](BROADCAST-WIRE-FORMAT.md) §1.
+
 ## Using it
 
 ### From the UI

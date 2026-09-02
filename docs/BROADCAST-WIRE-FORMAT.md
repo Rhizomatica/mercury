@@ -27,21 +27,35 @@ The KISS payload is **one modem frame**, exactly
 `payload_bytes_per_modem_frame` long for the configured mode.
 
 `cmd` MUST be `0x03` (`CMD_MODEM_FRAME`): *this payload is already one modem
-frame, transmit it untouched*. Mercury treats every other data-carrying command
-as a message to be framed for the air, injecting a 1-byte header and a 2-byte
-length prefix and truncating the payload by 3 bytes to make room — which
-destroys a frame that was already the right size.
+frame, transmit it untouched*.
 
 | cmd | meaning |
 |-----|---------|
-| `0x00` `CMD_AX25`, `0x01` `CMD_AX25CALLSIGN` | a message; Mercury frames it |
-| `0x02` `CMD_DATA` | **legacy.** Mercury *infers* whether it is a modem frame from the payload's own first byte |
-| `0x03` `CMD_MODEM_FRAME` | a modem frame; passed through untouched |
+| `0x00` `CMD_AX25`, `0x01` `CMD_AX25CALLSIGN` | a message; Mercury frames it for the air |
+| `0x02` `CMD_DATA` | a message; Mercury frames it for the air |
+| `0x03` `CMD_MODEM_FRAME` | a modem frame; transmitted untouched |
 
-`CMD_DATA`'s inference is retained only for hermes-broadcast deployments that
-predate `CMD_MODEM_FRAME`. It is a guess about bytes the sender chooses: a
-full-size payload beginning `0x60..0x9F` looks like a modem frame whatever it
-actually is. New implementations MUST use `0x03`.
+"Framing for the air" means Mercury prepends its own 1-byte header and a 2-byte
+length prefix, so the receiver can recover the message's exact length from a
+frame the modem has zero-padded. It costs 3 bytes, which is why a payload that
+already fills the frame is truncated by 3 to make room — harmless for a message,
+fatal for a modem frame.
+
+**A sender must therefore declare which it has.** Mercury does not inspect the
+payload to decide. It used to: `CMD_DATA` was passed through untouched when its
+first byte looked like a broadcast packet type. That could not be made correct,
+because those are bytes the sender chooses — a message beginning `0x60..0x9F`
+(backtick and every lowercase letter) was passed through unframed, and a real
+modem frame sent under any other command was quietly truncated.
+
+`CMD_AX25` and `CMD_AX25CALLSIGN` are unaffected and always framed, which is
+what VARA-compatible clients depend on.
+
+> **Upgrade note.** A sender that transmits modem frames as `CMD_DATA` must be
+> updated to `CMD_MODEM_FRAME`; against a current Mercury its frames would
+> otherwise be framed as messages and truncated. This affects
+> hermes-broadcast's `transmitter`, `receiver` and `broadcast_daemon`, all of
+> which now send `0x03`. Update both ends together.
 
 ## 2. Frame header byte
 

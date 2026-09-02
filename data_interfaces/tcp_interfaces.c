@@ -1042,29 +1042,24 @@ static bool bcast_process_decoded_frame(uint8_t *decoded_frame, int frame_len,
      * extension takes the false-positive space from 64/256 to 2/256 (0.8%),
      * and to ZERO across a-z: the only printable ASCII that still collides is
      * a leading backtick. */
-    /* CMD_MODEM_FRAME says outright that the payload is one modem frame.  No
-     * inference, no dependence on what its first byte happens to be. */
+    /* Whether a payload is a modem frame or a message is SAID, not guessed.
+     *
+     * CMD_MODEM_FRAME means "already exactly one modem frame, transmit it
+     * untouched".  Every other data-carrying command is a message, and gets
+     * Mercury's 1-byte header and 2-byte length prefix so the far side can
+     * recover its exact length from a frame the modem has zero-padded.
+     *
+     * There used to be an inference for CMD_DATA here, reading the payload's
+     * own first byte to decide.  It was wrong in both directions and could not
+     * be made right, because those are bytes the sender chooses: a message
+     * beginning 0x60..0x9F was passed through unframed, and a real modem frame
+     * sent under any other command was truncated by 3 bytes to make room for a
+     * header it did not need.  That second case silently broke the UI's file
+     * transfer.
+     *
+     * CMD_AX25 and CMD_AX25CALLSIGN are unchanged and always framed, which is
+     * what VARA-compatible clients depend on. */
     bool is_raw_modem_frame = (kiss_cmd == CMD_MODEM_FRAME);
-
-    if (kiss_cmd == CMD_DATA)
-    {
-        uint8_t pt = frame_header_packet_type(decoded_frame[0]);
-        /* A broadcast-typed frame that is already exactly one modem frame is
-         * raw by construction: there is no room to inject the Mercury header
-         * and length prefix, so wrapping it can only TRUNCATE it.  That is not
-         * hypothetical -- hermes-broadcast's joint RaptorQ frames fill the
-         * frame exactly and carry a per-file session id in the extension
-         * field, so the old "extension must be zero" test rejected every one
-         * of them and silently cut 3 bytes off each (1180 -> 1177), which the
-         * far side then discarded as the wrong size.
-         *
-         * Short frames still get wrapped, which is what VARA and chat need. */
-        is_raw_modem_frame =
-            (pt == PACKET_TYPE_BROADCAST_CONTROL ||
-             pt == PACKET_TYPE_BROADCAST_DATA) &&
-            (frame_header_extension(decoded_frame[0]) == 0 ||
-             (size_t)frame_len == frame_size);
-    }
 
     /* hermes-broadcast / unformatted CMD_DATA frames never fragment: anything
      * larger than one modem frame is discarded (0x00/0x01 truncate instead). */
