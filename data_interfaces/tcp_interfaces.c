@@ -1046,10 +1046,21 @@ static bool bcast_process_decoded_frame(uint8_t *decoded_frame, int frame_len,
     if (kiss_cmd == CMD_DATA)
     {
         uint8_t pt = frame_header_packet_type(decoded_frame[0]);
+        /* A broadcast-typed frame that is already exactly one modem frame is
+         * raw by construction: there is no room to inject the Mercury header
+         * and length prefix, so wrapping it can only TRUNCATE it.  That is not
+         * hypothetical -- hermes-broadcast's joint RaptorQ frames fill the
+         * frame exactly and carry a per-file session id in the extension
+         * field, so the old "extension must be zero" test rejected every one
+         * of them and silently cut 3 bytes off each (1180 -> 1177), which the
+         * far side then discarded as the wrong size.
+         *
+         * Short frames still get wrapped, which is what VARA and chat need. */
         is_raw_modem_frame =
             (pt == PACKET_TYPE_BROADCAST_CONTROL ||
              pt == PACKET_TYPE_BROADCAST_DATA) &&
-            frame_header_extension(decoded_frame[0]) == 0;
+            (frame_header_extension(decoded_frame[0]) == 0 ||
+             (size_t)frame_len == frame_size);
     }
 
     /* hermes-broadcast / unformatted CMD_DATA frames never fragment: anything
