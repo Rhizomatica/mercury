@@ -12,6 +12,10 @@ RaptorQ fountain carousel, and is **wire-compatible with that project's
 `broadcast_daemon`**: a Mercury station and a hermes-broadcast station
 interoperate in both directions.
 
+The byte-exact protocol is specified in
+[BROADCAST-WIRE-FORMAT.md](BROADCAST-WIRE-FORMAT.md); this page is the
+operator-facing description.
+
 ## How it works
 
 The file is encoded into a stream of RaptorQ symbols and transmitted round and
