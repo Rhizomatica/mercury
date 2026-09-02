@@ -301,6 +301,13 @@ const (
 	windowYKey      = "window.y"
 	windowPosSetKey = "window.positionSaved"
 
+	// Broadcast file receiving.  Persisted because a station that exists to
+	// collect bulletins is configured once and then left alone: it must come
+	// back up receiving into the same folder after a restart, with nobody
+	// present to tick a box.
+	broadcastRxDirPrefKey = "broadcastFile.rxDir"
+	broadcastRxOnPrefKey  = "broadcastFile.receive"
+
 	// defaultWindowWidth/Height match the previous hard-coded launch size and
 	// are used until the operator has resized the window once.
 	defaultWindowWidth  = 1280

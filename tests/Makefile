@@ -46,7 +46,7 @@ TEST_BINS = test_ring_buffer test_arq_protocol test_arq_timing test_arq_fsm \
             test_tcp_interfaces test_resampler test_pcm24 test_arq_olla test_arq_sim \
             test_arq_conn test_cfg_utils test_arq_tnc test_channel_busy \
             test_freedv_harq test_sock_wire test_virtual_clock test_watterson \
-            test_mercury_prng \
+            test_mercury_prng test_bcast_file \
             test_ofdm_acq test_ui_status test_ui_devices test_tx_pacing test_radio_port \
             test_radio_io_frequency
 
@@ -164,6 +164,16 @@ test_watterson: common/test_watterson.c $(UNITY_SRC) ../common/watterson.c ../co
 # point is that a seed means the same fade on every platform.
 test_mercury_prng: common/test_mercury_prng.c $(UNITY_SRC) ../common/mercury_prng.c
 	$(CC) $(CFLAGS) -I.. -o $@ $^ $(LDFLAGS)
+
+# Broadcast file TX: the frames must decode in a hermes-broadcast receiver, so
+# the test drives a full carousel through simulated loss and requires the file
+# back byte-for-byte.
+RAPTORQ_SRC = $(wildcard ../datalink_broadcast/raptorq/lib/*.c) \
+              $(wildcard ../datalink_broadcast/raptorq/deps/obl/*.c)
+test_bcast_file: datalink_broadcast/test_bcast_file.c $(UNITY_SRC) \
+                 ../datalink_broadcast/bcast_file.c $(RAPTORQ_SRC)
+	$(CC) $(CFLAGS) -I.. -I../datalink_broadcast -I../datalink_broadcast/raptorq/include \
+	      -I../datalink_broadcast/raptorq/deps -o $@ $^ $(LDFLAGS) -lm
 
 # OFDM acquisition: the FFT search must agree with brute force, fringe included.
 # libfreedvdata.a is a PREREQUISITE, not just a link argument: leave it off the

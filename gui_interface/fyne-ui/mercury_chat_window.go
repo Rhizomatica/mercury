@@ -68,6 +68,7 @@ type chatWindow struct {
 	sendBcast     *widget.Button
 	sendBcastWrap *hoverTooltipButton
 	sendCQ        *widget.Button
+	bcastFile     *broadcastFilePanel
 	arqMsg        *widget.Entry
 	bcastMsg      *widget.Entry
 
@@ -153,6 +154,27 @@ func (cw *chatWindow) build(app fyne.App, telemetry telemetryState, arqPort, bro
 		cw.sendCQ,
 	)
 
+	// File broadcast rides the same broadcast socket the chat below it uses,
+	// so it lives with the broadcast controls and is enabled by the same signal.
+	cw.bcastFile = newBroadcastFilePanel(cw.win, fyne.CurrentApp().Preferences(),
+		func() broadcastSender {
+			if cw.mc == nil {
+				return nil
+			}
+			return cw.mc
+		},
+		func(f func([]byte) bool) {
+			if cw.mc == nil {
+				return
+			}
+			if f == nil {
+				cw.mc.SetBroadcastFrameFilter(nil)
+				return
+			}
+			cw.mc.SetBroadcastFrameFilter(client.BroadcastFrameFilter(f))
+		},
+		cw.logMsg)
+
 	controls := container.NewVBox(
 		cfgForm,
 		modemRow,
@@ -161,6 +183,8 @@ func (cw *chatWindow) build(app fyne.App, telemetry telemetryState, arqPort, bro
 		cw.arqMsg, cw.sendARQ,
 		widget.NewSeparator(),
 		cw.bcastMsg, cw.sendBcastWrap,
+		widget.NewSeparator(),
+		cw.bcastFile.content(),
 	)
 
 	left := container.NewVBox(controls, layout.NewSpacer())
@@ -188,6 +212,9 @@ func (cw *chatWindow) build(app fyne.App, telemetry telemetryState, arqPort, bro
 	cw.win.SetContent(container.NewHSplit(left, right))
 	cw.win.Resize(fyne.NewSize(800, 600))
 	cw.win.SetOnClosed(func() {
+		if cw.bcastFile != nil {
+			cw.bcastFile.stopForShutdown()
+		}
 		if cw.mc != nil {
 			cw.mc.Disconnect()
 		}
@@ -258,6 +285,9 @@ func (cw *chatWindow) setTCP(on bool) {
 			cw.arqConnect.Enable()
 			cw.sendBcastWrap.Enable()
 			cw.sendCQ.Enable()
+			if cw.bcastFile != nil {
+				cw.bcastFile.setConnected(true)
+			}
 		} else {
 			cw.connectBtn.Enable()
 			cw.disconnectBtn.Disable()
@@ -267,6 +297,9 @@ func (cw *chatWindow) setTCP(on bool) {
 			cw.sendARQ.Disable()
 			cw.sendBcastWrap.Disable()
 			cw.sendCQ.Disable()
+			if cw.bcastFile != nil {
+				cw.bcastFile.setConnected(false)
+			}
 		}
 	})
 }
