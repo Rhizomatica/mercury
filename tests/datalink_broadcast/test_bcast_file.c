@@ -20,7 +20,7 @@
 #include "bcast_file.h"
 #include "bcast_modes.h"
 #include "raptorq/include/nanorq.h"
-#include "raptorq/include/io.h"
+#include "raptorq/include/nanorq_io.h"
 
 void setUp(void) {}
 void tearDown(void) {}

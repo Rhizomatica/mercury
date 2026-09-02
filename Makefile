@@ -313,8 +313,12 @@ libmercury_core.a: internal_deps $(HIDAPI_OBJS) $(BCAST_FILE_OBJS)
 
 libmercury_core_w64.a:
 	$(MAKE) internal_deps OS=Windows_NT CC=$(MINGW_CC) AR=$(MINGW_AR) HAVE_HERMES_SHM=0
-	$(MINGW_CC) $(CFLAGS) -I. -c $(FYNE_UI_DIR)/engine/mercury_bridge.c -o $(FYNE_UI_DIR)/engine/mercury_bridge_w64.o
-	$(MINGW_AR) rcs $@ $(MERCURY_CORE_OBJS_W64) $(FYNE_UI_DIR)/engine/mercury_bridge_w64.o
+	# The bridge calls bcast_file_*, so the RaptorQ objects have to be in this
+	# archive too -- built with the cross compiler, into the same paths the
+	# native build uses, exactly as internal_deps above already does.
+	$(MAKE) $(BCAST_FILE_OBJS) OS=Windows_NT CC=$(MINGW_CC) AR=$(MINGW_AR) HAVE_HERMES_SHM=0
+	$(MINGW_CC) $(CFLAGS) $(RAPTORQ_CFLAGS) -I. -c $(FYNE_UI_DIR)/engine/mercury_bridge.c -o $(FYNE_UI_DIR)/engine/mercury_bridge_w64.o
+	$(MINGW_AR) rcs $@ $(MERCURY_CORE_OBJS_W64) $(BCAST_FILE_OBJS) $(FYNE_UI_DIR)/engine/mercury_bridge_w64.o
 
 # HIDAPI_LDFLAGS is passed through CGO_LDFLAGS rather than hardcoded in
 # mercury_link_linux.go's #cgo directive, because hidapi is OPTIONAL: only this

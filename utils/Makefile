@@ -8,7 +8,7 @@ ifeq ($(OS),Windows_NT)
 LDFLAGS += -lws2_32
 endif
 
-OUT = bcast_file_tool broadcast_test broadcast_diag_tx broadcast_diag_rx watterson_test acquire_vs_decode
+OUT = broadcast_test broadcast_diag_tx broadcast_diag_rx watterson_test acquire_vs_decode
 
 # CPU-cost instruments.  Linux/macOS only: they time with
 # clock_gettime(CLOCK_PROCESS_CPUTIME_ID), which mingw-w64 does not provide
@@ -17,6 +17,13 @@ OUT = bcast_file_tool broadcast_test broadcast_diag_tx broadcast_diag_rx watters
 # the Windows build -- just exclude them and keep the cross-compile green.
 ifneq ($(OS),Windows_NT)
 OUT += resampler_bench rxcost_bench
+
+# bcast_file_tool talks to Mercury's broadcast port with BSD sockets
+# (<arpa/inet.h>, <netinet/tcp.h>, unistd read/write), which mingw-w64 does not
+# have -- Windows wants winsock2.  It is a development/diagnostic tool for
+# driving a broadcast file transfer without the UI, so there is nothing to gain
+# from porting it; the UI on Windows uses the same code in-process over CGo.
+OUT += bcast_file_tool
 endif
 
 # Default target

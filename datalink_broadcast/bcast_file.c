@@ -16,7 +16,7 @@
 #include <time.h>
 
 #include "raptorq/include/nanorq.h"
-#include "raptorq/include/io.h"
+#include "raptorq/include/nanorq_io.h"
 
 struct bcast_file_tx
 {

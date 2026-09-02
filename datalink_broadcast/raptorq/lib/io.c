@@ -18,15 +18,14 @@
 #include <sys/types.h>
 #ifdef _WIN32
 /* mingw's <unistd.h> defines ftruncate() as an inline that calls _chsize(),
- * declared in the SYSTEM <io.h>.  We cannot include that here: nanorq ships its
- * own include/io.h, which is on the include path and shadows it, so <io.h>
- * resolves to nanorq's header and _chsize stays undeclared.  Declaring the
- * prototype directly avoids the collision without renaming nanorq's header. */
-int _chsize(int _FileHandle, long _Size);
+ * which lives in the system <io.h>.  Upstream nanorq's own header was called
+ * io.h and shadowed it on the include path, so it is vendored here as
+ * nanorq_io.h and the system header resolves normally again. */
+#include <io.h>
 #endif
 #include <unistd.h>
 
-#include "io.h"
+#include "nanorq_io.h"
 
 struct fileioctx {
   struct ioctx io;

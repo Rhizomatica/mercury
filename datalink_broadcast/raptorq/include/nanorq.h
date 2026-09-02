@@ -5,7 +5,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include "io.h"
+#include "nanorq_io.h"
 
 #ifdef __cplusplus
 extern "C" {
