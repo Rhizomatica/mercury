@@ -13,6 +13,7 @@ import "C"
 import (
 	"context"
 	"fmt"
+	"runtime"
 	"time"
 	"unsafe"
 )
@@ -296,6 +297,20 @@ func readRadioList() (RadioListEvent, bool) {
 func (l *engineLink) SetWaterfall(enabled bool) {
 	cEn := C.bool(enabled)
 	C.mercury_ui_set_waterfall(cEn)
+}
+
+// AudioSubsystems reports the engine's audio subsystem and, on Linux, the two
+// backends (ALSA, PulseAudio) the operator can switch between at runtime. The
+// embedded engine runs in this process, so its platform is this process's
+// platform.
+func (l *engineLink) AudioSubsystems() (string, []string) {
+	name := make([]byte, 32)
+	C.mercury_ui_get_audio_system((*C.char)(unsafe.Pointer(&name[0])), C.int(len(name)))
+	current := cString(name)
+	if runtime.GOOS == "linux" {
+		return current, []string{"alsa", "pulse"}
+	}
+	return current, nil
 }
 
 // TCPPorts returns the ARQ base and broadcast TCP ports the engine is

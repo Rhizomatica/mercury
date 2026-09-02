@@ -104,6 +104,27 @@ func pttMethodID(label string) string {
 	return "none"
 }
 
+var audioSubsystemLabels = map[string]string{
+	"alsa":  "ALSA",
+	"pulse": "PulseAudio",
+}
+
+func audioSubsystemLabel(id string) string {
+	if label, ok := audioSubsystemLabels[id]; ok {
+		return label
+	}
+	return id
+}
+
+func audioSubsystemID(label string) string {
+	for id, candidate := range audioSubsystemLabels {
+		if candidate == label {
+			return id
+		}
+	}
+	return label
+}
+
 // Mirrors UI_SNR_UNKNOWN_DB in gui_interface/ui_status.h.
 const snrUnknownDB = -99.9
 
@@ -1230,33 +1251,74 @@ func main() {
 	myWindow.SetContent(mainLayout)
 
 	showSoundcardDialog := func() {
+		currentSubsystem, subsystemOptions := func() (string, []string) {
+			state.mu.RLock()
+			link := state.link
+			state.mu.RUnlock()
+			if link != nil {
+				return link.AudioSubsystems()
+			}
+			return "", nil
+		}()
+
+		var subsystemSelect *widget.Select
+		if len(subsystemOptions) > 1 {
+			labels := make([]string, 0, len(subsystemOptions))
+			for _, opt := range subsystemOptions {
+				labels = append(labels, audioSubsystemLabel(opt))
+			}
+			subsystemSelect = widget.NewSelect(labels, nil)
+			subsystemSelect.SetSelected(audioSubsystemLabel(currentSubsystem))
+		}
+
 		applyBtn := widget.NewButton("Apply", func() {
 			captureID := selectedID(bindings.captureSelect, state.captureItems)
 			playbackID := selectedID(bindings.playbackSelect, state.playbackItems)
 			channel := bindings.channelSelect.Selected
-			if captureID == "" {
+			subsystemID := ""
+			if subsystemSelect != nil && subsystemSelect.Selected != "" {
+				subsystemID = audioSubsystemID(subsystemSelect.Selected)
+			}
+			// Device ids are subsystem-specific, so a subsystem switch drops
+			// the old selection and lets the new subsystem pick its default.
+			subsystemChanged := subsystemID != "" && subsystemID != currentSubsystem
+			if subsystemChanged {
+				captureID = ""
+				playbackID = ""
+			}
+			if captureID == "" && !subsystemChanged {
 				captureID = "default"
 			}
-			if playbackID == "" {
+			if playbackID == "" && !subsystemChanged {
 				playbackID = "default"
 			}
 			if channel == "" {
 				channel = "left"
 			}
-			if err := sendWSCommand("set_audio_config", captureID, playbackID, channel, "", "", "", ""); err != nil {
+			if err := sendWSCommand("set_audio_config", captureID, playbackID, channel, subsystemID, "", "", ""); err != nil {
 				appendLog(fmt.Sprintf("Failed to send audio config: %v\n", err))
 			} else {
-				appendLog(fmt.Sprintf("Sent audio config: capture=%s playback=%s channel=%s\n",
-					captureID, playbackID, channel))
+				appendLog(fmt.Sprintf("Sent audio config: subsystem=%s capture=%s playback=%s channel=%s\n",
+					subsystemID, captureID, playbackID, channel))
 			}
 		})
 
-		content := container.NewVBox(
-			container.NewGridWithColumns(2,
+		rows := container.NewGridWithColumns(2,
+			widget.NewLabel("Capture Device"), bindings.captureSelect,
+			widget.NewLabel("Playback Device"), bindings.playbackSelect,
+			widget.NewLabel("Capture Input Channel"), bindings.channelSelect,
+		)
+		if subsystemSelect != nil {
+			rows = container.NewGridWithColumns(2,
+				widget.NewLabel("Audio Subsystem"), subsystemSelect,
 				widget.NewLabel("Capture Device"), bindings.captureSelect,
 				widget.NewLabel("Playback Device"), bindings.playbackSelect,
 				widget.NewLabel("Capture Input Channel"), bindings.channelSelect,
-			),
+			)
+		}
+
+		content := container.NewVBox(
+			rows,
 			container.NewHBox(layout.NewSpacer(), applyBtn, layout.NewSpacer()),
 		)
 

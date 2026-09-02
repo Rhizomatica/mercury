@@ -82,6 +82,10 @@ int mercury_ui_get_radio_list(ui_device_t *out, int max,
                               int *cm108_gpio);
 int mercury_ui_get_input_channel(void);
 
+/* Copy the current audio subsystem name ("alsa", "pulse", ...) into `name`.
+ * Never returns NULL; `name` is always NUL-terminated. */
+void mercury_ui_get_audio_system(char *name, int name_len);
+
 /* Enable / disable waterfall/spectrum at runtime.  Saves to mercury.ini. */
 void mercury_ui_set_waterfall(bool enabled);
 

@@ -162,6 +162,10 @@ void cfg_set_defaults(mercury_config *cfg);
  * Returns a static string; never NULL. */
 const char *cfg_sound_system_name(int sys);
 
+/* Map a sound-system name ("alsa", "pulse", ...) to the AUDIO_SUBSYSTEM_*
+ * constant.  Returns -1 (auto) for unrecognised strings. */
+int cfg_sound_system_parse(const char *name);
+
 /* Canonical string conversion for PTT methods used by INI, CLI and UI. */
 const char *cfg_ptt_method_name(ptt_method_t method);
 bool cfg_ptt_method_parse(const char *name, ptt_method_t *method);
