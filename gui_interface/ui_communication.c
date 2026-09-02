@@ -160,8 +160,24 @@ int ui_comm_handle_command(ui_ctx_t *ctx, const ws_command_t *cmd)
           cmd->value5, cmd->value6, cmd->value7);
 
     if (strcmp(cmd->command, "set_audio_config") == 0) {
-        // value = capture_dev, value2 = playback_dev, value3 = input_channel
-        if (cmd->value[0])
+        // value = capture_dev, value2 = playback_dev, value3 = input_channel,
+        // value4 = audio subsystem name ("alsa", "pulse", ...; optional).
+        int new_audio_system = -1;
+        if (cmd->value4[0])
+        {
+            new_audio_system = cfg_sound_system_parse(cmd->value4);
+            if (new_audio_system < 0)
+            {
+                HLOGE(UI_LOG_TAG, "Invalid audio subsystem from UI: %s", cmd->value4);
+                return -1;
+            }
+        }
+        bool subsystem_changed = (new_audio_system >= 0 &&
+                                  new_audio_system != ctx->audio_system);
+        bool have_capture = cmd->value[0] != '\0';
+        bool have_playback = cmd->value2[0] != '\0';
+
+        if (have_capture)
         {
             strncpy(ctx->selected_capture_dev, cmd->value,
                     sizeof(ctx->selected_capture_dev) - 1);
@@ -169,7 +185,7 @@ int ui_comm_handle_command(ui_ctx_t *ctx, const ws_command_t *cmd)
         }
         HLOGI(UI_LOG_TAG, "Capture device set to: %s", ctx->selected_capture_dev);
 
-        if (cmd->value2[0])
+        if (have_playback)
         {
             strncpy(ctx->selected_playback_dev, cmd->value2,
                     sizeof(ctx->selected_playback_dev) - 1);
@@ -186,7 +202,22 @@ int ui_comm_handle_command(ui_ctx_t *ctx, const ws_command_t *cmd)
         HLOGI(UI_LOG_TAG, "Input channel set to: %s (%d)",
               cmd->value3, ctx->rx_input_channel);
 
-        HLOGI(UI_LOG_TAG, "Restarting audioio subsystem (capture=%s playback=%s channel=%d)",
+        if (subsystem_changed)
+        {
+            ctx->audio_system = new_audio_system;
+            /* Device ids are subsystem-specific.  When the operator switches
+             * subsystem without choosing a device in the same breath, drop the
+             * stale ids so the new subsystem resolves its own default device. */
+            if (!have_capture)
+                ctx->selected_capture_dev[0] = '\0';
+            if (!have_playback)
+                ctx->selected_playback_dev[0] = '\0';
+            HLOGI(UI_LOG_TAG, "Audio subsystem switched to %s",
+                  cfg_sound_system_name(ctx->audio_system));
+        }
+
+        HLOGI(UI_LOG_TAG, "Restarting audioio subsystem (subsystem=%s capture=%s playback=%s channel=%d)",
+              cfg_sound_system_name(ctx->audio_system),
               ctx->selected_capture_dev, ctx->selected_playback_dev, ctx->rx_input_channel);
         audioio_restart(ctx->selected_capture_dev, ctx->selected_playback_dev,
                         ctx->audio_system, ctx->rx_input_channel);
@@ -201,9 +232,14 @@ int ui_comm_handle_command(ui_ctx_t *ctx, const ws_command_t *cmd)
                 sizeof(ctx->cfg.output_device) - 1);
         ctx->cfg.output_device[sizeof(ctx->cfg.output_device) - 1] = '\0';
         ctx->cfg.capture_channel = ctx->rx_input_channel;
+        ctx->cfg.sound_system = ctx->audio_system;
         if (ctx->cfg_path[0] && cfg_write(&ctx->cfg, ctx->cfg_path))
             HLOGI(UI_LOG_TAG, "Config saved to %s", ctx->cfg_path);
         pthread_mutex_unlock(&ctx->cfg_mutex);
+
+        /* The device list depends on the subsystem; republish it for any
+         * remote UI so it reflects the new selection (and new device set). */
+        ctx->soundcard_list_pending = 1;
 
     } else if (strcmp(cmd->command, "set_ptt_config") == 0) {
         ptt_config_t config;
@@ -488,6 +524,14 @@ int ui_comm_get_input_channel(void)
     return ctx ? ctx->rx_input_channel : 0;
 }
 
+const char *ui_comm_get_audio_system(void)
+{
+    ui_ctx_t *ctx = g_ui_ctx;
+    if (!ctx)
+        return "";
+    return cfg_sound_system_name(ctx->audio_system);
+}
+
 void ui_comm_preload_radio_list(void)
 {
 #ifdef HAVE_HAMLIB
@@ -704,6 +748,23 @@ void *ui_publisher_thread(void *arg)
                 "{\"type\":\"input_channel\",\"selected\":\"%s\","
                 "\"list\":[\"left\",\"right\",\"stereo\"]}", ch_str);
             ws_broadcast_json(&ctx->ws, ch_buf);
+
+            // Audio subsystem selection.  Only Linux can switch between ALSA
+            // and PulseAudio at runtime; everywhere else the subsystem is
+            // fixed and the list carries the single active backend so a UI can
+            // hide a selector it cannot act on.
+            const char *audio_sys = cfg_sound_system_name(ctx->audio_system);
+            char as_buf[256];
+#if defined(__linux__)
+            snprintf(as_buf, sizeof(as_buf),
+                "{\"type\":\"audio_system\",\"selected\":\"%s\","
+                "\"list\":[\"alsa\",\"pulse\"]}", audio_sys);
+#else
+            snprintf(as_buf, sizeof(as_buf),
+                "{\"type\":\"audio_system\",\"selected\":\"%s\","
+                "\"list\":[\"%s\"]}", audio_sys, audio_sys);
+#endif
+            ws_broadcast_json(&ctx->ws, as_buf);
         }
 
         // --- Send PTT/Hamlib choices at startup and after config changes ---

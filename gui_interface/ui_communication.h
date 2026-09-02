@@ -165,6 +165,10 @@ int  ui_comm_get_radio_list(ui_device_t *out, int max, char *selected, size_t se
 /* Current RX input channel: 0 = left, 1 = right, 2 = stereo. */
 int  ui_comm_get_input_channel(void);
 
+/* Current audio subsystem name ("alsa", "pulse", ...).  Returns a static
+ * string; never NULL.  Empty string when no UI context is running. */
+const char *ui_comm_get_audio_system(void);
+
 /* Pre-load the radio model list from the main thread.  The embedded UI calls
  * this during mercury_init() so hamlib backend loading happens on a regular
  * POSIX thread, not a CGo goroutine. */

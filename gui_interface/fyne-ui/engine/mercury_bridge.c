@@ -187,6 +187,13 @@ int mercury_ui_get_input_channel(void)
     return ui_comm_get_input_channel();
 }
 
+void mercury_ui_get_audio_system(char *name, int name_len)
+{
+    if (name && name_len > 0) {
+        snprintf(name, (size_t)name_len, "%s", ui_comm_get_audio_system());
+    }
+}
+
 void mercury_ui_set_waterfall(bool enabled)
 {
     ui_comm_set_waterfall(enabled);

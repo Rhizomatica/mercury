@@ -2387,13 +2387,13 @@ int audioio_restart(const char *capture_dev, const char *playback_dev,
     else
         capture_input_channel_layout = LEFT;
 
-    if (capture_dev && capture_dev[0] != '\0')
+    if (capture_dev)
     {
         strncpy(s_capture_dev, capture_dev, sizeof(s_capture_dev) - 1);
         s_capture_dev[sizeof(s_capture_dev) - 1] = '\0';
     }
 
-    if (playback_dev && playback_dev[0] != '\0')
+    if (playback_dev)
     {
         strncpy(s_playback_dev, playback_dev, sizeof(s_playback_dev) - 1);
         s_playback_dev[sizeof(s_playback_dev) - 1] = '\0';

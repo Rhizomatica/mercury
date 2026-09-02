@@ -31,6 +31,12 @@ type Link interface {
 	// Send delivers a command to the engine. Safe for concurrent use.
 	Send(cmd Command) error
 
+	// AudioSubsystems reports the engine's current audio subsystem name
+	// ("alsa", "pulse", ...) and the list of names it can switch to at
+	// runtime. A list with fewer than two entries means the subsystem is
+	// fixed, and the UI hides its subsystem selector.
+	AudioSubsystems() (current string, options []string)
+
 	// Close releases the transport. Idempotent.
 	Close()
 }
@@ -91,6 +97,13 @@ type RadioListEvent struct {
 	CM108GPIO   string
 }
 
+// AudioSystemEvent reports the engine's current audio subsystem and the
+// subsystems it can switch to at runtime (see Link.AudioSubsystems).
+type AudioSystemEvent struct {
+	Current string
+	Options []string
+}
+
 // LinkStateEvent reports the transport coming up or going down, with a
 // human-readable detail for the log pane.
 type LinkStateEvent struct {
@@ -102,12 +115,13 @@ type LinkStateEvent struct {
 // say that is not state.
 type LogEvent struct{ Text string }
 
-func (StatusEvent) isLinkEvent()     {}
-func (SpectrumEvent) isLinkEvent()   {}
-func (DeviceListEvent) isLinkEvent() {}
-func (RadioListEvent) isLinkEvent()  {}
-func (LinkStateEvent) isLinkEvent()  {}
-func (LogEvent) isLinkEvent()        {}
+func (StatusEvent) isLinkEvent()      {}
+func (SpectrumEvent) isLinkEvent()    {}
+func (DeviceListEvent) isLinkEvent()  {}
+func (RadioListEvent) isLinkEvent()   {}
+func (AudioSystemEvent) isLinkEvent() {}
+func (LinkStateEvent) isLinkEvent()   {}
+func (LogEvent) isLinkEvent()         {}
 
 // emit posts an event unless the consumer is gone or lagging. Telemetry is
 // disposable — a dropped spectrum frame costs one waterfall row, whereas
