@@ -65,6 +65,8 @@ _Static_assert(AUDIO_DEV_STR_MAX >= UI_DEV_ID_MAX,
 /* Audio path health; see audioio.h.  Declared here rather than included for
  * the same reason audioio_restart is: audioio.h drags in ffbase. */
 extern bool audioio_health_ok(char *reason, size_t reasonlen);
+extern void audioio_health_reason(char *buf, size_t buflen);
+extern int  audioio_wait_healthy(int timeout_ms);
 
 extern int audioio_restart(const char *capture_dev, const char *playback_dev,
                            int audio_subsys, int capture_channel_layout);
@@ -224,21 +226,43 @@ int ui_comm_handle_command(ui_ctx_t *ctx, const ws_command_t *cmd)
               ctx->selected_capture_dev, ctx->selected_playback_dev, ctx->rx_input_channel);
         audioio_restart(ctx->selected_capture_dev, ctx->selected_playback_dev,
                         active_system, ctx->rx_input_channel);
-        HLOGI(UI_LOG_TAG, "Audioio subsystem restarted successfully");
 
-        // Persist audio config to INI
-        pthread_mutex_lock(&ctx->cfg_mutex);
-        strncpy(ctx->cfg.input_device, ctx->selected_capture_dev,
-                sizeof(ctx->cfg.input_device) - 1);
-        ctx->cfg.input_device[sizeof(ctx->cfg.input_device) - 1] = '\0';
-        strncpy(ctx->cfg.output_device, ctx->selected_playback_dev,
-                sizeof(ctx->cfg.output_device) - 1);
-        ctx->cfg.output_device[sizeof(ctx->cfg.output_device) - 1] = '\0';
-        ctx->cfg.capture_channel = ctx->rx_input_channel;
-        ctx->cfg.sound_system = active_system;
-        if (ctx->cfg_path[0] && cfg_write(&ctx->cfg, ctx->cfg_path))
-            HLOGI(UI_LOG_TAG, "Config saved to %s", ctx->cfg_path);
-        pthread_mutex_unlock(&ctx->cfg_mutex);
+        /* Don't write a configuration that demonstrably failed into
+         * mercury.ini: the operator would restart straight back into the
+         * broken state.  audioio_restart reset the health flags before
+         * spawning the new threads, so wait for them to reach RUNNING or
+         * FAILED. */
+        int health = audioio_wait_healthy(3000);
+        if (health == 0)
+        {
+            HLOGI(UI_LOG_TAG, "Audioio subsystem restarted successfully");
+
+            // Persist audio config to INI
+            pthread_mutex_lock(&ctx->cfg_mutex);
+            strncpy(ctx->cfg.input_device, ctx->selected_capture_dev,
+                    sizeof(ctx->cfg.input_device) - 1);
+            ctx->cfg.input_device[sizeof(ctx->cfg.input_device) - 1] = '\0';
+            strncpy(ctx->cfg.output_device, ctx->selected_playback_dev,
+                    sizeof(ctx->cfg.output_device) - 1);
+            ctx->cfg.output_device[sizeof(ctx->cfg.output_device) - 1] = '\0';
+            ctx->cfg.capture_channel = ctx->rx_input_channel;
+            ctx->cfg.sound_system = active_system;
+            if (ctx->cfg_path[0] && cfg_write(&ctx->cfg, ctx->cfg_path))
+                HLOGI(UI_LOG_TAG, "Config saved to %s", ctx->cfg_path);
+            pthread_mutex_unlock(&ctx->cfg_mutex);
+        }
+        else
+        {
+            char why[192] = "";
+            audioio_health_reason(why, sizeof(why));
+            if (health == -1)
+                HLOGE(UI_LOG_TAG, "Audio subsystem %s failed to start: %s",
+                      cfg_sound_system_name(active_system),
+                      why[0] ? why : "unknown error");
+            else
+                HLOGW(UI_LOG_TAG, "Audio subsystem %s did not report health in time; "
+                                  "not persisting config", cfg_sound_system_name(active_system));
+        }
 
         /* The device list depends on the subsystem; republish it for any
          * remote UI so it reflects the new selection (and new device set). */

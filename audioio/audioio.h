@@ -76,6 +76,19 @@ void audioio_health_reason(char *buf, size_t buflen);
  * audioio_restart. */
 bool audioio_health_ok(char *reason, size_t reasonlen);
 
+/* Reset both health flags to STOPPED and clear the reason.  audioio_restart
+ * calls this before spawning the new threads so a subsequent
+ * audioio_wait_healthy() observes the new run, not the one that just stopped. */
+void audioio_health_reset(void);
+
+/* Wait up to timeout_ms for the capture and playback paths to leave STOPPED.
+ * Returns:
+ *   0  - both paths reached RUNNING (the restart is healthy);
+ *   -1 - at least one path reached FAILED (reason via audioio_health_reason);
+ *   -2 - timed out with one or both still STOPPED (indeterminate; the
+ *        null/fifo/sock backends never set health). */
+int audioio_wait_healthy(int timeout_ms);
+
 /* Stop the running audio threads and start them again with a new subsystem,
  * channel layout, and/or device selection.  The buffers are cleared but never
  * destroyed.
