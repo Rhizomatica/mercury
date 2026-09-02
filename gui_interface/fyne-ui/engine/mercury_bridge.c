@@ -17,6 +17,7 @@
 #include "mercury_cli.h"
 #include "mercury_version.h"
 #include "ui_communication.h"
+#include "bcast_file.h"
 #include "modem.h"
 #include "modem_stats.h"   /* MODEM_STATS_NSPEC */
 
@@ -206,3 +207,45 @@ void mercury_ui_get_version(char *version, int version_len,
         snprintf(git_hash, (size_t)git_hash_len, "%s", GIT_HASH);
     }
 }
+
+/* ---- Broadcast file transmission ---------------------------------------- */
+
+void *mercury_bcast_tx_open(const char *path, int mode, int cycles,
+                            int session_id, char *err, int errlen)
+{
+    return bcast_file_tx_open(path, mode, cycles, session_id, err, (size_t)errlen);
+}
+
+int mercury_bcast_tx_next(void *tx, unsigned char *buf, int buflen)
+{
+    return bcast_file_tx_next((bcast_file_tx_t *)tx, buf, (size_t)buflen);
+}
+
+int mercury_bcast_tx_frame_size(void *tx)
+{
+    return bcast_file_tx_frame_size((bcast_file_tx_t *)tx);
+}
+
+void mercury_bcast_tx_stats(void *tx, int *cycle_now, int *cycles_total,
+                            unsigned long long *frames_sent)
+{
+    uint64_t sent = 0;
+    bcast_file_tx_stats((bcast_file_tx_t *)tx, cycle_now, cycles_total, &sent);
+    if (frames_sent) *frames_sent = (unsigned long long)sent;
+}
+
+void mercury_bcast_tx_source(void *tx, long *file_bytes, int *blocks)
+{
+    size_t b = 0;
+    bcast_file_tx_source((bcast_file_tx_t *)tx, &b, blocks);
+    if (file_bytes) *file_bytes = (long)b;
+}
+
+void mercury_bcast_tx_close(void *tx)
+{
+    bcast_file_tx_close((bcast_file_tx_t *)tx);
+}
+
+int  mercury_bcast_mode_frame_size(int mode) { return bcast_file_mode_frame_size(mode); }
+int  mercury_bcast_mode_usable(int mode)     { return bcast_file_mode_usable(mode); }
+long mercury_bcast_max_file_bytes(void)      { return (long)BCAST_FILE_MAX_BYTES; }

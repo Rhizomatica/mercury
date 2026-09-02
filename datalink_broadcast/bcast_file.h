@@ -3,11 +3,11 @@
  * Copyright (C) 2026 Rhizomatica
  * SPDX-License-Identifier: GPL-3.0-or-later
  *
- * Wire-compatible with hermes-broadcast's `transmitter`, so a station running
- * this and a station running that interoperate.  The frames produced here are
- * byte-for-byte what transmitter.c emits: a 9-byte configuration packet zero-
- * padded to the frame size, then payload frames carrying a 1-byte HERMES
- * header, a 3-byte reduced RaptorQ tag, and the symbol.
+ * Wire-compatible with hermes-broadcast's `broadcast_daemon`, so a station
+ * running this and a station running that interoperate.  Every frame is
+ * self-describing -- header, reduced OTI, reduced tag, symbol -- which is what
+ * lets a receiver with no return path start decoding on whichever frame it
+ * happens to hear first.  See bcast_modes.h for the exact layout.
  *
  * Broadcast has no return path, so there is no acknowledgement and no
  * retransmission: the sender simply repeats the file as a RaptorQ carousel and
@@ -43,11 +43,14 @@ typedef struct bcast_file_tx bcast_file_tx_t;
  * @param path    file to transmit; must be <= BCAST_FILE_MAX_BYTES and non-empty
  * @param mode    Mercury mode index 0..10 (as `mercury -l` reports)
  * @param cycles  number of carousel passes, or 0 to repeat until stopped
+ * @param session_id  1..31 identifying this file, or 0 to pick one at random.
+ *                    Carried in every frame so a receiver can tell a new file
+ *                    from the one it just finished.
  * @param err     receives a human-readable reason on failure; may be NULL
  * @return the handle, or NULL on failure
  */
 bcast_file_tx_t *bcast_file_tx_open(const char *path, int mode, int cycles,
-                                    char *err, size_t errlen);
+                                    int session_id, char *err, size_t errlen);
 
 /**
  * Produce the next frame to transmit.

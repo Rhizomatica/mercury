@@ -16,12 +16,23 @@
 
 #include <stdint.h>
 
-/* Configuration packet: 1 header byte + 5-byte reduced common OTI +
- * 3-byte reduced scheme-specific OTI. */
-#define BCAST_CONFIG_PACKET_SIZE 9
-
-/* Per-payload-frame overhead: 1 header byte + 3-byte reduced RaptorQ tag. */
-#define BCAST_RQ_HEADER_SIZE 4
+/* Joint configuration+payload frame, as hermes-broadcast's broadcast_daemon
+ * builds it.  EVERY frame is self-describing:
+ *
+ *   [0]        header: packet type in the top 3 bits, session id in the low 5
+ *   [1..8]     config body -- 5-byte reduced common OTI + 3-byte reduced scheme
+ *   [9..11]    reduced RaptorQ tag -- sbn + 16-bit ESI little-endian
+ *   [12..]     the symbol
+ *
+ * The older split format (transmitter.c) sent the configuration as its own
+ * periodic frame and spent only 4 bytes per payload frame.  The joint format
+ * costs 8 more bytes per frame and is still the right trade for broadcast:
+ * there is no return path, so a receiver tunes in at an arbitrary point, and
+ * with the split format it can decode nothing until the next configuration
+ * frame happens to arrive.  Here it can start on the very first frame it hears. */
+#define BCAST_CONFIG_BODY_SIZE 8
+#define BCAST_TAG_BODY_SIZE    3
+#define BCAST_FRAME_OVERHEAD   (1 + BCAST_CONFIG_BODY_SIZE + BCAST_TAG_BODY_SIZE)
 
 /* The reduced tag carries a 16-bit ESI, so the carousel wraps at 65535. */
 #define BCAST_MAX_ESI ((1 << 16) - 1)

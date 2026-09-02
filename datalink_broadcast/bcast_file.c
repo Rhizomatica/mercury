@@ -13,6 +13,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #include "raptorq/include/nanorq.h"
 #include "raptorq/include/io.h"
@@ -32,14 +33,14 @@ struct bcast_file_tx
     int       blocks;      /* RaptorQ source blocks (sbn count) */
     uint32_t *esi;         /* next ESI per block                */
 
-    uint8_t   config[BCAST_CONFIG_PACKET_SIZE];
+    uint8_t   config_body[BCAST_CONFIG_BODY_SIZE];  /* repeated in every frame */
+    uint8_t   session_id;   /* 1..31, in the header's extension field */
 
-    /* Carousel position.  A cycle is one configuration packet followed by one
-     * symbol from each block -- the same unit hermes-broadcast's transmitter
-     * loops over, so "cycles" means the same thing at both ends. */
+    /* Carousel position.  A cycle is one symbol from each block: with the joint
+     * frame there is no separate configuration frame to account for. */
     int       cycles_total;   /* 0 = endless */
     int       cycle_now;
-    int       next_block;     /* -1 => the config packet is due */
+    int       next_block;
     uint64_t  frames_sent;
     int       finished;
 };
@@ -60,15 +61,15 @@ int bcast_file_mode_frame_size(int mode)
 int bcast_file_mode_usable(int mode)
 {
     int fs = bcast_file_mode_frame_size(mode);
-    /* Every payload frame spends BCAST_RQ_HEADER_SIZE on the header and tag,
-     * and the configuration packet is BCAST_CONFIG_PACKET_SIZE.  A frame too
-     * small for both carries no broadcast at all -- DATAC14's 3 bytes are the
-     * case this rejects.  Without the check the symbol size underflows. */
-    return fs > BCAST_RQ_HEADER_SIZE && fs >= BCAST_CONFIG_PACKET_SIZE;
+    /* Every frame carries the header, the config body and the tag, so a frame
+     * must have room for all of that plus at least one symbol byte.  DATAC14's
+     * 3 bytes are the case this rejects; without the check the symbol size
+     * underflows. */
+    return fs > BCAST_FRAME_OVERHEAD;
 }
 
 bcast_file_tx_t *bcast_file_tx_open(const char *path, int mode, int cycles,
-                                    char *err, size_t errlen)
+                                    int session_id, char *err, size_t errlen)
 {
     bcast_file_tx_t *tx = NULL;
     FILE *fp = NULL;
@@ -86,8 +87,8 @@ bcast_file_tx_t *bcast_file_tx_open(const char *path, int mode, int cycles,
                      mode, BCAST_MODE_MAX);
         else
             snprintf(m, sizeof(m),
-                     "mode %d carries only %d bytes per frame; broadcast needs at least %d",
-                     mode, fs, BCAST_CONFIG_PACKET_SIZE);
+                     "mode %d carries only %d bytes per frame; broadcast needs more than %d",
+                     mode, fs, BCAST_FRAME_OVERHEAD);
         set_err(err, errlen, m);
         return NULL;
     }
@@ -130,9 +131,9 @@ bcast_file_tx_t *bcast_file_tx_open(const char *path, int mode, int cycles,
 
     tx->mode         = mode;
     tx->frame_size   = (uint32_t)bcast_file_mode_frame_size(mode);
-    tx->symbol_size  = tx->frame_size - BCAST_RQ_HEADER_SIZE;
+    tx->symbol_size  = tx->frame_size - BCAST_FRAME_OVERHEAD;
     tx->cycles_total = cycles;
-    tx->next_block   = -1;   /* configuration packet first */
+    tx->next_block   = 0;
 
     /* Read-only memory context: no mmap, so this works on Windows too, and the
      * file is capped small enough that holding it is cheap. */
@@ -154,12 +155,19 @@ bcast_file_tx_t *bcast_file_tx_open(const char *path, int mode, int cycles,
     for (int b = 0; b < tx->blocks; b++)
         nanorq_generate_symbols(tx->rq, b, tx->io);
 
-    /* The configuration packet the receiver needs before it can decode
-     * anything: the reduced OTI, which is why it fits in 9 bytes. */
-    memset(tx->config, 0, sizeof(tx->config));
-    nanorq_oti_common_reduced(tx->rq, tx->config + 1);
-    nanorq_oti_scheme_specific_align1(tx->rq, tx->config + 6);
-    bcast_write_frame_header(tx->config, BCAST_PACKET_RQ_CONFIG, 0);
+    /* The reduced OTI, carried in EVERY frame so a receiver can begin on
+     * whichever one it happens to hear first. */
+    memset(tx->config_body, 0, sizeof(tx->config_body));
+    nanorq_oti_common_reduced(tx->rq, tx->config_body);
+    nanorq_oti_scheme_specific_align1(tx->rq, tx->config_body + 5);
+
+    /* Per-file id in the header's 5-bit extension field, so a receiver can tell
+     * a new file from the one it just finished.  Never 0: the daemon treats 0
+     * as "no session". */
+    if (session_id > 0)
+        tx->session_id = (uint8_t)(session_id & BCAST_FRAME_EXT_MASK);
+    if (tx->session_id == 0)
+        tx->session_id = (uint8_t)(1 + (rand() % (int)BCAST_FRAME_EXT_MASK));
 
     return tx;
 }
@@ -170,29 +178,18 @@ int bcast_file_tx_next(bcast_file_tx_t *tx, uint8_t *buf, size_t buflen)
     if (tx->finished)  return 0;
     if (buflen < tx->frame_size) return -1;
 
-    /* Configuration packet: sent once per cycle, so a receiver that starts
-     * listening mid-transmission never waits more than a cycle to learn the
-     * parameters.  Zero-padded to a full frame because the receiver accepts a
-     * frame only at exactly frame_size. */
-    if (tx->next_block < 0)
-    {
-        memset(buf, 0, tx->frame_size);
-        memcpy(buf, tx->config, sizeof(tx->config));
-        tx->next_block = 0;
-        tx->frames_sent++;
-        return (int)tx->frame_size;
-    }
-
     int sbn = tx->next_block;
     uint32_t esi = tx->esi[sbn];
 
+    /* One self-describing frame: header, config body, tag, symbol. */
     memset(buf, 0, tx->frame_size);
-    if (nanorq_encode(tx->rq, buf + BCAST_RQ_HEADER_SIZE, esi, (uint8_t)sbn, tx->io)
+    if (nanorq_encode(tx->rq, buf + BCAST_FRAME_OVERHEAD, esi, (uint8_t)sbn, tx->io)
             != tx->symbol_size)
         return -1;
 
-    bcast_write_frame_header(buf, BCAST_PACKET_RQ_PAYLOAD, 0);
-    nanorq_tag_reduced((uint8_t)sbn, esi, buf + 1);
+    memcpy(buf + 1, tx->config_body, BCAST_CONFIG_BODY_SIZE);
+    nanorq_tag_reduced((uint8_t)sbn, esi, buf + 1 + BCAST_CONFIG_BODY_SIZE);
+    bcast_write_frame_header(buf, BCAST_PACKET_RQ_CONFIG, tx->session_id);
 
     tx->esi[sbn]++;
     tx->frames_sent++;
@@ -201,7 +198,7 @@ int bcast_file_tx_next(bcast_file_tx_t *tx, uint8_t *buf, size_t buflen)
     tx->next_block++;
     if (tx->next_block >= tx->blocks)
     {
-        tx->next_block = -1;          /* config packet opens the next cycle */
+        tx->next_block = 0;
         tx->cycle_now++;
         if (tx->cycles_total > 0 && tx->cycle_now >= tx->cycles_total)
             tx->finished = 1;

@@ -37,6 +37,7 @@ static void write_file(const char *path, size_t n, unsigned seed)
 }
 
 /* ---- receiver-side parsing, mirroring hermes-broadcast/receiver.c ---- */
+/* Offsets are daemon.c's: config body at [1..8], tag at [9..11], symbol at 12. */
 static uint64_t rx_oti_common(const uint8_t *p)
 {
     uint64_t c = 0;
@@ -60,6 +61,10 @@ static uint8_t frame_type(const uint8_t *f)
 {
     return (uint8_t)((f[0] >> BCAST_PACKET_TYPE_SHIFT) & BCAST_PACKET_TYPE_MASK);
 }
+static uint8_t frame_session(const uint8_t *f)
+{
+    return (uint8_t)(f[0] & BCAST_FRAME_EXT_MASK);
+}
 
 /* Drive a whole transfer through a lossy channel and require the file back.
  *
@@ -75,7 +80,7 @@ static void transfer_case(size_t nbytes, int mode, int loss_pct, unsigned seed)
     write_file(TMP, nbytes, seed);
     srand(seed * 7919u + 13u);   /* loss pattern, independent of the payload */
 
-    bcast_file_tx_t *tx = bcast_file_tx_open(TMP, mode, 0 /* endless */, err, sizeof(err));
+    bcast_file_tx_t *tx = bcast_file_tx_open(TMP, mode, 0 /* endless */, 0, err, sizeof(err));
     TEST_ASSERT_NOT_NULL_MESSAGE(tx, err);
 
     int fs = bcast_file_tx_frame_size(tx);
@@ -97,23 +102,22 @@ static void transfer_case(size_t nbytes, int mode, int loss_pct, unsigned seed)
         sent++;
         if (loss_pct > 0 && (rand() % 100) < loss_pct) continue;   /* channel loss */
 
-        if (frame_type(frame) == BCAST_PACKET_RQ_CONFIG)
-        {
-            if (!dec)
-            {
-                dec = nanorq_decoder_new(rx_oti_common(frame), rx_oti_scheme(frame));
-                TEST_ASSERT_NOT_NULL_MESSAGE(dec, "decoder rejected our config packet");
-                TEST_ASSERT_EQUAL_size_t(nbytes, nanorq_transfer_length(dec));
-                rio = ioctx_from_file(outf, 0);
-                TEST_ASSERT_NOT_NULL(rio);
-            }
-            continue;
-        }
-        if (!dec) continue;   /* nothing usable until the config arrives */
+        TEST_ASSERT_EQUAL_UINT8(BCAST_PACKET_RQ_CONFIG, frame_type(frame));
 
-        /* reduced 3-byte tag -> the 32-bit tag nanorq wants */
-        uint32_t tag = ((uint32_t)frame[1] << 24) | frame[2] | ((uint32_t)frame[3] << 8);
-        nanorq_decoder_add_symbol(dec, frame + BCAST_RQ_HEADER_SIZE, tag, rio);
+        /* Every frame carries the OTI, so the receiver can start on any of
+         * them -- including the very first one it hears. */
+        if (!dec)
+        {
+            dec = nanorq_decoder_new(rx_oti_common(frame), rx_oti_scheme(frame));
+            TEST_ASSERT_NOT_NULL_MESSAGE(dec, "decoder rejected the frame's OTI");
+            TEST_ASSERT_EQUAL_size_t(nbytes, nanorq_transfer_length(dec));
+            rio = ioctx_from_file(outf, 0);
+            TEST_ASSERT_NOT_NULL(rio);
+        }
+
+        const uint8_t *tagp = frame + 1 + BCAST_CONFIG_BODY_SIZE;
+        uint32_t tag = ((uint32_t)tagp[0] << 24) | tagp[1] | ((uint32_t)tagp[2] << 8);
+        nanorq_decoder_add_symbol(dec, frame + BCAST_FRAME_OVERHEAD, tag, rio);
 
         done = 1;
         for (int b = 0; b < nanorq_blocks(dec); b++)
@@ -139,13 +143,15 @@ void test_lossy_channel_recovers_the_file(void)      { transfer_case(20000, 0, 2
 void test_small_robust_mode_recovers_the_file(void)  { transfer_case(1500,  8, 25, 3); }
 void test_fast_mode_recovers_the_file(void)          { transfer_case(60000, 10, 30, 4); }
 
-/* A receiver that tunes in late must still be able to start: the configuration
- * packet is repeated every cycle, not sent once at the beginning. */
-void test_config_packet_repeats_every_cycle(void)
+/* A receiver that tunes in late must still be able to start.  With the joint
+ * frame that is not "the config is repeated often enough" but the stronger
+ * property that EVERY frame carries it -- so this checks the OTI can be read
+ * out of an arbitrary later frame, not just the first. */
+void test_every_frame_is_self_describing(void)
 {
     char err[160] = {0};
     write_file(TMP, 8000, 7);
-    bcast_file_tx_t *tx = bcast_file_tx_open(TMP, 0, 0, err, sizeof(err));
+    bcast_file_tx_t *tx = bcast_file_tx_open(TMP, 0, 0, 0, err, sizeof(err));
     TEST_ASSERT_NOT_NULL_MESSAGE(tx, err);
     int fs = bcast_file_tx_frame_size(tx);
     uint8_t *frame = malloc((size_t)fs);
@@ -154,15 +160,22 @@ void test_config_packet_repeats_every_cycle(void)
     bcast_file_tx_source(tx, &bytes, &blocks);
     TEST_ASSERT_EQUAL_size_t(8000, bytes);
 
-    int configs = 0;
-    /* three cycles' worth of frames */
-    int total = 3 * (1 + blocks);
-    for (int i = 0; i < total; i++)
+    uint8_t session = 0;
+    for (int i = 0; i < 3 * blocks + 2; i++)
     {
         TEST_ASSERT_EQUAL_INT(fs, bcast_file_tx_next(tx, frame, (size_t)fs));
-        if (frame_type(frame) == BCAST_PACKET_RQ_CONFIG) configs++;
+        TEST_ASSERT_EQUAL_UINT8(BCAST_PACKET_RQ_CONFIG, frame_type(frame));
+
+        /* the OTI in THIS frame must describe the file on its own */
+        nanorq *d = nanorq_decoder_new(rx_oti_common(frame), rx_oti_scheme(frame));
+        TEST_ASSERT_NOT_NULL(d);
+        TEST_ASSERT_EQUAL_size_t(8000, nanorq_transfer_length(d));
+        nanorq_free(d);
+
+        /* and the session id must be stable across the whole file */
+        if (i == 0) { session = frame_session(frame); TEST_ASSERT_NOT_EQUAL_UINT8(0, session); }
+        else TEST_ASSERT_EQUAL_UINT8(session, frame_session(frame));
     }
-    TEST_ASSERT_EQUAL_INT(3, configs);
 
     free(frame);
     bcast_file_tx_close(tx);
@@ -175,7 +188,7 @@ void test_cycle_budget_is_honoured(void)
     char err[160] = {0};
     write_file(TMP, 8000, 9);
 
-    bcast_file_tx_t *tx = bcast_file_tx_open(TMP, 0, 2, err, sizeof(err));
+    bcast_file_tx_t *tx = bcast_file_tx_open(TMP, 0, 2, 0, err, sizeof(err));
     TEST_ASSERT_NOT_NULL_MESSAGE(tx, err);
     int fs = bcast_file_tx_frame_size(tx);
     uint8_t *frame = malloc((size_t)fs);
@@ -184,7 +197,7 @@ void test_cycle_budget_is_honoured(void)
 
     int n = 0;
     while (bcast_file_tx_next(tx, frame, (size_t)fs) > 0) { n++; TEST_ASSERT_LESS_THAN_INT(10000, n); }
-    TEST_ASSERT_EQUAL_INT(2 * (1 + blocks), n);
+    TEST_ASSERT_EQUAL_INT(2 * blocks, n);
 
     int cyc, tot; uint64_t sentf;
     bcast_file_tx_stats(tx, &cyc, &tot, &sentf);
@@ -194,9 +207,9 @@ void test_cycle_budget_is_honoured(void)
     bcast_file_tx_close(tx);
 
     /* endless: still going long after a bounded run would have stopped */
-    tx = bcast_file_tx_open(TMP, 0, 0, err, sizeof(err));
+    tx = bcast_file_tx_open(TMP, 0, 0, 0, err, sizeof(err));
     TEST_ASSERT_NOT_NULL(tx);
-    for (int i = 0; i < 5 * (1 + blocks); i++)
+    for (int i = 0; i < 5 * blocks; i++)
         TEST_ASSERT_EQUAL_INT(fs, bcast_file_tx_next(tx, frame, (size_t)fs));
     bcast_file_tx_close(tx);
 
@@ -208,7 +221,7 @@ void test_oversized_file_is_refused(void)
 {
     char err[160] = {0};
     write_file(TMP, BCAST_FILE_MAX_BYTES + 1, 11);
-    TEST_ASSERT_NULL(bcast_file_tx_open(TMP, 0, 1, err, sizeof(err)));
+    TEST_ASSERT_NULL(bcast_file_tx_open(TMP, 0, 1, 0, err, sizeof(err)));
     TEST_ASSERT_NOT_NULL(strstr(err, "limit"));
     remove(TMP);
 }
@@ -217,10 +230,10 @@ void test_empty_and_missing_files_are_refused(void)
 {
     char err[160] = {0};
     FILE *f = fopen(TMP, "wb"); fclose(f);          /* zero bytes */
-    TEST_ASSERT_NULL(bcast_file_tx_open(TMP, 0, 1, err, sizeof(err)));
+    TEST_ASSERT_NULL(bcast_file_tx_open(TMP, 0, 1, 0, err, sizeof(err)));
     TEST_ASSERT_NOT_NULL(strstr(err, "empty"));
     remove(TMP);
-    TEST_ASSERT_NULL(bcast_file_tx_open("/nonexistent/nope", 0, 1, err, sizeof(err)));
+    TEST_ASSERT_NULL(bcast_file_tx_open("/nonexistent/nope", 0, 1, 0, err, sizeof(err)));
 }
 
 /* DATAC14 carries 3 bytes; the 9-byte config packet cannot fit, and without
@@ -230,11 +243,11 @@ void test_modes_too_small_for_broadcast_are_refused(void)
     char err[160] = {0};
     write_file(TMP, 4000, 13);
     TEST_ASSERT_FALSE(bcast_file_mode_usable(5));
-    TEST_ASSERT_NULL(bcast_file_tx_open(TMP, 5, 1, err, sizeof(err)));
-    TEST_ASSERT_NOT_NULL(strstr(err, "at least"));
+    TEST_ASSERT_NULL(bcast_file_tx_open(TMP, 5, 1, 0, err, sizeof(err)));
+    TEST_ASSERT_NOT_NULL(strstr(err, "more than"));
 
-    TEST_ASSERT_NULL(bcast_file_tx_open(TMP, 11, 1, err, sizeof(err)));
-    TEST_ASSERT_NULL(bcast_file_tx_open(TMP, -1, 1, err, sizeof(err)));
+    TEST_ASSERT_NULL(bcast_file_tx_open(TMP, 11, 1, 0, err, sizeof(err)));
+    TEST_ASSERT_NULL(bcast_file_tx_open(TMP, -1, 1, 0, err, sizeof(err)));
     remove(TMP);
 }
 
@@ -245,7 +258,7 @@ int main(void)
     RUN_TEST(test_lossy_channel_recovers_the_file);
     RUN_TEST(test_small_robust_mode_recovers_the_file);
     RUN_TEST(test_fast_mode_recovers_the_file);
-    RUN_TEST(test_config_packet_repeats_every_cycle);
+    RUN_TEST(test_every_frame_is_self_describing);
     RUN_TEST(test_cycle_budget_is_honoured);
     RUN_TEST(test_oversized_file_is_refused);
     RUN_TEST(test_empty_and_missing_files_are_refused);
