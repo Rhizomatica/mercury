@@ -478,6 +478,55 @@ void test_tx_and_rx_complete_a_transfer(void)
     remove(TMP);
 }
 
+/* A broadcast chat line exactly one frame long must NOT be mistaken for a file
+ * frame.
+ *
+ * The header's top three bits are 3 for any byte in 0x60..0x7F -- backtick and
+ * every lowercase letter -- so "hello everyone, ..." padded to the frame size
+ * carries what looks like our packet type AND a non-zero session id.  Claiming
+ * it would swallow the message and reset a decode in progress.  The OTI check
+ * is what keeps them apart. */
+void test_rx_ignores_a_chat_line_that_fills_a_frame(void)
+{
+    char err[192] = {0};
+    char dir[] = "/tmp/.mercury_bcast_chatXXXXXX";
+    TEST_ASSERT_NOT_NULL(mkdtemp(dir));
+    bcast_file_rx_t *rx = bcast_file_rx_open(0, dir, err, sizeof(err));
+    TEST_ASSERT_NOT_NULL_MESSAGE(rx, err);
+
+    const int fs = bcast_file_mode_frame_size(0);
+    uint8_t *frame = malloc((size_t)fs);
+
+    /* Every lowercase first letter, at exactly frame_size. */
+    for (char c = 'a'; c <= 'z'; c++)
+    {
+        memset(frame, ' ', (size_t)fs);
+        frame[0] = (uint8_t)c;
+        snprintf((char *)frame + 1, (size_t)fs - 1,
+                 "%c this is a broadcast chat line that fills the frame", c);
+        TEST_ASSERT_EQUAL_UINT8(BCAST_PACKET_RQ_CONFIG,
+            (uint8_t)((frame[0] >> BCAST_PACKET_TYPE_SHIFT) & BCAST_PACKET_TYPE_MASK));
+        TEST_ASSERT_EQUAL_INT_MESSAGE(BCAST_RX_IGNORED,
+            bcast_file_rx_frame(rx, frame, (size_t)fs),
+            "a chat line was claimed as a file frame");
+    }
+
+    /* And a real frame is still accepted afterwards, so the gate is not just
+     * refusing everything. */
+    write_file(TMP, 4000, 71);
+    bcast_file_tx_t *tx = bcast_file_tx_open(TMP, 0, 0, 0, err, sizeof(err));
+    TEST_ASSERT_NOT_NULL_MESSAGE(tx, err);
+    TEST_ASSERT_EQUAL_INT(fs, bcast_file_tx_next(tx, frame, (size_t)fs));
+    TEST_ASSERT_NOT_EQUAL_INT_MESSAGE(BCAST_RX_IGNORED,
+        bcast_file_rx_frame(rx, frame, (size_t)fs),
+        "the gate rejected a genuine frame");
+
+    bcast_file_tx_close(tx);
+    bcast_file_rx_close(rx);
+    free(frame);
+    remove(TMP);
+}
+
 /* Traffic from other users of the broadcast plane -- chat, a different mode --
  * must be passed over, not mistaken for corruption. */
 void test_rx_ignores_frames_that_are_not_ours(void)
@@ -586,6 +635,7 @@ int main(void)
     RUN_TEST(test_rx_saves_a_payload_that_is_not_a_bundle);
     RUN_TEST(test_tx_and_rx_complete_a_transfer);
     RUN_TEST(test_rx_ignores_frames_that_are_not_ours);
+    RUN_TEST(test_rx_ignores_a_chat_line_that_fills_a_frame);
     RUN_TEST(test_periodic_loss_does_not_starve_a_block);
     RUN_TEST(test_bundle_round_trips_name_and_contents);
     RUN_TEST(test_bundle_sends_only_the_basename);

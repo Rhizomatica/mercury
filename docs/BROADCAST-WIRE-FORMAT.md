@@ -186,6 +186,25 @@ A receiver that decodes an object which is **not** a valid bundle MUST still
 save it — the decode succeeded, so the data is good. Name it
 `broadcast_<YYYYMMDD>_<HHMMSS>.bin`.
 
+### Claiming a frame
+
+A receiver MUST NOT decide a frame is its own from the header byte alone. The
+header's top three bits are `3` for any byte in `0x60..0x7F` — backtick and every
+lowercase letter — so a broadcast chat line that happens to be exactly one frame
+long and begins with a lowercase letter presents a valid-looking packet type and
+session id. Claiming it would swallow the message and reset any decode in
+progress.
+
+Before accepting a frame, a receiver MUST check that its configuration body
+describes a transfer that could be arriving on the configured mode:
+
+* the declared symbol size `T` MUST equal `frame_size - 12`;
+* the declared object length `F` MUST be non-zero and within the
+  implementation's limit.
+
+Text would have to encode `T-1` in two specific bytes by coincidence and then
+pass the length check as well.
+
 ## 8. Constraints
 
 | | |

@@ -464,6 +464,30 @@ bcast_rx_result_t bcast_file_rx_frame(bcast_file_rx_t *rx,
     int session = frame[0] & BCAST_FRAME_EXT_MASK;
     if (session == 0) return BCAST_RX_IGNORED;
 
+    /* The header byte alone is NOT enough to claim a frame.
+     *
+     * Its top three bits are 3 for any byte in 0x60..0x7F, which is backtick
+     * and every lowercase letter -- so a broadcast chat line that happens to be
+     * exactly one frame long and starts with a lowercase letter looks like one
+     * of ours, header and session id and all.  Claiming it would swallow the
+     * message (chat would never see it) and reset a decode in progress.
+     *
+     * So check that the frame's own OTI describes a transfer that could
+     * actually be arriving on THIS mode: the declared symbol size must match
+     * our frame size exactly, and the declared object length must be sane.
+     * Text would have to encode T-1 in two specific bytes by accident, which
+     * is a 1-in-65536 coincidence on top of the header, and then survive the
+     * length check as well. */
+    {
+        uint32_t f_len = (uint32_t)frame[1] | ((uint32_t)frame[2] << 8) |
+                         ((uint32_t)frame[3] << 16);
+        uint32_t t_dec = ((uint32_t)frame[4] | ((uint32_t)frame[5] << 8)) + 1;
+        if (t_dec != (uint32_t)rx->symbol_size)
+            return BCAST_RX_IGNORED;
+        if (f_len == 0 || f_len > BCAST_FILE_MAX_BYTES)
+            return BCAST_RX_IGNORED;
+    }
+
     /* The sender keeps transmitting after we have finished; do not start the
      * same file over again. */
     if (session == rx->last_done_session && rx->session < 0)
