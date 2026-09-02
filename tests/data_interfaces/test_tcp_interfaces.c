@@ -98,6 +98,34 @@ void arq_conn_get_calls(char *my_call, char *src_addr, char *dst_addr, size_t bu
     if (dst_addr) snprintf(dst_addr, bufsz, "%s", arq_conn.dst_addr);
 }
 
+/* ---- message_store stubs ---- */
+
+static size_t mock_msg_store_count = 0;
+static char   mock_msg_lines[4][128];
+
+void msg_store_feed(const char *plane, const char *dir, const char *peer,
+                    const uint8_t *data, size_t len)
+{
+    (void)plane; (void)dir; (void)peer; (void)data; (void)len;
+}
+
+size_t msg_store_count(void)
+{
+    return mock_msg_store_count;
+}
+
+size_t msg_store_get(size_t index, char *buf, size_t buf_cap)
+{
+    if (index >= mock_msg_store_count || !buf || buf_cap == 0)
+        return 0;
+    size_t n = strlen(mock_msg_lines[index]);
+    if (n >= buf_cap)
+        n = buf_cap - 1;
+    memcpy(buf, mock_msg_lines[index], n);
+    buf[n] = '\0';
+    return n;
+}
+
 /* ---- net stubs ---- */
 
 int cli_ctl_sockfd = -1;
@@ -275,6 +303,8 @@ void setUp(void)
     queued_line_count = 0;
     memset(&arq_conn, 0, sizeof(arq_conn));
     mock_bandwidth_hz = 2300;
+    mock_msg_store_count = 0;
+    memset(mock_msg_lines, 0, sizeof(mock_msg_lines));
 
     /* Broadcast framing state */
     memset(last_write_buffer_data, 0, sizeof(last_write_buffer_data));
@@ -1412,6 +1442,32 @@ void test_bitrate_query_is_always_answered(void)
         "host asked for BITRATE and got nothing: is the reply rate-limited?");
 }
 
+/* ---- HISTORY (persisted chat history) command tests ---- */
+
+void test_cmd_history_empty(void)
+{
+    mock_msg_store_count = 0;
+    char cmd[] = "HISTORY";
+    execute_control_command(cmd);
+
+    /* HISTORY 0 + HISTORYEND, two direct writes. */
+    TEST_ASSERT_EQUAL(2, tcp_write_call_count);
+    TEST_ASSERT_EQUAL_STRING("HISTORYEND\r", (char *)last_tcp_write_buf);
+}
+
+void test_cmd_history_with_messages(void)
+{
+    mock_msg_store_count = 1;
+    snprintf(mock_msg_lines[0], sizeof(mock_msg_lines[0]),
+             "{\"plane\":\"arq\",\"text\":\"hi\"}");
+    char cmd[] = "HISTORY";
+    execute_control_command(cmd);
+
+    /* HISTORY 1 + one HISTORYMSG + HISTORYEND. */
+    TEST_ASSERT_EQUAL(3, tcp_write_call_count);
+    TEST_ASSERT_EQUAL_STRING("HISTORYEND\r", (char *)last_tcp_write_buf);
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -1487,5 +1543,8 @@ int main(void)
     RUN_TEST(test_bcast_data_lenprefix_roundtrip);
     RUN_TEST(test_sn_query_is_always_answered);
     RUN_TEST(test_bitrate_query_is_always_answered);
+    /* HISTORY command tests */
+    RUN_TEST(test_cmd_history_empty);
+    RUN_TEST(test_cmd_history_with_messages);
     return UNITY_END();
 }

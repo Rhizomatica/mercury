@@ -6,6 +6,7 @@
 package client
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 	"sync"
@@ -183,6 +184,57 @@ func (c *Client) RemoteCallsign() string {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.remoteCall
+}
+
+// storedMessage is one JSONL history record as written by the engine.
+type storedMessage struct {
+	Plane string `json:"plane"`
+	Dir   string `json:"dir"`
+	Peer  string `json:"peer"`
+	Text  string `json:"text"`
+}
+
+// History fetches the persisted ARQ and broadcast chat history from the modem
+// and returns it as chat messages (oldest first). Broadcast messages keep their
+// "CALLSIGN: text" payload so the UI can split them the same way it splits live
+// traffic; ARQ messages carry the peer callsign (or the local one for TX).
+func (c *Client) History() ([]ChatMessage, error) {
+	c.mu.Lock()
+	mc := c.modem
+	c.mu.Unlock()
+	if mc == nil || !mc.IsConnected() {
+		return nil, fmt.Errorf("not connected to modem")
+	}
+
+	lines, err := mc.GetHistory()
+	if err != nil {
+		return nil, err
+	}
+
+	out := make([]ChatMessage, 0, len(lines))
+	for _, line := range lines {
+		var m storedMessage
+		if err := json.Unmarshal([]byte(line), &m); err != nil {
+			continue
+		}
+		switch m.Plane {
+		case "arq":
+			call := m.Peer
+			if m.Dir == "tx" {
+				call = c.cfg.MyCallsign
+			}
+			if strings.TrimSpace(m.Text) == "" {
+				continue
+			}
+			out = append(out, ChatMessage{Call: call, Text: m.Text})
+		case "bcast":
+			if strings.TrimSpace(m.Text) == "" {
+				continue
+			}
+			out = append(out, ChatMessage{Text: m.Text, Broadcast: true})
+		}
+	}
+	return out, nil
 }
 
 // ConnectARQ starts an ARQ session with the configured target callsign. It

@@ -16,7 +16,7 @@ ENGINE_CFLAGS = $(CFG_CFLAGS) -I.. -I../modem -I../modem/freedv -I../datalink_br
 
 all: os_interop.o ring_buffer_posix.o shm_posix.o crc6.o hermes_log.o chan.o queue.o \
      virtual_clock.o cfg_utils.o iniparser/iniparser.o iniparser/dictionary.o watterson.o mercury_engine.o \
-     mercury_cli.o
+     mercury_cli.o message_store.o
 
 os_interop.o: os_interop.c
 	$(CC) $(CFLAGS) -c os_interop.c
@@ -59,6 +59,9 @@ mercury_engine.o: mercury_engine.c mercury_engine.h
 
 mercury_cli.o: mercury_cli.c mercury_cli.h
 	$(CC) $(ENGINE_CFLAGS) $(CLI_SHM_CFLAGS) -c mercury_cli.c
+
+message_store.o: message_store.c message_store.h
+	$(CC) $(CFLAGS) -c message_store.c
 
 .PHONY: all clean
 

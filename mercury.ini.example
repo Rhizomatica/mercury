@@ -217,3 +217,18 @@ keepalive_s = 60
 ; Interval between BUFFER reports sent to the TNC control port, telling
 ; clients how many bytes are queued for TX. Valid range: 100..10000 ms. (default: 1000)
 buffer_report_ms = 1000
+
+[store]
+; Persist ARQ and broadcast chat messages to a JSONL file so the conversation
+; survives an application restart. true / false (default: true).
+enabled = true
+
+; JSONL message-store file path. Leave empty to use the platform default:
+;   Linux   ~/.local/state/mercury/messages.jsonl
+;   macOS   ~/Library/Application Support/mercury/messages.jsonl
+;   Windows %LOCALAPPDATA%\mercury\messages.jsonl
+;path =
+
+; Number of recent messages kept in memory (and returned by the HISTORY TNC
+; command). Valid range: 1..10000. (default: 500)
+max_messages = 500
