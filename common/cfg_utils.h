@@ -73,6 +73,9 @@
 #define CFG_KEY_BUSY_HYSTERESIS_DB            "channel:busy_hysteresis_db"
 #define CFG_KEY_BUSY_ON_DEBOUNCE_MS           "channel:busy_on_debounce_ms"
 #define CFG_KEY_BUSY_HANG_MS                  "channel:busy_hang_ms"
+#define CFG_KEY_STORE_ENABLED                 "store:enabled"
+#define CFG_KEY_STORE_PATH                    "store:path"
+#define CFG_KEY_STORE_MAX_MESSAGES            "store:max_messages"
 
 /* Holds all values read from the init configuration file */
 typedef struct {
@@ -142,7 +145,13 @@ typedef struct {
     int      busy_on_debounce_ms;   /* Sustain above threshold before BUSY.
                                     * Default 300, clamped 0..5000.           */
     int      busy_hang_ms;          /* Sustain below release before CLEAR.
-                                    * Default 1500, clamped 0..10000.         */
+                                     * Default 1500, clamped 0..10000.         */
+    bool     store_enabled;         /* Persist ARQ/broadcast chat messages to
+                                     * disk. Default true.                     */
+    char     store_path[512];       /* JSONL message-store path; empty = auto
+                                     * (platform data dir).                    */
+    int      store_max_messages;    /* In-memory history ring capacity.
+                                     * Default 500, clamped 1..10000.          */
 } mercury_config;
 
 /* Load configuration from an INI file into |cfg|.

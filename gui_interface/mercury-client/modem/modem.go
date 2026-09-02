@@ -91,6 +91,7 @@ type ModemClient struct {
 	arqConnected bool
 
 	connectRespCh chan string
+	historyRespCh chan string
 
 	mu   sync.Mutex
 	quit chan struct{}
@@ -297,6 +298,53 @@ func (mc *ModemClient) AbortARQ() error {
 	return mc.SendCommand("ABORT")
 }
 
+// GetHistory fetches the persisted ARQ/broadcast chat history from the modem.
+// Returns the JSONL message lines in chronological (oldest-first) order.
+func (mc *ModemClient) GetHistory() ([]string, error) {
+	mc.mu.Lock()
+	if mc.ARQControlConn == nil {
+		mc.mu.Unlock()
+		return nil, fmt.Errorf("not connected")
+	}
+	if mc.historyRespCh != nil {
+		mc.mu.Unlock()
+		return nil, fmt.Errorf("history request already in progress")
+	}
+	mc.historyRespCh = make(chan string, 512)
+	respCh := mc.historyRespCh
+	quit := mc.quit
+	mc.mu.Unlock()
+
+	defer func() {
+		mc.mu.Lock()
+		mc.historyRespCh = nil
+		mc.mu.Unlock()
+	}()
+
+	if _, err := mc.ARQControlConn.Write([]byte("HISTORY\r")); err != nil {
+		return nil, fmt.Errorf("send HISTORY: %w", err)
+	}
+
+	var lines []string
+	timeout := time.After(10 * time.Second)
+	for {
+		select {
+		case line := <-respCh:
+			if line == "HISTORYEND" {
+				return lines, nil
+			}
+			if strings.HasPrefix(line, "HISTORYMSG ") {
+				lines = append(lines, strings.TrimPrefix(line, "HISTORYMSG "))
+			}
+			// "HISTORY <n>" header is ignored.
+		case <-quit:
+			return nil, fmt.Errorf("disconnected")
+		case <-timeout:
+			return nil, fmt.Errorf("history request timed out")
+		}
+	}
+}
+
 func (mc *ModemClient) IsARQConnected() bool {
 	mc.mu.Lock()
 	defer mc.mu.Unlock()
@@ -472,9 +520,24 @@ func (mc *ModemClient) readARQControl() {
 }
 
 func (mc *ModemClient) dispatchControlLine(line string) {
-	mc.IncomingARQCh <- line
-
 	upper := strings.ToUpper(line)
+
+	// HISTORY responses (header, HISTORYMSG JSON lines, terminator) are routed
+	// only to the GetHistory() collector, never to the chat/status channels.
+	if strings.HasPrefix(upper, "HISTORY") {
+		mc.mu.Lock()
+		ch := mc.historyRespCh
+		mc.mu.Unlock()
+		if ch != nil {
+			select {
+			case ch <- line:
+			default:
+			}
+		}
+		return
+	}
+
+	mc.IncomingARQCh <- line
 
 	switch {
 	case strings.HasPrefix(upper, "CONNECTED"):

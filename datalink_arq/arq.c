@@ -30,6 +30,7 @@
 #include "../common/virtual_clock.h"
 #include "../common/defines_modem.h"
 #include "../common/ring_buffer_posix.h"
+#include "../common/message_store.h"
 #include "../data_interfaces/tcp_interfaces.h"
 #include "../modem/framer.h"
 #include "../modem/freedv/freedv_api.h"
@@ -301,6 +302,11 @@ static void cb_deliver_rx_data(const uint8_t *data, size_t len)
     if (!data || len == 0 || len > INT_BUFFER_SIZE)
         return;
     write_buffer(data_rx_buffer_arq, (uint8_t *)data, len);
+
+    char my_call[CALLSIGN_MAX_SIZE], src[CALLSIGN_MAX_SIZE], dst[CALLSIGN_MAX_SIZE];
+    arq_conn_get_calls(my_call, src, dst, CALLSIGN_MAX_SIZE);
+    const char *peer = (dst[0] && strcmp(dst, my_call) != 0) ? dst : src;
+    msg_store_feed(MSG_PLANE_ARQ, MSG_DIR_RX, peer, data, len);
 }
 
 static int cb_tx_backlog(void)
@@ -1121,6 +1127,12 @@ int arq_submit_tcp_cmd(const arq_cmd_msg_t *cmd)
 int arq_submit_tcp_payload(const uint8_t *data, size_t len)
 {
     if (!data || len == 0 || !g_initialized) return -1;
+
+    char my_call[CALLSIGN_MAX_SIZE], src[CALLSIGN_MAX_SIZE], dst[CALLSIGN_MAX_SIZE];
+    arq_conn_get_calls(my_call, src, dst, CALLSIGN_MAX_SIZE);
+    const char *peer = (dst[0] && strcmp(dst, my_call) != 0) ? dst : src;
+    msg_store_feed(MSG_PLANE_ARQ, MSG_DIR_TX, peer, data, len);
+
     return arq_channel_bus_try_send_payload(&g_bus, data, len);
 }
 

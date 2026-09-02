@@ -438,6 +438,28 @@ func (cw *chatWindow) onConnect() {
 	go cw.forwardARQChat()
 	go cw.forwardBroadcastChat()
 	go cw.forwardStatus()
+	go cw.loadHistory(mc)
+}
+
+// loadHistory pulls the persisted ARQ/broadcast chat history from the engine
+// and re-populates the chat panes, so messages survive an app restart.
+func (cw *chatWindow) loadHistory(mc *client.Client) {
+	msgs, err := mc.History()
+	if err != nil {
+		cw.logMsg("history: %v", err)
+		return
+	}
+	fyne.Do(func() {
+		for _, m := range msgs {
+			if m.Broadcast {
+				call, text := splitCallText(m.Text)
+				cw.appendRichChat(cw.bcastBox, call, text)
+			} else {
+				cw.appendRichChat(cw.arqBox, m.Call, m.Text)
+			}
+		}
+	})
+	cw.logMsg("Loaded %d messages from history.", len(msgs))
 }
 
 func (cw *chatWindow) onDisconnect() {
