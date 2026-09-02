@@ -73,8 +73,10 @@ struct ui_ctx {
     _Atomic bool spec_run;      // drives the spectrum publisher loop (0 = stop)
     int waterfall_enabled;      // 1 = send spectrum data to UI, 0 = disabled
 
-    // Audio subsystem info for soundcard enumeration
-    int audio_system;                // AUDIO_SUBSYSTEM_* constant
+    // Audio subsystem info for soundcard enumeration.  Written by the command
+    // handler (websocket server thread or embedded UI goroutine) and read by
+    // the publisher thread, so it is atomic.
+    _Atomic int audio_system;        // AUDIO_SUBSYSTEM_* constant
     char selected_capture_dev[UI_DEV_ID_MAX];   // currently active capture (input) device
     char selected_playback_dev[UI_DEV_ID_MAX];  // currently active playback (output) device
     int rx_input_channel;            // LEFT=0, RIGHT=1, STEREO=2
