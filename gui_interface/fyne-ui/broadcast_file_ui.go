@@ -36,9 +36,23 @@ type broadcastFilePanel struct {
 	modeLbl  *widget.Label
 	chooseBt *widget.Button
 
+	// Receive half.  Frames arrive on the chat client's broadcast socket, so
+	// the panel installs a filter there rather than opening a second
+	// connection: Mercury's broadcast port accepts exactly one client.
+	rx        *broadcastFileRx
+	rxEnabled *widget.Check
+	rxDir     string
+	rxDirLbl  *widget.Label
+	rxDirBt   *widget.Button
+	rxStatus  *widget.Label
+	rxList    *widget.Label
+
 	win    fyne.Window
 	sender func() broadcastSender // resolved at send time: the chat client
-	logf   func(string, ...any)
+	// setFilter installs (or clears, with nil) the raw-frame filter on the
+	// client.  Supplied by the chat window, which owns the connection.
+	setFilter func(func([]byte) bool)
+	logf      func(string, ...any)
 }
 
 // cycleChoices maps the visible label to a cycle count; 0 means until stopped.
@@ -57,9 +71,9 @@ func cyclesFromChoice(s string) int {
 }
 
 func newBroadcastFilePanel(win fyne.Window, sender func() broadcastSender,
-	logf func(string, ...any)) *broadcastFilePanel {
+	setFilter func(func([]byte) bool), logf func(string, ...any)) *broadcastFilePanel {
 
-	p := &broadcastFilePanel{win: win, sender: sender, logf: logf}
+	p := &broadcastFilePanel{win: win, sender: sender, setFilter: setFilter, logf: logf}
 
 	p.pathLbl = widget.NewLabel("(no file chosen)")
 	p.pathLbl.Wrapping = fyne.TextTruncate
@@ -78,7 +92,31 @@ func newBroadcastFilePanel(win fyne.Window, sender func() broadcastSender,
 	p.stopBtn = widget.NewButton("Stop", p.onStop)
 	p.sendBtn.Disable()
 	p.stopBtn.Disable()
+
+	// Receiving defaults to the user's Downloads directory if there is one, so
+	// the common case needs no configuration.
+	p.rxDir = defaultBroadcastRxDir()
+	p.rxDirLbl = widget.NewLabel(p.rxDir)
+	p.rxDirLbl.Wrapping = fyne.TextTruncate
+	p.rxDirBt = widget.NewButton("Folder...", p.onChooseRxDir)
+	p.rxStatus = widget.NewLabel("")
+	p.rxList = widget.NewLabel("")
+	p.rxList.Wrapping = fyne.TextWrapWord
+	p.rxEnabled = widget.NewCheck("Receive broadcast files", p.onToggleReceive)
+
 	return p
+}
+
+// defaultBroadcastRxDir picks somewhere sensible to put received files.
+func defaultBroadcastRxDir() string {
+	if home, err := os.UserHomeDir(); err == nil {
+		dl := filepath.Join(home, "Downloads")
+		if st, err := os.Stat(dl); err == nil && st.IsDir() {
+			return dl
+		}
+		return home
+	}
+	return "."
 }
 
 // content builds the panel. Kept separate so the widgets exist before layout.
@@ -89,6 +127,11 @@ func (p *broadcastFilePanel) content() fyne.CanvasObject {
 		container.NewBorder(nil, nil, p.chooseBt, nil, p.pathLbl),
 		container.NewGridWithColumns(2, p.cycles, container.NewGridWithColumns(2, p.sendBtn, p.stopBtn)),
 		p.status,
+		widget.NewSeparator(),
+		p.rxEnabled,
+		container.NewBorder(nil, nil, p.rxDirBt, nil, p.rxDirLbl),
+		p.rxStatus,
+		p.rxList,
 	)
 }
 
@@ -109,6 +152,116 @@ func (p *broadcastFilePanel) setConnected(on bool) {
 			p.stopBtn.Disable()
 		}
 	})
+}
+
+func (p *broadcastFilePanel) onChooseRxDir() {
+	dialog.ShowFolderOpen(func(u fyne.ListableURI, err error) {
+		if err != nil || u == nil {
+			return
+		}
+		dir := u.Path()
+		if dir == "" {
+			dialog.ShowError(fmt.Errorf("that folder is not on the local filesystem"), p.win)
+			return
+		}
+		p.rxDir = dir
+		p.rxDirLbl.SetText(dir)
+		// A running receiver holds the old directory; restart it on the new one.
+		if p.rxEnabled.Checked {
+			p.stopReceiving()
+			p.startReceiving()
+		}
+	}, p.win)
+}
+
+func (p *broadcastFilePanel) onToggleReceive(on bool) {
+	if on {
+		p.startReceiving()
+	} else {
+		p.stopReceiving()
+	}
+}
+
+// startReceiving opens a decoder and claims incoming file frames off the chat
+// client's broadcast socket.
+func (p *broadcastFilePanel) startReceiving() {
+	mode := broadcastEngineMode()
+	if mode < 0 {
+		dialog.ShowError(fmt.Errorf(
+			"the modem is running a mode that cannot carry broadcast; restart mercury with -m"), p.win)
+		fyne.Do(func() { p.rxEnabled.SetChecked(false) })
+		return
+	}
+	rx, err := newBroadcastFileRx(mode, p.rxDir)
+	if err != nil {
+		dialog.ShowError(err, p.win)
+		fyne.Do(func() { p.rxEnabled.SetChecked(false) })
+		return
+	}
+
+	p.mu.Lock()
+	old := p.rx
+	p.rx = rx
+	p.mu.Unlock()
+	if old != nil {
+		old.Close()
+	}
+
+	p.rxStatus.SetText("listening for files...")
+	p.logf("Receiving broadcast files into %s (mode %d)", p.rxDir, mode)
+	p.installFilter()
+}
+
+func (p *broadcastFilePanel) stopReceiving() {
+	p.mu.Lock()
+	rx := p.rx
+	p.rx = nil
+	p.mu.Unlock()
+	if rx != nil {
+		rx.Close()
+	}
+	p.rxStatus.SetText("")
+	p.installFilter()
+}
+
+// onBroadcastFrame is the filter the chat client calls for every raw frame.
+// Runs on the client's reader goroutine, so UI work is marshalled.
+func (p *broadcastFilePanel) onBroadcastFrame(frame []byte) bool {
+	p.mu.Lock()
+	rx := p.rx
+	p.mu.Unlock()
+	if rx == nil {
+		return false
+	}
+
+	claimed, pr := rx.Frame(frame)
+	if !claimed {
+		return false // somebody else's traffic: let chat have it
+	}
+
+	switch {
+	case pr.Err != nil:
+		fyne.Do(func() { p.rxStatus.SetText("receive error: " + pr.Err.Error()) })
+		p.logf("Broadcast receive error: %v", pr.Err)
+	case pr.Name != "":
+		fyne.Do(func() {
+			p.rxStatus.SetText("received " + pr.Name)
+			cur := p.rxList.Text
+			if cur != "" {
+				cur += "\n"
+			}
+			p.rxList.SetText(cur + "\u2713 " + pr.Name)
+		})
+		p.logf("Received broadcast file: %s -> %s", pr.Name, pr.Path)
+	default:
+		if pr.Symbols%5 == 0 {
+			sym, want := pr.Symbols, pr.ExpectBytes
+			fyne.Do(func() {
+				p.rxStatus.SetText(fmt.Sprintf("receiving: %d frames of ~%d bytes", sym, want))
+			})
+		}
+	}
+	return true
 }
 
 func (p *broadcastFilePanel) onChoose() {
@@ -234,6 +387,23 @@ func (p *broadcastFilePanel) stopForShutdown() {
 	p.mu.Unlock()
 	if tx != nil {
 		tx.Stop()
+	}
+	p.stopReceiving()
+}
+
+// installFilter wires onBroadcastFrame into the client while a receiver exists,
+// and clears it otherwise so chat is not filtered for nothing.
+func (p *broadcastFilePanel) installFilter() {
+	if p.setFilter == nil {
+		return
+	}
+	p.mu.Lock()
+	active := p.rx != nil
+	p.mu.Unlock()
+	if active {
+		p.setFilter(p.onBroadcastFrame)
+	} else {
+		p.setFilter(nil)
 	}
 }
 

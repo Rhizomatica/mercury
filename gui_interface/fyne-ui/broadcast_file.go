@@ -204,3 +204,90 @@ func broadcastModeName(mode int) string {
 func broadcastModeFrameSize(mode int) int {
 	return int(C.mercury_bcast_mode_frame_size(C.int(mode)))
 }
+
+// ---- Receiving ------------------------------------------------------------
+
+// broadcastRxResult mirrors bcast_rx_result_t.
+type broadcastRxResult int
+
+const (
+	broadcastRxIgnored  broadcastRxResult = 0
+	broadcastRxProgress broadcastRxResult = 1
+	broadcastRxComplete broadcastRxResult = 2
+	broadcastRxError    broadcastRxResult = 3
+)
+
+// broadcastFileRxProgress is what the UI renders while a file is arriving.
+type broadcastFileRxProgress struct {
+	Symbols     uint64
+	ExpectBytes int64
+	Name        string // set on completion
+	Path        string // set on completion
+	Err         error
+}
+
+// broadcastFileRx decodes incoming broadcast file frames.
+//
+// Frames arrive on the chat client's broadcast socket, so this is fed from that
+// reader rather than opening a second connection: Mercury's broadcast port
+// accepts exactly one client.
+type broadcastFileRx struct {
+	mu     sync.Mutex
+	handle unsafe.Pointer
+}
+
+func newBroadcastFileRx(mode int, dir string) (*broadcastFileRx, error) {
+	cDir := C.CString(dir)
+	defer C.free(unsafe.Pointer(cDir))
+	errBuf := make([]byte, 192)
+	h := C.mercury_bcast_rx_open(C.int(mode), cDir,
+		(*C.char)(unsafe.Pointer(&errBuf[0])), C.int(len(errBuf)))
+	if h == nil {
+		return nil, fmt.Errorf("%s", goStringFromC(errBuf))
+	}
+	return &broadcastFileRx{handle: h}, nil
+}
+
+// Frame feeds one raw broadcast frame in. Returns whether the frame was ours
+// (so the caller can keep it out of chat) and, when a file completes or fails,
+// what happened.
+func (r *broadcastFileRx) Frame(frame []byte) (claimed bool, pr broadcastFileRxProgress) {
+	if len(frame) == 0 {
+		return false, pr
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.handle == nil {
+		return false, pr
+	}
+
+	res := broadcastRxResult(C.mercury_bcast_rx_frame(r.handle,
+		(*C.uchar)(unsafe.Pointer(&frame[0])), C.int(len(frame))))
+	if res == broadcastRxIgnored {
+		return false, pr
+	}
+
+	var sym C.ulonglong
+	var want C.long
+	C.mercury_bcast_rx_stats(r.handle, &sym, &want)
+	pr.Symbols = uint64(sym)
+	pr.ExpectBytes = int64(want)
+
+	switch res {
+	case broadcastRxComplete:
+		pr.Name = C.GoString(C.mercury_bcast_rx_last_name(r.handle))
+		pr.Path = C.GoString(C.mercury_bcast_rx_last_path(r.handle))
+	case broadcastRxError:
+		pr.Err = fmt.Errorf("%s", C.GoString(C.mercury_bcast_rx_error(r.handle)))
+	}
+	return true, pr
+}
+
+func (r *broadcastFileRx) Close() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.handle != nil {
+		C.mercury_bcast_rx_close(r.handle)
+		r.handle = nil
+	}
+}

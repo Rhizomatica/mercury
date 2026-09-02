@@ -270,3 +270,32 @@ int mercury_bcast_engine_mode(void)
 
 int mercury_bcast_engine_bitrate(void)      { return mercury_engine_modem_bitrate(); }
 int mercury_bcast_engine_bandwidth_hz(void) { return mercury_engine_modem_bandwidth_hz(); }
+
+/* ---- Broadcast file receiving ------------------------------------------- */
+
+void *mercury_bcast_rx_open(int mode, const char *dir, char *err, int errlen)
+{
+    return bcast_file_rx_open(mode, dir, err, (size_t)errlen);
+}
+
+int mercury_bcast_rx_frame(void *rx, const unsigned char *frame, int len)
+{
+    return (int)bcast_file_rx_frame((bcast_file_rx_t *)rx, frame, (size_t)len);
+}
+
+const char *mercury_bcast_rx_last_path(void *rx)
+{ return bcast_file_rx_last_path((bcast_file_rx_t *)rx); }
+const char *mercury_bcast_rx_last_name(void *rx)
+{ return bcast_file_rx_last_name((bcast_file_rx_t *)rx); }
+const char *mercury_bcast_rx_error(void *rx)
+{ return bcast_file_rx_error((bcast_file_rx_t *)rx); }
+
+void mercury_bcast_rx_stats(void *rx, unsigned long long *symbols, long *expect_bytes)
+{
+    uint64_t sym = 0; size_t want = 0;
+    bcast_file_rx_stats((bcast_file_rx_t *)rx, &sym, &want);
+    if (symbols)      *symbols      = (unsigned long long)sym;
+    if (expect_bytes) *expect_bytes = (long)want;
+}
+
+void mercury_bcast_rx_close(void *rx) { bcast_file_rx_close((bcast_file_rx_t *)rx); }

@@ -162,7 +162,18 @@ func (cw *chatWindow) build(app fyne.App, telemetry telemetryState, arqPort, bro
 				return nil
 			}
 			return cw.mc
-		}, cw.logMsg)
+		},
+		func(f func([]byte) bool) {
+			if cw.mc == nil {
+				return
+			}
+			if f == nil {
+				cw.mc.SetBroadcastFrameFilter(nil)
+				return
+			}
+			cw.mc.SetBroadcastFrameFilter(client.BroadcastFrameFilter(f))
+		},
+		cw.logMsg)
 
 	controls := container.NewVBox(
 		cfgForm,

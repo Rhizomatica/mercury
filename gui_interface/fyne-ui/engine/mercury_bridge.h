@@ -121,6 +121,16 @@ int   mercury_bcast_engine_mode(void);
 int   mercury_bcast_engine_bitrate(void);
 int   mercury_bcast_engine_bandwidth_hz(void);
 
+/* Receiving.  Frames arrive on the same broadcast socket the chat client holds;
+ * the UI hands each one here and this says whether it was ours. */
+void *mercury_bcast_rx_open(int mode, const char *dir, char *err, int errlen);
+int   mercury_bcast_rx_frame(void *rx, const unsigned char *frame, int len);
+const char *mercury_bcast_rx_last_path(void *rx);
+const char *mercury_bcast_rx_last_name(void *rx);
+const char *mercury_bcast_rx_error(void *rx);
+void  mercury_bcast_rx_stats(void *rx, unsigned long long *symbols, long *expect_bytes);
+void  mercury_bcast_rx_close(void *rx);
+
 #ifdef __cplusplus
 }
 #endif

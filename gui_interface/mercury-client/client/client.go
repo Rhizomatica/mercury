@@ -47,6 +47,9 @@ type Client struct {
 	// StatusCh receives ARQ session status ("CONNECTED", "DISCONNECTED", ...).
 	StatusCh chan string
 
+	// bcastFilter, when set, gets first refusal on every raw broadcast frame.
+	bcastFilter BroadcastFrameFilter
+
 	remoteCall        string
 	chatRxBuffer      string
 	broadcastRxBuffer string
@@ -128,6 +131,21 @@ func (c *Client) Disconnect() {
 		close(done)
 	}
 	c.LogCh <- "Disconnected from modem."
+}
+
+// BroadcastFrameFilter inspects a raw broadcast frame before it is treated as
+// chat text.  Returning true claims the frame: chat never sees it.
+//
+// The broadcast plane carries whatever anyone puts on it, and Mercury's TNC
+// hands every frame to its single client.  Without this, binary file-transfer
+// frames would be appended to the chat buffer as mojibake.
+type BroadcastFrameFilter func(frame []byte) bool
+
+// SetBroadcastFrameFilter installs (or clears, with nil) the filter.
+func (c *Client) SetBroadcastFrameFilter(f BroadcastFrameFilter) {
+	c.mu.Lock()
+	c.bcastFilter = f
+	c.mu.Unlock()
 }
 
 // SendBroadcastFrame writes one already-framed modem frame to the broadcast
@@ -456,6 +474,13 @@ func (c *Client) handleIncomingBroadcast() {
 			if !ok {
 				return
 			}
+			c.mu.Lock()
+			filter := c.bcastFilter
+			c.mu.Unlock()
+			if filter != nil && filter(data) {
+				continue // claimed by the file receiver; not chat
+			}
+
 			if !sendOrStop(c.LogCh, fmt.Sprintf("Broadcast RX (Decoded): %s", string(data)), done) {
 				return
 			}
