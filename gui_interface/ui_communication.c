@@ -172,8 +172,9 @@ int ui_comm_handle_command(ui_ctx_t *ctx, const ws_command_t *cmd)
                 return -1;
             }
         }
+        int current_system = atomic_load_explicit(&ctx->audio_system, memory_order_relaxed);
         bool subsystem_changed = (new_audio_system >= 0 &&
-                                  new_audio_system != ctx->audio_system);
+                                  new_audio_system != current_system);
         bool have_capture = cmd->value[0] != '\0';
         bool have_playback = cmd->value2[0] != '\0';
 
@@ -202,9 +203,11 @@ int ui_comm_handle_command(ui_ctx_t *ctx, const ws_command_t *cmd)
         HLOGI(UI_LOG_TAG, "Input channel set to: %s (%d)",
               cmd->value3, ctx->rx_input_channel);
 
+        int active_system = current_system;
         if (subsystem_changed)
         {
-            ctx->audio_system = new_audio_system;
+            active_system = new_audio_system;
+            atomic_store_explicit(&ctx->audio_system, active_system, memory_order_relaxed);
             /* Device ids are subsystem-specific.  When the operator switches
              * subsystem without choosing a device in the same breath, drop the
              * stale ids so the new subsystem resolves its own default device. */
@@ -213,14 +216,14 @@ int ui_comm_handle_command(ui_ctx_t *ctx, const ws_command_t *cmd)
             if (!have_playback)
                 ctx->selected_playback_dev[0] = '\0';
             HLOGI(UI_LOG_TAG, "Audio subsystem switched to %s",
-                  cfg_sound_system_name(ctx->audio_system));
+                  cfg_sound_system_name(active_system));
         }
 
         HLOGI(UI_LOG_TAG, "Restarting audioio subsystem (subsystem=%s capture=%s playback=%s channel=%d)",
-              cfg_sound_system_name(ctx->audio_system),
+              cfg_sound_system_name(active_system),
               ctx->selected_capture_dev, ctx->selected_playback_dev, ctx->rx_input_channel);
         audioio_restart(ctx->selected_capture_dev, ctx->selected_playback_dev,
-                        ctx->audio_system, ctx->rx_input_channel);
+                        active_system, ctx->rx_input_channel);
         HLOGI(UI_LOG_TAG, "Audioio subsystem restarted successfully");
 
         // Persist audio config to INI
@@ -232,7 +235,7 @@ int ui_comm_handle_command(ui_ctx_t *ctx, const ws_command_t *cmd)
                 sizeof(ctx->cfg.output_device) - 1);
         ctx->cfg.output_device[sizeof(ctx->cfg.output_device) - 1] = '\0';
         ctx->cfg.capture_channel = ctx->rx_input_channel;
-        ctx->cfg.sound_system = ctx->audio_system;
+        ctx->cfg.sound_system = active_system;
         if (ctx->cfg_path[0] && cfg_write(&ctx->cfg, ctx->cfg_path))
             HLOGI(UI_LOG_TAG, "Config saved to %s", ctx->cfg_path);
         pthread_mutex_unlock(&ctx->cfg_mutex);
@@ -425,7 +428,9 @@ int ui_comm_get_audio_devices(ui_device_kind_t kind, ui_device_t *out, int max,
     }
 
     int cap = (max < 32) ? max : 32;
-    int count = get_soundcard_list(ctx->audio_system, mode, ids, names, cap);
+    int count = get_soundcard_list(
+        atomic_load_explicit(&ctx->audio_system, memory_order_relaxed),
+        mode, ids, names, cap);
     if (count < 0)
         count = 0;
 
@@ -529,7 +534,8 @@ const char *ui_comm_get_audio_system(void)
     ui_ctx_t *ctx = g_ui_ctx;
     if (!ctx)
         return "";
-    return cfg_sound_system_name(ctx->audio_system);
+    return cfg_sound_system_name(
+        atomic_load_explicit(&ctx->audio_system, memory_order_relaxed));
 }
 
 void ui_comm_preload_radio_list(void)
@@ -753,7 +759,8 @@ void *ui_publisher_thread(void *arg)
             // and PulseAudio at runtime; everywhere else the subsystem is
             // fixed and the list carries the single active backend so a UI can
             // hide a selector it cannot act on.
-            const char *audio_sys = cfg_sound_system_name(ctx->audio_system);
+            const char *audio_sys = cfg_sound_system_name(
+                atomic_load_explicit(&ctx->audio_system, memory_order_relaxed));
             char as_buf[256];
 #if defined(__linux__)
             snprintf(as_buf, sizeof(as_buf),
@@ -922,7 +929,7 @@ int ui_comm_init(ui_ctx_t *ctx, uint16_t ws_port, bool tls_enabled,
     pthread_mutex_init(&ctx->cfg_mutex, NULL);
 
     ctx->waterfall_enabled = waterfall_enabled;
-    ctx->audio_system = audio_system;
+    atomic_store_explicit(&ctx->audio_system, audio_system, memory_order_relaxed);
     ctx->rx_input_channel = rx_input_channel;
     ctx->ws_port = ws_port;
     ctx->tls_enabled = tls_enabled;
