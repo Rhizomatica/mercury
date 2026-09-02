@@ -227,7 +227,38 @@ bcast_file_tx_t *bcast_file_tx_open(const char *path, int mode, int cycles,
     tx->io = ioctx_from_mem_ro(tx->file, tx->file_bytes);
     if (!tx->io) { set_err(err, errlen, "cannot wrap file"); bcast_file_tx_close(tx); return NULL; }
 
-    tx->rq = nanorq_encoder_new(tx->file_bytes, tx->symbol_size, 1);
+    /* ONE source block wherever it fits.
+     *
+     * RaptorQ partitions into Z source blocks and codes each independently, so
+     * a symbol for one block does nothing for another.  nanorq defaults to
+     * Z=16, which costs twice over:
+     *
+     *   - the fountain's overhead is paid PER BLOCK, so 16 blocks need ~5-17%
+     *     more frames than one does for the same file (measured across modes 0,
+     *     1 and 10 at 1.44 MB), and
+     *   - a loss pattern that happens to be periodic in the carousel starves
+     *     one block completely, and no amount of further transmission recovers
+     *     it.  With Z=1 there is no such pattern: any K+e symbols decode.
+     *
+     * Decode cost is essentially unchanged (0.04s vs 0.04s at 1.44 MB), so this
+     * is a straight win where it is legal.  It is not always legal: a block
+     * holds at most K_max symbols, so a tiny symbol size on a large file needs
+     * more than one.  Fall back to the SMALLEST legal Z rather than nanorq's
+     * default 16, which keeps the per-block overhead as low as the constraint
+     * allows. */
+    {
+        const uint16_t k_max = 56403;   /* RFC 6330 */
+        size_t kt = (tx->file_bytes + tx->symbol_size - 1) / tx->symbol_size;
+        size_t z  = (kt + k_max - 1) / k_max;
+        if (z < 1) z = 1;
+        if (z > 256) z = 256;           /* Z_max */
+        tx->rq = nanorq_encoder_new_ex(tx->file_bytes, (uint16_t)tx->symbol_size,
+                                       0, (uint16_t)z, 1);
+        /* If the explicit choice is refused for any reason, let nanorq pick:
+         * a working transfer beats an optimal one that will not start. */
+        if (!tx->rq)
+            tx->rq = nanorq_encoder_new(tx->file_bytes, tx->symbol_size, 1);
+    }
     if (!tx->rq) { set_err(err, errlen, "cannot initialise RaptorQ encoder"); bcast_file_tx_close(tx); return NULL; }
 
     nanorq_set_max_esi(tx->rq, BCAST_MAX_ESI);

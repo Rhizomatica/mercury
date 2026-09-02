@@ -68,12 +68,9 @@ static uint8_t frame_session(const uint8_t *f)
 
 /* Drive a whole transfer through a lossy channel and require the file back.
  *
- * loss_pct is applied pseudo-randomly, NOT as "drop every Nth frame".  A fixed
- * period aliases with the carousel: the cycle is 1 config + one symbol per
- * block, so dropping every Nth frame where N is the cycle length starves the
- * same block every time and it can never decode.  Real HF loss is bursty, not
- * periodic, and a test that models it periodically fails for a reason that has
- * nothing to do with the code under test. */
+ * loss_pct is applied pseudo-randomly.  See
+ * test_periodic_loss_does_not_starve_a_block for why periodic loss is also
+ * tested separately. */
 static void transfer_case(size_t nbytes, int mode, int loss_pct, unsigned seed)
 {
     char err[160] = {0};
@@ -359,9 +356,69 @@ void test_bundle_parse_rejects_malformed_and_hostile_input(void)
     }
 }
 
+/* Periodic loss must not be able to starve the transfer.
+ *
+ * RaptorQ codes each source block independently, so a symbol for one block does
+ * nothing for another.  With the default Z=16 partitioning, a loss pattern
+ * whose period matches the carousel hits the same block every cycle and that
+ * block receives NOTHING -- measured: 0 symbols out of 15000 dropped, never
+ * decoding after 60000 frames.  Encoding as a single block removes the failure
+ * mode outright, because then there is only one block to feed and any K+e
+ * symbols decode it.
+ *
+ * This pins that.  It fails if the encoder ever goes back to multi-block for a
+ * file this size. */
+void test_periodic_loss_does_not_starve_a_block(void)
+{
+    char err[160] = {0};
+    write_file(TMP, 20000, 31);
+    bcast_file_tx_t *tx = bcast_file_tx_open(TMP, 0, 0, 0, err, sizeof(err));
+    TEST_ASSERT_NOT_NULL_MESSAGE(tx, err);
+
+    size_t bundle_bytes; int blocks;
+    bcast_file_tx_source(tx, &bundle_bytes, &blocks);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, blocks,
+        "a file this size must encode as ONE source block");
+
+    int fs = bcast_file_tx_frame_size(tx);
+    uint8_t *frame = malloc((size_t)fs);
+    nanorq *dec = NULL; struct ioctx *rio = NULL;
+    const char *outf = "/tmp/.mercury_bcast_periodic.bin";
+    int sent = 0, done = 0;
+
+    /* Drop on a strict period -- the pattern that starved a block before. */
+    for (int i = 0; i < 20000 && !done; i++)
+    {
+        TEST_ASSERT_EQUAL_INT(fs, bcast_file_tx_next(tx, frame, (size_t)fs));
+        sent++;
+        if (sent % 4 == 0) continue;
+
+        if (!dec)
+        {
+            dec = nanorq_decoder_new(rx_oti_common(frame), rx_oti_scheme(frame));
+            TEST_ASSERT_NOT_NULL(dec);
+            rio = ioctx_from_file(outf, 0);
+        }
+        const uint8_t *tagp = frame + 1 + BCAST_CONFIG_BODY_SIZE;
+        uint32_t tag = ((uint32_t)tagp[0] << 24) | tagp[1] | ((uint32_t)tagp[2] << 8);
+        nanorq_decoder_add_symbol(dec, frame + BCAST_FRAME_OVERHEAD, tag, rio);
+        done = 1;
+        for (int b = 0; b < nanorq_blocks(dec); b++)
+            if (!nanorq_repair_block(dec, rio, b)) { done = 0; break; }
+    }
+    TEST_ASSERT_TRUE_MESSAGE(done, "periodic loss starved the transfer");
+
+    rio->destroy(rio);
+    nanorq_free(dec);
+    bcast_file_tx_close(tx);
+    free(frame);
+    remove(TMP); remove(outf);
+}
+
 int main(void)
 {
     UNITY_BEGIN();
+    RUN_TEST(test_periodic_loss_does_not_starve_a_block);
     RUN_TEST(test_bundle_round_trips_name_and_contents);
     RUN_TEST(test_bundle_sends_only_the_basename);
     RUN_TEST(test_bundle_parse_rejects_malformed_and_hostile_input);
