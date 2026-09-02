@@ -192,14 +192,29 @@ paces it.
 
 ## Interoperating with hermes-broadcast
 
-Mercury emits `broadcast_daemon`'s frame format, so:
+All three combinations are tested through two real Mercury modems:
 
-* a Mercury station transmitting is received by `broadcast_daemon`, which
-  writes what arrives as `broadcast_<timestamp>.bin`. That file is the bundle;
-  the original name is inside it. The daemon has no filename mechanism of its
-  own.
-* a `broadcast_daemon` station transmitting is received by Mercury, which
-  recovers the name if the sender bundled one.
+| sender | receiver | result |
+|---|---|---|
+| Mercury | Mercury | file recovered under its original name |
+| hermes-broadcast `transmitter` | hermes-broadcast `receiver` | works — 1 kB at DATAC3 in 67 s |
+| hermes-broadcast `broadcast_daemon` | Mercury | file recovered, byte-identical |
 
-`transmitter`/`receiver` in hermes-broadcast use the older split format (a
-separate periodic configuration frame) and do **not** interoperate with this.
+**hermes-broadcast still works standalone through Mercury.** `transmitter` and
+`receiver` use the older split format (a separate periodic configuration frame,
+extension field zero) and are unaffected by anything here.
+
+`broadcast_daemon` uses the same joint frame Mercury does, so the two
+interoperate. It transmits the bare file rather than a bundle — the bundle is
+Mercury's convention for carrying a filename, not part of RaptorQ — so Mercury
+saves what it receives as `broadcast_<timestamp>.bin`, the same convention the
+daemon uses in the other direction. A decode that succeeded is never discarded
+for lacking the wrapper.
+
+In the other direction, a daemon receiving from Mercury writes
+`broadcast_<timestamp>.bin` whose contents are the bundle; the original name is
+inside it.
+
+Note that `transmitter`/`receiver` and `broadcast_daemon` do not interoperate
+with *each other* — that predates this work and is a property of the two frame
+formats.

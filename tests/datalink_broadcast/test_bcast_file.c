@@ -503,9 +503,87 @@ void test_rx_ignores_frames_that_are_not_ours(void)
     bcast_file_rx_close(rx);
 }
 
+/* A payload that is not one of our bundles must still be saved.
+ *
+ * hermes-broadcast's broadcast_daemon transmits the bare file -- the bundle is
+ * OUR convention for carrying a filename, not part of RaptorQ.  The decode
+ * having succeeded means the data is good; discarding it for lacking our
+ * wrapper would throw away a file we already have.  It is written under a
+ * timestamped name instead, which is what the daemon itself does. */
+void test_rx_saves_a_payload_that_is_not_a_bundle(void)
+{
+    char err[192] = {0};
+    char dir[] = "/tmp/.mercury_bcast_rawXXXXXX";
+    TEST_ASSERT_NOT_NULL(mkdtemp(dir));
+
+    /* Encode a RAW payload (no bundle header) exactly as a foreign sender
+     * would: same frame layout, different contents. */
+    const size_t N = 1200;
+    uint8_t *raw = malloc(N);
+    for (size_t i = 0; i < N; i++) raw[i] = (uint8_t)(i * 7 + 3);
+    FILE *f = fopen(TMP, "wb");
+    TEST_ASSERT_NOT_NULL(f);
+    TEST_ASSERT_EQUAL_size_t(N, fwrite(raw, 1, N, f));
+    fclose(f);
+
+    /* bcast_file_tx_open bundles, so drive nanorq directly for the raw case. */
+    struct ioctx *io = ioctx_from_mem_ro(raw, N);
+    TEST_ASSERT_NOT_NULL(io);
+    const int mode = 0;
+    int fs = bcast_file_mode_frame_size(mode);
+    size_t sym = (size_t)fs - BCAST_FRAME_OVERHEAD;
+    nanorq *enc = nanorq_encoder_new(N, (uint16_t)sym, 1);
+    TEST_ASSERT_NOT_NULL(enc);
+    nanorq_set_max_esi(enc, BCAST_MAX_ESI);
+    int blocks = nanorq_blocks(enc);
+    sym = nanorq_symbol_size(enc);
+    for (int b = 0; b < blocks; b++) nanorq_generate_symbols(enc, b, io);
+
+    uint8_t cfg[BCAST_CONFIG_BODY_SIZE] = {0};
+    nanorq_oti_common_reduced(enc, cfg);
+    nanorq_oti_scheme_specific_align1(enc, cfg + 5);
+
+    bcast_file_rx_t *rx = bcast_file_rx_open(mode, dir, err, sizeof(err));
+    TEST_ASSERT_NOT_NULL_MESSAGE(rx, err);
+
+    uint8_t *frame = malloc((size_t)fs);
+    int done = 0;
+    for (uint32_t esi = 0; esi < 500 && !done; esi++)
+    {
+        for (int b = 0; b < blocks && !done; b++)
+        {
+            memset(frame, 0, (size_t)fs);
+            TEST_ASSERT_EQUAL_UINT64(sym,
+                nanorq_encode(enc, frame + BCAST_FRAME_OVERHEAD, esi, (uint8_t)b, io));
+            memcpy(frame + 1, cfg, BCAST_CONFIG_BODY_SIZE);
+            nanorq_tag_reduced((uint8_t)b, esi, frame + 1 + BCAST_CONFIG_BODY_SIZE);
+            bcast_write_frame_header(frame, BCAST_PACKET_RQ_CONFIG, 7);
+            if (bcast_file_rx_frame(rx, frame, (size_t)fs) == BCAST_RX_COMPLETE)
+                done = 1;
+        }
+    }
+    TEST_ASSERT_TRUE_MESSAGE(done, "an un-bundled payload was not accepted");
+
+    /* named by time, not by a name we never received */
+    TEST_ASSERT_EQUAL_INT(0, strncmp(bcast_file_rx_last_name(rx), "broadcast_", 10));
+
+    uint8_t *back = malloc(N);
+    f = fopen(bcast_file_rx_last_path(rx), "rb");
+    TEST_ASSERT_NOT_NULL(f);
+    TEST_ASSERT_EQUAL_size_t(N, fread(back, 1, N, f));
+    fclose(f);
+    TEST_ASSERT_EQUAL_MEMORY(raw, back, N);
+
+    free(raw); free(back); free(frame);
+    nanorq_free(enc); io->destroy(io);
+    bcast_file_rx_close(rx);
+    remove(TMP);
+}
+
 int main(void)
 {
     UNITY_BEGIN();
+    RUN_TEST(test_rx_saves_a_payload_that_is_not_a_bundle);
     RUN_TEST(test_tx_and_rx_complete_a_transfer);
     RUN_TEST(test_rx_ignores_frames_that_are_not_ours);
     RUN_TEST(test_periodic_loss_does_not_starve_a_block);

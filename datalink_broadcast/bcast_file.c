@@ -528,10 +528,30 @@ bcast_rx_result_t bcast_file_rx_frame(bcast_file_rx_t *rx,
 
     if (got != rx->expect_bytes)
         snprintf(rx->err, sizeof(rx->err), "decoded file could not be read back");
-    else if (bcast_bundle_parse(buf, got, name, sizeof(name), &payload, &payload_len) != 0)
-        snprintf(rx->err, sizeof(rx->err), "decoded data is not a valid bundle");
     else
     {
+        if (bcast_bundle_parse(buf, got, name, sizeof(name), &payload, &payload_len) != 0)
+        {
+            /* Not one of our bundles.  hermes-broadcast's broadcast_daemon
+             * transmits the bare file, and so may anything else on the air --
+             * the bundle is OUR convention for carrying a name, not part of
+             * the RaptorQ protocol.  The decode succeeded, so the data is
+             * good; throwing it away because it lacks our wrapper would be
+             * losing a file we already have.  Save it under a timestamped
+             * name, which is what the daemon does with what it receives. */
+            time_t now = time(NULL);
+            struct tm tmv;
+#ifdef _WIN32
+            struct tm *tp = localtime(&now);
+            if (tp) tmv = *tp; else memset(&tmv, 0, sizeof(tmv));
+#else
+            localtime_r(&now, &tmv);
+#endif
+            strftime(name, sizeof(name), "broadcast_%Y%m%d_%H%M%S.bin", &tmv);
+            payload     = buf;
+            payload_len = got;
+        }
+
         char path[600];
         snprintf(path, sizeof(path), "%s/%s", rx->dir, name);
         FILE *of = fopen(path, "wb");
