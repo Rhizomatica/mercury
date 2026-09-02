@@ -470,6 +470,13 @@ func broadcastModeDescription() string {
 // Grouped by frame size, which is what actually drives it: a big frame carries
 // more per transmission but needs a better signal to be decoded at all.
 func broadcastModeCharacter(mode int) string {
+	// Every frame spends 12 bytes on the header, OTI and tag, so a 14-byte mode
+	// carries 2 bytes of payload -- 86% overhead, and over 500 frames for 1 kB.
+	// Measured: DATAC13 did not finish a 60-byte file in 200 s on a clean
+	// channel. Say so rather than let an operator discover it by waiting.
+	if fs := broadcastModeFrameSize(mode); fs > 0 && fs-12 < 8 {
+		return "NOT practical for files (only 2 bytes per frame after overhead)"
+	}
 	switch fs := broadcastModeFrameSize(mode); {
 	case fs >= 1000:
 		return "fastest, needs a strong signal"

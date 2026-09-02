@@ -257,16 +257,34 @@ WINDOWS_ZIP = $(WINDOWS_DIR)-w64-$(GIT_HASH).zip
 
 # RaptorQ (vendored nanorq) and the broadcast file carousel.  Only
 # libmercury_core needs these -- the standalone daemon does not transmit files.
-RAPTORQ_OBJS = $(patsubst %.c,%.o,$(wildcard datalink_broadcast/raptorq/lib/*.c)) \
-               $(patsubst %.c,%.o,$(wildcard datalink_broadcast/raptorq/deps/obl/*.c))
-BCAST_FILE_OBJS = datalink_broadcast/bcast_file.o $(RAPTORQ_OBJS)
+RAPTORQ_SRCS = $(wildcard datalink_broadcast/raptorq/lib/*.c) \
+               $(wildcard datalink_broadcast/raptorq/deps/obl/*.c)
 RAPTORQ_CFLAGS = -Idatalink_broadcast/raptorq/include -Idatalink_broadcast/raptorq/deps
+
+# Native and Windows objects go to DIFFERENT paths.
+#
+# The cross build compiles the same sources with the mingw compiler, and if both
+# wrote to %.o the second build would leave the first's archive full of objects
+# for the wrong platform -- silently, because make sees an .o newer than its .c
+# and considers it up to date.  That shows up much later as a pile of
+# "undefined reference to __imp__assert" at link time.  Distinct suffixes make
+# the two builds simply independent.
+RAPTORQ_OBJS     = $(patsubst %.c,%.o,$(RAPTORQ_SRCS))
+RAPTORQ_OBJS_W64 = $(patsubst %.c,%.w64.o,$(RAPTORQ_SRCS))
+BCAST_FILE_OBJS     = datalink_broadcast/bcast_file.o $(RAPTORQ_OBJS)
+BCAST_FILE_OBJS_W64 = datalink_broadcast/bcast_file.w64.o $(RAPTORQ_OBJS_W64)
 
 $(RAPTORQ_OBJS): %.o: %.c
 	$(CC) $(CFLAGS) $(RAPTORQ_CFLAGS) -c $< -o $@
 
+$(RAPTORQ_OBJS_W64): %.w64.o: %.c
+	$(MINGW_CC) $(CFLAGS) $(RAPTORQ_CFLAGS) -c $< -o $@
+
 datalink_broadcast/bcast_file.o: datalink_broadcast/bcast_file.c
 	$(CC) $(CFLAGS) $(RAPTORQ_CFLAGS) -c $< -o $@
+
+datalink_broadcast/bcast_file.w64.o: datalink_broadcast/bcast_file.c
+	$(MINGW_CC) $(CFLAGS) $(RAPTORQ_CFLAGS) -c $< -o $@
 
 MERCURY_CORE_OBJS = \
 	common/cfg_utils.o common/iniparser/iniparser.o common/iniparser/dictionary.o \
@@ -313,12 +331,12 @@ libmercury_core.a: internal_deps $(HIDAPI_OBJS) $(BCAST_FILE_OBJS)
 
 libmercury_core_w64.a:
 	$(MAKE) internal_deps OS=Windows_NT CC=$(MINGW_CC) AR=$(MINGW_AR) HAVE_HERMES_SHM=0
-	# The bridge calls bcast_file_*, so the RaptorQ objects have to be in this
-	# archive too -- built with the cross compiler, into the same paths the
-	# native build uses, exactly as internal_deps above already does.
-	$(MAKE) $(BCAST_FILE_OBJS) OS=Windows_NT CC=$(MINGW_CC) AR=$(MINGW_AR) HAVE_HERMES_SHM=0
+	# The bridge calls bcast_file_*, so the RaptorQ objects belong in this
+	# archive too -- built with the cross compiler into their own .w64.o paths,
+	# so a native build afterwards is not left linking Windows objects.
+	$(MAKE) $(BCAST_FILE_OBJS_W64) OS=Windows_NT HAVE_HERMES_SHM=0
 	$(MINGW_CC) $(CFLAGS) $(RAPTORQ_CFLAGS) -I. -c $(FYNE_UI_DIR)/engine/mercury_bridge.c -o $(FYNE_UI_DIR)/engine/mercury_bridge_w64.o
-	$(MINGW_AR) rcs $@ $(MERCURY_CORE_OBJS_W64) $(BCAST_FILE_OBJS) $(FYNE_UI_DIR)/engine/mercury_bridge_w64.o
+	$(MINGW_AR) rcs $@ $(MERCURY_CORE_OBJS_W64) $(BCAST_FILE_OBJS_W64) $(FYNE_UI_DIR)/engine/mercury_bridge_w64.o
 
 # HIDAPI_LDFLAGS is passed through CGO_LDFLAGS rather than hardcoded in
 # mercury_link_linux.go's #cgo directive, because hidapi is OPTIONAL: only this

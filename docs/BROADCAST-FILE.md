@@ -153,15 +153,36 @@ mode=9  file=1000 B  air=ch clean (--No -100)
   RESULT: recovered byte-identical as "report.bin" in 2s
 ```
 
-Measured on that harness:
+Measured on that harness, 1 kB file, one variable at a time
+(`SNR3k = -No - 14.82`; the harness's noise is AWGN, not fading):
 
-| mode | file | channel | time |
-|------|------|---------|------|
-| 9 (DATAC17) | 1 kB | clean | 2 s |
-| 9 (DATAC17) | 5 kB | clean | 31 s |
-| 0 (DATAC1)  | 5 kB | clean | 50 s |
-| 1 (DATAC3)  | 1 kB | clean | 32 s |
-| 9 (DATAC17) | 1 kB | SNR3k 10.2 dB | 2 s |
+| SNR3k | DATAC3 (mode 1, default) | DATAC17 (mode 9) |
+|------:|--------------------------|------------------|
+| 15.2 dB | 32 s | 2 s |
+| 10.2 dB | 32 s | 2 s |
+|  7.2 dB | — | 2 s |
+|  5.2 dB | 32 s | fails |
+|  2.2 dB | 32 s | — |
+|  0.2 dB | 32 s | — |
+| -2.8 dB | fails | — |
+| -4.8 dB | fails | — |
+
+DATAC3 carries a 1 kB file down to about **0 dB SNR3k** and takes the same 32 s
+throughout: below the cliff it fails outright rather than slowing down, which is
+what a fountain code over a hard-decision modem does — a frame either decodes or
+it does not. DATAC17 is 16x faster but gives out between 7 and 5 dB.
+
+### The small-frame modes are not usable for files
+
+Every frame spends 12 bytes on the header, OTI and tag. The 14-byte modes
+(DATAC0, DATAC13, DATAC16) therefore carry **2 bytes of payload per frame** —
+86% overhead — and a 1 kB file would need over 500 frames, about 17 minutes of
+continuous transmission at DATAC13's 1.98 s per frame.
+
+Measured: DATAC13 did not complete even a 60-byte file within 200 s at
++15.2 dB. The codec itself is fine at that symbol size — it produces valid
+frames — the mode is simply the wrong tool for a file. Use DATAC4 (42 bytes per
+symbol) or larger; DATAC3 is the sensible robust choice.
 
 Two things the harness encodes, both learned the hard way: `cat` between the
 FIFOs does **not** work as the air — it buffers in 64 kB chunks, so the
