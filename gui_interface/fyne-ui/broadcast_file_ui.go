@@ -47,6 +47,7 @@ type broadcastFilePanel struct {
 	rxStatus  *widget.Label
 	rxList    *widget.Label
 
+	prefs  fyne.Preferences
 	win    fyne.Window
 	sender func() broadcastSender // resolved at send time: the chat client
 	// setFilter installs (or clears, with nil) the raw-frame filter on the
@@ -70,10 +71,12 @@ func cyclesFromChoice(s string) int {
 	}
 }
 
-func newBroadcastFilePanel(win fyne.Window, sender func() broadcastSender,
-	setFilter func(func([]byte) bool), logf func(string, ...any)) *broadcastFilePanel {
+func newBroadcastFilePanel(win fyne.Window, prefs fyne.Preferences,
+	sender func() broadcastSender, setFilter func(func([]byte) bool),
+	logf func(string, ...any)) *broadcastFilePanel {
 
-	p := &broadcastFilePanel{win: win, sender: sender, setFilter: setFilter, logf: logf}
+	p := &broadcastFilePanel{win: win, prefs: prefs, sender: sender,
+		setFilter: setFilter, logf: logf}
 
 	p.pathLbl = widget.NewLabel("(no file chosen)")
 	p.pathLbl.Wrapping = fyne.TextTruncate
@@ -93,9 +96,12 @@ func newBroadcastFilePanel(win fyne.Window, sender func() broadcastSender,
 	p.sendBtn.Disable()
 	p.stopBtn.Disable()
 
-	// Receiving defaults to the user's Downloads directory if there is one, so
-	// the common case needs no configuration.
+	// The folder the operator set last time, else Downloads, so the common case
+	// needs no configuration and a configured station needs none ever again.
 	p.rxDir = defaultBroadcastRxDir()
+	if prefs != nil {
+		p.rxDir = prefs.StringWithFallback(broadcastRxDirPrefKey, p.rxDir)
+	}
 	p.rxDirLbl = widget.NewLabel(p.rxDir)
 	p.rxDirLbl.Wrapping = fyne.TextTruncate
 	p.rxDirBt = widget.NewButton("Folder...", p.onChooseRxDir)
@@ -103,6 +109,13 @@ func newBroadcastFilePanel(win fyne.Window, sender func() broadcastSender,
 	p.rxList = widget.NewLabel("")
 	p.rxList.Wrapping = fyne.TextWrapWord
 	p.rxEnabled = widget.NewCheck("Receive broadcast files", p.onToggleReceive)
+
+	// Restore the operator's choice.  Set the widget without firing OnChanged:
+	// receiving cannot start until there is a connection, so the panel arms
+	// itself here and setConnected() starts it when the socket comes up.
+	if prefs != nil && prefs.BoolWithFallback(broadcastRxOnPrefKey, false) {
+		p.rxEnabled.Checked = true
+	}
 
 	return p
 }
@@ -152,6 +165,16 @@ func (p *broadcastFilePanel) setConnected(on bool) {
 			p.stopBtn.Disable()
 		}
 	})
+
+	// Receiving needs the broadcast socket, which belongs to the connection.
+	// A station left with the box ticked therefore resumes on its own.
+	if on {
+		if p.rxEnabled.Checked {
+			p.startReceiving()
+		}
+	} else {
+		p.stopReceiving()
+	}
 }
 
 func (p *broadcastFilePanel) onChooseRxDir() {
@@ -166,6 +189,9 @@ func (p *broadcastFilePanel) onChooseRxDir() {
 		}
 		p.rxDir = dir
 		p.rxDirLbl.SetText(dir)
+		if p.prefs != nil {
+			p.prefs.SetString(broadcastRxDirPrefKey, dir)
+		}
 		// A running receiver holds the old directory; restart it on the new one.
 		if p.rxEnabled.Checked {
 			p.stopReceiving()
@@ -175,6 +201,9 @@ func (p *broadcastFilePanel) onChooseRxDir() {
 }
 
 func (p *broadcastFilePanel) onToggleReceive(on bool) {
+	if p.prefs != nil {
+		p.prefs.SetBool(broadcastRxOnPrefKey, on)
+	}
 	if on {
 		p.startReceiving()
 	} else {

@@ -156,7 +156,7 @@ func (cw *chatWindow) build(app fyne.App, telemetry telemetryState, arqPort, bro
 
 	// File broadcast rides the same broadcast socket the chat below it uses,
 	// so it lives with the broadcast controls and is enabled by the same signal.
-	cw.bcastFile = newBroadcastFilePanel(cw.win,
+	cw.bcastFile = newBroadcastFilePanel(cw.win, fyne.CurrentApp().Preferences(),
 		func() broadcastSender {
 			if cw.mc == nil {
 				return nil
