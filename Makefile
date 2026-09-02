@@ -229,8 +229,12 @@ main.o: main.c .git_hash_stamp
 	$(CC) $(CFLAGS) -c main.c
 
 # Vendored hidapi for the Windows cross-build (see the detection block above).
+# Built with $(MINGW_CC) rather than $(CC) so it is correct both for the native
+# `windows` target (where CC is already $(MINGW_CC)) and for the
+# `fyne-ui-windows` cross-build (whose host context would otherwise compile a
+# native ELF object that the mingw linker rejects).
 $(HIDAPI_W64_DIR)/hid.o: $(HIDAPI_W64_DIR)/src/hid.c
-	$(CC) -O2 -I$(HIDAPI_W64_DIR)/include -I$(HIDAPI_W64_DIR)/src -c $< -o $@
+	$(MINGW_CC) -O2 -I$(HIDAPI_W64_DIR)/include -I$(HIDAPI_W64_DIR)/src -c $< -o $@
 
 # Vendored hidapi for macOS: the IOKit backend, built from source so a stock
 # macOS with only the Xcode command line tools still gets CM108 PTT.
@@ -298,10 +302,20 @@ libmercury_core.a: internal_deps $(HIDAPI_OBJS)
 	rm -f $@
 	$(AR) rcs $@ $(MERCURY_CORE_OBJS) $(FYNE_UI_DIR)/engine/mercury_bridge.o
 
-libmercury_core_w64.a:
+# The OS=Windows_NT internal_deps sub-make compiles cm108_ptt.o with
+# -DHAVE_HIDAPI, so the archive must carry the matching vendored hidapi object.
+# It can't come from $(HIDAPI_OBJS): that is evaluated in this (host) context,
+# where it is empty on Linux.  Resolve the vendored object directly, mirroring
+# the wildcard guard in the hidapi detection block above.
+HIDAPI_W64_OBJ :=
+ifneq ($(wildcard $(HIDAPI_W64_DIR)/src/hid.c),)
+HIDAPI_W64_OBJ := $(HIDAPI_W64_DIR)/hid.o
+endif
+
+libmercury_core_w64.a: $(HIDAPI_W64_OBJ)
 	$(MAKE) internal_deps OS=Windows_NT CC=$(MINGW_CC) AR=$(MINGW_AR) HAVE_HERMES_SHM=0
 	$(MINGW_CC) $(CFLAGS) -I. -c $(FYNE_UI_DIR)/engine/mercury_bridge.c -o $(FYNE_UI_DIR)/engine/mercury_bridge_w64.o
-	$(MINGW_AR) rcs $@ $(MERCURY_CORE_OBJS_W64) $(FYNE_UI_DIR)/engine/mercury_bridge_w64.o
+	$(MINGW_AR) rcs $@ $(MERCURY_CORE_OBJS_W64) $(HIDAPI_W64_OBJ) $(FYNE_UI_DIR)/engine/mercury_bridge_w64.o
 
 # HIDAPI_LDFLAGS is passed through CGO_LDFLAGS rather than hardcoded in
 # mercury_link_linux.go's #cgo directive, because hidapi is OPTIONAL: only this
