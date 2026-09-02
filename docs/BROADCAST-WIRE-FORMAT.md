@@ -23,14 +23,25 @@ FEND (0xC0) | cmd | payload (escaped) | FEND (0xC0)
 
 Escaping: `0xC0 -> 0xDB 0xDC`, `0xDB -> 0xDB 0xDD`.
 
-`cmd` is `0x02` (`CMD_DATA`). Mercury also accepts `0x00` and `0x01` as
-data-carrying; `0x02` is what this protocol uses.
-
 The KISS payload is **one modem frame**, exactly
-`payload_bytes_per_modem_frame` long for the configured mode. Mercury passes
-such a frame to the modem unmodified when its first byte carries a broadcast
-packet type (see §2) — shorter frames get a Mercury header and length prefix
-injected instead, which is how chat and VARA traffic are carried.
+`payload_bytes_per_modem_frame` long for the configured mode.
+
+`cmd` MUST be `0x03` (`CMD_MODEM_FRAME`): *this payload is already one modem
+frame, transmit it untouched*. Mercury treats every other data-carrying command
+as a message to be framed for the air, injecting a 1-byte header and a 2-byte
+length prefix and truncating the payload by 3 bytes to make room — which
+destroys a frame that was already the right size.
+
+| cmd | meaning |
+|-----|---------|
+| `0x00` `CMD_AX25`, `0x01` `CMD_AX25CALLSIGN` | a message; Mercury frames it |
+| `0x02` `CMD_DATA` | **legacy.** Mercury *infers* whether it is a modem frame from the payload's own first byte |
+| `0x03` `CMD_MODEM_FRAME` | a modem frame; passed through untouched |
+
+`CMD_DATA`'s inference is retained only for hermes-broadcast deployments that
+predate `CMD_MODEM_FRAME`. It is a guess about bytes the sender chooses: a
+full-size payload beginning `0x60..0x9F` looks like a modem frame whatever it
+actually is. New implementations MUST use `0x03`.
 
 ## 2. Frame header byte
 

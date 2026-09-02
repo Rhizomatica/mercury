@@ -365,7 +365,26 @@ func (mc *ModemClient) SendARQFile(filePath string) error {
 	return nil
 }
 
+// kissCmdModemFrame tells Mercury the payload is already exactly one modem
+// frame and must be transmitted untouched.  Chat uses kissCmdAX25, which asks
+// Mercury to add its header and length prefix; sending a modem frame that way
+// gets it truncated by 3 bytes to make room for a header it does not need.
+const (
+	kissCmdAX25       = 0x00
+	kissCmdModemFrame = 0x03
+)
+
+// SendBroadcastModemFrame writes one already-framed modem frame, declaring it
+// as such so Mercury passes it through rather than framing it as a message.
+func (mc *ModemClient) SendBroadcastModemFrame(data []byte) error {
+	return mc.sendBroadcastWithCmd(kissCmdModemFrame, data)
+}
+
 func (mc *ModemClient) SendBroadcast(data []byte) error {
+	return mc.sendBroadcastWithCmd(kissCmdAX25, data)
+}
+
+func (mc *ModemClient) sendBroadcastWithCmd(cmd byte, data []byte) error {
 	mc.mu.Lock()
 	defer mc.mu.Unlock()
 
@@ -373,7 +392,7 @@ func (mc *ModemClient) SendBroadcast(data []byte) error {
 		return fmt.Errorf("not connected to Broadcast port")
 	}
 
-	kissData := append([]byte{0x00}, data...)
+	kissData := append([]byte{cmd}, data...)
 	frame := KISSEncode(kissData)
 
 	_, err := mc.BroadcastConn.Write(frame)

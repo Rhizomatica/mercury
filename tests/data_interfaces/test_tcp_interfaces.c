@@ -1040,6 +1040,58 @@ void test_bcast_vara_length_roundtrip(void)
     TEST_ASSERT_EQUAL_HEX8_ARRAY(orig, payload, orig_len); /* exact original bytes */
 }
 
+/* A modem frame declared as such must reach the air byte for byte.
+ *
+ * This is the regression that mattered: the UI's file transfer sent its frames
+ * through the chat path (CMD_AX25), which wraps unconditionally, so every
+ * 1180-byte RaptorQ frame was truncated to 1177 to make room for a header it
+ * did not need.  The far side then had 1177 bytes of a 1180-byte frame and
+ * discarded all of them.  CMD_MODEM_FRAME says what the payload is instead of
+ * leaving Mercury to infer it. */
+void test_bcast_tx_modem_frame_command_passes_through_untouched(void)
+{
+    const size_t fsz = 32;
+    uint8_t orig[32];
+    /* Deliberately a first byte that does NOT look like a broadcast type, so
+     * this can only pass by the command being honoured, not by the heuristic. */
+    for (size_t i = 0; i < fsz; i++) orig[i] = (uint8_t)(0x11 + i);
+
+    uint8_t txframe[MAX_PAYLOAD];
+    memset(txframe, 0, sizeof(txframe));
+    memcpy(txframe, orig, fsz);
+
+    bool ok = bcast_process_decoded_frame(txframe, (int)fsz, CMD_MODEM_FRAME, fsz);
+    TEST_ASSERT_TRUE(ok);
+
+    /* Not truncated, nothing injected. */
+    TEST_ASSERT_EQUAL_size_t(fsz, last_write_buffer_len);
+    TEST_ASSERT_EQUAL_HEX8_ARRAY(orig, last_write_buffer_data, fsz);
+}
+
+/* And the same payload sent the way chat is sent IS framed -- which is what
+ * silently broke the file transfer, so pin the difference. */
+void test_bcast_tx_same_frame_as_chat_is_truncated(void)
+{
+    const size_t fsz = 32;
+    uint8_t orig[32];
+    for (size_t i = 0; i < fsz; i++) orig[i] = (uint8_t)(0x11 + i);
+
+    uint8_t txframe[MAX_PAYLOAD];
+    memset(txframe, 0, sizeof(txframe));
+    memcpy(txframe, orig, fsz);
+
+    TEST_ASSERT_TRUE(bcast_process_decoded_frame(txframe, (int)fsz, CMD_AX25, fsz));
+
+    uint8_t rxframe[MAX_PAYLOAD];
+    memcpy(rxframe, last_write_buffer_data, fsz);
+    uint8_t *payload = NULL;
+    int plen = 0;
+    bcast_get_tx_payload(rxframe, fsz, &payload, &plen);
+
+    /* 3 bytes short: the header and length prefix took their room. */
+    TEST_ASSERT_EQUAL_INT((int)(fsz - HEADER_SIZE - BCAST_LEN_SIZE), plen);
+}
+
 /* What happens to a broadcast message that is EXACTLY one frame long?
  *
  * The raw-vs-wrap heuristic keys on the first byte: bits 7:5 == 3 or 4 look
@@ -1409,6 +1461,8 @@ int main(void)
     RUN_TEST(test_bcast_tx_cmd_data_full_frame);
     RUN_TEST(test_bcast_tx_vara_strips_header);
     RUN_TEST(test_bcast_vara_length_roundtrip);
+    RUN_TEST(test_bcast_tx_modem_frame_command_passes_through_untouched);
+    RUN_TEST(test_bcast_tx_same_frame_as_chat_is_truncated);
     RUN_TEST(test_bcast_tx_full_size_chat_is_still_wrapped);
     RUN_TEST(test_bcast_tx_full_size_cmd_data_passes_through_raw);
     RUN_TEST(test_bcast_tx_lenprefix_ignores_reply_cmd_default);

@@ -158,7 +158,7 @@ func (c *Client) SendBroadcastFrame(frame []byte) error {
 	if mc == nil {
 		return fmt.Errorf("not connected to the broadcast port")
 	}
-	return mc.SendBroadcast(frame)
+	return mc.SendBroadcastModemFrame(frame)
 }
 
 // IsConnected reports whether the TCP links to the modem are up.

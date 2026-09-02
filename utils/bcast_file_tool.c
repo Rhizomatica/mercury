@@ -29,7 +29,10 @@
 #define KISS_FESC  0xDB
 #define KISS_TFEND 0xDC
 #define KISS_TFESC 0xDD
-#define KISS_CMD_DATA 0x02
+/* Declare what we are sending: one modem frame, to be transmitted untouched.
+ * CMD_DATA still works (Mercury infers it from the frame's first byte for
+ * compatibility with deployed hermes-broadcast) but relies on a guess. */
+#define KISS_CMD_MODEM_FRAME 0x03
 
 static volatile sig_atomic_t running = 1;
 static void on_signal(int s) { (void)s; running = 0; }
@@ -54,7 +57,7 @@ static int send_kiss(int fd, const uint8_t *p, size_t n)
     uint8_t out[2 * BCAST_FILE_MAX_FRAME + 8];
     size_t o = 0;
     out[o++] = KISS_FEND;
-    out[o++] = KISS_CMD_DATA;
+    out[o++] = KISS_CMD_MODEM_FRAME;
     for (size_t i = 0; i < n; i++)
     {
         if (p[i] == KISS_FEND)      { out[o++] = KISS_FESC; out[o++] = KISS_TFEND; }
