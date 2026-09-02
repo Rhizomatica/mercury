@@ -66,19 +66,9 @@ func newBroadcastFileTx(path string, mode, cycles int) (*broadcastFileTx, error)
 	h := C.mercury_bcast_tx_open(cPath, C.int(mode), C.int(cycles), 0,
 		(*C.char)(unsafe.Pointer(&errBuf[0])), C.int(len(errBuf)))
 	if h == nil {
-		return nil, fmt.Errorf("%s", cString(errBuf))
+		return nil, fmt.Errorf("%s", goStringFromC(errBuf))
 	}
 	return &broadcastFileTx{handle: h}, nil
-}
-
-// cString turns a NUL-terminated C buffer into a Go string.
-func cString(b []byte) string {
-	for i, c := range b {
-		if c == 0 {
-			return string(b[:i])
-		}
-	}
-	return string(b)
 }
 
 func (t *broadcastFileTx) info() (frameSize int, fileBytes int64, blocks int) {
@@ -189,6 +179,25 @@ func (t *broadcastFileTx) Run(s broadcastSender, progress func(broadcastFileProg
 // all. DATAC14's 3-byte frame cannot hold the 9-byte configuration packet.
 func broadcastModeUsable(mode int) bool {
 	return C.mercury_bcast_mode_usable(C.int(mode)) != 0
+}
+
+// broadcastEngineMode is the hermes mode index the engine is running, or -1 if
+// it cannot carry broadcast.  Fixed at startup by -m; there is no runtime
+// switch, and the far station must be set to the same one.
+func broadcastEngineMode() int {
+	return int(C.mercury_bcast_engine_mode())
+}
+
+// broadcastEngineBitrate and broadcastEngineBandwidth describe the running
+// modem, computed from the modem itself rather than a table, so they cannot
+// disagree with what is actually on the air.
+func broadcastEngineBitrate() int     { return int(C.mercury_bcast_engine_bitrate()) }
+func broadcastEngineBandwidthHz() int { return int(C.mercury_bcast_engine_bandwidth_hz()) }
+
+// broadcastModeName is the mode's name as `mercury -l` reports it (DATAC3,
+// QAM16C2 ...).  An operator matching two stations reads names, not indices.
+func broadcastModeName(mode int) string {
+	return C.GoString(C.mercury_bcast_mode_name(C.int(mode)))
 }
 
 // broadcastModeFrameSize is the payload bytes per modem frame for a mode.

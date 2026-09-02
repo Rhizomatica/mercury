@@ -199,3 +199,40 @@ func TestParseSpectrumFrame(t *testing.T) {
 		t.Fatalf("expected first bin 1.0, got %v", spectrum[0])
 	}
 }
+
+// The cycle selector is the operator's only control over how long a broadcast
+// runs, so the label -> count mapping is worth pinning: "Until stopped" must be
+// 0 (endless) and never 1, and a typo in a label must not silently become 0.
+func TestCyclesFromChoice(t *testing.T) {
+	want := map[string]int{
+		"Once":          1,
+		"5 times":       5,
+		"10 times":      10,
+		"50 times":      50,
+		"Until stopped": 0,
+	}
+	for _, label := range cycleChoices {
+		got := cyclesFromChoice(label)
+		exp, ok := want[label]
+		if !ok {
+			t.Fatalf("choice %q has no expected mapping; update this test", label)
+		}
+		if got != exp {
+			t.Errorf("cyclesFromChoice(%q) = %d, want %d", label, got, exp)
+		}
+	}
+	if len(want) != len(cycleChoices) {
+		t.Errorf("cycleChoices has %d entries, test covers %d", len(cycleChoices), len(want))
+	}
+}
+
+// cycleText is what the operator reads while a transfer runs; an endless run
+// must not display a fake denominator.
+func TestCycleText(t *testing.T) {
+	if got := cycleText(broadcastFileProgress{CycleNow: 3, CyclesTotal: 0}); got != "3 (until stopped)" {
+		t.Errorf("endless run rendered as %q", got)
+	}
+	if got := cycleText(broadcastFileProgress{CycleNow: 2, CyclesTotal: 5}); got != "2/5" {
+		t.Errorf("bounded run rendered as %q", got)
+	}
+}

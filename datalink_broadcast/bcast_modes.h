@@ -54,6 +54,13 @@ static const uint32_t bcast_frame_size[BCAST_MODE_MAX + 1] = {
     510, 126, 14, 54, 14, 3, 30, 30, 14, 1180, 1213
 };
 
+/* Names as `mercury -l` and hermes-broadcast use them, in the same order as
+ * bcast_frame_size so the two cannot drift apart. */
+static const char *const bcast_mode_name[BCAST_MODE_MAX + 1] = {
+    "DATAC1", "DATAC3", "DATAC0", "DATAC4", "DATAC13", "DATAC14",
+    "FSK_LDPC", "DATAC15", "DATAC16", "DATAC17", "QAM16C2"
+};
+
 static inline void bcast_write_frame_header(uint8_t *frame, uint8_t packet_type,
                                             uint8_t extension)
 {

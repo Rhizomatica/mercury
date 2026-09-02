@@ -1,0 +1,288 @@
+//go:build mercury_embedded
+
+// The "Broadcast file" panel: pick a file, choose how many times to send it,
+// stop when you like.
+//
+// Broadcast has no return path, so there is no progress from the far side to
+// report -- only what WE have sent. The honest thing to show is frames and
+// cycles, not a percentage that would be a guess about someone else's decoder.
+package main
+
+import (
+	"fmt"
+	"os"
+	"path/filepath"
+	"strconv"
+	"sync"
+
+	"fyne.io/fyne/v2"
+	"fyne.io/fyne/v2/container"
+	"fyne.io/fyne/v2/dialog"
+	"fyne.io/fyne/v2/storage"
+	"fyne.io/fyne/v2/widget"
+)
+
+// broadcastFilePanel is the UI half; broadcastFileTx is the engine half.
+type broadcastFilePanel struct {
+	mu sync.Mutex
+	tx *broadcastFileTx
+
+	path     string
+	pathLbl  *widget.Label
+	cycles   *widget.Select
+	sendBtn  *widget.Button
+	stopBtn  *widget.Button
+	status   *widget.Label
+	modeLbl  *widget.Label
+	chooseBt *widget.Button
+
+	win    fyne.Window
+	sender func() broadcastSender // resolved at send time: the chat client
+	logf   func(string, ...any)
+}
+
+// cycleChoices maps the visible label to a cycle count; 0 means until stopped.
+var cycleChoices = []string{"Once", "5 times", "10 times", "50 times", "Until stopped"}
+
+func cyclesFromChoice(s string) int {
+	switch s {
+	case "Once":
+		return 1
+	case "Until stopped":
+		return 0
+	default:
+		n, _ := strconv.Atoi(s[:len(s)-len(" times")])
+		return n
+	}
+}
+
+func newBroadcastFilePanel(win fyne.Window, sender func() broadcastSender,
+	logf func(string, ...any)) *broadcastFilePanel {
+
+	p := &broadcastFilePanel{win: win, sender: sender, logf: logf}
+
+	p.pathLbl = widget.NewLabel("(no file chosen)")
+	p.pathLbl.Wrapping = fyne.TextTruncate
+	p.status = widget.NewLabel("")
+
+	// The mode is fixed at engine start by -m and cannot be changed at runtime,
+	// so it is REPORTED, not offered. Both stations must be on the same one:
+	// the broadcast plane has no negotiation.
+	p.modeLbl = widget.NewLabel(broadcastModeDescription())
+
+	p.cycles = widget.NewSelect(cycleChoices, nil)
+	p.cycles.SetSelected("Until stopped")
+
+	p.chooseBt = widget.NewButton("Choose file...", p.onChoose)
+	p.sendBtn = widget.NewButton("Broadcast", p.onSend)
+	p.stopBtn = widget.NewButton("Stop", p.onStop)
+	p.sendBtn.Disable()
+	p.stopBtn.Disable()
+	return p
+}
+
+// content builds the panel. Kept separate so the widgets exist before layout.
+func (p *broadcastFilePanel) content() fyne.CanvasObject {
+	return container.NewVBox(
+		widget.NewLabel("Broadcast file"),
+		p.modeLbl,
+		container.NewBorder(nil, nil, p.chooseBt, nil, p.pathLbl),
+		container.NewGridWithColumns(2, p.cycles, container.NewGridWithColumns(2, p.sendBtn, p.stopBtn)),
+		p.status,
+	)
+}
+
+// setConnected enables the panel only while the broadcast socket is up: the
+// frames go out over the chat client's connection.
+func (p *broadcastFilePanel) setConnected(on bool) {
+	fyne.Do(func() {
+		p.mu.Lock()
+		running := p.tx != nil
+		p.mu.Unlock()
+		if on && !running && p.path != "" {
+			p.sendBtn.Enable()
+		} else {
+			p.sendBtn.Disable()
+		}
+		p.chooseBt.Enable()
+		if !on {
+			p.stopBtn.Disable()
+		}
+	})
+}
+
+func (p *broadcastFilePanel) onChoose() {
+	dialog.ShowFileOpen(func(rc fyne.URIReadCloser, err error) {
+		if err != nil || rc == nil {
+			return
+		}
+		defer rc.Close()
+		path := rc.URI().Path()
+		if path == "" {
+			dialog.ShowError(fmt.Errorf("that file is not on the local filesystem"), p.win)
+			return
+		}
+		// Refuse an oversized file HERE rather than after the operator has
+		// started a transmission: the cap is on the bundle, which is the file
+		// plus its name, so check the way the encoder will.
+		if st, serr := os.Stat(path); serr == nil {
+			limit := broadcastFileMaxBytes()
+			bundle := st.Size() + int64(len(filepath.Base(path))) + 5
+			if bundle > limit {
+				dialog.ShowError(fmt.Errorf(
+					"%s is %d bytes; with its name that is %d, over the %d byte limit",
+					filepath.Base(path), st.Size(), bundle, limit), p.win)
+				return
+			}
+			if st.Size() == 0 {
+				dialog.ShowError(fmt.Errorf("%s is empty", filepath.Base(path)), p.win)
+				return
+			}
+		}
+		p.path = path
+		p.pathLbl.SetText(filepath.Base(path))
+		p.sendBtn.Enable()
+	}, p.win)
+}
+
+func (p *broadcastFilePanel) onSend() {
+	if p.path == "" {
+		return
+	}
+	s := p.sender()
+	if s == nil {
+		dialog.ShowError(fmt.Errorf("connect to the modem first"), p.win)
+		return
+	}
+	mode := broadcastEngineMode()
+	if mode < 0 {
+		dialog.ShowError(fmt.Errorf(
+			"the modem is running a mode that cannot carry broadcast; restart mercury with -m"), p.win)
+		return
+	}
+
+	cycles := cyclesFromChoice(p.cycles.Selected)
+	tx, err := newBroadcastFileTx(p.path, mode, cycles)
+	if err != nil {
+		dialog.ShowError(err, p.win)
+		return
+	}
+
+	p.mu.Lock()
+	p.tx = tx
+	p.mu.Unlock()
+
+	p.sendBtn.Disable()
+	p.chooseBt.Disable()
+	p.stopBtn.Enable()
+	p.logf("Broadcasting %s (mode %d, %s)", filepath.Base(p.path), mode, p.cycles.Selected)
+
+	go tx.Run(s, func(pr broadcastFileProgress) {
+		if !pr.Done {
+			// Only repaint every few frames: a fast mode can produce these
+			// faster than the UI can usefully redraw.
+			if pr.FramesSent%5 != 0 {
+				return
+			}
+			fyne.Do(func() {
+				p.status.SetText(fmt.Sprintf("sent %d frames, cycle %s",
+					pr.FramesSent, cycleText(pr)))
+			})
+			return
+		}
+		p.mu.Lock()
+		p.tx = nil
+		p.mu.Unlock()
+		fyne.Do(func() {
+			if pr.Err != nil {
+				p.status.SetText("stopped: " + pr.Err.Error())
+				p.logf("Broadcast failed: %v", pr.Err)
+			} else {
+				p.status.SetText(fmt.Sprintf("done: %d frames, %s",
+					pr.FramesSent, cycleText(pr)))
+				p.logf("Broadcast finished: %d frames", pr.FramesSent)
+			}
+			p.stopBtn.Disable()
+			p.chooseBt.Enable()
+			p.sendBtn.Enable()
+		})
+	})
+}
+
+func cycleText(pr broadcastFileProgress) string {
+	if pr.CyclesTotal == 0 {
+		return fmt.Sprintf("%d (until stopped)", pr.CycleNow)
+	}
+	return fmt.Sprintf("%d/%d", pr.CycleNow, pr.CyclesTotal)
+}
+
+func (p *broadcastFilePanel) onStop() {
+	p.mu.Lock()
+	tx := p.tx
+	p.mu.Unlock()
+	if tx != nil {
+		tx.Stop() // takes effect at the next frame boundary
+		p.status.SetText("stopping...")
+	}
+}
+
+// stopForShutdown ends any transfer when the window closes, so the goroutine
+// does not go on writing to a socket the window is about to drop.
+func (p *broadcastFilePanel) stopForShutdown() {
+	p.mu.Lock()
+	tx := p.tx
+	p.mu.Unlock()
+	if tx != nil {
+		tx.Stop()
+	}
+}
+
+// broadcastModeDescription tells the operator, in words they can act on, which
+// mode the far station has to be set to.
+//
+// The index alone is meaningless to anyone who has not read the source, so lead
+// with the name, then the speed/robustness trade, then the -m index they would
+// actually type.  The mode is fixed at engine start and cannot be changed here.
+func broadcastModeDescription() string {
+	m := broadcastEngineMode()
+	if m < 0 {
+		return "Mode: this modem's mode cannot carry broadcast.\n" +
+			"Restart mercury with -m (see 'mercury -l')."
+	}
+	line := fmt.Sprintf("Mode: %s - %s", broadcastModeName(m), broadcastModeCharacter(m))
+
+	// Bitrate and bandwidth come from the running modem, so they describe what
+	// is actually being transmitted.  Both are what an operator checks against
+	// their licence conditions and their filter setting.
+	if br := broadcastEngineBitrate(); br > 0 {
+		line += fmt.Sprintf("\n%d bit/s", br)
+		if bw := broadcastEngineBandwidthHz(); bw > 0 {
+			line += fmt.Sprintf(", %d Hz bandwidth", bw)
+		}
+		line += fmt.Sprintf(", %d bytes per frame", broadcastModeFrameSize(m))
+	} else {
+		line += fmt.Sprintf("\n%d bytes per frame", broadcastModeFrameSize(m))
+	}
+	line += fmt.Sprintf("\nThe receiving station must use the same mode (mercury -m %d).", m)
+	return line
+}
+
+// broadcastModeCharacter describes the speed/robustness trade in plain words.
+// Grouped by frame size, which is what actually drives it: a big frame carries
+// more per transmission but needs a better signal to be decoded at all.
+func broadcastModeCharacter(mode int) string {
+	switch fs := broadcastModeFrameSize(mode); {
+	case fs >= 1000:
+		return "fastest, needs a strong signal"
+	case fs >= 400:
+		return "fast, needs a good signal"
+	case fs >= 100:
+		return "moderate speed and robustness"
+	case fs >= 30:
+		return "slow, tolerates a poor signal"
+	default:
+		return "slowest, for the weakest signals"
+	}
+}
+
+var _ = storage.NewFileURI // keep the storage import if the dialog API changes

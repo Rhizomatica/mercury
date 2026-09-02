@@ -248,4 +248,25 @@ void mercury_bcast_tx_close(void *tx)
 
 int  mercury_bcast_mode_frame_size(int mode) { return bcast_file_mode_frame_size(mode); }
 int  mercury_bcast_mode_usable(int mode)     { return bcast_file_mode_usable(mode); }
+const char *mercury_bcast_mode_name(int mode) { return bcast_file_mode_name(mode); }
 long mercury_bcast_max_file_bytes(void)      { return (long)BCAST_FILE_MAX_BYTES; }
+
+int mercury_bcast_engine_mode(void)
+{
+    /* g_modem.mode is a FreeDV enum; map it back to the hermes index the
+     * broadcast protocol and hermes-broadcast both speak. */
+    static const int hermes_to_freedv[] = {
+        FREEDV_MODE_DATAC1, FREEDV_MODE_DATAC3, FREEDV_MODE_DATAC0,
+        FREEDV_MODE_DATAC4, FREEDV_MODE_DATAC13, FREEDV_MODE_DATAC14,
+        FREEDV_MODE_FSK_LDPC, FREEDV_MODE_DATAC15, FREEDV_MODE_DATAC16,
+        FREEDV_MODE_DATAC17, FREEDV_MODE_QAM16C2
+    };
+    int m = mercury_engine_modem_mode();
+    for (int i = 0; i < (int)(sizeof(hermes_to_freedv)/sizeof(hermes_to_freedv[0])); i++)
+        if (hermes_to_freedv[i] == m)
+            return i;
+    return -1;
+}
+
+int mercury_bcast_engine_bitrate(void)      { return mercury_engine_modem_bitrate(); }
+int mercury_bcast_engine_bandwidth_hz(void) { return mercury_engine_modem_bandwidth_hz(); }

@@ -169,4 +169,7 @@ int bcast_file_mode_frame_size(int mode);
 /** Whether a mode can carry broadcast at all (DATAC14's 3 bytes cannot). */
 int bcast_file_mode_usable(int mode);
 
+/** The mode's name as `mercury -l` reports it, or "" if out of range. */
+const char *bcast_file_mode_name(int mode);
+
 #endif /* BCAST_FILE_H_ */

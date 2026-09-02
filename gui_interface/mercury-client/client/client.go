@@ -130,6 +130,19 @@ func (c *Client) Disconnect() {
 	c.LogCh <- "Disconnected from modem."
 }
 
+// SendBroadcastFrame writes one already-framed modem frame to the broadcast
+// port.  SendBroadcast() is for text; a RaptorQ frame is binary and must not be
+// touched, so it gets its own path rather than a string round-trip.
+func (c *Client) SendBroadcastFrame(frame []byte) error {
+	c.mu.Lock()
+	mc := c.modem
+	c.mu.Unlock()
+	if mc == nil {
+		return fmt.Errorf("not connected to the broadcast port")
+	}
+	return mc.SendBroadcast(frame)
+}
+
 // IsConnected reports whether the TCP links to the modem are up.
 func (c *Client) IsConnected() bool {
 	c.mu.Lock()

@@ -170,6 +170,13 @@ int bcast_file_mode_frame_size(int mode)
     return (int)bcast_frame_size[mode];
 }
 
+const char *bcast_file_mode_name(int mode)
+{
+    if (mode < 0 || mode > BCAST_MODE_MAX)
+        return "";
+    return bcast_mode_name[mode];
+}
+
 int bcast_file_mode_usable(int mode)
 {
     int fs = bcast_file_mode_frame_size(mode);

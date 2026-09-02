@@ -111,7 +111,15 @@ void  mercury_bcast_tx_source(void *tx, long *file_bytes, int *blocks);
 void  mercury_bcast_tx_close(void *tx);
 int   mercury_bcast_mode_frame_size(int mode);
 int   mercury_bcast_mode_usable(int mode);
+const char *mercury_bcast_mode_name(int mode);
 long  mercury_bcast_max_file_bytes(void);
+
+/* The broadcast mode the engine is running, as a hermes mode index (0..10), or
+ * -1 if it is not one broadcast can use.  Fixed at startup by -m: there is no
+ * runtime mode switch, and both stations must be set to the same one. */
+int   mercury_bcast_engine_mode(void);
+int   mercury_bcast_engine_bitrate(void);
+int   mercury_bcast_engine_bandwidth_hz(void);
 
 #ifdef __cplusplus
 }

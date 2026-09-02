@@ -312,11 +312,12 @@ func (l *engineLink) Version() (version, gitHash string) {
 	cg := make([]byte, 64)
 	C.mercury_ui_get_version((*C.char)(unsafe.Pointer(&cv[0])), C.int(len(cv)),
 		(*C.char)(unsafe.Pointer(&cg[0])), C.int(len(cg)))
-	return cString(cv), cString(cg)
+	return goStringFromC(cv), goStringFromC(cg)
 }
 
 // cString converts a C buffer to a Go string, truncating at the first NUL.
-func cString(b []byte) string {
+// goStringFromC turns a NUL-terminated C buffer into a Go string.
+func goStringFromC(b []byte) string {
 	for i, c := range b {
 		if c == 0 {
 			return string(b[:i])
