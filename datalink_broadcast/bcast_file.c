@@ -45,10 +45,122 @@ struct bcast_file_tx
     int       finished;
 };
 
+/* basename() without <libgen.h>: that header's basename() may modify its
+ * argument, and the Windows build has no libgen at all. */
+static const char *bundle_basename(const char *path)
+{
+    const char *b = path;
+    for (const char *p = path; *p; p++)
+        if (*p == '/' || *p == '\\')
+            b = p + 1;
+    return b;
+}
+
 static void set_err(char *err, size_t errlen, const char *msg)
 {
     if (err && errlen)
         snprintf(err, errlen, "%s", msg);
+}
+
+uint8_t *bcast_bundle_build(const char *path, size_t *out_len,
+                            char *err, size_t errlen)
+{
+    FILE *fp = NULL;
+    uint8_t *bundle = NULL;
+    long fsz;
+
+    if (!path || !*path) { set_err(err, errlen, "no file given"); return NULL; }
+
+    const char *name = bundle_basename(path);
+    size_t namelen = strlen(name);
+    if (namelen == 0)                     { set_err(err, errlen, "file has no name"); return NULL; }
+    if (namelen > BCAST_BUNDLE_NAME_MAX)  { set_err(err, errlen, "file name is too long"); return NULL; }
+
+    fp = fopen(path, "rb");
+    if (!fp) { set_err(err, errlen, "cannot open file"); return NULL; }
+    if (fseek(fp, 0, SEEK_END) != 0) { fclose(fp); set_err(err, errlen, "cannot size file"); return NULL; }
+    fsz = ftell(fp);
+    rewind(fp);
+
+    if (fsz <= 0) { fclose(fp); set_err(err, errlen, "file is empty"); return NULL; }
+
+    size_t body   = namelen + 1 + (size_t)fsz;   /* what the size field counts */
+    size_t total  = 4 + body;
+
+    if (total > BCAST_FILE_MAX_BYTES)
+    {
+        char m[160];
+        snprintf(m, sizeof(m),
+                 "file plus its name comes to %zu bytes; the limit is %u",
+                 total, BCAST_FILE_MAX_BYTES);
+        fclose(fp);
+        set_err(err, errlen, m);
+        return NULL;
+    }
+
+    bundle = malloc(total);
+    if (!bundle) { fclose(fp); set_err(err, errlen, "out of memory"); return NULL; }
+
+    /* Explicit little-endian; see the note in bcast_file.h. */
+    uint32_t sz = (uint32_t)body;
+    bundle[0] = (uint8_t)(sz & 0xff);
+    bundle[1] = (uint8_t)((sz >> 8) & 0xff);
+    bundle[2] = (uint8_t)((sz >> 16) & 0xff);
+    bundle[3] = (uint8_t)((sz >> 24) & 0xff);
+
+    memcpy(bundle + 4, name, namelen);
+    bundle[4 + namelen] = '\n';
+
+    if (fread(bundle + 4 + namelen + 1, 1, (size_t)fsz, fp) != (size_t)fsz)
+    {
+        fclose(fp);
+        free(bundle);
+        set_err(err, errlen, "cannot read file");
+        return NULL;
+    }
+    fclose(fp);
+
+    if (out_len) *out_len = total;
+    return bundle;
+}
+
+int bcast_bundle_parse(const uint8_t *buf, size_t len,
+                       char *name, size_t namelen,
+                       const uint8_t **payload, size_t *payload_len)
+{
+    if (!buf || len < 6)   /* size field + at least one name byte + '\n' */
+        return -1;
+
+    uint32_t body = (uint32_t)buf[0] | ((uint32_t)buf[1] << 8) |
+                    ((uint32_t)buf[2] << 16) | ((uint32_t)buf[3] << 24);
+    if ((size_t)body + 4 != len)
+        return -1;               /* truncated or over-long: not our bundle */
+
+    /* The name runs to the first '\n'.  Bounded by the buffer, so a bundle
+     * with no terminator is rejected rather than read off the end. */
+    size_t n = 0;
+    while (4 + n < len && buf[4 + n] != '\n')
+        n++;
+    if (4 + n >= len || n == 0 || n > BCAST_BUNDLE_NAME_MAX)
+        return -1;
+
+    /* Refuse anything that is not a bare filename: a receiver must never be
+     * talked into writing outside its own directory. */
+    for (size_t i = 0; i < n; i++)
+        if (buf[4 + i] == '/' || buf[4 + i] == '\\' || buf[4 + i] == 0)
+            return -1;
+    if (buf[4] == '.' && (n == 1 || (n == 2 && buf[5] == '.')))
+        return -1;               /* "." and ".." */
+
+    if (name && namelen)
+    {
+        if (n + 1 > namelen) return -1;
+        memcpy(name, buf + 4, n);
+        name[n] = 0;
+    }
+    if (payload)     *payload = buf + 4 + n + 1;
+    if (payload_len) *payload_len = len - (4 + n + 1);
+    return 0;
 }
 
 int bcast_file_mode_frame_size(int mode)
@@ -72,8 +184,6 @@ bcast_file_tx_t *bcast_file_tx_open(const char *path, int mode, int cycles,
                                     int session_id, char *err, size_t errlen)
 {
     bcast_file_tx_t *tx = NULL;
-    FILE *fp = NULL;
-    long sz;
 
     if (!path || !*path) { set_err(err, errlen, "no file given"); return NULL; }
     if (cycles < 0)      { set_err(err, errlen, "cycles cannot be negative"); return NULL; }
@@ -93,41 +203,18 @@ bcast_file_tx_t *bcast_file_tx_open(const char *path, int mode, int cycles,
         return NULL;
     }
 
-    fp = fopen(path, "rb");
-    if (!fp) { set_err(err, errlen, "cannot open file"); return NULL; }
-    if (fseek(fp, 0, SEEK_END) != 0) { fclose(fp); set_err(err, errlen, "cannot size file"); return NULL; }
-    sz = ftell(fp);
-    rewind(fp);
-
-    if (sz <= 0)
-    {
-        fclose(fp);
-        set_err(err, errlen, "file is empty");
+    /* What goes over the air is the BUNDLE -- the file with its name -- not the
+     * bare file, so the receiver can write it back under the right name. */
+    size_t bundle_len = 0;
+    uint8_t *bundle = bcast_bundle_build(path, &bundle_len, err, errlen);
+    if (!bundle)
         return NULL;
-    }
-    if ((size_t)sz > BCAST_FILE_MAX_BYTES)
-    {
-        char m[128];
-        snprintf(m, sizeof(m), "file is %ld bytes; the limit is %u",
-                 sz, BCAST_FILE_MAX_BYTES);
-        fclose(fp);
-        set_err(err, errlen, m);
-        return NULL;
-    }
 
     tx = calloc(1, sizeof(*tx));
-    if (!tx) { fclose(fp); set_err(err, errlen, "out of memory"); return NULL; }
+    if (!tx) { free(bundle); set_err(err, errlen, "out of memory"); return NULL; }
 
-    tx->file_bytes = (size_t)sz;
-    tx->file = malloc(tx->file_bytes);
-    if (!tx->file || fread(tx->file, 1, tx->file_bytes, fp) != tx->file_bytes)
-    {
-        fclose(fp);
-        set_err(err, errlen, "cannot read file");
-        bcast_file_tx_close(tx);
-        return NULL;
-    }
-    fclose(fp);
+    tx->file       = bundle;
+    tx->file_bytes = bundle_len;
 
     tx->mode         = mode;
     tx->frame_size   = (uint32_t)bcast_file_mode_frame_size(mode);

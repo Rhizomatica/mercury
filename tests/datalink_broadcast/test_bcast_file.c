@@ -87,8 +87,16 @@ static void transfer_case(size_t nbytes, int mode, int loss_pct, unsigned seed)
     TEST_ASSERT_EQUAL_INT(bcast_file_mode_frame_size(mode), fs);
 
     uint8_t *frame = malloc((size_t)fs);
-    uint8_t *src = malloc(nbytes), *out = malloc(nbytes);
+    uint8_t *src = malloc(nbytes);
     FILE *f = fopen(TMP, "rb"); TEST_ASSERT_EQUAL_size_t(nbytes, fread(src, 1, nbytes, f)); fclose(f);
+
+    /* The transfer carries the bundle, which is longer than the file. */
+    size_t bundle_len = 0;
+    uint8_t *ref = bcast_bundle_build(TMP, &bundle_len, err, sizeof(err));
+    TEST_ASSERT_NOT_NULL_MESSAGE(ref, err);
+    free(ref);
+    size_t outsz = bundle_len;
+    uint8_t *out = malloc(outsz);
 
     nanorq *dec = NULL;
     struct ioctx *rio = NULL;
@@ -110,7 +118,7 @@ static void transfer_case(size_t nbytes, int mode, int loss_pct, unsigned seed)
         {
             dec = nanorq_decoder_new(rx_oti_common(frame), rx_oti_scheme(frame));
             TEST_ASSERT_NOT_NULL_MESSAGE(dec, "decoder rejected the frame's OTI");
-            TEST_ASSERT_EQUAL_size_t(nbytes, nanorq_transfer_length(dec));
+            TEST_ASSERT_EQUAL_size_t(outsz, nanorq_transfer_length(dec));
             rio = ioctx_from_file(outf, 0);
             TEST_ASSERT_NOT_NULL(rio);
         }
@@ -128,9 +136,19 @@ static void transfer_case(size_t nbytes, int mode, int loss_pct, unsigned seed)
     rio->destroy(rio);
     f = fopen(outf, "rb");
     TEST_ASSERT_NOT_NULL(f);
-    TEST_ASSERT_EQUAL_size_t(nbytes, fread(out, 1, nbytes, f));
+    TEST_ASSERT_EQUAL_size_t(outsz, fread(out, 1, outsz, f));
     fclose(f);
-    TEST_ASSERT_EQUAL_MEMORY_MESSAGE(src, out, nbytes, "recovered file differs");
+    /* What came back is the bundle, so unwrap it the way a receiver does and
+     * require BOTH the original name and the original bytes. */
+    char gotname[BCAST_BUNDLE_NAME_MAX + 1] = {0};
+    const uint8_t *payload = NULL;
+    size_t paylen = 0;
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0,
+        bcast_bundle_parse(out, (size_t)outsz, gotname, sizeof(gotname), &payload, &paylen),
+        "recovered data is not a valid bundle");
+    TEST_ASSERT_EQUAL_STRING(".mercury_bcast_test.bin", gotname);
+    TEST_ASSERT_EQUAL_size_t(nbytes, paylen);
+    TEST_ASSERT_EQUAL_MEMORY_MESSAGE(src, payload, nbytes, "recovered file differs");
 
     nanorq_free(dec);
     bcast_file_tx_close(tx);
@@ -158,7 +176,7 @@ void test_every_frame_is_self_describing(void)
 
     size_t bytes; int blocks;
     bcast_file_tx_source(tx, &bytes, &blocks);
-    TEST_ASSERT_EQUAL_size_t(8000, bytes);
+    TEST_ASSERT_TRUE(bytes > 8000);  /* the bundle, not the bare file */
 
     uint8_t session = 0;
     for (int i = 0; i < 3 * blocks + 2; i++)
@@ -169,7 +187,7 @@ void test_every_frame_is_self_describing(void)
         /* the OTI in THIS frame must describe the file on its own */
         nanorq *d = nanorq_decoder_new(rx_oti_common(frame), rx_oti_scheme(frame));
         TEST_ASSERT_NOT_NULL(d);
-        TEST_ASSERT_EQUAL_size_t(8000, nanorq_transfer_length(d));
+        TEST_ASSERT_TRUE(nanorq_transfer_length(d) > 8000); /* file + bundle header */
         nanorq_free(d);
 
         /* and the session id must be stable across the whole file */
@@ -251,9 +269,102 @@ void test_modes_too_small_for_broadcast_are_refused(void)
     remove(TMP);
 }
 
+/* ---- the bundle itself ---- */
+
+void test_bundle_round_trips_name_and_contents(void)
+{
+    char err[160] = {0};
+    write_file(TMP, 777, 21);
+
+    size_t len = 0;
+    uint8_t *b = bcast_bundle_build(TMP, &len, err, sizeof(err));
+    TEST_ASSERT_NOT_NULL_MESSAGE(b, err);
+
+    /* Layout is mercury-connector's: LE size, then "name\n", then contents. */
+    uint32_t body = (uint32_t)b[0] | ((uint32_t)b[1] << 8) |
+                    ((uint32_t)b[2] << 16) | ((uint32_t)b[3] << 24);
+    TEST_ASSERT_EQUAL_UINT32((uint32_t)(len - 4), body);
+
+    char name[BCAST_BUNDLE_NAME_MAX + 1] = {0};
+    const uint8_t *pay = NULL; size_t paylen = 0;
+    TEST_ASSERT_EQUAL_INT(0, bcast_bundle_parse(b, len, name, sizeof(name), &pay, &paylen));
+    TEST_ASSERT_EQUAL_STRING(".mercury_bcast_test.bin", name);
+    TEST_ASSERT_EQUAL_size_t(777, paylen);
+
+    uint8_t *src = malloc(777);
+    FILE *f = fopen(TMP, "rb"); TEST_ASSERT_EQUAL_size_t(777, fread(src, 1, 777, f)); fclose(f);
+    TEST_ASSERT_EQUAL_MEMORY(src, pay, 777);
+
+    free(src); free(b);
+    remove(TMP);
+}
+
+/* Only the basename travels, so a receiver cannot be steered out of its
+ * directory by the sender's path. */
+void test_bundle_sends_only_the_basename(void)
+{
+    char err[160] = {0};
+    write_file("/tmp/.mercury_bcast_test.bin", 32, 22);
+    size_t len = 0;
+    uint8_t *b = bcast_bundle_build("/tmp/.mercury_bcast_test.bin", &len, err, sizeof(err));
+    TEST_ASSERT_NOT_NULL_MESSAGE(b, err);
+    char name[BCAST_BUNDLE_NAME_MAX + 1] = {0};
+    TEST_ASSERT_EQUAL_INT(0, bcast_bundle_parse(b, len, name, sizeof(name), NULL, NULL));
+    TEST_ASSERT_EQUAL_STRING(".mercury_bcast_test.bin", name);
+    TEST_ASSERT_NULL(strchr(name, '/'));
+    free(b);
+    remove(TMP);
+}
+
+/* A bundle arriving off the air is untrusted input.  Malformed ones must be
+ * rejected, and a name that would escape the download directory must never be
+ * handed back to the caller. */
+void test_bundle_parse_rejects_malformed_and_hostile_input(void)
+{
+    char name[BCAST_BUNDLE_NAME_MAX + 1];
+    uint8_t buf[64];
+
+    TEST_ASSERT_EQUAL_INT(-1, bcast_bundle_parse(NULL, 32, name, sizeof(name), NULL, NULL));
+    TEST_ASSERT_EQUAL_INT(-1, bcast_bundle_parse(buf, 3, name, sizeof(name), NULL, NULL));
+
+    /* size field disagrees with the buffer */
+    memset(buf, 0, sizeof(buf));
+    buf[0] = 99; memcpy(buf + 4, "a\nxy", 4);
+    TEST_ASSERT_EQUAL_INT(-1, bcast_bundle_parse(buf, 8, name, sizeof(name), NULL, NULL));
+
+    /* no '\n' terminator anywhere */
+    memset(buf, 'A', sizeof(buf));
+    buf[0] = 12; buf[1] = buf[2] = buf[3] = 0;
+    TEST_ASSERT_EQUAL_INT(-1, bcast_bundle_parse(buf, 16, name, sizeof(name), NULL, NULL));
+
+    /* empty name */
+    memset(buf, 0, sizeof(buf));
+    buf[0] = 5; memcpy(buf + 4, "\nabcd", 5);
+    TEST_ASSERT_EQUAL_INT(-1, bcast_bundle_parse(buf, 9, name, sizeof(name), NULL, NULL));
+
+    /* path traversal, in both separator flavours, and the dot names */
+    const char *hostile[] = { "../etc/passwd", "/etc/passwd", "..\\windows", "..", "." };
+    for (unsigned i = 0; i < sizeof(hostile)/sizeof(hostile[0]); i++)
+    {
+        size_t n = strlen(hostile[i]);
+        size_t body = n + 1 + 2;
+        memset(buf, 0, sizeof(buf));
+        buf[0] = (uint8_t)(body & 0xff); buf[1] = (uint8_t)(body >> 8);
+        memcpy(buf + 4, hostile[i], n);
+        buf[4 + n] = '\n';
+        buf[4 + n + 1] = 'h'; buf[4 + n + 2] = 'i';
+        TEST_ASSERT_EQUAL_INT_MESSAGE(-1,
+            bcast_bundle_parse(buf, 4 + body, name, sizeof(name), NULL, NULL),
+            hostile[i]);
+    }
+}
+
 int main(void)
 {
     UNITY_BEGIN();
+    RUN_TEST(test_bundle_round_trips_name_and_contents);
+    RUN_TEST(test_bundle_sends_only_the_basename);
+    RUN_TEST(test_bundle_parse_rejects_malformed_and_hostile_input);
     RUN_TEST(test_clean_channel_recovers_the_file);
     RUN_TEST(test_lossy_channel_recovers_the_file);
     RUN_TEST(test_small_robust_mode_recovers_the_file);

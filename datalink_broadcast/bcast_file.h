@@ -35,12 +35,59 @@
 /* Longest frame any supported mode carries (QAM16C2 = 1213). */
 #define BCAST_FILE_MAX_FRAME 1213
 
+/* ---- The bundle ------------------------------------------------------------
+ *
+ * RaptorQ moves an opaque blob, so the filename has to travel inside it.  The
+ * layout is mercury-connector's (spool.c), which already solved this:
+ *
+ *     [0..3]   uint32 total = strlen(basename) + 1 + file bytes
+ *     [4..]    basename, terminated by '
+' rather than NUL
+ *     [...]    file contents
+ *
+ * Only the BASENAME is sent -- never a path -- so a hostile or careless sender
+ * cannot make a receiver write outside its download directory.
+ *
+ * The size field is written explicitly little-endian.  mercury-connector writes
+ * a native uint32, which is the same bytes on every machine this runs on today
+ * and wrong on a big-endian one; being explicit costs nothing and removes the
+ * trap.
+ *
+ * hermes-broadcast's broadcast_daemon has no filename mechanism at all -- it
+ * names what it receives broadcast_<timestamp>.bin -- so a daemon receiving
+ * this gets the bundle verbatim under a timestamp name, and a bundle-aware
+ * receiver recovers the real name.  Nothing breaks either way.
+ */
+
+/** Longest basename we will transmit or accept. */
+#define BCAST_BUNDLE_NAME_MAX 255
+
+/** Bytes of overhead a bundle adds to the file: the size field and "name
+". */
+#define BCAST_BUNDLE_OVERHEAD(namelen) (4u + (unsigned)(namelen) + 1u)
+
+/**
+ * Build the bundle for a file.  Caller frees the returned buffer.
+ * @return the buffer, or NULL with a reason in @p err.
+ */
+uint8_t *bcast_bundle_build(const char *path, size_t *out_len,
+                            char *err, size_t errlen);
+
+/**
+ * Parse a bundle.  @p payload points INTO @p buf; nothing is copied.
+ * @return 0 on success, -1 if the bundle is malformed.
+ */
+int bcast_bundle_parse(const uint8_t *buf, size_t len,
+                       char *name, size_t namelen,
+                       const uint8_t **payload, size_t *payload_len);
+
 typedef struct bcast_file_tx bcast_file_tx_t;
 
 /**
  * Open a file for broadcast.
  *
- * @param path    file to transmit; must be <= BCAST_FILE_MAX_BYTES and non-empty
+ * @param path    file to transmit; the BUNDLE (file + name + header) must be
+ *                <= BCAST_FILE_MAX_BYTES, and the file must be non-empty
  * @param mode    Mercury mode index 0..10 (as `mercury -l` reports)
  * @param cycles  number of carousel passes, or 0 to repeat until stopped
  * @param session_id  1..31 identifying this file, or 0 to pick one at random.
