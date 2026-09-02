@@ -415,9 +415,99 @@ void test_periodic_loss_does_not_starve_a_block(void)
     remove(TMP); remove(outf);
 }
 
+/* ---- TX straight into RX ---- */
+
+/* The pair must work together, joining mid-carousel and surviving loss, and the
+ * receiver must write the file under the name the sender gave it. */
+void test_tx_and_rx_complete_a_transfer(void)
+{
+    char err[192] = {0};
+    const size_t N = 5000;
+    write_file(TMP, N, 41);
+
+    char dir[] = "/tmp/.mercury_bcast_rxdirXXXXXX";
+    TEST_ASSERT_NOT_NULL(mkdtemp(dir));
+
+    bcast_file_tx_t *tx = bcast_file_tx_open(TMP, 0, 0, 0, err, sizeof(err));
+    TEST_ASSERT_NOT_NULL_MESSAGE(tx, err);
+    bcast_file_rx_t *rx = bcast_file_rx_open(0, dir, err, sizeof(err));
+    TEST_ASSERT_NOT_NULL_MESSAGE(rx, err);
+
+    int fs = bcast_file_tx_frame_size(tx);
+    uint8_t *frame = malloc((size_t)fs);
+    srand(4242);
+
+    /* Skip the first few frames outright: a receiver tunes in mid-carousel. */
+    for (int i = 0; i < 3; i++)
+        TEST_ASSERT_EQUAL_INT(fs, bcast_file_tx_next(tx, frame, (size_t)fs));
+
+    int done = 0;
+    for (int i = 0; i < 5000 && !done; i++)
+    {
+        TEST_ASSERT_EQUAL_INT(fs, bcast_file_tx_next(tx, frame, (size_t)fs));
+        if (rand() % 100 < 20) continue;                 /* 20% loss */
+        switch (bcast_file_rx_frame(rx, frame, (size_t)fs))
+        {
+        case BCAST_RX_COMPLETE: done = 1; break;
+        case BCAST_RX_ERROR:    TEST_FAIL_MESSAGE(bcast_file_rx_error(rx)); break;
+        default: break;
+        }
+    }
+    TEST_ASSERT_TRUE_MESSAGE(done, "receiver never completed the file");
+    TEST_ASSERT_EQUAL_STRING(".mercury_bcast_test.bin", bcast_file_rx_last_name(rx));
+
+    /* contents must match the original exactly */
+    uint8_t *a = malloc(N), *b = malloc(N);
+    FILE *f = fopen(TMP, "rb"); TEST_ASSERT_EQUAL_size_t(N, fread(a, 1, N, f)); fclose(f);
+    f = fopen(bcast_file_rx_last_path(rx), "rb");
+    TEST_ASSERT_NOT_NULL(f);
+    TEST_ASSERT_EQUAL_size_t(N, fread(b, 1, N, f));
+    fclose(f);
+    TEST_ASSERT_EQUAL_MEMORY(a, b, N);
+
+    /* The sender keeps going; that must not restart the same file. */
+    for (int i = 0; i < 20; i++)
+    {
+        TEST_ASSERT_EQUAL_INT(fs, bcast_file_tx_next(tx, frame, (size_t)fs));
+        TEST_ASSERT_EQUAL_INT(BCAST_RX_IGNORED, bcast_file_rx_frame(rx, frame, (size_t)fs));
+    }
+
+    free(a); free(b); free(frame);
+    bcast_file_tx_close(tx);
+    bcast_file_rx_close(rx);
+    remove(TMP);
+}
+
+/* Traffic from other users of the broadcast plane -- chat, a different mode --
+ * must be passed over, not mistaken for corruption. */
+void test_rx_ignores_frames_that_are_not_ours(void)
+{
+    char err[192] = {0};
+    char dir[] = "/tmp/.mercury_bcast_rxdir2XXXXXX";
+    TEST_ASSERT_NOT_NULL(mkdtemp(dir));
+    bcast_file_rx_t *rx = bcast_file_rx_open(0, dir, err, sizeof(err));
+    TEST_ASSERT_NOT_NULL_MESSAGE(rx, err);
+
+    uint8_t buf[510];
+    memset(buf, 0, sizeof(buf));
+
+    /* wrong length (a chat frame) */
+    TEST_ASSERT_EQUAL_INT(BCAST_RX_IGNORED, bcast_file_rx_frame(rx, buf, 40));
+    /* right length, wrong packet type */
+    buf[0] = (uint8_t)(0x01 << BCAST_PACKET_TYPE_SHIFT) | 3;
+    TEST_ASSERT_EQUAL_INT(BCAST_RX_IGNORED, bcast_file_rx_frame(rx, buf, sizeof(buf)));
+    /* right type, session 0 is "no session" */
+    buf[0] = (uint8_t)(BCAST_PACKET_RQ_CONFIG << BCAST_PACKET_TYPE_SHIFT);
+    TEST_ASSERT_EQUAL_INT(BCAST_RX_IGNORED, bcast_file_rx_frame(rx, buf, sizeof(buf)));
+
+    bcast_file_rx_close(rx);
+}
+
 int main(void)
 {
     UNITY_BEGIN();
+    RUN_TEST(test_tx_and_rx_complete_a_transfer);
+    RUN_TEST(test_rx_ignores_frames_that_are_not_ours);
     RUN_TEST(test_periodic_loss_does_not_starve_a_block);
     RUN_TEST(test_bundle_round_trips_name_and_contents);
     RUN_TEST(test_bundle_sends_only_the_basename);

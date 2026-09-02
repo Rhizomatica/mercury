@@ -361,3 +361,214 @@ void bcast_file_tx_close(bcast_file_tx_t *tx)
     free(tx->file);
     free(tx);
 }
+
+/* ======================================================================
+ * Receiving
+ * ====================================================================== */
+
+struct bcast_file_rx
+{
+    int       mode;
+    uint32_t  frame_size;
+    size_t    symbol_size;
+    char      dir[512];
+
+    nanorq       *rq;
+    struct ioctx *io;
+    char      tmp_path[600];      /* decode target, renamed once complete */
+    int       session;            /* -1 = no session yet */
+    int       last_done_session;  /* ignore a repeat of what we just finished */
+    uint64_t  symbols;
+    size_t    expect_bytes;
+
+    char      last_path[600];
+    char      last_name[BCAST_BUNDLE_NAME_MAX + 1];
+    char      err[192];
+};
+
+static void rx_reset(bcast_file_rx_t *rx)
+{
+    if (rx->rq) { nanorq_free(rx->rq); rx->rq = NULL; }
+    if (rx->io) { rx->io->destroy(rx->io); rx->io = NULL; }
+    rx->session = -1;
+    rx->symbols = 0;
+    rx->expect_bytes = 0;
+    if (rx->tmp_path[0]) remove(rx->tmp_path);
+}
+
+bcast_file_rx_t *bcast_file_rx_open(int mode, const char *dir,
+                                    char *err, size_t errlen)
+{
+    if (!bcast_file_mode_usable(mode))
+    {
+        set_err(err, errlen, "mode cannot carry broadcast");
+        return NULL;
+    }
+    if (!dir || !*dir) { set_err(err, errlen, "no directory given"); return NULL; }
+
+    bcast_file_rx_t *rx = calloc(1, sizeof(*rx));
+    if (!rx) { set_err(err, errlen, "out of memory"); return NULL; }
+
+    rx->mode        = mode;
+    rx->frame_size  = (uint32_t)bcast_file_mode_frame_size(mode);
+    rx->symbol_size = rx->frame_size - BCAST_FRAME_OVERHEAD;
+    rx->session     = -1;
+    rx->last_done_session = -1;
+    snprintf(rx->dir, sizeof(rx->dir), "%s", dir);
+    snprintf(rx->tmp_path, sizeof(rx->tmp_path), "%s/.bcast_partial.tmp", dir);
+    return rx;
+}
+
+/* Reassemble the standard OTI words from the reduced bytes every frame carries.
+ * Mirrors hermes-broadcast's daemon so the two interoperate. */
+static uint64_t rx_common(const uint8_t *f)
+{
+    uint64_t c = 0;
+    c |= (uint64_t)(f[1] & 0xff) << 24;
+    c |= (uint64_t)(f[2] & 0xff) << 32;
+    c |= (uint64_t)(f[3] & 0xff) << 40;
+    c |= (uint64_t)(f[4] & 0xff);
+    c |= (uint64_t)(f[5] & 0xff) << 8;
+    return c;
+}
+static uint32_t rx_scheme(const uint8_t *f)
+{
+    uint32_t s = 0;
+    s |= (uint32_t)(f[6] & 0xff) << 24;
+    s |= (uint32_t)(f[7] & 0xff) << 8;
+    s |= (uint32_t)(f[8] & 0xff) << 16;
+    s |= 1;                       /* Al, not transmitted */
+    return s;
+}
+
+bcast_rx_result_t bcast_file_rx_frame(bcast_file_rx_t *rx,
+                                      const uint8_t *frame, size_t len)
+{
+    if (!rx || !frame) return BCAST_RX_ERROR;
+
+    /* Anything that is not exactly one of our frames is somebody else's
+     * traffic on the broadcast plane -- chat, KISS from another client -- and
+     * must be passed over silently rather than treated as corruption. */
+    if (len != rx->frame_size) return BCAST_RX_IGNORED;
+    if (((frame[0] >> BCAST_PACKET_TYPE_SHIFT) & BCAST_PACKET_TYPE_MASK)
+            != BCAST_PACKET_RQ_CONFIG)
+        return BCAST_RX_IGNORED;
+
+    int session = frame[0] & BCAST_FRAME_EXT_MASK;
+    if (session == 0) return BCAST_RX_IGNORED;
+
+    /* The sender keeps transmitting after we have finished; do not start the
+     * same file over again. */
+    if (session == rx->last_done_session && rx->session < 0)
+        return BCAST_RX_IGNORED;
+
+    if (rx->session >= 0 && session != rx->session)
+        rx_reset(rx);             /* a different file began */
+
+    if (rx->session < 0)
+    {
+        uint64_t common = rx_common(frame);
+        uint32_t scheme = rx_scheme(frame);
+        rx->rq = nanorq_decoder_new(common, scheme);
+        if (!rx->rq)
+        {
+            snprintf(rx->err, sizeof(rx->err), "frame carried an unusable OTI");
+            return BCAST_RX_ERROR;
+        }
+        rx->expect_bytes = nanorq_transfer_length(rx->rq);
+        if (rx->expect_bytes == 0 || rx->expect_bytes > BCAST_FILE_MAX_BYTES)
+        {
+            snprintf(rx->err, sizeof(rx->err), "announced size %zu is out of range",
+                     rx->expect_bytes);
+            rx_reset(rx);
+            return BCAST_RX_ERROR;
+        }
+        rx->io = ioctx_from_file(rx->tmp_path, 0);
+        if (!rx->io)
+        {
+            snprintf(rx->err, sizeof(rx->err), "cannot write into the download directory");
+            rx_reset(rx);
+            return BCAST_RX_ERROR;
+        }
+        rx->session = session;
+        rx->symbols = 0;
+    }
+
+    const uint8_t *tagp = frame + 1 + BCAST_CONFIG_BODY_SIZE;
+    uint32_t tag = ((uint32_t)tagp[0] << 24) | tagp[1] | ((uint32_t)tagp[2] << 8);
+    nanorq_decoder_add_symbol(rx->rq, (void *)(frame + BCAST_FRAME_OVERHEAD),
+                              tag, rx->io);
+    rx->symbols++;
+
+    int blocks = nanorq_blocks(rx->rq);
+    for (int b = 0; b < blocks; b++)
+        if (!nanorq_repair_block(rx->rq, rx->io, b))
+            return BCAST_RX_PROGRESS;
+
+    /* Complete: flush, read the bundle back, and unwrap it. */
+    rx->io->destroy(rx->io);
+    rx->io = NULL;
+
+    uint8_t *buf = malloc(rx->expect_bytes);
+    FILE *fp = buf ? fopen(rx->tmp_path, "rb") : NULL;
+    size_t got = fp ? fread(buf, 1, rx->expect_bytes, fp) : 0;
+    if (fp) fclose(fp);
+
+    bcast_rx_result_t out = BCAST_RX_ERROR;
+    char name[BCAST_BUNDLE_NAME_MAX + 1] = {0};
+    const uint8_t *payload = NULL;
+    size_t payload_len = 0;
+
+    if (got != rx->expect_bytes)
+        snprintf(rx->err, sizeof(rx->err), "decoded file could not be read back");
+    else if (bcast_bundle_parse(buf, got, name, sizeof(name), &payload, &payload_len) != 0)
+        snprintf(rx->err, sizeof(rx->err), "decoded data is not a valid bundle");
+    else
+    {
+        char path[600];
+        snprintf(path, sizeof(path), "%s/%s", rx->dir, name);
+        FILE *of = fopen(path, "wb");
+        if (!of)
+            snprintf(rx->err, sizeof(rx->err), "cannot create the output file");
+        else
+        {
+            size_t w = fwrite(payload, 1, payload_len, of);
+            fclose(of);
+            if (w != payload_len)
+                snprintf(rx->err, sizeof(rx->err), "short write to the output file");
+            else
+            {
+                snprintf(rx->last_path, sizeof(rx->last_path), "%s", path);
+                snprintf(rx->last_name, sizeof(rx->last_name), "%s", name);
+                out = BCAST_RX_COMPLETE;
+            }
+        }
+    }
+
+    free(buf);
+    rx->last_done_session = rx->session;
+    rx_reset(rx);
+    return out;
+}
+
+const char *bcast_file_rx_last_path(const bcast_file_rx_t *rx)
+{ return rx ? rx->last_path : ""; }
+const char *bcast_file_rx_last_name(const bcast_file_rx_t *rx)
+{ return rx ? rx->last_name : ""; }
+const char *bcast_file_rx_error(const bcast_file_rx_t *rx)
+{ return rx ? rx->err : ""; }
+
+void bcast_file_rx_stats(const bcast_file_rx_t *rx, uint64_t *symbols,
+                         size_t *expect_bytes)
+{
+    if (!rx) return;
+    if (symbols)      *symbols      = rx->symbols;
+    if (expect_bytes) *expect_bytes = rx->expect_bytes;
+}
+
+void bcast_file_rx_close(bcast_file_rx_t *rx)
+{
+    if (!rx) return;
+    rx_reset(rx);
+    free(rx);
+}

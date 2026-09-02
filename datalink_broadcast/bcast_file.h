@@ -123,6 +123,46 @@ void bcast_file_tx_source(const bcast_file_tx_t *tx, size_t *file_bytes, int *bl
 
 void bcast_file_tx_close(bcast_file_tx_t *tx);
 
+/* ---- Receiving --------------------------------------------------------------
+ *
+ * Feed every broadcast frame in; the receiver picks out the ones it can use.
+ * It learns the transfer parameters from the first usable frame -- every frame
+ * carries them -- so it can join a carousel already in progress.
+ *
+ * A new session id means a different file: the receiver restarts rather than
+ * mixing symbols from two files into one decode, which would never converge. */
+
+typedef struct bcast_file_rx bcast_file_rx_t;
+
+/**
+ * @param mode  Mercury mode index; frames of any other size are ignored.
+ * @param dir   directory received files are written into.
+ */
+bcast_file_rx_t *bcast_file_rx_open(int mode, const char *dir,
+                                    char *err, size_t errlen);
+
+/** Result of feeding one frame. */
+typedef enum {
+    BCAST_RX_IGNORED = 0,  /* not for us (wrong size, wrong type)      */
+    BCAST_RX_PROGRESS,     /* accepted, still incomplete               */
+    BCAST_RX_COMPLETE,     /* file finished and written                */
+    BCAST_RX_ERROR         /* malformed beyond recovery; see the error */
+} bcast_rx_result_t;
+
+bcast_rx_result_t bcast_file_rx_frame(bcast_file_rx_t *rx,
+                                      const uint8_t *frame, size_t len);
+
+/** Path of the last completed file, or "" if none yet. */
+const char *bcast_file_rx_last_path(const bcast_file_rx_t *rx);
+/** Name the sender gave the last completed file. */
+const char *bcast_file_rx_last_name(const bcast_file_rx_t *rx);
+/** Symbols accepted into the current decode, and the total the file needs. */
+void bcast_file_rx_stats(const bcast_file_rx_t *rx, uint64_t *symbols,
+                         size_t *expect_bytes);
+const char *bcast_file_rx_error(const bcast_file_rx_t *rx);
+
+void bcast_file_rx_close(bcast_file_rx_t *rx);
+
 /** Payload bytes per modem frame for a mode, or 0 if the mode is out of range. */
 int bcast_file_mode_frame_size(int mode);
 

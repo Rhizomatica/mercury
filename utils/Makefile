@@ -8,7 +8,7 @@ ifeq ($(OS),Windows_NT)
 LDFLAGS += -lws2_32
 endif
 
-OUT = broadcast_test broadcast_diag_tx broadcast_diag_rx watterson_test acquire_vs_decode
+OUT = bcast_file_tool broadcast_test broadcast_diag_tx broadcast_diag_rx watterson_test acquire_vs_decode
 
 # CPU-cost instruments.  Linux/macOS only: they time with
 # clock_gettime(CLOCK_PROCESS_CPUTIME_ID), which mingw-w64 does not provide
@@ -56,3 +56,10 @@ rxcost_bench: rxcost_bench.c
 	$(CC) $(CFLAGS) -o $@ $^ ../modem/freedv/libfreedvdata.a $(LDFLAGS) -lm
 
 .PHONY: all clean run
+
+# Broadcast a file to Mercury, or receive one, over the broadcast TCP/KISS port.
+BCAST_RQ_SRC = $(wildcard ../datalink_broadcast/raptorq/lib/*.c) \
+               $(wildcard ../datalink_broadcast/raptorq/deps/obl/*.c)
+bcast_file_tool: bcast_file_tool.c ../datalink_broadcast/bcast_file.c $(BCAST_RQ_SRC)
+	$(CC) $(CFLAGS) -I../datalink_broadcast -I../datalink_broadcast/raptorq/include \
+	      -I../datalink_broadcast/raptorq/deps -o $@ $^ $(LDFLAGS) -lm
