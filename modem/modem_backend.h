@@ -54,6 +54,10 @@ struct modem_backend {
     int   (*n_max_rx_samples)(void *ctx);    /* RX demod buffer sizing */
     int   (*n_nom_samples)(void *ctx);       /* nominal samples (settle time) */
     int   (*sample_rate)(void *ctx);         /* Hz (8000) */
+    /* Occupied bandwidth in Hz, for the UI to report.  OPTIONAL: leave NULL
+     * when the backend cannot answer honestly -- the caller then reports no
+     * bandwidth rather than a number nobody measured. */
+    int   (*bandwidth_hz)(void *ctx);
     int   (*get_mode)(void *ctx);            /* the mode int */
     int   (*frames_per_burst)(void *ctx);
 

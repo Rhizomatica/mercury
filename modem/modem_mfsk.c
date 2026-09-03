@@ -248,6 +248,17 @@ static int mfsk_be_n_max_rx_samples(void *ctx)
 }
 static int mfsk_be_n_nom_samples(void *ctx) { return mfsk_be_n_tx_samples(ctx); }
 static int mfsk_be_sample_rate(void *ctx)   { (void)ctx; return (int)MFSK_FS; }
+/* Occupied bandwidth: the modulator lights nStreams*M contiguous OFDM bins
+ * (mfsk_init), spaced MFSK_FS/MFSK_NFFT = 31.25 Hz apart.  Same convention the
+ * freedv backend reports (lit carriers x subcarrier spacing), so the two
+ * numbers the UI shows for the two backends mean the same thing. */
+static int mfsk_be_bandwidth_hz(void *ctx)
+{
+    const mfsk_t *m = &((mfsk_modem_t *)ctx)->m;
+    double spacing = MFSK_FS / (double)MFSK_NFFT;
+    return (int)((double)(m->nStreams * m->M) * spacing + 0.5);
+}
+
 static int mfsk_be_get_mode(void *ctx)       { return ((mfsk_modem_t *)ctx)->mode; }
 static int mfsk_be_frames_per_burst(void *ctx) { (void)ctx; return 1; }
 
@@ -819,6 +830,7 @@ const modem_backend_t modem_backend_mfsk = {
     .n_max_rx_samples = mfsk_be_n_max_rx_samples,
     .n_nom_samples    = mfsk_be_n_nom_samples,
     .sample_rate      = mfsk_be_sample_rate,
+    .bandwidth_hz     = mfsk_be_bandwidth_hz,
     .get_mode         = mfsk_be_get_mode,
     .frames_per_burst = mfsk_be_frames_per_burst,
     .preamble_tx      = mfsk_be_preamble_tx,

@@ -13,6 +13,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <math.h>
 
 static const modem_backend_t *be;
 static void *ctx;
@@ -507,6 +508,83 @@ void test_mfsk_modem_decodes_with_dial_offset(void)
     }
 }
 
+/* The bandwidth the backend reports is what the UI shows the operator, so it
+ * has to describe the signal that actually goes on the air -- not just restate
+ * the constant it was computed from.  Transmit a data burst, measure where its
+ * energy really sits, and require the reported figure to match.
+ *
+ * The spectrum must be averaged over the WHOLE burst: MFSK lights one tone of
+ * the 32 per symbol, so any single short window sees only the handful of tones
+ * that symbol happened to use (a 4096-sample window spans 12.8 symbols and
+ * measures ~690 Hz).  Only across the full burst does the modulation visit the
+ * whole grid it occupies. */
+void test_mfsk_modem_reported_bandwidth_matches_emitted_spectrum(void)
+{
+    TEST_ASSERT_NOT_NULL_MESSAGE(be->bandwidth_hz,
+        "MFSK backend reports no bandwidth: the UI would show nothing");
+    int reported = be->bandwidth_hz(ctx);
+
+    int bytes = be->bits_per_frame(ctx) / 8;
+    uint8_t *frame = malloc(bytes);
+    for (int i = 0; i < bytes - 2; i++) frame[i] = (uint8_t)(i * 29 + 3);
+    uint16_t crc = freedv_gen_crc16(frame, bytes - 2);
+    frame[bytes - 2] = crc >> 8; frame[bytes - 1] = crc & 0xff;
+
+    int16_t *dat = calloc(be->n_tx_samples(ctx) + 40000, 2);
+    int nd = be->rawdata_tx(ctx, dat, frame);
+    TEST_ASSERT_TRUE(nd > 0);
+
+    /* Welch: 512-point windows (15.6 Hz/bin, resolving the 31.25 Hz grid),
+     * hopped by half a window across the entire burst and averaged. */
+    const int N = 512, hop = N / 2, fs = be->sample_rate(ctx);
+    TEST_ASSERT_TRUE(nd >= N);
+    double *psd = calloc(N / 2, sizeof(double));
+    int windows = 0;
+    for (int off = 0; off + N <= nd; off += hop, windows++)
+        for (int k = 0; k < N / 2; k++)
+        {
+            double re = 0, im = 0;
+            for (int n = 0; n < N; n++)
+            {
+                double w = 0.5 - 0.5 * cos(2.0 * M_PI * n / (N - 1));
+                double a = 2.0 * M_PI * k * n / N;
+                re += w * dat[off + n] * cos(a);
+                im -= w * dat[off + n] * sin(a);
+            }
+            psd[k] += re * re + im * im;
+        }
+    TEST_ASSERT_TRUE_MESSAGE(windows > 32, "burst too short to average a spectrum");
+
+    double total = 0;
+    for (int k = 0; k < N / 2; k++) total += psd[k];
+    TEST_ASSERT_TRUE(total > 0);
+
+    /* Trim 0.5% of the energy off each end: the occupied band. */
+    double acc = 0; int lo = 0, hi = N / 2 - 1;
+    for (int k = 0; k < N / 2; k++) { acc += psd[k]; if (acc >= 0.005 * total) { lo = k; break; } }
+    acc = 0;
+    for (int k = N / 2 - 1; k >= 0; k--) { acc += psd[k]; if (acc >= 0.005 * total) { hi = k; break; } }
+
+    double bin_hz    = (double)fs / N;
+    double occupied  = (hi - lo + 1) * bin_hz;
+    double centre_hz = (hi + lo) / 2.0 * bin_hz;
+
+    char msg[192];
+    snprintf(msg, sizeof msg,
+             "reported %d Hz but the burst occupies %.0f Hz (%.0f-%.0f Hz, centre %.0f)",
+             reported, occupied, lo * bin_hz, hi * bin_hz, centre_hz);
+    /* 15%: the reported figure counts lit subcarriers x spacing, while the
+     * measurement also catches each subcarrier's own skirt. */
+    TEST_ASSERT_TRUE_MESSAGE(fabs(occupied - reported) <= 0.15 * reported, msg);
+
+    /* And it has to fit where an SSB radio can pass it. */
+    TEST_ASSERT_TRUE_MESSAGE(reported > 0 && reported <= 2400,
+        "MFSK occupies more than an SSB passband");
+    TEST_ASSERT_TRUE_MESSAGE(fabs(centre_hz - 2000.0) <= 150.0, msg);
+
+    free(psd); free(dat); free(frame);
+}
+
 void test_mfsk_modem_tx_does_not_clip(void)
 {
     int bytes = be->bits_per_frame(ctx) / 8;
@@ -559,6 +637,7 @@ int main(void)
 {
     UNITY_BEGIN();
     RUN_TEST(test_mfsk_modem_roundtrip);
+    RUN_TEST(test_mfsk_modem_reported_bandwidth_matches_emitted_spectrum);
     RUN_TEST(test_mfsk_modem_preamble_clipped_recovers_via_postamble);
     RUN_TEST(test_mfsk_modem_decodes_with_short_preroll);
     RUN_TEST(test_mfsk_modem_decodes_after_long_preroll);
