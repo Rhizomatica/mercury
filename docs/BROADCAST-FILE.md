@@ -110,6 +110,9 @@ mercury -m <index>          # see `mercury -l` for the list; default is 1 (DATAC
 | 10| QAM16C2 | 1213 B | 3130 | 2062 Hz | |
 
 All figures measured from the modems themselves, not quoted from a datasheet.
+The **Benchmarks** section below gives each mode's measured SNR floor and how
+long a 5 kB file actually takes on it.
+
 Bigger frames carry more per transmission but need a better signal to decode at
 all. The UI reports the running mode, its bit rate and its bandwidth, computed
 from the modem itself rather than this table.
@@ -160,7 +163,8 @@ bcast_file_tool recv <dir>  [-m mode] [-i ip] [-p port]
 ## Testing
 
 `utils/bcast_ota_test.sh <mode> <bytes> [No]` runs a whole transfer between two
-real Mercury modems with `ch` standing in for the propagation path:
+real Mercury modems with `ch` standing in for the propagation path. It is what
+produced the benchmarks below:
 
 ```
 $ utils/bcast_ota_test.sh 9 1000
@@ -168,24 +172,60 @@ mode=9  file=1000 B  air=ch clean (--No -100)
   RESULT: recovered byte-identical as "report.bin" in 2s
 ```
 
-Measured on that harness, 1 kB file, one variable at a time
-(`SNR3k = -No - 14.82`; the harness's noise is AWGN, not fading):
+## Benchmarks
 
-| SNR3k | DATAC3 (mode 1, default) | DATAC17 (mode 9) |
-|------:|--------------------------|------------------|
-| 15.2 dB | 32 s | 2 s |
-| 10.2 dB | 32 s | 2 s |
-|  7.2 dB | — | 2 s |
-|  5.2 dB | 32 s | fails |
-|  2.2 dB | 32 s | — |
-|  0.2 dB | 32 s | — |
-| -2.8 dB | fails | — |
-| -4.8 dB | fails | — |
+A 5 kB file, transmitted between two real Mercury modems with `ch` standing in
+for the propagation path. Each mode was walked down in SNR until it stopped
+decoding; `SNR3k = -No - 14.82`, and the harness's noise is **AWGN, not
+fading** — a real HF path will be worse.
 
-DATAC3 carries a 1 kB file down to about **0 dB SNR3k** and takes the same 32 s
-throughout: below the cliff it fails outright rather than slowing down, which is
-what a fountain code over a hard-decision modem does — a frame either decodes or
-it does not. DATAC17 is 16x faster but gives out between 7 and 5 dB.
+### What each mode costs and buys
+
+| mode | | frame | 5 kB in | goodput | works down to | fails at |
+|------|--:|------:|--------:|--------:|--------------:|---------:|
+| QAM16C2 | 10 | 1213 B | **17 s** | 2353 bps | +17.2 dB | +15.2 dB |
+| DATAC17 | 9 | 1180 B | 31 s | 1290 bps | +7.2 dB | +6.2 dB |
+| DATAC1 | 0 | 510 B | 50 s | 800 bps | +5.2 dB | +3.2 dB |
+| DATAC3 | 1 | 126 B | 167 s | 240 bps | +0.2 dB | −1.8 dB |
+| DATAC4 | 3 | 54 B | 695 s | 58 bps | **−6.8 dB** | −7.8 dB |
+
+The span is the whole point: **QAM16C2 moves the file 41× faster than DATAC4,
+and DATAC4 works 24 dB further down.** Pick for the path you have, not the one
+you want — and remember both stations must be set to the same mode by hand.
+
+### Every point measured
+
+```
+QAM16C2  +20.2 ok 17s    +17.2 ok 17s    +15.2 FAIL     +12.2 FAIL
+DATAC17  +20.2 ok 31s    +15.2 ok 31s    +10.2 ok 31s    +7.2 ok 31s
+          +6.2 FAIL       +5.2 FAIL       +2.2 FAIL
+DATAC1   +15.2 ok 50s    +10.2 ok 50s     +5.2 ok 50s    +3.2 FAIL
+          +2.2 FAIL       +0.2 FAIL
+DATAC3   +10.2 ok 167s    +5.2 ok 167s    +2.2 ok 167s   +0.2 ok 167s
+          -1.8 FAIL       -2.8 FAIL       -4.8 FAIL
+DATAC4    +5.2 ok 695s    +0.2 ok 695s    -2.8 ok 695s   -4.8 ok 701s
+          -6.8 ok 2110s   -7.8 FAIL       -8.8 FAIL
+```
+
+### How the failure behaves
+
+**Time is flat with SNR, then the mode stops working.** DATAC3 takes the same
+167 s at +10 dB as at +0.2 dB. That is the fountain code doing its job: the
+carousel sends a fixed number of symbols per pass, and as long as enough of them
+decode the file completes in one pass regardless of how much margin is left.
+
+**The cliff is sharp — 1 to 2 dB in every case.** There is no useful "slow but
+working" region to operate in, so a mode chosen 3 dB above its floor is not
+meaningfully more reliable than one chosen 1 dB above it; it is either decoding
+or it is not.
+
+**With one exception, at the very edge.** DATAC4's last working point took
+2110 s against 695 s everywhere above it — 3× — because enough symbols were
+being lost that the carousel had to go round repeatedly. So there *is* a
+degradation zone, but it is narrow (roughly the last 2 dB) and it costs time
+rather than correctness. If a transfer is taking several times longer than the
+table says, the link is at that mode's edge and the next mode down is the
+answer.
 
 ### The small-frame modes are not usable for files
 
@@ -195,7 +235,7 @@ Every frame spends 12 bytes on the header, OTI and tag. The 14-byte modes
 continuous transmission at DATAC13's 1.98 s per frame.
 
 Measured: DATAC13 did not complete even a 60-byte file within 200 s at
-+15.2 dB. The codec itself is fine at that symbol size — it produces valid
++15.2 dB -- which is why no 14-byte mode appears in the table above. The codec itself is fine at that symbol size — it produces valid
 frames — the mode is simply the wrong tool for a file. Use DATAC4 (42 bytes per
 symbol) or larger; DATAC3 is the sensible robust choice.
 
