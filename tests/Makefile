@@ -181,10 +181,19 @@ test_mercury_prng: common/test_mercury_prng.c $(UNITY_SRC) ../common/mercury_prn
 # back byte-for-byte.
 RAPTORQ_SRC = $(wildcard ../datalink_broadcast/raptorq/lib/*.c) \
               $(wildcard ../datalink_broadcast/raptorq/deps/obl/*.c)
+MFSK_SRC = ../modem/mfsk.c ../modem/mfsk_ofdm.c ../modem/mfsk_sync.c ../modem/mfsk_ldpc.c \
+           ../modem/mfsk_ldpc_1_16.c ../modem/mfsk_ldpc_2_16.c ../modem/mfsk_ldpc_3_16.c \
+           ../modem/mfsk_ldpc_5_16.c ../modem/mfsk_ldpc_8_16.c
+
+# Links the real modems too: one test pins the wire frame-size table against
+# what each modem actually transmits, which is the only way a wrong entry gets
+# caught before it fails silently on the air.
 test_bcast_file: datalink_broadcast/test_bcast_file.c $(UNITY_SRC) \
-                 ../datalink_broadcast/bcast_file.c $(RAPTORQ_SRC)
+                 ../datalink_broadcast/bcast_file.c $(RAPTORQ_SRC) \
+                 ../modem/modem_mfsk.c $(MFSK_SRC) ../modem/freedv/libfreedvdata.a
 	$(CC) $(CFLAGS) -I.. -I../datalink_broadcast -I../datalink_broadcast/raptorq/include \
-	      -I../datalink_broadcast/raptorq/deps -o $@ $^ $(LDFLAGS) -lm
+	      -I../datalink_broadcast/raptorq/deps -I../modem -I../modem/freedv \
+	      -o $@ $^ $(LDFLAGS) -lm
 
 # OFDM acquisition: the FFT search must agree with brute force, fringe included.
 # libfreedvdata.a is a PREREQUISITE, not just a link argument: leave it off the
@@ -245,9 +254,6 @@ test_mfsk: modem/test_mfsk.c $(UNITY_SRC) ../modem/mfsk.c ../modem/mfsk_ofdm.c .
 	$(CC) $(CFLAGS) -I../modem -o $@ $^ $(LDFLAGS) -lm
 
 # MFSK modem backend (burst TX/RX through the vtable); links libfreedvdata for CRC16
-MFSK_SRC = ../modem/mfsk.c ../modem/mfsk_ofdm.c ../modem/mfsk_sync.c ../modem/mfsk_ldpc.c \
-           ../modem/mfsk_ldpc_1_16.c ../modem/mfsk_ldpc_2_16.c ../modem/mfsk_ldpc_3_16.c \
-           ../modem/mfsk_ldpc_5_16.c ../modem/mfsk_ldpc_8_16.c
 
 test_mfsk_modem: modem/test_mfsk_modem.c $(UNITY_SRC) ../modem/modem_mfsk.c $(MFSK_SRC) ../modem/freedv/libfreedvdata.a
 	$(CC) $(CFLAGS) -I../modem -I../modem/freedv -o $@ $^ $(LDFLAGS) -lm

@@ -14,6 +14,7 @@
 
 #include "mercury_cli.h"
 #include "freedv_api.h"
+#include "modem_mfsk.h"
 #include "ldpc_codes.h"
 #include "audioio/audioio.h"
 #include "radio_io.h"
@@ -31,7 +32,11 @@ int freedv_modes[] = { FREEDV_MODE_DATAC1,
                        FREEDV_MODE_DATAC15,
                        FREEDV_MODE_DATAC16,
                        FREEDV_MODE_DATAC17,
-                       FREEDV_MODE_QAM16C2 };
+                       FREEDV_MODE_QAM16C2,
+                       /* Not a FreeDV mode: our own fringe modem, which the
+                        * modem layer already opens through its own backend.
+                        * Listed here so -m can select it like any other. */
+                       MERCURY_MODE_MFSK };
 
 char *freedv_mode_names[] = { "DATAC1",
                               "DATAC3",
@@ -43,7 +48,9 @@ char *freedv_mode_names[] = { "DATAC1",
                               "DATAC15",
                               "DATAC16",
                               "DATAC17",
-                              "QAM16C2" };
+                              "QAM16C2",
+                              "MFSK"
+};
 
 int mercury_cli_mode_count(void)
 {
@@ -486,6 +493,29 @@ static void list_modulation_modes(int freedv_verbosity, bool verbose)
     {
         printf("Mode index: %d\n", i);
         printf("Opening mode %s (%d)\n", freedv_mode_names[i], freedv_modes[i]);
+
+        if (freedv_modes[i] == MERCURY_MODE_MFSK)
+        {
+            /* Non-FreeDV backend: ask it the same questions directly. */
+            const modem_backend_t *be = &modem_backend_mfsk;
+            void *ctx = be->open(MERCURY_MODE_MFSK);
+            if (ctx == NULL) { printf("Failed to open mode %d\n", freedv_modes[i]); continue; }
+            int bits = be->bits_per_frame(ctx);
+            int nsam = be->n_tx_samples(ctx);
+            int fs   = be->sample_rate(ctx);
+            printf("Modem frame size: %d bits\n", bits);
+            printf("payload_bytes_per_modem_frame: %d\n", bits / 8 - 2);
+            printf("n_tx_modem_samples: %d\n", nsam);
+            printf("modem_sample_rate: %d Hz\n", fs);
+            if (nsam > 0 && fs > 0)
+                printf("payload bitrate: %.0f bit/s\n",
+                       (bits / 8 - 2) * 8.0 / ((double)nsam / fs));
+            if (be->bandwidth_hz)
+                printf("occupied bandwidth: %d Hz (tone span)\n", be->bandwidth_hz(ctx));
+            printf("\n");
+            be->close(ctx);
+            continue;
+        }
 
         struct freedv *freedv = freedv_open(freedv_modes[i]);
         if (freedv == NULL)
