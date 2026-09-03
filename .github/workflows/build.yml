@@ -359,6 +359,7 @@ jobs:
           apt-get install -y --no-install-recommends \
             ca-certificates \
             build-essential \
+            file \
             git \
             golang-go \
             pkg-config \
@@ -412,6 +413,7 @@ jobs:
           apt-get install -y --no-install-recommends \
             ca-certificates \
             build-essential \
+            file \
             git \
             golang-go \
             gcc-mingw-w64-x86-64 \
