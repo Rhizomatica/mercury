@@ -317,119 +317,17 @@ jobs:
           if-no-files-found: ignore
 
   # ---- macOS universal .dmg: build, sign (Developer ID), notarize, staple ----
-  # Runs on macOS only because hdiutil builds the .dmg and is Apple-only.
-  # Signing and notarization are rcodesign, not Apple's codesign/notarytool:
-  # no keychain to unlock, and the same command works on a Linux box by hand.
-  # See docs/MACOS-SIGNING.md.
+  # Defined in its own reusable workflow so the exact same job can be run on
+  # demand without cutting a release (Actions -> "macOS signed DMG" -> Run
+  # workflow).  What gets tested is then literally what ships.
   macos:
     name: Build and notarize macOS .dmg
     needs: bump
     if: ${{ inputs.build_macos }}
-    runs-on: macos-latest
-    timeout-minutes: 60
-    steps:
-      - uses: actions/checkout@v4
-        with: { ref: mercuryv2, fetch-depth: 1 }
-
-      - uses: actions/setup-go@v5
-        with: { go-version: 'stable' }
-
-      # Fail before spending 40 minutes on a build we could not ship.  An
-      # unsigned .dmg on a release page is worse than no .dmg: it teaches
-      # people to click through Gatekeeper.
-      - name: Require signing credentials
-        env:
-          P12:   ${{ secrets.MACOS_SIGN_P12_BASE64 }}
-          PASS:  ${{ secrets.MACOS_SIGN_P12_PASSWORD }}
-          NOTARY: ${{ secrets.MACOS_NOTARY_KEY_BASE64 }}
-        run: |
-          # The password is deliberately NOT required.  PKCS#12 permits an
-          # empty password, and protecting the .p12 with one adds nothing when
-          # the certificate is already a bearer credential held in a secret
-          # store -- so an empty MACOS_SIGN_P12_PASSWORD is a valid setup, and
-          # demanding a non-empty one would fail a correct configuration.
-          missing=
-          [ -n "$P12" ]    || missing="$missing MACOS_SIGN_P12_BASE64"
-          [ -n "$NOTARY" ] || missing="$missing MACOS_NOTARY_KEY_BASE64"
-          if [ -n "$missing" ]; then
-            echo "::error::missing repository secret(s):$missing"
-            echo "See docs/MACOS-SIGNING.md for how to create and set them."
-            exit 1
-          fi
-
-      # rcodesign has no Homebrew formula, and `cargo install` would compile it
-      # from source on every release.  Pinned pre-built binary + checksum: the
-      # version is the one the Makefile documents as verified (0.28.0), and the
-      # checksum means a replaced asset fails the job instead of signing with
-      # something we did not intend.
-      - name: Install fyne and rcodesign
-        env:
-          RCODESIGN_VERSION: '0.28.0'
-          RCODESIGN_SHA256: 'fdad0c03e3a33ac7676c3641547f0cf9adad2cd52919033e3866b551bc9aae12'
-        run: |
-          go install fyne.io/tools/cmd/fyne@latest
-          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
-
-          TARBALL="apple-codesign-${RCODESIGN_VERSION}-macos-universal.tar.gz"
-          curl -fsSLO "https://github.com/indygreg/apple-platform-rs/releases/download/apple-codesign%2F${RCODESIGN_VERSION}/${TARBALL}"
-          echo "${RCODESIGN_SHA256}  ${TARBALL}" | shasum -a 256 -c -
-          tar xzf "$TARBALL"
-          mkdir -p "$HOME/.local/bin"
-          mv apple-codesign-*/rcodesign "$HOME/.local/bin/"
-          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
-          "$HOME/.local/bin/rcodesign" --version
-
-      # Written to the runner's temp dir, not the workspace, so they cannot be
-      # picked up by a later packaging step or an artifact upload.
-      - name: Materialise credentials
-        env:
-          P12:    ${{ secrets.MACOS_SIGN_P12_BASE64 }}
-          NOTARY: ${{ secrets.MACOS_NOTARY_KEY_BASE64 }}
-        run: |
-          umask 077
-          printf '%s' "$P12"    | base64 --decode > "$RUNNER_TEMP/developer_id.p12"
-          printf '%s' "$NOTARY" | base64 --decode > "$RUNNER_TEMP/notary_key.json"
-
-      # Catches the commonest setup mistake -- an "Apple Development" or
-      # "Developer ID Installer" certificate -- with a clear message, rather
-      # than as a Gatekeeper failure on a user's machine weeks later.
-      - name: Check certificate type
-        env: { PASS: "${{ secrets.MACOS_SIGN_P12_PASSWORD }}" }
-        run: |
-          subj=$(openssl pkcs12 -in "$RUNNER_TEMP/developer_id.p12" -nodes -passin env:PASS \
-                 | openssl x509 -noout -subject)
-          echo "certificate: $subj"
-          case "$subj" in
-            *"Developer ID Application"*) ;;
-            *) echo "::error::not a Developer ID Application certificate: $subj"; exit 1 ;;
-          esac
-
-      - name: Build, sign and package
-        env: { PASS: "${{ secrets.MACOS_SIGN_P12_PASSWORD }}" }
-        run: |
-          make fyne-ui-macos-universal-dmg \
-            MACOS_SIGN_P12="$RUNNER_TEMP/developer_id.p12" \
-            MACOS_SIGN_P12_PASSWORD="$PASS"
-
-      - name: Notarize and staple
-        run: |
-          make macos-notarize-dmg MACOS_NOTARY_KEY="$RUNNER_TEMP/notary_key.json"
-
-      # Gatekeeper's own verdict, on the artifact we are about to publish.
-      - name: Verify Gatekeeper accepts it
-        run: |
-          DMG=$(ls Mercury-*-universal.dmg)
-          spctl -a -t open --context context:primary-signature -v "$DMG"
-
-      - name: Shred credentials
-        if: always()
-        run: rm -f "$RUNNER_TEMP/developer_id.p12" "$RUNNER_TEMP/notary_key.json"
-
-      - name: Upload signed .dmg
-        uses: actions/upload-artifact@v4
-        with:
-          name: macos-dmg
-          path: Mercury-*-universal.dmg
+    uses: ./.github/workflows/macos-dmg.yml
+    with:
+      ref: mercuryv2
+    secrets: inherit
 
   # ---- Create GitHub release ----
   release:
