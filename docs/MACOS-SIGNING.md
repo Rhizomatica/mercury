@@ -27,7 +27,11 @@ is signing and notarization.
 
 **Keep all of it OUTSIDE the git tree**, same rule as
 [WINDOWS-SIGNING.md](WINDOWS-SIGNING.md). `.gitignore` blocks `*.p12` as a
-backstop, but the rule is: secrets live in `~/.config/mercury-signing/`.
+backstop, but the rule is that the material never enters the repository at all.
+The paths below are a suggestion; anywhere outside the tree works, and the
+maintainer's copies live in `hermes/apple/` alongside Apple's public
+intermediate certificates (`certs/DeveloperIDG2CA.cer` and the WWDR CAs), which
+are **not** secret and are what lets a signing tool build the full chain.
 
 A Developer ID certificate can only be created by the team's **Account Holder**
 (Admins cannot), and Apple caps them at **5 per team** — they are not
