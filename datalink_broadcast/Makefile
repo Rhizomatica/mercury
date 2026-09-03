@@ -31,5 +31,14 @@ broadcast.o: broadcast.c
 	$(CC) $(CFLAGS) -c broadcast.c
 
 
+# The vendored RaptorQ tree builds into its own subdirectories, so a flat
+# `rm -f *.o` leaves those objects behind.  That is not cosmetic: the universal
+# macOS build runs `make clean` between its x86_64 and arm64 slices, so stale
+# objects from the first slice survive into the second and `ar` then refuses
+# the archive -- "cputype (16777223) does not match previous archive members
+# cputype (16777228)".  Same trap for a Windows cross build after a native one,
+# which is why those objects are named .w64.o; clean them here too.
 clean:
-	rm -f *.o
+	rm -f *.o *.w64.o *.d
+	rm -f raptorq/lib/*.o raptorq/lib/*.w64.o raptorq/lib/*.d
+	rm -f raptorq/deps/obl/*.o raptorq/deps/obl/*.w64.o raptorq/deps/obl/*.d
