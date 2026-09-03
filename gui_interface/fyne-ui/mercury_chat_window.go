@@ -68,8 +68,10 @@ type chatWindow struct {
 	sendBcast     *widget.Button
 	sendBcastWrap *hoverTooltipButton
 	sendCQ        *widget.Button
+	bcastFile     *broadcastFilePanel
 	arqMsg        *widget.Entry
 	bcastMsg      *widget.Entry
+	bcastCount    *widget.Label
 
 	// bcastDisabledReason is shown as a hover tooltip on the Broadcast
 	// message button while it is disabled (e.g. during an ARQ session).
@@ -85,6 +87,16 @@ func (cw *chatWindow) build(app fyne.App, telemetry telemetryState, arqPort, bro
 	cw.win = app.NewWindow("Mercury Client")
 
 	cw.myCall = widget.NewEntry()
+	// The limit includes the callsign, so it moves when the callsign does.
+	defer func() {
+		prev := cw.myCall.OnChanged
+		cw.myCall.OnChanged = func(v string) {
+			if prev != nil {
+				prev(v)
+			}
+			cw.enforceBroadcastLimit()
+		}
+	}()
 	cw.myCall.SetText(defaultCall(telemetry.UserCallsign, "NOCALL"))
 	cw.target = widget.NewEntry()
 	cw.target.SetText(defaultCall(telemetry.DestCallsign, "DEST"))
@@ -102,6 +114,12 @@ func (cw *chatWindow) build(app fyne.App, telemetry telemetryState, arqPort, bro
 	cw.arqMsg.SetPlaceHolder("Type message to be sent...")
 	cw.bcastMsg = widget.NewEntry()
 	cw.bcastMsg.SetPlaceHolder("Type broadcast message...")
+	// A broadcast message that overruns one modem frame is TRUNCATED by the
+	// TNC -- the operator just sees their last characters vanish.  The limit
+	// depends on the mode and the callsign, so show it and enforce it here
+	// rather than let it be discovered on the air.  See issue #243.
+	cw.bcastMsg.OnChanged = func(string) { cw.enforceBroadcastLimit() }
+	cw.bcastCount = widget.NewLabel("")
 
 	cw.log = widget.NewMultiLineEntry()
 	cw.log.SetPlaceHolder("Activity log...")
@@ -153,6 +171,27 @@ func (cw *chatWindow) build(app fyne.App, telemetry telemetryState, arqPort, bro
 		cw.sendCQ,
 	)
 
+	// File broadcast rides the same broadcast socket the chat below it uses,
+	// so it lives with the broadcast controls and is enabled by the same signal.
+	cw.bcastFile = newBroadcastFilePanel(cw.win, fyne.CurrentApp().Preferences(),
+		func() broadcastSender {
+			if cw.mc == nil {
+				return nil
+			}
+			return cw.mc
+		},
+		func(f func([]byte) bool) {
+			if cw.mc == nil {
+				return
+			}
+			if f == nil {
+				cw.mc.SetBroadcastFrameFilter(nil)
+				return
+			}
+			cw.mc.SetBroadcastFrameFilter(client.BroadcastFrameFilter(f))
+		},
+		cw.logMsg)
+
 	controls := container.NewVBox(
 		cfgForm,
 		modemRow,
@@ -160,7 +199,9 @@ func (cw *chatWindow) build(app fyne.App, telemetry telemetryState, arqPort, bro
 		widget.NewSeparator(),
 		cw.arqMsg, cw.sendARQ,
 		widget.NewSeparator(),
-		cw.bcastMsg, cw.sendBcastWrap,
+		cw.bcastMsg, cw.bcastCount, cw.sendBcastWrap,
+		widget.NewSeparator(),
+		cw.bcastFile.content(),
 	)
 
 	left := container.NewVBox(controls, layout.NewSpacer())
@@ -188,6 +229,9 @@ func (cw *chatWindow) build(app fyne.App, telemetry telemetryState, arqPort, bro
 	cw.win.SetContent(container.NewHSplit(left, right))
 	cw.win.Resize(fyne.NewSize(800, 600))
 	cw.win.SetOnClosed(func() {
+		if cw.bcastFile != nil {
+			cw.bcastFile.stopForShutdown()
+		}
 		if cw.mc != nil {
 			cw.mc.Disconnect()
 		}
@@ -199,6 +243,39 @@ func (cw *chatWindow) build(app fyne.App, telemetry telemetryState, arqPort, bro
 		}
 	})
 	cw.win.Show()
+}
+
+// broadcastChatLimit is how many characters will actually reach the air, given
+// the mode the engine is running and the callsign in the form.  0 means the
+// limit is unknown (no engine) and no cap is applied.
+func (cw *chatWindow) broadcastChatLimit() int {
+	mode := broadcastEngineMode()
+	if mode < 0 {
+		return 0
+	}
+	fs := broadcastModeFrameSize(mode)
+	if fs <= 0 {
+		return 0
+	}
+	return client.BroadcastChatLimit(fs, strings.TrimSpace(cw.myCall.Text))
+}
+
+// enforceBroadcastLimit caps the entry at what will actually be transmitted and
+// shows the operator how much room is left.  Trimming as they type is blunt,
+// but the alternative is letting them compose a message the TNC will quietly
+// shorten.
+func (cw *chatWindow) enforceBroadcastLimit() {
+	limit := cw.broadcastChatLimit()
+	if limit <= 0 {
+		cw.bcastCount.SetText("")
+		return
+	}
+	if len(cw.bcastMsg.Text) > limit {
+		cw.bcastMsg.SetText(cw.bcastMsg.Text[:limit])
+		return // SetText re-enters; the count is updated on that pass
+	}
+	cw.bcastCount.SetText(fmt.Sprintf("%d/%d characters this mode",
+		len(cw.bcastMsg.Text), limit))
 }
 
 func (cw *chatWindow) logMsg(format string, args ...any) {
@@ -258,6 +335,9 @@ func (cw *chatWindow) setTCP(on bool) {
 			cw.arqConnect.Enable()
 			cw.sendBcastWrap.Enable()
 			cw.sendCQ.Enable()
+			if cw.bcastFile != nil {
+				cw.bcastFile.setConnected(true)
+			}
 		} else {
 			cw.connectBtn.Enable()
 			cw.disconnectBtn.Disable()
@@ -267,6 +347,9 @@ func (cw *chatWindow) setTCP(on bool) {
 			cw.sendARQ.Disable()
 			cw.sendBcastWrap.Disable()
 			cw.sendCQ.Disable()
+			if cw.bcastFile != nil {
+				cw.bcastFile.setConnected(false)
+			}
 		}
 	})
 }

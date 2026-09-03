@@ -25,6 +25,9 @@ type wsLink struct {
 
 	mu   sync.RWMutex
 	conn *websocket.Conn
+
+	audioSystem        string
+	audioSystemOptions []string
 }
 
 func newWSLink(scheme, host, port string) *wsLink {
@@ -80,6 +83,12 @@ func (l *wsLink) Start(ctx context.Context) (<-chan Event, error) {
 				return
 			}
 			for _, ev := range decodeWSMessage(msgType, payload) {
+				if e, ok := ev.(AudioSystemEvent); ok {
+					l.mu.Lock()
+					l.audioSystem = e.Current
+					l.audioSystemOptions = e.Options
+					l.mu.Unlock()
+				}
 				if !emit(ctx, events, ev) {
 					return
 				}
@@ -130,6 +139,13 @@ func (l *wsLink) Close() {
 	}
 }
 
+// AudioSubsystems returns the last subsystem info published by the engine.
+func (l *wsLink) AudioSubsystems() (string, []string) {
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+	return l.audioSystem, l.audioSystemOptions
+}
+
 // decodeWSMessage turns one websocket frame into zero or more link events.
 // Kept free of connection state so it can be exercised on its own.
 func decodeWSMessage(msgType int, payload []byte) []Event {
@@ -176,6 +192,12 @@ func decodeWSMessage(msgType int, payload []byte) []Event {
 				Selected: selectedValue(raw, "selected"),
 			}}
 
+		case "audio_system":
+			return []Event{AudioSystemEvent{
+				Current: selectedValue(raw, "selected"),
+				Options: stringSliceValue(raw, "list"),
+			}}
+
 		case "radio_list":
 			items := parseMenuItems(payload)
 			sortRadioItems(items)
@@ -209,6 +231,18 @@ func stringValue(raw map[string]any, key, fallback string) string {
 		return fmt.Sprint(value)
 	}
 	return fallback
+}
+
+func stringSliceValue(raw map[string]any, key string) []string {
+	list, ok := raw[key].([]any)
+	if !ok {
+		return nil
+	}
+	out := make([]string, 0, len(list))
+	for _, item := range list {
+		out = append(out, fmt.Sprint(item))
+	}
+	return out
 }
 
 // sortRadioItems puts "None" first and the rest alphabetically — hamlib's own

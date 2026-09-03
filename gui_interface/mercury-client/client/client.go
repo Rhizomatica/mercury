@@ -47,6 +47,9 @@ type Client struct {
 	// StatusCh receives ARQ session status ("CONNECTED", "DISCONNECTED", ...).
 	StatusCh chan string
 
+	// bcastFilter, when set, gets first refusal on every raw broadcast frame.
+	bcastFilter BroadcastFrameFilter
+
 	remoteCall        string
 	chatRxBuffer      string
 	broadcastRxBuffer string
@@ -128,6 +131,34 @@ func (c *Client) Disconnect() {
 		close(done)
 	}
 	c.LogCh <- "Disconnected from modem."
+}
+
+// BroadcastFrameFilter inspects a raw broadcast frame before it is treated as
+// chat text.  Returning true claims the frame: chat never sees it.
+//
+// The broadcast plane carries whatever anyone puts on it, and Mercury's TNC
+// hands every frame to its single client.  Without this, binary file-transfer
+// frames would be appended to the chat buffer as mojibake.
+type BroadcastFrameFilter func(frame []byte) bool
+
+// SetBroadcastFrameFilter installs (or clears, with nil) the filter.
+func (c *Client) SetBroadcastFrameFilter(f BroadcastFrameFilter) {
+	c.mu.Lock()
+	c.bcastFilter = f
+	c.mu.Unlock()
+}
+
+// SendBroadcastFrame writes one already-framed modem frame to the broadcast
+// port.  SendBroadcast() is for text; a RaptorQ frame is binary and must not be
+// touched, so it gets its own path rather than a string round-trip.
+func (c *Client) SendBroadcastFrame(frame []byte) error {
+	c.mu.Lock()
+	mc := c.modem
+	c.mu.Unlock()
+	if mc == nil {
+		return fmt.Errorf("not connected to the broadcast port")
+	}
+	return mc.SendBroadcastModemFrame(frame)
 }
 
 // IsConnected reports whether the TCP links to the modem are up.
@@ -266,6 +297,36 @@ func (c *Client) SendCQFrame() error {
 // SendBroadcast sends a broadcast message. The local callsign is prefixed to
 // the payload because the Mercury broadcast plane carries no callsign, so
 // receiving stations can attribute the message.
+// broadcastChatOverhead is what SendBroadcast adds around the operator's text:
+// the callsign, ": " and the terminating newline.  Kept beside the Sprintf that
+// produces it so the two cannot drift.
+func broadcastChatOverhead(callsign string) int {
+	return len(callsign) + len(": ") + len("\n")
+}
+
+// BroadcastChatLimit is how many characters of message will actually reach the
+// air for a given modem frame size.
+//
+// Mercury frames a broadcast message with a 1-byte header and a 2-byte length
+// prefix, and when the payload already fills the frame there is nowhere to put
+// them, so the TNC truncates -- the operator just sees their last characters
+// vanish.  The limit therefore depends on the mode AND the callsign, which
+// nobody can be expected to work out:
+//
+//	DATAC3 (126 B) as "PU2UIT-3"  ->  112 characters
+//	DATAC4  (54 B) as "PU2UIT-3"  ->   40 characters
+//
+// Returns 0 if frameSize leaves no room at all, so a caller can tell the
+// difference between "short message" and "this mode cannot carry chat".
+func BroadcastChatLimit(frameSize int, callsign string) int {
+	const mercuryFraming = 3 // header + 2-byte length prefix
+	n := frameSize - mercuryFraming - broadcastChatOverhead(callsign)
+	if n < 0 {
+		return 0
+	}
+	return n
+}
+
 func (c *Client) SendBroadcast(msg string) error {
 	if strings.TrimSpace(msg) == "" {
 		return fmt.Errorf("empty message")
@@ -443,6 +504,13 @@ func (c *Client) handleIncomingBroadcast() {
 			if !ok {
 				return
 			}
+			c.mu.Lock()
+			filter := c.bcastFilter
+			c.mu.Unlock()
+			if filter != nil && filter(data) {
+				continue // claimed by the file receiver; not chat
+			}
+
 			if !sendOrStop(c.LogCh, fmt.Sprintf("Broadcast RX (Decoded): %s", string(data)), done) {
 				return
 			}

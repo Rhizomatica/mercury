@@ -77,7 +77,7 @@ void cfg_set_defaults(mercury_config *cfg)
 
 /* Map a sound-system name to the AUDIO_SUBSYSTEM_* constant.
  * Returns -1 (auto) for unrecognised strings. */
-static int parse_sound_system(const char *s)
+int cfg_sound_system_parse(const char *s)
 {
     if (!s) return -1;
     if (!strcmp(s, "auto"))      return -1;
@@ -319,7 +319,7 @@ bool cfg_read(mercury_config *cfg, const char *ini_path)
 
     s = iniparser_getstring(ini, CFG_KEY_SOUND_SYSTEM, NULL);
     if (s)
-        cfg->sound_system = parse_sound_system(s);
+        cfg->sound_system = cfg_sound_system_parse(s);
 
     i = iniparser_getint(ini, CFG_KEY_ARQ_TCP_BASE_PORT, cfg->arq_tcp_base_port);
     cfg->arq_tcp_base_port = i;

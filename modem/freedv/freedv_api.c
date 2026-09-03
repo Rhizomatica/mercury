@@ -1683,6 +1683,18 @@ void freedv_ofdm_print_info(struct freedv *freedv) {
   ofdm_print_info(freedv->ofdm);
 }
 
+/* Occupied bandwidth of the OFDM modes, in Hz.
+ *
+ * The carriers sit one symbol rate apart, so the signal spans nc*rs.  Computed
+ * from the mode's own config rather than a table, so it cannot drift from what
+ * the modem is actually transmitting.  Returns 0 for non-OFDM modes. */
+float freedv_get_modem_bandwidth_hz(struct freedv *freedv) {
+  if (freedv == NULL || freedv->ofdm == NULL) return 0.0f;
+  struct OFDM_CONFIG *c = ofdm_get_config_param(freedv->ofdm);
+  if (c == NULL) return 0.0f;
+  return (float)c->nc * c->rs;
+}
+
 void freedv_set_acq_fft_enable(struct freedv *f, bool val) {
   if (f != NULL && f->ofdm != NULL) ofdm_set_acq_fft_enable(f->ofdm, val);
 }

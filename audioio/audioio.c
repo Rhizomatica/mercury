@@ -228,6 +228,36 @@ static inline uint64_t audioio_monotonic_ms(void)
 #endif
 }
 
+void audioio_health_reset(void)
+{
+    pthread_mutex_lock(&s_health_lock);
+    s_cap_health  = AUDIO_HEALTH_STOPPED;
+    s_play_health = AUDIO_HEALTH_STOPPED;
+    s_health_reason[0] = '\0';
+    pthread_mutex_unlock(&s_health_lock);
+}
+
+int audioio_wait_healthy(int timeout_ms)
+{
+    if (timeout_ms < 0)
+        timeout_ms = 0;
+
+    uint64_t deadline = audioio_monotonic_ms() + (uint64_t)timeout_ms;
+    for (;;)
+    {
+        audio_health_t c = audioio_capture_health();
+        audio_health_t p = audioio_playback_health();
+
+        if (c == AUDIO_HEALTH_FAILED || p == AUDIO_HEALTH_FAILED)
+            return -1;
+        if (c == AUDIO_HEALTH_RUNNING && p == AUDIO_HEALTH_RUNNING)
+            return 0;
+        if (audioio_monotonic_ms() >= deadline)
+            return -2;
+        ffthread_sleep(5);
+    }
+}
+
 #if defined(__linux__)
 static pthread_mutex_t s_pulse_lock = PTHREAD_MUTEX_INITIALIZER;
 
@@ -992,7 +1022,6 @@ void *radio_playback_thread(void *device_ptr)
     format_device_display(audio_subsystem, FFAUDIO_DEV_PLAYBACK,
                            device_ptr ? (const char *)device_ptr : NULL,
                            play_dev_display, sizeof(play_dev_display));
-    audio_health_set(false, AUDIO_HEALTH_RUNNING, NULL);
     HLOGI("audio-play", "I/O playback (%s) %s / %dHz / %dch / %dms buffer",
           play_dev_display,
           cfg->format == FFAUDIO_F_FLOAT32 ? "float32" :
@@ -1017,6 +1046,8 @@ void *radio_playback_thread(void *device_ptr)
         HLOGE("audio-play",
               "Device negotiated %d channels; only mono/stereo playback is supported, aborting",
               cfg->channels);
+        audio_health_set(false, AUDIO_HEALTH_FAILED,
+                         "device negotiated more than 2 playback channels");
         goto cleanup_play;
     }
 
@@ -1110,6 +1141,10 @@ void *radio_playback_thread(void *device_ptr)
         resampler_init_up(resample_ratio);
         resamp_up_reset(&up_rs);
     }
+
+    /* Reached only after the device, rate, format and channel checks above:
+     * the playback path is fully validated and about to stream. */
+    audio_health_set(false, AUDIO_HEALTH_RUNNING, NULL);
 
     while (!shutdown_ && !audio_shutdown_)
     {
@@ -1393,7 +1428,6 @@ void *radio_capture_thread(void *device_ptr)
     format_device_display(audio_subsystem, FFAUDIO_DEV_CAPTURE,
                            device_ptr ? (const char *)device_ptr : NULL,
                            cap_dev_display, sizeof(cap_dev_display));
-    audio_health_set(true, AUDIO_HEALTH_RUNNING, NULL);
     HLOGI("audio-cap", "I/O capture (%s) %s / %dHz / %dch / %dms buffer",
           cap_dev_display,
           cfg->format == FFAUDIO_F_FLOAT32 ? "float32" :
@@ -1519,6 +1553,10 @@ void *radio_capture_thread(void *device_ptr)
     const uint64_t CAP_POLL_MS  = 5;
     uint64_t cap_last_data_ms   = audioio_monotonic_ms();
     uint32_t diag_reopens       = 0;
+
+    /* Reached only after the device, rate and format checks above: the capture
+     * path is fully validated and about to stream. */
+    audio_health_set(true, AUDIO_HEALTH_RUNNING, NULL);
 
     while (!shutdown_ && !audio_shutdown_)
     {
@@ -2369,6 +2407,7 @@ int audioio_restart(const char *capture_dev, const char *playback_dev,
 {
     HLOGI("audio-restart", "stopping audio threads...");
     audioio_stop_threads();
+    audioio_health_reset();
 
 #if defined(__linux__)
     if (audio_subsystem == AUDIO_SUBSYSTEM_PULSE || audio_subsys == AUDIO_SUBSYSTEM_PULSE)
@@ -2387,13 +2426,13 @@ int audioio_restart(const char *capture_dev, const char *playback_dev,
     else
         capture_input_channel_layout = LEFT;
 
-    if (capture_dev && capture_dev[0] != '\0')
+    if (capture_dev)
     {
         strncpy(s_capture_dev, capture_dev, sizeof(s_capture_dev) - 1);
         s_capture_dev[sizeof(s_capture_dev) - 1] = '\0';
     }
 
-    if (playback_dev && playback_dev[0] != '\0')
+    if (playback_dev)
     {
         strncpy(s_playback_dev, playback_dev, sizeof(s_playback_dev) - 1);
         s_playback_dev[sizeof(s_playback_dev) - 1] = '\0';

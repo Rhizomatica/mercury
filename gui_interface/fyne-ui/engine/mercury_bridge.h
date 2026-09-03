@@ -82,6 +82,10 @@ int mercury_ui_get_radio_list(ui_device_t *out, int max,
                               int *cm108_gpio);
 int mercury_ui_get_input_channel(void);
 
+/* Copy the current audio subsystem name ("alsa", "pulse", ...) into `name`.
+ * Never returns NULL; `name` is always NUL-terminated. */
+void mercury_ui_get_audio_system(char *name, int name_len);
+
 /* Enable / disable waterfall/spectrum at runtime.  Saves to mercury.ini. */
 void mercury_ui_set_waterfall(bool enabled);
 
@@ -91,6 +95,45 @@ void mercury_ui_get_tcp_ports(int *arq_base_port, int *broadcast_port);
 /* Copy the release version string and git hash into the provided buffers. */
 void mercury_ui_get_version(char *version, int version_len,
                             char *git_hash, int git_hash_len);
+
+/* ---- Broadcast file transmission -------------------------------------------
+ *
+ * Thin pass-through to datalink_broadcast/bcast_file.c.  It exists so the Go UI
+ * does not have to include nanorq's headers, and so the handle crosses CGo as
+ * an opaque pointer.
+ *
+ * The engine does NOT send these frames.  The UI pulls them one at a time and
+ * writes them to the broadcast socket its chat client already holds, so file
+ * transfer and chat share one transport and one set of framing rules. */
+void *mercury_bcast_tx_open(const char *path, int mode, int cycles,
+                            int session_id, char *err, int errlen);
+int   mercury_bcast_tx_next(void *tx, unsigned char *buf, int buflen);
+int   mercury_bcast_tx_frame_size(void *tx);
+void  mercury_bcast_tx_stats(void *tx, int *cycle_now, int *cycles_total,
+                             unsigned long long *frames_sent);
+void  mercury_bcast_tx_source(void *tx, long *file_bytes, int *blocks);
+void  mercury_bcast_tx_close(void *tx);
+int   mercury_bcast_mode_frame_size(int mode);
+int   mercury_bcast_mode_usable(int mode);
+const char *mercury_bcast_mode_name(int mode);
+long  mercury_bcast_max_file_bytes(void);
+
+/* The broadcast mode the engine is running, as a hermes mode index (0..10), or
+ * -1 if it is not one broadcast can use.  Fixed at startup by -m: there is no
+ * runtime mode switch, and both stations must be set to the same one. */
+int   mercury_bcast_engine_mode(void);
+int   mercury_bcast_engine_bitrate(void);
+int   mercury_bcast_engine_bandwidth_hz(void);
+
+/* Receiving.  Frames arrive on the same broadcast socket the chat client holds;
+ * the UI hands each one here and this says whether it was ours. */
+void *mercury_bcast_rx_open(int mode, const char *dir, char *err, int errlen);
+int   mercury_bcast_rx_frame(void *rx, const unsigned char *frame, int len);
+const char *mercury_bcast_rx_last_path(void *rx);
+const char *mercury_bcast_rx_last_name(void *rx);
+const char *mercury_bcast_rx_error(void *rx);
+void  mercury_bcast_rx_stats(void *rx, unsigned long long *symbols, long *expect_bytes);
+void  mercury_bcast_rx_close(void *rx);
 
 #ifdef __cplusplus
 }

@@ -69,6 +69,31 @@ static int apply_audio_defaults(int audio_system, char *input_dev, size_t in_siz
     return 0;
 }
 
+int mercury_engine_modem_mode(void)
+{
+    return g_modem.mode;
+}
+
+/* Payload bit rate of the running modem, in bits/s: the bytes a frame carries
+ * over the time that frame occupies the air.  Derived from the modem itself so
+ * it reflects the mode actually in use. */
+int mercury_engine_modem_bitrate(void)
+{
+    if (!g_modem.freedv) return 0;
+    int nsam = freedv_get_n_tx_modem_samples(g_modem.freedv);
+    int fs   = freedv_get_modem_sample_rate(g_modem.freedv);
+    if (nsam <= 0 || fs <= 0) return 0;
+    double secs = (double)nsam / (double)fs;
+    return (int)((double)g_modem.payload_bytes_per_modem_frame * 8.0 / secs + 0.5);
+}
+
+/* Occupied bandwidth of the running modem, in Hz (0 if not an OFDM mode). */
+int mercury_engine_modem_bandwidth_hz(void)
+{
+    if (!g_modem.freedv) return 0;
+    return (int)(freedv_get_modem_bandwidth_hz(g_modem.freedv) + 0.5f);
+}
+
 int mercury_engine_init(const mercury_config *cfg,
                         const char *config_path,
                         const char *log_path,

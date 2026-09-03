@@ -13,6 +13,7 @@ import "C"
 import (
 	"context"
 	"fmt"
+	"runtime"
 	"time"
 	"unsafe"
 )
@@ -298,6 +299,20 @@ func (l *engineLink) SetWaterfall(enabled bool) {
 	C.mercury_ui_set_waterfall(cEn)
 }
 
+// AudioSubsystems reports the engine's audio subsystem and, on Linux, the two
+// backends (ALSA, PulseAudio) the operator can switch between at runtime. The
+// embedded engine runs in this process, so its platform is this process's
+// platform.
+func (l *engineLink) AudioSubsystems() (string, []string) {
+	name := make([]byte, 32)
+	C.mercury_ui_get_audio_system((*C.char)(unsafe.Pointer(&name[0])), C.int(len(name)))
+	current := goStringFromC(name)
+	if runtime.GOOS == "linux" {
+		return current, []string{"alsa", "pulse"}
+	}
+	return current, nil
+}
+
 // TCPPorts returns the ARQ base and broadcast TCP ports the engine is
 // actually listening on (from its config).
 func (l *engineLink) TCPPorts() (arqBase, broadcast int) {
@@ -312,11 +327,12 @@ func (l *engineLink) Version() (version, gitHash string) {
 	cg := make([]byte, 64)
 	C.mercury_ui_get_version((*C.char)(unsafe.Pointer(&cv[0])), C.int(len(cv)),
 		(*C.char)(unsafe.Pointer(&cg[0])), C.int(len(cg)))
-	return cString(cv), cString(cg)
+	return goStringFromC(cv), goStringFromC(cg)
 }
 
 // cString converts a C buffer to a Go string, truncating at the first NUL.
-func cString(b []byte) string {
+// goStringFromC turns a NUL-terminated C buffer into a Go string.
+func goStringFromC(b []byte) string {
 	for i, c := range b {
 		if c == 0 {
 			return string(b[:i])
