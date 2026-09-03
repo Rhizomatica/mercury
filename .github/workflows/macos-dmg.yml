@@ -30,7 +30,10 @@ jobs:
   macos:
     name: Build and notarize macOS .dmg
     runs-on: macos-latest
-    timeout-minutes: 90
+    # Must exceed the universal build plus MACOS_NOTARY_WAIT (3600s), or the
+    # runner kills a job that is only waiting on Apple.  90 was exactly the
+    # sum, leaving no margin for a slow build.
+    timeout-minutes: 150
     steps:
       - uses: actions/checkout@v4
         with:
