@@ -343,9 +343,13 @@ jobs:
           PASS:  ${{ secrets.MACOS_SIGN_P12_PASSWORD }}
           NOTARY: ${{ secrets.MACOS_NOTARY_KEY_BASE64 }}
         run: |
+          # The password is deliberately NOT required.  PKCS#12 permits an
+          # empty password, and protecting the .p12 with one adds nothing when
+          # the certificate is already a bearer credential held in a secret
+          # store -- so an empty MACOS_SIGN_P12_PASSWORD is a valid setup, and
+          # demanding a non-empty one would fail a correct configuration.
           missing=
           [ -n "$P12" ]    || missing="$missing MACOS_SIGN_P12_BASE64"
-          [ -n "$PASS" ]   || missing="$missing MACOS_SIGN_P12_PASSWORD"
           [ -n "$NOTARY" ] || missing="$missing MACOS_NOTARY_KEY_BASE64"
           if [ -n "$missing" ]; then
             echo "::error::missing repository secret(s):$missing"

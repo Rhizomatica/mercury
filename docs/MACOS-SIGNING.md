@@ -73,7 +73,17 @@ At <https://developer.apple.com/account/resources/certificates>:
 5. Download the issued `developerID_application.cer`.
 
 Then combine the certificate with the private key into the `.p12` rcodesign
-wants. **Choose your own password** and keep it with the file:
+wants. `-certfile` is the part that matters: it bundles the intermediate so the
+`.p12` carries leaf **+** chain. Without it you get a leaf-only signature, which
+signs fine and then fails to validate on machines that do not already have the
+intermediate cached — a bug that shows up on other people's Macs, not yours.
+
+**An empty password (`-passout pass:`) is fine**, and is what this project
+uses. PKCS#12 permits it, rcodesign accepts it, and a password protects
+nothing here: the key generated in §1 is already unencrypted on disk beside it,
+and in CI the `.p12` is a bearer credential inside a secret store either way.
+Use one only if you also encrypt or delete that private key. If you do set one,
+keep it with the file — the certificate is valid for 5 years.
 
 ```sh
 cd ~/.config/mercury-signing
@@ -81,15 +91,22 @@ openssl x509 -inform DER -in developerID_application.cer -out apple_developer_id
 openssl pkcs12 -export \
   -inkey apple_developer_id.key \
   -in apple_developer_id.pem \
-  -out apple_developer_id.p12
+  -certfile certs/DeveloperIDG2CA.pem \
+  -name "Developer ID Application: <Team Name>" \
+  -out apple_developer_id.p12 \
+  -passout pass:
 chmod 600 apple_developer_id.p12
+
+# it must contain TWO certificates: the leaf and the G2 intermediate
+openssl pkcs12 -in apple_developer_id.p12 -passin pass: -nokeys 2>/dev/null \
+  | grep -c "BEGIN CERTIFICATE"
 ```
 
 Check it is the certificate you think it is — the common name must start with
 `Developer ID Application:`:
 
 ```sh
-openssl pkcs12 -in apple_developer_id.p12 -nodes -passin pass:YOURPASS \
+openssl pkcs12 -in apple_developer_id.p12 -nodes -passin pass: \
   | openssl x509 -noout -subject -dates
 ```
 
@@ -162,6 +179,8 @@ the key JSON are binary/multiline, so base64 them:
 ```sh
 cd ~/.config/mercury-signing
 gh secret set MACOS_SIGN_P12_BASE64   --repo Rhizomatica/mercury < <(base64 -w0 apple_developer_id.p12)
+# Only if the .p12 has a password.  The job treats it as optional, so an
+# unset secret means "empty password" and is a valid configuration.
 gh secret set MACOS_SIGN_P12_PASSWORD --repo Rhizomatica/mercury   # prompts, does not echo
 gh secret set MACOS_NOTARY_KEY_BASE64 --repo Rhizomatica/mercury < <(base64 -w0 apple_notary_key.json)
 ```
