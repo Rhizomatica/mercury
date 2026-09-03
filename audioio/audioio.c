@@ -318,7 +318,7 @@ int audioio_available_subsystems(int *subsystems, int max)
     if (!subsystems || max <= 0)
         return 0;
 
-#define ADD(s) do { if (n < max) subsystems[n] = (s); n++; } while (0)
+#define ADD(s) do { if (n < max) subsystems[n++] = (s); } while (0)
 #if defined(__linux__)
     ADD(AUDIO_SUBSYSTEM_ALSA);
     ADD(AUDIO_SUBSYSTEM_PULSE);
