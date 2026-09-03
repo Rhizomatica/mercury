@@ -297,6 +297,36 @@ func (c *Client) SendCQFrame() error {
 // SendBroadcast sends a broadcast message. The local callsign is prefixed to
 // the payload because the Mercury broadcast plane carries no callsign, so
 // receiving stations can attribute the message.
+// broadcastChatOverhead is what SendBroadcast adds around the operator's text:
+// the callsign, ": " and the terminating newline.  Kept beside the Sprintf that
+// produces it so the two cannot drift.
+func broadcastChatOverhead(callsign string) int {
+	return len(callsign) + len(": ") + len("\n")
+}
+
+// BroadcastChatLimit is how many characters of message will actually reach the
+// air for a given modem frame size.
+//
+// Mercury frames a broadcast message with a 1-byte header and a 2-byte length
+// prefix, and when the payload already fills the frame there is nowhere to put
+// them, so the TNC truncates -- the operator just sees their last characters
+// vanish.  The limit therefore depends on the mode AND the callsign, which
+// nobody can be expected to work out:
+//
+//	DATAC3 (126 B) as "PU2UIT-3"  ->  112 characters
+//	DATAC4  (54 B) as "PU2UIT-3"  ->   40 characters
+//
+// Returns 0 if frameSize leaves no room at all, so a caller can tell the
+// difference between "short message" and "this mode cannot carry chat".
+func BroadcastChatLimit(frameSize int, callsign string) int {
+	const mercuryFraming = 3 // header + 2-byte length prefix
+	n := frameSize - mercuryFraming - broadcastChatOverhead(callsign)
+	if n < 0 {
+		return 0
+	}
+	return n
+}
+
 func (c *Client) SendBroadcast(msg string) error {
 	if strings.TrimSpace(msg) == "" {
 		return fmt.Errorf("empty message")
