@@ -73,17 +73,47 @@ At <https://developer.apple.com/account/resources/certificates>:
 5. Download the issued `developerID_application.cer`.
 
 Then combine the certificate with the private key into the `.p12` rcodesign
-wants. `-certfile` is the part that matters: it bundles the intermediate so the
-`.p12` carries leaf **+** chain. Without it you get a leaf-only signature, which
-signs fine and then fails to validate on machines that do not already have the
-intermediate cached — a bug that shows up on other people's Macs, not yours.
+wants. **Two details here are not optional, and both were found the hard way by
+signing a real binary and asking Apple's own `codesign` what it thought.**
 
-**An empty password (`-passout pass:`) is fine**, and is what this project
-uses. PKCS#12 permits it, rcodesign accepts it, and a password protects
-nothing here: the key generated in §1 is already unencrypted on disk beside it,
-and in CI the `.p12` is a bearer credential inside a secret store either way.
-Use one only if you also encrypt or delete that private key. If you do set one,
-keep it with the file — the certificate is valid for 5 years.
+**1. The `.p12` must hold the leaf ONLY — do not add the intermediate.**
+rcodesign takes the *first* certificate in the bundle as the signing
+certificate, and it reads an OpenSSL-written bundle CA-first. Adding
+`-certfile certs/DeveloperIDG2CA.pem` therefore makes it sign with the
+*Developer ID Certification Authority*, producing `TeamIdentifier=G2`,
+`Authority=(unavailable)` and a signature Apple rejects as
+`invalid signature (code or signature have been modified)`. rcodesign registers
+Apple's CA chain by itself:
+
+```
+automatically registered Apple CA certificate: Developer ID Certification Authority
+automatically registered Apple CA certificate: Apple Root CA
+```
+
+so a leaf-only bundle yields the full `Authority` chain anyway.
+
+**2. It must use the legacy PKCS#12 algorithms.** OpenSSL 3 defaults to
+AES-256-CBC + PBKDF2, which rcodesign's PFX parser cannot read — and the error
+it gives points at entirely the wrong thing:
+
+```
+Error: incorrect password given when decrypting PFX data
+```
+
+That message means *unsupported encryption*, not a wrong password. Measured:
+
+| bundle | password | rcodesign |
+|---|---|---|
+| legacy (SHA1/3DES) | empty | accepted |
+| legacy (SHA1/3DES) | set | accepted |
+| OpenSSL 3 default | set | rejected |
+| OpenSSL 3 default | empty | rejected |
+
+**An empty password is fine** — the table shows it is the algorithm that
+matters, not the password. It is what this project uses: the key generated in
+§1 is already unencrypted on disk beside the bundle, and in CI the `.p12` is a
+bearer credential inside a secret store either way, so a password protects
+nothing unless that private key is also encrypted or deleted.
 
 ```sh
 cd ~/.config/mercury-signing
@@ -91,23 +121,32 @@ openssl x509 -inform DER -in developerID_application.cer -out apple_developer_id
 openssl pkcs12 -export \
   -inkey apple_developer_id.key \
   -in apple_developer_id.pem \
-  -certfile certs/DeveloperIDG2CA.pem \
   -name "Developer ID Application: <Team Name>" \
+  -keypbe PBE-SHA1-3DES -certpbe PBE-SHA1-3DES -macalg sha1 \
   -out apple_developer_id.p12 \
   -passout pass:
 chmod 600 apple_developer_id.p12
-
-# it must contain TWO certificates: the leaf and the G2 intermediate
-openssl pkcs12 -in apple_developer_id.p12 -passin pass: -nokeys 2>/dev/null \
-  | grep -c "BEGIN CERTIFICATE"
 ```
 
-Check it is the certificate you think it is — the common name must start with
-`Developer ID Application:`:
+Verify it end to end rather than by inspection — sign a throwaway Mach-O and
+let Apple judge it. This is the only check that catches both traps above:
 
 ```sh
-openssl pkcs12 -in apple_developer_id.p12 -nodes -passin pass: \
-  | openssl x509 -noout -subject -dates
+cp /bin/echo /tmp/sigtest && chmod +w /tmp/sigtest
+rcodesign sign --p12-file apple_developer_id.p12 --p12-password "" \
+  --code-signature-flags runtime /tmp/sigtest
+codesign -dv --verbose=4 /tmp/sigtest 2>&1 | grep -E "^Authority|TeamIdentifier"
+codesign --verify --strict --verbose=2 /tmp/sigtest
+```
+
+Correct output names your organisation, not the CA, and ends with
+`valid on disk` / `satisfies its Designated Requirement`:
+
+```
+Authority=Developer ID Application: <Your Org> (<TEAMID>)
+Authority=Developer ID Certification Authority
+Authority=Apple Root CA
+TeamIdentifier=<TEAMID>
 ```
 
 Apple's Developer ID certificates are valid for 5 years. Note the expiry: a
@@ -195,7 +234,9 @@ because it teaches people to click through Gatekeeper warnings.
 
 | symptom | cause |
 |---|---|
-| `rcodesign` rejects the `.p12` | wrong certificate type — must be *Developer ID Application*, check with the `openssl x509 -subject` command in §2 |
+| `Error: incorrect password given when decrypting PFX data` | **Not a password problem.** The `.p12` uses OpenSSL 3's default AES-256/PBKDF2, which rcodesign cannot read. Rebuild it with `-keypbe PBE-SHA1-3DES -certpbe PBE-SHA1-3DES -macalg sha1` (§2). |
+| Signature has `TeamIdentifier=G2` and `Authority=(unavailable)`; `codesign --verify` says `invalid signature (code or signature have been modified)` | The `.p12` contains the intermediate as well as the leaf, so rcodesign signed with the CA. Rebuild it leaf-only, without `-certfile` (§2). |
+| `rcodesign` rejects the certificate type | must be *Developer ID Application*, check with the `openssl x509 -subject` command in §2 |
 | Notarization rejected: "The signature does not include a secure timestamp" | signing ran without network; rcodesign timestamps by default, so this means the timestamp server was unreachable |
 | Notarization rejected: "The executable does not have the hardened runtime enabled" | `--code-signature-flags runtime` missing — the Makefile always passes it, so this means something was signed outside `macos_sign` |
 | Gatekeeper still warns after notarizing | the ticket was not stapled, or the `.dmg` was rebuilt after stapling — staple last |
