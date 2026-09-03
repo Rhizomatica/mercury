@@ -306,7 +306,7 @@ func (l *engineLink) SetWaterfall(enabled bool) {
 func (l *engineLink) AudioSubsystems() (string, []string) {
 	name := make([]byte, 32)
 	C.mercury_ui_get_audio_system((*C.char)(unsafe.Pointer(&name[0])), C.int(len(name)))
-	current := cString(name)
+	current := goStringFromC(name)
 	if runtime.GOOS == "linux" {
 		return current, []string{"alsa", "pulse"}
 	}
