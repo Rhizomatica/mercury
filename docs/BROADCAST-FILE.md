@@ -187,11 +187,18 @@ fading** — a real HF path will be worse.
 | DATAC17 | 9 | 1180 B | 31 s | 1290 bps | +7.2 dB | +6.2 dB |
 | DATAC1 | 0 | 510 B | 50 s | 800 bps | +5.2 dB | +3.2 dB |
 | DATAC3 | 1 | 126 B | 167 s | 240 bps | +0.2 dB | −1.8 dB |
-| DATAC4 | 3 | 54 B | 695 s | 58 bps | **−6.8 dB** | −7.8 dB |
+| DATAC4 | 3 | 54 B | 695 s | 58 bps | −6.8 dB | −7.8 dB |
+| MFSK | 11 | 98 B | 786 s | 51 bps | **−9.8 dB** | −12.8 dB |
 
-The span is the whole point: **QAM16C2 moves the file 41× faster than DATAC4,
-and DATAC4 works 24 dB further down.** Pick for the path you have, not the one
-you want — and remember both stations must be set to the same mode by hand.
+The span is the whole point: **QAM16C2 moves the file 46× faster than MFSK, and
+MFSK works 27 dB further down.** Pick for the path you have, not the one you
+want — and remember both stations must be set to the same mode by hand.
+
+MFSK (mode 11) is the robust end of the ladder, 3 dB below DATAC4 while
+carrying a *larger* frame (98 B against 54 B) — it buys that margin with time
+per frame (12.8 s) rather than with payload, which is why its 5 kB time is only
+13% worse than DATAC4's for 3 dB more reach. It is Mercury's own modem rather
+than a FreeDV mode; both stations need `mercury -m 11`.
 
 ### Every point measured
 
@@ -205,7 +212,17 @@ DATAC3   +10.2 ok 167s    +5.2 ok 167s    +2.2 ok 167s   +0.2 ok 167s
           -1.8 FAIL       -2.8 FAIL       -4.8 FAIL
 DATAC4    +5.2 ok 695s    +0.2 ok 695s    -2.8 ok 695s   -4.8 ok 701s
           -6.8 ok 2110s   -7.8 FAIL       -8.8 FAIL
+MFSK     clean ok 786s    -9.8 ok 786s   -12.8 FAIL     -14.8 FAIL
+         -17.8 FAIL      -19.8 FAIL
 ```
+
+The MFSK points were run with a 1800 s cap — 2.3 carousel passes against a
+786 s flat time. That is enough to separate "decodes" from "does not", but it
+would not have caught a DATAC4-style degradation zone, where the last working
+point took 3× the flat time. So −12.8 dB is where MFSK stops decoding *within
+2.3 passes*; a station willing to leave a much longer transfer running may get
+a little further down. The −9.8 dB figure in the table is a floor that is
+safe to plan against, not the theoretical limit.
 
 ### How the failure behaves
 
@@ -237,7 +254,8 @@ continuous transmission at DATAC13's 1.98 s per frame.
 Measured: DATAC13 did not complete even a 60-byte file within 200 s at
 +15.2 dB -- which is why no 14-byte mode appears in the table above. The codec itself is fine at that symbol size — it produces valid
 frames — the mode is simply the wrong tool for a file. Use DATAC4 (42 bytes per
-symbol) or larger; DATAC3 is the sensible robust choice.
+symbol) or larger; DATAC3 is the sensible robust choice, and MFSK (86 bytes per
+symbol) is the choice when the path will not carry anything else.
 
 Two things the harness encodes, both learned the hard way: `cat` between the
 FIFOs does **not** work as the air — it buffers in 64 kB chunks, so the

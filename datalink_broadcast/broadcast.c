@@ -42,10 +42,15 @@
  * polled by every worker loop; volatile orders nothing between threads, and
  * declaring the same object differently in different translation units is
  * undefined behaviour on top of that.  Plain assignment and test still work. */
+#include "bcast_modes.h"
+#include "modem_mfsk.h"
+
 extern _Atomic bool shutdown_;
 extern arq_info arq_conn; // ARQ connection info
 
-static const uint32_t hermes_broadcast_frame_size[] = { 510, 126, 14, 54, 14, 3, 30, 30, 14, 1180, 1213 };
+/* Frame sizes come from bcast_modes.h -- the same table the file transfer and
+ * hermes-broadcast use.  This file used to carry its own copy, which is how a
+ * mode added in one place can go missing in another. */
 static const int freedv_to_hermes_mode_map[] = {
     FREEDV_MODE_DATAC1,
     FREEDV_MODE_DATAC3,
@@ -57,10 +62,16 @@ static const int freedv_to_hermes_mode_map[] = {
     FREEDV_MODE_DATAC15,
     FREEDV_MODE_DATAC16,
     FREEDV_MODE_DATAC17,
-    FREEDV_MODE_QAM16C2
+    FREEDV_MODE_QAM16C2,
+    MERCURY_MODE_MFSK        /* index 11: our own modem, not a FreeDV mode */
 };
 #define HERMES_BROADCAST_MODE_COUNT \
     ((int)(sizeof(freedv_to_hermes_mode_map) / sizeof(freedv_to_hermes_mode_map[0])))
+
+/* The two tables are indexed by the same wire mode number, so a mode added to
+ * one and not the other is a build error rather than a field failure. */
+_Static_assert(HERMES_BROADCAST_MODE_COUNT == BCAST_MODE_MAX + 1,
+               "broadcast mode map and bcast_modes.h frame table disagree");
 
 // Main function to handle broadcast operations
 void broadcast_run(generic_modem_t *g_modem)
@@ -85,7 +96,7 @@ void broadcast_run(generic_modem_t *g_modem)
 
     if (hermes_mode >= 0)
     {
-        uint32_t expected_frame_size = hermes_broadcast_frame_size[hermes_mode];
+        uint32_t expected_frame_size = bcast_frame_size[hermes_mode];
         if (g_modem->payload_bytes_per_modem_frame != expected_frame_size)
         {
             HLOGW("bcast", "Broadcast frame mismatch (FreeDV mode %d, hermes mode %d): modem payload=%zu, hermes-broadcast expects=%u",

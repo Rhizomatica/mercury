@@ -43,12 +43,13 @@ ARQ_STUBS = datalink_arq/arq_test_stubs.c
 
 # Test executables
 TEST_BINS = test_ring_buffer test_arq_protocol test_arq_timing test_arq_fsm \
-            test_tcp_interfaces test_resampler test_pcm24 test_arq_olla test_arq_sim \
+            test_tcp_interfaces test_resampler test_arq_ladder test_arq_sim \
             test_arq_conn test_cfg_utils test_arq_tnc test_channel_busy \
-            test_freedv_harq test_sock_wire test_virtual_clock test_watterson \
+            test_mfsk test_watterson test_mfsk_modem test_pattern_ack_detection \
+            test_freedv_harq test_pcm24 test_sock_wire test_virtual_clock \
             test_mercury_prng test_bcast_file \
-            test_ofdm_acq test_ui_status test_ui_devices test_tx_pacing test_radio_port \
-            test_radio_io_frequency
+            test_ofdm_acq test_ui_status test_ui_devices test_tx_pacing \
+            test_radio_port test_radio_io_frequency
 
 .PHONY: all test clean
 
@@ -81,9 +82,11 @@ test_arq_protocol: datalink_arq/test_arq_protocol.c $(UNITY_SRC) $(ARQ_STUBS) \
                    ../common/virtual_clock.c ../datalink_arq/arq_protocol.c ../datalink_arq/arith.c
 	$(CC) $(CFLAGS) -I../modem/freedv -o $@ $^ $(LDFLAGS)
 
-# OLLA control-loop test (closed-loop gear-shift convergence)
-test_arq_olla: datalink_arq/test_arq_olla.c $(UNITY_SRC) $(ARQ_STUBS) \
-               ../common/virtual_clock.c ../datalink_arq/arq_protocol.c ../datalink_arq/arith.c
+# Delivery-driven ladder test (deterministic climb/drop, MFSK start, BW clamp)
+test_arq_ladder: datalink_arq/test_arq_ladder.c $(UNITY_SRC) $(ARQ_STUBS) \
+               ../datalink_arq/arq_fsm.c ../common/virtual_clock.c \
+               ../datalink_arq/arq_protocol.c ../datalink_arq/arq_timing.c \
+               ../datalink_arq/arith.c
 	$(CC) $(CFLAGS) -I../modem/freedv -o $@ $^ $(LDFLAGS) -lm
 
 # ARQ timing tests (instrumentation recording)
@@ -128,6 +131,14 @@ test_arq_conn: datalink_arq/test_arq_conn.c $(UNITY_SRC) \
                datalink_arq/arq_conn_accessors.c
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
+# Connect-latency instrument (not a pass/fail test — run it by hand).
+# Mirrors test_arq_sim's link line, minus Unity.
+connect_bench: sim/connect_bench.c $(ARQ_STUBS) $(SIM_SRC) \
+               ../datalink_arq/arq_fsm.c ../common/virtual_clock.c \
+               ../datalink_arq/arq_protocol.c \
+               ../datalink_arq/arq_timing.c ../datalink_arq/arith.c
+	$(CC) $(CFLAGS) -Isim -I../modem/freedv -o $@ $^ $(LDFLAGS)
+
 test_cfg_utils: common/test_cfg_utils.c $(UNITY_SRC) \
                 ../common/cfg_utils.c ../radio_io/cm108_ptt.c \
                 ../common/hermes_log.c \
@@ -170,10 +181,19 @@ test_mercury_prng: common/test_mercury_prng.c $(UNITY_SRC) ../common/mercury_prn
 # back byte-for-byte.
 RAPTORQ_SRC = $(wildcard ../datalink_broadcast/raptorq/lib/*.c) \
               $(wildcard ../datalink_broadcast/raptorq/deps/obl/*.c)
+MFSK_SRC = ../modem/mfsk.c ../modem/mfsk_ofdm.c ../modem/mfsk_sync.c ../modem/mfsk_ldpc.c \
+           ../modem/mfsk_ldpc_1_16.c ../modem/mfsk_ldpc_2_16.c ../modem/mfsk_ldpc_3_16.c \
+           ../modem/mfsk_ldpc_5_16.c ../modem/mfsk_ldpc_8_16.c
+
+# Links the real modems too: one test pins the wire frame-size table against
+# what each modem actually transmits, which is the only way a wrong entry gets
+# caught before it fails silently on the air.
 test_bcast_file: datalink_broadcast/test_bcast_file.c $(UNITY_SRC) \
-                 ../datalink_broadcast/bcast_file.c $(RAPTORQ_SRC)
+                 ../datalink_broadcast/bcast_file.c $(RAPTORQ_SRC) \
+                 ../modem/modem_mfsk.c $(MFSK_SRC) ../modem/freedv/libfreedvdata.a
 	$(CC) $(CFLAGS) -I.. -I../datalink_broadcast -I../datalink_broadcast/raptorq/include \
-	      -I../datalink_broadcast/raptorq/deps -o $@ $^ $(LDFLAGS) -lm
+	      -I../datalink_broadcast/raptorq/deps -I../modem -I../modem/freedv \
+	      -o $@ $^ $(LDFLAGS) -lm
 
 # OFDM acquisition: the FFT search must agree with brute force, fringe included.
 # libfreedvdata.a is a PREREQUISITE, not just a link argument: leave it off the
@@ -229,5 +249,26 @@ test_ui_devices: gui_interface/test_ui_devices.c $(UNITY_SRC) \
 	$(CC) $(CFLAGS) -I../gui_interface -I../datalink_arq -I../modem -I../common -o $@ \
 	    gui_interface/test_ui_devices.c $(UNITY_SRC) ../gui_interface/ui_devices.c $(LDFLAGS)
 
+# MFSK codec test (mod/demod round-trip, modulation-order gain, OFDM framing)
+test_mfsk: modem/test_mfsk.c $(UNITY_SRC) ../modem/mfsk.c ../modem/mfsk_ofdm.c ../modem/mfsk_sync.c ../modem/mfsk_ldpc.c ../modem/mfsk_ldpc_1_16.c ../modem/mfsk_ldpc_2_16.c ../modem/mfsk_ldpc_3_16.c ../modem/mfsk_ldpc_5_16.c ../modem/mfsk_ldpc_8_16.c
+	$(CC) $(CFLAGS) -I../modem -o $@ $^ $(LDFLAGS) -lm
+
+# MFSK modem backend (burst TX/RX through the vtable); links libfreedvdata for CRC16
+
+test_mfsk_modem: modem/test_mfsk_modem.c $(UNITY_SRC) ../modem/modem_mfsk.c $(MFSK_SRC) ../modem/freedv/libfreedvdata.a
+	$(CC) $(CFLAGS) -I../modem -I../modem/freedv -o $@ $^ $(LDFLAGS) -lm
+
+# Pattern ACK DSP test (mfsk_pattern_tx/detect: noise rejects, real detects)
+test_pattern_ack_detection: modem/test_pattern_ack_detection.c $(UNITY_SRC) \
+           ../modem/modem_mfsk.c $(MFSK_SRC)
+	$(CC) $(CFLAGS) -I../modem -I../modem/freedv -o $@ $^ ../modem/freedv/libfreedvdata.a $(LDFLAGS) -lm
+
+# The benches are not part of `all` (they are instruments, not pass/fail gates),
+# but they MUST be removed by clean.  Leaving connect_bench behind meant a
+# `make clean && make` cycle silently served a binary built from the previous
+# tree -- an A/B that read byte-identical before and after a change that had in
+# fact moved the number by 3.1 s.
+BENCH_BINS = connect_bench
+
 clean:
-	rm -f $(TEST_BINS)
+	rm -f $(TEST_BINS) $(BENCH_BINS)

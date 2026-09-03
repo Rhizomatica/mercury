@@ -24,19 +24,19 @@ _Atomic int arq_retry_stagger_ms       = ARQ_RETRY_STAGGER_MS_DEFAULT;
 _Atomic int arq_no_progress_timeout_s  = ARQ_NO_PROGRESS_TIMEOUT_S_DEFAULT;
 _Atomic int arq_disconnect_drain_timeout_s = ARQ_DISCONNECT_DRAIN_TIMEOUT_S_DEFAULT;
 
-/* Runtime-configurable guard/keepalive/ladder constants */
+/* Runtime-configurable guard/ladder constants */
 _Atomic int arq_channel_guard_ms            = ARQ_CHANNEL_GUARD_MS_DEFAULT;
 _Atomic int arq_iss_post_ack_guard_ms       = ARQ_ISS_POST_ACK_GUARD_MS_DEFAULT;
-_Atomic int arq_keepalive_interval_s        = ARQ_KEEPALIVE_INTERVAL_S_DEFAULT;
-_Atomic int arq_keepalive_miss_limit        = ARQ_KEEPALIVE_MISS_LIMIT_DEFAULT;
 _Atomic int arq_ladder_up_successes         = ARQ_LADDER_UP_SUCCESSES_DEFAULT;
+
+/* Config-compat storage (see arq_protocol.h) — set by config, unused by FSM. */
+_Atomic int arq_peer_payload_hold_s         = ARQ_PEER_PAYLOAD_HOLD_S_DEFAULT;
 _Atomic int arq_retry_downgrade_threshold   = ARQ_RETRY_DOWNGRADE_THRESHOLD_DEFAULT;
 _Atomic int arq_mode_hold_after_downgrade_s = ARQ_MODE_HOLD_AFTER_DOWNGRADE_S_DEFAULT;
-_Atomic int arq_peer_payload_hold_s         = ARQ_PEER_PAYLOAD_HOLD_S_DEFAULT;
-_Atomic int arq_startup_max_s               = ARQ_STARTUP_MAX_S_DEFAULT;
 
 /* Include FreeDV mode constants */
 #include "../modem/freedv/freedv_api.h"
+#include "../modem/modem_mfsk.h"   /* MERCURY_MODE_MFSK */
 
 /* Framer layer (write_frame_header, PACKET_TYPE_* constants) */
 #include "../modem/framer.h"
@@ -87,19 +87,39 @@ extern int  arithmetic_decode(uint8_t *input, int max_len, char *output, int max
  * payload in the DATA-frame mode-inference loop (arq.c).
  * ====================================================================== */
 
+/* ack_timeout_s/retry_interval_s are sized for the 0.64 s Welch-Costas pattern
+ * ACK (was the 3.74 s DATAC16 coded ACK): ack_timeout >= frame_duration +
+ * channel_guard + pattern_ack(0.64) + margin (~1.5 s).  DATAC16 keeps its
+ * 3.74 s coded-frame budget because CALL/ACCEPT/DISCONNECT still ride it. */
 const arq_mode_timing_t arq_mode_table[] = {
     /*  freedv_mode           frame_dur  tx_period  ack_timeout  retry_interval  payload  burst */
     {  FREEDV_MODE_DATAC16,   3.74f,     1.0f,      7.0f,        8.0f,           14,   1 },
-    {  FREEDV_MODE_DATAC15,   4.40f,     1.0f,      11.0f,       12.0f,          30,   1 },
-    {  FREEDV_MODE_DATAC4,    5.80f,     1.0f,      13.0f,       14.0f,          54,   1 },
-    {  FREEDV_MODE_DATAC3,    3.82f,     1.0f,      11.0f,       12.0f,          126,   1 },
-    {  FREEDV_MODE_DATAC1,    4.81f,     1.0f,      12.0f,       13.0f,          510,   1 },
-    {  FREEDV_MODE_DATAC17,   7.40f,     1.0f,      14.0f,       15.0f,          1180,   1 },
-    {  FREEDV_MODE_QAM16C2,   3.70f,     1.0f,      11.0f,       12.0f,          1213,   1 },
+    {  FREEDV_MODE_DATAC15,   4.40f,     1.0f,      7.0f,        8.0f,           30,   1 },
+    {  FREEDV_MODE_DATAC4,    5.80f,     1.0f,      9.0f,        10.0f,          54,   1 },
+    {  FREEDV_MODE_DATAC3,    3.82f,     1.0f,      7.0f,        8.0f,           126,   1 },
+    {  FREEDV_MODE_DATAC1,    4.81f,     1.0f,      8.0f,        9.0f,           510,   1 },
+    {  FREEDV_MODE_DATAC17,   7.40f,     1.0f,      11.0f,       12.0f,          1180,   1 },
+    {  FREEDV_MODE_QAM16C2,   3.70f,     1.0f,      7.0f,        8.0f,           1213,   1 },
+    /* MFSK weak-signal fringe rung (ladder floor, rank 0 = start): non-coherent
+     * 32-MFSK, rate-1/2 LDPC, ~13.5s burst carrying 98 payload bytes.  Reached
+     * whenever delivery feedback drops the level to the floor.  ack_timeout
+     * covers the peer's turnaround + the pattern ACK after our long burst. */
+    {  MERCURY_MODE_MFSK,     13.50f,    1.0f,      17.0f,       18.0f,          98,   1 },
 };
 
 const int arq_mode_table_count =
     (int)(sizeof(arq_mode_table) / sizeof(arq_mode_table[0]));
+
+/* Delivery-driven ladder ordered by ARQ goodput, floor first (rank 0 = MFSK,
+ * the start).  arq_fsm derives payload_mode = arq_mode_ladder[speed_level]. */
+const int arq_mode_ladder[ARQ_LADDER_LEVELS] = {
+    MERCURY_MODE_MFSK,
+    FREEDV_MODE_DATAC4,
+    FREEDV_MODE_DATAC3,
+    FREEDV_MODE_DATAC1,
+    FREEDV_MODE_DATAC17,
+    FREEDV_MODE_QAM16C2,
+};
 
 /* ======================================================================
  * Mode timing lookup
@@ -121,17 +141,44 @@ const arq_mode_timing_t *arq_protocol_mode_timing(int freedv_mode)
     return NULL;
 }
 
+/* RX window the IRS holds open after sending ACCEPT, waiting for the ISS's
+ * first data frame.
+ *
+ * Derived from the ladder, never hand-picked: it must outlast the LONGEST burst
+ * the ISS can send, which is the floor rung (the slowest, most robust mode).
+ * The old fixed 9000 ms was computed for a DATAC15 first frame (4.4 s); when
+ * MFSK became the floor at 13.5 s the window was shorter than the burst, so the
+ * IRS gave up mid-burst and retransmitted ACCEPT on top of it -- keying up
+ * inside every data burst, going deaf for the 3.7 s of its own transmission,
+ * and destroying the frame that would have told it to stop.  The ISS then
+ * retried into the same collision.  Deriving it means a future rung cannot
+ * reintroduce that by being slower than a constant nobody remembered to bump. */
+/* Longest burst any rung of the ladder can put on the air.
+ *
+ * Anything that has to survive "a burst is in flight" must be sized from THIS,
+ * not from whichever mode happens to be selected at the instant it is asked.
+ * The payload mode moves around during a session, so a guard derived from the
+ * current mode silently shrinks -- and a guard that shrinks below the burst it
+ * is protecting destroys that burst. */
 float arq_protocol_longest_burst_s(void)
 {
     float longest_s = 0.0f;
-    for (int i = 0; i < arq_mode_table_count; i++)
+    for (int i = 0; i < ARQ_LADDER_LEVELS; i++)
     {
-        float burst_s = arq_mode_table[i].frame_duration_s;
-        if (burst_s > longest_s)
-            longest_s = burst_s;
+        const arq_mode_timing_t *tm = arq_protocol_mode_timing(arq_mode_ladder[i]);
+        if (tm && tm->frame_duration_s > longest_s)
+            longest_s = tm->frame_duration_s;
     }
-    /* Unreadable table: fall back to the slowest rung we ship (DATAC17). */
-    return (longest_s > 0.0f) ? longest_s : 7.4f;
+    return (longest_s > 0.0f) ? longest_s : 13.5f;  /* unreadable: slowest rung */
+}
+
+uint32_t arq_protocol_accept_rx_window_ms(void)
+{
+    float longest_s = arq_protocol_longest_burst_s();
+
+    return (uint32_t)ARQ_ISS_POST_ACK_GUARD_MS
+         + (uint32_t)(longest_s * 1000.0f)
+         + ARQ_ACCEPT_RX_WINDOW_MARGIN_MS;
 }
 
 float arq_protocol_call_interval_s(void)
@@ -268,14 +315,6 @@ float arq_protocol_decode_snr(uint8_t snr_raw)
     return (float)((int)snr_raw - 128);
 }
 
-float arq_olla_update(float offset_db, bool first_try_ok)
-{
-    offset_db += first_try_ok ? ARQ_OLLA_STEP_UP_DB : -ARQ_OLLA_STEP_DOWN_DB;
-    if (offset_db < ARQ_OLLA_OFFSET_MIN_DB) offset_db = ARQ_OLLA_OFFSET_MIN_DB;
-    if (offset_db > ARQ_OLLA_OFFSET_MAX_DB) offset_db = ARQ_OLLA_OFFSET_MAX_DB;
-    return offset_db;
-}
-
 /* ======================================================================
  * ACK delay codec
  *
@@ -350,65 +389,6 @@ int arq_protocol_build_disconnect(uint8_t *buf, size_t buf_len,
                       ARQ_SUBTYPE_DISCONNECT, session_id,
                       0, 0, 0, snr_raw, 0,
                       NULL, 0);
-}
-
-int arq_protocol_build_keepalive(uint8_t *buf, size_t buf_len,
-                                  uint8_t session_id, uint8_t snr_raw)
-{
-    return build_ctrl(buf, buf_len,
-                      ARQ_SUBTYPE_KEEPALIVE, session_id,
-                      0, 0, 0, snr_raw, 0,
-                      NULL, 0);
-}
-
-int arq_protocol_build_keepalive_ack(uint8_t *buf, size_t buf_len,
-                                      uint8_t session_id, uint8_t snr_raw)
-{
-    return build_ctrl(buf, buf_len,
-                      ARQ_SUBTYPE_KEEPALIVE_ACK, session_id,
-                      0, 0, 0, snr_raw, 0,
-                      NULL, 0);
-}
-
-int arq_protocol_build_turn_req(uint8_t *buf, size_t buf_len,
-                                 uint8_t session_id, uint8_t rx_ack_seq,
-                                 uint8_t snr_raw)
-{
-    return build_ctrl(buf, buf_len,
-                      ARQ_SUBTYPE_TURN_REQ, session_id,
-                      0, rx_ack_seq, 0, snr_raw, 0,
-                      NULL, 0);
-}
-
-int arq_protocol_build_turn_ack(uint8_t *buf, size_t buf_len,
-                                 uint8_t session_id, uint8_t snr_raw)
-{
-    return build_ctrl(buf, buf_len,
-                      ARQ_SUBTYPE_TURN_ACK, session_id,
-                      0, 0, 0, snr_raw, 0,
-                      NULL, 0);
-}
-
-int arq_protocol_build_mode_req(uint8_t *buf, size_t buf_len,
-                                 uint8_t session_id, uint8_t snr_raw,
-                                 int freedv_mode)
-{
-    uint8_t payload[1] = { (uint8_t)freedv_mode };
-    return build_ctrl(buf, buf_len,
-                      ARQ_SUBTYPE_MODE_REQ, session_id,
-                      0, 0, 0, snr_raw, 0,
-                      payload, 1);
-}
-
-int arq_protocol_build_mode_ack(uint8_t *buf, size_t buf_len,
-                                 uint8_t session_id, uint8_t snr_raw,
-                                 int freedv_mode, uint8_t rx_ack_seq)
-{
-    uint8_t payload[1] = { (uint8_t)freedv_mode };
-    return build_ctrl(buf, buf_len,
-                      ARQ_SUBTYPE_MODE_ACK, session_id,
-                      0, rx_ack_seq, ARQ_FLAG_CTRL_ACKSEQ, snr_raw, 0,
-                      payload, 1);
 }
 
 int arq_protocol_build_data(uint8_t *buf, size_t buf_len,
@@ -491,12 +471,12 @@ static int encode_callsign_payload(const char *src, const char *dst,
     if (enc_len <= 0)
         return -1;
 
-    size_t src_cap = out_cap - ARQ_CONNECT_DST_CRC_SIZE;
     /* Refuse rather than truncate.  A truncated arithmetic code is not a
-     * shortened callsign -- it decodes to a DIFFERENT string at the far end,
+     * shortened callsign — it decodes to a DIFFERENT string at the far end,
      * so the peer either answers a call from a station that does not exist or
      * silently drops one that does.  Failing here makes the operator's
      * over-long callsign visible instead of turning it into a wrong one. */
+    size_t src_cap = out_cap - ARQ_CONNECT_DST_CRC_SIZE;
     if ((size_t)enc_len > src_cap)
         return -1;
     memcpy(out + ARQ_CONNECT_DST_CRC_SIZE, tmp, (size_t)enc_len);

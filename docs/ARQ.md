@@ -20,7 +20,6 @@ a table-driven, two-level hierarchical FSM and a clean protocol codec.
 8. [Session Roles: ISS and IRS](#session-roles-iss-and-irs)
 9. [Turn Mechanism](#turn-mechanism)
 10. [Mode Upgrade / Downgrade](#mode-upgrade--downgrade)
-11. [Keepalive](#keepalive)
 12. [Timing Instrumentation](#timing-instrumentation)
 13. [Logging](#logging)
 14. [Tuning Guide](#tuning-guide)
@@ -35,9 +34,9 @@ radio using the FreeDV modem stack.
 
 Key properties:
 - **Half-duplex**, explicit turn-taking (ISS/IRS roles).
-- **DATAC16** is the *control-only* mode: CALL, ACCEPT, ACK, DISCONNECT, TURN_REQ/ACK,
-  KEEPALIVE, MODE_REQ/ACK frames are always 14 bytes on DATAC16 (a Mercury custom
-  rate-1/3 mode that replaced DATAC13 as the control mode).
+- **DATAC16** is the *control-only* mode: CALL, ACCEPT, ACK and DISCONNECT are
+  always 14 bytes on DATAC16 (a Mercury custom rate-1/3 mode that replaced
+  DATAC13 as the control mode).
 - **Data frames** start in DATAC15 (30 bytes payload, Mercury custom rate-1/3 mode) and
   may upgrade to DATAC4 (54 bytes), DATAC3 (126 bytes) or DATAC1 (510 bytes) based on
   SNR and backlog.  See `docs/MODES.md` for the full mode table with measured
@@ -82,7 +81,7 @@ Packet type values:
 
 | Value | Name                  | Used for                            |
 |-------|-----------------------|-------------------------------------|
-| 0x0   | `ARQ_CONTROL`         | ACK, DISCONNECT, KEEPALIVE, TURN, MODE |
+| 0x0   | `ARQ_CONTROL`         | ACK, DISCONNECT                        |
 | 0x1   | `ARQ_DATA`            | Data payload frames                 |
 | 0x2   | `ARQ_CALL`            | CALL and ACCEPT compact frames      |
 | 0x3   | `BROADCAST_CONTROL`   | Broadcast subsystem (unrelated)     |
@@ -102,14 +101,6 @@ Byte 5: rx_ack_seq   last sequence number received from peer (implicit ACK)
 Byte 6: snr_raw      local RX SNR as uint8 = round(snr_dB) + 128; 0=unknown
 Byte 7: ack_delay    IRS→ISS delay from data_rx to ack_tx, in 10ms units; 0=unknown
 ```
-
-**`ARQ_FLAG_CTRL_ACKSEQ` (bit 1, CONTROL frames)** — set on `MODE_ACK` to mark
-`rx_ack_seq` (byte 5) as carrying the responder's valid `rx_expected`.  This
-lets a mode-probing ISS resolve an unACKed TX window during a mid-transfer
-mode change (see *Mode Upgrade / Downgrade* below): the value tells it
-definitively which queued frames the peer already delivered.  Absent on frames
-from older builds, in which case the ISS keeps its current mode and window
-(no interop break).
 
 For **DATA frames** (`ARQ_DATA`), payload bytes follow immediately after byte 7.
 The payload size is determined by the FreeDV mode in use.
@@ -177,12 +168,6 @@ attempts not addressed to them.
 | 3             | ACK             | IRS → ISS       | DATAC16   |
 | 4             | DISCONNECT      | Either          | DATAC16   |
 | 5             | DATA            | ISS → IRS       | DATAC15/4/3/1/17/QAM16C2|
-| 6             | KEEPALIVE       | Either          | DATAC16   |
-| 7             | KEEPALIVE_ACK   | Either          | DATAC16   |
-| 8             | MODE_REQ        | ISS → IRS       | DATAC16   |
-| 9             | MODE_ACK        | IRS → ISS       | DATAC16   |
-| 10            | TURN_REQ        | IRS → ISS       | DATAC16   |
-| 11            | TURN_ACK        | ISS → IRS       | DATAC16   |
 
 Note: Subtype 12 (`FLOW_HINT`) from the old protocol was removed; the `HAS_DATA`
 flag in byte 2 serves the same purpose.
@@ -212,147 +197,15 @@ These values are defined as constants in `arq_protocol.h` and can be tuned there
 
 ---
 
-## Two-Level FSM
+## FSM, Events, Turn Mechanism and Mode Upgrade
 
-The FSM is entirely in `arq_fsm.c`.  All state is in `arq_session_t`; there are
-no hidden global flags.  The FSM is driven by a single event-loop thread via
-`arq_fsm_dispatch()`.
-
-### Level 1 — Connection FSM
-
-```
-                    EV_APP_LISTEN
-  DISCONNECTED ─────────────────► LISTENING
-       ▲                              │
-       │ (no client /                 │ EV_RX_CALL (to us)
-       │  EV_APP_DISCONNECT)          ▼
-       │                          ACCEPTING ──── EV_APP_DISCONNECT ──► DISCONNECTED
-       │                              │
-       │                              │ EV_RX_DATA / EV_RX_ACK (first data)
-       │                              │ (sends ACCEPT retries meanwhile)
-       │
-  DISCONNECTING ◄──────────────── CONNECTED ◄─────────────────────────────────┐
-       │                              ▲                                        │
-       │ EV_APP_DISCONNECT            │ EV_RX_ACCEPT                          │
-       │ or EV_RX_DISCONNECT          │                                        │
-       ▼                          CALLING                                      │
-  (sends DISCONNECT               │                                            │
-   retries, then                  │ EV_APP_CONNECT                             │
-   → DISCONNECTED)            DISCONNECTED ────────────────────────────────────┘
-                                  (EV_APP_LISTEN → LISTENING)
-```
-
-States:
-
-| State          | Description                                        |
-|----------------|----------------------------------------------------|
-| DISCONNECTED   | No active session; idle                            |
-| LISTENING      | Waiting for an incoming CALL frame                 |
-| CALLING        | Outgoing CALL sent; awaiting ACCEPT                |
-| ACCEPTING      | ACCEPT sent; awaiting first data or ACK            |
-| CONNECTED      | Data-flow sub-FSM is active                        |
-| DISCONNECTING  | DISCONNECT frame exchange in progress              |
-
-If the caller receives `ACCEPT` before any application payload is queued, it
-sends an empty `ACK` after the post-`ACCEPT` guard to complete the handshake.
-Without that confirmation, the callee remains in `ACCEPTING` and keeps retrying
-`ACCEPT` until its window expires.
-If a duplicate `ACCEPT` arrives for the active session while the caller is
-already connected and idle, the caller re-sends that confirmation `ACK`.
-
-### Level 2 — Data-Flow Sub-FSM
-
-Active only when L1 is in `CONNECTED`.  Manages the half-duplex turn-taking and
-retransmission loop.
-
-```
-ISS side:                              IRS side:
-
-IDLE_ISS ──(APP_DATA_READY)──► DATA_TX   IDLE_IRS ──(RX_DATA)──► DATA_RX
-              │                   │                                    │
-              │ TX_STARTED         │ TX_COMPLETE                        │ (immediate ACK)
-              ▼                   ▼                                    ▼
-            DATA_TX           WAIT_ACK                              ACK_TX
-              │                   │                                    │
-              │                   │ RX_ACK → next frame                │ TX_COMPLETE
-              │                   │ or retry / TURN_ACK                ▼
-              │                   │                              IDLE_IRS (or TURN_REQ_TX
-              │                   │                               if HAS_DATA was set)
-              │                   │
-              │                   └─(timeout)──► retry or disconnect
-              │
-              └──(peer TURN_REQ) TURN_ACK_TX ──► IDLE_IRS
-```
-
-Full state list:
-
-| State            | Description                                    |
-|------------------|------------------------------------------------|
-| IDLE_ISS         | ISS: no pending frame; waiting for TX data     |
-| DATA_TX          | ISS: frame queued or on air                    |
-| WAIT_ACK         | ISS: PTT-OFF; waiting for peer ACK             |
-| IDLE_IRS         | IRS: waiting for peer data frame               |
-| DATA_RX          | IRS: data frame decoded; ACK pending           |
-| ACK_TX           | IRS: ACK frame being transmitted               |
-| TURN_REQ_TX      | IRS→ISS: TURN_REQ being transmitted            |
-| TURN_REQ_WAIT    | IRS→ISS: waiting for TURN_ACK                 |
-| TURN_ACK_TX      | ISS→IRS: TURN_ACK being transmitted            |
-| MODE_REQ_TX      | Mode upgrade: MODE_REQ being transmitted       |
-| MODE_REQ_WAIT    | Mode upgrade: waiting for MODE_ACK             |
-| MODE_ACK_TX      | Mode upgrade: MODE_ACK being transmitted       |
-| KEEPALIVE_TX     | KEEPALIVE being transmitted                    |
-| KEEPALIVE_WAIT   | Waiting for KEEPALIVE_ACK                      |
-
----
-
-## Events
-
-Events are dispatched to the FSM via `arq_fsm_dispatch()`.
-
-### Application events (from TCP TNC via channel bus)
-
-| Event               | Triggered by                     |
-|---------------------|----------------------------------|
-| `EV_APP_LISTEN`     | `LISTEN ON` command              |
-| `EV_APP_STOP_LISTEN`| `LISTEN OFF` command             |
-| `EV_APP_CONNECT`    | `CONNECT <dst>` command          |
-| `EV_APP_DISCONNECT` | `DISCONNECT` command             |
-| `EV_APP_DATA_READY` | Data bytes arrived from TCP      |
-
-### Radio RX events (from modem)
-
-| Event                | Triggered by                     |
-|----------------------|----------------------------------|
-| `EV_RX_CALL`         | CALL frame decoded               |
-| `EV_RX_ACCEPT`       | ACCEPT frame decoded             |
-| `EV_RX_ACK`          | ACK frame decoded                |
-| `EV_RX_DATA`         | DATA frame decoded               |
-| `EV_RX_DISCONNECT`   | DISCONNECT frame decoded         |
-| `EV_RX_TURN_REQ`     | TURN_REQ frame decoded           |
-| `EV_RX_TURN_ACK`     | TURN_ACK frame decoded           |
-| `EV_RX_MODE_REQ`     | MODE_REQ frame decoded           |
-| `EV_RX_MODE_ACK`     | MODE_ACK frame decoded           |
-| `EV_RX_KEEPALIVE`    | KEEPALIVE frame decoded          |
-| `EV_RX_KEEPALIVE_ACK`| KEEPALIVE_ACK frame decoded      |
-
-### Timer events (synthesised by event loop)
-
-| Event                  | Fired when                                     |
-|------------------------|------------------------------------------------|
-| `EV_TIMER_RETRY`       | Retry deadline expired (ack_timeout + guard)   |
-| `EV_TIMER_TIMEOUT`     | Session/call timeout                           |
-| `EV_TIMER_ACK`         | ACK wait deadline                              |
-| `EV_TIMER_PEER_BACKLOG`| Peer-backlog hold (15 s) expired               |
-| `EV_TIMER_KEEPALIVE`   | Keepalive interval (20 s)                      |
-
-### Modem events
-
-| Event              | Triggered by                    |
-|--------------------|---------------------------------|
-| `EV_TX_STARTED`    | `arq_modem_ptt_on()` (PTT ON)   |
-| `EV_TX_COMPLETE`   | `arq_modem_ptt_off()` (PTT OFF) |
-
----
+**RE-DO AFTER FSM REWRITE.** These sections described `MODE_REQ`/`MODE_ACK`,
+the `MODE_REQ_WAIT`/`MODE_ACK_TX` states, `EV_RX_MODE_ACK`, the
+`ARQ_BACKLOG_MIN_*` upgrade thresholds and keepalive — none of which exist any
+more (verified by grep: zero references outside this file). The data plane is
+now delivery-driven stop-and-wait with a pattern ACK, and the ladder is inferred
+from what decodes rather than negotiated. Removed rather than left to mislead;
+see `datalink_arq/arq_fsm.{c,h}` until rewritten.
 
 ## Session Roles: ISS and IRS
 
@@ -367,48 +220,6 @@ This matches the VARA protocol convention and the UUCP use case where the
 connecting side sends the session-initiation packets first.
 
 ---
-
-## Turn Mechanism
-
-Either side may request a role reversal.
-
-**Piggyback turn** (fast path — single frame overhead):
-1. IRS has TX data pending.
-2. IRS sets `ARQ_FLAG_HAS_DATA` in the ACK frame.
-3. ISS receives ACK with `HAS_DATA` → immediately transitions to IRS,
-   IRS transitions to ISS and starts sending.
-
-**Explicit TURN_REQ / TURN_ACK** (when piggyback is not available):
-1. IRS sends `TURN_REQ` frame.
-2. ISS stops sending, sends `TURN_ACK`.
-3. Both sides swap roles.
-
-The `ARQ_PEER_PAYLOAD_HOLD_S` constant (15 s) prevents the ISS from immediately
-downgrading the modem mode back to DATAC16 while the peer is expected to have
-more data.
-
----
-
-## Mode Upgrade / Downgrade
-
-Mode selection follows a `speed_level` ladder:
-`DATAC15 (0) → DATAC4 (1) → DATAC3 (2) → DATAC1 (3) → DATAC17 (4) → QAM16C2 (5)`.
-
-**Upgrade** triggers (ISS side, checked after each ACK):
-- SNR > threshold + `ARQ_SNR_HYST_DB` (1.0 dB), *and*
-- backlog > `ARQ_BACKLOG_MIN_DATAC4` (31 bytes), `ARQ_BACKLOG_MIN_DATAC3` (56 bytes) or `ARQ_BACKLOG_MIN_DATAC1` (126 bytes).
-- A hysteresis counter (`ARQ_MODE_SWITCH_HYST_COUNT = 1`) avoids rapid flapping.
-
-**Downgrade** triggers:
-- A retry event (frame not ACKed in time): step one level down (floor: DATAC15).
-- Peer SNR feedback below threshold.
-- Sustained delivery failure — the fade-cliff net below.
-
-Mode change procedure: ISS sends `MODE_REQ`; IRS responds with `MODE_ACK` or
-ignores (ISS falls back after `ARQ_MODE_REQ_RETRIES = 2`).
-
-During the **startup window** (`ARQ_STARTUP_MAX_S = 10 s`), only DATAC16 is used
-for bidirectional control framing to ensure the link is stable before upgrading.
 
 ### Delivery-driven downgrade (fade-cliff)
 
@@ -427,33 +238,6 @@ SNR. Three mechanisms keep the link from starving above such a cliff:
   advances `consecutive_retries`, which feeds the hard-loss drop to the floor
   (`ARQ_HARD_LOSS_THRESHOLD`) without disturbing OLLA's tuned first-try-FER
   accounting.
-- **Mid-window mode probe (downgrade-only).** When retries can't drain the
-  go-back-N window (the window never empties if the mode can't deliver), a
-  *probe* issues a `MODE_REQ` despite the unACKed window. The `MODE_ACK`
-  carries the peer's `rx_expected` (flagged `ARQ_FLAG_CTRL_ACKSEQ`), which
-  resolves the window: frames the peer already got are ACK-progressed;
-  undelivered bytes are **restaged** (pulled back into `restage_buf`, `tx_seq`
-  rewound) and re-framed at the new mode. A probe only ever moves *down* the
-  ladder, and never fires once the no-progress budget is spent (past that the
-  session's job is to disconnect, not to keep probing a dead peer).
-
-Rationale note: capping selection *toward* robust modes on NVIS was tried and
-measured to reduce throughput (goodput rises with mode speed there despite
-high erasure — the large frames win). The mechanisms above therefore restore
-delivery without holding the link at the floor. See
-`docs/FADE-CLIFF-DECISION.md` for the full simulation + OTA evidence.
-
----
-
-## Keepalive
-
-When the link is idle (no data in either direction):
-- Every `ARQ_KEEPALIVE_INTERVAL_S` (20 s), the current ISS sends a `KEEPALIVE` frame.
-- The peer responds with `KEEPALIVE_ACK`.
-- If `ARQ_KEEPALIVE_MISS_LIMIT` (5) consecutive keepalives receive no reply,
-  the session is torn down with a local DISCONNECT.
-
----
 
 ## Timing Instrumentation
 
@@ -555,10 +339,7 @@ the mode timing table in `arq_protocol.c`.
 | Symptom                                 | Likely cause                              | Fix                                    |
 |-----------------------------------------|-------------------------------------------|----------------------------------------|
 | Spurious retries despite good SNR       | `ack_timeout_s` too short                 | Increase by 1–2 s in mode table        |
-| Link stuck at DATAC15, no mode upgrade  | SNR not high enough, or backlog too small | Check `ARQ_BACKLOG_MIN_DATAC3`         |
-| UUCP handshake fails (timeout)          | First few data frames lost in startup     | Raise `startup_max_s` in the `[arq]` INI section (no recompile) |
 | Long gaps between turns                 | `peer_payload_hold_s` too large           | Lower `peer_payload_hold_s` (e.g. 8–10) in the `[arq]` INI section |
-| Keepalive disconnects on idle link      | Propagation gap > keepalive window        | Raise `keepalive_miss_limit` in the `[arq]` INI section (no recompile) |
 
 ### Timing constants quick reference
 
@@ -574,9 +355,6 @@ All in `arq_protocol.h`:
 #define ARQ_CALL_RETRY_SLOTS          4     /* CALL retries                     */
 #define ARQ_DATA_RETRY_SLOTS          10    /* DATA retries before disconnect   */
 #define ARQ_DISCONNECT_RETRY_SLOTS    2
-#define ARQ_KEEPALIVE_INTERVAL_S      20
-#define ARQ_KEEPALIVE_MISS_LIMIT      5
-#define ARQ_STARTUP_MAX_S             10    /* control-mode-only startup window */
 #define ARQ_PEER_PAYLOAD_HOLD_S       15    /* hold payload mode after activity */
 #define ARQ_SNR_HYST_DB               1.0f
 #define ARQ_HARD_LOSS_THRESHOLD       8     /* consecutive retries => drop to floor */
@@ -588,9 +366,24 @@ file (`mercury.ini`) rather than fixed at compile time — they are `_Atomic`
 globals seeded from the `_DEFAULT` value above and set once at startup:
 `channel_guard_ms`, `iss_post_ack_guard_ms`, `data_retry_slots`,
 `mode_hold_after_downgrade_s`, `ladder_up_successes`, `retry_downgrade_threshold`,
-`keepalive_interval_s`, `keepalive_miss_limit`, `peer_payload_hold_s`,
-`startup_max_s`, `retry_stagger_ms` (each clamped to a safe range). See
-`mercury.ini.example` for keys, defaults, and ranges.
+`peer_payload_hold_s`
+(each clamped to a safe range). See `mercury.ini.example`
+for keys, defaults, and ranges.
+
+### Diagnostic environment variables
+
+Not operator settings — deliberately env-only, off by default, and not written
+to the INI, because each one disables an adaptive behaviour and would be a
+foot-gun as a config key. They exist so a single question can be asked of a
+live link (including on air) without building a special binary.
+
+| Variable | Effect |
+|---|---|
+| `MERCURY_HARQ=0` | Kill-switch for HARQ Chase soft-combining (`harq_enabled()`). Combining is otherwise on for data modes. |
+| `MERCURY_PIN_LADDER=<n>` | Pin the payload ladder to rung `n` (`0..ARQ_LADDER_LEVELS-1`) so one mode is exercised on every burst, instead of the delivery-driven climb. Out-of-range values are ignored; when it takes effect it logs `TEST HOOK: ladder pinned to level <n>` at WARN so a pinned run can never be mistaken for a normal one. |
+
+Rung numbering follows `arq_mode_ladder` (0 = MFSK floor, 1 = DATAC4,
+2 = DATAC3, 3 = DATAC1, 4 = DATAC17, 5 = QAM16C2).
 
 ---
 

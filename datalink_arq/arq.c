@@ -224,6 +224,22 @@ static void cb_send_tx_frame(int packet_type, int mode,
     arq_modem_enqueue(&action);
 }
 
+/* Enqueue a Welch-Costas MFSK pattern ACK for the modem TX worker.  Carries no
+ * coded frame — the modem synthesises the ack/break tone burst directly (see
+ * send_pattern_ack in modem.c).  `mode` is the current payload mode, used only
+ * so the worker can key at the right passband geometry. */
+static void cb_send_pattern_ack(int mode, int pattern_kind)
+{
+    arq_action_t action = {
+        .type         = ARQ_ACTION_TX_PATTERN,
+        .mode         = mode,
+        .frame_size   = 0,
+        .frame_count  = 1,
+        .pattern_kind = pattern_kind,
+    };
+    arq_modem_enqueue(&action);
+}
+
 static void cb_notify_connected(const char *remote_call, const char *local_call)
 {
     pthread_mutex_lock(&g_conn_lock);
@@ -857,22 +873,11 @@ void arq_handle_incoming_frame(uint8_t *data, size_t frame_size, float rx_snr)
     {
         switch (hdr.subtype)
         {
+        /* ACK: the coded DATAC16 ACK is used only for the post-ACCEPT connect
+         * confirmation now; in-session ACKs are the MFSK pattern (synthesised
+         * in modem.c), not a control frame here. */
         case ARQ_SUBTYPE_ACK:          ev.id = ARQ_EV_RX_ACK;           break;
         case ARQ_SUBTYPE_DISCONNECT:   ev.id = ARQ_EV_RX_DISCONNECT;    break;
-        case ARQ_SUBTYPE_TURN_REQ:     ev.id = ARQ_EV_RX_TURN_REQ;      break;
-        case ARQ_SUBTYPE_TURN_ACK:     ev.id = ARQ_EV_RX_TURN_ACK;      break;
-        case ARQ_SUBTYPE_KEEPALIVE:    ev.id = ARQ_EV_RX_KEEPALIVE;     break;
-        case ARQ_SUBTYPE_KEEPALIVE_ACK: ev.id = ARQ_EV_RX_KEEPALIVE_ACK; break;
-        case ARQ_SUBTYPE_MODE_REQ:
-            ev.id   = ARQ_EV_RX_MODE_REQ;
-            ev.mode = (frame_size > ARQ_FRAME_HDR_SIZE)
-                      ? (int)data[ARQ_FRAME_HDR_SIZE] : 0;
-            break;
-        case ARQ_SUBTYPE_MODE_ACK:
-            ev.id   = ARQ_EV_RX_MODE_ACK;
-            ev.mode = (frame_size > ARQ_FRAME_HDR_SIZE)
-                      ? (int)data[ARQ_FRAME_HDR_SIZE] : 0;
-            break;
         default:
             return;
         }
@@ -882,6 +887,16 @@ void arq_handle_incoming_frame(uint8_t *data, size_t frame_size, float rx_snr)
         return;
     }
 
+    evq_push(&ev);
+}
+
+void arq_post_pattern_ack(bool is_break)
+{
+    arq_event_t ev = {0};
+    ev.id       = ARQ_EV_RX_ACK;
+    ev.rx_flags = is_break ? ARQ_FLAG_HAS_DATA : 0;
+    /* session_id left 0: patterns carry none, and the dispatch session-ID
+     * gate treats 0 as "unknown/accept". */
     evq_push(&ev);
 }
 
@@ -924,6 +939,7 @@ int arq_init(size_t frame_size, int mode)
 
     static const arq_fsm_callbacks_t cbs = {
         .send_tx_frame       = cb_send_tx_frame,
+        .send_pattern_ack    = cb_send_pattern_ack,
         .notify_connected    = cb_notify_connected,
         .notify_pending      = cb_notify_pending,
         .notify_cancelpending = cb_notify_cancelpending,
@@ -1033,6 +1049,13 @@ int arq_get_tx_backlog_bytes(void)  { return cb_tx_backlog(); }
         return _v; \
     } while (0)
 
+/* Telemetry only -- see arq_session_t.peer_snr_x10.
+ *
+ * On this branch a reading arrives from the framed packets only: the CALL and
+ * ACCEPT of the handshake, and DATA frames.  The in-session ACK is a
+ * Welch-Costas pattern with no header, so a caller with nothing left to receive
+ * gets its reading at connect time and it then ages.  peer_snr_valid says
+ * whether one has arrived at all; it is deliberately not a freshness claim. */
 bool arq_get_peer_snr_x10(int *snr_x10)
 {
     bool valid;
@@ -1098,8 +1121,36 @@ bool arq_get_runtime_snapshot(arq_runtime_snapshot_t *snapshot)
     pthread_mutex_lock(&g_sess_lock);
     snapshot->initialized      = true;
     snapshot->connected        = (g_sess.conn_state == ARQ_CONN_CONNECTED);
+    /* Only while a pattern ACK could actually arrive.
+     *
+     * This gates a correlation that modem.c runs over a ~3-burst window on
+     * EVERY capture chunk, so leaving it on for all of CONNECTED cost about
+     * half the RX budget for the whole session: measured 3.5k samp/s consumed
+     * against 8k arriving, the capture ring growing to ~400 kB, and the backlog
+     * guard then flushing bursts that were still arriving.  Trunk, which has no
+     * pattern ACK, holds 7.99k samp/s on the same bench.
+     *
+     * WAIT_ACK is by definition the only state where a pattern ACK is due
+     * (see ARQ_DFLOW_WAIT_ACK).  Everywhere else -- above all IDLE_IRS, where
+     * the receiver is busy demodulating a 13.5 s burst -- there is nothing to
+     * detect and the CPU is needed elsewhere.
+     *
+     * ACCEPTING is the one other state where a pattern is due -- the caller's
+     * connect confirm -- but it is emphatically NOT the whole ~18 s ACCEPT
+     * window, which is how this was first written and what cost the RX budget
+     * at exactly the wrong moment.  The confirm's arrival time is predictable
+     * (one ISS post-ACK guard after our ACCEPT leaves the air), so the FSM opens
+     * a bounded few-second window at ACCEPT PTT-OFF and closes it on any state
+     * change: see confirm_listen_until_ms / ARQ_CONNECT_CONFIRM_LISTEN_MS. */
+    snapshot->expect_pattern_ack =
+        (g_sess.conn_state == ARQ_CONN_CONNECTED &&
+         g_sess.dflow_state == ARQ_DFLOW_WAIT_ACK) ||
+        (g_sess.conn_state == ARQ_CONN_ACCEPTING &&
+         g_sess.confirm_listen_until_ms != 0 &&
+         time_now_ms() < g_sess.confirm_listen_until_ms);
     snapshot->trx              = trx;
-    snapshot->tx_backlog_bytes = backlog + g_sess.tx_inflight_bytes;
+    snapshot->tx_backlog_bytes = backlog +
+        (g_sess.tx_frame_present ? g_sess.tx_frame_len : 0);
     snapshot->speed_level      = g_sess.speed_level;
     snapshot->payload_mode      = g_sess.payload_mode;
     snapshot->peer_tx_mode      = g_sess.peer_tx_mode;
@@ -1207,22 +1258,6 @@ void arq_set_iss_post_ack_guard_ms(int ms)
     HLOGI(LOG_COMP, "iss_post_ack_guard_ms = %d", atomic_load(&arq_iss_post_ack_guard_ms));
 }
 
-void arq_set_keepalive_interval_s(int s)
-{
-    if (s < 5)   s = (s <= 0) ? ARQ_KEEPALIVE_INTERVAL_S_DEFAULT : 5;
-    if (s > 120) s = 120;
-    atomic_store(&arq_keepalive_interval_s, s);
-    HLOGI(LOG_COMP, "keepalive_interval_s = %d", atomic_load(&arq_keepalive_interval_s));
-}
-
-void arq_set_keepalive_miss_limit(int n)
-{
-    if (n < 2)  n = (n <= 0) ? ARQ_KEEPALIVE_MISS_LIMIT_DEFAULT : 2;
-    if (n > 20) n = 20;
-    atomic_store(&arq_keepalive_miss_limit, n);
-    HLOGI(LOG_COMP, "keepalive_miss_limit = %d", atomic_load(&arq_keepalive_miss_limit));
-}
-
 void arq_set_ladder_up_successes(int n)
 {
     if (n < 1)  n = (n <= 0) ? ARQ_LADDER_UP_SUCCESSES_DEFAULT : 1;
@@ -1253,14 +1288,6 @@ void arq_set_peer_payload_hold_s(int s)
     if (s > 120) s = 120;
     atomic_store(&arq_peer_payload_hold_s, s);
     HLOGI(LOG_COMP, "peer_payload_hold_s = %d", atomic_load(&arq_peer_payload_hold_s));
-}
-
-void arq_set_startup_max_s(int s)
-{
-    if (s < 2)  s = (s <= 0) ? ARQ_STARTUP_MAX_S_DEFAULT : 2;
-    if (s > 60) s = 60;
-    atomic_store(&arq_startup_max_s, s);
-    HLOGI(LOG_COMP, "startup_max_s = %d", atomic_load(&arq_startup_max_s));
 }
 
 void arq_set_retry_stagger_ms(int ms)

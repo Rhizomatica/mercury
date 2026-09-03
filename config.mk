@@ -69,6 +69,18 @@ ifeq ($(filter arm64%,$(TARGET_MACHINE)),)
 endif
 endif
 
+# Header dependency tracking, for every Makefile that inherits COMMON_CFLAGS.
+#
+# Objects are built by make's implicit %.o: %.c rule, which knows nothing about
+# headers.  Without this, editing a header rebuilds nothing and the link reuses
+# objects compiled against the previous definitions — not a slow build, a wrong
+# one.  It has produced a bench number 18% off (stale constant) and a binary
+# with half the program compiled against each of two struct layouts.
+#
+# -MMD writes a .d beside each object; -MP adds phony targets so deleting a
+# header does not break the build.  Each Makefile -includes its own .d files.
+COMMON_CFLAGS += -MMD -MP
+
 GIT_HASH ?= $(shell git rev-parse --short=8 HEAD 2>/dev/null || echo unknown000)
 COMMON_CFLAGS += -DGIT_HASH=\"$(GIT_HASH)\"
 

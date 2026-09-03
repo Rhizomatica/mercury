@@ -6,6 +6,48 @@
 #include <string.h>
 #include <stdio.h>
 
+/* Everything delivered so far is a byte-exact PREFIX of what was sent.
+ *
+ * The weaker half of sim_prop_integrity, for scenarios where completion is not
+ * guaranteed (a deep fade can strand the transfer) but correctness still is.
+ * Duplication and reordering are what a re-framing bug produces, and this
+ * catches both without requiring the transfer to finish.  v.detail carries the
+ * delivered count so a caller can report progress. */
+sim_verdict_t sim_prop_integrity_prefix(sim_t *s, sim_endpoint_t *src,
+                                        sim_endpoint_t *dst,
+                                        const uint8_t *sent, size_t sent_len)
+{
+    (void)s;
+    (void)src;
+
+    sim_verdict_t v = { .ok = false };
+
+    uint8_t delivered[256 * 1024];
+    size_t got = sim_endpoint_delivered(dst, delivered, sizeof(delivered));
+
+    if (got > sent_len) {
+        snprintf(v.detail, sizeof(v.detail),
+                 "delivered %zu bytes, more than the %zu sent (duplication)",
+                 got, sent_len);
+        return v;
+    }
+
+    for (size_t i = 0; i < got; i++) {
+        if (delivered[i] != sent[i]) {
+            snprintf(v.detail, sizeof(v.detail),
+                     "mismatch at offset %zu: got 0x%02x expected 0x%02x",
+                     i, delivered[i], sent[i]);
+            return v;
+        }
+    }
+
+    v.ok = true;
+    snprintf(v.detail, sizeof(v.detail),
+             "ok: %zu of %zu bytes delivered, intact and in order",
+             got, sent_len);
+    return v;
+}
+
 sim_verdict_t sim_prop_integrity(sim_t *s, sim_endpoint_t *src, sim_endpoint_t *dst,
                                   const uint8_t *sent, size_t sent_len)
 {

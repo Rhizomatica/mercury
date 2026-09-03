@@ -20,6 +20,17 @@ type ChannelParams struct {
 	Gain         float64
 	Fading       string // ch: "mpg"/"mpp"/"mpd"; watterson: "good"/"moderate"/"poor"/"flutter"
 	Engine       string // "" or "ch" = codec2 ch.c; "watterson" = utils/watterson_test
+
+	// Distinguishes the two directions' fading realisations.
+	//
+	// Both directions spawn their own channel process, and both would inherit
+	// the same MERCURY_WATTERSON_SEED -- so forward and reverse would fade in
+	// LOCKSTEP: one deep fade blocking the CALL and the ACCEPT at the same
+	// instant, and asymmetric-link effects invisible by construction.  Real
+	// paths are correlated, not identical.  Salting the seed per direction
+	// keeps a pinned run exactly reproducible while making the two paths
+	// independent.
+	SeedSalt uint32
 }
 
 func DefaultChannelParams() ChannelParams {
@@ -100,6 +111,7 @@ func startChannelBridge(ctx context.Context, chBin string,
 	// (callee's ACKs).  MERCURY_CH_NO_FWD / MERCURY_CH_NO_REV (dBHz) override
 	// each direction; unset = symmetric params.No_dBHz.  ch: SNR3k = -No - 14.82.
 	fwd, rev := params, params
+	fwd.SeedSalt, rev.SeedSalt = 1, 2
 	if v := os.Getenv("MERCURY_CH_NO_FWD"); v != "" {
 		if f, err := strconv.ParseFloat(v, 64); err == nil {
 			fwd.No_dBHz = f
@@ -178,6 +190,16 @@ func runChannelDirOnce(ctx context.Context, chBin, txPath, rxPath string, params
 	chCmd.Args = append(chCmd.Args, params.args()...)
 	chCmd.Dir = filepath.Dir(chBin) // so --fading_dir 'unittest' resolves
 	chCmd.Stderr = nil
+	// Give each direction its own fading realisation (see SeedSalt).  Only
+	// when the run is pinned: unpinned, each channel process already seeds
+	// itself from clock+pid and is independent anyway.
+	if base := os.Getenv("MERCURY_WATTERSON_SEED"); base != "" && params.SeedSalt != 0 {
+		if b, err := strconv.ParseUint(base, 0, 32); err == nil {
+			chCmd.Env = append(os.Environ(),
+				fmt.Sprintf("MERCURY_WATTERSON_SEED=%d",
+					uint32(b)*2654435761+params.SeedSalt))
+		}
+	}
 
 	chStdin, err := chCmd.StdinPipe()
 	if err != nil {

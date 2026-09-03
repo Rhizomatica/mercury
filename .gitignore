@@ -70,9 +70,17 @@ context-*.txt
 copilot-*.txt
 screen.jpg
 
-# utils build outputs
+# dependency files from -MMD
+*.d
+
+# test/bench binaries and their output dirs
 utils/watterson_test
+tests/connect_bench
+/results/
+
+utils/shortframe_sweep
 utils/acquire_vs_decode
+utils/hail_suffix_sweep
 utils/resampler_bench
 utils/rxcost_bench
 

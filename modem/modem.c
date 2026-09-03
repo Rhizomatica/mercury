@@ -40,6 +40,8 @@
 #include "channel_busy.h"
 #include "tx_pacing.h"
 #include "freedv_api.h"
+#include "modem_freedv.h"
+#include "modem_mfsk.h"
 #include "fsk.h"
 #include "ldpc_codes.h"
 #include "ofdm_internal.h"
@@ -97,8 +99,13 @@ pthread_t tx_thread_tid, rx_thread_tid;
  * under the pool lock stays valid after that lock is dropped. */
 static pthread_mutex_t modem_pool_lock = PTHREAD_MUTEX_INITIALIZER;
 
-#define MODEM_POOL_SLOTS 8
-static pthread_mutex_t modem_inst_lock[MODEM_POOL_SLOTS] = {
+/* One lock per pool slot, indexed the same way the pool array is.  The pool is
+ * a generic slot array now (any backend, not just freedv), so the lock a codec
+ * belongs to is found by its context pointer rather than by naming the mode. */
+#define MODEM_POOL_MAX 12
+static pthread_mutex_t modem_inst_lock[MODEM_POOL_MAX] = {
+    PTHREAD_MUTEX_INITIALIZER, PTHREAD_MUTEX_INITIALIZER,
+    PTHREAD_MUTEX_INITIALIZER, PTHREAD_MUTEX_INITIALIZER,
     PTHREAD_MUTEX_INITIALIZER, PTHREAD_MUTEX_INITIALIZER,
     PTHREAD_MUTEX_INITIALIZER, PTHREAD_MUTEX_INITIALIZER,
     PTHREAD_MUTEX_INITIALIZER, PTHREAD_MUTEX_INITIALIZER,
@@ -108,7 +115,7 @@ static pthread_mutex_t modem_inst_lock[MODEM_POOL_SLOTS] = {
  * one: correct, just not parallel. */
 static pthread_mutex_t modem_inst_lock_other = PTHREAD_MUTEX_INITIALIZER;
 
-static pthread_mutex_t *modem_inst_lock_for(struct freedv *f);
+static pthread_mutex_t *modem_inst_lock_for(void *ctx);
 static uint64_t modem_freedv_epoch = 1;
 static uint64_t modem_last_switch_ms = 0;
 static bool modem_owns_radio_buffers = false;
@@ -390,26 +397,20 @@ static int rx_burst_capacity_samples(void)
     return (need > RX_BACKLOG_FLOOR_SAMPLES) ? need : RX_BACKLOG_FLOOR_SAMPLES;
 }
 
+/* Persistent per-mode codec pool.  One backend instance per mode, opened once
+ * at init and kept alive; the active TX modem and each RX decoder point at a
+ * pooled instance.  A generic slot array replaces the former hand-enumerated
+ * freedv-only struct, so any backend (freedv, mfsk, ...) can register a mode. */
 typedef struct {
-    struct freedv *datac1;
-    struct freedv *datac3;
-    struct freedv *datac4;
-    struct freedv *datac13;
-    struct freedv *datac15;
-    struct freedv *datac16;
-    struct freedv *datac17;
-    struct freedv *qam16c2;
-    size_t payload_datac1;
-    size_t payload_datac3;
-    size_t payload_datac4;
-    size_t payload_datac13;
-    size_t payload_datac15;
-    size_t payload_datac16;
-    size_t payload_datac17;
-    size_t payload_qam16c2;
-} modem_mode_pool_t;
+    int           mode;
+    modem_codec_t codec;   /* {backend, ctx} */
+    size_t        payload; /* bytes_per_modem_frame - 2 (CRC16) */
+} modem_pool_slot_t;
 
-static modem_mode_pool_t modem_mode_pool = {0};
+/* MODEM_POOL_MAX is defined next to modem_inst_lock[], which must have one
+ * entry per slot. */
+static modem_pool_slot_t modem_mode_pool[MODEM_POOL_MAX];
+static int               modem_mode_pool_n = 0;
 
 /* Spectrum/waterfall FFT gate: set false when no UI consumes it. */
 static atomic_bool g_spectrum_enabled = true;
@@ -537,7 +538,8 @@ static bool is_supported_split_mode(int mode)
            mode == FREEDV_MODE_DATAC15 ||
            mode == FREEDV_MODE_DATAC16 ||
            mode == FREEDV_MODE_DATAC17 ||
-           mode == FREEDV_MODE_QAM16C2;
+           mode == FREEDV_MODE_QAM16C2 ||
+           mode == MERCURY_MODE_MFSK;
 }
 
 static bool is_payload_split_mode(int mode)
@@ -547,7 +549,8 @@ static bool is_payload_split_mode(int mode)
            mode == FREEDV_MODE_DATAC4 ||
            mode == FREEDV_MODE_DATAC15 ||
            mode == FREEDV_MODE_DATAC17 ||
-           mode == FREEDV_MODE_QAM16C2;
+           mode == FREEDV_MODE_QAM16C2 ||
+           mode == MERCURY_MODE_MFSK;
 }
 
 static const char *mode_name_from_enum(int mode)
@@ -565,142 +568,110 @@ static const char *mode_name_from_enum(int mode)
     case FREEDV_MODE_DATAC17: return "DATAC17";
     case FREEDV_MODE_QAM16C2: return "QAM16C2";
     case FREEDV_MODE_FSK_LDPC: return "FSK_LDPC";
+    case MERCURY_MODE_MFSK: return "MFSK";
     default: return "UNKNOWN";
     }
 }
 
-static struct freedv *open_freedv_mode_locked(int mode)
+/* Which backend owns a given mode. Every current mode is FreeDV; the MFSK
+ * fringe mode registers its own backend here (Stage 2). */
+static const modem_backend_t *backend_for_mode(int mode)
 {
-    // Was:
-    // char codename[80] = "H_256_512_4";
-    // struct freedv_advanced adv = {0, 2, 100, 8000, 1000, 200, codename};
-    char codename[80] = "H_256_768_22";
-    struct freedv_advanced adv = {0, 4, 50, 8000, 750, 250, codename};
-
-    if (mode == FREEDV_MODE_FSK_LDPC)
-        return freedv_open_advanced(mode, &adv);
-    return freedv_open(mode);
+    if (mode == MERCURY_MODE_MFSK)
+        return &modem_backend_mfsk;
+    return &modem_backend_freedv;
 }
 
 static void clear_mode_pool_locked(void)
 {
-    if (modem_mode_pool.datac1) freedv_close(modem_mode_pool.datac1);
-    if (modem_mode_pool.datac3) freedv_close(modem_mode_pool.datac3);
-    if (modem_mode_pool.datac4) freedv_close(modem_mode_pool.datac4);
-    if (modem_mode_pool.datac13) freedv_close(modem_mode_pool.datac13);
-    if (modem_mode_pool.datac15) freedv_close(modem_mode_pool.datac15);
-    if (modem_mode_pool.datac16) freedv_close(modem_mode_pool.datac16);
-    if (modem_mode_pool.datac17) freedv_close(modem_mode_pool.datac17);
-    if (modem_mode_pool.qam16c2) freedv_close(modem_mode_pool.qam16c2);
-    memset(&modem_mode_pool, 0, sizeof(modem_mode_pool));
+    for (int i = 0; i < modem_mode_pool_n; i++)
+    {
+        modem_pool_slot_t *s = &modem_mode_pool[i];
+        if (s->codec.be && s->codec.ctx)
+            s->codec.be->close(s->codec.ctx);
+    }
+    memset(modem_mode_pool, 0, sizeof(modem_mode_pool));
+    modem_mode_pool_n = 0;
 }
 
-static int pool_open_mode_locked(struct freedv **slot, size_t *payload_slot, int mode, int frames_per_burst, int freedv_verbosity)
+static int pool_open_mode_locked(int mode, int frames_per_burst, int verbosity)
 {
-    struct freedv *f = open_freedv_mode_locked(mode);
-    if (!f)
+    if (modem_mode_pool_n >= MODEM_POOL_MAX)
         return -1;
-    freedv_set_frames_per_burst(f, frames_per_burst);
-    freedv_set_verbose(f, freedv_verbosity);
-    *slot = f;
-    *payload_slot = (freedv_get_bits_per_modem_frame(f) / 8) - 2;
+    const modem_backend_t *be = backend_for_mode(mode);
+    void *ctx = be->open(mode);
+    if (!ctx)
+        return -1;
+    if (be->configure)
+        be->configure(ctx, frames_per_burst, verbosity);
+    modem_pool_slot_t *s = &modem_mode_pool[modem_mode_pool_n++];
+    s->mode = mode;
+    s->codec.be = be;
+    s->codec.ctx = ctx;
+    s->payload = (size_t)(be->bits_per_frame(ctx) / 8) - 2;
     return 0;
 }
 
 static int init_mode_pool_locked(int frames_per_burst, int freedv_verbosity)
 {
-    clear_mode_pool_locked();
-    if (pool_open_mode_locked(&modem_mode_pool.datac16, &modem_mode_pool.payload_datac16, FREEDV_MODE_DATAC16, frames_per_burst, freedv_verbosity) < 0)
-        goto fail;
-    if (pool_open_mode_locked(&modem_mode_pool.datac15, &modem_mode_pool.payload_datac15, FREEDV_MODE_DATAC15, frames_per_burst, freedv_verbosity) < 0)
-        goto fail;
-    if (pool_open_mode_locked(&modem_mode_pool.datac13, &modem_mode_pool.payload_datac13, FREEDV_MODE_DATAC13, frames_per_burst, freedv_verbosity) < 0)
-        goto fail;
-    if (pool_open_mode_locked(&modem_mode_pool.datac4, &modem_mode_pool.payload_datac4, FREEDV_MODE_DATAC4, frames_per_burst, freedv_verbosity) < 0)
-        goto fail;
-    if (pool_open_mode_locked(&modem_mode_pool.datac3, &modem_mode_pool.payload_datac3, FREEDV_MODE_DATAC3, frames_per_burst, freedv_verbosity) < 0)
-        goto fail;
-    if (pool_open_mode_locked(&modem_mode_pool.datac1, &modem_mode_pool.payload_datac1, FREEDV_MODE_DATAC1, frames_per_burst, freedv_verbosity) < 0)
-        goto fail;
-    if (pool_open_mode_locked(&modem_mode_pool.datac17, &modem_mode_pool.payload_datac17, FREEDV_MODE_DATAC17, frames_per_burst, freedv_verbosity) < 0)
-        goto fail;
-    if (pool_open_mode_locked(&modem_mode_pool.qam16c2, &modem_mode_pool.payload_qam16c2, FREEDV_MODE_QAM16C2, frames_per_burst, freedv_verbosity) < 0)
-        goto fail;
-    return 0;
-fail:
-    clear_mode_pool_locked();
-    return -1;
-}
-
-static struct freedv *pooled_freedv_for_mode_locked(int mode, size_t *payload_bytes)
-{
-    switch (mode)
-    {
-    case FREEDV_MODE_DATAC1:
-        if (payload_bytes) *payload_bytes = modem_mode_pool.payload_datac1;
-        return modem_mode_pool.datac1;
-    case FREEDV_MODE_DATAC3:
-        if (payload_bytes) *payload_bytes = modem_mode_pool.payload_datac3;
-        return modem_mode_pool.datac3;
-    case FREEDV_MODE_DATAC4:
-        if (payload_bytes) *payload_bytes = modem_mode_pool.payload_datac4;
-        return modem_mode_pool.datac4;
-    case FREEDV_MODE_DATAC13:
-        if (payload_bytes) *payload_bytes = modem_mode_pool.payload_datac13;
-        return modem_mode_pool.datac13;
-    case FREEDV_MODE_DATAC15:
-        if (payload_bytes) *payload_bytes = modem_mode_pool.payload_datac15;
-        return modem_mode_pool.datac15;
-    case FREEDV_MODE_DATAC16:
-        if (payload_bytes) *payload_bytes = modem_mode_pool.payload_datac16;
-        return modem_mode_pool.datac16;
-    case FREEDV_MODE_DATAC17:
-        if (payload_bytes) *payload_bytes = modem_mode_pool.payload_datac17;
-        return modem_mode_pool.datac17;
-    case FREEDV_MODE_QAM16C2:
-        if (payload_bytes) *payload_bytes = modem_mode_pool.payload_qam16c2;
-        return modem_mode_pool.qam16c2;
-    default:
-        if (payload_bytes) *payload_bytes = 0;
-        return NULL;
-    }
-}
-
-/* Which per-instance lock guards this freedv.  Pool slots are assigned once in
- * init_modem and never move, so this needs no lock of its own: the pointers it
- * compares against are stable for the life of the process. */
-static pthread_mutex_t *modem_inst_lock_for(struct freedv *f)
-{
-    if (!f) return &modem_inst_lock_other;
-    struct freedv *const slot[MODEM_POOL_SLOTS] = {
-        modem_mode_pool.datac1,  modem_mode_pool.datac3,
-        modem_mode_pool.datac4,  modem_mode_pool.datac13,
-        modem_mode_pool.datac15, modem_mode_pool.datac16,
-        modem_mode_pool.datac17, modem_mode_pool.qam16c2,
+    static const int pool_modes[] = {
+        FREEDV_MODE_DATAC16, FREEDV_MODE_DATAC15, FREEDV_MODE_DATAC13,
+        FREEDV_MODE_DATAC4,  FREEDV_MODE_DATAC3,  FREEDV_MODE_DATAC1,
+        FREEDV_MODE_DATAC17, FREEDV_MODE_QAM16C2, MERCURY_MODE_MFSK,
     };
-    for (int i = 0; i < MODEM_POOL_SLOTS; i++)
-        if (slot[i] == f) return &modem_inst_lock[i];
+    clear_mode_pool_locked();
+    for (size_t i = 0; i < sizeof(pool_modes) / sizeof(pool_modes[0]); i++)
+    {
+        if (pool_open_mode_locked(pool_modes[i], frames_per_burst, freedv_verbosity) < 0)
+        {
+            clear_mode_pool_locked();
+            return -1;
+        }
+    }
+    return 0;
+}
+
+/* Which per-instance lock guards this codec context.  Pool slots are filled
+ * once in init_modem and never move, so this needs no lock of its own: the
+ * pointers it compares against are stable for the life of the process. */
+static pthread_mutex_t *modem_inst_lock_for(void *ctx)
+{
+    if (!ctx) return &modem_inst_lock_other;
+    for (int i = 0; i < modem_mode_pool_n; i++)
+        if (modem_mode_pool[i].codec.ctx == ctx) return &modem_inst_lock[i];
     return &modem_inst_lock_other;
 }
 
-static bool is_pooled_freedv_locked(struct freedv *f)
+/* Return the pooled codec instance for a mode (be==NULL if not pooled). */
+static modem_codec_t pooled_codec_for_mode_locked(int mode, size_t *payload_bytes)
 {
-    return f &&
-           (f == modem_mode_pool.datac1 ||
-            f == modem_mode_pool.datac3 ||
-            f == modem_mode_pool.datac4 ||
-            f == modem_mode_pool.datac13 ||
-            f == modem_mode_pool.datac15 ||
-            f == modem_mode_pool.datac16 ||
-            f == modem_mode_pool.datac17 ||
-            f == modem_mode_pool.qam16c2);
+    for (int i = 0; i < modem_mode_pool_n; i++)
+    {
+        if (modem_mode_pool[i].mode == mode)
+        {
+            if (payload_bytes) *payload_bytes = modem_mode_pool[i].payload;
+            return modem_mode_pool[i].codec;
+        }
+    }
+    if (payload_bytes) *payload_bytes = 0;
+    return (modem_codec_t){0};
 }
 
-static uint32_t compute_bitrate_bps_locked(struct freedv *freedv)
+static bool is_pooled_codec_locked(const modem_codec_t *c)
 {
-    uint32_t bits_per_modem_frame = (uint32_t)freedv_get_bits_per_modem_frame(freedv);
-    uint32_t tx_modem_samples = (uint32_t)freedv_get_n_tx_modem_samples(freedv);
-    uint32_t modem_sample_rate = (uint32_t)freedv_get_modem_sample_rate(freedv);
+    if (!c || !c->ctx)
+        return false;
+    for (int i = 0; i < modem_mode_pool_n; i++)
+        if (modem_mode_pool[i].codec.ctx == c->ctx)
+            return true;
+    return false;
+}
+
+static uint32_t compute_bitrate_bps_locked(const modem_codec_t *c)
+{
+    uint32_t bits_per_modem_frame = (uint32_t)c->be->bits_per_frame(c->ctx);
+    uint32_t tx_modem_samples = (uint32_t)c->be->n_tx_samples(c->ctx);
+    uint32_t modem_sample_rate = (uint32_t)c->be->sample_rate(c->ctx);
 
     if (tx_modem_samples == 0)
         return 0;
@@ -724,6 +695,8 @@ static uint32_t bitrate_level_from_payload_mode(int mode)
         return 17;
     case FREEDV_MODE_QAM16C2:
         return 25;
+    case MERCURY_MODE_MFSK:
+        return 100;
     default:
         return 15;
     }
@@ -775,13 +748,13 @@ static int maybe_switch_modem_mode(generic_modem_t *g_modem,
         return 0;
     }
     size_t payload_bytes_per_modem_frame = 0;
-    struct freedv *new_freedv = pooled_freedv_for_mode_locked(target_mode, &payload_bytes_per_modem_frame);
-    if (!new_freedv)
+    modem_codec_t new_codec = pooled_codec_for_mode_locked(target_mode, &payload_bytes_per_modem_frame);
+    if (!modem_codec_valid(&new_codec))
     {
         pthread_mutex_unlock(&modem_pool_lock);
         return -1;
     }
-    g_modem->freedv = new_freedv;
+    g_modem->codec = new_codec;
     g_modem->mode = target_mode;
     g_modem->payload_bytes_per_modem_frame = payload_bytes_per_modem_frame;
     modem_freedv_epoch++;
@@ -852,27 +825,31 @@ try_shm_connect2:
     }
 
     size_t payload_bytes_per_modem_frame = 0;
-    g_modem->freedv = pooled_freedv_for_mode_locked(mode, &payload_bytes_per_modem_frame);
-    if (!g_modem->freedv)
+    g_modem->codec = pooled_codec_for_mode_locked(mode, &payload_bytes_per_modem_frame);
+    if (!modem_codec_valid(&g_modem->codec))
     {
-        g_modem->freedv = open_freedv_mode_locked(mode);
-        if (!g_modem->freedv)
+        /* Not in the pool: open a standalone instance for this startup mode. */
+        const modem_backend_t *be = backend_for_mode(mode);
+        void *ctx = be->open(mode);
+        if (!ctx)
         {
             pthread_mutex_unlock(&modem_pool_lock);
-            HLOGE("modem", "Failed to open FreeDV mode %d", mode);
+            HLOGE("modem", "Failed to open modem mode %d", mode);
             return -1;
         }
-        freedv_set_frames_per_burst(g_modem->freedv, frames_per_burst);
-        freedv_set_verbose(g_modem->freedv, freedv_verbosity);
-        payload_bytes_per_modem_frame = (freedv_get_bits_per_modem_frame(g_modem->freedv) / 8) - 2;
+        if (be->configure)
+            be->configure(ctx, frames_per_burst, freedv_verbosity);
+        g_modem->codec.be = be;
+        g_modem->codec.ctx = ctx;
+        payload_bytes_per_modem_frame = (size_t)(be->bits_per_frame(ctx) / 8) - 2;
     }
     pthread_mutex_unlock(&modem_pool_lock);
 
     g_modem->mode = mode;
     g_modem->payload_bytes_per_modem_frame = payload_bytes_per_modem_frame;
     broadcast_frame_size = payload_bytes_per_modem_frame;
-    
-    int modem_sample_rate = freedv_get_modem_sample_rate(g_modem->freedv);
+
+    int modem_sample_rate = g_modem->codec.be->sample_rate(g_modem->codec.ctx);
     HLOGI("modem", "Initialized persistent FreeDV mode pool (DATAC16/DATAC15/DATAC13/DATAC4/DATAC3/DATAC1/DATAC17/QAM16C2), frames per burst: %d", frames_per_burst);
     HLOGI("modem", "Active FreeDV mode at startup: %d (%s), verbosity: %d", mode, mode_name_from_enum(mode), freedv_verbosity);
     HLOGI("modem", "Modem expects sample rate: %d Hz", modem_sample_rate);
@@ -934,7 +911,7 @@ static void drain_capture_buffer_fast(size_t samples)
 
 int run_tests_tx(generic_modem_t *g_modem)
 {
-    size_t bytes_per_modem_frame = freedv_get_bits_per_modem_frame(g_modem->freedv) / 8;
+    size_t bytes_per_modem_frame = (size_t)(g_modem->codec.be->bits_per_frame(g_modem->codec.ctx) / 8);
     size_t payload_size = bytes_per_modem_frame - 2;  /* 2 bytes reserved for CRC by send_modulated_data */
     uint8_t *buffer = (uint8_t *)malloc(payload_size);
 
@@ -975,7 +952,7 @@ int run_tests_tx(generic_modem_t *g_modem)
 
 int run_tests_rx(generic_modem_t *g_modem)
 {
-    size_t bytes_per_modem_frame = freedv_get_bits_per_modem_frame(g_modem->freedv) / 8;
+    size_t bytes_per_modem_frame = (size_t)(g_modem->codec.be->bits_per_frame(g_modem->codec.ctx) / 8);
     size_t payload_size = bytes_per_modem_frame - 2;  /* RX returns frame with CRC, payload is 2 bytes less */
     uint8_t *buffer = (uint8_t *)malloc(bytes_per_modem_frame);
 
@@ -1072,9 +1049,9 @@ int shutdown_modem(generic_modem_t *g_modem)
     circular_buf_free(data_rx_buffer_broadcast);
     
     pthread_mutex_lock(&modem_pool_lock);
-    if (g_modem->freedv && !is_pooled_freedv_locked(g_modem->freedv))
-        freedv_close(g_modem->freedv);
-    g_modem->freedv = NULL;
+    if (modem_codec_valid(&g_modem->codec) && !is_pooled_codec_locked(&g_modem->codec))
+        g_modem->codec.be->close(g_modem->codec.ctx);
+    g_modem->codec = (modem_codec_t){0};
     clear_mode_pool_locked();
     pthread_mutex_unlock(&modem_pool_lock);
 
@@ -1084,29 +1061,29 @@ int shutdown_modem(generic_modem_t *g_modem)
 int send_modulated_data(generic_modem_t *g_modem, uint8_t *bytes_in, int frames_per_burst)
 {
     /* Which instance is active is pool state; USING it is instance state.
-     * Take the pool lock only long enough to read the pointer, then hold that
+     * Take the pool lock only long enough to read the codec, then hold that
      * instance's lock for the modulation itself.  Keeping the pool lock here
      * would block the decoders on OTHER modes for the whole TX build, which is
      * exactly the serialisation this split removes -- while dropping the
      * instance lock would let TX and a decoder on the SAME mode touch one
-     * struct freedv concurrently, which is a real race. */
+     * codec context concurrently, which is a real race. */
     pthread_mutex_lock(&modem_pool_lock);
-    struct freedv *freedv = g_modem->freedv;
+    modem_codec_t codec = g_modem->codec;
     pthread_mutex_unlock(&modem_pool_lock);
 
-    pthread_mutex_t *ilock = modem_inst_lock_for(freedv);
+    pthread_mutex_t *ilock = modem_inst_lock_for(codec.ctx);
     pthread_mutex_lock(ilock);
-    size_t bytes_per_modem_frame = freedv_get_bits_per_modem_frame(freedv) / 8;
+    size_t bytes_per_modem_frame = (size_t)(codec.be->bits_per_frame(codec.ctx) / 8);
     size_t payload_bytes = bytes_per_modem_frame - 2;  /* 2 bytes reserved for CRC16 */
-    size_t n_mod_out = freedv_get_n_tx_modem_samples(freedv);
+    size_t n_mod_out = (size_t)codec.be->n_tx_samples(codec.ctx);
     uint8_t frame_with_crc[bytes_per_modem_frame];
 
     /* Inter-burst silence */
     int inter_burst_delay_ms = 200;
     int samples_silence = FREEDV_FS_8000 * inter_burst_delay_ms / 1000;
-    if (freedv_get_mode(freedv) == FREEDV_MODE_FSK_LDPC)
+    if (codec.be->get_mode(codec.ctx) == FREEDV_MODE_FSK_LDPC)
     {
-        int fsk_settle_samples = freedv_get_n_nom_modem_samples(freedv);
+        int fsk_settle_samples = codec.be->n_nom_samples(codec.ctx);
         if (fsk_settle_samples > samples_silence)
             samples_silence = fsk_settle_samples;
     }
@@ -1117,13 +1094,16 @@ int send_modulated_data(generic_modem_t *g_modem, uint8_t *bytes_in, int frames_
 
     /* Calculate max buffer size needed:
      * head silence + preamble + (frames * n_mod_out) + postamble + tail silence */
-    int max_preamble = freedv_get_n_tx_modem_samples(freedv) * 2;  /* conservative estimate */
+    int max_preamble = (int)n_mod_out * 2;  /* conservative estimate */
     int max_postamble = max_preamble;
     size_t max_samples = (size_t)samples_head + max_preamble + (frames_per_burst * n_mod_out) + max_postamble + samples_silence;
 
-    /* Allocate temporary buffer for all modulated audio */
+    /* Allocate temporary buffer for all modulated audio.  mod_out_short must
+     * hold the largest single builder output (preamble/frame/postamble); size
+     * it to max_preamble so a burst backend whose pre/postamble exceeds the
+     * frame length cannot overflow it. */
     int32_t *tx_buffer = (int32_t *)malloc(max_samples * sizeof(int32_t));
-    int16_t *mod_out_short = (int16_t *)malloc(n_mod_out * sizeof(int16_t));
+    int16_t *mod_out_short = (int16_t *)malloc((size_t)max_preamble * sizeof(int16_t));
 
     if (!tx_buffer || !mod_out_short)
     {
@@ -1157,7 +1137,7 @@ int send_modulated_data(generic_modem_t *g_modem, uint8_t *bytes_in, int frames_
         tx_buffer[total_samples++] = 0;
 
     /* Generate preamble */
-    int n_preamble = freedv_rawdatapreambletx(freedv, mod_out_short);
+    int n_preamble = codec.be->preamble_tx(codec.ctx, mod_out_short);
     for (int i = 0; i < n_preamble; i++)
     {
         tx_buffer[total_samples++] = tx_sample_with_gain(mod_out_short[i], tx_gain, &peak_fs);
@@ -1172,15 +1152,15 @@ int send_modulated_data(generic_modem_t *g_modem, uint8_t *bytes_in, int frames_
         frame_with_crc[bytes_per_modem_frame - 2] = crc16 >> 8;
         frame_with_crc[bytes_per_modem_frame - 1] = crc16 & 0xff;
 
-        freedv_rawdatatx(freedv, mod_out_short, frame_with_crc);
-        for (size_t j = 0; j < n_mod_out; j++)
+        int n = codec.be->rawdata_tx(codec.ctx, mod_out_short, frame_with_crc);
+        for (int j = 0; j < n; j++)
         {
             tx_buffer[total_samples++] = tx_sample_with_gain(mod_out_short[j], tx_gain, &peak_fs);
         }
     }
 
     /* Generate postamble */
-    int n_postamble = freedv_rawdatapostambletx(freedv, mod_out_short);
+    int n_postamble = codec.be->postamble_tx(codec.ctx, mod_out_short);
     for (int i = 0; i < n_postamble; i++)
     {
         tx_buffer[total_samples++] = tx_sample_with_gain(mod_out_short[i], tx_gain, &peak_fs);
@@ -1215,8 +1195,7 @@ int send_modulated_data(generic_modem_t *g_modem, uint8_t *bytes_in, int frames_
     /* === STEP 2: Key transmitter and send pre-generated audio === */
 
     ptt_on();
-    arq_modem_ptt_on(freedv_get_mode(g_modem->freedv),
-                     freedv_get_bits_per_modem_frame(g_modem->freedv) / 8);
+    arq_modem_ptt_on(g_modem->mode, bytes_per_modem_frame);
 
     if (virtual_clock_enabled())
     {
@@ -1304,6 +1283,77 @@ int send_modulated_data(generic_modem_t *g_modem, uint8_t *bytes_in, int frames_
     return 0;
 }
 
+/* Emit a Welch-Costas MFSK pattern ACK.  Sibling of send_modulated_data:
+ * reuses the same head-silence / ptt_on / playback / ptt_off path so the
+ * TX_STARTED/TX_COMPLETE events fire identically to a coded frame.  The tone
+ * burst is generated at the MFSK passband geometry (8 kHz); the mode argument
+ * only names which payload mode the ARQ layer keyed at (for logging). */
+static int send_pattern_ack(generic_modem_t *g_modem, int mode, int pattern_kind)
+{
+    (void)mode;
+    int max_samp = mfsk_pattern_max_tx_samples();
+    if (max_samp <= 0)
+        return -1;
+
+    int16_t  *pat = (int16_t *)malloc((size_t)max_samp * sizeof(int16_t));
+    if (!pat)
+        return -1;
+    int n_pat = mfsk_pattern_tx(pat, pattern_kind);
+    if (n_pat <= 0)
+    {
+        free(pat);
+        return -1;
+    }
+
+    int samples_head = FREEDV_FS_8000 * 100 / 1000;   /* 100 ms head silence  */
+    int inter_burst  = 200;
+    int samples_tail = FREEDV_FS_8000 * inter_burst / 1000;
+    size_t total = (size_t)samples_head + (size_t)n_pat + (size_t)samples_tail;
+
+    int32_t *tx_buffer = (int32_t *)malloc(total * sizeof(int32_t));
+    if (!tx_buffer)
+    {
+        free(pat);
+        return -1;
+    }
+
+    size_t k = 0;
+    float tx_gain = atomic_load(&g_tx_gain);
+    float peak_fs = 0.0f;
+    for (int i = 0; i < samples_head; i++) tx_buffer[k++] = 0;
+    /* MFSK generator emits int16 passband; scale up to int32 with tx_gain. */
+    for (int i = 0; i < n_pat; i++)
+        tx_buffer[k++] = tx_sample_with_gain(pat[i], tx_gain, &peak_fs);
+    for (int i = 0; i < samples_tail; i++) tx_buffer[k++] = 0;
+    free(pat);
+
+    {
+        float dbfs = -120.0f;
+        if (peak_fs > 0.0f)
+        {
+            float lin = peak_fs / 2147483648.0f;
+            dbfs = 20.0f * log10f(lin);
+            if (dbfs < -120.0f) dbfs = -120.0f;
+        }
+        atomic_store(&g_tx_peak_dbfs, dbfs);
+    }
+
+    ptt_on();
+    arq_modem_ptt_on(MERCURY_MODE_MFSK, 0);
+    usleep(10000);
+    write_buffer(playback_buffer, (uint8_t *)tx_buffer, total * sizeof(int32_t));
+    uint64_t playback_duration_us = ((uint64_t)total * 1000000ULL) / FREEDV_FS_8000;
+    usleep((useconds_t)playback_duration_us);
+    usleep(TAIL_TIME_US);
+    ptt_off();
+    arq_modem_ptt_off();
+
+    free(tx_buffer);
+    HLOGD("modem-tx", "Pattern ACK sent (%s)",
+          pattern_kind == 1 ? "ACK+TURN" : "ACK");
+    return 0;
+}
+
 static int send_modulated_data_with_cq_status(generic_modem_t *g_modem,
                                               uint8_t *bytes_in,
                                               int frames_per_burst)
@@ -1325,7 +1375,7 @@ static int send_modulated_data_with_cq_status(generic_modem_t *g_modem,
 
 int receive_modulated_data(generic_modem_t *g_modem, uint8_t *bytes_out, size_t *nbytes_out)
 {
-    struct freedv *freedv = NULL;
+    modem_codec_t codec = {0};
     uint64_t epoch = 0;
     size_t nin = 0;
     int input_size = 0;
@@ -1340,17 +1390,17 @@ int receive_modulated_data(generic_modem_t *g_modem, uint8_t *bytes_out, size_t 
         return -1;
 
     pthread_mutex_lock(&modem_pool_lock);
-    freedv = g_modem->freedv;
+    codec = g_modem->codec;
     epoch = modem_freedv_epoch;
-    if (!freedv)
+    if (!modem_codec_valid(&codec))
     {
         pthread_mutex_unlock(&modem_pool_lock);
         *nbytes_out = 0;
         usleep(RX_IDLE_SLEEP_US);
         return 0;
     }
-    input_size = freedv_get_n_max_modem_samples(freedv);
-    nin = freedv_nin(freedv);
+    input_size = codec.be->n_max_rx_samples(codec.ctx);
+    nin = codec.be->nin(codec.ctx);
     pthread_mutex_unlock(&modem_pool_lock);
     
     // Allocate buffers on first call or if size changed
@@ -1401,21 +1451,21 @@ int receive_modulated_data(generic_modem_t *g_modem, uint8_t *bytes_out, size_t 
     }
 
     pthread_mutex_lock(&modem_pool_lock);
-    if (g_modem->freedv != freedv || modem_freedv_epoch != epoch)
+    if (g_modem->codec.ctx != codec.ctx || modem_freedv_epoch != epoch)
     {
         pthread_mutex_unlock(&modem_pool_lock);
         *nbytes_out = 0;
         return 0;
     }
 
-    // ALWAYS call freedv_rawdatarx - even when nin==0, it processes internal buffers
-    *nbytes_out = freedv_rawdatarx(freedv, bytes_out, demod_in);
+    // ALWAYS call rawdata_rx - even when nin==0, freedv processes internal buffers
+    *nbytes_out = (size_t)codec.be->rawdata_rx(codec.ctx, bytes_out, demod_in);
     if (nin == 0 && *nbytes_out == 0)
         idle_spin_sleep = true;
 
     int sync = 0;
     float snr_est = 0.0;
-    freedv_get_modem_stats(freedv, &sync, &snr_est);
+    codec.be->get_stats(codec.ctx, &sync, &snr_est);
     if (!sync)
         *nbytes_out = 0;
 
@@ -1433,7 +1483,7 @@ int receive_modulated_data(generic_modem_t *g_modem, uint8_t *bytes_out, size_t 
 }
 
 typedef struct {
-    struct freedv *freedv;
+    modem_codec_t codec;   /* bound backend instance for this decoder's mode */
     int mode;
     int16_t *demod_in;
     int demod_count;
@@ -1491,7 +1541,7 @@ static int harq_enabled(void)
 
 static int rx_decoder_bind_mode(rx_decoder_state_t *state, int mode)
 {
-    struct freedv *freedv = NULL;
+    modem_codec_t codec = {0};
     int max_samples = 0;
     size_t bytes_cap = 0;
     bool mode_changed = false;
@@ -1500,43 +1550,47 @@ static int rx_decoder_bind_mode(rx_decoder_state_t *state, int mode)
         return -1;
 
     pthread_mutex_lock(&modem_pool_lock);
-    freedv = pooled_freedv_for_mode_locked(mode, NULL);
-    if (freedv)
+    codec = pooled_codec_for_mode_locked(mode, NULL);
+    if (modem_codec_valid(&codec))
     {
-        max_samples = freedv_get_n_max_modem_samples(freedv);
-        bytes_cap = (size_t)(freedv_get_bits_per_modem_frame(freedv) / 8);
-        mode_changed = state->freedv != freedv || state->mode != mode;
+        max_samples = codec.be->n_max_rx_samples(codec.ctx);
+        bytes_cap = (size_t)(codec.be->bits_per_frame(codec.ctx) / 8);
+        mode_changed = state->codec.ctx != codec.ctx || state->mode != mode;
         if (mode_changed)
         {
-            /* Do NOT call freedv_set_sync(UNSYNC) here.  The new mode's
-             * decoder is already in search mode from its last use (or
-             * init).  UNSYNC would zero its rxbuf, starving the preamble
-             * correlation normalizer (same as the was_tx regression).
-             * Stale rxbuf content is harmless: it won't correlate with
-             * the new mode's preamble pattern, and the non-zero energy
-             * keeps the normalizer well-conditioned. */
+            /* Do NOT reset sync here.  The new mode's decoder is already in
+             * search mode from its last use (or init).  A forced UNSYNC would
+             * zero its rxbuf, starving the preamble correlation normalizer
+             * (same as the was_tx regression).  Stale rxbuf content is
+             * harmless: it won't correlate with the new mode's preamble
+             * pattern, and the non-zero energy keeps the normalizer well
+             * conditioned. */
             state->demod_count = 0;
 
             /* HARQ Chase soft-combining on the RX decoder.  Every ARQ mode is
              * burst_frames==1 (one DATA frame per preamble), so each
              * retransmission the IRS sees is a fresh, bit-identical copy of the
-             * single in-flight frame — freedv accumulates their LLRs and
+             * single in-flight frame — the decoder accumulates their LLRs and
              * auto-clears the residual on CRC success.  Enabled for data modes
              * only (the DATAC16 control plane carries non-identical frames).
              * Reset on every bind so a pooled instance never combines a stale
-             * failed frame with a different payload after a mode excursion. */
-            /* These mutate the instance, so they need its lock, not just the
+             * failed frame with a different payload after a mode excursion.
+             * Backends without HARQ leave these hooks NULL.
+             *
+             * These mutate the instance, so they need its lock, not just the
              * pool's.  Nested pool->instance, the documented order. */
-            pthread_mutex_t *bl = modem_inst_lock_for(freedv);
+            pthread_mutex_t *bl = modem_inst_lock_for(codec.ctx);
             pthread_mutex_lock(bl);
-            freedv_harq_reset(freedv);
-            freedv_set_harq(freedv, harq_enabled() && mode != FREEDV_MODE_DATAC16);
+            if (codec.be->harq_reset)
+                codec.be->harq_reset(codec.ctx);
+            if (codec.be->set_harq)
+                codec.be->set_harq(codec.ctx, harq_enabled() && mode != FREEDV_MODE_DATAC16);
             pthread_mutex_unlock(bl);
         }
     }
     pthread_mutex_unlock(&modem_pool_lock);
 
-    if (!freedv || max_samples <= 0 || bytes_cap == 0)
+    if (!modem_codec_valid(&codec) || max_samples <= 0 || bytes_cap == 0)
         return -1;
 
     if (state->demod_cap < max_samples)
@@ -1557,7 +1611,7 @@ static int rx_decoder_bind_mode(rx_decoder_state_t *state, int mode)
         state->bytes_cap = bytes_cap;
     }
 
-    state->freedv = freedv;
+    state->codec = codec;
     state->mode = mode;
     return 0;
 }
@@ -1575,17 +1629,17 @@ static int rx_decoder_target_chunk_samples(const rx_decoder_state_t *state)
 {
     int nin = 0;
 
-    if (!state || !state->freedv)
+    if (!state || !modem_codec_valid(&state->codec))
         return RX_DECODE_CHUNK_SAMPLES;
 
-    /* freedv_nin() reads the demodulator's mutable state, so it must take the
-     * same lock the decode takes -- the INSTANCE lock.  Reading it under the
-     * pool lock instead would leave it unsynchronised against
+    /* nin() reads the demodulator's mutable state, so it must take the same
+     * lock the decode takes -- the INSTANCE lock.  Reading it under the pool
+     * lock instead would leave it unsynchronised against
      * send_modulated_data(), which holds the instance lock while modulating on
-     * the very same struct freedv when TX and this decoder share a mode. */
-    pthread_mutex_t *ilock = modem_inst_lock_for(state->freedv);
+     * the very same context when TX and this decoder share a mode. */
+    pthread_mutex_t *ilock = modem_inst_lock_for(state->codec.ctx);
     pthread_mutex_lock(ilock);
-    nin = freedv_nin(state->freedv);
+    nin = state->codec.be->nin(state->codec.ctx);
     pthread_mutex_unlock(ilock);
 
     if (nin < RX_DECODE_CHUNK_SAMPLES)
@@ -1764,11 +1818,13 @@ static void *rx_worker_thread(void *arg)
         if (w->state.mode != FREEDV_MODE_DATAC16 &&
             atomic_exchange(&g_payload_resync_req, false))
         {
-            pthread_mutex_t *rl = modem_inst_lock_for(w->state.freedv);
-            pthread_mutex_lock(rl);
-            if (w->state.freedv)
-                freedv_set_sync(w->state.freedv, FREEDV_SYNC_UNSYNC);
-            pthread_mutex_unlock(rl);
+            if (modem_codec_valid(&w->state.codec) && w->state.codec.be->unsync)
+            {
+                pthread_mutex_t *rl = modem_inst_lock_for(w->state.codec.ctx);
+                pthread_mutex_lock(rl);
+                w->state.codec.be->unsync(w->state.codec.ctx);
+                pthread_mutex_unlock(rl);
+            }
             w->state.demod_count = 0;
         }
 
@@ -1821,7 +1877,7 @@ static void rx_decoder_consume_chunk(rx_decoder_state_t *state,
 {
     int guard = 0;
 
-    if (!state || !state->freedv || !state->demod_in || !state->bytes_out ||
+    if (!state || !modem_codec_valid(&state->codec) || !state->demod_in || !state->bytes_out ||
         !samples || sample_count <= 0)
         return;
 
@@ -1862,26 +1918,27 @@ static void rx_decoder_consume_chunk(rx_decoder_state_t *state,
         size_t nbytes_out = 0;
 
         /* Per-instance, not the pool lock: this holds the lock across
-         * freedv_rawdatarx() below, and the control and payload decoders
-         * always hold different instances, so they must not exclude each
-         * other.  state->freedv is owned by this decoder (set by
-         * rx_decoder_bind_mode from the same thread), so reading it here needs
-         * no pool lock. */
-        pthread_mutex_t *ilock = modem_inst_lock_for(state->freedv);
+         * rawdata_rx() below, and the control and payload decoders always hold
+         * different instances, so they must not exclude each other.
+         * state->codec is owned by this decoder (set by rx_decoder_bind_mode
+         * from the same thread), so reading it here needs no pool lock. */
+        pthread_mutex_t *ilock = modem_inst_lock_for(state->codec.ctx);
         pthread_mutex_lock(ilock);
-        if (!state->freedv)
+        if (!modem_codec_valid(&state->codec))
         {
             pthread_mutex_unlock(ilock);
             break;
         }
+        const modem_backend_t *be = state->codec.be;
+        void *ctx = state->codec.ctx;
 
-        nin = freedv_nin(state->freedv);
+        nin = be->nin(ctx);
         if (nin < 0 || nin > state->demod_count)
         {
-            /* freedv needs more samples than we hold: feed the rest of the
+            /* backend needs more samples than we hold: feed the rest of the
              * chunk if any remains, otherwise this chunk is consumed. */
-            rx_status = freedv_get_rx_status(state->freedv);
-            freedv_get_modem_stats(state->freedv, &sync, &snr_est);
+            rx_status = be->get_rx_status(ctx);
+            be->get_stats(ctx, &sync, &snr_est);
             pthread_mutex_unlock(ilock);
             rx_metrics_update(metrics, sync, snr_est, rx_status, false);
             if (fed >= sample_count)
@@ -1889,7 +1946,7 @@ static void rx_decoder_consume_chunk(rx_decoder_state_t *state,
             continue;
         }
 
-        nbytes_out = freedv_rawdatarx(state->freedv, state->bytes_out, state->demod_in);
+        nbytes_out = (size_t)be->rawdata_rx(ctx, state->bytes_out, state->demod_in);
         if (nin > 0)
         {
             state->demod_count -= nin;
@@ -1901,8 +1958,8 @@ static void rx_decoder_consume_chunk(rx_decoder_state_t *state,
             }
         }
 
-        rx_status = freedv_get_rx_status(state->freedv);
-        freedv_get_modem_stats(state->freedv, &sync, &snr_est);
+        rx_status = be->get_rx_status(ctx);
+        be->get_stats(ctx, &sync, &snr_est);
         pthread_mutex_unlock(ilock);
 
         rx_metrics_update(metrics, sync, snr_est, rx_status, nbytes_out > 0);
@@ -2004,8 +2061,8 @@ void *tx_thread(void *g_modem)
         int tx_frames_per_burst = 1;
         pthread_mutex_lock(&modem_pool_lock);
         payload_bytes_per_modem_frame = modem->payload_bytes_per_modem_frame;
-        if (modem->freedv)
-            frames_per_burst = freedv_get_frames_per_burst(modem->freedv);
+        if (modem_codec_valid(&modem->codec))
+            frames_per_burst = modem->codec.be->frames_per_burst(modem->codec.ctx);
         pthread_mutex_unlock(&modem_pool_lock);
 
         if (payload_bytes_per_modem_frame != 14)
@@ -2041,7 +2098,16 @@ void *tx_thread(void *g_modem)
             have_action = arq_wait_dequeue_action(&action, ARQ_ACTION_WAIT_MS);
         }
 
-        if (have_action)
+        if (have_action && action.type == ARQ_ACTION_TX_PATTERN)
+        {
+            /* Pattern ACK: a self-contained MFSK tone burst.  Emit it directly
+             * without touching the codec/mode (it is not a coded frame). */
+            if (send_pattern_ack(modem, action.mode, action.pattern_kind) == 0)
+                sent_from_action = true;
+            else
+                HLOGW("modem-tx", "Failed to send pattern ACK");
+        }
+        else if (have_action)
         {
             cbuf_handle_t action_buffer = NULL;
             size_t action_frame_size = payload_bytes_per_modem_frame;
@@ -2195,11 +2261,11 @@ void *rx_thread(void *g_modem)
 
         uint32_t bitrate_bps = 0;
         pthread_mutex_lock(&modem_pool_lock);
-        struct freedv *payload_freedv = pooled_freedv_for_mode_locked(payload_mode, NULL);
-        if (payload_freedv)
-            bitrate_bps = compute_bitrate_bps_locked(payload_freedv);
-        else if (modem->freedv)
-            bitrate_bps = compute_bitrate_bps_locked(modem->freedv);
+        modem_codec_t payload_codec = pooled_codec_for_mode_locked(payload_mode, NULL);
+        if (modem_codec_valid(&payload_codec))
+            bitrate_bps = compute_bitrate_bps_locked(&payload_codec);
+        else if (modem_codec_valid(&modem->codec))
+            bitrate_bps = compute_bitrate_bps_locked(&modem->codec);
         pthread_mutex_unlock(&modem_pool_lock);
 
         if (arq_policy_ready && arq_snapshot.trx == TX)
@@ -2343,6 +2409,66 @@ void *rx_thread(void *g_modem)
             write_buffer(tee[t]->ring, (uint8_t *)capture_i16, tee_bytes);
         }
 
+        /* --- Pattern ACK detector (3rd consumer) ---
+         * A Welch-Costas pattern ACK carries no coded header, so neither freedv
+         * decoder sees it.  Accumulate a sliding window of the 8 kHz passband
+         * chunk and run mfsk_pattern_detect (ack + break tables); on a match
+         * synthesize an ARQ_EV_RX_ACK (HAS_DATA = break).  In stop-and-wait
+         * only one frame is outstanding, so a heard ACK unambiguously acks it;
+         * a stale ACK outside WAIT_ACK is ignored by the FSM.
+         *
+         * Gate on expect_pattern_ack (ACCEPTING or CONNECTED): a pattern ACK is
+         * only expected while the answerer awaits the connect-confirm or a live
+         * session awaits a data ACK.  Running this sliding-window correlation
+         * every chunk during CALLING/LISTENING/idle is pure overhead that slows
+         * the RX loop enough to miss the connect-critical DATAC16 ACCEPT and
+         * break the CALL/ACCEPT turnaround. */
+        if (arq_policy_ready && arq_snapshot.expect_pattern_ack)
+        {
+            static int16_t *pat_win = NULL;
+            static int      pat_cap = 0, pat_len = 0;
+            int burst = mfsk_pattern_max_tx_samples();
+            int need  = burst * 3;   /* hold ~3 bursts so one can't straddle out */
+            if (burst > 0)
+            {
+                if (pat_cap < need)
+                {
+                    int16_t *nw = (int16_t *)realloc(pat_win,
+                                                     (size_t)need * sizeof(int16_t));
+                    if (nw) { pat_win = nw; pat_cap = need; }
+                }
+                if (pat_win && pat_cap >= need)
+                {
+                    /* Slide in the new chunk (drop oldest if over capacity). */
+                    int add = chunk_samples;
+                    if (add > pat_cap) add = pat_cap;
+                    if (pat_len + add > pat_cap)
+                    {
+                        int drop = pat_len + add - pat_cap;
+                        memmove(pat_win, pat_win + drop,
+                                (size_t)(pat_len - drop) * sizeof(int16_t));
+                        pat_len -= drop;
+                    }
+                    memcpy(pat_win + pat_len,
+                           capture_i16 + (chunk_samples - add),
+                           (size_t)add * sizeof(int16_t));
+                    pat_len += add;
+
+                    if (pat_len >= burst)
+                    {
+                        int is_break = 0;
+                        if (mfsk_pattern_detect(pat_win, pat_len, &is_break))
+                        {
+                            HLOGD("modem-rx", "Pattern ACK detected (%s)",
+                                  is_break ? "ACK+TURN" : "ACK");
+                            arq_post_pattern_ack(is_break != 0);
+                            pat_len = 0;   /* consume the window */
+                        }
+                    }
+                }
+            }
+        }
+
         rx_metrics_accum_t metrics = {0};
         rx_worker_take_metrics(&w_ctrl, &metrics);
         rx_worker_take_metrics(&w_pay,  &metrics);
@@ -2399,8 +2525,8 @@ void *rx_thread(void *g_modem)
                 g_spectrum_seq++;
                 /* Determine sample rate from the modem */
                 pthread_mutex_lock(&modem_pool_lock);
-                if (modem->freedv)
-                    g_spectrum_sample_rate = freedv_get_modem_sample_rate(modem->freedv);
+                if (modem_codec_valid(&modem->codec))
+                    g_spectrum_sample_rate = modem->codec.be->sample_rate(modem->codec.ctx);
                 pthread_mutex_unlock(&modem_pool_lock);
                 if (spectrum_first_log)
                 {

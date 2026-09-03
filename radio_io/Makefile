@@ -130,3 +130,7 @@ clean:
 	@# hid_* symbol undefined.  The Windows copy has the same shape, so clean
 	@# both rather than leaving the next cross-build to trip over it.
 	rm -f hidapi-macos/hid.o hidapi-w64/hid.o
+
+# Pull in the header dependencies emitted by -MMD (see config.mk).  Leading
+# dash: absent on a first build, which is correct.
+-include $(wildcard *.d */*.d */*/*.d)

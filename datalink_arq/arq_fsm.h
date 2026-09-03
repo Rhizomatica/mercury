@@ -38,21 +38,12 @@ typedef enum
 
 typedef enum
 {
-    ARQ_DFLOW_IDLE_ISS        =  0, /* ISS: no pending frame; waiting for data   */
-    ARQ_DFLOW_DATA_TX         =  1, /* ISS: frame queued/transmitting            */
-    ARQ_DFLOW_WAIT_ACK        =  2, /* ISS: PTT-OFF; waiting for peer ACK        */
-    ARQ_DFLOW_IDLE_IRS        =  3, /* IRS: waiting for peer data frame          */
-    ARQ_DFLOW_DATA_RX         =  4, /* IRS: data frame decoded; ACK pending      */
-    ARQ_DFLOW_ACK_TX          =  5, /* IRS: ACK frame being transmitted          */
-    ARQ_DFLOW_TURN_REQ_TX     =  6, /* IRS→ISS: TURN_REQ being transmitted       */
-    ARQ_DFLOW_TURN_REQ_WAIT   =  7, /* IRS→ISS: waiting for TURN_ACK            */
-    ARQ_DFLOW_TURN_ACK_TX     =  8, /* ISS→IRS: TURN_ACK being transmitted       */
-    ARQ_DFLOW_MODE_REQ_TX     =  9, /* mode upgrade: MODE_REQ being transmitted  */
-    ARQ_DFLOW_MODE_REQ_WAIT   = 10, /* mode upgrade: waiting for MODE_ACK        */
-    ARQ_DFLOW_MODE_ACK_TX     = 11, /* mode upgrade: MODE_ACK being transmitted  */
-    ARQ_DFLOW_KEEPALIVE_TX    = 12, /* KEEPALIVE being transmitted               */
-    ARQ_DFLOW_KEEPALIVE_WAIT  = 13, /* waiting for KEEPALIVE_ACK                 */
-    ARQ_DFLOW_KEEPALIVE_ACK_TX = 14, /* sending KEEPALIVE_ACK (with guard)        */
+    ARQ_DFLOW_IDLE_ISS  =  0, /* ISS: no pending frame; waiting for data          */
+    ARQ_DFLOW_DATA_TX   =  1, /* ISS: the one retained frame is queued/on air     */
+    ARQ_DFLOW_WAIT_ACK  =  2, /* ISS: PTT-OFF; waiting for the peer's pattern ACK */
+    ARQ_DFLOW_IDLE_IRS  =  3, /* IRS: waiting for the peer's data frame           */
+    ARQ_DFLOW_ACK_TX    =  4, /* IRS: pattern ACK being transmitted (folds the
+                               * old DATA_RX guard into this state's entry)       */
     ARQ_DFLOW__COUNT
 } arq_dflow_state_t;
 
@@ -83,26 +74,19 @@ typedef enum
     /* Radio RX events (from modem worker) */
     ARQ_EV_RX_CALL            =  5,  /* CALL frame decoded            */
     ARQ_EV_RX_ACCEPT          =  6,  /* ACCEPT frame decoded          */
-    ARQ_EV_RX_ACK             =  7,  /* ACK frame decoded             */
+    ARQ_EV_RX_ACK             =  7,  /* pattern ACK detected (rx_flags
+                                      * HAS_DATA = ACK+TURN break)    */
     ARQ_EV_RX_DATA            =  8,  /* DATA frame decoded            */
     ARQ_EV_RX_DISCONNECT      =  9,  /* DISCONNECT frame decoded      */
-    ARQ_EV_RX_TURN_REQ        = 10,  /* TURN_REQ frame decoded        */
-    ARQ_EV_RX_TURN_ACK        = 11,  /* TURN_ACK frame decoded        */
-    ARQ_EV_RX_MODE_REQ        = 12,  /* MODE_REQ frame decoded        */
-    ARQ_EV_RX_MODE_ACK        = 13,  /* MODE_ACK frame decoded        */
-    ARQ_EV_RX_KEEPALIVE       = 14,  /* KEEPALIVE frame decoded       */
-    ARQ_EV_RX_KEEPALIVE_ACK   = 15,  /* KEEPALIVE_ACK frame decoded   */
 
     /* Timer events */
-    ARQ_EV_TIMER_RETRY        = 16,  /* retry deadline expired        */
-    ARQ_EV_TIMER_TIMEOUT      = 17,  /* session/call timeout expired  */
-    ARQ_EV_TIMER_ACK          = 18,  /* ACK wait deadline expired     */
-    ARQ_EV_TIMER_PEER_BACKLOG = 19,  /* peer-backlog hold expired     */
-    ARQ_EV_TIMER_KEEPALIVE    = 20,  /* keepalive interval expired    */
+    ARQ_EV_TIMER_RETRY        = 10,  /* retry deadline expired        */
+    ARQ_EV_TIMER_ACK          = 11,  /* ACK wait deadline expired     */
+    ARQ_EV_TIMER_PEER_BACKLOG = 12,  /* peer-backlog hold expired     */
 
     /* Modem events */
-    ARQ_EV_TX_STARTED         = 21,  /* PTT ON (frame on air)         */
-    ARQ_EV_TX_COMPLETE        = 22,  /* PTT OFF (TX finished)         */
+    ARQ_EV_TX_STARTED         = 13,  /* PTT ON (frame on air)         */
+    ARQ_EV_TX_COMPLETE        = 14,  /* PTT OFF (TX finished)         */
 
     ARQ_EV__COUNT
 } arq_event_id_t;
@@ -121,7 +105,8 @@ typedef struct
     uint8_t  session_id;
     uint8_t  seq;
     uint8_t  ack_seq;
-    uint8_t  rx_flags;        /* ARQ_FLAG_TURN_REQ / HAS_DATA / HAS_SNR bits  */
+    uint8_t  rx_flags;        /* ARQ_FLAG_HAS_DATA (+ LEN_* on DATA frames);
+                               * on a pattern ACK, HAS_DATA = ACK+TURN break   */
     int8_t   snr_encoded;     /* as received from frame header                */
     uint16_t ack_delay_raw;   /* as received (10ms units, 0=unknown)          */
 
@@ -176,42 +161,74 @@ typedef struct
     uint8_t  rx_expected;              /* next seq we expect from peer         */
 
     /* --- Mode / speed --- */
-    int      payload_mode;             /* MY data TX mode (ISS); per-direction,
-                                        * independent of peer's TX mode        */
+    int      payload_mode;             /* MY data TX mode (ISS) = mode_ladder
+                                        * [speed_level]; per-direction, set from
+                                        * delivery outcomes only (no SNR)       */
     int      control_mode;             /* always FREEDV_MODE_DATAC16           */
     int      initial_payload_mode;     /* startup payload mode (= broadcast RX
                                         * mode); restored on disconnect so the
                                         * payload decoder matches broadcast    */
-    int      speed_level;              /* reliability ladder: 0=DATAC15,
-                                        * 1=DATAC4, 2=DATAC3, 3=DATAC1        */
-    int      tx_success_count;         /* consecutive clean ACKs (no retry)
-                                        * towards ladder step-up               */
-    int      mode_upgrade_count;       /* SNR hysteresis counter for upgrade   */
-    int      pending_tx_mode;          /* mode requested in MODE_REQ (retry)   */
-    int      peer_tx_mode;             /* mode peer last TX'd in = my payload
-                                        * RX decoder mode when IRS; updated
-                                        * from ev->mode on every DATA frame    */
+    int      speed_level;              /* delivery-driven ladder index
+                                        * (0 = MFSK floor .. ARQ_LADDER_LEVELS-1)*/
+    int      tx_success_count;         /* consecutive clean deliveries toward a
+                                        * ladder step-up                        */
+    bool     fast_ramp;                /* faster initial climb: 1 rung per clean
+                                        * delivery until the first retry, then
+                                        * ARQ_LADDER_UP_SUCCESSES-per-step       */
+    int      tx_last_good_level;       /* highest rung that has delivered: a
+                                        * miss falls back here in one step
+                                        * rather than walking down rung by
+                                        * rung, each costing an ACK timeout  */
+    int      tx_below_good_misses;     /* consecutive misses while ALREADY at
+                                        * tx_last_good_level; abandoning a rung
+                                        * that has delivered takes more than one
+                                        * miss, or occasional loss ratchets the
+                                        * session down to the floor            */
+    int      peer_tx_mode;             /* my payload RX decoder mode when IRS =
+                                        * arq_mode_ladder[rx_speed_level]; the
+                                        * mode the peer's NEXT DATA burst uses  */
+
+    /* --- IRS-side mirror of the peer's (ISS) delivery-driven ladder --------
+     * The IRS observes the same per-frame outcomes the sender climbs on (a
+     * clean new frame == a clean delivery; a duplicate == a sender retry), so
+     * applying the identical ladder rule keeps rx_speed_level == the sender's
+     * speed_level with no on-wire mode negotiation.  Without it the decoder can
+     * only ever track a mode it has ALREADY decoded, so it misses the first
+     * burst of every mode the sender climbs to (stalling the transfer at the
+     * MFSK floor).  A prolonged RX gap (a lost ACK left us above the sender)
+     * steps this back down toward the floor so the two ends re-rendezvous. */
+    int      rx_speed_level;           /* mirror of the peer's ladder index    */
+    int      rx_last_good_level;       /* mirror of tx_last_good_level        */
+    int      rx_success_count;         /* clean receives toward a mirror step-up*/
+    bool     rx_fast_ramp;             /* mirror of the peer's fast initial ramp*/
+    int      rx_below_good_misses;     /* mirror of tx_below_good_misses        */
 
     /* --- Retry/timeout bookkeeping --- */
     int      tx_retries_left;          /* retries remaining for current frame  */
     uint64_t state_enter_ms;          /* when current conn_state was entered   */
-    uint64_t startup_deadline_ms;     /* end of control-mode-only startup      */
 
     /* --- Peer state observed from frames --- */
     bool     peer_has_data;            /* peer's HAS_DATA flag in last frame   */
     bool     acktx_had_has_data;       /* HAS_DATA was set in the last ACK sent */
-    int      peer_snr_x10;            /* peer-reported SNR * 10 (integer)     */
-    bool     peer_snr_valid;          /* a peer SNR reading has been received; *
-                                       * distinguishes a genuine 0 dB report   *
-                                       * (snr_raw=128) from "no reading yet" so *
-                                       * mode-climbing isn't stalled at ~0 dB   */
-    int      local_snr_x10;           /* local SNR EMA * 10                   */
-    float    olla_offset_db;          /* OLLA per-link SNR offset (dB); added  *
-                                       * to peer_snr before mode thresholding  */
-    uint64_t peer_busy_until_ms;      /* remote TX busy guard expiry          */
+    /* Peer-reported SNR for OUR signal, * 10.  TELEMETRY ONLY.
+     *
+     * This branch's data plane is delivery-driven: it does NOT adapt on SNR,
+     * and must not start doing so here (that was the gear-shift oscillation
+     * the rethink removed).  The peer's reading is still on the wire in every
+     * frame header, though, and an operator setting TX drive needs it -- it is
+     * the only number that says whether the far side can hear us.  So it is
+     * kept purely so the UI can show it.
+     *
+     * peer_snr_valid stays false until a reading actually arrives, so the UI
+     * can say "--" rather than a 0.0 dB that reads as "they hear us at zero". */
+    int      peer_snr_x10;
+    bool     peer_snr_valid;
+
+    int      local_snr_x10;           /* local RX SNR EMA * 10 — host display
+                                       * only (from decoded DATA frames); not
+                                       * used for mode control                 */
 
     /* --- Data bookkeeping --- */
-    int      tx_backlog_bytes;         /* bytes pending in TX buffer           */
     int      pending_burst_frames;     /* frames accumulated for current PTT burst;
                                         * written by cb_send_tx_frame under g_sess_lock
                                         * (replaces the former function-static so that
@@ -237,59 +254,34 @@ typedef struct
     bool     pending_connect_confirm;  /* caller must ACK ACCEPT when no initial
                                         * DATA is queued, otherwise callee stays
                                         * in ACCEPTING waiting for first traffic */
+    uint64_t confirm_listen_until_ms;  /* answerer only: run the pattern
+                                        * correlator until this instant, waiting
+                                        * for the caller's connect confirm.
+                                        * 0 = do not run it.  Bounded on purpose;
+                                        * see ARQ_CONNECT_CONFIRM_LISTEN_MS      */
     bool     need_initial_guard;       /* ISS must apply channel guard before
                                         * first DATA after connect (prevents
                                         * transmitting before IRS resets its
                                         * decoders from TX→RX)               */
 
-    /* --- Delivery-feedback safety net --- */
-    int      consecutive_retries;      /* consecutive non-clean TX outcomes     */
-    int      reverse_hold_streak;      /* consecutive retries attributed to
-                                        * reverse-path ACK loss (mode held);
-                                        * capped at ARQ_REVERSE_HOLD_MAX so a
-                                        * fade cluster with healthy-looking SNR
-                                        * cannot freeze the downgrade paths
-                                        * (S1 fade-cliff fix); reset on clean  */
-    uint64_t mode_hold_until_ms;       /* after forced downgrade: don't upgrade
-                                        * until this uptime (prevents oscillation
-                                        * when stale SNR says "upgrade" but the
-                                        * channel can't support it)            */
+    /* --- Retransmit: one retained frame (stop-and-wait, no window/restage) ---
+     * Holds the RAW USER bytes of the single outstanding frame (read once from
+     * the app ring when the frame is created).  A retransmit re-frames these
+     * bytes at the CURRENT payload_mode; a mode drop to a smaller payload sends
+     * the head now and retains the tail via a memmove on this one buffer.
+     * Sized to the largest user payload (QAM16C2: 1213 - 8 = 1205). */
+    uint8_t  tx_frame[1213];
+    int      tx_frame_len;             /* valid user bytes in tx_frame (0=none)*/
+    uint8_t  tx_frame_seq;             /* seq assigned to the retained frame   */
+    bool     tx_frame_present;         /* a frame is outstanding (awaiting ACK)*/
+    bool     tx_frame_retx;            /* it was retransmitted at least once   */
 
-    /* --- Retransmit buffer --- */
-    /* --- TX window (go-back-N, one PTT burst) ---
-     * Slot buffers must hold the largest frame: QAM16C2 is 1213 bytes
-     * (8 hdr + 1205 payload). */
-    struct
-    {
-        uint8_t buf[1280];
-        int     len;            /* frame bytes (hdr + payload slot)       */
-        int     payload_len;    /* valid user bytes carried               */
-        uint8_t seq;
-    }        tx_window[ARQ_BURST_MAX];
-    int      tx_window_count;          /* unACKed frames in the window      */
-    bool     tx_window_retx;           /* window needed >=1 retransmission  */
-    int      tx_inflight_bytes;       /* payload bytes across the window    */
-
-    /* --- Restage buffer (S1 fade-cliff fix) ---
-     * When a mode change is needed but the window holds unACKed frames, the
-     * MODE_ACK probe resolves their fate; bytes confirmed UNdelivered are
-     * pulled back here (tx_seq rewound to the window base) and re-framed by
-     * send_data_burst() at the new mode.  Sized for a full window of the
-     * largest frames. */
-    uint8_t  restage_buf[ARQ_BURST_MAX * 1280];
-    size_t   restage_len;              /* valid bytes in restage_buf        */
-    size_t   restage_off;              /* next unread offset                */
-    bool     mode_probe;               /* one-shot: allow MODE_REQ with a
-                                        * non-empty window (set by the retry-
-                                        * exhaustion path; consumed by
-                                        * maybe_upgrade_mode)               */
-
-    /* --- Keepalive tracking --- */
-    int      keepalive_miss_count;
-    bool     keepalive_from_irs;       /* true when keepalive was initiated from IRS idle state */
-    bool     keepalive_ack_from_irs;   /* true when KEEPALIVE_ACK is in response to KEEPALIVE
-                                        * received while in IDLE_IRS state           */
     uint64_t last_rx_ms;              /* last successful frame decode time     */
+    uint64_t irs_data_wait_ms;        /* when this IRS first had data queued
+                                       * with the peer still active; the self-
+                                       * promote silence window counts from
+                                       * max(last_rx_ms, this) so a peer that is
+                                       * about to send gets a full turn to bid  */
     uint64_t last_tx_progress_ms;     /* baseline for the no-progress budget:
                                        * seeded on CONNECTED entry and refreshed
                                        * whenever tx_seq advances.             */
@@ -315,6 +307,11 @@ typedef struct
     void (*send_tx_frame)(int packet_type, int mode,
                           size_t frame_size, const uint8_t *frame,
                           int burst_remaining);
+
+    /** Emit a Welch-Costas MFSK pattern ACK (no coded frame).
+     *  @param mode         payload FreeDV mode to emit the pattern under
+     *  @param pattern_kind arq_pattern_kind_t: ACK or ACK+TURN (break). */
+    void (*send_pattern_ack)(int mode, int pattern_kind);
 
     /** Notify TCP interface that a connection is established.
      *  @param remote_call  the peer (caller) callsign
