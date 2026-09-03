@@ -339,9 +339,12 @@ jobs:
   # engine via libmercury_core.a.  Fyne's GLFW frontend is vendored and builds
   # BOTH X11 and Wayland backends by default, so the container needs their dev
   # headers (xorg-dev, libwayland-dev, libxkbcommon-dev) alongside the C core
-  # deps (libpulse/libasound/libhamlib).  Plain checkout (no ssh-key) so PRs
-  # from forks -- exactly the contributor whose GUI break we most want caught --
-  # are covered; secrets are not available to those runs.
+  # deps (libpulse/libasound/libhamlib).  libhidapi-dev is what turns this from
+  # "the UI compiles" into "the UI links the way it ships": with it, the
+  # Makefile sets HAVE_HIDAPI and cm108_ptt.o references hid_*, so the link
+  # really exercises the CGO_LDFLAGS="$(HIDAPI_LDFLAGS)" path.  Plain checkout
+  # (no ssh-key) so PRs from forks -- exactly the contributor whose GUI break we
+  # most want caught -- are covered; secrets are not available to those runs.
   build-fyne-ui-linux:
     name: Build Fyne UI (Linux amd64, Debian 13)
     runs-on: ubuntu-latest
@@ -351,6 +354,11 @@ jobs:
       github.event_name == 'push' ||
       github.event.inputs.build_fyne_ui_linux == 'true'
     timeout-minutes: 30
+    # trixie ships golang-go 1.24, but gui_interface/fyne-ui/go.mod requires
+    # go 1.26.8.  Pin the toolchain so the newer-Go fetch is a deliberate,
+    # visible step rather than a silent GOTOOLCHAIN=auto download mid-build.
+    env:
+      GOTOOLCHAIN: go1.26.8
 
     steps:
       - name: Install build dependencies
@@ -366,6 +374,7 @@ jobs:
             libpulse-dev \
             libasound2-dev \
             libhamlib-dev \
+            libhidapi-dev \
             libgl1-mesa-dev \
             libegl1-mesa-dev \
             xorg-dev \
@@ -405,6 +414,9 @@ jobs:
       github.event_name == 'push' ||
       github.event.inputs.build_fyne_ui_windows == 'true'
     timeout-minutes: 30
+    # Same toolchain pin as the native job: the Fyne module needs go 1.26.8.
+    env:
+      GOTOOLCHAIN: go1.26.8
 
     steps:
       - name: Install build dependencies
