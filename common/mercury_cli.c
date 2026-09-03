@@ -508,6 +508,24 @@ static void list_modulation_modes(int freedv_verbosity, bool verbose)
         printf("freedv_get_n_max_modem_samples: %d\n", freedv_get_n_max_modem_samples(freedv));
         printf("modem_sample_rate: %d Hz\n", freedv_get_modem_sample_rate(freedv));
 
+        /* Payload bitrate and occupied bandwidth: what an operator compares
+         * modes on, and checks against their filter and licence.  The
+         * bandwidth is the carrier span (carriers x spacing) -- the figure
+         * these modes are conventionally quoted at.  A 99%-power measurement
+         * runs wider on the narrow modes, where the two outer carriers' skirts
+         * hold more than the 1% budget: 187 Hz nominal measures ~265 Hz.  All
+         * modes still fit inside an SSB passband either way. */
+        {
+            int    nsam = freedv_get_n_tx_modem_samples(freedv);
+            int    fs   = freedv_get_modem_sample_rate(freedv);
+            double bw   = freedv_get_modem_bandwidth_hz(freedv);
+            if (nsam > 0 && fs > 0)
+                printf("payload bitrate: %.0f bit/s\n",
+                       payload_bytes_per_modem_frame * 8.0 / ((double)nsam / fs));
+            if (bw > 0)
+                printf("occupied bandwidth: %.0f Hz (carrier span)\n", bw);
+        }
+
         if (freedv_modes[i] != FREEDV_MODE_FSK_LDPC && verbose)
             freedv_ofdm_print_info(freedv);
         printf("\n");
