@@ -86,6 +86,10 @@ int mercury_ui_get_input_channel(void);
  * Never returns NULL; `name` is always NUL-terminated. */
 void mercury_ui_get_audio_system(char *name, int name_len);
 
+/* Copy the space-separated list of audio subsystems this build can run
+ * ("alsa pulse", "wasapi dsound", ...) into `names`; always NUL-terminated. */
+void mercury_ui_get_audio_subsystems(char *names, int names_len);
+
 /* Enable / disable waterfall/spectrum at runtime.  Saves to mercury.ini. */
 void mercury_ui_set_waterfall(bool enabled);
 

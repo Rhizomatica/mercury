@@ -194,6 +194,13 @@ void mercury_ui_get_audio_system(char *name, int name_len)
     }
 }
 
+void mercury_ui_get_audio_subsystems(char *names, int names_len)
+{
+    if (names && names_len > 0) {
+        (void) ui_comm_get_audio_subsystems(names, (size_t)names_len);
+    }
+}
+
 void mercury_ui_set_waterfall(bool enabled)
 {
     ui_comm_set_waterfall(enabled);

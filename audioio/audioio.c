@@ -312,6 +312,35 @@ int audioio_pick_default_subsystem(void)
 #endif
 }
 
+int audioio_available_subsystems(int *subsystems, int max)
+{
+    int n = 0;
+    if (!subsystems || max <= 0)
+        return 0;
+
+#define ADD(s) do { if (n < max) subsystems[n] = (s); n++; } while (0)
+#if defined(__linux__)
+    ADD(AUDIO_SUBSYSTEM_ALSA);
+    ADD(AUDIO_SUBSYSTEM_PULSE);
+    if (OSS_IFACE != NULL)
+        ADD(AUDIO_SUBSYSTEM_OSS);
+#elif defined(_WIN32)
+    ADD(AUDIO_SUBSYSTEM_WASAPI);
+    ADD(AUDIO_SUBSYSTEM_DSOUND);
+#elif defined(__FreeBSD__)
+    ADD(AUDIO_SUBSYSTEM_OSS);
+#elif defined(__APPLE__)
+    ADD(AUDIO_SUBSYSTEM_COREAUDIO);
+#elif defined(__ANDROID__)
+    ADD(AUDIO_SUBSYSTEM_AAUDIO);
+#else
+    ADD(AUDIO_SUBSYSTEM_ALSA);
+#endif
+#undef ADD
+
+    return n;
+}
+
 static void *null_capture_thread(void *unused)
 {
     (void) unused;
