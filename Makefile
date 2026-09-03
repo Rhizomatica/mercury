@@ -312,9 +312,17 @@ ifeq ($(HAVE_HAMLIB),1)
 MERCURY_CORE_OBJS += radio_io/rigctl_parse.o
 endif
 
-MERCURY_CORE_OBJS_W64 = $(filter-out radio_io/sbitx_io.o radio_io/shm_utils.o,$(MERCURY_CORE_OBJS))
+# Simply-expanded (:=), so the dedupe below can refer to it without make
+# complaining that the variable references itself.
+MERCURY_CORE_OBJS_W64 := $(filter-out radio_io/sbitx_io.o radio_io/shm_utils.o,$(MERCURY_CORE_OBJS))
+
+# rigctl_parse.o may already be here, inherited from MERCURY_CORE_OBJS when the
+# HOST has hamlib.  Adding it unconditionally put it in the archive twice --
+# two identical members, which GNU ld tolerates but a stricter linker need not,
+# and which is simply wrong either way.  Add it only when it is not already
+# present, so the Windows archive is correct whether or not the host has hamlib.
 ifneq ($(strip $(HAMLIB_W64_LIBS)),)
-MERCURY_CORE_OBJS_W64 += radio_io/rigctl_parse.o
+MERCURY_CORE_OBJS_W64 += $(filter-out $(MERCURY_CORE_OBJS_W64),radio_io/rigctl_parse.o)
 endif
 
 # $(HIDAPI_OBJS) is listed in MERCURY_CORE_OBJS but is NOT built by
