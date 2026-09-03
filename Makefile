@@ -580,6 +580,13 @@ fyne-ui-macos-universal-dmg:
 #
 # then:  make macos-notarize-dmg MACOS_NOTARY_KEY=~/.mercury-notary.json
 MACOS_NOTARY_KEY ?=
+# Apple's notary service is not quick, and rcodesign gives up after 600s by
+# default -- which fails the build even though the submission is still
+# progressing perfectly well.  Measured on a 52 MB .dmg: still "InProgress"
+# past 600s, so the default is not a safe margin, it is a coin toss.  Waiting
+# longer costs nothing when the service is fast.
+MACOS_NOTARY_WAIT ?= 3600
+
 macos-notarize-dmg:
 	@[ -n "$(MACOS_NOTARY_KEY)" ] || { \
 		echo "error: set MACOS_NOTARY_KEY to an encoded App Store Connect key"; \
@@ -589,6 +596,7 @@ macos-notarize-dmg:
 		echo "error: $(MACOS_DMG_UNIVERSAL) not built yet"; exit 1; }
 	$(RCODESIGN) notary-submit \
 		--api-key-file "$(MACOS_NOTARY_KEY)" --staple \
+		--max-wait-seconds $(MACOS_NOTARY_WAIT) \
 		"$(MACOS_DMG_UNIVERSAL)"
 	@echo "  -> $(abspath $(MACOS_DMG_UNIVERSAL))  (notarized + stapled)"
 

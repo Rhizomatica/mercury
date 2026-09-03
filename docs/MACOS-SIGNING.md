@@ -201,8 +201,12 @@ make macos-notarize-dmg \
 Signing is **opt-in**: with `MACOS_SIGN_P12` unset the build still completes and
 prints `WARNING: ... is unsigned`, so ordinary developer builds are unchanged.
 
-Notarization takes a few minutes; `--staple` writes the ticket into the `.dmg`
-so it validates even when the user is offline. Verify on a Mac:
+Notarization is **slow and variable** — a 52 MB `.dmg` was still `InProgress`
+past 600 s, which is rcodesign's default wait, so the Makefile passes
+`--max-wait-seconds $(MACOS_NOTARY_WAIT)` (default 3600). Hitting the limit is
+not a rejection: the submission carries on server-side, and
+`rcodesign notary-wait <submission-id>` resumes waiting on it. `--staple` writes
+the ticket into the `.dmg` so it validates even when the user is offline. Verify on a Mac:
 
 ```sh
 codesign --verify --deep --strict --verbose=2 /Applications/Mercury.app
