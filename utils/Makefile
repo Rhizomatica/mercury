@@ -17,6 +17,13 @@ OUT = broadcast_test broadcast_diag_tx broadcast_diag_rx watterson_test acquire_
 # the Windows build -- just exclude them and keep the cross-compile green.
 ifneq ($(OS),Windows_NT)
 OUT += resampler_bench rxcost_bench
+
+# bcast_file_tool talks to Mercury's broadcast port with BSD sockets
+# (<arpa/inet.h>, <netinet/tcp.h>, unistd read/write), which mingw-w64 does not
+# have -- Windows wants winsock2.  It is a development/diagnostic tool for
+# driving a broadcast file transfer without the UI, so there is nothing to gain
+# from porting it; the UI on Windows uses the same code in-process over CGo.
+OUT += bcast_file_tool
 endif
 
 # Default target
@@ -56,3 +63,10 @@ rxcost_bench: rxcost_bench.c
 	$(CC) $(CFLAGS) -o $@ $^ ../modem/freedv/libfreedvdata.a $(LDFLAGS) -lm
 
 .PHONY: all clean run
+
+# Broadcast a file to Mercury, or receive one, over the broadcast TCP/KISS port.
+BCAST_RQ_SRC = $(wildcard ../datalink_broadcast/raptorq/lib/*.c) \
+               $(wildcard ../datalink_broadcast/raptorq/deps/obl/*.c)
+bcast_file_tool: bcast_file_tool.c ../datalink_broadcast/bcast_file.c $(BCAST_RQ_SRC)
+	$(CC) $(CFLAGS) -I../datalink_broadcast -I../datalink_broadcast/raptorq/include \
+	      -I../datalink_broadcast/raptorq/deps -o $@ $^ $(LDFLAGS) -lm

@@ -52,6 +52,13 @@ int mercury_engine_init(const mercury_config *cfg,
 /* ------------------------------------------------------------------ */
 void mercury_engine_shutdown(void);
 
+/* The FreeDV mode the modem is running.  Fixed at startup by -m; there is no
+ * runtime switch.  The UI needs it to tell the operator which broadcast mode
+ * the far station must also be set to. */
+int mercury_engine_modem_mode(void);
+int mercury_engine_modem_bitrate(void);
+int mercury_engine_modem_bandwidth_hz(void);
+
 /* ------------------------------------------------------------------ */
 /*  mercury_engine_is_initialized()                                    */
 /*                                                                     */
