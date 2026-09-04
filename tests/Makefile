@@ -45,7 +45,7 @@ ARQ_STUBS = datalink_arq/arq_test_stubs.c
 TEST_BINS = test_ring_buffer test_arq_protocol test_arq_timing test_arq_fsm \
             test_tcp_interfaces test_resampler test_arq_ladder test_arq_sim \
             test_arq_conn test_cfg_utils test_arq_tnc test_channel_busy \
-            test_mfsk test_watterson test_mfsk_modem test_pattern_ack_detection \
+            test_mfsk test_mfsk_harq test_watterson test_mfsk_modem test_pattern_ack_detection \
             test_freedv_harq test_pcm24 test_sock_wire test_virtual_clock \
             test_mercury_prng test_bcast_file \
             test_ofdm_acq test_ui_status test_ui_devices test_tx_pacing \
@@ -252,6 +252,11 @@ test_ui_devices: gui_interface/test_ui_devices.c $(UNITY_SRC) \
 # MFSK codec test (mod/demod round-trip, modulation-order gain, OFDM framing)
 test_mfsk: modem/test_mfsk.c $(UNITY_SRC) ../modem/mfsk.c ../modem/mfsk_ofdm.c ../modem/mfsk_sync.c ../modem/mfsk_ldpc.c ../modem/mfsk_ldpc_1_16.c ../modem/mfsk_ldpc_2_16.c ../modem/mfsk_ldpc_3_16.c ../modem/mfsk_ldpc_5_16.c ../modem/mfsk_ldpc_8_16.c
 	$(CC) $(CFLAGS) -I../modem -o $@ $^ $(LDFLAGS) -lm
+
+# Chase combining across separated MFSK bursts: does summing LLRs from copies
+# that individually fail actually decode?
+test_mfsk_harq: modem/test_mfsk_harq.c ../modem/mfsk_ldpc.c ../modem/mfsk_ldpc_8_16.c
+	$(CC) $(CFLAGS) -I../modem -o $@ $^ -lm
 
 # MFSK modem backend (burst TX/RX through the vtable); links libfreedvdata for CRC16
 
