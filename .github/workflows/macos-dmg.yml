@@ -113,12 +113,46 @@ jobs:
             *) echo "::error::not a Developer ID Application certificate: $subj"; exit 1 ;;
           esac
 
+      # Disk is tight on a macOS runner once the Go toolchain, two architecture
+      # slices and an uncompressed .app are all present, and hdiutil failed
+      # with "No space left on device" during packaging.  Report it, and drop
+      # the largest thing we no longer need.
+      - name: Free disk space
+        run: |
+          df -h / | tail -1
+          du -sh ~/go/pkg/mod 2>/dev/null || true
+          # CoreSimulator runtimes are many GB and nothing here uses them.
+          # Deliberately NOT removing any Xcode: the toolchain in use may be
+          # one of them, and a build that cannot find clang is a worse problem
+          # than a full disk.
+          sudo rm -rf /Library/Developer/CoreSimulator/Profiles/Runtimes 2>/dev/null || true
+          df -h / | tail -1
+
+      # MACOS_NOTARY_KEY is passed HERE as well as to the notarize step: the
+      # .app has to be notarized and stapled before hdiutil seals the .dmg,
+      # because a .dmg is read-only afterwards and the app inside it can never
+      # be given a ticket.  Without it the recipe silently takes its
+      # "not stapled" branch and the whole point is lost.
       - name: Build, sign and package
         env: { PASS: "${{ secrets.MACOS_SIGN_P12_PASSWORD }}" }
         run: |
           make fyne-ui-macos-universal-dmg \
             MACOS_SIGN_P12="$RUNNER_TEMP/developer_id.p12" \
-            MACOS_SIGN_P12_PASSWORD="$PASS"
+            MACOS_SIGN_P12_PASSWORD="$PASS" \
+            MACOS_NOTARY_KEY="$RUNNER_TEMP/notary_key.json"
+          df -h / | tail -1
+
+      # Proves the step above actually stapled the app, rather than printing
+      # its "not stapled" note and carrying on.
+      - name: Confirm the .app inside the .dmg is stapled
+        run: |
+          hdiutil attach -nobrowse -readonly Mercury-*-universal.dmg
+          M=$(ls -d /Volumes/Mercury* | head -1)
+          xcrun stapler validate "$M/Mercury.app"
+          codesign -d --entitlements - "$M/Mercury.app" 2>&1 | grep -q "audio-input" \
+            || { echo "::error::audio-input entitlement missing from the signed app"; exit 1; }
+          echo "app is stapled and carries its entitlements"
+          hdiutil detach "$M"
 
       - name: Notarize and staple
         run: |
