@@ -587,6 +587,28 @@ MACOS_NOTARY_KEY ?=
 # longer costs nothing when the service is fast.
 MACOS_NOTARY_WAIT ?= 3600
 
+# Submitting and waiting are separate operations on purpose.  rcodesign's
+# combined `notary-submit --staple` aborts the whole thing if a single poll
+# request fails, and Apple's service is slow enough (observed: still processing
+# at 55 minutes on a 52 MB .dmg, and longer for a team's first ever submission)
+# that a ~1 hour poll is long enough for one transient HTTP error to be likely.
+# Measured failure:
+#
+#   waiting up to 3600s for package upload 80db453b... to finish processing
+#   Error: error sending request for url (.../notary/v2/submissions/80db453b...)
+#
+# That threw away a 30 minute universal build for a submission Apple was still
+# processing perfectly happily.  So: submit once, then retry only the waiting,
+# and staple as its own step.
+#
+# A rejection is NOT retried -- "Invalid" is Apple's verdict, not a hiccup.
+#
+# Pass MACOS_NOTARY_SUBMISSION=<id> to skip submitting and resume waiting on an
+# existing submission, so a timed-out or interrupted run can be finished
+# without rebuilding.
+MACOS_NOTARY_RETRIES ?= 5
+MACOS_NOTARY_SUBMISSION ?=
+
 macos-notarize-dmg:
 	@[ -n "$(MACOS_NOTARY_KEY)" ] || { \
 		echo "error: set MACOS_NOTARY_KEY to an encoded App Store Connect key"; \
@@ -594,10 +616,42 @@ macos-notarize-dmg:
 		exit 1; }
 	@[ -f "$(MACOS_DMG_UNIVERSAL)" ] || { \
 		echo "error: $(MACOS_DMG_UNIVERSAL) not built yet"; exit 1; }
-	$(RCODESIGN) notary-submit \
-		--api-key-file "$(MACOS_NOTARY_KEY)" --staple \
-		--max-wait-seconds $(MACOS_NOTARY_WAIT) \
-		"$(MACOS_DMG_UNIVERSAL)"
+	@set -e; \
+	sub="$(MACOS_NOTARY_SUBMISSION)"; \
+	if [ -z "$$sub" ]; then \
+		out=$$($(RCODESIGN) notary-submit --api-key-file "$(MACOS_NOTARY_KEY)" \
+			"$(MACOS_DMG_UNIVERSAL)" 2>&1); \
+		echo "$$out"; \
+		sub=$$(printf '%s\n' "$$out" | sed -n 's/^created submission ID: //p' | head -1); \
+	fi; \
+	if [ -z "$$sub" ]; then echo "error: no submission ID from notary-submit"; exit 1; fi; \
+	echo "notarization submission: $$sub"; \
+	echo "  resume with: make macos-notarize-dmg MACOS_NOTARY_SUBMISSION=$$sub"; \
+	n=0; ok=0; \
+	while [ $$n -lt $(MACOS_NOTARY_RETRIES) ]; do \
+		n=$$((n+1)); \
+		if w=$$($(RCODESIGN) notary-wait --api-key-file "$(MACOS_NOTARY_KEY)" \
+			--max-wait-seconds $(MACOS_NOTARY_WAIT) "$$sub" 2>&1); then \
+			echo "$$w"; ok=1; break; \
+		fi; \
+		echo "$$w"; \
+		if printf '%s\n' "$$w" | grep -q "Invalid"; then \
+			echo "error: Apple REJECTED the submission -- not retrying"; \
+			$(RCODESIGN) notary-log --api-key-file "$(MACOS_NOTARY_KEY)" "$$sub" || true; \
+			exit 1; \
+		fi; \
+		if [ $$n -lt $(MACOS_NOTARY_RETRIES) ]; then \
+			echo "notary-wait attempt $$n/$(MACOS_NOTARY_RETRIES) did not complete; retrying in 60s"; \
+			sleep 60; \
+		fi; \
+	done; \
+	if [ $$ok -ne 1 ]; then \
+		echo "error: notarization did not complete for submission $$sub"; \
+		echo "  it may still be processing; resume with:"; \
+		echo "  make macos-notarize-dmg MACOS_NOTARY_SUBMISSION=$$sub"; \
+		exit 1; \
+	fi; \
+	$(RCODESIGN) staple "$(MACOS_DMG_UNIVERSAL)"
 	@echo "  -> $(abspath $(MACOS_DMG_UNIVERSAL))  (notarized + stapled)"
 
 # ---- Authenticode signing (Windows binaries) ----
