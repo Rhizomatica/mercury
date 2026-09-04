@@ -370,6 +370,7 @@ int freedv_get_protocol_bits(struct freedv *freedv);
 
 // dump OFDM modem config
 void freedv_ofdm_print_info(struct freedv *freedv);
+float freedv_get_modem_bandwidth_hz(struct freedv *freedv);
 
 #ifdef __cplusplus
 }

@@ -32,6 +32,10 @@ func (l *engineLink) Close() {}
 
 func (l *engineLink) SetWaterfall(enabled bool) {}
 
+func (l *engineLink) AudioSubsystems() (string, []string) {
+	return "", nil
+}
+
 func (l *engineLink) TCPPorts() (arqBase, broadcast int) {
 	return 8300, 8100
 }

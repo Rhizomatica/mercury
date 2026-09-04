@@ -26,6 +26,7 @@
 #define watterson_h
 
 #include "modem/freedv/comp.h"
+#include "mercury_prng.h"
 
 /* Maximum number of paths supported */
 #define WATTERSON_MAX_PATHS 4
@@ -95,6 +96,17 @@ typedef struct watterson
     double sig_pwr_acc;    /* Sum |faded signal|^2 (pre-noise)            */
     double noise_pwr_acc;  /* Sum |noise added|^2                         */
     long   meas_nsamp;     /* samples accumulated into the sums           */
+
+    /* The fading and AWGN draws come from HERE, not rand().
+     *
+     * Per-instance so two channels in one process cannot perturb each other's
+     * realisation, and private so nothing else in the program can either.  It
+     * also makes a seed mean the same channel on every platform, which libc's
+     * rand() does not: glibc, musl, macOS and MinGW each implement a different
+     * generator, so a fading result pinned on one host could not be replayed
+     * on another. */
+    mercury_prng_t rng;
+    unsigned int   seed;   /* the seed rng was last seeded with */
 } watterson_t;
 
 /* Initialise the Watterson channel simulator.
@@ -106,6 +118,32 @@ typedef struct watterson
  * Returns 0 on success, -1 on error.
  */
 int watterson_init(watterson_t *w, int sample_rate);
+
+/* Pin the fading realisation to a known seed.
+ *
+ * Use this to replay one specific channel: bisecting a failure, or A/B-ing two
+ * builds over EXACTLY the same fade (which is the only way to compare them at
+ * a sample size a laptop can afford). */
+void watterson_seed(watterson_t *w, unsigned int seed);
+
+/* Seed from MERCURY_WATTERSON_SEED if set, otherwise from the clock and pid.
+ *
+ * Called automatically by watterson_init(), so a channel is never unseeded.
+ * That used to be possible, and it was silent: the model drew from rand(), and
+ * no entry point called srand(), so libc behaved as if seeded with 1 and EVERY
+ * run produced the identical fade.  Repeat runs looked like independent
+ * agreement while being one sample reported N times.
+ *
+ * Returns the seed used.  Print it -- an unpinned result is only worth having
+ * if the run can be replayed later. */
+unsigned int watterson_seed_auto(watterson_t *w);
+
+/* The seed this channel is currently running on.
+ *
+ * Use this to REPORT the seed; calling watterson_seed_auto() again to find out
+ * what init chose would re-seed, discarding the draws watterson_add_path() has
+ * already made and yielding a different channel from the one the seed names. */
+unsigned int watterson_get_seed(const watterson_t *w);
 
 /* Release resources allocated by the Watterson simulator. */
 void watterson_dispose(watterson_t *w);

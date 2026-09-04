@@ -13,6 +13,13 @@
 #include "watterson.h"
 #include <math.h>
 #include <stdlib.h>
+#include <stdint.h>
+
+/* FNV-1a of the channel output for seed 1, two 1 Hz paths, No=-20 at 8 kHz.
+ * Captured from the port that replaced rand() with mercury_prng, which was
+ * verified byte-identical to the pre-port channel across three presets and
+ * three noise levels. */
+#define GOLDEN_SEED1_HASH 0xB0B9513Cu
 
 void setUp(void) {}
 void tearDown(void) {}
@@ -82,10 +89,64 @@ void test_single_static_path_is_rate_invariant(void)
     TEST_ASSERT_FLOAT_WITHIN(0.5f, a, b);
 }
 
+/* A fixed seed must name a fixed channel, FOREVER.
+ *
+ * That is the whole value of seeding: a fading result quoted in a commit
+ * message has to be replayable, on this machine and on someone else's.  The
+ * realisation depends not only on the generator but on the ORDER and COUNT of
+ * the draws -- watterson_add_path() consumes some to estimate tap_norm before
+ * a single sample is processed -- so a refactor that merely moves a draw
+ * silently invalidates every recorded measurement without failing anything.
+ *
+ * Hence a golden checksum rather than a statistical assertion.  If this test
+ * fails, the channel changed: either fix the change, or accept it deliberately
+ * and re-measure everything that was pinned to a seed.
+ */
+void test_a_pinned_seed_reproduces_a_fixed_realisation(void)
+{
+    const int   fs = 8000;
+    const int   n  = fs;
+    watterson_t w;
+    uint32_t    sum = 0;
+
+    TEST_ASSERT_EQUAL_INT(0, watterson_init(&w, fs));
+    watterson_seed(&w, 1);
+    watterson_add_path(&w, 0.0f, 1.0f, 0.0f, 0.7f);
+    watterson_add_path(&w, 2.0f, 1.0f, 0.0f, 0.7f);
+    watterson_set_noise(&w, -20.0f);
+    watterson_reset_meas(&w);
+
+    COMP *s = malloc(sizeof(COMP) * (size_t)n);
+    TEST_ASSERT_NOT_NULL(s);
+    for (int i = 0; i < n; i++) {
+        s[i].real = 3000.0f * sinf(2.0f * (float)M_PI * 1500.0f * i / fs);
+        s[i].imag = 0.0f;
+    }
+    watterson_process(&w, s, n);
+
+    /* FNV-1a over the raw sample bytes: sensitive to a single changed bit. */
+    sum = 2166136261u;
+    for (int i = 0; i < n; i++) {
+        const unsigned char *b = (const unsigned char *)&s[i];
+        for (size_t k = 0; k < sizeof(COMP); k++) {
+            sum ^= b[k];
+            sum *= 16777619u;
+        }
+    }
+    free(s);
+
+    TEST_ASSERT_EQUAL_HEX32(GOLDEN_SEED1_HASH, sum);
+
+    /* And the seed must be reported back, so a run can say what it used. */
+    TEST_ASSERT_EQUAL_UINT(1, watterson_get_seed(&w));
+    watterson_dispose(&w);
+}
+
 int main(void)
 {
     UNITY_BEGIN();
     RUN_TEST(test_fading_is_stable_across_sample_rates);
     RUN_TEST(test_single_static_path_is_rate_invariant);
+    RUN_TEST(test_a_pinned_seed_reproduces_a_fixed_realisation);
     return UNITY_END();
 }

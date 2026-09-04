@@ -43,6 +43,7 @@
 #include "../data_interfaces/tcp_interfaces.h"
 #include "../common/hermes_log.h"
 #include "../modem/freedv/modem_stats.h"
+#include "../modem/freedv/freedv_api.h"
 #include "../modem/modem.h"
 #include "../radio_io/radio_io.h"  /* RADIO_TYPE_NONE */
 #include "../radio_io/rigctl_parse.h"  /* preload_radio_list */
@@ -55,6 +56,8 @@ extern int get_soundcard_list(int audio_system, int mode,
                               char ids[][AUDIO_DEV_STR_MAX], char dev_names[][AUDIO_DEV_STR_MAX],
                               int max_count);
 
+extern int audioio_available_subsystems(int *subsystems, int max);
+
 /* The enumerator writes rows this wide and we copy them straight into
  * ui_device_t; if the UI struct were ever the narrower of the two, long
  * PulseAudio node names would be cut again exactly as in issue #185. */
@@ -64,6 +67,8 @@ _Static_assert(AUDIO_DEV_STR_MAX >= UI_DEV_ID_MAX,
 /* Audio path health; see audioio.h.  Declared here rather than included for
  * the same reason audioio_restart is: audioio.h drags in ffbase. */
 extern bool audioio_health_ok(char *reason, size_t reasonlen);
+extern void audioio_health_reason(char *buf, size_t buflen);
+extern int  audioio_wait_healthy(int timeout_ms);
 
 extern int audioio_restart(const char *capture_dev, const char *playback_dev,
                            int audio_subsys, int capture_channel_layout);
@@ -77,6 +82,20 @@ extern int audioio_restart(const char *capture_dev, const char *playback_dev,
 extern _Atomic bool shutdown_;
 
 #define UI_LOG_TAG "ui-comm"
+
+static const char *ui_arq_mode_name(int mode)
+{
+    switch (mode)
+    {
+    case FREEDV_MODE_DATAC1: return "DATAC1";
+    case FREEDV_MODE_DATAC3: return "DATAC3";
+    case FREEDV_MODE_DATAC4: return "DATAC4";
+    case FREEDV_MODE_DATAC15: return "DATAC15";
+    case FREEDV_MODE_DATAC17: return "DATAC17";
+    case FREEDV_MODE_QAM16C2: return "QAM16C2";
+    default: return "";
+    }
+}
 
 // Called by the WebSocket server thread when a new UI client connects.
 // Sets pending flags so the publisher sends device lists and radio list.
@@ -145,8 +164,25 @@ int ui_comm_handle_command(ui_ctx_t *ctx, const ws_command_t *cmd)
           cmd->value5, cmd->value6, cmd->value7);
 
     if (strcmp(cmd->command, "set_audio_config") == 0) {
-        // value = capture_dev, value2 = playback_dev, value3 = input_channel
-        if (cmd->value[0])
+        // value = capture_dev, value2 = playback_dev, value3 = input_channel,
+        // value4 = audio subsystem name ("alsa", "pulse", ...; optional).
+        int new_audio_system = -1;
+        if (cmd->value4[0])
+        {
+            new_audio_system = cfg_sound_system_parse(cmd->value4);
+            if (new_audio_system < 0)
+            {
+                HLOGE(UI_LOG_TAG, "Invalid audio subsystem from UI: %s", cmd->value4);
+                return -1;
+            }
+        }
+        int current_system = atomic_load_explicit(&ctx->audio_system, memory_order_relaxed);
+        bool subsystem_changed = (new_audio_system >= 0 &&
+                                  new_audio_system != current_system);
+        bool have_capture = cmd->value[0] != '\0';
+        bool have_playback = cmd->value2[0] != '\0';
+
+        if (have_capture)
         {
             strncpy(ctx->selected_capture_dev, cmd->value,
                     sizeof(ctx->selected_capture_dev) - 1);
@@ -154,7 +190,7 @@ int ui_comm_handle_command(ui_ctx_t *ctx, const ws_command_t *cmd)
         }
         HLOGI(UI_LOG_TAG, "Capture device set to: %s", ctx->selected_capture_dev);
 
-        if (cmd->value2[0])
+        if (have_playback)
         {
             strncpy(ctx->selected_playback_dev, cmd->value2,
                     sizeof(ctx->selected_playback_dev) - 1);
@@ -171,24 +207,68 @@ int ui_comm_handle_command(ui_ctx_t *ctx, const ws_command_t *cmd)
         HLOGI(UI_LOG_TAG, "Input channel set to: %s (%d)",
               cmd->value3, ctx->rx_input_channel);
 
-        HLOGI(UI_LOG_TAG, "Restarting audioio subsystem (capture=%s playback=%s channel=%d)",
+        int active_system = current_system;
+        if (subsystem_changed)
+        {
+            active_system = new_audio_system;
+            atomic_store_explicit(&ctx->audio_system, active_system, memory_order_relaxed);
+            /* Device ids are subsystem-specific.  When the operator switches
+             * subsystem without choosing a device in the same breath, drop the
+             * stale ids so the new subsystem resolves its own default device. */
+            if (!have_capture)
+                ctx->selected_capture_dev[0] = '\0';
+            if (!have_playback)
+                ctx->selected_playback_dev[0] = '\0';
+            HLOGI(UI_LOG_TAG, "Audio subsystem switched to %s",
+                  cfg_sound_system_name(active_system));
+        }
+
+        HLOGI(UI_LOG_TAG, "Restarting audioio subsystem (subsystem=%s capture=%s playback=%s channel=%d)",
+              cfg_sound_system_name(active_system),
               ctx->selected_capture_dev, ctx->selected_playback_dev, ctx->rx_input_channel);
         audioio_restart(ctx->selected_capture_dev, ctx->selected_playback_dev,
-                        ctx->audio_system, ctx->rx_input_channel);
-        HLOGI(UI_LOG_TAG, "Audioio subsystem restarted successfully");
+                        active_system, ctx->rx_input_channel);
 
-        // Persist audio config to INI
-        pthread_mutex_lock(&ctx->cfg_mutex);
-        strncpy(ctx->cfg.input_device, ctx->selected_capture_dev,
-                sizeof(ctx->cfg.input_device) - 1);
-        ctx->cfg.input_device[sizeof(ctx->cfg.input_device) - 1] = '\0';
-        strncpy(ctx->cfg.output_device, ctx->selected_playback_dev,
-                sizeof(ctx->cfg.output_device) - 1);
-        ctx->cfg.output_device[sizeof(ctx->cfg.output_device) - 1] = '\0';
-        ctx->cfg.capture_channel = ctx->rx_input_channel;
-        if (ctx->cfg_path[0] && cfg_write(&ctx->cfg, ctx->cfg_path))
-            HLOGI(UI_LOG_TAG, "Config saved to %s", ctx->cfg_path);
-        pthread_mutex_unlock(&ctx->cfg_mutex);
+        /* Don't write a configuration that demonstrably failed into
+         * mercury.ini: the operator would restart straight back into the
+         * broken state.  audioio_restart reset the health flags before
+         * spawning the new threads, so wait for them to reach RUNNING or
+         * FAILED. */
+        int health = audioio_wait_healthy(3000);
+        if (health == 0)
+        {
+            HLOGI(UI_LOG_TAG, "Audioio subsystem restarted successfully");
+
+            // Persist audio config to INI
+            pthread_mutex_lock(&ctx->cfg_mutex);
+            strncpy(ctx->cfg.input_device, ctx->selected_capture_dev,
+                    sizeof(ctx->cfg.input_device) - 1);
+            ctx->cfg.input_device[sizeof(ctx->cfg.input_device) - 1] = '\0';
+            strncpy(ctx->cfg.output_device, ctx->selected_playback_dev,
+                    sizeof(ctx->cfg.output_device) - 1);
+            ctx->cfg.output_device[sizeof(ctx->cfg.output_device) - 1] = '\0';
+            ctx->cfg.capture_channel = ctx->rx_input_channel;
+            ctx->cfg.sound_system = active_system;
+            if (ctx->cfg_path[0] && cfg_write(&ctx->cfg, ctx->cfg_path))
+                HLOGI(UI_LOG_TAG, "Config saved to %s", ctx->cfg_path);
+            pthread_mutex_unlock(&ctx->cfg_mutex);
+        }
+        else
+        {
+            char why[192] = "";
+            audioio_health_reason(why, sizeof(why));
+            if (health == -1)
+                HLOGE(UI_LOG_TAG, "Audio subsystem %s failed to start: %s",
+                      cfg_sound_system_name(active_system),
+                      why[0] ? why : "unknown error");
+            else
+                HLOGW(UI_LOG_TAG, "Audio subsystem %s did not report health in time; "
+                                  "not persisting config", cfg_sound_system_name(active_system));
+        }
+
+        /* The device list depends on the subsystem; republish it for any
+         * remote UI so it reflects the new selection (and new device set). */
+        ctx->soundcard_list_pending = 1;
 
     } else if (strcmp(cmd->command, "set_ptt_config") == 0) {
         ptt_config_t config;
@@ -374,7 +454,9 @@ int ui_comm_get_audio_devices(ui_device_kind_t kind, ui_device_t *out, int max,
     }
 
     int cap = (max < 32) ? max : 32;
-    int count = get_soundcard_list(ctx->audio_system, mode, ids, names, cap);
+    int count = get_soundcard_list(
+        atomic_load_explicit(&ctx->audio_system, memory_order_relaxed),
+        mode, ids, names, cap);
     if (count < 0)
         count = 0;
 
@@ -473,6 +555,36 @@ int ui_comm_get_input_channel(void)
     return ctx ? ctx->rx_input_channel : 0;
 }
 
+const char *ui_comm_get_audio_system(void)
+{
+    ui_ctx_t *ctx = g_ui_ctx;
+    if (!ctx)
+        return "";
+    return cfg_sound_system_name(
+        atomic_load_explicit(&ctx->audio_system, memory_order_relaxed));
+}
+
+int ui_comm_get_audio_subsystems(char *names, size_t names_len)
+{
+    int subsystems[8];
+    int n = audioio_available_subsystems(subsystems, 8);
+
+    if (!names || names_len == 0)
+        return n;
+
+    size_t off = 0;
+    for (int i = 0; i < n; i++)
+    {
+        int w = snprintf(names + off, names_len - off, "%s%s",
+                         i ? " " : "", cfg_sound_system_name(subsystems[i]));
+        if (w < 0 || (size_t)w >= names_len - off)
+            break;
+        off += (size_t)w;
+    }
+    names[off] = '\0';
+    return n;
+}
+
 void ui_comm_preload_radio_list(void)
 {
 #ifdef HAVE_HAMLIB
@@ -505,6 +617,12 @@ static void ui_gather_status(ui_ctx_t *ctx, ui_status_t *out)
 
     out->bitrate_bps = (int)tnc_get_last_bitrate_bps();
     out->snr_db      = (double)tnc_get_last_snr();
+    {
+        int peer_x10 = 0;
+        out->peer_snr_valid = arq_get_peer_snr_x10(&peer_x10);
+        out->peer_snr_db    = out->peer_snr_valid ? (double)peer_x10 / 10.0
+                                                  : UI_SNR_UNKNOWN_DB;
+    }
 
     if (have_snap && snap.initialized)
     {
@@ -512,6 +630,10 @@ static void ui_gather_status(ui_ctx_t *ctx, ui_status_t *out)
         out->sync              = snap.connected ? true : false;
         out->bytes_transmitted = (long)snap.tx_bytes;
         out->bytes_received    = (long)snap.rx_bytes;
+        snprintf(out->arq_tx_mode, sizeof(out->arq_tx_mode), "%s",
+                 ui_arq_mode_name(snap.payload_mode));
+        snprintf(out->arq_rx_mode, sizeof(out->arq_rx_mode), "%s",
+                 ui_arq_mode_name(snap.peer_tx_mode));
     }
 
     int ctl_status  = net_get_status(CTL_TCP_PORT);
@@ -532,6 +654,12 @@ static void ui_gather_status(ui_ctx_t *ctx, ui_status_t *out)
      * without it the UI shows a perfectly healthy station that happens to hear
      * nothing. */
     out->audio_ok = audioio_health_ok(out->audio_error, sizeof(out->audio_error));
+
+    bool allow_frequency_poll = !(have_snap && snap.initialized &&
+                                  (snap.connected || snap.trx == 1));
+    out->radio_frequency_valid =
+        radio_io_get_frequency(allow_frequency_poll, &out->radio_frequency_hz,
+                               &out->radio_frequency_age_ms);
 }
 
 /* Copy the latest gathered status out for the embedded UI.  Returns false
@@ -673,6 +801,24 @@ void *ui_publisher_thread(void *arg)
                 "{\"type\":\"input_channel\",\"selected\":\"%s\","
                 "\"list\":[\"left\",\"right\",\"stereo\"]}", ch_str);
             ws_broadcast_json(&ctx->ws, ch_buf);
+
+            // Audio subsystem selection.  The list is the set of subsystems
+            // this build actually compiled in; a single-entry list means the
+            // backend is fixed and the UI can hide a selector it cannot act on.
+            const char *audio_sys = cfg_sound_system_name(
+                atomic_load_explicit(&ctx->audio_system, memory_order_relaxed));
+            int  subsystems[8];
+            int  n_subsys = audioio_available_subsystems(subsystems, 8);
+            char as_buf[256];
+            int  pos = snprintf(as_buf, sizeof(as_buf),
+                "{\"type\":\"audio_system\",\"selected\":\"%s\",\"list\":[",
+                audio_sys);
+            for (int i = 0; i < n_subsys && pos < (int)sizeof(as_buf) - 16; i++)
+                pos += snprintf(as_buf + pos, sizeof(as_buf) - pos, "%s\"%s\"",
+                                i ? "," : "", cfg_sound_system_name(subsystems[i]));
+            if (pos < (int)sizeof(as_buf) - 4)
+                pos += snprintf(as_buf + pos, sizeof(as_buf) - pos, "]}");
+            ws_broadcast_json(&ctx->ws, as_buf);
         }
 
         // --- Send PTT/Hamlib choices at startup and after config changes ---
@@ -830,7 +976,7 @@ int ui_comm_init(ui_ctx_t *ctx, uint16_t ws_port, bool tls_enabled,
     pthread_mutex_init(&ctx->cfg_mutex, NULL);
 
     ctx->waterfall_enabled = waterfall_enabled;
-    ctx->audio_system = audio_system;
+    atomic_store_explicit(&ctx->audio_system, audio_system, memory_order_relaxed);
     ctx->rx_input_channel = rx_input_channel;
     ctx->ws_port = ws_port;
     ctx->tls_enabled = tls_enabled;

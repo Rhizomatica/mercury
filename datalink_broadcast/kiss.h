@@ -49,7 +49,28 @@ extern "C" {
 #define CMD_AX25 0x00 //  AX25 Frame (standard) in VARA
 #define CMD_AX25CALLSIGN 0x01 // AX25 Frame (7 chrs Call Signs) in VARA
 #define CMD_DATA 0x02 // Raw/unformatted KISS payload; current hermes-broadcast TCP framing uses this
-#define CMD_RQ_CONFIG 0x03 // Reserved/legacy KISS command value; current TCP framing does not use it for RaptorQ config
+/* "The payload is already exactly one modem frame -- pass it through."
+ *
+ * This exists because the alternative is guessing.  Mercury has to decide
+ * whether a client's payload is a message to be framed (header + length prefix
+ * injected) or a modem frame to be transmitted untouched, and with only
+ * CMD_DATA to go on it inferred that from the payload's own first byte -- which
+ * a sender is free to choose.  A full-size payload beginning 0x60..0x9F looked
+ * like a modem frame whatever it actually was, and conversely a genuine modem
+ * frame sent as CMD_AX25 was silently truncated by 3 bytes to make room for a
+ * header it did not need.
+ *
+ * A sender that knows what it is sending should say so.  0x03 was already
+ * reserved and unused as a KISS command, so it costs nothing.
+ *
+ * CMD_DATA keeps its inference and stays fully supported -- it is what older
+ * builds send.  CMD_AX25 and CMD_AX25CALLSIGN are untouched: they always mean
+ * "a message, frame it", which is what VARA clients depend on. */
+#define CMD_MODEM_FRAME 0x03
+
+/* The RaptorQ packet type lives in the FRAME's header byte, never in the KISS
+ * command.  Kept so older code referring to these names still compiles. */
+#define CMD_RQ_CONFIG 0x03
 #define CMD_RQ_PAYLOAD 0x04 // Reserved/legacy KISS command value; current TCP framing does not use it for RaptorQ payload
 
 #define MAX_PAYLOAD 1213 // largest broadcast frame we can select (QAM16C2)

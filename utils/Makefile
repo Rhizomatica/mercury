@@ -17,6 +17,13 @@ OUT = broadcast_test broadcast_diag_tx broadcast_diag_rx watterson_test acquire_
 # the Windows build -- just exclude them and keep the cross-compile green.
 ifneq ($(OS),Windows_NT)
 OUT += resampler_bench rxcost_bench
+
+# bcast_file_tool talks to Mercury's broadcast port with BSD sockets
+# (<arpa/inet.h>, <netinet/tcp.h>, unistd read/write), which mingw-w64 does not
+# have -- Windows wants winsock2.  It is a development/diagnostic tool for
+# driving a broadcast file transfer without the UI, so there is nothing to gain
+# from porting it; the UI on Windows uses the same code in-process over CGo.
+OUT += bcast_file_tool
 endif
 
 # Default target
@@ -31,7 +38,7 @@ broadcast_diag_tx: broadcast_diag_tx.c ../datalink_broadcast/kiss.c ../modem/fra
 broadcast_diag_rx: broadcast_diag_rx.c ../datalink_broadcast/kiss.c ../modem/framer.c
 	$(CC) $(CFLAGS) -I../datalink_broadcast -o $@ $^ $(LDFLAGS)
 
-watterson_test: watterson_test.c ../common/watterson.c
+watterson_test: watterson_test.c ../common/watterson.c ../common/mercury_prng.c
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS) -lm
 
 # Clean up build artifacts
@@ -45,7 +52,7 @@ run: broadcast_test
 # Drives the real freedv OFDM modems (not a model) to separate acquisition
 # failures from decode failures.  chanutil puts it on the project's own
 # Watterson channel so its numbers are comparable with other instruments'.
-acquire_vs_decode: acquire_vs_decode.c chanutil.c ../common/watterson.c
+acquire_vs_decode: acquire_vs_decode.c chanutil.c ../common/watterson.c ../common/mercury_prng.c
 	$(CC) $(CFLAGS) -o $@ $^ ../modem/freedv/libfreedvdata.a $(LDFLAGS) -lm
 
 # Perf instruments for issue #162 (idle CPU on a 48 kHz Pi 4).
@@ -70,3 +77,9 @@ hail_suffix_sweep: hail_suffix_sweep.c ../modem/mfsk.c ../modem/mfsk_ofdm.c ../m
 
 mfsk_puncture_sweep: mfsk_puncture_sweep.c ../modem/mfsk_ldpc.c ../modem/mfsk_ldpc_8_16.c
 	$(CC) $(CFLAGS) -I../modem -o $@ $^ -lm
+# Broadcast a file to Mercury, or receive one, over the broadcast TCP/KISS port.
+BCAST_RQ_SRC = $(wildcard ../datalink_broadcast/raptorq/lib/*.c) \
+               $(wildcard ../datalink_broadcast/raptorq/deps/obl/*.c)
+bcast_file_tool: bcast_file_tool.c ../datalink_broadcast/bcast_file.c $(BCAST_RQ_SRC)
+	$(CC) $(CFLAGS) -I../datalink_broadcast -I../datalink_broadcast/raptorq/include \
+	      -I../datalink_broadcast/raptorq/deps -o $@ $^ $(LDFLAGS) -lm

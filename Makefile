@@ -229,8 +229,12 @@ main.o: main.c .git_hash_stamp
 	$(CC) $(CFLAGS) -c main.c
 
 # Vendored hidapi for the Windows cross-build (see the detection block above).
+# Built with $(MINGW_CC) rather than $(CC) so it is correct both for the native
+# `windows` target (where CC is already $(MINGW_CC)) and for the
+# `fyne-ui-windows` cross-build (whose host context would otherwise compile a
+# native ELF object that the mingw linker rejects).
 $(HIDAPI_W64_DIR)/hid.o: $(HIDAPI_W64_DIR)/src/hid.c
-	$(CC) -O2 -I$(HIDAPI_W64_DIR)/include -I$(HIDAPI_W64_DIR)/src -c $< -o $@
+	$(MINGW_CC) -O2 -I$(HIDAPI_W64_DIR)/include -I$(HIDAPI_W64_DIR)/src -c $< -o $@
 
 # Vendored hidapi for macOS: the IOKit backend, built from source so a stock
 # macOS with only the Xcode command line tools still gets CM108 PTT.
@@ -255,6 +259,37 @@ MERCURY_VERSION ?= $(shell grep 'define MERCURY_VERSION "' common/mercury_versio
 WINDOWS_DIR = mercury-$(MERCURY_VERSION)
 WINDOWS_ZIP = $(WINDOWS_DIR)-w64-$(GIT_HASH).zip
 
+# RaptorQ (vendored nanorq) and the broadcast file carousel.  Only
+# libmercury_core needs these -- the standalone daemon does not transmit files.
+RAPTORQ_SRCS = $(wildcard datalink_broadcast/raptorq/lib/*.c) \
+               $(wildcard datalink_broadcast/raptorq/deps/obl/*.c)
+RAPTORQ_CFLAGS = -Idatalink_broadcast/raptorq/include -Idatalink_broadcast/raptorq/deps
+
+# Native and Windows objects go to DIFFERENT paths.
+#
+# The cross build compiles the same sources with the mingw compiler, and if both
+# wrote to %.o the second build would leave the first's archive full of objects
+# for the wrong platform -- silently, because make sees an .o newer than its .c
+# and considers it up to date.  That shows up much later as a pile of
+# "undefined reference to __imp__assert" at link time.  Distinct suffixes make
+# the two builds simply independent.
+RAPTORQ_OBJS     = $(patsubst %.c,%.o,$(RAPTORQ_SRCS))
+RAPTORQ_OBJS_W64 = $(patsubst %.c,%.w64.o,$(RAPTORQ_SRCS))
+BCAST_FILE_OBJS     = datalink_broadcast/bcast_file.o $(RAPTORQ_OBJS)
+BCAST_FILE_OBJS_W64 = datalink_broadcast/bcast_file.w64.o $(RAPTORQ_OBJS_W64)
+
+$(RAPTORQ_OBJS): %.o: %.c
+	$(CC) $(CFLAGS) $(RAPTORQ_CFLAGS) -c $< -o $@
+
+$(RAPTORQ_OBJS_W64): %.w64.o: %.c
+	$(MINGW_CC) $(CFLAGS) $(RAPTORQ_CFLAGS) -c $< -o $@
+
+datalink_broadcast/bcast_file.o: datalink_broadcast/bcast_file.c
+	$(CC) $(CFLAGS) $(RAPTORQ_CFLAGS) -c $< -o $@
+
+datalink_broadcast/bcast_file.w64.o: datalink_broadcast/bcast_file.c
+	$(MINGW_CC) $(CFLAGS) $(RAPTORQ_CFLAGS) -c $< -o $@
+
 MERCURY_CORE_OBJS = \
 	common/cfg_utils.o common/iniparser/iniparser.o common/iniparser/dictionary.o \
 	datalink_arq/arq.o datalink_arq/arq_tnc.o datalink_arq/arith.o datalink_arq/arq_channels.o \
@@ -277,9 +312,17 @@ ifeq ($(HAVE_HAMLIB),1)
 MERCURY_CORE_OBJS += radio_io/rigctl_parse.o
 endif
 
-MERCURY_CORE_OBJS_W64 = $(filter-out radio_io/sbitx_io.o radio_io/shm_utils.o,$(MERCURY_CORE_OBJS))
+# Simply-expanded (:=), so the dedupe below can refer to it without make
+# complaining that the variable references itself.
+MERCURY_CORE_OBJS_W64 := $(filter-out radio_io/sbitx_io.o radio_io/shm_utils.o,$(MERCURY_CORE_OBJS))
+
+# rigctl_parse.o may already be here, inherited from MERCURY_CORE_OBJS when the
+# HOST has hamlib.  Adding it unconditionally put it in the archive twice --
+# two identical members, which GNU ld tolerates but a stricter linker need not,
+# and which is simply wrong either way.  Add it only when it is not already
+# present, so the Windows archive is correct whether or not the host has hamlib.
 ifneq ($(strip $(HAMLIB_W64_LIBS)),)
-MERCURY_CORE_OBJS_W64 += radio_io/rigctl_parse.o
+MERCURY_CORE_OBJS_W64 += $(filter-out $(MERCURY_CORE_OBJS_W64),radio_io/rigctl_parse.o)
 endif
 
 # $(HIDAPI_OBJS) is listed in MERCURY_CORE_OBJS but is NOT built by
@@ -290,22 +333,40 @@ endif
 #     ar: radio_io/hidapi-macos/hid.o: No such file or directory
 # $(BINARY) already declares it via MERCURY_LINK_INPUTS, which is why the CLI
 # build was unaffected and only the .app/.dmg packaging path broke.
-libmercury_core.a: internal_deps $(HIDAPI_OBJS)
-	$(CC) $(CFLAGS) -I. -c $(FYNE_UI_DIR)/engine/mercury_bridge.c -o $(FYNE_UI_DIR)/engine/mercury_bridge.o
+libmercury_core.a: internal_deps $(HIDAPI_OBJS) $(BCAST_FILE_OBJS)
+	$(CC) $(CFLAGS) $(RAPTORQ_CFLAGS) -I. -c $(FYNE_UI_DIR)/engine/mercury_bridge.c -o $(FYNE_UI_DIR)/engine/mercury_bridge.o
 	# Remove a stale archive first: macOS ar (cctools) refuses to update an
 	# existing *fat* .a in place, so a leftover universal build would wedge the
 	# next native build ("is a fat file"). Fresh create is identical on Linux.
 	rm -f $@
-	$(AR) rcs $@ $(MERCURY_CORE_OBJS) $(FYNE_UI_DIR)/engine/mercury_bridge.o
+	$(AR) rcs $@ $(MERCURY_CORE_OBJS) $(BCAST_FILE_OBJS) $(FYNE_UI_DIR)/engine/mercury_bridge.o
 
-libmercury_core_w64.a:
+# The OS=Windows_NT internal_deps sub-make compiles cm108_ptt.o with
+# -DHAVE_HIDAPI, so the archive must carry the matching vendored hidapi object.
+# It can't come from $(HIDAPI_OBJS): that is evaluated in this (host) context,
+# where it is empty on Linux.  Resolve the vendored object directly, mirroring
+# the wildcard guard in the hidapi detection block above.
+HIDAPI_W64_OBJ :=
+ifneq ($(wildcard $(HIDAPI_W64_DIR)/src/hid.c),)
+HIDAPI_W64_OBJ := $(HIDAPI_W64_DIR)/hid.o
+endif
+
+libmercury_core_w64.a: $(HIDAPI_W64_OBJ)
 	$(MAKE) internal_deps OS=Windows_NT CC=$(MINGW_CC) AR=$(MINGW_AR) HAVE_HERMES_SHM=0
-	$(MINGW_CC) $(CFLAGS) -I. -c $(FYNE_UI_DIR)/engine/mercury_bridge.c -o $(FYNE_UI_DIR)/engine/mercury_bridge_w64.o
-	$(MINGW_AR) rcs $@ $(MERCURY_CORE_OBJS_W64) $(FYNE_UI_DIR)/engine/mercury_bridge_w64.o
+	# The bridge calls bcast_file_*, so the RaptorQ objects belong in this
+	# archive too -- built with the cross compiler into their own .w64.o paths,
+	# so a native build afterwards is not left linking Windows objects.
+	$(MAKE) $(BCAST_FILE_OBJS_W64) OS=Windows_NT HAVE_HERMES_SHM=0
+	$(MINGW_CC) $(CFLAGS) $(RAPTORQ_CFLAGS) -I. -c $(FYNE_UI_DIR)/engine/mercury_bridge.c -o $(FYNE_UI_DIR)/engine/mercury_bridge_w64.o
+	$(MINGW_AR) rcs $@ $(MERCURY_CORE_OBJS_W64) $(HIDAPI_W64_OBJ) $(BCAST_FILE_OBJS_W64) $(FYNE_UI_DIR)/engine/mercury_bridge_w64.o
 
+# HIDAPI_LDFLAGS is passed through CGO_LDFLAGS rather than hardcoded in
+# mercury_link_linux.go's #cgo directive, because hidapi is OPTIONAL: only this
+# Makefile knows whether pkg-config found it.  Without this, cm108_ptt.o's
+# hid_* references go unresolved on any host that HAS hidapi installed.
 fyne-ui: libmercury_core.a
 	@echo "Building Mercury UI (native: Linux or macOS)..."
-	cd $(FYNE_UI_DIR) && CGO_ENABLED=1 go build -tags mercury_embedded \
+	cd $(FYNE_UI_DIR) && CGO_ENABLED=1 CGO_LDFLAGS="$(HIDAPI_LDFLAGS)" go build -tags mercury_embedded \
 		-ldflags "-X main.coreBuildID=$$(cksum $(abspath libmercury_core.a) | cut -d' ' -f1)" \
 		-o $(abspath mercury-ui) .
 	@echo "  -> mercury-ui"
@@ -363,7 +424,14 @@ MACOS_CLI_PARK       = mercury-cli-universal
 # pinned by indygreg/apple-code-sign-action.
 RCODESIGN ?= rcodesign
 
-# $(call macos_sign,<mach-o | bundle dir | dmg>)
+# Hardened runtime entitlements for the .app.  The runtime is mandatory for
+# notarization and denies audio input and USB HID by default, so without these
+# a perfectly notarized Mercury cannot hear the radio or key it over CM108 --
+# a failure that appears on the user's machine, never in the build.  The CLI
+# binary and the .dmg do not take entitlements.
+MACOS_ENTITLEMENTS ?= $(CURDIR)/macos/entitlements.plist
+
+# $(call macos_sign,<mach-o | bundle dir | dmg>[,<identifier>][,<entitlements>])
 # --code-signature-flags runtime is the hardened runtime, which notarization
 # requires; Apple rejects the upload without it.
 define macos_sign
@@ -378,6 +446,7 @@ define macos_sign
 			--p12-password "$(MACOS_SIGN_P12_PASSWORD)" \
 			--code-signature-flags runtime \
 			$(if $(2),--binary-identifier "$(2)",) \
+			$(if $(3),--entitlements-xml-file "$(3)",) \
 			"$(1)" || exit 1; \
 	else \
 		echo "WARNING: MACOS_SIGN_P12 unset — $(1) is unsigned"; \
@@ -499,7 +568,17 @@ fyne-ui-macos-universal-dmg:
 	@# Seal the bundle before it goes into the image: rcodesign recurses into
 	@# nested Mach-Os and writes Contents/_CodeSignature/CodeResources.
 	@# Signing the image afterwards does NOT sign what is inside it.
-	$(call macos_sign,$(FYNE_UI_DIR)/dmg-stage/$(MACOS_APP_NAME).app)
+	$(call macos_sign,$(FYNE_UI_DIR)/dmg-stage/$(MACOS_APP_NAME).app,,$(MACOS_ENTITLEMENTS))
+	@# Staple BEFORE hdiutil: once the .dmg is built it is read-only, and the
+	@# app inside it can never be given a ticket.  Skipped when no notary key
+	@# is configured, so an ordinary developer build is unaffected.
+	@if [ -n "$(MACOS_NOTARY_KEY)" ] && [ "$(MACOS_STAPLE_APP)" != "0" ]; then \
+		RCODESIGN="$(RCODESIGN)" $(CURDIR)/macos/notarize.sh \
+			"$(FYNE_UI_DIR)/dmg-stage/$(MACOS_APP_NAME).app" "$(MACOS_NOTARY_KEY)" \
+			$(MACOS_NOTARY_WAIT) $(MACOS_NOTARY_RETRIES) || exit 1; \
+	else \
+		echo "NOTE: .app not stapled (no MACOS_NOTARY_KEY); Gatekeeper will check online"; \
+	fi
 	hdiutil create -volname "$(MACOS_APP_NAME) $(MERCURY_VERSION)" \
 		-srcfolder $(FYNE_UI_DIR)/dmg-stage \
 		-ov -format UDZO "$(abspath $(MACOS_DMG_UNIVERSAL))"
@@ -519,6 +598,42 @@ fyne-ui-macos-universal-dmg:
 #
 # then:  make macos-notarize-dmg MACOS_NOTARY_KEY=~/.mercury-notary.json
 MACOS_NOTARY_KEY ?=
+# Apple's notary service is not quick, and rcodesign gives up after 600s by
+# default -- which fails the build even though the submission is still
+# progressing perfectly well.  Measured on a 52 MB .dmg: still "InProgress"
+# past 600s, so the default is not a safe margin, it is a coin toss.  Waiting
+# longer costs nothing when the service is fast.
+MACOS_NOTARY_WAIT ?= 3600
+
+# Submitting and waiting are separate operations on purpose.  rcodesign's
+# combined `notary-submit --staple` aborts the whole thing if a single poll
+# request fails, and Apple's service is slow enough (observed: still processing
+# at 55 minutes on a 52 MB .dmg, and longer for a team's first ever submission)
+# that a ~1 hour poll is long enough for one transient HTTP error to be likely.
+# Measured failure:
+#
+#   waiting up to 3600s for package upload 80db453b... to finish processing
+#   Error: error sending request for url (.../notary/v2/submissions/80db453b...)
+#
+# That threw away a 30 minute universal build for a submission Apple was still
+# processing perfectly happily.  So: submit once, then retry only the waiting,
+# and staple as its own step.
+#
+# A rejection is NOT retried -- "Invalid" is Apple's verdict, not a hiccup.
+#
+# Pass MACOS_NOTARY_SUBMISSION=<id> to skip submitting and resume waiting on an
+# existing submission, so a timed-out or interrupted run can be finished
+# without rebuilding.
+MACOS_NOTARY_RETRIES ?= 5
+MACOS_NOTARY_SUBMISSION ?=
+
+# Notarize + staple the .app as well as the .dmg.  Stapling only the .dmg
+# leaves the app the user drags out with no ticket, so Gatekeeper has to ask
+# Apple online at first launch -- exactly the wrong failure mode for stations
+# deployed on poor or no connectivity.  Costs a second Apple round trip; set
+# to 0 to skip it.
+MACOS_STAPLE_APP ?= 1
+
 macos-notarize-dmg:
 	@[ -n "$(MACOS_NOTARY_KEY)" ] || { \
 		echo "error: set MACOS_NOTARY_KEY to an encoded App Store Connect key"; \
@@ -526,10 +641,9 @@ macos-notarize-dmg:
 		exit 1; }
 	@[ -f "$(MACOS_DMG_UNIVERSAL)" ] || { \
 		echo "error: $(MACOS_DMG_UNIVERSAL) not built yet"; exit 1; }
-	$(RCODESIGN) notary-submit \
-		--api-key-file "$(MACOS_NOTARY_KEY)" --staple \
-		"$(MACOS_DMG_UNIVERSAL)"
-	@echo "  -> $(abspath $(MACOS_DMG_UNIVERSAL))  (notarized + stapled)"
+	RCODESIGN="$(RCODESIGN)" $(CURDIR)/macos/notarize.sh \
+		"$(abspath $(MACOS_DMG_UNIVERSAL))" "$(MACOS_NOTARY_KEY)" \
+		$(MACOS_NOTARY_WAIT) $(MACOS_NOTARY_RETRIES) $(MACOS_NOTARY_SUBMISSION)
 
 # ---- Authenticode signing (Windows binaries) ----
 # Two modes:

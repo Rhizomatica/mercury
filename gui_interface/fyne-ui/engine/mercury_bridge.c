@@ -17,6 +17,7 @@
 #include "mercury_cli.h"
 #include "mercury_version.h"
 #include "ui_communication.h"
+#include "bcast_file.h"
 #include "modem.h"
 #include "modem_stats.h"   /* MODEM_STATS_NSPEC */
 
@@ -186,6 +187,20 @@ int mercury_ui_get_input_channel(void)
     return ui_comm_get_input_channel();
 }
 
+void mercury_ui_get_audio_system(char *name, int name_len)
+{
+    if (name && name_len > 0) {
+        snprintf(name, (size_t)name_len, "%s", ui_comm_get_audio_system());
+    }
+}
+
+void mercury_ui_get_audio_subsystems(char *names, int names_len)
+{
+    if (names && names_len > 0) {
+        (void) ui_comm_get_audio_subsystems(names, (size_t)names_len);
+    }
+}
+
 void mercury_ui_set_waterfall(bool enabled)
 {
     ui_comm_set_waterfall(enabled);
@@ -206,3 +221,95 @@ void mercury_ui_get_version(char *version, int version_len,
         snprintf(git_hash, (size_t)git_hash_len, "%s", GIT_HASH);
     }
 }
+
+/* ---- Broadcast file transmission ---------------------------------------- */
+
+void *mercury_bcast_tx_open(const char *path, int mode, int cycles,
+                            int session_id, char *err, int errlen)
+{
+    return bcast_file_tx_open(path, mode, cycles, session_id, err, (size_t)errlen);
+}
+
+int mercury_bcast_tx_next(void *tx, unsigned char *buf, int buflen)
+{
+    return bcast_file_tx_next((bcast_file_tx_t *)tx, buf, (size_t)buflen);
+}
+
+int mercury_bcast_tx_frame_size(void *tx)
+{
+    return bcast_file_tx_frame_size((bcast_file_tx_t *)tx);
+}
+
+void mercury_bcast_tx_stats(void *tx, int *cycle_now, int *cycles_total,
+                            unsigned long long *frames_sent)
+{
+    uint64_t sent = 0;
+    bcast_file_tx_stats((bcast_file_tx_t *)tx, cycle_now, cycles_total, &sent);
+    if (frames_sent) *frames_sent = (unsigned long long)sent;
+}
+
+void mercury_bcast_tx_source(void *tx, long *file_bytes, int *blocks)
+{
+    size_t b = 0;
+    bcast_file_tx_source((bcast_file_tx_t *)tx, &b, blocks);
+    if (file_bytes) *file_bytes = (long)b;
+}
+
+void mercury_bcast_tx_close(void *tx)
+{
+    bcast_file_tx_close((bcast_file_tx_t *)tx);
+}
+
+int  mercury_bcast_mode_frame_size(int mode) { return bcast_file_mode_frame_size(mode); }
+int  mercury_bcast_mode_usable(int mode)     { return bcast_file_mode_usable(mode); }
+const char *mercury_bcast_mode_name(int mode) { return bcast_file_mode_name(mode); }
+long mercury_bcast_max_file_bytes(void)      { return (long)BCAST_FILE_MAX_BYTES; }
+
+int mercury_bcast_engine_mode(void)
+{
+    /* g_modem.mode is a FreeDV enum; map it back to the hermes index the
+     * broadcast protocol and hermes-broadcast both speak. */
+    static const int hermes_to_freedv[] = {
+        FREEDV_MODE_DATAC1, FREEDV_MODE_DATAC3, FREEDV_MODE_DATAC0,
+        FREEDV_MODE_DATAC4, FREEDV_MODE_DATAC13, FREEDV_MODE_DATAC14,
+        FREEDV_MODE_FSK_LDPC, FREEDV_MODE_DATAC15, FREEDV_MODE_DATAC16,
+        FREEDV_MODE_DATAC17, FREEDV_MODE_QAM16C2
+    };
+    int m = mercury_engine_modem_mode();
+    for (int i = 0; i < (int)(sizeof(hermes_to_freedv)/sizeof(hermes_to_freedv[0])); i++)
+        if (hermes_to_freedv[i] == m)
+            return i;
+    return -1;
+}
+
+int mercury_bcast_engine_bitrate(void)      { return mercury_engine_modem_bitrate(); }
+int mercury_bcast_engine_bandwidth_hz(void) { return mercury_engine_modem_bandwidth_hz(); }
+
+/* ---- Broadcast file receiving ------------------------------------------- */
+
+void *mercury_bcast_rx_open(int mode, const char *dir, char *err, int errlen)
+{
+    return bcast_file_rx_open(mode, dir, err, (size_t)errlen);
+}
+
+int mercury_bcast_rx_frame(void *rx, const unsigned char *frame, int len)
+{
+    return (int)bcast_file_rx_frame((bcast_file_rx_t *)rx, frame, (size_t)len);
+}
+
+const char *mercury_bcast_rx_last_path(void *rx)
+{ return bcast_file_rx_last_path((bcast_file_rx_t *)rx); }
+const char *mercury_bcast_rx_last_name(void *rx)
+{ return bcast_file_rx_last_name((bcast_file_rx_t *)rx); }
+const char *mercury_bcast_rx_error(void *rx)
+{ return bcast_file_rx_error((bcast_file_rx_t *)rx); }
+
+void mercury_bcast_rx_stats(void *rx, unsigned long long *symbols, long *expect_bytes)
+{
+    uint64_t sym = 0; size_t want = 0;
+    bcast_file_rx_stats((bcast_file_rx_t *)rx, &sym, &want);
+    if (symbols)      *symbols      = (unsigned long long)sym;
+    if (expect_bytes) *expect_bytes = (long)want;
+}
+
+void mercury_bcast_rx_close(void *rx) { bcast_file_rx_close((bcast_file_rx_t *)rx); }

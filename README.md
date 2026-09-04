@@ -333,6 +333,11 @@ See [docs/ARQ.md](docs/ARQ.md) for full ARQ architecture, protocol reference, an
 Mercury can carry [Reticulum](https://github.com/markqvist/reticulum) mesh
 networking over HF via its KISS-over-TCP broadcast port (verified) or as a
 point-to-point ARQ backbone. See [docs/RETICULUM.md](docs/RETICULUM.md) for
+
+Mercury can also broadcast a **file** to whoever is listening, with no return
+path, using a RaptorQ fountain carousel wire-compatible with
+[hermes-broadcast](https://github.com/Rhizomatica/hermes-broadcast). See
+[docs/BROADCAST-FILE.md](docs/BROADCAST-FILE.md).
 the integration architectures and configuration.
 
 ## Physical Layer

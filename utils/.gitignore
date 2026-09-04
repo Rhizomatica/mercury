@@ -1,0 +1,17 @@
+# utils/ builds its tools straight into this directory, with no extension --
+# so a compiled binary looks exactly like a file worth committing, and three of
+# them have been committed by accident (see issue #236).  One was carried into
+# an unrelated commit, which is why that commit could not be cherry-picked.
+#
+# Deny by default and allow sources back in, rather than listing today's
+# targets: the next tool added is then covered without anyone remembering to
+# update this file.
+*
+!.gitignore
+!Makefile
+!*/
+!*.c
+!*.h
+!*.sh
+!*.py
+!*.md

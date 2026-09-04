@@ -21,7 +21,8 @@ uint8_t kiss_command = CMD_UNKNOWN;
 
 static bool kiss_cmd_carries_data(uint8_t cmd)
 {
-    return cmd == CMD_DATA || cmd == CMD_AX25 || cmd == CMD_AX25CALLSIGN;
+    return cmd == CMD_DATA || cmd == CMD_AX25 || cmd == CMD_AX25CALLSIGN ||
+           cmd == CMD_MODEM_FRAME;
 }
 
 void kiss_reset_state(void)
