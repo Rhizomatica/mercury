@@ -213,6 +213,40 @@ codesign --verify --deep --strict --verbose=2 /Applications/Mercury.app
 spctl -a -t open --context context:primary-signature -v Mercury-*.dmg
 ```
 
+## 4b. Entitlements and what actually gets stapled
+
+Two things are easy to get wrong here, and **notarization passes either way** —
+they fail on the user's machine instead.
+
+**The hardened runtime needs entitlements.** Notarization requires the hardened
+runtime, and the runtime denies protected resources by default. An
+`Info.plist` usage string only supplies the prompt text; it grants nothing. So
+`macos/entitlements.plist` declares what Mercury genuinely needs:
+
+| entitlement | why |
+|---|---|
+| `com.apple.security.device.audio-input` | capture audio from the radio — without it the modem cannot hear |
+| `com.apple.security.device.usb` | CM108 USB HID PTT (`radio_io/cm108_ptt.c`) |
+
+Nothing else: every entry widens what the signed binary may do. Check the
+result rather than trusting the flag —
+
+```sh
+codesign -d --entitlements - /Volumes/Mercury*/Mercury.app
+```
+
+**Staple the `.app`, not just the `.dmg`.** A ticket stapled to the `.dmg`
+covers the `.dmg`. The app the user drags to /Applications carries no ticket,
+so Gatekeeper has to ask Apple online at first launch — the wrong failure mode
+for a station on a poor or absent link. The recipe therefore notarizes and
+staples the `.app` **before** `hdiutil` seals it (a `.dmg` is read-only
+afterwards, so it is the last chance), then notarizes and staples the `.dmg`.
+That is two Apple round trips; `MACOS_STAPLE_APP=0` skips the first.
+
+```sh
+xcrun stapler validate /Volumes/Mercury*/Mercury.app   # must NOT say "does not have a ticket"
+```
+
 ## 5. Wire it into CI
 
 The release workflow signs and notarizes the macOS artifact when three
