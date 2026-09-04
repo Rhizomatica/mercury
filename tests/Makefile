@@ -48,7 +48,8 @@ TEST_BINS = test_ring_buffer test_arq_protocol test_arq_timing test_arq_fsm \
             test_freedv_harq test_sock_wire test_virtual_clock test_watterson \
             test_mercury_prng test_bcast_file \
             test_ofdm_acq test_ui_status test_ui_devices test_tx_pacing test_radio_port \
-            test_radio_io_frequency
+            test_radio_io_frequency \
+			test_message_store
 
 .PHONY: all test clean
 
@@ -164,6 +165,10 @@ test_watterson: common/test_watterson.c $(UNITY_SRC) ../common/watterson.c ../co
 # point is that a seed means the same fade on every platform.
 test_mercury_prng: common/test_mercury_prng.c $(UNITY_SRC) ../common/mercury_prng.c
 	$(CC) $(CFLAGS) -I.. -o $@ $^ $(LDFLAGS)
+
+# Persistent message store (JSONL append, feed/append/count/get, reload).
+test_message_store: common/test_message_store.c $(UNITY_SRC) ../common/message_store.c
+	$(CC) $(CFLAGS) -o $@ common/test_message_store.c $(UNITY_SRC) ../common/message_store.c $(LDFLAGS)
 
 # Broadcast file TX: the frames must decode in a hermes-broadcast receiver, so
 # the test drives a full carousel through simulated loss and requires the file

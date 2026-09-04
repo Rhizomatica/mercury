@@ -51,6 +51,7 @@
 #include "hermes_log.h"
 #include "radio_io.h"
 #include "modem.h"
+#include "message_store.h"
 
 static pthread_t tid[7];
 static bool tid_started[7];
@@ -469,6 +470,32 @@ static void execute_control_command(char *buffer)
     {
         int buffered = arq_buffered_bytes_snapshot();
         tnc_send_buffer((uint32_t)buffered);
+        return;
+    }
+
+    if (!strncmp(buffer, "HISTORY", strlen("HISTORY")))
+    {
+        /* Mercury extension: dump the persisted ARQ/broadcast chat history as
+         * JSONL lines, oldest first, framed as HISTORYMSG <json> between a
+         * HISTORY <count> header and a HISTORYEND terminator. */
+        size_t n = msg_store_count();
+        char hdr[64];
+        int hn = snprintf(hdr, sizeof(hdr), "HISTORY %zu\r", n);
+        if (hn > 0)
+            tcp_write(CTL_TCP_PORT, (uint8_t *)hdr, (size_t)hn);
+
+        char line[8192];
+        for (size_t i = 0; i < n; i++)
+        {
+            size_t l = msg_store_get(i, line, sizeof(line));
+            if (l == 0)
+                continue;
+            char out[8192 + 16];
+            int on = snprintf(out, sizeof(out), "HISTORYMSG %s\r", line);
+            if (on > 0)
+                tcp_write(CTL_TCP_PORT, (uint8_t *)out, (size_t)on);
+        }
+        tcp_write(CTL_TCP_PORT, (uint8_t *)"HISTORYEND\r", 11);
         return;
     }
 
@@ -1077,6 +1104,14 @@ static bool bcast_process_decoded_frame(uint8_t *decoded_frame, int frame_len,
 
     if (needs_wrap)
     {
+        /* Persist the client's chat payload before it is shifted to make room
+         * for the header + length prefix.  Raw hermes-broadcast frames are not
+         * chat and are skipped; the printable-text filter also drops AX.25 /
+         * Reticulum binary frames. */
+        char my_call[CALLSIGN_MAX_SIZE];
+        arq_conn_get_calls(my_call, NULL, NULL, CALLSIGN_MAX_SIZE);
+        msg_store_feed(MSG_PLANE_BCAST, MSG_DIR_TX, my_call, decoded_frame, (size_t)frame_len);
+
         /* Inject Mercury header + 2-byte payload-length prefix before the
          * payload, so the receiver can recover the exact frame length (the
          * modem zero-pads to frame_size). The length prefix is flagged in the
@@ -1186,6 +1221,24 @@ static uint8_t bcast_get_tx_payload(uint8_t *frame_buffer, size_t frame_size,
     return reply_cmd;
 }
 
+/* Best-effort peer callsign from a "CALLSIGN: message" broadcast payload. */
+static void bcast_store_peer(const uint8_t *payload, int len, char *peer, size_t peer_cap)
+{
+    for (int i = 0; i < len - 1; i++)
+    {
+        if (payload[i] == ':' && payload[i + 1] == ' ')
+        {
+            size_t n = (size_t)i;
+            if (n >= peer_cap)
+                n = peer_cap - 1;
+            memcpy(peer, payload, n);
+            peer[n] = '\0';
+            return;
+        }
+    }
+    peer[0] = '\0';
+}
+
 void *send_thread(void *client_socket_ptr)
 {
     int client_socket = *((int *)client_socket_ptr);
@@ -1234,6 +1287,12 @@ void *send_thread(void *client_socket_ptr)
                                                   &payload_start, &payload_len);
         if (payload_len <= 0)
             continue;
+
+        /* Persist received broadcast chat; raw hermes-broadcast/AX.25 frames
+         * are filtered out by the printable-text check inside the store. */
+        char peer[CALLSIGN_MAX_SIZE];
+        bcast_store_peer(payload_start, payload_len, peer, sizeof(peer));
+        msg_store_feed(MSG_PLANE_BCAST, MSG_DIR_RX, peer, payload_start, (size_t)payload_len);
 
         int kiss_len = kiss_write_frame(payload_start, payload_len, reply_cmd, kiss_buffer);
         HLOGI("tcp-bcast", "Sending KISS frame to client: kiss_cmd=0x%02X payload=%d kiss_len=%d",

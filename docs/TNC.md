@@ -260,6 +260,44 @@ IGNOREKISSDCD\r
 
 ---
 
+### HISTORY
+
+Mercury extension: dump the persisted ARQ/broadcast chat history.
+
+```
+HISTORY\r
+```
+
+**Response:**
+
+```
+HISTORY <n>\r
+HISTORYMSG <jsonl>\r
+...
+HISTORYEND\r
+```
+
+`<n>` is the number of messages that follow.  Each message is a single
+JSON object on one line (oldest first), framed with a `HISTORYMSG ` prefix so
+a client can tell history lines apart from other asynchronous notifications:
+
+```json
+{"ts":1699999999,"ms":123,"plane":"arq","dir":"rx","peer":"CALL","text":"hello"}
+```
+
+- `plane` is `arq` or `bcast`.
+- `dir` is `rx` or `tx`.
+- `peer` is the remote callsign (best effort; `""` when unknown).
+- `ts`/`ms` are wall-clock seconds/milliseconds at the time the message was
+  stored.
+
+`HISTORYEND\r` marks the end of the dump.  History is stored to disk when the
+`[store]` section of `mercury.ini` has `enabled = true` (the default), so it
+survives a modem restart; `HISTORY` returns the in-memory ring of up to
+`store:max_messages` messages.
+
+---
+
 ### BUFFER
 
 Query the number of bytes pending in the ARQ transmit buffer.
