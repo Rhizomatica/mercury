@@ -84,3 +84,8 @@ gui_interface/websocket/web_packed.c
 
 # Vendored hidapi builds with the tree; keep its object out of git.
 radio_io/hidapi-w64/*.o
+
+# MFSK sweep tools (build artefacts)
+utils/shortframe_sweep
+utils/hail_suffix_sweep
+utils/mfsk_puncture_sweep
