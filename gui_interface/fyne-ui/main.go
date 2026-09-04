@@ -105,8 +105,13 @@ func pttMethodID(label string) string {
 }
 
 var audioSubsystemLabels = map[string]string{
-	"alsa":  "ALSA",
-	"pulse": "PulseAudio",
+	"alsa":      "ALSA",
+	"pulse":     "PulseAudio",
+	"wasapi":    "WASAPI",
+	"dsound":    "DirectSound",
+	"coreaudio": "CoreAudio",
+	"oss":       "OSS",
+	"aaudio":    "AAudio",
 }
 
 func audioSubsystemLabel(id string) string {

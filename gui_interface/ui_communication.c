@@ -56,6 +56,8 @@ extern int get_soundcard_list(int audio_system, int mode,
                               char ids[][AUDIO_DEV_STR_MAX], char dev_names[][AUDIO_DEV_STR_MAX],
                               int max_count);
 
+extern int audioio_available_subsystems(int *subsystems, int max);
+
 /* The enumerator writes rows this wide and we copy them straight into
  * ui_device_t; if the UI struct were ever the narrower of the two, long
  * PulseAudio node names would be cut again exactly as in issue #185. */
@@ -562,6 +564,27 @@ const char *ui_comm_get_audio_system(void)
         atomic_load_explicit(&ctx->audio_system, memory_order_relaxed));
 }
 
+int ui_comm_get_audio_subsystems(char *names, size_t names_len)
+{
+    int subsystems[8];
+    int n = audioio_available_subsystems(subsystems, 8);
+
+    if (!names || names_len == 0)
+        return n;
+
+    size_t off = 0;
+    for (int i = 0; i < n; i++)
+    {
+        int w = snprintf(names + off, names_len - off, "%s%s",
+                         i ? " " : "", cfg_sound_system_name(subsystems[i]));
+        if (w < 0 || (size_t)w >= names_len - off)
+            break;
+        off += (size_t)w;
+    }
+    names[off] = '\0';
+    return n;
+}
+
 void ui_comm_preload_radio_list(void)
 {
 #ifdef HAVE_HAMLIB
@@ -779,22 +802,22 @@ void *ui_publisher_thread(void *arg)
                 "\"list\":[\"left\",\"right\",\"stereo\"]}", ch_str);
             ws_broadcast_json(&ctx->ws, ch_buf);
 
-            // Audio subsystem selection.  Only Linux can switch between ALSA
-            // and PulseAudio at runtime; everywhere else the subsystem is
-            // fixed and the list carries the single active backend so a UI can
-            // hide a selector it cannot act on.
+            // Audio subsystem selection.  The list is the set of subsystems
+            // this build actually compiled in; a single-entry list means the
+            // backend is fixed and the UI can hide a selector it cannot act on.
             const char *audio_sys = cfg_sound_system_name(
                 atomic_load_explicit(&ctx->audio_system, memory_order_relaxed));
+            int  subsystems[8];
+            int  n_subsys = audioio_available_subsystems(subsystems, 8);
             char as_buf[256];
-#if defined(__linux__)
-            snprintf(as_buf, sizeof(as_buf),
-                "{\"type\":\"audio_system\",\"selected\":\"%s\","
-                "\"list\":[\"alsa\",\"pulse\"]}", audio_sys);
-#else
-            snprintf(as_buf, sizeof(as_buf),
-                "{\"type\":\"audio_system\",\"selected\":\"%s\","
-                "\"list\":[\"%s\"]}", audio_sys, audio_sys);
-#endif
+            int  pos = snprintf(as_buf, sizeof(as_buf),
+                "{\"type\":\"audio_system\",\"selected\":\"%s\",\"list\":[",
+                audio_sys);
+            for (int i = 0; i < n_subsys && pos < (int)sizeof(as_buf) - 16; i++)
+                pos += snprintf(as_buf + pos, sizeof(as_buf) - pos, "%s\"%s\"",
+                                i ? "," : "", cfg_sound_system_name(subsystems[i]));
+            if (pos < (int)sizeof(as_buf) - 4)
+                pos += snprintf(as_buf + pos, sizeof(as_buf) - pos, "]}");
             ws_broadcast_json(&ctx->ws, as_buf);
         }
 

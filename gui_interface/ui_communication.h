@@ -171,6 +171,11 @@ int  ui_comm_get_input_channel(void);
  * string; never NULL.  Empty string when no UI context is running. */
 const char *ui_comm_get_audio_system(void);
 
+/* Fill names with the audio subsystems this build can run, space-separated
+ * and NUL-terminated (e.g. "alsa pulse", "wasapi dsound").  Returns the
+ * number of subsystems written. */
+int  ui_comm_get_audio_subsystems(char *names, size_t names_len);
+
 /* Pre-load the radio model list from the main thread.  The embedded UI calls
  * this during mercury_init() so hamlib backend loading happens on a regular
  * POSIX thread, not a CGo goroutine. */

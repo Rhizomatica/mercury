@@ -13,7 +13,7 @@ import "C"
 import (
 	"context"
 	"fmt"
-	"runtime"
+	"strings"
 	"time"
 	"unsafe"
 )
@@ -299,18 +299,18 @@ func (l *engineLink) SetWaterfall(enabled bool) {
 	C.mercury_ui_set_waterfall(cEn)
 }
 
-// AudioSubsystems reports the engine's audio subsystem and, on Linux, the two
-// backends (ALSA, PulseAudio) the operator can switch between at runtime. The
-// embedded engine runs in this process, so its platform is this process's
-// platform.
+// AudioSubsystems reports the engine's audio subsystem and the set of
+// subsystems this build compiled in. The embedded engine runs in this process,
+// so its platform is this process's platform; a single-entry list means the
+// backend is fixed and the UI hides its subsystem selector.
 func (l *engineLink) AudioSubsystems() (string, []string) {
 	name := make([]byte, 32)
 	C.mercury_ui_get_audio_system((*C.char)(unsafe.Pointer(&name[0])), C.int(len(name)))
 	current := goStringFromC(name)
-	if runtime.GOOS == "linux" {
-		return current, []string{"alsa", "pulse"}
-	}
-	return current, nil
+
+	names := make([]byte, 64)
+	C.mercury_ui_get_audio_subsystems((*C.char)(unsafe.Pointer(&names[0])), C.int(len(names)))
+	return current, strings.Fields(goStringFromC(names))
 }
 
 // TCPPorts returns the ARQ base and broadcast TCP ports the engine is
