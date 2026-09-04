@@ -187,6 +187,18 @@ typedef struct
     int      peer_tx_mode;             /* my payload RX decoder mode when IRS =
                                         * arq_mode_ladder[rx_speed_level]; the
                                         * mode the peer's NEXT DATA burst uses  */
+    int      call_sends_done;          /* CALL transmissions made this attempt;
+                                        * counts SENDS, not remaining slots, so
+                                        * ARQ_CALL_FAST_SLOTS means what it says */
+    int      call_carrier;             /* carrier CHOSEN for the CALL now in
+                                        * flight.  Decided once, when the frame
+                                        * is built and sized; the modem keys
+                                        * exactly this.  Recomputing it later
+                                        * raced the send counter and put the
+                                        * FIRST call on MFSK.  0 = not set.     */
+    int      call_rx_mode;             /* carrier the incoming CALL decoded on,
+                                        * so the ACCEPT answers on the same one.
+                                        * 0 = answer on the control mode        */
 
     /* --- IRS-side mirror of the peer's (ISS) delivery-driven ladder --------
      * The IRS observes the same per-frame outcomes the sender climbs on (a
@@ -400,5 +412,20 @@ const char *arq_dflow_state_name(arq_dflow_state_t s);
  * @brief Human-readable name for an event (for log output).
  */
 const char *arq_event_name(arq_event_id_t ev);
+
+/* Which carrier the next CALL should key.
+ *
+ * ONE definition, because this predicate decides two things that must agree:
+ * how send_frame() SIZES/pads the frame, and which carrier
+ * arq_modem_preferred_tx_mode() actually keys.  When they disagreed, the
+ * escalation logged itself and still transmitted a 3.71 s DATAC16 burst -- the
+ * frame was merely sized for MFSK.  Keep this the only copy.
+ *
+ * Counts sends rather than remaining retry slots: with the old
+ * `tx_retries_left < RETRY_SLOTS - FAST_SLOTS` form, FAST_SLOTS=1 actually
+ * produced TWO DATAC16 bursts, because the first CALL goes out before any
+ * retry slot is consumed.
+ */
+int arq_call_carrier(const arq_session_t *sess);
 
 #endif /* ARQ_FSM_H_ */

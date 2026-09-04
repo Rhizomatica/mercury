@@ -255,6 +255,23 @@ uint32_t arq_protocol_accept_rx_window_ms(void);
  * 2 s is conservative: ~0.5 s of TCP+host processing with headroom. */
 #define ARQ_LISTEN_OFF_GRACE_MS       2000
 #define ARQ_CALL_RETRY_SLOTS_DEFAULT       4    /* CALL retries before giving up       */
+
+/* How many of those CALL slots go out on the fast control mode before the
+ * caller escalates to the MFSK floor.
+ *
+ * The data plane runs ~10 dB below DATAC16 (MFSK payload + pattern ACK), but
+ * CALL/ACCEPT rode DATAC16 alone -- so a pair that could sustain a transfer
+ * could never open one.  This closes that gap from the caller's side.
+ *
+ * MFSK is used rather than a short directed pattern because airtime IS the
+ * diversity: measured on the project's Watterson MPP channel, the 960 ms
+ * directed pattern loses to the 3740 ms DATAC16 ACCEPT (56% vs 80% at -7 dB)
+ * even though it wins by ~2 dB on AWGN -- see docs/MFSK-PORT.md.  The fix for
+ * a fading channel is a LONGER burst, and MFSK's 13.5 s is the longest we
+ * have.  It is not free, so the fast mode is tried first and the deep mode
+ * only when the fast one has demonstrably failed: a good link connects
+ * exactly as quickly as before. */
+#define ARQ_CALL_FAST_SLOTS                2
 #define ARQ_ACCEPT_RETRY_SLOTS_DEFAULT     4    /* ACCEPT retries before returning     */
 #define ARQ_DATA_RETRY_SLOTS_DEFAULT      10    /* DATA retries before disconnect      */
 #define ARQ_DISCONNECT_RETRY_SLOTS_DEFAULT 2    /* DISCONNECT frame retries            */
@@ -475,6 +492,13 @@ float arq_protocol_longest_burst_s(void);
  * CALLINT override.  Falls back to the DATAC16 table default (8.0s).
  */
 float arq_protocol_call_interval_s(void);
+
+/* CALL retry interval for a given carrier.  A CALL that has escalated to the
+ * MFSK floor keys for 13.5 s, so the 8 s DATAC16 interval fires the next retry
+ * while the current burst is still on the air -- observed: a second CALL armed
+ * at +43.3 s against a burst that ran to +48.9 s, throwing away the last slot.
+ * Size the wait from the mode actually being transmitted. */
+float arq_protocol_call_interval_for_mode_s(int mode);
 
 /**
  * @brief Compute CRC16-CCITT of an uppercase-normalised callsign.

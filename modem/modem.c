@@ -1652,6 +1652,7 @@ static void process_received_frame(const uint8_t *data,
                                    size_t frame_bytes,
                                    bool arq_policy_ready,
                                    int payload_mode,
+                                   int rx_mode,
                                    uint32_t bitrate_bps,
                                    float snr_est)
 {
@@ -1674,7 +1675,8 @@ static void process_received_frame(const uint8_t *data,
     {
     case PACKET_TYPE_ARQ_CALL:
         if (arq_policy_ready)
-            arq_handle_incoming_connect_frame((uint8_t *)data, payload_nbytes);
+            arq_handle_incoming_connect_frame((uint8_t *)data, payload_nbytes,
+                                              rx_mode);
         break;
     case PACKET_TYPE_ARQ_CQ:
         if (arq_policy_ready)
@@ -1985,6 +1987,7 @@ static void rx_decoder_consume_chunk(rx_decoder_state_t *state,
                                    state->bytes_cap,
                                    arq_policy_ready,
                                    payload_mode,
+                                   state->mode,
                                    bitrate_bps,
                                    snr_est);
         }
