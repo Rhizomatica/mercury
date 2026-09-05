@@ -42,3 +42,7 @@ clean:
 	rm -f *.o *.w64.o *.d
 	rm -f raptorq/lib/*.o raptorq/lib/*.w64.o raptorq/lib/*.d
 	rm -f raptorq/deps/obl/*.o raptorq/deps/obl/*.w64.o raptorq/deps/obl/*.d
+
+# Pull in the header dependencies emitted by -MMD (see config.mk).  Leading
+# dash: absent on a first build, which is correct.
+-include $(wildcard *.d */*.d */*/*.d)

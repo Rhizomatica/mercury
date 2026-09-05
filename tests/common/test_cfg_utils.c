@@ -42,14 +42,10 @@ void test_defaults_match_constants(void)
     TEST_ASSERT_EQUAL_INT(10,  c.data_retry_slots);
     TEST_ASSERT_EQUAL_INT(6,   c.mode_hold_after_downgrade_s);
     TEST_ASSERT_EQUAL_INT(2,   c.ladder_up_successes);
-    TEST_ASSERT_EQUAL_INT(2,   c.retry_downgrade_threshold);
+    TEST_ASSERT_EQUAL_INT(4,   c.retry_downgrade_threshold);
     TEST_ASSERT_EQUAL_INT(700, c.channel_guard_ms);
     TEST_ASSERT_EQUAL_INT(900, c.iss_post_ack_guard_ms);
-    TEST_ASSERT_EQUAL_INT(20,  c.keepalive_interval_s);
-    TEST_ASSERT_EQUAL_INT(5,   c.keepalive_miss_limit);
     TEST_ASSERT_EQUAL_INT(15,  c.peer_payload_hold_s);
-    TEST_ASSERT_EQUAL_INT(10,  c.startup_max_s);
-    TEST_ASSERT_EQUAL_INT(2000, c.retry_stagger_ms);
     /* Opt-in: hosts hold transmissions while BUSY is asserted, so this must
      * never switch on under a station that did not ask for it. */
     TEST_ASSERT_FALSE(c.busy_detect);
@@ -70,11 +66,7 @@ void test_arq_tunables_roundtrip(void)
     w.retry_downgrade_threshold   = 3;
     w.channel_guard_ms            = 800;
     w.iss_post_ack_guard_ms       = 1000;
-    w.keepalive_interval_s        = 30;
-    w.keepalive_miss_limit        = 8;
     w.peer_payload_hold_s         = 25;
-    w.startup_max_s               = 20;
-    w.retry_stagger_ms            = 0;      /* off-switch must round-trip */
     w.ptt.method                  = PTT_METHOD_HAMLIB;
     snprintf(w.ptt.device, sizeof(w.ptt.device), "COM7");
     w.ptt.hamlib_model            = 1049;
@@ -96,11 +88,7 @@ void test_arq_tunables_roundtrip(void)
     TEST_ASSERT_EQUAL_INT(3,    r.retry_downgrade_threshold);
     TEST_ASSERT_EQUAL_INT(800,  r.channel_guard_ms);
     TEST_ASSERT_EQUAL_INT(1000, r.iss_post_ack_guard_ms);
-    TEST_ASSERT_EQUAL_INT(30,   r.keepalive_interval_s);
-    TEST_ASSERT_EQUAL_INT(8,    r.keepalive_miss_limit);
     TEST_ASSERT_EQUAL_INT(25,   r.peer_payload_hold_s);
-    TEST_ASSERT_EQUAL_INT(20,   r.startup_max_s);
-    TEST_ASSERT_EQUAL_INT(0,    r.retry_stagger_ms);   /* 0 (off) preserved */
     TEST_ASSERT_EQUAL_INT(PTT_METHOD_HAMLIB, r.ptt.method);
     TEST_ASSERT_EQUAL_STRING("COM7", r.ptt.device);
     TEST_ASSERT_EQUAL_INT(1049, r.ptt.hamlib_model);
@@ -333,19 +321,15 @@ void test_arq_tunables_clamp_rejects_garbage(void)
 {
     FILE *f = fopen(TMP, "w");
     TEST_ASSERT_NOT_NULL(f);
-    fputs("[arq]\nchannel_guard_ms = 999999\nkeepalive_miss_limit = 0\n"
-          "peer_payload_hold_s = 0\nstartup_max_s = 999\n"
-          "retry_stagger_ms = 999999\n", f);
+    fputs("[arq]\nchannel_guard_ms = 999999\n"
+          "peer_payload_hold_s = 0\n", f);
     fclose(f);
 
     mercury_config r;
     cfg_set_defaults(&r);
     TEST_ASSERT_TRUE(cfg_read(&r, TMP));
     TEST_ASSERT_EQUAL_INT(700, r.channel_guard_ms);   /* out of 200..3000 -> default kept */
-    TEST_ASSERT_EQUAL_INT(5,   r.keepalive_miss_limit);/* out of 2..20   -> default kept  */
     TEST_ASSERT_EQUAL_INT(15,  r.peer_payload_hold_s); /* out of 1..120  -> default kept  */
-    TEST_ASSERT_EQUAL_INT(10,  r.startup_max_s);       /* out of 2..60   -> default kept  */
-    TEST_ASSERT_EQUAL_INT(2000, r.retry_stagger_ms);    /* out of 0..5000 -> default kept  */
 }
 
 int main(void)

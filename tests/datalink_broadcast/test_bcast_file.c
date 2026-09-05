@@ -21,6 +21,8 @@
 #include "bcast_modes.h"
 #include "raptorq/include/nanorq.h"
 #include "raptorq/include/nanorq_io.h"
+#include "freedv_api.h"
+#include "modem_mfsk.h"
 
 void setUp(void) {}
 void tearDown(void) {}
@@ -158,6 +160,45 @@ void test_lossy_channel_recovers_the_file(void)      { transfer_case(20000, 0, 2
 void test_small_robust_mode_recovers_the_file(void)  { transfer_case(1500,  8, 25, 3); }
 void test_fast_mode_recovers_the_file(void)          { transfer_case(60000, 10, 30, 4); }
 
+/* bcast_frame_size[] is wire format, and a wrong entry fails silently on the
+ * air: the sender emits frames of one length and every receiver on the mode
+ * discards them for being the wrong size, with nothing logged that points at
+ * the table.  So pin each entry against the modem that actually transmits it.
+ *
+ * MFSK (index 11) is the reason this matters -- it is Mercury's own modem
+ * rather than a FreeDV mode, so nothing else cross-checks its 98 bytes. */
+void test_frame_size_table_matches_the_modems(void)
+{
+    /* payload_bytes_per_modem_frame = bits_per_frame/8 - 2 (the CRC). */
+    static const struct { int idx; int freedv_mode; } fdv[] = {
+        {0, FREEDV_MODE_DATAC1}, {1, FREEDV_MODE_DATAC3},  {2, FREEDV_MODE_DATAC0},
+        {3, FREEDV_MODE_DATAC4}, {4, FREEDV_MODE_DATAC13}, {5, FREEDV_MODE_DATAC14},
+        {7, FREEDV_MODE_DATAC15},{8, FREEDV_MODE_DATAC16}, {9, FREEDV_MODE_DATAC17},
+        {10, FREEDV_MODE_QAM16C2},
+    };
+    for (unsigned i = 0; i < sizeof fdv / sizeof fdv[0]; i++)
+    {
+        struct freedv *f = freedv_open(fdv[i].freedv_mode);
+        TEST_ASSERT_NOT_NULL(f);
+        char msg[96];
+        snprintf(msg, sizeof msg, "bcast_frame_size[%d] disagrees with the modem", fdv[i].idx);
+        TEST_ASSERT_EQUAL_UINT32_MESSAGE(freedv_get_bits_per_modem_frame(f) / 8 - 2,
+                                         bcast_frame_size[fdv[i].idx], msg);
+        freedv_close(f);
+    }
+
+    const modem_backend_t *be = &modem_backend_mfsk;
+    void *ctx = be->open(MERCURY_MODE_MFSK);
+    TEST_ASSERT_NOT_NULL(ctx);
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE((uint32_t)(be->bits_per_frame(ctx) / 8 - 2),
+                                     bcast_frame_size[11],
+                                     "bcast_frame_size[11] disagrees with the MFSK modem");
+    be->close(ctx);
+
+    /* Index 6 is FSK_LDPC, which needs an advanced open and is not in use;
+     * it is left in the table only to keep the indices stable. */
+}
+
 /* A receiver that tunes in late must still be able to start.  With the joint
  * frame that is not "the config is repeated often enough" but the stronger
  * property that EVERY frame carries it -- so this checks the OTI can be read
@@ -261,8 +302,14 @@ void test_modes_too_small_for_broadcast_are_refused(void)
     TEST_ASSERT_NULL(bcast_file_tx_open(TMP, 5, 1, 0, err, sizeof(err)));
     TEST_ASSERT_NOT_NULL(strstr(err, "more than"));
 
-    TEST_ASSERT_NULL(bcast_file_tx_open(TMP, 11, 1, 0, err, sizeof(err)));
+    /* Off both ends of the table.  Derived from BCAST_MODE_MAX rather than
+     * written as a literal: this assertion used to say 11, which stopped
+     * testing anything the day MFSK was appended as mode 11. */
+    TEST_ASSERT_NULL(bcast_file_tx_open(TMP, BCAST_MODE_MAX + 1, 1, 0, err, sizeof(err)));
     TEST_ASSERT_NULL(bcast_file_tx_open(TMP, -1, 1, 0, err, sizeof(err)));
+
+    /* MFSK (98 B) is large enough and must be accepted. */
+    TEST_ASSERT_TRUE(bcast_file_mode_usable(11));
     remove(TMP);
 }
 
@@ -644,6 +691,7 @@ int main(void)
     RUN_TEST(test_lossy_channel_recovers_the_file);
     RUN_TEST(test_small_robust_mode_recovers_the_file);
     RUN_TEST(test_fast_mode_recovers_the_file);
+    RUN_TEST(test_frame_size_table_matches_the_modems);
     RUN_TEST(test_every_frame_is_self_describing);
     RUN_TEST(test_cycle_budget_is_honoured);
     RUN_TEST(test_oversized_file_is_refused);

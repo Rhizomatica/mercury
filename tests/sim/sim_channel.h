@@ -37,9 +37,26 @@ typedef struct { int freedv_mode; double per; } sim_mode_per_t;
 void           sim_channel_set_mode_per(sim_channel_t *ch,
                                         const sim_mode_per_t *table, int count);
 
+/* Per-direction channel SNR (cliff model) for asymmetric-link tests.
+ *   dir 0 = A->B (forward), dir 1 = B->A (reverse).
+ * Enables the cliff model on that direction only; the other direction keeps
+ * whatever it was configured with (base per or its own SNR). */
+void           sim_channel_set_dir_snr(sim_channel_t *ch, int dir, double snr_db);
+
 uint32_t       sim_channel_airtime_ms(int freedv_mode, size_t frame_size);
+
+/* Short airtime for a pattern ACK (Welch-Costas tone burst, ~0.64 s). */
+uint32_t       sim_channel_pattern_airtime_ms(void);
+
 bool           sim_channel_schedule(sim_channel_t *ch, uint64_t now_ms,
                                      int dir, int freedv_mode, size_t frame_size,
                                      uint64_t *deliver_at_ms);
+
+/* Schedule a pattern ACK: short airtime + its own (low) erasure, which
+ * survives ~10 dB deeper than a coded frame.  dir selects the reverse-path
+ * SNR when per-direction SNR is set. */
+bool           sim_channel_pattern_schedule(sim_channel_t *ch, uint64_t now_ms,
+                                             int dir, uint64_t *deliver_at_ms);
+
 double         sim_channel_next_rand(sim_channel_t *ch);
 #endif

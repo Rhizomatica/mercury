@@ -195,6 +195,74 @@ rather than left in the tree as a dead mode.  DATAC13 vs DATAC16 splits by
 Doppler: fast fading favours DATAC13, slow fading (the measured OTA regime)
 favours DATAC16.
 
+### Fourth attempt: a short MFSK control frame (rejected, 2026-08)
+
+A fourth run at the same target — replace the 3.74 s DATAC16 CALL/ACCEPT with
+something shorter — this time carrying the existing 14-byte control frame plus
+a CRC16 over the project's own non-coherent 32-MFSK waveform with a short
+vendored LDPC code (`H_128_256_5`, K=128, N=256).  Geometry: 52 payload symbols
+at 40 ms = 2.08 s, plus the MFSK 8+8 preamble/postamble = **2.72 s on air**
+against DATAC16's 3.74 s.
+
+The interesting part is that it wins convincingly on AWGN and still loses.
+Measured with `utils/shortframe_sweep`:
+
+| channel | Eb/N0 for FER ≲ 0.02 |
+|---|---|
+| AWGN, 52-sym short frame | 5 dB |
+| flat Rayleigh 1.0 Hz, 52-sym short frame | 12 dB |
+| flat Rayleigh 1.0 Hz, 410-sym long frame (same rate 1/2) | 8 dB |
+| flat Rayleigh 0.2 Hz, 52-sym short frame | 16–18 dB |
+
+On AWGN that is SNR3k ≈ −11.9 dB, about **2.6 dB better than DATAC16's −9.3 dB
+floor and a second shorter** — which is exactly why this idea keeps coming
+back.  Then fading removes it: shortening costs **~4 dB of time diversity** at
+1 Hz, more than the 2.6 dB the shorter frame had won, and it is *worse again on
+a calm channel* (0.2 Hz), where a 2.08 s burst spans roughly a single fade and
+has no time diversity at all.  Slow fading is the measured OTA regime.
+
+Two things are worth keeping from this:
+
+- **Airtime is diversity.**  On a fading channel a control frame cannot be made
+  both shorter and more robust by re-coding it; the time-diversity term is not
+  something a better code recovers.  This is the same wall DATAC13, DATAC14 and
+  DATAC18 hit, and the reason is now a number rather than a recollection.
+- **DATAC16's fringe floor is set by acquisition, not by the decoder** —
+  measured, not inferred (`utils/acquire_vs_decode DATAC16 100 -13 -8`, AWGN,
+  0 % clipped):
+
+  | SNR3k | acquired | delivered | decode given sync |
+  |---|---|---|---|
+  | −8 dB | 100/100 | 99/100 | 99 % |
+  | −9 dB | 99/100 | 98/100 | 99 % |
+  | −10 dB | 84/100 | 78/100 | 93 % |
+  | −11 dB | 52/100 | 48/100 | 92 % |
+  | −12 dB | 26/100 | 19/100 | 73 % |
+  | −13 dB | 7/100 | 2/100 | 29 % |
+
+  Acquisition falls away far faster than decoding does — 99 → 52 → 7 between
+  −9 and −13 dB, while frames that do sync still decode 92–99 % of the time
+  down to −11 dB.  The decoder does eventually join in below that, so the
+  honest statement is that acquisition is the *first-order* limiter, not the
+  only one.  This agrees with the independent 100-trial AWGN figures earlier in
+  this document (98 vs 96 delivered at −9 dB, 78 vs 82 at −10, 48 vs 52 at −11).
+
+  Two traps, both of which produced confident and wrong tables first:
+
+  - **Level.**  freedv emits DATAC16 at rms ~8000 / peak ~16400.  At fringe
+    SNRs the noise rms is a couple of times that, so signal+noise hits the
+    int16 rail: 23 % of samples clipped, delivering −7.1 dB when −9.0 was
+    asked for, and costing about a dB net.  The harness now normalises the
+    burst to a fixed peak before adding noise and prints the clipped
+    percentage on every row.
+  - **Do not settle this from an energy budget.**  DATAC16's floor implies
+    Eb/N0 ≈ 9.3 dB against ~1–2 dB for a rate-0.2 code near capacity, which
+    looks like ~7 dB of acquisition deficit — until cyclic prefix (~1.3 dB),
+    pilots (~1.3 dB), channel-estimation and implementation loss (~1.5 dB) and
+    short-code loss at N=640 (~2.5 dB) are subtracted, leaving ~1 dB, i.e.
+    nothing conclusive.  The budget cannot answer this question; the split
+    above can.
+
 ## Reproducing the measurements
 
 ```sh

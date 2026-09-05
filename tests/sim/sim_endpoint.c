@@ -7,6 +7,7 @@
 #include <string.h>
 #include <stdio.h>
 #include <assert.h>
+#include "sim_clock.h"
 
 #define SIM_TX_CAP   (256 * 1024)
 #define SIM_RX_CAP   (256 * 1024)
@@ -20,6 +21,11 @@ struct sim_endpoint {
     uint8_t rx[SIM_RX_CAP]; size_t rx_len;            /* delivered app bytes */
 
     sim_outframe_t outbox;   /* frame emitted by send_tx_frame, drained by core */
+
+    /* connect-latency instrumentation (virtual ms; 0 = not reached) */
+    uint64_t connected_at_ms;
+    uint64_t pending_at_ms;
+    unsigned tx_frames;
 };
 
 /* v1 context: set before each arq_fsm_dispatch. Also updates arq_conn.my_call_sign
@@ -72,6 +78,7 @@ bool sim_endpoint_take_outframe(sim_endpoint_t *ep, sim_outframe_t *out)
     if (!ep->outbox.present) return false;
     *out = ep->outbox;
     ep->outbox.present = false;
+    ep->tx_frames++;      /* counted here, so patterns and coded frames both land */
     return true;
 }
 
@@ -92,11 +99,41 @@ static void cb_send_tx_frame(int packet_type, int mode, size_t frame_size,
     ep->outbox.packet_type   = packet_type;
     ep->outbox.mode          = mode;
     ep->outbox.burst_remaining = burst_remaining;
+    ep->outbox.is_pattern    = false;
+    ep->outbox.pattern_kind  = 0;
     ep->outbox.present       = true;
 }
 
-static void cb_notify_connected(const char *remote_call, const char *local_call) { (void)remote_call; (void)local_call; }
-static void cb_notify_pending(const char *remote_call, const char *local_call)    { (void)remote_call; (void)local_call; }
+/* Pattern ACK: a degenerate outframe with no coded bytes.  sim_core schedules
+ * it with a short airtime and its own low erasure, and translates it straight
+ * to ARQ_EV_RX_ACK (HAS_DATA = break) on delivery. */
+static void cb_send_pattern_ack(int mode, int pattern_kind)
+{
+    sim_endpoint_t *ep = s_active;
+    assert(!ep->outbox.present &&
+           "send_pattern_ack fired with outbox full");
+    ep->outbox.len             = 0;
+    ep->outbox.packet_type     = -1;
+    ep->outbox.mode            = mode;
+    ep->outbox.burst_remaining = 0;
+    ep->outbox.is_pattern      = true;
+    ep->outbox.pattern_kind    = pattern_kind;
+    ep->outbox.present         = true;
+}
+
+static void cb_notify_connected(const char *remote_call, const char *local_call)
+{
+    (void)remote_call; (void)local_call;
+    /* First transition only: the callee can be notified again on a retry. */
+    if (s_active && s_active->connected_at_ms == 0)
+        s_active->connected_at_ms = sim_clock_now();
+}
+static void cb_notify_pending(const char *remote_call, const char *local_call)
+{
+    (void)remote_call; (void)local_call;
+    if (s_active && s_active->pending_at_ms == 0)
+        s_active->pending_at_ms = sim_clock_now();
+}
 static void cb_notify_cancelpending(void)                   { }
 static void cb_notify_disconnected(bool to_no_client)       { (void)to_no_client; }
 
@@ -130,6 +167,7 @@ const arq_fsm_callbacks_t *sim_endpoint_callbacks(void)
 {
     static const arq_fsm_callbacks_t cbs = {
         .send_tx_frame        = cb_send_tx_frame,
+        .send_pattern_ack     = cb_send_pattern_ack,
         .notify_connected     = cb_notify_connected,
         .notify_pending       = cb_notify_pending,
         .notify_cancelpending = cb_notify_cancelpending,
@@ -140,4 +178,15 @@ const arq_fsm_callbacks_t *sim_endpoint_callbacks(void)
         .send_buffer_status   = cb_send_buffer_status,
     };
     return &cbs;
+}
+
+uint64_t sim_endpoint_connected_at_ms(const sim_endpoint_t *ep) { return ep->connected_at_ms; }
+uint64_t sim_endpoint_pending_at_ms(const sim_endpoint_t *ep)   { return ep->pending_at_ms; }
+unsigned sim_endpoint_tx_frames(const sim_endpoint_t *ep)       { return ep->tx_frames; }
+
+void sim_endpoint_reset_stats(sim_endpoint_t *ep)
+{
+    ep->connected_at_ms = 0;
+    ep->pending_at_ms   = 0;
+    ep->tx_frames       = 0;
 }

@@ -64,3 +64,7 @@ mercury_cli.o: mercury_cli.c mercury_cli.h
 
 clean:
 	rm -f *.o iniparser/*.o
+
+# Pull in the header dependencies emitted by -MMD (see config.mk).  Leading
+# dash: absent on a first build, which is correct.
+-include $(wildcard *.d */*.d */*/*.d)

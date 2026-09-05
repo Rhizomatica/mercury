@@ -40,4 +40,8 @@ void            sim_set_snr(sim_t *s, double snr_db);
 void            sim_set_mode_per(sim_t *s, const sim_mode_per_t *table,
                                  int count, float rx_snr_db);
 
+/* Per-direction channel SNR (cliff model) for an asymmetric link.
+ *   dir 0 = A->B (forward), dir 1 = B->A (reverse). */
+void            sim_set_dir_snr(sim_t *s, int dir, double snr_db);
+
 #endif

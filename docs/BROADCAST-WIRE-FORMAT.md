@@ -246,6 +246,25 @@ There is **no negotiation** on the broadcast plane and no runtime mode switch.
 Both stations must be started with the same mode (`mercury -m <index>`), and a
 receiver silently ignores any frame whose length is not its mode's frame size.
 
+The mode index is **wire format**. A new mode may only be appended, never
+inserted, so that a receiver built before it existed still reads every index it
+already knew:
+
+| index | mode | frame | index | mode | frame |
+|------:|------|------:|------:|------|------:|
+| 0 | DATAC1 | 510 B | 6 | FSK_LDPC | 30 B |
+| 1 | DATAC3 | 126 B | 7 | DATAC15 | 30 B |
+| 2 | DATAC0 | 14 B | 8 | DATAC16 | 14 B |
+| 3 | DATAC4 | 54 B | 9 | DATAC17 | 1180 B |
+| 4 | DATAC13 | 14 B | 10 | QAM16C2 | 1213 B |
+| 5 | DATAC14 | 3 B | 11 | MFSK | 98 B |
+
+Index 11 is Mercury's own MFSK fringe modem rather than a FreeDV mode; it is
+selected with `-m 11` like any other. The table lives in
+`datalink_broadcast/bcast_modes.h` and is mirrored in hermes-broadcast's
+`mercury_modes.h` — both must move together, and a mismatch is caught at build
+time by a `_Static_assert` in `datalink_broadcast/broadcast.c`.
+
 ## 10. Interoperability
 
 | sender | receiver | works |

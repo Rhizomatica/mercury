@@ -92,7 +92,7 @@ func TestMercuryARQTransfer(t *testing.T) {
 
 	startInstance := func(name, rxPath, txPath string, port, bcastPort int) (*exec.Cmd, *processWait, *os.File, *os.File) {
 		stdout, stderr := tempLogFilesNamed(t, name)
-		cmd := exec.CommandContext(ctx, bin,
+		args := []string{
 			"-x", "fifo",
 			"-i", rxPath,
 			"-o", txPath,
@@ -100,11 +100,18 @@ func TestMercuryARQTransfer(t *testing.T) {
 			"-b", fmt.Sprint(bcastPort),
 			"-m", "1",
 			"-C", filepath.Join(t.TempDir(), "missing-mercury.ini"),
-		)
+		}
+		// MERCURY_TEST_VERBOSE=1 runs both peers at DEBUG.  Off by default:
+		// the ARQ/modem traces are what you need to see which mode a stalled
+		// transfer died on, but they are far too noisy for a normal CI run.
+		if os.Getenv("MERCURY_TEST_VERBOSE") == "1" {
+			args = append(args, "-v")
+		}
+		cmd := exec.CommandContext(ctx, bin, args...)
 		cmd.Dir = repoRoot
 		cmd.Stdout = stdout
 		cmd.Stderr = stderr
-		if err := cmd.Start(); err != nil {
+		if err := startChild(cmd); err != nil {
 			t.Fatalf("start mercury %s: %v", name, err)
 		}
 		return cmd, waitForProcess(cmd), stdout, stderr
@@ -248,6 +255,7 @@ func TestMercuryARQTransfer(t *testing.T) {
 	}
 
 	// The transfer proves the modes on the air; the logs document them.
+	logs := map[string]string{}
 	for name, paths := range map[string][2]string{
 		"A": {outA.Name(), errA.Name()},
 		"B": {outB.Name(), errB.Name()},
@@ -260,11 +268,26 @@ func TestMercuryARQTransfer(t *testing.T) {
 			}
 			log.Write(data)
 		}
+		logs[name] = log.String()
 		for _, mode := range []string{"DATAC16", "DATAC15"} {
-			if !strings.Contains(log.String(), mode) {
+			if !strings.Contains(logs[name], mode) {
 				failWithLogs("instance %s log has no %s activity", name, mode)
 			}
 		}
+	}
+
+	// This test connects before it queues any payload, so the caller confirms
+	// the ACCEPT with a 0.64 s pattern rather than a coded frame.  Nothing but
+	// the pattern correlator decodes one, and the answerer only runs it for a
+	// bounded window after its ACCEPT keys down -- so this assertion is what
+	// proves that window is actually open when the confirm lands.
+	//
+	// Without it the test still passes: a missed confirm falls through to
+	// connecting on the caller's first DATA burst, which is correct but slow,
+	// and silently gives back the 3.1 s the pattern was introduced to save.
+	if !strings.Contains(logs["B"], "handshake completed on connect confirm (pattern)") {
+		failWithLogs("answerer did not complete the handshake on the pattern confirm; " +
+			"it fell through to the first data frame (correlator window closed too early?)")
 	}
 	t.Logf("ARQ transfer complete over ch (No=%.1f dB): %d bytes delivered", params.No_dBHz, len(payload))
 }
