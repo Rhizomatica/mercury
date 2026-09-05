@@ -33,7 +33,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "../modem/mfsk_ldpc.h"
+#include "../modem/mfsk/mfsk_ldpc.h"
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846

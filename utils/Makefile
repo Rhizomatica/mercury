@@ -1,7 +1,7 @@
 # Compiler and flags
 include ../config.mk
 
-CFLAGS = $(COMMON_CFLAGS) -Wextra -I../common -I../modem -I.. -I../modem/freedv
+CFLAGS = $(COMMON_CFLAGS) -Wextra -I../common -I../modem -I../modem/mfsk -I.. -I../modem/freedv
 LDFLAGS = -pthread
 
 ifeq ($(OS),Windows_NT)
@@ -42,7 +42,7 @@ watterson_test: watterson_test.c ../common/watterson.c ../common/mercury_prng.c
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS) -lm
 
 # Needs the freedv LDPC decoder and its vendored parity matrices.
-shortframe_sweep: shortframe_sweep.c ../modem/mfsk.c ../modem/freedv/mpdecode_core.c \
+shortframe_sweep: shortframe_sweep.c ../modem/mfsk/mfsk.c ../modem/freedv/mpdecode_core.c \
                   ../modem/freedv/ldpc_codes.c ../modem/freedv/phi0.c
 	$(CC) $(CFLAGS) -o $@ $^ ../modem/freedv/libfreedvdata.a $(LDFLAGS) -lm
 
@@ -58,22 +58,22 @@ run: broadcast_test
 # Is the MFSK floor set by acquisition or by the code?  Sweeps noise over the
 # whole burst and over the payload alone; the gap is the code's slack.
 mfsk_floor_sweep: mfsk_floor_sweep.c chanutil.c ../common/watterson.c ../common/mercury_prng.c \
-                  ../modem/modem_mfsk.c ../modem/mfsk.c ../modem/mfsk_sync.c \
-                  ../modem/mfsk_ofdm.c ../modem/mfsk_ldpc.c ../modem/mfsk_ldpc_8_16.c
+                  ../modem/modem_mfsk.c ../modem/mfsk/mfsk.c ../modem/mfsk/mfsk_sync.c \
+                  ../modem/mfsk/mfsk_ofdm.c ../modem/mfsk/mfsk_ldpc.c ../modem/mfsk/mfsk_ldpc_8_16.c
 	$(CC) $(CFLAGS) -o $@ $^ ../modem/freedv/libfreedvdata.a $(LDFLAGS) -lm
 
 # Coding cost of shortening the MFSK floor burst by puncturing parity.
-mfsk_puncture_sweep: mfsk_puncture_sweep.c ../modem/mfsk_ldpc.c ../modem/mfsk_ldpc_8_16.c
+mfsk_puncture_sweep: mfsk_puncture_sweep.c ../modem/mfsk/mfsk_ldpc.c ../modem/mfsk/mfsk_ldpc_8_16.c
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS) -lm
 
 # What the pattern ACK's second repetition buys: detection vs SNR and
 # false-accept on noise, for one repetition and two, at every threshold.
-ackpat_sweep: ackpat_sweep.c ../modem/modem_mfsk.c ../modem/mfsk.c \
-              ../modem/mfsk_sync.c ../modem/mfsk_ofdm.c ../modem/mfsk_ldpc.c ../modem/mfsk_ldpc_8_16.c
+ackpat_sweep: ackpat_sweep.c ../modem/modem_mfsk.c ../modem/mfsk/mfsk.c \
+              ../modem/mfsk/mfsk_sync.c ../modem/mfsk/mfsk_ofdm.c ../modem/mfsk/mfsk_ldpc.c ../modem/mfsk/mfsk_ldpc_8_16.c
 	$(CC) $(CFLAGS) -o $@ $^ ../modem/freedv/libfreedvdata.a $(LDFLAGS) -lm
 
 hail_suffix_sweep: hail_suffix_sweep.c chanutil.c ../common/watterson.c ../common/mercury_prng.c \
-                   ../modem/mfsk.c ../modem/mfsk_sync.c ../modem/mfsk_ofdm.c
+                   ../modem/mfsk/mfsk.c ../modem/mfsk/mfsk_sync.c ../modem/mfsk/mfsk_ofdm.c
 	$(CC) $(CFLAGS) -o $@ $^ ../modem/freedv/libfreedvdata.a $(LDFLAGS) -lm
 
 # Drives the real freedv OFDM modems (not a model) to separate acquisition
@@ -91,6 +91,7 @@ rxcost_bench: rxcost_bench.c
 
 .PHONY: all clean run
 
+# MFSK waveform sweeps (pure DSP; no modem vtable, no ARQ)
 # Broadcast a file to Mercury, or receive one, over the broadcast TCP/KISS port.
 BCAST_RQ_SRC = $(wildcard ../datalink_broadcast/raptorq/lib/*.c) \
                $(wildcard ../datalink_broadcast/raptorq/deps/obl/*.c)

@@ -27,7 +27,7 @@ UNITY_INC = -Iunity -Ifff
 UNITY_CFLAGS = -DUNITY_SUPPORT_64
 
 # Project includes
-PROJECT_INC = -I../common -I../modem -I../datalink_arq -I../datalink_broadcast \
+PROJECT_INC = -I../common -I../modem -I../modem/mfsk -I../datalink_arq -I../datalink_broadcast \
               -I../data_interfaces -I../gui_interface -I../radio_io -I../audioio/ffaudio
 
 CFLAGS = $(COMMON_CFLAGS) $(UNITY_CFLAGS) $(UNITY_INC) $(PROJECT_INC)
@@ -49,7 +49,7 @@ TEST_BINS = test_ring_buffer test_arq_protocol test_arq_timing test_arq_fsm \
             test_freedv_harq test_pcm24 test_sock_wire test_virtual_clock \
             test_mercury_prng test_bcast_file \
             test_ofdm_acq test_ui_status test_ui_devices test_tx_pacing \
-            test_radio_port test_radio_io_frequency
+            test_radio_port test_radio_io_frequency test_mfsk
 
 .PHONY: all test clean
 
@@ -66,6 +66,9 @@ test: $(TEST_BINS)
 	@echo "\n=== All Tests Passed ===\n"
 
 # Common module tests
+test_mfsk: modem/test_mfsk.c $(UNITY_SRC) ../modem/mfsk/mfsk.c ../modem/mfsk/mfsk_ofdm.c ../modem/mfsk/mfsk_sync.c ../modem/mfsk/mfsk_ldpc.c ../modem/mfsk/mfsk_ldpc_1_16.c ../modem/mfsk/mfsk_ldpc_2_16.c ../modem/mfsk/mfsk_ldpc_3_16.c ../modem/mfsk/mfsk_ldpc_5_16.c ../modem/mfsk/mfsk_ldpc_8_16.c
+	$(CC) $(CFLAGS) -I../modem -I../modem/mfsk -o $@ $^ $(LDFLAGS) -lm
+
 test_ring_buffer: common/test_ring_buffer.c $(UNITY_SRC) ../common/ring_buffer_posix.c ../common/os_interop.c ../common/shm_posix.c
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
@@ -151,7 +154,7 @@ test_arq_tnc: datalink_arq/test_arq_tnc.c $(UNITY_SRC) ../datalink_arq/arq_tnc.c
 
 # Channel-busy classifier test (pure state machine, virtual clock)
 test_channel_busy: modem/test_channel_busy.c $(UNITY_SRC) ../modem/channel_busy.c
-	$(CC) $(CFLAGS) -I../modem -o $@ $^ $(LDFLAGS) -lm
+	$(CC) $(CFLAGS) -I../modem -I../modem/mfsk -o $@ $^ $(LDFLAGS) -lm
 
 # HARQ combined-decode acceptance gate (drives the real DATAC15 LDPC decoder)
 test_freedv_harq: modem/test_freedv_harq.c $(UNITY_SRC) \
@@ -181,9 +184,9 @@ test_mercury_prng: common/test_mercury_prng.c $(UNITY_SRC) ../common/mercury_prn
 # back byte-for-byte.
 RAPTORQ_SRC = $(wildcard ../datalink_broadcast/raptorq/lib/*.c) \
               $(wildcard ../datalink_broadcast/raptorq/deps/obl/*.c)
-MFSK_SRC = ../modem/mfsk.c ../modem/mfsk_ofdm.c ../modem/mfsk_sync.c ../modem/mfsk_ldpc.c \
-           ../modem/mfsk_ldpc_1_16.c ../modem/mfsk_ldpc_2_16.c ../modem/mfsk_ldpc_3_16.c \
-           ../modem/mfsk_ldpc_5_16.c ../modem/mfsk_ldpc_8_16.c
+MFSK_SRC = ../modem/mfsk/mfsk.c ../modem/mfsk/mfsk_ofdm.c ../modem/mfsk/mfsk_sync.c ../modem/mfsk/mfsk_ldpc.c \
+           ../modem/mfsk/mfsk_ldpc_1_16.c ../modem/mfsk/mfsk_ldpc_2_16.c ../modem/mfsk/mfsk_ldpc_3_16.c \
+           ../modem/mfsk/mfsk_ldpc_5_16.c ../modem/mfsk/mfsk_ldpc_8_16.c
 
 # Links the real modems too: one test pins the wire frame-size table against
 # what each modem actually transmits, which is the only way a wrong entry gets
@@ -217,7 +220,7 @@ test_ofdm_acq: modem/test_ofdm_acq.c $(UNITY_SRC) $(FREEDV_LIB)
 # header, so without it make will not relink and the mutation check silently
 # re-runs the previous binary.
 test_tx_pacing: modem/test_tx_pacing.c $(UNITY_SRC) ../modem/tx_pacing.h
-	$(CC) $(CFLAGS) -I../modem -o $@ modem/test_tx_pacing.c $(UNITY_SRC) $(LDFLAGS)
+	$(CC) $(CFLAGS) -I../modem -I../modem/mfsk -o $@ modem/test_tx_pacing.c $(UNITY_SRC) $(LDFLAGS)
 
 # radio_device vs the rig's port type (pure header; no hamlib needed).
 # radio_port.h is a PREREQUISITE -- the logic under test lives in the header.
@@ -236,7 +239,7 @@ test_radio_io_frequency: radio_io/test_radio_io_frequency.c $(UNITY_SRC) \
 # re-runs the previous binary (which is exactly how a mutation check passes
 # when it should fail).
 test_ui_status: gui_interface/test_ui_status.c $(UNITY_SRC) ../gui_interface/ui_status.c ../gui_interface/ui_status.h
-	$(CC) $(CFLAGS) -I../gui_interface -I../datalink_arq -I../modem -I../common -o $@ \
+	$(CC) $(CFLAGS) -I../gui_interface -I../datalink_arq -I../modem -I../modem/mfsk -I../common -o $@ \
 	    gui_interface/test_ui_status.c $(UNITY_SRC) ../gui_interface/ui_status.c $(LDFLAGS)
 
 # UI device labelling (issue #189: two identical-looking USB codecs).
@@ -246,11 +249,11 @@ test_ui_status: gui_interface/test_ui_status.c $(UNITY_SRC) ../gui_interface/ui_
 test_ui_devices: gui_interface/test_ui_devices.c $(UNITY_SRC) \
                  ../gui_interface/ui_devices.c ../gui_interface/ui_communication.h \
                  ../gui_interface/ui_status.h
-	$(CC) $(CFLAGS) -I../gui_interface -I../datalink_arq -I../modem -I../common -o $@ \
+	$(CC) $(CFLAGS) -I../gui_interface -I../datalink_arq -I../modem -I../modem/mfsk -I../common -o $@ \
 	    gui_interface/test_ui_devices.c $(UNITY_SRC) ../gui_interface/ui_devices.c $(LDFLAGS)
 
 # MFSK codec test (mod/demod round-trip, modulation-order gain, OFDM framing)
-test_mfsk: modem/test_mfsk.c $(UNITY_SRC) ../modem/mfsk.c ../modem/mfsk_ofdm.c ../modem/mfsk_sync.c ../modem/mfsk_ldpc.c ../modem/mfsk_ldpc_1_16.c ../modem/mfsk_ldpc_2_16.c ../modem/mfsk_ldpc_3_16.c ../modem/mfsk_ldpc_5_16.c ../modem/mfsk_ldpc_8_16.c
+test_mfsk: modem/test_mfsk.c $(UNITY_SRC) ../modem/mfsk/mfsk.c ../modem/mfsk/mfsk_ofdm.c ../modem/mfsk/mfsk_sync.c ../modem/mfsk/mfsk_ldpc.c ../modem/mfsk/mfsk_ldpc_1_16.c ../modem/mfsk/mfsk_ldpc_2_16.c ../modem/mfsk/mfsk_ldpc_3_16.c ../modem/mfsk/mfsk_ldpc_5_16.c ../modem/mfsk/mfsk_ldpc_8_16.c
 	$(CC) $(CFLAGS) -I../modem -o $@ $^ $(LDFLAGS) -lm
 
 # MFSK modem backend (burst TX/RX through the vtable); links libfreedvdata for CRC16
