@@ -46,6 +46,14 @@ on:
         description: 'Build Windows x64 (cross-compile)'
         type: boolean
         default: true
+      build_fyne_ui_linux:
+        description: 'Build Fyne UI (native Linux)'
+        type: boolean
+        default: true
+      build_fyne_ui_windows:
+        description: 'Build Fyne UI Windows x64 (cross-compile)'
+        type: boolean
+        default: true
 
 jobs:
   build-linux-amd64:
@@ -326,3 +334,119 @@ jobs:
           lipo -archs mercury | grep -q arm64 || {
             echo "::error::binary is not arm64"; exit 1; }
           echo "OK: macOS arm64 build"
+
+  # Native Fyne UI (`mercury-ui`): the CGo single-binary GUI that embeds the
+  # engine via libmercury_core.a.  Fyne's GLFW frontend is vendored and builds
+  # BOTH X11 and Wayland backends by default, so the container needs their dev
+  # headers (xorg-dev, libwayland-dev, libxkbcommon-dev) alongside the C core
+  # deps (libpulse/libasound/libhamlib).  libhidapi-dev is what turns this from
+  # "the UI compiles" into "the UI links the way it ships": with it, the
+  # Makefile sets HAVE_HIDAPI and cm108_ptt.o references hid_*, so the link
+  # really exercises the CGO_LDFLAGS="$(HIDAPI_LDFLAGS)" path.  Plain checkout
+  # (no ssh-key) so PRs from forks -- exactly the contributor whose GUI break we
+  # most want caught -- are covered; secrets are not available to those runs.
+  build-fyne-ui-linux:
+    name: Build Fyne UI (Linux amd64, Debian 13)
+    runs-on: ubuntu-latest
+    container: debian:trixie
+    if: >-
+      github.event_name == 'pull_request' ||
+      github.event_name == 'push' ||
+      github.event.inputs.build_fyne_ui_linux == 'true'
+    timeout-minutes: 30
+    # trixie ships golang-go 1.24, but gui_interface/fyne-ui/go.mod requires
+    # go 1.26.8.  Pin the toolchain so the newer-Go fetch is a deliberate,
+    # visible step rather than a silent GOTOOLCHAIN=auto download mid-build.
+    env:
+      GOTOOLCHAIN: go1.26.8
+
+    steps:
+      - name: Install build dependencies
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            ca-certificates \
+            build-essential \
+            file \
+            git \
+            golang-go \
+            pkg-config \
+            libpulse-dev \
+            libasound2-dev \
+            libhamlib-dev \
+            libhidapi-dev \
+            libgl1-mesa-dev \
+            libegl1-mesa-dev \
+            xorg-dev \
+            libwayland-dev \
+            libxkbcommon-dev
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.inputs.branch || github.event.pull_request.head.sha || github.sha }}
+
+      - name: Git Safe Directory
+        run: git config --global --add safe.directory /__w/mercury/mercury
+
+      - name: Build Mercury Fyne UI (Linux amd64)
+        run: make fyne-ui
+
+      - name: Verify the binary
+        run: |
+          set -eu
+          [ -f mercury-ui ] || { echo "::error::no mercury-ui binary produced"; exit 1; }
+          file mercury-ui
+          echo "OK: native Fyne UI build"
+
+  # Cross-compiled Fyne UI for Windows (`windows-installer/mercury-ui.exe`).
+  # Same CGo single-binary GUI as the native job, but linked against
+  # libmercury_core_w64.a via MinGW.  Dependency set mirrors the release/signpath
+  # Windows jobs: no native pulse/asound/hamlib needed -- the Windows build uses
+  # the vendored hamlib-w64/hidapi-w64 trees.
+  build-fyne-ui-windows:
+    name: Build Fyne UI Windows x64 (cross-compile, Debian 13)
+    runs-on: ubuntu-latest
+    container: debian:trixie
+    if: >-
+      github.event_name == 'pull_request' ||
+      github.event_name == 'push' ||
+      github.event.inputs.build_fyne_ui_windows == 'true'
+    timeout-minutes: 30
+    # Same toolchain pin as the native job: the Fyne module needs go 1.26.8.
+    env:
+      GOTOOLCHAIN: go1.26.8
+
+    steps:
+      - name: Install build dependencies
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            ca-certificates \
+            build-essential \
+            file \
+            git \
+            golang-go \
+            gcc-mingw-w64-x86-64 \
+            mingw-w64-x86-64-dev \
+            mingw-w64-common
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.inputs.branch || github.event.pull_request.head.sha || github.sha }}
+
+      - name: Git Safe Directory
+        run: git config --global --add safe.directory /__w/mercury/mercury
+
+      - name: Build Mercury Fyne UI (Windows x64 cross-compile)
+        run: make fyne-ui-windows
+
+      - name: Verify the binary
+        run: |
+          set -eu
+          [ -f windows-installer/mercury-ui.exe ] || { echo "::error::no mercury-ui.exe produced"; exit 1; }
+          file windows-installer/mercury-ui.exe
+          echo "OK: Windows Fyne UI cross-build"

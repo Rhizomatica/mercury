@@ -107,6 +107,12 @@ int audioio_restart(const char *capture_dev, const char *playback_dev,
 int audioio_deinit(pthread_t *radio_capture, pthread_t *radio_playback);
 int audioio_pick_default_subsystem(void);
 
+/* Fill subsystems[0..max-1] with the AUDIO_SUBSYSTEM_* constants this build
+ * can actually run, in the order a UI should offer them.  Returns the number
+ * written.  A build with only one entry (e.g. CoreAudio on macOS) has no
+ * runtime choice; a UI should hide its subsystem picker then. */
+int audioio_available_subsystems(int *subsystems, int max);
+
 int tx_transfer(double *buffer, size_t len);
 int rx_transfer(double *buffer, size_t len);
 

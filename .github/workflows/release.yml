@@ -22,6 +22,11 @@ on:
         required: false
         default: true
         type: boolean
+      build_macos:
+        description: 'Build+sign+notarize the macOS universal .dmg'
+        required: false
+        default: true
+        type: boolean
 
 jobs:
   # ---- Version bump + commit ----
@@ -311,10 +316,26 @@ jobs:
           path: /tmp/mercury-signing-diag
           if-no-files-found: ignore
 
+  # ---- macOS universal .dmg: build, sign (Developer ID), notarize, staple ----
+  # Defined in its own reusable workflow so the exact same job can be run on
+  # demand without cutting a release (Actions -> "macOS signed DMG" -> Run
+  # workflow).  What gets tested is then literally what ships.
+  macos:
+    name: Build and notarize macOS .dmg
+    needs: bump
+    if: ${{ inputs.build_macos }}
+    uses: ./.github/workflows/macos-dmg.yml
+    with:
+      ref: mercuryv2
+    secrets: inherit
+
   # ---- Create GitHub release ----
   release:
     name: Create GitHub release
-    needs: sign
+    needs: [sign, macos]
+    # The macOS job is opt-in; without this the whole release is skipped when
+    # it is, because a skipped dependency skips its dependents.
+    if: ${{ always() && needs.sign.result == 'success' && needs.macos.result != 'failure' }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -329,6 +350,11 @@ jobs:
         uses: actions/download-artifact@v4
         with: { name: windows-installer-signed }
 
+      - name: Download notarized .dmg
+        if: ${{ inputs.build_macos }}
+        uses: actions/download-artifact@v4
+        with: { name: macos-dmg }
+
       - name: Create release
         env: { GH_TOKEN: "${{ secrets.GITHUB_TOKEN }}" }
         run: |
@@ -340,6 +366,8 @@ jobs:
           # Not `[ -n ... ] && ASSETS=...`: the runner shell has -e, so the
           # false test would end the step and no release would be created.
           if [ -n "$SETUP" ]; then ASSETS="$ASSETS ./${SETUP}"; fi
+          DMG=$(ls Mercury-*-universal.dmg 2>/dev/null | head -1 || true)
+          if [ -n "$DMG" ]; then ASSETS="$ASSETS ./${DMG}"; fi
           gh release create "v${{ inputs.version }}" $ASSETS \
             --repo Rhizomatica/mercury --target mercuryv2 --generate-notes \
             --title "Mercury ${{ inputs.version }}"

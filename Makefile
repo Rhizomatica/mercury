@@ -442,7 +442,14 @@ MACOS_CLI_PARK       = mercury-cli-universal
 # pinned by indygreg/apple-code-sign-action.
 RCODESIGN ?= rcodesign
 
-# $(call macos_sign,<mach-o | bundle dir | dmg>)
+# Hardened runtime entitlements for the .app.  The runtime is mandatory for
+# notarization and denies audio input and USB HID by default, so without these
+# a perfectly notarized Mercury cannot hear the radio or key it over CM108 --
+# a failure that appears on the user's machine, never in the build.  The CLI
+# binary and the .dmg do not take entitlements.
+MACOS_ENTITLEMENTS ?= $(CURDIR)/macos/entitlements.plist
+
+# $(call macos_sign,<mach-o | bundle dir | dmg>[,<identifier>][,<entitlements>])
 # --code-signature-flags runtime is the hardened runtime, which notarization
 # requires; Apple rejects the upload without it.
 define macos_sign
@@ -457,6 +464,7 @@ define macos_sign
 			--p12-password "$(MACOS_SIGN_P12_PASSWORD)" \
 			--code-signature-flags runtime \
 			$(if $(2),--binary-identifier "$(2)",) \
+			$(if $(3),--entitlements-xml-file "$(3)",) \
 			"$(1)" || exit 1; \
 	else \
 		echo "WARNING: MACOS_SIGN_P12 unset — $(1) is unsigned"; \
@@ -578,7 +586,17 @@ fyne-ui-macos-universal-dmg:
 	@# Seal the bundle before it goes into the image: rcodesign recurses into
 	@# nested Mach-Os and writes Contents/_CodeSignature/CodeResources.
 	@# Signing the image afterwards does NOT sign what is inside it.
-	$(call macos_sign,$(FYNE_UI_DIR)/dmg-stage/$(MACOS_APP_NAME).app)
+	$(call macos_sign,$(FYNE_UI_DIR)/dmg-stage/$(MACOS_APP_NAME).app,,$(MACOS_ENTITLEMENTS))
+	@# Staple BEFORE hdiutil: once the .dmg is built it is read-only, and the
+	@# app inside it can never be given a ticket.  Skipped when no notary key
+	@# is configured, so an ordinary developer build is unaffected.
+	@if [ -n "$(MACOS_NOTARY_KEY)" ] && [ "$(MACOS_STAPLE_APP)" != "0" ]; then \
+		RCODESIGN="$(RCODESIGN)" $(CURDIR)/macos/notarize.sh \
+			"$(FYNE_UI_DIR)/dmg-stage/$(MACOS_APP_NAME).app" "$(MACOS_NOTARY_KEY)" \
+			$(MACOS_NOTARY_WAIT) $(MACOS_NOTARY_RETRIES) || exit 1; \
+	else \
+		echo "NOTE: .app not stapled (no MACOS_NOTARY_KEY); Gatekeeper will check online"; \
+	fi
 	hdiutil create -volname "$(MACOS_APP_NAME) $(MERCURY_VERSION)" \
 		-srcfolder $(FYNE_UI_DIR)/dmg-stage \
 		-ov -format UDZO "$(abspath $(MACOS_DMG_UNIVERSAL))"
@@ -598,6 +616,42 @@ fyne-ui-macos-universal-dmg:
 #
 # then:  make macos-notarize-dmg MACOS_NOTARY_KEY=~/.mercury-notary.json
 MACOS_NOTARY_KEY ?=
+# Apple's notary service is not quick, and rcodesign gives up after 600s by
+# default -- which fails the build even though the submission is still
+# progressing perfectly well.  Measured on a 52 MB .dmg: still "InProgress"
+# past 600s, so the default is not a safe margin, it is a coin toss.  Waiting
+# longer costs nothing when the service is fast.
+MACOS_NOTARY_WAIT ?= 3600
+
+# Submitting and waiting are separate operations on purpose.  rcodesign's
+# combined `notary-submit --staple` aborts the whole thing if a single poll
+# request fails, and Apple's service is slow enough (observed: still processing
+# at 55 minutes on a 52 MB .dmg, and longer for a team's first ever submission)
+# that a ~1 hour poll is long enough for one transient HTTP error to be likely.
+# Measured failure:
+#
+#   waiting up to 3600s for package upload 80db453b... to finish processing
+#   Error: error sending request for url (.../notary/v2/submissions/80db453b...)
+#
+# That threw away a 30 minute universal build for a submission Apple was still
+# processing perfectly happily.  So: submit once, then retry only the waiting,
+# and staple as its own step.
+#
+# A rejection is NOT retried -- "Invalid" is Apple's verdict, not a hiccup.
+#
+# Pass MACOS_NOTARY_SUBMISSION=<id> to skip submitting and resume waiting on an
+# existing submission, so a timed-out or interrupted run can be finished
+# without rebuilding.
+MACOS_NOTARY_RETRIES ?= 5
+MACOS_NOTARY_SUBMISSION ?=
+
+# Notarize + staple the .app as well as the .dmg.  Stapling only the .dmg
+# leaves the app the user drags out with no ticket, so Gatekeeper has to ask
+# Apple online at first launch -- exactly the wrong failure mode for stations
+# deployed on poor or no connectivity.  Costs a second Apple round trip; set
+# to 0 to skip it.
+MACOS_STAPLE_APP ?= 1
+
 macos-notarize-dmg:
 	@[ -n "$(MACOS_NOTARY_KEY)" ] || { \
 		echo "error: set MACOS_NOTARY_KEY to an encoded App Store Connect key"; \
@@ -605,10 +659,9 @@ macos-notarize-dmg:
 		exit 1; }
 	@[ -f "$(MACOS_DMG_UNIVERSAL)" ] || { \
 		echo "error: $(MACOS_DMG_UNIVERSAL) not built yet"; exit 1; }
-	$(RCODESIGN) notary-submit \
-		--api-key-file "$(MACOS_NOTARY_KEY)" --staple \
-		"$(MACOS_DMG_UNIVERSAL)"
-	@echo "  -> $(abspath $(MACOS_DMG_UNIVERSAL))  (notarized + stapled)"
+	RCODESIGN="$(RCODESIGN)" $(CURDIR)/macos/notarize.sh \
+		"$(abspath $(MACOS_DMG_UNIVERSAL))" "$(MACOS_NOTARY_KEY)" \
+		$(MACOS_NOTARY_WAIT) $(MACOS_NOTARY_RETRIES) $(MACOS_NOTARY_SUBMISSION)
 
 # ---- Authenticode signing (Windows binaries) ----
 # Two modes:
