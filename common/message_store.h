@@ -71,6 +71,19 @@ void msg_store_append(const char *plane, const char *dir, const char *peer,
                       const char *text);
 
 /**
+ * @brief Reset the partial-line buffer for one plane/direction.
+ *
+ * msg_store_feed() assembles newline-delimited lines across calls, so a message
+ * that ended without a trailing newline is held until the next feed.  Call this
+ * on session/client boundaries so that residue is discarded instead of being
+ * glued onto the first message of the next session.
+ *
+ * @param plane MSG_PLANE_ARQ or MSG_PLANE_BCAST.
+ * @param dir   MSG_DIR_RX or MSG_DIR_TX.
+ */
+void msg_store_reset(const char *plane, const char *dir);
+
+/**
  * @brief Number of messages currently in the in-memory ring.
  */
 size_t msg_store_count(void);

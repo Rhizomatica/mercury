@@ -245,6 +245,10 @@ static void cb_notify_connected(const char *remote_call, const char *local_call)
      * of the previous session have time to drain to the TCP socket before
      * the buffer is cleared (clearing on disconnect races with UUCP reads). */
     clear_buffer(data_rx_buffer_arq);
+    /* A new session starts with a clean slate: drop any partial chat line left
+     * over from the previous session's feed buffer. */
+    msg_store_reset(MSG_PLANE_ARQ, MSG_DIR_RX);
+    msg_store_reset(MSG_PLANE_ARQ, MSG_DIR_TX);
     arq_tnc_send_connected();   /* dispatches to tnc_send_connected, which takes g_conn_lock via arq_conn_get_calls; must be outside our lock */
     HLOGI(LOG_COMP, "Connected to %s", remote_call);
 }
@@ -283,6 +287,10 @@ static void cb_notify_disconnected(bool to_no_client)
     pthread_mutex_lock(&g_app_tx_mtx);
     clear_buffer(g_app_tx_buf);
     pthread_mutex_unlock(&g_app_tx_mtx);
+    /* Discard any partial chat line so the next session's first message is not
+     * glued onto trailing bytes from this one. */
+    msg_store_reset(MSG_PLANE_ARQ, MSG_DIR_RX);
+    msg_store_reset(MSG_PLANE_ARQ, MSG_DIR_TX);
     arq_tnc_send_disconnected();
     HLOGI(LOG_COMP, "Disconnected");
     ARQ_TRACE_DUMP("disconnected");
