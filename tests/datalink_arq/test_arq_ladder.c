@@ -233,16 +233,22 @@ void test_proven_rung_survives_a_single_miss(void)
     TEST_ASSERT_EQUAL_INT(proven - 1, sess.speed_level);
 }
 
-void test_probe_frame_fits_the_rung_below(void)
+/* A frame is no longer sized so that it fits the rung below -- it is re-cut to
+ * whatever rung is actually transmitting.  So the property to hold is stronger
+ * and simpler than the old one: whatever the ladder is on, what goes on the air
+ * fits that mode's slot, all the way down to the floor.
+ *
+ * The old test asserted the previous design (cap a fresh read at the widest
+ * lower slot).  That cap cost ~7% on a clean link and was not sufficient
+ * anyway: from DATAC1 the widest lower slot is DATAC3's 118 bytes, which the
+ * 90-byte MFSK floor still cannot carry, so a frame could strand when the band
+ * collapsed.  See docs/ARQ-FRAME-SIZING.md. */
+void test_frame_is_recut_to_the_transmitting_rung(void)
 {
     fake_tx_read_fake.custom_fake = tx_read_full;
     goto_connected();
     goto_wait_ack();
 
-    /* Climb to DATAC1.  Each clean delivery proves the rung that carried it,
-     * so the frame sent while probing DATAC1's rung is sized for the proven
-     * rung below it.  Found by search, not hardcoded: the ladder's contents
-     * are a tuning decision and this property holds whatever they are. */
     const int c1 = ladder_rung_of(FREEDV_MODE_DATAC1);
     for (int expect = ARQ_LADDER_START_LEVEL + 1; expect <= c1; expect++)
     {
@@ -250,13 +256,32 @@ void test_probe_frame_fits_the_rung_below(void)
         TEST_ASSERT_EQUAL_INT(expect, sess.speed_level);
     }
     TEST_ASSERT_EQUAL_INT(FREEDV_MODE_DATAC1, sess.payload_mode);
-    TEST_ASSERT_EQUAL_INT(FREEDV_MODE_DATAC1, last_tx_mode());
 
-    const arq_mode_timing_t *below = arq_protocol_mode_timing(arq_mode_ladder[c1 - 1]);
-    TEST_ASSERT_NOT_NULL(below);
-    TEST_ASSERT_TRUE_MESSAGE(
-        sess.tx_frame_len <= (int)below->payload_bytes - ARQ_FRAME_HDR_SIZE,
-        "probe frame is too big for the rung the ladder retreats to");
+    /* What is on the air fits the mode on the air, at every rung the ladder
+     * walks down -- including the floor, which is the one the old design could
+     * not reach with a DATAC1-sized frame. */
+    for (int lvl = c1; lvl >= 0; lvl--)
+    {
+        const arq_mode_timing_t *tm = arq_protocol_mode_timing(last_tx_mode());
+        TEST_ASSERT_NOT_NULL(tm);
+        TEST_ASSERT_TRUE_MESSAGE(
+            sess.tx_frame_len <= (int)tm->payload_bytes - ARQ_FRAME_HDR_SIZE,
+            "transmitted frame does not fit the mode it is being sent on");
+        if (lvl > 0)
+        {
+            /* ACK timeout: the ladder steps down and the SAME frame is
+             * retransmitted -- re-cut to the new rung rather than pinned. */
+            arq_event_t ev = make_event(ARQ_EV_TIMER_ACK);
+            arq_fsm_dispatch(&sess, &ev);
+            ev = make_event(ARQ_EV_TX_COMPLETE);
+            arq_fsm_dispatch(&sess, &ev);
+        }
+    }
+    /* The ladder actually descended (how far depends on the retry budget, which
+     * is a tuning decision -- asserting a particular rung would make this test
+     * about the budget rather than about the re-cut). */
+    TEST_ASSERT_TRUE_MESSAGE(sess.speed_level < c1,
+                             "ladder did not descend on repeated ACK timeouts");
 }
 
 /* ...and because it fits, a failed probe actually retreats ON THE AIR.
@@ -511,7 +536,7 @@ int main(void)
     UNITY_BEGIN();
     RUN_TEST(test_longest_ladder_burst_is_the_slowest_rung);
     RUN_TEST(test_accept_rx_window_outlasts_longest_ladder_burst);
-    RUN_TEST(test_probe_frame_fits_the_rung_below);
+    RUN_TEST(test_frame_is_recut_to_the_transmitting_rung);
     RUN_TEST(test_failed_probe_retreats_on_the_air);
     RUN_TEST(test_ladder_starts_at_the_configured_rung);
     RUN_TEST(test_ladder_table_ordered_and_sized);

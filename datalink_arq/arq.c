@@ -815,6 +815,8 @@ void arq_handle_incoming_frame(uint8_t *data, size_t frame_size, float rx_snr)
     ev.session_id    = hdr.session_id;
     ev.seq           = hdr.tx_seq;
     ev.ack_seq       = hdr.rx_ack_seq;
+    /* DATA frames overlay a 16-bit stream offset on these two bytes. */
+    ev.stream_off    = arq_hdr_stream_off(hdr.tx_seq, hdr.rx_ack_seq);
     ev.rx_flags      = hdr.flags;
     ev.snr_encoded   = (int8_t)hdr.snr_raw;
     ev.ack_delay_raw = hdr.ack_delay_raw;

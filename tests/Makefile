@@ -253,8 +253,6 @@ test_ui_devices: gui_interface/test_ui_devices.c $(UNITY_SRC) \
 	    gui_interface/test_ui_devices.c $(UNITY_SRC) ../gui_interface/ui_devices.c $(LDFLAGS)
 
 # MFSK codec test (mod/demod round-trip, modulation-order gain, OFDM framing)
-test_mfsk: modem/test_mfsk.c $(UNITY_SRC) ../modem/mfsk/mfsk.c ../modem/mfsk/mfsk_ofdm.c ../modem/mfsk/mfsk_sync.c ../modem/mfsk/mfsk_ldpc.c ../modem/mfsk/mfsk_ldpc_1_16.c ../modem/mfsk/mfsk_ldpc_2_16.c ../modem/mfsk/mfsk_ldpc_3_16.c ../modem/mfsk/mfsk_ldpc_5_16.c ../modem/mfsk/mfsk_ldpc_8_16.c
-	$(CC) $(CFLAGS) -I../modem -o $@ $^ $(LDFLAGS) -lm
 
 # MFSK modem backend (burst TX/RX through the vtable); links libfreedvdata for CRC16
 

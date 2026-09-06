@@ -105,6 +105,7 @@ typedef struct
     uint8_t  session_id;
     uint8_t  seq;
     uint8_t  ack_seq;
+    uint16_t stream_off;      /* DATA: offset of the first payload byte        */
     uint8_t  rx_flags;        /* ARQ_FLAG_HAS_DATA (+ LEN_* on DATA frames);
                                * on a pattern ACK, HAS_DATA = ACK+TURN break   */
     int8_t   snr_encoded;     /* as received from frame header                */
@@ -159,6 +160,8 @@ typedef struct
     /* --- Sequence numbers --- */
     uint8_t  tx_seq;                   /* next seq we will send                */
     uint8_t  rx_expected;              /* next seq we expect from peer         */
+    uint16_t tx_stream_off;            /* offset of the retained frame's byte 0 */
+    uint16_t rx_stream_hwm;            /* bytes delivered: next offset expected */
 
     /* --- Mode / speed --- */
     int      payload_mode;             /* MY data TX mode (ISS) = mode_ladder
@@ -275,6 +278,9 @@ typedef struct
     uint8_t  tx_frame_seq;             /* seq assigned to the retained frame   */
     bool     tx_frame_present;         /* a frame is outstanding (awaiting ACK)*/
     bool     tx_frame_retx;            /* it was retransmitted at least once   */
+    int      tx_frame_tail;            /* bytes held after tx_frame_len, kept
+                                        * back when a frame was re-cut to fit a
+                                        * rung; they become the next frame      */
 
     uint64_t last_rx_ms;              /* last successful frame decode time     */
     uint64_t irs_data_wait_ms;        /* when this IRS first had data queued

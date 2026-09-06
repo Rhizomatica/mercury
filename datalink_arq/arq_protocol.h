@@ -33,8 +33,29 @@
  *  Byte 1: subtype      — arq_subtype_t
  *  Byte 2: flags        — bit7=TURN_REQ, bit6=HAS_DATA, bits[5:0]=spare
  *  Byte 3: session_id   — random byte chosen by caller at connect time
- *  Byte 4: tx_seq       — sender's frame sequence number
- *  Byte 5: rx_ack_seq   — last sequence number received from peer
+ *  Bytes 4-5: stream_off — DATA frames only: the 16-bit offset, modulo 65536,
+ *                         of this frame's first payload byte within the
+ *                         session's forward byte stream (big-endian).
+ *
+ *      Identity is the OFFSET, not a frame number, and that is what makes a
+ *      frame re-framable.  With a sequence number the seq<->bytes mapping has
+ *      to stay fixed for a duplicate to be idempotent, so the width a frame is
+ *      first read at permanently decides which modes can ever carry it: read
+ *      502 bytes while probing DATAC1 and no lower rung can hold them, so the
+ *      ladder steps down while the transmitter cannot, and the session strands
+ *      with both ends healthy (docs/ARQ-FRAME-SIZING.md).
+ *
+ *      Keyed by offset the receiver delivers bytes at their position and drops
+ *      anything below its high-water mark, whatever frame carried it, so the
+ *      sender may re-cut a stranded frame to fit whatever rung still works.
+ *
+ *      16 bits is ample: stop-and-wait keeps exactly one frame outstanding and
+ *      the largest slot is ~1.2 kB, so a duplicate is always within one frame
+ *      of the mark and the modulo comparison is never ambiguous.
+ *
+ *      These two bytes previously held tx_seq and rx_ack_seq.  rx_ack_seq was
+ *      written on every frame and read by nothing (the ACK is a bare pattern
+ *      and carries no header at all), so the offset costs no wire space.
  *  Byte 6: snr_raw      — local RX SNR feedback to peer; 0=unknown
  *                         encoded as uint8_t: (int)round(snr_dB) + 128, clamped 1-255
  *  Byte 7: ack_delay    — IRS→ISS: time from data_rx to ack_tx, in 10ms units; 0=unknown
@@ -54,6 +75,15 @@
 #define ARQ_HDR_SNR_IDX       6
 #define ARQ_HDR_DELAY_IDX     7
 #define ARQ_FRAME_HDR_SIZE    8   /* bytes 0-7 inclusive */
+
+/* DATA frames carry a 16-bit stream offset in bytes 4-5 (big-endian).  Helpers
+ * rather than open-coded shifts so the two ends cannot disagree about order. */
+static inline uint16_t arq_hdr_stream_off(uint8_t hi, uint8_t lo)
+{
+    return (uint16_t)(((uint16_t)hi << 8) | (uint16_t)lo);
+}
+static inline uint8_t arq_hdr_stream_off_hi(uint16_t off) { return (uint8_t)(off >> 8); }
+static inline uint8_t arq_hdr_stream_off_lo(uint16_t off) { return (uint8_t)(off & 0xFF); }
 
 /* CONNECT frames (CALL/ACCEPT) compact layout — 14 bytes, DATAC16 only.
  * Uses PACKET_TYPE_ARQ_CALL in the framer byte.
@@ -150,8 +180,8 @@ typedef struct
     uint8_t  subtype;       /* arq_subtype_t                                         */
     uint8_t  flags;         /* ARQ_FLAG_* bitmask                                    */
     uint8_t  session_id;
-    uint8_t  tx_seq;
-    uint8_t  rx_ack_seq;
+    uint8_t  tx_seq;        /* DATA: high byte of stream_off (see above)         */
+    uint8_t  rx_ack_seq;    /* DATA: low  byte of stream_off                     */
     uint8_t  snr_raw;       /* 0=unknown; decode via arq_protocol_decode_snr         */
     uint8_t  ack_delay_raw; /* 0=unknown; 10ms units; decode via _decode_ack_delay   */
 } arq_frame_hdr_t;

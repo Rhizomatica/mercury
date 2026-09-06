@@ -65,8 +65,11 @@ static arq_event_t make_event(arq_event_id_t id)
 
 /* ---- setUp / tearDown ---- */
 
+static void fixture_offsets_reset(void);
+
 void setUp(void)
 {
+    fixture_offsets_reset();
     /* Reset all FFF fakes */
     RESET_FAKE(fake_send_tx_frame);
     RESET_FAKE(fake_notify_connected);
@@ -958,6 +961,29 @@ static void goto_connected_irs(void)
     TEST_ASSERT_EQUAL_INT(ARQ_CONN_CONNECTED, sess.conn_state);
     TEST_ASSERT_EQUAL_INT(ARQ_DFLOW_IDLE_IRS, sess.dflow_state);
 }
+/* Offsets a real sender would use: first sighting of a seq consumes the next
+ * `n` bytes of the stream; a repeat of that seq replays the same offset. */
+static uint16_t fixture_seq_off[256];
+static bool     fixture_seq_seen[256];
+static uint16_t fixture_stream_next;
+
+static void fixture_offsets_reset(void)
+{
+    memset(fixture_seq_seen, 0, sizeof(fixture_seq_seen));
+    fixture_stream_next = 0;
+}
+
+static uint16_t fixture_offset_for_seq(uint8_t seq, size_t n)
+{
+    if (!fixture_seq_seen[seq])
+    {
+        fixture_seq_seen[seq] = true;
+        fixture_seq_off[seq]  = fixture_stream_next;
+        fixture_stream_next   = (uint16_t)(fixture_stream_next + n);
+    }
+    return fixture_seq_off[seq];
+}
+
 /* In-order DATA frame carrying `n` payload bytes.  HAS_DATA keeps us the IRS
  * across frames (the sender has more to send).  mode is set to what the peer
  * actually sent, but the mirror deliberately ignores it (anticipation, not
@@ -967,6 +993,12 @@ static arq_event_t make_data_event(uint8_t seq, int mode, size_t n)
     arq_event_t ev = make_event(ARQ_EV_RX_DATA);
     ev.session_id  = 0x42;
     ev.seq         = seq;
+    /* Frames are identified by stream offset now, so the fixture has to model a
+     * real sender: offsets accumulate by payload length (these tests feed 90,
+     * 54 and 126-byte frames, so seq*n would be wrong), and a RETRANSMISSION of
+     * the same seq must carry the same offset -- which is what the duplicate
+     * tests depend on. */
+    ev.stream_off  = fixture_offset_for_seq(seq, n);
     ev.mode        = mode;
     ev.rx_flags    = ARQ_FLAG_HAS_DATA;
     ev.data_bytes  = n;
