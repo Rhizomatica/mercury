@@ -131,6 +131,44 @@ size_t msg_store_get(size_t index, char *buf, size_t buf_cap)
     return n;
 }
 
+/* HISTORY uses msg_store_snapshot(); build a newline-terminated JSONL blob from
+ * the mock lines so the command's framing can be asserted. */
+char *msg_store_snapshot(size_t *count_out, size_t *len_out)
+{
+    if (mock_msg_store_count == 0)
+    {
+        if (count_out) *count_out = 0;
+        if (len_out)   *len_out   = 0;
+        return NULL;
+    }
+
+    size_t total = 0;
+    for (size_t i = 0; i < mock_msg_store_count; i++)
+        total += strlen(mock_msg_lines[i]) + 1;
+
+    char *buf = malloc(total + 1);
+    if (!buf)
+    {
+        if (count_out) *count_out = 0;
+        if (len_out)   *len_out   = 0;
+        return NULL;
+    }
+
+    size_t off = 0;
+    for (size_t i = 0; i < mock_msg_store_count; i++)
+    {
+        size_t len = strlen(mock_msg_lines[i]);
+        memcpy(buf + off, mock_msg_lines[i], len);
+        buf[off + len] = '\n';
+        off += len + 1;
+    }
+    buf[off] = '\0';
+
+    if (count_out) *count_out = mock_msg_store_count;
+    if (len_out)   *len_out   = total;
+    return buf;
+}
+
 /* ---- net stubs ---- */
 
 int cli_ctl_sockfd = -1;

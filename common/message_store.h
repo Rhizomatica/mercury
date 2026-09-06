@@ -101,4 +101,18 @@ size_t msg_store_count(void);
  */
 size_t msg_store_get(size_t index, char *buf, size_t buf_cap);
 
+/**
+ * @brief Snapshot the whole ring (oldest first) as newline-terminated JSONL.
+ *
+ * One lock acquisition yields a consistent view, so *count_out and *len_out
+ * always agree — unlike iterating msg_store_count()/msg_store_get(), which can
+ * race a concurrent append and see the ring roll between calls.
+ *
+ * @param count_out Receives the number of lines (may be NULL).
+ * @param len_out   Receives the buffer length excluding the NUL (may be NULL).
+ * @return A newly-allocated buffer the caller must free(), or NULL if the ring
+ *         is empty or allocation failed (then the out-params are set to 0).
+ */
+char *msg_store_snapshot(size_t *count_out, size_t *len_out);
+
 #endif /* MESSAGE_STORE_H_ */
