@@ -311,7 +311,9 @@ func (mc *ModemClient) GetHistory() ([]string, error) {
 		mc.mu.Unlock()
 		return nil, fmt.Errorf("history request already in progress")
 	}
-	mc.historyRespCh = make(chan string, 512)
+	// This channel only ever receives the "HISTORY <n>" header: the bulk
+	// channel is sized from n (see dispatchControlLine) when the header lands.
+	mc.historyRespCh = make(chan string, 1)
 	respCh := mc.historyRespCh
 	quit := mc.quit
 	mc.mu.Unlock()
@@ -326,24 +328,57 @@ func (mc *ModemClient) GetHistory() ([]string, error) {
 		return nil, fmt.Errorf("send HISTORY: %w", err)
 	}
 
-	var lines []string
 	timeout := time.After(10 * time.Second)
-	for {
-		select {
-		case line := <-respCh:
-			if line == "HISTORYEND" {
-				return lines, nil
-			}
-			if strings.HasPrefix(line, "HISTORYMSG ") {
-				lines = append(lines, strings.TrimPrefix(line, "HISTORYMSG "))
-			}
-			// "HISTORY <n>" header is ignored.
-		case <-quit:
-			return nil, fmt.Errorf("disconnected")
-		case <-timeout:
-			return nil, fmt.Errorf("history request timed out")
-		}
+
+	// The engine's first line is the "HISTORY <n>" header; consume it (the
+	// count is already used to size the bulk channel).
+	if _, err := recvHistoryLine(respCh, quit, timeout); err != nil {
+		return nil, err
 	}
+
+	// Re-fetch the collector: dispatchControlLine swapped it to a channel sized
+	// for the whole dump while delivering the header above.
+	mc.mu.Lock()
+	bulk := mc.historyRespCh
+	mc.mu.Unlock()
+
+	var lines []string
+	for {
+		line, err := recvHistoryLine(bulk, quit, timeout)
+		if err != nil {
+			return nil, err
+		}
+		if line == "HISTORYEND" {
+			return lines, nil
+		}
+		if strings.HasPrefix(line, "HISTORYMSG ") {
+			lines = append(lines, strings.TrimPrefix(line, "HISTORYMSG "))
+		}
+		// "HISTORY <n>" header (unexpected here) is ignored.
+	}
+}
+
+// recvHistoryLine receives one history line, returning an error on quit or
+// timeout.
+func recvHistoryLine(ch <-chan string, quit <-chan struct{}, timeout <-chan time.Time) (string, error) {
+	select {
+	case line := <-ch:
+		return line, nil
+	case <-quit:
+		return "", fmt.Errorf("disconnected")
+	case <-timeout:
+		return "", fmt.Errorf("history request timed out")
+	}
+}
+
+// historyCountFromLine parses the message count from a "HISTORY <n>" header,
+// returning -1 if it is malformed.
+func historyCountFromLine(line string) int {
+	var n int
+	if _, err := fmt.Sscanf(line, "HISTORY %d", &n); err != nil || n < 0 {
+		return -1
+	}
+	return n
 }
 
 func (mc *ModemClient) IsARQConnected() bool {
@@ -528,6 +563,15 @@ func (mc *ModemClient) dispatchControlLine(line string) {
 	if strings.HasPrefix(upper, "HISTORY") {
 		mc.mu.Lock()
 		ch := mc.historyRespCh
+		if ch != nil && strings.HasPrefix(upper, "HISTORY ") {
+			// "HISTORY <n>" header: grow the collector to fit the whole dump so
+			// the non-blocking send below can never overflow it and drop a line
+			// (notably HISTORYEND).  The header itself is delivered through the
+			// original channel that GetHistory is already waiting on.
+			if n := historyCountFromLine(line); n >= 0 {
+				mc.historyRespCh = make(chan string, n+2)
+			}
+		}
 		mc.mu.Unlock()
 		if ch != nil {
 			select {
