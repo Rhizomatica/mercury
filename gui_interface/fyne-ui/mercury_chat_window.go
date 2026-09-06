@@ -450,6 +450,13 @@ func (cw *chatWindow) loadHistory(mc *client.Client) {
 		return
 	}
 	fyne.Do(func() {
+		// The history fetch can outlive the connection it was issued for; if a
+		// disconnect/reconnect happened while it was in flight, cw.mc no longer
+		// points at mc and appending here would stack stale history on top of
+		// the new session's (freshly loaded) history.
+		if cw.mc != mc {
+			return
+		}
 		for _, m := range msgs {
 			if m.Broadcast {
 				call, text := splitCallText(m.Text)
@@ -458,8 +465,8 @@ func (cw *chatWindow) loadHistory(mc *client.Client) {
 				cw.appendRichChat(cw.arqBox, m.Call, m.Text)
 			}
 		}
+		cw.logMsg("Loaded %d messages from history.", len(msgs))
 	})
-	cw.logMsg("Loaded %d messages from history.", len(msgs))
 }
 
 func (cw *chatWindow) onDisconnect() {
@@ -475,7 +482,20 @@ func (cw *chatWindow) onDisconnect() {
 	cw.setTCP(false)
 	cw.setARQ(false)
 	cw.cqSending = false
+	// Clear the chat panes so a later reconnect re-populates from history
+	// instead of stacking the same messages on top of what is already shown.
+	cw.clearChat()
 	cw.logMsg("Disconnected.")
+}
+
+// clearChat empties the ARQ and broadcast chat panes on the UI thread.
+func (cw *chatWindow) clearChat() {
+	fyne.Do(func() {
+		cw.arqBox.Objects = nil
+		cw.bcastBox.Objects = nil
+		cw.arqBox.Refresh()
+		cw.bcastBox.Refresh()
+	})
 }
 
 func (cw *chatWindow) onARQConnect() {

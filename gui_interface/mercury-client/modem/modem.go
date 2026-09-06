@@ -302,7 +302,8 @@ func (mc *ModemClient) AbortARQ() error {
 // Returns the JSONL message lines in chronological (oldest-first) order.
 func (mc *ModemClient) GetHistory() ([]string, error) {
 	mc.mu.Lock()
-	if mc.ARQControlConn == nil {
+	conn := mc.ARQControlConn
+	if conn == nil {
 		mc.mu.Unlock()
 		return nil, fmt.Errorf("not connected")
 	}
@@ -321,7 +322,7 @@ func (mc *ModemClient) GetHistory() ([]string, error) {
 		mc.mu.Unlock()
 	}()
 
-	if _, err := mc.ARQControlConn.Write([]byte("HISTORY\r")); err != nil {
+	if _, err := conn.Write([]byte("HISTORY\r")); err != nil {
 		return nil, fmt.Errorf("send HISTORY: %w", err)
 	}
 
