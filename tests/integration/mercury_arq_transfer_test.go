@@ -104,7 +104,7 @@ func TestMercuryARQTransfer(t *testing.T) {
 		cmd.Dir = repoRoot
 		cmd.Stdout = stdout
 		cmd.Stderr = stderr
-		if err := cmd.Start(); err != nil {
+		if err := startChild(cmd); err != nil {
 			t.Fatalf("start mercury %s: %v", name, err)
 		}
 		return cmd, waitForProcess(cmd), stdout, stderr
@@ -219,6 +219,16 @@ func TestMercuryARQTransfer(t *testing.T) {
 		repeats = (kb*1024 + 33) / 34
 	}
 	payload := []byte(strings.Repeat("MERCURY-DATAC15-PAYLOAD-0123456789", repeats))
+	// Exact byte count, which MERCURY_TEST_PAYLOAD_KB cannot express.  A
+	// like-for-like A/B across the SNR range needs ONE payload at every point.
+	if v := os.Getenv("MERCURY_TEST_PAYLOAD_B"); v != "" {
+		nb, err := strconv.Atoi(v)
+		if err != nil || nb <= 0 {
+			t.Fatalf("bad MERCURY_TEST_PAYLOAD_B %q", v)
+		}
+		unit := "MERCURY-DATAC15-PAYLOAD-0123456789"
+		payload = []byte(strings.Repeat(unit, nb/len(unit)+1))[:nb]
+	}
 	if _, err := dataA.Write(payload); err != nil {
 		failWithLogs("write payload: %v", err)
 	}
