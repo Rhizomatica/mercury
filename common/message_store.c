@@ -61,6 +61,7 @@ static struct
     int          cap;
     int          start;              /* index of oldest entry */
     int          count;
+    int          file_lines;         /* records currently in the JSONL file */
 
     /* Partial line being assembled per (plane, dir). */
     char         feed[PLANE_COUNT][DIR_COUNT][FEED_BUF_SIZE];
@@ -239,6 +240,45 @@ static void ring_push(const char *line, size_t len)
     g_store.lines[idx][n] = '\0';
 }
 
+/* Rewrite the JSONL file to mirror the in-memory ring (the last `cap` lines),
+ * oldest first.  Caller holds exclusive access: the store lock on the emit
+ * path, or the single-threaded init path. */
+static void msg_store_rewrite_file_locked(void)
+{
+    FILE *tmp;
+
+    if (!g_store.fp || g_store.path[0] == '\0')
+        return;
+
+    fflush(g_store.fp);
+    fclose(g_store.fp);
+    g_store.fp = NULL;
+
+    tmp = fopen(g_store.path, "w");
+    if (!tmp)
+    {
+        HLOGW(MSG_STORE_LOG_TAG, "cannot rewrite %s: %s — file may grow unbounded",
+              g_store.path, strerror(errno));
+    }
+    else
+    {
+        for (int i = 0; i < g_store.count; i++)
+        {
+            int idx = (g_store.start + i) % g_store.cap;
+            size_t len = strlen(g_store.lines[idx]);
+            if (len > 0 && g_store.lines[idx][len - 1] == '\n')
+                len--;
+            fwrite(g_store.lines[idx], 1, len, tmp);
+            fputc('\n', tmp);
+        }
+        fflush(tmp);
+        fclose(tmp);
+    }
+
+    /* Reopen for append regardless, so later writes still persist. */
+    g_store.fp = fopen(g_store.path, "a+");
+}
+
 /* ------------------------------------------------------------------ */
 /*  Core                                                               */
 /* ------------------------------------------------------------------ */
@@ -272,8 +312,10 @@ static void msg_store_emit(const char *plane, const char *dir, const char *peer,
                      (long long)sec, ms, plane, dir, peer_esc, text_esc);
     if (n < 0)
         return;
-    if ((size_t)n >= sizeof(buf))
-        n = (int)sizeof(buf) - 1;
+    /* Reserve room for the trailing "\n\0": n indexes the newline, n+1 the NUL,
+     * so both must stay inside buf. */
+    if ((size_t)n > sizeof(buf) - 2)
+        n = (int)(sizeof(buf) - 2);
 
     buf[n] = '\n';
     buf[n + 1] = '\0';
@@ -286,6 +328,14 @@ static void msg_store_emit(const char *plane, const char *dir, const char *peer,
             fflush(g_store.fp) != 0)
         {
             HLOGW(MSG_STORE_LOG_TAG, "write failed: %s", strerror(errno));
+        }
+        else if (++g_store.file_lines >= 2 * g_store.cap)
+        {
+            /* Bound the file too: rewrite it down to the last `cap` lines once
+             * it has grown to twice the configured cap, so max_messages keeps
+             * the on-disk size bounded as well as the in-memory ring. */
+            msg_store_rewrite_file_locked();
+            g_store.file_lines = g_store.count;
         }
     }
 }
@@ -410,6 +460,58 @@ size_t msg_store_get(size_t index, char *buf, size_t buf_cap)
     return written;
 }
 
+char *msg_store_snapshot(size_t *count_out, size_t *len_out)
+{
+    char *buf = NULL;
+    size_t count = 0;
+    size_t total = 0;
+
+    msg_store_lock();
+    if (g_store.enabled && g_store.count > 0 && g_store.lines)
+    {
+        count = (size_t)g_store.count;
+
+        /* One pass for the exact size, one for the copy — under a single lock,
+         * so the returned count and bytes always describe the same ring. */
+        for (int i = 0; i < g_store.count; i++)
+        {
+            int idx = (g_store.start + i) % g_store.cap;
+            size_t len = strlen(g_store.lines[idx]);
+            if (len > 0 && g_store.lines[idx][len - 1] == '\n')
+                len--;
+            total += len + 1;   /* line + '\n' */
+        }
+
+        buf = malloc(total + 1);
+        if (buf)
+        {
+            size_t off = 0;
+            for (int i = 0; i < g_store.count; i++)
+            {
+                int idx = (g_store.start + i) % g_store.cap;
+                size_t len = strlen(g_store.lines[idx]);
+                if (len > 0 && g_store.lines[idx][len - 1] == '\n')
+                    len--;
+                memcpy(buf + off, g_store.lines[idx], len);
+                buf[off + len] = '\n';
+                off += len + 1;
+            }
+            buf[off] = '\0';
+        }
+        else
+        {
+            total = 0;
+        }
+    }
+    msg_store_unlock();
+
+    if (count_out)
+        *count_out = count;
+    if (len_out)
+        *len_out = total;
+    return buf;
+}
+
 /* ------------------------------------------------------------------ */
 /*  Init / shutdown                                                    */
 /* ------------------------------------------------------------------ */
@@ -464,10 +566,20 @@ int msg_store_init(const char *path, int max_lines)
                 len--;
             if (len == 0)
                 continue;
+            g_store.file_lines++;
             ring_push(line, len);
         }
         /* Reposition for appends (fgets may have hit EOF). */
         fseek(g_store.fp, 0, SEEK_END);
+
+        /* A file larger than the ring (e.g. written before trimming existed)
+         * is rewritten down to the last `cap` lines so the on-disk size obeys
+         * max_messages from here on. */
+        if (g_store.file_lines > g_store.count)
+        {
+            msg_store_rewrite_file_locked();
+            g_store.file_lines = g_store.count;
+        }
     }
 
     g_store.enabled = true;

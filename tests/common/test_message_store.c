@@ -139,6 +139,67 @@ void test_reset_discards_partial_line(void)
     TEST_ASSERT_NULL(strstr(get_buf, "hello"));
 }
 
+void test_snapshot(void)
+{
+    TEST_ASSERT_EQUAL_INT(0, msg_store_init(TEST_PATH, 10));
+    msg_store_append(MSG_PLANE_ARQ, MSG_DIR_RX, "P", "m1");
+    msg_store_append(MSG_PLANE_ARQ, MSG_DIR_RX, "P", "m2");
+
+    size_t count = 0, len = 0;
+    char *snap = msg_store_snapshot(&count, &len);
+    TEST_ASSERT_NOT_NULL(snap);
+    TEST_ASSERT_EQUAL_size_t(2, count);
+    TEST_ASSERT_TRUE(len > 0);
+    TEST_ASSERT_NOT_NULL(strstr(snap, "\"text\":\"m1\""));
+    TEST_ASSERT_NOT_NULL(strstr(snap, "\"text\":\"m2\""));
+    free(snap);
+}
+
+void test_snapshot_empty(void)
+{
+    TEST_ASSERT_EQUAL_INT(0, msg_store_init(TEST_PATH, 10));
+
+    size_t count = 99, len = 99;
+    char *snap = msg_store_snapshot(&count, &len);
+    TEST_ASSERT_NULL(snap);
+    TEST_ASSERT_EQUAL_size_t(0, count);
+    TEST_ASSERT_EQUAL_size_t(0, len);
+}
+
+void test_file_trimmed_to_cap(void)
+{
+    TEST_ASSERT_EQUAL_INT(0, msg_store_init(TEST_PATH, 3));
+    for (int i = 1; i <= 20; i++)
+    {
+        char m[8];
+        snprintf(m, sizeof(m), "m%d", i);
+        msg_store_append(MSG_PLANE_ARQ, MSG_DIR_RX, "P", m);
+    }
+
+    /* In-memory ring keeps the last 3. */
+    TEST_ASSERT_EQUAL_size_t(3, msg_store_count());
+
+    /* The on-disk file must be bounded (not append-only): with cap=3 it stays
+     * under 2*cap lines no matter how many messages were appended. */
+    FILE *f = fopen(TEST_PATH, "r");
+    TEST_ASSERT_NOT_NULL(f);
+    int lines = 0;
+    char line[8192];
+    while (fgets(line, sizeof(line), f))
+        lines++;
+    fclose(f);
+    TEST_ASSERT_TRUE(lines >= 3 && lines < 6);
+
+    /* A reload keeps exactly those last 3, oldest first. */
+    msg_store_shutdown();
+    TEST_ASSERT_EQUAL_INT(0, msg_store_init(TEST_PATH, 3));
+    TEST_ASSERT_EQUAL_size_t(3, msg_store_count());
+    TEST_ASSERT_TRUE(msg_store_get(0, get_buf, sizeof(get_buf)) > 0);
+    TEST_ASSERT_NOT_NULL(strstr(get_buf, "\"text\":\"m18\""));
+    TEST_ASSERT_TRUE(msg_store_get(2, get_buf, sizeof(get_buf)) > 0);
+    TEST_ASSERT_NOT_NULL(strstr(get_buf, "\"text\":\"m20\""));
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -150,5 +211,8 @@ int main(void)
     RUN_TEST(test_ring_capacity);
     RUN_TEST(test_get_out_of_range);
     RUN_TEST(test_reset_discards_partial_line);
+    RUN_TEST(test_snapshot);
+    RUN_TEST(test_snapshot_empty);
+    RUN_TEST(test_file_trimmed_to_cap);
     return UNITY_END();
 }

@@ -484,23 +484,38 @@ static void execute_control_command(char *buffer)
          * socket is non-blocking and tcp_write() drops on EAGAIN / resets on a
          * short send, which would truncate the dump or tear down the control
          * connection right after it connects.  Stop early if the write fails. */
-        size_t n = msg_store_count();
-        char hdr[64];
-        int hn = snprintf(hdr, sizeof(hdr), "HISTORY %zu\r", n);
-        if (hn > 0 && tcp_write_all(CTL_TCP_PORT, (uint8_t *)hdr, (size_t)hn) < 0)
-            return;
+        size_t count = 0, snap_len = 0;
+        char *snap = msg_store_snapshot(&count, &snap_len);
+        if (!snap)
+            snap_len = 0;
 
-        char line[8192];
-        for (size_t i = 0; i < n; i++)
+        char hdr[64];
+        int hn = snprintf(hdr, sizeof(hdr), "HISTORY %zu\r", count);
+        if (hn > 0 && tcp_write_all(CTL_TCP_PORT, (uint8_t *)hdr, (size_t)hn) < 0)
         {
-            size_t l = msg_store_get(i, line, sizeof(line));
-            if (l == 0)
-                continue;
-            char out[8192 + 16];
-            int on = snprintf(out, sizeof(out), "HISTORYMSG %s\r", line);
-            if (on > 0 && tcp_write_all(CTL_TCP_PORT, (uint8_t *)out, (size_t)on) < 0)
-                return;
+            free(snap);
+            return;
         }
+
+        /* The snapshot is a consistent, newline-terminated view of the ring, so
+         * the emitted lines always agree with the advertised count even if a
+         * message is appended while we dump. */
+        const char *p = snap;
+        char out[8192 + 16];
+        for (size_t i = 0; i < count && p != NULL; i++)
+        {
+            const char *nl = strchr(p, '\n');
+            size_t linelen = nl ? (size_t)(nl - p) : strlen(p);
+            int on = snprintf(out, sizeof(out), "HISTORYMSG %.*s\r",
+                              (int)linelen, p);
+            if (on > 0 && tcp_write_all(CTL_TCP_PORT, (uint8_t *)out, (size_t)on) < 0)
+            {
+                free(snap);
+                return;
+            }
+            p = nl ? nl + 1 : NULL;
+        }
+        free(snap);
         tcp_write_all(CTL_TCP_PORT, (uint8_t *)"HISTORYEND\r", 11);
         return;
     }
