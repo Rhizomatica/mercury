@@ -1146,12 +1146,19 @@ int arq_submit_tcp_payload(const uint8_t *data, size_t len)
 {
     if (!data || len == 0 || !g_initialized) return -1;
 
-    char my_call[CALLSIGN_MAX_SIZE], src[CALLSIGN_MAX_SIZE], dst[CALLSIGN_MAX_SIZE];
-    arq_conn_get_calls(my_call, src, dst, CALLSIGN_MAX_SIZE);
-    const char *peer = (dst[0] && strcmp(dst, my_call) != 0) ? dst : src;
-    msg_store_feed(MSG_PLANE_ARQ, MSG_DIR_TX, peer, data, len);
+    /* Persist only bytes that were actually accepted for transmission: the bus
+     * rejects on EAGAIN (full) and EINVAL (oversized), and a message that never
+     * went out must not be replayed as if it had. */
+    int rc = arq_channel_bus_try_send_payload(&g_bus, data, len);
+    if (rc == 0)
+    {
+        char my_call[CALLSIGN_MAX_SIZE], src[CALLSIGN_MAX_SIZE], dst[CALLSIGN_MAX_SIZE];
+        arq_conn_get_calls(my_call, src, dst, CALLSIGN_MAX_SIZE);
+        const char *peer = (dst[0] && strcmp(dst, my_call) != 0) ? dst : src;
+        msg_store_feed(MSG_PLANE_ARQ, MSG_DIR_TX, peer, data, len);
+    }
 
-    return arq_channel_bus_try_send_payload(&g_bus, data, len);
+    return rc;
 }
 
 void clear_connection_data(void)
