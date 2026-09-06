@@ -500,7 +500,10 @@ char *msg_store_snapshot(size_t *count_out, size_t *len_out)
         }
         else
         {
+            /* Allocation failed: report an empty snapshot so the advertised
+             * count and the (zero) emitted lines always agree. */
             total = 0;
+            count = 0;
         }
     }
     msg_store_unlock();
