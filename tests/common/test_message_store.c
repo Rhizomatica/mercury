@@ -122,6 +122,23 @@ void test_get_out_of_range(void)
     TEST_ASSERT_EQUAL_size_t(0, msg_store_get(5, get_buf, sizeof(get_buf)));
 }
 
+void test_reset_discards_partial_line(void)
+{
+    TEST_ASSERT_EQUAL_INT(0, msg_store_init(TEST_PATH, 10));
+
+    /* Session ends without a trailing newline; a reset must drop that residue
+     * so the next session's message is stored alone with its own peer. */
+    msg_store_feed(MSG_PLANE_ARQ, MSG_DIR_RX, "AAA", (const uint8_t *)"hello", 5);
+    msg_store_reset(MSG_PLANE_ARQ, MSG_DIR_RX);
+    msg_store_feed(MSG_PLANE_ARQ, MSG_DIR_RX, "BBB", (const uint8_t *)"hi\n", 3);
+
+    TEST_ASSERT_EQUAL_size_t(1, msg_store_count());
+    TEST_ASSERT_TRUE(msg_store_get(0, get_buf, sizeof(get_buf)) > 0);
+    TEST_ASSERT_NOT_NULL(strstr(get_buf, "\"text\":\"hi\""));
+    TEST_ASSERT_NOT_NULL(strstr(get_buf, "\"peer\":\"BBB\""));
+    TEST_ASSERT_NULL(strstr(get_buf, "hello"));
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -132,5 +149,6 @@ int main(void)
     RUN_TEST(test_persistence_reload);
     RUN_TEST(test_ring_capacity);
     RUN_TEST(test_get_out_of_range);
+    RUN_TEST(test_reset_discards_partial_line);
     return UNITY_END();
 }

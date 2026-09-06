@@ -359,6 +359,22 @@ void msg_store_append(const char *plane, const char *dir, const char *peer,
     msg_store_unlock();
 }
 
+void msg_store_reset(const char *plane, const char *dir)
+{
+    plane_t p;
+    dir_t d;
+
+    if (strcmp(plane, MSG_PLANE_BCAST) == 0) p = PLANE_BCAST;
+    else                                    p = PLANE_ARQ;
+    if (strcmp(dir, MSG_DIR_TX) == 0) d = DIR_TX;
+    else                              d = DIR_RX;
+
+    msg_store_lock();
+    g_store.feed_len[p][d] = 0;
+    g_store.discarding[p][d] = false;
+    msg_store_unlock();
+}
+
 size_t msg_store_count(void)
 {
     size_t n = 0;

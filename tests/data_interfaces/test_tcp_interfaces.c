@@ -109,6 +109,11 @@ void msg_store_feed(const char *plane, const char *dir, const char *peer,
     (void)plane; (void)dir; (void)peer; (void)data; (void)len;
 }
 
+void msg_store_reset(const char *plane, const char *dir)
+{
+    (void)plane; (void)dir;
+}
+
 size_t msg_store_count(void)
 {
     return mock_msg_store_count;
@@ -147,6 +152,13 @@ ssize_t tcp_write(int port_type, uint8_t *buffer, size_t tx_size)
     }
     tcp_write_call_count++;
     return (ssize_t)tx_size;
+}
+
+/* HISTORY uses tcp_write_all(); delegate to the tcp_write mock so the same
+ * capture/assertion helpers see the dump. */
+ssize_t tcp_write_all(int port_type, uint8_t *buffer, size_t tx_size)
+{
+    return tcp_write(port_type, buffer, tx_size);
 }
 
 void net_set_status(int pt, int st) { (void)pt; (void)st; }

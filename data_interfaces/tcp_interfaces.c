@@ -477,12 +477,18 @@ static void execute_control_command(char *buffer)
     {
         /* Mercury extension: dump the persisted ARQ/broadcast chat history as
          * JSONL lines, oldest first, framed as HISTORYMSG <json> between a
-         * HISTORY <count> header and a HISTORYEND terminator. */
+         * HISTORY <count> header and a HISTORYEND terminator.
+         *
+         * The dump can be several KB to MB and is written in one burst, so it
+         * goes through tcp_write_all() rather than tcp_write(): the control
+         * socket is non-blocking and tcp_write() drops on EAGAIN / resets on a
+         * short send, which would truncate the dump or tear down the control
+         * connection right after it connects.  Stop early if the write fails. */
         size_t n = msg_store_count();
         char hdr[64];
         int hn = snprintf(hdr, sizeof(hdr), "HISTORY %zu\r", n);
-        if (hn > 0)
-            tcp_write(CTL_TCP_PORT, (uint8_t *)hdr, (size_t)hn);
+        if (hn > 0 && tcp_write_all(CTL_TCP_PORT, (uint8_t *)hdr, (size_t)hn) < 0)
+            return;
 
         char line[8192];
         for (size_t i = 0; i < n; i++)
@@ -492,10 +498,10 @@ static void execute_control_command(char *buffer)
                 continue;
             char out[8192 + 16];
             int on = snprintf(out, sizeof(out), "HISTORYMSG %s\r", line);
-            if (on > 0)
-                tcp_write(CTL_TCP_PORT, (uint8_t *)out, (size_t)on);
+            if (on > 0 && tcp_write_all(CTL_TCP_PORT, (uint8_t *)out, (size_t)on) < 0)
+                return;
         }
-        tcp_write(CTL_TCP_PORT, (uint8_t *)"HISTORYEND\r", 11);
+        tcp_write_all(CTL_TCP_PORT, (uint8_t *)"HISTORYEND\r", 11);
         return;
     }
 
@@ -1289,10 +1295,16 @@ void *send_thread(void *client_socket_ptr)
             continue;
 
         /* Persist received broadcast chat; raw hermes-broadcast/AX.25 frames
-         * are filtered out by the printable-text check inside the store. */
+         * are filtered out by the printable-text check inside the store.
+         * Trim the modem's zero padding (legacy/hermes-broadcast frames carry
+         * no length prefix) so trailing NUL bytes don't accumulate in the
+         * line buffer and poison the next message. */
+        int text_len = payload_len;
+        while (text_len > 0 && payload_start[text_len - 1] == '\0')
+            text_len--;
         char peer[CALLSIGN_MAX_SIZE];
-        bcast_store_peer(payload_start, payload_len, peer, sizeof(peer));
-        msg_store_feed(MSG_PLANE_BCAST, MSG_DIR_RX, peer, payload_start, (size_t)payload_len);
+        bcast_store_peer(payload_start, text_len, peer, sizeof(peer));
+        msg_store_feed(MSG_PLANE_BCAST, MSG_DIR_RX, peer, payload_start, (size_t)text_len);
 
         int kiss_len = kiss_write_frame(payload_start, payload_len, reply_cmd, kiss_buffer);
         HLOGI("tcp-bcast", "Sending KISS frame to client: kiss_cmd=0x%02X payload=%d kiss_len=%d",
@@ -1432,6 +1444,11 @@ void *tcp_server_thread(void *port_ptr)
 
         bcast_client_done = false;
         atomic_store_explicit(&bcast_reply_cmd, CMD_DATA, memory_order_relaxed);
+
+        /* New client, clean slate: drop any partial broadcast line left in the
+         * store's feed buffer from the previous client. */
+        msg_store_reset(MSG_PLANE_BCAST, MSG_DIR_RX);
+        msg_store_reset(MSG_PLANE_BCAST, MSG_DIR_TX);
 
         pthread_t recv_tid, send_tid;
 
