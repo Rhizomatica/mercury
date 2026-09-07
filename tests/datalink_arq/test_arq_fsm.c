@@ -969,6 +969,57 @@ void test_wait_ack_deadline_stagger_is_exact(void)
     TEST_ASSERT_EQUAL_UINT64(base, sess.deadline_ms);
 }
 
+/* An ACCEPT is only correct one channel guard after a CALL we actually heard:
+ * that is the only moment we know the caller has dropped PTT and is listening.
+ *
+ * The RX window armed at TX_COMPLETE is a LISTENING window, not a retry timer.
+ * Firing an ACCEPT when it expires has no phase relationship to the caller and
+ * lands inside its next CALL, where a half-duplex radio is deaf.  Measured on
+ * the Watterson harness at SNR3k -9.8 dB: an unprompted ACCEPT keyed at
+ * +37.67 s while the caller transmitted CALL#4 from +34.55 to +38.27 s; two of
+ * the three ACCEPTs in that connect were destroyed that way, and 4 of 20
+ * connect attempts failed outright.
+ *
+ * tx_retries_left is spent whether we transmit or merely wait, so the frame
+ * counter is what distinguishes the two. */
+void test_accept_is_only_sent_in_answer_to_a_heard_call(void)
+{
+    enter_accepting();
+
+    /* The CALL that put us here earns one ACCEPT. */
+    int sent = (int)fake_send_tx_frame_fake.call_count;
+    arq_event_t ev = make_event(ARQ_EV_TIMER_RETRY);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(sent + 1, (int)fake_send_tx_frame_fake.call_count);
+
+    /* Our ACCEPT finishes: the deadline now guards the caller's reply. */
+    ev = make_event(ARQ_EV_TX_COMPLETE);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_FALSE(sess.accept_tx_pending);
+
+    /* That window expiring means the caller never came back.  Stay off the air
+     * -- but keep spending the budget, so a pending call stays bounded. */
+    sent = (int)fake_send_tx_frame_fake.call_count;
+    int budget = (int)sess.tx_retries_left;
+    ev = make_event(ARQ_EV_TIMER_RETRY);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(sent, (int)fake_send_tx_frame_fake.call_count);
+    TEST_ASSERT_EQUAL_INT(budget - 1, (int)sess.tx_retries_left);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_ACCEPTING, sess.conn_state);
+
+    /* A fresh CALL re-arms both the budget and the right to transmit, and
+     * re-anchors the ACCEPT to the gap the caller just opened. */
+    arq_event_t call = make_event(ARQ_EV_RX_CALL);
+    call.session_id = 0x42;
+    strncpy(call.remote_call, "REMOTE1", CALLSIGN_MAX_SIZE);
+    arq_fsm_dispatch(&sess, &call);
+    TEST_ASSERT_TRUE(sess.accept_tx_pending);
+
+    ev = make_event(ARQ_EV_TIMER_RETRY);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(sent + 1, (int)fake_send_tx_frame_fake.call_count);
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -1011,5 +1062,6 @@ int main(void)
     RUN_TEST(test_default_call_accept_slots_are_short);
     RUN_TEST(test_stop_listen);
     RUN_TEST(test_timeout_ms_idle);
+    RUN_TEST(test_accept_is_only_sent_in_answer_to_a_heard_call);
     return UNITY_END();
 }

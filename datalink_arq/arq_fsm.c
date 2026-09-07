@@ -165,6 +165,10 @@ static void sess_enter(arq_session_t *sess, arq_conn_state_t new_state,
      * release. */
     if (new_state == ARQ_CONN_DISCONNECTED || new_state == ARQ_CONN_LISTENING)
         sess->deferred_listen_off = false;
+    /* The right to key an ACCEPT is earned by hearing a CALL, and it does not
+     * survive leaving ACCEPTING. */
+    if (new_state != ARQ_CONN_ACCEPTING)
+        sess->accept_tx_pending = false;
     if (new_state != ARQ_CONN_CONNECTED)
     {
         sess->pending_connect_confirm = false;
@@ -1088,6 +1092,7 @@ static void fsm_listening(arq_session_t *sess, const arq_event_t *ev)
         snprintf(sess->local_call, CALLSIGN_MAX_SIZE, "%s", ev->local_call);
         sess->session_id      = ev->session_id;
         sess->tx_retries_left = ARQ_ACCEPT_RETRY_SLOTS;
+        sess->accept_tx_pending = true;   /* answering a CALL we just heard */
         /* Reset mode state so the payload decoder matches the new caller's
          * initial DATAC15.  This must happen here (not in sess_enter for
          * DISCONNECTED/LISTENING) because LISTENING needs peer_tx_mode to
@@ -1317,8 +1322,28 @@ static void fsm_accepting(arq_session_t *sess, const arq_event_t *ev)
     case ARQ_EV_RX_CALL:
         /* Caller is still retrying CALL (our previous ACCEPT was lost). Reset
          * the retry counter so the ACCEPTING window stays open long enough for
-         * the caller to decode the next ACCEPT and start sending data. */
-        sess->tx_retries_left = ARQ_ACCEPT_RETRY_SLOTS;
+         * the caller to decode the next ACCEPT and start sending data.
+         *
+         * ...and re-anchor the retry to NOW, rather than letting the deadline
+         * set at TX_COMPLETE run its full course.  That deadline is sized to
+         * hold the RX window open for the caller's first DATA burst, so it is
+         * many seconds long.  Waiting it out here is wrong twice over:
+         *
+         *   - It is the wrong question.  A CALL just arrived, which is proof
+         *     the caller is still in CALLING and has NOT begun a data burst,
+         *     so there is nothing for the long window to protect.
+         *   - It desynchronises us from the caller.  The caller retries CALL
+         *     every arq_protocol_call_interval_s(), so a retransmitted ACCEPT
+         *     drifts into the middle of a CALL, and the caller is deaf over
+         *     its own transmission.
+         *
+         * Answering one channel guard after the CALL puts the ACCEPT in the
+         * gap the caller has just opened by dropping PTT -- the same schedule
+         * fsm_listening uses for the first ACCEPT, and for the same reason. */
+        sess->tx_retries_left   = ARQ_ACCEPT_RETRY_SLOTS;
+        sess->accept_tx_pending = true;   /* answering a CALL we just heard */
+        sess->deadline_ms       = time_now_ms() + ARQ_CHANNEL_GUARD_MS;
+        sess->deadline_event    = ARQ_EV_TIMER_RETRY;
         break;
 
     case ARQ_EV_TX_COMPLETE:
@@ -1331,6 +1356,21 @@ static void fsm_accepting(arq_session_t *sess, const arq_event_t *ev)
          * a full ARQ_ACCEPT_RX_WINDOW_MS window (guard + DATAC15 frame +
          * margin) measured from the moment our TX actually ends. */
         sess->deadline_ms = time_now_ms() + ARQ_ACCEPT_RX_WINDOW_MS;
+        /* This deadline is a LISTENING window, not a retransmission timer.  An
+         * ACCEPT is only ever correct one channel guard after a CALL we heard,
+         * because that is the only moment we know the caller has dropped PTT
+         * and is listening.  Firing one when this window expires has no phase
+         * relationship to the caller at all, and lands in the middle of its
+         * next CALL, where a half-duplex radio is deaf.  Measured on the
+         * Watterson harness at SNR3k -9.8 dB: the answerer keyed an unprompted
+         * ACCEPT at +37.67 s while the caller transmitted CALL#4 from +34.55 to
+         * +38.27 s; two of the three ACCEPTs in that connect were destroyed
+         * that way and the call went unanswered.  4/20 connects failed.
+         *
+         * So mark the pending timer as "window", not "ACCEPT".  If the caller
+         * is still calling we will hear it and answer that; if we cannot hear
+         * it, transmitting blind only destroys someone else's burst. */
+        sess->accept_tx_pending = false;
         break;
 
     case ARQ_EV_TIMER_RETRY:
@@ -1347,6 +1387,18 @@ static void fsm_accepting(arq_session_t *sess, const arq_event_t *ev)
         if (sess->tx_retries_left > 0)
         {
             sess->tx_retries_left--;
+            if (!sess->accept_tx_pending)
+            {
+                /* The RX window closed without the caller coming back.  Stay
+                 * off the air -- see the TX_COMPLETE comment above -- and wait
+                 * again, so the budget still bounds how long we hold the
+                 * pending call open. */
+                sess->deadline_ms = retry_deadline_from_s(sess, arq_protocol_call_interval_s());
+                break;
+            }
+            /* Answering a CALL we heard: the caller dropped PTT one channel
+             * guard ago and is listening now. */
+            sess->accept_tx_pending = false;
             send_call_accept(sess, true);
             /* deadline is now managed via TX_COMPLETE above; set a generous
              * fallback here in case TX_COMPLETE is missed for any reason */

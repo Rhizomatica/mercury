@@ -224,6 +224,13 @@ typedef struct
                                         * LISTENING vs DISCONNECTED, so an ARQ
                                         * call always returns to where it was   */
 
+    /* --- Connect handshake --- */
+    bool     accept_tx_pending;        /* the pending TIMER_RETRY is an ACCEPT
+                                        * answering a CALL we actually heard,
+                                        * not the RX-window timer.  Only the
+                                        * former may key the transmitter -- see
+                                        * fsm_accepting's TIMER_RETRY.        */
+
     /* --- Teardown flags --- */
     bool     deferred_listen_off;      /* LISTEN OFF received during grace period;
                                         * will be honoured once the grace expires    */
