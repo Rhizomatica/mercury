@@ -98,7 +98,7 @@ func TestMercuryARQBidirectional(t *testing.T) {
 		cmd.Dir = repoRoot
 		cmd.Stdout = stdout
 		cmd.Stderr = stderr
-		if err := cmd.Start(); err != nil {
+		if err := startChild(cmd); err != nil {
 			t.Fatalf("start mercury %s: %v", name, err)
 		}
 		return cmd, waitForProcess(cmd), stdout, stderr

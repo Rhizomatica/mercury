@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 )
@@ -20,6 +21,17 @@ type ChannelParams struct {
 	Gain         float64
 	Fading       string // ch: "mpg"/"mpp"/"mpd"; watterson: "good"/"moderate"/"poor"/"flutter"
 	Engine       string // "" or "ch" = codec2 ch.c; "watterson" = utils/watterson_test
+
+	// Distinguishes the two directions' fading realisations.
+	//
+	// Both directions spawn their own channel process, and both would inherit
+	// the same MERCURY_WATTERSON_SEED -- so forward and reverse would fade in
+	// LOCKSTEP: one deep fade blocking the CALL and the ACCEPT at the same
+	// instant, and asymmetric-link effects invisible by construction.  Real
+	// paths are correlated, not identical.  Salting the seed per direction
+	// keeps a pinned run exactly reproducible while making the two paths
+	// independent.
+	SeedSalt uint32
 }
 
 func DefaultChannelParams() ChannelParams {
@@ -100,6 +112,7 @@ func startChannelBridge(ctx context.Context, chBin string,
 	// (callee's ACKs).  MERCURY_CH_NO_FWD / MERCURY_CH_NO_REV (dBHz) override
 	// each direction; unset = symmetric params.No_dBHz.  ch: SNR3k = -No - 14.82.
 	fwd, rev := params, params
+	fwd.SeedSalt, rev.SeedSalt = 1, 2
 	if v := os.Getenv("MERCURY_CH_NO_FWD"); v != "" {
 		if f, err := strconv.ParseFloat(v, 64); err == nil {
 			fwd.No_dBHz = f
@@ -178,6 +191,16 @@ func runChannelDirOnce(ctx context.Context, chBin, txPath, rxPath string, params
 	chCmd.Args = append(chCmd.Args, params.args()...)
 	chCmd.Dir = filepath.Dir(chBin) // so --fading_dir 'unittest' resolves
 	chCmd.Stderr = nil
+	// Give each direction its own fading realisation (see SeedSalt).  Only
+	// when the run is pinned: unpinned, each channel process already seeds
+	// itself from clock+pid and is independent anyway.
+	if base := os.Getenv("MERCURY_WATTERSON_SEED"); base != "" && params.SeedSalt != 0 {
+		if b, err := strconv.ParseUint(base, 0, 32); err == nil {
+			chCmd.Env = append(os.Environ(),
+				fmt.Sprintf("MERCURY_WATTERSON_SEED=%d",
+					uint32(b)*2654435761+params.SeedSalt))
+		}
+	}
 
 	chStdin, err := chCmd.StdinPipe()
 	if err != nil {
@@ -222,10 +245,59 @@ func runChannelDirOnce(ctx context.Context, chBin, txPath, rxPath string, params
 	var inBytes, outBytes int64
 	pumpDone := make(chan error, 2)
 
-	go func() { // TX FIFO -> ch stdin
+	// Diagnosis: is the bridge itself falling behind real time?  inBytes is
+	// s32 read off the sender's TX FIFO, outBytes s32 written to the peer's
+	// capture FIFO; both are 4 bytes per 8 kHz sample, so their difference is
+	// audio that entered the channel and has not been delivered yet.
+	if os.Getenv("MERCURY_CH_DIAG") != "" {
+		t0 := time.Now()
+		go func() {
+			tk := time.NewTicker(time.Second)
+			defer tk.Stop()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-tk.C:
+					in := atomic.LoadInt64(&inBytes)
+					out := atomic.LoadInt64(&outBytes)
+					fmt.Printf("CHDIAG %-14s %7.3f keyed=%.2fs delivered=%.2fs\n",
+						filepath.Base(txPath), time.Since(t0).Seconds(),
+						float64(in)/4/8000, float64(out)/4/8000)
+				}
+			}
+		}()
+	}
+
+	go func() { // TX FIFO -> ch stdin, paced at real-time 8 kHz
+		// A sound card consumes 8 kHz continuously whether or not the
+		// operator is transmitting, so the channel -- and the receiver
+		// behind it -- sees an unbroken sample stream.  Feed ch the same
+		// way: one 160-sample block every 20 ms, taken from Mercury's TX
+		// FIFO when it has audio and silence when it does not.
+		//
+		// Handing ch only the bursts, as this pump used to, leaves the
+		// peer's demodulator holding the tail of each burst: it needs a
+		// whole nin() block to run, the burst ends part-way through one,
+		// and no further audio arrives to complete it until the next
+		// transmission -- a full retry period later.  That is not a
+		// throughput detail, it inverts the connect handshake.  Measured
+		// on this harness at seed 6: the answerer had every sample of the
+		// caller's CALL by t=4.0 s, decoded it at t=12.2 s (when the
+		// caller's *second* CALL began arriving), and keyed its ACCEPT at
+		// t=12.9 s -- inside the caller's 11.7-15.4 s transmission, where
+		// a half-duplex radio is deaf. Every round, so the connect never
+		// completed and the failure looked like a modem bug.
+		//
+		// Feeding silence also advances the fading process in wall-clock
+		// time instead of only while somebody transmits, which is what
+		// the Watterson model assumes.
 		buf := make([]byte, 64*1024)
-		s16 := make([]byte, 32*1024)
+		s16 := make([]byte, blockS16)
+		var pending []byte // s16le drained from the FIFO, not yet fed to ch
 		carry := 0
+		deadline := time.Now()
+
 		for {
 			select {
 			case <-ctx.Done():
@@ -233,38 +305,69 @@ func runChannelDirOnce(ctx context.Context, chBin, txPath, rxPath string, params
 				return
 			default:
 			}
-			n, err := syscall.Read(txFD, buf[carry:])
-			if n > 0 {
-				n += carry
-				whole := n &^ 3 // s32le sample alignment
-				for i := 0; i < whole/4; i++ {
-					v := int32(binary.LittleEndian.Uint32(buf[i*4 : i*4+4]))
-					binary.LittleEndian.PutUint16(s16[i*2:i*2+2], uint16(int16(v>>16)))
+
+			// Drain whatever Mercury has written; a whole burst lands
+			// far faster than real time and queues up here.
+			for {
+				n, err := syscall.Read(txFD, buf[carry:])
+				if n > 0 {
+					n += carry
+					whole := n &^ 3 // s32le sample alignment
+					for i := 0; i < whole/4; i++ {
+						v := int32(binary.LittleEndian.Uint32(buf[i*4 : i*4+4]))
+						var b [2]byte
+						binary.LittleEndian.PutUint16(b[:], uint16(int16(v>>16)))
+						pending = append(pending, b[0], b[1])
+					}
+					atomic.AddInt64(&inBytes, int64(whole))
+					carry = n - whole
+					copy(buf[:carry], buf[whole:n])
+					continue
 				}
-				if _, werr := chStdin.Write(s16[:whole/2]); werr != nil {
-					pumpDone <- werr
-					return
+				if err == syscall.EAGAIN || (err == nil && n == 0) {
+					break // nothing queued right now
 				}
-				inBytes += int64(whole)
-				carry = n - whole
-				copy(buf[:carry], buf[whole:n])
-				continue
+				pumpDone <- err
+				return
 			}
-			if err == syscall.EAGAIN || (err == nil && n == 0) {
-				time.Sleep(2 * time.Millisecond) // idle: no TX in progress
-				continue
+
+			// One block per 20 ms on an absolute clock.
+			now := time.Now()
+			if deadline.Before(now) {
+				deadline = now
 			}
-			pumpDone <- err
-			return
+			time.Sleep(deadline.Sub(now))
+			deadline = deadline.Add(20 * time.Millisecond)
+
+			if len(pending) >= blockS16 {
+				copy(s16, pending[:blockS16])
+				pending = pending[blockS16:]
+				if len(pending) == 0 {
+					pending = nil
+				}
+			} else {
+				// Idle (or a burst that ends mid-block): silence.
+				n := copy(s16, pending)
+				for i := n; i < blockS16; i++ {
+					s16[i] = 0
+				}
+				pending = nil
+			}
+
+			if _, werr := chStdin.Write(s16); werr != nil {
+				pumpDone <- werr
+				return
+			}
 		}
 	}()
 
-	go func() { // ch stdout -> RX FIFO, paced at real-time 8 kHz
-		// Mercury's TX side writes a whole burst into its FIFO immediately
-		// while holding PTT for the frame's nominal wall-clock duration.
-		// Delivery to the peer must be paced at the sample rate: otherwise
-		// the peer decodes and replies while the sender still has PTT on,
-		// and the half-duplex RX path discards the reply (TX drain/flush).
+	go func() { // ch stdout -> RX FIFO
+		// The TX pump above already meters audio into ch at 8 kHz, so ch
+		// emits at real time and this side only has to forward.  The
+		// absolute-clock sleep is kept as a backstop against ch emitting a
+		// burst of blocks after a scheduling hiccup: without it the peer
+		// could decode and reply while the sender still holds PTT, and the
+		// half-duplex RX path would discard the reply.
 		s16 := make([]byte, blockS16)
 		s32 := make([]byte, blockS32)
 		deadline := time.Now()
@@ -300,7 +403,7 @@ func runChannelDirOnce(ctx context.Context, chBin, txPath, rxPath string, params
 						return
 					}
 				}
-				outBytes += int64(whole * 2)
+				atomic.AddInt64(&outBytes, int64(whole*2))
 			}
 			if err != nil {
 				pumpDone <- err
@@ -311,7 +414,8 @@ func runChannelDirOnce(ctx context.Context, chBin, txPath, rxPath string, params
 
 	err = <-pumpDone
 	fmt.Printf("channel bridge %s->%s: %d bytes in, %d bytes out (%v)\n",
-		filepath.Base(txPath), filepath.Base(rxPath), inBytes, outBytes, err)
+		filepath.Base(txPath), filepath.Base(rxPath),
+		atomic.LoadInt64(&inBytes), atomic.LoadInt64(&outBytes), err)
 
 	close(done)
 	chStdin.Close()

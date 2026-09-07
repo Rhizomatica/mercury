@@ -104,7 +104,7 @@ func TestMercuryARQTransfer(t *testing.T) {
 		cmd.Dir = repoRoot
 		cmd.Stdout = stdout
 		cmd.Stderr = stderr
-		if err := cmd.Start(); err != nil {
+		if err := startChild(cmd); err != nil {
 			t.Fatalf("start mercury %s: %v", name, err)
 		}
 		return cmd, waitForProcess(cmd), stdout, stderr
@@ -219,14 +219,29 @@ func TestMercuryARQTransfer(t *testing.T) {
 		repeats = (kb*1024 + 33) / 34
 	}
 	payload := []byte(strings.Repeat("MERCURY-DATAC15-PAYLOAD-0123456789", repeats))
+	// Exact byte count, which MERCURY_TEST_PAYLOAD_KB cannot express.  A
+	// like-for-like A/B across the SNR range needs ONE payload at every point.
+	if v := os.Getenv("MERCURY_TEST_PAYLOAD_B"); v != "" {
+		nb, err := strconv.Atoi(v)
+		if err != nil || nb <= 0 {
+			t.Fatalf("bad MERCURY_TEST_PAYLOAD_B %q", v)
+		}
+		unit := "MERCURY-DATAC15-PAYLOAD-0123456789"
+		payload = []byte(strings.Repeat(unit, nb/len(unit)+1))[:nb]
+	}
 	if _, err := dataA.Write(payload); err != nil {
 		failWithLogs("write payload: %v", err)
 	}
 
 	rx := make([]byte, 0, len(payload))
 	buf := make([]byte, 4096)
+	// Scale on the SLOWEST rung, not a nominal one: MFSK carries 61 bit/s
+	// (~7.6 B/s), so the old 100 B/s allowance timed out a perfectly healthy
+	// fringe transfer long before it could finish.  5 B/s is a floor beneath
+	// every mode in the ladder, so this bounds a genuine stall without
+	// failing a link that is merely slow because the channel is bad.
 	rxDeadline := time.Now().Add(5*time.Minute +
-		time.Duration(len(payload)/100)*time.Second)
+		time.Duration(len(payload)/5)*time.Second)
 	for len(rx) < len(payload) && time.Now().Before(rxDeadline) {
 		if err := dataB.SetReadDeadline(time.Now().Add(15 * time.Second)); err != nil {
 			t.Fatal(err)
