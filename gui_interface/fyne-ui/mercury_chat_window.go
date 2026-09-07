@@ -385,12 +385,15 @@ func (cw *chatWindow) setARQ(on bool) {
 			// conn_state guard -- so the block has to be here.
 			cw.sendCQ.Disable()
 		} else {
-			cw.arqConnect.Enable()
 			cw.arqDisconnect.Disable()
 			cw.arqAbort.Disable()
 			cw.sendARQ.Disable()
 			cw.bcastDisabledReason = ""
 			if cw.mc != nil && cw.mc.IsConnected() {
+				// Gate the re-enable on the modem still being up: setARQ is
+				// also called after setTCP(false) on disconnect, and enabling
+				// arqConnect there leaves a live-looking button over dead ports.
+				cw.arqConnect.Enable()
 				cw.sendBcastWrap.Enable()
 				// Not while a CQ of our own is still on the air: setCQBusy
 				// owns that case and re-enables when PTT drops.
