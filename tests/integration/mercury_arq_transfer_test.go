@@ -235,8 +235,13 @@ func TestMercuryARQTransfer(t *testing.T) {
 
 	rx := make([]byte, 0, len(payload))
 	buf := make([]byte, 4096)
+	// Scale on the SLOWEST rung, not a nominal one: MFSK carries 61 bit/s
+	// (~7.6 B/s), so the old 100 B/s allowance timed out a perfectly healthy
+	// fringe transfer long before it could finish.  5 B/s is a floor beneath
+	// every mode in the ladder, so this bounds a genuine stall without
+	// failing a link that is merely slow because the channel is bad.
 	rxDeadline := time.Now().Add(5*time.Minute +
-		time.Duration(len(payload)/100)*time.Second)
+		time.Duration(len(payload)/5)*time.Second)
 	for len(rx) < len(payload) && time.Now().Before(rxDeadline) {
 		if err := dataB.SetReadDeadline(time.Now().Add(15 * time.Second)); err != nil {
 			t.Fatal(err)
