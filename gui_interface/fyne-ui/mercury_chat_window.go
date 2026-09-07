@@ -226,7 +226,9 @@ func (cw *chatWindow) build(app fyne.App, telemetry telemetryState, arqPort, bro
 		),
 	)
 
-	cw.win.SetContent(container.NewHSplit(left, right))
+	// Make the whole client window scrollable so small displays can access
+	// the Broadcast file panel and other controls by scrolling.
+	cw.win.SetContent(container.NewScroll(container.NewHSplit(left, right)))
 	// Restore previously saved geometry (or fall back to sensible defaults)
 	restoreWindowGeometry(cw.win, app.Preferences())
 	cw.win.SetOnClosed(func() {
