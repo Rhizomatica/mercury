@@ -45,7 +45,7 @@ ARQ_STUBS = datalink_arq/arq_test_stubs.c
 TEST_BINS = test_ring_buffer test_arq_protocol test_arq_timing test_arq_fsm \
             test_tcp_interfaces test_resampler test_arq_ladder test_arq_sim \
             test_arq_conn test_cfg_utils test_arq_tnc test_channel_busy \
-            test_mfsk test_watterson test_mfsk_modem test_pattern_ack_detection \
+            test_mfsk test_mfsk_harq test_watterson test_mfsk_modem test_pattern_ack_detection \
             test_freedv_harq test_pcm24 test_sock_wire test_virtual_clock \
             test_mercury_prng test_bcast_file \
             test_ofdm_acq test_ui_status test_ui_devices test_tx_pacing \
@@ -253,6 +253,11 @@ test_ui_devices: gui_interface/test_ui_devices.c $(UNITY_SRC) \
 	    gui_interface/test_ui_devices.c $(UNITY_SRC) ../gui_interface/ui_devices.c $(LDFLAGS)
 
 # MFSK codec test (mod/demod round-trip, modulation-order gain, OFDM framing)
+
+# Chase combining across separated MFSK bursts: does summing LLRs from copies
+# that individually fail actually decode?
+test_mfsk_harq: modem/test_mfsk_harq.c ../modem/mfsk_ldpc.c ../modem/mfsk_ldpc_8_16.c
+	$(CC) $(CFLAGS) -I../modem -o $@ $^ -lm
 
 # MFSK modem backend (burst TX/RX through the vtable); links libfreedvdata for CRC16
 

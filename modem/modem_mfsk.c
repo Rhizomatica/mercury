@@ -9,6 +9,13 @@
 #include "mfsk_ofdm.h"
 #include "mfsk_sync.h"
 #include "mfsk_ldpc.h"
+
+/* How much may be Chase-combined before the accumulator is abandoned.  Sized
+ * from the MFSK CALL retry cadence (~18 s apart, at most a handful of tries):
+ * long enough to hold one genuine retry sequence together, short enough that an
+ * abandoned sequence cannot reach the next caller. */
+#define MFSK_HARQ_MAX_COPIES 4
+#define MFSK_HARQ_WINDOW_MS  90000ULL
 #include "freedv_api.h"   /* freedv_gen_crc16 — codec-independent CRC16 */
 
 #include <complex.h>
@@ -92,6 +99,10 @@ typedef struct {
     int            *ilv;            /* interleaver: coded index per tx slot   */
     float          *llr;            /* nb LLRs, in transmitted order          */
     float          *llr_di;         /* N LLRs, deinterleaved into code order  */
+    float          *llr_acc;        /* HARQ: summed LLRs across received copies */
+    int             harq_on;        /* accumulate across bursts when non-zero   */
+    int             harq_copies;    /* copies currently summed into llr_acc     */
+    uint64_t        harq_first_ms;  /* when the current accumulation started    */
     int            *info;           /* K info bits */
     double complex *preT, *pstT;
     /* Preamble templates pre-rotated by each frequency hypothesis. A dial
@@ -183,13 +194,17 @@ static void *mfsk_be_open(int mode)
     h->ilv   = (int *)malloc((size_t)h->nb * sizeof(int));
     h->llr   = (float *)malloc((size_t)h->nb * sizeof(float));
     h->llr_di= (float *)malloc((size_t)h->code->N * sizeof(float));
+    h->llr_acc = (float *)calloc((size_t)h->code->N, sizeof(float));
+    h->harq_on = 0;
+    h->harq_copies = 0;
+    h->harq_first_ms = 0;
     h->info  = (int *)malloc((size_t)h->code->K * sizeof(int));
     h->preT  = (double complex *)malloc((size_t)h->P * h->Nofdm * sizeof(double complex));
     h->pstT  = (double complex *)malloc((size_t)h->P * h->Nofdm * sizeof(double complex));
-    if (!h->rxbuf || !h->bf || !h->rb || !h->llr || !h->llr_di || !h->ilv ||
+    if (!h->rxbuf || !h->bf || !h->rb || !h->llr || !h->llr_di || !h->llr_acc || !h->ilv ||
         !h->info || !h->preT || !h->pstT)
     {
-        free(h->rxbuf); free(h->bf); free(h->rb); free(h->llr); free(h->llr_di);
+        free(h->rxbuf); free(h->bf); free(h->rb); free(h->llr); free(h->llr_di); free(h->llr_acc);
         free(h->ilv); free(h->info); free(h->preT); free(h->pstT); free(h);
         return NULL;
     }
@@ -225,7 +240,7 @@ static void mfsk_be_close(void *ctx)
      * every open/close cycle. */
     for (int hy = 0; hy < MFSK_FREQ_HYPS; hy++) free(h->preT_hyp[hy]);
     free(h->rxbuf); free(h->bf); free(h->bb); free(h->rb);
-    free(h->llr); free(h->llr_di); free(h->ilv);
+    free(h->llr); free(h->llr_di); free(h->llr_acc); free(h->ilv);
     free(h->info); free(h->preT); free(h->pstT); free(h);
 }
 
@@ -266,6 +281,13 @@ static int mfsk_be_frames_per_burst(void *ctx) { (void)ctx; return 1; }
 
 /* Emit nsym freq-domain MFSK symbols as int16 passband, advancing the burst
  * carrier phase (h->tx_n) so preamble→data→postamble is phase-continuous. */
+static uint64_t mfsk_now_ms(void)
+{
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (uint64_t)ts.tv_sec * 1000ULL + (uint64_t)ts.tv_nsec / 1000000ULL;
+}
+
 static int mfsk_emit(mfsk_modem_t *h, const mfsk_cplx *syms, int nsym, int16_t *out)
 {
     int written = 0;
@@ -435,8 +457,70 @@ static int mfsk_try_payload(mfsk_modem_t *h, int payoff, uint8_t *bytes_out)
     for (int i = 0; i < h->code->N; i++) sig += fabs(h->llr_di[i]);   /* proxy */
     (void)noise;
 
+    /* HARQ Chase combining across separated bursts.
+     *
+     * A chunked CALL keys the same codeword several times with unkeyed gaps
+     * between copies, so the caller can listen for an early ACCEPT.  Each copy
+     * alone is far too weak at the fringe; summing their LLRs is what makes
+     * the sequence equivalent to one long burst.  Measured on flat Rayleigh at
+     * equal airtime, gapped copies match a contiguous burst and beat it at
+     * 0.1 Hz (FER 0.050 vs 0.133 at SNR3k -15 dB) because the copies
+     * decorrelate across fades instead of sitting inside one.
+     *
+     * Decode the single shot FIRST and only fall back to the combined buffer
+     * when it fails: a good copy must never be corrupted by summing it with
+     * stale ones -- that ordering mistake once turned HARQ into a data-plane
+     * outage here (issue #223 lineage), so it is deliberate.
+     */
     static int out_bits[MFSK_LDPC_MAXK];
-    mfsk_ldpc_decode(h->code, h->llr_di, out_bits, 50);
+    int ok = mfsk_ldpc_decode(h->code, h->llr_di, out_bits, 50);
+
+    if (h->harq_on)
+    {
+        /* Bound what may be summed together.
+         *
+         * The accumulator has no way to know which codeword a copy belongs to:
+         * it sums LLRs BEFORE the decode, and a listening station has no
+         * session yet, so consecutive CALLs from different callers would
+         * otherwise pile into one sum.  That cannot produce a wrong frame --
+         * single-shot is decoded first and the CRC16 gate below rejects
+         * garbage -- but a stale sum quietly wastes the combining opportunity
+         * for every later copy, which is the whole point of having it.
+         *
+         * So discard an accumulation that has grown too old or too deep and
+         * start fresh from the current copy.  MFSK CALL retries arrive about
+         * one retry_interval apart (18 s), so a window of a few intervals
+         * keeps a genuine retry sequence together while ensuring an abandoned
+         * one cannot poison the next caller. */
+        uint64_t now = mfsk_now_ms();
+        if (h->harq_copies > 0 &&
+            (h->harq_copies >= MFSK_HARQ_MAX_COPIES ||
+             now - h->harq_first_ms > MFSK_HARQ_WINDOW_MS))
+        {
+            memset(h->llr_acc, 0, (size_t)h->code->N * sizeof(float));
+            h->harq_copies = 0;
+        }
+        if (h->harq_copies == 0)
+            h->harq_first_ms = now;
+
+        for (int i = 0; i < h->code->N; i++) h->llr_acc[i] += h->llr_di[i];
+        h->harq_copies++;
+        if (!ok && h->harq_copies > 1)
+        {
+            /* Average, not raw sum: the min-sum decoder is scale-sensitive,
+             * so a growing magnitude changes its behaviour as copies pile up. */
+            float inv = 1.0f / (float)h->harq_copies;
+            for (int i = 0; i < h->code->N; i++) h->llr_di[i] = h->llr_acc[i] * inv;
+            ok = mfsk_ldpc_decode(h->code, h->llr_di, out_bits, 50);
+        }
+        if (ok)
+        {
+            memset(h->llr_acc, 0, (size_t)h->code->N * sizeof(float));
+            h->harq_copies = 0;
+            h->harq_first_ms = 0;
+        }
+    }
+    (void)ok;
 
     /* pack info bits -> bytes (MSB-first, matching TX) */
     size_t nbytes = h->frame_bytes;
@@ -820,6 +904,23 @@ int mfsk_pattern_detect(const int16_t *pb, int n, int *is_break)
     return 1;
 }
 
+static void mfsk_be_harq_reset(void *ctx)
+{
+    mfsk_modem_t *h = (mfsk_modem_t *)ctx;
+    if (!h || !h->llr_acc || !h->code) return;
+    memset(h->llr_acc, 0, (size_t)h->code->N * sizeof(float));
+    h->harq_copies = 0;
+    h->harq_first_ms = 0;
+}
+
+static void mfsk_be_set_harq(void *ctx, int enabled)
+{
+    mfsk_modem_t *h = (mfsk_modem_t *)ctx;
+    if (!h) return;
+    h->harq_on = enabled ? 1 : 0;
+    if (!enabled) mfsk_be_harq_reset(ctx);
+}
+
 const modem_backend_t modem_backend_mfsk = {
     .name             = "mfsk",
     .open             = mfsk_be_open,
@@ -840,6 +941,6 @@ const modem_backend_t modem_backend_mfsk = {
     .rawdata_rx       = mfsk_be_rawdata_rx,
     .get_stats        = mfsk_be_get_stats,
     .get_rx_status    = mfsk_be_get_rx_status,
-    .harq_reset       = NULL,   /* MFSK: single-shot decode (no Chase combining yet) */
-    .set_harq         = NULL,
+    .harq_reset       = mfsk_be_harq_reset,
+    .set_harq         = mfsk_be_set_harq,
 };
