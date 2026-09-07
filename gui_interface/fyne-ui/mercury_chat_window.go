@@ -227,8 +227,11 @@ func (cw *chatWindow) build(app fyne.App, telemetry telemetryState, arqPort, bro
 	)
 
 	cw.win.SetContent(container.NewHSplit(left, right))
-	cw.win.Resize(fyne.NewSize(800, 600))
+	// Restore previously saved geometry (or fall back to sensible defaults)
+	restoreWindowGeometry(cw.win, app.Preferences())
 	cw.win.SetOnClosed(func() {
+		// Save window geometry so the user's resize/position persists.
+		saveWindowGeometry(cw.win, app.Preferences())
 		if cw.bcastFile != nil {
 			cw.bcastFile.stopForShutdown()
 		}
