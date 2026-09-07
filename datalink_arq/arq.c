@@ -696,7 +696,8 @@ static void *arq_event_loop_worker(void *arg)
  * Incoming frame handling (called from modem.c worker)
  * ====================================================================== */
 
-bool arq_handle_incoming_connect_frame(uint8_t *data, size_t frame_size)
+bool arq_handle_incoming_connect_frame(uint8_t *data, size_t frame_size,
+                                       int rx_mode)
 {
     if (!data || frame_size < 2) return false;
 
@@ -753,6 +754,9 @@ bool arq_handle_incoming_connect_frame(uint8_t *data, size_t frame_size)
 
     arq_event_t ev = {0};
     ev.id         = is_accept ? ARQ_EV_RX_ACCEPT : ARQ_EV_RX_CALL;
+    /* Carrier this CALL/ACCEPT actually arrived on, so the answerer can reply
+     * on the same one (a deep CALL rides the MFSK floor, not DATAC16). */
+    ev.mode       = rx_mode;
     ev.session_id = session_id;
     /* src = transmitting side's callsign */
     snprintf(ev.remote_call, CALLSIGN_MAX_SIZE, "%s", src);

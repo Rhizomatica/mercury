@@ -99,6 +99,10 @@ func TestMercuryARQTransfer(t *testing.T) {
 			"-p", fmt.Sprint(port),
 			"-b", fmt.Sprint(bcastPort),
 			"-m", "1",
+			// -v is what makes "Decoded frame mode=N (NAME)" appear; without
+			// it the only mode strings in the log are the startup mode-pool
+			// listing, which says nothing about what carried the payload.
+			"-v",
 			"-C", filepath.Join(t.TempDir(), "missing-mercury.ini"),
 		}
 		// MERCURY_TEST_VERBOSE=1 runs both peers at DEBUG.  Off by default:
@@ -269,9 +273,24 @@ func TestMercuryARQTransfer(t *testing.T) {
 			log.Write(data)
 		}
 		logs[name] = log.String()
-		for _, mode := range []string{"DATAC16", "DATAC15"} {
-			if !strings.Contains(logs[name], mode) {
-				failWithLogs("instance %s log has no %s activity", name, mode)
+		// Assert on frames that were actually decoded, not on any mention of
+		// the mode name.  The old check matched bare "DATAC15", which the
+		// startup line "Initialized persistent FreeDV mode pool
+		// (DATAC16/DATAC15/...)" satisfies on every run -- so it passed even
+		// after DATAC15 was dropped from the ladder entirely, and would have
+		// passed if the MFSK floor had never keyed once.  A ladder rung that
+		// silently stops being exercised is exactly what this must catch.
+		// Both ends decode control frames; payload flows A->B, so only the
+		// caller keys MFSK and only the answerer decodes it.
+		want := []string{"Decoded frame mode=23 (DATAC16)"}
+		if name == "A" {
+			want = append(want, "Switched modem mode to 100 (MFSK)")
+		} else {
+			want = append(want, "Decoded frame mode=100 (MFSK)")
+		}
+		for _, w := range want {
+			if !strings.Contains(logs[name], w) {
+				failWithLogs("instance %s log has no %q", name, w)
 			}
 		}
 	}

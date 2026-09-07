@@ -15,6 +15,7 @@
 #include <errno.h>
 
 #include "../modem/freedv/freedv_api.h"
+#include "modem_mfsk.h"   /* MERCURY_MODE_MFSK for the deep CALL */
 
 /* ======================================================================
  * Action queue — ring buffer of arq_action_t entries
@@ -175,6 +176,21 @@ int arq_modem_preferred_tx_mode(const arq_session_t *sess)
         (sess->dflow_state == ARQ_DFLOW_DATA_TX ||
          sess->dflow_state == ARQ_DFLOW_IDLE_ISS))
         return sess->payload_mode;
+
+    /* Deep connect: once the fast CALL slots are spent the caller escalates to
+     * the MFSK floor, and the answerer replies on whatever the CALL arrived
+     * on.  The modem's TX mode has to follow, or the frame is merely SIZED for
+     * MFSK and still keyed as DATAC16 -- which is what happened first time
+     * round: the escalation logged, and the burst was still 3.71 s. */
+    /* Use the carrier LATCHED when the CALL was built, not a fresh evaluation:
+     * this runs on the modem thread after send_call_accept() has already
+     * advanced the send counter, so recomputing disagrees with how the frame
+     * was sized. */
+    if (sess->conn_state == ARQ_CONN_CALLING && sess->call_carrier > 0)
+        return sess->call_carrier;
+
+    if (sess->conn_state == ARQ_CONN_ACCEPTING && sess->call_rx_mode > 0)
+        return sess->call_rx_mode;
 
     return sess->control_mode;
 }
