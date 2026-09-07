@@ -735,9 +735,25 @@ func (cw *chatWindow) watchLink() {
 			if mc.IsConnected() {
 				continue
 			}
-			cw.logMsg("Disconnected by the modem: another client has taken the TNC ports.")
-			cw.setTCP(false)
-			cw.setARQ(false)
+			// The TNC hung up on us.  Tear down on the UI thread exactly as
+			// onDisconnect does, so cw.mc goes nil and the connect interlock
+			// stops answering "already ours": leaving it set would let the
+			// operator reconnect and evict the very client that took the ports.
+			fyne.Do(func() {
+				if cw.mc != mc {
+					return
+				}
+				cw.logMsg("Disconnected by the modem: another client has taken the TNC ports.")
+				mc.Disconnect()
+				cw.mc = nil
+				if cw.done != nil {
+					close(cw.done)
+					cw.done = nil
+				}
+				cw.cqSending = false
+				cw.setTCP(false)
+				cw.setARQ(false)
+			})
 			return
 		}
 	}
