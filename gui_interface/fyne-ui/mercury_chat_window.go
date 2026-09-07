@@ -28,13 +28,13 @@ const (
 // the first and tear down its ARQ session.  Reuse the window instead.
 var mercuryClientSingleton *chatWindow
 
-func openMercuryClientWindow(app fyne.App, telemetry telemetryState, arqPort, broadcastPort int) {
+func openMercuryClientWindow(app fyne.App, telemetry telemetryState, arqPort, broadcastPort int, history []HistoryMessage) {
 	if mercuryClientSingleton != nil {
 		mercuryClientSingleton.win.RequestFocus()
 		return
 	}
 	cw := &chatWindow{}
-	cw.build(app, telemetry, arqPort, broadcastPort)
+	cw.build(app, telemetry, arqPort, broadcastPort, history)
 	mercuryClientSingleton = cw
 }
 
@@ -46,6 +46,10 @@ type chatWindow struct {
 	// logLines is the bounded ring (newest first) backing the log Entry,
 	// so appending never re-splits the widget's own text.
 	logLines []string
+
+	// history is the persisted chat backlog, supplied by the engine over the
+	// UI data path (WebSocket or in-process bridge) at launch time.
+	history []HistoryMessage
 
 	arqBox      *fyne.Container
 	arqScroll   *container.Scroll
@@ -83,8 +87,9 @@ type chatWindow struct {
 	cqSending bool
 }
 
-func (cw *chatWindow) build(app fyne.App, telemetry telemetryState, arqPort, broadcastPort int) {
+func (cw *chatWindow) build(app fyne.App, telemetry telemetryState, arqPort, broadcastPort int, history []HistoryMessage) {
 	cw.win = app.NewWindow("Mercury Client")
+	cw.history = history
 
 	cw.myCall = widget.NewEntry()
 	// The limit includes the callsign, so it moves when the callsign does.
@@ -443,34 +448,28 @@ func (cw *chatWindow) onConnect() {
 	go cw.forwardARQChat()
 	go cw.forwardBroadcastChat()
 	go cw.forwardStatus()
-	go cw.loadHistory(mc)
+
+	// The persisted history was handed over at launch time (from the UI data
+	// path, not the TNC control channel); populate the panes now.
+	cw.populateHistory()
 }
 
-// loadHistory pulls the persisted ARQ/broadcast chat history from the engine
-// and re-populates the chat panes, so messages survive an app restart.
-func (cw *chatWindow) loadHistory(mc *client.Client) {
-	msgs, err := mc.History()
-	if err != nil {
-		cw.logMsg("history: %v", err)
-		return
-	}
+// populateHistory fills the chat panes from the history supplied at launch,
+// so a previous session's messages survive an app restart.
+func (cw *chatWindow) populateHistory() {
 	fyne.Do(func() {
-		// The history fetch can outlive the connection it was issued for; if a
-		// disconnect/reconnect happened while it was in flight, cw.mc no longer
-		// points at mc and appending here would stack stale history on top of
-		// the new session's (freshly loaded) history.
-		if cw.mc != mc {
-			return
-		}
-		for _, m := range msgs {
-			if m.Broadcast {
+		for _, m := range cw.history {
+			if m.Plane == "bcast" {
 				call, text := splitCallText(m.Text)
 				cw.appendRichChat(cw.bcastBox, call, text)
-			} else {
-				cw.appendRichChat(cw.arqBox, m.Call, m.Text)
+				continue
 			}
+			call := m.Peer
+			if m.Dir == "tx" {
+				call = cw.myCall.Text
+			}
+			cw.appendRichChat(cw.arqBox, call, m.Text)
 		}
-		cw.logMsg("Loaded %d messages from history.", len(msgs))
 	})
 }
 

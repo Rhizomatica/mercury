@@ -220,10 +220,24 @@ func decodeWSMessage(msgType int, payload []byte) []Event {
 				PTTInvert:   stringValue(raw, "ptt_invert", "none"),
 				CM108GPIO:   stringValue(raw, "cm108_gpio", "3"),
 			}}
+
+		case "history":
+			return []Event{parseHistoryMessage(payload)}
 		}
 		return []Event{LogEvent{Text: fmt.Sprintf("[Raw WS Msg]: %s\n", string(payload))}}
 	}
 	return nil
+}
+
+// parseHistoryMessage decodes a {"type":"history","messages":[...]} frame.
+func parseHistoryMessage(payload []byte) HistoryEvent {
+	var raw struct {
+		Messages []HistoryMessage `json:"messages"`
+	}
+	if err := json.Unmarshal(payload, &raw); err != nil {
+		return HistoryEvent{}
+	}
+	return HistoryEvent{Messages: raw.Messages}
 }
 
 func stringValue(raw map[string]any, key, fallback string) string {
