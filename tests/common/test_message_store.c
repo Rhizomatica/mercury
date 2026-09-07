@@ -167,7 +167,7 @@ void test_snapshot_empty(void)
     TEST_ASSERT_EQUAL_size_t(0, len);
 }
 
-void test_file_trimmed_to_cap(void)
+void test_file_trimmed_at_shutdown(void)
 {
     TEST_ASSERT_EQUAL_INT(0, msg_store_init(TEST_PATH, 3));
     for (int i = 1; i <= 20; i++)
@@ -180,8 +180,10 @@ void test_file_trimmed_to_cap(void)
     /* In-memory ring keeps the last 3. */
     TEST_ASSERT_EQUAL_size_t(3, msg_store_count());
 
-    /* The on-disk file must be bounded (not append-only): with cap=3 it stays
-     * under 2*cap lines no matter how many messages were appended. */
+    /* During the session the file grows (bounded only by session traffic);
+     * a clean shutdown trims it back down to the ring. */
+    msg_store_shutdown();
+
     FILE *f = fopen(TEST_PATH, "r");
     TEST_ASSERT_NOT_NULL(f);
     int lines = 0;
@@ -189,16 +191,46 @@ void test_file_trimmed_to_cap(void)
     while (fgets(line, sizeof(line), f))
         lines++;
     fclose(f);
-    TEST_ASSERT_TRUE(lines >= 3 && lines < 6);
+    TEST_ASSERT_EQUAL_INT(3, lines);
 
     /* A reload keeps exactly those last 3, oldest first. */
-    msg_store_shutdown();
     TEST_ASSERT_EQUAL_INT(0, msg_store_init(TEST_PATH, 3));
     TEST_ASSERT_EQUAL_size_t(3, msg_store_count());
     TEST_ASSERT_TRUE(msg_store_get(0, get_buf, sizeof(get_buf)) > 0);
     TEST_ASSERT_NOT_NULL(strstr(get_buf, "\"text\":\"m18\""));
     TEST_ASSERT_TRUE(msg_store_get(2, get_buf, sizeof(get_buf)) > 0);
     TEST_ASSERT_NOT_NULL(strstr(get_buf, "\"text\":\"m20\""));
+}
+
+void test_file_trimmed_at_init(void)
+{
+    /* A first session writes 10 messages with a cap of 10 (no trim). */
+    TEST_ASSERT_EQUAL_INT(0, msg_store_init(TEST_PATH, 10));
+    for (int i = 1; i <= 10; i++)
+    {
+        char m[8];
+        snprintf(m, sizeof(m), "m%d", i);
+        msg_store_append(MSG_PLANE_ARQ, MSG_DIR_RX, "P", m);
+    }
+    msg_store_shutdown();
+
+    /* Re-opening with a smaller cap trims the oversized file to the last 3. */
+    TEST_ASSERT_EQUAL_INT(0, msg_store_init(TEST_PATH, 3));
+    TEST_ASSERT_EQUAL_size_t(3, msg_store_count());
+    TEST_ASSERT_TRUE(msg_store_get(0, get_buf, sizeof(get_buf)) > 0);
+    TEST_ASSERT_NOT_NULL(strstr(get_buf, "\"text\":\"m8\""));
+    TEST_ASSERT_TRUE(msg_store_get(2, get_buf, sizeof(get_buf)) > 0);
+    TEST_ASSERT_NOT_NULL(strstr(get_buf, "\"text\":\"m10\""));
+
+    /* The file is now 3 lines on disk too. */
+    FILE *f = fopen(TEST_PATH, "r");
+    TEST_ASSERT_NOT_NULL(f);
+    int lines = 0;
+    char line[8192];
+    while (fgets(line, sizeof(line), f))
+        lines++;
+    fclose(f);
+    TEST_ASSERT_EQUAL_INT(3, lines);
 }
 
 int main(void)
@@ -214,6 +246,7 @@ int main(void)
     RUN_TEST(test_reset_discards_partial_line);
     RUN_TEST(test_snapshot);
     RUN_TEST(test_snapshot_empty);
-    RUN_TEST(test_file_trimmed_to_cap);
+    RUN_TEST(test_file_trimmed_at_shutdown);
+    RUN_TEST(test_file_trimmed_at_init);
     return UNITY_END();
 }

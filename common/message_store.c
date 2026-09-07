@@ -240,12 +240,32 @@ static void ring_push(const char *line, size_t len)
     g_store.lines[idx][n] = '\0';
 }
 
+/* Atomically replace `path` with `tmp_path`.  POSIX rename() is atomic (a
+ * crash leaves either the old or the new file, never a truncated one); Windows
+ * needs MOVEFILE_REPLACE_EXISTING. */
+static bool msg_store_atomic_replace(const char *tmp_path, const char *path)
+{
+#if defined(_WIN32)
+    return MoveFileExA(tmp_path, path, MOVEFILE_REPLACE_EXISTING) != 0;
+#else
+    return rename(tmp_path, path) == 0;
+#endif
+}
+
 /* Rewrite the JSONL file to mirror the in-memory ring (the last `cap` lines),
- * oldest first.  Caller holds exclusive access: the store lock on the emit
- * path, or the single-threaded init path. */
+ * oldest first.
+ *
+ * Crash-safe: the new contents are written to "<path>.tmp" and atomically
+ * renamed over the live file only once every byte has been flushed, so a crash
+ * or power loss mid-rewrite leaves the old file intact rather than a truncated
+ * one.  Caller holds exclusive access (the store lock on the shutdown path, or
+ * the single-threaded init path) — never the ARQ event-loop thread, which must
+ * not sit through a whole-file rewrite. */
 static void msg_store_rewrite_file_locked(void)
 {
+    char tmp_path[sizeof(g_store.path) + 8];
     FILE *tmp;
+    bool ok = false;
 
     if (!g_store.fp || g_store.path[0] == '\0')
         return;
@@ -254,25 +274,45 @@ static void msg_store_rewrite_file_locked(void)
     fclose(g_store.fp);
     g_store.fp = NULL;
 
-    tmp = fopen(g_store.path, "w");
+    snprintf(tmp_path, sizeof(tmp_path), "%s.tmp", g_store.path);
+    tmp = fopen(tmp_path, "w");
     if (!tmp)
     {
-        HLOGW(MSG_STORE_LOG_TAG, "cannot rewrite %s: %s — file may grow unbounded",
-              g_store.path, strerror(errno));
+        HLOGW(MSG_STORE_LOG_TAG, "cannot open %s for rewrite: %s — keeping old file",
+              tmp_path, strerror(errno));
     }
     else
     {
-        for (int i = 0; i < g_store.count; i++)
+        ok = true;
+        for (int i = 0; i < g_store.count && ok; i++)
         {
             int idx = (g_store.start + i) % g_store.cap;
             size_t len = strlen(g_store.lines[idx]);
             if (len > 0 && g_store.lines[idx][len - 1] == '\n')
                 len--;
-            fwrite(g_store.lines[idx], 1, len, tmp);
-            fputc('\n', tmp);
+            if (fwrite(g_store.lines[idx], 1, len, tmp) != len ||
+                fputc('\n', tmp) == EOF)
+                ok = false;
         }
-        fflush(tmp);
+        if (ok && fflush(tmp) != 0)
+            ok = false;
         fclose(tmp);
+
+        if (ok)
+        {
+            if (!msg_store_atomic_replace(tmp_path, g_store.path))
+            {
+                HLOGW(MSG_STORE_LOG_TAG, "replace %s with %s failed: %s — keeping old file",
+                      g_store.path, tmp_path, strerror(errno));
+                remove(tmp_path);
+            }
+        }
+        else
+        {
+            HLOGW(MSG_STORE_LOG_TAG, "rewrite of %s failed — keeping old file",
+                  g_store.path);
+            remove(tmp_path);
+        }
     }
 
     /* Reopen for append regardless, so later writes still persist. */
@@ -329,13 +369,13 @@ static void msg_store_emit(const char *plane, const char *dir, const char *peer,
         {
             HLOGW(MSG_STORE_LOG_TAG, "write failed: %s", strerror(errno));
         }
-        else if (++g_store.file_lines >= 2 * g_store.cap)
+        else
         {
-            /* Bound the file too: rewrite it down to the last `cap` lines once
-             * it has grown to twice the configured cap, so max_messages keeps
-             * the on-disk size bounded as well as the in-memory ring. */
-            msg_store_rewrite_file_locked();
-            g_store.file_lines = g_store.count;
+            /* The file is NOT rewritten here: this runs on the ARQ event-loop
+             * thread (via cb_deliver_rx_data), where a whole-file rewrite would
+             * stall link timing.  Trimming is deferred to init/shutdown, which
+             * run on the main thread. */
+            g_store.file_lines++;
         }
     }
 }
@@ -602,6 +642,12 @@ void msg_store_shutdown(void)
 
     if (g_store.fp)
     {
+        /* Trim the file down to the ring on a clean shutdown, so the on-disk
+         * size obeys max_messages even if the session appended past the cap.
+         * Runs on the main thread, not the ARQ event loop. */
+        if (g_store.file_lines > g_store.count)
+            msg_store_rewrite_file_locked();
+
         fflush(g_store.fp);
         fclose(g_store.fp);
         g_store.fp = NULL;
