@@ -58,6 +58,7 @@ type appState struct {
 	pttInvert        string
 	cm108GPIO        string
 	telemetry        telemetryState
+	history          []HistoryMessage
 	spectrumValues   []float32
 	spectrumRate     int
 	spectrumHistory  []float32
@@ -1085,6 +1086,11 @@ func main() {
 
 				case LogEvent:
 					appendLog(e.Text)
+
+				case HistoryEvent:
+					state.mu.Lock()
+					state.history = e.Messages
+					state.mu.Unlock()
 				}
 			}
 
@@ -1140,13 +1146,14 @@ func main() {
 	mercuryClientButton := widget.NewButton("Launch Mercury Client", func() {
 		state.mu.RLock()
 		tel := state.telemetry
+		history := state.history
 		link := state.link
 		state.mu.RUnlock()
 		arqPort, broadcastPort := 8300, 8100
 		if engLink, ok := link.(*engineLink); ok {
 			arqPort, broadcastPort = engLink.TCPPorts()
 		}
-		openMercuryClientWindow(myApp, tel, arqPort, broadcastPort)
+		openMercuryClientWindow(myApp, tel, arqPort, broadcastPort, history)
 	})
 
 	topBar := container.NewHBox(

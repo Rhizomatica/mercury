@@ -42,6 +42,7 @@
 #include "../data_interfaces/net.h"
 #include "../data_interfaces/tcp_interfaces.h"
 #include "../common/hermes_log.h"
+#include "../common/message_store.h"
 #include "../modem/freedv/modem_stats.h"
 #include "../modem/freedv/freedv_api.h"
 #include "../modem/modem.h"
@@ -105,6 +106,7 @@ static void ws_connect_handler(void *user_data)
     if (ctx) {
         ctx->soundcard_list_pending = 1;
         ctx->radio_list_pending = 1;
+        ctx->history_pending = 1;
     }
 }
 
@@ -868,6 +870,52 @@ void *ui_publisher_thread(void *arg)
                 free(radios);
                 free(buf);
             }
+        }
+
+        // --- Send persisted chat history when a new UI client connects ---
+        if (ctx->history_pending)
+        {
+            ctx->history_pending = 0;
+
+            size_t count = 0, snap_len = 0;
+            char *snap = msg_store_snapshot(&count, &snap_len);
+            if (!snap)
+            {
+                snap = "";
+                count = 0;
+                snap_len = 0;
+            }
+
+            /* Wrap the newline-delimited JSONL snapshot in a single
+             * {"type":"history","messages":[...]} frame.  Each snapshot line is
+             * already a complete JSON object, so join them with commas. */
+            char *buf = malloc(snap_len + 64);
+            if (buf)
+            {
+                size_t off = snprintf(buf, snap_len + 64,
+                                      "{\"type\":\"history\",\"messages\":[");
+                const char *p = snap;
+                for (size_t i = 0; i < count; i++)
+                {
+                    const char *nl = strchr(p, '\n');
+                    size_t linelen = nl ? (size_t)(nl - p) : strlen(p);
+                    if (i > 0)
+                        buf[off++] = ',';
+                    memcpy(buf + off, p, linelen);
+                    off += linelen;
+                    p = nl ? nl + 1 : p + linelen;
+                }
+                off += snprintf(buf + off, snap_len + 64 - off, "]}");
+                ws_broadcast_json(&ctx->ws, buf);
+                free(buf);
+            }
+            else
+            {
+                HLOGE(UI_LOG_TAG, "out of memory building the history frame");
+            }
+
+            if (snap[0])
+                free(snap);
         }
 
         hermes_usleep(UI_PUBLISH_INTERVAL_US);

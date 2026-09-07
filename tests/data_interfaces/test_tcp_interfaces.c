@@ -100,8 +100,6 @@ void arq_conn_get_calls(char *my_call, char *src_addr, char *dst_addr, size_t bu
 
 /* ---- message_store stubs ---- */
 
-static size_t mock_msg_store_count = 0;
-
 void msg_store_feed(const char *plane, const char *dir, const char *peer,
                     const uint8_t *data, size_t len)
 {
@@ -111,42 +109,6 @@ void msg_store_feed(const char *plane, const char *dir, const char *peer,
 void msg_store_reset(const char *plane, const char *dir)
 {
     (void)plane; (void)dir;
-}
-
-/* HISTORY uses msg_store_snapshot(); synthesise a newline-terminated JSONL blob
- * of mock_msg_store_count lines so the command's framing can be asserted,
- * including a dump larger than a single socket write. */
-char *msg_store_snapshot(size_t *count_out, size_t *len_out)
-{
-    if (mock_msg_store_count == 0)
-    {
-        if (count_out) *count_out = 0;
-        if (len_out)   *len_out   = 0;
-        return NULL;
-    }
-
-    size_t total = mock_msg_store_count * 32 + 1;   /* generous per-line cap */
-    char *buf = malloc(total);
-    if (!buf)
-    {
-        if (count_out) *count_out = 0;
-        if (len_out)   *len_out   = 0;
-        return NULL;
-    }
-
-    size_t off = 0;
-    for (size_t i = 0; i < mock_msg_store_count; i++)
-    {
-        int n = snprintf(buf + off, total - off, "{\"text\":\"m%zu\"}\n", i);
-        if (n < 0 || (size_t)n >= total - off)
-            break;
-        off += (size_t)n;
-    }
-    buf[off] = '\0';
-
-    if (count_out) *count_out = mock_msg_store_count;
-    if (len_out)   *len_out   = off;
-    return buf;
 }
 
 /* ---- net stubs ---- */
@@ -160,36 +122,18 @@ static uint8_t last_tcp_write_buf[256];
 static size_t last_tcp_write_len = 0;
 static int tcp_write_call_count = 0;
 
-/* Accumulated copy of every write, so a multi-line dump (HISTORY) can be
- * asserted in full rather than just its last line.  Sized to hold a dump of
- * several thousand synthesised messages. */
-#define ACCUM_WRITES_CAP (256 * 1024)
-static uint8_t accum_writes[ACCUM_WRITES_CAP];
-static size_t  accum_writes_len = 0;
-
-static void record_write(const uint8_t *buffer, size_t tx_size)
+ssize_t tcp_write(int port_type, uint8_t *buffer, size_t tx_size)
 {
+    (void)port_type;
     if (tx_size < sizeof(last_tcp_write_buf)) {
         memcpy(last_tcp_write_buf, buffer, tx_size);
         last_tcp_write_buf[tx_size] = '\0';
         last_tcp_write_len = tx_size;
     }
-    if (accum_writes_len + tx_size < sizeof(accum_writes)) {
-        memcpy(accum_writes + accum_writes_len, buffer, tx_size);
-        accum_writes_len += tx_size;
-    }
     tcp_write_call_count++;
-}
-
-ssize_t tcp_write(int port_type, uint8_t *buffer, size_t tx_size)
-{
-    (void)port_type;
-    record_write(buffer, tx_size);
     return (ssize_t)tx_size;
 }
 
-/* HISTORY uses tcp_write_all(); delegate to the tcp_write mock so the same
- * capture/assertion helpers see the dump. */
 ssize_t tcp_write_all(int port_type, uint8_t *buffer, size_t tx_size)
 {
     return tcp_write(port_type, buffer, tx_size);
@@ -339,7 +283,6 @@ void setUp(void)
     memset(last_tcp_write_buf, 0, sizeof(last_tcp_write_buf));
     last_tcp_write_len = 0;
     tcp_write_call_count = 0;
-    accum_writes_len = 0;
     memset(&captured_cmd, 0, sizeof(captured_cmd));
     captured_cmd_count = 0;
     arq_submit_return = 0;
@@ -350,7 +293,6 @@ void setUp(void)
     queued_line_count = 0;
     memset(&arq_conn, 0, sizeof(arq_conn));
     mock_bandwidth_hz = 2300;
-    mock_msg_store_count = 0;
 
     /* Broadcast framing state */
     memset(last_write_buffer_data, 0, sizeof(last_write_buffer_data));
@@ -1488,86 +1430,6 @@ void test_bitrate_query_is_always_answered(void)
         "host asked for BITRATE and got nothing: is the reply rate-limited?");
 }
 
-/* ---- HISTORY (persisted chat history) command tests ---- */
-
-void test_cmd_history_empty(void)
-{
-    mock_msg_store_count = 0;
-    char cmd[] = "HISTORY";
-    execute_control_command(cmd);
-
-    /* HISTORY 0 + HISTORYEND, two direct writes. */
-    TEST_ASSERT_EQUAL(2, tcp_write_call_count);
-    TEST_ASSERT_EQUAL_STRING("HISTORYEND\r", (char *)last_tcp_write_buf);
-}
-
-void test_cmd_history_with_messages(void)
-{
-    mock_msg_store_count = 1;
-    char cmd[] = "HISTORY";
-    execute_control_command(cmd);
-
-    /* HISTORY 1 + one HISTORYMSG + HISTORYEND. */
-    TEST_ASSERT_EQUAL(3, tcp_write_call_count);
-    TEST_ASSERT_EQUAL_STRING("HISTORYEND\r", (char *)last_tcp_write_buf);
-}
-
-/* Count occurrences of a non-empty needle in the accumulated write capture. */
-static int count_occurrences(const char *needle)
-{
-    int count = 0;
-    const char *p = (const char *)accum_writes;
-    size_t remaining = accum_writes_len;
-    size_t needle_len = strlen(needle);
-
-    if (needle_len == 0)
-        return 0;
-
-    while (remaining >= needle_len)
-    {
-        if (memcmp(p, needle, needle_len) == 0)
-        {
-            count++;
-            p += needle_len;
-            remaining -= needle_len;
-        }
-        else
-        {
-            p++;
-            remaining--;
-        }
-    }
-    return count;
-}
-
-/* A dump larger than a socket buffer's worth must still frame every message,
- * and the advertised HISTORY <n> must match what is actually emitted. */
-void test_cmd_history_many_messages(void)
-{
-    const size_t n = 3000;
-    mock_msg_store_count = n;
-    char cmd[] = "HISTORY";
-    execute_control_command(cmd);
-
-    /* HISTORY <n> + n HISTORYMSG lines + HISTORYEND. */
-    TEST_ASSERT_EQUAL_INT((int)(n + 2), tcp_write_call_count);
-    TEST_ASSERT_EQUAL_STRING("HISTORYEND\r", (char *)last_tcp_write_buf);
-    TEST_ASSERT_EQUAL_INT((int)n, count_occurrences("HISTORYMSG "));
-
-    /* The header must advertise the exact count. */
-    char hdr[64];
-    snprintf(hdr, sizeof(hdr), "HISTORY %zu\r", n);
-    TEST_ASSERT_EQUAL_STRING_LEN(hdr, (char *)accum_writes,
-                                 (int)strlen(hdr));
-
-    /* Spot-check the first and last message lines made it through in order. */
-    char first[64], last[64];
-    snprintf(first, sizeof(first), "HISTORYMSG {\"text\":\"m0\"}\r");
-    snprintf(last,  sizeof(last),  "HISTORYMSG {\"text\":\"m%zu\"}\r", n - 1);
-    TEST_ASSERT_NOT_NULL(strstr((const char *)accum_writes, first));
-    TEST_ASSERT_NOT_NULL(strstr((const char *)accum_writes, last));
-}
-
 int main(void)
 {
     UNITY_BEGIN();
@@ -1643,9 +1505,5 @@ int main(void)
     RUN_TEST(test_bcast_data_lenprefix_roundtrip);
     RUN_TEST(test_sn_query_is_always_answered);
     RUN_TEST(test_bitrate_query_is_always_answered);
-    /* HISTORY command tests */
-    RUN_TEST(test_cmd_history_empty);
-    RUN_TEST(test_cmd_history_with_messages);
-    RUN_TEST(test_cmd_history_many_messages);
     return UNITY_END();
 }

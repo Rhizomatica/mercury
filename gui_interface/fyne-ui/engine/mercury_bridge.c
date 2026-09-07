@@ -10,6 +10,8 @@
 
 #include <stdio.h>
 #include <stdbool.h>
+#include <stdlib.h>
+#include <string.h>
 #include <unistd.h>
 
 #include "cfg_utils.h"
@@ -17,9 +19,10 @@
 #include "mercury_cli.h"
 #include "mercury_version.h"
 #include "ui_communication.h"
-#include "bcast_file.h"
 #include "modem.h"
 #include "modem_stats.h"   /* MODEM_STATS_NSPEC */
+#include "message_store.h"
+#include "bcast_file.h"
 
 /* Print the startup version banner (same text the daemon prints), so the UI
  * announces its version on the terminal too.  Resolved here, in a unit the
@@ -209,6 +212,26 @@ void mercury_ui_set_waterfall(bool enabled)
 void mercury_ui_get_tcp_ports(int *arq_base_port, int *broadcast_port)
 {
     ui_comm_get_tcp_ports(arq_base_port, broadcast_port);
+}
+
+int mercury_ui_get_history(char *out, int out_len)
+{
+    size_t count = 0, len = 0;
+    char *snap;
+
+    if (!out || out_len <= 0)
+        return 0;
+
+    snap = msg_store_snapshot(&count, &len);
+    if (!snap)
+        return 0;
+
+    if (len >= (size_t)out_len)
+        len = (size_t)out_len - 1;
+    memcpy(out, snap, len);
+    out[len] = '\0';
+    free(snap);
+    return (int)len;
 }
 
 void mercury_ui_get_version(char *version, int version_len,

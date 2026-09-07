@@ -473,53 +473,6 @@ static void execute_control_command(char *buffer)
         return;
     }
 
-    if (!strncmp(buffer, "HISTORY", strlen("HISTORY")))
-    {
-        /* Mercury extension: dump the persisted ARQ/broadcast chat history as
-         * JSONL lines, oldest first, framed as HISTORYMSG <json> between a
-         * HISTORY <count> header and a HISTORYEND terminator.
-         *
-         * The dump can be several KB to MB and is written in one burst, so it
-         * goes through tcp_write_all() rather than tcp_write(): the control
-         * socket is non-blocking and tcp_write() drops on EAGAIN / resets on a
-         * short send, which would truncate the dump or tear down the control
-         * connection right after it connects.  Stop early if the write fails. */
-        size_t count = 0, snap_len = 0;
-        char *snap = msg_store_snapshot(&count, &snap_len);
-        if (!snap)
-            snap_len = 0;
-
-        char hdr[64];
-        int hn = snprintf(hdr, sizeof(hdr), "HISTORY %zu\r", count);
-        if (hn > 0 && tcp_write_all(CTL_TCP_PORT, (uint8_t *)hdr, (size_t)hn) < 0)
-        {
-            free(snap);
-            return;
-        }
-
-        /* The snapshot is a consistent, newline-terminated view of the ring, so
-         * the emitted lines always agree with the advertised count even if a
-         * message is appended while we dump. */
-        const char *p = snap;
-        char out[8192 + 16];
-        for (size_t i = 0; i < count && p != NULL; i++)
-        {
-            const char *nl = strchr(p, '\n');
-            size_t linelen = nl ? (size_t)(nl - p) : strlen(p);
-            int on = snprintf(out, sizeof(out), "HISTORYMSG %.*s\r",
-                              (int)linelen, p);
-            if (on > 0 && tcp_write_all(CTL_TCP_PORT, (uint8_t *)out, (size_t)on) < 0)
-            {
-                free(snap);
-                return;
-            }
-            p = nl ? nl + 1 : NULL;
-        }
-        free(snap);
-        tcp_write_all(CTL_TCP_PORT, (uint8_t *)"HISTORYEND\r", 11);
-        return;
-    }
-
     if (!strncmp(buffer, "SN", strlen("SN")))
     {
         uint32_t bits = atomic_load_explicit(&last_sn_bits, memory_order_relaxed);

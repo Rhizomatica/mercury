@@ -96,6 +96,11 @@ void mercury_ui_set_waterfall(bool enabled);
 /* Read the TNC TCP ports the engine listens on. */
 void mercury_ui_get_tcp_ports(int *arq_base_port, int *broadcast_port);
 
+/* Copy the persisted ARQ/broadcast chat history (newline-delimited JSONL,
+ * oldest first) into the provided buffer.  Returns the number of bytes written
+ * (excluding the NUL), or 0 if the store is empty or unavailable. */
+int mercury_ui_get_history(char *out, int out_len);
+
 /* Copy the release version string and git hash into the provided buffers. */
 void mercury_ui_get_version(char *version, int version_len,
                             char *git_hash, int git_hash_len);
