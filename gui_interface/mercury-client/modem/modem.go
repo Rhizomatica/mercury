@@ -423,6 +423,13 @@ func (mc *ModemClient) Disconnect() {
 	var disconnected []string
 
 	mc.mu.Lock()
+	// Close the quit channel FIRST, before the sockets.  readARQControl
+	// distinguishes "we asked to go away" (quit closed) from "the modem hung
+	// up on us" (linkDown); if the socket close raced ahead of this, a clean
+	// local disconnect could be misread as a remote eviction.
+	close(mc.quit)
+	mc.quit = make(chan struct{})
+
 	control := mc.ARQControlConn
 	if control != nil {
 		control.Close()
@@ -442,8 +449,6 @@ func (mc *ModemClient) Disconnect() {
 
 	mc.arqConnected = false
 
-	close(mc.quit)
-	mc.quit = make(chan struct{})
 	mc.mu.Unlock()
 
 	for _, msg := range disconnected {
@@ -467,6 +472,15 @@ func (mc *ModemClient) readARQControl() {
 		default:
 			line, err := reader.ReadString('\r')
 			if err != nil {
+				// A local Disconnect() closes quit and the socket, landing us
+				// here with the same error as a remote eviction.  Distinguish
+				// the two: if we asked to go away, this is expected, not the
+				// modem hanging up on us.
+				select {
+				case <-quit:
+					return
+				default:
+				}
 				if err != io.EOF {
 					mc.LogCh <- fmt.Sprintf("ARQ Control read error: %v", err)
 				}
