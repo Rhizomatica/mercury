@@ -2073,8 +2073,22 @@ static void resolve_device_string(int audio_subsys, int mode, char *buf, size_t 
          * appears in SNDCTL_AUDIOINFO_EX under that name, and ALSA takes
          * plughw:/hw: strings that are absent from the list too.  If the open
          * really does fail, that is reported with the driver's own reason. */
-        HLOGI(log_tag, "device '%s' is not in the enumerated list -- passing it to the "
-                       "driver as given (-z lists the enumerated devices)", buf);
+        /* A CoreAudio config from an older build holds an enumeration index.
+         * It still opens (the driver takes it), but it is not an identity: the
+         * next replug or reboot can move it, and then it addresses nothing.
+         * Say so once, with the fix, rather than let it fail silently later. */
+        bool numeric = buf[0] != '\0';
+        for (const char *p = buf; numeric && *p != '\0'; p++)
+            if (*p < '0' || *p > '9')
+                numeric = false;
+        if (numeric && audio_subsys == AUDIO_SUBSYSTEM_COREAUDIO)
+            HLOGW(log_tag, "device '%s' looks like a CoreAudio enumeration index, "
+                           "which changes when the device is replugged or the machine "
+                           "reboots -- re-select the device (or use the id from -z, "
+                           "now a stable UID) so it keeps working", buf);
+        else
+            HLOGI(log_tag, "device '%s' is not in the enumerated list -- passing it to the "
+                           "driver as given (-z lists the enumerated devices)", buf);
     }
 
 done:

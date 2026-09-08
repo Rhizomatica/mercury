@@ -24,11 +24,16 @@ ui_protocol = ws
 waterfall_enabled = true
 
 ; Audio capture (input) device id (e.g. "plughw:0,0")
-; Run mercury -z to list available devices.
+; Run mercury -z to list available devices, and store the id it prints.
+;
+; On macOS that id is the CoreAudio device UID, a string that stays with the
+; device across replug and reboot and is distinct between two units of the
+; same model.  Do NOT store the enumeration index shown by other tools: it is
+; not an identity, and once the device is replugged it addresses nothing.
 input_device =
 
 ; Audio playback (output) device id (e.g. "plughw:0,0")
-; Run mercury -z to list available devices.
+; Run mercury -z to list available devices, and store the id it prints.
 output_device =
 
 ; Capture input channel: left, right, or stereo (default: left)
