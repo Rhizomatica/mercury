@@ -265,9 +265,18 @@ void ffcoreaudio_free(ffaudio_buf *b)
 	if (b == NULL)
 		return;
 
-	ffring_free(b->ring);
-	if (b->aprocid != NULL)
+	/* Order matters: the IOProc writes into b->ring from CoreAudio's own
+	 * thread, so it has to be stopped and destroyed BEFORE the ring is freed.
+	 * Freeing first leaves a live callback writing into released memory --
+	 * rare, timing-dependent, and exactly the kind of fault that shows up as
+	 * an unrelated crash much later.  Stop first: destroying a running IOProc
+	 * is not defined to be safe. */
+	if (b->aprocid != NULL) {
+		AudioDeviceStop(b->dev, (AudioDeviceIOProcID)b->aprocid);
 		AudioDeviceDestroyIOProcID(b->dev, (AudioDeviceIOProcID)b->aprocid);
+		b->aprocid = NULL;
+	}
+	ffring_free(b->ring);
 	ffmem_free(b);
 }
 
@@ -391,8 +400,17 @@ end:
 		 * leaked proc per failed open.  A reopen loop retrying every 200 ms,
 		 * as in issue #254, leaks them at that rate. */
 		if (b->aprocid != NULL) {
-			AudioDeviceDestroyIOProcID(dev, (AudioDeviceIOProcID)b->aprocid);
-			b->aprocid = NULL;
+			/* Only drop the handle if the proc is really gone.  Clearing it
+			 * unconditionally discards the one reference we have to a proc
+			 * that is still registered on the device, so nothing can ever
+			 * clean it up -- the leak this block exists to prevent, arrived
+			 * at from the other side.  Keep it and let ffcoreaudio_free()
+			 * try again; b->dev is set below only on success, so record the
+			 * device the proc actually belongs to. */
+			if (0 == AudioDeviceDestroyIOProcID(dev, (AudioDeviceIOProcID)b->aprocid))
+				b->aprocid = NULL;
+			else
+				b->dev = dev;
 		}
 	}
 	return rc;
