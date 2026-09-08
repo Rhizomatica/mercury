@@ -388,28 +388,25 @@ int ffcoreaudio_open(ffaudio_buf *b, ffaudio_conf *conf, ffuint flags)
 	ffuint capture = (flags & 0x0f) == FFAUDIO_DEV_CAPTURE;
 	b->nonblock = !!(flags & FFAUDIO_O_NONBLOCK);
 
+	/* Devices are addressed by UID.  An AudioDeviceID is an enumeration
+	 * index, not an identity -- replug the interface or reboot and it moves,
+	 * which is how a stored index ends up addressing nothing (issue #254).
+	 * kAudioDevicePropertyDeviceUID is stable for the device and distinct
+	 * between two units of the same model, so it is what enumeration reports
+	 * and what a config holds; resolve it fresh on every open. */
 	int dev = -1;
-	if (conf->device_id != NULL) {
-		/* Validate the parse: strtoul() returns 0 on a string it cannot read,
-		 * which would silently select device 0 instead of falling back to the
-		 * default. A config written by an older build holds exactly such an
-		 * unparsable id (it stored the raw AudioDeviceID bytes), so this is the
-		 * upgrade path, not a hypothetical. */
-		/* A UID first: that is what enumeration now reports and what a
-		 * config written by this build holds.  Resolving it every open is the
-		 * point -- the index behind it changes when the device is replugged
-		 * or the machine reboots, which is why a stored index eventually
-		 * addresses nothing (issue #254). */
+	if (conf->device_id != NULL && conf->device_id[0] != '\0') {
 		dev = coreaudio_dev_by_uid(conf->device_id);
-
 		if (dev < 0) {
-			char *end = NULL;
-			unsigned long v = strtoul(conf->device_id, &end, 10);
-			if (end != conf->device_id && *end == '\0' && v <= 0x7fffffffUL)
-				dev = (int)v;   /* config from an older build */
+			/* An explicitly chosen device that is not present is an error, not
+			 * an invitation to open something else.  Falling back to the
+			 * default here would quietly bind the built-in microphone and the
+			 * modem would sit there hearing nothing -- far worse to diagnose
+			 * than a refusal. */
+			b->errfunc = "device UID not found (run -z to list devices)";
+			return FFAUDIO_ERROR;
 		}
-	}
-	if (dev < 0) {
+	} else {
 		dev = coreaudio_dev_default(capture);
 		if (dev < 0) {
 			b->errfunc = "get default device";
