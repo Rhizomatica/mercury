@@ -222,7 +222,35 @@ struct ffaudio_buf {
 	ffring_head rhead;
 
 	const char *errfunc;
+	/* CoreAudio reports every failure as an OSStatus, and the reason lives in
+	 * that code -- device gone, format refused, permission, hardware not
+	 * running.  Recording only the function name (as this did) turns a
+	 * diagnosable fault into "AudioDeviceStart failed" with nothing to act on;
+	 * see issue #254, where that is exactly what happened. */
+	char errbuf[96];
 };
+
+/* Format "func: 'four' (-10851)".  Most CoreAudio statuses are four-character
+ * codes ('nope', '!dat', 'stop'); the numeric form is kept for the ones that
+ * are not printable. */
+static void coreaudio_err(ffaudio_buf *b, const char *func, OSStatus st)
+{
+	unsigned char c[4] = {
+		(unsigned char)(st >> 24), (unsigned char)(st >> 16),
+		(unsigned char)(st >> 8),  (unsigned char)st,
+	};
+	int printable = 1;
+	for (int i = 0; i != 4; i++) {
+		if (c[i] < 0x20 || c[i] > 0x7e)
+			printable = 0;
+	}
+	if (printable)
+		snprintf(b->errbuf, sizeof(b->errbuf), "%s: '%c%c%c%c' (%d)",
+			 func, c[0], c[1], c[2], c[3], (int)st);
+	else
+		snprintf(b->errbuf, sizeof(b->errbuf), "%s: (%d)", func, (int)st);
+	b->errfunc = b->errbuf;
+}
 
 ffaudio_buf* ffcoreaudio_alloc()
 {
@@ -238,7 +266,8 @@ void ffcoreaudio_free(ffaudio_buf *b)
 		return;
 
 	ffring_free(b->ring);
-	AudioDeviceDestroyIOProcID(b->dev, b->aprocid);
+	if (b->aprocid != NULL)
+		AudioDeviceDestroyIOProcID(b->dev, (AudioDeviceIOProcID)b->aprocid);
 	ffmem_free(b);
 }
 
@@ -308,9 +337,10 @@ int ffcoreaudio_open(ffaudio_buf *b, ffaudio_conf *conf, ffuint flags)
 	AudioStreamBasicDescription asbd = {};
 	ffuint size = sizeof(asbd);
 	const AudioObjectPropertyAddress *a = (capture) ? &prop_idev_fmt : &prop_odev_fmt;
-	if (0 != AudioObjectGetPropertyData(dev, a, 0, NULL, &size, &asbd)) {
-		b->errfunc = "AudioStreamBasicDescription";
-		return -1;
+	OSStatus st;
+	if (0 != (st = AudioObjectGetPropertyData(dev, a, 0, NULL, &size, &asbd))) {
+		coreaudio_err(b, "AudioStreamBasicDescription", st);
+		return FFAUDIO_ERROR;
 	}
 
 	int new_format = 0;
@@ -333,9 +363,10 @@ int ffcoreaudio_open(ffaudio_buf *b, ffaudio_conf *conf, ffuint flags)
 		return FFAUDIO_EFORMAT;
 
 	void *proc = (capture) ? coreaudio_ioproc_capture : coreaudio_ioproc_playback;
-	if (0 != AudioDeviceCreateIOProcID(dev, proc, b, (AudioDeviceIOProcID*)&b->aprocid)
+	b->aprocid = NULL;
+	if (0 != (st = AudioDeviceCreateIOProcID(dev, proc, b, (AudioDeviceIOProcID*)&b->aprocid))
 		|| b->aprocid == NULL) {
-		b->errfunc = "AudioDeviceCreateIOProcID";
+		coreaudio_err(b, "AudioDeviceCreateIOProcID", st);
 		goto end;
 	}
 
@@ -352,15 +383,26 @@ int ffcoreaudio_open(ffaudio_buf *b, ffaudio_conf *conf, ffuint flags)
 	rc = 0;
 
 end:
-	if (rc != 0)
-		AudioDeviceDestroyIOProcID(b->dev, b->aprocid);
+	if (rc != 0) {
+		/* Destroy the proc on the device it was CREATED on.  b->dev is only
+		 * assigned on the success path above, so it still holds 0 (first open)
+		 * or the previous device (a reopen) -- destroying against it leaves the
+		 * new proc registered on `dev` for the lifetime of the process, one
+		 * leaked proc per failed open.  A reopen loop retrying every 200 ms,
+		 * as in issue #254, leaks them at that rate. */
+		if (b->aprocid != NULL) {
+			AudioDeviceDestroyIOProcID(dev, (AudioDeviceIOProcID)b->aprocid);
+			b->aprocid = NULL;
+		}
+	}
 	return rc;
 }
 
 int ffcoreaudio_start(ffaudio_buf *b)
 {
-	if (0 != AudioDeviceStart(b->dev, b->aprocid)) {
-		b->errfunc = "AudioDeviceStart";
+	OSStatus st;
+	if (0 != (st = AudioDeviceStart(b->dev, b->aprocid))) {
+		coreaudio_err(b, "AudioDeviceStart", st);
 		return FFAUDIO_ERROR;
 	}
 	return 0;
@@ -368,8 +410,9 @@ int ffcoreaudio_start(ffaudio_buf *b)
 
 int ffcoreaudio_stop(ffaudio_buf *b)
 {
-	if (0 != AudioDeviceStop(b->dev, b->aprocid)) {
-		b->errfunc = "AudioDeviceStop";
+	OSStatus st;
+	if (0 != (st = AudioDeviceStop(b->dev, b->aprocid))) {
+		coreaudio_err(b, "AudioDeviceStop", st);
 		return FFAUDIO_ERROR;
 	}
 	return 0;

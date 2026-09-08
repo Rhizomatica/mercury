@@ -1592,8 +1592,14 @@ void *radio_capture_thread(void *device_ptr)
         r = audio->read(b, (const void **)&buffer);
         if (r < 0)
         {
+            /* A device that fails every read fails it hundreds of times a
+             * second.  Log the first, then thin out: the useful information is
+             * the error text and that it is persisting, not one line per
+             * attempt drowning the rest of the session (issue #254). */
             diag_read_errors++;
-            HLOGE("audio-cap", "ffaudio.read: %s", audio->error(b));
+            if (diag_read_errors == 1 || (diag_read_errors % 256) == 0)
+                HLOGE("audio-cap", "ffaudio.read: %s (error %u)",
+                      audio->error(b), diag_read_errors);
         }
         if (r <= 0)
         {
@@ -1607,15 +1613,31 @@ void *radio_capture_thread(void *device_ptr)
                       (unsigned long long)(now - cap_last_data_ms), ++diag_reopens);
                 audio->free(b);
                 b = NULL;
+                /* Keep trying -- a USB radio interface can come back -- but
+                 * back off instead of hammering the device every 200 ms, and
+                 * do not print a line per attempt.  The old loop produced an
+                 * unbounded error stream that buried the reason it was
+                 * failing (issue #254). */
+                unsigned attempt = 0;
+                unsigned delay_ms = 200;
                 while (!shutdown_ && !audio_shutdown_)
                 {
                     b = audio->alloc();
                     if (b != NULL && audio->open(b, cfg, conf.flags) == 0)
+                    {
+                        if (attempt != 0)
+                            HLOGI("audio-cap", "capture reopened after %u attempts",
+                                  attempt + 1);
                         break;
-                    HLOGE("audio-cap", "capture reopen failed: %s",
-                          b ? audio->error(b) : "alloc()");
+                    }
+                    attempt++;
+                    if (attempt == 1 || (attempt % 16) == 0)
+                        HLOGE("audio-cap", "capture reopen failed (attempt %u): %s",
+                              attempt, b ? audio->error(b) : "alloc()");
                     if (b != NULL) { audio->free(b); b = NULL; }
-                    ffthread_sleep(200);
+                    ffthread_sleep(delay_ms);
+                    if (delay_ms < 5000)
+                        delay_ms *= 2;
                 }
                 if (b == NULL)   /* shutdown requested mid-reopen */
                 {
