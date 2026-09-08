@@ -1987,9 +1987,27 @@ int get_soundcard_list(int audio_system, int mode,
  * enumerable devices (NULL/FIFO/SOCK/SHM), enumeration fails, or a
  * substring match is ambiguous, buf is left untouched -- callers get
  * exactly today's behavior. */
+/* Display name of the device each direction last resolved to.
+ *
+ * A native device id is not necessarily stable: CoreAudio AudioDeviceIDs are
+ * assigned per enumeration and a USB interface that drops off the bus and
+ * comes back gets a NEW one.  A config holding a numeric id (which is what the
+ * UI writes) then points at nothing, and every reopen fails in
+ * AudioObjectGetPropertyData -- reported, before the diagnostics landed, as a
+ * bare "AudioStreamBasicDescription" and, with them, as '!obj'
+ * (kAudioHardwareBadObjectError).  Verified on macOS: an id that is not in the
+ * device list produces exactly that.
+ *
+ * Names survive re-enumeration where ids do not, so remember the name we
+ * opened and fall back to it when the id stops resolving.  This is the reopen
+ * path for issue #254's failure shape, and it costs nothing on the ordinary
+ * path where the id is still valid. */
+static char s_resolved_name[2][160];
+
 static void resolve_device_string(int audio_subsys, int mode, char *buf, size_t bufsz,
                                   const char *log_tag, bool pulse_lock_held)
 {
+    const int dirslot = (mode == FFAUDIO_DEV_CAPTURE) ? 0 : 1;
     /* An empty device means "the default".  Most backends take that as NULL and
      * choose sensibly, but OSS cannot: ffaudio falls back to /dev/dsp for BOTH
      * directions, and on OSSv4 /dev/dsp is one node -- commonly playback-only.
@@ -2032,6 +2050,10 @@ static void resolve_device_string(int audio_subsys, int mode, char *buf, size_t 
     for (int i = 0; i < n; i++) {
         if (strcmp(buf, ids[i]) == 0) {
             already_native = true;   // already a valid native id
+            /* Remember what this id is called, so a later re-enumeration can
+             * be followed by name.  See s_resolved_name. */
+            snprintf(s_resolved_name[dirslot], sizeof(s_resolved_name[dirslot]),
+                     "%s", names[i] ? names[i] : "");
             break;
         }
     }
@@ -2068,13 +2090,36 @@ static void resolve_device_string(int audio_subsys, int mode, char *buf, size_t 
     } else if (matches > 1) {
         HLOGW(log_tag, "device name '%s' is ambiguous (%d matches) -- use an exact id from -z instead", buf, matches);
     } else {
-        /* Not a prediction of failure: enumeration does not see every valid
-         * node.  Every /dev/dsp* symlink is a working OSS device that never
-         * appears in SNDCTL_AUDIOINFO_EX under that name, and ALSA takes
-         * plughw:/hw: strings that are absent from the list too.  If the open
-         * really does fail, that is reported with the driver's own reason. */
-        HLOGI(log_tag, "device '%s' is not in the enumerated list -- passing it to the "
-                       "driver as given (-z lists the enumerated devices)", buf);
+        /* The id we were given is gone.  If we have opened this direction
+         * before, the device it named may simply have come back under a new
+         * id -- follow it by name rather than handing the driver a stale
+         * number that cannot resolve. */
+        int rematch = -1, rematches = 0;
+        if (s_resolved_name[dirslot][0] != '\0') {
+            for (int i = 0; i < n; i++) {
+                if (ffsz_ieq(s_resolved_name[dirslot], names[i])) {
+                    if (rematches == 0)
+                        rematch = i;
+                    rematches++;
+                }
+            }
+        }
+        if (rematches == 1) {
+            HLOGW(log_tag, "device id '%s' is gone; '%s' is now id=%s -- following it "
+                           "(the device re-enumerated)",
+                  buf, names[rematch], ids[rematch]);
+            strncpy(buf, ids[rematch], bufsz - 1);
+            buf[bufsz - 1] = '\0';
+        } else {
+            /* Not a prediction of failure: enumeration does not see every
+             * valid node.  Every /dev/dsp* symlink is a working OSS device
+             * that never appears in SNDCTL_AUDIOINFO_EX under that name, and
+             * ALSA takes plughw:/hw: strings absent from the list too.  If the
+             * open really does fail, that is reported with the driver's own
+             * reason. */
+            HLOGI(log_tag, "device '%s' is not in the enumerated list -- passing it to the "
+                           "driver as given (-z lists the enumerated devices)", buf);
+        }
     }
 
 done:
