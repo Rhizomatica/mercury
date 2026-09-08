@@ -10,6 +10,7 @@
 #include "arq_fsm.h"
 #include "arq_tnc.h"
 #include "arq_protocol.h"
+#include "arq_trace.h"
 #include "arq_timing.h"
 #include "arq_modem.h"
 #include "arq_channels.h"
@@ -283,6 +284,7 @@ static void cb_notify_disconnected(bool to_no_client)
     pthread_mutex_unlock(&g_app_tx_mtx);
     arq_tnc_send_disconnected();
     HLOGI(LOG_COMP, "Disconnected");
+    ARQ_TRACE_DUMP("disconnected");
     /* Return to LISTENING after any disconnection (failed call, cancelled call,
      * or ended session) as long as listen mode is active.  The was_connected
      * guard was thought to prevent spurious APP_LISTEN from APP_DISCONNECT-in-
@@ -694,6 +696,12 @@ bool arq_handle_incoming_connect_frame(uint8_t *data, size_t frame_size)
              ? arq_protocol_parse_accept(data, frame_size, &session_id, src, dst, &bw_hz)
              : arq_protocol_parse_call  (data, frame_size, &session_id, src, dst, &bw_hz);
 
+    /* CALL/ACCEPT do not pass through arq_handle_incoming_frame, so without
+     * this the connect exchange is invisible to the trace -- which is exactly
+     * the exchange whose reliability decides whether a link comes up. */
+    ARQ_TRACE(ARQ_TR_RX_FRAME, is_accept ? 2 : 1, (uint8_t)(rc < 0 ? 0xff : 0),
+              (uint16_t)frame_size);
+
     if (rc < 0)
     {
         HLOGD(LOG_COMP, "CALL/ACCEPT parse failed");
@@ -794,6 +802,8 @@ void arq_handle_incoming_frame(uint8_t *data, size_t frame_size, float rx_snr)
         HLOGD(LOG_COMP, "Frame header decode failed");
         return;
     }
+
+    ARQ_TRACE(ARQ_TR_RX_FRAME, hdr.packet_type, hdr.subtype, (uint16_t)frame_size);
 
     arq_event_t ev = {0};
     ev.session_id    = hdr.session_id;

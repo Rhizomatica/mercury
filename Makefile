@@ -165,7 +165,7 @@ ifeq ($(HAVE_HERMES_SHM),1)
 HERMES_SHM_CFLAGS = -DHAVE_HERMES_SHM
 endif
 
-CFLAGS = $(COMMON_CFLAGS) -I. -Imodem/freedv -Imodem -Idatalink_broadcast -Idata_interfaces -Idatalink_arq -Iaudioio -Iaudioio/ffaudio -Icommon -Igui_interface -Iradio_io $(HAMLIB_CFLAGS) $(HERMES_SHM_CFLAGS)
+CFLAGS = $(COMMON_CFLAGS) -I. -Imodem/freedv -Imodem -Idatalink_broadcast -Idata_interfaces -Idatalink_arq -Iaudioio -Iaudioio/ffaudio -Icommon -Igui_interface -Iradio_io $(HAMLIB_CFLAGS) $(HERMES_SHM_CFLAGS) $(EXTRA_CFLAGS)
 
 ifeq ($(OS),Windows_NT)
 BINARY = mercury.exe
@@ -177,7 +177,7 @@ LDFLAGS=$(FFAUDIO_LINKFLAGS) -lm $(HAMLIB_LDFLAGS) $(HIDAPI_LDFLAGS) $(ATOMIC_LD
 
 MERCURY_LINK_INPUTS = \
 	main.o common/cfg_utils.o common/iniparser/iniparser.o common/iniparser/dictionary.o \
-	datalink_arq/arq.o datalink_arq/arq_tnc.o datalink_arq/arith.o datalink_arq/arq_channels.o \
+	datalink_arq/arq.o datalink_arq/arq_trace.o datalink_arq/arq_tnc.o datalink_arq/arith.o datalink_arq/arq_channels.o \
 	datalink_arq/arq_fsm.o datalink_arq/arq_protocol.o datalink_arq/arq_timing.o datalink_arq/arq_modem.o \
 	datalink_broadcast/broadcast.o datalink_broadcast/kiss.o modem/modem.o modem/framer.o modem/channel_busy.o modem/freedv/libfreedvdata.a \
 	audioio/audioio.a common/os_interop.o common/ring_buffer_posix.o common/shm_posix.o common/crc6.o common/hermes_log.o common/virtual_clock.o \
@@ -292,7 +292,7 @@ datalink_broadcast/bcast_file.w64.o: datalink_broadcast/bcast_file.c
 
 MERCURY_CORE_OBJS = \
 	common/cfg_utils.o common/iniparser/iniparser.o common/iniparser/dictionary.o \
-	datalink_arq/arq.o datalink_arq/arq_tnc.o datalink_arq/arith.o datalink_arq/arq_channels.o \
+	datalink_arq/arq.o datalink_arq/arq_trace.o datalink_arq/arq_tnc.o datalink_arq/arith.o datalink_arq/arq_channels.o \
 	datalink_arq/arq_fsm.o datalink_arq/arq_protocol.o datalink_arq/arq_timing.o datalink_arq/arq_modem.o \
 	datalink_broadcast/broadcast.o datalink_broadcast/kiss.o \
 	modem/modem.o modem/framer.o modem/channel_busy.o \

@@ -34,6 +34,7 @@
 #include "ring_buffer_posix.h"
 #include "framer.h"
 #include "arq.h"
+#include "arq_trace.h"
 #include "../datalink_arq/arq_modem.h"
 #include "../datalink_arq/arq_protocol.h"
 #include "tcp_interfaces.h"
@@ -1688,6 +1689,7 @@ typedef struct {
     _Atomic bool        policy_ready;
     _Atomic uint32_t    bitrate_bps;
     _Atomic long        dropped_samples;  /* ring overflow, logged not fatal */
+    long                dbg_samples;      /* diagnosis: samples consumed        */
 } rx_worker_t;
 
 static void rx_worker_publish_metrics(rx_worker_t *w, const rx_metrics_accum_t *m)
@@ -1796,6 +1798,14 @@ static void *rx_worker_thread(void *arg)
         }
 
         read_buffer(w->ring, (uint8_t *)buf, sizeof(int16_t) * (size_t)want);
+#ifdef ARQ_TRACE_ENABLED
+        w->dbg_samples += want;
+        if (w->dbg_samples >= 8000) {
+            ARQ_TRACE(ARQ_TR_DROP, (uint8_t)(w->state.mode & 0xff), 0,
+                      (uint16_t)(w->dbg_samples / 100));
+            w->dbg_samples = 0;
+        }
+#endif
 
         rx_metrics_accum_t m = {0};
         rx_decoder_consume_chunk(&w->state, buf, want,
@@ -1823,7 +1833,18 @@ static void rx_decoder_consume_chunk(rx_decoder_state_t *state,
 
     if (!state || !state->freedv || !state->demod_in || !state->bytes_out ||
         !samples || sample_count <= 0)
+    {
+        /* Silent drop: the worker has already read this audio off its ring, so
+         * a decoder parked here consumes the whole stream and reports nothing
+         * at all -- indistinguishable from a dead channel unless traced. */
+        ARQ_TRACE(ARQ_TR_DROP, 0xfe,
+                  (uint8_t)((state ? (state->freedv ? 1 : 0) : 0) |
+                            (state && state->demod_in  ? 2 : 0) |
+                            (state && state->bytes_out ? 4 : 0) |
+                            (samples ? 8 : 0)),
+                  (uint16_t)(sample_count > 0 ? sample_count : 0));
         return;
+    }
 
     /* Feed the chunk in demod-buffer-sized pieces and run one decode step per
      * iteration.  Two invariants matter:
@@ -1889,6 +1910,17 @@ static void rx_decoder_consume_chunk(rx_decoder_state_t *state,
             continue;
         }
 
+        /* Count every decode attempt, not just the ones that produce something.
+         * A plane that is fed but never reaches this call is indistinguishable
+         * from one that decodes and never acquires, unless both are counted. */
+        {
+            static _Atomic unsigned rx_calls[2];
+            unsigned idx = (state->mode == FREEDV_MODE_DATAC16) ? 0u : 1u;
+            unsigned c = atomic_fetch_add(&rx_calls[idx], 1u) + 1u;
+            if ((c % 64) == 1)
+                ARQ_TRACE(ARQ_TR_TX_END, (uint8_t)(state->mode & 0xff),
+                          (uint8_t)(nin & 0xff), (uint16_t)c);
+        }
         nbytes_out = freedv_rawdatarx(state->freedv, state->bytes_out, state->demod_in);
         if (nin > 0)
         {
@@ -1904,6 +1936,15 @@ static void rx_decoder_consume_chunk(rx_decoder_state_t *state,
         rx_status = freedv_get_rx_status(state->freedv);
         freedv_get_modem_stats(state->freedv, &sync, &snr_est);
         pthread_mutex_unlock(ilock);
+
+        /* Diagnosis: what the decoder actually saw.  sync, the status bits and
+         * the SNR estimate together say whether a burst was heard at all, was
+         * acquired and failed, or never arrived. */
+        if (ARQ_TRACE_ON && (sync || rx_status || nbytes_out))
+            ARQ_TRACE(ARQ_TR_DECODE, (uint8_t)(state->mode & 0xff),
+                      (uint8_t)((sync ? 1 : 0) | (rx_status << 1)),
+                      (uint16_t)(nbytes_out ? nbytes_out
+                                            : (uint16_t)(int)(snr_est * 10.0f + 1000.0f)));
 
         rx_metrics_update(metrics, sync, snr_est, rx_status, nbytes_out > 0);
 
@@ -2317,6 +2358,19 @@ void *rx_thread(void *g_modem)
         }
         rx_diag_iterations++;
         rx_diag_total_samples += chunk_samples;
+        /* Diagnosis: how much audio the capture path actually delivers, once
+         * per 8000 samples (1 s).  A plane that decodes nothing while this
+         * ticks is starved downstream; this silent means nothing arrives. */
+#ifdef ARQ_TRACE_ENABLED
+        {
+            static int dbg_cap;
+            dbg_cap += chunk_samples;
+            if (dbg_cap >= 8000) {
+                ARQ_TRACE(ARQ_TR_TX_START, 0xff, 0, (uint16_t)(dbg_cap / 100));
+                dbg_cap = 0;
+            }
+        }
+#endif
         for (int i = 0; i < chunk_samples; i++)
         {
             capture_i16[i] = (int16_t)(capture_i32[i] >> 16);
