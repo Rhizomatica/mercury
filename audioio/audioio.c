@@ -1635,9 +1635,18 @@ void *radio_capture_thread(void *device_ptr)
                         HLOGE("audio-cap", "capture reopen failed (attempt %u): %s",
                               attempt, b ? audio->error(b) : "alloc()");
                     if (b != NULL) { audio->free(b); b = NULL; }
-                    ffthread_sleep(delay_ms);
-                    if (delay_ms < 5000)
-                        delay_ms *= 2;
+                    /* Sleep in short steps so a shutdown during recovery is
+                     * still prompt: a single ffthread_sleep(5000) here makes
+                     * the user wait out the whole backoff before the process
+                     * will exit. */
+                    for (unsigned slept = 0; slept < delay_ms &&
+                                             !shutdown_ && !audio_shutdown_;
+                         slept += 100)
+                        ffthread_sleep(100);
+                    /* Double up to the ceiling, do not overshoot it: the old
+                     * form (`if (delay_ms < 5000) delay_ms *= 2`) stepped
+                     * 3200 -> 6400, past the 5 s cap it advertises. */
+                    delay_ms = (delay_ms < 2500) ? delay_ms * 2 : 5000;
                 }
                 if (b == NULL)   /* shutdown requested mid-reopen */
                 {
