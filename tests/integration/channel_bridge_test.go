@@ -397,9 +397,8 @@ func runChannelDirOnce(ctx context.Context, chBin, txPath, rxPath string, params
 				// handed over AFTER its PTT drops -- past the flush that was
 				// meant to discard it.  The peer then decodes a burst that
 				// left the air seconds earlier and answers into a window that
-				// has already closed.  Measured at SNR3k -9.8 dB: an answerer
-				// raised RX_CALL 5.86 s after the CALL had ended, and its
-				// ACCEPT landed inside the caller's next transmission.
+				// has already closed.  This is a fidelity principle, not a
+				// measured regression: a radio has no such buffer.
 				//
 				// So write what the kernel takes and discard the rest, which
 				// is what the radio does.
@@ -419,7 +418,7 @@ func runChannelDirOnce(ctx context.Context, chBin, txPath, rxPath string, params
 						return
 					}
 				}
-				atomic.AddInt64(&outBytes, int64(whole*2))
+				atomic.AddInt64(&outBytes, int64(written))
 			}
 			if err != nil {
 				pumpDone <- err
