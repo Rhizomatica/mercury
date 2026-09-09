@@ -242,7 +242,7 @@ func runChannelDirOnce(ctx context.Context, chBin, txPath, rxPath string, params
 	// time), converts s32le→s16le and streams it into ch; the RX pump
 	// streams ch output back as s32le into the peer's capture FIFO.
 
-	var inBytes, outBytes int64
+	var inBytes, outBytes, droppedBytes int64
 	pumpDone := make(chan error, 2)
 
 	// Diagnosis: is the bridge itself falling behind real time?  inBytes is
@@ -261,9 +261,10 @@ func runChannelDirOnce(ctx context.Context, chBin, txPath, rxPath string, params
 				case <-tk.C:
 					in := atomic.LoadInt64(&inBytes)
 					out := atomic.LoadInt64(&outBytes)
-					fmt.Printf("CHDIAG %-14s %7.3f keyed=%.2fs delivered=%.2fs\n",
+					fmt.Printf("CHDIAG %-14s %7.3f keyed=%.2fs delivered=%.2fs dropped=%.2fs\n",
 						filepath.Base(txPath), time.Since(t0).Seconds(),
-						float64(in)/4/8000, float64(out)/4/8000)
+						float64(in)/4/8000, float64(out)/4/8000,
+						float64(atomic.LoadInt64(&droppedBytes))/4/8000)
 				}
 			}
 		}()
@@ -387,23 +388,37 @@ func runChannelDirOnce(ctx context.Context, chBin, txPath, rxPath string, params
 				time.Sleep(deadline.Sub(now))
 				deadline = deadline.Add(20 * time.Millisecond)
 
+				// Deliver, or DROP -- never queue.  A receiver that is not
+				// listening (half-duplex: it is transmitting) loses the audio
+				// on a real link; there is no buffer in the air holding it
+				// back for later.  Retrying here until the peer drains turns
+				// the FIFO into exactly such a buffer: the peer stops reading
+				// while it transmits, this pump stalls, and the backlog is
+				// handed over AFTER its PTT drops -- past the flush that was
+				// meant to discard it.  The peer then decodes a burst that
+				// left the air seconds earlier and answers into a window that
+				// has already closed.  This is a fidelity principle, not a
+				// measured regression: a radio has no such buffer.
+				//
+				// So write what the kernel takes and discard the rest, which
+				// is what the radio does.
 				written := 0
 				for written < whole*2 {
 					wn, werr := syscall.Write(rxFD, s32[written:whole*2])
 					if wn > 0 {
 						written += wn
+						continue
+					}
+					if werr == syscall.EAGAIN {
+						atomic.AddInt64(&droppedBytes, int64(whole*2-written))
+						break
 					}
 					if werr != nil {
-						if werr == syscall.EAGAIN {
-							// Peer capture FIFO momentarily full.
-							time.Sleep(2 * time.Millisecond)
-							continue
-						}
 						pumpDone <- werr
 						return
 					}
 				}
-				atomic.AddInt64(&outBytes, int64(whole*2))
+				atomic.AddInt64(&outBytes, int64(written))
 			}
 			if err != nil {
 				pumpDone <- err
