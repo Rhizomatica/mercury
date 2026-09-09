@@ -2240,10 +2240,16 @@ void list_soundcards(int audio_system)
                     break;
                 }
 
-            printf("device: name: '%s'  id: '%s'  default: %s\n"
+            /* IS_DEFAULT is a backend capability, not a property of the
+             * device: a backend that does not report it returns NULL for
+             * every device, and printing that as "(null)" reads like the
+             * device has no default status rather than like Mercury does not
+             * know.  Say "yes" or nothing. */
+            const char *is_def = audio->dev_info(d, FFAUDIO_DEV_IS_DEFAULT);
+            printf("device: name: '%s'  id: '%s'%s\n"
                    , audio->dev_info(d, FFAUDIO_DEV_NAME)
                    , audio->dev_info(d, FFAUDIO_DEV_ID)
-                   , audio->dev_info(d, FFAUDIO_DEV_IS_DEFAULT)
+                   , (is_def != NULL) ? "  (system default)" : ""
                 );
         }
 

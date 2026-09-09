@@ -2,10 +2,30 @@
 2020, Simon Zolin
 */
 
+/* macOS 12 renamed kAudioObjectPropertyElementMaster to ...Main and deprecated
+ * the old spelling; the value is the same.  Tahoe warns on every one of the ten
+ * uses in this file, which buries anything else the build has to say -- and
+ * this is the file people are asked to build when a sound-card bug is being
+ * chased.  Use the modern name, and fall back to the old one on SDKs that
+ * predate it.
+ *
+ * This has to come FIRST, before ffaudio/ffbase.  Including those first leaves
+ * MAC_OS_VERSION_12_0 undefined -- verified by compiling the same test with and
+ * without them -- so the guard silently took the fallback branch and the file
+ * went on using the deprecated name while looking as though it did not.  An
+ * undefined macro is 0 in #if, which makes that failure quiet in exactly the
+ * wrong direction. */
+#include <AvailabilityMacros.h>
+#if !defined(MAC_OS_VERSION_12_0) \
+	|| (MAC_OS_X_VERSION_MAX_ALLOWED < MAC_OS_VERSION_12_0)
+	#define kAudioObjectPropertyElementMain kAudioObjectPropertyElementMaster
+#endif
+
 #include <ffaudio/audio.h>
 #include <ffaudio/util.h>
 #include <ffbase/ring.h>
 #include <CoreAudio/CoreAudio.h>
+
 #include <CoreFoundation/CFString.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -53,22 +73,22 @@ void ffcoreaudio_dev_free(ffaudio_dev *d)
 }
 
 static const AudioObjectPropertyAddress prop_dev_list = {
-	kAudioHardwarePropertyDevices, kAudioObjectPropertyScopeGlobal, kAudioObjectPropertyElementMaster
+	kAudioHardwarePropertyDevices, kAudioObjectPropertyScopeGlobal, kAudioObjectPropertyElementMain
 };
 static const AudioObjectPropertyAddress prop_dev_uid = {
-	kAudioDevicePropertyDeviceUID, kAudioObjectPropertyScopeGlobal, kAudioObjectPropertyElementMaster
+	kAudioDevicePropertyDeviceUID, kAudioObjectPropertyScopeGlobal, kAudioObjectPropertyElementMain
 };
 static const AudioObjectPropertyAddress prop_dev_outname = {
-	kAudioObjectPropertyName, kAudioDevicePropertyScopeOutput, kAudioObjectPropertyElementMaster
+	kAudioObjectPropertyName, kAudioDevicePropertyScopeOutput, kAudioObjectPropertyElementMain
 };
 static const AudioObjectPropertyAddress prop_dev_inname = {
-	kAudioObjectPropertyName, kAudioDevicePropertyScopeInput, kAudioObjectPropertyElementMaster
+	kAudioObjectPropertyName, kAudioDevicePropertyScopeInput, kAudioObjectPropertyElementMain
 };
 static const AudioObjectPropertyAddress prop_dev_outconf = {
-	kAudioDevicePropertyStreamConfiguration, kAudioDevicePropertyScopeOutput, kAudioObjectPropertyElementMaster
+	kAudioDevicePropertyStreamConfiguration, kAudioDevicePropertyScopeOutput, kAudioObjectPropertyElementMain
 };
 static const AudioObjectPropertyAddress prop_dev_inconf = {
-	kAudioDevicePropertyStreamConfiguration, kAudioDevicePropertyScopeInput, kAudioObjectPropertyElementMaster
+	kAudioDevicePropertyStreamConfiguration, kAudioDevicePropertyScopeInput, kAudioObjectPropertyElementMain
 };
 
 /** Get device list */
@@ -213,6 +233,9 @@ static int coreaudio_dev_uid(AudioDeviceID dev, char *buf, size_t cap)
 	return ok ? 0 : -1;
 }
 
+/* Defined below, next to the open path that is its main user. */
+static int coreaudio_dev_default(ffuint capture);
+
 const char* ffcoreaudio_dev_info(ffaudio_dev *d, ffuint i)
 {
 	switch (i) {
@@ -229,6 +252,19 @@ const char* ffcoreaudio_dev_info(ffaudio_dev *d, ffuint i)
 
 	case FFAUDIO_DEV_NAME:
 		return d->name;
+
+	case FFAUDIO_DEV_IS_DEFAULT: {
+		/* Which device the system would pick if the operator picked nothing.
+		 * The UI needs this to preselect sensibly on a first run, and an
+		 * operator reading -z needs to know which line is the one Mercury
+		 * would open by default -- on this VM the two VoodooHDA devices are
+		 * both called "Unknown Codec ... (N/A)", so the name does not say. */
+		if (d->idev == 0)
+			return NULL;
+		int def = coreaudio_dev_default(d->mode == FFAUDIO_DEV_CAPTURE);
+		return (def >= 0 && (AudioObjectID)def == d->devs[d->idev - 1])
+			? "1" : NULL;
+	}
 	}
 	return NULL;
 }
@@ -324,17 +360,17 @@ static OSStatus coreaudio_ioproc_capture(AudioDeviceID device, const AudioTimeSt
 	AudioBufferList *outdata, const AudioTimeStamp *outtime,
 	void *udata);
 static const AudioObjectPropertyAddress prop_odev_fmt = {
-	kAudioDevicePropertyStreamFormat, kAudioDevicePropertyScopeOutput, kAudioObjectPropertyElementMaster
+	kAudioDevicePropertyStreamFormat, kAudioDevicePropertyScopeOutput, kAudioObjectPropertyElementMain
 };
 static const AudioObjectPropertyAddress prop_idev_fmt = {
-	kAudioDevicePropertyStreamFormat, kAudioDevicePropertyScopeInput, kAudioObjectPropertyElementMaster
+	kAudioDevicePropertyStreamFormat, kAudioDevicePropertyScopeInput, kAudioObjectPropertyElementMain
 };
 
 static const AudioObjectPropertyAddress prop_idev_default = {
-	kAudioHardwarePropertyDefaultInputDevice, kAudioObjectPropertyScopeGlobal, kAudioObjectPropertyElementMaster
+	kAudioHardwarePropertyDefaultInputDevice, kAudioObjectPropertyScopeGlobal, kAudioObjectPropertyElementMain
 };
 static const AudioObjectPropertyAddress prop_odev_default = {
-	kAudioHardwarePropertyDefaultOutputDevice, kAudioObjectPropertyScopeGlobal, kAudioObjectPropertyElementMaster
+	kAudioHardwarePropertyDefaultOutputDevice, kAudioObjectPropertyScopeGlobal, kAudioObjectPropertyElementMain
 };
 static int coreaudio_dev_default(ffuint capture)
 {
