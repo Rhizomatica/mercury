@@ -969,6 +969,89 @@ void test_wait_ack_deadline_stagger_is_exact(void)
     TEST_ASSERT_EQUAL_UINT64(base, sess.deadline_ms);
 }
 
+/* An ACCEPT is only correct one channel guard after a CALL we actually heard:
+ * that is the only moment we know the caller has dropped PTT and is listening.
+ *
+ * The RX window armed at TX_COMPLETE is a LISTENING window, not a retry timer.
+ * Firing an ACCEPT when it expires has no phase relationship to the caller and
+ * lands inside its next CALL, where a half-duplex radio is deaf.  This is a
+ * protocol invariant — the caller cannot hear anything over its own
+ * transmission — independent of any measured connect outcome.
+ *
+ * tx_retries_left is spent whether we transmit or merely wait, so the frame
+ * counter is what distinguishes the two. */
+void test_accept_is_only_sent_in_answer_to_a_heard_call(void)
+{
+    enter_accepting();
+
+    /* The CALL that put us here earns one ACCEPT. */
+    int sent = (int)fake_send_tx_frame_fake.call_count;
+    arq_event_t ev = make_event(ARQ_EV_TIMER_RETRY);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(sent + 1, (int)fake_send_tx_frame_fake.call_count);
+
+    /* Our ACCEPT finishes: the deadline now guards the caller's reply. */
+    ev = make_event(ARQ_EV_TX_COMPLETE);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_FALSE(sess.accept_tx_pending);
+    TEST_ASSERT_EQUAL_UINT64(1000 + ARQ_ACCEPT_RX_WINDOW_MS, sess.deadline_ms);
+
+    /* That window expiring means the caller never came back.  Stay off the air
+     * -- but keep spending the budget, so a pending call stays bounded. */
+    sent = (int)fake_send_tx_frame_fake.call_count;
+    int budget = (int)sess.tx_retries_left;
+    ev = make_event(ARQ_EV_TIMER_RETRY);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(sent, (int)fake_send_tx_frame_fake.call_count);
+    TEST_ASSERT_EQUAL_INT(budget - 1, (int)sess.tx_retries_left);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_ACCEPTING, sess.conn_state);
+
+    /* A fresh CALL re-arms both the budget and the right to transmit, and
+     * re-anchors the ACCEPT to the gap the caller just opened — one channel
+     * guard after NOW, not a leftover RX-window deadline. */
+    arq_event_t call = make_event(ARQ_EV_RX_CALL);
+    call.session_id = 0x42;
+    strncpy(call.remote_call, "REMOTE1", CALLSIGN_MAX_SIZE);
+    arq_fsm_dispatch(&sess, &call);
+    TEST_ASSERT_TRUE(sess.accept_tx_pending);
+    TEST_ASSERT_EQUAL_UINT64(1000 + ARQ_CHANNEL_GUARD_MS, sess.deadline_ms);
+
+    ev = make_event(ARQ_EV_TIMER_RETRY);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(sent + 1, (int)fake_send_tx_frame_fake.call_count);
+}
+
+/* The silent-wait give-up path: after the RX window armed at TX_COMPLETE
+ * closes without another CALL, we must hold the pending call open for the
+ * remaining budget WITHOUT transmitting again, then return to LISTENING. */
+void test_accepting_silent_wait_gives_up_after_budget(void)
+{
+    enter_accepting();
+
+    /* First (and only) ACCEPT, anchored to the CALL that put us here. */
+    arq_event_t ev = make_event(ARQ_EV_TIMER_RETRY);
+    arq_fsm_dispatch(&sess, &ev);
+    int sent = (int)fake_send_tx_frame_fake.call_count;
+    TEST_ASSERT_EQUAL_INT(1, sent);
+
+    /* ACCEPT finishes; the caller never comes back. */
+    ev = make_event(ARQ_EV_TX_COMPLETE);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_FALSE(sess.accept_tx_pending);
+
+    /* Exhaust the remaining budget through silent waits: every slot must be
+     * spent off the air, and the give-up must still arrive. */
+    for (int i = 0; i < ARQ_ACCEPT_RETRY_SLOTS + 2; i++) {
+        ev = make_event(ARQ_EV_TIMER_RETRY);
+        mock_set_uptime_ms(1000 + (uint64_t)(i + 1) * 10000);
+        arq_fsm_dispatch(&sess, &ev);
+        TEST_ASSERT_EQUAL_INT(sent, (int)fake_send_tx_frame_fake.call_count);
+        if (sess.conn_state == ARQ_CONN_LISTENING)
+            break;
+    }
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_LISTENING, sess.conn_state);
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -1011,5 +1094,7 @@ int main(void)
     RUN_TEST(test_default_call_accept_slots_are_short);
     RUN_TEST(test_stop_listen);
     RUN_TEST(test_timeout_ms_idle);
+    RUN_TEST(test_accept_is_only_sent_in_answer_to_a_heard_call);
+    RUN_TEST(test_accepting_silent_wait_gives_up_after_budget);
     return UNITY_END();
 }
