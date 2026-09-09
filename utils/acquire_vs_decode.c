@@ -62,6 +62,8 @@ static double gauss(void)
 
 static int mode_from_name(const char *s)
 {
+    if (!strcmp(s, "QAM16C2")) return FREEDV_MODE_QAM16C2;
+    if (!strcmp(s, "DATAC17")) return FREEDV_MODE_DATAC17;
     if (!strcmp(s, "DATAC16")) return FREEDV_MODE_DATAC16;
     if (!strcmp(s, "DATAC15")) return FREEDV_MODE_DATAC15;
     if (!strcmp(s, "DATAC13")) return FREEDV_MODE_DATAC13;
@@ -88,7 +90,7 @@ int main(int argc, char **argv)
     if (mode < 0 || trials <= 0)
     {
         fprintf(stderr, "usage: %s [MODE] [trials] [snr_lo] [snr_hi]\n"
-                        "  MODE: DATAC0/1/3/4/13/15/16 (default DATAC16)\n", argv[0]);
+                        "  MODE: DATAC0/1/3/4/13/15/16/17, QAM16C2 (default DATAC16)\n", argv[0]);
         return 1;
     }
 
@@ -111,7 +113,7 @@ int main(int argc, char **argv)
     if (chan == CHAN_AWGN)
         printf("  SNR3k    acquired   delivered   decoded|acquired\n");
     else
-        printf("   No     SNR3k(meas)  acquired   delivered\n");
+        printf("   No     SNR3k(meas)  modem_est   bias   acquired   delivered\n");
 
     short *burst = malloc(sizeof(short) * (size_t)(nburst + 4));
     unsigned char *payload = malloc((size_t)nbytes);
@@ -122,6 +124,7 @@ int main(int argc, char **argv)
     {
         int acquired = 0, delivered = 0;
         double snr_meas_sum = 0.0; int snr_meas_cnt = 0;
+        double est_sum = 0.0;      int est_cnt = 0;
         long clipped = 0, tot_samp = 0;
 
         /* One channel per SNR point, warmed once, shared by every burst: the
@@ -241,6 +244,25 @@ int main(int argc, char **argv)
                  * the mode look acquisition-limited when it is not. */
                 if (st & FREEDV_RX_SYNC) saw_sync = 1;
                 if (nb > 0 && !(st & FREEDV_RX_BIT_ERRORS)) got = 1;
+
+                /* What the MODEM thinks the SNR is, next to what the channel
+                 * actually delivered.  This is the number OLLA steers the mode
+                 * ladder with (modem.c reads it straight from
+                 * freedv_get_modem_stats with no per-mode correction), so any
+                 * gap between the two columns is a gap in the ladder's idea of
+                 * the link -- and it is a PER-MODE gap, which means a rung can
+                 * make the channel look worse simply by being climbed to. */
+                /* Sample where modem.c samples it: after a frame has come
+                 * out.  Read mid-burst, the estimate has not converged and
+                 * sits at a floor -- a property of the instrument, not of the
+                 * modem, and one that made this table meaningless once. */
+                if (nb > 0)
+                {
+                    int   fsync = 0;
+                    float fsnr  = 0.0f;
+                    freedv_get_modem_stats(rx, &fsync, &fsnr);
+                    if (isfinite(fsnr)) { est_sum += fsnr; est_cnt++; }
+                }
             }
 
             tot_samp += n;
@@ -262,8 +284,10 @@ int main(int argc, char **argv)
         }
         else
         {
-            printf("  %+6.1f    %+6.2f     %3d/%-3d     %3d/%-3d   clip %.2f%%\n",
-                   snr, snr_meas_cnt ? snr_meas_sum / snr_meas_cnt : 0.0,
+            double true_snr = snr_meas_cnt ? snr_meas_sum / snr_meas_cnt : 0.0;
+            double est      = est_cnt ? est_sum / est_cnt : 0.0;
+            printf("  %+6.1f    %+6.2f    %+6.2f  %+6.2f    %3d/%-3d     %3d/%-3d   clip %.2f%%\n",
+                   snr, true_snr, est, est_cnt ? est - true_snr : 0.0,
                    acquired, trials, delivered, trials,
                    tot_samp ? 100.0 * (double)clipped / (double)tot_samp : 0.0);
         }
