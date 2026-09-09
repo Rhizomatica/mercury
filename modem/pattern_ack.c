@@ -213,3 +213,62 @@ int pattern_ack_detect(const int16_t *pb, int n, uint8_t session_id,
     if (is_break) *is_break = 0;
     return 1;
 }
+
+/* ======================================================================
+ * Sliding detection window — see pattern_ack.h
+ * ====================================================================== */
+
+int pattern_ack_window_push(pattern_ack_window_t *w, const int16_t *pcm, int n,
+                            uint8_t session_id, int *is_break)
+{
+    if (!w || !pcm || n <= 0)
+        return 0;
+
+    const int burst = pattern_ack_max_tx_samples();
+    if (burst <= 0)
+        return 0;
+    const int need = burst * 3;
+
+    if (w->cap < need)
+    {
+        int16_t *nw = (int16_t *)realloc(w->buf, (size_t)need * sizeof(int16_t));
+        if (!nw)
+            return 0;               /* no window, no detection; never a crash */
+        w->buf = nw;
+        w->cap = need;
+        if (w->len > need) w->len = need;
+    }
+
+    /* Keep the newest samples: an older burst that has already slid most of
+     * the way out cannot be completed by anything arriving now. */
+    int add = n;
+    if (add > w->cap) { pcm += (n - w->cap); add = w->cap; }
+    if (w->len + add > w->cap)
+    {
+        int drop = w->len + add - w->cap;
+        memmove(w->buf, w->buf + drop, (size_t)(w->len - drop) * sizeof(int16_t));
+        w->len -= drop;
+    }
+    memcpy(w->buf + w->len, pcm, (size_t)add * sizeof(int16_t));
+    w->len += add;
+
+    if (w->len < burst)
+        return 0;
+
+    int isb = 0;
+    if (!pattern_ack_detect(w->buf, w->len, session_id, &isb))
+        return 0;
+
+    w->len = 0;                     /* consume: one burst, one event */
+    if (is_break) *is_break = isb;
+    return 1;
+}
+
+void pattern_ack_window_free(pattern_ack_window_t *w)
+{
+    if (!w) return;
+    free(w->buf);
+    w->buf = NULL;
+    w->cap = 0;
+    w->len = 0;
+}

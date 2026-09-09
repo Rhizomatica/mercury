@@ -825,16 +825,75 @@ static void send_ctrl_frame(arq_session_t *sess, arq_subtype_t subtype)
         send_frame(PACKET_TYPE_ARQ_CONTROL, sess->control_mode, (size_t)n, frame, 0);
 }
 
+/* How many pattern ACKs may run before a coded one must carry an SNR report. */
+#define ARQ_PATTERN_ACK_RUN 4
+/* SNR movement (tenths of a dB) that forces a coded ACK regardless of the run. */
+#define ARQ_PATTERN_ACK_SNR_DELTA_X10 20
+
+/* Can this ACK be a tone pattern rather than a coded frame?
+ *
+ * The pattern is 0.64 s against DATAC16's 3.30 s and several dB deeper, and
+ * under fading it converges where DATAC16 plateaus near 77% (docs/ACK-CHANNEL.md).
+ * On the reverse path -- which is exactly where a link dies, since losing ACKs
+ * stalls a transfer as dead as carrying nothing -- that is worth having.
+ *
+ * What it cannot carry is the deciding factor.  It has room for "received" and
+ * "received, and I want the turn", and nothing else:
+ *
+ *   rx_ack_seq   redundant only while one frame is outstanding.  Every mode in
+ *                arq_mode_table ships burst_frames = 1, so that holds today;
+ *                this checks the running value rather than trusting it, so a
+ *                burst > 1 silently falls back to coded ACKs instead of
+ *                silently acknowledging the wrong frames.
+ *   snr_raw      feeds the peer's OLLA.  A run of patterns would leave it
+ *                adapting on a stale reading, so a coded ACK goes out every
+ *                ARQ_PATTERN_ACK_RUN, and immediately whenever our SNR
+ *                estimate has moved enough to matter.
+ *   ack_delay    a timing metric only; its absence costs a statistic.
+ */
+static bool ack_can_be_pattern(const arq_session_t *sess)
+{
+    if (!g_cbs.send_pattern_ack)
+        return false;
+
+    const arq_mode_timing_t *tm = arq_protocol_mode_timing(sess->payload_mode);
+    if (!tm || tm->burst_frames != 1)
+        return false;
+
+    if (sess->acks_since_coded >= ARQ_PATTERN_ACK_RUN)
+        return false;
+
+    int moved = sess->local_snr_x10 - sess->coded_ack_snr_x10;
+    if (moved < 0) moved = -moved;
+    if (moved >= ARQ_PATTERN_ACK_SNR_DELTA_X10)
+        return false;
+
+    return true;
+}
+
 static void send_ack(arq_session_t *sess, uint8_t ack_delay_raw)
 {
     uint8_t frame[INT_BUFFER_SIZE];
     uint8_t flags   = 0;
     uint8_t snr_raw = 0;
+    bool    has_data = session_tx_backlog(sess) > 0;
 
-    if (session_tx_backlog(sess) > 0)
+    if (ack_can_be_pattern(sess))
+    {
+        sess->acks_since_coded++;
+        HLOGD(LOG_COMP, "ACK as pattern (%s, run %d)",
+              has_data ? "ACK+TURN" : "ACK", sess->acks_since_coded);
+        g_cbs.send_pattern_ack(has_data ? 1 : 0, sess->session_id);
+        return;
+    }
+
+    if (has_data)
         flags |= ARQ_FLAG_HAS_DATA;
     if (sess->local_snr_x10 != 0)
         snr_raw = arq_protocol_encode_snr((float)sess->local_snr_x10 / 10.0f);
+
+    sess->acks_since_coded   = 0;
+    sess->coded_ack_snr_x10  = sess->local_snr_x10;
 
     int n = arq_protocol_build_ack(frame, sizeof(frame), sess->session_id,
                                    sess->rx_expected, flags, snr_raw, ack_delay_raw);
@@ -1720,7 +1779,20 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
              * burst_frames=1 this degenerates to the classic single-frame
              * accept (ack_seq == base+1 -> n_acked == 1). */
             int n_acked = 0;
-            if (sess->tx_window_count > 0)
+            if (ev->ack_from_pattern)
+            {
+                /* A pattern ACK has no sequence number, so it can only mean
+                 * "the frame you are waiting for arrived".  That is sound
+                 * exactly while one frame is outstanding, which is what the
+                 * IRS checked (burst_frames == 1) before choosing to send a
+                 * pattern at all -- so confirm one frame, never a window. */
+                if (sess->tx_window_count == 1)
+                    n_acked = 1;
+                else
+                    HLOGD(LOG_COMP, "pattern ACK with window=%d — ignored",
+                          sess->tx_window_count);
+            }
+            else if (sess->tx_window_count > 0)
             {
                 uint8_t base = sess->tx_window[0].seq;
                 uint8_t dist = (uint8_t)(ev->ack_seq - base);
@@ -1728,8 +1800,11 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
                     n_acked = (int)dist;
             }
 
-            /* peer_snr_x10 = IRS's local SNR = quality of IRS receiving our data */
-            update_peer_snr(sess, ev);
+            /* peer_snr_x10 = IRS's local SNR = quality of IRS receiving our data.
+             * A pattern carries none, so leave the last coded reading standing;
+             * the IRS forces a coded ACK before it can go stale (send_ack). */
+            if (!ev->ack_from_pattern)
+                update_peer_snr(sess, ev);
 
             if (n_acked == 0)
             {

@@ -225,6 +225,22 @@ static void cb_send_tx_frame(int packet_type, int mode,
     arq_modem_enqueue(&action);
 }
 
+/* Put a tone-pattern ACK on the air.  No frame goes into any TX ring and no
+ * FreeDV mode is selected -- mode = -1 keeps the modem worker from switching
+ * the modem for a burst that does not use one. */
+static void cb_send_pattern_ack(int kind, uint8_t session_id)
+{
+    arq_action_t action = {
+        .type         = ARQ_ACTION_TX_PATTERN,
+        .mode         = -1,
+        .frame_size   = 0,
+        .frame_count  = 0,
+        .pattern_kind = kind,
+        .session_id   = session_id,
+    };
+    arq_modem_enqueue(&action);
+}
+
 static void cb_notify_connected(const char *remote_call, const char *local_call)
 {
     pthread_mutex_lock(&g_conn_lock);
@@ -934,6 +950,7 @@ int arq_init(size_t frame_size, int mode)
 
     static const arq_fsm_callbacks_t cbs = {
         .send_tx_frame       = cb_send_tx_frame,
+        .send_pattern_ack    = cb_send_pattern_ack,
         .notify_connected    = cb_notify_connected,
         .notify_pending      = cb_notify_pending,
         .notify_cancelpending = cb_notify_cancelpending,
@@ -1013,6 +1030,24 @@ void arq_shutdown(void)
 void arq_tick_1hz(void) { }
 
 void arq_post_event(int event) { (void)event; }
+
+void arq_post_pattern_ack(int is_break)
+{
+    /* Session ID is filled from our own session rather than from the air:
+     * a pattern carries no bits to hold one.  What makes this safe is that the
+     * tone rotation the detector matched was derived from that same ID, so a
+     * foreign station's ACK does not score here at all -- see
+     * modem/pattern_ack.h. */
+    arq_event_t ev = { .id = ARQ_EV_RX_ACK };
+    ev.ack_from_pattern = true;
+    ev.rx_flags = is_break ? ARQ_FLAG_HAS_DATA : 0;
+
+    pthread_mutex_lock(&g_sess_lock);
+    ev.session_id = g_sess.session_id;
+    pthread_mutex_unlock(&g_sess_lock);
+
+    evq_push(&ev);
+}
 
 bool arq_is_link_connected(void)
 {
@@ -1116,6 +1151,15 @@ bool arq_get_runtime_snapshot(arq_runtime_snapshot_t *snapshot)
     snapshot->control_mode      = g_sess.control_mode;
     snapshot->preferred_rx_mode = arq_modem_preferred_rx_mode(&g_sess);
     snapshot->preferred_tx_mode = arq_modem_preferred_tx_mode(&g_sess);
+    /* WAIT_ACK is by definition the only state in which a pattern ACK can
+     * arrive, and the correlator is far too expensive to run anywhere else:
+     * measured at 3.5k samp/s against 8k arriving.  Running it continuously
+     * once cost the RX loop enough time to miss connect-critical control
+     * frames outright. */
+    snapshot->expect_pattern_ack =
+        (g_sess.conn_state == ARQ_CONN_CONNECTED &&
+         g_sess.dflow_state == ARQ_DFLOW_WAIT_ACK);
+    snapshot->pattern_session_id = g_sess.session_id;
     snapshot->tx_bytes          = g_timing.tx_bytes;
     snapshot->rx_bytes          = g_timing.rx_bytes;
     pthread_mutex_unlock(&g_sess_lock);

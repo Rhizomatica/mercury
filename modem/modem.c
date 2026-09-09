@@ -31,6 +31,7 @@
 #include <limits.h>
 
 #include "modem.h"
+#include "pattern_ack.h"
 #include "ring_buffer_posix.h"
 #include "framer.h"
 #include "arq.h"
@@ -1082,6 +1083,186 @@ int shutdown_modem(generic_modem_t *g_modem)
     return 0;
 }
 
+/* Key the transmitter, play a pre-generated burst, unkey.
+ *
+ * Extracted from send_modulated_data() so that anything with samples to put on
+ * the air goes out through EXACTLY this path -- the virtual-clock branch, the
+ * absolute-deadline pacing that keeps PTT from overhanging the burst on a
+ * coarse scheduler tick, the TX spectrum publishing and the tail.  A second
+ * copy of this logic is how a 1.1 s PTT overhang once ate every ACK on Windows
+ * while Linux looked fine; there must not be one.
+ *
+ * ptt_mode / ptt_frame_bytes are reported to the ARQ timing layer.  A pattern
+ * burst has no FreeDV mode, so it passes -1.
+ */
+static void tx_play_burst(const int32_t *tx_buffer, size_t total_samples,
+                          int ptt_mode, size_t ptt_frame_bytes)
+{
+
+    ptt_on();
+    arq_modem_ptt_on(ptt_mode, ptt_frame_bytes);
+
+    if (virtual_clock_enabled())
+    {
+        /* Virtual clock (-x sock): the lockstep transport drains playback at
+         * the sim's pace and time_now_ms() advances with it, so PTT must span
+         * the burst IN SIGNAL TIME.  The wall-clock sleeps of the else-branch
+         * would tear the keyed window away from the audio actually on the
+         * virtual cable (observed: back-to-back CALL bursts with ~4 ms listen
+         * gaps -- the caller could never hear the ACCEPT).  Hold PTT until the
+         * ring is fully handed to the transport AND virtual time has passed
+         * the burst end plus the tail; the wall poll below only paces the
+         * check, progress itself is virtual. */
+        uint64_t t0_ms      = time_now_ms();
+        uint64_t burst_ms   = ((uint64_t)total_samples * 1000ULL) / FREEDV_FS_8000;
+        uint64_t tail_ms    = TAIL_TIME_US / 1000;
+
+        write_buffer(playback_buffer, (uint8_t *)tx_buffer, total_samples * sizeof(int32_t));
+
+        uint64_t next_spec_ms = t0_ms;
+        while (!shutdown_ &&
+               (size_buffer(playback_buffer) > 0 ||
+                time_now_ms() < t0_ms + burst_ms + tail_ms))
+        {
+            uint64_t now = time_now_ms();
+            if (now >= next_spec_ms)
+            {
+                /* Paced by elapsed playout, not by write progress: the ring is
+                 * filled far faster than it drains. */
+                size_t pos = (size_t)(((now - t0_ms) * FREEDV_FS_8000) / 1000ULL);
+                publish_tx_spectrum_at(tx_buffer, total_samples, pos, FREEDV_FS_8000);
+                next_spec_ms = now + TX_SPECTRUM_STEP_MS;
+            }
+            usleep(1000);
+        }
+    }
+    else
+    {
+        /* Wait for radio relay to switch, plus any extra keying delay
+         * configured for a slower external PTT path. */
+        usleep((useconds_t)modem_get_tx_delay_ms() * 1000);
+
+        /* Write entire pre-generated buffer to playback */
+        write_buffer(playback_buffer, (uint8_t *)tx_buffer, total_samples * sizeof(int32_t));
+
+        /* Wait for all samples to be played out, publishing the waterfall as we
+         * go so the UI scrolls during the burst rather than after it.
+         *
+         * Sleep to an ABSOLUTE deadline, never `usleep(step)` in a loop.  usleep
+         * may return late but never early, so relative steps accumulate their
+         * overshoot: on a host with a coarse scheduler tick (Windows defaults to
+         * ~15.6 ms) a 4.41 s burst paced in 50 ms steps holds PTT for ~5.5 s.
+         * That 1.1 s of dead carrier lands exactly where the peer's ACK is —
+         * the IRS answers 700 ms after decoding — so every ACK collided with our
+         * own tail and the link stalled at ack_timeout/retry forever, while the
+         * Linux station (7 ms of drift over the same burst) looked fine.
+         * Re-deriving the sleep from elapsed time each pass keeps the total
+         * bounded by one tick however coarse the tick is. */
+        uint64_t playback_duration_us = ((uint64_t)total_samples * 1000000ULL) / FREEDV_FS_8000;
+        uint64_t t_start_ms = hermes_uptime_ms();
+        uint64_t waited_us = 0;
+        while (waited_us < playback_duration_us)
+        {
+            size_t pos = (size_t)((waited_us * FREEDV_FS_8000) / 1000000ULL);
+            publish_tx_spectrum_at(tx_buffer, total_samples, pos, FREEDV_FS_8000);
+
+            uint64_t elapsed_us = (hermes_uptime_ms() - t_start_ms) * 1000ULL;
+            uint64_t sleep_us = tx_pace_sleep_us(waited_us, elapsed_us,
+                                                 playback_duration_us,
+                                                 (uint64_t)TX_SPECTRUM_STEP_MS * 1000ULL,
+                                                 &waited_us);
+            if (sleep_us)
+                usleep((useconds_t)sleep_us);
+        }
+
+        /* Give some tail time before turning off PTT */
+        usleep(TAIL_TIME_US);
+    }
+
+    ptt_off();
+    arq_modem_ptt_off();
+}
+
+/* Put a pattern ACK on the air.
+ *
+ * The reverse path of a fringe link: a known tone burst the peer correlates
+ * for rather than decodes.  0.64 s against the 3.30 s a DATAC16 ACK costs, and
+ * several dB deeper -- see docs/ACK-CHANNEL.md and modem/pattern_ack.h.
+ *
+ * Shares tx_play_burst() with send_modulated_data(), so PTT, pacing, the
+ * virtual clock and the TX spectrum all behave identically; the only thing
+ * that differs is where the samples came from.  No FreeDV instance is involved
+ * and none is locked, which is the point: this can go out while the decoders
+ * keep running.
+ *
+ * The session ID selects the tone rotation, so only the peer we are in session
+ * with can hear it.
+ */
+static int send_pattern_burst(pattern_kind_t kind, uint8_t session_id)
+{
+    /* Never key on top of a tuning carrier: the tune thread owns PTT and the
+     * playback ring until TUNE OFF or its safety deadline. */
+    if (atomic_load(&g_tune_active))
+    {
+        HLOGW("modem", "pattern ACK suppressed: tuning carrier active");
+        return -1;
+    }
+
+    const int cap = pattern_ack_max_tx_samples();
+    if (cap <= 0)
+        return -1;
+
+    /* Same head and tail as a modulated burst: the head lets the radio's
+     * RX->TX relay and the peer's audio path settle before the first tone, and
+     * without the tail the last symbols are still in flight when PTT drops. */
+    const int samples_head    = FREEDV_FS_8000 * 100 / 1000;
+    const int samples_silence = FREEDV_FS_8000 * 200 / 1000;
+
+    int16_t *pat = (int16_t *)malloc((size_t)cap * sizeof(int16_t));
+    int32_t *tx  = (int32_t *)malloc((size_t)(samples_head + cap + samples_silence)
+                                     * sizeof(int32_t));
+    if (!pat || !tx)
+    {
+        HLOGE("modem-tx", "pattern ACK: allocation failed");
+        free(pat); free(tx);
+        return -1;
+    }
+
+    int n = pattern_ack_tx(pat, kind, session_id);
+    if (n <= 0)
+    {
+        HLOGE("modem-tx", "pattern ACK: generation failed");
+        free(pat); free(tx);
+        return -1;
+    }
+
+    size_t total = 0;
+    float  gain  = atomic_load(&g_tx_gain);
+    float  peak_fs = 0.0f;
+    for (int i = 0; i < samples_head; i++)    tx[total++] = 0;
+    for (int i = 0; i < n; i++)               tx[total++] = tx_sample_with_gain(pat[i], gain, &peak_fs);
+    for (int i = 0; i < samples_silence; i++) tx[total++] = 0;
+
+    {
+        float dbfs = -120.0f;
+        if (peak_fs > 0.0f)
+        {
+            float lin = peak_fs / 2147483648.0f;
+            dbfs = 20.0f * log10f(lin);
+            if (dbfs < -120.0f) dbfs = -120.0f;
+        }
+        atomic_store(&g_tx_peak_dbfs, dbfs);
+    }
+
+    /* mode -1: there is no FreeDV mode on the air, and the ARQ timing layer
+     * must not attribute this burst to one. */
+    tx_play_burst(tx, total, -1, 0);
+
+    free(pat);
+    free(tx);
+    return 0;
+}
+
 int send_modulated_data(generic_modem_t *g_modem, uint8_t *bytes_in, int frames_per_burst)
 {
     /* Which instance is active is pool state; USING it is instance state.
@@ -1213,91 +1394,9 @@ int send_modulated_data(generic_modem_t *g_modem, uint8_t *bytes_in, int frames_
     }
 
 
-    /* === STEP 2: Key transmitter and send pre-generated audio === */
-
-    ptt_on();
-    arq_modem_ptt_on(freedv_get_mode(g_modem->freedv),
-                     freedv_get_bits_per_modem_frame(g_modem->freedv) / 8);
-
-    if (virtual_clock_enabled())
-    {
-        /* Virtual clock (-x sock): the lockstep transport drains playback at
-         * the sim's pace and time_now_ms() advances with it, so PTT must span
-         * the burst IN SIGNAL TIME.  The wall-clock sleeps of the else-branch
-         * would tear the keyed window away from the audio actually on the
-         * virtual cable (observed: back-to-back CALL bursts with ~4 ms listen
-         * gaps -- the caller could never hear the ACCEPT).  Hold PTT until the
-         * ring is fully handed to the transport AND virtual time has passed
-         * the burst end plus the tail; the wall poll below only paces the
-         * check, progress itself is virtual. */
-        uint64_t t0_ms      = time_now_ms();
-        uint64_t burst_ms   = ((uint64_t)total_samples * 1000ULL) / FREEDV_FS_8000;
-        uint64_t tail_ms    = TAIL_TIME_US / 1000;
-
-        write_buffer(playback_buffer, (uint8_t *)tx_buffer, total_samples * sizeof(int32_t));
-
-        uint64_t next_spec_ms = t0_ms;
-        while (!shutdown_ &&
-               (size_buffer(playback_buffer) > 0 ||
-                time_now_ms() < t0_ms + burst_ms + tail_ms))
-        {
-            uint64_t now = time_now_ms();
-            if (now >= next_spec_ms)
-            {
-                /* Paced by elapsed playout, not by write progress: the ring is
-                 * filled far faster than it drains. */
-                size_t pos = (size_t)(((now - t0_ms) * FREEDV_FS_8000) / 1000ULL);
-                publish_tx_spectrum_at(tx_buffer, total_samples, pos, FREEDV_FS_8000);
-                next_spec_ms = now + TX_SPECTRUM_STEP_MS;
-            }
-            usleep(1000);
-        }
-    }
-    else
-    {
-        /* Wait for radio relay to switch, plus any extra keying delay
-         * configured for a slower external PTT path. */
-        usleep((useconds_t)modem_get_tx_delay_ms() * 1000);
-
-        /* Write entire pre-generated buffer to playback */
-        write_buffer(playback_buffer, (uint8_t *)tx_buffer, total_samples * sizeof(int32_t));
-
-        /* Wait for all samples to be played out, publishing the waterfall as we
-         * go so the UI scrolls during the burst rather than after it.
-         *
-         * Sleep to an ABSOLUTE deadline, never `usleep(step)` in a loop.  usleep
-         * may return late but never early, so relative steps accumulate their
-         * overshoot: on a host with a coarse scheduler tick (Windows defaults to
-         * ~15.6 ms) a 4.41 s burst paced in 50 ms steps holds PTT for ~5.5 s.
-         * That 1.1 s of dead carrier lands exactly where the peer's ACK is —
-         * the IRS answers 700 ms after decoding — so every ACK collided with our
-         * own tail and the link stalled at ack_timeout/retry forever, while the
-         * Linux station (7 ms of drift over the same burst) looked fine.
-         * Re-deriving the sleep from elapsed time each pass keeps the total
-         * bounded by one tick however coarse the tick is. */
-        uint64_t playback_duration_us = ((uint64_t)total_samples * 1000000ULL) / FREEDV_FS_8000;
-        uint64_t t_start_ms = hermes_uptime_ms();
-        uint64_t waited_us = 0;
-        while (waited_us < playback_duration_us)
-        {
-            size_t pos = (size_t)((waited_us * FREEDV_FS_8000) / 1000000ULL);
-            publish_tx_spectrum_at(tx_buffer, total_samples, pos, FREEDV_FS_8000);
-
-            uint64_t elapsed_us = (hermes_uptime_ms() - t_start_ms) * 1000ULL;
-            uint64_t sleep_us = tx_pace_sleep_us(waited_us, elapsed_us,
-                                                 playback_duration_us,
-                                                 (uint64_t)TX_SPECTRUM_STEP_MS * 1000ULL,
-                                                 &waited_us);
-            if (sleep_us)
-                usleep((useconds_t)sleep_us);
-        }
-
-        /* Give some tail time before turning off PTT */
-        usleep(TAIL_TIME_US);
-    }
-
-    ptt_off();
-    arq_modem_ptt_off();
+    tx_play_burst(tx_buffer, total_samples,
+                  freedv_get_mode(g_modem->freedv),
+                  freedv_get_bits_per_modem_frame(g_modem->freedv) / 8);
 
     free(tx_buffer);
     free(mod_out_short);
@@ -2100,6 +2199,17 @@ void *tx_thread(void *g_modem)
                 action_buffer = data_tx_buffer_arq;
             else if (action.type == ARQ_ACTION_MODE_SWITCH)
                 sent_from_action = true;
+            else if (action.type == ARQ_ACTION_TX_PATTERN)
+            {
+                /* No frame and no TX ring: the samples are generated here.
+                 * Mark it sent either way -- on failure the ARQ's ACK deadline
+                 * is what recovers, and falling through to the buffered-frame
+                 * path below would transmit an unrelated frame. */
+                if (send_pattern_burst((pattern_kind_t)action.pattern_kind,
+                                       action.session_id) != 0)
+                    HLOGW("modem-tx", "Failed to send pattern ACK");
+                sent_from_action = true;
+            }
 
             int action_frames = action.frame_count;
             if (action_frames < 1) action_frames = 1;
@@ -2181,6 +2291,8 @@ void *rx_thread(void *g_modem)
     static rx_worker_t w_ctrl, w_pay;
     memset(&w_ctrl, 0, sizeof(w_ctrl));
     memset(&w_pay,  0, sizeof(w_pay));
+    /* Accumulates capture chunks while a pattern ACK is due; see below. */
+    pattern_ack_window_t pat_win = {0};
     pthread_mutex_init(&w_ctrl.mlock, NULL);
     pthread_mutex_init(&w_pay.mlock,  NULL);
     /* Two seconds of 8 kHz int16 per plane: the same order as the capture
@@ -2397,6 +2509,31 @@ void *rx_thread(void *g_modem)
             write_buffer(tee[t]->ring, (uint8_t *)capture_i16, tee_bytes);
         }
 
+        /* --- Pattern ACK: a third consumer of the same chunk ---------------
+         *
+         * A tone pattern carries no coded header, so neither FreeDV decoder
+         * sees it at all -- it has to be correlated for here, on the raw
+         * passband, over a window that slides across chunk boundaries.
+         *
+         * Gated on expect_pattern_ack, which the ARQ sets only in WAIT_ACK.
+         * That is not an optimisation: the correlator was measured at 3.5k
+         * samp/s against 8k arriving, and running it every chunk regardless of
+         * state slows the RX loop enough to miss coded control frames -- the
+         * cure becoming the disease.  WAIT_ACK is also the only state in which
+         * a pattern ACK can legitimately arrive, so nothing is lost by it. */
+        if (arq_policy_ready && arq_snapshot.expect_pattern_ack)
+        {
+            int is_break = 0;
+            if (pattern_ack_window_push(&pat_win, capture_i16, chunk_samples,
+                                        arq_snapshot.pattern_session_id,
+                                        &is_break))
+            {
+                HLOGD("modem-rx", "Pattern ACK detected (%s)",
+                      is_break ? "ACK+TURN" : "ACK");
+                arq_post_pattern_ack(is_break);
+            }
+        }
+
         rx_metrics_accum_t metrics = {0};
         rx_worker_take_metrics(&w_ctrl, &metrics);
         rx_worker_take_metrics(&w_pay,  &metrics);
@@ -2551,6 +2688,7 @@ void *rx_thread(void *g_modem)
     pthread_mutex_destroy(&w_pay.mlock);
 
     free(capture_i32);
+    pattern_ack_window_free(&pat_win);
     free(capture_i16);
 
     pthread_mutex_lock(&g_spectrum_lock);

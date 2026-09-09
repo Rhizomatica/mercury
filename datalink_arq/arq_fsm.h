@@ -124,6 +124,13 @@ typedef struct
     uint8_t  rx_flags;        /* ARQ_FLAG_TURN_REQ / HAS_DATA / HAS_SNR bits  */
     int8_t   snr_encoded;     /* as received from frame header                */
     uint16_t ack_delay_raw;   /* as received (10ms units, 0=unknown)          */
+    /* RX_ACK only: this ACK arrived as a tone pattern, not a coded frame.  It
+     * therefore carries no sequence number, no SNR and no ack delay -- only
+     * "received" and, via HAS_DATA in rx_flags, "and I want the turn".  The
+     * WAIT_ACK handler must derive the acknowledged frame from its own window
+     * rather than from ack_seq, which is why this is a flag and not a
+     * pre-filled ack_seq: the difference has to be visible where it matters. */
+    bool     ack_from_pattern;
 
     /* Mode negotiation */
     int      mode;            /* requested/applied FreeDV mode                */
@@ -268,6 +275,13 @@ typedef struct
     }        tx_window[ARQ_BURST_MAX];
     int      tx_window_count;          /* unACKed frames in the window      */
     bool     tx_window_retx;           /* window needed >=1 retransmission  */
+
+    /* Reverse path: how many ACKs since the last CODED one, and the SNR that
+     * coded ACK reported.  A pattern ACK carries neither a sequence number nor
+     * an SNR, so a run of them would leave the peer's OLLA reading a stale
+     * link.  See send_ack(). */
+    int      acks_since_coded;
+    int      coded_ack_snr_x10;
     int      tx_inflight_bytes;       /* payload bytes across the window    */
 
     /* --- Restage buffer (S1 fade-cliff fix) ---
@@ -344,6 +358,11 @@ typedef struct
 
     /** Send BUFFER status (bytes remaining) to TCP interface. */
     void (*send_buffer_status)(int backlog_bytes);
+
+    /** Put a tone-pattern ACK on the air (kind: 0 = ACK, 1 = ACK+TURN).
+     *  No frame and no FreeDV mode; the modem generates the samples.
+     *  May be NULL, in which case the FSM always sends a coded ACK. */
+    void (*send_pattern_ack)(int kind, uint8_t session_id);
 } arq_fsm_callbacks_t;
 
 /**

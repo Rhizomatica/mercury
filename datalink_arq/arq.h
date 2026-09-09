@@ -69,7 +69,11 @@ typedef enum
     ARQ_ACTION_NONE = 0,
     ARQ_ACTION_TX_CONTROL = 1,
     ARQ_ACTION_TX_PAYLOAD = 2,
-    ARQ_ACTION_MODE_SWITCH = 3
+    ARQ_ACTION_MODE_SWITCH = 3,
+    /* A tone-pattern ACK: no frame, no FreeDV mode, no bytes in any TX ring.
+     * The modem worker generates the samples itself from `pattern_kind` and
+     * `session_id`.  See modem/pattern_ack.h. */
+    ARQ_ACTION_TX_PATTERN = 4
 } arq_action_type_t;
 
 /** @brief Single modem action item popped by modem TX worker. */
@@ -81,6 +85,8 @@ typedef struct
     int frame_count;     /* frames in this PTT burst (>= 1); the modem reads
                           * frame_count * frame_size bytes and modulates them
                           * behind a single preamble                          */
+    int pattern_kind;    /* TX_PATTERN only: 0 = ACK, 1 = ACK+TURN            */
+    uint8_t session_id;  /* TX_PATTERN only: selects the tone rotation        */
 } arq_action_t;
 
 /** @brief Snapshot of current ARQ runtime state for telemetry/decision making. */
@@ -98,6 +104,13 @@ typedef struct
     int preferred_tx_mode;
     uint64_t tx_bytes;
     uint64_t rx_bytes;
+    /* A tone-pattern ACK is due right now, and this is the session whose tone
+     * rotation to score for.  The correlator costs roughly 44% of a real-time
+     * RX budget (modem/pattern_ack.h), so the RX loop runs it only while this
+     * is set -- which is WAIT_ACK and nowhere else, because WAIT_ACK is by
+     * definition the only state in which a pattern ACK can arrive. */
+    bool     expect_pattern_ack;
+    uint8_t  pattern_session_id;
 } arq_runtime_snapshot_t;
 
 extern arq_info arq_conn;
@@ -141,6 +154,11 @@ void arq_tick_1hz(void);
  * @param event Event identifier from fsm.h.
  */
 void arq_post_event(int event);
+
+/** @brief Inject an ACK that arrived as a tone pattern rather than a frame.
+ *  @param is_break  non-zero if the peer also wants the turn (ACK+TURN).
+ *  Called from the RX loop; safe from any thread. */
+void arq_post_pattern_ack(int is_break);
 
 /**
  * @brief Check whether ARQ link is connected.

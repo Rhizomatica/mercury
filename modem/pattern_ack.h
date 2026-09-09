@@ -86,4 +86,31 @@ int pattern_ack_tx(int16_t *out, pattern_kind_t kind, uint8_t session_id);
 int pattern_ack_detect(const int16_t *pb, int n, uint8_t session_id,
                        int *is_break);
 
+/* ======================================================================
+ * Sliding detection window
+ *
+ * A pattern arrives as a stream of capture chunks, not as one aligned buffer,
+ * so the detector needs somewhere to accumulate.  The window holds three
+ * bursts: with only one, a pattern straddling a chunk boundary could be split
+ * across two windows and appear in neither.
+ *
+ * On a match the window is CONSUMED, so one burst on the air produces exactly
+ * one event rather than one per chunk for as long as it stays in view.
+ * ====================================================================== */
+
+typedef struct {
+    int16_t *buf;
+    int      cap;
+    int      len;
+} pattern_ack_window_t;
+
+/* Push `n` samples and look for a pattern.  Returns 1 on a match, setting
+ * *is_break (1 = ACK+TURN); 0 otherwise.  Allocates on first use; a failed
+ * allocation simply never matches.  Zero-initialise the window before use. */
+int  pattern_ack_window_push(pattern_ack_window_t *w, const int16_t *pcm, int n,
+                             uint8_t session_id, int *is_break);
+
+/* Release the window's buffer and reset it. */
+void pattern_ack_window_free(pattern_ack_window_t *w);
+
 #endif /* MERCURY_PATTERN_ACK_H */

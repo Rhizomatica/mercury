@@ -289,6 +289,108 @@ void test_rotation_map_avoids_aliases(void)
     }
 }
 
+/* The receive path as the RX loop actually drives it.
+ *
+ * pattern_ack_detect() proves the correlator; this proves the thing around it,
+ * which is where the mistakes live.  Capture arrives in small chunks -- the RX
+ * loop hands over RX_DECODE_CHUNK_SAMPLES at a time -- so a burst is split
+ * across many pushes and never starts at a window boundary.  A window that
+ * only ever looked at one chunk, or that dropped the newest samples instead of
+ * the oldest, would still pass every test above.
+ *
+ * Also asserts the window is CONSUMED on a match: without that, one burst on
+ * the air is reported once per chunk for as long as it stays in view, and each
+ * report is an ACK that advances the sender's window.
+ */
+#define CHUNK 160   /* RX_DECODE_CHUNK_SAMPLES */
+
+static void push_silence(pattern_ack_window_t *w, int n, int *hits)
+{
+    int16_t z[CHUNK];
+    memset(z, 0, sizeof(z));
+    for (int i = 0; i < n; i += CHUNK)
+    {
+        int isb = 0;
+        if (pattern_ack_window_push(w, z, CHUNK, SID, &isb)) (*hits)++;
+    }
+}
+
+static void push_burst(pattern_ack_window_t *w, const int16_t *pat, int n,
+                       int *hits, int *last_break)
+{
+    for (int off = 0; off < n; off += CHUNK)
+    {
+        int take = (n - off < CHUNK) ? (n - off) : CHUNK;
+        int isb = 0;
+        if (pattern_ack_window_push(w, pat + off, take, SID, &isb))
+        {
+            (*hits)++;
+            if (last_break) *last_break = isb;
+        }
+    }
+}
+
+void test_window_detects_a_chunked_burst(void)
+{
+    const int cap = pattern_ack_max_tx_samples();
+    int16_t *ack = malloc((size_t)cap * sizeof(int16_t));
+    int16_t *brk = malloc((size_t)cap * sizeof(int16_t));
+    TEST_ASSERT_NOT_NULL(ack);
+    TEST_ASSERT_NOT_NULL(brk);
+    int n_ack = pattern_ack_tx(ack, PATTERN_ACK,   SID);
+    int n_brk = pattern_ack_tx(brk, PATTERN_BREAK, SID);
+
+    pattern_ack_window_t w = {0};
+    int hits = 0, isb = -1;
+
+    /* Quiet channel first: nothing may fire, and the window must not be primed
+     * into a state where the burst that follows is missed. */
+    push_silence(&w, cap, &hits);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, hits, "silence produced an ACK");
+
+    push_burst(&w, ack, n_ack, &hits, &isb);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, hits, "chunked ACK burst not detected exactly once");
+    TEST_ASSERT_EQUAL_INT(0, isb);
+
+    /* Keep pushing silence: the window was consumed, so the burst that just
+     * matched must not match again as it slides out. */
+    push_silence(&w, cap * 2, &hits);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, hits, "one burst reported more than once");
+
+    /* A second, different burst on the same window. */
+    isb = -1;
+    push_burst(&w, brk, n_brk, &hits, &isb);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(2, hits, "second burst missed");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, isb, "ACK+TURN read as plain ACK");
+
+    pattern_ack_window_free(&w);
+    free(ack); free(brk);
+}
+
+/* A foreign session's burst must not be reported through the window either --
+ * the same property as test_sessions_do_not_hear_each_other, but exercised
+ * through the code the RX loop runs rather than through the tone tables. */
+void test_window_ignores_another_session(void)
+{
+    const int cap = pattern_ack_max_tx_samples();
+    int16_t *pat = malloc((size_t)cap * sizeof(int16_t));
+    TEST_ASSERT_NOT_NULL(pat);
+
+    /* A session whose rotation differs from SID's. */
+    uint8_t other = SID ^ 0x01;
+    TEST_ASSERT_NOT_EQUAL(pattern_ack_rotation(SID), pattern_ack_rotation(other));
+    int n = pattern_ack_tx(pat, PATTERN_ACK, other);
+
+    pattern_ack_window_t w = {0};
+    int hits = 0;
+    push_burst(&w, pat, n, &hits, NULL);
+    push_silence(&w, cap, &hits);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, hits, "heard another session's ACK");
+
+    pattern_ack_window_free(&w);
+    free(pat);
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -301,5 +403,7 @@ int main(void)
     RUN_TEST(test_ack_and_break_are_not_confusable);
     RUN_TEST(test_sessions_do_not_hear_each_other);
     RUN_TEST(test_rotation_map_avoids_aliases);
+    RUN_TEST(test_window_detects_a_chunked_burst);
+    RUN_TEST(test_window_ignores_another_session);
     return UNITY_END();
 }
