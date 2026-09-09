@@ -21,6 +21,24 @@
 
 include ../config.mk
 
+# -MMD is stripped here on purpose, and there is no -include of .d files.
+#
+# Every rule below compiles and links in ONE step.  With several sources and a
+# single -o, gcc writes a .d per source but names them all after the OUTPUT, so
+# each overwrites the last: the surviving file says "test_foo: last_unit.c" and
+# records no headers at all.  It buys nothing.
+#
+# It also actively broke the build.  Including such a .d makes its contents a
+# prerequisite of the binary, and a bare $^ then handed a .h to the compiler as
+# a source ("unknown type name 'uint8_t'" out of a perfectly good header).  It
+# only bit on a REBUILD -- a clean checkout has no .d, so the first build
+# succeeds and creates it and the second fails -- which is exactly why it got
+# through CI.
+#
+# Real header tracking here would mean compiling to .o first; these binaries
+# are cheap to rebuild, so they are simply rebuilt.  The $(filter) in each
+# recipe stays as a guard in case a .d ever reappears.
+
 # Test framework
 UNITY_SRC = unity/unity.c
 UNITY_INC = -Iunity -Ifff
@@ -30,7 +48,7 @@ UNITY_CFLAGS = -DUNITY_SUPPORT_64
 PROJECT_INC = -I../common -I../modem -I../modem/mfsk -I../datalink_arq -I../datalink_broadcast \
               -I../data_interfaces -I../gui_interface -I../radio_io -I../audioio/ffaudio
 
-CFLAGS = $(COMMON_CFLAGS) $(UNITY_CFLAGS) $(UNITY_INC) $(PROJECT_INC)
+CFLAGS = $(filter-out -MMD -MP,$(COMMON_CFLAGS)) $(UNITY_CFLAGS) $(UNITY_INC) $(PROJECT_INC)
 UNAME_S := $(shell uname -s)
 ifeq ($(UNAME_S),Darwin)
 LDFLAGS = -lpthread -lm $(SAN_LDFLAGS)
@@ -67,42 +85,42 @@ test: $(TEST_BINS)
 
 # Common module tests
 test_mfsk: modem/test_mfsk.c $(UNITY_SRC) ../modem/mfsk/mfsk.c ../modem/mfsk/mfsk_ofdm.c ../modem/mfsk/mfsk_sync.c ../modem/mfsk/mfsk_ldpc.c ../modem/mfsk/mfsk_ldpc_1_16.c ../modem/mfsk/mfsk_ldpc_2_16.c ../modem/mfsk/mfsk_ldpc_3_16.c ../modem/mfsk/mfsk_ldpc_5_16.c ../modem/mfsk/mfsk_ldpc_8_16.c
-	$(CC) $(CFLAGS) -I../modem -I../modem/mfsk -o $@ $^ $(LDFLAGS) -lm
+	$(CC) $(CFLAGS) -I../modem -I../modem/mfsk -o $@ $(filter %.c %.a %.o,$^) $(LDFLAGS) -lm
 
 test_ring_buffer: common/test_ring_buffer.c $(UNITY_SRC) ../common/ring_buffer_posix.c ../common/os_interop.c ../common/shm_posix.c
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+	$(CC) $(CFLAGS) -o $@ $(filter %.c %.a %.o,$^) $(LDFLAGS)
 
 # Audio resampler test (offline, no sound card)
 test_resampler: audioio/test_resampler.c $(UNITY_SRC) ../audioio/resampler.c
-	$(CC) $(CFLAGS) -I../audioio -o $@ $^ $(LDFLAGS) -lm
+	$(CC) $(CFLAGS) -I../audioio -o $@ $(filter %.c %.a %.o,$^) $(LDFLAGS) -lm
 
 # 24-bit packed PCM conversion test (offline, no sound card)
 test_pcm24: audioio/test_pcm24.c $(UNITY_SRC)
-	$(CC) $(CFLAGS) -I../audioio -o $@ $^ $(LDFLAGS) -lm
+	$(CC) $(CFLAGS) -I../audioio -o $@ $(filter %.c %.a %.o,$^) $(LDFLAGS) -lm
 
 # ARQ protocol tests (frame encode/decode, utilities)
 test_arq_protocol: datalink_arq/test_arq_protocol.c $(UNITY_SRC) $(ARQ_STUBS) \
                    ../common/virtual_clock.c ../datalink_arq/arq_protocol.c ../datalink_arq/arith.c
-	$(CC) $(CFLAGS) -I../modem/freedv -o $@ $^ $(LDFLAGS)
+	$(CC) $(CFLAGS) -I../modem/freedv -o $@ $(filter %.c %.a %.o,$^) $(LDFLAGS)
 
 # OLLA control-loop test (closed-loop gear-shift convergence)
 test_arq_olla: datalink_arq/test_arq_olla.c $(UNITY_SRC) $(ARQ_STUBS) \
                ../common/virtual_clock.c ../datalink_arq/arq_protocol.c ../datalink_arq/arith.c
-	$(CC) $(CFLAGS) -I../modem/freedv -o $@ $^ $(LDFLAGS) -lm
+	$(CC) $(CFLAGS) -I../modem/freedv -o $@ $(filter %.c %.a %.o,$^) $(LDFLAGS) -lm
 
 # ARQ timing tests (instrumentation recording)
 test_arq_timing: datalink_arq/test_arq_timing.c $(UNITY_SRC) $(ARQ_STUBS) \
                  ../datalink_arq/arq_timing.c ../common/virtual_clock.c \
                  ../datalink_arq/arq_protocol.c \
                  ../datalink_arq/arith.c
-	$(CC) $(CFLAGS) -I../modem/freedv -o $@ $^ $(LDFLAGS)
+	$(CC) $(CFLAGS) -I../modem/freedv -o $@ $(filter %.c %.a %.o,$^) $(LDFLAGS)
 
 # ARQ FSM tests (state transitions, callback invocations)
 test_arq_fsm: datalink_arq/test_arq_fsm.c $(UNITY_SRC) $(ARQ_STUBS) \
               ../datalink_arq/arq_fsm.c ../common/virtual_clock.c \
               ../datalink_arq/arq_protocol.c ../datalink_arq/arq_timing.c \
               ../datalink_arq/arith.c
-	$(CC) $(CFLAGS) -I../modem/freedv -o $@ $^ $(LDFLAGS)
+	$(CC) $(CFLAGS) -I../modem/freedv -o $@ $(filter %.c %.a %.o,$^) $(LDFLAGS)
 
 # TCP TNC interface tests (command parsing, status emitters, broadcast framing)
 # Uses #include "tcp_interfaces.c" — framer.c provides write_frame_header
@@ -111,7 +129,7 @@ test_arq_fsm: datalink_arq/test_arq_fsm.c $(UNITY_SRC) $(ARQ_STUBS) \
 # the test #includes it directly (see the top of the .c), so without it here
 # make does not relink when the implementation changes and the suite silently
 # re-runs the previous binary -- which is exactly how a mutation check passes
-# when it should fail.  It stays off the link line ($^ would compile it twice).
+# when it should fail.  It stays off the link line ($(filter %.c %.a %.o,$^) would compile it twice).
 test_tcp_interfaces: data_interfaces/test_tcp_interfaces.c $(UNITY_SRC) ../modem/framer.c \
                      ../datalink_arq/arq_tnc.c ../data_interfaces/tcp_interfaces.c
 	$(CC) $(CFLAGS) -I../modem/freedv -o $@ \
@@ -125,49 +143,49 @@ test_arq_sim: sim/test_arq_sim.c $(UNITY_SRC) $(ARQ_STUBS) $(SIM_SRC) \
               ../datalink_arq/arq_fsm.c ../common/virtual_clock.c \
               ../datalink_arq/arq_protocol.c \
               ../datalink_arq/arq_timing.c ../datalink_arq/arith.c
-	$(CC) $(CFLAGS) -Isim -I../modem/freedv -o $@ $^ $(LDFLAGS)
+	$(CC) $(CFLAGS) -Isim -I../modem/freedv -o $@ $(filter %.c %.a %.o,$^) $(LDFLAGS)
 
 # arq_conn accessor correctness tests (single-threaded; locking verified by TSan)
 test_arq_conn: datalink_arq/test_arq_conn.c $(UNITY_SRC) \
                datalink_arq/arq_conn_accessors.c
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+	$(CC) $(CFLAGS) -o $@ $(filter %.c %.a %.o,$^) $(LDFLAGS)
 
 test_cfg_utils: common/test_cfg_utils.c $(UNITY_SRC) \
                 ../common/cfg_utils.c ../radio_io/cm108_ptt.c \
                 ../common/hermes_log.c \
                 ../common/iniparser/iniparser.c ../common/iniparser/dictionary.c
-	$(CC) $(CFLAGS) -I../radio_io -o $@ $^ $(LDFLAGS)
+	$(CC) $(CFLAGS) -I../radio_io -o $@ $(filter %.c %.a %.o,$^) $(LDFLAGS)
 
 # ARQ→TNC seam test (standalone TU, no threads/bus)
 test_arq_tnc: datalink_arq/test_arq_tnc.c $(UNITY_SRC) ../datalink_arq/arq_tnc.c
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+	$(CC) $(CFLAGS) -o $@ $(filter %.c %.a %.o,$^) $(LDFLAGS)
 
 # Channel-busy classifier test (pure state machine, virtual clock)
 test_channel_busy: modem/test_channel_busy.c $(UNITY_SRC) ../modem/channel_busy.c
-	$(CC) $(CFLAGS) -I../modem -I../modem/mfsk -o $@ $^ $(LDFLAGS) -lm
+	$(CC) $(CFLAGS) -I../modem -I../modem/mfsk -o $@ $(filter %.c %.a %.o,$^) $(LDFLAGS) -lm
 
 # HARQ combined-decode acceptance gate (drives the real DATAC15 LDPC decoder)
 test_freedv_harq: modem/test_freedv_harq.c $(UNITY_SRC) \
                   ../modem/freedv/mpdecode_core.c ../modem/freedv/phi0.c \
                   ../modem/freedv/H_256_768_22.c
-	$(CC) $(CFLAGS) -I../modem/freedv -o $@ $^ $(LDFLAGS) -lm
+	$(CC) $(CFLAGS) -I../modem/freedv -o $@ $(filter %.c %.a %.o,$^) $(LDFLAGS) -lm
 # -x sock wire codec: byte-exact pin of the lockstep frame layout
 test_sock_wire: audioio/test_sock_wire.c $(UNITY_SRC)
-	$(CC) $(CFLAGS) -I../audioio -o $@ $^ $(LDFLAGS)
+	$(CC) $(CFLAGS) -I../audioio -o $@ $(filter %.c %.a %.o,$^) $(LDFLAGS)
 
 # Virtual clock (time base for -x sock); hermes_uptime_ms stubbed in-test
 test_virtual_clock: common/test_virtual_clock.c $(UNITY_SRC) ../common/virtual_clock.c
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+	$(CC) $(CFLAGS) -o $@ $(filter %.c %.a %.o,$^) $(LDFLAGS)
 
 # Channel model: pins that fading stays finite across sample rates (-I.. because
 # the test includes common/watterson.h by path).
 test_watterson: common/test_watterson.c $(UNITY_SRC) ../common/watterson.c ../common/mercury_prng.c
-	$(CC) $(CFLAGS) -I.. -o $@ $^ $(LDFLAGS)
+	$(CC) $(CFLAGS) -I.. -o $@ $(filter %.c %.a %.o,$^) $(LDFLAGS)
 
 # The channel's random source.  Pins actual output values, because the whole
 # point is that a seed means the same fade on every platform.
 test_mercury_prng: common/test_mercury_prng.c $(UNITY_SRC) ../common/mercury_prng.c
-	$(CC) $(CFLAGS) -I.. -o $@ $^ $(LDFLAGS)
+	$(CC) $(CFLAGS) -I.. -o $@ $(filter %.c %.a %.o,$^) $(LDFLAGS)
 
 # Persistent message store (JSONL append, feed/append/count/get, reload).
 test_message_store: common/test_message_store.c $(UNITY_SRC) ../common/message_store.c
@@ -185,7 +203,7 @@ RAPTORQ_SRC = $(wildcard ../datalink_broadcast/raptorq/lib/*.c) \
 test_bcast_file: datalink_broadcast/test_bcast_file.c $(UNITY_SRC) \
                  ../datalink_broadcast/bcast_file.c $(RAPTORQ_SRC)
 	$(CC) $(CFLAGS) -I.. -I../datalink_broadcast -I../datalink_broadcast/raptorq/include \
-	      -I../datalink_broadcast/raptorq/deps -o $@ $^ $(LDFLAGS) -lm
+	      -I../datalink_broadcast/raptorq/deps -o $@ $(filter %.c %.a %.o,$^) $(LDFLAGS) -lm
 
 # OFDM acquisition: the FFT search must agree with brute force, fringe included.
 # libfreedvdata.a is a PREREQUISITE, not just a link argument: leave it off the
@@ -220,7 +238,7 @@ test_radio_port: radio_io/test_radio_port.c $(UNITY_SRC) ../radio_io/radio_port.
 # timing-sensitive radio operation owns the shared mutex.
 test_radio_io_frequency: radio_io/test_radio_io_frequency.c $(UNITY_SRC) \
                          ../radio_io/radio_io.c ../common/hermes_log.c
-	$(CC) $(CFLAGS) -DRADIO_IO_TEST -o $@ $^ $(LDFLAGS)
+	$(CC) $(CFLAGS) -DRADIO_IO_TEST -o $@ $(filter %.c %.a %.o,$^) $(LDFLAGS)
 
 # UI status wire format (embedded struct vs remote JSON must not drift)
 # ui_status.h is a PREREQUISITE: the device-id widths under test are #defines
@@ -247,4 +265,3 @@ clean:
 # Pull in the header dependencies generated by -MMD (see config.mk).  Each test
 # binary is compiled+linked in one step, so -MMD writes a .d named after the
 # binary; include only those (paths are relative to this directory).
--include $(wildcard *.d)
