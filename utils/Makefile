@@ -64,18 +64,14 @@ rxcost_bench: rxcost_bench.c
 
 .PHONY: all clean run
 
-# MFSK waveform sweeps (pure DSP; no modem vtable, no ARQ)
-MFSK_DSP_SRC = ../modem/mfsk/mfsk.c ../modem/mfsk/mfsk_ofdm.c ../modem/mfsk/mfsk_sync.c \
-               ../modem/mfsk/mfsk_ldpc.c ../modem/mfsk/mfsk_ldpc_1_16.c ../modem/mfsk/mfsk_ldpc_2_16.c \
-               ../modem/mfsk/mfsk_ldpc_3_16.c ../modem/mfsk/mfsk_ldpc_5_16.c ../modem/mfsk/mfsk_ldpc_8_16.c
-
-# Both link libfreedvdata.a: they exercise the MFSK waveform against the
-# FreeDV LDPC codes, so they need encode(), run_ldpc_decoder() and
-# ldpc_codes_list() -- which live in codec2.c, mpdecode_core.c and
-# ldpc_codes.c respectively.  Without the archive these compile and then fail
-# at link, which is how they sat broken.
-shortframe_sweep: shortframe_sweep.c ../modem/mfsk/mfsk.c ../modem/freedv/libfreedvdata.a
-	$(CC) $(CFLAGS) -I../modem -I../modem/mfsk -I../modem/freedv -o $@ $^ -lm
+# Detection rate, false-accept rate and ACK/ACK+TURN discrimination for the
+# tone-pattern signalling channel, on the project's Watterson channel and the
+# SNR3k axis acquire_vs_decode reports -- so the pattern and the coded frame it
+# replaces can be read from one table.  See docs/ACK-CHANNEL.md.
+ackpat_chan_sweep: ackpat_chan_sweep.c ../modem/pattern_ack.c \
+                   ../modem/mfsk/mfsk.c ../modem/mfsk/mfsk_ofdm.c ../modem/mfsk/mfsk_sync.c \
+                   chanutil.c ../common/watterson.c ../common/mercury_prng.c ../modem/freedv/libfreedvdata.a
+	$(CC) $(CFLAGS) -I../modem -I../modem/mfsk -I../modem/freedv -o $@ $^ $(LDFLAGS) -lm
 
 # Also needs chanutil (and the Watterson channel it drives), the same set
 # acquire_vs_decode links -- it sweeps the hail suffix over a faded channel.
@@ -83,8 +79,6 @@ hail_suffix_sweep: hail_suffix_sweep.c ../modem/mfsk/mfsk.c ../modem/mfsk/mfsk_o
                    chanutil.c ../common/watterson.c ../common/mercury_prng.c ../modem/freedv/libfreedvdata.a
 	$(CC) $(CFLAGS) -I../modem -I../modem/mfsk -I../modem/freedv -o $@ $^ $(LDFLAGS) -lm
 
-mfsk_puncture_sweep: mfsk_puncture_sweep.c ../modem/mfsk/mfsk_ldpc.c ../modem/mfsk/mfsk_ldpc_8_16.c
-	$(CC) $(CFLAGS) -I../modem -I../modem/mfsk -o $@ $^ -lm
 # Broadcast a file to Mercury, or receive one, over the broadcast TCP/KISS port.
 BCAST_RQ_SRC = $(wildcard ../datalink_broadcast/raptorq/lib/*.c) \
                $(wildcard ../datalink_broadcast/raptorq/deps/obl/*.c)

@@ -1,18 +1,20 @@
-/* Deterministic unit tests for the MFSK codec (C port of v1's cl_mfsk).
+/* Deterministic unit tests for the tone-pattern signalling channel.
  *
  * Copyright (C) 2026 Rhizomatica
  * SPDX-License-Identifier: GPL-3.0-or-later
  *
- * Verifies: mod->demod is lossless with no noise (Gray + tone-hop consistency)
- * across M=4/8/16/32; the soft LLR sign tracks the sent bit at high SNR; and
- * higher M is more power-efficient (lower BER at a fixed Eb/N0) on AWGN —
- * the reason v1 used 32-MFSK.  Fixed PRNG seed -> deterministic.
+ * Verifies the OFDM framing round-trip, that the preamble and postamble
+ * templates acquire (including well below the coherent-OFDM threshold), that
+ * noise alone is never accepted as either, and that the ACK / ACK+TURN
+ * patterns are detected and told apart.
+ *
+ * The codec tests that used to live here went with the MFSK data waveform.
+ * Fixed PRNG seed -> deterministic.
  */
 #include "unity.h"
 #include "mfsk.h"
 #include "mfsk_ofdm.h"
 #include "mfsk_sync.h"
-#include "mfsk_ldpc.h"
 
 #include <math.h>
 #include <stdlib.h>
@@ -20,87 +22,18 @@
 #include <complex.h>
 
 #define NC       50
-#define NSYM     4000
 
 static mfsk_t m;
-static int    bits[NSYM * 5];      /* max bps = nBits(32)=5, 1 stream */
-static float  llr[NSYM * 5];
-static mfsk_cplx sym[NSYM * NC];
 
 void setUp(void) {}
 void tearDown(void) {}
 
-/* deterministic N(0,1) */
+/* deterministic U(0,1) */
 static unsigned long s_rng = 88172645463325252ULL;
 static double urand(void)
 {
     s_rng ^= s_rng << 13; s_rng ^= s_rng >> 7; s_rng ^= s_rng << 17;
     return ((s_rng >> 11) + 1.0) / ((1ULL << 53) + 1.0);
-}
-static double grand(void)
-{
-    return sqrt(-2.0 * log(urand())) * cos(2.0 * M_PI * urand());
-}
-
-static int run_awgn(int M, double ebn0_db, int fading)
-{
-    mfsk_init(&m, M, NC, 1);
-    int bps = mfsk_bits_per_symbol(&m);
-    int nbits = bps * NSYM;
-    for (int i = 0; i < nbits; i++) bits[i] = (urand() < 0.5) ? 0 : 1;
-    memset(sym, 0, sizeof(mfsk_cplx) * (size_t)NSYM * NC);
-    mfsk_mod(&m, bits, nbits, sym);
-
-    double Es = (double)NC, Eb = Es / m.nBits;
-    double N0 = Eb / pow(10.0, ebn0_db / 10.0), sd = sqrt(N0 / 2.0);
-    for (int s = 0; s < NSYM; s++)
-    {
-        double h = 1.0;
-        if (fading) { double a = grand(), b = grand(); h = sqrt((a*a + b*b) / 2.0); }
-        for (int k = 0; k < NC; k++)
-        {
-            mfsk_cplx *c = &sym[s * NC + k];
-            c->re = h * c->re + sd * grand();
-            c->im = h * c->im + sd * grand();
-        }
-    }
-    mfsk_demod(&m, sym, nbits, llr);
-    int err = 0;
-    for (int i = 0; i < nbits; i++)
-        if (((llr[i] < 0) ? 1 : 0) != bits[i]) err++;
-    return err; /* bit errors out of nbits */
-}
-
-void test_roundtrip_lossless(void)
-{
-    int Ms[] = {4, 8, 16, 32};
-    for (int i = 0; i < 4; i++)
-    {
-        mfsk_init(&m, Ms[i], NC, 1);
-        int bps = mfsk_bits_per_symbol(&m);
-        int nbits = bps * NSYM;
-        for (int b = 0; b < nbits; b++) bits[b] = (int)(urand() < 0.5);
-        memset(sym, 0, sizeof(mfsk_cplx) * (size_t)NSYM * NC);
-        mfsk_mod(&m, bits, nbits, sym);
-        mfsk_demod(&m, sym, nbits, llr);
-        for (int b = 0; b < nbits; b++)
-            TEST_ASSERT_EQUAL_INT(bits[b], (llr[b] < 0) ? 1 : 0);
-    }
-}
-
-void test_bits_per_symbol(void)
-{
-    mfsk_init(&m, 32, NC, 1);  TEST_ASSERT_EQUAL_INT(5, mfsk_bits_per_symbol(&m));
-    mfsk_init(&m, 4,  NC, 1);  TEST_ASSERT_EQUAL_INT(2, mfsk_bits_per_symbol(&m));
-    mfsk_init(&m, 8,  NC, 2);  TEST_ASSERT_EQUAL_INT(6, mfsk_bits_per_symbol(&m));
-}
-
-void test_higher_M_more_robust_awgn(void)
-{
-    /* At a fixed Eb/N0 on AWGN, 32-MFSK must beat 2-FSK (power efficiency). */
-    int err_m2  = run_awgn(2,  6.0, 0);
-    int err_m32 = run_awgn(32, 6.0, 0);
-    TEST_ASSERT_TRUE(err_m32 < err_m2);
 }
 
 void test_ofdm_framing_roundtrip(void)
@@ -206,82 +139,6 @@ void test_weak_preamble_acquisition(void)
     }
     TEST_ASSERT_EQUAL_INT_MESSAGE(0, falsehits, "false preamble detected in noise");
 }
-
-void test_ldpc_encode_decode(void)
-{
-    /* For every rate in the ladder: encoder produces valid codewords (H*c=0)
-     * and noiseless LLRs decode back to the info bits (converged). */
-    const mfsk_ldpc_code_t *codes[] = {
-        &mfsk_ldpc_1_16, &mfsk_ldpc_2_16, &mfsk_ldpc_3_16,
-        &mfsk_ldpc_5_16, &mfsk_ldpc_8_16
-    };
-    static int info[MFSK_LDPC_MAXK], coded[MFSK_LDPC_MAXN], out[MFSK_LDPC_MAXK];
-    static float llr[MFSK_LDPC_MAXN];
-
-    for (int ci = 0; ci < 5; ci++)
-    {
-        const mfsk_ldpc_code_t *c = codes[ci];
-        for (int i = 0; i < c->K; i++) info[i] = (int)(urand() < 0.5);
-        mfsk_ldpc_encode(c, info, coded);
-
-        for (int ch = 0; ch < c->P; ch++)
-        {
-            int par = 0;
-            for (int j = 0; j < c->cwidth; j++)
-            {
-                int v = c->C[ch * c->cwidth + j];
-                if (v >= 0) par ^= coded[v];
-            }
-            TEST_ASSERT_EQUAL_INT(0, par);            /* H*c = 0 */
-        }
-
-        for (int i = 0; i < c->N; i++) llr[i] = coded[i] ? -10.0f : 10.0f;
-        int conv = mfsk_ldpc_decode(c, llr, out, 50);
-        TEST_ASSERT_TRUE(conv);
-        for (int i = 0; i < c->K; i++)
-            TEST_ASSERT_EQUAL_INT(info[i], out[i]);
-    }
-}
-
-void test_interleaver(void)
-{
-    /* The interleaver has to be a true permutation (nothing lost, nothing
-     * duplicated), identical on both ends without anything being sent, and it
-     * has to actually SPREAD: consecutive transmitted slots must land far apart
-     * in the codeword, or a fade that wipes a run of symbols still takes out a
-     * contiguous block of coded bits and the LDPC cannot recover it. */
-    enum { N = 1600 };
-    static int perm[N], seen[N], perm2[N];
-
-    mfsk_interleave_init(perm, N);
-
-    for (int i = 0; i < N; i++) seen[i] = 0;
-    for (int t = 0; t < N; t++)
-    {
-        TEST_ASSERT_TRUE(perm[t] >= 0 && perm[t] < N);
-        seen[perm[t]]++;
-    }
-    for (int i = 0; i < N; i++)
-        TEST_ASSERT_EQUAL_INT_MESSAGE(1, seen[i], "interleaver is not a permutation");
-
-    /* Deterministic: the far end derives the same table from the same code. */
-    mfsk_interleave_init(perm2, N);
-    for (int i = 0; i < N; i++) TEST_ASSERT_EQUAL_INT(perm[i], perm2[i]);
-
-    /* Spread: mean jump between neighbouring slots should be a large fraction
-     * of the block.  For a random permutation the expectation is N/3; identity
-     * would give 1. */
-    double jump = 0.0;
-    for (int t = 1; t < N; t++) jump += abs(perm[t] - perm[t-1]);
-    jump /= (N - 1);
-    TEST_ASSERT_TRUE_MESSAGE(jump > N / 8, "interleaver does not spread the codeword");
-
-    /* No short run of slots may map to a run of consecutive codeword bits. */
-    int adjacent = 0;
-    for (int t = 1; t < N; t++) if (abs(perm[t] - perm[t-1]) == 1) adjacent++;
-    TEST_ASSERT_TRUE_MESSAGE(adjacent < N / 100, "too many adjacent pairs survive");
-}
-
 void test_postamble(void)
 {
     /* Postamble tones are distinct from the preamble, and its own template
@@ -364,18 +221,12 @@ void test_pattern_detect(void)
                                  m.ack_pattern_len, ns, &pos);
     TEST_ASSERT_TRUE(m3 < m.ack_match_threshold);         /* not an ACK */
 }
-
 int main(void)
 {
     UNITY_BEGIN();
-    RUN_TEST(test_roundtrip_lossless);
-    RUN_TEST(test_bits_per_symbol);
-    RUN_TEST(test_higher_M_more_robust_awgn);
     RUN_TEST(test_ofdm_framing_roundtrip);
     RUN_TEST(test_preamble_acquisition);
     RUN_TEST(test_weak_preamble_acquisition);
-    RUN_TEST(test_ldpc_encode_decode);
-    RUN_TEST(test_interleaver);
     RUN_TEST(test_postamble);
     RUN_TEST(test_pattern_detect);
     return UNITY_END();

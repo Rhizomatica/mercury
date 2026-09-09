@@ -48,6 +48,21 @@ typedef struct chanutil chanutil_t;
 chanutil_t *chanutil_open(int preset, float no_dbhz, unsigned seed);
 void        chanutil_close(chanutil_t *c);
 
+/* Run `n` samples of silence through the channel, advancing the fading process
+ * without producing output.
+ *
+ * A sweep of SHORT bursts on a slow channel otherwise samples only a few fade
+ * cycles: at MPG's 0.1 Hz the coherence time is ~10 s, so fifty back-to-back
+ * 0.64 s pattern bursts all land inside a handful of fades and the resulting
+ * detection rate is an estimate of those fades, not of the channel.  Spacing
+ * the trials fixes that, and doing it here is far cheaper than handing
+ * chanutil_run() a buffer of zeros: the analytic signal of silence is silence,
+ * so the Hilbert pass -- the expensive part -- can be skipped entirely.
+ *
+ * Does not disturb the SNR measurement of the next burst (chanutil_run resets
+ * the accumulators before it processes). */
+void        chanutil_advance(chanutil_t *c, int n);
+
 /* Fade + noise one burst through an already-warmed channel. */
 int chanutil_run(chanutil_t *c, int16_t *pb, int n, float *snr3k_out);
 

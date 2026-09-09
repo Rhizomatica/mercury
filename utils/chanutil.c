@@ -135,6 +135,24 @@ void chanutil_close(chanutil_t *c)
     free(c);
 }
 
+void chanutil_advance(chanutil_t *c, int n)
+{
+    if (!c || n <= 0) return;
+
+    /* In blocks, so a long advance does not allocate a long buffer. */
+    const int blk = (n < 8000) ? n : 8000;
+    COMP *z = calloc((size_t)blk, sizeof(COMP));
+    if (!z) return;
+    for (int done = 0; done < n; done += blk)
+    {
+        int k = (n - done < blk) ? (n - done) : blk;
+        memset(z, 0, (size_t)k * sizeof(COMP));
+        watterson_process(&c->w, z, k);
+    }
+    free(z);
+    watterson_reset_meas(&c->w);
+}
+
 int chanutil_run(chanutil_t *c, int16_t *pb, int n, float *snr3k_out)
 {
     if (!c || !pb || n <= 0) return -1;

@@ -1,9 +1,19 @@
-/* Mercury MFSK — non-coherent M-FSK over OFDM subcarriers
+/* Mercury tone-pattern signalling — known tone sequences over OFDM subcarriers
  *
- * Pure-C port of Mercury v1's cl_mfsk (C++), originally by Fadi Jerji.
- * Weak-signal modulation: each symbol places one tone per stream in an OFDM
- * subcarrier band; RX does non-coherent energy detection -> soft LLRs, so it
- * works below the coherent OFDM acquisition threshold. Feeds an LDPC decoder.
+ * What remains of the MFSK port after the data waveform was removed: the tone
+ * geometry and the known sequences built on it (preamble, postamble, ACK,
+ * ACK+TURN, HAIL).  There is no modulator, no demodulator and no FEC here --
+ * these sequences carry no bits of their own.  A receiver does not decode
+ * them, it correlates for them (modem/mfsk/mfsk_sync.h), which is why they
+ * survive several dB below where a coded frame on the same air time does.
+ *
+ * The MFSK data waveform that used to share this geometry was removed: it was
+ * measured LOSING to DATAC16 by ~3.7 dB on MPG, so it cost a whole LDPC codec
+ * and five code tables to be worse than a mode already in the ladder.  The
+ * signalling half won on every axis, and is what stayed.  See
+ * docs/ACK-CHANNEL.md.
+ *
+ * Originally a pure-C port of Mercury v1's cl_mfsk (C++) by Fadi Jerji.
  *
  * Copyright (C) 2022-2024 Fadi Jerji (original C++ implementation)
  * Copyright (C) 2026 Rhizomatica (C port)
@@ -63,12 +73,6 @@ typedef struct
 void mfsk_init(mfsk_t *m, int M, int Nc, int nStreams);
 void mfsk_deinit(mfsk_t *m);
 
-/* Effective bits consumed/produced per symbol period. */
-static inline int mfsk_bits_per_symbol(const mfsk_t *m)
-{
-    return m->nBits * m->nStreams;
-}
-
 /* Directed-HAIL callsign targeting (FNV-1a-derived tone suffix). */
 void mfsk_set_hail_target(mfsk_t *m, const char *callsign, int len);
 void mfsk_clear_hail_target(mfsk_t *m);
@@ -79,29 +83,5 @@ void mfsk_generate_postamble(const mfsk_t *m, mfsk_cplx *out, int nSymb);
 void mfsk_generate_ack_pattern(const mfsk_t *m, mfsk_cplx *out);
 void mfsk_generate_break_pattern(const mfsk_t *m, mfsk_cplx *out);
 void mfsk_generate_hail_pattern(const mfsk_t *m, mfsk_cplx *out);
-
-/* TX: bits -> one-hot subcarrier vectors (mfsk_bits_per_symbol bits/symbol).
- *     symbols_out holds (total_bits / bits_per_symbol) * Nc bins. */
-void mfsk_mod(const mfsk_t *m, const int *bits_in, int total_bits,
-              mfsk_cplx *symbols_out);
-
-/* RX: non-coherent energy detection -> soft LLRs (clamped to +/-5). */
-/* Build a deterministic interleaver permutation over n transmitted bit slots.
- *
- * perm[t] is the coded-bit index carried by transmitted slot t.  An LDPC code
- * corrects scattered errors far better than a contiguous block, but a fading
- * HF channel produces exactly the contiguous case: a burst is many seconds
- * long, so a deep fade wipes a run of consecutive symbols and, without
- * interleaving, a run of consecutive codeword bits with it.
- *
- * Fisher-Yates driven by a fixed xorshift seed, integer arithmetic only, so
- * both ends derive an identical table on any platform with nothing sent over
- * the air.  Pseudo-random rather than a fixed stride: these are quasi-cyclic
- * codes (N=1600, circulant 100), and an arithmetic progression risks aligning
- * damage onto the same check nodes. */
-void mfsk_interleave_init(int *perm, int n);
-
-void mfsk_demod(const mfsk_t *m, const mfsk_cplx *fft_in, int total_bits,
-                float *llr_out);
 
 #endif /* MERCURY_MFSK_H */
