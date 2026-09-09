@@ -15,9 +15,11 @@
 #if defined(_WIN32)
 #include <windows.h>
 #include <direct.h>
+#include <io.h>
 #else
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <unistd.h>
 #endif
 
 #include "message_store.h"
@@ -240,6 +242,19 @@ static void ring_push(const char *line, size_t len)
     g_store.lines[idx][n] = '\0';
 }
 
+/* Flush a stdio stream's buffered data through to the storage device.  POSIX
+ * fsync(); Windows _commit(). */
+static bool msg_store_fsync(FILE *f)
+{
+    if (!f)
+        return false;
+#if defined(_WIN32)
+    return _commit(_fileno(f)) == 0;
+#else
+    return fsync(fileno(f)) == 0;
+#endif
+}
+
 /* Atomically replace `path` with `tmp_path`.  POSIX rename() is atomic (a
  * crash leaves either the old or the new file, never a truncated one); Windows
  * needs MOVEFILE_REPLACE_EXISTING. */
@@ -255,12 +270,13 @@ static bool msg_store_atomic_replace(const char *tmp_path, const char *path)
 /* Rewrite the JSONL file to mirror the in-memory ring (the last `cap` lines),
  * oldest first.
  *
- * Crash-safe: the new contents are written to "<path>.tmp" and atomically
- * renamed over the live file only once every byte has been flushed, so a crash
- * or power loss mid-rewrite leaves the old file intact rather than a truncated
- * one.  Caller holds exclusive access (the store lock on the shutdown path, or
- * the single-threaded init path) — never the ARQ event-loop thread, which must
- * not sit through a whole-file rewrite. */
+ * Crash-safe: the new contents are written to "<path>.tmp", fsync'd so they are
+ * durable, and only then atomically renamed over the live file.  A crash or
+ * power loss therefore leaves either the old file or the new one — never a
+ * truncated one — because rename() replaces the directory entry atomically.
+ * Caller holds exclusive access (the store lock on the shutdown path, or the
+ * single-threaded init path) — never the ARQ event-loop thread, which must not
+ * sit through a whole-file rewrite. */
 static void msg_store_rewrite_file_locked(void)
 {
     char tmp_path[sizeof(g_store.path) + 8];
@@ -296,7 +312,10 @@ static void msg_store_rewrite_file_locked(void)
         }
         if (ok && fflush(tmp) != 0)
             ok = false;
-        fclose(tmp);
+        if (ok && !msg_store_fsync(tmp))
+            ok = false;
+        if (fclose(tmp) != 0)
+            ok = false;
 
         if (ok)
         {

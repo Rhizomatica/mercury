@@ -49,7 +49,7 @@ TEST_BINS = test_ring_buffer test_arq_protocol test_arq_timing test_arq_fsm \
             test_mercury_prng test_bcast_file \
             test_ofdm_acq test_ui_status test_ui_devices test_tx_pacing test_radio_port \
             test_radio_io_frequency test_mfsk \
-			test_message_store
+			test_message_store test_ui_history
 
 .PHONY: all test clean
 
@@ -172,6 +172,10 @@ test_mercury_prng: common/test_mercury_prng.c $(UNITY_SRC) ../common/mercury_prn
 # Persistent message store (JSONL append, feed/append/count/get, reload).
 test_message_store: common/test_message_store.c $(UNITY_SRC) ../common/message_store.c
 	$(CC) $(CFLAGS) -o $@ common/test_message_store.c $(UNITY_SRC) ../common/message_store.c $(LDFLAGS)
+
+# UI history frame builder (pure string function; no engine/websocket deps).
+test_ui_history: gui_interface/test_ui_history.c $(UNITY_SRC) ../gui_interface/ui_history.c
+	$(CC) $(CFLAGS) -I../gui_interface -o $@ gui_interface/test_ui_history.c $(UNITY_SRC) ../gui_interface/ui_history.c $(LDFLAGS)
 
 # Broadcast file TX: the frames must decode in a hermes-broadcast receiver, so
 # the test drives a full carousel through simulated loss and requires the file
