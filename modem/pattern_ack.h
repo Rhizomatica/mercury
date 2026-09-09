@@ -10,13 +10,17 @@
  * Measured on the project's Watterson channel against the mode it replaces
  * (docs/ACK-CHANNEL.md), at 0.64 s against DATAC16's 3.30 s:
  *
- *              50% point (SNR3k)          reaches 100%
- *              AWGN    MPG     MPD
- *   pattern    -13.9   -14.0   -13.2      yes, by -1.7 dB (MPG)
- *   DATAC16      --    -10.9    -8.0      no: floors near 77%
+ *              50% point (SNR3k)         delivery at ~-1.7 dB
+ *              AWGN    MPG     MPD         MPG        MPD
+ *   pattern    -13.9   -14.0   -13.2      100%       100%
+ *   DATAC16      --    -10.9    -8.0       91%        82%
  *
- * The ceiling is the reason this exists.  One ACK in five lost on a GOOD link
- * is a retransmission on every fifth frame, permanently, at the top of the
+ * How fast each converges is the reason this exists, more than the cliff.  The
+ * pattern saturates; DATAC16 climbs slowly and is still losing better than one
+ * ACK in eight on the disturbed channel at 0 dB SNR3k, because a coded burst
+ * that lands in a fade is lost whatever the average SNR is and a longer burst
+ * meets more fades.  One ACK in eight lost on a link that is not fringe at all
+ * is a retransmission on every eighth frame, permanently, at the top of the
  * ladder where throughput is supposed to be won.
  *
  * The cost is capacity: this channel carries ACK, ACK+TURN and HAIL -- about

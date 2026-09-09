@@ -60,31 +60,36 @@ one fifth of DATAC16's airtime.  Against DATAC14, at the *same* airtime, it is
 4.2 dB deeper on MPG and far more than that on MPD, where DATAC14 delivered
 17 of 200 at the top of the swept range and never recovered.
 
-## The result that matters more: the ceiling
+## The result that matters more: how fast each one converges
 
-A 50 % point describes the cliff.  What a real link spends most of its time
-near is the top of the curve, and there the two behave differently in kind:
+A 50 % point describes the cliff.  What a link spends most of its time near is
+the top of the curve, and there the two behave differently in kind.  Delivery
+at 100 trials a point (200 for the pattern):
 
-| | reaches 100 % by | best seen in the sweep |
-|---|---|---|
-| **pattern ACK** | −1.7 dB (MPG), −4.4 dB (MPD) | 200/200, and stays there |
-| DATAC16 | not within the swept range | 77/100 at −5.7 dB (MPG), 77/100 at −4.9 dB (MPD) |
+| SNR3k | pattern, MPG | DATAC16, MPG | pattern, MPD | DATAC16, MPD |
+|---|---|---|---|---|
+| ≈ −5.7 | 98 % | 81 % | 99.5 %* | 78 % |
+| ≈ −3.7 | 99.5 % | 90 % | 100 % | 82 % |
+| ≈ −1.7 | 100 % | 91 % | 100 % | 82 % |
+| ≈ −0.7 | 100 % | 95 % | 100 % | 84 % |
 
-Under fading DATAC16 does not converge to reliable delivery anywhere this
-sweep reached.  It sits near 77 % on both MPG and MPD across the whole top of
-its curve -- 79 % at −6.7 dB, 77 % at −5.7 dB -- because a burst that lands in
-a fade is lost whatever the average SNR is.  The pattern converges: by −1.7 dB
-on MPG it is 200 for 200 and stays there through +6.3 dB.
+\* at −6.4 dB, the nearest measured point.
 
-(A sweep further up, to +4 dB SNR3k, is still running; it will say whether
-DATAC16's plateau eventually breaks or holds.  The comparison above stands on
-what is measured either way, since the pattern is already saturated at the
-SNRs where DATAC16 is at 77 %.)
+The pattern saturates and stays there.  DATAC16 climbs, but slowly, and on the
+disturbed channel it is still losing better than one ACK in eight at 0 dB
+SNR3k -- because a coded burst that lands in a fade is lost whatever the
+average SNR is, and a longer burst meets more fades.
 
-One ACK in five lost on a *good* link is a retransmission on every fifth frame,
-permanently, at the top of the ladder where throughput is supposed to be won.
-That is a larger practical cost than the cliff position, and it is the
-strongest single argument in this document.
+One ACK in eight lost on a link that is not fringe at all is a retransmission
+on every eighth frame, permanently, at the top of the ladder where throughput
+is supposed to be won.  That, rather than the cliff position, is the strongest
+argument here.
+
+A caution about small samples, recorded because it caught this document out: an
+earlier 30-trial run returned 30/30 for DATAC16 at −3.2 dB on MPG and briefly
+supported a much stronger claim -- that DATAC16 does not converge under fading
+at all.  The 100-trial run at the same point says 90 %.  Thirty trials cannot
+distinguish 90 % from 100 %; do not let them.
 
 ## Channel sensitivity
 
