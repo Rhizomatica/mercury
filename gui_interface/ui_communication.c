@@ -44,6 +44,7 @@
 #include "../common/hermes_log.h"
 #include "../common/message_store.h"
 #include "../modem/freedv/modem_stats.h"
+#include "ui_history.h"
 #include "../modem/freedv/freedv_api.h"
 #include "../modem/modem.h"
 #include "../radio_io/radio_io.h"  /* RADIO_TYPE_NONE */
@@ -879,33 +880,15 @@ void *ui_publisher_thread(void *arg)
 
             size_t count = 0, snap_len = 0;
             char *snap = msg_store_snapshot(&count, &snap_len);
-            if (!snap)
-            {
-                snap = "";
-                count = 0;
-                snap_len = 0;
-            }
+            bool owned = (snap != NULL);
 
             /* Wrap the newline-delimited JSONL snapshot in a single
-             * {"type":"history","messages":[...]} frame.  Each snapshot line is
-             * already a complete JSON object, so join them with commas. */
-            char *buf = malloc(snap_len + 64);
+             * {"type":"history","messages":[...]} frame (each snapshot line is
+             * already a complete JSON object).  An empty ring yields a NULL
+             * snapshot, so pass an empty buffer with count 0. */
+            char *buf = ui_history_frame_build(owned ? snap : "", count, snap_len);
             if (buf)
             {
-                size_t off = snprintf(buf, snap_len + 64,
-                                      "{\"type\":\"history\",\"messages\":[");
-                const char *p = snap;
-                for (size_t i = 0; i < count; i++)
-                {
-                    const char *nl = strchr(p, '\n');
-                    size_t linelen = nl ? (size_t)(nl - p) : strlen(p);
-                    if (i > 0)
-                        buf[off++] = ',';
-                    memcpy(buf + off, p, linelen);
-                    off += linelen;
-                    p = nl ? nl + 1 : p + linelen;
-                }
-                off += snprintf(buf + off, snap_len + 64 - off, "]}");
                 ws_broadcast_json(&ctx->ws, buf);
                 free(buf);
             }
@@ -914,7 +897,7 @@ void *ui_publisher_thread(void *arg)
                 HLOGE(UI_LOG_TAG, "out of memory building the history frame");
             }
 
-            if (snap[0])
+            if (owned)
                 free(snap);
         }
 
