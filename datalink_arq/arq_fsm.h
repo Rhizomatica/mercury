@@ -193,7 +193,11 @@ typedef struct
                                         * from ev->mode on every DATA frame    */
 
     /* --- Retry/timeout bookkeeping --- */
-    int      tx_retries_left;          /* retries remaining for current frame  */
+    int      tx_retries_left;          /* retries remaining for current frame.
+                                        * In ACCEPTING this counts TIMER_RETRY
+                                        * slots, not transmissions: a slot may be
+                                        * spent silently when the RX window closes
+                                        * without a CALL (see fsm_accepting).    */
     uint64_t state_enter_ms;          /* when current conn_state was entered   */
     uint64_t startup_deadline_ms;     /* end of control-mode-only startup      */
 

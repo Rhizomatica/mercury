@@ -1343,7 +1343,6 @@ static void fsm_accepting(arq_session_t *sess, const arq_event_t *ev)
         sess->tx_retries_left   = ARQ_ACCEPT_RETRY_SLOTS;
         sess->accept_tx_pending = true;   /* answering a CALL we just heard */
         sess->deadline_ms       = time_now_ms() + ARQ_CHANNEL_GUARD_MS;
-        sess->deadline_event    = ARQ_EV_TIMER_RETRY;
         break;
 
     case ARQ_EV_TX_COMPLETE:
@@ -1361,11 +1360,11 @@ static void fsm_accepting(arq_session_t *sess, const arq_event_t *ev)
          * because that is the only moment we know the caller has dropped PTT
          * and is listening.  Firing one when this window expires has no phase
          * relationship to the caller at all, and lands in the middle of its
-         * next CALL, where a half-duplex radio is deaf.  Measured on the
-         * Watterson harness at SNR3k -9.8 dB: the answerer keyed an unprompted
-         * ACCEPT at +37.67 s while the caller transmitted CALL#4 from +34.55 to
-         * +38.27 s; two of the three ACCEPTs in that connect were destroyed
-         * that way and the call went unanswered.  4/20 connects failed.
+         * next CALL, where a half-duplex radio is deaf.
+         *
+         * This is a protocol invariant, not a reliability fix: the caller is
+         * deaf over its own transmission, so a blind ACCEPT is wrong whether
+         * or not it happens to collide in any given run.
          *
          * So mark the pending timer as "window", not "ACCEPT".  If the caller
          * is still calling we will hear it and answer that; if we cannot hear
