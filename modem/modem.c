@@ -2293,6 +2293,7 @@ void *rx_thread(void *g_modem)
     memset(&w_pay,  0, sizeof(w_pay));
     /* Accumulates capture chunks while a pattern ACK is due; see below. */
     pattern_ack_window_t pat_win = {0};
+    bool pat_armed = false;   /* was an ACK due on the previous chunk? */
     pthread_mutex_init(&w_ctrl.mlock, NULL);
     pthread_mutex_init(&w_pay.mlock,  NULL);
     /* Two seconds of 8 kHz int16 per plane: the same order as the capture
@@ -2521,7 +2522,16 @@ void *rx_thread(void *g_modem)
          * state slows the RX loop enough to miss coded control frames -- the
          * cure becoming the disease.  WAIT_ACK is also the only state in which
          * a pattern ACK can legitimately arrive, so nothing is lost by it. */
-        if (arq_policy_ready && arq_snapshot.expect_pattern_ack)
+        /* Opening a new ACK window discards whatever the last one left behind.
+         * The window holds over a second of audio; an unmatched burst from the
+         * PREVIOUS exchange still sitting in it would be found now and reported
+         * as this frame's ACK, advancing the sender past a frame the peer never
+         * confirmed.  See pattern_ack_window_reset(). */
+        if (arq_policy_ready && arq_snapshot.expect_pattern_ack && !pat_armed)
+            pattern_ack_window_reset(&pat_win);
+        pat_armed = arq_policy_ready && arq_snapshot.expect_pattern_ack;
+
+        if (pat_armed)
         {
             int is_break = 0;
             if (pattern_ack_window_push(&pat_win, capture_i16, chunk_samples,

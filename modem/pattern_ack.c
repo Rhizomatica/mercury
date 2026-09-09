@@ -227,7 +227,8 @@ int pattern_ack_window_push(pattern_ack_window_t *w, const int16_t *pcm, int n,
     const int burst = pattern_ack_max_tx_samples();
     if (burst <= 0)
         return 0;
-    const int need = burst * 3;
+    /* One burst to hold the pattern, one to cover the scan interval below. */
+    const int need = burst * 2;
 
     if (w->cap < need)
     {
@@ -251,17 +252,32 @@ int pattern_ack_window_push(pattern_ack_window_t *w, const int16_t *pcm, int n,
     }
     memcpy(w->buf + w->len, pcm, (size_t)add * sizeof(int16_t));
     w->len += add;
+    w->since_scan += add;
 
     if (w->len < burst)
         return 0;
+    /* Pace the correlation: see the header.  Scanning per chunk instead of per
+     * burst is a 32x cost increase for no extra sensitivity, and overloads the
+     * thread that feeds the decoders. */
+    if (w->since_scan < burst)
+        return 0;
+    w->since_scan = 0;
 
     int isb = 0;
     if (!pattern_ack_detect(w->buf, w->len, session_id, &isb))
         return 0;
 
     w->len = 0;                     /* consume: one burst, one event */
+    w->since_scan = 0;
     if (is_break) *is_break = isb;
     return 1;
+}
+
+void pattern_ack_window_reset(pattern_ack_window_t *w)
+{
+    if (!w) return;
+    w->len        = 0;
+    w->since_scan = 0;
 }
 
 void pattern_ack_window_free(pattern_ack_window_t *w)
@@ -271,4 +287,5 @@ void pattern_ack_window_free(pattern_ack_window_t *w)
     w->buf = NULL;
     w->cap = 0;
     w->len = 0;
+    w->since_scan = 0;
 }

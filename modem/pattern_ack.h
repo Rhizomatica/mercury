@@ -94,18 +94,33 @@ int pattern_ack_detect(const int16_t *pb, int n, uint8_t session_id,
  * Sliding detection window
  *
  * A pattern arrives as a stream of capture chunks, not as one aligned buffer,
- * so the detector needs somewhere to accumulate.  The window holds three
- * bursts: with only one, a pattern straddling a chunk boundary could be split
- * across two windows and appear in neither.
+ * so the detector needs somewhere to accumulate.
+ *
+ * The window also PACES the correlation, and that is the whole reason it
+ * exists as a type rather than as a buffer the caller manages.  Detection is
+ * not cheap and its cost grows with the square of the window, because the
+ * search scores every candidate start: measured 0.001 s of CPU over one burst,
+ * 0.069 s over two, 0.130 s over three.  A caller that simply correlated its
+ * window on every arriving chunk -- 50 times per second of audio at a
+ * 160-sample chunk -- would spend 6.5 s of CPU per second of audio and fall
+ * hopelessly behind, which is exactly what an earlier version of this did.  It
+ * cost ~20% of end-to-end throughput and looked like a channel problem.
+ *
+ * So the window scans only once per burst of NEW audio, and holds two bursts.
+ * Two is the minimum that still guarantees capture: to be sure a burst is
+ * wholly inside the window at some scan, the window must hold at least one
+ * burst plus one scan interval.  Cost is then 0.069 s per 0.64 s of audio,
+ * about a tenth of real time.
  *
  * On a match the window is CONSUMED, so one burst on the air produces exactly
- * one event rather than one per chunk for as long as it stays in view.
+ * one event rather than one per scan for as long as it stays in view.
  * ====================================================================== */
 
 typedef struct {
     int16_t *buf;
     int      cap;
     int      len;
+    int      since_scan;   /* new samples since the last correlation */
 } pattern_ack_window_t;
 
 /* Push `n` samples and look for a pattern.  Returns 1 on a match, setting
@@ -113,6 +128,17 @@ typedef struct {
  * allocation simply never matches.  Zero-initialise the window before use. */
 int  pattern_ack_window_push(pattern_ack_window_t *w, const int16_t *pcm, int n,
                              uint8_t session_id, int *is_break);
+
+/* Discard everything held, keeping the buffer.
+ *
+ * MUST be called whenever the caller starts expecting a NEW ACK -- the window
+ * holds over a second of audio, and if the previous ACK's burst is still in it
+ * (because it was never matched) a later scan will find it and report it as
+ * the ACK for the frame now outstanding.  That acknowledges a frame the peer
+ * never confirmed, the sender advances past it, and with no NACK and no
+ * reordering buffer the transfer wedges -- the same failure a foreign
+ * station's pattern would cause, arriving by a different route. */
+void pattern_ack_window_reset(pattern_ack_window_t *w);
 
 /* Release the window's buffer and reset it. */
 void pattern_ack_window_free(pattern_ack_window_t *w);

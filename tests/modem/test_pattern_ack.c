@@ -391,6 +391,54 @@ void test_window_ignores_another_session(void)
     free(pat);
 }
 
+/* A burst that was never matched must not be reported later, once the caller
+ * has started waiting for a DIFFERENT ACK.
+ *
+ * This is the failure mode that makes the window stateful rather than a plain
+ * buffer.  The window holds over a second of audio.  If a burst arrives but is
+ * never matched -- it fell outside the gate, or the gate closed first -- it is
+ * still sitting there when the caller opens the next ACK window, and the next
+ * scan will find it.  The sender then treats it as the ACK for the frame now
+ * outstanding, advances past a frame the peer never received, and the transfer
+ * wedges: deliver_rx_checked() drops everything that follows.
+ *
+ * So the caller resets on arming, and this asserts the reset actually clears
+ * what is held rather than only the bookkeeping around it. */
+void test_reset_discards_a_stale_burst(void)
+{
+    const int cap = pattern_ack_max_tx_samples();
+    int16_t *pat = malloc((size_t)cap * sizeof(int16_t));
+    TEST_ASSERT_NOT_NULL(pat);
+    int n = pattern_ack_tx(pat, PATTERN_ACK, SID);
+
+    pattern_ack_window_t w = {0};
+    int hits = 0;
+
+    /* Offset the scan cadence by half a burst first, so that the scan which
+     * falls during the burst sees only part of it and finds nothing.  The
+     * burst then sits COMPLETE in the window with no further scan due -- which
+     * is the state the gate closing leaves behind on a real miss. */
+    push_silence(&w, cap / 2, &hits);
+    for (int off = 0; off < n; off += CHUNK)
+    {
+        int take = (n - off < CHUNK) ? (n - off) : CHUNK;
+        int isb = 0;
+        if (pattern_ack_window_push(&w, pat + off, take, SID, &isb)) hits++;
+    }
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, hits, "test setup: burst was matched too early");
+
+    /* The caller now starts waiting for a different ACK. */
+    pattern_ack_window_reset(&w);
+
+    /* Nothing but silence follows.  The stale burst must be gone. */
+    push_silence(&w, cap * 3, &hits);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, hits,
+        "a stale burst was reported as the next frame's ACK");
+
+    pattern_ack_window_free(&w);
+    free(pat);
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -405,5 +453,6 @@ int main(void)
     RUN_TEST(test_rotation_map_avoids_aliases);
     RUN_TEST(test_window_detects_a_chunked_burst);
     RUN_TEST(test_window_ignores_another_session);
+    RUN_TEST(test_reset_discards_a_stale_burst);
     return UNITY_END();
 }
