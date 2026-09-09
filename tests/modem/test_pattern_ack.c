@@ -34,6 +34,9 @@
 #include <stdlib.h>
 #include <string.h>
 
+/* An arbitrary session; the rotation it selects is exercised throughout. */
+#define SID 0x37
+
 void setUp(void) {}
 void tearDown(void) {}
 
@@ -67,15 +70,15 @@ void test_roundtrip_ack_and_break(void)
     TEST_ASSERT_NOT_NULL(buf);
 
     int is_break = -1;
-    int n = pattern_ack_tx(buf, PATTERN_ACK);
+    int n = pattern_ack_tx(buf, PATTERN_ACK, SID);
     TEST_ASSERT_EQUAL_INT(cap, n);
-    TEST_ASSERT_EQUAL_INT(1, pattern_ack_detect(buf, n, &is_break));
+    TEST_ASSERT_EQUAL_INT(1, pattern_ack_detect(buf, n, SID, &is_break));
     TEST_ASSERT_EQUAL_INT_MESSAGE(0, is_break, "plain ACK read as ACK+TURN");
 
     is_break = -1;
-    n = pattern_ack_tx(buf, PATTERN_BREAK);
+    n = pattern_ack_tx(buf, PATTERN_BREAK, SID);
     TEST_ASSERT_EQUAL_INT(cap, n);
-    TEST_ASSERT_EQUAL_INT(1, pattern_ack_detect(buf, n, &is_break));
+    TEST_ASSERT_EQUAL_INT(1, pattern_ack_detect(buf, n, SID, &is_break));
     TEST_ASSERT_EQUAL_INT_MESSAGE(1, is_break, "ACK+TURN read as plain ACK");
 
     free(buf);
@@ -96,7 +99,7 @@ void test_noise_is_not_an_ack(void)
             buf[i] = (int16_t)lrint(v);
         }
         int isb = 0;
-        if (pattern_ack_detect(buf, cap, &isb)) hits++;
+        if (pattern_ack_detect(buf, cap, SID, &isb)) hits++;
     }
     TEST_ASSERT_EQUAL_INT_MESSAGE(0, hits, "noise accepted as a pattern ACK");
     free(buf);
@@ -108,7 +111,7 @@ void test_silence_is_not_an_ack(void)
     int16_t *buf  = calloc((size_t)cap, sizeof(int16_t));
     TEST_ASSERT_NOT_NULL(buf);
     int isb = 0;
-    TEST_ASSERT_EQUAL_INT(0, pattern_ack_detect(buf, cap, &isb));
+    TEST_ASSERT_EQUAL_INT(0, pattern_ack_detect(buf, cap, SID, &isb));
     free(buf);
 }
 
@@ -121,11 +124,11 @@ void test_detected_when_not_sample_aligned(void)
     TEST_ASSERT_NOT_NULL(pat);
     TEST_ASSERT_NOT_NULL(win);
 
-    int n = pattern_ack_tx(pat, PATTERN_ACK);
+    int n = pattern_ack_tx(pat, PATTERN_ACK, SID);
     memcpy(win + lead, pat, (size_t)n * sizeof(int16_t));
 
     int isb = -1;
-    TEST_ASSERT_EQUAL_INT_MESSAGE(1, pattern_ack_detect(win, cap + lead, &isb),
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, pattern_ack_detect(win, cap + lead, SID, &isb),
                                   "pattern missed when offset in the window");
     TEST_ASSERT_EQUAL_INT(0, isb);
     free(pat); free(win);
@@ -136,10 +139,10 @@ void test_short_buffer_is_refused(void)
     const int cap = pattern_ack_max_tx_samples();
     int16_t *buf  = malloc((size_t)cap * sizeof(int16_t));
     TEST_ASSERT_NOT_NULL(buf);
-    int n = pattern_ack_tx(buf, PATTERN_ACK);
+    int n = pattern_ack_tx(buf, PATTERN_ACK, SID);
     int isb = 0;
-    TEST_ASSERT_EQUAL_INT(0, pattern_ack_detect(buf, n - 1, &isb));
-    TEST_ASSERT_EQUAL_INT(0, pattern_ack_detect(NULL, n, &isb));
+    TEST_ASSERT_EQUAL_INT(0, pattern_ack_detect(buf, n - 1, SID, &isb));
+    TEST_ASSERT_EQUAL_INT(0, pattern_ack_detect(NULL, n, SID, &isb));
     free(buf);
 }
 
@@ -202,6 +205,90 @@ void test_ack_and_break_are_not_confusable(void)
     mfsk_deinit(&m);
 }
 
+/* A station must not hear another session's ACK.
+ *
+ * This is the property the rotation exists for, and the failure it prevents is
+ * not a lost frame: an ISS that accepts a foreign ACK advances past a frame
+ * the IRS never received, and since deliver_rx_checked() drops anything that
+ * is not exactly rx_expected -- no NACK, no reordering buffer -- every frame
+ * after it is dropped too.  The transfer wedges and the bytes are gone.
+ *
+ * Exhaustive over the 16 usable rotations and both tone tables, at every
+ * alignment, on the shipped tables: integer arithmetic, so this is proof for
+ * the noiseless case rather than a sample.  Noise can only add matches to a
+ * foreign pattern (a random peak lands on the expected bin with probability
+ * 1/M), so the margin this leaves -- threshold minus worst cross-score -- is
+ * what stands between a busy channel and a wedged transfer. */
+void test_sessions_do_not_hear_each_other(void)
+{
+    mfsk_t base;
+    mfsk_init(&base, 32, 50, 1);
+    const int ns  = base.ack_pattern_nsymb;
+    const int len = base.ack_pattern_len;
+    const int hop = base.tone_hop_step;
+    const int M   = base.M;
+    const int thr = base.ack_match_threshold < base.break_match_threshold
+                    ? base.ack_match_threshold : base.break_match_threshold;
+
+    /* The 16 rotations sessions can select, via the shipped mapping. */
+    int rots[16];
+    for (int i = 0; i < 16; i++) rots[i] = pattern_ack_rotation((uint8_t)i);
+
+    int worst_cross = 0;
+    for (int a = 0; a < 16; a++)
+    {
+        for (int b = 0; b < 16; b++)
+        {
+            for (int ta = 0; ta < 2; ta++)
+            {
+                const int *tbl_a = ta ? base.break_tones : base.ack_tones;
+                for (int tb = 0; tb < 2; tb++)
+                {
+                    const int *tbl_b = tb ? base.break_tones : base.ack_tones;
+                    for (int shift = -(ns - 1); shift < ns; shift++)
+                    {
+                        if (a == b && ta == tb && shift == 0)
+                            continue;           /* the wanted match */
+                        int sc = 0;
+                        for (int p = 0; p < ns; p++)
+                        {
+                            int q = p + shift;
+                            if (q < 0 || q >= ns) continue;
+                            int tx = (tbl_a[q % len] + rots[a] + q * hop) % M;
+                            int ex = (tbl_b[p % len] + rots[b] + p * hop) % M;
+                            if (tx == ex) sc++;
+                        }
+                        if (sc > worst_cross) worst_cross = sc;
+                    }
+                }
+            }
+        }
+    }
+
+    TEST_ASSERT_LESS_THAN_INT_MESSAGE(thr, worst_cross,
+        "some session's pattern reaches another session's acceptance threshold");
+    mfsk_deinit(&base);
+}
+
+/* The mapping must never hand out two rotations that alias (differ by 8 or 24
+ * mod 32).  Guards the mapping itself rather than its consequences, so a
+ * change to it fails here with a readable reason. */
+void test_rotation_map_avoids_aliases(void)
+{
+    for (int i = 0; i < 256; i++)
+    {
+        for (int j = 0; j < 256; j++)
+        {
+            int ri = pattern_ack_rotation((uint8_t)i);
+            int rj = pattern_ack_rotation((uint8_t)j);
+            if (ri == rj) continue;            /* same rotation: fine */
+            int d = ((ri - rj) % 32 + 32) % 32;
+            TEST_ASSERT_TRUE_MESSAGE(d != 8 && d != 24,
+                "rotation map produced an aliasing pair");
+        }
+    }
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -212,5 +299,7 @@ int main(void)
     RUN_TEST(test_detected_when_not_sample_aligned);
     RUN_TEST(test_short_buffer_is_refused);
     RUN_TEST(test_ack_and_break_are_not_confusable);
+    RUN_TEST(test_sessions_do_not_hear_each_other);
+    RUN_TEST(test_rotation_map_avoids_aliases);
     return UNITY_END();
 }

@@ -57,6 +57,10 @@ int main(int argc, char **argv)
     const float no_lo   = (argc > 3) ? (float)atof(argv[3]) : -22.0f;
     const float no_step = (argc > 4) ? (float)atof(argv[4]) : 2.0f;
     const int   chan    = (argc > 5) ? chanutil_preset_from_name(argv[5]) : CHAN_AWGN;
+    /* Session ID: selects the tone rotation.  A rotation is a frequency shift
+     * of a constant-envelope tone pattern in white noise, so it should cost
+     * exactly nothing -- sweep two and check rather than assume. */
+    const int   sid     = (argc > 6) ? atoi(argv[6]) : 0;
 
     if (chan < 0) {
         fprintf(stderr, "unknown channel '%s' (awgn|mpg|mpp|mpd)\n", argv[5]);
@@ -74,8 +78,8 @@ int main(int argc, char **argv)
     int16_t *work  = malloc((size_t)cap * sizeof(int16_t));
     if (!ack || !brk || !work) return 1;
 
-    const int n_ack = pattern_ack_tx(ack, PATTERN_ACK);
-    const int n_brk = pattern_ack_tx(brk, PATTERN_BREAK);
+    const int n_ack = pattern_ack_tx(ack, PATTERN_ACK, (uint8_t)sid);
+    const int n_brk = pattern_ack_tx(brk, PATTERN_BREAK, (uint8_t)sid);
     if (n_ack <= 0 || n_brk <= 0) {
         fprintf(stderr, "pattern tx failed\n");
         return 1;
@@ -98,6 +102,7 @@ int main(int argc, char **argv)
            pattern_ack_nsymb(), n_ack, 1000.0 * n_ack / 8000.0);
     printf("pattern level: rms %.0f, peak %d, crest %.1f dB\n",
            rms, pk, 20.0 * log10(pk / rms));
+    printf("session %d -> tone rotation %d\n", sid, pattern_ack_rotation((uint8_t)sid));
     printf("%d trials per point\n\n", trials);
     printf("   No     SNR3k     DETECT      FALSE      CONFUSE\n");
 
@@ -121,7 +126,7 @@ int main(int argc, char **argv)
             memcpy(work, src, (size_t)n * sizeof(int16_t));
             chanutil_run(c, work, n, &meas);
             snr_sum += meas; snr_n++;
-            if (pattern_ack_detect(work, n, &isb)) {
+            if (pattern_ack_detect(work, n, (uint8_t)sid, &isb)) {
                 hit++;
                 if ((isb != 0) != (want_break != 0)) confuse++;
             }
@@ -129,7 +134,7 @@ int main(int argc, char **argv)
             /* Same channel, same instant in its evolution, no signal. */
             memset(work, 0, (size_t)n * sizeof(int16_t));
             chanutil_run(c, work, n, NULL);
-            if (pattern_ack_detect(work, n, &isb)) fa++;
+            if (pattern_ack_detect(work, n, (uint8_t)sid, &isb)) fa++;
 
             /* Let the fading process move on between trials. */
             chanutil_advance(c, 4 * 8000);

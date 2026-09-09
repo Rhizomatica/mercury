@@ -13,8 +13,10 @@
 
 #include <complex.h>
 #include <math.h>
+#include <pthread.h>
 #include <stdbool.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include "pattern_ack.h"
 #include "mfsk.h"
@@ -37,12 +39,16 @@
 #define PAT_LPF_TAPS  63
 #define PAT_LPF_FC    1000.0
 
-static mfsk_t       g_m;
-static ofdm_frame_t g_o;
-static double       g_lpf[PAT_LPF_TAPS];
-static double       g_w;
-static int          g_nofdm;
-static bool         g_ready = false;
+/* Written once under g_once, read-only afterwards.  Both the TX worker and the
+ * RX loop use these concurrently; nothing here is mutated per call, and the
+ * per-session tone rotation is applied to a stack copy rather than to g_m, so
+ * there is no shared mutable state to race on. */
+static mfsk_t         g_m;
+static ofdm_frame_t   g_o;
+static double         g_lpf[PAT_LPF_TAPS];
+static double         g_w;
+static int            g_nofdm;
+static pthread_once_t g_once = PTHREAD_ONCE_INIT;
 
 static void mklpf(double *lpf, double fc)
 {
@@ -58,15 +64,47 @@ static void mklpf(double *lpf, double fc)
     for (int i = 0; i < PAT_LPF_TAPS; i++) lpf[i] /= s;
 }
 
-static void lazy_init(void)
+static void init_once(void)
 {
-    if (g_ready) return;
     mfsk_init(&g_m, PAT_M, PAT_NCAR, 1);
     ofdm_frame_init(&g_o, PAT_NFFT, PAT_NCAR, PAT_GI, 0);
     g_nofdm = ofdm_frame_nofdm(&g_o);
     g_w     = 2.0 * M_PI * PAT_FC / PAT_FS;
     mklpf(g_lpf, PAT_LPF_FC);
-    g_ready = true;
+}
+
+static void lazy_init(void)
+{
+    pthread_once(&g_once, init_once);
+}
+
+/* Map a session ID onto one of the 16 rotations that cannot alias.
+ *
+ * Rotations differing by 8 or 24 (mod 32) score a full 8 of 16 against each
+ * other -- see the header -- so from each group {r, r+8, r+16, r+24} at most
+ * two are usable.  Taking {0..7} and {16..23} gives exactly that: any two
+ * differ by something other than 8 or 24.
+ *
+ * Four bits of the session ID select one.  Sessions are not numerous enough on
+ * one frequency for the pigeonhole to matter much, and a collision only costs
+ * what no rotation at all would have cost everywhere. */
+int pattern_ack_rotation(uint8_t session_id)
+{
+    const int idx = session_id & 0x0F;
+    return (idx < 8) ? idx : (idx + 8);      /* 0..7, then 16..23 */
+}
+
+/* g_m with its ACK and ACK+TURN tone tables rotated for this session.  A copy,
+ * because g_m is shared read-only between the TX and RX threads. */
+static void session_view(mfsk_t *out, uint8_t session_id)
+{
+    memcpy(out, &g_m, sizeof(*out));
+    const int rot = pattern_ack_rotation(session_id);
+    for (int i = 0; i < out->ack_pattern_len; i++)
+    {
+        out->ack_tones[i]   = (out->ack_tones[i]   + rot) % out->M;
+        out->break_tones[i] = (out->break_tones[i] + rot) % out->M;
+    }
 }
 
 int pattern_ack_nsymb(void)
@@ -81,17 +119,19 @@ int pattern_ack_max_tx_samples(void)
     return g_m.ack_pattern_nsymb * g_nofdm;
 }
 
-int pattern_ack_tx(int16_t *out, pattern_kind_t kind)
+int pattern_ack_tx(int16_t *out, pattern_kind_t kind, uint8_t session_id)
 {
     lazy_init();
-    const int ns = g_m.ack_pattern_nsymb;
+    mfsk_t m;
+    session_view(&m, session_id);
+    const int ns = m.ack_pattern_nsymb;
 
     mfsk_cplx *bins = (mfsk_cplx *)calloc((size_t)ns * PAT_NCAR, sizeof(mfsk_cplx));
     if (!bins) return 0;
     if (kind == PATTERN_BREAK)
-        mfsk_generate_break_pattern(&g_m, bins);
+        mfsk_generate_break_pattern(&m, bins);
     else
-        mfsk_generate_ack_pattern(&g_m, bins);
+        mfsk_generate_ack_pattern(&m, bins);
 
     int  written = 0;
     long tx_n    = 0;
@@ -116,10 +156,13 @@ int pattern_ack_tx(int16_t *out, pattern_kind_t kind)
     return written;
 }
 
-int pattern_ack_detect(const int16_t *pb, int n, int *is_break)
+int pattern_ack_detect(const int16_t *pb, int n, uint8_t session_id,
+                       int *is_break)
 {
     lazy_init();
-    if (!pb || n < g_m.ack_pattern_nsymb * g_nofdm)
+    mfsk_t m;
+    session_view(&m, session_id);
+    if (!pb || n < m.ack_pattern_nsymb * g_nofdm)
         return 0;
 
     /* Passband -> complex baseband + LPF. */
@@ -147,17 +190,17 @@ int pattern_ack_detect(const int16_t *pb, int n, int *is_break)
     /* Score ack and break in ONE pass.  Scoring them separately redoes every
      * FFT over the same samples for the sake of a different tone list, which
      * doubles the cost of the most expensive thing in the RX loop. */
-    const int  ns       = g_m.ack_pattern_nsymb;
-    const int *lists[2] = { g_m.ack_tones, g_m.break_tones };
+    const int  ns        = m.ack_pattern_nsymb;
+    const int *lists[2]  = { m.ack_tones, m.break_tones };
     int        scores[2] = { 0, 0 };
-    mfsk_detect_patterns(&g_m, &g_o, bf, n, lists, 2,
-                         g_m.ack_pattern_len, ns, scores, NULL);
+    mfsk_detect_patterns(&m, &g_o, bf, n, lists, 2,
+                         m.ack_pattern_len, ns, scores, NULL);
     const int ack_score = scores[0];
     const int brk_score = scores[1];
     free(bb); free(bf);
 
-    const bool ack_hit = ack_score >= g_m.ack_match_threshold;
-    const bool brk_hit = brk_score >= g_m.break_match_threshold;
+    const bool ack_hit = ack_score >= m.ack_match_threshold;
+    const bool brk_hit = brk_score >= m.break_match_threshold;
     if (!ack_hit && !brk_hit)
         return 0;
 
