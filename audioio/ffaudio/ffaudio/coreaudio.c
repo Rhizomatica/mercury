@@ -30,7 +30,7 @@ struct ffaudio_dev {
 
 	ffuint err;
 	char *errmsg;
-	char id_str[16];
+	char id_str[256];
 };
 
 ffaudio_dev* ffcoreaudio_dev_alloc(ffuint mode)
@@ -54,6 +54,9 @@ void ffcoreaudio_dev_free(ffaudio_dev *d)
 
 static const AudioObjectPropertyAddress prop_dev_list = {
 	kAudioHardwarePropertyDevices, kAudioObjectPropertyScopeGlobal, kAudioObjectPropertyElementMaster
+};
+static const AudioObjectPropertyAddress prop_dev_uid = {
+	kAudioDevicePropertyDeviceUID, kAudioObjectPropertyScopeGlobal, kAudioObjectPropertyElementMaster
 };
 static const AudioObjectPropertyAddress prop_dev_outname = {
 	kAudioObjectPropertyName, kAudioDevicePropertyScopeOutput, kAudioObjectPropertyElementMaster
@@ -187,6 +190,29 @@ int ffcoreaudio_dev_next(ffaudio_dev *d)
 	}
 }
 
+/* A device's persistent unique id.
+ *
+ * AudioDeviceID is an enumeration index, not an identity: unplug a USB
+ * interface and plug it back and it gets a different one, and after a reboot
+ * the numbering can differ again.  Anything stored in a config file therefore
+ * has to be the UID, which CoreAudio guarantees is stable for the device and
+ * unique between devices -- including between two units of the same model,
+ * which share a display name and defeat name matching (see issue #189 and
+ * ui_devices_disambiguate).
+ *
+ * Returns 0 on success and fills buf with a NUL-terminated UTF-8 UID. */
+static int coreaudio_dev_uid(AudioDeviceID dev, char *buf, size_t cap)
+{
+	CFStringRef cfs = NULL;
+	ffuint size = sizeof(cfs);
+	if (0 != AudioObjectGetPropertyData(dev, &prop_dev_uid, 0, NULL, &size, &cfs)
+		|| cfs == NULL)
+		return -1;
+	Boolean ok = CFStringGetCString(cfs, buf, (CFIndex)cap, kCFStringEncodingUTF8);
+	CFRelease(cfs);
+	return ok ? 0 : -1;
+}
+
 const char* ffcoreaudio_dev_info(ffaudio_dev *d, ffuint i)
 {
 	switch (i) {
@@ -194,6 +220,10 @@ const char* ffcoreaudio_dev_info(ffaudio_dev *d, ffuint i)
 		if (d->idev == 0)
 			return NULL;
 
+		/* Report the UID, not the index: this string is what the UI stores
+		 * and hands back on the next run, possibly after a reboot. */
+		if (0 == coreaudio_dev_uid(d->devs[d->idev - 1], d->id_str, sizeof(d->id_str)))
+			return d->id_str;
 		snprintf(d->id_str, sizeof(d->id_str), "%u", (unsigned)d->devs[d->idev - 1]);
 		return d->id_str;
 
@@ -317,25 +347,66 @@ static int coreaudio_dev_default(ffuint capture)
 	return dev;
 }
 
+/* Find the device currently carrying this UID.  Returns -1 if no device does,
+ * which is the honest answer when the interface is unplugged -- better than
+ * opening whatever now holds some remembered index. */
+static int coreaudio_dev_by_uid(const char *uid)
+{
+	AudioDeviceID *devs = NULL;
+	ffuint size = 0;
+	int found = -1;
+
+	if (uid == NULL || uid[0] == '\0')
+		return -1;
+	if (0 != AudioObjectGetPropertyDataSize(kAudioObjectSystemObject, &prop_dev_list,
+						0, NULL, &size) || size == 0)
+		return -1;
+	if (NULL == (devs = (AudioDeviceID *)ffmem_alloc(size)))
+		return -1;
+	if (0 != AudioObjectGetPropertyData(kAudioObjectSystemObject, &prop_dev_list,
+					    0, NULL, &size, devs)) {
+		ffmem_free(devs);
+		return -1;
+	}
+
+	ffuint n = size / sizeof(AudioDeviceID);
+	char buf[256];
+	for (ffuint i = 0; i != n; i++) {
+		if (0 == coreaudio_dev_uid(devs[i], buf, sizeof(buf))
+			&& 0 == strcmp(buf, uid)) {
+			found = (int)devs[i];
+			break;
+		}
+	}
+	ffmem_free(devs);
+	return found;
+}
+
 int ffcoreaudio_open(ffaudio_buf *b, ffaudio_conf *conf, ffuint flags)
 {
 	int rc = FFAUDIO_ERROR;
 	ffuint capture = (flags & 0x0f) == FFAUDIO_DEV_CAPTURE;
 	b->nonblock = !!(flags & FFAUDIO_O_NONBLOCK);
 
+	/* Devices are addressed by UID.  An AudioDeviceID is an enumeration
+	 * index, not an identity -- replug the interface or reboot and it moves,
+	 * which is how a stored index ends up addressing nothing (issue #254).
+	 * kAudioDevicePropertyDeviceUID is stable for the device and distinct
+	 * between two units of the same model, so it is what enumeration reports
+	 * and what a config holds; resolve it fresh on every open. */
 	int dev = -1;
-	if (conf->device_id != NULL) {
-		/* Validate the parse: strtoul() returns 0 on a string it cannot read,
-		 * which would silently select device 0 instead of falling back to the
-		 * default. A config written by an older build holds exactly such an
-		 * unparsable id (it stored the raw AudioDeviceID bytes), so this is the
-		 * upgrade path, not a hypothetical. */
-		char *end = NULL;
-		unsigned long v = strtoul(conf->device_id, &end, 10);
-		if (end != conf->device_id && *end == '\0' && v <= 0x7fffffffUL)
-			dev = (int)v;
-	}
-	if (dev < 0) {
+	if (conf->device_id != NULL && conf->device_id[0] != '\0') {
+		dev = coreaudio_dev_by_uid(conf->device_id);
+		if (dev < 0) {
+			/* An explicitly chosen device that is not present is an error, not
+			 * an invitation to open something else.  Falling back to the
+			 * default here would quietly bind the built-in microphone and the
+			 * modem would sit there hearing nothing -- far worse to diagnose
+			 * than a refusal. */
+			b->errfunc = "device UID not found (run -z to list devices)";
+			return FFAUDIO_ERROR;
+		}
+	} else {
 		dev = coreaudio_dev_default(capture);
 		if (dev < 0) {
 			b->errfunc = "get default device";
