@@ -213,6 +213,9 @@ static int coreaudio_dev_uid(AudioDeviceID dev, char *buf, size_t cap)
 	return ok ? 0 : -1;
 }
 
+/* Defined below, next to the open path that is its main user. */
+static int coreaudio_dev_default(ffuint capture);
+
 const char* ffcoreaudio_dev_info(ffaudio_dev *d, ffuint i)
 {
 	switch (i) {
@@ -229,6 +232,19 @@ const char* ffcoreaudio_dev_info(ffaudio_dev *d, ffuint i)
 
 	case FFAUDIO_DEV_NAME:
 		return d->name;
+
+	case FFAUDIO_DEV_IS_DEFAULT: {
+		/* Which device the system would pick if the operator picked nothing.
+		 * The UI needs this to preselect sensibly on a first run, and an
+		 * operator reading -z needs to know which line is the one Mercury
+		 * would open by default -- on this VM the two VoodooHDA devices are
+		 * both called "Unknown Codec ... (N/A)", so the name does not say. */
+		if (d->idev == 0)
+			return NULL;
+		int def = coreaudio_dev_default(d->mode == FFAUDIO_DEV_CAPTURE);
+		return (def >= 0 && (AudioObjectID)def == d->devs[d->idev - 1])
+			? "1" : NULL;
+	}
 	}
 	return NULL;
 }
