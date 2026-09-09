@@ -28,6 +28,7 @@
  */
 #include "unity.h"
 #include "pattern_ack.h"
+#include "mfsk.h"
 
 #include <math.h>
 #include <stdlib.h>
@@ -142,6 +143,65 @@ void test_short_buffer_is_refused(void)
     free(buf);
 }
 
+/* The two patterns must not be mistakable for one another.
+ *
+ * This is pure integer arithmetic on the shipped tone tables, so it is exact
+ * rather than statistical: it scores every alignment of each pattern against
+ * both tone lists and asserts the wrong list never reaches the acceptance
+ * threshold.  The detector slides over candidate starts, so a shift of zero is
+ * not the only case that matters.
+ *
+ * Guards the tables and the tone hop together.  Changing either can destroy
+ * the separation without changing anything a round-trip test would notice --
+ * a pattern still detects itself perfectly while becoming confusable with the
+ * other one, and the confusion is a protocol error rather than a lost frame.
+ *
+ * (Recorded while checking whether these patterns could be rotated per session
+ * to give the ACK an identity: they can, but only over half the rotations.
+ * The pattern is an 8-tone array sent twice, and a shift of 8 symbols with a
+ * hop of 13 lands on +8 mod 32 -- so rotations differing by 8 or 24 alias
+ * exactly onto each other and score a full 8 of 16.  See docs/ACK-CHANNEL.md.) */
+void test_ack_and_break_are_not_confusable(void)
+{
+    mfsk_t m;
+    mfsk_init(&m, 32, 50, 1);
+
+    const int  ns   = m.ack_pattern_nsymb;
+    const int  len  = m.ack_pattern_len;
+    const int  hop  = m.tone_hop_step;
+    const int  M    = m.M;
+    const int *tbl[2] = { m.ack_tones, m.break_tones };
+    const int  thr[2] = { m.ack_match_threshold, m.break_match_threshold };
+
+    for (int sent = 0; sent < 2; sent++)
+    {
+        for (int against = 0; against < 2; against++)
+        {
+            int best = 0;
+            for (int shift = -(ns - 1); shift < ns; shift++)
+            {
+                int sc = 0;
+                for (int p = 0; p < ns; p++)
+                {
+                    int q = p + shift;
+                    if (q < 0 || q >= ns) continue;
+                    int tx = (tbl[sent][q % len] + q * hop) % M;
+                    int ex = (tbl[against][p % len] + p * hop) % M;
+                    if (tx == ex) sc++;
+                }
+                if (sc > best) best = sc;
+            }
+            if (sent == against)
+                TEST_ASSERT_EQUAL_INT_MESSAGE(ns, best,
+                    "a pattern must score perfectly against its own table");
+            else
+                TEST_ASSERT_LESS_THAN_INT_MESSAGE(thr[against], best,
+                    "ACK and ACK+TURN are confusable at some alignment");
+        }
+    }
+    mfsk_deinit(&m);
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -151,5 +211,6 @@ int main(void)
     RUN_TEST(test_silence_is_not_an_ack);
     RUN_TEST(test_detected_when_not_sample_aligned);
     RUN_TEST(test_short_buffer_is_refused);
+    RUN_TEST(test_ack_and_break_are_not_confusable);
     return UNITY_END();
 }
