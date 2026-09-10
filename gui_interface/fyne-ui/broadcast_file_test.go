@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"mercury-client/client"
 )
 
 // The Go halves of send and receive must work together over the CGo bridge.
@@ -155,6 +157,68 @@ func TestBroadcastUsabilityIsNotTheSameAsRunnable(t *testing.T) {
 		}
 		if !got && fs >= 53 {
 			t.Errorf("%s: reported unusable with a %d-byte frame", names[mode], fs)
+		}
+	}
+}
+
+// Broadcast CHAT and broadcast FILES have different requirements, and the two
+// mode accessors exist to keep them apart.
+//
+// A chat line needs only a frame to sit in.  A file needs a frame big enough
+// for one whole RaptorQ symbol, which DATAC15 and FSK_LDPC (30 B) are not.  So
+// those modes carry chat and GPS perfectly well while refusing file transfer,
+// and code wanting a chat limit must NOT use the file-filtered accessor: it
+// would read "limit unknown", stop capping the entry, and let the TNC silently
+// truncate what the operator typed.  That regression was live for one commit.
+//
+// The property asserted is the one the bug violated: a mode can be refused for
+// files and still have a real chat capacity, and the chat limit is a function
+// of the frame alone.
+func TestChatLimitDoesNotDependOnFileUsability(t *testing.T) {
+	names := map[int]string{
+		0: "DATAC1", 1: "DATAC3", 2: "DATAC0", 3: "DATAC4", 4: "DATAC13",
+		5: "DATAC14", 6: "FSK_LDPC", 7: "DATAC15", 8: "DATAC16",
+		9: "DATAC17", 10: "QAM16C2",
+	}
+	chatOnly := 0
+	for mode := 0; mode <= 10; mode++ {
+		fs := broadcastModeFrameSize(mode)
+		if fs <= 0 {
+			continue
+		}
+		limit := client.BroadcastChatLimit(fs, "PU2UIT")
+
+		// The limit must depend on the frame and nothing else: two modes with
+		// the same frame size must agree, whatever their file usability.
+		for other := 0; other <= 10; other++ {
+			if other == mode || broadcastModeFrameSize(other) != fs {
+				continue
+			}
+			if l2 := client.BroadcastChatLimit(fs, "PU2UIT"); l2 != limit {
+				t.Errorf("%s and %s share a %d-byte frame but differ: %d vs %d",
+					names[mode], names[other], fs, limit, l2)
+			}
+		}
+
+		if !broadcastModeUsable(mode) && limit > 0 {
+			// The case the bug broke: chat works, files do not.
+			chatOnly++
+			t.Logf("%s: chat limit %d, file transfer refused", names[mode], limit)
+		}
+	}
+	if chatOnly == 0 {
+		t.Fatal("no mode carries chat but not files; the distinction this test " +
+			"guards has disappeared and the two accessors may have been merged")
+	}
+
+	// FSK_LDPC and DATAC15 specifically: the modes the symbol floor evicted
+	// from file transfer, which must still carry a chat line.
+	for _, m := range []int{6, 7} {
+		if broadcastModeUsable(m) {
+			t.Errorf("%s: expected file transfer to be refused at T=41", names[m])
+		}
+		if got := client.BroadcastChatLimit(broadcastModeFrameSize(m), "PU2UIT"); got <= 0 {
+			t.Errorf("%s: chat limit %d, want > 0", names[m], got)
 		}
 	}
 }
