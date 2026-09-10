@@ -246,6 +246,26 @@ static uint64_t retry_deadline_from_s(const arq_session_t *sess, float seconds)
     return arq_protocol_retry_deadline_ms(seconds, rank);
 }
 
+/* Does this station yield when both request the turn at the same time?
+ *
+ * Reuses the retry rank -- the same strcmp() of the exchanged callsign pair
+ * that staggers retries for #217 -- so both peers compute the same answer from
+ * the same data and exactly one of them yields.  No negotiation round trip, no
+ * randomness, and reproducible in a test.
+ *
+ * Rank 1 yields.  A degenerate pair (rank < 0: identical or missing callsigns,
+ * i.e. a misconfigured link) also yields: with no way to break the tie, both
+ * sides deferring is a stall that the retry timer recovers from, while neither
+ * deferring is two stations transmitting on top of each other.
+ */
+static bool turn_conflict_should_yield(const arq_session_t *sess)
+{
+    char my_call[CALLSIGN_MAX_SIZE];
+    arq_conn_get_calls(my_call, NULL, NULL, sizeof(my_call));
+    const char *local = sess->local_call[0] ? sess->local_call : my_call;
+    return arq_protocol_retry_rank(local, sess->remote_call) != 0;
+}
+
 /** Update local_snr_x10 EMA from the SNR carried in a received frame event.
  *  Called in all RX_DATA handlers to avoid cross-thread race with the modem
  *  thread's arq_update_link_metrics() call. */
@@ -2329,6 +2349,44 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
                                   ? (ev->rx_flags & ARQ_FLAG_HAS_DATA) != 0
                                   : true;
             irs_arm_ack_deadline(sess, ev);
+        }
+        else if (ev->id == ARQ_EV_RX_TURN_REQ)
+        {
+            /* Both sides asked for the turn at the same time.
+             *
+             * Without this case the event fell through and neither peer
+             * yielded: both retried until the budget ran out, both dropped to
+             * IDLE_IRS, and the link sat with NO sender until one of them
+             * requested again -- immediately and unstaggered, so the two
+             * requests collided and the cycle repeated.  That is the pair of
+             * symptoms reported from the field on bidirectional B1F
+             * forwarding: long silent gaps, then both stations transmitting on
+             * top of each other.  Both are this one loop.
+             *
+             * The retry stagger from #217 cannot fix it.  It staggers retry
+             * DEADLINES, whereas the deadlock is that nobody yields at all and
+             * the collision is on a first send that no deadline governs.
+             *
+             * So break the tie with the same rank the stagger uses: exactly one
+             * peer yields, grants the turn, and becomes the receiver; the other
+             * keeps its request outstanding and gets the floor.  Deterministic,
+             * so both ends agree without another exchange.
+             *
+             * The winner deliberately does nothing here: its own TURN_REQ is
+             * still outstanding and the peer is about to answer it.  Sending
+             * anything now would key on top of that TURN_ACK. */
+            if (turn_conflict_should_yield(sess))
+            {
+                HLOGD(LOG_COMP, "Turn requested by both; yielding (rank)");
+                if (g_timing) arq_timing_record_turn(g_timing, false, "turn_conflict");
+                dflow_enter(sess, ARQ_DFLOW_TURN_ACK_TX,
+                            time_now_ms() + ARQ_CHANNEL_GUARD_MS,
+                            ARQ_EV_TIMER_ACK);
+            }
+            else
+            {
+                HLOGD(LOG_COMP, "Turn requested by both; holding (rank)");
+            }
         }
         else if (ev->id == ARQ_EV_TIMER_RETRY)
         {
