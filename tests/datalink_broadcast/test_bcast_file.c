@@ -155,7 +155,10 @@ static void transfer_case(size_t nbytes, int mode, int loss_pct, unsigned seed)
 
 void test_clean_channel_recovers_the_file(void)      { transfer_case(20000, 0,  0, 1); }
 void test_lossy_channel_recovers_the_file(void)      { transfer_case(20000, 0, 20, 2); }
-void test_small_robust_mode_recovers_the_file(void)  { transfer_case(1500,  8, 25, 3); }
+/* DATAC4 (mode 3), not DATAC16 (8): with a fixed 41-byte symbol the most
+ * robust rung that can carry a whole symbol is DATAC4.  See
+ * BCAST_SYMBOL_SIZE_MIN for why that floor was chosen. */
+void test_small_robust_mode_recovers_the_file(void)  { transfer_case(1500,  3, 25, 3); }
 void test_fast_mode_recovers_the_file(void)          { transfer_case(60000, 10, 30, 4); }
 
 /* A receiver that tunes in late must still be able to start.  With the joint
@@ -251,18 +254,121 @@ void test_empty_and_missing_files_are_refused(void)
     TEST_ASSERT_NULL(bcast_file_tx_open("/nonexistent/nope", 0, 1, 0, err, sizeof(err)));
 }
 
-/* DATAC14 carries 3 bytes; the 9-byte config packet cannot fit, and without
- * the guard the symbol size underflows. */
+/* A mode that cannot carry one whole fixed-size symbol is refused, and the
+ * refusal says what the shortfall is.  DATAC14 (3 B) cannot even hold the
+ * framing; DATAC15 (30 B) holds the framing but not a 41-byte symbol, and used
+ * to be usable back when the symbol shrank to fit the mode. */
 void test_modes_too_small_for_broadcast_are_refused(void)
 {
     char err[160] = {0};
     write_file(TMP, 4000, 13);
-    TEST_ASSERT_FALSE(bcast_file_mode_usable(5));
+
+    TEST_ASSERT_FALSE(bcast_file_mode_usable(5));      /* DATAC14, 3 B  */
     TEST_ASSERT_NULL(bcast_file_tx_open(TMP, 5, 1, 0, err, sizeof(err)));
-    TEST_ASSERT_NOT_NULL(strstr(err, "more than"));
+    TEST_ASSERT_NOT_NULL_MESSAGE(strstr(err, "needs"), err);
+    TEST_ASSERT_NOT_NULL_MESSAGE(strstr(err, "symbol"), err);
+
+    TEST_ASSERT_FALSE(bcast_file_mode_usable(7));      /* DATAC15, 30 B */
+    TEST_ASSERT_NULL(bcast_file_tx_open(TMP, 7, 1, 0, err, sizeof(err)));
 
     TEST_ASSERT_NULL(bcast_file_tx_open(TMP, 11, 1, 0, err, sizeof(err)));
     TEST_ASSERT_NULL(bcast_file_tx_open(TMP, -1, 1, 0, err, sizeof(err)));
+    remove(TMP);
+}
+
+
+/* ---- fixed symbol size, and what it costs ---- */
+
+/* The symbol size must not depend on the mode.
+ *
+ * This is the whole point of the fixed T: a RaptorQ symbol collected from one
+ * mode has to be usable for the same object when it arrives on another, which
+ * is what makes a mode change free and an interleaved carousel possible.  If
+ * T ever goes back to being frame-derived, every one of those properties dies
+ * quietly and only this test notices.
+ *
+ * It also pins the cost.  At T=41 the most robust mode that can carry a whole
+ * symbol is DATAC4, so FSK_LDPC (30 B) and DATAC15 (30 B) drop out of
+ * broadcast -- they used to be usable with an 18-byte symbol.  That is a
+ * deliberate trade: keeping them would mean T<=17 and 84% payload efficiency
+ * at QAM16C2 instead of 98%. */
+void test_symbol_size_is_fixed_across_modes(void)
+{
+    struct { int mode; const char *name; int syms; } expect[] = {
+        { 0,  "DATAC1",   12 },
+        { 1,  "DATAC3",    2 },
+        { 2,  "DATAC0",    0 },
+        { 3,  "DATAC4",    1 },
+        { 4,  "DATAC13",   0 },
+        { 5,  "DATAC14",   0 },
+        { 6,  "FSK_LDPC",  0 },   /* was usable with a tiny symbol; now not */
+        { 7,  "DATAC15",   0 },   /* likewise */
+        { 8,  "DATAC16",   0 },
+        { 9,  "DATAC17",  28 },
+        { 10, "QAM16C2",  29 },
+    };
+    for (unsigned i = 0; i < sizeof(expect) / sizeof(expect[0]); i++)
+    {
+        char msg[96];
+        snprintf(msg, sizeof(msg), "%s symbols per frame", expect[i].name);
+        TEST_ASSERT_EQUAL_INT_MESSAGE(expect[i].syms,
+                                      bcast_file_mode_symbols(expect[i].mode), msg);
+        snprintf(msg, sizeof(msg), "%s usability", expect[i].name);
+        TEST_ASSERT_EQUAL_INT_MESSAGE(expect[i].syms > 0,
+                                      bcast_file_mode_usable(expect[i].mode) != 0, msg);
+    }
+}
+
+/* Symbols collected from DIFFERENT modes must decode ONE object.
+ *
+ * The property every other benefit rests on.  A carousel can interleave a fast
+ * mode and a robust one, and a receiver that decodes only some of each still
+ * completes -- fast for good signal, slow for bad, one transmission serving
+ * both.  It also means a mode change costs nothing.
+ *
+ * The test feeds a decoder alternate frames from a QAM16C2 sender and a DATAC4
+ * sender for the same file, giving each decoder only half the frames of each,
+ * and requires completion.  Neither sender's frames alone are enough here.
+ */
+void test_symbols_from_two_modes_decode_one_object(void)
+{
+    const size_t bytes = 3000;
+    write_file(TMP, bytes, 91);
+
+    char err[160] = {0};
+    /* Same file, same session id, so both senders describe the same object. */
+    bcast_file_tx_t *fast = bcast_file_tx_open(TMP, 10, 0, 7, err, sizeof(err));
+    TEST_ASSERT_NOT_NULL_MESSAGE(fast, err);
+    bcast_file_tx_t *slow = bcast_file_tx_open(TMP, 3, 0, 7, err, sizeof(err));
+    TEST_ASSERT_NOT_NULL_MESSAGE(slow, err);
+
+    /* Both must have agreed on the same symbol size and the same OTI, or the
+     * receiver could not mix them at all. */
+    TEST_ASSERT_EQUAL_UINT32((uint32_t)bcast_file_tx_symbol_size(fast),
+                             (uint32_t)bcast_file_tx_symbol_size(slow));
+
+    char dir[] = "/tmp/.mercury_bcast_mixmodeXXXXXX";
+    TEST_ASSERT_NOT_NULL(mkdtemp(dir));
+    bcast_file_rx_t *rx = bcast_file_rx_open(10, dir, err, sizeof(err));
+    TEST_ASSERT_NOT_NULL_MESSAGE(rx, err);
+
+    uint8_t frame[BCAST_FILE_MAX_FRAME];
+    int done = 0;
+    for (int i = 0; i < 4000 && !done; i++)
+    {
+        bcast_file_tx_t *tx = (i & 1) ? slow : fast;
+        int n = bcast_file_tx_next(tx, frame, sizeof(frame));
+        if (n <= 0) break;
+        /* Drop half of each sender's frames, so completion needs both. */
+        if ((i >> 1) & 1) continue;
+        if (bcast_file_rx_frame(rx, frame, (size_t)n) == BCAST_RX_COMPLETE)
+            done = 1;
+    }
+    TEST_ASSERT_TRUE_MESSAGE(done, "mixed-mode symbols did not complete the object");
+
+    bcast_file_tx_close(fast);
+    bcast_file_tx_close(slow);
+    bcast_file_rx_close(rx);
     remove(TMP);
 }
 
@@ -580,7 +686,12 @@ void test_rx_saves_a_payload_that_is_not_a_bundle(void)
     TEST_ASSERT_NOT_NULL(io);
     const int mode = 0;
     int fs = bcast_file_mode_frame_size(mode);
-    size_t sym = (size_t)fs - BCAST_FRAME_OVERHEAD;
+    /* The symbol size is FIXED and mode-independent now, and a frame carries
+     * several of them behind one tag -- so a foreign sender has to be imitated
+     * at that layout, not at one-symbol-per-frame. */
+    size_t sym = BCAST_SYMBOL_SIZE_MIN;
+    const unsigned per = bcast_syms_per_frame((size_t)fs, sym);
+    TEST_ASSERT_GREATER_THAN_UINT32(1, per);
     nanorq *enc = nanorq_encoder_new(N, (uint16_t)sym, 1);
     TEST_ASSERT_NOT_NULL(enc);
     nanorq_set_max_esi(enc, BCAST_MAX_ESI);
@@ -597,13 +708,16 @@ void test_rx_saves_a_payload_that_is_not_a_bundle(void)
 
     uint8_t *frame = malloc((size_t)fs);
     int done = 0;
-    for (uint32_t esi = 0; esi < 500 && !done; esi++)
+    for (uint32_t esi = 0; esi < 500 && !done; esi += per)
     {
         for (int b = 0; b < blocks && !done; b++)
         {
             memset(frame, 0, (size_t)fs);
-            TEST_ASSERT_EQUAL_UINT64(sym,
-                nanorq_encode(enc, frame + BCAST_FRAME_OVERHEAD, esi, (uint8_t)b, io));
+            /* `per` consecutive ESIs of one block, described by one tag. */
+            for (unsigned k = 0; k < per; k++)
+                TEST_ASSERT_EQUAL_UINT64(sym,
+                    nanorq_encode(enc, frame + BCAST_FRAME_OVERHEAD + k * sym,
+                                  esi + k, (uint8_t)b, io));
             memcpy(frame + 1, cfg, BCAST_CONFIG_BODY_SIZE);
             nanorq_tag_reduced((uint8_t)b, esi, frame + 1 + BCAST_CONFIG_BODY_SIZE);
             bcast_write_frame_header(frame, BCAST_PACKET_RQ_CONFIG, 7);
@@ -649,5 +763,7 @@ int main(void)
     RUN_TEST(test_oversized_file_is_refused);
     RUN_TEST(test_empty_and_missing_files_are_refused);
     RUN_TEST(test_modes_too_small_for_broadcast_are_refused);
+    RUN_TEST(test_symbol_size_is_fixed_across_modes);
+    RUN_TEST(test_symbols_from_two_modes_decode_one_object);
     return UNITY_END();
 }
