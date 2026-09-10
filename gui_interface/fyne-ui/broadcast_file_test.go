@@ -124,3 +124,37 @@ func TestBroadcastFileRefusesOversized(t *testing.T) {
 		t.Fatal("expected an oversized file to be refused")
 	}
 }
+
+// A mode the engine runs perfectly well is not necessarily a mode broadcast can
+// use.  A broadcast frame must hold the framing plus one whole RaptorQ symbol,
+// so FSK_LDPC and DATAC15 (30-byte frames) are runnable but unusable -- the
+// first modes for which those two answers differ, which is why the usability
+// predicate went unused for so long.
+//
+// The distinction has to be made BEFORE a transfer starts.  If it is not, the
+// UI proceeds as though broadcast will work and the operator gets an opaque
+// failure out of tx_open instead of being told to restart with -m.
+func TestBroadcastUsabilityIsNotTheSameAsRunnable(t *testing.T) {
+	usable := map[int]bool{0: true, 1: true, 3: true, 9: true, 10: true}
+	names := map[int]string{
+		0: "DATAC1", 1: "DATAC3", 2: "DATAC0", 3: "DATAC4", 4: "DATAC13",
+		5: "DATAC14", 6: "FSK_LDPC", 7: "DATAC15", 8: "DATAC16",
+		9: "DATAC17", 10: "QAM16C2",
+	}
+	for mode := 0; mode <= 10; mode++ {
+		got := broadcastModeUsable(mode)
+		if got != usable[mode] {
+			t.Errorf("%s (mode %d): usable=%v, want %v",
+				names[mode], mode, got, usable[mode])
+		}
+		// Whatever the verdict, a usable mode must have room for a symbol and
+		// an unusable one must not -- so the predicate and the geometry agree.
+		fs := broadcastModeFrameSize(mode)
+		if got && fs < 53 {
+			t.Errorf("%s: reported usable with a %d-byte frame", names[mode], fs)
+		}
+		if !got && fs >= 53 {
+			t.Errorf("%s: reported unusable with a %d-byte frame", names[mode], fs)
+		}
+	}
+}

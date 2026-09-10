@@ -130,7 +130,14 @@ long  mercury_bcast_max_file_bytes(void);
 /* The broadcast mode the engine is running, as a hermes mode index (0..10), or
  * -1 if it is not one broadcast can use.  Fixed at startup by -m: there is no
  * runtime mode switch, and both stations must be set to the same one. */
+/* The hermes mode index the engine is running, or -1 if broadcast cannot use
+ * it -- which includes modes the engine runs perfectly well but whose frames
+ * are too small to carry a whole RaptorQ symbol (FSK_LDPC, DATAC15). */
 int   mercury_bcast_engine_mode(void);
+
+/* The same index without the broadcast-usability filter, so a caller can name
+ * the mode in a message explaining why broadcast is unavailable. */
+int   mercury_bcast_engine_mode_raw(void);
 int   mercury_bcast_engine_bitrate(void);
 int   mercury_bcast_engine_bandwidth_hz(void);
 
