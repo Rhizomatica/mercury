@@ -158,7 +158,60 @@ bcast_file_tool send <file> [-m mode] [-c cycles] [-i ip] [-p port]
 bcast_file_tool recv <dir>  [-m mode] [-i ip] [-p port]
 ```
 
-`-c 0` (the default) repeats until interrupted.
+Defaults: `-m 1` (DATAC3), `-c 0` (repeat until interrupted), `-p 8100`,
+`-i 127.0.0.1`.
+
+#### Worked example: sending an NNCP bundle
+
+There is no negotiation in broadcast.  **The mode is fixed at Mercury's start
+by `-m` and cannot be changed at runtime**, so the same mode has to be set in
+four places: both Mercury instances, and both invocations of the tool.  Get one
+of them wrong and the receiver simply never decodes -- there is no error,
+because a mismatched frame is indistinguishable from noise.
+
+Produce the bundle with NNCP as usual, then hand the file to Mercury:
+
+```
+# --- receiving station: Mercury on QAM16C2, broadcast port 8100 ---
+mercury -x alsa -i plughw:1,0 -o plughw:1,0 -m 10 -b 8100 &
+bcast_file_tool recv /var/spool/nncp/incoming -m 10 -p 8100
+
+# --- sending station: same mode, same framing ---
+nncp-bundle -tx somenode > /tmp/out.nncp
+mercury -x alsa -i plughw:1,0 -o plughw:1,0 -m 10 -b 8100 &
+bcast_file_tool send /tmp/out.nncp -m 10 -c 12 -p 8100
+```
+
+The receiver writes the file into the directory under **its original name** --
+the name travels in the bundle, so `out.nncp` arrives as `out.nncp` and NNCP's
+inbound spool can pick it up directly.  (Mercury's "bundle" here is just
+file + name; it is unrelated to NNCP's own bundle format, which Mercury treats
+as opaque bytes.)
+
+#### How many cycles to send
+
+This is the number to get right, and the fixed symbol size changed it.  A cycle
+is one frame per source block, and a frame now carries MANY symbols:
+
+    symbols needed  ~=  bundle_bytes / 41       (plus a couple for RaptorQ)
+    frames needed   ~=  symbols / symbols_per_frame
+
+For the 6 kB bundle above on QAM16C2: 6016 / 41 = 147 symbols, at 29 symbols
+per frame = **6 frames minimum**.  `-c 12` sends twice that, which is the right
+instinct on a broadcast with no feedback -- overshoot costs one frame, coming
+up short costs the whole transfer.  Verified end to end over `ch`:
+
+```
+sending /tmp/out.nncp: bundle 6016 B, mode 10 (1213 B/frame), 1 block(s), cycles 12
+  ... receiver: symbols 29 -> 58 -> 87 -> 116 -> 145
+  received "out.nncp" -> /var/spool/nncp/incoming/out.nncp
+```
+
+Completed on the 6th frame, as the arithmetic predicts.  On a real fading link
+send more: erasures mean the receiver needs the same 147 DISTINCT symbols, so
+budget for the loss rate (30% loss -> about 1.4x the frames).  `-c 0` repeats
+until interrupted, which is the honest choice when you cannot predict the
+channel and have no return path to tell you when to stop.
 
 ## Testing
 
@@ -227,21 +280,41 @@ rather than correctness. If a transfer is taking several times longer than the
 table says, the link is at that mode's edge and the next mode down is the
 answer.
 
-### The small-frame modes are not usable for files
+### Which modes can carry a file, and why the list shrank
 
-Every frame spends 12 bytes on the header, OTI and tag. The 14-byte modes
-(DATAC0, DATAC13, DATAC16) therefore carry **2 bytes of payload per frame** —
-86% overhead — and a 1 kB file would need over 500 frames, about 17 minutes of
-continuous transmission at DATAC13's 1.98 s per frame.
+A frame spends 12 bytes on the header, OTI and tag, and the symbol size is now
+FIXED at 41 bytes so that a symbol means the same thing on every mode (see
+"One source block" above).  A mode can therefore carry a file only if it has
+room for the framing plus one whole symbol -- 53 bytes:
 
-Measured: DATAC13 did not complete even a 60-byte file within 200 s at
-+15.2 dB -- which is why no 14-byte mode appears in the table above. The codec itself is fine at that symbol size — it produces valid
-frames — the mode is simply the wrong tool for a file. Use DATAC4 (42 bytes per
-symbol) or larger; DATAC3 is the sensible robust choice.
+| mode | frame | symbols/frame | file transfer |
+|---|---|---|---|
+| QAM16C2 | 1213 | 29 | yes |
+| DATAC17 | 1180 | 28 | yes |
+| DATAC1 | 510 | 12 | yes |
+| DATAC3 | 126 | 2 | yes -- the sensible robust choice |
+| DATAC4 | 54 | 1 | yes -- the robust floor |
+| FSK_LDPC, DATAC15 | 30 | 0 | **no** |
+| DATAC0, DATAC13, DATAC16 | 14 | 0 | no |
+| DATAC14 | 3 | 0 | no |
+
+FSK_LDPC and DATAC15 used to work, with an 18-byte symbol, and no longer do.
+That is the price of a mode-independent symbol: keeping them would mean a
+symbol of 17 bytes or less and 84% payload efficiency at the fast end instead
+of 98%.  `mercury -z`-style refusal is explicit -- the tool and the UI both
+name the mode and say what to switch to, rather than failing later.
+
+**Broadcast CHAT and GPS are unaffected on those modes.**  A chat line needs
+only a frame to sit in; the 41-byte floor is a file-transfer constraint.
+DATAC15 still carries 18 characters per frame.
+
+The 14-byte modes could never carry a file: 2 bytes of payload per frame, 86%
+overhead, and a measured failure to complete even a 60-byte file within 200 s
+at +15.2 dB.
 
 Two things the harness encodes, both learned the hard way: `cat` between the
-FIFOs does **not** work as the air — it buffers in 64 kB chunks, so the
-receiving modem never syncs — and no sender pacing is needed, because
+FIFOs does **not** work as the air -- it buffers in 64 kB chunks, so the
+receiving modem never syncs -- and no sender pacing is needed, because
 `write_buffer()` blocks when the ring is full and TCP backpressure already
 paces it.
 
