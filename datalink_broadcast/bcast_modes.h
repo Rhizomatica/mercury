@@ -34,52 +34,6 @@
 #define BCAST_TAG_BODY_SIZE    3
 #define BCAST_FRAME_OVERHEAD   (1 + BCAST_CONFIG_BODY_SIZE + BCAST_TAG_BODY_SIZE)
 
-
-/* Symbol size, decoupled from the modem frame.
- *
- * The obvious sizing is one symbol per frame, T = frame - overhead, and that is
- * what this used to do.  It is the most efficient possible packing and it has
- * one fatal property: T is then a function of the MODE, so RaptorQ symbols
- * collected at one mode are worthless at another.  Changing mode mid-transfer
- * throws away everything the receiver has, and interleaving two modes in one
- * carousel is impossible.
- *
- * Fixing T instead makes a symbol mode-independent: any mode can carry symbols
- * for the same source block, a mode change costs nothing, and one transmission
- * can serve a fast audience and a fringe audience at the same time -- each
- * decoding whatever it can, all of it counting toward the same object.
- *
- * 41 bytes is the largest T that still fits a DATAC4 frame (54 - 9 fixed - 3
- * tag), so DATAC4 is the most robust rung that can carry one whole symbol.
- * Going lower to admit DATAC15 (30 B) costs 7 points of efficiency at the fast
- * end to serve a rung carrying 17 B a frame; DATAC16 can never participate at
- * all (14 B frame, 5 left after the fixed part).
- *
- * The symbols packed into one frame are CONSECUTIVE ESIs of ONE source block,
- * so the frame's single reduced tag describes all of them: the receiver reads
- * the base sbn/ESI and derives ESI+1, ESI+2, ... for the rest.  Tagging each
- * symbol separately would cost 3 bytes apiece -- 6.8 points at QAM16C2 -- to
- * buy a per-symbol block spread that a fountain code does not need, since
- * every block has to reach K+e either way.
- *
- * The cost of mode-independence is then 1 point: 98.0% payload efficiency at
- * QAM16C2 against 99.0% for one-symbol-per-frame -- against the 100% extra a
- * second carousel for the fringe audience would cost. */
-#define BCAST_SYMBOL_SIZE_MIN  41
-
-/* How many whole symbols of `T` a frame of `frame_size` carries.
- *
- * Both ends compute this the same way, and the RECEIVER computes it from the
- * length of the frame it just decoded rather than from any configured mode --
- * which is what lets it accept frames from any mode in an interleaved
- * carousel without being told which one is arriving. */
-static inline unsigned bcast_syms_per_frame(size_t frame_size, size_t T)
-{
-    if (T == 0 || frame_size <= BCAST_FRAME_OVERHEAD)
-        return 0;
-    return (unsigned)((frame_size - BCAST_FRAME_OVERHEAD) / T);
-}
-
 /* The reduced tag carries a 16-bit ESI, so the carousel wraps at 65535. */
 #define BCAST_MAX_ESI ((1 << 16) - 1)
 

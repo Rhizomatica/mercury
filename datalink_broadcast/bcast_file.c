@@ -28,8 +28,7 @@ struct bcast_file_tx
 
     int       mode;
     uint32_t  frame_size;  /* every emitted frame is exactly this long */
-    size_t    symbol_size; /* FIXED (BCAST_SYMBOL_SIZE_MIN), not mode-derived */
-    unsigned  syms;        /* whole symbols packed into one frame            */
+    size_t    symbol_size; /* frame_size - BCAST_RQ_HEADER_SIZE          */
 
     int       blocks;      /* RaptorQ source blocks (sbn count) */
     uint32_t *esi;         /* next ESI per block                */
@@ -181,25 +180,11 @@ const char *bcast_file_mode_name(int mode)
 int bcast_file_mode_usable(int mode)
 {
     int fs = bcast_file_mode_frame_size(mode);
-    if (fs <= 0)
-        return 0;
-    /* The symbol size is fixed so that symbols are mode-independent (see
-     * BCAST_SYMBOL_SIZE_MIN), so a mode is usable only if a whole symbol plus
-     * its tag fits beside the fixed part of the frame.  This rejects DATAC14
-     * (3 B), DATAC16 and DATAC0 (14 B) and DATAC15 (30 B) -- none can carry a
-     * 41-byte symbol -- as well as anything that used to squeeze in a symbol
-     * of a few bytes and could therefore never interoperate with another
-     * mode's frames. */
-    return bcast_syms_per_frame((size_t)fs, BCAST_SYMBOL_SIZE_MIN) >= 1;
-}
-
-/** @brief Whole symbols a mode's frame carries at the fixed symbol size. */
-int bcast_file_mode_symbols(int mode)
-{
-    int fs = bcast_file_mode_frame_size(mode);
-    if (fs <= 0)
-        return 0;
-    return (int)bcast_syms_per_frame((size_t)fs, BCAST_SYMBOL_SIZE_MIN);
+    /* Every frame carries the header, the config body and the tag, so a frame
+     * must have room for all of that plus at least one symbol byte.  DATAC14's
+     * 3 bytes are the case this rejects; without the check the symbol size
+     * underflows. */
+    return fs > BCAST_FRAME_OVERHEAD;
 }
 
 bcast_file_tx_t *bcast_file_tx_open(const char *path, int mode, int cycles,
@@ -219,11 +204,8 @@ bcast_file_tx_t *bcast_file_tx_open(const char *path, int mode, int cycles,
                      mode, BCAST_MODE_MAX);
         else
             snprintf(m, sizeof(m),
-                     "mode %d carries only %d bytes per frame; broadcast needs "
-                     "%d (a %d-byte symbol plus %d of framing)",
-                     mode, fs,
-                     (int)(BCAST_FRAME_OVERHEAD + BCAST_SYMBOL_SIZE_MIN),
-                     (int)BCAST_SYMBOL_SIZE_MIN, (int)BCAST_FRAME_OVERHEAD);
+                     "mode %d carries only %d bytes per frame; broadcast needs more than %d",
+                     mode, fs, BCAST_FRAME_OVERHEAD);
         set_err(err, errlen, m);
         return NULL;
     }
@@ -243,8 +225,7 @@ bcast_file_tx_t *bcast_file_tx_open(const char *path, int mode, int cycles,
 
     tx->mode         = mode;
     tx->frame_size   = (uint32_t)bcast_file_mode_frame_size(mode);
-    tx->symbol_size  = BCAST_SYMBOL_SIZE_MIN;
-    tx->syms         = bcast_syms_per_frame(tx->frame_size, tx->symbol_size);
+    tx->symbol_size  = tx->frame_size - BCAST_FRAME_OVERHEAD;
     tx->cycles_total = cycles;
     tx->next_block   = 0;
 
@@ -324,42 +305,18 @@ int bcast_file_tx_next(bcast_file_tx_t *tx, uint8_t *buf, size_t buflen)
 
     int sbn = tx->next_block;
     uint32_t esi = tx->esi[sbn];
-    unsigned n = tx->syms;
 
-    if (n == 0)
-        return -1;
-
-    /* Do not let a frame's ESI run straddle the 16-bit ceiling: the tag only
-     * describes a base, so every symbol in the frame must be inside the range
-     * the receiver can reconstruct.  Short the run rather than wrap. */
-    if (esi + n - 1 > BCAST_MAX_ESI)
-    {
-        if (esi > BCAST_MAX_ESI)
-        {
-            tx->finished = 1;
-            return 0;
-        }
-        n = (unsigned)(BCAST_MAX_ESI - esi + 1);
-    }
-
-    /* One self-describing frame: header, config body, one tag, then `n`
-     * symbols of the FIXED size, carrying consecutive ESIs of this block.  The
-     * single tag names the first; the receiver derives the rest by counting,
-     * which is why they have to be consecutive and from one block. */
+    /* One self-describing frame: header, config body, tag, symbol. */
     memset(buf, 0, tx->frame_size);
-    for (unsigned i = 0; i < n; i++)
-    {
-        uint8_t *dst = buf + BCAST_FRAME_OVERHEAD + (size_t)i * tx->symbol_size;
-        if (nanorq_encode(tx->rq, dst, esi + i, (uint8_t)sbn, tx->io)
-                != tx->symbol_size)
-            return -1;
-    }
+    if (nanorq_encode(tx->rq, buf + BCAST_FRAME_OVERHEAD, esi, (uint8_t)sbn, tx->io)
+            != tx->symbol_size)
+        return -1;
 
     memcpy(buf + 1, tx->config_body, BCAST_CONFIG_BODY_SIZE);
     nanorq_tag_reduced((uint8_t)sbn, esi, buf + 1 + BCAST_CONFIG_BODY_SIZE);
     bcast_write_frame_header(buf, BCAST_PACKET_RQ_CONFIG, tx->session_id);
 
-    tx->esi[sbn] += n;
+    tx->esi[sbn]++;
     tx->frames_sent++;
 
     /* Advance the carousel. */
@@ -379,11 +336,6 @@ int bcast_file_tx_next(bcast_file_tx_t *tx, uint8_t *buf, size_t buflen)
         tx->finished = 1;
 
     return (int)tx->frame_size;
-}
-
-size_t bcast_file_tx_symbol_size(const bcast_file_tx_t *tx)
-{
-    return tx ? tx->symbol_size : 0;
 }
 
 int bcast_file_tx_frame_size(const bcast_file_tx_t *tx)
@@ -425,9 +377,7 @@ struct bcast_file_rx
 {
     int       mode;
     uint32_t  frame_size;
-    size_t    symbol_size;   /* FIXED, so symbols are mode-independent */
-    uint64_t  oti_common;    /* the OTI the running decoder was built with, so */
-    uint32_t  oti_scheme;    /* a mode change under one session id is caught   */
+    size_t    symbol_size;
     char      dir[512];
 
     nanorq       *rq;
@@ -468,7 +418,7 @@ bcast_file_rx_t *bcast_file_rx_open(int mode, const char *dir,
 
     rx->mode        = mode;
     rx->frame_size  = (uint32_t)bcast_file_mode_frame_size(mode);
-    rx->symbol_size = BCAST_SYMBOL_SIZE_MIN;
+    rx->symbol_size = rx->frame_size - BCAST_FRAME_OVERHEAD;
     rx->session     = -1;
     rx->last_done_session = -1;
     snprintf(rx->dir, sizeof(rx->dir), "%s", dir);
@@ -532,10 +482,6 @@ bcast_rx_result_t bcast_file_rx_frame(bcast_file_rx_t *rx,
         uint32_t f_len = (uint32_t)frame[1] | ((uint32_t)frame[2] << 8) |
                          ((uint32_t)frame[3] << 16);
         uint32_t t_dec = ((uint32_t)frame[4] | ((uint32_t)frame[5] << 8)) + 1;
-        /* The symbol size is FIXED and mode-independent, so this check no
-         * longer says "did this arrive on my mode" -- it says "is this one of
-         * ours at all".  That is what allows an interleaved carousel: frames
-         * from any mode carry the same T and are all acceptable. */
         if (t_dec != (uint32_t)rx->symbol_size)
             return BCAST_RX_IGNORED;
         if (f_len == 0 || f_len > BCAST_FILE_MAX_BYTES)
@@ -549,16 +495,6 @@ bcast_rx_result_t bcast_file_rx_frame(bcast_file_rx_t *rx,
 
     if (rx->session >= 0 && session != rx->session)
         rx_reset(rx);             /* a different file began */
-
-    /* ...and when the OTI changes under the SAME session id.  A mode change is
-     * a full RaptorQ reset (the symbol run and block layout are re-derived), and
-     * the sender signals it by starting a new session -- but a random 1..31
-     * session id collides one time in 31.  Without this the new encoding's
-     * symbols would be fed to a decoder built for the old OTI, which is
-     * undetectable garbage rather than a clean restart. */
-    if (rx->session >= 0 &&
-        (rx_common(frame) != rx->oti_common || rx_scheme(frame) != rx->oti_scheme))
-        rx_reset(rx);
 
     if (rx->session < 0)
     {
@@ -585,38 +521,15 @@ bcast_rx_result_t bcast_file_rx_frame(bcast_file_rx_t *rx,
             rx_reset(rx);
             return BCAST_RX_ERROR;
         }
-        rx->session    = session;
-        rx->symbols    = 0;
-        rx->oti_common = common;
-        rx->oti_scheme = scheme;
+        rx->session = session;
+        rx->symbols = 0;
     }
-
-    /* How many symbols this frame carries, derived from the length of the frame
-     * we actually decoded -- NOT from any configured mode.  That is the whole
-     * point: an interleaved carousel mixes QAM16C2 and DATAC4 keydowns, and the
-     * receiver must take whichever it managed to decode without being told
-     * which was on the air. */
-    const unsigned n = bcast_syms_per_frame(len, rx->symbol_size);
-    if (n == 0)
-        return BCAST_RX_IGNORED;
 
     const uint8_t *tagp = frame + 1 + BCAST_CONFIG_BODY_SIZE;
     uint32_t tag = ((uint32_t)tagp[0] << 24) | tagp[1] | ((uint32_t)tagp[2] << 8);
-    const uint32_t sbn_bits = tag & 0xFF000000u;
-    const uint32_t esi_base = tag & 0x00FFFFFFu;
-
-    for (unsigned i = 0; i < n; i++)
-    {
-        /* Consecutive ESIs of one block, so the tag advances by one per symbol.
-         * Stop at the ceiling rather than carrying into the sbn field, which
-         * would silently attribute a symbol to a different block. */
-        if (esi_base + i > BCAST_MAX_ESI)
-            break;
-        nanorq_decoder_add_symbol(rx->rq,
-            (void *)(frame + BCAST_FRAME_OVERHEAD + (size_t)i * rx->symbol_size),
-            sbn_bits | (esi_base + i), rx->io);
-        rx->symbols++;
-    }
+    nanorq_decoder_add_symbol(rx->rq, (void *)(frame + BCAST_FRAME_OVERHEAD),
+                              tag, rx->io);
+    rx->symbols++;
 
     int blocks = nanorq_blocks(rx->rq);
     for (int b = 0; b < blocks; b++)

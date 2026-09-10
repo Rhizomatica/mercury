@@ -114,10 +114,6 @@ int bcast_file_tx_next(bcast_file_tx_t *tx, uint8_t *buf, size_t buflen);
 /** Frame size of the chosen mode, i.e. the length every frame will be. */
 int bcast_file_tx_frame_size(const bcast_file_tx_t *tx);
 
-/** @brief The RaptorQ symbol size in use.  Fixed, so two senders on different
- *  modes produce symbols a single receiver can mix for the same object. */
-size_t bcast_file_tx_symbol_size(const bcast_file_tx_t *tx);
-
 /** Progress. Any out parameter may be NULL. cycles_total is 0 for endless. */
 void bcast_file_tx_stats(const bcast_file_tx_t *tx, int *cycle_now,
                          int *cycles_total, uint64_t *frames_sent);
@@ -172,12 +168,6 @@ int bcast_file_mode_frame_size(int mode);
 
 /** Whether a mode can carry broadcast at all (DATAC14's 3 bytes cannot). */
 int bcast_file_mode_usable(int mode);
-
-/** @brief Whole RaptorQ symbols a mode's frame carries at the fixed symbol
- *  size, or 0 if the mode cannot carry one.  The symbol size does NOT depend
- *  on the mode (see BCAST_SYMBOL_SIZE_MIN), which is what lets one carousel
- *  interleave modes and lets a mode change keep the symbols already sent. */
-int bcast_file_mode_symbols(int mode);
 
 /** The mode's name as `mercury -l` reports it, or "" if out of range. */
 const char *bcast_file_mode_name(int mode);
