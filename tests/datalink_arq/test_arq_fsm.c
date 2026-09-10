@@ -677,6 +677,98 @@ void test_keepalive_wait_accepts_data(void)
     TEST_ASSERT_EQUAL_INT(ARQ_CONN_CONNECTED, sess.conn_state);
 }
 
+/* Both stations ask for the turn at the same instant.
+ *
+ * TURN_REQ_WAIT used to have no RX_TURN_REQ case at all, so the event fell
+ * through and NEITHER peer yielded.  Both retried to exhaustion, both dropped
+ * to IDLE_IRS, and the link sat with no sender until one requested again --
+ * immediately and unstaggered, so the requests collided and it repeated.  Both
+ * halves of the field report on bidirectional B1F forwarding (long silent
+ * gaps, then both stations transmitting over each other) are that one loop.
+ *
+ * This is the same omission already fixed for WAIT_ACK in
+ * test_wait_ack_yields_on_turn_req; TURN_REQ_WAIT was the state it was missed
+ * in.  A one-way transfer harness cannot reach either, because its IRS never
+ * initiates data.
+ *
+ * The tie is broken on the retry rank -- the strcmp() of the exchanged
+ * callsign pair that #217's stagger already uses -- so both ends compute the
+ * same answer and exactly one yields, with no extra exchange.  These two cases
+ * assert both sides of that decision from the same state, which is what proves
+ * it is a tiebreak and not just "always yield" (which would deadlock the other
+ * way) or "never yield" (the original bug).
+ */
+static void goto_turn_req_wait(void)
+{
+    /* Connect as the CALLEE, which starts as the receiver -- the caller sends
+     * first.  (goto_connected() dials out and would make us the sender.) */
+    arq_event_t ev = make_event(ARQ_EV_APP_LISTEN);
+    arq_fsm_dispatch(&sess, &ev);
+    ev = make_event(ARQ_EV_RX_CALL);
+    ev.session_id = 0x42;
+    strncpy(ev.remote_call, "DST1", CALLSIGN_MAX_SIZE);
+    arq_fsm_dispatch(&sess, &ev);
+    ev = make_event(ARQ_EV_TIMER_ACK);
+    arq_fsm_dispatch(&sess, &ev);          /* send the ACCEPT */
+    ev = make_event(ARQ_EV_TX_COMPLETE);
+    arq_fsm_dispatch(&sess, &ev);
+    ev = make_event(ARQ_EV_RX_DATA);       /* caller's first burst confirms us */
+    ev.session_id = sess.session_id;
+    ev.seq = sess.rx_expected;
+    ev.data_bytes = 8;
+    ev.payload_len = 8;
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_CONNECTED, sess.conn_state);
+    ev = make_event(ARQ_EV_TIMER_ACK);
+    arq_fsm_dispatch(&sess, &ev);          /* our ACK */
+    ev = make_event(ARQ_EV_TX_COMPLETE);
+    arq_fsm_dispatch(&sess, &ev);          /* -> IDLE_IRS */
+    TEST_ASSERT_EQUAL_INT(ARQ_DFLOW_IDLE_IRS, sess.dflow_state);
+
+    fake_tx_backlog_fake.return_val = 256; /* we now have traffic of our own */
+    ev = make_event(ARQ_EV_APP_DATA_READY);
+    arq_fsm_dispatch(&sess, &ev);
+    ev = make_event(ARQ_EV_TX_COMPLETE);
+    arq_fsm_dispatch(&sess, &ev);          /* TURN_REQ_TX -> TURN_REQ_WAIT */
+    TEST_ASSERT_EQUAL_INT(ARQ_DFLOW_TURN_REQ_WAIT, sess.dflow_state);
+}
+
+void test_simultaneous_turn_req_one_side_yields(void)
+{
+    /* Local "SRC1" vs remote "DST1": strcmp > 0 is rank 1, which yields. */
+    goto_turn_req_wait();
+    strncpy(sess.local_call, "SRC1", CALLSIGN_MAX_SIZE);
+    strncpy(sess.remote_call, "DST1", CALLSIGN_MAX_SIZE);
+    TEST_ASSERT_TRUE(strcmp(sess.local_call, sess.remote_call) > 0);
+
+    arq_event_t ev = make_event(ARQ_EV_RX_TURN_REQ);
+    ev.session_id = sess.session_id;
+    arq_fsm_dispatch(&sess, &ev);
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ARQ_DFLOW_TURN_ACK_TX, sess.dflow_state,
+        "the higher-ranked station must grant the turn, not ignore the request");
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_CONNECTED, sess.conn_state);
+}
+
+void test_simultaneous_turn_req_other_side_holds(void)
+{
+    /* Local "AAA1" vs remote "DST1": strcmp < 0 is rank 0, which holds. */
+    goto_turn_req_wait();
+    strncpy(sess.local_call, "AAA1", CALLSIGN_MAX_SIZE);
+    strncpy(sess.remote_call, "DST1", CALLSIGN_MAX_SIZE);
+    TEST_ASSERT_TRUE(strcmp(sess.local_call, sess.remote_call) < 0);
+
+    arq_event_t ev = make_event(ARQ_EV_RX_TURN_REQ);
+    ev.session_id = sess.session_id;
+    arq_fsm_dispatch(&sess, &ev);
+
+    /* Holds its request and stays silent: the peer is about to answer it, and
+     * transmitting now would key on top of that TURN_ACK. */
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ARQ_DFLOW_TURN_REQ_WAIT, sess.dflow_state,
+        "the lower-ranked station must keep its request, not also yield");
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_CONNECTED, sess.conn_state);
+}
+
 /* Retry exhaustion within the no-progress budget persists (stays CONNECTED);
  * once the budget elapses, the next exhaustion tears the link down. */
 void test_retry_exhaustion_persists_then_disconnects(void)
@@ -1142,6 +1234,8 @@ int main(void)
     RUN_TEST(test_wait_ack_stale_ack_keeps_window);
     RUN_TEST(test_wait_ack_yields_on_turn_req);
     RUN_TEST(test_keepalive_wait_accepts_data);
+    RUN_TEST(test_simultaneous_turn_req_one_side_yields);
+    RUN_TEST(test_simultaneous_turn_req_other_side_holds);
     RUN_TEST(test_disconnect_drain_timeout_forces_teardown);
     RUN_TEST(test_retry_exhaustion_persists_then_disconnects);
     RUN_TEST(test_retry_exhaustion_disconnects_from_zero_uptime_baseline);
