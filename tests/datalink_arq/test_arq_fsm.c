@@ -619,6 +619,64 @@ void test_wait_ack_yields_on_turn_req(void)
     TEST_ASSERT_EQUAL_INT(ARQ_CONN_CONNECTED, sess.conn_state);
 }
 
+/* A station waiting for a KEEPALIVE_ACK must accept incoming DATA.
+ *
+ * KEEPALIVE_WAIT handled RX_KEEPALIVE_ACK, RX_KEEPALIVE and TIMER_RETRY, and
+ * nothing else -- so RX_DATA fell through and was DISCARDED.  The sender then
+ * retransmitted into a station that would not listen, made no progress, and
+ * this side counted keepalive misses until it tore the link down.
+ *
+ * Reproduced in the two-station sim (tests/sim) at seed 17 with only 10% frame
+ * erasure: zero bytes delivered in EITHER direction, the sender cycling
+ * DATA_TX -> WAIT_ACK the whole time, and "Keepalive miss limit --
+ * disconnecting" at 37 s.  Fixing it took the sim's total-failure count from 2
+ * to 0 over 114 bidirectional trials.
+ *
+ * A keepalive asks whether the peer is still there.  A DATA frame answers that
+ * better than a KEEPALIVE_ACK would, so there is nothing left to wait for: take
+ * the data and ACK it.
+ *
+ * Third instance of one class -- a state ignoring an event that can
+ * legitimately arrive in it.  WAIT_ACK ignored RX_TURN_REQ (a 21-minute uucp
+ * hang), TURN_REQ_WAIT ignored RX_TURN_REQ, and this one ignored RX_DATA.
+ */
+void test_keepalive_wait_accepts_data(void)
+{
+    goto_connected();
+
+    /* ISS with nothing queued goes idle, then the keepalive timer fires. */
+    fake_tx_backlog_fake.return_val = 0;
+    arq_event_t ev = make_event(ARQ_EV_TIMER_KEEPALIVE);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(ARQ_DFLOW_KEEPALIVE_TX, sess.dflow_state);
+    ev = make_event(ARQ_EV_TX_COMPLETE);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(ARQ_DFLOW_KEEPALIVE_WAIT, sess.dflow_state);
+
+    /* The peer answers with DATA rather than a KEEPALIVE_ACK: it is alive and
+     * it holds the floor. */
+    const uint8_t payload[8] = { 1, 2, 3, 4, 5, 6, 7, 8 };
+    ev = make_event(ARQ_EV_RX_DATA);
+    ev.session_id  = sess.session_id;
+    ev.seq         = sess.rx_expected;
+    ev.data_bytes  = sizeof(payload);
+    ev.payload_len = sizeof(payload);
+    memcpy(ev.payload, payload, sizeof(payload));
+    unsigned before = fake_deliver_rx_data_fake.call_count;
+    arq_fsm_dispatch(&sess, &ev);
+
+    /* Delivered upward, not dropped. */
+    TEST_ASSERT_EQUAL_UINT_MESSAGE(before + 1,
+        fake_deliver_rx_data_fake.call_count,
+        "DATA arriving in KEEPALIVE_WAIT was discarded");
+    /* Keepalive abandoned in favour of ACKing what arrived. */
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ARQ_DFLOW_DATA_RX, sess.dflow_state,
+        "must move to DATA_RX to ACK, not keep waiting for a KEEPALIVE_ACK");
+    /* A frame is proof of life, so the miss counter must not stand. */
+    TEST_ASSERT_EQUAL_INT(0, sess.keepalive_miss_count);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_CONNECTED, sess.conn_state);
+}
+
 /* Retry exhaustion within the no-progress budget persists (stays CONNECTED);
  * once the budget elapses, the next exhaustion tears the link down. */
 void test_retry_exhaustion_persists_then_disconnects(void)
@@ -1083,6 +1141,7 @@ int main(void)
     RUN_TEST(test_wait_ack_cumulative_ack_advances_window);
     RUN_TEST(test_wait_ack_stale_ack_keeps_window);
     RUN_TEST(test_wait_ack_yields_on_turn_req);
+    RUN_TEST(test_keepalive_wait_accepts_data);
     RUN_TEST(test_disconnect_drain_timeout_forces_teardown);
     RUN_TEST(test_retry_exhaustion_persists_then_disconnects);
     RUN_TEST(test_retry_exhaustion_disconnects_from_zero_uptime_baseline);

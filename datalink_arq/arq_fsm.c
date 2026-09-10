@@ -2366,7 +2366,49 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
         break;
 
     case ARQ_DFLOW_KEEPALIVE_WAIT:
-        if (ev->id == ARQ_EV_RX_KEEPALIVE_ACK)
+        if (ev->id == ARQ_EV_RX_DATA)
+        {
+            /* The peer is not merely alive, it is transmitting -- and it holds
+             * the floor, or it would not be sending DATA.  Abandon the
+             * keepalive and take the data.
+             *
+             * Without this case RX_DATA fell through and was DISCARDED, which
+             * is the worst possible outcome: the sender retransmits into a
+             * station that will not listen, makes no progress, and this side
+             * meanwhile counts keepalive misses and eventually tears the link
+             * down.  Reproduced in the two-station sim at seed 17 with only 10%
+             * frame erasure: zero bytes delivered in either direction, the
+             * sender cycling DATA_TX -> WAIT_ACK throughout, and
+             * "Keepalive miss limit -- disconnecting" at 37 s.
+             *
+             * A keepalive exists to find out whether the peer is still there.
+             * A DATA frame answers that question better than a KEEPALIVE_ACK
+             * would, so there is nothing left to wait for.
+             *
+             * Same shape as the RX_DATA case in TURN_REQ_WAIT, and the same
+             * class as the RX_TURN_REQ omissions in WAIT_ACK and
+             * TURN_REQ_WAIT: a state that ignores an event which can
+             * legitimately arrive in it. */
+            sess->keepalive_miss_count = 0;
+            update_local_snr(sess, ev);
+            update_peer_snr(sess, ev);
+            sess->peer_tx_mode = ev->mode;
+            bool new_frame = deliver_rx_checked(sess, ev);
+            if (new_frame && g_timing)
+                arq_timing_record_data_rx(g_timing, (int)ev->seq,
+                                          (int)ev->data_bytes,
+                                          sess->local_snr_x10);
+            sess->last_rx_ms = time_now_ms();
+            /* As in TURN_REQ_WAIT: a duplicate means the sender is still the
+             * active ISS and is retransmitting because it has not had our ACK,
+             * so do not take a piggyback turn that would put both sides into
+             * ISS at once. */
+            sess->peer_has_data = new_frame
+                                  ? (ev->rx_flags & ARQ_FLAG_HAS_DATA) != 0
+                                  : true;
+            irs_arm_ack_deadline(sess, ev);
+        }
+        else if (ev->id == ARQ_EV_RX_KEEPALIVE_ACK)
         {
             sess->keepalive_miss_count = 0;
             if (sess->keepalive_from_irs)
