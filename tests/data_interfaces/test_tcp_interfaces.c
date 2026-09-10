@@ -34,8 +34,12 @@
 #include "hermes_log.h"
 #include "radio_io.h"
 
+/* Interpose joins only to schedule the disconnect/read race deterministically. */
+static int test_server_join(pthread_t thread, void **result);
+#define pthread_join test_server_join
 /* include source to get access to static functions */
 #include "../../data_interfaces/tcp_interfaces.c"
+#undef pthread_join
 
 #include "unity.h"
 
@@ -171,11 +175,42 @@ void  modem_tune_stop(void)        { mock_tune_stop_calls++; }
 bool  modem_tune_active(void)      { return false; }
 float modem_tune_level_dbfs(void)  { return mock_tune_level_dbfs; }
 
+/* Use the actual ring implementation for the shutdown race; retain command
+ * test stubs under their usual names. No audio/modem hardware is linked. */
+#define size_buffer real_size_buffer
+#define read_buffer real_read_buffer
+#define clear_buffer real_clear_buffer
+#define write_buffer real_write_buffer
+#include "../../common/ring_buffer_posix.c"
+#undef size_buffer
+#undef read_buffer
+#undef clear_buffer
+#undef write_buffer
+
+static atomic_bool race_enabled, race_read_entered, race_release_read;
+static atomic_int race_reads;
+static int race_joins;
+
+static int test_server_join(pthread_t thread, void **result)
+{
+    if (race_enabled && ++race_joins == 2)
+        race_release_read = true; /* server is about to join its sender */
+    return pthread_join(thread, result);
+}
+
 /* ---- ring_buffer stubs ---- */
 
-size_t size_buffer(cbuf_handle_t cbuf) { (void)cbuf; return 0; }
-int read_buffer(cbuf_handle_t cbuf, uint8_t *data, size_t len) { (void)cbuf; (void)data; (void)len; return 0; }
-void clear_buffer(cbuf_handle_t cbuf) { (void)cbuf; }
+size_t size_buffer(cbuf_handle_t cbuf) { return race_enabled ? real_size_buffer(cbuf) : 0; }
+int read_buffer(cbuf_handle_t cbuf, uint8_t *data, size_t len)
+{
+    if (!race_enabled) return 0;
+    race_read_entered = true; /* sender has passed both size and done checks */
+    while (!race_release_read) usleep(1000);
+    int rc = real_read_buffer(cbuf, data, len);
+    race_reads++;
+    return rc;
+}
+void clear_buffer(cbuf_handle_t cbuf) { if (race_enabled) real_clear_buffer(cbuf); }
 
 static uint8_t last_write_buffer_data[MAX_PAYLOAD];
 static size_t  last_write_buffer_len  = 0;
@@ -1430,9 +1465,122 @@ void test_bitrate_query_is_always_answered(void)
         "host asked for BITRATE and got nothing: is the reply rate-limited?");
 }
 
+/* Real loopback sockets, no modem/audio/radio. The process watchdog makes
+ * a regression fail instead of leaving the test runner stuck in join. */
+static void broadcast_shutdown_case(int client_mode)
+{
+    int probe = socket(AF_INET, SOCK_STREAM, 0);
+    struct sockaddr_in addr = { .sin_family = AF_INET,
+                               .sin_addr.s_addr = htonl(INADDR_LOOPBACK) };
+    socklen_t len = sizeof(addr);
+    TEST_ASSERT_EQUAL_INT(0, bind(probe, (struct sockaddr *)&addr, sizeof(addr)));
+    TEST_ASSERT_EQUAL_INT(0, getsockname(probe, (struct sockaddr *)&addr, &len));
+    int port = ntohs(addr.sin_port);
+    close(probe);
+    shutdown_ = false;
+    uint8_t backing[128] = {0};
+    if (client_mode == 3)
+    {
+        race_read_entered = race_release_read = false;
+        race_reads = 0;
+        race_joins = 0;
+        data_rx_buffer_broadcast = circular_buf_init(backing, sizeof(backing));
+        uint8_t frame[64] = {0};
+        TEST_ASSERT_EQUAL_INT(0, real_write_buffer(data_rx_buffer_broadcast, frame, sizeof(frame)));
+        race_enabled = true;
+    }
+    broadcast_frame_size_cfg = 64;
+    pthread_t server;
+    alarm(5);
+    TEST_ASSERT_EQUAL_INT(0, pthread_create(&server, NULL, tcp_server_thread, &port));
+    int client = -1;
+    if (client_mode)
+    {
+        for (int i = 0; i < 100; ++i)
+        {
+            client = socket(AF_INET, SOCK_STREAM, 0);
+            if (connect(client, (struct sockaddr *)&addr, sizeof(addr)) == 0)
+                break;
+            close(client);
+            client = -1;
+            usleep(10000);
+        }
+        TEST_ASSERT_TRUE(client >= 0);
+    }
+    usleep(150000);
+    if (client_mode == 2)
+    {
+        close(client);
+        client = -1;
+        usleep(150000);
+    }
+    if (client_mode == 3)
+    {
+        while (!race_read_entered) usleep(1000);
+        /* EOF lets the server enter its disconnect teardown while read is paused. */
+        close(client);
+        client = -1;
+    }
+    uint64_t start = monotonic_ms();
+    shutdown_ = true;
+    pthread_join(server, NULL);
+    alarm(0);
+    if (client >= 0)
+        close(client);
+    TEST_ASSERT_TRUE(monotonic_ms() - start < 1000);
+    if (client_mode == 3)
+    {
+        TEST_ASSERT_EQUAL_INT(1, race_reads);
+        TEST_ASSERT_EQUAL_size_t(0, real_size_buffer(data_rx_buffer_broadcast));
+        circular_buf_free(data_rx_buffer_broadcast);
+        data_rx_buffer_broadcast = NULL;
+        race_enabled = false;
+    }
+    shutdown_ = false;
+}
+
+void test_bcast_disconnect_during_buffer_read(void) { broadcast_shutdown_case(3); }
+
+void test_bcast_shutdown_no_client(void) { broadcast_shutdown_case(0); }
+void test_bcast_shutdown_idle_client(void) { broadcast_shutdown_case(1); }
+void test_bcast_shutdown_disconnected_client(void) { broadcast_shutdown_case(2); }
+
+static void *blocked_broadcast_send(void *arg)
+{
+    uint8_t data[65536] = {0};
+    while (send_all(*(int *)arg, data, sizeof(data)) >= 0) {}
+    return NULL;
+}
+
+void test_bcast_shutdown_backpressured_send(void)
+{
+    int pair[2];
+    TEST_ASSERT_EQUAL_INT(0, socketpair(AF_UNIX, SOCK_STREAM, 0, pair));
+    TEST_ASSERT_EQUAL_INT(0, set_nonblocking(pair[0]));
+    shutdown_ = false;
+    bcast_client_done = false;
+    pthread_t sender;
+    alarm(5);
+    TEST_ASSERT_EQUAL_INT(0, pthread_create(&sender, NULL, blocked_broadcast_send, &pair[0]));
+    usleep(200000);
+    uint64_t start = monotonic_ms();
+    shutdown_ = true;
+    pthread_join(sender, NULL);
+    alarm(0);
+    close(pair[0]);
+    close(pair[1]);
+    TEST_ASSERT_TRUE(monotonic_ms() - start < 1000);
+    shutdown_ = false;
+}
+
 int main(void)
 {
     UNITY_BEGIN();
+    RUN_TEST(test_bcast_disconnect_during_buffer_read);
+    RUN_TEST(test_bcast_shutdown_no_client);
+    RUN_TEST(test_bcast_shutdown_idle_client);
+    RUN_TEST(test_bcast_shutdown_disconnected_client);
+    RUN_TEST(test_bcast_shutdown_backpressured_send);
     /* Command parser tests */
     RUN_TEST(test_cmd_mycall);
     RUN_TEST(test_cmd_mycall_registered_follows_ok);

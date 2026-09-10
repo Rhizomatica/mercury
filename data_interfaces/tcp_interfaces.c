@@ -120,17 +120,27 @@ static ssize_t send_all(int socket_fd, const uint8_t *buffer, size_t len)
 {
     size_t total_sent = 0;
 
-    while (total_sent < len)
+    while (total_sent < len && !shutdown_ && !bcast_client_done)
     {
         ssize_t sent = send(socket_fd, (const char *)buffer + total_sent, len - total_sent, HERMES_SEND_FLAGS);
-        if (sent <= 0)
+        if (sent < 0)
         {
+            int err = sock_errno();
+            if (err == SOCK_EINTR)
+                continue;
+            if (err == SOCK_EAGAIN || err == SOCK_EWOULDBLOCK)
+            {
+                hermes_usleep(20000);
+                continue;
+            }
             return -1;
         }
+        if (sent == 0)
+            return -1;
         total_sent += (size_t)sent;
     }
 
-    return (ssize_t)total_sent;
+    return total_sent == len ? (ssize_t)total_sent : -1;
 }
 
 typedef struct
@@ -1239,10 +1249,9 @@ void *send_thread(void *client_socket_ptr)
 
     while (!shutdown_ && !bcast_client_done)
     {
-        /* Poll size_buffer() instead of blocking in read_buffer()'s
-         * condvar wait.  Re-check bcast_client_done after size_buffer()
-         * returns to close the race where clear_buffer() drains the
-         * ring between our size check and the read_buffer() call. */
+        /* Only this worker consumes the RX ring, and the server clears it
+         * after joining us. A full frame therefore cannot disappear between
+         * this size check and read_buffer(). Poll while no frame is ready. */
         if (size_buffer(data_rx_buffer_broadcast) < frame_size)
         {
             msleep(100);
@@ -1279,8 +1288,9 @@ void *send_thread(void *client_socket_ptr)
               reply_cmd, payload_len, kiss_len);
         if (send_all(client_socket, kiss_buffer, (size_t)kiss_len) < 0)
         {
-            HLOGW("tcp-bcast", "Error sending KISS broadcast frame: %s",
-                  strerror(errno));
+            if (!shutdown_ && !bcast_client_done)
+                HLOGW("tcp-bcast", "Error sending KISS broadcast frame (err=%d)",
+                      sock_errno());
             break;
         }
     }
@@ -1314,7 +1324,7 @@ void *recv_thread(void *client_socket_ptr)
 
     HLOGI("tcp-bcast", "Receive thread started (expected frame_size=%zu)", frame_size);
 
-    while (!shutdown_)
+    while (!shutdown_ && !bcast_client_done)
     {
         ssize_t received = recv(client_socket, (char *)buffer, DATA_TX_BUFFER_SIZE, 0);
         if (received > 0)
@@ -1341,7 +1351,15 @@ void *recv_thread(void *client_socket_ptr)
         }
         else if (received < 0)
         {
-            HLOGW("tcp-bcast", "Error receiving TCP data (err=%d)", sock_errno());
+            int err = sock_errno();
+            if (err == SOCK_EINTR)
+                continue;
+            if (err == SOCK_EAGAIN || err == SOCK_EWOULDBLOCK)
+            {
+                hermes_usleep(20000);
+                continue;
+            }
+            HLOGW("tcp-bcast", "Error receiving TCP data (err=%d)", err);
             break;
         }
     }
@@ -1388,7 +1406,9 @@ void *tcp_server_thread(void *port_ptr)
         return NULL;
     }
 
-    if (listen(tcp_socket, 1) < 0)
+    /* The server owns all descriptors; bounded waits avoid cross-thread close
+     * races and work with both POSIX and Winsock nonblocking sockets. */
+    if (set_nonblocking(tcp_socket) < 0 || listen(tcp_socket, 1) < 0)
     {
         HLOGE("tcp-bcast", "Failed to listen on TCP socket: %s", strerror(errno));
         SOCK_CLOSE(tcp_socket);
@@ -1399,15 +1419,35 @@ void *tcp_server_thread(void *port_ptr)
 
     while (!shutdown_)
     {
+        struct pollfd listener = { .fd = tcp_socket, .events = POLLIN };
+        int ready = poll(&listener, 1, 100);
+        if (shutdown_)
+            break;
+        if (ready == 0 || (ready < 0 && sock_errno() == SOCK_EINTR))
+            continue;
+        if (ready < 0 || (listener.revents & (POLLERR | POLLHUP | POLLNVAL)))
+            break;
+        client_addr_len = sizeof(client_addr);
         client_socket = accept(tcp_socket, (struct sockaddr *)&client_addr, &client_addr_len);
         if (client_socket < 0)
         {
+            int err = sock_errno();
+            if (err == SOCK_EINTR || err == SOCK_EAGAIN || err == SOCK_EWOULDBLOCK)
+                continue;
             HLOGE("tcp-bcast", "Failed to accept client connection: %s", strerror(errno));
             if (shutdown_)
                 break; // Exit if shutdown flag is set
             continue; // Retry accepting a connection
         }
 
+        if (shutdown_ || set_nonblocking(client_socket) < 0)
+        {
+            SOCK_CLOSE(client_socket);
+            continue;
+        }
+#if defined(SO_NOSIGPIPE)
+        setsockopt(client_socket, SOL_SOCKET, SO_NOSIGPIPE, (const char *)&opt, sizeof(opt));
+#endif
         HLOGI("tcp-bcast", "Client connected.");
 
         bcast_client_done = false;
@@ -1420,16 +1460,23 @@ void *tcp_server_thread(void *port_ptr)
 
         pthread_t recv_tid, send_tid;
 
-        pthread_create(&recv_tid, NULL, recv_thread, (void *)&client_socket);
-        pthread_create(&send_tid, NULL, send_thread, (void *)&client_socket);
+        if (pthread_create(&recv_tid, NULL, recv_thread, &client_socket) != 0)
+        {
+            SOCK_CLOSE(client_socket);
+            continue;
+        }
+        bool send_started = pthread_create(&send_tid, NULL, send_thread, &client_socket) == 0;
+        if (!send_started)
+            bcast_client_done = true;
 
-        /* recv_thread exits when the client disconnects (recv returns 0).
-         * Signal send_thread to stop and drain the RX buffer so it does
-         * not stay blocked inside a condvar wait holding the mutex. */
+        /* Stop and join the sole RX-buffer reader before draining its ring.
+         * Clearing before join can empty the ring after the sender's size/
+         * done checks but before read_buffer(), stranding it in a wait. */
         pthread_join(recv_tid, NULL);
         bcast_client_done = true;
+        if (send_started)
+            pthread_join(send_tid, NULL);
         clear_buffer(data_rx_buffer_broadcast);
-        pthread_join(send_tid, NULL);
 
         SOCK_CLOSE(client_socket);
         HLOGI("tcp-bcast", "Waiting for a new client to connect...");
