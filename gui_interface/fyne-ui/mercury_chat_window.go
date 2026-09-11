@@ -28,6 +28,40 @@ const (
 // the first and tear down its ARQ session.  Reuse the window instead.
 var mercuryClientSingleton *chatWindow
 
+// currentTelemetry reports the engine's LIVE status to the embedded client.
+// The window is handed a telemetry snapshot when it is built, which is stale by
+// the time anyone presses Connect -- and staleness is the whole problem here.
+// Set by main(); nil in tests, where the interlock simply does not engage.
+var currentTelemetry func() telemetryState
+
+// embeddedClientMayConnect decides whether the embedded client may take the TNC
+// ports, and says why not when it may not.
+//
+// Split out from onConnect so the decision is testable without a running
+// engine: getting it wrong costs someone a half-finished HF transfer, which is
+// not a thing you want to discover on air.
+//
+// alreadyOurs means we currently hold the port, in which case the attached
+// client IS us and reconnecting is our own business.
+func embeddedClientMayConnect(alreadyOurs bool, tel telemetryState) (bool, string) {
+	if alreadyOurs || !tel.ClientTCPConnected {
+		return true, ""
+	}
+	if tel.Sync {
+		return false, "Another client is attached to the TNC ports AND an ARQ session is live."
+	}
+	return false, "Another client (uucp, VarAC, RNS...) is attached to the TNC ports."
+}
+
+// closeMercuryClientWindow shuts the embedded client down if it is open.
+// The window's SetOnClosed handler disconnects the sockets and clears the
+// singleton, so this releases the TNC ports as a side effect.
+func closeMercuryClientWindow() {
+	if mercuryClientSingleton != nil {
+		mercuryClientSingleton.win.Close()
+	}
+}
+
 func openMercuryClientWindow(app fyne.App, telemetry telemetryState, arqPort, broadcastPort int, history []HistoryMessage) {
 	if mercuryClientSingleton != nil {
 		mercuryClientSingleton.win.RequestFocus()
