@@ -183,7 +183,7 @@ func broadcastModeUsable(mode int) bool {
 	return C.mercury_bcast_mode_usable(C.int(mode)) != 0
 }
 
-// broadcastEngineModeRaw is the running mode's index whether or not broadcast
+// broadcastEngineModeRaw is the broadcast mode's index whether or not broadcast
 // can use it.  broadcastEngineMode() reports -1 for an unusable mode so the
 // guards fire; this still knows which mode that was, so the operator can be
 // told what to change rather than only that something is wrong.
@@ -191,9 +191,11 @@ func broadcastEngineModeRaw() int {
 	return int(C.mercury_bcast_engine_mode_raw())
 }
 
-// broadcastEngineMode is the hermes mode index the engine is running, or -1 if
-// it cannot carry broadcast.  Fixed at startup by -m; there is no runtime
-// switch, and the far station must be set to the same one.
+// broadcastEngineMode is the hermes mode index broadcast is using, or -1 if it
+// cannot carry broadcast.  This is the listen mode, not whatever mode an ARQ
+// session happens to be on: set by -m at startup and changeable at runtime
+// with the MODE control-port command.  The far station must be set to the
+// same one.
 func broadcastEngineMode() int {
 	return int(C.mercury_bcast_engine_mode())
 }

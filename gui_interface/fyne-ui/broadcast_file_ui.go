@@ -441,7 +441,8 @@ func (p *broadcastFilePanel) installFilter() {
 //
 // The index alone is meaningless to anyone who has not read the source, so lead
 // with the name, then the speed/robustness trade, then the -m index they would
-// actually type.  The mode is fixed at engine start and cannot be changed here.
+// actually type.  The mode cannot be changed from this window; it comes from -m
+// or the MODE control-port command.
 func broadcastModeDescription() string {
 	m := broadcastEngineMode()
 	if m < 0 {
@@ -454,7 +455,7 @@ func broadcastModeDescription() string {
 					"or faster (see 'mercury -l').", broadcastModeName(raw))
 		}
 		return "Mode: this modem's mode cannot carry broadcast.\n" +
-			"Restart mercury with -m (see 'mercury -l')."
+			"Set a broadcast-capable mode with -m or the MODE command (see 'mercury -l')."
 	}
 	line := fmt.Sprintf("Mode: %s - %s", broadcastModeName(m), broadcastModeCharacter(m))
 

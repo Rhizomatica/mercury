@@ -70,11 +70,6 @@ static int apply_audio_defaults(int audio_system, char *input_dev, size_t in_siz
     return 0;
 }
 
-int mercury_engine_modem_mode(void)
-{
-    return g_modem.mode;
-}
-
 /* Payload bit rate of the running modem, in bits/s: the bytes a frame carries
  * over the time that frame occupies the air.  Derived from the modem itself so
  * it reflects the mode actually in use. */
