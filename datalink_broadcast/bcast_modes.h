@@ -70,9 +70,29 @@
 /* How many whole symbols of `T` a frame of `frame_size` carries.
  *
  * Both ends compute this the same way, and the RECEIVER computes it from the
- * length of the frame it just decoded rather than from any configured mode --
- * which is what lets it accept frames from any mode in an interleaved
- * carousel without being told which one is arriving. */
+ * length of the frame it just decoded rather than from any configured mode.
+ * That is what an interleaved carousel would need -- frames of several modes
+ * on the air at once, the receiver taking whichever it managed to decode
+ * without being told which was sent.
+ *
+ * NOT YET REACHABLE, deliberately: this is the fixed-single-mode step.
+ * Fixing T is what makes interleaving POSSIBLE later -- symbols become
+ * mode-independent, so symbols a receiver collects all count toward the same
+ * object no matter which mode carried them.
+ *
+ * The receiving machinery for it already exists: Mercury runs a DUAL
+ * receiver.  modem.c tees each audio chunk into two independent rx workers,
+ * the control plane and the user plane, each decoding on its own mode, and
+ * BOTH deliver through process_received_frame().  So a mixed carousel does
+ * not need a new decoder -- it needs the two workers pointed at the two
+ * interleaved modes, and then the two size gates relaxed to admit both frame
+ * sizes rather than one: modem.c's single broadcast_frame_size, and
+ * bcast_file_rx_frame()'s len != rx->frame_size.
+ *
+ * Note the spare capacity that makes this cheap: while ARQ is disconnected
+ * the control-plane worker is pinned to DATAC16 (arq_modem_preferred_rx_mode()
+ * always returns the control mode) and is decoding nothing useful for
+ * broadcast.  That is a whole idle decoder available to the fringe rung. */
 static inline unsigned bcast_syms_per_frame(size_t frame_size, size_t T)
 {
     if (T == 0 || frame_size <= BCAST_FRAME_OVERHEAD)

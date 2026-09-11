@@ -505,7 +505,13 @@ bcast_rx_result_t bcast_file_rx_frame(bcast_file_rx_t *rx,
 
     /* Anything that is not exactly one of our frames is somebody else's
      * traffic on the broadcast plane -- chat, KISS from another client -- and
-     * must be passed over silently rather than treated as corruption. */
+     * must be passed over silently rather than treated as corruption.
+     *
+     * This is also the gate that confines a receive to ONE mode.  Relaxing it
+     * to "any usable mode's frame size" is this side's half of interleaving;
+     * the other half is modem.c -- its single broadcast_frame_size filter, and
+     * pointing the two rx workers of the dual receiver at the two interleaved
+     * modes.  See bcast_modes.h. */
     if (len != rx->frame_size) return BCAST_RX_IGNORED;
     if (((frame[0] >> BCAST_PACKET_TYPE_SHIFT) & BCAST_PACKET_TYPE_MASK)
             != BCAST_PACKET_RQ_CONFIG)
@@ -523,19 +529,19 @@ bcast_rx_result_t bcast_file_rx_frame(bcast_file_rx_t *rx,
      * message (chat would never see it) and reset a decode in progress.
      *
      * So check that the frame's own OTI describes a transfer that could
-     * actually be arriving on THIS mode: the declared symbol size must match
-     * our frame size exactly, and the declared object length must be sane.
-     * Text would have to encode T-1 in two specific bytes by accident, which
-     * is a 1-in-65536 coincidence on top of the header, and then survive the
-     * length check as well. */
+     * actually be one of ours: the declared symbol size must be exactly our
+     * fixed T, and the declared object length must be sane.  Text would have
+     * to encode T-1 in two specific bytes by accident, which is a 1-in-65536
+     * coincidence on top of the header, and then survive the length check as
+     * well. */
     {
         uint32_t f_len = (uint32_t)frame[1] | ((uint32_t)frame[2] << 8) |
                          ((uint32_t)frame[3] << 16);
         uint32_t t_dec = ((uint32_t)frame[4] | ((uint32_t)frame[5] << 8)) + 1;
-        /* The symbol size is FIXED and mode-independent, so this check no
-         * longer says "did this arrive on my mode" -- it says "is this one of
-         * ours at all".  That is what allows an interleaved carousel: frames
-         * from any mode carry the same T and are all acceptable. */
+        /* T is fixed now, so this no longer says "did this arrive on my
+         * mode" -- it says "is this one of ours at all".  Mode-matching is
+         * still enforced, by the frame-size gate at the top of this function;
+         * see bcast_modes.h on why interleaving is not yet reachable. */
         if (t_dec != (uint32_t)rx->symbol_size)
             return BCAST_RX_IGNORED;
         if (f_len == 0 || f_len > BCAST_FILE_MAX_BYTES)
@@ -591,11 +597,11 @@ bcast_rx_result_t bcast_file_rx_frame(bcast_file_rx_t *rx,
         rx->oti_scheme = scheme;
     }
 
-    /* How many symbols this frame carries, derived from the length of the frame
-     * we actually decoded -- NOT from any configured mode.  That is the whole
-     * point: an interleaved carousel mixes QAM16C2 and DATAC4 keydowns, and the
-     * receiver must take whichever it managed to decode without being told
-     * which was on the air. */
+    /* How many symbols this frame carries, derived from the length of the
+     * frame we actually decoded rather than from rx->mode.  Today the gate at
+     * the top means len is always rx->frame_size, so the two agree; deriving
+     * it from the frame is what lets an interleaved carousel work later
+     * without touching this arithmetic. */
     const unsigned n = bcast_syms_per_frame(len, rx->symbol_size);
     if (n == 0)
         return BCAST_RX_IGNORED;

@@ -330,7 +330,25 @@ void test_symbol_size_is_fixed_across_modes(void)
  * sender for the same file, giving each decoder only half the frames of each,
  * and requires completion.  Neither sender's frames alone are enough here.
  */
-void test_symbols_from_two_modes_decode_one_object(void)
+/* The fixed symbol size makes a symbol mode-INDEPENDENT: two senders on wildly
+ * different modes describe the same object with the same T and the same OTI, so
+ * their symbols are interchangeable as far as RaptorQ is concerned.  That is the
+ * property the whole change exists to create, and it is what a future
+ * interleaved carousel would stand on.
+ *
+ * It is NOT the same thing as the receiver accepting a mixed carousel today, and
+ * this test pins both halves so the difference cannot be misread.  An earlier
+ * version of this test fed a mode-10 receiver alternating mode-10 and mode-3
+ * frames and asserted the object completed -- it did, but purely from the
+ * mode-10 frames: the mode-3 frames were silently ignored by the frame-size
+ * gate, so the test proved nothing it claimed.  Measured: 500 mode-3 frames
+ * into a mode-10 receiver produced 0 accepted, 500 ignored.
+ *
+ * So: assert the symbol-level interchangeability directly, and assert that the
+ * receiver still takes exactly one mode.  When somebody enables interleaving,
+ * the second half of this test is the thing that should start failing, and it
+ * names what to relax. */
+void test_symbol_is_mode_independent_but_rx_takes_one_mode(void)
 {
     const size_t bytes = 3000;
     write_file(TMP, bytes, 91);
@@ -342,29 +360,54 @@ void test_symbols_from_two_modes_decode_one_object(void)
     bcast_file_tx_t *slow = bcast_file_tx_open(TMP, 3, 0, 7, err, sizeof(err));
     TEST_ASSERT_NOT_NULL_MESSAGE(slow, err);
 
-    /* Both must have agreed on the same symbol size and the same OTI, or the
-     * receiver could not mix them at all. */
+    /* Half one: the symbol is mode-independent.  Same T ... */
+    TEST_ASSERT_EQUAL_UINT32(BCAST_SYMBOL_SIZE_MIN,
+                             (uint32_t)bcast_file_tx_symbol_size(fast));
     TEST_ASSERT_EQUAL_UINT32((uint32_t)bcast_file_tx_symbol_size(fast),
                              (uint32_t)bcast_file_tx_symbol_size(slow));
 
+    uint8_t ffast[BCAST_FILE_MAX_FRAME], fslow[BCAST_FILE_MAX_FRAME];
+    int nfast = bcast_file_tx_next(fast, ffast, sizeof(ffast));
+    int nslow = bcast_file_tx_next(slow, fslow, sizeof(fslow));
+    TEST_ASSERT_GREATER_THAN(0, nfast);
+    TEST_ASSERT_GREATER_THAN(0, nslow);
+    TEST_ASSERT_NOT_EQUAL(nfast, nslow);   /* genuinely different modes */
+
+    /* ... and the same OTI, bytes 1..8, so a decoder built from either one's
+     * configuration could consume the other's symbols. */
+    TEST_ASSERT_EQUAL_UINT8_ARRAY(ffast + 1, fslow + 1, BCAST_CONFIG_BODY_SIZE);
+
+    /* Half two: the receiver nonetheless takes one mode only.  Feed a mode-10
+     * receiver nothing but mode-3 frames; every one must be ignored, and the
+     * object must not complete. */
     char dir[] = "/tmp/.mercury_bcast_mixmodeXXXXXX";
     TEST_ASSERT_NOT_NULL(mkdtemp(dir));
     bcast_file_rx_t *rx = bcast_file_rx_open(10, dir, err, sizeof(err));
     TEST_ASSERT_NOT_NULL_MESSAGE(rx, err);
 
-    uint8_t frame[BCAST_FILE_MAX_FRAME];
-    int done = 0;
-    for (int i = 0; i < 4000 && !done; i++)
+    int accepted = 0;
+    for (int i = 0; i < 300; i++)
     {
-        bcast_file_tx_t *tx = (i & 1) ? slow : fast;
-        int n = bcast_file_tx_next(tx, frame, sizeof(frame));
+        int n = bcast_file_tx_next(slow, fslow, sizeof(fslow));
         if (n <= 0) break;
-        /* Drop half of each sender's frames, so completion needs both. */
-        if ((i >> 1) & 1) continue;
-        if (bcast_file_rx_frame(rx, frame, (size_t)n) == BCAST_RX_COMPLETE)
+        if (bcast_file_rx_frame(rx, fslow, (size_t)n) != BCAST_RX_IGNORED)
+            accepted++;
+    }
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, accepted,
+        "receiver accepted another mode's frame: interleaving may now be live, "
+        "in which case this expectation is what needs updating");
+
+    /* And its own mode still completes, so the rejection above is the size
+     * gate and not a broken receiver. */
+    int done = 0;
+    for (int i = 0; i < 400 && !done; i++)
+    {
+        int n = bcast_file_tx_next(fast, ffast, sizeof(ffast));
+        if (n <= 0) break;
+        if (bcast_file_rx_frame(rx, ffast, (size_t)n) == BCAST_RX_COMPLETE)
             done = 1;
     }
-    TEST_ASSERT_TRUE_MESSAGE(done, "mixed-mode symbols did not complete the object");
+    TEST_ASSERT_TRUE_MESSAGE(done, "configured mode failed to complete the object");
 
     bcast_file_tx_close(fast);
     bcast_file_tx_close(slow);
@@ -764,6 +807,6 @@ int main(void)
     RUN_TEST(test_empty_and_missing_files_are_refused);
     RUN_TEST(test_modes_too_small_for_broadcast_are_refused);
     RUN_TEST(test_symbol_size_is_fixed_across_modes);
-    RUN_TEST(test_symbols_from_two_modes_decode_one_object);
+    RUN_TEST(test_symbol_is_mode_independent_but_rx_takes_one_mode);
     return UNITY_END();
 }

@@ -301,7 +301,25 @@ room for the framing plus one whole symbol -- 53 bytes:
 FSK_LDPC and DATAC15 used to work, with an 18-byte symbol, and no longer do.
 That is the price of a mode-independent symbol: keeping them would mean a
 symbol of 17 bytes or less and 84% payload efficiency at the fast end instead
-of 98%.  `mercury -z`-style refusal is explicit -- the tool and the UI both
+of 98%.  The other four were never really usable anyway -- a 14-byte frame
+spends 12 on framing, so it carried a 2-byte symbol.
+
+What the fixed symbol buys, and what it does not buy *yet*: because a symbol
+now means the same thing on every mode, symbols collected from different modes
+all count toward the same object, which is what an interleaved carousel needs
+-- one transmission serving a fast audience and a fringe audience at once.
+That is **not enabled**.  This is the fixed-single-mode step; both stations
+still have to be on one agreed mode.
+
+The receiver for it is already there, though: Mercury runs a **dual receiver**
+-- each audio chunk is tee'd into two independent decoders, the control plane
+and the user plane, each on its own mode, and both deliver into the same frame
+path.  A mixed carousel therefore needs no new decoder, only the two workers
+pointed at the two interleaved modes and two size gates relaxed to admit both
+frame sizes instead of one.  And while ARQ is disconnected the control-plane
+decoder sits on DATAC16 doing nothing for broadcast -- spare capacity the
+fringe rung could use for free.  The wire format does not have to change again
+for any of it, which was the point of doing the symbol sizing first.  `mercury -z`-style refusal is explicit -- the tool and the UI both
 name the mode and say what to switch to, rather than failing later.
 
 **Broadcast CHAT and GPS are unaffected on those modes.**  A chat line needs
