@@ -88,8 +88,9 @@ mode — 1 kB takes about half a minute.
 ## Choosing the mode
 
 **Both stations must be set to the same mode.** There is no negotiation on the
-broadcast plane, and no runtime mode switch: the mode is fixed when Mercury
-starts.
+broadcast plane: nothing tells one station what the other is using, so you set
+it on both.  It is set with `-m` at startup, and can be changed at runtime with
+the [`MODE`](TNC.md#mode) control-port command while the ARQ link is idle.
 
 ```
 mercury -m <index>          # see `mercury -l` for the list; default is 1 (DATAC3)
@@ -163,11 +164,11 @@ Defaults: `-m 1` (DATAC3), `-c 0` (repeat until interrupted), `-p 8100`,
 
 #### Worked example: sending an NNCP bundle
 
-There is no negotiation in broadcast.  **The mode is fixed at Mercury's start
-by `-m` and cannot be changed at runtime**, so the same mode has to be set in
-four places: both Mercury instances, and both invocations of the tool.  Get one
-of them wrong and the receiver simply never decodes -- there is no error,
-because a mismatched frame is indistinguishable from noise.
+There is no negotiation in broadcast.  **The same mode has to be set in four
+places**: both Mercury instances (with `-m`, or at runtime with the
+[`MODE`](TNC.md#mode) command) and both invocations of the tool.  Get one of
+them wrong and the receiver simply never decodes -- there is no error, because
+a mismatched frame is indistinguishable from noise.
 
 Produce the bundle with NNCP as usual, then hand the file to Mercury:
 
