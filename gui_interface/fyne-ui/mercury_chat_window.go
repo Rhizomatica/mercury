@@ -259,7 +259,13 @@ func (cw *chatWindow) build(app fyne.App, telemetry telemetryState, arqPort, bro
 // the mode the engine is running and the callsign in the form.  0 means the
 // limit is unknown (no engine) and no cap is applied.
 func (cw *chatWindow) broadcastChatLimit() int {
-	mode := broadcastEngineMode()
+	// The RAW mode, deliberately.  broadcastEngineMode() reports -1 for a mode
+	// broadcast FILES cannot use -- one whose frame is too small to hold a
+	// whole RaptorQ symbol -- but a chat line needs only a frame.  DATAC15 and
+	// FSK_LDPC broadcast chat and GPS perfectly well; using the filtered
+	// accessor here would report "limit unknown" and silently stop capping the
+	// entry, which is the truncation this function exists to prevent.
+	mode := broadcastEngineModeRaw()
 	if mode < 0 {
 		return 0
 	}

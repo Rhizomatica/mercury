@@ -445,6 +445,14 @@ func (p *broadcastFilePanel) installFilter() {
 func broadcastModeDescription() string {
 	m := broadcastEngineMode()
 	if m < 0 {
+		// Name it if we can.  "DATAC15 cannot carry broadcast" tells the
+		// operator what to change; "this modem's mode" makes them go looking.
+		if raw := broadcastEngineModeRaw(); raw >= 0 && !broadcastModeUsable(raw) {
+			return fmt.Sprintf(
+				"Mode: %s cannot carry broadcast - its frames are too small to\n"+
+					"hold one RaptorQ symbol.  Restart mercury with -m 3 (DATAC4)\n"+
+					"or faster (see 'mercury -l').", broadcastModeName(raw))
+		}
 		return "Mode: this modem's mode cannot carry broadcast.\n" +
 			"Restart mercury with -m (see 'mercury -l')."
 	}

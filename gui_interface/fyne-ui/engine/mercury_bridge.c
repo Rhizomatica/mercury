@@ -288,18 +288,42 @@ int  mercury_bcast_mode_usable(int mode)     { return bcast_file_mode_usable(mod
 const char *mercury_bcast_mode_name(int mode) { return bcast_file_mode_name(mode); }
 long mercury_bcast_max_file_bytes(void)      { return (long)BCAST_FILE_MAX_BYTES; }
 
+/* hermes mode index -> FreeDV enum, in the order `mercury -l` reports them.
+ * Shared by both accessors below so the two cannot drift apart. */
+static const int hermes_to_freedv[] = {
+    FREEDV_MODE_DATAC1, FREEDV_MODE_DATAC3, FREEDV_MODE_DATAC0,
+    FREEDV_MODE_DATAC4, FREEDV_MODE_DATAC13, FREEDV_MODE_DATAC14,
+    FREEDV_MODE_FSK_LDPC, FREEDV_MODE_DATAC15, FREEDV_MODE_DATAC16,
+    FREEDV_MODE_DATAC17, FREEDV_MODE_QAM16C2
+};
+#define HERMES_MODE_COUNT ((int)(sizeof(hermes_to_freedv)/sizeof(hermes_to_freedv[0])))
+
 int mercury_bcast_engine_mode(void)
 {
     /* g_modem.mode is a FreeDV enum; map it back to the hermes index the
      * broadcast protocol and hermes-broadcast both speak. */
-    static const int hermes_to_freedv[] = {
-        FREEDV_MODE_DATAC1, FREEDV_MODE_DATAC3, FREEDV_MODE_DATAC0,
-        FREEDV_MODE_DATAC4, FREEDV_MODE_DATAC13, FREEDV_MODE_DATAC14,
-        FREEDV_MODE_FSK_LDPC, FREEDV_MODE_DATAC15, FREEDV_MODE_DATAC16,
-        FREEDV_MODE_DATAC17, FREEDV_MODE_QAM16C2
-    };
     int m = mercury_engine_modem_mode();
-    for (int i = 0; i < (int)(sizeof(hermes_to_freedv)/sizeof(hermes_to_freedv[0])); i++)
+    for (int i = 0; i < HERMES_MODE_COUNT; i++)
+        if (hermes_to_freedv[i] == m)
+        {
+            /* Runnable by the engine is not the same as usable for broadcast.
+             * A broadcast frame has to carry the framing plus one whole
+             * RaptorQ symbol, and FSK_LDPC and DATAC15 (30-byte frames) do
+             * not -- see BCAST_SYMBOL_SIZE_MIN.  Report -1 for those, so the
+             * callers' existing "this modem's mode cannot carry broadcast"
+             * paths fire BEFORE a transfer is attempted, instead of the
+             * operator getting an opaque failure out of tx_open. */
+            return bcast_file_mode_usable(i) ? i : -1;
+        }
+    return -1;
+}
+
+/* The mapped index whether or not broadcast can use it, so the UI can NAME the
+ * mode it is refusing rather than saying only that something is wrong. */
+int mercury_bcast_engine_mode_raw(void)
+{
+    int m = mercury_engine_modem_mode();
+    for (int i = 0; i < HERMES_MODE_COUNT; i++)
         if (hermes_to_freedv[i] == m)
             return i;
     return -1;

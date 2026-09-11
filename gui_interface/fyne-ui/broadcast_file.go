@@ -176,9 +176,19 @@ func (t *broadcastFileTx) Run(s broadcastSender, progress func(broadcastFileProg
 }
 
 // broadcastModeUsable reports whether a Mercury mode can carry broadcast at
-// all. DATAC14's 3-byte frame cannot hold the 9-byte configuration packet.
+// all.  A broadcast frame must hold the framing plus one whole RaptorQ symbol,
+// so DATAC14 (3 B) cannot even take the framing and FSK_LDPC and DATAC15
+// (30 B) cannot take a symbol.
 func broadcastModeUsable(mode int) bool {
 	return C.mercury_bcast_mode_usable(C.int(mode)) != 0
+}
+
+// broadcastEngineModeRaw is the running mode's index whether or not broadcast
+// can use it.  broadcastEngineMode() reports -1 for an unusable mode so the
+// guards fire; this still knows which mode that was, so the operator can be
+// told what to change rather than only that something is wrong.
+func broadcastEngineModeRaw() int {
+	return int(C.mercury_bcast_engine_mode_raw())
 }
 
 // broadcastEngineMode is the hermes mode index the engine is running, or -1 if
