@@ -242,9 +242,12 @@ pass the length check as well.
 
 ## 9. Mode agreement
 
-There is **no negotiation** on the broadcast plane and no runtime mode switch.
-Both stations must be started with the same mode (`mercury -m <index>`), and a
-receiver silently ignores any frame whose length is not its mode's frame size.
+There is **no negotiation** on the broadcast plane: nothing on the wire tells
+one station which mode another is using, so both must be set to the same one --
+with `mercury -m <index>` at startup, or at runtime with the
+[`MODE`](TNC.md#mode) control-port command while the ARQ link is idle.  A
+receiver silently ignores any frame whose length is not its mode's frame size,
+which is also what confines a receive to a single mode.
 
 ## 10. Interoperability
 

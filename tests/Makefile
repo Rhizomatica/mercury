@@ -130,12 +130,17 @@ test_arq_fsm: datalink_arq/test_arq_fsm.c $(UNITY_SRC) $(ARQ_STUBS) \
 # make does not relink when the implementation changes and the suite silently
 # re-runs the previous binary -- which is exactly how a mutation check passes
 # when it should fail.  It stays off the link line ($(filter %.c %.a %.o,$^) would compile it twice).
+# ../common/mercury_modes.c carries the -m/MODE index table; linking the real
+# one (rather than a copy in the test) is the point -- the MODE tests assert on
+# specific indexes, which is only meaningful against the shipping table.
 test_tcp_interfaces: data_interfaces/test_tcp_interfaces.c $(UNITY_SRC) ../modem/framer.c \
                      ../datalink_arq/arq_tnc.c ../data_interfaces/tcp_interfaces.c \
-                     ../common/ring_buffer_posix.c ../common/shm_posix.c ../common/os_interop.c
+                     ../common/ring_buffer_posix.c ../common/shm_posix.c ../common/os_interop.c \
+                     ../common/mercury_modes.c
 	$(CC) $(CFLAGS) -I../modem/freedv -o $@ \
 	    data_interfaces/test_tcp_interfaces.c $(UNITY_SRC) ../modem/framer.c \
-	    ../datalink_arq/arq_tnc.c ../common/shm_posix.c ../common/os_interop.c $(LDFLAGS)
+	    ../datalink_arq/arq_tnc.c ../common/shm_posix.c ../common/os_interop.c \
+	    ../common/mercury_modes.c $(LDFLAGS)
 
 # Two-FSM ARQ simulation harness
 SIM_SRC = sim/sim_clock.c sim/sim_channel.c sim/sim_endpoint.c \

@@ -175,6 +175,23 @@ void  modem_tune_stop(void)        { mock_tune_stop_calls++; }
 bool  modem_tune_active(void)      { return false; }
 float modem_tune_level_dbfs(void)  { return mock_tune_level_dbfs; }
 
+/* ---- modem listen-mode stubs ---- */
+
+static int mock_listen_mode_set    = -1;   /* last mode passed to the setter */
+static int mock_listen_mode_calls  = 0;
+static int mock_listen_mode_rc     = 0;    /* what modem_set_listen_mode returns */
+static int mock_listen_mode_cur    = FREEDV_MODE_DATAC15;
+
+int modem_set_listen_mode(int mode)
+{
+    mock_listen_mode_calls++;
+    if (mock_listen_mode_rc == 0)
+        mock_listen_mode_set = mode;
+    return mock_listen_mode_rc;
+}
+int    modem_get_listen_mode(void)          { return mock_listen_mode_cur; }
+size_t modem_get_broadcast_frame_size(void) { return 14; }
+
 /* Use the actual ring implementation for the shutdown race; retain command
  * test stubs under their usual names. No audio/modem hardware is linked. */
 #define size_buffer real_size_buffer
@@ -349,6 +366,12 @@ void setUp(void)
     mock_tune_start_rc    = 0;
     mock_tune_stop_calls  = 0;
     mock_tune_level_dbfs  = -15.0f;
+
+    /* Listen mode */
+    mock_listen_mode_set   = -1;
+    mock_listen_mode_calls = 0;
+    mock_listen_mode_rc    = 0;
+    mock_listen_mode_cur   = FREEDV_MODE_DATAC15;
 }
 
 void tearDown(void) { }
@@ -534,6 +557,74 @@ void test_cmd_tune_garbage_argument(void)
 
     assert_wrong_response();
     TEST_ASSERT_EQUAL_INT(0, mock_tune_start_calls);
+}
+
+/* MODE takes the same index space as -m.  Index 7 is DATAC15. */
+void test_cmd_mode_sets_listen_mode(void)
+{
+    char cmd[] = "MODE 7";
+    execute_control_command(cmd);
+
+    assert_ok_response();
+    TEST_ASSERT_EQUAL_INT(1, mock_listen_mode_calls);
+    TEST_ASSERT_EQUAL_INT(FREEDV_MODE_DATAC15, mock_listen_mode_set);
+}
+
+void test_cmd_mode_index_out_of_range(void)
+{
+    /* Must be rejected by the parser without reaching the modem, or an
+     * out-of-range index would read past freedv_modes[]. */
+    char cmd[] = "MODE 99";
+    execute_control_command(cmd);
+
+    assert_wrong_response();
+    TEST_ASSERT_EQUAL_INT(0, mock_listen_mode_calls);
+}
+
+void test_cmd_mode_negative_index(void)
+{
+    char cmd[] = "MODE -3";
+    execute_control_command(cmd);
+
+    assert_wrong_response();
+    TEST_ASSERT_EQUAL_INT(0, mock_listen_mode_calls);
+}
+
+void test_cmd_mode_busy_is_not_ok(void)
+{
+    /* An ARQ session owns the payload mode: the host must see BUSY, never OK,
+     * or it would believe a setting that was silently discarded. */
+    mock_listen_mode_rc = MODEM_LISTEN_MODE_BUSY;
+    char cmd[] = "MODE 7";
+    execute_control_command(cmd);
+
+    TEST_ASSERT_EQUAL(1, tcp_write_call_count);
+    TEST_ASSERT_EQUAL_STRING_LEN("BUSY\r", (char *)last_tcp_write_buf, 5);
+    TEST_ASSERT_EQUAL_INT(1, mock_listen_mode_calls);
+}
+
+void test_cmd_mode_unsupported_mode_is_wrong(void)
+{
+    /* Index 6 is FSK_LDPC: a valid -m startup mode but not runtime-switchable,
+     * so the modem refuses it and the host must not see OK. */
+    mock_listen_mode_rc = MODEM_LISTEN_MODE_BAD;
+    char cmd[] = "MODE 6";
+    execute_control_command(cmd);
+
+    assert_wrong_response();
+    TEST_ASSERT_EQUAL_INT(1, mock_listen_mode_calls);
+}
+
+void test_cmd_mode_query_reports_index_and_name(void)
+{
+    /* The reply must round-trip: the reported index is a valid MODE argument. */
+    mock_listen_mode_cur = FREEDV_MODE_QAM16C2;
+    char cmd[] = "MODE";
+    execute_control_command(cmd);
+
+    TEST_ASSERT_EQUAL(1, tcp_write_call_count);
+    TEST_ASSERT_EQUAL_STRING_LEN("MODE 10 QAM16C2\r", (char *)last_tcp_write_buf, 16);
+    TEST_ASSERT_EQUAL_INT(0, mock_listen_mode_calls);
 }
 
 void test_cmd_chat_on(void)
@@ -1597,6 +1688,12 @@ int main(void)
     RUN_TEST(test_cmd_tune_refusal_is_not_ok);
     RUN_TEST(test_cmd_tune_missing_argument);
     RUN_TEST(test_cmd_tune_garbage_argument);
+    RUN_TEST(test_cmd_mode_sets_listen_mode);
+    RUN_TEST(test_cmd_mode_index_out_of_range);
+    RUN_TEST(test_cmd_mode_negative_index);
+    RUN_TEST(test_cmd_mode_busy_is_not_ok);
+    RUN_TEST(test_cmd_mode_unsupported_mode_is_wrong);
+    RUN_TEST(test_cmd_mode_query_reports_index_and_name);
     RUN_TEST(test_cmd_chat_on);
     RUN_TEST(test_cmd_bw500);
     RUN_TEST(test_cmd_bw2300);

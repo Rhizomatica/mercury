@@ -19,36 +19,7 @@
 #include "radio_io.h"
 #include "hermes_log.h"
 
-/* Startup-mode table (index -> FreeDV mode).  Non-static: shared with the
- * modem, and referenced by main()'s -l listing. */
-int freedv_modes[] = { FREEDV_MODE_DATAC1,
-                       FREEDV_MODE_DATAC3,
-                       FREEDV_MODE_DATAC0,
-                       FREEDV_MODE_DATAC4,
-                       FREEDV_MODE_DATAC13,
-                       FREEDV_MODE_DATAC14,
-                       FREEDV_MODE_FSK_LDPC,
-                       FREEDV_MODE_DATAC15,
-                       FREEDV_MODE_DATAC16,
-                       FREEDV_MODE_DATAC17,
-                       FREEDV_MODE_QAM16C2 };
-
-char *freedv_mode_names[] = { "DATAC1",
-                              "DATAC3",
-                              "DATAC0",
-                              "DATAC4",
-                              "DATAC13",
-                              "DATAC14",
-                              "FSK_LDPC",
-                              "DATAC15",
-                              "DATAC16",
-                              "DATAC17",
-                              "QAM16C2" };
-
-int mercury_cli_mode_count(void)
-{
-    return (int)(sizeof(freedv_modes) / sizeof(freedv_modes[0]));
-}
+/* The mode table itself lives in mercury_modes.c. */
 
 static int parse_rx_channel_layout(const char *value)
 {
