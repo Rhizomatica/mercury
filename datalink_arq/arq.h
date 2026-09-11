@@ -217,6 +217,14 @@ bool arq_get_peer_snr_x10(int *snr_x10);
  */
 int arq_get_payload_mode(void);
 
+/* Idle ("listen") payload mode: what the payload decoder sits on while no ARQ
+ * session is up, and therefore which broadcast frames this station can hear.
+ * arq_set_listen_mode() returns 0 on success, -1 if a session is up (the ARQ
+ * mode ladder owns the mode then).  Does not affect any later session: every
+ * session-start path resets the mode state to DATAC15.  Read it back through
+ * modem_get_listen_mode(), which owns the operator-facing value. */
+int arq_set_listen_mode(int mode);
+
 /**
  * @brief Get active ARQ control mode.
  * @return FreeDV control mode value.

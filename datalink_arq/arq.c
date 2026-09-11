@@ -1073,6 +1073,40 @@ int arq_get_control_mode(void)      { SESS_READ(g_sess.control_mode); }
 int arq_get_preferred_rx_mode(void) { SESS_READ(arq_modem_preferred_rx_mode(&g_sess)); }
 int arq_get_preferred_tx_mode(void) { SESS_READ(arq_modem_preferred_tx_mode(&g_sess)); }
 
+/* Operator-selected idle ("listen") payload mode.  initial_payload_mode is
+ * what sess_enter() restores peer_tx_mode to whenever the session falls back
+ * to DISCONNECTED/LISTENING, so it is the single field that decides which
+ * payload mode the RX decoder sits on while no ARQ session is up (and hence
+ * which broadcast frames we can hear).
+ *
+ * Refused unless the link is actually idle: while a session is up the ARQ
+ * ladder owns peer_tx_mode and would overwrite an operator setting within one
+ * RX-loop iteration, so accepting the command there would silently do nothing.
+ * The state test is inside the lock deliberately -- checking it in the caller
+ * would race the event loop, which is the same unsynchronized-g_sess class of
+ * bug as the on-air handshake freeze.
+ *
+ * A session that starts later is unaffected: every session-start path
+ * (APP_CONNECT, RX_ACCEPT, and the ACCEPTING data/ack paths) hard-resets
+ * payload_mode and peer_tx_mode to DATAC15, so the listen mode cannot leak
+ * into a connection's mode ladder. */
+int arq_set_listen_mode(int mode)
+{
+    int rc = -1;
+    pthread_mutex_lock(&g_sess_lock);
+    if (g_sess.conn_state == ARQ_CONN_DISCONNECTED ||
+        g_sess.conn_state == ARQ_CONN_LISTENING)
+    {
+        g_sess.initial_payload_mode = mode;
+        /* Apply now rather than waiting for the next sess_enter(): we are
+         * already in an idle state, so no further transition is guaranteed. */
+        g_sess.peer_tx_mode = mode;
+        rc = 0;
+    }
+    pthread_mutex_unlock(&g_sess_lock);
+    return rc;
+}
+
 void arq_set_active_modem_mode(int mode, size_t frame_size)
 {
     /* Only record payload_mode for data modes.  Control-mode TX switches

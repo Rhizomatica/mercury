@@ -47,6 +47,8 @@
 #include "chan.h"
 #include "defines_modem.h"
 #include "kiss.h"
+#include "modem.h"
+#include "mercury_cli.h"
 #include "framer.h"
 #include "hermes_log.h"
 #include "radio_io.h"
@@ -57,7 +59,9 @@ static pthread_t tid[7];
 static bool tid_started[7];
 static int arq_tcp_base_port_cfg = 0;
 static int broadcast_tcp_port_cfg = 0;
-static size_t broadcast_frame_size_cfg = 0;
+/* Broadcast wire frame size.  Written by the control-port thread on a
+ * listen-mode change and read by the broadcast client threads, so _Atomic. */
+static _Atomic size_t broadcast_frame_size_cfg = 0;
 /* SNR and bitrate are written by the ARQ FSM thread and read by the UI
  * publisher thread; use atomics to avoid a data race.  The float SNR is
  * stored as its raw IEEE-754 bit pattern in a uint32 atomic and
@@ -460,6 +464,49 @@ static void execute_control_command(char *buffer)
             tcp_write(CTL_TCP_PORT, (uint8_t *)"OK\r", 3);
         else
             tcp_write(CTL_TCP_PORT, (uint8_t *)"WRONG\r", 6);
+        return;
+    }
+
+    /* MODE <index>  -- set the idle ("listen") payload mode, same index space
+     * as -m (use -l to list).  MODE alone reports the current one.
+     *
+     * Only accepted while the ARQ link is idle: during a session the ARQ mode
+     * ladder owns the payload mode and would overwrite this within one RX-loop
+     * iteration.  Note this does NOT give a later ARQ connection a head start
+     * -- every session starts at DATAC15 and climbs via OLLA regardless. */
+    if (!strncmp(buffer, "MODE", strlen("MODE")))
+    {
+        int idx = -1;
+        if (sscanf(buffer, "MODE %d", &idx) == 1)
+        {
+            int count = mercury_cli_mode_count();
+            int rc = (idx >= 0 && idx < count)
+                         ? modem_set_listen_mode(freedv_modes[idx])
+                         : MODEM_LISTEN_MODE_BAD;
+            if (rc == 0)
+                tcp_write(CTL_TCP_PORT, (uint8_t *)"OK\r", 3);
+            else if (rc == MODEM_LISTEN_MODE_BUSY)
+                tcp_write(CTL_TCP_PORT, (uint8_t *)"BUSY\r", 5);
+            else
+                tcp_write(CTL_TCP_PORT, (uint8_t *)"WRONG\r", 6);
+        }
+        else
+        {
+            /* Report the live mode by index so the answer round-trips as the
+             * argument to a later MODE command. */
+            int mode = modem_get_listen_mode();
+            int count = mercury_cli_mode_count();
+            char reply[64];
+            int n = snprintf(reply, sizeof(reply), "MODE -1 UNKNOWN\r");
+            for (int i = 0; i < count; i++)
+                if (freedv_modes[i] == mode)
+                {
+                    n = snprintf(reply, sizeof(reply), "MODE %d %s\r",
+                                 i, freedv_mode_names[i]);
+                    break;
+                }
+            tcp_write(CTL_TCP_PORT, (uint8_t *)reply, (size_t)n);
+        }
         return;
     }
 
@@ -1226,7 +1273,7 @@ static void bcast_store_peer(const uint8_t *payload, int len, char *peer, size_t
 void *send_thread(void *client_socket_ptr)
 {
     int client_socket = *((int *)client_socket_ptr);
-    size_t frame_size = broadcast_frame_size_cfg;
+    size_t frame_size = atomic_load(&broadcast_frame_size_cfg);
     uint8_t *frame_buffer = NULL;
     uint8_t *kiss_buffer = NULL;
 
@@ -1236,8 +1283,11 @@ void *send_thread(void *client_socket_ptr)
         return NULL;
     }
 
-    frame_buffer = (uint8_t *)malloc(frame_size);
-    kiss_buffer = (uint8_t *)malloc((frame_size * 2) + 3);
+    /* Size for the widest selectable frame, not the current one: a listen-mode
+     * change can grow the frame size under a connected client, and the loop
+     * below re-reads it.  MAX_PAYLOAD is 1213 bytes, so this costs nothing. */
+    frame_buffer = (uint8_t *)malloc(MAX_PAYLOAD);
+    kiss_buffer = (uint8_t *)malloc((MAX_PAYLOAD * 2) + 3);
 
     if (!frame_buffer || !kiss_buffer)
     {
@@ -1249,6 +1299,15 @@ void *send_thread(void *client_socket_ptr)
 
     while (!shutdown_ && !bcast_client_done)
     {
+        /* Re-read: a MODE command can change the broadcast framing while this
+         * client stays connected. */
+        frame_size = atomic_load(&broadcast_frame_size_cfg);
+        if (frame_size == 0 || frame_size > MAX_PAYLOAD)
+        {
+            msleep(100);
+            continue;
+        }
+
         /* Only this worker consumes the RX ring, and the server clears it
          * after joining us. A full frame therefore cannot disappear between
          * this size check and read_buffer(). Poll while no frame is ready. */
@@ -1303,7 +1362,7 @@ void *send_thread(void *client_socket_ptr)
 void *recv_thread(void *client_socket_ptr)
 {
     int client_socket = *((int *)client_socket_ptr);
-    size_t frame_size = broadcast_frame_size_cfg;
+    size_t frame_size = atomic_load(&broadcast_frame_size_cfg);
     uint8_t *buffer = (uint8_t *)malloc(DATA_TX_BUFFER_SIZE);
     uint8_t decoded_frame[MAX_PAYLOAD];
 
@@ -1336,6 +1395,8 @@ void *recv_thread(void *client_socket_ptr)
                 if (frame_len <= 0)
                     continue;
 
+                /* Re-read: see send_thread. */
+                frame_size = atomic_load(&broadcast_frame_size_cfg);
                 uint8_t kiss_cmd = kiss_last_command();
                 HLOGI("tcp-bcast", "KISS frame decoded: cmd=0x%02X len=%d (expected %zu)",
                       kiss_cmd, frame_len, frame_size);
@@ -1644,12 +1705,22 @@ uint32_t tnc_get_last_bitrate_bps(void)
     return atomic_load_explicit(&last_bitrate_bps, memory_order_relaxed);
 }
 
+void interfaces_set_broadcast_frame_size(size_t broadcast_frame_size)
+{
+    atomic_store(&broadcast_frame_size_cfg, broadcast_frame_size);
+}
+
+size_t interfaces_get_broadcast_frame_size(void)
+{
+    return atomic_load(&broadcast_frame_size_cfg);
+}
+
 int interfaces_init(int arq_tcp_base_port, int broadcast_tcp_port, size_t broadcast_frame_size)
 {
     arq_set_tnc_callbacks(&g_arq_tnc_cbs);
     arq_tcp_base_port_cfg = arq_tcp_base_port;
     broadcast_tcp_port_cfg = broadcast_tcp_port;
-    broadcast_frame_size_cfg = broadcast_frame_size;
+    atomic_store(&broadcast_frame_size_cfg, broadcast_frame_size);
     memset(tid_started, 0, sizeof(tid_started));
 
     /*************** ARQ TCP ports *******************/

@@ -112,6 +112,19 @@ float modem_get_tx_peak_dbfs(void);
 //
 // Returns 0 on success, -1 if the level is out of range, -2 if a link is up or
 // a burst is in flight (the two never key together), -3 if the thread failed.
+/* Idle ("listen") payload mode -- the payload mode the station sits on while
+ * no ARQ session is up, which decides the broadcast frames it can hear and
+ * send.  Seeded from -m at startup; changeable at runtime only while the ARQ
+ * link is idle, and only to a pooled payload mode (DATAC1/3/4/15/17/QAM16C2).
+ *
+ * This does NOT affect a later ARQ connection: every session-start path resets
+ * the mode ladder to DATAC15, so an inbound CALL cannot inherit this mode. */
+#define MODEM_LISTEN_MODE_BAD   (-1)  /* not a runtime-switchable payload mode */
+#define MODEM_LISTEN_MODE_BUSY  (-2)  /* an ARQ session is up; ladder owns mode */
+int    modem_set_listen_mode(int mode);
+int    modem_get_listen_mode(void);
+size_t modem_get_broadcast_frame_size(void);
+
 int   modem_tune_start(float dbfs);
 // Stop the carrier and unkey. Safe to call when not tuning; blocks until the
 // tuning thread has unkeyed.

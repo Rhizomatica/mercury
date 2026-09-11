@@ -274,6 +274,68 @@ void test_accept_transitions_to_connected(void)
     TEST_ASSERT_GREATER_THAN(0, fake_notify_connected_fake.call_count);
 }
 
+/* The listen mode (initial_payload_mode) is an operator setting for the IDLE
+ * decoder -- which broadcast frames the station can hear while no session is
+ * up.  It must not leak into a session: an inbound CALL answered on a station
+ * listening in QAM16C2 must still start its mode ladder at the safest rung,
+ * or the first data burst of every inbound connection would be sent in a mode
+ * the link may not support at all.  This pins the guarantee that makes the
+ * MODE control-port command safe to accept while LISTENING. */
+void test_listen_mode_does_not_leak_into_inbound_session(void)
+{
+    sess.initial_payload_mode = FREEDV_MODE_QAM16C2;
+
+    arq_event_t ev = make_event(ARQ_EV_APP_LISTEN);
+    arq_fsm_dispatch(&sess, &ev);
+    /* Entering LISTENING puts the idle decoder on the listen mode. */
+    TEST_ASSERT_EQUAL_INT(FREEDV_MODE_QAM16C2, sess.peer_tx_mode);
+
+    ev = make_event(ARQ_EV_RX_CALL);
+    ev.session_id = 0x42;
+    strncpy(ev.remote_call, "REMOTE1", CALLSIGN_MAX_SIZE);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_ACCEPTING, sess.conn_state);
+
+    /* The caller's first data burst completes the inbound connect. */
+    ev = make_event(ARQ_EV_RX_DATA);
+    ev.session_id = 0x42;
+    ev.mode       = FREEDV_MODE_DATAC15;
+    arq_fsm_dispatch(&sess, &ev);
+
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_CONNECTED, sess.conn_state);
+    TEST_ASSERT_EQUAL_INT(FREEDV_MODE_DATAC15, sess.payload_mode);
+    /* The listen mode is remembered for the next idle period, not applied. */
+    TEST_ASSERT_EQUAL_INT(FREEDV_MODE_QAM16C2, sess.initial_payload_mode);
+}
+
+/* ...and the converse: once the session ends, the idle decoder goes back to
+ * the listen mode rather than being stranded on whatever rung the ladder
+ * happened to finish on -- otherwise broadcast RX would silently stop working
+ * after every ARQ call. */
+void test_listen_mode_restored_after_session_ends(void)
+{
+    sess.initial_payload_mode = FREEDV_MODE_QAM16C2;
+
+    arq_event_t ev = make_event(ARQ_EV_APP_LISTEN);
+    arq_fsm_dispatch(&sess, &ev);
+    ev = make_event(ARQ_EV_APP_CONNECT);
+    strncpy(ev.remote_call, "DST1", CALLSIGN_MAX_SIZE);
+    arq_fsm_dispatch(&sess, &ev);
+    ev = make_event(ARQ_EV_RX_ACCEPT);
+    ev.session_id = sess.session_id;
+    strncpy(ev.remote_call, "DST1", CALLSIGN_MAX_SIZE);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_CONNECTED, sess.conn_state);
+    /* The session climbed away from the listen mode. */
+    TEST_ASSERT_EQUAL_INT(FREEDV_MODE_DATAC15, sess.peer_tx_mode);
+
+    ev = make_event(ARQ_EV_RX_DISCONNECT);
+    ev.session_id = sess.session_id;
+    arq_fsm_dispatch(&sess, &ev);
+
+    TEST_ASSERT_EQUAL_INT(FREEDV_MODE_QAM16C2, sess.peer_tx_mode);
+}
+
 /* APP_DISCONNECT from CONNECTED */
 void test_disconnect_from_connected(void)
 {
@@ -1215,6 +1277,8 @@ int main(void)
     RUN_TEST(test_incoming_call_transitions_to_accepting);
     RUN_TEST(test_incoming_call_records_dialed_secondary);
     RUN_TEST(test_accept_transitions_to_connected);
+    RUN_TEST(test_listen_mode_does_not_leak_into_inbound_session);
+    RUN_TEST(test_listen_mode_restored_after_session_ends);
     RUN_TEST(test_disconnect_from_connected);
     RUN_TEST(test_listen_off_drops_pending_accept);
     RUN_TEST(test_listen_off_drops_outgoing_call);

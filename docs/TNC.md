@@ -327,6 +327,45 @@ CALLINT 0\r
 
 ---
 
+### MODE
+
+Set the **listen mode** — the payload mode the station sits on while no ARQ
+session is up.  This decides which broadcast frames the station can hear and
+send, and takes the same index space as the `-m` startup option (use `-l` to
+list them).
+
+```
+MODE 10\r          set the listen mode to QAM16C2
+MODE\r             report the current listen mode
+```
+
+The query form answers `MODE <index> <name>\r`, e.g. `MODE 10 QAM16C2\r`, so
+the reported index round-trips as the argument to a later `MODE` command.
+
+**Response:** `OK\r` on success, `BUSY\r` if an ARQ session is up, `WRONG\r`
+for an index that is out of range or not switchable at runtime.
+
+Two limits are worth knowing:
+
+* **Only accepted while the ARQ link is idle** (disconnected or listening).
+  During a session the ARQ mode ladder owns the payload mode and would
+  overwrite an operator setting within one RX-loop iteration, so the command
+  answers `BUSY\r` rather than silently accepting a setting that is about to
+  be discarded.
+* **Only the pooled payload modes are runtime-switchable:** indexes 0
+  (DATAC1), 1 (DATAC3), 3 (DATAC4), 7 (DATAC15), 9 (DATAC17) and 10
+  (QAM16C2).  DATAC16 is the ARQ control mode, and DATAC0 / DATAC13 / DATAC14
+  / FSK_LDPC have no runtime pool slot — `-m` can still *start* on some of
+  those, but they cannot be selected later, and `MODE` answers `WRONG\r`.
+
+This does **not** change how ARQ connections behave.  Every session — inbound
+or outbound — resets its mode ladder to DATAC15 and climbs from there via
+OLLA, so a fast listen mode gives a later connection no head start, and a
+robust one costs it nothing.  Setting the listen mode is about *broadcast*
+reception and transmission while idle.
+
+---
+
 ### TUNE
 
 Key the transmitter and hold a steady **1000 Hz tone**, so an antenna tuner
@@ -503,6 +542,13 @@ port only carries payload when a session is CONNECTED.
 The **broadcast port** (default 8100) is independent of ARQ and uses
 **KISS framing**.  One-way broadcast frames are sent/received as
 fixed-size KISS-encoded packets matching the modem's payload size.
+
+That frame size follows the **listen mode**, set at startup with `-m` and
+changeable at runtime with the [`MODE`](#mode) control-port command.  A
+connected broadcast client picks up a new frame size on its next frame — the
+socket does not need to be reopened — so a `MODE` change re-frames the plane
+underneath a live client.  Size your client's frames from the mode you
+selected, not from a cached value.
 
 Three client framings are accepted, distinguished by the KISS command byte:
 
