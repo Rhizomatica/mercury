@@ -228,6 +228,10 @@ mode=9  file=1000 B  air=ch clean (--No -100)
 
 ## Benchmarks
 
+For a trial carrying a real NNCP bundle end to end, including fading results
+and the traps that produced wrong answers first, see
+[BROADCAST-NNCP-TRIAL.md](BROADCAST-NNCP-TRIAL.md).
+
 A 5 kB file, transmitted between two real Mercury modems with `ch` standing in
 for the propagation path. Each mode was walked down in SNR until it stopped
 decoding; `SNR3k = -No - 14.82`, and the harness's noise is **AWGN, not

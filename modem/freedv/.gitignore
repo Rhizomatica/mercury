@@ -1,3 +1,8 @@
 ch
 unittest/fast_fading_samples.float
+# The other two multipath profiles ch can load (--mpg 0.1 Hz, --mpd 2.0 Hz).
+# ~100 MB each and generated, not source: see requireChFading() in
+# tests/integration/channel_bridge_test.go for the octave command.
+unittest/slow_fading_samples.float
+unittest/faster_fading_samples.float
 slow_fading/

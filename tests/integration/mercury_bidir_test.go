@@ -58,6 +58,7 @@ func TestMercuryARQBidirectional(t *testing.T) {
 	if v := os.Getenv("MERCURY_CH_FADING"); v != "" {
 		params.Fading = v // ch: mpg|mpp|mpd ; watterson: good|moderate|poor
 	}
+	requireChFading(t, repoRoot, params.Fading)
 	if v := os.Getenv("MERCURY_CH_GAIN"); v != "" {
 		g, perr := strconv.ParseFloat(v, 64)
 		if perr != nil {
