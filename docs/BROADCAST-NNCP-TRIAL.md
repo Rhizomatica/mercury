@@ -75,10 +75,75 @@ replays a single fixed fading realisation (seed 1), so these are one draw from
 the ensemble, not an average over it. Confirming the effect needs repeats with
 different realisations.
 
+## Where it stops working
+
+Walking the SNR down at a fixed 2x cycle overshoot until the bundle stops
+arriving. "Last OK" and "first FAIL" bracket the transition; the step is 2 dB.
+
+| mode | channel | last OK | first FAIL |
+|---|---|---:|---:|
+| QAM16C2 | AWGN | +13.2 | +11.2 |
+| QAM16C2 | mpg | +15.2 | +13.2 |
+| DATAC17 | AWGN | +3.2 | +1.2 |
+| DATAC17 | mpg | +5.2 | +3.2 |
+
+**Multipath costs about 2 dB**, and the same 2 dB on both modes — a much more
+useful number than the percent-of-airtime figures above, because it is the
+quantity you compare against a link budget.
+
+### But that is not a decode floor, it is a carousel-length limit
+
+The table above is "the SNR at which 2x overshoot stops being enough", which is
+not the same thing as "the SNR at which the mode stops working". Taking the
+QAM16C2/mpg point that failed at 2x and simply sending more:
+
+| cycles | overshoot | result |
+|---:|---:|---|
+| 14 | 2x | FAIL |
+| 28 | 4x | OK, 63.6 s |
+| 56 | 8x | OK, 63.6 s |
+| 112 | 16x | OK, 64.1 s |
+
+Doubling the carousel recovered a point that had "failed". So under fading the
+floor is a budget decision, not a hard limit: a fade takes out whole frames, and
+more passes simply give the receiver more chances to catch the gaps between
+fades.
+
+**Overshoot is insurance, not latency.** 4x, 8x and 16x all delivered at the
+same moment — the receiver finishes the instant it holds enough symbols, and
+the sender goes on transmitting into the void afterwards. Extra cycles cost
+airtime and channel occupancy, not time-to-delivery. Since broadcast has no
+feedback and a short carousel delivers *nothing at all* rather than a partial
+file, err generously.
+
+### AWGN does have a hard floor
+
+The same trick does **not** work on a clean channel:
+
+| channel | SNR3k | overshoot | result |
+|---|---:|---:|---|
+| AWGN | +11.2 | 4x | FAIL |
+| mpg | +9.2 | 16x | FAIL |
+| mpg | +7.2 | 16x | FAIL |
+
+This is the distinction worth carrying away. AWGN is stationary: below the
+modem's decode threshold every frame fails equally, so repetition buys nothing
+and no overshoot will save it — the answer there is a more robust mode. Fading
+is time-varying, so between the 2x cliff and the true floor there is a region
+where patience substitutes for SNR. Far enough down, fading runs out of good
+periods too and even 16x fails.
+
+So, operationally:
+
+- **Marginal on a fading path** → send more cycles.
+- **Marginal on a quiet, weak path** → change mode; cycles will not help.
+
 ## Caveats
 
 - **Simulator, not radio.** See the top of this file.
-- **n = 1 per row.** No repeats, no error bars.
+- **n = 1 per row.** No repeats, no error bars. The cliff brackets in
+  particular are single runs at a 2 dB step, so read them as "between these two
+  values", not as a threshold measured to a decibel.
 - **One fading realisation.** `ch` replays a fixed file; runs are reproducible
   but not independent samples.
 - **The mpg and mpd fading files are generated locally**, not shipped: only the
@@ -100,8 +165,12 @@ The test computes it as
 
 For the 7680-byte bundle that is 189 symbols: 7 frames on QAM16C2 (29
 symbols/frame) but 95 frames on DATAC3 (2 symbols/frame) — a factor of 13
-between modes for the same object. The 2x overshoot was sufficient at every
-point measured here, including under fading.
+between modes for the same object.
+
+2x is enough with a few dB of margin in hand, and is what the trial harness
+defaults to. It is **not** enough close to the cliff: at QAM16C2 under mpg at
++13.2 dB, 2x delivered nothing and 4x delivered in 63.6 s. See "Where it stops
+working" — on a fading path, overshoot is the cheapest margin you have.
 
 ## Traps this trial hit
 
