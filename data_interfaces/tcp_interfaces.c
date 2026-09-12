@@ -1530,9 +1530,39 @@ void *tcp_server_thread(void *port_ptr)
         if (!send_started)
             bcast_client_done = true;
 
-        /* Stop and join the sole RX-buffer reader before draining its ring.
-         * Clearing before join can empty the ring after the sender's size/
-         * done checks but before read_buffer(), stranding it in a wait. */
+        /* recv_thread normally notices a clean FIN (recv()==0) and exits on
+         * its own, letting the join below return.  Do not trust that alone:
+         * if the client half-drops the link without a FIN -- or a non-blocking
+         * read races the close -- recv_thread spins on EAGAIN forever and this
+         * thread never returns to accept(), so the listen backlog fills and the
+         * NEXT client's connect() hangs.  Watch the socket directly and, on
+         * hangup/error, shut it down so recv() unblocks.  shutdown() keeps the
+         * descriptor owned by this thread until the join, avoiding the
+         * cross-thread close race. */
+        while (!shutdown_)
+        {
+            struct pollfd cfd = { .fd = client_socket, .events = POLLIN | POLLERR | POLLHUP };
+            int r = poll(&cfd, 1, 100);
+            if (shutdown_)
+                break;
+            if (r < 0 && sock_errno() == SOCK_EINTR)
+                continue;
+            if (r <= 0)
+                continue;
+            if (cfd.revents & (POLLERR | POLLHUP | POLLNVAL))
+                break;
+            if (cfd.revents & POLLIN)
+            {
+                /* recv_thread consumes the data; peek to tell data from EOF. */
+                char probe;
+                ssize_t got = recv(client_socket, &probe, 1, MSG_PEEK);
+                if (got == 0)
+                    break; /* EOF: peer sent FIN */
+                if (got < 0 && sock_errno() != SOCK_EAGAIN && sock_errno() != SOCK_EWOULDBLOCK)
+                    break; /* reset or other error */
+            }
+        }
+        SOCK_SHUTDOWN(client_socket);
         pthread_join(recv_tid, NULL);
         bcast_client_done = true;
         if (send_started)

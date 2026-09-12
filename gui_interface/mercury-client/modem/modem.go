@@ -9,6 +9,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -91,6 +92,13 @@ type ModemClient struct {
 	arqConnected bool
 
 	connectRespCh chan string
+
+	// linkDown is set when the modem closes the control link under us -- which
+	// the TNC does whenever ANOTHER client connects, because it keeps only one
+	// control client and evicts the incumbent.  Without it, IsConnected() keeps
+	// answering true off conn objects that are merely non-nil, and the UI goes
+	// on claiming it is attached to ports it lost.
+	linkDown atomic.Bool
 
 	mu   sync.Mutex
 	quit chan struct{}
@@ -403,6 +411,9 @@ func (mc *ModemClient) sendBroadcastWithCmd(cmd byte, data []byte) error {
 }
 
 func (mc *ModemClient) IsConnected() bool {
+	if mc.linkDown.Load() {
+		return false
+	}
 	mc.mu.Lock()
 	defer mc.mu.Unlock()
 	return mc.ARQControlConn != nil && mc.BroadcastConn != nil
@@ -412,6 +423,13 @@ func (mc *ModemClient) Disconnect() {
 	var disconnected []string
 
 	mc.mu.Lock()
+	// Close the quit channel FIRST, before the sockets.  readARQControl
+	// distinguishes "we asked to go away" (quit closed) from "the modem hung
+	// up on us" (linkDown); if the socket close raced ahead of this, a clean
+	// local disconnect could be misread as a remote eviction.
+	close(mc.quit)
+	mc.quit = make(chan struct{})
+
 	control := mc.ARQControlConn
 	if control != nil {
 		control.Close()
@@ -431,8 +449,6 @@ func (mc *ModemClient) Disconnect() {
 
 	mc.arqConnected = false
 
-	close(mc.quit)
-	mc.quit = make(chan struct{})
 	mc.mu.Unlock()
 
 	for _, msg := range disconnected {
@@ -456,8 +472,23 @@ func (mc *ModemClient) readARQControl() {
 		default:
 			line, err := reader.ReadString('\r')
 			if err != nil {
+				// A local Disconnect() closes quit and the socket, landing us
+				// here with the same error as a remote eviction.  Distinguish
+				// the two: if we asked to go away, this is expected, not the
+				// modem hanging up on us.
+				select {
+				case <-quit:
+					return
+				default:
+				}
 				if err != io.EOF {
 					mc.LogCh <- fmt.Sprintf("ARQ Control read error: %v", err)
+				}
+				// EOF here is not "nothing more to read", it is the modem
+				// hanging up on us.  Say so, and stop claiming to be connected.
+				if !mc.linkDown.Swap(true) {
+					mc.LogCh <- "ARQ control link closed by the modem " +
+						"(another client may have taken the TNC ports)."
 				}
 				return
 			}
