@@ -86,6 +86,40 @@ else
     endif
 endif
 
+# pkg-config can report a hamlib that is not actually usable: the .pc file is
+# installed but the headers it points at are missing or broken.  The build then
+# gets all the way into radio_io before dying on
+#
+#     hamlib/rig.h: No such file or directory
+#
+# with libhamlib-dev apparently installed and pkg-config apparently happy --
+# which is a confusing place to start debugging, and was reported as a Mercury
+# build bug (issue #272) rather than a broken package.
+#
+# So probe the header with the compiler that is about to use it, and if it is
+# not there, fail immediately saying which of the two things to do.  Skipped
+# when HAVE_HAMLIB was set on the command line: that is someone overriding
+# detection deliberately, and they do not need to be second-guessed.
+ifeq ($(HAVE_HAMLIB),1)
+ifneq ($(origin HAVE_HAMLIB),command line)
+# -include rather than a piped '#include' line: make eats '#' as a comment, and
+# escaping it through both make and the shell produced a probe that failed on a
+# perfectly good system -- a check that breaks working builds is worse than no
+# check at all.  /dev/null is the (empty) translation unit.
+HAMLIB_HEADER_OK := $(shell $(CC) $(HAMLIB_CFLAGS) -fsyntax-only \
+    -include hamlib/rig.h -xc /dev/null >/dev/null 2>&1 && echo 1)
+ifneq ($(HAMLIB_HEADER_OK),1)
+$(warning pkg-config reports hamlib, but <hamlib/rig.h> cannot be compiled with)
+$(warning the flags it gives: $(HAMLIB_CFLAGS))
+$(warning )
+$(warning The hamlib package looks installed but its headers are missing or broken.)
+$(warning Either reinstall it:      sudo apt reinstall libhamlib-dev)
+$(warning or build without hamlib:  make HAVE_HAMLIB=0)
+$(error hamlib headers not usable -- see the messages above)
+endif
+endif
+endif
+
 # hidapi: OPTIONAL, and preferred when present.  It is what gives the CM108
 # GPIO PTT backend Windows and macOS support; without it the backend falls back
 # to talking to /dev/hidraw directly, which works on Linux only.  Deliberately
