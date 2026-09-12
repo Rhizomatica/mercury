@@ -12,6 +12,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"syscall"
+	"testing"
 	"time"
 )
 
@@ -76,6 +77,45 @@ func buildWatterson(repoRoot string) (string, error) {
 	}
 	return dst, nil
 }
+
+// chFadingFile maps ch's multipath profiles to the sample file each one loads
+// (see MPG/MPP/MPD_FADING_FILE_NAME in modem/freedv/ch.c).
+var chFadingFile = map[string]string{
+	"mpg": "slow_fading_samples.float",   // 0.1 Hz Doppler, 0.5 ms delay
+	"mpp": "fast_fading_samples.float",   // 1.0 Hz Doppler, 2.0 ms delay
+	"mpd": "faster_fading_samples.float", // 2.0 Hz Doppler, 4.0 ms delay
+}
+
+// requireChFading fails loudly when a requested multipath profile has no sample
+// file, instead of letting the run produce meaningless results.
+//
+// This is worth a preflight check because of how ch fails: given --mpg with no
+// slow_fading_samples.float, it prints octave instructions and EXITS.  The
+// bridge then carries no audio at all, every mode fails at every SNR, and the
+// run looks exactly like a channel too harsh to decode.  A sweep was read that
+// way once -- five "fading breaks broadcast" results that were really five
+// missing-file errors.  Only the repo's 1.0 Hz file ships, so --mpg and --mpd
+// hit this by default.
+func requireChFading(t *testing.T, repoRoot, fading string) {
+	t.Helper()
+	if fading == "" {
+		return
+	}
+	name, ok := chFadingFile[fading]
+	if !ok {
+		t.Fatalf("unknown ch fading profile %q (want mpg, mpp or mpd)", fading)
+	}
+	path := filepath.Join(repoRoot, "modem", "freedv", "unittest", name)
+	if _, err := os.Stat(path); err != nil {
+		t.Skipf("ch fading profile %q needs %s, which is not present.\n"+
+			"Generate it (~100 MB, needs octave + the signal package) with:\n"+
+			"  cd modem/freedv/original_docs/octave && octave --no-gui -qf --eval "+
+			"'pkg load signal; ch_fading(\"%s\", 8000, %s, 8000*800)'",
+			fading, path, path, chFadingDoppler[fading])
+	}
+}
+
+var chFadingDoppler = map[string]string{"mpg": "0.1", "mpp": "1.0", "mpd": "2.0"}
 
 func buildCh(repoRoot string) (string, error) {
 	dst := filepath.Join(repoRoot, "modem", "freedv", "ch")
