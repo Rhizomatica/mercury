@@ -127,6 +127,7 @@ void arq_fsm_init(arq_session_t *sess)
     sess->deadline_event = ARQ_EV_TIMER_RETRY;
     sess->control_mode        = ARQ_CONTROL_MODE;
     sess->payload_mode        = FREEDV_MODE_DATAC15;  /* my TX mode, starts at safest level */
+    sess->peer_turn_req_pending = false;  /* never inherit a stale yield */
     sess->peer_tx_mode        = FREEDV_MODE_DATAC15;  /* RX decoder, starts at safest level */
     sess->initial_payload_mode = FREEDV_MODE_DATAC15;  /* overwritten by arq_set_initial_mode */
     sess->speed_level    = 0;
@@ -1078,6 +1079,7 @@ static void fsm_disconnected(arq_session_t *sess, const arq_event_t *ev)
         sess->disconnect_deadline_ms = 0;
         /* Reset mode state for new session */
         sess->payload_mode       = FREEDV_MODE_DATAC15;
+        sess->peer_turn_req_pending = false;  /* never inherit a stale yield */
         sess->peer_tx_mode       = FREEDV_MODE_DATAC15;
         sess->speed_level        = 0;
         sess->tx_success_count   = 0;
@@ -1118,6 +1120,7 @@ static void fsm_listening(arq_session_t *sess, const arq_event_t *ev)
          * DISCONNECTED/LISTENING) because LISTENING needs peer_tx_mode to
          * stay at the broadcast mode for receiving broadcast frames. */
         sess->payload_mode       = FREEDV_MODE_DATAC15;
+        sess->peer_turn_req_pending = false;  /* never inherit a stale yield */
         sess->peer_tx_mode       = FREEDV_MODE_DATAC15;
         sess->speed_level        = 0;
         sess->tx_success_count   = 0;
@@ -1170,6 +1173,7 @@ static void fsm_listening(arq_session_t *sess, const arq_event_t *ev)
             sess->tx_inflight_bytes = 0;
             sess->tx_retries_left = ARQ_DATA_RETRY_SLOTS;
             sess->payload_mode       = FREEDV_MODE_DATAC15;
+            sess->peer_turn_req_pending = false;  /* never inherit a stale yield */
             sess->peer_tx_mode       = FREEDV_MODE_DATAC15;
             sess->pending_tx_mode    = 0;
             sess->mode_upgrade_count = 0;
@@ -1209,6 +1213,7 @@ static void fsm_calling(arq_session_t *sess, const arq_event_t *ev)
             sess->tx_inflight_bytes = 0;
             sess->tx_retries_left = ARQ_DATA_RETRY_SLOTS;
             sess->payload_mode       = FREEDV_MODE_DATAC15;  /* reset mode state from prior session */
+            sess->peer_turn_req_pending = false;  /* never inherit a stale yield */
             sess->peer_tx_mode       = FREEDV_MODE_DATAC15;
             sess->pending_tx_mode    = 0;
             sess->mode_upgrade_count = 0;
@@ -1308,6 +1313,7 @@ static void fsm_accepting(arq_session_t *sess, const arq_event_t *ev)
         sess->tx_inflight_bytes = 0;
         sess->tx_retries_left = ARQ_DATA_RETRY_SLOTS;
         sess->payload_mode       = FREEDV_MODE_DATAC15;  /* reset mode state from prior session */
+        sess->peer_turn_req_pending = false;  /* never inherit a stale yield */
         sess->peer_tx_mode       = FREEDV_MODE_DATAC15;
         sess->pending_tx_mode    = 0;
         sess->mode_upgrade_count = 0;
@@ -1855,9 +1861,21 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
             record_tx_outcome(sess, window_clean);
             sess->tx_window_retx = false;
 
-            if (sess->peer_has_data)
+            /* A TURN_REQ that arrived while we were waiting is honoured here,
+             * where the handover costs no transmission: the peer asked for the
+             * floor, and this ACK is the moment we can give it without keying
+             * over the peer.  HAS_DATA may be clear by now (its backlog can
+             * drain between the request and the ACK); the explicit request is
+             * still the peer's stated intent, and handing the floor to a peer
+             * that no longer needs it merely idles one turn, whereas holding it
+             * against an explicit request is what stalls. */
+            bool yield_to_peer = sess->peer_has_data || sess->peer_turn_req_pending;
+            const char *turn_reason = sess->peer_has_data ? "piggyback" : "turn_req";
+            sess->peer_turn_req_pending = false;
+
+            if (yield_to_peer)
             {
-                if (g_timing) arq_timing_record_turn(g_timing, false, "piggyback");
+                if (g_timing) arq_timing_record_turn(g_timing, false, turn_reason);
                 enter_idle_irs(sess);
             }
             else
@@ -1868,16 +1886,40 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
         else if (ev->id == ARQ_EV_RX_TURN_REQ)
         {
             /* The peer has reverse data and explicitly requested the floor
-             * while we are awaiting the ACK of our last burst.  Yield instead
-             * of ignoring it: otherwise we sit out the full ack-timeout and
-             * retransmit, while the peer keeps re-sending TURN_REQ — a mutual
-             * stall that hangs bidirectional traffic (e.g. the uucp handshake).
-             * Our unacked window is retransmitted (go-back-N) once we regain
-             * the turn, so no data is lost. */
-            if (g_timing) arq_timing_record_turn(g_timing, false, "turn_req");
-            dflow_enter(sess, ARQ_DFLOW_TURN_ACK_TX,
-                        time_now_ms() + ARQ_CHANNEL_GUARD_MS,
-                        ARQ_EV_TIMER_ACK);
+             * while we are awaiting the ACK of our last burst.  We must yield
+             * -- ignoring it sits out the full ack-timeout while the peer
+             * re-sends TURN_REQ, a mutual stall that hangs bidirectional
+             * traffic (the uucp handshake) -- but we must NOT yield by keying.
+             *
+             * Keying TURN_ACK here is a collision by construction.  The peer
+             * requested the floor because it decoded our DATA, so it is already
+             * on its own ARQ_CHANNEL_GUARD_MS timer to ACK that DATA.  Both
+             * guards are the same length from nearly the same instant, so the
+             * TURN_ACK and the ACK land on top of each other and both are lost;
+             * the ISS never sees an ACK, retransmits, and the two collide again
+             * on every cycle.  Observed as an indefinite retransmit loop with
+             * zero ack_rx in 600 s (issue #278).
+             *
+             * So latch the request and let the ACK that is already coming carry
+             * the handover.  Nothing is keyed in response to a TURN_REQ:
+             *
+             *   - ACK arrives  -> the RX_ACK path below yields to the peer,
+             *                     and our frame is confirmed before we go, so
+             *                     nothing is left un-acknowledged.
+             *   - ACK is lost  -> TIMER_ACK retransmits as usual.  The peer is
+             *                     in TURN_REQ_WAIT, whose RX_DATA case
+             *                     abandons the request and ACKs us, which then
+             *                     takes the first branch.
+             *
+             * That the yield can now only happen AFTER the ACK also removes the
+             * second half of #278: a frame yielded out of WAIT_ACK while still
+             * un-acknowledged was neither retried, nor counted as backlog for
+             * piggyback/TURN_REQ, and sat in the window forever. */
+            if (!sess->peer_turn_req_pending)
+                HLOGD(LOG_COMP,
+                      "TURN_REQ in WAIT_ACK: deferring the yield to the ACK "
+                      "(seq=%d)", (int)sess->tx_seq);
+            sess->peer_turn_req_pending = true;
         }
         else if (ev->id == ARQ_EV_TIMER_ACK)
         {
@@ -2081,10 +2123,10 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
                 send_data_burst(sess);
             }
         }
-        /* TURN_REQ is intentionally ignored in WAIT_ACK: the ISS must not
-         * give up its role while a data frame is still unacknowledged.
-         * The peer's TURN_REQ will be honoured after the ACK arrives and
-         * the ISS enters IDLE_ISS (or after retries are exhausted). */
+        /* (RX_TURN_REQ is handled above: it latches peer_turn_req_pending and
+         * the yield happens on the ACK.  The comment that used to sit here
+         * said TURN_REQ was ignored in WAIT_ACK, which stopped being true when
+         * 11a6a9f added the handler.) */
         else if (ev->id == ARQ_EV_RX_MODE_REQ)
         {
             if (arq_protocol_mode_timing(ev->mode) != NULL &&

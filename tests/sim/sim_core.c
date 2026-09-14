@@ -35,6 +35,10 @@ typedef struct {
     uint8_t            frame[1280];
     size_t             frame_len;
     float              rx_snr;
+    /* The transmission that produced this frame, kept so a later overlapping
+     * transmission can destroy it retroactively (see half-duplex below). */
+    uint64_t           tx_start_ms;
+    uint64_t           tx_end_ms;
 } sim_pending_t;
 
 /* ======================================================================
@@ -50,6 +54,19 @@ struct sim {
     int              pending_count;
 
     float            rx_snr_db;  /* SNR stamped on delivered frames */
+
+    /* Half-duplex shared medium.  Two stations keyed at once destroy each
+     * other's frames; without this the sim cannot represent a collision at
+     * all, and every turn-coordination bug whose mechanism IS a collision is
+     * invisible to it.  That is not hypothetical: #278 (the ISS keying
+     * TURN_ACK into the peer's ACK) passed the whole sim suite unchanged both
+     * before and after the fix, because both frames were delivered happily in
+     * parallel.
+     *
+     * tx_end_ms[] is when each endpoint's last transmission stops. */
+    bool             half_duplex;
+    uint64_t         tx_end_ms[2];   /* [0] = a, [1] = b */
+    int              collisions;     /* frames destroyed by overlap */
 
     arq_timing_ctx_t timing;  /* shared timing context (metrics only, not correctness) */
 };
@@ -85,17 +102,56 @@ static void drain_outframes_from(sim_t *s, sim_endpoint_t *sender,
         };
         enqueue(s, &tx_done);
 
-        /* Frame delivery to peer (may be erased). */
-        uint64_t deliver_at = 0;
         int dir = (sender == s->a) ? 0 : 1;
-        if (sim_channel_schedule(s->ch, now_ms, dir, of.mode, of.len, &deliver_at))
+
+        /* Half-duplex: does this transmission overlap one already on the air?
+         *
+         * Both directions are checked against the PEER's transmit window, and
+         * the destruction is mutual and retroactive -- the peer's frame may
+         * already be queued for delivery, so it has to be withdrawn.  A real
+         * half-duplex station also hears nothing while keyed, which is the
+         * same outcome for the frame that arrives during its own burst. */
+        bool collided = false;
+        if (s->half_duplex)
+        {
+            uint64_t peer_tx_end = s->tx_end_ms[dir ^ 1];
+            if (peer_tx_end > now_ms)
+            {
+                collided = true;
+                /* Withdraw any of the peer's in-flight frames whose own
+                 * transmission overlaps ours. */
+                for (int i = 0; i < s->pending_count; i++)
+                {
+                    if (s->pending[i].kind != SIM_PENDING_FRAME)
+                        continue;
+                    if (s->pending[i].target != sender)
+                        continue;   /* not addressed to us */
+                    if (s->pending[i].tx_end_ms > now_ms &&
+                        s->pending[i].tx_start_ms < tx_end)
+                    {
+                        s->pending[i] = s->pending[--s->pending_count];
+                        i--;
+                        s->collisions++;
+                    }
+                }
+                s->collisions++;    /* ours is destroyed too */
+            }
+        }
+        s->tx_end_ms[dir] = tx_end;
+
+        /* Frame delivery to peer (may be erased, or destroyed by a collision). */
+        uint64_t deliver_at = 0;
+        if (!collided &&
+            sim_channel_schedule(s->ch, now_ms, dir, of.mode, of.len, &deliver_at))
         {
             sim_pending_t frame_ev = {
-                .fire_at_ms = deliver_at,
-                .target     = peer,
-                .kind       = SIM_PENDING_FRAME,
-                .frame_len  = of.len,
-                .rx_snr     = s->rx_snr_db, /* default 12 dB; sim_set_rx_snr models fades */
+                .fire_at_ms  = deliver_at,
+                .target      = peer,
+                .kind        = SIM_PENDING_FRAME,
+                .frame_len   = of.len,
+                .rx_snr      = s->rx_snr_db, /* default 12 dB; sim_set_rx_snr models fades */
+                .tx_start_ms = now_ms,
+                .tx_end_ms   = tx_end,
             };
             memcpy(frame_ev.frame, of.buf, of.len);
             enqueue(s, &frame_ev);
@@ -168,6 +224,9 @@ sim_endpoint_t *sim_a(sim_t *s) { return s->a; }
 sim_endpoint_t *sim_b(sim_t *s) { return s->b; }
 
 int sim_frames_in_flight(sim_t *s) { return s->pending_count; }
+
+void sim_set_half_duplex(sim_t *s, bool on) { s->half_duplex = on; }
+int  sim_collisions(sim_t *s)               { return s->collisions; }
 
 /* Fade controls: change channel loss and delivered-frame SNR mid-simulation
  * (a real fade degrades both — surviving frames also arrive weaker). */

@@ -655,30 +655,97 @@ void test_wait_ack_stale_ack_keeps_window(void)
     TEST_ASSERT_EQUAL_INT(ARQ_DFLOW_WAIT_ACK, sess.dflow_state);
 }
 
-/* Turn-coordination deadlock guard.  When the ISS is in WAIT_ACK (awaiting the
- * ACK of its last burst) and the peer — which has reverse data — requests the
- * floor via RX_TURN_REQ, the ISS must YIELD (-> TURN_ACK_TX), not ignore it.
- * The pre-fix bug ignored RX_TURN_REQ here, so the ISS sat out the full
- * ack-timeout and retransmitted while the peer kept re-sending TURN_REQ — a
- * mutual stall that hangs bidirectional traffic (observed: a 21-min uucp hang).
- * The unACKed window must survive so it is retransmitted (go-back-N) once the
- * turn is regained.  This is the case the one-way transfer harness can never
- * reach (its IRS never initiates data), so only a unit test guards it. */
-void test_wait_ack_yields_on_turn_req(void)
+/* Turn coordination in WAIT_ACK, both halves of it.
+ *
+ * The ISS must not IGNORE a peer's TURN_REQ while awaiting an ACK: the pre-fix
+ * bug sat out the full ack-timeout and retransmitted while the peer kept
+ * re-sending TURN_REQ -- a mutual stall that hung bidirectional traffic
+ * (observed: a 21-min uucp hang).  That is what 11a6a9f fixed.
+ *
+ * But it must not yield by KEYING either, which is what 11a6a9f did.  The peer
+ * asked for the floor because it decoded our DATA, so it is already on its own
+ * ARQ_CHANNEL_GUARD_MS timer to ACK that DATA.  Two equal guards from nearly
+ * the same instant put the TURN_ACK on top of the ACK; both are lost, the ISS
+ * never sees an ACK, retransmits, and the pair collide again every cycle --
+ * an indefinite retransmit loop with zero ack_rx in 600 s (issue #278).
+ *
+ * So the contract is: latch the request, transmit NOTHING, and yield when the
+ * ACK arrives.  This test pins the "transmit nothing" half, which is the part
+ * that stops the collision. */
+void test_wait_ack_turn_req_defers_the_yield_without_keying(void)
 {
     goto_connected();
     goto_wait_ack();
     TEST_ASSERT_EQUAL_INT(1, sess.tx_window_count);
 
+    RESET_FAKE(fake_send_tx_frame);
+
     arq_event_t ev = make_event(ARQ_EV_RX_TURN_REQ);
     ev.session_id = sess.session_id;
     arq_fsm_dispatch(&sess, &ev);
 
-    /* Yielded the floor instead of deadlocking in WAIT_ACK. */
-    TEST_ASSERT_EQUAL_INT(ARQ_DFLOW_TURN_ACK_TX, sess.dflow_state);
-    /* In-flight frame retained for go-back-N retransmit on turn regain. */
+    /* The collision fix: nothing is keyed in response to the TURN_REQ, and we
+     * do not leave WAIT_ACK, so the peer's ACK is still being waited for. */
+    TEST_ASSERT_EQUAL_INT(0, fake_send_tx_frame_fake.call_count);
+    TEST_ASSERT_NOT_EQUAL_INT(ARQ_DFLOW_TURN_ACK_TX, sess.dflow_state);
+    TEST_ASSERT_EQUAL_INT(ARQ_DFLOW_WAIT_ACK, sess.dflow_state);
+    /* The request is not dropped -- it is recorded, so the yield is owed. */
+    TEST_ASSERT_TRUE(sess.peer_turn_req_pending);
+    /* Frame still in flight and still ours to retry. */
     TEST_ASSERT_EQUAL_INT(1, sess.tx_window_count);
     TEST_ASSERT_EQUAL_INT(ARQ_CONN_CONNECTED, sess.conn_state);
+}
+
+/* ...and the other half: the latched request is honoured on the ACK, even when
+ * HAS_DATA is clear (the peer's backlog can drain between asking and ACKing --
+ * the explicit request is still its stated intent).
+ *
+ * Yielding only after the ACK is also what stops the second failure in #278: a
+ * frame yielded out of WAIT_ACK while still un-acknowledged was neither
+ * retried, nor counted as backlog for piggyback/TURN_REQ, and sat in the window
+ * forever -- a station stuck with BUFFER=41 for 15 minutes.  Here the window
+ * must be empty by the time we give up the floor. */
+void test_wait_ack_yields_to_latched_turn_req_when_the_ack_lands(void)
+{
+    goto_connected();
+    goto_wait_ack();
+    uint8_t base = sess.tx_window[0].seq;
+
+    arq_event_t ev = make_event(ARQ_EV_RX_TURN_REQ);
+    ev.session_id = sess.session_id;
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_TRUE(sess.peer_turn_req_pending);
+
+    /* ACK confirming our frame, with NO HAS_DATA flag. */
+    ev = make_event(ARQ_EV_RX_ACK);
+    ev.session_id = sess.session_id;
+    ev.ack_seq    = (uint8_t)(base + 1);
+    ev.rx_flags   = 0;
+    arq_fsm_dispatch(&sess, &ev);
+
+    /* Floor handed over, because the peer asked for it. */
+    TEST_ASSERT_EQUAL_INT(ARQ_DFLOW_IDLE_IRS, sess.dflow_state);
+    /* Nothing stranded: the frame was confirmed before we yielded. */
+    TEST_ASSERT_EQUAL_INT(0, sess.tx_window_count);
+    /* Latch consumed, so a later ACK does not yield again spuriously. */
+    TEST_ASSERT_FALSE(sess.peer_turn_req_pending);
+}
+
+/* Without a pending request and without HAS_DATA, an ACK must leave the ISS
+ * holding the floor -- the latch must not make every ACK hand the turn away. */
+void test_wait_ack_ack_without_request_keeps_the_turn(void)
+{
+    goto_connected();
+    goto_wait_ack();
+    uint8_t base = sess.tx_window[0].seq;
+
+    arq_event_t ev = make_event(ARQ_EV_RX_ACK);
+    ev.session_id = sess.session_id;
+    ev.ack_seq    = (uint8_t)(base + 1);
+    ev.rx_flags   = 0;
+    arq_fsm_dispatch(&sess, &ev);
+
+    TEST_ASSERT_NOT_EQUAL_INT(ARQ_DFLOW_IDLE_IRS, sess.dflow_state);
 }
 
 /* A station waiting for a KEEPALIVE_ACK must accept incoming DATA.
@@ -1296,7 +1363,9 @@ int main(void)
     RUN_TEST(test_app_disconnect_defers_in_wait_ack);
     RUN_TEST(test_wait_ack_cumulative_ack_advances_window);
     RUN_TEST(test_wait_ack_stale_ack_keeps_window);
-    RUN_TEST(test_wait_ack_yields_on_turn_req);
+    RUN_TEST(test_wait_ack_turn_req_defers_the_yield_without_keying);
+    RUN_TEST(test_wait_ack_yields_to_latched_turn_req_when_the_ack_lands);
+    RUN_TEST(test_wait_ack_ack_without_request_keeps_the_turn);
     RUN_TEST(test_keepalive_wait_accepts_data);
     RUN_TEST(test_simultaneous_turn_req_one_side_yields);
     RUN_TEST(test_simultaneous_turn_req_other_side_holds);
