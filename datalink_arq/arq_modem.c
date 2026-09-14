@@ -143,6 +143,19 @@ void arq_modem_set_event_fn(void (*fn)(int mode, bool ptt_on))
     g_inject_event = fn;
 }
 
+/* Channel-occupancy probe, registered by the modem (see arq_modem.h). */
+static bool (*g_channel_busy_fn)(void) = NULL;
+
+void arq_modem_set_channel_busy_fn(bool (*fn)(void))
+{
+    g_channel_busy_fn = fn;
+}
+
+bool arq_modem_channel_busy(void)
+{
+    return g_channel_busy_fn ? g_channel_busy_fn() : false;
+}
+
 void arq_modem_ptt_on(int mode, size_t frame_size)
 {
     (void)frame_size;

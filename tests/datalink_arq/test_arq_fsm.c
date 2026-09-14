@@ -21,6 +21,7 @@ DEFINE_FFF_GLOBALS;
 
 #include "arq_fsm.h"
 #include "arq_protocol.h"
+#include "virtual_clock.h"   /* time_now_ms(), to stage a busy channel */
 #include "freedv/freedv_api.h"
 
 /* Provided by arq_test_stubs.c */
@@ -35,6 +36,7 @@ FAKE_VOID_FUNC(fake_notify_cancelpending);
 FAKE_VOID_FUNC(fake_notify_disconnected, bool);
 FAKE_VOID_FUNC(fake_deliver_rx_data, const uint8_t *, size_t);
 FAKE_VALUE_FUNC(int, fake_tx_backlog);
+FAKE_VALUE_FUNC(bool, fake_channel_busy);
 FAKE_VALUE_FUNC(int, fake_tx_read, uint8_t *, size_t);
 FAKE_VOID_FUNC(fake_send_buffer_status, int);
 
@@ -46,6 +48,7 @@ static arq_fsm_callbacks_t test_callbacks = {
     .notify_disconnected = fake_notify_disconnected,
     .deliver_rx_data     = fake_deliver_rx_data,
     .tx_backlog          = fake_tx_backlog,
+    .channel_busy        = fake_channel_busy,
     .tx_read             = fake_tx_read,
     .send_buffer_status  = fake_send_buffer_status,
 };
@@ -74,6 +77,7 @@ void setUp(void)
     RESET_FAKE(fake_notify_disconnected);
     RESET_FAKE(fake_deliver_rx_data);
     RESET_FAKE(fake_tx_backlog);
+    RESET_FAKE(fake_channel_busy);
     RESET_FAKE(fake_tx_read);
     RESET_FAKE(fake_send_buffer_status);
     FFF_RESET_HISTORY();
@@ -862,6 +866,124 @@ static void goto_turn_req_wait(void)
     TEST_ASSERT_EQUAL_INT(ARQ_DFLOW_TURN_REQ_WAIT, sess.dflow_state);
 }
 
+/* Get to IDLE_IRS as the receiver, with traffic of our own queued -- the state
+ * where TIMER_PEER_BACKLOG decides whether to ask for the floor. */
+static void goto_idle_irs_with_backlog(void)
+{
+    arq_event_t ev = make_event(ARQ_EV_APP_LISTEN);
+    arq_fsm_dispatch(&sess, &ev);
+    ev = make_event(ARQ_EV_RX_CALL);
+    ev.session_id = 0x42;
+    strncpy(ev.remote_call, "DST1", CALLSIGN_MAX_SIZE);
+    arq_fsm_dispatch(&sess, &ev);
+    ev = make_event(ARQ_EV_TIMER_ACK);
+    arq_fsm_dispatch(&sess, &ev);
+    ev = make_event(ARQ_EV_TX_COMPLETE);
+    arq_fsm_dispatch(&sess, &ev);
+    ev = make_event(ARQ_EV_RX_DATA);
+    ev.session_id  = sess.session_id;
+    ev.seq         = sess.rx_expected;
+    ev.data_bytes  = 8;
+    ev.payload_len = 8;
+    arq_fsm_dispatch(&sess, &ev);
+    ev = make_event(ARQ_EV_TIMER_ACK);
+    arq_fsm_dispatch(&sess, &ev);
+    ev = make_event(ARQ_EV_TX_COMPLETE);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(ARQ_DFLOW_IDLE_IRS, sess.dflow_state);
+    fake_tx_backlog_fake.return_val = 256;   /* we have data to send */
+}
+
+/* The other half of #278: TIMER_PEER_BACKLOG fires on a clock, with no regard
+ * for whether the peer is mid-burst.  The IRS's TURN_REQ therefore landed on
+ * top of the ISS's DATA and both were lost -- the collision that STARTS the
+ * retransmit loop, as the reporter diagnosed.
+ *
+ * With a decoder holding sync (the peer is transmitting), the request must be
+ * held back and nothing keyed. */
+void test_turn_req_is_not_keyed_over_the_peers_burst(void)
+{
+    goto_idle_irs_with_backlog();
+    RESET_FAKE(fake_send_tx_frame);
+
+    sess.last_rx_sync_ms = time_now_ms();   /* a burst is arriving right now */
+
+    arq_event_t ev = make_event(ARQ_EV_TIMER_PEER_BACKLOG);
+    arq_fsm_dispatch(&sess, &ev);
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, fake_send_tx_frame_fake.call_count,
+        "keyed a TURN_REQ while the peer was transmitting");
+    TEST_ASSERT_EQUAL_INT(ARQ_DFLOW_IDLE_IRS, sess.dflow_state);
+    TEST_ASSERT_EQUAL_UINT8(1, sess.turn_req_defer_count);
+}
+
+/* ...and once the channel is quiet the request goes out, so the deferral is a
+ * wait and not a mute. */
+void test_turn_req_is_sent_once_the_channel_is_quiet(void)
+{
+    goto_idle_irs_with_backlog();
+    RESET_FAKE(fake_send_tx_frame);
+
+    sess.last_rx_sync_ms = 0;               /* nothing has been heard */
+
+    arq_event_t ev = make_event(ARQ_EV_TIMER_PEER_BACKLOG);
+    arq_fsm_dispatch(&sess, &ev);
+
+    TEST_ASSERT_EQUAL_INT(ARQ_DFLOW_TURN_REQ_TX, sess.dflow_state);
+    TEST_ASSERT_GREATER_THAN(0, fake_send_tx_frame_fake.call_count);
+}
+
+/* The deferral must be bounded.  False sync is real -- a payload decoder can
+ * latch onto a control burst -- and a decoder stuck in sync would otherwise
+ * hold the turn request off forever, which trades #278's loop for a silent
+ * station that never sends its backlog.  After the cap we ask anyway. */
+/* The case decoder sync CANNOT see: the peer is transmitting but nothing has
+ * synced on it.  That is not a corner case -- it covers the acquisition window
+ * at the start of every burst, a mode neither decoder is bound to, and any
+ * burst too weak to sync on, which is precisely the fringe where a collision
+ * costs most.  Energy on the channel is the only signal left, so the busy
+ * detector must be honoured independently of sync. */
+void test_turn_req_defers_on_channel_energy_without_sync(void)
+{
+    goto_idle_irs_with_backlog();
+    RESET_FAKE(fake_send_tx_frame);
+
+    sess.last_rx_sync_ms = 0;                    /* nothing ever synced */
+    fake_channel_busy_fake.return_val = true;    /* but the channel is occupied */
+
+    arq_event_t ev = make_event(ARQ_EV_TIMER_PEER_BACKLOG);
+    arq_fsm_dispatch(&sess, &ev);
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, fake_send_tx_frame_fake.call_count,
+        "keyed over an un-synced transmission: sync alone is not enough");
+    TEST_ASSERT_EQUAL_INT(ARQ_DFLOW_IDLE_IRS, sess.dflow_state);
+}
+
+void test_turn_req_deferral_is_bounded(void)
+{
+    goto_idle_irs_with_backlog();
+
+    for (int i = 0; i < ARQ_TURN_REQ_DEFER_MAX; i++)
+    {
+        sess.last_rx_sync_ms = time_now_ms();   /* permanently "busy" */
+        arq_event_t ev = make_event(ARQ_EV_TIMER_PEER_BACKLOG);
+        arq_fsm_dispatch(&sess, &ev);
+        TEST_ASSERT_EQUAL_INT(ARQ_DFLOW_IDLE_IRS, sess.dflow_state);
+    }
+    TEST_ASSERT_EQUAL_UINT8(ARQ_TURN_REQ_DEFER_MAX, sess.turn_req_defer_count);
+
+    /* Cap reached: the next fire requests the floor even though sync persists. */
+    RESET_FAKE(fake_send_tx_frame);
+    sess.last_rx_sync_ms = time_now_ms();
+    arq_event_t ev = make_event(ARQ_EV_TIMER_PEER_BACKLOG);
+    arq_fsm_dispatch(&sess, &ev);
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ARQ_DFLOW_TURN_REQ_TX, sess.dflow_state,
+        "deferral never gave up: the station would never send its backlog");
+    TEST_ASSERT_GREATER_THAN(0, fake_send_tx_frame_fake.call_count);
+    TEST_ASSERT_EQUAL_UINT8(0, sess.turn_req_defer_count);
+}
+
 void test_simultaneous_turn_req_one_side_yields(void)
 {
     /* Local "SRC1" vs remote "DST1": strcmp > 0 is rank 1, which yields. */
@@ -1367,6 +1489,10 @@ int main(void)
     RUN_TEST(test_wait_ack_yields_to_latched_turn_req_when_the_ack_lands);
     RUN_TEST(test_wait_ack_ack_without_request_keeps_the_turn);
     RUN_TEST(test_keepalive_wait_accepts_data);
+    RUN_TEST(test_turn_req_is_not_keyed_over_the_peers_burst);
+    RUN_TEST(test_turn_req_is_sent_once_the_channel_is_quiet);
+    RUN_TEST(test_turn_req_defers_on_channel_energy_without_sync);
+    RUN_TEST(test_turn_req_deferral_is_bounded);
     RUN_TEST(test_simultaneous_turn_req_one_side_yields);
     RUN_TEST(test_simultaneous_turn_req_other_side_holds);
     RUN_TEST(test_disconnect_drain_timeout_forces_teardown);

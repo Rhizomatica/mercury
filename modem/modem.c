@@ -938,6 +938,9 @@ try_shm_connect2:
      * (DATAC0/DATAC14/FSK_LDPC), so do not filter it here -- that would change
      * startup behaviour for those modes. */
     atomic_store(&modem_listen_mode, mode);
+    /* Let the ARQ FSM ask whether the channel is occupied, so a timer-driven
+     * TURN_REQ does not key over a transmission no decoder has synced on. */
+    arq_modem_set_channel_busy_fn(modem_channel_busy);
     
     int modem_sample_rate = freedv_get_modem_sample_rate(g_modem->freedv);
     HLOGI("modem", "Initialized persistent FreeDV mode pool (DATAC16/DATAC15/DATAC13/DATAC4/DATAC3/DATAC1/DATAC17/QAM16C2), frames per burst: %d", frames_per_burst);
