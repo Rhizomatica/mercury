@@ -203,6 +203,9 @@ typedef struct
 
     /* --- Peer state observed from frames --- */
     bool     peer_has_data;            /* peer's HAS_DATA flag in last frame   */
+    bool     peer_turn_req_pending;    /* peer asked for the floor while we were
+                                        * in WAIT_ACK; honoured when the ACK
+                                        * lands, never by keying into it        */
     bool     acktx_had_has_data;       /* HAS_DATA was set in the last ACK sent */
     int      peer_snr_x10;            /* peer-reported SNR * 10 (integer)     */
     bool     peer_snr_valid;          /* a peer SNR reading has been received; *
