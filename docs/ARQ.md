@@ -274,14 +274,15 @@ IDLE_ISS ──(APP_DATA_READY)──► DATA_TX   IDLE_IRS ──(RX_DATA)─�
               ▼                   ▼                                    ▼
             DATA_TX           WAIT_ACK                              ACK_TX
               │                   │                                    │
-              │                   │ RX_ACK → next frame                │ TX_COMPLETE
-              │                   │ or retry / TURN_ACK                ▼
+              │                   │ RX_ACK → next frame,               │ TX_COMPLETE
+              │                   │ or → IDLE_IRS if the peer          ▼
+              │                   │ asked for the floor (see below)
               │                   │                              IDLE_IRS (or TURN_REQ_TX
               │                   │                               if HAS_DATA was set)
               │                   │
               │                   └─(timeout)──► retry or disconnect
               │
-              └──(peer TURN_REQ) TURN_ACK_TX ──► IDLE_IRS
+              └──(peer TURN_REQ, before TX starts) TURN_ACK_TX ──► IDLE_IRS
 ```
 
 Full state list:
@@ -379,9 +380,39 @@ Either side may request a role reversal.
    IRS transitions to ISS and starts sending.
 
 **Explicit TURN_REQ / TURN_ACK** (when piggyback is not available):
-1. IRS sends `TURN_REQ` frame.
-2. ISS stops sending, sends `TURN_ACK`.
+1. IRS waits until the channel is clear, then sends a `TURN_REQ` frame.
+2. ISS stops sending and hands the floor over.
 3. Both sides swap roles.
+
+Two details of that exchange are load-bearing, because getting either wrong
+produces a collision loop rather than a handover (issue #278):
+
+**The IRS listens before it keys.** `TIMER_PEER_BACKLOG` fires on a clock, so
+without a check the `TURN_REQ` lands on top of a DATA frame already on the air
+and both are lost. The request is held while a decoder holds sync on an
+incoming burst, or while the channel-busy detector reports energy — the second
+signal matters because sync cannot see the acquisition window at the start of a
+burst, a mode no decoder is bound to, or a burst too weak to sync on at all.
+The hold is capped (~10 s): a decoder stuck in false sync must not silence the
+station permanently, so after the cap the request goes out regardless.
+
+**The ISS does not answer a `TURN_REQ` by keying, if it is in `WAIT_ACK`.**
+A peer that asks for the floor has just decoded our DATA, so it is already
+counting down its own `ARQ_CHANNEL_GUARD_MS` to ACK that frame. Sending
+`TURN_ACK` after the same guard puts the two transmissions on top of each
+other. Instead the request is recorded and the handover rides the ACK that is
+already coming: the ACK confirms our frame and the ISS then enters `IDLE_IRS`.
+If the ACK is lost, the normal retransmit runs, and the peer — sitting in
+`TURN_REQ_WAIT` — abandons its request and ACKs the retransmission.
+
+A consequence worth stating: because the yield now happens only *after* the
+ACK, a frame can never leave `WAIT_ACK` unacknowledged. It previously could,
+and since `session_tx_backlog()` counts the app queue rather than the in-flight
+window, such a frame was invisible to both the piggyback `HAS_DATA` flag and
+the turn-request trigger — it simply sat there.
+
+`TURN_ACK_TX` is still used when the ISS is in `DATA_TX`'s guard phase with
+nothing yet transmitted; there is no pending ACK to collide with there.
 
 The `ARQ_PEER_PAYLOAD_HOLD_S` constant (15 s) prevents the ISS from immediately
 downgrading the modem mode back to DATAC16 while the peer is expected to have
