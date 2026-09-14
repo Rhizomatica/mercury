@@ -16,6 +16,7 @@ having — they are not updated as the code moves on.
 | [ARQ.md](ARQ.md) | The ARQ data link: state machine, frame formats, timers, mode ladder, and the OTA tuning guide. The main architecture document. |
 | [TNC.md](TNC.md) | Every TNC command and async status on the control socket. What you need to drive Mercury from your own software. |
 | [MODES.md](MODES.md) | All modulation modes with measured bandwidth, payload, FEC and delivery rates — including the Mercury-specific DATAC15/16/17 and QAM16C2. |
+| [BROADCAST-WIRE-FORMAT.md](BROADCAST-WIRE-FORMAT.md) | The broadcast plane on the wire: frame layout, RaptorQ symbol sizing, and mode agreement. |
 | [watterson_model.md](watterson_model.md) | The HF channel simulator used for every measurement in these docs, and how its noise axis is calibrated. |
 
 ## Guides — doing a particular thing
@@ -27,6 +28,8 @@ having — they are not updated as the code moves on.
 | [WINDOWS-SIGNING.md](WINDOWS-SIGNING.md) | Authenticode signing for Windows releases. |
 | [MACOS-VM-GLFW-SOFTWARE-OPENGL.md](MACOS-VM-GLFW-SOFTWARE-OPENGL.md) | Running the Fyne UI on a macOS VM with no GPU. |
 | [SANITIZERS.md](SANITIZERS.md) | ASan/UBSan and TSan builds. |
+| [MACOS-SIGNING.md](MACOS-SIGNING.md) | Apple notarization and signing for macOS releases. |
+| [WEBSOCKET_STATUS.md](WEBSOCKET_STATUS.md) | The WebSocket status feed (`-G`) that the Qt/web UI consumes. |
 | [FUZZING.md](FUZZING.md) | Fuzzing the frame parsers. |
 
 ## Findings — why things are the way they are
@@ -42,6 +45,8 @@ them for reasoning, not for current behaviour.
 | [SPEED-REGRESSION-FINDINGS.md](SPEED-REGRESSION-FINDINGS.md) | Why a pre-2.0 build was slower than v1.9.9 on the bench — FEC under fading and gear-shift oscillation, not the guard intervals everyone suspected. |
 | [OTA-PHASE-A-SNR-CALIB.md](OTA-PHASE-A-SNR-CALIB.md) | Why the mode ladder stuck at the bottom: per-mode SNR estimation bias. |
 | [broadcast-length-prefix-root-cause.md](broadcast-length-prefix-root-cause.md) | Why VarAC broadcasts would not decode. |
+| [BROADCAST-NNCP-TRIAL.md](BROADCAST-NNCP-TRIAL.md) | A real NNCP bundle carried over the broadcast plane on the bench: where it stops working, and why the cliff is a carousel-length limit rather than a decode floor. |
+| [MFSK-PORT.md](MFSK-PORT.md) | Porting the v1 32-MFSK fringe waveform to C, and how deep it actually reaches. |
 | [ARDOP-IDEAS.md](ARDOP-IDEAS.md) | What is worth borrowing from ARDOP. |
 | [PLAN-arq-robustness-tx-gain.md](PLAN-arq-robustness-tx-gain.md) | Improvements proposed from Gary K7EK's review. |
 
