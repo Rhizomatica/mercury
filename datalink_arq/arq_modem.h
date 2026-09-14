@@ -64,6 +64,19 @@ bool arq_modem_dequeue(arq_action_t *action, int timeout_ms);
 void arq_modem_set_event_fn(void (*fn)(int mode, bool ptt_on));
 
 /**
+ * @brief Register the station's channel-occupancy probe.
+ *
+ * Set by the modem at init.  Lets the ARQ layer ask "is there energy on the
+ * channel right now" without including modem.h, keeping this header the single
+ * ARQ->modem boundary.  Unset (or a detector that is switched off) simply
+ * reports not-busy, so the FSM falls back to decoder sync alone.
+ */
+void arq_modem_set_channel_busy_fn(bool (*fn)(void));
+
+/** @brief Is the channel occupied?  false when no probe is registered. */
+bool arq_modem_channel_busy(void);
+
+/**
  * @brief Notify ARQ that PTT has gone ON.
  * @param mode       FreeDV mode of the frame now on air.
  * @param frame_size Frame size in bytes.

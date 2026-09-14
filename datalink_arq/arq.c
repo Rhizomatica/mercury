@@ -956,6 +956,11 @@ int arq_init(size_t frame_size, int mode)
         .tx_backlog          = cb_tx_backlog,
         .tx_read             = cb_tx_read,
         .send_buffer_status  = cb_send_buffer_status,
+        /* Energy-based channel occupancy, so the FSM can avoid keying over a
+         * transmission it cannot decode.  modem_channel_busy() returns false
+         * when the detector is disabled (the default), which degrades this to
+         * the decoder-sync signal alone rather than breaking anything. */
+        .channel_busy        = arq_modem_channel_busy,
     };
     arq_fsm_set_callbacks(&cbs);
     arq_fsm_set_timing(&g_timing);
@@ -1124,7 +1129,18 @@ void arq_set_active_modem_mode(int mode, size_t frame_size)
 
 void arq_update_link_metrics(int sync, float snr, int rx_status, bool frame_decoded)
 {
-    (void)sync; (void)rx_status;
+    (void)rx_status;
+    /* A decoder holding sync means a burst is arriving, i.e. the peer is
+     * transmitting.  Record when we last saw that so the FSM can avoid keying
+     * on top of it (see ARQ_CHANNEL_SYNC_HOLD_MS).  This argument used to be
+     * discarded, which is why nothing in the FSM could tell a busy channel
+     * from an idle one. */
+    if (sync)
+    {
+        pthread_mutex_lock(&g_sess_lock);
+        g_sess.last_rx_sync_ms = time_now_ms();
+        pthread_mutex_unlock(&g_sess_lock);
+    }
     if (frame_decoded && snr > -100.0f && snr < 100.0f)
     {
         pthread_mutex_lock(&g_sess_lock);

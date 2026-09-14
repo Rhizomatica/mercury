@@ -287,6 +287,30 @@ extern _Atomic int arq_keepalive_interval_s;
 extern _Atomic int arq_keepalive_miss_limit;
 #define ARQ_KEEPALIVE_MISS_LIMIT  atomic_load(&arq_keepalive_miss_limit)
 #define ARQ_TURN_REQ_RETRIES          2
+
+/* Don't key a TURN_REQ on top of the peer's transmission.
+ *
+ * TIMER_PEER_BACKLOG fires on a clock, with no regard for whether the peer is
+ * mid-burst -- so the IRS's request landed on the ISS's DATA and both were
+ * lost, which is the collision that STARTS the #278 retransmit loop (the
+ * reporter's own diagnosis; the ISS-side half is fixed separately).
+ *
+ * "Busy" is a decoder holding sync on an incoming burst: the modem already
+ * reports that via arq_update_link_metrics(), which used to discard it.  SYNC
+ * is a better signal than energy here -- it means a frame addressed to this
+ * waveform is actually arriving, not that something is on the band.
+ *
+ * HOLD_MS is how stale a sync observation may be and still count as busy.  The
+ * modem updates it once per RX chunk, so this only has to cover scheduling
+ * jitter, not a whole frame: sync keeps being re-observed for as long as the
+ * burst lasts.
+ *
+ * DEFER_MAX bounds it.  False sync is real (a payload decoder can latch onto a
+ * control burst), and a decoder stuck in sync must not block the turn forever,
+ * so after this many deferrals we key anyway and take the collision. */
+#define ARQ_CHANNEL_SYNC_HOLD_MS      250
+#define ARQ_TURN_REQ_DEFER_MS         500
+#define ARQ_TURN_REQ_DEFER_MAX        20   /* ~10 s, then request regardless */
 #define ARQ_MODE_REQ_RETRIES          2
 #define ARQ_PEER_PAYLOAD_HOLD_S_DEFAULT  15    /* hold peer payload mode after activity */
 extern _Atomic int arq_peer_payload_hold_s;

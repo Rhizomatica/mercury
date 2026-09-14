@@ -206,6 +206,13 @@ typedef struct
     bool     peer_turn_req_pending;    /* peer asked for the floor while we were
                                         * in WAIT_ACK; honoured when the ACK
                                         * lands, never by keying into it        */
+
+    /* When a decoder was last holding sync on an incoming burst, i.e. when the
+     * peer was last observed transmitting.  Written by the modem RX thread via
+     * arq_update_link_metrics() under g_sess_lock, read by the FSM; used to
+     * avoid keying a TURN_REQ into the peer's frame. */
+    uint64_t last_rx_sync_ms;
+    uint8_t  turn_req_defer_count;     /* consecutive busy-channel deferrals   */
     bool     acktx_had_has_data;       /* HAS_DATA was set in the last ACK sent */
     int      peer_snr_x10;            /* peer-reported SNR * 10 (integer)     */
     bool     peer_snr_valid;          /* a peer SNR reading has been received; *
@@ -358,6 +365,12 @@ typedef struct
 
     /** Send BUFFER status (bytes remaining) to TCP interface. */
     void (*send_buffer_status)(int backlog_bytes);
+
+    /** Is there energy on the channel right now?  Optional (NULL when the
+     *  station has no busy detector, which is the default) -- used to avoid
+     *  keying over a transmission we cannot decode, which decoder sync alone
+     *  cannot see.  See peer_is_transmitting() in arq_fsm.c. */
+    bool (*channel_busy)(void);
 } arq_fsm_callbacks_t;
 
 /**

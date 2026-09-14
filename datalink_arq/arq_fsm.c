@@ -128,6 +128,7 @@ void arq_fsm_init(arq_session_t *sess)
     sess->control_mode        = ARQ_CONTROL_MODE;
     sess->payload_mode        = FREEDV_MODE_DATAC15;  /* my TX mode, starts at safest level */
     sess->peer_turn_req_pending = false;  /* never inherit a stale yield */
+        sess->turn_req_defer_count  = 0;
     sess->peer_tx_mode        = FREEDV_MODE_DATAC15;  /* RX decoder, starts at safest level */
     sess->initial_payload_mode = FREEDV_MODE_DATAC15;  /* overwritten by arq_set_initial_mode */
     sess->speed_level    = 0;
@@ -1033,6 +1034,40 @@ static void enter_idle_iss_guarded(arq_session_t *sess, bool gained_turn)
         dflow_enter(sess, ARQ_DFLOW_IDLE_ISS, UINT64_MAX, ARQ_EV_TIMER_RETRY);
 }
 
+/* Is the peer transmitting right now, as far as this station can tell?
+ *
+ * Two independent signals, because neither is sufficient alone:
+ *
+ *  - A decoder holding sync on an incoming burst.  Precise when available --
+ *    it means a frame in a waveform we are listening for is actually arriving.
+ *  - Energy on the channel, via the busy detector.  Coarser, but it sees
+ *    transmissions sync cannot: the acquisition window before sync is
+ *    established, a mode neither decoder happens to be bound to, and a burst
+ *    too weak to sync on at all.  Optional -- the detector is off unless the
+ *    station enables it, so this is an improvement when present, not a
+ *    dependency.
+ *
+ * What neither covers: if the peer's signal cannot be heard at all -- a deep
+ * fade, or simply too little SNR to detect -- then no amount of
+ * listen-before-talk helps, and the collision happens.  That is the hidden
+ * transmitter problem and it is not solvable by listening; the protocol-level
+ * answer is to prefer the piggyback HAS_DATA path, which is collision-free by
+ * construction because it rides a frame the peer is already waiting for, and
+ * to treat an unsolicited TURN_REQ as the fallback it is.  So this check
+ * reduces the collision rate; it does not eliminate it. */
+static bool peer_is_transmitting(const arq_session_t *sess)
+{
+    if (g_cbs.channel_busy && g_cbs.channel_busy())
+        return true;
+
+    if (sess->last_rx_sync_ms == 0)
+        return false;
+    uint64_t now = time_now_ms();
+    if (now < sess->last_rx_sync_ms)
+        return true;          /* clock went backwards; treat as busy */
+    return (now - sess->last_rx_sync_ms) < (uint64_t)ARQ_CHANNEL_SYNC_HOLD_MS;
+}
+
 static void enter_idle_irs(arq_session_t *sess)
 {
     dflow_enter(sess, ARQ_DFLOW_IDLE_IRS,
@@ -1080,6 +1115,7 @@ static void fsm_disconnected(arq_session_t *sess, const arq_event_t *ev)
         /* Reset mode state for new session */
         sess->payload_mode       = FREEDV_MODE_DATAC15;
         sess->peer_turn_req_pending = false;  /* never inherit a stale yield */
+        sess->turn_req_defer_count  = 0;
         sess->peer_tx_mode       = FREEDV_MODE_DATAC15;
         sess->speed_level        = 0;
         sess->tx_success_count   = 0;
@@ -1121,6 +1157,7 @@ static void fsm_listening(arq_session_t *sess, const arq_event_t *ev)
          * stay at the broadcast mode for receiving broadcast frames. */
         sess->payload_mode       = FREEDV_MODE_DATAC15;
         sess->peer_turn_req_pending = false;  /* never inherit a stale yield */
+        sess->turn_req_defer_count  = 0;
         sess->peer_tx_mode       = FREEDV_MODE_DATAC15;
         sess->speed_level        = 0;
         sess->tx_success_count   = 0;
@@ -1174,6 +1211,7 @@ static void fsm_listening(arq_session_t *sess, const arq_event_t *ev)
             sess->tx_retries_left = ARQ_DATA_RETRY_SLOTS;
             sess->payload_mode       = FREEDV_MODE_DATAC15;
             sess->peer_turn_req_pending = false;  /* never inherit a stale yield */
+        sess->turn_req_defer_count  = 0;
             sess->peer_tx_mode       = FREEDV_MODE_DATAC15;
             sess->pending_tx_mode    = 0;
             sess->mode_upgrade_count = 0;
@@ -1214,6 +1252,7 @@ static void fsm_calling(arq_session_t *sess, const arq_event_t *ev)
             sess->tx_retries_left = ARQ_DATA_RETRY_SLOTS;
             sess->payload_mode       = FREEDV_MODE_DATAC15;  /* reset mode state from prior session */
             sess->peer_turn_req_pending = false;  /* never inherit a stale yield */
+        sess->turn_req_defer_count  = 0;
             sess->peer_tx_mode       = FREEDV_MODE_DATAC15;
             sess->pending_tx_mode    = 0;
             sess->mode_upgrade_count = 0;
@@ -1314,6 +1353,7 @@ static void fsm_accepting(arq_session_t *sess, const arq_event_t *ev)
         sess->tx_retries_left = ARQ_DATA_RETRY_SLOTS;
         sess->payload_mode       = FREEDV_MODE_DATAC15;  /* reset mode state from prior session */
         sess->peer_turn_req_pending = false;  /* never inherit a stale yield */
+        sess->turn_req_defer_count  = 0;
         sess->peer_tx_mode       = FREEDV_MODE_DATAC15;
         sess->pending_tx_mode    = 0;
         sess->mode_upgrade_count = 0;
@@ -2212,6 +2252,33 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
             }
             else if (session_tx_backlog(sess) > 0)
             {
+                /* Don't request the floor while the peer is using it.  This
+                 * timer fires on a clock, so without the check the TURN_REQ
+                 * lands on top of the ISS's DATA and both are lost -- the
+                 * collision that starts the #278 retransmit loop.  Wait for the
+                 * burst to finish and ask into the gap instead.
+                 *
+                 * Bounded: a decoder stuck in sync (false sync is real) must
+                 * not block the turn forever, so after ARQ_TURN_REQ_DEFER_MAX
+                 * deferrals we ask anyway and accept the collision. */
+                if (peer_is_transmitting(sess) &&
+                    sess->turn_req_defer_count < ARQ_TURN_REQ_DEFER_MAX)
+                {
+                    sess->turn_req_defer_count++;
+                    HLOGD(LOG_COMP,
+                          "TURN_REQ deferred: peer transmitting (%u/%u)",
+                          (unsigned)sess->turn_req_defer_count,
+                          (unsigned)ARQ_TURN_REQ_DEFER_MAX);
+                    dflow_enter(sess, ARQ_DFLOW_IDLE_IRS,
+                                time_now_ms() + ARQ_TURN_REQ_DEFER_MS,
+                                ARQ_EV_TIMER_PEER_BACKLOG);
+                    break;
+                }
+                if (sess->turn_req_defer_count >= ARQ_TURN_REQ_DEFER_MAX)
+                    HLOGW(LOG_COMP,
+                          "TURN_REQ deferral cap reached (%u) - requesting anyway",
+                          (unsigned)sess->turn_req_defer_count);
+                sess->turn_req_defer_count = 0;
                 send_ctrl_frame(sess, ARQ_SUBTYPE_TURN_REQ);
                 sess->tx_retries_left = ARQ_TURN_REQ_RETRIES;
                 tm = arq_protocol_mode_timing(sess->control_mode);
