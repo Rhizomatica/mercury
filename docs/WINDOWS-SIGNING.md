@@ -90,7 +90,7 @@ The Makefile calls `code-signing/sign.sh`, which:
 2. Launches SimplySign Desktop, waits for the login window
 3. Generates a fresh TOTP from the otpauth URI, types e-mail + TOTP, clicks Login
 4. Dismisses the "Logon successful" dialog; waits for the PKCS#11 token
-5. Signs each file **in place** with `jsign` via SunPKCS11 (alias auto-detected)
+5. Signs each file **in place** with `jsign` via SunPKCS11 (the single key is auto-selected)
 6. Verifies with `osslsigncode`
 7. `sign-logout.sh` tears the session down at the end of `windows-zip-signed`
 
@@ -145,7 +145,8 @@ account or the clock; if they are not, it is the GUI layout.
 | `display :99 is already in use by another X server` | Something else owns `:99`; the login refuses to type credentials into a session it does not own. Use `SS_DISPLAY=:98`. |
 | `Xvfb did not come up on :99` | Stale lock: `rm -f /tmp/.X99-lock`. |
 | `the token probe never ran` | `pkcs11-tool` itself failed — usually `opensc` missing, or an empty `$USER` (the bundled OpenSSL NULL-derefs; `sign-lib.sh` exports it). |
-| `no signing key visible via SunPKCS11` | The session is live but the cert is not on this account — or `keytool`/Java is missing. |
+| `keystore not populated yet` (jsign retries) | The token is live but the SunPKCS11 keystore has not enumerated the cert yet — normal for a few seconds right after login; `sign-lib.sh` waits and retries this automatically. |
+| jsign `No certificate found` after all retries | The session is live but the cert is not on this account, or the cloud token is not actually authenticated. |
 | `WARNING: no signing method available — X is unsigned` | `CERTUM_EMAIL` is unset, so signing was skipped (this is the opt-in default, not an error). |
 
 ## CI
