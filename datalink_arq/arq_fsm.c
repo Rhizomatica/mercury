@@ -183,6 +183,7 @@ static void reset_session_data_state(arq_session_t *sess)
     }
     sess->pending_disconnect = false;
     sess->irs_data_wait_ms   = 0;
+    sess->turn_req_defer_count = 0;
 }
 
 /* ======================================================================
@@ -1753,6 +1754,34 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
                     enter_idle_irs(sess);   /* re-arm; not silent long enough yet */
                     break;
                 }
+                /* Listen before keying.  Self-promotion fires on a clock, so
+                 * "the peer has been silent for ARQ_IRS_SELFPROMOTE_S" says
+                 * nothing about whether it has just started a new burst -- and
+                 * a peer returning after exactly that long is the case this
+                 * branch exists for.  Keying then lands our DATA on its DATA
+                 * and both are lost: the same initiating collision #278 found
+                 * for trunk's TURN_REQ.  Wait for the burst to end instead.
+                 *
+                 * Bounded, as on trunk: a decoder stuck in false sync must not
+                 * stop this station ever sending its backlog. */
+                if (peer_is_transmitting(sess) &&
+                    sess->turn_req_defer_count < ARQ_TURN_REQ_DEFER_MAX)
+                {
+                    sess->turn_req_defer_count++;
+                    HLOGD(LOG_COMP,
+                          "self-promotion deferred: peer transmitting (%u/%u)",
+                          (unsigned)sess->turn_req_defer_count,
+                          (unsigned)ARQ_TURN_REQ_DEFER_MAX);
+                    dflow_enter(sess, ARQ_DFLOW_IDLE_IRS,
+                                time_now_ms() + ARQ_TURN_REQ_DEFER_MS,
+                                ARQ_EV_TIMER_PEER_BACKLOG);
+                    break;
+                }
+                if (sess->turn_req_defer_count >= ARQ_TURN_REQ_DEFER_MAX)
+                    HLOGW(LOG_COMP,
+                          "self-promotion deferral cap reached (%u) - keying anyway",
+                          (unsigned)sess->turn_req_defer_count);
+                sess->turn_req_defer_count = 0;
                 sess->irs_data_wait_ms = 0;
                 sess->tx_retries_left = ARQ_DATA_RETRY_SLOTS;
                 dflow_enter(sess, ARQ_DFLOW_DATA_TX,
