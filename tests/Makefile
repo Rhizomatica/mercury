@@ -289,7 +289,7 @@ test_ui_devices: gui_interface/test_ui_devices.c $(UNITY_SRC) \
 
 # Chase combining across separated MFSK bursts: does summing LLRs from copies
 # that individually fail actually decode?
-test_mfsk_harq: modem/test_mfsk_harq.c ../modem/mfsk_ldpc.c ../modem/mfsk_ldpc_8_16.c
+test_mfsk_harq: modem/test_mfsk_harq.c ../modem/mfsk/mfsk_ldpc.c ../modem/mfsk/mfsk_ldpc_8_16.c
 	$(CC) $(CFLAGS) -I../modem -o $@ $^ -lm
 
 # MFSK modem backend (burst TX/RX through the vtable); links libfreedvdata for CRC16
