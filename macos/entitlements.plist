@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- Hardened runtime entitlements for Mercury.
+
+         The hardened runtime is required for notarization, and it denies
+         these resources by default.  An Info.plist usage string supplies the
+         prompt text only; it does not grant access.  Keep this list minimal:
+         every entry widens what the signed binary is allowed to do. -->
+
+    <!-- Capture audio from the radio.  Without this the modem cannot hear,
+         and NSMicrophoneUsageDescription alone will not help. -->
+    <key>com.apple.security.device.audio-input</key>
+    <true/>
+
+    <!-- CM108 style USB HID PTT (radio_io/cm108_ptt.c via the vendored
+         hidapi).  IOKit HID access to a USB device is gated by this. -->
+    <key>com.apple.security.device.usb</key>
+    <true/>
+</dict>
+</plist>

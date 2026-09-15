@@ -199,3 +199,83 @@ func TestParseSpectrumFrame(t *testing.T) {
 		t.Fatalf("expected first bin 1.0, got %v", spectrum[0])
 	}
 }
+
+// The cycle selector is the operator's only control over how long a broadcast
+// runs, so the label -> count mapping is worth pinning: "Until stopped" must be
+// 0 (endless) and never 1, and a typo in a label must not silently become 0.
+func TestCyclesFromChoice(t *testing.T) {
+	want := map[string]int{
+		"Once":          1,
+		"5 times":       5,
+		"10 times":      10,
+		"50 times":      50,
+		"Until stopped": 0,
+	}
+	for _, label := range cycleChoices {
+		got := cyclesFromChoice(label)
+		exp, ok := want[label]
+		if !ok {
+			t.Fatalf("choice %q has no expected mapping; update this test", label)
+		}
+		if got != exp {
+			t.Errorf("cyclesFromChoice(%q) = %d, want %d", label, got, exp)
+		}
+	}
+	if len(want) != len(cycleChoices) {
+		t.Errorf("cycleChoices has %d entries, test covers %d", len(cycleChoices), len(want))
+	}
+}
+
+// cycleText is what the operator reads while a transfer runs; an endless run
+// must not display a fake denominator.
+func TestCycleText(t *testing.T) {
+	if got := cycleText(broadcastFileProgress{CycleNow: 3, CyclesTotal: 0}); got != "3 (until stopped)" {
+		t.Errorf("endless run rendered as %q", got)
+	}
+	if got := cycleText(broadcastFileProgress{CycleNow: 2, CyclesTotal: 5}); got != "2/5" {
+		t.Errorf("bounded run rendered as %q", got)
+	}
+}
+
+// The embedded client shares the TNC ports with every other client, and the TNC
+// evicts the incumbent on a new accept -- tearing down any live ARQ session.
+// These pin the rule that stops a click from killing someone's transfer.
+func TestEmbeddedClientMayConnect(t *testing.T) {
+	cases := []struct {
+		name        string
+		alreadyOurs bool
+		tel         telemetryState
+		wantOK      bool
+	}{
+		{"free ports", false, telemetryState{}, true},
+		{"another client attached", false,
+			telemetryState{ClientTCPConnected: true}, false},
+		{"another client mid-session", false,
+			telemetryState{ClientTCPConnected: true, Sync: true}, false},
+		// Reconnecting our own client must stay possible: the attached client
+		// is us, so there is nobody else to evict.
+		{"the attached client is us", true,
+			telemetryState{ClientTCPConnected: true}, true},
+		{"the attached client is us, mid-session", true,
+			telemetryState{ClientTCPConnected: true, Sync: true}, true},
+		// A session cannot be live with nothing attached, but if the engine
+		// ever reports it, an empty port is still free to take.
+		{"session flag without a client", false,
+			telemetryState{Sync: true}, true},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ok, why := embeddedClientMayConnect(tc.alreadyOurs, tc.tel)
+			if ok != tc.wantOK {
+				t.Fatalf("got ok=%v, want %v (reason %q)", ok, tc.wantOK, why)
+			}
+			if !ok && why == "" {
+				t.Fatal("refused without telling the operator why")
+			}
+			if ok && why != "" {
+				t.Fatalf("allowed but gave a reason %q", why)
+			}
+		})
+	}
+}

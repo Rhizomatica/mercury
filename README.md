@@ -149,6 +149,25 @@ PTT control notes:
 | `make fyne-ui-macos-dmg` | Wrap the host-arch `Mercury.app` in a drag-to-install `Mercury.dmg` at the repo top level. **Needs Go + the `fyne` CLI** ([setup](#gui-build-prerequisites-go--fyne)). |
 | `make fyne-ui-macos-universal-dmg` | **Distribution build:** universal (x86_64 + arm64) `Mercury.app` wrapped in `Mercury.dmg` at the repo top level. This is the artifact for the website. **Needs Go + the `fyne` CLI** ([setup](#gui-build-prerequisites-go--fyne)). |
 
+### Build options
+
+Passed on the `make` command line, e.g. `make HAVE_HAMLIB=0`.
+
+| Option | Effect |
+|--------|--------|
+| `HAVE_HAMLIB=0` | Build without Hamlib. Drops the `libhamlib-dev` build dependency entirely; `-P hamlib`, `-R` and `-K` are compiled out and report "HAMLIB support not compiled in". The serial/RTS, CM108 and HERMES shared-memory PTT backends are unaffected, so the radio can still be keyed. |
+| `HAVE_HIDAPI=0` | Build without hidapi. The CM108 GPIO PTT backend then talks to `/dev/hidraw` directly, which works on Linux only. |
+
+Both are auto-detected with `pkg-config` when not set, so the default build
+picks them up if they are installed. Set them to `0` to opt out.
+
+**If the build fails on `hamlib/rig.h: No such file or directory`** while
+`libhamlib-dev` is installed, the package's headers are missing or broken —
+Mercury only enables Hamlib when `pkg-config --exists hamlib` succeeds, so
+pkg-config is finding the `.pc` file but the headers it points at are not
+there. Either reinstall the package (`sudo apt reinstall libhamlib-dev`) or
+build without it using `HAVE_HAMLIB=0`.
+
 ### Build the Fyne GUI (Linux)
 
 ```bash
@@ -333,6 +352,11 @@ See [docs/ARQ.md](docs/ARQ.md) for full ARQ architecture, protocol reference, an
 Mercury can carry [Reticulum](https://github.com/markqvist/reticulum) mesh
 networking over HF via its KISS-over-TCP broadcast port (verified) or as a
 point-to-point ARQ backbone. See [docs/RETICULUM.md](docs/RETICULUM.md) for
+
+Mercury can also broadcast a **file** to whoever is listening, with no return
+path, using a RaptorQ fountain carousel wire-compatible with
+[hermes-broadcast](https://github.com/Rhizomatica/hermes-broadcast). See
+[docs/BROADCAST-FILE.md](docs/BROADCAST-FILE.md).
 the integration architectures and configuration.
 
 ## Physical Layer

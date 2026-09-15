@@ -38,6 +38,7 @@
 #include "freedv_api.h"
 #include "ldpc_codes.h"
 #include "arq.h"
+#include "arq_trace.h"
 #include "modem.h"
 #include "broadcast.h"
 #include "defines_modem.h"
@@ -140,6 +141,10 @@ int main(int argc, char *argv[])
 
     while (!shutdown_)
         msleep(500);
+
+    /* Diagnosis build only: the answerer never disconnects, so its trace would
+     * otherwise be lost.  No-op unless ARQ_TRACE_ENABLED. */
+    ARQ_TRACE_DUMP("shutdown");
 
 #ifndef _WIN32
     alarm(10);

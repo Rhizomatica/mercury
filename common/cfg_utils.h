@@ -70,6 +70,9 @@
 #define CFG_KEY_BUSY_HYSTERESIS_DB            "channel:busy_hysteresis_db"
 #define CFG_KEY_BUSY_ON_DEBOUNCE_MS           "channel:busy_on_debounce_ms"
 #define CFG_KEY_BUSY_HANG_MS                  "channel:busy_hang_ms"
+#define CFG_KEY_STORE_ENABLED                 "store:enabled"
+#define CFG_KEY_STORE_PATH                    "store:path"
+#define CFG_KEY_STORE_MAX_MESSAGES            "store:max_messages"
 
 /* Holds all values read from the init configuration file */
 typedef struct {
@@ -133,7 +136,13 @@ typedef struct {
     int      busy_on_debounce_ms;   /* Sustain above threshold before BUSY.
                                     * Default 300, clamped 0..5000.           */
     int      busy_hang_ms;          /* Sustain below release before CLEAR.
-                                    * Default 1500, clamped 0..10000.         */
+                                     * Default 1500, clamped 0..10000.         */
+    bool     store_enabled;         /* Persist ARQ/broadcast chat messages to
+                                     * disk. Default true.                     */
+    char     store_path[512];       /* JSONL message-store path; empty = auto
+                                     * (platform data dir).                    */
+    int      store_max_messages;    /* In-memory history ring capacity.
+                                     * Default 500, clamped 1..10000.          */
 } mercury_config;
 
 /* Load configuration from an INI file into |cfg|.
@@ -152,6 +161,10 @@ void cfg_set_defaults(mercury_config *cfg);
 /* Map an AUDIO_SUBSYSTEM_* constant back to its CLI name ("alsa", "oss", ...).
  * Returns a static string; never NULL. */
 const char *cfg_sound_system_name(int sys);
+
+/* Map a sound-system name ("alsa", "pulse", ...) to the AUDIO_SUBSYSTEM_*
+ * constant.  Returns -1 (auto) for unrecognised strings. */
+int cfg_sound_system_parse(const char *name);
 
 /* Canonical string conversion for PTT methods used by INI, CLI and UI. */
 const char *cfg_ptt_method_name(ptt_method_t method);

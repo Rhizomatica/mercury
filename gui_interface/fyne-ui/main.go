@@ -58,6 +58,7 @@ type appState struct {
 	pttInvert        string
 	cm108GPIO        string
 	telemetry        telemetryState
+	history          []HistoryMessage
 	spectrumValues   []float32
 	spectrumRate     int
 	spectrumHistory  []float32
@@ -102,6 +103,32 @@ func pttMethodID(label string) string {
 		}
 	}
 	return "none"
+}
+
+var audioSubsystemLabels = map[string]string{
+	"alsa":      "ALSA",
+	"pulse":     "PulseAudio",
+	"wasapi":    "WASAPI",
+	"dsound":    "DirectSound",
+	"coreaudio": "CoreAudio",
+	"oss":       "OSS",
+	"aaudio":    "AAudio",
+}
+
+func audioSubsystemLabel(id string) string {
+	if label, ok := audioSubsystemLabels[id]; ok {
+		return label
+	}
+	return id
+}
+
+func audioSubsystemID(label string) string {
+	for id, candidate := range audioSubsystemLabels {
+		if candidate == label {
+			return id
+		}
+	}
+	return label
 }
 
 // Mirrors UI_SNR_UNKNOWN_DB in gui_interface/ui_status.h.
@@ -300,6 +327,16 @@ const (
 	windowXKey      = "window.x"
 	windowYKey      = "window.y"
 	windowPosSetKey = "window.positionSaved"
+
+	// Broadcast file receiving.  Persisted because a station that exists to
+	// collect bulletins is configured once and then left alone: it must come
+	// back up receiving into the same folder after a restart, with nobody
+	// present to tick a box.
+	broadcastRxDirPrefKey = "broadcastFile.rxDir"
+	broadcastRxOnPrefKey  = "broadcastFile.receive"
+	// Master switch for the embedded chat client (top bar).  Persisted, so a
+	// gateway station that turned it off stays safe across restarts.
+	embeddedClientPrefKey = "embeddedClient.enabled"
 
 	// defaultWindowWidth/Height match the previous hard-coded launch size and
 	// are used until the operator has resized the window once.
@@ -1052,6 +1089,11 @@ func main() {
 
 				case LogEvent:
 					appendLog(e.Text)
+
+				case HistoryEvent:
+					state.mu.Lock()
+					state.history = e.Messages
+					state.mu.Unlock()
 				}
 			}
 
@@ -1104,20 +1146,59 @@ func main() {
 		}
 	}
 
+	// Give the embedded client a live view of the engine, so its interlock can
+	// see whether some other client already holds the TNC ports.
+	currentTelemetry = func() telemetryState {
+		state.mu.RLock()
+		defer state.mu.RUnlock()
+		return state.telemetry
+	}
+
 	mercuryClientButton := widget.NewButton("Launch Mercury Client", func() {
 		state.mu.RLock()
 		tel := state.telemetry
+		history := state.history
 		link := state.link
 		state.mu.RUnlock()
 		arqPort, broadcastPort := 8300, 8100
 		if engLink, ok := link.(*engineLink); ok {
 			arqPort, broadcastPort = engLink.TCPPorts()
 		}
-		openMercuryClientWindow(myApp, tel, arqPort, broadcastPort)
+		openMercuryClientWindow(myApp, tel, arqPort, broadcastPort, history)
 	})
+
+	// The master switch for the embedded client.
+	//
+	// The embedded client is an ordinary TCP client of our own TNC ports, and
+	// the TNC accepts one control client at a time, evicting the incumbent.  On
+	// a station that exists to serve uucp or VarAC, the chat client is not just
+	// unused -- it is a hazard someone can trip by clicking the wrong button.
+	// Turning it off here makes that impossible rather than merely unlikely.
+	//
+	// Defaults ON, so nothing changes for anyone who has not asked for it; the
+	// interlock in onConnect() is what removes the surprise in that case.
+	embeddedClientEnabled := myApp.Preferences().BoolWithFallback(embeddedClientPrefKey, true)
+	embeddedClientCheck := widget.NewCheck("Embedded client", nil)
+	embeddedClientCheck.SetChecked(embeddedClientEnabled)
+	applyEmbeddedClientEnabled := func(on bool) {
+		if on {
+			mercuryClientButton.Enable()
+			return
+		}
+		mercuryClientButton.Disable()
+		// Disabling must also RELEASE the ports, or "off" would only mean
+		// "cannot be opened again" while a connected client kept holding them.
+		closeMercuryClientWindow()
+	}
+	embeddedClientCheck.OnChanged = func(on bool) {
+		myApp.Preferences().SetBool(embeddedClientPrefKey, on)
+		applyEmbeddedClientEnabled(on)
+	}
+	applyEmbeddedClientEnabled(embeddedClientEnabled)
 
 	topBar := container.NewHBox(
 		layout.NewSpacer(),
+		embeddedClientCheck,
 		mercuryClientButton,
 	)
 
@@ -1223,33 +1304,74 @@ func main() {
 	myWindow.SetContent(mainLayout)
 
 	showSoundcardDialog := func() {
+		currentSubsystem, subsystemOptions := func() (string, []string) {
+			state.mu.RLock()
+			link := state.link
+			state.mu.RUnlock()
+			if link != nil {
+				return link.AudioSubsystems()
+			}
+			return "", nil
+		}()
+
+		var subsystemSelect *widget.Select
+		if len(subsystemOptions) > 1 {
+			labels := make([]string, 0, len(subsystemOptions))
+			for _, opt := range subsystemOptions {
+				labels = append(labels, audioSubsystemLabel(opt))
+			}
+			subsystemSelect = widget.NewSelect(labels, nil)
+			subsystemSelect.SetSelected(audioSubsystemLabel(currentSubsystem))
+		}
+
 		applyBtn := widget.NewButton("Apply", func() {
 			captureID := selectedID(bindings.captureSelect, state.captureItems)
 			playbackID := selectedID(bindings.playbackSelect, state.playbackItems)
 			channel := bindings.channelSelect.Selected
-			if captureID == "" {
+			subsystemID := ""
+			if subsystemSelect != nil && subsystemSelect.Selected != "" {
+				subsystemID = audioSubsystemID(subsystemSelect.Selected)
+			}
+			// Device ids are subsystem-specific, so a subsystem switch drops
+			// the old selection and lets the new subsystem pick its default.
+			subsystemChanged := subsystemID != "" && subsystemID != currentSubsystem
+			if subsystemChanged {
+				captureID = ""
+				playbackID = ""
+			}
+			if captureID == "" && !subsystemChanged {
 				captureID = "default"
 			}
-			if playbackID == "" {
+			if playbackID == "" && !subsystemChanged {
 				playbackID = "default"
 			}
 			if channel == "" {
 				channel = "left"
 			}
-			if err := sendWSCommand("set_audio_config", captureID, playbackID, channel, "", "", "", ""); err != nil {
+			if err := sendWSCommand("set_audio_config", captureID, playbackID, channel, subsystemID, "", "", ""); err != nil {
 				appendLog(fmt.Sprintf("Failed to send audio config: %v\n", err))
 			} else {
-				appendLog(fmt.Sprintf("Sent audio config: capture=%s playback=%s channel=%s\n",
-					captureID, playbackID, channel))
+				appendLog(fmt.Sprintf("Sent audio config: subsystem=%s capture=%s playback=%s channel=%s\n",
+					subsystemID, captureID, playbackID, channel))
 			}
 		})
 
-		content := container.NewVBox(
-			container.NewGridWithColumns(2,
+		rows := container.NewGridWithColumns(2,
+			widget.NewLabel("Capture Device"), bindings.captureSelect,
+			widget.NewLabel("Playback Device"), bindings.playbackSelect,
+			widget.NewLabel("Capture Input Channel"), bindings.channelSelect,
+		)
+		if subsystemSelect != nil {
+			rows = container.NewGridWithColumns(2,
+				widget.NewLabel("Audio Subsystem"), subsystemSelect,
 				widget.NewLabel("Capture Device"), bindings.captureSelect,
 				widget.NewLabel("Playback Device"), bindings.playbackSelect,
 				widget.NewLabel("Capture Input Channel"), bindings.channelSelect,
-			),
+			)
+		}
+
+		content := container.NewVBox(
+			rows,
 			container.NewHBox(layout.NewSpacer(), applyBtn, layout.NewSpacer()),
 		)
 
