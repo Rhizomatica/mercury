@@ -521,14 +521,45 @@ static void handle_cmd(const arq_cmd_msg_t *msg)
         break;
 
     case ARQ_CMD_CONNECT:
+    {
         pthread_mutex_lock(&g_conn_lock);
         snprintf(arq_conn.src_addr, CALLSIGN_MAX_SIZE, "%s", msg->arg0);
         snprintf(arq_conn.dst_addr, CALLSIGN_MAX_SIZE, "%s", msg->arg1);
         arq_conn.session_bw = 0;
         pthread_mutex_unlock(&g_conn_lock);
+        /* The FSM defers a CONNECT that arrives while the previous session is
+         * ending, and then skips that session's teardown callback -- which is
+         * what would normally flush the TX queue.  So flush the leftovers here,
+         * before anything for the new call can be queued, so no stale byte
+         * reaches a different station.
+         *
+         * Only in DISCONNECTING.  A redial can also arrive while the session is
+         * still CONNECTED with its DISCONNECT deferred; there the old session
+         * is still delivering its last bytes (that is why the disconnect was
+         * deferred), and flushing would cut them off.  In that case nothing
+         * flushes at all: normally the drain empties the queue before teardown,
+         * but if the drain deadline forces the teardown first, bytes it did not
+         * send would go out on the new call.  Accepted as a narrow edge: it
+         * needs a DISCONNECT with data still unsent, a redial before the ACK,
+         * and a drain that times out.
+         *
+         * Locks are taken one at a time (never nested), keeping the leaf
+         * ordering described at g_conn_lock. */
+        pthread_mutex_lock(&g_sess_lock);
+        bool tearing_down = (g_sess.conn_state == ARQ_CONN_DISCONNECTING);
+        pthread_mutex_unlock(&g_sess_lock);
+        if (tearing_down)
+        {
+            pthread_mutex_lock(&g_app_tx_mtx);
+            clear_buffer(g_app_tx_buf);
+            pthread_mutex_unlock(&g_app_tx_mtx);
+            HLOGI(LOG_COMP, "CONNECT during teardown: flushed previous session's TX queue");
+        }
+
         snprintf(ev.remote_call, CALLSIGN_MAX_SIZE, "%s", msg->arg1);
         ev.id = ARQ_EV_APP_CONNECT;
         break;
+    }
 
     case ARQ_CMD_SEND_CQ:
     {
