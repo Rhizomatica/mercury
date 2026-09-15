@@ -138,7 +138,13 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     container:
-      image: ghcr.io/reactiveui/certum-signer:latest
+      # Pinned by digest to the image that signed 1.9.13 (built 2026-07-01,
+      # Ubuntu 24.04, jsign 7.4).  :latest was rebuilt on 2026-09-15 on Ubuntu
+      # 26.04 / jsign 7.5, and under it the SimplySign session comes up but
+      # keytool never sees the signing key ("no signing key visible via
+      # SunPKCS11"), so 1.9.14 could not be signed.  Move the pin forward only
+      # after a signing run has passed on the newer image.
+      image: ghcr.io/reactiveui/certum-signer@sha256:fb03892c379b6703bee9bfd7a2f66df3a5696de149d6d6240e1897ae15afc3e4
     timeout-minutes: 15
     steps:
       # Full checkout, not sparse: building the installer needs installer.iss,
