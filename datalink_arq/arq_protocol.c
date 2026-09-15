@@ -191,6 +191,18 @@ float arq_protocol_call_interval_s(void)
     return tm ? tm->retry_interval_s : 8.0f;
 }
 
+float arq_protocol_call_interval_for_mode_s(int mode)
+{
+    float override = atomic_load(&arq_callint_override_s);
+    if (override > 0.0f)
+        return override;
+
+    const arq_mode_timing_t *tm = arq_protocol_mode_timing(mode);
+    if (!tm)
+        return arq_protocol_call_interval_s();
+    return tm->retry_interval_s;
+}
+
 int arq_protocol_retry_rank(const char *local_call, const char *remote_call)
 {
     if (!local_call || !remote_call || !local_call[0] || !remote_call[0])
