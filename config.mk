@@ -24,6 +24,22 @@ EXTRA_CFLAGS := $(CFLAGS)
 COMMON_CFLAGS ?= -Wall -O2 -std=gnu11 -pthread -D_GNU_SOURCE
 COMMON_CFLAGS += $(EXTRA_CFLAGS)
 
+# Header dependency tracking.
+#
+# Without this, editing a header does NOT rebuild the objects that include it,
+# and make happily links a binary from a mix of old and new layouts.  Adding a
+# field to arq_session_t in arq_fsm.h and rebuilding incrementally produced a
+# mercury whose ARQ event loop read deadline_ms at the wrong offset: it started
+# a CALL and then sat forever, looking exactly like a protocol bug.  Two
+# separate measurements were built on such binaries and had to be thrown away.
+#
+# -MMD writes a .d beside each .o listing the headers it used; -MP adds a
+# phony target for each header so a DELETED or renamed header does not wedge
+# the build with "no rule to make target".  Each Makefile then -includes the
+# .d files next to its own objects (paths in a .d are relative to the
+# directory the compiler ran in, so they must be included from there).
+COMMON_CFLAGS += -MMD -MP
+
 # Detect the compiler target so cross-compiling armhf from an aarch64 host
 # doesn't inherit aarch64-only flags from uname -m.
 CC_MACHINE := $(strip $(shell $(CC) -dumpmachine 2>/dev/null))

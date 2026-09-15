@@ -330,6 +330,13 @@ uint64_t arq_protocol_retry_deadline_ms(float seconds, int rank);
  * ladder needs no SNR/OLLA/keepalive), but retained as runtime storage so the
  * existing [arq] mercury.ini knobs and their config accessors stay valid. */
 #define ARQ_PEER_PAYLOAD_HOLD_S_DEFAULT         15
+
+/* How stale a decoder-sync observation may be and still mean "the peer is on
+ * the air".  arq_update_link_metrics() refreshes it once per RX chunk, so this
+ * only covers scheduling jitter, not a whole frame.  Read by
+ * peer_is_transmitting() in arq_fsm.c; kept identical to trunk so the two
+ * branches share the listen-before-talk signal. */
+#define ARQ_CHANNEL_SYNC_HOLD_MS                250
 extern _Atomic int arq_peer_payload_hold_s;
 /* Consecutive misses required to abandon a rung that has ALREADY delivered.
  *

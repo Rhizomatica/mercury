@@ -255,6 +255,78 @@ void test_sim_transfer_clean(void)
     sim_destroy(s);
 }
 
+/* Sustained small-record traffic BOTH ways over a HALF-DUPLEX medium, where
+ * the two stations' transmissions really do destroy each other.
+ *
+ * What this is: a regression guard for bidirectional progress under genuine
+ * collisions.  Every other sim test either sends one way or queues a single
+ * large block, and all of them run on a channel where both stations can key at
+ * once and both frames still arrive.  Turn coordination is exactly the area
+ * where that is the wrong model, so sim_set_half_duplex() exists and this test
+ * uses it; the run above produces real collisions (6 in the single-block
+ * variant) and both directions must still complete.
+ *
+ * What this is NOT: a reproduction of issue #278.  It was written trying to be
+ * one and it is not -- it passes on the unfixed FSM.  The #278 livelock needs
+ * the ISS to decode a TURN_REQ while in WAIT_ACK, and this traffic pattern
+ * resolves the turn by piggyback before that happens, so the colliding path is
+ * never entered.  Recorded here so the next person does not mistake a pass for
+ * evidence about #278; the FSM contract for that bug is pinned by
+ * test_wait_ack_turn_req_defers_the_yield_without_keying in test_arq_fsm.c,
+ * and the end-to-end behaviour is unverified. */
+void test_sim_bidirectional_progress_under_collisions(void)
+{
+    sim_channel_cfg_t chan = { .seed = 7, .per = 0.0, .guard_ms = 100 };
+    sim_t *s = make_connected(&chan);
+    TEST_ASSERT_NOT_NULL(s);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_CONNECTED,
+                          sim_endpoint_session(sim_a(s))->conn_state);
+
+    sim_set_half_duplex(s, true);
+
+    const int rounds = 12;
+    const int rec    = 28;      /* the reporter's record size */
+    int a_sent = 0, b_sent = 0;
+
+    for (int r = 0; r < rounds; r++)
+    {
+        uint8_t recb[64];
+        for (int i = 0; i < rec; i++) recb[i] = (uint8_t)(r * 31 + i);
+
+        /* B is the chatty peer: a record every round. */
+        sim_endpoint_queue_tx(sim_b(s), recb, rec);
+        b_sent += rec;
+        arq_event_t dready = { .id = ARQ_EV_APP_DATA_READY };
+        sim_inject(s, sim_b(s), &dready);
+
+        /* A speaks up occasionally, which is what lands it in WAIT_ACK while B
+         * is asking for the floor. */
+        if (r % 4 == 0)
+        {
+            sim_endpoint_queue_tx(sim_a(s), recb, rec);
+            a_sent += rec;
+            sim_inject(s, sim_a(s), &dready);
+        }
+
+        sim_run_until_idle(s, 60000);   /* 60 virtual seconds per round */
+    }
+
+    /* Let any tail drain. */
+    sim_run_until_idle(s, 300000);
+
+    uint8_t got[4096];
+    size_t at_b = sim_endpoint_delivered(sim_b(s), got, sizeof(got));
+    size_t at_a = sim_endpoint_delivered(sim_a(s), got, sizeof(got));
+
+    /* A livelock shows up as one direction stalling well short of its total. */
+    TEST_ASSERT_EQUAL_size_t_MESSAGE((size_t)a_sent, at_b,
+        "A->B stalled: the ISS never got its ACKs through");
+    TEST_ASSERT_EQUAL_size_t_MESSAGE((size_t)b_sent, at_a,
+        "B->A stalled: the IRS never obtained the floor");
+
+    sim_destroy(s);
+}
+
 void test_sim_transfer_lossy_per20(void)
 {
     sim_channel_cfg_t chan = { .seed = 7, .per = 0.20, .guard_ms = 150 };
@@ -714,6 +786,7 @@ int main(void)
 
     /* Task 7: scenario tests */
     RUN_TEST(test_sim_transfer_clean);
+    RUN_TEST(test_sim_bidirectional_progress_under_collisions);
     RUN_TEST(test_sim_transfer_lossy_per20);
     RUN_TEST(test_sim_fade_cliff_downgrades);
     RUN_TEST(test_sim_peer_loss_disconnects);

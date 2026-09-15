@@ -115,6 +115,20 @@ type LinkStateEvent struct {
 // say that is not state.
 type LogEvent struct{ Text string }
 
+// HistoryMessage is one persisted chat message as reported by the engine.
+type HistoryMessage struct {
+	Plane string `json:"plane"` // "arq" or "bcast"
+	Dir   string `json:"dir"`   // "rx" or "tx"
+	Peer  string `json:"peer"`  // remote callsign ("" when unknown)
+	Text  string `json:"text"`
+}
+
+// HistoryEvent carries the persisted ARQ/broadcast chat history, pushed once
+// when a UI connects.
+type HistoryEvent struct {
+	Messages []HistoryMessage
+}
+
 func (StatusEvent) isLinkEvent()      {}
 func (SpectrumEvent) isLinkEvent()    {}
 func (DeviceListEvent) isLinkEvent()  {}
@@ -122,6 +136,7 @@ func (RadioListEvent) isLinkEvent()   {}
 func (AudioSystemEvent) isLinkEvent() {}
 func (LinkStateEvent) isLinkEvent()   {}
 func (LogEvent) isLinkEvent()         {}
+func (HistoryEvent) isLinkEvent()     {}
 
 // emit posts an event unless the consumer is gone or lagging. Telemetry is
 // disposable — a dropped spectrum frame costs one waterfall row, whereas

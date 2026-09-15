@@ -87,6 +87,9 @@ struct ui_ctx {
     // Soundcard lists and input_channel are sent when a new UI client connects
     volatile int soundcard_list_pending;  // 1 = need to send capture/playback/input_channel to UI
 
+    // Persisted chat history is sent when a new UI client connects
+    volatile int history_pending;         // 1 = need to send message history to UI
+
     // Persistent configuration (written back to INI on UI changes)
     pthread_mutex_t cfg_mutex;
     mercury_config cfg;

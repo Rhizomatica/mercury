@@ -11,7 +11,9 @@ package main
 import "C"
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -81,6 +83,12 @@ func (l *engineLink) Start(ctx context.Context) (<-chan Event, error) {
 		// The websocket path pushes the pickers when a client connects; here
 		// there is no connect event, so read them once up front.
 		listsOK := l.emitDeviceLists(ctx, events)
+
+		// History is pushed once too, like the pickers: read the persisted chat
+		// history from the engine and hand it to the UI.
+		if h := readHistory(); len(h.Messages) > 0 {
+			emit(ctx, events, h)
+		}
 
 		// If the engine was not ready yet the lists come back empty. Retry for
 		// a few seconds rather than leaving the pickers on "(Select one)" for
@@ -384,4 +392,34 @@ func pollSpectrum() ([]float32, int, uint64, bool) {
 		return nil, 0, 0, false
 	}
 	return buf[:int(n)], int(rate), uint64(seq), true
+}
+
+// historyBufferCap bounds the persisted-history snapshot the engine hands back.
+// It is more than enough for the default ring (500 messages); a pathological
+// max_messages would truncate rather than exhaust memory.
+const historyBufferCap = 8 << 20 // 8 MiB
+
+// readHistory pulls the persisted chat history out of the embedded engine and
+// parses the newline-delimited JSONL into HistoryMessage entries.
+func readHistory() HistoryEvent {
+	buf := make([]byte, historyBufferCap)
+	n := int(C.mercury_ui_get_history((*C.char)(unsafe.Pointer(&buf[0])), C.int(len(buf))))
+	if n <= 0 {
+		return HistoryEvent{}
+	}
+
+	lines := bytes.Split(buf[:n], []byte("\n"))
+	msgs := make([]HistoryMessage, 0, len(lines))
+	for _, line := range lines {
+		line = bytes.TrimSpace(line)
+		if len(line) == 0 {
+			continue
+		}
+		var m HistoryMessage
+		if err := json.Unmarshal(line, &m); err != nil {
+			continue
+		}
+		msgs = append(msgs, m)
+	}
+	return HistoryEvent{Messages: msgs}
 }

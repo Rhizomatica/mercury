@@ -10,6 +10,8 @@
 
 #include <stdio.h>
 #include <stdbool.h>
+#include <stdlib.h>
+#include <string.h>
 #include <unistd.h>
 
 #include "cfg_utils.h"
@@ -17,9 +19,10 @@
 #include "mercury_cli.h"
 #include "mercury_version.h"
 #include "ui_communication.h"
-#include "bcast_file.h"
 #include "modem.h"
 #include "modem_stats.h"   /* MODEM_STATS_NSPEC */
+#include "message_store.h"
+#include "bcast_file.h"
 
 /* Print the startup version banner (same text the daemon prints), so the UI
  * announces its version on the terminal too.  Resolved here, in a unit the
@@ -211,6 +214,26 @@ void mercury_ui_get_tcp_ports(int *arq_base_port, int *broadcast_port)
     ui_comm_get_tcp_ports(arq_base_port, broadcast_port);
 }
 
+int mercury_ui_get_history(char *out, int out_len)
+{
+    size_t count = 0, len = 0;
+    char *snap;
+
+    if (!out || out_len <= 0)
+        return 0;
+
+    snap = msg_store_snapshot(&count, &len);
+    if (!snap)
+        return 0;
+
+    if (len >= (size_t)out_len)
+        len = (size_t)out_len - 1;
+    memcpy(out, snap, len);
+    out[len] = '\0';
+    free(snap);
+    return (int)len;
+}
+
 void mercury_ui_get_version(char *version, int version_len,
                             char *git_hash, int git_hash_len)
 {
@@ -265,21 +288,48 @@ int  mercury_bcast_mode_usable(int mode)     { return bcast_file_mode_usable(mod
 const char *mercury_bcast_mode_name(int mode) { return bcast_file_mode_name(mode); }
 long mercury_bcast_max_file_bytes(void)      { return (long)BCAST_FILE_MAX_BYTES; }
 
-int mercury_bcast_engine_mode(void)
+/* Both accessors below report the LISTEN mode, not the live modem mode.
+ * g_modem.mode follows whatever rung the ARQ ladder is currently on, so
+ * reading it made the broadcast UI report -- and size its frames from -- a
+ * mode unrelated to broadcast as soon as an ARQ session came up.  The listen
+ * mode is the one broadcast actually uses: what the payload decoder sits on
+ * while idle and what pure-broadcast TX is pinned to.  It also means these
+ * follow a MODE control-port command instead of reporting the startup mode
+ * forever.
+ *
+ * The hermes index they return is the same index space as -m, `mercury -l` and
+ * MODE, and comes from the shared table in common/mercury_modes.c rather than
+ * a copy here: it is a user-facing API, so two copies could drift apart. */
+static int listen_mode_index(void)
 {
-    /* g_modem.mode is a FreeDV enum; map it back to the hermes index the
-     * broadcast protocol and hermes-broadcast both speak. */
-    static const int hermes_to_freedv[] = {
-        FREEDV_MODE_DATAC1, FREEDV_MODE_DATAC3, FREEDV_MODE_DATAC0,
-        FREEDV_MODE_DATAC4, FREEDV_MODE_DATAC13, FREEDV_MODE_DATAC14,
-        FREEDV_MODE_FSK_LDPC, FREEDV_MODE_DATAC15, FREEDV_MODE_DATAC16,
-        FREEDV_MODE_DATAC17, FREEDV_MODE_QAM16C2
-    };
-    int m = mercury_engine_modem_mode();
-    for (int i = 0; i < (int)(sizeof(hermes_to_freedv)/sizeof(hermes_to_freedv[0])); i++)
-        if (hermes_to_freedv[i] == m)
+    int m = modem_get_listen_mode();
+    int count = mercury_cli_mode_count();
+    for (int i = 0; i < count; i++)
+        if (freedv_modes[i] == m)
             return i;
     return -1;
+}
+
+int mercury_bcast_engine_mode(void)
+{
+    int i = listen_mode_index();
+    if (i < 0)
+        return -1;
+    /* Runnable by the engine is not the same as usable for broadcast.  A
+     * broadcast frame has to carry the framing plus one whole RaptorQ symbol,
+     * and FSK_LDPC and DATAC15 (30-byte frames) do not -- see
+     * BCAST_SYMBOL_SIZE_MIN.  Report -1 for those, so the callers' existing
+     * "this modem's mode cannot carry broadcast" paths fire BEFORE a transfer
+     * is attempted, instead of the operator getting an opaque failure out of
+     * tx_open. */
+    return bcast_file_mode_usable(i) ? i : -1;
+}
+
+/* The mapped index whether or not broadcast can use it, so the UI can NAME the
+ * mode it is refusing rather than saying only that something is wrong. */
+int mercury_bcast_engine_mode_raw(void)
+{
+    return listen_mode_index();
 }
 
 int mercury_bcast_engine_bitrate(void)      { return mercury_engine_modem_bitrate(); }

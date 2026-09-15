@@ -207,11 +207,25 @@ typedef struct
     int      rx_below_good_misses;     /* mirror of tx_below_good_misses        */
 
     /* --- Retry/timeout bookkeeping --- */
-    int      tx_retries_left;          /* retries remaining for current frame  */
+    int      tx_retries_left;          /* retries remaining for current frame.
+                                        * In ACCEPTING this counts TIMER_RETRY
+                                        * slots, not transmissions: a slot may be
+                                        * spent silently when the RX window closes
+                                        * without a CALL (see fsm_accepting).    */
     uint64_t state_enter_ms;          /* when current conn_state was entered   */
 
     /* --- Peer state observed from frames --- */
     bool     peer_has_data;            /* peer's HAS_DATA flag in last frame   */
+    bool     peer_turn_req_pending;    /* peer asked for the floor while we were
+                                        * in WAIT_ACK; honoured when the ACK
+                                        * lands, never by keying into it        */
+
+    /* When a decoder was last holding sync on an incoming burst, i.e. when the
+     * peer was last observed transmitting.  Written by the modem RX thread via
+     * arq_update_link_metrics() under g_sess_lock, read by the FSM; used to
+     * avoid keying a TURN_REQ into the peer's frame. */
+    uint64_t last_rx_sync_ms;
+    uint8_t  turn_req_defer_count;     /* consecutive busy-channel deferrals   */
     bool     acktx_had_has_data;       /* HAS_DATA was set in the last ACK sent */
     /* Peer-reported SNR for OUR signal, * 10.  TELEMETRY ONLY.
      *
@@ -243,6 +257,13 @@ typedef struct
                                         * selects the post-call idle status,
                                         * LISTENING vs DISCONNECTED, so an ARQ
                                         * call always returns to where it was   */
+
+    /* --- Connect handshake --- */
+    bool     accept_tx_pending;        /* the pending TIMER_RETRY is an ACCEPT
+                                        * answering a CALL we actually heard,
+                                        * not the RX-window timer.  Only the
+                                        * former may key the transmitter -- see
+                                        * fsm_accepting's TIMER_RETRY.        */
 
     /* --- Teardown flags --- */
     bool     deferred_listen_off;      /* LISTEN OFF received during grace period;
@@ -347,6 +368,12 @@ typedef struct
 
     /** Send BUFFER status (bytes remaining) to TCP interface. */
     void (*send_buffer_status)(int backlog_bytes);
+
+    /** Is there energy on the channel right now?  Optional (NULL when the
+     *  station has no busy detector, which is the default) -- used to avoid
+     *  keying over a transmission we cannot decode, which decoder sync alone
+     *  cannot see.  See peer_is_transmitting() in arq_fsm.c. */
+    bool (*channel_busy)(void);
 } arq_fsm_callbacks_t;
 
 /**

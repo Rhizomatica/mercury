@@ -15,20 +15,36 @@ import (
 	"time"
 )
 
-// TestMercuryARQBidirectional exercises the half-duplex turn-taking that the
-// one-way TestMercuryARQTransfer structurally cannot reach.  Both endpoints
-// queue application data at the same time, so the receiver (IRS) must gain the
-// floor to deliver its own payload while the initiator (ISS) is mid-transfer.
+// TestMercuryARQTurnHandoff exercises the TURN_REQ/TURN_ACK role change with
+// real binaries and real modems -- the path that TestMercuryARQBidirectional
+// never reaches.
 //
-// That is the WAIT_ACK + RX_TURN_REQ contention that deadlocked the link before
-// commit 11a6a9f: the ISS, awaiting the ACK of its last burst, ignored the
-// peer's TURN_REQ, sat out the ack-timeout and retransmitted while the peer
-// kept re-requesting the floor — a mutual stall.  Pre-fix this test times out
-// (neither payload completes); post-fix both directions deliver.
+// That test queues both payloads AT ONCE, so both stations always have data and
+// the floor is handed over by the piggyback HAS_DATA flag on every ACK.  A
+// TURN_REQ is only ever sent by an IRS whose peer has gone IDLE, so the whole
+// TURN_REQ/TURN_ACK exchange is dead code as far as the integration suite is
+// concerned: measured zero TURN_REQ frames across a full bidirectional run.
 //
-// The channel is clean (default No=-100) so a failure is unambiguously the turn
-// logic, not the link.  MERCURY_CH_NO may be set to add noise.
-func TestMercuryARQBidirectional(t *testing.T) {
+// That blind spot is why three separate dflow states were found ignoring events
+// they should handle -- WAIT_ACK and TURN_REQ_WAIT ignoring RX_TURN_REQ, and
+// KEEPALIVE_WAIT discarding RX_DATA -- with CI green throughout.
+//
+// So sequence it instead, which is also the real-world shape (a store-and-
+// forward batch completes, then the other end has traffic):
+//
+//  1. A connects and sends its payload; wait until B has ALL of it.
+//  2. Let A fall idle, so it holds the floor with nothing to send.
+//  3. THEN B's application queues data.  B is the IRS with an idle peer, so it
+//     must request the turn, and A must grant it.
+//  4. B's payload must arrive at A.
+//
+// Step 3 is the assertion that matters: the test verifies from B's own log that
+// a TURN_REQ was actually sent.  Without that check a passing run proves
+// nothing, because the piggyback path could have carried the data instead.
+//
+// MERCURY_CH_NO adds noise; loss is what makes a TURN_ACK go missing and puts
+// both ends into the contested state.
+func TestMercuryARQTurnHandoff(t *testing.T) {
 	repoRoot := mustRepoRoot(t)
 	bin := locateOrBuildMercury(t, repoRoot)
 
@@ -201,33 +217,15 @@ func TestMercuryARQBidirectional(t *testing.T) {
 	}
 	_ = connA.SetReadDeadline(time.Time{})
 
-	// Both sides queue data at once.  A holds the floor (it issued CONNECT);
-	// B's queued payload forces it to request the turn while A is still
-	// sending — the contention the deadlock fix addresses.  Kept small (a few
-	// datac15 frames each way) so the test turns the floor over several times
-	// without depending on throughput.
-	payloadA := []byte(strings.Repeat("MERCURY-BIDIR-A2B-0123456789", 4)) // ~112 B, A -> B
-	payloadB := []byte(strings.Repeat("MERCURY-BIDIR-B2A-0123456789", 4)) // ~112 B, B -> A
+	// --- Step 1: A sends, and B must receive all of it. ---------------------
+	payloadA := []byte(strings.Repeat("MERCURY-TURN-A2B-0123456789", 4)) // ~108 B
+	payloadB := []byte(strings.Repeat("MERCURY-TURN-B2A-0123456789", 4)) // ~108 B
 
-	if _, err := dataA.Write(payloadA); err != nil {
-		failWithLogs("A write payload: %v", err)
-	}
-	if _, err := dataB.Write(payloadB); err != nil {
-		failWithLogs("B write payload: %v", err)
-	}
-
-	type result struct {
-		name string
-		got  int
-		ok   bool
-		dur  time.Duration
-	}
-	results := make(chan result, 2)
-	recv := func(name string, conn net.Conn, want []byte) {
+	recvAll := func(name string, conn net.Conn, want []byte, within time.Duration) (int, bool) {
 		start := time.Now()
 		got := make([]byte, 0, len(want))
 		buf := make([]byte, 4096)
-		deadline := time.Now().Add(4 * time.Minute)
+		deadline := time.Now().Add(within)
 		for len(got) < len(want) && time.Now().Before(deadline) {
 			_ = conn.SetReadDeadline(time.Now().Add(10 * time.Second))
 			n, err := conn.Read(buf)
@@ -241,23 +239,60 @@ func TestMercuryARQBidirectional(t *testing.T) {
 				break
 			}
 		}
-		results <- result{name, len(got), string(got) == string(want), time.Since(start)}
+		t.Logf("%s delivered %d/%d bytes in %s", name, len(got), len(want),
+			time.Since(start).Round(time.Millisecond))
+		return len(got), string(got) == string(want)
 	}
-	go recv("B<-A", dataB, payloadA)
-	go recv("A<-B", dataA, payloadB)
 
-	for i := 0; i < 2; i++ {
-		r := <-results
-		want := len(payloadA)
-		if r.name == "A<-B" {
-			want = len(payloadB)
-		}
-		t.Logf("%s delivered %d/%d bytes in %s", r.name, r.got, want, r.dur.Round(time.Millisecond))
-		if !r.ok {
-			failWithLogs("%s: incomplete delivery %d/%d bytes — turnaround likely deadlocked",
-				r.name, r.got, want)
-		}
+	if _, err := dataA.Write(payloadA); err != nil {
+		failWithLogs("A write payload: %v", err)
 	}
-	t.Logf("bidirectional ARQ exchange complete over ch (No=%.1f dB): both directions delivered, turn-taking healthy",
-		params.No_dBHz)
+	if n, ok := recvAll("B<-A", dataB, payloadA, 4*time.Minute); !ok {
+		failWithLogs("A->B incomplete (%d/%d) before the handoff could be tested",
+			n, len(payloadA))
+	}
+
+	// --- Step 2: let A fall idle, holding the floor with nothing to send. ---
+	// Long enough for A's last ACK to land and its data flow to settle; short
+	// enough to stay well inside the keepalive interval, so what follows is a
+	// turn request and not keepalive recovery.
+	time.Sleep(12 * time.Second)
+
+	// --- Step 3+4: B now has data.  It must ASK for the floor. --------------
+	if _, err := dataB.Write(payloadB); err != nil {
+		failWithLogs("B write payload: %v", err)
+	}
+	n, ok := recvAll("A<-B", dataA, payloadB, 4*time.Minute)
+	if !ok {
+		failWithLogs("B->A incomplete (%d/%d): the IRS could not take the floor "+
+			"from an idle peer", n, len(payloadB))
+	}
+
+	// The assertion that makes this a test of the role change.  If the payload
+	// arrived without a TURN_REQ, the piggyback path carried it and the
+	// TURN_REQ/TURN_ACK exchange is still untested.
+	logB, rerr := os.ReadFile(errB.Name())
+	if rerr != nil {
+		t.Fatalf("read B log: %v", rerr)
+	}
+	// The explicit (non-piggyback) handover leaves a different trace on each
+	// FSM: trunk's IRS sends a TURN_REQ, while the delivery-driven FSM on the
+	// MFSK line has no TURN_REQ and instead self-promotes from IDLE_IRS
+	// straight to DATA_TX once the peer has been silent.  Either one proves
+	// the idle-peer handover ran; accepting both keeps this file identical on
+	// the two lines, so it does not become a merge conflict of its own.
+	explicitHandover := strings.Contains(string(logB), "TURN_REQ") ||
+		strings.Contains(string(logB), "dflow: IDLE_IRS -> DATA_TX")
+	if !explicitHandover {
+		failWithLogs("B delivered its payload without an explicit handover (no TURN_REQ, " +
+			"no IDLE_IRS -> DATA_TX self-promotion) — the turn was taken by piggyback, " +
+			"so the role-change path is STILL untested; the idle-peer sequencing this " +
+			"test depends on has broken")
+	}
+	t.Logf("turn handoff exercised: B logged %d TURN_REQ and %d self-promotion events",
+		strings.Count(string(logB), "TURN_REQ"),
+		strings.Count(string(logB), "dflow: IDLE_IRS -> DATA_TX"))
+
+	t.Logf("turn-handoff ARQ exchange complete over ch (No=%.1f dB): "+
+		"idle-peer floor request granted, both directions delivered", params.No_dBHz)
 }

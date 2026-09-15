@@ -213,6 +213,10 @@ static void sess_enter(arq_session_t *sess, arq_conn_state_t new_state,
      * release. */
     if (new_state == ARQ_CONN_DISCONNECTED || new_state == ARQ_CONN_LISTENING)
         sess->deferred_listen_off = false;
+    /* The right to key an ACCEPT is earned by hearing a CALL, and it does not
+     * survive leaving ACCEPTING. */
+    if (new_state != ARQ_CONN_ACCEPTING)
+        sess->accept_tx_pending = false;
     if (new_state != ARQ_CONN_CONNECTED)
     {
         sess->pending_connect_confirm = false;
@@ -798,6 +802,40 @@ static void enter_idle_iss_guarded(arq_session_t *sess, bool gained_turn)
         dflow_enter(sess, ARQ_DFLOW_IDLE_ISS, UINT64_MAX, ARQ_EV_TIMER_RETRY);
 }
 
+/* Is the peer transmitting right now, as far as this station can tell?
+ *
+ * Two independent signals, because neither is sufficient alone:
+ *
+ *  - A decoder holding sync on an incoming burst.  Precise when available --
+ *    it means a frame in a waveform we are listening for is actually arriving.
+ *  - Energy on the channel, via the busy detector.  Coarser, but it sees
+ *    transmissions sync cannot: the acquisition window before sync is
+ *    established, a mode neither decoder happens to be bound to, and a burst
+ *    too weak to sync on at all.  Optional -- the detector is off unless the
+ *    station enables it, so this is an improvement when present, not a
+ *    dependency.
+ *
+ * What neither covers: if the peer's signal cannot be heard at all -- a deep
+ * fade, or simply too little SNR to detect -- then no amount of
+ * listen-before-talk helps, and the collision happens.  That is the hidden
+ * transmitter problem and it is not solvable by listening; the protocol-level
+ * answer is to prefer the piggyback HAS_DATA path, which is collision-free by
+ * construction because it rides a frame the peer is already waiting for, and
+ * to treat an unsolicited TURN_REQ as the fallback it is.  So this check
+ * reduces the collision rate; it does not eliminate it. */
+static bool peer_is_transmitting(const arq_session_t *sess)
+{
+    if (g_cbs.channel_busy && g_cbs.channel_busy())
+        return true;
+
+    if (sess->last_rx_sync_ms == 0)
+        return false;
+    uint64_t now = time_now_ms();
+    if (now < sess->last_rx_sync_ms)
+        return true;          /* clock went backwards; treat as busy */
+    return (now - sess->last_rx_sync_ms) < (uint64_t)ARQ_CHANNEL_SYNC_HOLD_MS;
+}
+
 static void enter_idle_irs(arq_session_t *sess)
 {
     dflow_enter(sess, ARQ_DFLOW_IDLE_IRS,
@@ -869,6 +907,8 @@ static void fsm_listening(arq_session_t *sess, const arq_event_t *ev)
         snprintf(sess->remote_call, CALLSIGN_MAX_SIZE, "%s", ev->remote_call);
         snprintf(sess->local_call, CALLSIGN_MAX_SIZE, "%s", ev->local_call);
         sess->session_id      = ev->session_id;
+        sess->tx_retries_left = ARQ_ACCEPT_RETRY_SLOTS;
+        sess->accept_tx_pending = true;   /* answering a CALL we just heard */
         /* Reset mode state so the payload decoder matches the new caller's
          * initial MFSK floor.  This must happen here (not in sess_enter for
          * DISCONNECTED/LISTENING) because LISTENING needs peer_tx_mode to
@@ -1091,9 +1131,10 @@ static void fsm_accepting(arq_session_t *sess, const arq_event_t *ev)
          * Answering one channel guard after the CALL puts the ACCEPT in the
          * gap the caller has just opened by dropping PTT -- the same schedule
          * fsm_listening uses for the first ACCEPT, and for the same reason. */
-        sess->tx_retries_left = ARQ_ACCEPT_RETRY_SLOTS;
-        sess->deadline_ms     = time_now_ms() + ARQ_CHANNEL_GUARD_MS;
-        sess->deadline_event  = ARQ_EV_TIMER_RETRY;
+        sess->tx_retries_left   = ARQ_ACCEPT_RETRY_SLOTS;
+        sess->accept_tx_pending = true;   /* answering a CALL we just heard */
+        sess->deadline_ms       = time_now_ms() + ARQ_CHANNEL_GUARD_MS;
+        sess->deadline_event    = ARQ_EV_TIMER_RETRY;
         break;
 
     case ARQ_EV_TX_COMPLETE:
@@ -1112,6 +1153,21 @@ static void fsm_accepting(arq_session_t *sess, const arq_event_t *ev)
          * it is shut again well before the caller's first data burst needs the
          * whole sample budget. */
         sess->confirm_listen_until_ms = time_now_ms() + ARQ_CONNECT_CONFIRM_LISTEN_MS;
+        /* This deadline is a LISTENING window, not a retransmission timer.  An
+         * ACCEPT is only ever correct one channel guard after a CALL we heard,
+         * because that is the only moment we know the caller has dropped PTT
+         * and is listening.  Firing one when this window expires has no phase
+         * relationship to the caller at all, and lands in the middle of its
+         * next CALL, where a half-duplex radio is deaf.
+         *
+         * This is a protocol invariant, not a reliability fix: the caller is
+         * deaf over its own transmission, so a blind ACCEPT is wrong whether
+         * or not it happens to collide in any given run.
+         *
+         * So mark the pending timer as "window", not "ACCEPT".  If the caller
+         * is still calling we will hear it and answer that; if we cannot hear
+         * it, transmitting blind only destroys someone else's burst. */
+        sess->accept_tx_pending = false;
         break;
 
     case ARQ_EV_TIMER_RETRY:
@@ -1128,6 +1184,18 @@ static void fsm_accepting(arq_session_t *sess, const arq_event_t *ev)
         if (sess->tx_retries_left > 0)
         {
             sess->tx_retries_left--;
+            if (!sess->accept_tx_pending)
+            {
+                /* The RX window closed without the caller coming back.  Stay
+                 * off the air -- see the TX_COMPLETE comment above -- and wait
+                 * again, so the budget still bounds how long we hold the
+                 * pending call open. */
+                sess->deadline_ms = retry_deadline_from_s(sess, arq_protocol_call_interval_s());
+                break;
+            }
+            /* Answering a CALL we heard: the caller dropped PTT one channel
+             * guard ago and is listening now. */
+            sess->accept_tx_pending = false;
             send_call_accept(sess, true);
             /* deadline is now managed via TX_COMPLETE above; set a generous
              * fallback here in case TX_COMPLETE is missed for any reason */

@@ -96,6 +96,11 @@ void mercury_ui_set_waterfall(bool enabled);
 /* Read the TNC TCP ports the engine listens on. */
 void mercury_ui_get_tcp_ports(int *arq_base_port, int *broadcast_port);
 
+/* Copy the persisted ARQ/broadcast chat history (newline-delimited JSONL,
+ * oldest first) into the provided buffer.  Returns the number of bytes written
+ * (excluding the NUL), or 0 if the store is empty or unavailable. */
+int mercury_ui_get_history(char *out, int out_len);
+
 /* Copy the release version string and git hash into the provided buffers. */
 void mercury_ui_get_version(char *version, int version_len,
                             char *git_hash, int git_hash_len);
@@ -125,7 +130,14 @@ long  mercury_bcast_max_file_bytes(void);
 /* The broadcast mode the engine is running, as a hermes mode index (0..10), or
  * -1 if it is not one broadcast can use.  Fixed at startup by -m: there is no
  * runtime mode switch, and both stations must be set to the same one. */
+/* The hermes mode index the engine is running, or -1 if broadcast cannot use
+ * it -- which includes modes the engine runs perfectly well but whose frames
+ * are too small to carry a whole RaptorQ symbol (FSK_LDPC, DATAC15). */
 int   mercury_bcast_engine_mode(void);
+
+/* The same index without the broadcast-usability filter, so a caller can name
+ * the mode in a message explaining why broadcast is unavailable. */
+int   mercury_bcast_engine_mode_raw(void);
 int   mercury_bcast_engine_bitrate(void);
 int   mercury_bcast_engine_bandwidth_hz(void);
 

@@ -86,6 +86,40 @@ else
     endif
 endif
 
+# pkg-config can report a hamlib that is not actually usable: the .pc file is
+# installed but the headers it points at are missing or broken.  The build then
+# gets all the way into radio_io before dying on
+#
+#     hamlib/rig.h: No such file or directory
+#
+# with libhamlib-dev apparently installed and pkg-config apparently happy --
+# which is a confusing place to start debugging, and was reported as a Mercury
+# build bug (issue #272) rather than a broken package.
+#
+# So probe the header with the compiler that is about to use it, and if it is
+# not there, fail immediately saying which of the two things to do.  Skipped
+# when HAVE_HAMLIB was set on the command line: that is someone overriding
+# detection deliberately, and they do not need to be second-guessed.
+ifeq ($(HAVE_HAMLIB),1)
+ifneq ($(origin HAVE_HAMLIB),command line)
+# -include rather than a piped '#include' line: make eats '#' as a comment, and
+# escaping it through both make and the shell produced a probe that failed on a
+# perfectly good system -- a check that breaks working builds is worse than no
+# check at all.  /dev/null is the (empty) translation unit.
+HAMLIB_HEADER_OK := $(shell $(CC) $(HAMLIB_CFLAGS) -fsyntax-only \
+    -include hamlib/rig.h -xc /dev/null >/dev/null 2>&1 && echo 1)
+ifneq ($(HAMLIB_HEADER_OK),1)
+$(warning pkg-config reports hamlib, but <hamlib/rig.h> cannot be compiled with)
+$(warning the flags it gives: $(HAMLIB_CFLAGS))
+$(warning )
+$(warning The hamlib package looks installed but its headers are missing or broken.)
+$(warning Either reinstall it:      sudo apt reinstall libhamlib-dev)
+$(warning or build without hamlib:  make HAVE_HAMLIB=0)
+$(error hamlib headers not usable -- see the messages above)
+endif
+endif
+endif
+
 # hidapi: OPTIONAL, and preferred when present.  It is what gives the CM108
 # GPIO PTT backend Windows and macOS support; without it the backend falls back
 # to talking to /dev/hidraw directly, which works on Linux only.  Deliberately
@@ -165,7 +199,7 @@ ifeq ($(HAVE_HERMES_SHM),1)
 HERMES_SHM_CFLAGS = -DHAVE_HERMES_SHM
 endif
 
-CFLAGS = $(COMMON_CFLAGS) -I. -Imodem/freedv -Imodem/mfsk -Imodem -Idatalink_broadcast -Idata_interfaces -Idatalink_arq -Iaudioio -Iaudioio/ffaudio -Icommon -Igui_interface -Iradio_io $(HAMLIB_CFLAGS) $(HERMES_SHM_CFLAGS)
+CFLAGS = $(COMMON_CFLAGS) -I. -Imodem/freedv -Imodem/mfsk -Imodem -Idatalink_broadcast -Idata_interfaces -Idatalink_arq -Iaudioio -Iaudioio/ffaudio -Icommon -Igui_interface -Iradio_io $(HAMLIB_CFLAGS) $(HERMES_SHM_CFLAGS) $(EXTRA_CFLAGS)
 
 ifeq ($(OS),Windows_NT)
 BINARY = mercury.exe
@@ -177,15 +211,15 @@ LDFLAGS=$(FFAUDIO_LINKFLAGS) -lm $(HAMLIB_LDFLAGS) $(HIDAPI_LDFLAGS) $(ATOMIC_LD
 
 MERCURY_LINK_INPUTS = \
 	main.o common/cfg_utils.o common/iniparser/iniparser.o common/iniparser/dictionary.o \
-	datalink_arq/arq.o datalink_arq/arq_tnc.o datalink_arq/arith.o datalink_arq/arq_channels.o \
+	datalink_arq/arq.o datalink_arq/arq_trace.o datalink_arq/arq_tnc.o datalink_arq/arith.o datalink_arq/arq_channels.o \
 	datalink_arq/arq_fsm.o datalink_arq/arq_protocol.o datalink_arq/arq_timing.o datalink_arq/arq_modem.o \
 	datalink_broadcast/broadcast.o datalink_broadcast/kiss.o modem/modem.o modem/modem_freedv.o \
 	modem/modem_mfsk.o modem/mfsk/mfsk.o modem/mfsk/mfsk_ofdm.o modem/mfsk/mfsk_sync.o modem/mfsk/mfsk_ldpc.o modem/mfsk/mfsk_ldpc_1_16.o \
 	modem/mfsk/mfsk_ldpc_2_16.o modem/mfsk/mfsk_ldpc_3_16.o modem/mfsk/mfsk_ldpc_5_16.o modem/mfsk/mfsk_ldpc_8_16.o modem/framer.o \
 	modem/channel_busy.o modem/freedv/libfreedvdata.a audioio/audioio.a common/os_interop.o \
 	common/ring_buffer_posix.o common/shm_posix.o common/crc6.o common/hermes_log.o common/virtual_clock.o \
-	common/chan.o common/queue.o common/mercury_engine.o common/mercury_cli.o data_interfaces/tcp_interfaces.o data_interfaces/net.o \
-	gui_interface/ui_communication.o gui_interface/ui_status.o gui_interface/ui_devices.o \
+	common/chan.o common/queue.o common/mercury_engine.o common/mercury_cli.o common/mercury_modes.o common/message_store.o data_interfaces/tcp_interfaces.o data_interfaces/net.o \
+	gui_interface/ui_communication.o gui_interface/ui_status.o gui_interface/ui_devices.o gui_interface/ui_history.o \
 	gui_interface/websocket/mongoose.o gui_interface/websocket/mercury_websocket.o \
 	gui_interface/websocket/web_packed.o \
 	radio_io/radio_io.o radio_io/serial_ptt.o radio_io/cm108_ptt.o $(HIDAPI_OBJS)
@@ -224,8 +258,6 @@ install: all
 # against each layout.  -MMD emits a .d per object and -MP keeps a removed
 # header from breaking the build; -include pulls them in (leading dash: absent
 # on the first build, which is correct).
-MERCURY_DEPS = $(patsubst %.o,%.d,$(filter %.o,$(MERCURY_LINK_INPUTS)))
--include $(MERCURY_DEPS)
 
 $(BINARY): $(MERCURY_LINK_INPUTS)
 	$(CC) -o $(BINARY)  \
@@ -250,12 +282,12 @@ main.o: main.c .git_hash_stamp
 # `fyne-ui-windows` cross-build (whose host context would otherwise compile a
 # native ELF object that the mingw linker rejects).
 $(HIDAPI_W64_DIR)/hid.o: $(HIDAPI_W64_DIR)/src/hid.c
-	$(MINGW_CC) -O2 -I$(HIDAPI_W64_DIR)/include -I$(HIDAPI_W64_DIR)/src -c $< -o $@
+	$(MINGW_CC) -MMD -MP -O2 -I$(HIDAPI_W64_DIR)/include -I$(HIDAPI_W64_DIR)/src -c $< -o $@
 
 # Vendored hidapi for macOS: the IOKit backend, built from source so a stock
 # macOS with only the Xcode command line tools still gets CM108 PTT.
 $(HIDAPI_MACOS_DIR)/hid.o: $(HIDAPI_MACOS_DIR)/src/hid.c
-	$(CC) -O2 -I$(HIDAPI_MACOS_DIR)/include -c $< -o $@
+	$(CC) -MMD -MP -O2 -I$(HIDAPI_MACOS_DIR)/include -c $< -o $@
 
 internal_deps:
 	$(MAKE) -C modem
@@ -308,16 +340,16 @@ datalink_broadcast/bcast_file.w64.o: datalink_broadcast/bcast_file.c
 
 MERCURY_CORE_OBJS = \
 	common/cfg_utils.o common/iniparser/iniparser.o common/iniparser/dictionary.o \
-	datalink_arq/arq.o datalink_arq/arq_tnc.o datalink_arq/arith.o datalink_arq/arq_channels.o \
+	datalink_arq/arq.o datalink_arq/arq_trace.o datalink_arq/arq_tnc.o datalink_arq/arith.o datalink_arq/arq_channels.o \
 	datalink_arq/arq_fsm.o datalink_arq/arq_protocol.o datalink_arq/arq_timing.o datalink_arq/arq_modem.o \
 	datalink_broadcast/broadcast.o datalink_broadcast/kiss.o \
 	modem/modem.o modem/modem_freedv.o modem/modem_mfsk.o modem/mfsk/mfsk.o modem/mfsk/mfsk_ofdm.o modem/mfsk/mfsk_sync.o \
 	modem/mfsk/mfsk_ldpc.o modem/mfsk/mfsk_ldpc_1_16.o modem/mfsk/mfsk_ldpc_2_16.o modem/mfsk/mfsk_ldpc_3_16.o \
 	modem/mfsk/mfsk_ldpc_5_16.o modem/mfsk/mfsk_ldpc_8_16.o modem/framer.o modem/channel_busy.o common/os_interop.o \
 	common/ring_buffer_posix.o common/shm_posix.o common/crc6.o common/hermes_log.o common/virtual_clock.o \
-	common/chan.o common/queue.o common/mercury_engine.o common/mercury_cli.o \
+	common/chan.o common/queue.o common/mercury_engine.o common/mercury_cli.o common/mercury_modes.o common/message_store.o \
 	data_interfaces/tcp_interfaces.o data_interfaces/net.o \
-	gui_interface/ui_communication.o gui_interface/ui_status.o gui_interface/ui_devices.o \
+	gui_interface/ui_communication.o gui_interface/ui_status.o gui_interface/ui_devices.o gui_interface/ui_history.o \
 	gui_interface/websocket/mongoose.o gui_interface/websocket/mercury_websocket.o \
 	gui_interface/websocket/web_packed.o \
 	radio_io/radio_io.o radio_io/serial_ptt.o radio_io/cm108_ptt.o $(HIDAPI_OBJS)
@@ -849,11 +881,11 @@ windows-installer: windows fyne-ui-windows windows-installer-stage
 	@echo ""
 
 clean:
-	rm -f $(MERCURY_DEPS)
 	rm -f mercury mercury.exe *.o *.d .git_hash_stamp mercury-*.zip libmercury_core.a libmercury_core_w64.a
 	rm -rf mercury-[0-9]*
 	rm -f $(WINDOWS_INSTALLER_DIR)/$(FYNE_UI_BIN)
 	rm -f $(FYNE_UI_DIR)/engine/mercury_bridge.o $(FYNE_UI_DIR)/engine/mercury_bridge_w64.o
+	rm -f $(FYNE_UI_DIR)/engine/mercury_bridge.d $(FYNE_UI_DIR)/engine/mercury_bridge_w64.d
 	rm -f mercury-ui $(FYNE_UI_DIR)/mercury-ui $(FYNE_UI_DIR)/mercury-fyne-ui
 	rm -f $(MACOS_DMG) $(FYNE_UI_DIR)/$(MACOS_DMG)
 	rm -f $(MACOS_DMG_UNIVERSAL) $(FYNE_UI_DIR)/$(MACOS_DMG_UNIVERSAL)
@@ -886,3 +918,17 @@ test:
 
 integration-test:
 	cd tests/integration && go test -v ./...
+
+# Pull in the header dependencies generated by -MMD (see config.mk).  Include
+# only the .d files next to the objects THIS Makefile compiles: paths inside a
+# .d are relative to the directory the compiler ran in, so they only resolve
+# correctly from the Makefile that built them.  The top level compiles main.o,
+# the RaptorQ + bcast_file objects, the fyne-ui engine bridge, and the vendored
+# hidapi objects -- and must NOT sweep in the sub-makes' .d files (common/*.d,
+# datalink_arq/*.d, ...), whose relative paths would be resolved wrongly here.
+TOP_DEPS := main.d \
+	datalink_broadcast/bcast_file.d datalink_broadcast/bcast_file.w64.d \
+	datalink_broadcast/raptorq/lib/*.d datalink_broadcast/raptorq/deps/obl/*.d \
+	$(FYNE_UI_DIR)/engine/mercury_bridge.d $(FYNE_UI_DIR)/engine/mercury_bridge_w64.d \
+	$(HIDAPI_W64_DIR)/hid.d $(HIDAPI_MACOS_DIR)/hid.d
+-include $(wildcard $(TOP_DEPS))

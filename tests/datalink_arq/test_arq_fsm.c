@@ -21,6 +21,7 @@ DEFINE_FFF_GLOBALS;
 
 #include "arq_fsm.h"
 #include "arq_protocol.h"
+#include "virtual_clock.h"   /* time_now_ms(), to stage a busy channel */
 #include "freedv/freedv_api.h"
 #include "modem_mfsk.h"   /* MERCURY_MODE_MFSK */
 
@@ -36,6 +37,7 @@ FAKE_VOID_FUNC(fake_notify_cancelpending);
 FAKE_VOID_FUNC(fake_notify_disconnected, bool);
 FAKE_VOID_FUNC(fake_deliver_rx_data, const uint8_t *, size_t);
 FAKE_VALUE_FUNC(int, fake_tx_backlog);
+FAKE_VALUE_FUNC(bool, fake_channel_busy);
 FAKE_VALUE_FUNC(int, fake_tx_read, uint8_t *, size_t);
 FAKE_VOID_FUNC(fake_send_buffer_status, int);
 
@@ -47,6 +49,7 @@ static arq_fsm_callbacks_t test_callbacks = {
     .notify_disconnected = fake_notify_disconnected,
     .deliver_rx_data     = fake_deliver_rx_data,
     .tx_backlog          = fake_tx_backlog,
+    .channel_busy        = fake_channel_busy,
     .tx_read             = fake_tx_read,
     .send_buffer_status  = fake_send_buffer_status,
 };
@@ -78,6 +81,7 @@ void setUp(void)
     RESET_FAKE(fake_notify_disconnected);
     RESET_FAKE(fake_deliver_rx_data);
     RESET_FAKE(fake_tx_backlog);
+    RESET_FAKE(fake_channel_busy);
     RESET_FAKE(fake_tx_read);
     RESET_FAKE(fake_send_buffer_status);
     FFF_RESET_HISTORY();
@@ -312,6 +316,73 @@ void test_accept_transitions_to_connected(void)
 
     TEST_ASSERT_EQUAL_INT(ARQ_CONN_CONNECTED, sess.conn_state);
     TEST_ASSERT_GREATER_THAN(0, fake_notify_connected_fake.call_count);
+}
+
+/* The listen mode (initial_payload_mode) is an operator setting for the IDLE
+ * decoder -- which broadcast frames the station can hear while no session is
+ * up.  It must not leak into a session: an inbound CALL answered on a station
+ * listening in QAM16C2 must still start its mode ladder at the start rung
+ * (arq_mode_ladder[ARQ_LADDER_START_LEVEL] -- DATAC15 on trunk, the MFSK floor
+ * here; asserted symbolically so the test means the same on both),
+ * or the first data burst of every inbound connection would be sent in a mode
+ * the link may not support at all.  This pins the guarantee that makes the
+ * MODE control-port command safe to accept while LISTENING. */
+void test_listen_mode_does_not_leak_into_inbound_session(void)
+{
+    sess.initial_payload_mode = FREEDV_MODE_QAM16C2;
+
+    arq_event_t ev = make_event(ARQ_EV_APP_LISTEN);
+    arq_fsm_dispatch(&sess, &ev);
+    /* Entering LISTENING puts the idle decoder on the listen mode. */
+    TEST_ASSERT_EQUAL_INT(FREEDV_MODE_QAM16C2, sess.peer_tx_mode);
+
+    ev = make_event(ARQ_EV_RX_CALL);
+    ev.session_id = 0x42;
+    strncpy(ev.remote_call, "REMOTE1", CALLSIGN_MAX_SIZE);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_ACCEPTING, sess.conn_state);
+
+    const int start_rung = arq_mode_ladder[ARQ_LADDER_START_LEVEL];
+
+    /* The caller's first data burst completes the inbound connect. */
+    ev = make_event(ARQ_EV_RX_DATA);
+    ev.session_id = 0x42;
+    ev.mode       = start_rung;
+    arq_fsm_dispatch(&sess, &ev);
+
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_CONNECTED, sess.conn_state);
+    TEST_ASSERT_EQUAL_INT(start_rung, sess.payload_mode);
+    TEST_ASSERT_NOT_EQUAL(FREEDV_MODE_QAM16C2, sess.payload_mode);
+    /* The listen mode is remembered for the next idle period, not applied. */
+    TEST_ASSERT_EQUAL_INT(FREEDV_MODE_QAM16C2, sess.initial_payload_mode);
+}
+
+/* ...and the converse: once the session ends, the idle decoder goes back to
+ * the listen mode rather than being stranded on whatever rung the ladder
+ * happened to finish on -- otherwise broadcast RX would silently stop working
+ * after every ARQ call. */
+void test_listen_mode_restored_after_session_ends(void)
+{
+    sess.initial_payload_mode = FREEDV_MODE_QAM16C2;
+
+    arq_event_t ev = make_event(ARQ_EV_APP_LISTEN);
+    arq_fsm_dispatch(&sess, &ev);
+    ev = make_event(ARQ_EV_APP_CONNECT);
+    strncpy(ev.remote_call, "DST1", CALLSIGN_MAX_SIZE);
+    arq_fsm_dispatch(&sess, &ev);
+    ev = make_event(ARQ_EV_RX_ACCEPT);
+    ev.session_id = sess.session_id;
+    strncpy(ev.remote_call, "DST1", CALLSIGN_MAX_SIZE);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_CONNECTED, sess.conn_state);
+    /* The session starts on the ladder, away from the listen mode. */
+    TEST_ASSERT_EQUAL_INT(arq_mode_ladder[ARQ_LADDER_START_LEVEL], sess.peer_tx_mode);
+
+    ev = make_event(ARQ_EV_RX_DISCONNECT);
+    ev.session_id = sess.session_id;
+    arq_fsm_dispatch(&sess, &ev);
+
+    TEST_ASSERT_EQUAL_INT(FREEDV_MODE_QAM16C2, sess.peer_tx_mode);
 }
 
 /* APP_DISCONNECT from CONNECTED */
@@ -607,6 +678,7 @@ void test_app_disconnect_defers_in_wait_ack(void)
     TEST_ASSERT_EQUAL_INT(ARQ_CONN_CONNECTED, sess.conn_state);
     TEST_ASSERT_EQUAL_INT(ARQ_DFLOW_DATA_TX, sess.dflow_state);
 }
+
 
 
 
@@ -1195,6 +1267,89 @@ void test_wait_ack_deadline_stagger_is_exact(void)
     TEST_ASSERT_EQUAL_UINT64(base, sess.deadline_ms);
 }
 
+/* An ACCEPT is only correct one channel guard after a CALL we actually heard:
+ * that is the only moment we know the caller has dropped PTT and is listening.
+ *
+ * The RX window armed at TX_COMPLETE is a LISTENING window, not a retry timer.
+ * Firing an ACCEPT when it expires has no phase relationship to the caller and
+ * lands inside its next CALL, where a half-duplex radio is deaf.  This is a
+ * protocol invariant — the caller cannot hear anything over its own
+ * transmission — independent of any measured connect outcome.
+ *
+ * tx_retries_left is spent whether we transmit or merely wait, so the frame
+ * counter is what distinguishes the two. */
+void test_accept_is_only_sent_in_answer_to_a_heard_call(void)
+{
+    enter_accepting();
+
+    /* The CALL that put us here earns one ACCEPT. */
+    int sent = (int)fake_send_tx_frame_fake.call_count;
+    arq_event_t ev = make_event(ARQ_EV_TIMER_RETRY);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(sent + 1, (int)fake_send_tx_frame_fake.call_count);
+
+    /* Our ACCEPT finishes: the deadline now guards the caller's reply. */
+    ev = make_event(ARQ_EV_TX_COMPLETE);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_FALSE(sess.accept_tx_pending);
+    TEST_ASSERT_EQUAL_UINT64(1000 + ARQ_ACCEPT_RX_WINDOW_MS, sess.deadline_ms);
+
+    /* That window expiring means the caller never came back.  Stay off the air
+     * -- but keep spending the budget, so a pending call stays bounded. */
+    sent = (int)fake_send_tx_frame_fake.call_count;
+    int budget = (int)sess.tx_retries_left;
+    ev = make_event(ARQ_EV_TIMER_RETRY);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(sent, (int)fake_send_tx_frame_fake.call_count);
+    TEST_ASSERT_EQUAL_INT(budget - 1, (int)sess.tx_retries_left);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_ACCEPTING, sess.conn_state);
+
+    /* A fresh CALL re-arms both the budget and the right to transmit, and
+     * re-anchors the ACCEPT to the gap the caller just opened — one channel
+     * guard after NOW, not a leftover RX-window deadline. */
+    arq_event_t call = make_event(ARQ_EV_RX_CALL);
+    call.session_id = 0x42;
+    strncpy(call.remote_call, "REMOTE1", CALLSIGN_MAX_SIZE);
+    arq_fsm_dispatch(&sess, &call);
+    TEST_ASSERT_TRUE(sess.accept_tx_pending);
+    TEST_ASSERT_EQUAL_UINT64(1000 + ARQ_CHANNEL_GUARD_MS, sess.deadline_ms);
+
+    ev = make_event(ARQ_EV_TIMER_RETRY);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(sent + 1, (int)fake_send_tx_frame_fake.call_count);
+}
+
+/* The silent-wait give-up path: after the RX window armed at TX_COMPLETE
+ * closes without another CALL, we must hold the pending call open for the
+ * remaining budget WITHOUT transmitting again, then return to LISTENING. */
+void test_accepting_silent_wait_gives_up_after_budget(void)
+{
+    enter_accepting();
+
+    /* First (and only) ACCEPT, anchored to the CALL that put us here. */
+    arq_event_t ev = make_event(ARQ_EV_TIMER_RETRY);
+    arq_fsm_dispatch(&sess, &ev);
+    int sent = (int)fake_send_tx_frame_fake.call_count;
+    TEST_ASSERT_EQUAL_INT(1, sent);
+
+    /* ACCEPT finishes; the caller never comes back. */
+    ev = make_event(ARQ_EV_TX_COMPLETE);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_FALSE(sess.accept_tx_pending);
+
+    /* Exhaust the remaining budget through silent waits: every slot must be
+     * spent off the air, and the give-up must still arrive. */
+    for (int i = 0; i < ARQ_ACCEPT_RETRY_SLOTS + 2; i++) {
+        ev = make_event(ARQ_EV_TIMER_RETRY);
+        mock_set_uptime_ms(1000 + (uint64_t)(i + 1) * 10000);
+        arq_fsm_dispatch(&sess, &ev);
+        TEST_ASSERT_EQUAL_INT(sent, (int)fake_send_tx_frame_fake.call_count);
+        if (sess.conn_state == ARQ_CONN_LISTENING)
+            break;
+    }
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_LISTENING, sess.conn_state);
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -1209,6 +1364,8 @@ int main(void)
     RUN_TEST(test_accepting_reanchors_accept_retry_on_repeated_call);
     RUN_TEST(test_incoming_call_records_dialed_secondary);
     RUN_TEST(test_accept_transitions_to_connected);
+    RUN_TEST(test_listen_mode_does_not_leak_into_inbound_session);
+    RUN_TEST(test_listen_mode_restored_after_session_ends);
     RUN_TEST(test_disconnect_from_connected);
     RUN_TEST(test_listen_off_drops_pending_accept);
     RUN_TEST(test_listen_off_drops_outgoing_call);
@@ -1243,5 +1400,7 @@ int main(void)
     RUN_TEST(test_retx_flagged_frame_does_not_climb_the_mirror);
     RUN_TEST(test_irs_mirror_resets_toward_floor_on_silence);
     RUN_TEST(test_calling_reanchors_retry_on_tx_complete);
+    RUN_TEST(test_accept_is_only_sent_in_answer_to_a_heard_call);
+    RUN_TEST(test_accepting_silent_wait_gives_up_after_budget);
     return UNITY_END();
 }

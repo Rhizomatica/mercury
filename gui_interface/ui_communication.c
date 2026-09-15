@@ -42,7 +42,9 @@
 #include "../data_interfaces/net.h"
 #include "../data_interfaces/tcp_interfaces.h"
 #include "../common/hermes_log.h"
+#include "../common/message_store.h"
 #include "../modem/freedv/modem_stats.h"
+#include "ui_history.h"
 #include "../modem/freedv/freedv_api.h"
 #include "../modem/modem.h"
 #include "../radio_io/radio_io.h"  /* RADIO_TYPE_NONE */
@@ -105,6 +107,7 @@ static void ws_connect_handler(void *user_data)
     if (ctx) {
         ctx->soundcard_list_pending = 1;
         ctx->radio_list_pending = 1;
+        ctx->history_pending = 1;
     }
 }
 
@@ -868,6 +871,34 @@ void *ui_publisher_thread(void *arg)
                 free(radios);
                 free(buf);
             }
+        }
+
+        // --- Send persisted chat history when a new UI client connects ---
+        if (ctx->history_pending)
+        {
+            ctx->history_pending = 0;
+
+            size_t count = 0, snap_len = 0;
+            char *snap = msg_store_snapshot(&count, &snap_len);
+            bool owned = (snap != NULL);
+
+            /* Wrap the newline-delimited JSONL snapshot in a single
+             * {"type":"history","messages":[...]} frame (each snapshot line is
+             * already a complete JSON object).  An empty ring yields a NULL
+             * snapshot, so pass an empty buffer with count 0. */
+            char *buf = ui_history_frame_build(owned ? snap : "", count, snap_len);
+            if (buf)
+            {
+                ws_broadcast_json(&ctx->ws, buf);
+                free(buf);
+            }
+            else
+            {
+                HLOGE(UI_LOG_TAG, "out of memory building the history frame");
+            }
+
+            if (owned)
+                free(snap);
         }
 
         hermes_usleep(UI_PUBLISH_INTERVAL_US);

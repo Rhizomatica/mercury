@@ -65,6 +65,7 @@ func TestMercuryARQTransfer(t *testing.T) {
 	if v := os.Getenv("MERCURY_CH_FADING"); v != "" {
 		params.Fading = v // mpg | mpp | mpd
 	}
+	requireChFading(t, repoRoot, params.Fading)
 	if v := os.Getenv("MERCURY_CH_GAIN"); v != "" {
 		g, err := strconv.ParseFloat(v, 64)
 		if err != nil {
@@ -73,14 +74,32 @@ func TestMercuryARQTransfer(t *testing.T) {
 		params.Gain = g
 	}
 
+	// MERCURY_TEST_TRANSPORT=sock runs the deterministic lockstep bench
+	// instead of the real-time FIFO bridge: virtual time advances only as the
+	// simulator hands out blocks, so a pinned seed reproduces a run exactly.
+	// See socksim_test.go for why that matters at the fringe.
+	useSock := os.Getenv("MERCURY_TEST_TRANSPORT") == "sock"
+
 	dir := t.TempDir()
 	aRX := filepath.Join(dir, "a_rx.s32le.fifo")
 	aTX := filepath.Join(dir, "a_tx.s32le.fifo")
 	bRX := filepath.Join(dir, "b_rx.s32le.fifo")
 	bTX := filepath.Join(dir, "b_tx.s32le.fifo")
-	for _, p := range []string{aRX, aTX, bRX, bTX} {
-		if err := syscall.Mkfifo(p, 0600); err != nil {
-			t.Fatalf("mkfifo %s: %v", p, err)
+	// Unix socket paths are capped near 108 bytes, and t.TempDir() is long,
+	// so the sock bench puts its sockets somewhere short.
+	sockDir, err := os.MkdirTemp("", "msim")
+	if err != nil {
+		t.Fatalf("temp dir: %v", err)
+	}
+	defer os.RemoveAll(sockDir)
+	sockA := filepath.Join(sockDir, "a.sock")
+	sockB := filepath.Join(sockDir, "b.sock")
+
+	if !useSock {
+		for _, p := range []string{aRX, aTX, bRX, bTX} {
+			if err := syscall.Mkfifo(p, 0600); err != nil {
+				t.Fatalf("mkfifo %s: %v", p, err)
+			}
 		}
 	}
 
@@ -90,17 +109,29 @@ func TestMercuryARQTransfer(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	timingLogs := map[string]string{}
 	startInstance := func(name, rxPath, txPath string, port, bcastPort int) (*exec.Cmd, *processWait, *os.File, *os.File) {
 		stdout, stderr := tempLogFilesNamed(t, name)
-		args := []string{
-			"-x", "fifo",
-			"-i", rxPath,
-			"-o", txPath,
+		// -L writes a TIMING-level log FILE through the async logger: that is
+		// where the per-session disconnect reason and the tx/ack/retry
+		// timeline land.  They never reach the console at the default level,
+		// and raising the console level perturbs the timing enough to hide
+		// the races worth diagnosing.
+		timing := filepath.Join(t.TempDir(), name+".timing.log")
+		timingLogs[name] = timing
+		transport := []string{"-x", "fifo", "-i", rxPath, "-o", txPath}
+		if useSock {
+			// The station connects to the simulator and takes its clock from
+			// it; there is no separate playback path.
+			transport = []string{"-x", "sock", "-i", rxPath}
+		}
+		args := append([]string{"-L", timing}, transport...)
+		args = append(args,
 			"-p", fmt.Sprint(port),
 			"-b", fmt.Sprint(bcastPort),
 			"-m", "1",
 			"-C", filepath.Join(t.TempDir(), "missing-mercury.ini"),
-		}
+		)
 		// MERCURY_TEST_VERBOSE=1 runs both peers at DEBUG.  Off by default:
 		// the ARQ/modem traces are what you need to see which mode a stalled
 		// transfer died on, but they are far too noisy for a normal CI run.
@@ -117,17 +148,46 @@ func TestMercuryARQTransfer(t *testing.T) {
 		return cmd, waitForProcess(cmd), stdout, stderr
 	}
 
-	cmdA, procA, outA, errA := startInstance("A", aRX, aTX, aPort, aPort+100)
-	defer func() { _ = stopProcess(t, cmdA, procA, outA.Name(), errA.Name()) }()
-	cmdB, procB, outB, errB := startInstance("B", bRX, bTX, bPort, bPort+100)
-	defer func() { _ = stopProcess(t, cmdB, procB, outB.Name(), errB.Name()) }()
+	if useSock {
+		fwd, rev := params, params
+		fwd.SeedSalt, rev.SeedSalt = 1, 2
+		sim, err := startSockSim(ctx, chBin, sockA, sockB, fwd, rev)
+		if err != nil {
+			t.Fatalf("start sock sim: %v", err)
+		}
+		defer func() {
 
-	bridge := startChannelBridge(ctx, chBin, aTX, bRX, bTX, aRX, params)
-	defer bridge.Close()
+			aS, aN, bS, bN := sim.BurstLevels()
+			fmt.Printf("SOCKSIM burst/noise: A hears %.1f/%.1f dBFS (%.1f dB), B hears %.1f/%.1f dBFS (%.1f dB)\n",
+				aS, aN, aS-aN, bS, bN, bS-bN)
+			txA, txB := sim.TxLevels()
+			fmt.Printf("SOCKSIM tx level (keyed): A=%.1f dBFS  B=%.1f dBFS\n", txA, txB)
+			lvlA, lvlB := sim.RxLevels()
+			fmt.Printf("SOCKSIM rx level: A=%.1f dBFS  B=%.1f dBFS\n", lvlA, lvlB)
+			blocks, late, maxLate := sim.Cadence()
+			fmt.Printf("SOCKSIM cadence: %d blocks (%.1fs of audio), %d late, worst %dms\n",
+				blocks, float64(blocks)*sockBlockMs/1000, late, maxLate)
+			sim.Close() // drains the channel models so their SNR report exists
+			fmt.Printf("SOCKSIM measured SNR3k: %s\n", sim.ChannelSNR())
+		}()
+	} else {
+		bridge := startChannelBridge(ctx, chBin, aTX, bRX, bTX, aRX, params)
+		defer bridge.Close()
+	}
+
+	aIn, bIn := aRX, bRX
+	if useSock {
+		aIn, bIn = sockA, sockB
+	}
+	cmdA, procA, outA, errA := startInstance("A", aIn, aTX, aPort, aPort+100)
+	defer func() { _ = stopProcess(t, cmdA, procA, outA.Name(), errA.Name()) }()
+	cmdB, procB, outB, errB := startInstance("B", bIn, bTX, bPort, bPort+100)
+	defer func() { _ = stopProcess(t, cmdB, procB, outB.Name(), errB.Name()) }()
 
 	failWithLogs := func(format string, args ...interface{}) {
 		printLogs(t, outA.Name(), errA.Name())
 		printLogs(t, outB.Name(), errB.Name())
+		printLogs(t, timingLogs["A"], timingLogs["B"])
 		t.Fatalf(format, args...)
 	}
 
@@ -226,14 +286,29 @@ func TestMercuryARQTransfer(t *testing.T) {
 		repeats = (kb*1024 + 33) / 34
 	}
 	payload := []byte(strings.Repeat("MERCURY-DATAC15-PAYLOAD-0123456789", repeats))
+	// Exact byte count, which MERCURY_TEST_PAYLOAD_KB cannot express.  A
+	// like-for-like A/B across the SNR range needs ONE payload at every point.
+	if v := os.Getenv("MERCURY_TEST_PAYLOAD_B"); v != "" {
+		nb, err := strconv.Atoi(v)
+		if err != nil || nb <= 0 {
+			t.Fatalf("bad MERCURY_TEST_PAYLOAD_B %q", v)
+		}
+		unit := "MERCURY-DATAC15-PAYLOAD-0123456789"
+		payload = []byte(strings.Repeat(unit, nb/len(unit)+1))[:nb]
+	}
 	if _, err := dataA.Write(payload); err != nil {
 		failWithLogs("write payload: %v", err)
 	}
 
 	rx := make([]byte, 0, len(payload))
 	buf := make([]byte, 4096)
+	// Scale on the SLOWEST rung, not a nominal one: MFSK carries 61 bit/s
+	// (~7.6 B/s), so the old 100 B/s allowance timed out a perfectly healthy
+	// fringe transfer long before it could finish.  5 B/s is a floor beneath
+	// every mode in the ladder, so this bounds a genuine stall without
+	// failing a link that is merely slow because the channel is bad.
 	rxDeadline := time.Now().Add(5*time.Minute +
-		time.Duration(len(payload)/100)*time.Second)
+		time.Duration(len(payload)/5)*time.Second)
 	for len(rx) < len(payload) && time.Now().Before(rxDeadline) {
 		if err := dataB.SetReadDeadline(time.Now().Add(15 * time.Second)); err != nil {
 			t.Fatal(err)

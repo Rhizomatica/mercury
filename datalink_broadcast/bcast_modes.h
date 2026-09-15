@@ -34,6 +34,72 @@
 #define BCAST_TAG_BODY_SIZE    3
 #define BCAST_FRAME_OVERHEAD   (1 + BCAST_CONFIG_BODY_SIZE + BCAST_TAG_BODY_SIZE)
 
+
+/* Symbol size, decoupled from the modem frame.
+ *
+ * The obvious sizing is one symbol per frame, T = frame - overhead, and that is
+ * what this used to do.  It is the most efficient possible packing and it has
+ * one fatal property: T is then a function of the MODE, so RaptorQ symbols
+ * collected at one mode are worthless at another.  Changing mode mid-transfer
+ * throws away everything the receiver has, and interleaving two modes in one
+ * carousel is impossible.
+ *
+ * Fixing T instead makes a symbol mode-independent: any mode can carry symbols
+ * for the same source block, a mode change costs nothing, and one transmission
+ * can serve a fast audience and a fringe audience at the same time -- each
+ * decoding whatever it can, all of it counting toward the same object.
+ *
+ * 41 bytes is the largest T that still fits a DATAC4 frame (54 - 9 fixed - 3
+ * tag), so DATAC4 is the most robust rung that can carry one whole symbol.
+ * Going lower to admit DATAC15 (30 B) costs 7 points of efficiency at the fast
+ * end to serve a rung carrying 17 B a frame; DATAC16 can never participate at
+ * all (14 B frame, 5 left after the fixed part).
+ *
+ * The symbols packed into one frame are CONSECUTIVE ESIs of ONE source block,
+ * so the frame's single reduced tag describes all of them: the receiver reads
+ * the base sbn/ESI and derives ESI+1, ESI+2, ... for the rest.  Tagging each
+ * symbol separately would cost 3 bytes apiece -- 6.8 points at QAM16C2 -- to
+ * buy a per-symbol block spread that a fountain code does not need, since
+ * every block has to reach K+e either way.
+ *
+ * The cost of mode-independence is then 1 point: 98.0% payload efficiency at
+ * QAM16C2 against 99.0% for one-symbol-per-frame -- against the 100% extra a
+ * second carousel for the fringe audience would cost. */
+#define BCAST_SYMBOL_SIZE_MIN  41
+
+/* How many whole symbols of `T` a frame of `frame_size` carries.
+ *
+ * Both ends compute this the same way, and the RECEIVER computes it from the
+ * length of the frame it just decoded rather than from any configured mode.
+ * That is what an interleaved carousel would need -- frames of several modes
+ * on the air at once, the receiver taking whichever it managed to decode
+ * without being told which was sent.
+ *
+ * NOT YET REACHABLE, deliberately: this is the fixed-single-mode step.
+ * Fixing T is what makes interleaving POSSIBLE later -- symbols become
+ * mode-independent, so symbols a receiver collects all count toward the same
+ * object no matter which mode carried them.
+ *
+ * The receiving machinery for it already exists: Mercury runs a DUAL
+ * receiver.  modem.c tees each audio chunk into two independent rx workers,
+ * the control plane and the user plane, each decoding on its own mode, and
+ * BOTH deliver through process_received_frame().  So a mixed carousel does
+ * not need a new decoder -- it needs the two workers pointed at the two
+ * interleaved modes, and then the two size gates relaxed to admit both frame
+ * sizes rather than one: modem.c's single broadcast_frame_size, and
+ * bcast_file_rx_frame()'s len != rx->frame_size.
+ *
+ * Note the spare capacity that makes this cheap: while ARQ is disconnected
+ * the control-plane worker is pinned to DATAC16 (arq_modem_preferred_rx_mode()
+ * always returns the control mode) and is decoding nothing useful for
+ * broadcast.  That is a whole idle decoder available to the fringe rung. */
+static inline unsigned bcast_syms_per_frame(size_t frame_size, size_t T)
+{
+    if (T == 0 || frame_size <= BCAST_FRAME_OVERHEAD)
+        return 0;
+    return (unsigned)((frame_size - BCAST_FRAME_OVERHEAD) / T);
+}
+
 /* The reduced tag carries a 16-bit ESI, so the carousel wraps at 65535. */
 #define BCAST_MAX_ESI ((1 << 16) - 1)
 
