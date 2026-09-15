@@ -29,7 +29,7 @@ warn() { printf '  \033[33mWARN\033[0m  %s\n' "$*"; }
 sec()  { printf '\n== %s ==\n' "$*"; }
 
 sec "Tools"
-for t in python3 xdotool Xvfb fluxbox pkcs11-tool keytool java; do
+for t in python3 xdotool Xvfb fluxbox pkcs11-tool java; do
     if command -v "$t" >/dev/null 2>&1; then ok "$t -> $(command -v "$t")"
     else bad "$t MISSING"; fi
 done

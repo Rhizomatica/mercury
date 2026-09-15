@@ -47,6 +47,10 @@ endif
 # Default target
 all: $(OUT)
 
+# Rebuild the tools when their flags change (BUILD_CONFIG, see config.mk).  The
+# recipes filter $^, so these never reach the compiler.
+$(OUT): $(BUILD_CONFIG)
+
 broadcast_test: broadcast_test.c ../datalink_broadcast/kiss.c
 	$(CC) $(CFLAGS) -I../datalink_broadcast -o $@ $(filter %.c %.a %.o,$^) $(LDFLAGS)
 
@@ -73,13 +77,13 @@ run: broadcast_test
 mfsk_floor_sweep: mfsk_floor_sweep.c chanutil.c ../common/watterson.c ../common/mercury_prng.c \
                   ../modem/modem_mfsk.c ../modem/mfsk/mfsk.c ../modem/mfsk/mfsk_sync.c \
                   ../modem/mfsk/mfsk_ofdm.c ../modem/mfsk/mfsk_ldpc.c ../modem/mfsk/mfsk_ldpc_8_16.c
-	$(CC) $(CFLAGS) -o $@ $^ ../modem/freedv/libfreedvdata.a $(LDFLAGS) -lm
+	$(CC) $(CFLAGS) -o $@ $(filter %.c %.a %.o,$^) ../modem/freedv/libfreedvdata.a $(LDFLAGS) -lm
 
 # What the pattern ACK's second repetition buys: detection vs SNR and
 # false-accept on noise, for one repetition and two, at every threshold.
 ackpat_sweep: ackpat_sweep.c ../modem/modem_mfsk.c ../modem/mfsk/mfsk.c \
               ../modem/mfsk/mfsk_sync.c ../modem/mfsk/mfsk_ofdm.c ../modem/mfsk/mfsk_ldpc.c ../modem/mfsk/mfsk_ldpc_8_16.c
-	$(CC) $(CFLAGS) -o $@ $^ ../modem/freedv/libfreedvdata.a $(LDFLAGS) -lm
+	$(CC) $(CFLAGS) -o $@ $(filter %.c %.a %.o,$^) ../modem/freedv/libfreedvdata.a $(LDFLAGS) -lm
 
 # Drives the real freedv OFDM modems (not a model) to separate acquisition
 # failures from decode failures.  chanutil puts it on the project's own

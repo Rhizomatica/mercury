@@ -72,7 +72,7 @@ SS_APT_PKGS="xvfb fluxbox xdotool opensc osslsigncode default-jre-headless image
 
 ss_require_tools() {
     local missing="" t
-    for t in python3 xdotool Xvfb fluxbox pkcs11-tool keytool; do
+    for t in python3 xdotool Xvfb fluxbox pkcs11-tool; do
         ss_have "$t" || missing="$missing $t"
     done
     [ -z "$missing" ] || {
@@ -175,17 +175,8 @@ ss_snap() {
 # snapshot only when SS_DEBUG=1 (step-by-step tracing)
 ss_snap_debug() { [ "${SS_DEBUG:-0}" = 1 ] && ss_snap "$@"; return 0; }
 
-# --- write the SunPKCS11 config jsign/keytool use to reach the module ---
+# --- write the SunPKCS11 config jsign uses to reach the module ---
 ss_write_conf() { printf 'name = SimplySign\nlibrary = %s\nslotListIndex = 0\n' "$PKCS11" > "$SS_CONF"; }
-
-# --- the signing key's alias (via SunPKCS11 — OpenSC can't enumerate it) ---
-ss_key_alias() {
-    ss_write_conf
-    timeout 40 keytool -list -keystore NONE -storetype PKCS11 \
-        -providerClass sun.security.pkcs11.SunPKCS11 -providerArg "$SS_CONF" \
-        -storepass "" 2>/dev/null \
-        | awk -F, '/PrivateKeyEntry/{gsub(/ /,"",$1); print $1; exit}'
-}
 
 # --- largest on-screen SimplySign window: sets WID BX BY BW BH ---
 ss_find_window() {
@@ -410,16 +401,30 @@ ss_sign_file() {
     local in="$1"
     [ -f "$in" ] || { ss_log "ERROR: no such file: $in"; return 1; }
     ss_login || return 1
-    local alias; alias=$(ss_key_alias)
-    [ -z "$alias" ] && { ss_log "ERROR: no signing key visible via SunPKCS11"; return 1; }
 
-    local attempt rc=1
-    for attempt in 1 2 3; do
-        ss_log "signing $in (alias $alias, attempt $attempt)"
-        if "${JSIGN[@]}" --storetype PKCS11 --keystore "$SS_CONF" --storepass "" \
-                --alias "$alias" --alg "$SS_ALG" --tsaurl "$CERTUM_TSA" "$in" \
-                2>&1 | grep -viE '^Warning|proprietary|will be removed' | sed 's/^/[jsign] /' >&2; then
-            rc=0; break
+    # The signing key is NOT looked up up-front: jsign auto-selects the token's
+    # single key (--alias has been optional since jsign 4.0), so the keytool
+    # alias probe is gone.  That probe was fragile — the SunPKCS11 keystore can
+    # legitimately report no certificate for a few seconds after a successful
+    # login, and a newer Java/image can change keytool's listing output — and it
+    # turned a recoverable "not populated yet" into a hard failure.  Let jsign
+    # report its own error instead: "No certificate found" is that same
+    # not-populated-yet state, and only that error is retried with a wait.
+    ss_write_conf
+
+    local attempt rc=1 out
+    for attempt in $(seq 1 "${SS_SIGN_TRIES:-15}"); do
+        ss_log "signing $in (attempt $attempt)"
+        out=$("${JSIGN[@]}" --storetype PKCS11 --keystore "$SS_CONF" --storepass "" \
+                --alg "$SS_ALG" --tsaurl "$CERTUM_TSA" "$in" 2>&1); rc=$?
+        printf '%s\n' "$out" | grep -viE '^Warning|proprietary|will be removed' | sed 's/^/[jsign] /' >&2
+        [ "$rc" = 0 ] && break
+        if printf '%s' "$out" | grep -qi 'No certificate found'; then
+            # Token live, but the keystore has not enumerated the cert yet
+            # (seen right after login).  Not a bad session: wait and retry.
+            ss_log "keystore not populated yet — retrying in a moment"
+            sleep 4
+            continue
         fi
         ss_log "attempt $attempt failed (transient cloud/timestamp?) — retrying"; sleep 5
     done
@@ -428,7 +433,7 @@ ss_sign_file() {
         command -v osslsigncode >/dev/null && \
             osslsigncode verify "$in" 2>&1 | grep -iE 'Subject:|Issuer :|Serial :|Timestamp' | sed 's/^/[verify] /' >&2 || true
     else
-        ss_log "ERROR: failed to sign $in after 3 attempts"
+        ss_log "ERROR: failed to sign $in after ${SS_SIGN_TRIES:-15} attempts"
     fi
     return $rc
 }

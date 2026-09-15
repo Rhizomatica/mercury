@@ -898,6 +898,22 @@ static void enter_idle_after_call(arq_session_t *sess)
                UINT64_MAX, ARQ_EV_TIMER_RETRY);
 }
 
+/* Tell the host a session ended -- unless it has already asked for the next
+ * call.  Every end-of-session notice goes through here, on every path (peer
+ * ack, timeout, drain deadline, retry exhaustion, peer-initiated disconnect),
+ * because a CONNECT deferred behind the teardown must not be followed by the
+ * OLD session's DISCONNECTED: arriving after the host's new CONNECT, it reads
+ * as "your call failed".  The call's own outcome is the next status the host
+ * sees.  Skipping the callback also leaves the new call's addresses and TX
+ * queue alone (arq.c's disconnect callback clears both). */
+static void notify_session_ended(arq_session_t *sess)
+{
+    if (sess->pending_connect)
+        return;
+    if (g_cbs.notify_disconnected)
+        g_cbs.notify_disconnected(false);
+}
+
 static void fsm_disconnected(arq_session_t *sess, const arq_event_t *ev)
 {
     switch (ev->id)
@@ -908,7 +924,7 @@ static void fsm_disconnected(arq_session_t *sess, const arq_event_t *ev)
         if (sess->pending_disconnect_notify)
         {
             sess->pending_disconnect_notify = false;
-            if (g_cbs.notify_disconnected) g_cbs.notify_disconnected(false);
+            notify_session_ended(sess);
             /* Call fully torn down — restore the pre-call idle status. */
             enter_idle_after_call(sess);
         }
@@ -1096,14 +1112,14 @@ static void fsm_calling(arq_session_t *sess, const arq_event_t *ev)
         }
         else
         {
-            if (g_cbs.notify_disconnected) g_cbs.notify_disconnected(false);
+            notify_session_ended(sess);
             enter_idle_after_call(sess);
         }
         break;
 
     case ARQ_EV_APP_STOP_LISTEN:  /* host wants the radio back — abandon the call */
     case ARQ_EV_APP_DISCONNECT:
-        if (g_cbs.notify_disconnected) g_cbs.notify_disconnected(false);
+        notify_session_ended(sess);
         enter_idle_after_call(sess);
         break;
 
@@ -1145,7 +1161,7 @@ static void fsm_accepting(arq_session_t *sess, const arq_event_t *ev)
             sess->deferred_listen_off = false;
             sess->pending_disconnect  = false;
             if (g_timing) arq_timing_record_disconnect(g_timing, "listen_off");
-            if (g_cbs.notify_disconnected) g_cbs.notify_disconnected(false);
+            notify_session_ended(sess);
             enter_idle_after_call(sess);
             break;
         }
@@ -1229,7 +1245,7 @@ static void fsm_accepting(arq_session_t *sess, const arq_event_t *ev)
             sess->deferred_listen_off = false;
             if (g_cbs.notify_cancelpending)
                 g_cbs.notify_cancelpending();
-            if (g_cbs.notify_disconnected) g_cbs.notify_disconnected(false);
+            notify_session_ended(sess);
             enter_idle_after_call(sess);
             break;
         }
@@ -1292,7 +1308,7 @@ static void fsm_accepting(arq_session_t *sess, const arq_event_t *ev)
     case ARQ_EV_APP_DISCONNECT:
         if (g_cbs.notify_cancelpending)
             g_cbs.notify_cancelpending();
-        if (g_cbs.notify_disconnected) g_cbs.notify_disconnected(false);
+        notify_session_ended(sess);
         enter_idle_after_call(sess);
         break;
 
@@ -1301,12 +1317,60 @@ static void fsm_accepting(arq_session_t *sess, const arq_event_t *ev)
     }
 }
 
+/* A CONNECT that arrived during teardown: place it now that the station is idle.
+ * Called from arq_fsm_dispatch() once the station is DISCONNECTED or LISTENING,
+ * both of which handle APP_CONNECT as a fresh call -- one place, so every way a
+ * session can end places the call, not only the ones that were thought of. */
+static void fire_deferred_connect(arq_session_t *sess)
+{
+    if (!sess->pending_connect)
+        return;
+    arq_event_t ev = { .id = ARQ_EV_APP_CONNECT };
+    snprintf(ev.remote_call, CALLSIGN_MAX_SIZE, "%s", sess->pending_connect_call);
+    sess->pending_connect = false;
+    sess->pending_connect_call[0] = '\0';
+    HLOGI(LOG_COMP, "Teardown complete: placing deferred call to %s", ev.remote_call);
+    arq_fsm_dispatch(sess, &ev);
+}
+
 static void fsm_disconnecting(arq_session_t *sess, const arq_event_t *ev)
 {
     const arq_mode_timing_t *tm;
 
     switch (ev->id)
     {
+    case ARQ_EV_APP_CONNECT:
+        /* A new call while the previous one is still tearing down.
+         *
+         * This used to fall through to default and be DROPPED -- no call, no
+         * reply -- while the control port had already answered the command
+         * with OK.  A client that redials promptly (uucp does; so did the
+         * loopsim driver) waited for a CONNECTED that could never come.
+         *
+         * Placing the call over the teardown is not an option: the DISCONNECT
+         * exchange is still on the air.  So remember it and place it the
+         * moment the teardown completes, which gives the client the ordinary
+         * outcome of a CONNECT -- CONNECTED, or DISCONNECTED if the call itself
+         * fails.  The old session's own teardown notice is suppressed then
+         * (see fire_deferred_connect below): arriving after the new CONNECT,
+         * it would read as "your call failed". */
+        sess->pending_connect = true;
+        snprintf(sess->pending_connect_call, CALLSIGN_MAX_SIZE, "%s", ev->remote_call);
+        HLOGI(LOG_COMP, "CONNECT to %s deferred until the teardown completes",
+              sess->pending_connect_call);
+        break;
+
+    case ARQ_EV_APP_DISCONNECT:
+        /* The host changed its mind about a deferred call: drop it.  The
+         * teardown already in progress carries on regardless. */
+        if (sess->pending_connect)
+        {
+            HLOGI(LOG_COMP, "Deferred CONNECT to %s cancelled", sess->pending_connect_call);
+            sess->pending_connect = false;
+            sess->pending_connect_call[0] = '\0';
+        }
+        break;
+
     case ARQ_EV_TIMER_ACK:
         /* Initial DISCONNECT send after channel guard. */
         send_ctrl_frame(sess, ARQ_SUBTYPE_DISCONNECT);
@@ -1318,16 +1382,21 @@ static void fsm_disconnecting(arq_session_t *sess, const arq_event_t *ev)
 
     case ARQ_EV_RX_DISCONNECT:
         HLOGI(LOG_COMP, "Disconnect finalized (peer ack)");
-        if (g_cbs.notify_disconnected) g_cbs.notify_disconnected(false);
+        notify_session_ended(sess);   /* silent if a call is queued behind it */
         if (g_timing) arq_timing_record_disconnect(g_timing, "peer_ack");
         enter_idle_after_call(sess);
         break;
 
     case ARQ_EV_APP_STOP_LISTEN:
         /* The radio was asked for back mid-teardown: stop retransmitting
-         * DISCONNECT.  The peer times out on its own. */
+         * DISCONNECT.  The peer times out on its own.  That also rules out a
+         * deferred call, so drop it first -- notify_session_ended() then tells
+         * the host, rather than leaving it waiting for a CONNECTED that is not
+         * coming. */
         HLOGI(LOG_COMP, "LISTEN OFF while disconnecting — stopping retransmits");
-        if (g_cbs.notify_disconnected) g_cbs.notify_disconnected(false);
+        sess->pending_connect = false;
+        sess->pending_connect_call[0] = '\0';
+        notify_session_ended(sess);
         if (g_timing) arq_timing_record_disconnect(g_timing, "listen_off");
         enter_idle_after_call(sess);
         break;
@@ -1344,7 +1413,7 @@ static void fsm_disconnecting(arq_session_t *sess, const arq_event_t *ev)
         else
         {
             HLOGI(LOG_COMP, "Disconnect finalized (timeout)");
-            if (g_cbs.notify_disconnected) g_cbs.notify_disconnected(false);
+            notify_session_ended(sess);
             if (g_timing) arq_timing_record_disconnect(g_timing, "timeout");
             enter_idle_after_call(sess);
         }
@@ -1389,12 +1458,44 @@ static void fsm_connected(arq_session_t *sess, const arq_event_t *ev)
          * is keyed.  Contrast APP_DISCONNECT below, which defers to drain. */
         HLOGI(LOG_COMP, "LISTEN OFF while connected — releasing the radio");
         sess->pending_disconnect = false;
+        sess->pending_connect    = false;   /* releasing the radio rules out a queued call */
+        sess->pending_connect_call[0] = '\0';
         if (g_timing) arq_timing_record_disconnect(g_timing, "listen_off");
-        if (g_cbs.notify_disconnected) g_cbs.notify_disconnected(false);
+        notify_session_ended(sess);
         enter_idle_after_call(sess);
         return;
 
+    case ARQ_EV_APP_CONNECT:
+        /* A redial that arrives right after DISCONNECT usually lands HERE, not
+         * in DISCONNECTING: the disconnect is deferred while the last frame
+         * waits for its ACK, so the station is still CONNECTED.  Found on the
+         * loopback -- a fix that only handled DISCONNECTING passed every unit
+         * test and still dropped a real redial.  Record the call; it is placed
+         * once the session has fully ended (see arq_fsm_dispatch).
+         *
+         * Without a disconnect already under way this is a CONNECT on a live
+         * session, which is a host error; it stays ignored. */
+        if (sess->pending_disconnect)
+        {
+            sess->pending_connect = true;
+            snprintf(sess->pending_connect_call, CALLSIGN_MAX_SIZE, "%s", ev->remote_call);
+            HLOGI(LOG_COMP, "CONNECT to %s deferred until the teardown completes",
+                  sess->pending_connect_call);
+        }
+        else
+        {
+            HLOGW(LOG_COMP, "CONNECT to %s ignored: a session is already up", ev->remote_call);
+        }
+        return;
+
     case ARQ_EV_APP_DISCONNECT:
+        /* A DISCONNECT after a deferred CONNECT withdraws that call. */
+        if (sess->pending_connect)
+        {
+            HLOGI(LOG_COMP, "Deferred CONNECT to %s cancelled", sess->pending_connect_call);
+            sess->pending_connect = false;
+            sess->pending_connect_call[0] = '\0';
+        }
         /* Defer DISCONNECT while a frame is physically being transmitted
          * (DATA_TX), still awaiting its ACK (WAIT_ACK), or the TX buffer has
          * unsent bytes, so the last application bytes get delivered before
@@ -2060,4 +2161,13 @@ void arq_fsm_dispatch(arq_session_t *sess, const arq_event_t *ev)
     case ARQ_CONN_DISCONNECTING: fsm_disconnecting(sess, ev); break;
     default:                                                   break;
     }
+
+    /* Place a CONNECT that was deferred behind a teardown, once the station is
+     * idle -- whichever way the session ended.  Not while a peer-initiated
+     * disconnect's notice is still pending: that waits for the DISCONNECT ack
+     * frame to finish transmitting, and a CALL must not be queued over it. */
+    if (sess->pending_connect && !sess->pending_disconnect_notify &&
+        (sess->conn_state == ARQ_CONN_DISCONNECTED ||
+         sess->conn_state == ARQ_CONN_LISTENING))
+        fire_deferred_connect(sess);
 }
