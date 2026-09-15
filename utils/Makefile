@@ -47,6 +47,10 @@ endif
 # Default target
 all: $(OUT)
 
+# Rebuild the tools when their flags change (BUILD_CONFIG, see config.mk).  The
+# recipes filter $^, so these never reach the compiler.
+$(OUT): $(BUILD_CONFIG)
+
 broadcast_test: broadcast_test.c ../datalink_broadcast/kiss.c
 	$(CC) $(CFLAGS) -I../datalink_broadcast -o $@ $(filter %.c %.a %.o,$^) $(LDFLAGS)
 
