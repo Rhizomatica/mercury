@@ -2315,6 +2315,10 @@ void *rx_thread(void *g_modem)
      * capture_buffer, the flush policy and the spectrum/busy work; the workers
      * only decode. */
     static rx_worker_t w_ctrl, w_pay;
+    /* Pattern-ACK window, and whether an ACK was due on the previous chunk
+     * (its rising edge resets the window; see the detector below). */
+    mfsk_pattern_window_t pat_win = {0};
+    bool pat_armed = false;
     memset(&w_ctrl, 0, sizeof(w_ctrl));
     memset(&w_pay,  0, sizeof(w_pay));
     pthread_mutex_init(&w_ctrl.mlock, NULL);
@@ -2535,61 +2539,37 @@ void *rx_thread(void *g_modem)
 
         /* --- Pattern ACK detector (3rd consumer) ---
          * A Welch-Costas pattern ACK carries no coded header, so neither freedv
-         * decoder sees it.  Accumulate a sliding window of the 8 kHz passband
-         * chunk and run mfsk_pattern_detect (ack + break tables); on a match
-         * synthesize an ARQ_EV_RX_ACK (HAS_DATA = break).  In stop-and-wait
-         * only one frame is outstanding, so a heard ACK unambiguously acks it;
-         * a stale ACK outside WAIT_ACK is ignored by the FSM.
+         * decoder sees it.  Accumulate the 8 kHz passband chunks in a window
+         * and look for ack/break; on a match synthesize an ARQ_EV_RX_ACK
+         * (HAS_DATA = break).  In stop-and-wait only one frame is outstanding,
+         * so a heard ACK unambiguously acks it; a stale ACK outside WAIT_ACK is
+         * ignored by the FSM.
          *
-         * Gate on expect_pattern_ack (ACCEPTING or CONNECTED): a pattern ACK is
-         * only expected while the answerer awaits the connect-confirm or a live
-         * session awaits a data ACK.  Running this sliding-window correlation
-         * every chunk during CALLING/LISTENING/idle is pure overhead that slows
-         * the RX loop enough to miss the connect-critical DATAC16 ACCEPT and
-         * break the CALL/ACCEPT turnaround. */
-        if (arq_policy_ready && arq_snapshot.expect_pattern_ack)
-        {
-            static int16_t *pat_win = NULL;
-            static int      pat_cap = 0, pat_len = 0;
-            int burst = mfsk_pattern_max_tx_samples();
-            int need  = burst * 3;   /* hold ~3 bursts so one can't straddle out */
-            if (burst > 0)
-            {
-                if (pat_cap < need)
-                {
-                    int16_t *nw = (int16_t *)realloc(pat_win,
-                                                     (size_t)need * sizeof(int16_t));
-                    if (nw) { pat_win = nw; pat_cap = need; }
-                }
-                if (pat_win && pat_cap >= need)
-                {
-                    /* Slide in the new chunk (drop oldest if over capacity). */
-                    int add = chunk_samples;
-                    if (add > pat_cap) add = pat_cap;
-                    if (pat_len + add > pat_cap)
-                    {
-                        int drop = pat_len + add - pat_cap;
-                        memmove(pat_win, pat_win + drop,
-                                (size_t)(pat_len - drop) * sizeof(int16_t));
-                        pat_len -= drop;
-                    }
-                    memcpy(pat_win + pat_len,
-                           capture_i16 + (chunk_samples - add),
-                           (size_t)add * sizeof(int16_t));
-                    pat_len += add;
+         * Gate on expect_pattern_ack (ACCEPTING confirm window, or WAIT_ACK):
+         * running the correlation outside those states is pure overhead.
+         *
+         * The window paces itself to one scan per burst of new audio; see
+         * mfsk_pattern_window_push().  This used to correlate a three-burst
+         * window on EVERY 160-sample chunk -- 4.5 s of CPU per second of audio
+         * -- and the RX loop fell so far behind that a pattern ACK arriving
+         * well inside WAIT_ACK was processed after it closed.  That is how a
+         * turn handover failed about half the time with every ACK sent.
+         *
+         * Opening a new ACK window discards what the last one left behind: an
+         * unmatched burst from the PREVIOUS exchange would otherwise be found
+         * now and reported as this frame's ACK. */
+        if (arq_policy_ready && arq_snapshot.expect_pattern_ack && !pat_armed)
+            mfsk_pattern_window_reset(&pat_win);
+        pat_armed = arq_policy_ready && arq_snapshot.expect_pattern_ack;
 
-                    if (pat_len >= burst)
-                    {
-                        int is_break = 0;
-                        if (mfsk_pattern_detect(pat_win, pat_len, &is_break))
-                        {
-                            HLOGD("modem-rx", "Pattern ACK detected (%s)",
-                                  is_break ? "ACK+TURN" : "ACK");
-                            arq_post_pattern_ack(is_break != 0);
-                            pat_len = 0;   /* consume the window */
-                        }
-                    }
-                }
+        if (pat_armed)
+        {
+            int is_break = 0;
+            if (mfsk_pattern_window_push(&pat_win, capture_i16, chunk_samples, &is_break))
+            {
+                HLOGD("modem-rx", "Pattern ACK detected (%s)",
+                      is_break ? "ACK+TURN" : "ACK");
+                arq_post_pattern_ack(is_break != 0);
             }
         }
 
@@ -2748,6 +2728,7 @@ void *rx_thread(void *g_modem)
 
     free(capture_i32);
     free(capture_i16);
+    mfsk_pattern_window_free(&pat_win);
 
     pthread_mutex_lock(&g_spectrum_lock);
     if (g_spectrum_stats_inited)

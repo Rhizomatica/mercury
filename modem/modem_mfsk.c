@@ -843,3 +843,73 @@ const modem_backend_t modem_backend_mfsk = {
     .harq_reset       = NULL,   /* MFSK: single-shot decode (no Chase combining yet) */
     .set_harq         = NULL,
 };
+
+
+/* ----------------------------------------------------------------------
+ * Sliding detection window -- see modem_mfsk.h for why it paces.
+ * ---------------------------------------------------------------------- */
+int mfsk_pattern_window_push(mfsk_pattern_window_t *w, const int16_t *pcm, int n,
+                             int *is_break)
+{
+    if (!w || !pcm || n <= 0)
+        return 0;
+
+    const int burst = mfsk_pattern_max_tx_samples();
+    if (burst <= 0)
+        return 0;
+    const int need = burst * 2;   /* one burst to hold the pattern, one scan interval */
+
+    if (w->cap < need)
+    {
+        int16_t *nw = (int16_t *)realloc(w->buf, (size_t)need * sizeof(int16_t));
+        if (!nw)
+            return 0;             /* no window, no detection; never a crash */
+        w->buf = nw;
+        w->cap = need;
+        if (w->len > need) w->len = need;
+    }
+
+    /* Keep the newest samples: an older burst that has slid most of the way
+     * out cannot be completed by anything arriving now. */
+    int add = n;
+    if (add > w->cap) { pcm += (n - w->cap); add = w->cap; }
+    if (w->len + add > w->cap)
+    {
+        int drop = w->len + add - w->cap;
+        memmove(w->buf, w->buf + drop, (size_t)(w->len - drop) * sizeof(int16_t));
+        w->len -= drop;
+    }
+    memcpy(w->buf + w->len, pcm, (size_t)add * sizeof(int16_t));
+    w->len += add;
+    w->since_scan += add;
+
+    if (w->len < burst)
+        return 0;
+    if (w->since_scan < burst)    /* pace: once per burst of new audio */
+        return 0;
+    w->since_scan = 0;
+
+    int isb = 0;
+    if (!mfsk_pattern_detect(w->buf, w->len, &isb))
+        return 0;
+
+    w->len = 0;                   /* consume: one burst, one event */
+    w->since_scan = 0;
+    if (is_break) *is_break = isb;
+    return 1;
+}
+
+void mfsk_pattern_window_reset(mfsk_pattern_window_t *w)
+{
+    if (!w) return;
+    w->len        = 0;
+    w->since_scan = 0;
+}
+
+void mfsk_pattern_window_free(mfsk_pattern_window_t *w)
+{
+    if (!w) return;
+    free(w->buf);
+    w->buf = NULL;
+    w->cap = w->len = w->since_scan = 0;
+}
