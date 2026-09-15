@@ -246,9 +246,17 @@ test_radio_port: radio_io/test_radio_port.c $(UNITY_SRC) ../radio_io/radio_port.
 
 # Optional CAT telemetry must return its cache immediately while PTT or another
 # timing-sensitive radio operation owns the shared mutex.
+#
+# -U HAVE_HAMLIB -U HAVE_HERMES_SHM: this suite stubs serial/CM108 and installs a
+# fake backend, so it must be independent of the hamlib and shared-memory radio
+# backends too.  The parent make passes its full CFLAGS (including -DHAVE_HAMLIB
+# / -DHAVE_HERMES_SHM when those are detected) down to the sub-make; without
+# undefining them here, radio_io.c compiles in its real hamlib/shm calls and the
+# link fails on undefined rig_* / shm_* symbols (this test links no -lhamlib and
+# no sbitx_io).
 test_radio_io_frequency: radio_io/test_radio_io_frequency.c $(UNITY_SRC) \
                          ../radio_io/radio_io.c ../common/hermes_log.c
-	$(CC) $(CFLAGS) -DRADIO_IO_TEST -o $@ $(filter %.c %.a %.o,$^) $(LDFLAGS)
+	$(CC) $(CFLAGS) -U HAVE_HAMLIB -U HAVE_HERMES_SHM -DRADIO_IO_TEST -o $@ $(filter %.c %.a %.o,$^) $(LDFLAGS)
 
 # UI status wire format (embedded struct vs remote JSON must not drift)
 # ui_status.h is a PREREQUISITE: the device-id widths under test are #defines
