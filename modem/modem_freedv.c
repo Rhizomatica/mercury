@@ -36,6 +36,12 @@ static int fdv_n_tx_samples(void *ctx)     { return freedv_get_n_tx_modem_sample
 static int fdv_n_max_rx_samples(void *ctx) { return freedv_get_n_max_modem_samples(FDV(ctx)); }
 static int fdv_n_nom_samples(void *ctx)    { return freedv_get_n_nom_modem_samples(FDV(ctx)); }
 static int fdv_sample_rate(void *ctx)      { return freedv_get_modem_sample_rate(FDV(ctx)); }
+
+static int fdv_bandwidth_hz(void *ctx)
+{
+    /* nc carriers one symbol rate apart; see freedv_get_modem_bandwidth_hz. */
+    return (int)(freedv_get_modem_bandwidth_hz(FDV(ctx)) + 0.5f);
+}
 static int fdv_get_mode(void *ctx)         { return freedv_get_mode(FDV(ctx)); }
 static int fdv_frames_per_burst(void *ctx) { return freedv_get_frames_per_burst(FDV(ctx)); }
 
@@ -82,6 +88,7 @@ const modem_backend_t modem_backend_freedv = {
     .n_max_rx_samples = fdv_n_max_rx_samples,
     .n_nom_samples    = fdv_n_nom_samples,
     .sample_rate      = fdv_sample_rate,
+    .bandwidth_hz     = fdv_bandwidth_hz,
     .get_mode         = fdv_get_mode,
     .frames_per_burst = fdv_frames_per_burst,
     .preamble_tx      = fdv_preamble_tx,

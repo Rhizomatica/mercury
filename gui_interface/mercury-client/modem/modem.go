@@ -9,6 +9,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -91,6 +92,13 @@ type ModemClient struct {
 	arqConnected bool
 
 	connectRespCh chan string
+
+	// linkDown is set when the modem closes the control link under us -- which
+	// the TNC does whenever ANOTHER client connects, because it keeps only one
+	// control client and evicts the incumbent.  Without it, IsConnected() keeps
+	// answering true off conn objects that are merely non-nil, and the UI goes
+	// on claiming it is attached to ports it lost.
+	linkDown atomic.Bool
 
 	mu   sync.Mutex
 	quit chan struct{}
@@ -365,7 +373,26 @@ func (mc *ModemClient) SendARQFile(filePath string) error {
 	return nil
 }
 
+// kissCmdModemFrame tells Mercury the payload is already exactly one modem
+// frame and must be transmitted untouched.  Chat uses kissCmdAX25, which asks
+// Mercury to add its header and length prefix; sending a modem frame that way
+// gets it truncated by 3 bytes to make room for a header it does not need.
+const (
+	kissCmdAX25       = 0x00
+	kissCmdModemFrame = 0x03
+)
+
+// SendBroadcastModemFrame writes one already-framed modem frame, declaring it
+// as such so Mercury passes it through rather than framing it as a message.
+func (mc *ModemClient) SendBroadcastModemFrame(data []byte) error {
+	return mc.sendBroadcastWithCmd(kissCmdModemFrame, data)
+}
+
 func (mc *ModemClient) SendBroadcast(data []byte) error {
+	return mc.sendBroadcastWithCmd(kissCmdAX25, data)
+}
+
+func (mc *ModemClient) sendBroadcastWithCmd(cmd byte, data []byte) error {
 	mc.mu.Lock()
 	defer mc.mu.Unlock()
 
@@ -373,7 +400,7 @@ func (mc *ModemClient) SendBroadcast(data []byte) error {
 		return fmt.Errorf("not connected to Broadcast port")
 	}
 
-	kissData := append([]byte{0x00}, data...)
+	kissData := append([]byte{cmd}, data...)
 	frame := KISSEncode(kissData)
 
 	_, err := mc.BroadcastConn.Write(frame)
@@ -384,6 +411,9 @@ func (mc *ModemClient) SendBroadcast(data []byte) error {
 }
 
 func (mc *ModemClient) IsConnected() bool {
+	if mc.linkDown.Load() {
+		return false
+	}
 	mc.mu.Lock()
 	defer mc.mu.Unlock()
 	return mc.ARQControlConn != nil && mc.BroadcastConn != nil
@@ -393,6 +423,13 @@ func (mc *ModemClient) Disconnect() {
 	var disconnected []string
 
 	mc.mu.Lock()
+	// Close the quit channel FIRST, before the sockets.  readARQControl
+	// distinguishes "we asked to go away" (quit closed) from "the modem hung
+	// up on us" (linkDown); if the socket close raced ahead of this, a clean
+	// local disconnect could be misread as a remote eviction.
+	close(mc.quit)
+	mc.quit = make(chan struct{})
+
 	control := mc.ARQControlConn
 	if control != nil {
 		control.Close()
@@ -412,8 +449,6 @@ func (mc *ModemClient) Disconnect() {
 
 	mc.arqConnected = false
 
-	close(mc.quit)
-	mc.quit = make(chan struct{})
 	mc.mu.Unlock()
 
 	for _, msg := range disconnected {
@@ -437,8 +472,23 @@ func (mc *ModemClient) readARQControl() {
 		default:
 			line, err := reader.ReadString('\r')
 			if err != nil {
+				// A local Disconnect() closes quit and the socket, landing us
+				// here with the same error as a remote eviction.  Distinguish
+				// the two: if we asked to go away, this is expected, not the
+				// modem hanging up on us.
+				select {
+				case <-quit:
+					return
+				default:
+				}
 				if err != io.EOF {
 					mc.LogCh <- fmt.Sprintf("ARQ Control read error: %v", err)
+				}
+				// EOF here is not "nothing more to read", it is the modem
+				// hanging up on us.  Say so, and stop claiming to be connected.
+				if !mc.linkDown.Swap(true) {
+					mc.LogCh <- "ARQ control link closed by the modem " +
+						"(another client may have taken the TNC ports)."
 				}
 				return
 			}

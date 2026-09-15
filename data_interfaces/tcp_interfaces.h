@@ -31,6 +31,13 @@
 #define TCP_BLOCK_SIZE 128
 
 int interfaces_init(int arq_tcp_base_port, int broadcast_tcp_port, size_t broadcast_frame_size);
+
+/* Re-frame the broadcast TCP plane after a listen-mode change.  The connected
+ * client (the server serves one at a time) picks the new size up on its next
+ * frame; its buffers are sized for the largest selectable frame, so no
+ * reallocation is needed. */
+void interfaces_set_broadcast_frame_size(size_t broadcast_frame_size);
+size_t interfaces_get_broadcast_frame_size(void);
 void interfaces_shutdown();
 
 // ARQ TCP/IP server threads

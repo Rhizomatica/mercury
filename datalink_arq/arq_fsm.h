@@ -105,6 +105,7 @@ typedef struct
     uint8_t  session_id;
     uint8_t  seq;
     uint8_t  ack_seq;
+    uint16_t stream_off;      /* DATA: offset of the first payload byte        */
     uint8_t  rx_flags;        /* ARQ_FLAG_HAS_DATA (+ LEN_* on DATA frames);
                                * on a pattern ACK, HAS_DATA = ACK+TURN break   */
     int8_t   snr_encoded;     /* as received from frame header                */
@@ -159,6 +160,8 @@ typedef struct
     /* --- Sequence numbers --- */
     uint8_t  tx_seq;                   /* next seq we will send                */
     uint8_t  rx_expected;              /* next seq we expect from peer         */
+    uint16_t tx_stream_off;            /* offset of the retained frame's byte 0 */
+    uint16_t rx_stream_hwm;            /* bytes delivered: next offset expected */
 
     /* --- Mode / speed --- */
     int      payload_mode;             /* MY data TX mode (ISS) = mode_ladder
@@ -216,11 +219,25 @@ typedef struct
     int      rx_below_good_misses;     /* mirror of tx_below_good_misses        */
 
     /* --- Retry/timeout bookkeeping --- */
-    int      tx_retries_left;          /* retries remaining for current frame  */
+    int      tx_retries_left;          /* retries remaining for current frame.
+                                        * In ACCEPTING this counts TIMER_RETRY
+                                        * slots, not transmissions: a slot may be
+                                        * spent silently when the RX window closes
+                                        * without a CALL (see fsm_accepting).    */
     uint64_t state_enter_ms;          /* when current conn_state was entered   */
 
     /* --- Peer state observed from frames --- */
     bool     peer_has_data;            /* peer's HAS_DATA flag in last frame   */
+    bool     peer_turn_req_pending;    /* peer asked for the floor while we were
+                                        * in WAIT_ACK; honoured when the ACK
+                                        * lands, never by keying into it        */
+
+    /* When a decoder was last holding sync on an incoming burst, i.e. when the
+     * peer was last observed transmitting.  Written by the modem RX thread via
+     * arq_update_link_metrics() under g_sess_lock, read by the FSM; used to
+     * avoid keying a TURN_REQ into the peer's frame. */
+    uint64_t last_rx_sync_ms;
+    uint8_t  turn_req_defer_count;     /* consecutive busy-channel deferrals   */
     bool     acktx_had_has_data;       /* HAS_DATA was set in the last ACK sent */
     /* Peer-reported SNR for OUR signal, * 10.  TELEMETRY ONLY.
      *
@@ -252,6 +269,13 @@ typedef struct
                                         * selects the post-call idle status,
                                         * LISTENING vs DISCONNECTED, so an ARQ
                                         * call always returns to where it was   */
+
+    /* --- Connect handshake --- */
+    bool     accept_tx_pending;        /* the pending TIMER_RETRY is an ACCEPT
+                                        * answering a CALL we actually heard,
+                                        * not the RX-window timer.  Only the
+                                        * former may key the transmitter -- see
+                                        * fsm_accepting's TIMER_RETRY.        */
 
     /* --- Teardown flags --- */
     bool     deferred_listen_off;      /* LISTEN OFF received during grace period;
@@ -287,6 +311,9 @@ typedef struct
     uint8_t  tx_frame_seq;             /* seq assigned to the retained frame   */
     bool     tx_frame_present;         /* a frame is outstanding (awaiting ACK)*/
     bool     tx_frame_retx;            /* it was retransmitted at least once   */
+    int      tx_frame_tail;            /* bytes held after tx_frame_len, kept
+                                        * back when a frame was re-cut to fit a
+                                        * rung; they become the next frame      */
 
     uint64_t last_rx_ms;              /* last successful frame decode time     */
     uint64_t irs_data_wait_ms;        /* when this IRS first had data queued
@@ -353,6 +380,12 @@ typedef struct
 
     /** Send BUFFER status (bytes remaining) to TCP interface. */
     void (*send_buffer_status)(int backlog_bytes);
+
+    /** Is there energy on the channel right now?  Optional (NULL when the
+     *  station has no busy detector, which is the default) -- used to avoid
+     *  keying over a transmission we cannot decode, which decoder sync alone
+     *  cannot see.  See peer_is_transmitting() in arq_fsm.c. */
+    bool (*channel_busy)(void);
 } arq_fsm_callbacks_t;
 
 /**

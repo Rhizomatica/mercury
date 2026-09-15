@@ -34,8 +34,12 @@
 #include "hermes_log.h"
 #include "radio_io.h"
 
+/* Interpose joins only to schedule the disconnect/read race deterministically. */
+static int test_server_join(pthread_t thread, void **result);
+#define pthread_join test_server_join
 /* include source to get access to static functions */
 #include "../../data_interfaces/tcp_interfaces.c"
+#undef pthread_join
 
 #include "unity.h"
 
@@ -98,6 +102,19 @@ void arq_conn_get_calls(char *my_call, char *src_addr, char *dst_addr, size_t bu
     if (dst_addr) snprintf(dst_addr, bufsz, "%s", arq_conn.dst_addr);
 }
 
+/* ---- message_store stubs ---- */
+
+void msg_store_feed(const char *plane, const char *dir, const char *peer,
+                    const uint8_t *data, size_t len)
+{
+    (void)plane; (void)dir; (void)peer; (void)data; (void)len;
+}
+
+void msg_store_reset(const char *plane, const char *dir)
+{
+    (void)plane; (void)dir;
+}
+
 /* ---- net stubs ---- */
 
 int cli_ctl_sockfd = -1;
@@ -119,6 +136,11 @@ ssize_t tcp_write(int port_type, uint8_t *buffer, size_t tx_size)
     }
     tcp_write_call_count++;
     return (ssize_t)tx_size;
+}
+
+ssize_t tcp_write_all(int port_type, uint8_t *buffer, size_t tx_size)
+{
+    return tcp_write(port_type, buffer, tx_size);
 }
 
 void net_set_status(int pt, int st) { (void)pt; (void)st; }
@@ -153,11 +175,59 @@ void  modem_tune_stop(void)        { mock_tune_stop_calls++; }
 bool  modem_tune_active(void)      { return false; }
 float modem_tune_level_dbfs(void)  { return mock_tune_level_dbfs; }
 
+/* ---- modem listen-mode stubs ---- */
+
+static int mock_listen_mode_set    = -1;   /* last mode passed to the setter */
+static int mock_listen_mode_calls  = 0;
+static int mock_listen_mode_rc     = 0;    /* what modem_set_listen_mode returns */
+static int mock_listen_mode_cur    = FREEDV_MODE_DATAC15;
+
+int modem_set_listen_mode(int mode)
+{
+    mock_listen_mode_calls++;
+    if (mock_listen_mode_rc == 0)
+        mock_listen_mode_set = mode;
+    return mock_listen_mode_rc;
+}
+int    modem_get_listen_mode(void)          { return mock_listen_mode_cur; }
+size_t modem_get_broadcast_frame_size(void) { return 14; }
+
+/* Use the actual ring implementation for the shutdown race; retain command
+ * test stubs under their usual names. No audio/modem hardware is linked. */
+#define size_buffer real_size_buffer
+#define read_buffer real_read_buffer
+#define clear_buffer real_clear_buffer
+#define write_buffer real_write_buffer
+#include "../../common/ring_buffer_posix.c"
+#undef size_buffer
+#undef read_buffer
+#undef clear_buffer
+#undef write_buffer
+
+static atomic_bool race_enabled, race_read_entered, race_release_read;
+static atomic_int race_reads;
+static int race_joins;
+
+static int test_server_join(pthread_t thread, void **result)
+{
+    if (race_enabled && ++race_joins == 2)
+        race_release_read = true; /* server is about to join its sender */
+    return pthread_join(thread, result);
+}
+
 /* ---- ring_buffer stubs ---- */
 
-size_t size_buffer(cbuf_handle_t cbuf) { (void)cbuf; return 0; }
-int read_buffer(cbuf_handle_t cbuf, uint8_t *data, size_t len) { (void)cbuf; (void)data; (void)len; return 0; }
-void clear_buffer(cbuf_handle_t cbuf) { (void)cbuf; }
+size_t size_buffer(cbuf_handle_t cbuf) { return race_enabled ? real_size_buffer(cbuf) : 0; }
+int read_buffer(cbuf_handle_t cbuf, uint8_t *data, size_t len)
+{
+    if (!race_enabled) return 0;
+    race_read_entered = true; /* sender has passed both size and done checks */
+    while (!race_release_read) usleep(1000);
+    int rc = real_read_buffer(cbuf, data, len);
+    race_reads++;
+    return rc;
+}
+void clear_buffer(cbuf_handle_t cbuf) { if (race_enabled) real_clear_buffer(cbuf); }
 
 static uint8_t last_write_buffer_data[MAX_PAYLOAD];
 static size_t  last_write_buffer_len  = 0;
@@ -296,6 +366,12 @@ void setUp(void)
     mock_tune_start_rc    = 0;
     mock_tune_stop_calls  = 0;
     mock_tune_level_dbfs  = -15.0f;
+
+    /* Listen mode */
+    mock_listen_mode_set   = -1;
+    mock_listen_mode_calls = 0;
+    mock_listen_mode_rc    = 0;
+    mock_listen_mode_cur   = FREEDV_MODE_DATAC15;
 }
 
 void tearDown(void) { }
@@ -481,6 +557,74 @@ void test_cmd_tune_garbage_argument(void)
 
     assert_wrong_response();
     TEST_ASSERT_EQUAL_INT(0, mock_tune_start_calls);
+}
+
+/* MODE takes the same index space as -m.  Index 7 is DATAC15. */
+void test_cmd_mode_sets_listen_mode(void)
+{
+    char cmd[] = "MODE 7";
+    execute_control_command(cmd);
+
+    assert_ok_response();
+    TEST_ASSERT_EQUAL_INT(1, mock_listen_mode_calls);
+    TEST_ASSERT_EQUAL_INT(FREEDV_MODE_DATAC15, mock_listen_mode_set);
+}
+
+void test_cmd_mode_index_out_of_range(void)
+{
+    /* Must be rejected by the parser without reaching the modem, or an
+     * out-of-range index would read past freedv_modes[]. */
+    char cmd[] = "MODE 99";
+    execute_control_command(cmd);
+
+    assert_wrong_response();
+    TEST_ASSERT_EQUAL_INT(0, mock_listen_mode_calls);
+}
+
+void test_cmd_mode_negative_index(void)
+{
+    char cmd[] = "MODE -3";
+    execute_control_command(cmd);
+
+    assert_wrong_response();
+    TEST_ASSERT_EQUAL_INT(0, mock_listen_mode_calls);
+}
+
+void test_cmd_mode_busy_is_not_ok(void)
+{
+    /* An ARQ session owns the payload mode: the host must see BUSY, never OK,
+     * or it would believe a setting that was silently discarded. */
+    mock_listen_mode_rc = MODEM_LISTEN_MODE_BUSY;
+    char cmd[] = "MODE 7";
+    execute_control_command(cmd);
+
+    TEST_ASSERT_EQUAL(1, tcp_write_call_count);
+    TEST_ASSERT_EQUAL_STRING_LEN("BUSY\r", (char *)last_tcp_write_buf, 5);
+    TEST_ASSERT_EQUAL_INT(1, mock_listen_mode_calls);
+}
+
+void test_cmd_mode_unsupported_mode_is_wrong(void)
+{
+    /* Index 6 is FSK_LDPC: a valid -m startup mode but not runtime-switchable,
+     * so the modem refuses it and the host must not see OK. */
+    mock_listen_mode_rc = MODEM_LISTEN_MODE_BAD;
+    char cmd[] = "MODE 6";
+    execute_control_command(cmd);
+
+    assert_wrong_response();
+    TEST_ASSERT_EQUAL_INT(1, mock_listen_mode_calls);
+}
+
+void test_cmd_mode_query_reports_index_and_name(void)
+{
+    /* The reply must round-trip: the reported index is a valid MODE argument. */
+    mock_listen_mode_cur = FREEDV_MODE_QAM16C2;
+    char cmd[] = "MODE";
+    execute_control_command(cmd);
+
+    TEST_ASSERT_EQUAL(1, tcp_write_call_count);
+    TEST_ASSERT_EQUAL_STRING_LEN("MODE 10 QAM16C2\r", (char *)last_tcp_write_buf, 16);
+    TEST_ASSERT_EQUAL_INT(0, mock_listen_mode_calls);
 }
 
 void test_cmd_chat_on(void)
@@ -778,7 +922,11 @@ void test_cmd_callint_negative(void)
 #define BCAST_HDR_RAW_CONTROL \
     ((uint8_t)(PACKET_TYPE_BROADCAST_CONTROL << PACKET_TYPE_SHIFT))
 
-/* CMD_DATA, exact frame_size: queued unchanged, bcast_reply_cmd = CMD_DATA */
+/* CMD_DATA at exact frame_size is a MESSAGE and is framed like any other.
+ *
+ * This used to be passed through unchanged, inferred from the payload's first
+ * byte.  A sender that means "this is a modem frame" now says so with
+ * CMD_MODEM_FRAME; CMD_DATA no longer carries a second meaning. */
 void test_bcast_rx_cmd_data_exact_size(void)
 {
     const size_t fsz = 10;
@@ -793,9 +941,10 @@ void test_bcast_rx_cmd_data_exact_size(void)
     TEST_ASSERT_TRUE(ok);
     TEST_ASSERT_EQUAL(1, write_buffer_call_count);
     TEST_ASSERT_EQUAL_size_t(fsz, last_write_buffer_len);
-    TEST_ASSERT_EQUAL_HEX8(0x60, last_write_buffer_data[0]);
-    TEST_ASSERT_EQUAL_HEX8(CMD_DATA,
-        atomic_load_explicit(&bcast_reply_cmd, memory_order_relaxed));
+    /* Mercury's own header now leads the frame, not the payload's first byte. */
+    TEST_ASSERT_EQUAL_HEX8(PACKET_TYPE_BROADCAST_DATA,
+                           frame_header_packet_type(last_write_buffer_data[0]));
+    TEST_ASSERT_TRUE(frame_header_extension(last_write_buffer_data[0]) & BCAST_EXT_LEN_PREFIX);
 }
 
 /* CMD_DATA, short frame with a broadcast-header-looking first byte (0x60): NOT
@@ -807,14 +956,11 @@ void test_bcast_rx_cmd_data_exact_size(void)
  * a beacon could in principle start with.  Nothing in the frame distinguishes
  * them.
  *
- * Resolve it in favour of hermes-broadcast: that is a protocol in daily use
- * whose config frames arrive short by RQ_HEADER_SIZE, and whose receiver
- * discards anything that is not exactly frame_size, so guessing "beacon" here
- * silently kills the broadcast stream.  A beacon whose payload begins with a
- * literal backtick is hypothetical by comparison, and every other printable
- * first byte -- including all of a-z -- is wrapped correctly because its
- * extension bits are non-zero. */
-void test_bcast_rx_cmd_data_ambiguous_0x60_treated_as_hermes(void)
+ * That ambiguity no longer exists.  A sender that means "this is a modem
+ * frame" says CMD_MODEM_FRAME; CMD_DATA always means a message.  So 0x60 --
+ * or any other first byte -- gets no special treatment, and a beacon that
+ * happens to start with a backtick is framed like every other message. */
+void test_bcast_rx_cmd_data_0x60_is_not_special(void)
 {
     const size_t fsz = 10;
     broadcast_frame_size_cfg = fsz;
@@ -829,14 +975,20 @@ void test_bcast_rx_cmd_data_ambiguous_0x60_treated_as_hermes(void)
     TEST_ASSERT_TRUE(ok);
     TEST_ASSERT_EQUAL(1, write_buffer_call_count);
     TEST_ASSERT_EQUAL_size_t(fsz, last_write_buffer_len);
-    /* Passed raw and zero-padded -- no wrapper, no length prefix. */
-    TEST_ASSERT_EQUAL_HEX8(0x60, last_write_buffer_data[0]);
+
+    /* Framed: Mercury's header, then the true length, then the payload. */
+    TEST_ASSERT_EQUAL_HEX8(PACKET_TYPE_BROADCAST_DATA,
+                           frame_header_packet_type(last_write_buffer_data[0]));
+    TEST_ASSERT_TRUE(frame_header_extension(last_write_buffer_data[0]) & BCAST_EXT_LEN_PREFIX);
+
+    uint8_t *payload = NULL;
+    int plen = 0;
+    uint8_t cmd = bcast_get_tx_payload(last_write_buffer_data, fsz, &payload, &plen);
+    TEST_ASSERT_EQUAL_HEX8(CMD_DATA, cmd);
+    TEST_ASSERT_EQUAL_INT(5, plen);              /* exact original length */
+    TEST_ASSERT_EQUAL_HEX8(0x60, payload[0]);
     for (int i = 1; i < 5; i++)
-        TEST_ASSERT_EQUAL_HEX8(0xBB, last_write_buffer_data[i]);
-    for (size_t i = 5; i < fsz; i++)
-        TEST_ASSERT_EQUAL_HEX8(0x00, last_write_buffer_data[i]);
-    TEST_ASSERT_EQUAL_HEX8(CMD_DATA,
-        atomic_load_explicit(&bcast_reply_cmd, memory_order_relaxed));
+        TEST_ASSERT_EQUAL_HEX8(0xBB, payload[i]);
 }
 
 /* A short beacon whose body begins with a lowercase letter ('a'=0x61, 'z'=0x7A)
@@ -1040,6 +1192,126 @@ void test_bcast_vara_length_roundtrip(void)
     TEST_ASSERT_EQUAL_HEX8_ARRAY(orig, payload, orig_len); /* exact original bytes */
 }
 
+/* A modem frame declared as such must reach the air byte for byte.
+ *
+ * This is the regression that mattered: the UI's file transfer sent its frames
+ * through the chat path (CMD_AX25), which wraps unconditionally, so every
+ * 1180-byte RaptorQ frame was truncated to 1177 to make room for a header it
+ * did not need.  The far side then had 1177 bytes of a 1180-byte frame and
+ * discarded all of them.  CMD_MODEM_FRAME says what the payload is instead of
+ * leaving Mercury to infer it. */
+void test_bcast_tx_modem_frame_command_passes_through_untouched(void)
+{
+    const size_t fsz = 32;
+    uint8_t orig[32];
+    /* Deliberately a first byte that does NOT look like a broadcast type, so
+     * this can only pass by the command being honoured, not by the heuristic. */
+    for (size_t i = 0; i < fsz; i++) orig[i] = (uint8_t)(0x11 + i);
+
+    uint8_t txframe[MAX_PAYLOAD];
+    memset(txframe, 0, sizeof(txframe));
+    memcpy(txframe, orig, fsz);
+
+    bool ok = bcast_process_decoded_frame(txframe, (int)fsz, CMD_MODEM_FRAME, fsz);
+    TEST_ASSERT_TRUE(ok);
+
+    /* Not truncated, nothing injected. */
+    TEST_ASSERT_EQUAL_size_t(fsz, last_write_buffer_len);
+    TEST_ASSERT_EQUAL_HEX8_ARRAY(orig, last_write_buffer_data, fsz);
+}
+
+/* And the same payload sent the way chat is sent IS framed -- which is what
+ * silently broke the file transfer, so pin the difference. */
+void test_bcast_tx_same_frame_as_chat_is_truncated(void)
+{
+    const size_t fsz = 32;
+    uint8_t orig[32];
+    for (size_t i = 0; i < fsz; i++) orig[i] = (uint8_t)(0x11 + i);
+
+    uint8_t txframe[MAX_PAYLOAD];
+    memset(txframe, 0, sizeof(txframe));
+    memcpy(txframe, orig, fsz);
+
+    TEST_ASSERT_TRUE(bcast_process_decoded_frame(txframe, (int)fsz, CMD_AX25, fsz));
+
+    uint8_t rxframe[MAX_PAYLOAD];
+    memcpy(rxframe, last_write_buffer_data, fsz);
+    uint8_t *payload = NULL;
+    int plen = 0;
+    bcast_get_tx_payload(rxframe, fsz, &payload, &plen);
+
+    /* 3 bytes short: the header and length prefix took their room. */
+    TEST_ASSERT_EQUAL_INT((int)(fsz - HEADER_SIZE - BCAST_LEN_SIZE), plen);
+}
+
+/* What happens to a broadcast message that is EXACTLY one frame long?
+ *
+ * The raw-vs-wrap heuristic keys on the first byte: bits 7:5 == 3 or 4 look
+ * like a broadcast packet type, and 0x60..0x7F is backtick plus every lowercase
+ * letter.  So "hello ..." padded to the frame size presents a broadcast-looking
+ * header.  These pin what each kind of sender actually gets, because the answer
+ * differs and the difference is the whole safety argument. */
+
+/* Chat (CMD_AX25) is ALWAYS wrapped, whatever it contains: needs_wrap is true
+ * for CMD_AX25 unconditionally, so the heuristic never applies to it.  A
+ * full-length chat line survives intact with its exact length. */
+void test_bcast_tx_full_size_chat_is_still_wrapped(void)
+{
+    const size_t fsz = 32;
+    uint8_t orig[32];
+    memset(orig, 'x', sizeof(orig));
+    orig[0] = 'h';                     /* 0x68 -> looks like packet type 3 */
+
+    uint8_t txframe[MAX_PAYLOAD];
+    memset(txframe, 0, sizeof(txframe));
+    memcpy(txframe, orig, fsz);
+
+    /* Exactly one frame of chat.  It cannot fit a header+len prefix as well, so
+     * the wrap path truncates to make room -- lossy, but it is delivered as a
+     * message rather than misread as a modem frame. */
+    bool ok = bcast_process_decoded_frame(txframe, (int)fsz, CMD_AX25, fsz);
+    TEST_ASSERT_TRUE(ok);
+
+    uint8_t rxframe[MAX_PAYLOAD];
+    memcpy(rxframe, last_write_buffer_data, fsz);
+    uint8_t *payload = NULL;
+    int plen = 0;
+    uint8_t cmd = bcast_get_tx_payload(rxframe, fsz, &payload, &plen);
+
+    /* Framed and delivered as chat, not passed through as a raw modem frame. */
+    TEST_ASSERT_EQUAL_HEX8(CMD_AX25, cmd);
+    TEST_ASSERT_EQUAL_INT((int)(fsz - HEADER_SIZE - BCAST_LEN_SIZE), plen);
+    TEST_ASSERT_EQUAL_HEX8_ARRAY(orig, payload, plen);
+}
+
+/* A full-size CMD_DATA payload is a MESSAGE and is framed -- so it is truncated
+ * by 3 bytes to make room, exactly as chat is.  A sender with a real modem
+ * frame must say CMD_MODEM_FRAME; nothing about the payload's contents changes
+ * the answer any more. */
+void test_bcast_tx_full_size_cmd_data_is_framed(void)
+{
+    const size_t fsz = 32;
+    uint8_t orig[32];
+    for (size_t i = 0; i < fsz; i++) orig[i] = (uint8_t)(0x40 + i);
+    orig[0] = 'h';                     /* 0x68 -> packet type 3, ext 8 */
+
+    uint8_t txframe[MAX_PAYLOAD];
+    memset(txframe, 0, sizeof(txframe));
+    memcpy(txframe, orig, fsz);
+
+    TEST_ASSERT_TRUE(bcast_process_decoded_frame(txframe, (int)fsz, CMD_DATA, fsz));
+
+    uint8_t rxframe[MAX_PAYLOAD];
+    memcpy(rxframe, last_write_buffer_data, fsz);
+    uint8_t *payload = NULL;
+    int plen = 0;
+    uint8_t cmd = bcast_get_tx_payload(rxframe, fsz, &payload, &plen);
+
+    TEST_ASSERT_EQUAL_HEX8(CMD_DATA, cmd);
+    TEST_ASSERT_EQUAL_INT((int)(fsz - HEADER_SIZE - BCAST_LEN_SIZE), plen);
+    TEST_ASSERT_EQUAL_HEX8_ARRAY(orig, payload, plen);
+}
+
 /* Receive-only station: a length-prefixed frame must be delivered as the exact
  * AX.25 payload with CMD_AX25CALLSIGN even when bcast_reply_cmd is still the
  * default CMD_DATA (local client has not transmitted). Regression for the bug
@@ -1152,8 +1424,9 @@ void test_bcast_rx_cmd_data_vara_beacon_wrapped(void)
  * Mercury wraps a short config frame instead of passing it raw, the far side
  * never receives the RaptorQ configuration and can never start decoding.
  *
- * This is why frame length cannot be the hermes-broadcast discriminator. */
-void test_bcast_short_hermes_config_passed_raw(void)
+ * With CMD_MODEM_FRAME the sender says which it is, so neither length nor
+ * content has to be a discriminator. */
+void test_bcast_short_cmd_data_is_framed(void)
 {
     const size_t fsz = 10;
     broadcast_frame_size_cfg = fsz;
@@ -1164,12 +1437,26 @@ void test_bcast_short_hermes_config_passed_raw(void)
     frame[1] = 0xAA;
     frame[2] = 0xBB;
 
-    bool ok = bcast_process_decoded_frame(frame, 3, CMD_DATA, fsz);  /* 3 < fsz */
-
-    TEST_ASSERT_TRUE(ok);
+    /* As CMD_DATA it is a message: framed, exact length recoverable. */
+    TEST_ASSERT_TRUE(bcast_process_decoded_frame(frame, 3, CMD_DATA, fsz));
     TEST_ASSERT_EQUAL_size_t(fsz, last_write_buffer_len);
-    /* Passed raw and zero-padded: the client's own header stays at byte 0 and
-     * no length prefix is injected. */
+
+    uint8_t *payload = NULL;
+    int plen = 0;
+    bcast_get_tx_payload(last_write_buffer_data, fsz, &payload, &plen);
+    TEST_ASSERT_EQUAL_INT(3, plen);
+    TEST_ASSERT_EQUAL_HEX8(BCAST_HDR_RAW_CONTROL, payload[0]);
+    TEST_ASSERT_EQUAL_HEX8(0xAA, payload[1]);
+    TEST_ASSERT_EQUAL_HEX8(0xBB, payload[2]);
+
+    /* The SAME payload declared as a modem frame is passed through and padded,
+     * which is how hermes-broadcast gets its short config frame on the air. */
+    memset(frame, 0, sizeof(frame));
+    frame[0] = BCAST_HDR_RAW_CONTROL;
+    frame[1] = 0xAA;
+    frame[2] = 0xBB;
+    TEST_ASSERT_TRUE(bcast_process_decoded_frame(frame, 3, CMD_MODEM_FRAME, fsz));
+    TEST_ASSERT_EQUAL_size_t(fsz, last_write_buffer_len);
     TEST_ASSERT_EQUAL_HEX8(BCAST_HDR_RAW_CONTROL, last_write_buffer_data[0]);
     TEST_ASSERT_EQUAL_HEX8(0xAA, last_write_buffer_data[1]);
     TEST_ASSERT_EQUAL_HEX8(0xBB, last_write_buffer_data[2]);
@@ -1269,9 +1556,122 @@ void test_bitrate_query_is_always_answered(void)
         "host asked for BITRATE and got nothing: is the reply rate-limited?");
 }
 
+/* Real loopback sockets, no modem/audio/radio. The process watchdog makes
+ * a regression fail instead of leaving the test runner stuck in join. */
+static void broadcast_shutdown_case(int client_mode)
+{
+    int probe = socket(AF_INET, SOCK_STREAM, 0);
+    struct sockaddr_in addr = { .sin_family = AF_INET,
+                               .sin_addr.s_addr = htonl(INADDR_LOOPBACK) };
+    socklen_t len = sizeof(addr);
+    TEST_ASSERT_EQUAL_INT(0, bind(probe, (struct sockaddr *)&addr, sizeof(addr)));
+    TEST_ASSERT_EQUAL_INT(0, getsockname(probe, (struct sockaddr *)&addr, &len));
+    int port = ntohs(addr.sin_port);
+    close(probe);
+    shutdown_ = false;
+    uint8_t backing[128] = {0};
+    if (client_mode == 3)
+    {
+        race_read_entered = race_release_read = false;
+        race_reads = 0;
+        race_joins = 0;
+        data_rx_buffer_broadcast = circular_buf_init(backing, sizeof(backing));
+        uint8_t frame[64] = {0};
+        TEST_ASSERT_EQUAL_INT(0, real_write_buffer(data_rx_buffer_broadcast, frame, sizeof(frame)));
+        race_enabled = true;
+    }
+    broadcast_frame_size_cfg = 64;
+    pthread_t server;
+    alarm(5);
+    TEST_ASSERT_EQUAL_INT(0, pthread_create(&server, NULL, tcp_server_thread, &port));
+    int client = -1;
+    if (client_mode)
+    {
+        for (int i = 0; i < 100; ++i)
+        {
+            client = socket(AF_INET, SOCK_STREAM, 0);
+            if (connect(client, (struct sockaddr *)&addr, sizeof(addr)) == 0)
+                break;
+            close(client);
+            client = -1;
+            usleep(10000);
+        }
+        TEST_ASSERT_TRUE(client >= 0);
+    }
+    usleep(150000);
+    if (client_mode == 2)
+    {
+        close(client);
+        client = -1;
+        usleep(150000);
+    }
+    if (client_mode == 3)
+    {
+        while (!race_read_entered) usleep(1000);
+        /* EOF lets the server enter its disconnect teardown while read is paused. */
+        close(client);
+        client = -1;
+    }
+    uint64_t start = monotonic_ms();
+    shutdown_ = true;
+    pthread_join(server, NULL);
+    alarm(0);
+    if (client >= 0)
+        close(client);
+    TEST_ASSERT_TRUE(monotonic_ms() - start < 1000);
+    if (client_mode == 3)
+    {
+        TEST_ASSERT_EQUAL_INT(1, race_reads);
+        TEST_ASSERT_EQUAL_size_t(0, real_size_buffer(data_rx_buffer_broadcast));
+        circular_buf_free(data_rx_buffer_broadcast);
+        data_rx_buffer_broadcast = NULL;
+        race_enabled = false;
+    }
+    shutdown_ = false;
+}
+
+void test_bcast_disconnect_during_buffer_read(void) { broadcast_shutdown_case(3); }
+
+void test_bcast_shutdown_no_client(void) { broadcast_shutdown_case(0); }
+void test_bcast_shutdown_idle_client(void) { broadcast_shutdown_case(1); }
+void test_bcast_shutdown_disconnected_client(void) { broadcast_shutdown_case(2); }
+
+static void *blocked_broadcast_send(void *arg)
+{
+    uint8_t data[65536] = {0};
+    while (send_all(*(int *)arg, data, sizeof(data)) >= 0) {}
+    return NULL;
+}
+
+void test_bcast_shutdown_backpressured_send(void)
+{
+    int pair[2];
+    TEST_ASSERT_EQUAL_INT(0, socketpair(AF_UNIX, SOCK_STREAM, 0, pair));
+    TEST_ASSERT_EQUAL_INT(0, set_nonblocking(pair[0]));
+    shutdown_ = false;
+    bcast_client_done = false;
+    pthread_t sender;
+    alarm(5);
+    TEST_ASSERT_EQUAL_INT(0, pthread_create(&sender, NULL, blocked_broadcast_send, &pair[0]));
+    usleep(200000);
+    uint64_t start = monotonic_ms();
+    shutdown_ = true;
+    pthread_join(sender, NULL);
+    alarm(0);
+    close(pair[0]);
+    close(pair[1]);
+    TEST_ASSERT_TRUE(monotonic_ms() - start < 1000);
+    shutdown_ = false;
+}
+
 int main(void)
 {
     UNITY_BEGIN();
+    RUN_TEST(test_bcast_disconnect_during_buffer_read);
+    RUN_TEST(test_bcast_shutdown_no_client);
+    RUN_TEST(test_bcast_shutdown_idle_client);
+    RUN_TEST(test_bcast_shutdown_disconnected_client);
+    RUN_TEST(test_bcast_shutdown_backpressured_send);
     /* Command parser tests */
     RUN_TEST(test_cmd_mycall);
     RUN_TEST(test_cmd_mycall_registered_follows_ok);
@@ -1288,6 +1688,12 @@ int main(void)
     RUN_TEST(test_cmd_tune_refusal_is_not_ok);
     RUN_TEST(test_cmd_tune_missing_argument);
     RUN_TEST(test_cmd_tune_garbage_argument);
+    RUN_TEST(test_cmd_mode_sets_listen_mode);
+    RUN_TEST(test_cmd_mode_index_out_of_range);
+    RUN_TEST(test_cmd_mode_negative_index);
+    RUN_TEST(test_cmd_mode_busy_is_not_ok);
+    RUN_TEST(test_cmd_mode_unsupported_mode_is_wrong);
+    RUN_TEST(test_cmd_mode_query_reports_index_and_name);
     RUN_TEST(test_cmd_chat_on);
     RUN_TEST(test_cmd_bw500);
     RUN_TEST(test_cmd_bw2300);
@@ -1323,7 +1729,7 @@ int main(void)
     RUN_TEST(test_tnc_send_registered);
     /* Broadcast framing helper tests */
     RUN_TEST(test_bcast_rx_cmd_data_exact_size);
-    RUN_TEST(test_bcast_rx_cmd_data_ambiguous_0x60_treated_as_hermes);
+    RUN_TEST(test_bcast_rx_cmd_data_0x60_is_not_special);
     RUN_TEST(test_bcast_rx_cmd_data_short_lowercase_wrapped);
     RUN_TEST(test_bcast_rx_cmd_data_oversized_discarded);
     RUN_TEST(test_bcast_rx_vara_header_injected);
@@ -1332,10 +1738,14 @@ int main(void)
     RUN_TEST(test_bcast_tx_cmd_data_full_frame);
     RUN_TEST(test_bcast_tx_vara_strips_header);
     RUN_TEST(test_bcast_vara_length_roundtrip);
+    RUN_TEST(test_bcast_tx_modem_frame_command_passes_through_untouched);
+    RUN_TEST(test_bcast_tx_same_frame_as_chat_is_truncated);
+    RUN_TEST(test_bcast_tx_full_size_chat_is_still_wrapped);
+    RUN_TEST(test_bcast_tx_full_size_cmd_data_is_framed);
     RUN_TEST(test_bcast_tx_lenprefix_ignores_reply_cmd_default);
     RUN_TEST(test_bcast_std_kiss_roundtrip);
     RUN_TEST(test_bcast_rx_cmd_data_vara_beacon_wrapped);
-    RUN_TEST(test_bcast_short_hermes_config_passed_raw);
+    RUN_TEST(test_bcast_short_cmd_data_is_framed);
     RUN_TEST(test_bcast_beacon_broadcast_type_nonzero_ext_wrapped);
     RUN_TEST(test_bcast_data_lenprefix_roundtrip);
     RUN_TEST(test_sn_query_is_always_answered);

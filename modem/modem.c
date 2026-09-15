@@ -34,6 +34,7 @@
 #include "ring_buffer_posix.h"
 #include "framer.h"
 #include "arq.h"
+#include "arq_trace.h"
 #include "../datalink_arq/arq_modem.h"
 #include "../datalink_arq/arq_protocol.h"
 #include "tcp_interfaces.h"
@@ -119,7 +120,14 @@ static pthread_mutex_t *modem_inst_lock_for(void *ctx);
 static uint64_t modem_freedv_epoch = 1;
 static uint64_t modem_last_switch_ms = 0;
 static bool modem_owns_radio_buffers = false;
-static size_t broadcast_frame_size = 0;  /* expected broadcast payload size (set at init) */
+/* Expected broadcast payload size, and the operator-selected idle ("listen")
+ * mode it belongs to.  Both are written by the control-port thread via
+ * modem_set_listen_mode() and read by the modem RX thread (the broadcast frame
+ * size filter) and the TX thread (the pure-broadcast mode pin), so they are
+ * _Atomic: a plain size_t would be a data race, the same class as the
+ * unsynchronized g_sess access behind the on-air handshake freeze. */
+static _Atomic size_t broadcast_frame_size = 0;
+static _Atomic int    modem_listen_mode    = -1;
 
 /* --- Spectrum data for UI waterfall display --- */
 #include "freedv/modem_stats.h"
@@ -717,6 +725,59 @@ static int select_payload_rx_mode(const arq_runtime_snapshot_t *snapshot, bool r
     return mode;
 }
 
+/* Set the idle ("listen") payload mode: which payload mode this station sits
+ * on when no ARQ session is up, and hence which broadcast frames it can hear
+ * and send.  Pure state -- it deliberately does NOT switch the modem itself.
+ * The TX thread's pure-broadcast branch and the RX payload worker (via ARQ's
+ * peer_tx_mode -> select_payload_rx_mode) already converge on this every
+ * iteration, exactly as they do for the ARQ ladder, so a forced switch here
+ * would only race them.
+ *
+ * Returns 0 on success, MODEM_LISTEN_MODE_BAD for a mode that cannot be a
+ * runtime payload mode or whose pool slot is not up yet, and
+ * MODEM_LISTEN_MODE_BUSY if an ARQ session is up (the ladder owns the mode
+ * then).  Nothing is changed unless the whole change is accepted. */
+int modem_set_listen_mode(int mode)
+{
+    /* Runtime switching is limited to the pooled payload modes: DATAC16 is the
+     * control mode, and DATAC0/DATAC13/DATAC14/FSK_LDPC have no pool slot to
+     * switch to even though -m can start on some of them. */
+    if (!is_payload_split_mode(mode))
+        return MODEM_LISTEN_MODE_BAD;
+
+    size_t frame_size = 0;
+    pthread_mutex_lock(&modem_pool_lock);
+    modem_codec_t codec = pooled_codec_for_mode_locked(mode, &frame_size);
+    pthread_mutex_unlock(&modem_pool_lock);
+    if (!codec.be || frame_size == 0)
+        return MODEM_LISTEN_MODE_BAD;   /* pool not initialised yet */
+
+    /* Ask ARQ first: it is the one party that can refuse, and it owns the
+     * idle-state test.  Doing this before touching the frame size keeps the
+     * refusal clean -- a rejected command leaves every field untouched. */
+    if (arq_set_listen_mode(mode) != 0)
+        return MODEM_LISTEN_MODE_BUSY;
+
+    atomic_store(&broadcast_frame_size, frame_size);
+    atomic_store(&modem_listen_mode, mode);
+    /* Broadcast TCP clients frame to this size; they re-read it per frame. */
+    interfaces_set_broadcast_frame_size(frame_size);
+
+    HLOGI("modem", "Listen mode set to %d (%s), broadcast frame size %zu",
+          mode, mode_name_from_enum(mode), frame_size);
+    return 0;
+}
+
+int modem_get_listen_mode(void)
+{
+    return atomic_load(&modem_listen_mode);
+}
+
+size_t modem_get_broadcast_frame_size(void)
+{
+    return atomic_load(&broadcast_frame_size);
+}
+
 static int maybe_switch_modem_mode(generic_modem_t *g_modem,
                                    int target_mode,
                                    int arq_trx,
@@ -847,8 +908,17 @@ try_shm_connect2:
 
     g_modem->mode = mode;
     g_modem->payload_bytes_per_modem_frame = payload_bytes_per_modem_frame;
-    broadcast_frame_size = payload_bytes_per_modem_frame;
-
+    atomic_store(&broadcast_frame_size, payload_bytes_per_modem_frame);
+    /* Seed the listen mode from -m, whatever it is.  Runtime changes are
+     * restricted to pooled payload modes (see modem_set_listen_mode), but the
+     * startup mode may legitimately be one that is not runtime-switchable
+     * (DATAC0/DATAC14/FSK_LDPC), so do not filter it here -- that would change
+     * startup behaviour for those modes. */
+    atomic_store(&modem_listen_mode, mode);
+    /* Let the ARQ FSM ask whether the channel is occupied, so a timer-driven
+     * TURN_REQ does not key over a transmission no decoder has synced on. */
+    arq_modem_set_channel_busy_fn(modem_channel_busy);
+    
     int modem_sample_rate = g_modem->codec.be->sample_rate(g_modem->codec.ctx);
     HLOGI("modem", "Initialized persistent FreeDV mode pool (DATAC16/DATAC15/DATAC13/DATAC4/DATAC3/DATAC1/DATAC17/QAM16C2), frames per burst: %d", frames_per_burst);
     HLOGI("modem", "Active FreeDV mode at startup: %d (%s), verbosity: %d", mode, mode_name_from_enum(mode), freedv_verbosity);
@@ -1689,14 +1759,17 @@ static void process_received_frame(const uint8_t *data,
         break;
     case PACKET_TYPE_BROADCAST_CONTROL:
     case PACKET_TYPE_BROADCAST_DATA:
-        if (broadcast_frame_size > 0 && payload_nbytes != broadcast_frame_size)
+    {
+        size_t expect_bcast = atomic_load(&broadcast_frame_size);
+        if (expect_bcast > 0 && payload_nbytes != expect_bcast)
         {
             HLOGD("modem-rx", "Discarding broadcast frame: size %zu != expected %zu",
-                  payload_nbytes, broadcast_frame_size);
+                  payload_nbytes, expect_bcast);
             break;
         }
         write_buffer(data_rx_buffer_broadcast, (uint8_t *)data, payload_nbytes);
         break;
+    }
     default:
         HLOGW("modem-rx", "Unknown frame type received");
         break;
@@ -1744,6 +1817,7 @@ typedef struct {
     _Atomic bool        policy_ready;
     _Atomic uint32_t    bitrate_bps;
     _Atomic long        dropped_samples;  /* ring overflow, logged not fatal */
+    long                dbg_samples;      /* diagnosis: samples consumed        */
 } rx_worker_t;
 
 static void rx_worker_publish_metrics(rx_worker_t *w, const rx_metrics_accum_t *m)
@@ -1854,6 +1928,14 @@ static void *rx_worker_thread(void *arg)
         }
 
         read_buffer(w->ring, (uint8_t *)buf, sizeof(int16_t) * (size_t)want);
+#ifdef ARQ_TRACE_ENABLED
+        w->dbg_samples += want;
+        if (w->dbg_samples >= 8000) {
+            ARQ_TRACE(ARQ_TR_DROP, (uint8_t)(w->state.mode & 0xff), 0,
+                      (uint16_t)(w->dbg_samples / 100));
+            w->dbg_samples = 0;
+        }
+#endif
 
         rx_metrics_accum_t m = {0};
         rx_decoder_consume_chunk(&w->state, buf, want,
@@ -1881,7 +1963,18 @@ static void rx_decoder_consume_chunk(rx_decoder_state_t *state,
 
     if (!state || !modem_codec_valid(&state->codec) || !state->demod_in || !state->bytes_out ||
         !samples || sample_count <= 0)
+    {
+        /* Silent drop: the worker has already read this audio off its ring, so
+         * a decoder parked here consumes the whole stream and reports nothing
+         * at all -- indistinguishable from a dead channel unless traced. */
+        ARQ_TRACE(ARQ_TR_DROP, 0xfe,
+                  (uint8_t)((state ? (state->freedv ? 1 : 0) : 0) |
+                            (state && state->demod_in  ? 2 : 0) |
+                            (state && state->bytes_out ? 4 : 0) |
+                            (samples ? 8 : 0)),
+                  (uint16_t)(sample_count > 0 ? sample_count : 0));
         return;
+    }
 
     /* Feed the chunk in demod-buffer-sized pieces and run one decode step per
      * iteration.  Two invariants matter:
@@ -1948,6 +2041,17 @@ static void rx_decoder_consume_chunk(rx_decoder_state_t *state,
             continue;
         }
 
+        /* Count every decode attempt, not just the ones that produce something.
+         * A plane that is fed but never reaches this call is indistinguishable
+         * from one that decodes and never acquires, unless both are counted. */
+        {
+            static _Atomic unsigned rx_calls[2];
+            unsigned idx = (state->mode == FREEDV_MODE_DATAC16) ? 0u : 1u;
+            unsigned c = atomic_fetch_add(&rx_calls[idx], 1u) + 1u;
+            if ((c % 64) == 1)
+                ARQ_TRACE(ARQ_TR_TX_END, (uint8_t)(state->mode & 0xff),
+                          (uint8_t)(nin & 0xff), (uint16_t)c);
+        }
         nbytes_out = (size_t)be->rawdata_rx(ctx, state->bytes_out, state->demod_in);
         if (nin > 0)
         {
@@ -1963,6 +2067,15 @@ static void rx_decoder_consume_chunk(rx_decoder_state_t *state,
         rx_status = be->get_rx_status(ctx);
         be->get_stats(ctx, &sync, &snr_est);
         pthread_mutex_unlock(ilock);
+
+        /* Diagnosis: what the decoder actually saw.  sync, the status bits and
+         * the SNR estimate together say whether a burst was heard at all, was
+         * acquired and failed, or never arrived. */
+        if (ARQ_TRACE_ON && (sync || rx_status || nbytes_out))
+            ARQ_TRACE(ARQ_TR_DECODE, (uint8_t)(state->mode & 0xff),
+                      (uint8_t)((sync ? 1 : 0) | (rx_status << 1)),
+                      (uint16_t)(nbytes_out ? nbytes_out
+                                            : (uint16_t)(int)(snr_est * 10.0f + 1000.0f)));
 
         rx_metrics_update(metrics, sync, snr_est, rx_status, nbytes_out > 0);
 
@@ -2017,7 +2130,6 @@ void *tx_thread(void *g_modem)
     generic_modem_t *modem = (generic_modem_t *)g_modem;
     uint8_t *data = NULL;
     size_t data_size = 0;
-    int startup_mode = -1;
 
     while (!shutdown_)
     {
@@ -2025,13 +2137,6 @@ void *tx_thread(void *g_modem)
         memset(&arq_snapshot, 0, sizeof(arq_snapshot));
         bool have_arq_snapshot = arq_get_runtime_snapshot(&arq_snapshot);
         bool arq_policy_ready = arq_mode_policy_ready_snapshot(have_arq_snapshot, &arq_snapshot);
-
-        if (startup_mode < 0)
-        {
-            pthread_mutex_lock(&modem_pool_lock);
-            startup_mode = modem->mode;
-            pthread_mutex_unlock(&modem_pool_lock);
-        }
 
         size_t pending_arq_data = size_buffer(data_tx_buffer_arq);
         size_t pending_arq_control = size_buffer(data_tx_buffer_arq_control);
@@ -2052,11 +2157,16 @@ void *tx_thread(void *g_modem)
         }
         else if (arq_snapshot.trx != TX &&
                  !arq_tx_queued &&
-                 pending_broadcast > 0 &&
-                 startup_mode >= 0)
+                 pending_broadcast > 0)
         {
-            // Keep pure broadcast TX on the startup payload mode/frame size.
-            maybe_switch_modem_mode(modem, startup_mode, arq_snapshot.trx, false);
+            /* Keep pure broadcast TX on the listen mode's payload mode/frame
+             * size.  Read live rather than latched once at thread start, so a
+             * MODE command actually moves broadcast TX; otherwise the frame
+             * size would follow the new mode while TX stayed on the old one
+             * and the size gate below would silently drop every frame. */
+            int listen = atomic_load(&modem_listen_mode);
+            if (listen >= 0)
+                maybe_switch_modem_mode(modem, listen, arq_snapshot.trx, false);
         }
 
         size_t payload_bytes_per_modem_frame = 0;
@@ -2170,9 +2280,10 @@ void *tx_thread(void *g_modem)
                 HLOGW("modem-tx", "Failed to send ARQ buffered frame");
         }
 
+        size_t expect_bcast = atomic_load(&broadcast_frame_size);
         if (size_buffer(data_tx_buffer_broadcast) >= required &&
-            broadcast_frame_size > 0 &&
-            payload_bytes_per_modem_frame == broadcast_frame_size)
+            expect_bcast > 0 &&
+            payload_bytes_per_modem_frame == expect_bcast)
         {
             for (int i = 0; i < tx_frames_per_burst; i++)
             {
@@ -2386,6 +2497,19 @@ void *rx_thread(void *g_modem)
         }
         rx_diag_iterations++;
         rx_diag_total_samples += chunk_samples;
+        /* Diagnosis: how much audio the capture path actually delivers, once
+         * per 8000 samples (1 s).  A plane that decodes nothing while this
+         * ticks is starved downstream; this silent means nothing arrives. */
+#ifdef ARQ_TRACE_ENABLED
+        {
+            static int dbg_cap;
+            dbg_cap += chunk_samples;
+            if (dbg_cap >= 8000) {
+                ARQ_TRACE(ARQ_TR_TX_START, 0xff, 0, (uint16_t)(dbg_cap / 100));
+                dbg_cap = 0;
+            }
+        }
+#endif
         for (int i = 0; i < chunk_samples; i++)
         {
             capture_i16[i] = (int16_t)(capture_i32[i] >> 16);

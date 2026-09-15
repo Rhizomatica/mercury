@@ -159,6 +159,9 @@ static void reset_session_data_state(arq_session_t *sess)
     sess->tx_seq             = 0;
     sess->rx_expected        = 0;
     sess->tx_frame_present   = false;
+    sess->tx_frame_tail      = 0;
+    sess->tx_stream_off      = 0;
+    sess->rx_stream_hwm      = 0;
     sess->tx_frame_len       = 0;
     sess->tx_frame_retx      = false;
     sess->tx_retries_left    = ARQ_DATA_RETRY_SLOTS;
@@ -210,6 +213,10 @@ static void sess_enter(arq_session_t *sess, arq_conn_state_t new_state,
      * release. */
     if (new_state == ARQ_CONN_DISCONNECTED || new_state == ARQ_CONN_LISTENING)
         sess->deferred_listen_off = false;
+    /* The right to key an ACCEPT is earned by hearing a CALL, and it does not
+     * survive leaving ACCEPTING. */
+    if (new_state != ARQ_CONN_ACCEPTING)
+        sess->accept_tx_pending = false;
     if (new_state != ARQ_CONN_CONNECTED)
     {
         sess->pending_connect_confirm = false;
@@ -239,6 +246,7 @@ static void sess_enter(arq_session_t *sess, arq_conn_state_t new_state,
         sess->rx_success_count = 0;
         sess->rx_fast_ramp     = true;
         sess->tx_frame_present = false;
+        sess->tx_frame_tail    = 0;
         sess->tx_frame_len     = 0;
         sess->tx_frame_retx    = false;
     }
@@ -527,15 +535,22 @@ static void irs_arm_ack_deadline(arq_session_t *sess, const arq_event_t *ev)
 
 static bool deliver_rx_checked(arq_session_t *sess, const arq_event_t *ev)
 {
-    if (ev->seq != sess->rx_expected)
+    /* Deliver strictly at the high-water mark.  Anything else is a duplicate or
+     * an overlap of bytes already handed up, and is dropped -- but the caller
+     * still ACKs it, so a sender whose ACK was lost walks forward instead of
+     * stalling.  Keying on the offset rather than a frame number is what lets
+     * the sender re-cut a stranded frame: the same bytes at the same offset are
+     * idempotent whatever frame carried them. */
+    if (ev->stream_off != sess->rx_stream_hwm)
     {
-        HLOGD(LOG_COMP, "Duplicate data seq=%d (expected=%d) — suppressed",
-              (int)ev->seq, (int)sess->rx_expected);
+        HLOGD(LOG_COMP, "Duplicate data off=%u (expected=%u) — suppressed",
+              (unsigned)ev->stream_off, (unsigned)sess->rx_stream_hwm);
         return false;
     }
     if (ev->payload_len > 0 && g_cbs.deliver_rx_data)
         g_cbs.deliver_rx_data(ev->payload, ev->payload_len);
-    sess->rx_expected = ev->seq + 1;
+    sess->rx_stream_hwm = (uint16_t)(sess->rx_stream_hwm + ev->payload_len);
+    sess->rx_expected   = ev->seq + 1;   /* kept for logging/dup statistics */
     return true;
 }
 
@@ -644,24 +659,6 @@ static void send_ack(arq_session_t *sess, uint8_t ack_delay_raw)
         g_cbs.send_pattern_ack(sess->payload_mode, kind);
 }
 
-/* Smallest ladder mode whose usable payload can carry `len` user bytes, at or
- * above the current speed_level.  Used so an already-outstanding frame (whose
- * seq<->bytes identity is immutable) is never re-framed too small after a mode
- * drop — which would double-deliver on the peer.  Falls back to the fastest
- * mode if none fits (should not happen: reads are sized to the mode at
- * creation, so len always fits some mode >= the creation mode). */
-static int mode_that_fits(int from_level, int len)
-{
-    for (int lvl = from_level; lvl < ARQ_LADDER_LEVELS; lvl++)
-    {
-        int m = clamp_payload_mode_to_bandwidth(arq_mode_ladder[lvl]);
-        const arq_mode_timing_t *tm = arq_protocol_mode_timing(m);
-        if (tm && (int)tm->payload_bytes - ARQ_FRAME_HDR_SIZE >= len)
-            return m;
-    }
-    return clamp_payload_mode_to_bandwidth(arq_mode_ladder[ARQ_LADDER_LEVELS - 1]);
-}
-
 /* Build and transmit the single retained DATA frame.  A FRESH frame reads raw
  * user bytes from the app ring once, sized to the current payload_mode, and
  * caches them in sess->tx_frame with a fixed seq.  A retransmit re-frames the
@@ -682,42 +679,17 @@ static void send_data_burst(arq_session_t *sess)
         return;
     size_t user_bytes = (size_t)tm->payload_bytes - ARQ_FRAME_HDR_SIZE;
 
-    /* Cap a FRESH read so the frame still fits a rung BELOW this one.
+    /* No cap on a fresh read.  This used to be capped at the widest slot among
+     * the lower rungs so a failed probe could still be carried after a
+     * step-down -- necessary while a frame was immutable, and it cost ~7% on a
+     * clean link because one frame per rung climbed went out under-filled.  It
+     * was also not sufficient: from DATAC1 the widest lower slot is DATAC3's
+     * 118 bytes, which the 90-byte MFSK floor still cannot carry, so a frame
+     * read at a rung that had delivered could still strand when the band
+     * collapsed (the residual half of docs/ARQ-FRAME-SIZING.md).
      *
-     * The retained frame is immutable — it is never re-framed smaller, because
-     * the seq<->bytes identity has to stay fixed for a duplicate to be
-     * idempotent on the peer.  So the width it is read at decides, once and for
-     * all, which modes can ever transmit it.  Read 502 bytes while probing
-     * DATAC1 and no lower rung's slot can hold them: mode_that_fits() pins
-     * every retransmission to DATAC1 while the ladder steps down beneath it,
-     * the peer's mirror follows the ladder away from the mode actually on the
-     * air, and the session runs to the no-progress timeout with both ends
-     * healthy and simply not listening to each other.
-     *
-     * The invariant that prevents it is exactly "some rung below this one can
-     * carry this frame", so cap at the LARGEST slot among the lower rungs.
-     * Not the rung immediately below: slot sizes are not monotonic along the
-     * ladder (MFSK carries 90 user bytes, DATAC15 22), and taking the maximum
-     * exploits that — a DATAC3 probe may carry 90 bytes because MFSK can catch
-     * it, where a neighbour-only rule would allow 46.  Stateless, and it can
-     * only ever be as strict as it has to be. */
-    if (!sess->tx_frame_present && sess->speed_level > 0)
-    {
-        size_t widest_below = 0;
-        for (int lvl = 0; lvl < sess->speed_level && lvl < ARQ_LADDER_LEVELS; lvl++)
-        {
-            const arq_mode_timing_t *tl = arq_protocol_mode_timing(
-                clamp_payload_mode_to_bandwidth(arq_mode_ladder[lvl]));
-            if (tl && (int)tl->payload_bytes > ARQ_FRAME_HDR_SIZE)
-            {
-                size_t sl = (size_t)tl->payload_bytes - ARQ_FRAME_HDR_SIZE;
-                if (sl > widest_below)
-                    widest_below = sl;
-            }
-        }
-        if (widest_below > 0 && widest_below < user_bytes)
-            user_bytes = widest_below;
-    }
+     * Frames are keyed by stream offset now, so a stranded frame is simply
+     * re-cut to whatever the working rung can carry.  Read the full width. */
 
     /* Fetch a new frame's worth of user bytes iff none is outstanding. */
     if (!sess->tx_frame_present)
@@ -734,18 +706,28 @@ static void send_data_burst(arq_session_t *sess)
         sess->tx_frame_retx    = false;
     }
 
-    /* Choose the TX mode: the current mode if the (immutable) retained frame
-     * fits, else the smallest mode that does — the frame is never resized. */
+    /* Transmit on the rung the ladder is on, and make the frame fit it.
+     *
+     * The frame used to be immutable, so a frame too big for the current rung
+     * pinned the transmitter to mode_that_fits() while the ladder stepped down
+     * beneath it -- the receiver's mirror followed the ladder away from the
+     * mode actually on the air and the session stranded with both ends healthy.
+     *
+     * Keyed by offset, re-cutting is idempotent: the bytes beyond what this
+     * rung can carry stay in the buffer as tx_frame_tail and go out as the next
+     * frame, at the offset they already have.  The ladder can always descend to
+     * the floor and the frame follows it down. */
     int tx_mode = sess->payload_mode;
     const arq_mode_timing_t *tmm = arq_protocol_mode_timing(tx_mode);
     size_t slot = (tmm && (int)tmm->payload_bytes > ARQ_FRAME_HDR_SIZE)
                   ? (size_t)tmm->payload_bytes - ARQ_FRAME_HDR_SIZE : 0;
-    if (sess->tx_frame_len > (int)slot)
+    if (slot > 0 && sess->tx_frame_len > (int)slot)
     {
-        tx_mode = mode_that_fits(sess->speed_level, sess->tx_frame_len);
-        tmm  = arq_protocol_mode_timing(tx_mode);
-        slot = (tmm && (int)tmm->payload_bytes > ARQ_FRAME_HDR_SIZE)
-               ? (size_t)tmm->payload_bytes - ARQ_FRAME_HDR_SIZE : slot;
+        int keep = sess->tx_frame_len - (int)slot;
+        HLOGD(LOG_COMP, "Re-cut frame %d -> %d bytes for mode %d (%d held back)",
+              sess->tx_frame_len, (int)slot, tx_mode, keep);
+        sess->tx_frame_tail += keep;
+        sess->tx_frame_len   = (int)slot;
     }
 
     int this_len = sess->tx_frame_len;
@@ -782,8 +764,10 @@ static void send_data_burst(arq_session_t *sess)
 
     uint8_t frame[INT_BUFFER_SIZE];
     int n = arq_protocol_build_data(frame, sizeof(frame),
-                                    sess->session_id, sess->tx_frame_seq,
-                                    sess->rx_expected, data_flags, snr_raw,
+                                    sess->session_id,
+                                    arq_hdr_stream_off_hi(sess->tx_stream_off),
+                                    arq_hdr_stream_off_lo(sess->tx_stream_off),
+                                    data_flags, snr_raw,
                                     payload_valid, payload, slot);
     if (n <= 0)
         return;
@@ -859,6 +843,40 @@ static void enter_idle_iss_guarded(arq_session_t *sess, bool gained_turn)
     }
     else
         dflow_enter(sess, ARQ_DFLOW_IDLE_ISS, UINT64_MAX, ARQ_EV_TIMER_RETRY);
+}
+
+/* Is the peer transmitting right now, as far as this station can tell?
+ *
+ * Two independent signals, because neither is sufficient alone:
+ *
+ *  - A decoder holding sync on an incoming burst.  Precise when available --
+ *    it means a frame in a waveform we are listening for is actually arriving.
+ *  - Energy on the channel, via the busy detector.  Coarser, but it sees
+ *    transmissions sync cannot: the acquisition window before sync is
+ *    established, a mode neither decoder happens to be bound to, and a burst
+ *    too weak to sync on at all.  Optional -- the detector is off unless the
+ *    station enables it, so this is an improvement when present, not a
+ *    dependency.
+ *
+ * What neither covers: if the peer's signal cannot be heard at all -- a deep
+ * fade, or simply too little SNR to detect -- then no amount of
+ * listen-before-talk helps, and the collision happens.  That is the hidden
+ * transmitter problem and it is not solvable by listening; the protocol-level
+ * answer is to prefer the piggyback HAS_DATA path, which is collision-free by
+ * construction because it rides a frame the peer is already waiting for, and
+ * to treat an unsolicited TURN_REQ as the fallback it is.  So this check
+ * reduces the collision rate; it does not eliminate it. */
+static bool peer_is_transmitting(const arq_session_t *sess)
+{
+    if (g_cbs.channel_busy && g_cbs.channel_busy())
+        return true;
+
+    if (sess->last_rx_sync_ms == 0)
+        return false;
+    uint64_t now = time_now_ms();
+    if (now < sess->last_rx_sync_ms)
+        return true;          /* clock went backwards; treat as busy */
+    return (now - sess->last_rx_sync_ms) < (uint64_t)ARQ_CHANNEL_SYNC_HOLD_MS;
 }
 
 static void enter_idle_irs(arq_session_t *sess)
@@ -938,6 +956,8 @@ static void fsm_listening(arq_session_t *sess, const arq_event_t *ev)
         snprintf(sess->remote_call, CALLSIGN_MAX_SIZE, "%s", ev->remote_call);
         snprintf(sess->local_call, CALLSIGN_MAX_SIZE, "%s", ev->local_call);
         sess->session_id      = ev->session_id;
+        sess->tx_retries_left = ARQ_ACCEPT_RETRY_SLOTS;
+        sess->accept_tx_pending = true;   /* answering a CALL we just heard */
         /* Reset mode state so the payload decoder matches the new caller's
          * initial MFSK floor.  This must happen here (not in sess_enter for
          * DISCONNECTED/LISTENING) because LISTENING needs peer_tx_mode to
@@ -1162,9 +1182,10 @@ static void fsm_accepting(arq_session_t *sess, const arq_event_t *ev)
          * Answering one channel guard after the CALL puts the ACCEPT in the
          * gap the caller has just opened by dropping PTT -- the same schedule
          * fsm_listening uses for the first ACCEPT, and for the same reason. */
-        sess->tx_retries_left = ARQ_ACCEPT_RETRY_SLOTS;
-        sess->deadline_ms     = time_now_ms() + ARQ_CHANNEL_GUARD_MS;
-        sess->deadline_event  = ARQ_EV_TIMER_RETRY;
+        sess->tx_retries_left   = ARQ_ACCEPT_RETRY_SLOTS;
+        sess->accept_tx_pending = true;   /* answering a CALL we just heard */
+        sess->deadline_ms       = time_now_ms() + ARQ_CHANNEL_GUARD_MS;
+        sess->deadline_event    = ARQ_EV_TIMER_RETRY;
         break;
 
     case ARQ_EV_TX_COMPLETE:
@@ -1183,6 +1204,21 @@ static void fsm_accepting(arq_session_t *sess, const arq_event_t *ev)
          * it is shut again well before the caller's first data burst needs the
          * whole sample budget. */
         sess->confirm_listen_until_ms = time_now_ms() + ARQ_CONNECT_CONFIRM_LISTEN_MS;
+        /* This deadline is a LISTENING window, not a retransmission timer.  An
+         * ACCEPT is only ever correct one channel guard after a CALL we heard,
+         * because that is the only moment we know the caller has dropped PTT
+         * and is listening.  Firing one when this window expires has no phase
+         * relationship to the caller at all, and lands in the middle of its
+         * next CALL, where a half-duplex radio is deaf.
+         *
+         * This is a protocol invariant, not a reliability fix: the caller is
+         * deaf over its own transmission, so a blind ACCEPT is wrong whether
+         * or not it happens to collide in any given run.
+         *
+         * So mark the pending timer as "window", not "ACCEPT".  If the caller
+         * is still calling we will hear it and answer that; if we cannot hear
+         * it, transmitting blind only destroys someone else's burst. */
+        sess->accept_tx_pending = false;
         break;
 
     case ARQ_EV_TIMER_RETRY:
@@ -1199,6 +1235,18 @@ static void fsm_accepting(arq_session_t *sess, const arq_event_t *ev)
         if (sess->tx_retries_left > 0)
         {
             sess->tx_retries_left--;
+            if (!sess->accept_tx_pending)
+            {
+                /* The RX window closed without the caller coming back.  Stay
+                 * off the air -- see the TX_COMPLETE comment above -- and wait
+                 * again, so the budget still bounds how long we hold the
+                 * pending call open. */
+                sess->deadline_ms = retry_deadline_from_s(sess, arq_protocol_call_interval_s());
+                break;
+            }
+            /* Answering a CALL we heard: the caller dropped PTT one channel
+             * guard ago and is listening now. */
+            sess->accept_tx_pending = false;
             send_call_accept(sess, true);
             /* deadline is now managed via TX_COMPLETE above; set a generous
              * fallback here in case TX_COMPLETE is missed for any reason */
@@ -1452,6 +1500,31 @@ static void irs_receive_data(arq_session_t *sess, const arq_event_t *ev)
  * (fixed seq + byte range), so clear it whole and advance tx_seq. */
 static void iss_frame_delivered(arq_session_t *sess)
 {
+    /* The delivered bytes advance the stream position, which is the identity
+     * the peer dedups on. */
+    sess->tx_stream_off = (uint16_t)(sess->tx_stream_off + sess->tx_frame_len);
+
+    if (sess->tx_frame_tail > 0)
+    {
+        /* This frame was re-cut to fit the rung; the held-back bytes are still
+         * in the buffer directly after the part just delivered.  They become
+         * the next frame at the offset just advanced to -- no re-read, so the
+         * backlog is not touched and nothing is duplicated. */
+        memmove(sess->tx_frame, sess->tx_frame + sess->tx_frame_len,
+                (size_t)sess->tx_frame_tail);
+        sess->tx_frame_len     = sess->tx_frame_tail;
+        sess->tx_frame_tail    = 0;
+        sess->tx_frame_present = true;
+        sess->tx_frame_retx    = false;
+        sess->tx_frame_seq     = (uint8_t)(sess->tx_frame_seq + 1);
+        sess->tx_seq           = (uint8_t)(sess->tx_frame_seq + 1);
+        sess->last_tx_progress_ms = time_now_ms();
+        sess->tx_retries_left     = ARQ_DATA_RETRY_SLOTS;
+        if (g_cbs.send_buffer_status)
+            g_cbs.send_buffer_status(session_tx_backlog(sess));
+        return;
+    }
+
     sess->tx_frame_present = false;
     sess->tx_frame_len     = 0;
     sess->tx_frame_retx    = false;

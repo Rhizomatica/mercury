@@ -31,6 +31,7 @@
 #include "ui_communication.h"
 #include "mercury_engine.h"
 #include "virtual_clock.h"
+#include "message_store.h"
 
 /* ---- shared globals ---- */
 _Atomic bool shutdown_ = false;
@@ -67,6 +68,34 @@ static int apply_audio_defaults(int audio_system, char *input_dev, size_t in_siz
         break;
     }
     return 0;
+}
+
+/* Payload bit rate of the running modem, in bits/s: the bytes a frame carries
+ * over the time that frame occupies the air.  Derived from the modem itself so
+ * it reflects the mode actually in use. */
+int mercury_engine_modem_bitrate(void)
+{
+    /* Asked through the backend rather than a freedv handle, so it answers for
+     * whichever backend is active -- MFSK is not a freedv mode. */
+    const modem_backend_t *be = g_modem.codec.be;
+    void *ctx = g_modem.codec.ctx;
+    if (!be || !ctx || !be->n_tx_samples || !be->sample_rate) return 0;
+
+    int nsam = be->n_tx_samples(ctx);
+    int fs   = be->sample_rate(ctx);
+    if (nsam <= 0 || fs <= 0) return 0;
+    double secs = (double)nsam / (double)fs;
+    return (int)((double)g_modem.payload_bytes_per_modem_frame * 8.0 / secs + 0.5);
+}
+
+/* Occupied bandwidth of the running modem in Hz, or 0 when the backend cannot
+ * say -- reporting nothing is better than reporting a figure nobody measured. */
+int mercury_engine_modem_bandwidth_hz(void)
+{
+    const modem_backend_t *be = g_modem.codec.be;
+    void *ctx = g_modem.codec.ctx;
+    if (!be || !ctx || !be->bandwidth_hz) return 0;
+    return be->bandwidth_hz(ctx);
 }
 
 int mercury_engine_init(const mercury_config *cfg,
@@ -219,6 +248,13 @@ int mercury_engine_init(const mercury_config *cfg,
 
     tnc_set_intervals(cfg->tnc_keepalive_s, cfg->tnc_buffer_report_ms);
 
+    /* ---- persistent message store ---- */
+    if (cfg->store_enabled)
+    {
+        if (msg_store_init(cfg->store_path, cfg->store_max_messages) != 0)
+            HLOGW("engine", "Message store init failed — chat history will not persist");
+    }
+
     /* ---- ARQ ---- */
     if (arq_init(g_modem.payload_bytes_per_modem_frame, g_modem.mode) != EXIT_SUCCESS)
     {
@@ -304,6 +340,8 @@ void mercury_engine_shutdown(void)
 
     ui_comm_shutdown(&g_ui_ctx);
     radio_io_shutdown();
+
+    msg_store_shutdown();
 
     HLOGI("engine", "Mercury engine shut down");
     hermes_log_shutdown();

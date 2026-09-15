@@ -52,6 +52,14 @@ int mercury_engine_init(const mercury_config *cfg,
 /* ------------------------------------------------------------------ */
 void mercury_engine_shutdown(void);
 
+/* Bit rate and bandwidth of the running modem.  Derived from the modem itself
+ * rather than a table, so they describe what is actually on the air.  For the
+ * broadcast mode an operator has to match, see mercury_bcast_engine_mode():
+ * that reports the listen mode, which is what broadcast uses, rather than
+ * whatever rung the ARQ ladder currently sits on. */
+int mercury_engine_modem_bitrate(void);
+int mercury_engine_modem_bandwidth_hz(void);
+
 /* ------------------------------------------------------------------ */
 /*  mercury_engine_is_initialized()                                    */
 /*                                                                     */

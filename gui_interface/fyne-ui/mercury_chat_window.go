@@ -28,13 +28,47 @@ const (
 // the first and tear down its ARQ session.  Reuse the window instead.
 var mercuryClientSingleton *chatWindow
 
-func openMercuryClientWindow(app fyne.App, telemetry telemetryState, arqPort, broadcastPort int) {
+// currentTelemetry reports the engine's LIVE status to the embedded client.
+// The window is handed a telemetry snapshot when it is built, which is stale by
+// the time anyone presses Connect -- and staleness is the whole problem here.
+// Set by main(); nil in tests, where the interlock simply does not engage.
+var currentTelemetry func() telemetryState
+
+// embeddedClientMayConnect decides whether the embedded client may take the TNC
+// ports, and says why not when it may not.
+//
+// Split out from onConnect so the decision is testable without a running
+// engine: getting it wrong costs someone a half-finished HF transfer, which is
+// not a thing you want to discover on air.
+//
+// alreadyOurs means we currently hold the port, in which case the attached
+// client IS us and reconnecting is our own business.
+func embeddedClientMayConnect(alreadyOurs bool, tel telemetryState) (bool, string) {
+	if alreadyOurs || !tel.ClientTCPConnected {
+		return true, ""
+	}
+	if tel.Sync {
+		return false, "Another client is attached to the TNC ports AND an ARQ session is live."
+	}
+	return false, "Another client (uucp, VarAC, RNS...) is attached to the TNC ports."
+}
+
+// closeMercuryClientWindow shuts the embedded client down if it is open.
+// The window's SetOnClosed handler disconnects the sockets and clears the
+// singleton, so this releases the TNC ports as a side effect.
+func closeMercuryClientWindow() {
+	if mercuryClientSingleton != nil {
+		mercuryClientSingleton.win.Close()
+	}
+}
+
+func openMercuryClientWindow(app fyne.App, telemetry telemetryState, arqPort, broadcastPort int, history []HistoryMessage) {
 	if mercuryClientSingleton != nil {
 		mercuryClientSingleton.win.RequestFocus()
 		return
 	}
 	cw := &chatWindow{}
-	cw.build(app, telemetry, arqPort, broadcastPort)
+	cw.build(app, telemetry, arqPort, broadcastPort, history)
 	mercuryClientSingleton = cw
 }
 
@@ -46,6 +80,10 @@ type chatWindow struct {
 	// logLines is the bounded ring (newest first) backing the log Entry,
 	// so appending never re-splits the widget's own text.
 	logLines []string
+
+	// history is the persisted chat backlog, supplied by the engine over the
+	// UI data path (WebSocket or in-process bridge) at launch time.
+	history []HistoryMessage
 
 	arqBox      *fyne.Container
 	arqScroll   *container.Scroll
@@ -68,8 +106,10 @@ type chatWindow struct {
 	sendBcast     *widget.Button
 	sendBcastWrap *hoverTooltipButton
 	sendCQ        *widget.Button
+	bcastFile     *broadcastFilePanel
 	arqMsg        *widget.Entry
 	bcastMsg      *widget.Entry
+	bcastCount    *widget.Label
 
 	// bcastDisabledReason is shown as a hover tooltip on the Broadcast
 	// message button while it is disabled (e.g. during an ARQ session).
@@ -81,10 +121,21 @@ type chatWindow struct {
 	cqSending bool
 }
 
-func (cw *chatWindow) build(app fyne.App, telemetry telemetryState, arqPort, broadcastPort int) {
+func (cw *chatWindow) build(app fyne.App, telemetry telemetryState, arqPort, broadcastPort int, history []HistoryMessage) {
 	cw.win = app.NewWindow("Mercury Client")
+	cw.history = history
 
 	cw.myCall = widget.NewEntry()
+	// The limit includes the callsign, so it moves when the callsign does.
+	defer func() {
+		prev := cw.myCall.OnChanged
+		cw.myCall.OnChanged = func(v string) {
+			if prev != nil {
+				prev(v)
+			}
+			cw.enforceBroadcastLimit()
+		}
+	}()
 	cw.myCall.SetText(defaultCall(telemetry.UserCallsign, "NOCALL"))
 	cw.target = widget.NewEntry()
 	cw.target.SetText(defaultCall(telemetry.DestCallsign, "DEST"))
@@ -102,6 +153,12 @@ func (cw *chatWindow) build(app fyne.App, telemetry telemetryState, arqPort, bro
 	cw.arqMsg.SetPlaceHolder("Type message to be sent...")
 	cw.bcastMsg = widget.NewEntry()
 	cw.bcastMsg.SetPlaceHolder("Type broadcast message...")
+	// A broadcast message that overruns one modem frame is TRUNCATED by the
+	// TNC -- the operator just sees their last characters vanish.  The limit
+	// depends on the mode and the callsign, so show it and enforce it here
+	// rather than let it be discovered on the air.  See issue #243.
+	cw.bcastMsg.OnChanged = func(string) { cw.enforceBroadcastLimit() }
+	cw.bcastCount = widget.NewLabel("")
 
 	cw.log = widget.NewMultiLineEntry()
 	cw.log.SetPlaceHolder("Activity log...")
@@ -153,6 +210,27 @@ func (cw *chatWindow) build(app fyne.App, telemetry telemetryState, arqPort, bro
 		cw.sendCQ,
 	)
 
+	// File broadcast rides the same broadcast socket the chat below it uses,
+	// so it lives with the broadcast controls and is enabled by the same signal.
+	cw.bcastFile = newBroadcastFilePanel(cw.win, fyne.CurrentApp().Preferences(),
+		func() broadcastSender {
+			if cw.mc == nil {
+				return nil
+			}
+			return cw.mc
+		},
+		func(f func([]byte) bool) {
+			if cw.mc == nil {
+				return
+			}
+			if f == nil {
+				cw.mc.SetBroadcastFrameFilter(nil)
+				return
+			}
+			cw.mc.SetBroadcastFrameFilter(client.BroadcastFrameFilter(f))
+		},
+		cw.logMsg)
+
 	controls := container.NewVBox(
 		cfgForm,
 		modemRow,
@@ -160,7 +238,9 @@ func (cw *chatWindow) build(app fyne.App, telemetry telemetryState, arqPort, bro
 		widget.NewSeparator(),
 		cw.arqMsg, cw.sendARQ,
 		widget.NewSeparator(),
-		cw.bcastMsg, cw.sendBcastWrap,
+		cw.bcastMsg, cw.bcastCount, cw.sendBcastWrap,
+		widget.NewSeparator(),
+		cw.bcastFile.content(),
 	)
 
 	left := container.NewVBox(controls, layout.NewSpacer())
@@ -185,9 +265,17 @@ func (cw *chatWindow) build(app fyne.App, telemetry telemetryState, arqPort, bro
 		),
 	)
 
-	cw.win.SetContent(container.NewHSplit(left, right))
-	cw.win.Resize(fyne.NewSize(800, 600))
+	// Make the whole client window scrollable so small displays can access
+	// the Broadcast file panel and other controls by scrolling.
+	cw.win.SetContent(container.NewScroll(container.NewHSplit(left, right)))
+	// Restore previously saved geometry (or fall back to sensible defaults)
+	restoreWindowGeometry(cw.win, app.Preferences())
 	cw.win.SetOnClosed(func() {
+		// Save window geometry so the user's resize/position persists.
+		saveWindowGeometry(cw.win, app.Preferences())
+		if cw.bcastFile != nil {
+			cw.bcastFile.stopForShutdown()
+		}
 		if cw.mc != nil {
 			cw.mc.Disconnect()
 		}
@@ -199,6 +287,45 @@ func (cw *chatWindow) build(app fyne.App, telemetry telemetryState, arqPort, bro
 		}
 	})
 	cw.win.Show()
+}
+
+// broadcastChatLimit is how many characters will actually reach the air, given
+// the mode the engine is running and the callsign in the form.  0 means the
+// limit is unknown (no engine) and no cap is applied.
+func (cw *chatWindow) broadcastChatLimit() int {
+	// The RAW mode, deliberately.  broadcastEngineMode() reports -1 for a mode
+	// broadcast FILES cannot use -- one whose frame is too small to hold a
+	// whole RaptorQ symbol -- but a chat line needs only a frame.  DATAC15 and
+	// FSK_LDPC broadcast chat and GPS perfectly well; using the filtered
+	// accessor here would report "limit unknown" and silently stop capping the
+	// entry, which is the truncation this function exists to prevent.
+	mode := broadcastEngineModeRaw()
+	if mode < 0 {
+		return 0
+	}
+	fs := broadcastModeFrameSize(mode)
+	if fs <= 0 {
+		return 0
+	}
+	return client.BroadcastChatLimit(fs, strings.TrimSpace(cw.myCall.Text))
+}
+
+// enforceBroadcastLimit caps the entry at what will actually be transmitted and
+// shows the operator how much room is left.  Trimming as they type is blunt,
+// but the alternative is letting them compose a message the TNC will quietly
+// shorten.
+func (cw *chatWindow) enforceBroadcastLimit() {
+	limit := cw.broadcastChatLimit()
+	if limit <= 0 {
+		cw.bcastCount.SetText("")
+		return
+	}
+	if len(cw.bcastMsg.Text) > limit {
+		cw.bcastMsg.SetText(cw.bcastMsg.Text[:limit])
+		return // SetText re-enters; the count is updated on that pass
+	}
+	cw.bcastCount.SetText(fmt.Sprintf("%d/%d characters this mode",
+		len(cw.bcastMsg.Text), limit))
 }
 
 func (cw *chatWindow) logMsg(format string, args ...any) {
@@ -258,6 +385,9 @@ func (cw *chatWindow) setTCP(on bool) {
 			cw.arqConnect.Enable()
 			cw.sendBcastWrap.Enable()
 			cw.sendCQ.Enable()
+			if cw.bcastFile != nil {
+				cw.bcastFile.setConnected(true)
+			}
 		} else {
 			cw.connectBtn.Enable()
 			cw.disconnectBtn.Disable()
@@ -267,6 +397,9 @@ func (cw *chatWindow) setTCP(on bool) {
 			cw.sendARQ.Disable()
 			cw.sendBcastWrap.Disable()
 			cw.sendCQ.Disable()
+			if cw.bcastFile != nil {
+				cw.bcastFile.setConnected(false)
+			}
 		}
 	})
 }
@@ -286,12 +419,15 @@ func (cw *chatWindow) setARQ(on bool) {
 			// conn_state guard -- so the block has to be here.
 			cw.sendCQ.Disable()
 		} else {
-			cw.arqConnect.Enable()
 			cw.arqDisconnect.Disable()
 			cw.arqAbort.Disable()
 			cw.sendARQ.Disable()
 			cw.bcastDisabledReason = ""
 			if cw.mc != nil && cw.mc.IsConnected() {
+				// Gate the re-enable on the modem still being up: setARQ is
+				// also called after setTCP(false) on disconnect, and enabling
+				// arqConnect there leaves a live-looking button over dead ports.
+				cw.arqConnect.Enable()
 				cw.sendBcastWrap.Enable()
 				// Not while a CQ of our own is still on the air: setCQBusy
 				// owns that case and re-enables when PTT drops.
@@ -307,6 +443,27 @@ func (cw *chatWindow) onConnect() {
 	// Synchronous guard: a double-tap (or key-repeat on a focused button)
 	// can fire this twice in one poll batch before setTCP's fyne.Do runs.
 	cw.connectBtn.Disable()
+
+	// THE INTERLOCK.
+	//
+	// The TNC keeps exactly one control and one data client, and a new accept()
+	// EVICTS the incumbent -- closing its sockets and submitting
+	// ARQ_CMD_CLIENT_DISCONNECT, which tears down any live ARQ session
+	// (data_interfaces/tcp_interfaces.c:799, arq.c:565).  So pressing Connect
+	// here would silently kill an in-progress uucp or VarAC transfer, and the
+	// operator's only clue would be the transfer failing.
+	//
+	// Refuse instead.  Only when we do not already hold the port: if cw.mc is
+	// non-nil the attached client IS us, and reconnecting is our own business.
+	if currentTelemetry != nil {
+		if ok, why := embeddedClientMayConnect(cw.mc != nil, currentTelemetry()); !ok {
+			dialog.ShowError(fmt.Errorf("%s\n\nConnecting here would disconnect it and abort any "+
+				"transfer in progress. Stop the other client first.", why), cw.win)
+			cw.logMsg("connect refused: %s", why)
+			cw.connectBtn.Enable()
+			return
+		}
+	}
 
 	// Disconnect any existing client before opening a new one, so a stale
 	// control client is not left open to be evicted by the new connection.
@@ -355,6 +512,30 @@ func (cw *chatWindow) onConnect() {
 	go cw.forwardARQChat()
 	go cw.forwardBroadcastChat()
 	go cw.forwardStatus()
+	go cw.watchLink()
+
+	// The persisted history was handed over at launch time (from the UI data
+	// path, not the TNC control channel); populate the panes now.
+	cw.populateHistory()
+}
+
+// populateHistory fills the chat panes from the history supplied at launch,
+// so a previous session's messages survive an app restart.
+func (cw *chatWindow) populateHistory() {
+	fyne.Do(func() {
+		for _, m := range cw.history {
+			if m.Plane == "bcast" {
+				call, text := splitCallText(m.Text)
+				cw.appendRichChat(cw.bcastBox, call, text)
+				continue
+			}
+			call := m.Peer
+			if m.Dir == "tx" {
+				call = cw.myCall.Text
+			}
+			cw.appendRichChat(cw.arqBox, call, m.Text)
+		}
+	})
 }
 
 func (cw *chatWindow) onDisconnect() {
@@ -370,7 +551,20 @@ func (cw *chatWindow) onDisconnect() {
 	cw.setTCP(false)
 	cw.setARQ(false)
 	cw.cqSending = false
+	// Clear the chat panes so a later reconnect re-populates from history
+	// instead of stacking the same messages on top of what is already shown.
+	cw.clearChat()
 	cw.logMsg("Disconnected.")
+}
+
+// clearChat empties the ARQ and broadcast chat panes on the UI thread.
+func (cw *chatWindow) clearChat() {
+	fyne.Do(func() {
+		cw.arqBox.Objects = nil
+		cw.bcastBox.Objects = nil
+		cw.arqBox.Refresh()
+		cw.bcastBox.Refresh()
+	})
 }
 
 func (cw *chatWindow) onARQConnect() {
@@ -550,6 +744,53 @@ func (cw *chatWindow) forwardBroadcastChat() {
 			call, text := splitCallText(m.Text)
 			cw.appendRichChat(cw.bcastBox, call, text)
 		case <-done:
+			return
+		}
+	}
+}
+
+// watchLink notices when the TNC hangs up on us.
+//
+// The other direction of the same hazard the connect interlock guards: the TNC
+// evicts its control client whenever a new one connects, so starting uucp or
+// VarAC silently takes the ports away from here.  Nothing else observes that --
+// the reader goroutines just return -- so without this the window keeps showing
+// "connected" and its buttons keep pretending to work.
+func (cw *chatWindow) watchLink() {
+	mc := cw.mc
+	done := cw.done
+	if mc == nil || done == nil {
+		return
+	}
+	tick := time.NewTicker(time.Second)
+	defer tick.Stop()
+	for {
+		select {
+		case <-done:
+			return
+		case <-tick.C:
+			if mc.IsConnected() {
+				continue
+			}
+			// The TNC hung up on us.  Tear down on the UI thread exactly as
+			// onDisconnect does, so cw.mc goes nil and the connect interlock
+			// stops answering "already ours": leaving it set would let the
+			// operator reconnect and evict the very client that took the ports.
+			fyne.Do(func() {
+				if cw.mc != mc {
+					return
+				}
+				cw.logMsg("Disconnected by the modem: another client has taken the TNC ports.")
+				mc.Disconnect()
+				cw.mc = nil
+				if cw.done != nil {
+					close(cw.done)
+					cw.done = nil
+				}
+				cw.cqSending = false
+				cw.setTCP(false)
+				cw.setARQ(false)
+			})
 			return
 		}
 	}

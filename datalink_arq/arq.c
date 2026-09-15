@@ -10,6 +10,7 @@
 #include "arq_fsm.h"
 #include "arq_tnc.h"
 #include "arq_protocol.h"
+#include "arq_trace.h"
 #include "arq_timing.h"
 #include "arq_modem.h"
 #include "arq_channels.h"
@@ -30,6 +31,7 @@
 #include "../common/virtual_clock.h"
 #include "../common/defines_modem.h"
 #include "../common/ring_buffer_posix.h"
+#include "../common/message_store.h"
 #include "../data_interfaces/tcp_interfaces.h"
 #include "../modem/framer.h"
 #include "../modem/freedv/freedv_api.h"
@@ -259,6 +261,10 @@ static void cb_notify_connected(const char *remote_call, const char *local_call)
      * of the previous session have time to drain to the TCP socket before
      * the buffer is cleared (clearing on disconnect races with UUCP reads). */
     clear_buffer(data_rx_buffer_arq);
+    /* A new session starts with a clean slate: drop any partial chat line left
+     * over from the previous session's feed buffer. */
+    msg_store_reset(MSG_PLANE_ARQ, MSG_DIR_RX);
+    msg_store_reset(MSG_PLANE_ARQ, MSG_DIR_TX);
     arq_tnc_send_connected();   /* dispatches to tnc_send_connected, which takes g_conn_lock via arq_conn_get_calls; must be outside our lock */
     HLOGI(LOG_COMP, "Connected to %s", remote_call);
 }
@@ -297,8 +303,13 @@ static void cb_notify_disconnected(bool to_no_client)
     pthread_mutex_lock(&g_app_tx_mtx);
     clear_buffer(g_app_tx_buf);
     pthread_mutex_unlock(&g_app_tx_mtx);
+    /* Discard any partial chat line so the next session's first message is not
+     * glued onto trailing bytes from this one. */
+    msg_store_reset(MSG_PLANE_ARQ, MSG_DIR_RX);
+    msg_store_reset(MSG_PLANE_ARQ, MSG_DIR_TX);
     arq_tnc_send_disconnected();
     HLOGI(LOG_COMP, "Disconnected");
+    ARQ_TRACE_DUMP("disconnected");
     /* Return to LISTENING after any disconnection (failed call, cancelled call,
      * or ended session) as long as listen mode is active.  The was_connected
      * guard was thought to prevent spurious APP_LISTEN from APP_DISCONNECT-in-
@@ -317,6 +328,11 @@ static void cb_deliver_rx_data(const uint8_t *data, size_t len)
     if (!data || len == 0 || len > INT_BUFFER_SIZE)
         return;
     write_buffer(data_rx_buffer_arq, (uint8_t *)data, len);
+
+    char my_call[CALLSIGN_MAX_SIZE], src[CALLSIGN_MAX_SIZE], dst[CALLSIGN_MAX_SIZE];
+    arq_conn_get_calls(my_call, src, dst, CALLSIGN_MAX_SIZE);
+    const char *peer = (dst[0] && strcmp(dst, my_call) != 0) ? dst : src;
+    msg_store_feed(MSG_PLANE_ARQ, MSG_DIR_RX, peer, data, len);
 }
 
 static int cb_tx_backlog(void)
@@ -711,6 +727,12 @@ bool arq_handle_incoming_connect_frame(uint8_t *data, size_t frame_size,
              ? arq_protocol_parse_accept(data, frame_size, &session_id, src, dst, &bw_hz)
              : arq_protocol_parse_call  (data, frame_size, &session_id, src, dst, &bw_hz);
 
+    /* CALL/ACCEPT do not pass through arq_handle_incoming_frame, so without
+     * this the connect exchange is invisible to the trace -- which is exactly
+     * the exchange whose reliability decides whether a link comes up. */
+    ARQ_TRACE(ARQ_TR_RX_FRAME, is_accept ? 2 : 1, (uint8_t)(rc < 0 ? 0xff : 0),
+              (uint16_t)frame_size);
+
     if (rc < 0)
     {
         HLOGD(LOG_COMP, "CALL/ACCEPT parse failed");
@@ -815,10 +837,14 @@ void arq_handle_incoming_frame(uint8_t *data, size_t frame_size, float rx_snr)
         return;
     }
 
+    ARQ_TRACE(ARQ_TR_RX_FRAME, hdr.packet_type, hdr.subtype, (uint16_t)frame_size);
+
     arq_event_t ev = {0};
     ev.session_id    = hdr.session_id;
     ev.seq           = hdr.tx_seq;
     ev.ack_seq       = hdr.rx_ack_seq;
+    /* DATA frames overlay a 16-bit stream offset on these two bytes. */
+    ev.stream_off    = arq_hdr_stream_off(hdr.tx_seq, hdr.rx_ack_seq);
     ev.rx_flags      = hdr.flags;
     ev.snr_encoded   = (int8_t)hdr.snr_raw;
     ev.ack_delay_raw = hdr.ack_delay_raw;
@@ -952,6 +978,11 @@ int arq_init(size_t frame_size, int mode)
         .tx_backlog          = cb_tx_backlog,
         .tx_read             = cb_tx_read,
         .send_buffer_status  = cb_send_buffer_status,
+        /* Energy-based channel occupancy, so the FSM can avoid keying over a
+         * transmission it cannot decode.  modem_channel_busy() returns false
+         * when the detector is disabled (the default), which degrades this to
+         * the decoder-sync signal alone rather than breaking anything. */
+        .channel_busy        = arq_modem_channel_busy,
     };
     arq_fsm_set_callbacks(&cbs);
     arq_fsm_set_timing(&g_timing);
@@ -1076,6 +1107,40 @@ int arq_get_control_mode(void)      { SESS_READ(g_sess.control_mode); }
 int arq_get_preferred_rx_mode(void) { SESS_READ(arq_modem_preferred_rx_mode(&g_sess)); }
 int arq_get_preferred_tx_mode(void) { SESS_READ(arq_modem_preferred_tx_mode(&g_sess)); }
 
+/* Operator-selected idle ("listen") payload mode.  initial_payload_mode is
+ * what sess_enter() restores peer_tx_mode to whenever the session falls back
+ * to DISCONNECTED/LISTENING, so it is the single field that decides which
+ * payload mode the RX decoder sits on while no ARQ session is up (and hence
+ * which broadcast frames we can hear).
+ *
+ * Refused unless the link is actually idle: while a session is up the ARQ
+ * ladder owns peer_tx_mode and would overwrite an operator setting within one
+ * RX-loop iteration, so accepting the command there would silently do nothing.
+ * The state test is inside the lock deliberately -- checking it in the caller
+ * would race the event loop, which is the same unsynchronized-g_sess class of
+ * bug as the on-air handshake freeze.
+ *
+ * A session that starts later is unaffected: every session-start path
+ * (APP_CONNECT, RX_ACCEPT, and the ACCEPTING data/ack paths) hard-resets
+ * payload_mode and peer_tx_mode to DATAC15, so the listen mode cannot leak
+ * into a connection's mode ladder. */
+int arq_set_listen_mode(int mode)
+{
+    int rc = -1;
+    pthread_mutex_lock(&g_sess_lock);
+    if (g_sess.conn_state == ARQ_CONN_DISCONNECTED ||
+        g_sess.conn_state == ARQ_CONN_LISTENING)
+    {
+        g_sess.initial_payload_mode = mode;
+        /* Apply now rather than waiting for the next sess_enter(): we are
+         * already in an idle state, so no further transition is guaranteed. */
+        g_sess.peer_tx_mode = mode;
+        rc = 0;
+    }
+    pthread_mutex_unlock(&g_sess_lock);
+    return rc;
+}
+
 void arq_set_active_modem_mode(int mode, size_t frame_size)
 {
     /* Only record payload_mode for data modes.  Control-mode TX switches
@@ -1093,7 +1158,18 @@ void arq_set_active_modem_mode(int mode, size_t frame_size)
 
 void arq_update_link_metrics(int sync, float snr, int rx_status, bool frame_decoded)
 {
-    (void)sync; (void)rx_status;
+    (void)rx_status;
+    /* A decoder holding sync means a burst is arriving, i.e. the peer is
+     * transmitting.  Record when we last saw that so the FSM can avoid keying
+     * on top of it (see ARQ_CHANNEL_SYNC_HOLD_MS).  This argument used to be
+     * discarded, which is why nothing in the FSM could tell a busy channel
+     * from an idle one. */
+    if (sync)
+    {
+        pthread_mutex_lock(&g_sess_lock);
+        g_sess.last_rx_sync_ms = time_now_ms();
+        pthread_mutex_unlock(&g_sess_lock);
+    }
     if (frame_decoded && snr > -100.0f && snr < 100.0f)
     {
         pthread_mutex_lock(&g_sess_lock);
@@ -1176,7 +1252,20 @@ int arq_submit_tcp_cmd(const arq_cmd_msg_t *cmd)
 int arq_submit_tcp_payload(const uint8_t *data, size_t len)
 {
     if (!data || len == 0 || !g_initialized) return -1;
-    return arq_channel_bus_try_send_payload(&g_bus, data, len);
+
+    /* Persist only bytes that were actually accepted for transmission: the bus
+     * rejects on EAGAIN (full) and EINVAL (oversized), and a message that never
+     * went out must not be replayed as if it had. */
+    int rc = arq_channel_bus_try_send_payload(&g_bus, data, len);
+    if (rc == 0)
+    {
+        char my_call[CALLSIGN_MAX_SIZE], src[CALLSIGN_MAX_SIZE], dst[CALLSIGN_MAX_SIZE];
+        arq_conn_get_calls(my_call, src, dst, CALLSIGN_MAX_SIZE);
+        const char *peer = (dst[0] && strcmp(dst, my_call) != 0) ? dst : src;
+        msg_store_feed(MSG_PLANE_ARQ, MSG_DIR_TX, peer, data, len);
+    }
+
+    return rc;
 }
 
 void clear_connection_data(void)

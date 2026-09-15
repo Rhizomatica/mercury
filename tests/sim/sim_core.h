@@ -4,6 +4,7 @@
 #ifndef SIM_CORE_H
 #define SIM_CORE_H
 #include <stdint.h>
+#include <stdbool.h>
 #include <stddef.h>
 #include "sim_channel.h"
 #include "sim_endpoint.h"
@@ -27,6 +28,12 @@ uint64_t        sim_run_until_idle(sim_t *s, uint64_t max_ms);
 
 /* Number of pending channel events (for liveness checks). */
 int             sim_frames_in_flight(sim_t *s);
+
+/* Half-duplex shared medium: two stations keyed at once destroy each other's
+ * frames.  OFF by default so existing tests keep their channel semantics; turn
+ * it on for anything about turn coordination, where a collision IS the bug. */
+void            sim_set_half_duplex(sim_t *s, bool on);
+int             sim_collisions(sim_t *s);
 
 /* Fade controls: change channel loss / delivered-frame SNR mid-simulation. */
 void            sim_set_per(sim_t *s, double per);

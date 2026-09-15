@@ -228,6 +228,36 @@ static inline uint64_t audioio_monotonic_ms(void)
 #endif
 }
 
+void audioio_health_reset(void)
+{
+    pthread_mutex_lock(&s_health_lock);
+    s_cap_health  = AUDIO_HEALTH_STOPPED;
+    s_play_health = AUDIO_HEALTH_STOPPED;
+    s_health_reason[0] = '\0';
+    pthread_mutex_unlock(&s_health_lock);
+}
+
+int audioio_wait_healthy(int timeout_ms)
+{
+    if (timeout_ms < 0)
+        timeout_ms = 0;
+
+    uint64_t deadline = audioio_monotonic_ms() + (uint64_t)timeout_ms;
+    for (;;)
+    {
+        audio_health_t c = audioio_capture_health();
+        audio_health_t p = audioio_playback_health();
+
+        if (c == AUDIO_HEALTH_FAILED || p == AUDIO_HEALTH_FAILED)
+            return -1;
+        if (c == AUDIO_HEALTH_RUNNING && p == AUDIO_HEALTH_RUNNING)
+            return 0;
+        if (audioio_monotonic_ms() >= deadline)
+            return -2;
+        ffthread_sleep(5);
+    }
+}
+
 #if defined(__linux__)
 static pthread_mutex_t s_pulse_lock = PTHREAD_MUTEX_INITIALIZER;
 
@@ -280,6 +310,35 @@ int audioio_pick_default_subsystem(void)
 #else
     return AUDIO_SUBSYSTEM_ALSA;
 #endif
+}
+
+int audioio_available_subsystems(int *subsystems, int max)
+{
+    int n = 0;
+    if (!subsystems || max <= 0)
+        return 0;
+
+#define ADD(s) do { if (n < max) subsystems[n++] = (s); } while (0)
+#if defined(__linux__)
+    ADD(AUDIO_SUBSYSTEM_ALSA);
+    ADD(AUDIO_SUBSYSTEM_PULSE);
+    if (OSS_IFACE != NULL)
+        ADD(AUDIO_SUBSYSTEM_OSS);
+#elif defined(_WIN32)
+    ADD(AUDIO_SUBSYSTEM_WASAPI);
+    ADD(AUDIO_SUBSYSTEM_DSOUND);
+#elif defined(__FreeBSD__)
+    ADD(AUDIO_SUBSYSTEM_OSS);
+#elif defined(__APPLE__)
+    ADD(AUDIO_SUBSYSTEM_COREAUDIO);
+#elif defined(__ANDROID__)
+    ADD(AUDIO_SUBSYSTEM_AAUDIO);
+#else
+    ADD(AUDIO_SUBSYSTEM_ALSA);
+#endif
+#undef ADD
+
+    return n;
 }
 
 static void *null_capture_thread(void *unused)
@@ -845,7 +904,7 @@ void *radio_playback_thread(void *device_ptr)
     if (audio_subsystem == AUDIO_SUBSYSTEM_DSOUND)
         audio = (ffaudio_interface *) &ffdsound;
 #elif defined(__linux__)
-    conf.buf.buffer_length_msec = 30;
+    conf.buf.buffer_length_msec = 80;
     period_ms = conf.buf.buffer_length_msec / 3;
     if (audio_subsystem == AUDIO_SUBSYSTEM_ALSA)
         audio = (ffaudio_interface *) &ffalsa;
@@ -992,7 +1051,6 @@ void *radio_playback_thread(void *device_ptr)
     format_device_display(audio_subsystem, FFAUDIO_DEV_PLAYBACK,
                            device_ptr ? (const char *)device_ptr : NULL,
                            play_dev_display, sizeof(play_dev_display));
-    audio_health_set(false, AUDIO_HEALTH_RUNNING, NULL);
     HLOGI("audio-play", "I/O playback (%s) %s / %dHz / %dch / %dms buffer",
           play_dev_display,
           cfg->format == FFAUDIO_F_FLOAT32 ? "float32" :
@@ -1017,6 +1075,8 @@ void *radio_playback_thread(void *device_ptr)
         HLOGE("audio-play",
               "Device negotiated %d channels; only mono/stereo playback is supported, aborting",
               cfg->channels);
+        audio_health_set(false, AUDIO_HEALTH_FAILED,
+                         "device negotiated more than 2 playback channels");
         goto cleanup_play;
     }
 
@@ -1110,6 +1170,10 @@ void *radio_playback_thread(void *device_ptr)
         resampler_init_up(resample_ratio);
         resamp_up_reset(&up_rs);
     }
+
+    /* Reached only after the device, rate, format and channel checks above:
+     * the playback path is fully validated and about to stream. */
+    audio_health_set(false, AUDIO_HEALTH_RUNNING, NULL);
 
     while (!shutdown_ && !audio_shutdown_)
     {
@@ -1282,7 +1346,7 @@ void *radio_capture_thread(void *device_ptr)
         audio = (ffaudio_interface *) &ffdsound;
     }
 #elif defined(__linux__)
-    conf.buf.buffer_length_msec = 30;
+    conf.buf.buffer_length_msec = 80;
     if (audio_subsystem == AUDIO_SUBSYSTEM_ALSA)
         audio = (ffaudio_interface *) &ffalsa;
     if (audio_subsystem == AUDIO_SUBSYSTEM_PULSE)
@@ -1393,7 +1457,6 @@ void *radio_capture_thread(void *device_ptr)
     format_device_display(audio_subsystem, FFAUDIO_DEV_CAPTURE,
                            device_ptr ? (const char *)device_ptr : NULL,
                            cap_dev_display, sizeof(cap_dev_display));
-    audio_health_set(true, AUDIO_HEALTH_RUNNING, NULL);
     HLOGI("audio-cap", "I/O capture (%s) %s / %dHz / %dch / %dms buffer",
           cap_dev_display,
           cfg->format == FFAUDIO_F_FLOAT32 ? "float32" :
@@ -1520,13 +1583,23 @@ void *radio_capture_thread(void *device_ptr)
     uint64_t cap_last_data_ms   = audioio_monotonic_ms();
     uint32_t diag_reopens       = 0;
 
+    /* Reached only after the device, rate and format checks above: the capture
+     * path is fully validated and about to stream. */
+    audio_health_set(true, AUDIO_HEALTH_RUNNING, NULL);
+
     while (!shutdown_ && !audio_shutdown_)
     {
         r = audio->read(b, (const void **)&buffer);
         if (r < 0)
         {
+            /* A device that fails every read fails it hundreds of times a
+             * second.  Log the first, then thin out: the useful information is
+             * the error text and that it is persisting, not one line per
+             * attempt drowning the rest of the session (issue #254). */
             diag_read_errors++;
-            HLOGE("audio-cap", "ffaudio.read: %s", audio->error(b));
+            if (diag_read_errors == 1 || (diag_read_errors % 256) == 0)
+                HLOGE("audio-cap", "ffaudio.read: %s (error %u)",
+                      audio->error(b), diag_read_errors);
         }
         if (r <= 0)
         {
@@ -1540,15 +1613,40 @@ void *radio_capture_thread(void *device_ptr)
                       (unsigned long long)(now - cap_last_data_ms), ++diag_reopens);
                 audio->free(b);
                 b = NULL;
+                /* Keep trying -- a USB radio interface can come back -- but
+                 * back off instead of hammering the device every 200 ms, and
+                 * do not print a line per attempt.  The old loop produced an
+                 * unbounded error stream that buried the reason it was
+                 * failing (issue #254). */
+                unsigned attempt = 0;
+                unsigned delay_ms = 200;
                 while (!shutdown_ && !audio_shutdown_)
                 {
                     b = audio->alloc();
                     if (b != NULL && audio->open(b, cfg, conf.flags) == 0)
+                    {
+                        if (attempt != 0)
+                            HLOGI("audio-cap", "capture reopened after %u attempts",
+                                  attempt + 1);
                         break;
-                    HLOGE("audio-cap", "capture reopen failed: %s",
-                          b ? audio->error(b) : "alloc()");
+                    }
+                    attempt++;
+                    if (attempt == 1 || (attempt % 16) == 0)
+                        HLOGE("audio-cap", "capture reopen failed (attempt %u): %s",
+                              attempt, b ? audio->error(b) : "alloc()");
                     if (b != NULL) { audio->free(b); b = NULL; }
-                    ffthread_sleep(200);
+                    /* Sleep in short steps so a shutdown during recovery is
+                     * still prompt: a single ffthread_sleep(5000) here makes
+                     * the user wait out the whole backoff before the process
+                     * will exit. */
+                    for (unsigned slept = 0; slept < delay_ms &&
+                                             !shutdown_ && !audio_shutdown_;
+                         slept += 100)
+                        ffthread_sleep(100);
+                    /* Double up to the ceiling, do not overshoot it: the old
+                     * form (`if (delay_ms < 5000) delay_ms *= 2`) stepped
+                     * 3200 -> 6400, past the 5 s cap it advertises. */
+                    delay_ms = (delay_ms < 2500) ? delay_ms * 2 : 5000;
                 }
                 if (b == NULL)   /* shutdown requested mid-reopen */
                 {
@@ -1975,8 +2073,21 @@ static void resolve_device_string(int audio_subsys, int mode, char *buf, size_t 
          * appears in SNDCTL_AUDIOINFO_EX under that name, and ALSA takes
          * plughw:/hw: strings that are absent from the list too.  If the open
          * really does fail, that is reported with the driver's own reason. */
-        HLOGI(log_tag, "device '%s' is not in the enumerated list -- passing it to the "
-                       "driver as given (-z lists the enumerated devices)", buf);
+        /* A CoreAudio config holding a bare number is an enumeration index
+         * from an older build.  Indices are not identities -- say so with the
+         * fix, because the open below will refuse it rather than quietly bind
+         * some other device. */
+        bool numeric = buf[0] != '\0';
+        for (const char *p = buf; numeric && *p != '\0'; p++)
+            if (*p < '0' || *p > '9')
+                numeric = false;
+        if (numeric && audio_subsys == AUDIO_SUBSYSTEM_COREAUDIO)
+            HLOGW(log_tag, "device '%s' is an old CoreAudio enumeration index and is no "
+                           "longer accepted -- re-select the device, or use the id from "
+                           "-z (a stable UID)", buf);
+        else
+            HLOGI(log_tag, "device '%s' is not in the enumerated list -- passing it to the "
+                           "driver as given (-z lists the enumerated devices)", buf);
     }
 
 done:
@@ -2129,10 +2240,16 @@ void list_soundcards(int audio_system)
                     break;
                 }
 
-            printf("device: name: '%s'  id: '%s'  default: %s\n"
+            /* IS_DEFAULT is a backend capability, not a property of the
+             * device: a backend that does not report it returns NULL for
+             * every device, and printing that as "(null)" reads like the
+             * device has no default status rather than like Mercury does not
+             * know.  Say "yes" or nothing. */
+            const char *is_def = audio->dev_info(d, FFAUDIO_DEV_IS_DEFAULT);
+            printf("device: name: '%s'  id: '%s'%s\n"
                    , audio->dev_info(d, FFAUDIO_DEV_NAME)
                    , audio->dev_info(d, FFAUDIO_DEV_ID)
-                   , audio->dev_info(d, FFAUDIO_DEV_IS_DEFAULT)
+                   , (is_def != NULL) ? "  (system default)" : ""
                 );
         }
 
@@ -2369,6 +2486,7 @@ int audioio_restart(const char *capture_dev, const char *playback_dev,
 {
     HLOGI("audio-restart", "stopping audio threads...");
     audioio_stop_threads();
+    audioio_health_reset();
 
 #if defined(__linux__)
     if (audio_subsystem == AUDIO_SUBSYSTEM_PULSE || audio_subsys == AUDIO_SUBSYSTEM_PULSE)
@@ -2387,13 +2505,13 @@ int audioio_restart(const char *capture_dev, const char *playback_dev,
     else
         capture_input_channel_layout = LEFT;
 
-    if (capture_dev && capture_dev[0] != '\0')
+    if (capture_dev)
     {
         strncpy(s_capture_dev, capture_dev, sizeof(s_capture_dev) - 1);
         s_capture_dev[sizeof(s_capture_dev) - 1] = '\0';
     }
 
-    if (playback_dev && playback_dev[0] != '\0')
+    if (playback_dev)
     {
         strncpy(s_playback_dev, playback_dev, sizeof(s_playback_dev) - 1);
         s_playback_dev[sizeof(s_playback_dev) - 1] = '\0';

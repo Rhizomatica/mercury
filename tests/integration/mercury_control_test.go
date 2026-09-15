@@ -390,6 +390,12 @@ func stopProcess(t *testing.T, cmd *exec.Cmd, proc *processWait, stdoutPath, std
 
 	select {
 	case <-proc.done:
+		// A clean exit still carries the shutdown-time diagnostics (the
+		// answerer never disconnects, so that is the only place its trace
+		// is printed); surface them when the test has already failed.
+		if t.Failed() {
+			printLogs(t, stdoutPath, stderrPath)
+		}
 		return nil
 	case <-time.After(processStopTimeout):
 		_ = cmd.Process.Kill()
