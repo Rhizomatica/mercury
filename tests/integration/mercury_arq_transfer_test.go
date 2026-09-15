@@ -65,7 +65,7 @@ func TestMercuryARQTransfer(t *testing.T) {
 	if v := os.Getenv("MERCURY_CH_FADING"); v != "" {
 		params.Fading = v // mpg | mpp | mpd
 	}
-	requireChFading(t, repoRoot, params.Fading)
+	requireChFading(t, repoRoot, params)
 	if v := os.Getenv("MERCURY_CH_GAIN"); v != "" {
 		g, err := strconv.ParseFloat(v, 64)
 		if err != nil {

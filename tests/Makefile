@@ -74,6 +74,10 @@ TEST_BINS = test_ring_buffer test_arq_protocol test_arq_timing test_arq_fsm \
 
 all: test
 
+# Rebuild the tests when their flags change (BUILD_CONFIG, see config.mk).  The
+# recipes filter $^, so these never reach the compiler.
+$(TEST_BINS): $(BUILD_CONFIG)
+
 test: $(TEST_BINS)
 	@echo "\n=== Running Unit Tests ===\n"
 	@fail=0; \
@@ -109,7 +113,7 @@ test_arq_ladder: datalink_arq/test_arq_ladder.c $(UNITY_SRC) $(ARQ_STUBS) \
                ../datalink_arq/arq_fsm.c ../common/virtual_clock.c \
                ../datalink_arq/arq_protocol.c ../datalink_arq/arq_timing.c \
                ../datalink_arq/arith.c
-	$(CC) $(CFLAGS) -I../modem/freedv -o $@ $^ $(LDFLAGS) -lm
+	$(CC) $(CFLAGS) -I../modem/freedv -o $@ $(filter %.c %.a %.o,$^) $(LDFLAGS) -lm
 
 # ARQ timing tests (instrumentation recording)
 test_arq_timing: datalink_arq/test_arq_timing.c $(UNITY_SRC) $(ARQ_STUBS) \
@@ -165,7 +169,7 @@ connect_bench: sim/connect_bench.c $(ARQ_STUBS) $(SIM_SRC) \
                ../datalink_arq/arq_fsm.c ../common/virtual_clock.c \
                ../datalink_arq/arq_protocol.c \
                ../datalink_arq/arq_timing.c ../datalink_arq/arith.c
-	$(CC) $(CFLAGS) -Isim -I../modem/freedv -o $@ $^ $(LDFLAGS)
+	$(CC) $(CFLAGS) -Isim -I../modem/freedv -o $@ $(filter %.c %.a %.o,$^) $(LDFLAGS)
 
 test_cfg_utils: common/test_cfg_utils.c $(UNITY_SRC) \
                 ../common/cfg_utils.c ../radio_io/cm108_ptt.c \
@@ -262,9 +266,17 @@ test_radio_port: radio_io/test_radio_port.c $(UNITY_SRC) ../radio_io/radio_port.
 
 # Optional CAT telemetry must return its cache immediately while PTT or another
 # timing-sensitive radio operation owns the shared mutex.
+#
+# -U HAVE_HAMLIB -U HAVE_HERMES_SHM: this suite stubs serial/CM108 and installs a
+# fake backend, so it must be independent of the hamlib and shared-memory radio
+# backends too.  The parent make passes its full CFLAGS (including -DHAVE_HAMLIB
+# / -DHAVE_HERMES_SHM when those are detected) down to the sub-make; without
+# undefining them here, radio_io.c compiles in its real hamlib/shm calls and the
+# link fails on undefined rig_* / shm_* symbols (this test links no -lhamlib and
+# no sbitx_io).
 test_radio_io_frequency: radio_io/test_radio_io_frequency.c $(UNITY_SRC) \
                          ../radio_io/radio_io.c ../common/hermes_log.c
-	$(CC) $(CFLAGS) -DRADIO_IO_TEST -o $@ $(filter %.c %.a %.o,$^) $(LDFLAGS)
+	$(CC) $(CFLAGS) -U HAVE_HAMLIB -U HAVE_HERMES_SHM -DRADIO_IO_TEST -o $@ $(filter %.c %.a %.o,$^) $(LDFLAGS)
 
 # UI status wire format (embedded struct vs remote JSON must not drift)
 # ui_status.h is a PREREQUISITE: the device-id widths under test are #defines
@@ -290,17 +302,17 @@ test_ui_devices: gui_interface/test_ui_devices.c $(UNITY_SRC) \
 # Chase combining across separated MFSK bursts: does summing LLRs from copies
 # that individually fail actually decode?
 test_mfsk_harq: modem/test_mfsk_harq.c ../modem/mfsk/mfsk_ldpc.c ../modem/mfsk/mfsk_ldpc_8_16.c
-	$(CC) $(CFLAGS) -I../modem -o $@ $^ -lm
+	$(CC) $(CFLAGS) -I../modem -o $@ $(filter %.c %.a %.o,$^) -lm
 
 # MFSK modem backend (burst TX/RX through the vtable); links libfreedvdata for CRC16
 
 test_mfsk_modem: modem/test_mfsk_modem.c $(UNITY_SRC) ../modem/modem_mfsk.c $(MFSK_SRC) ../modem/freedv/libfreedvdata.a
-	$(CC) $(CFLAGS) -I../modem -I../modem/freedv -o $@ $^ $(LDFLAGS) -lm
+	$(CC) $(CFLAGS) -I../modem -I../modem/freedv -o $@ $(filter %.c %.a %.o,$^) $(LDFLAGS) -lm
 
 # Pattern ACK DSP test (mfsk_pattern_tx/detect: noise rejects, real detects)
 test_pattern_ack_detection: modem/test_pattern_ack_detection.c $(UNITY_SRC) \
            ../modem/modem_mfsk.c $(MFSK_SRC)
-	$(CC) $(CFLAGS) -I../modem -I../modem/freedv -o $@ $^ ../modem/freedv/libfreedvdata.a $(LDFLAGS) -lm
+	$(CC) $(CFLAGS) -I../modem -I../modem/freedv -o $@ $(filter %.c %.a %.o,$^) ../modem/freedv/libfreedvdata.a $(LDFLAGS) -lm
 
 # The benches are not part of `all` (they are instruments, not pass/fail gates),
 # but they MUST be removed by clean.  Leaving connect_bench behind meant a

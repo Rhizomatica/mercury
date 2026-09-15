@@ -29,3 +29,5 @@ clean:
 # built them.  The freedv objects are built by the freedv sub-make, whose own
 # -include covers them.
 -include $(wildcard *.d)
+# ...and rebuild them when their flags change (BUILD_CONFIG, see config.mk).
+$(wildcard *.o): $(BUILD_CONFIG)

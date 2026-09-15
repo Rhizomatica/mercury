@@ -76,3 +76,5 @@ clean:
 # .d are relative to the directory the compiler ran in, so they only resolve
 # correctly from the Makefile that built them.
 -include $(wildcard *.d iniparser/*.d)
+# ...and rebuild them when their flags change (BUILD_CONFIG, see config.mk).
+$(wildcard *.o iniparser/*.o): $(BUILD_CONFIG)
