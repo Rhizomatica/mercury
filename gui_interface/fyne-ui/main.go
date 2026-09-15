@@ -29,6 +29,7 @@ import (
 	"fyne.io/fyne/v2/dialog"
 	"fyne.io/fyne/v2/driver/desktop"
 	"fyne.io/fyne/v2/layout"
+	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 )
 
@@ -573,42 +574,42 @@ func main() {
 	bindings.bytesLabel = bytesLabel
 
 	// create compact telemetry canvas texts (smaller font sizes)
-	bitrateText := canvas.NewText("0", color.NRGBA{R: 0xEE, G: 0xEE, B: 0xEE, A: 0xFF})
+	bitrateText := canvas.NewText("0", themeForeground())
 	bitrateText.TextSize = 14
 	bitrateText.TextStyle = fyne.TextStyle{Bold: true}
 	bindings.bitrateText = bitrateText
 
-	snrText := canvas.NewText("-- dB", color.NRGBA{R: 0xEE, G: 0xEE, B: 0xEE, A: 0xFF})
+	snrText := canvas.NewText("-- dB", themeForeground())
 	snrText.TextSize = 14
 	bindings.snrText = snrText
 
 	// What the far side reports hearing from us.  This is the number that
 	// tells an operator whether their TX audio level is right: lower the
 	// drive and watch it go UP if the rig was over-driven (issue #230).
-	peerSnrText := canvas.NewText("-- dB", color.NRGBA{R: 0x88, G: 0x88, B: 0x88, A: 0xFF})
+	peerSnrText := canvas.NewText("-- dB", themeDim())
 	peerSnrText.TextSize = 14
 	bindings.peerSnrText = peerSnrText
 
 	// SNR row in the Telemetry card, shown only when the waterfall (which
 	// carries its own SNR overlay) is disabled.
-	snrRowLabel := canvas.NewText("SNR", color.NRGBA{R: 0xAA, G: 0xAA, B: 0xAA, A: 0xFF})
+	snrRowLabel := canvas.NewText("SNR", themeDim())
 	bindings.snrRowLabel = snrRowLabel
 
-	peerSnrRowLabel := canvas.NewText("SNR (them)", color.NRGBA{R: 0xAA, G: 0xAA, B: 0xAA, A: 0xFF})
+	peerSnrRowLabel := canvas.NewText("SNR (them)", themeDim())
 	bindings.peerSnrRowLabel = peerSnrRowLabel
 
-	directionText := canvas.NewText("--", color.NRGBA{R: 0xDD, G: 0xDD, B: 0xDD, A: 0xFF})
+	directionText := canvas.NewText("--", themeForeground())
 	directionText.TextSize = 20
 	bindings.directionText = directionText
 
-	directionDot := canvas.NewCircle(color.NRGBA{R: 0xDD, G: 0xDD, B: 0xDD, A: 0xFF})
+	directionDot := canvas.NewCircle(themeForeground())
 	bindings.directionDot = directionDot
 
-	userCallsText := canvas.NewText("", color.NRGBA{R: 0xDD, G: 0xDD, B: 0xDD, A: 0xFF})
+	userCallsText := canvas.NewText("", themeForeground())
 	userCallsText.TextSize = 13
 	bindings.userCallsText = userCallsText
 
-	destCallsText := canvas.NewText("", color.NRGBA{R: 0xDD, G: 0xDD, B: 0xDD, A: 0xFF})
+	destCallsText := canvas.NewText("", themeForeground())
 	destCallsText.TextSize = 13
 	bindings.destCallsText = destCallsText
 
@@ -622,15 +623,15 @@ func main() {
 	waterfallSyncText.TextStyle = fyne.TextStyle{Bold: true}
 	bindings.waterfallSyncText = waterfallSyncText
 
-	tcpText := canvas.NewText("--", color.NRGBA{R: 0xFF, G: 0x88, B: 0x88, A: 0xFF})
+	tcpText := canvas.NewText("--", theme.Color(theme.ColorNameError))
 	tcpText.TextSize = 13
 	bindings.tcpText = tcpText
 
-	txBytesText := canvas.NewText("0", color.NRGBA{R: 0xDD, G: 0xDD, B: 0xDD, A: 0xFF})
+	txBytesText := canvas.NewText("0", themeForeground())
 	txBytesText.TextSize = 13
 	bindings.txBytesText = txBytesText
 
-	rxBytesText := canvas.NewText("0", color.NRGBA{R: 0xDD, G: 0xDD, B: 0xDD, A: 0xFF})
+	rxBytesText := canvas.NewText("0", themeForeground())
 	rxBytesText.TextSize = 13
 	bindings.rxBytesText = rxBytesText
 
@@ -747,6 +748,7 @@ func main() {
 			// update compact telemetry texts
 			if bindings.bitrateText != nil {
 				bindings.bitrateText.Text = fmt.Sprintf("%d", telemetry.Bitrate)
+				bindings.bitrateText.Color = themeForeground()
 				bindings.bitrateText.Refresh()
 			}
 			if bindings.snrText != nil {
@@ -755,19 +757,19 @@ func main() {
 				// "they hear us at zero", which is the opposite of the truth.
 				if telemetry.PeerSNRValid {
 					bindings.peerSnrText.Text = fmt.Sprintf("%.1f dB", telemetry.PeerSNR)
-					bindings.peerSnrText.Color = color.NRGBA{R: 0xEE, G: 0xEE, B: 0xEE, A: 0xFF}
+					bindings.peerSnrText.Color = themeForeground()
 				} else {
 					bindings.peerSnrText.Text = "-- dB"
-					bindings.peerSnrText.Color = color.NRGBA{R: 0x88, G: 0x88, B: 0x88, A: 0xFF}
+					bindings.peerSnrText.Color = themeDim()
 				}
 				bindings.peerSnrText.Refresh()
-				bindings.snrText.Color = waterfallSNRColor(telemetry.SNR)
+				bindings.snrText.Color = themeForeground()
 				bindings.snrText.Refresh()
 			}
 			if bindings.directionText != nil {
 				bindings.directionText.Text = strings.ToUpper(telemetry.Direction)
-				txRed := color.NRGBA{R: 0xFF, G: 0x44, B: 0x44, A: 0xFF}
-				rxGreen := color.NRGBA{R: 0x44, G: 0xFF, B: 0x44, A: 0xFF}
+				txRed := theme.Color(theme.ColorNameError)
+				rxGreen := theme.Color(theme.ColorNameSuccess)
 				switch strings.ToUpper(telemetry.Direction) {
 				case "TX":
 					bindings.directionText.Color = txRed
@@ -782,7 +784,7 @@ func main() {
 						bindings.directionDot.Show()
 					}
 				default:
-					bindings.directionText.Color = color.NRGBA{R: 0xDD, G: 0xDD, B: 0xDD, A: 0xFF}
+					bindings.directionText.Color = themeForeground()
 					if bindings.directionDot != nil {
 						bindings.directionDot.Hide()
 					}
@@ -791,10 +793,12 @@ func main() {
 			}
 			if bindings.userCallsText != nil {
 				bindings.userCallsText.Text = telemetry.UserCallsign
+				bindings.userCallsText.Color = themeForeground()
 				bindings.userCallsText.Refresh()
 			}
 			if bindings.destCallsText != nil {
 				bindings.destCallsText.Text = telemetry.DestCallsign
+				bindings.destCallsText.Color = themeForeground()
 				bindings.destCallsText.Refresh()
 			}
 			if bindings.waterfallSNRText != nil {
@@ -818,15 +822,16 @@ func main() {
 			if bindings.tcpText != nil {
 				if telemetry.ClientTCPConnected {
 					bindings.tcpText.Text = "On"
-					bindings.tcpText.Color = color.NRGBA{R: 0x66, G: 0xFF, B: 0x66, A: 0xFF}
+					bindings.tcpText.Color = theme.Color(theme.ColorNameSuccess)
 				} else {
 					bindings.tcpText.Text = "Off"
-					bindings.tcpText.Color = color.NRGBA{R: 0xFF, G: 0x88, B: 0x88, A: 0xFF}
+					bindings.tcpText.Color = theme.Color(theme.ColorNameError)
 				}
 				bindings.tcpText.Refresh()
 			}
 			if bindings.txBytesText != nil {
 				bindings.txBytesText.Text = fmt.Sprintf("%d", telemetry.BytesTransmitted)
+				bindings.txBytesText.Color = themeForeground()
 				bindings.txBytesText.Refresh()
 			}
 			if bindings.rxBytesText != nil {
@@ -1209,7 +1214,7 @@ func main() {
 	))
 
 	// compact telemetry layout matching screenshot: left labels small, right values small-bold
-	txrxLabel := canvas.NewText("TX/RX", color.NRGBA{R: 0xAA, G: 0xAA, B: 0xAA, A: 0xFF})
+	txrxLabel := canvas.NewText("TX/RX", themeDim())
 	txrxLabel.TextSize = directionText.TextSize
 	telemetryGrid := container.NewGridWithColumns(2,
 		txrxLabel,
@@ -1217,14 +1222,14 @@ func main() {
 			container.NewVBox(layout.NewSpacer(), container.NewGridWrap(fyne.NewSize(directionText.TextSize, directionText.TextSize), bindings.directionDot), layout.NewSpacer()),
 			bindings.directionText,
 		),
-		canvas.NewText("Bitrate", color.NRGBA{R: 0xAA, G: 0xAA, B: 0xAA, A: 0xFF}), bindings.bitrateText,
+		canvas.NewText("Bitrate", themeDim()), bindings.bitrateText,
 		bindings.snrRowLabel, bindings.snrText,
 		bindings.peerSnrRowLabel, bindings.peerSnrText,
-		canvas.NewText("My callsign", color.NRGBA{R: 0xAA, G: 0xAA, B: 0xAA, A: 0xFF}), bindings.userCallsText,
-		canvas.NewText("Target callsign", color.NRGBA{R: 0xAA, G: 0xAA, B: 0xAA, A: 0xFF}), bindings.destCallsText,
-		canvas.NewText("Client TCP Connected", color.NRGBA{R: 0xAA, G: 0xAA, B: 0xAA, A: 0xFF}), bindings.tcpText,
-		canvas.NewText("Bytes transmitted", color.NRGBA{R: 0xAA, G: 0xAA, B: 0xAA, A: 0xFF}), bindings.txBytesText,
-		canvas.NewText("Bytes received", color.NRGBA{R: 0xAA, G: 0xAA, B: 0xAA, A: 0xFF}), bindings.rxBytesText,
+		canvas.NewText("My callsign", themeDim()), bindings.userCallsText,
+		canvas.NewText("Target callsign", themeDim()), bindings.destCallsText,
+		canvas.NewText("Client TCP Connected", themeDim()), bindings.tcpText,
+		canvas.NewText("Bytes transmitted", themeDim()), bindings.txBytesText,
+		canvas.NewText("Bytes received", themeDim()), bindings.rxBytesText,
 	)
 	telemetryCard := widget.NewCard("Telemetry", "", telemetryGrid)
 
@@ -1238,37 +1243,37 @@ func main() {
 	)
 	waterfallBottom := container.NewGridWithColumns(7,
 		func() fyne.CanvasObject {
-			t := canvas.NewText("0", color.NRGBA{R: 0xCC, G: 0xCC, B: 0xCC, A: 0xFF})
+			t := canvas.NewText("0", themeDim())
 			t.TextSize = 8
 			return t
 		}(),
 		func() fyne.CanvasObject {
-			t := canvas.NewText("500", color.NRGBA{R: 0xCC, G: 0xCC, B: 0xCC, A: 0xFF})
+			t := canvas.NewText("500", themeDim())
 			t.TextSize = 8
 			return t
 		}(),
 		func() fyne.CanvasObject {
-			t := canvas.NewText("1000", color.NRGBA{R: 0xCC, G: 0xCC, B: 0xCC, A: 0xFF})
+			t := canvas.NewText("1000", themeDim())
 			t.TextSize = 8
 			return t
 		}(),
 		func() fyne.CanvasObject {
-			t := canvas.NewText("1500", color.NRGBA{R: 0xCC, G: 0xCC, B: 0xCC, A: 0xFF})
+			t := canvas.NewText("1500", themeDim())
 			t.TextSize = 8
 			return t
 		}(),
 		func() fyne.CanvasObject {
-			t := canvas.NewText("2000", color.NRGBA{R: 0xCC, G: 0xCC, B: 0xCC, A: 0xFF})
+			t := canvas.NewText("2000", themeDim())
 			t.TextSize = 8
 			return t
 		}(),
 		func() fyne.CanvasObject {
-			t := canvas.NewText("2500", color.NRGBA{R: 0xCC, G: 0xCC, B: 0xCC, A: 0xFF})
+			t := canvas.NewText("2500", themeDim())
 			t.TextSize = 8
 			return t
 		}(),
 		func() fyne.CanvasObject {
-			t := canvas.NewText("3000", color.NRGBA{R: 0xCC, G: 0xCC, B: 0xCC, A: 0xFF})
+			t := canvas.NewText("3000", themeDim())
 			t.TextSize = 8
 			return t
 		}(),
@@ -2044,3 +2049,12 @@ func getLogDir() string {
 	}
 	return "."
 }
+
+// themeForeground and themeDim are the text colours for everything drawn on a
+// card's own background: the Telemetry card and the waterfall's frequency axis.
+// They follow the active theme.  These used to be hard-coded pale greys made for
+// a dark background, which were unreadable on the light theme -- grey on white
+// (AA5RL, 1.9.14).  The waterfall's SNR and SYNC overlays keep their fixed
+// colours: they sit on a dark strip of their own.
+func themeForeground() color.Color { return theme.Color(theme.ColorNameForeground) }
+func themeDim() color.Color        { return theme.Color(theme.ColorNamePlaceHolder) }
