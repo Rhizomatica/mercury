@@ -338,6 +338,16 @@ datalink_broadcast/bcast_file.o: datalink_broadcast/bcast_file.c
 datalink_broadcast/bcast_file.w64.o: datalink_broadcast/bcast_file.c
 	$(MINGW_CC) $(CFLAGS) $(RAPTORQ_CFLAGS) -c $< -o $@
 
+# Modem objects that no sub-make builds.  The top-level implicit rule compiles
+# them, but only as prerequisites of something that names them: the CLI binary
+# does (MERCURY_LINK_INPUTS), the core archives did not, so on a clean checkout
+# `make fyne-ui` reached `ar` with none of them built:
+#     ar: modem/modem_freedv.o: No such file or directory
+# Same class as the hidapi object documented at libmercury_core.a below.
+MODEM_TOP_OBJS = modem/modem_freedv.o modem/modem_mfsk.o modem/mfsk/mfsk.o modem/mfsk/mfsk_ofdm.o \
+	modem/mfsk/mfsk_sync.o modem/mfsk/mfsk_ldpc.o modem/mfsk/mfsk_ldpc_1_16.o modem/mfsk/mfsk_ldpc_2_16.o \
+	modem/mfsk/mfsk_ldpc_3_16.o modem/mfsk/mfsk_ldpc_5_16.o modem/mfsk/mfsk_ldpc_8_16.o
+
 MERCURY_CORE_OBJS = \
 	common/cfg_utils.o common/iniparser/iniparser.o common/iniparser/dictionary.o \
 	datalink_arq/arq.o datalink_arq/arq_trace.o datalink_arq/arq_tnc.o datalink_arq/arith.o datalink_arq/arq_channels.o \
@@ -383,7 +393,7 @@ endif
 #     ar: radio_io/hidapi-macos/hid.o: No such file or directory
 # $(BINARY) already declares it via MERCURY_LINK_INPUTS, which is why the CLI
 # build was unaffected and only the .app/.dmg packaging path broke.
-libmercury_core.a: internal_deps $(HIDAPI_OBJS) $(BCAST_FILE_OBJS)
+libmercury_core.a: internal_deps $(HIDAPI_OBJS) $(BCAST_FILE_OBJS) $(MODEM_TOP_OBJS)
 	$(CC) $(CFLAGS) $(RAPTORQ_CFLAGS) -I. -c $(FYNE_UI_DIR)/engine/mercury_bridge.c -o $(FYNE_UI_DIR)/engine/mercury_bridge.o
 	# Remove a stale archive first: macOS ar (cctools) refuses to update an
 	# existing *fat* .a in place, so a leftover universal build would wedge the
@@ -403,6 +413,10 @@ endif
 
 libmercury_core_w64.a: $(HIDAPI_W64_OBJ)
 	$(MAKE) internal_deps OS=Windows_NT CC=$(MINGW_CC) AR=$(MINGW_AR) HAVE_HERMES_SHM=0
+	# The modem objects no sub-make builds (see MODEM_TOP_OBJS), cross-compiled.
+	# They share the native .o paths exactly as internal_deps' objects already
+	# do, so the same "rebuild natively afterwards" rule applies to them.
+	$(MAKE) $(MODEM_TOP_OBJS) OS=Windows_NT CC=$(MINGW_CC) AR=$(MINGW_AR) HAVE_HERMES_SHM=0
 	# The bridge calls bcast_file_*, so the RaptorQ objects belong in this
 	# archive too -- built with the cross compiler into their own .w64.o paths,
 	# so a native build afterwards is not left linking Windows objects.
