@@ -196,22 +196,65 @@ static size_t json_escape(const char *s, size_t len, char *out, size_t out_cap)
 /*  Text filter                                                        */
 /* ------------------------------------------------------------------ */
 
-/* A line is stored only if it is printable text: tabs and bytes >= 0x20 (which
- * includes UTF-8 continuation bytes) are allowed, control bytes are not.  This
- * rejects binary file-transfer chunks and AX.25/Reticulum frames. */
+/* A control byte cannot appear in a chat message: everything below 0x20 except
+ * tab, CR and LF, plus DEL. */
+static bool msg_store_is_ctl(uint8_t c)
+{
+    return (c < 0x20 && c != '\t' && c != '\r' && c != '\n') || c == 0x7F;
+}
+
+/* Well-formed UTF-8: no overlong encodings, no surrogates, nothing above
+ * U+10FFFF.  Random binary almost never is -- a lone byte >= 0x80, or a lead
+ * byte without its continuation bytes, fails -- while real chat in any
+ * language passes. */
+static bool msg_store_utf8_valid(const uint8_t *s, size_t len)
+{
+    size_t i = 0;
+    while (i < len)
+    {
+        uint8_t c = s[i];
+        size_t n;
+        uint32_t cp, min;
+        if (c < 0x80)      { i++; continue; }
+        else if ((c & 0xE0) == 0xC0) { n = 1; cp = c & 0x1F; min = 0x80; }
+        else if ((c & 0xF0) == 0xE0) { n = 2; cp = c & 0x0F; min = 0x800; }
+        else if ((c & 0xF8) == 0xF0) { n = 3; cp = c & 0x07; min = 0x10000; }
+        else return false;
+        if (i + n >= len)           /* its continuation bytes run past the end */
+            return false;
+        for (size_t k = 1; k <= n; k++)
+        {
+            if ((s[i + k] & 0xC0) != 0x80)
+                return false;
+            cp = (cp << 6) | (s[i + k] & 0x3F);
+        }
+        if (cp < min || cp > 0x10FFFF || (cp >= 0xD800 && cp <= 0xDFFF))
+            return false;
+        i += n + 1;
+    }
+    return true;
+}
+
+/* A line is stored only if it is text: no control bytes (tab and CR allowed)
+ * and well-formed UTF-8.
+ *
+ * Checking control bytes alone let binary through.  A binary frame's control
+ * bytes include its 0x0A bytes, which the feed treats as line breaks, and the
+ * short runs between them are often free of any other control byte -- the
+ * 2026-09-12 broadcast NNCP trial left 23 such fragments of RaptorQ frames in
+ * the chat history.  Those runs are full of bytes >= 0x80 that do not form
+ * UTF-8, which is what the second check catches.  msg_store_feed() also drops
+ * any chunk that carries a control byte, before it is split at all. */
 static bool msg_store_is_text(const uint8_t *data, size_t len)
 {
     if (len == 0)
         return false;
     for (size_t i = 0; i < len; i++)
     {
-        uint8_t c = data[i];
-        if (c < 0x20 && c != '\t' && c != '\r')
-            return false;
-        if (c == 0x7F)
+        if (msg_store_is_ctl(data[i]))
             return false;
     }
-    return true;
+    return msg_store_utf8_valid(data, len);
 }
 
 /* ------------------------------------------------------------------ */
@@ -418,6 +461,22 @@ void msg_store_feed(const char *plane, const char *dir, const char *peer,
     {
         msg_store_unlock();
         return;
+    }
+
+    /* A chunk carrying a control byte is binary -- a file transfer, a KISS or
+     * AX.25 frame, RaptorQ symbols -- not chat.  Drop it whole, together with
+     * any partial line it would have completed: split at its 0x0A bytes, the
+     * pieces between them can each look like text.  The next chunk starts
+     * clean, so a chat message in the frame right after a binary one is kept. */
+    for (size_t i = 0; i < len; i++)
+    {
+        if (msg_store_is_ctl(data[i]))
+        {
+            g_store.feed_len[p][d]   = 0;
+            g_store.discarding[p][d] = false;
+            msg_store_unlock();
+            return;
+        }
     }
 
     for (size_t i = 0; i < len; i++)

@@ -72,6 +72,84 @@ void test_feed_filters_binary(void)
     TEST_ASSERT_EQUAL_size_t(0, msg_store_count());
 }
 
+/* The 2026-09-12 case: a binary broadcast frame whose 0x0A bytes split it into
+ * short runs that each contain no other control byte.  Checked line by line,
+ * those runs were stored as chat. */
+void test_feed_drops_binary_frame_whose_pieces_look_like_text(void)
+{
+    TEST_ASSERT_EQUAL_INT(0, msg_store_init(TEST_PATH, 50));
+
+    uint8_t frame[256];
+    uint32_t x = 12345;
+    for (size_t i = 0; i < sizeof(frame); i++)
+    {
+        x = x * 1103515245u + 12345u;
+        frame[i] = (uint8_t)(x >> 16);
+    }
+    /* Plant newlines around a control-free run of high bytes, as found in the
+     * polluted history, and make sure the frame also carries a control byte. */
+    frame[40] = '\n';
+    for (size_t i = 41; i < 52; i++) frame[i] |= 0x80;
+    frame[52] = '\n';
+    frame[100] = 0x01;
+    /* A piece that is perfectly good text on its own.  Only dropping the whole
+     * chunk keeps it out; the per-line checks would accept it. */
+    frame[120] = '\n';
+    frame[121] = 'o';
+    frame[122] = 'k';
+    frame[123] = '\n';
+
+    msg_store_feed(MSG_PLANE_BCAST, MSG_DIR_RX, "", frame, sizeof(frame));
+
+    TEST_ASSERT_EQUAL_size_t(0, msg_store_count());
+}
+
+void test_feed_rejects_invalid_utf8_line(void)
+{
+    TEST_ASSERT_EQUAL_INT(0, msg_store_init(TEST_PATH, 10));
+
+    /* No control bytes at all, but not UTF-8: a lone continuation byte, a lead
+     * byte cut short, and an overlong encoding of '/'. */
+    const uint8_t lone[]     = { 'a', 0x95, 'b', '\n' };
+    const uint8_t cut[]      = { 'a', 0xE2, 0x9C, '\n' };
+    const uint8_t overlong[] = { 0xC0, 0xAF, '\n' };
+    msg_store_feed(MSG_PLANE_BCAST, MSG_DIR_RX, "P", lone, sizeof(lone));
+    msg_store_feed(MSG_PLANE_BCAST, MSG_DIR_RX, "P", cut, sizeof(cut));
+    msg_store_feed(MSG_PLANE_BCAST, MSG_DIR_RX, "P", overlong, sizeof(overlong));
+
+    TEST_ASSERT_EQUAL_size_t(0, msg_store_count());
+}
+
+void test_feed_keeps_utf8_text_even_split_across_chunks(void)
+{
+    TEST_ASSERT_EQUAL_INT(0, msg_store_init(TEST_PATH, 10));
+
+    const char *whole = "Ol\xc3\xa1, Jos\xc3\xa9 \xe2\x9c\x93 73\n";
+    msg_store_feed(MSG_PLANE_ARQ, MSG_DIR_RX, "P", (const uint8_t *)whole, strlen(whole));
+    /* The ARQ byte stream can cut a multi-byte character in two. */
+    msg_store_feed(MSG_PLANE_ARQ, MSG_DIR_RX, "P", (const uint8_t *)"Ol\xc3", 3);
+    msg_store_feed(MSG_PLANE_ARQ, MSG_DIR_RX, "P", (const uint8_t *)"\xa1\n", 2);
+
+    TEST_ASSERT_EQUAL_size_t(2, msg_store_count());
+    TEST_ASSERT_TRUE(msg_store_get(0, get_buf, sizeof(get_buf)) > 0);
+    TEST_ASSERT_NOT_NULL(strstr(get_buf, "Ol\xc3\xa1, Jos\xc3\xa9 \xe2\x9c\x93 73"));
+    TEST_ASSERT_TRUE(msg_store_get(1, get_buf, sizeof(get_buf)) > 0);
+    TEST_ASSERT_NOT_NULL(strstr(get_buf, "\"text\":\"Ol\xc3\xa1\""));
+}
+
+void test_chat_right_after_a_binary_frame_is_kept(void)
+{
+    TEST_ASSERT_EQUAL_INT(0, msg_store_init(TEST_PATH, 10));
+
+    const uint8_t binary[] = { 'x', 0x00, 0xFF, 'y' };   /* no trailing newline */
+    msg_store_feed(MSG_PLANE_BCAST, MSG_DIR_RX, "P", binary, sizeof(binary));
+    msg_store_feed(MSG_PLANE_BCAST, MSG_DIR_RX, "P", (const uint8_t *)"hi\n", 3);
+
+    TEST_ASSERT_EQUAL_size_t(1, msg_store_count());
+    TEST_ASSERT_TRUE(msg_store_get(0, get_buf, sizeof(get_buf)) > 0);
+    TEST_ASSERT_NOT_NULL(strstr(get_buf, "\"text\":\"hi\""));
+}
+
 void test_feed_filters_overlong_line(void)
 {
     TEST_ASSERT_EQUAL_INT(0, msg_store_init(TEST_PATH, 10));
@@ -239,6 +317,10 @@ int main(void)
     RUN_TEST(test_append_and_get_roundtrip);
     RUN_TEST(test_feed_splits_on_newlines);
     RUN_TEST(test_feed_filters_binary);
+    RUN_TEST(test_feed_drops_binary_frame_whose_pieces_look_like_text);
+    RUN_TEST(test_feed_rejects_invalid_utf8_line);
+    RUN_TEST(test_feed_keeps_utf8_text_even_split_across_chunks);
+    RUN_TEST(test_chat_right_after_a_binary_frame_is_kept);
     RUN_TEST(test_feed_filters_overlong_line);
     RUN_TEST(test_persistence_reload);
     RUN_TEST(test_ring_capacity);
