@@ -1,3 +1,58 @@
+mercury (1.9.14-1) unstable; urgency=medium
+
+  * Release 1.9.14.
+  * Add PTT method configuration.
+  * PTT method configuration: serial, CM108/AIOC, and three-platform hidapi.
+  * Fix audio capture on Mac OS.
+  * fix(arq): add bounded random jitter to retry deadlines.
+  * modem/rx + arq/fsm: fix two causes of missed first-burst decodes (fixes #223).
+  * build: fix the macOS universal build (vendored hidapi object never rebuilt per-arch).
+  * Expose non-blocking radio and ARQ telemetry.
+  * watterson: seed the fading channel, from a private generator.
+  * gui: show the SNR the far side reports for our signal (#230).
+  * Makefile: link vendored hidapi into the Windows UI archive.
+  * Broadcast file transfer (RaptorQ) with a Fyne UI panel.
+  * Makefile: stop archiving rigctl_parse.o twice for Windows.
+  * Broadcast follow-ups: chat length cap, and stop tracking built tools.
+  * ui: allow runtime ALSA/PulseAudio subsystem switch on Linux.
+  * docs: publish the broadcast file-transfer benchmarks.
+  * macOS: Developer ID signing and notarization, wired into releases.
+  * macos: wait longer for notarization than rcodesign's default.
+  * macos: survive a transient error while waiting on notarization.
+  * macos: sign with entitlements, and staple the .app as well as the .dmg.
+  * ci: actually staple the .app, and give the runner room to package.
+  * ci: build Fyne UI (native + Windows) on every PR and mercuryv2 push.
+  * ui: derive the audio subsystem picker from the compiled-in backends.
+  * modem: add the MFSK fringe waveform (DSP core + tests), not yet wired in.
+  * utils: fix the MFSK sweeps, which compiled but never linked.
+  * tests/integration: reap orphaned modems, and stop the two paths fading in lockstep.
+  * tests/integration: a lockstep bench where the same seed reproduces the run.
+  * audioio: report the CoreAudio OSStatus, and stop leaking IOProcs on failure.
+  * arq: a low-perturbation trace ring, compiled out of release builds.
+  * audioio: keep IOProc ownership correct, and cap the reopen backoff where it says.
+  * audioio: identify CoreAudio devices by UID, not by enumeration index.
+  * audioio: mark the system-default CoreAudio device, and clear the Tahoe deprecation warnings.
+  * gui: make client window scrollable and persist chat window geometry.
+  * Persist ARQ/broadcast chat history across restarts.
+  * build: track header dependencies, so a header edit rebuilds what includes it.
+  * tests/integration: make the channel bridge behave like a radio.
+  * arq: only send an ACCEPT in answer to a CALL we actually heard.
+  * arq: accept incoming DATA while waiting for a keepalive reply.
+  * arq: break the tie when both stations request the turn at once.
+  * tcp: make broadcast listener shutdown bounded.
+  * broadcast: fix the RaptorQ symbol size so symbols survive a mode change.
+  * tests/integration: exercise the TURN_REQ role change on real modems.
+  * modem: MODE command to change the listen mode while the link is idle.
+  * tests: carry a real NNCP bundle over the broadcast plane, and record the result.
+  * build: say what is wrong when pkg-config reports an unusable hamlib.
+  * fyne-ui: make the embedded client an explicit, interlocked choice.
+  * audioio: increase Linux ALSA/Pulse buffer from 30ms to 80ms.
+  * arq: stop the ISS keying TURN_ACK on top of the ACK it is waiting for.
+  * arq: don't key a TURN_REQ over the peer's burst.
+  * docs: bring the turn handover in ARQ.md back in line with the code.
+
+ -- Rafael Diniz <rafael@riseup.net>  Tue, 15 Sep 2026 13:30:09 +0000
+
 mercury (1.9.13-1) unstable; urgency=medium
 
   * Release 1.9.13.

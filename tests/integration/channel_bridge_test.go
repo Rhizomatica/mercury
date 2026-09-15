@@ -96,9 +96,14 @@ var chFadingFile = map[string]string{
 // way once -- five "fading breaks broadcast" results that were really five
 // missing-file errors.  Only the repo's 1.0 Hz file ships, so --mpg and --mpd
 // hit this by default.
-func requireChFading(t *testing.T, repoRoot, fading string) {
+//
+// Only the ch engine loads these files.  watterson and pathsim take their own
+// profile names (good, moderate, poor, ...), so checking those against ch's
+// table rejected every fading run on those engines as an unknown profile.
+func requireChFading(t *testing.T, repoRoot string, params ChannelParams) {
 	t.Helper()
-	if fading == "" {
+	fading := params.Fading
+	if fading == "" || (params.Engine != "" && params.Engine != "ch") {
 		return
 	}
 	name, ok := chFadingFile[fading]

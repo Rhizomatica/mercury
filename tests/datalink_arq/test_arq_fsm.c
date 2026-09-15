@@ -385,6 +385,220 @@ void test_listen_mode_restored_after_session_ends(void)
     TEST_ASSERT_EQUAL_INT(FREEDV_MODE_QAM16C2, sess.peer_tx_mode);
 }
 
+/* ---- CONNECT while the previous session is still tearing down ----
+ *
+ * DISCONNECTING had no APP_CONNECT case, so a call placed during teardown was
+ * silently dropped -- after the control port had already answered OK.  A
+ * client that redials promptly waited for a CONNECTED that could never come.
+ * The call is now deferred and placed when the teardown completes. */
+
+/* Caller with a live session, then DISCONNECT with nothing queued: the
+ * DISCONNECT exchange is on the air and the FSM is in DISCONNECTING. */
+static void goto_disconnecting_caller(void)
+{
+    /* setUp() clears our callsign, and a CALL with an empty SRC cannot be
+     * encoded -- no frame would go out and the "CALL was sent" checks below
+     * could not pass for any implementation. */
+    snprintf(arq_conn.my_call_sign, CALLSIGN_MAX_SIZE, "%s", "AAA");
+    arq_conn.bw = ARQ_BANDWIDTH_FULL_HZ;   /* arq_get_bw() stub reads this; 0 is not a bandwidth */
+    fake_tx_backlog_fake.return_val = 0;
+    arq_event_t ev = make_event(ARQ_EV_APP_LISTEN);
+    arq_fsm_dispatch(&sess, &ev);
+    ev = make_event(ARQ_EV_APP_CONNECT);
+    strncpy(ev.remote_call, "DST1", CALLSIGN_MAX_SIZE);
+    arq_fsm_dispatch(&sess, &ev);
+    ev = make_event(ARQ_EV_RX_ACCEPT);
+    ev.session_id = sess.session_id;
+    strncpy(ev.remote_call, "DST1", CALLSIGN_MAX_SIZE);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_CONNECTED, sess.conn_state);
+    ev = make_event(ARQ_EV_APP_DISCONNECT);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_DISCONNECTING, sess.conn_state);
+    RESET_FAKE(fake_send_tx_frame);
+    RESET_FAKE(fake_notify_disconnected);
+}
+
+static void connect_to(const char *call)
+{
+    arq_event_t ev = make_event(ARQ_EV_APP_CONNECT);
+    strncpy(ev.remote_call, call, CALLSIGN_MAX_SIZE);
+    arq_fsm_dispatch(&sess, &ev);
+}
+
+void test_connect_during_teardown_is_deferred_not_dropped(void)
+{
+    goto_disconnecting_caller();
+    uint8_t old_session = sess.session_id;
+
+    connect_to("DST2");
+    /* Not placed over the teardown, but not lost either. */
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_DISCONNECTING, sess.conn_state);
+    TEST_ASSERT_TRUE_MESSAGE(sess.pending_connect,
+        "CONNECT during DISCONNECTING was dropped: the client never gets an answer");
+
+    /* Peer acks the DISCONNECT: teardown done, the deferred call goes out. */
+    arq_event_t ev = make_event(ARQ_EV_RX_DISCONNECT);
+    ev.session_id = old_session;
+    arq_fsm_dispatch(&sess, &ev);
+
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_CALLING, sess.conn_state);
+    TEST_ASSERT_EQUAL_STRING("DST2", sess.remote_call);
+    TEST_ASSERT_GREATER_THAN(0, fake_send_tx_frame_fake.call_count);   /* the CALL */
+    TEST_ASSERT_FALSE(sess.pending_connect);
+    /* The old session's end is not reported after the new CONNECT: it would
+     * read as "your call failed". */
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, fake_notify_disconnected_fake.call_count,
+        "old teardown notified DISCONNECTED after the client's new CONNECT");
+}
+
+/* Same, when the teardown ends by DISCONNECT retry exhaustion instead. */
+void test_deferred_connect_is_placed_after_teardown_timeout(void)
+{
+    goto_disconnecting_caller();
+    connect_to("DST2");
+
+    sess.tx_retries_left = 0;
+    arq_event_t ev = make_event(ARQ_EV_TIMER_RETRY);
+    arq_fsm_dispatch(&sess, &ev);
+
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_CALLING, sess.conn_state);
+    TEST_ASSERT_EQUAL_STRING("DST2", sess.remote_call);
+    TEST_ASSERT_EQUAL_INT(0, fake_notify_disconnected_fake.call_count);
+}
+
+/* A DISCONNECT after the deferred CONNECT cancels it: the station goes idle,
+ * and the client gets the ordinary DISCONNECTED. */
+void test_disconnect_cancels_deferred_connect(void)
+{
+    goto_disconnecting_caller();
+    uint8_t old_session = sess.session_id;
+    connect_to("DST2");
+
+    arq_event_t ev = make_event(ARQ_EV_APP_DISCONNECT);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_FALSE(sess.pending_connect);
+
+    ev = make_event(ARQ_EV_RX_DISCONNECT);
+    ev.session_id = old_session;
+    arq_fsm_dispatch(&sess, &ev);
+
+    TEST_ASSERT_NOT_EQUAL(ARQ_CONN_CALLING, sess.conn_state);
+    TEST_ASSERT_EQUAL_INT(1, fake_notify_disconnected_fake.call_count);
+}
+
+/* LISTEN OFF means "release the radio", which rules out the deferred call too.
+ * The client must be told, or it waits for a CONNECTED that is not coming. */
+void test_listen_off_cancels_deferred_connect(void)
+{
+    goto_disconnecting_caller();
+    connect_to("DST2");
+
+    arq_event_t ev = make_event(ARQ_EV_APP_STOP_LISTEN);
+    arq_fsm_dispatch(&sess, &ev);
+
+    TEST_ASSERT_NOT_EQUAL(ARQ_CONN_CALLING, sess.conn_state);
+    TEST_ASSERT_FALSE(sess.pending_connect);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, fake_notify_disconnected_fake.call_count,
+        "LISTEN OFF dropped the deferred call without telling the client");
+}
+
+/* The redial that actually happens.  Right after DISCONNECT the station is
+ * usually still CONNECTED, with the disconnect deferred while its last frame
+ * waits for an ACK -- not yet in DISCONNECTING.  A fix covering only
+ * DISCONNECTING passed the four tests above and still dropped a real redial on
+ * the loopback; these pin the path it took. */
+/* Defined further down with the other session helpers. */
+static void goto_connected(void);
+static void goto_wait_ack(void);
+
+static void goto_connected_with_deferred_disconnect(void)
+{
+    goto_connected();
+    goto_wait_ack();
+    fake_tx_backlog_fake.return_val = 0;          /* last frame sent, ACK outstanding */
+    arq_event_t ev = make_event(ARQ_EV_APP_DISCONNECT);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_CONNECTED, sess.conn_state);
+    TEST_ASSERT_TRUE(sess.pending_disconnect);
+    RESET_FAKE(fake_notify_disconnected);
+}
+
+void test_redial_while_disconnect_deferred_is_placed_after_teardown(void)
+{
+    goto_connected_with_deferred_disconnect();
+    connect_to("DST2");
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_CONNECTED, sess.conn_state);
+    TEST_ASSERT_TRUE_MESSAGE(sess.pending_connect,
+        "redial during a deferred disconnect was dropped");
+
+    /* The outstanding frame is ACKed: the deferred disconnect proceeds. */
+    /* No ack_seq: an in-session ACK on this branch is a Welch-Costas pattern
+     * with no header, so it carries no sequence and the FSM never reads one
+     * (trunk's version of this test took the seq from its TX window). */
+    arq_event_t ev = make_event(ARQ_EV_RX_ACK);
+    ev.session_id = sess.session_id;
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_DISCONNECTING, sess.conn_state);
+    TEST_ASSERT_TRUE(sess.pending_connect);       /* survives the state change */
+
+    uint8_t old_session = sess.session_id;
+    ev = make_event(ARQ_EV_RX_DISCONNECT);
+    ev.session_id = old_session;
+    arq_fsm_dispatch(&sess, &ev);
+
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_CALLING, sess.conn_state);
+    TEST_ASSERT_EQUAL_STRING("DST2", sess.remote_call);
+    TEST_ASSERT_EQUAL_INT(0, fake_notify_disconnected_fake.call_count);
+}
+
+/* The peer ends the session first.  Its DISCONNECTED notice waits for our
+ * DISCONNECT ack frame to finish transmitting, and so must the deferred CALL:
+ * queuing it over that frame would key over our own ack. */
+void test_redial_waits_for_peer_disconnect_ack_to_finish(void)
+{
+    goto_connected_with_deferred_disconnect();
+    connect_to("DST2");
+
+    arq_event_t ev = make_event(ARQ_EV_RX_DISCONNECT);
+    ev.session_id = sess.session_id;
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_NOT_EQUAL_MESSAGE(ARQ_CONN_CALLING, sess.conn_state,
+        "CALL placed while our DISCONNECT ack was still on the air");
+    TEST_ASSERT_TRUE(sess.pending_connect);
+
+    ev = make_event(ARQ_EV_TX_COMPLETE);          /* the ack has left the air */
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_CALLING, sess.conn_state);
+    TEST_ASSERT_EQUAL_STRING("DST2", sess.remote_call);
+    TEST_ASSERT_EQUAL_INT(0, fake_notify_disconnected_fake.call_count);
+}
+
+/* LISTEN OFF on a live link releases the radio: the queued call goes too, and
+ * the host is told. */
+void test_listen_off_while_connected_cancels_deferred_connect(void)
+{
+    goto_connected_with_deferred_disconnect();
+    connect_to("DST2");
+
+    arq_event_t ev = make_event(ARQ_EV_APP_STOP_LISTEN);
+    arq_fsm_dispatch(&sess, &ev);
+
+    TEST_ASSERT_NOT_EQUAL(ARQ_CONN_CALLING, sess.conn_state);
+    TEST_ASSERT_FALSE(sess.pending_connect);
+    TEST_ASSERT_EQUAL_INT(1, fake_notify_disconnected_fake.call_count);
+}
+
+/* A CONNECT on a live session with no disconnect requested is a host error:
+ * it must not be queued to fire when this session ends by itself. */
+void test_connect_on_live_session_without_disconnect_is_not_queued(void)
+{
+    goto_connected();
+    connect_to("DST2");
+    TEST_ASSERT_FALSE(sess.pending_connect);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_CONNECTED, sess.conn_state);
+}
+
 /* APP_DISCONNECT from CONNECTED */
 void test_disconnect_from_connected(void)
 {
@@ -1442,6 +1656,14 @@ int main(void)
     RUN_TEST(test_listen_mode_does_not_leak_into_inbound_session);
     RUN_TEST(test_listen_mode_restored_after_session_ends);
     RUN_TEST(test_disconnect_from_connected);
+    RUN_TEST(test_connect_during_teardown_is_deferred_not_dropped);
+    RUN_TEST(test_deferred_connect_is_placed_after_teardown_timeout);
+    RUN_TEST(test_disconnect_cancels_deferred_connect);
+    RUN_TEST(test_listen_off_cancels_deferred_connect);
+    RUN_TEST(test_redial_while_disconnect_deferred_is_placed_after_teardown);
+    RUN_TEST(test_redial_waits_for_peer_disconnect_ack_to_finish);
+    RUN_TEST(test_listen_off_while_connected_cancels_deferred_connect);
+    RUN_TEST(test_connect_on_live_session_without_disconnect_is_not_queued);
     RUN_TEST(test_listen_off_drops_pending_accept);
     RUN_TEST(test_listen_off_drops_outgoing_call);
     RUN_TEST(test_listen_off_deferred_within_grace_accepting);

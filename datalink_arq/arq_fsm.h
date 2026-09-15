@@ -270,6 +270,9 @@ typedef struct
                                         * will be honoured once the grace expires    */
     bool     pending_disconnect_notify;/* defer notify_disconnected until TX done */
     bool     pending_disconnect;       /* APP_DISCONNECT deferred until TX buf empty */
+    bool     pending_connect;          /* CONNECT arrived while DISCONNECTING: place
+                                        * the call once the teardown completes     */
+    char     pending_connect_call[CALLSIGN_MAX_SIZE];
     uint64_t disconnect_deadline_ms;   /* absolute time by which a deferred
                                         * APP_DISCONNECT must resolve into a
                                         * clean teardown. 0 = none armed. */
