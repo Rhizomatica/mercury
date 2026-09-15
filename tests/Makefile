@@ -73,6 +73,10 @@ TEST_BINS = test_ring_buffer test_arq_protocol test_arq_timing test_arq_fsm \
 
 all: test
 
+# Rebuild the tests when their flags change (BUILD_CONFIG, see config.mk).  The
+# recipes filter $^, so these never reach the compiler.
+$(TEST_BINS): $(BUILD_CONFIG)
+
 test: $(TEST_BINS)
 	@echo "\n=== Running Unit Tests ===\n"
 	@fail=0; \

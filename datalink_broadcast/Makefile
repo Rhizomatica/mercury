@@ -50,3 +50,8 @@ clean:
 # RaptorQ/bcast_file objects are compiled by the TOP-LEVEL Makefile, whose own
 # -include covers them -- their .d paths would be resolved wrongly here.
 -include $(wildcard *.d)
+# ...and rebuild them when their flags change (BUILD_CONFIG, see config.mk).
+# Named, not globbed: a *.o here would also catch bcast_file.o, which the top
+# level compiles with RAPTORQ_CFLAGS, and this Makefile would then rebuild it
+# through the implicit %.o: %.c rule without them.
+$(wildcard broadcast.o kiss.o): $(BUILD_CONFIG)

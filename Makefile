@@ -916,3 +916,6 @@ TOP_DEPS := main.d \
 	$(FYNE_UI_DIR)/engine/mercury_bridge.d $(FYNE_UI_DIR)/engine/mercury_bridge_w64.d \
 	$(HIDAPI_W64_DIR)/hid.d $(HIDAPI_MACOS_DIR)/hid.d
 -include $(wildcard $(TOP_DEPS))
+# ...and rebuild those same objects when their flags change (BUILD_CONFIG, see
+# config.mk).
+$(wildcard $(TOP_DEPS:.d=.o)): $(BUILD_CONFIG)

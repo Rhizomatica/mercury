@@ -40,6 +40,24 @@ COMMON_CFLAGS += $(EXTRA_CFLAGS)
 # directory the compiler ran in, so they must be included from there).
 COMMON_CFLAGS += -MMD -MP
 
+# Rebuild objects when the build configuration changes.
+#
+# -MMD tracks headers, not flags: an object depends on its source and headers
+# only, so changing a compile flag -- here or in the Makefile that compiles it
+# -- leaves every existing object "up to date".  5ea3356 added
+# -DMG_ENABLE_PACKED_FS=1 for mongoose.o together with a generated
+# web_packed.o, in a Makefile-only change.  An incremental build of an older
+# tree kept a mongoose.o that still carried mongoose's own mg_unpack/mg_unlist
+# stubs, linked it beside the generated ones, and failed with "multiple
+# definition of `mg_unpack'".
+#
+# BUILD_CONFIG is the including Makefile plus this file (MAKEFILE_LIST as it
+# stands here).  Each Makefile makes the objects it compiles depend on it, next
+# to its -include of .d files.  Only objects already on disk are named: one
+# that does not exist yet gets built regardless.  Variables given on the
+# command line (make CC=..., OS=Windows_NT) are still not tracked.
+BUILD_CONFIG := $(MAKEFILE_LIST)
+
 # Detect the compiler target so cross-compiling armhf from an aarch64 host
 # doesn't inherit aarch64-only flags from uname -m.
 CC_MACHINE := $(strip $(shell $(CC) -dumpmachine 2>/dev/null))
