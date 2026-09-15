@@ -1158,6 +1158,81 @@ void test_retx_flagged_frame_does_not_climb_the_mirror(void)
         "rungs and only one payload decoder is running");
 }
 
+/* Listen before self-promotion.
+ *
+ * This FSM has no TURN_REQ: an IRS holding data takes the floor itself once the
+ * peer has been silent for ARQ_IRS_SELFPROMOTE_S.  That fires on a clock, so it
+ * can key DATA on top of a burst the peer has just started -- the collision
+ * that starts #278's retransmit loop on trunk, arriving here by a different
+ * route.  These pin the port of trunk's #280 guard onto that path.
+ *
+ * Helper: an IRS with backlog whose silence window has fully elapsed, so the
+ * next TIMER_PEER_BACKLOG would self-promote if nothing else stopped it. */
+static void goto_irs_due_to_selfpromote(void)
+{
+    goto_connected_irs();
+    fake_tx_backlog_fake.return_val = 64;
+    arq_event_t ev = make_event(ARQ_EV_APP_DATA_READY);   /* starts the silence window */
+    arq_fsm_dispatch(&sess, &ev);
+    mock_set_uptime_ms(time_now_ms() + 120000);           /* well past ARQ_IRS_SELFPROMOTE_S */
+    RESET_FAKE(fake_send_tx_frame);
+}
+
+/* Control: with a quiet channel the promotion happens.  Without this the three
+ * tests below could pass merely because the silence window never elapsed. */
+void test_selfpromote_proceeds_on_a_quiet_channel(void)
+{
+    goto_irs_due_to_selfpromote();
+    sess.last_rx_sync_ms = 0;
+    arq_event_t ev = make_event(ARQ_EV_TIMER_PEER_BACKLOG);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(ARQ_DFLOW_DATA_TX, sess.dflow_state);
+    TEST_ASSERT_EQUAL_UINT8(0, sess.turn_req_defer_count);
+}
+
+void test_selfpromote_is_not_keyed_over_the_peers_burst(void)
+{
+    goto_irs_due_to_selfpromote();
+    sess.last_rx_sync_ms = time_now_ms();        /* a decoder holds sync right now */
+    arq_event_t ev = make_event(ARQ_EV_TIMER_PEER_BACKLOG);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ARQ_DFLOW_IDLE_IRS, sess.dflow_state,
+        "self-promoted into a burst the peer was transmitting");
+    TEST_ASSERT_EQUAL_UINT8(1, sess.turn_req_defer_count);
+}
+
+/* Sync cannot see the acquisition window, a mode no decoder is bound to, or a
+ * burst too weak to sync on; channel energy can. */
+void test_selfpromote_defers_on_channel_energy_without_sync(void)
+{
+    goto_irs_due_to_selfpromote();
+    sess.last_rx_sync_ms = 0;
+    fake_channel_busy_fake.return_val = true;
+    arq_event_t ev = make_event(ARQ_EV_TIMER_PEER_BACKLOG);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ARQ_DFLOW_IDLE_IRS, sess.dflow_state,
+        "self-promoted over an un-synced transmission: sync alone is not enough");
+}
+
+/* A stuck detector must not mute the station: after the cap it keys anyway. */
+void test_selfpromote_deferral_is_bounded(void)
+{
+    goto_irs_due_to_selfpromote();
+    for (int i = 0; i < ARQ_TURN_REQ_DEFER_MAX; i++)
+    {
+        sess.last_rx_sync_ms = time_now_ms();
+        arq_event_t ev = make_event(ARQ_EV_TIMER_PEER_BACKLOG);
+        arq_fsm_dispatch(&sess, &ev);
+        TEST_ASSERT_EQUAL_INT(ARQ_DFLOW_IDLE_IRS, sess.dflow_state);
+    }
+    sess.last_rx_sync_ms = time_now_ms();
+    arq_event_t ev = make_event(ARQ_EV_TIMER_PEER_BACKLOG);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ARQ_DFLOW_DATA_TX, sess.dflow_state,
+        "deferral never gave up: the station would never send its backlog");
+    TEST_ASSERT_EQUAL_UINT8(0, sess.turn_req_defer_count);
+}
+
 /* Reset-on-miss: a full idle hold with no DATA (a lost ACK left us climbed above
  * the sender) steps the mirror down toward the floor so the two ends re-sync. */
 void test_irs_mirror_resets_toward_floor_on_silence(void)
@@ -1398,6 +1473,10 @@ int main(void)
     RUN_TEST(test_irs_mirror_climbs_with_peer);
     RUN_TEST(test_irs_mirror_steps_down_on_duplicate);
     RUN_TEST(test_retx_flagged_frame_does_not_climb_the_mirror);
+    RUN_TEST(test_selfpromote_proceeds_on_a_quiet_channel);
+    RUN_TEST(test_selfpromote_is_not_keyed_over_the_peers_burst);
+    RUN_TEST(test_selfpromote_defers_on_channel_energy_without_sync);
+    RUN_TEST(test_selfpromote_deferral_is_bounded);
     RUN_TEST(test_irs_mirror_resets_toward_floor_on_silence);
     RUN_TEST(test_calling_reanchors_retry_on_tx_complete);
     RUN_TEST(test_accept_is_only_sent_in_answer_to_a_heard_call);
