@@ -159,7 +159,7 @@ func TestBroadcastNNCPBundleOverChannel(t *testing.T) {
 	if v := os.Getenv("MERCURY_CH_FADING"); v != "" {
 		params.Fading = v
 	}
-	requireChFading(t, repoRoot, params.Fading)
+	requireChFading(t, repoRoot, params)
 	if v := os.Getenv("MERCURY_CH_GAIN"); v != "" {
 		params.Gain, _ = strconv.ParseFloat(v, 64)
 	}
