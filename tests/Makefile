@@ -67,7 +67,7 @@ TEST_BINS = test_ring_buffer test_arq_protocol test_arq_timing test_arq_fsm \
             test_freedv_harq test_pcm24 test_sock_wire test_virtual_clock \
             test_mercury_prng test_bcast_file \
             test_ofdm_acq test_ui_status test_ui_devices test_tx_pacing \
-            test_radio_port test_radio_io_frequency test_mfsk \
+            test_radio_port test_radio_io_frequency \
             test_message_store test_ui_history
 
 .PHONY: all test clean

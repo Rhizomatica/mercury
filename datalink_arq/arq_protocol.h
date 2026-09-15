@@ -354,6 +354,15 @@ uint64_t arq_protocol_retry_deadline_ms(float seconds, int rank);
  * peer_is_transmitting() in arq_fsm.c; kept identical to trunk so the two
  * branches share the listen-before-talk signal. */
 #define ARQ_CHANNEL_SYNC_HOLD_MS                250
+
+/* Bound on listen-before-talk.  On trunk these gate a TURN_REQ; on this FSM,
+ * which has no TURN_REQ, they gate self-promotion out of IDLE_IRS -- the one
+ * transmission here that fires on a timer rather than in answer to something
+ * heard.  Same names and values as trunk so the two lines stay paired.  After
+ * DEFER_MAX consecutive deferrals the station keys anyway: a decoder stuck in
+ * false sync must not silence it. */
+#define ARQ_TURN_REQ_DEFER_MS                   500
+#define ARQ_TURN_REQ_DEFER_MAX                  20     /* ~10 s */
 extern _Atomic int arq_peer_payload_hold_s;
 /* Consecutive misses required to abandon a rung that has ALREADY delivered.
  *
