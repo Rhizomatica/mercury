@@ -26,7 +26,7 @@ ifeq ($(OS),Windows_NT)
 LDFLAGS += -lws2_32
 endif
 
-OUT = broadcast_test broadcast_diag_tx broadcast_diag_rx watterson_test acquire_vs_decode
+OUT = broadcast_test broadcast_diag_tx broadcast_diag_rx watterson_test shortframe_sweep acquire_vs_decode hail_suffix_sweep ackpat_sweep mfsk_puncture_sweep mfsk_floor_sweep
 
 # CPU-cost instruments.  Linux/macOS only: they time with
 # clock_gettime(CLOCK_PROCESS_CPUTIME_ID), which mingw-w64 does not provide
@@ -70,6 +70,20 @@ clean:
 # Run the program
 run: broadcast_test
 	./broadcast_test 127.0.0.1 8300
+
+# Links the whole freedv library: drives the real OFDM modems, not a model.
+# Is the MFSK floor set by acquisition or by the code?  Sweeps noise over the
+# whole burst and over the payload alone; the gap is the code's slack.
+mfsk_floor_sweep: mfsk_floor_sweep.c chanutil.c ../common/watterson.c ../common/mercury_prng.c \
+                  ../modem/modem_mfsk.c ../modem/mfsk/mfsk.c ../modem/mfsk/mfsk_sync.c \
+                  ../modem/mfsk/mfsk_ofdm.c ../modem/mfsk/mfsk_ldpc.c ../modem/mfsk/mfsk_ldpc_8_16.c
+	$(CC) $(CFLAGS) -o $@ $(filter %.c %.a %.o,$^) ../modem/freedv/libfreedvdata.a $(LDFLAGS) -lm
+
+# What the pattern ACK's second repetition buys: detection vs SNR and
+# false-accept on noise, for one repetition and two, at every threshold.
+ackpat_sweep: ackpat_sweep.c ../modem/modem_mfsk.c ../modem/mfsk/mfsk.c \
+              ../modem/mfsk/mfsk_sync.c ../modem/mfsk/mfsk_ofdm.c ../modem/mfsk/mfsk_ldpc.c ../modem/mfsk/mfsk_ldpc_8_16.c
+	$(CC) $(CFLAGS) -o $@ $(filter %.c %.a %.o,$^) ../modem/freedv/libfreedvdata.a $(LDFLAGS) -lm
 
 # Drives the real freedv OFDM modems (not a model) to separate acquisition
 # failures from decode failures.  chanutil puts it on the project's own

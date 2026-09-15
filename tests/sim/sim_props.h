@@ -15,6 +15,12 @@ typedef struct { bool ok; char detail[256]; } sim_verdict_t;
 sim_verdict_t sim_prop_integrity(sim_t *s, sim_endpoint_t *src, sim_endpoint_t *dst,
                                   const uint8_t *sent, size_t sent_len);
 
+/* Weaker form: everything delivered is a byte-exact prefix of what was sent.
+ * For scenarios where completion is not guaranteed but correctness is. */
+sim_verdict_t sim_prop_integrity_prefix(sim_t *s, sim_endpoint_t *src,
+                                        sim_endpoint_t *dst,
+                                        const uint8_t *sent, size_t sent_len);
+
 /* Check that both sessions are disconnected or are in a stable connected-idle
  * state with no channel frames pending. */
 sim_verdict_t sim_prop_both_idle_or_disconnected(sim_t *s);

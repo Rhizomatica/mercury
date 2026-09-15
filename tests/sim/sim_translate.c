@@ -71,6 +71,9 @@ bool sim_translate_frame(const uint8_t *frame, size_t frame_size, float rx_snr,
 
     out_ev->session_id    = hdr.session_id;
     out_ev->seq           = hdr.tx_seq;
+    /* DATA overlays a 16-bit stream offset on bytes 4-5; the sim drives the
+     * real FSM, so it must present the same identity the live path does. */
+    out_ev->stream_off    = arq_hdr_stream_off(hdr.tx_seq, hdr.rx_ack_seq);
     out_ev->ack_seq       = hdr.rx_ack_seq;
     out_ev->rx_flags      = hdr.flags;
     out_ev->snr_encoded   = (int8_t)hdr.snr_raw;
@@ -128,22 +131,11 @@ bool sim_translate_frame(const uint8_t *frame, size_t frame_size, float rx_snr,
     {
         switch (hdr.subtype)
         {
+        /* ACK: only the coded post-ACCEPT connect confirmation reaches here;
+         * in-session ACKs are the MFSK pattern (modelled as a pattern outframe
+         * translated directly in sim_core, not through sim_translate_frame). */
         case ARQ_SUBTYPE_ACK:           out_ev->id = ARQ_EV_RX_ACK;           break;
         case ARQ_SUBTYPE_DISCONNECT:    out_ev->id = ARQ_EV_RX_DISCONNECT;    break;
-        case ARQ_SUBTYPE_TURN_REQ:      out_ev->id = ARQ_EV_RX_TURN_REQ;      break;
-        case ARQ_SUBTYPE_TURN_ACK:      out_ev->id = ARQ_EV_RX_TURN_ACK;      break;
-        case ARQ_SUBTYPE_KEEPALIVE:     out_ev->id = ARQ_EV_RX_KEEPALIVE;     break;
-        case ARQ_SUBTYPE_KEEPALIVE_ACK: out_ev->id = ARQ_EV_RX_KEEPALIVE_ACK; break;
-        case ARQ_SUBTYPE_MODE_REQ:
-            out_ev->id   = ARQ_EV_RX_MODE_REQ;
-            out_ev->mode = (frame_size > ARQ_FRAME_HDR_SIZE)
-                           ? (int)frame[ARQ_FRAME_HDR_SIZE] : 0;
-            break;
-        case ARQ_SUBTYPE_MODE_ACK:
-            out_ev->id   = ARQ_EV_RX_MODE_ACK;
-            out_ev->mode = (frame_size > ARQ_FRAME_HDR_SIZE)
-                           ? (int)frame[ARQ_FRAME_HDR_SIZE] : 0;
-            break;
         default:
             return false;
         }

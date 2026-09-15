@@ -275,13 +275,23 @@ func TestMercuryARQTurnHandoff(t *testing.T) {
 	if rerr != nil {
 		t.Fatalf("read B log: %v", rerr)
 	}
-	if !strings.Contains(string(logB), "TURN_REQ") {
-		failWithLogs("B delivered its payload without ever sending a TURN_REQ — " +
-			"the turn was taken by piggyback, so the role-change path is STILL " +
-			"untested; the idle-peer sequencing this test depends on has broken")
+	// The explicit (non-piggyback) handover leaves a different trace on each
+	// FSM: trunk's IRS sends a TURN_REQ, while the delivery-driven FSM on the
+	// MFSK line has no TURN_REQ and instead self-promotes from IDLE_IRS
+	// straight to DATA_TX once the peer has been silent.  Either one proves
+	// the idle-peer handover ran; accepting both keeps this file identical on
+	// the two lines, so it does not become a merge conflict of its own.
+	explicitHandover := strings.Contains(string(logB), "TURN_REQ") ||
+		strings.Contains(string(logB), "dflow: IDLE_IRS -> DATA_TX")
+	if !explicitHandover {
+		failWithLogs("B delivered its payload without an explicit handover (no TURN_REQ, " +
+			"no IDLE_IRS -> DATA_TX self-promotion) — the turn was taken by piggyback, " +
+			"so the role-change path is STILL untested; the idle-peer sequencing this " +
+			"test depends on has broken")
 	}
-	turnReqs := strings.Count(string(logB), "TURN_REQ")
-	t.Logf("turn handoff exercised: B sent/handled %d TURN_REQ log events", turnReqs)
+	t.Logf("turn handoff exercised: B logged %d TURN_REQ and %d self-promotion events",
+		strings.Count(string(logB), "TURN_REQ"),
+		strings.Count(string(logB), "dflow: IDLE_IRS -> DATA_TX"))
 
 	t.Logf("turn-handoff ARQ exchange complete over ch (No=%.1f dB): "+
 		"idle-peer floor request granted, both directions delivered", params.No_dBHz)

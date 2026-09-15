@@ -353,15 +353,15 @@ Two limits are worth knowing:
   answers `BUSY\r` rather than silently accepting a setting that is about to
   be discarded.
 * **Only the pooled payload modes are runtime-switchable:** indexes 0
-  (DATAC1), 1 (DATAC3), 3 (DATAC4), 7 (DATAC15), 9 (DATAC17) and 10
-  (QAM16C2).  DATAC16 is the ARQ control mode, and DATAC0 / DATAC13 / DATAC14
+  (DATAC1), 1 (DATAC3), 3 (DATAC4), 7 (DATAC15), 9 (DATAC17), 10
+  (QAM16C2) and 11 (MFSK).  DATAC16 is the ARQ control mode, and DATAC0 / DATAC13 / DATAC14
   / FSK_LDPC have no runtime pool slot — `-m` can still *start* on some of
   those, but they cannot be selected later, and `MODE` answers `WRONG\r`.
 
 This does **not** change how ARQ connections behave.  Every session — inbound
-or outbound — resets its mode ladder to DATAC15 and climbs from there via
-OLLA, so a fast listen mode gives a later connection no head start, and a
-robust one costs it nothing.  Setting the listen mode is about *broadcast*
+or outbound — resets its mode ladder to the start rung (the MFSK floor on this
+line) and climbs from there on delivery, so a fast listen mode gives a later
+connection no head start, and a robust one costs it nothing.  Setting the listen mode is about *broadcast*
 reception and transmission while idle.
 
 ---
