@@ -80,6 +80,10 @@ conditions (all optional; default is codec2 `ch` on an effectively clean link):
 | `MERCURY_TEST_PAYLOAD_KB` | transfer size in KB (default ~102 bytes = 3 DATAC15 frames) |
 | `MERCURY_TEST_LOGDIR` | directory to keep per-instance logs (default: temp, deleted) |
 
+Every Mercury the tests start gets a private, temporary state directory
+(`XDG_STATE_HOME`, `LOCALAPPDATA`/`APPDATA`, and `HOME` on macOS; see
+`main_test.go`), so test runs never read or write your real chat history.
+
 Example — one 1 KB transfer over an NVIS-disturbed pathsim channel:
 ```
 MERCURY_BIN=./mercury MERCURY_CH_ENGINE=pathsim \
