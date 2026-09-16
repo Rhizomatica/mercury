@@ -2625,7 +2625,9 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
                       "conceding the turn (my TX mode %d unchanged)",
                       sess->peer_tx_mode, ev->mode, sess->payload_mode);
                 sess->peer_tx_mode = ev->mode;
-                if (g_timing) arq_timing_record_turn(g_timing, false, "mode_req");
+                /* No turn record: the peer already holds the floor, so nothing
+                 * changes hands here.  Logging one would count a turn that did
+                 * not happen -- the RX_DATA concede above records none either. */
                 dflow_enter(sess, ARQ_DFLOW_MODE_ACK_TX,
                             time_now_ms() + ARQ_CHANNEL_GUARD_MS,
                             ARQ_EV_TIMER_ACK);
