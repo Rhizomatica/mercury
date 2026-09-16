@@ -74,8 +74,6 @@ static void handle_termination_signal(int sig)
 
 int main(int argc, char *argv[])
 {
-    mercury_print_version_banner();
-
 #ifdef _WIN32
     WSADATA wsa_data;
     if (WSAStartup(MAKEWORD(2, 2), &wsa_data) != 0)
@@ -98,9 +96,13 @@ int main(int argc, char *argv[])
                    ? EXIT_SUCCESS : EXIT_FAILURE;
     }
 
-    /* -h/-l/-z/-K print and exit. */
+    /* -h/-l/-z/-K/-V print and exit. */
     if (mercury_cli_run_info_action(&cli, argv[0]))
         return EXIT_SUCCESS;
+
+    /* Announce the version only when the modem is actually starting, not for
+     * the informational actions above (so -V etc. print a single line). */
+    mercury_print_version_banner();
 
     signal(SIGINT, handle_termination_signal);
     signal(SIGTERM, handle_termination_signal);

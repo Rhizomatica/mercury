@@ -407,14 +407,14 @@ func windowPosition(win fyne.Window) (int, int, bool) {
 }
 
 func main() {
-	// Announce the version on the terminal, just like the standalone daemon.
-	mercuryPrintVersion()
-
-	// Handle informational CLI actions (-h/-l/-z/-K) before touching the GUI,
-	// so `mercury-ui -h` prints to the terminal and exits like the daemon.
+	// Handle informational CLI actions (-h/-l/-z/-K/-Q/-V) before touching the
+	// GUI, so `mercury-ui -h` prints to the terminal and exits like the daemon.
 	if mercuryInfoCheck(os.Args) {
 		return
 	}
+
+	// Announce the version on the terminal, just like the standalone daemon.
+	mercuryPrintVersion()
 
 	// Use a stable application ID (matches the .desktop / Mercury.app appID) so
 	// Fyne's preferences/storage have a unique identity instead of warning.

@@ -18,6 +18,7 @@ typedef enum {
     MERCURY_CLI_LIST_RADIOS,    /* -K : list HAMLIB radio models   */
     MERCURY_CLI_TEST_PTT,       /* -Q : pulse configured PTT       */
     MERCURY_CLI_HELP,           /* -h : print usage                */
+    MERCURY_CLI_PRINT_VERSION,  /* -V : print version and exit     */
 } mercury_cli_action_t;
 
 /* Everything main()/the bridge need out of the command line. */
