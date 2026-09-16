@@ -710,6 +710,25 @@ static uint32_t bitrate_level_from_payload_mode(int mode)
     }
 }
 
+/* Report a frame that is actually on the air -- one just decoded, or a burst
+ * about to be sent -- as the link bitrate: BITRATE on the TNC port, and the
+ * GUI's Bitrate field, which shows the last value sent.
+ *
+ * Only payload frames count.  DATAC16 carries the connect handshake, ACKs and
+ * the other control frames at 42 bps whatever the link is doing.  The value
+ * used to be the rate of the mode we were set to RECEIVE, refreshed on every
+ * decoded frame including those ACKs, so a station sending DATAC17 while
+ * receiving DATAC15 showed 68 bps throughout (AA5RL, 1.9.14 on 20 m).
+ *
+ * Caller holds the codec instance's lock. */
+static void publish_link_bitrate(const modem_codec_t *codec, int mode)
+{
+    if (!modem_codec_valid(codec) || mode == FREEDV_MODE_DATAC16)
+        return;
+    tnc_send_bitrate(bitrate_level_from_payload_mode(mode),
+                     compute_bitrate_bps_locked(codec));
+}
+
 static int select_payload_rx_mode(const arq_runtime_snapshot_t *snapshot, bool ready)
 {
     int mode = FREEDV_MODE_DATAC15;
@@ -1147,6 +1166,8 @@ int send_modulated_data(generic_modem_t *g_modem, uint8_t *bytes_in, int frames_
     size_t payload_bytes = bytes_per_modem_frame - 2;  /* 2 bytes reserved for CRC16 */
     size_t n_mod_out = (size_t)codec.be->n_tx_samples(codec.ctx);
     uint8_t frame_with_crc[bytes_per_modem_frame];
+
+    publish_link_bitrate(&codec, codec.be->get_mode(codec.ctx));
 
     /* Inter-burst silence */
     int inter_burst_delay_ms = 200;
@@ -1721,8 +1742,6 @@ static void process_received_frame(const uint8_t *data,
                                    size_t nbytes_out,
                                    size_t frame_bytes,
                                    bool arq_policy_ready,
-                                   int payload_mode,
-                                   uint32_t bitrate_bps,
                                    float snr_est)
 {
     size_t payload_nbytes;
@@ -1735,8 +1754,7 @@ static void process_received_frame(const uint8_t *data,
     if (payload_nbytes == 0)
         return;
 
-    tnc_send_sn(snr_est);
-    tnc_send_bitrate(bitrate_level_from_payload_mode(payload_mode), bitrate_bps);
+    tnc_send_sn(snr_est);   /* the bitrate is published by the decoder, see publish_link_bitrate() */
 
     frame_type = parse_frame_header((const uint8_t *)data, payload_nbytes, NULL);
 
@@ -1779,8 +1797,7 @@ static void process_received_frame(const uint8_t *data,
 
 static void rx_decoder_consume_chunk(rx_decoder_state_t *state,
                                      const int16_t *samples, int sample_count,
-                                     bool arq_policy_ready, int payload_mode,
-                                     uint32_t bitrate_bps,
+                                     bool arq_policy_ready,
                                      rx_metrics_accum_t *metrics);
 
 /* --- Parallel decode: one worker per plane ------------------------------
@@ -1811,9 +1828,7 @@ typedef struct {
     pthread_mutex_t     mlock;
     rx_metrics_accum_t  metrics;
     /* Set by the dispatcher each chunk; read by the worker. */
-    _Atomic int         payload_mode;
     _Atomic bool        policy_ready;
-    _Atomic uint32_t    bitrate_bps;
     _Atomic long        dropped_samples;  /* ring overflow, logged not fatal */
     long                dbg_samples;      /* diagnosis: samples consumed        */
 } rx_worker_t;
@@ -1938,8 +1953,6 @@ static void *rx_worker_thread(void *arg)
         rx_metrics_accum_t m = {0};
         rx_decoder_consume_chunk(&w->state, buf, want,
                                  atomic_load(&w->policy_ready),
-                                 atomic_load(&w->payload_mode),
-                                 atomic_load(&w->bitrate_bps),
                                  &m);
         rx_worker_publish_metrics(w, &m);
     }
@@ -1953,8 +1966,6 @@ static void rx_decoder_consume_chunk(rx_decoder_state_t *state,
                                      const int16_t *samples,
                                      int sample_count,
                                      bool arq_policy_ready,
-                                     int payload_mode,
-                                     uint32_t bitrate_bps,
                                      rx_metrics_accum_t *metrics)
 {
     int guard = 0;
@@ -1966,7 +1977,7 @@ static void rx_decoder_consume_chunk(rx_decoder_state_t *state,
          * a decoder parked here consumes the whole stream and reports nothing
          * at all -- indistinguishable from a dead channel unless traced. */
         ARQ_TRACE(ARQ_TR_DROP, 0xfe,
-                  (uint8_t)((state ? (state->freedv ? 1 : 0) : 0) |
+                  (uint8_t)((state && modem_codec_valid(&state->codec) ? 1 : 0) |
                             (state && state->demod_in  ? 2 : 0) |
                             (state && state->bytes_out ? 4 : 0) |
                             (samples ? 8 : 0)),
@@ -2051,6 +2062,8 @@ static void rx_decoder_consume_chunk(rx_decoder_state_t *state,
                           (uint8_t)(nin & 0xff), (uint16_t)c);
         }
         nbytes_out = (size_t)be->rawdata_rx(ctx, state->bytes_out, state->demod_in);
+        if (nbytes_out > 0)
+            publish_link_bitrate(&state->codec, state->mode);
         if (nin > 0)
         {
             state->demod_count -= nin;
@@ -2097,8 +2110,6 @@ static void rx_decoder_consume_chunk(rx_decoder_state_t *state,
                                    nbytes_out,
                                    state->bytes_cap,
                                    arq_policy_ready,
-                                   payload_mode,
-                                   bitrate_bps,
                                    snr_est);
         }
 
@@ -2374,15 +2385,6 @@ void *rx_thread(void *g_modem)
 
         }
 
-        uint32_t bitrate_bps = 0;
-        pthread_mutex_lock(&modem_pool_lock);
-        modem_codec_t payload_codec = pooled_codec_for_mode_locked(payload_mode, NULL);
-        if (modem_codec_valid(&payload_codec))
-            bitrate_bps = compute_bitrate_bps_locked(&payload_codec);
-        else if (modem_codec_valid(&modem->codec))
-            bitrate_bps = compute_bitrate_bps_locked(&modem->codec);
-        pthread_mutex_unlock(&modem_pool_lock);
-
         if (arq_policy_ready && arq_snapshot.trx == TX)
         {
             // Half-duplex local TX: drain capture at low cost and skip demod work.
@@ -2461,12 +2463,8 @@ void *rx_thread(void *g_modem)
         }
 
         atomic_store(&w_pay.mode, payload_mode);
-        atomic_store(&w_ctrl.payload_mode, payload_mode);
-        atomic_store(&w_pay.payload_mode,  payload_mode);
         atomic_store(&w_ctrl.policy_ready, arq_policy_ready);
         atomic_store(&w_pay.policy_ready,  arq_policy_ready);
-        atomic_store(&w_ctrl.bitrate_bps, bitrate_bps);
-        atomic_store(&w_pay.bitrate_bps,  bitrate_bps);
 
         int chunk_samples = RX_DECODE_CHUNK_SAMPLES;
 
