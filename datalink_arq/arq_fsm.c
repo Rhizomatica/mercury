@@ -2601,6 +2601,36 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
                 HLOGD(LOG_COMP, "Turn requested by both; holding (rank)");
             }
         }
+        else if (ev->id == ARQ_EV_RX_MODE_REQ)
+        {
+            /* The peer is the ISS and is telling us the mode it will send in,
+             * while our own TURN_REQ is still outstanding.  It has the floor
+             * and is not yielding, so concede exactly as the RX_DATA case
+             * above does: accept the mode, answer, and go back to receiving.
+             *
+             * Ignoring it deadlocked the turn.  Neither side acted on the
+             * other's request: we retried TURN_REQ while the peer retried
+             * MODE_REQ, both to exhaustion, costing ~40 s of dead air on every
+             * turn whenever both ends had a backlog (issue #282).  Only the
+             * matching pair of requests is affected -- normal traffic, where
+             * one side is idle, never reaches it.
+             *
+             * Our backlog is not lost: MODE_ACK_TX lands in enter_idle_irs(),
+             * which arms the peer-backlog timer that asks for the floor again. */
+            if (arq_protocol_mode_timing(ev->mode) != NULL &&
+                ev->mode != ARQ_CONTROL_MODE)
+            {
+                HLOGI(LOG_COMP,
+                      "MODE_REQ while awaiting TURN_ACK: peer TX mode %d -> %d, "
+                      "conceding the turn (my TX mode %d unchanged)",
+                      sess->peer_tx_mode, ev->mode, sess->payload_mode);
+                sess->peer_tx_mode = ev->mode;
+                if (g_timing) arq_timing_record_turn(g_timing, false, "mode_req");
+                dflow_enter(sess, ARQ_DFLOW_MODE_ACK_TX,
+                            time_now_ms() + ARQ_CHANNEL_GUARD_MS,
+                            ARQ_EV_TIMER_ACK);
+            }
+        }
         else if (ev->id == ARQ_EV_TIMER_RETRY)
         {
             if (sess->tx_retries_left > 0)
@@ -2841,7 +2871,37 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
                       sess->payload_mode, ev->mode);
                 sess->payload_mode = ev->mode;
             }
-            enter_idle_iss_guarded(sess, false);  /* ISS confirmed mode — retain turn */
+            /* A TURN_REQ that crossed our MODE_REQ is honoured here, where the
+             * handover costs no transmission -- the same rule WAIT_ACK applies
+             * to an ACK.  Retaining the floor against an explicit request is
+             * what stalls; the negotiation itself is finished either way. */
+            if (sess->peer_turn_req_pending)
+            {
+                sess->peer_turn_req_pending = false;
+                if (g_timing) arq_timing_record_turn(g_timing, false, "turn_req");
+                enter_idle_irs(sess);
+            }
+            else
+            {
+                enter_idle_iss_guarded(sess, false);  /* ISS confirmed mode — retain turn */
+            }
+        }
+        else if (ev->id == ARQ_EV_RX_TURN_REQ)
+        {
+            /* The peer asked for the floor while we were waiting for its
+             * MODE_ACK.  Do not key anything: the peer is answering our
+             * MODE_REQ right now, and a TURN_ACK from here would land on that
+             * reply.  Latch the request; the MODE_ACK branch above hands the
+             * floor over as soon as the negotiation completes.
+             *
+             * Dropping it (the old behaviour) was one half of issue #282: we
+             * retried MODE_REQ while the peer retried TURN_REQ, neither acted,
+             * and the turn cost ~40 s.  The other half is TURN_REQ_WAIT's
+             * RX_MODE_REQ case above. */
+            if (!sess->peer_turn_req_pending)
+                HLOGD(LOG_COMP,
+                      "TURN_REQ in MODE_REQ_WAIT: yielding once the mode is confirmed");
+            sess->peer_turn_req_pending = true;
         }
         else if (ev->id == ARQ_EV_TIMER_RETRY)
         {

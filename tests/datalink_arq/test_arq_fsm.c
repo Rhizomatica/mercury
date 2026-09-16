@@ -1078,6 +1078,100 @@ static void goto_turn_req_wait(void)
     TEST_ASSERT_EQUAL_INT(ARQ_DFLOW_TURN_REQ_WAIT, sess.dflow_state);
 }
 
+/* The two crossed requests of issue #282.
+ *
+ * When both ends have a backlog, the ISS takes the floor and negotiates its
+ * mode while the IRS asks for the floor.  Each then sat in its own wait state
+ * ignoring the other's frame -- MODE_REQ_WAIT dropped RX_TURN_REQ, TURN_REQ_WAIT
+ * dropped RX_MODE_REQ -- and both retried to exhaustion, ~40 s of dead air per
+ * turn.  The reporter saw it on every turn of a bidirectional transfer; normal
+ * traffic, where one side is idle, never reaches either state.
+ *
+ * The two sides resolve it asymmetrically, by role rather than by a tiebreak:
+ * the ISS already holds the floor and finishes its negotiation, so it defers
+ * the peer's request to the MODE_ACK (where handing over costs no
+ * transmission); the IRS concedes immediately, exactly as it already concedes
+ * to RX_DATA.  Together that settles the turn in one exchange.
+ */
+static void goto_mode_req_wait(void)
+{
+    /* Reached directly.  The natural path needs OLLA hysteresis, a peer SNR
+     * estimate and the startup window to have elapsed, which would make this a
+     * test about mode selection rather than about the crossed requests. */
+    goto_connected();
+    goto_wait_ack();
+    sess.dflow_state    = ARQ_DFLOW_MODE_REQ_WAIT;
+    sess.pending_tx_mode = FREEDV_MODE_DATAC3;
+    sess.tx_retries_left = ARQ_MODE_REQ_RETRIES;
+    sess.peer_turn_req_pending = false;
+}
+
+/* ISS: a TURN_REQ crossing our MODE_REQ must be remembered, not dropped, and
+ * must not be answered on the air -- the peer is sending our MODE_ACK. */
+void test_mode_req_wait_latches_crossed_turn_req(void)
+{
+    goto_mode_req_wait();
+    unsigned sends_before = fake_send_tx_frame_fake.call_count;
+
+    arq_event_t ev = make_event(ARQ_EV_RX_TURN_REQ);
+    ev.session_id = sess.session_id;
+    arq_fsm_dispatch(&sess, &ev);
+
+    TEST_ASSERT_TRUE_MESSAGE(sess.peer_turn_req_pending,
+        "TURN_REQ crossing a MODE_REQ was dropped (issue #282)");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ARQ_DFLOW_MODE_REQ_WAIT, sess.dflow_state,
+        "the negotiation must continue; the yield belongs on the MODE_ACK");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(sends_before, fake_send_tx_frame_fake.call_count,
+        "nothing may be keyed: the peer is transmitting our MODE_ACK");
+}
+
+/* ...and the MODE_ACK then hands the floor over instead of retaining it. */
+void test_mode_ack_yields_to_the_latched_turn_req(void)
+{
+    goto_mode_req_wait();
+    arq_event_t ev = make_event(ARQ_EV_RX_TURN_REQ);
+    ev.session_id = sess.session_id;
+    arq_fsm_dispatch(&sess, &ev);
+
+    ev = make_event(ARQ_EV_RX_MODE_ACK);
+    ev.session_id = sess.session_id;
+    ev.mode       = FREEDV_MODE_DATAC3;
+    arq_fsm_dispatch(&sess, &ev);
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ARQ_DFLOW_IDLE_IRS, sess.dflow_state,
+        "the floor must go to the peer that asked for it");
+    TEST_ASSERT_FALSE_MESSAGE(sess.peer_turn_req_pending,
+        "the latch must be consumed, not left to fire again");
+}
+
+/* IRS: a MODE_REQ arriving while our TURN_REQ is outstanding means the peer
+ * holds the floor and is not yielding.  Accept its mode and answer. */
+void test_turn_req_wait_concedes_to_mode_req(void)
+{
+    goto_turn_req_wait();
+    int my_tx_mode = sess.payload_mode;
+
+    arq_event_t ev = make_event(ARQ_EV_RX_MODE_REQ);
+    ev.session_id = sess.session_id;
+    ev.mode       = FREEDV_MODE_DATAC3;
+    arq_fsm_dispatch(&sess, &ev);
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ARQ_DFLOW_MODE_ACK_TX, sess.dflow_state,
+        "MODE_REQ crossing a TURN_REQ was dropped (issue #282)");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(FREEDV_MODE_DATAC3, sess.peer_tx_mode,
+        "the peer's TX mode is what we must decode next");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(my_tx_mode, sess.payload_mode,
+        "our own TX mode is per-direction and must not change");
+
+    /* The answer goes out and we are the receiver again, with our own backlog
+     * still queued -- IDLE_IRS arms the timer that asks for the floor later. */
+    ev = make_event(ARQ_EV_TIMER_ACK);
+    arq_fsm_dispatch(&sess, &ev);
+    ev = make_event(ARQ_EV_TX_COMPLETE);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(ARQ_DFLOW_IDLE_IRS, sess.dflow_state);
+}
+
 /* Get to IDLE_IRS as the receiver, with traffic of our own queued -- the state
  * where TIMER_PEER_BACKLOG decides whether to ask for the floor. */
 static void goto_idle_irs_with_backlog(void)
@@ -1688,6 +1782,9 @@ int main(void)
     RUN_TEST(test_redial_while_disconnect_deferred_is_placed_after_teardown);
     RUN_TEST(test_redial_waits_for_peer_disconnect_ack_to_finish);
     RUN_TEST(test_listen_off_while_connected_cancels_deferred_connect);
+    RUN_TEST(test_mode_req_wait_latches_crossed_turn_req);
+    RUN_TEST(test_mode_ack_yields_to_the_latched_turn_req);
+    RUN_TEST(test_turn_req_wait_concedes_to_mode_req);
     RUN_TEST(test_connect_on_live_session_without_disconnect_is_not_queued);
     RUN_TEST(test_listen_off_drops_pending_accept);
     RUN_TEST(test_listen_off_drops_outgoing_call);
