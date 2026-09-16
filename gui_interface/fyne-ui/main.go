@@ -836,6 +836,7 @@ func main() {
 			}
 			if bindings.rxBytesText != nil {
 				bindings.rxBytesText.Text = fmt.Sprintf("%d", telemetry.BytesReceived)
+				bindings.rxBytesText.Color = themeForeground()
 				bindings.rxBytesText.Refresh()
 			}
 			bindings.txGainLabel.SetText(fmt.Sprintf("TX gain: %.1f dB", telemetry.TXGainDB))
