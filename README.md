@@ -45,7 +45,7 @@ command-line flags override it. Run `./mercury -h` for this list at any time.
 ```
 Usage modes:
 ./mercury -m [mode_index] -i [device] -o [device] -x [sound_system] -p [arq_tcp_base_port] -b [broadcast_tcp_port] -f [freedv_verbosity] -H [hamlib_log_level] -k [rx_input_channel] [-P ptt_method] [-A ptt_device] [-G] [-T] [-U ui_port] [-W] [-C config_file]
-./mercury [-h -l -z]
+./mercury [-h -l -z -K -Q -V]
 
 Options:
  -c [cpu_nr]                Run on CPU [cpu_nr]. Use -1 to disable CPU selection, which is the default.
@@ -78,6 +78,7 @@ Options:
  -C [path]                  Path to INI configuration file (default: mercury.ini in the current directory).
  -t                         Test TX mode.
  -r                         Test RX mode.
+ -V                         Print version information and exit.
  -h                         Prints this help.
 ```
 

@@ -13,6 +13,7 @@
 #include <unistd.h>
 
 #include "mercury_cli.h"
+#include "mercury_version.h"
 #include "freedv_api.h"
 #include "ldpc_codes.h"
 #include "audioio/audioio.h"
@@ -38,7 +39,7 @@ void mercury_cli_print_usage(const char *prog)
 {
     printf("Usage modes: \n");
     printf("%s -m [mode_index] -i [device] -o [device] -x [sound_system] -p [arq_tcp_base_port] -b [broadcast_tcp_port] -f [freedv_verbosity] -H [hamlib_log_level] -k [rx_input_channel] [-P ptt_method] [-A ptt_device] [-G] [-T] [-U ui_port] [-W]\n", prog);
-    printf("%s [-h -l -z -K -Q]\n", prog);
+    printf("%s [-h -l -z -K -Q -V]\n", prog);
     printf("\nOptions:\n");
     printf(" -c [cpu_nr]                Run on CPU [cpu_nr]. Use -1 to disable CPU selection, which is the default.\n");
     printf(" -m [mode_index]            Startup payload mode index shown in \"-l\" output. Used for broadcast and idle/disconnected ARQ decode. Default is 1 (DATAC3)\n");
@@ -74,6 +75,7 @@ void mercury_cli_print_usage(const char *prog)
     printf(" -Q                         Test PTT: key the configured backend for one second, release it, and exit.\n");
     printf(" -t                         Test TX mode.\n");
     printf(" -r                         Test RX mode.\n");
+    printf(" -V                         Print version information and exit.\n");
     printf(" -h                         Prints this help.\n");
 }
 
@@ -84,7 +86,7 @@ int mercury_cli_parse(int argc, char **argv,
         return -1;
 
     const int mode_count = mercury_cli_mode_count();
-    const char *optstring = "hc:s:m:f:H:k:li:o:x:p:b:zvtrL:JP:R:U:A:C:SKWGQT";
+    const char *optstring = "hc:s:m:f:H:k:li:o:x:p:b:zvtrL:JP:R:U:A:C:SKWGQTV";
 
     memset(out, 0, sizeof(*out));
     cfg_set_defaults(&out->cfg);
@@ -343,6 +345,9 @@ int mercury_cli_parse(int argc, char **argv,
         case 'Q':
             out->action = MERCURY_CLI_TEST_PTT;
             break;
+        case 'V':
+            out->action = MERCURY_CLI_PRINT_VERSION;
+            break;
         case 'h':
             out->action = MERCURY_CLI_HELP;
             break;
@@ -498,6 +503,9 @@ bool mercury_cli_run_info_action(const mercury_cli_t *cli, const char *prog)
     {
     case MERCURY_CLI_HELP:
         mercury_cli_print_usage(prog);
+        return true;
+    case MERCURY_CLI_PRINT_VERSION:
+        mercury_print_version_banner();
         return true;
     case MERCURY_CLI_LIST_RADIOS:
         radio_io_list_models();
