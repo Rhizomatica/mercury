@@ -62,13 +62,13 @@ func closeMercuryClientWindow() {
 	}
 }
 
-func openMercuryClientWindow(app fyne.App, telemetry telemetryState, arqPort, broadcastPort int, history []HistoryMessage) {
+func openMercuryClientWindow(app fyne.App, telemetry telemetryState, arqPort, broadcastPort int, history []HistoryMessage, tcpHost string) {
 	if mercuryClientSingleton != nil {
 		mercuryClientSingleton.win.RequestFocus()
 		return
 	}
 	cw := &chatWindow{}
-	cw.build(app, telemetry, arqPort, broadcastPort, history)
+	cw.build(app, telemetry, arqPort, broadcastPort, history, tcpHost)
 	mercuryClientSingleton = cw
 }
 
@@ -121,7 +121,7 @@ type chatWindow struct {
 	cqSending bool
 }
 
-func (cw *chatWindow) build(app fyne.App, telemetry telemetryState, arqPort, broadcastPort int, history []HistoryMessage) {
+func (cw *chatWindow) build(app fyne.App, telemetry telemetryState, arqPort, broadcastPort int, history []HistoryMessage, tcpHost string) {
 	cw.win = app.NewWindow("Mercury Client")
 	cw.history = history
 
@@ -140,7 +140,10 @@ func (cw *chatWindow) build(app fyne.App, telemetry telemetryState, arqPort, bro
 	cw.target = widget.NewEntry()
 	cw.target.SetText(defaultCall(telemetry.DestCallsign, "DEST"))
 	cw.ip = widget.NewEntry()
-	cw.ip.SetText("127.0.0.1")
+	if tcpHost == "" {
+		tcpHost = "127.0.0.1"
+	}
+	cw.ip.SetText(tcpHost)
 	cw.arqPort = widget.NewEntry()
 	cw.arqPort.SetText(strconv.Itoa(arqPort))
 	cw.bcastPort = widget.NewEntry()

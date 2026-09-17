@@ -1165,12 +1165,22 @@ func main() {
 		tel := state.telemetry
 		history := state.history
 		link := state.link
+		useRemote := state.useRemote
+		wsHost := state.wsHost
 		state.mu.RUnlock()
 		arqPort, broadcastPort := 8300, 8100
 		if engLink, ok := link.(*engineLink); ok {
 			arqPort, broadcastPort = engLink.TCPPorts()
 		}
-		openMercuryClientWindow(myApp, tel, arqPort, broadcastPort, history)
+		// The TNC ports live where the engine lives: on this machine in
+		// Local mode, but on the remote host in Remote mode.  Default the
+		// client to that host so the operator does not retype the IP every
+		// time they switch to a remote engine.
+		tcpHost := "127.0.0.1"
+		if useRemote {
+			tcpHost = wsHost
+		}
+		openMercuryClientWindow(myApp, tel, arqPort, broadcastPort, history, tcpHost)
 	})
 
 	// The master switch for the embedded client.
