@@ -65,7 +65,7 @@ TEST_BINS = test_ring_buffer test_arq_protocol test_arq_timing test_arq_fsm \
             test_arq_conn test_cfg_utils test_arq_tnc test_channel_busy \
             test_freedv_harq test_sock_wire test_virtual_clock test_watterson \
             test_mercury_prng test_bcast_file \
-            test_ofdm_acq test_ui_status test_ui_devices test_tx_pacing test_radio_port \
+            test_ofdm_acq test_ui_status test_ui_devices test_ui_ptt_persist test_tx_pacing test_radio_port \
             test_radio_io_frequency test_mfsk \
 			test_message_store test_ui_history
 
@@ -276,6 +276,18 @@ test_ui_devices: gui_interface/test_ui_devices.c $(UNITY_SRC) \
                  ../gui_interface/ui_status.h
 	$(CC) $(CFLAGS) -I../gui_interface -I../datalink_arq -I../modem -I../modem/mfsk -I../common -o $@ \
 	    gui_interface/test_ui_devices.c $(UNITY_SRC) ../gui_interface/ui_devices.c $(LDFLAGS)
+
+# A PTT change from the UI must be applied AND written to the INI (issue #219).
+# ui_communication.c and the real INI code are linked; the radio backend, audio,
+# modem, ARQ and websocket are stubbed in the test.  ui_communication.h and
+# cfg_utils.h are PREREQUISITES so a header change relinks the test.
+test_ui_ptt_persist: gui_interface/test_ui_ptt_persist.c $(UNITY_SRC) \
+                     ../gui_interface/ui_communication.c ../common/cfg_utils.c \
+                     ../common/iniparser/iniparser.c ../common/iniparser/dictionary.c \
+                     ../gui_interface/ui_communication.h ../common/cfg_utils.h
+	$(CC) $(CFLAGS) -I../gui_interface -I../datalink_arq -I../modem -I../modem/freedv \
+	    -I../common -I../common/iniparser -I../data_interfaces -I../audioio -I../radio_io -o $@ \
+	    $(filter %.c %.a %.o,$^) $(LDFLAGS) -lm
 
 clean:
 	rm -f $(TEST_BINS) *.d
