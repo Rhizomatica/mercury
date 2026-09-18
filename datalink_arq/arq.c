@@ -1259,6 +1259,7 @@ bool arq_get_runtime_snapshot(arq_runtime_snapshot_t *snapshot)
         (g_sess.conn_state == ARQ_CONN_ACCEPTING &&
          g_sess.confirm_listen_until_ms != 0 &&
          time_now_ms() < g_sess.confirm_listen_until_ms);
+    snapshot->listening_for_calls = (g_sess.conn_state == ARQ_CONN_LISTENING);
     snapshot->trx              = trx;
     snapshot->tx_backlog_bytes = backlog +
         (g_sess.tx_frame_present ? g_sess.tx_frame_len : 0);
