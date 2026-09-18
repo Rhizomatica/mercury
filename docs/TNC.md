@@ -298,8 +298,11 @@ BITRATE\r
 
 ### RETRIES
 
-Override the amount of retries Mercury will try to connect or retry a transmission before giving up.
-Setting to 0 should revert to the defined values in datalink_arq/arq_protocol.h.
+Override how many times Mercury retransmits a data frame, or an ACCEPT, before giving up.
+Setting to 0 reverts to the values in datalink_arq/arq_protocol.h.
+
+It does not limit CONNECT: a caller keeps CALLing for `ARQ_CONNECT_TIMEOUT_S`
+(180 s) whatever this is set to.
 
 ```
 RETRIES 10\r

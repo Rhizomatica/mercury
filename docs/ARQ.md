@@ -352,7 +352,7 @@ All in `arq_protocol.h`:
                                              * ~500ms; the radio needs ~340ms
                                              * for TX->RX switch */
 #define ARQ_ACK_GUARD_S               1     /* slack added to retry interval    */
-#define ARQ_CALL_RETRY_SLOTS          4     /* CALL retries                     */
+#define ARQ_CONNECT_TIMEOUT_S         180   /* keep CALLing this long           */
 #define ARQ_DATA_RETRY_SLOTS          10    /* DATA retries before disconnect   */
 #define ARQ_DISCONNECT_RETRY_SLOTS    2
 #define ARQ_PEER_PAYLOAD_HOLD_S       15    /* hold payload mode after activity */

@@ -285,6 +285,8 @@ typedef struct
     bool     pending_connect;          /* CONNECT arrived while DISCONNECTING: place
                                         * the call once the teardown completes     */
     char     pending_connect_call[CALLSIGN_MAX_SIZE];
+    uint64_t connect_deadline_ms;      /* CALLING: absolute time after which no
+                                        * further CALL is sent (ARQ_CONNECT_TIMEOUT_S) */
     uint64_t disconnect_deadline_ms;   /* absolute time by which a deferred
                                         * APP_DISCONNECT must resolve into a
                                         * clean teardown. 0 = none armed. */

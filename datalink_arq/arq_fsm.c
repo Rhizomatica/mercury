@@ -938,7 +938,7 @@ static void fsm_disconnected(arq_session_t *sess, const arq_event_t *ev)
         snprintf(sess->remote_call, CALLSIGN_MAX_SIZE, "%s", ev->remote_call);
         sess->session_id      = (uint8_t)(time_now_ms() & 0x7F) | 0x01;
         reset_session_data_state(sess);  /* MFSK-start ladder, clean retransmit */
-        sess->tx_retries_left = ARQ_CALL_RETRY_SLOTS;
+        sess->connect_deadline_ms    = time_now_ms() + ARQ_CONNECT_TIMEOUT_S * 1000ULL;
         sess->call_sends_done = 0;      /* fresh attempt: start on the fast mode */
         sess->call_carrier    = 0;
         sess->disconnect_deadline_ms = 0;
@@ -1097,15 +1097,18 @@ static void fsm_calling(arq_session_t *sess, const arq_event_t *ev)
         {
             float wait_s = arq_protocol_call_interval_for_mode_s(call_inflight_carrier(sess));
             sess->deadline_ms = deadline_from_s(wait_s);
-            HLOGD(LOG_COMP, "CALL retry re-anchored: +%.2fs, retries_left=%d",
-                  (double)wait_s, (int)sess->tx_retries_left);
+            HLOGD(LOG_COMP, "CALL retry re-anchored: +%.2fs, connect budget left %ds",
+                  (double)wait_s,
+                  sess->connect_deadline_ms > time_now_ms()
+                      ? (int)((sess->connect_deadline_ms - time_now_ms()) / 1000) : 0);
         }
         break;
 
     case ARQ_EV_TIMER_RETRY:
-        if (sess->tx_retries_left > 0)
+        /* The budget is checked only when the NEXT CALL would go out, so the
+         * last one always gets its full interval to hear the ACCEPT. */
+        if (time_now_ms() < sess->connect_deadline_ms)
         {
-            sess->tx_retries_left--;
             send_call_accept(sess, false);
             /* Deadline is re-anchored on TX_COMPLETE above; this is the
              * fallback if that event is ever missed. */
@@ -1114,6 +1117,8 @@ static void fsm_calling(arq_session_t *sess, const arq_event_t *ev)
         }
         else
         {
+            HLOGI(LOG_COMP, "Connect to %s gave up after %ds of CALLs",
+                  sess->remote_call, ARQ_CONNECT_TIMEOUT_S);
             notify_session_ended(sess);
             enter_idle_after_call(sess);
         }

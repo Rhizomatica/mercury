@@ -284,10 +284,23 @@ uint32_t arq_protocol_accept_rx_window_ms(void);
  * moves to the next channel and the reply goes out on the wrong frequency.
  * 2 s is conservative: ~0.5 s of TCP+host processing with headroom. */
 #define ARQ_LISTEN_OFF_GRACE_MS       2000
-#define ARQ_CALL_RETRY_SLOTS_DEFAULT       4    /* CALL retries before giving up       */
+/* How long a caller keeps CALLing before it reports the connect as failed.
+ *
+ * A time budget, not a count of CALLs: the carrier and so the interval between
+ * CALLs vary, and what an operator experiences is how long "CONNECT" takes to
+ * give up.  It used to be 4 retries -- 5 CALLs, ~59 s -- which at -9 dB SNR3k
+ * under fading was routinely one long fade: the answerer would decode a late
+ * CALL and start ACCEPTing just as the caller hung up.  A connect needs a CALL
+ * and an ACCEPT through in succession on a DATAC16 frame whose acquisition is
+ * the weak link near its floor, so it needs many chances, spread over time.
+ *
+ * The last CALL still gets its full retry interval to hear the ACCEPT: the
+ * budget is only checked when the next CALL would go out.  Calling a station
+ * that is not there now takes this long to report. */
+#define ARQ_CONNECT_TIMEOUT_S              180
 
-/* How many of those CALL slots go out on the fast control mode before the
- * caller escalates to the MFSK floor.
+/* How many CALLs go out on the fast control mode before the caller escalates
+ * to the MFSK floor.
  *
  * The data plane runs ~10 dB below DATAC16 (MFSK payload + pattern ACK), but
  * CALL/ACCEPT rode DATAC16 alone -- so a pair that could sustain a transfer
@@ -308,7 +321,6 @@ uint32_t arq_protocol_accept_rx_window_ms(void);
 
 /* Runtime-configurable retry counts (set via RETRIES TCP command).
  * Macros below preserve existing FSM code unchanged. */
-extern _Atomic int arq_call_retry_slots;
 extern _Atomic int arq_accept_retry_slots;
 extern _Atomic int arq_data_retry_slots;
 extern _Atomic int arq_disconnect_retry_slots;
@@ -338,7 +350,6 @@ int arq_protocol_retry_rank(const char *local_call, const char *remote_call);
 
 uint64_t arq_protocol_retry_deadline_ms(float seconds, int rank);
 
-#define ARQ_CALL_RETRY_SLOTS       atomic_load(&arq_call_retry_slots)
 #define ARQ_ACCEPT_RETRY_SLOTS     atomic_load(&arq_accept_retry_slots)
 #define ARQ_DATA_RETRY_SLOTS       atomic_load(&arq_data_retry_slots)
 #define ARQ_DISCONNECT_RETRY_SLOTS atomic_load(&arq_disconnect_retry_slots)

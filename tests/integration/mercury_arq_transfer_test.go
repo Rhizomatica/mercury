@@ -252,7 +252,7 @@ func TestMercuryARQTransfer(t *testing.T) {
 
 	// Wait for the CONNECTED notification on A's control port.  Control
 	// notifications are CR-terminated; DISCONNECTED must not match.
-	connectedDeadline := time.Now().Add(3 * time.Minute)
+	connectedDeadline := time.Now().Add(4 * time.Minute) // > ARQ_CONNECT_TIMEOUT_S, so a failed connect is reported by Mercury
 	if err := connA.SetReadDeadline(connectedDeadline); err != nil {
 		t.Fatal(err)
 	}
