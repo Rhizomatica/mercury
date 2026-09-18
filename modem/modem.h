@@ -27,11 +27,12 @@
 #include <stdbool.h>
 
 #include "freedv_api.h"
+#include "modem_backend.h"
 
 #define TAIL_TIME_US 100000 // 100 ms (in microseconds) tail time after sending data
 
 typedef struct generic_modem {
-    struct freedv *freedv;
+    modem_codec_t codec;   /* active backend + instance (freedv, mfsk, ...) */
     int mode;
     size_t payload_bytes_per_modem_frame;
     void *future_extension; // Placeholder for future extensions

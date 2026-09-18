@@ -23,6 +23,7 @@ DEFINE_FFF_GLOBALS;
 #include "arq_protocol.h"
 #include "virtual_clock.h"   /* time_now_ms(), to stage a busy channel */
 #include "freedv/freedv_api.h"
+#include "modem_mfsk.h"   /* MERCURY_MODE_MFSK */
 
 /* Provided by arq_test_stubs.c */
 extern void mock_set_uptime_ms(uint64_t ms);
@@ -67,8 +68,11 @@ static arq_event_t make_event(arq_event_id_t id)
 
 /* ---- setUp / tearDown ---- */
 
+static void fixture_offsets_reset(void);
+
 void setUp(void)
 {
+    fixture_offsets_reset();
     /* Reset all FFF fakes */
     RESET_FAKE(fake_send_tx_frame);
     RESET_FAKE(fake_notify_connected);
@@ -105,9 +109,10 @@ void test_init_state_disconnected(void)
 void test_init_mode_defaults(void)
 {
     TEST_ASSERT_EQUAL_INT(FREEDV_MODE_DATAC16, sess.control_mode);
-    TEST_ASSERT_EQUAL_INT(FREEDV_MODE_DATAC15, sess.payload_mode);
-    TEST_ASSERT_EQUAL_INT(FREEDV_MODE_DATAC15, sess.peer_tx_mode);
-    TEST_ASSERT_EQUAL_INT(FREEDV_MODE_DATAC15, sess.initial_payload_mode);
+    /* Sessions now start at the MFSK ladder floor, not DATAC15. */
+    TEST_ASSERT_EQUAL_INT(MERCURY_MODE_MFSK, sess.payload_mode);
+    TEST_ASSERT_EQUAL_INT(MERCURY_MODE_MFSK, sess.peer_tx_mode);
+    TEST_ASSERT_EQUAL_INT(MERCURY_MODE_MFSK, sess.initial_payload_mode);
     TEST_ASSERT_EQUAL_INT(0, sess.speed_level);
 }
 
@@ -248,11 +253,46 @@ void test_accepting_rx_call_rearms_budget(void)
     TEST_ASSERT_EQUAL_INT(ARQ_CONN_ACCEPTING, sess.conn_state);
 }
 
-/* Connection-setup slots must stay short by default (not the DATA default of
- * 10) so a failed connect and its mirror ACCEPT window give up quickly. */
-void test_default_call_accept_slots_are_short(void)
+/* The caller confirms an ACCEPT with a 0.64 s Welch-Costas pattern, and nothing
+ * but the pattern correlator can decode one -- so the answerer has to run that
+ * correlator or the connect never completes.  It is also expensive (measured
+ * 3.5k samp/s consumed against 8k arriving), so it must NOT stay on for the
+ * whole ~18 s ACCEPT window, which is what starves the decoders that handle the
+ * caller's first data burst.
+ *
+ * The contract is therefore a bounded window: opened when our ACCEPT leaves the
+ * air (TX_COMPLETE), closed on any state change.  Both halves matter -- an
+ * always-off window breaks the handshake, an always-on one costs sensitivity
+ * exactly where we cannot afford it. */
+void test_connect_confirm_listen_window_is_bounded(void)
 {
-    TEST_ASSERT_EQUAL_INT(ARQ_CALL_RETRY_SLOTS_DEFAULT,   ARQ_CALL_RETRY_SLOTS);
+    enter_accepting();
+
+    /* Not yet keyed off: nothing to listen for. */
+    TEST_ASSERT_EQUAL_UINT64(0, sess.confirm_listen_until_ms);
+
+    mock_set_uptime_ms(5000);
+    arq_event_t done = make_event(ARQ_EV_TX_COMPLETE);
+    arq_fsm_dispatch(&sess, &done);
+
+    /* Opened at PTT-OFF, and bounded -- emphatically shorter than the ACCEPT
+     * RX window it used to be conflated with. */
+    TEST_ASSERT_EQUAL_UINT64(5000 + ARQ_CONNECT_CONFIRM_LISTEN_MS,
+                             sess.confirm_listen_until_ms);
+    TEST_ASSERT_TRUE(ARQ_CONNECT_CONFIRM_LISTEN_MS < ARQ_ACCEPT_RX_WINDOW_MS);
+
+    /* The confirm arrives; ACCEPTING is over and so is the correlator. */
+    arq_event_t ack = make_event(ARQ_EV_RX_ACK);
+    arq_fsm_dispatch(&sess, &ack);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_CONNECTED, sess.conn_state);
+    TEST_ASSERT_EQUAL_UINT64(0, sess.confirm_listen_until_ms);
+}
+
+/* The answerer's ACCEPT retries stay short by default (not the DATA default of
+ * 10): it re-arms on every CALL it hears, so the caller's connect budget, not
+ * this, is what keeps a connect alive. */
+void test_default_accept_slots_are_short(void)
+{
     TEST_ASSERT_EQUAL_INT(ARQ_ACCEPT_RETRY_SLOTS_DEFAULT, ARQ_ACCEPT_RETRY_SLOTS);
     TEST_ASSERT_TRUE(ARQ_ACCEPT_RETRY_SLOTS < ARQ_DATA_RETRY_SLOTS_DEFAULT);
 }
@@ -281,7 +321,9 @@ void test_accept_transitions_to_connected(void)
 /* The listen mode (initial_payload_mode) is an operator setting for the IDLE
  * decoder -- which broadcast frames the station can hear while no session is
  * up.  It must not leak into a session: an inbound CALL answered on a station
- * listening in QAM16C2 must still start its mode ladder at the safest rung,
+ * listening in QAM16C2 must still start its mode ladder at the start rung
+ * (arq_mode_ladder[ARQ_LADDER_START_LEVEL] -- DATAC15 on trunk, the MFSK floor
+ * here; asserted symbolically so the test means the same on both),
  * or the first data burst of every inbound connection would be sent in a mode
  * the link may not support at all.  This pins the guarantee that makes the
  * MODE control-port command safe to accept while LISTENING. */
@@ -300,14 +342,17 @@ void test_listen_mode_does_not_leak_into_inbound_session(void)
     arq_fsm_dispatch(&sess, &ev);
     TEST_ASSERT_EQUAL_INT(ARQ_CONN_ACCEPTING, sess.conn_state);
 
+    const int start_rung = arq_mode_ladder[ARQ_LADDER_START_LEVEL];
+
     /* The caller's first data burst completes the inbound connect. */
     ev = make_event(ARQ_EV_RX_DATA);
     ev.session_id = 0x42;
-    ev.mode       = FREEDV_MODE_DATAC15;
+    ev.mode       = start_rung;
     arq_fsm_dispatch(&sess, &ev);
 
     TEST_ASSERT_EQUAL_INT(ARQ_CONN_CONNECTED, sess.conn_state);
-    TEST_ASSERT_EQUAL_INT(FREEDV_MODE_DATAC15, sess.payload_mode);
+    TEST_ASSERT_EQUAL_INT(start_rung, sess.payload_mode);
+    TEST_ASSERT_NOT_EQUAL(FREEDV_MODE_QAM16C2, sess.payload_mode);
     /* The listen mode is remembered for the next idle period, not applied. */
     TEST_ASSERT_EQUAL_INT(FREEDV_MODE_QAM16C2, sess.initial_payload_mode);
 }
@@ -330,8 +375,8 @@ void test_listen_mode_restored_after_session_ends(void)
     strncpy(ev.remote_call, "DST1", CALLSIGN_MAX_SIZE);
     arq_fsm_dispatch(&sess, &ev);
     TEST_ASSERT_EQUAL_INT(ARQ_CONN_CONNECTED, sess.conn_state);
-    /* The session climbed away from the listen mode. */
-    TEST_ASSERT_EQUAL_INT(FREEDV_MODE_DATAC15, sess.peer_tx_mode);
+    /* The session starts on the ladder, away from the listen mode. */
+    TEST_ASSERT_EQUAL_INT(arq_mode_ladder[ARQ_LADDER_START_LEVEL], sess.peer_tx_mode);
 
     ev = make_event(ARQ_EV_RX_DISCONNECT);
     ev.session_id = sess.session_id;
@@ -488,9 +533,11 @@ void test_redial_while_disconnect_deferred_is_placed_after_teardown(void)
         "redial during a deferred disconnect was dropped");
 
     /* The outstanding frame is ACKed: the deferred disconnect proceeds. */
+    /* No ack_seq: an in-session ACK on this branch is a Welch-Costas pattern
+     * with no header, so it carries no sequence and the FSM never reads one
+     * (trunk's version of this test took the seq from its TX window). */
     arq_event_t ev = make_event(ARQ_EV_RX_ACK);
     ev.session_id = sess.session_id;
-    ev.ack_seq    = (uint8_t)(sess.tx_window[0].seq + 1);
     arq_fsm_dispatch(&sess, &ev);
     TEST_ASSERT_EQUAL_INT(ARQ_CONN_DISCONNECTING, sess.conn_state);
     TEST_ASSERT_TRUE(sess.pending_connect);       /* survives the state change */
@@ -634,24 +681,62 @@ void test_connected_rejects_zero_session_id(void)
     TEST_ASSERT_EQUAL_UINT64(last_rx, sess.last_rx_ms);
 }
 
-/* Mode negotiation frames are session-bound too.  They were previously
- * absent from the top-level validation list, allowing another session's
- * MODE_REQ to change the active receiver mode. */
-void test_connected_rejects_foreign_mode_request(void)
+/* The other half of the zero-session rule, and the reason it is not a blanket
+ * ban.  An in-session ACK is a bare Welch-Costas pattern: it has no header, so
+ * it cannot carry a session ID and is posted with zero.  Tightening the gate to
+ * reject every zero-ID event -- which is correct for framed events, as the test
+ * above shows -- would discard every in-session ACK and stall the data plane
+ * with no visible error.  This pins the asymmetry so the two cannot drift. */
+void test_connected_accepts_zero_session_pattern_ack(void)
 {
     goto_connected();
-    uint64_t last_rx = sess.last_rx_ms;
-    int peer_tx_mode = sess.peer_tx_mode;
-
     mock_set_uptime_ms(5000);
-    arq_event_t ev = make_event(ARQ_EV_RX_MODE_REQ);
-    ev.session_id = (uint8_t)(sess.session_id + 1);
-    ev.mode = FREEDV_MODE_DATAC4;
+    uint64_t before = sess.last_rx_ms;
+
+    arq_event_t ev = make_event(ARQ_EV_RX_ACK);
+    ev.session_id = 0;                 /* what a pattern ACK always carries */
     arq_fsm_dispatch(&sess, &ev);
 
     TEST_ASSERT_EQUAL_INT(ARQ_CONN_CONNECTED, sess.conn_state);
-    TEST_ASSERT_EQUAL_INT(peer_tx_mode, sess.peer_tx_mode);
-    TEST_ASSERT_EQUAL_UINT64(last_rx, sess.last_rx_ms);
+    TEST_ASSERT_NOT_EQUAL_MESSAGE(before, sess.last_rx_ms,
+        "a zero-session pattern ACK was dropped by the session-ID gate");
+}
+
+/* A repeated CALL while ACCEPTING is proof our ACCEPT was lost AND that the
+ * caller has not started a data burst.  The deadline set at ACCEPT TX_COMPLETE
+ * holds the RX window open for that burst -- ~18 s once MFSK is the ladder
+ * floor -- so waiting it out drifts our retransmitted ACCEPT into the middle of
+ * the caller's next CALL, where it is deaf over its own transmission.  Answer
+ * one channel guard later instead, in the gap the caller just opened. */
+void test_accepting_reanchors_accept_retry_on_repeated_call(void)
+{
+    arq_event_t ev = make_event(ARQ_EV_APP_LISTEN);
+    arq_fsm_dispatch(&sess, &ev);
+    ev = make_event(ARQ_EV_RX_CALL);
+    ev.session_id = 0x42;
+    strncpy(ev.remote_call, "REMOTE1", CALLSIGN_MAX_SIZE);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_ACCEPTING, sess.conn_state);
+
+    /* Our ACCEPT goes out; the long data-burst window is armed here. */
+    mock_set_uptime_ms(1000);
+    ev = make_event(ARQ_EV_TX_COMPLETE);
+    arq_fsm_dispatch(&sess, &ev);
+    uint64_t long_window = sess.deadline_ms;
+    TEST_ASSERT_GREATER_THAN_UINT64(1000 + ARQ_CHANNEL_GUARD_MS, long_window);
+
+    /* The caller retries CALL: it never heard the ACCEPT. */
+    mock_set_uptime_ms(5000);
+    ev = make_event(ARQ_EV_RX_CALL);
+    ev.session_id = 0x42;
+    strncpy(ev.remote_call, "REMOTE1", CALLSIGN_MAX_SIZE);
+    arq_fsm_dispatch(&sess, &ev);
+
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_ACCEPTING, sess.conn_state);
+    TEST_ASSERT_EQUAL_UINT64_MESSAGE(5000 + ARQ_CHANNEL_GUARD_MS, sess.deadline_ms,
+        "a repeated CALL must re-anchor the ACCEPT retry to one channel guard "
+        "from now, not leave the data-burst window running");
+    TEST_ASSERT_EQUAL_INT(ARQ_EV_TIMER_RETRY, sess.deadline_event);
 }
 
 /* ---- Disconnect teardown tests (K7EK field regressions) ---- */
@@ -693,7 +778,7 @@ void test_disconnect_drain_timeout_forces_teardown(void)
 
     /* Advance past the absolute drain budget and feed any CONNECTED event. */
     mock_set_uptime_ms(1000 + (uint64_t)ARQ_DISCONNECT_DRAIN_TIMEOUT_S * 1000 + 1000);
-    ev = make_event(ARQ_EV_TIMER_KEEPALIVE);
+    ev = make_event(ARQ_EV_TIMER_RETRY /* was TIMER_KEEPALIVE; keepalive removed in the FSM rewrite */);
     arq_fsm_dispatch(&sess, &ev);
 
     TEST_ASSERT_EQUAL_INT(ARQ_CONN_DISCONNECTING, sess.conn_state);
@@ -808,523 +893,9 @@ void test_app_disconnect_defers_in_wait_ack(void)
     TEST_ASSERT_EQUAL_INT(ARQ_DFLOW_DATA_TX, sess.dflow_state);
 }
 
-/* Cumulative ACK with ack_seq == window base + 1 confirms the single
- * in-flight frame (the K=1 degenerate case of the burst window). */
-/* A foreign MODE_REQ arriving in WAIT_ACK is treated as an IMPLICIT ACK: it
- * retires the whole TX window, resets the retry budget and repoints the RX
- * decoder.  That is the state where session-ID validation actually bites, and
- * it is silent DATA LOSS rather than just a mode change.
- *
- * test_connected_rejects_foreign_mode_request above cannot show this: MODE_REQ
- * is only handled inside ARQ_DFLOW_WAIT_ACK, so from an idle CONNECTED session
- * it reaches no handler and that test passes with or without the check. */
-void test_wait_ack_rejects_foreign_mode_request(void)
-{
-    goto_connected();
-    goto_wait_ack();
-    TEST_ASSERT_EQUAL_INT(1, sess.tx_window_count);
-    int peer_tx_mode = sess.peer_tx_mode;
 
-    arq_event_t ev = make_event(ARQ_EV_RX_MODE_REQ);
-    ev.session_id = (uint8_t)(sess.session_id + 1);   /* another session */
-    ev.mode = FREEDV_MODE_DATAC4;
-    arq_fsm_dispatch(&sess, &ev);
 
-    TEST_ASSERT_EQUAL_INT_MESSAGE(1, sess.tx_window_count,
-        "a foreign MODE_REQ retired our outstanding frame as an implicit ACK");
-    TEST_ASSERT_EQUAL_INT_MESSAGE(peer_tx_mode, sess.peer_tx_mode,
-        "a foreign MODE_REQ repointed our payload decoder");
-    TEST_ASSERT_EQUAL_INT(ARQ_DFLOW_WAIT_ACK, sess.dflow_state);
-}
 
-void test_wait_ack_cumulative_ack_advances_window(void)
-{
-    goto_connected();
-    goto_wait_ack();
-    TEST_ASSERT_EQUAL_INT(1, sess.tx_window_count);
-
-    arq_event_t ev = make_event(ARQ_EV_RX_ACK);
-    ev.session_id = sess.session_id;
-    ev.ack_seq = (uint8_t)(sess.tx_window[0].seq + 1);
-    arq_fsm_dispatch(&sess, &ev);
-
-    TEST_ASSERT_EQUAL_INT(0, sess.tx_window_count);
-    TEST_ASSERT_EQUAL_INT(ARQ_CONN_CONNECTED, sess.conn_state);
-    TEST_ASSERT_NOT_EQUAL(ARQ_DFLOW_WAIT_ACK, sess.dflow_state);
-}
-
-/* A stale ACK (ack_seq == window base — peer still expects our oldest
- * frame) must confirm nothing: stay in WAIT_ACK with the window intact
- * so TIMER_ACK drives the retransmission. */
-void test_wait_ack_stale_ack_keeps_window(void)
-{
-    goto_connected();
-    goto_wait_ack();
-    TEST_ASSERT_EQUAL_INT(1, sess.tx_window_count);
-
-    arq_event_t ev = make_event(ARQ_EV_RX_ACK);
-    ev.session_id = sess.session_id;
-    ev.ack_seq = sess.tx_window[0].seq;   /* nothing new received */
-    arq_fsm_dispatch(&sess, &ev);
-
-    TEST_ASSERT_EQUAL_INT(1, sess.tx_window_count);
-    TEST_ASSERT_EQUAL_INT(ARQ_DFLOW_WAIT_ACK, sess.dflow_state);
-}
-
-/* Turn coordination in WAIT_ACK, both halves of it.
- *
- * The ISS must not IGNORE a peer's TURN_REQ while awaiting an ACK: the pre-fix
- * bug sat out the full ack-timeout and retransmitted while the peer kept
- * re-sending TURN_REQ -- a mutual stall that hung bidirectional traffic
- * (observed: a 21-min uucp hang).  That is what 11a6a9f fixed.
- *
- * But it must not yield by KEYING either, which is what 11a6a9f did.  The peer
- * asked for the floor because it decoded our DATA, so it is already on its own
- * ARQ_CHANNEL_GUARD_MS timer to ACK that DATA.  Two equal guards from nearly
- * the same instant put the TURN_ACK on top of the ACK; both are lost, the ISS
- * never sees an ACK, retransmits, and the pair collide again every cycle --
- * an indefinite retransmit loop with zero ack_rx in 600 s (issue #278).
- *
- * So the contract is: latch the request, transmit NOTHING, and yield when the
- * ACK arrives.  This test pins the "transmit nothing" half, which is the part
- * that stops the collision. */
-void test_wait_ack_turn_req_defers_the_yield_without_keying(void)
-{
-    goto_connected();
-    goto_wait_ack();
-    TEST_ASSERT_EQUAL_INT(1, sess.tx_window_count);
-
-    RESET_FAKE(fake_send_tx_frame);
-
-    arq_event_t ev = make_event(ARQ_EV_RX_TURN_REQ);
-    ev.session_id = sess.session_id;
-    arq_fsm_dispatch(&sess, &ev);
-
-    /* The collision fix: nothing is keyed in response to the TURN_REQ, and we
-     * do not leave WAIT_ACK, so the peer's ACK is still being waited for. */
-    TEST_ASSERT_EQUAL_INT(0, fake_send_tx_frame_fake.call_count);
-    TEST_ASSERT_NOT_EQUAL_INT(ARQ_DFLOW_TURN_ACK_TX, sess.dflow_state);
-    TEST_ASSERT_EQUAL_INT(ARQ_DFLOW_WAIT_ACK, sess.dflow_state);
-    /* The request is not dropped -- it is recorded, so the yield is owed. */
-    TEST_ASSERT_TRUE(sess.peer_turn_req_pending);
-    /* Frame still in flight and still ours to retry. */
-    TEST_ASSERT_EQUAL_INT(1, sess.tx_window_count);
-    TEST_ASSERT_EQUAL_INT(ARQ_CONN_CONNECTED, sess.conn_state);
-}
-
-/* ...and the other half: the latched request is honoured on the ACK, even when
- * HAS_DATA is clear (the peer's backlog can drain between asking and ACKing --
- * the explicit request is still its stated intent).
- *
- * Yielding only after the ACK is also what stops the second failure in #278: a
- * frame yielded out of WAIT_ACK while still un-acknowledged was neither
- * retried, nor counted as backlog for piggyback/TURN_REQ, and sat in the window
- * forever -- a station stuck with BUFFER=41 for 15 minutes.  Here the window
- * must be empty by the time we give up the floor. */
-void test_wait_ack_yields_to_latched_turn_req_when_the_ack_lands(void)
-{
-    goto_connected();
-    goto_wait_ack();
-    uint8_t base = sess.tx_window[0].seq;
-
-    arq_event_t ev = make_event(ARQ_EV_RX_TURN_REQ);
-    ev.session_id = sess.session_id;
-    arq_fsm_dispatch(&sess, &ev);
-    TEST_ASSERT_TRUE(sess.peer_turn_req_pending);
-
-    /* ACK confirming our frame, with NO HAS_DATA flag. */
-    ev = make_event(ARQ_EV_RX_ACK);
-    ev.session_id = sess.session_id;
-    ev.ack_seq    = (uint8_t)(base + 1);
-    ev.rx_flags   = 0;
-    arq_fsm_dispatch(&sess, &ev);
-
-    /* Floor handed over, because the peer asked for it. */
-    TEST_ASSERT_EQUAL_INT(ARQ_DFLOW_IDLE_IRS, sess.dflow_state);
-    /* Nothing stranded: the frame was confirmed before we yielded. */
-    TEST_ASSERT_EQUAL_INT(0, sess.tx_window_count);
-    /* Latch consumed, so a later ACK does not yield again spuriously. */
-    TEST_ASSERT_FALSE(sess.peer_turn_req_pending);
-}
-
-/* Without a pending request and without HAS_DATA, an ACK must leave the ISS
- * holding the floor -- the latch must not make every ACK hand the turn away. */
-void test_wait_ack_ack_without_request_keeps_the_turn(void)
-{
-    goto_connected();
-    goto_wait_ack();
-    uint8_t base = sess.tx_window[0].seq;
-
-    arq_event_t ev = make_event(ARQ_EV_RX_ACK);
-    ev.session_id = sess.session_id;
-    ev.ack_seq    = (uint8_t)(base + 1);
-    ev.rx_flags   = 0;
-    arq_fsm_dispatch(&sess, &ev);
-
-    TEST_ASSERT_NOT_EQUAL_INT(ARQ_DFLOW_IDLE_IRS, sess.dflow_state);
-}
-
-/* A station waiting for a KEEPALIVE_ACK must accept incoming DATA.
- *
- * KEEPALIVE_WAIT handled RX_KEEPALIVE_ACK, RX_KEEPALIVE and TIMER_RETRY, and
- * nothing else -- so RX_DATA fell through and was DISCARDED.  The sender then
- * retransmitted into a station that would not listen, made no progress, and
- * this side counted keepalive misses until it tore the link down.
- *
- * Reproduced in the two-station sim (tests/sim) at seed 17 with only 10% frame
- * erasure: zero bytes delivered in EITHER direction, the sender cycling
- * DATA_TX -> WAIT_ACK the whole time, and "Keepalive miss limit --
- * disconnecting" at 37 s.  Fixing it took the sim's total-failure count from 2
- * to 0 over 114 bidirectional trials.
- *
- * A keepalive asks whether the peer is still there.  A DATA frame answers that
- * better than a KEEPALIVE_ACK would, so there is nothing left to wait for: take
- * the data and ACK it.
- *
- * Third instance of one class -- a state ignoring an event that can
- * legitimately arrive in it.  WAIT_ACK ignored RX_TURN_REQ (a 21-minute uucp
- * hang), TURN_REQ_WAIT ignored RX_TURN_REQ, and this one ignored RX_DATA.
- */
-void test_keepalive_wait_accepts_data(void)
-{
-    goto_connected();
-
-    /* ISS with nothing queued goes idle, then the keepalive timer fires. */
-    fake_tx_backlog_fake.return_val = 0;
-    arq_event_t ev = make_event(ARQ_EV_TIMER_KEEPALIVE);
-    arq_fsm_dispatch(&sess, &ev);
-    TEST_ASSERT_EQUAL_INT(ARQ_DFLOW_KEEPALIVE_TX, sess.dflow_state);
-    ev = make_event(ARQ_EV_TX_COMPLETE);
-    arq_fsm_dispatch(&sess, &ev);
-    TEST_ASSERT_EQUAL_INT(ARQ_DFLOW_KEEPALIVE_WAIT, sess.dflow_state);
-
-    /* The peer answers with DATA rather than a KEEPALIVE_ACK: it is alive and
-     * it holds the floor. */
-    const uint8_t payload[8] = { 1, 2, 3, 4, 5, 6, 7, 8 };
-    ev = make_event(ARQ_EV_RX_DATA);
-    ev.session_id  = sess.session_id;
-    ev.seq         = sess.rx_expected;
-    ev.data_bytes  = sizeof(payload);
-    ev.payload_len = sizeof(payload);
-    memcpy(ev.payload, payload, sizeof(payload));
-    unsigned before = fake_deliver_rx_data_fake.call_count;
-    arq_fsm_dispatch(&sess, &ev);
-
-    /* Delivered upward, not dropped. */
-    TEST_ASSERT_EQUAL_UINT_MESSAGE(before + 1,
-        fake_deliver_rx_data_fake.call_count,
-        "DATA arriving in KEEPALIVE_WAIT was discarded");
-    /* Keepalive abandoned in favour of ACKing what arrived. */
-    TEST_ASSERT_EQUAL_INT_MESSAGE(ARQ_DFLOW_DATA_RX, sess.dflow_state,
-        "must move to DATA_RX to ACK, not keep waiting for a KEEPALIVE_ACK");
-    /* A frame is proof of life, so the miss counter must not stand. */
-    TEST_ASSERT_EQUAL_INT(0, sess.keepalive_miss_count);
-    TEST_ASSERT_EQUAL_INT(ARQ_CONN_CONNECTED, sess.conn_state);
-}
-
-/* Both stations ask for the turn at the same instant.
- *
- * TURN_REQ_WAIT used to have no RX_TURN_REQ case at all, so the event fell
- * through and NEITHER peer yielded.  Both retried to exhaustion, both dropped
- * to IDLE_IRS, and the link sat with no sender until one requested again --
- * immediately and unstaggered, so the requests collided and it repeated.  Both
- * halves of the field report on bidirectional B1F forwarding (long silent
- * gaps, then both stations transmitting over each other) are that one loop.
- *
- * This is the same omission already fixed for WAIT_ACK in
- * test_wait_ack_yields_on_turn_req; TURN_REQ_WAIT was the state it was missed
- * in.  A one-way transfer harness cannot reach either, because its IRS never
- * initiates data.
- *
- * The tie is broken on the retry rank -- the strcmp() of the exchanged
- * callsign pair that #217's stagger already uses -- so both ends compute the
- * same answer and exactly one yields, with no extra exchange.  These two cases
- * assert both sides of that decision from the same state, which is what proves
- * it is a tiebreak and not just "always yield" (which would deadlock the other
- * way) or "never yield" (the original bug).
- */
-static void goto_turn_req_wait(void)
-{
-    /* Connect as the CALLEE, which starts as the receiver -- the caller sends
-     * first.  (goto_connected() dials out and would make us the sender.) */
-    arq_event_t ev = make_event(ARQ_EV_APP_LISTEN);
-    arq_fsm_dispatch(&sess, &ev);
-    ev = make_event(ARQ_EV_RX_CALL);
-    ev.session_id = 0x42;
-    strncpy(ev.remote_call, "DST1", CALLSIGN_MAX_SIZE);
-    arq_fsm_dispatch(&sess, &ev);
-    ev = make_event(ARQ_EV_TIMER_ACK);
-    arq_fsm_dispatch(&sess, &ev);          /* send the ACCEPT */
-    ev = make_event(ARQ_EV_TX_COMPLETE);
-    arq_fsm_dispatch(&sess, &ev);
-    ev = make_event(ARQ_EV_RX_DATA);       /* caller's first burst confirms us */
-    ev.session_id = sess.session_id;
-    ev.seq = sess.rx_expected;
-    ev.data_bytes = 8;
-    ev.payload_len = 8;
-    arq_fsm_dispatch(&sess, &ev);
-    TEST_ASSERT_EQUAL_INT(ARQ_CONN_CONNECTED, sess.conn_state);
-    ev = make_event(ARQ_EV_TIMER_ACK);
-    arq_fsm_dispatch(&sess, &ev);          /* our ACK */
-    ev = make_event(ARQ_EV_TX_COMPLETE);
-    arq_fsm_dispatch(&sess, &ev);          /* -> IDLE_IRS */
-    TEST_ASSERT_EQUAL_INT(ARQ_DFLOW_IDLE_IRS, sess.dflow_state);
-
-    fake_tx_backlog_fake.return_val = 256; /* we now have traffic of our own */
-    ev = make_event(ARQ_EV_APP_DATA_READY);
-    arq_fsm_dispatch(&sess, &ev);
-    ev = make_event(ARQ_EV_TX_COMPLETE);
-    arq_fsm_dispatch(&sess, &ev);          /* TURN_REQ_TX -> TURN_REQ_WAIT */
-    TEST_ASSERT_EQUAL_INT(ARQ_DFLOW_TURN_REQ_WAIT, sess.dflow_state);
-}
-
-/* The two crossed requests of issue #282.
- *
- * When both ends have a backlog, the ISS takes the floor and negotiates its
- * mode while the IRS asks for the floor.  Each then sat in its own wait state
- * ignoring the other's frame -- MODE_REQ_WAIT dropped RX_TURN_REQ, TURN_REQ_WAIT
- * dropped RX_MODE_REQ -- and both retried to exhaustion, ~40 s of dead air per
- * turn.  The reporter saw it on every turn of a bidirectional transfer; normal
- * traffic, where one side is idle, never reaches either state.
- *
- * The two sides resolve it asymmetrically, by role rather than by a tiebreak:
- * the ISS already holds the floor and finishes its negotiation, so it defers
- * the peer's request to the MODE_ACK (where handing over costs no
- * transmission); the IRS concedes immediately, exactly as it already concedes
- * to RX_DATA.  Together that settles the turn in one exchange.
- */
-static void goto_mode_req_wait(void)
-{
-    /* Reached directly.  The natural path needs OLLA hysteresis, a peer SNR
-     * estimate and the startup window to have elapsed, which would make this a
-     * test about mode selection rather than about the crossed requests. */
-    goto_connected();
-    goto_wait_ack();
-    sess.dflow_state    = ARQ_DFLOW_MODE_REQ_WAIT;
-    sess.pending_tx_mode = FREEDV_MODE_DATAC3;
-    sess.tx_retries_left = ARQ_MODE_REQ_RETRIES;
-    sess.peer_turn_req_pending = false;
-}
-
-/* ISS: a TURN_REQ crossing our MODE_REQ must be remembered, not dropped, and
- * must not be answered on the air -- the peer is sending our MODE_ACK. */
-void test_mode_req_wait_latches_crossed_turn_req(void)
-{
-    goto_mode_req_wait();
-    unsigned sends_before = fake_send_tx_frame_fake.call_count;
-
-    arq_event_t ev = make_event(ARQ_EV_RX_TURN_REQ);
-    ev.session_id = sess.session_id;
-    arq_fsm_dispatch(&sess, &ev);
-
-    TEST_ASSERT_TRUE_MESSAGE(sess.peer_turn_req_pending,
-        "TURN_REQ crossing a MODE_REQ was dropped (issue #282)");
-    TEST_ASSERT_EQUAL_INT_MESSAGE(ARQ_DFLOW_MODE_REQ_WAIT, sess.dflow_state,
-        "the negotiation must continue; the yield belongs on the MODE_ACK");
-    TEST_ASSERT_EQUAL_INT_MESSAGE(sends_before, fake_send_tx_frame_fake.call_count,
-        "nothing may be keyed: the peer is transmitting our MODE_ACK");
-}
-
-/* ...and the MODE_ACK then hands the floor over instead of retaining it. */
-void test_mode_ack_yields_to_the_latched_turn_req(void)
-{
-    goto_mode_req_wait();
-    arq_event_t ev = make_event(ARQ_EV_RX_TURN_REQ);
-    ev.session_id = sess.session_id;
-    arq_fsm_dispatch(&sess, &ev);
-
-    ev = make_event(ARQ_EV_RX_MODE_ACK);
-    ev.session_id = sess.session_id;
-    ev.mode       = FREEDV_MODE_DATAC3;
-    arq_fsm_dispatch(&sess, &ev);
-
-    TEST_ASSERT_EQUAL_INT_MESSAGE(ARQ_DFLOW_IDLE_IRS, sess.dflow_state,
-        "the floor must go to the peer that asked for it");
-    TEST_ASSERT_FALSE_MESSAGE(sess.peer_turn_req_pending,
-        "the latch must be consumed, not left to fire again");
-}
-
-/* IRS: a MODE_REQ arriving while our TURN_REQ is outstanding means the peer
- * holds the floor and is not yielding.  Accept its mode and answer. */
-void test_turn_req_wait_concedes_to_mode_req(void)
-{
-    goto_turn_req_wait();
-    int my_tx_mode = sess.payload_mode;
-
-    arq_event_t ev = make_event(ARQ_EV_RX_MODE_REQ);
-    ev.session_id = sess.session_id;
-    ev.mode       = FREEDV_MODE_DATAC3;
-    arq_fsm_dispatch(&sess, &ev);
-
-    TEST_ASSERT_EQUAL_INT_MESSAGE(ARQ_DFLOW_MODE_ACK_TX, sess.dflow_state,
-        "MODE_REQ crossing a TURN_REQ was dropped (issue #282)");
-    TEST_ASSERT_EQUAL_INT_MESSAGE(FREEDV_MODE_DATAC3, sess.peer_tx_mode,
-        "the peer's TX mode is what we must decode next");
-    TEST_ASSERT_EQUAL_INT_MESSAGE(my_tx_mode, sess.payload_mode,
-        "our own TX mode is per-direction and must not change");
-
-    /* The answer goes out and we are the receiver again, with our own backlog
-     * still queued -- IDLE_IRS arms the timer that asks for the floor later. */
-    ev = make_event(ARQ_EV_TIMER_ACK);
-    arq_fsm_dispatch(&sess, &ev);
-    ev = make_event(ARQ_EV_TX_COMPLETE);
-    arq_fsm_dispatch(&sess, &ev);
-    TEST_ASSERT_EQUAL_INT(ARQ_DFLOW_IDLE_IRS, sess.dflow_state);
-}
-
-/* Get to IDLE_IRS as the receiver, with traffic of our own queued -- the state
- * where TIMER_PEER_BACKLOG decides whether to ask for the floor. */
-static void goto_idle_irs_with_backlog(void)
-{
-    arq_event_t ev = make_event(ARQ_EV_APP_LISTEN);
-    arq_fsm_dispatch(&sess, &ev);
-    ev = make_event(ARQ_EV_RX_CALL);
-    ev.session_id = 0x42;
-    strncpy(ev.remote_call, "DST1", CALLSIGN_MAX_SIZE);
-    arq_fsm_dispatch(&sess, &ev);
-    ev = make_event(ARQ_EV_TIMER_ACK);
-    arq_fsm_dispatch(&sess, &ev);
-    ev = make_event(ARQ_EV_TX_COMPLETE);
-    arq_fsm_dispatch(&sess, &ev);
-    ev = make_event(ARQ_EV_RX_DATA);
-    ev.session_id  = sess.session_id;
-    ev.seq         = sess.rx_expected;
-    ev.data_bytes  = 8;
-    ev.payload_len = 8;
-    arq_fsm_dispatch(&sess, &ev);
-    ev = make_event(ARQ_EV_TIMER_ACK);
-    arq_fsm_dispatch(&sess, &ev);
-    ev = make_event(ARQ_EV_TX_COMPLETE);
-    arq_fsm_dispatch(&sess, &ev);
-    TEST_ASSERT_EQUAL_INT(ARQ_DFLOW_IDLE_IRS, sess.dflow_state);
-    fake_tx_backlog_fake.return_val = 256;   /* we have data to send */
-}
-
-/* The other half of #278: TIMER_PEER_BACKLOG fires on a clock, with no regard
- * for whether the peer is mid-burst.  The IRS's TURN_REQ therefore landed on
- * top of the ISS's DATA and both were lost -- the collision that STARTS the
- * retransmit loop, as the reporter diagnosed.
- *
- * With a decoder holding sync (the peer is transmitting), the request must be
- * held back and nothing keyed. */
-void test_turn_req_is_not_keyed_over_the_peers_burst(void)
-{
-    goto_idle_irs_with_backlog();
-    RESET_FAKE(fake_send_tx_frame);
-
-    sess.last_rx_sync_ms = time_now_ms();   /* a burst is arriving right now */
-
-    arq_event_t ev = make_event(ARQ_EV_TIMER_PEER_BACKLOG);
-    arq_fsm_dispatch(&sess, &ev);
-
-    TEST_ASSERT_EQUAL_INT_MESSAGE(0, fake_send_tx_frame_fake.call_count,
-        "keyed a TURN_REQ while the peer was transmitting");
-    TEST_ASSERT_EQUAL_INT(ARQ_DFLOW_IDLE_IRS, sess.dflow_state);
-    TEST_ASSERT_EQUAL_UINT8(1, sess.turn_req_defer_count);
-}
-
-/* ...and once the channel is quiet the request goes out, so the deferral is a
- * wait and not a mute. */
-void test_turn_req_is_sent_once_the_channel_is_quiet(void)
-{
-    goto_idle_irs_with_backlog();
-    RESET_FAKE(fake_send_tx_frame);
-
-    sess.last_rx_sync_ms = 0;               /* nothing has been heard */
-
-    arq_event_t ev = make_event(ARQ_EV_TIMER_PEER_BACKLOG);
-    arq_fsm_dispatch(&sess, &ev);
-
-    TEST_ASSERT_EQUAL_INT(ARQ_DFLOW_TURN_REQ_TX, sess.dflow_state);
-    TEST_ASSERT_GREATER_THAN(0, fake_send_tx_frame_fake.call_count);
-}
-
-/* The deferral must be bounded.  False sync is real -- a payload decoder can
- * latch onto a control burst -- and a decoder stuck in sync would otherwise
- * hold the turn request off forever, which trades #278's loop for a silent
- * station that never sends its backlog.  After the cap we ask anyway. */
-/* The case decoder sync CANNOT see: the peer is transmitting but nothing has
- * synced on it.  That is not a corner case -- it covers the acquisition window
- * at the start of every burst, a mode neither decoder is bound to, and any
- * burst too weak to sync on, which is precisely the fringe where a collision
- * costs most.  Energy on the channel is the only signal left, so the busy
- * detector must be honoured independently of sync. */
-void test_turn_req_defers_on_channel_energy_without_sync(void)
-{
-    goto_idle_irs_with_backlog();
-    RESET_FAKE(fake_send_tx_frame);
-
-    sess.last_rx_sync_ms = 0;                    /* nothing ever synced */
-    fake_channel_busy_fake.return_val = true;    /* but the channel is occupied */
-
-    arq_event_t ev = make_event(ARQ_EV_TIMER_PEER_BACKLOG);
-    arq_fsm_dispatch(&sess, &ev);
-
-    TEST_ASSERT_EQUAL_INT_MESSAGE(0, fake_send_tx_frame_fake.call_count,
-        "keyed over an un-synced transmission: sync alone is not enough");
-    TEST_ASSERT_EQUAL_INT(ARQ_DFLOW_IDLE_IRS, sess.dflow_state);
-}
-
-void test_turn_req_deferral_is_bounded(void)
-{
-    goto_idle_irs_with_backlog();
-
-    for (int i = 0; i < ARQ_TURN_REQ_DEFER_MAX; i++)
-    {
-        sess.last_rx_sync_ms = time_now_ms();   /* permanently "busy" */
-        arq_event_t ev = make_event(ARQ_EV_TIMER_PEER_BACKLOG);
-        arq_fsm_dispatch(&sess, &ev);
-        TEST_ASSERT_EQUAL_INT(ARQ_DFLOW_IDLE_IRS, sess.dflow_state);
-    }
-    TEST_ASSERT_EQUAL_UINT8(ARQ_TURN_REQ_DEFER_MAX, sess.turn_req_defer_count);
-
-    /* Cap reached: the next fire requests the floor even though sync persists. */
-    RESET_FAKE(fake_send_tx_frame);
-    sess.last_rx_sync_ms = time_now_ms();
-    arq_event_t ev = make_event(ARQ_EV_TIMER_PEER_BACKLOG);
-    arq_fsm_dispatch(&sess, &ev);
-
-    TEST_ASSERT_EQUAL_INT_MESSAGE(ARQ_DFLOW_TURN_REQ_TX, sess.dflow_state,
-        "deferral never gave up: the station would never send its backlog");
-    TEST_ASSERT_GREATER_THAN(0, fake_send_tx_frame_fake.call_count);
-    TEST_ASSERT_EQUAL_UINT8(0, sess.turn_req_defer_count);
-}
-
-void test_simultaneous_turn_req_one_side_yields(void)
-{
-    /* Local "SRC1" vs remote "DST1": strcmp > 0 is rank 1, which yields. */
-    goto_turn_req_wait();
-    strncpy(sess.local_call, "SRC1", CALLSIGN_MAX_SIZE);
-    strncpy(sess.remote_call, "DST1", CALLSIGN_MAX_SIZE);
-    TEST_ASSERT_TRUE(strcmp(sess.local_call, sess.remote_call) > 0);
-
-    arq_event_t ev = make_event(ARQ_EV_RX_TURN_REQ);
-    ev.session_id = sess.session_id;
-    arq_fsm_dispatch(&sess, &ev);
-
-    TEST_ASSERT_EQUAL_INT_MESSAGE(ARQ_DFLOW_TURN_ACK_TX, sess.dflow_state,
-        "the higher-ranked station must grant the turn, not ignore the request");
-    TEST_ASSERT_EQUAL_INT(ARQ_CONN_CONNECTED, sess.conn_state);
-}
-
-void test_simultaneous_turn_req_other_side_holds(void)
-{
-    /* Local "AAA1" vs remote "DST1": strcmp < 0 is rank 0, which holds. */
-    goto_turn_req_wait();
-    strncpy(sess.local_call, "AAA1", CALLSIGN_MAX_SIZE);
-    strncpy(sess.remote_call, "DST1", CALLSIGN_MAX_SIZE);
-    TEST_ASSERT_TRUE(strcmp(sess.local_call, sess.remote_call) < 0);
-
-    arq_event_t ev = make_event(ARQ_EV_RX_TURN_REQ);
-    ev.session_id = sess.session_id;
-    arq_fsm_dispatch(&sess, &ev);
-
-    /* Holds its request and stays silent: the peer is about to answer it, and
-     * transmitting now would key on top of that TURN_ACK. */
-    TEST_ASSERT_EQUAL_INT_MESSAGE(ARQ_DFLOW_TURN_REQ_WAIT, sess.dflow_state,
-        "the lower-ranked station must keep its request, not also yield");
-    TEST_ASSERT_EQUAL_INT(ARQ_CONN_CONNECTED, sess.conn_state);
-}
 
 /* Retry exhaustion within the no-progress budget persists (stays CONNECTED);
  * once the budget elapses, the next exhaustion tears the link down. */
@@ -1388,8 +959,8 @@ void test_call_timeout(void)
     arq_fsm_dispatch(&sess, &ev);
     TEST_ASSERT_EQUAL_INT(ARQ_CONN_CALLING, sess.conn_state);
 
-    /* Exhaust retries */
-    for (int i = 0; i < ARQ_CALL_RETRY_SLOTS_DEFAULT + 2; i++) {
+    /* Run out the connect budget */
+    for (int i = 0; i < ARQ_CONNECT_TIMEOUT_S / 10 + 2; i++) {
         ev = make_event(ARQ_EV_TIMER_RETRY);
         mock_set_uptime_ms(1000 + (uint64_t)(i + 1) * 10000);
         arq_fsm_dispatch(&sess, &ev);
@@ -1408,7 +979,7 @@ void test_call_timeout_no_listen(void)
     arq_fsm_dispatch(&sess, &ev);
     TEST_ASSERT_EQUAL_INT(ARQ_CONN_CALLING, sess.conn_state);
 
-    for (int i = 0; i < ARQ_CALL_RETRY_SLOTS_DEFAULT + 2; i++) {
+    for (int i = 0; i < ARQ_CONNECT_TIMEOUT_S / 10 + 2; i++) {
         ev = make_event(ARQ_EV_TIMER_RETRY);
         mock_set_uptime_ms(1000 + (uint64_t)(i + 1) * 10000);
         arq_fsm_dispatch(&sess, &ev);
@@ -1617,6 +1188,315 @@ void test_listen_off_drops_live_link_without_draining(void)
     TEST_ASSERT_EQUAL_INT(0, fake_send_tx_frame_fake.call_count);
 }
 
+/* A pattern ACK (RX_ACK) confirms the single outstanding frame: stop-and-wait
+ * has at most one frame in flight, so a heard ACK acks it unambiguously.  The
+ * retained frame is cleared and the flow leaves WAIT_ACK. */
+void test_wait_ack_pattern_ack_confirms_frame(void)
+{
+    goto_connected();
+    goto_wait_ack();
+    TEST_ASSERT_TRUE(sess.tx_frame_present);
+
+    arq_event_t ev = make_event(ARQ_EV_RX_ACK);   /* plain pattern ACK */
+    arq_fsm_dispatch(&sess, &ev);
+
+    TEST_ASSERT_FALSE(sess.tx_frame_present);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_CONNECTED, sess.conn_state);
+    TEST_ASSERT_NOT_EQUAL(ARQ_DFLOW_WAIT_ACK, sess.dflow_state);
+}
+/* A pattern ACK+TURN (break: HAS_DATA set) confirms the frame AND, when the
+ * local side has drained its own backlog, yields the floor to the peer
+ * (piggyback turn) -> the ISS becomes IRS.  (With local backlog still present
+ * a role tiebreak applies instead; that is covered by the sim's bidirectional
+ * test.) */
+void test_wait_ack_break_yields_floor(void)
+{
+    goto_connected();
+    goto_wait_ack();
+    TEST_ASSERT_TRUE(sess.tx_frame_present);
+
+    /* Local side has no more data to send: the break must hand it the floor. */
+    fake_tx_backlog_fake.return_val = 0;
+
+    arq_event_t ev = make_event(ARQ_EV_RX_ACK);
+    ev.rx_flags = ARQ_FLAG_HAS_DATA;   /* ACK+TURN break */
+    arq_fsm_dispatch(&sess, &ev);
+
+    TEST_ASSERT_FALSE(sess.tx_frame_present);
+    TEST_ASSERT_EQUAL_INT(ARQ_DFLOW_IDLE_IRS, sess.dflow_state);
+}
+/* A stale RX_ACK with no outstanding frame is ignored (no state churn). */
+void test_wait_ack_stale_ack_ignored(void)
+{
+    goto_connected();
+    goto_wait_ack();
+    /* Clear the frame with a first ACK, land in an idle ISS/DATA state. */
+    arq_event_t ack = make_event(ARQ_EV_RX_ACK);
+    arq_fsm_dispatch(&sess, &ack);
+    /* A second, spurious ACK must not crash or advance anything odd. */
+    arq_fsm_dispatch(&sess, &ack);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_CONNECTED, sess.conn_state);
+}
+/* LISTENING -> ACCEPTING -> CONNECTED as the answerer: IRS role, IDLE_IRS. */
+static void goto_connected_irs(void)
+{
+    enter_accepting();
+    arq_event_t ev = make_event(ARQ_EV_RX_ACK);
+    ev.session_id = 0x42;
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_CONNECTED, sess.conn_state);
+    TEST_ASSERT_EQUAL_INT(ARQ_DFLOW_IDLE_IRS, sess.dflow_state);
+}
+/* Offsets a real sender would use: first sighting of a seq consumes the next
+ * `n` bytes of the stream; a repeat of that seq replays the same offset. */
+static uint16_t fixture_seq_off[256];
+static bool     fixture_seq_seen[256];
+static uint16_t fixture_stream_next;
+
+static void fixture_offsets_reset(void)
+{
+    memset(fixture_seq_seen, 0, sizeof(fixture_seq_seen));
+    fixture_stream_next = 0;
+}
+
+static uint16_t fixture_offset_for_seq(uint8_t seq, size_t n)
+{
+    if (!fixture_seq_seen[seq])
+    {
+        fixture_seq_seen[seq] = true;
+        fixture_seq_off[seq]  = fixture_stream_next;
+        fixture_stream_next   = (uint16_t)(fixture_stream_next + n);
+    }
+    return fixture_seq_off[seq];
+}
+
+/* In-order DATA frame carrying `n` payload bytes.  HAS_DATA keeps us the IRS
+ * across frames (the sender has more to send).  mode is set to what the peer
+ * actually sent, but the mirror deliberately ignores it (anticipation, not
+ * follow-the-decoded-mode). */
+static arq_event_t make_data_event(uint8_t seq, int mode, size_t n)
+{
+    arq_event_t ev = make_event(ARQ_EV_RX_DATA);
+    ev.session_id  = 0x42;
+    ev.seq         = seq;
+    /* Frames are identified by stream offset now, so the fixture has to model a
+     * real sender: offsets accumulate by payload length (these tests feed 90,
+     * 54 and 126-byte frames, so seq*n would be wrong), and a RETRANSMISSION of
+     * the same seq must carry the same offset -- which is what the duplicate
+     * tests depend on. */
+    ev.stream_off  = fixture_offset_for_seq(seq, n);
+    ev.mode        = mode;
+    ev.rx_flags    = ARQ_FLAG_HAS_DATA;
+    ev.data_bytes  = n;
+    ev.payload_len = n;
+    for (size_t i = 0; i < n && i < sizeof(ev.payload); i++)
+        ev.payload[i] = (uint8_t)(seq * 17 + i);
+    return ev;
+}
+/* Run the ACK_TX cycle (guard timer -> pattern ACK -> TX complete) back to
+ * IDLE_IRS, so the next DATA frame is received in the same state a real IRS is. */
+static void complete_ack_tx(void)
+{
+    arq_event_t ev = make_event(ARQ_EV_TIMER_ACK);
+    arq_fsm_dispatch(&sess, &ev);
+    ev = make_event(ARQ_EV_TX_COMPLETE);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(ARQ_DFLOW_IDLE_IRS, sess.dflow_state);
+}
+/* Each clean in-order frame climbs the sender one rung (fast initial ramp);
+ * the IRS mirror climbs in lock step so peer_tx_mode names the NEXT burst's
+ * mode before it arrives. */
+void test_irs_mirror_climbs_with_peer(void)
+{
+    goto_connected_irs();
+    TEST_ASSERT_EQUAL_INT(MERCURY_MODE_MFSK, sess.peer_tx_mode);
+
+    arq_event_t ev = make_data_event(0, MERCURY_MODE_MFSK, 90);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(arq_mode_ladder[1], sess.peer_tx_mode);
+    complete_ack_tx();
+
+    ev = make_data_event(1, FREEDV_MODE_DATAC4, 54);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(arq_mode_ladder[2], sess.peer_tx_mode);
+    complete_ack_tx();
+
+    ev = make_data_event(2, FREEDV_MODE_DATAC3, 126);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(arq_mode_ladder[3], sess.peer_tx_mode);    /* level 3 */
+}
+/* A duplicate frame means our ACK was lost and the sender retried, stepping ITS
+ * ladder down — the mirror must step down too so we can decode the retransmit. */
+void test_irs_mirror_steps_down_on_duplicate(void)
+{
+    goto_connected_irs();
+    arq_event_t ev = make_data_event(0, MERCURY_MODE_MFSK, 90);
+    arq_fsm_dispatch(&sess, &ev);
+    complete_ack_tx();
+    ev = make_data_event(1, FREEDV_MODE_DATAC4, 54);
+    arq_fsm_dispatch(&sess, &ev);
+    complete_ack_tx();
+    TEST_ASSERT_EQUAL_INT(arq_mode_ladder[2], sess.peer_tx_mode);    /* climbed two rungs */
+
+    /* Duplicate of an already-delivered seq (rx_expected has advanced past it). */
+    ev = make_data_event(0, MERCURY_MODE_MFSK, 90);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(arq_mode_ladder[1], sess.peer_tx_mode);    /* stepped down one rung */
+}
+/* A frame the sender marks as a RETRANSMISSION must not climb the mirror.
+ *
+ * A lost burst is invisible on the receiving side: the retry is the first copy
+ * it ever sees, so without ARQ_FLAG_RETX it scores a clean delivery and CLIMBS
+ * while the sender scored a retry and DESCENDED.  Only one payload decoder runs
+ * at a time, so that split is total deafness — which loses the next burst and
+ * widens the split.  Measured on the 0 dB bench cell: the mirror oscillated
+ * 0 -> 1 -> 0 against a sender parked at the floor and only 12 of 23 bursts
+ * were ever decoded. */
+void test_retx_flagged_frame_does_not_climb_the_mirror(void)
+{
+    goto_connected_irs();
+    arq_event_t ev = make_data_event(0, MERCURY_MODE_MFSK, 90);
+    arq_fsm_dispatch(&sess, &ev);
+    complete_ack_tx();
+    int climbed = sess.rx_speed_level;
+    TEST_ASSERT_GREATER_THAN_INT(0, climbed);   /* a clean first copy climbs */
+
+    /* The next frame is NEW to us, but the sender says it is a retransmission:
+     * score it the way the sender did, so the two ladders stay in step. */
+    ev = make_data_event(1, arq_mode_ladder[sess.rx_speed_level], 22);
+    ev.rx_flags |= ARQ_FLAG_RETX;
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_LESS_OR_EQUAL_INT_MESSAGE(climbed, sess.rx_speed_level,
+        "mirror climbed on a frame the sender had to retransmit: the sender "
+        "stepped down for that frame, so the two ends are now on different "
+        "rungs and only one payload decoder is running");
+}
+
+/* Listen before self-promotion.
+ *
+ * This FSM has no TURN_REQ: an IRS holding data takes the floor itself once the
+ * peer has been silent for ARQ_IRS_SELFPROMOTE_S.  That fires on a clock, so it
+ * can key DATA on top of a burst the peer has just started -- the collision
+ * that starts #278's retransmit loop on trunk, arriving here by a different
+ * route.  These pin the port of trunk's #280 guard onto that path.
+ *
+ * Helper: an IRS with backlog whose silence window has fully elapsed, so the
+ * next TIMER_PEER_BACKLOG would self-promote if nothing else stopped it. */
+static void goto_irs_due_to_selfpromote(void)
+{
+    goto_connected_irs();
+    fake_tx_backlog_fake.return_val = 64;
+    arq_event_t ev = make_event(ARQ_EV_APP_DATA_READY);   /* starts the silence window */
+    arq_fsm_dispatch(&sess, &ev);
+    mock_set_uptime_ms(time_now_ms() + 120000);           /* well past ARQ_IRS_SELFPROMOTE_S */
+    RESET_FAKE(fake_send_tx_frame);
+}
+
+/* Control: with a quiet channel the promotion happens.  Without this the three
+ * tests below could pass merely because the silence window never elapsed. */
+void test_selfpromote_proceeds_on_a_quiet_channel(void)
+{
+    goto_irs_due_to_selfpromote();
+    sess.last_rx_sync_ms = 0;
+    arq_event_t ev = make_event(ARQ_EV_TIMER_PEER_BACKLOG);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(ARQ_DFLOW_DATA_TX, sess.dflow_state);
+    TEST_ASSERT_EQUAL_UINT8(0, sess.turn_req_defer_count);
+}
+
+void test_selfpromote_is_not_keyed_over_the_peers_burst(void)
+{
+    goto_irs_due_to_selfpromote();
+    sess.last_rx_sync_ms = time_now_ms();        /* a decoder holds sync right now */
+    arq_event_t ev = make_event(ARQ_EV_TIMER_PEER_BACKLOG);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ARQ_DFLOW_IDLE_IRS, sess.dflow_state,
+        "self-promoted into a burst the peer was transmitting");
+    TEST_ASSERT_EQUAL_UINT8(1, sess.turn_req_defer_count);
+}
+
+/* Sync cannot see the acquisition window, a mode no decoder is bound to, or a
+ * burst too weak to sync on; channel energy can. */
+void test_selfpromote_defers_on_channel_energy_without_sync(void)
+{
+    goto_irs_due_to_selfpromote();
+    sess.last_rx_sync_ms = 0;
+    fake_channel_busy_fake.return_val = true;
+    arq_event_t ev = make_event(ARQ_EV_TIMER_PEER_BACKLOG);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ARQ_DFLOW_IDLE_IRS, sess.dflow_state,
+        "self-promoted over an un-synced transmission: sync alone is not enough");
+}
+
+/* A stuck detector must not mute the station: after the cap it keys anyway. */
+void test_selfpromote_deferral_is_bounded(void)
+{
+    goto_irs_due_to_selfpromote();
+    for (int i = 0; i < ARQ_TURN_REQ_DEFER_MAX; i++)
+    {
+        sess.last_rx_sync_ms = time_now_ms();
+        arq_event_t ev = make_event(ARQ_EV_TIMER_PEER_BACKLOG);
+        arq_fsm_dispatch(&sess, &ev);
+        TEST_ASSERT_EQUAL_INT(ARQ_DFLOW_IDLE_IRS, sess.dflow_state);
+    }
+    sess.last_rx_sync_ms = time_now_ms();
+    arq_event_t ev = make_event(ARQ_EV_TIMER_PEER_BACKLOG);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ARQ_DFLOW_DATA_TX, sess.dflow_state,
+        "deferral never gave up: the station would never send its backlog");
+    TEST_ASSERT_EQUAL_UINT8(0, sess.turn_req_defer_count);
+}
+
+/* Reset-on-miss: a full idle hold with no DATA (a lost ACK left us climbed above
+ * the sender) steps the mirror down toward the floor so the two ends re-sync. */
+void test_irs_mirror_resets_toward_floor_on_silence(void)
+{
+    goto_connected_irs();
+    arq_event_t ev = make_data_event(0, MERCURY_MODE_MFSK, 90);
+    arq_fsm_dispatch(&sess, &ev);
+    complete_ack_tx();
+    TEST_ASSERT_EQUAL_INT(arq_mode_ladder[1], sess.peer_tx_mode);    /* climbed to level 1 */
+
+    /* Idle-hold fires with no reverse backlog and a recent RX (not dead yet). */
+    fake_tx_backlog_fake.return_val = 0;
+    ev = make_event(ARQ_EV_TIMER_PEER_BACKLOG);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(MERCURY_MODE_MFSK, sess.peer_tx_mode);     /* stepped back to the floor */
+}
+
+/* The CALL retry clock must start when the burst leaves the air, not when it
+ * was queued.  A CALL spends ~3.8 s modulating, so anchoring at enqueue spent
+ * that airtime out of the 8 s retry interval and fired the retransmission at
+ * t~8.0 s — while the peer's ACCEPT was still arriving at t~8.1 s.  That cost
+ * a fourth transmission on a channel that had lost nothing (measured: 4.0
+ * frames for a 3-frame handshake on a clean link). */
+void test_calling_reanchors_retry_on_tx_complete(void)
+{
+    arq_event_t ev = make_event(ARQ_EV_APP_LISTEN);
+    arq_fsm_dispatch(&sess, &ev);
+
+    mock_set_uptime_ms(1000);
+    ev = make_event(ARQ_EV_APP_CONNECT);
+    strncpy(ev.remote_call, "DST1", CALLSIGN_MAX_SIZE);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_CALLING, sess.conn_state);
+    uint64_t deadline_at_enqueue = sess.deadline_ms;
+
+    /* The burst occupies the channel, then PTT drops. */
+    mock_set_uptime_ms(1000 + 3840);
+    ev = make_event(ARQ_EV_TX_COMPLETE);
+    arq_fsm_dispatch(&sess, &ev);
+
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_CALLING, sess.conn_state);
+    TEST_ASSERT_TRUE_MESSAGE(sess.deadline_ms > deadline_at_enqueue,
+        "CALL retry still anchored at enqueue: it will collide with the ACCEPT");
+    /* A full retry interval measured from PTT-OFF. */
+    TEST_ASSERT_UINT64_WITHIN(50,
+        (uint64_t)(1000 + 3840) +
+            (uint64_t)(arq_protocol_call_interval_s() * 1000.0f),
+        sess.deadline_ms);
+}
+
 /* The CALL retry interval must be measured from PTT-OFF, not from the moment
  * the CALL was queued.
  *
@@ -1759,6 +1639,67 @@ void test_accepting_silent_wait_gives_up_after_budget(void)
     TEST_ASSERT_EQUAL_INT(ARQ_CONN_LISTENING, sess.conn_state);
 }
 
+
+/* ---- Connect budget ------------------------------------------------------
+ *
+ * A caller keeps CALLing for ARQ_CONNECT_TIMEOUT_S.  It used to stop after 5
+ * CALLs (~59 s); at -8.8 dB SNR3k under fading that routinely ended inside one
+ * long fade, with the answerer decoding a late CALL and ACCEPTing just as the
+ * caller hung up.
+ */
+
+static void call_and_step(uint64_t *t_ms, uint64_t step_ms)
+{
+    *t_ms += step_ms;
+    mock_set_uptime_ms(*t_ms);
+    arq_event_t ev = make_event(ARQ_EV_TIMER_RETRY);
+    arq_fsm_dispatch(&sess, &ev);
+}
+
+/* Still calling well past the old ~59 s limit, sending a CALL each interval,
+ * right up to the end of the budget. */
+void test_call_keeps_trying_for_the_whole_connect_budget(void)
+{
+    snprintf(arq_conn.my_call_sign, CALLSIGN_MAX_SIZE, "%s", "AAA");
+    arq_conn.bw = ARQ_BANDWIDTH_FULL_HZ;
+    uint64_t t = 1000;
+    mock_set_uptime_ms(t);
+    arq_event_t ev = make_event(ARQ_EV_APP_CONNECT);
+    strncpy(ev.remote_call, "DST1", CALLSIGN_MAX_SIZE);
+    arq_fsm_dispatch(&sess, &ev);                       /* CALL #1 */
+
+    const uint64_t step = 12000;                        /* ~one DATAC16 CALL cycle */
+    const uint64_t end  = 1000 + ARQ_CONNECT_TIMEOUT_S * 1000ULL;
+    while (t + step < end)
+    {
+        call_and_step(&t, step);
+        TEST_ASSERT_EQUAL_INT_MESSAGE(ARQ_CONN_CALLING, sess.conn_state,
+            "gave up before the connect budget was spent");
+    }
+    TEST_ASSERT_TRUE(t > 60000);                       /* past the old limit */
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1 + (int)((end - 1000 - 1) / step), fake_send_tx_frame_fake.call_count,
+        "a CALL must go out on every retry while the budget lasts");
+}
+
+/* Once the budget is spent the next retry reports the failure instead of
+ * keying another CALL. */
+void test_call_gives_up_once_the_connect_budget_is_spent(void)
+{
+    snprintf(arq_conn.my_call_sign, CALLSIGN_MAX_SIZE, "%s", "AAA");
+    arq_conn.bw = ARQ_BANDWIDTH_FULL_HZ;
+    arq_event_t ev = make_event(ARQ_EV_APP_CONNECT);
+    strncpy(ev.remote_call, "DST1", CALLSIGN_MAX_SIZE);
+    arq_fsm_dispatch(&sess, &ev);
+    unsigned sent = fake_send_tx_frame_fake.call_count;
+
+    uint64_t t = 1000 + ARQ_CONNECT_TIMEOUT_S * 1000ULL;   /* budget just spent */
+    call_and_step(&t, 0);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_DISCONNECTED, sess.conn_state);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(sent, fake_send_tx_frame_fake.call_count,
+        "a CALL was keyed after the connect budget ran out");
+    TEST_ASSERT_EQUAL_INT(1, fake_notify_disconnected_fake.call_count);
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -1770,6 +1711,7 @@ int main(void)
     RUN_TEST(test_call_retry_deadline_anchored_to_ptt_off);
     RUN_TEST(test_wait_ack_deadline_stagger_is_exact);
     RUN_TEST(test_incoming_call_transitions_to_accepting);
+    RUN_TEST(test_accepting_reanchors_accept_retry_on_repeated_call);
     RUN_TEST(test_incoming_call_records_dialed_secondary);
     RUN_TEST(test_accept_transitions_to_connected);
     RUN_TEST(test_listen_mode_does_not_leak_into_inbound_session);
@@ -1782,9 +1724,6 @@ int main(void)
     RUN_TEST(test_redial_while_disconnect_deferred_is_placed_after_teardown);
     RUN_TEST(test_redial_waits_for_peer_disconnect_ack_to_finish);
     RUN_TEST(test_listen_off_while_connected_cancels_deferred_connect);
-    RUN_TEST(test_mode_req_wait_latches_crossed_turn_req);
-    RUN_TEST(test_mode_ack_yields_to_the_latched_turn_req);
-    RUN_TEST(test_turn_req_wait_concedes_to_mode_req);
     RUN_TEST(test_connect_on_live_session_without_disconnect_is_not_queued);
     RUN_TEST(test_listen_off_drops_pending_accept);
     RUN_TEST(test_listen_off_drops_outgoing_call);
@@ -1794,35 +1733,37 @@ int main(void)
     RUN_TEST(test_listen_off_drops_live_link_without_draining);
     RUN_TEST(test_rx_disconnect_from_connected);
     RUN_TEST(test_connected_rejects_zero_session_id);
-    RUN_TEST(test_connected_rejects_foreign_mode_request);
-    RUN_TEST(test_wait_ack_rejects_foreign_mode_request);
+    RUN_TEST(test_connected_accepts_zero_session_pattern_ack);
     RUN_TEST(test_connected_seeds_no_progress_clock);
     RUN_TEST(test_app_disconnect_defers_with_backlog);
     RUN_TEST(test_pending_disconnect_retries_last_frame_before_teardown);
     RUN_TEST(test_app_disconnect_defers_in_wait_ack);
-    RUN_TEST(test_wait_ack_cumulative_ack_advances_window);
-    RUN_TEST(test_wait_ack_stale_ack_keeps_window);
-    RUN_TEST(test_wait_ack_turn_req_defers_the_yield_without_keying);
-    RUN_TEST(test_wait_ack_yields_to_latched_turn_req_when_the_ack_lands);
-    RUN_TEST(test_wait_ack_ack_without_request_keeps_the_turn);
-    RUN_TEST(test_keepalive_wait_accepts_data);
-    RUN_TEST(test_turn_req_is_not_keyed_over_the_peers_burst);
-    RUN_TEST(test_turn_req_is_sent_once_the_channel_is_quiet);
-    RUN_TEST(test_turn_req_defers_on_channel_energy_without_sync);
-    RUN_TEST(test_turn_req_deferral_is_bounded);
-    RUN_TEST(test_simultaneous_turn_req_one_side_yields);
-    RUN_TEST(test_simultaneous_turn_req_other_side_holds);
     RUN_TEST(test_disconnect_drain_timeout_forces_teardown);
     RUN_TEST(test_retry_exhaustion_persists_then_disconnects);
     RUN_TEST(test_retry_exhaustion_disconnects_from_zero_uptime_baseline);
     /* Timeout tests */
     RUN_TEST(test_call_timeout);
     RUN_TEST(test_call_timeout_no_listen);
+    RUN_TEST(test_call_keeps_trying_for_the_whole_connect_budget);
+    RUN_TEST(test_call_gives_up_once_the_connect_budget_is_spent);
     RUN_TEST(test_accepting_gives_up_after_budget);
     RUN_TEST(test_accepting_rx_call_rearms_budget);
-    RUN_TEST(test_default_call_accept_slots_are_short);
+    RUN_TEST(test_connect_confirm_listen_window_is_bounded);
+    RUN_TEST(test_default_accept_slots_are_short);
     RUN_TEST(test_stop_listen);
     RUN_TEST(test_timeout_ms_idle);
+    RUN_TEST(test_wait_ack_pattern_ack_confirms_frame);
+    RUN_TEST(test_wait_ack_stale_ack_ignored);
+    RUN_TEST(test_wait_ack_break_yields_floor);
+    RUN_TEST(test_irs_mirror_climbs_with_peer);
+    RUN_TEST(test_irs_mirror_steps_down_on_duplicate);
+    RUN_TEST(test_retx_flagged_frame_does_not_climb_the_mirror);
+    RUN_TEST(test_selfpromote_proceeds_on_a_quiet_channel);
+    RUN_TEST(test_selfpromote_is_not_keyed_over_the_peers_burst);
+    RUN_TEST(test_selfpromote_defers_on_channel_energy_without_sync);
+    RUN_TEST(test_selfpromote_deferral_is_bounded);
+    RUN_TEST(test_irs_mirror_resets_toward_floor_on_silence);
+    RUN_TEST(test_calling_reanchors_retry_on_tx_complete);
     RUN_TEST(test_accept_is_only_sent_in_answer_to_a_heard_call);
     RUN_TEST(test_accepting_silent_wait_gives_up_after_budget);
     return UNITY_END();
