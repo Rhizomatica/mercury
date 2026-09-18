@@ -288,11 +288,11 @@ void test_connect_confirm_listen_window_is_bounded(void)
     TEST_ASSERT_EQUAL_UINT64(0, sess.confirm_listen_until_ms);
 }
 
-/* Connection-setup slots must stay short by default (not the DATA default of
- * 10) so a failed connect and its mirror ACCEPT window give up quickly. */
-void test_default_call_accept_slots_are_short(void)
+/* The answerer's ACCEPT retries stay short by default (not the DATA default of
+ * 10): it re-arms on every CALL it hears, so the caller's connect budget, not
+ * this, is what keeps a connect alive. */
+void test_default_accept_slots_are_short(void)
 {
-    TEST_ASSERT_EQUAL_INT(ARQ_CALL_RETRY_SLOTS_DEFAULT,   ARQ_CALL_RETRY_SLOTS);
     TEST_ASSERT_EQUAL_INT(ARQ_ACCEPT_RETRY_SLOTS_DEFAULT, ARQ_ACCEPT_RETRY_SLOTS);
     TEST_ASSERT_TRUE(ARQ_ACCEPT_RETRY_SLOTS < ARQ_DATA_RETRY_SLOTS_DEFAULT);
 }
@@ -959,8 +959,8 @@ void test_call_timeout(void)
     arq_fsm_dispatch(&sess, &ev);
     TEST_ASSERT_EQUAL_INT(ARQ_CONN_CALLING, sess.conn_state);
 
-    /* Exhaust retries */
-    for (int i = 0; i < ARQ_CALL_RETRY_SLOTS_DEFAULT + 2; i++) {
+    /* Run out the connect budget */
+    for (int i = 0; i < ARQ_CONNECT_TIMEOUT_S / 10 + 2; i++) {
         ev = make_event(ARQ_EV_TIMER_RETRY);
         mock_set_uptime_ms(1000 + (uint64_t)(i + 1) * 10000);
         arq_fsm_dispatch(&sess, &ev);
@@ -979,7 +979,7 @@ void test_call_timeout_no_listen(void)
     arq_fsm_dispatch(&sess, &ev);
     TEST_ASSERT_EQUAL_INT(ARQ_CONN_CALLING, sess.conn_state);
 
-    for (int i = 0; i < ARQ_CALL_RETRY_SLOTS_DEFAULT + 2; i++) {
+    for (int i = 0; i < ARQ_CONNECT_TIMEOUT_S / 10 + 2; i++) {
         ev = make_event(ARQ_EV_TIMER_RETRY);
         mock_set_uptime_ms(1000 + (uint64_t)(i + 1) * 10000);
         arq_fsm_dispatch(&sess, &ev);
@@ -1639,6 +1639,67 @@ void test_accepting_silent_wait_gives_up_after_budget(void)
     TEST_ASSERT_EQUAL_INT(ARQ_CONN_LISTENING, sess.conn_state);
 }
 
+
+/* ---- Connect budget ------------------------------------------------------
+ *
+ * A caller keeps CALLing for ARQ_CONNECT_TIMEOUT_S.  It used to stop after 5
+ * CALLs (~59 s); at -8.8 dB SNR3k under fading that routinely ended inside one
+ * long fade, with the answerer decoding a late CALL and ACCEPTing just as the
+ * caller hung up.
+ */
+
+static void call_and_step(uint64_t *t_ms, uint64_t step_ms)
+{
+    *t_ms += step_ms;
+    mock_set_uptime_ms(*t_ms);
+    arq_event_t ev = make_event(ARQ_EV_TIMER_RETRY);
+    arq_fsm_dispatch(&sess, &ev);
+}
+
+/* Still calling well past the old ~59 s limit, sending a CALL each interval,
+ * right up to the end of the budget. */
+void test_call_keeps_trying_for_the_whole_connect_budget(void)
+{
+    snprintf(arq_conn.my_call_sign, CALLSIGN_MAX_SIZE, "%s", "AAA");
+    arq_conn.bw = ARQ_BANDWIDTH_FULL_HZ;
+    uint64_t t = 1000;
+    mock_set_uptime_ms(t);
+    arq_event_t ev = make_event(ARQ_EV_APP_CONNECT);
+    strncpy(ev.remote_call, "DST1", CALLSIGN_MAX_SIZE);
+    arq_fsm_dispatch(&sess, &ev);                       /* CALL #1 */
+
+    const uint64_t step = 12000;                        /* ~one DATAC16 CALL cycle */
+    const uint64_t end  = 1000 + ARQ_CONNECT_TIMEOUT_S * 1000ULL;
+    while (t + step < end)
+    {
+        call_and_step(&t, step);
+        TEST_ASSERT_EQUAL_INT_MESSAGE(ARQ_CONN_CALLING, sess.conn_state,
+            "gave up before the connect budget was spent");
+    }
+    TEST_ASSERT_TRUE(t > 60000);                       /* past the old limit */
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1 + (int)((end - 1000 - 1) / step), fake_send_tx_frame_fake.call_count,
+        "a CALL must go out on every retry while the budget lasts");
+}
+
+/* Once the budget is spent the next retry reports the failure instead of
+ * keying another CALL. */
+void test_call_gives_up_once_the_connect_budget_is_spent(void)
+{
+    snprintf(arq_conn.my_call_sign, CALLSIGN_MAX_SIZE, "%s", "AAA");
+    arq_conn.bw = ARQ_BANDWIDTH_FULL_HZ;
+    arq_event_t ev = make_event(ARQ_EV_APP_CONNECT);
+    strncpy(ev.remote_call, "DST1", CALLSIGN_MAX_SIZE);
+    arq_fsm_dispatch(&sess, &ev);
+    unsigned sent = fake_send_tx_frame_fake.call_count;
+
+    uint64_t t = 1000 + ARQ_CONNECT_TIMEOUT_S * 1000ULL;   /* budget just spent */
+    call_and_step(&t, 0);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_DISCONNECTED, sess.conn_state);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(sent, fake_send_tx_frame_fake.call_count,
+        "a CALL was keyed after the connect budget ran out");
+    TEST_ASSERT_EQUAL_INT(1, fake_notify_disconnected_fake.call_count);
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -1683,10 +1744,12 @@ int main(void)
     /* Timeout tests */
     RUN_TEST(test_call_timeout);
     RUN_TEST(test_call_timeout_no_listen);
+    RUN_TEST(test_call_keeps_trying_for_the_whole_connect_budget);
+    RUN_TEST(test_call_gives_up_once_the_connect_budget_is_spent);
     RUN_TEST(test_accepting_gives_up_after_budget);
     RUN_TEST(test_accepting_rx_call_rearms_budget);
     RUN_TEST(test_connect_confirm_listen_window_is_bounded);
-    RUN_TEST(test_default_call_accept_slots_are_short);
+    RUN_TEST(test_default_accept_slots_are_short);
     RUN_TEST(test_stop_listen);
     RUN_TEST(test_timeout_ms_idle);
     RUN_TEST(test_wait_ack_pattern_ack_confirms_frame);
