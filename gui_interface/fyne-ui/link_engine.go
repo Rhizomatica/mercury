@@ -179,7 +179,7 @@ func (l *engineLink) Send(cmd Command) error {
 	}
 
 	switch cmd.Name {
-	case "set_audio_config", "set_radio_config", "set_ptt_config":
+	case "set_audio_config", "set_ptt_config":
 		// The Start goroutine owns the retry timing (cancellable via ctx),
 		// so no bare time.AfterFunc here that would outlive Close().
 		select {

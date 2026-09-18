@@ -323,29 +323,6 @@ int ui_comm_handle_command(ui_ctx_t *ctx, const ws_command_t *cmd)
         }
         return ui_apply_ptt_config(ctx, &config);
 
-    } else if (strcmp(cmd->command, "set_radio_config") == 0) {
-        /* Legacy UI command: the old model selector also selected the backend.
-         * Keep accepting it so older remote web/Qt clients remain compatible. */
-        int new_radio_type = atoi(cmd->value);
-        const char *dev_path = cmd->value2;
-        int new_serial_speed = cmd->value3[0] ? atoi(cmd->value3) : radio_io_get_serial_speed();
-        if (new_serial_speed < 0) new_serial_speed = 0;
-
-        ptt_config_t config;
-        radio_io_get_config(&config);
-        config.hamlib_serial_speed = new_serial_speed;
-        snprintf(config.device, sizeof(config.device), "%s",
-                 dev_path ? dev_path : "");
-        if (new_radio_type == RADIO_TYPE_NONE)
-            config.method = PTT_METHOD_NONE;
-        else if (new_radio_type == RADIO_TYPE_SHM)
-            config.method = PTT_METHOD_HERMES_SHM;
-        else {
-            config.method = PTT_METHOD_HAMLIB;
-            config.hamlib_model = new_radio_type;
-        }
-        return ui_apply_ptt_config(ctx, &config);
-
     } else if (strcmp(cmd->command, "set_waterfall") == 0) {
         bool enable = (strcmp(cmd->value, "off") != 0);
         ui_comm_set_waterfall(enable);

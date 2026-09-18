@@ -582,32 +582,12 @@ const char *radio_io_get_device_path(void)
     return device;
 }
 
-int radio_io_get_radio_type(void)
-{
-    pthread_mutex_lock(&g_radio_mutex);
-    int type = RADIO_TYPE_NONE;
-    if (g_config.method == PTT_METHOD_HAMLIB)
-        type = g_config.hamlib_model;
-    else if (g_config.method == PTT_METHOD_HERMES_SHM)
-        type = RADIO_TYPE_SHM;
-    pthread_mutex_unlock(&g_radio_mutex);
-    return type;
-}
-
 int radio_io_get_hamlib_log_level(void)
 {
     pthread_mutex_lock(&g_radio_mutex);
     int level = g_config.hamlib_log_level;
     pthread_mutex_unlock(&g_radio_mutex);
     return level;
-}
-
-int radio_io_get_serial_speed(void)
-{
-    pthread_mutex_lock(&g_radio_mutex);
-    int speed = g_config.hamlib_serial_speed;
-    pthread_mutex_unlock(&g_radio_mutex);
-    return speed;
 }
 
 static bool radio_io_copy_frequency_cache(uint64_t *frequency_hz,

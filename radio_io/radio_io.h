@@ -113,15 +113,8 @@ ptt_method_t radio_io_get_ptt_method(void);
  * valid until this function is called again on the same thread. */
 const char *radio_io_get_device_path(void);
 
-/* Legacy view of the current config: RADIO_TYPE_NONE, RADIO_TYPE_SHM, or the
- * Hamlib model ID.  Serial RTS has no legacy representation and returns NONE. */
-int radio_io_get_radio_type(void);
-
 /* Return the hamlib debug level used by the current (or last) init. */
 int radio_io_get_hamlib_log_level(void);
-
-/* Return the serial speed used by the current (or last) init (0 = hamlib default). */
-int radio_io_get_serial_speed(void);
 
 /* Return the last successfully read Hamlib frequency and its age.  A refresh
  * is attempted only when allow_poll is true and the radio mutex is immediately
