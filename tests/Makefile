@@ -126,7 +126,7 @@ test_arq_timing: datalink_arq/test_arq_timing.c $(UNITY_SRC) $(ARQ_STUBS) \
 test_arq_fsm: datalink_arq/test_arq_fsm.c $(UNITY_SRC) $(ARQ_STUBS) \
               ../datalink_arq/arq_fsm.c ../common/virtual_clock.c \
               ../datalink_arq/arq_protocol.c ../datalink_arq/arq_timing.c \
-              ../datalink_arq/arith.c
+              ../datalink_arq/arith.c ../datalink_arq/arq_modem.c
 	$(CC) $(CFLAGS) -I../modem/freedv -o $@ $(filter %.c %.a %.o,$^) $(LDFLAGS)
 
 # TCP TNC interface tests (command parsing, status emitters, broadcast framing)

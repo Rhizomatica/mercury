@@ -1094,10 +1094,12 @@ static void fsm_calling(arq_session_t *sess, const arq_event_t *ev)
          * or, for a pair whose callsigns are not yet known, its random
          * fallback -- would blur precisely the quantity being measured.  The
          * stagger belongs on the retry scheduling below, not here. */
-        sess->deadline_ms =
-            deadline_from_s(arq_protocol_call_interval_for_mode_s(call_inflight_carrier(sess)));
-        HLOGD(LOG_COMP, "CALL retry re-anchored: +%.2fs, retries_left=%d",
-              (double)arq_protocol_call_interval_s(), (int)sess->tx_retries_left);
+        {
+            float wait_s = arq_protocol_call_interval_for_mode_s(call_inflight_carrier(sess));
+            sess->deadline_ms = deadline_from_s(wait_s);
+            HLOGD(LOG_COMP, "CALL retry re-anchored: +%.2fs, retries_left=%d",
+                  (double)wait_s, (int)sess->tx_retries_left);
+        }
         break;
 
     case ARQ_EV_TIMER_RETRY:
@@ -1171,6 +1173,14 @@ static void fsm_accepting(arq_session_t *sess, const arq_event_t *ev)
 
     case ARQ_EV_RX_CALL:
         update_peer_snr(sess, ev);
+        /* Answer on the carrier THIS CALL arrived on.  The caller escalates to
+         * the MFSK floor after its fast slots even while we are already
+         * accepting -- typically because it heard none of our DATAC16
+         * ACCEPTs.  That is a weak return path, and replying on DATAC16 again
+         * would fail the same way.  LISTENING records the carrier of the
+         * first CALL; this keeps it current for every repeat. */
+        if (ev->mode > 0)
+            sess->call_rx_mode = ev->mode;
         /* Caller is still retrying CALL, so our previous ACCEPT was lost.
          * Reset the retry counter so the ACCEPTING window stays open long
          * enough for the caller to decode the next ACCEPT and start sending
