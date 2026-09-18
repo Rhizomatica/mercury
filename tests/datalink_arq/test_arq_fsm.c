@@ -1694,6 +1694,18 @@ void test_call_escalates_to_mfsk_after_the_fast_slots(void)
         "the caller did not escalate once its fast slots were spent");
 }
 
+/* After escalating the caller must not give up on the fast carrier: it
+ * alternates MFSK and DATAC16.  Staying on MFSK lost connects at -8.8/-10.8 dB
+ * that DATAC16 made on the same fading realisation (bench, 10 paired seeds). */
+void test_call_alternates_carriers_after_escalating(void)
+{
+    place_call_and_send(ARQ_CALL_FAST_SLOTS + 4);
+    for (unsigned i = ARQ_CALL_FAST_SLOTS; i < ARQ_CALL_FAST_SLOTS + 4; i++)
+        TEST_ASSERT_EQUAL_INT_MESSAGE(
+            ((i - ARQ_CALL_FAST_SLOTS) % 2 == 0) ? MERCURY_MODE_MFSK : FREEDV_MODE_DATAC16,
+            nth_tx_mode(i), "the escalated CALLs did not alternate carriers");
+}
+
 /* The modem keys the carrier the CALL was SIZED for.  After the last fast CALL
  * the send counter already says "escalate", so recomputing the carrier on the
  * modem thread would key a DATAC16-sized frame as MFSK. */
@@ -1881,6 +1893,7 @@ int main(void)
     RUN_TEST(test_redial_waits_for_peer_disconnect_ack_to_finish);
     RUN_TEST(test_listen_off_while_connected_cancels_deferred_connect);
     RUN_TEST(test_call_escalates_to_mfsk_after_the_fast_slots);
+    RUN_TEST(test_call_alternates_carriers_after_escalating);
     RUN_TEST(test_modem_keys_the_carrier_latched_for_the_call_in_flight);
     RUN_TEST(test_call_retry_wait_matches_the_carrier_sent);
     RUN_TEST(test_new_call_starts_on_the_fast_carrier);

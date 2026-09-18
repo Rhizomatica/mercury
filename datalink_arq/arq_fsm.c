@@ -569,12 +569,21 @@ static int call_inflight_carrier(const arq_session_t *sess)
     return sess->control_mode;
 }
 
+/* After the fast CALLs the caller ALTERNATES carriers -- MFSK, DATAC16,
+ * MFSK, ... -- rather than staying on MFSK.  Staying there lost connects DATAC16
+ * would have made: under fading an MFSK CALL is no surer than a DATAC16 one at
+ * -9..-11 dB SNR3k, and at 13.5 s + an 18 s wait it gets a third as many tries
+ * in the connect budget.  On the bench (Watterson moderate, 10 paired seeds)
+ * the all-MFSK tail lost 2 seeds at -8.8 and -10.8 dB that the DATAC16-only
+ * build connected, while MFSK is what connects at -12.8 dB where DATAC16 never
+ * does.  Alternating keeps both. */
 int arq_call_carrier(const arq_session_t *sess)
 {
     if (!sess) return ARQ_CONTROL_MODE;
-    if (sess->call_sends_done >= ARQ_CALL_FAST_SLOTS)
-        return MERCURY_MODE_MFSK;
-    return sess->control_mode;
+    if (sess->call_sends_done < ARQ_CALL_FAST_SLOTS)
+        return sess->control_mode;
+    return ((sess->call_sends_done - ARQ_CALL_FAST_SLOTS) % 2 == 0)
+         ? MERCURY_MODE_MFSK : sess->control_mode;
 }
 
 static void send_call_accept(arq_session_t *sess, bool is_accept)

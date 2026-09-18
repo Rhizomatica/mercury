@@ -451,7 +451,8 @@ const char *arq_dflow_state_name(arq_dflow_state_t s);
  */
 const char *arq_event_name(arq_event_id_t ev);
 
-/* Which carrier the next CALL should key.
+/* Which carrier the next CALL should key: the fast control mode for the first
+ * ARQ_CALL_FAST_SLOTS CALLs, then MFSK and the control mode alternately.
  *
  * ONE definition, because this predicate decides two things that must agree:
  * how send_frame() SIZES/pads the frame, and which carrier
