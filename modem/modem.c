@@ -1038,7 +1038,13 @@ int run_tests_tx(generic_modem_t *g_modem)
 
     int counter = 0;
 
-    while(1)
+    /* Stop on SIGINT/SIGTERM.  This used to be while(1): a signal only set
+     * shutdown_, the frame in flight finished and unkeyed, and the next one
+     * keyed straight back up -- so `timeout 15 mercury -t` never stopped
+     * transmitting, and only a second signal ended it, through _exit() with no
+     * cleanup, possibly mid-frame with PTT still on.  Every frame unkeys at its
+     * end (send_modulated_data), so leaving here leaves the radio unkeyed. */
+    while (!shutdown_)
     {
         for (size_t i = 0; i < payload_size; i++)
         {
