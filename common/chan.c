@@ -26,7 +26,7 @@
 #include <time.h>
 #include <sys/time.h>
 
-#ifdef __MACH__
+#if defined __APPLE__ && defined __MACH__
 #include <mach/clock.h>
 #include <mach/mach.h>
 #endif
@@ -51,7 +51,7 @@ static int chan_can_send(chan_t* chan);
 static int chan_is_buffered(chan_t* chan);
 
 void current_utc_time(struct timespec *ts) {
-#ifdef __MACH__ 
+#if defined __APPLE__ && defined __MACH__
     clock_serv_t cclock;
     mach_timespec_t mts;
     host_get_clock_service(mach_host_self(), CALENDAR_CLOCK, &cclock);
