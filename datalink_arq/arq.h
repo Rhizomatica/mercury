@@ -105,6 +105,10 @@ typedef struct
      * correlation only when this is set — running it during CALLING/LISTENING/
      * idle is pure overhead that slows the connect-critical DATAC16 decode. */
     bool expect_pattern_ack;
+    /* True while LISTENING for a call.  A caller escalates to the MFSK floor
+     * once its fast DATAC16 CALLs go unanswered, so a listener has to decode
+     * MFSK then too -- its payload decoder is on the listen (-m) mode. */
+    bool listening_for_calls;
     int trx;
     int tx_backlog_bytes;
     int speed_level;
@@ -273,7 +277,8 @@ void arq_set_active_modem_mode(int mode, size_t frame_size);
  * @param frame_size Frame length in bytes.
  * @return true if frame was handled by ARQ connect path.
  */
-bool arq_handle_incoming_connect_frame(uint8_t *data, size_t frame_size);
+bool arq_handle_incoming_connect_frame(uint8_t *data, size_t frame_size,
+                                       int rx_mode);
 
 /**
  * @brief Handle incoming compact CQ frame and emit host-side CQFRAME notification.

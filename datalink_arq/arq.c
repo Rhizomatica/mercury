@@ -743,7 +743,8 @@ static void *arq_event_loop_worker(void *arg)
  * Incoming frame handling (called from modem.c worker)
  * ====================================================================== */
 
-bool arq_handle_incoming_connect_frame(uint8_t *data, size_t frame_size)
+bool arq_handle_incoming_connect_frame(uint8_t *data, size_t frame_size,
+                                       int rx_mode)
 {
     if (!data || frame_size < 2) return false;
 
@@ -806,6 +807,9 @@ bool arq_handle_incoming_connect_frame(uint8_t *data, size_t frame_size)
 
     arq_event_t ev = {0};
     ev.id         = is_accept ? ARQ_EV_RX_ACCEPT : ARQ_EV_RX_CALL;
+    /* Carrier this CALL/ACCEPT actually arrived on, so the answerer can reply
+     * on the same one (a deep CALL rides the MFSK floor, not DATAC16). */
+    ev.mode       = rx_mode;
     ev.session_id = session_id;
     /* src = transmitting side's callsign */
     snprintf(ev.remote_call, CALLSIGN_MAX_SIZE, "%s", src);
@@ -1255,6 +1259,7 @@ bool arq_get_runtime_snapshot(arq_runtime_snapshot_t *snapshot)
         (g_sess.conn_state == ARQ_CONN_ACCEPTING &&
          g_sess.confirm_listen_until_ms != 0 &&
          time_now_ms() < g_sess.confirm_listen_until_ms);
+    snapshot->listening_for_calls = (g_sess.conn_state == ARQ_CONN_LISTENING);
     snapshot->trx              = trx;
     snapshot->tx_backlog_bytes = backlog +
         (g_sess.tx_frame_present ? g_sess.tx_frame_len : 0);

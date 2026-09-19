@@ -555,6 +555,37 @@ static bool deliver_rx_checked(arq_session_t *sess, const arq_event_t *ev)
     return true;
 }
 
+/* Carrier the next CALL will key on: fast control mode until the fast slots
+ * are spent, then the MFSK floor.  Shared by the sender and the retry timer so
+ * the wait is always sized for the burst actually going out. */
+/* Carrier of the CALL currently in flight (the one just keyed), for sizing how
+ * long to wait for its reply.  The ACCEPT comes back on the carrier the CALL
+ * arrived on, so the wait must match what was SENT -- not what the next CALL
+ * will use.  Sizing it from arq_call_carrier() instead made a 3.7 s DATAC16
+ * CALL wait MFSK's 18 s, which spends a fringe link's budget twice over. */
+static int call_inflight_carrier(const arq_session_t *sess)
+{
+    if (sess->call_carrier > 0) return sess->call_carrier;
+    return sess->control_mode;
+}
+
+/* After the fast CALLs the caller ALTERNATES carriers -- MFSK, DATAC16,
+ * MFSK, ... -- rather than staying on MFSK.  Staying there lost connects DATAC16
+ * would have made: under fading an MFSK CALL is no surer than a DATAC16 one at
+ * -9..-11 dB SNR3k, and at 13.5 s + an 18 s wait it gets a third as many tries
+ * in the connect budget.  On the bench (Watterson moderate, 10 paired seeds)
+ * the all-MFSK tail lost 2 seeds at -8.8 and -10.8 dB that the DATAC16-only
+ * build connected, while MFSK is what connects at -12.8 dB where DATAC16 never
+ * does.  Alternating keeps both. */
+int arq_call_carrier(const arq_session_t *sess)
+{
+    if (!sess) return ARQ_CONTROL_MODE;
+    if (sess->call_sends_done < ARQ_CALL_FAST_SLOTS)
+        return sess->control_mode;
+    return ((sess->call_sends_done - ARQ_CALL_FAST_SLOTS) % 2 == 0)
+         ? MERCURY_MODE_MFSK : sess->control_mode;
+}
+
 static void send_call_accept(arq_session_t *sess, bool is_accept)
 {
     uint8_t frame[INT_BUFFER_SIZE];
@@ -572,7 +603,28 @@ static void send_call_accept(arq_session_t *sess, bool is_accept)
         n = arq_protocol_build_call(frame, sizeof(frame), sess->session_id,
                                     my_call, sess->remote_call, bw_hz);
     if (n > 0)
-        send_frame(PACKET_TYPE_ARQ_CALL, sess->control_mode, (size_t)n, frame, 0);
+    {
+        /* A CALL escalates to the MFSK floor once the fast slots are spent;
+         * an ACCEPT answers on whatever the CALL arrived on, so the two ends
+         * never disagree about the carrier.  See ARQ_CALL_FAST_SLOTS. */
+        int mode = is_accept
+                 ? (sess->call_rx_mode > 0 ? sess->call_rx_mode : sess->control_mode)
+                 : arq_call_carrier(sess);
+        /* Latch it: send_frame() only SIZES the frame, and the modem asks for
+         * the carrier later, on its own thread.  Deriving it twice let the send
+         * counter advance in between and keyed the very first CALL on MFSK. */
+        sess->call_carrier = mode;
+        if (mode != sess->control_mode)
+            HLOGI(LOG_COMP, "%s on the MFSK floor (%s)",
+                  is_accept ? "ACCEPT" : "CALL",
+                  is_accept ? "answering on the carrier the CALL arrived on"
+                            : "fast slots spent");
+        send_frame(PACKET_TYPE_ARQ_CALL, mode, (size_t)n, frame, 0);
+        /* Count CALL transmissions (not ACCEPTs): arq_call_carrier() escalates
+         * once ARQ_CALL_FAST_SLOTS of them have gone out. */
+        if (!is_accept)
+            sess->call_sends_done++;
+    }
     else
         /* Almost always an over-long callsign: the 10-byte SRC slot holds ~14
          * characters at ~5.25 bits each.  The encoder refuses rather than
@@ -896,6 +948,8 @@ static void fsm_disconnected(arq_session_t *sess, const arq_event_t *ev)
         sess->session_id      = (uint8_t)(time_now_ms() & 0x7F) | 0x01;
         reset_session_data_state(sess);  /* MFSK-start ladder, clean retransmit */
         sess->connect_deadline_ms    = time_now_ms() + ARQ_CONNECT_TIMEOUT_S * 1000ULL;
+        sess->call_sends_done = 0;      /* fresh attempt: start on the fast mode */
+        sess->call_carrier    = 0;
         sess->disconnect_deadline_ms = 0;
         send_call_accept(sess, false);
         sess_enter(sess, ARQ_CONN_CALLING,
@@ -921,6 +975,10 @@ static void fsm_listening(arq_session_t *sess, const arq_event_t *ev)
     switch (ev->id)
     {
     case ARQ_EV_RX_CALL:
+        /* Answer on the carrier the CALL came in on: a caller that escalated
+         * to the MFSK floor cannot hear a DATAC16 ACCEPT. */
+        sess->call_rx_mode = ev->mode;
+
         snprintf(sess->remote_call, CALLSIGN_MAX_SIZE, "%s", ev->remote_call);
         snprintf(sess->local_call, CALLSIGN_MAX_SIZE, "%s", ev->local_call);
         sess->session_id      = ev->session_id;
@@ -1045,11 +1103,14 @@ static void fsm_calling(arq_session_t *sess, const arq_event_t *ev)
          * or, for a pair whose callsigns are not yet known, its random
          * fallback -- would blur precisely the quantity being measured.  The
          * stagger belongs on the retry scheduling below, not here. */
-        sess->deadline_ms = deadline_from_s(arq_protocol_call_interval_s());
-        HLOGD(LOG_COMP, "CALL retry re-anchored: +%.2fs, connect budget left %ds",
-              (double)arq_protocol_call_interval_s(),
-              sess->connect_deadline_ms > time_now_ms()
-                  ? (int)((sess->connect_deadline_ms - time_now_ms()) / 1000) : 0);
+        {
+            float wait_s = arq_protocol_call_interval_for_mode_s(call_inflight_carrier(sess));
+            sess->deadline_ms = deadline_from_s(wait_s);
+            HLOGD(LOG_COMP, "CALL retry re-anchored: +%.2fs, connect budget left %ds",
+                  (double)wait_s,
+                  sess->connect_deadline_ms > time_now_ms()
+                      ? (int)((sess->connect_deadline_ms - time_now_ms()) / 1000) : 0);
+        }
         break;
 
     case ARQ_EV_TIMER_RETRY:
@@ -1060,7 +1121,8 @@ static void fsm_calling(arq_session_t *sess, const arq_event_t *ev)
             send_call_accept(sess, false);
             /* Deadline is re-anchored on TX_COMPLETE above; this is the
              * fallback if that event is ever missed. */
-            sess->deadline_ms = retry_deadline_from_s(sess, arq_protocol_call_interval_s());
+            sess->deadline_ms = retry_deadline_from_s(sess,
+                                    arq_protocol_call_interval_for_mode_s(call_inflight_carrier(sess)));
         }
         else
         {
@@ -1125,6 +1187,14 @@ static void fsm_accepting(arq_session_t *sess, const arq_event_t *ev)
 
     case ARQ_EV_RX_CALL:
         update_peer_snr(sess, ev);
+        /* Answer on the carrier THIS CALL arrived on.  The caller escalates to
+         * the MFSK floor after its fast slots even while we are already
+         * accepting -- typically because it heard none of our DATAC16
+         * ACCEPTs.  That is a weak return path, and replying on DATAC16 again
+         * would fail the same way.  LISTENING records the carrier of the
+         * first CALL; this keeps it current for every repeat. */
+        if (ev->mode > 0)
+            sess->call_rx_mode = ev->mode;
         /* Caller is still retrying CALL, so our previous ACCEPT was lost.
          * Reset the retry counter so the ACCEPTING window stays open long
          * enough for the caller to decode the next ACCEPT and start sending

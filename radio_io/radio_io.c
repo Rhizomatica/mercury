@@ -400,6 +400,15 @@ static const ptt_backend_t *backend_for_method(ptt_method_t method)
 
 static void radio_io_shutdown_locked(void)
 {
+    /* Never leave the radio keyed behind us.  Closing a Hamlib rig or the
+     * sBitx shared memory does not unkey it, so a shutdown that lands while
+     * PTT is on would leave the transmitter on after Mercury is gone. */
+    if (g_backend && g_ptt_active)
+    {
+        (void)g_backend->set(false);
+        g_ptt_active = false;
+        g_last_ptt_off_ms = hermes_uptime_ms();
+    }
     if (g_backend)
         g_backend->close();
     g_backend = NULL;
@@ -681,6 +690,7 @@ bool radio_io_get_frequency(bool allow_poll, uint64_t *frequency_hz,
 
 #ifdef RADIO_IO_TEST
 static int g_test_backend_result = 0;
+static int g_test_backend_last_set = -1;   /* last value set(): 1 on, 0 off */
 
 static int radio_io_test_backend_open(const ptt_config_t *config)
 {
@@ -690,7 +700,7 @@ static int radio_io_test_backend_open(const ptt_config_t *config)
 
 static int radio_io_test_backend_set(bool on)
 {
-    (void)on;
+    g_test_backend_last_set = on ? 1 : 0;
     return g_test_backend_result;
 }
 
@@ -724,6 +734,7 @@ void radio_io_test_install_backend(int set_result)
     pthread_mutex_lock(&g_radio_mutex);
     g_backend = &RADIO_IO_TEST_BACKEND;
     g_test_backend_result = set_result;
+    g_test_backend_last_set = -1;
     g_ptt_active = false;
     g_last_ptt_off_ms = UINT64_MAX;
     pthread_mutex_unlock(&g_radio_mutex);
@@ -735,6 +746,11 @@ bool radio_io_test_ptt_active(void)
     bool active = g_ptt_active;
     pthread_mutex_unlock(&g_radio_mutex);
     return active;
+}
+
+int radio_io_test_backend_last_set(void)
+{
+    return g_test_backend_last_set;
 }
 
 uint64_t radio_io_test_last_ptt_off_ms(void)

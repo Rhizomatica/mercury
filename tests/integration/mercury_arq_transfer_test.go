@@ -23,7 +23,12 @@ import (
 // MERCURY_CH_NO can be set to a noise density in dB (e.g. "-8" for an SNR
 // of roughly -6 dB in 3 kHz) to exercise the link under channel noise;
 // the default -100 is effectively a clean channel.
-func TestMercuryARQTransfer(t *testing.T) {
+func TestMercuryARQTransfer(t *testing.T) { runARQTransfer(t, false) }
+
+// runARQTransfer is TestMercuryARQTransfer's body.  mfskConnect says the
+// connect is expected to happen on the MFSK floor rather than DATAC16, which
+// changes which control frames each end must have decoded.
+func runARQTransfer(t *testing.T, mfskConnect bool) {
 	repoRoot := mustRepoRoot(t)
 	bin := locateOrBuildMercury(t, repoRoot)
 
@@ -130,6 +135,10 @@ func TestMercuryARQTransfer(t *testing.T) {
 			"-p", fmt.Sprint(port),
 			"-b", fmt.Sprint(bcastPort),
 			"-m", "1",
+			// -v is what makes "Decoded frame mode=N (NAME)" appear; without
+			// it the only mode strings in the log are the startup mode-pool
+			// listing, which says nothing about what carried the payload.
+			"-v",
 			"-C", filepath.Join(t.TempDir(), "missing-mercury.ini"),
 		)
 		// MERCURY_TEST_VERBOSE=1 runs both peers at DEBUG.  Off by default:
@@ -344,9 +353,34 @@ func TestMercuryARQTransfer(t *testing.T) {
 			log.Write(data)
 		}
 		logs[name] = log.String()
-		for _, mode := range []string{"DATAC16", "DATAC15"} {
-			if !strings.Contains(logs[name], mode) {
-				failWithLogs("instance %s log has no %s activity", name, mode)
+		// Assert on frames that were actually decoded, not on any mention of
+		// the mode name.  The old check matched bare "DATAC15", which the
+		// startup line "Initialized persistent FreeDV mode pool
+		// (DATAC16/DATAC15/...)" satisfies on every run -- so it passed even
+		// after DATAC15 was dropped from the ladder entirely, and would have
+		// passed if the MFSK floor had never keyed once.  A ladder rung that
+		// silently stops being exercised is exactly what this must catch.
+		// Both ends decode control frames; payload flows A->B, so only the
+		// caller keys MFSK and only the answerer decodes it.
+		want := []string{"Decoded frame mode=23 (DATAC16)"}
+		if name == "A" {
+			want = append(want, "Switched modem mode to 100 (MFSK)")
+		} else {
+			want = append(want, "Decoded frame mode=100 (MFSK)")
+		}
+		// Connected on the MFSK floor: the caller's CALL and the answerer's
+		// ACCEPT both went out on MFSK, so the caller need not have decoded any
+		// DATAC16 at all -- and must have sent and heard MFSK instead.
+		if mfskConnect {
+			if name == "A" {
+				want = []string{"CALL on the MFSK floor", "Decoded frame mode=100 (MFSK)"}
+			} else {
+				want = []string{"ACCEPT on the MFSK floor", "Decoded frame mode=100 (MFSK)"}
+			}
+		}
+		for _, w := range want {
+			if !strings.Contains(logs[name], w) {
+				failWithLogs("instance %s log has no %q", name, w)
 			}
 		}
 	}
@@ -365,4 +399,25 @@ func TestMercuryARQTransfer(t *testing.T) {
 			"it fell through to the first data frame (correlator window closed too early?)")
 	}
 	t.Logf("ARQ transfer complete over ch (No=%.1f dB): %d bytes delivered", params.No_dBHz, len(payload))
+}
+
+// TestMercuryARQMFSKCallToListener: a CALL only the MFSK floor can carry must
+// reach a station that is just LISTENING.
+//
+// The forward path (caller -> answerer) is set to AWGN at SNR3k -13.8 dB,
+// where DATAC16 does not decode but MFSK does; the reverse path is clean.  The
+// caller escalates to MFSK after its fast DATAC16 CALLs.  A listener's payload
+// decoder is on the listen (-m) mode and its control decoder on DATAC16, so
+// without the dedicated MFSK call listener it hears nothing: measured, 3 MFSK
+// CALLs and no connect.  With it, the first MFSK CALL is answered on MFSK and
+// the transfer completes.
+func TestMercuryARQMFSKCallToListener(t *testing.T) {
+	t.Setenv("MERCURY_CH_ENGINE", "ch")
+	t.Setenv("MERCURY_CH_FADING", "")
+	t.Setenv("MERCURY_CH_FADING_FWD", "")
+	t.Setenv("MERCURY_CH_FADING_REV", "")
+	t.Setenv("MERCURY_CH_NO", "-15")
+	t.Setenv("MERCURY_CH_NO_FWD", "-1")
+	t.Setenv("MERCURY_CH_NO_REV", "-15")
+	runARQTransfer(t, true)
 }
