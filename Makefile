@@ -207,7 +207,7 @@ else
 BINARY = mercury
 endif
 
-LDFLAGS=$(FFAUDIO_LINKFLAGS) -lm $(HAMLIB_LDFLAGS) $(HIDAPI_LDFLAGS) $(ATOMIC_LDFLAGS)
+LDFLAGS=$(FFAUDIO_LINKFLAGS) -lm $(HAMLIB_LDFLAGS) $(HIDAPI_LDFLAGS) $(ATOMIC_LDFLAGS) $(WS_TLS_LDFLAGS)
 
 MERCURY_LINK_INPUTS = \
 	main.o common/cfg_utils.o common/iniparser/iniparser.o common/iniparser/dictionary.o \
@@ -217,8 +217,10 @@ MERCURY_LINK_INPUTS = \
 	audioio/audioio.a common/os_interop.o common/ring_buffer_posix.o common/shm_posix.o common/crc6.o common/hermes_log.o common/virtual_clock.o \
 	common/chan.o common/queue.o common/mercury_engine.o common/mercury_cli.o common/mercury_modes.o common/message_store.o data_interfaces/tcp_interfaces.o data_interfaces/net.o \
 	gui_interface/ui_communication.o gui_interface/ui_status.o gui_interface/ui_devices.o gui_interface/ui_history.o \
-	gui_interface/websocket/mongoose.o gui_interface/websocket/mercury_websocket.o \
-	gui_interface/websocket/web_packed.o \
+	gui_interface/websocket/mercury_websocket.o gui_interface/websocket/ws_server.o \
+	gui_interface/websocket/ws_crypto.o gui_interface/websocket/ws_frame.o \
+	gui_interface/websocket/ws_json.o \
+	gui_interface/websocket/ws_tls.o gui_interface/websocket/web_packed.o \
 	radio_io/radio_io.o radio_io/serial_ptt.o radio_io/cm108_ptt.o $(HIDAPI_OBJS)
 
 ifeq ($(HAVE_HERMES_SHM),1)
@@ -336,8 +338,10 @@ MERCURY_CORE_OBJS = \
 	common/chan.o common/queue.o common/mercury_engine.o common/mercury_cli.o common/mercury_modes.o common/message_store.o \
 	data_interfaces/tcp_interfaces.o data_interfaces/net.o \
 	gui_interface/ui_communication.o gui_interface/ui_status.o gui_interface/ui_devices.o gui_interface/ui_history.o \
-	gui_interface/websocket/mongoose.o gui_interface/websocket/mercury_websocket.o \
-	gui_interface/websocket/web_packed.o \
+	gui_interface/websocket/mercury_websocket.o gui_interface/websocket/ws_server.o \
+	gui_interface/websocket/ws_crypto.o gui_interface/websocket/ws_frame.o \
+	gui_interface/websocket/ws_json.o \
+	gui_interface/websocket/ws_tls.o gui_interface/websocket/web_packed.o \
 	radio_io/radio_io.o radio_io/serial_ptt.o radio_io/cm108_ptt.o $(HIDAPI_OBJS)
 
 ifeq ($(HAVE_HERMES_SHM),1)

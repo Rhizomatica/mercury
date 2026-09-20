@@ -32,10 +32,11 @@ FUZZ_LDFLAGS = $(FUZZ_SAN) -lm -lpthread
 PROJECT_INC = -I../../common -I../../modem -I../../datalink_arq \
               -I../../datalink_broadcast -I../../data_interfaces \
               -I../../gui_interface -I../../radio_io \
-              -I../../audioio/ffaudio -I../../modem/freedv
+              -I../../audioio/ffaudio -I../../modem/freedv \
+              -I../../gui_interface/websocket
 
 # Populated by later tasks.
-FUZZ_BINS = fuzz_arq_hdr fuzz_frame_header fuzz_kiss fuzz_arith
+FUZZ_BINS = fuzz_arq_hdr fuzz_frame_header fuzz_kiss fuzz_arith fuzz_ws_json
 
 # Number of iterations for the smoke `check` run (kept short: this is a
 # build+no-crash gate, not a fuzzing campaign).
@@ -87,4 +88,8 @@ fuzz_kiss: fuzz_kiss.c ../../datalink_broadcast/kiss.c
 	$(FUZZ_CC) $(FUZZ_CFLAGS) $(PROJECT_INC) -o $@ $^ $(FUZZ_LDFLAGS)
 
 fuzz_arith: fuzz_arith.c ../../datalink_arq/arith.c
+	$(FUZZ_CC) $(FUZZ_CFLAGS) $(PROJECT_INC) -o $@ $^ $(FUZZ_LDFLAGS)
+
+# Reachable by anything that can open the UI port, which is unauthenticated.
+fuzz_ws_json: fuzz_ws_json.c ../../gui_interface/websocket/ws_json.c
 	$(FUZZ_CC) $(FUZZ_CFLAGS) $(PROJECT_INC) -o $@ $^ $(FUZZ_LDFLAGS)

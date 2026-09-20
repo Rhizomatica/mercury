@@ -4,6 +4,16 @@ These libFuzzer targets exercise the parsers that consume untrusted bytes off th
 air, off the TCP/KISS link, or from the WebSocket UI. They are **opt-in**: they are
 not part of the blocking CI gates and require clang with libFuzzer.
 
+## Targets
+
+| Target | Parses |
+| --- | --- |
+| `fuzz_arq_hdr` | ARQ frame headers off the air |
+| `fuzz_frame_header` | modem framer headers |
+| `fuzz_kiss` | KISS frames off the TCP link |
+| `fuzz_arith` | the arithmetic coder |
+| `fuzz_ws_json` | UI commands off the WebSocket port (unauthenticated) |
+
 ## Build
 
     make -C tests/fuzz            # build all targets (needs clang)
@@ -45,22 +55,9 @@ not covered here: it routes every command through `arq_submit_tcp_cmd()` and rea
 several external ring buffers, so a target needs a stub layer. See the "Roadmap"
 section below.
 
-The WebSocket JSON command parser (`parse_ws_command` in
-`gui_interface/websocket/mercury_websocket.c`) is also deferred: the translation
-unit includes mongoose.h (a ~1000-line single-file HTTP/WS amalgamation that
-references TLS, filesystem, and network symbols at link time). Including the .c
-whole-file to reach the two `static` helpers pulls in all those link dependencies.
-A clean harness would require either linking the full mongoose amalgamation
-(feasible but heavy, and mongoose is not part of the declared scope) or splitting
-the two JSON helpers into a separate header, which would touch production code.
-Both options are documented as follow-up work.
 
 ## Roadmap / future work
 
-- **WebSocket JSON command parser** (`parse_ws_command` / `json_find_key`): extract
-  the two JSON helpers to a separate `gui_interface/websocket/ws_json.c` so a fuzz
-  target can reach them without dragging in the mongoose link surface. A
-  `fuzz_ws_json.c` harness is already checked in; it will build once that split lands.
 - **TNC control-command parser** (`process_control_bytes`): needs a stub layer for
   `arq_submit_tcp_cmd()`, the ARQ ring buffers, and socket state before it can be a
   clean target. Worth doing next - it parses attacker-influenced TCP text.

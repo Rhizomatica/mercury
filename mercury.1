@@ -159,7 +159,13 @@ Requires
 .B \-T
 Use WSS (WebSocket Secure / TLS) for UI communication instead of plain WS.
 Requires
-.BR \-G .
+.BR \-G ,
+and a build with OpenSSL, which is the Linux packages; the Windows and macOS
+builds serve plain WS only and refuse this option at startup.
+The certificate and key are read from
+.I /etc/ssl/certs/hermes.radio.crt
+and
+.IR /etc/ssl/private/hermes.radio.key .
 .TP
 .B \-W
 Disable waterfall/spectrum data sent to the UI (saves CPU).

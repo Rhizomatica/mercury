@@ -67,7 +67,7 @@ TEST_BINS = test_ring_buffer test_arq_protocol test_arq_timing test_arq_fsm \
             test_mercury_prng test_bcast_file \
             test_ofdm_acq test_ui_status test_ui_devices test_ui_ptt_persist test_tx_pacing test_radio_port \
             test_radio_io_frequency test_mfsk \
-			test_message_store test_ui_history
+			test_message_store test_ui_history test_ws_protocol
 
 .PHONY: all test clean
 
@@ -257,6 +257,23 @@ test_radio_port: radio_io/test_radio_port.c $(UNITY_SRC) ../radio_io/radio_port.
 test_radio_io_frequency: radio_io/test_radio_io_frequency.c $(UNITY_SRC) \
                          ../radio_io/radio_io.c ../common/hermes_log.c
 	$(CC) $(CFLAGS) -U HAVE_HAMLIB -U HAVE_HERMES_SHM -DRADIO_IO_TEST -o $@ $(filter %.c %.a %.o,$^) $(LDFLAGS)
+
+# WebSocket wire format (RFC 6455).  Mercury speaks this protocol with its own
+# code since the vendored GPL-2.0-only library was removed, so the handshake
+# digest and the frame codec are ours to keep correct.  Pure functions only --
+# no sockets, no threads.
+test_ws_protocol: gui_interface/test_ws_protocol.c $(UNITY_SRC) \
+                  ../gui_interface/websocket/ws_crypto.c \
+                  ../gui_interface/websocket/ws_frame.c \
+                  ../gui_interface/websocket/ws_json.c \
+                  ../gui_interface/websocket/ws_crypto.h \
+                  ../gui_interface/websocket/ws_frame.h \
+                  ../gui_interface/websocket/ws_json.h
+	$(CC) $(CFLAGS) -I../gui_interface/websocket -o $@ \
+	    gui_interface/test_ws_protocol.c $(UNITY_SRC) \
+	    ../gui_interface/websocket/ws_crypto.c \
+	    ../gui_interface/websocket/ws_frame.c \
+	    ../gui_interface/websocket/ws_json.c $(LDFLAGS)
 
 # UI status wire format (embedded struct vs remote JSON must not drift)
 # ui_status.h is a PREREQUISITE: the device-id widths under test are #defines

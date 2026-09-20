@@ -23,13 +23,18 @@ include ../config.mk
 
 CFLAGS_COMMON = $(COMMON_CFLAGS) -Wno-stringop-truncation -I../datalink_arq -I../data_interfaces -I../common -I../modem/freedv
 
-# Mongoose / WebSocket flags
-# Use mongoose built-in TLS backend.
-WS_CFLAGS = $(COMMON_CFLAGS) -Iwebsocket -DMG_TLS=MG_TLS_BUILTIN -DMG_ENABLE_PACKED_FS=1
+# WebSocket server flags.  WS_TLS_CFLAGS is set by config.mk and carries
+# -DWS_HAVE_OPENSSL=1 plus the OpenSSL include path where wss:// is
+# supported (Linux); elsewhere it is empty and the server refuses wss://
+# at startup instead of failing per connection.
+WS_CFLAGS = $(COMMON_CFLAGS) -Iwebsocket -I../common $(WS_TLS_CFLAGS)
 
 # Objects
 OBJS = ui_communication.o ui_status.o ui_devices.o ui_history.o
-WS_OBJS = websocket/mongoose.o websocket/mercury_websocket.o websocket/web_packed.o
+WS_OBJS = websocket/mercury_websocket.o websocket/ws_server.o \
+          websocket/ws_crypto.o websocket/ws_frame.o websocket/ws_json.o \
+          websocket/ws_tls.o \
+          websocket/web_packed.o
 
 all: $(OBJS) $(WS_OBJS)
 
@@ -45,11 +50,23 @@ ui_status.o: ui_status.c ui_status.h
 ui_history.o: ui_history.c ui_history.h
 	$(CC) $(CFLAGS_COMMON) -c ui_history.c -o ui_history.o
 
-websocket/mongoose.o: websocket/mongoose.c websocket/mongoose.h
-	$(CC) $(WS_CFLAGS) -Wno-maybe-uninitialized -c websocket/mongoose.c -o websocket/mongoose.o
-
 websocket/mercury_websocket.o: websocket/mercury_websocket.c websocket/mercury_websocket.h
 	$(CC) $(WS_CFLAGS) -c websocket/mercury_websocket.c -o websocket/mercury_websocket.o
+
+websocket/ws_server.o: websocket/ws_server.c websocket/ws_server.h
+	$(CC) $(WS_CFLAGS) -c websocket/ws_server.c -o websocket/ws_server.o
+
+websocket/ws_crypto.o: websocket/ws_crypto.c websocket/ws_crypto.h
+	$(CC) $(WS_CFLAGS) -c websocket/ws_crypto.c -o websocket/ws_crypto.o
+
+websocket/ws_frame.o: websocket/ws_frame.c websocket/ws_frame.h
+	$(CC) $(WS_CFLAGS) -c websocket/ws_frame.c -o websocket/ws_frame.o
+
+websocket/ws_json.o: websocket/ws_json.c websocket/ws_json.h
+	$(CC) $(WS_CFLAGS) -c websocket/ws_json.c -o websocket/ws_json.o
+
+websocket/ws_tls.o: websocket/ws_tls.c websocket/ws_tls.h
+	$(CC) $(WS_CFLAGS) -c websocket/ws_tls.c -o websocket/ws_tls.o
 
 # The UI pages are compiled INTO the binary.  Generated at build time from
 # websocket/web/ and never committed: a checked-in generated file drifts from
@@ -63,7 +80,7 @@ websocket/mercury_websocket.o: websocket/mercury_websocket.c websocket/mercury_w
 websocket/web_packed.c: websocket/pack_web.sh $(wildcard websocket/web/*)
 	sh websocket/pack_web.sh websocket/web websocket/web_packed.c
 
-websocket/web_packed.o: websocket/web_packed.c
+websocket/web_packed.o: websocket/web_packed.c websocket/web_assets.h
 	$(CC) $(WS_CFLAGS) -c websocket/web_packed.c -o websocket/web_packed.o
 
 clean:

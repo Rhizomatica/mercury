@@ -3,7 +3,7 @@ Section: comm
 Priority: optional
 Maintainer: Rafael Diniz <rafael@riseup.net>
 Build-Depends: debhelper-compat (= 13), libasound2-dev, libpulse-dev, libhamlib-dev,
- golang-go, libgl1-mesa-dev, xorg-dev
+ golang-go, libgl1-mesa-dev, xorg-dev, libssl-dev, pkgconf
 Standards-Version: 4.6.2
 Homepage: https://github.com/Rhizomatica/mercury
 Vcs-Git: https://github.com/Rhizomatica/mercury.git
