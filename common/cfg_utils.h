@@ -29,6 +29,14 @@
 #define CFG_KEY_UI_ENABLED          "main:ui_enabled"
 #define CFG_KEY_UI_PORT             "main:ui_port"
 #define CFG_KEY_UI_PROTOCOL         "main:ui_protocol"
+#define CFG_KEY_UI_TLS_CERT         "main:ui_tls_cert"
+#define CFG_KEY_UI_TLS_KEY          "main:ui_tls_key"
+
+/* Defaults for wss://.  Overridable because these are only reachable by root
+ * on Linux and do not exist at all on Windows or macOS, which made wss://
+ * impossible to actually use -- or test -- anywhere else. */
+#define CFG_SSL_CERT "/etc/ssl/certs/hermes.radio.crt"
+#define CFG_SSL_KEY  "/etc/ssl/private/hermes.radio.key"
 #define CFG_KEY_WATERFALL_ENABLED   "main:waterfall_enabled"
 /* Legacy radio keys.  Read indefinitely, but cfg_write emits [ptt]. */
 #define CFG_KEY_RADIO_MODEL         "main:radio_model"
@@ -82,6 +90,8 @@ typedef struct {
     bool     ui_enabled;
     uint16_t ui_port;
     bool     tls_enabled;           /* false = ws, true = wss */
+    char     tls_cert[512];         /* PEM certificate chain, wss only */
+    char     tls_key[512];          /* PEM private key, wss only */
     bool     waterfall_enabled;
     ptt_config_t ptt;               /* selected PTT method and backend config */
     char     input_device[512];

@@ -761,6 +761,17 @@ static int conn_process_http(ws_conn_t *c)
         }
 
         hdr_len = (size_t) (found - start) + 4;
+
+        /* Refuse an over-long header block even when it arrived complete.
+         * Checking only the incomplete case made the limit depend on how the
+         * request was split across reads: the same oversized request was
+         * refused when it trickled in and served when it came in one piece. */
+        if (hdr_len > WS_MAX_HTTP_HEADER)
+        {
+            http_reply(c, 431, "Request Header Fields Too Large", NULL,
+                       "text/plain", "headers too large", 17, true);
+            return 0;
+        }
     }
 
     if (conn_handle_request(c, start, hdr_len) != 0)

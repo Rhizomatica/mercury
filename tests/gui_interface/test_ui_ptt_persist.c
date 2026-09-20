@@ -110,9 +110,10 @@ int  ws_broadcast_binary(ws_ctx_t *ctx, const void *data, size_t len)
 { (void)ctx; (void)data; (void)len; return 0; }
 int  ws_broadcast_json(ws_ctx_t *ctx, const char *json) { (void)ctx; (void)json; return 0; }
 int  ws_init(ws_ctx_t *ctx, uint16_t port, ws_command_callback_t cmd_callback, void *cb_data,
-             ws_connect_callback_t connect_callback, void *connect_cb_data, bool tls_enabled)
+             ws_connect_callback_t connect_callback, void *connect_cb_data, bool tls_enabled,
+             const char *tls_cert_path, const char *tls_key_path)
 { (void)ctx; (void)port; (void)cmd_callback; (void)cb_data; (void)connect_callback;
-  (void)connect_cb_data; (void)tls_enabled; return 0; }
+  (void)connect_cb_data; (void)tls_enabled; (void)tls_cert_path; (void)tls_key_path; return 0; }
 void ws_shutdown(ws_ctx_t *ctx) { (void)ctx; }
 
 /* ---- fixture ------------------------------------------------------------- */
