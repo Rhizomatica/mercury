@@ -1,100 +1,72 @@
 /* Mercury backend websocket
  *
  * Copyright (C) 2026 Rhizomatica
- * Author: Pedro Messetti <pedromessetti.rhizomatica@gmail.com>
+ * Authors: Pedro Messetti <pedromessetti.rhizomatica@gmail.com>
+ *          Rafael Diniz <rafael@riseup.net>
  *
- * This is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 3, or (at your option)
- * any later version.
+ * SPDX-License-Identifier: GPL-3.0-or-later
  *
- * This software is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this software; see the file COPYING.  If not, write to
- * the Free Software Foundation, Inc., 51 Franklin Street,
- * Boston, MA 02110-1301, USA.
- *
+ * Bidirectional WebSocket server for the Mercury C backend <-> UI link,
+ * used by both the browser pages and the Fyne client.  The transport lives
+ * in ws_server.c; this is the API the rest of Mercury sees.
  */
-
-// Bidirectional WebSocket server for Mercury C backend <-> MercuryQT UI
-// communication. Uses mongoose for the WebSocket transport layer, enabling WSS
-// when a TLS backend is compiled in.
-// Based on the sbitx_websocket implementation (unidirectional) but extended
-// to support receiving commands from the UI (bidirectional).
 
 #ifndef MERCURY_WEBSOCKET_H_
 #define MERCURY_WEBSOCKET_H_
 
-#include <pthread.h>
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
-// ---- SSL certificate and key paths ----
+#include "ws_json.h"     /* ws_command_t */
+
+/* ---- SSL certificate and key paths (wss:// only) ---- */
 #define CFG_SSL_CERT "/etc/ssl/certs/hermes.radio.crt"
 #define CFG_SSL_KEY  "/etc/ssl/private/hermes.radio.key"
 
-// ---- WebSocket server defaults ----
+/* ---- WebSocket server defaults ---- */
 #define WS_MAX_MESSAGE_SIZE   8192
-#define WS_POLL_INTERVAL_MS   40
 
-// ---- Incoming command from UI (parsed from JSON) ----
-typedef struct {
-    char command[64];   // e.g. "set_audio_config", "set_ptt_config"
-    char value[256];    // primary value (e.g. device id, channel name)
-    char value2[256];   // optional second value (e.g. device path for radio config)
-    char value3[256];   // optional third value (e.g. input channel for audio config)
-    char value4[256];   // optional fourth value (e.g. Hamlib speed for PTT config)
-    char value5[256];   // optional fifth value (e.g. serial PTT line)
-    char value6[256];   // optional sixth value (e.g. serial PTT inversion)
-    char value7[256];   // optional seventh value (e.g. CM108 GPIO pin)
-} ws_command_t;
-
-// Callback invoked on the websocket thread when the UI sends a command.
-// The implementation should be thread-safe. Return 0 on success.
+/* Callback invoked on the websocket thread when the UI sends a command.
+ * The implementation should be thread-safe.  Return 0 on success. */
 typedef int (*ws_command_callback_t)(const ws_command_t *cmd, void *user_data);
 
-// Callback invoked on the websocket thread when a new client connects.
+/* Callback invoked on the websocket thread when a new client connects. */
 typedef void (*ws_connect_callback_t)(void *user_data);
 
-// ---- WebSocket server context ----
+/* ---- WebSocket server context ---- */
 typedef struct {
-    pthread_t ws_tid;                  // websocket server thread
-    volatile bool running;             // thread run flag (set false to stop)
+    volatile bool running;             /* true between ws_init and ws_shutdown */
 
-    // Runtime TLS mode: false = plain WS (default), true = WSS (requires certs)
+    /* Runtime TLS mode: false = plain WS (default), true = WSS.
+     * WSS needs a build with OpenSSL; without one ws_init() fails and says so
+     * rather than silently falling back to plaintext. */
     bool tls_enabled;
 
-    // Callback for incoming UI commands
+    /* Callback for incoming UI commands */
     ws_command_callback_t cmd_callback;
-    void *cmd_callback_data;           // opaque pointer passed to cmd_callback
+    void *cmd_callback_data;           /* opaque pointer passed to cmd_callback */
 
-    // Callback invoked when a new WebSocket client connects
+    /* Callback invoked when a new WebSocket client connects */
     ws_connect_callback_t connect_callback;
-    void *connect_callback_data;       // opaque pointer passed to connect_callback
+    void *connect_callback_data;       /* opaque pointer passed to the callback */
 
-    // Server listen URL (e.g. "wss://0.0.0.0:10000" or "ws://0.0.0.0:10000")
+    /* Server listen URL, for logging (e.g. "ws://0.0.0.0:10000") */
     char listen_url[128];
-
-    // Web root for serving static files (e.g. test.html)
 } ws_ctx_t;
 
-// ---- Public API ----
+/* ---- Public API ---- */
 
 /**
  * Initialise and start the WebSocket server thread.
  *
- * @param ctx            WebSocket context (caller-allocated, zeroed before call).
+ * @param ctx            WebSocket context (caller-allocated).
  * @param port           WebSocket listen port (e.g. 10000). Listens on 0.0.0.0.
- *                       Pass NULL to disable static file serving.
- * @param cmd_callback   Function called when a command is received from the UI.
+ * @param cmd_callback   Called when a command is received from the UI.
  *                       May be NULL if no command handling is needed yet.
  * @param cb_data        Opaque pointer forwarded to cmd_callback.
- * @param tls_enabled    false = plain WS (default); true = WSS using mongoose
- *                       built-in TLS with certs at CFG_SSL_CERT / CFG_SSL_KEY.
+ * @param tls_enabled    false = plain WS (default); true = WSS using the certs
+ *                       at CFG_SSL_CERT / CFG_SSL_KEY.
  * @return 0 on success, -1 on error.
  */
 int ws_init(ws_ctx_t *ctx,
@@ -106,32 +78,24 @@ int ws_init(ws_ctx_t *ctx,
             bool tls_enabled);
 
 /**
- * Send a JSON text message to all connected WebSocket clients.
+ * Queue a JSON text message for all connected WebSocket clients.
  * Thread-safe - may be called from any thread.
  *
- * @param ctx   WebSocket context.
- * @param json  Null-terminated JSON string.
- * @return number of clients the message was sent to, or -1 on error.
+ * @return 0 when queued, -1 on error.
  */
 int ws_broadcast_json(ws_ctx_t *ctx, const char *json);
 
 /**
- * Send raw binary data to all connected WebSocket clients.
- * Useful for spectrum / waterfall binary frames.
+ * Queue raw binary data for all connected WebSocket clients.
+ * Used for the spectrum / waterfall frames.  Thread-safe.
  *
- * @param ctx   WebSocket context.
- * @param data  Binary payload.
- * @param len   Payload length in bytes.
- * @return number of clients the message was sent to, or -1 on error.
+ * @return 0 when queued, -1 on error.
  */
 int ws_broadcast_binary(ws_ctx_t *ctx, const void *data, size_t len);
 
 /**
- * Gracefully shut down the WebSocket server.
- * Joins the server thread and frees mongoose resources.
- *
- * @param ctx  WebSocket context previously initialised with ws_init().
+ * Gracefully shut down the WebSocket server, joining its thread.
  */
 void ws_shutdown(ws_ctx_t *ctx);
 
-#endif // MERCURY_WEBSOCKET_H_
+#endif /* MERCURY_WEBSOCKET_H_ */

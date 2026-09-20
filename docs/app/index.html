@@ -337,7 +337,13 @@ let writeIdx = 0;
 let linesWritten = 0;
 
 // Connection
-let currentScheme = "wss";
+// Match the scheme the page itself was served over: a page from mercury's
+// own HTTP server is plain http, so ws connects on the first try, while the
+// https-hosted PWA must use wss anyway (a browser blocks ws from https).
+// Guessing wss first cost every plain install two failed attempts plus
+// RECONNECT_MS before it fell back, and wss needs a build with TLS, which
+// the Windows and macOS packages do not have.
+let currentScheme = (location.protocol === "https:") ? "wss" : "ws";
 let schemeFailures = 0;
 let reconnectTimer = null;
 let inactivityTimer = null;
