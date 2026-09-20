@@ -101,6 +101,9 @@ ifneq ($(filter arm%,$(TARGET_MACHINE)),)
 ifeq ($(filter arm64%,$(TARGET_MACHINE)),)
   ATOMIC_LDFLAGS = -latomic
 endif
+ifneq ($(filter m68k%,$(TARGET_MACHINE)),)
+  ATOMIC_LDFLAGS = -latomic
+endif
 endif
 
 GIT_HASH ?= $(shell git rev-parse --short=8 HEAD 2>/dev/null || echo unknown000)
