@@ -404,9 +404,14 @@ libmercury_core_w64.a: $(HIDAPI_W64_OBJ)
 # mercury_link_linux.go's #cgo directive, because hidapi is OPTIONAL: only this
 # Makefile knows whether pkg-config found it.  Without this, cm108_ptt.o's
 # hid_* references go unresolved on any host that HAS hidapi installed.
+#
+# WS_TLS_LDFLAGS rides along for the same reason: whether the websocket server
+# has an OpenSSL backend is decided by pkg-config in config.mk, so only the
+# Makefile knows whether ws_tls.o carries SSL_* references.  It is empty on
+# Windows and macOS, which build without TLS.
 fyne-ui: libmercury_core.a
 	@echo "Building Mercury UI (native: Linux or macOS)..."
-	cd $(FYNE_UI_DIR) && CGO_ENABLED=1 CGO_LDFLAGS="$(HIDAPI_LDFLAGS)" go build -tags mercury_embedded \
+	cd $(FYNE_UI_DIR) && CGO_ENABLED=1 CGO_LDFLAGS="$(HIDAPI_LDFLAGS) $(WS_TLS_LDFLAGS)" go build -tags mercury_embedded \
 		-ldflags "-X main.coreBuildID=$$(cksum $(abspath libmercury_core.a) | cut -d' ' -f1)" \
 		-o $(abspath mercury-ui) .
 	@echo "  -> mercury-ui"
