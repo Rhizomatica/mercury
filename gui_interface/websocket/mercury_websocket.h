@@ -20,10 +20,6 @@
 
 #include "ws_json.h"     /* ws_command_t */
 
-/* ---- SSL certificate and key paths (wss:// only) ---- */
-#define CFG_SSL_CERT "/etc/ssl/certs/hermes.radio.crt"
-#define CFG_SSL_KEY  "/etc/ssl/private/hermes.radio.key"
-
 /* ---- WebSocket server defaults ---- */
 #define WS_MAX_MESSAGE_SIZE   8192
 
@@ -65,8 +61,9 @@ typedef struct {
  * @param cmd_callback   Called when a command is received from the UI.
  *                       May be NULL if no command handling is needed yet.
  * @param cb_data        Opaque pointer forwarded to cmd_callback.
- * @param tls_enabled    false = plain WS (default); true = WSS using the certs
- *                       at CFG_SSL_CERT / CFG_SSL_KEY.
+ * @param tls_enabled    false = plain WS (default); true = WSS.
+ * @param tls_cert_path  PEM certificate chain, used only when tls_enabled.
+ * @param tls_key_path   PEM private key, used only when tls_enabled.
  * @return 0 on success, -1 on error.
  */
 int ws_init(ws_ctx_t *ctx,
@@ -75,7 +72,9 @@ int ws_init(ws_ctx_t *ctx,
             void *cb_data,
             ws_connect_callback_t connect_callback,
             void *connect_cb_data,
-            bool tls_enabled);
+            bool tls_enabled,
+            const char *tls_cert_path,
+            const char *tls_key_path);
 
 /**
  * Queue a JSON text message for all connected WebSocket clients.

@@ -109,7 +109,9 @@ int ws_init(ws_ctx_t *ctx,
             void *cb_data,
             ws_connect_callback_t connect_callback,
             void *connect_cb_data,
-            bool tls_enabled)
+            bool tls_enabled,
+            const char *tls_cert_path,
+            const char *tls_key_path)
 {
     ws_server_opts_t opts;
 
@@ -136,8 +138,8 @@ int ws_init(ws_ctx_t *ctx,
     opts.ws_path = "/websocket";
     opts.max_message_size = WS_MAX_MESSAGE_SIZE;
     opts.tls_enabled = tls_enabled;
-    opts.tls_cert_path = CFG_SSL_CERT;
-    opts.tls_key_path = CFG_SSL_KEY;
+    opts.tls_cert_path = tls_cert_path;
+    opts.tls_key_path = tls_key_path;
     opts.asset_lookup = ws_asset_find;
     opts.on_connect = on_ws_connect;
     opts.on_message = on_ws_message;

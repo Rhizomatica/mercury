@@ -1021,7 +1021,9 @@ int ui_comm_init(ui_ctx_t *ctx, uint16_t ws_port, bool tls_enabled,
     if (ws_init(&ctx->ws, ws_port,
                 ws_command_handler, ctx,
                 ws_connect_handler, ctx,
-                tls_enabled) != 0) {
+                tls_enabled,
+                initial_cfg ? initial_cfg->tls_cert : CFG_SSL_CERT,
+                initial_cfg ? initial_cfg->tls_key  : CFG_SSL_KEY) != 0) {
         HLOGE(UI_LOG_TAG, "Failed to init WebSocket server on port %u", ws_port);
         return -1;
     }

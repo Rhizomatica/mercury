@@ -37,6 +37,8 @@ void cfg_set_defaults(mercury_config *cfg)
     cfg->ui_enabled         = false;
     cfg->ui_port            = UI_DEFAULT_PORT;       /* 10000  */
     cfg->tls_enabled        = false;                 /* ws     */
+    snprintf(cfg->tls_cert, sizeof(cfg->tls_cert), "%s", CFG_SSL_CERT);
+    snprintf(cfg->tls_key,  sizeof(cfg->tls_key),  "%s", CFG_SSL_KEY);
     cfg->waterfall_enabled  = true;
     cfg->ptt.method         = PTT_METHOD_NONE;
     cfg->ptt.device[0]      = '\0';
@@ -215,6 +217,17 @@ bool cfg_read(mercury_config *cfg, const char *ini_path)
 
     s = iniparser_getstring(ini, CFG_KEY_UI_PROTOCOL, cfg->tls_enabled ? "wss" : "ws");
     cfg->tls_enabled = (s && !strcmp(s, "wss"));
+
+    /* NULL as the fallback, not cfg->tls_cert: iniparser hands the default
+     * straight back when the key is absent, and snprintf'ing a buffer onto
+     * itself is undefined -- it emptied the path instead of keeping it. */
+    s = iniparser_getstring(ini, CFG_KEY_UI_TLS_CERT, NULL);
+    if (s && *s)
+        snprintf(cfg->tls_cert, sizeof(cfg->tls_cert), "%s", s);
+
+    s = iniparser_getstring(ini, CFG_KEY_UI_TLS_KEY, NULL);
+    if (s && *s)
+        snprintf(cfg->tls_key, sizeof(cfg->tls_key), "%s", s);
 
     b = iniparser_getboolean(ini, CFG_KEY_WATERFALL_ENABLED, cfg->waterfall_enabled ? 1 : 0);
     cfg->waterfall_enabled = (bool) b;
@@ -487,6 +500,8 @@ bool cfg_write(const mercury_config *cfg, const char *ini_path)
     fprintf(f, "ui_enabled = %s\n",      cfg->ui_enabled ? "true" : "false");
     fprintf(f, "ui_port = %d\n",          cfg->ui_port);
     fprintf(f, "ui_protocol = %s\n",      cfg->tls_enabled ? "wss" : "ws");
+    fprintf(f, "ui_tls_cert = %s\n",      cfg->tls_cert);
+    fprintf(f, "ui_tls_key = %s\n",       cfg->tls_key);
     fprintf(f, "waterfall_enabled = %s\n", cfg->waterfall_enabled ? "true" : "false");
     cfg_escape_str(escaped, sizeof(escaped), cfg->input_device);
     fprintf(f, "input_device = \"%s\"\n",  escaped);

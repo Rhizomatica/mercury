@@ -160,12 +160,18 @@ Requires
 Use WSS (WebSocket Secure / TLS) for UI communication instead of plain WS.
 Requires
 .BR \-G ,
-and a build with OpenSSL, which is the Linux packages; the Windows and macOS
-builds serve plain WS only and refuse this option at startup.
-The certificate and key are read from
+and a build with OpenSSL, which is used wherever the system provides it; a
+build without it refuses this option at startup and says so.
+The certificate and key default to
 .I /etc/ssl/certs/hermes.radio.crt
 and
-.IR /etc/ssl/private/hermes.radio.key .
+.IR /etc/ssl/private/hermes.radio.key ,
+and are overridden with the
+.B ui_tls_cert
+and
+.B ui_tls_key
+keys in the configuration file \(em needed to run the UI as a normal user, or
+on Windows and macOS where those paths do not exist.
 .TP
 .B \-W
 Disable waterfall/spectrum data sent to the UI (saves CPU).
@@ -265,6 +271,8 @@ _
 ui_enabled	false	Enable WebSocket UI server
 ui_port	10000	WebSocket port
 ui_protocol	ws	ws (plain) or wss (TLS)
+ui_tls_cert	/etc/ssl/...	PEM certificate for wss
+ui_tls_key	/etc/ssl/...	PEM private key for wss
 waterfall_enabled	true	Send waterfall/spectrum data to UI
 input_device	(empty)	Audio capture device
 output_device	(empty)	Audio playback device

@@ -348,10 +348,66 @@ void test_arq_tunables_clamp_rejects_garbage(void)
     TEST_ASSERT_EQUAL_INT(2000, r.retry_stagger_ms);    /* out of 0..5000 -> default kept  */
 }
 
+/* The wss:// certificate paths must be configurable.  They used to be
+ * compile-time constants under /etc/ssl, which only root can read on Linux
+ * and which do not exist at all on Windows or macOS -- so wss:// could not
+ * actually be used, or tested, anywhere but a root Linux box. */
+void test_tls_cert_paths_default_to_the_system_locations(void)
+{
+    mercury_config c;
+    cfg_set_defaults(&c);
+    TEST_ASSERT_FALSE(c.tls_enabled);                 /* plain ws by default */
+    TEST_ASSERT_EQUAL_STRING(CFG_SSL_CERT, c.tls_cert);
+    TEST_ASSERT_EQUAL_STRING(CFG_SSL_KEY,  c.tls_key);
+}
+
+void test_tls_settings_roundtrip(void)
+{
+    mercury_config w, r;
+
+    cfg_set_defaults(&w);
+    w.ui_enabled  = true;
+    w.ui_port     = 10131;
+    w.tls_enabled = true;
+    snprintf(w.tls_cert, sizeof(w.tls_cert), "/home/pi/certs/station.crt");
+    snprintf(w.tls_key,  sizeof(w.tls_key),  "/home/pi/certs/station.key");
+    TEST_ASSERT_TRUE(cfg_write(&w, TMP));
+
+    cfg_set_defaults(&r);
+    TEST_ASSERT_TRUE(cfg_read(&r, TMP));
+    TEST_ASSERT_TRUE(r.ui_enabled);
+    TEST_ASSERT_EQUAL_INT(10131, r.ui_port);
+    TEST_ASSERT_TRUE(r.tls_enabled);
+    TEST_ASSERT_EQUAL_STRING("/home/pi/certs/station.crt", r.tls_cert);
+    TEST_ASSERT_EQUAL_STRING("/home/pi/certs/station.key", r.tls_key);
+}
+
+/* A config that predates these keys must keep working and fall back to the
+ * system paths rather than ending up with empty ones, which would fail the
+ * TLS setup with a confusing "cannot read certificate ''". */
+void test_config_without_tls_keys_keeps_the_defaults(void)
+{
+    mercury_config r;
+    FILE *f = fopen(TMP, "w");
+
+    TEST_ASSERT_NOT_NULL(f);
+    fprintf(f, "[main]\nui_enabled = true\nui_port = 10000\nui_protocol = wss\n");
+    fclose(f);
+
+    cfg_set_defaults(&r);
+    TEST_ASSERT_TRUE(cfg_read(&r, TMP));
+    TEST_ASSERT_TRUE(r.tls_enabled);
+    TEST_ASSERT_EQUAL_STRING(CFG_SSL_CERT, r.tls_cert);
+    TEST_ASSERT_EQUAL_STRING(CFG_SSL_KEY,  r.tls_key);
+}
+
 int main(void)
 {
     UNITY_BEGIN();
     RUN_TEST(test_defaults_match_constants);
+    RUN_TEST(test_tls_cert_paths_default_to_the_system_locations);
+    RUN_TEST(test_tls_settings_roundtrip);
+    RUN_TEST(test_config_without_tls_keys_keeps_the_defaults);
     RUN_TEST(test_arq_tunables_roundtrip);
     RUN_TEST(test_arq_tunables_clamp_rejects_garbage);
     RUN_TEST(test_legacy_radio_config_maps_to_hamlib_ptt);

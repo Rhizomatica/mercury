@@ -18,11 +18,15 @@ ui_enabled = false
 ui_port = 10000
 
 ; WebSocket protocol: ws (plain) or wss (TLS) (default: ws)
-; wss needs a build with OpenSSL (the Linux packages) plus a certificate at
-; /etc/ssl/certs/hermes.radio.crt and a key at /etc/ssl/private/hermes.radio.key.
-; The Windows and macOS builds serve plain ws only; put a reverse proxy or an
-; SSH tunnel in front if the UI has to cross an untrusted network.
+; wss needs a build with OpenSSL, which is used wherever the system provides
+; it.  Builds without it refuse wss at startup and say so.
 ui_protocol = ws
+
+; Certificate and private key for wss, both PEM.  The defaults below are
+; readable only by root; point these at your own files to run the UI as a
+; normal user, or on Windows and macOS where these paths do not exist.
+;ui_tls_cert = /etc/ssl/certs/hermes.radio.crt
+;ui_tls_key = /etc/ssl/private/hermes.radio.key
 
 ; Enable waterfall / spectrum data sent to the UI (default: true)
 waterfall_enabled = true

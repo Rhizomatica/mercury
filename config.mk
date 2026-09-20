@@ -110,27 +110,42 @@ endif
 # --- Optional TLS (wss://) for the UI web server ---
 #
 # The built-in WebSocket server can serve wss:// through OpenSSL, which is
-# Apache-2.0 and so compatible with Mercury's GPL-3.0-or-later.  It is used
-# where the system provides it, which in practice means Linux: the Windows and
-# macOS builds vendor their dependencies as static libraries, and dragging a
-# whole TLS stack into those for a feature that is off by default is not worth
-# it.  Those builds serve plain ws:// and refuse wss:// at startup with a clear
-# message rather than failing per connection.
+# Apache-2.0 and so compatible with Mercury's GPL-3.0-or-later.  Default is to
+# USE IT WHEREVER THE SYSTEM HAS IT -- detected with pkg-config, the same way
+# hamlib and hidapi are.  A build without it still works: the server serves
+# plain ws:// and refuses wss:// at startup with a clear message, rather than
+# failing per connection.
 #
-# Override with WS_TLS=0 to build without it anywhere.
+# Windows is the one exception, and not by preference: that build is a mingw
+# cross-compile, where a bare `pkg-config --exists openssl` answers for the
+# HOST.  Believing it would link an ELF shared library into a PE, so it is
+# skipped unless someone points PKG_CONFIG_LIBDIR at a real mingw OpenSSL and
+# asks for it with WS_TLS=1.
+#
+# That exception is a "not yet", not a "never": the way to give Windows and
+# universal macOS wss:// is to vendor a static OpenSSL the way radio_io already
+# vendors hamlib-w64 and the fat hamlib-macos, and then drop the guard below.
+#
+#   WS_TLS=0   never use OpenSSL
+#   WS_TLS=1   use it if pkg-config finds it (default), Windows included
 WS_TLS ?= 1
 WS_TLS_CFLAGS :=
 WS_TLS_LDFLAGS :=
 
+WS_TLS_CROSS_SAFE := 1
+ifeq ($(OS),Windows_NT)
+ifneq ($(origin WS_TLS),command line)
+  WS_TLS_CROSS_SAFE := 0
+endif
+endif
+
 ifeq ($(WS_TLS),1)
-ifneq ($(OS),Windows_NT)
-ifneq ($(shell uname -s 2>/dev/null),Darwin)
+ifeq ($(WS_TLS_CROSS_SAFE),1)
   WS_OPENSSL_OK := $(shell pkg-config --exists openssl 2>/dev/null && echo 1)
   ifeq ($(WS_OPENSSL_OK),1)
     WS_TLS_CFLAGS := -DWS_HAVE_OPENSSL=1 $(shell pkg-config --cflags openssl)
     WS_TLS_LDFLAGS := $(shell pkg-config --libs openssl)
   endif
-endif
 endif
 endif
 
