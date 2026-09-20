@@ -77,7 +77,9 @@ jobs:
             openssh-client \
             libpulse-dev \
             libasound2-dev \
-            libhamlib-dev
+            libhamlib-dev \
+            libssl-dev \
+            pkg-config
 
       - name: Checkout
         uses: actions/checkout@v4
@@ -134,7 +136,8 @@ jobs:
           apt-get install -y --no-install-recommends \
             libpulse-dev:arm64 \
             libasound2-dev:arm64 \
-            libhamlib-dev:arm64
+            libhamlib-dev:arm64 \
+            libssl-dev:arm64
 
       - name: Checkout
         uses: actions/checkout@v4
@@ -193,7 +196,8 @@ jobs:
           apt-get install -y --no-install-recommends \
             libpulse-dev:armhf \
             libasound2-dev:armhf \
-            libhamlib-dev:armhf
+            libhamlib-dev:armhf \
+            libssl-dev:armhf
 
       - name: Checkout
         uses: actions/checkout@v4
@@ -374,6 +378,7 @@ jobs:
             libpulse-dev \
             libasound2-dev \
             libhamlib-dev \
+            libssl-dev \
             libhidapi-dev \
             libgl1-mesa-dev \
             libegl1-mesa-dev \

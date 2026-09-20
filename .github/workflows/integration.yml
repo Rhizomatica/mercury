@@ -41,7 +41,10 @@ jobs:
             libpulse-dev \
             libasound2-dev \
             libhamlib-dev \
+            libssl-dev \
+            openssl \
             pkg-config \
+            python3 \
             golang-go
 
       - name: Checkout
@@ -58,6 +61,53 @@ jobs:
       - name: Build Mercury
         shell: bash
         run: make
+
+      # The UI web server is Mercury's own code, not a library, so the build
+      # has to prove it actually got a TLS backend.  Detection is pkg-config,
+      # which degrades silently: without libssl-dev the server still builds
+      # and simply refuses wss:// at startup, so a missing build dependency
+      # would ship as a quietly missing feature rather than as a failure.
+      - name: Check the websocket server was built with TLS
+        shell: bash
+        run: |
+          set -eu
+          if ! ldd mercury | grep -q libssl; then
+            echo "::error::mercury is not linked against OpenSSL — wss:// would be refused at startup"
+            exit 1
+          fi
+          echo "OpenSSL backend present: $(ldd mercury | grep -o 'libssl[^ ]*' | head -1)"
+
+      - name: WebSocket conformance (ws and wss)
+        shell: bash
+        run: |
+          set -eu
+          openssl req -x509 -newkey rsa:2048 -nodes -days 1 \
+            -keyout /tmp/ws.key -out /tmp/ws.crt -subj "/CN=localhost" \
+            -addext "subjectAltName=IP:127.0.0.1,DNS:localhost" 2>/dev/null
+
+          run_mercury() {   # $1 = ini
+            ./mercury -x null -p 8700 -b 8800 -C "$1" >/tmp/ws-server.log 2>&1 &
+            echo $! > /tmp/ws-server.pid
+            for _ in $(seq 1 40); do
+              grep -q "listening on" /tmp/ws-server.log && return 0
+              sleep 0.5
+            done
+            echo "::error::server never came up"; cat /tmp/ws-server.log; return 1
+          }
+          stop_mercury() { kill "$(cat /tmp/ws-server.pid)" 2>/dev/null || true; sleep 2; }
+
+          printf '[main]\nui_enabled = true\nui_port = 10141\n' > /tmp/ws.ini
+          run_mercury /tmp/ws.ini
+          python3 tests/ws/ws_conformance.py 10141
+          stop_mercury
+
+          # wss:// end to end: TLS handshake, upgrade, frames, clean close.
+          printf '[main]\nui_enabled = true\nui_port = 10142\nui_protocol = wss\nui_tls_cert = /tmp/ws.crt\nui_tls_key = /tmp/ws.key\n' > /tmp/wss.ini
+          run_mercury /tmp/wss.ini
+          grep -q "listening on wss" /tmp/ws-server.log \
+            || { echo "::error::wss listener did not start"; cat /tmp/ws-server.log; exit 1; }
+          python3 tests/ws/ws_tls_check.py 10142 /tmp/ws.crt
+          stop_mercury
 
       - name: Run Integration Tests
         shell: bash
