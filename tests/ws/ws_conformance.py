@@ -111,6 +111,19 @@ ok("oversized control frame -> close 1002", read_close(s)==1002); s.close()
 s=conn(12); handshake(s); s.sendall(mask_frame(1,b"z"*9000))
 ok("message over the 8192 cap -> close 1009", read_close(s,8)==1009); s.close()
 
+# RFC 6455 7.4.1: 1005/1006/1015 describe a local condition and must never
+# appear in a frame, so they must not be echoed back either.
+for bad in (1005, 1006, 1015):
+    s=conn(); handshake(s)
+    s.sendall(mask_frame(0x8, struct.pack("!H", bad)))
+    got = read_close(s)
+    ok("close %d is not echoed on the wire" % bad, got == 1000, "got %s" % got)
+    s.close()
+
+s=conn(); handshake(s); s.sendall(mask_frame(0x8, struct.pack("!H", 1001)))
+got = read_close(s)
+ok("a normal close code is echoed", got == 1001, "got %s" % got); s.close()
+
 print("== HTTP edge cases ==")
 s=conn(); s.sendall(b"POST /websocket HTTP/1.1\r\nHost: x\r\n\r\n")
 d=s.recv(4096); ok("POST -> 405", b"405" in d, d.split(b"\r\n")[0].decode()); s.close()
@@ -126,6 +139,20 @@ d=s.recv(4096); ok("wrong websocket version -> 426", b"426" in d, d.split(b"\r\n
 s=conn(); s.sendall(b"GET /websocket HTTP/1.1\r\nHost: x\r\nUpgrade: websocket\r\n"
                     b"Connection: Upgrade\r\nSec-WebSocket-Version: 13\r\n\r\n")
 d=s.recv(4096); ok("upgrade without a key -> 400", b"400" in d, d.split(b"\r\n")[0].decode()); s.close()
+
+# RFC 6455 4.2.1: the Connection header must carry the Upgrade token.
+s=conn(); s.sendall(b"GET /websocket HTTP/1.1\r\nHost: x\r\nUpgrade: websocket\r\n"
+                    b"Connection: keep-alive\r\nSec-WebSocket-Version: 13\r\n"
+                    b"Sec-WebSocket-Key: AAAAAAAAAAAAAAAAAAAAAA==\r\n\r\n")
+d=s.recv(4096); ok("Connection without the upgrade token -> 400", b"400" in d,
+                   d.split(b"\r\n")[0].decode()); s.close()
+
+# ...and a comma-separated list that contains it is still valid.
+s=conn(); s.sendall(b"GET /websocket HTTP/1.1\r\nHost: x\r\nUpgrade: websocket\r\n"
+                    b"Connection: keep-alive, Upgrade\r\nSec-WebSocket-Version: 13\r\n"
+                    b"Sec-WebSocket-Key: AAAAAAAAAAAAAAAAAAAAAA==\r\n\r\n")
+d=s.recv(4096); ok("Connection: keep-alive, Upgrade accepted", b"101" in d,
+                   d.split(b"\r\n")[0].decode()); s.close()
 
 s=conn(); s.sendall(b"GET /../../etc/passwd HTTP/1.1\r\nHost: x\r\n\r\n")
 d=s.recv(4096); ok("path traversal refused", b"400" in d or b"404" in d, d.split(b"\r\n")[0].decode()); s.close()

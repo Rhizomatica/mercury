@@ -17,6 +17,7 @@
 #define WS_JSON_H_
 
 #include <stddef.h>
+#include <stdint.h>
 
 /* ---- Incoming command from the UI ---- */
 typedef struct {

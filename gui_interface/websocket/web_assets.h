@@ -21,7 +21,4 @@
 /* Look up a page by request path ("/index.html").  Returns NULL when absent. */
 const void *ws_asset_find(const char *path, size_t *size);
 
-/* Enumerate packed paths: index 0, 1, ... until NULL. */
-const char *ws_asset_name(size_t no);
-
 #endif /* WEB_ASSETS_H_ */

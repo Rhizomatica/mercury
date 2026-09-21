@@ -369,6 +369,130 @@ static void test_sanitiser_keeps_utf8_and_replaces_the_rest(void)
     TEST_ASSERT_EQUAL_STRING("a?- ", s);
 }
 
+/* The scanner walks the object's structure.  A substring search looked
+ * equivalent for the messages the UI sends and was not: it ended a string at
+ * the first quote byte without honouring the backslash before it. */
+static void test_values_may_contain_escaped_quotes(void)
+{
+    const char *json =
+        "{\"command\":\"set_ptt_config\",\"value\":\"a \\\"b\\\" c\"}";
+    ws_command_t cmd;
+
+    TEST_ASSERT_EQUAL_INT(0, ws_json_parse_command(json, strlen(json), &cmd));
+    TEST_ASSERT_EQUAL_STRING("set_ptt_config", cmd.command);
+    TEST_ASSERT_EQUAL_STRING("a \"b\" c", cmd.value);
+}
+
+static void test_decodes_the_json_escapes_a_browser_emits(void)
+{
+    /* JSON.stringify escapes quotes, backslashes and control characters;
+     * everything else it leaves as raw UTF-8. */
+    const char *json =
+        "{\"command\":\"x\",\"value\":\"tab\\there\\nline\","
+        "\"value2\":\"back\\\\slash\",\"value3\":\"\\u00e3o\"}";
+    ws_command_t cmd;
+
+    TEST_ASSERT_EQUAL_INT(0, ws_json_parse_command(json, strlen(json), &cmd));
+    TEST_ASSERT_EQUAL_STRING("tab\there\nline", cmd.value);
+    TEST_ASSERT_EQUAL_STRING("back\\slash", cmd.value2);
+    TEST_ASSERT_EQUAL_STRING("\xC3\xA3o", cmd.value3);   /* U+00E3 as UTF-8 */
+}
+
+/* A key of the same name nested inside a value must not win over the real
+ * one at the top level. */
+static void test_nested_object_does_not_shadow_the_top_level_key(void)
+{
+    const char *json =
+        "{\"value\":{\"command\":\"evil\"},\"command\":\"real\"}";
+    ws_command_t cmd;
+
+    TEST_ASSERT_EQUAL_INT(0, ws_json_parse_command(json, strlen(json), &cmd));
+    TEST_ASSERT_EQUAL_STRING("real", cmd.command);
+}
+
+static void test_a_key_is_matched_whole(void)
+{
+    const char *json = "{\"xcommand\":\"no\",\"commandx\":\"no\","
+                       "\"command\":\"yes\"}";
+    ws_command_t cmd;
+
+    TEST_ASSERT_EQUAL_INT(0, ws_json_parse_command(json, strlen(json), &cmd));
+    TEST_ASSERT_EQUAL_STRING("yes", cmd.command);
+}
+
+static void test_malformed_json_is_refused_not_guessed(void)
+{
+    ws_command_t cmd;
+    const char *unterminated = "{\"command\":\"abc";
+    const char *not_an_object = "\"command\":\"abc\"";
+    const char *empty = "{}";
+
+    TEST_ASSERT_EQUAL_INT(-1, ws_json_parse_command(unterminated,
+                                                    strlen(unterminated), &cmd));
+    TEST_ASSERT_EQUAL_INT(-1, ws_json_parse_command(not_an_object,
+                                                    strlen(not_an_object), &cmd));
+    TEST_ASSERT_EQUAL_INT(-1, ws_json_parse_command(empty, strlen(empty), &cmd));
+}
+
+/* RFC 6455 8.1: a TEXT frame must be valid UTF-8, and a client that gets
+ * anything else fails the connection.  Checking continuation-byte shape alone
+ * let these through -- they all have well-formed tail bytes. */
+static void test_sanitiser_rejects_the_invalid_utf8_that_looks_well_formed(void)
+{
+    char s[16];
+
+    /* Overlong: '/' encoded in two bytes. */
+    memcpy(s, "\xC0\xAF", 3);
+    ws_json_sanitise_utf8(s, 2);
+    TEST_ASSERT_EQUAL_STRING("??", s);
+
+    /* Overlong NUL in three bytes. */
+    memcpy(s, "\xE0\x80\x80", 4);
+    ws_json_sanitise_utf8(s, 3);
+    TEST_ASSERT_EQUAL_STRING("???", s);
+
+    /* A UTF-16 surrogate has no business in UTF-8. */
+    memcpy(s, "\xED\xA0\x80", 4);
+    ws_json_sanitise_utf8(s, 3);
+    TEST_ASSERT_EQUAL_STRING("???", s);
+
+    /* Above U+10FFFF. */
+    memcpy(s, "\xF4\x90\x80\x80", 5);
+    ws_json_sanitise_utf8(s, 4);
+    TEST_ASSERT_EQUAL_STRING("????", s);
+
+    /* C0/C1 can only ever start an overlong form. */
+    memcpy(s, "\xC1\xBF", 3);
+    ws_json_sanitise_utf8(s, 2);
+    TEST_ASSERT_EQUAL_STRING("??", s);
+}
+
+static void test_sanitiser_keeps_every_valid_length(void)
+{
+    char s[16];
+
+    memcpy(s, "\xC3\xA3", 3);                   /* U+00E3 */
+    ws_json_sanitise_utf8(s, 2);
+    TEST_ASSERT_EQUAL_STRING("\xC3\xA3", s);
+
+    memcpy(s, "\xE2\x82\xAC", 4);              /* U+20AC euro */
+    ws_json_sanitise_utf8(s, 3);
+    TEST_ASSERT_EQUAL_STRING("\xE2\x82\xAC", s);
+
+    memcpy(s, "\xF0\x9F\x98\x80", 5);         /* U+1F600 */
+    ws_json_sanitise_utf8(s, 4);
+    TEST_ASSERT_EQUAL_STRING("\xF0\x9F\x98\x80", s);
+
+    /* The boundaries of the restricted ranges are legal. */
+    memcpy(s, "\xED\x9F\xBF", 4);              /* U+D7FF, just below D800 */
+    ws_json_sanitise_utf8(s, 3);
+    TEST_ASSERT_EQUAL_STRING("\xED\x9F\xBF", s);
+
+    memcpy(s, "\xF4\x8F\xBF\xBF", 5);         /* U+10FFFF, the last one */
+    ws_json_sanitise_utf8(s, 4);
+    TEST_ASSERT_EQUAL_STRING("\xF4\x8F\xBF\xBF", s);
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -392,6 +516,13 @@ int main(void)
     RUN_TEST(test_refuses_a_command_without_the_command_key);
     RUN_TEST(test_parser_respects_the_given_length);
     RUN_TEST(test_sanitiser_keeps_utf8_and_replaces_the_rest);
+    RUN_TEST(test_values_may_contain_escaped_quotes);
+    RUN_TEST(test_decodes_the_json_escapes_a_browser_emits);
+    RUN_TEST(test_nested_object_does_not_shadow_the_top_level_key);
+    RUN_TEST(test_a_key_is_matched_whole);
+    RUN_TEST(test_malformed_json_is_refused_not_guessed);
+    RUN_TEST(test_sanitiser_rejects_the_invalid_utf8_that_looks_well_formed);
+    RUN_TEST(test_sanitiser_keeps_every_valid_length);
 
     return UNITY_END();
 }

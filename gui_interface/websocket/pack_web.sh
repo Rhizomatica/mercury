@@ -62,14 +62,5 @@ const void *ws_asset_find(const char *path, size_t *size)
   if (size != NULL) *size = 0;
   return NULL;
 }
-
-const char *ws_asset_name(size_t no)
-{
-  size_t n = 0;
-  int i;
-  for (i = 0; tab[i].n != NULL; i++, n++)
-    if (n == no) return tab[i].n;
-  return NULL;
-}
 CEOF
 } > "$out"
