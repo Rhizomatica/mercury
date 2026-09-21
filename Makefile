@@ -249,9 +249,11 @@ $(BINARY): $(MERCURY_LINK_INPUTS)
 	$(CC) -o $(BINARY)  \
 		$(MERCURY_LINK_INPUTS) $(LDFLAGS) $(SAN_LDFLAGS)
 
-# Stamp file: written only when GIT_HASH changes so main.o is rebuilt
-# exactly when needed (FORCE makes the recipe always run; the recipe
-# only touches the file when the content actually differs).
+# Stamp file: written only when GIT_HASH changes so the objects that embed it
+# (main.o and common/mercury_cli.o) are rebuilt exactly when needed (FORCE makes
+# the recipe always run; the recipe only touches the file when the content
+# actually differs).  internal_deps depends on it so it is refreshed BEFORE the
+# sub-makes compile, not lazily at link time when it would be too late.
 .git_hash_stamp: FORCE
 	@if [ ! -f $@ ] || [ "$$(cat $@)" != "$(GIT_HASH)" ]; then \
 		printf '%s' "$(GIT_HASH)" > $@; \
@@ -275,7 +277,7 @@ $(HIDAPI_W64_DIR)/hid.o: $(HIDAPI_W64_DIR)/src/hid.c
 $(HIDAPI_MACOS_DIR)/hid.o: $(HIDAPI_MACOS_DIR)/src/hid.c
 	$(CC) -MMD -MP -O2 -I$(HIDAPI_MACOS_DIR)/include -c $< -o $@
 
-internal_deps:
+internal_deps: .git_hash_stamp
 	$(MAKE) -C modem
 	$(MAKE) -C datalink_arq
 	$(MAKE) -C datalink_broadcast

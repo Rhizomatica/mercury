@@ -57,7 +57,10 @@ watterson.o: watterson.c watterson.h
 mercury_engine.o: mercury_engine.c mercury_engine.h
 	$(CC) $(ENGINE_CFLAGS) -c mercury_engine.c
 
-mercury_cli.o: mercury_cli.c mercury_cli.h
+# mercury_cli.c embeds GIT_HASH (via mercury_version.h's -V banner), so it must
+# be rebuilt when the hash changes -- the root Makefile refreshes .git_hash_stamp
+# before this sub-make runs (see internal_deps).
+mercury_cli.o: mercury_cli.c mercury_cli.h ../.git_hash_stamp
 	$(CC) $(ENGINE_CFLAGS) $(CLI_SHM_CFLAGS) -c mercury_cli.c
 
 mercury_modes.o: mercury_modes.c mercury_cli.h
