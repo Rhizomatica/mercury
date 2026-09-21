@@ -71,7 +71,4 @@ int ws_server_broadcast(ws_server_t *s, const void *data, size_t len,
 /* Send on one connection.  Server thread only -- use it from a callback. */
 int ws_conn_send(ws_conn_t *c, const void *data, size_t len, bool is_text);
 
-/* Number of connections that have completed the WebSocket handshake. */
-size_t ws_server_client_count(ws_server_t *s);
-
 #endif /* WS_SERVER_H_ */

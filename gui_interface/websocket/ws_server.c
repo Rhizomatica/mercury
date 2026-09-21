@@ -453,6 +453,14 @@ static int conn_process_frames(ws_conn_t *c)
 
                 if (plen >= 2)
                     code = (uint16_t) ((payload[0] << 8) | payload[1]);
+
+                /* 1005, 1006 and 1015 describe how a connection ended
+                 * locally; RFC 6455 7.4.1 says they must never be sent in a
+                 * frame.  Echoing the peer's code verbatim would put them
+                 * there, so fall back to a normal closure. */
+                if (code == 1005 || code == 1006 || code == 1015 || code < 1000)
+                    code = 1000;
+
                 conn_close_ws(c, code, NULL);
             }
             else if (opcode == WS_OP_PING)
@@ -634,6 +642,19 @@ static int conn_handle_request(ws_conn_t *c, const char *req, size_t req_len)
             http_reply(c, 426, "Upgrade Required",
                        "Upgrade: websocket\r\nSec-WebSocket-Version: 13\r\n",
                        "text/plain", "websocket endpoint", 18, true);
+            return 0;
+        }
+
+        /* RFC 6455 4.2.1 also requires the Connection header to carry the
+         * Upgrade token.  Every browser sends it, so leaving it unchecked
+         * looked harmless -- but it is what separates a real upgrade from a
+         * plain GET that merely names the header, and a proxy in between is
+         * entitled to rely on us enforcing it. */
+        v = header_find(hdrs, hdrs_len, "Connection", &vlen);
+        if (v == NULL || !header_has_token(v, vlen, "upgrade"))
+        {
+            http_reply(c, 400, "Bad Request", NULL, "text/plain",
+                       "connection must upgrade", 23, true);
             return 0;
         }
 
@@ -1324,19 +1345,4 @@ int ws_server_broadcast(ws_server_t *s, const void *data, size_t len,
 
     pthread_mutex_unlock(&s->qlock);
     return 0;
-}
-
-size_t ws_server_client_count(ws_server_t *s)
-{
-    size_t n = 0;
-    ws_conn_t *c;
-
-    if (s == NULL)
-        return 0;
-
-    for (c = s->conns; c != NULL; c = c->next)
-        if (c->is_ws)
-            n++;
-
-    return n;
 }
