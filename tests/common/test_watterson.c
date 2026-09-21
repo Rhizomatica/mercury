@@ -11,6 +11,7 @@
  */
 #include "unity.h"
 #include "watterson.h"
+#include <float.h>
 #include <math.h>
 #include <stdlib.h>
 #include <stdint.h>
@@ -101,9 +102,25 @@ void test_single_static_path_is_rate_invariant(void)
  * Hence a golden checksum rather than a statistical assertion.  If this test
  * fails, the channel changed: either fix the change, or accept it deliberately
  * and re-measure everything that was pinned to a seed.
+ *
+ * The checksum is over the raw sample bytes, so it only means anything where
+ * float expressions are evaluated in float.  On i386 the x87 unit keeps
+ * intermediates in 80-bit registers, so the same source produces different
+ * low bits -- and different ones again at a different optimisation level,
+ * which is why Debian's i386 build and a local -m32 build disagreed with each
+ * other as well as with this value (issue #299).  FLT_EVAL_METHOD says
+ * exactly that: 0 means each expression is evaluated in its own type, 2 means
+ * everything goes through long double.  Where it is not 0 the golden value is
+ * not a meaningful assertion, so say so instead of failing.  Building i386
+ * with -mfpmath=sse also makes it 0, and then the value matches amd64 exactly.
  */
 void test_a_pinned_seed_reproduces_a_fixed_realisation(void)
 {
+#if defined(FLT_EVAL_METHOD) && FLT_EVAL_METHOD != 0
+    TEST_IGNORE_MESSAGE("excess floating-point precision (FLT_EVAL_METHOD != 0): "
+                        "a bit-exact channel checksum is not reproducible here; "
+                        "build with -mfpmath=sse to check it on this target");
+#endif
     const int   fs = 8000;
     const int   n  = fs;
     watterson_t w;
