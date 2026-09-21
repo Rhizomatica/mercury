@@ -16,6 +16,7 @@
 
 #include <math.h>
 #include <stdlib.h>
+#include <stdint.h>
 #include <string.h>
 #include <complex.h>
 
@@ -31,7 +32,14 @@ void setUp(void) {}
 void tearDown(void) {}
 
 /* deterministic N(0,1) */
-static unsigned long s_rng = 88172645463325252ULL;
+/* uint64_t, not unsigned long: this is xorshift64, and on any ILP32 target
+ * (i386, armhf) unsigned long is 32 bits.  There the seed was truncated to
+ * 3418323524, the shifts ran on 32 bits, and urand() returned about 1e-11
+ * instead of spanning [0,1) -- so every "random" bit came out the same and
+ * grand() collapsed to a near-constant 7.1.  The AWGN tests below were
+ * measuring a constant offset, and two of them failed on Debian i386
+ * (issue #299) for that reason rather than from any modem behaviour. */
+static uint64_t s_rng = 88172645463325252ULL;
 static double urand(void)
 {
     s_rng ^= s_rng << 13; s_rng ^= s_rng >> 7; s_rng ^= s_rng << 17;
