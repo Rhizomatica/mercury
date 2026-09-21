@@ -15,6 +15,7 @@ void radio_io_test_seed_frequency(uint64_t frequency_hz, uint64_t read_ms);
 void radio_io_test_install_backend(int set_result);
 bool radio_io_test_ptt_active(void);
 uint64_t radio_io_test_last_ptt_off_ms(void);
+int radio_io_test_backend_last_set(void);
 
 /* radio_io.c retains all production backends in this unit build.  These stubs
  * keep the telemetry contract test independent of serial and HID hardware. */
@@ -77,11 +78,36 @@ void test_common_backend_dispatch_tracks_ptt_and_failed_key(void)
     TEST_ASSERT_FALSE(radio_io_test_ptt_active());
 }
 
+/* Shutting down while keyed must unkey the radio first.  Closing a Hamlib rig
+ * or the sBitx shared memory does not, so the transmitter would stay on after
+ * Mercury had gone. */
+void test_shutdown_while_keyed_unkeys_the_radio(void)
+{
+    radio_io_test_install_backend(0);
+    TEST_ASSERT_EQUAL_INT(0, radio_io_key_on());
+    TEST_ASSERT_EQUAL_INT(1, radio_io_test_backend_last_set());
+
+    radio_io_shutdown();
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, radio_io_test_backend_last_set(),
+        "shutdown closed the backend with the radio still keyed");
+    TEST_ASSERT_FALSE(radio_io_test_ptt_active());
+}
+
+/* ...and does not key or unkey anything when the radio was not keyed. */
+void test_shutdown_while_unkeyed_touches_nothing(void)
+{
+    radio_io_test_install_backend(0);
+    radio_io_shutdown();
+    TEST_ASSERT_EQUAL_INT(-1, radio_io_test_backend_last_set());
+}
+
 int main(void)
 {
     UNITY_BEGIN();
     RUN_TEST(test_busy_radio_returns_cached_frequency_without_waiting);
     RUN_TEST(test_null_outputs_are_rejected);
     RUN_TEST(test_common_backend_dispatch_tracks_ptt_and_failed_key);
+    RUN_TEST(test_shutdown_while_keyed_unkeys_the_radio);
+    RUN_TEST(test_shutdown_while_unkeyed_touches_nothing);
     return UNITY_END();
 }
