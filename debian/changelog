@@ -1,3 +1,25 @@
+mercury (1.9.15-1) unstable; urgency=medium
+
+  * Release 1.9.15.
+  * tests: make loopsim runs repeatable, stop it killing other mercurys, and stop go test caching.
+  * arq: place a CONNECT sent during teardown instead of dropping it.
+  * build: rebuild objects when their Makefile or config.mk changes.
+  * tests: run the ch fading-file preflight only for the ch engine.
+  * telemetry: report the bitrate of frames on the air, and make the card readable.
+  * store, tests: keep binary frames out of chat history, and tests out of the user's.
+  * cli: add -V option to print the version and exit.
+  * arq: settle a MODE_REQ that crosses a TURN_REQ, instead of both sides waiting.
+  * ui: remove the legacy set_radio_config command.
+  * Fix libatomic on m68k architecture.
+  * Fix compilation on GNU/Hurd.
+  * fyne-ui: default Mercury Client TCP target to the remote host.
+  * build: ensure mercury_cli.o rebuilds with GIT_HASH changes.
+  * Replace mongoose with our own WebSocket server (GPLv3 licence fix).
+  * tests: fix the three i386 failures (#299).
+  * modem, radio_io: stop TX test mode on a signal, and unkey on shutdown.
+
+ -- Rafael Diniz <rafael@riseup.net>  Tue, 22 Sep 2026 22:46:35 +0000
+
 mercury (1.9.14-1) unstable; urgency=medium
 
   * Release 1.9.14.
