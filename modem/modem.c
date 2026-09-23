@@ -2098,7 +2098,17 @@ void *tx_thread(void *g_modem)
         size_t pending_arq_data = size_buffer(data_tx_buffer_arq);
         size_t pending_arq_control = size_buffer(data_tx_buffer_arq_control);
         size_t pending_broadcast = size_buffer(data_tx_buffer_broadcast);
-        int pending_arq_app = have_arq_snapshot ? arq_snapshot.tx_backlog_bytes : 0;
+        /* Application bytes only become frames inside a connected session.
+         * Outside one they are waiting for a CONNECT that may never come --
+         * e.g. a client's late write after the peer hung up -- and must not
+         * count as ARQ traffic: that pinned the modem to the ARQ control mode,
+         * so broadcast frames (sent only at the listen mode's frame size)
+         * never went out again and the broadcast port stopped being read.
+         * Seen on air: a 352-frame carousel stalled for 80 minutes after 12
+         * frames.  The frames ARQ does build outside a session (CALL, ACCEPT,
+         * teardown) are in the control queue and still count below. */
+        int pending_arq_app = (have_arq_snapshot && arq_snapshot.connected)
+                              ? arq_snapshot.tx_backlog_bytes : 0;
         bool arq_tx_queued =
             (pending_arq_app > 0) ||
             (pending_arq_data > 0) ||
