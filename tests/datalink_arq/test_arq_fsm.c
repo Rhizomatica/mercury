@@ -946,6 +946,39 @@ void test_peer_data_in_wait_ack_is_not_an_ack_of_ours(void)
         "the ACK did not ask for the turn back for the kept frame");
 }
 
+/* A DUPLICATE from the peer while we wait for our ACK: our ACK of its frame
+ * was lost and it is still retrying, on a timer sized for a short ACK.  We
+ * must ACK the duplicate (keeping our frame) rather than re-send our own frame:
+ * a long frame of ours (a 13.5 s MFSK burst) collided with every one of the
+ * peer's ~11 s retries, and the session died with nothing delivered. */
+void test_peer_duplicate_in_wait_ack_is_acked_not_answered_with_ours(void)
+{
+    goto_connected();
+    goto_wait_ack();
+    sess.rx_stream_hwm = 90;              /* we already delivered 90 of theirs */
+
+    RESET_FAKE(fake_send_tx_frame);
+    RESET_FAKE(fake_deliver_rx_data);
+    arq_event_t ev = make_event(ARQ_EV_RX_DATA);
+    ev.session_id  = sess.session_id;
+    ev.stream_off  = 0;                   /* their last frame again */
+    ev.data_bytes  = 90;
+    ev.payload_len = 90;
+    arq_fsm_dispatch(&sess, &ev);
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ARQ_DFLOW_ACK_TX, sess.dflow_state,
+        "answered the peer's duplicate with our own frame instead of an ACK");
+    TEST_ASSERT_EQUAL_INT(0, fake_send_tx_frame_fake.call_count);   /* nothing re-sent */
+    TEST_ASSERT_EQUAL_INT(0, fake_deliver_rx_data_fake.call_count); /* not re-delivered */
+    TEST_ASSERT_TRUE(sess.tx_frame_present);                         /* ours kept */
+
+    fake_tx_backlog_fake.return_val = 0;
+    ev = make_event(ARQ_EV_TIMER_ACK);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_TRUE_MESSAGE(sess.acktx_had_has_data,
+        "the ACK did not ask for the turn for our kept frame");
+}
+
 /* A frame starting past our stream position is proof of a gap, not a
  * duplicate.  ACKing it tells the sender the gap is filled, and the loss
  * becomes permanent and silent. */
@@ -1878,6 +1911,7 @@ int main(void)
     RUN_TEST(test_app_disconnect_defers_with_backlog);
     RUN_TEST(test_peer_data_in_wait_ack_is_not_an_ack_of_ours);
     RUN_TEST(test_data_past_our_position_is_not_acked);
+    RUN_TEST(test_peer_duplicate_in_wait_ack_is_acked_not_answered_with_ours);
     RUN_TEST(test_pending_disconnect_retries_last_frame_before_teardown);
     RUN_TEST(test_app_disconnect_defers_in_wait_ack);
     RUN_TEST(test_disconnect_drain_timeout_forces_teardown);

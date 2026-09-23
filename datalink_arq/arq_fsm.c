@@ -1845,17 +1845,28 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
             }
             else
             {
-                /* Duplicate frame (our ACK was lost; peer retransmitting).
-                 * Not an implicit ACK of our own frame.  Retransmit our frame
-                 * so the peer can ACK it; do NOT advance our seq. */
+                /* A duplicate of the peer's last frame: our ACK of it never
+                 * arrived, so the peer is still retrying -- on a timer sized for
+                 * a short ACK, straight over whatever we transmit.
+                 *
+                 * The old response re-sent our own frame, which collided with
+                 * those retries every cycle whenever our frame is long (a
+                 * 13.5 s MFSK burst against an ~11 s ACK timeout): both
+                 * stations sender, nothing delivered either way, the session
+                 * lost to the progress timeout.  ACK the duplicate instead --
+                 * a short pattern, inside the peer's ACK window -- and keep our
+                 * frame.  The ACK asks for the turn (a kept frame counts as
+                 * data), so ours goes out once the peer stops; if the peer has
+                 * more of its own, it says so and we wait. */
                 HLOGD(LOG_COMP,
-                      "RX_DATA in WAIT_ACK (dup seq=%d expected=%d) — re-TX our seq=%d",
-                      (int)ev->seq, (int)sess->rx_expected, (int)sess->tx_frame_seq);
-                deliver_rx_checked(sess, ev);   /* logs dup; no delivery */
-                irs_mirror_peer_ladder(sess, false);  /* peer retried → mirror step-down */
-                sess->tx_frame_retx = true;
-                dflow_enter(sess, ARQ_DFLOW_DATA_TX, UINT64_MAX, ARQ_EV_TIMER_RETRY);
-                send_data_burst(sess);
+                      "RX_DATA in WAIT_ACK (dup off=%u, at %u) — ACKing it; our seq=%d kept",
+                      (unsigned)ev->stream_off, (unsigned)sess->rx_stream_hwm,
+                      (int)sess->tx_frame_seq);
+                irs_receive_data(sess, ev);     /* dup: suppressed, mirror steps down */
+                sess->peer_has_data = (ev->rx_flags & ARQ_FLAG_HAS_DATA) != 0;
+                if (sess->tx_frame_present)
+                    sess->tx_frame_retx = true;
+                irs_arm_ack_deadline(sess, ev);
             }
         }
         break;
