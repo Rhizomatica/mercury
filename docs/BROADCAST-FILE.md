@@ -155,12 +155,12 @@ would be a guess about someone else's decoder presented as a fact.
 on Windows use the UI, which runs the same code in-process):
 
 ```
-bcast_file_tool send <file> [-m mode] [-c cycles] [-i ip] [-p port]
-bcast_file_tool recv <dir>  [-m mode] [-i ip] [-p port]
+bcast_file_tool send <file> [-m mode] [-c cycles] [-i ip] [-p port] [-k key]
+bcast_file_tool recv <dir>  [-m mode] [-i ip] [-p port] [-k key]
 ```
 
 Defaults: `-m 1` (DATAC3), `-c 0` (repeat until interrupted), `-p 8100`,
-`-i 127.0.0.1`.
+`-i 127.0.0.1`.  `-k` names a broadcast key; see [Encryption](#encryption).
 
 #### Worked example: sending an NNCP bundle
 
@@ -340,6 +340,28 @@ FIFOs does **not** work as the air -- it buffers in 64 kB chunks, so the
 receiving modem never syncs -- and no sender pacing is needed, because
 `write_buffer()` blocks when the ring is full and TCP backpressure already
 paces it.
+
+## Encryption
+
+A file can be sealed with a network's 32-byte broadcast key: once per file,
+before RaptorQ, with XChaCha20-Poly1305 and a random nonce.  It costs 41 bytes
+per file, whatever the file's size or the mode, so about one extra symbol.
+The format is `datalink_broadcast/bcast_aead.h`, shared with hermes-broadcast.
+
+* **UI**: with `[crypto] mode` set to `optional` or `required`, the panel
+  loads `[crypto] broadcast_key_file` (default `/etc/mercury/broadcast.key`)
+  at startup.  With no key file, files go clear as before.
+* **Command line**: `bcast_file_tool ... -k <keyfile>`.
+
+A receiver with the key opens files sealed with it and still takes clear files,
+so clear and encrypted senders can share a carousel.  A file sealed with a key
+the receiver does not hold does not open: it is saved raw, under a generated
+name, never under the sender's name.  In `required` mode Mercury logs every
+clear file it receives, so none arrives unnoticed.
+
+The name and the size inside the bundle are sealed along with the contents.
+The frame headers are not: the session id, the object length and the RaptorQ
+parameters stay in clear, because a receiver needs them before it can decode.
 
 ## Interoperating with hermes-broadcast
 

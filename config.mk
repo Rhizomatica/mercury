@@ -149,6 +149,44 @@ ifeq ($(WS_TLS_CROSS_SAFE),1)
 endif
 endif
 
+# --- Optional ARQ session encryption (libsodium) ---
+#
+# [crypto] mode = optional | required needs libsodium (ISC licence, GPL-
+# compatible), for X25519, ChaCha20-Poly1305 and SHA-256.  Same rule as TLS
+# above: used wherever pkg-config finds it, with the mingw cross-build the one
+# exception, for the same host-versus-target reason.  Without it Mercury still
+# builds and runs with crypto off, and refuses mode != off at startup rather
+# than silently sending in the clear.
+#
+# The define goes into COMMON_CFLAGS so that every translation unit agrees on
+# it.  arq_xs_t has the same layout either way, but anything compiled from
+# arq_crypto.c or noise_kk.c -- the daemon and the tests alike -- must see
+# the same answer to "is there a backend".
+#
+#   ARQ_CRYPTO=0   never use libsodium
+#   ARQ_CRYPTO=1   use it if pkg-config finds it (default)
+ARQ_CRYPTO ?= 1
+CRYPTO_CFLAGS :=
+CRYPTO_LDFLAGS :=
+
+ARQ_CRYPTO_CROSS_SAFE := 1
+ifeq ($(OS),Windows_NT)
+ifneq ($(origin ARQ_CRYPTO),command line)
+  ARQ_CRYPTO_CROSS_SAFE := 0
+endif
+endif
+
+ifeq ($(ARQ_CRYPTO),1)
+ifeq ($(ARQ_CRYPTO_CROSS_SAFE),1)
+  SODIUM_OK := $(shell pkg-config --exists libsodium 2>/dev/null && echo 1)
+  ifeq ($(SODIUM_OK),1)
+    CRYPTO_CFLAGS := -DARQ_HAVE_CRYPTO $(shell pkg-config --cflags libsodium)
+    CRYPTO_LDFLAGS := $(shell pkg-config --libs libsodium)
+  endif
+endif
+endif
+COMMON_CFLAGS += $(CRYPTO_CFLAGS)
+
 GIT_HASH ?= $(shell git rev-parse --short=8 HEAD 2>/dev/null || echo unknown000)
 COMMON_CFLAGS += -DGIT_HASH=\"$(GIT_HASH)\"
 

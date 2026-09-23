@@ -148,6 +148,9 @@ typedef struct
      * when not applicable; the callee reports this as the connection's local
      * address so a station listening on multiple SSIDs shows the dialed one. */
     char     local_call[CALLSIGN_MAX_SIZE];
+
+    /* RX_CALL / RX_ACCEPT: the frame's encryption bit (see arq_crypto.h). */
+    bool     crypto;
 } arq_event_t;
 
 /* ======================================================================
@@ -240,6 +243,11 @@ typedef struct
                                         * call always returns to where it was   */
 
     /* --- Connect handshake --- */
+    /* Encryption negotiation for this session, exactly as it went on air:
+     * the CALL's offer bit and the ACCEPT's accept bit.  Both set means the
+     * session runs the Noise_KK handshake (arq_crypto.h). */
+    bool     crypto_offer;
+    bool     crypto_accept;
     bool     accept_tx_pending;        /* the pending TIMER_RETRY is an ACCEPT
                                         * answering a CALL we actually heard,
                                         * not the RX-window timer.  Only the
@@ -375,6 +383,12 @@ typedef struct
      *  keying over a transmission we cannot decode, which decoder sync alone
      *  cannot see.  See peer_is_transmitting() in arq_fsm.c. */
     bool (*channel_busy)(void);
+
+    /** The encryption bit for the CALL (is_accept false) or ACCEPT we are
+     *  about to send.  peer_offered is the CALL's bit when answering.
+     *  Optional: NULL means never (the frame stays byte-identical to 1.9.x). */
+    bool (*crypto_connect_bit)(bool is_accept, const char *remote_call,
+                               bool peer_offered);
 } arq_fsm_callbacks_t;
 
 /**

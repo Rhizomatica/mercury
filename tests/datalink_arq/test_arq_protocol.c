@@ -14,6 +14,7 @@
 
 #include "unity.h"
 #include "arq_protocol.h"
+#include "arq_crypto.h"
 #include "arq.h"
 #include "framer.h"
 #include "freedv/freedv_api.h"
@@ -389,10 +390,10 @@ void test_callsign_too_long_is_refused_not_truncated(void)
 
     TEST_ASSERT_LESS_THAN_INT(0, arq_protocol_build_call(frame, sizeof(frame),
                                                          0x42, too_long,
-                                                         "PU2UIT-3", 2300));
+                                                         "PU2UIT-3", 2300, false));
     TEST_ASSERT_LESS_THAN_INT(0, arq_protocol_build_accept(frame, sizeof(frame),
                                                            0x42, too_long,
-                                                           "PU2UIT-3", 2300));
+                                                           "PU2UIT-3", 2300, false));
     /* Not asserted for CQ: its SRC slot is 13 bytes (ARQ_CQ_SRC_MAX_ENCODED)
      * against CALL/ACCEPT's 10, and the longest callsign that fits
      * CALLSIGN_MAX_SIZE encodes to about 10 bytes -- so the CQ encoder cannot
@@ -411,14 +412,14 @@ void test_callsign_roundtrip_realistic(void)
     {
         uint8_t frame[INT_BUFFER_SIZE];
         int n = arq_protocol_build_call(frame, sizeof(frame), 0x21,
-                                        calls[i], "PU2UIT-3", 2300);
+                                        calls[i], "PU2UIT-3", 2300, false);
         TEST_ASSERT_GREATER_THAN_INT(0, n);
 
         uint8_t sid = 0;
         char src[CALLSIGN_MAX_SIZE] = {0}, dst[CALLSIGN_MAX_SIZE] = {0};
         int bw = 0;
         TEST_ASSERT_GREATER_OR_EQUAL_INT(0,
-            arq_protocol_parse_call(frame, (size_t)n, &sid, src, dst, &bw));
+            arq_protocol_parse_call(frame, (size_t)n, &sid, src, dst, &bw, NULL));
         TEST_ASSERT_EQUAL_UINT8(0x21, sid);
         TEST_ASSERT_EQUAL_STRING(calls[i], src);
     }
@@ -461,6 +462,84 @@ void test_two_second_buffer_cannot_hold_a_burst(void)
     float capacity_s = arq_protocol_longest_burst_s() + 3.0f;
     TEST_ASSERT_TRUE_MESSAGE(capacity_s > arq_protocol_longest_burst_s(),
         "RX capacity must exceed the longest burst, not merely equal it");
+}
+
+/* ---- the encryption negotiation bit (arq_crypto.h) ---- */
+
+/* With encryption off, a CALL/ACCEPT must be exactly the frame Mercury 1.9.x
+ * sends: the extension field carries the bandwidth token and nothing else.
+ * That is what lets a default station interoperate with every older one. */
+void test_crypto_off_frames_are_byte_identical_to_1_9(void)
+{
+    uint8_t frame[INT_BUFFER_SIZE];
+    int n = arq_protocol_build_call(frame, sizeof(frame), 0x21, "PU2UIT-2",
+                                    "PU2UIT-3", 2300, false);
+
+    TEST_ASSERT_GREATER_THAN_INT(0, n);
+    TEST_ASSERT_EQUAL_HEX8(arq_protocol_bw_token_from_hz(2300),
+                           frame_header_extension(frame[0]));
+}
+
+void test_crypto_bit_round_trips_on_call_and_accept(void)
+{
+    uint8_t frame[INT_BUFFER_SIZE];
+    char src[CALLSIGN_MAX_SIZE], dst[CALLSIGN_MAX_SIZE];
+    uint8_t sid;
+    int bw, n;
+    bool crypto;
+
+    for (int on = 0; on <= 1; on++)
+    {
+        n = arq_protocol_build_call(frame, sizeof(frame), 0x21, "PU2UIT-2",
+                                    "PU2UIT-3", 2300, on);
+        crypto = !on;
+        TEST_ASSERT_EQUAL_INT(0, arq_protocol_parse_call(frame, (size_t)n, &sid,
+                                                         src, dst, &bw, &crypto));
+        TEST_ASSERT_EQUAL(on, crypto);
+        TEST_ASSERT_EQUAL_INT(2300, bw);      /* the bit does not disturb BW */
+
+        n = arq_protocol_build_accept(frame, sizeof(frame), 0x21, "PU2UIT-3",
+                                      "PU2UIT-2", 500, on);
+        crypto = !on;
+        TEST_ASSERT_EQUAL_INT(0, arq_protocol_parse_accept(frame, (size_t)n, &sid,
+                                                           src, dst, &bw, &crypto));
+        TEST_ASSERT_EQUAL(on, crypto);
+        TEST_ASSERT_EQUAL_INT(500, bw);
+    }
+}
+
+/* The interop claim, pinned: a 1.9.x receiver reads the WHOLE extension field
+ * as the bandwidth token, so a CALL offering encryption is an unknown token
+ * to it and it drops the frame.  Offering encryption to an old station fails
+ * closed rather than being half-understood. */
+void test_an_old_receiver_rejects_the_crypto_bit(void)
+{
+    uint8_t frame[INT_BUFFER_SIZE];
+
+    arq_protocol_build_call(frame, sizeof(frame), 0x21, "PU2UIT-2", "PU2UIT-3",
+                            2300, true);
+    /* What 1.9.x did with the field: */
+    TEST_ASSERT_EQUAL_INT(0, arq_protocol_bw_hz_from_token(
+                                 frame_header_extension(frame[0])));
+}
+
+/* The two remaining bits are reserved.  A frame that sets one comes from a
+ * newer protocol than this one and is refused, exactly as 1.9.x refuses ours. */
+void test_reserved_extension_bits_are_refused(void)
+{
+    uint8_t frame[INT_BUFFER_SIZE];
+    char src[CALLSIGN_MAX_SIZE], dst[CALLSIGN_MAX_SIZE];
+    uint8_t sid;
+    int bw;
+    int n = arq_protocol_build_call(frame, sizeof(frame), 0x21, "PU2UIT-2",
+                                    "PU2UIT-3", 2300, false);
+
+    frame[0] |= 0x08;
+    TEST_ASSERT_EQUAL_INT(-1, arq_protocol_parse_call(frame, (size_t)n, &sid,
+                                                      src, dst, &bw, NULL));
+    frame[0] ^= 0x08 | 0x10;
+    TEST_ASSERT_EQUAL_INT(-1, arq_protocol_parse_call(frame, (size_t)n, &sid,
+                                                      src, dst, &bw, NULL));
 }
 
 int main(void)
@@ -507,5 +586,9 @@ int main(void)
 
     RUN_TEST(test_callsign_too_long_is_refused_not_truncated);
     RUN_TEST(test_callsign_roundtrip_realistic);
+    RUN_TEST(test_crypto_off_frames_are_byte_identical_to_1_9);
+    RUN_TEST(test_crypto_bit_round_trips_on_call_and_accept);
+    RUN_TEST(test_an_old_receiver_rejects_the_crypto_bit);
+    RUN_TEST(test_reserved_extension_bits_are_refused);
     return UNITY_END();
 }

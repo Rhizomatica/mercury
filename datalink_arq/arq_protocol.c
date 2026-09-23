@@ -7,6 +7,7 @@
  */
 
 #include "arq_protocol.h"
+#include "arq_crypto.h"
 
 #include <string.h>
 #include <stdio.h>
@@ -568,7 +569,7 @@ static int decode_callsign_only_payload(const uint8_t *in, size_t in_len, char *
 static int build_call_accept(uint8_t *buf, size_t buf_len, bool is_accept,
                               uint8_t session_id,
                               const char *src, const char *dst,
-                              int bw_hz)
+                              int bw_hz, bool crypto)
 {
     uint8_t encoded[ARQ_CONNECT_MAX_ENCODED];
     int enc_len;
@@ -590,38 +591,56 @@ static int build_call_accept(uint8_t *buf, size_t buf_len, bool is_accept,
         (uint8_t)((session_id & ARQ_CONNECT_SESSION_MASK) |
                   (is_accept ? ARQ_CONNECT_ACCEPT_FLAG : 0));
     memcpy(buf + ARQ_CONNECT_PAYLOAD_IDX, encoded, (size_t)enc_len);
-    write_frame_header(buf, PACKET_TYPE_ARQ_CALL, bw_token);
+    /* The BW token takes extension bits 0-1; bit 2 is the encryption flag.
+     * Clear by default, so a station without crypto sends exactly the frame
+     * Mercury 1.9.x sends. */
+    write_frame_header(buf, PACKET_TYPE_ARQ_CALL,
+                       (uint8_t)(bw_token | (crypto ? ARQ_CONNECT_EXT_CRYPTO : 0)));
     return ARQ_CONTROL_FRAME_SIZE;
 }
 
 int arq_protocol_build_call(uint8_t *buf, size_t buf_len,
                              uint8_t session_id,
                              const char *src, const char *dst,
-                             int bw_hz)
+                             int bw_hz, bool crypto)
 {
-    return build_call_accept(buf, buf_len, false, session_id, src, dst, bw_hz);
+    return build_call_accept(buf, buf_len, false, session_id, src, dst, bw_hz,
+                             crypto);
 }
 
 int arq_protocol_build_accept(uint8_t *buf, size_t buf_len,
                                uint8_t session_id,
                                const char *src, const char *dst,
-                               int bw_hz)
+                               int bw_hz, bool crypto)
 {
-    return build_call_accept(buf, buf_len, true, session_id, src, dst, bw_hz);
+    return build_call_accept(buf, buf_len, true, session_id, src, dst, bw_hz,
+                             crypto);
 }
 
 static int parse_call_accept(const uint8_t *buf, size_t buf_len,
                                uint8_t *session_id_out,
                                char *src_out, char *dst_out,
-                               int *bw_hz_out)
+                               int *bw_hz_out, bool *crypto_out)
 {
+    uint8_t ext;
+
     if (!buf || buf_len < ARQ_CONTROL_FRAME_SIZE ||
         !session_id_out || !src_out || !dst_out || !bw_hz_out)
         return -1;
 
-    *bw_hz_out = arq_protocol_bw_hz_from_token(frame_header_extension(buf[0]));
+    /* Extension bits: 0-1 BW token, 2 encryption, 3-4 reserved.  A reserved
+     * bit set is refused, exactly as 1.9.x refuses our bit 2: a frame from a
+     * newer protocol than this one fails closed rather than being half-read. */
+    ext = frame_header_extension(buf[0]);
+    if (ext & ~(ARQ_CONNECT_EXT_BW_MASK | ARQ_CONNECT_EXT_CRYPTO) & 0x1f)
+        return -1;
+
+    *bw_hz_out = arq_protocol_bw_hz_from_token(ext & ARQ_CONNECT_EXT_BW_MASK);
     if (*bw_hz_out == 0)
         return -1;
+
+    if (crypto_out)
+        *crypto_out = (ext & ARQ_CONNECT_EXT_CRYPTO) != 0;
 
     *session_id_out = buf[ARQ_CONNECT_SESSION_IDX] & ARQ_CONNECT_SESSION_MASK;
     return decode_callsign_payload(buf + ARQ_CONNECT_PAYLOAD_IDX,
@@ -632,19 +651,19 @@ static int parse_call_accept(const uint8_t *buf, size_t buf_len,
 int arq_protocol_parse_call(const uint8_t *buf, size_t buf_len,
                               uint8_t *session_id_out,
                               char *src_out, char *dst_out,
-                              int *bw_hz_out)
+                              int *bw_hz_out, bool *crypto_out)
 {
     return parse_call_accept(buf, buf_len, session_id_out, src_out, dst_out,
-                             bw_hz_out);
+                             bw_hz_out, crypto_out);
 }
 
 int arq_protocol_parse_accept(const uint8_t *buf, size_t buf_len,
                                 uint8_t *session_id_out,
                                 char *src_out, char *dst_out,
-                                int *bw_hz_out)
+                                int *bw_hz_out, bool *crypto_out)
 {
     return parse_call_accept(buf, buf_len, session_id_out, src_out, dst_out,
-                             bw_hz_out);
+                             bw_hz_out, crypto_out);
 }
 
 int arq_protocol_build_cq(uint8_t *buf, size_t buf_len,

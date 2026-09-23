@@ -51,10 +51,14 @@ PROJECT_INC = -I../common -I../modem -I../modem/mfsk -I../datalink_arq -I../data
 CFLAGS = $(filter-out -MMD -MP,$(COMMON_CFLAGS)) $(UNITY_CFLAGS) $(UNITY_INC) $(PROJECT_INC)
 UNAME_S := $(shell uname -s)
 ifeq ($(UNAME_S),Darwin)
-LDFLAGS = -lpthread -lm $(SAN_LDFLAGS)
+LDFLAGS = -lpthread -lm $(SAN_LDFLAGS) $(CRYPTO_LDFLAGS)
 else
-LDFLAGS = -lpthread -lrt -lm $(SAN_LDFLAGS) $(ATOMIC_LDFLAGS)
+LDFLAGS = -lpthread -lrt -lm $(SAN_LDFLAGS) $(ATOMIC_LDFLAGS) $(CRYPTO_LDFLAGS)
 endif
+
+# ARQ session encryption.  Its tests need the libsodium backend (config.mk);
+# without one noise_kk.c compiles to nothing and there is nothing to test.
+ARQ_CRYPTO_SRC = ../datalink_arq/arq_crypto.c ../common/noise_kk.c
 
 # Shared mock stubs for ARQ tests
 ARQ_STUBS = datalink_arq/arq_test_stubs.c
@@ -68,6 +72,9 @@ TEST_BINS = test_ring_buffer test_arq_protocol test_arq_timing test_arq_fsm \
             test_ofdm_acq test_ui_status test_ui_devices test_ui_ptt_persist test_tx_pacing test_radio_port \
             test_radio_io_frequency test_mfsk \
 			test_message_store test_ui_history test_ws_protocol
+ifneq ($(strip $(CRYPTO_CFLAGS)),)
+TEST_BINS += test_noise_kk test_arq_crypto test_bcast_aead
+endif
 
 .PHONY: all test clean
 
@@ -140,11 +147,26 @@ test_arq_fsm: datalink_arq/test_arq_fsm.c $(UNITY_SRC) $(ARQ_STUBS) \
 test_tcp_interfaces: data_interfaces/test_tcp_interfaces.c $(UNITY_SRC) ../modem/framer.c \
                      ../datalink_arq/arq_tnc.c ../data_interfaces/tcp_interfaces.c \
                      ../common/ring_buffer_posix.c ../common/shm_posix.c ../common/os_interop.c \
-                     ../common/mercury_modes.c
+                     ../common/mercury_modes.c $(ARQ_CRYPTO_SRC)
 	$(CC) $(CFLAGS) -I../modem/freedv -o $@ \
 	    data_interfaces/test_tcp_interfaces.c $(UNITY_SRC) ../modem/framer.c \
 	    ../datalink_arq/arq_tnc.c ../common/shm_posix.c ../common/os_interop.c \
-	    ../common/mercury_modes.c $(LDFLAGS)
+	    ../common/mercury_modes.c $(ARQ_CRYPTO_SRC) $(LDFLAGS)
+
+# Noise_KK_25519_ChaChaPoly_SHA256 against the published test vector.
+test_noise_kk: common/test_noise_kk.c common/noise_kk_vectors.h $(UNITY_SRC) \
+               ../common/noise_kk.c ../common/noise_kk.h
+	$(CC) $(CFLAGS) -Icommon -o $@ $(filter %.c %.a %.o,$^) $(LDFLAGS)
+
+# Broadcast object encryption, shared with hermes-broadcast's broadcast_daemon.
+test_bcast_aead: datalink_broadcast/test_bcast_aead.c $(UNITY_SRC) \
+                 ../datalink_broadcast/bcast_aead.c ../datalink_broadcast/bcast_aead.h
+	$(CC) $(CFLAGS) -o $@ $(filter %.c %.a %.o,$^) $(LDFLAGS)
+
+# ARQ session encryption: handshake sequencing, records, negotiation, overhead.
+test_arq_crypto: datalink_arq/test_arq_crypto.c $(UNITY_SRC) $(ARQ_CRYPTO_SRC) \
+                 ../common/hermes_log.c ../datalink_arq/arq_crypto.h
+	$(CC) $(CFLAGS) -o $@ $(filter %.c %.a %.o,$^) $(LDFLAGS)
 
 # Two-FSM ARQ simulation harness
 SIM_SRC = sim/sim_clock.c sim/sim_channel.c sim/sim_endpoint.c \
@@ -211,7 +233,8 @@ test_ui_history: gui_interface/test_ui_history.c $(UNITY_SRC) ../gui_interface/u
 RAPTORQ_SRC = $(wildcard ../datalink_broadcast/raptorq/lib/*.c) \
               $(wildcard ../datalink_broadcast/raptorq/deps/obl/*.c)
 test_bcast_file: datalink_broadcast/test_bcast_file.c $(UNITY_SRC) \
-                 ../datalink_broadcast/bcast_file.c $(RAPTORQ_SRC)
+                 ../datalink_broadcast/bcast_file.c ../datalink_broadcast/bcast_aead.c \
+                 $(RAPTORQ_SRC)
 	$(CC) $(CFLAGS) -I.. -I../datalink_broadcast -I../datalink_broadcast/raptorq/include \
 	      -I../datalink_broadcast/raptorq/deps -o $@ $(filter %.c %.a %.o,$^) $(LDFLAGS) -lm
 

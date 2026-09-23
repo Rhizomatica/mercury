@@ -85,6 +85,19 @@
 #define CFG_KEY_STORE_PATH                    "store:path"
 #define CFG_KEY_STORE_MAX_MESSAGES            "store:max_messages"
 
+/* ARQ session encryption (datalink_arq/arq_crypto.h).  Off by default:
+ * amateur rules forbid encryption in many places.  The paths are the ones the
+ * HERMES installer writes; they are config keys, not constants, so a station
+ * can run as a normal user or on a system where /etc/mercury does not exist. */
+#define CFG_KEY_CRYPTO_MODE                   "crypto:mode"
+#define CFG_KEY_CRYPTO_KEY_FILE               "crypto:key_file"
+#define CFG_KEY_CRYPTO_PEERS_DIR              "crypto:peers_dir"
+#define CFG_KEY_CRYPTO_BROADCAST_KEY_FILE     "crypto:broadcast_key_file"
+
+#define CFG_CRYPTO_DEFAULT_KEY_FILE           "/etc/mercury/station.key"
+#define CFG_CRYPTO_DEFAULT_PEERS_DIR          "/etc/mercury/peers"
+#define CFG_CRYPTO_DEFAULT_BROADCAST_KEY_FILE "/etc/mercury/broadcast.key"
+
 /* Holds all values read from the init configuration file */
 typedef struct {
     bool     ui_enabled;
@@ -92,6 +105,10 @@ typedef struct {
     bool     tls_enabled;           /* false = ws, true = wss */
     char     tls_cert[512];         /* PEM certificate chain, wss only */
     char     tls_key[512];          /* PEM private key, wss only */
+    char     crypto_mode[16];       /* "off" | "optional" | "required" */
+    char     crypto_key_file[512];
+    char     crypto_peers_dir[512];
+    char     crypto_broadcast_key_file[512];
     bool     waterfall_enabled;
     ptt_config_t ptt;               /* selected PTT method and backend config */
     char     input_device[512];

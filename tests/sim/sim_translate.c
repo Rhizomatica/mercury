@@ -40,8 +40,8 @@ bool sim_translate_frame(const uint8_t *frame, size_t frame_size, float rx_snr,
         int  bw_hz = 0;
 
         int rc = is_accept
-                 ? arq_protocol_parse_accept(frame, frame_size, &session_id, src, dst, &bw_hz)
-                 : arq_protocol_parse_call  (frame, frame_size, &session_id, src, dst, &bw_hz);
+                 ? arq_protocol_parse_accept(frame, frame_size, &session_id, src, dst, &bw_hz, NULL)
+                 : arq_protocol_parse_call  (frame, frame_size, &session_id, src, dst, &bw_hz, NULL);
         if (rc < 0)
             return false;
 

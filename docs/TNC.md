@@ -408,6 +408,28 @@ asynchronous lines bracket the carrier exactly as they do a data burst.
 **Response:** `OK\r` on success, `WRONG\r` on error.
 `TUNE ?` replies `TUNE <level>\r` (for example `TUNE -15\r`).
 
+### ENCRYPT
+
+```
+ENCRYPT ON|OFF\r
+```
+
+Only meaningful on a station with `[crypto] mode = optional` (see the
+configuration file).  `ENCRYPT OFF` stops Mercury encrypting the sessions this
+client makes and answers, for clients that already encrypt end to end -- NNCP
+is the obvious one -- so they do not pay for the handshake (48 bytes each way)
+and the per-record overhead twice.  It lasts until `ENCRYPT ON` or until the
+client reconnects.
+
+VARA has no such command (its encryption is chosen in its own window), so this
+one is Mercury's; VARA-only clients never send it.
+
+**Response:** `OK\r` followed by VARA's station status for what is now in
+effect -- `ENCRYPTION READY\r`, or `ENCRYPTION DISABLED\r` (also on a station
+with `[crypto] mode = off`, where `ENCRYPT ON` changes nothing).  `WRONG\r` for
+anything else, including `ENCRYPT OFF` in `required` mode, where a clear session
+is never allowed.
+
 ---
 
 
@@ -431,6 +453,7 @@ These are sent on the **control port** without a preceding command.
 | `BITRATE (<level>) <bps> BPS\r`            | Throughput update                            |
 | `IAMALIVE\r`                                | Heartbeat (sent periodically while idle)     |
 | `REGISTERED <callsign>\r`                  | Callsign registration confirmed (after MYCALL) |
+| `ENCRYPTED LINK\r` / `UNENCRYPTED LINK\r` | After `CONNECTED`, only with `[crypto]` on    |
 
 ### PENDING
 
@@ -458,6 +481,27 @@ If either peer is `BW500`, both sides report `500`. If both peers stay wide,
 Mercury reports the lower of the two wide tokens, preserving `2750` only when
 both sides advertised it. `<sourcecall>` is always the station that initiated
 the session, and `<destcall>` is always the station that was called.
+
+On an encrypted session `CONNECTED` is sent only once the encryption handshake
+has completed, so a client can never send a byte before the session is
+secure.
+
+### ENCRYPTED LINK / UNENCRYPTED LINK
+
+```
+ENCRYPTED LINK\r
+UNENCRYPTED LINK\r
+```
+
+VARA's own lines, sent immediately after `CONNECTED`, and only by a station
+with `[crypto] mode = optional` or `required` -- a default station never sends
+either.  `UNENCRYPTED LINK` is possible only in `optional` mode.  An encrypted
+link means the peer proved it holds the key in `peers_dir` for its callsign;
+Mercury logs that key's fingerprint (the first 8 bytes of SHA-256 of the public
+key, in hex), since VARA's line has no room for it.
+
+Encryption covers the data stream only.  Callsigns and ARQ headers always
+travel in the clear, for station identification.
 
 ### CQFRAME
 

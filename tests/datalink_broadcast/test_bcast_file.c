@@ -19,6 +19,7 @@
 
 #include "bcast_file.h"
 #include "bcast_modes.h"
+#include "bcast_aead.h"
 #include "raptorq/include/nanorq.h"
 #include "raptorq/include/nanorq_io.h"
 
@@ -786,6 +787,170 @@ void test_rx_saves_a_payload_that_is_not_a_bundle(void)
     remove(TMP);
 }
 
+/* ---- broadcast key ([crypto] broadcast_key_file) ----
+ * The key is process-wide and a sender seals when it OPENS the file, so one
+ * process plays both stations by changing the key between open and receive. */
+
+static const uint8_t KEY_A[BCAST_AEAD_KEYLEN] = { 0xA1, 0xA2, 0xA3, 0xA4 };
+static const uint8_t KEY_B[BCAST_AEAD_KEYLEN] = { 0xB1, 0xB2, 0xB3, 0xB4 };
+
+/* Carry a whole carousel to rx, lossless; returns the receiver's last result. */
+static bcast_rx_result_t carry(bcast_file_tx_t *tx, bcast_file_rx_t *rx)
+{
+    int fs = bcast_file_tx_frame_size(tx);
+    uint8_t *frame = malloc((size_t)fs);
+    bcast_rx_result_t r = BCAST_RX_IGNORED;
+
+    for (int i = 0; i < 5000; i++)
+    {
+        TEST_ASSERT_EQUAL_INT(fs, bcast_file_tx_next(tx, frame, (size_t)fs));
+        r = bcast_file_rx_frame(rx, frame, (size_t)fs);
+        if (r == BCAST_RX_COMPLETE || r == BCAST_RX_ERROR)
+            break;
+    }
+    free(frame);
+    return r;
+}
+
+static void assert_file_equals(const char *path, const char *orig, size_t n)
+{
+    uint8_t *a = malloc(n), *b = malloc(n + 1);
+    FILE *f = fopen(orig, "rb");
+    TEST_ASSERT_EQUAL_size_t(n, fread(a, 1, n, f)); fclose(f);
+    f = fopen(path, "rb");
+    TEST_ASSERT_NOT_NULL(f);
+    TEST_ASSERT_EQUAL_size_t(n, fread(b, 1, n + 1, f)); fclose(f);
+    TEST_ASSERT_EQUAL_MEMORY(a, b, n);
+    free(a); free(b);
+}
+
+/* Sealed with the station key, received with it: same name, same bytes, and
+ * the receiver knows it arrived encrypted. */
+void test_keyed_transfer_round_trips(void)
+{
+    char err[192] = {0};
+    char dir[] = "/tmp/.mercury_bcast_rxdirXXXXXX";
+    const size_t N = 5000;
+
+    if (!bcast_aead_available()) TEST_IGNORE_MESSAGE("built without libsodium");
+    TEST_ASSERT_NOT_NULL(mkdtemp(dir));
+    write_file(TMP, N, 77);
+
+    bcast_file_set_key(KEY_A, true);
+    bcast_file_tx_t *tx = bcast_file_tx_open(TMP, 0, 0, 0, err, sizeof(err));
+    TEST_ASSERT_NOT_NULL_MESSAGE(tx, err);
+    bcast_file_rx_t *rx = bcast_file_rx_open(0, dir, err, sizeof(err));
+    TEST_ASSERT_NOT_NULL_MESSAGE(rx, err);
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(BCAST_RX_COMPLETE, carry(tx, rx), bcast_file_rx_error(rx));
+    TEST_ASSERT_TRUE(bcast_file_rx_last_encrypted(rx));
+    TEST_ASSERT_EQUAL_STRING(".mercury_bcast_test.bin", bcast_file_rx_last_name(rx));
+    assert_file_equals(bcast_file_rx_last_path(rx), TMP, N);
+
+    bcast_file_tx_close(tx);
+    bcast_file_rx_close(rx);
+    bcast_file_set_key(NULL, false);
+    remove(TMP);
+}
+
+/* The largest legal file, sealed, is 41 bytes over BCAST_FILE_MAX_BYTES; a
+ * receiver must still accept the size it announces on the first frame. */
+void test_sealed_file_at_the_size_limit_is_accepted(void)
+{
+    char err[192] = {0};
+    char dir[] = "/tmp/.mercury_bcast_rxdirXXXXXX";
+    const size_t N = BCAST_FILE_MAX_BYTES - 4 - 1 - strlen(".mercury_bcast_test.bin");
+    size_t expect = 0;
+
+    if (!bcast_aead_available()) TEST_IGNORE_MESSAGE("built without libsodium");
+    TEST_ASSERT_NOT_NULL(mkdtemp(dir));
+    write_file(TMP, N, 80);
+
+    bcast_file_set_key(KEY_A, true);
+    bcast_file_tx_t *tx = bcast_file_tx_open(TMP, 0, 0, 0, err, sizeof(err));
+    TEST_ASSERT_NOT_NULL_MESSAGE(tx, err);
+    bcast_file_rx_t *rx = bcast_file_rx_open(0, dir, err, sizeof(err));
+    TEST_ASSERT_NOT_NULL_MESSAGE(rx, err);
+
+    int fs = bcast_file_tx_frame_size(tx);
+    uint8_t *frame = malloc((size_t)fs);
+    for (int i = 0; i < 10; i++)
+    {
+        TEST_ASSERT_EQUAL_INT(fs, bcast_file_tx_next(tx, frame, (size_t)fs));
+        TEST_ASSERT_NOT_EQUAL_MESSAGE(BCAST_RX_ERROR,
+                                      bcast_file_rx_frame(rx, frame, (size_t)fs),
+                                      bcast_file_rx_error(rx));
+    }
+    bcast_file_rx_stats(rx, NULL, &expect);
+    TEST_ASSERT_EQUAL_size_t(BCAST_FILE_MAX_BYTES + BCAST_AEAD_OVERHEAD, expect);
+
+    free(frame);
+    bcast_file_tx_close(tx);
+    bcast_file_rx_close(rx);
+    bcast_file_set_key(NULL, false);
+    remove(TMP);
+}
+
+/* A keyed station still receives a clear sender, as a clear file: clear and
+ * encrypted objects share one carousel. */
+void test_keyed_receiver_still_takes_a_clear_file(void)
+{
+    char err[192] = {0};
+    char dir[] = "/tmp/.mercury_bcast_rxdirXXXXXX";
+    const size_t N = 3000;
+
+    if (!bcast_aead_available()) TEST_IGNORE_MESSAGE("built without libsodium");
+    TEST_ASSERT_NOT_NULL(mkdtemp(dir));
+    write_file(TMP, N, 78);
+
+    bcast_file_set_key(NULL, false);
+    bcast_file_tx_t *tx = bcast_file_tx_open(TMP, 0, 0, 0, err, sizeof(err));
+    TEST_ASSERT_NOT_NULL_MESSAGE(tx, err);
+    bcast_file_set_key(KEY_A, false);
+    bcast_file_rx_t *rx = bcast_file_rx_open(0, dir, err, sizeof(err));
+    TEST_ASSERT_NOT_NULL_MESSAGE(rx, err);
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(BCAST_RX_COMPLETE, carry(tx, rx), bcast_file_rx_error(rx));
+    TEST_ASSERT_FALSE(bcast_file_rx_last_encrypted(rx));
+    TEST_ASSERT_EQUAL_STRING(".mercury_bcast_test.bin", bcast_file_rx_last_name(rx));
+    assert_file_equals(bcast_file_rx_last_path(rx), TMP, N);
+
+    bcast_file_tx_close(tx);
+    bcast_file_rx_close(rx);
+    bcast_file_set_key(NULL, false);
+    remove(TMP);
+}
+
+/* Another network's object never comes out as that network's file: the name
+ * and contents stay sealed, and it is not reported as encrypted-for-us. */
+void test_another_keys_file_does_not_open(void)
+{
+    char err[192] = {0};
+    char dir[] = "/tmp/.mercury_bcast_rxdirXXXXXX";
+    const size_t N = 3000;
+
+    if (!bcast_aead_available()) TEST_IGNORE_MESSAGE("built without libsodium");
+    TEST_ASSERT_NOT_NULL(mkdtemp(dir));
+    write_file(TMP, N, 79);
+
+    bcast_file_set_key(KEY_A, false);
+    bcast_file_tx_t *tx = bcast_file_tx_open(TMP, 0, 0, 0, err, sizeof(err));
+    TEST_ASSERT_NOT_NULL_MESSAGE(tx, err);
+    bcast_file_set_key(KEY_B, false);
+    bcast_file_rx_t *rx = bcast_file_rx_open(0, dir, err, sizeof(err));
+    TEST_ASSERT_NOT_NULL_MESSAGE(rx, err);
+
+    carry(tx, rx);
+    TEST_ASSERT_FALSE(bcast_file_rx_last_encrypted(rx));
+    /* Saved raw, like any file that is not one of our bundles. */
+    TEST_ASSERT_EQUAL_INT(0, strncmp(bcast_file_rx_last_name(rx), "broadcast_", 10));
+
+    bcast_file_tx_close(tx);
+    bcast_file_rx_close(rx);
+    bcast_file_set_key(NULL, false);
+    remove(TMP);
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -804,6 +969,10 @@ int main(void)
     RUN_TEST(test_every_frame_is_self_describing);
     RUN_TEST(test_cycle_budget_is_honoured);
     RUN_TEST(test_oversized_file_is_refused);
+    RUN_TEST(test_keyed_transfer_round_trips);
+    RUN_TEST(test_sealed_file_at_the_size_limit_is_accepted);
+    RUN_TEST(test_keyed_receiver_still_takes_a_clear_file);
+    RUN_TEST(test_another_keys_file_does_not_open);
     RUN_TEST(test_empty_and_missing_files_are_refused);
     RUN_TEST(test_modes_too_small_for_broadcast_are_refused);
     RUN_TEST(test_symbol_size_is_fixed_across_modes);

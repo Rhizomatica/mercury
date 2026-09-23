@@ -207,12 +207,12 @@ else
 BINARY = mercury
 endif
 
-LDFLAGS=$(FFAUDIO_LINKFLAGS) -lm $(HAMLIB_LDFLAGS) $(HIDAPI_LDFLAGS) $(ATOMIC_LDFLAGS) $(WS_TLS_LDFLAGS)
+LDFLAGS=$(FFAUDIO_LINKFLAGS) -lm $(HAMLIB_LDFLAGS) $(HIDAPI_LDFLAGS) $(ATOMIC_LDFLAGS) $(WS_TLS_LDFLAGS) $(CRYPTO_LDFLAGS)
 
 MERCURY_LINK_INPUTS = \
 	main.o common/cfg_utils.o common/iniparser/iniparser.o common/iniparser/dictionary.o \
 	datalink_arq/arq.o datalink_arq/arq_trace.o datalink_arq/arq_tnc.o datalink_arq/arith.o datalink_arq/arq_channels.o \
-	datalink_arq/arq_fsm.o datalink_arq/arq_protocol.o datalink_arq/arq_timing.o datalink_arq/arq_modem.o \
+	datalink_arq/arq_fsm.o datalink_arq/arq_protocol.o datalink_arq/arq_timing.o datalink_arq/arq_modem.o datalink_arq/arq_crypto.o common/noise_kk.o \
 	datalink_broadcast/broadcast.o datalink_broadcast/kiss.o modem/modem.o modem/framer.o modem/channel_busy.o modem/freedv/libfreedvdata.a \
 	audioio/audioio.a common/os_interop.o common/ring_buffer_posix.o common/shm_posix.o common/crc6.o common/hermes_log.o common/virtual_clock.o \
 	common/chan.o common/queue.o common/mercury_engine.o common/mercury_cli.o common/mercury_modes.o common/message_store.o data_interfaces/tcp_interfaces.o data_interfaces/net.o \
@@ -313,8 +313,8 @@ RAPTORQ_CFLAGS = -Idatalink_broadcast/raptorq/include -Idatalink_broadcast/rapto
 # the two builds simply independent.
 RAPTORQ_OBJS     = $(patsubst %.c,%.o,$(RAPTORQ_SRCS))
 RAPTORQ_OBJS_W64 = $(patsubst %.c,%.w64.o,$(RAPTORQ_SRCS))
-BCAST_FILE_OBJS     = datalink_broadcast/bcast_file.o $(RAPTORQ_OBJS)
-BCAST_FILE_OBJS_W64 = datalink_broadcast/bcast_file.w64.o $(RAPTORQ_OBJS_W64)
+BCAST_FILE_OBJS     = datalink_broadcast/bcast_file.o datalink_broadcast/bcast_aead.o $(RAPTORQ_OBJS)
+BCAST_FILE_OBJS_W64 = datalink_broadcast/bcast_file.w64.o datalink_broadcast/bcast_aead.w64.o $(RAPTORQ_OBJS_W64)
 
 $(RAPTORQ_OBJS): %.o: %.c
 	$(CC) $(CFLAGS) $(RAPTORQ_CFLAGS) -c $< -o $@
@@ -328,10 +328,16 @@ datalink_broadcast/bcast_file.o: datalink_broadcast/bcast_file.c
 datalink_broadcast/bcast_file.w64.o: datalink_broadcast/bcast_file.c
 	$(MINGW_CC) $(CFLAGS) $(RAPTORQ_CFLAGS) -c $< -o $@
 
+datalink_broadcast/bcast_aead.o: datalink_broadcast/bcast_aead.c
+	$(CC) $(CFLAGS) -c $< -o $@
+
+datalink_broadcast/bcast_aead.w64.o: datalink_broadcast/bcast_aead.c
+	$(MINGW_CC) $(CFLAGS) -c $< -o $@
+
 MERCURY_CORE_OBJS = \
 	common/cfg_utils.o common/iniparser/iniparser.o common/iniparser/dictionary.o \
 	datalink_arq/arq.o datalink_arq/arq_trace.o datalink_arq/arq_tnc.o datalink_arq/arith.o datalink_arq/arq_channels.o \
-	datalink_arq/arq_fsm.o datalink_arq/arq_protocol.o datalink_arq/arq_timing.o datalink_arq/arq_modem.o \
+	datalink_arq/arq_fsm.o datalink_arq/arq_protocol.o datalink_arq/arq_timing.o datalink_arq/arq_modem.o datalink_arq/arq_crypto.o common/noise_kk.o \
 	datalink_broadcast/broadcast.o datalink_broadcast/kiss.o \
 	modem/modem.o modem/framer.o modem/channel_busy.o \
 	common/os_interop.o common/ring_buffer_posix.o common/shm_posix.o common/crc6.o common/hermes_log.o common/virtual_clock.o \
@@ -411,7 +417,7 @@ libmercury_core_w64.a: $(HIDAPI_W64_OBJ)
 # Windows and macOS, which build without TLS.
 fyne-ui: libmercury_core.a
 	@echo "Building Mercury UI (native: Linux or macOS)..."
-	cd $(FYNE_UI_DIR) && CGO_ENABLED=1 CGO_LDFLAGS="$(HIDAPI_LDFLAGS) $(WS_TLS_LDFLAGS)" go build -tags mercury_embedded \
+	cd $(FYNE_UI_DIR) && CGO_ENABLED=1 CGO_LDFLAGS="$(HIDAPI_LDFLAGS) $(WS_TLS_LDFLAGS) $(CRYPTO_LDFLAGS)" go build -tags mercury_embedded \
 		-ldflags "-X main.coreBuildID=$$(cksum $(abspath libmercury_core.a) | cut -d' ' -f1)" \
 		-o $(abspath mercury-ui) .
 	@echo "  -> mercury-ui"
