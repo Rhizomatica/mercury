@@ -290,6 +290,10 @@ ptt:device	(empty)	Serial device or Hamlib endpoint
 ptt:hamlib_model	\-1	Hamlib model ID
 ptt:hamlib_serial_speed	0	Serial baud rate (0=Hamlib default)
 ptt:hamlib_log_level	0	Hamlib debug level (0\-6)
+crypto:mode	off	off, optional or required (ARQ encryption)
+crypto:key_file	/etc/mercury/station.key	X25519 private key, 32 bytes
+crypto:peers_dir	/etc/mercury/peers	<CALLSIGN>.pub per trusted station
+crypto:broadcast_key_file	/etc/mercury/broadcast.key	Broadcast group key
 .TE
 .PP
 The
@@ -416,6 +420,17 @@ Accepted for VARA compatibility; no-op.
 .TP
 .B IGNOREKISSDCD
 Accepted for VARA compatibility; no-op.
+.TP
+.B ENCRYPT ON|OFF
+With
+.BR "[crypto] mode = optional" ,
+.B ENCRYPT OFF
+stops Mercury encrypting this client's sessions, for clients that already
+encrypt end to end (such as NNCP).  Lasts until
+.B ENCRYPT ON
+or the client reconnects.  Refused in
+.B required
+mode.
 .SS "Responses (control port)"
 .TP
 .B OK
@@ -452,6 +467,27 @@ Current bitrate in bits per second and the speed ladder level.
 .BI "CQFRAME " callsign " " bandwidth
 Received a CQ broadcast from
 .IR callsign .
+.TP
+.BI "ENCRYPTED " fingerprint
+Sent after
+.B CONNECTED
+on a station with
+.B [crypto]
+enabled: the session is encrypted, and
+.I fingerprint
+is the first 8 bytes of SHA-256 of the peer's public key, in hex.
+On an encrypted session
+.B CONNECTED
+itself is sent only once the handshake has completed.
+.TP
+.B CLEAR
+Sent after
+.B CONNECTED
+on a station with
+.B [crypto]
+enabled when the session is not encrypted (possible only in
+.B optional
+mode).
 .SH FREEDV MODES
 Mercury uses the following FreeDV OFDM waveforms:
 .PP

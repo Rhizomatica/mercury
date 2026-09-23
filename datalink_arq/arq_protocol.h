@@ -634,12 +634,15 @@ int arq_protocol_build_data(uint8_t *buf, size_t buf_len,
  * @param src  Local callsign.
  * @param dst  Remote callsign.
  * @param bw_hz        Requested bandwidth in Hz.
+ * @param crypto       Offer an encrypted session (ARQ_CONNECT_EXT_CRYPTO bit;
+ *                     see arq_crypto.h).  false keeps the frame byte-identical
+ *                     to Mercury 1.9.x.
  * @return Total frame bytes (ARQ_CONTROL_FRAME_SIZE = 14) on success, -1 on error.
  */
 int arq_protocol_build_call(uint8_t *buf, size_t buf_len,
                               uint8_t session_id,
                               const char *src, const char *dst,
-                              int bw_hz);
+                              int bw_hz, bool crypto);
 
 /**
  * Build an ACCEPT frame.
@@ -649,11 +652,12 @@ int arq_protocol_build_call(uint8_t *buf, size_t buf_len,
  * @param src  Local callsign.
  * @param dst  Remote callsign.
  * @param bw_hz        Accepted bandwidth in Hz.
+ * @param crypto       Accept the offered encrypted session.
  */
 int arq_protocol_build_accept(uint8_t *buf, size_t buf_len,
                                 uint8_t session_id,
                                 const char *src, const char *dst,
-                                int bw_hz);
+                                int bw_hz, bool crypto);
 
 /**
  * Parse a CALL frame; extract callsigns.
@@ -663,12 +667,13 @@ int arq_protocol_build_accept(uint8_t *buf, size_t buf_len,
  * @param src_out         Buffer for local (transmitting) callsign, CALLSIGN_MAX_SIZE bytes.
  * @param dst_out         Buffer for remote callsign, CALLSIGN_MAX_SIZE bytes.
  * @param bw_hz_out       Receives the requested bandwidth in Hz.
+ * @param crypto_out      Receives the encryption offer bit; may be NULL.
  * @return 0 on success, -1 on parse error.
  */
 int arq_protocol_parse_call(const uint8_t *buf, size_t buf_len,
                               uint8_t *session_id_out,
                               char *src_out, char *dst_out,
-                              int *bw_hz_out);
+                              int *bw_hz_out, bool *crypto_out);
 
 /**
  * Parse an ACCEPT frame; same layout as CALL.
@@ -676,7 +681,7 @@ int arq_protocol_parse_call(const uint8_t *buf, size_t buf_len,
 int arq_protocol_parse_accept(const uint8_t *buf, size_t buf_len,
                                 uint8_t *session_id_out,
                                 char *src_out, char *dst_out,
-                                int *bw_hz_out);
+                                int *bw_hz_out, bool *crypto_out);
 
 /**
  * Build a compact DATAC16 CQ frame carrying source callsign and BW token.

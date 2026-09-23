@@ -79,6 +79,7 @@ jobs:
             libasound2-dev \
             libhamlib-dev \
             libssl-dev \
+            libsodium-dev \
             pkg-config
 
       - name: Checkout
@@ -137,7 +138,8 @@ jobs:
             libpulse-dev:arm64 \
             libasound2-dev:arm64 \
             libhamlib-dev:arm64 \
-            libssl-dev:arm64
+            libssl-dev:arm64 \
+            libsodium-dev:arm64
 
       - name: Checkout
         uses: actions/checkout@v4
@@ -197,7 +199,8 @@ jobs:
             libpulse-dev:armhf \
             libasound2-dev:armhf \
             libhamlib-dev:armhf \
-            libssl-dev:armhf
+            libssl-dev:armhf \
+            libsodium-dev:armhf
 
       - name: Checkout
         uses: actions/checkout@v4
@@ -379,6 +382,7 @@ jobs:
             libasound2-dev \
             libhamlib-dev \
             libssl-dev \
+            libsodium-dev \
             libhidapi-dev \
             libgl1-mesa-dev \
             libegl1-mesa-dev \

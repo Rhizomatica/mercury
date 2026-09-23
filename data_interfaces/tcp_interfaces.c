@@ -39,6 +39,7 @@
 
 #include "tcp_interfaces.h"
 #include "arq_tnc.h"
+#include "arq_crypto.h"
 #include <errno.h>
 #include <string.h>
 #include "ring_buffer_posix.h"
@@ -405,6 +406,23 @@ static void execute_control_command(char *buffer)
         if (temp[1] == 'F')
             cmd.flag = false;
         if (arq_submit_tcp_cmd(&cmd) == 0)
+            tcp_write(CTL_TCP_PORT, (uint8_t *)"OK\r", 3);
+        else
+            tcp_write(CTL_TCP_PORT, (uint8_t *)"WRONG\r", 6);
+        return;
+    }
+
+    /* ENCRYPT OFF: for clients that already encrypt end to end (NNCP), skip
+     * the session handshake and the per-record overhead.  Applies to calls
+     * made and answered while this client stays connected.  Refused in
+     * required mode, where a clear session is never allowed. */
+    if (!strncmp(buffer, "ENCRYPT", strlen("ENCRYPT")))
+    {
+        memset(temp, 0, sizeof(temp));
+        sscanf(buffer, "ENCRYPT %15s", temp);
+        if (!strcmp(temp, "OFF") && arq_crypto_set_client_off(true) == 0)
+            tcp_write(CTL_TCP_PORT, (uint8_t *)"OK\r", 3);
+        else if (!strcmp(temp, "ON") && arq_crypto_set_client_off(false) == 0)
             tcp_write(CTL_TCP_PORT, (uint8_t *)"OK\r", 3);
         else
             tcp_write(CTL_TCP_PORT, (uint8_t *)"WRONG\r", 6);
@@ -1679,6 +1697,21 @@ void tnc_send_buffer(uint32_t bytes)
         atomic_store_explicit(&tnc_last_buffer_sent, (int)bytes, memory_order_relaxed);
 }
 
+/* Sent right after CONNECTED, only on stations that enabled [crypto]: a
+ * default station's clients (VARA-style, Pat) never see a line they do not
+ * know.  The fingerprint is the first 8 bytes of SHA-256 of the peer's key. */
+void tnc_send_encryption(const char *fingerprint)
+{
+    char buffer[64];
+
+    if (fingerprint != NULL && fingerprint[0] != '\0')
+        snprintf(buffer, sizeof(buffer), "ENCRYPTED %s\r", fingerprint);
+    else
+        snprintf(buffer, sizeof(buffer), "CLEAR\r");
+    if (tnc_queue_line_critical(buffer) < 0)
+        HLOGW("tcp-ctl", "Error queuing encryption status");
+}
+
 /* TNC notification callbacks registered into the ARQ layer.  Decouples ARQ
  * from this file: ARQ calls arq_tnc_send_*(), which dispatch here. */
 static const arq_tnc_callbacks_t g_arq_tnc_cbs = {
@@ -1689,6 +1722,7 @@ static const arq_tnc_callbacks_t g_arq_tnc_cbs = {
     .send_disconnected  = tnc_send_disconnected,
     .send_buffer        = tnc_send_buffer,
     .send_registered    = tnc_send_registered,
+    .send_encryption    = tnc_send_encryption,
 };
 
 void tnc_send_sn(float snr)

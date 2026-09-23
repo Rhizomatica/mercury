@@ -30,6 +30,7 @@
 #include "cfg_utils.h"
 #include "ui_communication.h"
 #include "mercury_engine.h"
+#include "arq_crypto.h"
 #include "virtual_clock.h"
 #include "message_store.h"
 
@@ -210,6 +211,24 @@ int mercury_engine_init(const mercury_config *cfg,
     else
     {
         fprintf(stderr, "mercury_engine: async logger unavailable\n");
+    }
+
+    /* ---- ARQ session encryption ----
+     * Before any audio or radio is touched: an operator who configured
+     * encryption and cannot have it (no libsodium, no readable station key)
+     * gets a refusal to start, never a station quietly transmitting clear. */
+    {
+        arq_crypto_mode_t crypto_mode = ARQ_CRYPTO_OFF;
+
+        if (arq_crypto_mode_from_name(cfg->crypto_mode, &crypto_mode) != 0 ||
+            arq_crypto_configure(crypto_mode, cfg->crypto_key_file,
+                                 cfg->crypto_peers_dir) != 0)
+        {
+            fprintf(stderr, "mercury_engine: [crypto] mode = %s cannot be honoured; "
+                            "not starting\n", cfg->crypto_mode);
+            hermes_log_shutdown();
+            return -1;
+        }
     }
 
     /* ---- audio I/O ---- */

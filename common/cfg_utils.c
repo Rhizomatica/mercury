@@ -39,6 +39,13 @@ void cfg_set_defaults(mercury_config *cfg)
     cfg->tls_enabled        = false;                 /* ws     */
     snprintf(cfg->tls_cert, sizeof(cfg->tls_cert), "%s", CFG_SSL_CERT);
     snprintf(cfg->tls_key,  sizeof(cfg->tls_key),  "%s", CFG_SSL_KEY);
+    snprintf(cfg->crypto_mode, sizeof(cfg->crypto_mode), "off");
+    snprintf(cfg->crypto_key_file, sizeof(cfg->crypto_key_file), "%s",
+             CFG_CRYPTO_DEFAULT_KEY_FILE);
+    snprintf(cfg->crypto_peers_dir, sizeof(cfg->crypto_peers_dir), "%s",
+             CFG_CRYPTO_DEFAULT_PEERS_DIR);
+    snprintf(cfg->crypto_broadcast_key_file, sizeof(cfg->crypto_broadcast_key_file),
+             "%s", CFG_CRYPTO_DEFAULT_BROADCAST_KEY_FILE);
     cfg->waterfall_enabled  = true;
     cfg->ptt.method         = PTT_METHOD_NONE;
     cfg->ptt.device[0]      = '\0';
@@ -439,6 +446,30 @@ bool cfg_read(mercury_config *cfg, const char *ini_path)
     i = iniparser_getint(ini, CFG_KEY_STORE_MAX_MESSAGES, cfg->store_max_messages);
     if (i >= 1 && i <= 10000) cfg->store_max_messages = i;
 
+    /* An unknown crypto mode is refused, never read as "off": a typo such as
+     * "requierd" from an operator who meant to encrypt must not quietly give
+     * them cleartext. */
+    s = iniparser_getstring(ini, CFG_KEY_CRYPTO_MODE, NULL);
+    if (s) {
+        if (strcmp(s, "off") && strcmp(s, "optional") && strcmp(s, "required")) {
+            fprintf(stderr, "cfg_read: invalid [crypto] mode '%s' "
+                    "(use off, optional or required)\n", s);
+            iniparser_freedict(ini);
+            return false;
+        }
+        snprintf(cfg->crypto_mode, sizeof(cfg->crypto_mode), "%s", s);
+    }
+    s = iniparser_getstring(ini, CFG_KEY_CRYPTO_KEY_FILE, NULL);
+    if (s && *s)
+        snprintf(cfg->crypto_key_file, sizeof(cfg->crypto_key_file), "%s", s);
+    s = iniparser_getstring(ini, CFG_KEY_CRYPTO_PEERS_DIR, NULL);
+    if (s && *s)
+        snprintf(cfg->crypto_peers_dir, sizeof(cfg->crypto_peers_dir), "%s", s);
+    s = iniparser_getstring(ini, CFG_KEY_CRYPTO_BROADCAST_KEY_FILE, NULL);
+    if (s && *s)
+        snprintf(cfg->crypto_broadcast_key_file,
+                 sizeof(cfg->crypto_broadcast_key_file), "%s", s);
+
     iniparser_freedict(ini);
     return true;
 }
@@ -563,6 +594,12 @@ bool cfg_write(const mercury_config *cfg, const char *ini_path)
     cfg_escape_str(escaped, sizeof(escaped), cfg->store_path);
     fprintf(f, "path = \"%s\"\n", escaped);
     fprintf(f, "max_messages = %d\n", cfg->store_max_messages);
+
+    fprintf(f, "\n[crypto]\n");
+    fprintf(f, "mode = %s\n", cfg->crypto_mode);
+    fprintf(f, "key_file = %s\n", cfg->crypto_key_file);
+    fprintf(f, "peers_dir = %s\n", cfg->crypto_peers_dir);
+    fprintf(f, "broadcast_key_file = %s\n", cfg->crypto_broadcast_key_file);
 
     fclose(f);
     return true;

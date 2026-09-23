@@ -22,6 +22,9 @@ typedef struct
     void (*send_disconnected)(void);
     void (*send_buffer)(uint32_t bytes);
     void (*send_registered)(const char *callsign);
+    /* After CONNECTED, on stations with [crypto] mode != off: "ENCRYPTED <fp>"
+     * when fingerprint is non-NULL, "CLEAR" otherwise. */
+    void (*send_encryption)(const char *fingerprint);
 } arq_tnc_callbacks_t;
 
 /* Register the TNC notification callbacks (call once, after arq_init()).
@@ -38,5 +41,6 @@ void arq_tnc_send_cqframe(const char *source_call, int bw_hz);
 void arq_tnc_send_disconnected(void);
 void arq_tnc_send_buffer(uint32_t bytes);
 void arq_tnc_send_registered(const char *callsign);
+void arq_tnc_send_encryption(const char *fingerprint);
 
 #endif /* ARQ_TNC_H */

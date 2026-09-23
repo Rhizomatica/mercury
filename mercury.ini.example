@@ -245,3 +245,34 @@ enabled = true
 ; Number of recent messages kept in memory (and returned by the HISTORY TNC
 ; command). Valid range: 1..10000. (default: 500)
 max_messages = 500
+
+[crypto]
+; Encryption of ARQ sessions (Noise_KK_25519_ChaChaPoly_SHA256).
+;
+; OFF BY DEFAULT, and it must stay off where your licence forbids encryption:
+; amateur rules do in many countries.  Callsigns and ARQ headers always travel
+; in the clear for identification; only the data stream is encrypted.
+;
+;   off       never encrypt (default).  On the air this is byte-identical to
+;             Mercury 1.9.x.
+;   optional  encrypt whenever both stations hold each other's key; otherwise
+;             run the session in the clear.  An active attacker on the channel
+;             can force a clear session in this mode.
+;   required  never run a session in the clear: calls to or from a station
+;             without a key are refused.  The only mode that resists a
+;             downgrade.
+;
+; Needs a build with libsodium; without it Mercury refuses to start with any
+; mode other than off, rather than quietly sending in the clear.
+mode = off
+
+; This station's X25519 private key: 32 raw bytes, readable only by the user
+; Mercury runs as (0600).
+;key_file = /etc/mercury/station.key
+
+; One file per trusted station: <CALLSIGN>.pub, 32 raw bytes, named by the
+; callsign as it goes on air -- uppercase, with the SSID (e.g. PU2UIT-2.pub).
+;peers_dir = /etc/mercury/peers
+
+; Group key for encrypted broadcast objects: 32 raw bytes.
+;broadcast_key_file = /etc/mercury/broadcast.key

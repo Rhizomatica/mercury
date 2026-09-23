@@ -800,12 +800,21 @@ static void send_call_accept(arq_session_t *sess, bool is_accept)
     char my_call[CALLSIGN_MAX_SIZE];
     arq_conn_get_calls(my_call, NULL, NULL, sizeof(my_call));
     int bw_hz = is_accept ? arq_reported_bandwidth_hz() : arq_get_bw();
+    bool crypto = g_cbs.crypto_connect_bit &&
+                  g_cbs.crypto_connect_bit(is_accept, sess->remote_call,
+                                           sess->crypto_offer);
     if (is_accept)
+    {
+        sess->crypto_accept = crypto;
         n = arq_protocol_build_accept(frame, sizeof(frame), sess->session_id,
-                                      my_call, sess->remote_call, bw_hz);
+                                      my_call, sess->remote_call, bw_hz, crypto);
+    }
     else
+    {
+        sess->crypto_offer = crypto;
         n = arq_protocol_build_call(frame, sizeof(frame), sess->session_id,
-                                    my_call, sess->remote_call, bw_hz);
+                                    my_call, sess->remote_call, bw_hz, crypto);
+    }
     if (n > 0)
         send_frame(PACKET_TYPE_ARQ_CALL, sess->control_mode, (size_t)n, frame, 0);
     else
@@ -1125,6 +1134,8 @@ static void fsm_disconnected(arq_session_t *sess, const arq_event_t *ev)
     case ARQ_EV_APP_CONNECT:
         snprintf(sess->remote_call, CALLSIGN_MAX_SIZE, "%s", ev->remote_call);
         sess->session_id      = (uint8_t)(time_now_ms() & 0x7F) | 0x01;
+        sess->crypto_offer    = false;   /* set as the CALL is built */
+        sess->crypto_accept   = false;
         sess->tx_retries_left = ARQ_CALL_RETRY_SLOTS;
         sess->pending_disconnect = false;  /* clear stale deferred disconnect from prior session */
         sess->disconnect_deadline_ms = 0;
@@ -1165,6 +1176,8 @@ static void fsm_listening(arq_session_t *sess, const arq_event_t *ev)
         snprintf(sess->remote_call, CALLSIGN_MAX_SIZE, "%s", ev->remote_call);
         snprintf(sess->local_call, CALLSIGN_MAX_SIZE, "%s", ev->local_call);
         sess->session_id      = ev->session_id;
+        sess->crypto_offer    = ev->crypto;
+        sess->crypto_accept   = false;   /* set as the ACCEPT is built */
         sess->tx_retries_left = ARQ_ACCEPT_RETRY_SLOTS;
         sess->accept_tx_pending = true;   /* answering a CALL we just heard */
         /* Reset mode state so the payload decoder matches the new caller's
@@ -1258,7 +1271,8 @@ static void fsm_calling(arq_session_t *sess, const arq_event_t *ev)
     case ARQ_EV_RX_ACCEPT:
         if (ev->session_id == sess->session_id)
         {
-            bool has_tx_backlog = session_tx_backlog(sess) > 0;
+            bool has_tx_backlog;
+            sess->crypto_accept = ev->crypto;
             sess->role        = ARQ_ROLE_CALLER;
             sess->tx_seq      = 0;
             sess->rx_expected = 0;
@@ -1279,6 +1293,13 @@ static void fsm_calling(arq_session_t *sess, const arq_event_t *ev)
                 time_now_ms() + (ARQ_STARTUP_MAX_S * 1000ULL);
             if (g_cbs.notify_connected)
                 g_cbs.notify_connected(sess->remote_call, sess->local_call);
+            /* Only now: an encrypted session queues its handshake message in
+             * notify_connected, and it must count as backlog so it goes out as
+             * the first DATA -- otherwise a no-backlog start spends a whole
+             * connect-confirm ACK frame before the handshake even begins.
+             * Without encryption notify_connected queues nothing, so this is
+             * the same value it always was. */
+            has_tx_backlog = session_tx_backlog(sess) > 0;
             if (g_timing)
                 arq_timing_record_connect(g_timing, sess->control_mode);
             /* The callee does not enter CONNECTED until it sees the caller's

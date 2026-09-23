@@ -408,6 +408,22 @@ asynchronous lines bracket the carrier exactly as they do a data burst.
 **Response:** `OK\r` on success, `WRONG\r` on error.
 `TUNE ?` replies `TUNE <level>\r` (for example `TUNE -15\r`).
 
+### ENCRYPT
+
+```
+ENCRYPT ON|OFF\r
+```
+
+Only meaningful on a station with `[crypto] mode = optional` (see the
+configuration file).  `ENCRYPT OFF` stops Mercury encrypting the sessions this
+client makes and answers, for clients that already encrypt end to end -- NNCP
+is the obvious one -- so they do not pay for the handshake (48 bytes each way)
+and the per-record overhead twice.  It lasts until `ENCRYPT ON` or until the
+client reconnects.
+
+**Response:** `OK\r`, or `WRONG\r` -- including `ENCRYPT OFF` in `required`
+mode, where a clear session is never allowed.
+
 ---
 
 
@@ -458,6 +474,27 @@ If either peer is `BW500`, both sides report `500`. If both peers stay wide,
 Mercury reports the lower of the two wide tokens, preserving `2750` only when
 both sides advertised it. `<sourcecall>` is always the station that initiated
 the session, and `<destcall>` is always the station that was called.
+
+On an encrypted session `CONNECTED` is sent only once the encryption handshake
+has completed, so a client can never send a byte before the session is
+secure.
+
+### ENCRYPTED / CLEAR
+
+```
+ENCRYPTED <fingerprint>\r
+CLEAR\r
+```
+
+Sent immediately after `CONNECTED`, and only by a station with
+`[crypto] mode = optional` or `required` -- a default station never sends
+either, so existing VARA-style clients see nothing new.  `ENCRYPTED` names the
+peer's key: `<fingerprint>` is the first 8 bytes of SHA-256 of its public key,
+in hex, so a client can check it is talking to the station it meant to.
+`CLEAR` means the session is not encrypted (possible only in `optional` mode).
+
+Encryption covers the data stream only.  Callsigns and ARQ headers always
+travel in the clear, for station identification.
 
 ### CQFRAME
 
