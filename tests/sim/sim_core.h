@@ -35,6 +35,13 @@ int             sim_frames_in_flight(sim_t *s);
 void            sim_set_half_duplex(sim_t *s, bool on);
 int             sim_collisions(sim_t *s);
 
+/* Carrier sense: a station hears the peer (decoder sync, what listen-before-
+ * talk reads) from acq_ms after the peer keys until it unkeys, unless it is
+ * keyed itself; senders also get TX_STARTED.  OFF by default. */
+void            sim_set_carrier_sense(sim_t *s, bool on, uint32_t acq_ms);
+/* Is this endpoint on the air right now? */
+bool            sim_keyed(sim_t *s, sim_endpoint_t *ep);
+
 /* Fade controls: change channel loss / delivered-frame SNR mid-simulation. */
 void            sim_set_per(sim_t *s, double per);
 void            sim_set_rx_snr(sim_t *s, float snr_db);
