@@ -26,7 +26,7 @@ ifeq ($(OS),Windows_NT)
 LDFLAGS += -lws2_32
 endif
 
-OUT = broadcast_test broadcast_diag_tx broadcast_diag_rx watterson_test acquire_vs_decode
+OUT = broadcast_test broadcast_diag_tx broadcast_diag_rx watterson_test acquire_vs_decode resync_gap_probe
 
 # CPU-cost instruments.  Linux/macOS only: they time with
 # clock_gettime(CLOCK_PROCESS_CPUTIME_ID), which mingw-w64 does not provide
@@ -76,6 +76,11 @@ run: broadcast_test
 # Watterson channel so its numbers are comparable with other instruments'.
 acquire_vs_decode: acquire_vs_decode.c chanutil.c ../common/watterson.c ../common/mercury_prng.c
 	$(CC) $(CFLAGS) -o $@ $(filter %.c %.a %.o,$^) ../modem/freedv/libfreedvdata.a $(LDFLAGS) -lm
+
+# Does the payload decoder hear a data burst that follows a control burst, and
+# where may the control-plane resync (g_payload_resync_req) land?
+resync_gap_probe: resync_gap_probe.c ../modem/freedv/libfreedvdata.a
+	$(CC) $(CFLAGS) -o $@ $(filter %.c %.a %.o,$^) $(LDFLAGS) -lm
 
 # Perf instruments for issue #162 (idle CPU on a 48 kHz Pi 4).
 resampler_bench: resampler_bench.c ../audioio/resampler.c
