@@ -29,7 +29,9 @@
 
 /* A band this quiet is digital silence (no audio), never a noise floor.  Real
  * receiver noise sits around -115 dB on this scale; an all-zero window reads
- * about -232 dB. */
+ * about -232 dB.  The scale is modem_stats_get_rx_spectrum()'s: dB relative to
+ * full_scale_dB = 20*log10(MODEM_STATS_NSPEC * FDMDV_SCALE).  If that
+ * normalisation changes, this constant must move with it. */
 #define BUSY_SILENCE_DB     (-180.0f)
 
 /* After start-up and after each of our own overs, no verdicts for this long:

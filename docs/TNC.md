@@ -481,6 +481,15 @@ station transmitting.  Enable it if your host scans.  Its sensitivity/timing kno
 `busy_hang_ms`) typically need on-air tuning per band/noise environment. When
 disabled, these notifications are never sent. See `mercury.ini.example`.
 
+The detector needs a receive filter at least ~1.8 kHz wide.  It measures
+300-2700 Hz and takes its noise floor from the quieter part of that range, so a
+narrower filter puts the floor under the filter skirt and an empty channel reads
+BUSY (offline: 99% of the time behind a 600-2200 Hz filter, never at 500-2300 Hz
+or wider).  A continuous signal covering most of the passband is eventually
+absorbed into the floor and reads CLEAR after ~60 s (+12 dB) to ~95 s (+20 dB);
+a step up in the noise itself cannot be told from such a signal and reads BUSY
+for ~100-145 s until the floor catches up.
+
 `BUSY ON` is the earliest notification a host can act on: it follows the carrier
 by roughly the debounce time (~0.3 s by default), whereas `PENDING` cannot be
 sent until a whole connect request has decoded — 3.74 s in the DATAC16 control

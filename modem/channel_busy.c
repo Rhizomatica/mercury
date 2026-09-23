@@ -17,9 +17,20 @@
  * genuinely quiet channel re-establishes a low floor quickly), rise slowly
  * toward a higher reading (so a sustained signal does NOT get absorbed into the
  * floor and mask itself).  Coefficients are per-update; the RX spectrum arrives
- * ~20x/s so these give multi-second rise, sub-second fall. */
-#define BUSY_FLOOR_FALL 0.20f   /* toward a new, lower minimum   */
-#define BUSY_FLOOR_RISE 0.003f  /* toward a new, higher level: ~17 s at 20/s */
+ * ~20x/s so these give multi-second rise, sub-second fall.
+ *
+ * While BUSY the rise is much slower still.  A digital mode covers most of the
+ * passband, so the floor candidate sits inside it; at the normal rate a
+ * continuous +12 dB signal was absorbed and read CLEAR 13 s into the
+ * transmission -- the moment a host would be told it may key over it.  Held,
+ * a continuous wideband signal stays BUSY ~60 s at +12 dB and ~95 s at +20 dB;
+ * one covering half the passband or less never moves the floor at all.  The
+ * cost: a step up in the noise itself (a new QRM source, the band opening)
+ * cannot be told from a wideband signal and reads BUSY until the floor catches
+ * up, ~100 s for a 12 dB step and ~145 s for 20 dB. */
+#define BUSY_FLOOR_FALL      0.20f     /* toward a new, lower reading           */
+#define BUSY_FLOOR_RISE      0.003f    /* toward a higher one: ~17 s at 20/s     */
+#define BUSY_FLOOR_RISE_HELD 0.0006f   /* the same while BUSY: ~80 s at 20/s     */
 
 void channel_busy_init(busy_state_t *st)
 {
@@ -102,7 +113,7 @@ bool channel_busy_update(busy_state_t *st, const busy_cfg_t *cfg,
         while (j >= 0 && band_db[j] > v) { band_db[j + 1] = band_db[j]; j--; }
         band_db[j + 1] = v;
     }
-    float minv = nb ? band_db[nb / 4] : peak;
+    float floor_cand = nb ? band_db[nb / 4] : peak;
 
     /* Digital silence is not a quiet channel: it is no audio at all -- e.g.
      * the zeros a radio's capture carries while it transmits.  Measuring it
@@ -113,14 +124,15 @@ bool channel_busy_update(busy_state_t *st, const busy_cfg_t *cfg,
         return false;
     }
 
-    /* Seed / track the noise floor from the median band. */
+    /* Seed / track the noise floor from the lower-quartile band. */
     if (!st->inited) {
-        st->noise_floor_db = minv;
+        st->noise_floor_db = floor_cand;
         st->inited = true;
-    } else if (minv < st->noise_floor_db) {
-        st->noise_floor_db += BUSY_FLOOR_FALL * (minv - st->noise_floor_db);
+    } else if (floor_cand < st->noise_floor_db) {
+        st->noise_floor_db += BUSY_FLOOR_FALL * (floor_cand - st->noise_floor_db);
     } else {
-        st->noise_floor_db += BUSY_FLOOR_RISE * (minv - st->noise_floor_db);
+        float rise = st->busy ? BUSY_FLOOR_RISE_HELD : BUSY_FLOOR_RISE;
+        st->noise_floor_db += rise * (floor_cand - st->noise_floor_db);
     }
 
     float excess       = peak - st->noise_floor_db;

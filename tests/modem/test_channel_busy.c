@@ -154,7 +154,8 @@ void test_out_of_band_energy_ignored(void)
  * tens of dB above the quietest.  Each bin here is drawn independently, which
  * is harsher than a real (Hann-windowed, correlated) FFT. */
 
-static unsigned long long rng_state = 88172645463325252ULL;
+#define RNG_SEED 88172645463325252ULL
+static unsigned long long rng_state = RNG_SEED;
 static double urand(void)
 {
     rng_state = rng_state * 6364136223846793005ULL + 1442695040888963407ULL;
@@ -178,7 +179,7 @@ void test_real_noise_stays_clear(void)
 {
     for (int seed = 1; seed <= 20; seed++) {
         channel_busy_init(&st);
-        rng_state = 88172645463325252ULL * (unsigned long long)seed;
+        rng_state = RNG_SEED * (unsigned long long)seed;
         bool busy = false;
         for (uint64_t t = 0; t <= 120000; t += 50) {
             fill_real_noise(-100.0f, -999.0f);
@@ -192,6 +193,7 @@ void test_real_noise_stays_clear(void)
  * it lasts and releases once it ends. */
 void test_real_wideband_signal_asserts_and_releases(void)
 {
+    rng_state = RNG_SEED;
     bool busy = false, was_busy = false;
     for (uint64_t t = 0; t < 20000; t += 50) { fill_real_noise(-100.0f, -999.0f); feed(t, &busy); }
     TEST_ASSERT_FALSE(busy);
@@ -219,6 +221,7 @@ void test_real_wideband_signal_asserts_and_releases(void)
  * field station. */
 void test_digital_silence_does_not_latch_busy(void)
 {
+    rng_state = RNG_SEED;
     bool busy = false;
     for (uint64_t t = 0; t < 10000; t += 50) { fill_real_noise(-100.0f, -999.0f); feed(t, &busy); }
     for (uint64_t t = 10000; t < 13000; t += 50) { fill_noise(-232.0f); feed(t, &busy); }
@@ -227,6 +230,40 @@ void test_digital_silence_does_not_latch_busy(void)
         feed(t, &busy);
         TEST_ASSERT_FALSE_MESSAGE(busy, "noise after digital silence read as BUSY");
     }
+}
+
+/* A digital mode covers most of the passband, so the floor candidate sits
+ * inside it.  At the normal rise rate the floor climbed under a continuous
+ * +12 dB signal and read CLEAR 13 s into it -- telling a host it may key over
+ * a transmission in progress.  It must still read BUSY well into a long one. */
+void test_long_wideband_signal_is_not_absorbed(void)
+{
+    rng_state = RNG_SEED;
+    bool busy = false;
+    for (uint64_t t = 0; t < 20000; t += 50) { fill_real_noise(-100.0f, -999.0f); feed(t, &busy); }
+    for (uint64_t t = 20000; t < 80000; t += 50) {
+        fill_real_noise(-100.0f, 12.0f);
+        feed(t, &busy);
+        if (t >= 21000 && t <= 50000)
+            TEST_ASSERT_TRUE_MESSAGE(busy, "a continuous signal read CLEAR 30 s in");
+    }
+}
+
+/* The price of holding the floor: a step up in the noise itself looks exactly
+ * like a wideband signal and reads BUSY.  It must still release on its own, or
+ * one noisier band condition would silence the host for good. */
+void test_noise_step_releases_eventually(void)
+{
+    rng_state = RNG_SEED;
+    bool busy = false, was_busy = false;
+    for (uint64_t t = 0; t < 20000; t += 50) { fill_real_noise(-100.0f, -999.0f); feed(t, &busy); }
+    for (uint64_t t = 20000; t < 320000; t += 50) {
+        fill_real_noise(-88.0f, -999.0f);            /* +12 dB, for good */
+        feed(t, &busy);
+        if (busy) was_busy = true;
+    }
+    TEST_ASSERT_TRUE(was_busy);
+    TEST_ASSERT_FALSE_MESSAGE(busy, "a 12 dB noise step held BUSY for 5 minutes");
 }
 
 int main(void)
@@ -240,5 +277,7 @@ int main(void)
     RUN_TEST(test_real_noise_stays_clear);
     RUN_TEST(test_real_wideband_signal_asserts_and_releases);
     RUN_TEST(test_digital_silence_does_not_latch_busy);
+    RUN_TEST(test_long_wideband_signal_is_not_absorbed);
+    RUN_TEST(test_noise_step_releases_eventually);
     return UNITY_END();
 }
