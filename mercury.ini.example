@@ -274,5 +274,7 @@ mode = off
 ; callsign as it goes on air -- uppercase, with the SSID (e.g. PU2UIT-2.pub).
 ;peers_dir = /etc/mercury/peers
 
-; Group key for encrypted broadcast objects: 32 raw bytes.
+; Group key for encrypted broadcast objects: 32 raw bytes.  With mode set to
+; optional or required, the UI's broadcast file panel seals the files it sends
+; and opens the ones it receives (docs/BROADCAST-FILE.md).
 ;broadcast_key_file = /etc/mercury/broadcast.key

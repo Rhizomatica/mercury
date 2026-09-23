@@ -73,7 +73,7 @@ TEST_BINS = test_ring_buffer test_arq_protocol test_arq_timing test_arq_fsm \
             test_radio_io_frequency test_mfsk \
 			test_message_store test_ui_history test_ws_protocol
 ifneq ($(strip $(CRYPTO_CFLAGS)),)
-TEST_BINS += test_noise_kk test_arq_crypto
+TEST_BINS += test_noise_kk test_arq_crypto test_bcast_aead
 endif
 
 .PHONY: all test clean
@@ -158,6 +158,11 @@ test_noise_kk: common/test_noise_kk.c common/noise_kk_vectors.h $(UNITY_SRC) \
                ../common/noise_kk.c ../common/noise_kk.h
 	$(CC) $(CFLAGS) -Icommon -o $@ $(filter %.c %.a %.o,$^) $(LDFLAGS)
 
+# Broadcast object encryption, shared with hermes-broadcast's broadcast_daemon.
+test_bcast_aead: datalink_broadcast/test_bcast_aead.c $(UNITY_SRC) \
+                 ../datalink_broadcast/bcast_aead.c ../datalink_broadcast/bcast_aead.h
+	$(CC) $(CFLAGS) -o $@ $(filter %.c %.a %.o,$^) $(LDFLAGS)
+
 # ARQ session encryption: handshake sequencing, records, negotiation, overhead.
 test_arq_crypto: datalink_arq/test_arq_crypto.c $(UNITY_SRC) $(ARQ_CRYPTO_SRC) \
                  ../common/hermes_log.c ../datalink_arq/arq_crypto.h
@@ -228,7 +233,8 @@ test_ui_history: gui_interface/test_ui_history.c $(UNITY_SRC) ../gui_interface/u
 RAPTORQ_SRC = $(wildcard ../datalink_broadcast/raptorq/lib/*.c) \
               $(wildcard ../datalink_broadcast/raptorq/deps/obl/*.c)
 test_bcast_file: datalink_broadcast/test_bcast_file.c $(UNITY_SRC) \
-                 ../datalink_broadcast/bcast_file.c $(RAPTORQ_SRC)
+                 ../datalink_broadcast/bcast_file.c ../datalink_broadcast/bcast_aead.c \
+                 $(RAPTORQ_SRC)
 	$(CC) $(CFLAGS) -I.. -I../datalink_broadcast -I../datalink_broadcast/raptorq/include \
 	      -I../datalink_broadcast/raptorq/deps -o $@ $(filter %.c %.a %.o,$^) $(LDFLAGS) -lm
 

@@ -9,7 +9,9 @@
 
 #include "bcast_file.h"
 #include "bcast_modes.h"
+#include "bcast_aead.h"
 
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -17,6 +19,29 @@
 
 #include "raptorq/include/nanorq.h"
 #include "raptorq/include/nanorq_io.h"
+
+/* The station's broadcast key ([crypto] broadcast_key_file); see
+ * bcast_file_set_key().  Set once at startup, before any carousel runs. */
+static uint8_t s_bkey[BCAST_AEAD_KEYLEN];
+
+/* The largest object on air: a full-size bundle, plus 41 bytes if sealed. */
+#define BCAST_OBJECT_MAX_BYTES (BCAST_FILE_MAX_BYTES + BCAST_AEAD_OVERHEAD)
+
+static bool    s_have_bkey = false;
+static bool    s_bkey_required = false;
+
+void bcast_file_set_key(const uint8_t *key, bool required)
+{
+    memset(s_bkey, 0, sizeof(s_bkey));
+    s_have_bkey = false;
+    s_bkey_required = false;
+    if (key != NULL && bcast_aead_available())
+    {
+        memcpy(s_bkey, key, sizeof(s_bkey));
+        s_have_bkey = true;
+        s_bkey_required = required;
+    }
+}
 
 struct bcast_file_tx
 {
@@ -235,6 +260,25 @@ bcast_file_tx_t *bcast_file_tx_open(const char *path, int mode, int cycles,
     if (!bundle)
         return NULL;
 
+    /* With a broadcast key, seal the whole bundle ONCE, before RaptorQ: the
+     * 41 bytes are paid per object, not per symbol (bcast_aead.h). */
+    if (s_have_bkey)
+    {
+        size_t cap = bundle_len + BCAST_AEAD_OVERHEAD;
+        uint8_t *sealed = malloc(cap);
+        size_t n = sealed ? bcast_aead_seal(s_bkey, bundle, bundle_len, sealed, cap) : 0;
+
+        free(bundle);
+        if (n == 0)
+        {
+            free(sealed);
+            set_err(err, errlen, "could not encrypt the file for broadcast");
+            return NULL;
+        }
+        bundle = sealed;
+        bundle_len = n;
+    }
+
     tx = calloc(1, sizeof(*tx));
     if (!tx) { free(bundle); set_err(err, errlen, "out of memory"); return NULL; }
 
@@ -440,6 +484,7 @@ struct bcast_file_rx
 
     char      last_path[600];
     char      last_name[BCAST_BUNDLE_NAME_MAX + 1];
+    bool      last_encrypted;   /* the last file arrived sealed with our key */
     char      err[192];
 };
 
@@ -544,7 +589,7 @@ bcast_rx_result_t bcast_file_rx_frame(bcast_file_rx_t *rx,
          * see bcast_modes.h on why interleaving is not yet reachable. */
         if (t_dec != (uint32_t)rx->symbol_size)
             return BCAST_RX_IGNORED;
-        if (f_len == 0 || f_len > BCAST_FILE_MAX_BYTES)
+        if (f_len == 0 || f_len > BCAST_OBJECT_MAX_BYTES)
             return BCAST_RX_IGNORED;
     }
 
@@ -577,7 +622,7 @@ bcast_rx_result_t bcast_file_rx_frame(bcast_file_rx_t *rx,
             return BCAST_RX_ERROR;
         }
         rx->expect_bytes = nanorq_transfer_length(rx->rq);
-        if (rx->expect_bytes == 0 || rx->expect_bytes > BCAST_FILE_MAX_BYTES)
+        if (rx->expect_bytes == 0 || rx->expect_bytes > BCAST_OBJECT_MAX_BYTES)
         {
             snprintf(rx->err, sizeof(rx->err), "announced size %zu is out of range",
                      rx->expect_bytes);
@@ -643,7 +688,31 @@ bcast_rx_result_t bcast_file_rx_frame(bcast_file_rx_t *rx,
     const uint8_t *payload = NULL;
     size_t payload_len = 0;
 
-    if (got != rx->expect_bytes)
+    rx->last_encrypted = false;
+    if (got == rx->expect_bytes && s_have_bkey)
+    {
+        /* Try the key only on an object that names it; anything else is a
+         * clear object and is handled exactly as before (bcast_aead.h). */
+        uint8_t *plain = malloc(got);
+        size_t plain_len = 0;
+
+        if (plain && bcast_aead_open(s_bkey, buf, got, plain, got, &plain_len))
+        {
+            free(buf);
+            buf = plain;
+            got = plain_len;
+            rx->last_encrypted = true;
+        }
+        else
+        {
+            free(plain);
+            if (s_bkey_required)
+                fprintf(stderr, "bcast_file: received a broadcast object that was "
+                        "not encrypted with this station's key\n");
+        }
+    }
+
+    if (got == 0 || (!rx->last_encrypted && got != rx->expect_bytes))
         snprintf(rx->err, sizeof(rx->err), "decoded file could not be read back");
     else
     {
@@ -699,6 +768,8 @@ const char *bcast_file_rx_last_path(const bcast_file_rx_t *rx)
 { return rx ? rx->last_path : ""; }
 const char *bcast_file_rx_last_name(const bcast_file_rx_t *rx)
 { return rx ? rx->last_name : ""; }
+bool bcast_file_rx_last_encrypted(const bcast_file_rx_t *rx)
+{ return rx ? rx->last_encrypted : false; }
 const char *bcast_file_rx_error(const bcast_file_rx_t *rx)
 { return rx ? rx->err : ""; }
 

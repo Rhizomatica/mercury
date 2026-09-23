@@ -23,6 +23,7 @@
 #include "modem_stats.h"   /* MODEM_STATS_NSPEC */
 #include "message_store.h"
 #include "bcast_file.h"
+#include "bcast_aead.h"
 
 /* Print the startup version banner (same text the daemon prints), so the UI
  * announces its version on the terminal too.  Resolved here, in a unit the
@@ -85,6 +86,21 @@ int mercury_init(int argc, char **argv, const char *default_config, const char *
     /* The single-binary UI always runs the engine (the list/help actions are
      * daemon-only) and always enables the UI websocket. */
     cli.cfg.ui_enabled = true;
+
+    /* Broadcast files carry the same sealed format as hermes-broadcast
+     * (bcast_aead.h).  Only with [crypto] on: a station without the broadcast
+     * key -- most ARQ-only ones -- keeps sending and receiving files clear. */
+    if (strcmp(cli.cfg.crypto_mode, "off") != 0 && bcast_aead_available())
+    {
+        uint8_t key[BCAST_AEAD_KEYLEN];
+
+        if (bcast_aead_key_load(cli.cfg.crypto_broadcast_key_file, key) == 0)
+            bcast_file_set_key(key, strcmp(cli.cfg.crypto_mode, "required") == 0);
+        else
+            fprintf(stderr, "mercury: no 32-byte broadcast key at %s; broadcast "
+                            "files stay clear\n", cli.cfg.crypto_broadcast_key_file);
+        memset(key, 0, sizeof(key));
+    }
 
     const char *log = cli.log_file_path ? cli.log_file_path : log_path;
     return mercury_engine_init(&cli.cfg, cli.cfg_path, log, cli.log_file_jsonl,

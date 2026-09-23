@@ -23,6 +23,7 @@
 #ifndef BCAST_FILE_H_
 #define BCAST_FILE_H_
 
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -144,6 +145,18 @@ typedef struct bcast_file_rx bcast_file_rx_t;
  */
 bcast_file_rx_t *bcast_file_rx_open(int mode, const char *dir,
                                     char *err, size_t errlen);
+
+/**
+ * The station's broadcast key ([crypto] broadcast_key_file), or NULL for none.
+ * With a key, every file sent is sealed before RaptorQ, and every file received
+ * is opened if it was sealed with this key; anything else is received as a
+ * clear object, as before (bcast_aead.h).  `required` logs clear objects so
+ * they do not pass silently.  Call once at startup, before any carousel.
+ */
+void bcast_file_set_key(const uint8_t *key, bool required);
+
+/** Whether the last file received arrived sealed with this station's key. */
+bool bcast_file_rx_last_encrypted(const bcast_file_rx_t *rx);
 
 /** Result of feeding one frame. */
 typedef enum {
