@@ -205,10 +205,21 @@ retry_stagger_ms = 2000
 ; everything else waits for a full frame to decode (3.7 s for a connect request)
 ; and a scanning host cannot hold its dwell that long.  Expect to tune the
 ; thresholds below per band and noise environment before trusting it.
+;
+; It needs a receive filter at least ~1.8 kHz wide.  It measures 300-2700 Hz
+; and takes its noise floor from the quieter bands there; a narrower filter
+; attenuates enough of that range that the floor sits under the filter skirt and
+; plain noise reads as a signal.  Offline, an empty channel behind a 600-2200 Hz
+; filter read BUSY 99% of the time, while 500-2300 Hz and wider never did.  A
+; continuous signal covering most of the passband is eventually absorbed into
+; the floor and reads CLEAR after ~60 s (+12 dB) to ~95 s (+20 dB), and a step
+; up in the noise itself reads BUSY for ~100-145 s until the floor catches up.
 busy_detect = false
 
-; Passband peak level, in dB above the tracked noise floor, required to call the
-; channel BUSY (default 10, range 3..40).  Lower = more sensitive.
+; Level of the loudest 150 Hz band of the 300-2700 Hz passband, in dB above the
+; tracked noise floor, required to call the channel BUSY (default 10, range
+; 3..40).  Lower = more sensitive.  The floor follows the quieter bands, so a
+; signal has to cover most of the passband before it is absorbed into it.
 busy_threshold_db = 10
 
 ; Release hysteresis in dB: the channel is only declared CLEAR once the peak

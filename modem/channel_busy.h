@@ -23,6 +23,22 @@
 #define BUSY_PASSBAND_LO_HZ 300
 #define BUSY_PASSBAND_HI_HZ 2700
 
+/* Width of the bands the passband is averaged over before classifying. */
+#define BUSY_BAND_HZ        150.0f
+#define BUSY_MAX_BANDS      64
+
+/* A band this quiet is digital silence (no audio), never a noise floor.  Real
+ * receiver noise sits around -115 dB on this scale; an all-zero window reads
+ * about -232 dB.  The scale is modem_stats_get_rx_spectrum()'s: dB relative to
+ * full_scale_dB = 20*log10(MODEM_STATS_NSPEC * FDMDV_SCALE).  If that
+ * normalisation changes, this constant must move with it. */
+#define BUSY_SILENCE_DB     (-180.0f)
+
+/* After start-up and after each of our own overs, no verdicts for this long:
+ * the loopback delay (~50 ms) plus the 1024-sample (128 ms) FFT window, with
+ * margin. */
+#define BUSY_TX_HOLDOFF_MS  300
+
 typedef struct {
     float    threshold_db;     /* BUSY when passband peak >= floor + threshold_db     */
     float    hysteresis_db;    /* CLEAR only when peak < floor + threshold - hyst      */

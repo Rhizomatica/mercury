@@ -2306,6 +2306,12 @@ void *rx_thread(void *g_modem)
     int last_pref_tx_mode = -1;
     bool was_tx = false;
     uint64_t spectrum_next_ms = 0; /* throttle FFT to ~20 fps */
+    /* No occupancy verdicts until the spectrum's FFT window holds only real
+     * audio: at start-up (it starts zeroed) and after each of our own overs,
+     * whose capture is digital silence that reaches us ~50 ms late through the
+     * radio's audio path.  Measured on a hermes-radio-daemon sBitx: exact
+     * zeros from PTT ON + 40 ms to PTT OFF + ~50 ms. */
+    uint64_t busy_holdoff_until_ms = monotonic_ms() + BUSY_TX_HOLDOFF_MS;
     bool spectrum_first_log = true;
 
     /* --- RX thread rate diagnostics (prints every ~5 seconds) --- */
@@ -2378,6 +2384,7 @@ void *rx_thread(void *g_modem)
              * what they hold rather than reaching into their state. */
             atomic_store(&w_ctrl.flush_req, true);
             atomic_store(&w_pay.flush_req, true);
+            busy_holdoff_until_ms = monotonic_ms() + BUSY_TX_HOLDOFF_MS;
             was_tx = false;
         }
 
@@ -2578,7 +2585,7 @@ void *rx_thread(void *g_modem)
                               "traffic is not occupancy)");
                     }
                 }
-                else if (busy_on && arq_get_trx() != TX)
+                else if (busy_on && arq_get_trx() != TX && now_ms >= busy_holdoff_until_ms)
                 {
                     busy_cfg_t cfg;
                     pthread_mutex_lock(&g_busy_cfg_lock);
