@@ -126,6 +126,10 @@ func TestMercuryTxTestForcedExitUnkeysFirst(t *testing.T) {
 	if !strings.Contains(log, "Transmitter unkeyed; exiting.") {
 		t.Fatalf("forced exit did not go through the unkey path:\n%s", log)
 	}
+	// With -x null there is no PTT to drop, so the forced exit finishes in well
+	// under a millisecond: the process is usually gone before this third
+	// signal arrives, and the count holds without exercising g_forcing.  It
+	// still catches a regression that loops on the second signal.
 	if n := strings.Count(log, "Caught second signal"); n != 1 {
 		t.Fatalf("forced exit taken %d times, want once:\n%s", n, log)
 	}

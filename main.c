@@ -182,7 +182,10 @@ static void install_termination_handlers(void)
     sigemptyset(&sa.sa_mask);
     sigaddset(&sa.sa_mask, SIGINT);
     sigaddset(&sa.sa_mask, SIGTERM);
-    sa.sa_flags = SA_RESTART;               /* what signal() gave us on glibc */
+    /* What signal() gave us on glibc.  On BSD/macOS signal() did not restart
+     * interrupted syscalls, so this makes them restart there too (at most one
+     * more msleep() before the shutdown loop sees the flag). */
+    sa.sa_flags = SA_RESTART;
     sigaction(SIGINT, &sa, NULL);
     sigaction(SIGTERM, &sa, NULL);
 #else
