@@ -151,3 +151,34 @@ and retry decisions.
   upstream (`arq_fsm_callbacks_t`).  This also fixes the S4
   static-`pending_burst_frames` race and makes the FSM safe for multi-
   instance embedding (e.g. a relay node running two concurrent sessions).
+
+## Prototype: erasure-coded carousel ARQ (`carousel_bench.c`)
+
+`carousel_bench <seed> <channel> [bidir]` runs a different ARQ design on the
+same channel model, airtime table and half-duplex medium as `ab_bench`, so the
+numbers compare directly.  It is a protocol simulation, not Mercury code:
+
+- The sender cuts its backlog into blocks of K <= 96 pieces of 24 bytes,
+  Reed-Solomon erasure coded over GF(256) (`rs_erasure.c`, systematic Cauchy:
+  the first K pieces are the data; any K of the pieces decode).
+- A round is one keydown of back-to-back frames, as many pieces per frame as the
+  mode carries.  After each round the receiver sends ONE feedback frame: pieces
+  still needed (0 = done), the loss it saw, faster/slower/same, "I have data".
+- No sequence numbers and no per-frame ACKs: duplicates are harmless, a lost
+  feedback costs one extra round, and the turn hands over at block boundaries.
+
+First results, both stations sending 8 KB, 20 seeds each (version 4):
+
+| channel  | mercuryv2          | mfsk-margin + fixes | carousel          |
+|----------|--------------------|---------------------|-------------------|
+| clean    | 20/20 260 s, 153 c | 20/20 203 s, 0 c    | 20/20 228 s, 0 c  |
+| 10 %     | 19/20 323 s, 247 c | 20/20 475 s, 35 c   | 20/20 260 s, 0 c  |
+| 25 %     | 16/20 700 s, 513 c | 1/20, 416 c         | 7/20 485 s, 0 c   |
+| cliff 3  | 20/20 1562 s       | 16/20 1673 s        | 17/20 1647 s, 0 c |
+| cliff 10 | 20/20 333 s        | 20/20 350 s         | 20/20 388 s, 0 c  |
+
+(c = collisions.)  No collisions and no corruption in any carousel run; what
+still loses is the link adaptation.  Version 1 had no memory and was perfect on
+flat loss but oscillated into dead modes on the cliff model; the ceiling added
+since fixes the cliff and trips on flat-loss noise at 25 %.  That, not the
+coding, is the open design problem.
