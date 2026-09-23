@@ -2452,6 +2452,20 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
         }
         else if (ev->id == ARQ_EV_APP_DATA_READY)
         {
+            /* New bytes from the application can arrive in the middle of the
+             * peer's burst.  On air the TURN_REQ keyed 3.5 s into a DATAC1
+             * frame and both were lost.  Hand over to the timer path, which
+             * listens (bounded) before asking; if the peer's frame decodes
+             * meanwhile, our ACK carries HAS_DATA and no TURN_REQ is needed. */
+            if (peer_is_transmitting(sess))
+            {
+                HLOGD(LOG_COMP, "TURN_REQ for new data deferred: peer transmitting");
+                uint64_t soon = time_now_ms() + ARQ_TURN_REQ_DEFER_MS;
+                if (soon < sess->deadline_ms)
+                    dflow_enter(sess, ARQ_DFLOW_IDLE_IRS, soon,
+                                ARQ_EV_TIMER_PEER_BACKLOG);
+                break;
+            }
             send_ctrl_frame(sess, ARQ_SUBTYPE_TURN_REQ);
             sess->tx_retries_left = ARQ_TURN_REQ_RETRIES;
             tm = arq_protocol_mode_timing(sess->control_mode);

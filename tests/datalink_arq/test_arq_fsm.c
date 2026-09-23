@@ -1332,6 +1332,30 @@ void test_turn_req_is_not_keyed_over_the_peers_burst(void)
     TEST_ASSERT_EQUAL_UINT8(1, sess.turn_req_defer_count);
 }
 
+/* The same for new application data: it can arrive mid-burst, and on air the
+ * TURN_REQ it triggered keyed 3.5 s into the peer's DATAC1 frame. */
+void test_turn_req_for_new_data_is_not_keyed_over_the_peers_burst(void)
+{
+    goto_idle_irs_with_backlog();
+    RESET_FAKE(fake_send_tx_frame);
+
+    sess.last_rx_sync_ms = time_now_ms();
+    arq_event_t ev = make_event(ARQ_EV_APP_DATA_READY);
+    arq_fsm_dispatch(&sess, &ev);
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, fake_send_tx_frame_fake.call_count,
+        "keyed a TURN_REQ for new data while the peer was transmitting");
+    TEST_ASSERT_EQUAL_INT(ARQ_DFLOW_IDLE_IRS, sess.dflow_state);
+    TEST_ASSERT_EQUAL_INT(ARQ_EV_TIMER_PEER_BACKLOG, sess.deadline_event);
+    TEST_ASSERT_TRUE(sess.deadline_ms <= time_now_ms() + ARQ_TURN_REQ_DEFER_MS);
+
+    /* Quiet channel: new data asks for the floor straight away. */
+    sess.last_rx_sync_ms = 0;
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(ARQ_DFLOW_TURN_REQ_TX, sess.dflow_state);
+    TEST_ASSERT_GREATER_THAN(0, fake_send_tx_frame_fake.call_count);
+}
+
 /* ...and once the channel is quiet the request goes out, so the deferral is a
  * wait and not a mute. */
 void test_turn_req_is_sent_once_the_channel_is_quiet(void)
@@ -1920,6 +1944,7 @@ int main(void)
     RUN_TEST(test_wait_ack_ack_without_request_keeps_the_turn);
     RUN_TEST(test_keepalive_wait_accepts_data);
     RUN_TEST(test_turn_req_is_not_keyed_over_the_peers_burst);
+    RUN_TEST(test_turn_req_for_new_data_is_not_keyed_over_the_peers_burst);
     RUN_TEST(test_turn_req_is_sent_once_the_channel_is_quiet);
     RUN_TEST(test_turn_req_defers_on_channel_energy_without_sync);
     RUN_TEST(test_turn_req_deferral_is_bounded);
