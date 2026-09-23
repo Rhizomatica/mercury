@@ -239,6 +239,10 @@ typedef struct
                                         * call always returns to where it was   */
 
     /* --- Connect handshake --- */
+    bool     accept_fallback;          /* LISTENING was entered because our ACCEPT
+                                        * retries ran out: the caller may still
+                                        * have heard it, so its first DATA/ACK
+                                        * may complete this session.  Only then. */
     bool     accept_tx_pending;        /* the pending TIMER_RETRY is an ACCEPT
                                         * answering a CALL we actually heard,
                                         * not the RX-window timer.  Only the
