@@ -1290,6 +1290,115 @@ void test_turn_req_deferral_is_bounded(void)
     TEST_ASSERT_EQUAL_UINT8(0, sess.turn_req_defer_count);
 }
 
+/* The retry must listen as well.  On air (1.9.14, 7.050 MHz) the ISS never
+ * heard the first TURN_REQ, retransmitted a 7.4 s DATAC17 burst, and the
+ * TURN_REQ_WAIT retry -- on a fixed 10 s clock -- keyed over its last second.
+ * The first request had the check; the retry did not. */
+static void goto_turn_req_wait_after_first_request(void)
+{
+    goto_idle_irs_with_backlog();
+    sess.last_rx_sync_ms = 0;
+    arq_event_t ev = make_event(ARQ_EV_TIMER_PEER_BACKLOG);
+    arq_fsm_dispatch(&sess, &ev);
+    ev = make_event(ARQ_EV_TX_COMPLETE);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(ARQ_DFLOW_TURN_REQ_WAIT, sess.dflow_state);
+}
+
+void test_turn_req_retry_is_not_keyed_over_the_peers_burst(void)
+{
+    goto_turn_req_wait_after_first_request();
+    uint8_t retries = sess.tx_retries_left;
+    RESET_FAKE(fake_send_tx_frame);
+
+    sess.last_rx_sync_ms = time_now_ms();   /* the peer's retransmission */
+    arq_event_t ev = make_event(ARQ_EV_TIMER_RETRY);
+    arq_fsm_dispatch(&sess, &ev);
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, fake_send_tx_frame_fake.call_count,
+        "retried a TURN_REQ on top of the peer's burst");
+    TEST_ASSERT_EQUAL_INT(ARQ_DFLOW_TURN_REQ_WAIT, sess.dflow_state);
+    TEST_ASSERT_EQUAL_UINT8_MESSAGE(retries, sess.tx_retries_left,
+        "waiting for a quiet channel spent a retry");
+
+    /* Burst over: the retry goes out and only now costs a retry. */
+    sess.last_rx_sync_ms = 0;
+    ev = make_event(ARQ_EV_TIMER_RETRY);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(ARQ_DFLOW_TURN_REQ_TX, sess.dflow_state);
+    TEST_ASSERT_GREATER_THAN(0, fake_send_tx_frame_fake.call_count);
+    TEST_ASSERT_EQUAL_UINT8(retries - 1, sess.tx_retries_left);
+    TEST_ASSERT_EQUAL_UINT8(0, sess.turn_req_defer_count);
+}
+
+/* Energy alone must hold the retry, as it holds the first request. */
+void test_turn_req_retry_defers_on_channel_energy_without_sync(void)
+{
+    goto_turn_req_wait_after_first_request();
+    RESET_FAKE(fake_send_tx_frame);
+
+    fake_channel_busy_fake.return_val = true;
+    arq_event_t ev = make_event(ARQ_EV_TIMER_RETRY);
+    arq_fsm_dispatch(&sess, &ev);
+
+    TEST_ASSERT_EQUAL_INT(0, fake_send_tx_frame_fake.call_count);
+    TEST_ASSERT_EQUAL_INT(ARQ_DFLOW_TURN_REQ_WAIT, sess.dflow_state);
+}
+
+/* Bounded like the first request: a stuck detector cannot hold it forever. */
+void test_turn_req_retry_deferral_is_bounded(void)
+{
+    goto_turn_req_wait_after_first_request();
+
+    for (int i = 0; i < ARQ_TURN_REQ_DEFER_MAX; i++)
+    {
+        sess.last_rx_sync_ms = time_now_ms();
+        arq_event_t ev = make_event(ARQ_EV_TIMER_RETRY);
+        arq_fsm_dispatch(&sess, &ev);
+        TEST_ASSERT_EQUAL_INT(ARQ_DFLOW_TURN_REQ_WAIT, sess.dflow_state);
+    }
+
+    RESET_FAKE(fake_send_tx_frame);
+    sess.last_rx_sync_ms = time_now_ms();
+    arq_event_t ev = make_event(ARQ_EV_TIMER_RETRY);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ARQ_DFLOW_TURN_REQ_TX, sess.dflow_state,
+        "retry deferral never gave up");
+    TEST_ASSERT_GREATER_THAN(0, fake_send_tx_frame_fake.call_count);
+}
+
+/* A TURN_REQ that ends some other way must not shorten the next wait's
+ * deferral budget: here a retry is deferred, then the peer's DATA arrives and
+ * we concede, which lands back in IDLE_IRS through ACK_TX.  The next request
+ * must start from a zero count (enter_idle_irs resets it). */
+void test_turn_req_concede_resets_the_deferral_budget(void)
+{
+    goto_turn_req_wait_after_first_request();
+
+    sess.last_rx_sync_ms = time_now_ms();   /* the peer's burst */
+    arq_event_t ev = make_event(ARQ_EV_TIMER_RETRY);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(ARQ_DFLOW_TURN_REQ_WAIT, sess.dflow_state);
+    TEST_ASSERT_EQUAL_UINT8(1, sess.turn_req_defer_count);
+
+    /* The burst decodes: DATA instead of TURN_ACK, so we concede. */
+    ev = make_event(ARQ_EV_RX_DATA);
+    ev.session_id  = sess.session_id;
+    ev.seq         = sess.rx_expected;
+    ev.data_bytes  = 8;
+    ev.payload_len = 8;
+    ev.rx_flags    = ARQ_FLAG_HAS_DATA;     /* the peer keeps the floor */
+    arq_fsm_dispatch(&sess, &ev);
+    ev = make_event(ARQ_EV_TIMER_ACK);
+    arq_fsm_dispatch(&sess, &ev);
+    ev = make_event(ARQ_EV_TX_COMPLETE);
+    arq_fsm_dispatch(&sess, &ev);
+
+    TEST_ASSERT_EQUAL_INT(ARQ_DFLOW_IDLE_IRS, sess.dflow_state);
+    TEST_ASSERT_EQUAL_UINT8_MESSAGE(0, sess.turn_req_defer_count,
+        "a conceded TURN_REQ left its deferrals charged to the next wait");
+}
+
 void test_simultaneous_turn_req_one_side_yields(void)
 {
     /* Local "SRC1" vs remote "DST1": strcmp > 0 is rank 1, which yields. */
@@ -1810,6 +1919,10 @@ int main(void)
     RUN_TEST(test_turn_req_is_sent_once_the_channel_is_quiet);
     RUN_TEST(test_turn_req_defers_on_channel_energy_without_sync);
     RUN_TEST(test_turn_req_deferral_is_bounded);
+    RUN_TEST(test_turn_req_retry_is_not_keyed_over_the_peers_burst);
+    RUN_TEST(test_turn_req_retry_defers_on_channel_energy_without_sync);
+    RUN_TEST(test_turn_req_retry_deferral_is_bounded);
+    RUN_TEST(test_turn_req_concede_resets_the_deferral_budget);
     RUN_TEST(test_simultaneous_turn_req_one_side_yields);
     RUN_TEST(test_simultaneous_turn_req_other_side_holds);
     RUN_TEST(test_disconnect_drain_timeout_forces_teardown);

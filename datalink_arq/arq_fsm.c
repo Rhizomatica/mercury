@@ -1070,6 +1070,9 @@ static bool peer_is_transmitting(const arq_session_t *sess)
 
 static void enter_idle_irs(arq_session_t *sess)
 {
+    /* A fresh wait for the floor gets the full deferral budget: a count left
+     * over from a TURN_REQ that ended some other way must not shorten it. */
+    sess->turn_req_defer_count = 0;
     dflow_enter(sess, ARQ_DFLOW_IDLE_IRS,
                 deadline_from_s(ARQ_PEER_PAYLOAD_HOLD_S),
                 ARQ_EV_TIMER_PEER_BACKLOG);
@@ -2635,8 +2638,32 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
         }
         else if (ev->id == ARQ_EV_TIMER_RETRY)
         {
+            /* Listen before the retry too, exactly as IDLE_IRS does before the
+             * first request.  The retry fires on a clock as well, and the
+             * likeliest reason it is needed at all is that the peer is the ISS,
+             * never heard our first request, and is retransmitting a DATA burst
+             * right now: on air, a DATAC17 retransmission ran 7.4 s and the
+             * retry keyed over its last second.  Waiting costs no retry. */
+            if (sess->tx_retries_left > 0 && peer_is_transmitting(sess) &&
+                sess->turn_req_defer_count < ARQ_TURN_REQ_DEFER_MAX)
+            {
+                sess->turn_req_defer_count++;
+                HLOGD(LOG_COMP,
+                      "TURN_REQ retry deferred: peer transmitting (%u/%u)",
+                      (unsigned)sess->turn_req_defer_count,
+                      (unsigned)ARQ_TURN_REQ_DEFER_MAX);
+                dflow_enter(sess, ARQ_DFLOW_TURN_REQ_WAIT,
+                            time_now_ms() + ARQ_TURN_REQ_DEFER_MS,
+                            ARQ_EV_TIMER_RETRY);
+                break;
+            }
             if (sess->tx_retries_left > 0)
             {
+                if (sess->turn_req_defer_count >= ARQ_TURN_REQ_DEFER_MAX)
+                    HLOGW(LOG_COMP,
+                          "TURN_REQ retry deferral cap reached (%u) - retrying anyway",
+                          (unsigned)sess->turn_req_defer_count);
+                sess->turn_req_defer_count = 0;
                 sess->tx_retries_left--;
                 send_ctrl_frame(sess, ARQ_SUBTYPE_TURN_REQ);
                 tm = arq_protocol_mode_timing(sess->control_mode);
