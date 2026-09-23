@@ -214,6 +214,9 @@ static void sess_enter(arq_session_t *sess, arq_conn_state_t new_state,
      * release. */
     if (new_state == ARQ_CONN_DISCONNECTED || new_state == ARQ_CONN_LISTENING)
         sess->deferred_listen_off = false;
+    /* The right to complete a session from LISTENING is granted only by the
+     * ACCEPT-exhaustion fallback, which sets it right after this call. */
+    sess->accept_fallback = false;
     /* The right to key an ACCEPT is earned by hearing a CALL, and it does not
      * survive leaving ACCEPTING. */
     if (new_state != ARQ_CONN_ACCEPTING)
@@ -967,9 +970,20 @@ static void fsm_listening(arq_session_t *sess, const arq_event_t *ev)
     case ARQ_EV_RX_ACK:
         /* Safety net: if IRS fell from ACCEPTING→LISTENING (ACCEPT retries
          * exhausted) but the ISS is already sending DATA/ACK, accept the
-         * connection now — same logic as fsm_accepting RX_DATA handler. */
-        if (ev->session_id == sess->session_id)
+         * connection now — same logic as fsm_accepting RX_DATA handler.
+         *
+         * ONLY after that fallback.  The session id survives an ordinary
+         * teardown too, so without the flag a late frame from the peer of a
+         * session that has ENDED -- we gave up on retries and went back to
+         * listening, while the peer never noticed -- resurrected it.  The peer
+         * then carried on with one continuous stream while our side had been
+         * disconnected and reconnected: our in-flight frame was gone, and
+         * whatever we sent next was spliced onto its stream.  Measured on the
+         * two-FSM sim (bidirectional, 10 % loss / NVIS): 90 bytes silently
+         * missing from the delivered stream. */
+        if (sess->accept_fallback && ev->session_id == sess->session_id)
         {
+            sess->accept_fallback = false;
             sess->role        = ARQ_ROLE_CALLEE;
             reset_session_data_state(sess);
             if (g_cbs.notify_connected)
@@ -1228,6 +1242,7 @@ static void fsm_accepting(arq_session_t *sess, const arq_event_t *ev)
             if (g_cbs.notify_cancelpending)
                 g_cbs.notify_cancelpending();
             sess_enter(sess, ARQ_CONN_LISTENING, UINT64_MAX, ARQ_EV_TIMER_RETRY);
+            sess->accept_fallback = true;
         }
         break;
 
