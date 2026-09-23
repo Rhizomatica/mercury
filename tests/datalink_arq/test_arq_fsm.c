@@ -944,6 +944,83 @@ void test_wait_ack_turn_req_pulls_the_retransmission_in(void)
     TEST_ASSERT_EQUAL_INT(ARQ_DFLOW_DATA_TX, sess.dflow_state);
 }
 
+/* The ACK timeout fires on a clock.  When the burst was lost the peer is often
+ * on air right then with a TURN_REQ, and on air the retransmission keyed 1-2 s
+ * into it while our own decoder was synced on it -- both lost.  With the peer
+ * transmitting, the retransmission waits and nothing is keyed. */
+void test_wait_ack_retransmission_is_not_keyed_over_the_peer(void)
+{
+    goto_connected();
+    goto_wait_ack();
+    RESET_FAKE(fake_send_tx_frame);
+
+    sess.last_rx_sync_ms = time_now_ms();   /* a frame is arriving right now */
+    arq_event_t ev = make_event(ARQ_EV_TIMER_ACK);
+    arq_fsm_dispatch(&sess, &ev);
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, fake_send_tx_frame_fake.call_count,
+        "retransmitted over the peer's transmission");
+    TEST_ASSERT_EQUAL_INT(ARQ_DFLOW_WAIT_ACK, sess.dflow_state);
+    TEST_ASSERT_EQUAL_INT(ARQ_EV_TIMER_ACK, sess.deadline_event);
+    TEST_ASSERT_TRUE(sess.deadline_ms <= time_now_ms() + ARQ_TURN_REQ_DEFER_MS);
+    TEST_ASSERT_EQUAL_INT(ARQ_DATA_RETRY_SLOTS, sess.tx_retries_left);  /* no retry spent */
+
+    /* Channel energy without sync counts too. */
+    sess.last_rx_sync_ms = 0;
+    fake_channel_busy_fake.return_val = true;
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(0, fake_send_tx_frame_fake.call_count);
+    TEST_ASSERT_EQUAL_INT(ARQ_DFLOW_WAIT_ACK, sess.dflow_state);
+
+    /* Quiet channel: the retransmission goes. */
+    fake_channel_busy_fake.return_val = false;
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(ARQ_DFLOW_DATA_TX, sess.dflow_state);
+    TEST_ASSERT_GREATER_THAN(0, fake_send_tx_frame_fake.call_count);
+}
+
+/* Deferring usually lets us decode the peer's TURN_REQ.  It has only just ended
+ * then, so the retransmission waits one reply guard for the peer to get back
+ * on receive instead of keying on the next deferral step. */
+void test_turn_req_decoded_while_deferring_waits_one_guard(void)
+{
+    goto_connected();
+    goto_wait_ack();
+    sess.last_rx_sync_ms = time_now_ms();
+    arq_event_t ev = make_event(ARQ_EV_TIMER_ACK);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(ARQ_DFLOW_WAIT_ACK, sess.dflow_state);
+
+    ev = make_event(ARQ_EV_RX_TURN_REQ);
+    ev.session_id = sess.session_id;
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_TRUE(sess.peer_turn_req_pending);
+    TEST_ASSERT_TRUE(sess.deadline_ms >= time_now_ms() + ARQ_CHANNEL_GUARD_MS);
+    TEST_ASSERT_EQUAL_INT(ARQ_EV_TIMER_ACK, sess.deadline_event);
+}
+
+/* Bounded, like the TURN_REQ deferral: a decoder stuck in false sync must not
+ * stop the ISS retransmitting. */
+void test_wait_ack_retransmission_deferral_is_bounded(void)
+{
+    goto_connected();
+    goto_wait_ack();
+    arq_event_t ev = make_event(ARQ_EV_TIMER_ACK);
+    for (int i = 0; i < ARQ_TURN_REQ_DEFER_MAX; i++)
+    {
+        sess.last_rx_sync_ms = time_now_ms();
+        arq_fsm_dispatch(&sess, &ev);
+        TEST_ASSERT_EQUAL_INT(ARQ_DFLOW_WAIT_ACK, sess.dflow_state);
+    }
+    RESET_FAKE(fake_send_tx_frame);
+    sess.last_rx_sync_ms = time_now_ms();
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ARQ_DFLOW_DATA_TX, sess.dflow_state,
+        "deferral never gave up: the ISS would never retransmit");
+    TEST_ASSERT_GREATER_THAN(0, fake_send_tx_frame_fake.call_count);
+    TEST_ASSERT_EQUAL_UINT8(0, sess.retx_defer_count);
+}
+
 /* ...and the other half: the latched request is honoured on the ACK, even when
  * HAS_DATA is clear (the peer's backlog can drain between asking and ACKing --
  * the explicit request is still its stated intent).
@@ -1836,6 +1913,9 @@ int main(void)
     RUN_TEST(test_wait_ack_stale_ack_keeps_window);
     RUN_TEST(test_wait_ack_turn_req_defers_the_yield_without_keying);
     RUN_TEST(test_wait_ack_turn_req_pulls_the_retransmission_in);
+    RUN_TEST(test_wait_ack_retransmission_is_not_keyed_over_the_peer);
+    RUN_TEST(test_turn_req_decoded_while_deferring_waits_one_guard);
+    RUN_TEST(test_wait_ack_retransmission_deferral_is_bounded);
     RUN_TEST(test_wait_ack_yields_to_latched_turn_req_when_the_ack_lands);
     RUN_TEST(test_wait_ack_ack_without_request_keeps_the_turn);
     RUN_TEST(test_keepalive_wait_accepts_data);

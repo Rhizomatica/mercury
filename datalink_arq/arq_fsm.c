@@ -1911,6 +1911,7 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
              * the margin.  Jitter here is load-bearing: when two connected
              * stations submit data simultaneously, both send and both land in
              * WAIT_ACK, and only a jittered retransmit can break the lock. */
+            sess->retx_defer_count = 0;
             dflow_enter(sess, ARQ_DFLOW_WAIT_ACK,
                         retry_deadline_from_s(sess, tm ? tm->ack_timeout_s : 9.0f),
                         ARQ_EV_TIMER_ACK);
@@ -2086,9 +2087,41 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
                             ARQ_TURN_REQ_ACK_MARGIN_MS;
             if (soon < sess->deadline_ms)
                 sess->deadline_ms = soon;
+            /* Nor earlier than one reply guard: the TURN_REQ has only just
+             * ended, and a retransmission deferred behind it (below) would
+             * otherwise key before the peer is back on receive. */
+            uint64_t earliest = time_now_ms() + ARQ_CHANNEL_GUARD_MS;
+            if (sess->deadline_ms < earliest)
+                sess->deadline_ms = earliest;
         }
         else if (ev->id == ARQ_EV_TIMER_ACK)
         {
+            /* Listen before retransmitting, as the IRS does before a TURN_REQ.
+             * The ACK timeout fires on a clock, and when the burst was lost the
+             * peer is often on air right then with a TURN_REQ of its own.  On
+             * air the retransmission keyed 1-2 s into the peer's TURN_REQ while
+             * our own decoder was synced on it, and both were lost.  Waiting
+             * out the frame usually lets us decode it, and the TURN_REQ branch
+             * above then takes over.  Bounded like the TURN_REQ deferral: a
+             * decoder stuck in false sync must not stop us retransmitting. */
+            if (peer_is_transmitting(sess) &&
+                sess->retx_defer_count < ARQ_TURN_REQ_DEFER_MAX)
+            {
+                sess->retx_defer_count++;
+                HLOGD(LOG_COMP,
+                      "Retransmission deferred: peer transmitting (%u/%u)",
+                      (unsigned)sess->retx_defer_count,
+                      (unsigned)ARQ_TURN_REQ_DEFER_MAX);
+                sess->deadline_ms = time_now_ms() + ARQ_TURN_REQ_DEFER_MS;
+                sess->deadline_event = ARQ_EV_TIMER_ACK;
+                break;
+            }
+            if (sess->retx_defer_count >= ARQ_TURN_REQ_DEFER_MAX)
+                HLOGW(LOG_COMP,
+                      "Retransmission deferral cap reached (%u) - keying anyway",
+                      (unsigned)sess->retx_defer_count);
+            sess->retx_defer_count = 0;
+
             if (sess->tx_retries_left > 0)
             {
                 /* Save the pre-cap value so the attempt number reported to
