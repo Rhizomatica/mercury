@@ -912,6 +912,72 @@ static void goto_wait_ack(void)
     TEST_ASSERT_EQUAL_INT(ARQ_DFLOW_WAIT_ACK, sess.dflow_state);
 }
 
+/* The peer's DATA while we wait for our ACK means the peer holds the floor --
+ * not that it received our frame.  Taking it as an implicit ACK lost our frame
+ * whenever both stations were acting as sender: on the two-FSM sim a whole
+ * 8 KB transfer was ACKed frame by frame and not one byte delivered.  We must
+ * yield and receive theirs, KEEP ours for resend, and ask for the turn back. */
+void test_peer_data_in_wait_ack_is_not_an_ack_of_ours(void)
+{
+    goto_connected();
+    goto_wait_ack();
+    TEST_ASSERT_TRUE(sess.tx_frame_present);
+    uint16_t off_before = sess.tx_stream_off;
+
+    RESET_FAKE(fake_deliver_rx_data);
+    arq_event_t ev = make_event(ARQ_EV_RX_DATA);
+    ev.session_id  = sess.session_id;
+    ev.stream_off  = sess.rx_stream_hwm;          /* the peer's next bytes */
+    ev.data_bytes  = 8;
+    ev.payload_len = 8;
+    arq_fsm_dispatch(&sess, &ev);
+
+    TEST_ASSERT_TRUE_MESSAGE(sess.tx_frame_present, "our unACKed frame was retired");
+    TEST_ASSERT_EQUAL_UINT16_MESSAGE(off_before, sess.tx_stream_off,
+        "our stream advanced past a frame the peer never ACKed");
+    TEST_ASSERT_EQUAL_INT(1, fake_deliver_rx_data_fake.call_count);
+    TEST_ASSERT_EQUAL_INT(ARQ_DFLOW_ACK_TX, sess.dflow_state);
+
+    /* Nothing else queued: the kept frame alone must still claim the turn. */
+    fake_tx_backlog_fake.return_val = 0;
+    ev = make_event(ARQ_EV_TIMER_ACK);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_TRUE_MESSAGE(sess.acktx_had_has_data,
+        "the ACK did not ask for the turn back for the kept frame");
+}
+
+/* A frame starting past our stream position is proof of a gap, not a
+ * duplicate.  ACKing it tells the sender the gap is filled, and the loss
+ * becomes permanent and silent. */
+void test_data_past_our_position_is_not_acked(void)
+{
+    enter_accepting();
+    arq_event_t ev = make_event(ARQ_EV_RX_DATA);       /* bytes 0..7 */
+    ev.session_id  = 0x42;
+    ev.stream_off  = 0;
+    ev.data_bytes  = 8;
+    ev.payload_len = 8;
+    arq_fsm_dispatch(&sess, &ev);
+    ev = make_event(ARQ_EV_TIMER_ACK);
+    arq_fsm_dispatch(&sess, &ev);
+    ev = make_event(ARQ_EV_TX_COMPLETE);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(ARQ_DFLOW_IDLE_IRS, sess.dflow_state);
+    TEST_ASSERT_EQUAL_UINT16(8, sess.rx_stream_hwm);
+
+    RESET_FAKE(fake_deliver_rx_data);
+    ev = make_event(ARQ_EV_RX_DATA);                   /* bytes 100.., a gap */
+    ev.session_id  = 0x42;
+    ev.stream_off  = 100;
+    ev.data_bytes  = 8;
+    ev.payload_len = 8;
+    arq_fsm_dispatch(&sess, &ev);
+
+    TEST_ASSERT_EQUAL_INT(0, fake_deliver_rx_data_fake.call_count);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ARQ_DFLOW_IDLE_IRS, sess.dflow_state,
+        "a frame past our stream position was ACKed");
+}
+
 /* A pending (deferred) disconnect must not drop the unACKed last frame: the
  * first ACK timeout retries it once (capped), and only the second timeout
  * completes the teardown.  Regression test for the Fix-14 zero-retry abort
@@ -1810,6 +1876,8 @@ int main(void)
     RUN_TEST(test_connected_accepts_zero_session_pattern_ack);
     RUN_TEST(test_connected_seeds_no_progress_clock);
     RUN_TEST(test_app_disconnect_defers_with_backlog);
+    RUN_TEST(test_peer_data_in_wait_ack_is_not_an_ack_of_ours);
+    RUN_TEST(test_data_past_our_position_is_not_acked);
     RUN_TEST(test_pending_disconnect_retries_last_frame_before_teardown);
     RUN_TEST(test_app_disconnect_defers_in_wait_ack);
     RUN_TEST(test_disconnect_drain_timeout_forces_teardown);
