@@ -1532,6 +1532,44 @@ void test_turn_req_concede_resets_the_deferral_budget(void)
         "a conceded TURN_REQ left its deferrals charged to the next wait");
 }
 
+/* ---- Nothing reaches an application that has ended its session ----
+ *
+ * DISCONNECT is answered with DISCONNECTED at once (VARA semantics) while the
+ * air side drains, so data arriving during the drain has no reader.  It used
+ * to be delivered anyway, parked in the receive buffer, and handed to the NEXT
+ * client: on air, a frame decoded during a drain reached a new NNCP session
+ * 86 ms after its CONNECTED and killed it. */
+void test_no_delivery_after_the_application_disconnects(void)
+{
+    goto_idle_irs_with_backlog();            /* connected callee, 256 B of its own */
+    arq_event_t ev = make_event(ARQ_EV_APP_DISCONNECT);
+    arq_fsm_dispatch(&sess, &ev);            /* deferred: backlog still queued */
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_CONNECTED, sess.conn_state);
+
+    RESET_FAKE(fake_deliver_rx_data);
+    ev = make_event(ARQ_EV_RX_DATA);
+    ev.session_id  = sess.session_id;
+    ev.seq         = sess.rx_expected;
+    ev.data_bytes  = 8;
+    ev.payload_len = 8;
+    arq_fsm_dispatch(&sess, &ev);
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, fake_deliver_rx_data_fake.call_count,
+        "data delivered to an application that had already disconnected");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ARQ_DFLOW_DATA_RX, sess.dflow_state,
+        "no ACK pending for the frame: the peer could not finish");
+}
+
+/* ...and the next session delivers again. */
+void test_new_session_delivers_again(void)
+{
+    sess.host_released = true;               /* left over from a previous session */
+    RESET_FAKE(fake_deliver_rx_data);
+    goto_idle_irs_with_backlog();            /* a fresh inbound session */
+    TEST_ASSERT_FALSE(sess.host_released);
+    TEST_ASSERT_GREATER_THAN(0, fake_deliver_rx_data_fake.call_count);
+}
+
 void test_simultaneous_turn_req_one_side_yields(void)
 {
     /* Local "SRC1" vs remote "DST1": strcmp > 0 is rank 1, which yields. */
@@ -2061,6 +2099,8 @@ int main(void)
     RUN_TEST(test_turn_req_retry_defers_on_channel_energy_without_sync);
     RUN_TEST(test_turn_req_retry_deferral_is_bounded);
     RUN_TEST(test_turn_req_concede_resets_the_deferral_budget);
+    RUN_TEST(test_no_delivery_after_the_application_disconnects);
+    RUN_TEST(test_new_session_delivers_again);
     RUN_TEST(test_simultaneous_turn_req_one_side_yields);
     RUN_TEST(test_simultaneous_turn_req_other_side_holds);
     RUN_TEST(test_disconnect_drain_timeout_forces_teardown);

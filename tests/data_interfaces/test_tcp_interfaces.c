@@ -90,6 +90,7 @@ int arq_reported_bandwidth_hz(void)
 }
 
 bool arq_bandwidth_allows_mode(int mode) { (void)mode; return true; }
+bool arq_is_link_connected(void) { return false; }
 
 void arq_set_trx(int trx) { arq_conn.TRX = trx; }
 int  arq_get_trx(void)    { return arq_conn.TRX; }
