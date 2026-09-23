@@ -128,6 +128,7 @@ void arq_fsm_init(arq_session_t *sess)
     sess->control_mode        = ARQ_CONTROL_MODE;
     sess->payload_mode        = FREEDV_MODE_DATAC15;  /* my TX mode, starts at safest level */
     sess->peer_turn_req_pending = false;  /* never inherit a stale yield */
+    sess->ack_carries_data      = false;  /* nor a stale one-keydown ACK */
         sess->turn_req_defer_count  = 0;
     sess->peer_tx_mode        = FREEDV_MODE_DATAC15;  /* RX decoder, starts at safest level */
     sess->initial_payload_mode = FREEDV_MODE_DATAC15;  /* overwritten by arq_set_initial_mode */
@@ -630,6 +631,92 @@ static int select_best_mode(const arq_session_t *sess, int backlog)
 
 /** Check whether a mode upgrade/downgrade is warranted.  If yes, send
  *  MODE_REQ and enter MODE_REQ_TX.  Returns true when negotiation started. */
+/* The payload mode maybe_upgrade_mode() would negotiate to right now, or -1
+ * for none.  With consume=false this is a pure peek -- nothing in the session
+ * changes -- so a caller can ask before committing to a path; with
+ * consume=true it applies the decision's own bookkeeping (the one-shot probe,
+ * the hysteresis count) exactly as maybe_upgrade_mode() always has. */
+static int mode_change_due(arq_session_t *sess, bool consume)
+{
+    /* Hold the initial DATAC15 payload mode during the startup window. */
+    if (time_now_ms() < sess->startup_deadline_ms)
+        return -1;
+
+    /* Never change the payload mode while unACKed frames are in flight.  Those
+     * go-back-N window frames were built for the current mode; the per-frame
+     * size and the FULL-length sentinel (payload_valid==0 means "all slot bytes
+     * valid") are mode-RELATIVE, so retransmitting them after a mode change
+     * makes the receiver — now decoding at the new mode's geometry — deliver the
+     * wrong byte count (a FULL DATAC15 frame read at DATAC3's larger slot
+     * over-delivers: the 118-vs-112 bidirectional regression).  Defer the change
+     * until the window drains; it reaches 0 after every fully-ACKed burst, so
+     * mode adaptation still happens at burst boundaries.
+     *
+     * Exception (S1 fade-cliff fix): the retry-exhaustion path sets mode_probe
+     * to break out of a channel that can no longer deliver the current mode —
+     * there the window may NEVER drain, which made this guard a permanent
+     * mode-change lockout (the transfer starved above the fade cliff).  The
+     * MODE_REQ itself doesn't touch the window; the MODE_ACK reply carries the
+     * peer's rx_expected, which resolves the window safely before the switch
+     * (delivered frames are ACK-progressed, undelivered bytes are restaged and
+     * re-framed at the new mode). */
+    bool probe = sess->mode_probe;
+    if (consume)
+        sess->mode_probe = false;   /* one-shot */
+    if (sess->tx_window_count > 0 && !probe)
+        return -1;
+
+    /* Normally we need at least one valid peer SNR reading before deciding.
+     * Exception: a retry-forced downgrade is driven purely by delivery
+     * failure (consecutive_retries), not SNR — select_best_mode's safety net
+     * steps the mode down regardless of SNR.  Allow it through even with no
+     * SNR estimate, otherwise a link that never lands an advancing ACK (so
+     * no reading ever arrives) would keep retransmitting at a too-fast mode
+     * forever, defeating the hard-loss drop to the floor.  Gate on the
+     * validity flag, not peer_snr_x10==0, so a genuine 0 dB report (snr_raw=128,
+     * common at the OTA fade cliff) is honoured instead of mistaken for "no
+     * reading" and stalling the climb. */
+    if (!sess->peer_snr_valid &&
+        sess->consecutive_retries < ARQ_HARD_LOSS_THRESHOLD)
+        return -1;
+
+    int backlog = session_tx_backlog(sess);
+    int desired_mode = select_best_mode(sess, backlog);
+
+    if (desired_mode == sess->payload_mode)
+    {
+        if (consume)
+            sess->mode_upgrade_count = 0;
+        return -1;
+    }
+
+    /* A probe is fired from retry trouble (ACK timeouts / exhaustion) to
+     * ESCAPE a mode the channel can no longer deliver — it must only ever
+     * move DOWN the ladder.  Without this, an SNR reading that still looks
+     * adequate (fading: the surviving frames measure fine) lets the probe
+     * UPGRADE mid-trouble — measured on the Watterson bench as a climb into
+     * the fade followed by a ~2 min go-back-N stall, slower than just
+     * holding the floor.  Upgrades keep the original discipline: only at
+     * burst boundaries with a drained window. */
+    if (probe && mode_rank(desired_mode) >= mode_rank(sess->payload_mode))
+        return -1;
+
+    /* After a retry-forced downgrade, don't allow re-upgrade until the
+     * hold timer expires.  This prevents oscillation when stale SNR
+     * says "upgrade" but the channel can't actually support it. */
+    if (mode_rank(desired_mode) > mode_rank(sess->payload_mode) &&
+        time_now_ms() < sess->mode_hold_until_ms)
+        return -1;
+
+    /* Hysteresis: require ARQ_MODE_SWITCH_HYST_COUNT consecutive observations. */
+    int seen = sess->mode_upgrade_count + 1;
+    if (consume)
+        sess->mode_upgrade_count = seen;
+    if (seen < ARQ_MODE_SWITCH_HYST_COUNT)
+        return -1;
+    return desired_mode;
+}
+
 static bool maybe_upgrade_mode(arq_session_t *sess)
 {
     /* --- Phase-A diagnostic: throttled OLLA state, to confirm on-air climbing
@@ -651,78 +738,10 @@ static bool maybe_upgrade_mode(arq_session_t *sess)
         }
     }
 
-    /* Hold the initial DATAC15 payload mode during the startup window. */
-    if (time_now_ms() < sess->startup_deadline_ms)
+    int desired_mode = mode_change_due(sess, true);
+    if (desired_mode < 0)
         return false;
-
-    /* Never change the payload mode while unACKed frames are in flight.  Those
-     * go-back-N window frames were built for the current mode; the per-frame
-     * size and the FULL-length sentinel (payload_valid==0 means "all slot bytes
-     * valid") are mode-RELATIVE, so retransmitting them after a mode change
-     * makes the receiver — now decoding at the new mode's geometry — deliver the
-     * wrong byte count (a FULL DATAC15 frame read at DATAC3's larger slot
-     * over-delivers: the 118-vs-112 bidirectional regression).  Defer the change
-     * until the window drains; it reaches 0 after every fully-ACKed burst, so
-     * mode adaptation still happens at burst boundaries.
-     *
-     * Exception (S1 fade-cliff fix): the retry-exhaustion path sets mode_probe
-     * to break out of a channel that can no longer deliver the current mode —
-     * there the window may NEVER drain, which made this guard a permanent
-     * mode-change lockout (the transfer starved above the fade cliff).  The
-     * MODE_REQ itself doesn't touch the window; the MODE_ACK reply carries the
-     * peer's rx_expected, which resolves the window safely before the switch
-     * (delivered frames are ACK-progressed, undelivered bytes are restaged and
-     * re-framed at the new mode). */
-    bool probe = sess->mode_probe;
-    sess->mode_probe = false;   /* one-shot */
-    if (sess->tx_window_count > 0 && !probe)
-        return false;
-
-    /* Normally we need at least one valid peer SNR reading before deciding.
-     * Exception: a retry-forced downgrade is driven purely by delivery
-     * failure (consecutive_retries), not SNR — select_best_mode's safety net
-     * steps the mode down regardless of SNR.  Allow it through even with no
-     * SNR estimate, otherwise a link that never lands an advancing ACK (so
-     * no reading ever arrives) would keep retransmitting at a too-fast mode
-     * forever, defeating the hard-loss drop to the floor.  Gate on the
-     * validity flag, not peer_snr_x10==0, so a genuine 0 dB report (snr_raw=128,
-     * common at the OTA fade cliff) is honoured instead of mistaken for "no
-     * reading" and stalling the climb. */
-    if (!sess->peer_snr_valid &&
-        sess->consecutive_retries < ARQ_HARD_LOSS_THRESHOLD)
-        return false;
-
     int backlog = session_tx_backlog(sess);
-    int desired_mode = select_best_mode(sess, backlog);
-
-    if (desired_mode == sess->payload_mode)
-    {
-        sess->mode_upgrade_count = 0;
-        return false;
-    }
-
-    /* A probe is fired from retry trouble (ACK timeouts / exhaustion) to
-     * ESCAPE a mode the channel can no longer deliver — it must only ever
-     * move DOWN the ladder.  Without this, an SNR reading that still looks
-     * adequate (fading: the surviving frames measure fine) lets the probe
-     * UPGRADE mid-trouble — measured on the Watterson bench as a climb into
-     * the fade followed by a ~2 min go-back-N stall, slower than just
-     * holding the floor.  Upgrades keep the original discipline: only at
-     * burst boundaries with a drained window. */
-    if (probe && mode_rank(desired_mode) >= mode_rank(sess->payload_mode))
-        return false;
-
-    /* After a retry-forced downgrade, don't allow re-upgrade until the
-     * hold timer expires.  This prevents oscillation when stale SNR
-     * says "upgrade" but the channel can't actually support it. */
-    if (mode_rank(desired_mode) > mode_rank(sess->payload_mode) &&
-        time_now_ms() < sess->mode_hold_until_ms)
-        return false;
-
-    /* Hysteresis: require ARQ_MODE_SWITCH_HYST_COUNT consecutive observations. */
-    sess->mode_upgrade_count++;
-    if (sess->mode_upgrade_count < ARQ_MODE_SWITCH_HYST_COUNT)
-        return false;
 
     /* After a hard-loss drop to the floor, hold briefly so OLLA re-climbs on
      * fresh delivery evidence rather than stale SNR. */
@@ -1035,6 +1054,27 @@ static void enter_idle_iss(arq_session_t *sess, bool gained_turn)
     }
 }
 
+/* Our data burst is on the air: wait for its ACK.
+ *
+ * ack_timeout_s is a lower bound (must cover the peer's ACK), so a bounded
+ * positive jitter only ever waits longer and never violates the margin.
+ * Jitter here is load-bearing: when two connected stations submit data
+ * simultaneously, both send and both land in WAIT_ACK, and only a jittered
+ * retransmit can break the lock. */
+static void enter_wait_ack(arq_session_t *sess)
+{
+    const arq_mode_timing_t *tm = arq_protocol_mode_timing(sess->payload_mode);
+    /* ack_timeout_s is a lower bound (must cover the peer's ACK), so a bounded
+     * positive jitter only ever waits longer and never violates the margin.
+     * Jitter here is load-bearing: when two connected stations submit data
+     * simultaneously, both send and both land in WAIT_ACK, and only a
+     * jittered retransmit can break the lock. */
+    sess->retx_defer_count = 0;      /* fresh listen-before-retransmit budget */
+    dflow_enter(sess, ARQ_DFLOW_WAIT_ACK,
+                retry_deadline_from_s(sess, tm ? tm->ack_timeout_s : 9.0f),
+                ARQ_EV_TIMER_ACK);
+}
+
 /* Called when a remote frame grants ISS role.  Defers DATA_TX by
  * ARQ_ISS_POST_ACK_GUARD_MS so the peer's decoder has enough time to
  * switch from TX back to RX and re-acquire OFDM sync before our preamble
@@ -1256,6 +1296,7 @@ static void fsm_disconnected(arq_session_t *sess, const arq_event_t *ev)
         /* Reset mode state for new session */
         sess->payload_mode       = FREEDV_MODE_DATAC15;
         sess->peer_turn_req_pending = false;  /* never inherit a stale yield */
+        sess->ack_carries_data      = false;  /* nor a stale one-keydown ACK */
         sess->turn_req_defer_count  = 0;
         sess->peer_tx_mode       = FREEDV_MODE_DATAC15;
         sess->speed_level        = 0;
@@ -1298,6 +1339,7 @@ static void fsm_listening(arq_session_t *sess, const arq_event_t *ev)
          * stay at the broadcast mode for receiving broadcast frames. */
         sess->payload_mode       = FREEDV_MODE_DATAC15;
         sess->peer_turn_req_pending = false;  /* never inherit a stale yield */
+        sess->ack_carries_data      = false;  /* nor a stale one-keydown ACK */
         sess->turn_req_defer_count  = 0;
         sess->peer_tx_mode       = FREEDV_MODE_DATAC15;
         sess->speed_level        = 0;
@@ -1363,6 +1405,7 @@ static void fsm_listening(arq_session_t *sess, const arq_event_t *ev)
             sess->tx_retries_left = ARQ_DATA_RETRY_SLOTS;
             sess->payload_mode       = FREEDV_MODE_DATAC15;
             sess->peer_turn_req_pending = false;  /* never inherit a stale yield */
+            sess->ack_carries_data      = false;  /* nor a stale one-keydown ACK */
         sess->turn_req_defer_count  = 0;
             sess->peer_tx_mode       = FREEDV_MODE_DATAC15;
             sess->pending_tx_mode    = 0;
@@ -1404,6 +1447,7 @@ static void fsm_calling(arq_session_t *sess, const arq_event_t *ev)
             sess->tx_retries_left = ARQ_DATA_RETRY_SLOTS;
             sess->payload_mode       = FREEDV_MODE_DATAC15;  /* reset mode state from prior session */
             sess->peer_turn_req_pending = false;  /* never inherit a stale yield */
+            sess->ack_carries_data      = false;  /* nor a stale one-keydown ACK */
         sess->turn_req_defer_count  = 0;
             sess->peer_tx_mode       = FREEDV_MODE_DATAC15;
             sess->pending_tx_mode    = 0;
@@ -1505,6 +1549,7 @@ static void fsm_accepting(arq_session_t *sess, const arq_event_t *ev)
         sess->tx_retries_left = ARQ_DATA_RETRY_SLOTS;
         sess->payload_mode       = FREEDV_MODE_DATAC15;  /* reset mode state from prior session */
         sess->peer_turn_req_pending = false;  /* never inherit a stale yield */
+        sess->ack_carries_data      = false;  /* nor a stale one-keydown ACK */
         sess->turn_req_defer_count  = 0;
         sess->peer_tx_mode       = FREEDV_MODE_DATAC15;
         sess->pending_tx_mode    = 0;
@@ -2127,16 +2172,7 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
         {
             if (g_timing)
                 arq_timing_record_tx_end(g_timing, (int)sess->tx_seq);
-            tm = arq_protocol_mode_timing(sess->payload_mode);
-            /* ack_timeout_s is a lower bound (must cover the peer's ACK), so a
-             * bounded positive jitter only ever waits longer and never violates
-             * the margin.  Jitter here is load-bearing: when two connected
-             * stations submit data simultaneously, both send and both land in
-             * WAIT_ACK, and only a jittered retransmit can break the lock. */
-            sess->retx_defer_count = 0;
-            dflow_enter(sess, ARQ_DFLOW_WAIT_ACK,
-                        retry_deadline_from_s(sess, tm ? tm->ack_timeout_s : 9.0f),
-                        ARQ_EV_TIMER_ACK);
+            enter_wait_ack(sess);
         }
         else if (ev->id == ARQ_EV_RX_TURN_REQ)
         {
@@ -2749,9 +2785,35 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
              * knows whether a piggyback turn is valid. */
             uint32_t delay_ms = (uint32_t)(time_now_ms() - sess->last_rx_ms);
             sess->acktx_had_has_data = session_tx_backlog(sess) > 0;
+
+            /* Will this ACK hand us the turn (we have data, the peer has none)
+             * with nothing to renegotiate first?  Then our first data burst
+             * rides the ACK's keydown instead of a second over after the ISS
+             * guard: one key-up instead of two, no dead gap for the peer to
+             * key into.  The peer sees exactly what it always did -- an ACK
+             * with HAS_DATA, then our data -- only sooner.  A mode change
+             * still goes the long way, since the MODE_REQ must come first. */
+            bool chain = sess->acktx_had_has_data && !sess->peer_has_data &&
+                         mode_change_due(sess, false) < 0;
+
+            sess->tx_join_next = chain;
             send_ack(sess, arq_protocol_encode_ack_delay(delay_ms));
+            sess->tx_join_next = false;
             if (g_timing)
                 arq_timing_record_ack_tx(g_timing, (int)sess->rx_expected - 1);
+
+            sess->ack_carries_data = false;
+            if (chain)
+            {
+                /* What enter_idle_iss_guarded() would do after the ACK, done
+                 * now: the same mode-decision bookkeeping (it decides "no
+                 * change", as the peek just did), a fresh retry budget, and
+                 * the burst itself. */
+                (void)mode_change_due(sess, true);
+                sess->tx_retries_left = ARQ_DATA_RETRY_SLOTS;
+                send_data_burst(sess);
+                sess->ack_carries_data = sess->tx_window_count > 0;
+            }
             dflow_enter(sess, ARQ_DFLOW_ACK_TX, UINT64_MAX, ARQ_EV_TIMER_RETRY);
         }
         else if (ev->id == ARQ_EV_RX_DATA)
@@ -2784,6 +2846,26 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
         {
             send_ack(sess, 0);
             dflow_enter(sess, ARQ_DFLOW_ACK_TX, UINT64_MAX, ARQ_EV_TIMER_RETRY);
+        }
+        else if (ev->id == ARQ_EV_TX_STARTED && sess->ack_carries_data)
+        {
+            if (g_timing)
+                arq_timing_record_tx_start(g_timing, (int)sess->tx_seq,
+                                           sess->payload_mode,
+                                           session_tx_backlog(sess));
+        }
+        else if (ev->id == ARQ_EV_TX_COMPLETE && sess->ack_carries_data)
+        {
+            /* The ACK and our first data burst went out in one keydown: we
+             * took the turn on the ACK (HAS_DATA) and the data is on the air
+             * too, so this is DATA_TX's completion as much as ACK_TX's. */
+            sess->ack_carries_data = false;
+            if (g_timing)
+            {
+                arq_timing_record_turn(g_timing, true, "piggyback");
+                arq_timing_record_tx_end(g_timing, (int)sess->tx_seq);
+            }
+            enter_wait_ack(sess);
         }
         else if (ev->id == ARQ_EV_TX_COMPLETE)
         {

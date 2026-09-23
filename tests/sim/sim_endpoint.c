@@ -19,7 +19,11 @@ struct sim_endpoint {
     uint8_t tx[SIM_TX_CAP]; size_t tx_head, tx_len;   /* app bytes to send   */
     uint8_t rx[SIM_RX_CAP]; size_t rx_len;            /* delivered app bytes */
 
-    sim_outframe_t outbox;   /* frame emitted by send_tx_frame, drained by core */
+    /* Frames emitted by send_tx_frame, drained by the core.  One per keydown,
+     * or two when the first opened a shared keydown (an ACK that hands us the
+     * turn, carrying our first data burst). */
+    sim_outframe_t outbox[2];
+    int            outbox_n;
 };
 
 /* v1 context: set before each arq_fsm_dispatch. Also updates arq_conn.my_call_sign
@@ -69,9 +73,10 @@ size_t sim_endpoint_delivered(sim_endpoint_t *ep, uint8_t *out, size_t out_cap)
 
 bool sim_endpoint_take_outframe(sim_endpoint_t *ep, sim_outframe_t *out)
 {
-    if (!ep->outbox.present) return false;
-    *out = ep->outbox;
-    ep->outbox.present = false;
+    if (ep->outbox_n == 0) return false;
+    *out = ep->outbox[0];
+    ep->outbox[0] = ep->outbox[1];
+    ep->outbox_n--;
     return true;
 }
 
@@ -81,18 +86,23 @@ static void cb_send_tx_frame(int packet_type, int mode, size_t frame_size,
                               const uint8_t *frame, int burst_remaining)
 {
     sim_endpoint_t *ep = s_active;
-    /* Stop-and-wait: at most one outframe in flight at a time. The core drains
-     * the outbox before the next dispatch that can emit a frame, so if this
-     * fires while an outframe is present, the burst machinery has changed. */
-    assert(!ep->outbox.present &&
+    /* Stop-and-wait: one outframe per keydown.  The core drains the outbox
+     * before the next dispatch that can emit a frame, so a second frame is
+     * legal only when the first opened a shared keydown; anything else means
+     * the burst machinery has changed. */
+    assert((ep->outbox_n == 0 ||
+            (ep->outbox_n == 1 && ep->outbox[0].join_next)) &&
            "send_tx_frame fired with outbox full: multi-frame burst detected");
-    assert(frame_size <= sizeof(ep->outbox.buf));
-    memcpy(ep->outbox.buf, frame, frame_size);
-    ep->outbox.len           = frame_size;
-    ep->outbox.packet_type   = packet_type;
-    ep->outbox.mode          = mode;
-    ep->outbox.burst_remaining = burst_remaining;
-    ep->outbox.present       = true;
+    sim_outframe_t *of = &ep->outbox[ep->outbox_n];
+    assert(frame_size <= sizeof(of->buf));
+    memcpy(of->buf, frame, frame_size);
+    of->len             = frame_size;
+    of->packet_type     = packet_type;
+    of->mode            = mode;
+    of->burst_remaining = burst_remaining;
+    of->present         = true;
+    of->join_next       = ep->sess.tx_join_next;
+    ep->outbox_n++;
 }
 
 static void cb_notify_connected(const char *remote_call, const char *local_call) { (void)remote_call; (void)local_call; }

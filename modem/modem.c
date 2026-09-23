@@ -1176,94 +1176,32 @@ int shutdown_modem(generic_modem_t *g_modem)
     return 0;
 }
 
-int send_modulated_data(generic_modem_t *g_modem, uint8_t *bytes_in, int frames_per_burst)
+/* Worst-case samples for one burst of `frames` frames on `freedv`: preamble,
+ * frames, postamble.  Conservative on the pre/postamble. */
+static size_t burst_audio_max_samples(struct freedv *freedv, int frames)
 {
-    /* Which instance is active is pool state; USING it is instance state.
-     * Take the pool lock only long enough to read the pointer, then hold that
-     * instance's lock for the modulation itself.  Keeping the pool lock here
-     * would block the decoders on OTHER modes for the whole TX build, which is
-     * exactly the serialisation this split removes -- while dropping the
-     * instance lock would let TX and a decoder on the SAME mode touch one
-     * struct freedv concurrently, which is a real race. */
-    pthread_mutex_lock(&modem_pool_lock);
-    struct freedv *freedv = g_modem->freedv;
-    pthread_mutex_unlock(&modem_pool_lock);
+    size_t n_mod_out = freedv_get_n_tx_modem_samples(freedv);
+    return 2 * (2 * n_mod_out) + (size_t)frames * n_mod_out;
+}
 
-    pthread_mutex_t *ilock = modem_inst_lock_for(freedv);
-    pthread_mutex_lock(ilock);
+/* Append one burst -- preamble, `frames` frames with their CRC16, postamble --
+ * modulated on `freedv` to tx_buffer at *total.  Caller holds the instance
+ * lock and has sized tx_buffer with burst_audio_max_samples(). */
+static void append_burst_audio(struct freedv *freedv, const uint8_t *bytes_in, int frames,
+                               int32_t *tx_buffer, size_t *total,
+                               int16_t *mod_out_short, float tx_gain, float *peak_fs)
+{
     size_t bytes_per_modem_frame = freedv_get_bits_per_modem_frame(freedv) / 8;
     size_t payload_bytes = bytes_per_modem_frame - 2;  /* 2 bytes reserved for CRC16 */
     size_t n_mod_out = freedv_get_n_tx_modem_samples(freedv);
     uint8_t frame_with_crc[bytes_per_modem_frame];
 
-    publish_link_bitrate(freedv, freedv_get_mode(freedv));
-
-    /* Inter-burst silence */
-    int inter_burst_delay_ms = 200;
-    int samples_silence = FREEDV_FS_8000 * inter_burst_delay_ms / 1000;
-    if (freedv_get_mode(freedv) == FREEDV_MODE_FSK_LDPC)
-    {
-        int fsk_settle_samples = freedv_get_n_nom_modem_samples(freedv);
-        if (fsk_settle_samples > samples_silence)
-            samples_silence = fsk_settle_samples;
-    }
-
-    /* 100ms head silence before preamble — gives the radio RX→TX relay and
-     * the peer's audio path time to settle before the preamble arrives. */
-    int samples_head = FREEDV_FS_8000 * 100 / 1000;
-
-    /* Calculate max buffer size needed:
-     * head silence + preamble + (frames * n_mod_out) + postamble + tail silence */
-    int max_preamble = freedv_get_n_tx_modem_samples(freedv) * 2;  /* conservative estimate */
-    int max_postamble = max_preamble;
-    size_t max_samples = (size_t)samples_head + max_preamble + (frames_per_burst * n_mod_out) + max_postamble + samples_silence;
-
-    /* Allocate temporary buffer for all modulated audio */
-    int32_t *tx_buffer = (int32_t *)malloc(max_samples * sizeof(int32_t));
-    int16_t *mod_out_short = (int16_t *)malloc(n_mod_out * sizeof(int16_t));
-
-    if (!tx_buffer || !mod_out_short)
-    {
-        printf("ERROR: Failed to allocate TX buffer\n");
-        if (tx_buffer) free(tx_buffer);
-        if (mod_out_short) free(mod_out_short);
-        pthread_mutex_unlock(ilock);
-        return -1;
-    }
-
-    size_t total_samples = 0;
-    float tx_gain = atomic_load(&g_tx_gain);
-    float peak_fs = 0.0f;  /* pre-saturation peak magnitude across this burst */
-
-    /* Never modulate on top of a tuning carrier: the tune thread owns PTT and
-     * the playback ring until TUNE OFF or its safety deadline. */
-    if (atomic_load(&g_tune_active))
-    {
-        HLOGW("modem", "TX suppressed: tuning carrier active (send TUNE OFF)");
-        free(tx_buffer);
-        free(mod_out_short);
-        pthread_mutex_unlock(ilock);
-        return -1;
-    }
-
-
-    /* === STEP 1: Generate all modulated audio into temp buffer === */
-
-    /* Head silence: allow relay/audio path to settle before preamble */
-    for (int i = 0; i < samples_head; i++)
-        tx_buffer[total_samples++] = 0;
-
-    /* Generate preamble */
     int n_preamble = freedv_rawdatapreambletx(freedv, mod_out_short);
     for (int i = 0; i < n_preamble; i++)
-    {
-        tx_buffer[total_samples++] = tx_sample_with_gain(mod_out_short[i], tx_gain, &peak_fs);
-    }
+        tx_buffer[(*total)++] = tx_sample_with_gain(mod_out_short[i], tx_gain, peak_fs);
 
-    /* Generate data frame(s) */
-    for (int i = 0; i < frames_per_burst; i++)
+    for (int i = 0; i < frames; i++)
     {
-        /* Copy payload and add CRC16 in last 2 bytes */
         memcpy(frame_with_crc, &bytes_in[payload_bytes * i], payload_bytes);
         uint16_t crc16 = freedv_gen_crc16(frame_with_crc, payload_bytes);
         frame_with_crc[bytes_per_modem_frame - 2] = crc16 >> 8;
@@ -1271,25 +1209,19 @@ int send_modulated_data(generic_modem_t *g_modem, uint8_t *bytes_in, int frames_
 
         freedv_rawdatatx(freedv, mod_out_short, frame_with_crc);
         for (size_t j = 0; j < n_mod_out; j++)
-        {
-            tx_buffer[total_samples++] = tx_sample_with_gain(mod_out_short[j], tx_gain, &peak_fs);
-        }
+            tx_buffer[(*total)++] = tx_sample_with_gain(mod_out_short[j], tx_gain, peak_fs);
     }
 
-    /* Generate postamble */
     int n_postamble = freedv_rawdatapostambletx(freedv, mod_out_short);
     for (int i = 0; i < n_postamble; i++)
-    {
-        tx_buffer[total_samples++] = tx_sample_with_gain(mod_out_short[i], tx_gain, &peak_fs);
-    }
+        tx_buffer[(*total)++] = tx_sample_with_gain(mod_out_short[i], tx_gain, peak_fs);
+}
 
-    /* Add silence at end */
-    for (int i = 0; i < samples_silence; i++)
-    {
-        tx_buffer[total_samples++] = 0;
-    }
-    pthread_mutex_unlock(ilock);
-
+/* Key the transmitter, play `total_samples` of pre-built audio, unkey.  ARQ's
+ * TX_STARTED reports the modem's current mode, so set that first. */
+static void key_and_play(generic_modem_t *g_modem, int32_t *tx_buffer, size_t total_samples,
+                         float peak_fs)
+{
     /* Publish the post-gain, pre-saturation TX peak for the UI meter.
      * peak_fs was accumulated as |fs| inside tx_sample_with_gain before any
      * clamping, so it reflects the true level: at 0 dBFS the signal is right
@@ -1394,10 +1326,214 @@ int send_modulated_data(generic_modem_t *g_modem, uint8_t *bytes_in, int frames_
 
     ptt_off();
     arq_modem_ptt_off();
+}
+
+/* Samples of silence ahead of the first preamble: gives the radio RX->TX relay
+ * and the peer's audio path time to settle before the preamble arrives. */
+#define TX_HEAD_SILENCE_MS   100
+/* Silence after the last postamble, before PTT drops. */
+#define TX_TAIL_SILENCE_MS   200
+
+int send_modulated_data(generic_modem_t *g_modem, uint8_t *bytes_in, int frames_per_burst)
+{
+    /* Which instance is active is pool state; USING it is instance state.
+     * Take the pool lock only long enough to read the pointer, then hold that
+     * instance's lock for the modulation itself.  Keeping the pool lock here
+     * would block the decoders on OTHER modes for the whole TX build, which is
+     * exactly the serialisation this split removes -- while dropping the
+     * instance lock would let TX and a decoder on the SAME mode touch one
+     * struct freedv concurrently, which is a real race. */
+    pthread_mutex_lock(&modem_pool_lock);
+    struct freedv *freedv = g_modem->freedv;
+    pthread_mutex_unlock(&modem_pool_lock);
+
+    pthread_mutex_t *ilock = modem_inst_lock_for(freedv);
+    pthread_mutex_lock(ilock);
+    size_t n_mod_out = freedv_get_n_tx_modem_samples(freedv);
+
+    publish_link_bitrate(freedv, freedv_get_mode(freedv));
+
+    /* Inter-burst silence */
+    int samples_silence = FREEDV_FS_8000 * TX_TAIL_SILENCE_MS / 1000;
+    if (freedv_get_mode(freedv) == FREEDV_MODE_FSK_LDPC)
+    {
+        int fsk_settle_samples = freedv_get_n_nom_modem_samples(freedv);
+        if (fsk_settle_samples > samples_silence)
+            samples_silence = fsk_settle_samples;
+    }
+    int samples_head = FREEDV_FS_8000 * TX_HEAD_SILENCE_MS / 1000;
+
+    size_t max_samples = (size_t)samples_head + burst_audio_max_samples(freedv, frames_per_burst) +
+                         (size_t)samples_silence;
+    int32_t *tx_buffer = (int32_t *)malloc(max_samples * sizeof(int32_t));
+    int16_t *mod_out_short = (int16_t *)malloc(n_mod_out * sizeof(int16_t));
+    if (!tx_buffer || !mod_out_short)
+    {
+        printf("ERROR: Failed to allocate TX buffer\n");
+        free(tx_buffer);
+        free(mod_out_short);
+        pthread_mutex_unlock(ilock);
+        return -1;
+    }
+
+    /* Never modulate on top of a tuning carrier: the tune thread owns PTT and
+     * the playback ring until TUNE OFF or its safety deadline. */
+    if (atomic_load(&g_tune_active))
+    {
+        HLOGW("modem", "TX suppressed: tuning carrier active (send TUNE OFF)");
+        free(tx_buffer);
+        free(mod_out_short);
+        pthread_mutex_unlock(ilock);
+        return -1;
+    }
+
+    size_t total_samples = 0;
+    float tx_gain = atomic_load(&g_tx_gain);
+    float peak_fs = 0.0f;  /* pre-saturation peak magnitude across this burst */
+
+    for (int i = 0; i < samples_head; i++)
+        tx_buffer[total_samples++] = 0;
+    append_burst_audio(freedv, bytes_in, frames_per_burst, tx_buffer, &total_samples,
+                       mod_out_short, tx_gain, &peak_fs);
+    for (int i = 0; i < samples_silence; i++)
+        tx_buffer[total_samples++] = 0;
+    pthread_mutex_unlock(ilock);
+
+    key_and_play(g_modem, tx_buffer, total_samples, peak_fs);
 
     free(tx_buffer);
     free(mod_out_short);
+    return 0;
+}
 
+/* Two bursts in ONE keydown: `a` then, after `gap_ms` of silence with the
+ * transmitter still keyed, `b` -- each on its own mode.  Used to send an ACK
+ * that hands this station the turn together with its first data burst, rather
+ * than unkeying, waiting a guard and keying again.
+ *
+ * The gap is not a turnaround: the peer is already receiving.  It only has to
+ * cover the peer's control decoder reporting `a` and the payload decoder
+ * dropping any sync it took off `a` (see g_payload_resync_req) before `b`'s
+ * preamble arrives. */
+int send_modulated_chain(generic_modem_t *g_modem,
+                         int mode_a, const uint8_t *bytes_a, int frames_a,
+                         int mode_b, const uint8_t *bytes_b, int frames_b,
+                         int gap_ms)
+{
+    size_t fb_a = 0, fb_b = 0;
+    pthread_mutex_lock(&modem_pool_lock);
+    struct freedv *fa = pooled_freedv_for_mode_locked(mode_a, &fb_a);
+    struct freedv *fb = pooled_freedv_for_mode_locked(mode_b, &fb_b);
+    pthread_mutex_unlock(&modem_pool_lock);
+    if (!fa || !fb)
+        return -1;
+
+    if (atomic_load(&g_tune_active))
+    {
+        HLOGW("modem", "TX suppressed: tuning carrier active (send TUNE OFF)");
+        return -1;
+    }
+
+    int samples_head = FREEDV_FS_8000 * TX_HEAD_SILENCE_MS / 1000;
+    int samples_gap  = FREEDV_FS_8000 * gap_ms / 1000;
+    int samples_tail = FREEDV_FS_8000 * TX_TAIL_SILENCE_MS / 1000;
+
+    pthread_mutex_t *la = modem_inst_lock_for(fa);
+    pthread_mutex_t *lb = modem_inst_lock_for(fb);
+
+    pthread_mutex_lock(la);
+    size_t max_a = burst_audio_max_samples(fa, frames_a);
+    size_t nmo_a = freedv_get_n_tx_modem_samples(fa);
+    pthread_mutex_unlock(la);
+    pthread_mutex_lock(lb);
+    size_t max_b = burst_audio_max_samples(fb, frames_b);
+    size_t nmo_b = freedv_get_n_tx_modem_samples(fb);
+    pthread_mutex_unlock(lb);
+
+    size_t max_samples = (size_t)samples_head + max_a + (size_t)samples_gap + max_b +
+                         (size_t)samples_tail;
+    int32_t *tx_buffer = (int32_t *)malloc(max_samples * sizeof(int32_t));
+    int16_t *mod_out_short = (int16_t *)malloc((nmo_a > nmo_b ? nmo_a : nmo_b) * sizeof(int16_t));
+    if (!tx_buffer || !mod_out_short)
+    {
+        free(tx_buffer);
+        free(mod_out_short);
+        return -1;
+    }
+
+    size_t total = 0;
+    float tx_gain = atomic_load(&g_tx_gain);
+    float peak_fs = 0.0f;
+
+    for (int i = 0; i < samples_head; i++)
+        tx_buffer[total++] = 0;
+    pthread_mutex_lock(la);
+    append_burst_audio(fa, bytes_a, frames_a, tx_buffer, &total, mod_out_short, tx_gain, &peak_fs);
+    pthread_mutex_unlock(la);
+    for (int i = 0; i < samples_gap; i++)
+        tx_buffer[total++] = 0;
+    pthread_mutex_lock(lb);
+    publish_link_bitrate(fb, mode_b);
+    append_burst_audio(fb, bytes_b, frames_b, tx_buffer, &total, mod_out_short, tx_gain, &peak_fs);
+    pthread_mutex_unlock(lb);
+    for (int i = 0; i < samples_tail; i++)
+        tx_buffer[total++] = 0;
+
+    /* The over is reported as the first burst's (TX_STARTED carries its mode);
+     * leave the modem on the second burst's mode, as two separate sends would
+     * have. */
+    maybe_switch_modem_mode(g_modem, mode_a, RX, true);
+    key_and_play(g_modem, tx_buffer, total, peak_fs);
+    maybe_switch_modem_mode(g_modem, mode_b, RX, true);
+
+    free(tx_buffer);
+    free(mod_out_short);
+    return 0;
+}
+
+/* Switch to an action's mode, check its frame size, and read its frames out
+ * of the ARQ TX ring into *buf (grown as needed).  0 on success. */
+static int read_action_frames(generic_modem_t *modem, const arq_action_t *action,
+                              bool arq_policy_ready, uint8_t **buf, size_t *cap,
+                              int *frames_out)
+{
+    cbuf_handle_t ring = NULL;
+    if (action->type == ARQ_ACTION_TX_CONTROL)
+        ring = data_tx_buffer_arq_control;
+    else if (action->type == ARQ_ACTION_TX_PAYLOAD)
+        ring = data_tx_buffer_arq;
+    else
+        return -1;
+
+    if (action->mode >= 0 && arq_policy_ready)
+        maybe_switch_modem_mode(modem, action->mode, RX, true);
+
+    pthread_mutex_lock(&modem_pool_lock);
+    size_t frame_size = modem->payload_bytes_per_modem_frame;
+    pthread_mutex_unlock(&modem_pool_lock);
+
+    int frames = action->frame_count;
+    if (frames < 1) frames = 1;
+    if (frames > ARQ_BURST_MAX) frames = ARQ_BURST_MAX;
+    size_t total = frame_size * (size_t)frames;
+
+    if (frame_size == 0 || frame_size > INT_BUFFER_SIZE ||
+        action->frame_size != frame_size || size_buffer(ring) < total)
+        return -1;
+
+    if (*cap < total)
+    {
+        uint8_t *nb = (uint8_t *)realloc(*buf, total);
+        if (!nb)
+        {
+            HLOGE("modem-tx", "Failed to allocate memory for action TX data");
+            return -1;
+        }
+        *buf = nb;
+        *cap = total;
+    }
+    read_buffer(ring, *buf, total);
+    *frames_out = frames;
     return 0;
 }
 
@@ -2087,6 +2223,8 @@ void *tx_thread(void *g_modem)
     generic_modem_t *modem = (generic_modem_t *)g_modem;
     uint8_t *data = NULL;
     size_t data_size = 0;
+    uint8_t *data2 = NULL;     /* second burst of a chained keydown */
+    size_t data2_size = 0;
 
     while (!shutdown_)
     {
@@ -2185,47 +2323,36 @@ void *tx_thread(void *g_modem)
 
         if (have_action)
         {
-            cbuf_handle_t action_buffer = NULL;
-            size_t action_frame_size = payload_bytes_per_modem_frame;
-            if (action.mode >= 0 &&
-                arq_policy_ready)
-                maybe_switch_modem_mode(modem, action.mode, RX, true);
-
-            pthread_mutex_lock(&modem_pool_lock);
-            action_frame_size = modem->payload_bytes_per_modem_frame;
-            pthread_mutex_unlock(&modem_pool_lock);
-
-            if (action.type == ARQ_ACTION_TX_CONTROL)
-                action_buffer = data_tx_buffer_arq_control;
-            else if (action.type == ARQ_ACTION_TX_PAYLOAD)
-                action_buffer = data_tx_buffer_arq;
-            else if (action.type == ARQ_ACTION_MODE_SWITCH)
-                sent_from_action = true;
-
-            int action_frames = action.frame_count;
-            if (action_frames < 1) action_frames = 1;
-            if (action_frames > ARQ_BURST_MAX) action_frames = ARQ_BURST_MAX;
-            size_t action_total = action_frame_size * (size_t)action_frames;
-
-            if (action_buffer &&
-                action_frame_size > 0 &&
-                action_frame_size <= INT_BUFFER_SIZE &&
-                action.frame_size == action_frame_size &&
-                size_buffer(action_buffer) >= action_total)
+            int a_frames = 0;
+            if (action.type == ARQ_ACTION_MODE_SWITCH)
             {
-                if (data_size < action_total)
+                if (action.mode >= 0 && arq_policy_ready)
+                    maybe_switch_modem_mode(modem, action.mode, RX, true);
+                sent_from_action = true;
+            }
+            else if (read_action_frames(modem, &action, arq_policy_ready,
+                                        &data, &data_size, &a_frames) == 0)
+            {
+                /* An ACK that hands us the turn, chained to our first data
+                 * burst: both go out in this one keydown.  The FSM enqueues the
+                 * pair from one event, so the second is already queued; if it
+                 * is not, the first goes out alone, exactly as before. */
+                arq_action_t next = {0};
+                int b_frames = 0;
+                if (action.join_next && arq_try_dequeue_action(&next) &&
+                    read_action_frames(modem, &next, arq_policy_ready,
+                                       &data2, &data2_size, &b_frames) == 0)
                 {
-                    uint8_t *new_data = (uint8_t *)realloc(data, action_total);
-                    if (!new_data)
-                    {
-                        HLOGE("modem-tx", "Failed to allocate memory for action TX data");
-                        continue;
-                    }
-                    data = new_data;
-                    data_size = action_total;
+                    HLOGD("modem-tx", "one keydown: mode %d x%d + %d ms + mode %d x%d",
+                          action.mode, a_frames, ARQ_ACK_DATA_GAP_MS, next.mode, b_frames);
+                    if (send_modulated_chain(modem, action.mode, data, a_frames,
+                                             next.mode, data2, b_frames,
+                                             ARQ_ACK_DATA_GAP_MS) == 0)
+                        sent_from_action = true;
+                    else
+                        HLOGW("modem-tx", "Failed to send chained TX actions");
                 }
-                read_buffer(action_buffer, data, action_total);
-                if (send_modulated_data_with_cq_status(modem, data, action_frames) == 0)
+                else if (send_modulated_data_with_cq_status(modem, data, a_frames) == 0)
                     sent_from_action = true;
                 else
                     HLOGW("modem-tx", "Failed to send queued TX action");
@@ -2267,6 +2394,7 @@ void *tx_thread(void *g_modem)
     }
 
     free(data);
+    free(data2);
     return NULL;
 }
 

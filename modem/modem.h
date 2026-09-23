@@ -47,6 +47,10 @@ int shutdown_modem(generic_modem_t *g_modem);
 
 // always send the frame size in bytes_in
 int send_modulated_data(generic_modem_t *g_modem, uint8_t *bytes_in, int frames_per_burst);
+int send_modulated_chain(generic_modem_t *g_modem,
+                         int mode_a, const uint8_t *bytes_a, int frames_a,
+                         int mode_b, const uint8_t *bytes_b, int frames_b,
+                         int gap_ms);
 
 int receive_modulated_data(generic_modem_t *g_modem, uint8_t *bytes_out, size_t *nbytes_out);
 

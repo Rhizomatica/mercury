@@ -99,7 +99,7 @@ static void enqueue(sim_t *s, const sim_pending_t *p)
 static void drain_outframes_from(sim_t *s, sim_endpoint_t *sender,
                                  sim_endpoint_t *peer, uint64_t now_ms)
 {
-    sim_outframe_t of;
+    sim_outframe_t of, chained;
     int dir = (sender == s->a) ? 0 : 1;
     while (sim_endpoint_take_outframe(sender, &of))
     {
@@ -126,9 +126,18 @@ static void drain_outframes_from(sim_t *s, sim_endpoint_t *sender,
             enqueue(s, &tx_go);
         }
 
+        /* A shared keydown: the chained frame follows after the gap, in the
+         * same over, so the sender's TX_COMPLETE and the medium's busy window
+         * both run to the end of the second frame. */
+        bool     has_chained  = of.join_next && sim_endpoint_take_outframe(sender, &chained);
+        uint64_t chained_start = tx_end + ARQ_ACK_DATA_GAP_MS;
+        uint64_t over_end      = has_chained
+                                 ? chained_start + sim_channel_airtime_ms(chained.mode, chained.len)
+                                 : tx_end;
+
         /* TX_COMPLETE back to sender at TX-end time. */
         sim_pending_t tx_done = {
-            .fire_at_ms = tx_end,
+            .fire_at_ms = over_end,
             .target     = sender,
             .kind       = SIM_PENDING_TX_COMPLETE,
         };
@@ -157,7 +166,7 @@ static void drain_outframes_from(sim_t *s, sim_endpoint_t *sender,
                     if (s->pending[i].target != sender)
                         continue;   /* not addressed to us */
                     if (s->pending[i].tx_end_ms > now_ms &&
-                        s->pending[i].tx_start_ms < tx_end)
+                        s->pending[i].tx_start_ms < over_end)
                     {
                         s->pending[i] = s->pending[--s->pending_count];
                         i--;
@@ -167,8 +176,8 @@ static void drain_outframes_from(sim_t *s, sim_endpoint_t *sender,
                 s->collisions++;    /* ours is destroyed too */
             }
         }
-        s->tx_start_ms[dir] = now_ms;
-        s->tx_end_ms[dir]   = tx_end;
+        s->tx_start_ms[dir] = now_ms;     /* the whole keydown is on the air */
+        s->tx_end_ms[dir]   = over_end;
 
         /* Frame delivery to peer (may be erased, or destroyed by a collision). */
         uint64_t deliver_at = 0;
@@ -185,6 +194,25 @@ static void drain_outframes_from(sim_t *s, sim_endpoint_t *sender,
                 .tx_end_ms   = tx_end,
             };
             memcpy(frame_ev.frame, of.buf, of.len);
+            enqueue(s, &frame_ev);
+        }
+
+        /* The chained frame takes its own channel draw -- the channel may
+         * keep one and lose the other, as a real fade could. */
+        if (has_chained && !collided &&
+            sim_channel_schedule(s->ch, chained_start, dir, chained.mode, chained.len,
+                                 &deliver_at))
+        {
+            sim_pending_t frame_ev = {
+                .fire_at_ms  = deliver_at,
+                .target      = peer,
+                .kind        = SIM_PENDING_FRAME,
+                .frame_len   = chained.len,
+                .rx_snr      = s->rx_snr_db,
+                .tx_start_ms = chained_start,
+                .tx_end_ms   = over_end,
+            };
+            memcpy(frame_ev.frame, chained.buf, chained.len);
             enqueue(s, &frame_ev);
         }
     }

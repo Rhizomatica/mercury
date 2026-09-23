@@ -2030,6 +2030,126 @@ void test_no_turn_req_right_after_granting_the_turn(void)
         "TURN_REQ keyed into the first burst of the sender we just granted");
 }
 
+/* ---- ACK + first data burst in one keydown ----
+ *
+ * When the ACK we are about to send hands us the turn (we have data, the peer
+ * has none) and no mode change must be negotiated first, our first data burst
+ * rides the ACK's keydown instead of a second over after the ISS guard.  On air
+ * (IC-7100 <-> sbitx, 1.9.14) the two overs stood 0.96 s apart six times in one
+ * session: two key-ups and a dead gap where one over would do. */
+
+#define MAX_TX_RECORD 16
+static int  tx_rec_n;
+static int  tx_rec_ptype[MAX_TX_RECORD];
+static bool tx_rec_join[MAX_TX_RECORD];
+
+static void record_tx_frame(int ptype, int mode, size_t len, const uint8_t *frame, int burst_remaining)
+{
+    (void)mode; (void)len; (void)frame; (void)burst_remaining;
+    if (tx_rec_n < MAX_TX_RECORD)
+    {
+        tx_rec_ptype[tx_rec_n] = ptype;
+        tx_rec_join[tx_rec_n]  = sess.tx_join_next;   /* what the modem action gets */
+        tx_rec_n++;
+    }
+}
+
+/* A connected IRS with `backlog` bytes of its own, holding a new DATA frame
+ * from the peer -- with or without HAS_DATA -- whose ACK is now due. */
+/* peer_keeps_turn: the frame is a duplicate -- the ISS missed our last ACK and
+ * is retransmitting, so it stays the sender (HAS_DATA on a DATA frame only
+ * says more is queued, and the ISS still yields to our HAS_DATA ACK). */
+static void goto_ack_due(int backlog, bool peer_keeps_turn)
+{
+    goto_idle_irs_with_backlog();
+    fake_tx_backlog_fake.return_val = backlog;
+    fake_tx_read_fake.custom_fake   = tx_read_one_frame;
+
+    arq_event_t ev = make_event(ARQ_EV_RX_DATA);
+    ev.session_id  = sess.session_id;
+    ev.seq         = peer_keeps_turn ? (uint8_t)(sess.rx_expected - 1) : sess.rx_expected;
+    ev.data_bytes  = 8;
+    ev.payload_len = 8;
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(ARQ_DFLOW_DATA_RX, sess.dflow_state);
+
+    RESET_FAKE(fake_send_tx_frame);
+    tx_rec_n = 0;
+    fake_send_tx_frame_fake.custom_fake = record_tx_frame;
+}
+
+void test_ack_that_hands_us_the_turn_carries_our_data(void)
+{
+    goto_ack_due(256, false);
+
+    arq_event_t ev = make_event(ARQ_EV_TIMER_ACK);
+    arq_fsm_dispatch(&sess, &ev);
+
+    TEST_ASSERT_GREATER_OR_EQUAL_INT_MESSAGE(2, tx_rec_n, "only the ACK was queued");
+    TEST_ASSERT_EQUAL_INT(PACKET_ARQ_CONTROL, tx_rec_ptype[0]);
+    TEST_ASSERT_TRUE_MESSAGE(tx_rec_join[0], "the ACK does not open a shared keydown");
+    TEST_ASSERT_EQUAL_INT(PACKET_ARQ_DATA, tx_rec_ptype[1]);
+    TEST_ASSERT_FALSE_MESSAGE(tx_rec_join[1], "the data burst would chain onto the next send too");
+    TEST_ASSERT_FALSE(sess.tx_join_next);
+    TEST_ASSERT_EQUAL_INT(ARQ_DFLOW_ACK_TX, sess.dflow_state);
+
+    /* One TX_COMPLETE covers both: straight to WAIT_ACK, no second over. */
+    int sent = tx_rec_n;
+    ev = make_event(ARQ_EV_TX_COMPLETE);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(ARQ_DFLOW_WAIT_ACK, sess.dflow_state);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(sent, tx_rec_n, "sent the data again after the shared keydown");
+    TEST_ASSERT_FALSE(sess.ack_carries_data);
+}
+
+/* The peer has data too: the ACK does not hand us the turn, so it goes alone. */
+void test_ack_goes_alone_when_the_peer_keeps_the_turn(void)
+{
+    goto_ack_due(256, true);
+
+    arq_event_t ev = make_event(ARQ_EV_TIMER_ACK);
+    arq_fsm_dispatch(&sess, &ev);
+
+    TEST_ASSERT_EQUAL_INT(1, tx_rec_n);
+    TEST_ASSERT_FALSE(tx_rec_join[0]);
+    ev = make_event(ARQ_EV_TX_COMPLETE);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(ARQ_DFLOW_IDLE_IRS, sess.dflow_state);
+}
+
+/* Nothing of our own to send: a plain ACK. */
+void test_ack_goes_alone_with_no_backlog(void)
+{
+    goto_ack_due(0, false);
+
+    arq_event_t ev = make_event(ARQ_EV_TIMER_ACK);
+    arq_fsm_dispatch(&sess, &ev);
+
+    TEST_ASSERT_EQUAL_INT(1, tx_rec_n);
+    TEST_ASSERT_FALSE(tx_rec_join[0]);
+}
+
+/* A mode change is due: the MODE_REQ has to go first, so no chaining -- the
+ * turn is taken the long way and the negotiation starts after the ACK. */
+void test_ack_goes_alone_when_a_mode_change_is_due(void)
+{
+    goto_ack_due(4096, false);                  /* more than one DATAC17 frame */
+    sess.startup_deadline_ms = 0;               /* past the startup hold  */
+    sess.payload_mode        = FREEDV_MODE_DATAC17;
+    sess.peer_snr_valid      = true;
+    sess.peer_snr_x10        = -50;             /* far too weak for DATAC17 */
+    sess.mode_upgrade_count  = ARQ_MODE_SWITCH_HYST_COUNT;
+
+    arq_event_t ev = make_event(ARQ_EV_TIMER_ACK);
+    arq_fsm_dispatch(&sess, &ev);
+
+    TEST_ASSERT_EQUAL_INT(1, tx_rec_n);
+    TEST_ASSERT_FALSE_MESSAGE(tx_rec_join[0], "chained data past a due mode change");
+    ev = make_event(ARQ_EV_TX_COMPLETE);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(ARQ_DFLOW_MODE_REQ_WAIT, sess.dflow_state);
+}
+
 void test_simultaneous_turn_req_one_side_yields(void)
 {
     /* Local "SRC1" vs remote "DST1": strcmp > 0 is rank 1, which yields. */
@@ -2574,6 +2694,10 @@ int main(void)
     RUN_TEST(test_irs_takes_the_turn_it_asked_for_despite_announced_more);
     RUN_TEST(test_no_turn_req_right_after_yielding_to_a_has_data_ack);
     RUN_TEST(test_no_turn_req_right_after_granting_the_turn);
+    RUN_TEST(test_ack_that_hands_us_the_turn_carries_our_data);
+    RUN_TEST(test_ack_goes_alone_when_the_peer_keeps_the_turn);
+    RUN_TEST(test_ack_goes_alone_with_no_backlog);
+    RUN_TEST(test_ack_goes_alone_when_a_mode_change_is_due);
     RUN_TEST(test_simultaneous_turn_req_one_side_yields);
     RUN_TEST(test_simultaneous_turn_req_other_side_holds);
     RUN_TEST(test_disconnect_drain_timeout_forces_teardown);
