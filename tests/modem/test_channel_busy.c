@@ -12,6 +12,7 @@
 #include "channel_busy.h"
 
 #include <string.h>
+#include <math.h>
 
 #define NBINS 512
 #define FS    8000            /* bin i centred at i*(FS/2)/NBINS = i*7.8125 Hz  */
@@ -145,6 +146,89 @@ void test_out_of_band_energy_ignored(void)
     TEST_ASSERT_FALSE(busy);
 }
 
+/* --- Realistic noise ------------------------------------------------------
+ * The tests above use a flat "noise" spectrum, every bin at the same level --
+ * which is how a classifier comparing the loudest bin with the quietest passed
+ * them while reporting BUSY on almost every real empty channel: one FFT bin of
+ * noise is an exponential variable, and across the passband the loudest sits
+ * tens of dB above the quietest.  Each bin here is drawn independently, which
+ * is harsher than a real (Hann-windowed, correlated) FFT. */
+
+static unsigned long long rng_state = 88172645463325252ULL;
+static double urand(void)
+{
+    rng_state = rng_state * 6364136223846793005ULL + 1442695040888963407ULL;
+    return ((double)((rng_state >> 11) & 0x1FFFFFFFFFFFFFULL) + 0.5) / (double)0x20000000000000ULL;
+}
+
+/* Exponentially distributed bin powers around a mean of noise_db, plus an
+ * optional wideband signal `sig_db` above the noise across 500-2500 Hz. */
+static void fill_real_noise(float noise_db, float sig_db)
+{
+    for (int i = 0; i < NBINS; i++) {
+        double p = -log(urand());                         /* mean 1 */
+        double f = i * (FS / 2.0) / NBINS;
+        if (sig_db > -900.0f && f >= 500.0 && f <= 2500.0)
+            p += pow(10.0, sig_db / 10.0);
+        spec[i] = noise_db + (float)(10.0 * log10(p));
+    }
+}
+
+void test_real_noise_stays_clear(void)
+{
+    for (int seed = 1; seed <= 20; seed++) {
+        channel_busy_init(&st);
+        rng_state = 88172645463325252ULL * (unsigned long long)seed;
+        bool busy = false;
+        for (uint64_t t = 0; t <= 120000; t += 50) {
+            fill_real_noise(-100.0f, -999.0f);
+            feed(t, &busy);
+            TEST_ASSERT_FALSE_MESSAGE(busy, "an empty channel read as BUSY");
+        }
+    }
+}
+
+/* A wideband signal (a digital mode) well above the noise asserts BUSY while
+ * it lasts and releases once it ends. */
+void test_real_wideband_signal_asserts_and_releases(void)
+{
+    bool busy = false, was_busy = false;
+    for (uint64_t t = 0; t < 20000; t += 50) { fill_real_noise(-100.0f, -999.0f); feed(t, &busy); }
+    TEST_ASSERT_FALSE(busy);
+    for (uint64_t t = 20000; t < 30000; t += 50) {
+        fill_real_noise(-100.0f, 12.0f);
+        feed(t, &busy);
+        if (t >= 21000) {
+            TEST_ASSERT_TRUE_MESSAGE(busy, "missed a +12 dB wideband signal");
+            was_busy = true;
+        }
+    }
+    TEST_ASSERT_TRUE(was_busy);
+    bool cleared = false;
+    for (uint64_t t = 30000; t < 40000; t += 50) {
+        fill_real_noise(-100.0f, -999.0f);
+        if (feed(t, &busy) && !busy) cleared = true;
+    }
+    TEST_ASSERT_TRUE_MESSAGE(cleared, "BUSY never released after the signal ended");
+    TEST_ASSERT_FALSE(busy);
+}
+
+/* Digital silence -- a radio's capture while it transmits -- is no audio, not
+ * a quiet channel.  Measuring it dragged the floor to ~-220 dB, after which
+ * ordinary noise read as a 100 dB signal and BUSY latched for 80 minutes on a
+ * field station. */
+void test_digital_silence_does_not_latch_busy(void)
+{
+    bool busy = false;
+    for (uint64_t t = 0; t < 10000; t += 50) { fill_real_noise(-100.0f, -999.0f); feed(t, &busy); }
+    for (uint64_t t = 10000; t < 13000; t += 50) { fill_noise(-232.0f); feed(t, &busy); }
+    for (uint64_t t = 13000; t < 60000; t += 50) {
+        fill_real_noise(-100.0f, -999.0f);
+        feed(t, &busy);
+        TEST_ASSERT_FALSE_MESSAGE(busy, "noise after digital silence read as BUSY");
+    }
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -153,5 +237,8 @@ int main(void)
     RUN_TEST(test_busy_holds_through_hang);
     RUN_TEST(test_borderline_does_not_flap);
     RUN_TEST(test_out_of_band_energy_ignored);
+    RUN_TEST(test_real_noise_stays_clear);
+    RUN_TEST(test_real_wideband_signal_asserts_and_releases);
+    RUN_TEST(test_digital_silence_does_not_latch_busy);
     return UNITY_END();
 }

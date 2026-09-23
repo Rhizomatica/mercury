@@ -207,8 +207,10 @@ retry_stagger_ms = 2000
 ; thresholds below per band and noise environment before trusting it.
 busy_detect = false
 
-; Passband peak level, in dB above the tracked noise floor, required to call the
-; channel BUSY (default 10, range 3..40).  Lower = more sensitive.
+; Level of the loudest 150 Hz band of the 300-2700 Hz passband, in dB above the
+; tracked noise floor, required to call the channel BUSY (default 10, range
+; 3..40).  Lower = more sensitive.  The floor follows the quieter bands, so a
+; signal has to cover most of the passband before it is absorbed into it.
 busy_threshold_db = 10
 
 ; Release hysteresis in dB: the channel is only declared CLEAR once the peak
