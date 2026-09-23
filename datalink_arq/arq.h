@@ -149,6 +149,14 @@ void arq_post_event(int event);
 bool arq_is_link_connected(void);
 
 /**
+ * @brief Drop received bytes an ended session left in the RX buffer.
+ *
+ * Does nothing while a session is up.  Check and clear are one step under the
+ * session lock, so they cannot straddle a session starting.
+ */
+void arq_discard_stale_rx(void);
+
+/**
  * @brief Get the effective ARQ bandwidth cap in Hz used for mode gating.
  * @return 500 for narrow-band mode, otherwise 2300.
  */

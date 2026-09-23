@@ -217,7 +217,15 @@ typedef struct
     bool     acktx_had_has_data;       /* HAS_DATA was set in the last ACK sent */
     bool     host_released;            /* the application ended this session
                                         * (DISCONNECT/ABORT): nothing more is
-                                        * delivered to it until a new one  */
+                                        * delivered to it until a new one.
+                                        * Only APP_DISCONNECT (DISCONNECT,
+                                        * ABORT, control client gone) sets
+                                        * it: it is the one teardown that stays
+                                        * CONNECTED (draining the backlog)
+                                        * after the host is told DISCONNECTED.
+                                        * Peer DISCONNECT, timeouts and LISTEN
+                                        * OFF leave CONNECTED at once, so
+                                        * nothing is delivered after them. */
     int      peer_snr_x10;            /* peer-reported SNR * 10 (integer)     */
     bool     peer_snr_valid;          /* a peer SNR reading has been received; *
                                        * distinguishes a genuine 0 dB report   *

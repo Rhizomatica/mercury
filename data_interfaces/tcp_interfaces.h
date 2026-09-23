@@ -46,6 +46,9 @@ void *server_worker_thread_ctl(void *port);
 /* Configure TNC control-port pacing (from [tnc] INI keys; clamped). */
 void tnc_set_intervals(int keepalive_s, int buffer_report_ms);
 
+// ARQ control + data port reactor (started by interfaces_init)
+void *arq_reactor_thread(void *port);
+
 // BROADCAST TCP/IP server threads
 void *send_thread(void *client_socket_ptr);
 void *recv_thread(void *client_socket_ptr);

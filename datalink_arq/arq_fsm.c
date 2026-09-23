@@ -793,9 +793,9 @@ static bool deliver_rx_checked(arq_session_t *sess, const arq_event_t *ev)
      * during the drain reached a new NNCP session 86 ms after its CONNECTED
      * ("xdr: data exceeds max slice limit").  The frame still counts as
      * received, so it is ACKed and the peer can finish. */
-    if (sess->host_released)
+    if (ev->payload_len > 0 && sess->host_released)
     {
-        HLOGI(LOG_COMP, "RX data after the application disconnected: %zu bytes dropped",
+        HLOGD(LOG_COMP, "RX data after the application disconnected: %zu bytes dropped",
               ev->payload_len);
     }
     else if (ev->payload_len > 0 && g_cbs.deliver_rx_data)
