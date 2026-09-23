@@ -1588,13 +1588,14 @@ void test_turn_req_concede_resets_the_deferral_budget(void)
     TEST_ASSERT_EQUAL_INT(ARQ_DFLOW_TURN_REQ_WAIT, sess.dflow_state);
     TEST_ASSERT_EQUAL_UINT8(1, sess.turn_req_defer_count);
 
-    /* The burst decodes: DATA instead of TURN_ACK, so we concede. */
+    /* The burst decodes: DATA instead of TURN_ACK, so we concede.  It is a
+     * retransmission (the peer missed our last ACK), so the peer keeps the
+     * floor and we go back to IDLE_IRS after ACKing it. */
     ev = make_event(ARQ_EV_RX_DATA);
     ev.session_id  = sess.session_id;
-    ev.seq         = sess.rx_expected;
+    ev.seq         = (uint8_t)(sess.rx_expected - 1);
     ev.data_bytes  = 8;
     ev.payload_len = 8;
-    ev.rx_flags    = ARQ_FLAG_HAS_DATA;     /* the peer keeps the floor */
     arq_fsm_dispatch(&sess, &ev);
     ev = make_event(ARQ_EV_TIMER_ACK);
     arq_fsm_dispatch(&sess, &ev);
@@ -1841,6 +1842,148 @@ void test_new_data_at_idle_iss_listens(void)
         "new data keyed over the peer");
     TEST_ASSERT_EQUAL_INT(ARQ_DFLOW_DATA_TX, sess.dflow_state);
     TEST_ASSERT_EQUAL_INT(ARQ_EV_TIMER_ACK, sess.deadline_event);
+}
+
+/* ---- "More is queued": HAS_DATA on DATA frames (fix 2) ----
+ *
+ * The last collision listen-before-talk cannot prevent is two stations
+ * deciding within the ~0.4 s a decoder needs to lock on: on air (bench run 8)
+ * an IRS TURN_REQ retry and an ISS ACK-timeout retransmission, 0.33 s apart.
+ * The ISS now says on each DATA whether more is queued, so the IRS asks for
+ * the floor in its ACK instead of competing.  Only toward peers that set
+ * ARQ_FLAG_CAP_MORE: 1.9.x would read HAS_DATA on DATA as "the ISS keeps the
+ * floor" and idle after asking for the turn. */
+
+static uint8_t cap_subtype, cap_flags;
+static void capture_frame(int ptype, int mode, size_t len, const uint8_t *f, int rem)
+{
+    (void)ptype; (void)mode; (void)rem;
+    if (len > ARQ_HDR_FLAGS_IDX)
+    {
+        cap_subtype = f[ARQ_HDR_SUBTYPE_IDX];
+        cap_flags   = f[ARQ_HDR_FLAGS_IDX];
+    }
+}
+
+/* IRS receives one DATA with these flags; its own backlog when it ACKs. */
+static void irs_receive_data(uint8_t flags, int backlog)
+{
+    fake_tx_backlog_fake.return_val = backlog;
+    arq_event_t ev = make_event(ARQ_EV_RX_DATA);
+    ev.session_id  = sess.session_id;
+    ev.seq         = sess.rx_expected;
+    ev.data_bytes  = 8;
+    ev.payload_len = 8;
+    ev.rx_flags    = flags;
+    arq_fsm_dispatch(&sess, &ev);
+    ev = make_event(ARQ_EV_TIMER_ACK);
+    arq_fsm_dispatch(&sess, &ev);
+    ev = make_event(ARQ_EV_TX_COMPLETE);
+    arq_fsm_dispatch(&sess, &ev);
+}
+
+void test_data_announces_more_only_to_a_capable_peer(void)
+{
+    goto_connected();
+    goto_wait_ack();                                /* first DATA sent */
+    fake_send_tx_frame_fake.custom_fake = capture_frame;
+
+    /* The peer's ACK does not advertise the capability: no HAS_DATA. */
+    fake_tx_backlog_fake.return_val = 512;
+    arq_event_t ev = make_event(ARQ_EV_RX_ACK);
+    ev.session_id = sess.session_id;
+    ev.ack_seq    = sess.tx_seq;
+    arq_fsm_dispatch(&sess, &ev);
+    for (int i = 0; i < 4 && sess.dflow_state != ARQ_DFLOW_WAIT_ACK; i++)
+    {
+        ev = make_event(ARQ_EV_TIMER_ACK);  arq_fsm_dispatch(&sess, &ev);
+        ev = make_event(ARQ_EV_TX_COMPLETE); arq_fsm_dispatch(&sess, &ev);
+    }
+    TEST_ASSERT_EQUAL_UINT8(ARQ_SUBTYPE_DATA, cap_subtype);
+    TEST_ASSERT_TRUE(cap_flags & ARQ_FLAG_CAP_MORE);
+    TEST_ASSERT_FALSE_MESSAGE(cap_flags & ARQ_FLAG_HAS_DATA,
+        "HAS_DATA on DATA sent to a peer that never said it understands it");
+
+    /* It does now, and more is queued: HAS_DATA. */
+    ev = make_event(ARQ_EV_RX_ACK);
+    ev.session_id = sess.session_id;
+    ev.ack_seq    = sess.tx_seq;
+    ev.rx_flags   = ARQ_FLAG_CAP_MORE;
+    arq_fsm_dispatch(&sess, &ev);
+    for (int i = 0; i < 4 && sess.dflow_state != ARQ_DFLOW_WAIT_ACK; i++)
+    {
+        ev = make_event(ARQ_EV_TIMER_ACK);  arq_fsm_dispatch(&sess, &ev);
+        ev = make_event(ARQ_EV_TX_COMPLETE); arq_fsm_dispatch(&sess, &ev);
+    }
+    TEST_ASSERT_TRUE(sess.peer_cap_more);
+    TEST_ASSERT_TRUE_MESSAGE(cap_flags & ARQ_FLAG_HAS_DATA, "more queued, not announced");
+
+    /* Last frame: nothing behind it, no HAS_DATA. */
+    fake_tx_backlog_fake.return_val = 0;
+    ev = make_event(ARQ_EV_TIMER_ACK);             /* ACK timeout: retransmit */
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_UINT8(ARQ_SUBTYPE_DATA, cap_subtype);
+    TEST_ASSERT_FALSE_MESSAGE(cap_flags & ARQ_FLAG_HAS_DATA,
+        "announced more with nothing queued");
+}
+
+void test_ack_advertises_the_capability(void)
+{
+    goto_idle_irs_with_backlog();
+    fake_send_tx_frame_fake.custom_fake = capture_frame;
+    irs_receive_data(0, 0);
+    TEST_ASSERT_EQUAL_UINT8(ARQ_SUBTYPE_ACK, cap_subtype);
+    TEST_ASSERT_TRUE(cap_flags & ARQ_FLAG_CAP_MORE);
+}
+
+/* The IRS does not compete with an ISS that said more is coming... */
+void test_irs_holds_turn_req_while_the_iss_announced_more(void)
+{
+    goto_idle_irs_with_backlog();
+    irs_receive_data(ARQ_FLAG_CAP_MORE | ARQ_FLAG_HAS_DATA, 0);  /* nothing of ours yet */
+    TEST_ASSERT_EQUAL_INT(ARQ_DFLOW_IDLE_IRS, sess.dflow_state);
+    fake_tx_backlog_fake.return_val = 256;
+    RESET_FAKE(fake_send_tx_frame);
+
+    arq_event_t ev = make_event(ARQ_EV_APP_DATA_READY);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, fake_send_tx_frame_fake.call_count,
+        "TURN_REQ raced an ISS that announced more data");
+    ev = make_event(ARQ_EV_TIMER_PEER_BACKLOG);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(0, fake_send_tx_frame_fake.call_count);
+    TEST_ASSERT_EQUAL_INT(ARQ_DFLOW_IDLE_IRS, sess.dflow_state);
+    TEST_ASSERT_EQUAL_INT(ARQ_EV_TIMER_PEER_BACKLOG, sess.deadline_event);
+
+    /* ...but not forever: once a retransmission would have arrived, ask. */
+    mock_set_uptime_ms(sess.deadline_ms + 1);
+    sess.last_rx_ms = time_now_ms();                /* not an inactivity probe */
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ARQ_DFLOW_TURN_REQ_TX, sess.dflow_state,
+        "a stale announcement muted the IRS");
+}
+
+/* HAS_DATA on DATA from a peer that did not set the capability means nothing. */
+void test_has_data_without_capability_is_ignored(void)
+{
+    goto_idle_irs_with_backlog();
+    irs_receive_data(ARQ_FLAG_HAS_DATA, 0);
+    fake_tx_backlog_fake.return_val = 256;
+    arq_event_t ev = make_event(ARQ_EV_APP_DATA_READY);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(ARQ_DFLOW_TURN_REQ_TX, sess.dflow_state);
+}
+
+/* The ISS yields to our HAS_DATA ACK whatever its own backlog, so its "more
+ * is queued" must not send us idle after that ACK: both would sit in IDLE_IRS. */
+void test_irs_takes_the_turn_it_asked_for_despite_announced_more(void)
+{
+    goto_idle_irs_with_backlog();
+    fake_tx_read_fake.custom_fake = tx_read_one_frame;
+    irs_receive_data(ARQ_FLAG_CAP_MORE | ARQ_FLAG_HAS_DATA, 256);  /* our ACK: HAS_DATA */
+    TEST_ASSERT_TRUE(sess.acktx_had_has_data);
+    TEST_ASSERT_NOT_EQUAL_INT_MESSAGE(ARQ_DFLOW_IDLE_IRS, sess.dflow_state,
+        "asked for the turn in the ACK, then sat idle");
 }
 
 void test_simultaneous_turn_req_one_side_yields(void)
@@ -2380,6 +2523,11 @@ int main(void)
     RUN_TEST(test_disconnect_reply_waits_one_reply_guard);
     RUN_TEST(test_first_data_after_turn_ack_listens);
     RUN_TEST(test_new_data_at_idle_iss_listens);
+    RUN_TEST(test_data_announces_more_only_to_a_capable_peer);
+    RUN_TEST(test_ack_advertises_the_capability);
+    RUN_TEST(test_irs_holds_turn_req_while_the_iss_announced_more);
+    RUN_TEST(test_has_data_without_capability_is_ignored);
+    RUN_TEST(test_irs_takes_the_turn_it_asked_for_despite_announced_more);
     RUN_TEST(test_simultaneous_turn_req_one_side_yields);
     RUN_TEST(test_simultaneous_turn_req_other_side_holds);
     RUN_TEST(test_disconnect_drain_timeout_forces_teardown);
