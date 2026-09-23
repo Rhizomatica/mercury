@@ -1367,6 +1367,38 @@ void test_turn_req_retry_deferral_is_bounded(void)
     TEST_ASSERT_GREATER_THAN(0, fake_send_tx_frame_fake.call_count);
 }
 
+/* A TURN_REQ that ends some other way must not shorten the next wait's
+ * deferral budget: here a retry is deferred, then the peer's DATA arrives and
+ * we concede, which lands back in IDLE_IRS through ACK_TX.  The next request
+ * must start from a zero count (enter_idle_irs resets it). */
+void test_turn_req_concede_resets_the_deferral_budget(void)
+{
+    goto_turn_req_wait_after_first_request();
+
+    sess.last_rx_sync_ms = time_now_ms();   /* the peer's burst */
+    arq_event_t ev = make_event(ARQ_EV_TIMER_RETRY);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(ARQ_DFLOW_TURN_REQ_WAIT, sess.dflow_state);
+    TEST_ASSERT_EQUAL_UINT8(1, sess.turn_req_defer_count);
+
+    /* The burst decodes: DATA instead of TURN_ACK, so we concede. */
+    ev = make_event(ARQ_EV_RX_DATA);
+    ev.session_id  = sess.session_id;
+    ev.seq         = sess.rx_expected;
+    ev.data_bytes  = 8;
+    ev.payload_len = 8;
+    ev.rx_flags    = ARQ_FLAG_HAS_DATA;     /* the peer keeps the floor */
+    arq_fsm_dispatch(&sess, &ev);
+    ev = make_event(ARQ_EV_TIMER_ACK);
+    arq_fsm_dispatch(&sess, &ev);
+    ev = make_event(ARQ_EV_TX_COMPLETE);
+    arq_fsm_dispatch(&sess, &ev);
+
+    TEST_ASSERT_EQUAL_INT(ARQ_DFLOW_IDLE_IRS, sess.dflow_state);
+    TEST_ASSERT_EQUAL_UINT8_MESSAGE(0, sess.turn_req_defer_count,
+        "a conceded TURN_REQ left its deferrals charged to the next wait");
+}
+
 void test_simultaneous_turn_req_one_side_yields(void)
 {
     /* Local "SRC1" vs remote "DST1": strcmp > 0 is rank 1, which yields. */
@@ -1890,6 +1922,7 @@ int main(void)
     RUN_TEST(test_turn_req_retry_is_not_keyed_over_the_peers_burst);
     RUN_TEST(test_turn_req_retry_defers_on_channel_energy_without_sync);
     RUN_TEST(test_turn_req_retry_deferral_is_bounded);
+    RUN_TEST(test_turn_req_concede_resets_the_deferral_budget);
     RUN_TEST(test_simultaneous_turn_req_one_side_yields);
     RUN_TEST(test_simultaneous_turn_req_other_side_holds);
     RUN_TEST(test_disconnect_drain_timeout_forces_teardown);
