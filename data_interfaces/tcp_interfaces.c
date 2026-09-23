@@ -772,7 +772,7 @@ static void dispose_tnc_tx_queue(void)
     atomic_store_explicit(&tnc_last_buffer_sent, -1, memory_order_relaxed);
 }
 
-static void *arq_reactor_thread(void *port)
+void *arq_reactor_thread(void *port)
 {
     int tcp_base_port = *((int *)port);
     int ctl_listener = -1;
@@ -885,6 +885,11 @@ static void *arq_reactor_thread(void *port)
                 {
                     if (data_client >= 0)
                         close_data_client(&data_client);
+                    /* A client that connects with no session up must not be
+                     * handed bytes some earlier session left behind: they were
+                     * for a reader that is gone.  (With a session up, a client
+                     * reconnecting mid-session still gets its session's data.) */
+                    arq_discard_stale_rx();
                     data_client = fd;
                     cli_data_sockfd = fd;
                     net_set_status(DATA_TCP_PORT, NET_CONNECTED);

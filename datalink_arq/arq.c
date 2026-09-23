@@ -1072,6 +1072,18 @@ bool arq_is_link_connected(void)
     return connected;
 }
 
+void arq_discard_stale_rx(void)
+{
+    /* Every FSM dispatch -- so every CONNECTED transition and every delivery
+     * into the buffer -- runs under g_sess_lock.  Holding it across the check
+     * and the clear means a session cannot start in between and have its
+     * first bytes wiped. */
+    pthread_mutex_lock(&g_sess_lock);
+    if (g_sess.conn_state != ARQ_CONN_CONNECTED)
+        clear_buffer(data_rx_buffer_arq);
+    pthread_mutex_unlock(&g_sess_lock);
+}
+
 int arq_queue_data(const uint8_t *data, size_t len)
 {
     if (!data || len == 0) return -1;

@@ -90,6 +90,9 @@ int arq_reported_bandwidth_hz(void)
 }
 
 bool arq_bandwidth_allows_mode(int mode) { (void)mode; return true; }
+bool arq_is_link_connected(void) { return false; }
+static atomic_int discard_stale_rx_calls;
+void arq_discard_stale_rx(void) { discard_stale_rx_calls++; }
 
 void arq_set_trx(int trx) { arq_conn.TRX = trx; }
 int  arq_get_trx(void)    { return arq_conn.TRX; }
@@ -1636,6 +1639,65 @@ void test_bcast_shutdown_no_client(void) { broadcast_shutdown_case(0); }
 void test_bcast_shutdown_idle_client(void) { broadcast_shutdown_case(1); }
 void test_bcast_shutdown_disconnected_client(void) { broadcast_shutdown_case(2); }
 
+/* A data client that connects must not be handed bytes an ended session left
+ * in the RX buffer: on air, a frame from a session's drain reached the next
+ * NNCP session 86 ms after its CONNECTED and killed it.  The reactor asks ARQ
+ * to discard them on every data-port accept (ARQ keeps them while a session
+ * is up, for a client reconnecting mid-session). */
+void test_data_client_connect_discards_stale_rx(void)
+{
+    struct sockaddr_in addr = { .sin_family = AF_INET,
+                                .sin_addr.s_addr = htonl(INADDR_LOOPBACK) };
+    int base = -1;
+    for (int tries = 0; tries < 20 && base < 0; tries++)
+    {
+        /* The reactor needs two consecutive ports: probe both. */
+        int a = socket(AF_INET, SOCK_STREAM, 0), b = socket(AF_INET, SOCK_STREAM, 0);
+        socklen_t len = sizeof(addr);
+        addr.sin_port = 0;
+        if (bind(a, (struct sockaddr *)&addr, sizeof(addr)) == 0 &&
+            getsockname(a, (struct sockaddr *)&addr, &len) == 0)
+        {
+            int p = ntohs(addr.sin_port);
+            addr.sin_port = htons((uint16_t)(p + 1));
+            if (p < 65535 && bind(b, (struct sockaddr *)&addr, sizeof(addr)) == 0)
+                base = p;
+        }
+        close(a);
+        close(b);
+    }
+    TEST_ASSERT_TRUE_MESSAGE(base > 0, "no free port pair");
+
+    shutdown_ = false;
+    discard_stale_rx_calls = 0;
+    pthread_t reactor;
+    alarm(5);
+    TEST_ASSERT_EQUAL_INT(0, pthread_create(&reactor, NULL, arq_reactor_thread, &base));
+
+    addr.sin_port = htons((uint16_t)(base + 1));
+    int client = -1;
+    for (int i = 0; i < 100; ++i)
+    {
+        client = socket(AF_INET, SOCK_STREAM, 0);
+        if (connect(client, (struct sockaddr *)&addr, sizeof(addr)) == 0)
+            break;
+        close(client);
+        client = -1;
+        usleep(10000);
+    }
+    TEST_ASSERT_TRUE(client >= 0);
+    for (int i = 0; i < 100 && discard_stale_rx_calls == 0; ++i)
+        usleep(10000);
+
+    shutdown_ = true;
+    pthread_join(reactor, NULL);
+    alarm(0);
+    close(client);
+    shutdown_ = false;
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, discard_stale_rx_calls,
+        "a data client connected without stale RX being discarded");
+}
+
 static void *blocked_broadcast_send(void *arg)
 {
     uint8_t data[65536] = {0};
@@ -1672,6 +1734,7 @@ int main(void)
     RUN_TEST(test_bcast_shutdown_idle_client);
     RUN_TEST(test_bcast_shutdown_disconnected_client);
     RUN_TEST(test_bcast_shutdown_backpressured_send);
+    RUN_TEST(test_data_client_connect_discards_stale_rx);
     /* Command parser tests */
     RUN_TEST(test_cmd_mycall);
     RUN_TEST(test_cmd_mycall_registered_follows_ok);

@@ -154,6 +154,8 @@ static void sess_enter(arq_session_t *sess, arq_conn_state_t new_state,
     HLOGD(LOG_COMP, "conn: %s -> %s",
           arq_conn_state_name(sess->conn_state),
           arq_conn_state_name(new_state));
+    if (new_state == ARQ_CONN_CONNECTED && sess->conn_state != ARQ_CONN_CONNECTED)
+        sess->host_released = false;         /* a new session: a new reader */
     sess->conn_state     = new_state;
     sess->state_enter_ms = time_now_ms();
     sess->deadline_ms    = deadline_ms;
@@ -784,7 +786,19 @@ static bool deliver_rx_checked(arq_session_t *sess, const arq_event_t *ev)
               (int)ev->seq, (int)sess->rx_expected);
         return false;
     }
-    if (ev->payload_len > 0 && g_cbs.deliver_rx_data)
+    /* Once the application has ended the session it is told DISCONNECTED at
+     * once (VARA semantics) while the air side drains -- so anything that
+     * arrives after that has no reader.  Delivering it anyway parked it in the
+     * receive buffer, and the NEXT client got it: on air, a frame decoded
+     * during the drain reached a new NNCP session 86 ms after its CONNECTED
+     * ("xdr: data exceeds max slice limit").  The frame still counts as
+     * received, so it is ACKed and the peer can finish. */
+    if (ev->payload_len > 0 && sess->host_released)
+    {
+        HLOGD(LOG_COMP, "RX data after the application disconnected: %zu bytes dropped",
+              ev->payload_len);
+    }
+    else if (ev->payload_len > 0 && g_cbs.deliver_rx_data)
         g_cbs.deliver_rx_data(ev->payload, ev->payload_len);
     sess->rx_expected = ev->seq + 1;
     return true;
@@ -3069,6 +3083,12 @@ void arq_fsm_dispatch(arq_session_t *sess, const arq_event_t *ev)
 {
     if (!sess || !ev)
         return;
+
+    /* The application ended the session (DISCONNECT, ABORT, or its TCP client
+     * went away): whatever the air side still does, nothing more is delivered
+     * to it.  See deliver_rx_checked(). */
+    if (ev->id == ARQ_EV_APP_DISCONNECT)
+        sess->host_released = true;
 
     HLOGD(LOG_COMP, "state=%s dflow=%s ev=%s",
           arq_conn_state_name(sess->conn_state),
