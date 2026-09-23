@@ -912,6 +912,38 @@ void test_wait_ack_turn_req_defers_the_yield_without_keying(void)
     TEST_ASSERT_EQUAL_INT(ARQ_CONN_CONNECTED, sess.conn_state);
 }
 
+/* A TURN_REQ in WAIT_ACK usually means our burst never arrived: a peer that
+ * decoded it ACKs instead.  Waiting out the whole ACK timeout then left 8-14 s
+ * of silence after every lost burst on air, and the eventual retransmission
+ * keyed over the peer's TURN_REQ retry.  The deadline is pulled in to about
+ * one reply guard plus one control frame -- still keying nothing -- and when it
+ * fires we retransmit. */
+void test_wait_ack_turn_req_pulls_the_retransmission_in(void)
+{
+    goto_connected();
+    goto_wait_ack();
+    uint64_t full = sess.deadline_ms;
+
+    RESET_FAKE(fake_send_tx_frame);
+    arq_event_t ev = make_event(ARQ_EV_RX_TURN_REQ);
+    ev.session_id = sess.session_id;
+    arq_fsm_dispatch(&sess, &ev);
+
+    const arq_mode_timing_t *ctm = arq_protocol_mode_timing(sess.control_mode);
+    uint64_t bound = time_now_ms() + ARQ_CHANNEL_GUARD_MS +
+                     (uint64_t)(ctm->frame_duration_s * 1000.0f) + ARQ_TURN_REQ_ACK_MARGIN_MS;
+    TEST_ASSERT_EQUAL_INT(0, fake_send_tx_frame_fake.call_count);   /* nothing keyed */
+    TEST_ASSERT_EQUAL_INT(ARQ_DFLOW_WAIT_ACK, sess.dflow_state);
+    TEST_ASSERT_TRUE_MESSAGE(sess.deadline_ms < full, "still waiting out the full ACK timeout");
+    TEST_ASSERT_TRUE(sess.deadline_ms <= bound);
+    TEST_ASSERT_EQUAL_INT(ARQ_EV_TIMER_ACK, sess.deadline_event);
+
+    /* No ACK came: the timer retransmits. */
+    ev = make_event(ARQ_EV_TIMER_ACK);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(ARQ_DFLOW_DATA_TX, sess.dflow_state);
+}
+
 /* ...and the other half: the latched request is honoured on the ACK, even when
  * HAS_DATA is clear (the peer's backlog can drain between asking and ACKing --
  * the explicit request is still its stated intent).
@@ -1803,6 +1835,7 @@ int main(void)
     RUN_TEST(test_wait_ack_cumulative_ack_advances_window);
     RUN_TEST(test_wait_ack_stale_ack_keeps_window);
     RUN_TEST(test_wait_ack_turn_req_defers_the_yield_without_keying);
+    RUN_TEST(test_wait_ack_turn_req_pulls_the_retransmission_in);
     RUN_TEST(test_wait_ack_yields_to_latched_turn_req_when_the_ack_lands);
     RUN_TEST(test_wait_ack_ack_without_request_keeps_the_turn);
     RUN_TEST(test_keepalive_wait_accepts_data);

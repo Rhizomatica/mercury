@@ -2064,6 +2064,28 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
                       "TURN_REQ in WAIT_ACK: deferring the yield to the ACK "
                       "(seq=%d)", (int)sess->tx_seq);
             sess->peer_turn_req_pending = true;
+
+            /* ...but do not wait out the whole ACK timeout for it.  A peer
+             * that decoded our burst ACKs it -- with HAS_DATA if it wants the
+             * floor -- rather than sending TURN_REQ, so a TURN_REQ heard here
+             * usually means our burst never arrived and no ACK is coming.  On
+             * air (1.9.15 + #308, two sBitx stations) the ISS then sat out
+             * its 14 s ACK timeout after every lost burst -- silences of 8-14 s
+             * -- and its retransmission finally keyed over the peer's 8 s
+             * TURN_REQ retry.
+             *
+             * Nothing is keyed in response (that was #278): the deadline is
+             * only pulled in, to one reply guard plus one control frame plus
+             * margin from now.  An ACK that IS coming lands inside that; if
+             * none does, we retransmit well before the peer's retry, the peer's
+             * TURN_REQ_WAIT takes the DATA, abandons its request and ACKs with
+             * HAS_DATA, and the latched yield hands it the floor. */
+            const arq_mode_timing_t *ctm = arq_protocol_mode_timing(sess->control_mode);
+            uint64_t soon = time_now_ms() + ARQ_CHANNEL_GUARD_MS +
+                            (uint64_t)((ctm ? ctm->frame_duration_s : 4.0f) * 1000.0f) +
+                            ARQ_TURN_REQ_ACK_MARGIN_MS;
+            if (soon < sess->deadline_ms)
+                sess->deadline_ms = soon;
         }
         else if (ev->id == ARQ_EV_TIMER_ACK)
         {
