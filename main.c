@@ -57,16 +57,81 @@ extern cbuf_handle_t playback_buffer;
 
 static volatile sig_atomic_t g_signal_count = 0;
 
+#ifndef _WIN32
+/* A forced exit must never leave the transmitter keyed.
+ *
+ * The first signal starts an orderly shutdown, which finishes the frame in
+ * flight and unkeys.  A second one used to _exit() on the spot -- mid-frame,
+ * PTT still asserted.  On a hermes_shm station the radio daemon then held the
+ * key: an IC-7100 stayed in transmit for 4 h 40 min after `sudo timeout -s INT
+ * ... mercury -t` delivered its one SIGINT twice (timeout signals the whole
+ * process group and sudo relays it too).
+ *
+ * So: a second signal within DUPLICATE_WINDOW_MS of the first is the same
+ * request delivered twice, and is ignored.  A later one -- someone insisting --
+ * still forces the exit, but through a thread that drops PTT first: unkeying
+ * takes locks (radio_cmd's shared mutexes, hamlib), which a signal handler must
+ * not touch, while sem_post() is async-signal-safe.  alarm() is the backstop if
+ * even the unkey hangs. */
+#include <semaphore.h>
+#include <pthread.h>
+#include <time.h>
+
+#define DUPLICATE_WINDOW_MS 1000
+#define FORCED_EXIT_GRACE_S 3
+
+static sem_t           g_force_exit_sem;
+static struct timespec g_first_signal_ts;
+
+static void *forced_exit_thread(void *arg)
+{
+    (void)arg;
+    while (sem_wait(&g_force_exit_sem) != 0)
+        ;                                   /* EINTR */
+    if (radio_io_enabled())
+        radio_io_key_off();
+    static const char msg[] = "Transmitter unkeyed; exiting.\n";
+    (void)!write(STDERR_FILENO, msg, sizeof(msg) - 1);
+    _exit(1);
+    return NULL;
+}
+
+static void start_forced_exit_thread(void)
+{
+    pthread_t th;
+    if (sem_init(&g_force_exit_sem, 0, 0) == 0 &&
+        pthread_create(&th, NULL, forced_exit_thread, NULL) == 0)
+        pthread_detach(th);
+}
+#endif
+
 static void handle_termination_signal(int sig)
 {
     (void)sig;
     if (g_signal_count)
     {
+#ifndef _WIN32
+        struct timespec now;
+        clock_gettime(CLOCK_MONOTONIC, &now);
+        long ms = (long)(now.tv_sec - g_first_signal_ts.tv_sec) * 1000L +
+                  (now.tv_nsec - g_first_signal_ts.tv_nsec) / 1000000L;
+        if (ms < DUPLICATE_WINDOW_MS)
+            return;                         /* the same request, delivered twice */
+        static const char msg[] = "Caught second signal, unkeying and forcing exit.\n";
+        (void)!write(STDERR_FILENO, msg, sizeof(msg) - 1);
+        alarm(FORCED_EXIT_GRACE_S);
+        sem_post(&g_force_exit_sem);
+        return;
+#else
         static const char msg[] = "Caught second signal, forcing exit.\n";
         (void)!write(STDERR_FILENO, msg, sizeof(msg) - 1);
         _exit(1);
+#endif
     }
     g_signal_count = 1;
+#ifndef _WIN32
+    clock_gettime(CLOCK_MONOTONIC, &g_first_signal_ts);
+#endif
     static const char msg[] = "Signal received, shutting down...\n";
     (void)!write(STDERR_FILENO, msg, sizeof(msg) - 1);
     shutdown_ = true;
@@ -87,6 +152,10 @@ int main(int argc, char *argv[])
     mercury_cli_t cli;
     if (mercury_cli_parse(argc, argv, "mercury.ini", &cli) != 0)
         return EXIT_FAILURE;
+
+#ifndef _WIN32
+    start_forced_exit_thread();
+#endif
 
     if (cli.action == MERCURY_CLI_TEST_PTT)
     {
