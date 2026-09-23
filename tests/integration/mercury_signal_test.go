@@ -21,8 +21,12 @@ func startTxTest(t *testing.T) (*exec.Cmd, *bytes.Buffer) {
 	bin := locateOrBuildMercury(t, repoRoot)
 	dir := t.TempDir()
 	var out bytes.Buffer
+	// Its own ports, broadcast included: the default 8100 may be taken on the
+	// host, and a failed TCP init ends the process with exit 1 -- which reads
+	// exactly like the forced exit these tests look for.
 	cmd := exec.Command(bin, "-t", "-x", "null", "-m", "9",
-		"-p", fmt.Sprint(freePortPair(t)), "-C", filepath.Join(dir, "none.ini"))
+		"-p", fmt.Sprint(freePortPair(t)), "-b", fmt.Sprint(freePort(t)),
+		"-C", filepath.Join(dir, "none.ini"))
 	cmd.Dir = dir
 	cmd.Env = append(cmd.Environ(), "XDG_STATE_HOME="+dir)
 	cmd.Stdout, cmd.Stderr = &out, &out
@@ -76,14 +80,43 @@ func TestMercuryTxTestDuplicateSignalShutsDownCleanly(t *testing.T) {
 	}
 }
 
+// SIGINT and SIGTERM are distinct signals: a SIGTERM right after a SIGINT (a
+// supervisor stopping a unit a user has just interrupted) is still one
+// shutdown request, and must not force the exit.
+func TestMercuryTxTestMixedDuplicateSignalsShutDownCleanly(t *testing.T) {
+	cmd, out := startTxTest(t)
+	pid := cmd.Process.Pid
+	_ = syscall.Kill(pid, syscall.SIGINT)
+	time.Sleep(100 * time.Millisecond)
+	_ = syscall.Kill(pid, syscall.SIGTERM)
+
+	code, ok := waitExit(cmd, 20*time.Second)
+	log := out.String()
+	if !ok {
+		t.Fatalf("mercury -t still running 20 s after its signals:\n%s", log)
+	}
+	if strings.Contains(log, "forcing exit") || code != 0 ||
+		!strings.Contains(log, "Shutting down PTT method") {
+		t.Fatalf("SIGINT+SIGTERM did not give one orderly shutdown (exit %d):\n%s", code, log)
+	}
+}
+
 // Someone insisting -- a second signal well after the first -- still forces
-// the exit, promptly, but through the path that drops PTT first.
+// the exit, promptly, but through the path that drops PTT first; a third
+// signal changes nothing.
+//
+// Limitation: with -x null there is no PTT backend (radio_io_enabled() is
+// false), so radio_io_key_off() is a no-op here and this proves the signal ->
+// unkey-thread -> exit control flow, not that a real transmitter was released.
+// Observing that needs a recording fake PTT backend.
 func TestMercuryTxTestForcedExitUnkeysFirst(t *testing.T) {
 	cmd, out := startTxTest(t)
 	pid := cmd.Process.Pid
 	_ = syscall.Kill(pid, syscall.SIGINT)
 	time.Sleep(2 * time.Second) // still inside the 7.4 s frame
 	_ = syscall.Kill(pid, syscall.SIGINT)
+	time.Sleep(10 * time.Millisecond)
+	_ = syscall.Kill(pid, syscall.SIGINT) // insisting again: must not re-arm
 
 	_, ok := waitExit(cmd, 5*time.Second)
 	log := out.String()
@@ -92,5 +125,8 @@ func TestMercuryTxTestForcedExitUnkeysFirst(t *testing.T) {
 	}
 	if !strings.Contains(log, "Transmitter unkeyed; exiting.") {
 		t.Fatalf("forced exit did not go through the unkey path:\n%s", log)
+	}
+	if n := strings.Count(log, "Caught second signal"); n != 1 {
+		t.Fatalf("forced exit taken %d times, want once:\n%s", n, log)
 	}
 }

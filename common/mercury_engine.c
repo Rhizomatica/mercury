@@ -239,6 +239,23 @@ int mercury_engine_init(const mercury_config *cfg,
     /* ---- modem ---- */
     HLOGI("engine", "Initialising modem (mode=%d)", startup_mode);
     init_modem(&g_modem, startup_mode, 1, test_mode, freedv_verbosity);
+
+    /* A TX/RX test runs inside init_modem() until a signal ends it; by then the
+     * process is on its way out.  Stop here, orderly, rather than bring up ARQ
+     * and the TCP listeners with shutdown already requested: they can refuse
+     * to start, and init then reported a failure -- exit 1, no PTT shutdown --
+     * for what was a clean stop.  radio_io_shutdown() leaves PTT released. */
+    if (test_mode && shutdown_)
+    {
+        shutdown_modem(&g_modem);
+        if (g_audio_system != AUDIO_SUBSYSTEM_SHM)
+            audioio_deinit(&g_radio_capture, &g_radio_playback);
+        radio_io_shutdown();
+        HLOGI("engine", "Test mode stopped");
+        hermes_log_shutdown();
+        return 0;
+    }
+
     modem_set_spectrum_enabled(ui_enabled && waterfall_enabled);
 
     tnc_set_intervals(cfg->tnc_keepalive_s, cfg->tnc_buffer_report_ms);
