@@ -307,7 +307,11 @@ extern _Atomic int arq_keepalive_miss_limit;
  *
  * DEFER_MAX bounds it.  False sync is real (a payload decoder can latch onto a
  * control burst), and a decoder stuck in sync must not block the turn forever,
- * so after this many deferrals we key anyway and take the collision. */
+ * so after this many deferrals we key anyway and take the collision.
+ *
+ * The same step and cap also pace the ISS's WAIT_ACK retransmission, which
+ * listens the same way (retx_defer_count); the TURN_REQ in the names is
+ * historical. */
 #define ARQ_CHANNEL_SYNC_HOLD_MS      250
 #define ARQ_TURN_REQ_DEFER_MS         500
 #define ARQ_TURN_REQ_DEFER_MAX        20   /* ~10 s, then request regardless */
