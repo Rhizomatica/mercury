@@ -1,7 +1,10 @@
 /* Deterministic ARQ throughput/integrity bench over a channel matrix.
  *
- *   ab_bench <seed> <channel>
+ *   ab_bench <seed> <channel> [bidir]
  *   channel := clean | awgn:<per> | cliff:<snr_db> | nvis
+ * bidir: both stations queue 8 KB at once, on a half-duplex medium, and the
+ * virtual time until BOTH transfers complete is printed (done_ms) -- the turn
+ * handover is where that is won or lost.
  *
  * Connects two real arq_fsm sessions over the two-FSM sim, applies the named
  * channel to an 8 KB transfer, and prints delivered/total, integrity,
@@ -31,6 +34,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
+#include <stdbool.h>
 
 /* Measured NVIS (pathsim --midlat-dist-nvis --snr 10, freedv raw tools). */
 static const sim_mode_per_t NVIS[] = {
@@ -43,9 +47,10 @@ static const sim_mode_per_t NVIS[] = {
 
 int main(int argc, char **argv)
 {
-    if (argc < 3) { fprintf(stderr, "usage: %s <seed> <channel>\n", argv[0]); return 1; }
+    if (argc < 3) { fprintf(stderr, "usage: %s <seed> <channel> [bidir]\n", argv[0]); return 1; }
     uint64_t seed = (uint64_t)atoll(argv[1]);
     const char *chan_spec = argv[2];
+    bool bidir = argc > 3 && strcmp(argv[3], "bidir") == 0;
 
     sim_channel_cfg_t chan = { .seed = seed, .per = 0.02, .guard_ms = 150 };
     sim_t *s = sim_create(&chan, "A0AAA", "B0BBB");
@@ -72,13 +77,50 @@ int main(int argc, char **argv)
         sim_set_mode_per(s, NVIS, (int)(sizeof(NVIS)/sizeof(NVIS[0])), 10.0f);
     /* "clean" leaves the 2% floor. */
 
-    static uint8_t blob[8192];
+    static uint8_t blob[8192], blob_b[8192];
     for (int i = 0; i < (int)sizeof(blob); i++) blob[i] = (uint8_t)((i * 13 + 7) & 0xFF);
+    for (int i = 0; i < (int)sizeof(blob_b); i++) blob_b[i] = (uint8_t)((i * 29 + 3) & 0xFF);
     sim_endpoint_queue_tx(sim_a(s), blob, sizeof(blob));
     arq_event_t dready = { .id = ARQ_EV_APP_DATA_READY };
     sim_inject(s, sim_a(s), &dready);
 
-    sim_run_until_idle(s, 30 * 60 * 1000);
+    if (!bidir)
+        sim_run_until_idle(s, 30 * 60 * 1000);
+    else
+    {
+        static uint8_t tmp[65536];
+        sim_set_half_duplex(s, true);
+        sim_endpoint_queue_tx(sim_b(s), blob_b, sizeof(blob_b));
+        sim_inject(s, sim_b(s), &dready);
+        uint64_t t0 = sim_clock_now(), done_ms = 0;
+        bool stalled = false;
+        while (sim_clock_now() - t0 < 30ULL * 60 * 1000)
+        {
+            /* Both FSMs idle with nothing scheduled and a transfer still
+             * short: nothing will ever move the clock again. */
+            if (sim_run_until_idle(s, 1000) == 0)
+            {
+                stalled = true;
+                break;
+            }
+            if (sim_endpoint_delivered(sim_b(s), tmp, sizeof(tmp)) >= sizeof(blob) &&
+                sim_endpoint_delivered(sim_a(s), tmp, sizeof(tmp)) >= sizeof(blob_b))
+            {
+                done_ms = sim_clock_now() - t0;
+                break;
+            }
+        }
+        size_t nb = sim_endpoint_delivered(sim_a(s), tmp, sizeof(tmp));
+        int ok_b = (nb <= sizeof(blob_b)) && memcmp(tmp, blob_b, nb) == 0;
+        size_t na = sim_endpoint_delivered(sim_b(s), tmp, sizeof(tmp));
+        int ok_a = (na <= sizeof(blob)) && memcmp(tmp, blob, na) == 0;
+        printf("seed=%llu chan=%s bidir a2b=%zu b2a=%zu integrity=%s done_ms=%llu collisions=%d%s\n",
+               (unsigned long long)seed, chan_spec, na, nb,
+               (ok_a && ok_b) ? "OK" : "CORRUPT", (unsigned long long)done_ms,
+               sim_collisions(s), stalled ? " STALLED" : "");
+        sim_destroy(s);
+        return (ok_a && ok_b) ? 0 : 2;
+    }
 
     static uint8_t got[65536];
     size_t n = sim_endpoint_delivered(sim_b(s), got, sizeof(got));
