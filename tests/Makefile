@@ -298,11 +298,18 @@ test_ui_devices: gui_interface/test_ui_devices.c $(UNITY_SRC) \
 # ui_communication.c and the real INI code are linked; the radio backend, audio,
 # modem, ARQ and websocket are stubbed in the test.  ui_communication.h and
 # cfg_utils.h are PREREQUISITES so a header change relinks the test.
+# -U HAVE_HAMLIB -U HAVE_HERMES_SHM: this suite stubs the radio backend, so it
+# must be independent of the hamlib and shared-memory backends too.  The parent
+# make passes its full CFLAGS (including -DHAVE_HAMLIB / -DHAVE_HERMES_SHM when
+# those are detected) down to the sub-make; without undefining them here,
+# ui_communication.c compiles in its real ui_comm_preload_radio_list() -> hamlib
+# preload_radio_list() call and the link fails on that undefined symbol (this
+# test links no -lhamlib and no rigctl_parse.c).
 test_ui_ptt_persist: gui_interface/test_ui_ptt_persist.c $(UNITY_SRC) \
                      ../gui_interface/ui_communication.c ../common/cfg_utils.c \
                      ../common/iniparser/iniparser.c ../common/iniparser/dictionary.c \
                      ../gui_interface/ui_communication.h ../common/cfg_utils.h
-	$(CC) $(CFLAGS) -I../gui_interface -I../datalink_arq -I../modem -I../modem/freedv \
+	$(CC) $(CFLAGS) -U HAVE_HAMLIB -U HAVE_HERMES_SHM -I../gui_interface -I../datalink_arq -I../modem -I../modem/freedv \
 	    -I../common -I../common/iniparser -I../data_interfaces -I../audioio -I../radio_io -o $@ \
 	    $(filter %.c %.a %.o,$^) $(LDFLAGS) -lm
 
