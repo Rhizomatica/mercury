@@ -2,6 +2,7 @@
  *
  *   ab_bench <seed> <channel> [bidir]
  *   channel := clean | awgn:<per> | cliff:<snr_db> | nvis
+ * Exit: 0 all delivered intact, 2 corrupt, 3 short or stalled.
  * bidir: both stations queue 8 KB at once, on a half-duplex medium, and the
  * virtual time until BOTH transfers complete is printed (done_ms) -- the turn
  * handover is where that is won or lost.
@@ -110,16 +111,22 @@ int main(int argc, char **argv)
                 break;
             }
         }
+        /* integrity = what arrived is exactly a prefix of what was sent;
+         * complete = all of it arrived.  A correct prefix with bytes missing
+         * is not a pass: silent loss is what this bench exists to catch. */
         size_t nb = sim_endpoint_delivered(sim_a(s), tmp, sizeof(tmp));
         int ok_b = (nb <= sizeof(blob_b)) && memcmp(tmp, blob_b, nb) == 0;
         size_t na = sim_endpoint_delivered(sim_b(s), tmp, sizeof(tmp));
         int ok_a = (na <= sizeof(blob)) && memcmp(tmp, blob, na) == 0;
-        printf("seed=%llu chan=%s bidir a2b=%zu b2a=%zu integrity=%s done_ms=%llu collisions=%d%s\n",
-               (unsigned long long)seed, chan_spec, na, nb,
+        int complete = na == sizeof(blob) && nb == sizeof(blob_b);
+        printf("seed=%llu chan=%s bidir a2b=%zu/%zu b2a=%zu/%zu integrity=%s done_ms=%llu collisions=%d%s%s\n",
+               (unsigned long long)seed, chan_spec, na, sizeof(blob), nb, sizeof(blob_b),
                (ok_a && ok_b) ? "OK" : "CORRUPT", (unsigned long long)done_ms,
-               sim_collisions(s), stalled ? " STALLED" : "");
+               sim_collisions(s), complete ? "" : " INCOMPLETE", stalled ? " STALLED" : "");
         sim_destroy(s);
-        return (ok_a && ok_b) ? 0 : 2;
+        if (!(ok_a && ok_b))
+            return 2;                   /* corrupt */
+        return (complete && !stalled) ? 0 : 3;   /* short or stalled */
     }
 
     static uint8_t got[65536];

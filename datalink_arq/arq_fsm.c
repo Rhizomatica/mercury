@@ -527,6 +527,21 @@ static void irs_mirror_peer_ladder(arq_session_t *sess, bool clean_new)
               sess->rx_speed_level, sess->peer_tx_mode);
 }
 
+/* ISS: the peer took the floor while our frame waited for its ACK, so the
+ * frame is kept and goes out again on our next turn, flagged ARQ_FLAG_RETX.
+ * The peer scores that resend as a miss -- a new frame with RETX, or a
+ * duplicate of one it already had, both step its mirror down -- so our ladder
+ * must take the same one miss, as each TIMER_ACK retransmit does, or the two
+ * ends drift apart and the peer's decoder leaves our TX mode.  (Once per
+ * resend: after a yield we leave WAIT_ACK, and only a resend brings us back.) */
+static void keep_frame_for_resend(arq_session_t *sess)
+{
+    if (!sess->tx_frame_present)
+        return;
+    sess->tx_frame_retx = true;
+    record_tx_outcome(sess, false);
+}
+
 /* IRS: arm the ACK deadline after a received DATA frame.  Stop-and-wait: one
  * frame per burst, so we always wait the channel guard before emitting the
  * pattern ACK (lets the ISS relay switch TX->RX before our tones arrive). */
@@ -986,10 +1001,11 @@ static void fsm_listening(arq_session_t *sess, const arq_event_t *ev)
         break;
 
     case ARQ_EV_RX_DATA:
-    case ARQ_EV_RX_ACK:
         /* Safety net: if IRS fell from ACCEPTING→LISTENING (ACCEPT retries
-         * exhausted) but the ISS is already sending DATA/ACK, accept the
+         * exhausted) but the ISS is already sending DATA, accept the
          * connection now — same logic as fsm_accepting RX_DATA handler.
+         * Only DATA can do it: in-session ACKs are patterns and carry no
+         * session id, so one could never match below.
          *
          * ONLY after that fallback.  The session id survives an ordinary
          * teardown too, so without the flag a late frame from the peer of a
@@ -1838,8 +1854,7 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
                 HLOGD(LOG_COMP,
                       "RX_DATA in WAIT_ACK (new off=%u) — yielding; our seq=%d kept for resend",
                       (unsigned)ev->stream_off, (int)sess->tx_frame_seq);
-                if (sess->tx_frame_present)
-                    sess->tx_frame_retx = true;
+                keep_frame_for_resend(sess);
                 irs_receive_data(sess, ev);
                 irs_arm_ack_deadline(sess, ev);
             }
@@ -1864,8 +1879,7 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
                       (int)sess->tx_frame_seq);
                 irs_receive_data(sess, ev);     /* dup: suppressed, mirror steps down */
                 sess->peer_has_data = (ev->rx_flags & ARQ_FLAG_HAS_DATA) != 0;
-                if (sess->tx_frame_present)
-                    sess->tx_frame_retx = true;
+                keep_frame_for_resend(sess);
                 irs_arm_ack_deadline(sess, ev);
             }
         }

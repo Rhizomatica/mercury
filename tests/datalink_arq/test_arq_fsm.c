@@ -946,6 +946,62 @@ void test_peer_data_in_wait_ack_is_not_an_ack_of_ours(void)
         "the ACK did not ask for the turn back for the kept frame");
 }
 
+/* Keeping our frame for a resend flags it ARQ_FLAG_RETX, which the peer's
+ * mirror scores as a miss (a new frame with RETX, or a duplicate: both step it
+ * down).  Our ladder must take exactly that one miss -- the same step as a
+ * TIMER_ACK retransmit, which is the pairing the peer already mirrors -- or the
+ * two ends drift apart and the peer's decoder leaves our TX mode. */
+static void overshoot_ladder(void)
+{
+    sess.speed_level          = 3;        /* above the last rung that delivered */
+    sess.tx_last_good_level   = 1;
+    sess.tx_success_count     = 0;
+    sess.fast_ramp            = false;
+    sess.tx_below_good_misses = 0;
+}
+
+void test_kept_frame_takes_the_miss_the_peer_scores(void)
+{
+    /* Reference: an ACK timeout retransmit from the same ladder state. */
+    goto_connected();
+    goto_wait_ack();
+    overshoot_ladder();
+    arq_event_t ev = make_event(ARQ_EV_TIMER_ACK);
+    arq_fsm_dispatch(&sess, &ev);
+    int ref = sess.speed_level;
+    TEST_ASSERT_TRUE(ref < 3);
+
+    setUp();
+    goto_connected();
+    goto_wait_ack();
+    overshoot_ladder();
+    ev = make_event(ARQ_EV_RX_DATA);             /* the peer takes the floor */
+    ev.session_id  = sess.session_id;
+    ev.stream_off  = sess.rx_stream_hwm;
+    ev.data_bytes  = 8;
+    ev.payload_len = 8;
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_TRUE(sess.tx_frame_retx);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ref, sess.speed_level,
+        "the resend is a miss to the peer but not to our ladder");
+
+    /* The duplicate branch keeps the frame too, and pays the same. */
+    setUp();
+    goto_connected();
+    goto_wait_ack();
+    overshoot_ladder();
+    sess.rx_stream_hwm = 90;
+    ev = make_event(ARQ_EV_RX_DATA);
+    ev.session_id  = sess.session_id;
+    ev.stream_off  = 0;                           /* their last frame again */
+    ev.data_bytes  = 90;
+    ev.payload_len = 90;
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_TRUE(sess.tx_frame_retx);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ref, sess.speed_level,
+        "duplicate branch: the resend is a miss to the peer but not to us");
+}
+
 /* A DUPLICATE from the peer while we wait for our ACK: our ACK of its frame
  * was lost and it is still retrying, on a timer sized for a short ACK.  We
  * must ACK the duplicate (keeping our frame) rather than re-send our own frame:
@@ -1910,6 +1966,7 @@ int main(void)
     RUN_TEST(test_connected_seeds_no_progress_clock);
     RUN_TEST(test_app_disconnect_defers_with_backlog);
     RUN_TEST(test_peer_data_in_wait_ack_is_not_an_ack_of_ours);
+    RUN_TEST(test_kept_frame_takes_the_miss_the_peer_scores);
     RUN_TEST(test_data_past_our_position_is_not_acked);
     RUN_TEST(test_peer_duplicate_in_wait_ack_is_acked_not_answered_with_ours);
     RUN_TEST(test_pending_disconnect_retries_last_frame_before_teardown);

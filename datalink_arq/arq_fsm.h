@@ -226,7 +226,8 @@ typedef struct
      * avoid keying a TURN_REQ into the peer's frame. */
     uint64_t last_rx_sync_ms;
     uint8_t  turn_req_defer_count;     /* consecutive busy-channel deferrals   */
-    bool     acktx_had_has_data;       /* HAS_DATA was set in the last ACK sent */
+    bool     acktx_had_has_data;       /* the last ACK sent asked for the turn:
+                                        * backlog, or a kept frame to resend */
     /* Peer-reported SNR for OUR signal, * 10.  TELEMETRY ONLY.
      *
      * This branch's data plane is delivery-driven: it does NOT adapt on SNR,
@@ -261,8 +262,8 @@ typedef struct
     /* --- Connect handshake --- */
     bool     accept_fallback;          /* LISTENING was entered because our ACCEPT
                                         * retries ran out: the caller may still
-                                        * have heard it, so its first DATA/ACK
-                                        * may complete this session.  Only then. */
+                                        * have heard it, so its first DATA may
+                                        * complete this session.  Only then. */
     bool     accept_tx_pending;        /* the pending TIMER_RETRY is an ACCEPT
                                         * answering a CALL we actually heard,
                                         * not the RX-window timer.  Only the
