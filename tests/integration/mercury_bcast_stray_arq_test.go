@@ -195,8 +195,12 @@ func TestBroadcastSurvivesStrayARQData(t *testing.T) {
 			// Mid-carousel, no session up: a client's late write.
 			if !stray {
 				stray = true
-				if _, err := dataA.Write([]byte("late bytes, no session up here!!")); err != nil {
-					fail("stray ARQ write: %v", err)
+				// The write must really land: the bug needs the ARQ data port
+				// to buffer these bytes, and if it ever dropped them instead
+				// this test would pass without exercising anything.
+				late := []byte("late bytes, no session up here!!")
+				if n, err := dataA.Write(late); err != nil || n != len(late) {
+					fail("stray ARQ write: %d/%d bytes, %v", n, len(late), err)
 				}
 			}
 		case <-deadline:

@@ -2106,7 +2106,12 @@ void *tx_thread(void *g_modem)
          * never went out again and the broadcast port stopped being read.
          * Seen on air: a 352-frame carousel stalled for 80 minutes after 12
          * frames.  The frames ARQ does build outside a session (CALL, ACCEPT,
-         * teardown) are in the control queue and still count below. */
+         * teardown) are in the control queue and still count below.
+         *
+         * "Connected" deliberately excludes DISCONNECTING too: a disconnect
+         * with bytes still queued is deferred while CONNECTED until they
+         * drain, and DISCONNECTING itself only sends DISCONNECT control
+         * frames, so leftover app bytes there are never framed either. */
         int pending_arq_app = (have_arq_snapshot && arq_snapshot.connected)
                               ? arq_snapshot.tx_backlog_bytes : 0;
         bool arq_tx_queued =
