@@ -326,7 +326,7 @@ static void crypto_session_start(const char *remote_call, const char *local_call
     }
 
     arq_tnc_send_connected();
-    arq_tnc_send_encryption(NULL);
+    arq_tnc_send_encryption(false);
     HLOGI(LOG_COMP, "Connected to %s (not encrypted)", remote_call);
 }
 
@@ -460,7 +460,7 @@ static void cb_deliver_rx_data(const uint8_t *data, size_t len)
         arq_event_t e = { .id = ARQ_EV_APP_DATA_READY };
 
         arq_tnc_send_connected();
-        arq_tnc_send_encryption(fp);
+        arq_tnc_send_encryption(true);
         HLOGI(LOG_COMP, "Session encrypted; peer key fingerprint %s", fp);
         /* The responder's reply is queued now, and the client may start
          * sending: either way ARQ has something to transmit. */

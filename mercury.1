@@ -431,6 +431,13 @@ encrypt end to end (such as NNCP).  Lasts until
 or the client reconnects.  Refused in
 .B required
 mode.
+The
+.B OK
+is followed by VARA's
+.B ENCRYPTION READY
+or
+.BR "ENCRYPTION DISABLED" ,
+for the state now in effect.
 .SS "Responses (control port)"
 .TP
 .B OK
@@ -468,19 +475,18 @@ Current bitrate in bits per second and the speed ladder level.
 Received a CQ broadcast from
 .IR callsign .
 .TP
-.BI "ENCRYPTED " fingerprint
+.B ENCRYPTED LINK
 Sent after
 .B CONNECTED
 on a station with
 .B [crypto]
-enabled: the session is encrypted, and
-.I fingerprint
-is the first 8 bytes of SHA-256 of the peer's public key, in hex.
+enabled: the session is encrypted, and the peer proved it holds the key
+configured for its callsign (Mercury logs that key's fingerprint).
 On an encrypted session
 .B CONNECTED
 itself is sent only once the handshake has completed.
 .TP
-.B CLEAR
+.B UNENCRYPTED LINK
 Sent after
 .B CONNECTED
 on a station with

@@ -74,8 +74,8 @@ func (s *cryptoStation) ini(t *testing.T, mode string) string {
 	return p
 }
 
-// fingerprint is what Mercury reports: the first 8 bytes of SHA-256 of the
-// public key, in hex.
+// fingerprint is what Mercury logs for the peer: the first 8 bytes of SHA-256
+// of the public key, in hex.  (VARA's ENCRYPTED LINK line has no room for it.)
 func fingerprint(pub []byte) string {
 	h := sha256.Sum256(pub)
 	return hex.EncodeToString(h[:8])
@@ -86,6 +86,7 @@ type cryptoLink struct {
 	connA, connB net.Conn
 	rwA, rwB     *bufio.ReadWriter
 	dataA, dataB net.Conn
+	logsA, logsB []string // stdout and stderr of each mercury
 	failWithLogs func(format string, args ...interface{})
 	cleanup      []func()
 }
@@ -148,6 +149,8 @@ func startCryptoLink(t *testing.T, iniA, iniB string) *cryptoLink {
 	b := start("B", bRX, bTX, iniB, bPort)
 	l.cleanup = append(l.cleanup, func() { _ = stopProcess(t, b.cmd, b.proc, b.out.Name(), b.err.Name()) })
 
+	l.logsA = []string{a.out.Name(), a.err.Name()}
+	l.logsB = []string{b.out.Name(), b.err.Name()}
 	l.failWithLogs = func(format string, args ...interface{}) {
 		printLogs(t, a.out.Name(), a.err.Name())
 		printLogs(t, b.out.Name(), b.err.Name())
@@ -229,6 +232,36 @@ func awaitLines(t *testing.T, conn net.Conn, rw *bufio.ReadWriter, want []string
 	return seen, true
 }
 
+// logContains polls a station's logs for want: the logger is asynchronous,
+// so a line can land a moment after the event it records.
+func logContains(paths []string, want string, within time.Duration) bool {
+	deadline := time.Now().Add(within)
+	for {
+		for _, p := range paths {
+			if data, err := os.ReadFile(p); err == nil && strings.Contains(string(data), want) {
+				return true
+			}
+		}
+		if time.Now().After(deadline) {
+			return false
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+}
+
+// encryptCommand sends ENCRYPT ON|OFF and returns the reply and, after OK,
+// the station-status line that follows it.
+func encryptCommand(t *testing.T, conn net.Conn, rw *bufio.ReadWriter, arg string) (string, string) {
+	got := sendControlCommand(t, conn, rw, "ENCRYPT "+arg)
+	if !strings.HasPrefix(got, "OK") {
+		return got, ""
+	}
+	_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	defer conn.SetReadDeadline(time.Time{})
+	line, _ := rw.ReadString('\r')
+	return got, strings.TrimSpace(line)
+}
+
 func readExactly(t *testing.T, conn net.Conn, n int, within time.Duration) []byte {
 	got := make([]byte, 0, n)
 	buf := make([]byte, 4096)
@@ -259,23 +292,39 @@ func TestMercuryARQEncrypted(t *testing.T) {
 	l := startCryptoLink(t, a.ini(t, "required"), b.ini(t, "required"))
 	defer l.close()
 
+	// Required mode refuses to be turned off, and says encryption is ready.
+	if got, _ := encryptCommand(t, l.connA, l.rwA, "OFF"); !strings.HasPrefix(got, "WRONG") {
+		l.failWithLogs("ENCRYPT OFF in required mode -> %q, want WRONG", got)
+	}
+	if got, status := encryptCommand(t, l.connA, l.rwA, "ON"); !strings.HasPrefix(got, "OK") ||
+		status != "ENCRYPTION READY" {
+		l.failWithLogs("ENCRYPT ON -> %q then %q, want OK then ENCRYPTION READY", got, status)
+	}
+
 	if got := sendControlCommand(t, l.connA, l.rwA, "CONNECT TESTA TESTB"); !strings.HasPrefix(got, "OK") {
 		l.failWithLogs("CONNECT -> %q", got)
 	}
 
-	// CONNECTED must be followed by ENCRYPTED with B's fingerprint -- and no
-	// CONNECTED may appear before the handshake has finished.
+	// CONNECTED must be followed by VARA's ENCRYPTED LINK -- and no CONNECTED
+	// may appear before the handshake has finished.
 	seen, ok := awaitLines(t, l.connA, l.rwA,
-		[]string{"CONNECTED", "ENCRYPTED " + fingerprint(b.pub)},
-		[]string{"DISCONNECTED", "CLEAR"}, 4*time.Minute)
+		[]string{"CONNECTED", "ENCRYPTED LINK"},
+		[]string{"DISCONNECTED", "UNENCRYPTED LINK"}, 4*time.Minute)
 	if !ok {
 		l.failWithLogs("A: no encrypted CONNECTED; saw %q", seen)
 	}
 	seen, ok = awaitLines(t, l.connB, l.rwB,
-		[]string{"CONNECTED", "ENCRYPTED " + fingerprint(a.pub)},
-		[]string{"DISCONNECTED", "CLEAR"}, 2*time.Minute)
+		[]string{"CONNECTED", "ENCRYPTED LINK"},
+		[]string{"DISCONNECTED", "UNENCRYPTED LINK"}, 2*time.Minute)
 	if !ok {
 		l.failWithLogs("B: no encrypted CONNECTED; saw %q", seen)
+	}
+	// Each side authenticated the other's key.
+	if !logContains(l.logsA, "peer key fingerprint "+fingerprint(b.pub), 10*time.Second) {
+		l.failWithLogs("A did not log B's fingerprint %s", fingerprint(b.pub))
+	}
+	if !logContains(l.logsB, "peer key fingerprint "+fingerprint(a.pub), 10*time.Second) {
+		l.failWithLogs("B did not log A's fingerprint %s", fingerprint(a.pub))
 	}
 
 	// Several records' worth in each direction, so records span frames.
@@ -326,11 +375,22 @@ func TestMercuryARQOptionalFallsBackToClear(t *testing.T) {
 	l := startCryptoLink(t, a.ini(t, "optional"), b.ini(t, "optional"))
 	defer l.close()
 
+	// Optional mode lets a client turn it off and on; each reply is followed
+	// by the station status now in effect.
+	for _, c := range []struct{ arg, status string }{
+		{"OFF", "ENCRYPTION DISABLED"}, {"ON", "ENCRYPTION READY"},
+	} {
+		if got, status := encryptCommand(t, l.connB, l.rwB, c.arg); !strings.HasPrefix(got, "OK") ||
+			status != c.status {
+			l.failWithLogs("ENCRYPT %s -> %q then %q, want OK then %s", c.arg, got, status, c.status)
+		}
+	}
+
 	if got := sendControlCommand(t, l.connA, l.rwA, "CONNECT TESTA TESTB"); !strings.HasPrefix(got, "OK") {
 		l.failWithLogs("CONNECT -> %q", got)
 	}
-	seen, ok := awaitLines(t, l.connA, l.rwA, []string{"CONNECTED", "CLEAR"},
-		[]string{"DISCONNECTED", "ENCRYPTED"}, 4*time.Minute)
+	seen, ok := awaitLines(t, l.connA, l.rwA, []string{"CONNECTED", "UNENCRYPTED LINK"},
+		[]string{"DISCONNECTED", "ENCRYPTED LINK"}, 4*time.Minute)
 	if !ok {
 		l.failWithLogs("A: expected a clear session; saw %q", seen)
 	}

@@ -415,15 +415,31 @@ static void execute_control_command(char *buffer)
     /* ENCRYPT OFF: for clients that already encrypt end to end (NNCP), skip
      * the session handshake and the per-record overhead.  Applies to calls
      * made and answered while this client stays connected.  Refused in
-     * required mode, where a clear session is never allowed. */
-    if (!strncmp(buffer, "ENCRYPT", strlen("ENCRYPT")))
+     * required mode, where a clear session is never allowed.  After OK comes
+     * VARA's station status for what is now in effect: ENCRYPTION READY, or
+     * ENCRYPTION DISABLED -- also on a station with [crypto] off, where ON
+     * changes nothing.  Only on request: VARA-only clients never send
+     * ENCRYPT, so they never see a line they did not ask for. */
+    if (!strncmp(buffer, "ENCRYPT ", strlen("ENCRYPT ")))
     {
+        int rc = -1;
+
         memset(temp, 0, sizeof(temp));
         sscanf(buffer, "ENCRYPT %15s", temp);
-        if (!strcmp(temp, "OFF") && arq_crypto_set_client_off(true) == 0)
+        if (!strcmp(temp, "OFF"))
+            rc = arq_crypto_set_client_off(true);
+        else if (!strcmp(temp, "ON"))
+            rc = arq_crypto_set_client_off(false);
+        if (rc == 0)
+        {
+            bool on = arq_crypto_mode() != ARQ_CRYPTO_OFF && !arq_crypto_client_off();
+
             tcp_write(CTL_TCP_PORT, (uint8_t *)"OK\r", 3);
-        else if (!strcmp(temp, "ON") && arq_crypto_set_client_off(false) == 0)
-            tcp_write(CTL_TCP_PORT, (uint8_t *)"OK\r", 3);
+            if (on)
+                tcp_write(CTL_TCP_PORT, (uint8_t *)"ENCRYPTION READY\r", 17);
+            else
+                tcp_write(CTL_TCP_PORT, (uint8_t *)"ENCRYPTION DISABLED\r", 20);
+        }
         else
             tcp_write(CTL_TCP_PORT, (uint8_t *)"WRONG\r", 6);
         return;
@@ -1697,18 +1713,14 @@ void tnc_send_buffer(uint32_t bytes)
         atomic_store_explicit(&tnc_last_buffer_sent, (int)bytes, memory_order_relaxed);
 }
 
-/* Sent right after CONNECTED, only on stations that enabled [crypto]: a
- * default station's clients (VARA-style, Pat) never see a line they do not
- * know.  The fingerprint is the first 8 bytes of SHA-256 of the peer's key. */
-void tnc_send_encryption(const char *fingerprint)
+/* Sent right after CONNECTED, only on stations that enabled [crypto], with
+ * VARA's own wording so VARA clients read it unchanged.  VARA's line has no
+ * room for the peer's key fingerprint; Mercury logs it instead. */
+void tnc_send_encryption(bool encrypted)
 {
-    char buffer[64];
+    const char *line = encrypted ? "ENCRYPTED LINK\r" : "UNENCRYPTED LINK\r";
 
-    if (fingerprint != NULL && fingerprint[0] != '\0')
-        snprintf(buffer, sizeof(buffer), "ENCRYPTED %s\r", fingerprint);
-    else
-        snprintf(buffer, sizeof(buffer), "CLEAR\r");
-    if (tnc_queue_line_critical(buffer) < 0)
+    if (tnc_queue_line_critical(line) < 0)
         HLOGW("tcp-ctl", "Error queuing encryption status");
 }
 

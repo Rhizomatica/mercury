@@ -52,7 +52,7 @@ void arq_tnc_send_registered(const char *callsign)
     if (g_tnc && g_tnc->send_registered) g_tnc->send_registered(callsign);
 }
 
-void arq_tnc_send_encryption(const char *fingerprint)
+void arq_tnc_send_encryption(bool encrypted)
 {
-    if (g_tnc && g_tnc->send_encryption) g_tnc->send_encryption(fingerprint);
+    if (g_tnc && g_tnc->send_encryption) g_tnc->send_encryption(encrypted);
 }

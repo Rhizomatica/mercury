@@ -421,8 +421,14 @@ is the obvious one -- so they do not pay for the handshake (48 bytes each way)
 and the per-record overhead twice.  It lasts until `ENCRYPT ON` or until the
 client reconnects.
 
-**Response:** `OK\r`, or `WRONG\r` -- including `ENCRYPT OFF` in `required`
-mode, where a clear session is never allowed.
+VARA has no such command (its encryption is chosen in its own window), so this
+one is Mercury's; VARA-only clients never send it.
+
+**Response:** `OK\r` followed by VARA's station status for what is now in
+effect -- `ENCRYPTION READY\r`, or `ENCRYPTION DISABLED\r` (also on a station
+with `[crypto] mode = off`, where `ENCRYPT ON` changes nothing).  `WRONG\r` for
+anything else, including `ENCRYPT OFF` in `required` mode, where a clear session
+is never allowed.
 
 ---
 
@@ -447,6 +453,7 @@ These are sent on the **control port** without a preceding command.
 | `BITRATE (<level>) <bps> BPS\r`            | Throughput update                            |
 | `IAMALIVE\r`                                | Heartbeat (sent periodically while idle)     |
 | `REGISTERED <callsign>\r`                  | Callsign registration confirmed (after MYCALL) |
+| `ENCRYPTED LINK\r` / `UNENCRYPTED LINK\r` | After `CONNECTED`, only with `[crypto]` on    |
 
 ### PENDING
 
@@ -479,19 +486,19 @@ On an encrypted session `CONNECTED` is sent only once the encryption handshake
 has completed, so a client can never send a byte before the session is
 secure.
 
-### ENCRYPTED / CLEAR
+### ENCRYPTED LINK / UNENCRYPTED LINK
 
 ```
-ENCRYPTED <fingerprint>\r
-CLEAR\r
+ENCRYPTED LINK\r
+UNENCRYPTED LINK\r
 ```
 
-Sent immediately after `CONNECTED`, and only by a station with
-`[crypto] mode = optional` or `required` -- a default station never sends
-either, so existing VARA-style clients see nothing new.  `ENCRYPTED` names the
-peer's key: `<fingerprint>` is the first 8 bytes of SHA-256 of its public key,
-in hex, so a client can check it is talking to the station it meant to.
-`CLEAR` means the session is not encrypted (possible only in `optional` mode).
+VARA's own lines, sent immediately after `CONNECTED`, and only by a station
+with `[crypto] mode = optional` or `required` -- a default station never sends
+either.  `UNENCRYPTED LINK` is possible only in `optional` mode.  An encrypted
+link means the peer proved it holds the key in `peers_dir` for its callsign;
+Mercury logs that key's fingerprint (the first 8 bytes of SHA-256 of the public
+key, in hex), since VARA's line has no room for it.
 
 Encryption covers the data stream only.  Callsigns and ARQ headers always
 travel in the clear, for station identification.
