@@ -114,6 +114,13 @@ deltas — the channel PRNG is a single shared stream, so once two builds make
 different decisions they consume it differently and see different erasure
 realizations. Used for the S1 merge decision (`docs/S1-FADECLIFF-DECISION.md`).
 
+`ab_bench <seed> <channel> bidir` queues 8 KB on BOTH stations over a half-duplex
+medium and prints the virtual time until both transfers complete (`done_ms`),
+the collision count, and `STALLED` when both FSMs go idle with data still
+undelivered.  That is the turn-handover bench: it measured the ACK + first data
+burst in one keydown (1-2.5 % faster on clean/lossy channels, same completions,
+no corruption).
+
 ## The S1 fade-cliff regression (fixed)
 
 `test_sim_fade_cliff_downgrades` connects on a good band, then drops the
