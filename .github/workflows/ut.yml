@@ -5,7 +5,7 @@
 #   - Manually via workflow_dispatch
 #   - Automatically on every push to mercuryv2
 #
-# Runs unit tests on Linux amd64 only.
+# Runs the unit tests on Linux amd64, and again in a native i386 userland.
 
 name: UT
 
@@ -56,3 +56,45 @@ jobs:
       - name: Run Unit Tests
         shell: bash
         run: make test
+
+  # The same suite on 32-bit x86, in a real i386 Debian userland: i386 gcc,
+  # x87 floating point, i386 packages -- what Debian's i386 buildd runs, so
+  # we see its failures before a packager does.  Issue #299 is why: CI cross-
+  # compiled arm64 and armhf but never RAN the tests on any 32-bit target, so
+  # a PRNG declared `unsigned long` (32 bits on every ILP32 target) made two
+  # MFSK tests measure a constant for years, and the first to notice was
+  # Debian.
+  #
+  # Run with docker on the host rather than as a job `container:`, because
+  # actions/checkout is a node action and node does not run in an i386 image.
+  # linux32 gives the process the i386 personality, so `uname -m` says i686
+  # instead of leaking the host kernel's x86_64 -- as on a real buildd.
+  unit-tests-i386:
+    name: Unit Tests (Linux i386, Debian 13)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          repository: Rhizomatica/mercury
+          ssh-key: ${{ secrets.SSH_PRIVATE_KEY }}
+          fetch-depth: 0
+          ref: ${{ github.event.inputs.branch || github.event.pull_request.head.sha || github.sha }}
+
+      - name: Run Unit Tests (i386)
+        shell: bash
+        run: |
+          docker run --rm --platform linux/386 \
+            -v "$GITHUB_WORKSPACE:/src" -w /src \
+            i386/debian:trixie \
+            linux32 bash -euo pipefail -c '
+              apt-get update
+              apt-get install -y --no-install-recommends \
+                ca-certificates build-essential git pkg-config \
+                libpulse-dev libasound2-dev libhamlib-dev libsodium-dev
+              git config --global --add safe.directory /src
+              echo "compiler target: $(gcc -dumpmachine), uname -m: $(uname -m)"
+              make test
+            '
