@@ -1914,6 +1914,7 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
              * the margin.  Jitter here is load-bearing: when two connected
              * stations submit data simultaneously, both send and both land in
              * WAIT_ACK, and only a jittered retransmit can break the lock. */
+            sess->retx_defer_count = 0;
             dflow_enter(sess, ARQ_DFLOW_WAIT_ACK,
                         retry_deadline_from_s(sess, tm ? tm->ack_timeout_s : 9.0f),
                         ARQ_EV_TIMER_ACK);
@@ -2067,9 +2068,63 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
                       "TURN_REQ in WAIT_ACK: deferring the yield to the ACK "
                       "(seq=%d)", (int)sess->tx_seq);
             sess->peer_turn_req_pending = true;
+
+            /* ...but do not wait out the whole ACK timeout for it.  A peer
+             * that decoded our burst ACKs it -- with HAS_DATA if it wants the
+             * floor -- rather than sending TURN_REQ, so a TURN_REQ heard here
+             * usually means our burst never arrived and no ACK is coming.  On
+             * air (1.9.15 + #308, two sBitx stations) the ISS then sat out
+             * its 14 s ACK timeout after every lost burst -- silences of 8-14 s
+             * -- and its retransmission finally keyed over the peer's 8 s
+             * TURN_REQ retry.
+             *
+             * Nothing is keyed in response (that was #278): the deadline is
+             * only pulled in, to one reply guard plus one control frame plus
+             * margin from now.  An ACK that IS coming lands inside that; if
+             * none does, we retransmit well before the peer's retry, the peer's
+             * TURN_REQ_WAIT takes the DATA, abandons its request and ACKs with
+             * HAS_DATA, and the latched yield hands it the floor. */
+            const arq_mode_timing_t *ctm = arq_protocol_mode_timing(sess->control_mode);
+            uint64_t soon = time_now_ms() + ARQ_CHANNEL_GUARD_MS +
+                            (uint64_t)((ctm ? ctm->frame_duration_s : 4.0f) * 1000.0f) +
+                            ARQ_TURN_REQ_ACK_MARGIN_MS;
+            if (soon < sess->deadline_ms)
+                sess->deadline_ms = soon;
+            /* Nor earlier than one reply guard: the TURN_REQ has only just
+             * ended, and a retransmission deferred behind it (below) would
+             * otherwise key before the peer is back on receive. */
+            uint64_t earliest = time_now_ms() + ARQ_CHANNEL_GUARD_MS;
+            if (sess->deadline_ms < earliest)
+                sess->deadline_ms = earliest;
         }
         else if (ev->id == ARQ_EV_TIMER_ACK)
         {
+            /* Listen before retransmitting, as the IRS does before a TURN_REQ.
+             * The ACK timeout fires on a clock, and when the burst was lost the
+             * peer is often on air right then with a TURN_REQ of its own.  On
+             * air the retransmission keyed 1-2 s into the peer's TURN_REQ while
+             * our own decoder was synced on it, and both were lost.  Waiting
+             * out the frame usually lets us decode it, and the TURN_REQ branch
+             * above then takes over.  Bounded like the TURN_REQ deferral: a
+             * decoder stuck in false sync must not stop us retransmitting. */
+            if (peer_is_transmitting(sess) &&
+                sess->retx_defer_count < ARQ_TURN_REQ_DEFER_MAX)
+            {
+                sess->retx_defer_count++;
+                HLOGD(LOG_COMP,
+                      "Retransmission deferred: peer transmitting (%u/%u)",
+                      (unsigned)sess->retx_defer_count,
+                      (unsigned)ARQ_TURN_REQ_DEFER_MAX);
+                sess->deadline_ms = time_now_ms() + ARQ_TURN_REQ_DEFER_MS;
+                sess->deadline_event = ARQ_EV_TIMER_ACK;
+                break;
+            }
+            if (sess->retx_defer_count >= ARQ_TURN_REQ_DEFER_MAX)
+                HLOGW(LOG_COMP,
+                      "Retransmission deferral cap reached (%u) - keying anyway",
+                      (unsigned)sess->retx_defer_count);
+            sess->retx_defer_count = 0;
+
             if (sess->tx_retries_left > 0)
             {
                 /* Save the pre-cap value so the attempt number reported to
@@ -2400,6 +2455,20 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
         }
         else if (ev->id == ARQ_EV_APP_DATA_READY)
         {
+            /* New bytes from the application can arrive in the middle of the
+             * peer's burst.  On air the TURN_REQ keyed 3.5 s into a DATAC1
+             * frame and both were lost.  Hand over to the timer path, which
+             * listens (bounded) before asking; if the peer's frame decodes
+             * meanwhile, our ACK carries HAS_DATA and no TURN_REQ is needed. */
+            if (peer_is_transmitting(sess))
+            {
+                HLOGD(LOG_COMP, "TURN_REQ for new data deferred: peer transmitting");
+                uint64_t soon = time_now_ms() + ARQ_TURN_REQ_DEFER_MS;
+                if (soon < sess->deadline_ms)
+                    dflow_enter(sess, ARQ_DFLOW_IDLE_IRS, soon,
+                                ARQ_EV_TIMER_PEER_BACKLOG);
+                break;
+            }
             send_ctrl_frame(sess, ARQ_SUBTYPE_TURN_REQ);
             sess->tx_retries_left = ARQ_TURN_REQ_RETRIES;
             tm = arq_protocol_mode_timing(sess->control_mode);

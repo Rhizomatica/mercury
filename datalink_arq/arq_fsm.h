@@ -213,6 +213,7 @@ typedef struct
      * avoid keying a TURN_REQ into the peer's frame. */
     uint64_t last_rx_sync_ms;
     uint8_t  turn_req_defer_count;     /* consecutive busy-channel deferrals   */
+    uint8_t  retx_defer_count;         /* same, for the WAIT_ACK retransmission */
     bool     acktx_had_has_data;       /* HAS_DATA was set in the last ACK sent */
     int      peer_snr_x10;            /* peer-reported SNR * 10 (integer)     */
     bool     peer_snr_valid;          /* a peer SNR reading has been received; *
