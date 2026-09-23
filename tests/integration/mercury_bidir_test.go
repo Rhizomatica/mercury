@@ -206,8 +206,18 @@ func TestMercuryARQBidirectional(t *testing.T) {
 	// sending — the contention the deadlock fix addresses.  Kept small (a few
 	// datac15 frames each way) so the test turns the floor over several times
 	// without depending on throughput.
-	payloadA := []byte(strings.Repeat("MERCURY-BIDIR-A2B-0123456789", 4)) // ~112 B, A -> B
-	payloadB := []byte(strings.Repeat("MERCURY-BIDIR-B2A-0123456789", 4)) // ~112 B, B -> A
+	// MERCURY_BIDIR_REPEAT scales both payloads (28 B per repeat) so a run can
+	// climb the ladder and exercise turns in the large payload modes.
+	repeat := 4
+	if v := os.Getenv("MERCURY_BIDIR_REPEAT"); v != "" {
+		n, perr := strconv.Atoi(v)
+		if perr != nil || n <= 0 {
+			t.Fatalf("bad MERCURY_BIDIR_REPEAT %q", v)
+		}
+		repeat = n
+	}
+	payloadA := []byte(strings.Repeat("MERCURY-BIDIR-A2B-0123456789", repeat)) // ~112 B by default, A -> B
+	payloadB := []byte(strings.Repeat("MERCURY-BIDIR-B2A-0123456789", repeat)) // ~112 B by default, B -> A
 
 	if _, err := dataA.Write(payloadA); err != nil {
 		failWithLogs("A write payload: %v", err)
@@ -227,7 +237,7 @@ func TestMercuryARQBidirectional(t *testing.T) {
 		start := time.Now()
 		got := make([]byte, 0, len(want))
 		buf := make([]byte, 4096)
-		deadline := time.Now().Add(4 * time.Minute)
+		deadline := time.Now().Add(time.Duration(4+repeat/10) * time.Minute)
 		for len(got) < len(want) && time.Now().Before(deadline) {
 			_ = conn.SetReadDeadline(time.Now().Add(10 * time.Second))
 			n, err := conn.Read(buf)
