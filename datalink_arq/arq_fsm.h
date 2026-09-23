@@ -266,6 +266,8 @@ typedef struct
     bool     deferred_listen_off;      /* LISTEN OFF received during grace period;
                                         * will be honoured once the grace expires    */
     bool     pending_disconnect_notify;/* defer notify_disconnected until TX done */
+    bool     pending_disconnect_reply; /* our reply to the peer's DISCONNECT is
+                                        * due when the reply guard expires  */
     bool     pending_disconnect;       /* APP_DISCONNECT deferred until TX buf empty */
     bool     pending_connect;          /* CONNECT arrived while DISCONNECTING: place
                                         * the call once the teardown completes     */

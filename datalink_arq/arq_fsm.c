@@ -1121,10 +1121,23 @@ static void notify_session_ended(arq_session_t *sess)
         g_cbs.notify_disconnected(false);
 }
 
+/* The reply to the peer's DISCONNECT, if it is still owed. */
+static void send_disconnect_reply(arq_session_t *sess)
+{
+    if (!sess->pending_disconnect_reply)
+        return;
+    sess->pending_disconnect_reply = false;
+    send_ctrl_frame(sess, ARQ_SUBTYPE_DISCONNECT);
+}
+
 static void fsm_disconnected(arq_session_t *sess, const arq_event_t *ev)
 {
     switch (ev->id)
     {
+    case ARQ_EV_TIMER_ACK:
+        send_disconnect_reply(sess);    /* the reply guard has expired */
+        break;
+
     case ARQ_EV_TX_COMPLETE:
         /* Deferred from RX_DISCONNECT: fire now that DISCONNECT ACK is sent,
          * giving the TCP data thread time to drain data_rx_buffer_arq. */
@@ -1138,10 +1151,16 @@ static void fsm_disconnected(arq_session_t *sess, const arq_event_t *ev)
         break;
 
     case ARQ_EV_APP_LISTEN:
+        /* Still finishing the peer's teardown: the listen intent is recorded
+         * (listen_enabled) and enter_idle_after_call() restores LISTENING once
+         * our reply is out.  Entering it now would drop the reply's timer. */
+        if (sess->pending_disconnect_notify)
+            break;
         sess_enter(sess, ARQ_CONN_LISTENING, UINT64_MAX, ARQ_EV_TIMER_RETRY);
         break;
 
     case ARQ_EV_APP_CONNECT:
+        send_disconnect_reply(sess);    /* owed first; the CALL queues behind it */
         snprintf(sess->remote_call, CALLSIGN_MAX_SIZE, "%s", ev->remote_call);
         sess->session_id      = (uint8_t)(time_now_ms() & 0x7F) | 0x01;
         sess->tx_retries_left = ARQ_CALL_RETRY_SLOTS;
@@ -1820,14 +1839,19 @@ static void fsm_connected(arq_session_t *sess, const arq_event_t *ev)
         return;
 
     case ARQ_EV_RX_DISCONNECT:
-        send_ctrl_frame(sess, ARQ_SUBTYPE_DISCONNECT);
+        /* Reply one reply guard later, like every other answer.  A frame
+         * decodes before its tail has played out -- on air (bench run 14) the
+         * DISCONNECT decoded 186 ms before the peer's TX_COMPLETE -- and a
+         * reply keyed at once (40 ms) clipped it. */
+        sess->pending_disconnect_reply = true;
         /* Peer-initiated disconnect supersedes any locally deferred one. */
         sess->pending_disconnect = false;
         /* Defer notify until TX_COMPLETE so data_rx_buffer_arq has time to
          * drain to the TCP socket before UUCP sees the DISCONNECTED signal. */
         sess->pending_disconnect_notify = true;
         if (g_timing) arq_timing_record_disconnect(g_timing, "rx_disconnect");
-        sess_enter(sess, ARQ_CONN_DISCONNECTED, UINT64_MAX, ARQ_EV_TIMER_RETRY);
+        sess_enter(sess, ARQ_CONN_DISCONNECTED,
+                   time_now_ms() + ARQ_CHANNEL_GUARD_MS, ARQ_EV_TIMER_ACK);
         return;
 
     case ARQ_EV_RX_ACCEPT:

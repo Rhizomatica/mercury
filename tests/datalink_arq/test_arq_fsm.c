@@ -1693,6 +1693,39 @@ void test_disconnect_deferral_is_bounded(void)
         "the DISCONNECT deferral never gave up");
 }
 
+/* Bench run 14: the peer's DISCONNECT decoded 186 ms before its TX_COMPLETE
+ * (a frame decodes before its tail has played out), our reply keyed 40 ms
+ * later and clipped it.  The reply waits one reply guard, like every other
+ * answer. */
+void test_disconnect_reply_waits_one_reply_guard(void)
+{
+    goto_idle_iss();
+    RESET_FAKE(fake_send_tx_frame);
+    RESET_FAKE(fake_notify_disconnected);
+    arq_event_t ev = make_event(ARQ_EV_RX_DISCONNECT);
+    ev.session_id = sess.session_id;
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, fake_send_tx_frame_fake.call_count,
+        "replied to the DISCONNECT without a guard");
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_DISCONNECTED, sess.conn_state);
+    TEST_ASSERT_EQUAL_INT(ARQ_EV_TIMER_ACK, sess.deadline_event);
+    TEST_ASSERT_TRUE(sess.deadline_ms >= time_now_ms() + ARQ_CHANNEL_GUARD_MS);
+
+    /* LISTEN ON inside the guard must not drop the owed reply. */
+    ev = make_event(ARQ_EV_APP_LISTEN);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(ARQ_EV_TIMER_ACK, sess.deadline_event);
+
+    ev = make_event(ARQ_EV_TIMER_ACK);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(1, fake_send_tx_frame_fake.call_count);
+    ev = make_event(ARQ_EV_TX_COMPLETE);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_GREATER_THAN(0, fake_notify_disconnected_fake.call_count);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ARQ_CONN_LISTENING, sess.conn_state,
+        "the listen intent given during the guard was lost");
+}
+
 /* The other half of run 12: holding the TURN_ACK, the new ISS keyed its first
  * DATA without listening, 0.83 s into the peer's DISCONNECT. */
 void test_first_data_after_turn_ack_listens(void)
@@ -2270,6 +2303,7 @@ int main(void)
     RUN_TEST(test_disconnect_waits_for_the_reply_its_turn_ack_invited);
     RUN_TEST(test_disconnect_retry_is_not_keyed_over_the_peer);
     RUN_TEST(test_disconnect_deferral_is_bounded);
+    RUN_TEST(test_disconnect_reply_waits_one_reply_guard);
     RUN_TEST(test_first_data_after_turn_ack_listens);
     RUN_TEST(test_new_data_at_idle_iss_listens);
     RUN_TEST(test_simultaneous_turn_req_one_side_yields);
