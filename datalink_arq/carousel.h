@@ -79,6 +79,7 @@ typedef struct {
 typedef struct {
     bool     known, done;
     int      K, len, have;
+    int      delivered;             /* bytes already handed to the application */
     bool     got[RS_MAX_PIECES];
     uint8_t  piece[RS_MAX_PIECES][CAR_PIECE];
 } car_rblock_t;

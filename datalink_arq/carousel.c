@@ -275,10 +275,27 @@ static bool unopened(const car_t *c)
     return c->io.tx_pending && c->io.tx_pending(c->io.ctx) > 0;
 }
 
-static void open_block(car_t *c)
+/* A block is cut to about BLOCK_AIR_MS of airtime on the rung it is first
+ * sent on (at least 8 pieces, at most CAR_MAX_K).  A lost data piece is only
+ * made good once the whole block's data has gone out and repair follows, and
+ * in-order delivery waits for it: a 96-piece block on DATAC15 (one piece a
+ * frame, 7 minutes of airtime) stalled the stream for minutes.  Sizing by the
+ * poll's early one-frame rounds instead cut 10-piece blocks on DATAC3, and
+ * every other frame paid a second segment header (cliff 3 dB, 8 % slower). */
+#define BLOCK_MIN_K  8
+#define BLOCK_AIR_MS 60000
+static int block_k_for(int lv, int n)
+{
+    (void)n;
+    int frames = (int)((BLOCK_AIR_MS + level_air(lv) - 1) / level_air(lv));
+    int k = frames * pieces_per_frame(lv);
+    return k < BLOCK_MIN_K ? BLOCK_MIN_K : k > CAR_MAX_K ? CAR_MAX_K : k;
+}
+
+static void open_block(car_t *c, int max_k)
 {
     uint8_t buf[CAR_MAX_K * CAR_PIECE];
-    size_t len = c->io.tx_read(c->io.ctx, buf, sizeof(buf));
+    size_t len = c->io.tx_read(c->io.ctx, buf, (size_t)max_k * CAR_PIECE);
     if (!len) return;
     car_sblock_t *s = &c->sb[c->nsb++];
     s->id = c->next_blk_id++;
@@ -323,20 +340,36 @@ static void apply_need(car_t *c, const msg_t *m)
  * fr[].  Returns the frame count (0: nothing to send). */
 static int build_round(car_t *c, int lv, int n, uint32_t poll_id, car_frame_t *fr)
 {
-    while (c->nsb < CAR_WIN && unopened(c))
-        open_block(c);
+    /* Open blocks span fewer than CAR_WIN ids from the oldest unconfirmed
+     * one, not merely number fewer than CAR_WIN: ids travel mod 16, and a
+     * block 8 or more ahead of the receiver's base reads as behind it.
+     * Blocks complete out of order, and with small blocks the span outgrew
+     * the window -- a poll then retired a block that was never delivered, and
+     * the session stalled with data undelivered. */
+    /* Blocks are opened only as this round needs them, so each is cut for
+     * the rung it first goes out on.  Filling the whole window up front cut
+     * eight DATAC15-sized blocks at a low-SNR start, and after the climb they
+     * rode DATAC3 frames with extra segment headers (cliff 3 dB, 8 % slower). */
+    double margin = c->tx_loss * 1.3 + 0.05;
+    int ppf = pieces_per_frame(lv);
+    int queued = 0;
+    for (int b = 0; b < c->nsb; b++) queued += (int)ceil(c->sb[b].need * (1.0 + margin));
+    while (queued < n * ppf && c->nsb < CAR_WIN && unopened(c) &&
+           (c->nsb == 0 || (uint8_t)(c->next_blk_id - c->sb[0].id) < CAR_WIN))
+    {
+        open_block(c, block_k_for(lv, n));
+        queued += (int)ceil(c->sb[c->nsb - 1].need * (1.0 + margin));
+    }
     if (!c->nsb || n < 1) return 0;
     int mode = LADDER[lv];
     int room = mode_payload(mode);
 
     /* What each open block still needs, with a margin for the loss seen. */
-    double margin = c->tx_loss * 1.3 + 0.05;
     int want[CAR_WIN], want_total = 0;
     for (int b = 0; b < c->nsb; b++) {
         want[b] = (int)ceil(c->sb[b].need * (1.0 + margin));
         want_total += want[b];
     }
-    int ppf = pieces_per_frame(lv);
     int frames = (want_total + ppf - 1) / ppf;
     if (frames > n) frames = n;
     if (frames < 1) frames = 1;
@@ -584,16 +617,35 @@ static void decode_block(car_t *c, car_rblock_t *r)
     c->done_in_round++;
 }
 
-/* Hand complete blocks to the application in order, sliding the window.
- * A decoded block's data pieces are in piece[0..K-1]. */
+/* Hand data to the application in order, sliding the window.  A decoded
+ * block's data pieces are in piece[0..K-1].  The code is systematic, so the
+ * block at the base is streamed as far as its data pieces have arrived
+ * contiguously -- the repair pieces only fill the gaps.  Waiting for whole
+ * blocks, a slow direction delivered nothing for minutes and NNCP took the
+ * silent link for dead (two 60 s ping intervals without a byte) and hung up
+ * with data still in flight. */
 static void deliver_in_order(car_t *c)
 {
+    uint8_t buf[CAR_MAX_K * CAR_PIECE];
     for (;;) {
         car_rblock_t *r = &c->rb[c->rbase % CAR_WIN];
-        if (!r->known || !r->done) break;
-        uint8_t buf[CAR_MAX_K * CAR_PIECE];
-        for (int i = 0; i < r->K; i++) memcpy(buf + i * CAR_PIECE, r->piece[i], CAR_PIECE);
-        if (c->io.deliver) c->io.deliver(c->io.ctx, buf, (size_t)r->len);
+        if (!r->known) break;
+        int upto;
+        if (r->done) {
+            upto = r->len;
+        } else {
+            int j = 0;
+            while (j < r->K && r->got[j]) j++;
+            upto = j * CAR_PIECE < r->len ? j * CAR_PIECE : r->len;
+        }
+        if (upto > r->delivered) {
+            int n = 0;
+            for (int off = r->delivered; off < upto; off++, n++)
+                buf[n] = r->piece[off / CAR_PIECE][off % CAR_PIECE];
+            if (c->io.deliver) c->io.deliver(c->io.ctx, buf, (size_t)n);
+            r->delivered = upto;
+        }
+        if (!r->done) break;
         memset(r, 0, sizeof(*r));
         c->rbase++;
     }
