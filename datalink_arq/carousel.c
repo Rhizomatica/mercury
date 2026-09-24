@@ -692,13 +692,24 @@ static int peer_outstanding(const car_t *c)
 
 /* How many frames to ask for on level lv: what it has earned (one frame more
  * than it recently delivered, so a probe is one frame, a proven mode gets full
- * rounds and a dead one never costs more than a frame), what fits a keydown,
- * and -- when every block of the sender is known here -- what is still needed. */
-static int poll_size(const car_t *c, int lv)
+ * rounds and a dead one never costs more than a frame), what fits a keydown
+ * and the rest of the turn, and -- when every block of the sender is known
+ * here -- what is still needed. */
+static int poll_size(const car_t *c, int lv, uint64_t now)
 {
     int cap = keydown_cap(lv);
     int earned = 1 + (int)(c->lv_sent[lv] - c->lv_lost[lv]);
     if (cap > earned) cap = earned;
+    /* With our own data waiting, the peer's turn ends at TURN_CAP_MS: ask
+     * only for what fits before it.  The cap is checked between rounds, and
+     * a full keydown after it stretched a 45 s turn to 75 s. */
+    if (has_data(c)) {
+        uint64_t held = now - c->drive_start;
+        int64_t left = (int64_t)TURN_CAP_MS - (int64_t)held;
+        int fit = left > 0 ? (int)(left / (int64_t)(level_air(lv) + burst_gap_ms(lv))) : 1;
+        if (fit < 1) fit = 1;
+        if (cap > fit) cap = fit;
+    }
     int out = peer_outstanding(c);
     if (out >= 0 && !c->peer_unopened) {
         double margin = c->loss_est * 1.3 + 0.05;
@@ -885,7 +896,7 @@ static void on_poll_timer(car_t *c, uint64_t now)
         return;
     }
     int lv = choose_level(c, now);
-    send_poll(c, lv, poll_size(c, lv));
+    send_poll(c, lv, poll_size(c, lv, now));
 }
 
 /* The sense timer: by now the sender should be keyed.  Silence means it never
