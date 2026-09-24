@@ -1,4 +1,4 @@
-/* tests/sim/rs_erasure.h -- systematic Reed-Solomon erasure code over GF(256)
+/* datalink_arq/rs_erasure.h -- systematic Reed-Solomon erasure code over GF(256)
  *
  * A block is K data pieces of P bytes.  Pieces 0..K-1 ARE the data (systematic);
  * pieces K..K+R-1 are repair, each a Cauchy combination of all data pieces.

@@ -66,7 +66,7 @@ TEST_BINS = test_ring_buffer test_arq_protocol test_arq_timing test_arq_fsm \
             test_freedv_harq test_sock_wire test_virtual_clock test_watterson \
             test_mercury_prng test_bcast_file \
             test_ofdm_acq test_ui_status test_ui_devices test_ui_ptt_persist test_tx_pacing test_radio_port \
-            test_radio_io_frequency test_mfsk test_rs_erasure \
+            test_radio_io_frequency test_mfsk test_rs_erasure test_carousel \
 			test_message_store test_ui_history test_ws_protocol
 
 .PHONY: all test clean
@@ -146,14 +146,20 @@ test_tcp_interfaces: data_interfaces/test_tcp_interfaces.c $(UNITY_SRC) ../modem
 	    ../datalink_arq/arq_tnc.c ../common/shm_posix.c ../common/os_interop.c \
 	    ../common/mercury_modes.c $(LDFLAGS)
 
-# Reed-Solomon erasure code for the carousel ARQ prototype
-test_rs_erasure: sim/test_rs_erasure.c sim/rs_erasure.c sim/rs_erasure.h $(UNITY_SRC)
-	$(CC) $(CFLAGS) -Isim -o $@ $(filter %.c %.a %.o,$^) $(LDFLAGS)
+# Reed-Solomon erasure code of the carousel data plane
+test_rs_erasure: sim/test_rs_erasure.c ../datalink_arq/rs_erasure.c ../datalink_arq/rs_erasure.h $(UNITY_SRC)
+	$(CC) $(CFLAGS) -o $@ $(filter %.c %.a %.o,$^) $(LDFLAGS)
 
-# Prototype: erasure-coded carousel ARQ on the sim's channel (not run by `make
-# test`; a bench, like ab_bench):  ./carousel_bench <seed> <channel> [bidir]
-carousel_bench: sim/carousel_bench.c sim/rs_erasure.c sim/sim_channel.c $(ARQ_STUBS) \
-                ../datalink_arq/arq_protocol.c ../datalink_arq/arith.c ../common/virtual_clock.c
+# The carousel data plane on the sim's channel (not run by `make test`; a
+# bench, like ab_bench):  ./carousel_bench <seed> <channel> [bidir]
+CAROUSEL_SIM_SRC = sim/carousel_sim.c ../datalink_arq/carousel.c ../datalink_arq/rs_erasure.c \
+                   sim/sim_channel.c $(ARQ_STUBS) \
+                   ../datalink_arq/arq_protocol.c ../datalink_arq/arith.c ../common/virtual_clock.c
+carousel_bench: sim/carousel_bench.c $(CAROUSEL_SIM_SRC)
+	$(CC) $(CFLAGS) -Isim -I../modem/freedv -o $@ $(filter %.c %.a %.o,$^) $(LDFLAGS)
+
+# The carousel's invariants: completes, delivers intact, never keys over the peer
+test_carousel: sim/test_carousel.c $(CAROUSEL_SIM_SRC) $(UNITY_SRC)
 	$(CC) $(CFLAGS) -Isim -I../modem/freedv -o $@ $(filter %.c %.a %.o,$^) $(LDFLAGS)
 
 # Two-FSM ARQ simulation harness

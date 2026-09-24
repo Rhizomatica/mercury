@@ -1,4 +1,4 @@
-/* tests/sim/rs_erasure.c -- systematic Cauchy Reed-Solomon erasure code
+/* datalink_arq/rs_erasure.c -- systematic Cauchy Reed-Solomon erasure code
  *
  * Copyright (C) 2026 Rhizomatica
  * SPDX-License-Identifier: GPL-3.0-or-later
