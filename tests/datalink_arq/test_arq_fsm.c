@@ -1986,6 +1986,50 @@ void test_irs_takes_the_turn_it_asked_for_despite_announced_more(void)
         "asked for the turn in the ACK, then sat idle");
 }
 
+/* Bench run 16: right after a handover the new sender is about to key its
+ * first DATA, and a TURN_REQ for freshly written data keyed 250 ms into that
+ * burst -- too early for any decoder to have synced.  A handover arms the same
+ * hold as an announcement. */
+void test_no_turn_req_right_after_yielding_to_a_has_data_ack(void)
+{
+    goto_connected();
+    goto_wait_ack();
+    arq_event_t ev = make_event(ARQ_EV_RX_ACK);   /* the peer wants the floor */
+    ev.session_id = sess.session_id;
+    ev.ack_seq    = sess.tx_seq;
+    ev.rx_flags   = ARQ_FLAG_HAS_DATA;
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(ARQ_DFLOW_IDLE_IRS, sess.dflow_state);
+
+    fake_tx_backlog_fake.return_val = 256;        /* our host writes more */
+    RESET_FAKE(fake_send_tx_frame);
+    ev = make_event(ARQ_EV_APP_DATA_READY);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, fake_send_tx_frame_fake.call_count,
+        "TURN_REQ keyed into the first burst of the sender we just yielded to");
+    TEST_ASSERT_EQUAL_INT(ARQ_DFLOW_IDLE_IRS, sess.dflow_state);
+}
+
+void test_no_turn_req_right_after_granting_the_turn(void)
+{
+    goto_idle_iss();
+    arq_event_t ev = make_event(ARQ_EV_RX_TURN_REQ);
+    ev.session_id = sess.session_id;
+    arq_fsm_dispatch(&sess, &ev);
+    ev = make_event(ARQ_EV_TIMER_ACK);               /* TURN_ACK */
+    arq_fsm_dispatch(&sess, &ev);
+    ev = make_event(ARQ_EV_TX_COMPLETE);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(ARQ_DFLOW_IDLE_IRS, sess.dflow_state);
+
+    fake_tx_backlog_fake.return_val = 256;
+    RESET_FAKE(fake_send_tx_frame);
+    ev = make_event(ARQ_EV_APP_DATA_READY);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, fake_send_tx_frame_fake.call_count,
+        "TURN_REQ keyed into the first burst of the sender we just granted");
+}
+
 void test_simultaneous_turn_req_one_side_yields(void)
 {
     /* Local "SRC1" vs remote "DST1": strcmp > 0 is rank 1, which yields. */
@@ -2528,6 +2572,8 @@ int main(void)
     RUN_TEST(test_irs_holds_turn_req_while_the_iss_announced_more);
     RUN_TEST(test_has_data_without_capability_is_ignored);
     RUN_TEST(test_irs_takes_the_turn_it_asked_for_despite_announced_more);
+    RUN_TEST(test_no_turn_req_right_after_yielding_to_a_has_data_ack);
+    RUN_TEST(test_no_turn_req_right_after_granting_the_turn);
     RUN_TEST(test_simultaneous_turn_req_one_side_yields);
     RUN_TEST(test_simultaneous_turn_req_other_side_holds);
     RUN_TEST(test_disconnect_drain_timeout_forces_teardown);

@@ -1137,15 +1137,33 @@ static void note_peer_data(arq_session_t *sess, const arq_event_t *ev, bool new_
  * retry and an ACK-timeout retransmission 0.33 s apart).  Asking in our ACK
  * instead (HAS_DATA) costs nothing: the ISS yields to it.
  *
- * Bounded, so a stale announcement cannot mute us: past one ACK timeout plus
- * one frame of the peer's mode (and margin), a retransmission would have
- * arrived by now, so the ISS has stopped (its host aborted, say) and a
- * TURN_REQ is the right move again. */
+ * Bounded, so a stale announcement cannot mute us.  The hold must end AFTER
+ * a retransmission would have finished, not near its start: its expiry is
+ * itself a keying decision, and one landing as the ISS re-keys is the very
+ * collision the hold exists to prevent (the first version, one ACK timeout
+ * plus one frame, did exactly that after a handover: the new sender's first
+ * DATA starts a post-ACK guard later, and a lost one comes back one ACK
+ * timeout, one frame and up to a retry stagger after that).  So: one ACK
+ * timeout, two frames (first DATA and its retransmission), the post-ACK
+ * guard, and margin for the stagger.  Past that the ISS has stopped (its host
+ * aborted, say) and a TURN_REQ is the right move again. */
 static uint64_t peer_still_sending_until(const arq_session_t *sess)
 {
     const arq_mode_timing_t *tm = arq_protocol_mode_timing(sess->peer_tx_mode);
-    float s = tm ? tm->ack_timeout_s + tm->frame_duration_s : 20.0f;
-    return sess->peer_more_data_ms + (uint64_t)(s * 1000.0f) + ARQ_PEER_MORE_MARGIN_MS;
+    float s = tm ? tm->ack_timeout_s + 2.0f * tm->frame_duration_s : 25.0f;
+    return sess->peer_more_data_ms + (uint64_t)(s * 1000.0f) +
+           (uint64_t)ARQ_ISS_POST_ACK_GUARD_MS + ARQ_PEER_MORE_MARGIN_MS;
+}
+
+/* We just handed the floor over (yielded to the peer's HAS_DATA ACK, or sent
+ * TURN_ACK): the peer is about to key its first DATA.  Treat that exactly
+ * like an announcement -- on air (bench run 16) new application data arrived
+ * right after such a handover and the TURN_REQ keyed 250 ms into the new
+ * sender's first burst, before any decoder could sync on it. */
+static void expect_peer_to_send(arq_session_t *sess)
+{
+    sess->peer_more_data    = true;
+    sess->peer_more_data_ms = time_now_ms();
 }
 
 static bool peer_still_sending(const arq_session_t *sess)
@@ -2226,6 +2244,7 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
             {
                 if (g_timing) arq_timing_record_turn(g_timing, false, turn_reason);
                 enter_idle_irs(sess);
+                expect_peer_to_send(sess);
             }
             else
             {
@@ -2965,7 +2984,10 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
         if (ev->id == ARQ_EV_TIMER_ACK)
             send_ctrl_frame(sess, ARQ_SUBTYPE_TURN_ACK);
         else if (ev->id == ARQ_EV_TX_COMPLETE)
+        {
             enter_idle_irs(sess);
+            expect_peer_to_send(sess);
+        }
         break;
 
     case ARQ_DFLOW_KEEPALIVE_TX:
