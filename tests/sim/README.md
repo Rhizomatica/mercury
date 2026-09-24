@@ -168,6 +168,7 @@ and retry decisions.
 `carousel_bench <seed> <channel> [bidir]` runs a different ARQ design on the
 same channel model, airtime table and half-duplex medium as `ab_bench`, so the
 numbers compare directly.  It is a protocol simulation, not Mercury code.
+`CAR_TRACE=1` prints every keydown.
 
 **Design** (chosen by measurement; each rejected alternative is noted in the
 code where it was tried):
@@ -176,48 +177,64 @@ code where it was tried):
   coded over GF(256) (`rs_erasure.c`, systematic Cauchy: the first K pieces are
   the data, any K of them decode).  24-byte pieces fit every mode, so a block
   never has to be re-encoded when the mode drops.
-- A round is one keydown of back-to-back frames.  It carries pieces of up to 8
-  open blocks at once (oldest first, each with a margin for the loss seen), so
-  a fast mode fills its keydown instead of paying a feedback turnaround every
-  two or three frames.
-- After each round the receiver sends ONE feedback frame: the window base and
-  what each block still needs (or "not seen"), the loss, "I have data", and the
-  round it answers.  No sequence numbers and no per-frame ACKs.
-- Link adaptation picks the level with the best measured goodput (raw rate x
-  delivered fraction, from decayed frame counts); probes only rungs that could
-  beat it; a level's round is capped at one frame more than it recently
-  delivered; a mode losing 4 frames in a row is dead, and caps the modes above
-  it unless they have delivered recently themselves; dead modes are re-probed
-  after 60 s, doubling to 8 min.
-- A sender starts on the rung the peer's reported SNR supports, mapped as trunk
+- **The receiver drives.**  Mercury's modem runs a control decoder (DATAC16)
+  and one payload decoder bound to the mode it expects; nothing on the air says
+  which mode a burst is in.  So the receiver chooses the mode, and it is also
+  the side that sees what arrives.  It sends a POLL in DATAC16: the window base,
+  what each open block still needs, and "send me up to N frames in mode M".
+- The sender answers with a round, one keydown of up to N bursts carrying
+  pieces of up to 8 open blocks (oldest first, with a margin for the loss the
+  poll reports), and keys only when polled.  Every frame says how many follow,
+  so the receiver knows when the round ends and polls again.  No sequence
+  numbers and no per-frame ACKs.
+- Only the receiver keeps a round timer, so the sides cannot race.  If the
+  sender is not on the air by the time it should be, the poll was lost: poll
+  again at once, and do not score the mode for it (a second silent poll in a
+  row is scored, so a mode too weak even to sync is still found dead).  If it
+  is on the air but nothing decodes, poll when its carrier drops.
+- Link adaptation, run by the receiver on what it received: the level with the
+  best measured goodput (raw rate x delivered fraction, from decayed frame
+  counts); probes only rungs that could beat it; a level's round is capped at
+  one frame more than it recently delivered; a mode losing 4 frames in a row is
+  dead, and caps the modes above it unless they have delivered recently
+  themselves; dead modes are re-probed after 60 s, doubling to 8 min.
+- A direction starts on the rung its measured SNR supports, mapped as trunk
   enters a mode from DATAC15 (threshold plus hysteresis).  It is only a start:
   the first round on it is a one-frame probe and measured goodput takes over.
-- The turn: a sender keeps it for at most a 120 s quantum while the peer has
-  data, then yields at a block boundary.  Open blocks are only suspended.
+  In Mercury the connect measures both directions, and the ACCEPT is the first
+  poll.
+- The turn: the receiver takes it with a HANDOVER poll that also announces its
+  own first round, sent in the same keydown (the peer rebinds its payload
+  decoder in the gap, as #310 does), after at most a 120 s quantum when both
+  have data.  Open blocks are only suspended.
 
 **Results**, both stations sending 8 KB, against trunk (e06e00e + #321) with the
 sim's carrier sense on (`sim_set_carrier_sense(s, true, 400)`; without it every
 listen-before-talk check in the FSM is inert).  Seeds 1-20 were used while
-tuning; seeds 21-40 are held out:
+tuning; seeds 21-40 are held out.  "Omniscient" is the first prototype, whose
+receiver decoded every mode and whose sender chose them:
 
-| channel         | trunk 1-20 / 21-40      | carousel 1-20 / 21-40   |
-|-----------------|-------------------------|-------------------------|
-| clean           | 231 / 234 s             | 124 / 125 s             |
-| 10 %            | 275 / 294 s             | 141 / 152 s             |
-| 25 %            | 416 / 450 s             | 209 / 230 s             |
-| cliff 3         | 1373 / 1380 s           | 1140 / 1189 s           |
-| cliff 10        | 310 / 309 s             | 249 / 247 s             |
-| NVIS            | 0/20 in 3 h (1 KB, then no progress) | 5100 / 5392 s |
-| fade 3 dB, 0.5 Hz  | 0/20 (11 KB of 16)   | 1532 / 1464 s           |
-| fade 8 dB, 0.5 Hz  | 728 / 718 s          | 575 / 590 s             |
-| fade 8 dB, 1 Hz    | 750 / 721 s (18/20)  | 589 / 563 s             |
-| fade 15 dB, 0.1 Hz | 261 / 274 s          | 220 / 213 s             |
-| fade 15 dB, 1 Hz   | 243 / 241 s          | 206 / 228 s             |
-| fade 25 dB, 1 Hz   | 179 / 182 s          | 105 / 109 s             |
+| channel            | trunk 1-20 / 21-40    | omniscient      | receiver-driven |
+|--------------------|-----------------------|-----------------|-----------------|
+| clean              | 231 / 234 s           | 124 / 125 s     | 121 / 121 s     |
+| 10 %               | 275 / 294 s           | 141 / 152 s     | 136 / 143 s     |
+| 25 %               | 416 / 450 s           | 209 / 230 s     | 193 / 209 s     |
+| cliff 3            | 1373 / 1380 s         | 1140 / 1189 s   | 1162 / 1133 s   |
+| cliff 10           | 310 / 309 s           | 249 / 247 s     | 253 / 251 s     |
+| NVIS               | 0/20 (1 KB, then no progress) | 5100 / 5392 s | 4196 / 4411 s |
+| fade 3 dB, 0.5 Hz  | 0/20 (11 KB of 16)    | 1532 / 1464 s   | 1519 / 1475 s   |
+| fade 8 dB, 0.5 Hz  | 728 / 718 s           | 575 / 590 s     | 496 / 556 s     |
+| fade 8 dB, 1 Hz    | 750 / 721 s (18/20)   | 589 / 563 s     | 530 / 525 s     |
+| fade 15 dB, 0.1 Hz | 261 / 274 s           | 220 / 213 s     | 223 / 208 s     |
+| fade 15 dB, 1 Hz   | 243 / 241 s           | 206 / 228 s     | 211 / 219 s     |
+| fade 25 dB, 1 Hz   | 179 / 182 s           | 105 / 109 s     | 102 / 106 s     |
 
 Every carousel run completes (NVIS and fade 3 dB need more than the default
 30-minute `LIMIT_MS`: build with `-DLIMIT_MS='(8ULL*3600*1000)'`), with no
 collisions and no corruption; trunk has 35-164 collisions per 20 runs.
+Rounds are sent as separate bursts back to back; a gap between them
+(`-DBURST_GAP_MS`) of 300 ms costs 1-3 %, of 1 s 5-11 %.  The 30 s keydown cap
+(`-DMAX_KEYDOWN_MS`) makes no difference between 15 and 60 s at 8 KB.
 
 What decided it, in the order it was found:
 
@@ -240,3 +257,8 @@ What decided it, in the order it was found:
   hint gives the carousel the same information and is 30-45 % faster on the
   clean and flat-loss channels too; NVIS, where the 10 dB reading misleads,
   pays 1-5 % for it.
+- **The receiver drives**, forced by the modem (one payload decoder, bound in
+  advance).  At first a lost poll cost a whole round's window of silence (25 %
+  loss: 258/390 s against the omniscient 209/230 s); re-polling when the sender
+  is not on the air recovered it and more.  A window timer then collided with a
+  repeated handover (NVIS, 2 collisions); polling on carrier drop removed that.
