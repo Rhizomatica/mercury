@@ -51,11 +51,13 @@
 #define GUARD_MS         ARQ_CHANNEL_GUARD_MS_DEFAULT
 #define ISS_GUARD_MS     ARQ_ISS_POST_ACK_GUARD_MS_DEFAULT
 #define CHAIN_GAP_MS     ARQ_ACK_DATA_GAP_MS   /* poll -> first burst, one keydown */
-/* Between the bursts of a round.  DATAC15 misses the next burst without it
- * (burst_train_probe: 39/120 at -2 dB with no gap, 120/120 with 100 ms): its
- * decoder clears its buffer after each packet and needs audio before it can
- * see the next preamble. */
-#define BURST_GAP_MS     100
+/* Between the bursts of a round (utils/burst_train_probe).  With no gap the
+ * payload decoder misses bursts after the first: DATAC15 decoded 72/120 at
+ * -5 dB AWGN against 120/120 alone, and DATAC3 and QAM16C2 lost frames under
+ * fading.  At 100 ms every mode matched isolated bursts, except QAM16C2 on
+ * ITU moderate fading, which still lost 6 % (297/360 against 316) and needs
+ * 200 ms (324/328).  Gap is airtime: 200 ms everywhere cost up to 7 % on the
+ * sim's 8 dB fading channel. */
 #define WINDOW_MARGIN_MS 1000     /* a round that never came: re-poll after this */
 #define SENSE_MS         1400     /* after keying, the sender is heard by now */
 #define CARRIER_CHECK_MS 250      /* carrier re-checked this often */
@@ -69,6 +71,7 @@ static const int LADDER[CAR_NLEVELS] = {
     FREEDV_MODE_DATAC1, FREEDV_MODE_DATAC17, FREEDV_MODE_QAM16C2,
 };
 
+static uint32_t burst_gap_ms(int lv) { return LADDER[lv] == FREEDV_MODE_QAM16C2 ? 200 : 100; }
 int car_level_mode(int level) { return LADDER[level]; }
 bool car_is_sending(const car_t *c) { return c->sending; }
 bool car_is_idle(const car_t *c) { return c->idle; }
@@ -94,7 +97,7 @@ static uint64_t level_air(int lv) { return mode_air(LADDER[lv]); }
 static int pieces_per_frame(int lv) { return (mode_payload(LADDER[lv]) - FRAME_HDR - SEG_HDR) / CAR_PIECE; }
 static uint64_t round_air(int lv, int n)
 {
-    return (uint64_t)n * level_air(lv) + (uint64_t)(n > 0 ? n - 1 : 0) * BURST_GAP_MS;
+    return (uint64_t)n * level_air(lv) + (uint64_t)(n > 0 ? n - 1 : 0) * burst_gap_ms(lv);
 }
 
 /* ---- messages ------------------------------------------------------------ */
@@ -336,7 +339,7 @@ static int build_round(car_t *c, int lv, int n, uint32_t poll_id, car_frame_t *f
         car_frame_t *x = &fr[nf];
         memset(x->bytes, 0, (size_t)room);
         x->mode = mode; x->len = (size_t)room;
-        x->gap_ms = nf ? BURST_GAP_MS : 0;
+        x->gap_ms = nf ? burst_gap_ms(lv) : 0;
         int pos = FRAME_HDR, nseg = 0;
         uint8_t last_block = 0;
         /* Fill the frame oldest block first; a block's pieces go on past its
@@ -766,7 +769,7 @@ static void on_data(car_t *c, uint64_t now, const msg_t *m, int lv)
         c->round_frames = c->round_seen + m->left;   /* the frames say how many there are */
     }
     deliver_in_order(c);
-    arm_poll(c, now + (uint64_t)m->left * (level_air(lv) + BURST_GAP_MS) + TAIL_MS);
+    arm_poll(c, now + (uint64_t)m->left * (level_air(lv) + burst_gap_ms(lv)) + TAIL_MS);
 }
 
 static void on_ctl(car_t *c, uint64_t now, const msg_t *m)
