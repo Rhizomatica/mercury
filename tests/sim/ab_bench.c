@@ -1,7 +1,9 @@
 /* Deterministic ARQ throughput/integrity bench over a channel matrix.
  *
  *   ab_bench <seed> <channel> [bidir]
- *   channel := clean | awgn:<per> | cliff:<snr_db> | nvis
+ *   channel := clean | awgn:<per> | cliff:<snr_db> | nvis | fade:<snr_db>:<doppler_hz>
+ * SIM_CS=<acq_ms> in the environment turns the sim's carrier sense on (bidir),
+ * without which the FSM's listen-before-talk checks are inert.
  * bidir: both stations queue 8 KB at once, on a half-duplex medium, and the
  * virtual time until BOTH transfers complete is printed (done_ms) -- the turn
  * handover is where that is won or lost.
@@ -75,6 +77,12 @@ int main(int argc, char **argv)
         sim_set_snr(s, atof(chan_spec + 6));
     else if (strcmp(chan_spec, "nvis") == 0)
         sim_set_mode_per(s, NVIS, (int)(sizeof(NVIS)/sizeof(NVIS[0])), 10.0f);
+    else if (strncmp(chan_spec, "fade:", 5) == 0)
+    {
+        double m = 0, d = 0.5;
+        sscanf(chan_spec + 5, "%lf:%lf", &m, &d);
+        sim_set_fading(s, m, d);
+    }
     /* "clean" leaves the 2% floor. */
 
     static uint8_t blob[8192], blob_b[8192];
@@ -90,6 +98,8 @@ int main(int argc, char **argv)
     {
         static uint8_t tmp[65536];
         sim_set_half_duplex(s, true);
+        if (getenv("SIM_CS"))
+            sim_set_carrier_sense(s, true, (uint32_t)atoi(getenv("SIM_CS")));
         sim_endpoint_queue_tx(sim_b(s), blob_b, sizeof(blob_b));
         sim_inject(s, sim_b(s), &dready);
         uint64_t t0 = sim_clock_now(), done_ms = 0;

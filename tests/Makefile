@@ -165,6 +165,14 @@ test_arq_sim: sim/test_arq_sim.c $(UNITY_SRC) $(ARQ_STUBS) $(SIM_SRC) \
               ../datalink_arq/arq_timing.c ../datalink_arq/arith.c
 	$(CC) $(CFLAGS) -Isim -I../modem/freedv -o $@ $(filter %.c %.a %.o,$^) $(LDFLAGS)
 
+# Deterministic A/B bench (not part of `make test`):
+#   SIM_CS=400 ./ab_bench <seed> <channel> [bidir]
+ab_bench: sim/ab_bench.c $(ARQ_STUBS) $(SIM_SRC) \
+          ../datalink_arq/arq_fsm.c ../common/virtual_clock.c \
+          ../datalink_arq/arq_protocol.c \
+          ../datalink_arq/arq_timing.c ../datalink_arq/arith.c
+	$(CC) $(CFLAGS) -Isim -I../modem/freedv -o $@ $(filter %.c %.a %.o,$^) $(LDFLAGS)
+
 # arq_conn accessor correctness tests (single-threaded; locking verified by TSan)
 test_arq_conn: datalink_arq/test_arq_conn.c $(UNITY_SRC) \
                datalink_arq/arq_conn_accessors.c

@@ -48,6 +48,9 @@ void            sim_set_rx_snr(sim_t *s, float snr_db);
 /* Coherent fade: cliff-model channel SNR + delivered-frame SNR together. */
 void            sim_set_snr(sim_t *s, double snr_db);
 
+/* Rayleigh fading around mean_snr_db at doppler_hz (see sim_channel_set_fading). */
+void            sim_set_fading(sim_t *s, double mean_snr_db, double doppler_hz);
+
 /* Empirical per-mode erasure table (see sim_channel_set_mode_per) plus the
  * SNR stamped on delivered frames — models ISI-limited channels (e.g. NVIS
  * disturbed) where the SNR reads healthy while fast modes fail. */

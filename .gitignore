@@ -60,6 +60,7 @@ utils/broadcast_test
 # Test binaries
 tests/test_*
 tests/carousel_bench
+tests/ab_bench
 
 # Bench/scratch artifacts (never commit)
 tap-*.f64

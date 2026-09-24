@@ -334,6 +334,12 @@ void sim_set_snr(sim_t *s, double snr_db)
     s->rx_snr_db = (float)snr_db;
 }
 
+void sim_set_fading(sim_t *s, double mean_snr_db, double doppler_hz)
+{
+    sim_channel_set_fading(s->ch, mean_snr_db, doppler_hz);
+    s->rx_snr_db = (float)mean_snr_db;   /* stamped on frames: the mean */
+}
+
 void sim_set_mode_per(sim_t *s, const sim_mode_per_t *table, int count,
                       float rx_snr_db)
 {

@@ -37,6 +37,11 @@ typedef struct { int freedv_mode; double per; } sim_mode_per_t;
 void           sim_channel_set_mode_per(sim_channel_t *ch,
                                         const sim_mode_per_t *table, int count);
 
+/* Time-varying channel: Rayleigh fading around mean_snr_db, independent per
+ * direction, at doppler_hz (fade rate); each frame is judged by its effective
+ * SNR against the mode cliffs.  Overrides the other models. */
+void           sim_channel_set_fading(sim_channel_t *ch, double mean_snr_db, double doppler_hz);
+
 uint32_t       sim_channel_airtime_ms(int freedv_mode, size_t frame_size);
 bool           sim_channel_schedule(sim_channel_t *ch, uint64_t now_ms,
                                      int dir, int freedv_mode, size_t frame_size,
