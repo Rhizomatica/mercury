@@ -102,9 +102,13 @@ ifneq ($(filter arm%,$(TARGET_MACHINE)),)
 ifeq ($(filter arm64%,$(TARGET_MACHINE)),)
   ATOMIC_LDFLAGS = -latomic
 endif
+endif
+# m68k is 32-bit with no native 64-bit atomics, so it needs libatomic for the
+# same reason as 32-bit ARM.  This used to live inside the arm% block above,
+# where it could never match (m68k is not arm) and m68k silently linked without
+# libatomic.
 ifneq ($(filter m68k%,$(TARGET_MACHINE)),)
   ATOMIC_LDFLAGS = -latomic
-endif
 endif
 
 # --- Optional TLS (wss://) for the UI web server ---
