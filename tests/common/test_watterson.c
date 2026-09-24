@@ -15,12 +15,33 @@
 #include <math.h>
 #include <stdlib.h>
 #include <stdint.h>
+#include <string.h>
 
 /* FNV-1a of the channel output for seed 1, two 1 Hz paths, No=-20 at 8 kHz.
  * Captured from the port that replaced rand() with mercury_prng, which was
  * verified byte-identical to the pre-port channel across three presets and
- * three noise levels. */
-#define GOLDEN_SEED1_HASH 0xB0B9513Cu
+ * three noise levels.  The hash is over the numeric bit-pattern of each float
+ * in a canonical byte order (see fnv1a_float below), so it names the same
+ * channel on little- and big-endian hosts alike. */
+#define GOLDEN_SEED1_HASH 0x4D5ADF92u
+
+/* FNV-1a over the 32-bit bit-pattern of f, most-significant byte first.
+ *
+ * Hashing the raw in-memory bytes of a float ties the golden checksum to the
+ * host byte order: the same IEEE-754 value is laid out LSB-first on little-
+ * endian and MSB-first on big-endian, so a big-endian build (e.g. Debian
+ * s390x) computed the same channel but a different hash and failed.  Reading
+ * the bytes out of the numeric value in a fixed order removes the dependency
+ * on how the host stores them while staying sensitive to a single changed bit. */
+static void fnv1a_float(uint32_t *sum, float f)
+{
+    uint32_t u;
+    memcpy(&u, &f, sizeof u);
+    for (int k = 3; k >= 0; k--) {
+        *sum ^= (unsigned char)(u >> (8 * k));
+        *sum *= 16777619u;
+    }
+}
 
 void setUp(void) {}
 void tearDown(void) {}
@@ -141,14 +162,12 @@ void test_a_pinned_seed_reproduces_a_fixed_realisation(void)
     }
     watterson_process(&w, s, n);
 
-    /* FNV-1a over the raw sample bytes: sensitive to a single changed bit. */
+    /* FNV-1a over each sample's float bit-patterns: sensitive to a single
+     * changed bit, independent of host byte order (see fnv1a_float). */
     sum = 2166136261u;
     for (int i = 0; i < n; i++) {
-        const unsigned char *b = (const unsigned char *)&s[i];
-        for (size_t k = 0; k < sizeof(COMP); k++) {
-            sum ^= b[k];
-            sum *= 16777619u;
-        }
+        fnv1a_float(&sum, s[i].real);
+        fnv1a_float(&sum, s[i].imag);
     }
     free(s);
 
