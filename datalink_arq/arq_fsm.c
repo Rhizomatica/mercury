@@ -148,6 +148,12 @@ void arq_fsm_init(arq_session_t *sess)
     sess->olla_offset_db = 0.0f;
 }
 
+void arq_fsm_release(arq_session_t *sess)
+{
+    free(sess->car);
+    sess->car = NULL;
+}
+
 int arq_fsm_timeout_ms(const arq_session_t *sess, uint64_t now)
 {
     if (sess->deadline_ms == UINT64_MAX) return INT_MAX;

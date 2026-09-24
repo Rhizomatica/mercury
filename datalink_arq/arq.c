@@ -1064,6 +1064,7 @@ int arq_init(size_t frame_size, int mode)
     {
         HLOGE(LOG_COMP, "Failed to start event loop thread");
         arq_channel_bus_dispose(&g_bus);
+    arq_fsm_release(&g_sess);
         return -1;
     }
 

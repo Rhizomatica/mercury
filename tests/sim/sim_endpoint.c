@@ -63,7 +63,12 @@ sim_endpoint_t *sim_endpoint_create(const char *my_call, const char *peer_call)
     return ep;
 }
 
-void sim_endpoint_destroy(sim_endpoint_t *ep) { free(ep); }
+void sim_endpoint_destroy(sim_endpoint_t *ep)
+{
+    if (!ep) return;
+    arq_fsm_release(&ep->sess);
+    free(ep);
+}
 
 void sim_endpoint_queue_tx(sim_endpoint_t *ep, const uint8_t *data, size_t len)
 {

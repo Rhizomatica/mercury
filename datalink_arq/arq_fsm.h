@@ -458,6 +458,9 @@ void arq_fsm_set_timing(arq_timing_ctx_t *timing);
  */
 void arq_fsm_init(arq_session_t *sess);
 
+/* Free what arq_fsm_init allocated. */
+void arq_fsm_release(arq_session_t *sess);
+
 /**
  * @brief Dispatch an event through both FSM levels.
  *
