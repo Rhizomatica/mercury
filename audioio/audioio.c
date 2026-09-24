@@ -905,6 +905,7 @@ static const char *sock_resolve_path(void)
 #ifndef _WIN32
 
 #include <arpa/inet.h>
+#include <ifaddrs.h>
 #include <net/if.h>
 #include <netinet/in.h>
 #include <poll.h>
@@ -958,6 +959,31 @@ static bool rtp_parse_dev(const char *dev, const char *def_group, struct in_addr
     return inet_pton(AF_INET, buf, group) == 1 && IN_MULTICAST(ntohl(group->s_addr));
 }
 
+/* IPv4 address of iface (lo -> 127.0.0.1).  struct ip_mreq and
+ * IP_MULTICAST_IF take the interface by address, which unlike ip_mreqn's
+ * ifindex works on Linux, macOS and the BSDs alike. */
+static bool rtp_iface_addr(const char *iface, struct in_addr *addr)
+{
+    struct ifaddrs *ifs = NULL;
+    bool found = false;
+
+    if (!strcmp(iface, "lo") || !strcmp(iface, "lo0"))
+    {
+        addr->s_addr = htonl(INADDR_LOOPBACK);
+        return true;
+    }
+    if (getifaddrs(&ifs) != 0)
+        return false;
+    for (struct ifaddrs *i = ifs; i && !found; i = i->ifa_next)
+        if (i->ifa_addr && i->ifa_addr->sa_family == AF_INET && !strcmp(i->ifa_name, iface))
+        {
+            *addr = ((struct sockaddr_in *) i->ifa_addr)->sin_addr;
+            found = true;
+        }
+    freeifaddrs(ifs);
+    return found;
+}
+
 static int rtp_open_rx(struct in_addr group, const char *iface)
 {
     int fd = socket(AF_INET, SOCK_DGRAM, 0), one = 1;
@@ -970,8 +996,9 @@ static int rtp_open_rx(struct in_addr group, const char *iface)
     /* Bind to the group, not INADDR_ANY: the TX group uses the same port. */
     struct sockaddr_in sa = { .sin_family = AF_INET, .sin_port = htons(RTP_WIRE_DATA_PORT),
                               .sin_addr = group };
-    struct ip_mreqn m = { .imr_multiaddr = group, .imr_ifindex = (int) if_nametoindex(iface) };
-    if (bind(fd, (struct sockaddr *) &sa, sizeof(sa)) < 0 ||
+    struct ip_mreq m = { .imr_multiaddr = group };
+    if (!rtp_iface_addr(iface, &m.imr_interface) ||
+        bind(fd, (struct sockaddr *) &sa, sizeof(sa)) < 0 ||
         setsockopt(fd, IPPROTO_IP, IP_ADD_MEMBERSHIP, &m, sizeof(m)) < 0)
     {
         HLOGE("audio-rtp", "listen on %s,%s: %s", inet_ntoa(group), iface, strerror(errno));
@@ -986,15 +1013,14 @@ static int rtp_open_tx(struct in_addr group, const char *iface)
     int fd = socket(AF_INET, SOCK_DGRAM, 0);
     if (fd < 0)
         return -1;
-    bool lo = !strcmp(iface, "lo");
+    bool lo = !strcmp(iface, "lo") || !strcmp(iface, "lo0");
     unsigned char ttl = lo ? 0 : 1, loop = 1;
-    struct ip_mreqn m = { .imr_multiaddr = group, .imr_ifindex = (int) if_nametoindex(iface) };
-    m.imr_address.s_addr = htonl(lo ? INADDR_LOOPBACK : INADDR_ANY);
+    struct in_addr ifaddr;
     fcntl(fd, F_SETFL, O_NONBLOCK);
-    if (!m.imr_ifindex ||
+    if (!rtp_iface_addr(iface, &ifaddr) ||
         setsockopt(fd, IPPROTO_IP, IP_MULTICAST_TTL, &ttl, sizeof(ttl)) < 0 ||
         setsockopt(fd, IPPROTO_IP, IP_MULTICAST_LOOP, &loop, sizeof(loop)) < 0 ||
-        setsockopt(fd, IPPROTO_IP, IP_MULTICAST_IF, &m, sizeof(m)) < 0)
+        setsockopt(fd, IPPROTO_IP, IP_MULTICAST_IF, &ifaddr, sizeof(ifaddr)) < 0)
     {
         HLOGE("audio-rtp", "send on %s,%s: %s", inet_ntoa(group), iface, strerror(errno));
         close(fd);
