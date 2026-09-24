@@ -174,18 +174,38 @@ numbers compare directly.  It is a protocol simulation, not Mercury code:
 - No sequence numbers and no per-frame ACKs: duplicates are harmless, a lost
   feedback costs one extra round, and the turn hands over at block boundaries.
 
-First results, both stations sending 8 KB, 20 seeds each (version 4):
+Results, both stations sending 8 KB, against trunk (e06e00e + #321) with the
+sim's carrier sense on (`sim_set_carrier_sense(s, true, 400)`: without it every
+listen-before-talk check in the FSM is inert, and trunk looked far worse).
+Seeds 1-20 were used while tuning; seeds 21-40 are held out:
 
-| channel  | mercuryv2          | mfsk-margin + fixes | carousel          |
-|----------|--------------------|---------------------|-------------------|
-| clean    | 20/20 260 s, 153 c | 20/20 203 s, 0 c    | 20/20 228 s, 0 c  |
-| 10 %     | 19/20 323 s, 247 c | 20/20 475 s, 35 c   | 20/20 260 s, 0 c  |
-| 25 %     | 16/20 700 s, 513 c | 1/20, 416 c         | 7/20 485 s, 0 c   |
-| cliff 3  | 20/20 1562 s       | 16/20 1673 s        | 17/20 1647 s, 0 c |
-| cliff 10 | 20/20 333 s        | 20/20 350 s         | 20/20 388 s, 0 c  |
+| channel  | trunk, 1-20        | carousel, 1-20   | trunk, 21-40       | carousel, 21-40  |
+|----------|--------------------|------------------|--------------------|------------------|
+| clean    | 20/20 231 s, 38 c  | 20/20 216 s, 0 c | 20/20 233 s, 38 c  | 20/20 204 s, 0 c |
+| 10 %     | 20/20 274 s, 35 c  | 20/20 255 s, 0 c | 20/20 293 s, 39 c  | 20/20 247 s, 0 c |
+| 25 %     | 20/20 416 s, 50 c  | 20/20 446 s, 0 c | 20/20 450 s, 74 c  | 20/20 425 s, 0 c |
+| cliff 3  | 20/20 1372 s       | 20/20 1281 s     | 20/20 1380 s       | 20/20 1281 s     |
+| cliff 10 | 20/20 310 s        | 20/20 347 s      | 20/20 308 s        | 20/20 349 s      |
+| NVIS     | 0/20; 1007 B in 30 min | 0/20; 4953 B in 30 min | | |
 
-(c = collisions.)  No collisions and no corruption in any carousel run; what
-still loses is the link adaptation.  Version 1 had no memory and was perfect on
-flat loss but oscillated into dead modes on the cliff model; the ceiling added
-since fixes the cliff and trips on flat-loss noise at 25 %.  That, not the
-coding, is the open design problem.
+(c = collisions; NVIS shows the mean bytes delivered, both directions, when no
+run finishes.)  No collisions and no corruption in any carousel run.
+
+**Link adaptation** is what decided it.  With the mode pinned to the best one
+per channel the carousel already won on the cliffs (cliff 3: 1044 s on DATAC3;
+cliff 10: 267 s on DATAC1), so the work went into finding that mode:
+
+- goodput per level, measured: raw rate times delivered fraction.  Flat loss
+  hits every mode alike, so the fastest wins; past a cliff a mode delivers
+  nothing and drops out;
+- estimates from decayed frame counts, not single rounds (a quarter of
+  one-frame probes vanish at 25 % flat loss);
+- a hard, run-based dead verdict (4 frames lost in a row, none delivered) sets
+  a ceiling: faster modes need more SNR, so above a dead mode everything is
+  dead.  It is re-probed with doubling backoff.  One estimator could not both
+  climb and avoid dead modes when raw rates span 60x;
+- a level earns its round size: at most one frame more than it recently
+  delivered, so a probe is one frame and a dead mode never costs more.
+
+Still open: cliff 10 is ~13 % slower than trunk (the dead fast modes above
+DATAC1 keep costing re-probes), and 25 % flat loss is mixed across seed sets.

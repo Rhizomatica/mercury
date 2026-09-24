@@ -122,8 +122,14 @@ typedef struct {
     uint8_t  rx[XFER_BYTES + 64]; size_t rx_len;
     bool     sender;                 /* holds the turn */
     int      level;                  /* my TX ladder level */
-    int      ceiling;                /* highest level allowed (learned cliff) */
-    int      clean_rounds;           /* consecutive low-loss rounds, to re-probe */
+    int      round_level;            /* level the outstanding round went out on */
+    double   lv_sent[NLADDER];       /* frames sent on each level (decayed)  */
+    double   lv_lost[NLADDER];       /* ...and lost (decayed)                */
+    int      lv_rounds[NLADDER];     /* rounds measured on each level (0 = unknown) */
+    int      round_frames;           /* frames in the outstanding round      */
+    int      lv_dead_run[NLADDER];   /* frames lost in a row, none delivered */
+    uint32_t lv_round_at[NLADDER];   /* round_id of the last measurement */
+    int      lv_backoff[NLADDER];    /* rounds before re-probing this level */
     int      timeouts;               /* consecutive rounds with no feedback */
     double   loss_est;
     /* sender block */
@@ -206,9 +212,115 @@ static void piece_bytes(station_t *s, int idx, uint8_t *out)
     rs_encode_repair(K, PIECE, d, idx - K, out);
 }
 
+/* ---- link adaptation: goodput, measured per level ------------------------ *
+ * The first version adapted on round-to-round advice plus a learned ceiling.
+ * With the mode pinned to the best one, this carousel beats the stop-and-wait
+ * ARQ on the cliff channels and ties it at 25 % flat loss; adaptive, it lost
+ * 13 of 20 runs at 25 % and was 20-50 % slower on the cliffs.  The ceiling
+ * tripped on flat-loss noise and never came back, and the advice climbed into
+ * dead modes.
+ *
+ * So choose on what each level actually delivers.  With erasure coding every
+ * piece received is useful, so a level's goodput is simply its raw rate times
+ * the fraction that gets through.  Flat loss hits every mode alike, so the
+ * fastest wins; past a cliff a mode delivers nothing and drops out by itself.
+ * Above the best, the first rung that COULD beat it (its raw rate exceeds the
+ * best's measured goodput) is probed with a one-frame round when it has never
+ * been measured or its measurement is stale -- a probe costs one frame, a
+ * wrong climb costs a round.  Only rungs that could win: the ladder is not
+ * monotonic in rate (DATAC4 carries one 24-byte piece in 5.8 s, below
+ * DATAC15), and probing only the next rung stranded the sender under it. */
+#define PROBE_EVERY   8     /* rounds before a measured rung is re-probed...  */
+#define PROBE_MAX     64    /* ...doubling while it keeps coming back dead    */
+#define LV_DECAY      0.8   /* per measured round: memory of ~5 frames */
+#define DEAD_RUN      4     /* consecutive frames lost, none delivered: dead */
+
+static double level_rate(int lv)          /* raw piece bytes per ms of airtime */
+{
+    int mode = LADDER[lv];
+    return (double)(pieces_per_frame(mode) * PIECE) / (double)mode_air(mode);
+}
+
+/* Delivery estimated from frame counts, not from single rounds: at 25 % flat
+ * loss a quarter of one-frame probes vanish whole, and judging a level on one
+ * of them condemned a working mode.
+ *
+ * One estimator cannot both explore and avoid dead modes when raw rates span
+ * 60x: an optimistic prior kept a dead QAM16C2 (12x DATAC3's rate) outscoring
+ * a working DATAC3 on the cliff for 100+ rounds, and a pessimistic one never
+ * climbed on a clean channel.  So the two jobs are split, using what HF modes
+ * guarantee -- a faster mode needs more SNR, so above a dead mode everything is
+ * dead too:
+ *   - dead is a hard verdict: DEAD_RUN frames lost in a row with nothing
+ *     delivered (0.4 % by chance at 25 % flat loss; a decayed-sum test fired
+ *     on flat-loss runs and froze working modes out).  The lowest dead level
+ *     is a ceiling nothing at or above is chosen from, re-probed with backoff
+ *     to notice the channel improving;
+ *   - below it, selection uses (lost + 1/2) / (sent + 2), optimistic enough to
+ *     climb, and the earned round size bounds what any trial can cost. */
+static double level_delivery(const station_t *s, int lv)
+{
+    return 1.0 - (s->lv_lost[lv] + 0.5) / (s->lv_sent[lv] + 2.0);
+}
+
+static bool level_dead(const station_t *s, int lv)
+{
+    return s->lv_dead_run[lv] >= DEAD_RUN;
+}
+
+static void measure_level(station_t *s, int lv, double loss)
+{
+    s->lv_sent[lv] = LV_DECAY * s->lv_sent[lv] + s->round_frames;
+    s->lv_lost[lv] = LV_DECAY * s->lv_lost[lv] + s->round_frames * loss;
+    if (loss >= 1.0) s->lv_dead_run[lv] += s->round_frames;
+    else             s->lv_dead_run[lv] = 0;
+    s->lv_rounds[lv]++;
+    s->lv_round_at[lv] = s->round_id;
+    if (!s->lv_backoff[lv]) s->lv_backoff[lv] = PROBE_EVERY;
+    if (loss >= 0.9) {
+        if (s->lv_backoff[lv] < PROBE_MAX) s->lv_backoff[lv] *= 2;
+    } else {
+        s->lv_backoff[lv] = PROBE_EVERY;
+    }
+}
+
+static void choose_level(station_t *s)
+{
+    int ceil = NLADDER;
+    for (int lv = 0; lv < NLADDER; lv++)
+        if (level_dead(s, lv)) { ceil = lv; break; }
+    int best = -1;
+    double best_gp = -1.0;
+    for (int lv = 0; lv < ceil; lv++) {
+        if (!s->lv_rounds[lv]) continue;
+        double gp = level_rate(lv) * level_delivery(s, lv);
+        if (gp > best_gp) { best_gp = gp; best = lv; }
+    }
+    if (best < 0) { s->level = 0; return; }
+    /* Nothing measured gets through: go down to a rung not tried yet. */
+    if (best_gp <= 0.0) {
+        for (int lv = best - 1; lv >= 0; lv--)
+            if (!s->lv_rounds[lv]) { s->level = lv; return; }
+    }
+    for (int up = best + 1; up < NLADDER; up++) {
+        if (level_rate(up) <= best_gp)
+            continue;                   /* cannot win even with no loss */
+        /* At or above the ceiling only a stale re-probe, with backoff. */
+        if (up >= ceil && s->round_id - s->lv_round_at[up] < (uint32_t)s->lv_backoff[up])
+            break;
+        if (!s->lv_rounds[up] || s->round_id - s->lv_round_at[up] >= (uint32_t)s->lv_backoff[up]) {
+            s->level = up;          /* a probe: its earned round is one frame */
+            return;
+        }
+        break;                          /* measured and fresh: the argmax decided */
+    }
+    s->level = best;
+}
+
 static void send_round(station_t *s)
 {
     if (!s->blk_active) new_block(s);
+    s->round_level = s->level;
     int mode = LADDER[s->level];
     int ppf = pieces_per_frame(mode);
     double margin = s->loss_est * 1.3 + 0.05;
@@ -216,9 +328,15 @@ static void send_round(station_t *s)
     int frames = (want + ppf - 1) / ppf;
     int cap = (int)(MAX_KEYDOWN_MS / mode_air(mode));
     if (ppf < 10 && cap > 3) cap = 3;            /* slow rungs: short probing rounds */
+    /* A level earns its round size: at most one frame more than it has
+     * recently delivered (decayed), so a probe is one frame, a proven mode
+     * gets full rounds, and a dead one never costs more than a frame. */
+    int earned = 1 + (int)(s->lv_sent[s->level] - s->lv_lost[s->level]);
+    if (cap > earned) cap = earned;
     if (cap < 1) cap = 1;
     if (frames > cap) frames = cap;
     if (frames < 1) frames = 1;
+    s->round_frames = frames;
     int nmax = RS_MAX_PIECES;                    /* piece indices wrap: data, repair... */
     frame_t *fr[64];
     s->round_id++;
@@ -253,21 +371,8 @@ static void on_feedback(station_t *s, const frame_t *f)
      * advice, and re-probe the cap one rung at a time only after a run of
      * clean rounds -- climbing blindly into a dead mode after every clean round
      * oscillated forever on the cliff model. */
-    double loss = f->loss16 / 16.0;
-    if (s->loss_est >= 0.55) {               /* smoothed: one noisy round is not a cliff */
-        int drop = loss >= 0.8 ? 2 : 1;
-        s->ceiling = s->level - 1 > 0 ? s->level - 1 : 0;
-        s->level = s->level - drop > 0 ? s->level - drop : 0;
-        s->clean_rounds = 0;
-    } else {
-        if (loss <= 0.25 && ++s->clean_rounds >= 6 && s->ceiling < NLADDER - 1) {
-            s->ceiling++;
-            s->clean_rounds = 0;
-        }
-        if (f->advice > 0) s->level += f->advice;
-        if (s->level > s->ceiling) s->level = s->ceiling;
-    }
-    if (s->level < 0) s->level = 0;
+    measure_level(s, s->round_level, f->loss16 / 16.0);
+    choose_level(s);
     if (f->need > 0) {
         s->last_need = f->need;
         arm(s, T_SEND_ROUND, now_ms + ISS_GUARD_MS);
@@ -396,7 +501,6 @@ int main(int argc, char **argv)
     for (int i = 0; i < 2; i++) {
         memset(&S[i], 0, sizeof(S[i]));
         S[i].id = i; S[i].rb_id = -1; S[i].last_done = -1; S[i].loss_est = 0.1;
-        S[i].ceiling = NLADDER - 1;
     }
     for (int i = 0; i < XFER_BYTES; i++) {
         S[0].tx[i] = (uint8_t)((i * 13 + 7) & 0xFF);
@@ -441,13 +545,16 @@ int main(int argc, char **argv)
                     /* One timeout is ambiguous -- the round OR the reply was
                      * lost -- so it only nudges the estimate; two in a row at
                      * the same level is a dead mode. */
+                    /* The feedback travels in the robust control mode, so a
+                     * timeout is almost always the ROUND lost, not the reply:
+                     * score it as total loss.  Scoring it as half let a dead
+                     * fast mode (half of 100 B/s) outscore a working slow one
+                     * (25 B/s) on the cliff channel, and whole rounds went
+                     * into it. */
                     s->loss_est = 0.75 * s->loss_est + 0.25;
-                    if (++s->timeouts >= 2) {
-                        s->timeouts = 0;
-                        s->ceiling = s->level - 1 > 0 ? s->level - 1 : 0;
-                        s->level = s->level - 2 > 0 ? s->level - 2 : 0;
-                        s->clean_rounds = 0;
-                    }
+                    s->timeouts++;
+                    measure_level(s, s->round_level, 1.0);
+                    choose_level(s);
                     send_round(s);
                 }
                 break;
