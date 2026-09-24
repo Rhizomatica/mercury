@@ -73,6 +73,7 @@ enum { CAR_T_POLL, CAR_T_SEND, CAR_T_WAIT, CAR_T_SENSE, CAR_NTIMERS };
 typedef struct {
     uint8_t  id;
     int      K, len, next, need;          /* next: the next piece index to send */
+    int      resend;                      /* data piece the receiver waits on, -1 */
     uint8_t  data[CAR_MAX_K][CAR_PIECE];
 } car_sblock_t;
 
@@ -90,6 +91,8 @@ typedef struct {
     bool     idle;                  /* nothing in flight either way */
     int      rx_level;              /* what the payload decoder is bound to */
     int      snr_level;             /* where the SNR measured here starts the peer */
+    float    snr_ema;               /* SNR of what the peer sends us, smoothed */
+    bool     snr_valid;
     uint64_t deadline[CAR_NTIMERS]; /* 0 = disarmed */
     uint64_t last_carrier_ms;       /* the peer was last heard on the air */
     bool     tx_busy;               /* our keydown is on the air */
@@ -138,8 +141,10 @@ void car_start_sender(car_t *c, uint64_t now);
 void car_start_receiver(car_t *c, uint64_t now);
 
 /* A frame came in.  control: the control decoder (DATAC16) produced it;
- * otherwise mode is the payload decoder's. */
-void car_on_frame(car_t *c, uint64_t now, const uint8_t *bytes, size_t len, int mode, bool control);
+ * otherwise mode is the payload decoder's.  snr_db: the decoder's estimate
+ * for it, 0 when unknown. */
+void car_on_frame(car_t *c, uint64_t now, const uint8_t *bytes, size_t len, int mode, bool control,
+                  float snr_db);
 void car_on_tx_done(car_t *c, uint64_t now);
 /* The application queued data. */
 void car_on_app_data(car_t *c, uint64_t now);

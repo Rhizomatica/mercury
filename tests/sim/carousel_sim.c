@@ -83,6 +83,7 @@ static sim_channel_t *ch;
 static int collisions;
 static uint64_t now_ms;
 static bool trace;
+static double snr_now = 12.0;          /* the SNR stamped on delivered frames */
 
 static void io_keydown(void *ctx, const car_frame_t *fr, int n)
 {
@@ -171,6 +172,7 @@ void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limi
         sim_channel_set_mode_per(ch, NVIS, (int)(sizeof(NVIS) / sizeof(NVIS[0])));
         snr_db = 10.0;
     }
+    snr_now = snr_db;
     if (getenv("CAR_NOHINT")) snr_db = -99.0;
 
     for (int i = 0; i < 2; i++) {
@@ -214,9 +216,9 @@ void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limi
                 collisions++;
                 if (trace) printf("%9.1f COLLISION at %c\n", now_ms / 1000.0, 'A' + s->id);
             } else if (e.mode == ARQ_CONTROL_MODE) {
-                car_on_frame(&s->car, now_ms, e.bytes, e.len, e.mode, true);
+                car_on_frame(&s->car, now_ms, e.bytes, e.len, e.mode, true, (float)snr_now);
             } else if (e.mode == s->rx_mode) {
-                car_on_frame(&s->car, now_ms, e.bytes, e.len, e.mode, false);
+                car_on_frame(&s->car, now_ms, e.bytes, e.len, e.mode, false, (float)snr_now);
             }
             free(e.bytes);
         }

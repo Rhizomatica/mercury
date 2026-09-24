@@ -18,7 +18,9 @@
  *     b0  type (2) | has data (1) | poll id (4) | 0
  *     b1  level (3) | frames asked for (4) | 0
  *     b2  loss (4) | window base, mod 16 (4)
- *     b3..b10  pieces each block from the base still needs (255: none seen)
+ *     b3..b9   pieces each block from the base still needs, 7 bits each
+ *              (127: none seen)
+ *     b10 the first data piece missing from the base block (255: none)
  *     b11 the start rung for the peer (3) | handover round's level (3) | 0 (2)
  *     b12 handover round's frames (4) | its id (4)
  *     b13 highest block opened (4) | data not yet cut (1) | 0 (3)
@@ -44,7 +46,17 @@
 #define SEG_HDR          4
 #define FB_UNSEEN        255
 #define SLOW_RUNG_FRAMES 3        /* round cap on the two slowest rungs      */
-#define TURN_QUANTUM_MS  120000   /* a turn may run this long before the peer's */
+/* With both sides holding data, a turn ends at the first round after
+ * TURN_QUANTUM_MS that completed a block, and at TURN_CAP_MS at the latest.
+ * Applications time out on silence: NNCP drops a peer after two 60 s ping
+ * intervals without a byte, and 120/240 s turns left one side silent past
+ * that on most low-SNR runs, where 30/45 s cost nothing measurable. */
+#ifndef TURN_QUANTUM_MS
+#define TURN_QUANTUM_MS  30000
+#endif
+#ifndef TURN_CAP_MS
+#define TURN_CAP_MS      45000
+#endif
 #define MAX_KEYDOWN_MS   30000    /* airtime cap per round                  */
 #define HEAD_MS          110      /* tx delay + head silence                */
 #define TAIL_MS          200
@@ -58,6 +70,7 @@
  * ITU moderate fading, which still lost 6 % (297/360 against 316) and needs
  * 200 ms (324/328).  Gap is airtime: 200 ms everywhere cost up to 7 % on the
  * sim's 8 dB fading channel. */
+#define RESEND_RUN       2        /* pieces repeated from the receiver's gap */
 #define WINDOW_MARGIN_MS 1000     /* a round that never came: re-poll after this */
 #define SENSE_MS         1400     /* after keying, the sender is heard by now */
 #define CARRIER_CHECK_MS 250      /* carrier re-checked this often */
@@ -126,6 +139,7 @@ typedef struct {
     int      level, n, loss16;
     uint8_t  base;        /* mod 16 */
     int      need[CAR_WIN];
+    int      gap;         /* first missing data piece of the base block, -1 none */
     bool     has_data;
     int      h_level, h_n;
     uint32_t h_id;
@@ -138,7 +152,11 @@ static void encode_ctl(const msg_t *m, uint8_t *b)
     b[0] = (uint8_t)(type << 6 | (m->has_data ? 1 : 0) << 5 | (m->poll_id & 0x0F) << 1);
     b[1] = (uint8_t)((m->level & 7) << 5 | (m->n & 0x0F) << 1);
     b[2] = (uint8_t)((m->loss16 & 0x0F) << 4 | (m->base & 0x0F));
-    for (int o = 0; o < CAR_WIN; o++) b[3 + o] = (uint8_t)m->need[o];
+    uint64_t nb = 0;                          /* 8 x 7 bits, first block high */
+    for (int o = 0; o < CAR_WIN; o++)
+        nb = nb << 7 | (uint64_t)(m->need[o] == FB_UNSEEN ? 127 : m->need[o] & 0x7F);
+    for (int i = 0; i < 7; i++) b[3 + i] = (uint8_t)(nb >> (8 * (6 - i)));
+    b[10] = (uint8_t)(m->gap < 0 ? 255 : m->gap);
     b[11] = (uint8_t)((m->snr_level & 7) << 5 | (m->h_level & 7) << 2);
     b[12] = (uint8_t)((m->h_n & 0x0F) << 4 | (m->h_id & 0x0F));
     b[13] = (uint8_t)((m->hi & 0x0F) << 4 | (m->unopened ? 1 : 0) << 3);
@@ -157,7 +175,13 @@ static bool decode_ctl(const uint8_t *b, size_t len, msg_t *m)
     m->n = (b[1] >> 1) & 0x0F;
     m->loss16 = b[2] >> 4;
     m->base = b[2] & 0x0F;
-    for (int o = 0; o < CAR_WIN; o++) m->need[o] = b[3 + o];
+    uint64_t nb = 0;
+    for (int i = 0; i < 7; i++) nb = nb << 8 | b[3 + i];
+    for (int o = 0; o < CAR_WIN; o++) {
+        int v = (int)((nb >> (7 * (CAR_WIN - 1 - o))) & 0x7F);
+        m->need[o] = v == 127 ? FB_UNSEEN : v;
+    }
+    m->gap = b[10] == 255 ? -1 : b[10];
     m->snr_level = b[11] >> 5;
     m->h_level = (b[11] >> 2) & 7;
     m->h_n = b[12] >> 4;
@@ -283,7 +307,9 @@ static bool unopened(const car_t *c)
  * poll's early one-frame rounds instead cut 10-piece blocks on DATAC3, and
  * every other frame paid a second segment header (cliff 3 dB, 8 % slower). */
 #define BLOCK_MIN_K  8
+#ifndef BLOCK_AIR_MS
 #define BLOCK_AIR_MS 60000
+#endif
 static int block_k_for(int lv, int n)
 {
     (void)n;
@@ -303,6 +329,7 @@ static void open_block(car_t *c, int max_k)
     s->K = (int)((len + CAR_PIECE - 1) / CAR_PIECE);
     s->next = 0;
     s->need = s->K;
+    s->resend = -1;
     memset(s->data, 0, sizeof(s->data));
     memcpy(s->data, buf, len);
 }
@@ -329,6 +356,7 @@ static void apply_need(car_t *c, const msg_t *m)
         else                               need = m->need[off];
         if (need == 0) { retired += (size_t)c->sb[b].len; continue; }
         c->sb[b].need = need;
+        c->sb[b].resend = off == 0 && m->gap >= 0 && m->gap < c->sb[b].K ? m->gap : -1;
         if (keep != b) c->sb[keep] = c->sb[b];
         keep++;
     }
@@ -382,6 +410,25 @@ static int build_round(car_t *c, int lv, int n, uint32_t poll_id, car_frame_t *f
         x->gap_ms = nf ? burst_gap_ms(lv) : 0;
         int pos = FRAME_HDR, nseg = 0;
         uint8_t last_block = 0;
+        /* The piece the receiver's in-order stream waits for goes first, so
+         * the stream advances every round trip instead of waiting for the
+         * block to decode -- stop-and-wait delivered every frame at once, and
+         * waiting for whole blocks left NNCP silent past its 120 s limit on
+         * most low-SNR runs.  It and the next piece; duplicates cost nothing
+         * but airtime. */
+        for (int r = 0; nf == 0 && r < c->nsb; r++) {
+            car_sblock_t *s = &c->sb[r];
+            if (s->resend < 0) continue;
+            int count = s->K - s->resend < RESEND_RUN ? s->K - s->resend : RESEND_RUN;
+            if (room - pos < SEG_HDR + count * CAR_PIECE) break;
+            put_seg_hdr(x->bytes + pos, s, count, s->resend);
+            pos += SEG_HDR;
+            for (int i = 0; i < count; i++, pos += CAR_PIECE)
+                piece_bytes(s, s->resend + i, x->bytes + pos);
+            s->resend = -1;
+            nseg++;
+            break;
+        }
         /* Fill the frame oldest block first; a block's pieces go on past its
          * want (as extra repair) only when nothing else is left to send. */
         while (room - pos >= SEG_HDR + CAR_PIECE && nseg < CAR_WIN) {
@@ -481,8 +528,20 @@ static double level_rate(int lv)          /* raw piece bytes per ms of airtime *
  *     is a ceiling nothing at or above is chosen from, re-probed with backoff;
  *   - below it, selection uses (lost + 1/2) / (sent + 2), optimistic enough to
  *     climb, and the earned round size bounds what any trial can cost. */
+static float level_min_db(int lv);
+static bool level_marginal(const car_t *c, int lv);
+
+/* A rung the SNR supports with room to spare gets the benefit of the doubt:
+ * (lost + 1/2) / (sent + 2), so a clean link climbs on the first probe.  One
+ * within SNR_GATE_DB of its threshold has to earn it: (sent - lost) / (sent +
+ * 1).  With the optimistic prior everywhere, DATAC1 at 3 dB (threshold 3)
+ * that had lost both its frames still outscored a DATAC3 delivering all of
+ * its own, and every such choice was a round of airtime that delivered
+ * nothing. */
 static double level_delivery(const car_t *c, int lv)
 {
+    if (level_marginal(c, lv))
+        return (c->lv_sent[lv] - c->lv_lost[lv]) / (c->lv_sent[lv] + 1.0);
     return 1.0 - (c->lv_lost[lv] + 0.5) / (c->lv_sent[lv] + 2.0);
 }
 
@@ -510,9 +569,41 @@ static void measure_level(car_t *c, int lv, int frames, double loss, uint64_t no
  * 25 % flat loss a lightly probed DATAC4 was declared dead by chance, and the
  * ceiling then locked out a DATAC3 and a DATAC1 that were delivering.
  * Evidence of delivery beats the inference. */
+/* The SNR a rung needs (the thresholds the stop-and-wait plane enters it at). */
+static float level_min_db(int lv)
+{
+    switch (LADDER[lv]) {
+    case FREEDV_MODE_QAM16C2: return ARQ_SNR_MIN_QAM16C2_DB;
+    case FREEDV_MODE_DATAC17: return ARQ_SNR_MIN_DATAC17_DB;
+    case FREEDV_MODE_DATAC1:  return ARQ_SNR_MIN_DATAC1_DB;
+    case FREEDV_MODE_DATAC3:  return ARQ_SNR_MIN_DATAC3_DB;
+    case FREEDV_MODE_DATAC4:  return ARQ_SNR_MIN_DATAC4_DB;
+    default:                  return -99.0f;
+    }
+}
+
+/* A rung the SNR says cannot work is out, like a dead one, unless it has
+ * delivered well itself.  Measured goodput alone kept choosing DATAC17 at
+ * 3 dB (cliff 8 dB): a frame in ten still got through, so it was never
+ * declared dead, and one lucky frame on a short memory made it outscore a
+ * DATAC3 delivering 98 % -- minutes of rounds that delivered nothing, and
+ * the application heard nothing.  The SNR only ever excludes: on NVIS it
+ * reads 10 dB where fast rungs fail anyway, and measurement handles that. */
+#define SNR_GATE_DB 3.0f
+static bool level_marginal(const car_t *c, int lv)
+{
+    return c->snr_valid && c->snr_ema < level_min_db(lv) + SNR_GATE_DB;
+}
+
+static bool level_gated(const car_t *c, int lv)
+{
+    return c->snr_valid && c->snr_ema < level_min_db(lv) - SNR_GATE_DB &&
+           !(c->lv_sent[lv] >= 3.0 && level_delivery(c, lv) >= 0.7);
+}
+
 static bool level_allowed(const car_t *c, int lv)
 {
-    if (level_dead(c, lv)) return false;
+    if (level_dead(c, lv) || level_gated(c, lv)) return false;
     for (int b = 0; b < lv; b++)
         if (level_dead(c, b))
             return c->lv_sent[lv] - c->lv_lost[lv] >= 0.5;
@@ -533,13 +624,41 @@ static bool reprobe_due(const car_t *c, int lv, uint64_t now)
  * goodput decides from then on, so a misleading SNR (ISI-limited NVIS reads
  * 10 dB) costs a few frames.  Climbing by probes from DATAC15 instead cost
  * 25-40 s of airtime per turn on a 15 dB fading channel. */
+/* A round costs more than its frames: the poll that asks for it, and the
+ * guards and turnarounds either side -- about 5.6 s, fixed.  Goodput per rung
+ * is scaled by the airtime fraction of the round it gets.  Scored on raw
+ * rate alone, a fast rung that delivered some frames in a fade kept winning
+ * over a solid slower one, and ran one-frame rounds at 3.7 s of air for 9 s
+ * of turnaround (in the sim: QAM16C2 at 8 dB, 7 rounds, 70 s for nothing). */
+#define ROUND_OVERHEAD_MS (4400 + GUARD_MS + ISS_GUARD_MS + HEAD_MS + TAIL_MS)
+static int keydown_cap(int lv)
+{
+    int cap = (int)(MAX_KEYDOWN_MS / level_air(lv));
+    if (lv <= 1 && cap > SLOW_RUNG_FRAMES) cap = SLOW_RUNG_FRAMES;   /* slow rungs */
+    return cap > 15 ? 15 : cap < 1 ? 1 : cap;                          /* 4 bits */
+}
+static double air_fraction(int lv, int frames)
+{
+    double air = (double)round_air(lv, frames);
+    return air / (air + ROUND_OVERHEAD_MS);
+}
+/* What a measured rung delivers per second, in the rounds it has earned. */
+static double level_goodput(const car_t *c, int lv)
+{
+    int earned = 1 + (int)(c->lv_sent[lv] - c->lv_lost[lv]);
+    int frames = earned < keydown_cap(lv) ? earned : keydown_cap(lv);
+    return level_rate(lv) * level_delivery(c, lv) * air_fraction(lv, frames);
+}
+/* The most a rung could deliver: no loss, full rounds. */
+static double level_potential(int lv) { return level_rate(lv) * air_fraction(lv, keydown_cap(lv)); }
+
 static int choose_level(const car_t *c, uint64_t now)
 {
     int best = -1;
     double best_gp = -1.0;
     for (int lv = 0; lv < CAR_NLEVELS; lv++) {
         if (!c->lv_rounds[lv] || !level_allowed(c, lv)) continue;
-        double gp = level_rate(lv) * level_delivery(c, lv);
+        double gp = level_goodput(c, lv);
         if (gp > best_gp) { best_gp = gp; best = lv; }
     }
     if (best < 0)
@@ -550,7 +669,7 @@ static int choose_level(const car_t *c, uint64_t now)
             if (!c->lv_rounds[lv]) return lv;
     }
     for (int up = best + 1; up < CAR_NLEVELS; up++) {
-        if (level_rate(up) <= best_gp)
+        if (level_potential(up) <= best_gp)
             continue;                   /* cannot win even with no loss */
         if (!level_allowed(c, up)) {
             if (!reprobe_due(c, up, now)) break;
@@ -577,9 +696,7 @@ static int peer_outstanding(const car_t *c)
  * and -- when every block of the sender is known here -- what is still needed. */
 static int poll_size(const car_t *c, int lv)
 {
-    int cap = (int)(MAX_KEYDOWN_MS / level_air(lv));
-    if (lv <= 1 && cap > SLOW_RUNG_FRAMES) cap = SLOW_RUNG_FRAMES;   /* slow rungs */
-    if (cap > 15) cap = 15;                                           /* 4 bits */
+    int cap = keydown_cap(lv);
     int earned = 1 + (int)(c->lv_sent[lv] - c->lv_lost[lv]);
     if (cap > earned) cap = earned;
     int out = peer_outstanding(c);
@@ -665,6 +782,14 @@ static void fill_poll(const car_t *c, msg_t *m)
         const car_rblock_t *r = &c->rb[(uint8_t)(c->rbase + o) % CAR_WIN];
         m->need[o] = !r->known ? FB_UNSEEN : r->done ? 0 : r->K - r->have;
     }
+    /* In-order delivery waits at the first data piece missing from the base
+     * block; name it so the sender repeats it rather than the stream waiting
+     * for the whole block to decode. */
+    m->gap = -1;
+    const car_rblock_t *h = &c->rb[c->rbase % CAR_WIN];
+    if (h->known && !h->done)
+        for (int i = 0; i < h->K; i++)
+            if (!h->got[i]) { m->gap = i; break; }
     m->loss16 = (int)lround(c->loss_est * 15.0);
     m->has_data = has_data(c);
     m->snr_level = c->snr_level;
@@ -747,7 +872,7 @@ static void on_poll_timer(car_t *c, uint64_t now)
 
     bool done = peer_direction_done(c);
     uint64_t held = now - c->drive_start;
-    bool quantum = (c->done_in_round && held >= TURN_QUANTUM_MS) || held >= 2 * TURN_QUANTUM_MS;
+    bool quantum = (c->done_in_round && held >= TURN_QUANTUM_MS) || held >= TURN_CAP_MS;
     if (has_data(c) && (done || quantum)) {
         /* When the peer still has data its open blocks are only suspended:
          * both sides keep their state and carry on when the turn comes back. */
@@ -916,10 +1041,15 @@ void car_start_receiver(car_t *c, uint64_t now)
     start_driving(c, 1, c->snr_level, 1, now, now);
 }
 
-void car_on_frame(car_t *c, uint64_t now, const uint8_t *bytes, size_t len, int mode, bool control)
+void car_on_frame(car_t *c, uint64_t now, const uint8_t *bytes, size_t len, int mode, bool control,
+                  float snr_db)
 {
     msg_t m;
     c->last_carrier_ms = now;
+    if (snr_db != 0.0f) {
+        c->snr_ema = c->snr_valid ? 0.7f * c->snr_ema + 0.3f * snr_db : snr_db;
+        c->snr_valid = true;
+    }
     if (control) {
         if (decode_ctl(bytes, len, &m)) on_ctl(c, now, &m);
         return;

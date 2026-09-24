@@ -1741,7 +1741,7 @@ static void car_connect_callee(arq_session_t *sess, const arq_event_t *ev)
     }
     uint64_t now = time_now_ms();
     car_start(sess, false, now);
-    car_on_frame(sess->car, now, ev->payload, ev->payload_len, ev->mode, ev->from_control);
+    car_on_frame(sess->car, now, ev->payload, ev->payload_len, ev->mode, ev->from_control, ev->rx_snr);
 }
 
 static void fsm_accepting(arq_session_t *sess, const arq_event_t *ev)
@@ -2107,7 +2107,7 @@ static bool fsm_connected_carousel(arq_session_t *sess, const arq_event_t *ev)
     {
     case ARQ_EV_RX_CAROUSEL:
         sess->car_last_rx_ms = now;
-        car_on_frame(sess->car, now, ev->payload, ev->payload_len, ev->mode, ev->from_control);
+        car_on_frame(sess->car, now, ev->payload, ev->payload_len, ev->mode, ev->from_control, ev->rx_snr);
         break;
     case ARQ_EV_TX_COMPLETE:
         car_on_tx_done(sess->car, now);
