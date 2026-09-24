@@ -94,6 +94,7 @@ the handshake completes on a clean channel, then the fault hits the transfer):
 | `sim_set_rx_snr(s, db)` | SNR stamped on delivered frames (drives OLLA feedback) |
 | `sim_set_snr(s, db)` | **coherent fade**: mode-aware SNR *cliff* erasure model + stamps the same SNR on survivors. A frame in a mode whose cliff (approx. `docs/MODES.md`) is above the channel SNR is erased ~90%; robust modes pass. This makes "downgrade" the winning move, as on real HF. |
 | `sim_set_mode_per(s, tbl, n, db)` | **empirical per-mode erasure**: a `{freedv_mode, per}` table (e.g. measured on pathsim `--midlat-dist-nvis`) plus the delivered-frame SNR. Models ISI-limited channels where SNR reads healthy while fast modes fail. Overrides the cliff model. |
+| `sim_set_fading(s, db, hz)` | **time-varying Rayleigh fading** around a mean SNR, independent per direction, at `hz` fade rate (sum of 8 sinusoids). Each frame's instantaneous SNR is sampled at 8 points over its airtime and combined by an exponential effective-SNR mapping (beta = the mode's cliff), then judged against the cliff: a frame survives a deep fade over about a quarter of its length. Flat fading only (no delay spread). Stamps the mean SNR on survivors. Overrides the other models. |
 
 `test_sim_fuzz` sweeps flat AWGN erasure; `test_sim_fuzz_fading` sweeps the
 cliff and per-mode-PER models (60 seeds), asserting the two invariants that
@@ -104,7 +105,8 @@ requires a bounded disconnect.
 
 ## A/B throughput bench (`ab_bench.c`)
 
-`ab_bench <seed> <channel>` (channel = `clean | awgn:<per> | cliff:<snr> | nvis`)
+`ab_bench <seed> <channel>` (channel = `clean | awgn:<per> | cliff:<snr> | nvis |
+fade:<snr>:<doppler_hz>`; built by `make -C tests ab_bench`)
 runs an 8 KB transfer and prints delivered/total, integrity, final mode and
 conn-state. It links against whatever tree's `arq_fsm.c` it is compiled in, so
 comparing two builds means compiling it twice (against tree A's and tree B's
@@ -119,7 +121,9 @@ medium and prints the virtual time until both transfers complete (`done_ms`),
 the collision count, and `STALLED` when both FSMs go idle with data still
 undelivered.  That is the turn-handover bench: it measured the ACK + first data
 burst in one keydown (1-2.5 % faster on clean/lossy channels, same completions,
-no corruption).
+no corruption).  `SIM_CS=<acq_ms>` turns the sim's carrier sense on (without
+it every listen-before-talk check in the FSM is inert), and `SIM_STATS=1` (both
+benches) prints the frames and airtime each mode used.
 
 ## The S1 fade-cliff regression (fixed)
 
@@ -185,6 +189,9 @@ code where it was tried):
   delivered; a mode losing 4 frames in a row is dead, and caps the modes above
   it unless they have delivered recently themselves; dead modes are re-probed
   after 60 s, doubling to 8 min.
+- A sender starts on the rung the peer's reported SNR supports, mapped as trunk
+  enters a mode from DATAC15 (threshold plus hysteresis).  It is only a start:
+  the first round on it is a one-frame probe and measured goodput takes over.
 - The turn: a sender keeps it for at most a 120 s quantum while the peer has
   data, then yields at a block boundary.  Open blocks are only suspended.
 
@@ -193,17 +200,24 @@ sim's carrier sense on (`sim_set_carrier_sense(s, true, 400)`; without it every
 listen-before-talk check in the FSM is inert).  Seeds 1-20 were used while
 tuning; seeds 21-40 are held out:
 
-| channel  | trunk 1-20 / 21-40      | carousel 1-20 / 21-40   |
-|----------|-------------------------|-------------------------|
-| clean    | 231 / 233 s             | 177 / 174 s             |
-| 10 %     | 274 / 293 s             | 207 / 233 s             |
-| 25 %     | 416 / 450 s             | 313 / 316 s             |
-| cliff 3  | 1372 / 1380 s           | 1139 / 1189 s           |
-| cliff 10 | 310 / 308 s             | 280 / 278 s             |
-| NVIS     | 0/20 in 3 h (1 KB, then no progress) | 20/20, 4872 s  |
+| channel         | trunk 1-20 / 21-40      | carousel 1-20 / 21-40   |
+|-----------------|-------------------------|-------------------------|
+| clean           | 231 / 234 s             | 124 / 125 s             |
+| 10 %            | 275 / 294 s             | 141 / 152 s             |
+| 25 %            | 416 / 450 s             | 209 / 230 s             |
+| cliff 3         | 1373 / 1380 s           | 1140 / 1189 s           |
+| cliff 10        | 310 / 309 s             | 249 / 247 s             |
+| NVIS            | 0/20 in 3 h (1 KB, then no progress) | 5100 / 5392 s |
+| fade 3 dB, 0.5 Hz  | 0/20 (11 KB of 16)   | 1532 / 1464 s           |
+| fade 8 dB, 0.5 Hz  | 728 / 718 s          | 575 / 590 s             |
+| fade 8 dB, 1 Hz    | 750 / 721 s (18/20)  | 589 / 563 s             |
+| fade 15 dB, 0.1 Hz | 261 / 274 s          | 220 / 213 s             |
+| fade 15 dB, 1 Hz   | 243 / 241 s          | 206 / 228 s             |
+| fade 25 dB, 1 Hz   | 179 / 182 s          | 105 / 109 s             |
 
-All runs complete (20/20 on every row but trunk's NVIS), with no collisions and
-no corruption in any carousel run; trunk has 35-164 collisions per 20 runs.
+Every carousel run completes (NVIS and fade 3 dB need more than the default
+30-minute `LIMIT_MS`: build with `-DLIMIT_MS='(8ULL*3600*1000)'`), with no
+collisions and no corruption; trunk has 35-164 collisions per 20 runs.
 
 What decided it, in the order it was found:
 
@@ -220,3 +234,9 @@ What decided it, in the order it was found:
 - **Evidence beats inference**: a false dead verdict on a lightly probed
   DATAC4 locked out a working DATAC3/DATAC1, and a re-probe backoff counted in
   rounds kept it in force for half an hour.
+- **The SNR start hint**, found on the fading channel: trunk was 10 % faster
+  at 15 dB because it goes straight to DATAC17 on the SNR it is told, while the
+  carousel climbed from DATAC15 by probes (25-40 s of airtime per sender).  The
+  hint gives the carousel the same information and is 30-45 % faster on the
+  clean and flat-loss channels too; NVIS, where the 10 dB reading misleads,
+  pays 1-5 % for it.

@@ -376,6 +376,28 @@ static void choose_level(station_t *s)
     s->level = best;
 }
 
+/* Where a sender starts: the SNR its peer reported (in Mercury, the connect
+ * exchange measures both directions), mapped the way trunk enters a mode from
+ * DATAC15 -- threshold plus hysteresis.  Only a start: the first round on it is
+ * a one-frame probe like any other, and measured goodput decides from there,
+ * so a misleading SNR (ISI-limited NVIS reads 10 dB) costs a few frames.
+ * Climbing by probes from DATAC15 instead cost 25-40 s of airtime per turn on
+ * a 15 dB fading channel, where trunk goes straight to DATAC17. */
+static double snr_hint_db = 12.0;          /* what the sim stamps on frames */
+
+static int hint_level(double snr_db)
+{
+    static const struct { int mode; float min_db; } T[] = {
+        { FREEDV_MODE_QAM16C2, ARQ_SNR_MIN_QAM16C2_DB }, { FREEDV_MODE_DATAC17, ARQ_SNR_MIN_DATAC17_DB },
+        { FREEDV_MODE_DATAC1,  ARQ_SNR_MIN_DATAC1_DB },  { FREEDV_MODE_DATAC3,  ARQ_SNR_MIN_DATAC3_DB },
+    };
+    for (size_t i = 0; i < sizeof(T) / sizeof(T[0]); i++)
+        if (snr_db >= T[i].min_db + ARQ_SNR_HYST_DB)
+            for (int lv = 0; lv < NLADDER; lv++)
+                if (LADDER[lv] == T[i].mode) return lv;
+    return 0;                  /* DATAC4 is slower than DATAC15 here: never a start */
+}
+
 static void send_round(station_t *s)
 {
     while (s->nsb < WIN && s->tx_alloc < s->tx_len)
@@ -600,13 +622,24 @@ int main(int argc, char **argv)
         { FREEDV_MODE_DATAC1,  0.89 }, { FREEDV_MODE_DATAC17, 0.93 },
         { FREEDV_MODE_QAM16C2, 0.95 },
     };
-    if (!strncmp(chan, "awgn:", 5)) sim_channel_set_per(ch, atof(chan + 5));
-    else if (!strncmp(chan, "cliff:", 6)) sim_channel_set_snr(ch, atof(chan + 6));
-    else if (!strcmp(chan, "nvis")) sim_channel_set_mode_per(ch, NVIS, (int)(sizeof(NVIS) / sizeof(NVIS[0])));
+    if (!strncmp(chan, "fade:", 5)) {
+        double m = 0, d = 0.5;
+        sscanf(chan + 5, "%lf:%lf", &m, &d);
+        sim_channel_set_fading(ch, m, d);
+        snr_hint_db = m;
+    }
+    else if (!strncmp(chan, "awgn:", 5)) sim_channel_set_per(ch, atof(chan + 5));
+    else if (!strncmp(chan, "cliff:", 6)) { sim_channel_set_snr(ch, atof(chan + 6)); snr_hint_db = atof(chan + 6); }
+    else if (!strcmp(chan, "nvis")) {
+        sim_channel_set_mode_per(ch, NVIS, (int)(sizeof(NVIS) / sizeof(NVIS[0])));
+        snr_hint_db = 10.0;
+    }
+    if (getenv("CAR_NOHINT")) snr_hint_db = -99.0;
 
     for (int i = 0; i < 2; i++) {
         memset(&S[i], 0, sizeof(S[i]));
         S[i].id = i; S[i].loss_est = 0.1;
+        S[i].level = hint_level(snr_hint_db);
     }
     for (int i = 0; i < XFER_BYTES; i++) {
         S[0].tx[i] = (uint8_t)((i * 13 + 7) & 0xFF);
@@ -689,5 +722,6 @@ int main(int argc, char **argv)
            (unsigned long long)seed, chan, bidir ? "bidir" : "oneway",
            S[1].rx_len, S[0].rx_len, (ok_a && ok_b) ? "OK" : "CORRUPT",
            (unsigned long long)done_ms, collisions, nev == 0 && !done_ms ? " STALLED" : "");
+    sim_channel_destroy(ch);
     return (ok_a && ok_b) ? 0 : 2;
 }
