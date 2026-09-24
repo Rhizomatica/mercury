@@ -218,16 +218,16 @@ receiver decoded every mode and whose sender chose them:
 |--------------------|-----------------------|-----------------|-----------------|
 | clean              | 231 / 234 s           | 124 / 125 s     | 121 / 121 s     |
 | 10 %               | 275 / 294 s           | 141 / 152 s     | 136 / 143 s     |
-| 25 %               | 416 / 450 s           | 209 / 230 s     | 193 / 209 s     |
-| cliff 3            | 1373 / 1380 s         | 1140 / 1189 s   | 1162 / 1133 s   |
-| cliff 10           | 310 / 309 s           | 249 / 247 s     | 253 / 251 s     |
-| NVIS               | 0/20 (1 KB, then no progress) | 5100 / 5392 s | 4196 / 4411 s |
-| fade 3 dB, 0.5 Hz  | 0/20 (11 KB of 16)    | 1532 / 1464 s   | 1519 / 1475 s   |
-| fade 8 dB, 0.5 Hz  | 728 / 718 s           | 575 / 590 s     | 496 / 556 s     |
-| fade 8 dB, 1 Hz    | 750 / 721 s (18/20)   | 589 / 563 s     | 530 / 525 s     |
-| fade 15 dB, 0.1 Hz | 261 / 274 s           | 220 / 213 s     | 223 / 208 s     |
-| fade 15 dB, 1 Hz   | 243 / 241 s           | 206 / 228 s     | 211 / 219 s     |
-| fade 25 dB, 1 Hz   | 179 / 182 s           | 105 / 109 s     | 102 / 106 s     |
+| 25 %               | 416 / 450 s           | 209 / 230 s     | 192 / 216 s     |
+| cliff 3            | 1373 / 1380 s         | 1140 / 1189 s   | 1050 / 1040 s   |
+| cliff 10           | 310 / 309 s           | 249 / 247 s     | 247 / 242 s     |
+| NVIS               | 0/20 (1 KB, then no progress) | 5100 / 5392 s | 3854 / 3959 s |
+| fade 3 dB, 0.5 Hz  | 0/20 (11 KB of 16)    | 1532 / 1464 s   | 1321 / 1287 s   |
+| fade 8 dB, 0.5 Hz  | 728 / 718 s           | 575 / 590 s     | 482 / 543 s     |
+| fade 8 dB, 1 Hz    | 750 / 721 s (18/20)   | 589 / 563 s     | 495 / 530 s     |
+| fade 15 dB, 0.1 Hz | 261 / 274 s           | 220 / 213 s     | 215 / 206 s     |
+| fade 15 dB, 1 Hz   | 243 / 241 s           | 206 / 228 s     | 205 / 217 s     |
+| fade 25 dB, 1 Hz   | 179 / 182 s           | 105 / 109 s     | 102 / 107 s     |
 
 Every carousel run completes (NVIS and fade 3 dB need more than the default
 30-minute `LIMIT_MS`: build with `-DLIMIT_MS='(8ULL*3600*1000)'`), with no
@@ -262,3 +262,7 @@ What decided it, in the order it was found:
   loss: 258/390 s against the omniscient 209/230 s); re-polling when the sender
   is not on the air recovered it and more.  A window timer then collided with a
   repeated handover (NVIS, 2 collisions); polling on carrier drop removed that.
+- **No per-piece index**: a block's pieces go out with consecutive indices, so
+  a segment carries its first index and a count instead of one byte per piece.
+  DATAC4 carries 2 pieces instead of 1, DATAC3 5 instead of 4; cliff 3, fade
+  3 dB and NVIS got 8-13 % faster.

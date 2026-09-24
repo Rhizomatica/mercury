@@ -25,11 +25,17 @@
  * mode changes.  No sequence numbers and no per-frame ACKs.
  *
  * Wire sizes (the bench keeps the fields in structs):
- *   DATA  3 B: frames left | unopened data ; poll id | highest block opened
- *              (both mod 16) ; the SNR measured on the peer's polls
- *         per block 2 B: block id (mod 16) | K | pad ; per piece 1 B index
- *   POLL  13 B in DATAC16: type, has-data, poll id, mode, N, loss, base,
- *              need of 8 blocks, SNR; on a handover the round's mode and length
+ *   DATA  2 B: frames left (4 bits) | unopened data | the start rung the SNR
+ *              measured on the peer's polls gives it (3 bits) ; poll id |
+ *              highest block opened (both mod 16)
+ *         then per block 4 B: block id (mod 16) | K | piece count | first
+ *              piece index | pad, and the pieces -- consecutive indices, so
+ *              no per-piece index
+ *   POLL  14 B in DATAC16: type, has-data, poll id, mode, N, loss, base,
+ *              need of 8 blocks, start rung; on a handover the round's mode,
+ *              length and id
+ *   The session id costs no bytes: it seeds the frame CRC16, so another
+ *   session's frames fail the check.
  *
  * Channel, airtime and the half-duplex medium are the sim's (sim_channel.c +
  * the ARQ mode table), with the same guards Mercury uses and carrier sense
@@ -60,8 +66,8 @@
  * piece: after a few lost rounds the indices wrapped and rounds delivered
  * nothing new. */
 #define MAX_K           96
-#define FRAME_HDR       3
-#define SEG_HDR         2
+#define FRAME_HDR       2
+#define SEG_HDR         4
 #define WIN             8         /* blocks a round may carry at once       */
 #ifndef SLOW_RUNG_FRAMES
 #define SLOW_RUNG_FRAMES 3        /* round cap on the two slowest rungs      */
@@ -100,7 +106,7 @@ static int mode_payload(int mode)
     return tm ? tm->payload_bytes : 14;
 }
 static uint64_t mode_air(int mode) { return sim_channel_airtime_ms(mode, 0); }
-static int pieces_per_frame(int mode) { return (mode_payload(mode) - FRAME_HDR - SEG_HDR) / (PIECE + 1); }
+static int pieces_per_frame(int mode) { return (mode_payload(mode) - FRAME_HDR - SEG_HDR) / PIECE; }
 static uint64_t level_air(int lv) { return mode_air(LADDER[lv]); }
 static uint64_t round_air(int lv, int n)
 {
@@ -373,7 +379,7 @@ static int build_round(station_t *s, int lv, int n, uint32_t poll_id, frame_t **
         int bytes = room;
         /* Fill the frame oldest block first; a block's pieces go on past its
          * want (as extra repair) only when nothing else is left to send. */
-        while (bytes >= SEG_HDR + PIECE + 1 && x->nseg < WIN) {
+        while (bytes >= SEG_HDR + PIECE && x->nseg < WIN) {
             while (b < s->nsb && want[b] <= 0) b++;
             int bb = b;
             if (bb >= s->nsb) {
@@ -384,13 +390,13 @@ static int build_round(station_t *s, int lv, int n, uint32_t poll_id, frame_t **
             seg_t *g = &x->seg[x->nseg++];
             g->block = s->sb[bb].id; g->K = s->sb[bb].K; g->len = s->sb[bb].len;
             bytes -= SEG_HDR;
-            while (bytes >= PIECE + 1 && g->n < 64 && (bb != b || want[bb] > 0)) {
+            while (bytes >= PIECE && g->n < 63 && (bb != b || want[bb] > 0)) {
                 int idx = s->sb[bb].next;
                 s->sb[bb].next = (idx + 1) % RS_MAX_PIECES;   /* data, repair, then wrap */
                 g->idx[g->n] = idx;
                 piece_bytes(s, bb, idx, g->piece[g->n]);
                 g->n++;
-                bytes -= PIECE + 1;
+                bytes -= PIECE;
                 if (bb == b) want[bb]--;
             }
             if (bb != b) break;
