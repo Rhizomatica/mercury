@@ -7,6 +7,16 @@
  *
  */
 
+/* ffbase/base.h defines _POSIX_C_SOURCE, which on macOS and FreeBSD hides
+ * the BSD socket API the -x rtp backend needs (IN_MULTICAST, ip_mreq,
+ * IP_MULTICAST_*).  Ask for the full API before any header is included;
+ * Linux gets it from -D_GNU_SOURCE. */
+#if defined(__APPLE__) && !defined(_DARWIN_C_SOURCE)
+#define _DARWIN_C_SOURCE 1
+#endif
+#if defined(__FreeBSD__) && !defined(__BSD_VISIBLE)
+#define __BSD_VISIBLE 1
+#endif
 
 #include <stdint.h>
 #include <stdbool.h>
