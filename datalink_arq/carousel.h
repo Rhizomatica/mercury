@@ -152,5 +152,7 @@ int  car_start_level(float snr_db);
 int  car_level_mode(int level);
 bool car_is_sending(const car_t *c);
 bool car_is_idle(const car_t *c);
+/* Bytes taken from the application that the peer has not confirmed yet. */
+size_t car_tx_inflight(const car_t *c);
 
 #endif

@@ -76,6 +76,13 @@ int car_level_mode(int level) { return LADDER[level]; }
 bool car_is_sending(const car_t *c) { return c->sending; }
 bool car_is_idle(const car_t *c) { return c->idle; }
 
+size_t car_tx_inflight(const car_t *c)
+{
+    size_t n = 0;
+    for (int b = 0; b < c->nsb; b++) n += (size_t)c->sb[b].len;
+    return n;
+}
+
 static int level_of_mode(int mode)
 {
     for (int lv = 0; lv < CAR_NLEVELS; lv++)

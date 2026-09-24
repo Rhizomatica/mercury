@@ -1347,12 +1347,16 @@ static void car_io_deliver(void *ctx, const uint8_t *buf, size_t len)
         g_cbs.deliver_rx_data(buf, len);
 }
 
+/* BUFFER is what the peer has not confirmed: the application's queue plus
+ * the carousel's open blocks (tx_inflight_bytes, which the runtime adds to
+ * the backlog in its own periodic BUFFER report). */
 static void car_io_tx_confirmed(void *ctx, size_t len)
 {
     arq_session_t *sess = ctx;
     (void)len;
+    sess->tx_inflight_bytes = (int)car_tx_inflight(sess->car);
     if (g_cbs.send_buffer_status)
-        g_cbs.send_buffer_status(session_tx_backlog(sess));
+        g_cbs.send_buffer_status(session_tx_backlog(sess) + sess->tx_inflight_bytes);
 }
 
 /* The session's CRC seed: both ends know the session id and both callsigns
@@ -3778,6 +3782,7 @@ void arq_fsm_dispatch(arq_session_t *sess, const arq_event_t *ev)
      * the one deadline it knows. */
     if (sess->car_active && sess->conn_state == ARQ_CONN_CONNECTED)
     {
+        sess->tx_inflight_bytes = (int)car_tx_inflight(sess->car);
         uint64_t d = car_next_deadline(sess->car);
         if (!car_is_idle(sess->car) && sess->car_last_rx_ms + ARQ_CAR_PEER_LOST_MS < d)
             d = sess->car_last_rx_ms + ARQ_CAR_PEER_LOST_MS;
