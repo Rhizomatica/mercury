@@ -63,7 +63,7 @@ ARQ_STUBS = datalink_arq/arq_test_stubs.c
 TEST_BINS = test_ring_buffer test_arq_protocol test_arq_timing test_arq_fsm \
             test_tcp_interfaces test_resampler test_pcm24 test_arq_olla test_arq_sim \
             test_arq_conn test_cfg_utils test_arq_tnc test_channel_busy \
-            test_freedv_harq test_sock_wire test_virtual_clock test_watterson \
+            test_freedv_harq test_sock_wire test_rtp_wire test_virtual_clock test_watterson \
             test_mercury_prng test_bcast_file \
             test_ofdm_acq test_ui_status test_ui_devices test_ui_ptt_persist test_tx_pacing test_radio_port \
             test_radio_io_frequency test_mfsk \
@@ -181,6 +181,10 @@ test_freedv_harq: modem/test_freedv_harq.c $(UNITY_SRC) \
 	$(CC) $(CFLAGS) -I../modem/freedv -o $@ $(filter %.c %.a %.o,$^) $(LDFLAGS) -lm
 # -x sock wire codec: byte-exact pin of the lockstep frame layout
 test_sock_wire: audioio/test_sock_wire.c $(UNITY_SRC)
+	$(CC) $(CFLAGS) -I../audioio -o $@ $(filter %.c %.a %.o,$^) $(LDFLAGS)
+
+# -x rtp wire codec: RTP/PT 125 layout, end packet, ka9q status TLVs
+test_rtp_wire: audioio/test_rtp_wire.c $(UNITY_SRC)
 	$(CC) $(CFLAGS) -I../audioio -o $@ $(filter %.c %.a %.o,$^) $(LDFLAGS)
 
 # Virtual clock (time base for -x sock); hermes_uptime_ms stubbed in-test

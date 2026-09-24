@@ -30,6 +30,7 @@
 #define AUDIO_SUBSYSTEM_NULL 8
 #define AUDIO_SUBSYSTEM_FIFO 9
 #define AUDIO_SUBSYSTEM_SOCK 10
+#define AUDIO_SUBSYSTEM_RTP 11   /* RTP multicast from/to the radio daemon */
 
 #define LEFT 0
 #define RIGHT 1
