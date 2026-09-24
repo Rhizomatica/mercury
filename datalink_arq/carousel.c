@@ -828,21 +828,26 @@ int car_start_level(float snr_db)
     return 0;                  /* DATAC4 is slower than DATAC15 here: never a start */
 }
 
-void car_init(car_t *c, const car_io_t *io, int start_level)
+void car_init(car_t *c, const car_io_t *io, int rx_level, int tx_level)
 {
     memset(c, 0, sizeof(*c));
     c->io = *io;
     c->loss_est = c->tx_loss = 0.1;
-    c->snr_level = c->peer_snr_level = start_level;
+    c->snr_level = rx_level;
+    c->peer_snr_level = tx_level >= 0 ? tx_level : rx_level;
     c->tx_level = -1;
 }
 
 /* The caller: the callee's ACCEPT was the first poll, a one-frame probe on the
- * start rung.  Answer it now. */
+ * start rung.  Answer it now.  Until a poll comes back the round is treated as
+ * an unconfirmed handover: the callee only knows it is connected once it hears
+ * us, so a lost first round is repeated with a handover poll ahead of it,
+ * which names the mode -- the callee never has to key blind. */
 void car_start_sender(car_t *c, uint64_t now)
 {
     c->sending = true;
     c->tx_level = c->peer_snr_level; c->tx_n = 1; c->tx_poll_id = 1;
+    c->handover_unconfirmed = true;
     arm(c, CAR_T_SEND, now);
 }
 

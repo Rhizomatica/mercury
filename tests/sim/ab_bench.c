@@ -2,6 +2,8 @@
  *
  *   ab_bench <seed> <channel> [bidir]
  *   channel := clean | awgn:<per> | cliff:<snr_db> | nvis | fade:<snr_db>:<doppler_hz>
+ * CAROUSEL=0 runs the stop-and-wait data plane instead of the carousel;
+ * AB_LIMIT_MIN=<minutes> raises the bidir run's 30-minute virtual limit.
  * SIM_CS=<acq_ms> in the environment turns the sim's carrier sense on (bidir),
  * without which the FSM's listen-before-talk checks are inert.
  * bidir: both stations queue 8 KB at once, on a half-duplex medium, and the
@@ -55,8 +57,20 @@ int main(int argc, char **argv)
     bool bidir = argc > 3 && strcmp(argv[3], "bidir") == 0;
 
     sim_channel_cfg_t chan = { .seed = seed, .per = 0.02, .guard_ms = 150 };
+    /* CAROUSEL=0: the stop-and-wait data plane; default the carousel. */
+    arq_fsm_set_carousel(!(getenv("CAROUSEL") && getenv("CAROUSEL")[0] == '0'));
     sim_t *s = sim_create(&chan, "A0AAA", "B0BBB");
     if (!s) { fprintf(stderr, "sim_create failed\n"); return 1; }
+
+    /* The connect sees the channel's SNR -- it is a property of the path, and
+     * both ARQs start from what the connect measured -- but not its loss:
+     * the connect runs on the clean 2% floor (below). */
+    if (strncmp(chan_spec, "cliff:", 6) == 0)
+        sim_set_rx_snr(s, (float)atof(chan_spec + 6));
+    else if (strcmp(chan_spec, "nvis") == 0)
+        sim_set_rx_snr(s, 10.0f);
+    else if (strncmp(chan_spec, "fade:", 5) == 0)
+        sim_set_rx_snr(s, (float)atof(chan_spec + 5));
 
     arq_event_t listen = { .id = ARQ_EV_APP_LISTEN };
     sim_inject(s, sim_b(s), &listen);
@@ -104,7 +118,9 @@ int main(int argc, char **argv)
         sim_inject(s, sim_b(s), &dready);
         uint64_t t0 = sim_clock_now(), done_ms = 0;
         bool stalled = false;
-        while (sim_clock_now() - t0 < 30ULL * 60 * 1000)
+        /* AB_LIMIT_MIN: virtual minutes before giving up (default 30). */
+        uint64_t limit_ms = (uint64_t)(getenv("AB_LIMIT_MIN") ? atoi(getenv("AB_LIMIT_MIN")) : 30) * 60000ULL;
+        while (sim_clock_now() - t0 < limit_ms)
         {
             /* Both FSMs idle with nothing scheduled and a transfer still
              * short: nothing will ever move the clock again. */

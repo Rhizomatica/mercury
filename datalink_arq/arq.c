@@ -227,6 +227,31 @@ static void cb_send_tx_frame(int packet_type, int mode,
     arq_modem_enqueue(&action);
 }
 
+/* Carousel keydown: the FSM's frames are only valid during the call, so the
+ * modem gets a copy it frees when sent. */
+static void cb_send_keydown(const arq_keydown_t *kd)
+{
+    arq_keydown_t *copy = (arq_keydown_t *)malloc(sizeof(*copy));
+    if (!copy)
+    {
+        HLOGE(LOG_COMP, "keydown dropped: out of memory");
+        arq_modem_ptt_off();          /* the carousel waits for its end */
+        return;
+    }
+    *copy = *kd;
+    arq_action_t action = {
+        .type    = ARQ_ACTION_TX_KEYDOWN,
+        .mode    = kd->f[0].mode,
+        .keydown = copy,
+    };
+    if (arq_modem_enqueue(&action) != 0)
+    {
+        HLOGW(LOG_COMP, "keydown dropped: modem queue full");
+        free(copy);
+        arq_modem_ptt_off();
+    }
+}
+
 static void cb_notify_connected(const char *remote_call, const char *local_call)
 {
     pthread_mutex_lock(&g_conn_lock);
@@ -728,7 +753,24 @@ static void *arq_event_loop_worker(void *arg)
  * Incoming frame handling (called from modem.c worker)
  * ====================================================================== */
 
-bool arq_handle_incoming_connect_frame(uint8_t *data, size_t frame_size)
+/* A frame that passed the session's seeded CRC: the carousel data plane's. */
+void arq_handle_carousel_frame(const uint8_t *data, size_t frame_size, int mode,
+                               bool from_control, float rx_snr)
+{
+    if (!data || frame_size == 0)
+        return;
+    arq_event_t ev = {0};
+    ev.id           = ARQ_EV_RX_CAROUSEL;
+    ev.mode         = mode;
+    ev.from_control = from_control;
+    ev.rx_snr       = rx_snr;
+    ev.payload_len  = frame_size < sizeof(ev.payload) ? frame_size : sizeof(ev.payload);
+    memcpy(ev.payload, data, ev.payload_len);
+    ARQ_TRACE(ARQ_TR_RX_FRAME, 0xCA, (uint8_t)(from_control ? 1 : 0), (uint16_t)frame_size);
+    evq_push(&ev);
+}
+
+bool arq_handle_incoming_connect_frame(uint8_t *data, size_t frame_size, float rx_snr)
 {
     if (!data || frame_size < 2) return false;
 
@@ -771,12 +813,10 @@ bool arq_handle_incoming_connect_frame(uint8_t *data, size_t frame_size)
     const char *dialed_call = my_call;
     if (my_call[0] != 0)
     {
-        uint16_t frame_crc = (uint16_t)data[ARQ_CONNECT_PAYLOAD_IDX]
-                           | ((uint16_t)data[ARQ_CONNECT_PAYLOAD_IDX + 1] << 8);
-        bool match = (frame_crc == arq_protocol_callsign_crc16(my_call));
+        bool match = arq_protocol_connect_dst_matches(data, is_accept, my_call);
         for (int i = 0; !match && i < sec_count; i++)
         {
-            if (frame_crc == arq_protocol_callsign_crc16(sec[i]))
+            if (arq_protocol_connect_dst_matches(data, is_accept, sec[i]))
             {
                 match       = true;
                 dialed_call = sec[i];
@@ -792,6 +832,9 @@ bool arq_handle_incoming_connect_frame(uint8_t *data, size_t frame_size)
     arq_event_t ev = {0};
     ev.id         = is_accept ? ARQ_EV_RX_ACCEPT : ARQ_EV_RX_CALL;
     ev.session_id = session_id;
+    ev.rx_snr     = rx_snr;
+    if (is_accept)
+        ev.car_level = arq_protocol_accept_start_level(data);
     /* src = transmitting side's callsign */
     snprintf(ev.remote_call, CALLSIGN_MAX_SIZE, "%s", src);
     /* local = the one of our callsigns the caller dialed (primary or secondary) */
@@ -993,6 +1036,8 @@ int arq_init(size_t frame_size, int mode)
          * when the detector is disabled (the default), which degrades this to
          * the decoder-sync signal alone rather than breaking anything. */
         .channel_busy        = arq_modem_channel_busy,
+        .send_keydown        = cb_send_keydown,
+        .set_crc_seed        = arq_modem_crc_seed,
     };
     arq_fsm_set_callbacks(&cbs);
     arq_fsm_set_timing(&g_timing);

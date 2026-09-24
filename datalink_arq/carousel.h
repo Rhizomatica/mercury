@@ -127,11 +127,12 @@ typedef struct {
     car_frame_t txbuf[CAR_KEYDOWN_MAX];
 } car_t;
 
-/* Start a connected session.  start_level: the rung the connect's SNR gives
- * each direction (car_start_level).  The caller is polled first -- the
- * callee's ACCEPT is that poll -- so car_start_sender() on the caller and
- * car_start_receiver() on the callee. */
-void car_init(car_t *c, const car_io_t *io, int start_level);
+/* Start a connected session.  rx_level: the rung the SNR measured here gives
+ * the peer's direction; tx_level: the rung the peer gave ours (-1: unknown,
+ * then rx_level until the peer's frames say).  The caller is polled first --
+ * the callee's ACCEPT is that poll, naming tx_level -- so car_start_sender()
+ * on the caller and car_start_receiver() on the callee. */
+void car_init(car_t *c, const car_io_t *io, int rx_level, int tx_level);
 void car_start_sender(car_t *c, uint64_t now);
 void car_start_receiver(car_t *c, uint64_t now);
 

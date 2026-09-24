@@ -178,7 +178,7 @@ void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limi
         car_io_t io = { .keydown = io_keydown, .bind_rx = io_bind_rx, .peer_keyed = io_peer_keyed,
                         .tx_read = io_tx_read, .tx_pending = io_tx_pending, .deliver = io_deliver,
                         .ctx = s };
-        car_init(&s->car, &io, car_start_level((float)snr_db));
+        car_init(&s->car, &io, car_start_level((float)snr_db), car_start_level((float)snr_db));
         s->rx_mode = -1;
     }
     for (int i = 0; i < CAR_SIM_BYTES; i++) {

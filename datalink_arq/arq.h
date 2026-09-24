@@ -287,7 +287,12 @@ void arq_set_active_modem_mode(int mode, size_t frame_size);
  * @param frame_size Frame length in bytes.
  * @return true if frame was handled by ARQ connect path.
  */
-bool arq_handle_incoming_connect_frame(uint8_t *data, size_t frame_size);
+bool arq_handle_incoming_connect_frame(uint8_t *data, size_t frame_size, float rx_snr);
+/* A frame that passed the session's seeded CRC (carousel data plane).
+ * from_control: the control decoder produced it; otherwise mode is the
+ * payload decoder's. */
+void arq_handle_carousel_frame(const uint8_t *data, size_t frame_size, int mode,
+                               bool from_control, float rx_snr);
 
 /**
  * @brief Handle incoming compact CQ frame and emit host-side CQFRAME notification.

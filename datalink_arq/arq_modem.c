@@ -166,6 +166,20 @@ bool arq_modem_channel_busy(void)
     return g_channel_busy_fn ? g_channel_busy_fn() : false;
 }
 
+/* Session CRC seed, applied by the modem to its decoders (see arq_modem.h). */
+static void (*g_crc_seed_fn)(uint16_t seed) = NULL;
+
+void arq_modem_set_crc_seed_fn(void (*fn)(uint16_t seed))
+{
+    g_crc_seed_fn = fn;
+}
+
+void arq_modem_crc_seed(uint16_t seed)
+{
+    if (g_crc_seed_fn)
+        g_crc_seed_fn(seed);
+}
+
 void arq_modem_ptt_on(int mode, size_t frame_size)
 {
     (void)frame_size;

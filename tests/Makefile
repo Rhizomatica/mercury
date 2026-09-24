@@ -66,7 +66,7 @@ TEST_BINS = test_ring_buffer test_arq_protocol test_arq_timing test_arq_fsm \
             test_freedv_harq test_sock_wire test_virtual_clock test_watterson \
             test_mercury_prng test_bcast_file \
             test_ofdm_acq test_crc_seed test_ui_status test_ui_devices test_ui_ptt_persist test_tx_pacing test_radio_port \
-            test_radio_io_frequency test_mfsk test_rs_erasure test_carousel \
+            test_radio_io_frequency test_mfsk test_rs_erasure test_carousel test_carousel_sim \
 			test_message_store test_ui_history test_ws_protocol
 
 .PHONY: all test clean
@@ -121,7 +121,7 @@ test_arq_timing: datalink_arq/test_arq_timing.c $(UNITY_SRC) $(ARQ_STUBS) \
 
 # ARQ FSM tests (state transitions, callback invocations)
 test_arq_fsm: datalink_arq/test_arq_fsm.c $(UNITY_SRC) $(ARQ_STUBS) \
-              ../datalink_arq/arq_fsm.c ../common/virtual_clock.c \
+              ../datalink_arq/arq_fsm.c ../datalink_arq/carousel.c ../datalink_arq/rs_erasure.c ../common/virtual_clock.c \
               ../datalink_arq/arq_protocol.c ../datalink_arq/arq_timing.c \
               ../datalink_arq/arith.c
 	$(CC) $(CFLAGS) -I../modem/freedv -o $@ $(filter %.c %.a %.o,$^) $(LDFLAGS)
@@ -166,7 +166,14 @@ test_carousel: sim/test_carousel.c $(CAROUSEL_SIM_SRC) $(UNITY_SRC)
 SIM_SRC = sim/sim_clock.c sim/sim_channel.c sim/sim_endpoint.c \
           sim/sim_translate.c sim/sim_core.c sim/sim_props.c
 test_arq_sim: sim/test_arq_sim.c $(UNITY_SRC) $(ARQ_STUBS) $(SIM_SRC) \
-              ../datalink_arq/arq_fsm.c ../common/virtual_clock.c \
+              ../datalink_arq/arq_fsm.c ../datalink_arq/carousel.c ../datalink_arq/rs_erasure.c ../common/virtual_clock.c \
+              ../datalink_arq/arq_protocol.c \
+              ../datalink_arq/arq_timing.c ../datalink_arq/arith.c
+	$(CC) $(CFLAGS) -Isim -I../modem/freedv -o $@ $(filter %.c %.a %.o,$^) $(LDFLAGS)
+
+# The carousel data plane through the real FSM on the two-FSM sim
+test_carousel_sim: sim/test_carousel_sim.c $(UNITY_SRC) $(ARQ_STUBS) $(SIM_SRC) \
+              ../datalink_arq/arq_fsm.c ../datalink_arq/carousel.c ../datalink_arq/rs_erasure.c ../common/virtual_clock.c \
               ../datalink_arq/arq_protocol.c \
               ../datalink_arq/arq_timing.c ../datalink_arq/arith.c
 	$(CC) $(CFLAGS) -Isim -I../modem/freedv -o $@ $(filter %.c %.a %.o,$^) $(LDFLAGS)
@@ -174,7 +181,7 @@ test_arq_sim: sim/test_arq_sim.c $(UNITY_SRC) $(ARQ_STUBS) $(SIM_SRC) \
 # Deterministic A/B bench (not part of `make test`):
 #   SIM_CS=400 ./ab_bench <seed> <channel> [bidir]
 ab_bench: sim/ab_bench.c $(ARQ_STUBS) $(SIM_SRC) \
-          ../datalink_arq/arq_fsm.c ../common/virtual_clock.c \
+          ../datalink_arq/arq_fsm.c ../datalink_arq/carousel.c ../datalink_arq/rs_erasure.c ../common/virtual_clock.c \
           ../datalink_arq/arq_protocol.c \
           ../datalink_arq/arq_timing.c ../datalink_arq/arith.c
 	$(CC) $(CFLAGS) -Isim -I../modem/freedv -o $@ $(filter %.c %.a %.o,$^) $(LDFLAGS)

@@ -110,6 +110,7 @@ static pthread_mutex_t modem_inst_lock[MODEM_POOL_SLOTS] = {
 static pthread_mutex_t modem_inst_lock_other = PTHREAD_MUTEX_INITIALIZER;
 
 static pthread_mutex_t *modem_inst_lock_for(struct freedv *f);
+static void modem_apply_crc_seed(uint16_t seed);
 static uint64_t modem_freedv_epoch = 1;
 static uint64_t modem_last_switch_ms = 0;
 static bool modem_owns_radio_buffers = false;
@@ -960,6 +961,7 @@ try_shm_connect2:
     /* Let the ARQ FSM ask whether the channel is occupied, so a timer-driven
      * TURN_REQ does not key over a transmission no decoder has synced on. */
     arq_modem_set_channel_busy_fn(modem_channel_busy);
+    arq_modem_set_crc_seed_fn(modem_apply_crc_seed);
     
     int modem_sample_rate = freedv_get_modem_sample_rate(g_modem->freedv);
     HLOGI("modem", "Initialized persistent FreeDV mode pool (DATAC16/DATAC15/DATAC13/DATAC4/DATAC3/DATAC1/DATAC17/QAM16C2), frames per burst: %d", frames_per_burst);
@@ -1800,6 +1802,36 @@ static int harq_enabled(void)
     return !(e && e[0] == '0');
 }
 
+/* Carousel session seed (see arq_modem_set_crc_seed_fn).  While set, HARQ is
+ * off: consecutive carousel frames are different codewords, never copies. */
+static _Atomic bool g_crc_seed_active = false;
+
+static void modem_apply_crc_seed(uint16_t seed)
+{
+    atomic_store(&g_crc_seed_active, seed != 0);
+    pthread_mutex_lock(&modem_pool_lock);
+    struct freedv *pool[] = {
+        modem_mode_pool.datac16, modem_mode_pool.datac15, modem_mode_pool.datac13,
+        modem_mode_pool.datac4, modem_mode_pool.datac3, modem_mode_pool.datac1,
+        modem_mode_pool.datac17, modem_mode_pool.qam16c2,
+    };
+    for (size_t i = 0; i < sizeof(pool) / sizeof(pool[0]); i++)
+    {
+        struct freedv *f = pool[i];
+        if (!f)
+            continue;
+        bool control = f == modem_mode_pool.datac16;
+        pthread_mutex_t *l = modem_inst_lock_for(f);
+        pthread_mutex_lock(l);
+        freedv_set_crc_seed(f, seed, control);
+        freedv_harq_reset(f);
+        freedv_set_harq(f, !seed && !control && harq_enabled());
+        pthread_mutex_unlock(l);
+    }
+    pthread_mutex_unlock(&modem_pool_lock);
+    HLOGD("modem", "session CRC seed %s", seed ? "set" : "cleared");
+}
+
 static int rx_decoder_bind_mode(rx_decoder_state_t *state, int mode)
 {
     struct freedv *freedv = NULL;
@@ -1841,7 +1873,8 @@ static int rx_decoder_bind_mode(rx_decoder_state_t *state, int mode)
             pthread_mutex_t *bl = modem_inst_lock_for(freedv);
             pthread_mutex_lock(bl);
             freedv_harq_reset(freedv);
-            freedv_set_harq(freedv, harq_enabled() && mode != FREEDV_MODE_DATAC16);
+            freedv_set_harq(freedv, harq_enabled() && mode != FREEDV_MODE_DATAC16 &&
+                                    !atomic_load(&g_crc_seed_active));
             pthread_mutex_unlock(bl);
         }
     }
@@ -1908,7 +1941,9 @@ static void process_received_frame(const uint8_t *data,
                                    size_t nbytes_out,
                                    size_t frame_bytes,
                                    bool arq_policy_ready,
-                                   float snr_est)
+                                   float snr_est,
+                                   int mode,
+                                   bool seeded)
 {
     size_t payload_nbytes;
     int frame_type;
@@ -1922,13 +1957,22 @@ static void process_received_frame(const uint8_t *data,
 
     tnc_send_sn(snr_est);   /* the bitrate is published by the decoder, see publish_link_bitrate() */
 
+    /* The session's seeded CRC: a carousel frame, whatever its bytes say. */
+    if (seeded)
+    {
+        if (arq_policy_ready)
+            arq_handle_carousel_frame(data, payload_nbytes, mode,
+                                      mode == FREEDV_MODE_DATAC16, snr_est);
+        return;
+    }
+
     frame_type = parse_frame_header((const uint8_t *)data, payload_nbytes, NULL);
 
     switch (frame_type)
     {
     case PACKET_TYPE_ARQ_CALL:
         if (arq_policy_ready)
-            arq_handle_incoming_connect_frame((uint8_t *)data, payload_nbytes);
+            arq_handle_incoming_connect_frame((uint8_t *)data, payload_nbytes, snr_est);
         break;
     case PACKET_TYPE_ARQ_CQ:
         if (arq_policy_ready)
@@ -2240,6 +2284,7 @@ static void rx_decoder_consume_chunk(rx_decoder_state_t *state,
 
         rx_status = freedv_get_rx_status(state->freedv);
         freedv_get_modem_stats(state->freedv, &sync, &snr_est);
+        bool seeded = nbytes_out > 0 && freedv_get_rx_crc_seeded(state->freedv);
         pthread_mutex_unlock(ilock);
 
         /* Diagnosis: what the decoder actually saw.  sync, the status bits and
@@ -2273,7 +2318,9 @@ static void rx_decoder_consume_chunk(rx_decoder_state_t *state,
                                    nbytes_out,
                                    state->bytes_cap,
                                    arq_policy_ready,
-                                   snr_est);
+                                   snr_est,
+                                   state->mode,
+                                   seeded);
         }
 
         /* Whole chunk fed and freedv produced nothing and wants no input

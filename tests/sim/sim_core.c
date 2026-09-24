@@ -10,6 +10,7 @@
 #include "sim_translate.h"
 #include "arq_fsm.h"
 #include "arq_timing.h"
+#include "freedv_api.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -20,7 +21,7 @@
  * Pending event queue
  * ====================================================================== */
 
-#define SIM_PENDING_MAX 32
+#define SIM_PENDING_MAX 128   /* a carousel keydown queues up to 17 frames */
 
 typedef enum {
     SIM_PENDING_FRAME,       /* deliver a translated frame to target */
@@ -40,6 +41,10 @@ typedef struct {
      * transmission can destroy it retroactively (see half-duplex below). */
     uint64_t           tx_start_ms;
     uint64_t           tx_end_ms;
+    /* A carousel frame: its mode and the CRC seed it was sent with. */
+    bool               car;
+    int                mode;
+    uint16_t           seed;
 } sim_pending_t;
 
 /* ======================================================================
@@ -218,10 +223,87 @@ static void drain_outframes_from(sim_t *s, sim_endpoint_t *sender,
     }
 }
 
+/* A carousel keydown: its bursts one after another with their gaps, one
+ * TX_STARTED/TX_COMPLETE pair, each burst its own channel draw, and the same
+ * half-duplex collision rules as a single frame over the whole keydown. */
+static void drain_keydown_from(sim_t *s, sim_endpoint_t *sender,
+                               sim_endpoint_t *peer, uint64_t now_ms)
+{
+    static arq_keydown_t kd;
+    if (!sim_endpoint_take_keydown(sender, &kd) || kd.n < 1)
+        return;
+    int dir = (sender == s->a) ? 0 : 1;
+    if (s->half_duplex && s->tx_end_ms[dir] > now_ms)
+        now_ms = s->tx_end_ms[dir];
+
+    uint64_t start[ARQ_KEYDOWN_FRAMES], end[ARQ_KEYDOWN_FRAMES], t = now_ms;
+    for (int i = 0; i < kd.n; i++)
+    {
+        if (i) t += kd.f[i].gap_ms;
+        start[i] = t;
+        t += sim_channel_airtime_ms(kd.f[i].mode, kd.f[i].len);
+        end[i] = t;
+    }
+    uint64_t over_end = t;
+
+    if (s->carrier_sense)
+    {
+        sim_pending_t tx_go = { .fire_at_ms = now_ms, .target = sender, .kind = SIM_PENDING_TX_STARTED };
+        enqueue(s, &tx_go);
+    }
+    sim_pending_t tx_done = { .fire_at_ms = over_end, .target = sender, .kind = SIM_PENDING_TX_COMPLETE };
+    enqueue(s, &tx_done);
+
+    bool collided = false;
+    if (s->half_duplex && s->tx_end_ms[dir ^ 1] > now_ms)
+    {
+        collided = true;
+        for (int i = 0; i < s->pending_count; i++)
+        {
+            if (s->pending[i].kind != SIM_PENDING_FRAME || s->pending[i].target != sender)
+                continue;
+            if (s->pending[i].tx_end_ms > now_ms && s->pending[i].tx_start_ms < over_end)
+            {
+                s->pending[i] = s->pending[--s->pending_count];
+                i--;
+                s->collisions++;
+            }
+        }
+        s->collisions++;
+    }
+    s->tx_start_ms[dir] = now_ms;
+    s->tx_end_ms[dir]   = over_end;
+    if (collided)
+        return;
+
+    for (int i = 0; i < kd.n; i++)
+    {
+        uint64_t deliver_at = 0;
+        if (!sim_channel_schedule(s->ch, start[i], dir, kd.f[i].mode, kd.f[i].len, &deliver_at))
+            continue;
+        sim_pending_t fe = {
+            .fire_at_ms  = deliver_at,
+            .target      = peer,
+            .kind        = SIM_PENDING_FRAME,
+            .frame_len   = kd.f[i].len,
+            .rx_snr      = s->rx_snr_db,
+            .tx_start_ms = start[i],
+            .tx_end_ms   = end[i],
+            .car         = true,
+            .mode        = kd.f[i].mode,
+            .seed        = kd.crc_seed,
+        };
+        memcpy(fe.frame, kd.f[i].bytes, kd.f[i].len);
+        enqueue(s, &fe);
+    }
+}
+
 static void drain_all_outframes(sim_t *s, uint64_t now_ms)
 {
     drain_outframes_from(s, s->a, s->b, now_ms);
     drain_outframes_from(s, s->b, s->a, now_ms);
+    drain_keydown_from(s, s->a, s->b, now_ms);
+    drain_keydown_from(s, s->b, s->a, now_ms);
 }
 
 /* Before an endpoint handles anything: if the peer's frame has been on the
@@ -255,6 +337,30 @@ static void fire_pending(sim_t *s, sim_pending_t *p)
     {
         arq_event_t ev = { .id = ARQ_EV_TX_COMPLETE };
         arq_fsm_dispatch(sim_endpoint_session(p->target), &ev);
+        return;
+    }
+
+    /* A carousel frame, as Mercury's receiver hears it: the control decoder
+     * takes every DATAC16 frame, the one payload decoder only the mode it is
+     * bound to (the session's peer_tx_mode), and a frame counts only with the
+     * seed the station's decoders accept. */
+    if (p->car)
+    {
+        arq_session_t *rs = sim_endpoint_session(p->target);
+        bool control = p->mode == ARQ_CONTROL_MODE;
+        if (p->seed != sim_endpoint_crc_seed(p->target) || p->seed == 0)
+            return;
+        if (!control && p->mode != rs->peer_tx_mode)
+            return;
+        static arq_event_t cev;
+        memset(&cev, 0, sizeof(cev));
+        cev.id           = ARQ_EV_RX_CAROUSEL;
+        cev.mode         = p->mode;
+        cev.from_control = control;
+        cev.rx_snr       = p->rx_snr;
+        cev.payload_len  = p->frame_len;
+        memcpy(cev.payload, p->frame, p->frame_len);
+        arq_fsm_dispatch(rs, &cev);
         return;
     }
 
