@@ -236,6 +236,10 @@ typedef struct
                                         * Peer DISCONNECT, timeouts and LISTEN
                                         * OFF leave CONNECTED at once, so
                                         * nothing is delivered after them. */
+    bool     tx_join_next;             /* the frame being sent opens a keydown the
+                                        * NEXT send joins (ACK + first data burst) */
+    bool     ack_carries_data;         /* the ACK over in flight also carries our
+                                        * first data burst (one keydown)        */
     int      peer_snr_x10;            /* peer-reported SNR * 10 (integer)     */
     bool     peer_snr_valid;          /* a peer SNR reading has been received; *
                                        * distinguishes a genuine 0 dB report   *

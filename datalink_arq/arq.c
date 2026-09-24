@@ -221,6 +221,7 @@ static void cb_send_tx_frame(int packet_type, int mode,
         .mode        = mode,
         .frame_size  = frame_size,
         .frame_count = g_sess.pending_burst_frames,
+        .join_next   = g_sess.tx_join_next,
     };
     g_sess.pending_burst_frames = 0;
     arq_modem_enqueue(&action);

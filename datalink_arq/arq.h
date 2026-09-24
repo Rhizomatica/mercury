@@ -81,6 +81,8 @@ typedef struct
     int frame_count;     /* frames in this PTT burst (>= 1); the modem reads
                           * frame_count * frame_size bytes and modulates them
                           * behind a single preamble                          */
+    bool join_next;      /* the NEXT action goes out in this same keydown,
+                          * after a short gap, instead of in its own over    */
 } arq_action_t;
 
 /** @brief Snapshot of current ARQ runtime state for telemetry/decision making. */

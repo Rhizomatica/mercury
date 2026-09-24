@@ -17,6 +17,7 @@ typedef struct {
     int     mode;
     int     burst_remaining;
     bool    present;
+    bool    join_next;   /* the next outframe shares this one's keydown */
 } sim_outframe_t;
 
 sim_endpoint_t            *sim_endpoint_create(const char *my_call, const char *peer_call);
