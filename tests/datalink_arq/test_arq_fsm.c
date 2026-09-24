@@ -21,7 +21,9 @@ DEFINE_FFF_GLOBALS;
 
 #include "arq_fsm.h"
 #include "arq_protocol.h"
-#include "virtual_clock.h"   /* time_now_ms(), to stage a busy channel */
+#include "virtual_clock.h"
+#include "arq_modem.h"        /* arq_modem_preferred_tx_mode(): what the modem keys */
+#include "modem_mfsk.h"       /* MERCURY_MODE_MFSK */   /* time_now_ms(), to stage a busy channel */
 #include "freedv/freedv_api.h"
 #include "modem_mfsk.h"   /* MERCURY_MODE_MFSK */
 
@@ -1869,6 +1871,172 @@ void test_accepting_silent_wait_gives_up_after_budget(void)
 }
 
 
+/* ---- Deep connect: CALL escalation to the MFSK floor (#235) ------------------
+ *
+ * The data plane runs ~10 dB below DATAC16, but CALL/ACCEPT rode DATAC16
+ * alone, so a pair that could carry a transfer could not open one.  After
+ * ARQ_CALL_FAST_SLOTS CALLs on the fast control mode the caller escalates to
+ * the MFSK floor, and the answerer replies on whatever carrier the CALL arrived
+ * on.  These pin the four things that make that correct.
+ */
+
+static void set_my_call(void)
+{
+    snprintf(arq_conn.my_call_sign, CALLSIGN_MAX_SIZE, "%s", "AAA");
+    arq_conn.bw = ARQ_BANDWIDTH_FULL_HZ;
+}
+
+/* Place a call and send `sends` CALLs, completing each transmission. */
+static void place_call_and_send(int sends)
+{
+    set_my_call();
+    arq_event_t ev = make_event(ARQ_EV_APP_LISTEN);
+    arq_fsm_dispatch(&sess, &ev);
+    connect_to("DST1");                        /* CALL #1 */
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_CALLING, sess.conn_state);
+    ev = make_event(ARQ_EV_TX_COMPLETE);
+    arq_fsm_dispatch(&sess, &ev);
+    for (int i = 1; i < sends; i++)
+    {
+        ev = make_event(ARQ_EV_TIMER_RETRY);   /* CALL #i+1 */
+        arq_fsm_dispatch(&sess, &ev);
+        ev = make_event(ARQ_EV_TX_COMPLETE);
+        arq_fsm_dispatch(&sess, &ev);
+    }
+}
+
+static int nth_tx_mode(unsigned n)
+{
+    TEST_ASSERT_TRUE(fake_send_tx_frame_fake.call_count > n);
+    return fake_send_tx_frame_fake.arg1_history[n];
+}
+
+/* Fast slots on DATAC16, then the MFSK floor -- exactly ARQ_CALL_FAST_SLOTS
+ * fast ones, not one more (the old slot arithmetic sent an extra DATAC16). */
+void test_call_escalates_to_mfsk_after_the_fast_slots(void)
+{
+    place_call_and_send(ARQ_CALL_FAST_SLOTS + 1);
+    for (unsigned i = 0; i < ARQ_CALL_FAST_SLOTS; i++)
+        TEST_ASSERT_EQUAL_INT_MESSAGE(FREEDV_MODE_DATAC16, nth_tx_mode(i),
+            "a fast CALL slot went out on the wrong carrier");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(MERCURY_MODE_MFSK, nth_tx_mode(ARQ_CALL_FAST_SLOTS),
+        "the caller did not escalate once its fast slots were spent");
+}
+
+/* After escalating the caller must not give up on the fast carrier: it
+ * alternates MFSK and DATAC16.  Staying on MFSK lost connects at -8.8/-10.8 dB
+ * that DATAC16 made on the same fading realisation (bench, 10 paired seeds). */
+void test_call_alternates_carriers_after_escalating(void)
+{
+    place_call_and_send(ARQ_CALL_FAST_SLOTS + 4);
+    for (unsigned i = ARQ_CALL_FAST_SLOTS; i < ARQ_CALL_FAST_SLOTS + 4; i++)
+        TEST_ASSERT_EQUAL_INT_MESSAGE(
+            ((i - ARQ_CALL_FAST_SLOTS) % 2 == 0) ? MERCURY_MODE_MFSK : FREEDV_MODE_DATAC16,
+            nth_tx_mode(i), "the escalated CALLs did not alternate carriers");
+}
+
+/* The modem keys the carrier the CALL was SIZED for.  After the last fast CALL
+ * the send counter already says "escalate", so recomputing the carrier on the
+ * modem thread would key a DATAC16-sized frame as MFSK. */
+void test_modem_keys_the_carrier_latched_for_the_call_in_flight(void)
+{
+    place_call_and_send(ARQ_CALL_FAST_SLOTS);
+    TEST_ASSERT_EQUAL_INT(MERCURY_MODE_MFSK, arq_call_carrier(&sess));   /* next one */
+    TEST_ASSERT_EQUAL_INT_MESSAGE(FREEDV_MODE_DATAC16, arq_modem_preferred_tx_mode(&sess),
+        "the modem re-derived the carrier instead of keying the one the frame was built for");
+}
+
+/* The wait for an ACCEPT is sized from the carrier just sent: a 3.7 s DATAC16
+ * CALL must not wait MFSK's interval, and a 13.5 s MFSK CALL must not have
+ * its retry fired over its own burst by the DATAC16 one. */
+void test_call_retry_wait_matches_the_carrier_sent(void)
+{
+    place_call_and_send(1);
+    TEST_ASSERT_EQUAL_UINT64(
+        (uint64_t)(arq_protocol_call_interval_for_mode_s(FREEDV_MODE_DATAC16) * 1000.0f + 0.5f),
+        sess.deadline_ms - time_now_ms());
+
+    setUp();
+    place_call_and_send(ARQ_CALL_FAST_SLOTS + 1);
+    TEST_ASSERT_EQUAL_UINT64(
+        (uint64_t)(arq_protocol_call_interval_for_mode_s(MERCURY_MODE_MFSK) * 1000.0f + 0.5f),
+        sess.deadline_ms - time_now_ms());
+    TEST_ASSERT_TRUE(arq_protocol_call_interval_for_mode_s(MERCURY_MODE_MFSK) >
+                     arq_protocol_call_interval_for_mode_s(FREEDV_MODE_DATAC16));
+}
+
+/* Every new call starts on the fast carrier again: an escalated attempt must
+ * not leave the next one starting on MFSK. */
+void test_new_call_starts_on_the_fast_carrier(void)
+{
+    place_call_and_send(ARQ_CALL_FAST_SLOTS + 1);
+    arq_event_t ev = make_event(ARQ_EV_APP_DISCONNECT);
+    arq_fsm_dispatch(&sess, &ev);
+    unsigned before = fake_send_tx_frame_fake.call_count;
+
+    connect_to("DST2");
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_CALLING, sess.conn_state);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(FREEDV_MODE_DATAC16, nth_tx_mode(before),
+        "a fresh call inherited the previous attempt's escalation");
+}
+
+static void listen_and_hear_call(int mode)
+{
+    set_my_call();
+    arq_event_t ev = make_event(ARQ_EV_APP_LISTEN);
+    arq_fsm_dispatch(&sess, &ev);
+    ev = make_event(ARQ_EV_RX_CALL);
+    ev.session_id = 0x42;
+    ev.mode       = mode;
+    strncpy(ev.remote_call, "DST1", CALLSIGN_MAX_SIZE);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_ACCEPTING, sess.conn_state);
+}
+
+/* Send whatever the answerer has scheduled next (the ACCEPT) and return the
+ * carrier it went out on. */
+static int send_scheduled_accept(void)
+{
+    unsigned before = fake_send_tx_frame_fake.call_count;
+    arq_event_t ev = make_event(sess.deadline_event);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_TRUE_MESSAGE(fake_send_tx_frame_fake.call_count > before,
+        "no ACCEPT was sent");
+    return nth_tx_mode(before);
+}
+
+/* An MFSK CALL is answered on MFSK: the caller escalated because DATAC16 is
+ * not getting through, so a DATAC16 ACCEPT would not be heard. */
+void test_accept_answers_on_the_carrier_of_the_call(void)
+{
+    listen_and_hear_call(MERCURY_MODE_MFSK);
+    TEST_ASSERT_EQUAL_INT(MERCURY_MODE_MFSK, send_scheduled_accept());
+    TEST_ASSERT_EQUAL_INT(MERCURY_MODE_MFSK, arq_modem_preferred_tx_mode(&sess));
+}
+
+/* The bug: the answerer heard the DATAC16 CALL and is already accepting, but
+ * the caller never heard the DATAC16 ACCEPT and escalated.  The repeated CALL
+ * arrives on MFSK, and the ACCEPT must follow it there.  Answering on DATAC16
+ * again repeats exactly what already failed -- a weak return path. */
+void test_accepting_follows_a_call_that_escalated_to_mfsk(void)
+{
+    listen_and_hear_call(FREEDV_MODE_DATAC16);
+    TEST_ASSERT_EQUAL_INT(FREEDV_MODE_DATAC16, send_scheduled_accept());
+    arq_event_t ev = make_event(ARQ_EV_TX_COMPLETE);
+    arq_fsm_dispatch(&sess, &ev);
+
+    ev = make_event(ARQ_EV_RX_CALL);           /* the caller escalated */
+    ev.session_id = 0x42;
+    ev.mode       = MERCURY_MODE_MFSK;
+    strncpy(ev.remote_call, "DST1", CALLSIGN_MAX_SIZE);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_ACCEPTING, sess.conn_state);
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(MERCURY_MODE_MFSK, send_scheduled_accept(),
+        "the ACCEPT stayed on DATAC16 after the caller escalated to MFSK");
+    TEST_ASSERT_EQUAL_INT(MERCURY_MODE_MFSK, arq_modem_preferred_tx_mode(&sess));
+}
+
 /* ---- Connect budget ------------------------------------------------------
  *
  * A caller keeps CALLing for ARQ_CONNECT_TIMEOUT_S.  It used to stop after 5
@@ -1953,6 +2121,13 @@ int main(void)
     RUN_TEST(test_redial_while_disconnect_deferred_is_placed_after_teardown);
     RUN_TEST(test_redial_waits_for_peer_disconnect_ack_to_finish);
     RUN_TEST(test_listen_off_while_connected_cancels_deferred_connect);
+    RUN_TEST(test_call_escalates_to_mfsk_after_the_fast_slots);
+    RUN_TEST(test_call_alternates_carriers_after_escalating);
+    RUN_TEST(test_modem_keys_the_carrier_latched_for_the_call_in_flight);
+    RUN_TEST(test_call_retry_wait_matches_the_carrier_sent);
+    RUN_TEST(test_new_call_starts_on_the_fast_carrier);
+    RUN_TEST(test_accept_answers_on_the_carrier_of_the_call);
+    RUN_TEST(test_accepting_follows_a_call_that_escalated_to_mfsk);
     RUN_TEST(test_connect_on_live_session_without_disconnect_is_not_queued);
     RUN_TEST(test_listen_off_drops_pending_accept);
     RUN_TEST(test_listen_off_drops_outgoing_call);

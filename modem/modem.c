@@ -1015,7 +1015,13 @@ int run_tests_tx(generic_modem_t *g_modem)
 
     int counter = 0;
 
-    while(1)
+    /* Stop on SIGINT/SIGTERM.  This used to be while(1): a signal only set
+     * shutdown_, the frame in flight finished and unkeyed, and the next one
+     * keyed straight back up -- so `timeout 15 mercury -t` never stopped
+     * transmitting, and only a second signal ended it, through _exit() with no
+     * cleanup, possibly mid-frame with PTT still on.  Every frame unkeys at its
+     * end (send_modulated_data), so leaving here leaves the radio unkeyed. */
+    while (!shutdown_)
     {
         for (size_t i = 0; i < payload_size; i++)
         {
@@ -1630,6 +1636,9 @@ static int harq_enabled(void)
     return !(e && e[0] == '0');
 }
 
+static int rx_decoder_adopt(rx_decoder_state_t *state, modem_codec_t codec, int mode,
+                            int max_samples, size_t bytes_cap);
+
 static int rx_decoder_bind_mode(rx_decoder_state_t *state, int mode)
 {
     modem_codec_t codec = {0};
@@ -1683,7 +1692,13 @@ static int rx_decoder_bind_mode(rx_decoder_state_t *state, int mode)
 
     if (!modem_codec_valid(&codec) || max_samples <= 0 || bytes_cap == 0)
         return -1;
+    return rx_decoder_adopt(state, codec, mode, max_samples, bytes_cap);
+}
 
+/* Size the decoder's buffers for `codec` and make it the one decoded with. */
+static int rx_decoder_adopt(rx_decoder_state_t *state, modem_codec_t codec, int mode,
+                            int max_samples, size_t bytes_cap)
+{
     if (state->demod_cap < max_samples)
     {
         int16_t *new_demod = (int16_t *)realloc(state->demod_in, (size_t)max_samples * sizeof(int16_t));
@@ -1742,6 +1757,7 @@ static void process_received_frame(const uint8_t *data,
                                    size_t nbytes_out,
                                    size_t frame_bytes,
                                    bool arq_policy_ready,
+                                   int rx_mode,
                                    float snr_est)
 {
     size_t payload_nbytes;
@@ -1762,7 +1778,8 @@ static void process_received_frame(const uint8_t *data,
     {
     case PACKET_TYPE_ARQ_CALL:
         if (arq_policy_ready)
-            arq_handle_incoming_connect_frame((uint8_t *)data, payload_nbytes);
+            arq_handle_incoming_connect_frame((uint8_t *)data, payload_nbytes,
+                                              rx_mode);
         break;
     case PACKET_TYPE_ARQ_CQ:
         if (arq_policy_ready)
@@ -1819,6 +1836,15 @@ typedef struct {
     cbuf_handle_t       ring;         /* int16 samples from the dispatcher   */
     pthread_t           tid;
     _Atomic int         mode;         /* plane's mode, set by the dispatcher */
+    /* When valid, decode with this instance instead of the pooled one for the
+     * mode.  The MFSK call listener uses its own, so it never shares decoder
+     * state with the payload plane, which uses the pooled MFSK instance in a
+     * session. */
+    modem_codec_t       own_codec;
+    /* Honour g_payload_resync_req.  Exactly one worker may: the flag is taken
+     * with atomic_exchange, so a second consumer would steal the payload
+     * plane's resync. */
+    bool                takes_payload_resync;
     _Atomic bool        running;
     _Atomic bool        flush_req;    /* dispatcher asks: drop what you hold  */
     /* Metrics this plane observed since the dispatcher last drained them.
@@ -1863,6 +1889,19 @@ static void rx_worker_take_metrics(rx_worker_t *w, rx_metrics_accum_t *out)
     pthread_mutex_unlock(&w->mlock);
 }
 
+/* Bind a worker's own codec instance (see rx_worker_t.own_codec). */
+static int rx_decoder_bind_own(rx_decoder_state_t *state, modem_codec_t codec, int mode)
+{
+    if (state->codec.ctx == codec.ctx && state->mode == mode)
+        return 0;
+    int max_samples = codec.be->n_max_rx_samples(codec.ctx);
+    size_t bytes_cap = (size_t)(codec.be->bits_per_frame(codec.ctx) / 8);
+    if (max_samples <= 0 || bytes_cap == 0)
+        return -1;
+    state->demod_count = 0;
+    return rx_decoder_adopt(state, codec, mode, max_samples, bytes_cap);
+}
+
 static void *rx_worker_thread(void *arg)
 {
     rx_worker_t *w = (rx_worker_t *)arg;
@@ -1879,7 +1918,10 @@ static void *rx_worker_thread(void *arg)
         }
 
         int mode = atomic_load(&w->mode);
-        if (rx_decoder_bind_mode(&w->state, mode) < 0)
+        int bound = modem_codec_valid(&w->own_codec)
+                  ? rx_decoder_bind_own(&w->state, w->own_codec, mode)
+                  : rx_decoder_bind_mode(&w->state, mode);
+        if (bound < 0)
         {
             usleep(100000);
             continue;
@@ -1904,7 +1946,7 @@ static void *rx_worker_thread(void *arg)
          * that costs ~770 ms of audio to refill and the peer's data burst
          * follows its control burst by longer than that (it has to key up,
          * and the ARQ guard interval sits in between). */
-        if (w->state.mode != FREEDV_MODE_DATAC16 &&
+        if (w->takes_payload_resync &&
             atomic_exchange(&g_payload_resync_req, false))
         {
             if (modem_codec_valid(&w->state.codec) && w->state.codec.be->unsync)
@@ -2110,6 +2152,7 @@ static void rx_decoder_consume_chunk(rx_decoder_state_t *state,
                                    nbytes_out,
                                    state->bytes_cap,
                                    arq_policy_ready,
+                                   state->mode,
                                    snr_est);
         }
 
@@ -2325,22 +2368,26 @@ void *rx_thread(void *g_modem)
     /* One worker per plane.  rx_thread keeps ownership of reading
      * capture_buffer, the flush policy and the spectrum/busy work; the workers
      * only decode. */
-    static rx_worker_t w_ctrl, w_pay;
+    static rx_worker_t w_ctrl, w_pay, w_listen;
     /* Pattern-ACK window, and whether an ACK was due on the previous chunk
      * (its rising edge resets the window; see the detector below). */
     mfsk_pattern_window_t pat_win = {0};
     bool pat_armed = false;
     memset(&w_ctrl, 0, sizeof(w_ctrl));
     memset(&w_pay,  0, sizeof(w_pay));
+    memset(&w_listen, 0, sizeof(w_listen));
     pthread_mutex_init(&w_ctrl.mlock, NULL);
     pthread_mutex_init(&w_pay.mlock,  NULL);
+    pthread_mutex_init(&w_listen.mlock, NULL);
+    w_pay.takes_payload_resync = true;
     /* Two seconds of 8 kHz int16 per plane: the same order as the capture
      * backlog cap, so a stalled worker is bounded by its own ring rather than
      * by starving the other plane. */
     int ring_bytes = rx_burst_capacity_samples() * (int)sizeof(int16_t);
     w_ctrl.ring = circular_buf_init((uint8_t *)malloc(ring_bytes), ring_bytes);
     w_pay.ring  = circular_buf_init((uint8_t *)malloc(ring_bytes), ring_bytes);
-    if (!w_ctrl.ring || !w_pay.ring)
+    w_listen.ring = circular_buf_init((uint8_t *)malloc(ring_bytes), ring_bytes);
+    if (!w_ctrl.ring || !w_pay.ring || !w_listen.ring)
     {
         HLOGE("modem-rx", "could not allocate decoder rings; RX disabled");
         return NULL;
@@ -2351,6 +2398,31 @@ void *rx_thread(void *g_modem)
     atomic_store(&w_pay.running,  true);
     pthread_create(&w_ctrl.tid, NULL, rx_worker_thread, &w_ctrl);
     pthread_create(&w_pay.tid,  NULL, rx_worker_thread, &w_pay);
+
+    /* Third worker: MFSK, fed only while LISTENING with the payload plane on
+     * another mode.  A caller escalates to the MFSK floor after its fast
+     * DATAC16 CALLs (ARQ_CALL_FAST_SLOTS); without this a station that was
+     * only listening could not decode those CALLs at all -- its payload
+     * decoder sits on the listen (-m) mode and its control decoder on DATAC16.
+     * It costs one more decoder while idle, nothing during a session. */
+    {
+        const modem_backend_t *be = backend_for_mode(MERCURY_MODE_MFSK);
+        void *ctx = be ? be->open(MERCURY_MODE_MFSK) : NULL;
+        if (ctx)
+        {
+            if (be->configure)
+                be->configure(ctx, 1, 0);
+            w_listen.own_codec.be  = be;
+            w_listen.own_codec.ctx = ctx;
+            atomic_store(&w_listen.mode, MERCURY_MODE_MFSK);
+            atomic_store(&w_listen.running, true);
+            pthread_create(&w_listen.tid, NULL, rx_worker_thread, &w_listen);
+        }
+        else
+            HLOGW("modem-rx", "could not open the MFSK call listener; "
+                  "MFSK CALLs will be heard only during a session");
+    }
+    bool listen_fed = false;
     int last_pref_rx_mode = -1;
     int last_pref_tx_mode = -1;
     bool was_tx = false;
@@ -2427,6 +2499,7 @@ void *rx_thread(void *g_modem)
              * what they hold rather than reaching into their state. */
             atomic_store(&w_ctrl.flush_req, true);
             atomic_store(&w_pay.flush_req, true);
+            atomic_store(&w_listen.flush_req, true);
             was_tx = false;
         }
 
@@ -2460,11 +2533,23 @@ void *rx_thread(void *g_modem)
              * their own demod_count, since they own it. */
             atomic_store(&w_ctrl.flush_req, true);
             atomic_store(&w_pay.flush_req, true);
+            atomic_store(&w_listen.flush_req, true);
         }
 
         atomic_store(&w_pay.mode, payload_mode);
         atomic_store(&w_ctrl.policy_ready, arq_policy_ready);
         atomic_store(&w_pay.policy_ready,  arq_policy_ready);
+        atomic_store(&w_listen.policy_ready, arq_policy_ready);
+
+        /* The MFSK call listener only runs while a CALL can arrive on MFSK and
+         * nothing else would decode it.  Leaving that state drops what it
+         * holds, so a later listening spell starts from fresh audio. */
+        bool feed_listen = modem_codec_valid(&w_listen.own_codec) &&
+                           arq_policy_ready && arq_snapshot.listening_for_calls &&
+                           payload_mode != MERCURY_MODE_MFSK;
+        if (listen_fed && !feed_listen)
+            atomic_store(&w_listen.flush_req, true);
+        listen_fed = feed_listen;
 
         int chunk_samples = RX_DECODE_CHUNK_SAMPLES;
 
@@ -2519,8 +2604,8 @@ void *rx_thread(void *g_modem)
          * dispatcher (that would let a slow payload decoder starve control,
          * which is the failure this whole split exists to avoid). */
         size_t tee_bytes = sizeof(int16_t) * (size_t)chunk_samples;
-        rx_worker_t *tee[2] = { &w_ctrl, &w_pay };
-        for (int t = 0; t < 2; t++)
+        rx_worker_t *tee[3] = { &w_ctrl, &w_pay, &w_listen };
+        for (int t = 0; t < (feed_listen ? 3 : 2); t++)
         {
             if (circular_buf_free_size(tee[t]->ring) < tee_bytes)
             {
@@ -2574,6 +2659,12 @@ void *rx_thread(void *g_modem)
         rx_metrics_accum_t metrics = {0};
         rx_worker_take_metrics(&w_ctrl, &metrics);
         rx_worker_take_metrics(&w_pay,  &metrics);
+        {
+            /* The listener is not a link-quality source: it hears noise while
+             * idle.  Drain its metrics so they do not accumulate. */
+            rx_metrics_accum_t ignored = {0};
+            rx_worker_take_metrics(&w_listen, &ignored);
+        }
 
         if (arq_policy_ready)
         {
@@ -2713,16 +2804,25 @@ void *rx_thread(void *g_modem)
     /* Stop and join the workers BEFORE releasing anything they touch.  Teardown
      * order is not cosmetic here: freeing a ring under a live worker is the
      * use-after-free class this project has hit before. */
+    bool listen_started = atomic_load(&w_listen.running);
     atomic_store(&w_ctrl.running, false);
     atomic_store(&w_pay.running,  false);
+    atomic_store(&w_listen.running, false);
     pthread_join(w_ctrl.tid, NULL);
     pthread_join(w_pay.tid,  NULL);
+    if (listen_started)
+        pthread_join(w_listen.tid, NULL);
     rx_decoder_dispose(&w_ctrl.state);
     rx_decoder_dispose(&w_pay.state);
+    rx_decoder_dispose(&w_listen.state);
+    if (modem_codec_valid(&w_listen.own_codec))
+        w_listen.own_codec.be->close(w_listen.own_codec.ctx);
     if (w_ctrl.ring) { free(w_ctrl.ring->buffer); circular_buf_free(w_ctrl.ring); }
     if (w_pay.ring)  { free(w_pay.ring->buffer);  circular_buf_free(w_pay.ring);  }
+    if (w_listen.ring) { free(w_listen.ring->buffer); circular_buf_free(w_listen.ring); }
     pthread_mutex_destroy(&w_ctrl.mlock);
     pthread_mutex_destroy(&w_pay.mlock);
+    pthread_mutex_destroy(&w_listen.mlock);
 
     free(capture_i32);
     free(capture_i16);
