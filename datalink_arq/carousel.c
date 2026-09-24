@@ -502,6 +502,7 @@ static void send_round(car_t *c)
  * the ladder is not monotonic in rate (DATAC4 is below DATAC15), and probing
  * only the next rung stranded the sender under it.  The receiver runs this, on
  * what it received. */
+#define PROBE_UP_DELIVERY 0.5   /* the best must deliver this well to probe above it */
 #define PROBE_EVERY   8     /* polls before a measured rung is re-probed...  */
 #define DEAD_PROBE_MS     60000   /* a dead rung is re-probed after this...  */
 #define DEAD_PROBE_MAX_MS 480000  /* ...doubling to at most this             */
@@ -545,7 +546,12 @@ static double level_delivery(const car_t *c, int lv)
     return 1.0 - (c->lv_lost[lv] + 0.5) / (c->lv_sent[lv] + 2.0);
 }
 
-static bool level_dead(const car_t *c, int lv) { return c->lv_dead_run[lv] >= DEAD_RUN; }
+/* Near its SNR threshold two lost frames in a row are enough: the SNR already
+ * doubts the rung, and each loss costs a round. */
+static bool level_dead(const car_t *c, int lv)
+{
+    return c->lv_dead_run[lv] >= (level_marginal(c, lv) ? 2 : DEAD_RUN);
+}
 
 static void measure_level(car_t *c, int lv, int frames, double loss, uint64_t now)
 {
@@ -613,8 +619,13 @@ static bool level_allowed(const car_t *c, int lv)
 /* A dead or locked-out level comes back for one probe after its backoff --
  * counted in time, not rounds: slow rungs have 30 s rounds, and 64 of them
  * kept a false verdict in force for over half an hour. */
+static bool level_gated(const car_t *c, int lv);
 static bool reprobe_due(const car_t *c, int lv, uint64_t now)
 {
+    /* A rung the SNR has excluded and nobody has tried is not probed: its
+     * probe clock starts at 0, and "due" at 60 s probed QAM16C2 at 8 dB
+     * first thing in a session. */
+    if (!c->lv_rounds[lv] && level_gated(c, lv)) return false;
     uint64_t wait = c->lv_backoff_ms[lv] ? c->lv_backoff_ms[lv] : DEAD_PROBE_MS;
     return now - c->lv_probe_at[lv] >= wait;
 }
@@ -668,6 +679,13 @@ static int choose_level(const car_t *c, uint64_t now)
         for (int lv = best - 1; lv >= 0; lv--)
             if (!c->lv_rounds[lv]) return lv;
     }
+    /* A faster rung needs more SNR than the best one does, so probe upward
+     * only while that one is delivering: after DATAC1 lost a frame at 8 dB,
+     * probing DATAC17 and QAM16C2 cost a round each and delivered nothing.
+     * Not stricter than half: flat 25 % loss holds every rung near 75 %, and
+     * a 0.7 bar stopped the climb there. */
+    if (level_delivery(c, best) < PROBE_UP_DELIVERY)
+        return best;
     for (int up = best + 1; up < CAR_NLEVELS; up++) {
         if (level_potential(up) <= best_gp)
             continue;                   /* cannot win even with no loss */
