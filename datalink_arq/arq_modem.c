@@ -13,6 +13,7 @@
 #include <string.h>
 #include <time.h>
 #include <errno.h>
+#include <stdlib.h>
 
 #include "../modem/freedv/freedv_api.h"
 
@@ -47,6 +48,15 @@ int arq_modem_queue_init(size_t capacity)
 void arq_modem_queue_shutdown(void)
 {
     pthread_mutex_lock(&g_qmtx);
+    for (size_t i = 0; i < g_count; i++)
+    {
+        arq_action_t *a = &g_queue[(g_head + i) % g_cap];
+        if (a->type == ARQ_ACTION_TX_KEYDOWN)
+        {
+            free(a->keydown);
+            a->keydown = NULL;
+        }
+    }
     g_shutdown = true;
     pthread_cond_broadcast(&g_qcond);
     pthread_mutex_unlock(&g_qmtx);
