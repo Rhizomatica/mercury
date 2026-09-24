@@ -24,6 +24,7 @@
 
 typedef enum {
     SIM_PENDING_FRAME,       /* deliver a translated frame to target */
+    SIM_PENDING_TX_STARTED,  /* inject ARQ_EV_TX_STARTED to target (sender) */
     SIM_PENDING_TX_COMPLETE  /* inject ARQ_EV_TX_COMPLETE to target (sender) */
 } sim_pending_kind_t;
 
@@ -66,7 +67,17 @@ struct sim {
      * tx_end_ms[] is when each endpoint's last transmission stops. */
     bool             half_duplex;
     uint64_t         tx_end_ms[2];   /* [0] = a, [1] = b */
+    uint64_t         tx_start_ms[2];
     int              collisions;     /* frames destroyed by overlap */
+
+    /* Carrier sense.  A real station knows the peer is on the air once a
+     * decoder holds sync on its frame, which takes the preamble to arrive --
+     * about acq_ms after the peer keys -- and that is what the FSM's
+     * listen-before-talk reads (last_rx_sync_ms).  Without it every such
+     * check is inert here and the race it leaves open (two stations deciding
+     * within acq_ms of each other) cannot happen.  Off by default. */
+    bool             carrier_sense;
+    uint32_t         acq_ms;
 
     arq_timing_ctx_t timing;  /* shared timing context (metrics only, not correctness) */
 };
@@ -89,10 +100,31 @@ static void drain_outframes_from(sim_t *s, sim_endpoint_t *sender,
                                  sim_endpoint_t *peer, uint64_t now_ms)
 {
     sim_outframe_t of;
+    int dir = (sender == s->a) ? 0 : 1;
     while (sim_endpoint_take_outframe(sender, &of))
     {
+        /* A station plays its frames one after another: one queued while it
+         * is still keyed goes out when the current one ends (on air the modem
+         * keyed a DISCONNECT 42 ms after the TURN_ACK it was queued behind),
+         * not on top of it.  Only on the half-duplex medium, the model where
+         * that timing decides whether frames collide. */
+        uint64_t start_ms = now_ms;
+        if (s->half_duplex && s->tx_end_ms[dir] > now_ms)
+            start_ms = s->tx_end_ms[dir];
+        now_ms = start_ms;
+
         uint32_t airtime = sim_channel_airtime_ms(of.mode, of.len);
         uint64_t tx_end  = now_ms + airtime;
+
+        if (s->carrier_sense)
+        {
+            sim_pending_t tx_go = {
+                .fire_at_ms = now_ms,
+                .target     = sender,
+                .kind       = SIM_PENDING_TX_STARTED,
+            };
+            enqueue(s, &tx_go);
+        }
 
         /* TX_COMPLETE back to sender at TX-end time. */
         sim_pending_t tx_done = {
@@ -101,8 +133,6 @@ static void drain_outframes_from(sim_t *s, sim_endpoint_t *sender,
             .kind       = SIM_PENDING_TX_COMPLETE,
         };
         enqueue(s, &tx_done);
-
-        int dir = (sender == s->a) ? 0 : 1;
 
         /* Half-duplex: does this transmission overlap one already on the air?
          *
@@ -137,7 +167,8 @@ static void drain_outframes_from(sim_t *s, sim_endpoint_t *sender,
                 s->collisions++;    /* ours is destroyed too */
             }
         }
-        s->tx_end_ms[dir] = tx_end;
+        s->tx_start_ms[dir] = now_ms;
+        s->tx_end_ms[dir]   = tx_end;
 
         /* Frame delivery to peer (may be erased, or destroyed by a collision). */
         uint64_t deliver_at = 0;
@@ -165,10 +196,32 @@ static void drain_all_outframes(sim_t *s, uint64_t now_ms)
     drain_outframes_from(s, s->b, s->a, now_ms);
 }
 
+/* Before an endpoint handles anything: if the peer's frame has been on the
+ * air for at least acq_ms (and we are not keyed ourselves, which deafens a
+ * half-duplex station), a decoder holds sync on it now. */
+static void sense(sim_t *s, sim_endpoint_t *ep, uint64_t now_ms)
+{
+    if (!s->carrier_sense)
+        return;
+    int me = (ep == s->a) ? 0 : 1, peer = me ^ 1;
+    bool keyed = s->tx_start_ms[me] <= now_ms && now_ms < s->tx_end_ms[me];
+    if (!keyed &&
+        s->tx_start_ms[peer] + s->acq_ms <= now_ms && now_ms < s->tx_end_ms[peer])
+        sim_endpoint_session(ep)->last_rx_sync_ms = now_ms;
+}
+
 /* Fire one pending event. */
 static void fire_pending(sim_t *s, sim_pending_t *p)
 {
     sim_endpoint_set_active(p->target);
+    sense(s, p->target, sim_clock_now());
+
+    if (p->kind == SIM_PENDING_TX_STARTED)
+    {
+        arq_event_t ev = { .id = ARQ_EV_TX_STARTED };
+        arq_fsm_dispatch(sim_endpoint_session(p->target), &ev);
+        return;
+    }
 
     if (p->kind == SIM_PENDING_TX_COMPLETE)
     {
@@ -226,7 +279,18 @@ sim_endpoint_t *sim_b(sim_t *s) { return s->b; }
 int sim_frames_in_flight(sim_t *s) { return s->pending_count; }
 
 void sim_set_half_duplex(sim_t *s, bool on) { s->half_duplex = on; }
+void sim_set_carrier_sense(sim_t *s, bool on, uint32_t acq_ms)
+{
+    s->carrier_sense = on;
+    s->acq_ms        = acq_ms;
+}
 int  sim_collisions(sim_t *s)               { return s->collisions; }
+bool sim_keyed(sim_t *s, sim_endpoint_t *ep)
+{
+    int me = (ep == s->a) ? 0 : 1;
+    uint64_t now = sim_clock_now();
+    return s->tx_start_ms[me] <= now && now < s->tx_end_ms[me];
+}
 
 /* Fade controls: change channel loss and delivered-frame SNR mid-simulation
  * (a real fade degrades both — surviving frames also arrive weaker). */
@@ -252,6 +316,7 @@ void sim_set_mode_per(sim_t *s, const sim_mode_per_t *table, int count,
 void sim_inject(sim_t *s, sim_endpoint_t *ep, const arq_event_t *ev)
 {
     sim_endpoint_set_active(ep);
+    sense(s, ep, sim_clock_now());
     arq_fsm_dispatch(sim_endpoint_session(ep), ev);
     drain_all_outframes(s, sim_clock_now());
 }
@@ -307,6 +372,7 @@ uint64_t sim_run_until_idle(sim_t *s, uint64_t max_ms)
             sa->deadline_ms = UINT64_MAX;
             arq_event_t tev = { .id = sa->deadline_event };
             sim_endpoint_set_active(s->a);
+            sense(s, s->a, now);
             arq_fsm_dispatch(sa, &tev);
             drain_all_outframes(s, now);
         }
@@ -318,6 +384,7 @@ uint64_t sim_run_until_idle(sim_t *s, uint64_t max_ms)
             sb->deadline_ms = UINT64_MAX;
             arq_event_t tev = { .id = sb->deadline_event };
             sim_endpoint_set_active(s->b);
+            sense(s, s->b, now);
             arq_fsm_dispatch(sb, &tev);
             drain_all_outframes(s, now);
         }

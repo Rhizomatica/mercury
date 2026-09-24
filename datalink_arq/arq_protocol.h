@@ -318,6 +318,10 @@ extern _Atomic int arq_keepalive_miss_limit;
 /* After a TURN_REQ heard in WAIT_ACK: how long past one reply guard plus one
  * control frame to wait for an ACK before retransmitting (see arq_fsm.c). */
 #define ARQ_TURN_REQ_ACK_MARGIN_MS    1000
+/* Before a DISCONNECT: how long past the longer reply guard to leave for a
+ * frame our last transmission invited (DATA after a TURN_ACK or an ACK, an ACK
+ * after DATA) to start and be heard, before keying over the gap. */
+#define ARQ_REPLY_WINDOW_MARGIN_MS    1000
 #define ARQ_MODE_REQ_RETRIES          2
 #define ARQ_PEER_PAYLOAD_HOLD_S_DEFAULT  15    /* hold peer payload mode after activity */
 extern _Atomic int arq_peer_payload_hold_s;

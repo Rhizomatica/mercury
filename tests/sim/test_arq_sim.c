@@ -327,6 +327,48 @@ void test_sim_bidirectional_progress_under_collisions(void)
     sim_destroy(s);
 }
 
+/* Bench run 12, end of the call, replayed with carrier sense on.  B asks for
+ * the floor; A's host hangs up while A's TURN_ACK is on the air.  On air the
+ * DISCONNECT keyed 42 ms after the TURN_ACK and B, holding the TURN_ACK,
+ * keyed its first DATA 0.9 s later without listening: both were lost, and the
+ * DISCONNECT retry clipped the DATA.  The teardown must now complete with
+ * nothing keyed over anything. */
+void test_sim_disconnect_behind_turn_ack_does_not_collide(void)
+{
+    sim_channel_cfg_t chan = { .seed = 3, .per = 0.0, .guard_ms = 100 };
+    sim_t *s = make_connected(&chan);
+    TEST_ASSERT_NOT_NULL(s);
+    sim_set_half_duplex(s, true);
+    sim_set_carrier_sense(s, true, 400);
+    sim_run_until_idle(s, 30000);                 /* settle after connect */
+
+    uint8_t rec[64];
+    memset(rec, 0x5a, sizeof(rec));
+    sim_endpoint_queue_tx(sim_b(s), rec, sizeof(rec));
+    arq_event_t dready = { .id = ARQ_EV_APP_DATA_READY };
+    sim_inject(s, sim_b(s), &dready);
+
+    arq_session_t *a = sim_endpoint_session(sim_a(s));
+    for (int i = 0; i < 600 && !(a->dflow_state == ARQ_DFLOW_TURN_ACK_TX &&
+                                 sim_keyed(s, sim_a(s))); i++)
+        sim_run_until_idle(s, 50);
+    TEST_ASSERT_TRUE_MESSAGE(a->dflow_state == ARQ_DFLOW_TURN_ACK_TX &&
+                             sim_keyed(s, sim_a(s)),
+        "never got A keying a TURN_ACK");
+
+    int before = sim_collisions(s);
+    arq_event_t bye = { .id = ARQ_EV_APP_DISCONNECT };
+    sim_inject(s, sim_a(s), &bye);
+    sim_run_until_idle(s, 180000);
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(before, sim_collisions(s),
+        "the teardown behind the TURN_ACK collided");
+    TEST_ASSERT_NOT_EQUAL_INT(ARQ_CONN_CONNECTED, a->conn_state);
+    TEST_ASSERT_NOT_EQUAL_INT(ARQ_CONN_CONNECTED,
+                              sim_endpoint_session(sim_b(s))->conn_state);
+    sim_destroy(s);
+}
+
 void test_sim_transfer_lossy_per20(void)
 {
     sim_channel_cfg_t chan = { .seed = 7, .per = 0.20, .guard_ms = 150 };
@@ -696,6 +738,7 @@ int main(void)
     /* Task 7: scenario tests */
     RUN_TEST(test_sim_transfer_clean);
     RUN_TEST(test_sim_bidirectional_progress_under_collisions);
+    RUN_TEST(test_sim_disconnect_behind_turn_ack_does_not_collide);
     RUN_TEST(test_sim_transfer_lossy_per20);
     RUN_TEST(test_sim_fade_cliff_downgrades);
     RUN_TEST(test_sim_peer_loss_disconnects);

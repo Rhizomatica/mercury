@@ -213,7 +213,12 @@ typedef struct
      * avoid keying a TURN_REQ into the peer's frame. */
     uint64_t last_rx_sync_ms;
     uint8_t  turn_req_defer_count;     /* consecutive busy-channel deferrals   */
-    uint8_t  retx_defer_count;         /* same, for the WAIT_ACK retransmission */
+    uint8_t  retx_defer_count;         /* same, for DATA (first burst and
+                                        * WAIT_ACK retransmission)          */
+    uint8_t  disc_defer_count;         /* same, for DISCONNECT              */
+    bool     tx_active;                /* we are keyed (TX_STARTED seen, no
+                                        * TX_COMPLETE yet)                   */
+    uint64_t last_tx_end_ms;           /* when our last transmission ended  */
     bool     acktx_had_has_data;       /* HAS_DATA was set in the last ACK sent */
     bool     host_released;            /* the application ended this session
                                         * (DISCONNECT/ABORT): nothing more is
@@ -265,6 +270,8 @@ typedef struct
     bool     deferred_listen_off;      /* LISTEN OFF received during grace period;
                                         * will be honoured once the grace expires    */
     bool     pending_disconnect_notify;/* defer notify_disconnected until TX done */
+    bool     pending_disconnect_reply; /* our reply to the peer's DISCONNECT is
+                                        * due when the reply guard expires  */
     bool     pending_disconnect;       /* APP_DISCONNECT deferred until TX buf empty */
     bool     pending_connect;          /* CONNECT arrived while DISCONNECTING: place
                                         * the call once the teardown completes     */

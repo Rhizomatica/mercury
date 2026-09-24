@@ -156,6 +156,8 @@ static void sess_enter(arq_session_t *sess, arq_conn_state_t new_state,
           arq_conn_state_name(new_state));
     if (new_state == ARQ_CONN_CONNECTED && sess->conn_state != ARQ_CONN_CONNECTED)
         sess->host_released = false;         /* a new session: a new reader */
+    if (new_state == ARQ_CONN_DISCONNECTING && sess->conn_state != ARQ_CONN_DISCONNECTING)
+        sess->disc_defer_count = 0;          /* a fresh teardown: a fresh budget */
     sess->conn_state     = new_state;
     sess->state_enter_ms = time_now_ms();
     sess->deadline_ms    = deadline_ms;
@@ -1122,10 +1124,23 @@ static void notify_session_ended(arq_session_t *sess)
         g_cbs.notify_disconnected(false);
 }
 
+/* The reply to the peer's DISCONNECT, if it is still owed. */
+static void send_disconnect_reply(arq_session_t *sess)
+{
+    if (!sess->pending_disconnect_reply)
+        return;
+    sess->pending_disconnect_reply = false;
+    send_ctrl_frame(sess, ARQ_SUBTYPE_DISCONNECT);
+}
+
 static void fsm_disconnected(arq_session_t *sess, const arq_event_t *ev)
 {
     switch (ev->id)
     {
+    case ARQ_EV_TIMER_ACK:
+        send_disconnect_reply(sess);    /* the reply guard has expired */
+        break;
+
     case ARQ_EV_TX_COMPLETE:
         /* Deferred from RX_DISCONNECT: fire now that DISCONNECT ACK is sent,
          * giving the TCP data thread time to drain data_rx_buffer_arq. */
@@ -1139,10 +1154,16 @@ static void fsm_disconnected(arq_session_t *sess, const arq_event_t *ev)
         break;
 
     case ARQ_EV_APP_LISTEN:
+        /* Still finishing the peer's teardown: the listen intent is recorded
+         * (listen_enabled) and enter_idle_after_call() restores LISTENING once
+         * our reply is out.  Entering it now would drop the reply's timer. */
+        if (sess->pending_disconnect_notify)
+            break;
         sess_enter(sess, ARQ_CONN_LISTENING, UINT64_MAX, ARQ_EV_TIMER_RETRY);
         break;
 
     case ARQ_EV_APP_CONNECT:
+        send_disconnect_reply(sess);    /* owed first; the CALL queues behind it */
         snprintf(sess->remote_call, CALLSIGN_MAX_SIZE, "%s", ev->remote_call);
         sess->session_id      = (uint8_t)(time_now_ms() & 0x7F) | 0x01;
         sess->tx_retries_left = ARQ_CALL_RETRY_SLOTS;
@@ -1576,6 +1597,57 @@ static void fire_deferred_connect(arq_session_t *sess)
     arq_fsm_dispatch(sess, &ev);
 }
 
+/* Hold a DISCONNECT back until it cannot land on a frame we invited.
+ *
+ * On air (bench run 12) the host hung up while our TURN_ACK was on the air.
+ * The DISCONNECT, queued by the guard timer, keyed 42 ms after the TURN_ACK
+ * ended -- and the peer, holding the TURN_ACK, keyed its first DATA 0.9 s
+ * later; both were lost, and the DISCONNECT retry clipped the DATA's tail.
+ * Listening alone cannot fix that: the invited DATA starts after the guard,
+ * so at the moment we would key there is nothing yet to hear.
+ *
+ * So: never while we are still keyed; not before our last transmission's
+ * reply window has passed, by which time an invited frame has started and a
+ * decoder holds sync on it; and not until the peer has been quiet for one
+ * reply guard, so its radio is back on receive.  Bounded like the other
+ * deferrals: after ARQ_TURN_REQ_DEFER_MAX steps we key regardless. */
+static bool disconnect_must_wait(arq_session_t *sess)
+{
+    uint64_t now = time_now_ms();
+    if (sess->disc_defer_count >= ARQ_TURN_REQ_DEFER_MAX)
+    {
+        HLOGW(LOG_COMP, "DISCONNECT deferral cap reached (%u) - keying anyway",
+              (unsigned)sess->disc_defer_count);
+        sess->disc_defer_count = 0;
+        return false;
+    }
+    uint64_t guard  = (uint64_t)ARQ_CHANNEL_GUARD_MS;
+    uint64_t window = (uint64_t)(ARQ_ISS_POST_ACK_GUARD_MS > ARQ_CHANNEL_GUARD_MS
+                                     ? ARQ_ISS_POST_ACK_GUARD_MS : ARQ_CHANNEL_GUARD_MS) +
+                      ARQ_REPLY_WINDOW_MARGIN_MS;
+    uint64_t clear_at = 0;
+    if (sess->last_tx_end_ms)
+        clear_at = sess->last_tx_end_ms + window;
+    if (sess->last_rx_sync_ms && sess->last_rx_sync_ms + guard > clear_at)
+        clear_at = sess->last_rx_sync_ms + guard;
+
+    if (!sess->tx_active && !peer_is_transmitting(sess) && now >= clear_at)
+    {
+        sess->disc_defer_count = 0;
+        return false;
+    }
+    sess->disc_defer_count++;
+    uint64_t next = now + ARQ_TURN_REQ_DEFER_MS;
+    if (!sess->tx_active && !peer_is_transmitting(sess) && clear_at > now)
+        next = clear_at;           /* the only thing left is the window */
+    HLOGD(LOG_COMP, "DISCONNECT deferred (%s) %u/%u",
+          sess->tx_active ? "still keyed" :
+          peer_is_transmitting(sess) ? "peer transmitting" : "reply window",
+          (unsigned)sess->disc_defer_count, (unsigned)ARQ_TURN_REQ_DEFER_MAX);
+    sess->deadline_ms = next;
+    return true;
+}
+
 static void fsm_disconnecting(arq_session_t *sess, const arq_event_t *ev)
 {
     const arq_mode_timing_t *tm;
@@ -1630,6 +1702,8 @@ static void fsm_disconnecting(arq_session_t *sess, const arq_event_t *ev)
 
     case ARQ_EV_TIMER_ACK:
         /* Initial DISCONNECT send after channel guard. */
+        if (disconnect_must_wait(sess))
+            break;
         send_ctrl_frame(sess, ARQ_SUBTYPE_DISCONNECT);
         tm = arq_protocol_mode_timing(sess->control_mode);
         sess->deadline_ms    = retry_deadline_from_s(sess, tm ? tm->retry_interval_s : 7.0f);
@@ -1647,6 +1721,8 @@ static void fsm_disconnecting(arq_session_t *sess, const arq_event_t *ev)
     case ARQ_EV_TIMER_RETRY:
         if (sess->tx_retries_left > 0)
         {
+            if (disconnect_must_wait(sess))
+                break;
             sess->tx_retries_left--;
             send_ctrl_frame(sess, ARQ_SUBTYPE_DISCONNECT);
             tm = arq_protocol_mode_timing(sess->control_mode);
@@ -1778,14 +1854,19 @@ static void fsm_connected(arq_session_t *sess, const arq_event_t *ev)
         return;
 
     case ARQ_EV_RX_DISCONNECT:
-        send_ctrl_frame(sess, ARQ_SUBTYPE_DISCONNECT);
+        /* Reply one reply guard later, like every other answer.  A frame
+         * decodes before its tail has played out -- on air (bench run 14) the
+         * DISCONNECT decoded 186 ms before the peer's TX_COMPLETE -- and a
+         * reply keyed at once (40 ms) clipped it. */
+        sess->pending_disconnect_reply = true;
         /* Peer-initiated disconnect supersedes any locally deferred one. */
         sess->pending_disconnect = false;
         /* Defer notify until TX_COMPLETE so data_rx_buffer_arq has time to
          * drain to the TCP socket before UUCP sees the DISCONNECTED signal. */
         sess->pending_disconnect_notify = true;
         if (g_timing) arq_timing_record_disconnect(g_timing, "rx_disconnect");
-        sess_enter(sess, ARQ_CONN_DISCONNECTED, UINT64_MAX, ARQ_EV_TIMER_RETRY);
+        sess_enter(sess, ARQ_CONN_DISCONNECTED,
+                   time_now_ms() + ARQ_CHANNEL_GUARD_MS, ARQ_EV_TIMER_ACK);
         return;
 
     case ARQ_EV_RX_ACCEPT:
@@ -1880,6 +1961,15 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
                             time_now_ms() + ARQ_ISS_POST_ACK_GUARD_MS,
                             ARQ_EV_TIMER_ACK);
             }
+            else if (peer_is_transmitting(sess))
+            {
+                /* New bytes can arrive while the peer is on air (a keepalive,
+                 * a DISCONNECT): take the listening path instead of keying. */
+                sess->retx_defer_count = 0;
+                dflow_enter(sess, ARQ_DFLOW_DATA_TX,
+                            time_now_ms() + ARQ_TURN_REQ_DEFER_MS,
+                            ARQ_EV_TIMER_ACK);
+            }
             else
             {
                 dflow_enter(sess, ARQ_DFLOW_DATA_TX, UINT64_MAX, ARQ_EV_TIMER_RETRY);
@@ -1923,7 +2013,25 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
     case ARQ_DFLOW_DATA_TX:
         if (ev->id == ARQ_EV_TIMER_ACK)
         {
-            /* Channel guard elapsed — now safe to transmit data. */
+            /* Channel guard elapsed.  Listen before keying, as every other
+             * keying path does: this is the first DATA after gaining the turn
+             * (TURN_ACK, piggyback) or after an ACK, and on air (bench run 12)
+             * it keyed 0.83 s into a DISCONNECT the peer sent right after its
+             * TURN_ACK.  Bounded by the same cap. */
+            if (peer_is_transmitting(sess) &&
+                sess->retx_defer_count < ARQ_TURN_REQ_DEFER_MAX)
+            {
+                sess->retx_defer_count++;
+                HLOGD(LOG_COMP, "DATA deferred: peer transmitting (%u/%u)",
+                      (unsigned)sess->retx_defer_count,
+                      (unsigned)ARQ_TURN_REQ_DEFER_MAX);
+                sess->deadline_ms = time_now_ms() + ARQ_TURN_REQ_DEFER_MS;
+                break;
+            }
+            if (sess->retx_defer_count >= ARQ_TURN_REQ_DEFER_MAX)
+                HLOGW(LOG_COMP, "DATA deferral cap reached (%u) - keying anyway",
+                      (unsigned)sess->retx_defer_count);
+            sess->retx_defer_count = 0;
             send_data_burst(sess);
         }
         else if (ev->id == ARQ_EV_TX_STARTED)
@@ -3143,6 +3251,16 @@ void arq_fsm_dispatch(arq_session_t *sess, const arq_event_t *ev)
         break;
     default:
         break;
+    }
+
+    /* Whether we are keyed, and when we last stopped: the DISCONNECT has to
+     * wait for both (see disconnect_must_wait). */
+    if (ev->id == ARQ_EV_TX_STARTED)
+        sess->tx_active = true;
+    else if (ev->id == ARQ_EV_TX_COMPLETE)
+    {
+        sess->tx_active = false;
+        sess->last_tx_end_ms = time_now_ms();
     }
 
     /* Track the app's listen intent before the per-state dispatch so LISTEN
