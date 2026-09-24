@@ -93,7 +93,13 @@
  * ====================================================================== */
 
 #define ARQ_FLAG_TURN_REQ  0x80  /* bit 7: sender requests role turn          */
-#define ARQ_FLAG_HAS_DATA  0x40  /* bit 6: sender has data queued (IRS→ISS)   */
+#define ARQ_FLAG_HAS_DATA  0x40  /* bit 6: sender has data queued.  On ACKs
+                                  * (IRS→ISS): the IRS wants the floor.  On
+                                  * DATA (ISS→IRS): more is queued after this
+                                  * frame -- sent only to a peer that set
+                                  * ARQ_FLAG_CAP_MORE, because 1.9.x read it
+                                  * as "the ISS keeps the floor" and would sit
+                                  * idle instead of taking a turn it asked for. */
 #define ARQ_FLAG_LEN_HI    0x20  /* bit 5: DATA frames only — payload_valid    *
                                   * field carries bits [7:0] of valid byte     *
                                   * count; this flag carries bit 8.            */
@@ -110,6 +116,10 @@
                                    * tells it definitively whether the stuck
                                    * frame was delivered (late/lost ACK) or
                                    * never arrived. */
+#define ARQ_FLAG_CAP_MORE  0x01  /* bit 0: DATA and ACK frames -- the sender
+                                  * understands HAS_DATA on DATA frames (see
+                                  * above).  Older stations never set it and
+                                  * ignore it. */
 #define ARQ_FLAG_BURST_END 0x04  /* bit 2: DATA frames only — last frame of a  *
                                   * multi-frame burst; the IRS sends one       *
                                   * cumulative ACK when it sees this (or when  *
@@ -322,6 +332,10 @@ extern _Atomic int arq_keepalive_miss_limit;
  * frame our last transmission invited (DATA after a TURN_ACK or an ACK, an ACK
  * after DATA) to start and be heard, before keying over the gap. */
 #define ARQ_REPLY_WINDOW_MARGIN_MS    1000
+/* Margin at the end of the IRS's hold on "the ISS will key again": covers the
+ * retry stagger and scheduling jitter (see peer_still_sending_until in
+ * arq_fsm.c). */
+#define ARQ_PEER_MORE_MARGIN_MS       3000
 #define ARQ_MODE_REQ_RETRIES          2
 #define ARQ_PEER_PAYLOAD_HOLD_S_DEFAULT  15    /* hold peer payload mode after activity */
 extern _Atomic int arq_peer_payload_hold_s;

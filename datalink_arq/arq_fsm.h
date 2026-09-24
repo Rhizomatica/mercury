@@ -203,6 +203,11 @@ typedef struct
 
     /* --- Peer state observed from frames --- */
     bool     peer_has_data;            /* peer's HAS_DATA flag in last frame   */
+    bool     peer_cap_more;            /* peer sets/understands HAS_DATA on
+                                        * DATA frames (ARQ_FLAG_CAP_MORE)    */
+    bool     peer_more_data;           /* the peer's last DATA said more is
+                                        * queued behind it                   */
+    uint64_t peer_more_data_ms;        /* when that DATA was received       */
     bool     peer_turn_req_pending;    /* peer asked for the floor while we were
                                         * in WAIT_ACK; honoured when the ACK
                                         * lands, never by keying into it        */

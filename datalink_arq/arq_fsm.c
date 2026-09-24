@@ -155,7 +155,11 @@ static void sess_enter(arq_session_t *sess, arq_conn_state_t new_state,
           arq_conn_state_name(sess->conn_state),
           arq_conn_state_name(new_state));
     if (new_state == ARQ_CONN_CONNECTED && sess->conn_state != ARQ_CONN_CONNECTED)
-        sess->host_released = false;         /* a new session: a new reader */
+    {
+        sess->host_released  = false;        /* a new session: a new reader */
+        sess->peer_cap_more  = false;        /* learned afresh from this peer */
+        sess->peer_more_data = false;
+    }
     if (new_state == ARQ_CONN_DISCONNECTING && sess->conn_state != ARQ_CONN_DISCONNECTING)
         sess->disc_defer_count = 0;          /* a fresh teardown: a fresh budget */
     sess->conn_state     = new_state;
@@ -877,7 +881,13 @@ static void send_ack(arq_session_t *sess, uint8_t ack_delay_raw)
     uint8_t snr_raw = 0;
 
     if (session_tx_backlog(sess) > 0)
+    {
         flags |= ARQ_FLAG_HAS_DATA;
+        /* We have asked for the floor: an ISS that hears this yields, so
+         * whatever it had queued no longer means it will key again. */
+        sess->peer_more_data = false;
+    }
+    flags |= ARQ_FLAG_CAP_MORE;
     if (sess->local_snr_x10 != 0)
         snr_raw = arq_protocol_encode_snr((float)sess->local_snr_x10 / 10.0f);
 
@@ -972,6 +982,16 @@ static void send_data_burst(arq_session_t *sess)
             f[ARQ_HDR_FLAGS_IDX] |= ARQ_FLAG_BURST_END;
         else
             f[ARQ_HDR_FLAGS_IDX] &= (uint8_t)~ARQ_FLAG_BURST_END;
+
+        /* Tell a peer that understands it whether more follows this frame,
+         * so it asks for the floor in its ACK rather than with a TURN_REQ
+         * racing our next transmission (see peer_still_sending). */
+        f[ARQ_HDR_FLAGS_IDX] |= ARQ_FLAG_CAP_MORE;
+        bool more = i < sess->tx_window_count - 1 || session_tx_backlog(sess) > 0;
+        if (sess->peer_cap_more && more)
+            f[ARQ_HDR_FLAGS_IDX] |= ARQ_FLAG_HAS_DATA;
+        else
+            f[ARQ_HDR_FLAGS_IDX] &= (uint8_t)~ARQ_FLAG_HAS_DATA;
 
         send_frame(PACKET_TYPE_ARQ_DATA, sess->payload_mode,
                    (size_t)sess->tx_window[i].len, f,
@@ -1085,6 +1105,70 @@ static bool peer_is_transmitting(const arq_session_t *sess)
     if (now < sess->last_rx_sync_ms)
         return true;          /* clock went backwards; treat as busy */
     return (now - sess->last_rx_sync_ms) < (uint64_t)ARQ_CHANNEL_SYNC_HOLD_MS;
+}
+
+/* A DATA frame from the peer has been handled.
+ *
+ * peer_has_data keeps its one meaning on the IRS: a DUPLICATE says the ISS is
+ * still retransmitting (it missed our ACK), so after ACKing we must not take a
+ * piggyback turn and put both sides into ISS.  HAS_DATA on DATA frames is
+ * deliberately NOT folded into it: the ISS yields to our HAS_DATA ACK whatever
+ * its own backlog, so if "the ISS has more" also sent us idle after that ACK,
+ * both sides would sit in IDLE_IRS.  It goes to peer_more_data instead, which
+ * only holds our TURN_REQs back (see peer_still_sending). */
+static void note_peer_data(arq_session_t *sess, const arq_event_t *ev, bool new_frame)
+{
+    sess->peer_has_data = !new_frame;
+    if (new_frame)
+    {
+        sess->peer_more_data = (ev->rx_flags & ARQ_FLAG_CAP_MORE) &&
+                               (ev->rx_flags & ARQ_FLAG_HAS_DATA);
+        sess->peer_more_data_ms = time_now_ms();
+    }
+}
+
+/* Is the ISS still in the middle of sending?
+ *
+ * Its last DATA said more is queued, so it will key again: its next DATA once
+ * our ACK lands, or a retransmission when its ACK timeout fires.  A TURN_REQ
+ * then competes with a transmission that is coming anyway, and the two timers
+ * can fire within the ~0.4 s it takes a decoder to lock on the other's
+ * preamble -- a collision listening cannot prevent (bench run 8: a TURN_REQ
+ * retry and an ACK-timeout retransmission 0.33 s apart).  Asking in our ACK
+ * instead (HAS_DATA) costs nothing: the ISS yields to it.
+ *
+ * Bounded, so a stale announcement cannot mute us.  The hold must end AFTER
+ * a retransmission would have finished, not near its start: its expiry is
+ * itself a keying decision, and one landing as the ISS re-keys is the very
+ * collision the hold exists to prevent (the first version, one ACK timeout
+ * plus one frame, did exactly that after a handover: the new sender's first
+ * DATA starts a post-ACK guard later, and a lost one comes back one ACK
+ * timeout, one frame and up to a retry stagger after that).  So: one ACK
+ * timeout, two frames (first DATA and its retransmission), the post-ACK
+ * guard, and margin for the stagger.  Past that the ISS has stopped (its host
+ * aborted, say) and a TURN_REQ is the right move again. */
+static uint64_t peer_still_sending_until(const arq_session_t *sess)
+{
+    const arq_mode_timing_t *tm = arq_protocol_mode_timing(sess->peer_tx_mode);
+    float s = tm ? tm->ack_timeout_s + 2.0f * tm->frame_duration_s : 25.0f;
+    return sess->peer_more_data_ms + (uint64_t)(s * 1000.0f) +
+           (uint64_t)ARQ_ISS_POST_ACK_GUARD_MS + ARQ_PEER_MORE_MARGIN_MS;
+}
+
+/* We just handed the floor over (yielded to the peer's HAS_DATA ACK, or sent
+ * TURN_ACK): the peer is about to key its first DATA.  Treat that exactly
+ * like an announcement -- on air (bench run 16) new application data arrived
+ * right after such a handover and the TURN_REQ keyed 250 ms into the new
+ * sender's first burst, before any decoder could sync on it. */
+static void expect_peer_to_send(arq_session_t *sess)
+{
+    sess->peer_more_data    = true;
+    sess->peer_more_data_ms = time_now_ms();
+}
+
+static bool peer_still_sending(const arq_session_t *sess)
+{
+    return sess->peer_more_data && time_now_ms() < peer_still_sending_until(sess);
 }
 
 static void enter_idle_irs(arq_session_t *sess)
@@ -1993,9 +2077,7 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
              * our ACK yet.  Force peer_has_data=true so ACK_TX→TX_COMPLETE
              * calls enter_idle_irs() instead of taking a spurious piggyback
              * turn that would place both sides into ISS simultaneously. */
-            sess->peer_has_data = new_frame
-                                  ? (ev->rx_flags & ARQ_FLAG_HAS_DATA) != 0
-                                  : true;
+            note_peer_data(sess, ev, new_frame);
             irs_arm_ack_deadline(sess, ev);
         }
         else if (ev->id == ARQ_EV_RX_TURN_REQ)
@@ -2162,6 +2244,7 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
             {
                 if (g_timing) arq_timing_record_turn(g_timing, false, turn_reason);
                 enter_idle_irs(sess);
+                expect_peer_to_send(sess);
             }
             else
             {
@@ -2438,7 +2521,7 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
                 sess->tx_inflight_bytes = 0;
                 sess->tx_retries_left   = ARQ_DATA_RETRY_SLOTS;
                 sess->last_tx_progress_ms = time_now_ms();
-                sess->peer_has_data = (ev->rx_flags & ARQ_FLAG_HAS_DATA) != 0;
+                note_peer_data(sess, ev, true);
                 if (g_cbs.send_buffer_status)
                     g_cbs.send_buffer_status(session_tx_backlog(sess));
                 if (deliver_rx_checked(sess, ev) && g_timing)
@@ -2517,9 +2600,7 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
              * our ACK yet.  Force peer_has_data=true so ACK_TX→TX_COMPLETE
              * calls enter_idle_irs() instead of taking a spurious piggyback
              * turn that would place both sides into ISS simultaneously. */
-            sess->peer_has_data = new_frame
-                                  ? (ev->rx_flags & ARQ_FLAG_HAS_DATA) != 0
-                                  : true;
+            note_peer_data(sess, ev, new_frame);
 
             /* Guard: allow ARQ_CHANNEL_GUARD_MS for the ISS relay to switch
              * back to RX before our ACK preamble arrives.  ACK is sent
@@ -2548,6 +2629,15 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
                 dflow_enter(sess, ARQ_DFLOW_KEEPALIVE_TX,
                             retry_deadline_from_s(sess, tm ? tm->retry_interval_s : 7.0f),
                             ARQ_EV_TIMER_RETRY);
+            }
+            else if (session_tx_backlog(sess) > 0 && peer_still_sending(sess))
+            {
+                /* The ISS said more is coming: ask in the ACK to its next
+                 * frame, not with a TURN_REQ that races it. */
+                HLOGD(LOG_COMP, "TURN_REQ held: the ISS announced more data");
+                dflow_enter(sess, ARQ_DFLOW_IDLE_IRS,
+                            peer_still_sending_until(sess),
+                            ARQ_EV_TIMER_PEER_BACKLOG);
             }
             else if (session_tx_backlog(sess) > 0)
             {
@@ -2589,6 +2679,16 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
             {
                 enter_idle_irs(sess);
             }
+        }
+        else if (ev->id == ARQ_EV_APP_DATA_READY && peer_still_sending(sess))
+        {
+            /* The ISS said more is coming: our ACK to it will carry HAS_DATA.
+             * If that frame never shows up, TIMER_PEER_BACKLOG asks later. */
+            HLOGD(LOG_COMP, "TURN_REQ for new data held: the ISS announced more data");
+            if (peer_still_sending_until(sess) < sess->deadline_ms)
+                dflow_enter(sess, ARQ_DFLOW_IDLE_IRS,
+                            peer_still_sending_until(sess),
+                            ARQ_EV_TIMER_PEER_BACKLOG);
         }
         else if (ev->id == ARQ_EV_APP_DATA_READY)
         {
@@ -2671,9 +2771,7 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
              * our ACK yet.  Force peer_has_data=true so ACK_TX→TX_COMPLETE
              * calls enter_idle_irs() instead of taking a spurious piggyback
              * turn that would place both sides into ISS simultaneously. */
-            sess->peer_has_data = new_frame
-                                  ? (ev->rx_flags & ARQ_FLAG_HAS_DATA) != 0
-                                  : true;
+            note_peer_data(sess, ev, new_frame);
             /* Re-arm per frame: mid-burst frames push the ACK deadline out
              * past the next expected frame; the BURST_END frame collapses
              * it to the channel guard. */
@@ -2767,9 +2865,7 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
              * NOTE: deliver_rx_checked() increments rx_expected on success,
              * so (ev->seq == sess->rx_expected) is never true after the call;
              * the return value is the only correct new/dup discriminator. */
-            sess->peer_has_data = new_frame
-                                  ? (ev->rx_flags & ARQ_FLAG_HAS_DATA) != 0
-                                  : true;
+            note_peer_data(sess, ev, new_frame);
             irs_arm_ack_deadline(sess, ev);
         }
         else if (ev->id == ARQ_EV_RX_TURN_REQ)
@@ -2888,7 +2984,10 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
         if (ev->id == ARQ_EV_TIMER_ACK)
             send_ctrl_frame(sess, ARQ_SUBTYPE_TURN_ACK);
         else if (ev->id == ARQ_EV_TX_COMPLETE)
+        {
             enter_idle_irs(sess);
+            expect_peer_to_send(sess);
+        }
         break;
 
     case ARQ_DFLOW_KEEPALIVE_TX:
@@ -2939,9 +3038,7 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
              * active ISS and is retransmitting because it has not had our ACK,
              * so do not take a piggyback turn that would put both sides into
              * ISS at once. */
-            sess->peer_has_data = new_frame
-                                  ? (ev->rx_flags & ARQ_FLAG_HAS_DATA) != 0
-                                  : true;
+            note_peer_data(sess, ev, new_frame);
             irs_arm_ack_deadline(sess, ev);
         }
         else if (ev->id == ARQ_EV_RX_KEEPALIVE_ACK)
@@ -3252,6 +3349,15 @@ void arq_fsm_dispatch(arq_session_t *sess, const arq_event_t *ev)
     default:
         break;
     }
+
+    /* The peer understands HAS_DATA on DATA frames once it has said so. */
+    if ((ev->id == ARQ_EV_RX_DATA || ev->id == ARQ_EV_RX_ACK) &&
+        (ev->rx_flags & ARQ_FLAG_CAP_MORE))
+        sess->peer_cap_more = true;
+    /* A peer that ACKs or asks for the floor is not the one sending: its old
+     * "more is queued" says nothing about what it will key next. */
+    if (ev->id == ARQ_EV_RX_ACK || ev->id == ARQ_EV_RX_TURN_REQ)
+        sess->peer_more_data = false;
 
     /* Whether we are keyed, and when we last stopped: the DISCONNECT has to
      * wait for both (see disconnect_must_wait). */

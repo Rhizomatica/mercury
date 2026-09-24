@@ -369,6 +369,60 @@ void test_sim_disconnect_behind_turn_ack_does_not_collide(void)
     sim_destroy(s);
 }
 
+/* Fix 2 on the whole path.  A is mid-transfer and its DATA says more is
+ * queued; B's host then writes, and A's next DATA is lost.  B must not answer
+ * with a TURN_REQ -- that is the frame that raced A's retransmission on air
+ * (bench run 8) -- but wait for the retransmission and ask for the floor in
+ * its ACK.  B's data must still get through, with nothing colliding. */
+void test_sim_irs_asks_in_its_ack_while_the_iss_has_more(void)
+{
+    sim_channel_cfg_t chan = { .seed = 5, .per = 0.0, .guard_ms = 100 };
+    sim_t *s = make_connected(&chan);
+    TEST_ASSERT_NOT_NULL(s);
+    sim_set_half_duplex(s, true);
+    sim_set_carrier_sense(s, true, 400);
+    sim_run_until_idle(s, 30000);
+
+    static uint8_t blob[6000];
+    for (size_t i = 0; i < sizeof(blob); i++) blob[i] = (uint8_t)(i * 13 + 1);
+    sim_endpoint_queue_tx(sim_a(s), blob, sizeof(blob));
+    arq_event_t dready = { .id = ARQ_EV_APP_DATA_READY };
+    sim_inject(s, sim_a(s), &dready);
+
+    arq_session_t *a = sim_endpoint_session(sim_a(s));
+    arq_session_t *b = sim_endpoint_session(sim_b(s));
+    /* Until B has taken an announcing DATA and ACKed it. */
+    for (int i = 0; i < 2000 && !(b->peer_more_data && b->dflow_state == ARQ_DFLOW_IDLE_IRS); i++)
+        sim_run_until_idle(s, 50);
+    TEST_ASSERT_TRUE_MESSAGE(b->peer_more_data, "A never announced more");
+
+    uint8_t rec[40];
+    memset(rec, 0x77, sizeof(rec));
+    sim_endpoint_queue_tx(sim_b(s), rec, sizeof(rec));
+    sim_inject(s, sim_b(s), &dready);
+
+    /* Lose A's next DATA. */
+    sim_set_per(s, 1.0);
+    for (int i = 0; i < 2000 && !(a->dflow_state == ARQ_DFLOW_WAIT_ACK); i++)
+        sim_run_until_idle(s, 50);
+    sim_set_per(s, 0.0);
+
+    bool b_turn_req = false;
+    for (int i = 0; i < 6000; i++)
+    {
+        sim_run_until_idle(s, 50);
+        if (b->dflow_state == ARQ_DFLOW_TURN_REQ_TX)
+            b_turn_req = true;
+    }
+    static uint8_t got[8192];
+    TEST_ASSERT_EQUAL_size_t_MESSAGE(sizeof(rec), sim_endpoint_delivered(sim_a(s), got, sizeof(got)),
+        "B's data never reached A");
+    TEST_ASSERT_EQUAL_size_t(sizeof(blob), sim_endpoint_delivered(sim_b(s), got, sizeof(got)));
+    TEST_ASSERT_FALSE_MESSAGE(b_turn_req, "B competed with a TURN_REQ");
+    TEST_ASSERT_EQUAL_INT(0, sim_collisions(s));
+    sim_destroy(s);
+}
+
 void test_sim_transfer_lossy_per20(void)
 {
     sim_channel_cfg_t chan = { .seed = 7, .per = 0.20, .guard_ms = 150 };
@@ -739,6 +793,7 @@ int main(void)
     RUN_TEST(test_sim_transfer_clean);
     RUN_TEST(test_sim_bidirectional_progress_under_collisions);
     RUN_TEST(test_sim_disconnect_behind_turn_ack_does_not_collide);
+    RUN_TEST(test_sim_irs_asks_in_its_ack_while_the_iss_has_more);
     RUN_TEST(test_sim_transfer_lossy_per20);
     RUN_TEST(test_sim_fade_cliff_downgrades);
     RUN_TEST(test_sim_peer_loss_disconnects);
