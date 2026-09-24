@@ -1644,17 +1644,18 @@ void test_bcast_shutdown_disconnected_client(void) { broadcast_shutdown_case(2);
  * NNCP session 86 ms after its CONNECTED and killed it.  The reactor asks ARQ
  * to discard them on every data-port accept (ARQ keeps them while a session
  * is up, for a client reconnecting mid-session). */
-void test_data_client_connect_discards_stale_rx(void)
+/* Two consecutive free ports for the reactor (control, data), or -1.  Probed
+ * by binding and releasing them, so another process can still take one before
+ * the reactor binds it: callers retry with a new pair when that happens. */
+static int free_port_pair(void)
 {
-    struct sockaddr_in addr = { .sin_family = AF_INET,
-                                .sin_addr.s_addr = htonl(INADDR_LOOPBACK) };
-    int base = -1;
-    for (int tries = 0; tries < 20 && base < 0; tries++)
+    for (int tries = 0; tries < 20; tries++)
     {
-        /* The reactor needs two consecutive ports: probe both. */
+        struct sockaddr_in addr = { .sin_family = AF_INET,
+                                    .sin_addr.s_addr = htonl(INADDR_LOOPBACK) };
         int a = socket(AF_INET, SOCK_STREAM, 0), b = socket(AF_INET, SOCK_STREAM, 0);
         socklen_t len = sizeof(addr);
-        addr.sin_port = 0;
+        int base = -1;
         if (bind(a, (struct sockaddr *)&addr, sizeof(addr)) == 0 &&
             getsockname(a, (struct sockaddr *)&addr, &len) == 0)
         {
@@ -1665,27 +1666,53 @@ void test_data_client_connect_discards_stale_rx(void)
         }
         close(a);
         close(b);
+        if (base > 0)
+            return base;
     }
-    TEST_ASSERT_TRUE_MESSAGE(base > 0, "no free port pair");
+    return -1;
+}
 
-    shutdown_ = false;
-    discard_stale_rx_calls = 0;
+void test_data_client_connect_discards_stale_rx(void)
+{
+    struct sockaddr_in addr = { .sin_family = AF_INET,
+                                .sin_addr.s_addr = htonl(INADDR_LOOPBACK) };
+    static int base;
     pthread_t reactor;
-    alarm(5);
-    TEST_ASSERT_EQUAL_INT(0, pthread_create(&reactor, NULL, arq_reactor_thread, &base));
-
-    addr.sin_port = htons((uint16_t)(base + 1));
     int client = -1;
-    for (int i = 0; i < 100; ++i)
+    bool reactor_gave_up = false;
+    alarm(10);
+    /* ~1 run in 150 lost the probed pair to another process before the
+     * reactor bound it; the reactor then gave up (shutdown_) and nothing ever
+     * answered.  Start again on a fresh pair instead of failing. */
+    for (int attempt = 0; attempt < 5 && client < 0; attempt++)
     {
-        client = socket(AF_INET, SOCK_STREAM, 0);
-        if (connect(client, (struct sockaddr *)&addr, sizeof(addr)) == 0)
-            break;
-        close(client);
-        client = -1;
-        usleep(10000);
+        base = free_port_pair();
+        TEST_ASSERT_TRUE_MESSAGE(base > 0, "no free port pair");
+        shutdown_ = false;
+        discard_stale_rx_calls = 0;
+        TEST_ASSERT_EQUAL_INT(0, pthread_create(&reactor, NULL, arq_reactor_thread, &base));
+
+        addr.sin_port = htons((uint16_t)(base + 1));
+        for (int i = 0; i < 200 && client < 0 && !shutdown_; ++i)
+        {
+            client = socket(AF_INET, SOCK_STREAM, 0);
+            if (connect(client, (struct sockaddr *)&addr, sizeof(addr)) != 0)
+            {
+                close(client);
+                client = -1;
+                usleep(10000);
+            }
+        }
+        if (client < 0)
+        {
+            reactor_gave_up = shutdown_;
+            shutdown_ = true;
+            pthread_join(reactor, NULL);
+        }
     }
-    TEST_ASSERT_TRUE(client >= 0);
+    TEST_ASSERT_TRUE_MESSAGE(client >= 0, reactor_gave_up
+        ? "the reactor could not bind a port pair in 5 attempts"
+        : "the reactor never accepted a data client");
     for (int i = 0; i < 100 && discard_stale_rx_calls == 0; ++i)
         usleep(10000);
 
