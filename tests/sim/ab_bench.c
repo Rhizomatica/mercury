@@ -117,6 +117,8 @@ int main(int argc, char **argv)
         sim_endpoint_queue_tx(sim_b(s), blob_b, sizeof(blob_b));
         sim_inject(s, sim_b(s), &dready);
         uint64_t t0 = sim_clock_now(), done_ms = 0;
+        sim_endpoint_gap_start(sim_a(s), t0);
+        sim_endpoint_gap_start(sim_b(s), t0);
         bool stalled = false;
         /* AB_LIMIT_MIN: virtual minutes before giving up (default 30). */
         uint64_t limit_ms = (uint64_t)(getenv("AB_LIMIT_MIN") ? atoi(getenv("AB_LIMIT_MIN")) : 30) * 60000ULL;
@@ -140,10 +142,16 @@ int main(int argc, char **argv)
         int ok_b = (nb <= sizeof(blob_b)) && memcmp(tmp, blob_b, nb) == 0;
         size_t na = sim_endpoint_delivered(sim_b(s), tmp, sizeof(tmp));
         int ok_a = (na <= sizeof(blob)) && memcmp(tmp, blob, na) == 0;
-        printf("seed=%llu chan=%s bidir a2b=%zu b2a=%zu integrity=%s done_ms=%llu collisions=%d%s\n",
+        /* The longest silence each application saw while its direction was
+         * incomplete (until the whole run ended). */
+        uint64_t tend = sim_clock_now();
+        printf("seed=%llu chan=%s bidir a2b=%zu b2a=%zu integrity=%s done_ms=%llu collisions=%d gap_b=%llu gap_a=%llu%s\n",
                (unsigned long long)seed, chan_spec, na, nb,
                (ok_a && ok_b) ? "OK" : "CORRUPT", (unsigned long long)done_ms,
-               sim_collisions(s), stalled ? " STALLED" : "");
+               sim_collisions(s),
+               (unsigned long long)sim_endpoint_max_gap(sim_b(s), na >= sizeof(blob) ? 0 : tend),
+               (unsigned long long)sim_endpoint_max_gap(sim_a(s), nb >= sizeof(blob_b) ? 0 : tend),
+               stalled ? " STALLED" : "");
         sim_destroy(s);
         return (ok_a && ok_b) ? 0 : 2;
     }

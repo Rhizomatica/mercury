@@ -2,6 +2,7 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  * Copyright (C) 2026 Rhizomatica */
 #include "sim_endpoint.h"
+#include "sim_clock.h"
 #include "arq.h"    /* arq_conn, CALLSIGN_MAX_SIZE, ARQ_BANDWIDTH_FULL_HZ */
 #include <stdlib.h>
 #include <string.h>
@@ -30,6 +31,8 @@ struct sim_endpoint {
     arq_keydown_t  kd;
     bool           kd_present;
     uint16_t       crc_seed;
+
+    uint64_t       last_rx_ms, max_gap_ms;   /* application liveness */
 };
 
 /* v1 context: set before each arq_fsm_dispatch. Also updates arq_conn.my_call_sign
@@ -96,6 +99,14 @@ bool sim_endpoint_take_keydown(sim_endpoint_t *ep, arq_keydown_t *out)
 
 uint16_t sim_endpoint_crc_seed(sim_endpoint_t *ep) { return ep->crc_seed; }
 
+void sim_endpoint_gap_start(sim_endpoint_t *ep, uint64_t since) { ep->last_rx_ms = since; ep->max_gap_ms = 0; }
+
+uint64_t sim_endpoint_max_gap(sim_endpoint_t *ep, uint64_t now)
+{
+    uint64_t tail = ep->last_rx_ms && now > ep->last_rx_ms ? now - ep->last_rx_ms : 0;
+    return tail > ep->max_gap_ms ? tail : ep->max_gap_ms;
+}
+
 static void cb_send_keydown(const arq_keydown_t *kd)
 {
     sim_endpoint_t *ep = s_active;
@@ -139,6 +150,10 @@ static void cb_notify_disconnected(bool to_no_client)       { (void)to_no_client
 static void cb_deliver_rx_data(const uint8_t *data, size_t len)
 {
     sim_endpoint_t *ep = s_active;
+    uint64_t now = sim_clock_now();
+    if (ep->last_rx_ms && now - ep->last_rx_ms > ep->max_gap_ms)
+        ep->max_gap_ms = now - ep->last_rx_ms;
+    ep->last_rx_ms = now;
     if (ep->rx_len + len > SIM_RX_CAP) len = SIM_RX_CAP - ep->rx_len;
     memcpy(ep->rx + ep->rx_len, data, len);
     ep->rx_len += len;

@@ -135,6 +135,7 @@ static size_t io_tx_pending(void *ctx) { station_t *s = ctx; return s->tx_len - 
 static void io_deliver(void *ctx, const uint8_t *buf, size_t len)
 {
     station_t *s = ctx;
+    if (trace) printf("%9.1f %c delivered %zu (total %zu)\n", now_ms / 1000.0, 'A' + s->id, len, s->rx_len + len);
     if (s->rx_len + len > sizeof(s->rx)) len = sizeof(s->rx) - s->rx_len;
     memcpy(s->rx + s->rx_len, buf, len);
     s->rx_len += len;
