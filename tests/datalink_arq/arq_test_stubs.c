@@ -40,10 +40,12 @@ void hermes_logf(hermes_log_level_t level, const char *component,
 #ifdef SIM_TRACE_LOGS
     /* Opt-in FSM log visibility for sim debugging:
      *   make ... CFLAGS+=-DSIM_TRACE_LOGS
-     * Prefixes the virtual uptime so traces line up with sim time. */
+     * Prefixes the virtual uptime so traces line up with sim time, and the
+     * callsign of the station being dispatched (the sim sets it per event),
+     * so a two-station trace says whose line is whose. */
     va_list ap;
-    fprintf(stderr, "[%8llu ms] [%s] ",
-            (unsigned long long)hermes_uptime_ms(), component);
+    fprintf(stderr, "[%8llu ms] [%-6s] [%s] ",
+            (unsigned long long)hermes_uptime_ms(), arq_conn.my_call_sign, component);
     va_start(ap, fmt);
     vfprintf(stderr, fmt, ap);
     va_end(ap);

@@ -218,6 +218,80 @@ void test_accepting_gives_up_after_budget(void)
     TEST_ASSERT_EQUAL_INT(ARQ_CONN_LISTENING, sess.conn_state);
 }
 
+/* Exhaust our ACCEPT retries: back to LISTENING through the fallback. */
+static void accept_until_fallback(void)
+{
+    for (int i = 0; i < ARQ_ACCEPT_RETRY_SLOTS + 2; i++) {
+        arq_event_t ev = make_event(ARQ_EV_TIMER_RETRY);
+        mock_set_uptime_ms(1000 + (uint64_t)(i + 1) * 10000);
+        arq_fsm_dispatch(&sess, &ev);
+        if (sess.conn_state == ARQ_CONN_LISTENING)
+            break;
+    }
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_LISTENING, sess.conn_state);
+}
+
+/* The safety net this guards: our ACCEPT retries ran out, but the caller did
+ * hear an ACCEPT and is already sending -- its first frame completes the
+ * session. */
+void test_accept_fallback_completes_on_first_data(void)
+{
+    enter_accepting();
+    accept_until_fallback();
+
+    RESET_FAKE(fake_notify_connected);
+    arq_event_t ev = make_event(ARQ_EV_RX_DATA);
+    ev.session_id  = 0x42;
+    ev.data_bytes  = 8;
+    ev.payload_len = 8;
+    arq_fsm_dispatch(&sess, &ev);
+
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_CONNECTED, sess.conn_state);
+    TEST_ASSERT_EQUAL_INT(1, fake_notify_connected_fake.call_count);
+}
+
+/* A session that has ENDED is not resurrected by a late frame from its peer.
+ *
+ * The session id survives a teardown, and the rejoin used to key on it alone:
+ * a station that gave up on retries and went back to listening, while its peer
+ * never noticed and kept sending, rejoined on the peer's next DATA.  The peer
+ * then treated it as one unbroken session while this side had been torn down
+ * and reconnected -- its in-flight frame gone, its next bytes spliced onto the
+ * peer's stream.  Measured on the two-FSM sim (bidirectional, 10 % loss /
+ * NVIS): 90 bytes silently missing from a delivered stream. */
+void test_ended_session_is_not_resurrected_by_late_data(void)
+{
+    enter_accepting();
+    arq_event_t ev = make_event(ARQ_EV_RX_DATA);   /* caller's first frame */
+    ev.session_id  = 0x42;
+    ev.data_bytes  = 8;
+    ev.payload_len = 8;
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_CONNECTED, sess.conn_state);
+
+    /* The session ends; we are back to listening. */
+    ev = make_event(ARQ_EV_RX_DISCONNECT);
+    ev.session_id = 0x42;
+    arq_fsm_dispatch(&sess, &ev);
+    for (int i = 0; i < 4 && sess.conn_state != ARQ_CONN_LISTENING; i++) {
+        ev = make_event(ARQ_EV_TX_COMPLETE);
+        arq_fsm_dispatch(&sess, &ev);
+    }
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_LISTENING, sess.conn_state);
+
+    /* A late frame from that session's peer. */
+    RESET_FAKE(fake_notify_connected);
+    ev = make_event(ARQ_EV_RX_DATA);
+    ev.session_id  = 0x42;
+    ev.data_bytes  = 8;
+    ev.payload_len = 8;
+    arq_fsm_dispatch(&sess, &ev);
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ARQ_CONN_LISTENING, sess.conn_state,
+        "an ended session was resurrected by a late DATA frame");
+    TEST_ASSERT_EQUAL_INT(0, fake_notify_connected_fake.call_count);
+}
+
 /* A fresh RX_CALL while ACCEPTING re-arms the retry budget (so the window
  * stays open while the caller is still calling); the give-up is bounded by
  * the ACCEPT budget measured from the LAST heard CALL. */
@@ -2110,6 +2184,8 @@ int main(void)
     RUN_TEST(test_call_timeout);
     RUN_TEST(test_call_timeout_no_listen);
     RUN_TEST(test_accepting_gives_up_after_budget);
+    RUN_TEST(test_accept_fallback_completes_on_first_data);
+    RUN_TEST(test_ended_session_is_not_resurrected_by_late_data);
     RUN_TEST(test_accepting_rx_call_rearms_budget);
     RUN_TEST(test_default_call_accept_slots_are_short);
     RUN_TEST(test_stop_listen);
