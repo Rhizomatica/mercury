@@ -101,6 +101,7 @@ int cfg_sound_system_parse(const char *s)
     if (!strcmp(s, "null"))      return AUDIO_SUBSYSTEM_NULL;
     if (!strcmp(s, "fifo"))      return AUDIO_SUBSYSTEM_FIFO;
     if (!strcmp(s, "sock"))      return AUDIO_SUBSYSTEM_SOCK;
+    if (!strcmp(s, "rtp"))       return AUDIO_SUBSYSTEM_RTP;
     return -1;
 }
 
@@ -458,6 +459,7 @@ const char *cfg_sound_system_name(int sys)
     case AUDIO_SUBSYSTEM_NULL:      return "null";
     case AUDIO_SUBSYSTEM_FIFO:      return "fifo";
     case AUDIO_SUBSYSTEM_SOCK:      return "sock";
+    case AUDIO_SUBSYSTEM_RTP:       return "rtp";
     default:                        return "auto";
     }
 }
