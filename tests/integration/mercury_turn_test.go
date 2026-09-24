@@ -115,6 +115,9 @@ func TestMercuryARQTurnHandoff(t *testing.T) {
 		cmd.Dir = repoRoot
 		cmd.Stdout = stdout
 		cmd.Stderr = stderr
+		// TURN_REQ belongs to the stop-and-wait data plane; the carousel
+		// takes the turn with a handover poll (TestMercuryARQBidirectional).
+		cmd.Env = append(os.Environ(), "MERCURY_CAROUSEL=0")
 		if err := startChild(cmd); err != nil {
 			t.Fatalf("start mercury %s: %v", name, err)
 		}

@@ -996,6 +996,15 @@ int arq_init(size_t frame_size, int mode)
         return -1;
     }
 
+    /* MERCURY_CAROUSEL=0: the stop-and-wait data plane, kept for A/B
+     * measurement until the carousel is validated on air.  Both ends of a
+     * session must run the same one. */
+    {
+        const char *e = getenv("MERCURY_CAROUSEL");
+        arq_fsm_set_carousel(!(e && e[0] == '0'));
+        HLOGI(LOG_COMP, "data plane: %s", arq_fsm_carousel() ? "carousel" : "stop-and-wait");
+    }
+
     /* single-threaded: before worker threads start -- no lock needed */
     memset(&arq_conn, 0, sizeof(arq_conn));
     arq_conn.frame_size      = frame_size;
