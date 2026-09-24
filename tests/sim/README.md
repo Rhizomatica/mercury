@@ -163,49 +163,60 @@ and retry decisions.
 
 `carousel_bench <seed> <channel> [bidir]` runs a different ARQ design on the
 same channel model, airtime table and half-duplex medium as `ab_bench`, so the
-numbers compare directly.  It is a protocol simulation, not Mercury code:
+numbers compare directly.  It is a protocol simulation, not Mercury code.
 
-- The sender cuts its backlog into blocks of K <= 96 pieces of 24 bytes,
-  Reed-Solomon erasure coded over GF(256) (`rs_erasure.c`, systematic Cauchy:
-  the first K pieces are the data; any K of the pieces decode).
-- A round is one keydown of back-to-back frames, as many pieces per frame as the
-  mode carries.  After each round the receiver sends ONE feedback frame: pieces
-  still needed (0 = done), the loss it saw, faster/slower/same, "I have data".
-- No sequence numbers and no per-frame ACKs: duplicates are harmless, a lost
-  feedback costs one extra round, and the turn hands over at block boundaries.
+**Design** (chosen by measurement; each rejected alternative is noted in the
+code where it was tried):
 
-Results, both stations sending 8 KB, against trunk (e06e00e + #321) with the
-sim's carrier sense on (`sim_set_carrier_sense(s, true, 400)`: without it every
-listen-before-talk check in the FSM is inert, and trunk looked far worse).
-Seeds 1-20 were used while tuning; seeds 21-40 are held out:
+- Data is cut into blocks of up to 96 pieces of 24 bytes, Reed-Solomon erasure
+  coded over GF(256) (`rs_erasure.c`, systematic Cauchy: the first K pieces are
+  the data, any K of them decode).  24-byte pieces fit every mode, so a block
+  never has to be re-encoded when the mode drops.
+- A round is one keydown of back-to-back frames.  It carries pieces of up to 8
+  open blocks at once (oldest first, each with a margin for the loss seen), so
+  a fast mode fills its keydown instead of paying a feedback turnaround every
+  two or three frames.
+- After each round the receiver sends ONE feedback frame: the window base and
+  what each block still needs (or "not seen"), the loss, "I have data", and the
+  round it answers.  No sequence numbers and no per-frame ACKs.
+- Link adaptation picks the level with the best measured goodput (raw rate x
+  delivered fraction, from decayed frame counts); probes only rungs that could
+  beat it; a level's round is capped at one frame more than it recently
+  delivered; a mode losing 4 frames in a row is dead, and caps the modes above
+  it unless they have delivered recently themselves; dead modes are re-probed
+  after 60 s, doubling to 8 min.
+- The turn: a sender keeps it for at most a 120 s quantum while the peer has
+  data, then yields at a block boundary.  Open blocks are only suspended.
 
-| channel  | trunk, 1-20        | carousel, 1-20   | trunk, 21-40       | carousel, 21-40  |
-|----------|--------------------|------------------|--------------------|------------------|
-| clean    | 20/20 231 s, 38 c  | 20/20 216 s, 0 c | 20/20 233 s, 38 c  | 20/20 204 s, 0 c |
-| 10 %     | 20/20 274 s, 35 c  | 20/20 255 s, 0 c | 20/20 293 s, 39 c  | 20/20 247 s, 0 c |
-| 25 %     | 20/20 416 s, 50 c  | 20/20 446 s, 0 c | 20/20 450 s, 74 c  | 20/20 425 s, 0 c |
-| cliff 3  | 20/20 1372 s       | 20/20 1281 s     | 20/20 1380 s       | 20/20 1281 s     |
-| cliff 10 | 20/20 310 s        | 20/20 347 s      | 20/20 308 s        | 20/20 349 s      |
-| NVIS     | 0/20; 1007 B in 30 min | 0/20; 4953 B in 30 min | | |
+**Results**, both stations sending 8 KB, against trunk (e06e00e + #321) with the
+sim's carrier sense on (`sim_set_carrier_sense(s, true, 400)`; without it every
+listen-before-talk check in the FSM is inert).  Seeds 1-20 were used while
+tuning; seeds 21-40 are held out:
 
-(c = collisions; NVIS shows the mean bytes delivered, both directions, when no
-run finishes.)  No collisions and no corruption in any carousel run.
+| channel  | trunk 1-20 / 21-40      | carousel 1-20 / 21-40   |
+|----------|-------------------------|-------------------------|
+| clean    | 231 / 233 s             | 177 / 174 s             |
+| 10 %     | 274 / 293 s             | 207 / 233 s             |
+| 25 %     | 416 / 450 s             | 313 / 316 s             |
+| cliff 3  | 1372 / 1380 s           | 1139 / 1189 s           |
+| cliff 10 | 310 / 308 s             | 280 / 278 s             |
+| NVIS     | 0/20 in 3 h (1 KB, then no progress) | 20/20, 4872 s  |
 
-**Link adaptation** is what decided it.  With the mode pinned to the best one
-per channel the carousel already won on the cliffs (cliff 3: 1044 s on DATAC3;
-cliff 10: 267 s on DATAC1), so the work went into finding that mode:
+All runs complete (20/20 on every row but trunk's NVIS), with no collisions and
+no corruption in any carousel run; trunk has 35-164 collisions per 20 runs.
 
-- goodput per level, measured: raw rate times delivered fraction.  Flat loss
-  hits every mode alike, so the fastest wins; past a cliff a mode delivers
-  nothing and drops out;
-- estimates from decayed frame counts, not single rounds (a quarter of
-  one-frame probes vanish at 25 % flat loss);
-- a hard, run-based dead verdict (4 frames lost in a row, none delivered) sets
-  a ceiling: faster modes need more SNR, so above a dead mode everything is
-  dead.  It is re-probed with doubling backoff.  One estimator could not both
-  climb and avoid dead modes when raw rates span 60x;
-- a level earns its round size: at most one frame more than it recently
-  delivered, so a probe is one frame and a dead mode never costs more.
+What decided it, in the order it was found:
 
-Still open: cliff 10 is ~13 % slower than trunk (the dead fast modes above
-DATAC1 keep costing re-probes), and 25 % flat loss is mixed across seed sets.
+- **Link adaptation**, not the coding: pinned to the best mode, the first
+  version already won on the cliffs.  Goodput per level, estimated from counts
+  (a quarter of one-frame probes vanish at 25 % flat loss), with dead-mode
+  detection kept separate from selection -- one estimator could not both climb
+  and avoid dead modes when raw rates span 60x.
+- **Multi-block rounds** over per-block piece sizes: bigger pieces also cut the
+  turnaround cost, but a block cut for a fast mode does not fit a slow one and
+  had to be re-encoded on a drop, losing its progress (unfinished runs).
+- **Turn quantum** over "hand over at every block boundary" (25 % loss 25 %
+  slower) and over "finish the window first" (starved the peer on NVIS).
+- **Evidence beats inference**: a false dead verdict on a lightly probed
+  DATAC4 locked out a working DATAC3/DATAC1, and a re-probe backoff counted in
+  rounds kept it in force for half an hour.
