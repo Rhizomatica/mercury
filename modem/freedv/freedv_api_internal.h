@@ -221,6 +221,15 @@ struct freedv {
   int harq_enable;
   int harq_valid;
   int harq_ncopies; /* number of copies summed into harq_llr (for LLR averaging) */
+
+  /* Data-frame CRC16 seed (Mercury): a sender XORs its CRC with the seed, so
+   * frames of another session -- or of none -- fail the check.  0 = plain CRC.
+   * With a seed, crc_accept_plain also admits plain frames (the control
+   * decoder hears CALL/ACCEPT as well as its session's frames);
+   * rx_crc_seeded says which one the last good frame was. */
+  uint16_t crc_seed;
+  int crc_accept_plain;
+  int rx_crc_seeded;
 };
 
 // open function for each mode

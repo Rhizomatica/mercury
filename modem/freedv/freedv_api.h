@@ -35,6 +35,7 @@
 #define __FREEDV_API__
 
 #include <stdbool.h>
+#include <stdint.h>
 #include <sys/types.h>
 // This declares a single-precision (float) complex number
 #include "comp.h"
@@ -288,6 +289,12 @@ void freedv_set_callback_data(struct freedv *freedv,
 void freedv_set_test_frames(struct freedv *freedv, int test_frames);
 void freedv_set_harq(struct freedv *freedv, int enable);
 void freedv_harq_reset(struct freedv *freedv);
+/* Data-frame CRC16 seed: TX side XORs the CRC with it (freedv_gen_crc16 ^
+ * seed); RX accepts only seeded frames, plus plain ones if accept_plain.
+ * seed 0 restores the plain CRC. */
+void freedv_set_crc_seed(struct freedv *freedv, uint16_t seed, int accept_plain);
+int freedv_get_rx_crc_seeded(struct freedv *freedv);
+int freedv_crc16_class(struct freedv *freedv, unsigned char *unpacked_bits, int nbits);
 void freedv_set_test_frames_diversity(struct freedv *freedv,
                                       int test_frames_diversity);
 void freedv_set_smooth_symbols(struct freedv *freedv, int smooth_symbols);
