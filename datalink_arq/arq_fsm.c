@@ -214,6 +214,9 @@ static void sess_enter(arq_session_t *sess, arq_conn_state_t new_state,
      * release. */
     if (new_state == ARQ_CONN_DISCONNECTED || new_state == ARQ_CONN_LISTENING)
         sess->deferred_listen_off = false;
+    /* The right to complete a session from LISTENING is granted only by the
+     * ACCEPT-exhaustion fallback, which sets it right after this call. */
+    sess->accept_fallback = false;
     /* The right to key an ACCEPT is earned by hearing a CALL, and it does not
      * survive leaving ACCEPTING. */
     if (new_state != ARQ_CONN_ACCEPTING)
@@ -524,12 +527,44 @@ static void irs_mirror_peer_ladder(arq_session_t *sess, bool clean_new)
               sess->rx_speed_level, sess->peer_tx_mode);
 }
 
+/* ISS: the peer took the floor while our frame waited for its ACK, so the
+ * frame is kept and goes out again on our next turn, flagged ARQ_FLAG_RETX.
+ * The peer scores that resend as a miss -- a new frame with RETX, or a
+ * duplicate of one it already had, both step its mirror down -- so our ladder
+ * must take the same one miss, as each TIMER_ACK retransmit does, or the two
+ * ends drift apart and the peer's decoder leaves our TX mode.  (Once per
+ * resend: after a yield we leave WAIT_ACK, and only a resend brings us back.) */
+static void keep_frame_for_resend(arq_session_t *sess)
+{
+    if (!sess->tx_frame_present)
+        return;
+    sess->tx_frame_retx = true;
+    record_tx_outcome(sess, false);
+}
+
 /* IRS: arm the ACK deadline after a received DATA frame.  Stop-and-wait: one
  * frame per burst, so we always wait the channel guard before emitting the
  * pattern ACK (lets the ISS relay switch TX->RX before our tones arrive). */
+static void enter_idle_irs(arq_session_t *sess);
+
 static void irs_arm_ack_deadline(arq_session_t *sess, const arq_event_t *ev)
 {
-    (void)ev;
+    /* Never ACK a frame that starts PAST what we have delivered.  A duplicate
+     * (behind the high-water mark) is ACKed so a sender whose ACK was lost can
+     * walk on; a frame ahead of it is not a duplicate but proof of a gap, and
+     * ACKing it tells the sender the gap is filled -- it walks on and the gap
+     * is permanent: silent loss, with the sender's application told the bytes
+     * were delivered.  Unanswered, the sender retries and, if it truly cannot
+     * go back, runs out of progress and ends the session: a loud failure.
+     * Offsets are 16-bit and wrap, hence the modular test. */
+    uint16_t ahead = (uint16_t)(ev->stream_off - sess->rx_stream_hwm);
+    if (ahead != 0 && ahead < 0x8000u)
+    {
+        HLOGW(LOG_COMP, "DATA off=%u is past our stream position %u: gap, not ACKed",
+              (unsigned)ev->stream_off, (unsigned)sess->rx_stream_hwm);
+        enter_idle_irs(sess);
+        return;
+    }
     dflow_enter(sess, ARQ_DFLOW_ACK_TX,
                 time_now_ms() + ARQ_CHANNEL_GUARD_MS, ARQ_EV_TIMER_ACK);
 }
@@ -610,8 +645,10 @@ static void send_ctrl_frame(arq_session_t *sess, arq_subtype_t subtype)
 static void send_ack(arq_session_t *sess, uint8_t ack_delay_raw)
 {
     (void)ack_delay_raw;
-    int kind = (session_tx_backlog(sess) > 0) ? ARQ_PATTERN_BREAK
-                                               : ARQ_PATTERN_ACK;
+    /* A frame kept for resend (see WAIT_ACK's RX_DATA) is data to send too,
+     * or it would never get the turn back. */
+    int kind = (session_tx_backlog(sess) > 0 || sess->tx_frame_present)
+               ? ARQ_PATTERN_BREAK : ARQ_PATTERN_ACK;
     sess->acktx_had_has_data = (kind == ARQ_PATTERN_BREAK);
     if (g_cbs.send_pattern_ack)
         g_cbs.send_pattern_ack(sess->payload_mode, kind);
@@ -964,12 +1001,24 @@ static void fsm_listening(arq_session_t *sess, const arq_event_t *ev)
         break;
 
     case ARQ_EV_RX_DATA:
-    case ARQ_EV_RX_ACK:
         /* Safety net: if IRS fell from ACCEPTING→LISTENING (ACCEPT retries
-         * exhausted) but the ISS is already sending DATA/ACK, accept the
-         * connection now — same logic as fsm_accepting RX_DATA handler. */
-        if (ev->session_id == sess->session_id)
+         * exhausted) but the ISS is already sending DATA, accept the
+         * connection now — same logic as fsm_accepting RX_DATA handler.
+         * Only DATA can do it: in-session ACKs are patterns and carry no
+         * session id, so one could never match below.
+         *
+         * ONLY after that fallback.  The session id survives an ordinary
+         * teardown too, so without the flag a late frame from the peer of a
+         * session that has ENDED -- we gave up on retries and went back to
+         * listening, while the peer never noticed -- resurrected it.  The peer
+         * then carried on with one continuous stream while our side had been
+         * disconnected and reconnected: our in-flight frame was gone, and
+         * whatever we sent next was spliced onto its stream.  Measured on the
+         * two-FSM sim (bidirectional, 10 % loss / NVIS): 90 bytes silently
+         * missing from the delivered stream. */
+        if (sess->accept_fallback && ev->session_id == sess->session_id)
         {
+            sess->accept_fallback = false;
             sess->role        = ARQ_ROLE_CALLEE;
             reset_session_data_state(sess);
             if (g_cbs.notify_connected)
@@ -1228,6 +1277,7 @@ static void fsm_accepting(arq_session_t *sess, const arq_event_t *ev)
             if (g_cbs.notify_cancelpending)
                 g_cbs.notify_cancelpending();
             sess_enter(sess, ARQ_CONN_LISTENING, UINT64_MAX, ARQ_EV_TIMER_RETRY);
+            sess->accept_fallback = true;
         }
         break;
 
@@ -1781,37 +1831,56 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
             update_local_snr(sess, ev);
             sess->last_rx_ms = time_now_ms();
 
-            if (ev->seq == sess->rx_expected)
+            if (ev->stream_off == sess->rx_stream_hwm)
             {
-                /* Peer sent new DATA while we await our ACK — implicit ACK:
-                 * the peer would not send new DATA unless it received ours.
-                 * Consume our frame, receive theirs, and ACK (yield to IRS). */
+                /* Peer sent new DATA while we await our ACK: it holds the
+                 * floor, so yield and receive it.
+                 *
+                 * This is NOT an ACK of our frame.  It used to be taken as one
+                 * ("the peer would not send new DATA unless it received
+                 * ours"), which is false when both sides are acting as sender:
+                 * the peer never got our frame, and retiring it here lost it
+                 * for good -- the peer's stream skipped it, and every later
+                 * frame landed past the gap.  On the two-FSM sim with both
+                 * stations sending, a whole 8 KB transfer was ACKed frame by
+                 * frame and not one byte delivered.  DATA frames cannot say
+                 * otherwise on this branch: the header bytes that once carried
+                 * an ACK carry the stream offset.  So keep our frame and resend
+                 * it on our next turn; if the peer did have it, the resend is a
+                 * duplicate it drops and ACKs, at the cost of one frame.
+                 *
+                 * New vs. duplicate is decided on the stream offset, as
+                 * delivery is: ev->seq is only the offset's high byte here. */
                 HLOGD(LOG_COMP,
-                      "RX_DATA in WAIT_ACK (new seq=%d) — implicit ACK for tx_seq=%d",
-                      (int)ev->seq, (int)sess->tx_frame_seq);
-                bool clean = !sess->tx_frame_retx &&
-                             sess->tx_retries_left == ARQ_DATA_RETRY_SLOTS;
-                if (sess->tx_frame_present)
-                {
-                    iss_frame_delivered(sess);
-                    record_tx_outcome(sess, clean);
-                }
+                      "RX_DATA in WAIT_ACK (new off=%u) — yielding; our seq=%d kept for resend",
+                      (unsigned)ev->stream_off, (int)sess->tx_frame_seq);
+                keep_frame_for_resend(sess);
                 irs_receive_data(sess, ev);
                 irs_arm_ack_deadline(sess, ev);
             }
             else
             {
-                /* Duplicate frame (our ACK was lost; peer retransmitting).
-                 * Not an implicit ACK of our own frame.  Retransmit our frame
-                 * so the peer can ACK it; do NOT advance our seq. */
+                /* A duplicate of the peer's last frame: our ACK of it never
+                 * arrived, so the peer is still retrying -- on a timer sized for
+                 * a short ACK, straight over whatever we transmit.
+                 *
+                 * The old response re-sent our own frame, which collided with
+                 * those retries every cycle whenever our frame is long (a
+                 * 13.5 s MFSK burst against an ~11 s ACK timeout): both
+                 * stations sender, nothing delivered either way, the session
+                 * lost to the progress timeout.  ACK the duplicate instead --
+                 * a short pattern, inside the peer's ACK window -- and keep our
+                 * frame.  The ACK asks for the turn (a kept frame counts as
+                 * data), so ours goes out once the peer stops; if the peer has
+                 * more of its own, it says so and we wait. */
                 HLOGD(LOG_COMP,
-                      "RX_DATA in WAIT_ACK (dup seq=%d expected=%d) — re-TX our seq=%d",
-                      (int)ev->seq, (int)sess->rx_expected, (int)sess->tx_frame_seq);
-                deliver_rx_checked(sess, ev);   /* logs dup; no delivery */
-                irs_mirror_peer_ladder(sess, false);  /* peer retried → mirror step-down */
-                sess->tx_frame_retx = true;
-                dflow_enter(sess, ARQ_DFLOW_DATA_TX, UINT64_MAX, ARQ_EV_TIMER_RETRY);
-                send_data_burst(sess);
+                      "RX_DATA in WAIT_ACK (dup off=%u, at %u) — ACKing it; our seq=%d kept",
+                      (unsigned)ev->stream_off, (unsigned)sess->rx_stream_hwm,
+                      (int)sess->tx_frame_seq);
+                irs_receive_data(sess, ev);     /* dup: suppressed, mirror steps down */
+                sess->peer_has_data = (ev->rx_flags & ARQ_FLAG_HAS_DATA) != 0;
+                keep_frame_for_resend(sess);
+                irs_arm_ack_deadline(sess, ev);
             }
         }
         break;
