@@ -249,7 +249,7 @@ install: all
 
 $(BINARY): $(MERCURY_LINK_INPUTS)
 	$(CC) -o $(BINARY)  \
-		$(MERCURY_LINK_INPUTS) $(LDFLAGS) $(SAN_LDFLAGS)
+		$(MERCURY_LINK_INPUTS) $(LDFLAGS) $(COMMON_LDFLAGS) $(SAN_LDFLAGS)
 
 # Stamp file: written only when GIT_HASH changes so the objects that embed it
 # (main.o and common/mercury_cli.o) are rebuilt exactly when needed (FORCE makes

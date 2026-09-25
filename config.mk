@@ -24,6 +24,14 @@ EXTRA_CFLAGS := $(CFLAGS)
 COMMON_CFLAGS ?= -Wall -O2 -std=gnu11 -pthread -D_GNU_SOURCE
 COMMON_CFLAGS += $(EXTRA_CFLAGS)
 
+# Linker hardening flags.  Mirror COMMON_CFLAGS: capture the caller's LDFLAGS
+# (e.g. dpkg-buildflags' -Wl,-z,relro -Wl,-z,now) here, before any Makefile
+# overwrites LDFLAGS with its own per-project libraries, so the link steps can
+# still pick the hardening flags up.
+EXTRA_LDFLAGS := $(LDFLAGS)
+COMMON_LDFLAGS ?=
+COMMON_LDFLAGS += $(EXTRA_LDFLAGS)
+
 # Header dependency tracking.
 #
 # Without this, editing a header does NOT rebuild the objects that include it,
