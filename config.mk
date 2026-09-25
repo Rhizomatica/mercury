@@ -20,15 +20,33 @@ ifeq ($(origin AR),default)
 AR = ar
 endif
 
+# The caller's CPPFLAGS, CFLAGS and LDFLAGS, e.g. dpkg-buildflags' hardening
+# (-D_FORTIFY_SOURCE, -fstack-protector-strong, -Wl,-z,relro -Wl,-z,now).
+# Capture them once, in the top-level make, and hand them down: the Makefiles
+# overwrite CFLAGS and LDFLAGS with their own, and make exports a variable that
+# came from the environment with its overwritten value, so a sub-make (every
+# directory, and the final link of mercury, which "all" runs as
+# $(MAKE) $(BINARY)) would otherwise capture the parent's include paths and
+# libraries instead of the caller's flags.
+ifeq ($(origin EXTRA_CPPFLAGS),undefined)
+EXTRA_CPPFLAGS := $(CPPFLAGS)
+export EXTRA_CPPFLAGS
+endif
+ifeq ($(origin EXTRA_CFLAGS),undefined)
 EXTRA_CFLAGS := $(CFLAGS)
-COMMON_CFLAGS ?= -Wall -O2 -std=gnu11 -pthread -D_GNU_SOURCE
-COMMON_CFLAGS += $(EXTRA_CFLAGS)
-
-# Linker hardening flags.  Mirror COMMON_CFLAGS: capture the caller's LDFLAGS
-# (e.g. dpkg-buildflags' -Wl,-z,relro -Wl,-z,now) here, before any Makefile
-# overwrites LDFLAGS with its own per-project libraries, so the link steps can
-# still pick the hardening flags up.
+export EXTRA_CFLAGS
+endif
+ifeq ($(origin EXTRA_LDFLAGS),undefined)
 EXTRA_LDFLAGS := $(LDFLAGS)
+export EXTRA_LDFLAGS
+endif
+
+COMMON_CFLAGS ?= -Wall -O2 -std=gnu11 -pthread -D_GNU_SOURCE
+COMMON_CFLAGS += $(EXTRA_CPPFLAGS) $(EXTRA_CFLAGS)
+
+# Link flags for the binaries we ship: every link line puts them before its
+# objects and libraries, where order-sensitive flags such as -Wl,--as-needed
+# take effect.
 COMMON_LDFLAGS ?=
 COMMON_LDFLAGS += $(EXTRA_LDFLAGS)
 
