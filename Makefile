@@ -199,7 +199,7 @@ ifeq ($(HAVE_HERMES_SHM),1)
 HERMES_SHM_CFLAGS = -DHAVE_HERMES_SHM
 endif
 
-CFLAGS = $(COMMON_CFLAGS) -I. -Imodem/freedv -Imodem -Idatalink_broadcast -Idata_interfaces -Idatalink_arq -Iaudioio -Iaudioio/ffaudio -Icommon -Igui_interface -Iradio_io $(HAMLIB_CFLAGS) $(HERMES_SHM_CFLAGS) $(EXTRA_CFLAGS)
+CFLAGS = $(COMMON_CFLAGS) -I. -Imodem/freedv -Imodem -Idatalink_broadcast -Idata_interfaces -Idatalink_arq -Iaudioio -Iaudioio/ffaudio -Icommon -Igui_interface -Iradio_io $(HAMLIB_CFLAGS) $(HERMES_SHM_CFLAGS)
 
 ifeq ($(OS),Windows_NT)
 BINARY = mercury.exe
@@ -248,8 +248,8 @@ install: all
 	install -D -m 644 mercury.ini.example $(DESTDIR)$(docdir)/mercury.ini.example
 
 $(BINARY): $(MERCURY_LINK_INPUTS)
-	$(CC) -o $(BINARY)  \
-		$(MERCURY_LINK_INPUTS) $(LDFLAGS) $(COMMON_LDFLAGS) $(SAN_LDFLAGS)
+	$(CC) $(COMMON_LDFLAGS) -o $(BINARY)  \
+		$(MERCURY_LINK_INPUTS) $(LDFLAGS) $(SAN_LDFLAGS)
 
 # Stamp file: written only when GIT_HASH changes so the objects that embed it
 # (main.o and common/mercury_cli.o) are rebuilt exactly when needed (FORCE makes
@@ -411,7 +411,11 @@ libmercury_core_w64.a: $(HIDAPI_W64_OBJ)
 # Windows and macOS, which build without TLS.
 fyne-ui: libmercury_core.a
 	@echo "Building Mercury UI (native: Linux or macOS)..."
-	cd $(FYNE_UI_DIR) && CGO_ENABLED=1 CGO_LDFLAGS="$(HIDAPI_LDFLAGS) $(WS_TLS_LDFLAGS)" go build -tags mercury_embedded \
+	cd $(FYNE_UI_DIR) && CGO_ENABLED=1 \
+		CGO_CPPFLAGS="$(EXTRA_CPPFLAGS)" \
+		CGO_CFLAGS="$(or $(strip $(EXTRA_CFLAGS)),-g -O2)" \
+		CGO_LDFLAGS="$(COMMON_LDFLAGS) $(HIDAPI_LDFLAGS) $(WS_TLS_LDFLAGS)" \
+		go build -buildmode=pie -tags mercury_embedded \
 		-ldflags "-X main.coreBuildID=$$(cksum $(abspath libmercury_core.a) | cut -d' ' -f1)" \
 		-o $(abspath mercury-ui) .
 	@echo "  -> mercury-ui"
