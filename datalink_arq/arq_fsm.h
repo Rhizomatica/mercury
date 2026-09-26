@@ -16,6 +16,7 @@
 #include "arq.h"  /* CALLSIGN_MAX_SIZE, arq_action_t/type, arq_info */
 #include "arq_timing.h"  /* arq_timing_ctx_t */
 #include "arq_protocol.h"  /* ARQ_BURST_MAX */
+#include "carousel.h"      /* car_t: the carousel data plane */
 
 /* ======================================================================
  * Level 1 — Connection FSM states
@@ -104,6 +105,10 @@ typedef enum
     ARQ_EV_TX_STARTED         = 21,  /* PTT ON (frame on air)         */
     ARQ_EV_TX_COMPLETE        = 22,  /* PTT OFF (TX finished)         */
 
+    /* Carousel data plane */
+    ARQ_EV_RX_CAROUSEL        = 23,  /* a frame with the session's CRC seed */
+    ARQ_EV_TIMER_CAROUSEL     = 24,  /* the carousel's next deadline  */
+
     ARQ_EV__COUNT
 } arq_event_id_t;
 
@@ -134,6 +139,12 @@ typedef struct
     uint8_t  payload[1280];           /* >= largest user payload: QAM16C2
                                        * carries 1213 - 8 = 1205 bytes      */
     size_t   payload_len;
+
+    /* RX_CAROUSEL: the control decoder (DATAC16) produced it; otherwise the
+     * payload decoder, in `mode`.  RX_ACCEPT: the carousel rung the callee
+     * starts us on (arq_protocol_accept_start_level). */
+    bool     from_control;
+    int      car_level;
 
     /* Local receive SNR at the time the frame was decoded (dB, 0 = unknown).
      * Carried in-band so the FSM can update local_snr_x10 without relying on
@@ -350,6 +361,18 @@ typedef struct
                                        * seeded on CONNECTED entry and refreshed
                                        * whenever tx_seq advances.             */
 
+    /* --- Carousel data plane (carousel.h) --- *
+     * When car_active, CONNECTED runs the carousel instead of the data-flow
+     * sub-FSM, and deadline_ms mirrors the carousel's next deadline
+     * (ARQ_EV_TIMER_CAROUSEL).  crc_seed rides every carousel frame's CRC16. */
+    car_t   *car;                     /* allocated by arq_fsm_init             */
+    bool     car_active;
+    uint16_t crc_seed;
+    int      car_rx_level;            /* start rung for the peer's direction:
+                                       * the SNR measured here                 */
+    int      car_tx_level;            /* ...for ours, from the peer (-1: none) */
+    uint64_t car_last_rx_ms;          /* last carousel frame from the peer     */
+
     /* --- Timer mechanism --- */
     uint64_t       deadline_ms;       /* absolute monotonic deadline           */
     arq_event_id_t deadline_event;   /* event to fire when deadline fires     */
@@ -406,6 +429,12 @@ typedef struct
      *  keying over a transmission we cannot decode, which decoder sync alone
      *  cannot see.  See peer_is_transmitting() in arq_fsm.c. */
     bool (*channel_busy)(void);
+
+    /** Carousel: key the radio for a keydown of separate bursts (copied by
+     *  the callee), and set the CRC seed the modem's decoders accept (0: plain
+     *  frames only, outside a carousel session). */
+    void (*send_keydown)(const arq_keydown_t *kd);
+    void (*set_crc_seed)(uint16_t seed);
 } arq_fsm_callbacks_t;
 
 /**
@@ -429,6 +458,9 @@ void arq_fsm_set_timing(arq_timing_ctx_t *timing);
  */
 void arq_fsm_init(arq_session_t *sess);
 
+/* Free what arq_fsm_init allocated. */
+void arq_fsm_release(arq_session_t *sess);
+
 /**
  * @brief Dispatch an event through both FSM levels.
  *
@@ -450,6 +482,13 @@ void arq_fsm_dispatch(arq_session_t *sess, const arq_event_t *event);
  * @return Milliseconds to wait (0 = fire immediately, INT_MAX = no deadline).
  */
 int arq_fsm_timeout_ms(const arq_session_t *sess, uint64_t now);
+
+/**
+ * @brief Run CONNECTED on the carousel data plane (default) or on the
+ *        stop-and-wait data-flow sub-FSM.  Both ends must agree.
+ */
+void arq_fsm_set_carousel(bool on);
+bool arq_fsm_carousel(void);
 
 /**
  * @brief Human-readable name for a connection state (for log output).

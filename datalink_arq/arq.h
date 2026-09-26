@@ -69,8 +69,28 @@ typedef enum
     ARQ_ACTION_NONE = 0,
     ARQ_ACTION_TX_CONTROL = 1,
     ARQ_ACTION_TX_PAYLOAD = 2,
-    ARQ_ACTION_MODE_SWITCH = 3
+    ARQ_ACTION_MODE_SWITCH = 3,
+    ARQ_ACTION_TX_KEYDOWN = 4
 } arq_action_type_t;
+
+/* A keydown of separate bursts -- each its own preamble, frame and postamble,
+ * in its own mode -- with a silence before each but the first (the carousel
+ * data plane's rounds).  Heap-allocated by the enqueuer; whoever dequeues the
+ * action frees it. */
+#define ARQ_KEYDOWN_FRAMES    17
+#define ARQ_KEYDOWN_FRAME_MAX 1280
+typedef struct
+{
+    int      n;
+    uint16_t crc_seed;           /* XORed into every frame's CRC16 (0: plain) */
+    struct
+    {
+        int      mode;
+        uint32_t gap_ms;
+        size_t   len;
+        uint8_t  bytes[ARQ_KEYDOWN_FRAME_MAX];
+    } f[ARQ_KEYDOWN_FRAMES];
+} arq_keydown_t;
 
 /** @brief Single modem action item popped by modem TX worker. */
 typedef struct
@@ -83,6 +103,7 @@ typedef struct
                           * behind a single preamble                          */
     bool join_next;      /* the NEXT action goes out in this same keydown,
                           * after a short gap, instead of in its own over    */
+    arq_keydown_t *keydown; /* ARQ_ACTION_TX_KEYDOWN only                     */
 } arq_action_t;
 
 /** @brief Snapshot of current ARQ runtime state for telemetry/decision making. */
@@ -266,7 +287,12 @@ void arq_set_active_modem_mode(int mode, size_t frame_size);
  * @param frame_size Frame length in bytes.
  * @return true if frame was handled by ARQ connect path.
  */
-bool arq_handle_incoming_connect_frame(uint8_t *data, size_t frame_size);
+bool arq_handle_incoming_connect_frame(uint8_t *data, size_t frame_size, float rx_snr);
+/* A frame that passed the session's seeded CRC (carousel data plane).
+ * from_control: the control decoder produced it; otherwise mode is the
+ * payload decoder's. */
+void arq_handle_carousel_frame(const uint8_t *data, size_t frame_size, int mode,
+                               bool from_control, float rx_snr);
 
 /**
  * @brief Handle incoming compact CQ frame and emit host-side CQFRAME notification.

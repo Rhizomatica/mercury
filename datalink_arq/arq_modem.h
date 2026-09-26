@@ -77,6 +77,18 @@ void arq_modem_set_channel_busy_fn(bool (*fn)(void));
 bool arq_modem_channel_busy(void);
 
 /**
+ * @brief Register the modem's session-seed setter (carousel data plane).
+ *
+ * The carousel's frames carry the session in their CRC16: with a seed set,
+ * the payload decoders accept only seeded frames, the control decoder seeded
+ * and plain ones (CALL, ACCEPT, DISCONNECT), and HARQ combining is off --
+ * consecutive carousel frames are different codewords.  0 restores plain
+ * CRCs and HARQ.
+ */
+void arq_modem_set_crc_seed_fn(void (*fn)(uint16_t seed));
+void arq_modem_crc_seed(uint16_t seed);
+
+/**
  * @brief Notify ARQ that PTT has gone ON.
  * @param mode       FreeDV mode of the frame now on air.
  * @param frame_size Frame size in bytes.

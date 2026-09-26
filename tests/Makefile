@@ -65,8 +65,8 @@ TEST_BINS = test_ring_buffer test_arq_protocol test_arq_timing test_arq_fsm \
             test_arq_conn test_cfg_utils test_arq_tnc test_channel_busy \
             test_freedv_harq test_sock_wire test_rtp_wire test_virtual_clock test_watterson \
             test_mercury_prng test_bcast_file \
-            test_ofdm_acq test_ui_status test_ui_devices test_ui_ptt_persist test_tx_pacing test_radio_port \
-            test_radio_io_frequency test_mfsk \
+            test_ofdm_acq test_crc_seed test_ui_status test_ui_devices test_ui_ptt_persist test_tx_pacing test_radio_port \
+            test_radio_io_frequency test_mfsk test_rs_erasure test_carousel test_carousel_sim \
 			test_message_store test_ui_history test_ws_protocol
 
 .PHONY: all test clean
@@ -121,7 +121,7 @@ test_arq_timing: datalink_arq/test_arq_timing.c $(UNITY_SRC) $(ARQ_STUBS) \
 
 # ARQ FSM tests (state transitions, callback invocations)
 test_arq_fsm: datalink_arq/test_arq_fsm.c $(UNITY_SRC) $(ARQ_STUBS) \
-              ../datalink_arq/arq_fsm.c ../common/virtual_clock.c \
+              ../datalink_arq/arq_fsm.c ../datalink_arq/carousel.c ../datalink_arq/rs_erasure.c ../common/virtual_clock.c \
               ../datalink_arq/arq_protocol.c ../datalink_arq/arq_timing.c \
               ../datalink_arq/arith.c
 	$(CC) $(CFLAGS) -I../modem/freedv -o $@ $(filter %.c %.a %.o,$^) $(LDFLAGS)
@@ -146,13 +146,44 @@ test_tcp_interfaces: data_interfaces/test_tcp_interfaces.c $(UNITY_SRC) ../modem
 	    ../datalink_arq/arq_tnc.c ../common/shm_posix.c ../common/os_interop.c \
 	    ../common/mercury_modes.c $(LDFLAGS)
 
+# Reed-Solomon erasure code of the carousel data plane
+test_rs_erasure: sim/test_rs_erasure.c ../datalink_arq/rs_erasure.c ../datalink_arq/rs_erasure.h $(UNITY_SRC)
+	$(CC) $(CFLAGS) -o $@ $(filter %.c %.a %.o,$^) $(LDFLAGS)
+
+# The carousel data plane on the sim's channel (not run by `make test`; a
+# bench, like ab_bench):  ./carousel_bench <seed> <channel> [bidir]
+CAROUSEL_SIM_SRC = sim/carousel_sim.c ../datalink_arq/carousel.c ../datalink_arq/rs_erasure.c \
+                   sim/sim_channel.c $(ARQ_STUBS) \
+                   ../datalink_arq/arq_protocol.c ../datalink_arq/arith.c ../common/virtual_clock.c
+carousel_bench: sim/carousel_bench.c $(CAROUSEL_SIM_SRC)
+	$(CC) $(CFLAGS) -Isim -I../modem/freedv -o $@ $(filter %.c %.a %.o,$^) $(LDFLAGS)
+
+# The carousel's invariants: completes, delivers intact, never keys over the peer
+test_carousel: sim/test_carousel.c $(CAROUSEL_SIM_SRC) $(UNITY_SRC)
+	$(CC) $(CFLAGS) -Isim -I../modem/freedv -o $@ $(filter %.c %.a %.o,$^) $(LDFLAGS)
+
 # Two-FSM ARQ simulation harness
 SIM_SRC = sim/sim_clock.c sim/sim_channel.c sim/sim_endpoint.c \
           sim/sim_translate.c sim/sim_core.c sim/sim_props.c
 test_arq_sim: sim/test_arq_sim.c $(UNITY_SRC) $(ARQ_STUBS) $(SIM_SRC) \
-              ../datalink_arq/arq_fsm.c ../common/virtual_clock.c \
+              ../datalink_arq/arq_fsm.c ../datalink_arq/carousel.c ../datalink_arq/rs_erasure.c ../common/virtual_clock.c \
               ../datalink_arq/arq_protocol.c \
               ../datalink_arq/arq_timing.c ../datalink_arq/arith.c
+	$(CC) $(CFLAGS) -Isim -I../modem/freedv -o $@ $(filter %.c %.a %.o,$^) $(LDFLAGS)
+
+# The carousel data plane through the real FSM on the two-FSM sim
+test_carousel_sim: sim/test_carousel_sim.c $(UNITY_SRC) $(ARQ_STUBS) $(SIM_SRC) \
+              ../datalink_arq/arq_fsm.c ../datalink_arq/carousel.c ../datalink_arq/rs_erasure.c ../common/virtual_clock.c \
+              ../datalink_arq/arq_protocol.c \
+              ../datalink_arq/arq_timing.c ../datalink_arq/arith.c
+	$(CC) $(CFLAGS) -Isim -I../modem/freedv -o $@ $(filter %.c %.a %.o,$^) $(LDFLAGS)
+
+# Deterministic A/B bench (not part of `make test`):
+#   SIM_CS=400 ./ab_bench <seed> <channel> [bidir]
+ab_bench: sim/ab_bench.c $(ARQ_STUBS) $(SIM_SRC) \
+          ../datalink_arq/arq_fsm.c ../datalink_arq/carousel.c ../datalink_arq/rs_erasure.c ../common/virtual_clock.c \
+          ../datalink_arq/arq_protocol.c \
+          ../datalink_arq/arq_timing.c ../datalink_arq/arith.c
 	$(CC) $(CFLAGS) -Isim -I../modem/freedv -o $@ $(filter %.c %.a %.o,$^) $(LDFLAGS)
 
 # arq_conn accessor correctness tests (single-threaded; locking verified by TSan)
@@ -235,6 +266,9 @@ $(FREEDV_LIB):
 
 test_ofdm_acq: modem/test_ofdm_acq.c $(UNITY_SRC) $(FREEDV_LIB)
 	$(CC) $(CFLAGS) -I../modem/freedv -o $@ modem/test_ofdm_acq.c $(UNITY_SRC) $(FREEDV_LIB) $(LDFLAGS) -lm
+
+test_crc_seed: modem/test_crc_seed.c $(UNITY_SRC) $(FREEDV_LIB)
+	$(CC) $(CFLAGS) -I../modem/freedv -o $@ modem/test_crc_seed.c $(UNITY_SRC) $(FREEDV_LIB) $(LDFLAGS) -lm
 
 # TX burst pacing (pure header; simulated coarse timer, no sleeping).
 # tx_pacing.h is a PREREQUISITE: the logic under test lives entirely in the

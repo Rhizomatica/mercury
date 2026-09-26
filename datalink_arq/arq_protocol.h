@@ -684,7 +684,15 @@ int arq_protocol_build_call(uint8_t *buf, size_t buf_len,
 int arq_protocol_build_accept(uint8_t *buf, size_t buf_len,
                                 uint8_t session_id,
                                 const char *src, const char *dst,
-                                int bw_hz);
+                                int bw_hz, int start_level);
+
+/* The ACCEPT is also the carousel's first poll: it names the ladder rung the
+ * caller's first round goes out on (car_start_level of the SNR the callee
+ * measured on the CALL), in the top 3 bits of its DST CRC -- which an ACCEPT
+ * checks on 13 bits, alongside its 7-bit session id. */
+int  arq_protocol_accept_start_level(const uint8_t *buf);
+/* Is a CALL (16-bit DST CRC) or an ACCEPT (13-bit) addressed to callsign? */
+bool arq_protocol_connect_dst_matches(const uint8_t *buf, bool is_accept, const char *callsign);
 
 /**
  * Parse a CALL frame; extract callsigns.

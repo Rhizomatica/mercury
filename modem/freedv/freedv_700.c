@@ -578,8 +578,8 @@ int freedv_comp_short_rx_ofdm(struct freedv *f, void *demod_in_8kHz,
       memcpy(f->rx_payload_bits, decoded_codeword, Ndatabitsperpacket);
 
       if (strlen(ofdm->data_mode)) {
-        int crc_ok =
-            freedv_check_crc16_unpacked(f->rx_payload_bits, Ndatabitsperpacket);
+        int crc_class = freedv_crc16_class(f, f->rx_payload_bits, Ndatabitsperpacket);
+        int crc_ok = crc_class != 0;
         /* HARQ Chase combining FALLBACK: only when the single-shot decode
          * failed, add the retained running sum of prior (same-frame) LLRs and
          * retry.  Independent noise realisations of the same codeword add
@@ -625,8 +625,8 @@ int freedv_comp_short_rx_ofdm(struct freedv *f, void *demod_in_8kHz,
           if (ldpc_harq_combine_parity_ok(parityCheckCount,
                                           ldpc->NumberParityBits)) {
             memcpy(f->rx_payload_bits, decoded_codeword, Ndatabitsperpacket);
-            crc_ok = freedv_check_crc16_unpacked(f->rx_payload_bits,
-                                                 Ndatabitsperpacket);
+            crc_class = freedv_crc16_class(f, f->rx_payload_bits, Ndatabitsperpacket);
+            crc_ok = crc_class != 0;
           }
         }
         if (!crc_ok && f->verbose) {
@@ -663,6 +663,7 @@ int freedv_comp_short_rx_ofdm(struct freedv *f, void *demod_in_8kHz,
           fprintf(stderr, "\n");
         }
         // we need a valid CRC to declare a data packet valid
+        f->rx_crc_seeded = crc_class == 2;
         if (crc_ok)
           rx_status |= FREEDV_RX_BITS;
         else

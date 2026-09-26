@@ -45,17 +45,17 @@ bool sim_translate_frame(const uint8_t *frame, size_t frame_size, float rx_snr,
         if (rc < 0)
             return false;
 
-        /* Validate DST CRC against the receiver's callsign. */
-        if (receiver_call && receiver_call[0] != 0)
-        {
-            uint16_t frame_crc = (uint16_t)frame[ARQ_CONNECT_PAYLOAD_IDX]
-                               | ((uint16_t)frame[ARQ_CONNECT_PAYLOAD_IDX + 1] << 8);
-            if (frame_crc != arq_protocol_callsign_crc16(receiver_call))
-                return false;
-        }
+        /* Validate DST CRC against the receiver's callsign (13 bits on an
+         * ACCEPT, which carries the carousel's start rung in the rest). */
+        if (receiver_call && receiver_call[0] != 0 &&
+            !arq_protocol_connect_dst_matches(frame, is_accept, receiver_call))
+            return false;
 
         out_ev->id         = is_accept ? ARQ_EV_RX_ACCEPT : ARQ_EV_RX_CALL;
         out_ev->session_id = session_id;
+        out_ev->rx_snr     = rx_snr;
+        if (is_accept)
+            out_ev->car_level = arq_protocol_accept_start_level(frame);
         /* src = transmitting side's callsign (the remote station for the receiver) */
         snprintf(out_ev->remote_call, CALLSIGN_MAX_SIZE, "%s", src);
         return true;

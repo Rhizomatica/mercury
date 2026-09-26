@@ -69,6 +69,8 @@ static arq_event_t make_event(arq_event_id_t id)
 
 void setUp(void)
 {
+    /* The stop-and-wait data plane (see test_arq_sim's setUp). */
+    arq_fsm_set_carousel(false);
     /* Reset all FFF fakes */
     RESET_FAKE(fake_send_tx_frame);
     RESET_FAKE(fake_notify_connected);

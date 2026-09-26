@@ -605,9 +605,26 @@ int arq_protocol_build_call(uint8_t *buf, size_t buf_len,
 int arq_protocol_build_accept(uint8_t *buf, size_t buf_len,
                                uint8_t session_id,
                                const char *src, const char *dst,
-                               int bw_hz)
+                               int bw_hz, int start_level)
 {
-    return build_call_accept(buf, buf_len, true, session_id, src, dst, bw_hz);
+    int n = build_call_accept(buf, buf_len, true, session_id, src, dst, bw_hz);
+    if (n > 0)
+        buf[ARQ_CONNECT_PAYLOAD_IDX + 1] =
+            (uint8_t)((buf[ARQ_CONNECT_PAYLOAD_IDX + 1] & 0x1F) | ((start_level & 7) << 5));
+    return n;
+}
+
+int arq_protocol_accept_start_level(const uint8_t *buf)
+{
+    return (buf[ARQ_CONNECT_PAYLOAD_IDX + 1] >> 5) & 7;
+}
+
+bool arq_protocol_connect_dst_matches(const uint8_t *buf, bool is_accept, const char *callsign)
+{
+    uint16_t frame_crc = (uint16_t)buf[ARQ_CONNECT_PAYLOAD_IDX]
+                       | ((uint16_t)buf[ARQ_CONNECT_PAYLOAD_IDX + 1] << 8);
+    uint16_t mask = is_accept ? 0x1FFF : 0xFFFF;
+    return (frame_crc & mask) == (arq_protocol_callsign_crc16(callsign) & mask);
 }
 
 static int parse_call_accept(const uint8_t *buf, size_t buf_len,

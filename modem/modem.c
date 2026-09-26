@@ -110,6 +110,7 @@ static pthread_mutex_t modem_inst_lock[MODEM_POOL_SLOTS] = {
 static pthread_mutex_t modem_inst_lock_other = PTHREAD_MUTEX_INITIALIZER;
 
 static pthread_mutex_t *modem_inst_lock_for(struct freedv *f);
+static void modem_apply_crc_seed(uint16_t seed);
 static uint64_t modem_freedv_epoch = 1;
 static uint64_t modem_last_switch_ms = 0;
 static bool modem_owns_radio_buffers = false;
@@ -960,6 +961,7 @@ try_shm_connect2:
     /* Let the ARQ FSM ask whether the channel is occupied, so a timer-driven
      * TURN_REQ does not key over a transmission no decoder has synced on. */
     arq_modem_set_channel_busy_fn(modem_channel_busy);
+    arq_modem_set_crc_seed_fn(modem_apply_crc_seed);
     
     int modem_sample_rate = freedv_get_modem_sample_rate(g_modem->freedv);
     HLOGI("modem", "Initialized persistent FreeDV mode pool (DATAC16/DATAC15/DATAC13/DATAC4/DATAC3/DATAC1/DATAC17/QAM16C2), frames per burst: %d", frames_per_burst);
@@ -1188,7 +1190,7 @@ static size_t burst_audio_max_samples(struct freedv *freedv, int frames)
  * modulated on `freedv` to tx_buffer at *total.  Caller holds the instance
  * lock and has sized tx_buffer with burst_audio_max_samples(). */
 static void append_burst_audio(struct freedv *freedv, const uint8_t *bytes_in, int frames,
-                               int32_t *tx_buffer, size_t *total,
+                               uint16_t crc_seed, int32_t *tx_buffer, size_t *total,
                                int16_t *mod_out_short, float tx_gain, float *peak_fs)
 {
     size_t bytes_per_modem_frame = freedv_get_bits_per_modem_frame(freedv) / 8;
@@ -1203,7 +1205,7 @@ static void append_burst_audio(struct freedv *freedv, const uint8_t *bytes_in, i
     for (int i = 0; i < frames; i++)
     {
         memcpy(frame_with_crc, &bytes_in[payload_bytes * i], payload_bytes);
-        uint16_t crc16 = freedv_gen_crc16(frame_with_crc, payload_bytes);
+        uint16_t crc16 = freedv_gen_crc16(frame_with_crc, payload_bytes) ^ crc_seed;
         frame_with_crc[bytes_per_modem_frame - 2] = crc16 >> 8;
         frame_with_crc[bytes_per_modem_frame - 1] = crc16 & 0xff;
 
@@ -1393,7 +1395,7 @@ int send_modulated_data(generic_modem_t *g_modem, uint8_t *bytes_in, int frames_
 
     for (int i = 0; i < samples_head; i++)
         tx_buffer[total_samples++] = 0;
-    append_burst_audio(freedv, bytes_in, frames_per_burst, tx_buffer, &total_samples,
+    append_burst_audio(freedv, bytes_in, frames_per_burst, 0, tx_buffer, &total_samples,
                        mod_out_short, tx_gain, &peak_fs);
     for (int i = 0; i < samples_silence; i++)
         tx_buffer[total_samples++] = 0;
@@ -1468,13 +1470,13 @@ int send_modulated_chain(generic_modem_t *g_modem,
     for (int i = 0; i < samples_head; i++)
         tx_buffer[total++] = 0;
     pthread_mutex_lock(la);
-    append_burst_audio(fa, bytes_a, frames_a, tx_buffer, &total, mod_out_short, tx_gain, &peak_fs);
+    append_burst_audio(fa, bytes_a, frames_a, 0, tx_buffer, &total, mod_out_short, tx_gain, &peak_fs);
     pthread_mutex_unlock(la);
     for (int i = 0; i < samples_gap; i++)
         tx_buffer[total++] = 0;
     pthread_mutex_lock(lb);
     publish_link_bitrate(fb, mode_b);
-    append_burst_audio(fb, bytes_b, frames_b, tx_buffer, &total, mod_out_short, tx_gain, &peak_fs);
+    append_burst_audio(fb, bytes_b, frames_b, 0, tx_buffer, &total, mod_out_short, tx_gain, &peak_fs);
     pthread_mutex_unlock(lb);
     for (int i = 0; i < samples_tail; i++)
         tx_buffer[total++] = 0;
@@ -1485,6 +1487,84 @@ int send_modulated_chain(generic_modem_t *g_modem,
     maybe_switch_modem_mode(g_modem, mode_a, RX, true);
     key_and_play(g_modem, tx_buffer, total, peak_fs);
     maybe_switch_modem_mode(g_modem, mode_b, RX, true);
+
+    free(tx_buffer);
+    free(mod_out_short);
+    return 0;
+}
+
+/* A keydown of separate bursts (arq_keydown_t): each frame is its own burst on
+ * its own pooled instance, with its silence before it; one TX_STARTED /
+ * TX_COMPLETE pair for the whole keydown.  The frames of a carousel round
+ * share one mode, and its receiver re-acquires on each preamble. */
+static int send_modulated_keydown(generic_modem_t *g_modem, const arq_keydown_t *kd)
+{
+    if (!kd || kd->n < 1 || kd->n > ARQ_KEYDOWN_FRAMES)
+        return -1;
+    if (atomic_load(&g_tune_active))
+    {
+        HLOGW("modem", "TX suppressed: tuning carrier active (send TUNE OFF)");
+        return -1;
+    }
+
+    struct freedv *inst[ARQ_KEYDOWN_FRAMES];
+    size_t max_samples = (size_t)FREEDV_FS_8000 * (TX_HEAD_SILENCE_MS + TX_TAIL_SILENCE_MS) / 1000;
+    size_t nmo_max = 0;
+    for (int i = 0; i < kd->n; i++)
+    {
+        size_t fb = 0;
+        pthread_mutex_lock(&modem_pool_lock);
+        inst[i] = pooled_freedv_for_mode_locked(kd->f[i].mode, &fb);
+        pthread_mutex_unlock(&modem_pool_lock);
+        if (!inst[i])
+            return -1;
+        pthread_mutex_t *l = modem_inst_lock_for(inst[i]);
+        pthread_mutex_lock(l);
+        size_t payload = (size_t)freedv_get_bits_per_modem_frame(inst[i]) / 8 - 2;
+        size_t nmo = freedv_get_n_tx_modem_samples(inst[i]);
+        max_samples += burst_audio_max_samples(inst[i], 1);
+        pthread_mutex_unlock(l);
+        if (kd->f[i].len != payload)
+        {
+            HLOGW("modem-tx", "keydown frame %d: %zu bytes for mode %d (wants %zu)",
+                  i, kd->f[i].len, kd->f[i].mode, payload);
+            return -1;
+        }
+        if (nmo > nmo_max) nmo_max = nmo;
+        if (i) max_samples += (size_t)FREEDV_FS_8000 * kd->f[i].gap_ms / 1000;
+    }
+
+    int32_t *tx_buffer = (int32_t *)malloc(max_samples * sizeof(int32_t));
+    int16_t *mod_out_short = (int16_t *)malloc(nmo_max * sizeof(int16_t));
+    if (!tx_buffer || !mod_out_short)
+    {
+        free(tx_buffer);
+        free(mod_out_short);
+        return -1;
+    }
+
+    size_t total = 0;
+    float tx_gain = atomic_load(&g_tx_gain);
+    float peak_fs = 0.0f;
+    for (int i = 0; i < FREEDV_FS_8000 * TX_HEAD_SILENCE_MS / 1000; i++)
+        tx_buffer[total++] = 0;
+    for (int i = 0; i < kd->n; i++)
+    {
+        if (i)
+            for (uint32_t s = 0; s < (uint32_t)FREEDV_FS_8000 * kd->f[i].gap_ms / 1000; s++)
+                tx_buffer[total++] = 0;
+        pthread_mutex_t *l = modem_inst_lock_for(inst[i]);
+        pthread_mutex_lock(l);
+        publish_link_bitrate(inst[i], kd->f[i].mode);
+        append_burst_audio(inst[i], kd->f[i].bytes, 1, kd->crc_seed, tx_buffer, &total,
+                           mod_out_short, tx_gain, &peak_fs);
+        pthread_mutex_unlock(l);
+    }
+    for (int i = 0; i < FREEDV_FS_8000 * TX_TAIL_SILENCE_MS / 1000; i++)
+        tx_buffer[total++] = 0;
+
+    maybe_switch_modem_mode(g_modem, kd->f[0].mode, RX, true);
+    key_and_play(g_modem, tx_buffer, total, peak_fs);
 
     free(tx_buffer);
     free(mod_out_short);
@@ -1722,6 +1802,36 @@ static int harq_enabled(void)
     return !(e && e[0] == '0');
 }
 
+/* Carousel session seed (see arq_modem_set_crc_seed_fn).  While set, HARQ is
+ * off: consecutive carousel frames are different codewords, never copies. */
+static _Atomic bool g_crc_seed_active = false;
+
+static void modem_apply_crc_seed(uint16_t seed)
+{
+    atomic_store(&g_crc_seed_active, seed != 0);
+    pthread_mutex_lock(&modem_pool_lock);
+    struct freedv *pool[] = {
+        modem_mode_pool.datac16, modem_mode_pool.datac15, modem_mode_pool.datac13,
+        modem_mode_pool.datac4, modem_mode_pool.datac3, modem_mode_pool.datac1,
+        modem_mode_pool.datac17, modem_mode_pool.qam16c2,
+    };
+    for (size_t i = 0; i < sizeof(pool) / sizeof(pool[0]); i++)
+    {
+        struct freedv *f = pool[i];
+        if (!f)
+            continue;
+        bool control = f == modem_mode_pool.datac16;
+        pthread_mutex_t *l = modem_inst_lock_for(f);
+        pthread_mutex_lock(l);
+        freedv_set_crc_seed(f, seed, control);
+        freedv_harq_reset(f);
+        freedv_set_harq(f, !seed && !control && harq_enabled());
+        pthread_mutex_unlock(l);
+    }
+    pthread_mutex_unlock(&modem_pool_lock);
+    HLOGD("modem", "session CRC seed %s", seed ? "set" : "cleared");
+}
+
 static int rx_decoder_bind_mode(rx_decoder_state_t *state, int mode)
 {
     struct freedv *freedv = NULL;
@@ -1763,7 +1873,8 @@ static int rx_decoder_bind_mode(rx_decoder_state_t *state, int mode)
             pthread_mutex_t *bl = modem_inst_lock_for(freedv);
             pthread_mutex_lock(bl);
             freedv_harq_reset(freedv);
-            freedv_set_harq(freedv, harq_enabled() && mode != FREEDV_MODE_DATAC16);
+            freedv_set_harq(freedv, harq_enabled() && mode != FREEDV_MODE_DATAC16 &&
+                                    !atomic_load(&g_crc_seed_active));
             pthread_mutex_unlock(bl);
         }
     }
@@ -1830,7 +1941,9 @@ static void process_received_frame(const uint8_t *data,
                                    size_t nbytes_out,
                                    size_t frame_bytes,
                                    bool arq_policy_ready,
-                                   float snr_est)
+                                   float snr_est,
+                                   int mode,
+                                   bool seeded)
 {
     size_t payload_nbytes;
     int frame_type;
@@ -1844,13 +1957,22 @@ static void process_received_frame(const uint8_t *data,
 
     tnc_send_sn(snr_est);   /* the bitrate is published by the decoder, see publish_link_bitrate() */
 
+    /* The session's seeded CRC: a carousel frame, whatever its bytes say. */
+    if (seeded)
+    {
+        if (arq_policy_ready)
+            arq_handle_carousel_frame(data, payload_nbytes, mode,
+                                      mode == FREEDV_MODE_DATAC16, snr_est);
+        return;
+    }
+
     frame_type = parse_frame_header((const uint8_t *)data, payload_nbytes, NULL);
 
     switch (frame_type)
     {
     case PACKET_TYPE_ARQ_CALL:
         if (arq_policy_ready)
-            arq_handle_incoming_connect_frame((uint8_t *)data, payload_nbytes);
+            arq_handle_incoming_connect_frame((uint8_t *)data, payload_nbytes, snr_est);
         break;
     case PACKET_TYPE_ARQ_CQ:
         if (arq_policy_ready)
@@ -2162,6 +2284,7 @@ static void rx_decoder_consume_chunk(rx_decoder_state_t *state,
 
         rx_status = freedv_get_rx_status(state->freedv);
         freedv_get_modem_stats(state->freedv, &sync, &snr_est);
+        bool seeded = nbytes_out > 0 && freedv_get_rx_crc_seeded(state->freedv);
         pthread_mutex_unlock(ilock);
 
         /* Diagnosis: what the decoder actually saw.  sync, the status bits and
@@ -2195,7 +2318,9 @@ static void rx_decoder_consume_chunk(rx_decoder_state_t *state,
                                    nbytes_out,
                                    state->bytes_cap,
                                    arq_policy_ready,
-                                   snr_est);
+                                   snr_est,
+                                   state->mode,
+                                   seeded);
         }
 
         /* Whole chunk fed and freedv produced nothing and wants no input
@@ -2328,6 +2453,19 @@ void *tx_thread(void *g_modem)
             {
                 if (action.mode >= 0 && arq_policy_ready)
                     maybe_switch_modem_mode(modem, action.mode, RX, true);
+                sent_from_action = true;
+            }
+            else if (action.type == ARQ_ACTION_TX_KEYDOWN)
+            {
+                if (send_modulated_keydown(modem, action.keydown) != 0)
+                {
+                    /* Nothing went out, but the carousel waits for its keydown
+                     * to end before it arms anything: tell it it has. */
+                    HLOGW("modem-tx", "Failed to send keydown of %d bursts",
+                          action.keydown ? action.keydown->n : 0);
+                    arq_modem_ptt_off();
+                }
+                free(action.keydown);
                 sent_from_action = true;
             }
             else if (read_action_frames(modem, &action, arq_policy_ready,

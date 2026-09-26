@@ -392,7 +392,7 @@ void test_callsign_too_long_is_refused_not_truncated(void)
                                                          "PU2UIT-3", 2300));
     TEST_ASSERT_LESS_THAN_INT(0, arq_protocol_build_accept(frame, sizeof(frame),
                                                            0x42, too_long,
-                                                           "PU2UIT-3", 2300));
+                                                           "PU2UIT-3", 2300, 0));
     /* Not asserted for CQ: its SRC slot is 13 bytes (ARQ_CQ_SRC_MAX_ENCODED)
      * against CALL/ACCEPT's 10, and the longest callsign that fits
      * CALLSIGN_MAX_SIZE encodes to about 10 bytes -- so the CQ encoder cannot
