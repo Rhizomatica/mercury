@@ -1311,8 +1311,8 @@ bool arq_fsm_carousel(void) { return g_carousel; }
 
 bool arq_fsm_expect_pattern(const arq_session_t *sess, uint64_t now)
 {
-    (void)sess; (void)now;
-    return false;   /* nothing sends a pattern yet */
+    (void)now;
+    return sess->car_active && sess->car && car_expect_pattern(sess->car);
 }
 
 /* Silence while data is in flight after which the peer is gone. */
@@ -1336,6 +1336,13 @@ static void car_io_keydown(void *ctx, const car_frame_t *fr, int n)
 }
 
 static void car_io_bind_rx(void *ctx, int mode) { ((arq_session_t *)ctx)->peer_tx_mode = mode; }
+
+static void car_io_pattern(void *ctx, int kind)
+{
+    (void)ctx;
+    if (g_cbs.send_pattern)
+        g_cbs.send_pattern(kind == CAR_PATTERN_BREAK ? ARQ_PATTERN_BREAK : ARQ_PATTERN_ACK);
+}
 static bool peer_is_transmitting(const arq_session_t *sess);
 static bool car_io_peer_keyed(void *ctx) { return peer_is_transmitting((arq_session_t *)ctx); }
 
@@ -1408,6 +1415,7 @@ static void car_start(arq_session_t *sess, bool is_caller, uint64_t now)
         .keydown = car_io_keydown, .bind_rx = car_io_bind_rx, .peer_keyed = car_io_peer_keyed,
         .tx_read = car_io_tx_read, .tx_pending = car_io_tx_pending, .deliver = car_io_deliver,
         .tx_confirmed = car_io_tx_confirmed, .ctx = sess,
+        .pattern = g_cbs.send_pattern ? car_io_pattern : NULL,
     };
     car_init(sess->car, &io, sess->car_rx_level, sess->car_tx_level);
     sess->car_active = true;
@@ -2124,6 +2132,11 @@ static bool fsm_connected_carousel(arq_session_t *sess, const arq_event_t *ev)
         break;
     case ARQ_EV_TX_COMPLETE:
         car_on_tx_done(sess->car, now);
+        break;
+    case ARQ_EV_RX_PATTERN:
+        sess->car_last_rx_ms = now;
+        car_on_pattern(sess->car, now, (ev->rx_flags & ARQ_FLAG_HAS_DATA) ? CAR_PATTERN_BREAK
+                                                                          : CAR_PATTERN_ACK);
         break;
     case ARQ_EV_APP_DATA_READY:
         car_on_app_data(sess->car, now);

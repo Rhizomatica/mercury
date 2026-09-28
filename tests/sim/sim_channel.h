@@ -3,6 +3,9 @@
  * Copyright (C) 2026 Rhizomatica */
 #ifndef SIM_CHANNEL_H
 #define SIM_CHANNEL_H
+/* Not a modem mode: a 0.64 s Welch-Costas pattern (ACK/BREAK). */
+#define SIM_MODE_PATTERN 101
+
 #include <stdint.h>
 #include <stdbool.h>
 #include <stddef.h>

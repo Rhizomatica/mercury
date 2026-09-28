@@ -116,6 +116,24 @@ static void io_keydown(void *ctx, const car_frame_t *fr, int n)
 
 static void io_bind_rx(void *ctx, int mode) { ((station_t *)ctx)->rx_mode = mode; }
 
+/* A pattern: 0.64 s on the air, detected ~10 dB below DATAC16. */
+static void io_pattern(void *ctx, int kind)
+{
+    station_t *s = ctx, *peer = &S[s->id ^ 1];
+    uint64_t t = now_ms + HEAD_MS, d;
+    uint64_t air = sim_channel_airtime_ms(SIM_MODE_PATTERN, 0);
+    s->tx_start = now_ms;
+    if (trace) printf("%9.1f %c keys: pattern %s\n", now_ms / 1000.0, 'A' + s->id, kind ? "BREAK" : "ACK");
+    if (sim_channel_schedule(ch, t, s->id, SIM_MODE_PATTERN, 0, &d)) {
+        event_t e = { .t = t + air, .type = EV_ARRIVE, .st = peer->id, .mode = SIM_MODE_PATTERN,
+                      .len = (size_t)kind, .bytes = NULL, .f_start = t, .f_end = t + air };
+        push(e);
+    }
+    s->tx_end = t + air + TAIL_MS;
+    event_t e = { .t = s->tx_end, .type = EV_TXEND, .st = s->id };
+    push(e);
+}
+
 static bool io_peer_keyed(void *ctx)
 {
     const station_t *p = &S[((station_t *)ctx)->id ^ 1];
@@ -180,6 +198,7 @@ void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limi
         s->id = i;
         car_io_t io = { .keydown = io_keydown, .bind_rx = io_bind_rx, .peer_keyed = io_peer_keyed,
                         .tx_read = io_tx_read, .tx_pending = io_tx_pending, .deliver = io_deliver,
+                        .pattern = getenv("CAR_NOPATTERN") ? NULL : io_pattern,
                         .ctx = s };
         car_init(&s->car, &io, car_start_level((float)snr_db), car_start_level((float)snr_db));
         s->rx_mode = -1;
@@ -215,6 +234,9 @@ void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limi
             if (s->tx_end > e.f_start && s->tx_start < e.f_end && s->tx_end) {
                 collisions++;
                 if (trace) printf("%9.1f COLLISION at %c\n", now_ms / 1000.0, 'A' + s->id);
+            } else if (e.mode == SIM_MODE_PATTERN) {
+                if (!getenv("CAR_NOPATTERN_RX"))
+                    car_on_pattern(&s->car, now_ms, (int)e.len);
             } else if (e.mode == ARQ_CONTROL_MODE) {
                 car_on_frame(&s->car, now_ms, e.bytes, e.len, e.mode, true, (float)snr_now);
             } else if (e.mode == s->rx_mode) {

@@ -16,6 +16,12 @@
  * The receiver takes the turn with a HANDOVER poll that announces its own
  * first round, sent in the same keydown.
  *
+ * At the MFSK floor the control mode no longer gets through, so the receiver
+ * answers a round with a pattern instead (car_io_t.pattern): ACK "keep
+ * going", BREAK "the block you are on is delivered".  Any piece is useful
+ * there, so silence also means "keep going", and the sender sends only its
+ * oldest block, so a BREAK always names it.
+ *
  * This module is the protocol only: no threads, no clock of its own, no I/O
  * but the callbacks.  tests/sim/carousel_bench.c runs two of them on the sim
  * channel; the ARQ runtime runs one against the modem.
@@ -65,8 +71,14 @@ typedef struct {
     void   (*deliver)(void *ctx, const uint8_t *buf, size_t len);
     /* This many of our bytes have reached the peer. */
     void   (*tx_confirmed)(void *ctx, size_t len);
+    /* Key a pattern: CAR_PATTERN_ACK or CAR_PATTERN_BREAK.  Optional: without
+     * it the floor polls in the control mode like every other rung.  The
+     * runtime calls car_on_tx_done() when it has ended. */
+    void   (*pattern)(void *ctx, int kind);
     void    *ctx;
 } car_io_t;
+
+enum { CAR_PATTERN_ACK = 0, CAR_PATTERN_BREAK = 1 };
 
 enum { CAR_T_POLL, CAR_T_SEND, CAR_T_WAIT, CAR_T_SENSE, CAR_NTIMERS };
 
@@ -74,6 +86,7 @@ typedef struct {
     uint8_t  id;
     int      K, len, next, need;          /* next: the next piece index to send */
     int      resend;                      /* data piece the receiver waits on, -1 */
+    int      sent;                        /* distinct pieces sent so far (capped) */
     uint8_t  data[CAR_MAX_K][CAR_PIECE];
 } car_sblock_t;
 
@@ -106,6 +119,9 @@ typedef struct {
     uint32_t tx_poll_id;
     double   tx_loss;               /* the receiver's loss estimate, for the margin */
     bool     handover_unconfirmed;  /* my handover round is out, no poll yet */
+    bool     floor_waiting;         /* a floor round is out: a pattern may come */
+    int      floor_silent;          /* floor rounds in a row with no answer */
+    uint8_t  floor_blk;             /* the block my last floor round carried */
     int      peer_snr_level;        /* where the SNR the peer measures starts me */
     size_t   confirmed_pending;     /* retired block bytes not yet reported */
 
@@ -128,6 +144,10 @@ typedef struct {
     car_rblock_t rb[CAR_WIN];
     uint8_t  rbase;
     int      done_in_round;
+    bool     rx_break;              /* the last round delivered the block it carried */
+    bool     last_was_pattern;      /* my last answer was a pattern, not a poll */
+    int      floor_patterns;        /* patterns since my last poll */
+    bool     floor_streaming;       /* a floor round came since my last poll */
     car_frame_t txbuf[CAR_KEYDOWN_MAX];
 } car_t;
 
@@ -146,6 +166,10 @@ void car_start_receiver(car_t *c, uint64_t now);
 void car_on_frame(car_t *c, uint64_t now, const uint8_t *bytes, size_t len, int mode, bool control,
                   float snr_db);
 void car_on_tx_done(car_t *c, uint64_t now);
+/* A pattern was heard: CAR_PATTERN_ACK or CAR_PATTERN_BREAK. */
+void car_on_pattern(car_t *c, uint64_t now, int kind);
+/* Whether a pattern can arrive now (the runtime runs its detector only then). */
+bool car_expect_pattern(const car_t *c);
 /* The application queued data. */
 void car_on_app_data(car_t *c, uint64_t now);
 

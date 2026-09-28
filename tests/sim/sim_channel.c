@@ -42,6 +42,7 @@ static double mode_cliff_db(int freedv_mode)
     case FREEDV_MODE_DATAC13: return -4.0;
     case FREEDV_MODE_DATAC14: return -2.0;
     case MERCURY_MODE_MFSK:   return -13.0; /* the fringe floor */
+    case SIM_MODE_PATTERN:    return -17.0; /* ~10 dB below DATAC16 (mfsk-margin) */
     default:                  return -7.0;  /* DATAC15 / DATAC16 floor modes */
     }
 }
@@ -162,6 +163,8 @@ double sim_channel_next_rand(sim_channel_t *ch)
 uint32_t sim_channel_airtime_ms(int freedv_mode, size_t frame_size)
 {
     (void)frame_size;
+    if (freedv_mode == SIM_MODE_PATTERN)
+        return 640;
     for (int i = 0; i < arq_mode_table_count; i++)
         if (arq_mode_table[i].freedv_mode == freedv_mode)
             return (uint32_t)(arq_mode_table[i].frame_duration_s * 1000.0f + 0.5f);

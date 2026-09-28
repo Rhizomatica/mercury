@@ -25,7 +25,9 @@ int main(int argc, char **argv)
     uint64_t seed = (uint64_t)atoll(argv[1]);
     bool bidir = argc > 3 && !strcmp(argv[3], "bidir");
     car_sim_result_t r;
-    carousel_sim_run(seed, argv[2], bidir, LIMIT_MS, &r);
+    /* CAR_LIMIT_S: a longer run than the default (the deep fringe is slow). */
+    uint64_t limit = getenv("CAR_LIMIT_S") ? (uint64_t)atoll(getenv("CAR_LIMIT_S")) * 1000 : LIMIT_MS;
+    carousel_sim_run(seed, argv[2], bidir, limit, &r);
     printf("seed=%llu chan=%s %s a2b=%zu b2a=%zu integrity=%s done_ms=%llu collisions=%d%s\n",
            (unsigned long long)seed, argv[2], bidir ? "bidir" : "oneway", r.a2b, r.b2a,
            r.intact ? "OK" : "CORRUPT", (unsigned long long)r.done_ms, r.collisions,

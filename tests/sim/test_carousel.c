@@ -35,6 +35,8 @@ static void check(uint64_t seed, const char *chan, bool bidir)
 static const char *CHANNELS[] = {
     "clean", "awgn:0.10", "awgn:0.25", "cliff:3", "cliff:10", "nvis",
     "fade:3:0.5", "fade:8:1.0", "fade:15:0.1", "fade:25:1.0",
+    /* the MFSK floor, answered by patterns */
+    "cliff:-9", "cliff:-11", "fade:-9:0.5",
 };
 
 static void test_carousel_bidir_completes_intact(void)
