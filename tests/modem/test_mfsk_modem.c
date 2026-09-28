@@ -633,6 +633,103 @@ void test_mfsk_modem_noise_no_false_decode(void)
     free(pb); free(out);
 }
 
+/* Carrier sense.  The ARQ keys only when no burst is arriving, and for MFSK the
+ * decoder's sync flag is the only thing that says one is: a 13.5 s frame is on
+ * the air for seconds before it can be decoded.  On air an idle receiver
+ * answered its application 8 s into the sender's floor frame because the flag
+ * came up only in the burst's last symbols; the two ends then keyed over each
+ * other every round until UUCP gave up. */
+static double gauss(void)
+{
+    double u1 = ((s_rng = s_rng ^ (s_rng << 13), s_rng ^= s_rng >> 7, s_rng ^= s_rng << 17) >> 11) * (1.0 / 9007199254740992.0);
+    double u2 = ((s_rng = s_rng ^ (s_rng << 13), s_rng ^= s_rng >> 7, s_rng ^= s_rng << 17) >> 11) * (1.0 / 9007199254740992.0);
+    if (u1 < 1e-300) u1 = 1e-300;
+    return sqrt(-2.0 * log(u1)) * cos(2.0 * M_PI * u2);
+}
+
+typedef struct { double lag_s; double held; int decoded; int false_steps; } carrier_t;
+
+/* [15 s prior audio | burst | 2 s]; snr_db is in 3 kHz, NAN for no noise;
+ * with_burst 0 feeds the same length of noise alone. */
+static carrier_t carrier_timeline(double snr_db, int with_burst)
+{
+    int bytes = be->bits_per_frame(ctx) / 8;
+    int nin   = be->nin(ctx);
+    int ndata = be->n_tx_samples(ctx);
+    int fs    = be->sample_rate(ctx);
+    uint8_t *frame = malloc(bytes);
+    for (int i = 0; i < bytes - 2; i++) frame[i] = (uint8_t)(i * 7 + 3);
+    uint16_t crc = freedv_gen_crc16(frame, bytes - 2);
+    frame[bytes - 2] = crc >> 8; frame[bytes - 1] = crc & 0xff;
+    int cap = ndata * 2 + 40000;
+    int16_t *pre = calloc(cap, 2), *dat = calloc(cap, 2), *post = calloc(cap, 2);
+    int np = be->preamble_tx(ctx, pre);
+    int nd = be->rawdata_tx(ctx, dat, frame);
+    int ns = be->postamble_tx(ctx, post);
+    int preroll = 15 * fs, trail = 2 * fs;       /* a live receiver has been listening */
+    int blen = np + nd + ns;
+    int total = preroll + blen + trail;
+    double *x = calloc((size_t)total, sizeof(double));
+    double ps = 0.0;
+    for (int k = 0; k < blen; k++) {
+        double v = k < np ? pre[k] : k < np + nd ? dat[k - np] : post[k - np - nd];
+        ps += v * v;
+        if (with_burst) x[preroll + k] = v;
+    }
+    ps /= blen;
+    /* Real noise of variance s2 spreads over fs/2: SNR3k = ps / (s2 * 3000 / (fs/2)). */
+    double sigma = isnan(snr_db) ? 12.0 / 3.0
+                 : sqrt(ps * (fs / 2.0) / (3000.0 * pow(10.0, snr_db / 10.0)));
+    int16_t *pb = malloc((size_t)total * 2);
+    for (int k = 0; k < total; k++) {
+        double v = x[k] + sigma * gauss();
+        pb[k] = (int16_t)(v > 32767 ? 32767 : v < -32768 ? -32768 : v);
+    }
+    uint8_t *out = calloc(bytes, 1);
+    carrier_t r = { -1.0, 0.0, 0, 0 };
+    int steps = 0, held = 0, first = -1;
+    for (int off = 0; off + nin <= total; off += nin) {
+        int n = be->rawdata_rx(ctx, out, &pb[off]);
+        int sync = 0; float snr = 0;
+        be->get_stats(ctx, &sync, &snr);
+        int t = off + nin;
+        int in_burst = with_burst && t > preroll && t <= preroll + blen;
+        if (in_burst) { steps++; if (sync) { held++; if (first < 0) first = t; } }
+        else if (sync && (!with_burst || t <= preroll)) r.false_steps++;
+        if (n > 0 && with_burst && memcmp(out, frame, bytes) == 0) r.decoded = 1;
+    }
+    if (first >= 0) r.lag_s = (double)(first - preroll) / fs;
+    r.held = steps ? (double)held / steps : 0.0;
+    free(frame); free(pre); free(dat); free(post); free(x); free(pb); free(out);
+    return r;
+}
+
+void test_mfsk_modem_sync_while_burst_arrives(void)
+{
+    /* Clean and at the -7 dB the failed on-air run had: seen within a second
+     * of the burst's start and held for nearly all of it.  Deeper, the flag
+     * can be no better than the preamble search it rides on (-9 dB 5/6,
+     * -10 dB 4/6, -11 dB 3/6 over six noise seeds, when this was written). */
+    const double snrs[] = { NAN, -7.0 };
+    for (size_t i = 0; i < sizeof snrs / sizeof snrs[0]; i++) {
+        be->close(ctx); ctx = be->open(MERCURY_MODE_MFSK);
+        carrier_t r = carrier_timeline(snrs[i], 1);
+        TEST_ASSERT_TRUE(r.lag_s >= 0.0 && r.lag_s < 1.0);
+        TEST_ASSERT_TRUE(r.held > 0.9);
+        TEST_ASSERT_TRUE(r.decoded);             /* and the frame still decodes */
+        TEST_ASSERT_EQUAL_INT(0, r.false_steps);
+    }
+}
+
+/* A false carrier holds the ARQ off a keydown for up to a frame. */
+void test_mfsk_modem_no_carrier_in_noise(void)
+{
+    for (int k = 0; k < 3; k++) {
+        be->close(ctx); ctx = be->open(MERCURY_MODE_MFSK);
+        TEST_ASSERT_EQUAL_INT(0, carrier_timeline(0.0, 0).false_steps);
+    }
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -647,5 +744,7 @@ int main(void)
     RUN_TEST(test_mfsk_modem_decodes_with_dial_offset);
     RUN_TEST(test_mfsk_modem_tx_does_not_clip);
     RUN_TEST(test_mfsk_modem_noise_no_false_decode);
+    RUN_TEST(test_mfsk_modem_sync_while_burst_arrives);
+    RUN_TEST(test_mfsk_modem_no_carrier_in_noise);
     return UNITY_END();
 }

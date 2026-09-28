@@ -131,6 +131,8 @@ typedef struct {
     long  anchor_abs;      /* absolute sample index of a located preamble, or
                             * -1: lets a burst be tracked without re-correlating
                             * the whole window on every attempt */
+    long  carrier_abs;     /* a preamble whose payload is still arriving, or -1 */
+    long  carrier_scan_abs;/* carrier sense has searched up to here, or -1 */
     int   last_sync;
     float last_snr;
 
@@ -202,6 +204,7 @@ static void *mfsk_be_open(int mode)
     h->anchor_abs = -1;
     h->tried_abs  = -1;
     h->reject_abs = -1;
+    h->carrier_abs = h->carrier_scan_abs = -1;
     h->rb    = (mfsk_cplx *)calloc((size_t)h->NPAY * MFSK_NCAR, sizeof(mfsk_cplx));
     /* NPAY*bps, not N: mfsk_demod emits one LLR per transmitted bit slot, and
      * bps need not divide N (M=8 gives 1602 slots for a 1600-bit codeword). */
@@ -589,6 +592,52 @@ static int mfsk_try_payload(mfsk_modem_t *h, int payoff, uint8_t *bytes_out)
     return (int)nbytes;
 }
 
+/* Carrier sense: is a burst on the air now?  The search above looks only at
+ * preambles whose payload has all arrived -- nothing earlier can be decoded --
+ * so on its own it notices a 13.5 s burst in its last few symbols, and the ARQ,
+ * reading "no sync" as "nobody transmitting", keyed over the peer's frame (an
+ * idle receiver answered its application mid-burst on air, and the two ends
+ * then collided every round).  This looks where that search does not: at
+ * preambles still followed by an incomplete payload.  Only the samples added
+ * since the last look are new, so each look correlates a few symbols' worth,
+ * and once a preamble is found it is tracked until its payload is resident,
+ * where the search above takes over. */
+#define CS_OVERLAP_SYMB 4
+static int mfsk_carrier_sense(mfsk_modem_t *h, int search_len)
+{
+    int burst = (h->P + h->NPAY) * h->Nofdm;
+    long end_abs = h->n_abs + h->bf_len;
+    if (h->carrier_abs >= 0) {
+        if (h->carrier_abs >= h->n_abs && h->carrier_abs + burst > end_abs)
+            return 1;                        /* still arriving */
+        h->carrier_abs = -1;                 /* resident or slid out */
+    }
+    /* From where the last look stopped, one symbol back so a preamble that
+     * straddled it is seen whole; never below the resident-payload range. */
+    int resident_end = search_len - h->P * h->Nofdm;   /* the search above ends here */
+    long from_abs = h->n_abs + (resident_end > 0 ? resident_end : 0);
+    if (h->carrier_scan_abs - CS_OVERLAP_SYMB * h->Nofdm > from_abs)
+        from_abs = h->carrier_scan_abs - CS_OVERLAP_SYMB * h->Nofdm;
+    int base = (int)(from_abs - h->n_abs);
+    int len  = h->bf_len - base;
+    if (len < (h->P + 1) * h->Nofdm)
+        return 0;
+    int best = -1;
+    double best_metric = -1.0;
+    for (int hy = 0; hy < MFSK_FREQ_HYPS; hy++) {
+        if (h->freq_locked && hy != h->freq_hb - MFSK_FREQ_HYP_LO) continue;
+        double m = 0.0;
+        int o = mfsk_sync_search(h->bf + base, len, 1, h->preT_hyp[hy], h->preE,
+                                 h->preN, h->Nofdm, 0, &m);
+        if (o >= 0 && m > best_metric) { best_metric = m; best = o; }
+    }
+    /* Positions within P symbols of the end cannot be tested yet. */
+    h->carrier_scan_abs = end_abs - (long)(h->P + 2) * h->Nofdm;
+    if (best < 0) return 0;
+    h->carrier_abs = from_abs + best;
+    return h->carrier_abs + burst > end_abs;
+}
+
 static int mfsk_be_rawdata_rx(void *ctx, uint8_t *bytes_out, const int16_t *demod_in)
 {
     mfsk_modem_t *h = ctx;
@@ -804,9 +853,12 @@ static int mfsk_be_rawdata_rx(void *ctx, uint8_t *bytes_out, const int16_t *demo
      * so the carousel's receiver deferred its answer to a round until the
      * sender, hearing nothing, had keyed the next one. */
     int arriving = off >= 0 && off + (h->P + h->NPAY) * h->Nofdm > h->bf_len;
+    if (nbytes <= 0 && !arriving)
+        arriving = mfsk_carrier_sense(h, search_len);
     h->last_sync = nbytes <= 0 && arriving;
     if (nbytes <= 0)
         return 0;
+    h->carrier_abs = h->carrier_scan_abs = -1;
     h->n_abs += h->rxlen;
     h->rxlen = h->bb_len = h->bf_len = 0;   /* burst consumed */
     h->anchor_abs = -1;
