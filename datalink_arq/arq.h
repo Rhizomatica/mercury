@@ -70,8 +70,17 @@ typedef enum
     ARQ_ACTION_TX_CONTROL = 1,
     ARQ_ACTION_TX_PAYLOAD = 2,
     ARQ_ACTION_MODE_SWITCH = 3,
-    ARQ_ACTION_TX_KEYDOWN = 4
+    ARQ_ACTION_TX_KEYDOWN = 4,
+    ARQ_ACTION_TX_PATTERN = 5  /* emit a Welch-Costas MFSK pattern: no coded
+                                * frame, pattern_kind says which; ~0.64 s   */
 } arq_action_type_t;
+
+/** @brief Pattern kind (ARQ_ACTION_TX_PATTERN). */
+typedef enum
+{
+    ARQ_PATTERN_ACK   = 0,  /* "got it"                          */
+    ARQ_PATTERN_BREAK = 1   /* "got it, and I have data" (HAS_DATA) */
+} arq_pattern_kind_t;
 
 /* A keydown of separate bursts -- each its own preamble, frame and postamble,
  * in its own mode -- with a silence before each but the first (the carousel
@@ -104,6 +113,7 @@ typedef struct
     bool join_next;      /* the NEXT action goes out in this same keydown,
                           * after a short gap, instead of in its own over    */
     arq_keydown_t *keydown; /* ARQ_ACTION_TX_KEYDOWN only                     */
+    int pattern_kind;       /* arq_pattern_kind_t, ARQ_ACTION_TX_PATTERN only */
 } arq_action_t;
 
 /** @brief Snapshot of current ARQ runtime state for telemetry/decision making. */
@@ -111,6 +121,9 @@ typedef struct
 {
     bool initialized;
     bool connected;
+    /* A pattern can arrive now: the RX pattern detector correlates only while
+     * this is set -- running it all the time costs the decoders CPU. */
+    bool expect_pattern_ack;
     int trx;
     int tx_backlog_bytes;
     int speed_level;
@@ -164,6 +177,8 @@ void arq_tick_1hz(void);
  * @param event Event identifier from fsm.h.
  */
 void arq_post_event(int event);
+/* The RX pattern detector heard a pattern (is_break: the BREAK kind). */
+void arq_post_pattern_ack(bool is_break);
 
 /**
  * @brief Check whether ARQ link is connected.

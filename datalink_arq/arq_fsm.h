@@ -108,6 +108,8 @@ typedef enum
     /* Carousel data plane */
     ARQ_EV_RX_CAROUSEL        = 23,  /* a frame with the session's CRC seed */
     ARQ_EV_TIMER_CAROUSEL     = 24,  /* the carousel's next deadline  */
+    ARQ_EV_RX_PATTERN         = 25,  /* a pattern heard; rx_flags HAS_DATA
+                                      * for the BREAK kind             */
 
     ARQ_EV__COUNT
 } arq_event_id_t;
@@ -434,6 +436,8 @@ typedef struct
      *  the callee), and set the CRC seed the modem's decoders accept (0: plain
      *  frames only, outside a carousel session). */
     void (*send_keydown)(const arq_keydown_t *kd);
+    /** Key a pattern (arq_pattern_kind_t) on the air.  Optional. */
+    void (*send_pattern)(int pattern_kind);
     void (*set_crc_seed)(uint16_t seed);
 } arq_fsm_callbacks_t;
 
@@ -489,6 +493,8 @@ int arq_fsm_timeout_ms(const arq_session_t *sess, uint64_t now);
  */
 void arq_fsm_set_carousel(bool on);
 bool arq_fsm_carousel(void);
+/** Whether a pattern can arrive now (the modem's detector runs only then). */
+bool arq_fsm_expect_pattern(const arq_session_t *sess, uint64_t now);
 
 /**
  * @brief Human-readable name for a connection state (for log output).

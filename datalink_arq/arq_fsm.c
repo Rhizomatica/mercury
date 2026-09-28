@@ -94,6 +94,7 @@ const char *arq_event_name(arq_event_id_t ev)
         [ARQ_EV_TX_COMPLETE]        = "TX_COMPLETE",
         [ARQ_EV_RX_CAROUSEL]        = "RX_CAROUSEL",
         [ARQ_EV_TIMER_CAROUSEL]     = "TIMER_CAROUSEL",
+        [ARQ_EV_RX_PATTERN]         = "RX_PATTERN",
     };
     if ((unsigned)ev < ARQ_EV__COUNT) return names[ev];
     return "UNKNOWN";
@@ -1307,6 +1308,12 @@ static void send_disconnect_reply(arq_session_t *sess)
 
 void arq_fsm_set_carousel(bool on) { g_carousel = on; }
 bool arq_fsm_carousel(void) { return g_carousel; }
+
+bool arq_fsm_expect_pattern(const arq_session_t *sess, uint64_t now)
+{
+    (void)sess; (void)now;
+    return false;   /* nothing sends a pattern yet */
+}
 
 /* Silence while data is in flight after which the peer is gone. */
 #define ARQ_CAR_PEER_LOST_MS 240000

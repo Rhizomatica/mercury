@@ -229,6 +229,19 @@ static void cb_send_tx_frame(int packet_type, int mode,
 
 /* Carousel keydown: the FSM's frames are only valid during the call, so the
  * modem gets a copy it frees when sent. */
+/* Enqueue a pattern for the modem TX worker: no coded frame, the modem
+ * synthesises the tone burst itself (send_pattern_ack in modem.c). */
+static void cb_send_pattern(int pattern_kind)
+{
+    arq_action_t action = {
+        .type         = ARQ_ACTION_TX_PATTERN,
+        .mode         = -1,
+        .frame_count  = 1,
+        .pattern_kind = pattern_kind,
+    };
+    arq_modem_enqueue(&action);
+}
+
 static void cb_send_keydown(const arq_keydown_t *kd)
 {
     arq_keydown_t *copy = (arq_keydown_t *)malloc(sizeof(*copy));
@@ -1046,6 +1059,7 @@ int arq_init(size_t frame_size, int mode)
          * the decoder-sync signal alone rather than breaking anything. */
         .channel_busy        = arq_modem_channel_busy,
         .send_keydown        = cb_send_keydown,
+        .send_pattern        = cb_send_pattern,
         .set_crc_seed        = arq_modem_crc_seed,
     };
     arq_fsm_set_callbacks(&cbs);
@@ -1119,6 +1133,14 @@ void arq_shutdown(void)
 void arq_tick_1hz(void) { }
 
 void arq_post_event(int event) { (void)event; }
+
+void arq_post_pattern_ack(bool is_break)
+{
+    arq_event_t ev = {0};
+    ev.id       = ARQ_EV_RX_PATTERN;
+    ev.rx_flags = is_break ? ARQ_FLAG_HAS_DATA : 0;
+    evq_push(&ev);
+}
 
 bool arq_is_link_connected(void)
 {
@@ -1271,6 +1293,7 @@ bool arq_get_runtime_snapshot(arq_runtime_snapshot_t *snapshot)
     pthread_mutex_lock(&g_sess_lock);
     snapshot->initialized      = true;
     snapshot->connected        = (g_sess.conn_state == ARQ_CONN_CONNECTED);
+    snapshot->expect_pattern_ack = arq_fsm_expect_pattern(&g_sess, time_now_ms());
     snapshot->trx              = trx;
     snapshot->tx_backlog_bytes = backlog + g_sess.tx_inflight_bytes;
     snapshot->speed_level      = g_sess.speed_level;
