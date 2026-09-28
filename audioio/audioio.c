@@ -7,6 +7,16 @@
  *
  */
 
+/* ffbase/base.h defines _POSIX_C_SOURCE, which on macOS and FreeBSD hides
+ * the BSD socket API the -x rtp backend needs (IN_MULTICAST, ip_mreq,
+ * IP_MULTICAST_*).  Ask for the full API before any header is included;
+ * Linux gets it from -D_GNU_SOURCE. */
+#if defined(__APPLE__) && !defined(_DARWIN_C_SOURCE)
+#define _DARWIN_C_SOURCE 1
+#endif
+#if defined(__FreeBSD__) && !defined(__BSD_VISIBLE)
+#define __BSD_VISIBLE 1
+#endif
 
 #include <stdint.h>
 #include <stdbool.h>
@@ -878,6 +888,376 @@ static const char *sock_resolve_path(void)
         return NULL;
     }
     return s_capture_dev;
+}
+
+#endif /* !_WIN32 */
+
+/* ------------------------------------------------------------------ */
+/*  RTP multicast backend (-x rtp)                                    */
+/* ------------------------------------------------------------------ */
+/*
+ * The radio daemon streams its RX signal as ka9q-radio style RTP multicast
+ * and owns the sample clock; this backend follows it (wire format in
+ * rtp_wire.h, full contract in hermes-radio-daemon docs/RTP-AUDIO.md):
+ *
+ *   -i <rx group>[,<iface>]   default 239.255.72.1,lo  (listen)
+ *   -o <tx group>             default 239.255.72.2     (send, same iface)
+ *
+ * One thread does both directions.  Each RX packet is deposited in the
+ * capture ring (timestamp gaps become silence, so the demod sees the loss
+ * instead of a splice) and, while the modem transmits, answered with one TX
+ * packet from the playback ring: TX is paced by the radio's clock and
+ * cannot drift from it.  PTT rides in the TX stream -- the first packet of
+ * a transmission has the marker bit, an empty packet ends it.  If the RX
+ * stream pauses while transmitting (a half-duplex codec), TX free-runs on
+ * the local clock until it resumes.
+ */
+#ifndef _WIN32
+
+#include <arpa/inet.h>
+#include <ifaddrs.h>
+#include <net/if.h>
+#include <netinet/in.h>
+#include <poll.h>
+
+#include "rtp_wire.h"
+
+#define RTP_DEFAULT_RX_GROUP   "239.255.72.1"
+#define RTP_DEFAULT_TX_GROUP   "239.255.72.2"
+#define RTP_DEFAULT_IFACE      "lo"
+#define RTP_STATUS_INTERVAL_MS 500
+#define RTP_RX_PAUSE_MS        60     /* no RX this long while TX: free-run  */
+#define RTP_SSRC_SWITCH_MS     1000   /* follow a new sender after this much
+                                         silence from the current one       */
+#define RTP_MAX_GAP_SAMPLES    8000   /* fill gaps up to 1 s; beyond: resync */
+#define RTP_GPS_EPOCH_UNIX     315964800LL
+#define RTP_GPS_UTC_OFFSET     18LL
+
+typedef struct {
+    int                fd;
+    struct sockaddr_in data, status;
+    uint32_t           ssrc;
+    uint16_t           seq;
+    uint32_t           ts;
+    bool               keyed;
+    uint64_t           next_status_ms;
+} rtp_tx_state;
+
+static uint32_t rtp_random32(void)
+{
+    static uint64_t x;
+    struct timespec t;
+    clock_gettime(CLOCK_REALTIME, &t);
+    x ^= (uint64_t) t.tv_nsec * 0x9E3779B97F4A7C15ULL ^ (uint64_t) t.tv_sec ^ ((uint64_t) getpid() << 32);
+    x ^= x << 13; x ^= x >> 7; x ^= x << 17;   /* xorshift64 */
+    return (uint32_t)(x >> 16);
+}
+
+/* "group[,iface]" -> group address and iface (iface untouched if absent). */
+static bool rtp_parse_dev(const char *dev, const char *def_group, struct in_addr *group,
+                          char *iface, size_t ifsz)
+{
+    char buf[256];
+    snprintf(buf, sizeof(buf), "%s", (dev && dev[0]) ? dev : def_group);
+    char *comma = strchr(buf, ',');
+    if (comma)
+    {
+        *comma = '\0';
+        if (comma[1])
+            snprintf(iface, ifsz, "%s", comma + 1);
+    }
+    return inet_pton(AF_INET, buf, group) == 1 && IN_MULTICAST(ntohl(group->s_addr));
+}
+
+/* IPv4 address of iface (lo -> 127.0.0.1).  struct ip_mreq and
+ * IP_MULTICAST_IF take the interface by address, which unlike ip_mreqn's
+ * ifindex works on Linux, macOS and the BSDs alike. */
+static bool rtp_iface_addr(const char *iface, struct in_addr *addr)
+{
+    struct ifaddrs *ifs = NULL;
+    bool found = false;
+
+    if (!strcmp(iface, "lo") || !strcmp(iface, "lo0"))
+    {
+        addr->s_addr = htonl(INADDR_LOOPBACK);
+        return true;
+    }
+    if (getifaddrs(&ifs) != 0)
+        return false;
+    for (struct ifaddrs *i = ifs; i && !found; i = i->ifa_next)
+        if (i->ifa_addr && i->ifa_addr->sa_family == AF_INET && !strcmp(i->ifa_name, iface))
+        {
+            *addr = ((struct sockaddr_in *) i->ifa_addr)->sin_addr;
+            found = true;
+        }
+    freeifaddrs(ifs);
+    return found;
+}
+
+static int rtp_open_rx(struct in_addr group, const char *iface)
+{
+    int fd = socket(AF_INET, SOCK_DGRAM, 0), one = 1;
+    if (fd < 0)
+        return -1;
+    setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
+#ifdef SO_REUSEPORT
+    setsockopt(fd, SOL_SOCKET, SO_REUSEPORT, &one, sizeof(one));
+#endif
+    /* Bind to the group, not INADDR_ANY: the TX group uses the same port. */
+    struct sockaddr_in sa = { .sin_family = AF_INET, .sin_port = htons(RTP_WIRE_DATA_PORT),
+                              .sin_addr = group };
+    struct ip_mreq m = { .imr_multiaddr = group };
+    if (!rtp_iface_addr(iface, &m.imr_interface) ||
+        bind(fd, (struct sockaddr *) &sa, sizeof(sa)) < 0 ||
+        setsockopt(fd, IPPROTO_IP, IP_ADD_MEMBERSHIP, &m, sizeof(m)) < 0)
+    {
+        HLOGE("audio-rtp", "listen on %s,%s: %s", inet_ntoa(group), iface, strerror(errno));
+        close(fd);
+        return -1;
+    }
+    return fd;
+}
+
+static int rtp_open_tx(struct in_addr group, const char *iface)
+{
+    int fd = socket(AF_INET, SOCK_DGRAM, 0);
+    if (fd < 0)
+        return -1;
+    bool lo = !strcmp(iface, "lo") || !strcmp(iface, "lo0");
+    unsigned char ttl = lo ? 0 : 1, loop = 1;
+    struct in_addr ifaddr;
+    fcntl(fd, F_SETFL, O_NONBLOCK);
+    if (!rtp_iface_addr(iface, &ifaddr) ||
+        setsockopt(fd, IPPROTO_IP, IP_MULTICAST_TTL, &ttl, sizeof(ttl)) < 0 ||
+        setsockopt(fd, IPPROTO_IP, IP_MULTICAST_LOOP, &loop, sizeof(loop)) < 0 ||
+        setsockopt(fd, IPPROTO_IP, IP_MULTICAST_IF, &ifaddr, sizeof(ifaddr)) < 0)
+    {
+        HLOGE("audio-rtp", "send on %s,%s: %s", inet_ntoa(group), iface, strerror(errno));
+        close(fd);
+        return -1;
+    }
+    return fd;
+}
+
+static void rtp_send_status(rtp_tx_state *tx)
+{
+    uint8_t pkt[128];
+    struct timespec t;
+    clock_gettime(CLOCK_REALTIME, &t);
+    uint64_t gps_ns = (uint64_t)(((int64_t) t.tv_sec - (RTP_GPS_EPOCH_UNIX - RTP_GPS_UTC_OFFSET))
+                                 * 1000000000LL + t.tv_nsec);
+    size_t n = rtp_wire_build_status(pkt, tx->ssrc, tx->ts, gps_ns, "mercury tx");
+    (void) sendto(tx->fd, pkt, n, 0, (struct sockaddr *) &tx->status, sizeof(tx->status));
+}
+
+/* One TX step: a 160-sample packet while the modem transmits (or still has
+ * audio queued), the empty end packet when it stops. */
+static void rtp_tx_step(rtp_tx_state *tx)
+{
+    int32_t ring[RTP_WIRE_FRAME];
+    uint8_t pkt[RTP_WIRE_MAX_BYTES];
+    size_t have = size_buffer(playback_buffer);
+    bool active = arq_get_trx() == 1 || have >= sizeof(int32_t);
+    size_t n;
+
+    if (!active && !tx->keyed)
+        return;
+
+    if (active)
+    {
+        have -= have % sizeof(int32_t);
+        if (have > sizeof(ring))
+            have = sizeof(ring);
+        if (have)
+            read_buffer(playback_buffer, (uint8_t *) ring, have);
+        n = rtp_wire_build(pkt, !tx->keyed, tx->seq, tx->ts, tx->ssrc,
+                           ring, have / sizeof(int32_t), RTP_WIRE_FRAME);
+        if (!tx->keyed)
+            HLOGI("audio-rtp", "TX start");
+        tx->keyed = true;
+        tx->ts += RTP_WIRE_FRAME;
+    }
+    else
+    {
+        n = rtp_wire_build(pkt, false, tx->seq, tx->ts, tx->ssrc, NULL, 0, 0);
+        tx->keyed = false;
+        HLOGI("audio-rtp", "TX end");
+    }
+    tx->seq++;
+    if (sendto(tx->fd, pkt, n, 0, (struct sockaddr *) &tx->data, sizeof(tx->data)) < 0 &&
+        errno != EAGAIN && errno != ENOBUFS)
+        HLOGW("audio-rtp", "TX send: %s", strerror(errno));
+}
+
+static void *rtp_transport_thread(void *unused)
+{
+    (void) unused;
+    char iface[IF_NAMESIZE + 1] = RTP_DEFAULT_IFACE;
+    struct in_addr rx_group, tx_group;
+    rtp_tx_state tx = { .fd = -1 };
+    int rx_fd = -1;
+
+    if (!rtp_parse_dev(s_capture_dev, RTP_DEFAULT_RX_GROUP, &rx_group, iface, sizeof(iface)) ||
+        !rtp_parse_dev(s_playback_dev, RTP_DEFAULT_TX_GROUP, &tx_group, iface, sizeof(iface)))
+    {
+        HLOGE("audio-rtp", "bad group: -i '%s' -o '%s' (want an IPv4 multicast address[,iface])",
+              s_capture_dev, s_playback_dev);
+        audio_health_set(true, AUDIO_HEALTH_FAILED, "bad RTP group");
+        return NULL;
+    }
+    rx_fd = rtp_open_rx(rx_group, iface);
+    tx.fd = rtp_open_tx(tx_group, iface);
+    if (rx_fd < 0 || tx.fd < 0)
+    {
+        audio_health_set(true, AUDIO_HEALTH_FAILED, "cannot open RTP sockets");
+        if (rx_fd >= 0) close(rx_fd);
+        if (tx.fd >= 0) close(tx.fd);
+        return NULL;
+    }
+    tx.data = (struct sockaddr_in) { .sin_family = AF_INET,
+                                     .sin_port = htons(RTP_WIRE_DATA_PORT), .sin_addr = tx_group };
+    tx.status = tx.data;
+    tx.status.sin_port = htons(RTP_WIRE_STATUS_PORT);
+    tx.ssrc = rtp_random32();
+    tx.seq = (uint16_t) rtp_random32();
+    tx.ts = rtp_random32();
+
+    char rx_s[INET_ADDRSTRLEN], tx_s[INET_ADDRSTRLEN];
+    inet_ntop(AF_INET, &rx_group, rx_s, sizeof(rx_s));
+    inet_ntop(AF_INET, &tx_group, tx_s, sizeof(tx_s));
+    HLOGI("audio-rtp", "RX %s:%d, TX %s:%d (ssrc %u) on %s",
+          rx_s, RTP_WIRE_DATA_PORT, tx_s, RTP_WIRE_DATA_PORT, tx.ssrc, iface);
+    audio_health_set(false, AUDIO_HEALTH_RUNNING, NULL);
+
+    bool     have_src = false, rx_running = false;
+    uint32_t src_ssrc = 0, next_ts = 0;
+    uint64_t last_rx_ms = 0, next_free_ms = 0, last_log_ms = 0;
+    uint64_t dropped = 0, filled = 0;
+    bool     warned_pt = false;
+    int32_t  ring[RTP_WIRE_FRAME * 4];
+
+    while (!shutdown_ && !audio_shutdown_)
+    {
+        uint64_t now = audioio_monotonic_ms();
+        if (now >= tx.next_status_ms)
+        {
+            rtp_send_status(&tx);
+            tx.next_status_ms = now + RTP_STATUS_INTERVAL_MS;
+        }
+
+        /* RX paused (or never started) while the modem transmits: keep TX
+         * going on the local clock, one packet per 20 ms. */
+        bool rx_paused = !last_rx_ms || now - last_rx_ms >= RTP_RX_PAUSE_MS;
+        if (rx_paused && (tx.keyed || arq_get_trx() == 1))
+        {
+            if (!next_free_ms || now >= next_free_ms + 200)
+                next_free_ms = now;
+            while (now >= next_free_ms)
+            {
+                rtp_tx_step(&tx);
+                next_free_ms += RTP_WIRE_FRAME * 1000 / RTP_WIRE_RATE;
+            }
+        }
+        else
+            next_free_ms = 0;
+
+        struct pollfd pfd = { .fd = rx_fd, .events = POLLIN };
+        int timeout = (tx.keyed || arq_get_trx() == 1) ? 5 : 100;
+        if (poll(&pfd, 1, timeout) <= 0)
+            continue;
+
+        uint8_t pkt[2048];
+        ssize_t len = recv(rx_fd, pkt, sizeof(pkt), 0);
+        rtp_wire_hdr h;
+        if (len <= 0 || rtp_wire_parse(pkt, (size_t) len, &h) != 0)
+            continue;
+        if (h.pt != RTP_WIRE_PT)
+        {
+            if (!warned_pt)
+                HLOGW("audio-rtp", "ignoring RX payload type %u (want %d: 8 kHz mono S16BE)",
+                      h.pt, RTP_WIRE_PT);
+            warned_pt = true;
+            continue;
+        }
+
+        now = audioio_monotonic_ms();
+        if (have_src && h.ssrc != src_ssrc && now - last_rx_ms < RTP_SSRC_SWITCH_MS)
+            continue;                         /* another sender: stay locked */
+        if (!have_src || h.ssrc != src_ssrc)
+        {
+            HLOGI("audio-rtp", "RX stream from ssrc %u", h.ssrc);
+            have_src = true;
+            src_ssrc = h.ssrc;
+            next_ts = h.ts;
+        }
+        if (!rx_running)
+        {
+            audio_health_set(true, AUDIO_HEALTH_RUNNING, NULL);
+            rx_running = true;
+        }
+        last_rx_ms = now;
+
+        /* Timestamp continuity: late/duplicate packets are dropped, a gap is
+         * filled with silence (up to RTP_MAX_GAP_SAMPLES), a jump beyond that
+         * is a resync. */
+        int32_t gap = (int32_t)(h.ts - next_ts);
+        if (gap < 0 && !h.marker)
+            continue;
+        if (gap > 0 && gap <= RTP_MAX_GAP_SAMPLES && !h.marker)
+        {
+            memset(ring, 0, sizeof(ring));
+            for (int32_t left = gap; left > 0;)
+            {
+                int32_t k = left > (int32_t)(sizeof(ring) / sizeof(ring[0]))
+                          ? (int32_t)(sizeof(ring) / sizeof(ring[0])) : left;
+                if (circular_buf_free_size(capture_buffer) >= (size_t) k * sizeof(int32_t))
+                    write_buffer(capture_buffer, (uint8_t *) ring, (size_t) k * sizeof(int32_t));
+                left -= k;
+            }
+            filled += (uint64_t) gap;
+            if (now - last_log_ms >= 10000)
+            {
+                HLOGW("audio-rtp", "RX gap: %llu samples of silence inserted so far",
+                      (unsigned long long) filled);
+                last_log_ms = now;
+            }
+        }
+
+        size_t n = h.payload_len / 2;
+        if (n > sizeof(ring) / sizeof(ring[0]))
+            n = sizeof(ring) / sizeof(ring[0]);
+        for (size_t i = 0; i < n; i++)
+            ring[i] = rtp_wire_s16be_to_ring(h.payload + 2 * i);
+        if (circular_buf_free_size(capture_buffer) >= n * sizeof(int32_t))
+            write_buffer(capture_buffer, (uint8_t *) ring, n * sizeof(int32_t));
+        else
+        {
+            dropped += n;
+            if (now - last_log_ms >= 10000)
+            {
+                HLOGW("audio-rtp", "capture ring full: %llu samples dropped so far",
+                      (unsigned long long) dropped);
+                last_log_ms = now;
+            }
+        }
+        next_ts = h.ts + (uint32_t) n;
+
+        /* Lockstep: one TX packet per RX packet. */
+        rtp_tx_step(&tx);
+    }
+
+    if (tx.keyed)                              /* never leave the radio keyed */
+    {
+        uint8_t pkt[RTP_WIRE_HDR_BYTES];
+        size_t n = rtp_wire_build(pkt, false, tx.seq, tx.ts, tx.ssrc, NULL, 0, 0);
+        (void) sendto(tx.fd, pkt, n, 0, (struct sockaddr *) &tx.data, sizeof(tx.data));
+    }
+    close(rx_fd);
+    close(tx.fd);
+    audio_health_set(true, AUDIO_HEALTH_STOPPED, NULL);
+    audio_health_set(false, AUDIO_HEALTH_STOPPED, NULL);
+    HLOGI("audio-rtp", "transport thread exit");
+    return NULL;
 }
 
 #endif /* !_WIN32 */
@@ -1870,7 +2250,9 @@ static int get_soundcard_list_int(int audio_system, int mode,
 
     if (audio_system == AUDIO_SUBSYSTEM_SHM ||
         audio_system == AUDIO_SUBSYSTEM_NULL ||
-        audio_system == AUDIO_SUBSYSTEM_FIFO)
+        audio_system == AUDIO_SUBSYSTEM_FIFO ||
+        audio_system == AUDIO_SUBSYSTEM_SOCK ||
+        audio_system == AUDIO_SUBSYSTEM_RTP)
         return 0;
 
 #if defined(_WIN32)
@@ -2001,7 +2383,8 @@ static void resolve_device_string(int audio_subsys, int mode, char *buf, size_t 
         return;
 
     if (audio_subsys == AUDIO_SUBSYSTEM_SHM || audio_subsys == AUDIO_SUBSYSTEM_NULL ||
-        audio_subsys == AUDIO_SUBSYSTEM_FIFO || audio_subsys == AUDIO_SUBSYSTEM_SOCK)
+        audio_subsys == AUDIO_SUBSYSTEM_FIFO || audio_subsys == AUDIO_SUBSYSTEM_SOCK ||
+        audio_subsys == AUDIO_SUBSYSTEM_RTP)
         return;
 
     /* Heap, not stack: DEVICE_RESOLVE_MAX x AUDIO_DEV_STR_MAX is 16 KB per
@@ -2150,6 +2533,13 @@ void list_soundcards(int audio_system)
     if (audio_subsystem == AUDIO_SUBSYSTEM_FIFO)
     {
         printf("FIFO audio subsystem selected (developer/test backend; no devices).\n");
+        audio = NULL;
+        return;
+    }
+    if (audio_subsystem == AUDIO_SUBSYSTEM_RTP)
+    {
+        printf("RTP audio subsystem selected (multicast groups, no devices): "
+               "-i <rx group>[,iface] -o <tx group>.\n");
         audio = NULL;
         return;
     }
@@ -2439,6 +2829,20 @@ int audioio_init_internal(char *capture_dev, char *playback_dev, int audio_subsy
 #endif
     }
 
+    if (audio_subsystem == AUDIO_SUBSYSTEM_RTP)
+    {
+#ifdef _WIN32
+        HLOGE("audio-rtp", "-x rtp is not supported on Windows");
+        return -1;
+#else
+        pthread_create(radio_capture, NULL, rtp_transport_thread, NULL);
+        pthread_create(radio_playback, NULL, sock_idle_thread, NULL);
+        s_radio_capture = *radio_capture;
+        s_radio_playback = *radio_playback;
+        return 0;
+#endif
+    }
+
     if (audio_subsystem == AUDIO_SUBSYSTEM_NULL)
     {
         pthread_create(radio_capture, NULL, null_capture_thread, NULL);
@@ -2567,6 +2971,18 @@ int audioio_restart(const char *capture_dev, const char *playback_dev,
         pthread_create(&s_radio_capture, NULL, sock_transport_thread, (void *) s_capture_dev);
         pthread_create(&s_radio_playback, NULL, sock_idle_thread, NULL);
         HLOGI("audio-restart", "sock lockstep threads restarted");
+        return 0;
+    }
+
+    if (audio_subsystem == AUDIO_SUBSYSTEM_RTP)
+    {
+#if defined(__linux__)
+        if (was_pulse || audio_subsystem == AUDIO_SUBSYSTEM_PULSE)
+            pthread_mutex_unlock(&s_pulse_lock);
+#endif
+        pthread_create(&s_radio_capture, NULL, rtp_transport_thread, NULL);
+        pthread_create(&s_radio_playback, NULL, sock_idle_thread, NULL);
+        HLOGI("audio-restart", "RTP transport restarted");
         return 0;
     }
 #endif
