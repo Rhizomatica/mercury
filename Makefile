@@ -918,6 +918,9 @@ clean:
 	@# failed run can never be staged as if it were fresh.
 	rm -rf $(FYNE_UI_DIR)/$(MACOS_APP_NAME).app $(FYNE_UI_DIR)/dmg-stage
 	$(MAKE) -C modem clean
+	@# The top-level rule builds these, so the modem sub-make's clean misses
+	@# modem/mfsk/ (and the same paths hold mingw objects after a w64 build).
+	rm -f $(MODEM_TOP_OBJS) $(MODEM_TOP_OBJS:.o=.d)
 	$(MAKE) -C datalink_arq clean
 	$(MAKE) -C datalink_broadcast clean
 	$(MAKE) -C data_interfaces clean
