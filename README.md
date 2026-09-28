@@ -14,11 +14,6 @@ and no power grid worth speaking of.
 [Docs](https://rhizomatica.github.io/mercury/) ·
 [Mailing list](https://lists.riseup.net/www/info/hermes-general)
 
-There are currently two versions:
-
-- **Mercury v2** (this branch) — a complete rewrite in C with a new ARQ data link. **This is the recommended version.**
-- **[Mercury v1](https://github.com/Rhizomatica/mercury/tree/mercuryv1)** — the original Mercury modem written in C++. Legacy; use only if you know what you are doing.
-
 ## What this software does
 
 Mercury turns a single-sideband radio into a data link. It handles the
@@ -226,9 +221,10 @@ make fyne-ui-macos-universal-dmg
 # → ./Mercury.dmg  (universal: x86_64 + arm64)
 ```
 
-The finished `Mercury.dmg` lands at the repository top level, ready to upload.
-It is unsigned, so on first launch Gatekeeper warns — right-click the app →
-**Open** to run it. For a quick host-architecture-only build use
+The finished `Mercury.dmg` lands at the repository top level. A local build is
+unsigned, so on first launch Gatekeeper warns — right-click the app →
+**Open** to run it (the released `.dmg` is signed and notarized by the release
+workflow). For a quick host-architecture-only build use
 `make fyne-ui-macos-dmg` (also emits `./Mercury.dmg`).
 
 ### Install via Debian package on Linux
@@ -272,10 +268,12 @@ For now just Debian 13 (Trixie) packages are built, for both arm64 (works on bot
 
 ### Install on macOS
 
-Download `Mercury.dmg` from the website, open it, and drag **Mercury** into
-**Applications**. The build is universal (runs natively on Intel and Apple
-Silicon) and self-contained (no Homebrew needed). It is unsigned, so on first
-launch right-click **Mercury** → **Open** to get past Gatekeeper.
+Download `Mercury-<version>-universal.dmg` from the
+[releases page](https://github.com/Rhizomatica/mercury/releases), open it, and
+drag **Mercury** into **Applications**. The build is universal (runs natively
+on Intel and Apple Silicon) and self-contained (no Homebrew needed). It is
+signed with a Developer ID certificate and notarized by Apple, so it opens
+like any other app.
 
 ## Configuration File
 
@@ -387,8 +385,8 @@ channel, 100-burst trials) that reproduces the published upstream numbers
 before it is trusted for ours. See [docs/MODES.md](docs/MODES.md) for the full
 tables, methodology, and the negative results.
 
-Work continues on porting the remaining Mercury v1 modulators, including a
-32-tone MFSK mode for the deepest fringe conditions.
+Work continues on more modulators, including a 32-tone MFSK mode for the
+deepest fringe conditions.
 
 ## Graphical Interfaces
 
@@ -419,13 +417,17 @@ Community interfaces also exist:
 
 ## About
 
-Mercury v2 is developed by Rhizomatica's HERMES team, namely:
+Mercury is developed by Rhizomatica's HERMES team, namely:
 
 - Rafael Diniz (ARQ, Broadcast, TCP interface, etc)
 - Pedro Messetti (Testing framework, general improvements, etc)
 - Matheus Thibau (Graphical User Interface)
 
 This project is sponsored by ARDC.
+
+Mercury was first written in C++. That original implementation is kept, for
+history, in the [mercuryv1](https://github.com/Rhizomatica/mercury/tree/mercuryv1)
+branch.
 
 ## LICENSE
 

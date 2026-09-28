@@ -1,3 +1,27 @@
+mercury (1.9.16-1) unstable; urgency=medium
+
+  * Release 1.9.16.
+  * ci: run the unit tests on i386 too.
+  * modem: don't let ARQ bytes with no session up block broadcast TX.
+  * arq: listen before retrying a TURN_REQ, not only before the first one.
+  * arq: listen before retransmitting and before every TURN_REQ.
+  * modem: make the busy detector read an empty channel as clear.
+  * arq: nothing from an ended session reaches the next client.
+  * Revert "audioio: increase Linux ALSA/Pulse buffer from 30ms to 80ms" (#83).
+  * main: never leave the transmitter keyed on a forced exit.
+  * arq: don't resurrect an ended session on a late DATA from its peer.
+  * arq: listen before the first DATA of a turn and before DISCONNECT.
+  * arq: the IRS asks in its ACK while the ISS has more queued.
+  * arq: send the ACK that hands us the turn and our first data burst in one keydown.
+  * tests: retry the reactor test on a fresh port pair.
+  * build: scope the m68k libatomic fallback outside the arm block.
+  * tests: make the watterson golden checksum endianness-independent.
+  * audioio: -x rtp, radio audio over RTP multicast with in-stream PTT.
+  * build: add COMMON_LDFLAGS for improved linker hardening.
+  * README: one Mercury; the released macOS .dmg is signed and notarized.
+
+ -- Rafael Diniz <rafael@riseup.net>  Mon, 28 Sep 2026 16:07:16 +0000
+
 mercury (1.9.15-1) unstable; urgency=medium
 
   * Release 1.9.15.

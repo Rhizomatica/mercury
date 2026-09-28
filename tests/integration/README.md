@@ -62,6 +62,17 @@ If neither a root Mercury binary nor `make` is available, the test is skipped
 with a prerequisite message. `MERCURY_BIN=/path/to/mercury` can be used to point
 the harness at an already-built binary.
 
+## `-x rtp`: `TestMercuryARQTransferRTP` (Linux)
+
+`mercury_rtp_linux_test.go` runs an ARQ transfer between two instances on
+the RTP backend. `rtpsim_linux_test.go` plays both radio daemons on
+loopback multicast: it sends each station a 20 ms RX packet on the radio's
+clock, carrying what the other station transmits, and polices the TX
+streams against the in-stream PTT contract. The transfer must complete;
+every transmission must be keyed by a marker packet and ended by an empty
+packet (none by the 200 ms dead-keyer), with TX in lockstep with RX.
+Groups are 239.255.<random>.1-4, so concurrent runs don't collide.
+
 ## Channel simulation for `TestMercuryARQTransfer`
 
 `TestMercuryARQTransfer` bridges two Mercury instances through a channel
