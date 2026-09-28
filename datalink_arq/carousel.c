@@ -82,6 +82,12 @@
  * pattern continues this much later than one that heard it, and the
  * receiver's round window allows for it. */
 #define FLOOR_POLL_EVERY  4
+/* Deep below the floor's exit (ARQ_SNR_MIN_DATAC15_DB) a poll cannot take the
+ * session off it, and on air the poll was half the floor's idle air (a 9-15 s
+ * gap where a pattern round takes 3.1 s): poll only every FLOOR_POLL_EVERY_DEEP
+ * rounds there. */
+#define FLOOR_DEEP_DB          3.0f
+#define FLOOR_POLL_EVERY_DEEP 12
 #define FLOOR_SILENT_MAX  6
 #define FLOOR_LATE_MS     9000
 #define PATTERN_AIR_MS    640
@@ -922,6 +928,12 @@ static void send_handover(car_t *c)
     /* Where the peer last put me, or where the SNR it measures of me starts me. */
     int lv = c->tx_level >= 0 ? c->tx_level : c->peer_snr_level;
     int n = c->tx_n > 0 ? c->tx_n : 1;
+    /* The rung I send on now, as if polled there: the pattern that answers
+     * this round is only taken on a rung I know.  Left at -1 until a poll,
+     * a sender that took the turn at the floor ignored every pattern and
+     * repeated its one-frame handover round, until a poll came (sim,
+     * cliff:-11 bidir: 360-6120 of 8192 bytes back in 2 h). */
+    c->tx_level = lv; c->tx_n = n;
     int nd = build_round(c, lv, n, c->tx_poll_id, fr + 1);
     m.h_level = lv; m.h_n = nd; m.h_id = c->tx_poll_id;
     m.hi = (uint8_t)(c->next_blk_id - 1);
@@ -956,6 +968,15 @@ static void send_poll(car_t *c, int lv, int n)
 
 /* At the floor: answer the round with a pattern.  expect_round: another round
  * of the same size comes next (a BREAK with nothing left expects none). */
+static int floor_poll_every(const car_t *c)
+{
+    /* Not with data of my own: the poll's has_data is what makes the sender
+     * yield the turn, and polled rarely it held it (sim, cliff:-11 bidir:
+     * 40 KB delivered of 64 against 54 KB). */
+    bool deep = c->snr_valid && c->snr_ema < ARQ_SNR_MIN_DATAC15_DB - FLOOR_DEEP_DB && !has_data(c);
+    return deep ? FLOOR_POLL_EVERY_DEEP : FLOOR_POLL_EVERY;
+}
+
 static void send_pattern(car_t *c, int kind, bool expect_round)
 {
     c->rx_break = false;
@@ -1018,7 +1039,7 @@ static void on_poll_timer(car_t *c, uint64_t now)
      * it instead gave back most of the floor's gain (26640 -> 14112 bytes at
      * -11 dB, carousel_bench). */
     if (c->round_seen > 0 && c->poll_level == 0) c->floor_streaming = true;
-    if (floor && lv == 0 && c->floor_streaming && c->floor_patterns < FLOOR_POLL_EVERY) {
+    if (floor && lv == 0 && c->floor_streaming && c->floor_patterns < floor_poll_every(c)) {
         c->floor_patterns++;
         send_pattern(c, c->rx_break ? CAR_PATTERN_BREAK : CAR_PATTERN_ACK, true);
         return;
