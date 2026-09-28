@@ -1087,11 +1087,28 @@ void car_on_frame(car_t *c, uint64_t now, const uint8_t *bytes, size_t len, int 
     if (lv >= 0 && decode_data(bytes, len, &m)) on_data(c, now, &m, lv);
 }
 
+/* Idle, with something to send: take the turn with a handover, after
+ * listening (the T_WAIT path repeats an unconfirmed handover). */
+static void take_turn_if_idle(car_t *c, uint64_t now)
+{
+    if (c->idle && !c->tx_busy && has_data(c)) {
+        c->idle = false;
+        c->sending = true;
+        c->handover_unconfirmed = true;
+        disarm(c, CAR_T_POLL); disarm(c, CAR_T_SENSE); disarm(c, CAR_T_SEND);
+        arm(c, CAR_T_WAIT, now);
+    }
+}
+
 void car_on_tx_done(car_t *c, uint64_t now)
 {
     c->tx_busy = false;
     int after = c->after_tx;
     c->after_tx = AFTER_NONE;
+    /* Data the application gave us while our last poll (nothing left either
+     * way) was on the air: that poll went idle without it, so take the turn
+     * now -- a request answered at once, as UUCP does, arrives just then. */
+    take_turn_if_idle(c, now);
     if (after == AFTER_ROUND) {
         arm_sender_wait(c, now);
     } else if (after == AFTER_POLL) {
@@ -1105,15 +1122,7 @@ void car_on_tx_done(car_t *c, uint64_t now)
 
 void car_on_app_data(car_t *c, uint64_t now)
 {
-    /* Idle, with something to send: take the turn with a handover, after
-     * listening (the T_WAIT path repeats an unconfirmed handover). */
-    if (c->idle && !c->tx_busy && has_data(c)) {
-        c->idle = false;
-        c->sending = true;
-        c->handover_unconfirmed = true;
-        disarm(c, CAR_T_POLL); disarm(c, CAR_T_SENSE); disarm(c, CAR_T_SEND);
-        arm(c, CAR_T_WAIT, now);
-    }
+    take_turn_if_idle(c, now);
 }
 
 void car_on_time(car_t *c, uint64_t now)

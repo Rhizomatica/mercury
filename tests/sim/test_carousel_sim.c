@@ -174,6 +174,41 @@ void test_car_disconnect_after_transfer(void)
     sim_destroy(s);
 }
 
+/* Request and reply, as UUCP talks: A's request arrives, B's application
+ * answers while B's last poll (nothing left either way) is on the air.  The
+ * reply came too late for that poll and B was not idle yet, so it waited for
+ * a turn that never came: both ends sat connected and silent (on air,
+ * 2026-09-28, until uucico's 120 s timeout). */
+void test_car_reply_during_final_poll(void)
+{
+    static uint8_t req[17], rep[20];
+    fill(req, sizeof(req), 3);
+    fill(rep, sizeof(rep), 9);
+    sim_t *s = make_sim(11, 0.0);
+    connect_ab(s);
+    sim_run_until_idle(s, 120000);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_CONNECTED, state(sim_a(s)));
+    queue(s, sim_a(s), req, sizeof(req));
+
+    bool replied = false;
+    for (int step = 0; step < 20000 && !replied; step++) {
+        if (sim_run_until_idle(s, 10) == 0) break;          /* nothing left to happen */
+        size_t got;
+        if (intact_prefix(sim_b(s), req, sizeof(req), &got) && got == sizeof(req) &&
+            sim_keyed(s, sim_b(s))) {
+            queue(s, sim_b(s), rep, sizeof(rep));
+            replied = true;
+        }
+    }
+    TEST_ASSERT_TRUE_MESSAGE(replied, "B never keyed after the request");
+    sim_run_until_idle(s, 600000);
+    size_t got_a;
+    TEST_ASSERT_TRUE(intact_prefix(sim_a(s), rep, sizeof(rep), &got_a));
+    TEST_ASSERT_EQUAL_size_t(sizeof(rep), got_a);
+    TEST_ASSERT_EQUAL_INT(0, sim_collisions(s));
+    sim_destroy(s);
+}
+
 /* Across channels and seeds: never corrupt, never stuck.  A run either
  * delivers everything or the session ends; it never sits connected with data
  * undelivered and nothing scheduled. */
@@ -225,6 +260,7 @@ int main(void)
     RUN_TEST(test_car_lossy);
     RUN_TEST(test_car_peer_loss_disconnects);
     RUN_TEST(test_car_disconnect_after_transfer);
+    RUN_TEST(test_car_reply_during_final_poll);
     RUN_TEST(test_car_fuzz);
     return UNITY_END();
 }
