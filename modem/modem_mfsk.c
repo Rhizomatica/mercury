@@ -761,7 +761,14 @@ static int mfsk_be_rawdata_rx(void *ctx, uint8_t *bytes_out, const int16_t *demo
         }
     }
 
-    h->last_sync = (nbytes > 0) || (off >= 0);
+    /* Sync means "a burst is arriving": its preamble located, its payload not
+     * all in yet.  The ARQ reads it as the peer being on the air.  It used to
+     * stay set from a decode until the window refilled -- the early return
+     * above leaves it untouched, and that is ~13 s after a burst had ended --
+     * so the carousel's receiver deferred its answer to a round until the
+     * sender, hearing nothing, had keyed the next one. */
+    int arriving = off >= 0 && off + (h->P + h->NPAY) * h->Nofdm > h->bf_len;
+    h->last_sync = nbytes <= 0 && arriving;
     if (nbytes <= 0)
         return 0;
     h->n_abs += h->rxlen;

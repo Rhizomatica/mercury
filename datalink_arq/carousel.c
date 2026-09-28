@@ -1160,7 +1160,12 @@ void car_on_frame(car_t *c, uint64_t now, const uint8_t *bytes, size_t len, int 
 {
     msg_t m;
     c->last_carrier_ms = now;
-    if (snr_db != 0.0f) {
+    /* Not the floor's: the MFSK decoder's SNR is a loose proxy (mean |LLR|),
+     * and it read +5 dB at -9 dB on the real modems -- enough to make the
+     * receiver leave the floor for a DATAC15 the sender never heard asked for.
+     * The floor is judged on the control mode's estimate. */
+    bool floor_frame = !control && level_of_mode(mode) == 0;
+    if (snr_db != 0.0f && !floor_frame) {
         c->snr_ema = c->snr_valid ? 0.7f * c->snr_ema + 0.3f * snr_db : snr_db;
         c->snr_valid = true;
     }

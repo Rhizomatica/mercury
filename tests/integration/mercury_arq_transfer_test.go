@@ -132,6 +132,11 @@ func TestMercuryARQTransfer(t *testing.T) {
 			"-m", "1",
 			"-C", filepath.Join(t.TempDir(), "missing-mercury.ini"),
 		)
+		// MERCURY_TEST_VERBOSE=1: -v on both stations, for diagnosis (it
+		// perturbs timing, see -L above).
+		if os.Getenv("MERCURY_TEST_VERBOSE") != "" {
+			args = append(args, "-v")
+		}
 		cmd := exec.CommandContext(ctx, bin, args...)
 		cmd.Dir = repoRoot
 		cmd.Stdout = stdout
