@@ -4,6 +4,7 @@
 #include "sim_channel.h"
 #include "arq_protocol.h"
 #include "freedv_api.h"
+#include "modem_mfsk.h"   /* MERCURY_MODE_MFSK */
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -40,6 +41,7 @@ static double mode_cliff_db(int freedv_mode)
     case FREEDV_MODE_DATAC4:  return -4.0;
     case FREEDV_MODE_DATAC13: return -4.0;
     case FREEDV_MODE_DATAC14: return -2.0;
+    case MERCURY_MODE_MFSK:   return -13.0; /* the fringe floor */
     default:                  return -7.0;  /* DATAC15 / DATAC16 floor modes */
     }
 }

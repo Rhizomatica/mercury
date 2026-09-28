@@ -356,6 +356,8 @@ extern _Atomic int arq_startup_max_s;
 #define ARQ_STARTUP_MAX_S  atomic_load(&arq_startup_max_s)
 #define ARQ_STARTUP_ACKS_REQUIRED     1
 #define ARQ_SNR_HYST_DB               5.0f
+#define ARQ_SNR_MIN_DATAC15_DB       -7.0f  /* its cliff (sim, bench): below
+                                             * it the carousel's MFSK rung wins */
 #define ARQ_SNR_MIN_DATAC4_DB        -6.0f  /* entry threshold from the DATAC15
                                              * floor.  Bench (docs/MODES.md):
                                              * DATAC15/DATAC4 goodput crossover

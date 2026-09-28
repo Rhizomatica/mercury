@@ -32,6 +32,7 @@
 #include "carousel.h"
 #include "arq_protocol.h"
 #include "freedv_api.h"
+#include "modem_mfsk.h"            /* MERCURY_MODE_MFSK */
 
 #include <math.h>
 #include <string.h>
@@ -79,12 +80,17 @@
 enum { M_DATA, M_POLL, M_HANDOVER, M_STATUS };
 enum { AFTER_NONE, AFTER_POLL, AFTER_ROUND };
 
+/* MFSK is the floor: ~10 dB below DATAC15, at 3 pieces per 13.5 s frame. */
 static const int LADDER[CAR_NLEVELS] = {
+    MERCURY_MODE_MFSK,
     FREEDV_MODE_DATAC15, FREEDV_MODE_DATAC4, FREEDV_MODE_DATAC3,
     FREEDV_MODE_DATAC1, FREEDV_MODE_DATAC17, FREEDV_MODE_QAM16C2,
 };
 
-static uint32_t burst_gap_ms(int lv) { return LADDER[lv] == FREEDV_MODE_QAM16C2 ? 200 : 100; }
+static uint32_t burst_gap_ms(int lv)
+{
+    return LADDER[lv] == FREEDV_MODE_QAM16C2 || LADDER[lv] == MERCURY_MODE_MFSK ? 200 : 100;
+}
 int car_level_mode(int level) { return LADDER[level]; }
 bool car_is_sending(const car_t *c) { return c->sending; }
 bool car_is_idle(const car_t *c) { return c->idle; }
@@ -584,7 +590,8 @@ static float level_min_db(int lv)
     case FREEDV_MODE_DATAC1:  return ARQ_SNR_MIN_DATAC1_DB;
     case FREEDV_MODE_DATAC3:  return ARQ_SNR_MIN_DATAC3_DB;
     case FREEDV_MODE_DATAC4:  return ARQ_SNR_MIN_DATAC4_DB;
-    default:                  return -99.0f;
+    case FREEDV_MODE_DATAC15: return ARQ_SNR_MIN_DATAC15_DB;
+    default:                  return -99.0f;          /* the MFSK floor */
     }
 }
 
@@ -645,7 +652,8 @@ static bool reprobe_due(const car_t *c, int lv, uint64_t now)
 static int keydown_cap(int lv)
 {
     int cap = (int)(MAX_KEYDOWN_MS / level_air(lv));
-    if (lv <= 1 && cap > SLOW_RUNG_FRAMES) cap = SLOW_RUNG_FRAMES;   /* slow rungs */
+    bool slow = LADDER[lv] == FREEDV_MODE_DATAC15 || LADDER[lv] == FREEDV_MODE_DATAC4;
+    if (slow && cap > SLOW_RUNG_FRAMES) cap = SLOW_RUNG_FRAMES;
     return cap > 15 ? 15 : cap < 1 ? 1 : cap;                          /* 4 bits */
 }
 static double air_fraction(int lv, int frames)
@@ -1031,6 +1039,8 @@ static void on_ctl(car_t *c, uint64_t now, const msg_t *m)
 static const struct { int mode; float min_db; } START[] = {
     { FREEDV_MODE_QAM16C2, ARQ_SNR_MIN_QAM16C2_DB }, { FREEDV_MODE_DATAC17, ARQ_SNR_MIN_DATAC17_DB },
     { FREEDV_MODE_DATAC1,  ARQ_SNR_MIN_DATAC1_DB },  { FREEDV_MODE_DATAC3,  ARQ_SNR_MIN_DATAC3_DB },
+    /* DATAC4 is slower than DATAC15 here: never a start. */
+    { FREEDV_MODE_DATAC15, ARQ_SNR_MIN_DATAC15_DB - ARQ_SNR_HYST_DB },
 };
 
 int car_start_level(float snr_db)
@@ -1038,7 +1048,7 @@ int car_start_level(float snr_db)
     for (size_t i = 0; i < sizeof(START) / sizeof(START[0]); i++)
         if (snr_db >= START[i].min_db + ARQ_SNR_HYST_DB)
             return level_of_mode(START[i].mode);
-    return 0;                  /* DATAC4 is slower than DATAC15 here: never a start */
+    return 0;                  /* below DATAC15's cliff: the MFSK floor */
 }
 
 void car_init(car_t *c, const car_io_t *io, int rx_level, int tx_level)
