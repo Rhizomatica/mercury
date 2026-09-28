@@ -49,6 +49,15 @@
  * re-measuring the peak: the clamp below hides the damage instead of reporting
  * it. */
 #define MFSK_TXAMP    2200.0
+/* SNR3k from per-bin energies: one bin is MFSK_FS/MFSK_NFFT = 31.25 Hz wide,
+ * the reference band 3 kHz, so 10*log10(31.25/3000) = -19.82 dB.  The
+ * correction is fitted against codec2's ch: test-TX frames at SNR3k +9.0,
+ * +4.0, -1.0, -5.2, -8.0, -10.0, -11.0, -12.0 dB read 1.1..1.4 dB high,
+ * linear over the range, frame-to-frame spread ~0.1 dB. */
+#define MFSK_SNR_BIN_TO_3K_DB  (-19.82)
+#ifndef MFSK_SNR_CAL_DB
+#define MFSK_SNR_CAL_DB        (-1.3)
+#endif
 /* Frequency hypotheses in HALF subcarriers (15.625 Hz), spanning +/-3 bins,
  * i.e. about +/-94 Hz of dial error -- well past what a pair of HF radios
  * drift apart by.
@@ -425,7 +434,12 @@ static int mfsk_try_payload(mfsk_modem_t *h, int payoff, uint8_t *bytes_out)
     if (payoff < 0 || payoff + h->NPAY * h->Nofdm > h->bf_len)
         return 0;
 
-    double sig = 0.0, noise = 0.0;   /* coarse SNR accumulators */
+    double sig = 0.0;                /* LLR magnitude, for HARQ below */
+    /* SNR: per symbol, the strongest tone bin of each stream (signal + noise)
+     * against the mean of the bins outside every stream's band (noise). */
+    double snr_s = 0.0, snr_n = 0.0;
+    int band_lo = h->m.stream_offsets[0];
+    int band_hi = h->m.stream_offsets[h->m.nStreams - 1] + h->m.M;
     for (int s = 0; s < h->NPAY; s++)
     {
         int b = payoff + s * h->Nofdm;
@@ -453,6 +467,23 @@ static int mfsk_try_payload(mfsk_modem_t *h, int payoff, uint8_t *bytes_out)
             h->rb[s * MFSK_NCAR + k].re = creal(dep[k]);
             h->rb[s * MFSK_NCAR + k].im = cimag(dep[k]);
         }
+        double nsum = 0.0;
+        int nbins = 0;
+        for (int k = 0; k < MFSK_NCAR; k++)
+            if (k < band_lo || k >= band_hi) { nsum += creal(dep[k] * conj(dep[k])); nbins++; }
+        double nbin = nbins ? nsum / nbins : 0.0;
+        for (int st = 0; st < h->m.nStreams; st++)
+        {
+            double emax = 0.0;
+            for (int t = 0; t < h->m.M; t++)
+            {
+                double complex v = dep[h->m.stream_offsets[st] + t];
+                double e = creal(v * conj(v));
+                if (e > emax) emax = e;
+            }
+            snr_s += emax - nbin;
+            snr_n += nbin;
+        }
     }
     mfsk_demod(&h->m, h->rb, h->nb, h->llr);
     for (int t = 0; t < h->nb; t++)
@@ -460,8 +491,7 @@ static int mfsk_try_payload(mfsk_modem_t *h, int payoff, uint8_t *bytes_out)
         int j = h->ilv[t];
         if (j < h->code->N) h->llr_di[j] = h->llr[t];   /* undo the scatter */
     }
-    for (int i = 0; i < h->code->N; i++) sig += fabs(h->llr_di[i]);   /* proxy */
-    (void)noise;
+    for (int i = 0; i < h->code->N; i++) sig += fabs(h->llr_di[i]);
 
     /* HARQ Chase combining across separated bursts.
      *
@@ -547,9 +577,15 @@ static int mfsk_try_payload(mfsk_modem_t *h, int payoff, uint8_t *bytes_out)
     else
         return 0;
 
-    /* coarse SNR proxy from mean |LLR| (clamped at +/-5 in the demod): higher
-     * mean magnitude => cleaner tones. Mapped loosely to dB; OTA-calibrated. */
-    h->last_snr = (float)(sig / h->code->N);
+    /* The SNR used to be the mean |LLR|, which saturates (it read +5 at -9 dB
+     * and at +7 dB alike on the air).  Now: tone energy over bin noise,
+     * summed over the streams' tones, referred to 3 kHz. */
+    {
+        double lin = snr_n > 0.0 ? snr_s / snr_n * h->m.nStreams : 0.0;
+        if (lin < 1e-4) lin = 1e-4;
+        h->last_snr = (float)(10.0 * log10(lin) + MFSK_SNR_BIN_TO_3K_DB + MFSK_SNR_CAL_DB);
+    }
+    (void)sig;
     return (int)nbytes;
 }
 

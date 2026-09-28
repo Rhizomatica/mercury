@@ -122,6 +122,8 @@ typedef struct {
     bool     floor_waiting;         /* a floor round is out: a pattern may come */
     int      floor_silent;          /* floor rounds in a row with no answer */
     uint8_t  floor_blk;             /* the block my last floor round carried */
+    uint64_t floor_tx_end;          /* when my last floor round ended */
+    uint32_t floor_delay_ms;        /* how long answers take after it (average) */
     int      peer_snr_level;        /* where the SNR the peer measures starts me */
     size_t   confirmed_pending;     /* retired block bytes not yet reported */
 

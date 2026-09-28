@@ -83,8 +83,21 @@
  * receiver's round window allows for it. */
 #define FLOOR_POLL_EVERY  4
 #define FLOOR_SILENT_MAX  6
-#define FLOOR_LATE_MS     5000
+#define FLOOR_LATE_MS     9000
 #define PATTERN_AIR_MS    640
+/* An MFSK round is answered later than an OFDM one: on the real modems the
+ * last frame decoded ~3.7 s after the sender unkeyed, and a pattern keyed
+ * after it ended 5.6 s after the round -- past the 5.75 s the sender waited,
+ * so it continued on silence over the answer.  And its carrier is found
+ * later: a receiver that checked at SENSE_MS saw nothing yet and polled again
+ * on top of the round. */
+#define FLOOR_ANSWER_MS   4000
+#define FLOOR_SENSE_MS    3000
+/* Once answers have come, the sender waits for the next one as long as they
+ * have been taking, plus this -- never longer than the fixed window.  Fixed,
+ * the margin the real modems need cost 5-11 % in the sim, which answers
+ * at once, wherever rounds or patterns were lost. */
+#define FLOOR_DELAY_MARGIN_MS 2000
 
 enum { M_DATA, M_POLL, M_HANDOVER, M_STATUS };
 enum { AFTER_NONE, AFTER_POLL, AFTER_ROUND, AFTER_PATTERN };
@@ -499,6 +512,12 @@ static void arm_sender_wait(car_t *c, uint64_t tx_end)
      * nothing means "keep going" there too.  A handover round included: the
      * control mode may never get through, and a pattern confirms it. */
     c->floor_waiting = c->tx_level == 0 && c->io.pattern;
+    if (c->floor_waiting) {
+        answer += FLOOR_ANSWER_MS;
+        c->floor_tx_end = tx_end;
+        if (c->floor_delay_ms && tx_end + c->floor_delay_ms + FLOOR_DELAY_MARGIN_MS < answer)
+            answer = tx_end + c->floor_delay_ms + FLOOR_DELAY_MARGIN_MS;
+    }
     uint64_t t = c->handover_unconfirmed || c->floor_waiting ? answer : tx_end + SENDER_SILENCE_MS;
     arm(c, CAR_T_WAIT, t);
 }
@@ -671,6 +690,15 @@ static bool reprobe_due(const car_t *c, int lv, uint64_t now)
  * over a solid slower one, and ran one-frame rounds at 3.7 s of air for 9 s
  * of turnaround (in the sim: QAM16C2 at 8 dB, 7 rounds, 70 s for nothing). */
 #define ROUND_OVERHEAD_MS (4400 + GUARD_MS + ISS_GUARD_MS + HEAD_MS + TAIL_MS)
+/* A floor round answered by a pattern pays a 0.64 s pattern, not a poll.
+ * Charged the poll's overhead, the floor lost to DATAC15, which it beats:
+ * on the real modems at -5 dB the climb to DATAC15 took 201 s for what the
+ * floor delivered in 108. */
+#define FLOOR_OVERHEAD_MS (PATTERN_AIR_MS + GUARD_MS + ISS_GUARD_MS + HEAD_MS + TAIL_MS)
+static uint64_t round_overhead(const car_t *c, int lv)
+{
+    return lv == 0 && c->io.pattern ? FLOOR_OVERHEAD_MS : ROUND_OVERHEAD_MS;
+}
 static int keydown_cap(int lv)
 {
     int cap = (int)(MAX_KEYDOWN_MS / level_air(lv));
@@ -678,20 +706,20 @@ static int keydown_cap(int lv)
     if (slow && cap > SLOW_RUNG_FRAMES) cap = SLOW_RUNG_FRAMES;
     return cap > 15 ? 15 : cap < 1 ? 1 : cap;                          /* 4 bits */
 }
-static double air_fraction(int lv, int frames)
+static double air_fraction(const car_t *c, int lv, int frames)
 {
     double air = (double)round_air(lv, frames);
-    return air / (air + ROUND_OVERHEAD_MS);
+    return air / (air + (double)round_overhead(c, lv));
 }
 /* What a measured rung delivers per second, in the rounds it has earned. */
 static double level_goodput(const car_t *c, int lv)
 {
     int earned = 1 + (int)(c->lv_sent[lv] - c->lv_lost[lv]);
     int frames = earned < keydown_cap(lv) ? earned : keydown_cap(lv);
-    return level_rate(lv) * level_delivery(c, lv) * air_fraction(lv, frames);
+    return level_rate(lv) * level_delivery(c, lv) * air_fraction(c, lv, frames);
 }
 /* The most a rung could deliver: no loss, full rounds. */
-static double level_potential(int lv) { return level_rate(lv) * air_fraction(lv, keydown_cap(lv)); }
+static double level_potential(const car_t *c, int lv) { return level_rate(lv) * air_fraction(c, lv, keydown_cap(lv)); }
 
 static int choose_level(const car_t *c, uint64_t now)
 {
@@ -717,7 +745,7 @@ static int choose_level(const car_t *c, uint64_t now)
     if (level_delivery(c, best) < PROBE_UP_DELIVERY)
         return best;
     for (int up = best + 1; up < CAR_NLEVELS; up++) {
-        if (level_potential(up) <= best_gp)
+        if (level_potential(c, up) <= best_gp)
             continue;                   /* cannot win even with no loss */
         if (!level_allowed(c, up)) {
             if (!reprobe_due(c, up, now)) break;
@@ -1002,6 +1030,10 @@ static void on_poll_timer(car_t *c, uint64_t now)
 static void on_sense_timer(car_t *c, uint64_t now)
 {
     if (c->sending || c->idle || c->round_seen || c->last_was_pattern) return;
+    /* At the floor a sender that missed the poll continues on its own, a
+     * floor wait after its round: polling again before that keyed over it
+     * (sim, cliff:-9 bidir). */
+    if (c->poll_level == 0 && c->io.pattern) return;
     if (peer_keyed(c, now)) {
         c->round_heard = true; c->silent_polls = 0;
         arm(c, CAR_T_SENSE, now + CARRIER_CHECK_MS);
@@ -1114,8 +1146,11 @@ static void on_ctl(car_t *c, uint64_t now, const msg_t *m)
 static const struct { int mode; float min_db; } START[] = {
     { FREEDV_MODE_QAM16C2, ARQ_SNR_MIN_QAM16C2_DB }, { FREEDV_MODE_DATAC17, ARQ_SNR_MIN_DATAC17_DB },
     { FREEDV_MODE_DATAC1,  ARQ_SNR_MIN_DATAC1_DB },  { FREEDV_MODE_DATAC3,  ARQ_SNR_MIN_DATAC3_DB },
-    /* DATAC4 is slower than DATAC15 here: never a start. */
-    { FREEDV_MODE_DATAC15, ARQ_SNR_MIN_DATAC15_DB - ARQ_SNR_HYST_DB },
+    /* DATAC4 is slower than DATAC15 here: never a start.  Below -3 dB the
+     * floor starts faster than DATAC15 (7-9 % in the sim at -7..-5 dB, fixed
+     * and fading); above it DATAC15 still wins in fading (a DATAC4 start cost
+     * 9 % there at 0 dB). */
+    { FREEDV_MODE_DATAC15, -3.0f - ARQ_SNR_HYST_DB },
 };
 
 int car_start_level(float snr_db)
@@ -1123,7 +1158,7 @@ int car_start_level(float snr_db)
     for (size_t i = 0; i < sizeof(START) / sizeof(START[0]); i++)
         if (snr_db >= START[i].min_db + ARQ_SNR_HYST_DB)
             return level_of_mode(START[i].mode);
-    return 0;                  /* below DATAC15's cliff: the MFSK floor */
+    return 0;                  /* the MFSK floor */
 }
 
 void car_init(car_t *c, const car_io_t *io, int rx_level, int tx_level)
@@ -1160,12 +1195,7 @@ void car_on_frame(car_t *c, uint64_t now, const uint8_t *bytes, size_t len, int 
 {
     msg_t m;
     c->last_carrier_ms = now;
-    /* Not the floor's: the MFSK decoder's SNR is a loose proxy (mean |LLR|),
-     * and it read +5 dB at -9 dB on the real modems -- enough to make the
-     * receiver leave the floor for a DATAC15 the sender never heard asked for.
-     * The floor is judged on the control mode's estimate. */
-    bool floor_frame = !control && level_of_mode(mode) == 0;
-    if (snr_db != 0.0f && !floor_frame) {
+    if (snr_db != 0.0f) {
         c->snr_ema = c->snr_valid ? 0.7f * c->snr_ema + 0.3f * snr_db : snr_db;
         c->snr_valid = true;
     }
@@ -1210,8 +1240,10 @@ void car_on_tx_done(car_t *c, uint64_t now)
         /* The peer heard the poll as its last frame ended, keys after its
          * guard, and should be heard by SENSE_MS after that. */
         uint64_t start = now - TAIL_MS + ISS_GUARD_MS;
-        arm(c, CAR_T_SENSE, start + SENSE_MS);
-        arm_poll(c, start + HEAD_MS + round_air(c->poll_level, c->poll_n) + TAIL_MS + WINDOW_MARGIN_MS);
+        bool floor = c->poll_level == 0 && c->io.pattern;
+        arm(c, CAR_T_SENSE, start + SENSE_MS + (floor ? FLOOR_SENSE_MS : 0));
+        arm_poll(c, start + HEAD_MS + round_air(c->poll_level, c->poll_n) + TAIL_MS + WINDOW_MARGIN_MS +
+                    (floor ? FLOOR_LATE_MS : 0));
     }
 }
 
@@ -1221,6 +1253,10 @@ void car_on_pattern(car_t *c, uint64_t now, int kind)
     if (!c->sending || c->tx_busy || !c->floor_waiting) return;
     c->floor_waiting = false;
     c->floor_silent = 0;
+    if (c->floor_tx_end && now > c->floor_tx_end) {
+        uint32_t d = (uint32_t)(now - c->floor_tx_end);
+        c->floor_delay_ms = c->floor_delay_ms ? (3 * c->floor_delay_ms + d) / 4 : d;
+    }
     c->handover_unconfirmed = false;       /* the receiver hears me */
     c->tx_n = keydown_cap(0);              /* streaming: full floor rounds */
     disarm(c, CAR_T_WAIT);
