@@ -87,6 +87,7 @@ typedef struct {
     int      K, len, next, need;          /* next: the next piece index to send */
     int      resend;                      /* data piece the receiver waits on, -1 */
     int      sent;                        /* distinct pieces sent so far (capped) */
+    int      round_sent;                  /* fresh pieces of it in my last round */
     uint8_t  data[CAR_MAX_K][CAR_PIECE];
 } car_sblock_t;
 
@@ -120,6 +121,8 @@ typedef struct {
     double   tx_loss;               /* the receiver's loss estimate, for the margin */
     bool     handover_unconfirmed;  /* my handover round is out, no poll yet */
     bool     floor_waiting;         /* a floor round is out: a pattern may come */
+    bool     pat_waiting;           /* a round above the floor is out: a pattern
+                                     * ("it came whole, the same again") may come */
     int      floor_silent;          /* floor rounds in a row with no answer */
     uint8_t  floor_blk;             /* the block my last floor round carried */
     uint64_t floor_tx_end;          /* when my last floor round ended */

@@ -421,6 +421,7 @@ static int build_round(car_t *c, int lv, int n, uint32_t poll_id, car_frame_t *f
         queued += (int)ceil(c->sb[c->nsb - 1].need * (1.0 + margin));
     }
     if (!c->nsb || n < 1) return 0;
+    for (int b = 0; b < c->nsb; b++) c->sb[b].round_sent = 0;
     int nsb_all = c->nsb;
     if (floor) { c->nsb = 1; c->floor_blk = c->sb[0].id; }
     int mode = LADDER[lv];
@@ -480,6 +481,7 @@ static int build_round(car_t *c, int lv, int n, uint32_t poll_id, car_frame_t *f
                 piece_bytes(s, s->next, x->bytes + pos);
                 s->next = (s->next + 1) % RS_MAX_PIECES;   /* data, repair, then wrap */
                 if (s->sent < RS_MAX_PIECES) s->sent++;
+                s->round_sent++;                   /* not the resent gap pieces: repeats */
                 pos += CAR_PIECE;
                 count++;
                 if (bb == b) want[bb]--;
@@ -512,6 +514,9 @@ static void arm_sender_wait(car_t *c, uint64_t tx_end)
      * nothing means "keep going" there too.  A handover round included: the
      * control mode may never get through, and a pattern confirms it. */
     c->floor_waiting = c->tx_level == 0 && c->io.pattern;
+    /* Above the floor a pattern means "that round came whole: the same again".
+     * Silence still means nothing there: only a poll or a pattern moves me. */
+    c->pat_waiting = c->tx_level > 0 && c->io.pattern;
     if (c->floor_waiting) {
         answer += FLOOR_ANSWER_MS;
         c->floor_tx_end = tx_end;
@@ -899,6 +904,7 @@ static void start_driving(car_t *c, uint32_t poll_id, int lv, int n, uint64_t ro
      * turn retired a block the receiver never completed (sim, nvis bidir). */
     c->rx_break = false; c->last_was_pattern = false; c->floor_patterns = 0;
     c->floor_streaming = false;
+    c->floor_waiting = false; c->pat_waiting = false;
     disarm(c, CAR_T_SEND); disarm(c, CAR_T_WAIT); disarm(c, CAR_T_SENSE);
     arm_poll(c, round_start + HEAD_MS + round_air(lv, n) + TAIL_MS + WINDOW_MARGIN_MS);
 }
@@ -955,7 +961,8 @@ static void send_pattern(car_t *c, int kind, bool expect_round)
     c->rx_break = false;
     c->last_was_pattern = true;
     if (expect_round) {
-        c->poll_n = keydown_cap(0);         /* what a sender streaming the floor sends */
+        if (c->poll_level == 0)
+            c->poll_n = keydown_cap(0);     /* what a sender streaming the floor sends */
         c->round_seen = 0; c->round_frames = c->poll_n; c->status_seen = false;
         c->done_in_round = 0; c->round_heard = false;
     }
@@ -1016,7 +1023,20 @@ static void on_poll_timer(car_t *c, uint64_t now)
         send_pattern(c, c->rx_break ? CAR_PATTERN_BREAK : CAR_PATTERN_ACK, true);
         return;
     }
-    send_poll(c, lv, poll_size(c, lv, now));
+    int n = poll_size(c, lv, now);
+    /* Above the floor a round that came whole, to be followed by the same
+     * again, is answered by a pattern: 0.64 s where a poll takes a DATAC16
+     * frame, and the sender takes it as "all of it is in".  Anything else --
+     * a lost frame, a new rung or round size, the sender out of data -- needs
+     * what only a poll carries, and a poll comes every FLOOR_POLL_EVERY rounds
+     * all the same, for the repairs and the in-order gap. */
+    if (c->io.pattern && lv > 0 && lv == c->poll_level && n == c->poll_n && !c->status_seen &&
+        c->round_seen > 0 && c->round_seen >= c->round_frames && c->floor_patterns < FLOOR_POLL_EVERY) {
+        c->floor_patterns++;
+        send_pattern(c, CAR_PATTERN_ACK, true);
+        return;
+    }
+    send_poll(c, lv, n);
 }
 
 /* The sense timer: by now the sender should be keyed.  Silence means it never
@@ -1029,7 +1049,7 @@ static void on_poll_timer(car_t *c, uint64_t now)
  * window timer ran into the sender's repeat timer. */
 static void on_sense_timer(car_t *c, uint64_t now)
 {
-    if (c->sending || c->idle || c->round_seen || c->last_was_pattern) return;
+    if (c->sending || c->idle || c->round_seen) return;
     /* At the floor a sender that missed the poll continues on its own, a
      * floor wait after its round: polling again before that keyed over it
      * (sim, cliff:-9 bidir). */
@@ -1124,7 +1144,7 @@ static void on_ctl(car_t *c, uint64_t now, const msg_t *m)
     /* A poll of my direction.  If I thought I was driving, the peer never
      * heard my handover and still polls me: be the sender again. */
     disarm(c, CAR_T_POLL); disarm(c, CAR_T_SENSE); disarm(c, CAR_T_WAIT);
-    c->floor_waiting = false; c->floor_silent = 0;
+    c->floor_waiting = false; c->floor_silent = 0; c->pat_waiting = false;
     apply_need(c, m);
     c->tx_poll_id = m->poll_id;
     c->tx_loss = m->loss16 / 15.0;
@@ -1232,10 +1252,14 @@ void car_on_tx_done(car_t *c, uint64_t now)
     if (after == AFTER_ROUND) {
         arm_sender_wait(c, now);
     } else if (after == AFTER_PATTERN) {
-        /* A sender that missed the pattern continues on silence, later. */
+        /* At the floor a sender that missed the pattern continues on silence,
+         * later.  Above it, one that missed it waits for a poll: poll as soon
+         * as its round has not started. */
         uint64_t start = now - TAIL_MS + ISS_GUARD_MS;
+        bool floor = c->poll_level == 0;
+        if (!floor) arm(c, CAR_T_SENSE, start + SENSE_MS);
         arm_poll(c, start + HEAD_MS + round_air(c->poll_level, c->poll_n) + TAIL_MS +
-                    WINDOW_MARGIN_MS + FLOOR_LATE_MS);
+                    WINDOW_MARGIN_MS + (floor ? FLOOR_LATE_MS : 0));
     } else if (after == AFTER_POLL) {
         /* The peer heard the poll as its last frame ended, keys after its
          * guard, and should be heard by SENSE_MS after that. */
@@ -1250,7 +1274,25 @@ void car_on_tx_done(car_t *c, uint64_t now)
 void car_on_pattern(car_t *c, uint64_t now, int kind)
 {
     c->last_carrier_ms = now;
-    if (!c->sending || c->tx_busy || !c->floor_waiting) return;
+    if (!c->sending || c->tx_busy || !(c->floor_waiting || c->pat_waiting)) return;
+    if (c->pat_waiting) {
+        /* The receiver answers a round above the floor with a pattern only
+         * when every frame of it came: what I sent of each block is in.  The
+         * blocks stay open until a poll retires them -- a wrong guess costs
+         * pieces, never data -- but the next round moves on to what it still
+         * needs, and to new blocks. */
+        c->pat_waiting = false;
+        c->handover_unconfirmed = false;
+        disarm(c, CAR_T_WAIT);
+        for (int b = 0; b < c->nsb; b++) {
+            car_sblock_t *sb = &c->sb[b];
+            sb->need = sb->need > sb->round_sent ? sb->need - sb->round_sent : 0;
+            sb->round_sent = 0;
+        }
+        if (!has_data(c)) { c->sending = false; c->idle = true; return; }
+        arm(c, CAR_T_SEND, now + ISS_GUARD_MS);
+        return;
+    }
     c->floor_waiting = false;
     c->floor_silent = 0;
     if (c->floor_tx_end && now > c->floor_tx_end) {
@@ -1277,7 +1319,7 @@ void car_on_pattern(car_t *c, uint64_t now, int kind)
 
 bool car_expect_pattern(const car_t *c)
 {
-    return c->floor_waiting && !c->tx_busy;
+    return (c->floor_waiting || c->pat_waiting) && !c->tx_busy;
 }
 
 void car_on_app_data(car_t *c, uint64_t now)

@@ -9,7 +9,9 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#ifndef CAR_SIM_BYTES
 #define CAR_SIM_BYTES 8192        /* each direction */
+#endif
 
 typedef struct {
     size_t   a2b, b2a;            /* bytes delivered each way */
