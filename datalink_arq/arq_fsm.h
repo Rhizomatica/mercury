@@ -179,6 +179,9 @@ typedef struct
 
     /* --- Identifiers --- */
     uint8_t  session_id;               /* random byte chosen by caller         */
+    int      call_sends_done;          /* CALLs sent this attempt (escalation) */
+    int      call_carrier;             /* the carrier the last CALL went out on */
+    int      call_rx_mode;             /* the carrier the CALL we answer came on */
     char     remote_call[CALLSIGN_MAX_SIZE];
     char     local_call[CALLSIGN_MAX_SIZE];  /* our dialed callsign/SSID for an
                                               * accepted incoming CALL (empty =>
@@ -493,6 +496,9 @@ int arq_fsm_timeout_ms(const arq_session_t *sess, uint64_t now);
  */
 void arq_fsm_set_carousel(bool on);
 bool arq_fsm_carousel(void);
+/** The carrier the next CALL goes out on: the control mode for the first
+ *  ARQ_CALL_FAST_SLOTS, then MFSK and the control mode alternately. */
+int arq_call_carrier(const arq_session_t *sess);
 /** Whether a pattern can arrive now (the modem's detector runs only then). */
 bool arq_fsm_expect_pattern(const arq_session_t *sess, uint64_t now);
 

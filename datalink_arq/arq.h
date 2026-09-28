@@ -124,6 +124,9 @@ typedef struct
     /* A pattern can arrive now: the RX pattern detector correlates only while
      * this is set -- running it all the time costs the decoders CPU. */
     bool expect_pattern_ack;
+    /* Idle and listening: a CALL can arrive on MFSK, and only the modem's
+     * MFSK call listener would decode it. */
+    bool listening_for_calls;
     int trx;
     int tx_backlog_bytes;
     int speed_level;
@@ -302,7 +305,7 @@ void arq_set_active_modem_mode(int mode, size_t frame_size);
  * @param frame_size Frame length in bytes.
  * @return true if frame was handled by ARQ connect path.
  */
-bool arq_handle_incoming_connect_frame(uint8_t *data, size_t frame_size, float rx_snr);
+bool arq_handle_incoming_connect_frame(uint8_t *data, size_t frame_size, float rx_snr, int mode);
 /* A frame that passed the session's seeded CRC (carousel data plane).
  * from_control: the control decoder produced it; otherwise mode is the
  * payload decoder's. */

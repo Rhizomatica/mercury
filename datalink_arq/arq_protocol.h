@@ -247,6 +247,16 @@ extern _Atomic int arq_iss_post_ack_guard_ms;
  * 2 s is conservative: ~0.5 s of TCP+host processing with headroom. */
 #define ARQ_LISTEN_OFF_GRACE_MS       2000
 #define ARQ_CALL_RETRY_SLOTS_DEFAULT       4    /* CALL retries before giving up       */
+/* CALLs on the fast control mode before the caller escalates to the MFSK
+ * floor; after that it alternates MFSK and the control mode (#235: under
+ * fading an MFSK CALL is no surer than a DATAC16 one at -9..-11 dB, and all-
+ * MFSK lost connects DATAC16 made; MFSK is what connects at -13 dB).  A good
+ * link connects exactly as quickly as before. */
+#define ARQ_CALL_FAST_SLOTS                2
+/* After an ACCEPT on MFSK the callee listens this long for the caller's first
+ * round: the caller decodes the ACCEPT ~4 s after it ends, keys one ISS guard
+ * later, and a floor round is a 13.5 s frame the callee decodes ~4 s after. */
+#define ARQ_ACCEPT_RX_WINDOW_FLOOR_MS 26000
 #define ARQ_ACCEPT_RETRY_SLOTS_DEFAULT     4    /* ACCEPT retries before returning     */
 #define ARQ_DATA_RETRY_SLOTS_DEFAULT      10    /* DATA retries before disconnect      */
 #define ARQ_DISCONNECT_RETRY_SLOTS_DEFAULT 2    /* DISCONNECT frame retries            */
@@ -558,6 +568,11 @@ float arq_protocol_longest_burst_s(void);
  * CALLINT override.  Falls back to the DATAC16 table default (8.0s).
  */
 float arq_protocol_call_interval_s(void);
+/* The wait after a CALL on this carrier.  After an MFSK CALL: the callee
+ * decodes it ~4 s after it ends, answers one guard later with a 13.5 s MFSK
+ * ACCEPT, which this end decodes ~4 s after -- about 24 s, where the table's
+ * DATAC16-shaped interval would key the next CALL over the answer. */
+float arq_protocol_call_interval_for_mode_s(int mode);
 
 /**
  * @brief Compute CRC16-CCITT of an uppercase-normalised callsign.

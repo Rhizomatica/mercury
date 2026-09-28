@@ -7,6 +7,7 @@
  */
 
 #include "arq_fsm.h"
+#include "../modem/modem_mfsk.h"   /* MERCURY_MODE_MFSK */
 #include "arq_protocol.h"
 #include "arq_timing.h"
 #include "arq.h"
@@ -859,6 +860,15 @@ static bool deliver_rx_checked(arq_session_t *sess, const arq_event_t *ev)
     return true;
 }
 
+int arq_call_carrier(const arq_session_t *sess)
+{
+    if (!sess || !g_carousel) return sess ? sess->control_mode : ARQ_CONTROL_MODE;
+    if (sess->call_sends_done < ARQ_CALL_FAST_SLOTS)
+        return sess->control_mode;
+    return ((sess->call_sends_done - ARQ_CALL_FAST_SLOTS) % 2 == 0)
+         ? MERCURY_MODE_MFSK : sess->control_mode;
+}
+
 static void send_call_accept(arq_session_t *sess, bool is_accept)
 {
     uint8_t frame[INT_BUFFER_SIZE];
@@ -887,7 +897,24 @@ static void send_call_accept(arq_session_t *sess, bool is_accept)
         n = arq_protocol_build_call(frame, sizeof(frame), sess->session_id,
                                     my_call, sess->remote_call, bw_hz);
     if (n > 0)
-        send_frame(PACKET_TYPE_ARQ_CALL, sess->control_mode, (size_t)n, frame, 0);
+    {
+        /* A CALL escalates to the MFSK floor once the fast slots are spent; an
+         * ACCEPT answers on the carrier the CALL came on, so the two ends
+         * never disagree about it. */
+        int mode = is_accept ? (sess->call_rx_mode > 0 ? sess->call_rx_mode : sess->control_mode)
+                             : arq_call_carrier(sess);
+        if (!is_accept) {
+            sess->call_carrier = mode;
+            sess->call_sends_done++;
+            /* An ACCEPT to an MFSK CALL comes back on MFSK: listen for it. */
+            if (mode == MERCURY_MODE_MFSK)
+                sess->peer_tx_mode = MERCURY_MODE_MFSK;
+        }
+        if (mode != sess->control_mode)
+            HLOGI(LOG_COMP, "%s on the MFSK floor (%s)", is_accept ? "ACCEPT" : "CALL",
+                  is_accept ? "the CALL came on it" : "the fast CALLs went unanswered");
+        send_frame(PACKET_TYPE_ARQ_CALL, mode, (size_t)n, frame, 0);
+    }
     else
         /* Almost always an over-long callsign: the 10-byte SRC slot holds ~14
          * characters at ~5.25 bits each.  The encoder refuses rather than
@@ -1474,6 +1501,8 @@ static void fsm_disconnected(arq_session_t *sess, const arq_event_t *ev)
         snprintf(sess->remote_call, CALLSIGN_MAX_SIZE, "%s", ev->remote_call);
         sess->session_id      = (uint8_t)(time_now_ms() & 0x7F) | 0x01;
         sess->tx_retries_left = ARQ_CALL_RETRY_SLOTS;
+        sess->call_sends_done = 0;
+        sess->call_carrier    = 0;
         sess->pending_disconnect = false;  /* clear stale deferred disconnect from prior session */
         sess->disconnect_deadline_ms = 0;
         /* Reset mode state for new session */
@@ -1514,6 +1543,7 @@ static void fsm_listening(arq_session_t *sess, const arq_event_t *ev)
         snprintf(sess->remote_call, CALLSIGN_MAX_SIZE, "%s", ev->remote_call);
         snprintf(sess->local_call, CALLSIGN_MAX_SIZE, "%s", ev->local_call);
         sess->session_id      = ev->session_id;
+        sess->call_rx_mode    = ev->mode;
         sess->car_rx_level    = car_start_level(ev->rx_snr);   /* the ACCEPT names it */
         sess->tx_retries_left = ARQ_ACCEPT_RETRY_SLOTS;
         sess->accept_tx_pending = true;   /* answering a CALL we just heard */
@@ -1696,7 +1726,7 @@ static void fsm_calling(arq_session_t *sess, const arq_event_t *ev)
          * moment the ACCEPT is arriving -- so the retry keys the transmitter on
          * top of the reply it was waiting for, on essentially every connect.
          * Measuring the interval from here gives the peer a full turnaround. */
-        sess->deadline_ms = retry_deadline_from_s(sess, arq_protocol_call_interval_s());
+        sess->deadline_ms = retry_deadline_from_s(sess, arq_protocol_call_interval_for_mode_s(sess->call_carrier));
         break;
 
     case ARQ_EV_TIMER_RETRY:
@@ -1706,7 +1736,7 @@ static void fsm_calling(arq_session_t *sess, const arq_event_t *ev)
             send_call_accept(sess, false);
             /* Deadline is re-anchored on TX_COMPLETE above; this is the
              * fallback if that event is ever missed. */
-            sess->deadline_ms = retry_deadline_from_s(sess, arq_protocol_call_interval_s());
+            sess->deadline_ms = retry_deadline_from_s(sess, arq_protocol_call_interval_for_mode_s(sess->call_carrier));
         }
         else
         {
@@ -1843,6 +1873,10 @@ static void fsm_accepting(arq_session_t *sess, const arq_event_t *ev)
         sess->accept_tx_pending = true;   /* answering a CALL we just heard */
         sess->deadline_ms       = time_now_ms() + ARQ_CHANNEL_GUARD_MS;
         sess->car_rx_level      = car_start_level(ev->rx_snr);
+        /* Answer on the carrier THIS CALL came on: a caller escalates when it
+         * hears none of our ACCEPTs -- a weak return path -- and an answer
+         * kept on DATAC16 kept failing the same way (#235). */
+        sess->call_rx_mode      = ev->mode;
         break;
 
     case ARQ_EV_TX_COMPLETE:
@@ -1854,7 +1888,8 @@ static void fsm_accepting(arq_session_t *sess, const arq_event_t *ev)
          * one DATAC15 frame.  Reset the deadline here so we always have
          * a full ARQ_ACCEPT_RX_WINDOW_MS window (guard + DATAC15 frame +
          * margin) measured from the moment our TX actually ends. */
-        sess->deadline_ms = time_now_ms() + ARQ_ACCEPT_RX_WINDOW_MS;
+        sess->deadline_ms = time_now_ms() + (sess->call_rx_mode == MERCURY_MODE_MFSK
+                                             ? ARQ_ACCEPT_RX_WINDOW_FLOOR_MS : ARQ_ACCEPT_RX_WINDOW_MS);
         /* This deadline is a LISTENING window, not a retransmission timer.  An
          * ACCEPT is only ever correct one channel guard after a CALL we heard,
          * because that is the only moment we know the caller has dropped PTT

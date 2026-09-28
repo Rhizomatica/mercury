@@ -783,7 +783,7 @@ void arq_handle_carousel_frame(const uint8_t *data, size_t frame_size, int mode,
     evq_push(&ev);
 }
 
-bool arq_handle_incoming_connect_frame(uint8_t *data, size_t frame_size, float rx_snr)
+bool arq_handle_incoming_connect_frame(uint8_t *data, size_t frame_size, float rx_snr, int mode)
 {
     if (!data || frame_size < 2) return false;
 
@@ -846,6 +846,7 @@ bool arq_handle_incoming_connect_frame(uint8_t *data, size_t frame_size, float r
     ev.id         = is_accept ? ARQ_EV_RX_ACCEPT : ARQ_EV_RX_CALL;
     ev.session_id = session_id;
     ev.rx_snr     = rx_snr;
+    ev.mode       = mode;          /* the carrier: an answer goes back on it */
     if (is_accept)
         ev.car_level = arq_protocol_accept_start_level(data);
     /* src = transmitting side's callsign */
@@ -1294,6 +1295,7 @@ bool arq_get_runtime_snapshot(arq_runtime_snapshot_t *snapshot)
     snapshot->initialized      = true;
     snapshot->connected        = (g_sess.conn_state == ARQ_CONN_CONNECTED);
     snapshot->expect_pattern_ack = arq_fsm_expect_pattern(&g_sess, time_now_ms());
+    snapshot->listening_for_calls = (g_sess.conn_state == ARQ_CONN_LISTENING);
     snapshot->trx              = trx;
     snapshot->tx_backlog_bytes = backlog + g_sess.tx_inflight_bytes;
     snapshot->speed_level      = g_sess.speed_level;
