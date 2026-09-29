@@ -19,6 +19,8 @@ struct sim_channel {
     uint32_t guard_ms;
     bool     cliff_enabled;   /* mode-aware erasure (see sim_channel_set_snr) */
     double   snr_db;          /* current channel SNR when cliff_enabled */
+    bool     asym;            /* per-direction SNR (sim_channel_set_snr_asym) */
+    double   snr_dir_db[2];
     sim_mode_per_t mode_per[SIM_MODE_PER_MAX]; /* empirical per-mode erasure */
     int      mode_per_count;
     bool     fading;          /* time-varying SNR (see sim_channel_set_fading) */
@@ -85,7 +87,17 @@ void sim_channel_set_snr(sim_channel_t *ch, double snr_db)
     {
         ch->cliff_enabled = true;
         ch->snr_db        = snr_db;
+        ch->asym          = false;
     }
+}
+
+void sim_channel_set_snr_asym(sim_channel_t *ch, double snr_dir0_db, double snr_dir1_db)
+{
+    if (!ch) return;
+    sim_channel_set_snr(ch, snr_dir0_db < snr_dir1_db ? snr_dir0_db : snr_dir1_db);
+    ch->asym = true;
+    ch->snr_dir_db[0] = snr_dir0_db;
+    ch->snr_dir_db[1] = snr_dir1_db;
 }
 
 void sim_channel_set_mode_per(sim_channel_t *ch,
@@ -172,6 +184,23 @@ uint32_t sim_channel_airtime_ms(int freedv_mode, size_t frame_size)
     return 4400;
 }
 
+bool sim_channel_syncable(const sim_channel_t *ch, uint64_t now_ms,
+                          int dir, int freedv_mode)
+{
+    double cliff = mode_cliff_db(freedv_mode);
+    if (ch->fading)
+        return frame_snr_db(ch, dir, now_ms, sim_channel_airtime_ms(freedv_mode, 0), cliff) >= cliff;
+    if (ch->mode_per_count > 0) {
+        for (int i = 0; i < ch->mode_per_count; i++)
+            if (ch->mode_per[i].freedv_mode == freedv_mode)
+                return ch->mode_per[i].per < 0.5;
+        return true;
+    }
+    if (ch->cliff_enabled)
+        return (ch->asym ? ch->snr_dir_db[dir & 1] : ch->snr_db) >= cliff;
+    return true;
+}
+
 bool sim_channel_schedule(sim_channel_t *ch, uint64_t now_ms,
                           int dir, int freedv_mode, size_t frame_size,
                           uint64_t *deliver_at_ms)
@@ -193,7 +222,8 @@ bool sim_channel_schedule(sim_channel_t *ch, uint64_t now_ms,
                 break;
             }
     }
-    else if (ch->cliff_enabled && ch->snr_db < mode_cliff_db(freedv_mode))
+    else if (ch->cliff_enabled &&
+             (ch->asym ? ch->snr_dir_db[dir & 1] : ch->snr_db) < mode_cliff_db(freedv_mode))
         per = SIM_CLIFF_PER;
     bool erased = sim_channel_next_rand(ch) < per;
     uint32_t air = sim_channel_airtime_ms(freedv_mode, frame_size);

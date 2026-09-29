@@ -31,6 +31,9 @@
 
 #define HEAD_MS         110       /* tx delay + head silence (as carousel.c) */
 #define TAIL_MS         200
+#ifndef MFSK_CS_EXTRA_MS
+#define MFSK_CS_EXTRA_MS 1000
+#endif
 #ifndef CS_ACQ_MS
 #define CS_ACQ_MS       400       /* carrier sense: sync this long after keying */
 #endif
@@ -80,6 +83,7 @@ typedef struct {
     int      rx_mode;              /* the payload decoder's binding */
     uint64_t tx_start, tx_end;     /* current/last keydown */
     bool     tx_seen;              /* the peer could sync on it (CAR_CS_DECODABLE) */
+    uint64_t seen_at;              /* ...from the start of this frame of it */
 } station_t;
 
 static station_t S[2];
@@ -92,6 +96,9 @@ static bool cs_decodable;              /* CAR_CS_DECODABLE: carrier sense needs 
 /* CAR_SNR_BIAS: the estimate as the bench read it at 10 %: DATAC15, DATAC4 and
  * DATAC16 frames about 3.5 dB below DATAC3 and DATAC1 on the same link. */
 static bool snr_biased;
+static bool asym;                                      /* an asym:A:B channel */
+static double snr_dir[2];                              /* its SNR, by sender */
+static double frame_snr(const station_t *rx) { return asym ? snr_dir[rx->id ^ 1] : snr_now; }
 static double snr_bias(int mode)
 {
     if (!snr_biased) return 0.0;
@@ -114,10 +121,17 @@ static void io_keydown(void *ctx, const car_frame_t *fr, int n)
             if (fr[i].mode == ARQ_CONTROL_MODE) printf(" %s", K[fr[i].bytes[0] >> 6]);
             else printf(" data(%d)", fr[i].mode);
         }
+        /* A decoder syncs on what it could decode: the control mode, or the
+         * mode the peer's payload decoder is bound to -- above its cliff, even
+         * when this frame is then lost. */
+        if (!s->tx_seen && (fr[i].mode == ARQ_CONTROL_MODE || fr[i].mode == peer->rx_mode) &&
+            sim_channel_syncable(ch, t, s->id, fr[i].mode)) {
+            s->tx_seen = true;
+            /* The MFSK preamble search takes longer to be sure: under a second
+             * at -7 dB (test_mfsk_modem), more near its floor. */
+            s->seen_at = t + (fr[i].mode == MERCURY_MODE_MFSK ? MFSK_CS_EXTRA_MS : 0);
+        }
         if (sim_channel_schedule(ch, t, s->id, fr[i].mode, 0, &d)) {
-            /* A decoder syncs on what it can decode: the control mode, or the
-             * mode the peer's payload decoder is bound to. */
-            if (fr[i].mode == ARQ_CONTROL_MODE || fr[i].mode == peer->rx_mode) s->tx_seen = true;
             uint8_t *b = malloc(fr[i].len);
             memcpy(b, fr[i].bytes, fr[i].len);
             event_t e = { .t = t + air, .type = EV_ARRIVE, .st = peer->id, .mode = fr[i].mode,
@@ -154,6 +168,7 @@ static void io_pattern(void *ctx, int kind)
     if (trace) printf("%9.1f %c keys: pattern %s\n", now_ms / 1000.0, 'A' + s->id, kind ? "BREAK" : "ACK");
     if (sim_channel_schedule(ch, t, s->id, SIM_MODE_PATTERN, 0, &d)) {
         s->tx_seen = peer->rx_mode == MERCURY_MODE_MFSK;   /* only the MFSK decoder syncs on it */
+        s->seen_at = t;
         event_t e = { .t = t + air + SIM_PATTERN_DETECT_MS, .type = EV_ARRIVE, .st = peer->id, .mode = SIM_MODE_PATTERN,
                       .len = (size_t)kind, .bytes = NULL, .f_start = t, .f_end = t + air };
         push(e);
@@ -168,9 +183,12 @@ static bool io_peer_keyed(void *ctx)
     const station_t *p = &S[((station_t *)ctx)->id ^ 1];
     /* CAR_CS_DECODABLE: carrier sense is a decoder in sync, so a keydown the
      * listener cannot decode is not sensed (on air: a DATAC1 probe at 4.5 dB,
-     * and patterns, which no OFDM decoder syncs on). */
+     * and patterns, which no OFDM decoder syncs on) -- nor the part of it
+     * before the first frame it can (on air: a floor frame behind a control
+     * frame the listener cannot decode). */
     if (cs_decodable && !p->tx_seen) return false;
-    return p->tx_end && p->tx_start + CS_ACQ_MS <= now_ms && now_ms < p->tx_end - TAIL_MS + CS_ACQ_MS;
+    uint64_t from = cs_decodable ? p->seen_at : p->tx_start;
+    return p->tx_end && from + CS_ACQ_MS <= now_ms && now_ms < p->tx_end - TAIL_MS + CS_ACQ_MS;
 }
 
 static size_t io_tx_read(void *ctx, uint8_t *buf, size_t max)
@@ -197,6 +215,7 @@ static void io_deliver(void *ctx, const uint8_t *buf, size_t len)
 void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limit_ms, car_sim_result_t *res)
 {
     trace = getenv("CAR_TRACE") != NULL;
+    asym = false;
     cs_decodable = getenv("CAR_CS_DECODABLE") != NULL;
     snr_biased = getenv("CAR_SNR_BIAS") != NULL;
     nev = 0;
@@ -225,6 +244,12 @@ void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limi
         sscanf(chan + 5, "%lf:%lf:%lf", &step_from, &step_to, &step_at_s);
         sim_channel_set_snr(ch, step_from); snr_db = step_from;
     }
+    else if (!strncmp(chan, "asym:", 5)) {   /* asym:A:B  A dB from A to B, B dB back */
+        sscanf(chan + 5, "%lf:%lf", &snr_dir[0], &snr_dir[1]);
+        sim_channel_set_snr_asym(ch, snr_dir[0], snr_dir[1]);
+        asym = true;
+        snr_db = snr_dir[0] < snr_dir[1] ? snr_dir[0] : snr_dir[1];
+    }
     else if (!strcmp(chan, "nvis")) {
         sim_channel_set_mode_per(ch, NVIS, (int)(sizeof(NVIS) / sizeof(NVIS[0])));
         snr_db = 10.0;
@@ -239,7 +264,10 @@ void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limi
                         .tx_read = io_tx_read, .tx_pending = io_tx_pending, .deliver = io_deliver,
                         .pattern = getenv("CAR_NOPATTERN") ? NULL : io_pattern,
                         .trace = io_trace, .ctx = s };
-        car_init(&s->car, &io, car_start_level((float)snr_db), car_start_level((float)snr_db));
+        /* What each end hears, and what its peer hears of it. */
+        double hears = asym ? snr_dir[i ^ 1] : snr_db, heard = asym ? snr_dir[i] : snr_db;
+        if (getenv("CAR_NOHINT")) hears = heard = -99.0;
+        car_init(&s->car, &io, car_start_level((float)hears), car_start_level((float)heard));
         s->rx_mode = -1;
     }
     for (int i = 0; i < CAR_SIM_BYTES; i++) {
@@ -281,9 +309,9 @@ void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limi
                 if (!getenv("CAR_NOPATTERN_RX"))
                     car_on_pattern(&s->car, now_ms, (int)e.len);
             } else if (e.mode == ARQ_CONTROL_MODE) {
-                car_on_frame(&s->car, now_ms, e.bytes, e.len, e.mode, true, (float)(snr_now + snr_bias(e.mode)));
+                car_on_frame(&s->car, now_ms, e.bytes, e.len, e.mode, true, (float)(frame_snr(s) + snr_bias(e.mode)));
             } else if (e.mode == s->rx_mode) {
-                car_on_frame(&s->car, now_ms, e.bytes, e.len, e.mode, false, (float)(snr_now + snr_bias(e.mode)));
+                car_on_frame(&s->car, now_ms, e.bytes, e.len, e.mode, false, (float)(frame_snr(s) + snr_bias(e.mode)));
             }
             free(e.bytes);
         }
