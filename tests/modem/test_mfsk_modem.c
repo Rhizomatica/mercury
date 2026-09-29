@@ -633,6 +633,73 @@ void test_mfsk_modem_noise_no_false_decode(void)
     free(pb); free(out);
 }
 
+/* Out-of-band emission.  Every symbol used to start with a hard jump in phase
+ * and tone, and a rectangular tone's spectrum falls off only as 1/f: the burst
+ * measured -27..-34 dB across the whole band against -50..-66 dB for codec2's
+ * modes, and was heard on air as spikes all over the spectrum.  Transmit what
+ * the radio sends -- a whole burst, and a pattern -- and require everything
+ * more than 400 Hz outside the lit band to sit 45 dB under it. */
+static double worst_oob_db(const int16_t *x, int n, int fs, double lo_hz, double hi_hz)
+{
+    const int N = 512, hop = N / 2;
+    double psd[256] = {0};
+    for (int off = 0; off + N <= n; off += hop)
+        for (int k = 0; k < N / 2; k++) {
+            double re = 0, im = 0;
+            for (int i = 0; i < N; i++) {
+                double w = 0.5 - 0.5 * cos(2.0 * M_PI * i / (N - 1));
+                double a = 2.0 * M_PI * k * i / N;
+                re += w * x[off + i] * cos(a);
+                im -= w * x[off + i] * sin(a);
+            }
+            psd[k] += re * re + im * im;
+        }
+    double bin = (double)fs / N, in = 0, worst = 0;
+    int nin = 0;
+    for (int k = 0; k < N / 2; k++)
+        if (k * bin >= lo_hz && k * bin <= hi_hz) { in += psd[k]; nin++; }
+    in /= nin;
+    /* 100 Hz bands, so a single quiet bin cannot pass for a clean band. */
+    for (double f = 0; f + 100 <= fs / 2.0; f += 100) {
+        if (f + 100 > lo_hz - 400 && f < hi_hz + 400) continue;
+        double b = 0; int nb = 0;
+        for (int k = 0; k < N / 2; k++)
+            if (k * bin >= f && k * bin < f + 100) { b += psd[k]; nb++; }
+        if (nb && b / nb > worst) worst = b / nb;
+    }
+    return 10.0 * log10(worst / in + 1e-30);
+}
+
+void test_mfsk_modem_out_of_band_emission(void)
+{
+    int bytes = be->bits_per_frame(ctx) / 8;
+    uint8_t *frame = malloc(bytes);
+    for (int i = 0; i < bytes - 2; i++) frame[i] = (uint8_t)(i * 29 + 3);
+    uint16_t crc = freedv_gen_crc16(frame, bytes - 2);
+    frame[bytes - 2] = crc >> 8; frame[bytes - 1] = crc & 0xff;
+    int cap = be->n_tx_samples(ctx) * 2 + 40000;
+    int16_t *x = calloc(cap, 2);
+    int n = be->preamble_tx(ctx, x);
+    n += be->rawdata_tx(ctx, x + n, frame);
+    n += be->postamble_tx(ctx, x + n);
+    int fs = be->sample_rate(ctx);
+    double half = be->bandwidth_hz(ctx) / 2.0;
+    char msg[128];
+    double burst = worst_oob_db(x, n, fs, 2000.0 - half, 2000.0 + half);
+    snprintf(msg, sizeof msg, "burst: %.1f dB out of band", burst);
+    TEST_ASSERT_TRUE_MESSAGE(burst <= -45.0, msg);
+
+    for (int kind = 0; kind < 2; kind++) {
+        int16_t *p = calloc(mfsk_pattern_max_tx_samples(), 2);
+        int np = mfsk_pattern_tx(p, kind);
+        double pat = worst_oob_db(p, np, fs, 2000.0 - half, 2000.0 + half);
+        snprintf(msg, sizeof msg, "pattern %d: %.1f dB out of band", kind, pat);
+        TEST_ASSERT_TRUE_MESSAGE(pat <= -45.0, msg);
+        free(p);
+    }
+    free(x); free(frame);
+}
+
 /* Carrier sense.  The ARQ keys only when no burst is arriving, and for MFSK the
  * decoder's sync flag is the only thing that says one is: a 13.5 s frame is on
  * the air for seconds before it can be decoded.  On air an idle receiver
@@ -754,6 +821,7 @@ int main(void)
     UNITY_BEGIN();
     RUN_TEST(test_mfsk_modem_roundtrip);
     RUN_TEST(test_mfsk_modem_reported_bandwidth_matches_emitted_spectrum);
+    RUN_TEST(test_mfsk_modem_out_of_band_emission);
     RUN_TEST(test_mfsk_modem_preamble_clipped_recovers_via_postamble);
     RUN_TEST(test_mfsk_modem_decodes_with_short_preroll);
     RUN_TEST(test_mfsk_modem_decodes_after_long_preroll);

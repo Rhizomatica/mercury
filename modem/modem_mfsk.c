@@ -49,6 +49,9 @@
  * re-measuring the peak: the clamp below hides the damage instead of reporting
  * it. */
 #define MFSK_TXAMP    2200.0
+/* Symbol-boundary crossfade, in samples (see mfsk_synth).  Must not exceed
+ * the guard interval (MFSK_GI * MFSK_NFFT = 64), which the receiver drops. */
+#define MFSK_XFADE    32
 /* SNR3k from per-bin energies: one bin is MFSK_FS/MFSK_NFFT = 31.25 Hz wide,
  * the reference band 3 kHz, so 10*log10(31.25/3000) = -19.82 dB.  The
  * correction is fitted against codec2's ch: test-TX frames at SNR3k +9.0,
@@ -87,6 +90,8 @@ typedef struct {
     double lpf[MFSK_LPF_TAPS];
     double w;                       /* carrier radians/sample */
     long tx_n;                      /* TX carrier phase counter (per burst) */
+    double complex tx_tail[MFSK_XFADE]; /* last symbol's faded-out suffix */
+    int      tx_have_tail;          /* ...to add to the next symbol's head */
 
     /* RX sliding window (int16 passband) */
     int16_t *rxbuf;
@@ -306,20 +311,54 @@ static uint64_t mfsk_now_ms(void)
     return (uint64_t)ts.tv_sec * 1000ULL + (uint64_t)ts.tv_nsec / 1000000ULL;
 }
 
-static int mfsk_emit(mfsk_modem_t *h, const mfsk_cplx *syms, int nsym, int16_t *out)
+/* Synthesize nsym freq-domain symbols as int16 passband.
+ *
+ * Each symbol is one IFFT (a tone per lit bin) behind its cyclic prefix.  Laid
+ * end to end, every symbol boundary is a jump in phase and frequency -- a
+ * click -- and a rectangular tone's spectrum falls off only as 1/f: measured
+ * on this output, -27..-34 dB out of band against -50..-66 dB for codec2's
+ * modes, and heard on air as spikes across the spectrum.  So the boundaries
+ * are crossfaded (windowed overlap-add): a symbol continues cyclically for
+ * MFSK_XFADE samples past its end, fading out under a raised cosine, while the
+ * next fades in over the same samples.  Both sit inside the next symbol's
+ * guard interval, which the receiver discards, so its FFT window sees the
+ * symbol exactly as before.  A burst fades in at its start and, when last is
+ * set, out over the end of its final symbol.
+ *
+ * *tx_n is the carrier phase counter (absolute sample index in the burst);
+ * tail/have_tail carry the pending fade-out across calls, so preamble, data
+ * and postamble join as smoothly as symbols do. */
+static int mfsk_synth(const ofdm_frame_t *o, double w, int nofdm, const mfsk_cplx *syms, int nsym,
+                      int16_t *out, long *tx_n, double complex *tail, int *have_tail, int last)
 {
+    static double rise[MFSK_XFADE];
+    static int rise_init;
+    if (!rise_init) {
+        for (int j = 0; j < MFSK_XFADE; j++)
+            rise[j] = 0.5 * (1.0 - cos(M_PI * (j + 0.5) / MFSK_XFADE));
+        rise_init = 1;
+    }
     int written = 0;
     for (int s = 0; s < nsym; s++)
     {
         double complex bins[MFSK_NCAR], pad[MFSK_NFFT], t[MFSK_NFFT], cp[MFSK_NFFT + 128];
         for (int k = 0; k < MFSK_NCAR; k++)
             bins[k] = syms[s * MFSK_NCAR + k].re + syms[s * MFSK_NCAR + k].im * I;
-        ofdm_zero_padder(&h->o, bins, pad);
-        ofdm_ifft(&h->o, pad, t);
-        ofdm_gi_adder(&h->o, t, cp);
-        for (int n = 0; n < h->Nofdm; n++)
+        ofdm_zero_padder(o, bins, pad);
+        ofdm_ifft(o, pad, t);
+        ofdm_gi_adder(o, t, cp);
+        for (int j = 0; j < MFSK_XFADE; j++)
+            cp[j] = cp[j] * rise[j] + (*have_tail ? tail[j] : 0);
+        if (last && s == nsym - 1)
+            for (int j = 0; j < MFSK_XFADE; j++)
+                cp[nofdm - MFSK_XFADE + j] *= rise[MFSK_XFADE - 1 - j];
+        /* The cyclic continuation past the symbol's end is its body's start. */
+        for (int j = 0; j < MFSK_XFADE; j++)
+            tail[j] = t[j] * rise[MFSK_XFADE - 1 - j];
+        *have_tail = !(last && s == nsym - 1);
+        for (int n = 0; n < nofdm; n++)
         {
-            double ph = h->w * (double)h->tx_n++;
+            double ph = w * (double)(*tx_n)++;
             double v = MFSK_TXAMP * (creal(cp[n]) * cos(ph) + cimag(cp[n]) * sin(ph));
             if (v > 32767.0) v = 32767.0; else if (v < -32768.0) v = -32768.0;
             out[written++] = (int16_t)lrint(v);
@@ -328,14 +367,21 @@ static int mfsk_emit(mfsk_modem_t *h, const mfsk_cplx *syms, int nsym, int16_t *
     return written;
 }
 
+static int mfsk_emit(mfsk_modem_t *h, const mfsk_cplx *syms, int nsym, int16_t *out, int last)
+{
+    return mfsk_synth(&h->o, h->w, h->Nofdm, syms, nsym, out, &h->tx_n,
+                      h->tx_tail, &h->tx_have_tail, last);
+}
+
 static int mfsk_be_preamble_tx(void *ctx, int16_t *out)
 {
     mfsk_modem_t *h = ctx;
     h->tx_n = 0;   /* preamble is always first in a burst */
+    h->tx_have_tail = 0;
     mfsk_cplx *pre = (mfsk_cplx *)calloc((size_t)h->P * MFSK_NCAR, sizeof(mfsk_cplx));
     if (!pre) return 0;
     mfsk_generate_preamble(&h->m, pre, h->P);
-    int n = mfsk_emit(h, pre, h->P, out);
+    int n = mfsk_emit(h, pre, h->P, out, 0);
     free(pre);
     return n;
 }
@@ -367,7 +413,7 @@ static int mfsk_be_rawdata_tx(void *ctx, int16_t *out, const uint8_t *frame)
     mfsk_cplx *dat = (mfsk_cplx *)calloc((size_t)h->NPAY * MFSK_NCAR, sizeof(mfsk_cplx));
     if (!dat) { free(cbits); return 0; }
     mfsk_mod(&h->m, cbits, nb, dat);
-    int n = mfsk_emit(h, dat, h->NPAY, out);
+    int n = mfsk_emit(h, dat, h->NPAY, out, 0);
     free(dat); free(cbits);
     return n;
 }
@@ -378,7 +424,7 @@ static int mfsk_be_postamble_tx(void *ctx, int16_t *out)
     mfsk_cplx *pst = (mfsk_cplx *)calloc((size_t)h->P * MFSK_NCAR, sizeof(mfsk_cplx));
     if (!pst) return 0;
     mfsk_generate_postamble(&h->m, pst, h->P);
-    int n = mfsk_emit(h, pst, h->P, out);
+    int n = mfsk_emit(h, pst, h->P, out, 1);
     free(pst);
     return n;
 }
@@ -940,24 +986,10 @@ int mfsk_pattern_tx(int16_t *out, int pattern_kind)
     else
         mfsk_generate_ack_pattern(&g_pat_m, bins);
 
-    int written = 0;
     long tx_n = 0;
-    for (int s = 0; s < ns; s++)
-    {
-        double complex fb[MFSK_NCAR], pad[MFSK_NFFT], t[MFSK_NFFT], cp[MFSK_NFFT + 128];
-        for (int k = 0; k < MFSK_NCAR; k++)
-            fb[k] = bins[s * MFSK_NCAR + k].re + bins[s * MFSK_NCAR + k].im * I;
-        ofdm_zero_padder(&g_pat_o, fb, pad);
-        ofdm_ifft(&g_pat_o, pad, t);
-        ofdm_gi_adder(&g_pat_o, t, cp);
-        for (int n = 0; n < g_pat_nofdm; n++)
-        {
-            double ph = g_pat_w * (double)tx_n++;
-            double v = MFSK_TXAMP * (creal(cp[n]) * cos(ph) + cimag(cp[n]) * sin(ph));
-            if (v > 32767.0) v = 32767.0; else if (v < -32768.0) v = -32768.0;
-            out[written++] = (int16_t)lrint(v);
-        }
-    }
+    double complex tail[MFSK_XFADE];
+    int have_tail = 0;
+    int written = mfsk_synth(&g_pat_o, g_pat_w, g_pat_nofdm, bins, ns, out, &tx_n, tail, &have_tail, 1);
     free(bins);
     return written;
 }
