@@ -17,6 +17,7 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 #include "carousel_sim.h"
+#include "modem_mfsk.h"            /* MERCURY_MODE_MFSK */
 #include "sim_channel.h"
 #include "carousel.h"
 #include "arq_protocol.h"
@@ -78,6 +79,7 @@ typedef struct {
     uint8_t  rx[CAR_SIM_BYTES + 64]; size_t rx_len;
     int      rx_mode;              /* the payload decoder's binding */
     uint64_t tx_start, tx_end;     /* current/last keydown */
+    bool     tx_seen;              /* the peer could sync on it (CAR_CS_DECODABLE) */
 } station_t;
 
 static station_t S[2];
@@ -86,6 +88,7 @@ static int collisions;
 static uint64_t now_ms;
 static bool trace;
 static double snr_now = 12.0;          /* the SNR stamped on delivered frames */
+static bool cs_decodable;              /* CAR_CS_DECODABLE: carrier sense needs a decodable frame */
 static double step_from, step_to, step_at_s = -1.0;   /* a step:A:B:T channel */
 
 static void io_keydown(void *ctx, const car_frame_t *fr, int n)
@@ -93,6 +96,7 @@ static void io_keydown(void *ctx, const car_frame_t *fr, int n)
     station_t *s = ctx, *peer = &S[s->id ^ 1];
     uint64_t t = now_ms + HEAD_MS;
     s->tx_start = now_ms;
+    s->tx_seen = false;
     if (trace) printf("%9.1f %c keys:", now_ms / 1000.0, 'A' + s->id);
     for (int i = 0; i < n; i++) {
         if (i) t += fr[i].gap_ms;
@@ -103,6 +107,9 @@ static void io_keydown(void *ctx, const car_frame_t *fr, int n)
             else printf(" data(%d)", fr[i].mode);
         }
         if (sim_channel_schedule(ch, t, s->id, fr[i].mode, 0, &d)) {
+            /* A decoder syncs on what it can decode: the control mode, or the
+             * mode the peer's payload decoder is bound to. */
+            if (fr[i].mode == ARQ_CONTROL_MODE || fr[i].mode == peer->rx_mode) s->tx_seen = true;
             uint8_t *b = malloc(fr[i].len);
             memcpy(b, fr[i].bytes, fr[i].len);
             event_t e = { .t = t + air, .type = EV_ARRIVE, .st = peer->id, .mode = fr[i].mode,
@@ -131,8 +138,10 @@ static void io_pattern(void *ctx, int kind)
     uint64_t t = now_ms + HEAD_MS, d;
     uint64_t air = sim_channel_airtime_ms(SIM_MODE_PATTERN, 0);
     s->tx_start = now_ms;
+    s->tx_seen = false;
     if (trace) printf("%9.1f %c keys: pattern %s\n", now_ms / 1000.0, 'A' + s->id, kind ? "BREAK" : "ACK");
     if (sim_channel_schedule(ch, t, s->id, SIM_MODE_PATTERN, 0, &d)) {
+        s->tx_seen = peer->rx_mode == MERCURY_MODE_MFSK;   /* only the MFSK decoder syncs on it */
         event_t e = { .t = t + air + SIM_PATTERN_DETECT_MS, .type = EV_ARRIVE, .st = peer->id, .mode = SIM_MODE_PATTERN,
                       .len = (size_t)kind, .bytes = NULL, .f_start = t, .f_end = t + air };
         push(e);
@@ -145,6 +154,10 @@ static void io_pattern(void *ctx, int kind)
 static bool io_peer_keyed(void *ctx)
 {
     const station_t *p = &S[((station_t *)ctx)->id ^ 1];
+    /* CAR_CS_DECODABLE: carrier sense is a decoder in sync, so a keydown the
+     * listener cannot decode is not sensed (on air: a DATAC1 probe at 4.5 dB,
+     * and patterns, which no OFDM decoder syncs on). */
+    if (cs_decodable && !p->tx_seen) return false;
     return p->tx_end && p->tx_start + CS_ACQ_MS <= now_ms && now_ms < p->tx_end - TAIL_MS + CS_ACQ_MS;
 }
 
@@ -172,6 +185,7 @@ static void io_deliver(void *ctx, const uint8_t *buf, size_t len)
 void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limit_ms, car_sim_result_t *res)
 {
     trace = getenv("CAR_TRACE") != NULL;
+    cs_decodable = getenv("CAR_CS_DECODABLE") != NULL;
     nev = 0;
     collisions = 0;
     memset(S, 0, sizeof(S));

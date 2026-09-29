@@ -1309,7 +1309,16 @@ void car_on_tx_done(car_t *c, uint64_t now)
          * guard, and should be heard by SENSE_MS after that. */
         uint64_t start = now - TAIL_MS + ISS_GUARD_MS;
         bool floor = c->poll_level == 0 && c->io.pattern;
-        arm(c, CAR_T_SENSE, start + SENSE_MS + (floor ? FLOOR_SENSE_MS : 0));
+        /* Carrier sense is the payload decoder finding the round's preamble,
+         * and on a marginal rung not yet seen to deliver it may not: on air a
+         * one-frame DATAC1 probe at 4.5 dB was unsensed 1.3 s in, and the
+         * re-poll for a sender that "missed the poll" went out over it (twice
+         * in three runs).  A one-frame round's window closes about as soon. */
+        int pl = c->poll_level;
+        bool blind = c->poll_n == 1 && level_marginal(c, pl) &&
+                     !(c->lv_sent[pl] >= 3.0 && level_delivery(c, pl) >= 0.7);
+        if (floor || !blind)
+            arm(c, CAR_T_SENSE, start + SENSE_MS + (floor ? FLOOR_SENSE_MS : 0));
         arm_poll(c, start + HEAD_MS + round_air(c->poll_level, c->poll_n) + TAIL_MS + WINDOW_MARGIN_MS +
                     (floor ? FLOOR_LATE_MS : 0));
     }
