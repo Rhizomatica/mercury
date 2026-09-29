@@ -539,6 +539,16 @@ static int keydown_cap(int lv);
 static void arm_sender_wait(car_t *c, uint64_t tx_end)
 {
     uint64_t answer = tx_end + GUARD_MS + HEAD_MS + mode_air(ARQ_CONTROL_MODE) + TAIL_MS + WINDOW_MARGIN_MS;
+    /* A peer that reaches me only at the floor answers in a control mode I
+     * cannot hear -- not even as carrier.  Its handover is followed by a floor
+     * frame I sense only seconds into it; timed for the control frame alone,
+     * my repeat went out over that frame (on air at 2 %, fourteen times in one
+     * run: st2 keyed 1.2 s into the gateway's MFSK, after a handover it never
+     * heard).  Or it polls, and when I do not key, polls again: my repeat
+     * then went out over the re-poll (sim, asym:-10:14 bidir).  Wait out both:
+     * the floor frame's sense time, and a second control keydown. */
+    if (c->drove_peer && c->poll_level == 0 && c->io.pattern)
+        answer += SENSE_MS + FLOOR_SENSE_MS + HEAD_MS + mode_air(ARQ_CONTROL_MODE) + TAIL_MS;
     /* A floor round: the answer is a pattern, a poll, or nothing -- and
      * nothing means "keep going" there too.  A handover round included: the
      * control mode may never get through, and a pattern confirms it. */
