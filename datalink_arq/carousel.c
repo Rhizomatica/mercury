@@ -761,9 +761,14 @@ static double level_potential(const car_t *c, int lv) { return level_rate(lv) * 
  * it should work, back to every PROBE_EVERY: backing off regardless cost a
  * link that rose from 3 to 10 dB 17 % (sim, step:3:10:200). */
 static bool level_marginal(const car_t *c, int lv);
+static double level_delivery(const car_t *c, int lv);
 static int probe_every(const car_t *c, int lv)
 {
-    if (!level_marginal(c, lv)) return PROBE_EVERY;
+    /* Nor for a rung that has been delivering: on air one faded DATAC3 round
+     * sent a session down to DATAC4, whose frames read the SNR 3.5 dB lower
+     * (marginal for DATAC3), and backed off it stayed on DATAC4 for 42-46
+     * frames where the build without the backoff was back on DATAC3 after 8. */
+    if (!level_marginal(c, lv) || level_delivery(c, lv) >= PROBE_UP_DELIVERY) return PROBE_EVERY;
     int f = c->lv_probe_fails[lv] < 3 ? c->lv_probe_fails[lv] : 3;
     return PROBE_EVERY << f;
 }
