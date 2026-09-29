@@ -344,6 +344,14 @@ int mercury_engine_init(const mercury_config *cfg,
     return 0;
 }
 
+/* On the bench stations a stop now and then ran past main()'s 10 s
+ * watchdog, always after the audio threads had exited and before the
+ * websocket reported shutting down, and never reproduced off the station.
+ * The step is recorded so the watchdog can name it. */
+static const char *volatile g_shutdown_step;
+
+const char *mercury_engine_shutdown_step(void) { return g_shutdown_step; }
+
 void mercury_engine_shutdown(void)
 {
     if (!g_initialized) return;
@@ -352,16 +360,23 @@ void mercury_engine_shutdown(void)
 
     shutdown_ = true;
 
+    g_shutdown_step = "tcp interfaces";
     interfaces_shutdown();
+    g_shutdown_step = "modem";
     shutdown_modem(&g_modem);
 
+    g_shutdown_step = "audio";
     if (g_audio_system != AUDIO_SUBSYSTEM_SHM)
         audioio_deinit(&g_radio_capture, &g_radio_playback);
 
+    g_shutdown_step = "ui";
     ui_comm_shutdown(&g_ui_ctx);
+    g_shutdown_step = "radio io";
     radio_io_shutdown();
 
+    g_shutdown_step = "message store";
     msg_store_shutdown();
+    g_shutdown_step = "done";
 
     HLOGI("engine", "Mercury engine shut down");
     hermes_log_shutdown();

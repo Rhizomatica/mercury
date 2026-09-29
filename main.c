@@ -121,6 +121,22 @@ static void start_forced_exit_thread(void)
 }
 #endif
 
+#ifndef _WIN32
+/* The orderly shutdown's backstop: say which step hung, then die of SIGALRM
+ * as before (write() and raise() are async-signal-safe). */
+static void shutdown_watchdog(int sig)
+{
+    static const char pre[] = "Shutdown watchdog: stuck in ";
+    const char *step = mercury_engine_shutdown_step();
+    if (!step) step = "(not started)";
+    (void)!write(STDERR_FILENO, pre, sizeof(pre) - 1);
+    (void)!write(STDERR_FILENO, step, strlen(step));
+    (void)!write(STDERR_FILENO, "\n", 1);
+    signal(sig, SIG_DFL);
+    raise(sig);
+}
+#endif
+
 static void handle_termination_signal(int sig)
 {
     (void)sig;
@@ -269,6 +285,7 @@ int main(int argc, char *argv[])
     ARQ_TRACE_DUMP("shutdown");
 
 #ifndef _WIN32
+    signal(SIGALRM, shutdown_watchdog);
     alarm(10);
 #endif
 
