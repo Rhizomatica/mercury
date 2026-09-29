@@ -557,10 +557,24 @@ static void arm_sender_wait(car_t *c, uint64_t tx_end)
      * Silence still means nothing there: only a poll or a pattern moves me. */
     c->pat_waiting = c->tx_level > 0 && c->io.pattern;
     if (c->floor_waiting) {
+        /* The learned pattern delay may shorten the wait, but never below the
+         * time a control frame takes to be heard: the answer to a floor round
+         * can be the receiver's handover instead of a pattern.  On air the
+         * wait had learned 4.2 s, the handover decodes 4.4 s after my unkey,
+         * and carrier sense -- the gateway's control decoder, just after its
+         * own 27 s keydown -- did not see it: I keyed 3.3 s into it. */
+        uint64_t ctl_answer = answer;
         answer += FLOOR_ANSWER_MS;
         c->floor_tx_end = tx_end;
         if (c->floor_delay_ms && tx_end + c->floor_delay_ms + FLOOR_DELAY_MARGIN_MS < answer)
             answer = tx_end + c->floor_delay_ms + FLOOR_DELAY_MARGIN_MS;
+        /* Only when that control frame could reach me at all: below the
+         * control mode's floor both ways (sim, cliff:-9 bidir) the longer wait
+         * bought nothing, and shifted this timer into lockstep with the
+         * peer's handover repeats. */
+        bool ctl_audible = c->snr_valid && c->snr_ema >= ARQ_SNR_MIN_DATAC15_DB;
+        if (ctl_audible && answer < ctl_answer)
+            answer = ctl_answer;
     }
     uint64_t t = c->handover_unconfirmed || c->floor_waiting ? answer : tx_end + SENDER_SILENCE_MS;
     arm(c, CAR_T_WAIT, t);
