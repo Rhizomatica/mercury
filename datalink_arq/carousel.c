@@ -91,6 +91,12 @@
 #define FLOOR_SILENT_MAX  6
 #define FLOOR_LATE_MS     9000
 #define PATTERN_AIR_MS    640
+/* After a pattern above the floor the sender keys later than after a poll:
+ * it detects the pattern ~0.25 s after it ends, where a poll is decoded as
+ * it ends.  Sensed at SENSE_MS alone, the round had been on the air 0.8 s
+ * and its preamble not yet found: on air the receiver took the sender for
+ * one that missed the pattern and re-polled over its round. */
+#define PATTERN_SENSE_EXTRA_MS 1000
 /* An MFSK round is answered later than an OFDM one: on the real modems the
  * last frame decoded ~3.7 s after the sender unkeyed, and a pattern keyed
  * after it ended 5.6 s after the round -- past the 5.75 s the sender waited,
@@ -1295,7 +1301,7 @@ void car_on_tx_done(car_t *c, uint64_t now)
          * as its round has not started. */
         uint64_t start = now - TAIL_MS + ISS_GUARD_MS;
         bool floor = c->poll_level == 0;
-        if (!floor) arm(c, CAR_T_SENSE, start + SENSE_MS);
+        if (!floor) arm(c, CAR_T_SENSE, start + SENSE_MS + PATTERN_SENSE_EXTRA_MS);
         arm_poll(c, start + HEAD_MS + round_air(c->poll_level, c->poll_n) + TAIL_MS +
                     WINDOW_MARGIN_MS + (floor ? FLOOR_LATE_MS : 0));
     } else if (after == AFTER_POLL) {

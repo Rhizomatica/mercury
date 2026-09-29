@@ -30,7 +30,9 @@
 
 #define HEAD_MS         110       /* tx delay + head silence (as carousel.c) */
 #define TAIL_MS         200
+#ifndef CS_ACQ_MS
 #define CS_ACQ_MS       400       /* carrier sense: sync this long after keying */
+#endif
 
 /* ---- events ---------------------------------------------------------------- */
 enum { EV_ARRIVE, EV_TXEND };
@@ -117,6 +119,11 @@ static void io_keydown(void *ctx, const car_frame_t *fr, int n)
 
 static void io_bind_rx(void *ctx, int mode) { ((station_t *)ctx)->rx_mode = mode; }
 
+/* The detector reports a pattern this long after it ends (0.23-0.24 s on air,
+ * Pi 4); a poll, by contrast, is decoded as it ends. */
+#ifndef SIM_PATTERN_DETECT_MS
+#define SIM_PATTERN_DETECT_MS 240
+#endif
 /* A pattern: 0.64 s on the air, detected ~10 dB below DATAC16. */
 static void io_pattern(void *ctx, int kind)
 {
@@ -126,7 +133,7 @@ static void io_pattern(void *ctx, int kind)
     s->tx_start = now_ms;
     if (trace) printf("%9.1f %c keys: pattern %s\n", now_ms / 1000.0, 'A' + s->id, kind ? "BREAK" : "ACK");
     if (sim_channel_schedule(ch, t, s->id, SIM_MODE_PATTERN, 0, &d)) {
-        event_t e = { .t = t + air, .type = EV_ARRIVE, .st = peer->id, .mode = SIM_MODE_PATTERN,
+        event_t e = { .t = t + air + SIM_PATTERN_DETECT_MS, .type = EV_ARRIVE, .st = peer->id, .mode = SIM_MODE_PATTERN,
                       .len = (size_t)kind, .bytes = NULL, .f_start = t, .f_end = t + air };
         push(e);
     }
