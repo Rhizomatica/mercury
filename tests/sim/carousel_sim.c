@@ -84,6 +84,7 @@ static int collisions;
 static uint64_t now_ms;
 static bool trace;
 static double snr_now = 12.0;          /* the SNR stamped on delivered frames */
+static double step_from, step_to, step_at_s = -1.0;   /* a step:A:B:T channel */
 
 static void io_keydown(void *ctx, const car_frame_t *fr, int n)
 {
@@ -186,6 +187,10 @@ void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limi
     }
     else if (!strncmp(chan, "awgn:", 5)) sim_channel_set_per(ch, atof(chan + 5));
     else if (!strncmp(chan, "cliff:", 6)) { sim_channel_set_snr(ch, atof(chan + 6)); snr_db = atof(chan + 6); }
+    else if (!strncmp(chan, "step:", 5)) {   /* step:A:B:T  A dB, then B dB from T s on */
+        sscanf(chan + 5, "%lf:%lf:%lf", &step_from, &step_to, &step_at_s);
+        sim_channel_set_snr(ch, step_from); snr_db = step_from;
+    }
     else if (!strcmp(chan, "nvis")) {
         sim_channel_set_mode_per(ch, NVIS, (int)(sizeof(NVIS) / sizeof(NVIS[0])));
         snr_db = 10.0;
@@ -223,6 +228,10 @@ void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limi
         }
         if (t == UINT64_MAX || t > limit_ms) break;
         now_ms = t;
+        if (step_at_s >= 0 && now_ms >= (uint64_t)(step_at_s * 1000.0)) {
+            sim_channel_set_snr(ch, step_to); snr_now = step_to;
+            step_at_s = -1.0;
+        }
         event_t e;
         while (nev && next_event_time() <= now_ms && pop(&e)) {
             station_t *s = &S[e.st];

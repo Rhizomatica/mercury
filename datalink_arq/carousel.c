@@ -617,6 +617,8 @@ static void measure_level(car_t *c, int lv, int frames, double loss, uint64_t no
     c->lv_lost[lv] = LV_DECAY * c->lv_lost[lv] + frames * loss;
     if (loss >= 1.0) c->lv_dead_run[lv] += frames;
     else             c->lv_dead_run[lv] = 0;
+    if (loss >= 0.5) c->lv_probe_fails[lv]++;
+    else             c->lv_probe_fails[lv] = 0;
     c->lv_rounds[lv]++;
     c->lv_round_at[lv] = ++c->polls;
     c->lv_probe_at[lv] = now;
@@ -732,6 +734,21 @@ static double level_goodput(const car_t *c, int lv)
 /* The most a rung could deliver: no loss, full rounds. */
 static double level_potential(const car_t *c, int lv) { return level_rate(lv) * air_fraction(c, lv, keydown_cap(lv)); }
 
+/* A measured rung above the best is probed again every PROBE_EVERY polls,
+ * twice as long after each round in a row on it that lost half its frames
+ * while the SNR still says the rung is marginal: on the sim's cliffs and
+ * fading DATAC1 was probed over DATAC3 and lost, every 8 polls, and each
+ * probe cost a poll back down (NVIS 9 % faster without).  Once the SNR says
+ * it should work, back to every PROBE_EVERY: backing off regardless cost a
+ * link that rose from 3 to 10 dB 17 % (sim, step:3:10:200). */
+static bool level_marginal(const car_t *c, int lv);
+static int probe_every(const car_t *c, int lv)
+{
+    if (!level_marginal(c, lv)) return PROBE_EVERY;
+    int f = c->lv_probe_fails[lv] < 3 ? c->lv_probe_fails[lv] : 3;
+    return PROBE_EVERY << f;
+}
+
 static int choose_level(const car_t *c, uint64_t now)
 {
     int best = -1;
@@ -760,7 +777,7 @@ static int choose_level(const car_t *c, uint64_t now)
             continue;                   /* cannot win even with no loss */
         if (!level_allowed(c, up)) {
             if (!reprobe_due(c, up, now)) break;
-        } else if (c->lv_rounds[up] && c->polls - c->lv_round_at[up] < PROBE_EVERY) {
+        } else if (c->lv_rounds[up] && c->polls - c->lv_round_at[up] < probe_every(c, up)) {
             break;                      /* measured and fresh: the argmax decided */
         }
         return up;                      /* a probe: its earned round is one frame */

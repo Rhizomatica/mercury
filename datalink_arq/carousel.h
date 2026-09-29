@@ -133,6 +133,7 @@ typedef struct {
     /* as receiver: the peer's direction, measured here */
     double   lv_sent[CAR_NLEVELS], lv_lost[CAR_NLEVELS];
     int      lv_rounds[CAR_NLEVELS], lv_dead_run[CAR_NLEVELS];
+    int      lv_probe_fails[CAR_NLEVELS]; /* its rounds in a row that lost half */
     uint32_t lv_round_at[CAR_NLEVELS];
     uint64_t lv_probe_at[CAR_NLEVELS], lv_backoff_ms[CAR_NLEVELS];
     uint32_t polls;
