@@ -143,6 +143,7 @@ typedef struct {
     double   loss_est;
     uint32_t poll_id;
     int      poll_level, poll_n;
+    bool     drove_peer;            /* poll_level is a rung I have polled the peer on */
     int      round_seen, round_frames;
     bool     round_heard, status_seen;
     int      silent_polls;

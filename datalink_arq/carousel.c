@@ -942,6 +942,7 @@ static void start_driving(car_t *c, uint32_t poll_id, int lv, int n, uint64_t ro
     c->idle = false;
     c->handover_unconfirmed = false;
     c->poll_id = poll_id; c->poll_level = lv; c->poll_n = n;
+    c->drove_peer = true;
     bind_rx(c, lv);
     c->round_seen = 0; c->round_frames = n; c->status_seen = false;
     c->round_heard = true;
@@ -998,7 +999,7 @@ static void send_poll(car_t *c, int lv, int n)
     m.level = lv; m.n = n;
     c->rx_break = false; c->last_was_pattern = false; c->floor_patterns = 0;
     c->floor_streaming = false;
-    if (n) { c->poll_level = lv; c->poll_n = n; bind_rx(c, lv); }
+    if (n) { c->poll_level = lv; c->poll_n = n; c->drove_peer = true; bind_rx(c, lv); }
     c->round_seen = 0; c->round_frames = n; c->status_seen = false; c->done_in_round = 0;
     c->round_heard = false;
     encode_ctl(&m, fr[0].bytes);
@@ -1236,7 +1237,13 @@ static void on_ctl(car_t *c, uint64_t now, const msg_t *m)
     c->idle = false;
     c->tx_level = m->level; c->tx_n = m->n;
     car_trace(c, "tx polled lv=%d n=%d loss=%.2f", m->level, m->n, c->tx_loss);
-    bind_rx(c, m->level);                     /* where the peer's data will come too */
+    /* While I send, what the payload decoder must catch is the peer's
+     * handover round, which comes on the rung I last polled it on -- not on
+     * mine.  Bound to mine, on air (DATAC1 one way, DATAC3 the other) it
+     * found the handover's DATAC3 frame only after decoding the handover and
+     * rebinding, 300 ms before that frame began, and lost it; the loss was
+     * scored against DATAC3. */
+    bind_rx(c, c->drove_peer ? c->poll_level : m->level);
     arm(c, CAR_T_SEND, now + ISS_GUARD_MS);
 }
 
