@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"image/color"
 	"strconv"
 	"strings"
 	"time"
@@ -10,6 +11,7 @@ import (
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/dialog"
 	"fyne.io/fyne/v2/layout"
+	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 
 	"mercury-client/client"
@@ -33,6 +35,21 @@ var mercuryClientSingleton *chatWindow
 // the time anyone presses Connect -- and staleness is the whole problem here.
 // Set by main(); nil in tests, where the interlock simply does not engage.
 var currentTelemetry func() telemetryState
+
+// logEntryTheme darkens Fyne's disabled text colour for the light variant only.
+// The activity log is a disabled Entry, so its text takes the theme's "disabled"
+// colour: near-white (#e3e3e3) on the light theme, which is unreadable on a
+// white background. On dark it keeps the stock grey.
+type logEntryTheme struct {
+	fyne.Theme
+}
+
+func (t *logEntryTheme) Color(name fyne.ThemeColorName, variant fyne.ThemeVariant) color.Color {
+	if name == theme.ColorNameDisabled && variant == theme.VariantLight {
+		return color.NRGBA{R: 0x56, G: 0x56, B: 0x56, A: 0xff}
+	}
+	return t.Theme.Color(name, variant)
+}
 
 // embeddedClientMayConnect decides whether the embedded client may take the TNC
 // ports, and says why not when it may not.
@@ -77,6 +94,9 @@ type chatWindow struct {
 	mc   *client.Client
 	done chan struct{}
 	log  *widget.Entry
+	// logBox wraps the log Entry in a theme override that keeps its disabled
+	// text readable on the light theme.
+	logBox *container.ThemeOverride
 	// logLines is the bounded ring (newest first) backing the log Entry,
 	// so appending never re-splits the widget's own text.
 	logLines []string
@@ -167,6 +187,10 @@ func (cw *chatWindow) build(app fyne.App, telemetry telemetryState, arqPort, bro
 	cw.log.SetPlaceHolder("Activity log...")
 	cw.log.Wrapping = fyne.TextWrapBreak
 	cw.log.Disable()
+	// The disabled Entry renders its text in the theme's "disabled" colour,
+	// which is near-white on the light theme. Wrap it in a theme override that
+	// darkens that colour for the light variant only, leaving dark unchanged.
+	cw.logBox = container.NewThemeOverride(cw.log, &logEntryTheme{Theme: theme.DefaultTheme()})
 
 	cw.arqBox = container.NewVBox()
 	cw.arqScroll = container.NewScroll(cw.arqBox)
@@ -258,7 +282,7 @@ func (cw *chatWindow) build(app fyne.App, telemetry telemetryState, arqPort, bro
 	)
 	logBox := container.NewBorder(
 		widget.NewLabelWithStyle("Activity Log", fyne.TextAlignCenter, fyne.TextStyle{Bold: true}),
-		nil, nil, nil, container.NewScroll(cw.log),
+		nil, nil, nil, container.NewScroll(cw.logBox),
 	)
 
 	right := container.NewBorder(nil, nil, nil, nil,
