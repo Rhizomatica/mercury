@@ -1436,6 +1436,12 @@ static void car_set_seed(arq_session_t *sess, uint16_t seed)
         g_cbs.set_crc_seed(seed);
 }
 
+static void car_io_trace(void *ctx, const char *line)
+{
+    (void)ctx;
+    HLOGD("carousel", "%s", line);
+}
+
 static void car_start(arq_session_t *sess, bool is_caller, uint64_t now)
 {
     car_io_t io = {
@@ -1443,6 +1449,7 @@ static void car_start(arq_session_t *sess, bool is_caller, uint64_t now)
         .tx_read = car_io_tx_read, .tx_pending = car_io_tx_pending, .deliver = car_io_deliver,
         .tx_confirmed = car_io_tx_confirmed, .ctx = sess,
         .pattern = g_cbs.send_pattern ? car_io_pattern : NULL,
+        .trace = car_io_trace,
     };
     car_init(sess->car, &io, sess->car_rx_level, sess->car_tx_level);
     sess->car_active = true;

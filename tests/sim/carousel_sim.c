@@ -89,6 +89,14 @@ static uint64_t now_ms;
 static bool trace;
 static double snr_now = 12.0;          /* the SNR stamped on delivered frames */
 static bool cs_decodable;              /* CAR_CS_DECODABLE: carrier sense needs a decodable frame */
+/* CAR_SNR_BIAS: the estimate as the bench read it at 10 %: DATAC15, DATAC4 and
+ * DATAC16 frames about 3.5 dB below DATAC3 and DATAC1 on the same link. */
+static bool snr_biased;
+static double snr_bias(int mode)
+{
+    if (!snr_biased) return 0.0;
+    return mode == FREEDV_MODE_DATAC15 || mode == FREEDV_MODE_DATAC4 || mode == ARQ_CONTROL_MODE ? -3.5 : 0.0;
+}
 static double step_from, step_to, step_at_s = -1.0;   /* a step:A:B:T channel */
 
 static void io_keydown(void *ctx, const car_frame_t *fr, int n)
@@ -125,6 +133,10 @@ static void io_keydown(void *ctx, const car_frame_t *fr, int n)
 }
 
 static void io_bind_rx(void *ctx, int mode) { ((station_t *)ctx)->rx_mode = mode; }
+static void io_trace(void *ctx, const char *line)
+{
+    if (trace) printf("%9.1f %c   %s\n", now_ms / 1000.0, 'A' + ((station_t *)ctx)->id, line);
+}
 
 /* The detector reports a pattern this long after it ends (0.23-0.24 s on air,
  * Pi 4); a poll, by contrast, is decoded as it ends. */
@@ -186,6 +198,7 @@ void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limi
 {
     trace = getenv("CAR_TRACE") != NULL;
     cs_decodable = getenv("CAR_CS_DECODABLE") != NULL;
+    snr_biased = getenv("CAR_SNR_BIAS") != NULL;
     nev = 0;
     collisions = 0;
     memset(S, 0, sizeof(S));
@@ -225,7 +238,7 @@ void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limi
         car_io_t io = { .keydown = io_keydown, .bind_rx = io_bind_rx, .peer_keyed = io_peer_keyed,
                         .tx_read = io_tx_read, .tx_pending = io_tx_pending, .deliver = io_deliver,
                         .pattern = getenv("CAR_NOPATTERN") ? NULL : io_pattern,
-                        .ctx = s };
+                        .trace = io_trace, .ctx = s };
         car_init(&s->car, &io, car_start_level((float)snr_db), car_start_level((float)snr_db));
         s->rx_mode = -1;
     }
@@ -268,9 +281,9 @@ void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limi
                 if (!getenv("CAR_NOPATTERN_RX"))
                     car_on_pattern(&s->car, now_ms, (int)e.len);
             } else if (e.mode == ARQ_CONTROL_MODE) {
-                car_on_frame(&s->car, now_ms, e.bytes, e.len, e.mode, true, (float)snr_now);
+                car_on_frame(&s->car, now_ms, e.bytes, e.len, e.mode, true, (float)(snr_now + snr_bias(e.mode)));
             } else if (e.mode == s->rx_mode) {
-                car_on_frame(&s->car, now_ms, e.bytes, e.len, e.mode, false, (float)snr_now);
+                car_on_frame(&s->car, now_ms, e.bytes, e.len, e.mode, false, (float)(snr_now + snr_bias(e.mode)));
             }
             free(e.bytes);
         }

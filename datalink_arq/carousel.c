@@ -35,6 +35,8 @@
 #include "modem_mfsk.h"            /* MERCURY_MODE_MFSK */
 
 #include <math.h>
+#include <stdarg.h>
+#include <stdio.h>
 #include <string.h>
 
 /* ---- parameters ---------------------------------------------------------- *
@@ -276,6 +278,17 @@ static uint8_t resolve16(uint8_t base, int v4)
     int d = (v4 - base) & 0x0F;
     if (d >= 8) d -= 16;
     return (uint8_t)(base + d);
+}
+
+static void car_trace(const car_t *c, const char *fmt, ...)
+{
+    if (!c->io.trace) return;
+    char line[200];
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(line, sizeof line, fmt, ap);
+    va_end(ap);
+    c->io.trace(c->io.ctx, line);
 }
 
 /* ---- timers and the medium ----------------------------------------------- */
@@ -1031,17 +1044,29 @@ static void on_poll_timer(car_t *c, uint64_t now)
     }
     deliver_in_order(c);
 
+    if (c->io.trace) {
+        char gp[120]; int p = 0;
+        for (int l = 0; l < CAR_NLEVELS && p < (int)sizeof gp - 24; l++)
+            if (c->lv_rounds[l])
+                p += snprintf(gp + p, sizeof gp - (size_t)p, " %d:%.0f/%.2f%s", l, 1000.0 * level_goodput(c, l),
+                              level_delivery(c, l), level_allowed(c, l) ? "" : "x");
+        car_trace(c, "rx round lv=%d seen=%d/%d status=%d snr=%.1f%s gp[lv:B/s/deliv]%s",
+                  c->poll_level, c->round_seen, c->round_frames, c->status_seen, c->snr_ema,
+                  c->snr_valid ? "" : "?", gp);
+    }
     bool done = peer_direction_done(c);
     uint64_t held = now - c->drive_start;
     bool quantum = (c->done_in_round && held >= TURN_QUANTUM_MS) || held >= TURN_CAP_MS;
     if (has_data(c) && (done || quantum)) {
         /* When the peer still has data its open blocks are only suspended:
          * both sides keep their state and carry on when the turn comes back. */
+        car_trace(c, "rx -> handover (%s)", done ? "peer done" : "turn quantum");
         send_handover(c);
         return;
     }
     bool floor = c->poll_level == 0 && c->io.pattern;
     if (done) {
+        car_trace(c, "rx -> done");
         c->idle = true;
         if (floor) send_pattern(c, CAR_PATTERN_BREAK, false);   /* the last block is in */
         else       send_poll(c, 0, 0);       /* ack only: nothing left either way */
@@ -1063,6 +1088,7 @@ static void on_poll_timer(car_t *c, uint64_t now)
      * -11 dB, carousel_bench). */
     if (c->round_seen > 0 && c->poll_level == 0) c->floor_streaming = true;
     if (floor && lv == 0 && c->floor_streaming && c->floor_patterns < floor_poll_every(c)) {
+        car_trace(c, "rx -> floor pattern %s", c->rx_break ? "BREAK" : "ACK");
         c->floor_patterns++;
         send_pattern(c, c->rx_break ? CAR_PATTERN_BREAK : CAR_PATTERN_ACK, true);
         return;
@@ -1076,10 +1102,12 @@ static void on_poll_timer(car_t *c, uint64_t now)
      * all the same, for the repairs and the in-order gap. */
     if (c->io.pattern && lv > 0 && lv == c->poll_level && n == c->poll_n && !c->status_seen &&
         c->round_seen > 0 && c->round_seen >= c->round_frames && c->floor_patterns < FLOOR_POLL_EVERY) {
+        car_trace(c, "rx -> pattern ACK (lv=%d n=%d)", lv, n);
         c->floor_patterns++;
         send_pattern(c, CAR_PATTERN_ACK, true);
         return;
     }
+    car_trace(c, "rx -> poll lv=%d n=%d", lv, n);
     send_poll(c, lv, n);
 }
 
@@ -1202,6 +1230,7 @@ static void on_ctl(car_t *c, uint64_t now, const msg_t *m)
     c->sending = true;
     c->idle = false;
     c->tx_level = m->level; c->tx_n = m->n;
+    car_trace(c, "tx polled lv=%d n=%d loss=%.2f", m->level, m->n, c->tx_loss);
     bind_rx(c, m->level);                     /* where the peer's data will come too */
     arm(c, CAR_T_SEND, now + ISS_GUARD_MS);
 }
@@ -1328,6 +1357,7 @@ void car_on_pattern(car_t *c, uint64_t now, int kind)
 {
     c->last_carrier_ms = now;
     if (!c->sending || c->tx_busy || !(c->floor_waiting || c->pat_waiting)) return;
+    car_trace(c, "tx pattern %s on lv=%d", kind == CAR_PATTERN_BREAK ? "BREAK" : "ACK", c->tx_level);
     if (c->pat_waiting) {
         /* The receiver answers a round above the floor with a pattern only
          * when every frame of it came: what I sent of each block is in.  The

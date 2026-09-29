@@ -75,6 +75,9 @@ typedef struct {
      * it the floor polls in the control mode like every other rung.  The
      * runtime calls car_on_tx_done() when it has ended. */
     void   (*pattern)(void *ctx, int kind);
+    /* One line on each decision (optional): what the receiver measured and
+     * chose, what the sender was told.  For debug logs. */
+    void   (*trace)(void *ctx, const char *line);
     void    *ctx;
 } car_io_t;
 
