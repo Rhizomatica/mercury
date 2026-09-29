@@ -649,9 +649,9 @@ static double gauss(void)
 
 typedef struct { double lag_s; double held; int decoded; int false_steps; } carrier_t;
 
-/* [15 s prior audio | burst | 2 s]; snr_db is in 3 kHz, NAN for no noise;
- * with_burst 0 feeds the same length of noise alone. */
-static carrier_t carrier_timeline(double snr_db, int with_burst)
+/* [preroll_s of prior audio | burst | 2 s]; snr_db is in 3 kHz, NAN for no
+ * noise; with_burst 0 feeds the same length of noise alone. */
+static carrier_t carrier_timeline(double snr_db, int with_burst, double preroll_s)
 {
     int bytes = be->bits_per_frame(ctx) / 8;
     int nin   = be->nin(ctx);
@@ -666,7 +666,7 @@ static carrier_t carrier_timeline(double snr_db, int with_burst)
     int np = be->preamble_tx(ctx, pre);
     int nd = be->rawdata_tx(ctx, dat, frame);
     int ns = be->postamble_tx(ctx, post);
-    int preroll = 15 * fs, trail = 2 * fs;       /* a live receiver has been listening */
+    int preroll = (int)(preroll_s * fs), trail = 2 * fs;
     int blen = np + nd + ns;
     int total = preroll + blen + trail;
     double *x = calloc((size_t)total, sizeof(double));
@@ -713,10 +713,29 @@ void test_mfsk_modem_sync_while_burst_arrives(void)
     const double snrs[] = { NAN, -7.0 };
     for (size_t i = 0; i < sizeof snrs / sizeof snrs[0]; i++) {
         be->close(ctx); ctx = be->open(MERCURY_MODE_MFSK);
-        carrier_t r = carrier_timeline(snrs[i], 1);
+        carrier_t r = carrier_timeline(snrs[i], 1, 15.0);  /* a live receiver has been listening */
         TEST_ASSERT_TRUE(r.lag_s >= 0.0 && r.lag_s < 1.0);
         TEST_ASSERT_TRUE(r.held > 0.9);
         TEST_ASSERT_TRUE(r.decoded);             /* and the frame still decodes */
+        TEST_ASSERT_EQUAL_INT(0, r.false_steps);
+    }
+}
+
+/* The same, one second after the decoder started from nothing -- which is where
+ * it is after its own station's TX, and after every burst it decodes (it drops
+ * the window).  It used to look for nothing until a whole burst's worth of
+ * audio had come in, so for 13 s after unkeying a station was deaf to an MFSK
+ * frame and keyed over it: seen on air, a repeated handover landing 1.3 s into
+ * the peer's floor frame. */
+void test_mfsk_modem_sync_soon_after_open(void)
+{
+    const double snrs[] = { NAN, -7.0 };
+    for (size_t i = 0; i < sizeof snrs / sizeof snrs[0]; i++) {
+        be->close(ctx); ctx = be->open(MERCURY_MODE_MFSK);
+        carrier_t r = carrier_timeline(snrs[i], 1, 1.0);
+        TEST_ASSERT_TRUE(r.lag_s >= 0.0 && r.lag_s < 1.0);
+        TEST_ASSERT_TRUE(r.held > 0.9);
+        TEST_ASSERT_TRUE(r.decoded);
         TEST_ASSERT_EQUAL_INT(0, r.false_steps);
     }
 }
@@ -726,7 +745,7 @@ void test_mfsk_modem_no_carrier_in_noise(void)
 {
     for (int k = 0; k < 3; k++) {
         be->close(ctx); ctx = be->open(MERCURY_MODE_MFSK);
-        TEST_ASSERT_EQUAL_INT(0, carrier_timeline(0.0, 0).false_steps);
+        TEST_ASSERT_EQUAL_INT(0, carrier_timeline(0.0, 0, 15.0).false_steps);
     }
 }
 
@@ -745,6 +764,7 @@ int main(void)
     RUN_TEST(test_mfsk_modem_tx_does_not_clip);
     RUN_TEST(test_mfsk_modem_noise_no_false_decode);
     RUN_TEST(test_mfsk_modem_sync_while_burst_arrives);
+    RUN_TEST(test_mfsk_modem_sync_soon_after_open);
     RUN_TEST(test_mfsk_modem_no_carrier_in_noise);
     return UNITY_END();
 }

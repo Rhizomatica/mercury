@@ -663,14 +663,24 @@ static int mfsk_be_rawdata_rx(void *ctx, uint8_t *bytes_out, const int16_t *demo
     h->rxlen += chunk;
     h->since_search += chunk;
 
-    /* Only attempt detection once a full burst could be present, and rate-limit
-     * the (heavy) downmix+search to a few times per burst. */
+    /* Rate-limit the (heavy) downmix+search to a few times per burst. */
     int burst = (h->P + h->NPAY) * h->Nofdm;   /* preamble + data */
-    if (h->rxlen < burst || h->since_search < 4 * h->Nofdm)
+    if (h->since_search < 4 * h->Nofdm)
         return 0;
     h->since_search = 0;
 
     mfsk_downmix(h);
+
+    /* Nothing can decode until a whole burst could be present, but a burst can
+     * already be arriving: the window starts empty after every decode and on
+     * open, and without this the carrier sense below stayed dark for a burst's
+     * length (13 s) -- on air, a station keyed a repeated handover over the
+     * peer's floor frame 1.3 s into it. */
+    if (h->rxlen < burst)
+    {
+        h->last_sync = mfsk_carrier_sense(h, h->bf_len - h->NPAY * h->Nofdm);
+        return 0;
+    }
 
     /* Primary sync anchor: the preamble at the burst head.  The payload's NPAY
      * symbols start P symbols after it. */
