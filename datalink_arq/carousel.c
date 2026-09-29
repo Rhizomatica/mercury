@@ -98,7 +98,11 @@
  * it ends.  Sensed at SENSE_MS alone, the round had been on the air 0.8 s
  * and its preamble not yet found: on air the receiver took the sender for
  * one that missed the pattern and re-polled over its round. */
-#define PATTERN_SENSE_EXTRA_MS 1000
+/* And an OFDM round is sensed only once its preamble is acquired: at 1 s
+ * more, on air, a DATAC3 round at 4.5 dB, which decoded, was still unsensed
+ * 1.7 s in.  (Waiting for the round's first frame to decode instead cost the
+ * fast rungs a lost poll's worth -- 7.4 s frames on DATAC17 -- in the sim.) */
+#define PATTERN_SENSE_EXTRA_MS 2000
 /* An MFSK round is answered later than an OFDM one: on the real modems the
  * last frame decoded ~3.7 s after the sender unkeyed, and a pattern keyed
  * after it ended 5.6 s after the round -- past the 5.75 s the sender waited,
@@ -988,13 +992,17 @@ static void send_handover(car_t *c)
     keydown(c, fr, 1 + nd, AFTER_ROUND);
 }
 
-static void send_poll(car_t *c, int lv, int n)
+static void send_poll_as(car_t *c, int lv, int n, bool repeat)
 {
     car_frame_t *fr = c->txbuf;
     msg_t m;
     fill_poll(c, &m);
     m.type = M_POLL;
-    c->poll_id = (c->poll_id + 1) & 0x0F;
+    /* A repeat asks for the same round, so it keeps its id: frames of the
+     * round the sender did key, answering the first ask, are that round's.
+     * With a new id, on air, a re-poll over a round that had started threw
+     * away the five of its seven frames that came, and marked DATAC3 dead. */
+    if (!repeat) c->poll_id = (c->poll_id + 1) & 0x0F;
     m.poll_id = c->poll_id;
     m.level = lv; m.n = n;
     c->rx_break = false; c->last_was_pattern = false; c->floor_patterns = 0;
@@ -1007,6 +1015,8 @@ static void send_poll(car_t *c, int lv, int n)
     disarm(c, CAR_T_POLL); disarm(c, CAR_T_SENSE);
     keydown(c, fr, 1, n ? AFTER_POLL : AFTER_NONE);
 }
+
+static void send_poll(car_t *c, int lv, int n) { send_poll_as(c, lv, n, false); }
 
 /* At the floor: answer the round with a pattern.  expect_round: another round
  * of the same size comes next (a BREAK with nothing left expects none). */
@@ -1139,7 +1149,7 @@ static void on_sense_timer(car_t *c, uint64_t now)
     }
     if (c->round_heard) { arm_poll(c, now); return; }   /* its carrier dropped */
     if (++c->silent_polls >= 2) return;
-    send_poll(c, c->poll_level, c->poll_n);
+    send_poll_as(c, c->poll_level, c->poll_n, true);
 }
 
 static void take_pieces(car_t *c, const msg_t *m)
