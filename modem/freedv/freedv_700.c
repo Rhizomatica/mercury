@@ -436,26 +436,37 @@ int freedv_comprx_700c(struct freedv *f, COMP demod_in_8kHz[]) {
  * DATAC15 the faster mode under-reports and OLLA false-downgrades straight
  * back to the floor (the measured "gear-shift oscillation").  The offsets
  * below bring every mode onto the accurate DATAC15 / true-SNR3k scale that the
- * ARQ_SNR_MIN_* thresholds are defined against.  Calibrated against the codec2
- * ch.c AWGN reference (SNR3k = -No - 14.82) over true 4..15 dB:
+ * ARQ_SNR_MIN_* thresholds are defined against.
  *
- *   mode      reported @ true 15.2 dB   offset
- *   DATAC15   13.99                      0.0  (reference)
- *   DATAC16   13.77                      0.0  (control, accurate)
- *   DATAC4    13.15                     +1.0
- *   DATAC1    10.70                     +3.0
- *   DATAC17   10.00                     +3.5
- *   DATAC3     7.56                     +5.0
- *   QAM16C2    4.32                     +9.0
+ * The error is not a constant: fixed offsets fitted at ~15 dB over-read
+ * DATAC3 by 4-5 dB and DATAC1 by 3-4 dB at 0..4 dB, where the ARQ decides
+ * most (on the bench a 1 dB link read 4.5 dB on DATAC3 and ~1 dB on DATAC4,
+ * so the rung chosen changed what the SNR looked like).  So each mode gets a
+ * line, true = a * raw + b, fitted against the codec2 ch.c AWGN reference
+ * (SNR3k = -No - 14.82), 60 s of test frames per point, median estimate of
+ * the frames that decoded:
+ *
+ *   mode      a       b      fitted over true   max residual
+ *   DATAC15   1       0      (reference; -7..11 dB within 0.3)
+ *   DATAC16   1.045  +0.29   -7.2..10.8 dB       0.38 dB
+ *   DATAC4    1.071  +0.33   -5.8..10.2 dB       0.40 dB
+ *   DATAC3    1.154  +0.37   -2.1.. 9.9 dB       0.16 dB
+ *   DATAC1    1.220  -0.42    1.4.. 9.4 dB       0.38 dB
+ *   DATAC17   1.604  -0.66    5.1..11.1 dB       0.11 dB
+ *   QAM16C2   1.124  +1.59    8.6..11.6 dB       (two points: it barely
+ *                                                  decodes below 8 dB)
+ *
+ * Above ~12 dB all of them read up to 2 dB low; every rung is open there.
  */
 static float freedv_snr_calib(int mode, float snr_raw) {
   switch (mode) {
-    case FREEDV_MODE_DATAC4:  return snr_raw + 1.0f;
-    case FREEDV_MODE_DATAC1:  return snr_raw + 3.0f;
-    case FREEDV_MODE_DATAC17: return snr_raw + 3.5f;
-    case FREEDV_MODE_DATAC3:  return snr_raw + 5.0f;
-    case FREEDV_MODE_QAM16C2: return snr_raw + 9.0f;
-    default:                  return snr_raw; /* DATAC15/DATAC16 read true */
+    case FREEDV_MODE_DATAC16: return 1.045f * snr_raw + 0.29f;
+    case FREEDV_MODE_DATAC4:  return 1.071f * snr_raw + 0.33f;
+    case FREEDV_MODE_DATAC3:  return 1.154f * snr_raw + 0.37f;
+    case FREEDV_MODE_DATAC1:  return 1.220f * snr_raw - 0.42f;
+    case FREEDV_MODE_DATAC17: return 1.604f * snr_raw - 0.66f;
+    case FREEDV_MODE_QAM16C2: return 1.124f * snr_raw + 1.59f;
+    default:                  return snr_raw; /* DATAC15 is the reference */
   }
 }
 
