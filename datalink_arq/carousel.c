@@ -1258,9 +1258,19 @@ static void on_ctl(car_t *c, uint64_t now, const msg_t *m)
 }
 
 /* ---- entry points ---------------------------------------------------------- */
+/* A start needs a margin over the rung's own threshold: the ARQ's 5 dB
+ * gear-shift hysteresis for the fast rungs, which fading takes down (a 2 dB
+ * margin started QAM16C2 at fading +15 dB and took 214 s against 98), but
+ * only DATAC3_START_MARGIN_DB for DATAC3.  At 5 dB there, on the bench, a
+ * session called at 1 dB -- where DATAC3 decodes every frame down to -2 dB
+ * on AWGN -- started on DATAC15 every time and climbed by probes, and one
+ * probe lost to a fade held it there for 40-odd frames.  In the sim the
+ * smaller margin is 6 % faster at cliff +1 / +2 and 7-11 % on fading +1 / +3. */
+#define DATAC3_START_MARGIN_DB 2.0f
 static const struct { int mode; float min_db; } START[] = {
     { FREEDV_MODE_QAM16C2, ARQ_SNR_MIN_QAM16C2_DB }, { FREEDV_MODE_DATAC17, ARQ_SNR_MIN_DATAC17_DB },
-    { FREEDV_MODE_DATAC1,  ARQ_SNR_MIN_DATAC1_DB },  { FREEDV_MODE_DATAC3,  ARQ_SNR_MIN_DATAC3_DB },
+    { FREEDV_MODE_DATAC1,  ARQ_SNR_MIN_DATAC1_DB },
+    { FREEDV_MODE_DATAC3,  ARQ_SNR_MIN_DATAC3_DB - ARQ_SNR_HYST_DB + DATAC3_START_MARGIN_DB },
     /* DATAC4 is slower than DATAC15 here: never a start.  Below -3 dB the
      * floor starts faster than DATAC15 (7-9 % in the sim at -7..-5 dB, fixed
      * and fading); above it DATAC15 still wins in fading (a DATAC4 start cost
