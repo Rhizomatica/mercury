@@ -633,6 +633,45 @@ void test_mfsk_modem_noise_no_false_decode(void)
     free(pb); free(out);
 }
 
+/* A decoder that starts listening partway through a burst -- after its own
+ * station's TX, or when the carousel rebinds it to MFSK from another rung --
+ * has the tail of that burst at the head of its window, and the tail ends in
+ * the postamble: the preamble two tones up, which the dial-offset sweep finds
+ * as a perfect preamble.  That anchor fails CRC and is rejected, but the
+ * search refined its way back onto it and it sat as "already tried" while the
+ * next burst went by: 5 of 9 join points lost the next burst on a clean
+ * channel, and on air a frame decoded 13 s late, whose answer keyed over the
+ * sender.  Join at points across a burst; the next must decode by its end. */
+void test_mfsk_modem_decodes_next_burst_after_joining_midway(void)
+{
+    int bytes = be->bits_per_frame(ctx) / 8, nin = be->nin(ctx), fs = be->sample_rate(ctx);
+    uint8_t *f1 = malloc(bytes), *f2 = malloc(bytes), *out = calloc(bytes, 1);
+    for (int i = 0; i < bytes - 2; i++) { f1[i] = (uint8_t)(i * 7 + 3); f2[i] = (uint8_t)(i * 7 + 4); }
+    uint16_t c = freedv_gen_crc16(f1, bytes - 2); f1[bytes - 2] = c >> 8; f1[bytes - 1] = c & 0xff;
+    c = freedv_gen_crc16(f2, bytes - 2); f2[bytes - 2] = c >> 8; f2[bytes - 1] = c & 0xff;
+    int cap = be->n_tx_samples(ctx) * 2 + 40000;
+    int16_t *b1 = calloc(cap, 2), *b2 = calloc(cap, 2);
+    int n1 = be->preamble_tx(ctx, b1); n1 += be->rawdata_tx(ctx, b1 + n1, f1); n1 += be->postamble_tx(ctx, b1 + n1);
+    int n2 = be->preamble_tx(ctx, b2); n2 += be->rawdata_tx(ctx, b2 + n2, f2); n2 += be->postamble_tx(ctx, b2 + n2);
+    const double tails[] = { 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9 };
+    for (size_t ti = 0; ti < sizeof tails / sizeof tails[0]; ti++) {
+        be->close(ctx); ctx = be->open(MERCURY_MODE_MFSK);
+        int t1 = (int)(n1 * tails[ti]), gap = fs / 10, total = t1 + gap + n2 + 2 * fs;
+        int16_t *x = calloc(total, 2);
+        memcpy(x, b1 + n1 - t1, (size_t)t1 * 2);
+        memcpy(x + t1 + gap, b2, (size_t)n2 * 2);
+        int end2 = t1 + gap + n2, got = -1;
+        for (int off = 0; off + nin <= total && got < 0; off += nin)
+            if (be->rawdata_rx(ctx, out, &x[off]) > 0 && !memcmp(out, f2, bytes)) got = off + nin;
+        char msg[96];
+        snprintf(msg, sizeof msg, "joined with %.0f%% of a burst left: next burst %s", tails[ti] * 100,
+                 got < 0 ? "lost" : "late");
+        TEST_ASSERT_TRUE_MESSAGE(got >= 0 && got <= end2 + fs / 2, msg);
+        free(x);
+    }
+    free(b1); free(b2); free(f1); free(f2); free(out);
+}
+
 /* Out-of-band emission.  Every symbol used to start with a hard jump in phase
  * and tone, and a rectangular tone's spectrum falls off only as 1/f: the burst
  * measured -27..-34 dB across the whole band against -50..-66 dB for codec2's
@@ -822,6 +861,7 @@ int main(void)
     RUN_TEST(test_mfsk_modem_roundtrip);
     RUN_TEST(test_mfsk_modem_reported_bandwidth_matches_emitted_spectrum);
     RUN_TEST(test_mfsk_modem_out_of_band_emission);
+    RUN_TEST(test_mfsk_modem_decodes_next_burst_after_joining_midway);
     RUN_TEST(test_mfsk_modem_preamble_clipped_recovers_via_postamble);
     RUN_TEST(test_mfsk_modem_decodes_with_short_preroll);
     RUN_TEST(test_mfsk_modem_decodes_after_long_preroll);

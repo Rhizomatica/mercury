@@ -826,6 +826,12 @@ static int mfsk_be_rawdata_rx(void *ctx, uint8_t *bytes_out, const int16_t *demo
             }
         }
 
+        /* The search refines its candidate to sub-symbol precision, and can
+         * refine it back onto the peak it was told to start past: a rejected
+         * anchor must never be taken again, or it is tried once and then
+         * sits there as "already tried" while the burst behind it goes by. */
+        if (off >= 0 && h->reject_abs >= 0 && h->n_abs + (long)off <= h->reject_abs)
+            off = -1;
         if (off >= 0)
             h->anchor_abs = h->n_abs + (long)off;
     }
