@@ -28,6 +28,9 @@ extern "C" {
 /* Print the startup version banner (same text the daemon prints). */
 void mercury_print_version(void);
 int  mercury_precheck(int argc, char **argv, const char *default_config);
+/* mercury_init() returns 0, MERCURY_INIT_CONFIG_ERROR when the configuration
+ * file cannot be read in full, or -1. */
+#define MERCURY_INIT_CONFIG_ERROR (-2)
 int  mercury_init(int argc, char **argv, const char *default_config, const char *log_path);
 void mercury_shutdown(void);
 void mercury_request_shutdown(void);

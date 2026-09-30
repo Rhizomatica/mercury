@@ -11,6 +11,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <string.h>
+#include <errno.h>
 #include <unistd.h>
 
 #include "mercury_cli.h"
@@ -72,7 +73,15 @@ void mercury_cli_print_usage(const char *prog)
 #else
     printf(" -S                         HERMES shared-memory PTT (Linux-only; unavailable in this build).\n");
 #endif
-    printf(" -C [config_file]           Path to init configuration file (INI format). Default is mercury.ini in the current directory.\n");
+#ifndef _WIN32
+    printf(" -C [config_file]           Path to init configuration file (INI format). Default is mercury.ini in the current\n");
+    printf("                            directory, else $XDG_CONFIG_HOME/mercury/mercury.ini (~/.config/mercury/mercury.ini),\n");
+    printf("                            else /etc/mercury/mercury.ini. A file that is there but cannot be read in full\n");
+    printf("                            stops the modem.\n");
+#else
+    printf(" -C [config_file]           Path to init configuration file (INI format). Default is mercury.ini in the current\n");
+    printf("                            directory. A file that is there but cannot be read in full stops the modem.\n");
+#endif
     printf(" -K                         List HAMLIB supported radio models.\n");
     printf(" -Q                         Test PTT: key the configured backend for one second, release it, and exit.\n");
     printf(" -t                         Test TX mode.\n");
@@ -147,23 +156,34 @@ int mercury_cli_parse(int argc, char **argv,
         (void)cli_find_config(out->cfg_path, sizeof(out->cfg_path));
     }
 
-    /* Load config file — fields not overridden by CLI keep these values. */
-    bool cfg_loaded = false;
+    /* Load config file — fields not overridden by CLI keep these values.
+     * A file that is there but cannot be read in full stops the modem (see
+     * below): running half-configured opens the wrong sound card or keys the
+     * wrong radio.  No file runs on built-in defaults, loudly -- also for -C,
+     * since HERMES units pass -C /etc/mercury/mercury.ini and stations
+     * without that file have always run that way. */
+    bool cfg_loaded = false, cfg_error = false;
     if (access(out->cfg_path, R_OK) == 0)
     {
         if (cfg_read(&out->cfg, out->cfg_path)) {
             printf("Loaded configuration from %s\n", out->cfg_path);
             cfg_loaded = true;
         } else {
-            fprintf(stderr, "Configuration %s has an invalid setting (above): it was "
-                    "read only in part, and built-in defaults stand in for the rest.\n",
-                    out->cfg_path);
+            fprintf(stderr, "Error: configuration %s could not be read (see above).  "
+                    "Fix it, or name another one with -C.\n", out->cfg_path);
+            cfg_error = true;
         }
+    }
+    else if (cli_config)
+    {
+        fprintf(stderr, "Cannot read configuration %s (%s): running on built-in "
+                "defaults.\n", out->cfg_path, strerror(errno));
     }
     else
     {
         fprintf(stderr, "No configuration file found (%s%s): running on built-in "
-                "defaults.  Use -C <file> to choose one.\n", out->cfg_path,
+                "defaults.  Use -C <file> to choose one; mercury.ini.example "
+                "lists every setting.\n", out->cfg_path,
                 searched ? ", $XDG_CONFIG_HOME or ~/.config/mercury, /etc/mercury" : "");
     }
 
@@ -410,6 +430,11 @@ int mercury_cli_parse(int argc, char **argv,
             return -1;
         }
     }
+
+    /* -h, -V and the listings do not need the configuration; running the
+     * modem and testing PTT do. */
+    if (cfg_error && (out->action == MERCURY_CLI_RUN || out->action == MERCURY_CLI_TEST_PTT))
+        return MERCURY_CLI_CONFIG_ERROR;
 
     /* -x selected a different sound system than the config file's, and the
      * matching device was not given on the command line.  A PulseAudio sink

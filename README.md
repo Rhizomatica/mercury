@@ -70,7 +70,7 @@ Options:
  -S                         Select HERMES shared-memory PTT (Linux shorthand for -P hermes_shm).
  -K                         List HAMLIB supported radio models.
  -Q                         Test PTT: key the configured backend for one second, release it, and exit.
- -C [path]                  Path to INI configuration file (default: mercury.ini in the current directory).
+ -C [path]                  Path to INI configuration file (default: searched for, see Configuration File).
  -t                         Test TX mode.
  -r                         Test RX mode.
  -V                         Print version information and exit.
@@ -277,9 +277,22 @@ like any other app.
 
 ## Configuration File
 
-Mercury reads an INI-format configuration file at startup. The default path is `mercury.ini` in the current working directory; use `-C` to specify an alternative path. Command-line arguments take priority over values from the file.
+Mercury reads an INI-format configuration file at startup. Command-line arguments take priority over values from the file.
 
-See the included [mercury.ini.example](mercury.ini.example) for all available settings and their default values — copy it to `mercury.ini` and edit as needed.
+With `-C <path>` that file is used. Otherwise Mercury takes the first of these that exists (on Windows, only the first):
+
+1. `mercury.ini` in the current working directory
+2. `$XDG_CONFIG_HOME/mercury/mercury.ini`, or `~/.config/mercury/mercury.ini` when `XDG_CONFIG_HOME` is not set
+3. `/etc/mercury/mercury.ini`
+
+A configuration that cannot be read in full (it does not parse, or a setting has an invalid value) stops Mercury with the reason before the modem starts: running on part of a configuration could open the wrong sound device or key the wrong radio. `-h`, `-V`, `-l`, `-z` and `-K` still work. With no configuration file (none found, or the `-C` file does not exist), Mercury runs on its built-in defaults and the command line, and says so, naming the sound system and devices it opens.
+
+See the included [mercury.ini.example](mercury.ini.example) for all available settings and their default values (the Debian package installs it as `/usr/share/doc/mercury/mercury.ini.example`). Copy it to one of the places above and edit it for your radio, for example:
+
+```sh
+mkdir -p ~/.config/mercury
+cp /usr/share/doc/mercury/mercury.ini.example ~/.config/mercury/mercury.ini
+```
 
 PTT is configured independently of CAT-oriented radio settings:
 

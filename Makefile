@@ -614,8 +614,9 @@ fyne-ui-macos-universal-dmg:
 	  '' \
 	  'Install:' \
 	  '  sudo cp mercury /usr/local/bin/' \
-	  '  cp mercury.ini.example ~/.mercury.ini    # then edit for your radio' \
-	  '  mercury -h                               # options' \
+	  '  mkdir -p ~/.config/mercury' \
+	  '  cp mercury.ini.example ~/.config/mercury/mercury.ini   # then edit for your radio' \
+	  '  mercury -h                                              # options' \
 	  '' \
 	  'Universal binary (Intel + Apple Silicon).  If this build is unsigned, the' \
 	  'first run needs:  xattr -d com.apple.quarantine /usr/local/bin/mercury' \
