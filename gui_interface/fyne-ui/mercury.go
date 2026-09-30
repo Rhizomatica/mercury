@@ -74,7 +74,10 @@ func mercuryStart(defaultConfig, logPath string, args []string) error {
 		argv = &cArgs[0]
 	}
 
-	if C.mercury_init(C.int(len(args)), argv, cDefault, cLog) != 0 {
+	switch rc := C.mercury_init(C.int(len(args)), argv, cDefault, cLog); {
+	case rc == C.MERCURY_INIT_CONFIG_ERROR:
+		return fmt.Errorf("the configuration file could not be read; run mercury-ui from a terminal to see why")
+	case rc != 0:
 		return fmt.Errorf("mercury engine init failed")
 	}
 	C.mercury_ui_preload_device_lists()
