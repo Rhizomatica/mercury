@@ -1156,7 +1156,7 @@ static void on_poll_timer(car_t *c, uint64_t now)
      * it was lost, the sender carries on at the floor a floor wait after its
      * round, and my decoder, bound to the rung I asked for, cannot hear that,
      * not even as carrier: polling again keyed into it (on air, car23 at 3 %:
-     * 3.7 s into the gateway's 27 s MFSK, after a poll for DATAC3 it missed;
+     * 3.7 s into the gateway's 27 s MFSK, after a poll for DATAC4 it missed;
      * sim, asym:-6:14 bidir).  So listen at the floor first.  A floor frame
      * already on the air when I rebind ends within a frame; one that starts
      * after is sensed from its preamble; and the round starts by the end of
