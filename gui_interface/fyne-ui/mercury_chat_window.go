@@ -76,8 +76,8 @@ type chatWindow struct {
 	win  fyne.Window
 	mc   *client.Client
 	done chan struct{}
-	log  *widget.Entry
-	// logLines is the bounded ring (newest first) backing the log Entry,
+	log  *widget.Label
+	// logLines is the bounded ring (newest first) backing the log label,
 	// so appending never re-splits the widget's own text.
 	logLines []string
 
@@ -163,20 +163,14 @@ func (cw *chatWindow) build(app fyne.App, telemetry telemetryState, arqPort, bro
 	cw.bcastMsg.OnChanged = func(string) { cw.enforceBroadcastLimit() }
 	cw.bcastCount = widget.NewLabel("")
 
-	cw.log = widget.NewMultiLineEntry()
-	cw.log.SetPlaceHolder("Activity log...")
+	// A selectable label: read-only by nature, drawn in the normal foreground
+	// colour on both themes (a disabled Entry uses the "disabled" colour,
+	// near-white on the light theme), and the operator can still select and
+	// copy lines. An enabled Entry reverting edits took keyboard focus and
+	// flashed keystrokes into the log.
+	cw.log = widget.NewLabel("")
 	cw.log.Wrapping = fyne.TextWrapBreak
-	// The log is read-only but left enabled so its text keeps the normal
-	// foreground colour (a disabled Entry renders in the theme's "disabled"
-	// colour, near-white on the light theme).  Reverting edits in OnChanged
-	// keeps it read-only without the disabled colour, and still allows the
-	// operator to select and copy lines.
-	cw.log.OnChanged = func(s string) {
-		if s == strings.Join(cw.logLines, "\n") {
-			return
-		}
-		cw.log.SetText(strings.Join(cw.logLines, "\n"))
-	}
+	cw.log.Selectable = true
 
 	cw.arqBox = container.NewVBox()
 	cw.arqScroll = container.NewScroll(cw.arqBox)
@@ -268,7 +262,8 @@ func (cw *chatWindow) build(app fyne.App, telemetry telemetryState, arqPort, bro
 	)
 	logBox := container.NewBorder(
 		widget.NewLabelWithStyle("Activity Log", fyne.TextAlignCenter, fyne.TextStyle{Bold: true}),
-		nil, nil, nil, container.NewScroll(cw.log),
+		// vertical only: a wrapping label needs the scroll's width
+		nil, nil, nil, container.NewVScroll(cw.log),
 	)
 
 	right := container.NewBorder(nil, nil, nil, nil,
@@ -350,7 +345,6 @@ func (cw *chatWindow) logMsg(format string, args ...any) {
 			cw.logLines = cw.logLines[:maxLogLines]
 		}
 		cw.log.SetText(strings.Join(cw.logLines, "\n"))
-		cw.log.Refresh()
 	})
 }
 
