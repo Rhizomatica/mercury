@@ -1506,7 +1506,12 @@ void car_on_tx_done(car_t *c, uint64_t now)
          * re-poll for a sender that "missed the poll" went out over it (twice
          * in three runs).  A one-frame round's window closes about as soon. */
         int pl = c->poll_level;
-        bool blind = c->poll_n == 1 && level_marginal(c, pl) &&
+        /* For any round size, not just one frame: on air (3 %) a two-frame
+         * DATAC4 probe at -6.5 dB was just as invisible, and the re-poll
+         * keyed 1.3 s into it, once per run.  (Tried before, this cost the
+         * sim a livelock on asym:-9:3 -- which was the DATAC16-only control
+         * plane, gone since fe7488f; now it only removes collisions.) */
+        bool blind = level_marginal(c, pl) &&
                      !(c->lv_sent[pl] >= 3.0 && level_delivery(c, pl) >= 0.7);
         if (floor || !blind)
             arm(c, CAR_T_SENSE, start + SENSE_MS + (floor ? FLOOR_SENSE_MS : 0));

@@ -63,7 +63,10 @@ static void test_carousel_oneway_completes_intact(void)
  * a gateway at 2 % polled a deaf estacao2 for minutes. */
 static void test_carousel_floor_control_plane(void)
 {
-    static const char *ASYM[] = { "asym:14:-10", "asym:-10:14", "asym:-9:3", "cliff:-9" };
+    static const char *ASYM[] = { "asym:14:-10", "asym:-10:14", "asym:-9:3", "cliff:-9",
+                                  /* a marginal probe rung the listener cannot
+                                   * sync on: no quick re-poll over it */
+                                  "cliff:-5", "asym:-6:14" };
     setenv("CAR_CS_DECODABLE", "1", 1);
     for (size_t c = 0; c < sizeof(ASYM) / sizeof(ASYM[0]); c++)
         for (uint64_t seed = 1; seed <= 4; seed++)
