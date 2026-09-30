@@ -49,6 +49,7 @@ void cfg_set_defaults(mercury_config *cfg)
     cfg->ptt.hamlib_model   = RADIO_TYPE_NONE;
     cfg->ptt.hamlib_log_level = 0;
     cfg->ptt.hamlib_serial_speed = 0;
+    cfg->ptt.hamlib_conf[0] = '\0';
     cfg->input_device[0]    = '\0';
     cfg->output_device[0]   = '\0';
     cfg->capture_channel    = LEFT;
@@ -322,6 +323,12 @@ bool cfg_read(mercury_config *cfg, const char *ini_path)
     if (i >= 0)
         cfg->ptt.hamlib_serial_speed = i;
 
+    s = iniparser_getstring(ini, CFG_KEY_PTT_HAMLIB_CONF, NULL);
+    if (s) {
+        strncpy(cfg->ptt.hamlib_conf, s, sizeof(cfg->ptt.hamlib_conf) - 1);
+        cfg->ptt.hamlib_conf[sizeof(cfg->ptt.hamlib_conf) - 1] = '\0';
+    }
+
     s = iniparser_getstring(ini, CFG_KEY_INPUT_DEVICE, NULL);
     if (s) {
         strncpy(cfg->input_device, s, sizeof(cfg->input_device) - 1);
@@ -528,6 +535,8 @@ bool cfg_write(const mercury_config *cfg, const char *ini_path)
     fprintf(f, "cm108_gpio = %d\n", cfg->ptt.cm108_gpio);
     fprintf(f, "hamlib_model = %d\n", cfg->ptt.hamlib_model);
     fprintf(f, "hamlib_serial_speed = %d\n", cfg->ptt.hamlib_serial_speed);
+    cfg_escape_str(escaped, sizeof(escaped), cfg->ptt.hamlib_conf);
+    fprintf(f, "hamlib_conf = \"%s\"\n", escaped);
     fprintf(f, "hamlib_log_level = %d\n", cfg->ptt.hamlib_log_level);
 
     fprintf(f, "\n[arq]\n");

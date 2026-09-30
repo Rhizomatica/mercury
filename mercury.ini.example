@@ -80,9 +80,7 @@ method = none
 ; /dev/ttyUSB0). For Hamlib use its serial device or ip:port endpoint.
 device =
 
-; The remaining settings are used only by method=hamlib.
-; Run mercury -K to list supported model IDs.
-; Which modem-control line keys the radio: rts (default), dtr, or both.
+; method=serial: which modem-control line keys the radio: rts (default), dtr, or both.
 ; Several interfaces, the AIOC included, need BOTH driven together.
 ;line = rts
 
@@ -93,6 +91,8 @@ device =
 ; CM108 GPIO pin, 1..4.  GPIO3 is the de-facto standard.
 ;cm108_gpio = 3
 
+; The settings below are used only by method=hamlib.
+; Run mercury -K to list supported model IDs.
 hamlib_model = -1
 
 ; 0 uses the Hamlib model default. Must match the radio's CAT rate when set.
@@ -100,6 +100,13 @@ hamlib_serial_speed = 0
 
 ; 0=NONE, 1=BUG, 2=ERR, 3=WARN, 4=VERBOSE, 5=TRACE, 6=CACHE
 hamlib_log_level = 0
+
+; On a serial CAT port Mercury holds RTS and DTR low: many rigs (IC-7300 with
+; USB SEND on RTS/DTR, for one) otherwise transmit for as long as the port is
+; open.  Lines used for PTT, or needed high (interfaces powered from DTR),
+; are set here, together with any other Hamlib setting, as rigctl --set-conf
+; takes them: key=value[,key=value...].  For example:
+;hamlib_conf = dtr_state=ON,civaddr=0x94
 
 [audio]
 

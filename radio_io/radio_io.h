@@ -68,6 +68,7 @@ typedef struct {
     /* hamlib */
     int hamlib_model;
     int hamlib_serial_speed; /* 0 = use Hamlib model default */
+    char hamlib_conf[256];   /* extra Hamlib settings, "key=value,..." (rigctl --set-conf) */
     int hamlib_log_level;    /* 0..6 */
 } ptt_config_t;
 
