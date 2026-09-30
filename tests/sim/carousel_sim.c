@@ -102,7 +102,14 @@ static bool cs_decodable;              /* CAR_CS_DECODABLE: carrier sense needs 
 static bool snr_biased;
 static bool asym;                                      /* an asym:A:B channel */
 static double snr_dir[2];                              /* its SNR, by sender */
-static double frame_snr(const station_t *rx) { return asym ? snr_dir[rx->id ^ 1] : snr_now; }
+/* Never exactly 0.0: car_on_frame takes that for "no estimate", which a
+ * decoded frame always has -- at 0 dB (cliff:0, fade:0) the sim ran with no
+ * SNR at all. */
+static double frame_snr(const station_t *rx)
+{
+    double snr = asym ? snr_dir[rx->id ^ 1] : snr_now;
+    return snr == 0.0 ? 0.001 : snr;
+}
 static double snr_bias(int mode)
 {
     if (!snr_biased) return 0.0;

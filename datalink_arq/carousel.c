@@ -1164,7 +1164,12 @@ static void on_poll_timer(car_t *c, uint64_t now)
      * sense MFSK, means no such round: the sender heard the poll, and the
      * rung I asked for is what failed.  A round that does come re-arms this
      * timer for its own end. */
-    if (c->probe_off_floor && !c->floor_fallback && !c->round_seen && !c->status_seen) {
+    /* Not when its carrier was heard: then the sender did answer, and the
+     * rung asked for is what failed.  Waiting at the floor for a round that
+     * was not coming, the receiver's floor polls and the sender's silence
+     * nudge met on the air (sim, nvis seed 5). */
+    if (c->probe_off_floor && !c->floor_fallback && !c->round_seen && !c->status_seen &&
+        !c->round_heard) {
         uint64_t start_max = c->probe_after_ms + peer_floor_wait_max(c) + HEAD_MS;
         uint64_t in_frame = now + level_air(0) + burst_gap_ms(0);
         car_trace(c, "rx probe lv=%d unanswered: listening at the floor", c->probe_lv);
@@ -1174,6 +1179,23 @@ static void on_poll_timer(car_t *c, uint64_t now)
         c->round_seen = 0; c->round_frames = c->poll_n; c->round_heard = false; c->done_in_round = 0;
         disarm(c, CAR_T_SENSE);
         arm(c, CAR_T_POLL, (in_frame > start_max ? in_frame : start_max) + FLOOR_SENSE_MS);
+        return;
+    }
+    /* Nothing at all of the round, and nothing sensed: the poll (or pattern)
+     * was lost, or the rung is dead.  The quick re-poll told these apart by
+     * asking again at once and scoring only a second silence; now the window
+     * waits, and on a rung that has delivered asks again here, unscored --
+     * the round, had it started, is over.  Scored at the first silence, two
+     * lost polls in a row (sim, awgn:0.25) threw DATAC17 away at 12 dB and
+     * slid the session to the floor: 169 s -> 719 s.  A rung that has not
+     * delivered is scored at once, as before: asking twice cost cliff:3
+     * probes 15 %. */
+    if (!c->floor_fallback && c->poll_level > 0 && !c->round_seen && !c->status_seen &&
+        !c->round_heard && c->round_frames > 0 && c->silent_polls == 0 &&
+        c->lv_sent[c->poll_level] >= 2.0 && level_delivery(c, c->poll_level) >= 0.5) {
+        c->silent_polls = 1;
+        car_trace(c, "rx round lv=%d unheard: asking again", c->poll_level);
+        send_poll_as(c, c->poll_level, c->poll_n, true);
         return;
     }
     bool probe_failed = c->floor_fallback && !c->round_seen && !c->status_seen && !c->round_heard;
@@ -1266,14 +1288,20 @@ static void on_poll_timer(car_t *c, uint64_t now)
     send_poll(c, lv, n);
 }
 
-/* The sense timer: by now the sender should be keyed.  Silence means it never
- * heard the poll, so poll again at once rather than sit out the round's window
- * -- and do not score the mode for it.  Silence on a second poll in a row is
- * left to the window and scored: a mode too weak even to sync must still be
- * found dead.  While it is on the air with nothing decoded yet, keep watching:
- * poll when its carrier drops, not at the window computed for the round we
- * asked for -- the keydown may be something else, a repeated handover, and a
- * window timer ran into the sender's repeat timer. */
+/* The sense timer: by now the sender should be keyed.  While it is on the air
+ * with nothing decoded yet, keep watching, and poll when its carrier drops,
+ * not at the window computed for the round we asked for -- the keydown may be
+ * something else, a repeated handover, and a window timer ran into the
+ * sender's repeat timer.
+ *
+ * Silence here is left to the window (on_poll_timer), above the floor too.
+ * It used to be taken for a lost poll and polled again at once; but carrier
+ * sense is a decoder syncing, and a round in a fade is not synced on.  In the
+ * sim, with sensing as on air, 20 seeds: fade:3 226 collisions one way and
+ * 376 both ways, nvis 178 and 295, fade:-3 494 and 1159 -- about none without
+ * the quick re-poll, and fade:3 12 % faster, fade:8:1.0 23 %, nvis 9 %.  Earning
+ * it back per rung where sensing proved sure did not help even pure random
+ * loss (awgn:0.25), and brought collisions back under fading. */
 static void on_sense_timer(car_t *c, uint64_t now)
 {
     if (c->sending || c->idle || c->round_seen) return;
@@ -1286,9 +1314,7 @@ static void on_sense_timer(car_t *c, uint64_t now)
         arm(c, CAR_T_SENSE, now + CARRIER_CHECK_MS);
         return;
     }
-    if (c->round_heard) { arm_poll(c, now); return; }   /* its carrier dropped */
-    if (++c->silent_polls >= 2) return;
-    send_poll_as(c, c->poll_level, c->poll_n, true);
+    if (c->round_heard) arm_poll(c, now);   /* its carrier dropped */
 }
 
 static void take_pieces(car_t *c, const msg_t *m)
@@ -1549,21 +1575,11 @@ void car_on_tx_done(car_t *c, uint64_t now)
          * guard, and should be heard by SENSE_MS after that. */
         uint64_t start = now - TAIL_MS + ISS_GUARD_MS;
         bool floor = c->poll_level == 0 && c->io.pattern;
-        /* Carrier sense is the payload decoder finding the round's preamble,
-         * and on a marginal rung not yet seen to deliver it may not: on air a
-         * one-frame DATAC1 probe at 4.5 dB was unsensed 1.3 s in, and the
-         * re-poll for a sender that "missed the poll" went out over it (twice
-         * in three runs).  A one-frame round's window closes about as soon. */
-        int pl = c->poll_level;
-        /* For any round size, not just one frame: on air (3 %) a two-frame
-         * DATAC4 probe at -6.5 dB was just as invisible, and the re-poll
-         * keyed 1.3 s into it, once per run.  (Tried before, this cost the
-         * sim a livelock on asym:-9:3 -- which was the DATAC16-only control
-         * plane, gone since fe7488f; now it only removes collisions.) */
-        bool blind = level_marginal(c, pl) &&
-                     !(c->lv_sent[pl] >= 3.0 && level_delivery(c, pl) >= 0.7);
-        if (floor || !blind)
-            arm(c, CAR_T_SENSE, start + SENSE_MS + (floor ? FLOOR_SENSE_MS : 0));
+        /* Only to follow the round's carrier (on_sense_timer): silence is no
+         * longer answered with a re-poll -- on air (car14, car16, 3 %) a DATAC4
+         * probe at -6.5 dB, and a DATAC1 one at 4.5 dB, unsensed 1.3 s in, had
+         * the re-poll keyed into them. */
+        arm(c, CAR_T_SENSE, start + SENSE_MS + (floor ? FLOOR_SENSE_MS : 0));
         arm_poll(c, start + HEAD_MS + round_air(c->poll_level, c->poll_n) + TAIL_MS + WINDOW_MARGIN_MS +
                     (floor ? FLOOR_LATE_MS : 0));
     }

@@ -17,7 +17,9 @@
 #define LIMIT_MS (8ULL * 3600 * 1000)
 
 void setUp(void) {}
-void tearDown(void) {}
+/* Here, not at the end of a test: a failed assertion leaves the test at once,
+ * and the next one would run with its sensing. */
+void tearDown(void) { unsetenv("CAR_CS_DECODABLE"); }
 
 static void check(uint64_t seed, const char *chan, bool bidir)
 {
@@ -89,6 +91,24 @@ static void test_carousel_lost_probe_poll(void)
     unsetenv("CAR_CS_DECODABLE");
 }
 
+/* Under fading a round on the air is not always synced on, so not sensed:
+ * taking silence at the sense check for a lost poll, the quick re-poll keyed
+ * into rounds -- 226 collisions in 20 one-way fade:3 runs, 178 on nvis --
+ * where waiting for the window keys over none. */
+static void test_carousel_fading_no_blind_repoll(void)
+{
+    static const char *FADE[] = { "fade:3:0.5", "fade:8:1.0", "nvis" };
+    setenv("CAR_CS_DECODABLE", "1", 1);
+    for (size_t c = 0; c < sizeof(FADE) / sizeof(FADE[0]); c++)
+        for (uint64_t seed = 1; seed <= 4; seed++)
+            check(seed, FADE[c], false);
+    for (uint64_t seed = 1; seed <= 2; seed++) {
+        check(seed, "fade:3:0.5", true);
+        check(seed, "fade:8:1.0", true);
+    }
+    unsetenv("CAR_CS_DECODABLE");
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -96,5 +116,6 @@ int main(void)
     RUN_TEST(test_carousel_oneway_completes_intact);
     RUN_TEST(test_carousel_floor_control_plane);
     RUN_TEST(test_carousel_lost_probe_poll);
+    RUN_TEST(test_carousel_fading_no_blind_repoll);
     return UNITY_END();
 }
