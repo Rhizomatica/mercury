@@ -81,9 +81,12 @@ typedef struct {
     uint8_t  tx[CAR_SIM_BYTES];  size_t tx_len, tx_read;
     uint8_t  rx[CAR_SIM_BYTES + 64]; size_t rx_len;
     int      rx_mode;              /* the payload decoder's binding */
+    uint64_t bound_at;             /* ...since */
     uint64_t tx_start, tx_end;     /* current/last keydown */
-    bool     tx_seen;              /* the peer could sync on it (CAR_CS_DECODABLE) */
-    uint64_t seen_at;              /* ...from the start of this frame of it */
+    /* The frames of that keydown, for CAR_CS_DECODABLE: a decoder syncs on a
+     * frame only from its preamble, so only one it was bound to by then. */
+    struct { uint64_t start; int mode; bool sync; } kd[CAR_KEYDOWN_MAX];
+    int      kd_n;
 } station_t;
 
 static station_t S[2];
@@ -112,7 +115,7 @@ static void io_keydown(void *ctx, const car_frame_t *fr, int n)
     station_t *s = ctx, *peer = &S[s->id ^ 1];
     uint64_t t = now_ms + HEAD_MS;
     s->tx_start = now_ms;
-    s->tx_seen = false;
+    s->kd_n = 0;
     if (trace) printf("%9.1f %c keys:", now_ms / 1000.0, 'A' + s->id);
     for (int i = 0; i < n; i++) {
         /* The modem refuses a frame that does not fill its mode (modem.c,
@@ -130,16 +133,11 @@ static void io_keydown(void *ctx, const car_frame_t *fr, int n)
             if (fr[i].mode == ARQ_CONTROL_MODE) printf(" %s", K[fr[i].bytes[0] >> 6]);
             else printf(" data(%d)", fr[i].mode);
         }
-        /* A decoder syncs on what it could decode: the control mode, or the
-         * mode the peer's payload decoder is bound to -- above its cliff, even
-         * when this frame is then lost. */
-        if (!s->tx_seen && (fr[i].mode == ARQ_CONTROL_MODE || fr[i].mode == peer->rx_mode) &&
-            sim_channel_syncable(ch, t, s->id, fr[i].mode)) {
-            s->tx_seen = true;
-            /* The MFSK preamble search takes longer to be sure: under a second
-             * at -7 dB (test_mfsk_modem), more near its floor. */
-            s->seen_at = t + (fr[i].mode == MERCURY_MODE_MFSK ? MFSK_CS_EXTRA_MS : 0);
-        }
+        /* A decoder syncs on what it could decode above its cliff, even when
+         * this frame is then lost (see io_peer_keyed). */
+        s->kd[s->kd_n].start = t; s->kd[s->kd_n].mode = fr[i].mode;
+        s->kd[s->kd_n].sync = sim_channel_syncable(ch, t, s->id, fr[i].mode);
+        s->kd_n++;
         if (sim_channel_schedule(ch, t, s->id, fr[i].mode, 0, &d)) {
             uint8_t *b = malloc(fr[i].len);
             memcpy(b, fr[i].bytes, fr[i].len);
@@ -155,7 +153,11 @@ static void io_keydown(void *ctx, const car_frame_t *fr, int n)
     push(e);
 }
 
-static void io_bind_rx(void *ctx, int mode) { ((station_t *)ctx)->rx_mode = mode; }
+static void io_bind_rx(void *ctx, int mode)
+{
+    station_t *s = ctx;
+    if (mode != s->rx_mode) { s->rx_mode = mode; s->bound_at = now_ms; }
+}
 static void io_trace(void *ctx, const char *line)
 {
     if (trace) printf("%9.1f %c   %s\n", now_ms / 1000.0, 'A' + ((station_t *)ctx)->id, line);
@@ -173,11 +175,11 @@ static void io_pattern(void *ctx, int kind)
     uint64_t t = now_ms + HEAD_MS, d;
     uint64_t air = sim_channel_airtime_ms(SIM_MODE_PATTERN, 0);
     s->tx_start = now_ms;
-    s->tx_seen = false;
+    s->kd_n = 0;
     if (trace) printf("%9.1f %c keys: pattern %s\n", now_ms / 1000.0, 'A' + s->id, kind ? "BREAK" : "ACK");
     if (sim_channel_schedule(ch, t, s->id, SIM_MODE_PATTERN, 0, &d)) {
-        s->tx_seen = peer->rx_mode == MERCURY_MODE_MFSK;   /* only the MFSK decoder syncs on it */
-        s->seen_at = t;
+        s->kd[0].start = t; s->kd[0].mode = SIM_MODE_PATTERN; s->kd[0].sync = true;
+        s->kd_n = 1;
         event_t e = { .t = t + air + SIM_PATTERN_DETECT_MS, .type = EV_ARRIVE, .st = peer->id, .mode = SIM_MODE_PATTERN,
                       .len = (size_t)kind, .bytes = NULL, .f_start = t, .f_end = t + air };
         push(e);
@@ -189,14 +191,32 @@ static void io_pattern(void *ctx, int kind)
 
 static bool io_peer_keyed(void *ctx)
 {
-    const station_t *p = &S[((station_t *)ctx)->id ^ 1];
+    const station_t *l = ctx, *p = &S[l->id ^ 1];
     /* CAR_CS_DECODABLE: carrier sense is a decoder in sync, so a keydown the
      * listener cannot decode is not sensed (on air: a DATAC1 probe at 4.5 dB,
      * and patterns, which no OFDM decoder syncs on) -- nor the part of it
      * before the first frame it can (on air: a floor frame behind a control
-     * frame the listener cannot decode). */
-    if (cs_decodable && !p->tx_seen) return false;
-    uint64_t from = cs_decodable ? p->seen_at : p->tx_start;
+     * frame the listener cannot decode).  The control decoder always runs;
+     * the payload decoder syncs on a frame only if bound to its mode by the
+     * frame's preamble, and a pattern only when that is MFSK: rebound to the
+     * floor mid-frame, on air, it missed that frame (car23 at 3 %). */
+    uint64_t from = p->tx_start;
+    if (cs_decodable) {
+        from = UINT64_MAX;
+        for (int i = 0; i < p->kd_n && from == UINT64_MAX; i++) {
+            int m = p->kd[i].mode;
+            bool bound = l->bound_at <= p->kd[i].start;
+            if (!p->kd[i].sync) continue;
+            if (m == SIM_MODE_PATTERN) {
+                if (l->rx_mode == MERCURY_MODE_MFSK && bound) from = p->kd[i].start;
+            } else if (m == ARQ_CONTROL_MODE || (m == l->rx_mode && bound)) {
+                /* The MFSK preamble search takes longer to be sure: under a
+                 * second at -7 dB (test_mfsk_modem), more near its floor. */
+                from = p->kd[i].start + (m == MERCURY_MODE_MFSK ? MFSK_CS_EXTRA_MS : 0);
+            }
+        }
+        if (from == UINT64_MAX) return false;
+    }
     return p->tx_end && from + CS_ACQ_MS <= now_ms && now_ms < p->tx_end - TAIL_MS + CS_ACQ_MS;
 }
 
@@ -321,7 +341,7 @@ void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limi
                     car_on_pattern(&s->car, now_ms, (int)e.len);
             } else if (e.mode == ARQ_CONTROL_MODE) {
                 car_on_frame(&s->car, now_ms, e.bytes, e.len, e.mode, true, (float)(frame_snr(s) + snr_bias(e.mode)));
-            } else if (e.mode == s->rx_mode) {
+            } else if (e.mode == s->rx_mode && (!cs_decodable || s->bound_at <= e.f_start)) {
                 car_on_frame(&s->car, now_ms, e.bytes, e.len, e.mode, false, (float)(frame_snr(s) + snr_bias(e.mode)));
             }
             free(e.bytes);

@@ -166,6 +166,10 @@ typedef struct {
     uint8_t  heard_poll_id;         /* the id of the last poll I heard (sent back in my handovers) */
     bool     pattern_for_lost_polls;/* my last pattern stood in for polls the peer was not hearing */
     bool     floor_streaming;       /* a floor round came since my last poll */
+    bool     probe_off_floor;       /* my last poll asked a floor stream for another rung */
+    bool     floor_fallback;        /* ...went unanswered: I listen for the floor round it kept sending */
+    int      probe_lv, probe_n;     /* what that poll asked for */
+    uint64_t probe_after_ms;        /* the stream's last frame I heard before it */
     car_frame_t txbuf[CAR_KEYDOWN_MAX];
 } car_t;
 

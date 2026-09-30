@@ -634,6 +634,17 @@ static void arm_sender_wait(car_t *c, uint64_t tx_end)
     arm(c, CAR_T_WAIT, t);
 }
 
+/* The longest a peer streaming the floor waits after its round, heard from
+ * me, before sending the next one: arm_sender_wait's floor wait at its
+ * longest (the learned delay only shortens it), its peer's control being
+ * mine. */
+static uint64_t peer_floor_wait_max(const car_t *c)
+{
+    uint64_t ctl = ctl_on_floor(c) ? level_air(0) : mode_air(ARQ_CONTROL_MODE);
+    return GUARD_MS + HEAD_MS + ctl + TAIL_MS + WINDOW_MARGIN_MS +
+           SENSE_MS + FLOOR_SENSE_MS + HEAD_MS + ctl + TAIL_MS + FLOOR_ANSWER_MS;
+}
+
 static void send_round(car_t *c)
 {
     car_frame_t *fr = c->txbuf;
@@ -1035,6 +1046,7 @@ static void start_driving(car_t *c, uint32_t poll_id, int lv, int n, uint64_t ro
      * turn retired a block the receiver never completed (sim, nvis bidir). */
     c->rx_break = false; c->last_was_pattern = false; c->floor_patterns = 0;
     c->floor_streaming = false;
+    c->probe_off_floor = c->floor_fallback = false;
     c->floor_waiting = false; c->pat_waiting = false;
     disarm(c, CAR_T_SEND); disarm(c, CAR_T_WAIT); disarm(c, CAR_T_SENSE);
     arm_poll(c, round_start + HEAD_MS + round_air(lv, n) + TAIL_MS + WINDOW_MARGIN_MS);
@@ -1086,6 +1098,13 @@ static void send_poll_as(car_t *c, int lv, int n, bool repeat)
     if (!repeat) c->poll_id = (c->poll_id + 1) & 0x0F;
     m.poll_id = c->poll_id;
     m.level = lv; m.n = n;
+    /* Asking a sender streaming the floor for another rung (see on_poll_timer:
+     * if this is lost, it carries on at the floor).  A repeat keeps it. */
+    if (!repeat) {
+        c->probe_off_floor = n && lv > 0 && c->poll_level == 0 && c->floor_streaming && c->io.pattern;
+        c->floor_fallback = false;
+        if (c->probe_off_floor) { c->probe_lv = lv; c->probe_n = n; c->probe_after_ms = c->last_carrier_ms; }
+    }
     c->rx_break = false; c->last_was_pattern = false; c->floor_patterns = 0;
     c->floor_streaming = false;
     if (n) { c->poll_level = lv; c->poll_n = n; c->drove_peer = true; bind_rx(c, lv); }
@@ -1131,8 +1150,38 @@ static void send_pattern(car_t *c, int kind, bool expect_round)
 static void on_poll_timer(car_t *c, uint64_t now)
 {
     if (c->sending || c->idle) return;
+    if (c->floor_fallback && peer_keyed(c, now)) c->round_heard = true;
     if (defer_if_busy(c, CAR_T_POLL, now)) return;
-    if (!c->status_seen) {
+    /* My poll off a floor stream brought nothing -- no frame, no status.  If
+     * it was lost, the sender carries on at the floor a floor wait after its
+     * round, and my decoder, bound to the rung I asked for, cannot hear that,
+     * not even as carrier: polling again keyed into it (on air, car23 at 3 %:
+     * 3.7 s into the gateway's 27 s MFSK, after a poll for DATAC3 it missed;
+     * sim, asym:-6:14 bidir).  So listen at the floor first.  A floor frame
+     * already on the air when I rebind ends within a frame; one that starts
+     * after is sensed from its preamble; and the round starts by the end of
+     * the sender's longest floor wait.  Silence past both, plus the time to
+     * sense MFSK, means no such round: the sender heard the poll, and the
+     * rung I asked for is what failed.  A round that does come re-arms this
+     * timer for its own end. */
+    if (c->probe_off_floor && !c->floor_fallback && !c->round_seen && !c->status_seen) {
+        uint64_t start_max = c->probe_after_ms + peer_floor_wait_max(c) + HEAD_MS;
+        uint64_t in_frame = now + level_air(0) + burst_gap_ms(0);
+        car_trace(c, "rx probe lv=%d unanswered: listening at the floor", c->probe_lv);
+        c->floor_fallback = true;
+        c->poll_level = 0; c->poll_n = keydown_cap(0);
+        bind_rx(c, 0);
+        c->round_seen = 0; c->round_frames = c->poll_n; c->round_heard = false; c->done_in_round = 0;
+        disarm(c, CAR_T_SENSE);
+        arm(c, CAR_T_POLL, (in_frame > start_max ? in_frame : start_max) + FLOOR_SENSE_MS);
+        return;
+    }
+    bool probe_failed = c->floor_fallback && !c->round_seen && !c->status_seen && !c->round_heard;
+    c->probe_off_floor = c->floor_fallback = false;
+    if (probe_failed) {
+        c->loss_est = 0.5 * c->loss_est + 0.5;
+        measure_level(c, c->probe_lv, c->probe_n, 1.0, now);
+    } else if (!c->status_seen) {
         int frames = c->round_frames > 0 ? c->round_frames : 1;
         double loss = 1.0 - (double)c->round_seen / frames;
         if (loss < 0) loss = 0;

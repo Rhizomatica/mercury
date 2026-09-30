@@ -74,11 +74,27 @@ static void test_carousel_floor_control_plane(void)
     unsetenv("CAR_CS_DECODABLE");
 }
 
+/* A poll off a floor stream, lost: the sender carries on at the floor, and a
+ * receiver bound to the rung it asked for neither hears nor senses it.  Its
+ * re-poll keyed into that round -- on air (car23, 3 %) 3.7 s into the
+ * gateway's 27 s MFSK; here 2-4 collisions on every fade:-5 seed below and on
+ * these asym:-6:14 bidir seeds -- until it listened at the floor first. */
+static void test_carousel_lost_probe_poll(void)
+{
+    setenv("CAR_CS_DECODABLE", "1", 1);
+    for (uint64_t seed = 1; seed <= 4; seed++)
+        check(seed, "fade:-5:0.5", false);
+    check(8, "asym:-6:14", true);
+    check(11, "asym:-6:14", true);
+    unsetenv("CAR_CS_DECODABLE");
+}
+
 int main(void)
 {
     UNITY_BEGIN();
     RUN_TEST(test_carousel_bidir_completes_intact);
     RUN_TEST(test_carousel_oneway_completes_intact);
     RUN_TEST(test_carousel_floor_control_plane);
+    RUN_TEST(test_carousel_lost_probe_poll);
     return UNITY_END();
 }
