@@ -257,12 +257,18 @@ struct OFDM *ofdm_create(const struct OFDM_CONFIG *config) {
   ofdm->acq_fft_en = true; /* FFT acquisition search on by default */
 
   ofdm->rs = (1.0f / ofdm->ts);            /* Modulation Symbol Rate */
-  ofdm->m = (int)(ofdm->fs / ofdm->rs);    /* 700D: 144 */
-  ofdm->ncp = (int)(ofdm->tcp * ofdm->fs); /* 700D: 16 */
+  /* Rounded, not truncated: fs/rs and tcp*fs are whole numbers only on
+     paper.  With i386's x87 precision datac14 (ts 0.018, tcp 0.005) came
+     out 143.99... and 39.99..., truncated to m = 143 and ncp = 39 where
+     every other build has 144 and 40 -- an i386 station could not talk to
+     one -- and the assert below, re-truncating the same expression at
+     another precision, aborted. */
+  ofdm->m = (int)roundf(ofdm->fs * ofdm->ts);    /* 700D: 144 */
+  ofdm->ncp = (int)roundf(ofdm->tcp * ofdm->fs); /* 700D: 16 */
   ofdm->inv_m = (1.0f / (float)ofdm->m);
 
   /* basic sanity checks */
-  assert((int)floorf(ofdm->fs / ofdm->rs) == ofdm->m);
+  assert(fabsf(ofdm->fs / ofdm->rs - (float)ofdm->m) < 0.01f);
   assert(!strcmp(ofdm->state_machine, "voice1") ||
          !strcmp(ofdm->state_machine, "data") ||
          !strcmp(ofdm->state_machine, "voice2"));

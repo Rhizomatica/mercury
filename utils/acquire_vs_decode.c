@@ -69,6 +69,8 @@ static int mode_from_name(const char *s)
     if (!strcmp(s, "DATAC3"))  return FREEDV_MODE_DATAC3;
     if (!strcmp(s, "DATAC1"))  return FREEDV_MODE_DATAC1;
     if (!strcmp(s, "DATAC0"))  return FREEDV_MODE_DATAC0;
+    if (!strcmp(s, "DATAC17")) return FREEDV_MODE_DATAC17;
+    if (!strcmp(s, "QAM16C2")) return FREEDV_MODE_QAM16C2;
     return -1;
 }
 
@@ -88,7 +90,7 @@ int main(int argc, char **argv)
     if (mode < 0 || trials <= 0)
     {
         fprintf(stderr, "usage: %s [MODE] [trials] [snr_lo] [snr_hi]\n"
-                        "  MODE: DATAC0/1/3/4/13/15/16 (default DATAC16)\n", argv[0]);
+                        "  MODE: DATAC0/1/3/4/13/15/16/17, QAM16C2 (default DATAC16)\n", argv[0]);
         return 1;
     }
 
