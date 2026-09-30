@@ -1291,7 +1291,13 @@ static void key_and_play(generic_modem_t *g_modem, int32_t *tx_buffer, size_t to
         uint64_t playback_duration_us = ((uint64_t)total_samples * 1000000ULL) / FREEDV_FS_8000;
         uint64_t t_start_ms = hermes_uptime_ms();
         uint64_t waited_us = 0;
-        while (waited_us < playback_duration_us)
+        /* ...but not past a shutdown.  The playback thread stops at the same
+         * signal, so the rest of the frame never reaches the radio anyway, and
+         * waiting it out kept PTT keyed over silence for up to the frame's
+         * whole airtime (27 s for a two-frame MFSK keydown) -- past main()'s
+         * 10 s alarm, which then killed the process with the key still down;
+         * on a HERMES SHM station the radio daemon holds it there. */
+        while (waited_us < playback_duration_us && !shutdown_)
         {
             size_t pos = (size_t)((waited_us * FREEDV_FS_8000) / 1000000ULL);
             publish_tx_spectrum_at(tx_buffer, total_samples, pos, FREEDV_FS_8000);

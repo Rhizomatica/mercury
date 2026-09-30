@@ -98,6 +98,20 @@ int mercury_engine_modem_bandwidth_hz(void)
     return be->bandwidth_hz(ctx);
 }
 
+/* Test hook: MERCURY_TEST_SHUTDOWN_STALL_MS holds an orderly shutdown open
+ * for that long.  An orderly stop now takes a fraction of a second even
+ * mid-frame, so without this nothing could land a second signal inside one,
+ * and the forced-exit path (second signal: unkey, then exit) would go untested
+ * (tests/integration, TestMercuryTxTestForcedExitUnkeysFirst).  Unset in
+ * normal use. */
+static void test_shutdown_stall(void)
+{
+    const char *v = getenv("MERCURY_TEST_SHUTDOWN_STALL_MS");
+    long ms = v ? strtol(v, NULL, 10) : 0;
+    for (; ms > 0; ms -= 10)
+        hermes_usleep(10000);
+}
+
 int mercury_engine_init(const mercury_config *cfg,
                         const char *config_path,
                         const char *log_path,
@@ -255,6 +269,7 @@ int mercury_engine_init(const mercury_config *cfg,
      * for what was a clean stop.  radio_io_shutdown() leaves PTT released. */
     if (test_mode && shutdown_)
     {
+        test_shutdown_stall();
         shutdown_modem(&g_modem);
         if (g_audio_system != AUDIO_SUBSYSTEM_SHM)
             audioio_deinit(&g_radio_capture, &g_radio_playback);
@@ -359,6 +374,7 @@ void mercury_engine_shutdown(void)
     HLOGI("engine", "Shutting down");
 
     shutdown_ = true;
+    test_shutdown_stall();
 
     g_shutdown_step = "tcp interfaces";
     interfaces_shutdown();
