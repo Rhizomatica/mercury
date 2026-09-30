@@ -55,6 +55,8 @@ double         sim_channel_next_rand(sim_channel_t *ch);
 /* Whether a receiver could sync on such a frame at all: its SNR is above the
  * mode's cliff, whether or not this one frame is then erased.  (A decoder
  * syncs on a frame whose CRC then fails.)  Draws no random number. */
+/* The SNR a modem reports for a frame starting at t0: NAN unless fading. */
+double         sim_channel_frame_snr(const sim_channel_t *ch, uint64_t t0_ms, int dir, int freedv_mode);
 bool           sim_channel_syncable(const sim_channel_t *ch, uint64_t now_ms,
                                     int dir, int freedv_mode);
 #endif

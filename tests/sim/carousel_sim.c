@@ -25,6 +25,7 @@
 
 #include <stdbool.h>
 #include <stdint.h>
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -105,9 +106,13 @@ static double snr_dir[2];                              /* its SNR, by sender */
 /* Never exactly 0.0: car_on_frame takes that for "no estimate", which a
  * decoded frame always has -- at 0 dB (cliff:0, fade:0) the sim ran with no
  * SNR at all. */
-static double frame_snr(const station_t *rx)
+static double frame_snr(const station_t *rx, uint64_t f_start, int mode)
 {
-    double snr = asym ? snr_dir[rx->id ^ 1] : snr_now;
+    /* Under fading, what the modem reports for this frame: on air the
+     * estimate swings with the fade, and everything that reads it -- the
+     * start rung, the control-deaf switch -- sees that. */
+    double snr = sim_channel_frame_snr(ch, f_start, rx->id ^ 1, mode);
+    if (isnan(snr)) snr = asym ? snr_dir[rx->id ^ 1] : snr_now;
     return snr == 0.0 ? 0.001 : snr;
 }
 static double snr_bias(int mode)
@@ -347,9 +352,9 @@ void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limi
                 if (!getenv("CAR_NOPATTERN_RX"))
                     car_on_pattern(&s->car, now_ms, (int)e.len);
             } else if (e.mode == ARQ_CONTROL_MODE) {
-                car_on_frame(&s->car, now_ms, e.bytes, e.len, e.mode, true, (float)(frame_snr(s) + snr_bias(e.mode)));
+                car_on_frame(&s->car, now_ms, e.bytes, e.len, e.mode, true, (float)(frame_snr(s, e.f_start, e.mode) + snr_bias(e.mode)));
             } else if (e.mode == s->rx_mode && (!cs_decodable || s->bound_at <= e.f_start)) {
-                car_on_frame(&s->car, now_ms, e.bytes, e.len, e.mode, false, (float)(frame_snr(s) + snr_bias(e.mode)));
+                car_on_frame(&s->car, now_ms, e.bytes, e.len, e.mode, false, (float)(frame_snr(s, e.f_start, e.mode) + snr_bias(e.mode)));
             }
             free(e.bytes);
         }

@@ -160,6 +160,24 @@ static double frame_snr_db(const sim_channel_t *ch, int dir, uint64_t t0_ms,
     return eff > 1e-9 ? 10.0 * log10(eff) : -90.0;
 }
 
+/* The SNR a modem reports for a frame received over [t0, t0+air): its
+ * estimator averages signal and noise power across the frame, so the linear
+ * mean of the instantaneous SNR -- not frame_snr_db's effective SNR, which is
+ * what decides the decode.  NAN when the channel does not fade: the caller's
+ * own figure stands. */
+double sim_channel_frame_snr(const sim_channel_t *ch, uint64_t t0_ms, int dir, int freedv_mode)
+{
+    if (!ch || !ch->fading) return NAN;
+    uint32_t air_ms = sim_channel_airtime_ms(freedv_mode, 0);
+    double acc = 0;
+    for (int i = 0; i < 8; i++) {
+        double t = (t0_ms + (air_ms * (i + 0.5)) / 8.0) / 1000.0;
+        acc += pow(10.0, ch->fade_mean_db / 10.0) * fade_power(ch, dir & 1, t);
+    }
+    acc /= 8.0;
+    return acc > 1e-9 ? 10.0 * log10(acc) : -90.0;
+}
+
 /* SplitMix64: deterministic, seedable, no global state. */
 static double next_rand(sim_channel_t *ch) { return sim_channel_next_rand(ch); }
 
