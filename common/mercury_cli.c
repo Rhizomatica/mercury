@@ -9,6 +9,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
+#include <stdbool.h>
 #include <string.h>
 #include <unistd.h>
 
@@ -80,6 +81,32 @@ void mercury_cli_print_usage(const char *prog)
     printf(" -h                         Prints this help.\n");
 }
 
+/* No -C, and no mercury.ini in the working directory: look where an
+ * installed Mercury keeps it.  Run from anywhere else, Mercury used to fall
+ * silently back to built-in defaults -- in issue #294 that meant the Pi's
+ * 'default' ALSA PCM and an EINVAL (-22) that looked like a driver fault. */
+static bool cli_find_config(char *out, size_t n)
+{
+#ifndef _WIN32
+    char cand[2][512];
+    int k = 0;
+    const char *xdg = getenv("XDG_CONFIG_HOME"), *home = getenv("HOME");
+    if (xdg && xdg[0])
+        snprintf(cand[k++], sizeof(cand[0]), "%s/mercury/mercury.ini", xdg);
+    else if (home && home[0])
+        snprintf(cand[k++], sizeof(cand[0]), "%s/.config/mercury/mercury.ini", home);
+    snprintf(cand[k++], sizeof(cand[0]), "/etc/mercury/mercury.ini");
+    for (int i = 0; i < k; i++)
+        if (access(cand[i], R_OK) == 0) {
+            snprintf(out, n, "%s", cand[i]);
+            return true;
+        }
+#else
+    (void)out; (void)n;
+#endif
+    return false;
+}
+
 int mercury_cli_parse(int argc, char **argv,
                       const char *default_cfg_path, mercury_cli_t *out)
 {
@@ -102,18 +129,42 @@ int mercury_cli_parse(int argc, char **argv,
 
     /* First pass: extract -C config path only. */
     int opt;
+    bool cli_config = false;
     optind = 1;
     while ((opt = getopt(argc, argv, optstring)) != -1)
     {
-        if (opt == 'C' && optarg)
+        if (opt == 'C' && optarg) {
             snprintf(out->cfg_path, sizeof(out->cfg_path), "%s", optarg);
+            cli_config = true;
+        }
+    }
+
+    bool searched = false;
+    if (!cli_config && !strcmp(out->cfg_path, "mercury.ini") &&
+        access(out->cfg_path, R_OK) != 0)
+    {
+        searched = true;
+        (void)cli_find_config(out->cfg_path, sizeof(out->cfg_path));
     }
 
     /* Load config file — fields not overridden by CLI keep these values. */
+    bool cfg_loaded = false;
     if (access(out->cfg_path, R_OK) == 0)
     {
-        if (cfg_read(&out->cfg, out->cfg_path))
+        if (cfg_read(&out->cfg, out->cfg_path)) {
             printf("Loaded configuration from %s\n", out->cfg_path);
+            cfg_loaded = true;
+        } else {
+            fprintf(stderr, "Configuration %s has an invalid setting (above): it was "
+                    "read only in part, and built-in defaults stand in for the rest.\n",
+                    out->cfg_path);
+        }
+    }
+    else
+    {
+        fprintf(stderr, "No configuration file found (%s%s): running on built-in "
+                "defaults.  Use -C <file> to choose one.\n", out->cfg_path,
+                searched ? ", $XDG_CONFIG_HOME or ~/.config/mercury, /etc/mercury" : "");
     }
 
     /* Device names are meaningful only to the sound system they came from, so
@@ -404,6 +455,14 @@ int mercury_cli_parse(int argc, char **argv,
         fprintf(stderr, "Error: -Q requires a configured PTT method (not 'none').\n");
         return -1;
     }
+
+    /* Without a configuration the audio devices are the first thing to go
+     * wrong, so say which ones will be opened. */
+    if (!cfg_loaded && out->action == MERCURY_CLI_RUN)
+        fprintf(stderr, "  audio: %s, input '%s', output '%s'\n",
+                cfg_sound_system_name(out->cfg.sound_system),
+                out->cfg.input_device[0] ? out->cfg.input_device : "default",
+                out->cfg.output_device[0] ? out->cfg.output_device : "default");
 
     return 0;
 }
