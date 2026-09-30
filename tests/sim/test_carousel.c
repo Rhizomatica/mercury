@@ -113,6 +113,18 @@ static void test_carousel_fading_no_blind_repoll(void)
     unsetenv("CAR_CS_DECODABLE");
 }
 
+/* Both ways at the deep floor, under fading: the receiver takes the turn
+ * with a handover on MFSK after its turn quantum, in place of a pattern, and
+ * the sender, continuing at the pattern delay, keyed into it -- 19, 12 and
+ * 11 collisions on these seeds -- until it waited for the handover once the
+ * quantum was near. */
+static void test_carousel_floor_handover_not_keyed_over(void)
+{
+    setenv("CAR_CS_DECODABLE", "1", 1);
+    for (uint64_t seed = 1; seed <= 3; seed++)
+        check(seed, "fade:-9:0.5", true);
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -121,5 +133,6 @@ int main(void)
     RUN_TEST(test_carousel_floor_control_plane);
     RUN_TEST(test_carousel_lost_probe_poll);
     RUN_TEST(test_carousel_fading_no_blind_repoll);
+    RUN_TEST(test_carousel_floor_handover_not_keyed_over);
     return UNITY_END();
 }

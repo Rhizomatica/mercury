@@ -119,6 +119,9 @@
  * the margin the real modems need cost 5-11 % in the sim, which answers
  * at once, wherever rounds or patterns were lost. */
 #define FLOOR_DELAY_MARGIN_MS 2000
+/* The peer checks its turn quantum as each round of mine ends; this much
+ * before it is due, the next answer may already be its handover. */
+#define HANDOVER_SOON_MS      5000
 
 enum { M_DATA, M_POLL, M_HANDOVER, M_STATUS };
 enum { AFTER_NONE, AFTER_POLL, AFTER_ROUND, AFTER_PATTERN };
@@ -629,6 +632,16 @@ static void arm_sender_wait(car_t *c, uint64_t tx_end)
         bool ctl_audible = c->snr_valid && c->snr_ema >= ARQ_SNR_MIN_DATAC15_DB;
         if (ctl_audible && answer < ctl_answer)
             answer = ctl_answer;
+        /* But once the peer, with data of its own, has driven me about a turn
+         * quantum, the answer may be its handover -- on MFSK below the control
+         * mode, a frame found only as it ends, and in a fade not sensed
+         * before.  Continuing at the pattern delay, I keyed into it (sim,
+         * fade:-9 both ways: 187 collisions in 20 runs).  A pattern still
+         * moves me at once. */
+        if (c->peer_has_data && tx_end + HANDOVER_SOON_MS >= c->send_start_ms + TURN_QUANTUM_MS) {
+            uint64_t ho = tx_end + GUARD_MS + HEAD_MS + peer_ctl_air(c) + TAIL_MS + FLOOR_ANSWER_MS;
+            if (answer < ho) answer = ho;
+        }
     }
     uint64_t t = c->handover_unconfirmed || c->floor_waiting ? answer : tx_end + SENDER_SILENCE_MS;
     arm(c, CAR_T_WAIT, t);
@@ -1278,6 +1291,7 @@ static void on_poll_timer(car_t *c, uint64_t now)
         /* When the peer still has data its open blocks are only suspended:
          * both sides keep their state and carry on when the turn comes back. */
         car_trace(c, "rx -> handover (%s)", done ? "peer done" : "turn quantum");
+        c->send_start_ms = now;
         send_handover(c);
         return;
     }
@@ -1448,6 +1462,7 @@ static void on_ctl(car_t *c, uint64_t now, const msg_t *m)
         bool heard_mine = (m->poll_id & 0x0F) == (c->my_poll_id & 0x0F);
         c->polls_unheard = c->polled_since_handover && !heard_mine ? c->polls_unheard + 1 : 0;
         c->polled_since_handover = false;
+        c->peer_has_data = m->has_data;   /* it will want the turn back */
         apply_need(c, m);
         c->peer_unopened = m->unopened;
         c->peer_hi = resolve16(c->rbase, m->hi);
@@ -1460,6 +1475,8 @@ static void on_ctl(car_t *c, uint64_t now, const msg_t *m)
     disarm(c, CAR_T_POLL); disarm(c, CAR_T_SENSE); disarm(c, CAR_T_WAIT);
     c->floor_waiting = false; c->floor_silent = 0; c->pat_waiting = false;
     apply_need(c, m);
+    c->peer_has_data = m->has_data;
+    if (!c->sending) c->send_start_ms = now;
     c->tx_poll_id = m->poll_id;
     c->heard_poll_id = (uint8_t)(m->poll_id & 0x0F);
     c->tx_loss = m->loss16 / 15.0;
@@ -1531,6 +1548,7 @@ void car_init(car_t *c, const car_io_t *io, int rx_level, int tx_level)
 void car_start_sender(car_t *c, uint64_t now)
 {
     c->sending = true;
+    c->send_start_ms = now;
     c->tx_level = c->peer_snr_level; c->tx_n = 1; c->tx_poll_id = 1;
     c->handover_unconfirmed = true;
     arm(c, CAR_T_SEND, now);
@@ -1594,6 +1612,7 @@ static void take_turn_if_idle(car_t *c, uint64_t now)
     if (c->idle && !c->tx_busy && has_data(c)) {
         c->idle = false;
         c->sending = true;
+        c->send_start_ms = now;
         c->handover_unconfirmed = true;
         disarm(c, CAR_T_POLL); disarm(c, CAR_T_SENSE); disarm(c, CAR_T_SEND);
         arm(c, CAR_T_WAIT, now);
