@@ -1046,7 +1046,7 @@ static void start_driving(car_t *c, uint32_t poll_id, int lv, int n, uint64_t ro
      * turn retired a block the receiver never completed (sim, nvis bidir). */
     c->rx_break = false; c->last_was_pattern = false; c->floor_patterns = 0;
     c->floor_streaming = false;
-    c->probe_off_floor = c->floor_fallback = false;
+    c->probe_off_floor = c->floor_fallback = c->floor_hold = false;
     c->floor_waiting = false; c->pat_waiting = false;
     disarm(c, CAR_T_SEND); disarm(c, CAR_T_WAIT); disarm(c, CAR_T_SENSE);
     arm_poll(c, round_start + HEAD_MS + round_air(lv, n) + TAIL_MS + WINDOW_MARGIN_MS);
@@ -1111,6 +1111,7 @@ static void send_poll_as(car_t *c, int lv, int n, bool repeat)
     if (n) { c->polled_since_handover = true; c->my_poll_id = (uint8_t)c->poll_id; }
     c->round_seen = 0; c->round_frames = n; c->status_seen = false; c->done_in_round = 0;
     c->round_heard = false;
+    c->floor_hold = false;
     put_ctl(c, &fr[0], &m);
     disarm(c, CAR_T_POLL); disarm(c, CAR_T_SENSE);
     keydown(c, fr, 1, n ? AFTER_POLL : AFTER_NONE);
@@ -1139,10 +1140,36 @@ static void send_pattern(car_t *c, int kind, bool expect_round)
         c->round_seen = 0; c->round_frames = c->poll_n; c->status_seen = false;
         c->done_in_round = 0; c->round_heard = false;
     }
+    c->floor_hold = false;
     disarm(c, CAR_T_POLL); disarm(c, CAR_T_SENSE);
     c->tx_busy = true;
     c->after_tx = expect_round ? AFTER_PATTERN : AFTER_NONE;
     c->io.pattern(c->io.ctx, kind);
+}
+
+/* A sender above the floor that hears no poll repeats its last round
+ * SENDER_SILENCE_MS after it, on its rung, whatever I am bound to.  After
+ * polls lost in a fade that repeat met my next one on the air, unsensed
+ * either way (sim, fade:-5 seeds 1, 3, 7 and nvis seed 5).  I know when it
+ * is due, where, and how long: if what I would key now could run into it,
+ * listen for it on its rung instead, and act once it is over.  True when this
+ * timer was moved for it. */
+static bool clear_of_peer_nudge(car_t *c, uint64_t now)
+{
+    if (c->sending || c->peer_round_lv <= 0 || !c->peer_round_end) return false;
+    /* Anything heard from the peer since that round means it heard a poll
+     * after it: its repeat timer started over, on whatever it was told. */
+    if (c->last_carrier_ms > c->peer_round_end + GUARD_MS) return false;
+    uint64_t start = c->peer_round_end + SENDER_SILENCE_MS;
+    uint64_t end   = start + HEAD_MS + round_air(c->peer_round_lv, c->peer_round_n) + TAIL_MS;
+    uint64_t ctl   = ctl_on_floor(c) ? level_air(0) : mode_air(ARQ_CONTROL_MODE);
+    uint64_t mine  = now + GUARD_MS + HEAD_MS + ctl + TAIL_MS;   /* a poll: what I would key */
+    if (now >= end + GUARD_MS || mine + GUARD_MS <= start) return false;
+    car_trace(c, "rx: the peer's repeat of its lv=%d round is due -- after it", c->peer_round_lv);
+    bind_rx(c, c->peer_round_lv);
+    c->peer_round_end = end;            /* and the next one, if this is not heard */
+    arm(c, CAR_T_POLL, end + GUARD_MS);
+    return true;
 }
 
 /* The poll timer: the round is over (or never came).  Measure it, then poll,
@@ -1150,8 +1177,9 @@ static void send_pattern(car_t *c, int kind, bool expect_round)
 static void on_poll_timer(car_t *c, uint64_t now)
 {
     if (c->sending || c->idle) return;
-    if (c->floor_fallback && peer_keyed(c, now)) c->round_heard = true;
+    if ((c->floor_fallback || c->floor_hold) && peer_keyed(c, now)) c->round_heard = true;
     if (defer_if_busy(c, CAR_T_POLL, now)) return;
+    if (clear_of_peer_nudge(c, now)) return;
     /* My poll off a floor stream brought nothing -- no frame, no status.  If
      * it was lost, the sender carries on at the floor a floor wait after its
      * round, and my decoder, bound to the rung I asked for, cannot hear that,
@@ -1181,6 +1209,27 @@ static void on_poll_timer(car_t *c, uint64_t now)
         arm(c, CAR_T_POLL, (in_frame > start_max ? in_frame : start_max) + FLOOR_SENSE_MS);
         return;
     }
+    /* An empty floor window.  The sender, hearing no answer, continues on its
+     * own a floor wait after its round -- and with the control mode audible
+     * that is 9.75 s, where the window runs 10.7 s past the round and MFSK is
+     * sensed only a second or more in: the answer went out into the next
+     * round (sim, awgn:0.25 seeds 6 and 17, after a slide to the floor).  So
+     * hold until that round, if it comes, has been sensed; its frames re-arm
+     * this timer for its end, as any round's do.  Silence past it means it is
+     * not coming.  Cheap at the floor: silence there already means "keep
+     * going". */
+    /* Only while the sender hears my control mode: below it its wait takes an
+     * MFSK control frame's air and outlasts the window by far. */
+    if (c->poll_level == 0 && c->io.pattern && !c->floor_hold && !c->floor_fallback &&
+        !c->peer_ctl_deaf && !c->round_seen && !c->status_seen && !c->round_heard) {
+        uint64_t until = c->floor_round_end + peer_floor_wait_max(c) + FLOOR_SENSE_MS;
+        if (until > now) {
+            c->floor_hold = true;
+            arm(c, CAR_T_POLL, until);
+            return;
+        }
+    }
+    c->floor_hold = false;
     /* Nothing at all of the round, and nothing sensed: the poll (or pattern)
      * was lost, or the rung is dead.  The quick re-poll told these apart by
      * asking again at once and scoring only a second silence; now the window
@@ -1371,6 +1420,11 @@ static void on_data(car_t *c, uint64_t now, const msg_t *m, int lv)
         c->round_frames = c->round_seen + m->left;   /* the frames say how many there are */
     }
     deliver_in_order(c);
+    if (lv > 0) {
+        c->peer_round_end = now + (uint64_t)m->left * (level_air(lv) + burst_gap_ms(lv));
+        c->peer_round_lv = lv;
+        c->peer_round_n = c->round_frames > 0 ? c->round_frames : 1;
+    }
     arm_poll(c, now + (uint64_t)m->left * (level_air(lv) + burst_gap_ms(lv)) + TAIL_MS);
 }
 
@@ -1568,8 +1622,8 @@ void car_on_tx_done(car_t *c, uint64_t now)
          * end landed on its repeat (sim, awgn:0.25 bidir). */
         if (!floor && !c->pattern_for_lost_polls)
             arm(c, CAR_T_SENSE, start + SENSE_MS + PATTERN_SENSE_EXTRA_MS);
-        arm_poll(c, start + HEAD_MS + round_air(c->poll_level, c->poll_n) + TAIL_MS +
-                    WINDOW_MARGIN_MS + (floor ? FLOOR_LATE_MS : 0));
+        c->floor_round_end = start + HEAD_MS + round_air(c->poll_level, c->poll_n) + TAIL_MS;
+        arm_poll(c, c->floor_round_end + WINDOW_MARGIN_MS + (floor ? FLOOR_LATE_MS : 0));
     } else if (after == AFTER_POLL) {
         /* The peer heard the poll as its last frame ended, keys after its
          * guard, and should be heard by SENSE_MS after that. */
@@ -1580,8 +1634,8 @@ void car_on_tx_done(car_t *c, uint64_t now)
          * probe at -6.5 dB, and a DATAC1 one at 4.5 dB, unsensed 1.3 s in, had
          * the re-poll keyed into them. */
         arm(c, CAR_T_SENSE, start + SENSE_MS + (floor ? FLOOR_SENSE_MS : 0));
-        arm_poll(c, start + HEAD_MS + round_air(c->poll_level, c->poll_n) + TAIL_MS + WINDOW_MARGIN_MS +
-                    (floor ? FLOOR_LATE_MS : 0));
+        c->floor_round_end = start + HEAD_MS + round_air(c->poll_level, c->poll_n) + TAIL_MS;
+        arm_poll(c, c->floor_round_end + WINDOW_MARGIN_MS + (floor ? FLOOR_LATE_MS : 0));
     }
 }
 

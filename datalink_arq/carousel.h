@@ -168,6 +168,12 @@ typedef struct {
     bool     floor_streaming;       /* a floor round came since my last poll */
     bool     probe_off_floor;       /* my last poll asked a floor stream for another rung */
     bool     floor_fallback;        /* ...went unanswered: I listen for the floor round it kept sending */
+    bool     floor_hold;            /* an empty floor window: waiting out its continuation */
+    uint64_t floor_round_end;       /* when the floor round I wait for should have ended */
+    /* The peer's last round heard above the floor: a sender that hears no
+     * poll repeats it SENDER_SILENCE_MS after it (see on_poll_timer). */
+    uint64_t peer_round_end;
+    int      peer_round_lv, peer_round_n;
     int      probe_lv, probe_n;     /* what that poll asked for */
     uint64_t probe_after_ms;        /* the stream's last frame I heard before it */
     car_frame_t txbuf[CAR_KEYDOWN_MAX];
