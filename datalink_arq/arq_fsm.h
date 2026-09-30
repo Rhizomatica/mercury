@@ -376,6 +376,8 @@ typedef struct
     int      car_rx_level;            /* start rung for the peer's direction:
                                        * the SNR measured here                 */
     int      car_tx_level;            /* ...for ours, from the peer (-1: none) */
+    bool     car_ctl_deaf;            /* connect: I heard the peer below the control mode */
+    bool     car_peer_ctl_deaf;       /* connect: ...and it, me (the CALL came on MFSK) */
     uint64_t car_last_rx_ms;          /* last carousel frame from the peer     */
 
     /* --- Timer mechanism --- */

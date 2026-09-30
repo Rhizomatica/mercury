@@ -89,6 +89,7 @@ typedef struct {
 static station_t S[2];
 static sim_channel_t *ch;
 static int collisions;
+static int bad_frames;
 static uint64_t now_ms;
 static bool trace;
 static double snr_now = 12.0;          /* the SNR stamped on delivered frames */
@@ -114,6 +115,14 @@ static void io_keydown(void *ctx, const car_frame_t *fr, int n)
     s->tx_seen = false;
     if (trace) printf("%9.1f %c keys:", now_ms / 1000.0, 'A' + s->id);
     for (int i = 0; i < n; i++) {
+        /* The modem refuses a frame that does not fill its mode (modem.c,
+         * send_modulated_keydown): a keydown with one never goes out. */
+        const arq_mode_timing_t *tm = arq_protocol_mode_timing(fr[i].mode);
+        if (tm && fr[i].len != (size_t)tm->payload_bytes) {
+            bad_frames++;
+            if (trace) printf("%9.1f %c BAD FRAME %d: %zu bytes for mode %d\n", now_ms / 1000.0,
+                              'A' + s->id, i, (size_t)fr[i].len, fr[i].mode);
+        }
         if (i) t += fr[i].gap_ms;
         uint64_t air = sim_channel_airtime_ms(fr[i].mode, 0), d;
         if (trace) {
@@ -220,6 +229,7 @@ void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limi
     snr_biased = getenv("CAR_SNR_BIAS") != NULL;
     nev = 0;
     collisions = 0;
+    bad_frames = 0;
     memset(S, 0, sizeof(S));
 
     sim_channel_cfg_t cfg = { .seed = seed, .per = 0.02, .guard_ms = 150 };
@@ -268,6 +278,7 @@ void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limi
         double hears = asym ? snr_dir[i ^ 1] : snr_db, heard = asym ? snr_dir[i] : snr_db;
         if (getenv("CAR_NOHINT")) hears = heard = -99.0;
         car_init(&s->car, &io, car_start_level((float)hears), car_start_level((float)heard));
+        car_seed_ctl_deaf(&s->car, hears < ARQ_SNR_MIN_DATAC15_DB, heard < ARQ_SNR_MIN_DATAC15_DB);
         s->rx_mode = -1;
     }
     for (int i = 0; i < CAR_SIM_BYTES; i++) {
@@ -326,6 +337,7 @@ void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limi
                   !memcmp(S[0].rx, S[1].tx, S[0].rx_len < S[1].tx_len ? S[0].rx_len : S[1].tx_len);
     res->done_ms = done_ms;
     res->collisions = collisions;
+    res->bad_frames = bad_frames;
     res->stalled = !done_ms && car_next_deadline(&S[0].car) == UINT64_MAX &&
                    car_next_deadline(&S[1].car) == UINT64_MAX;
     sim_channel_destroy(ch);

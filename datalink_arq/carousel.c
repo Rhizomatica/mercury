@@ -11,11 +11,14 @@
  *     b1  poll id (4) | highest block opened, mod 16 (4)
  *     then segments, one per block: 4 bytes
  *         block id mod 16 (4) | K - 1 (7) | piece count (6) | first piece
- *         index (8) | pad bytes in the block's last data piece (5) | 0 (2)
+ *         index (8) | pad bytes in the block's last data piece (5) | 0 (1) |
+ *         in the FIRST segment header only: control-deaf (1), else 0
  *       and count pieces with consecutive indices (mod 256).  A zero count
- *       ends the frame.
- *   POLL / HANDOVER / STATUS, in the control mode, CAR_POLL_BYTES:
- *     b0  type (2) | has data (1) | poll id (4) | 0
+ *       ends the frame.  (The first header is always there: a payload mode
+ *       frame holds at least FRAME_HDR + SEG_HDR bytes.)
+ *   POLL / HANDOVER / STATUS, CAR_POLL_BYTES, in the control mode -- or on
+ *   MFSK behind a byte CTL_FLOOR_MARK when the peer is control-deaf:
+ *     b0  type (2) | has data (1) | poll id (4) | control-deaf (1)
  *     b1  level (3) | frames asked for (4) | 0
  *     b2  loss (4) | window base, mod 16 (4)
  *     b3..b9   pieces each block from the base still needs, 7 bits each
@@ -160,6 +163,31 @@ static uint64_t mode_air(int mode)
     return tm ? (uint64_t)(tm->frame_duration_s * 1000.0f + 0.5f) : 4400;
 }
 static uint64_t level_air(int lv) { return mode_air(LADDER[lv]); }
+
+/* ---- the control plane at the floor ----------------------------------------
+ * Control frames go on the control mode (DATAC16).  A peer that hears me below
+ * it cannot decode them, and then nothing of mine but patterns reaches it: on
+ * air (estacao2 -> gateway at 2 %) its sender, deaf to my polls, re-sent the
+ * same handover for minutes, or sat waiting while I marked every rung dead.
+ *
+ * So each end measures the other and reports, in every frame it sends, whether
+ * it hears it below the control mode (ctl_deaf, with hysteresis).  To a peer
+ * that reports so, control frames go on MFSK, behind a first byte no data
+ * frame has (level 7 is off the 3-bit ladder); and an end that is itself
+ * control-deaf listens for its peer's control there.  Both ends act on the
+ * same bit, so they agree -- a switch on local evidence alone did not, and a
+ * peer still on DATAC15 missed the MFSK (sim, cliff:-5 bidir).  Nor on the
+ * start rung: level 0 begins at -2 dB, where the control mode still works and
+ * a 13.5 s MFSK control frame is pure cost. */
+#define CTL_FLOOR_MARK   0x07
+#define CTL_DEAF_ON_DB   (ARQ_SNR_MIN_DATAC15_DB - 0.5f)
+#define CTL_DEAF_OFF_DB  (ARQ_SNR_MIN_DATAC15_DB + 1.0f)
+static bool ctl_on_floor(const car_t *c)      { return c->io.pattern && c->peer_ctl_deaf; }
+static bool peer_ctl_on_floor(const car_t *c) { return c->io.pattern && c->ctl_deaf; }
+static uint64_t peer_ctl_air(const car_t *c)
+{
+    return peer_ctl_on_floor(c) ? level_air(0) : mode_air(ARQ_CONTROL_MODE);
+}
 static int pieces_per_frame(int lv) { return (mode_payload(LADDER[lv]) - FRAME_HDR - SEG_HDR) / CAR_PIECE; }
 static uint64_t round_air(int lv, int n)
 {
@@ -189,13 +217,15 @@ typedef struct {
     bool     has_data;
     int      h_level, h_n;
     uint32_t h_id;
+    bool     ctl_deaf;              /* the sender hears me below the control mode */
 } msg_t;
 
 static void encode_ctl(const msg_t *m, uint8_t *b)
 {
     memset(b, 0, CAR_POLL_BYTES);
     int type = m->type == M_POLL ? 0 : m->type == M_HANDOVER ? 1 : 2;
-    b[0] = (uint8_t)(type << 6 | (m->has_data ? 1 : 0) << 5 | (m->poll_id & 0x0F) << 1);
+    b[0] = (uint8_t)(type << 6 | (m->has_data ? 1 : 0) << 5 | (m->poll_id & 0x0F) << 1 |
+                     (m->ctl_deaf ? 1 : 0));
     b[1] = (uint8_t)((m->level & 7) << 5 | (m->n & 0x0F) << 1);
     b[2] = (uint8_t)((m->loss16 & 0x0F) << 4 | (m->base & 0x0F));
     uint64_t nb = 0;                          /* 8 x 7 bits, first block high */
@@ -208,6 +238,25 @@ static void encode_ctl(const msg_t *m, uint8_t *b)
     b[13] = (uint8_t)((m->hi & 0x0F) << 4 | (m->unopened ? 1 : 0) << 3);
 }
 
+/* A control frame: on the control mode, or on MFSK behind CTL_FLOOR_MARK to a
+ * control-deaf peer (see ctl_on_floor). */
+static void put_ctl(const car_t *c, car_frame_t *f, const msg_t *m)
+{
+    f->gap_ms = 0;
+    if (ctl_on_floor(c)) {
+        /* A frame fills its mode: the modem refuses anything shorter (on
+         * the real modem a 15-byte MFSK control frame never went out). */
+        int room = mode_payload(LADDER[0]);
+        memset(f->bytes, 0, (size_t)room);
+        f->bytes[0] = CTL_FLOOR_MARK;
+        encode_ctl(m, f->bytes + 1);
+        f->mode = LADDER[0]; f->len = room;
+    } else {
+        encode_ctl(m, f->bytes);
+        f->mode = ARQ_CONTROL_MODE; f->len = CAR_POLL_BYTES;
+    }
+}
+
 static bool decode_ctl(const uint8_t *b, size_t len, msg_t *m)
 {
     if (len < CAR_POLL_BYTES) return false;
@@ -217,6 +266,7 @@ static bool decode_ctl(const uint8_t *b, size_t len, msg_t *m)
     m->type = type == 0 ? M_POLL : type == 1 ? M_HANDOVER : M_STATUS;
     m->has_data = (b[0] >> 5) & 1;
     m->poll_id = (b[0] >> 1) & 0x0F;
+    m->ctl_deaf = b[0] & 1;
     m->level = b[1] >> 5;
     m->n = (b[1] >> 1) & 0x0F;
     m->loss16 = b[2] >> 4;
@@ -249,6 +299,7 @@ static bool decode_data(const uint8_t *b, size_t len, msg_t *m)
     m->poll_id = b[1] >> 4;
     m->hi = b[1] & 0x0F;
     if (m->snr_level >= CAR_NLEVELS) return false;
+    if (len >= FRAME_HDR + SEG_HDR) m->ctl_deaf = b[FRAME_HDR + SEG_HDR - 1] & 1;
     size_t pos = FRAME_HDR;
     while (pos + SEG_HDR <= len && m->nseg < CAR_WIN) {
         uint32_t h = (uint32_t)b[pos] << 24 | (uint32_t)b[pos + 1] << 16 | (uint32_t)b[pos + 2] << 8 | b[pos + 3];
@@ -528,6 +579,7 @@ static int build_round(car_t *c, int lv, int n, uint32_t poll_id, car_frame_t *f
     for (int i = 0; i < nf; i++) {
         fr[i].bytes[0] = (uint8_t)((nf - 1 - i) << 4 | (unopened(c) ? 1 : 0) << 3 | (c->snr_level & 7));
         fr[i].bytes[1] = (uint8_t)((poll_id & 0x0F) << 4 | ((c->next_blk_id - 1) & 0x0F));
+        if (c->ctl_deaf) fr[i].bytes[FRAME_HDR + SEG_HDR - 1] |= 1;
     }
     return nf;
 }
@@ -538,7 +590,9 @@ static int keydown_cap(int lv);
 
 static void arm_sender_wait(car_t *c, uint64_t tx_end)
 {
-    uint64_t answer = tx_end + GUARD_MS + HEAD_MS + mode_air(ARQ_CONTROL_MODE) + TAIL_MS + WINDOW_MARGIN_MS;
+    uint64_t answer = tx_end + GUARD_MS + HEAD_MS + peer_ctl_air(c) + TAIL_MS + WINDOW_MARGIN_MS;
+    /* A control-deaf end hears its peer's answer only on MFSK: listen there. */
+    if (peer_ctl_on_floor(c)) bind_rx(c, 0);
     /* A peer that reaches me only at the floor answers in a control mode I
      * cannot hear -- not even as carrier.  Its handover is followed by a floor
      * frame I sense only seconds into it; timed for the control frame alone,
@@ -548,7 +602,7 @@ static void arm_sender_wait(car_t *c, uint64_t tx_end)
      * then went out over the re-poll (sim, asym:-10:14 bidir).  Wait out both:
      * the floor frame's sense time, and a second control keydown. */
     if (c->drove_peer && c->poll_level == 0 && c->io.pattern)
-        answer += SENSE_MS + FLOOR_SENSE_MS + HEAD_MS + mode_air(ARQ_CONTROL_MODE) + TAIL_MS;
+        answer += SENSE_MS + FLOOR_SENSE_MS + HEAD_MS + peer_ctl_air(c) + TAIL_MS;
     /* A floor round: the answer is a pattern, a poll, or nothing -- and
      * nothing means "keep going" there too.  A handover round included: the
      * control mode may never get through, and a pattern confirms it. */
@@ -589,8 +643,8 @@ static void send_round(car_t *c)
         memset(&m, 0, sizeof(m));
         m.type = M_STATUS; m.poll_id = c->tx_poll_id;
         m.hi = (uint8_t)(c->next_blk_id - 1); m.snr_level = c->snr_level;
-        encode_ctl(&m, fr[0].bytes);
-        fr[0].mode = ARQ_CONTROL_MODE; fr[0].len = CAR_POLL_BYTES; fr[0].gap_ms = 0;
+        m.ctl_deaf = c->ctl_deaf;
+        put_ctl(c, &fr[0], &m);
         nf = 1;
     }
     keydown(c, fr, nf, AFTER_ROUND);
@@ -960,6 +1014,7 @@ static void fill_poll(const car_t *c, msg_t *m)
     m->loss16 = (int)lround(c->loss_est * 15.0);
     m->has_data = has_data(c);
     m->snr_level = c->snr_level;
+    m->ctl_deaf = c->ctl_deaf;
 }
 
 static void arm_poll(car_t *c, uint64_t end) { arm(c, CAR_T_POLL, end + GUARD_MS); }
@@ -1011,8 +1066,7 @@ static void send_handover(car_t *c)
     /* Name the last poll I heard, so a peer can tell "handed over after my
      * poll" from "never heard my poll". */
     m.poll_id = c->heard_poll_id;
-    encode_ctl(&m, fr[0].bytes);
-    fr[0].mode = ARQ_CONTROL_MODE; fr[0].len = CAR_POLL_BYTES; fr[0].gap_ms = 0;
+    put_ctl(c, &fr[0], &m);
     if (nd) fr[1].gap_ms = CHAIN_GAP_MS;
     c->handover_unconfirmed = true;
     disarm(c, CAR_T_POLL); disarm(c, CAR_T_SENSE);
@@ -1038,8 +1092,7 @@ static void send_poll_as(car_t *c, int lv, int n, bool repeat)
     if (n) { c->polled_since_handover = true; c->my_poll_id = (uint8_t)c->poll_id; }
     c->round_seen = 0; c->round_frames = n; c->status_seen = false; c->done_in_round = 0;
     c->round_heard = false;
-    encode_ctl(&m, fr[0].bytes);
-    fr[0].mode = ARQ_CONTROL_MODE; fr[0].len = CAR_POLL_BYTES; fr[0].gap_ms = 0;
+    put_ctl(c, &fr[0], &m);
     disarm(c, CAR_T_POLL); disarm(c, CAR_T_SENSE);
     keydown(c, fr, 1, n ? AFTER_POLL : AFTER_NONE);
 }
@@ -1298,7 +1351,7 @@ static void on_ctl(car_t *c, uint64_t now, const msg_t *m)
      * found the handover's DATAC3 frame only after decoding the handover and
      * rebinding, 300 ms before that frame began, and lost it; the loss was
      * scored against DATAC3. */
-    bind_rx(c, c->drove_peer ? c->poll_level : m->level);
+    bind_rx(c, peer_ctl_on_floor(c) ? 0 : c->drove_peer ? c->poll_level : m->level);
     arm(c, CAR_T_SEND, now + ISS_GUARD_MS);
 }
 
@@ -1360,6 +1413,21 @@ void car_start_receiver(car_t *c, uint64_t now)
     start_driving(c, 1, c->snr_level, 1, now, now);
 }
 
+static void note_peer_ctl_deaf(car_t *c, bool deaf)
+{
+    if (deaf != c->peer_ctl_deaf) {
+        c->peer_ctl_deaf = deaf;
+        car_trace(c, "the peer hears me %s the control mode: control on %s",
+                  deaf ? "below" : "above", deaf ? "MFSK" : "the control mode");
+    }
+}
+
+void car_seed_ctl_deaf(car_t *c, bool mine, bool peers)
+{
+    c->ctl_deaf = mine;
+    c->peer_ctl_deaf = peers;
+}
+
 void car_on_frame(car_t *c, uint64_t now, const uint8_t *bytes, size_t len, int mode, bool control,
                   float snr_db)
 {
@@ -1368,13 +1436,22 @@ void car_on_frame(car_t *c, uint64_t now, const uint8_t *bytes, size_t len, int 
     if (snr_db != 0.0f) {
         c->snr_ema = c->snr_valid ? 0.7f * c->snr_ema + 0.3f * snr_db : snr_db;
         c->snr_valid = true;
+        bool deaf = c->ctl_deaf ? c->snr_ema < CTL_DEAF_OFF_DB : c->snr_ema < CTL_DEAF_ON_DB;
+        if (deaf != c->ctl_deaf) {
+            c->ctl_deaf = deaf;
+            car_trace(c, "I hear the peer %s the control mode (%.1f dB)", deaf ? "below" : "above", c->snr_ema);
+        }
     }
     if (control) {
-        if (decode_ctl(bytes, len, &m)) on_ctl(c, now, &m);
+        if (decode_ctl(bytes, len, &m)) { note_peer_ctl_deaf(c, m.ctl_deaf); on_ctl(c, now, &m); }
+        return;
+    }
+    if (len >= 1 + CAR_POLL_BYTES && bytes[0] == CTL_FLOOR_MARK) {   /* control, on the floor */
+        if (decode_ctl(bytes + 1, len - 1, &m)) { note_peer_ctl_deaf(c, m.ctl_deaf); on_ctl(c, now, &m); }
         return;
     }
     int lv = level_of_mode(mode);
-    if (lv >= 0 && decode_data(bytes, len, &m)) on_data(c, now, &m, lv);
+    if (lv >= 0 && decode_data(bytes, len, &m)) { note_peer_ctl_deaf(c, m.ctl_deaf); on_data(c, now, &m, lv); }
 }
 
 /* Idle, with something to send: take the turn with a handover, after

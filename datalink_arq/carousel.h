@@ -108,6 +108,9 @@ typedef struct {
     bool     idle;                  /* nothing in flight either way */
     int      rx_level;              /* what the payload decoder is bound to */
     int      snr_level;             /* where the SNR measured here starts the peer */
+    bool     ctl_deaf;              /* I hear the peer below the control mode: its
+                                     * control must reach me on MFSK (reported) */
+    bool     peer_ctl_deaf;         /* ...and the peer, of me, as it reports */
     float    snr_ema;               /* SNR of what the peer sends us, smoothed */
     bool     snr_valid;
     uint64_t deadline[CAR_NTIMERS]; /* 0 = disarmed */
@@ -172,6 +175,9 @@ typedef struct {
  * the callee's ACCEPT is that poll, naming tx_level -- so car_start_sender()
  * on the caller and car_start_receiver() on the callee. */
 void car_init(car_t *c, const car_io_t *io, int rx_level, int tx_level);
+/* Seed, from the connect exchange, whether each end hears the other below the
+ * control mode (see ctl_on_floor in carousel.c).  Frames keep both current. */
+void car_seed_ctl_deaf(car_t *c, bool mine, bool peers);
 void car_start_sender(car_t *c, uint64_t now);
 void car_start_receiver(car_t *c, uint64_t now);
 

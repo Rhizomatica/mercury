@@ -12,6 +12,7 @@
 #include "carousel_sim.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 
 #define LIMIT_MS (8ULL * 3600 * 1000)
 
@@ -27,6 +28,7 @@ static void check(uint64_t seed, const char *chan, bool bidir)
     TEST_ASSERT_TRUE_MESSAGE(r.intact, what);
     TEST_ASSERT_FALSE_MESSAGE(r.stalled, what);
     TEST_ASSERT_EQUAL_INT_MESSAGE(0, r.collisions, what);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, r.bad_frames, what);
     TEST_ASSERT_EQUAL_MESSAGE(CAR_SIM_BYTES, r.a2b, what);
     TEST_ASSERT_EQUAL_MESSAGE(bidir ? CAR_SIM_BYTES : 0, r.b2a, what);
     TEST_ASSERT_NOT_EQUAL_MESSAGE(0, r.done_ms, what);
@@ -53,10 +55,27 @@ static void test_carousel_oneway_completes_intact(void)
             check(seed, CHANNELS[c], false);
 }
 
+/* A link one way below the control mode: its receiver's control frames go on
+ * MFSK, and each end learns which way from the other's control-deaf report.
+ * With carrier sense only on what the listener can sync on (as on air), the
+ * control-mode-only plane keyed over itself on these -- asym:14:-10 26
+ * collisions, asym:-9:3 465 and 2 of 8 unfinished, cliff:-9 740 -- and on air
+ * a gateway at 2 % polled a deaf estacao2 for minutes. */
+static void test_carousel_floor_control_plane(void)
+{
+    static const char *ASYM[] = { "asym:14:-10", "asym:-10:14", "asym:-9:3", "cliff:-9" };
+    setenv("CAR_CS_DECODABLE", "1", 1);
+    for (size_t c = 0; c < sizeof(ASYM) / sizeof(ASYM[0]); c++)
+        for (uint64_t seed = 1; seed <= 4; seed++)
+            check(seed, ASYM[c], true);
+    unsetenv("CAR_CS_DECODABLE");
+}
+
 int main(void)
 {
     UNITY_BEGIN();
     RUN_TEST(test_carousel_bidir_completes_intact);
     RUN_TEST(test_carousel_oneway_completes_intact);
+    RUN_TEST(test_carousel_floor_control_plane);
     return UNITY_END();
 }

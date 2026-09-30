@@ -1452,6 +1452,7 @@ static void car_start(arq_session_t *sess, bool is_caller, uint64_t now)
         .trace = car_io_trace,
     };
     car_init(sess->car, &io, sess->car_rx_level, sess->car_tx_level);
+    car_seed_ctl_deaf(sess->car, sess->car_ctl_deaf, sess->car_peer_ctl_deaf);
     sess->car_active = true;
     sess->car_last_rx_ms = now;
     if (is_caller)
@@ -1552,6 +1553,10 @@ static void fsm_listening(arq_session_t *sess, const arq_event_t *ev)
         sess->session_id      = ev->session_id;
         sess->call_rx_mode    = ev->mode;
         sess->car_rx_level    = car_start_level(ev->rx_snr);   /* the ACCEPT names it */
+        /* The caller escalates to an MFSK CALL when none of our control-mode
+         * ACCEPTs reached it: it hears us below the control mode. */
+        sess->car_ctl_deaf      = ev->rx_snr < ARQ_SNR_MIN_DATAC15_DB;
+        sess->car_peer_ctl_deaf = ev->mode == MERCURY_MODE_MFSK;
         sess->tx_retries_left = ARQ_ACCEPT_RETRY_SLOTS;
         sess->accept_tx_pending = true;   /* answering a CALL we just heard */
         /* Reset mode state so the payload decoder matches the new caller's
@@ -1667,6 +1672,9 @@ static void fsm_calling(arq_session_t *sess, const arq_event_t *ev)
             sess->pending_disconnect = false;
             sess->car_tx_level = ev->car_level;
             sess->car_rx_level = car_start_level(ev->rx_snr);
+            /* The callee's own report comes with its first frame. */
+            sess->car_ctl_deaf      = ev->rx_snr < ARQ_SNR_MIN_DATAC15_DB;
+            sess->car_peer_ctl_deaf = false;
             if (g_cbs.notify_connected)
                 g_cbs.notify_connected(sess->remote_call, sess->local_call);
             if (g_timing)
@@ -1880,6 +1888,8 @@ static void fsm_accepting(arq_session_t *sess, const arq_event_t *ev)
         sess->accept_tx_pending = true;   /* answering a CALL we just heard */
         sess->deadline_ms       = time_now_ms() + ARQ_CHANNEL_GUARD_MS;
         sess->car_rx_level      = car_start_level(ev->rx_snr);
+        sess->car_ctl_deaf      = ev->rx_snr < ARQ_SNR_MIN_DATAC15_DB;
+        sess->car_peer_ctl_deaf = ev->mode == MERCURY_MODE_MFSK;
         /* Answer on the carrier THIS CALL came on: a caller escalates when it
          * hears none of our ACCEPTs -- a weak return path -- and an answer
          * kept on DATAC16 kept failing the same way (#235). */

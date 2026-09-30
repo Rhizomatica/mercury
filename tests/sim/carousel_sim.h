@@ -18,6 +18,7 @@ typedef struct {
     bool     intact;              /* what was delivered is a prefix of what was sent */
     uint64_t done_ms;             /* both complete (0: not within the limit) */
     int      collisions;
+    int      bad_frames;   /* keydown frames the modem would refuse (length != mode payload) */
     bool     stalled;             /* nothing left to happen, data undelivered */
 } car_sim_result_t;
 
