@@ -100,10 +100,31 @@ static void test_the_filter_filters(void)
     }
 }
 
+/* The symbol and cyclic-prefix lengths are whole numbers of samples, and the
+ * same on every build.  Truncating fs/rs and tcp*fs gave datac14 m = 143 and
+ * ncp = 39 under i386's x87 precision (144 and 40 elsewhere) -- a waveform no
+ * other station decodes -- and ofdm_create's own check aborted on it: the
+ * first test here to open every mode did, in the i386 CI job. */
+static void test_symbol_and_prefix_lengths_are_whole(void)
+{
+    for (size_t m = 0; m < sizeof(MODES) / sizeof(MODES[0]); m++) {
+        struct OFDM *o = open_mode(MODES[m]);
+        TEST_ASSERT_NOT_NULL_MESSAGE(o, MODES[m]);
+        TEST_ASSERT_EQUAL_INT_MESSAGE((int)lround((double)o->fs * o->ts), o->m, MODES[m]);
+        TEST_ASSERT_EQUAL_INT_MESSAGE((int)lround((double)o->fs * o->tcp), o->ncp, MODES[m]);
+        if (!strcmp(MODES[m], "datac14")) {
+            TEST_ASSERT_EQUAL_INT(144, o->m);
+            TEST_ASSERT_EQUAL_INT(40, o->ncp);
+        }
+        ofdm_destroy(o);
+    }
+}
+
 int main(void)
 {
     UNITY_BEGIN();
     RUN_TEST(test_every_carrier_is_in_the_passband);
     RUN_TEST(test_the_filter_filters);
+    RUN_TEST(test_symbol_and_prefix_lengths_are_whole);
     return UNITY_END();
 }
