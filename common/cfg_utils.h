@@ -58,6 +58,7 @@
 #define CFG_KEY_PTT_CM108_GPIO      "ptt:cm108_gpio"
 #define CFG_KEY_PTT_HAMLIB_MODEL    "ptt:hamlib_model"
 #define CFG_KEY_PTT_HAMLIB_SPEED    "ptt:hamlib_serial_speed"
+#define CFG_KEY_PTT_HAMLIB_CONF     "ptt:hamlib_conf"
 #define CFG_KEY_PTT_HAMLIB_LOG      "ptt:hamlib_log_level"
 #define CFG_KEY_NO_PROGRESS_TIMEOUT_S "arq:no_progress_timeout_s"
 #define CFG_KEY_DISCONNECT_DRAIN_TIMEOUT_S "arq:disconnect_drain_timeout_s"

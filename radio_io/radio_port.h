@@ -116,4 +116,72 @@ static inline const char *radio_port_advice(radio_port_verdict_t v)
     }
 }
 
+/* ---- hamlib_conf pass-through ------------------------------------------------
+ * "key=value[,key=value...]" -- pairs separated by commas, semicolons or
+ * whitespace -- as rigctl --set-conf takes them.  Kept here, free of Hamlib
+ * types, so the parsing is unit-tested on any host. */
+typedef void (*radio_conf_pair_cb)(const char *key, const char *value, void *ctx);
+
+#define RADIO_CONF_MAX 256
+
+/* Calls cb for every pair and returns how many there were, or -1 (calling cb
+ * for none) if an item has no '=' or an empty key, or the string is too long:
+ * a half-applied configuration is worse than none. */
+static inline int radio_conf_pairs(const char *s, radio_conf_pair_cb cb, void *ctx)
+{
+    char buf[RADIO_CONF_MAX];
+    int n = 0;
+    if (!s) return 0;
+    size_t len = 0;
+    while (s[len]) len++;
+    if (len >= sizeof(buf)) return -1;
+    for (int pass = 0; pass < 2; pass++) {
+        size_t i = 0;
+        for (size_t k = 0; k <= len; k++) buf[k] = s[k];
+        n = 0;
+        while (buf[i]) {
+            while (buf[i] == ',' || buf[i] == ';' || buf[i] == ' ' || buf[i] == '\t') i++;
+            if (!buf[i]) break;
+            size_t start = i, eq = 0;
+            while (buf[i] && buf[i] != ',' && buf[i] != ';' && buf[i] != ' ' && buf[i] != '\t') {
+                if (buf[i] == '=' && !eq) eq = i;
+                i++;
+            }
+            if (!eq || eq == start) return -1;
+            char sep = buf[i];
+            buf[i] = '\0';
+            buf[eq] = '\0';
+            if (pass == 1 && cb) cb(buf + start, buf + eq + 1, ctx);
+            n++;
+            if (sep) i++;
+        }
+    }
+    return n;
+}
+
+static inline int radio_conf_ieq(const char *a, const char *b)
+{
+    for (; *a && *b; a++, b++) {
+        char x = *a >= 'A' && *a <= 'Z' ? (char)(*a + 32) : *a;
+        char y = *b >= 'A' && *b <= 'Z' ? (char)(*b + 32) : *b;
+        if (x != y) return 0;
+    }
+    return *a == *b;
+}
+
+typedef struct { const char *key; int found; } radio_conf_find_t;
+static inline void radio_conf_find_cb(const char *k, const char *v, void *ctx)
+{
+    (void)v;
+    radio_conf_find_t *f = (radio_conf_find_t *)ctx;
+    if (radio_conf_ieq(k, f->key)) f->found = 1;
+}
+
+/* Does the pass-through name this key (case-insensitively)? */
+static inline int radio_conf_sets(const char *s, const char *key)
+{
+    radio_conf_find_t f = { key, 0 };
+    return radio_conf_pairs(s, radio_conf_find_cb, &f) > 0 && f.found;
+}
+
 #endif /* RADIO_PORT_H */

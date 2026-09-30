@@ -110,11 +110,40 @@ static const char *radio_io_model_name(rig_model_t model)
     return name ? name : "this rig";
 }
 
-static void radio_io_apply_hamlib_conf(RIG *radio, rig_model_t model,
-                                       const char *device_path,
-                                       int serial_speed)
+static void radio_io_set_conf_cb(const char *key, const char *value, void *ctx)
 {
-    int rc;
+    RIG *radio = (RIG *)ctx;
+    hamlib_token_t tok = rig_token_lookup(radio, key);
+    if (tok == RIG_CONF_END)
+    {
+        HLOGW(RADIO_LOG_TAG, "hamlib_conf: '%s' is not a Hamlib setting for this rig", key);
+        return;
+    }
+    int rc = rig_set_conf(radio, tok, value);
+    if (rc != RIG_OK)
+        HLOGW(RADIO_LOG_TAG, "hamlib_conf: %s=%s refused: %d", key, value, rc);
+    else
+        HLOGI(RADIO_LOG_TAG, "hamlib_conf: %s=%s", key, value);
+}
+
+/* The current value of a Hamlib setting, or "" if it cannot be read. */
+static const char *radio_io_get_conf(RIG *radio, const char *key, char *buf)
+{
+    buf[0] = '\0';
+    hamlib_token_t tok = rig_token_lookup(radio, key);
+    if (tok == RIG_CONF_END || rig_get_conf(radio, tok, buf) != RIG_OK)
+        buf[0] = '\0';
+    return buf;
+}
+
+/* Returns which of RTS (1) and DTR (2) it held low by default. */
+static int radio_io_apply_hamlib_conf(RIG *radio, rig_model_t model,
+                                      const char *device_path,
+                                      int serial_speed,
+                                      const char *hamlib_conf)
+{
+    int rc, defaulted = 0;
+    bool serial = radio_io_port_kind(model) == RADIO_PORT_KIND_SERIAL;
 
     if (device_path && device_path[0])
     {
@@ -124,25 +153,63 @@ static void radio_io_apply_hamlib_conf(RIG *radio, rig_model_t model,
             HLOGW(RADIO_LOG_TAG, "rig_set_conf(rig_pathname) failed: %d", rc);
     }
 
-    if (serial_speed <= 0)
-        return;
-
-    if (radio_io_port_kind(model) != RADIO_PORT_KIND_SERIAL)
-    {
+    if (serial_speed > 0 && !serial)
         HLOGI(RADIO_LOG_TAG,
               "hamlib_serial_speed=%d ignored: %s is not a serial rig",
               serial_speed, radio_io_model_name(model));
-        return;
+    else if (serial_speed > 0)
+    {
+        char rate[16];
+        snprintf(rate, sizeof(rate), "%d", serial_speed);
+        rc = rig_set_conf(radio, rig_token_lookup(radio, "serial_speed"), rate);
+        if (rc != RIG_OK)
+            HLOGW(RADIO_LOG_TAG, "rig_set_conf(serial_speed) failed: %d", rc);
+        else
+            HLOGI(RADIO_LOG_TAG, "Hamlib serial speed overridden to %d baud",
+                  serial_speed);
     }
 
-    char rate[16];
-    snprintf(rate, sizeof(rate), "%d", serial_speed);
-    rc = rig_set_conf(radio, rig_token_lookup(radio, "serial_speed"), rate);
-    if (rc != RIG_OK)
-        HLOGW(RADIO_LOG_TAG, "rig_set_conf(serial_speed) failed: %d", rc);
-    else
-        HLOGI(RADIO_LOG_TAG, "Hamlib serial speed overridden to %d baud",
-              serial_speed);
+    if (hamlib_conf && hamlib_conf[0] &&
+        radio_conf_pairs(hamlib_conf, radio_io_set_conf_cb, radio) < 0)
+        HLOGW(RADIO_LOG_TAG, "hamlib_conf '%s' ignored: use key=value[,key=value...]",
+              hamlib_conf);
+
+    if (!serial)
+        return 0;
+
+    /* Hold RTS and DTR low on the CAT port (issue #294).  Linux raises both
+     * when a serial port opens, and Hamlib leaves them as it finds them unless
+     * told otherwise -- so an IC-7300 whose USB SEND is mapped to RTS or DTR
+     * transmitted for as long as Mercury held the port, with rig_set_ptt never
+     * called.  Not a line the operator set in hamlib_conf, and not one Hamlib
+     * would then refuse to open with: PTT by that line on this same port, or
+     * RTS under hardware handshake (rig_open's -RIG_ECONF checks). */
+    char ptt[128], hs[128], pttpath[128];
+    radio_io_get_conf(radio, "ptt_type", ptt);
+    radio_io_get_conf(radio, "serial_handshake", hs);
+    radio_io_get_conf(radio, "ptt_pathname", pttpath);
+    bool ptt_here = !pttpath[0] || !device_path || !strcmp(pttpath, device_path);
+    static const struct { const char *key, *ptt; bool hw_conflict; } lines[] = {
+        { "rts_state", "RTS", true  },
+        { "dtr_state", "DTR", false },
+    };
+    for (size_t i = 0; i < sizeof(lines) / sizeof(lines[0]); i++)
+    {
+        if (radio_conf_sets(hamlib_conf, lines[i].key))
+            continue;
+        if (ptt_here && !strcmp(ptt, lines[i].ptt))
+            continue;
+        if (lines[i].hw_conflict && !strcmp(hs, "Hardware"))
+            continue;
+        rc = rig_set_conf(radio, rig_token_lookup(radio, lines[i].key), "OFF");
+        if (rc != RIG_OK)
+            HLOGW(RADIO_LOG_TAG, "rig_set_conf(%s=OFF) failed: %d", lines[i].key, rc);
+        else
+            defaulted |= 1 << i;
+    }
+    if (defaulted)
+        HLOGI(RADIO_LOG_TAG, "CAT port: RTS and DTR held low unless PTT or hamlib_conf uses them");
+    return defaulted;
 }
 
 static void radio_io_warn_port_mismatch(rig_model_t model,
@@ -174,12 +241,27 @@ static int hamlib_open(const ptt_config_t *config)
         return -1;
     }
 
-    radio_io_apply_hamlib_conf(g_radio, config->hamlib_model,
-                               config->device,
-                               config->hamlib_serial_speed);
+    int defaulted = radio_io_apply_hamlib_conf(g_radio, config->hamlib_model,
+                                               config->device,
+                                               config->hamlib_serial_speed,
+                                               config->hamlib_conf);
     radio_io_warn_port_mismatch(config->hamlib_model, config->device);
 
     int ret = rig_open(g_radio);
+    /* A port without modem-control lines -- a pty from socat or ser2net, a
+     * com0com pair, some Bluetooth serial links -- refuses the ioctl, and
+     * Hamlib then fails the whole open over lines it was only asked to hold
+     * low.  Before holding them low, such ports opened fine: give it back. */
+    if (ret != RIG_OK && defaulted)
+    {
+        HLOGW(RADIO_LOG_TAG, "rig_open failed (%s) holding RTS/DTR low; "
+              "retrying with the lines as the port leaves them", rigerror2(ret));
+        if (defaulted & 1)
+            rig_set_conf(g_radio, rig_token_lookup(g_radio, "rts_state"), "Unset");
+        if (defaulted & 2)
+            rig_set_conf(g_radio, rig_token_lookup(g_radio, "dtr_state"), "Unset");
+        ret = rig_open(g_radio);
+    }
     if (ret != RIG_OK)
     {
         HLOGE(RADIO_LOG_TAG, "rig_open(%s) failed: %s (%d)",
