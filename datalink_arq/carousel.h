@@ -157,6 +157,11 @@ typedef struct {
     bool     rx_break;              /* the last round delivered the block it carried */
     bool     last_was_pattern;      /* my last answer was a pattern, not a poll */
     int      floor_patterns;        /* patterns since my last poll */
+    bool     polled_since_handover; /* a poll of mine is out since the peer's last handover */
+    int      polls_unheard;         /* ...answered by another handover instead, in a row */
+    uint8_t  my_poll_id;            /* the id of the last poll I sent */
+    uint8_t  heard_poll_id;         /* the id of the last poll I heard (sent back in my handovers) */
+    bool     pattern_for_lost_polls;/* my last pattern stood in for polls the peer was not hearing */
     bool     floor_streaming;       /* a floor round came since my last poll */
     car_frame_t txbuf[CAR_KEYDOWN_MAX];
 } car_t;

@@ -1008,6 +1008,9 @@ static void send_handover(car_t *c)
     m.h_level = lv; m.h_n = nd; m.h_id = c->tx_poll_id;
     m.hi = (uint8_t)(c->next_blk_id - 1);
     m.unopened = unopened(c);
+    /* Name the last poll I heard, so a peer can tell "handed over after my
+     * poll" from "never heard my poll". */
+    m.poll_id = c->heard_poll_id;
     encode_ctl(&m, fr[0].bytes);
     fr[0].mode = ARQ_CONTROL_MODE; fr[0].len = CAR_POLL_BYTES; fr[0].gap_ms = 0;
     if (nd) fr[1].gap_ms = CHAIN_GAP_MS;
@@ -1032,6 +1035,7 @@ static void send_poll_as(car_t *c, int lv, int n, bool repeat)
     c->rx_break = false; c->last_was_pattern = false; c->floor_patterns = 0;
     c->floor_streaming = false;
     if (n) { c->poll_level = lv; c->poll_n = n; c->drove_peer = true; bind_rx(c, lv); }
+    if (n) { c->polled_since_handover = true; c->my_poll_id = (uint8_t)c->poll_id; }
     c->round_seen = 0; c->round_frames = n; c->status_seen = false; c->done_in_round = 0;
     c->round_heard = false;
     encode_ctl(&m, fr[0].bytes);
@@ -1140,10 +1144,19 @@ static void on_poll_timer(car_t *c, uint64_t now)
      * a lost frame, a new rung or round size, the sender out of data -- needs
      * what only a poll carries, and a poll comes every FLOOR_POLL_EVERY rounds
      * all the same, for the repairs and the in-order gap. */
-    if (c->io.pattern && lv > 0 && lv == c->poll_level && n == c->poll_n && !c->status_seen &&
+    /* A sender that is not hearing my polls -- it keeps handing over again
+     * instead of sending the round I asked for -- gets the pattern even when
+     * I would rather grow the round: a poll would only be lost again.  On air
+     * (car18, estacao2 -> gateway at 2 %) the gateway asked for four DATAC17
+     * frames over a DATAC16 return estacao2 could not decode, estacao2 re-sent
+     * its one-frame handover every 25 s, and the UUCP hangup never completed
+     * in 4 min. */
+    bool polls_lost = c->polls_unheard > 0;
+    if (c->io.pattern && lv > 0 && lv == c->poll_level && (n == c->poll_n || polls_lost) && !c->status_seen &&
         c->round_seen > 0 && c->round_seen >= c->round_frames && c->floor_patterns < FLOOR_POLL_EVERY) {
-        car_trace(c, "rx -> pattern ACK (lv=%d n=%d)", lv, n);
+        car_trace(c, "rx -> pattern ACK (lv=%d n=%d)%s", lv, n, polls_lost ? " for lost polls" : "");
         c->floor_patterns++;
+        c->pattern_for_lost_polls = polls_lost;
         send_pattern(c, CAR_PATTERN_ACK, true);
         return;
     }
@@ -1223,6 +1236,8 @@ static void on_data(car_t *c, uint64_t now, const msg_t *m, int lv)
      * a delivered block at -11 dB. */
     bool floor_frame = lv == 0 && c->poll_level == 0 && c->io.pattern;
     if (floor_frame) c->floor_streaming = true;
+    if (m->poll_id == c->my_poll_id && c->polled_since_handover)
+        c->polls_unheard = 0;              /* it answered my poll: it hears them */
     if (m->poll_id == c->poll_id || floor_frame) {
         c->round_seen++;
         c->round_frames = c->round_seen + m->left;   /* the frames say how many there are */
@@ -1245,7 +1260,12 @@ static void on_ctl(car_t *c, uint64_t now, const msg_t *m)
     }
     c->handover_unconfirmed = false;
     if (m->type == M_HANDOVER) {
-        /* The peer takes the turn; its round follows in this keydown. */
+        /* The peer takes the turn; its round follows in this keydown.  It
+         * names the last poll it heard: if that is not the one I have out,
+         * my poll was lost. */
+        bool heard_mine = (m->poll_id & 0x0F) == (c->my_poll_id & 0x0F);
+        c->polls_unheard = c->polled_since_handover && !heard_mine ? c->polls_unheard + 1 : 0;
+        c->polled_since_handover = false;
         apply_need(c, m);
         c->peer_unopened = m->unopened;
         c->peer_hi = resolve16(c->rbase, m->hi);
@@ -1259,6 +1279,7 @@ static void on_ctl(car_t *c, uint64_t now, const msg_t *m)
     c->floor_waiting = false; c->floor_silent = 0; c->pat_waiting = false;
     apply_need(c, m);
     c->tx_poll_id = m->poll_id;
+    c->heard_poll_id = (uint8_t)(m->poll_id & 0x0F);
     c->tx_loss = m->loss16 / 15.0;
     if (m->n == 0) {                          /* ack only: the peer is done with us */
         c->sending = false;
@@ -1386,7 +1407,11 @@ void car_on_tx_done(car_t *c, uint64_t now)
          * as its round has not started. */
         uint64_t start = now - TAIL_MS + ISS_GUARD_MS;
         bool floor = c->poll_level == 0;
-        if (!floor) arm(c, CAR_T_SENSE, start + SENSE_MS + PATTERN_SENSE_EXTRA_MS);
+        /* Not after a pattern that stood in for lost polls: that sender
+         * repeats on its own timer, and a re-poll timed from the same round
+         * end landed on its repeat (sim, awgn:0.25 bidir). */
+        if (!floor && !c->pattern_for_lost_polls)
+            arm(c, CAR_T_SENSE, start + SENSE_MS + PATTERN_SENSE_EXTRA_MS);
         arm_poll(c, start + HEAD_MS + round_air(c->poll_level, c->poll_n) + TAIL_MS +
                     WINDOW_MARGIN_MS + (floor ? FLOOR_LATE_MS : 0));
     } else if (after == AFTER_POLL) {
