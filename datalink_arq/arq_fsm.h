@@ -378,6 +378,8 @@ typedef struct
     int      car_tx_level;            /* ...for ours, from the peer (-1: none) */
     bool     car_ctl_deaf;            /* connect: I heard the peer below the control mode */
     bool     car_peer_ctl_deaf;       /* connect: ...and it, me (the CALL came on MFSK) */
+    bool     ctl_floor_at_stop;       /* the carousel's peer_ctl_deaf when it stopped,
+                                       * for the DISCONNECT exchange after it */
     uint64_t car_last_rx_ms;          /* last carousel frame from the peer     */
 
     /* --- Timer mechanism --- */

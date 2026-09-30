@@ -188,7 +188,14 @@ static void sess_enter(arq_session_t *sess, arq_conn_state_t new_state,
     /* The carousel runs only in CONNECTED; its seed lasts until the station is
      * idle, so the teardown still hears its peer. */
     if (new_state != ARQ_CONN_CONNECTED)
+    {
+        /* The DISCONNECT exchange after it keeps the carousel's view of the
+         * peer (session_ctl_mode): here, not in car_stop, which runs only
+         * once the station is idle. */
+        if (sess->car_active)
+            sess->ctl_floor_at_stop = car_peer_ctl_deaf(sess->car);
         sess->car_active = false;
+    }
     if (new_state == ARQ_CONN_DISCONNECTED || new_state == ARQ_CONN_LISTENING)
         car_stop(sess);
     sess->conn_state     = new_state;
@@ -869,6 +876,18 @@ int arq_call_carrier(const arq_session_t *sess)
          ? MERCURY_MODE_MFSK : sess->control_mode;
 }
 
+/* The start level an ACCEPT names, 0..6 -- or 7, which no ladder level uses,
+ * for "level 0, and I hear you below the control mode".  A floor-only
+ * caller's first control from us would otherwise be its only way to learn
+ * that, and at the floor we answer with patterns, which carry no bits: a
+ * 1 KB transfer went by without one, and its DISCONNECT then went out on a
+ * mode we could not hear (harness, forward below DATAC16). */
+#define ACCEPT_LEVEL_CTL_DEAF 7
+static int accept_level(const arq_session_t *sess)
+{
+    return sess->car_ctl_deaf ? ACCEPT_LEVEL_CTL_DEAF : sess->car_rx_level;
+}
+
 static void send_call_accept(arq_session_t *sess, bool is_accept)
 {
     uint8_t frame[INT_BUFFER_SIZE];
@@ -883,7 +902,7 @@ static void send_call_accept(arq_session_t *sess, bool is_accept)
     {
         n = arq_protocol_build_accept(frame, sizeof(frame), sess->session_id,
                                       my_call, sess->remote_call, bw_hz,
-                                      g_carousel ? sess->car_rx_level : 0);
+                                      g_carousel ? accept_level(sess) : 0);
         /* The ACCEPT is the carousel's first poll: from here the caller's
          * frames carry the session seed, and its first round comes on the rung
          * the ACCEPT names. */
@@ -925,6 +944,19 @@ static void send_call_accept(arq_session_t *sess, bool is_accept)
               is_accept ? "ACCEPT" : "CALL", my_call);
 }
 
+/* The mode for the session's own control frames (DISCONNECT and the rest):
+ * MFSK to a peer the carousel says hears us below the control mode.  On air
+ * (car20, gateway at 2 %) the gateway's DISCONNECTs went on DATAC16 to an
+ * estacao2 that could not hear them; estacao2 polled a closed session until
+ * its uucico was killed. */
+static int session_ctl_mode(const arq_session_t *sess)
+{
+    if (!g_carousel || !sess->car)
+        return sess->control_mode;
+    bool deaf = sess->car_active ? car_peer_ctl_deaf(sess->car) : sess->ctl_floor_at_stop;
+    return deaf ? MERCURY_MODE_MFSK : sess->control_mode;
+}
+
 static void send_ctrl_frame(arq_session_t *sess, arq_subtype_t subtype)
 {
     uint8_t frame[INT_BUFFER_SIZE];
@@ -955,7 +987,7 @@ static void send_ctrl_frame(arq_session_t *sess, arq_subtype_t subtype)
         return;
     }
     if (n > 0)
-        send_frame(PACKET_TYPE_ARQ_CONTROL, sess->control_mode, (size_t)n, frame, 0);
+        send_frame(PACKET_TYPE_ARQ_CONTROL, session_ctl_mode(sess), (size_t)n, frame, 0);
 }
 
 static void send_ack(arq_session_t *sess, uint8_t ack_delay_raw)
@@ -1453,6 +1485,7 @@ static void car_start(arq_session_t *sess, bool is_caller, uint64_t now)
     };
     car_init(sess->car, &io, sess->car_rx_level, sess->car_tx_level);
     car_seed_ctl_deaf(sess->car, sess->car_ctl_deaf, sess->car_peer_ctl_deaf);
+    sess->ctl_floor_at_stop = false;
     sess->car_active = true;
     sess->car_last_rx_ms = now;
     if (is_caller)
@@ -1553,10 +1586,12 @@ static void fsm_listening(arq_session_t *sess, const arq_event_t *ev)
         sess->session_id      = ev->session_id;
         sess->call_rx_mode    = ev->mode;
         sess->car_rx_level    = car_start_level(ev->rx_snr);   /* the ACCEPT names it */
-        /* The caller escalates to an MFSK CALL when none of our control-mode
-         * ACCEPTs reached it: it hears us below the control mode. */
+        /* How the caller hears us it reports in its first frame, which comes
+         * before we send any control.  (Not "an MFSK CALL means it cannot
+         * hear us": the caller escalates just the same when it is we who
+         * cannot hear its control-mode CALLs.) */
         sess->car_ctl_deaf      = ev->rx_snr < ARQ_SNR_MIN_DATAC15_DB;
-        sess->car_peer_ctl_deaf = ev->mode == MERCURY_MODE_MFSK;
+        sess->car_peer_ctl_deaf = false;
         sess->tx_retries_left = ARQ_ACCEPT_RETRY_SLOTS;
         sess->accept_tx_pending = true;   /* answering a CALL we just heard */
         /* Reset mode state so the payload decoder matches the new caller's
@@ -1670,11 +1705,10 @@ static void fsm_calling(arq_session_t *sess, const arq_event_t *ev)
         {
             sess->role = ARQ_ROLE_CALLER;
             sess->pending_disconnect = false;
-            sess->car_tx_level = ev->car_level;
+            sess->car_peer_ctl_deaf = ev->car_level == ACCEPT_LEVEL_CTL_DEAF;
+            sess->car_tx_level = sess->car_peer_ctl_deaf ? 0 : ev->car_level;
             sess->car_rx_level = car_start_level(ev->rx_snr);
-            /* The callee's own report comes with its first frame. */
-            sess->car_ctl_deaf      = ev->rx_snr < ARQ_SNR_MIN_DATAC15_DB;
-            sess->car_peer_ctl_deaf = false;
+            sess->car_ctl_deaf = ev->rx_snr < ARQ_SNR_MIN_DATAC15_DB;
             if (g_cbs.notify_connected)
                 g_cbs.notify_connected(sess->remote_call, sess->local_call);
             if (g_timing)
@@ -1889,7 +1923,7 @@ static void fsm_accepting(arq_session_t *sess, const arq_event_t *ev)
         sess->deadline_ms       = time_now_ms() + ARQ_CHANNEL_GUARD_MS;
         sess->car_rx_level      = car_start_level(ev->rx_snr);
         sess->car_ctl_deaf      = ev->rx_snr < ARQ_SNR_MIN_DATAC15_DB;
-        sess->car_peer_ctl_deaf = ev->mode == MERCURY_MODE_MFSK;
+        sess->car_peer_ctl_deaf = false;
         /* Answer on the carrier THIS CALL came on: a caller escalates when it
          * hears none of our ACCEPTs -- a weak return path -- and an answer
          * kept on DATAC16 kept failing the same way (#235). */
@@ -2132,7 +2166,7 @@ static void fsm_disconnecting(arq_session_t *sess, const arq_event_t *ev)
         if (disconnect_must_wait(sess))
             break;
         send_ctrl_frame(sess, ARQ_SUBTYPE_DISCONNECT);
-        tm = arq_protocol_mode_timing(sess->control_mode);
+        tm = arq_protocol_mode_timing(session_ctl_mode(sess));
         sess->deadline_ms    = retry_deadline_from_s(sess, tm ? tm->retry_interval_s : 7.0f);
         sess->deadline_event = ARQ_EV_TIMER_RETRY;
         HLOGD(LOG_COMP, "Disconnect tx (initial, after guard)");
@@ -2152,7 +2186,7 @@ static void fsm_disconnecting(arq_session_t *sess, const arq_event_t *ev)
                 break;
             sess->tx_retries_left--;
             send_ctrl_frame(sess, ARQ_SUBTYPE_DISCONNECT);
-            tm = arq_protocol_mode_timing(sess->control_mode);
+            tm = arq_protocol_mode_timing(session_ctl_mode(sess));
             sess->deadline_ms = retry_deadline_from_s(sess, tm ? tm->retry_interval_s : 7.0f);
             HLOGD(LOG_COMP, "Disconnect tx retry=%d", sess->tx_retries_left);
         }
@@ -2857,7 +2891,7 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
                     sess->pending_disconnect = false;
                     send_ctrl_frame(sess, ARQ_SUBTYPE_DISCONNECT);
                     sess->tx_retries_left = ARQ_DISCONNECT_RETRY_SLOTS;
-                    tm = arq_protocol_mode_timing(sess->control_mode);
+                    tm = arq_protocol_mode_timing(session_ctl_mode(sess));
                     sess_enter(sess, ARQ_CONN_DISCONNECTING,
                                retry_deadline_from_s(sess, tm ? tm->retry_interval_s : 7.0f),
                                ARQ_EV_TIMER_RETRY);
@@ -3525,7 +3559,7 @@ static void fsm_dflow(arq_session_t *sess, const arq_event_t *ev)
                 HLOGW(LOG_COMP, "Keepalive miss limit — disconnecting");
                 send_ctrl_frame(sess, ARQ_SUBTYPE_DISCONNECT);
                 sess->tx_retries_left = ARQ_DISCONNECT_RETRY_SLOTS;
-                tm = arq_protocol_mode_timing(sess->control_mode);
+                tm = arq_protocol_mode_timing(session_ctl_mode(sess));
                 sess_enter(sess, ARQ_CONN_DISCONNECTING,
                            retry_deadline_from_s(sess, tm ? tm->retry_interval_s : 7.0f),
                            ARQ_EV_TIMER_RETRY);

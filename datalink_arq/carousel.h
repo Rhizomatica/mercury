@@ -178,6 +178,9 @@ void car_init(car_t *c, const car_io_t *io, int rx_level, int tx_level);
 /* Seed, from the connect exchange, whether each end hears the other below the
  * control mode (see ctl_on_floor in carousel.c).  Frames keep both current. */
 void car_seed_ctl_deaf(car_t *c, bool mine, bool peers);
+/* The peer hears us below the control mode, as it last reported: our control
+ * frames go on MFSK.  The session's own control frames follow the same rule. */
+bool car_peer_ctl_deaf(const car_t *c);
 void car_start_sender(car_t *c, uint64_t now);
 void car_start_receiver(car_t *c, uint64_t now);
 

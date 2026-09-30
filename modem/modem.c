@@ -1878,10 +1878,14 @@ static void modem_apply_crc_seed(uint16_t seed)
         if (!modem_codec_valid(c))
             continue;
         bool control = modem_mode_pool[i].mode == FREEDV_MODE_DATAC16;
+        /* The session's own control frames (DISCONNECT, ...) carry a plain
+         * CRC, and go on MFSK to a peer below the control mode (arq_fsm.c,
+         * session_ctl_mode): MFSK accepts them too. */
+        bool plain_ok = control || modem_mode_pool[i].mode == MERCURY_MODE_MFSK;
         pthread_mutex_t *l = modem_inst_lock_for(c->ctx);
         pthread_mutex_lock(l);
         if (c->be->set_crc_seed)
-            c->be->set_crc_seed(c->ctx, seed, control);
+            c->be->set_crc_seed(c->ctx, seed, plain_ok);
         if (c->be->harq_reset)
             c->be->harq_reset(c->ctx);
         if (c->be->set_harq)

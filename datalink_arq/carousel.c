@@ -1422,10 +1422,14 @@ static void note_peer_ctl_deaf(car_t *c, bool deaf)
     }
 }
 
+bool car_peer_ctl_deaf(const car_t *c) { return c && ctl_on_floor(c); }
+
 void car_seed_ctl_deaf(car_t *c, bool mine, bool peers)
 {
     c->ctl_deaf = mine;
     c->peer_ctl_deaf = peers;
+    car_trace(c, "at connect: I hear the peer %s the control mode, it hears me %s it",
+              mine ? "below" : "above", peers ? "below" : "above");
 }
 
 void car_on_frame(car_t *c, uint64_t now, const uint8_t *bytes, size_t len, int mode, bool control,
