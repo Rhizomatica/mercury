@@ -1659,14 +1659,17 @@ void *radio_playback_thread(void *device_ptr)
         }
         // printf("n = %lld total written = %u\n", n, total_written);
     }
-    // Only drain when doing a full shutdown, not a restart
-    // audio->drain() blocks until all buffered data is played out
-    // which can hang indefinitely during a device switch
-    if (!audio_shutdown_) {
-        r = audio->drain(b);
-        if (r < 0)
-            HLOGE("audio-play", "ffaudio.drain: %s", audio->error(b));
-    }
+    /* Never drain.  audio->drain() blocks until the device has played out
+     * what it holds, and a device nobody is reading never does: on the HERMES
+     * stations playback goes into an ALSA loopback the radio controller reads
+     * only when it wants to, and a shutdown sat here -- a 3 s stop, stops
+     * past main()'s 10 s alarm (SIGALRM, "capture exit" logged and never
+     * "playback exit"), and after a failed init, which has no alarm, a
+     * process that ignored SIGTERM until systemd killed it 90 s later, deaf
+     * all the while.  The drain saved nothing: this loop ends as soon as
+     * shutdown_ is set, frame in flight or not, so the rest of the ring is
+     * dropped regardless and the device holds at most its last period.
+     * stop() pauses and closing the PCM drops that. */
     r = audio->stop(b);
     if (r != 0)
         HLOGE("audio-play", "ffaudio.stop: %s", audio->error(b));

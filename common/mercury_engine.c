@@ -90,6 +90,20 @@ int mercury_engine_modem_bandwidth_hz(void)
     return (int)(freedv_get_modem_bandwidth_hz(g_modem.freedv) + 0.5f);
 }
 
+/* Test hook: MERCURY_TEST_SHUTDOWN_STALL_MS holds an orderly shutdown open
+ * for that long.  An orderly stop now takes a fraction of a second even
+ * mid-frame, so without this nothing could land a second signal inside one,
+ * and the forced-exit path (second signal: unkey, then exit) would go untested
+ * (tests/integration, TestMercuryTxTestForcedExitUnkeysFirst).  Unset in
+ * normal use. */
+static void test_shutdown_stall(void)
+{
+    const char *v = getenv("MERCURY_TEST_SHUTDOWN_STALL_MS");
+    long ms = v ? strtol(v, NULL, 10) : 0;
+    for (; ms > 0; ms -= 10)
+        hermes_usleep(10000);
+}
+
 int mercury_engine_init(const mercury_config *cfg,
                         const char *config_path,
                         const char *log_path,
@@ -247,6 +261,7 @@ int mercury_engine_init(const mercury_config *cfg,
      * for what was a clean stop.  radio_io_shutdown() leaves PTT released. */
     if (test_mode && shutdown_)
     {
+        test_shutdown_stall();
         shutdown_modem(&g_modem);
         if (g_audio_system != AUDIO_SUBSYSTEM_SHM)
             audioio_deinit(&g_radio_capture, &g_radio_playback);
@@ -336,6 +351,14 @@ int mercury_engine_init(const mercury_config *cfg,
     return 0;
 }
 
+/* On the bench stations a stop now and then ran past main()'s 10 s
+ * watchdog, always after the audio threads had exited and before the
+ * websocket reported shutting down, and never reproduced off the station.
+ * The step is recorded so the watchdog can name it. */
+static const char *volatile g_shutdown_step;
+
+const char *mercury_engine_shutdown_step(void) { return g_shutdown_step; }
+
 void mercury_engine_shutdown(void)
 {
     if (!g_initialized) return;
@@ -343,17 +366,25 @@ void mercury_engine_shutdown(void)
     HLOGI("engine", "Shutting down");
 
     shutdown_ = true;
+    test_shutdown_stall();
 
+    g_shutdown_step = "tcp interfaces";
     interfaces_shutdown();
+    g_shutdown_step = "modem";
     shutdown_modem(&g_modem);
 
+    g_shutdown_step = "audio";
     if (g_audio_system != AUDIO_SUBSYSTEM_SHM)
         audioio_deinit(&g_radio_capture, &g_radio_playback);
 
+    g_shutdown_step = "ui";
     ui_comm_shutdown(&g_ui_ctx);
+    g_shutdown_step = "radio io";
     radio_io_shutdown();
 
+    g_shutdown_step = "message store";
     msg_store_shutdown();
+    g_shutdown_step = "done";
 
     HLOGI("engine", "Mercury engine shut down");
     hermes_log_shutdown();

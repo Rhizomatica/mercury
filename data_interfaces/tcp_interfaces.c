@@ -1750,6 +1750,25 @@ size_t interfaces_get_broadcast_frame_size(void)
     return atomic_load(&broadcast_frame_size_cfg);
 }
 
+/* A listener is up once it is LISTENING -- or already CONNECTED: the HERMES
+ * stations' uucpd connects the instant the port opens, and on a Pi it got in
+ * (and sent MYCALL, LISTEN ON, ...) 18 ms into startup, before this thread
+ * looked.  Waiting for exactly LISTENING then timed out on a healthy port
+ * ("ARQ listeners failed to start (ctl=3 data=3)"), init failed, and the
+ * station sat deaf until the next restart. */
+static bool port_up(int status) { return status == NET_LISTENING || status == NET_CONNECTED; }
+
+static int wait_port_up(int port_type, int timeout_ms)
+{
+    for (int waited = 0; ; waited += 10)
+    {
+        int st = net_get_status(port_type);
+        if (port_up(st) || waited >= timeout_ms)
+            return st;
+        hermes_usleep(10000);
+    }
+}
+
 int interfaces_init(int arq_tcp_base_port, int broadcast_tcp_port, size_t broadcast_frame_size)
 {
     arq_set_tnc_callbacks(&g_arq_tnc_cbs);
@@ -1787,9 +1806,9 @@ int interfaces_init(int arq_tcp_base_port, int broadcast_tcp_port, size_t broadc
      * mercury_engine_init() has already returned success — the confusing
      * "Mercury engine initialised" immediately followed by "Shutting down"
      * and an alarm-killed shutdown. */
-    int ctl_status  = net_wait_for_status(CTL_TCP_PORT, NET_LISTENING, 3000);
-    int data_status = net_wait_for_status(DATA_TCP_PORT, NET_LISTENING, 3000);
-    if (ctl_status != NET_LISTENING || data_status != NET_LISTENING)
+    int ctl_status  = wait_port_up(CTL_TCP_PORT, 3000);
+    int data_status = wait_port_up(DATA_TCP_PORT, 3000);
+    if (!port_up(ctl_status) || !port_up(data_status))
     {
         HLOGE("tcp", "ARQ listeners failed to start (ctl=%d data=%d)",
               ctl_status, data_status);

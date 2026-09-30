@@ -14,8 +14,8 @@ import (
 // startTxTest runs `mercury -t` (TX test mode: back-to-back frames, each its
 // own keydown) on the null audio backend, in its own process group, and waits
 // until it is mid-frame.  DATAC17 frames last ~7.4 s, so a signal landing now
-// has to wait for the frame in flight.
-func startTxTest(t *testing.T) (*exec.Cmd, *bytes.Buffer) {
+// finds a frame in flight, which an orderly stop cuts short and unkeys.
+func startTxTest(t *testing.T, env ...string) (*exec.Cmd, *bytes.Buffer) {
 	t.Helper()
 	repoRoot := mustRepoRoot(t)
 	bin := locateOrBuildMercury(t, repoRoot)
@@ -28,7 +28,7 @@ func startTxTest(t *testing.T) (*exec.Cmd, *bytes.Buffer) {
 		"-p", fmt.Sprint(freePortPair(t)), "-b", fmt.Sprint(freePort(t)),
 		"-C", filepath.Join(dir, "none.ini"))
 	cmd.Dir = dir
-	cmd.Env = append(cmd.Environ(), "XDG_STATE_HOME="+dir)
+	cmd.Env = append(append(cmd.Environ(), "XDG_STATE_HOME="+dir), env...)
 	cmd.Stdout, cmd.Stderr = &out, &out
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	if err := cmd.Start(); err != nil {
@@ -110,10 +110,13 @@ func TestMercuryTxTestMixedDuplicateSignalsShutDownCleanly(t *testing.T) {
 // unkey-thread -> exit control flow, not that a real transmitter was released.
 // Observing that needs a recording fake PTT backend.
 func TestMercuryTxTestForcedExitUnkeysFirst(t *testing.T) {
-	cmd, out := startTxTest(t)
+	// An orderly stop no longer waits out the frame in flight, so it is over
+	// before a second signal could land; hold it open so the second signal
+	// finds a shutdown under way, as it would one that hangs.
+	cmd, out := startTxTest(t, "MERCURY_TEST_SHUTDOWN_STALL_MS=10000")
 	pid := cmd.Process.Pid
 	_ = syscall.Kill(pid, syscall.SIGINT)
-	time.Sleep(2 * time.Second) // still inside the 7.4 s frame
+	time.Sleep(2 * time.Second) // still inside the (held) shutdown
 	_ = syscall.Kill(pid, syscall.SIGINT)
 	time.Sleep(10 * time.Millisecond)
 	_ = syscall.Kill(pid, syscall.SIGINT) // insisting again: must not re-arm
