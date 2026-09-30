@@ -1961,7 +1961,19 @@ static void fsm_connected(arq_session_t *sess, const arq_event_t *ev)
          * drained buffer fires the deferred disconnect at the next idle-ISS
          * entry (an ACKed last frame with empty backlog disconnects there
          * without extra delay). */
-        if ((session_tx_backlog(sess) > 0) ||
+        /* ABORT: no drain.  What is re-staged or awaiting its ACK is
+         * dropped with the host's own bytes (cleared in arq.c); the
+         * DISCONNECTING state still keeps our DISCONNECT off a frame that is
+         * on the air (disconnect_must_wait). */
+        if (ev->abort)
+        {
+            HLOGI(LOG_COMP, "ABORT: dropping %d byte(s) in flight (dflow=%s)",
+                  session_tx_backlog(sess) + sess->tx_inflight_bytes,
+                  arq_dflow_state_name(sess->dflow_state));
+            sess->restage_len = sess->restage_off = 0;
+            sess->tx_inflight_bytes = 0;
+        }
+        else if ((session_tx_backlog(sess) > 0) ||
             sess->dflow_state == ARQ_DFLOW_DATA_TX ||
             sess->dflow_state == ARQ_DFLOW_WAIT_ACK)
         {

@@ -219,8 +219,7 @@ asynchronous response `DISCONNECTED\r` is sent on the control port.
 
 ### ABORT
 
-Dirty disconnect — immediately flush all buffers and terminate the session
-without air-side teardown.  The remote peer will time out.
+Dirty disconnect — drop everything still held and end the session at once.
 
 ```
 ABORT\r
@@ -228,8 +227,12 @@ ABORT\r
 
 **Response:** `OK\r` if the command was accepted, `WRONG\r` on error.
 
-Unlike `DISCONNECT`, `ABORT` does not send any over-the-air DISCONNECT
-frames and clears all pending TX data immediately.
+`DISCONNECT` first delivers what is still queued: unsent bytes, and the
+last frame's ACK.  `ABORT` does not wait.  It discards the unsent TX data,
+the frames awaiting an ACK and received data not yet read, then sends the
+DISCONNECT frames straight away (after any frame already on the air), so
+the peer is told rather than left to time out.  `DISCONNECTED\r` is sent
+on the control port at once, as for `DISCONNECT`.
 
 ---
 
