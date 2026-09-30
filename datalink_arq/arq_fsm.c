@@ -162,7 +162,10 @@ static void sess_enter(arq_session_t *sess, arq_conn_state_t new_state,
         sess->peer_more_data = false;
     }
     if (new_state == ARQ_CONN_DISCONNECTING && sess->conn_state != ARQ_CONN_DISCONNECTING)
+    {
         sess->disc_defer_count = 0;          /* a fresh teardown: a fresh budget */
+        sess->disconnect_sent  = false;
+    }
     sess->conn_state     = new_state;
     sess->state_enter_ms = time_now_ms();
     sess->deadline_ms    = deadline_ms;
@@ -1834,6 +1837,7 @@ static void fsm_disconnecting(arq_session_t *sess, const arq_event_t *ev)
         if (disconnect_must_wait(sess))
             break;
         send_ctrl_frame(sess, ARQ_SUBTYPE_DISCONNECT);
+        sess->disconnect_sent = true;
         tm = arq_protocol_mode_timing(sess->control_mode);
         sess->deadline_ms    = retry_deadline_from_s(sess, tm ? tm->retry_interval_s : 7.0f);
         sess->deadline_event = ARQ_EV_TIMER_RETRY;
@@ -1841,10 +1845,43 @@ static void fsm_disconnecting(arq_session_t *sess, const arq_event_t *ev)
         break;
 
     case ARQ_EV_RX_DISCONNECT:
+        /* Both ends hung up.  If ours has gone out the peer has it, and its
+         * DISCONNECT is our answer.  If not -- held back while the peer's was
+         * on the air -- the peer has nothing from us: finalizing silently left
+         * it retrying for 21 s, deaf to the CALL that came next (on air,
+         * gateway <- IC-7100: the redial failed).  Answer it as CONNECTED
+         * does, one reply guard later. */
+        if (!sess->disconnect_sent)
+        {
+            HLOGI(LOG_COMP, "Disconnect crossed the peer's before ours went out: replying");
+            sess->pending_disconnect_reply  = true;
+            sess->pending_disconnect_notify = true;
+            if (g_timing) arq_timing_record_disconnect(g_timing, "peer_ack");
+            sess_enter(sess, ARQ_CONN_DISCONNECTED,
+                       time_now_ms() + ARQ_CHANNEL_GUARD_MS, ARQ_EV_TIMER_ACK);
+            break;
+        }
         HLOGI(LOG_COMP, "Disconnect finalized (peer ack)");
         notify_session_ended(sess);   /* silent if a call is queued behind it */
         if (g_timing) arq_timing_record_disconnect(g_timing, "peer_ack");
         enter_idle_after_call(sess);
+        break;
+
+    case ARQ_EV_RX_CALL:
+        /* The peer we are tearing down with is calling again: it has left the
+         * old session, so there is nothing left to wait for.  Retrying on, the
+         * CALL was ignored, and our next DISCONNECT keyed over its retry.  Not
+         * with a call of our own queued: that one goes out first. */
+        if (!sess->pending_connect && sess->listen_enabled &&
+            strncmp(ev->remote_call, sess->remote_call, CALLSIGN_MAX_SIZE) == 0)
+        {
+            HLOGI(LOG_COMP, "Disconnect finalized (%s is calling again)", ev->remote_call);
+            notify_session_ended(sess);
+            if (g_timing) arq_timing_record_disconnect(g_timing, "peer_recall");
+            enter_idle_after_call(sess);
+            arq_fsm_dispatch(sess, ev);   /* the CALL, now in LISTENING */
+            return;
+        }
         break;
 
     case ARQ_EV_TIMER_RETRY:
@@ -1854,6 +1891,7 @@ static void fsm_disconnecting(arq_session_t *sess, const arq_event_t *ev)
                 break;
             sess->tx_retries_left--;
             send_ctrl_frame(sess, ARQ_SUBTYPE_DISCONNECT);
+            sess->disconnect_sent = true;
             tm = arq_protocol_mode_timing(sess->control_mode);
             sess->deadline_ms = retry_deadline_from_s(sess, tm ? tm->retry_interval_s : 7.0f);
             HLOGD(LOG_COMP, "Disconnect tx retry=%d", sess->tx_retries_left);
