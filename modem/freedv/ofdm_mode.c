@@ -118,7 +118,7 @@ void ofdm_init_mode(char mode[], struct OFDM_CONFIG *config) {
     config->ftwindowwidth = 80;
     config->state_machine = "data";
     config->amp_est_mode = 1;
-    config->tx_bpf_en = false;
+    config->tx_bpf_en = true;
     config->clip_en = false;
     config->data_mode = "streaming";
     config->amp_scale = 135E3;
