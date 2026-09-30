@@ -186,11 +186,19 @@ void mfsk_init(mfsk_t *m, int _M, int _Nc, int _nStreams)
             m->hail_tones[i] = (m->ack_tones[i] + m->M / 4) % m->M;
     }
 
-    /* Postamble tones: distinct from the preamble (+2 offset, mod M) so the
-     * two known sequences are distinguishable for dual-ended acquisition. */
+    /* Postamble tones: the preamble shifted a quarter of the band (mod M), so
+     * the two known sequences stay distinguishable for dual-ended acquisition.
+     * The shift must clear the receiver's dial-offset search, +/-3 tones: at
+     * the old +2 a burst's postamble WAS its preamble to that search (all 4
+     * symbols at M=32), and a decoder that joined a burst midway anchored on
+     * the postamble, rejected it, and lost the burst behind it (5 of 9 join
+     * points; 5c41f6e guards the symptom).  M/4 = 8 at M=32, 4 at M=16: no
+     * offset in range aligns a symbol.  The narrow sets (M=8, 4) span too few
+     * tones for any shift to clear it, and keep +2. */
     m->postamble_nSymb = m->preamble_nSymb;
+    int post_shift = m->M >= 16 ? m->M / 4 : 2;
     for (int i = 0; i < m->preamble_nSymb && i < MFSK_MAX_PREAMBLE_SYMB; i++)
-        m->postamble_tones[i] = (m->preamble_tones[i] + 2) % m->M;
+        m->postamble_tones[i] = (m->preamble_tones[i] + post_shift) % m->M;
 
     mfsk_clear_hail_target(m);
 }
