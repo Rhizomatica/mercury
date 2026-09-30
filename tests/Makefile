@@ -65,7 +65,7 @@ TEST_BINS = test_ring_buffer test_arq_protocol test_arq_timing test_arq_fsm \
             test_arq_conn test_cfg_utils test_arq_tnc test_channel_busy \
             test_freedv_harq test_sock_wire test_rtp_wire test_virtual_clock test_watterson \
             test_mercury_prng test_bcast_file \
-            test_ofdm_acq test_crc_seed test_ui_status test_ui_devices test_ui_ptt_persist test_tx_pacing test_radio_port \
+            test_ofdm_acq test_tx_bpf test_crc_seed test_ui_status test_ui_devices test_ui_ptt_persist test_tx_pacing test_radio_port \
             test_radio_io_frequency test_mfsk test_rs_erasure test_carousel test_carousel_sim \
             test_mfsk_harq test_mfsk_modem test_pattern_ack_detection \
 			test_message_store test_ui_history test_ws_protocol
@@ -267,6 +267,9 @@ $(FREEDV_LIB):
 
 test_ofdm_acq: modem/test_ofdm_acq.c $(UNITY_SRC) $(FREEDV_LIB)
 	$(CC) $(CFLAGS) -I../modem/freedv -o $@ modem/test_ofdm_acq.c $(UNITY_SRC) $(FREEDV_LIB) $(LDFLAGS) -lm
+
+test_tx_bpf: modem/test_tx_bpf.c $(UNITY_SRC) $(FREEDV_LIB)
+	$(CC) $(CFLAGS) -I../modem/freedv -o $@ modem/test_tx_bpf.c $(UNITY_SRC) $(FREEDV_LIB) $(LDFLAGS) -lm
 
 test_crc_seed: modem/test_crc_seed.c $(UNITY_SRC) $(FREEDV_LIB)
 	$(CC) $(CFLAGS) -I../modem/freedv -o $@ modem/test_crc_seed.c $(UNITY_SRC) $(FREEDV_LIB) $(LDFLAGS) -lm
