@@ -74,7 +74,7 @@ run: broadcast_test
 # Drives the real freedv OFDM modems (not a model) to separate acquisition
 # failures from decode failures.  chanutil puts it on the project's own
 # Watterson channel so its numbers are comparable with other instruments'.
-acquire_vs_decode: acquire_vs_decode.c chanutil.c ../common/watterson.c ../common/mercury_prng.c
+acquire_vs_decode: acquire_vs_decode.c chanutil.c ../common/watterson.c ../common/mercury_prng.c ../modem/freedv/libfreedvdata.a
 	$(CC) $(CFLAGS) -o $@ $(filter %.c %.a %.o,$^) ../modem/freedv/libfreedvdata.a $(LDFLAGS) -lm
 
 # Does the payload decoder hear a data burst that follows a control burst, and
