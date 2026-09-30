@@ -1666,8 +1666,10 @@ void *radio_playback_thread(void *device_ptr)
      * past main()'s 10 s alarm (SIGALRM, "capture exit" logged and never
      * "playback exit"), and after a failed init, which has no alarm, a
      * process that ignored SIGTERM until systemd killed it 90 s later, deaf
-     * all the while.  By now PTT is off and what is buffered is silence;
-     * stop() drops it. */
+     * all the while.  The drain saved nothing: this loop ends as soon as
+     * shutdown_ is set, frame in flight or not, so the rest of the ring is
+     * dropped regardless and the device holds at most its last period.
+     * stop() pauses and closing the PCM drops that. */
     r = audio->stop(b);
     if (r != 0)
         HLOGE("audio-play", "ffaudio.stop: %s", audio->error(b));
