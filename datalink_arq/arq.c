@@ -1295,7 +1295,14 @@ bool arq_get_runtime_snapshot(arq_runtime_snapshot_t *snapshot)
     snapshot->initialized      = true;
     snapshot->connected        = (g_sess.conn_state == ARQ_CONN_CONNECTED);
     snapshot->expect_pattern_ack = arq_fsm_expect_pattern(&g_sess, time_now_ms());
-    snapshot->listening_for_calls = (g_sess.conn_state == ARQ_CONN_LISTENING);
+    /* ACCEPTING too: a caller that hears none of our ACCEPTs -- a strong
+     * forward path, a weak return one -- escalates to MFSK CALLs, and those
+     * are what we must answer (on MFSK, #235).  With the listener off while
+     * ACCEPTING, the callee only ever heard the DATAC16 CALLs it could not
+     * usefully answer: on air (car17, st2 calling the gateway at 2 %), both
+     * MFSK CALLs arrived mid-ACCEPTING, and the call never connected. */
+    snapshot->listening_for_calls = (g_sess.conn_state == ARQ_CONN_LISTENING ||
+                                     g_sess.conn_state == ARQ_CONN_ACCEPTING);
     snapshot->trx              = trx;
     snapshot->tx_backlog_bytes = backlog + g_sess.tx_inflight_bytes;
     snapshot->speed_level      = g_sess.speed_level;

@@ -124,8 +124,8 @@ typedef struct
     /* A pattern can arrive now: the RX pattern detector correlates only while
      * this is set -- running it all the time costs the decoders CPU. */
     bool expect_pattern_ack;
-    /* Idle and listening: a CALL can arrive on MFSK, and only the modem's
-     * MFSK call listener would decode it. */
+    /* Listening or accepting: a CALL can arrive on MFSK, and only the
+     * modem's MFSK call listener would decode it. */
     bool listening_for_calls;
     int trx;
     int tx_backlog_bytes;
