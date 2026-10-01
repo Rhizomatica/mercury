@@ -113,7 +113,7 @@ static const char *radio_io_model_name(rig_model_t model)
 static void radio_io_set_conf_cb(const char *key, const char *value, void *ctx)
 {
     RIG *radio = (RIG *)ctx;
-    hamlib_token_t tok = rig_token_lookup(radio, key);
+    token_t tok = rig_token_lookup(radio, key);
     if (tok == RIG_CONF_END)
     {
         HLOGW(RADIO_LOG_TAG, "hamlib_conf: '%s' is not a Hamlib setting for this rig", key);
@@ -130,7 +130,7 @@ static void radio_io_set_conf_cb(const char *key, const char *value, void *ctx)
 static const char *radio_io_get_conf(RIG *radio, const char *key, char *buf)
 {
     buf[0] = '\0';
-    hamlib_token_t tok = rig_token_lookup(radio, key);
+    token_t tok = rig_token_lookup(radio, key);
     if (tok == RIG_CONF_END || rig_get_conf(radio, tok, buf) != RIG_OK)
         buf[0] = '\0';
     return buf;
