@@ -110,10 +110,13 @@ static const char *radio_io_model_name(rig_model_t model)
     return name ? name : "this rig";
 }
 
+/* Configuration tokens are held as long: Hamlib 4.5 calls the type token_t,
+ * 4.6 on hamlib_token_t with token_t kept only as a compatibility alias, and
+ * both are typedefs of long. */
 static void radio_io_set_conf_cb(const char *key, const char *value, void *ctx)
 {
     RIG *radio = (RIG *)ctx;
-    token_t tok = rig_token_lookup(radio, key);
+    long tok = rig_token_lookup(radio, key);
     if (tok == RIG_CONF_END)
     {
         HLOGW(RADIO_LOG_TAG, "hamlib_conf: '%s' is not a Hamlib setting for this rig", key);
@@ -126,12 +129,14 @@ static void radio_io_set_conf_cb(const char *key, const char *value, void *ctx)
         HLOGI(RADIO_LOG_TAG, "hamlib_conf: %s=%s", key, value);
 }
 
-/* The current value of a Hamlib setting, or "" if it cannot be read. */
-static const char *radio_io_get_conf(RIG *radio, const char *key, char *buf)
+/* The current value of a Hamlib setting, or "" if it cannot be read.
+ * rig_get_conf2 (Hamlib 4.5 on) is told the buffer size; rig_get_conf, which
+ * assumed 128 bytes, is deprecated from 4.7. */
+static const char *radio_io_get_conf(RIG *radio, const char *key, char *buf, int len)
 {
     buf[0] = '\0';
-    token_t tok = rig_token_lookup(radio, key);
-    if (tok == RIG_CONF_END || rig_get_conf(radio, tok, buf) != RIG_OK)
+    long tok = rig_token_lookup(radio, key);
+    if (tok == RIG_CONF_END || rig_get_conf2(radio, tok, buf, len) != RIG_OK)
         buf[0] = '\0';
     return buf;
 }
@@ -185,9 +190,9 @@ static int radio_io_apply_hamlib_conf(RIG *radio, rig_model_t model,
      * would then refuse to open with: PTT by that line on this same port, or
      * RTS under hardware handshake (rig_open's -RIG_ECONF checks). */
     char ptt[128], hs[128], pttpath[128];
-    radio_io_get_conf(radio, "ptt_type", ptt);
-    radio_io_get_conf(radio, "serial_handshake", hs);
-    radio_io_get_conf(radio, "ptt_pathname", pttpath);
+    radio_io_get_conf(radio, "ptt_type", ptt, sizeof(ptt));
+    radio_io_get_conf(radio, "serial_handshake", hs, sizeof(hs));
+    radio_io_get_conf(radio, "ptt_pathname", pttpath, sizeof(pttpath));
     bool ptt_here = !pttpath[0] || !device_path || !strcmp(pttpath, device_path);
     static const struct { const char *key, *ptt; bool hw_conflict; } lines[] = {
         { "rts_state", "RTS", true  },
