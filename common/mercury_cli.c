@@ -152,7 +152,9 @@ int mercury_cli_parse(int argc, char **argv,
     if (!cli_config && !strcmp(out->cfg_path, "mercury.ini") &&
         access(out->cfg_path, R_OK) != 0)
     {
+#ifndef _WIN32
         searched = true;
+#endif
         (void)cli_find_config(out->cfg_path, sizeof(out->cfg_path));
     }
 
