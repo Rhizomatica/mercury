@@ -1104,6 +1104,29 @@ void test_wait_ack_turn_req_pulls_the_retransmission_in(void)
     TEST_ASSERT_EQUAL_INT(ARQ_DFLOW_DATA_TX, sess.dflow_state);
 }
 
+/* A decoder can lose sync inside a frame that is still on the air: on air
+ * (car28) the gateway caught a 7.4 s DATAC17 frame, lost it 1.2 s in, and
+ * keyed 2.7 s into it.  A caught preamble holds the channel busy for the
+ * frame's airtime, sync or not; a decoded frame ends that. */
+void test_caught_preamble_holds_the_channel_through_a_sync_gap(void)
+{
+    goto_connected();
+    goto_wait_ack();
+    RESET_FAKE(fake_send_tx_frame);
+
+    sess.last_rx_sync_ms = 0;                              /* sync lost... */
+    sess.rx_frame_busy_until_ms = time_now_ms() + 5000;    /* ...mid-frame */
+    arq_event_t ev = make_event(ARQ_EV_TIMER_ACK);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, fake_send_tx_frame_fake.call_count,
+        "keyed into a frame whose preamble was caught");
+
+    sess.rx_frame_busy_until_ms = 0;                       /* the frame decoded */
+    ev = make_event(ARQ_EV_TIMER_ACK);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_GREATER_THAN(0, fake_send_tx_frame_fake.call_count);
+}
+
 /* The ACK timeout fires on a clock.  When the burst was lost the peer is often
  * on air right then with a TURN_REQ, and on air the retransmission keyed 1-2 s
  * into it while our own decoder was synced on it -- both lost.  With the peer
@@ -2754,6 +2777,7 @@ int main(void)
     RUN_TEST(test_wait_ack_turn_req_defers_the_yield_without_keying);
     RUN_TEST(test_wait_ack_turn_req_pulls_the_retransmission_in);
     RUN_TEST(test_wait_ack_retransmission_is_not_keyed_over_the_peer);
+    RUN_TEST(test_caught_preamble_holds_the_channel_through_a_sync_gap);
     RUN_TEST(test_turn_req_decoded_while_deferring_waits_one_guard);
     RUN_TEST(test_wait_ack_retransmission_deferral_is_bounded);
     RUN_TEST(test_wait_ack_yields_to_latched_turn_req_when_the_ack_lands);

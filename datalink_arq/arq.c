@@ -1249,6 +1249,30 @@ void arq_set_active_modem_mode(int mode, size_t frame_size)
     pthread_mutex_unlock(&g_conn_lock);
 }
 
+/* Carrier sense is a decoder holding sync, and a decoder can lose it inside a
+ * frame that is still on the air: on air (car28) the gateway caught a 7.4 s
+ * DATAC17 frame, lost it 1.2 s in, and its receiver polled 2.7 s into the
+ * frame.  A caught preamble starts a frame of known length; the channel is
+ * busy for that long.  When a frame decodes it is over. */
+void arq_note_rx_preamble(int mode)
+{
+    const arq_mode_timing_t *tm = arq_protocol_mode_timing(mode);
+    if (!tm || tm->frame_duration_s <= 0.0f)
+        return;
+    uint64_t until = time_now_ms() + (uint64_t)(tm->frame_duration_s * 1000.0f);
+    pthread_mutex_lock(&g_sess_lock);
+    if (until > g_sess.rx_frame_busy_until_ms)
+        g_sess.rx_frame_busy_until_ms = until;
+    pthread_mutex_unlock(&g_sess_lock);
+}
+
+void arq_note_rx_frame_done(void)
+{
+    pthread_mutex_lock(&g_sess_lock);
+    g_sess.rx_frame_busy_until_ms = 0;
+    pthread_mutex_unlock(&g_sess_lock);
+}
+
 void arq_update_link_metrics(int sync, float snr, int rx_status, bool frame_decoded)
 {
     (void)rx_status;

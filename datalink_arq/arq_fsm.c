@@ -1239,9 +1239,11 @@ static bool peer_is_transmitting(const arq_session_t *sess)
     if (g_cbs.channel_busy && g_cbs.channel_busy())
         return true;
 
+    uint64_t now = time_now_ms();
+    if (now < sess->rx_frame_busy_until_ms)
+        return true;          /* a frame whose preamble was caught: see arq_note_rx_preamble */
     if (sess->last_rx_sync_ms == 0)
         return false;
-    uint64_t now = time_now_ms();
     if (now < sess->last_rx_sync_ms)
         return true;          /* clock went backwards; treat as busy */
     return (now - sess->last_rx_sync_ms) < (uint64_t)ARQ_CHANNEL_SYNC_HOLD_MS;

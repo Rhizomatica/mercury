@@ -347,6 +347,14 @@ void arq_handle_incoming_frame(uint8_t *data, size_t frame_size, float rx_snr);
 void arq_update_link_metrics(int sync, float snr, int rx_status, bool frame_decoded);
 
 /**
+ * @brief A decoder for @p mode has just caught a frame's preamble: the
+ * channel is busy for that frame's airtime even if the decoder then loses
+ * sync.  arq_note_rx_frame_done() ends it when a frame decodes.
+ */
+void arq_note_rx_preamble(int mode);
+void arq_note_rx_frame_done(void);
+
+/**
  * @brief Try to dequeue next modem action without blocking.
  * @param action Output action item.
  * @return true if an action was dequeued.

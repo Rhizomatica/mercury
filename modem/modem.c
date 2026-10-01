@@ -2143,6 +2143,19 @@ static void rx_worker_publish_metrics(rx_worker_t *w, const rx_metrics_accum_t *
 }
 
 /* Drain this plane's metrics into `out` (max() merge), then reset. */
+/* Fold one worker's metrics into an aggregate, as rx_worker_take_metrics does. */
+static void rx_metrics_merge(rx_metrics_accum_t *out, const rx_metrics_accum_t *in)
+{
+    if (in->sync) out->sync = 1;
+    out->rx_status |= in->rx_status;
+    if (in->snr_valid && (!out->snr_valid || in->snr_est > out->snr_est))
+    {
+        out->snr_est = in->snr_est;
+        out->snr_valid = true;
+    }
+    if (in->frame_decoded) out->frame_decoded = true;
+}
+
 static void rx_worker_take_metrics(rx_worker_t *w, rx_metrics_accum_t *out)
 {
     pthread_mutex_lock(&w->mlock);
@@ -2660,6 +2673,7 @@ void *rx_thread(void *g_modem)
      * capture_buffer, the flush policy and the spectrum/busy work; the workers
      * only decode. */
     static rx_worker_t w_ctrl, w_pay, w_listen;
+    int ctrl_was_sync = 0, pay_was_sync = 0;   /* for preamble edges (arq_note_rx_preamble) */
     /* Pattern-ACK window, and whether an ACK was due on the previous chunk
      * (its rising edge resets the window; see the detector below). */
     mfsk_pattern_window_t pat_win = {0};
@@ -2955,8 +2969,24 @@ void *rx_thread(void *g_modem)
         }
 
         rx_metrics_accum_t metrics = {0};
-        rx_worker_take_metrics(&w_ctrl, &metrics);
-        rx_worker_take_metrics(&w_pay,  &metrics);
+        rx_metrics_accum_t m_ctrl = {0}, m_pay = {0};
+        rx_worker_take_metrics(&w_ctrl, &m_ctrl);
+        rx_worker_take_metrics(&w_pay,  &m_pay);
+        rx_metrics_merge(&metrics, &m_ctrl);
+        rx_metrics_merge(&metrics, &m_pay);
+        /* A decoder that has just caught a preamble holds the channel busy
+         * for one frame of its mode, sync or not (arq_note_rx_preamble). */
+        if (arq_policy_ready)
+        {
+            if (m_ctrl.sync && !ctrl_was_sync && !m_ctrl.frame_decoded)
+                arq_note_rx_preamble(atomic_load(&w_ctrl.mode));
+            if (m_pay.sync && !pay_was_sync && !m_pay.frame_decoded)
+                arq_note_rx_preamble(atomic_load(&w_pay.mode));
+            if (m_ctrl.frame_decoded || m_pay.frame_decoded)
+                arq_note_rx_frame_done();
+        }
+        ctrl_was_sync = m_ctrl.sync;
+        pay_was_sync  = m_pay.sync;
         {
             /* The listener is not a link-quality source: it hears noise while
              * idle.  Drain its metrics so they do not accumulate. */
