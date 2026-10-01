@@ -10,6 +10,7 @@
 #include "modem_mfsk.h"
 #include "freedv_api.h"
 
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -22,7 +23,10 @@ void setUp(void)   { be = &modem_backend_mfsk; ctx = be->open(MERCURY_MODE_MFSK)
 void tearDown(void){ be->close(ctx); }
 
 /* deterministic PRNG */
-static unsigned long s_rng = 0x9E3779B97F4A7C15ULL;
+/* 64 bits on every build: as unsigned long it was 32 on i386, where this
+ * xorshift64 then drew uniforms of ~2^-32 and gauss() noise ~16 dB above the
+ * level asked for -- the -7 dB sync tests failed only there. */
+static uint64_t s_rng = 0x9E3779B97F4A7C15ULL;
 static int coin(void){ s_rng ^= s_rng<<13; s_rng ^= s_rng>>7; s_rng ^= s_rng<<17; return (int)(s_rng & 1); }
 
 /* Feed a passband buffer to rawdata_rx in nin-sized chunks; return bytes on the
