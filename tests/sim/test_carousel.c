@@ -125,6 +125,19 @@ static void test_carousel_floor_handover_not_keyed_over(void)
         check(seed, "fade:-9:0.5", true);
 }
 
+/* Both ways in a fade: the receiver, its quantum due, answers a floor round
+ * with a handover that carries its own first round; the sender, missing the
+ * handover, took the silence for "keep going" and keyed into that round --
+ * 4-5 collisions on each of these seeds -- until it held for the peer once its
+ * turn was due. */
+static void test_carousel_sender_holds_for_peer_turn(void)
+{
+    static const uint64_t SEEDS[] = { 11, 13, 14, 17 };
+    setenv("CAR_CS_DECODABLE", "1", 1);
+    for (size_t i = 0; i < sizeof(SEEDS) / sizeof(SEEDS[0]); i++)
+        check(SEEDS[i], "fade:-5:0.5", true);
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -134,5 +147,6 @@ int main(void)
     RUN_TEST(test_carousel_lost_probe_poll);
     RUN_TEST(test_carousel_fading_no_blind_repoll);
     RUN_TEST(test_carousel_floor_handover_not_keyed_over);
+    RUN_TEST(test_carousel_sender_holds_for_peer_turn);
     return UNITY_END();
 }

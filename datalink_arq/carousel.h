@@ -176,6 +176,7 @@ typedef struct {
     int      peer_round_lv, peer_round_n;
     bool     peer_has_data;         /* the peer's last poll said it has data for me */
     uint64_t send_start_ms;         /* when this sending turn of mine began */
+    bool     floor_yielded;         /* silence near the peer's turn: I stopped for its handover */
     int      probe_lv, probe_n;     /* what that poll asked for */
     uint64_t probe_after_ms;        /* the stream's last frame I heard before it */
     car_frame_t txbuf[CAR_KEYDOWN_MAX];

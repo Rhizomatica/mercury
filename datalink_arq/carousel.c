@@ -661,6 +661,7 @@ static uint64_t peer_floor_wait_max(const car_t *c)
 static void send_round(car_t *c)
 {
     car_frame_t *fr = c->txbuf;
+    c->floor_yielded = false;
     int nf = build_round(c, c->tx_level, c->tx_n, c->tx_poll_id, fr);
     if (!nf) {
         msg_t m;                                  /* polled with nothing to send */
@@ -1661,6 +1662,7 @@ void car_on_tx_done(car_t *c, uint64_t now)
 void car_on_pattern(car_t *c, uint64_t now, int kind)
 {
     c->last_carrier_ms = now;
+    c->floor_yielded = false;
     if (!c->sending || c->tx_busy || !(c->floor_waiting || c->pat_waiting)) return;
     car_trace(c, "tx pattern %s on lv=%d", kind == CAR_PATTERN_BREAK ? "BREAK" : "ACK", c->tx_level);
     if (c->pat_waiting) {
@@ -1743,6 +1745,23 @@ void car_on_time(car_t *c, uint64_t now)
             if (!c->sending) break;
             if (defer_if_busy(c, CAR_T_WAIT, now)) break;
             if (c->handover_unconfirmed) { send_handover(c); break; }
+            /* No answer, and the peer, with data of its own, is due to take
+             * the turn: the likeliest answer is its handover, missed in a fade
+             * -- a keydown that carries its first round after it.  Continuing on
+             * silence I keyed into that round (sim, fade:-5 both ways: 25 of 35
+             * collisions).  Hold instead, until the peer is heard: it repeats an
+             * unconfirmed handover, and if it was not handing over its window
+             * ends in a pattern or a poll, either of which moves me.  Not on a
+             * timer of my own: one a floor round long ended just as the peer's
+             * window did, and the two keyed together (sim, cliff:-5 both
+             * ways).  The silence nudge stays the backstop. */
+            if (c->floor_waiting && c->peer_has_data && !c->floor_yielded &&
+                now + HANDOVER_SOON_MS >= c->send_start_ms + TURN_QUANTUM_MS) {
+                c->floor_yielded = true;
+                car_trace(c, "tx: no answer, the peer's turn is due -- holding for it");
+                arm(c, CAR_T_WAIT, now + SENDER_SILENCE_MS);
+                break;
+            }
             if (c->floor_waiting && ++c->floor_silent > FLOOR_SILENT_MAX) {
                 /* Nothing back for a while: stop streaming, wait to be polled. */
                 c->floor_waiting = false;
