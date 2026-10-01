@@ -632,6 +632,19 @@ static void arm_sender_wait(car_t *c, uint64_t tx_end)
         bool ctl_audible = c->snr_valid && c->snr_ema >= ARQ_SNR_MIN_DATAC15_DB;
         if (ctl_audible && answer < ctl_answer)
             answer = ctl_answer;
+        /* Below it the peer's control is a 13.5 s MFSK frame, and the floor
+         * wait was left to the learned pattern delay -- waiting out every one
+         * shifted this timer into step with the peer's handover repeats (above).
+         * But the receiver polls a floor stream every FLOOR_POLL_EVERY rounds or
+         * more, so after a run of patterns the next answer may be that frame:
+         * then cover it.  Continuing at the pattern delay, I keyed 3 s into it
+         * (sim, fade:-9 one way: 7 collisions in 20 runs). */
+        /* Not when the peer has data of its own: its handover is covered
+         * below, and this wait on top fell into step with its repeats (sim,
+         * fade:-9 both ways: 0 -> 4 collisions). */
+        if (!ctl_audible && peer_ctl_on_floor(c) && !c->peer_has_data &&
+            c->floor_pats_heard >= FLOOR_POLL_EVERY && answer < ctl_answer)
+            answer = ctl_answer;
         /* But once the peer, with data of its own, has driven me about a turn
          * quantum, the answer may be its handover -- on MFSK below the control
          * mode, a frame found only as it ends, and in a fade not sensed
@@ -1485,6 +1498,7 @@ static void on_ctl(car_t *c, uint64_t now, const msg_t *m)
     c->floor_waiting = false; c->floor_silent = 0; c->pat_waiting = false;
     apply_need(c, m);
     c->peer_has_data = m->has_data;
+    c->floor_pats_heard = 0;
     if (!c->sending) c->send_start_ms = now;
     c->tx_poll_id = m->poll_id;
     c->heard_poll_id = (uint8_t)(m->poll_id & 0x0F);
@@ -1671,6 +1685,7 @@ void car_on_pattern(car_t *c, uint64_t now, int kind)
 {
     c->last_carrier_ms = now;
     c->floor_yielded = false;
+    c->floor_pats_heard++;
     if (!c->sending || c->tx_busy || !(c->floor_waiting || c->pat_waiting)) return;
     car_trace(c, "tx pattern %s on lv=%d", kind == CAR_PATTERN_BREAK ? "BREAK" : "ACK", c->tx_level);
     if (c->pat_waiting) {
