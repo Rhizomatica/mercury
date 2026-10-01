@@ -12,6 +12,8 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
+#include <stdio.h>
+#include <math.h>
 #include <string.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -103,6 +105,64 @@ void test_noise_no_false_ack(void)
     }
     TEST_ASSERT_EQUAL_INT(0, false_alarms);
     free(pb);
+}
+
+/* The pattern as a radio df Hz off would hear it: its analytic signal, from
+ * a DFT over the MFSK band only (1-3 kHz; the tones sit at 1.5-2.5 kHz),
+ * moved df up and taken back to real. */
+static void shift_passband(const int16_t *in, int n, double df, int16_t *out)
+{
+    int k0 = (int)(1000.0 * n / 8000.0), k1 = (int)(3000.0 * n / 8000.0);
+    double complex *X = (double complex *)calloc((size_t)(k1 - k0 + 1), sizeof(double complex));
+    for (int k = k0; k <= k1; k++) {
+        double complex acc = 0;
+        for (int t = 0; t < n; t++) acc += in[t] * cexp(-2.0 * I * M_PI * k * t / n);
+        X[k - k0] = 2.0 * acc;
+    }
+    for (int t = 0; t < n; t++) {
+        double complex acc = 0;
+        for (int k = k0; k <= k1; k++) acc += X[k - k0] * cexp(2.0 * I * M_PI * k * t / n);
+        double v = creal(acc / n * cexp(2.0 * I * M_PI * df * t / 8000.0));
+        out[t] = (int16_t)(v > 32767 ? 32767 : v < -32768 ? -32768 : v);
+    }
+    free(X);
+}
+
+static int detect_shifted(int kind, double df, int *is_break)
+{
+    int burst = mfsk_pattern_max_tx_samples();
+    int16_t *tone = (int16_t *)malloc((size_t)burst * sizeof(int16_t));
+    int16_t *sh   = (int16_t *)malloc((size_t)burst * sizeof(int16_t));
+    int n = mfsk_pattern_tx(tone, kind);
+    shift_passband(tone, n, df, sh);
+    int gap = burst, L = gap + n + burst;
+    int16_t *pb = (int16_t *)malloc((size_t)L * sizeof(int16_t));
+    for (int i = 0; i < L; i++) pb[i] = (int16_t)((urand() - 0.5) * 200.0);
+    for (int i = 0; i < n; i++) pb[gap + i] = (int16_t)(pb[gap + i] + sh[i]);
+    *is_break = -1;
+    int hit = mfsk_pattern_detect(pb, L, is_break);
+    free(tone); free(sh); free(pb);
+    return hit;
+}
+
+/* Two radios are never on exactly the same frequency.  Taking a symbol only
+ * when its tone was the peak bin, the detector held to +/-15 Hz, half a tone
+ * spacing: on air an IC-7100 and an sBitx at 7.050 MHz never detected a
+ * pattern from each other (0 of 5), where the MFSK data decoder, which
+ * searches its offset, decoded the same frames.  It now searches +/-2 bins. */
+void test_ack_detects_off_frequency(void)
+{
+    static const double DF[] = { -40.0, -25.0, 25.0, 40.0 };
+    for (size_t i = 0; i < sizeof(DF) / sizeof(DF[0]); i++) {
+        char what[48];
+        int isb;
+        snprintf(what, sizeof(what), "ACK %+.0f Hz off", DF[i]);
+        TEST_ASSERT_TRUE_MESSAGE(detect_shifted(PAT_ACK, DF[i], &isb), what);
+        TEST_ASSERT_EQUAL_INT_MESSAGE(0, isb, what);
+    }
+    int isb;
+    TEST_ASSERT_TRUE_MESSAGE(detect_shifted(PAT_BREAK, 25.0, &isb), "BREAK +25 Hz off");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, isb, "BREAK +25 Hz off");
 }
 
 /* A real ACK burst planted in a noise window must detect as ACK (not break). */
@@ -309,6 +369,7 @@ int main(void)
     RUN_TEST(test_noise_no_false_ack);
     RUN_TEST(test_real_ack_detects);
     RUN_TEST(test_real_break_detects);
+    RUN_TEST(test_ack_detects_off_frequency);
     RUN_TEST(test_window_scans_once_per_burst_not_per_chunk);
     RUN_TEST(test_window_finds_a_chunked_ack_at_any_scan_phase);
     RUN_TEST(test_reset_discards_a_stale_burst);
