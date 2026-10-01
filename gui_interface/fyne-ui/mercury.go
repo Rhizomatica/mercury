@@ -32,7 +32,7 @@ func mercuryPrintVersion() {
 // mercuryInfoCheck forwards the args to the engine's CLI parser and handles the
 // exit-only actions (-h/-l/-z/-K/-Q) before the GUI starts. Returns true if
 // such an action was handled and the process should exit before opening a window.
-func mercuryInfoCheck(args []string) bool {
+func mercuryInfoCheck(args []string, defaultConfig string) bool {
 	cArgs := make([]*C.char, len(args))
 	for i, a := range args {
 		cArgs[i] = C.CString(a)
@@ -46,7 +46,7 @@ func mercuryInfoCheck(args []string) bool {
 	if len(cArgs) > 0 {
 		argv = &cArgs[0]
 	}
-	cDefault := C.CString("")
+	cDefault := C.CString(defaultConfig)
 	defer C.free(unsafe.Pointer(cDefault))
 	return C.mercury_precheck(C.int(len(args)), argv, cDefault) != 0
 }
