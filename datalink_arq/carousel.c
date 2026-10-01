@@ -889,8 +889,16 @@ static int choose_level(const car_t *c, uint64_t now)
         double gp = level_goodput(c, lv);
         if (gp > best_gp) { best_gp = gp; best = lv; }
     }
-    if (best < 0)
-        return c->lv_rounds[c->snr_level] ? 0 : c->snr_level;
+    if (best < 0) {
+        if (!c->lv_rounds[c->snr_level]) return c->snr_level;
+        /* The SNR's rung was tried and is out: the next one down not tried
+         * yet, not the floor.  At 12 dB two DATAC17 polls lost in a row
+         * dropped the session to MFSK past four rungs with margin to spare,
+         * and it took 220 s to climb back (sim, awgn:0.25 seed 6). */
+        for (int lv = c->snr_level - 1; lv > 0; lv--)
+            if (!c->lv_rounds[lv]) return lv;
+        return 0;
+    }
     /* Nothing measured gets through: go down to a rung not tried yet. */
     if (best_gp <= 0.0) {
         for (int lv = best - 1; lv >= 0; lv--)
