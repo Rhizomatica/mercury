@@ -220,6 +220,11 @@ int  car_start_level(float snr_db);
 int  car_level_mode(int level);
 bool car_is_sending(const car_t *c);
 bool car_is_idle(const car_t *c);
+
+/* How long delivering what is left may take on the rung the session is on:
+ * a few exchanges -- my round, the peer's control answer -- there.  Seconds
+ * on a fast rung; minutes at the MFSK floor. */
+uint64_t car_drain_budget_ms(const car_t *c);
 /* Bytes taken from the application that the peer has not confirmed yet. */
 size_t car_tx_inflight(const car_t *c);
 

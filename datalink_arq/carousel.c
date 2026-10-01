@@ -1796,3 +1796,18 @@ void car_on_time(car_t *c, uint64_t now)
         }
     }
 }
+
+/* Three exchanges at the rung in use, either way: enough for a lost round or
+ * handover to be repeated and answered.  A fixed 30 s drain dropped the last
+ * UUCP reply at the floor, where one exchange takes 40-50 s (on air, car29 at
+ * 2 %: the final 36 bytes behind a lost handover; the caller's uucico failed). */
+uint64_t car_drain_budget_ms(const car_t *c)
+{
+    int lv = c->tx_level >= 0 ? c->tx_level : 0;
+    if (c->poll_level >= 0 && c->poll_level < lv) lv = c->poll_level;   /* the slower way */
+    uint64_t ctl = level_air(0) > mode_air(ARQ_CONTROL_MODE) && (ctl_on_floor(c) || peer_ctl_on_floor(c))
+                   ? level_air(0) : mode_air(ARQ_CONTROL_MODE);
+    uint64_t exchange = GUARD_MS + HEAD_MS + ctl + CHAIN_GAP_MS + round_air(lv, keydown_cap(lv)) +
+                        TAIL_MS + FLOOR_ANSWER_MS;
+    return 3 * exchange;
+}

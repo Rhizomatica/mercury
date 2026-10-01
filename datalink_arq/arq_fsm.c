@@ -2290,9 +2290,15 @@ static bool fsm_connected_carousel(arq_session_t *sess, const arq_event_t *ev)
          * timeout in fsm_connected). */
         if (!car_drained(sess) || sess->tx_active)
         {
+            /* The configured drain is the least it gets; the carousel's
+             * budget for its rung stretches it where an exchange is slow. */
+            uint64_t budget = (uint64_t)ARQ_DISCONNECT_DRAIN_TIMEOUT_S * 1000ULL;
+            uint64_t car_budget = car_drain_budget_ms(sess->car);
+            if (car_budget > budget) budget = car_budget;
             sess->pending_disconnect = true;
-            sess->disconnect_deadline_ms =
-                now + (uint64_t)ARQ_DISCONNECT_DRAIN_TIMEOUT_S * 1000ULL;
+            sess->disconnect_deadline_ms = now + budget;
+            HLOGD(LOG_COMP, "DISCONNECT deferred until delivered (up to %llu s)",
+                  (unsigned long long)(budget / 1000));
             break;
         }
         sess->pending_disconnect = false;

@@ -148,6 +148,9 @@ no_progress_timeout_s = 180
 ; the session is stuck ping-ponging — preventing the rig from being keyed
 ; indefinitely after the host has already disconnected.  On a healthy link
 ; the drain finishes in seconds, so this only bites on a stuck session.
+; With the carousel data plane this is the least the drain gets: on a slow
+; rung it is stretched to about three exchanges there (about 2 minutes at the
+; MFSK floor, where one exchange takes 40-50 s), still bounded.
 disconnect_drain_timeout_s = 30
 
 ; Number of DATA-frame retries before a downgrade cycle (default 10, range 1..64).

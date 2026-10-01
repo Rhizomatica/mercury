@@ -10,6 +10,7 @@
  */
 #include "unity.h"
 #include "carousel_sim.h"
+#include "carousel.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -138,6 +139,21 @@ static void test_carousel_sender_holds_for_peer_turn(void)
         check(SEEDS[i], "fade:-5:0.5", true);
 }
 
+/* A DISCONNECT waits for what is left to be delivered, for as long as a few
+ * exchanges take on the rung in use.  A fixed 30 s dropped the final UUCP
+ * reply at the floor (on air, car29), where one exchange is 40-50 s. */
+static void test_carousel_drain_budget_fits_the_floor(void)
+{
+    car_t *c = calloc(1, sizeof(*c));
+    car_io_t io = {0};
+    car_init(c, &io, 0, 0);
+    c->tx_level = 0; c->poll_level = 0;
+    char what[64];
+    snprintf(what, sizeof(what), "floor drain budget %llu ms", (unsigned long long)car_drain_budget_ms(c));
+    TEST_ASSERT_TRUE_MESSAGE(car_drain_budget_ms(c) >= 90000, what);
+    free(c);
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -148,5 +164,6 @@ int main(void)
     RUN_TEST(test_carousel_fading_no_blind_repoll);
     RUN_TEST(test_carousel_floor_handover_not_keyed_over);
     RUN_TEST(test_carousel_sender_holds_for_peer_turn);
+    RUN_TEST(test_carousel_drain_budget_fits_the_floor);
     return UNITY_END();
 }
