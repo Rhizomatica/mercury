@@ -171,9 +171,7 @@ int mercury_cli_parse(int argc, char **argv,
             printf("Loaded configuration from %s\n", out->cfg_path);
             cfg_loaded = true;
         } else {
-            fprintf(stderr, "Error: configuration %s could not be read (see above).  "
-                    "Fix it, or name another one with -C.\n", out->cfg_path);
-            cfg_error = true;
+            cfg_error = true;   /* reported once the action is known */
         }
     }
     else if (cli_config)
@@ -433,10 +431,19 @@ int mercury_cli_parse(int argc, char **argv,
         }
     }
 
-    /* -h, -V and the listings do not need the configuration; running the
-     * modem and testing PTT do. */
-    if (cfg_error && (out->action == MERCURY_CLI_RUN || out->action == MERCURY_CLI_TEST_PTT))
-        return MERCURY_CLI_CONFIG_ERROR;
+    /* -h, -V and the listings do not need the configuration, so for them a
+     * broken one is only a note; running the modem and testing PTT stop. */
+    if (cfg_error)
+    {
+        if (out->action == MERCURY_CLI_RUN || out->action == MERCURY_CLI_TEST_PTT)
+        {
+            fprintf(stderr, "Error: configuration %s could not be read (see above).  "
+                    "Fix it, or name another one with -C.\n", out->cfg_path);
+            return MERCURY_CLI_CONFIG_ERROR;
+        }
+        fprintf(stderr, "Note: configuration %s could not be read (see above); "
+                "the modem will not start until it is fixed.\n", out->cfg_path);
+    }
 
     /* -x selected a different sound system than the config file's, and the
      * matching device was not given on the command line.  A PulseAudio sink
