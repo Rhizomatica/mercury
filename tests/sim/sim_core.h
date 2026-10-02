@@ -34,6 +34,8 @@ int             sim_frames_in_flight(sim_t *s);
  * it on for anything about turn coordination, where a collision IS the bug. */
 void            sim_set_half_duplex(sim_t *s, bool on);
 int             sim_collisions(sim_t *s);
+/* The timing context both FSMs share (session byte/frame counters). */
+const void     *sim_timing(sim_t *s);
 
 /* Carrier sense: a station hears the peer (decoder sync, what listen-before-
  * talk reads) from acq_ms after the peer keys until it unkeys, unless it is

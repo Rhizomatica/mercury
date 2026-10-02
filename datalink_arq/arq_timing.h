@@ -86,6 +86,13 @@ void arq_timing_record_ack_rx(arq_timing_ctx_t *ctx, int seq,
 void arq_timing_record_data_rx(arq_timing_ctx_t *ctx, int seq,
                                 int bytes, int snr_x10);
 
+/** @brief Carousel session: bytes the carousel took from the application to
+ *  send, or delivered to it; logs [TMG] car_tx / car_rx.  The stop-and-wait
+ *  records above never run in a carousel session, so without these the
+ *  session's byte counters (and the UI's) stayed at 0. */
+void arq_timing_record_car_tx(arq_timing_ctx_t *ctx, int bytes);
+void arq_timing_record_car_rx(arq_timing_ctx_t *ctx, int bytes);
+
 /** @brief Record ACK TX started (IRS side); logs [TMG] ack_tx. */
 void arq_timing_record_ack_tx(arq_timing_ctx_t *ctx, int seq);
 

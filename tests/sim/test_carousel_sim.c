@@ -18,6 +18,7 @@
 
 #include "arq_fsm.h"
 #include "arq.h"
+#include "arq_timing.h"
 #include "freedv_api.h"
 
 #include <stdio.h>
@@ -98,6 +99,12 @@ void test_car_transfer_after_connect(void)
     TEST_ASSERT_TRUE(intact_prefix(sim_b(s), blob, sizeof(blob), &got));
     TEST_ASSERT_EQUAL_size_t(sizeof(blob), got);
     TEST_ASSERT_EQUAL_INT(0, sim_collisions(s));
+    /* The session's byte counters (the UI's bytes transmitted / received)
+     * follow the carousel too; they stayed at 0 on air (Pedro, 2026-10-02). */
+    const arq_timing_ctx_t *tm = sim_timing(s);
+    TEST_ASSERT_EQUAL_UINT64(sizeof(blob), tm->tx_bytes);
+    TEST_ASSERT_EQUAL_UINT64(sizeof(blob), tm->rx_bytes);
+    TEST_ASSERT_TRUE(tm->frames_tx > 0 && tm->frames_rx > 0);
     sim_destroy(s);
 }
 

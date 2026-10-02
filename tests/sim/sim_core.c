@@ -552,3 +552,5 @@ uint64_t sim_run_until_idle(sim_t *s, uint64_t max_ms)
 
     return sim_clock_now() - start;
 }
+
+const void *sim_timing(sim_t *s) { return &s->timing; }

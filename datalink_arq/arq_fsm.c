@@ -1397,6 +1397,7 @@ static void car_io_keydown(void *ctx, const car_frame_t *fr, int n)
     }
     if (g_cbs.send_keydown)
         g_cbs.send_keydown(&kd);
+    if (g_timing) g_timing->frames_tx += (uint64_t)kd.n;
 }
 
 static void car_io_bind_rx(void *ctx, int mode) { ((arq_session_t *)ctx)->peer_tx_mode = mode; }
@@ -1413,6 +1414,7 @@ static bool car_io_peer_keyed(void *ctx) { return peer_is_transmitting((arq_sess
 static size_t car_io_tx_read(void *ctx, uint8_t *buf, size_t max)
 {
     int n = session_tx_read((arq_session_t *)ctx, buf, max);
+    if (n > 0 && g_timing) arq_timing_record_car_tx(g_timing, n);
     return n > 0 ? (size_t)n : 0;
 }
 
@@ -1428,7 +1430,10 @@ static void car_io_deliver(void *ctx, const uint8_t *buf, size_t len)
     /* Nothing reaches an application that has already ended the session (see
      * deliver_rx_checked). */
     if (!sess->host_released && g_cbs.deliver_rx_data)
+    {
         g_cbs.deliver_rx_data(buf, len);
+        if (g_timing) arq_timing_record_car_rx(g_timing, (int)len);
+    }
 }
 
 /* BUFFER is what the peer has not confirmed: the application's queue plus
@@ -1873,6 +1878,7 @@ static void car_connect_callee(arq_session_t *sess, const arq_event_t *ev)
     }
     uint64_t now = time_now_ms();
     car_start(sess, false, now);
+    if (g_timing) g_timing->frames_rx++;
     car_on_frame(sess->car, now, ev->payload, ev->payload_len, ev->mode, ev->from_control, ev->rx_snr);
 }
 
@@ -2289,6 +2295,7 @@ static bool fsm_connected_carousel(arq_session_t *sess, const arq_event_t *ev)
     {
     case ARQ_EV_RX_CAROUSEL:
         sess->car_last_rx_ms = now;
+        if (g_timing) g_timing->frames_rx++;
         car_on_frame(sess->car, now, ev->payload, ev->payload_len, ev->mode, ev->from_control, ev->rx_snr);
         break;
     case ARQ_EV_TX_COMPLETE:
