@@ -706,8 +706,18 @@ int arq_protocol_build_accept(uint8_t *buf, size_t buf_len,
 /* The ACCEPT is also the carousel's first poll: it names the ladder rung the
  * caller's first round goes out on (car_start_level of the SNR the callee
  * measured on the CALL), in the top 3 bits of its DST CRC -- which an ACCEPT
- * checks on 13 bits, alongside its 7-bit session id. */
+ * checks on 13 bits, alongside its 7-bit session id.  A start_level below 0
+ * builds a plain ACCEPT, for the stop-and-wait plane.
+ *
+ * A carousel ACCEPT sets ARQ_CONNECT_EXT_CAROUSEL in the framer extension.
+ * Stations without the carousel (1.9.x, MERCURY_CAROUSEL=0) read the
+ * extension as an unknown bandwidth token and drop the frame: their call goes
+ * unanswered rather than "connecting" to a session that cannot move data.
+ * A plain ACCEPT tells a carousel caller that the callee runs stop-and-wait,
+ * and the session runs on it. */
+#define ARQ_CONNECT_EXT_CAROUSEL      0x10
 int  arq_protocol_accept_start_level(const uint8_t *buf);
+bool arq_protocol_accept_is_carousel(const uint8_t *buf);
 /* Is a CALL (16-bit DST CRC) or an ACCEPT (13-bit) addressed to callsign? */
 bool arq_protocol_connect_dst_matches(const uint8_t *buf, bool is_accept, const char *callsign);
 

@@ -626,15 +626,23 @@ int arq_protocol_build_accept(uint8_t *buf, size_t buf_len,
                                int bw_hz, int start_level)
 {
     int n = build_call_accept(buf, buf_len, true, session_id, src, dst, bw_hz);
-    if (n > 0)
+    if (n > 0 && start_level >= 0)
+    {
         buf[ARQ_CONNECT_PAYLOAD_IDX + 1] =
             (uint8_t)((buf[ARQ_CONNECT_PAYLOAD_IDX + 1] & 0x1F) | ((start_level & 7) << 5));
+        buf[0] |= ARQ_CONNECT_EXT_CAROUSEL;
+    }
     return n;
 }
 
 int arq_protocol_accept_start_level(const uint8_t *buf)
 {
     return (buf[ARQ_CONNECT_PAYLOAD_IDX + 1] >> 5) & 7;
+}
+
+bool arq_protocol_accept_is_carousel(const uint8_t *buf)
+{
+    return (frame_header_extension(buf[0]) & ARQ_CONNECT_EXT_CAROUSEL) != 0;
 }
 
 bool arq_protocol_connect_dst_matches(const uint8_t *buf, bool is_accept, const char *callsign)
@@ -654,7 +662,8 @@ static int parse_call_accept(const uint8_t *buf, size_t buf_len,
         !session_id_out || !src_out || !dst_out || !bw_hz_out)
         return -1;
 
-    *bw_hz_out = arq_protocol_bw_hz_from_token(frame_header_extension(buf[0]));
+    *bw_hz_out = arq_protocol_bw_hz_from_token(frame_header_extension(buf[0]) &
+                                               (uint8_t)~ARQ_CONNECT_EXT_CAROUSEL);
     if (*bw_hz_out == 0)
         return -1;
 

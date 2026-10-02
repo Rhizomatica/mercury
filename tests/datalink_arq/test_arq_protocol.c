@@ -400,6 +400,37 @@ void test_callsign_too_long_is_refused_not_truncated(void)
      * defensive, and asserting it would only pin an unreachable branch. */
 }
 
+/* Mixed versions.  A station without the carousel (1.9.x, trunk before it)
+ * checks an ACCEPT's DST CRC on all 16 bits and its bandwidth token exactly.
+ * A carousel ACCEPT must fail that check -- or the old caller "connects" to a
+ * session neither side can move data on (harness: CONNECTED, then nothing for
+ * 10 minutes) -- and a plain one must pass it, untouched. */
+void test_accept_carousel_marker(void)
+{
+    uint8_t car[INT_BUFFER_SIZE], plain[INT_BUFFER_SIZE];
+    for (int lv = 0; lv <= 7; lv++)
+    {
+        TEST_ASSERT_GREATER_THAN_INT(0, arq_protocol_build_accept(car, sizeof(car), 0x21,
+                                                                  "PU2UIT-3", "PU2UIT", 2300, lv));
+        TEST_ASSERT_TRUE(arq_protocol_accept_is_carousel(car));
+        TEST_ASSERT_EQUAL_INT(lv, arq_protocol_accept_start_level(car));
+        /* What a 1.9.x caller does with it: an unknown token, dropped. */
+        TEST_ASSERT_EQUAL_INT(0, arq_protocol_bw_hz_from_token(frame_header_extension(car[0])));
+        /* Ours still parses it. */
+        uint8_t sid = 0; char src[CALLSIGN_MAX_SIZE] = {0}, dst[CALLSIGN_MAX_SIZE] = {0}; int bw = 0;
+        TEST_ASSERT_GREATER_OR_EQUAL_INT(0, arq_protocol_parse_accept(car, sizeof(car), &sid, src, dst, &bw));
+        TEST_ASSERT_EQUAL_INT(2300, bw);
+        TEST_ASSERT_EQUAL_STRING("PU2UIT-3", src);
+        TEST_ASSERT_TRUE(arq_protocol_connect_dst_matches(car, true, "PU2UIT"));
+    }
+
+    TEST_ASSERT_GREATER_THAN_INT(0, arq_protocol_build_accept(plain, sizeof(plain), 0x21,
+                                                              "PU2UIT-3", "PU2UIT", 2300, -1));
+    TEST_ASSERT_FALSE(arq_protocol_accept_is_carousel(plain));
+    TEST_ASSERT_EQUAL_INT(2300, arq_protocol_bw_hz_from_token(frame_header_extension(plain[0])));
+    TEST_ASSERT_TRUE(arq_protocol_connect_dst_matches(plain, false, "PU2UIT"));   /* all 16 bits */
+}
+
 /* Realistic callsigns must still round-trip exactly -- the refusal above must
  * not have narrowed what legitimately fits. */
 void test_callsign_roundtrip_realistic(void)
@@ -507,5 +538,6 @@ int main(void)
 
     RUN_TEST(test_callsign_too_long_is_refused_not_truncated);
     RUN_TEST(test_callsign_roundtrip_realistic);
+    RUN_TEST(test_accept_carousel_marker);
     return UNITY_END();
 }

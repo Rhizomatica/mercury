@@ -905,7 +905,7 @@ static void send_call_accept(arq_session_t *sess, bool is_accept)
     {
         n = arq_protocol_build_accept(frame, sizeof(frame), sess->session_id,
                                       my_call, sess->remote_call, bw_hz,
-                                      g_carousel ? accept_level(sess) : 0);
+                                      g_carousel ? accept_level(sess) : -1);
         /* The ACCEPT is the carousel's first poll: from here the caller's
          * frames carry the session seed, and its first round comes on the rung
          * the ACCEPT names. */
@@ -1673,8 +1673,11 @@ static void fsm_listening(arq_session_t *sess, const arq_event_t *ev)
          * disconnected and reconnected: our in-flight frame was gone, and
          * whatever we sent next was spliced onto its stream.  Measured on the
          * two-FSM sim (bidirectional, 10 % loss / NVIS): 90 bytes silently
-         * missing from the delivered stream. */
-        if (sess->accept_fallback && ev->session_id == sess->session_id)
+         * missing from the delivered stream.
+         *
+         * Not when our ACCEPT was a carousel one: a stop-and-wait caller drops
+         * it, so stop-and-wait frames are never its answer. */
+        if (sess->accept_fallback && !g_carousel && ev->session_id == sess->session_id)
         {
             sess->accept_fallback = false;
             sess->role        = ARQ_ROLE_CALLEE;
@@ -1716,7 +1719,15 @@ static void fsm_calling(arq_session_t *sess, const arq_event_t *ev)
     switch (ev->id)
     {
     case ARQ_EV_RX_ACCEPT:
-        if (ev->session_id == sess->session_id && g_carousel)
+        /* A carousel ACCEPT, and we run stop-and-wait: we could not follow
+         * the session it starts, so leave the call unanswered. */
+        if (ev->session_id == sess->session_id && ev->car_accept && !g_carousel)
+        {
+            HLOGW(LOG_COMP, "ACCEPT from %s is for the carousel, which is off here (MERCURY_CAROUSEL=0)",
+                  ev->remote_call);
+            break;
+        }
+        if (ev->session_id == sess->session_id && g_carousel && ev->car_accept)
         {
             sess->role = ARQ_ROLE_CALLER;
             sess->pending_disconnect = false;
@@ -1733,9 +1744,15 @@ static void fsm_calling(arq_session_t *sess, const arq_event_t *ev)
             car_start(sess, true, time_now_ms());
             break;
         }
+        /* A plain ACCEPT: the callee runs stop-and-wait (an older Mercury, or
+         * MERCURY_CAROUSEL=0), and so does this session. */
         if (ev->session_id == sess->session_id)
         {
             bool has_tx_backlog = session_tx_backlog(sess) > 0;
+            if (g_carousel)
+                HLOGI(LOG_COMP, "%s answered without the carousel: this session runs stop-and-wait",
+                      ev->remote_call);
+            sess->ctl_floor_at_stop = false;   /* control on the peer's own mode */
             sess->role        = ARQ_ROLE_CALLER;
             sess->tx_seq      = 0;
             sess->rx_expected = 0;
@@ -1870,6 +1887,10 @@ static void fsm_accepting(arq_session_t *sess, const arq_event_t *ev)
 
     case ARQ_EV_RX_DATA:
     case ARQ_EV_RX_ACK:
+        /* Our ACCEPT was a carousel one, which a stop-and-wait caller drops:
+         * stop-and-wait frames are not its answer. */
+        if (g_carousel)
+            break;
         sess->role        = ARQ_ROLE_CALLEE;
         sess->tx_seq      = 0;
         sess->rx_expected = 0;

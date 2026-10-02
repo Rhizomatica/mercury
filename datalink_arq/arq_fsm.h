@@ -144,9 +144,11 @@ typedef struct
 
     /* RX_CAROUSEL: the control decoder (DATAC16) produced it; otherwise the
      * payload decoder, in `mode`.  RX_ACCEPT: the carousel rung the callee
-     * starts us on (arq_protocol_accept_start_level). */
+     * starts us on (arq_protocol_accept_start_level), and whether the
+     * callee runs the carousel at all (car_accept). */
     bool     from_control;
     int      car_level;
+    bool     car_accept;
 
     /* Local receive SNR at the time the frame was decoded (dB, 0 = unknown).
      * Carried in-band so the FSM can update local_snr_x10 without relying on
