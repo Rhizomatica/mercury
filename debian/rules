@@ -20,6 +20,11 @@ override_dh_auto_install:
 	install -D -m 0644 gui_interface/fyne-ui/mercury-ui.png \
 		$(CURDIR)/debian/mercury-ui/usr/share/icons/hicolor/512x512/apps/mercury-ui.png
 
+# Keep the example configuration uncompressed, so it can be copied into place
+# as it is (mercury(1), CONFIGURATION FILE).
+override_dh_compress:
+	dh_compress -Xmercury.ini.example
+
 override_dh_auto_clean:
 	$(MAKE) clean
 

@@ -237,10 +237,9 @@ Linux only.
 .TP
 .BI \-C " path"
 Path to init configuration file (INI format).
-Default is
+Without it, Mercury looks for
 .B mercury.ini
-in the current directory.
-See
+in the places listed under
 .B CONFIGURATION FILE
 below.
 .TP
@@ -251,12 +250,42 @@ Print version information and exit.
 Print usage help and exit.
 .SH CONFIGURATION FILE
 Mercury reads an INI-format configuration file at startup.
-The default path is
-.B mercury.ini
-in the current working directory; use
-.B \-C
-to specify an alternative path.
 Command-line arguments take priority over file values.
+.PP
+With
+.BR \-C ,
+that file is used.
+Otherwise Mercury takes the first of these that exists:
+.RS
+.TP
+.B mercury.ini
+in the current working directory;
+.TP
+.B $XDG_CONFIG_HOME/mercury/mercury.ini
+or, when XDG_CONFIG_HOME is not set,
+.BR ~/.config/mercury/mercury.ini ;
+.TP
+.B /etc/mercury/mercury.ini
+.RE
+.PP
+On Windows only the working directory is searched.
+.PP
+If the file cannot be read in full \(em it does not parse, or a setting has
+an invalid value \(em Mercury prints why and exits without starting the modem
+or testing PTT (\fB\-h\fR, \fB\-V\fR, \fB\-l\fR, \fB\-z\fR and
+\fB\-K\fR still work).
+Running on part of a configuration could open the wrong sound device or key
+the wrong radio.
+When there is no configuration file (none found, or the one named with
+.B \-C
+does not exist), Mercury runs on its built-in defaults and the command line,
+and says so, naming the sound system and devices it opens.
+.PP
+.B mercury.ini.example
+lists every setting with its default.
+Packages install it as
+.BR /usr/share/doc/mercury/mercury.ini.example ;
+copy it to one of the places above and edit it for the radio.
 .PP
 General settings are under
 .BR [main] ;
@@ -583,6 +612,19 @@ mercury \-K
 Graceful shutdown.
 Mercury releases audio devices, closes TCP connections, and shuts down
 the radio control interface before exiting.
+.SH FILES
+.TP
+.B ./mercury.ini
+.TQ
+.B $XDG_CONFIG_HOME/mercury/mercury.ini \fR(\fB~/.config/mercury/mercury.ini\fR)
+.TQ
+.B /etc/mercury/mercury.ini
+Configuration file, searched in this order when
+.B \-C
+is not given.
+.TP
+.B /usr/share/doc/mercury/mercury.ini.example
+Example configuration with every setting and its default.
 .SH SEE ALSO
 .BR rigctld (1),
 .BR freedv (1),

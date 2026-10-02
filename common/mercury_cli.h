@@ -35,9 +35,16 @@ typedef struct {
 
 /* Parse argv into |out|.  |default_cfg_path| is used when -C is not given
  * (the daemon passes "mercury.ini"; the UI passes its per-user writable path).
- * Reads the config file, then applies CLI overrides on top.
+ * Without -C and without mercury.ini in the working directory it looks in
+ * $XDG_CONFIG_HOME/mercury (else ~/.config/mercury), then /etc/mercury (not
+ * on Windows).  Reads the config file, then applies CLI overrides on top.
  * Returns 0 on success (inspect out->action), -1 on a parse/validation error
- * (an error message + usage have already been printed). */
+ * (an error message + usage have already been printed), or
+ * MERCURY_CLI_CONFIG_ERROR when the modem would run or PTT be tested with a
+ * configuration file that cannot be read in full (reported already).  No
+ * file, even a -C one, is not an error: built-in defaults, with a notice. */
+#define MERCURY_CLI_CONFIG_ERROR (-2)
+
 int  mercury_cli_parse(int argc, char **argv,
                        const char *default_cfg_path, mercury_cli_t *out);
 
