@@ -640,12 +640,16 @@ static void handle_cmd(const arq_cmd_msg_t *msg)
         break;
 
     case ARQ_CMD_ABORT:
-        /* Dirty disconnect: flush all buffers immediately so the FSM sees no
-         * pending data and transitions to DISCONNECTED without deferral.
-         * No air-side DISCONNECT frame is sent — the peer will time out. */
+        /* Dirty disconnect: drop everything still held -- the host's unsent
+         * bytes here, the frames awaiting an ACK and the re-staged ones in the
+         * FSM (ev.abort) -- and go at once, without the drain DISCONNECT waits
+         * for.  The peer is still told: the FSM sends its DISCONNECT frames,
+         * after any frame on the air ends, so it need not time out (#218: the
+         * comment and docs/TNC.md said no frame went out; one always did). */
         clear_connection_data();
         arq_tnc_send_disconnected();
         ev.id = ARQ_EV_APP_DISCONNECT;
+        ev.abort = true;
         break;
 
     case ARQ_CMD_CLIENT_DISCONNECT:

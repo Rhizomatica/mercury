@@ -839,6 +839,37 @@ void test_app_disconnect_defers_with_backlog(void)
     TEST_ASSERT_NOT_EQUAL_UINT64(0, sess.disconnect_deadline_ms);
 }
 
+/* ABORT (#218) does not drain: with bytes queued, or a frame awaiting its
+ * ACK, it goes to DISCONNECTING at once and drops what was in flight. */
+void test_abort_skips_the_drain_with_backlog(void)
+{
+    goto_connected();
+    fake_tx_backlog_fake.return_val = 256;
+    sess.restage_len = 40; sess.restage_off = 0;
+
+    arq_event_t ev = make_event(ARQ_EV_APP_DISCONNECT);
+    ev.abort = true;
+    arq_fsm_dispatch(&sess, &ev);
+
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_DISCONNECTING, sess.conn_state);
+    TEST_ASSERT_FALSE(sess.pending_disconnect);
+    TEST_ASSERT_EQUAL_UINT(0, sess.restage_len - sess.restage_off);
+}
+
+void test_abort_skips_the_drain_in_wait_ack(void)
+{
+    goto_connected();
+    sess.dflow_state = ARQ_DFLOW_WAIT_ACK;
+    sess.tx_inflight_bytes = 120;
+
+    arq_event_t ev = make_event(ARQ_EV_APP_DISCONNECT);
+    ev.abort = true;
+    arq_fsm_dispatch(&sess, &ev);
+
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_DISCONNECTING, sess.conn_state);
+    TEST_ASSERT_EQUAL_INT(0, sess.tx_inflight_bytes);
+}
+
 /* A deferred APP_DISCONNECT that never drains must still tear down once the
  * drain deadline elapses — guarantees the rig is not keyed indefinitely
  * after the host disconnects (the "Mercury kept hanging on" report). */
@@ -2770,6 +2801,8 @@ int main(void)
     RUN_TEST(test_wait_ack_rejects_foreign_mode_request);
     RUN_TEST(test_connected_seeds_no_progress_clock);
     RUN_TEST(test_app_disconnect_defers_with_backlog);
+    RUN_TEST(test_abort_skips_the_drain_with_backlog);
+    RUN_TEST(test_abort_skips_the_drain_in_wait_ack);
     RUN_TEST(test_pending_disconnect_retries_last_frame_before_teardown);
     RUN_TEST(test_app_disconnect_defers_in_wait_ack);
     RUN_TEST(test_wait_ack_cumulative_ack_advances_window);

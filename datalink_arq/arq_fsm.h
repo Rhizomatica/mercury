@@ -156,6 +156,10 @@ typedef struct
      * event queue push in modem.c. */
     float    rx_snr;
 
+    /* APP_DISCONNECT from the host's ABORT: drop what is still in flight and
+     * go at once, rather than drain it first as DISCONNECT does (#218). */
+    bool     abort;
+
     /* Call setup */
     char     remote_call[CALLSIGN_MAX_SIZE];
     /* For an incoming CALL: which of OUR callsigns (primary or a secondary)

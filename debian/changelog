@@ -1,3 +1,19 @@
+mercury (1.9.17-1) unstable; urgency=medium
+
+  * Release 1.9.17.
+  * gui: darken Activity Log text on the light theme.
+  * debian: build-depend on wayland, xkbcommon and hidapi.
+  * Station fixes: TNC listener start race, shutdown drain hang, unkey on shutdown, watchdog step.
+  * radio_io: hold RTS/DTR low on a hamlib CAT port; hamlib_conf pass-through (#294).
+  * arq: answer a DISCONNECT that crosses ours; a re-call ends the teardown.
+  * freedv: TX filters that fit their modes (QAM16C2 unfiltered, DATAC17 too tight).
+  * gui: keep Activity Log read-only without the disabled colour.
+  * cli: find mercury.ini where it is installed, and say when there is none.
+  * radio_io: use portable token_t instead of hamlib_token_t.
+  * tnc: ABORT drops what is in flight and goes at once; say what it sends (#218).
+
+ -- Rafael Diniz <rafael@riseup.net>  Fri, 02 Oct 2026 12:34:49 +0000
+
 mercury (1.9.16-1) unstable; urgency=medium
 
   * Release 1.9.16.
