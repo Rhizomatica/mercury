@@ -2322,8 +2322,12 @@ static bool fsm_connected_carousel(arq_session_t *sess, const arq_event_t *ev)
             sess->pending_connect_call[0] = '\0';
         }
         /* Deliver what is queued or in flight first (bounded by the drain
-         * timeout in fsm_connected). */
-        if (!car_drained(sess) || sess->tx_active)
+         * timeout in fsm_connected).  ABORT (#218) delivers nothing: what the
+         * carousel holds is dropped, and DISCONNECTING still keeps our
+         * DISCONNECT off a keydown on the air (disconnect_must_wait). */
+        if (ev->abort)
+            HLOGI(LOG_COMP, "ABORT: dropping what the carousel has not delivered");
+        else if (!car_drained(sess) || sess->tx_active)
         {
             /* The configured drain is the least it gets; the carousel's
              * budget for its rung stretches it where an exchange is slow. */

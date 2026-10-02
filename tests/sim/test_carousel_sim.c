@@ -192,6 +192,29 @@ void test_car_disconnect_after_transfer(void)
     sim_destroy(s);
 }
 
+/* ABORT mid-transfer (#218): the session goes at once, without delivering
+ * the rest first as DISCONNECT does -- and the peer is told, not left to
+ * time out. */
+void test_car_abort_skips_the_drain(void)
+{
+    static uint8_t blob[16384];
+    fill(blob, sizeof(blob), 7);
+    sim_t *s = make_sim(5, 0.0);
+    sim_endpoint_queue_tx(sim_a(s), blob, sizeof(blob));
+    connect_ab(s);
+    sim_run_until_idle(s, 30000);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_CONNECTED, state(sim_a(s)));
+    arq_event_t ab = { .id = ARQ_EV_APP_DISCONNECT, .abort = true };
+    sim_inject(s, sim_a(s), &ab);
+    sim_run_until_idle(s, 60000);
+    size_t got;
+    TEST_ASSERT_TRUE(intact_prefix(sim_b(s), blob, sizeof(blob), &got));
+    TEST_ASSERT_TRUE_MESSAGE(got < sizeof(blob), "ABORT drained the whole transfer first");
+    TEST_ASSERT_NOT_EQUAL(ARQ_CONN_CONNECTED, state(sim_a(s)));
+    TEST_ASSERT_NOT_EQUAL(ARQ_CONN_CONNECTED, state(sim_b(s)));
+    sim_destroy(s);
+}
+
 /* Request and reply, as UUCP talks: A's request arrives, B's application
  * answers while B's last poll (nothing left either way) is on the air.  The
  * reply came too late for that poll and B was not idle yet, so it waited for
@@ -279,6 +302,7 @@ int main(void)
     RUN_TEST(test_car_peer_loss_disconnects);
     RUN_TEST(test_car_accept_fallback_seed_expires);
     RUN_TEST(test_car_disconnect_after_transfer);
+    RUN_TEST(test_car_abort_skips_the_drain);
     RUN_TEST(test_car_reply_during_final_poll);
     RUN_TEST(test_car_fuzz);
     return UNITY_END();
