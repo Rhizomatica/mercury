@@ -138,7 +138,6 @@ static uint32_t burst_gap_ms(int lv)
     return LADDER[lv] == FREEDV_MODE_QAM16C2 || LADDER[lv] == MERCURY_MODE_MFSK ? 200 : 100;
 }
 int car_level_mode(int level) { return LADDER[level]; }
-bool car_is_sending(const car_t *c) { return c->sending; }
 bool car_is_idle(const car_t *c) { return c->idle; }
 
 size_t car_tx_inflight(const car_t *c)
@@ -421,9 +420,8 @@ static bool unopened(const car_t *c)
 #ifndef BLOCK_AIR_MS
 #define BLOCK_AIR_MS 60000
 #endif
-static int block_k_for(int lv, int n)
+static int block_k_for(int lv)
 {
-    (void)n;
     int frames = (int)((BLOCK_AIR_MS + level_air(lv) - 1) / level_air(lv));
     int k = frames * pieces_per_frame(lv);
     return k < BLOCK_MIN_K ? BLOCK_MIN_K : k > CAR_MAX_K ? CAR_MAX_K : k;
@@ -500,7 +498,7 @@ static int build_round(car_t *c, int lv, int n, uint32_t poll_id, car_frame_t *f
     while (queued < n * ppf && c->nsb < CAR_WIN && unopened(c) && !(floor && c->nsb) &&
            (c->nsb == 0 || (uint8_t)(c->next_blk_id - c->sb[0].id) < CAR_WIN))
     {
-        open_block(c, block_k_for(lv, n));
+        open_block(c, block_k_for(lv));
         queued += (int)ceil(c->sb[c->nsb - 1].need * (1.0 + margin));
     }
     if (!c->nsb || n < 1) return 0;
@@ -1079,7 +1077,7 @@ static void start_driving(car_t *c, uint32_t poll_id, int lv, int n, uint64_t ro
     c->drive_start = now;
     /* A BREAK speaks for the round just heard: a flag left from an earlier
      * turn retired a block the receiver never completed (sim, nvis bidir). */
-    c->rx_break = false; c->last_was_pattern = false; c->floor_patterns = 0;
+    c->rx_break = false; c->floor_patterns = 0;
     c->floor_streaming = false;
     c->probe_off_floor = c->floor_fallback = c->floor_hold = false;
     c->floor_waiting = false; c->pat_waiting = false;
@@ -1140,7 +1138,7 @@ static void send_poll_as(car_t *c, int lv, int n, bool repeat)
         c->floor_fallback = false;
         if (c->probe_off_floor) { c->probe_lv = lv; c->probe_n = n; c->probe_after_ms = c->last_carrier_ms; }
     }
-    c->rx_break = false; c->last_was_pattern = false; c->floor_patterns = 0;
+    c->rx_break = false; c->floor_patterns = 0;
     c->floor_streaming = false;
     if (n) { c->poll_level = lv; c->poll_n = n; c->drove_peer = true; bind_rx(c, lv); }
     if (n) { c->polled_since_handover = true; c->my_poll_id = (uint8_t)c->poll_id; }
@@ -1168,7 +1166,6 @@ static int floor_poll_every(const car_t *c)
 static void send_pattern(car_t *c, int kind, bool expect_round)
 {
     c->rx_break = false;
-    c->last_was_pattern = true;
     if (expect_round) {
         if (c->poll_level == 0)
             c->poll_n = keydown_cap(0);     /* what a sender streaming the floor sends */
@@ -1804,7 +1801,7 @@ void car_on_time(car_t *c, uint64_t now)
 uint64_t car_drain_budget_ms(const car_t *c)
 {
     int lv = c->tx_level >= 0 ? c->tx_level : 0;
-    if (c->poll_level >= 0 && c->poll_level < lv) lv = c->poll_level;   /* the slower way */
+    if (c->drove_peer && c->poll_level < lv) lv = c->poll_level;   /* the slower way, once we poll */
     uint64_t ctl = level_air(0) > mode_air(ARQ_CONTROL_MODE) && (ctl_on_floor(c) || peer_ctl_on_floor(c))
                    ? level_air(0) : mode_air(ARQ_CONTROL_MODE);
     uint64_t exchange = GUARD_MS + HEAD_MS + ctl + CHAIN_GAP_MS + round_air(lv, keydown_cap(lv)) +

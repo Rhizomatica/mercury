@@ -134,7 +134,6 @@ typedef struct {
     uint64_t floor_tx_end;          /* when my last floor round ended */
     uint32_t floor_delay_ms;        /* how long answers take after it (average) */
     int      peer_snr_level;        /* where the SNR the peer measures starts me */
-    size_t   confirmed_pending;     /* retired block bytes not yet reported */
 
     /* as receiver: the peer's direction, measured here */
     double   lv_sent[CAR_NLEVELS], lv_lost[CAR_NLEVELS];
@@ -158,7 +157,6 @@ typedef struct {
     uint8_t  rbase;
     int      done_in_round;
     bool     rx_break;              /* the last round delivered the block it carried */
-    bool     last_was_pattern;      /* my last answer was a pattern, not a poll */
     int      floor_patterns;        /* patterns since my last poll */
     bool     polled_since_handover; /* a poll of mine is out since the peer's last handover */
     int      polls_unheard;         /* ...answered by another handover instead, in a row */
@@ -218,7 +216,6 @@ void     car_on_time(car_t *c, uint64_t now);
 /* The ladder rung for an SNR, mapped the way trunk enters a mode from DATAC15. */
 int  car_start_level(float snr_db);
 int  car_level_mode(int level);
-bool car_is_sending(const car_t *c);
 bool car_is_idle(const car_t *c);
 
 /* How long delivering what is left may take on the rung the session is on:

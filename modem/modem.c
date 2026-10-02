@@ -1616,6 +1616,11 @@ static int read_action_frames(generic_modem_t *modem, const arq_action_t *action
 static int send_pattern_ack(generic_modem_t *g_modem, int mode, int pattern_kind)
 {
     (void)mode;
+    if (atomic_load(&g_tune_active))
+    {
+        HLOGW("modem", "TX suppressed: tuning carrier active (send TUNE OFF)");
+        return -1;
+    }
     int max_samp = mfsk_pattern_max_tx_samples();
     if (max_samp <= 0)
         return -1;
@@ -1675,7 +1680,7 @@ static int send_pattern_ack(generic_modem_t *g_modem, int mode, int pattern_kind
 
     free(tx_buffer);
     HLOGD("modem-tx", "Pattern ACK sent (%s)",
-          pattern_kind == 1 ? "ACK+TURN" : "ACK");
+          pattern_kind == 1 ? "BREAK" : "ACK");
     return 0;
 }
 
@@ -2570,7 +2575,12 @@ void *tx_thread(void *g_modem)
             if (send_pattern_ack(modem, action.mode, action.pattern_kind) == 0)
                 sent_from_action = true;
             else
+            {
+                /* As for a keydown: the carousel waits for the pattern to
+                 * end before it arms anything, so tell it it has. */
                 HLOGW("modem-tx", "Failed to send pattern ACK");
+                arq_modem_ptt_off();
+            }
         }
         else if (have_action)
         {

@@ -1649,6 +1649,16 @@ static void fsm_listening(arq_session_t *sess, const arq_event_t *ev)
             car_connect_callee(sess, ev);
         break;
 
+    case ARQ_EV_TIMER_RETRY:
+        /* The ACCEPT-exhaustion fallback ran out: the caller never came. */
+        if (sess->accept_fallback && sess->crc_seed)
+        {
+            sess->accept_fallback = false;
+            car_set_seed(sess, 0);
+            sess->peer_tx_mode = sess->initial_payload_mode;   /* back to broadcast */
+        }
+        break;
+
     case ARQ_EV_RX_DATA:
     case ARQ_EV_RX_ACK:
         /* Safety net: if IRS fell from ACCEPTING→LISTENING (ACCEPT retries
@@ -2008,6 +2018,10 @@ static void fsm_accepting(arq_session_t *sess, const arq_event_t *ev)
             {
                 car_set_seed(sess, seed);
                 sess->peer_tx_mode = rx_mode;
+                /* ...but not past the point where a connected caller would
+                 * have given up on us: a seed left set drops every plain
+                 * frame, broadcast included. */
+                sess->deadline_ms = time_now_ms() + ARQ_CAR_PEER_LOST_MS;
             }
         }
         break;

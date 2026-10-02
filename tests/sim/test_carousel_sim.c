@@ -152,6 +152,24 @@ void test_car_peer_loss_disconnects(void)
     sim_destroy(s);
 }
 
+/* The callee's ACCEPTs never reach the caller: it falls back to LISTENING
+ * still seeded, to catch the caller's first round in case the caller did
+ * connect.  The caller never comes, and the seed must not outlive the wait:
+ * a seeded station drops every plain frame, broadcast included. */
+void test_car_accept_fallback_seed_expires(void)
+{
+    sim_t *s = make_sim(3, 0.0);
+    connect_ab(s);
+    for (int i = 0; i < 200 && state(sim_b(s)) != ARQ_CONN_ACCEPTING; i++)
+        sim_run_until_idle(s, 100);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_ACCEPTING, state(sim_b(s)));
+    sim_set_per(s, 1.0);
+    sim_run_until_idle(s, 900000);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_LISTENING, state(sim_b(s)));
+    TEST_ASSERT_EQUAL_UINT16(0, sim_endpoint_crc_seed(sim_b(s)));
+    sim_destroy(s);
+}
+
 /* DISCONNECT after the data: both ends leave the session, the seed is gone. */
 void test_car_disconnect_after_transfer(void)
 {
@@ -259,6 +277,7 @@ int main(void)
     RUN_TEST(test_car_bidirectional);
     RUN_TEST(test_car_lossy);
     RUN_TEST(test_car_peer_loss_disconnects);
+    RUN_TEST(test_car_accept_fallback_seed_expires);
     RUN_TEST(test_car_disconnect_after_transfer);
     RUN_TEST(test_car_reply_during_final_poll);
     RUN_TEST(test_car_fuzz);

@@ -227,8 +227,6 @@ static void cb_send_tx_frame(int packet_type, int mode,
     arq_modem_enqueue(&action);
 }
 
-/* Carousel keydown: the FSM's frames are only valid during the call, so the
- * modem gets a copy it frees when sent. */
 /* Enqueue a pattern for the modem TX worker: no coded frame, the modem
  * synthesises the tone burst itself (send_pattern_ack in modem.c). */
 static void cb_send_pattern(int pattern_kind)
@@ -242,6 +240,8 @@ static void cb_send_pattern(int pattern_kind)
     arq_modem_enqueue(&action);
 }
 
+/* Carousel keydown: the FSM's frames are only valid during the call, so the
+ * modem gets a copy it frees when sent. */
 static void cb_send_keydown(const arq_keydown_t *kd)
 {
     arq_keydown_t *copy = (arq_keydown_t *)malloc(sizeof(*copy));
@@ -1079,7 +1079,7 @@ int arq_init(size_t frame_size, int mode)
     {
         HLOGE(LOG_COMP, "Failed to start event loop thread");
         arq_channel_bus_dispose(&g_bus);
-    arq_fsm_release(&g_sess);
+        arq_fsm_release(&g_sess);
         return -1;
     }
 
@@ -1094,6 +1094,7 @@ int arq_init(size_t frame_size, int mode)
         arq_channel_bus_close(&g_bus);
         pthread_join(g_loop_tid, NULL);
         arq_channel_bus_dispose(&g_bus);
+        arq_fsm_release(&g_sess);
         return -1;
     }
 

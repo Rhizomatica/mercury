@@ -150,7 +150,13 @@ func TestMercuryARQTransfer(t *testing.T) {
 		if os.Getenv("MERCURY_TEST_VERBOSE") != "" {
 			args = append(args, "-v")
 		}
-		cmd := exec.CommandContext(ctx, bin, args...)
+		// MERCURY_TEST_BIN_A / _B: run that station on another build (a
+		// release, trunk), to see how mixed versions meet on the air.
+		stationBin := bin
+		if v := os.Getenv("MERCURY_TEST_BIN_" + name); v != "" {
+			stationBin = v
+		}
+		cmd := exec.CommandContext(ctx, stationBin, args...)
 		cmd.Dir = repoRoot
 		cmd.Stdout = stdout
 		cmd.Stderr = stderr
