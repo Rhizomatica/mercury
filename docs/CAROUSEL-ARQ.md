@@ -4,12 +4,23 @@ Mercury's connected sessions move data with an erasure-coded "carousel"
 driven by the receiver (`datalink_arq/carousel.[ch]`).  It replaces the
 stop-and-wait data-flow sub-FSM described in [ARQ.md](ARQ.md); CALL, ACCEPT
 and DISCONNECT are unchanged but for the ACCEPT, which is the carousel's first
-poll.  There is no on-air compatibility with 1.9.x or with earlier 2.0
-builds: both ends of a session must run a carousel build.
+poll.
 
-`MERCURY_CAROUSEL=0` in the environment runs the stop-and-wait plane instead.
-It is kept only to measure one against the other on air, and will be removed
-once the carousel is validated there.
+Stations without the carousel (1.9.x, earlier 2.0 builds, or
+`MERCURY_CAROUSEL=0`) are told apart by the ACCEPT:
+
+| caller | callee | session |
+|---|---|---|
+| carousel | carousel | carousel |
+| carousel | without | stop-and-wait: the callee's plain ACCEPT says so |
+| without | carousel | none: the caller drops the carousel ACCEPT, and its call goes unanswered |
+
+The last row fails cleanly: neither side reports CONNECTED.  Before the
+marker, every mixed pair "connected" and then moved nothing until the
+application gave up (harness, `MERCURY_TEST_BIN_A`/`_B`, see Tests).
+
+`MERCURY_CAROUSEL=0` in the environment runs the stop-and-wait plane for every
+session, as for a station without the carousel.
 
 ## How it works
 
@@ -86,7 +97,10 @@ POLL / HANDOVER / STATUS, in DATAC16 (14 bytes):
 | 13 | highest block opened (4), data not yet cut (1) |
 
 The ACCEPT carries the caller's start rung in the top 3 bits of its DST CRC,
-which an ACCEPT checks on 13 bits alongside its 7-bit session id.
+which an ACCEPT checks on 13 bits alongside its 7-bit session id.  A carousel
+ACCEPT also sets bit 4 of the framer extension (`ARQ_CONNECT_EXT_CAROUSEL`).
+A station without the carousel reads that as an unknown bandwidth token and
+drops the frame.  A plain ACCEPT keeps its CRC whole.
 
 Bursts of a round are 100 ms apart (QAM16C2: 200 ms).  With no gap the
 payload decoder misses bursts after the first; the gaps were measured with
@@ -134,6 +148,13 @@ connect; one run each, so indicative):
   connect, transfers, loss, a peer vanishing, disconnect, and a fuzz.
 - `tests/test_crc_seed`: the seeded CRC in freedv.
 - `tests/integration`: two real daemons over FIFO audio; the suite runs on
-  the carousel.
+  the carousel.  `MERCURY_TEST_BIN_A` / `MERCURY_TEST_BIN_B` run one station
+  on another build (a release, trunk, or a `MERCURY_CAROUSEL=0` wrapper
+  script) for the mixed-version table above:
+  `MERCURY_TEST_BIN_B=/path/to/mercury-1.9.16 go test -run '^TestMercuryARQTransfer$' .`
+- `tests/datalink_arq/test_arq_protocol`: `test_accept_carousel_marker`, the
+  ACCEPT as a station without the carousel reads it.
+- `utils/onair_logs.py`: one on-air run from the two stations' journals --
+  how rounds were answered, the rungs used, and any overlapping keydowns.
 - `tests/carousel_bench`, `tests/ab_bench` (`CAROUSEL=0` for the old plane):
   the throughput matrix.
