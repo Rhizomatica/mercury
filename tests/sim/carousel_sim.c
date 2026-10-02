@@ -17,6 +17,7 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 #include "carousel_sim.h"
+#include "modem_mfsk.h"            /* MERCURY_MODE_MFSK */
 #include "sim_channel.h"
 #include "carousel.h"
 #include "arq_protocol.h"
@@ -24,13 +25,19 @@
 
 #include <stdbool.h>
 #include <stdint.h>
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 #define HEAD_MS         110       /* tx delay + head silence (as carousel.c) */
 #define TAIL_MS         200
+#ifndef MFSK_CS_EXTRA_MS
+#define MFSK_CS_EXTRA_MS 1000
+#endif
+#ifndef CS_ACQ_MS
 #define CS_ACQ_MS       400       /* carrier sense: sync this long after keying */
+#endif
 
 /* ---- events ---------------------------------------------------------------- */
 enum { EV_ARRIVE, EV_TXEND };
@@ -75,23 +82,62 @@ typedef struct {
     uint8_t  tx[CAR_SIM_BYTES];  size_t tx_len, tx_read;
     uint8_t  rx[CAR_SIM_BYTES + 64]; size_t rx_len;
     int      rx_mode;              /* the payload decoder's binding */
+    uint64_t bound_at;             /* ...since */
     uint64_t tx_start, tx_end;     /* current/last keydown */
+    /* The frames of that keydown, for CAR_CS_DECODABLE: a decoder syncs on a
+     * frame only from its preamble, so only one it was bound to by then. */
+    struct { uint64_t start; int mode; bool sync; } kd[CAR_KEYDOWN_MAX];
+    int      kd_n;
 } station_t;
 
 static station_t S[2];
 static sim_channel_t *ch;
 static int collisions;
+static int bad_frames;
 static uint64_t now_ms;
 static bool trace;
 static double snr_now = 12.0;          /* the SNR stamped on delivered frames */
+static bool cs_decodable;              /* CAR_CS_DECODABLE: carrier sense needs a decodable frame */
+/* CAR_SNR_BIAS: the estimate as the bench read it at 10 %: DATAC15, DATAC4 and
+ * DATAC16 frames about 3.5 dB below DATAC3 and DATAC1 on the same link. */
+static bool snr_biased;
+static bool asym;                                      /* an asym:A:B channel */
+static double snr_dir[2];                              /* its SNR, by sender */
+/* Never exactly 0.0: car_on_frame takes that for "no estimate", which a
+ * decoded frame always has -- at 0 dB (cliff:0, fade:0) the sim ran with no
+ * SNR at all. */
+static double frame_snr(const station_t *rx, uint64_t f_start, int mode)
+{
+    /* Under fading, what the modem reports for this frame: on air the
+     * estimate swings with the fade, and everything that reads it -- the
+     * start rung, the control-deaf switch -- sees that. */
+    double snr = sim_channel_frame_snr(ch, f_start, rx->id ^ 1, mode);
+    if (isnan(snr)) snr = asym ? snr_dir[rx->id ^ 1] : snr_now;
+    return snr == 0.0 ? 0.001 : snr;
+}
+static double snr_bias(int mode)
+{
+    if (!snr_biased) return 0.0;
+    return mode == FREEDV_MODE_DATAC15 || mode == FREEDV_MODE_DATAC4 || mode == ARQ_CONTROL_MODE ? -3.5 : 0.0;
+}
+static double step_from, step_to, step_at_s = -1.0;   /* a step:A:B:T channel */
 
 static void io_keydown(void *ctx, const car_frame_t *fr, int n)
 {
     station_t *s = ctx, *peer = &S[s->id ^ 1];
     uint64_t t = now_ms + HEAD_MS;
     s->tx_start = now_ms;
+    s->kd_n = 0;
     if (trace) printf("%9.1f %c keys:", now_ms / 1000.0, 'A' + s->id);
     for (int i = 0; i < n; i++) {
+        /* The modem refuses a frame that does not fill its mode (modem.c,
+         * send_modulated_keydown): a keydown with one never goes out. */
+        const arq_mode_timing_t *tm = arq_protocol_mode_timing(fr[i].mode);
+        if (tm && fr[i].len != (size_t)tm->payload_bytes) {
+            bad_frames++;
+            if (trace) printf("%9.1f %c BAD FRAME %d: %zu bytes for mode %d\n", now_ms / 1000.0,
+                              'A' + s->id, i, (size_t)fr[i].len, fr[i].mode);
+        }
         if (i) t += fr[i].gap_ms;
         uint64_t air = sim_channel_airtime_ms(fr[i].mode, 0), d;
         if (trace) {
@@ -99,6 +145,11 @@ static void io_keydown(void *ctx, const car_frame_t *fr, int n)
             if (fr[i].mode == ARQ_CONTROL_MODE) printf(" %s", K[fr[i].bytes[0] >> 6]);
             else printf(" data(%d)", fr[i].mode);
         }
+        /* A decoder syncs on what it could decode above its cliff, even when
+         * this frame is then lost (see io_peer_keyed). */
+        s->kd[s->kd_n].start = t; s->kd[s->kd_n].mode = fr[i].mode;
+        s->kd[s->kd_n].sync = sim_channel_syncable(ch, t, s->id, fr[i].mode);
+        s->kd_n++;
         if (sim_channel_schedule(ch, t, s->id, fr[i].mode, 0, &d)) {
             uint8_t *b = malloc(fr[i].len);
             memcpy(b, fr[i].bytes, fr[i].len);
@@ -114,12 +165,71 @@ static void io_keydown(void *ctx, const car_frame_t *fr, int n)
     push(e);
 }
 
-static void io_bind_rx(void *ctx, int mode) { ((station_t *)ctx)->rx_mode = mode; }
+static void io_bind_rx(void *ctx, int mode)
+{
+    station_t *s = ctx;
+    if (mode != s->rx_mode) { s->rx_mode = mode; s->bound_at = now_ms; }
+}
+static void io_trace(void *ctx, const char *line)
+{
+    if (trace) printf("%9.1f %c   %s\n", now_ms / 1000.0, 'A' + ((station_t *)ctx)->id, line);
+}
+
+/* The detector reports a pattern this long after it ends (0.23-0.24 s on air,
+ * Pi 4); a poll, by contrast, is decoded as it ends. */
+#ifndef SIM_PATTERN_DETECT_MS
+#define SIM_PATTERN_DETECT_MS 240
+#endif
+/* A pattern: 0.64 s on the air, detected ~10 dB below DATAC16. */
+static void io_pattern(void *ctx, int kind)
+{
+    station_t *s = ctx, *peer = &S[s->id ^ 1];
+    uint64_t t = now_ms + HEAD_MS, d;
+    uint64_t air = sim_channel_airtime_ms(SIM_MODE_PATTERN, 0);
+    s->tx_start = now_ms;
+    s->kd_n = 0;
+    if (trace) printf("%9.1f %c keys: pattern %s\n", now_ms / 1000.0, 'A' + s->id, kind ? "BREAK" : "ACK");
+    if (sim_channel_schedule(ch, t, s->id, SIM_MODE_PATTERN, 0, &d)) {
+        s->kd[0].start = t; s->kd[0].mode = SIM_MODE_PATTERN; s->kd[0].sync = true;
+        s->kd_n = 1;
+        event_t e = { .t = t + air + SIM_PATTERN_DETECT_MS, .type = EV_ARRIVE, .st = peer->id, .mode = SIM_MODE_PATTERN,
+                      .len = (size_t)kind, .bytes = NULL, .f_start = t, .f_end = t + air };
+        push(e);
+    }
+    s->tx_end = t + air + TAIL_MS;
+    event_t e = { .t = s->tx_end, .type = EV_TXEND, .st = s->id };
+    push(e);
+}
 
 static bool io_peer_keyed(void *ctx)
 {
-    const station_t *p = &S[((station_t *)ctx)->id ^ 1];
-    return p->tx_end && p->tx_start + CS_ACQ_MS <= now_ms && now_ms < p->tx_end - TAIL_MS + CS_ACQ_MS;
+    const station_t *l = ctx, *p = &S[l->id ^ 1];
+    /* CAR_CS_DECODABLE: carrier sense is a decoder in sync, so a keydown the
+     * listener cannot decode is not sensed (on air: a DATAC1 probe at 4.5 dB,
+     * and patterns, which no OFDM decoder syncs on) -- nor the part of it
+     * before the first frame it can (on air: a floor frame behind a control
+     * frame the listener cannot decode).  The control decoder always runs;
+     * the payload decoder syncs on a frame only if bound to its mode by the
+     * frame's preamble, and a pattern only when that is MFSK: rebound to the
+     * floor mid-frame, on air, it missed that frame (car23 at 3 %). */
+    uint64_t from = p->tx_start;
+    if (cs_decodable) {
+        from = UINT64_MAX;
+        for (int i = 0; i < p->kd_n && from == UINT64_MAX; i++) {
+            int m = p->kd[i].mode;
+            bool bound = l->bound_at <= p->kd[i].start;
+            if (!p->kd[i].sync) continue;
+            if (m == SIM_MODE_PATTERN) {
+                if (l->rx_mode == MERCURY_MODE_MFSK && bound) from = p->kd[i].start;
+            } else if (m == ARQ_CONTROL_MODE || (m == l->rx_mode && bound)) {
+                /* The MFSK preamble search takes longer to be sure: under a
+                 * second at -7 dB (test_mfsk_modem), more near its floor. */
+                from = p->kd[i].start + (m == MERCURY_MODE_MFSK ? MFSK_CS_EXTRA_MS : 0);
+            }
+        }
+        if (from == UINT64_MAX) return false;
+    }
+    return p->tx_end && from + CS_ACQ_MS <= now_ms && now_ms < p->tx_end - TAIL_MS + CS_ACQ_MS;
 }
 
 static size_t io_tx_read(void *ctx, uint8_t *buf, size_t max)
@@ -146,8 +256,12 @@ static void io_deliver(void *ctx, const uint8_t *buf, size_t len)
 void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limit_ms, car_sim_result_t *res)
 {
     trace = getenv("CAR_TRACE") != NULL;
+    asym = false;
+    cs_decodable = getenv("CAR_CS_DECODABLE") != NULL;
+    snr_biased = getenv("CAR_SNR_BIAS") != NULL;
     nev = 0;
     collisions = 0;
+    bad_frames = 0;
     memset(S, 0, sizeof(S));
 
     sim_channel_cfg_t cfg = { .seed = seed, .per = 0.02, .guard_ms = 150 };
@@ -168,6 +282,16 @@ void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limi
     }
     else if (!strncmp(chan, "awgn:", 5)) sim_channel_set_per(ch, atof(chan + 5));
     else if (!strncmp(chan, "cliff:", 6)) { sim_channel_set_snr(ch, atof(chan + 6)); snr_db = atof(chan + 6); }
+    else if (!strncmp(chan, "step:", 5)) {   /* step:A:B:T  A dB, then B dB from T s on */
+        sscanf(chan + 5, "%lf:%lf:%lf", &step_from, &step_to, &step_at_s);
+        sim_channel_set_snr(ch, step_from); snr_db = step_from;
+    }
+    else if (!strncmp(chan, "asym:", 5)) {   /* asym:A:B  A dB from A to B, B dB back */
+        sscanf(chan + 5, "%lf:%lf", &snr_dir[0], &snr_dir[1]);
+        sim_channel_set_snr_asym(ch, snr_dir[0], snr_dir[1]);
+        asym = true;
+        snr_db = snr_dir[0] < snr_dir[1] ? snr_dir[0] : snr_dir[1];
+    }
     else if (!strcmp(chan, "nvis")) {
         sim_channel_set_mode_per(ch, NVIS, (int)(sizeof(NVIS) / sizeof(NVIS[0])));
         snr_db = 10.0;
@@ -180,8 +304,13 @@ void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limi
         s->id = i;
         car_io_t io = { .keydown = io_keydown, .bind_rx = io_bind_rx, .peer_keyed = io_peer_keyed,
                         .tx_read = io_tx_read, .tx_pending = io_tx_pending, .deliver = io_deliver,
-                        .ctx = s };
-        car_init(&s->car, &io, car_start_level((float)snr_db), car_start_level((float)snr_db));
+                        .pattern = getenv("CAR_NOPATTERN") ? NULL : io_pattern,
+                        .trace = io_trace, .ctx = s };
+        /* What each end hears, and what its peer hears of it. */
+        double hears = asym ? snr_dir[i ^ 1] : snr_db, heard = asym ? snr_dir[i] : snr_db;
+        if (getenv("CAR_NOHINT")) hears = heard = -99.0;
+        car_init(&s->car, &io, car_start_level((float)hears), car_start_level((float)heard));
+        car_seed_ctl_deaf(&s->car, hears < ARQ_SNR_MIN_DATAC15_DB, heard < ARQ_SNR_MIN_DATAC15_DB);
         s->rx_mode = -1;
     }
     for (int i = 0; i < CAR_SIM_BYTES; i++) {
@@ -204,6 +333,10 @@ void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limi
         }
         if (t == UINT64_MAX || t > limit_ms) break;
         now_ms = t;
+        if (step_at_s >= 0 && now_ms >= (uint64_t)(step_at_s * 1000.0)) {
+            sim_channel_set_snr(ch, step_to); snr_now = step_to;
+            step_at_s = -1.0;
+        }
         event_t e;
         while (nev && next_event_time() <= now_ms && pop(&e)) {
             station_t *s = &S[e.st];
@@ -215,10 +348,13 @@ void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limi
             if (s->tx_end > e.f_start && s->tx_start < e.f_end && s->tx_end) {
                 collisions++;
                 if (trace) printf("%9.1f COLLISION at %c\n", now_ms / 1000.0, 'A' + s->id);
+            } else if (e.mode == SIM_MODE_PATTERN) {
+                if (!getenv("CAR_NOPATTERN_RX"))
+                    car_on_pattern(&s->car, now_ms, (int)e.len);
             } else if (e.mode == ARQ_CONTROL_MODE) {
-                car_on_frame(&s->car, now_ms, e.bytes, e.len, e.mode, true, (float)snr_now);
-            } else if (e.mode == s->rx_mode) {
-                car_on_frame(&s->car, now_ms, e.bytes, e.len, e.mode, false, (float)snr_now);
+                car_on_frame(&s->car, now_ms, e.bytes, e.len, e.mode, true, (float)(frame_snr(s, e.f_start, e.mode) + snr_bias(e.mode)));
+            } else if (e.mode == s->rx_mode && (!cs_decodable || s->bound_at <= e.f_start)) {
+                car_on_frame(&s->car, now_ms, e.bytes, e.len, e.mode, false, (float)(frame_snr(s, e.f_start, e.mode) + snr_bias(e.mode)));
             }
             free(e.bytes);
         }
@@ -233,6 +369,7 @@ void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limi
                   !memcmp(S[0].rx, S[1].tx, S[0].rx_len < S[1].tx_len ? S[0].rx_len : S[1].tx_len);
     res->done_ms = done_ms;
     res->collisions = collisions;
+    res->bad_frames = bad_frames;
     res->stalled = !done_ms && car_next_deadline(&S[0].car) == UINT64_MAX &&
                    car_next_deadline(&S[1].car) == UINT64_MAX;
     sim_channel_destroy(ch);

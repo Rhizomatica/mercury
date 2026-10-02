@@ -209,6 +209,25 @@ int mfsk_sync_search(const double complex *rx, int rx_len, int interp,
  * this pipeline's LPF+depad already rejects the image. */
 #define MFSK_DETECT_MAX_LISTS 8
 
+/* Two radios are never on exactly the same frequency: an IC-7100 and an sBitx
+ * at 7.050 MHz, on air, were far enough apart that no pattern between them
+ * was ever detected (0 of 4), while the MFSK data decoder, which searches its
+ * offset, decoded the same station's frames.  Counting a symbol only when its
+ * tone is the peak bin holds to +/-15 Hz, half a tone spacing; so each FFT is
+ * read again shifted by whole bins, +/-MFSK_PAT_SHIFT_MAX of them (+/-78 Hz at
+ * 31.25 Hz spacing), and the best shift scored.  The FFT, the costly part, is
+ * still done once. */
+#define MFSK_PAT_SHIFT_MAX 2
+#define MFSK_PAT_SHIFTS    (2 * MFSK_PAT_SHIFT_MAX + 1)
+
+/* ofdm_zero_depadder, reading every bin s bins up (a signal s bins high). */
+static void depad_shifted(const ofdm_frame_t *o, const double complex *in, double complex *out, int s)
+{
+    int Nfft = o->Nfft, Nc = o->Nc, ss = o->start_shift;
+    for (int j = 0; j < Nc / 2; j++) out[j] = in[((j + Nfft - Nc / 2 + s) % Nfft + Nfft) % Nfft];
+    for (int j = Nc / 2; j < Nc; j++) out[j] = in[((j - Nc / 2 + ss + s) % Nfft + Nfft) % Nfft];
+}
+
 void mfsk_detect_patterns(const mfsk_t *m, const ofdm_frame_t *o,
                           const double complex *rx, int rx_len,
                           const int *const *tone_lists, int nlists,
@@ -244,8 +263,8 @@ void mfsk_detect_patterns(const mfsk_t *m, const ofdm_frame_t *o,
 
     for (int base = 0; base <= last_base; base += step)
     {
-        int    matched[MFSK_DETECT_MAX_LISTS] = {0};
-        double metric[MFSK_DETECT_MAX_LISTS]  = {0.0};
+        int    matched[MFSK_PAT_SHIFTS][MFSK_DETECT_MAX_LISTS] = {{0}};
+        double metric[MFSK_PAT_SHIFTS][MFSK_DETECT_MAX_LISTS]  = {{0.0}};
 
         for (int p = 0; p < nsymb; p++)
         {
@@ -255,7 +274,9 @@ void mfsk_detect_patterns(const mfsk_t *m, const ofdm_frame_t *o,
             for (int n = 0; n < Nofdm; n++) blk[n] = rx[rbase + n];
             ofdm_gi_remover(o, blk, rmv);
             ofdm_fft(o, rmv, fftd);
-            ofdm_zero_depadder(o, fftd, bins);
+          for (int si = 0; si < MFSK_PAT_SHIFTS; si++)
+          {
+            depad_shifted(o, fftd, bins, si - MFSK_PAT_SHIFT_MAX);
 
             double e_total = 0.0;
             for (int k = 0; k < o->Nc; k++)
@@ -284,21 +305,23 @@ void mfsk_detect_patterns(const mfsk_t *m, const ofdm_frame_t *o,
                     }
                     if (peak_e > 0.0 && peak_t == actual_tone) streams_matched++;
                 }
-                if (streams_matched == m->nStreams) matched[l]++;
-                if (e_total > 0.0) metric[l] += e_target / e_total;
+                if (streams_matched == m->nStreams) matched[si][l]++;
+                if (e_total > 0.0) metric[si][l] += e_target / e_total;
             }
+          }
         }
 
-        for (int l = 0; l < nlists; l++)
-        {
-            if (matched[l] > best_matched[l] ||
-                (matched[l] == best_matched[l] && metric[l] > best_metric[l]))
+        for (int si = 0; si < MFSK_PAT_SHIFTS; si++)
+            for (int l = 0; l < nlists; l++)
             {
-                best_matched[l] = matched[l];
-                best_metric[l]  = metric[l];
-                best_pos[l]     = base;
+                if (matched[si][l] > best_matched[l] ||
+                    (matched[si][l] == best_matched[l] && metric[si][l] > best_metric[l]))
+                {
+                    best_matched[l] = matched[si][l];
+                    best_metric[l]  = metric[si][l];
+                    best_pos[l]     = base;
+                }
             }
-        }
     }
 
     for (int l = 0; l < nlists; l++)
@@ -313,66 +336,11 @@ int mfsk_detect_pattern(const mfsk_t *m, const ofdm_frame_t *o,
                         const int *tones, int pattern_len, int nsymb,
                         int *out_pos)
 {
-    int Nofdm = ofdm_frame_nofdm(o);
-    if (rx_len < nsymb * Nofdm) { if (out_pos) *out_pos = -1; return 0; }
-
-    int step = Nofdm / 8;
-    if (step < 1) step = 1;
-    int last_base = rx_len - nsymb * Nofdm;
-
-    int best_matched = -1, best_pos = -1;
-    double best_metric = -1.0;
-
-    double complex blk[2048], rmv[2048], fftd[2048], bins[1024];
-
-    for (int base = 0; base <= last_base; base += step)
-    {
-        int matched = 0;
-        double metric = 0.0;
-
-        for (int p = 0; p < nsymb; p++)
-        {
-            int rbase = base + p * Nofdm;
-            for (int n = 0; n < Nofdm; n++) blk[n] = rx[rbase + n];
-            ofdm_gi_remover(o, blk, rmv);
-            ofdm_fft(o, rmv, fftd);
-            ofdm_zero_depadder(o, fftd, bins);
-
-            int actual_tone = (tones[p % pattern_len] + p * m->tone_hop_step) % m->M;
-
-            int streams_matched = 0;
-            double e_target = 0.0;
-            for (int st = 0; st < m->nStreams; st++)
-            {
-                int base_bin = m->stream_offsets[st];
-                double peak_e = -1.0; int peak_t = -1;
-                for (int t = 0; t < m->M; t++)
-                {
-                    double complex v = bins[base_bin + t];
-                    double e = creal(v) * creal(v) + cimag(v) * cimag(v);
-                    if (e > peak_e) { peak_e = e; peak_t = t; }
-                    if (t == actual_tone) e_target += e;
-                }
-                if (peak_e > 0.0 && peak_t == actual_tone) streams_matched++;
-            }
-            if (streams_matched == m->nStreams) matched++;
-
-            double e_total = 0.0;
-            for (int k = 0; k < o->Nc; k++)
-            {
-                double complex v = bins[k];
-                e_total += creal(v) * creal(v) + cimag(v) * cimag(v);
-            }
-            if (e_total > 0.0) metric += e_target / e_total;
-        }
-
-        if (matched > best_matched ||
-            (matched == best_matched && metric > best_metric))
-        {
-            best_matched = matched; best_metric = metric; best_pos = base;
-        }
-    }
-
-    if (out_pos) *out_pos = best_pos;
-    return (best_matched < 0) ? 0 : best_matched;
+    /* One list of mfsk_detect_patterns, frequency search and all: the two
+     * cannot drift apart. */
+    const int *lists[1] = { tones };
+    int score = 0, pos = -1;
+    mfsk_detect_patterns(m, o, rx, rx_len, lists, 1, pattern_len, nsymb, &score, &pos);
+    if (out_pos) *out_pos = pos;
+    return score;
 }

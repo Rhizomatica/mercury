@@ -75,19 +75,41 @@ static int apply_audio_defaults(int audio_system, char *input_dev, size_t in_siz
  * it reflects the mode actually in use. */
 int mercury_engine_modem_bitrate(void)
 {
-    if (!g_modem.freedv) return 0;
-    int nsam = freedv_get_n_tx_modem_samples(g_modem.freedv);
-    int fs   = freedv_get_modem_sample_rate(g_modem.freedv);
+    /* Asked through the backend rather than a freedv handle, so it answers for
+     * whichever backend is active -- MFSK is not a freedv mode. */
+    const modem_backend_t *be = g_modem.codec.be;
+    void *ctx = g_modem.codec.ctx;
+    if (!be || !ctx || !be->n_tx_samples || !be->sample_rate) return 0;
+
+    int nsam = be->n_tx_samples(ctx);
+    int fs   = be->sample_rate(ctx);
     if (nsam <= 0 || fs <= 0) return 0;
     double secs = (double)nsam / (double)fs;
     return (int)((double)g_modem.payload_bytes_per_modem_frame * 8.0 / secs + 0.5);
 }
 
-/* Occupied bandwidth of the running modem, in Hz (0 if not an OFDM mode). */
+/* Occupied bandwidth of the running modem in Hz, or 0 when the backend cannot
+ * say -- reporting nothing is better than reporting a figure nobody measured. */
 int mercury_engine_modem_bandwidth_hz(void)
 {
-    if (!g_modem.freedv) return 0;
-    return (int)(freedv_get_modem_bandwidth_hz(g_modem.freedv) + 0.5f);
+    const modem_backend_t *be = g_modem.codec.be;
+    void *ctx = g_modem.codec.ctx;
+    if (!be || !ctx || !be->bandwidth_hz) return 0;
+    return be->bandwidth_hz(ctx);
+}
+
+/* Test hook: MERCURY_TEST_SHUTDOWN_STALL_MS holds an orderly shutdown open
+ * for that long.  An orderly stop now takes a fraction of a second even
+ * mid-frame, so without this nothing could land a second signal inside one,
+ * and the forced-exit path (second signal: unkey, then exit) would go untested
+ * (tests/integration, TestMercuryTxTestForcedExitUnkeysFirst).  Unset in
+ * normal use. */
+static void test_shutdown_stall(void)
+{
+    const char *v = getenv("MERCURY_TEST_SHUTDOWN_STALL_MS");
+    long ms = v ? strtol(v, NULL, 10) : 0;
+    for (; ms > 0; ms -= 10)
+        hermes_usleep(10000);
 }
 
 int mercury_engine_init(const mercury_config *cfg,
@@ -247,6 +269,7 @@ int mercury_engine_init(const mercury_config *cfg,
      * for what was a clean stop.  radio_io_shutdown() leaves PTT released. */
     if (test_mode && shutdown_)
     {
+        test_shutdown_stall();
         shutdown_modem(&g_modem);
         if (g_audio_system != AUDIO_SUBSYSTEM_SHM)
             audioio_deinit(&g_radio_capture, &g_radio_playback);
@@ -336,6 +359,14 @@ int mercury_engine_init(const mercury_config *cfg,
     return 0;
 }
 
+/* On the bench stations a stop now and then ran past main()'s 10 s
+ * watchdog, always after the audio threads had exited and before the
+ * websocket reported shutting down, and never reproduced off the station.
+ * The step is recorded so the watchdog can name it. */
+static const char *volatile g_shutdown_step;
+
+const char *mercury_engine_shutdown_step(void) { return g_shutdown_step; }
+
 void mercury_engine_shutdown(void)
 {
     if (!g_initialized) return;
@@ -343,17 +374,25 @@ void mercury_engine_shutdown(void)
     HLOGI("engine", "Shutting down");
 
     shutdown_ = true;
+    test_shutdown_stall();
 
+    g_shutdown_step = "tcp interfaces";
     interfaces_shutdown();
+    g_shutdown_step = "modem";
     shutdown_modem(&g_modem);
 
+    g_shutdown_step = "audio";
     if (g_audio_system != AUDIO_SUBSYSTEM_SHM)
         audioio_deinit(&g_radio_capture, &g_radio_playback);
 
+    g_shutdown_step = "ui";
     ui_comm_shutdown(&g_ui_ctx);
+    g_shutdown_step = "radio io";
     radio_io_shutdown();
 
+    g_shutdown_step = "message store";
     msg_store_shutdown();
+    g_shutdown_step = "done";
 
     HLOGI("engine", "Mercury engine shut down");
     hermes_log_shutdown();

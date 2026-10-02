@@ -9,13 +9,16 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#ifndef CAR_SIM_BYTES
 #define CAR_SIM_BYTES 8192        /* each direction */
+#endif
 
 typedef struct {
     size_t   a2b, b2a;            /* bytes delivered each way */
     bool     intact;              /* what was delivered is a prefix of what was sent */
     uint64_t done_ms;             /* both complete (0: not within the limit) */
     int      collisions;
+    int      bad_frames;   /* keydown frames the modem would refuse (length != mode payload) */
     bool     stalled;             /* nothing left to happen, data undelivered */
 } car_sim_result_t;
 

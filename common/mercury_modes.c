@@ -13,6 +13,7 @@
 
 #include "freedv_api.h"
 #include "mercury_cli.h"
+#include "../modem/modem_mfsk.h"   /* MERCURY_MODE_MFSK */
 
 int freedv_modes[] = { FREEDV_MODE_DATAC1,
                        FREEDV_MODE_DATAC3,
@@ -24,7 +25,11 @@ int freedv_modes[] = { FREEDV_MODE_DATAC1,
                        FREEDV_MODE_DATAC15,
                        FREEDV_MODE_DATAC16,
                        FREEDV_MODE_DATAC17,
-                       FREEDV_MODE_QAM16C2 };
+                       FREEDV_MODE_QAM16C2,
+                       /* Not a FreeDV mode: our own fringe modem, which the
+                        * modem layer opens through its own backend.  Listed
+                        * here so -m and MODE can select it like any other. */
+                       MERCURY_MODE_MFSK };
 
 char *freedv_mode_names[] = { "DATAC1",
                               "DATAC3",
@@ -36,7 +41,8 @@ char *freedv_mode_names[] = { "DATAC1",
                               "DATAC15",
                               "DATAC16",
                               "DATAC17",
-                              "QAM16C2" };
+                              "QAM16C2",
+                              "MFSK" };
 
 int mercury_cli_mode_count(void)
 {

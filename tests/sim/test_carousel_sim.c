@@ -152,6 +152,24 @@ void test_car_peer_loss_disconnects(void)
     sim_destroy(s);
 }
 
+/* The callee's ACCEPTs never reach the caller: it falls back to LISTENING
+ * still seeded, to catch the caller's first round in case the caller did
+ * connect.  The caller never comes, and the seed must not outlive the wait:
+ * a seeded station drops every plain frame, broadcast included. */
+void test_car_accept_fallback_seed_expires(void)
+{
+    sim_t *s = make_sim(3, 0.0);
+    connect_ab(s);
+    for (int i = 0; i < 200 && state(sim_b(s)) != ARQ_CONN_ACCEPTING; i++)
+        sim_run_until_idle(s, 100);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_ACCEPTING, state(sim_b(s)));
+    sim_set_per(s, 1.0);
+    sim_run_until_idle(s, 900000);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_LISTENING, state(sim_b(s)));
+    TEST_ASSERT_EQUAL_UINT16(0, sim_endpoint_crc_seed(sim_b(s)));
+    sim_destroy(s);
+}
+
 /* DISCONNECT after the data: both ends leave the session, the seed is gone. */
 void test_car_disconnect_after_transfer(void)
 {
@@ -171,6 +189,29 @@ void test_car_disconnect_after_transfer(void)
     TEST_ASSERT_NOT_EQUAL(ARQ_CONN_CONNECTED, state(sim_b(s)));
     TEST_ASSERT_EQUAL_UINT16(0, sim_endpoint_crc_seed(sim_a(s)));
     TEST_ASSERT_EQUAL_UINT16(0, sim_endpoint_crc_seed(sim_b(s)));
+    sim_destroy(s);
+}
+
+/* ABORT mid-transfer (#218): the session goes at once, without delivering
+ * the rest first as DISCONNECT does -- and the peer is told, not left to
+ * time out. */
+void test_car_abort_skips_the_drain(void)
+{
+    static uint8_t blob[16384];
+    fill(blob, sizeof(blob), 7);
+    sim_t *s = make_sim(5, 0.0);
+    sim_endpoint_queue_tx(sim_a(s), blob, sizeof(blob));
+    connect_ab(s);
+    sim_run_until_idle(s, 30000);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_CONNECTED, state(sim_a(s)));
+    arq_event_t ab = { .id = ARQ_EV_APP_DISCONNECT, .abort = true };
+    sim_inject(s, sim_a(s), &ab);
+    sim_run_until_idle(s, 60000);
+    size_t got;
+    TEST_ASSERT_TRUE(intact_prefix(sim_b(s), blob, sizeof(blob), &got));
+    TEST_ASSERT_TRUE_MESSAGE(got < sizeof(blob), "ABORT drained the whole transfer first");
+    TEST_ASSERT_NOT_EQUAL(ARQ_CONN_CONNECTED, state(sim_a(s)));
+    TEST_ASSERT_NOT_EQUAL(ARQ_CONN_CONNECTED, state(sim_b(s)));
     sim_destroy(s);
 }
 
@@ -259,7 +300,9 @@ int main(void)
     RUN_TEST(test_car_bidirectional);
     RUN_TEST(test_car_lossy);
     RUN_TEST(test_car_peer_loss_disconnects);
+    RUN_TEST(test_car_accept_fallback_seed_expires);
     RUN_TEST(test_car_disconnect_after_transfer);
+    RUN_TEST(test_car_abort_skips_the_drain);
     RUN_TEST(test_car_reply_during_final_poll);
     RUN_TEST(test_car_fuzz);
     return UNITY_END();

@@ -4,6 +4,7 @@
 #include "sim_channel.h"
 #include "arq_protocol.h"
 #include "freedv_api.h"
+#include "modem_mfsk.h"   /* MERCURY_MODE_MFSK */
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -18,6 +19,8 @@ struct sim_channel {
     uint32_t guard_ms;
     bool     cliff_enabled;   /* mode-aware erasure (see sim_channel_set_snr) */
     double   snr_db;          /* current channel SNR when cliff_enabled */
+    bool     asym;            /* per-direction SNR (sim_channel_set_snr_asym) */
+    double   snr_dir_db[2];
     sim_mode_per_t mode_per[SIM_MODE_PER_MAX]; /* empirical per-mode erasure */
     int      mode_per_count;
     bool     fading;          /* time-varying SNR (see sim_channel_set_fading) */
@@ -40,6 +43,8 @@ static double mode_cliff_db(int freedv_mode)
     case FREEDV_MODE_DATAC4:  return -4.0;
     case FREEDV_MODE_DATAC13: return -4.0;
     case FREEDV_MODE_DATAC14: return -2.0;
+    case MERCURY_MODE_MFSK:   return -13.0; /* the fringe floor */
+    case SIM_MODE_PATTERN:    return -17.0; /* ~10 dB below DATAC16 (mfsk-margin) */
     default:                  return -7.0;  /* DATAC15 / DATAC16 floor modes */
     }
 }
@@ -82,7 +87,17 @@ void sim_channel_set_snr(sim_channel_t *ch, double snr_db)
     {
         ch->cliff_enabled = true;
         ch->snr_db        = snr_db;
+        ch->asym          = false;
     }
+}
+
+void sim_channel_set_snr_asym(sim_channel_t *ch, double snr_dir0_db, double snr_dir1_db)
+{
+    if (!ch) return;
+    sim_channel_set_snr(ch, snr_dir0_db < snr_dir1_db ? snr_dir0_db : snr_dir1_db);
+    ch->asym = true;
+    ch->snr_dir_db[0] = snr_dir0_db;
+    ch->snr_dir_db[1] = snr_dir1_db;
 }
 
 void sim_channel_set_mode_per(sim_channel_t *ch,
@@ -145,6 +160,24 @@ static double frame_snr_db(const sim_channel_t *ch, int dir, uint64_t t0_ms,
     return eff > 1e-9 ? 10.0 * log10(eff) : -90.0;
 }
 
+/* The SNR a modem reports for a frame received over [t0, t0+air): its
+ * estimator averages signal and noise power across the frame, so the linear
+ * mean of the instantaneous SNR -- not frame_snr_db's effective SNR, which is
+ * what decides the decode.  NAN when the channel does not fade: the caller's
+ * own figure stands. */
+double sim_channel_frame_snr(const sim_channel_t *ch, uint64_t t0_ms, int dir, int freedv_mode)
+{
+    if (!ch || !ch->fading) return NAN;
+    uint32_t air_ms = sim_channel_airtime_ms(freedv_mode, 0);
+    double acc = 0;
+    for (int i = 0; i < 8; i++) {
+        double t = (t0_ms + (air_ms * (i + 0.5)) / 8.0) / 1000.0;
+        acc += pow(10.0, ch->fade_mean_db / 10.0) * fade_power(ch, dir & 1, t);
+    }
+    acc /= 8.0;
+    return acc > 1e-9 ? 10.0 * log10(acc) : -90.0;
+}
+
 /* SplitMix64: deterministic, seedable, no global state. */
 static double next_rand(sim_channel_t *ch) { return sim_channel_next_rand(ch); }
 
@@ -160,11 +193,30 @@ double sim_channel_next_rand(sim_channel_t *ch)
 uint32_t sim_channel_airtime_ms(int freedv_mode, size_t frame_size)
 {
     (void)frame_size;
+    if (freedv_mode == SIM_MODE_PATTERN)
+        return 640;
     for (int i = 0; i < arq_mode_table_count; i++)
         if (arq_mode_table[i].freedv_mode == freedv_mode)
             return (uint32_t)(arq_mode_table[i].frame_duration_s * 1000.0f + 0.5f);
     /* Unknown mode: use DATAC15's duration as a safe nonzero fallback. */
     return 4400;
+}
+
+bool sim_channel_syncable(const sim_channel_t *ch, uint64_t now_ms,
+                          int dir, int freedv_mode)
+{
+    double cliff = mode_cliff_db(freedv_mode);
+    if (ch->fading)
+        return frame_snr_db(ch, dir, now_ms, sim_channel_airtime_ms(freedv_mode, 0), cliff) >= cliff;
+    if (ch->mode_per_count > 0) {
+        for (int i = 0; i < ch->mode_per_count; i++)
+            if (ch->mode_per[i].freedv_mode == freedv_mode)
+                return ch->mode_per[i].per < 0.5;
+        return true;
+    }
+    if (ch->cliff_enabled)
+        return (ch->asym ? ch->snr_dir_db[dir & 1] : ch->snr_db) >= cliff;
+    return true;
 }
 
 bool sim_channel_schedule(sim_channel_t *ch, uint64_t now_ms,
@@ -188,7 +240,8 @@ bool sim_channel_schedule(sim_channel_t *ch, uint64_t now_ms,
                 break;
             }
     }
-    else if (ch->cliff_enabled && ch->snr_db < mode_cliff_db(freedv_mode))
+    else if (ch->cliff_enabled &&
+             (ch->asym ? ch->snr_dir_db[dir & 1] : ch->snr_db) < mode_cliff_db(freedv_mode))
         per = SIM_CLIFF_PER;
     bool erased = sim_channel_next_rand(ch) < per;
     uint32_t air = sim_channel_airtime_ms(freedv_mode, frame_size);

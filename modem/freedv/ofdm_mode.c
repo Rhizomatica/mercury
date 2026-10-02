@@ -118,7 +118,7 @@ void ofdm_init_mode(char mode[], struct OFDM_CONFIG *config) {
     config->ftwindowwidth = 80;
     config->state_machine = "data";
     config->amp_est_mode = 1;
-    config->tx_bpf_en = false;
+    config->tx_bpf_en = true;
     config->clip_en = false;
     config->data_mode = "streaming";
     config->amp_scale = 135E3;
@@ -163,8 +163,10 @@ void ofdm_init_mode(char mode[], struct OFDM_CONFIG *config) {
     config->amp_scale = 145E3;
     config->clip_gain1 = 2.7;
     config->clip_gain2 = 0.8;
-    config->tx_bpf_proto = filtP900S1100;
-    config->tx_bpf_proto_n = sizeof(filtP900S1100) / sizeof(float);
+    /* Its 33 carriers span 500-2500 Hz: filtP900S1100 (-6 dB at 505 and
+       2495) took 6.5 dB off the outermost pair. */
+    config->tx_bpf_proto = filtP1100S1300;
+    config->tx_bpf_proto_n = sizeof(filtP1100S1300) / sizeof(float);
   } else if (strcmp(mode, "qam16") == 0) {
     /* not in use yet */
     config->ns = 5;

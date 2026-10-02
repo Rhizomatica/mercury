@@ -227,6 +227,19 @@ static void cb_send_tx_frame(int packet_type, int mode,
     arq_modem_enqueue(&action);
 }
 
+/* Enqueue a pattern for the modem TX worker: no coded frame, the modem
+ * synthesises the tone burst itself (send_pattern_ack in modem.c). */
+static void cb_send_pattern(int pattern_kind)
+{
+    arq_action_t action = {
+        .type         = ARQ_ACTION_TX_PATTERN,
+        .mode         = -1,
+        .frame_count  = 1,
+        .pattern_kind = pattern_kind,
+    };
+    arq_modem_enqueue(&action);
+}
+
 /* Carousel keydown: the FSM's frames are only valid during the call, so the
  * modem gets a copy it frees when sent. */
 static void cb_send_keydown(const arq_keydown_t *kd)
@@ -627,12 +640,16 @@ static void handle_cmd(const arq_cmd_msg_t *msg)
         break;
 
     case ARQ_CMD_ABORT:
-        /* Dirty disconnect: flush all buffers immediately so the FSM sees no
-         * pending data and transitions to DISCONNECTED without deferral.
-         * No air-side DISCONNECT frame is sent — the peer will time out. */
+        /* Dirty disconnect: drop everything still held -- the host's unsent
+         * bytes here, the frames awaiting an ACK and the re-staged ones in the
+         * FSM (ev.abort) -- and go at once, without the drain DISCONNECT waits
+         * for.  The peer is still told: the FSM sends its DISCONNECT frames,
+         * after any frame on the air ends, so it need not time out (#218: the
+         * comment and docs/TNC.md said no frame went out; one always did). */
         clear_connection_data();
         arq_tnc_send_disconnected();
         ev.id = ARQ_EV_APP_DISCONNECT;
+        ev.abort = true;
         break;
 
     case ARQ_CMD_CLIENT_DISCONNECT:
@@ -770,7 +787,7 @@ void arq_handle_carousel_frame(const uint8_t *data, size_t frame_size, int mode,
     evq_push(&ev);
 }
 
-bool arq_handle_incoming_connect_frame(uint8_t *data, size_t frame_size, float rx_snr)
+bool arq_handle_incoming_connect_frame(uint8_t *data, size_t frame_size, float rx_snr, int mode)
 {
     if (!data || frame_size < 2) return false;
 
@@ -833,8 +850,12 @@ bool arq_handle_incoming_connect_frame(uint8_t *data, size_t frame_size, float r
     ev.id         = is_accept ? ARQ_EV_RX_ACCEPT : ARQ_EV_RX_CALL;
     ev.session_id = session_id;
     ev.rx_snr     = rx_snr;
+    ev.mode       = mode;          /* the carrier: an answer goes back on it */
     if (is_accept)
-        ev.car_level = arq_protocol_accept_start_level(data);
+    {
+        ev.car_level  = arq_protocol_accept_start_level(data);
+        ev.car_accept = arq_protocol_accept_is_carousel(data);
+    }
     /* src = transmitting side's callsign */
     snprintf(ev.remote_call, CALLSIGN_MAX_SIZE, "%s", src);
     /* local = the one of our callsigns the caller dialed (primary or secondary) */
@@ -1046,6 +1067,7 @@ int arq_init(size_t frame_size, int mode)
          * the decoder-sync signal alone rather than breaking anything. */
         .channel_busy        = arq_modem_channel_busy,
         .send_keydown        = cb_send_keydown,
+        .send_pattern        = cb_send_pattern,
         .set_crc_seed        = arq_modem_crc_seed,
     };
     arq_fsm_set_callbacks(&cbs);
@@ -1064,7 +1086,7 @@ int arq_init(size_t frame_size, int mode)
     {
         HLOGE(LOG_COMP, "Failed to start event loop thread");
         arq_channel_bus_dispose(&g_bus);
-    arq_fsm_release(&g_sess);
+        arq_fsm_release(&g_sess);
         return -1;
     }
 
@@ -1079,6 +1101,7 @@ int arq_init(size_t frame_size, int mode)
         arq_channel_bus_close(&g_bus);
         pthread_join(g_loop_tid, NULL);
         arq_channel_bus_dispose(&g_bus);
+        arq_fsm_release(&g_sess);
         return -1;
     }
 
@@ -1119,6 +1142,14 @@ void arq_shutdown(void)
 void arq_tick_1hz(void) { }
 
 void arq_post_event(int event) { (void)event; }
+
+void arq_post_pattern_ack(bool is_break)
+{
+    arq_event_t ev = {0};
+    ev.id       = ARQ_EV_RX_PATTERN;
+    ev.rx_flags = is_break ? ARQ_FLAG_HAS_DATA : 0;
+    evq_push(&ev);
+}
 
 bool arq_is_link_connected(void)
 {
@@ -1226,6 +1257,30 @@ void arq_set_active_modem_mode(int mode, size_t frame_size)
     pthread_mutex_unlock(&g_conn_lock);
 }
 
+/* Carrier sense is a decoder holding sync, and a decoder can lose it inside a
+ * frame that is still on the air: on air (car28) the gateway caught a 7.4 s
+ * DATAC17 frame, lost it 1.2 s in, and its receiver polled 2.7 s into the
+ * frame.  A caught preamble starts a frame of known length; the channel is
+ * busy for that long.  When a frame decodes it is over. */
+void arq_note_rx_preamble(int mode)
+{
+    const arq_mode_timing_t *tm = arq_protocol_mode_timing(mode);
+    if (!tm || tm->frame_duration_s <= 0.0f)
+        return;
+    uint64_t until = time_now_ms() + (uint64_t)(tm->frame_duration_s * 1000.0f);
+    pthread_mutex_lock(&g_sess_lock);
+    if (until > g_sess.rx_frame_busy_until_ms)
+        g_sess.rx_frame_busy_until_ms = until;
+    pthread_mutex_unlock(&g_sess_lock);
+}
+
+void arq_note_rx_frame_done(void)
+{
+    pthread_mutex_lock(&g_sess_lock);
+    g_sess.rx_frame_busy_until_ms = 0;
+    pthread_mutex_unlock(&g_sess_lock);
+}
+
 void arq_update_link_metrics(int sync, float snr, int rx_status, bool frame_decoded)
 {
     (void)rx_status;
@@ -1271,6 +1326,15 @@ bool arq_get_runtime_snapshot(arq_runtime_snapshot_t *snapshot)
     pthread_mutex_lock(&g_sess_lock);
     snapshot->initialized      = true;
     snapshot->connected        = (g_sess.conn_state == ARQ_CONN_CONNECTED);
+    snapshot->expect_pattern_ack = arq_fsm_expect_pattern(&g_sess, time_now_ms());
+    /* ACCEPTING too: a caller that hears none of our ACCEPTs -- a strong
+     * forward path, a weak return one -- escalates to MFSK CALLs, and those
+     * are what we must answer (on MFSK, #235).  With the listener off while
+     * ACCEPTING, the callee only ever heard the DATAC16 CALLs it could not
+     * usefully answer: on air (car17, st2 calling the gateway at 2 %), both
+     * MFSK CALLs arrived mid-ACCEPTING, and the call never connected. */
+    snapshot->listening_for_calls = (g_sess.conn_state == ARQ_CONN_LISTENING ||
+                                     g_sess.conn_state == ARQ_CONN_ACCEPTING);
     snapshot->trx              = trx;
     snapshot->tx_backlog_bytes = backlog + g_sess.tx_inflight_bytes;
     snapshot->speed_level      = g_sess.speed_level;

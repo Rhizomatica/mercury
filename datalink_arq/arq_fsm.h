@@ -108,6 +108,8 @@ typedef enum
     /* Carousel data plane */
     ARQ_EV_RX_CAROUSEL        = 23,  /* a frame with the session's CRC seed */
     ARQ_EV_TIMER_CAROUSEL     = 24,  /* the carousel's next deadline  */
+    ARQ_EV_RX_PATTERN         = 25,  /* a pattern heard; rx_flags HAS_DATA
+                                      * for the BREAK kind             */
 
     ARQ_EV__COUNT
 } arq_event_id_t;
@@ -142,15 +144,21 @@ typedef struct
 
     /* RX_CAROUSEL: the control decoder (DATAC16) produced it; otherwise the
      * payload decoder, in `mode`.  RX_ACCEPT: the carousel rung the callee
-     * starts us on (arq_protocol_accept_start_level). */
+     * starts us on (arq_protocol_accept_start_level), and whether the
+     * callee runs the carousel at all (car_accept). */
     bool     from_control;
     int      car_level;
+    bool     car_accept;
 
     /* Local receive SNR at the time the frame was decoded (dB, 0 = unknown).
      * Carried in-band so the FSM can update local_snr_x10 without relying on
      * the cross-thread arq_update_link_metrics() write, which races with the
      * event queue push in modem.c. */
     float    rx_snr;
+
+    /* APP_DISCONNECT from the host's ABORT: drop what is still in flight and
+     * go at once, rather than drain it first as DISCONNECT does (#218). */
+    bool     abort;
 
     /* Call setup */
     char     remote_call[CALLSIGN_MAX_SIZE];
@@ -177,6 +185,9 @@ typedef struct
 
     /* --- Identifiers --- */
     uint8_t  session_id;               /* random byte chosen by caller         */
+    int      call_sends_done;          /* CALLs sent this attempt (escalation) */
+    int      call_carrier;             /* the carrier the last CALL went out on */
+    int      call_rx_mode;             /* the carrier the CALL we answer came on */
     char     remote_call[CALLSIGN_MAX_SIZE];
     char     local_call[CALLSIGN_MAX_SIZE];  /* our dialed callsign/SSID for an
                                               * accepted incoming CALL (empty =>
@@ -228,6 +239,9 @@ typedef struct
      * arq_update_link_metrics() under g_sess_lock, read by the FSM; used to
      * avoid keying a TURN_REQ into the peer's frame. */
     uint64_t last_rx_sync_ms;
+    /* A decoder caught a frame's preamble: the frame is on the air until
+     * this, whatever its sync does meanwhile (arq_note_rx_preamble). */
+    uint64_t rx_frame_busy_until_ms;
     uint8_t  turn_req_defer_count;     /* consecutive busy-channel deferrals   */
     uint8_t  retx_defer_count;         /* same, for DATA (first burst and
                                         * WAIT_ACK retransmission)          */
@@ -290,6 +304,7 @@ typedef struct
     bool     deferred_listen_off;      /* LISTEN OFF received during grace period;
                                         * will be honoured once the grace expires    */
     bool     pending_disconnect_notify;/* defer notify_disconnected until TX done */
+    bool     disconnect_sent;       /* our DISCONNECT is on the air this teardown */
     bool     pending_disconnect_reply; /* our reply to the peer's DISCONNECT is
                                         * due when the reply guard expires  */
     bool     pending_disconnect;       /* APP_DISCONNECT deferred until TX buf empty */
@@ -371,6 +386,10 @@ typedef struct
     int      car_rx_level;            /* start rung for the peer's direction:
                                        * the SNR measured here                 */
     int      car_tx_level;            /* ...for ours, from the peer (-1: none) */
+    bool     car_ctl_deaf;            /* connect: I heard the peer below the control mode */
+    bool     car_peer_ctl_deaf;       /* connect: ...and it, me (the CALL came on MFSK) */
+    bool     ctl_floor_at_stop;       /* the carousel's peer_ctl_deaf when it stopped,
+                                       * for the DISCONNECT exchange after it */
     uint64_t car_last_rx_ms;          /* last carousel frame from the peer     */
 
     /* --- Timer mechanism --- */
@@ -434,6 +453,8 @@ typedef struct
      *  the callee), and set the CRC seed the modem's decoders accept (0: plain
      *  frames only, outside a carousel session). */
     void (*send_keydown)(const arq_keydown_t *kd);
+    /** Key a pattern (arq_pattern_kind_t) on the air.  Optional. */
+    void (*send_pattern)(int pattern_kind);
     void (*set_crc_seed)(uint16_t seed);
 } arq_fsm_callbacks_t;
 
@@ -489,6 +510,11 @@ int arq_fsm_timeout_ms(const arq_session_t *sess, uint64_t now);
  */
 void arq_fsm_set_carousel(bool on);
 bool arq_fsm_carousel(void);
+/** The carrier the next CALL goes out on: the control mode for the first
+ *  ARQ_CALL_FAST_SLOTS, then MFSK and the control mode alternately. */
+int arq_call_carrier(const arq_session_t *sess);
+/** Whether a pattern can arrive now (the modem's detector runs only then). */
+bool arq_fsm_expect_pattern(const arq_session_t *sess, uint64_t now);
 
 /**
  * @brief Human-readable name for a connection state (for log output).

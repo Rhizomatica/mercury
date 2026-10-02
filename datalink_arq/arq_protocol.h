@@ -247,6 +247,16 @@ extern _Atomic int arq_iss_post_ack_guard_ms;
  * 2 s is conservative: ~0.5 s of TCP+host processing with headroom. */
 #define ARQ_LISTEN_OFF_GRACE_MS       2000
 #define ARQ_CALL_RETRY_SLOTS_DEFAULT       4    /* CALL retries before giving up       */
+/* CALLs on the fast control mode before the caller escalates to the MFSK
+ * floor; after that it alternates MFSK and the control mode (#235: under
+ * fading an MFSK CALL is no surer than a DATAC16 one at -9..-11 dB, and all-
+ * MFSK lost connects DATAC16 made; MFSK is what connects at -13 dB).  A good
+ * link connects exactly as quickly as before. */
+#define ARQ_CALL_FAST_SLOTS                2
+/* After an ACCEPT on MFSK the callee listens this long for the caller's first
+ * round: the caller decodes the ACCEPT ~4 s after it ends, keys one ISS guard
+ * later, and a floor round is a 13.5 s frame the callee decodes ~4 s after. */
+#define ARQ_ACCEPT_RX_WINDOW_FLOOR_MS 26000
 #define ARQ_ACCEPT_RETRY_SLOTS_DEFAULT     4    /* ACCEPT retries before returning     */
 #define ARQ_DATA_RETRY_SLOTS_DEFAULT      10    /* DATA retries before disconnect      */
 #define ARQ_DISCONNECT_RETRY_SLOTS_DEFAULT 2    /* DISCONNECT frame retries            */
@@ -356,6 +366,8 @@ extern _Atomic int arq_startup_max_s;
 #define ARQ_STARTUP_MAX_S  atomic_load(&arq_startup_max_s)
 #define ARQ_STARTUP_ACKS_REQUIRED     1
 #define ARQ_SNR_HYST_DB               5.0f
+#define ARQ_SNR_MIN_DATAC15_DB       -7.0f  /* its cliff (sim, bench): below
+                                             * it the carousel's MFSK rung wins */
 #define ARQ_SNR_MIN_DATAC4_DB        -6.0f  /* entry threshold from the DATAC15
                                              * floor.  Bench (docs/MODES.md):
                                              * DATAC15/DATAC4 goodput crossover
@@ -556,6 +568,11 @@ float arq_protocol_longest_burst_s(void);
  * CALLINT override.  Falls back to the DATAC16 table default (8.0s).
  */
 float arq_protocol_call_interval_s(void);
+/* The wait after a CALL on this carrier.  After an MFSK CALL: the callee
+ * decodes it ~4 s after it ends, answers one guard later with a 13.5 s MFSK
+ * ACCEPT, which this end decodes ~4 s after -- about 24 s, where the table's
+ * DATAC16-shaped interval would key the next CALL over the answer. */
+float arq_protocol_call_interval_for_mode_s(int mode);
 
 /**
  * @brief Compute CRC16-CCITT of an uppercase-normalised callsign.
@@ -689,8 +706,18 @@ int arq_protocol_build_accept(uint8_t *buf, size_t buf_len,
 /* The ACCEPT is also the carousel's first poll: it names the ladder rung the
  * caller's first round goes out on (car_start_level of the SNR the callee
  * measured on the CALL), in the top 3 bits of its DST CRC -- which an ACCEPT
- * checks on 13 bits, alongside its 7-bit session id. */
+ * checks on 13 bits, alongside its 7-bit session id.  A start_level below 0
+ * builds a plain ACCEPT, for the stop-and-wait plane.
+ *
+ * A carousel ACCEPT sets ARQ_CONNECT_EXT_CAROUSEL in the framer extension.
+ * Stations without the carousel (1.9.x, MERCURY_CAROUSEL=0) read the
+ * extension as an unknown bandwidth token and drop the frame: their call goes
+ * unanswered rather than "connecting" to a session that cannot move data.
+ * A plain ACCEPT tells a carousel caller that the callee runs stop-and-wait,
+ * and the session runs on it. */
+#define ARQ_CONNECT_EXT_CAROUSEL      0x10
 int  arq_protocol_accept_start_level(const uint8_t *buf);
+bool arq_protocol_accept_is_carousel(const uint8_t *buf);
 /* Is a CALL (16-bit DST CRC) or an ACCEPT (13-bit) addressed to callsign? */
 bool arq_protocol_connect_dst_matches(const uint8_t *buf, bool is_accept, const char *callsign);
 

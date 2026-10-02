@@ -423,9 +423,19 @@ void test_listen_mode_restored_after_session_ends(void)
  * client that redials promptly waited for a CONNECTED that could never come.
  * The call is now deferred and placed when the teardown completes. */
 
+/* The guard expires and our DISCONNECT goes out: a DISCONNECT from the peer
+ * after this answers ours (before it, the two crossed -- see
+ * test_crossed_disconnect_is_answered). */
+static void send_our_disconnect(void)
+{
+    arq_event_t ev = make_event(ARQ_EV_TIMER_ACK);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_TRUE_MESSAGE(sess.disconnect_sent, "our DISCONNECT did not go out");
+}
+
 /* Caller with a live session, then DISCONNECT with nothing queued: the
  * DISCONNECT exchange is on the air and the FSM is in DISCONNECTING. */
-static void goto_disconnecting_caller(void)
+static void goto_disconnecting_caller_held(void)
 {
     /* setUp() clears our callsign, and a CALL with an empty SRC cannot be
      * encoded -- no frame would go out and the "CALL was sent" checks below
@@ -448,6 +458,72 @@ static void goto_disconnecting_caller(void)
     TEST_ASSERT_EQUAL_INT(ARQ_CONN_DISCONNECTING, sess.conn_state);
     RESET_FAKE(fake_send_tx_frame);
     RESET_FAKE(fake_notify_disconnected);
+}
+
+static void goto_disconnecting_caller(void)
+{
+    goto_disconnecting_caller_held();
+    send_our_disconnect();
+    RESET_FAKE(fake_send_tx_frame);
+}
+
+/* Both ends hung up, and the peer's DISCONNECT came while ours was still held
+ * back: the peer has nothing from us.  Finalizing silently (on air, car24)
+ * left it retrying for 21 s and deaf to our redial.  It is answered. */
+void test_crossed_disconnect_is_answered(void)
+{
+    goto_disconnecting_caller_held();
+    TEST_ASSERT_FALSE(sess.disconnect_sent);
+
+    arq_event_t ev = make_event(ARQ_EV_RX_DISCONNECT);
+    ev.session_id = sess.session_id;
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(0, fake_notify_disconnected_fake.call_count);   /* not before the answer */
+
+    ev = make_event(ARQ_EV_TIMER_ACK);            /* one reply guard later */
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, fake_send_tx_frame_fake.call_count,
+        "the peer's DISCONNECT, crossing ours before it went out, was not answered");
+
+    ev = make_event(ARQ_EV_TX_COMPLETE);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(1, fake_notify_disconnected_fake.call_count);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_LISTENING, sess.conn_state);
+}
+
+/* Once ours is out, the peer's DISCONNECT is the answer: nothing more is sent. */
+void test_disconnect_after_ours_is_the_answer(void)
+{
+    goto_disconnecting_caller();
+    arq_event_t ev = make_event(ARQ_EV_RX_DISCONNECT);
+    ev.session_id = sess.session_id;
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(0, fake_send_tx_frame_fake.call_count);
+    TEST_ASSERT_EQUAL_INT(1, fake_notify_disconnected_fake.call_count);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_LISTENING, sess.conn_state);
+}
+
+/* The peer we are tearing down with calls again: it has left the old session.
+ * Retrying on, the CALL was ignored (on air, car24: the gateway kept sending
+ * DISCONNECT over the IC-7100's redial).  The teardown ends and the CALL is
+ * answered.  A CALL from anyone else does not end it. */
+void test_peer_calling_again_ends_teardown(void)
+{
+    goto_disconnecting_caller();
+    arq_event_t ev = make_event(ARQ_EV_RX_CALL);
+    ev.session_id = 0x33;
+    strncpy(ev.remote_call, "DST9", CALLSIGN_MAX_SIZE);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(ARQ_CONN_DISCONNECTING, sess.conn_state,
+        "a stranger's CALL ended our teardown");
+
+    ev = make_event(ARQ_EV_RX_CALL);
+    ev.session_id = 0x33;
+    strncpy(ev.remote_call, "DST1", CALLSIGN_MAX_SIZE);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_ACCEPTING, sess.conn_state);
+    TEST_ASSERT_EQUAL_UINT8(0x33, sess.session_id);
+    TEST_ASSERT_EQUAL_INT(1, fake_notify_disconnected_fake.call_count);   /* the old session's end */
 }
 
 static void connect_to(const char *call)
@@ -571,9 +647,17 @@ void test_redial_while_disconnect_deferred_is_placed_after_teardown(void)
     TEST_ASSERT_EQUAL_INT(ARQ_CONN_DISCONNECTING, sess.conn_state);
     TEST_ASSERT_TRUE(sess.pending_connect);       /* survives the state change */
 
+    /* Ours is still held back (the peer has only just gone quiet), so the
+     * peer's DISCONNECT crosses it: answered first, then the call. */
     uint8_t old_session = sess.session_id;
     ev = make_event(ARQ_EV_RX_DISCONNECT);
     ev.session_id = old_session;
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_NOT_EQUAL(ARQ_CONN_CALLING, sess.conn_state);
+    TEST_ASSERT_TRUE(sess.pending_connect);
+    ev = make_event(ARQ_EV_TIMER_ACK);            /* the reply guard: our answer */
+    arq_fsm_dispatch(&sess, &ev);
+    ev = make_event(ARQ_EV_TX_COMPLETE);          /* ...has left the air */
     arq_fsm_dispatch(&sess, &ev);
 
     TEST_ASSERT_EQUAL_INT(ARQ_CONN_CALLING, sess.conn_state);
@@ -753,6 +837,37 @@ void test_app_disconnect_defers_with_backlog(void)
     TEST_ASSERT_EQUAL_INT(ARQ_CONN_CONNECTED, sess.conn_state);
     TEST_ASSERT_TRUE(sess.pending_disconnect);
     TEST_ASSERT_NOT_EQUAL_UINT64(0, sess.disconnect_deadline_ms);
+}
+
+/* ABORT (#218) does not drain: with bytes queued, or a frame awaiting its
+ * ACK, it goes to DISCONNECTING at once and drops what was in flight. */
+void test_abort_skips_the_drain_with_backlog(void)
+{
+    goto_connected();
+    fake_tx_backlog_fake.return_val = 256;
+    sess.restage_len = 40; sess.restage_off = 0;
+
+    arq_event_t ev = make_event(ARQ_EV_APP_DISCONNECT);
+    ev.abort = true;
+    arq_fsm_dispatch(&sess, &ev);
+
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_DISCONNECTING, sess.conn_state);
+    TEST_ASSERT_FALSE(sess.pending_disconnect);
+    TEST_ASSERT_EQUAL_UINT(0, sess.restage_len - sess.restage_off);
+}
+
+void test_abort_skips_the_drain_in_wait_ack(void)
+{
+    goto_connected();
+    sess.dflow_state = ARQ_DFLOW_WAIT_ACK;
+    sess.tx_inflight_bytes = 120;
+
+    arq_event_t ev = make_event(ARQ_EV_APP_DISCONNECT);
+    ev.abort = true;
+    arq_fsm_dispatch(&sess, &ev);
+
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_DISCONNECTING, sess.conn_state);
+    TEST_ASSERT_EQUAL_INT(0, sess.tx_inflight_bytes);
 }
 
 /* A deferred APP_DISCONNECT that never drains must still tear down once the
@@ -1018,6 +1133,29 @@ void test_wait_ack_turn_req_pulls_the_retransmission_in(void)
     ev = make_event(ARQ_EV_TIMER_ACK);
     arq_fsm_dispatch(&sess, &ev);
     TEST_ASSERT_EQUAL_INT(ARQ_DFLOW_DATA_TX, sess.dflow_state);
+}
+
+/* A decoder can lose sync inside a frame that is still on the air: on air
+ * (car28) the gateway caught a 7.4 s DATAC17 frame, lost it 1.2 s in, and
+ * keyed 2.7 s into it.  A caught preamble holds the channel busy for the
+ * frame's airtime, sync or not; a decoded frame ends that. */
+void test_caught_preamble_holds_the_channel_through_a_sync_gap(void)
+{
+    goto_connected();
+    goto_wait_ack();
+    RESET_FAKE(fake_send_tx_frame);
+
+    sess.last_rx_sync_ms = 0;                              /* sync lost... */
+    sess.rx_frame_busy_until_ms = time_now_ms() + 5000;    /* ...mid-frame */
+    arq_event_t ev = make_event(ARQ_EV_TIMER_ACK);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, fake_send_tx_frame_fake.call_count,
+        "keyed into a frame whose preamble was caught");
+
+    sess.rx_frame_busy_until_ms = 0;                       /* the frame decoded */
+    ev = make_event(ARQ_EV_TIMER_ACK);
+    arq_fsm_dispatch(&sess, &ev);
+    TEST_ASSERT_GREATER_THAN(0, fake_send_tx_frame_fake.call_count);
 }
 
 /* The ACK timeout fires on a clock.  When the burst was lost the peer is often
@@ -2638,6 +2776,9 @@ int main(void)
     RUN_TEST(test_listen_mode_restored_after_session_ends);
     RUN_TEST(test_disconnect_from_connected);
     RUN_TEST(test_connect_during_teardown_is_deferred_not_dropped);
+    RUN_TEST(test_crossed_disconnect_is_answered);
+    RUN_TEST(test_disconnect_after_ours_is_the_answer);
+    RUN_TEST(test_peer_calling_again_ends_teardown);
     RUN_TEST(test_deferred_connect_is_placed_after_teardown_timeout);
     RUN_TEST(test_disconnect_cancels_deferred_connect);
     RUN_TEST(test_listen_off_cancels_deferred_connect);
@@ -2660,6 +2801,8 @@ int main(void)
     RUN_TEST(test_wait_ack_rejects_foreign_mode_request);
     RUN_TEST(test_connected_seeds_no_progress_clock);
     RUN_TEST(test_app_disconnect_defers_with_backlog);
+    RUN_TEST(test_abort_skips_the_drain_with_backlog);
+    RUN_TEST(test_abort_skips_the_drain_in_wait_ack);
     RUN_TEST(test_pending_disconnect_retries_last_frame_before_teardown);
     RUN_TEST(test_app_disconnect_defers_in_wait_ack);
     RUN_TEST(test_wait_ack_cumulative_ack_advances_window);
@@ -2667,6 +2810,7 @@ int main(void)
     RUN_TEST(test_wait_ack_turn_req_defers_the_yield_without_keying);
     RUN_TEST(test_wait_ack_turn_req_pulls_the_retransmission_in);
     RUN_TEST(test_wait_ack_retransmission_is_not_keyed_over_the_peer);
+    RUN_TEST(test_caught_preamble_holds_the_channel_through_a_sync_gap);
     RUN_TEST(test_turn_req_decoded_while_deferring_waits_one_guard);
     RUN_TEST(test_wait_ack_retransmission_deferral_is_bounded);
     RUN_TEST(test_wait_ack_yields_to_latched_turn_req_when_the_ack_lands);

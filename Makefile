@@ -199,7 +199,7 @@ ifeq ($(HAVE_HERMES_SHM),1)
 HERMES_SHM_CFLAGS = -DHAVE_HERMES_SHM
 endif
 
-CFLAGS = $(COMMON_CFLAGS) -I. -Imodem/freedv -Imodem -Idatalink_broadcast -Idata_interfaces -Idatalink_arq -Iaudioio -Iaudioio/ffaudio -Icommon -Igui_interface -Iradio_io $(HAMLIB_CFLAGS) $(HERMES_SHM_CFLAGS)
+CFLAGS = $(COMMON_CFLAGS) -I. -Imodem/freedv -Imodem/mfsk -Imodem -Idatalink_broadcast -Idata_interfaces -Idatalink_arq -Iaudioio -Iaudioio/ffaudio -Icommon -Igui_interface -Iradio_io $(HAMLIB_CFLAGS) $(HERMES_SHM_CFLAGS)
 
 ifeq ($(OS),Windows_NT)
 BINARY = mercury.exe
@@ -214,7 +214,10 @@ MERCURY_LINK_INPUTS = \
 	datalink_arq/arq.o datalink_arq/arq_trace.o datalink_arq/arq_tnc.o datalink_arq/arith.o datalink_arq/arq_channels.o \
 	datalink_arq/arq_fsm.o datalink_arq/arq_protocol.o datalink_arq/arq_timing.o datalink_arq/arq_modem.o \
 	datalink_arq/carousel.o datalink_arq/rs_erasure.o \
-	datalink_broadcast/broadcast.o datalink_broadcast/kiss.o modem/modem.o modem/framer.o modem/channel_busy.o modem/freedv/libfreedvdata.a \
+	datalink_broadcast/broadcast.o datalink_broadcast/kiss.o modem/modem.o \
+	modem/modem_freedv.o modem/modem_mfsk.o modem/mfsk/mfsk.o modem/mfsk/mfsk_ofdm.o modem/mfsk/mfsk_sync.o \
+	modem/mfsk/mfsk_ldpc.o modem/mfsk/mfsk_ldpc_1_16.o modem/mfsk/mfsk_ldpc_2_16.o modem/mfsk/mfsk_ldpc_3_16.o \
+	modem/mfsk/mfsk_ldpc_5_16.o modem/mfsk/mfsk_ldpc_8_16.o modem/framer.o modem/channel_busy.o modem/freedv/libfreedvdata.a \
 	audioio/audioio.a common/os_interop.o common/ring_buffer_posix.o common/shm_posix.o common/crc6.o common/hermes_log.o common/virtual_clock.o \
 	common/chan.o common/queue.o common/mercury_engine.o common/mercury_cli.o common/mercury_modes.o common/message_store.o data_interfaces/tcp_interfaces.o data_interfaces/net.o \
 	gui_interface/ui_communication.o gui_interface/ui_status.o gui_interface/ui_devices.o gui_interface/ui_history.o \
@@ -329,13 +332,23 @@ datalink_broadcast/bcast_file.o: datalink_broadcast/bcast_file.c
 datalink_broadcast/bcast_file.w64.o: datalink_broadcast/bcast_file.c
 	$(MINGW_CC) $(CFLAGS) $(RAPTORQ_CFLAGS) -c $< -o $@
 
+# Modem objects that no sub-make builds.  The top-level implicit rule compiles
+# them, but only as prerequisites of something that names them: the CLI binary
+# does (MERCURY_LINK_INPUTS), the core archives must say so too, or on a clean
+# checkout `make fyne-ui` reaches `ar` with none of them built.
+MODEM_TOP_OBJS = modem/modem_freedv.o modem/modem_mfsk.o modem/mfsk/mfsk.o modem/mfsk/mfsk_ofdm.o modem/mfsk/mfsk_sync.o \
+	modem/mfsk/mfsk_ldpc.o modem/mfsk/mfsk_ldpc_1_16.o modem/mfsk/mfsk_ldpc_2_16.o modem/mfsk/mfsk_ldpc_3_16.o \
+	modem/mfsk/mfsk_ldpc_5_16.o modem/mfsk/mfsk_ldpc_8_16.o
+
 MERCURY_CORE_OBJS = \
 	common/cfg_utils.o common/iniparser/iniparser.o common/iniparser/dictionary.o \
 	datalink_arq/arq.o datalink_arq/arq_trace.o datalink_arq/arq_tnc.o datalink_arq/arith.o datalink_arq/arq_channels.o \
 	datalink_arq/arq_fsm.o datalink_arq/arq_protocol.o datalink_arq/arq_timing.o datalink_arq/arq_modem.o \
 	datalink_arq/carousel.o datalink_arq/rs_erasure.o \
 	datalink_broadcast/broadcast.o datalink_broadcast/kiss.o \
-	modem/modem.o modem/framer.o modem/channel_busy.o \
+	modem/modem.o modem/modem_freedv.o modem/modem_mfsk.o modem/mfsk/mfsk.o modem/mfsk/mfsk_ofdm.o modem/mfsk/mfsk_sync.o \
+	modem/mfsk/mfsk_ldpc.o modem/mfsk/mfsk_ldpc_1_16.o modem/mfsk/mfsk_ldpc_2_16.o modem/mfsk/mfsk_ldpc_3_16.o \
+	modem/mfsk/mfsk_ldpc_5_16.o modem/mfsk/mfsk_ldpc_8_16.o modem/framer.o modem/channel_busy.o \
 	common/os_interop.o common/ring_buffer_posix.o common/shm_posix.o common/crc6.o common/hermes_log.o common/virtual_clock.o \
 	common/chan.o common/queue.o common/mercury_engine.o common/mercury_cli.o common/mercury_modes.o common/message_store.o \
 	data_interfaces/tcp_interfaces.o data_interfaces/net.o \
@@ -375,7 +388,7 @@ endif
 #     ar: radio_io/hidapi-macos/hid.o: No such file or directory
 # $(BINARY) already declares it via MERCURY_LINK_INPUTS, which is why the CLI
 # build was unaffected and only the .app/.dmg packaging path broke.
-libmercury_core.a: internal_deps $(HIDAPI_OBJS) $(BCAST_FILE_OBJS)
+libmercury_core.a: internal_deps $(HIDAPI_OBJS) $(BCAST_FILE_OBJS) $(MODEM_TOP_OBJS)
 	$(CC) $(CFLAGS) $(RAPTORQ_CFLAGS) -I. -c $(FYNE_UI_DIR)/engine/mercury_bridge.c -o $(FYNE_UI_DIR)/engine/mercury_bridge.o
 	# Remove a stale archive first: macOS ar (cctools) refuses to update an
 	# existing *fat* .a in place, so a leftover universal build would wedge the
@@ -395,6 +408,8 @@ endif
 
 libmercury_core_w64.a: $(HIDAPI_W64_OBJ)
 	$(MAKE) internal_deps OS=Windows_NT CC=$(MINGW_CC) AR=$(MINGW_AR) HAVE_HERMES_SHM=0
+	# The modem objects no sub-make builds (see MODEM_TOP_OBJS), cross-compiled.
+	$(MAKE) $(MODEM_TOP_OBJS) OS=Windows_NT CC=$(MINGW_CC) AR=$(MINGW_AR) HAVE_HERMES_SHM=0
 	# The bridge calls bcast_file_*, so the RaptorQ objects belong in this
 	# archive too -- built with the cross compiler into their own .w64.o paths,
 	# so a native build afterwards is not left linking Windows objects.
@@ -616,8 +631,9 @@ fyne-ui-macos-universal-dmg:
 	  '' \
 	  'Install:' \
 	  '  sudo cp mercury /usr/local/bin/' \
-	  '  cp mercury.ini.example ~/.mercury.ini    # then edit for your radio' \
-	  '  mercury -h                               # options' \
+	  '  mkdir -p ~/.config/mercury' \
+	  '  cp mercury.ini.example ~/.config/mercury/mercury.ini   # then edit for your radio' \
+	  '  mercury -h                                              # options' \
 	  '' \
 	  'Universal binary (Intel + Apple Silicon).  If this build is unsigned, the' \
 	  'first run needs:  xattr -d com.apple.quarantine /usr/local/bin/mercury' \
@@ -903,6 +919,9 @@ clean:
 	@# failed run can never be staged as if it were fresh.
 	rm -rf $(FYNE_UI_DIR)/$(MACOS_APP_NAME).app $(FYNE_UI_DIR)/dmg-stage
 	$(MAKE) -C modem clean
+	@# The top-level rule builds these, so the modem sub-make's clean misses
+	@# modem/mfsk/ (and the same paths hold mingw objects after a w64 build).
+	rm -f $(MODEM_TOP_OBJS) $(MODEM_TOP_OBJS:.o=.d)
 	$(MAKE) -C datalink_arq clean
 	$(MAKE) -C datalink_broadcast clean
 	$(MAKE) -C data_interfaces clean

@@ -52,6 +52,11 @@ int mercury_engine_init(const mercury_config *cfg,
 /* ------------------------------------------------------------------ */
 void mercury_engine_shutdown(void);
 
+/* The shutdown step in progress ("tcp interfaces", "audio", ...), or NULL
+ * before shutdown starts.  Read by main()'s SIGALRM watchdog, so a shutdown
+ * that hangs says where; a plain pointer load, safe from a signal handler. */
+const char *mercury_engine_shutdown_step(void);
+
 /* Bit rate and bandwidth of the running modem.  Derived from the modem itself
  * rather than a table, so they describe what is actually on the air.  For the
  * broadcast mode an operator has to match, see mercury_bcast_engine_mode():

@@ -17,6 +17,7 @@
 #include "cfg_utils.h"
 #include "mercury_engine.h"
 #include "mercury_cli.h"
+#include "mercury_bridge.h"
 #include "mercury_version.h"
 #include "ui_communication.h"
 #include "modem.h"
@@ -54,13 +55,19 @@ void mercury_print_version(void)
 int mercury_precheck(int argc, char **argv, const char *default_config)
 {
     mercury_cli_t cli;
-    if (mercury_cli_parse(argc, argv,
-                          (default_config && default_config[0]) ? default_config : "mercury.ini",
-                          &cli) != 0) {
+    int rc = mercury_cli_parse(argc, argv,
+                               (default_config && default_config[0]) ? default_config : "mercury.ini",
+                               &cli);
+    if (rc != 0) {
         /* Go exits without running C's atexit flush, so a piped stdout/stderr
          * would otherwise lose the buffered getopt/usage text — flush now. */
         fflush(stdout);
         fflush(stderr);
+        /* A broken configuration file when about to run: open the window
+         * anyway, so a UI started from a menu says the engine did not start
+         * instead of never appearing. */
+        if (rc == MERCURY_CLI_CONFIG_ERROR && cli.action == MERCURY_CLI_RUN)
+            return 0;
         return 1;   /* parse error already reported → exit */
     }
     int handled = mercury_cli_run_info_action(&cli,
@@ -77,10 +84,11 @@ int mercury_precheck(int argc, char **argv, const char *default_config)
 int mercury_init(int argc, char **argv, const char *default_config, const char *log_path)
 {
     mercury_cli_t cli;
-    if (mercury_cli_parse(argc, argv,
-                          (default_config && default_config[0]) ? default_config : "mercury.ini",
-                          &cli) != 0)
-        return -1;
+    int rc = mercury_cli_parse(argc, argv,
+                               (default_config && default_config[0]) ? default_config : "mercury.ini",
+                               &cli);
+    if (rc != 0)
+        return rc == MERCURY_CLI_CONFIG_ERROR ? MERCURY_INIT_CONFIG_ERROR : -1;
 
     /* The single-binary UI always runs the engine (the list/help actions are
      * daemon-only) and always enables the UI websocket. */

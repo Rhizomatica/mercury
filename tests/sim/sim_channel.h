@@ -3,6 +3,9 @@
  * Copyright (C) 2026 Rhizomatica */
 #ifndef SIM_CHANNEL_H
 #define SIM_CHANNEL_H
+/* Not a modem mode: a 0.64 s Welch-Costas pattern (ACK/BREAK). */
+#define SIM_MODE_PATTERN 101
+
 #include <stdint.h>
 #include <stdbool.h>
 #include <stddef.h>
@@ -27,6 +30,8 @@ void           sim_channel_set_per(sim_channel_t *ch, double per);
  * per cannot reward downgrades.  Cliffs approximate the MPP curves in
  * docs/MODES.md. */
 void           sim_channel_set_snr(sim_channel_t *ch, double snr_db);
+/* The same, with its own SNR each way: dir 0 (station A sending) and dir 1. */
+void           sim_channel_set_snr_asym(sim_channel_t *ch, double snr_dir0_db, double snr_dir1_db);
 
 /* Empirical per-mode erasure model: each entry maps a FreeDV mode to a
  * measured frame-erasure probability from a reference channel run (e.g. a
@@ -47,4 +52,11 @@ bool           sim_channel_schedule(sim_channel_t *ch, uint64_t now_ms,
                                      int dir, int freedv_mode, size_t frame_size,
                                      uint64_t *deliver_at_ms);
 double         sim_channel_next_rand(sim_channel_t *ch);
+/* Whether a receiver could sync on such a frame at all: its SNR is above the
+ * mode's cliff, whether or not this one frame is then erased.  (A decoder
+ * syncs on a frame whose CRC then fails.)  Draws no random number. */
+/* The SNR a modem reports for a frame starting at t0: NAN unless fading. */
+double         sim_channel_frame_snr(const sim_channel_t *ch, uint64_t t0_ms, int dir, int freedv_mode);
+bool           sim_channel_syncable(const sim_channel_t *ch, uint64_t now_ms,
+                                    int dir, int freedv_mode);
 #endif
