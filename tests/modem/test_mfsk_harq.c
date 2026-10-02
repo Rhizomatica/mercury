@@ -75,6 +75,8 @@ int main(void)
         }
     }
 
+    free(info); free(coded); free(out); free(llr); free(acc);
+
     printf("single copy : %3d/%d decoded\n", single_ok, trials);
     printf("3 combined  : %3d/%d decoded\n", comb_ok, trials);
     /* The whole chunked-CALL scheme rests on this: copies that individually
