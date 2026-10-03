@@ -645,6 +645,50 @@ bool arq_protocol_accept_is_carousel(const uint8_t *buf)
     return (frame_header_extension(buf[0]) & ARQ_CONNECT_EXT_CAROUSEL) != 0;
 }
 
+#define CALL_MARK_IDX (ARQ_CONTROL_FRAME_SIZE - 1)   /* the SRC slot's last byte */
+
+/* Bytes the arithmetic code of src takes, or -1. */
+static int src_code_len(const char *src, char *upper, size_t upper_cap)
+{
+    size_t n = 0;
+    for (; src[n] && n < upper_cap - 1; n++)
+        upper[n] = (char)(src[n] >= 'a' && src[n] <= 'z' ? src[n] - ('a' - 'A') : src[n]);
+    upper[n] = 0;
+    uint8_t tmp[4096];
+    init_model();
+    return arithmetic_encode(upper, tmp);
+}
+
+bool arq_protocol_mark_call_carousel(uint8_t *buf, const char *src)
+{
+    char upper[CALLSIGN_MAX_SIZE];
+    int len = src_code_len(src, upper, sizeof(upper));
+    if (len <= 0 || len > ARQ_CONNECT_SRC_MAX_ENCODED - 1)
+        return false;
+    uint8_t was = buf[CALL_MARK_IDX];
+    buf[CALL_MARK_IDX] = ARQ_CALL_CAROUSEL_MARK;
+    uint8_t slot[ARQ_CONNECT_SRC_MAX_ENCODED];
+    memcpy(slot, buf + ARQ_CONNECT_PAYLOAD_IDX + ARQ_CONNECT_DST_CRC_SIZE, sizeof(slot));
+    char out[CALLSIGN_MAX_SIZE] = {0};
+    init_model();
+    if (arithmetic_decode(slot, (int)sizeof(slot), out, (int)sizeof(out)) < 0 || strcmp(out, upper) != 0)
+    {
+        buf[CALL_MARK_IDX] = was;
+        return false;
+    }
+    return true;
+}
+
+bool arq_protocol_call_is_carousel(const uint8_t *buf, const char *src)
+{
+    if (buf[CALL_MARK_IDX] != ARQ_CALL_CAROUSEL_MARK)
+        return false;
+    /* An old caller's code may run into the last byte: then it is the code. */
+    char upper[CALLSIGN_MAX_SIZE];
+    int len = src_code_len(src, upper, sizeof(upper));
+    return len > 0 && len <= ARQ_CONNECT_SRC_MAX_ENCODED - 1;
+}
+
 bool arq_protocol_connect_dst_matches(const uint8_t *buf, bool is_accept, const char *callsign)
 {
     uint16_t frame_crc = (uint16_t)buf[ARQ_CONNECT_PAYLOAD_IDX]

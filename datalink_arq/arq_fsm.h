@@ -149,6 +149,7 @@ typedef struct
     bool     from_control;
     int      car_level;
     bool     car_accept;
+    bool     car_call;                /* RX_CALL: the caller runs the carousel */
 
     /* Local receive SNR at the time the frame was decoded (dB, 0 = unknown).
      * Carried in-band so the FSM can update local_snr_x10 without relying on
@@ -290,6 +291,9 @@ typedef struct
                                         * call always returns to where it was   */
 
     /* --- Connect handshake --- */
+    bool     peer_carousel;            /* the caller's CALL said it runs the
+                                        * carousel: our ACCEPT and the session
+                                        * follow it, else stop-and-wait        */
     bool     accept_fallback;          /* LISTENING was entered because our ACCEPT
                                         * retries ran out: the caller may still
                                         * have heard it, so its first DATA/ACK
