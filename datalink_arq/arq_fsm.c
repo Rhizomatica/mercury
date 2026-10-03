@@ -903,21 +903,29 @@ static void send_call_accept(arq_session_t *sess, bool is_accept)
     int bw_hz = is_accept ? arq_reported_bandwidth_hz() : arq_get_bw();
     if (is_accept)
     {
+        bool car = g_carousel && sess->peer_carousel;
         n = arq_protocol_build_accept(frame, sizeof(frame), sess->session_id,
                                       my_call, sess->remote_call, bw_hz,
-                                      g_carousel ? accept_level(sess) : -1);
+                                      car ? accept_level(sess) : -1);
         /* The ACCEPT is the carousel's first poll: from here the caller's
          * frames carry the session seed, and its first round comes on the rung
-         * the ACCEPT names. */
-        if (g_carousel)
+         * the ACCEPT names.  A caller without the carousel gets a plain
+         * ACCEPT, and the session runs stop-and-wait. */
+        if (car)
         {
             car_set_seed(sess, car_seed(sess, false));
             sess->peer_tx_mode = car_level_mode(sess->car_rx_level);
         }
     }
     else
+    {
         n = arq_protocol_build_call(frame, sizeof(frame), sess->session_id,
                                     my_call, sess->remote_call, bw_hz);
+        if (n > 0 && g_carousel && !arq_protocol_mark_call_carousel(frame, my_call) &&
+            sess->call_sends_done == 0)
+            HLOGW(LOG_COMP, "CALL unmarked (callsign '%s' leaves no room): the session will run stop-and-wait",
+                  my_call);
+    }
     if (n > 0)
     {
         /* A CALL escalates to the MFSK floor once the fast slots are spent; an
@@ -1595,6 +1603,7 @@ static void fsm_listening(arq_session_t *sess, const arq_event_t *ev)
         snprintf(sess->local_call, CALLSIGN_MAX_SIZE, "%s", ev->local_call);
         sess->session_id      = ev->session_id;
         sess->call_rx_mode    = ev->mode;
+        sess->peer_carousel   = ev->car_call;
         sess->car_rx_level    = car_start_level(ev->rx_snr);   /* the ACCEPT names it */
         /* How the caller hears us it reports in its first frame, which comes
          * before we send any control.  (Not "an MFSK CALL means it cannot
@@ -1682,7 +1691,8 @@ static void fsm_listening(arq_session_t *sess, const arq_event_t *ev)
          *
          * Not when our ACCEPT was a carousel one: a stop-and-wait caller drops
          * it, so stop-and-wait frames are never its answer. */
-        if (sess->accept_fallback && !g_carousel && ev->session_id == sess->session_id)
+        if (sess->accept_fallback && !(g_carousel && sess->peer_carousel) &&
+            ev->session_id == sess->session_id)
         {
             sess->accept_fallback = false;
             sess->role        = ARQ_ROLE_CALLEE;
@@ -1895,8 +1905,9 @@ static void fsm_accepting(arq_session_t *sess, const arq_event_t *ev)
     case ARQ_EV_RX_ACK:
         /* Our ACCEPT was a carousel one, which a stop-and-wait caller drops:
          * stop-and-wait frames are not its answer. */
-        if (g_carousel)
+        if (g_carousel && sess->peer_carousel)
             break;
+        sess->ctl_floor_at_stop = false;   /* control on the peer's own mode */
         sess->role        = ARQ_ROLE_CALLEE;
         sess->tx_seq      = 0;
         sess->rx_expected = 0;

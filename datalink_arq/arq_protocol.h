@@ -718,6 +718,21 @@ int arq_protocol_build_accept(uint8_t *buf, size_t buf_len,
 #define ARQ_CONNECT_EXT_CAROUSEL      0x10
 int  arq_protocol_accept_start_level(const uint8_t *buf);
 bool arq_protocol_accept_is_carousel(const uint8_t *buf);
+
+/* A carousel caller says so in its CALL, so that a callee can answer a
+ * station without the carousel (1.9.x, MERCURY_CAROUSEL=0) with a plain
+ * ACCEPT and run that session on stop-and-wait.  Nothing in a CALL is free --
+ * an old callee checks the bandwidth token exactly and the DST CRC on all 16
+ * bits -- except the SRC slot's tail: the arithmetic code ends at its
+ * end-of-string symbol and an old decoder never reads past it, while an old
+ * caller zeroes what it leaves.  So the slot's last byte carries
+ * ARQ_CALL_CAROUSEL_MARK, when the callsign leaves it free and the marked
+ * slot still decodes to the same callsign (the decoder is the same code on
+ * both sides, so that check is the old callee's).  A callsign too long for it
+ * goes unmarked, and that session runs stop-and-wait. */
+#define ARQ_CALL_CAROUSEL_MARK        0xA7
+bool arq_protocol_mark_call_carousel(uint8_t *buf, const char *src);
+bool arq_protocol_call_is_carousel(const uint8_t *buf, const char *src);
 /* Is a CALL (16-bit DST CRC) or an ACCEPT (13-bit) addressed to callsign? */
 bool arq_protocol_connect_dst_matches(const uint8_t *buf, bool is_accept, const char *callsign);
 

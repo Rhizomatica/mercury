@@ -57,7 +57,8 @@ bool sim_translate_frame(const uint8_t *frame, size_t frame_size, float rx_snr,
         if (is_accept) {
             out_ev->car_level  = arq_protocol_accept_start_level(frame);
             out_ev->car_accept = arq_protocol_accept_is_carousel(frame);
-        }
+        } else
+            out_ev->car_call = arq_protocol_call_is_carousel(frame, src);
         /* src = transmitting side's callsign (the remote station for the receiver) */
         snprintf(out_ev->remote_call, CALLSIGN_MAX_SIZE, "%s", src);
         return true;

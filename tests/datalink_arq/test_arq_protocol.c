@@ -431,6 +431,38 @@ void test_accept_carousel_marker(void)
     TEST_ASSERT_TRUE(arq_protocol_connect_dst_matches(plain, false, "PU2UIT"));   /* all 16 bits */
 }
 
+/* The CALL's marker: in the SRC slot's tail, where an old callee's decoder
+ * never reads -- so a marked CALL still parses there to the same callsign --
+ * and never mistaken for a callsign whose code runs into that byte. */
+void test_call_carousel_marker(void)
+{
+    static const char *calls[] = { "PU2UIT", "PU2UIT-6", "DL9ABC-15", "W1AW", "KO0OOO-2", "HB9ABCD-15" };
+    for (unsigned i = 0; i < sizeof(calls) / sizeof(calls[0]); i++)
+    {
+        uint8_t frame[INT_BUFFER_SIZE];
+        TEST_ASSERT_GREATER_THAN_INT(0, arq_protocol_build_call(frame, sizeof(frame), 0x21,
+                                                                calls[i], "PU2UIT-3", 2300));
+        TEST_ASSERT_FALSE(arq_protocol_call_is_carousel(frame, calls[i]));   /* an old caller's */
+        TEST_ASSERT_TRUE(arq_protocol_mark_call_carousel(frame, calls[i]));
+        uint8_t sid = 0; char src[CALLSIGN_MAX_SIZE] = {0}, dst[CALLSIGN_MAX_SIZE] = {0}; int bw = 0;
+        TEST_ASSERT_GREATER_OR_EQUAL_INT(0, arq_protocol_parse_call(frame, sizeof(frame), &sid, src, dst, &bw));
+        TEST_ASSERT_EQUAL_STRING(calls[i], src);                              /* as 1.9.x parses it */
+        TEST_ASSERT_TRUE(arq_protocol_connect_dst_matches(frame, false, "PU2UIT-3"));
+        TEST_ASSERT_TRUE(arq_protocol_call_is_carousel(frame, src));
+    }
+    /* A callsign whose code fills the slot: no room, so no marker -- and its
+     * last code byte, whatever it is, never reads as one. */
+    const char *full = "QZXJW98765432";
+    uint8_t frame[INT_BUFFER_SIZE];
+    if (arq_protocol_build_call(frame, sizeof(frame), 0x21, full, "PU2UIT-3", 2300) > 0)
+    {
+        frame[ARQ_CONTROL_FRAME_SIZE - 1] = ARQ_CALL_CAROUSEL_MARK;
+        char src[CALLSIGN_MAX_SIZE] = {0}, dst[CALLSIGN_MAX_SIZE] = {0}; uint8_t sid; int bw;
+        if (arq_protocol_parse_call(frame, sizeof(frame), &sid, src, dst, &bw) >= 0 && !strcmp(src, full))
+            TEST_ASSERT_FALSE(arq_protocol_call_is_carousel(frame, src));
+    }
+}
+
 /* Realistic callsigns must still round-trip exactly -- the refusal above must
  * not have narrowed what legitimately fits. */
 void test_callsign_roundtrip_realistic(void)
@@ -539,5 +571,6 @@ int main(void)
     RUN_TEST(test_callsign_too_long_is_refused_not_truncated);
     RUN_TEST(test_callsign_roundtrip_realistic);
     RUN_TEST(test_accept_carousel_marker);
+    RUN_TEST(test_call_carousel_marker);
     return UNITY_END();
 }

@@ -856,6 +856,8 @@ bool arq_handle_incoming_connect_frame(uint8_t *data, size_t frame_size, float r
         ev.car_level  = arq_protocol_accept_start_level(data);
         ev.car_accept = arq_protocol_accept_is_carousel(data);
     }
+    else
+        ev.car_call = arq_protocol_call_is_carousel(data, src);
     /* src = transmitting side's callsign */
     snprintf(ev.remote_call, CALLSIGN_MAX_SIZE, "%s", src);
     /* local = the one of our callsigns the caller dialed (primary or secondary) */
