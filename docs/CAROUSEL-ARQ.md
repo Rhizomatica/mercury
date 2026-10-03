@@ -7,20 +7,26 @@ and DISCONNECT are unchanged but for the ACCEPT, which is the carousel's first
 poll.
 
 Stations without the carousel (1.9.x, earlier 2.0 builds, or
-`MERCURY_CAROUSEL=0`) are told apart by the ACCEPT:
+`MERCURY_CAROUSEL=0`) are told apart in both connect frames.  A carousel
+CALL carries `ARQ_CALL_CAROUSEL_MARK` in the last byte of its callsign slot,
+and a carousel ACCEPT sets bit 4 of the framer extension.  Older stations do
+not see the first and drop the second:
 
 | caller | callee | session |
 |---|---|---|
 | carousel | carousel | carousel |
 | carousel | without | stop-and-wait: the callee's plain ACCEPT says so |
-| without | carousel | none: the caller drops the carousel ACCEPT, and its call goes unanswered |
+| without | carousel | stop-and-wait: the unmarked CALL gets a plain ACCEPT |
 
-The last row fails cleanly: neither side reports CONNECTED.  Before the
-marker, every mixed pair "connected" and then moved nothing until the
-application gave up (harness, `MERCURY_TEST_BIN_A`/`_B`, see Tests).
+Before the markers, every mixed pair "connected" and then moved nothing
+until the application gave up (harness, `MERCURY_TEST_BIN_A`/`_B`, see
+Tests).  A callsign whose code fills the whole slot (about 13-14
+characters) leaves no room for the CALL's marker, and its sessions run
+stop-and-wait.  Carousel builds from before the markers (pre-release only)
+do not mix with these.
 
 `MERCURY_CAROUSEL=0` in the environment runs the stop-and-wait plane for every
-session, as for a station without the carousel.
+session, as a station without the carousel does.
 
 ## How it works
 
@@ -101,6 +107,13 @@ which an ACCEPT checks on 13 bits alongside its 7-bit session id.  A carousel
 ACCEPT also sets bit 4 of the framer extension (`ARQ_CONNECT_EXT_CAROUSEL`).
 A station without the carousel reads that as an unknown bandwidth token and
 drops the frame.  A plain ACCEPT keeps its CRC whole.
+
+A carousel CALL sets the last byte of its 10-byte SRC slot to
+`ARQ_CALL_CAROUSEL_MARK` (0xA7).  The arithmetic code ends at its
+end-of-string symbol, and an older decoder never reads past it.  The caller
+marks only when the code leaves that byte free and the marked slot still
+decodes to the same callsign; the callee reads the marker only when the
+decoded callsign's code is shorter than the slot.
 
 Bursts of a round are 100 ms apart (QAM16C2: 200 ms).  With no gap the
 payload decoder misses bursts after the first; the gaps were measured with

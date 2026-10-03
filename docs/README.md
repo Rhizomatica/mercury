@@ -14,6 +14,7 @@ having — they are not updated as the code moves on.
 | Document | What it covers |
 |---|---|
 | [ARQ.md](ARQ.md) | The ARQ data link: state machine, frame formats, timers, mode ladder, and the OTA tuning guide. The main architecture document. |
+| [CAROUSEL-ARQ.md](CAROUSEL-ARQ.md) | The carousel data plane that connected sessions use: erasure-coded rounds driven by the receiver, the MFSK floor, wire formats, and how mixed versions meet. |
 | [TNC.md](TNC.md) | Every TNC command and async status on the control socket. What you need to drive Mercury from your own software. |
 | [MODES.md](MODES.md) | All modulation modes with measured bandwidth, payload, FEC and delivery rates — including the Mercury-specific DATAC15/16/17 and QAM16C2. |
 | [BROADCAST-WIRE-FORMAT.md](BROADCAST-WIRE-FORMAT.md) | The broadcast plane on the wire: frame layout, RaptorQ symbol sizing, and mode agreement. |
@@ -40,6 +41,7 @@ them for reasoning, not for current behaviour.
 
 | Document | The question it answered |
 |---|---|
+| [CAROUSEL-REPORT.md](CAROUSEL-REPORT.md) | Was the carousel with the MFSK floor ready to replace stop-and-wait? On-air and simulator results, what broke on the way, and the deep-fade collisions still open. |
 | [HARQ-FINDINGS.md](HARQ-FINDINGS.md) | Does soft-combining repeated frames actually rescue a link at the fading cliff? (Yes — roughly half the frames, where single-shot delivers none.) |
 | [FADE-CLIFF-DECISION.md](FADE-CLIFF-DECISION.md) | Should the S1 fade-cliff fix be merged? Simulation evidence behind the decision. |
 | [SPEED-REGRESSION-FINDINGS.md](SPEED-REGRESSION-FINDINGS.md) | Why a pre-2.0 build was slower than v1.9.9 on the bench — FEC under fading and gear-shift oscillation, not the guard intervals everyone suspected. |
