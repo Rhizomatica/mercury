@@ -9,6 +9,12 @@ reading: **reference** describes how Mercury behaves today and is kept current;
 investigation, kept because the reasoning and the negative results are worth
 having — they are not updated as the code moves on.
 
+## Releases
+
+| Document | What it covers |
+|---|---|
+| [RELEASE-1.9.18.md](RELEASE-1.9.18.md) | What changed since 1.9.17 and what to check before upgrading, with 1.9.17 and 1.9.18 measured side by side on real modems and on air. |
+
 ## Reference — how Mercury works
 
 | Document | What it covers |
