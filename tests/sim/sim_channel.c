@@ -44,7 +44,13 @@ static double mode_cliff_db(int freedv_mode)
     case FREEDV_MODE_DATAC13: return -4.0;
     case FREEDV_MODE_DATAC14: return -2.0;
     case MERCURY_MODE_MFSK:   return -13.0; /* the fringe floor */
-    case SIM_MODE_PATTERN:    return -17.0; /* ~10 dB below DATAC16 (mfsk-margin) */
+    case SIM_MODE_PATTERN: {  /* ~10 dB below DATAC16 (mfsk-margin) */
+        /* SIM_PATTERN_CLIFF: utils/pattern_probe measures the real detector
+         * at 50 % near -14.5 dB, -14 with a +25 Hz offset. */
+        static double cliff = 1.0;
+        if (cliff > 0.0) cliff = getenv("SIM_PATTERN_CLIFF") ? atof(getenv("SIM_PATTERN_CLIFF")) : -17.0;
+        return cliff;
+    }
     default:                  return -7.0;  /* DATAC15 / DATAC16 floor modes */
     }
 }

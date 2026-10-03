@@ -88,6 +88,10 @@ typedef struct {
      * frame only from its preamble, so only one it was bound to by then. */
     struct { uint64_t start; int mode; bool sync; } kd[CAR_KEYDOWN_MAX];
     int      kd_n;
+    /* CAR_NAV: the keydown's header pattern, heard by the peer or not, and
+     * when the peer's detector reports it. */
+    bool     nav_ok;
+    uint64_t nav_from;
 } station_t;
 
 static station_t S[2];
@@ -98,6 +102,12 @@ static uint64_t now_ms;
 static bool trace;
 static double snr_now = 12.0;          /* the SNR stamped on delivered frames */
 static bool cs_decodable;              /* CAR_CS_DECODABLE: carrier sense needs a decodable frame */
+static int nav_mode;                   /* CAR_NAV: 0 off, 1 modelled header, 2 always heard */
+/* The detector reports a pattern this long after it ends (0.23-0.24 s on air,
+ * Pi 4); a poll, by contrast, is decoded as it ends. */
+#ifndef SIM_PATTERN_DETECT_MS
+#define SIM_PATTERN_DETECT_MS 240
+#endif
 /* CAR_SNR_BIAS: the estimate as the bench read it at 10 %: DATAC15, DATAC4 and
  * DATAC16 frames about 3.5 dB below DATAC3 and DATAC1 on the same link. */
 static bool snr_biased;
@@ -122,12 +132,23 @@ static double snr_bias(int mode)
 }
 static double step_from, step_to, step_at_s = -1.0;   /* a step:A:B:T channel */
 
+static uint32_t nav_air;               /* CAR_NAV_AIR: the header's lead, header + gap */
 static void io_keydown(void *ctx, const car_frame_t *fr, int n)
 {
     station_t *s = ctx, *peer = &S[s->id ^ 1];
-    uint64_t t = now_ms + HEAD_MS;
+    bool nav = nav_mode && car_wants_nav(&s->car);
+    uint64_t t = now_ms + HEAD_MS + (nav ? nav_air : 0);
     s->tx_start = now_ms;
     s->kd_n = 0;
+    s->nav_ok = false;
+    if (nav) {
+        uint64_t th = now_ms + HEAD_MS, d;
+        uint64_t hair = sim_channel_airtime_ms(SIM_MODE_PATTERN, 0);
+        bool peer_keyed_then = peer->tx_end > th && peer->tx_start < th + hair;
+        s->nav_ok = !peer_keyed_then &&
+                    (nav_mode == 2 || sim_channel_schedule(ch, th, s->id, SIM_MODE_PATTERN, 0, &d));
+        s->nav_from = th + hair + SIM_PATTERN_DETECT_MS;
+    }
     if (trace) printf("%9.1f %c keys:", now_ms / 1000.0, 'A' + s->id);
     for (int i = 0; i < n; i++) {
         /* The modem refuses a frame that does not fill its mode (modem.c,
@@ -175,11 +196,6 @@ static void io_trace(void *ctx, const char *line)
     if (trace) printf("%9.1f %c   %s\n", now_ms / 1000.0, 'A' + ((station_t *)ctx)->id, line);
 }
 
-/* The detector reports a pattern this long after it ends (0.23-0.24 s on air,
- * Pi 4); a poll, by contrast, is decoded as it ends. */
-#ifndef SIM_PATTERN_DETECT_MS
-#define SIM_PATTERN_DETECT_MS 240
-#endif
 /* A pattern: 0.64 s on the air, detected ~10 dB below DATAC16. */
 static void io_pattern(void *ctx, int kind)
 {
@@ -188,6 +204,7 @@ static void io_pattern(void *ctx, int kind)
     uint64_t air = sim_channel_airtime_ms(SIM_MODE_PATTERN, 0);
     s->tx_start = now_ms;
     s->kd_n = 0;
+    s->nav_ok = false;
     if (trace) printf("%9.1f %c keys: pattern %s\n", now_ms / 1000.0, 'A' + s->id, kind ? "BREAK" : "ACK");
     if (sim_channel_schedule(ch, t, s->id, SIM_MODE_PATTERN, 0, &d)) {
         s->kd[0].start = t; s->kd[0].mode = SIM_MODE_PATTERN; s->kd[0].sync = true;
@@ -212,6 +229,8 @@ static bool io_peer_keyed(void *ctx)
      * the payload decoder syncs on a frame only if bound to its mode by the
      * frame's preamble, and a pattern only when that is MFSK: rebound to the
      * floor mid-frame, on air, it missed that frame (car23 at 3 %). */
+    if (nav_mode && p->nav_ok && p->tx_end && now_ms >= p->nav_from && now_ms < p->tx_end - TAIL_MS + CS_ACQ_MS)
+        return true;
     uint64_t from = p->tx_start;
     if (cs_decodable) {
         from = UINT64_MAX;
@@ -258,6 +277,10 @@ void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limi
     trace = getenv("CAR_TRACE") != NULL;
     asym = false;
     cs_decodable = getenv("CAR_CS_DECODABLE") != NULL;
+    nav_mode = getenv("CAR_NAV") ? (strcmp(getenv("CAR_NAV"), "perfect") ? 1 : 2) : 0;
+    nav_air = !nav_mode ? 0 : getenv("CAR_NAV_AIR") ? (uint32_t)atoi(getenv("CAR_NAV_AIR")) : 700;
+    car_set_nav_ms(nav_air);
+    car_set_nav_below_db(getenv("CAR_NAV_BELOW") ? (float)atof(getenv("CAR_NAV_BELOW")) : 99.0f);
     snr_biased = getenv("CAR_SNR_BIAS") != NULL;
     nev = 0;
     collisions = 0;
@@ -321,6 +344,12 @@ void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limi
     S[1].tx_len = bidir ? CAR_SIM_BYTES : 0;
 
     now_ms = 0;
+    /* The shared slot grid: the callee's origin is off by its ACCEPT's decode
+     * latency at the caller. */
+    car_set_slot_ms(getenv("CAR_SLOT") ? (uint32_t)atoi(getenv("CAR_SLOT")) : 0);
+    car_set_repoll_extra_ms(getenv("CAR_REPOLL_EXTRA") ? (uint32_t)atoi(getenv("CAR_REPOLL_EXTRA")) : 0);
+    car_set_slots(&S[0].car, 0, 0);
+    car_set_slots(&S[1].car, 200, 1);
     car_start_receiver(&S[1].car, 0);
     car_start_sender(&S[0].car, 0);
 

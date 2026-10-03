@@ -64,7 +64,24 @@
 #define TURN_CAP_MS      45000
 #endif
 #define MAX_KEYDOWN_MS   30000    /* airtime cap per round                  */
-#define HEAD_MS          110      /* tx delay + head silence                */
+/* The keydown's lead before its first frame: tx delay and head silence, plus
+ * the NAV header when keydowns carry one (car_set_nav_ms). */
+static uint32_t g_nav_ms;
+void car_set_nav_ms(uint32_t ms) { g_nav_ms = ms; }
+/* Does my next keydown need a NAV header?  Only where the peer may not sense
+ * it otherwise: below this SNR (as I hear it -- the path is reciprocal). */
+static float g_nav_below_db = 99.0f;
+void car_set_nav_below_db(float db) { g_nav_below_db = db; }
+bool car_wants_nav(const car_t *c)
+{
+    /* Or where frames are being lost at a good SNR (NVIS: ISI, not noise):
+     * a decoder that loses frames loses sync on them too. */
+    return g_nav_ms && (!c->snr_valid || c->snr_ema < g_nav_below_db || c->loss_est >= 0.3);
+}
+static uint32_t nav_lead(const car_t *c) { return car_wants_nav(c) ? g_nav_ms : 0; }
+/* Both ends decide from the same reciprocal evidence, so a keydown's lead is
+ * the same whichever end predicts it. */
+#define HEAD_MS          (110 + nav_lead(c))
 #define TAIL_MS          200
 #define GUARD_MS         ARQ_CHANNEL_GUARD_MS_DEFAULT
 #define ISS_GUARD_MS     ARQ_ISS_POST_ACK_GUARD_MS_DEFAULT
@@ -369,6 +386,24 @@ static bool peer_keyed(car_t *c, uint64_t now)
 
 /* Listen before talk: true (and the timer re-armed) when we must wait for the
  * peer to be off the air for a guard. */
+static uint32_t g_slot_ms;
+static uint32_t g_repoll_extra_ms;
+void car_set_repoll_extra_ms(uint32_t ms) { g_repoll_extra_ms = ms; }
+void car_set_slot_ms(uint32_t ms) { g_slot_ms = ms; }
+void car_set_slots(car_t *c, uint64_t epoch, int parity) { c->slot_epoch = epoch; c->slot_parity = parity & 1; }
+
+/* A blind keydown waits for my next slot (see car_set_slots). */
+static bool defer_to_slot(car_t *c, int t, uint64_t now)
+{
+    if (!g_slot_ms || now < c->slot_epoch) return false;
+    uint64_t k = (now - c->slot_epoch + g_slot_ms - 1) / g_slot_ms;   /* next boundary */
+    if ((int)(k & 1) != c->slot_parity) k++;
+    uint64_t b = c->slot_epoch + k * g_slot_ms;
+    if (b <= now + 20) return false;
+    arm(c, t, b);
+    return true;
+}
+
 static bool defer_if_busy(car_t *c, int t, uint64_t now)
 {
     if (c->tx_busy || peer_keyed(c, now)) { arm(c, t, now + CARRIER_CHECK_MS); return true; }
@@ -1211,6 +1246,20 @@ static void on_poll_timer(car_t *c, uint64_t now)
     if (c->sending || c->idle) return;
     if ((c->floor_fallback || c->floor_hold) && peer_keyed(c, now)) c->round_heard = true;
     if (defer_if_busy(c, CAR_T_POLL, now)) return;
+    if (!c->round_seen && !c->status_seen && !c->round_heard && defer_to_slot(c, CAR_T_POLL, now)) return;
+    /* After the peer's handover, its repeat has the first blind keydown: my
+     * poll answered by nothing may be a poll it missed, and its repeat comes
+     * when its own wait for my poll runs out -- about when this window does,
+     * both being sized from the same exchange.  Keying then, the two met
+     * (sim, fade:-3 both ways, after NAV).  Waiting past it, its repeat is
+     * heard first, and answered. */
+    if (g_repoll_extra_ms && c->polled_since_handover && !c->round_seen && !c->status_seen &&
+        !c->round_heard && !c->repoll_held) {
+        c->repoll_held = true;
+        arm(c, CAR_T_POLL, now + g_repoll_extra_ms);
+        return;
+    }
+    c->repoll_held = false;
     if (clear_of_peer_nudge(c, now)) return;
     /* My poll off a floor stream brought nothing -- no frame, no status.  If
      * it was lost, the sender carries on at the floor a floor wait after its
@@ -1764,6 +1813,7 @@ void car_on_time(car_t *c, uint64_t now)
              * gone quiet: nudge it with a round. */
             if (!c->sending) break;
             if (defer_if_busy(c, CAR_T_WAIT, now)) break;
+            if (defer_to_slot(c, CAR_T_WAIT, now)) break;
             if (c->handover_unconfirmed) { send_handover(c); break; }
             /* No answer, and the peer, with data of its own, is due to take
              * the turn: the likeliest answer is its handover, missed in a fade

@@ -175,6 +175,9 @@ typedef struct {
     bool     peer_has_data;         /* the peer's last poll said it has data for me */
     uint64_t send_start_ms;         /* when this sending turn of mine began */
     bool     floor_yielded;         /* silence near the peer's turn: I stopped for its handover */
+    uint64_t slot_epoch;            /* the session's shared time origin (car_set_slots) */
+    int      slot_parity;           /* blind keydowns start on slots of this parity */
+    bool     repoll_held;           /* this empty window already waited for the peer's repeat */
     int      floor_pats_heard;      /* patterns in a row since the peer's last poll */
     int      probe_lv, probe_n;     /* what that poll asked for */
     uint64_t probe_after_ms;        /* the stream's last frame I heard before it */
@@ -217,6 +220,16 @@ void     car_on_time(car_t *c, uint64_t now);
 int  car_start_level(float snr_db);
 int  car_level_mode(int level);
 bool car_is_idle(const car_t *c);
+/* Every keydown opens with a NAV header this long (0: none). */
+void car_set_nav_ms(uint32_t ms);
+void car_set_nav_below_db(float db);
+bool car_wants_nav(const car_t *c);
+/* Blind keydowns -- ones no frame of the peer's just asked for -- start only on
+ * slot boundaries of the session's grid, alternate slots per end, so two of
+ * them never start closer than a slot (car_set_slot_ms: the slot, 0 = off). */
+void car_set_slot_ms(uint32_t ms);
+void car_set_repoll_extra_ms(uint32_t ms);
+void car_set_slots(car_t *c, uint64_t epoch, int parity);
 
 /* How long delivering what is left may take on the rung the session is on:
  * a few exchanges -- my round, the peer's control answer -- there.  Seconds
