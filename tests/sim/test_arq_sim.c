@@ -765,7 +765,10 @@ void test_sim_fuzz_fading(void)
  * Unity main
  * ====================================================================== */
 
-void setUp(void)    { /* each test creates its own sim_t */ }
+/* These cover the stop-and-wait data plane, kept selectable for A/B until
+ * the carousel has been validated on air; test_carousel_sim covers the
+ * carousel through the same FSM. */
+void setUp(void)    { arq_fsm_set_carousel(false); /* each test creates its own sim_t */ }
 void tearDown(void) { /* each test destroys its own sim_t */ }
 
 int main(void)

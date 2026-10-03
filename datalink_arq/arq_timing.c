@@ -107,6 +107,21 @@ void arq_timing_record_data_rx(arq_timing_ctx_t *ctx, int seq,
           (unsigned long long)ctx->rx_bytes, turnaround);
 }
 
+void arq_timing_record_car_tx(arq_timing_ctx_t *ctx, int bytes)
+{
+    if (bytes <= 0) return;
+    ctx->tx_bytes += (uint64_t)bytes;
+    HLOGT(LOG_COMP, "car_tx bytes=%d tx_total=%llu", bytes, (unsigned long long)ctx->tx_bytes);
+}
+
+void arq_timing_record_car_rx(arq_timing_ctx_t *ctx, int bytes)
+{
+    if (bytes <= 0) return;
+    ctx->data_rx_ms = time_now_ms();
+    ctx->rx_bytes  += (uint64_t)bytes;
+    HLOGT(LOG_COMP, "car_rx bytes=%d rx_total=%llu", bytes, (unsigned long long)ctx->rx_bytes);
+}
+
 void arq_timing_record_ack_tx(arq_timing_ctx_t *ctx, int seq)
 {
     ctx->ack_tx_start_ms = time_now_ms();

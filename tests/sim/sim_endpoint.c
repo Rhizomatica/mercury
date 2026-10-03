@@ -2,6 +2,7 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  * Copyright (C) 2026 Rhizomatica */
 #include "sim_endpoint.h"
+#include "sim_clock.h"
 #include "arq.h"    /* arq_conn, CALLSIGN_MAX_SIZE, ARQ_BANDWIDTH_FULL_HZ */
 #include <stdlib.h>
 #include <string.h>
@@ -24,6 +25,14 @@ struct sim_endpoint {
      * turn, carrying our first data burst). */
     sim_outframe_t outbox[2];
     int            outbox_n;
+
+    /* The carousel data plane's keydown (one at a time: it keys again only
+     * after TX_COMPLETE), and the seed its decoders accept. */
+    arq_keydown_t  kd;
+    bool           kd_present;
+    uint16_t       crc_seed;
+
+    uint64_t       last_rx_ms, max_gap_ms;   /* application liveness */
 };
 
 /* v1 context: set before each arq_fsm_dispatch. Also updates arq_conn.my_call_sign
@@ -54,7 +63,12 @@ sim_endpoint_t *sim_endpoint_create(const char *my_call, const char *peer_call)
     return ep;
 }
 
-void sim_endpoint_destroy(sim_endpoint_t *ep) { free(ep); }
+void sim_endpoint_destroy(sim_endpoint_t *ep)
+{
+    if (!ep) return;
+    arq_fsm_release(&ep->sess);
+    free(ep);
+}
 
 void sim_endpoint_queue_tx(sim_endpoint_t *ep, const uint8_t *data, size_t len)
 {
@@ -80,7 +94,35 @@ bool sim_endpoint_take_outframe(sim_endpoint_t *ep, sim_outframe_t *out)
     return true;
 }
 
-/* ---- the nine shared FSM callbacks: all operate on s_active ---- */
+bool sim_endpoint_take_keydown(sim_endpoint_t *ep, arq_keydown_t *out)
+{
+    if (!ep->kd_present) return false;
+    *out = ep->kd;
+    ep->kd_present = false;
+    return true;
+}
+
+uint16_t sim_endpoint_crc_seed(sim_endpoint_t *ep) { return ep->crc_seed; }
+
+void sim_endpoint_gap_start(sim_endpoint_t *ep, uint64_t since) { ep->last_rx_ms = since; ep->max_gap_ms = 0; }
+
+uint64_t sim_endpoint_max_gap(sim_endpoint_t *ep, uint64_t now)
+{
+    uint64_t tail = ep->last_rx_ms && now > ep->last_rx_ms ? now - ep->last_rx_ms : 0;
+    return tail > ep->max_gap_ms ? tail : ep->max_gap_ms;
+}
+
+static void cb_send_keydown(const arq_keydown_t *kd)
+{
+    sim_endpoint_t *ep = s_active;
+    assert(!ep->kd_present && "a carousel keydown before the last one went out");
+    ep->kd = *kd;
+    ep->kd_present = true;
+}
+
+static void cb_set_crc_seed(uint16_t seed) { s_active->crc_seed = seed; }
+
+/* ---- the shared FSM callbacks: all operate on s_active ---- */
 
 static void cb_send_tx_frame(int packet_type, int mode, size_t frame_size,
                               const uint8_t *frame, int burst_remaining)
@@ -113,6 +155,10 @@ static void cb_notify_disconnected(bool to_no_client)       { (void)to_no_client
 static void cb_deliver_rx_data(const uint8_t *data, size_t len)
 {
     sim_endpoint_t *ep = s_active;
+    uint64_t now = sim_clock_now();
+    if (ep->last_rx_ms && now - ep->last_rx_ms > ep->max_gap_ms)
+        ep->max_gap_ms = now - ep->last_rx_ms;
+    ep->last_rx_ms = now;
     if (ep->rx_len + len > SIM_RX_CAP) len = SIM_RX_CAP - ep->rx_len;
     memcpy(ep->rx + ep->rx_len, data, len);
     ep->rx_len += len;
@@ -148,6 +194,8 @@ const arq_fsm_callbacks_t *sim_endpoint_callbacks(void)
         .tx_backlog           = cb_tx_backlog,
         .tx_read              = cb_tx_read,
         .send_buffer_status   = cb_send_buffer_status,
+        .send_keydown         = cb_send_keydown,
+        .set_crc_seed         = cb_set_crc_seed,
     };
     return &cbs;
 }

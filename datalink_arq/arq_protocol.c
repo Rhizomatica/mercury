@@ -37,6 +37,7 @@ _Atomic int arq_startup_max_s               = ARQ_STARTUP_MAX_S_DEFAULT;
 
 /* Include FreeDV mode constants */
 #include "../modem/freedv/freedv_api.h"
+#include "../modem/modem_mfsk.h"   /* MERCURY_MODE_MFSK */
 
 /* Framer layer (write_frame_header, PACKET_TYPE_* constants) */
 #include "../modem/framer.h"
@@ -96,6 +97,11 @@ const arq_mode_timing_t arq_mode_table[] = {
     {  FREEDV_MODE_DATAC1,    4.81f,     1.0f,      12.0f,       13.0f,          510,   1 },
     {  FREEDV_MODE_DATAC17,   7.40f,     1.0f,      14.0f,       15.0f,          1180,   1 },
     {  FREEDV_MODE_QAM16C2,   3.70f,     1.0f,      11.0f,       12.0f,          1213,   1 },
+    /* The MFSK fringe rung: non-coherent 32-MFSK, a ~13.5 s burst of 98
+     * payload bytes, about 10 dB below DATAC15.  Its row also sets the
+     * longest burst, which sizes the modem's RX backlog: shorter, and the
+     * backlog cap chopped MFSK bursts in half (mfsk-margin, 7feaadb). */
+    {  MERCURY_MODE_MFSK,     13.50f,    1.0f,      17.0f,       18.0f,          98,   1 },
 };
 
 const int arq_mode_table_count =
@@ -142,6 +148,18 @@ float arq_protocol_call_interval_s(void)
 
     const arq_mode_timing_t *tm = arq_protocol_mode_timing(ARQ_CONTROL_MODE);
     return tm ? tm->retry_interval_s : 8.0f;
+}
+
+float arq_protocol_call_interval_for_mode_s(int mode)
+{
+    float override = atomic_load(&arq_callint_override_s);
+    if (override > 0.0f)
+        return override;
+    if (mode == MERCURY_MODE_MFSK) {
+        const arq_mode_timing_t *tm = arq_protocol_mode_timing(mode);
+        return (tm ? tm->frame_duration_s : 13.5f) + 10.5f;
+    }
+    return arq_protocol_call_interval_s();
 }
 
 int arq_protocol_retry_rank(const char *local_call, const char *remote_call)
@@ -605,9 +623,34 @@ int arq_protocol_build_call(uint8_t *buf, size_t buf_len,
 int arq_protocol_build_accept(uint8_t *buf, size_t buf_len,
                                uint8_t session_id,
                                const char *src, const char *dst,
-                               int bw_hz)
+                               int bw_hz, int start_level)
 {
-    return build_call_accept(buf, buf_len, true, session_id, src, dst, bw_hz);
+    int n = build_call_accept(buf, buf_len, true, session_id, src, dst, bw_hz);
+    if (n > 0 && start_level >= 0)
+    {
+        buf[ARQ_CONNECT_PAYLOAD_IDX + 1] =
+            (uint8_t)((buf[ARQ_CONNECT_PAYLOAD_IDX + 1] & 0x1F) | ((start_level & 7) << 5));
+        buf[0] |= ARQ_CONNECT_EXT_CAROUSEL;
+    }
+    return n;
+}
+
+int arq_protocol_accept_start_level(const uint8_t *buf)
+{
+    return (buf[ARQ_CONNECT_PAYLOAD_IDX + 1] >> 5) & 7;
+}
+
+bool arq_protocol_accept_is_carousel(const uint8_t *buf)
+{
+    return (frame_header_extension(buf[0]) & ARQ_CONNECT_EXT_CAROUSEL) != 0;
+}
+
+bool arq_protocol_connect_dst_matches(const uint8_t *buf, bool is_accept, const char *callsign)
+{
+    uint16_t frame_crc = (uint16_t)buf[ARQ_CONNECT_PAYLOAD_IDX]
+                       | ((uint16_t)buf[ARQ_CONNECT_PAYLOAD_IDX + 1] << 8);
+    uint16_t mask = is_accept ? 0x1FFF : 0xFFFF;
+    return (frame_crc & mask) == (arq_protocol_callsign_crc16(callsign) & mask);
 }
 
 static int parse_call_accept(const uint8_t *buf, size_t buf_len,
@@ -619,7 +662,8 @@ static int parse_call_accept(const uint8_t *buf, size_t buf_len,
         !session_id_out || !src_out || !dst_out || !bw_hz_out)
         return -1;
 
-    *bw_hz_out = arq_protocol_bw_hz_from_token(frame_header_extension(buf[0]));
+    *bw_hz_out = arq_protocol_bw_hz_from_token(frame_header_extension(buf[0]) &
+                                               (uint8_t)~ARQ_CONNECT_EXT_CAROUSEL);
     if (*bw_hz_out == 0)
         return -1;
 

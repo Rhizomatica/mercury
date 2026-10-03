@@ -13,6 +13,7 @@
 #include <string.h>
 #include <time.h>
 #include <errno.h>
+#include <stdlib.h>
 
 #include "../modem/freedv/freedv_api.h"
 
@@ -47,6 +48,15 @@ int arq_modem_queue_init(size_t capacity)
 void arq_modem_queue_shutdown(void)
 {
     pthread_mutex_lock(&g_qmtx);
+    for (size_t i = 0; i < g_count; i++)
+    {
+        arq_action_t *a = &g_queue[(g_head + i) % g_cap];
+        if (a->type == ARQ_ACTION_TX_KEYDOWN)
+        {
+            free(a->keydown);
+            a->keydown = NULL;
+        }
+    }
     g_shutdown = true;
     pthread_cond_broadcast(&g_qcond);
     pthread_mutex_unlock(&g_qmtx);
@@ -154,6 +164,20 @@ void arq_modem_set_channel_busy_fn(bool (*fn)(void))
 bool arq_modem_channel_busy(void)
 {
     return g_channel_busy_fn ? g_channel_busy_fn() : false;
+}
+
+/* Session CRC seed, applied by the modem to its decoders (see arq_modem.h). */
+static void (*g_crc_seed_fn)(uint16_t seed) = NULL;
+
+void arq_modem_set_crc_seed_fn(void (*fn)(uint16_t seed))
+{
+    g_crc_seed_fn = fn;
+}
+
+void arq_modem_crc_seed(uint16_t seed)
+{
+    if (g_crc_seed_fn)
+        g_crc_seed_fn(seed);
 }
 
 void arq_modem_ptt_on(int mode, size_t frame_size)

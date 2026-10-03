@@ -1348,6 +1348,25 @@ void freedv_set_harq(struct freedv *f, int enable) {
   if (!enable) { f->harq_valid = 0; f->harq_ncopies = 0; }
 }
 void freedv_harq_reset(struct freedv *f) { f->harq_valid = 0; f->harq_ncopies = 0; }
+void freedv_set_crc_seed(struct freedv *f, uint16_t seed, int accept_plain) {
+  f->crc_seed = seed;
+  f->crc_accept_plain = accept_plain ? 1 : 0;
+}
+int freedv_get_rx_crc_seeded(struct freedv *f) { return f->rx_crc_seeded; }
+
+/* Which CRC a frame of unpacked bits carries under f's seed: 1 plain, 2
+ * seeded, 0 neither (or a class f does not accept). */
+int freedv_crc16_class(struct freedv *f, unsigned char unpacked_bits[], int nbits) {
+  assert((nbits % 8) == 0);
+  int nbytes = nbits / 8;
+  uint8_t packed_bytes[nbytes];
+  freedv_pack(packed_bytes, unpacked_bits, nbits);
+  uint16_t tx_crc16 = (packed_bytes[nbytes - 2] << 8) | packed_bytes[nbytes - 1];
+  uint16_t rx_crc16 = freedv_crc16_unpacked(unpacked_bits, nbits - 16);
+  if (f->crc_seed && (uint16_t)(tx_crc16 ^ f->crc_seed) == rx_crc16) return 2;
+  if ((!f->crc_seed || f->crc_accept_plain) && tx_crc16 == rx_crc16) return 1;
+  return 0;
+}
 void freedv_set_test_frames_diversity(struct freedv *f, int val) {
   f->test_frames_diversity = val;
 }

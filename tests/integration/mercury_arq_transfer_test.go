@@ -23,6 +23,19 @@ import (
 // MERCURY_CH_NO can be set to a noise density in dB (e.g. "-8" for an SNR
 // of roughly -6 dB in 3 kHz) to exercise the link under channel noise;
 // the default -100 is effectively a clean channel.
+// The callee hangs up to a caller that hears it only at the floor (return
+// path below DATAC16): its DISCONNECT has to go on MFSK, where the caller
+// listens, or the caller polls a closed session.  (The caller hanging up to a
+// floor-only callee -- MERCURY_TEST_DISCONNECT_BY=A, NO_FWD=0, NO_REV=-24.82
+// -- takes ~5 min at the floor, so it is left to be run by hand.)
+func TestMercuryARQDisconnectReachesFloorPeer(t *testing.T) {
+	t.Setenv("MERCURY_TEST_DISCONNECT_BY", "B")
+	t.Setenv("MERCURY_CH_NO_FWD", "-24.82")
+	t.Setenv("MERCURY_CH_NO_REV", "0")
+	t.Setenv("MERCURY_TEST_PAYLOAD_B", "1024")
+	TestMercuryARQTransfer(t)
+}
+
 func TestMercuryARQTransfer(t *testing.T) {
 	repoRoot := mustRepoRoot(t)
 	bin := locateOrBuildMercury(t, repoRoot)
@@ -132,7 +145,18 @@ func TestMercuryARQTransfer(t *testing.T) {
 			"-m", "1",
 			"-C", filepath.Join(t.TempDir(), "missing-mercury.ini"),
 		)
-		cmd := exec.CommandContext(ctx, bin, args...)
+		// MERCURY_TEST_VERBOSE=1: -v on both stations, for diagnosis (it
+		// perturbs timing, see -L above).
+		if os.Getenv("MERCURY_TEST_VERBOSE") != "" {
+			args = append(args, "-v")
+		}
+		// MERCURY_TEST_BIN_A / _B: run that station on another build (a
+		// release, trunk), to see how mixed versions meet on the air.
+		stationBin := bin
+		if v := os.Getenv("MERCURY_TEST_BIN_" + name); v != "" {
+			stationBin = v
+		}
+		cmd := exec.CommandContext(ctx, stationBin, args...)
 		cmd.Dir = repoRoot
 		cmd.Stdout = stdout
 		cmd.Stderr = stderr
@@ -341,6 +365,56 @@ func TestMercuryARQTransfer(t *testing.T) {
 				failWithLogs("instance %s log has no %s activity", name, mode)
 			}
 		}
+	}
+	// MERCURY_TEST_DISCONNECT_BY=A|B: that side hangs up after the transfer,
+	// and the other must hear it (DISCONNECTED on its control port).  Over an
+	// asymmetric link (MERCURY_CH_NO_FWD/REV) a DISCONNECT the peer cannot
+	// decode leaves it polling a closed session: on air a gateway at 2 %
+	// sent its DISCONNECTs on DATAC16 to an estacao2 that heard it only on
+	// MFSK, and estacao2 polled until its uucico was killed.
+	if by := os.Getenv("MERCURY_TEST_DISCONNECT_BY"); by == "A" || by == "B" {
+		hang, hangRW, other, otherRW, name := connA, rwA, connB, rwB, "B"
+		if by == "B" {
+			hang, hangRW, other, otherRW, name = connB, rwB, connA, rwA, "A"
+		}
+		// Not sendControlCommand: the control port is busy with notifications
+		// (BUFFER, PTT, ...) by now, and the first line need not be the reply.
+		if err := hang.SetDeadline(time.Now().Add(15 * time.Second)); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := hangRW.WriteString("DISCONNECT\r"); err != nil {
+			t.Fatalf("write DISCONNECT: %v", err)
+		}
+		if err := hangRW.Flush(); err != nil {
+			t.Fatalf("flush DISCONNECT: %v", err)
+		}
+		for {
+			line, err := hangRW.ReadString('\r')
+			if err != nil {
+				failWithLogs("no OK for DISCONNECT: %v", err)
+			}
+			if line = strings.TrimSpace(line); strings.HasPrefix(line, "OK") {
+				break
+			}
+		}
+		_ = hang.SetDeadline(time.Time{})
+		t0 := time.Now()
+		deadline := t0.Add(4 * time.Minute)
+		if err := other.SetReadDeadline(deadline); err != nil {
+			t.Fatal(err)
+		}
+		heard := false
+		for time.Now().Before(deadline) && !heard {
+			line, err := otherRW.ReadString('\r')
+			if err != nil {
+				break
+			}
+			heard = strings.HasPrefix(strings.TrimSpace(line), "DISCONNECTED")
+		}
+		if !heard {
+			failWithLogs("%s never heard %s's DISCONNECT", name, by)
+		}
+		t.Logf("%s heard %s's DISCONNECT after %.1f s", name, by, time.Since(t0).Seconds())
 	}
 	t.Logf("ARQ transfer complete over ch (No=%.1f dB): %d bytes delivered", params.No_dBHz, len(payload))
 }

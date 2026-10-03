@@ -115,10 +115,15 @@ static int run_rx(struct freedv *rx, const short *a, int n, int resync_at, int f
     short chunk[16384];
 
     freedv_set_sync(rx, FREEDV_SYNC_UNSYNC);
+    int idle = 0;
     while (pos < n)
     {
+        /* nin == 0: the demod rewinds after a postamble and wants another call
+         * with no new samples (as modem.c does) -- not the end of the stream. */
         int nin = freedv_nin(rx);
-        if (nin <= 0 || nin > (int)(sizeof(chunk) / sizeof(chunk[0])) || pos + nin > n) break;
+        if (nin < 0 || nin > (int)(sizeof(chunk) / sizeof(chunk[0])) || pos + nin > n) break;
+        if (nin == 0 && ++idle > 64) break;
+        if (nin > 0) idle = 0;
         memcpy(chunk, a + pos, sizeof(short) * (size_t)nin);
         pos += nin;
         int nb = (int)freedv_rawdatarx(rx, out, chunk);

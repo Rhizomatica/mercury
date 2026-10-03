@@ -34,6 +34,8 @@ int             sim_frames_in_flight(sim_t *s);
  * it on for anything about turn coordination, where a collision IS the bug. */
 void            sim_set_half_duplex(sim_t *s, bool on);
 int             sim_collisions(sim_t *s);
+/* The timing context both FSMs share (session byte/frame counters). */
+const void     *sim_timing(sim_t *s);
 
 /* Carrier sense: a station hears the peer (decoder sync, what listen-before-
  * talk reads) from acq_ms after the peer keys until it unkeys, unless it is
@@ -47,6 +49,9 @@ void            sim_set_per(sim_t *s, double per);
 void            sim_set_rx_snr(sim_t *s, float snr_db);
 /* Coherent fade: cliff-model channel SNR + delivered-frame SNR together. */
 void            sim_set_snr(sim_t *s, double snr_db);
+
+/* Rayleigh fading around mean_snr_db at doppler_hz (see sim_channel_set_fading). */
+void            sim_set_fading(sim_t *s, double mean_snr_db, double doppler_hz);
 
 /* Empirical per-mode erasure table (see sim_channel_set_mode_per) plus the
  * SNR stamped on delivered frames — models ISI-limited channels (e.g. NVIS

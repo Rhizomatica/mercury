@@ -1,0 +1,882 @@
+/* MFSK modem-backend round-trip: TX a frame through the vtable, assemble the
+ * passband burst, feed it to the RX in nin-sized chunks (as the modem RX funnel
+ * does), and require the exact frame back — CRC-gated, like FreeDV. Also checks
+ * that pure noise never false-decodes.
+ *
+ * Copyright (C) 2026 Rhizomatica
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
+#include "unity.h"
+#include "modem_mfsk.h"
+#include "freedv_api.h"
+
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <math.h>
+
+static const modem_backend_t *be;
+static void *ctx;
+
+void setUp(void)   { be = &modem_backend_mfsk; ctx = be->open(MERCURY_MODE_MFSK); TEST_ASSERT_NOT_NULL(ctx); }
+void tearDown(void){ be->close(ctx); }
+
+/* deterministic PRNG */
+/* 64 bits on every build: as unsigned long it was 32 on i386, where this
+ * xorshift64 then drew uniforms of ~2^-32 and gauss() noise ~16 dB above the
+ * level asked for -- the -7 dB sync tests failed only there. */
+static uint64_t s_rng = 0x9E3779B97F4A7C15ULL;
+static int coin(void){ s_rng ^= s_rng<<13; s_rng ^= s_rng>>7; s_rng ^= s_rng<<17; return (int)(s_rng & 1); }
+
+/* Feed a passband buffer to rawdata_rx in nin-sized chunks; return bytes on the
+ * call that decodes a frame (0 if none over the whole buffer). */
+static int feed_and_decode(int16_t *pb, int total, uint8_t *out)
+{
+    int nin = be->nin(ctx);
+    for (int off = 0; off + nin <= total; off += nin)
+    {
+        int n = be->rawdata_rx(ctx, out, &pb[off]);
+        if (n > 0) return n;
+    }
+    return 0;
+}
+
+void test_mfsk_modem_roundtrip(void)
+{
+    int bytes = be->bits_per_frame(ctx) / 8;      /* 100 */
+    int ndata = be->n_tx_samples(ctx);
+    TEST_ASSERT_EQUAL_INT(100, bytes);
+
+    /* Build a frame: 98 payload bytes + CRC16 in the last 2 (as send_modulated_data does). */
+    uint8_t *frame = malloc(bytes);
+    for (int i = 0; i < bytes - 2; i++) frame[i] = (uint8_t)(i * 5 + 1);
+    uint16_t crc = freedv_gen_crc16(frame, bytes - 2);
+    frame[bytes - 2] = crc >> 8; frame[bytes - 1] = crc & 0xff;
+
+    /* TX preamble + data + postamble into one passband buffer, with silence gaps. */
+    int cap = ndata * 2 + 40000;
+    int16_t *pre = calloc(cap, 2), *dat = calloc(cap, 2), *post = calloc(cap, 2);
+    int np = be->preamble_tx(ctx, pre);
+    int nd = be->rawdata_tx(ctx, dat, frame);
+    int ns = be->postamble_tx(ctx, post);
+    TEST_ASSERT_EQUAL_INT(ndata, nd);
+
+    int gap = 1200;
+    int total = gap + np + nd + ns + gap;
+    int16_t *pb = calloc(total, 2);
+    int p = gap;
+    memcpy(pb + p, pre,  (size_t)np * 2); p += np;
+    memcpy(pb + p, dat,  (size_t)nd * 2); p += nd;
+    memcpy(pb + p, post, (size_t)ns * 2); p += ns;
+
+    uint8_t *out = calloc(bytes, 1);
+    int n = feed_and_decode(pb, total, out);
+    TEST_ASSERT_EQUAL_INT(bytes, n);              /* decoded, CRC-valid */
+    TEST_ASSERT_EQUAL_MEMORY(frame, out, bytes);  /* exact bytes back */
+
+    free(frame); free(pre); free(dat); free(post); free(pb); free(out);
+}
+
+/* Head-clip recovery: a burst whose PREAMBLE was lost (the fragile head of a
+ * half-duplex burst — far end still keyed / AGC settling / T-R turnaround) must
+ * still decode by anchoring on the POSTAMBLE at the tail.  Without the postamble
+ * fallback this returns 0 (the sole preamble anchor is gone), which stalled the
+ * -x sock transfer at the MFSK floor: the ISS's first data burst was clipped by
+ * the connect turnaround and lost to a full ACK-timeout retransmit. */
+void test_mfsk_modem_preamble_clipped_recovers_via_postamble(void)
+{
+    int bytes = be->bits_per_frame(ctx) / 8;
+    int nin   = be->nin(ctx);                     /* Nofdm */
+
+    uint8_t *frame = malloc(bytes);
+    for (int i = 0; i < bytes - 2; i++) frame[i] = (uint8_t)(i * 7 + 3);
+    uint16_t crc = freedv_gen_crc16(frame, bytes - 2);
+    frame[bytes - 2] = crc >> 8; frame[bytes - 1] = crc & 0xff;
+
+    int cap = be->n_tx_samples(ctx) * 2 + 40000;
+    int16_t *dat = calloc(cap, 2), *post = calloc(cap, 2);
+    int nd = be->rawdata_tx(ctx, dat, frame);     /* data symbols  */
+    int ns = be->postamble_tx(ctx, post);         /* postamble only — NO preamble */
+
+    /* [lead gap | data | postamble | trail gap] — preamble deliberately omitted.
+     * Kept within the RX window (rxcap ~ one burst + slack) so data+postamble
+     * are both resident when the search fires. */
+    int lead = 2 * nin, trail = 6 * nin;
+    int total = lead + nd + ns + trail;
+    int16_t *pb = calloc(total, 2);
+    int p = lead;
+    memcpy(pb + p, dat,  (size_t)nd * 2); p += nd;
+    memcpy(pb + p, post, (size_t)ns * 2); p += ns;
+
+    uint8_t *out = calloc(bytes, 1);
+    int n = feed_and_decode(pb, total, out);
+    TEST_ASSERT_EQUAL_INT(bytes, n);              /* recovered despite the clipped head */
+    TEST_ASSERT_EQUAL_MEMORY(frame, out, bytes);
+
+    free(frame); free(dat); free(post); free(pb); free(out);
+}
+
+/* Feed like the LIVE RX funnel does, not like a tidy test: 880-sample chunks
+ * (modem.c's shared capture chunk, not this decoder's nin), and an arbitrary
+ * amount of prior audio ahead of the burst.  Returns bytes on the call that
+ * decodes, 0 if the whole buffer passes without one. */
+static int feed_live_shaped(int16_t *pb, int total, uint8_t *out, int chunk)
+{
+    int nin = be->nin(ctx);
+    /* Mirror rx_decoder_consume_chunk: accumulate, drain in nin-sized pieces,
+     * and CARRY THE REMAINDER.  chunk (880) is not a multiple of nin (320), so
+     * a loop that just walks the chunk in nin steps would silently discard 240
+     * samples of every 880 and corrupt the waveform. */
+    int16_t *acc = calloc((size_t)chunk + nin, sizeof(int16_t));
+    int held = 0, ret = 0;
+    for (int off = 0; off + chunk <= total && !ret; off += chunk)
+    {
+        memcpy(acc + held, &pb[off], (size_t)chunk * sizeof(int16_t));
+        held += chunk;
+        while (held >= nin)
+        {
+            int n = be->rawdata_rx(ctx, out, acc);
+            held -= nin;
+            if (held > 0) memmove(acc, acc + nin, (size_t)held * sizeof(int16_t));
+            if (n > 0) { ret = n; break; }
+        }
+    }
+    free(acc);
+    return ret;
+}
+
+/* Build [preroll | preamble | data | postamble | trail] and try to decode.
+ * preroll_syms is the prior audio ahead of the burst, in OFDM symbols. */
+static int decode_with_preroll(int preroll_syms, int trail_syms, int chunk,
+                               uint8_t **frame_out, uint8_t **out_out)
+{
+    int bytes = be->bits_per_frame(ctx) / 8;
+    int nin   = be->nin(ctx);
+    int ndata = be->n_tx_samples(ctx);
+
+    uint8_t *frame = malloc(bytes);
+    for (int i = 0; i < bytes - 2; i++) frame[i] = (uint8_t)(i * 11 + 5);
+    uint16_t crc = freedv_gen_crc16(frame, bytes - 2);
+    frame[bytes - 2] = crc >> 8; frame[bytes - 1] = crc & 0xff;
+
+    int cap = ndata * 2 + 40000;
+    int16_t *pre = calloc(cap, 2), *dat = calloc(cap, 2), *post = calloc(cap, 2);
+    int np = be->preamble_tx(ctx, pre);
+    int nd = be->rawdata_tx(ctx, dat, frame);
+    int ns = be->postamble_tx(ctx, post);
+
+    int preroll = preroll_syms * nin;
+    /* Trailing audio matters as much as leading.  A radio does not stop
+     * feeding the decoder when the burst ends -- silence keeps arriving and
+     * keeps sliding the window, which is exactly what the ALSA/PulseAudio
+     * paths do and what the FIFO harness does NOT (it only moves bytes while
+     * someone transmits, so a burst sits in an otherwise empty window).  Feed
+     * a burst's worth of trailing audio so the decoder has to hold the burst
+     * while the window walks past it. */
+    int trail   = trail_syms * nin;
+    int total   = preroll + np + nd + ns + trail;
+    int16_t *pb = calloc((size_t)total, 2);
+    /* Prior audio is quiet but not digitally silent — a real receiver is never
+     * fed exact zeros, and an all-zero preroll would flatter the sync search. */
+    for (int i = 0; i < preroll; i++) pb[i] = (int16_t)(coin() ? 12 : -12);
+    int p = preroll;
+    memcpy(pb + p, pre,  (size_t)np * 2); p += np;
+    memcpy(pb + p, dat,  (size_t)nd * 2); p += nd;
+    memcpy(pb + p, post, (size_t)ns * 2); p += ns;
+
+    uint8_t *out = calloc(bytes, 1);
+    int n = feed_live_shaped(pb, total, out, chunk);
+
+    free(pre); free(dat); free(post); free(pb);
+    *frame_out = frame; *out_out = out;
+    return n;
+}
+
+/* THE LIVE CASE.  On the air a burst never arrives 2 symbols into the receiver's
+ * window: the IRS has been listening for seconds — through the CALL, its own
+ * ACCEPT, the turnaround — so the data burst lands after a long stretch of prior
+ * audio.  Measured on loopsim, that put the preamble at sample 101085 of a
+ * 107520-sample window needing 204765, so it was detected (metric 0.889 against
+ * a 0.168 noise floor) and could never be demodulated: fits=0, forever, and the
+ * transfer delivered 0 bytes while -x sock (virtual clock, no deadline) passed.
+ *
+ * Residency is the contract being pinned here: a burst that has fully arrived
+ * must be decodable regardless of how much audio preceded it. */
+void test_mfsk_modem_decodes_after_long_preroll(void)
+{
+    /* Sweep the prior-audio length across and beyond one RX window.  A burst
+     * that has fully arrived must decode at every one of these: on the air the
+     * IRS has no control over how long it listened before the ISS keyed. */
+    static const int preroll_syms[] = { 2, 40, 120, 240, 320, 400, 640 };
+    int bytes = be->bits_per_frame(ctx) / 8;
+    int failures = 0;
+
+    for (unsigned i = 0; i < sizeof(preroll_syms)/sizeof(preroll_syms[0]); i++)
+    {
+        /* Fresh decoder per point: state must not carry between bursts. */
+        be->close(ctx);
+        ctx = be->open(MERCURY_MODE_MFSK);
+        TEST_ASSERT_NOT_NULL(ctx);
+
+        uint8_t *frame = NULL, *out = NULL;
+        int n = decode_with_preroll(preroll_syms[i], 8, 880, &frame, &out);
+        int ok = (n == bytes) && (memcmp(frame, out, (size_t)bytes) == 0);
+        if (!ok) failures++;
+        printf("  preroll %4d symbols (%6.2f s): %s\n", preroll_syms[i],
+               preroll_syms[i] * (double)be->nin(ctx) / 8000.0,
+               ok ? "decoded" : "NO DECODE");
+        free(frame); free(out);
+    }
+    TEST_ASSERT_EQUAL_INT(0, failures);
+}
+
+/* Same burst, negligible preroll: isolates residency from everything else.  If
+ * this passes while the test above fails, the waveform and the decoder are fine
+ * and only the window bookkeeping is wrong. */
+void test_mfsk_modem_decodes_with_short_preroll(void)
+{
+    uint8_t *frame = NULL, *out = NULL;
+    int bytes = be->bits_per_frame(ctx) / 8;
+    int n = decode_with_preroll(2, 8, 880, &frame, &out);
+    TEST_ASSERT_EQUAL_INT(bytes, n);
+    TEST_ASSERT_EQUAL_MEMORY(frame, out, bytes);
+    free(frame); free(out);
+}
+
+/* The modulator must not clip its own output.
+ *
+ * 32-carrier OFDM has a high peak-to-average ratio and MFSK_TXAMP is applied
+ * straight to the IFFT output, so a value chosen by eye put the true peak at
+ * 42426 against a 32767 rail: mfsk_emit() hard-clipped 45% of every payload and
+ * PAPR collapsed to 1.9 dB.  The round-trip test still passed, because TX and
+ * RX both saw the same deterministic distortion -- but on the air the burst
+ * never decoded.  Assert headroom on the SAMPLES, which is the thing that was
+ * actually wrong, and leave room for the operator's TX gain on top. */
+/* THE RADIO CASE: a burst arrives in the middle of continuously flowing audio.
+ * Silence before it AND after it, so the window keeps sliding once the burst is
+ * complete.  On the air (ALSA, PulseAudio) this is the normal situation and the
+ * transfer stalls after a single frame; the FIFO harness never exercises it
+ * because it carries no idle audio at all. */
+void test_mfsk_modem_decodes_burst_in_continuous_audio(void)
+{
+    static const int trail_syms[] = { 8, 40, 120, 240, 400 };
+    int bytes = be->bits_per_frame(ctx) / 8;
+    int failures = 0;
+
+    for (unsigned i = 0; i < sizeof(trail_syms)/sizeof(trail_syms[0]); i++)
+    {
+        be->close(ctx);
+        ctx = be->open(MERCURY_MODE_MFSK);
+        TEST_ASSERT_NOT_NULL(ctx);
+
+        uint8_t *frame = NULL, *out = NULL;
+        int n = decode_with_preroll(40, trail_syms[i], 880, &frame, &out);
+        int ok = (n == bytes) && (memcmp(frame, out, (size_t)bytes) == 0);
+        if (!ok) failures++;
+        printf("  trailing audio %4d symbols (%6.2f s): %s\n", trail_syms[i],
+               trail_syms[i] * (double)be->nin(ctx) / 8000.0,
+               ok ? "decoded" : "NO DECODE");
+        free(frame); free(out);
+    }
+    TEST_ASSERT_EQUAL_INT(0, failures);
+}
+
+/* A SECOND burst, after the window has filled and started sliding.
+ *
+ * Live, the first burst decodes and every retransmission after it fails: the
+ * successes all have a partly-filled window (bf_len 154849), the failures all
+ * have a full one (bf_len 211169, i.e. sliding).  Everything the decoder
+ * reports looks right on the failures -- preamble found, metric 0.891, payload
+ * resident -- and the CRC still fails, which is the signature of the buffer
+ * bookkeeping being wrong once samples start being dropped off the front, not
+ * of a channel problem.
+ *
+ * One burst is never enough to catch that.  This feeds two, with enough audio
+ * between them to fill and wrap the window. */
+void test_mfsk_modem_decodes_second_burst_after_window_wraps(void)
+{
+    int bytes = be->bits_per_frame(ctx) / 8;
+    int nin   = be->nin(ctx);
+    int cap   = be->n_tx_samples(ctx) + 40000;
+
+    uint8_t *frame = malloc(bytes);
+    for (int i = 0; i < bytes - 2; i++) frame[i] = (uint8_t)(i * 23 + 9);
+    uint16_t crc = freedv_gen_crc16(frame, bytes - 2);
+    frame[bytes - 2] = crc >> 8; frame[bytes - 1] = crc & 0xff;
+
+    int16_t *pre = calloc(cap,2), *dat = calloc(cap,2), *post = calloc(cap,2);
+    int np = be->preamble_tx(ctx, pre);
+    int nd = be->rawdata_tx(ctx, dat, frame);
+    int ns = be->postamble_tx(ctx, post);
+    int blen = np + nd + ns;
+
+    /* [burst][idle][burst][idle] — the second must decode too. */
+    int idle  = 400 * nin;               /* 16 s, comfortably wraps the window */
+    int total = blen + idle + blen + idle;
+    int16_t *pb = calloc((size_t)total, 2);
+    int p = 0;
+    for (int rep = 0; rep < 2; rep++)
+    {
+        memcpy(pb + p, pre,  (size_t)np * 2); p += np;
+        memcpy(pb + p, dat,  (size_t)nd * 2); p += nd;
+        memcpy(pb + p, post, (size_t)ns * 2); p += ns;
+        for (int i = 0; i < idle; i++) pb[p + i] = (int16_t)(coin() ? 9 : -9);
+        p += idle;
+    }
+
+    /* Count how many of the two bursts decode. */
+    int chunk = 880, held = 0, decodes = 0;
+    int16_t *acc = calloc((size_t)chunk + nin, 2);
+    uint8_t *out = calloc((size_t)bytes, 1);
+    for (int off = 0; off + chunk <= total; off += chunk)
+    {
+        memcpy(acc + held, &pb[off], (size_t)chunk * 2);
+        held += chunk;
+        while (held >= nin)
+        {
+            if (be->rawdata_rx(ctx, out, acc) > 0) decodes++;
+            held -= nin;
+            if (held > 0) memmove(acc, acc + nin, (size_t)held * 2);
+        }
+    }
+    printf("  bursts decoded: %d of 2\n", decodes);
+    free(acc); free(out); free(frame); free(pre); free(dat); free(post); free(pb);
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(2, decodes,
+        "a burst after the RX window wrapped did not decode");
+}
+
+void test_mfsk_modem_decodes_burst_behind_a_failed_anchor(void)
+{
+    /* A located preamble whose payload is resident but fails CRC must NOT stay
+     * cached as the anchor.  The decoder keeps the anchor to avoid re-running
+     * the correlation over the whole window, so settling on a dead one blinds it
+     * until that anchor slides out -- long enough, with a two-burst window, to
+     * lose the real burst sitting behind it.  This matters more the lower the
+     * accept threshold goes, since weak-signal detection admits more bad
+     * anchors by construction.
+     *
+     * Neither burst carries a postamble: the postamble fallback is a second,
+     * full-window correlation that would otherwise mask the defect here, and on
+     * a real half-duplex link the burst tail is not guaranteed either. */
+    int bytes = be->bits_per_frame(ctx) / 8;
+    int nin   = be->nin(ctx);
+    int cap   = be->n_tx_samples(ctx) + 40000;
+
+    uint8_t *frame = malloc(bytes);
+    for (int i = 0; i < bytes - 2; i++) frame[i] = (uint8_t)(i * 17 + 5);
+    uint16_t crc = freedv_gen_crc16(frame, bytes - 2);
+    frame[bytes - 2] = crc >> 8; frame[bytes - 1] = crc & 0xff;
+
+    int16_t *pre = calloc(cap,2), *dat = calloc(cap,2);
+    int np = be->preamble_tx(ctx, pre);
+    int nd = be->rawdata_tx(ctx, dat, frame);
+
+    int gap   = 4 * nin;
+    int trail = 12 * nin;                 /* room for the real payload to become resident */
+    int total = (np + nd) * 2 + gap + trail;
+    int16_t *pb = calloc((size_t)total, 2);
+    int p = 0;
+
+    /* decoy: a genuine preamble with garbage where the payload belongs */
+    memcpy(pb + p, pre, (size_t)np * 2); p += np;
+    for (int i = 0; i < nd; i++) pb[p + i] = (int16_t)(coin() ? 2200 : -2200);
+    p += nd;
+    for (int i = 0; i < gap; i++) pb[p + i] = (int16_t)(coin() ? 9 : -9);
+    p += gap;
+
+    /* the real burst, close enough behind that the decoy anchor is still in view */
+    memcpy(pb + p, pre, (size_t)np * 2); p += np;
+    memcpy(pb + p, dat, (size_t)nd * 2); p += nd;
+    for (int i = 0; i < trail; i++) pb[p + i] = (int16_t)(coin() ? 9 : -9);
+
+    int chunk = 880, held = 0, match = 0;
+    int16_t *acc = calloc((size_t)chunk + nin, 2);
+    uint8_t *out = calloc((size_t)bytes, 1);
+    for (int off = 0; off + chunk <= total; off += chunk)
+    {
+        memcpy(acc + held, &pb[off], (size_t)chunk * 2);
+        held += chunk;
+        while (held >= nin)
+        {
+            if (be->rawdata_rx(ctx, out, acc) > 0 &&
+                memcmp(out, frame, (size_t)bytes) == 0) match++;
+            held -= nin;
+            if (held > 0) memmove(acc, acc + nin, (size_t)held * 2);
+        }
+    }
+    printf("  payload-match=%d\n", match);
+    free(acc); free(out); free(frame); free(pre); free(dat); free(pb);
+
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, match,
+        "burst behind a failed anchor was lost -- is the dead anchor still cached?");
+}
+
+/* True single-sideband frequency shift of a real passband signal: form the
+ * analytic signal with a Hilbert FIR, rotate, take the real part. Multiplying
+ * by a cosine would make two sidebands, which is not what a mistuned radio
+ * does. */
+static void shift_hz(int16_t *x, int n, double df, double fs)
+{
+    enum { HT = 101 };
+    double h[HT];
+    for (int i = 0; i < HT; i++) {
+        int k = i - HT / 2;
+        if (k == 0 || (k % 2) == 0) { h[i] = 0.0; continue; }
+        double w = 0.54 - 0.46 * cos(2.0 * M_PI * i / (HT - 1));
+        h[i] = (2.0 / (M_PI * k)) * w;
+    }
+    double *q = calloc((size_t)n, sizeof(double));
+    for (int i = 0; i < n; i++) {
+        double acc = 0.0;
+        for (int j = 0; j < HT; j++) {
+            int idx = i - HT / 2 + j;
+            if (idx >= 0 && idx < n) acc += h[j] * (double)x[idx];
+        }
+        q[i] = acc;
+    }
+    for (int i = 0; i < n; i++) {
+        double ph = 2.0 * M_PI * df * (double)i / fs;
+        double v  = (double)x[i] * cos(ph) - q[i] * sin(ph);
+        if (v >  32767.0) v =  32767.0;
+        if (v < -32768.0) v = -32768.0;
+        x[i] = (int16_t)lrint(v);
+    }
+    free(q);
+}
+
+void test_mfsk_modem_decodes_with_dial_offset(void)
+{
+    /* A mistuned radio shifts every tone. Beyond half a subcarrier (15.6 Hz
+     * here) the nominal FFT bins see nothing and the mode goes deaf: measured
+     * on the pre-fix decoder, 12 Hz decoded 10/10 and 16 Hz decoded 0/10.
+     * Acquisition therefore has to search frequency as well as time.
+     *
+     * 47 Hz is deliberately 1.5 subcarriers -- an offset that defeats both the
+     * original decoder AND a whole-bin-only hypothesis grid, since it sits
+     * exactly between two whole-bin hypotheses. */
+    const double offsets[] = { 0.0, 16.0, 47.0, 94.0 };
+
+    for (unsigned oi = 0; oi < sizeof(offsets)/sizeof(offsets[0]); oi++)
+    {
+        be->close(ctx);
+        ctx = be->open(MERCURY_MODE_MFSK);
+        TEST_ASSERT_NOT_NULL(ctx);
+        if (be->configure) be->configure(ctx, 1, 0);
+
+        int bytes = be->bits_per_frame(ctx) / 8;
+        int nin   = be->nin(ctx);
+        int cap   = be->n_tx_samples(ctx) + 40000;
+
+        uint8_t *frame = malloc(bytes);
+        for (int i = 0; i < bytes - 2; i++) frame[i] = (uint8_t)(i * 31 + 7);
+        uint16_t crc = freedv_gen_crc16(frame, bytes - 2);
+        frame[bytes - 2] = crc >> 8; frame[bytes - 1] = crc & 0xff;
+
+        int16_t *pre = calloc(cap,2), *dat = calloc(cap,2), *post = calloc(cap,2);
+        int np = be->preamble_tx(ctx, pre);
+        int nd = be->rawdata_tx(ctx, dat, frame);
+        int ns = be->postamble_tx(ctx, post);
+
+        int lead = 2 * nin, trail = 8 * nin;
+        int total = lead + np + nd + ns + trail;
+        int16_t *pb = calloc((size_t)total, 2);
+        int p = lead;
+        memcpy(pb + p, pre,  (size_t)np * 2); p += np;
+        memcpy(pb + p, dat,  (size_t)nd * 2); p += nd;
+        memcpy(pb + p, post, (size_t)ns * 2);
+
+        if (offsets[oi] != 0.0) shift_hz(pb, total, offsets[oi], 8000.0);
+
+        int chunk = 880, held = 0, match = 0;
+        int16_t *acc = calloc((size_t)chunk + nin, 2);
+        uint8_t *out = calloc((size_t)bytes, 1);
+        for (int off = 0; off + chunk <= total; off += chunk) {
+            memcpy(acc + held, &pb[off], (size_t)chunk * 2);
+            held += chunk;
+            while (held >= nin) {
+                if (be->rawdata_rx(ctx, out, acc) > 0 &&
+                    memcmp(out, frame, (size_t)bytes) == 0) match++;
+                held -= nin;
+                if (held > 0) memmove(acc, acc + nin, (size_t)held * 2);
+            }
+        }
+        printf("  dial offset %+6.1f Hz (%.2f bins): %s\n", offsets[oi],
+               offsets[oi] / (8000.0 / 256.0), match ? "decoded" : "LOST");
+        free(acc); free(out); free(frame); free(pre); free(dat); free(post); free(pb);
+
+        char msg[96];
+        snprintf(msg, sizeof msg, "burst lost at a %.0f Hz dial offset", offsets[oi]);
+        TEST_ASSERT_TRUE_MESSAGE(match >= 1, msg);
+    }
+}
+
+/* The bandwidth the backend reports is what the UI shows the operator, so it
+ * has to describe the signal that actually goes on the air -- not just restate
+ * the constant it was computed from.  Transmit a data burst, measure where its
+ * energy really sits, and require the reported figure to match.
+ *
+ * The spectrum must be averaged over the WHOLE burst: MFSK lights one tone of
+ * the 32 per symbol, so any single short window sees only the handful of tones
+ * that symbol happened to use (a 4096-sample window spans 12.8 symbols and
+ * measures ~690 Hz).  Only across the full burst does the modulation visit the
+ * whole grid it occupies. */
+void test_mfsk_modem_reported_bandwidth_matches_emitted_spectrum(void)
+{
+    TEST_ASSERT_NOT_NULL_MESSAGE(be->bandwidth_hz,
+        "MFSK backend reports no bandwidth: the UI would show nothing");
+    int reported = be->bandwidth_hz(ctx);
+
+    int bytes = be->bits_per_frame(ctx) / 8;
+    uint8_t *frame = malloc(bytes);
+    for (int i = 0; i < bytes - 2; i++) frame[i] = (uint8_t)(i * 29 + 3);
+    uint16_t crc = freedv_gen_crc16(frame, bytes - 2);
+    frame[bytes - 2] = crc >> 8; frame[bytes - 1] = crc & 0xff;
+
+    int16_t *dat = calloc(be->n_tx_samples(ctx) + 40000, 2);
+    int nd = be->rawdata_tx(ctx, dat, frame);
+    TEST_ASSERT_TRUE(nd > 0);
+
+    /* Welch: 512-point windows (15.6 Hz/bin, resolving the 31.25 Hz grid),
+     * hopped by half a window across the entire burst and averaged. */
+    const int N = 512, hop = N / 2, fs = be->sample_rate(ctx);
+    TEST_ASSERT_TRUE(nd >= N);
+    double *psd = calloc(N / 2, sizeof(double));
+    int windows = 0;
+    for (int off = 0; off + N <= nd; off += hop, windows++)
+        for (int k = 0; k < N / 2; k++)
+        {
+            double re = 0, im = 0;
+            for (int n = 0; n < N; n++)
+            {
+                double w = 0.5 - 0.5 * cos(2.0 * M_PI * n / (N - 1));
+                double a = 2.0 * M_PI * k * n / N;
+                re += w * dat[off + n] * cos(a);
+                im -= w * dat[off + n] * sin(a);
+            }
+            psd[k] += re * re + im * im;
+        }
+    TEST_ASSERT_TRUE_MESSAGE(windows > 32, "burst too short to average a spectrum");
+
+    double total = 0;
+    for (int k = 0; k < N / 2; k++) total += psd[k];
+    TEST_ASSERT_TRUE(total > 0);
+
+    /* Trim 0.5% of the energy off each end: the occupied band. */
+    double acc = 0; int lo = 0, hi = N / 2 - 1;
+    for (int k = 0; k < N / 2; k++) { acc += psd[k]; if (acc >= 0.005 * total) { lo = k; break; } }
+    acc = 0;
+    for (int k = N / 2 - 1; k >= 0; k--) { acc += psd[k]; if (acc >= 0.005 * total) { hi = k; break; } }
+
+    double bin_hz    = (double)fs / N;
+    double occupied  = (hi - lo + 1) * bin_hz;
+    double centre_hz = (hi + lo) / 2.0 * bin_hz;
+
+    char msg[192];
+    snprintf(msg, sizeof msg,
+             "reported %d Hz but the burst occupies %.0f Hz (%.0f-%.0f Hz, centre %.0f)",
+             reported, occupied, lo * bin_hz, hi * bin_hz, centre_hz);
+    /* 15%: the reported figure counts lit subcarriers x spacing, while the
+     * measurement also catches each subcarrier's own skirt. */
+    TEST_ASSERT_TRUE_MESSAGE(fabs(occupied - reported) <= 0.15 * reported, msg);
+
+    /* And it has to fit where an SSB radio can pass it. */
+    TEST_ASSERT_TRUE_MESSAGE(reported > 0 && reported <= 2400,
+        "MFSK occupies more than an SSB passband");
+    TEST_ASSERT_TRUE_MESSAGE(fabs(centre_hz - 2000.0) <= 150.0, msg);
+
+    free(psd); free(dat); free(frame);
+}
+
+void test_mfsk_modem_tx_does_not_clip(void)
+{
+    int bytes = be->bits_per_frame(ctx) / 8;
+    int cap   = be->n_tx_samples(ctx) + 40000;
+
+    uint8_t *frame = malloc(bytes);
+    for (int i = 0; i < bytes - 2; i++) frame[i] = (uint8_t)(i * 13 + 7);
+    uint16_t crc = freedv_gen_crc16(frame, bytes - 2);
+    frame[bytes - 2] = crc >> 8; frame[bytes - 1] = crc & 0xff;
+
+    int16_t *pre = calloc(cap, 2), *dat = calloc(cap, 2), *post = calloc(cap, 2);
+    int np = be->preamble_tx(ctx, pre);
+    int nd = be->rawdata_tx(ctx, dat, frame);
+    int ns = be->postamble_tx(ctx, post);
+
+    const int16_t *parts[3] = { pre, dat, post };
+    const int      lens[3]  = { np,  nd,  ns  };
+    for (int p = 0; p < 3; p++)
+    {
+        long clipped = 0;
+        int  peak = 0;
+        for (int i = 0; i < lens[p]; i++)
+        {
+            int v = abs(parts[p][i]);
+            if (v > peak) peak = v;
+            if (v >= 32700) clipped++;
+        }
+        TEST_ASSERT_EQUAL_INT_MESSAGE(0, (int)clipped,
+            "MFSK TX clipped its own samples: lower MFSK_TXAMP");
+        /* >=6 dB of headroom so a +6 dB operator gain still fits. */
+        TEST_ASSERT_TRUE_MESSAGE(peak <= 16384,
+            "MFSK TX peak leaves no headroom for the operator's TX gain");
+    }
+    free(frame); free(pre); free(dat); free(post);
+}
+
+void test_mfsk_modem_noise_no_false_decode(void)
+{
+    int bytes = be->bits_per_frame(ctx) / 8;
+    int total = be->n_tx_samples(ctx) + 8000;
+    int16_t *pb = malloc((size_t)total * 2);
+    for (int i = 0; i < total; i++) pb[i] = (int16_t)((coin() ? 1 : -1) * (400 + (int)(s_rng % 400)));
+    uint8_t *out = calloc(bytes, 1);
+    int n = feed_and_decode(pb, total, out);
+    TEST_ASSERT_EQUAL_INT(0, n);                  /* noise never yields a CRC-valid frame */
+    free(pb); free(out);
+}
+
+/* A decoder that starts listening partway through a burst -- after its own
+ * station's TX, or when the carousel rebinds it to MFSK from another rung --
+ * has the tail of that burst at the head of its window, and the tail ends in
+ * the postamble: the preamble two tones up, which the dial-offset sweep finds
+ * as a perfect preamble.  That anchor fails CRC and is rejected, but the
+ * search refined its way back onto it and it sat as "already tried" while the
+ * next burst went by: 5 of 9 join points lost the next burst on a clean
+ * channel, and on air a frame decoded 13 s late, whose answer keyed over the
+ * sender.  Join at points across a burst; the next must decode by its end. */
+void test_mfsk_modem_decodes_next_burst_after_joining_midway(void)
+{
+    int bytes = be->bits_per_frame(ctx) / 8, nin = be->nin(ctx), fs = be->sample_rate(ctx);
+    uint8_t *f1 = malloc(bytes), *f2 = malloc(bytes), *out = calloc(bytes, 1);
+    for (int i = 0; i < bytes - 2; i++) { f1[i] = (uint8_t)(i * 7 + 3); f2[i] = (uint8_t)(i * 7 + 4); }
+    uint16_t c = freedv_gen_crc16(f1, bytes - 2); f1[bytes - 2] = c >> 8; f1[bytes - 1] = c & 0xff;
+    c = freedv_gen_crc16(f2, bytes - 2); f2[bytes - 2] = c >> 8; f2[bytes - 1] = c & 0xff;
+    int cap = be->n_tx_samples(ctx) * 2 + 40000;
+    int16_t *b1 = calloc(cap, 2), *b2 = calloc(cap, 2);
+    int n1 = be->preamble_tx(ctx, b1); n1 += be->rawdata_tx(ctx, b1 + n1, f1); n1 += be->postamble_tx(ctx, b1 + n1);
+    int n2 = be->preamble_tx(ctx, b2); n2 += be->rawdata_tx(ctx, b2 + n2, f2); n2 += be->postamble_tx(ctx, b2 + n2);
+    const double tails[] = { 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9 };
+    for (size_t ti = 0; ti < sizeof tails / sizeof tails[0]; ti++) {
+        be->close(ctx); ctx = be->open(MERCURY_MODE_MFSK);
+        int t1 = (int)(n1 * tails[ti]), gap = fs / 10, total = t1 + gap + n2 + 2 * fs;
+        int16_t *x = calloc(total, 2);
+        memcpy(x, b1 + n1 - t1, (size_t)t1 * 2);
+        memcpy(x + t1 + gap, b2, (size_t)n2 * 2);
+        int end2 = t1 + gap + n2, got = -1;
+        for (int off = 0; off + nin <= total && got < 0; off += nin)
+            if (be->rawdata_rx(ctx, out, &x[off]) > 0 && !memcmp(out, f2, bytes)) got = off + nin;
+        char msg[96];
+        snprintf(msg, sizeof msg, "joined with %.0f%% of a burst left: next burst %s", tails[ti] * 100,
+                 got < 0 ? "lost" : "late");
+        TEST_ASSERT_TRUE_MESSAGE(got >= 0 && got <= end2 + fs / 2, msg);
+        free(x);
+    }
+    free(b1); free(b2); free(f1); free(f2); free(out);
+}
+
+/* Out-of-band emission.  Every symbol used to start with a hard jump in phase
+ * and tone, and a rectangular tone's spectrum falls off only as 1/f: the burst
+ * measured -27..-34 dB across the whole band against -50..-66 dB for codec2's
+ * modes, and was heard on air as spikes all over the spectrum.  Transmit what
+ * the radio sends -- a whole burst, and a pattern -- and require everything
+ * more than 400 Hz outside the lit band to sit 45 dB under it. */
+static double worst_oob_db(const int16_t *x, int n, int fs, double lo_hz, double hi_hz)
+{
+    const int N = 512, hop = N / 2;
+    double psd[256] = {0};
+    for (int off = 0; off + N <= n; off += hop)
+        for (int k = 0; k < N / 2; k++) {
+            double re = 0, im = 0;
+            for (int i = 0; i < N; i++) {
+                double w = 0.5 - 0.5 * cos(2.0 * M_PI * i / (N - 1));
+                double a = 2.0 * M_PI * k * i / N;
+                re += w * x[off + i] * cos(a);
+                im -= w * x[off + i] * sin(a);
+            }
+            psd[k] += re * re + im * im;
+        }
+    double bin = (double)fs / N, in = 0, worst = 0;
+    int nin = 0;
+    for (int k = 0; k < N / 2; k++)
+        if (k * bin >= lo_hz && k * bin <= hi_hz) { in += psd[k]; nin++; }
+    in /= nin;
+    /* 100 Hz bands, so a single quiet bin cannot pass for a clean band. */
+    for (double f = 0; f + 100 <= fs / 2.0; f += 100) {
+        if (f + 100 > lo_hz - 400 && f < hi_hz + 400) continue;
+        double b = 0; int nb = 0;
+        for (int k = 0; k < N / 2; k++)
+            if (k * bin >= f && k * bin < f + 100) { b += psd[k]; nb++; }
+        if (nb && b / nb > worst) worst = b / nb;
+    }
+    return 10.0 * log10(worst / in + 1e-30);
+}
+
+void test_mfsk_modem_out_of_band_emission(void)
+{
+    int bytes = be->bits_per_frame(ctx) / 8;
+    uint8_t *frame = malloc(bytes);
+    for (int i = 0; i < bytes - 2; i++) frame[i] = (uint8_t)(i * 29 + 3);
+    uint16_t crc = freedv_gen_crc16(frame, bytes - 2);
+    frame[bytes - 2] = crc >> 8; frame[bytes - 1] = crc & 0xff;
+    int cap = be->n_tx_samples(ctx) * 2 + 40000;
+    int16_t *x = calloc(cap, 2);
+    int n = be->preamble_tx(ctx, x);
+    n += be->rawdata_tx(ctx, x + n, frame);
+    n += be->postamble_tx(ctx, x + n);
+    int fs = be->sample_rate(ctx);
+    double half = be->bandwidth_hz(ctx) / 2.0;
+    char msg[128];
+    double burst = worst_oob_db(x, n, fs, 2000.0 - half, 2000.0 + half);
+    snprintf(msg, sizeof msg, "burst: %.1f dB out of band", burst);
+    TEST_ASSERT_TRUE_MESSAGE(burst <= -45.0, msg);
+
+    for (int kind = 0; kind < 2; kind++) {
+        int16_t *p = calloc(mfsk_pattern_max_tx_samples(), 2);
+        int np = mfsk_pattern_tx(p, kind);
+        double pat = worst_oob_db(p, np, fs, 2000.0 - half, 2000.0 + half);
+        snprintf(msg, sizeof msg, "pattern %d: %.1f dB out of band", kind, pat);
+        TEST_ASSERT_TRUE_MESSAGE(pat <= -45.0, msg);
+        free(p);
+    }
+    free(x); free(frame);
+}
+
+/* Carrier sense.  The ARQ keys only when no burst is arriving, and for MFSK the
+ * decoder's sync flag is the only thing that says one is: a 13.5 s frame is on
+ * the air for seconds before it can be decoded.  On air an idle receiver
+ * answered its application 8 s into the sender's floor frame because the flag
+ * came up only in the burst's last symbols; the two ends then keyed over each
+ * other every round until UUCP gave up. */
+static double gauss(void)
+{
+    double u1 = ((s_rng = s_rng ^ (s_rng << 13), s_rng ^= s_rng >> 7, s_rng ^= s_rng << 17) >> 11) * (1.0 / 9007199254740992.0);
+    double u2 = ((s_rng = s_rng ^ (s_rng << 13), s_rng ^= s_rng >> 7, s_rng ^= s_rng << 17) >> 11) * (1.0 / 9007199254740992.0);
+    if (u1 < 1e-300) u1 = 1e-300;
+    return sqrt(-2.0 * log(u1)) * cos(2.0 * M_PI * u2);
+}
+
+typedef struct { double lag_s; double held; int decoded; int false_steps; } carrier_t;
+
+/* [preroll_s of prior audio | burst | 2 s]; snr_db is in 3 kHz, NAN for no
+ * noise; with_burst 0 feeds the same length of noise alone. */
+static carrier_t carrier_timeline(double snr_db, int with_burst, double preroll_s)
+{
+    int bytes = be->bits_per_frame(ctx) / 8;
+    int nin   = be->nin(ctx);
+    int ndata = be->n_tx_samples(ctx);
+    int fs    = be->sample_rate(ctx);
+    uint8_t *frame = malloc(bytes);
+    for (int i = 0; i < bytes - 2; i++) frame[i] = (uint8_t)(i * 7 + 3);
+    uint16_t crc = freedv_gen_crc16(frame, bytes - 2);
+    frame[bytes - 2] = crc >> 8; frame[bytes - 1] = crc & 0xff;
+    int cap = ndata * 2 + 40000;
+    int16_t *pre = calloc(cap, 2), *dat = calloc(cap, 2), *post = calloc(cap, 2);
+    int np = be->preamble_tx(ctx, pre);
+    int nd = be->rawdata_tx(ctx, dat, frame);
+    int ns = be->postamble_tx(ctx, post);
+    int preroll = (int)(preroll_s * fs), trail = 2 * fs;
+    int blen = np + nd + ns;
+    int total = preroll + blen + trail;
+    double *x = calloc((size_t)total, sizeof(double));
+    double ps = 0.0;
+    for (int k = 0; k < blen; k++) {
+        double v = k < np ? pre[k] : k < np + nd ? dat[k - np] : post[k - np - nd];
+        ps += v * v;
+        if (with_burst) x[preroll + k] = v;
+    }
+    ps /= blen;
+    /* Real noise of variance s2 spreads over fs/2: SNR3k = ps / (s2 * 3000 / (fs/2)). */
+    double sigma = isnan(snr_db) ? 12.0 / 3.0
+                 : sqrt(ps * (fs / 2.0) / (3000.0 * pow(10.0, snr_db / 10.0)));
+    int16_t *pb = malloc((size_t)total * 2);
+    for (int k = 0; k < total; k++) {
+        double v = x[k] + sigma * gauss();
+        pb[k] = (int16_t)(v > 32767 ? 32767 : v < -32768 ? -32768 : v);
+    }
+    uint8_t *out = calloc(bytes, 1);
+    carrier_t r = { -1.0, 0.0, 0, 0 };
+    int steps = 0, held = 0, first = -1;
+    for (int off = 0; off + nin <= total; off += nin) {
+        int n = be->rawdata_rx(ctx, out, &pb[off]);
+        int sync = 0; float snr = 0;
+        be->get_stats(ctx, &sync, &snr);
+        int t = off + nin;
+        int in_burst = with_burst && t > preroll && t <= preroll + blen;
+        if (in_burst) { steps++; if (sync) { held++; if (first < 0) first = t; } }
+        else if (sync && (!with_burst || t <= preroll)) r.false_steps++;
+        if (n > 0 && with_burst && memcmp(out, frame, bytes) == 0) r.decoded = 1;
+    }
+    if (first >= 0) r.lag_s = (double)(first - preroll) / fs;
+    r.held = steps ? (double)held / steps : 0.0;
+    free(frame); free(pre); free(dat); free(post); free(x); free(pb); free(out);
+    return r;
+}
+
+void test_mfsk_modem_sync_while_burst_arrives(void)
+{
+    /* Clean and at the -7 dB the failed on-air run had: seen within a second
+     * of the burst's start and held for nearly all of it.  Deeper, the flag
+     * can be no better than the preamble search it rides on (-9 dB 5/6,
+     * -10 dB 4/6, -11 dB 3/6 over six noise seeds, when this was written). */
+    const double snrs[] = { NAN, -7.0 };
+    for (size_t i = 0; i < sizeof snrs / sizeof snrs[0]; i++) {
+        be->close(ctx); ctx = be->open(MERCURY_MODE_MFSK);
+        carrier_t r = carrier_timeline(snrs[i], 1, 15.0);  /* a live receiver has been listening */
+        TEST_ASSERT_TRUE(r.lag_s >= 0.0 && r.lag_s < 1.0);
+        TEST_ASSERT_TRUE(r.held > 0.9);
+        TEST_ASSERT_TRUE(r.decoded);             /* and the frame still decodes */
+        TEST_ASSERT_EQUAL_INT(0, r.false_steps);
+    }
+}
+
+/* The same, one second after the decoder started from nothing -- which is where
+ * it is after its own station's TX, and after every burst it decodes (it drops
+ * the window).  It used to look for nothing until a whole burst's worth of
+ * audio had come in, so for 13 s after unkeying a station was deaf to an MFSK
+ * frame and keyed over it: seen on air, a repeated handover landing 1.3 s into
+ * the peer's floor frame. */
+void test_mfsk_modem_sync_soon_after_open(void)
+{
+    const double snrs[] = { NAN, -7.0 };
+    for (size_t i = 0; i < sizeof snrs / sizeof snrs[0]; i++) {
+        be->close(ctx); ctx = be->open(MERCURY_MODE_MFSK);
+        carrier_t r = carrier_timeline(snrs[i], 1, 1.0);
+        TEST_ASSERT_TRUE(r.lag_s >= 0.0 && r.lag_s < 1.0);
+        TEST_ASSERT_TRUE(r.held > 0.9);
+        TEST_ASSERT_TRUE(r.decoded);
+        TEST_ASSERT_EQUAL_INT(0, r.false_steps);
+    }
+}
+
+/* A false carrier holds the ARQ off a keydown for up to a frame. */
+void test_mfsk_modem_no_carrier_in_noise(void)
+{
+    for (int k = 0; k < 3; k++) {
+        be->close(ctx); ctx = be->open(MERCURY_MODE_MFSK);
+        TEST_ASSERT_EQUAL_INT(0, carrier_timeline(0.0, 0, 15.0).false_steps);
+    }
+}
+
+int main(void)
+{
+    UNITY_BEGIN();
+    RUN_TEST(test_mfsk_modem_roundtrip);
+    RUN_TEST(test_mfsk_modem_reported_bandwidth_matches_emitted_spectrum);
+    RUN_TEST(test_mfsk_modem_out_of_band_emission);
+    RUN_TEST(test_mfsk_modem_decodes_next_burst_after_joining_midway);
+    RUN_TEST(test_mfsk_modem_preamble_clipped_recovers_via_postamble);
+    RUN_TEST(test_mfsk_modem_decodes_with_short_preroll);
+    RUN_TEST(test_mfsk_modem_decodes_after_long_preroll);
+    RUN_TEST(test_mfsk_modem_decodes_burst_in_continuous_audio);
+    RUN_TEST(test_mfsk_modem_decodes_second_burst_after_window_wraps);
+    RUN_TEST(test_mfsk_modem_decodes_burst_behind_a_failed_anchor);
+    RUN_TEST(test_mfsk_modem_decodes_with_dial_offset);
+    RUN_TEST(test_mfsk_modem_tx_does_not_clip);
+    RUN_TEST(test_mfsk_modem_noise_no_false_decode);
+    RUN_TEST(test_mfsk_modem_sync_while_burst_arrives);
+    RUN_TEST(test_mfsk_modem_sync_soon_after_open);
+    RUN_TEST(test_mfsk_modem_no_carrier_in_noise);
+    return UNITY_END();
+}

@@ -94,6 +94,7 @@ the handshake completes on a clean channel, then the fault hits the transfer):
 | `sim_set_rx_snr(s, db)` | SNR stamped on delivered frames (drives OLLA feedback) |
 | `sim_set_snr(s, db)` | **coherent fade**: mode-aware SNR *cliff* erasure model + stamps the same SNR on survivors. A frame in a mode whose cliff (approx. `docs/MODES.md`) is above the channel SNR is erased ~90%; robust modes pass. This makes "downgrade" the winning move, as on real HF. |
 | `sim_set_mode_per(s, tbl, n, db)` | **empirical per-mode erasure**: a `{freedv_mode, per}` table (e.g. measured on pathsim `--midlat-dist-nvis`) plus the delivered-frame SNR. Models ISI-limited channels where SNR reads healthy while fast modes fail. Overrides the cliff model. |
+| `sim_set_fading(s, db, hz)` | **time-varying Rayleigh fading** around a mean SNR, independent per direction, at `hz` fade rate (sum of 8 sinusoids). Each frame's instantaneous SNR is sampled at 8 points over its airtime and combined by an exponential effective-SNR mapping (beta = the mode's cliff), then judged against the cliff: a frame survives a deep fade over about a quarter of its length. Flat fading only (no delay spread). Stamps the mean SNR on survivors. Overrides the other models. |
 
 `test_sim_fuzz` sweeps flat AWGN erasure; `test_sim_fuzz_fading` sweeps the
 cliff and per-mode-PER models (60 seeds), asserting the two invariants that
@@ -104,7 +105,8 @@ requires a bounded disconnect.
 
 ## A/B throughput bench (`ab_bench.c`)
 
-`ab_bench <seed> <channel>` (channel = `clean | awgn:<per> | cliff:<snr> | nvis`)
+`ab_bench <seed> <channel>` (channel = `clean | awgn:<per> | cliff:<snr> | nvis |
+fade:<snr>:<doppler_hz>`; built by `make -C tests ab_bench`)
 runs an 8 KB transfer and prints delivered/total, integrity, final mode and
 conn-state. It links against whatever tree's `arq_fsm.c` it is compiled in, so
 comparing two builds means compiling it twice (against tree A's and tree B's
@@ -119,7 +121,9 @@ medium and prints the virtual time until both transfers complete (`done_ms`),
 the collision count, and `STALLED` when both FSMs go idle with data still
 undelivered.  That is the turn-handover bench: it measured the ACK + first data
 burst in one keydown (1-2.5 % faster on clean/lossy channels, same completions,
-no corruption).
+no corruption).  `SIM_CS=<acq_ms>` turns the sim's carrier sense on (without
+it every listen-before-talk check in the FSM is inert), and `SIM_STATS=1` (both
+benches) prints the frames and airtime each mode used.
 
 ## The S1 fade-cliff regression (fixed)
 
@@ -158,3 +162,107 @@ and retry decisions.
   upstream (`arq_fsm_callbacks_t`).  This also fixes the S4
   static-`pending_burst_frames` race and makes the FSM safe for multi-
   instance embedding (e.g. a relay node running two concurrent sessions).
+
+## Prototype: erasure-coded carousel ARQ (`carousel_bench.c`)
+
+`carousel_bench <seed> <channel> [bidir]` runs a different ARQ design on the
+same channel model, airtime table and half-duplex medium as `ab_bench`, so the
+numbers compare directly.  It is a protocol simulation, not Mercury code.
+`CAR_TRACE=1` prints every keydown.
+
+**Design** (chosen by measurement; each rejected alternative is noted in the
+code where it was tried):
+
+- Data is cut into blocks of up to 96 pieces of 24 bytes, Reed-Solomon erasure
+  coded over GF(256) (`rs_erasure.c`, systematic Cauchy: the first K pieces are
+  the data, any K of them decode).  24-byte pieces fit every mode, so a block
+  never has to be re-encoded when the mode drops.
+- **The receiver drives.**  Mercury's modem runs a control decoder (DATAC16)
+  and one payload decoder bound to the mode it expects; nothing on the air says
+  which mode a burst is in.  So the receiver chooses the mode, and it is also
+  the side that sees what arrives.  It sends a POLL in DATAC16: the window base,
+  what each open block still needs, and "send me up to N frames in mode M".
+- The sender answers with a round, one keydown of up to N bursts carrying
+  pieces of up to 8 open blocks (oldest first, with a margin for the loss the
+  poll reports), and keys only when polled.  Every frame says how many follow,
+  so the receiver knows when the round ends and polls again.  No sequence
+  numbers and no per-frame ACKs.
+- Only the receiver keeps a round timer, so the sides cannot race.  If the
+  sender is not on the air by the time it should be, the poll was lost: poll
+  again at once, and do not score the mode for it (a second silent poll in a
+  row is scored, so a mode too weak even to sync is still found dead).  If it
+  is on the air but nothing decodes, poll when its carrier drops.
+- Link adaptation, run by the receiver on what it received: the level with the
+  best measured goodput (raw rate x delivered fraction, from decayed frame
+  counts); probes only rungs that could beat it; a level's round is capped at
+  one frame more than it recently delivered; a mode losing 4 frames in a row is
+  dead, and caps the modes above it unless they have delivered recently
+  themselves; dead modes are re-probed after 60 s, doubling to 8 min.
+- A direction starts on the rung its measured SNR supports, mapped as trunk
+  enters a mode from DATAC15 (threshold plus hysteresis).  It is only a start:
+  the first round on it is a one-frame probe and measured goodput takes over.
+  In Mercury the connect measures both directions, and the ACCEPT is the first
+  poll.
+- The turn: the receiver takes it with a HANDOVER poll that also announces its
+  own first round, sent in the same keydown (the peer rebinds its payload
+  decoder in the gap, as #310 does), after at most a 120 s quantum when both
+  have data.  Open blocks are only suspended.
+
+**Results**, both stations sending 8 KB, against trunk (e06e00e + #321) with the
+sim's carrier sense on (`sim_set_carrier_sense(s, true, 400)`; without it every
+listen-before-talk check in the FSM is inert).  Seeds 1-20 were used while
+tuning; seeds 21-40 are held out.  "Omniscient" is the first prototype, whose
+receiver decoded every mode and whose sender chose them:
+
+| channel            | trunk 1-20 / 21-40    | omniscient      | receiver-driven |
+|--------------------|-----------------------|-----------------|-----------------|
+| clean              | 231 / 234 s           | 124 / 125 s     | 121 / 121 s     |
+| 10 %               | 275 / 294 s           | 141 / 152 s     | 136 / 143 s     |
+| 25 %               | 416 / 450 s           | 209 / 230 s     | 192 / 216 s     |
+| cliff 3            | 1373 / 1380 s         | 1140 / 1189 s   | 1050 / 1040 s   |
+| cliff 10           | 310 / 309 s           | 249 / 247 s     | 247 / 242 s     |
+| NVIS               | 0/20 (1 KB, then no progress) | 5100 / 5392 s | 3854 / 3959 s |
+| fade 3 dB, 0.5 Hz  | 0/20 (11 KB of 16)    | 1532 / 1464 s   | 1321 / 1287 s   |
+| fade 8 dB, 0.5 Hz  | 728 / 718 s           | 575 / 590 s     | 482 / 543 s     |
+| fade 8 dB, 1 Hz    | 750 / 721 s (18/20)   | 589 / 563 s     | 495 / 530 s     |
+| fade 15 dB, 0.1 Hz | 261 / 274 s           | 220 / 213 s     | 215 / 206 s     |
+| fade 15 dB, 1 Hz   | 243 / 241 s           | 206 / 228 s     | 205 / 217 s     |
+| fade 25 dB, 1 Hz   | 179 / 182 s           | 105 / 109 s     | 102 / 107 s     |
+
+Every carousel run completes (NVIS and fade 3 dB need more than the default
+30-minute `LIMIT_MS`: build with `-DLIMIT_MS='(8ULL*3600*1000)'`), with no
+collisions and no corruption; trunk has 35-164 collisions per 20 runs.
+Rounds are sent as separate bursts back to back; a gap between them
+(`-DBURST_GAP_MS`) of 300 ms costs 1-3 %, of 1 s 5-11 %.  The 30 s keydown cap
+(`-DMAX_KEYDOWN_MS`) makes no difference between 15 and 60 s at 8 KB.
+
+What decided it, in the order it was found:
+
+- **Link adaptation**, not the coding: pinned to the best mode, the first
+  version already won on the cliffs.  Goodput per level, estimated from counts
+  (a quarter of one-frame probes vanish at 25 % flat loss), with dead-mode
+  detection kept separate from selection -- one estimator could not both climb
+  and avoid dead modes when raw rates span 60x.
+- **Multi-block rounds** over per-block piece sizes: bigger pieces also cut the
+  turnaround cost, but a block cut for a fast mode does not fit a slow one and
+  had to be re-encoded on a drop, losing its progress (unfinished runs).
+- **Turn quantum** over "hand over at every block boundary" (25 % loss 25 %
+  slower) and over "finish the window first" (starved the peer on NVIS).
+- **Evidence beats inference**: a false dead verdict on a lightly probed
+  DATAC4 locked out a working DATAC3/DATAC1, and a re-probe backoff counted in
+  rounds kept it in force for half an hour.
+- **The SNR start hint**, found on the fading channel: trunk was 10 % faster
+  at 15 dB because it goes straight to DATAC17 on the SNR it is told, while the
+  carousel climbed from DATAC15 by probes (25-40 s of airtime per sender).  The
+  hint gives the carousel the same information and is 30-45 % faster on the
+  clean and flat-loss channels too; NVIS, where the 10 dB reading misleads,
+  pays 1-5 % for it.
+- **The receiver drives**, forced by the modem (one payload decoder, bound in
+  advance).  At first a lost poll cost a whole round's window of silence (25 %
+  loss: 258/390 s against the omniscient 209/230 s); re-polling when the sender
+  is not on the air recovered it and more.  A window timer then collided with a
+  repeated handover (NVIS, 2 collisions); polling on carrier drop removed that.
+- **No per-piece index**: a block's pieces go out with consecutive indices, so
+  a segment carries its first index and a count instead of one byte per piece.
+  DATAC4 carries 2 pieces instead of 1, DATAC3 5 instead of 4; cliff 3, fade
+  3 dB and NVIS got 8-13 % faster.

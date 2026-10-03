@@ -65,8 +65,9 @@ TEST_BINS = test_ring_buffer test_arq_protocol test_arq_timing test_arq_fsm \
             test_arq_conn test_cfg_utils test_arq_tnc test_channel_busy \
             test_freedv_harq test_sock_wire test_rtp_wire test_virtual_clock test_watterson \
             test_mercury_prng test_bcast_file \
-            test_ofdm_acq test_tx_bpf test_ui_status test_ui_devices test_ui_ptt_persist test_tx_pacing test_radio_port \
-            test_radio_io_frequency test_mfsk \
+            test_ofdm_acq test_tx_bpf test_crc_seed test_ui_status test_ui_devices test_ui_ptt_persist test_tx_pacing test_radio_port \
+            test_radio_io_frequency test_mfsk test_rs_erasure test_carousel test_carousel_sim \
+            test_mfsk_harq test_mfsk_modem test_pattern_ack_detection \
 			test_message_store test_ui_history test_ws_protocol
 
 .PHONY: all test clean
@@ -121,7 +122,7 @@ test_arq_timing: datalink_arq/test_arq_timing.c $(UNITY_SRC) $(ARQ_STUBS) \
 
 # ARQ FSM tests (state transitions, callback invocations)
 test_arq_fsm: datalink_arq/test_arq_fsm.c $(UNITY_SRC) $(ARQ_STUBS) \
-              ../datalink_arq/arq_fsm.c ../common/virtual_clock.c \
+              ../datalink_arq/arq_fsm.c ../datalink_arq/carousel.c ../datalink_arq/rs_erasure.c ../common/virtual_clock.c \
               ../datalink_arq/arq_protocol.c ../datalink_arq/arq_timing.c \
               ../datalink_arq/arith.c
 	$(CC) $(CFLAGS) -I../modem/freedv -o $@ $(filter %.c %.a %.o,$^) $(LDFLAGS)
@@ -146,13 +147,44 @@ test_tcp_interfaces: data_interfaces/test_tcp_interfaces.c $(UNITY_SRC) ../modem
 	    ../datalink_arq/arq_tnc.c ../common/shm_posix.c ../common/os_interop.c \
 	    ../common/mercury_modes.c $(LDFLAGS)
 
+# Reed-Solomon erasure code of the carousel data plane
+test_rs_erasure: sim/test_rs_erasure.c ../datalink_arq/rs_erasure.c ../datalink_arq/rs_erasure.h $(UNITY_SRC)
+	$(CC) $(CFLAGS) -o $@ $(filter %.c %.a %.o,$^) $(LDFLAGS)
+
+# The carousel data plane on the sim's channel (not run by `make test`; a
+# bench, like ab_bench):  ./carousel_bench <seed> <channel> [bidir]
+CAROUSEL_SIM_SRC = sim/carousel_sim.c ../datalink_arq/carousel.c ../datalink_arq/rs_erasure.c \
+                   sim/sim_channel.c $(ARQ_STUBS) \
+                   ../datalink_arq/arq_protocol.c ../datalink_arq/arith.c ../common/virtual_clock.c
+carousel_bench: sim/carousel_bench.c $(CAROUSEL_SIM_SRC)
+	$(CC) $(CFLAGS) -Isim -I../modem/freedv -o $@ $(filter %.c %.a %.o,$^) $(LDFLAGS)
+
+# The carousel's invariants: completes, delivers intact, never keys over the peer
+test_carousel: sim/test_carousel.c $(CAROUSEL_SIM_SRC) $(UNITY_SRC)
+	$(CC) $(CFLAGS) -Isim -I../modem/freedv -o $@ $(filter %.c %.a %.o,$^) $(LDFLAGS)
+
 # Two-FSM ARQ simulation harness
 SIM_SRC = sim/sim_clock.c sim/sim_channel.c sim/sim_endpoint.c \
           sim/sim_translate.c sim/sim_core.c sim/sim_props.c
 test_arq_sim: sim/test_arq_sim.c $(UNITY_SRC) $(ARQ_STUBS) $(SIM_SRC) \
-              ../datalink_arq/arq_fsm.c ../common/virtual_clock.c \
+              ../datalink_arq/arq_fsm.c ../datalink_arq/carousel.c ../datalink_arq/rs_erasure.c ../common/virtual_clock.c \
               ../datalink_arq/arq_protocol.c \
               ../datalink_arq/arq_timing.c ../datalink_arq/arith.c
+	$(CC) $(CFLAGS) -Isim -I../modem/freedv -o $@ $(filter %.c %.a %.o,$^) $(LDFLAGS)
+
+# The carousel data plane through the real FSM on the two-FSM sim
+test_carousel_sim: sim/test_carousel_sim.c $(UNITY_SRC) $(ARQ_STUBS) $(SIM_SRC) \
+              ../datalink_arq/arq_fsm.c ../datalink_arq/carousel.c ../datalink_arq/rs_erasure.c ../common/virtual_clock.c \
+              ../datalink_arq/arq_protocol.c \
+              ../datalink_arq/arq_timing.c ../datalink_arq/arith.c
+	$(CC) $(CFLAGS) -Isim -I../modem/freedv -o $@ $(filter %.c %.a %.o,$^) $(LDFLAGS)
+
+# Deterministic A/B bench (not part of `make test`):
+#   SIM_CS=400 ./ab_bench <seed> <channel> [bidir]
+ab_bench: sim/ab_bench.c $(ARQ_STUBS) $(SIM_SRC) \
+          ../datalink_arq/arq_fsm.c ../datalink_arq/carousel.c ../datalink_arq/rs_erasure.c ../common/virtual_clock.c \
+          ../datalink_arq/arq_protocol.c \
+          ../datalink_arq/arq_timing.c ../datalink_arq/arith.c
 	$(CC) $(CFLAGS) -Isim -I../modem/freedv -o $@ $(filter %.c %.a %.o,$^) $(LDFLAGS)
 
 # arq_conn accessor correctness tests (single-threaded; locking verified by TSan)
@@ -239,6 +271,9 @@ test_ofdm_acq: modem/test_ofdm_acq.c $(UNITY_SRC) $(FREEDV_LIB)
 test_tx_bpf: modem/test_tx_bpf.c $(UNITY_SRC) $(FREEDV_LIB)
 	$(CC) $(CFLAGS) -I../modem/freedv -o $@ modem/test_tx_bpf.c $(UNITY_SRC) $(FREEDV_LIB) $(LDFLAGS) -lm
 
+test_crc_seed: modem/test_crc_seed.c $(UNITY_SRC) $(FREEDV_LIB)
+	$(CC) $(CFLAGS) -I../modem/freedv -o $@ modem/test_crc_seed.c $(UNITY_SRC) $(FREEDV_LIB) $(LDFLAGS) -lm
+
 # TX burst pacing (pure header; simulated coarse timer, no sleeping).
 # tx_pacing.h is a PREREQUISITE: the logic under test lives entirely in the
 # header, so without it make will not relink and the mutation check silently
@@ -300,6 +335,24 @@ test_ui_devices: gui_interface/test_ui_devices.c $(UNITY_SRC) \
                  ../gui_interface/ui_status.h
 	$(CC) $(CFLAGS) -I../gui_interface -I../datalink_arq -I../modem -I../modem/mfsk -I../common -o $@ \
 	    gui_interface/test_ui_devices.c $(UNITY_SRC) ../gui_interface/ui_devices.c $(LDFLAGS)
+
+MFSK_SRC = ../modem/mfsk/mfsk.c ../modem/mfsk/mfsk_ofdm.c ../modem/mfsk/mfsk_sync.c ../modem/mfsk/mfsk_ldpc.c \
+           ../modem/mfsk/mfsk_ldpc_1_16.c ../modem/mfsk/mfsk_ldpc_2_16.c ../modem/mfsk/mfsk_ldpc_3_16.c \
+           ../modem/mfsk/mfsk_ldpc_5_16.c ../modem/mfsk/mfsk_ldpc_8_16.c
+
+# Chase combining across separated MFSK bursts: does summing LLRs from copies
+# that individually fail actually decode?
+test_mfsk_harq: modem/test_mfsk_harq.c ../modem/mfsk/mfsk_ldpc.c ../modem/mfsk/mfsk_ldpc_8_16.c
+	$(CC) $(CFLAGS) -I../modem -o $@ $(filter %.c %.a %.o,$^) -lm
+
+# MFSK modem backend (burst TX/RX through the vtable); links libfreedvdata for CRC16
+test_mfsk_modem: modem/test_mfsk_modem.c $(UNITY_SRC) ../modem/modem_mfsk.c $(MFSK_SRC) $(FREEDV_LIB)
+	$(CC) $(CFLAGS) -I../modem -I../modem/freedv -o $@ $(filter %.c %.a %.o,$^) $(LDFLAGS) -lm
+
+# Pattern ACK DSP (mfsk_pattern_tx/detect: noise rejects, real detects)
+test_pattern_ack_detection: modem/test_pattern_ack_detection.c $(UNITY_SRC) \
+           ../modem/modem_mfsk.c $(MFSK_SRC) $(FREEDV_LIB)
+	$(CC) $(CFLAGS) -I../modem -I../modem/freedv -o $@ $(filter %.c %.a %.o,$^) $(LDFLAGS) -lm
 
 # A PTT change from the UI must be applied AND written to the INI (issue #219).
 # ui_communication.c and the real INI code are linked; the radio backend, audio,
