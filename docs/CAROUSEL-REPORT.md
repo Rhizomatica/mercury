@@ -156,6 +156,22 @@ Ten variants were measured against the 22-cell matrix, and none was a clean win:
 
 A real fix most likely needs carrier sense from energy rather than decoder sync. That is a modem-level change, and it is risky on noisy bands; the #311 busy detector is off by default for that reason.
 
+**A fix, prototyped and parked (2026-10-03).** Every in-session keydown would open with a 0.64 s pattern header, a NAV, chosen from about 16 patterns so that it announces how long the keydown lasts. A listener that hears it would hold off for exactly that long. That gives carrier sense about 10 dB below DATAC16 and independent of the mode the listener's decoder is bound to.
+
+The real pattern detector was measured with `utils/pattern_probe`:
+- **Detection:** 50 % near −14.5 dB, and −14 dB with a +25 Hz offset.
+- **Fading:** a single header is missed 12 % of the time under Rayleigh fading at −5 dB, and 27 % at −9 dB.
+- **False alarms:** none in 3 h of noise, and none in over 30 minutes of every data mode and MFSK.
+- **CPU:** 8.9 % of an x86 core when always on, so it would need a streaming rewrite for the Pi.
+
+In the simulator (branch `carousel-nav`, with the pattern cliff set to the measured −14 dB):
+- The header, sent only when the link is weak or losing frames, cut collisions across the matrix from 41 to 2.
+- At the fringe it was within ±2 %, but its airtime cost 4–8 % at moderate SNR.
+- The 2 remaining collisions are two timers firing within the header's ~1 s detection latency.
+- Two attempts at those were rejected. Slotted blind keydowns added collisions elsewhere, and a receiver yielding to a handover repeat only moved them.
+
+The work is parked. The plan is to resume it if mode-independent carrier sense, or third-party stations honouring the header to share a frequency, become worth the modem work.
+
 Also open:
 - **Carrier sense below −9 dB** is limited by the preamble.
 - **The receiver's round size** is recomputed from every frame (seen + left), so only a lost last frame ever counts as loss. Correcting that cost 5–8 % on fading, because the margins are tuned to it; it is a retuning job.
@@ -164,4 +180,5 @@ Also open:
 
 - **Simulator matrix.** `make -C tests carousel_bench`, then `CAR_CS_DECODABLE=1 CAR_LIMIT_S=28800 tests/carousel_bench <seed> <channel> [bidir]`. Channels: `awgn:L`, `cliff:dB`, `fade:dB:Hz`, `nvis`, `asym:A:B`, `step:A:B:T`. `CAR_TRACE=1` prints every decision.
 - **Mixed versions.** `MERCURY_TEST_BIN_A=<build> MERCURY_TEST_BIN_B=<build> go test -run '^TestMercuryARQTransfer$' ./tests/integration`. A wrapper script that exports `MERCURY_CAROUSEL=0` works as a build.
+- **Pattern detector.** `make -C utils pattern_probe`, then `utils/pattern_probe [curve N|fading|noise HOURS|signals|cpu]`. It measures the AWGN detection curve with offset, the Rayleigh miss rate, false alarms on noise and on every mode's bursts, and the CPU cost. `SIM_PATTERN_CLIFF` sets the simulator's pattern cliff to match; the default is still −17 dB.
 - **On air.** Run `utils/onair_logs.py <sender journal> <receiver journal>` on the two stations' Mercury journals for one transfer. It shows how each round was answered, the rungs used, and any keydowns that overlapped.
