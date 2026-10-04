@@ -80,6 +80,7 @@ static int feed(void *ctx, const int16_t *x, long n, uint8_t *out)
     return got;
 }
 
+static int g_snr_hi = -8, g_snr_lo = -14, g_off_lo = 0;
 static void sens(int frames)
 {
     void *tx = be->open(MERCURY_MODE_MFSK);
@@ -99,9 +100,10 @@ static void sens(int frames)
     double ps = 0; for (int i = 0; i < n; i++) ps += (double)f[i] * f[i]; ps /= n;
     printf("# sens: frames decoded of %d, frames at random times in continuous noise\n", frames);
     printf("# snr3k   off0   off+25\n");
-    for (int snr = -8; snr >= -14; snr--) {
+    for (int snr = g_snr_hi; snr >= g_snr_lo; snr--) {
         int got[2];
         for (int oi = 0; oi < 2; oi++) {
+            if (oi < g_off_lo) { got[oi] = -1; continue; }
             void *rx = be->open(MERCURY_MODE_MFSK);
             shift(f, n, oi ? 25.0 : 0.0, fs);
             double sigma = sqrt(ps / pow(10.0, snr / 10.0) * 4000.0 / 3000.0);
@@ -145,6 +147,8 @@ int main(int argc, char **argv)
 {
     const char *what = argc > 1 ? argv[1] : "all";
     if (!strcmp(what, "cpu") || !strcmp(what, "all")) cpu(argc > 2 && strcmp(what, "all") ? atof(argv[2]) : 120.0);
+    if (argc > 4) { g_snr_hi = atoi(argv[3]); g_snr_lo = atoi(argv[4]); }
+    if (argc > 5) g_off_lo = atoi(argv[5]);   /* 1: only the +25 Hz offset */
     if (!strcmp(what, "sens") || !strcmp(what, "all")) sens(argc > 2 && strcmp(what, "all") ? atoi(argv[2]) : 30);
     return 0;
 }

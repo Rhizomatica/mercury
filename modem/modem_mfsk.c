@@ -453,6 +453,24 @@ static void mfsk_downmix(mfsk_modem_t *h)
      *
      * The carrier phase is taken from the ABSOLUTE sample index (n_abs), so
      * sliding the buffer does not rotate previously computed samples. */
+    /* At the carrier's a quarter of the sample rate (2 kHz at 8 kHz) the
+     * phasor only ever takes 1, j, -1, -j: no trigonometry per sample, which
+     * on a Pi 4 was a sizeable share of what a listening station spends. */
+    if (MFSK_FC * 4.0 == MFSK_FS)
+    {
+        for (int i = h->bb_len; i < h->rxlen; i++)
+        {
+            double x = 2.0 * (double)h->rxbuf[i];
+            switch ((int)((h->n_abs + (long)i) & 3))
+            {
+            case 0:  h->bb[i] = x;      break;
+            case 1:  h->bb[i] = I * x;  break;
+            case 2:  h->bb[i] = -x;     break;
+            default: h->bb[i] = -I * x; break;
+            }
+        }
+    }
+    else
     for (int i = h->bb_len; i < h->rxlen; i++)
     {
         double x  = (double)h->rxbuf[i];
@@ -684,11 +702,6 @@ static int mfsk_carrier_sense(mfsk_modem_t *h, int search_len)
     }
     /* Positions within P symbols of the end cannot be tested yet. */
     h->carrier_scan_abs = end_abs - (long)(h->P + 2) * h->Nofdm;
-    /* Every hypothesis found nothing there: the preamble search, which
-     * reaches the same offsets once their payload is resident, would find
-     * nothing either (same samples, same templates, same threshold). */
-    if (best < 0 && !h->freq_locked && h->carrier_scan_abs > h->pre_scan_abs)
-        h->pre_scan_abs = h->carrier_scan_abs;
     if (best < 0) return 0;
     h->carrier_abs = from_abs + best;
     return h->carrier_abs + burst > end_abs;

@@ -42,16 +42,6 @@
  * because at the fringe individual symbols scatter around the mean and a floor
  * close to the threshold throws away genuine preambles for a single weak
  * symbol.  (The old 0.05 was 62% of the old 0.5 gate.) */
-/* Phase 2 refines a coarse candidate by at most half a coarse step: an eighth
- * of a symbol, which costs a symbol's correlation (7/8)^2 = 0.77 of its
- * aligned value.  A coarse best below this fraction of the accept threshold
- * cannot be refined over it, so the refinement -- the costly part on noise,
- * eight candidates sample by sample across two symbols -- is skipped.  0.70
- * leaves margin under 0.77 (utils/mfsk_rx_probe: decodes unchanged). */
-#ifndef MFSK_SYNC_REFINE_GATE
-#define MFSK_SYNC_REFINE_GATE 0.70
-#endif
-
 #ifndef MFSK_SYNC_SYM_FLOOR
 #define MFSK_SYNC_SYM_FLOOR (MFSK_SYNC_ACCEPT / 3.0)
 #endif
@@ -167,11 +157,7 @@ int mfsk_sync_search(const double complex *rx, int rx_len, int interp,
         if (metric > accept_thresh) break;  /* earliest strong preamble */
     }
 
-    if (best_p1_pos < 0 || best_p1 < MFSK_SYNC_REFINE_GATE * accept_thresh)
-    {
-        if (out_metric) *out_metric = best_p1;
-        return -1;
-    }
+    if (best_p1_pos < 0) { if (out_metric) *out_metric = best_p1; return -1; }
 
     /* Phase 2: fine refinement on all top-K candidates */
     int search_half = sym_period;
