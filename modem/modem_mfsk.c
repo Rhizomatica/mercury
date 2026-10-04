@@ -96,6 +96,7 @@ typedef struct {
     /* RX sliding window (int16 passband) */
     int16_t *rxbuf;
     int      rxlen, rxcap;
+    int      rxhold;                /* what the window keeps when it slides */
     long     since_search;          /* samples appended since last detect attempt */
 
     /* RX scratch (preallocated) */
@@ -137,6 +138,8 @@ typedef struct {
                             * -1: lets a burst be tracked without re-correlating
                             * the whole window on every attempt */
     long  carrier_abs;     /* a preamble whose payload is still arriving, or -1 */
+    long  pre_scan_abs;    /* preamble offsets below this were searched: none, or -1 */
+    long  pst_scan_abs;    /* postamble offsets below this were searched: none, or -1 */
     long  carrier_scan_abs;/* carrier sense has searched up to here, or -1 */
     int   last_sync;
     float last_snr;
@@ -200,7 +203,15 @@ static void *mfsk_be_open(int mode)
      * missing: measured, `off` never even reached 8000.  Sizing for two bursts
      * makes the burst decodable for a whole burst-length of slide instead, which
      * is the difference between "usually" and "reliably". */
-    h->rxcap = (2 * (h->P + h->NPAY) + h->P + 8) * h->Nofdm;
+    /* The window keeps two bursts and a margin (rxhold).  It slides by
+     * memmove, three buffers of it -- at 2 x 3.6 MB of complex doubles, 25
+     * times a second, ~190 MB/s, a quarter of a Pi 4 core spent copying while
+     * idle.  So it is allocated a burst larger, and slides only when that
+     * slack is used up: about once per burst instead of once per chunk.  The
+     * searches resume where they stopped, so the longer window costs them
+     * nothing. */
+    h->rxhold = (2 * (h->P + h->NPAY) + h->P + 8) * h->Nofdm;
+    h->rxcap  = h->rxhold + (h->P + h->NPAY) * h->Nofdm;
     h->rxbuf = (int16_t *)malloc((size_t)h->rxcap * sizeof(int16_t));
     h->bf    = (double complex *)malloc((size_t)h->rxcap * sizeof(double complex));
     h->bb    = (double complex *)malloc((size_t)h->rxcap * sizeof(double complex));
@@ -210,6 +221,7 @@ static void *mfsk_be_open(int mode)
     h->tried_abs  = -1;
     h->reject_abs = -1;
     h->carrier_abs = h->carrier_scan_abs = -1;
+    h->pre_scan_abs = h->pst_scan_abs = -1;
     h->rb    = (mfsk_cplx *)calloc((size_t)h->NPAY * MFSK_NCAR, sizeof(mfsk_cplx));
     /* NPAY*bps, not N: mfsk_demod emits one LLR per transmitted bit slot, and
      * bps need not divide N (M=8 gives 1602 slots for a 1600-bit codeword). */
@@ -450,6 +462,24 @@ static void mfsk_downmix(mfsk_modem_t *h)
      *
      * The carrier phase is taken from the ABSOLUTE sample index (n_abs), so
      * sliding the buffer does not rotate previously computed samples. */
+    /* At the carrier's a quarter of the sample rate (2 kHz at 8 kHz) the
+     * phasor only ever takes 1, j, -1, -j: no trigonometry per sample, which
+     * on a Pi 4 was a sizeable share of what a listening station spends. */
+    if (MFSK_FC * 4.0 == MFSK_FS)
+    {
+        for (int i = h->bb_len; i < h->rxlen; i++)
+        {
+            double x = 2.0 * (double)h->rxbuf[i];
+            switch ((int)((h->n_abs + (long)i) & 3))
+            {
+            case 0:  h->bb[i] = x;      break;
+            case 1:  h->bb[i] = I * x;  break;
+            case 2:  h->bb[i] = -x;     break;
+            default: h->bb[i] = -I * x; break;
+            }
+        }
+    }
+    else
     for (int i = h->bb_len; i < h->rxlen; i++)
     {
         double x  = (double)h->rxbuf[i];
@@ -648,7 +678,9 @@ static int mfsk_try_payload(mfsk_modem_t *h, int payoff, uint8_t *bytes_out)
  * since the last look are new, so each look correlates a few symbols' worth,
  * and once a preamble is found it is tracked until its payload is resident,
  * where the search above takes over. */
-#define CS_OVERLAP_SYMB 4
+#define CS_OVERLAP_SYMB 1
+/* How far back an incremental search starts behind where the last one ended. */
+#define SCAN_OVERLAP_SYMB 2
 static int mfsk_carrier_sense(mfsk_modem_t *h, int search_len)
 {
     int burst = (h->P + h->NPAY) * h->Nofdm;
@@ -692,7 +724,7 @@ static int mfsk_be_rawdata_rx(void *ctx, uint8_t *bytes_out, const int16_t *demo
     /* Append this chunk to the sliding window (drop oldest if over capacity). */
     if (h->rxlen + chunk > h->rxcap)
     {
-        int drop = h->rxlen + chunk - h->rxcap;
+        int drop = h->rxlen + chunk - h->rxhold;
         memmove(h->rxbuf, h->rxbuf + drop, (size_t)(h->rxlen - drop) * sizeof(int16_t));
         /* Keep the derived buffers aligned with the raw one, or the incremental
          * downmix would recompute the wrong region. */
@@ -775,6 +807,19 @@ static int mfsk_be_rawdata_rx(void *ctx, uint8_t *bytes_out, const int16_t *demo
             if (rel < 0) h->reject_abs = -1;                 /* slid out */
             else start_symb = (int)(rel / h->Nofdm) + 1;
         }
+        /* Nor search again what an earlier look already found empty: the
+         * window only grows at its end, and a correlation reads only the
+         * samples under it, so an offset that held no preamble then holds
+         * none now.  Searching the whole window every four symbols, on a
+         * listening station that hears only noise, was most of its CPU.
+         * SCAN_OVERLAP_SYMB back covers the refinement's reach and the
+         * downmix filter's still-settling tail. */
+        if (h->pre_scan_abs >= 0)
+        {
+            long rel = h->pre_scan_abs - h->n_abs - (long)SCAN_OVERLAP_SYMB * h->Nofdm;
+            int s = rel > 0 ? (int)(rel / h->Nofdm) : 0;
+            if (s > start_symb) start_symb = s;
+        }
         /* Sweep frequency hypotheses, not just time. Without this a dial
          * error of half a subcarrier makes the preamble invisible, and no
          * amount of time searching recovers it.
@@ -830,10 +875,13 @@ static int mfsk_be_rawdata_rx(void *ctx, uint8_t *bytes_out, const int16_t *demo
          * refine it back onto the peak it was told to start past: a rejected
          * anchor must never be taken again, or it is tried once and then
          * sits there as "already tried" while the burst behind it goes by. */
+        bool none_found = off < 0;   /* every hypothesis searched to the end */
         if (off >= 0 && h->reject_abs >= 0 && h->n_abs + (long)off <= h->reject_abs)
             off = -1;
         if (off >= 0)
             h->anchor_abs = h->n_abs + (long)off;
+        else if (none_found)   /* every offset with a whole preamble in view */
+            h->pre_scan_abs = h->n_abs + (long)(search_len / h->Nofdm - h->P) * h->Nofdm;
     }
     int payoff = (off >= 0) ? off + h->P * h->Nofdm : -1;
     /* Decode a given burst ONCE.  Once the anchor is fixed and the payload is
@@ -894,8 +942,14 @@ static int mfsk_be_rawdata_rx(void *ctx, uint8_t *bytes_out, const int16_t *demo
     if (nbytes <= 0 && (off < 0 || payload_was_resident))
     {
         double pmetric = 0.0;
+        int pstart = 0;
+        if (h->pst_scan_abs >= 0)
+        {
+            long rel = h->pst_scan_abs - h->n_abs - (long)SCAN_OVERLAP_SYMB * h->Nofdm;
+            pstart = rel > 0 ? (int)(rel / h->Nofdm) : 0;
+        }
         int poff = mfsk_sync_search(h->bf, h->bf_len, 1, h->pstT, h->pstE,
-                                    h->pstN, h->Nofdm, 0, &pmetric);
+                                    h->pstN, h->Nofdm, pstart, &pmetric);
         if (poff >= 0)
         {
             int ppayoff = poff - h->NPAY * h->Nofdm;
@@ -905,7 +959,11 @@ static int mfsk_be_rawdata_rx(void *ctx, uint8_t *bytes_out, const int16_t *demo
                 off = poff;
                 nbytes = pn;
             }
+            else   /* its payload failed, or is not in view: it will not change */
+                h->pst_scan_abs = h->n_abs + (long)poff + (long)(SCAN_OVERLAP_SYMB + 1) * h->Nofdm;
         }
+        else
+            h->pst_scan_abs = h->n_abs + (long)(h->bf_len / h->Nofdm - h->P) * h->Nofdm;
     }
 
     /* Sync means "a burst is arriving": its preamble located, its payload not
@@ -921,6 +979,7 @@ static int mfsk_be_rawdata_rx(void *ctx, uint8_t *bytes_out, const int16_t *demo
     if (nbytes <= 0)
         return 0;
     h->carrier_abs = h->carrier_scan_abs = -1;
+    h->pre_scan_abs = h->pst_scan_abs = -1;
     h->n_abs += h->rxlen;
     h->rxlen = h->bb_len = h->bf_len = 0;   /* burst consumed */
     h->anchor_abs = -1;
