@@ -96,6 +96,7 @@ typedef struct {
     /* RX sliding window (int16 passband) */
     int16_t *rxbuf;
     int      rxlen, rxcap;
+    int      rxhold;                /* what the window keeps when it slides */
     long     since_search;          /* samples appended since last detect attempt */
 
     /* RX scratch (preallocated) */
@@ -202,7 +203,15 @@ static void *mfsk_be_open(int mode)
      * missing: measured, `off` never even reached 8000.  Sizing for two bursts
      * makes the burst decodable for a whole burst-length of slide instead, which
      * is the difference between "usually" and "reliably". */
-    h->rxcap = (2 * (h->P + h->NPAY) + h->P + 8) * h->Nofdm;
+    /* The window keeps two bursts and a margin (rxhold).  It slides by
+     * memmove, three buffers of it -- at 2 x 3.6 MB of complex doubles, 25
+     * times a second, ~190 MB/s, a quarter of a Pi 4 core spent copying while
+     * idle.  So it is allocated a burst larger, and slides only when that
+     * slack is used up: about once per burst instead of once per chunk.  The
+     * searches resume where they stopped, so the longer window costs them
+     * nothing. */
+    h->rxhold = (2 * (h->P + h->NPAY) + h->P + 8) * h->Nofdm;
+    h->rxcap  = h->rxhold + (h->P + h->NPAY) * h->Nofdm;
     h->rxbuf = (int16_t *)malloc((size_t)h->rxcap * sizeof(int16_t));
     h->bf    = (double complex *)malloc((size_t)h->rxcap * sizeof(double complex));
     h->bb    = (double complex *)malloc((size_t)h->rxcap * sizeof(double complex));
@@ -715,7 +724,7 @@ static int mfsk_be_rawdata_rx(void *ctx, uint8_t *bytes_out, const int16_t *demo
     /* Append this chunk to the sliding window (drop oldest if over capacity). */
     if (h->rxlen + chunk > h->rxcap)
     {
-        int drop = h->rxlen + chunk - h->rxcap;
+        int drop = h->rxlen + chunk - h->rxhold;
         memmove(h->rxbuf, h->rxbuf + drop, (size_t)(h->rxlen - drop) * sizeof(int16_t));
         /* Keep the derived buffers aligned with the raw one, or the incremental
          * downmix would recompute the wrong region. */
