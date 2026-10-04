@@ -119,6 +119,11 @@ hail_suffix_sweep: hail_suffix_sweep.c ../modem/mfsk/mfsk.c ../modem/mfsk/mfsk_o
 pattern_probe: pattern_probe.c ../modem/modem_mfsk.c $(MFSK_DSP_SRC) ../modem/freedv/libfreedvdata.a
 	$(CC) $(CFLAGS) -O2 -I../modem -I../modem/mfsk -I../modem/freedv -o $@ $(filter %.c %.a %.o,$^) $(LDFLAGS) -lm
 
+# The MFSK receiver as a listening station runs it: decodes against SNR, and
+# idle CPU on noise.  A cheaper receiver must keep the first.
+mfsk_rx_probe: mfsk_rx_probe.c ../modem/modem_mfsk.c $(MFSK_DSP_SRC) ../modem/freedv/libfreedvdata.a
+	$(CC) $(CFLAGS) -O2 -I../modem -I../modem/mfsk -I../modem/freedv -o $@ $(filter %.c %.a %.o,$^) $(LDFLAGS) -lm
+
 mfsk_puncture_sweep: mfsk_puncture_sweep.c ../modem/mfsk/mfsk_ldpc.c ../modem/mfsk/mfsk_ldpc_8_16.c
 	$(CC) $(CFLAGS) -I../modem -I../modem/mfsk -o $@ $(filter %.c %.a %.o,$^) -lm
 # Broadcast a file to Mercury, or receive one, over the broadcast TCP/KISS port.
