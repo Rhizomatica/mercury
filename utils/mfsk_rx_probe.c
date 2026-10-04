@@ -143,9 +143,32 @@ static void cpu(double seconds)
     free(x); free(out);
 }
 
+/* The receiver on recorded audio (raw s16 at 8 kHz): what a station's own
+ * band noise costs, which white noise understates. */
+static void cpu_file(const char *path)
+{
+    FILE *f = fopen(path, "rb");
+    if (!f) { perror(path); return; }
+    fseek(f, 0, SEEK_END); long n = ftell(f) / 2; fseek(f, 0, SEEK_SET);
+    int16_t *x = malloc((size_t)n * sizeof *x);
+    if (fread(x, sizeof *x, (size_t)n, f) != (size_t)n) { fclose(f); free(x); return; }
+    fclose(f);
+    double rms = 0; for (long t = 0; t < n; t++) rms += (double)x[t] * x[t]; rms = sqrt(rms / n);
+    void *rx = be->open(MERCURY_MODE_MFSK);
+    uint8_t *out = calloc(256, 1);
+    clock_t c0 = clock();
+    int got = feed(rx, x, n, out);
+    double s = (double)(clock() - c0) / CLOCKS_PER_SEC;
+    printf("# file %s: %.0f s, rms %.0f: %.2f s = %.2f %% of one core (%d frames)\n",
+           path, n / 8000.0, rms, s, 100.0 * s / (n / 8000.0), got);
+    be->close(rx);
+    free(x); free(out);
+}
+
 int main(int argc, char **argv)
 {
     const char *what = argc > 1 ? argv[1] : "all";
+    if (!strcmp(what, "file") && argc > 2) { cpu_file(argv[2]); return 0; }
     if (!strcmp(what, "cpu") || !strcmp(what, "all")) cpu(argc > 2 && strcmp(what, "all") ? atof(argv[2]) : 120.0);
     if (argc > 4) { g_snr_hi = atoi(argv[3]); g_snr_lo = atoi(argv[4]); }
     if (argc > 5) g_off_lo = atoi(argv[5]);   /* 1: only the +25 Hz offset */
