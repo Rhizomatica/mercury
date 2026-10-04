@@ -16,7 +16,7 @@ The design is in [CAROUSEL-ARQ.md](CAROUSEL-ARQ.md), the full development record
 
   Development builds of the carousel from before 2026-10-02 (pre-release only) do not mix with 1.9.18; update both ends.
 - **Host timeouts.** A session can now open where DATAC16 cannot reach, through MFSK CALL/ACCEPT, which takes longer: about a minute or two at the floor. A host that hangs up an unconnected call early stops that. On HERMES stations uuport and uucico allow 180 s (hermes-net #30, uucp 1.07-39); other hosts (Winlink clients, BPQ) may need their connect timeout raised to use the deepest connects.
-- **Idle CPU is higher.** A listening station now also listens for MFSK CALLs. On a Raspberry Pi 4 idle LISTENING went from 22-26 % of one core (1.9.17) to 60-83 % (1.9.18), measured on estacao8 over 60 s; the RX loop keeps up (no backlog warnings). During a session the extra decoder stops.
+- **Idle CPU is unchanged.** A listening station now also listens for MFSK CALLs, with a third decoder that costs about 1 % of a Raspberry Pi 4 core. Idle LISTENING on a Pi 4 (estacao8, 60 s, two rounds): 1.9.17 30-31 % of one core, 1.9.18 33-34 %. (Before #344 that decoder took the station to 62-64 %; see the PR for what was expensive.)
 - **The old plane is still there.** `MERCURY_CAROUSEL=0` in the environment runs every session on stop-and-wait, as a station without the carousel does.
 
 ## What's new
