@@ -9,8 +9,10 @@
 (*   take_pieces: off = (wire - rbase) mod MOD; off >= WIN or a decoded    *)
 (*     block means "delivered already" (sets the BREAK flag);              *)
 (*   apply_need: off = (id - base) mod MOD; off >= WIN or need 0 retires;  *)
-(*   car_on_pattern: a floor BREAK retires sb[1] only if it is floor_blk   *)
-(*     and at least K of its pieces went out;                              *)
+(*   car_on_pattern: a floor BREAK names floor_blk; if at least K of its   *)
+(*     pieces went out the sender stops sending it, but only a poll        *)
+(*     retires it (a BREAK is advisory);                                   *)
+(*   a floor round carries one block: the oldest one not stopped;          *)
 (*   a block is opened only while the id span is < WIN.                    *)
 (* Time, rungs and turns are abstracted away: any enabled action may run,  *)
 (* which over-approximates every schedule the timers can produce.          *)
@@ -36,7 +38,7 @@ CONSTANTS NB,        \* blocks to send
 ASSUME MOD = 2 * WIN /\ K <= SENTMAX
 
 VARIABLES
-    sb,        \* sender: sequence of open blocks [id |-> abs id, sent |-> pieces sent]
+    sb,        \* sender: open blocks [id |-> abs id, sent |-> pieces sent, stop |-> BREAKed]
     nxt,       \* sender: next block id to open
     floorBlk,  \* sender: the block its last floor round carried
     down,      \* frames in flight sender -> receiver, in order (a FIFO: no overtaking on air)
@@ -67,13 +69,18 @@ Span == IF sb = << >> THEN 0 ELSE nxt - sb[1].id
 
 Open ==
     /\ nxt < NB /\ Span < WIN
-    /\ sb' = Append(sb, [id |-> nxt, sent |-> 0])
+    /\ sb' = Append(sb, [id |-> nxt, sent |-> 0, stop |-> FALSE])
     /\ nxt' = nxt + 1
     /\ UNCHANGED <<floorBlk, down, up, retired>> /\ UNCHANGED rxv
 
+\* The block a floor round carries: the oldest not stopped by a BREAK, or the
+\* oldest of all when every one is (its repair, until a poll comes).
+Live == {j \in 1 .. Len(sb) : ~sb[j].stop}
+FloorIdx == IF Live = {} THEN 1 ELSE CHOOSE j \in Live : \A k \in Live : j <= k
+
 SendPiece(i) ==
     /\ i \in 1 .. Len(sb)
-    /\ FLOOR => i = 1
+    /\ FLOOR => i = FloorIdx
     /\ sb[i].sent < SENTMAX
     /\ Len(down) < CHAN
     /\ down' = Append(down, [t |-> "data", wire |-> sb[i].id % MOD, true |-> sb[i].id,
@@ -89,16 +96,20 @@ SendPiece(i) ==
 Keep(blk, m) == LET off == (blk.id + MOD - m.base) % MOD
                 IN off < WIN /\ m.need[off] # 0
 
+\* A poll retires what it reports done, and a block it reports still needed
+\* is sent again even if a BREAK stopped it.
 OnPoll(m) ==
-    /\ sb' = SelectSeq(sb, LAMBDA blk : Keep(blk, m))
+    /\ LET kept == SelectSeq(sb, LAMBDA blk : Keep(blk, m))
+       IN sb' = [j \in 1 .. Len(kept) |-> [kept[j] EXCEPT !.stop = FALSE]]
     /\ retired' = retired \cup {sb[i].id : i \in {j \in 1 .. Len(sb) : ~Keep(sb[j], m)}}
     /\ UNCHANGED <<nxt, floorBlk>>
 
 OnBreak ==
-    IF FLOOR /\ sb # << >> /\ sb[1].id = floorBlk /\ sb[1].sent >= K
-    THEN /\ retired' = retired \cup {sb[1].id}
-         /\ sb' = Tail(sb)
-         /\ UNCHANGED <<nxt, floorBlk>>
+    IF FLOOR /\ \E j \in 1 .. Len(sb) : sb[j].id = floorBlk /\ sb[j].sent >= K
+    THEN /\ sb' = [j \in 1 .. Len(sb) |->
+                      IF sb[j].id = floorBlk /\ sb[j].sent >= K
+                      THEN [sb[j] EXCEPT !.stop = TRUE] ELSE sb[j]]
+         /\ UNCHANGED <<nxt, floorBlk, retired>>
     ELSE UNCHANGED txv
 
 (* ---- receiver ---- *)
@@ -192,6 +203,10 @@ Integrity == \A i \in 1 .. Len(delivered) : got[delivered[i]] \subseteq {deliver
 \* A block leaves the sender only once the receiver holds it decoded:
 \* otherwise nobody will ever send it again.
 RetireSafe == \A b \in retired : b < NB => done[b]
+
+\* Not a safety property: checked as an invariant it must FAIL, which shows a
+\* complete transfer is reachable (the model is not safe by doing nothing).
+NotFinished == Len(delivered) < NB
 
 \* Nothing past the real blocks is ever delivered.
 NoPhantom == \A i \in 1 .. Len(delivered) : delivered[i] < NB

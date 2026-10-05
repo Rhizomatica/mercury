@@ -440,6 +440,7 @@ static void open_block(car_t *c, int max_k)
     s->need = s->K;
     s->resend = -1;
     s->sent = 0;
+    s->stopped = false;
     memset(s->data, 0, sizeof(s->data));
     memcpy(s->data, buf, len);
 }
@@ -466,6 +467,7 @@ static void apply_need(car_t *c, const msg_t *m)
         else                               need = m->need[off];
         if (need == 0) { retired += (size_t)c->sb[b].len; continue; }
         c->sb[b].need = need;
+        c->sb[b].stopped = false;             /* a BREAK it contradicts was not the receiver's */
         c->sb[b].resend = off == 0 && m->gap >= 0 && m->gap < c->sb[b].K ? m->gap : -1;
         if (keep != b) c->sb[keep] = c->sb[b];
         keep++;
@@ -494,8 +496,10 @@ static int build_round(car_t *c, int lv, int n, uint32_t poll_id, car_frame_t *f
     /* At the floor a round carries only the oldest block, so a BREAK -- "the
      * block you are on is delivered" -- can only mean that one. */
     bool floor = lv == 0 && c->io.pattern;
+    int live = 0;                             /* the oldest block no BREAK stopped */
+    while (live < c->nsb && c->sb[live].stopped) live++;
     for (int b = 0; b < c->nsb; b++) queued += (int)ceil(c->sb[b].need * (1.0 + margin));
-    while (queued < n * ppf && c->nsb < CAR_WIN && unopened(c) && !(floor && c->nsb) &&
+    while (queued < n * ppf && c->nsb < CAR_WIN && unopened(c) && !(floor && live < c->nsb) &&
            (c->nsb == 0 || (uint8_t)(c->next_blk_id - c->sb[0].id) < CAR_WIN))
     {
         open_block(c, block_k_for(lv));
@@ -504,7 +508,18 @@ static int build_round(car_t *c, int lv, int n, uint32_t poll_id, car_frame_t *f
     if (!c->nsb || n < 1) return 0;
     for (int b = 0; b < c->nsb; b++) c->sb[b].round_sent = 0;
     int nsb_all = c->nsb;
-    if (floor) { c->nsb = 1; c->floor_blk = c->sb[0].id; }
+    /* A floor round carries one block: the oldest a BREAK has not stopped,
+     * or, every one stopped, repair for the oldest until a poll retires them
+     * -- or says one is still needed after all.  It goes in slot 0 for the
+     * round and back after. */
+    int fb = 0;
+    if (floor) {
+        live = 0;
+        while (live < c->nsb && c->sb[live].stopped) live++;
+        fb = live < c->nsb ? live : 0;
+        if (fb) { car_sblock_t t = c->sb[0]; c->sb[0] = c->sb[fb]; c->sb[fb] = t; }
+        c->nsb = 1; c->floor_blk = c->sb[0].id;
+    }
     int mode = LADDER[lv];
     int room = mode_payload(mode);
 
@@ -577,6 +592,7 @@ static int build_round(car_t *c, int lv, int n, uint32_t poll_id, car_frame_t *f
         if (b >= c->nsb) break;                  /* all wants met */
     }
     c->nsb = nsb_all;
+    if (fb) { car_sblock_t t = c->sb[0]; c->sb[0] = c->sb[fb]; c->sb[fb] = t; }
     for (int i = 0; i < nf; i++) {
         fr[i].bytes[0] = (uint8_t)((nf - 1 - i) << 4 | (unopened(c) ? 1 : 0) << 3 | (c->snr_level & 7));
         fr[i].bytes[1] = (uint8_t)((poll_id & 0x0F) << 4 | ((c->next_blk_id - 1) & 0x0F));
@@ -1039,10 +1055,11 @@ static bool peer_direction_done(const car_t *c)
     return c->status_seen || (!c->peer_unopened && peer_outstanding(c) == 0);
 }
 
-static void fill_poll(const car_t *c, msg_t *m)
+static void fill_poll(car_t *c, msg_t *m)
 {
     memset(m, 0, sizeof(*m));
     m->base = c->rbase;
+    c->polled_base = c->rbase;
     for (int o = 0; o < CAR_WIN; o++) {
         const car_rblock_t *r = &c->rb[(uint8_t)(c->rbase + o) % CAR_WIN];
         m->need[o] = !r->known ? FB_UNSEEN : r->done ? 0 : r->K - r->have;
@@ -1073,7 +1090,7 @@ static void start_driving(car_t *c, uint32_t poll_id, int lv, int n, uint64_t ro
     bind_rx(c, lv);
     c->round_seen = 0; c->round_frames = n; c->status_seen = false;
     c->round_heard = true;
-    c->done_in_round = 0;
+    c->done_in_round = 0; c->round_fresh = false;
     c->drive_start = now;
     /* A BREAK speaks for the round just heard: a flag left from an earlier
      * turn retired a block the receiver never completed (sim, nvis bidir). */
@@ -1142,7 +1159,8 @@ static void send_poll_as(car_t *c, int lv, int n, bool repeat)
     c->floor_streaming = false;
     if (n) { c->poll_level = lv; c->poll_n = n; c->drove_peer = true; bind_rx(c, lv); }
     if (n) { c->polled_since_handover = true; c->my_poll_id = (uint8_t)c->poll_id; }
-    c->round_seen = 0; c->round_frames = n; c->status_seen = false; c->done_in_round = 0;
+    c->round_seen = 0; c->round_frames = n; c->status_seen = false;
+    c->done_in_round = 0; c->round_fresh = false;
     c->round_heard = false;
     c->floor_hold = false;
     put_ctl(c, &fr[0], &m);
@@ -1170,7 +1188,7 @@ static void send_pattern(car_t *c, int kind, bool expect_round)
         if (c->poll_level == 0)
             c->poll_n = keydown_cap(0);     /* what a sender streaming the floor sends */
         c->round_seen = 0; c->round_frames = c->poll_n; c->status_seen = false;
-        c->done_in_round = 0; c->round_heard = false;
+        c->done_in_round = 0; c->round_fresh = false; c->round_heard = false;
     }
     c->floor_hold = false;
     disarm(c, CAR_T_POLL); disarm(c, CAR_T_SENSE);
@@ -1236,7 +1254,8 @@ static void on_poll_timer(car_t *c, uint64_t now)
         c->floor_fallback = true;
         c->poll_level = 0; c->poll_n = keydown_cap(0);
         bind_rx(c, 0);
-        c->round_seen = 0; c->round_frames = c->poll_n; c->round_heard = false; c->done_in_round = 0;
+        c->round_seen = 0; c->round_frames = c->poll_n; c->round_heard = false;
+        c->done_in_round = 0; c->round_fresh = false;
         disarm(c, CAR_T_SENSE);
         arm(c, CAR_T_POLL, (in_frame > start_max ? in_frame : start_max) + FLOOR_SENSE_MS);
         return;
@@ -1316,10 +1335,11 @@ static void on_poll_timer(car_t *c, uint64_t now)
     }
     bool floor = c->poll_level == 0 && c->io.pattern;
     if (done) {
+        /* Ack only: nothing left either way.  At the floor too -- a BREAK only
+         * stops a block, the poll retires them all. */
         car_trace(c, "rx -> done");
         c->idle = true;
-        if (floor) send_pattern(c, CAR_PATTERN_BREAK, false);   /* the last block is in */
-        else       send_poll(c, 0, 0);       /* ack only: nothing left either way */
+        send_poll(c, 0, 0);
         return;
     }
     int lv = choose_level(c, now);
@@ -1337,7 +1357,18 @@ static void on_poll_timer(car_t *c, uint64_t now)
      * it instead gave back most of the floor's gain (26640 -> 14112 bytes at
      * -11 dB, carousel_bench). */
     if (c->round_seen > 0 && c->poll_level == 0) c->floor_streaming = true;
-    if (floor && lv == 0 && c->floor_streaming && c->floor_patterns < floor_poll_every(c)) {
+    /* A BREAK only stops a block: the sender holds it until a poll, and opens
+     * a new one only while its blocks span fewer than CAR_WIN ids.  Poll
+     * before that stalls it -- the deep floor polls every 12 rounds. */
+    bool window_full = c->peer_hi_known && (uint8_t)(c->peer_hi + 1 - c->polled_base) >= CAR_WIN - 2;
+    /* And a sender whose every block is stopped sends repair of the oldest
+     * until a poll comes -- a poll that was lost, since mine are all it sees
+     * of my base.  Two rounds in a row of nothing new: the first may only be
+     * a BREAK it missed, which a BREAK repeats more cheaply than a poll. */
+    if (c->round_seen > 0) c->stale_rounds = c->round_fresh ? 0 : c->stale_rounds + 1;
+    bool stuck = c->stale_rounds >= 2;
+    if (floor && lv == 0 && c->floor_streaming && c->floor_patterns < floor_poll_every(c) && !window_full &&
+        !stuck) {
         car_trace(c, "rx -> floor pattern %s", c->rx_break ? "BREAK" : "ACK");
         c->floor_patterns++;
         send_pattern(c, c->rx_break ? CAR_PATTERN_BREAK : CAR_PATTERN_ACK, true);
@@ -1411,6 +1442,7 @@ static void take_pieces(car_t *c, const msg_t *m)
             r->K = sg->K; r->len = sg->K * CAR_PIECE - sg->pad;
         }
         if (r->done) { c->rx_break = true; continue; }   /* delivered: still sent */
+        c->round_fresh = true;
         for (int p = 0; p < sg->count; p++) {
             int i = (sg->first + p) % RS_MAX_PIECES;
             if (!r->got[i] && r->have < r->K) {
@@ -1712,17 +1744,20 @@ void car_on_pattern(car_t *c, uint64_t now, int kind)
     c->handover_unconfirmed = false;       /* the receiver hears me */
     c->tx_n = keydown_cap(0);              /* streaming: full floor rounds */
     disarm(c, CAR_T_WAIT);
-    /* Only for the block my last round carried: a BREAK repeated after I
-     * moved on must not retire the next one. */
-    /* And never for a block the receiver cannot have decoded yet: fewer than
-     * K distinct pieces of it have gone out.  A wrong BREAK is data lost. */
-    if (kind == CAR_PATTERN_BREAK && c->nsb > 0 && c->sb[0].id == c->floor_blk &&
-        c->sb[0].sent >= c->sb[0].K) {
-        size_t len = (size_t)c->sb[0].len;
-        memmove(&c->sb[0], &c->sb[1], (size_t)(c->nsb - 1) * sizeof(c->sb[0]));
-        c->nsb--;
-        if (c->io.tx_confirmed) c->io.tx_confirmed(c->io.ctx, len);
-    }
+    /* "The block you are on is in": only for the block my last round
+     * carried -- a BREAK repeated after I moved on must not stop the next one
+     * -- and never for a block the receiver cannot have decoded yet (fewer
+     * than K distinct pieces of it have gone out).  It stops the block; only
+     * a poll retires it.  A pattern carries no session and a detector can
+     * false-alarm: a BREAK that retired was a block dropped undelivered, and
+     * the session then ended on STATUS as if complete (spec risk R5,
+     * specs/carousel). */
+    for (int b = 0; kind == CAR_PATTERN_BREAK && b < c->nsb; b++)
+        if (c->sb[b].id == c->floor_blk && c->sb[b].sent >= c->sb[b].K) {
+            c->sb[b].stopped = true;
+            c->sb[b].need = 0;
+            c->sb[b].resend = -1;
+        }
     if (!has_data(c)) { c->sending = false; c->idle = true; return; }
     arm(c, CAR_T_SEND, now + ISS_GUARD_MS);
 }

@@ -91,6 +91,7 @@ typedef struct {
     int      resend;                      /* data piece the receiver waits on, -1 */
     int      sent;                        /* distinct pieces sent so far (capped) */
     int      round_sent;                  /* fresh pieces of it in my last round */
+    bool     stopped;                     /* a floor BREAK said it is in; a poll retires it */
     uint8_t  data[CAR_MAX_K][CAR_PIECE];
 } car_sblock_t;
 
@@ -151,6 +152,9 @@ typedef struct {
     int      silent_polls;
     bool     peer_unopened;
     uint8_t  peer_hi;
+    uint8_t  polled_base;           /* the window base my last poll or handover reported */
+    bool     round_fresh;           /* this round carried a block I do not have yet */
+    int      stale_rounds;          /* floor rounds in a row that carried nothing new */
     bool     peer_hi_known;
     uint64_t drive_start;
     car_rblock_t rb[CAR_WIN];

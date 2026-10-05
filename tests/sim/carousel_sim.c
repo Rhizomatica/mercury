@@ -48,6 +48,7 @@ typedef struct {
     size_t   len;
     uint8_t *bytes;
     uint64_t f_start, f_end;       /* EV_ARRIVE: the frame's air interval */
+    bool     injected;             /* an explorer's spurious pattern: never a collision */
 } event_t;
 
 #define MAXEV 4096
@@ -94,6 +95,9 @@ typedef struct {
 static station_t S[2];
 static sim_channel_t *ch;
 static int collisions;
+static const int *spurious_idx;
+static int spurious_n;
+void carousel_sim_force_spurious_break(const int *kd_idx, int n) { spurious_idx = kd_idx; spurious_n = n; }
 /* carousel_sim_force_losses: an explorer's choice of lost frames. */
 static const int *force_idx;
 static int force_n = -1;
@@ -111,9 +115,16 @@ static bool unsensed(int kd)
 }
 void carousel_sim_force_losses(const int *frame_idx, int n) { force_idx = frame_idx; force_n = n; }
 /* Is this frame delivered?  The channel model's answer, or the explorer's. */
+static bool spurious_kd(int kd)
+{
+    for (int i = 0; i < spurious_n; i++)
+        if (spurious_idx[i] == kd) return true;
+    return false;
+}
 static bool deliver(uint64_t t, int dir, int mode, uint64_t *d)
 {
     int k = frame_no++;
+    if (spurious_kd(S[dir].kd_no)) return false;   /* faded: a foreign BREAK answers it */
     if (force_n < 0) return sim_channel_schedule(ch, t, dir, mode, 0, d);
     for (int i = 0; i < force_n; i++)
         if (force_idx[i] == k) return false;
@@ -384,10 +395,19 @@ void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limi
             station_t *s = &S[e.st];
             if (e.type == EV_TXEND) {
                 car_on_tx_done(&s->car, now_ms);
+                /* An explorer's spurious BREAK, heard 1.2 s after this keydown:
+                 * a detector false alarm, or another station's pattern. */
+                if (spurious_kd(s->kd_no)) {
+                    event_t b = { .t = now_ms + 1200, .type = EV_ARRIVE, .st = s->id,
+                                  .mode = SIM_MODE_PATTERN, .len = CAR_PATTERN_BREAK,
+                                  .f_start = now_ms + 560, .f_end = now_ms + 1200, .injected = true };
+                    push(b);
+                }
                 continue;
             }
             /* half duplex: a station hears nothing while it transmits */
             if (s->tx_end > e.f_start && s->tx_start < e.f_end && s->tx_end) {
+                if (e.injected) { free(e.bytes); continue; }
                 collisions++;
                 if (trace) printf("%9.1f COLLISION at %c\n", now_ms / 1000.0, 'A' + s->id);
             } else if (e.mode == SIM_MODE_PATTERN) {

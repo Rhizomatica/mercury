@@ -34,6 +34,11 @@ void carousel_sim_force_losses(const int *frame_idx, int n);
  * they are keyed, both stations) are never sensed by the peer -- a carrier
  * sense failure.  n <= 0: sensing as the model has it. */
 void carousel_sim_force_unsensed(const int *keydown_idx, int n);
+/* Exploration: each of these keydowns is lost whole, and a BREAK pattern
+ * nobody sent reaches the station that keyed it 1.2 s after it ends -- a
+ * faded round "answered" by another station or a detector false alarm.
+ * n <= 0: none. */
+void carousel_sim_force_spurious_break(const int *keydown_idx, int n);
 
 /* A connected session, A sending first, B too when bidir; chan as in
  * ab_bench (clean | awgn:<per> | cliff:<snr> | nvis | fade:<snr>:<hz>). */
