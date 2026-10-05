@@ -730,9 +730,23 @@ bool arq_protocol_accept_is_carousel(const uint8_t *buf);
  * slot still decodes to the same callsign (the decoder is the same code on
  * both sides, so that check is the old callee's).  A callsign too long for it
  * goes unmarked, and that session runs stop-and-wait. */
-#define ARQ_CALL_CAROUSEL_MARK        0xA7
+#define ARQ_CALL_CAROUSEL_MARK        0xA8
+/* 0xA7 marked the carousel of 1.9.17 and 1.9.18, whose blocks carry no check
+ * and whose seed has no callee nonce: it cannot talk to this one, so it reads
+ * as unmarked and the session runs stop-and-wait -- and this mark reads as
+ * unmarked to it. */
 bool arq_protocol_mark_call_carousel(uint8_t *buf, const char *src);
 bool arq_protocol_call_is_carousel(const uint8_t *buf, const char *src);
+/* A carousel ACCEPT carries the callee's session nonce in the last two bytes
+ * of its SRC slot, when its callsign's code leaves them free (the same rule as
+ * the CALL's mark): both ends hash it into the session's CRC seed, so frames of
+ * an earlier session between the same two stations -- whose 7-bit session id
+ * repeats one time in 64 -- fail their CRC.  set: false when the callsign
+ * leaves no room (the nonce is then 0 on both ends).  get: 0 when it could not
+ * have been sent. */
+bool     arq_protocol_set_accept_nonce(uint8_t *buf, const char *src, uint16_t nonce);
+uint16_t arq_protocol_accept_nonce(const uint8_t *buf, const char *src);
+
 /* Is a CALL (16-bit DST CRC) or an ACCEPT (13-bit) addressed to callsign? */
 bool arq_protocol_connect_dst_matches(const uint8_t *buf, bool is_accept, const char *callsign);
 

@@ -48,6 +48,7 @@ typedef struct {
     size_t   len;
     uint8_t *bytes;
     uint64_t f_start, f_end;       /* EV_ARRIVE: the frame's air interval */
+    bool     injected;             /* an explorer's spurious pattern: never a collision */
 } event_t;
 
 #define MAXEV 4096
@@ -94,6 +95,12 @@ typedef struct {
 static station_t S[2];
 static sim_channel_t *ch;
 static int collisions;
+static const int *spurious_idx;
+static int spurious_n;
+void carousel_sim_force_spurious_break(const int *kd_idx, int n) { spurious_idx = kd_idx; spurious_n = n; }
+static const int *corrupt_idx;
+static int corrupt_n;
+void carousel_sim_force_corrupt(const int *frame_idx, int n) { corrupt_idx = frame_idx; corrupt_n = n; }
 /* carousel_sim_force_losses: an explorer's choice of lost frames. */
 static const int *force_idx;
 static int force_n = -1;
@@ -111,9 +118,16 @@ static bool unsensed(int kd)
 }
 void carousel_sim_force_losses(const int *frame_idx, int n) { force_idx = frame_idx; force_n = n; }
 /* Is this frame delivered?  The channel model's answer, or the explorer's. */
+static bool spurious_kd(int kd)
+{
+    for (int i = 0; i < spurious_n; i++)
+        if (spurious_idx[i] == kd) return true;
+    return false;
+}
 static bool deliver(uint64_t t, int dir, int mode, uint64_t *d)
 {
     int k = frame_no++;
+    if (spurious_kd(S[dir].kd_no)) return false;   /* faded: a foreign BREAK answers it */
     if (force_n < 0) return sim_channel_schedule(ch, t, dir, mode, 0, d);
     for (int i = 0; i < force_n; i++)
         if (force_idx[i] == k) return false;
@@ -185,6 +199,14 @@ static void io_keydown(void *ctx, const car_frame_t *fr, int n)
         if (deliver(t, s->id, fr[i].mode, &d)) {
             uint8_t *b = malloc(fr[i].len);
             memcpy(b, fr[i].bytes, fr[i].len);
+            /* An explorer's corrupt frame that passed its CRC: one byte flipped. */
+            for (int j = 0; j < corrupt_n; j++)
+                if (corrupt_idx[j] == frame_no - 1) {
+                    /* CAR_CORRUPT_POS: which byte (default the middle) */
+                    const char *ps = getenv("CAR_CORRUPT_POS");
+                    size_t pos = ps ? (size_t)atoi(ps) % fr[i].len : fr[i].len / 2;
+                    b[pos] ^= 0x5A;
+                }
             event_t e = { .t = t + air, .type = EV_ARRIVE, .st = peer->id, .mode = fr[i].mode,
                           .len = fr[i].len, .bytes = b, .f_start = t, .f_end = t + air };
             push(e);
@@ -384,10 +406,19 @@ void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limi
             station_t *s = &S[e.st];
             if (e.type == EV_TXEND) {
                 car_on_tx_done(&s->car, now_ms);
+                /* An explorer's spurious BREAK, heard 1.2 s after this keydown:
+                 * a detector false alarm, or another station's pattern. */
+                if (spurious_kd(s->kd_no)) {
+                    event_t b = { .t = now_ms + 1200, .type = EV_ARRIVE, .st = s->id,
+                                  .mode = SIM_MODE_PATTERN, .len = CAR_PATTERN_BREAK,
+                                  .f_start = now_ms + 560, .f_end = now_ms + 1200, .injected = true };
+                    push(b);
+                }
                 continue;
             }
             /* half duplex: a station hears nothing while it transmits */
             if (s->tx_end > e.f_start && s->tx_start < e.f_end && s->tx_end) {
+                if (e.injected) { free(e.bytes); continue; }
                 collisions++;
                 if (trace) printf("%9.1f COLLISION at %c\n", now_ms / 1000.0, 'A' + s->id);
             } else if (e.mode == SIM_MODE_PATTERN) {
@@ -401,6 +432,7 @@ void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limi
             free(e.bytes);
         }
         for (int i = 0; i < 2; i++) car_on_time(&S[i].car, now_ms);
+        if (car_failed(&S[0].car) || car_failed(&S[1].car)) break;   /* the session ends */
         if (S[1].rx_len >= S[0].tx_len && S[0].rx_len >= S[1].tx_len) { done_ms = now_ms; break; }
     }
     while (nev) { event_t e; pop(&e); free(e.bytes); }
@@ -415,6 +447,7 @@ void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limi
     res->keydowns = keydown_no;
     res->kd_overlaps = kd_overlaps;
     res->kd_unexplained = kd_unexplained;
+    res->failed = car_failed(&S[0].car) ? car_failed(&S[0].car) : car_failed(&S[1].car);
     res->bad_frames = bad_frames;
     res->stalled = !done_ms && car_next_deadline(&S[0].car) == UINT64_MAX &&
                    car_next_deadline(&S[1].car) == UINT64_MAX;

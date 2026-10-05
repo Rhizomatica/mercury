@@ -18,6 +18,7 @@ not see the first and drop the second:
 | carousel | carousel | carousel |
 | carousel | without | stop-and-wait: the callee's plain ACCEPT says so |
 | without | carousel | stop-and-wait: the unmarked CALL gets a plain ACCEPT |
+| carousel of 1.9.17/1.9.18 | carousel | stop-and-wait, either way round: their marks differ (0xA7, 0xA8), and each reads the other's CALL as unmarked |
 
 Before the markers, every mixed pair "connected" and then moved nothing
 until the application gave up (harness, `MERCURY_TEST_BIN_A`/`_B`, see
@@ -79,9 +80,17 @@ poll comes back, it repeats the round behind a handover poll, which names the
 mode.
 
 **Session.**  Carousel frames carry the session in their CRC16: the sender
-XORs the CRC with a seed (a CRC16 of the session id and both callsigns), and
-every decoder of the station checks against it.  Another session's frames
-fail like any bad frame.  The control decoder also admits plain frames
+XORs the CRC with a seed (a CRC16 of the session id, the callee's nonce from
+the ACCEPT and both callsigns), and every decoder of the station checks
+against it.  Another session's frames fail like any bad frame.
+
+**Integrity.**  A CRC16 passes about one corrupt frame in 65536, so every
+block also ends in a 4-byte CRC-32 keyed by the seed, checked when the block
+decodes.  A block that fails it, or fails to decode, or two frames that
+disagree on a block's size, end the session: the stream runs ahead of the
+check, so carrying on could deliver wrong data.  At the floor a BREAK pattern
+carries no session, and a detector can false-alarm, so it only stops the
+sender sending a block: only a poll retires one.  The control decoder also admits plain frames
 (CALL, ACCEPT, DISCONNECT, broadcast).  HARQ combining is off in a carousel
 session: consecutive frames are different codewords.
 
@@ -94,6 +103,9 @@ DATA, in a payload mode, filling the frame:
 | 0 | frames left in the round (4 bits), data not yet cut into blocks (1), the start rung for the peer (3) |
 | 1 | poll id (4), highest block opened, mod 16 (4) |
 | then per block | 4 bytes: block id mod 16 (4), K-1 (7), piece count (6), first piece index (8), pad bytes in the last data piece (5); then the pieces, consecutive indices mod 256 |
+
+A block is the application's bytes and then its 4-byte check: CRC-32 of the
+seed (4 bytes), the block's id and K, and those bytes.
 
 POLL / HANDOVER / STATUS, in DATAC16 (14 bytes):
 
@@ -115,11 +127,16 @@ A station without the carousel reads that as an unknown bandwidth token and
 drops the frame.  A plain ACCEPT keeps its CRC whole.
 
 A carousel CALL sets the last byte of its 10-byte SRC slot to
-`ARQ_CALL_CAROUSEL_MARK` (0xA7).  The arithmetic code ends at its
+`ARQ_CALL_CAROUSEL_MARK` (0xA8; 0xA7 was the carousel of 1.9.17 and 1.9.18,
+before the block check).  The arithmetic code ends at its
 end-of-string symbol, and an older decoder never reads past it.  The caller
 marks only when the code leaves that byte free and the marked slot still
 decodes to the same callsign; the callee reads the marker only when the
 decoded callsign's code is shorter than the slot.
+
+A carousel ACCEPT puts the callee's 16-bit session nonce in the last two
+bytes of its SRC slot, by the same rule (the code at most 8 bytes); with no
+room both ends use 0.
 
 Bursts of a round are 100 ms apart (QAM16C2: 200 ms).  With no gap the
 payload decoder misses bursts after the first; the gaps were measured with
@@ -166,6 +183,10 @@ connect; one run each, so indicative):
 - `tests/test_carousel_sim`: through the real FSM on the two-FSM sim --
   connect, transfers, loss, a peer vanishing, disconnect, and a fuzz.
 - `tests/test_crc_seed`: the seeded CRC in freedv.
+- `tests/test_car_explore`: the carousel under every set of up to 3 lost
+  frames and 3 unsensed keydowns, every single spurious BREAK and every
+  single corrupt frame; `specs/carousel/` has the TLA+ model of the block
+  layer and what both have shown.
 - `tests/integration`: two real daemons over FIFO audio; the suite runs on
   the carousel.  `MERCURY_TEST_BIN_A` / `MERCURY_TEST_BIN_B` run one station
   on another build (a release, trunk, or a `MERCURY_CAROUSEL=0` wrapper

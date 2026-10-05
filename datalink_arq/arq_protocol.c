@@ -689,6 +689,39 @@ bool arq_protocol_call_is_carousel(const uint8_t *buf, const char *src)
     return len > 0 && len <= ARQ_CONNECT_SRC_MAX_ENCODED - 1;
 }
 
+#define ACCEPT_NONCE_IDX (ARQ_CONTROL_FRAME_SIZE - 2)   /* the SRC slot's last two bytes */
+
+bool arq_protocol_set_accept_nonce(uint8_t *buf, const char *src, uint16_t nonce)
+{
+    char upper[CALLSIGN_MAX_SIZE];
+    int len = src_code_len(src, upper, sizeof(upper));
+    if (len <= 0 || len > ARQ_CONNECT_SRC_MAX_ENCODED - 2)
+        return false;
+    uint8_t was[2] = { buf[ACCEPT_NONCE_IDX], buf[ACCEPT_NONCE_IDX + 1] };
+    buf[ACCEPT_NONCE_IDX] = (uint8_t)nonce;
+    buf[ACCEPT_NONCE_IDX + 1] = (uint8_t)(nonce >> 8);
+    uint8_t slot[ARQ_CONNECT_SRC_MAX_ENCODED];
+    memcpy(slot, buf + ARQ_CONNECT_PAYLOAD_IDX + ARQ_CONNECT_DST_CRC_SIZE, sizeof(slot));
+    char out[CALLSIGN_MAX_SIZE] = {0};
+    init_model();
+    if (arithmetic_decode(slot, (int)sizeof(slot), out, (int)sizeof(out)) < 0 || strcmp(out, upper) != 0)
+    {
+        buf[ACCEPT_NONCE_IDX] = was[0];
+        buf[ACCEPT_NONCE_IDX + 1] = was[1];
+        return false;
+    }
+    return true;
+}
+
+uint16_t arq_protocol_accept_nonce(const uint8_t *buf, const char *src)
+{
+    char upper[CALLSIGN_MAX_SIZE];
+    int len = src_code_len(src, upper, sizeof(upper));
+    if (len <= 0 || len > ARQ_CONNECT_SRC_MAX_ENCODED - 2)
+        return 0;
+    return (uint16_t)(buf[ACCEPT_NONCE_IDX] | buf[ACCEPT_NONCE_IDX + 1] << 8);
+}
+
 bool arq_protocol_connect_dst_matches(const uint8_t *buf, bool is_accept, const char *callsign)
 {
     uint16_t frame_crc = (uint16_t)buf[ARQ_CONNECT_PAYLOAD_IDX]

@@ -24,6 +24,7 @@ typedef struct {
     int      keydowns;            /* keydowns, both stations */
     int      kd_overlaps;         /* keydowns that started while the peer was on the air */
     int      kd_unexplained;      /* ... over a keydown of the peer that could be sensed */
+    const char *failed;           /* a station failed the session (car_failed), or NULL */
 } car_sim_result_t;
 
 /* Exploration: from the next run on, no random loss -- the frames (and
@@ -34,6 +35,14 @@ void carousel_sim_force_losses(const int *frame_idx, int n);
  * they are keyed, both stations) are never sensed by the peer -- a carrier
  * sense failure.  n <= 0: sensing as the model has it. */
 void carousel_sim_force_unsensed(const int *keydown_idx, int n);
+/* Exploration: each of these keydowns is lost whole, and a BREAK pattern
+ * nobody sent reaches the station that keyed it 1.2 s after it ends -- a
+ * faded round "answered" by another station or a detector false alarm.
+ * n <= 0: none. */
+void carousel_sim_force_spurious_break(const int *keydown_idx, int n);
+/* Exploration: these frames (indices as for carousel_sim_force_losses) arrive
+ * with one byte flipped, as a corrupt frame that passed its CRC would. */
+void carousel_sim_force_corrupt(const int *frame_idx, int n);
 
 /* A connected session, A sending first, B too when bidir; chan as in
  * ab_bench (clean | awgn:<per> | cliff:<snr> | nvis | fade:<snr>:<hz>). */

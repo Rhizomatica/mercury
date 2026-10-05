@@ -79,6 +79,9 @@ typedef struct {
      * chose, what the sender was told.  For debug logs. */
     void   (*trace)(void *ctx, const char *line);
     void    *ctx;
+    /* Keys each block's check (the session's CRC seed): a block rebuilt from
+     * another session's pieces fails it. */
+    uint32_t block_key;
 } car_io_t;
 
 enum { CAR_PATTERN_ACK = 0, CAR_PATTERN_BREAK = 1 };
@@ -88,15 +91,18 @@ enum { CAR_T_POLL, CAR_T_SEND, CAR_T_WAIT, CAR_T_SENSE, CAR_NTIMERS };
 typedef struct {
     uint8_t  id;
     int      K, len, next, need;          /* next: the next piece index to send */
+    int      app_len;                     /* of len, the application's bytes (the rest: the check) */
     int      resend;                      /* data piece the receiver waits on, -1 */
     int      sent;                        /* distinct pieces sent so far (capped) */
     int      round_sent;                  /* fresh pieces of it in my last round */
+    bool     stopped;                     /* a floor BREAK said it is in; a poll retires it */
     uint8_t  data[CAR_MAX_K][CAR_PIECE];
 } car_sblock_t;
 
 typedef struct {
     bool     known, done;
-    int      K, len, have;
+    uint8_t  id;
+    int      K, len, have;          /* len: with the check */
     int      delivered;             /* bytes already handed to the application */
     bool     got[RS_MAX_PIECES];
     uint8_t  piece[RS_MAX_PIECES][CAR_PIECE];
@@ -151,6 +157,10 @@ typedef struct {
     int      silent_polls;
     bool     peer_unopened;
     uint8_t  peer_hi;
+    uint8_t  polled_base;           /* the window base my last poll or handover reported */
+    bool     round_fresh;           /* this round carried a block I do not have yet */
+    int      stale_rounds;          /* floor rounds in a row that carried nothing new */
+    const char *failed;             /* car_failed() */
     bool     peer_hi_known;
     uint64_t drive_start;
     car_rblock_t rb[CAR_WIN];
@@ -217,6 +227,10 @@ void     car_on_time(car_t *c, uint64_t now);
 int  car_start_level(float snr_db);
 int  car_level_mode(int level);
 bool car_is_idle(const car_t *c);
+/* The session can no longer be trusted: a block failed its check, or did not
+ * decode.  What it carried may already be partly delivered (the stream runs
+ * ahead of the check), so the session must end -- never carry on.  NULL: fine. */
+const char *car_failed(const car_t *c);
 
 /* How long delivering what is left may take on the rung the session is on:
  * a few exchanges -- my round, the peer's control answer -- there.  Seconds
