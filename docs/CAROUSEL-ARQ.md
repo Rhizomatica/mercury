@@ -4,7 +4,8 @@ Mercury's connected sessions move data with an erasure-coded "carousel"
 driven by the receiver (`datalink_arq/carousel.[ch]`).  It replaces the
 stop-and-wait data-flow sub-FSM described in [ARQ.md](ARQ.md); CALL, ACCEPT
 and DISCONNECT are unchanged but for the ACCEPT, which is the carousel's first
-poll.
+poll.  [CAROUSEL-SPEC.md](CAROUSEL-SPEC.md) specifies the protocol state by
+state, from the code; this page is the overview.
 
 Stations without the carousel (1.9.x, earlier 2.0 builds, or
 `MERCURY_CAROUSEL=0`) are told apart in both connect frames.  A carousel
@@ -49,10 +50,11 @@ side that sees what arrives.  Per direction:
 - every frame says how many follow, so the receiver knows when the round ends
   and polls again.  No sequence numbers, no per-frame ACKs.
 
-**Only the receiver keeps a round timer.**  If the sender is not on the air
-by the time it should be, the poll was lost: poll again at once, and do not
-score the mode for it.  If it is on the air but nothing decodes, poll when its
-carrier drops.
+**Only the receiver keeps a round timer.**  It polls again when the round's
+window closes, or when the sender's carrier drops if it heard the carrier.
+A round that brought nothing is repeated once unscored, keeping its poll id,
+on a rung that has already delivered in the session (the poll may have been
+lost); otherwise the silence is scored against the mode.
 
 **Link adaptation**, run by the receiver on what it received: the rung with
 the best measured goodput (raw rate times delivered fraction); probes only of
@@ -64,7 +66,10 @@ supports (the thresholds the stop-and-wait plane uses), as a one-frame probe.
 **The turn.**  The receiver takes it with a HANDOVER poll that announces its
 own first round, sent in the same keydown; the peer's control decoder reads
 the poll and rebinds its payload decoder in the 300 ms gap.  With both sides
-holding data, a turn runs at most 120 s.  Open blocks are only suspended.
+holding data, the receiver takes the turn at the first round after 30 s that
+completed a block, and after 45 s at the latest; its polls are trimmed to fit
+the 45 s.
+Open blocks are only suspended.
 
 **Connect.**  The callee's ACCEPT names the rung the caller's first round
 goes out on.  The callee binds its payload decoder to it and keys nothing
@@ -94,10 +99,11 @@ POLL / HANDOVER / STATUS, in DATAC16 (14 bytes):
 
 | byte | field |
 |---|---|
-| 0 | type (2), has data (1), poll id (4) |
+| 0 | type (2), has data (1), poll id (4), control-deaf (1) |
 | 1 | mode rung (3), frames asked for (4) |
 | 2 | loss (4), window base mod 16 (4) |
-| 3-10 | pieces each block from the base still needs (255: none seen) |
+| 3-9 | pieces each block from the base still needs, 8 x 7 bits (127: none seen) |
+| 10 | the first data piece missing from the base block (255: none) |
 | 11 | start rung for the peer (3), handover round's rung (3) |
 | 12 | handover round's frames (4), its id (4) |
 | 13 | highest block opened (4), data not yet cut (1) |

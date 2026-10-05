@@ -88,11 +88,38 @@ typedef struct {
      * frame only from its preamble, so only one it was bound to by then. */
     struct { uint64_t start; int mode; bool sync; } kd[CAR_KEYDOWN_MAX];
     int      kd_n;
+    int      kd_no;               /* this keydown's index, for carousel_sim_force_unsensed */
 } station_t;
 
 static station_t S[2];
 static sim_channel_t *ch;
 static int collisions;
+/* carousel_sim_force_losses: an explorer's choice of lost frames. */
+static const int *force_idx;
+static int force_n = -1;
+static int frame_no;
+static const int *unsensed_idx;
+static int unsensed_n;
+static int keydown_no;
+static int kd_overlaps, kd_unexplained;
+void carousel_sim_force_unsensed(const int *kd_idx, int n) { unsensed_idx = kd_idx; unsensed_n = n; }
+static bool unsensed(int kd)
+{
+    for (int i = 0; i < unsensed_n; i++)
+        if (unsensed_idx[i] == kd) return true;
+    return false;
+}
+void carousel_sim_force_losses(const int *frame_idx, int n) { force_idx = frame_idx; force_n = n; }
+/* Is this frame delivered?  The channel model's answer, or the explorer's. */
+static bool deliver(uint64_t t, int dir, int mode, uint64_t *d)
+{
+    int k = frame_no++;
+    if (force_n < 0) return sim_channel_schedule(ch, t, dir, mode, 0, d);
+    for (int i = 0; i < force_n; i++)
+        if (force_idx[i] == k) return false;
+    *d = t + sim_channel_airtime_ms(mode, 0);
+    return true;
+}
 static int bad_frames;
 static uint64_t now_ms;
 static bool trace;
@@ -126,8 +153,13 @@ static void io_keydown(void *ctx, const car_frame_t *fr, int n)
 {
     station_t *s = ctx, *peer = &S[s->id ^ 1];
     uint64_t t = now_ms + HEAD_MS;
+    if (peer->tx_end > now_ms) {                  /* keyed while the peer is on the air */
+        kd_overlaps++;
+        if (!unsensed(peer->kd_no)) kd_unexplained++;
+    }
     s->tx_start = now_ms;
     s->kd_n = 0;
+    s->kd_no = keydown_no++;
     if (trace) printf("%9.1f %c keys:", now_ms / 1000.0, 'A' + s->id);
     for (int i = 0; i < n; i++) {
         /* The modem refuses a frame that does not fill its mode (modem.c,
@@ -150,7 +182,7 @@ static void io_keydown(void *ctx, const car_frame_t *fr, int n)
         s->kd[s->kd_n].start = t; s->kd[s->kd_n].mode = fr[i].mode;
         s->kd[s->kd_n].sync = sim_channel_syncable(ch, t, s->id, fr[i].mode);
         s->kd_n++;
-        if (sim_channel_schedule(ch, t, s->id, fr[i].mode, 0, &d)) {
+        if (deliver(t, s->id, fr[i].mode, &d)) {
             uint8_t *b = malloc(fr[i].len);
             memcpy(b, fr[i].bytes, fr[i].len);
             event_t e = { .t = t + air, .type = EV_ARRIVE, .st = peer->id, .mode = fr[i].mode,
@@ -186,10 +218,15 @@ static void io_pattern(void *ctx, int kind)
     station_t *s = ctx, *peer = &S[s->id ^ 1];
     uint64_t t = now_ms + HEAD_MS, d;
     uint64_t air = sim_channel_airtime_ms(SIM_MODE_PATTERN, 0);
+    if (peer->tx_end > now_ms) {                  /* keyed while the peer is on the air */
+        kd_overlaps++;
+        if (!unsensed(peer->kd_no)) kd_unexplained++;
+    }
     s->tx_start = now_ms;
     s->kd_n = 0;
+    s->kd_no = keydown_no++;
     if (trace) printf("%9.1f %c keys: pattern %s\n", now_ms / 1000.0, 'A' + s->id, kind ? "BREAK" : "ACK");
-    if (sim_channel_schedule(ch, t, s->id, SIM_MODE_PATTERN, 0, &d)) {
+    if (deliver(t, s->id, SIM_MODE_PATTERN, &d)) {
         s->kd[0].start = t; s->kd[0].mode = SIM_MODE_PATTERN; s->kd[0].sync = true;
         s->kd_n = 1;
         event_t e = { .t = t + air + SIM_PATTERN_DETECT_MS, .type = EV_ARRIVE, .st = peer->id, .mode = SIM_MODE_PATTERN,
@@ -212,6 +249,7 @@ static bool io_peer_keyed(void *ctx)
      * the payload decoder syncs on a frame only if bound to its mode by the
      * frame's preamble, and a pattern only when that is MFSK: rebound to the
      * floor mid-frame, on air, it missed that frame (car23 at 3 %). */
+    if (p->tx_end && unsensed(p->kd_no)) return false;   /* an explorer's sensing failure */
     uint64_t from = p->tx_start;
     if (cs_decodable) {
         from = UINT64_MAX;
@@ -262,6 +300,10 @@ void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limi
     nev = 0;
     collisions = 0;
     bad_frames = 0;
+    frame_no = 0;
+    keydown_no = 0;
+    kd_overlaps = 0;
+    kd_unexplained = 0;
     memset(S, 0, sizeof(S));
 
     sim_channel_cfg_t cfg = { .seed = seed, .per = 0.02, .guard_ms = 150 };
@@ -369,6 +411,10 @@ void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limi
                   !memcmp(S[0].rx, S[1].tx, S[0].rx_len < S[1].tx_len ? S[0].rx_len : S[1].tx_len);
     res->done_ms = done_ms;
     res->collisions = collisions;
+    res->frames = frame_no;
+    res->keydowns = keydown_no;
+    res->kd_overlaps = kd_overlaps;
+    res->kd_unexplained = kd_unexplained;
     res->bad_frames = bad_frames;
     res->stalled = !done_ms && car_next_deadline(&S[0].car) == UINT64_MAX &&
                    car_next_deadline(&S[1].car) == UINT64_MAX;
