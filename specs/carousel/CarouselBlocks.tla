@@ -33,7 +33,8 @@ CONSTANTS NB,        \* blocks to send
           CHAN,      \* most frames in flight
           FLOOR,     \* the sender streams the floor: one block per round, BREAK accepted
           SPURIOUS,  \* allow a BREAK nobody sent
-          STALE      \* allow a stale same-seed frame with an arbitrary id
+          STALE,     \* allow a stale same-seed frame with an arbitrary id
+          CHECK      \* blocks carry a check (TRUE: the code since step 2)
 
 ASSUME MOD = 2 * WIN /\ K <= SENTMAX
 
@@ -49,10 +50,11 @@ VARIABLES
     done,      \* receiver: abs id -> decoded
     brk,       \* receiver: something to BREAK about since its last answer
     delivered, \* receiver: blocks handed to the application, in order
+    failed,    \* receiver: a block failed its check -- the session ends
     retired    \* ghost: blocks the sender has dropped
 
-vars == <<sb, nxt, floorBlk, down, up, rbase, pcs, got, done, brk, delivered, retired>>
-rxv  == <<rbase, pcs, got, done, brk, delivered>>
+vars == <<sb, nxt, floorBlk, down, up, rbase, pcs, got, done, brk, delivered, failed, retired>>
+rxv  == <<rbase, pcs, got, done, brk, delivered, failed>>
 txv  == <<sb, nxt, floorBlk, retired>>
 
 STALEID == NB + MOD            \* the true id of a stale frame: no real block
@@ -61,7 +63,7 @@ Ids == 0 .. NB + 2 * MOD
 Init ==
     /\ sb = << >> /\ nxt = 0 /\ floorBlk = 0 /\ down = << >> /\ up = << >>
     /\ rbase = 0 /\ pcs = [b \in Ids |-> {}] /\ got = [b \in Ids |-> {}]
-    /\ done = [b \in Ids |-> FALSE] /\ brk = FALSE /\ delivered = << >>
+    /\ done = [b \in Ids |-> FALSE] /\ brk = FALSE /\ delivered = << >> /\ failed = FALSE
     /\ retired = {}
 
 (* ---- sender ---- *)
@@ -118,15 +120,22 @@ OnData(m) ==
         abs == rbase + off
     IN IF off >= WIN \/ done[abs]
        THEN /\ brk' = TRUE
-            /\ UNCHANGED <<pcs, got, done>>
+            /\ UNCHANGED <<pcs, got, done, failed>>
        ELSE IF m.piece \in pcs[abs]
-            THEN UNCHANGED <<pcs, got, done, brk>>
+            THEN UNCHANGED <<pcs, got, done, brk, failed>>
             ELSE /\ pcs' = [pcs EXCEPT ![abs] = @ \cup {m.piece}]
                  /\ got' = [got EXCEPT ![abs] = @ \cup {m.true}]
+                 \* decode_block: the block's check covers every piece, so one
+                 \* that is not the block's fails it (CHECK = FALSE: the code
+                 \* before the check, which delivered it).
                  /\ IF Cardinality(pcs[abs]) + 1 >= K
-                    THEN /\ done' = [done EXCEPT ![abs] = TRUE]
-                         /\ brk' = TRUE
-                    ELSE UNCHANGED <<done, brk>>
+                    THEN IF CHECK /\ ~(got'[abs] \subseteq {abs})
+                         THEN /\ failed' = TRUE
+                              /\ UNCHANGED <<done, brk>>
+                         ELSE /\ done' = [done EXCEPT ![abs] = TRUE]
+                              /\ brk' = TRUE
+                              /\ UNCHANGED failed
+                    ELSE UNCHANGED <<done, brk, failed>>
 
 \* deliver_in_order, run by on_data right after the pieces are taken: the base
 \* slides over every decoded block at once, so a poll's base is always the
@@ -146,7 +155,7 @@ SendPoll ==
     /\ up' = Append(up, PollMsg)
     /\ down' = << >>
     /\ brk' = FALSE                  \* send_poll clears rx_break
-    /\ UNCHANGED <<rbase, pcs, got, done, delivered>> /\ UNCHANGED txv
+    /\ UNCHANGED <<rbase, pcs, got, done, delivered, failed>> /\ UNCHANGED txv
 
 SendBreak ==
     /\ FLOOR /\ brk
@@ -154,7 +163,7 @@ SendBreak ==
     /\ up' = Append(up, [t |-> "break"])
     /\ brk' = FALSE
     /\ down' = << >>
-    /\ UNCHANGED <<rbase, pcs, got, done, delivered>> /\ UNCHANGED txv
+    /\ UNCHANGED <<rbase, pcs, got, done, delivered, failed>> /\ UNCHANGED txv
 
 (* ---- channel ---- *)
 \* The head of a queue arrives, or is lost; nothing overtakes.
@@ -183,13 +192,16 @@ InjectStale(w) ==
     /\ down' = Append(down, [t |-> "data", wire |-> w, true |-> STALEID, piece |-> 0])
     /\ UNCHANGED up /\ UNCHANGED rxv /\ UNCHANGED txv
 
-Next ==
+Next0 ==
     \/ Open
     \/ \E i \in 1 .. Len(sb) : SendPiece(i)
     \/ SendPoll \/ SendBreak
     \/ RecvDown \/ RecvUp \/ LoseDown \/ LoseUp
     \/ InjectBreak
     \/ \E w \in 0 .. MOD - 1 : InjectStale(w)
+
+\* A failed session ends: nothing more happens.
+Next == ~failed /\ Next0
 
 Spec == Init /\ [][Next]_vars
 
