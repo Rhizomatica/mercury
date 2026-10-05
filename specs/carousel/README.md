@@ -115,7 +115,7 @@ longer transfer, and `CAR_EXPLORE_CHANS` sets the channels.
 | lost frames, k ≤ 3 | 600 B | 14 858 | 0 |
 | lost frames, k ≤ 4 | 600 B | 118 769 | **1** (below) |
 | lost frames, k ≤ 2 | 4000 B | 24 966 | 0 |
-| lost frames, k ≤ 3, six of the eight cells | 4000 B | 448 642 | 0 |
+| lost frames, k ≤ 3 | 4000 B | 9 093 700 | 0 |
 | unsensed keydowns, k ≤ 4 | 600 B | 22 183 | 0, no cascade |
 | unsensed keydowns, k ≤ 2 | 4000 B | 29 718 | 0, no cascade |
 
