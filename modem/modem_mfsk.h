@@ -38,6 +38,15 @@ int mfsk_pattern_max_tx_samples(void);
 /* Generate the pattern as int16 passband; returns the sample count. */
 int mfsk_pattern_tx(int16_t *out, int pattern_kind);
 
+/* Bind the ACK and BREAK patterns to a session: from now on mfsk_pattern_tx()
+ * sends, and the detectors look for, the session's lists (mfsk_session_patterns
+ * of key), so another station's patterns -- every station's were the same --
+ * are not taken for the peer's.  Key 0: the global lists.  Returns whether
+ * session lists are in use. */
+bool mfsk_pattern_set_session(uint32_t key);
+/* The same with explicit lists (ack_pattern_len tones each; NULL: global). */
+void mfsk_pattern_set_lists(const int *ack, const int *brk);
+
 /* Detect a pattern ACK in an int16 passband chunk.  Returns 1 on a match and
  * sets *is_break (1 = break/ACK+TURN, 0 = plain ACK); 0 if none. */
 int mfsk_pattern_detect(const int16_t *pb, int n, int *is_break);
@@ -61,6 +70,7 @@ typedef struct {
     double  hist_re[64], hist_im[64];   /* the low-pass filter's last inputs */
     int     hist_pos;
     long long n;                   /* samples pushed since the reset */
+    unsigned gen;                  /* the pattern lists it scores (mfsk_pattern_set_session) */
 } mfsk_pattern_window_t;
 
 /* Push `n` samples; returns 1 when a pattern is found (is_break set).  Never

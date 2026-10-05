@@ -14,6 +14,7 @@
 #define MERCURY_MFSK_H
 
 #include <stdbool.h>
+#include <stdint.h>
 
 #define MFSK_MAX_STREAMS       4
 #define MFSK_MAX_PREAMBLE_SYMB 8
@@ -72,6 +73,24 @@ static inline int mfsk_bits_per_symbol(const mfsk_t *m)
 /* Directed-HAIL callsign targeting (FNV-1a-derived tone suffix). */
 void mfsk_set_hail_target(mfsk_t *m, const char *callsign, int len);
 void mfsk_clear_hail_target(mfsk_t *m);
+
+/* Session-bound ACK and BREAK tone lists (pattern_len tones each), derived
+ * from a session key so that only the two stations of the session read each
+ * other's patterns: another station's, or another session's, match ours in at
+ * most a few symbols at any time and frequency shift, where detection needs
+ * ack_match_threshold.  Deterministic -- both ends derive the same lists --
+ * and checked against the global ACK/BREAK/HAIL patterns, the preamble and
+ * postamble, and the `nextra` lists of `extra` (pattern_len tones each).
+ * Key 0, or an M/pattern without a session family, gives the global lists
+ * and returns false. */
+bool mfsk_session_patterns(const mfsk_t *m, uint32_t key,
+                           const int *const *extra, int nextra,
+                           int *ack_out, int *brk_out);
+/* Most symbols on which two hop-expanded sequences agree, at any time shift
+ * and any frequency shift up to dmax bins (skip0: not at zero shift). */
+int mfsk_seq_xmatch(int M, const int *a, int na, const int *b, int nb, int dmax, bool skip0);
+/* The pattern's per-symbol tones: (tones[p % pattern_len] + p * hop) mod M. */
+void mfsk_pattern_expand(const mfsk_t *m, const int *tones, int *out);
 
 /* Known-tone sequence generators. out holds <nSymb|pattern> * Nc bins. */
 void mfsk_generate_preamble(const mfsk_t *m, mfsk_cplx *out, int nSymb);

@@ -1876,6 +1876,8 @@ static _Atomic bool g_crc_seed_active = false;
 static void modem_apply_crc_seed(uint16_t seed)
 {
     atomic_store(&g_crc_seed_active, seed != 0);
+    /* The session's patterns, too: only its peer's ACK/BREAK count. */
+    mfsk_pattern_set_session(seed);
     pthread_mutex_lock(&modem_pool_lock);
     for (int i = 0; i < modem_mode_pool_n; i++)
     {

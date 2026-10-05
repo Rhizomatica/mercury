@@ -24,6 +24,8 @@
 #include <stdlib.h>
 #include <time.h>
 #include <string.h>
+#include <pthread.h>
+#include <stdatomic.h>
 
 /* Passband geometry — matches the validated offline harness (docs/MFSK-PORT.md). */
 #define MFSK_FS       8000.0
@@ -1014,6 +1016,12 @@ static double       g_pat_lpf[MFSK_LPF_TAPS];
 static double       g_pat_w;
 static int          g_pat_nofdm;
 static bool         g_pat_ready = false;
+/* The ACK and BREAK lists in use: the session's while a carousel session
+ * seeds the modem (mfsk_pattern_set_session), the global ones otherwise. */
+static pthread_mutex_t g_pat_lists_mtx = PTHREAD_MUTEX_INITIALIZER;
+static int          g_pat_ack[MFSK_MAX_ACK_TONES], g_pat_brk[MFSK_MAX_ACK_TONES];
+static bool         g_pat_lists_set = false;
+static _Atomic unsigned g_pat_gen = 1;     /* bumped on every change */
 
 static void mfsk_pattern_lazy_init(void)
 {
@@ -1024,6 +1032,44 @@ static void mfsk_pattern_lazy_init(void)
     g_pat_w     = 2.0 * M_PI * MFSK_FC / MFSK_FS;
     mklpf(g_pat_lpf, MFSK_LPF_FC);
     g_pat_ready = true;
+}
+
+static void pat_lists(int *ack, int *brk)
+{
+    pthread_mutex_lock(&g_pat_lists_mtx);
+    if (!g_pat_lists_set) {
+        memcpy(g_pat_ack, g_pat_m.ack_tones, sizeof(g_pat_ack));
+        memcpy(g_pat_brk, g_pat_m.break_tones, sizeof(g_pat_brk));
+        g_pat_lists_set = true;
+    }
+    memcpy(ack, g_pat_ack, sizeof(g_pat_ack));
+    memcpy(brk, g_pat_brk, sizeof(g_pat_brk));
+    pthread_mutex_unlock(&g_pat_lists_mtx);
+}
+
+void mfsk_pattern_set_lists(const int *ack, const int *brk)
+{
+    mfsk_pattern_lazy_init();
+    pthread_mutex_lock(&g_pat_lists_mtx);
+    memcpy(g_pat_ack, ack ? ack : g_pat_m.ack_tones, sizeof(g_pat_ack));
+    memcpy(g_pat_brk, brk ? brk : g_pat_m.break_tones, sizeof(g_pat_brk));
+    g_pat_lists_set = true;
+    pthread_mutex_unlock(&g_pat_lists_mtx);
+    atomic_fetch_add(&g_pat_gen, 1);
+}
+
+bool mfsk_pattern_set_session(uint32_t key)
+{
+    mfsk_pattern_lazy_init();
+    int ack[MFSK_MAX_ACK_TONES] = {0}, brk[MFSK_MAX_ACK_TONES] = {0};
+    bool bound = mfsk_session_patterns(&g_pat_m, key, NULL, 0, ack, brk);
+    pthread_mutex_lock(&g_pat_lists_mtx);
+    memcpy(g_pat_ack, ack, sizeof(g_pat_ack));
+    memcpy(g_pat_brk, brk, sizeof(g_pat_brk));
+    g_pat_lists_set = true;
+    pthread_mutex_unlock(&g_pat_lists_mtx);
+    atomic_fetch_add(&g_pat_gen, 1);
+    return bound;
 }
 
 int mfsk_pattern_nsymb(void)
@@ -1046,10 +1092,12 @@ int mfsk_pattern_tx(int16_t *out, int pattern_kind)
 
     mfsk_cplx *bins = (mfsk_cplx *)calloc((size_t)ns * MFSK_NCAR, sizeof(mfsk_cplx));
     if (!bins) return 0;
+    mfsk_t m = g_pat_m;      /* with the lists in use */
+    pat_lists(m.ack_tones, m.break_tones);
     if (pattern_kind == 1)   /* ARQ_PATTERN_BREAK */
-        mfsk_generate_break_pattern(&g_pat_m, bins);
+        mfsk_generate_break_pattern(&m, bins);
     else
-        mfsk_generate_ack_pattern(&g_pat_m, bins);
+        mfsk_generate_ack_pattern(&m, bins);
 
     long tx_n = 0;
     double complex tail[MFSK_XFADE];
@@ -1094,7 +1142,9 @@ int mfsk_pattern_detect(const int16_t *pb, int n, int *is_break)
      * 3.5k samp/s against 8k arriving — the reason arq.c only runs this inside
      * bounded windows). */
     int ns  = g_pat_m.ack_pattern_nsymb;
-    const int *lists[2] = { g_pat_m.ack_tones, g_pat_m.break_tones };
+    int ack[MFSK_MAX_ACK_TONES], brk[MFSK_MAX_ACK_TONES];
+    pat_lists(ack, brk);
+    const int *lists[2] = { ack, brk };
     int scores[2] = {0, 0};
     mfsk_detect_patterns(&g_pat_m, &g_pat_o, bf, n, lists, 2,
                          g_pat_m.ack_pattern_len, ns, scores, NULL);
@@ -1187,8 +1237,19 @@ int mfsk_pattern_window_push(mfsk_pattern_window_t *w, const int16_t *pcm, int n
                                      g_pat_m.ack_pattern_nsymb);
         if (!w->det)
             return 0;             /* no memory, no detection; never a crash */
-        mfsk_stream_det_set_list(w->det, 0, g_pat_m.ack_tones, g_pat_m.ack_match_threshold);
-        mfsk_stream_det_set_list(w->det, 1, g_pat_m.break_tones, g_pat_m.break_match_threshold);
+        w->gen = 0;
+    }
+    unsigned gen = atomic_load(&g_pat_gen);
+    if (w->gen != gen)
+    {
+        /* the session's lists changed (a session began or ended): what is in
+         * the ring was scored against the old ones */
+        int ack[MFSK_MAX_ACK_TONES], brk[MFSK_MAX_ACK_TONES];
+        pat_lists(ack, brk);
+        mfsk_stream_det_set_list(w->det, 0, ack, g_pat_m.ack_match_threshold);
+        mfsk_stream_det_set_list(w->det, 1, brk, g_pat_m.break_match_threshold);
+        mfsk_stream_det_reset(w->det);
+        w->gen = gen;
     }
 
     /* Downmix by FC = FS/4 (a 1, j, -1, -j phasor) and low-pass, one sample

@@ -186,6 +186,80 @@ void test_stream_detector_events(void)
     free(rx);
 }
 
+/* Session lists: the same on both ends, apart from everything else by at most
+ * 3 symbols at any time and frequency shift, and the global lists for key 0. */
+void test_session_lists_are_separated(void)
+{
+    mfsk_t m;
+    mfsk_init(&m, 32, 50, 1);
+    int NS = m.ack_pattern_nsymb;
+    int g_ack[16], g_brk[16], g_hail[16];
+    mfsk_pattern_expand(&m, m.ack_tones, g_ack);
+    mfsk_pattern_expand(&m, m.break_tones, g_brk);
+    mfsk_pattern_expand(&m, m.hail_tones, g_hail);
+    int ack[MFSK_MAX_ACK_TONES], brk[MFSK_MAX_ACK_TONES];
+    TEST_ASSERT_FALSE(mfsk_session_patterns(&m, 0, NULL, 0, ack, brk));
+    TEST_ASSERT_EQUAL_INT_ARRAY(m.ack_tones, ack, 8);
+    TEST_ASSERT_EQUAL_INT_ARRAY(m.break_tones, brk, 8);
+    for (uint32_t key = 1; key < 65536; key += 211) {
+        TEST_ASSERT_TRUE(mfsk_session_patterns(&m, key, NULL, 0, ack, brk));
+        int ack2[MFSK_MAX_ACK_TONES], brk2[MFSK_MAX_ACK_TONES];
+        mfsk_session_patterns(&m, key, NULL, 0, ack2, brk2);          /* the other end */
+        TEST_ASSERT_EQUAL_INT_ARRAY(ack, ack2, 8);
+        TEST_ASSERT_EQUAL_INT_ARRAY(brk, brk2, 8);
+        int ea[16], eb[16];
+        mfsk_pattern_expand(&m, ack, ea);
+        mfsk_pattern_expand(&m, brk, eb);
+        TEST_ASSERT_LESS_OR_EQUAL_INT(3, mfsk_seq_xmatch(32, ea, NS, ea, NS, 4, true));
+        TEST_ASSERT_LESS_OR_EQUAL_INT(3, mfsk_seq_xmatch(32, eb, NS, eb, NS, 4, true));
+        TEST_ASSERT_LESS_OR_EQUAL_INT(3, mfsk_seq_xmatch(32, ea, NS, eb, NS, 4, false));
+        const int *g[3] = { g_ack, g_brk, g_hail };
+        for (int i = 0; i < 3; i++) {
+            TEST_ASSERT_LESS_OR_EQUAL_INT(3, mfsk_seq_xmatch(32, ea, NS, g[i], NS, 4, false));
+            TEST_ASSERT_LESS_OR_EQUAL_INT(3, mfsk_seq_xmatch(32, eb, NS, g[i], NS, 4, false));
+        }
+    }
+}
+
+static void push_silence_isb(mfsk_pattern_window_t *w, int samples, int *hits, int *is_break);
+static void push_silence(mfsk_pattern_window_t *w, int samples, int *hits);
+static int push_pcm(mfsk_pattern_window_t *w, const int16_t *pcm, int n, int *is_break);
+
+/* Detected kind through the window, or -1: pattern `kind` sent while the
+ * sender's session key is `tx_key`, heard while the receiver's is `rx_key`. */
+static int window_hears(uint32_t tx_key, int kind, uint32_t rx_key)
+{
+    const int burst = mfsk_pattern_max_tx_samples();
+    int16_t *pat = calloc((size_t)burst, sizeof(int16_t));
+    mfsk_pattern_set_session(tx_key);
+    int n = mfsk_pattern_tx(pat, kind);
+    mfsk_pattern_set_session(rx_key);
+    mfsk_pattern_window_t w = {0};
+    int hits = 0, isb = -1;
+    push_silence(&w, burst, &hits);
+    hits += push_pcm(&w, pat, n, &isb);
+    push_silence_isb(&w, 2 * burst, &hits, &isb);
+    mfsk_pattern_window_free(&w);
+    free(pat);
+    return hits ? isb : -1;
+}
+
+/* Bound to a session, a station hears its peer's ACK and BREAK -- and neither
+ * another session's patterns nor the global ones every station used to send. */
+void test_session_patterns_heard_only_by_the_session(void)
+{
+    TEST_ASSERT_EQUAL_INT(PAT_ACK,   window_hears(0x1D2B, PAT_ACK, 0x1D2B));
+    TEST_ASSERT_EQUAL_INT(PAT_BREAK, window_hears(0x1D2B, PAT_BREAK, 0x1D2B));
+    TEST_ASSERT_EQUAL_INT(-1, window_hears(0x4A71, PAT_ACK, 0x1D2B));
+    TEST_ASSERT_EQUAL_INT(-1, window_hears(0x4A71, PAT_BREAK, 0x1D2B));
+    TEST_ASSERT_EQUAL_INT(-1, window_hears(0, PAT_ACK, 0x1D2B));
+    TEST_ASSERT_EQUAL_INT(-1, window_hears(0, PAT_BREAK, 0x1D2B));
+    TEST_ASSERT_EQUAL_INT(-1, window_hears(0x1D2B, PAT_ACK, 0));
+    TEST_ASSERT_EQUAL_INT(PAT_ACK,   window_hears(0, PAT_ACK, 0));     /* no session: global */
+    TEST_ASSERT_EQUAL_INT(PAT_BREAK, window_hears(0, PAT_BREAK, 0));
+    mfsk_pattern_set_session(0);
+}
+
 /* Pure noise must never be mistaken for an ACK (false-alarm rejection). */
 void test_noise_no_false_ack(void)
 {
@@ -454,6 +528,8 @@ int main(void)
     RUN_TEST(test_detect_patterns_matches_per_list_calls);
     RUN_TEST(test_stream_detector_matches_batch);
     RUN_TEST(test_stream_detector_events);
+    RUN_TEST(test_session_lists_are_separated);
+    RUN_TEST(test_session_patterns_heard_only_by_the_session);
     RUN_TEST(test_noise_no_false_ack);
     RUN_TEST(test_real_ack_detects);
     RUN_TEST(test_real_break_detects);

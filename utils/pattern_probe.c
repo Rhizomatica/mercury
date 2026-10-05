@@ -18,6 +18,8 @@
  *
  *   wcurve     the curve through the streaming window the RX loop runs.
  *
+ * PATTERN_KEY=<seed> measures a session's lists (mfsk_pattern_set_session).
+ *
  * usage: pattern_probe [curve|wcurve N|fading|noise HOURS|signals|cpu|all]
  */
 #include <complex.h>
@@ -260,6 +262,16 @@ static void cpu(void)
 int main(int argc, char **argv)
 {
     const char *what = argc > 1 ? argv[1] : "all";
+    /* PATTERN_KEY: measure a session's patterns instead of the global ones */
+    /* PATTERN_LIST="t0,t1,...,t7": an explicit ACK list (experiments) */
+    if (getenv("PATTERN_LIST")) {
+        int l[48] = {0}, k = 0; char buf[256]; snprintf(buf, sizeof buf, "%s", getenv("PATTERN_LIST"));
+        for (char *t = strtok(buf, ","); t && k < 48; t = strtok(NULL, ",")) l[k++] = atoi(t);
+        mfsk_pattern_set_lists(l, NULL);
+        printf("# ACK list %s\n", getenv("PATTERN_LIST"));
+    }
+    if (getenv("PATTERN_KEY")) printf("# session key %s: %s\n", getenv("PATTERN_KEY"),
+        mfsk_pattern_set_session((uint32_t)strtoul(getenv("PATTERN_KEY"), NULL, 0)) ? "session lists" : "global lists");
     int all = !strcmp(what, "all");
     if (all || !strcmp(what, "cpu")) cpu();
     if (all || !strcmp(what, "curve") || !strcmp(what, "fading")) {
