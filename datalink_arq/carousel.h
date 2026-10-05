@@ -231,6 +231,12 @@ bool car_is_idle(const car_t *c);
  * decode.  What it carried may already be partly delivered (the stream runs
  * ahead of the check), so the session must end -- never carry on.  NULL: fine. */
 const char *car_failed(const car_t *c);
+/* Every keydown of mine opens with a NAV header this long (0: none), where
+ * car_wants_nav() says the peer may not sense it otherwise (car_set_nav_below_db). */
+void car_set_nav_ms(uint32_t ms);
+void car_set_nav_below_db(float db);
+void car_set_nav_loss(double loss);   /* ...or at this loss estimate (default 0.3) */
+bool car_wants_nav(const car_t *c);
 
 /* How long delivering what is left may take on the rung the session is on:
  * a few exchanges -- my round, the peer's control answer -- there.  Seconds

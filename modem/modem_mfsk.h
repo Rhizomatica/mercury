@@ -67,14 +67,38 @@ int mfsk_pattern_detect(const int16_t *pb, int n, int *is_break);
 struct mfsk_stream_det;
 typedef struct {
     struct mfsk_stream_det *det;   /* created on the first push */
-    double  hist_re[64], hist_im[64];   /* the low-pass filter's last inputs */
+    double  hist[64];              /* the low-pass filter's last inputs, signed by the downmix */
     int     hist_pos;
     long long n;                   /* samples pushed since the reset */
     unsigned gen;                  /* the pattern lists it scores (mfsk_pattern_set_session) */
+    long long nav_start;           /* the last NAV header reported, and its score */
+    int     nav_score;
 } mfsk_pattern_window_t;
 
-/* Push `n` samples; returns 1 when a pattern is found (is_break set).  Never
- * fails hard: without memory it simply cannot detect. */
+/* A pattern the window found: ACK, BREAK, or a NAV header of class k
+ * (MFSK_PAT_NAV(k)); `start` is its first sample, counted from the window's
+ * last reset (or creation), so a caller that knows the sample count of its
+ * own last chunk knows how long ago it began. */
+#define MFSK_PAT_ACK     0
+#define MFSK_PAT_BREAK   1
+#define MFSK_PAT_NAV(k)  (2 + (k))
+typedef struct {
+    int       kind;
+    long long start;
+    int       score;
+} mfsk_pattern_ev_t;
+/* Push `n` samples; up to maxev events are written.  Returns how many. */
+int  mfsk_pattern_window_events(mfsk_pattern_window_t *w, const int16_t *pcm, int n,
+                                mfsk_pattern_ev_t *ev, int maxev);
+/* Samples pushed since the reset (the clock `start` runs on). */
+long long mfsk_pattern_window_samples(const mfsk_pattern_window_t *w);
+
+/* The NAV header of class k (mfsk.h), int16 passband; returns the sample
+ * count (mfsk_pattern_max_tx_samples()). */
+int  mfsk_nav_tx(int16_t *out, int cls);
+
+/* Push `n` samples; returns 1 when an ACK or BREAK is found (is_break set),
+ * ignoring NAV headers.  Never fails hard: without memory it cannot detect. */
 int  mfsk_pattern_window_push(mfsk_pattern_window_t *w, const int16_t *pcm, int n,
                               int *is_break);
 

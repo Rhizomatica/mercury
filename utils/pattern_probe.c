@@ -17,6 +17,8 @@
  *   cpu        cost of the scan per second of audio.
  *
  *   wcurve     the curve through the streaming window the RX loop runs.
+ *   nav H N    NAV headers: false ones in H hours of noise and on data bursts,
+ *              and the curve (N trials) of three classes, with confusions.
  *
  * PATTERN_KEY=<seed> measures a session's lists (mfsk_pattern_set_session).
  *
@@ -181,6 +183,97 @@ static long scan_stream(const int16_t *x, long n, long *scans)
     return hits;
 }
 
+/* NAV headers found in audio, through the window (any class). */
+static long scan_nav(const int16_t *x, long n)
+{
+    mfsk_pattern_window_t w = {0};
+    long hits = 0, chunk = 160;
+    for (long i = 0; i + chunk <= n; i += chunk) {
+        mfsk_pattern_ev_t ev[16];
+        int nev = mfsk_pattern_window_events(&w, x + i, (int)chunk, ev, 16);
+        for (int e = 0; e < nev; e++) if (ev[e].kind >= MFSK_PAT_NAV(0)) hits++;
+    }
+    mfsk_pattern_window_free(&w);
+    return hits;
+}
+
+/* NAV: false headers in noise and on data bursts, and the detection curve of
+ * three classes with any class confusion. */
+static void nav(double hours, int trials)
+{
+    long n = (long)(8000.0 * 60.0), fa = 0;
+    int16_t *x = malloc((size_t)n * sizeof *x);
+    for (long m = 0; m < (long)(hours * 60.0 + 0.5); m++) {
+        for (long t = 0; t < n; t++) x[t] = (int16_t)(3000.0 * gauss());
+        fa += scan_nav(x, n);
+    }
+    printf("# nav: %ld false headers in %.2f h of noise\n", fa, hours);
+    free(x);
+    static const int modes[] = { FREEDV_MODE_DATAC16, FREEDV_MODE_DATAC15, FREEDV_MODE_DATAC4, FREEDV_MODE_DATAC3,
+                                 FREEDV_MODE_DATAC1, FREEDV_MODE_DATAC17, FREEDV_MODE_QAM16C2 };
+    for (unsigned mi = 0; mi < sizeof modes / sizeof modes[0]; mi++) {
+        struct freedv *f = freedv_open(modes[mi]);
+        if (!f) continue;
+        int npre = freedv_get_n_tx_preamble_modem_samples(f), nmod = freedv_get_n_tx_modem_samples(f);
+        int npost = freedv_get_n_tx_postamble_modem_samples(f), nb = freedv_get_bits_per_modem_frame(f) / 8;
+        long k = 0, cap = 60L * (npre + nmod + npost + 800);
+        int16_t *y = calloc((size_t)cap, sizeof *y); uint8_t *pl = malloc((size_t)nb);
+        for (int i = 0; i < 60; i++) {
+            for (int b = 0; b < nb; b++) pl[b] = (uint8_t)(urand() * 256);
+            k += freedv_rawdatapreambletx(f, y + k); freedv_rawdatatx(f, y + k, pl); k += nmod;
+            k += freedv_rawdatapostambletx(f, y + k); k += 800;
+        }
+        printf("# nav: mode %d, 60 frames: %ld false headers\n", modes[mi], scan_nav(y, k));
+        free(y); free(pl); freedv_close(f);
+    }
+    int n_pat = mfsk_pattern_max_tx_samples();
+    int16_t *pat = calloc((size_t)n_pat, sizeof *pat), *sh = calloc((size_t)n_pat, sizeof *sh);
+    int lead = 2400, total = lead + n_pat + 2 * n_pat;
+    int16_t *rx = calloc((size_t)total, sizeof *rx);
+    static const int cls[3] = { 0, 5, 11 };
+    printf("# nav curve: P(class heard as itself), off0 and +25 Hz, %d trials; wrong = another class\n", trials);
+    int snr_lo = getenv("NAV_SNR") ? atoi(getenv("NAV_SNR")) : -17, snr_hi = getenv("NAV_SNR") ? snr_lo : -10;
+    for (int snr = snr_lo; snr <= snr_hi; snr++) {
+        printf("%4d", snr);
+        int wrong = 0;
+        for (int ci = 0; ci < 3; ci++) {
+            int n = mfsk_nav_tx(pat, cls[ci]);
+            double ps = power(pat, n);
+            for (int oi = 0; oi < 2; oi++) {
+                shift(pat, n, oi ? 25.0 : 0.0, sh);
+                double sigma = sigma_for(ps, snr);
+                int hit = 0;
+                for (int i = 0; i < trials; i++) {
+                    for (int t = 0; t < total; t++) {
+                        double v = sigma * gauss() + ((t >= lead && t < lead + n) ? sh[t - lead] : 0);
+                        rx[t] = (int16_t)(v > 32767 ? 32767 : v < -32768 ? -32768 : v);
+                    }
+                    mfsk_pattern_window_t w = {0};
+                    int got = 0;
+                    for (int t = 0; t + 160 <= total; t += 160) {
+                        mfsk_pattern_ev_t ev[16];
+                        int nev = mfsk_pattern_window_events(&w, rx + t, 160, ev, 16);
+                        for (int e = 0; e < nev; e++) {
+                            if (ev[e].kind == MFSK_PAT_NAV(cls[ci])) got = 1;
+                            else {
+                                wrong++;
+                                if (getenv("NAV_WHY")) fprintf(stderr, "snr %d class %d: also kind %d score %d at %lld (sent at %d)\n",
+                                                               snr, cls[ci], ev[e].kind, ev[e].score, ev[e].start, lead);
+                            }
+                        }
+                    }
+                    mfsk_pattern_window_free(&w);
+                    hit += got;
+                }
+                printf("  c%d:%.3f", cls[ci], (double)hit / trials);
+            }
+        }
+        printf("  wrong=%d\n", wrong);
+        fflush(stdout);
+    }
+    free(pat); free(sh); free(rx);
+}
+
 static void noise(double hours)
 {
     long n = (long)(8000.0 * 60.0);   /* a minute at a time */
@@ -279,6 +372,7 @@ int main(int argc, char **argv)
         fading();
     }
     if (!strcmp(what, "wcurve")) wcurve(argc > 2 ? atoi(argv[2]) : 200);
+    if (!strcmp(what, "nav")) nav(argc > 2 ? atof(argv[2]) : 1.0, argc > 3 ? atoi(argv[3]) : 200);
     if (all || !strcmp(what, "signals")) signals();
     if (all || !strcmp(what, "noise")) noise(argc > 2 && !all ? atof(argv[2]) : 1.0);
     return 0;

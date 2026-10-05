@@ -1252,6 +1252,8 @@ static bool peer_is_transmitting(const arq_session_t *sess)
     uint64_t now = time_now_ms();
     if (now < sess->rx_frame_busy_until_ms)
         return true;          /* a frame whose preamble was caught: see arq_note_rx_preamble */
+    if (now < sess->nav_busy_until_ms)
+        return true;          /* its NAV header was heard: see arq_note_rx_nav */
     if (sess->last_rx_sync_ms == 0)
         return false;
     if (now < sess->last_rx_sync_ms)
@@ -1398,6 +1400,7 @@ static void car_io_keydown(void *ctx, const car_frame_t *fr, int n)
     static arq_keydown_t kd;          /* event-loop thread; the callee copies */
     kd.n = n > ARQ_KEYDOWN_FRAMES ? ARQ_KEYDOWN_FRAMES : n;
     kd.crc_seed = sess->crc_seed;
+    kd.nav = car_wants_nav(sess->car);
     for (int i = 0; i < kd.n; i++)
     {
         kd.f[i].mode   = fr[i].mode;
@@ -1519,6 +1522,16 @@ static void car_start(arq_session_t *sess, bool is_caller, uint64_t now)
         .trace = car_io_trace,
         .block_key = sess->crc_seed,
     };
+    /* NAV headers below 0 dB (as this end hears the peer: the path is
+     * reciprocal), where the peer's decoders may not sync on my keydowns.
+     * MERCURY_NAV=0 turns them off (A/B on air). */
+    const char *nav_env = getenv("MERCURY_NAV");
+    bool nav_on = !(nav_env && !strcmp(nav_env, "0"));
+    car_set_nav_ms(nav_on ? ARQ_NAV_LEAD_MS : 0);
+    HLOGI(LOG_COMP, "carousel: NAV headers %s", nav_on ? "below 0 dB" : "off (MERCURY_NAV=0)");
+    car_set_nav_below_db(0.0f);
+    car_set_nav_loss(2.0);
+    sess->nav_busy_until_ms = 0;
     car_init(sess->car, &io, sess->car_rx_level, sess->car_tx_level);
     car_seed_ctl_deaf(sess->car, sess->car_ctl_deaf, sess->car_peer_ctl_deaf);
     sess->ctl_floor_at_stop = false;

@@ -367,6 +367,7 @@ struct mfsk_stream_det {
     signed char *peak;            /* ring * SHIFTS * nStreams: the peak tone, -1 none */
     /* lists */
     int    tones[MFSK_STREAM_MAX_LISTS][MFSK_MAX_ACK_TONES];
+    signed char expect[MFSK_STREAM_MAX_LISTS][MFSK_MAX_ACK_TONES];   /* hopped tone per symbol */
     int    thr[MFSK_STREAM_MAX_LISTS];
     /* events */
     bool   open[MFSK_STREAM_MAX_LISTS];
@@ -386,7 +387,7 @@ mfsk_stream_det_t *mfsk_stream_det_new(const mfsk_t *m, const ofdm_frame_t *o,
     int Nofdm = ofdm_frame_nofdm(o);
     int step = Nofdm / 8;
     if (step < 1 || Nofdm % step || nsymb < 1 || pattern_len < 1 ||
-        pattern_len > MFSK_MAX_ACK_TONES || Nofdm > 2048)
+        pattern_len > MFSK_MAX_ACK_TONES || nsymb > MFSK_MAX_ACK_TONES || Nofdm > 2048)
         return NULL;
     mfsk_stream_det_t *d = calloc(1, sizeof(*d));
     if (!d) return NULL;
@@ -416,7 +417,11 @@ void mfsk_stream_det_set_list(mfsk_stream_det_t *d, int idx, const int *tones, i
 {
     if (!d || idx < 0 || idx >= MFSK_STREAM_MAX_LISTS) return;
     d->thr[idx] = tones ? threshold : 0;
-    if (tones) memcpy(d->tones[idx], tones, (size_t)d->pattern_len * sizeof(int));
+    if (tones) {
+        memcpy(d->tones[idx], tones, (size_t)d->pattern_len * sizeof(int));
+        for (int p = 0; p < d->nsymb && p < MFSK_MAX_ACK_TONES; p++)
+            d->expect[idx][p] = (signed char)((tones[p % d->pattern_len] + p * d->m->tone_hop_step) % d->m->M);
+    }
     d->open[idx] = false;
     d->hold_until[idx] = -1;
     d->best_score[idx] = -1; d->best_metric[idx] = -1.0; d->best_pos[idx] = -1;
@@ -489,26 +494,48 @@ static int stream_score(mfsk_stream_det_t *d, long long k, mfsk_stream_event_t *
     if (kb < 0) return 0;
     long long pos = kb * d->step;
     int nev = 0;
+    int slots[MFSK_MAX_ACK_TONES];
+    for (int p = 0; p < d->nsymb; p++) slots[p] = (int)((kb + (long long)p * d->S) % d->ring);
     for (int l = 0; l < MFSK_STREAM_MAX_LISTS; l++) {
         if (d->thr[l] <= 0) continue;
+        /* Matched symbols first, in integers; the E_target/E_total metric only
+         * breaks ties, so it is summed only where the count could matter --
+         * at the threshold, or at the best since the reset -- in the same
+         * order as the batch detector, so the result is the same to the bit. */
+        int matched[MFSK_PAT_SHIFTS], top = -1;
+        for (int si = 0; si < MFSK_PAT_SHIFTS; si++) {
+            int c = 0;
+            const signed char *ex = d->expect[l];
+            if (m->nStreams == 1) {
+                for (int p = 0; p < d->nsymb; p++)
+                    c += d->peak[slots[p] * MFSK_PAT_SHIFTS + si] == ex[p];
+            } else {
+                for (int p = 0; p < d->nsymb; p++) {
+                    const signed char *pk = d->peak + ((size_t)slots[p] * MFSK_PAT_SHIFTS + (size_t)si) * (size_t)m->nStreams;
+                    int streams = 0;
+                    for (int st = 0; st < m->nStreams; st++) if (pk[st] == ex[p]) streams++;
+                    if (streams == m->nStreams) c++;
+                }
+            }
+            matched[si] = c;
+            if (c > top) top = c;
+        }
+        int need = d->thr[l] < d->best_score[l] ? d->thr[l] : d->best_score[l];
         int best_m = -1; double best_x = -1.0;
         for (int si = 0; si < MFSK_PAT_SHIFTS; si++) {
-            int matched = 0; double metric = 0.0;
-            for (int p = 0; p < d->nsymb; p++) {
-                int slot = (int)((kb + (long long)p * d->S) % d->ring);
-                const double *e = d->e + ((size_t)slot * MFSK_PAT_SHIFTS + (size_t)si) * (size_t)d->ntone;
-                double e_total = d->etot[slot * MFSK_PAT_SHIFTS + si];
-                int actual = (d->tones[l][p % d->pattern_len] + p * m->tone_hop_step) % m->M;
-                const signed char *pk = d->peak + ((size_t)slot * MFSK_PAT_SHIFTS + (size_t)si) * (size_t)m->nStreams;
-                int streams = 0; double e_target = 0.0;
-                for (int st = 0; st < m->nStreams; st++) {
-                    e_target += e[st * m->M + actual];
-                    if (pk[st] == actual) streams++;
+            if (matched[si] < top) continue;           /* a lower count never wins */
+            double metric = 0.0;
+            if (top >= need)
+                for (int p = 0; p < d->nsymb; p++) {
+                    int slot = slots[p];
+                    const double *e = d->e + ((size_t)slot * MFSK_PAT_SHIFTS + (size_t)si) * (size_t)d->ntone;
+                    double e_total = d->etot[slot * MFSK_PAT_SHIFTS + si];
+                    int actual = d->expect[l][p];
+                    double e_target = 0.0;
+                    for (int st = 0; st < m->nStreams; st++) e_target += e[st * m->M + actual];
+                    if (e_total > 0.0) metric += e_target / e_total;
                 }
-                if (streams == m->nStreams) matched++;
-                if (e_total > 0.0) metric += e_target / e_total;
-            }
-            if (matched > best_m || (matched == best_m && metric > best_x)) { best_m = matched; best_x = metric; }
+            if (matched[si] > best_m || (matched[si] == best_m && metric > best_x)) { best_m = matched[si]; best_x = metric; }
         }
         if (best_m > d->best_score[l] || (best_m == d->best_score[l] && best_x > d->best_metric[l])) {
             d->best_score[l] = best_m; d->best_metric[l] = best_x; d->best_pos[l] = pos;

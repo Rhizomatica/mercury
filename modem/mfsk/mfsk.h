@@ -74,6 +74,20 @@ static inline int mfsk_bits_per_symbol(const mfsk_t *m)
 void mfsk_set_hail_target(mfsk_t *m, const char *callsign, int len);
 void mfsk_clear_hail_target(mfsk_t *m);
 
+/* NAV header: a pattern that opens an in-session keydown and says how long
+ * it lasts, so the peer holds the channel even where it cannot decode the
+ * keydown's frames.  MFSK_NAV_CLASSES duration classes, each its own tone list
+ * (M=32): class k means "this keydown ends at most mfsk_nav_class_ms(k) after
+ * the header starts".  The lists are global (any station may honour another's
+ * NAV), each agrees with the ACK/BREAK/HAIL patterns, the preamble and the
+ * postamble in at most 3 of 16 symbols at any time and frequency shift (up to
+ * 4 bins), and with another class in at most 4. */
+#define MFSK_NAV_CLASSES 12
+extern const int mfsk_nav_tones[MFSK_NAV_CLASSES][8];
+uint32_t mfsk_nav_class_ms(int k);
+/* The smallest class that covers ms (the longest if none does). */
+int      mfsk_nav_class_for_ms(uint32_t ms);
+
 /* Session-bound ACK and BREAK tone lists (pattern_len tones each), derived
  * from a session key so that only the two stations of the session read each
  * other's patterns: another station's, or another session's, match ours in at

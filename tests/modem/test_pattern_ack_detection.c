@@ -221,6 +221,7 @@ void test_session_lists_are_separated(void)
     }
 }
 
+#define CHUNK 160
 static void push_silence_isb(mfsk_pattern_window_t *w, int samples, int *hits, int *is_break);
 static void push_silence(mfsk_pattern_window_t *w, int samples, int *hits);
 static int push_pcm(mfsk_pattern_window_t *w, const int16_t *pcm, int n, int *is_break);
@@ -258,6 +259,70 @@ void test_session_patterns_heard_only_by_the_session(void)
     TEST_ASSERT_EQUAL_INT(PAT_ACK,   window_hears(0, PAT_ACK, 0));     /* no session: global */
     TEST_ASSERT_EQUAL_INT(PAT_BREAK, window_hears(0, PAT_BREAK, 0));
     mfsk_pattern_set_session(0);
+}
+
+/* The NAV table keeps its separation, and class boundaries round up. */
+void test_nav_table(void)
+{
+    mfsk_t m;
+    mfsk_init(&m, 32, 50, 1);
+    int NS = m.ack_pattern_nsymb, e[MFSK_NAV_CLASSES][16], g[3][16];
+    mfsk_pattern_expand(&m, m.ack_tones, g[0]);
+    mfsk_pattern_expand(&m, m.break_tones, g[1]);
+    mfsk_pattern_expand(&m, m.hail_tones, g[2]);
+    for (int k = 0; k < MFSK_NAV_CLASSES; k++) mfsk_pattern_expand(&m, mfsk_nav_tones[k], e[k]);
+    for (int k = 0; k < MFSK_NAV_CLASSES; k++) {
+        TEST_ASSERT_LESS_OR_EQUAL_INT(3, mfsk_seq_xmatch(32, e[k], NS, e[k], NS, 4, true));
+        for (int i = 0; i < 3; i++)
+            TEST_ASSERT_LESS_OR_EQUAL_INT(3, mfsk_seq_xmatch(32, e[k], NS, g[i], NS, 4, false));
+        for (int j = 0; j < k; j++)
+            TEST_ASSERT_LESS_OR_EQUAL_INT(4, mfsk_seq_xmatch(32, e[k], NS, e[j], NS, 4, false));
+    }
+    TEST_ASSERT_EQUAL_INT(0, mfsk_nav_class_for_ms(0));
+    TEST_ASSERT_EQUAL_INT(0, mfsk_nav_class_for_ms(2000));
+    TEST_ASSERT_EQUAL_INT(1, mfsk_nav_class_for_ms(2001));
+    TEST_ASSERT_EQUAL_INT(MFSK_NAV_CLASSES - 1, mfsk_nav_class_for_ms(600000));
+    for (uint32_t ms = 500; ms < 40000; ms += 137) {
+        int k = mfsk_nav_class_for_ms(ms);
+        TEST_ASSERT_TRUE(ms > mfsk_nav_class_ms(MFSK_NAV_CLASSES - 1) || mfsk_nav_class_ms(k) >= ms);
+        TEST_ASSERT_TRUE(k == 0 || mfsk_nav_class_ms(k - 1) < ms);
+    }
+}
+
+/* Every class is heard as itself -- no other class, no ACK or BREAK -- with
+ * its start, whether a session binds the ACK/BREAK lists or not. */
+void test_nav_classes_heard_as_sent(void)
+{
+    const int burst = mfsk_pattern_max_tx_samples();
+    int16_t *pat = calloc((size_t)burst, sizeof(int16_t));
+    for (int sess = 0; sess < 2; sess++) {
+        mfsk_pattern_set_session(sess ? 0x2B47 : 0);
+        for (int k = 0; k < MFSK_NAV_CLASSES; k++) {
+            int n = mfsk_nav_tx(pat, k);
+            TEST_ASSERT_EQUAL_INT(burst, n);
+            mfsk_pattern_window_t w = {0};
+            mfsk_pattern_ev_t ev[16];
+            int nev = 0, lead = burst + 123;
+            int16_t z[CHUNK] = {0};
+            for (int t = 0; t < lead; t += CHUNK) {
+                int c = lead - t < CHUNK ? lead - t : CHUNK;
+                nev += mfsk_pattern_window_events(&w, z, c, ev + nev, 16 - nev);
+            }
+            for (int t = 0; t < n; t += CHUNK)
+                nev += mfsk_pattern_window_events(&w, pat + t, n - t < CHUNK ? n - t : CHUNK, ev + nev, 16 - nev);
+            for (int t = 0; t < 2 * burst; t += CHUNK)
+                nev += mfsk_pattern_window_events(&w, z, CHUNK, ev + nev, 16 - nev);
+            char what[64];
+            snprintf(what, sizeof what, "NAV class %d, session %d", k, sess);
+            TEST_ASSERT_EQUAL_INT_MESSAGE(1, nev, what);
+            TEST_ASSERT_EQUAL_INT_MESSAGE(MFSK_PAT_NAV(k), ev[0].kind, what);
+            int gi = burst / 16 - 256;    /* a guard interval: Nofdm - Nfft */
+            TEST_ASSERT_TRUE_MESSAGE(ev[0].start >= lead - gi - 64 && ev[0].start <= lead + 64, what);
+            mfsk_pattern_window_free(&w);
+        }
+    }
+    mfsk_pattern_set_session(0);
+    free(pat);
 }
 
 /* Pure noise must never be mistaken for an ACK (false-alarm rejection). */
@@ -399,7 +464,6 @@ void test_real_break_detects(void)
 /* ---- The streaming window rx_thread uses ---------------------------------
  * CHUNK matches RX_DECODE_CHUNK_SAMPLES: the window is fed exactly as the live
  * receive loop feeds it. */
-#define CHUNK 160
 
 /* A match can surface during the silence that FOLLOWS a burst -- that is when
  * the next paced scan comes round -- so the break flag is recorded here too. */
@@ -530,6 +594,8 @@ int main(void)
     RUN_TEST(test_stream_detector_events);
     RUN_TEST(test_session_lists_are_separated);
     RUN_TEST(test_session_patterns_heard_only_by_the_session);
+    RUN_TEST(test_nav_table);
+    RUN_TEST(test_nav_classes_heard_as_sent);
     RUN_TEST(test_noise_no_false_ack);
     RUN_TEST(test_real_ack_detects);
     RUN_TEST(test_real_break_detects);

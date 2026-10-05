@@ -87,12 +87,17 @@ typedef enum
  * in its own mode -- with a silence before each but the first (the carousel
  * data plane's rounds).  Heap-allocated by the enqueuer; whoever dequeues the
  * action frees it. */
+/* A NAV header (mfsk.h) and the silence after it, ahead of a keydown's first
+ * frame: what the carousel adds to a headed keydown's lead. */
+#define ARQ_NAV_GAP_MS        60
+#define ARQ_NAV_LEAD_MS       (640 + ARQ_NAV_GAP_MS)
 #define ARQ_KEYDOWN_FRAMES    17
 #define ARQ_KEYDOWN_FRAME_MAX 1280
 typedef struct
 {
     int      n;
     uint16_t crc_seed;           /* XORed into every frame's CRC16 (0: plain) */
+    bool     nav;                /* open with a NAV header (ARQ_NAV_LEAD_MS) */
     struct
     {
         int      mode;
@@ -125,6 +130,9 @@ typedef struct
     /* A pattern can arrive now: the RX pattern detector correlates only while
      * this is set -- running it all the time costs the decoders CPU. */
     bool expect_pattern_ack;
+    /* A carousel session is up: the pattern detector runs throughout, for the
+     * peer's NAV headers (expect_pattern_ack still gates ACK/BREAK). */
+    bool in_carousel;
     /* Listening or accepting: a CALL can arrive on MFSK, and only the
      * modem's MFSK call listener would decode it. */
     bool listening_for_calls;
@@ -354,6 +362,12 @@ void arq_update_link_metrics(int sync, float snr, int rx_status, bool frame_deco
  */
 void arq_note_rx_preamble(int mode);
 void arq_note_rx_frame_done(void);
+/**
+ * @brief A NAV header that began @p age_ms ago says the peer's keydown ends
+ * within @p hold_ms of its start: the channel is busy until then, whether or
+ * not any of the keydown's frames can be decoded.
+ */
+void arq_note_rx_nav(uint32_t age_ms, uint32_t hold_ms);
 
 /**
  * @brief Try to dequeue next modem action without blocking.

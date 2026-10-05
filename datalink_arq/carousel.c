@@ -64,7 +64,26 @@
 #define TURN_CAP_MS      45000
 #endif
 #define MAX_KEYDOWN_MS   30000    /* airtime cap per round                  */
-#define HEAD_MS          110      /* tx delay + head silence                */
+/* The keydown's lead before its first frame: tx delay and head silence, plus
+ * the NAV header when keydowns carry one (car_set_nav_ms). */
+static uint32_t g_nav_ms;
+void car_set_nav_ms(uint32_t ms) { g_nav_ms = ms; }
+/* Does my next keydown need a NAV header?  Only where the peer may not sense
+ * it otherwise: below this SNR (as I hear it -- the path is reciprocal), or
+ * where frames are being lost at a good SNR (NVIS: ISI, not noise): a decoder
+ * that loses frames loses sync on them too. */
+static float g_nav_below_db = 99.0f;
+static double g_nav_loss = 0.3;
+void car_set_nav_below_db(float db) { g_nav_below_db = db; }
+void car_set_nav_loss(double loss) { g_nav_loss = loss; }
+bool car_wants_nav(const car_t *c)
+{
+    return g_nav_ms && (!c->snr_valid || c->snr_ema < g_nav_below_db || c->loss_est >= g_nav_loss);
+}
+static uint32_t nav_lead(const car_t *c) { return car_wants_nav(c) ? g_nav_ms : 0; }
+/* Both ends decide from the same reciprocal evidence, so a keydown's lead is
+ * the same whichever end predicts it. */
+#define HEAD_MS          (110 + nav_lead(c))
 #define TAIL_MS          200
 #define GUARD_MS         ARQ_CHANNEL_GUARD_MS_DEFAULT
 #define ISS_GUARD_MS     ARQ_ISS_POST_ACK_GUARD_MS_DEFAULT

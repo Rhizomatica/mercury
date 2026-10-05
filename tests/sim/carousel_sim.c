@@ -90,6 +90,10 @@ typedef struct {
     struct { uint64_t start; int mode; bool sync; } kd[CAR_KEYDOWN_MAX];
     int      kd_n;
     int      kd_no;               /* this keydown's index, for carousel_sim_force_unsensed */
+    /* CAR_NAV: the keydown's header pattern, heard by the peer or not, and
+     * when the peer's detector reports it. */
+    bool     nav_ok;
+    uint64_t nav_from;
 } station_t;
 
 static station_t S[2];
@@ -139,6 +143,8 @@ static uint64_t now_ms;
 static bool trace;
 static double snr_now = 12.0;          /* the SNR stamped on delivered frames */
 static bool cs_decodable;              /* CAR_CS_DECODABLE: carrier sense needs a decodable frame */
+static int nav_mode;                   /* CAR_NAV: 0 off, 1 modelled header, 2 always heard */
+static uint32_t nav_air;               /* CAR_NAV_AIR: the header's lead, header + gap */
 /* CAR_SNR_BIAS: the estimate as the bench read it at 10 %: DATAC15, DATAC4 and
  * DATAC16 frames about 3.5 dB below DATAC3 and DATAC1 on the same link. */
 static bool snr_biased;
@@ -163,10 +169,27 @@ static double snr_bias(int mode)
 }
 static double step_from, step_to, step_at_s = -1.0;   /* a step:A:B:T channel */
 
+/* The detector reports a pattern this long after it ends (0.23-0.24 s on air,
+ * Pi 4); a poll, by contrast, is decoded as it ends. */
+#ifndef SIM_PATTERN_DETECT_MS
+#define SIM_PATTERN_DETECT_MS 240
+#endif
 static void io_keydown(void *ctx, const car_frame_t *fr, int n)
 {
     station_t *s = ctx, *peer = &S[s->id ^ 1];
-    uint64_t t = now_ms + HEAD_MS;
+    /* CAR_NAV: the keydown opens with a header pattern, heard (or not) as a
+     * pattern is, after which the peer counts as keyed until the keydown ends. */
+    bool nav = nav_mode && car_wants_nav(&s->car);
+    uint64_t t = now_ms + HEAD_MS + (nav ? nav_air : 0);
+    s->nav_ok = false;
+    if (nav) {
+        uint64_t th = now_ms + HEAD_MS, d;
+        uint64_t hair = sim_channel_airtime_ms(SIM_MODE_PATTERN, 0);
+        bool peer_keyed_then = peer->tx_end > th && peer->tx_start < th + hair;
+        s->nav_ok = !peer_keyed_then &&
+                    (nav_mode == 2 || sim_channel_schedule(ch, th, s->id, SIM_MODE_PATTERN, 0, &d));
+        s->nav_from = th + hair + SIM_PATTERN_DETECT_MS;
+    }
     if (peer->tx_end > now_ms) {                  /* keyed while the peer is on the air */
         kd_overlaps++;
         if (!unsensed(peer->kd_no)) kd_unexplained++;
@@ -229,11 +252,6 @@ static void io_trace(void *ctx, const char *line)
     if (trace) printf("%9.1f %c   %s\n", now_ms / 1000.0, 'A' + ((station_t *)ctx)->id, line);
 }
 
-/* The detector reports a pattern this long after it ends (0.23-0.24 s on air,
- * Pi 4); a poll, by contrast, is decoded as it ends. */
-#ifndef SIM_PATTERN_DETECT_MS
-#define SIM_PATTERN_DETECT_MS 240
-#endif
 /* A pattern: 0.64 s on the air, detected ~10 dB below DATAC16. */
 static void io_pattern(void *ctx, int kind)
 {
@@ -246,6 +264,7 @@ static void io_pattern(void *ctx, int kind)
     }
     s->tx_start = now_ms;
     s->kd_n = 0;
+    s->nav_ok = false;
     s->kd_no = keydown_no++;
     if (trace) printf("%9.1f %c keys: pattern %s\n", now_ms / 1000.0, 'A' + s->id, kind ? "BREAK" : "ACK");
     if (deliver(t, s->id, SIM_MODE_PATTERN, &d)) {
@@ -272,6 +291,8 @@ static bool io_peer_keyed(void *ctx)
      * frame's preamble, and a pattern only when that is MFSK: rebound to the
      * floor mid-frame, on air, it missed that frame (car23 at 3 %). */
     if (p->tx_end && unsensed(p->kd_no)) return false;   /* an explorer's sensing failure */
+    if (nav_mode && p->nav_ok && p->tx_end && now_ms >= p->nav_from && now_ms < p->tx_end - TAIL_MS + CS_ACQ_MS)
+        return true;                                     /* its NAV header was heard */
     uint64_t from = p->tx_start;
     if (cs_decodable) {
         from = UINT64_MAX;
@@ -318,6 +339,11 @@ void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limi
     trace = getenv("CAR_TRACE") != NULL;
     asym = false;
     cs_decodable = getenv("CAR_CS_DECODABLE") != NULL;
+    nav_mode = getenv("CAR_NAV") ? (strcmp(getenv("CAR_NAV"), "perfect") ? 1 : 2) : 0;
+    nav_air = !nav_mode ? 0 : getenv("CAR_NAV_AIR") ? (uint32_t)atoi(getenv("CAR_NAV_AIR")) : 700;
+    car_set_nav_ms(nav_air);
+    car_set_nav_below_db(getenv("CAR_NAV_BELOW") ? (float)atof(getenv("CAR_NAV_BELOW")) : 99.0f);
+    car_set_nav_loss(getenv("CAR_NAV_LOSS") ? atof(getenv("CAR_NAV_LOSS")) : 0.3);
     snr_biased = getenv("CAR_SNR_BIAS") != NULL;
     nev = 0;
     collisions = 0;

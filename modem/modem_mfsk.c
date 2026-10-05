@@ -1107,6 +1107,25 @@ int mfsk_pattern_tx(int16_t *out, int pattern_kind)
     return written;
 }
 
+int mfsk_nav_tx(int16_t *out, int cls)
+{
+    mfsk_pattern_lazy_init();
+    if (cls < 0) cls = 0;
+    if (cls >= MFSK_NAV_CLASSES) cls = MFSK_NAV_CLASSES - 1;
+    int ns = g_pat_m.ack_pattern_nsymb;
+    mfsk_cplx *bins = (mfsk_cplx *)calloc((size_t)ns * MFSK_NCAR, sizeof(mfsk_cplx));
+    if (!bins) return 0;
+    mfsk_t m = g_pat_m;
+    memcpy(m.ack_tones, mfsk_nav_tones[cls], sizeof(mfsk_nav_tones[cls]));
+    mfsk_generate_ack_pattern(&m, bins);
+    long tx_n = 0;
+    double complex tail[MFSK_XFADE];
+    int have_tail = 0;
+    int written = mfsk_synth(&g_pat_o, g_pat_w, g_pat_nofdm, bins, ns, out, &tx_n, tail, &have_tail, 1);
+    free(bins);
+    return written;
+}
+
 /* Detect a pattern ACK in an int16 passband chunk.  Returns 1 on a match and
  * sets *is_break (1 = ACK+TURN break, 0 = plain ACK); 0 if none. */
 int mfsk_pattern_detect(const int16_t *pb, int n, int *is_break)
@@ -1225,8 +1244,8 @@ const modem_backend_t modem_backend_mfsk = {
 /* ----------------------------------------------------------------------
  * Sliding detection window -- see modem_mfsk.h for why it paces.
  * ---------------------------------------------------------------------- */
-int mfsk_pattern_window_push(mfsk_pattern_window_t *w, const int16_t *pcm, int n,
-                             int *is_break)
+int mfsk_pattern_window_events(mfsk_pattern_window_t *w, const int16_t *pcm, int n,
+                               mfsk_pattern_ev_t *out, int maxev)
 {
     if (!w || !pcm || n <= 0)
         return 0;
@@ -1237,6 +1256,9 @@ int mfsk_pattern_window_push(mfsk_pattern_window_t *w, const int16_t *pcm, int n
                                      g_pat_m.ack_pattern_nsymb);
         if (!w->det)
             return 0;             /* no memory, no detection; never a crash */
+        for (int k = 0; k < MFSK_NAV_CLASSES; k++)
+            mfsk_stream_det_set_list(w->det, MFSK_PAT_NAV(k), mfsk_nav_tones[k],
+                                     g_pat_m.ack_match_threshold);
         w->gen = 0;
     }
     unsigned gen = atomic_load(&g_pat_gen);
@@ -1246,57 +1268,87 @@ int mfsk_pattern_window_push(mfsk_pattern_window_t *w, const int16_t *pcm, int n
          * the ring was scored against the old ones */
         int ack[MFSK_MAX_ACK_TONES], brk[MFSK_MAX_ACK_TONES];
         pat_lists(ack, brk);
-        mfsk_stream_det_set_list(w->det, 0, ack, g_pat_m.ack_match_threshold);
-        mfsk_stream_det_set_list(w->det, 1, brk, g_pat_m.break_match_threshold);
+        mfsk_stream_det_set_list(w->det, MFSK_PAT_ACK, ack, g_pat_m.ack_match_threshold);
+        mfsk_stream_det_set_list(w->det, MFSK_PAT_BREAK, brk, g_pat_m.break_match_threshold);
         mfsk_stream_det_reset(w->det);
         w->gen = gen;
     }
 
-    /* Downmix by FC = FS/4 (a 1, j, -1, -j phasor) and low-pass, one sample
-     * at a time: the filter mfsk_pattern_detect() applies to a whole buffer,
-     * causal here, so positions run MFSK_LPF_TAPS/2 late. */
-    int hits = 0, best_score = -1, best_brk = 0;
+    /* Downmix by FC = FS/4 and low-pass, one sample at a time: the filter
+     * mfsk_pattern_detect() applies to a whole buffer, causal here, so the
+     * stream runs MFSK_LPF_TAPS/2 samples late.  The 1, j, -1, -j phasor puts
+     * an input sample wholly in the real part (even n) or the imaginary part
+     * (odd n), signed by n & 2: one ring of signed samples, and each tap
+     * feeds the real or the imaginary output by the parity of the sample it
+     * reads -- 63 multiply-adds a sample, not 126. */
+    int nout = 0;
     for (int i = 0; i < n; i++)
     {
-        double x = 2.0 * (double)pcm[i], re, im;
-        switch ((int)(w->n & 3)) {
-        case 0:  re = x;    im = 0.0;  break;
-        case 1:  re = 0.0;  im = x;    break;
-        case 2:  re = -x;   im = 0.0;  break;
-        default: re = 0.0;  im = -x;   break;
-        }
-        w->n++;
-        w->hist_re[w->hist_pos] = re;
-        w->hist_im[w->hist_pos] = im;
+        double x = 2.0 * (double)pcm[i];
+        long long sn = w->n++;
+        w->hist[w->hist_pos] = (sn & 2) ? -x : x;
         double ar = 0.0, ai = 0.0;
         int h = w->hist_pos;
         for (int k = 0; k < MFSK_LPF_TAPS; k++)
         {
-            ar += g_pat_lpf[k] * w->hist_re[h];
-            ai += g_pat_lpf[k] * w->hist_im[h];
+            /* the sample k back is sn - k: real part if even */
+            if (((sn - k) & 1) == 0) ar += g_pat_lpf[k] * w->hist[h];
+            else                     ai += g_pat_lpf[k] * w->hist[h];
             h = h ? h - 1 : MFSK_LPF_TAPS - 1;
         }
         w->hist_pos = (w->hist_pos + 1) % MFSK_LPF_TAPS;
         double complex y = ar + I * ai;
         mfsk_stream_event_t ev[4];
         int nev = mfsk_stream_det_push(w->det, &y, 1, ev, 4);
-        for (int e = 0; e < nev; e++)
+        for (int e = 0; e < nev && nout < maxev; e++)
         {
-            /* the higher score wins, as in mfsk_pattern_detect() */
-            if (ev[e].score > best_score) { best_score = ev[e].score; best_brk = ev[e].list == 1; }
-            hits = 1;
+            if (ev[e].list >= MFSK_PAT_NAV(0))
+            {
+                /* One header, one class: another class can agree with it in
+                 * 4 symbols at some shift, and noise may add the threshold's
+                 * other 4 -- a weaker header overlapping a reported one is
+                 * that, not a second keydown. */
+                long long span = (long long)mfsk_pattern_max_tx_samples();
+                if (w->nav_score && llabs(ev[e].pos - w->nav_start) < span && ev[e].score <= w->nav_score)
+                    continue;
+                w->nav_start = ev[e].pos;
+                w->nav_score = ev[e].score;
+            }
+            out[nout].kind  = ev[e].list;
+            out[nout].start = ev[e].pos - MFSK_LPF_TAPS / 2;
+            out[nout].score = ev[e].score;
+            nout++;
         }
     }
-    if (hits && is_break) *is_break = best_brk;
-    return hits;
+    return nout;
+}
+
+long long mfsk_pattern_window_samples(const mfsk_pattern_window_t *w) { return w ? w->n : 0; }
+
+int mfsk_pattern_window_push(mfsk_pattern_window_t *w, const int16_t *pcm, int n,
+                             int *is_break)
+{
+    mfsk_pattern_ev_t ev[16];
+    int nev = mfsk_pattern_window_events(w, pcm, n, ev, 16);
+    int hit = 0, best = -1, brk = 0;
+    for (int e = 0; e < nev; e++)
+    {
+        if (ev[e].kind != MFSK_PAT_ACK && ev[e].kind != MFSK_PAT_BREAK) continue;
+        /* the higher score wins, as in mfsk_pattern_detect() */
+        if (ev[e].score > best) { best = ev[e].score; brk = ev[e].kind == MFSK_PAT_BREAK; }
+        hit = 1;
+    }
+    if (hit && is_break) *is_break = brk;
+    return hit;
 }
 
 void mfsk_pattern_window_reset(mfsk_pattern_window_t *w)
 {
     if (!w) return;
     if (w->det) mfsk_stream_det_reset(w->det);
-    memset(w->hist_re, 0, sizeof(w->hist_re));
-    memset(w->hist_im, 0, sizeof(w->hist_im));
+    memset(w->hist, 0, sizeof(w->hist));
+    w->nav_start = 0;
+    w->nav_score = 0;
     w->hist_pos = 0;
     w->n = 0;
 }
