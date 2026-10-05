@@ -730,11 +730,11 @@ bool arq_protocol_accept_is_carousel(const uint8_t *buf);
  * slot still decodes to the same callsign (the decoder is the same code on
  * both sides, so that check is the old callee's).  A callsign too long for it
  * goes unmarked, and that session runs stop-and-wait. */
-#define ARQ_CALL_CAROUSEL_MARK        0xA8
-/* 0xA7 marked the carousel of 1.9.17 and 1.9.18, whose blocks carry no check
- * and whose seed has no callee nonce: it cannot talk to this one, so it reads
- * as unmarked and the session runs stop-and-wait -- and this mark reads as
- * unmarked to it. */
+#define ARQ_CALL_CAROUSEL_MARK        0xA9
+/* Earlier carousels read this mark as no mark, and this one theirs, so the
+ * session runs stop-and-wait: 0xA7 (1.9.17, 1.9.18) had no block check and no
+ * callee nonce; 0xA8 (mercuryv2 deab316..) sent the global ACK/BREAK, which
+ * this one, binding them to the session, does not hear. */
 bool arq_protocol_mark_call_carousel(uint8_t *buf, const char *src);
 bool arq_protocol_call_is_carousel(const uint8_t *buf, const char *src);
 /* A carousel ACCEPT carries the callee's session nonce in the last two bytes
