@@ -66,7 +66,7 @@ TEST_BINS = test_ring_buffer test_arq_protocol test_arq_timing test_arq_fsm \
             test_freedv_harq test_sock_wire test_rtp_wire test_virtual_clock test_watterson \
             test_mercury_prng test_bcast_file \
             test_ofdm_acq test_tx_bpf test_crc_seed test_ui_status test_ui_devices test_ui_ptt_persist test_tx_pacing test_radio_port \
-            test_radio_io_frequency test_mfsk test_rs_erasure test_carousel test_carousel_sim \
+            test_radio_io_frequency test_mfsk test_rs_erasure test_carousel test_carousel_sim test_car_explore \
             test_mfsk_harq test_mfsk_modem test_pattern_ack_detection \
 			test_message_store test_ui_history test_ws_protocol
 
@@ -156,6 +156,12 @@ test_rs_erasure: sim/test_rs_erasure.c ../datalink_arq/rs_erasure.c ../datalink_
 CAROUSEL_SIM_SRC = sim/carousel_sim.c ../datalink_arq/carousel.c ../datalink_arq/rs_erasure.c \
                    sim/sim_channel.c $(ARQ_STUBS) \
                    ../datalink_arq/arq_protocol.c ../datalink_arq/arith.c ../common/virtual_clock.c
+# Every loss and sensing-failure pattern up to k on a short transfer
+# (sim/car_explore.c); CAR_EXPLORE_BYTES=4000 make -B test_car_explore for a
+# longer one.
+test_car_explore: sim/car_explore.c $(CAROUSEL_SIM_SRC)
+	$(CC) $(CFLAGS) -DCAR_SIM_BYTES=$${CAR_EXPLORE_BYTES:-600} -Isim -I../modem/freedv -o $@ $(filter %.c %.a %.o,$^) $(LDFLAGS)
+
 carousel_bench: sim/carousel_bench.c $(CAROUSEL_SIM_SRC)
 	$(CC) $(CFLAGS) -Isim -I../modem/freedv -o $@ $(filter %.c %.a %.o,$^) $(LDFLAGS)
 
