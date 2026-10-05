@@ -83,6 +83,109 @@ void test_detect_patterns_matches_per_list_calls(void)
     free(rx);
 }
 
+/* Baseband of the ACK (kind 0) or BREAK (kind 1) pattern, amplitude a, added
+ * into rx at offset off (one stream). */
+static void add_pattern_bb(const mfsk_t *m, const ofdm_frame_t *o, int kind, double a,
+                           double complex *rx, int off)
+{
+    int ns = m->ack_pattern_nsymb, Nc = o->Nc, Nfft = o->Nfft, Nofdm = ofdm_frame_nofdm(o);
+    mfsk_cplx *bins = calloc((size_t)ns * (size_t)Nc, sizeof(mfsk_cplx));
+    double complex sym[2048], pad[2048], td[2048], gi[2048];
+    if (kind) mfsk_generate_break_pattern(m, bins); else mfsk_generate_ack_pattern(m, bins);
+    for (int p = 0; p < ns; p++) {
+        for (int c = 0; c < Nc; c++) sym[c] = bins[p * Nc + c].re + I * bins[p * Nc + c].im;
+        ofdm_zero_padder(o, sym, pad);
+        ofdm_ifft(o, pad, td);
+        for (int n = 0; n < Nfft; n++) td[n] /= sqrt((double)Nfft);
+        ofdm_gi_adder(o, td, gi);
+        for (int n = 0; n < Nofdm; n++) rx[off + p * Nofdm + n] += a * gi[n];
+    }
+    free(bins);
+}
+
+/* The streaming detector keeps one FFT per step and scores every list by
+ * lookup: on the same baseband and grid it must give the batch detector's
+ * best score and start for every list, bit for bit -- fed in any chunks. */
+void test_stream_detector_matches_batch(void)
+{
+    mfsk_t m;
+    ofdm_frame_t o;
+    mfsk_init(&m, 32, 50, 1);
+    ofdm_frame_init(&o, 256, 50, 0.25, 0);
+    int ns = m.ack_pattern_nsymb, Nofdm = ofdm_frame_nofdm(&o);
+    int len = ns * Nofdm * 4;
+    double complex *rx = malloc(sizeof(double complex) * (size_t)len);
+    TEST_ASSERT_NOT_NULL(rx);
+    const int *lists[2] = { m.ack_tones, m.break_tones };
+
+    for (int trial = 0; trial < 12; trial++) {
+        for (int i = 0; i < len; i++) rx[i] = (urand() - 0.5) + (urand() - 0.5) * I;
+        if (trial % 3 != 0) {    /* a pattern somewhere, at a modest SNR */
+            int off = (int)(urand() * (double)(len - ns * Nofdm));
+            add_pattern_bb(&m, &o, trial % 2, 0.6 + 0.4 * urand(), rx, off);
+        }
+        int scores[2], pos[2];
+        mfsk_detect_patterns(&m, &o, rx, len, lists, 2, m.ack_pattern_len, ns, scores, pos);
+
+        mfsk_stream_det_t *d = mfsk_stream_det_new(&m, &o, m.ack_pattern_len, ns);
+        TEST_ASSERT_NOT_NULL(d);
+        mfsk_stream_det_set_list(d, 0, m.ack_tones, m.ack_match_threshold);
+        mfsk_stream_det_set_list(d, 1, m.break_tones, m.break_match_threshold);
+        for (int i = 0; i < len; ) {
+            int c = 1 + (int)(urand() * 700.0);
+            if (c > len - i) c = len - i;
+            mfsk_stream_event_t ev[4];
+            mfsk_stream_det_push(d, rx + i, c, ev, 4);
+            i += c;
+        }
+        for (int l = 0; l < 2; l++) {
+            int sc; long long ps;
+            mfsk_stream_det_best(d, l, &sc, &ps);
+            TEST_ASSERT_EQUAL_INT(scores[l], sc);
+            TEST_ASSERT_EQUAL_INT(pos[l], (int)ps);
+        }
+        mfsk_stream_det_free(d);
+    }
+    free(rx);
+}
+
+/* One pattern, one event, at its start, for the right list -- and none for
+ * the other list, or for noise. */
+void test_stream_detector_events(void)
+{
+    mfsk_t m;
+    ofdm_frame_t o;
+    mfsk_init(&m, 32, 50, 1);
+    ofdm_frame_init(&o, 256, 50, 0.25, 0);
+    int ns = m.ack_pattern_nsymb, Nofdm = ofdm_frame_nofdm(&o);
+    int len = ns * Nofdm * 6;
+    double complex *rx = malloc(sizeof(double complex) * (size_t)len);
+    TEST_ASSERT_NOT_NULL(rx);
+    mfsk_stream_det_t *d = mfsk_stream_det_new(&m, &o, m.ack_pattern_len, ns);
+    TEST_ASSERT_NOT_NULL(d);
+    mfsk_stream_det_set_list(d, 0, m.ack_tones, m.ack_match_threshold);
+    mfsk_stream_det_set_list(d, 1, m.break_tones, m.break_match_threshold);
+    for (int trial = 0; trial < 8; trial++) {
+        for (int i = 0; i < len; i++) rx[i] = 0.3 * ((urand() - 0.5) + (urand() - 0.5) * I);
+        int kind = trial % 2, off = Nofdm * 2 + (int)(urand() * (double)(Nofdm * 2));
+        add_pattern_bb(&m, &o, kind, 1.0, rx, off);
+        mfsk_stream_det_reset(d);
+        mfsk_stream_event_t ev[16];
+        int nev = 0;
+        for (int i = 0; i < len; i += 160)
+            nev += mfsk_stream_det_push(d, rx + i, len - i < 160 ? len - i : 160, ev + nev, 16 - nev);
+        TEST_ASSERT_EQUAL_INT(1, nev);
+        TEST_ASSERT_EQUAL_INT(kind, ev[0].list);
+        TEST_ASSERT_TRUE(ev[0].score >= 14);
+        /* Every start up to a guard interval early puts the FFT wholly inside
+         * the symbol, and the first best wins; then the step grid. */
+        int gi = Nofdm - o.Nfft;
+        TEST_ASSERT_TRUE(ev[0].pos >= off - gi - Nofdm / 8 && ev[0].pos <= off + Nofdm / 8);
+    }
+    mfsk_stream_det_free(d);
+    free(rx);
+}
+
 /* Pure noise must never be mistaken for an ACK (false-alarm rejection). */
 void test_noise_no_false_ack(void)
 {
@@ -254,34 +357,27 @@ static int push_pcm(mfsk_pattern_window_t *w, const int16_t *pcm, int n, int *is
     return hits;
 }
 
-/* Pacing: the window correlates once per burst of new audio, not once per
- * chunk.  Correlating a multi-burst window on every 160-sample chunk cost
- * 4.5 s of CPU per second of audio and left the receive loop so far behind
- * that ACKs arriving inside WAIT_ACK were processed after it closed.  since_scan
- * is the observable: it must keep counting across chunks and reset only when a
- * full burst of new audio has accumulated. */
-void test_window_scans_once_per_burst_not_per_chunk(void)
+/* The window reports a burst as it ends, not a scan later: within a few steps
+ * of its last sample (plus the low-pass filter's delay), and only once. */
+void test_window_reports_a_burst_promptly_and_once(void)
 {
     const int burst = mfsk_pattern_max_tx_samples();
+    int16_t *pat = calloc((size_t)burst, sizeof(int16_t));
+    TEST_ASSERT_NOT_NULL(pat);
+    int n = mfsk_pattern_tx(pat, PAT_ACK);
     mfsk_pattern_window_t w = {0};
-    int hits = 0;
-
-    push_silence(&w, burst, &hits);                /* first full burst: one scan */
-    TEST_ASSERT_EQUAL_INT(0, w.since_scan);
-
-    push_silence(&w, CHUNK, &hits);                /* one more chunk: no scan */
-    TEST_ASSERT_EQUAL_INT_MESSAGE(CHUNK, w.since_scan,
-        "window correlated on a single new chunk: pacing is gone");
-    push_silence(&w, burst - 2 * CHUNK, &hits);    /* still short of a burst */
-    TEST_ASSERT_EQUAL_INT(burst - CHUNK, w.since_scan);
-    push_silence(&w, CHUNK, &hits);                /* completes the burst: scan */
-    TEST_ASSERT_EQUAL_INT(0, w.since_scan);
-
-    /* The window is bounded at two bursts, not three. */
+    int hits = 0, isb = -1;
+    push_silence(&w, burst, &hits);
+    hits += push_pcm(&w, pat, n, &isb);
+    int after = 0;
+    while (!hits && after < burst) { push_silence_isb(&w, CHUNK, &hits, &isb); after += CHUNK; }
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, hits, "ACK not reported");
+    TEST_ASSERT_LESS_OR_EQUAL_INT_MESSAGE(burst / 4, after, "ACK reported late");
+    TEST_ASSERT_EQUAL_INT(0, isb);
     push_silence(&w, 4 * burst, &hits);
-    TEST_ASSERT_LESS_OR_EQUAL_INT(2 * burst, w.cap);
-    TEST_ASSERT_EQUAL_INT(0, hits);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(1, hits, "one burst, more than one event");
     mfsk_pattern_window_free(&w);
+    free(pat);
 }
 
 /* Pacing must cost no sensitivity: a real ACK fed in live-sized chunks is found
@@ -308,17 +404,10 @@ void test_window_finds_a_chunked_ack_at_any_scan_phase(void)
     free(pat);
 }
 
-/* A burst that was never matched must not be reported once the caller waits
- * for a DIFFERENT ACK.  The window holds over a second of audio; a burst left
- * unmatched by the previous exchange would otherwise be found by the next scan
- * and taken as this frame's ACK, advancing the sender past a frame the peer
- * never received.
- *
- * The setup is what makes this a real test.  Matching the burst before the
- * reset would assert nothing, so the scan cadence is first offset by half a
- * burst: the scan that falls during the burst sees only part of it, and the
- * burst then sits COMPLETE in the window with no scan due -- the state a closed
- * gate leaves behind on a real miss. */
+/* A burst cut by a reset must not be reported once the caller waits for a
+ * DIFFERENT pattern: what came before the reset belongs to the previous
+ * exchange, and taking its tail for this frame's ACK would advance the sender
+ * past a frame the peer never received. */
 void test_reset_discards_a_stale_burst(void)
 {
     const int burst = mfsk_pattern_max_tx_samples();
@@ -329,20 +418,18 @@ void test_reset_discards_a_stale_burst(void)
     mfsk_pattern_window_t w = {0};
     int hits = 0;
     push_silence(&w, burst / 2, &hits);
-    hits += push_pcm(&w, pat, n, NULL);
-    TEST_ASSERT_EQUAL_INT_MESSAGE(0, hits, "test setup: burst was matched too early");
-
+    hits += push_pcm(&w, pat, n / 2, NULL);
     mfsk_pattern_window_reset(&w);                 /* a new ACK becomes due */
-
-    push_silence(&w, 2 * burst, &hits);            /* scans run over what is held */
+    hits += push_pcm(&w, pat + n / 2, n - n / 2, NULL);
+    push_silence(&w, 2 * burst, &hits);
     TEST_ASSERT_EQUAL_INT_MESSAGE(0, hits,
-        "a stale burst from the previous exchange was reported as a new ACK");
+        "a burst from before the reset was reported as a new ACK");
     mfsk_pattern_window_free(&w);
     free(pat);
 }
 
-/* ...and the control: without the reset, that same held burst IS found.  If
- * this ever stops failing to find it, the test above has stopped testing. */
+/* ...and the control: without the reset, that same split burst IS found.  If
+ * this ever stops finding it, the test above has stopped testing. */
 void test_without_reset_the_stale_burst_is_found(void)
 {
     const int burst = mfsk_pattern_max_tx_samples();
@@ -353,11 +440,10 @@ void test_without_reset_the_stale_burst_is_found(void)
     mfsk_pattern_window_t w = {0};
     int hits = 0;
     push_silence(&w, burst / 2, &hits);
-    hits += push_pcm(&w, pat, n, NULL);
-    TEST_ASSERT_EQUAL_INT(0, hits);
-    push_silence(&w, burst, &hits);                /* no reset */
-    TEST_ASSERT_EQUAL_INT_MESSAGE(1, hits,
-        "control: the held burst was not found, so the reset test proves nothing");
+    hits += push_pcm(&w, pat, n / 2, NULL);
+    hits += push_pcm(&w, pat + n / 2, n - n / 2, NULL);
+    push_silence(&w, 2 * burst, &hits);
+    TEST_ASSERT_EQUAL_INT(1, hits);
     mfsk_pattern_window_free(&w);
     free(pat);
 }
@@ -366,11 +452,13 @@ int main(void)
 {
     UNITY_BEGIN();
     RUN_TEST(test_detect_patterns_matches_per_list_calls);
+    RUN_TEST(test_stream_detector_matches_batch);
+    RUN_TEST(test_stream_detector_events);
     RUN_TEST(test_noise_no_false_ack);
     RUN_TEST(test_real_ack_detects);
     RUN_TEST(test_real_break_detects);
     RUN_TEST(test_ack_detects_off_frequency);
-    RUN_TEST(test_window_scans_once_per_burst_not_per_chunk);
+    RUN_TEST(test_window_reports_a_burst_promptly_and_once);
     RUN_TEST(test_window_finds_a_chunked_ack_at_any_scan_phase);
     RUN_TEST(test_reset_discards_a_stale_burst);
     RUN_TEST(test_without_reset_the_stale_burst_is_found);

@@ -16,7 +16,9 @@
  *              MFSK) -- the peer's own frames are what the detector hears most;
  *   cpu        cost of the scan per second of audio.
  *
- * usage: pattern_probe [curve|fading|noise HOURS|signals|cpu|all]
+ *   wcurve     the curve through the streaming window the RX loop runs.
+ *
+ * usage: pattern_probe [curve|wcurve N|fading|noise HOURS|signals|cpu|all]
  */
 #include <complex.h>
 #include <math.h>
@@ -95,6 +97,47 @@ static void curve(int trials)
         fflush(stdout);
     }
     free(pat); free(sh); free(bpat); free(rx);
+}
+
+/* The same curve through the streaming window, fed in the RX loop's 160-sample
+ * chunks, with noise before and after the pattern -- the detector the RX loop
+ * runs, not the batch function. */
+static void wcurve(int trials)
+{
+    int n_pat = mfsk_pattern_max_tx_samples();
+    int16_t *pat = calloc((size_t)n_pat, sizeof *pat), *sh = calloc((size_t)n_pat, sizeof *sh);
+    int n = mfsk_pattern_tx(pat, 0);
+    double ps = power(pat, n);
+    int lead = 2400, total = lead + n + 2 * n_pat;
+    int16_t *rx = calloc((size_t)total, sizeof *rx);
+    printf("# wcurve: P(detect ACK) through the window, %d trials per point\n", trials);
+    printf("# snr3k   off0    off+25  confused\n");
+    for (int snr = SNR_LO; snr <= SNR_HI; snr++) {
+        double pd[2]; int conf = 0;
+        for (int oi = 0; oi < 2; oi++) {
+            shift(pat, n, oi ? 25.0 : 0.0, sh);
+            double sigma = sigma_for(ps, snr);
+            int hit = 0;
+            for (int i = 0; i < trials; i++) {
+                for (int t = 0; t < total; t++) {
+                    double v = sigma * gauss() + ((t >= lead && t < lead + n) ? sh[t - lead] : 0);
+                    rx[t] = (int16_t)(v > 32767 ? 32767 : v < -32768 ? -32768 : v);
+                }
+                mfsk_pattern_window_t w = {0};
+                int got = 0, brk = 0;
+                for (int t = 0; t + 160 <= total; t += 160) {
+                    int isb = 0;
+                    if (mfsk_pattern_window_push(&w, rx + t, 160, &isb)) { got = 1; brk |= isb; }
+                }
+                mfsk_pattern_window_free(&w);
+                if (got && !brk) hit++; else if (got) conf++;
+            }
+            pd[oi] = (double)hit / trials;
+        }
+        printf("%6d  %6.3f  %6.3f  %d\n", snr, pd[0], pd[1], conf);
+        fflush(stdout);
+    }
+    free(pat); free(sh); free(rx);
 }
 
 static double p_detect_awgn(int oi, double snr)
@@ -223,6 +266,7 @@ int main(int argc, char **argv)
         curve(argc > 2 && strcmp(what, "curve") == 0 ? atoi(argv[2]) : 200);
         fading();
     }
+    if (!strcmp(what, "wcurve")) wcurve(argc > 2 ? atoi(argv[2]) : 200);
     if (all || !strcmp(what, "signals")) signals();
     if (all || !strcmp(what, "noise")) noise(argc > 2 && !all ? atof(argv[2]) : 1.0);
     return 0;

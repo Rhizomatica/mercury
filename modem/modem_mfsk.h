@@ -43,31 +43,24 @@ int mfsk_pattern_tx(int16_t *out, int pattern_kind);
 int mfsk_pattern_detect(const int16_t *pb, int n, int *is_break);
 
 /* ----------------------------------------------------------------------
- * Sliding detection window, for a pattern arriving as a stream of chunks.
+ * Streaming detection, for a pattern arriving as a stream of chunks.
  *
- * It exists as a type, rather than as a buffer rx_thread manages, because it
- * also PACES the correlation -- and pacing is the part that matters.
- * mfsk_pattern_detect() scores every candidate start, so its cost grows with
- * the square of the window: measured 0.0009 s of CPU over one burst, 0.043 s
- * over two, 0.090 s over three.  rx_thread used to correlate a three-burst
- * window on every 160-sample chunk, 50 times per second of audio: 4.5 s of
- * CPU per second of audio.  The RX loop could not keep up, so a pattern ACK
- * that arrived well inside the WAIT_ACK window was processed after the window
- * had closed, and the sender retransmitted a frame that had been ACKed.
+ * mfsk_pattern_detect() scores every candidate start of a buffer with an FFT
+ * per symbol under it, so its cost grows with the square of the window; run on
+ * every chunk it once cost 4.5 s of CPU per second of audio, and then, paced
+ * to a scan per burst, still about 7 % of real time, so it ran only inside
+ * WAIT_ACK windows.  The window now downmixes and filters each sample once and
+ * feeds mfsk_stream_det (mfsk_sync.h), which does one FFT per step and scores
+ * by lookup: the same scores, found as the audio arrives.
  *
- * So the window scans once per burst of NEW audio and holds two bursts: the
- * minimum that still guarantees a burst is wholly inside the window at some
- * scan (one burst plus one scan interval).  Cost: about 7% of real time.  A
- * burst cannot be present at one chunk and absent at the next, so pacing costs
- * no sensitivity.
- *
- * On a match the window is CONSUMED, so one burst produces one event.
+ * A burst is reported once, as it ends (a few steps after its last symbol).
  * ---------------------------------------------------------------------- */
+struct mfsk_stream_det;
 typedef struct {
-    int16_t *buf;
-    int      cap;
-    int      len;
-    int      since_scan;   /* new samples since the last correlation */
+    struct mfsk_stream_det *det;   /* created on the first push */
+    double  hist_re[64], hist_im[64];   /* the low-pass filter's last inputs */
+    int     hist_pos;
+    long long n;                   /* samples pushed since the reset */
 } mfsk_pattern_window_t;
 
 /* Push `n` samples; returns 1 when a pattern is found (is_break set).  Never

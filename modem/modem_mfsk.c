@@ -1180,63 +1180,69 @@ int mfsk_pattern_window_push(mfsk_pattern_window_t *w, const int16_t *pcm, int n
 {
     if (!w || !pcm || n <= 0)
         return 0;
-
-    const int burst = mfsk_pattern_max_tx_samples();
-    if (burst <= 0)
-        return 0;
-    const int need = burst * 2;   /* one burst to hold the pattern, one scan interval */
-
-    if (w->cap < need)
+    mfsk_pattern_lazy_init();
+    if (!w->det)
     {
-        int16_t *nw = (int16_t *)realloc(w->buf, (size_t)need * sizeof(int16_t));
-        if (!nw)
-            return 0;             /* no window, no detection; never a crash */
-        w->buf = nw;
-        w->cap = need;
-        if (w->len > need) w->len = need;
+        w->det = mfsk_stream_det_new(&g_pat_m, &g_pat_o, g_pat_m.ack_pattern_len,
+                                     g_pat_m.ack_pattern_nsymb);
+        if (!w->det)
+            return 0;             /* no memory, no detection; never a crash */
+        mfsk_stream_det_set_list(w->det, 0, g_pat_m.ack_tones, g_pat_m.ack_match_threshold);
+        mfsk_stream_det_set_list(w->det, 1, g_pat_m.break_tones, g_pat_m.break_match_threshold);
     }
 
-    /* Keep the newest samples: an older burst that has slid most of the way
-     * out cannot be completed by anything arriving now. */
-    int add = n;
-    if (add > w->cap) { pcm += (n - w->cap); add = w->cap; }
-    if (w->len + add > w->cap)
+    /* Downmix by FC = FS/4 (a 1, j, -1, -j phasor) and low-pass, one sample
+     * at a time: the filter mfsk_pattern_detect() applies to a whole buffer,
+     * causal here, so positions run MFSK_LPF_TAPS/2 late. */
+    int hits = 0, best_score = -1, best_brk = 0;
+    for (int i = 0; i < n; i++)
     {
-        int drop = w->len + add - w->cap;
-        memmove(w->buf, w->buf + drop, (size_t)(w->len - drop) * sizeof(int16_t));
-        w->len -= drop;
+        double x = 2.0 * (double)pcm[i], re, im;
+        switch ((int)(w->n & 3)) {
+        case 0:  re = x;    im = 0.0;  break;
+        case 1:  re = 0.0;  im = x;    break;
+        case 2:  re = -x;   im = 0.0;  break;
+        default: re = 0.0;  im = -x;   break;
+        }
+        w->n++;
+        w->hist_re[w->hist_pos] = re;
+        w->hist_im[w->hist_pos] = im;
+        double ar = 0.0, ai = 0.0;
+        int h = w->hist_pos;
+        for (int k = 0; k < MFSK_LPF_TAPS; k++)
+        {
+            ar += g_pat_lpf[k] * w->hist_re[h];
+            ai += g_pat_lpf[k] * w->hist_im[h];
+            h = h ? h - 1 : MFSK_LPF_TAPS - 1;
+        }
+        w->hist_pos = (w->hist_pos + 1) % MFSK_LPF_TAPS;
+        double complex y = ar + I * ai;
+        mfsk_stream_event_t ev[4];
+        int nev = mfsk_stream_det_push(w->det, &y, 1, ev, 4);
+        for (int e = 0; e < nev; e++)
+        {
+            /* the higher score wins, as in mfsk_pattern_detect() */
+            if (ev[e].score > best_score) { best_score = ev[e].score; best_brk = ev[e].list == 1; }
+            hits = 1;
+        }
     }
-    memcpy(w->buf + w->len, pcm, (size_t)add * sizeof(int16_t));
-    w->len += add;
-    w->since_scan += add;
-
-    if (w->len < burst)
-        return 0;
-    if (w->since_scan < burst)    /* pace: once per burst of new audio */
-        return 0;
-    w->since_scan = 0;
-
-    int isb = 0;
-    if (!mfsk_pattern_detect(w->buf, w->len, &isb))
-        return 0;
-
-    w->len = 0;                   /* consume: one burst, one event */
-    w->since_scan = 0;
-    if (is_break) *is_break = isb;
-    return 1;
+    if (hits && is_break) *is_break = best_brk;
+    return hits;
 }
 
 void mfsk_pattern_window_reset(mfsk_pattern_window_t *w)
 {
     if (!w) return;
-    w->len        = 0;
-    w->since_scan = 0;
+    if (w->det) mfsk_stream_det_reset(w->det);
+    memset(w->hist_re, 0, sizeof(w->hist_re));
+    memset(w->hist_im, 0, sizeof(w->hist_im));
+    w->hist_pos = 0;
+    w->n = 0;
 }
 
 void mfsk_pattern_window_free(mfsk_pattern_window_t *w)
 {
     if (!w) return;
-    free(w->buf);
-    w->buf = NULL;
-    w->cap = w->len = w->since_scan = 0;
+    mfsk_stream_det_free(w->det);
+    memset(w, 0, sizeof(*w));
 }
