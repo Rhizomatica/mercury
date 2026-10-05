@@ -1,7 +1,9 @@
 # Carousel data plane: protocol specification
 
 Derived from the code by reading it, at commit 2c07bf4: every `file:line`
-reference is to that commit.  The code is normative; this is the reference for
+reference is to that commit.  Section 11 lists what has changed since (the
+integrity work, branch carousel-integrity), and the rules it touched are
+updated where they stand, marked **[since 2c07bf4]**.  The code is normative; this is the reference for
 reviewing it, modelling it and re-implementing it.  What has been verified
 against it is in [specs/carousel/README.md](../specs/carousel/README.md) (a TLA+
 model of the block layer) and `tests/sim/car_explore.c` (the real carousel.c
@@ -38,8 +40,8 @@ ARQ FSM; only the parts that touch the carousel are specified here (section 5.12
 |---|---|---|
 | A1 | Half duplex. A station never receives while its own keydown (or pattern) is on the air. `tx_busy` is true from `keydown()`/`send_pattern()` until `car_on_tx_done()` (C:382-387, C:1177, C:1644). | runtime emits exactly one `ARQ_EV_TX_COMPLETE` per keydown/pattern (A:170-175, F:2312-2314); a dropped keydown forces PTT-off so TX_COMPLETE still comes (A:250-266) |
 | A2 | Two decoders during a session: the **control decoder** (DATAC16) always runs; the **payload decoder** is bound in advance to exactly one mode via `bind_rx` → `sess->peer_tx_mode` (F:1411, C:389-393). The MFSK call-listener is not fed while connected (M:2865-2873). | a burst in any other payload mode is not decoded at all, and is not even carrier (comments C:597-599, C:1217-1218) |
-| A3 | Frames are **erasure-or-correct**: each coded frame carries CRC16 XOR a 16-bit session seed (M:1192); a frame is delivered to the carousel only if it matched the seed (`seeded`, M:2409, M:2041-2047 → A:775-789 → `ARQ_EV_RX_CAROUSEL`). No other integrity check exists (see R1). | |
-| A4 | Seed = CRC16(session_id ‖ CALLER ‖ '/' ‖ CALLEE), callsigns upper-cased, never 0 (0 → 0x5A5A) (F:1461-1480). Set on the callee when it sends a carousel ACCEPT (F:914-918), on the caller when it hears one (F:1758); cleared when the station enters DISCONNECTED/LISTENING (F:201-203, F:1515-1520). While set, HARQ is off and DATAC16/MFSK still accept plain-CRC frames (CALL, ACCEPT, DISCONNECT, broadcast) (M:1872-1897). | |
+| A3 | Frames are **erasure-or-correct**: each coded frame carries CRC16 XOR a 16-bit session seed (M:1192); a frame is delivered to the carousel only if it matched the seed (`seeded`, M:2409, M:2041-2047 → A:775-789 → `ARQ_EV_RX_CAROUSEL`). **[since 2c07bf4]** Each block also ends in a 4-byte check (3.1), and a failed check ends the session (R1). | |
+| A4 | Seed = CRC16(session_id ‖ nonce ‖ CALLER ‖ '/' ‖ CALLEE) (**[since 2c07bf4]** nonce: the callee's 16 bits from the ACCEPT, 3.4, little-endian), callsigns upper-cased, never 0 (0 → 0x5A5A) (F:1461-1480). Set on the callee when it sends a carousel ACCEPT (F:914-918), on the caller when it hears one (F:1758); cleared when the station enters DISCONNECTED/LISTENING (F:201-203, F:1515-1520). While set, HARQ is off and DATAC16/MFSK still accept plain-CRC frames (CALL, ACCEPT, DISCONNECT, broadcast) (M:1872-1897). | |
 | A5 | **Patterns** (ACK/BREAK, ~0.64 s Welch-Costas tone bursts, `PATTERN_AIR_MS`, C:98) carry no bits beyond the 1-bit kind and **no session binding**. The detector runs only while `car_expect_pattern()` is true (C:1730-1733 → F:1384-1388 → A:1331 → M:2966-2978). Detection is reported ~0.25 s after the pattern ends (comment C:99-101). | |
 | A6 | **Carrier sense** = `io.peer_keyed` = `peer_is_transmitting()` (F:1420, F:1245-1258): true iff (busy detector on and busy — off by default) OR `now < rx_frame_busy_until_ms` (a preamble was caught: busy for one frame duration of that decoder's mode, cleared when any frame decodes; A:1267-1283, M:2988-2995) OR `now - last_rx_sync_ms < ARQ_CHANNEL_SYNC_HOLD_MS (250)` (P:341, A:1295-1298). It cannot see a burst in a mode neither decoder is bound to, nor one too weak to sync on (hidden terminal). | |
 | A7 | No reordering, no duplication on the channel; a frame is decoded at (approximately) its end. Event processing is serialized on one event-loop thread (`g_sess_lock`). | |
@@ -212,6 +214,7 @@ Encoder: `build_round` (C:479-586), `put_seg_hdr` (C:324-330). Decoder: `decode_
 | b1[7:4] | `poll_id` | id of the poll this round answers (`tx_poll_id`, C:582) |
 | b1[3:0] | `hi` | `(next_blk_id-1) mod 16` (C:582) |
 | then ≤ 8 segments, each 4-byte header + pieces | | stop at count 0, at < 4 bytes left, or after 8 segments (C:306-320) |
+| block bytes | | **[since 2c07bf4]** a block is the application's bytes followed by a 4-byte check, `len = app_len + 4`; K, pad and the pieces cover both. Check = CRC-32 (IEEE, reflected, init and final XOR 0xFFFFFFFF) over `seed` (4 bytes LE) ‖ `id` (the block's 8-bit id) ‖ `K` ‖ the application's bytes, stored LE. The receiver delivers only `app_len` bytes. |
 | hdr[31:28] | block id mod 16 | |
 | hdr[27:21] | K-1 | K ≤ 96 enforced on RX (C:316) |
 | hdr[20:15] | count | pieces following (1..63); 0 terminates |
@@ -276,12 +279,13 @@ RX demux (`car_on_frame`, C:1602-1626):
 | Pattern | Sent by | Meaning |
 |---|---|---|
 | ACK (floor) | receiver, `poll_level == 0` | "keep going" (silence means the same at the floor, H:19-23) |
-| BREAK (floor) | receiver | "the block your round carried is delivered" (`rx_break`), or final "done" (no round expected, C:1321) |
+| BREAK (floor) | receiver | "the block your round carried is delivered" (`rx_break`). **[since 2c07bf4]** Advisory: the sender stops sending that block but holds it until a POLL retires it; a finished direction is acknowledged by an ack-only POLL at the floor too (T11). |
 | ACK (above floor) | receiver, round came whole | "everything you sent of each block is in; the same again" (C:1347-1352, C:1689-1693) |
 
 ### 3.4 Connect frames (generic FSM, carousel-relevant fields only)
 
-- CALL: carousel marker `0xA7` in the last byte of the SRC slot when the callsign code leaves it free (P:661-690, F:924-927).
+- CALL: carousel marker in the last byte of the SRC slot when the callsign code leaves it free (P:661-690, F:924-927). **[since 2c07bf4]** `0xA8`; the 1.9.17/1.9.18 carousel's `0xA7` reads as unmarked (that session runs stop-and-wait), and so does `0xA8` to it.
+- **[since 2c07bf4]** Carousel ACCEPT: the callee's 16-bit session nonce in the last two bytes of its SRC slot (LE), when its callsign's code is at most 8 bytes; otherwise 0 on both ends (`arq_protocol_set_accept_nonce` / `_accept_nonce`). The same nonce on every ACCEPT of the session.
 - ACCEPT (callee → caller) **is the first POLL**: names the caller's start rung in the top 3 bits of the DST-CRC field (P:624-641); value **7 = "level 0, and I hear you below the control mode"** (`ACCEPT_LEVEL_CTL_DEAF`, F:888-892). Carousel flag 0x10 in the framer extension (P:718). Plain CRC.
 - DISCONNECT: plain CRC, session-id bound (7 bits, F:3929-3937); on MFSK to a peer the carousel last saw as control-deaf (`session_ctl_mode`, F:963-969).
 
@@ -394,7 +398,7 @@ If `retired > 0` → `io.tx_confirmed(retired)` (F:1450-1456 updates BUFFER).
 
 **P5 `deliver_in_order`** (C:1009-1034): loop at `r = rb[rbase % 8]`: if `!known` stop. `upto = done ? len : min(j*24, len)` with j = length of the contiguous run `got[0..j-1]`. Deliver bytes `[delivered, upto)` from `piece[]` (data pieces are systematic); `delivered = upto`. If `!done` stop; else clear the slot, `rbase++`, continue.
 
-**P6 `take_pieces(m)`** (C:1402-1428): per segment: `off = (blk - rbase) & 15`; `off ≥ 8` → `rx_break = true`, skip ("delivered already"). Slot `r = rb[(rbase+off) % 8]`; if `!known` → `known, K = seg.K, len = K*24 - pad` (**first segment wins**). If `done` → `rx_break = true`, skip. Each piece `i = (first+p) mod 256`: if `!got[i] && have < K` → store, `have++`. If `have ≥ K` → `decode_block` (RS decode, then `done = true`, `done_in_round++` **regardless of decode result**, C:986-1000), `rx_break = true`. After all segments: `peer_unopened = m.unopened; peer_hi = resolve16(rbase, m.hi); peer_hi_known = true; peer_snr_level = m.snr_level`.
+**P6 `take_pieces(m)`** (C:1402-1428): per segment: `off = (blk - rbase) & 15`; `off ≥ 8` → `rx_break = true`, skip ("delivered already"). Slot `r = rb[(rbase+off) % 8]`; if `!known` → `known, K = seg.K, len = K*24 - pad` (**first segment wins**; **[since 2c07bf4]** a later segment that disagrees fails the session). If `done` → `rx_break = true`, skip. Each piece `i = (first+p) mod 256`: if `!got[i] && have < K` → store, `have++`. If `have ≥ K` → `decode_block` (RS decode, then `done = true`, `done_in_round++` **regardless of decode result**, C:986-1000; **[since 2c07bf4]** a decode failure or a failed block check fails the session, and nothing more is delivered), `rx_break = true`. After all segments: `peer_unopened = m.unopened; peer_hi = resolve16(rbase, m.hi); peer_hi_known = true; peer_snr_level = m.snr_level`.
 
 **P7 `resolve16(base, v4)`** = `base + d`, `d = (v4 - base) & 15`, `d ≥ 8 → d -= 16` (C:333-338): nearest id in `[base-8, base+7]`.
 
@@ -468,7 +472,7 @@ Always first: `peer_snr_level = m.snr_level` (C:1466) (and `peer_ctl_deaf = m.ct
 | PA1 | `!sending || tx_busy || !(floor_waiting || pat_waiting)` | ignore. |
 | PA2 | `pat_waiting` (above floor; kind ignored) | `pat_waiting = false; handover_unconfirmed = false`; disarm WAIT; for each open block `need = max(0, need - round_sent); round_sent = 0` (**no retirement**); if `!has_data` → `sending = false; idle = true`; else `T_SEND := now + 900` (same `tx_level`, `tx_n`). |
 | PA3 | `floor_waiting` | `floor_waiting = false; floor_silent = 0`; if `floor_tx_end && now > floor_tx_end`: `d = now - floor_tx_end; floor_delay_ms = floor_delay_ms ? (3*floor_delay_ms + d)/4 : d`; `handover_unconfirmed = false; tx_n = keydown_cap(0) (= 2)`; disarm WAIT. |
-| PA4 | PA3 and `kind == BREAK && nsb > 0 && sb[0].id == floor_blk && sb[0].sent ≥ sb[0].K` | **retire sb[0]** (shift down, `tx_confirmed(len)`). |
+| PA4 | PA3 and `kind == BREAK`, for the open block with `id == floor_blk` and `sent ≥ K` | **[since 2c07bf4]** **stop it**: `stopped = true; need = 0; resend = -1`. Nothing is retired: only a POLL/HANDOVER does (P3), which also clears `stopped` on a block it still needs. A floor round carries the oldest block not stopped, or, every one stopped, repair for the oldest; a new block opens at the floor only when no open block is unstopped. |
 | PA5 | PA3, then | if `!has_data` → `sending = false; idle = true`; else `T_SEND := now + 900`. |
 
 ### 5.6 CAR_T_POLL fires — `on_poll_timer` (C:1209-1371), evaluated in order
@@ -486,10 +490,10 @@ Always first: `peer_snr_level = m.snr_level` (C:1466) (and `peer_ctl_deaf = m.ct
 | T8 | measure | `probe_failed = floor_fallback && !round_seen && !status_seen && !round_heard`; `probe_off_floor = floor_fallback = false`. If probe_failed: `loss_est = 0.5*loss_est + 0.5`; `measure_level(probe_lv, probe_n, 1.0)`. Else if `!status_seen`: `frames = max(round_frames,1)`; `loss = max(0, 1 - round_seen/frames)`; `loss_est = 0.5*loss_est + 0.5*loss`; `measure_level(poll_level, frames, loss)`. |
 | T9 | always | `deliver_in_order()`. |
 | T10 | **handover**: `has_data && (done || quantum)` where `done = peer_direction_done`, `held = now - drive_start`, `quantum = (done_in_round > 0 && held ≥ 30000) || held ≥ 45000` | `send_start_ms = now; send_handover()`; return. |
-| T11 | **done**: `done` (and no own data) | `idle = true`; if `floor = (poll_level == 0 && io.pattern)` → `send_pattern(BREAK, expect_round = false)`; else `send_poll(0, 0)` (ack-only). Return. |
+| T11 | **done**: `done` (and no own data) | `idle = true`; `send_poll(0, 0)` (ack-only) -- **[since 2c07bf4]** at the floor too (it was a BREAK, which no longer retires). Return. |
 | T12 | choose | `lv = choose_level(now)` (5.10); if `floor && lv > 0 && !(snr_valid && snr_ema ≥ -7)` → `lv = 0`. |
 | T13 | | if `round_seen > 0 && poll_level == 0` → `floor_streaming = true`. |
-| T14 | **floor pattern**: `floor && lv == 0 && floor_streaming && floor_patterns < floor_poll_every()` (12 if `snr_valid && snr_ema < -10 && !has_data`, else 4; C:1157-1164) | `floor_patterns++`; `send_pattern(rx_break ? BREAK : ACK, expect_round = true)`; return. |
+| T14 | **floor pattern**: `floor && lv == 0 && floor_streaming && floor_patterns < floor_poll_every()` (12 if `snr_valid && snr_ema < -10 && !has_data`, else 4; C:1157-1164), **[since 2c07bf4]** and not `window_full` (`peer_hi + 1 - polled_base ≥ 6`, polled_base = the base of my last poll/handover) and not `stuck` (two rounds in a row with no piece of a block I lack: the sender holds only stopped blocks) | `floor_patterns++`; `send_pattern(rx_break ? BREAK : ACK, expect_round = true)`; return. |
 | T15 | | `n = poll_size(lv, now)` (5.10). |
 | T16 | **above-floor pattern**: `io.pattern && lv > 0 && lv == poll_level && (n == poll_n || polls_unheard > 0) && !status_seen && round_seen > 0 && round_seen ≥ round_frames && floor_patterns < 4` | `floor_patterns++; pattern_for_lost_polls = (polls_unheard > 0)`; `send_pattern(ACK, expect_round = true)`; return. |
 | T17 | otherwise | `send_poll(lv, n)`. |
@@ -629,7 +633,7 @@ which rule last set `T_POLL`. A model should carry a ghost variable
 | I3 | Ids and `rbase` are uint8 and wrap at 256; 256 is a multiple of 16 and of 8, so `id mod 16` and slot `id % 8` are consistent across the wrap. | H:124, H:157, C:1013 |
 | I4 | Piece indices are mod 256; K ≤ 96 ⇒ ≥ 160 distinct repair indices before `next` wraps to already-sent indices. `sent` counts distinct pieces up to 256; resend-gap pieces are not counted (repeats). | C:563-565, C:46-50 |
 | I5 | **Floor rounds carry only `sb[0]`**, so a BREAK can only name it; the sender records `floor_blk`. | C:494-496, 507 |
-| I6 | **BREAK retires only `sb[0]`, only if `sb[0].id == floor_blk` and `sb[0].sent ≥ K`** (fewer than K distinct pieces cannot have been decoded). | C:1715-1725 |
+| I6 | **[since 2c07bf4]** **BREAK never retires**: it stops the block `floor_blk` if `sent ≥ K`. Retirement is by POLL/HANDOVER only, so I2 holds whatever patterns arrive. | PA4 |
 | I7 | Above-floor ACK pattern never retires; it only lowers `need` (a wrong ACK costs pieces, not data). Retirement otherwise only via a POLL/HANDOVER `need`/`base` (P3). | C:1689-1701 |
 | I8 | Data is delivered to the app strictly in order and exactly once: `delivered` is monotone per block; slot cleared only when `done` and fully delivered; `rbase` advances by one. | C:1009-1034 |
 | I9 | A receiver accepts DATA only on its bound rung (`lv == rx_level`); counts a frame toward the round only if its poll id matches (or at the floor). | C:1432, 1451 |
@@ -660,12 +664,12 @@ which rule last set `T_POLL`. A model should carry a ghost variable
 
 | # | Risk | Detail | Cite |
 |---|---|---|---|
-| R1 | **Integrity = one CRC16 per frame** | Seeded CRC16 is the only check; an undetected corrupted frame (~2^-16 per synced bad frame) puts a wrong piece into a block. No per-block or end-to-end checksum; RS decode does not verify. | M:1192, C:986-1000 |
+| R1 | **Integrity = one CRC16 per frame** — **fixed [since 2c07bf4]**: a CRC-32 per block, checked after decode; a failure ends the session (fail closed) | Seeded CRC16 is the only check; an undetected corrupted frame (~2^-16 per synced bad frame) puts a wrong piece into a block. No per-block or end-to-end checksum; RS decode does not verify. | M:1192, C:986-1000 |
 | R2 | **Streaming delivery before block decode** | Data pieces are handed to the app as soon as the contiguous prefix arrives (P5); a bad piece is delivered irrevocably, and a later RS decode (which overwrites `piece[0..K-1]`) cannot correct what was already delivered — the delivered prefix and the decoded block may silently disagree. | C:1015-1029 |
-| R3 | `decode_block` ignores `rs_decode` failure | `done = true` and the block is delivered even if `rs_decode` returned -1 (slots never filled stay zero). Unreachable for distinct indices in theory, but reachable with an inconsistent K (R4). | C:996-998 |
-| R4 | Block metadata from the first segment | `K` and `len` (pad) are taken from the first segment seen for a slot and never cross-checked against later segments; a mis-resolved id (R6/R7) mixes two blocks' pieces with the wrong K. | C:1409-1412 |
-| R5 | **Patterns are unauthenticated** | A pattern carries no seed/session; any station's pattern or a detector false alarm while `floor_waiting` with `sb[0].sent ≥ K` retires `sb[0]` (PA4). That block is then never resent: the receiver's base stalls forever; worse, once the sender retires the rest it answers a poll with STATUS and the receiver declares the direction done (`status_seen`) with the block missing → **silent truncation reported as success**. | C:1719-1725, C:1037-1040, C:1469 |
-| R6 | Wrong BREAK breaks I2 | After a premature retirement `sb[0].id > rbase`, the sender may open `id = rbase + 8`, which the receiver resolves as "behind base, delivered" (off ≥ 8) → `rx_break = true` → more BREAKs → cascading retirement of undelivered blocks. | C:498-499, C:1406-1407 |
+| R3 | `decode_block` ignores `rs_decode` failure — **fixed**: it fails the session | `done = true` and the block is delivered even if `rs_decode` returned -1 (slots never filled stay zero). Unreachable for distinct indices in theory, but reachable with an inconsistent K (R4). | C:996-998 |
+| R4 | Block metadata from the first segment — **fixed**: two segments that disagree on K or length fail the session (the first may be the bad one) | `K` and `len` (pad) are taken from the first segment seen for a slot and never cross-checked against later segments; a mis-resolved id (R6/R7) mixes two blocks' pieces with the wrong K. | C:1409-1412 |
+| R5 | **Patterns are unauthenticated** — **fixed for data [since 2c07bf4]**: a BREAK no longer retires (PA4); see R23 for what a spurious pattern can still do | A pattern carries no seed/session; any station's pattern or a detector false alarm while `floor_waiting` with `sb[0].sent ≥ K` retires `sb[0]` (PA4). That block is then never resent: the receiver's base stalls forever; worse, once the sender retires the rest it answers a poll with STATUS and the receiver declares the direction done (`status_seen`) with the block missing → **silent truncation reported as success**. | C:1719-1725, C:1037-1040, C:1469 |
+| R6 | Wrong BREAK breaks I2 — **fixed** with R5 | After a premature retirement `sb[0].id > rbase`, the sender may open `id = rbase + 8`, which the receiver resolves as "behind base, delivered" (off ≥ 8) → `rx_break = true` → more BREAKs → cascading retirement of undelivered blocks. | C:498-499, C:1406-1407 |
 | R7 | mod-16 ids everywhere | Block ids (4 bits) in DATA/POLL/HANDOVER/STATUS rely on I1/I2; poll ids (4 bits) rely on rounds not being heard 16 polls late. `hi` resolution (`resolve16`) assumes `hi ∈ [rbase-8, rbase+7]`. | C:333-338, 1425, 1449-1451 |
 | R8 | `rx_break` is round-scoped, not block-scoped | Set by any segment of a delivered/done block or any completion since the last poll/pattern; correct only because floor rounds carry one block (I5) and `send_poll`/`send_pattern`/`start_driving` reset it. A floor ACK/BREAK sent for a **lost** round (K14) reuses whatever `rx_break` remains. | C:1080, 1141, 1168, 1343, 1407, 1413, 1422 |
 | R9 | Caller's first round without channel guard | `car_init` zeroes `last_carrier_ms`, and S5 arms SEND at `now`; LBT then only sees the 250 ms sync hold / preamble hold after the ACCEPT decodes (decode fires ~200 ms before the callee's PTT-off). | C:1555, 1574, F:1245-1258, P:211-218 |
@@ -676,12 +680,14 @@ which rule last set `T_POLL`. A model should carry a ghost variable
 | R14 | STATUS trust | `status_seen` alone ends a direction; it requires only a matching 4-bit poll id. | C:1469, 1039 |
 | R15 | Loss under-estimate | `round_frames = round_seen + left` comes from the last frame decoded; losing the tail of a round makes it look shorter (loss under-counted). | C:1453, 1289 |
 | R16 | Idle with peer still holding blocks | The final ack-only POLL / BREAK (K16) is unacknowledged; if lost, the sender keeps its blocks unconfirmed and nudges every 90 s (K8) — harmless for data but delays `car_drained` on the sender and its BUFFER never reaches 0. | C:1318-1323, 657 |
-| R17 | Seed collisions | `session_id = (ms & 0x7F) | 1` (64 values); a redial between the same two callsigns reuses the same seed with p = 1/64, so late frames of the old session are accepted as the new one's (block ids restart at 0 → aliasing into the new window). Seeds of unrelated sessions collide with p ≈ 2^-16. | F:1561, F:1461-1480 |
+| R17 | Seed collisions — **fixed [since 2c07bf4]**: the callee's 16-bit nonce goes into the seed (p ≈ 2^-16, and a stale frame that passes still fails its block's check) | `session_id = (ms & 0x7F) | 1` (64 values); a redial between the same two callsigns reuses the same seed with p = 1/64, so late frames of the old session are accepted as the new one's (block ids restart at 0 → aliasing into the new window). Seeds of unrelated sessions collide with p ≈ 2^-16. | F:1561, F:1461-1480 |
 | R18 | Callee connects on any seeded frame | Including a stale frame of a previous same-seed session (R17); and in LISTENING fallback for 240 s. | F:1661-1664, 2053-2061 |
-| R19 | `decode_ctl` field validation | Only type, level, h_level, snr_level ranges are checked; `need[o] > K`, `n > keydown_cap`, reserved bits are accepted. | C:262-291 |
+| R19 | `decode_ctl` field validation — **partly fixed**: `need[o] > 96` and `gap ≥ 96` drop the frame | Only type, level, h_level, snr_level ranges are checked; `need[o] > K`, `n > keydown_cap`, reserved bits are accepted. | C:262-291 |
 | R20 | After FLOOR_SILENT_MAX, floor sender sends one round per 90 s until a poll/pattern; `floor_silent` never decays. | C:1785-1789 |
 | R21 | `drove_peer` never resets | After the first poll it permanently selects `poll_level` (possibly stale) for binding while sending (PL3) and the extra floor wait in `arm_sender_wait`. | C:1072, 1143, 605, 1520 |
 | R22 | Runtime clamps silently | `car_io_keydown` clamps frame count to 17 and frame length to 1280 without telling the carousel (fits today's constants). | F:1393-1409 |
+| R23 | **[found since]** Two senders after a spurious pattern | A handover keydown lost whole, and a pattern nobody sent heard just after it: the station takes it as the peer's answer (`handover_unconfirmed = false`) and streams, while the peer, which never heard the handover, keeps sending too. Each sends on a rung the other's payload decoder is not bound to, nobody polls, and the session never completes; the 240 s lost-peer watchdog (E2) ends it. Data stays intact. `test_car_explore brkreplay 1 cliff:-5 3 4`. | PA3 |
+| R24 | **[found since]** Blind timers coincide | A sender's 90 s silence repeat and the receiver's handover repeat keyed 0.3 s apart, under carrier-sense latency (four frames lost). Data intact. `test_car_explore replay 1 5 9 10 11` on cliff:-5. Generalises R10. | K8, W-repeat |
 
 ---
 
@@ -705,3 +711,21 @@ Corrected in CAROUSEL-ARQ.md together with this spec.
 - Timers: model deadlines symbolically (ordering only) or with a discrete clock using the constants of 1.3/1.4; the timing-dependent rules (T3-T5, W3, arm_sender_wait floor branch, X2/X3) can be first abstracted as nondeterministic "window expired" actions to check safety (I2, I6, I8, no wrong retirement), then refined to check liveness/collision freedom.
 - Safety properties worth stating: (a) delivered stream is a prefix of the sent stream (falsifiable via R2/R5/R6/R17); (b) a block is retired at the sender only if `rb.done` at the receiver; (c) at most one end `sending` after quiescence; (d) `idle` on both ends ⇒ both app queues empty and all retired.
 - Liveness: under fair, eventually-reliable channels both directions complete; the 240 s watchdog and drain deadline are the only progress guarantees independent of the channel.
+
+---
+
+## 11. Changes since 2c07bf4 (integrity, branch carousel-integrity)
+
+| Change | Rules | Risks |
+|---|---|---|
+| A floor BREAK stops a block instead of retiring it; a floor round carries the oldest unstopped block; the receiver acknowledges a finished direction with an ack-only POLL at the floor, polls before the sender's held blocks span the window, and polls when two rounds in a row brought nothing new. | PA4, T11, T14, I6, 3.3 | R5, R6 fixed |
+| Every block ends in a 4-byte CRC-32 keyed by the session seed; a block that fails it, or fails to decode, or two segments that disagree on its K/length, fail the session (`car_failed`); the FSM then ends it as ABORT does. The check bytes are never delivered. | 3.1, P6, A3 | R1, R3, R4 fixed |
+| The callee's 16-bit nonce in the carousel ACCEPT, hashed into the seed. | 3.4, A4 | R17, R18 fixed (to ≈2^-16) |
+| POLL `need`/`gap` range checks. | 3.2 | R19 partly |
+| CALL mark `0xA7` → `0xA8` (the block format changed). | 3.4 | — |
+
+What the stream delivers before a block's check is in can already be wrong when
+the check fails: the session ends, so the error is never silent, but those
+bytes are with the application.  An application that cannot tolerate that needs
+its own check -- or a keyed session (#306), whose AEAD records fail closed the
+same way.
