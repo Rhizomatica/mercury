@@ -463,6 +463,49 @@ void test_call_carousel_marker(void)
     }
 }
 
+/* The 1.9.17/1.9.18 carousel's mark is not this one: such a caller runs
+ * stop-and-wait with this build. */
+void test_call_old_carousel_mark_unmarked(void)
+{
+    uint8_t frame[INT_BUFFER_SIZE];
+    TEST_ASSERT_GREATER_THAN_INT(0, arq_protocol_build_call(frame, sizeof(frame), 0x21,
+                                                            "PU2UIT", "PU2UIT-3", 2300));
+    frame[ARQ_CONTROL_FRAME_SIZE - 1] = 0xA7;
+    TEST_ASSERT_FALSE(arq_protocol_call_is_carousel(frame, "PU2UIT"));
+}
+
+/* The callee's nonce rides the ACCEPT's SRC tail: the ACCEPT still parses to
+ * the same callsign, the caller reads back what was written, and a callsign
+ * with no room for it reads 0 on both ends. */
+void test_accept_nonce(void)
+{
+    static const char *calls[] = { "PU2UIT", "PU2UIT-6", "DL9ABC-15", "W1AW", "KO0OOO-2" };
+    for (unsigned i = 0; i < sizeof(calls) / sizeof(calls[0]); i++)
+    {
+        uint8_t frame[INT_BUFFER_SIZE];
+        TEST_ASSERT_GREATER_THAN_INT(0, arq_protocol_build_accept(frame, sizeof(frame), 0x21,
+                                                                  calls[i], "PU2UIT-3", 2300, 2));
+        for (unsigned v = 0; v < 4; v++)
+        {
+            uint16_t nonce = (uint16_t)(0x1234 * (v + 1) + i);
+            TEST_ASSERT_TRUE(arq_protocol_set_accept_nonce(frame, calls[i], nonce));
+            uint8_t sid = 0; char src[CALLSIGN_MAX_SIZE] = {0}, dst[CALLSIGN_MAX_SIZE] = {0}; int bw = 0;
+            TEST_ASSERT_GREATER_OR_EQUAL_INT(0, arq_protocol_parse_accept(frame, sizeof(frame), &sid, src, dst, &bw));
+            TEST_ASSERT_EQUAL_STRING(calls[i], src);
+            TEST_ASSERT_EQUAL_HEX16(nonce, arq_protocol_accept_nonce(frame, src));
+            TEST_ASSERT_EQUAL_INT(2, arq_protocol_accept_start_level(frame));
+            TEST_ASSERT_TRUE(arq_protocol_accept_is_carousel(frame));
+        }
+    }
+    const char *full = "QZXJW98765432";
+    uint8_t frame[INT_BUFFER_SIZE];
+    if (arq_protocol_build_accept(frame, sizeof(frame), 0x21, full, "PU2UIT-3", 2300, 2) > 0)
+    {
+        TEST_ASSERT_FALSE(arq_protocol_set_accept_nonce(frame, full, 0xBEEF));
+        TEST_ASSERT_EQUAL_HEX16(0, arq_protocol_accept_nonce(frame, full));
+    }
+}
+
 /* Realistic callsigns must still round-trip exactly -- the refusal above must
  * not have narrowed what legitimately fits. */
 void test_callsign_roundtrip_realistic(void)
@@ -572,5 +615,7 @@ int main(void)
     RUN_TEST(test_callsign_roundtrip_realistic);
     RUN_TEST(test_accept_carousel_marker);
     RUN_TEST(test_call_carousel_marker);
+    RUN_TEST(test_call_old_carousel_mark_unmarked);
+    RUN_TEST(test_accept_nonce);
     return UNITY_END();
 }

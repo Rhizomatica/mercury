@@ -913,6 +913,8 @@ static void send_call_accept(arq_session_t *sess, bool is_accept)
          * ACCEPT, and the session runs stop-and-wait. */
         if (car)
         {
+            if (n > 0 && !arq_protocol_set_accept_nonce(frame, my_call, sess->car_nonce))
+                sess->car_nonce = 0;          /* no room: the caller reads 0 too */
             car_set_seed(sess, car_seed(sess, false));
             sess->peer_tx_mode = car_level_mode(sess->car_rx_level);
         }
@@ -1456,8 +1458,21 @@ static void car_io_tx_confirmed(void *ctx, size_t len)
         g_cbs.send_buffer_status(session_tx_backlog(sess) + sess->tx_inflight_bytes);
 }
 
-/* The session's CRC seed: both ends know the session id and both callsigns
- * once the CALL has been heard.  Never 0, which means "plain CRC". */
+/* The callee's session nonce: unique, not secret -- a session's frames must
+ * not pass as the next one's between the same two stations.  The clock and a
+ * counter, mixed (splitmix64). */
+static uint16_t session_nonce(void)
+{
+    static uint64_t count;
+    uint64_t z = time_now_ms() + 0x9E3779B97F4A7C15ULL * ++count;
+    z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ULL;
+    z = (z ^ (z >> 27)) * 0x94D049BB133111EBULL;
+    return (uint16_t)(z ^ (z >> 31));
+}
+
+/* The session's CRC seed: both ends know the session id, the callee's nonce
+ * (in the ACCEPT) and both callsigns once the ACCEPT has been heard.  Never
+ * 0, which means "plain CRC". */
 static uint16_t car_seed(const arq_session_t *sess, bool is_caller)
 {
     char me[CALLSIGN_MAX_SIZE];
@@ -1467,9 +1482,11 @@ static uint16_t car_seed(const arq_session_t *sess, bool is_caller)
     const char *callee_me = sess->local_call[0] ? sess->local_call : me;
     const char *caller = is_caller ? me : sess->remote_call;
     const char *callee = is_caller ? sess->remote_call : callee_me;
-    unsigned char buf[1 + 2 * CALLSIGN_MAX_SIZE];
+    unsigned char buf[3 + 2 * CALLSIGN_MAX_SIZE];
     int n = 0;
     buf[n++] = sess->session_id;
+    buf[n++] = (unsigned char)sess->car_nonce;
+    buf[n++] = (unsigned char)(sess->car_nonce >> 8);
     for (const char *p = caller; *p && n < (int)sizeof(buf) - 1; p++)
         buf[n++] = (unsigned char)((*p >= 'a' && *p <= 'z') ? *p - 32 : *p);
     buf[n++] = '/';
@@ -1500,6 +1517,7 @@ static void car_start(arq_session_t *sess, bool is_caller, uint64_t now)
         .tx_confirmed = car_io_tx_confirmed, .ctx = sess,
         .pattern = g_cbs.send_pattern ? car_io_pattern : NULL,
         .trace = car_io_trace,
+        .block_key = sess->crc_seed,
     };
     car_init(sess->car, &io, sess->car_rx_level, sess->car_tx_level);
     car_seed_ctl_deaf(sess->car, sess->car_ctl_deaf, sess->car_peer_ctl_deaf);
@@ -1517,6 +1535,22 @@ static void car_stop(arq_session_t *sess)
     sess->car_active = false;
     if (sess->crc_seed)
         car_set_seed(sess, 0);
+}
+
+/* The carousel can no longer trust the session (car_failed): a block failed
+ * its check or did not decode.  Part of it may already be with the
+ * application, so end the session -- as ABORT does, dropping what is not
+ * delivered -- and let the application see the link go rather than carry on
+ * with wrong data.  True when it did. */
+static bool car_fail_closed(arq_session_t *sess, uint64_t now)
+{
+    const char *why = car_failed(sess->car);
+    if (!why) return false;
+    HLOGE(LOG_COMP, "carousel: %s -- ending the session", why);
+    sess->pending_disconnect = false;
+    sess->tx_retries_left = ARQ_DISCONNECT_RETRY_SLOTS;
+    sess_enter(sess, ARQ_CONN_DISCONNECTING, now + ARQ_CHANNEL_GUARD_MS, ARQ_EV_TIMER_ACK);
+    return true;
 }
 
 /* Once the carousel has nothing in flight either way, a deferred DISCONNECT
@@ -1604,6 +1638,7 @@ static void fsm_listening(arq_session_t *sess, const arq_event_t *ev)
         sess->session_id      = ev->session_id;
         sess->call_rx_mode    = ev->mode;
         sess->peer_carousel   = ev->car_call;
+        sess->car_nonce       = session_nonce();
         sess->car_rx_level    = car_start_level(ev->rx_snr);   /* the ACCEPT names it */
         /* How the caller hears us it reports in its first frame, which comes
          * before we send any control.  (Not "an MFSK CALL means it cannot
@@ -1755,6 +1790,7 @@ static void fsm_calling(arq_session_t *sess, const arq_event_t *ev)
             if (g_timing)
                 arq_timing_record_connect(g_timing, sess->control_mode);
             sess_enter(sess, ARQ_CONN_CONNECTED, UINT64_MAX, ARQ_EV_TIMER_CAROUSEL);
+            sess->car_nonce = ev->car_nonce;
             car_set_seed(sess, car_seed(sess, true));
             car_start(sess, true, time_now_ms());
             break;
@@ -1890,6 +1926,7 @@ static void car_connect_callee(arq_session_t *sess, const arq_event_t *ev)
     car_start(sess, false, now);
     if (g_timing) g_timing->frames_rx++;
     car_on_frame(sess->car, now, ev->payload, ev->payload_len, ev->mode, ev->from_control, ev->rx_snr);
+    car_fail_closed(sess, now);
 }
 
 static void fsm_accepting(arq_session_t *sess, const arq_event_t *ev)
@@ -2308,6 +2345,7 @@ static bool fsm_connected_carousel(arq_session_t *sess, const arq_event_t *ev)
         sess->car_last_rx_ms = now;
         if (g_timing) g_timing->frames_rx++;
         car_on_frame(sess->car, now, ev->payload, ev->payload_len, ev->mode, ev->from_control, ev->rx_snr);
+        if (car_fail_closed(sess, now)) return true;
         break;
     case ARQ_EV_TX_COMPLETE:
         car_on_tx_done(sess->car, now);

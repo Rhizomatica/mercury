@@ -855,6 +855,8 @@ bool arq_handle_incoming_connect_frame(uint8_t *data, size_t frame_size, float r
     {
         ev.car_level  = arq_protocol_accept_start_level(data);
         ev.car_accept = arq_protocol_accept_is_carousel(data);
+        if (ev.car_accept)
+            ev.car_nonce = arq_protocol_accept_nonce(data, src);
     }
     else
         ev.car_call = arq_protocol_call_is_carousel(data, src);

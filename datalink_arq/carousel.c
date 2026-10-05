@@ -143,8 +143,35 @@ bool car_is_idle(const car_t *c) { return c->idle; }
 size_t car_tx_inflight(const car_t *c)
 {
     size_t n = 0;
-    for (int b = 0; b < c->nsb; b++) n += (size_t)c->sb[b].len;
+    for (int b = 0; b < c->nsb; b++) n += (size_t)c->sb[b].app_len;
     return n;
+}
+
+const char *car_failed(const car_t *c) { return c->failed; }
+
+/* A block's check: CRC-32 (IEEE) of the session's key, the block's id and K,
+ * and its bytes, in the block's last BLOCK_CHECK bytes.  The frame CRC16
+ * passes about one bad frame in 65536, and a block is rebuilt from many: one
+ * wrong piece -- a corrupt frame that passed, or a frame of an earlier
+ * session with the same seed -- and the block fails its check instead of
+ * reaching the application.  Room for a MAC once sessions are keyed. */
+#define BLOCK_CHECK 4
+static uint32_t crc32_step(uint32_t crc, const uint8_t *p, size_t n)
+{
+    while (n--) {
+        crc ^= *p++;
+        for (int k = 0; k < 8; k++) crc = crc >> 1 ^ (0xEDB88320u & (0u - (crc & 1)));
+    }
+    return crc;
+}
+static uint32_t block_check(const car_t *c, uint8_t id, int K, const uint8_t (*piece)[CAR_PIECE], int n)
+{
+    uint8_t h[6] = { (uint8_t)c->io.block_key, (uint8_t)(c->io.block_key >> 8),
+                     (uint8_t)(c->io.block_key >> 16), (uint8_t)(c->io.block_key >> 24), id, (uint8_t)K };
+    uint32_t crc = crc32_step(0xFFFFFFFFu, h, sizeof h);
+    for (int i = 0; n > 0; i++, n -= CAR_PIECE)
+        crc = crc32_step(crc, piece[i], (size_t)(n < CAR_PIECE ? n : CAR_PIECE));
+    return ~crc;
 }
 
 static int level_of_mode(int mode)
@@ -287,6 +314,11 @@ static bool decode_ctl(const uint8_t *b, size_t len, msg_t *m)
     m->hi = b[13] >> 4;
     m->unopened = (b[13] >> 3) & 1;
     if (m->level >= CAR_NLEVELS || m->h_level >= CAR_NLEVELS || m->snr_level >= CAR_NLEVELS) return false;
+    /* Out-of-range fields mean a corrupt frame that passed its CRC: drop it
+     * rather than act on it (spec risk R19). */
+    for (int o = 0; o < CAR_WIN; o++)
+        if (m->need[o] != FB_UNSEEN && m->need[o] > CAR_MAX_K) return false;
+    if (m->gap >= CAR_MAX_K) return false;
     return true;
 }
 
@@ -430,12 +462,13 @@ static int block_k_for(int lv)
 static void open_block(car_t *c, int max_k)
 {
     uint8_t buf[CAR_MAX_K * CAR_PIECE];
-    size_t len = c->io.tx_read(c->io.ctx, buf, (size_t)max_k * CAR_PIECE);
+    size_t len = c->io.tx_read(c->io.ctx, buf, (size_t)max_k * CAR_PIECE - BLOCK_CHECK);
     if (!len) return;
     car_sblock_t *s = &c->sb[c->nsb++];
     s->id = c->next_blk_id++;
-    s->len = (int)len;
-    s->K = (int)((len + CAR_PIECE - 1) / CAR_PIECE);
+    s->app_len = (int)len;
+    s->len = (int)len + BLOCK_CHECK;
+    s->K = (s->len + CAR_PIECE - 1) / CAR_PIECE;
     s->next = 0;
     s->need = s->K;
     s->resend = -1;
@@ -443,6 +476,9 @@ static void open_block(car_t *c, int max_k)
     s->stopped = false;
     memset(s->data, 0, sizeof(s->data));
     memcpy(s->data, buf, len);
+    uint32_t chk = block_check(c, s->id, s->K, (const uint8_t (*)[CAR_PIECE])s->data, (int)len);
+    for (int i = 0; i < BLOCK_CHECK; i++, len++)
+        s->data[len / CAR_PIECE][len % CAR_PIECE] = (uint8_t)(chk >> (8 * i));
 }
 
 static void piece_bytes(const car_sblock_t *s, int idx, uint8_t *out)
@@ -465,7 +501,7 @@ static void apply_need(car_t *c, const msg_t *m)
         if (off >= CAR_WIN)                need = 0;   /* behind the base: delivered */
         else if (m->need[off] == FB_UNSEEN) need = c->sb[b].K;
         else                               need = m->need[off];
-        if (need == 0) { retired += (size_t)c->sb[b].len; continue; }
+        if (need == 0) { retired += (size_t)c->sb[b].app_len; continue; }
         c->sb[b].need = need;
         c->sb[b].stopped = false;             /* a BREAK it contradicts was not the receiver's */
         c->sb[b].resend = off == 0 && m->gap >= 0 && m->gap < c->sb[b].K ? m->gap : -1;
@@ -1009,10 +1045,21 @@ static void decode_block(car_t *c, car_rblock_t *r)
     for (int i = 0; i < RS_MAX_PIECES && n < r->K; i++)
         if (r->got[i]) { idx[n] = i; pcs[n] = r->piece[i]; n++; }
     for (int i = 0; i < r->K; i++) out[i] = outb[i];
-    if (rs_decode(r->K, CAR_PIECE, idx, pcs, out) == 0)
-        for (int i = 0; i < r->K; i++) memcpy(r->piece[i], out[i], CAR_PIECE);
     r->done = true;
     c->done_in_round++;
+    if (rs_decode(r->K, CAR_PIECE, idx, pcs, out) != 0) {
+        if (!c->failed) c->failed = "a block did not decode";
+        return;
+    }
+    for (int i = 0; i < r->K; i++) memcpy(r->piece[i], out[i], CAR_PIECE);
+    int len = r->len - BLOCK_CHECK;
+    uint32_t want = 0;
+    for (int i = 0; i < BLOCK_CHECK; i++)
+        want |= (uint32_t)r->piece[(len + i) / CAR_PIECE][(len + i) % CAR_PIECE] << (8 * i);
+    if (len < 0 || block_check(c, r->id, r->K, (const uint8_t (*)[CAR_PIECE])r->piece, len) != want) {
+        car_trace(c, "rx block %d failed its check", r->id);
+        if (!c->failed) c->failed = "a block failed its check";
+    }
 }
 
 /* Hand data to the application in order, sliding the window.  A decoded
@@ -1025,16 +1072,16 @@ static void decode_block(car_t *c, car_rblock_t *r)
 static void deliver_in_order(car_t *c)
 {
     uint8_t buf[CAR_MAX_K * CAR_PIECE];
-    for (;;) {
+    while (!c->failed) {
         car_rblock_t *r = &c->rb[c->rbase % CAR_WIN];
         if (!r->known) break;
-        int upto;
+        int len = r->len - BLOCK_CHECK, upto;   /* the check is not the application's */
         if (r->done) {
-            upto = r->len;
+            upto = len;
         } else {
             int j = 0;
             while (j < r->K && r->got[j]) j++;
-            upto = j * CAR_PIECE < r->len ? j * CAR_PIECE : r->len;
+            upto = j * CAR_PIECE < len ? j * CAR_PIECE : len;
         }
         if (upto > r->delivered) {
             int n = 0;
@@ -1439,7 +1486,16 @@ static void take_pieces(car_t *c, const msg_t *m)
         car_rblock_t *r = &c->rb[(uint8_t)(c->rbase + off) % CAR_WIN];
         if (!r->known) {
             r->known = true;
+            r->id = (uint8_t)(c->rbase + off);
             r->K = sg->K; r->len = sg->K * CAR_PIECE - sg->pad;
+        } else if (sg->K != r->K || sg->K * CAR_PIECE - sg->pad != r->len) {
+            /* Two frames disagree on what the block is: one was corrupt and
+             * passed its CRC, or came from another session -- and the first
+             * one seen may be it, so neither can be kept. */
+            car_trace(c, "rx segment of block %d: K/len %d/%d against %d/%d",
+                      r->id, sg->K, sg->K * CAR_PIECE - sg->pad, r->K, r->len);
+            if (!c->failed) c->failed = "two frames disagree on a block";
+            continue;
         }
         if (r->done) { c->rx_break = true; continue; }   /* delivered: still sent */
         c->round_fresh = true;

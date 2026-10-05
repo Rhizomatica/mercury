@@ -161,6 +161,63 @@ static void explore_brk(bool bidir, int k, const char *chan)
     fflush(stdout);
 }
 
+static const char *chan_list(void);
+
+/* Corrupt frames that passed their CRC: every set of at most k frames arrives
+ * with a byte flipped.  The session must fail closed: complete intact, or
+ * fail (car_failed) -- never deliver wrong data and carry on, never stall. */
+static int detected;
+static void explore_bad(bool bidir, int k, const char *chan)
+{
+    car_sim_result_t r;
+    carousel_sim_force_unsensed(NULL, 0);
+    carousel_sim_force_spurious_break(NULL, 0);
+    carousel_sim_force_corrupt(NULL, 0);
+    carousel_sim_force_losses(NULL, 0);
+    carousel_sim_run(1, chan, bidir, LIMIT_MS, &r);
+    int N = r.frames, idx[8], nruns = 0, bad = 0, failed = 0;
+    for (int size = 1; size <= k && size <= N; size++) {
+        for (int i = 0; i < size; i++) idx[i] = i;
+        for (;;) {
+            carousel_sim_force_corrupt(idx, size);
+            carousel_sim_run(1, chan, bidir, LIMIT_MS, &r);
+            nruns++; runs++;
+            bool complete = r.intact && r.done_ms && r.collisions == 0 && r.bad_frames == 0 &&
+                            r.a2b == CAR_SIM_BYTES && r.b2a == (bidir ? CAR_SIM_BYTES : 0);
+            if (r.failed) failed++;
+            if (!r.failed && !complete) {
+                bad++; failures++;
+                if (bad <= 10) {
+                    printf("FAIL %s%s corrupt {", chan, bidir ? " bidir" : "");
+                    for (int i = 0; i < size; i++) printf("%s%d", i ? "," : "", idx[i]);
+                    printf("}: intact=%d done=%llu a2b=%zu b2a=%zu collisions=%d stalled=%d\n", r.intact,
+                           (unsigned long long)r.done_ms, r.a2b, r.b2a, r.collisions, r.stalled);
+                }
+            }
+            int p = size - 1;
+            while (p >= 0 && idx[p] == N - size + p) p--;
+            if (p < 0) break;
+            idx[p]++;
+            for (int q = p + 1; q < size; q++) idx[q] = idx[q - 1] + 1;
+        }
+    }
+    carousel_sim_force_corrupt(NULL, 0);
+    detected += failed;
+    printf("%-9s %-6s frames=%d corrupt<=%d: %d runs, %d failed closed, %d failed\n",
+           chan, bidir ? "bidir" : "oneway", N, k, nruns, failed, bad);
+    fflush(stdout);
+}
+
+static void explore_corrupt(int k)
+{
+    if (k > 8) k = 8;
+    for (int bidir = 0; bidir <= 1; bidir++) {
+        char list[256];
+        snprintf(list, sizeof list, "%s", chan_list());
+        for (char *t = strtok(list, " "); t; t = strtok(NULL, " ")) explore_bad(bidir, k, t);
+    }
+}
+
 static const char *chan_list(void)
 {
     /* A fast rung, the middle, the DATAC15/MFSK boundary, the MFSK floor;
@@ -209,11 +266,12 @@ static void explore_sensing(int k)
 }
 
 /* No arguments (make test): every set of up to 3 lost frames, of up to 3
- * unsensed keydowns and of single spurious BREAKs, a second or two at the
- * default transfer size.
+ * unsensed keydowns, every single spurious BREAK and every single corrupt
+ * frame (four byte positions), a second or two at the default transfer size.
  *   all|0|1 <k>       lost frames, both ways / one way / both directions
  *   cs <k>            unsensed keydowns
  *   brk <k>           spurious BREAKs
+ *   bad <k>           corrupt frames that passed their CRC
  *   replay <bidir> i...            one loss set (CAR_EXPLORE_CHAN, CAR_TRACE=1)
  *   csreplay <bidir> <chan> kd...  one sensing-failure set
  *   brkreplay <bidir> <chan> kd... one spurious-BREAK set */
@@ -223,7 +281,14 @@ int main(int argc, char **argv)
         explore_losses(-1, 3);
         explore_sensing(3);
         explore_spurious(1);
-        printf("%d runs, %d failures\n", runs, failures);
+        /* A frame header, a segment header (K, pad), a control frame's need
+         * and the middle of a frame (a piece). */
+        const char *pos[] = { "1", "5", "7", NULL };
+        for (int i = 0; i < 4; i++) {
+            if (pos[i]) setenv("CAR_CORRUPT_POS", pos[i], 1); else unsetenv("CAR_CORRUPT_POS");
+            explore_corrupt(1);
+        }
+        printf("%d runs, %d failures (%d corrupt runs failed closed)\n", runs, failures, detected);
         return failures != 0;
     }
     if (argc > 3 && !strcmp(argv[1], "csreplay")) {
@@ -235,6 +300,21 @@ int main(int argc, char **argv)
         carousel_sim_run(1, argv[3], atoi(argv[2]) != 0, LIMIT_MS, &r);
         printf("collisions=%d overlapping keydowns=%d (over a sensed one %d) intact=%d done=%llu\n",
                r.collisions, r.kd_overlaps, r.kd_unexplained, r.intact, (unsigned long long)r.done_ms);
+        return 0;
+    }
+    if (!strcmp(argv[1], "bad")) {
+        explore_corrupt(argc > 2 ? atoi(argv[2]) : 1);
+        return failures != 0;
+    }
+    if (argc > 3 && !strcmp(argv[1], "badreplay")) {    /* badreplay <bidir> <chan> frame... */
+        int idx[64], n = 0;
+        for (int i = 4; i < argc && n < 64; i++) idx[n++] = atoi(argv[i]);
+        car_sim_result_t r;
+        carousel_sim_force_losses(NULL, 0);
+        carousel_sim_force_corrupt(idx, n);
+        carousel_sim_run(1, argv[3], atoi(argv[2]) != 0, LIMIT_MS, &r);
+        printf("intact=%d done=%llu a2b=%zu b2a=%zu failed=%s\n", r.intact,
+               (unsigned long long)r.done_ms, r.a2b, r.b2a, r.failed ? r.failed : "no");
         return 0;
     }
     if (!strcmp(argv[1], "brk")) {

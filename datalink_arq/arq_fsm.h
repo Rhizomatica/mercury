@@ -150,6 +150,7 @@ typedef struct
     int      car_level;
     bool     car_accept;
     bool     car_call;                /* RX_CALL: the caller runs the carousel */
+    uint16_t car_nonce;               /* RX_ACCEPT: the callee's session nonce */
 
     /* Local receive SNR at the time the frame was decoded (dB, 0 = unknown).
      * Carried in-band so the FSM can update local_snr_x10 without relying on
@@ -387,6 +388,7 @@ typedef struct
     car_t   *car;                     /* allocated by arq_fsm_init             */
     bool     car_active;
     uint16_t crc_seed;
+    uint16_t car_nonce;             /* the callee's, in the ACCEPT: part of crc_seed */
     int      car_rx_level;            /* start rung for the peer's direction:
                                        * the SNR measured here                 */
     int      car_tx_level;            /* ...for ours, from the peer (-1: none) */

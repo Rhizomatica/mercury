@@ -98,6 +98,9 @@ static int collisions;
 static const int *spurious_idx;
 static int spurious_n;
 void carousel_sim_force_spurious_break(const int *kd_idx, int n) { spurious_idx = kd_idx; spurious_n = n; }
+static const int *corrupt_idx;
+static int corrupt_n;
+void carousel_sim_force_corrupt(const int *frame_idx, int n) { corrupt_idx = frame_idx; corrupt_n = n; }
 /* carousel_sim_force_losses: an explorer's choice of lost frames. */
 static const int *force_idx;
 static int force_n = -1;
@@ -196,6 +199,14 @@ static void io_keydown(void *ctx, const car_frame_t *fr, int n)
         if (deliver(t, s->id, fr[i].mode, &d)) {
             uint8_t *b = malloc(fr[i].len);
             memcpy(b, fr[i].bytes, fr[i].len);
+            /* An explorer's corrupt frame that passed its CRC: one byte flipped. */
+            for (int j = 0; j < corrupt_n; j++)
+                if (corrupt_idx[j] == frame_no - 1) {
+                    /* CAR_CORRUPT_POS: which byte (default the middle) */
+                    const char *ps = getenv("CAR_CORRUPT_POS");
+                    size_t pos = ps ? (size_t)atoi(ps) % fr[i].len : fr[i].len / 2;
+                    b[pos] ^= 0x5A;
+                }
             event_t e = { .t = t + air, .type = EV_ARRIVE, .st = peer->id, .mode = fr[i].mode,
                           .len = fr[i].len, .bytes = b, .f_start = t, .f_end = t + air };
             push(e);
@@ -421,6 +432,7 @@ void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limi
             free(e.bytes);
         }
         for (int i = 0; i < 2; i++) car_on_time(&S[i].car, now_ms);
+        if (car_failed(&S[0].car) || car_failed(&S[1].car)) break;   /* the session ends */
         if (S[1].rx_len >= S[0].tx_len && S[0].rx_len >= S[1].tx_len) { done_ms = now_ms; break; }
     }
     while (nev) { event_t e; pop(&e); free(e.bytes); }
@@ -435,6 +447,7 @@ void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limi
     res->keydowns = keydown_no;
     res->kd_overlaps = kd_overlaps;
     res->kd_unexplained = kd_unexplained;
+    res->failed = car_failed(&S[0].car) ? car_failed(&S[0].car) : car_failed(&S[1].car);
     res->bad_frames = bad_frames;
     res->stalled = !done_ms && car_next_deadline(&S[0].car) == UINT64_MAX &&
                    car_next_deadline(&S[1].car) == UINT64_MAX;
