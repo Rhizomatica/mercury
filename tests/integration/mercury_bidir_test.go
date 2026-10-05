@@ -86,7 +86,13 @@ func TestMercuryARQBidirectional(t *testing.T) {
 
 	startInstance := func(name, rxPath, txPath string, port, bcastPort int) (*exec.Cmd, *processWait, *os.File, *os.File) {
 		stdout, stderr := tempLogFilesNamed(t, name)
-		cmd := exec.CommandContext(ctx, bin,
+		// MERCURY_TEST_BIN_A / _B: run that station on another build, as in
+		// TestMercuryARQTransfer.
+		stationBin := bin
+		if v := os.Getenv("MERCURY_TEST_BIN_" + name); v != "" {
+			stationBin = v
+		}
+		cmd := exec.CommandContext(ctx, stationBin,
 			"-x", "fifo",
 			"-i", rxPath,
 			"-o", txPath,
