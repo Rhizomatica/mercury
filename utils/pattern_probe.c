@@ -274,6 +274,47 @@ static void nav(double hours, int trials)
     free(pat); free(sh); free(rx);
 }
 
+/* Cross-reads: session keys' ACK and BREAK, clean, at 0 and +25 Hz, through
+ * the window -- any event that is not the pattern sent. */
+static void xread(int nkeys)
+{
+    int n_pat = mfsk_pattern_max_tx_samples();
+    int16_t *pat = calloc((size_t)n_pat, sizeof *pat), *sh = calloc((size_t)n_pat, sizeof *sh);
+    int total = 4 * n_pat;
+    int16_t *x = calloc((size_t)total, sizeof *x);
+    long bad = 0, runs = 0;
+    for (int i = 0; i < nkeys; i++) {
+        uint32_t key = getenv("XREAD_KEY") ? (uint32_t)strtoul(getenv("XREAD_KEY"), NULL, 0)
+                                           : 1 + (uint32_t)((uint64_t)i * 65535 / (uint64_t)nkeys);
+        mfsk_pattern_set_session(key);
+        for (int kind = 0; kind < 2; kind++) {
+            int n = mfsk_pattern_tx(pat, kind);
+            for (int oi = 0; oi < 2; oi++) {
+                shift(pat, n, oi ? 25.0 : 0.0, sh);
+                for (int t = 0; t < total; t++) x[t] = (int16_t)(30.0 * gauss() + ((t >= n_pat && t < n_pat + n) ? sh[t - n_pat] : 0));
+                mfsk_pattern_window_t w = {0};
+                mfsk_pattern_ev_t ev[16];
+                int nev = 0;
+                for (int t = 0; t + 160 <= total; t += 160) nev += mfsk_pattern_window_events(&w, x + t, 160, ev + nev, 16 - nev);
+                mfsk_pattern_window_free(&w);
+                runs++;
+                if (getenv("XREAD_ALL"))
+                    for (int e = 0; e < nev; e++)
+                        printf("  key 0x%04x %s %+d Hz: event kind %d score %d start %lld (sent at %d)\n", key,
+                               kind ? "BREAK" : "ACK", oi ? 25 : 0, ev[e].kind, ev[e].score, ev[e].start, n_pat);
+                for (int e = 0; e < nev; e++)
+                    if (ev[e].kind != kind) {
+                        bad++;
+                        printf("key 0x%04x %s %+d Hz: also kind %d score %d\n", key, kind ? "BREAK" : "ACK", oi ? 25 : 0, ev[e].kind, ev[e].score);
+                    }
+            }
+        }
+    }
+    printf("# xread: %ld stray events in %ld clean bursts\n", bad, runs);
+    mfsk_pattern_set_session(0);
+    free(pat); free(sh); free(x);
+}
+
 static void noise(double hours)
 {
     long n = (long)(8000.0 * 60.0);   /* a minute at a time */
@@ -372,6 +413,7 @@ int main(int argc, char **argv)
         fading();
     }
     if (!strcmp(what, "wcurve")) wcurve(argc > 2 ? atoi(argv[2]) : 200);
+    if (!strcmp(what, "xread")) xread(argc > 2 ? atoi(argv[2]) : 256);
     if (!strcmp(what, "nav")) nav(argc > 2 ? atof(argv[2]) : 1.0, argc > 3 ? atoi(argv[3]) : 200);
     if (all || !strcmp(what, "signals")) signals();
     if (all || !strcmp(what, "noise")) noise(argc > 2 && !all ? atof(argv[2]) : 1.0);

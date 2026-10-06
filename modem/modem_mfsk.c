@@ -1244,6 +1244,9 @@ const modem_backend_t modem_backend_mfsk = {
 /* ----------------------------------------------------------------------
  * Sliding detection window -- see modem_mfsk.h for why it paces.
  * ---------------------------------------------------------------------- */
+/* How long an event waits for a stronger overlapping one: two symbols. */
+#define PAT_HOLD 640
+
 int mfsk_pattern_window_events(mfsk_pattern_window_t *w, const int16_t *pcm, int n,
                                mfsk_pattern_ev_t *out, int maxev)
 {
@@ -1256,9 +1259,17 @@ int mfsk_pattern_window_events(mfsk_pattern_window_t *w, const int16_t *pcm, int
                                      g_pat_m.ack_pattern_nsymb);
         if (!w->det)
             return 0;             /* no memory, no detection; never a crash */
+        /* A NAV threshold a symbol above the ACK's: a session ACK or BREAK
+         * at a few dB can cross-read as a NAV class at the ACK's threshold
+         * (a window straddling two of its symbols matches either tone),
+         * aligned a few symbols early, before the pattern itself is
+         * complete -- and a false NAV is a hold of up to 32 s.  At 9 of 16
+         * (pattern_probe): 0 cross-reads in 2048 clean session ACK/BREAK
+         * bursts (3 at 8), 0 false headers in 10 h of noise (4 at 8), for
+         * about 0.7 dB at -14 dB; 98 % detection at -12 dB still. */
+        int nav_thr = g_pat_m.ack_match_threshold + 1;
         for (int k = 0; k < MFSK_NAV_CLASSES; k++)
-            mfsk_stream_det_set_list(w->det, MFSK_PAT_NAV(k), mfsk_nav_tones[k],
-                                     g_pat_m.ack_match_threshold);
+            mfsk_stream_det_set_list(w->det, MFSK_PAT_NAV(k), mfsk_nav_tones[k], nav_thr);
         w->gen = 0;
     }
     unsigned gen = atomic_load(&g_pat_gen);
@@ -1300,24 +1311,39 @@ int mfsk_pattern_window_events(mfsk_pattern_window_t *w, const int16_t *pcm, int
         double complex y = ar + I * ai;
         mfsk_stream_event_t ev[4];
         int nev = mfsk_stream_det_push(w->det, &y, 1, ev, 4);
-        for (int e = 0; e < nev && nout < maxev; e++)
+        for (int e = 0; e < nev; e++)
         {
-            if (ev[e].list >= MFSK_PAT_NAV(0))
+            /* Overlapping events: one burst read as more than one list.  The
+             * strongest stands; a weaker one never reaches the caller. */
+            long long st = ev[e].pos - MFSK_LPF_TAPS / 2, span = (long long)mfsk_pattern_max_tx_samples();
+            if (w->last_score && llabs(st - w->last_start) < span && ev[e].score <= w->last_score)
+                continue;
+            bool drop = false;
+            for (int q = 0; q < w->npend; q++)
             {
-                /* One header, one class: another class can agree with it in
-                 * 4 symbols at some shift, and noise may add the threshold's
-                 * other 4 -- a weaker header overlapping a reported one is
-                 * that, not a second keydown. */
-                long long span = (long long)mfsk_pattern_max_tx_samples();
-                if (w->nav_score && llabs(ev[e].pos - w->nav_start) < span && ev[e].score <= w->nav_score)
-                    continue;
-                w->nav_start = ev[e].pos;
-                w->nav_score = ev[e].score;
+                if (llabs(st - w->pend[q].start) >= span) continue;
+                if (ev[e].score <= w->pend[q].score) { drop = true; break; }
+                w->pend[q] = w->pend[--w->npend];     /* the newcomer is stronger */
+                q--;
             }
-            out[nout].kind  = ev[e].list;
-            out[nout].start = ev[e].pos - MFSK_LPF_TAPS / 2;
-            out[nout].score = ev[e].score;
-            nout++;
+            if (drop || w->npend >= (int)(sizeof w->pend / sizeof w->pend[0]))
+                continue;
+            w->pend[w->npend].kind  = ev[e].list;
+            w->pend[w->npend].start = st;
+            w->pend[w->npend].score = ev[e].score;
+            w->pend_due[w->npend]   = w->n + PAT_HOLD;
+            w->npend++;
+        }
+        for (int q = 0; q < w->npend && nout < maxev; q++)
+        {
+            if (w->pend_due[q] > w->n) continue;
+            out[nout++] = w->pend[q];
+            w->last_start = w->pend[q].start;
+            w->last_score = w->pend[q].score;
+            w->pend[q] = w->pend[w->npend - 1];
+            w->pend_due[q] = w->pend_due[w->npend - 1];
+            w->npend--;
+            q--;
         }
     }
     return nout;
@@ -1347,8 +1373,9 @@ void mfsk_pattern_window_reset(mfsk_pattern_window_t *w)
     if (!w) return;
     if (w->det) mfsk_stream_det_reset(w->det);
     memset(w->hist, 0, sizeof(w->hist));
-    w->nav_start = 0;
-    w->nav_score = 0;
+    w->npend = 0;
+    w->last_start = 0;
+    w->last_score = 0;
     w->hist_pos = 0;
     w->n = 0;
 }

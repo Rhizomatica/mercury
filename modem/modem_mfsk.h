@@ -64,17 +64,6 @@ int mfsk_pattern_detect(const int16_t *pb, int n, int *is_break);
  *
  * A burst is reported once, as it ends (a few steps after its last symbol).
  * ---------------------------------------------------------------------- */
-struct mfsk_stream_det;
-typedef struct {
-    struct mfsk_stream_det *det;   /* created on the first push */
-    double  hist[64];              /* the low-pass filter's last inputs, signed by the downmix */
-    int     hist_pos;
-    long long n;                   /* samples pushed since the reset */
-    unsigned gen;                  /* the pattern lists it scores (mfsk_pattern_set_session) */
-    long long nav_start;           /* the last NAV header reported, and its score */
-    int     nav_score;
-} mfsk_pattern_window_t;
-
 /* A pattern the window found: ACK, BREAK, or a NAV header of class k
  * (MFSK_PAT_NAV(k)); `start` is its first sample, counted from the window's
  * last reset (or creation), so a caller that knows the sample count of its
@@ -87,6 +76,24 @@ typedef struct {
     long long start;
     int       score;
 } mfsk_pattern_ev_t;
+
+struct mfsk_stream_det;
+typedef struct {
+    struct mfsk_stream_det *det;   /* created on the first push */
+    double  hist[64];              /* the low-pass filter's last inputs, signed by the downmix */
+    int     hist_pos;
+    long long n;                   /* samples pushed since the reset */
+    unsigned gen;                  /* the pattern lists it scores (mfsk_pattern_set_session) */
+    /* Events wait PAT_HOLD samples before they are reported, so that of
+     * several overlapping ones -- a pattern can cross-read as another list,
+     * at its threshold, a few steps apart -- only the strongest is. */
+    mfsk_pattern_ev_t pend[8];
+    long long pend_due[8];
+    int     npend;
+    long long last_start;          /* the last event reported, and its score */
+    int     last_score;
+} mfsk_pattern_window_t;
+
 /* Push `n` samples; up to maxev events are written.  Returns how many. */
 int  mfsk_pattern_window_events(mfsk_pattern_window_t *w, const int16_t *pcm, int n,
                                 mfsk_pattern_ev_t *ev, int maxev);

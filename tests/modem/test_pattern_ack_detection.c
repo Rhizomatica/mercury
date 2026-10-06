@@ -325,6 +325,56 @@ void test_nav_classes_heard_as_sent(void)
     free(pat);
 }
 
+/* Events a clean burst produces through the window: kinds into kinds[]. */
+static int burst_events(const int16_t *pat, int n, int *kinds, int maxk)
+{
+    const int burst = mfsk_pattern_max_tx_samples();
+    mfsk_pattern_window_t w = {0};
+    mfsk_pattern_ev_t ev[16];
+    int nev = 0;
+    int16_t *x = calloc((size_t)(4 * burst), sizeof(int16_t));
+    for (int i = 0; i < 4 * burst; i++) x[i] = (int16_t)((urand() - 0.5) * 60.0);   /* a little noise */
+    for (int i = 0; i < n; i++) x[burst + i] = (int16_t)(x[burst + i] + pat[i]);
+    for (int t = 0; t < 4 * burst; t += CHUNK)
+        nev += mfsk_pattern_window_events(&w, x + t, CHUNK, ev + nev, 16 - nev);
+    mfsk_pattern_window_free(&w);
+    free(x);
+    for (int e = 0; e < nev && e < maxk; e++) kinds[e] = ev[e].kind;
+    return nev;
+}
+
+/* A clean pattern is one event of its own kind.  On air (2026-10-06, 3 %) a
+ * session ACK at +15 dB was also read as NAV class 11, at its threshold, 35 ms
+ * earlier -- a 32 s hold the sender then waited out: at high SNR a window
+ * straddling two symbols can match either tone, so a list cross-reads more
+ * than the whole-symbol separation says.  The window reports only the
+ * strongest of overlapping events. */
+void test_clean_patterns_are_one_event_each(void)
+{
+    const int burst = mfsk_pattern_max_tx_samples();
+    int16_t *pat = calloc((size_t)burst, sizeof(int16_t));
+    int kinds[16];
+    for (uint32_t key = 1; key < 65536; key += 977) {
+        mfsk_pattern_set_session(key);
+        for (int kind = 0; kind < 2; kind++) {
+            int n = mfsk_pattern_tx(pat, kind);
+            int nev = burst_events(pat, n, kinds, 16);
+            char what[64];
+            snprintf(what, sizeof what, "key %u, %s", key, kind ? "BREAK" : "ACK");
+            TEST_ASSERT_EQUAL_INT_MESSAGE(1, nev, what);
+            TEST_ASSERT_EQUAL_INT_MESSAGE(kind, kinds[0], what);
+        }
+    }
+    for (int k = 0; k < MFSK_NAV_CLASSES; k++) {
+        int n = mfsk_nav_tx(pat, k);
+        int nev = burst_events(pat, n, kinds, 16);
+        TEST_ASSERT_EQUAL_INT(1, nev);
+        TEST_ASSERT_EQUAL_INT(MFSK_PAT_NAV(k), kinds[0]);
+    }
+    mfsk_pattern_set_session(0);
+    free(pat);
+}
+
 /* Pure noise must never be mistaken for an ACK (false-alarm rejection). */
 void test_noise_no_false_ack(void)
 {
@@ -596,6 +646,7 @@ int main(void)
     RUN_TEST(test_session_patterns_heard_only_by_the_session);
     RUN_TEST(test_nav_table);
     RUN_TEST(test_nav_classes_heard_as_sent);
+    RUN_TEST(test_clean_patterns_are_one_event_each);
     RUN_TEST(test_noise_no_false_ack);
     RUN_TEST(test_real_ack_detects);
     RUN_TEST(test_real_break_detects);
