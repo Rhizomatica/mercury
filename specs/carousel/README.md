@@ -44,24 +44,25 @@ Properties, checked as invariants:
 
 ### Results
 
-TLC (tla2tools 2026.10.04), 8 workers.  `CHECK_DEADLOCK FALSE`: a finished
+TLC (tla2tools 2026-10-05), 8 workers.  `CHECK_DEADLOCK FALSE`: a finished
 transfer has no enabled action, and that is not an error.  `NotFinished`,
 checked as an invariant, must fail: a complete transfer is reachable, so a
 pass is not the model doing nothing.
 
 The model as of the integrity work (a BREAK only stops a block, `CHECK` =
-blocks carry a check):
+blocks carry a check), with repeating pieces; state counts from the last
+run:
 
 | Config | Channel | Sizes | Result |
 |---|---|---|---|
-| `Honest_Floor` | honest, floor (BREAK) | NB 4, K 2, sent ≤ 4, MOD 4, WIN 2, 3 in flight | pass, 212 817 states |
-| `Honest_Above` | honest, polls only | same | pass, 341 673 states |
-| `Honest_Floor_W3` | honest, floor | NB 7, K 2, sent ≤ 3, MOD 6, WIN 3, 2 in flight (ids wrap) | pass, 714 830 states |
-| `Honest_Above_W3` | honest, polls only | same | pass, 4 529 446 states |
-| `Spurious_Floor` | a BREAK nobody sent | NB 3, K 2, sent ≤ 3, MOD 4, WIN 2, 2 in flight | pass, 33 908 states |
-| `Spurious_Floor_Big` | a BREAK nobody sent | NB 4, K 2, sent ≤ 4, MOD 4, WIN 2, 3 in flight | pass, 2 988 659 states |
-| `Stale_Above` | a same-seed frame of an earlier session | NB 3, K 2, sent ≤ 3, MOD 4, WIN 2, 2 in flight | pass, 415 000 states |
-| `Adversary_Floor` | both, at the floor | same | pass, 2 475 788 states |
+| `Honest_Floor` | honest, floor (BREAK) | NB 4, K 2, sent ≤ 4, MOD 4, WIN 2, 3 in flight | pass, 2 254 974 states |
+| `Honest_Above` | honest, polls only | same | pass, 3 654 644 states |
+| `Honest_Floor_W3` | honest, floor | NB 7, K 2, sent ≤ 3, MOD 6, WIN 3, 2 in flight (ids wrap) | pass, 23 827 905 states |
+| `Honest_Above_W3` | honest, polls only | same | pass, 63 416 012 states |
+| `Spurious_Floor` | a BREAK nobody sent | NB 3, K 2, sent ≤ 3, MOD 4, WIN 2, 2 in flight | pass, 259 464 states |
+| `Spurious_Floor_Big` | a BREAK nobody sent | NB 4, K 2, sent ≤ 4, MOD 4, WIN 2, 3 in flight | pass, 27 515 636 states |
+| `Stale_Above` | a same-seed frame of an earlier session | NB 3, K 2, sent ≤ 3, MOD 4, WIN 2, 2 in flight | pass, 1 482 872 states |
+| `Adversary_Floor` | both, at the floor | same | pass, 12 138 448 states |
 | `Stale_Above_NoCheck` | a stale frame, blocks without a check | same | **`Integrity` violated** |
 
 Before it (trunk 2c07bf4: a BREAK retired the block, and blocks had no
@@ -87,16 +88,50 @@ where the code streams its data pieces as they arrive.  So in the code a bad
 block's leading bytes can reach the application before its check fails; the
 session then ends (fail closed), which the explorer checks below.
 
+### Liveness
+
+Safety says nothing bad happens; `Completes` says the transfer ends: every
+block reaches the application, or the session fails closed.  It is checked
+under `LiveSpec` (`Live_*.cfg`), which adds what the code does and what a
+lossy channel can fairly be asked:
+
+- `TURNS`: a half-duplex turn.  The sender keys a round of at least one
+  piece, then listens until the answer comes or its timer runs out.  With
+  any interleaving the sender kept keying over the poll in flight, forever.
+- The sender's pieces repeat (the code's indices wrap mod 256).
+- Fairness: the sender keeps sending, the receiver keeps answering, and polls
+  infinitely often (the code's floor cadence guarantees one every 4 patterns,
+  12 deep).  Each piece *of each block* and each poll, offered again and
+  again, is eventually delivered.  Per piece index alone was not enough: TLC
+  found a channel that delivered only the duplicates the receiver already
+  held.  A frame on the air ends, received or lost.
+- `INJMAX`: at most this many spurious BREAKs or stale frames.  No protocol
+  progresses against forgeries without end: a BREAK always at the head of the
+  return channel keeps the poll behind it from ever being heard.  The safety
+  configurations leave them unbounded.
+
+| Config | Result |
+|---|---|
+| `Live_Honest_Floor` | pass (2.8 M states, 29 min) |
+| `Live_Spurious_Floor` (2 spurious BREAKs) | pass (516 k states, 2 h) |
+| `Live_Adversary_Floor`, `Live_Honest_Above` | running at the time of writing |
+
+The counterexamples on the way were the model's, not the code's: the
+unbounded adversary, a timeout that waited for the channel to empty, a sender
+ending its turn without sending.  Each is recorded where the model was fixed.
+
 ### Running it
 
 ```
-java -XX:+UseParallelGC -cp tla2tools.jar tlc2.TLC -workers 8 -cleanup \
-     -config Honest_Floor.cfg CarouselBlocks.tla
+java -XX:+UseParallelGC -cp tla2tools.jar tlc2.TLC -workers 8 \
+     -metadir /some/private/dir -config Honest_Floor.cfg CarouselBlocks.tla
 ```
 
 `tla2tools.jar` is the TLA+ tools release from
-https://github.com/tlaplus/tlaplus/releases.  A violated invariant prints the
-trace state by state.
+https://github.com/tlaplus/tlaplus/releases (these results: the Toolbox's,
+2026-10-05).  Give each run its own `-metadir`: two runs sharing `states/`
+destroy each other's state.  A violated property prints the trace state by
+state.
 
 ## The explorer: `tests/sim/car_explore.c`
 
