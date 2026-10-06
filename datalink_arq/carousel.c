@@ -949,10 +949,20 @@ static double air_fraction(const car_t *c, int lv, int frames)
     double air = (double)round_air(lv, frames);
     return air / (air + (double)round_overhead(c, lv));
 }
+/* The round a rung has earned: one frame more than it recently delivered,
+ * twice that where the SNR has room to spare -- the round size then doubles
+ * from a probe as TCP's window does, where adding one frame took an 8 KB
+ * transfer at 20 dB four rounds (1, 2, 3, 2) and a poll's overhead each. */
+static bool level_marginal(const car_t *c, int lv);
+static int level_earned(const car_t *c, int lv)
+{
+    double got = c->lv_sent[lv] - c->lv_lost[lv];
+    return 1 + (int)(level_marginal(c, lv) || !c->snr_valid ? got : 2.0 * got);
+}
 /* What a measured rung delivers per second, in the rounds it has earned. */
 static double level_goodput(const car_t *c, int lv)
 {
-    int earned = 1 + (int)(c->lv_sent[lv] - c->lv_lost[lv]);
+    int earned = level_earned(c, lv);
     int frames = earned < keydown_cap(lv) ? earned : keydown_cap(lv);
     return level_rate(lv) * level_delivery(c, lv) * air_fraction(c, lv, frames);
 }
@@ -1058,7 +1068,7 @@ static int peer_outstanding(const car_t *c)
 static int poll_size(const car_t *c, int lv, uint64_t now)
 {
     int cap = keydown_cap(lv);
-    int earned = 1 + (int)(c->lv_sent[lv] - c->lv_lost[lv]);
+    int earned = level_earned(c, lv);
     if (cap > earned) cap = earned;
     /* With our own data waiting, the peer's turn ends at TURN_CAP_MS: ask
      * only for what fits before it.  The cap is checked between rounds, and
