@@ -1854,6 +1854,7 @@ typedef struct {
     uint8_t *bytes_out;
     size_t bytes_cap;
     int last_sync;      /* previous sync state, for change detection */
+    int backlog;        /* samples queued behind the chunk being decoded */
 } rx_decoder_state_t;
 
 typedef struct {
@@ -2059,7 +2060,8 @@ static void process_received_frame(const uint8_t *data,
                                    bool arq_policy_ready,
                                    float snr_est,
                                    int mode,
-                                   bool seeded)
+                                   bool seeded,
+                                   uint32_t age_ms)
 {
     size_t payload_nbytes;
     int frame_type;
@@ -2078,7 +2080,7 @@ static void process_received_frame(const uint8_t *data,
     {
         if (arq_policy_ready)
             arq_handle_carousel_frame(data, payload_nbytes, mode,
-                                      mode == FREEDV_MODE_DATAC16, snr_est);
+                                      mode == FREEDV_MODE_DATAC16, snr_est, age_ms);
         return;
     }
 
@@ -2305,6 +2307,9 @@ static void *rx_worker_thread(void *arg)
         }
 
         read_buffer(w->ring, (uint8_t *)buf, sizeof(int16_t) * (size_t)want);
+        /* What waits behind this chunk: with the rest of the chunk and the
+         * decoder's own buffer, how long ago a frame decoded now ended. */
+        w->state.backlog = (int)(size_buffer(w->ring) / sizeof(int16_t));
 #ifdef ARQ_TRACE_ENABLED
         w->dbg_samples += want;
         if (w->dbg_samples >= 8000) {
@@ -2466,18 +2471,24 @@ static void rx_decoder_consume_chunk(rx_decoder_state_t *state,
             if (state->mode == FREEDV_MODE_DATAC16)
                 atomic_store(&g_payload_resync_req, true);
 
-            HLOGD("modem-rx", "Decoded frame mode=%d (%s) bytes=%zu snr=%.2f",
+            /* The audio captured after the frame's last sample and not yet
+             * decoded: how long ago it ended (the carousel answers a frame
+             * only within its mode's decode bound, docs/CAROUSEL-TURNS.md R4). */
+            long behind = (long)state->backlog + state->demod_count + (sample_count - fed);
+            uint32_t age_ms = behind > 0 ? (uint32_t)(behind * 1000L / FREEDV_FS_8000) : 0;
+            HLOGD("modem-rx", "Decoded frame mode=%d (%s) bytes=%zu snr=%.2f age=%u ms",
                   state->mode,
                   mode_name_from_enum(state->mode),
                   nbytes_out,
-                  snr_est);
+                  snr_est, age_ms);
             process_received_frame(state->bytes_out,
                                    nbytes_out,
                                    state->bytes_cap,
                                    arq_policy_ready,
                                    snr_est,
                                    state->mode,
-                                   seeded);
+                                   seeded,
+                                   age_ms);
         }
 
         /* Whole chunk fed and freedv produced nothing and wants no input

@@ -1992,7 +1992,8 @@ static void car_connect_callee(arq_session_t *sess, const arq_event_t *ev)
     uint64_t now = time_now_ms();
     car_start(sess, false, now);
     if (g_timing) g_timing->frames_rx++;
-    car_on_frame(sess->car, now, ev->payload, ev->payload_len, ev->mode, ev->from_control, ev->rx_snr);
+    car_on_frame(sess->car, now, ev->payload, ev->payload_len, ev->mode, ev->from_control, ev->rx_snr,
+                     ev->rx_age_ms);
     car_fail_closed(sess, now);
 }
 
@@ -2282,7 +2283,8 @@ static void fsm_disconnecting(arq_session_t *sess, const arq_event_t *ev)
         switch (ev->id)
         {
         case ARQ_EV_RX_CAROUSEL:
-            car_on_frame(sess->car, now, ev->payload, ev->payload_len, ev->mode, ev->from_control, ev->rx_snr);
+            car_on_frame(sess->car, now, ev->payload, ev->payload_len, ev->mode, ev->from_control, ev->rx_snr,
+                     ev->rx_age_ms);
             return;
         case ARQ_EV_RX_PATTERN:
             car_on_pattern(sess->car, now, (ev->rx_flags & ARQ_FLAG_HAS_DATA) ? CAR_PATTERN_BREAK
@@ -2451,7 +2453,8 @@ static bool fsm_connected_carousel(arq_session_t *sess, const arq_event_t *ev)
     case ARQ_EV_RX_CAROUSEL:
         sess->car_last_rx_ms = now;
         if (g_timing) g_timing->frames_rx++;
-        car_on_frame(sess->car, now, ev->payload, ev->payload_len, ev->mode, ev->from_control, ev->rx_snr);
+        car_on_frame(sess->car, now, ev->payload, ev->payload_len, ev->mode, ev->from_control, ev->rx_snr,
+                     ev->rx_age_ms);
         if (car_fail_closed(sess, now)) return true;
         break;
     case ARQ_EV_TX_COMPLETE:

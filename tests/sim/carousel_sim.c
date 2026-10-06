@@ -483,9 +483,9 @@ void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limi
                 if (!getenv("CAR_NOPATTERN_RX"))
                     car_on_pattern(&s->car, now_ms, (int)e.len);
             } else if (e.mode == ARQ_CONTROL_MODE) {
-                car_on_frame(&s->car, now_ms, e.bytes, e.len, e.mode, true, (float)(frame_snr(s, e.f_start, e.mode) + snr_bias(e.mode)));
+                car_on_frame(&s->car, now_ms, e.bytes, e.len, e.mode, true, (float)(frame_snr(s, e.f_start, e.mode) + snr_bias(e.mode)), 0);
             } else if (e.mode == s->rx_mode && (!cs_decodable || s->bound_at <= e.f_start)) {
-                car_on_frame(&s->car, now_ms, e.bytes, e.len, e.mode, false, (float)(frame_snr(s, e.f_start, e.mode) + snr_bias(e.mode)));
+                car_on_frame(&s->car, now_ms, e.bytes, e.len, e.mode, false, (float)(frame_snr(s, e.f_start, e.mode) + snr_bias(e.mode)), 0);
             }
             free(e.bytes);
         }

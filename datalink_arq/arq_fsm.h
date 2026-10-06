@@ -157,6 +157,8 @@ typedef struct
      * the cross-thread arq_update_link_metrics() write, which races with the
      * event queue push in modem.c. */
     float    rx_snr;
+    /* RX_CAROUSEL: how long ago the frame ended when it was decoded. */
+    uint32_t rx_age_ms;
 
     /* APP_DISCONNECT from the host's ABORT: drop what is still in flight and
      * go at once, rather than drain it first as DISCONNECT does (#218). */

@@ -1865,6 +1865,7 @@ static void m_on_ctl(car_t *c, uint64_t now, const msg_t *m)
 /* ---- S: slots ---- */
 static void s_anchor(car_t *c, int kind, uint8_t mk, uint64_t eh, uint32_t d, int k, uint32_t rp)
 {
+    if (c->rx_late) return;                  /* decoded too late to answer (R4) */
     /* More frames of the keydown already anchored on. */
     if (c->anc.on && c->anc.kind == kind && kind != ANC_PATTERN && c->anc.mk == mk && c->anc.i == 0) {
         if (eh < c->anc.eh) { c->anc.eh = eh; arm(c, CAR_T_S, eh + TG_MS); }
@@ -2109,10 +2110,15 @@ void car_seed_ctl_deaf(car_t *c, bool mine, bool peers)
 }
 
 void car_on_frame(car_t *c, uint64_t now, const uint8_t *bytes, size_t len, int mode, bool control,
-                  float snr_db)
+                  float snr_db, uint32_t age_ms)
 {
     msg_t m;
     c->last_carrier_ms = now;
+    /* Times below are the frame's own: when it ended, not when it decoded. */
+    uint64_t when = now > age_ms ? now - age_ms : now;
+    c->rx_late = age_ms > d_of_mode(control ? ARQ_CONTROL_MODE : mode);
+    if (c->rx_late) car_trace(c, "rx frame decoded %u ms late: data only", age_ms);
+    now = when;
     if (snr_db != 0.0f) {
         c->snr_ema = c->snr_valid ? 0.7f * c->snr_ema + 0.3f * snr_db : snr_db;
         c->snr_valid = true;
@@ -2184,6 +2190,7 @@ static bool pattern_in_time(const car_t *c, uint64_t now)
 void car_on_pattern(car_t *c, uint64_t now, int kind)
 {
     c->last_carrier_ms = now;
+    c->rx_late = false;
     if (c->tx_busy || !(c->floor_waiting || c->pat_waiting)) return;
     if (!pattern_in_time(c, now)) {
         car_trace(c, "pattern %s out of time: ignored", kind == CAR_PATTERN_BREAK ? "BREAK" : "ACK");

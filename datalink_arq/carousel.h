@@ -176,6 +176,7 @@ typedef struct {
     uint8_t  req_mk;
     uint8_t  rx_mk;                 /* the M round whose frames I am counting */
     uint64_t s_tx_end;              /* when my last keydown ended */
+    bool     rx_late;               /* the frame being handled was decoded too late to answer */
     int      s_prev_lv;             /* the rung M's rounds last came on (-1: none) */
     bool     s_asked_new;           /* my poll on the air asks M for another rung */
     int      ok_lv;                 /* M: the rung of my last round S answered (-1: none) */
@@ -244,9 +245,11 @@ void car_start_receiver(car_t *c, uint64_t now);
 
 /* A frame came in.  control: the control decoder (DATAC16) produced it;
  * otherwise mode is the payload decoder's.  snr_db: the decoder's estimate
- * for it, 0 when unknown. */
+ * for it, 0 when unknown.  age_ms: how long ago the frame ended (0 when the
+ * decode was immediate); one older than its mode's decode bound is data,
+ * never a time to answer at. */
 void car_on_frame(car_t *c, uint64_t now, const uint8_t *bytes, size_t len, int mode, bool control,
-                  float snr_db);
+                  float snr_db, uint32_t age_ms);
 void car_on_tx_done(car_t *c, uint64_t now);
 /* A pattern was heard: CAR_PATTERN_ACK or CAR_PATTERN_BREAK. */
 void car_on_pattern(car_t *c, uint64_t now, int kind);
