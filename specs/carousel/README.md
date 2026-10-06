@@ -133,6 +133,54 @@ https://github.com/tlaplus/tlaplus/releases (these results: the Toolbox's,
 destroy each other's state.  A violated property prints the trace state by
 state.
 
+## A proof for every size: `CarouselProof.tla`, `CarouselProofs.tla`
+
+TLC checks the model at small sizes.  `CarouselProofs.tla` proves the block
+layer safe with TLAPS for the code's window -- WIN = 8, ids mod 16 -- and any
+number of blocks, any K, and FIFO channels of any length that lose any frames:
+
+```
+THEOREM SafetyHolds == Spec => []Safety      \* RetireSafe /\ Integrity
+```
+
+823 obligations, all proved (tlapm bfa9468, Z3 and Zenon):
+`tlapm --threads 8 CarouselProofs.tla`.
+
+`CarouselProof.tla` is the block layer written for proof: sets and functions
+over block ids instead of sequences filtered with `SelectSeq`, ghost fields
+on frames in flight, and no BREAK.  The sender may send a piece of *any*
+open block at any time, which covers whatever a BREAK -- genuine, spurious,
+another station's -- makes it choose.  K does not enter: a block may decode
+on any piece.
+
+The inductive invariant (`Inv`), in words:
+- the sender's open blocks span at most WIN ids below `nxt`; every id below
+  `nxt` is open or retired;
+- the receiver's base is the first block not decoded;
+- a data frame in flight was sent from an open block (`snxt` = `nxt` then,
+  in FIFO order), so its block lies within WIN of the base either side and
+  its id mod 16 resolves to it -- or reads as behind the base;
+- a poll in flight carries a faithful snapshot (`abase`, `sd`): its base is
+  at most the receiver's, everything it reports decoded is decoded; older
+  polls come first with smaller snapshots; and its base is open, or not yet
+  opened -- so every open block is below it plus WIN.
+
+The last point is where FIFO order is needed: an older poll can only retire
+blocks it saw decoded, so it never retires a later poll's base, and the
+sender's window stays anchored to every poll in flight.  The window lemmas
+(`ResolveIn`, `ResolveBehind`) are where WIN = 8 enters: with a symbolic WIN,
+`%` is non-linear for the SMT solver.
+
+`ProofCheck.tla` runs TLC over the proof model with `Inv` as the invariant
+(13 556 states at WIN 2): it found the invariant's gaps before any proof was
+attempted.  Dropping the span check from `Open` breaks it (TLC) and the proof
+(2 obligations fail).
+
+The Isabelle backend of this tlapm build does not start (its heaps record the
+build machine's paths), so nothing here uses it: the one step that wanted it,
+the least undecoded block, is avoided by letting the base slide to *a* first
+undecoded block (one always exists).
+
 ## The explorer: `tests/sim/car_explore.c`
 
 It runs the real `carousel.c` in the carousel simulator (`tests/sim/carousel_sim.c`,
