@@ -360,6 +360,15 @@ func formatChatTimestamp(t time.Time) string {
 	return t.Format(chatTimestampLayout)
 }
 
+// historyTimestamp recovers the display timestamp for a persisted history
+// message from its unix-second/millisecond fields, or "" when none is present.
+func historyTimestamp(m HistoryMessage) string {
+	if m.Ts == 0 {
+		return ""
+	}
+	return formatChatTimestamp(time.Unix(m.Ts, int64(m.Ms)*int64(time.Millisecond)))
+}
+
 func (cw *chatWindow) appendRichChat(box *fyne.Container, call, text, ts string) {
 	fyne.Do(func() {
 		segments := make([]widget.RichTextSegment, 0, 3)
@@ -548,14 +557,14 @@ func (cw *chatWindow) populateHistory() {
 		for _, m := range cw.history {
 			if m.Plane == "bcast" {
 				call, text := splitCallText(m.Text)
-				cw.appendRichChat(cw.bcastBox, call, text, "")
+				cw.appendRichChat(cw.bcastBox, call, text, historyTimestamp(m))
 				continue
 			}
 			call := m.Peer
 			if m.Dir == "tx" {
 				call = cw.myCall.Text
 			}
-			cw.appendRichChat(cw.arqBox, call, m.Text, "")
+			cw.appendRichChat(cw.arqBox, call, m.Text, historyTimestamp(m))
 		}
 	})
 }
