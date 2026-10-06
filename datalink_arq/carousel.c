@@ -1470,9 +1470,14 @@ static void on_poll_timer(car_t *c, uint64_t now)
      * frames over a DATAC16 return estacao2 could not decode, estacao2 re-sent
      * its one-frame handover every 25 s, and the UUCP hangup never completed
      * in 4 min. */
+    /* Nor to a sender whose window is full: its blocks are all in, but only
+     * a poll retires them, and until one does it has nothing new to open and
+     * sends one-frame rounds of repair nobody needs (sim, cliff:20: a third
+     * of the rounds after the first two full ones). */
     bool polls_lost = c->polls_unheard > 0;
     if (c->io.pattern && lv > 0 && lv == c->poll_level && (n == c->poll_n || polls_lost) && !c->status_seen &&
-        c->round_seen > 0 && c->round_seen >= c->round_frames && c->floor_patterns < FLOOR_POLL_EVERY) {
+        c->round_seen > 0 && c->round_seen >= c->round_frames && c->floor_patterns < FLOOR_POLL_EVERY &&
+        (!window_full || polls_lost)) {
         car_trace(c, "rx -> pattern ACK (lv=%d n=%d)%s", lv, n, polls_lost ? " for lost polls" : "");
         c->floor_patterns++;
         c->pattern_for_lost_polls = polls_lost;
