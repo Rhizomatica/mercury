@@ -65,26 +65,19 @@
 #define TURN_CAP_MS      45000
 #endif
 #define MAX_KEYDOWN_MS   30000    /* airtime cap per round                  */
-/* The keydown's lead before its first frame: tx delay and head silence, plus
- * the NAV header when keydowns carry one (car_set_nav_ms). */
+/* NAV headers (car_set_nav_ms) are not sent inside a session: the turn rules
+ * (docs/CAROUSEL-TURNS.md) keep the two ends off each other without carrier
+ * sense, and a header was 0.7 s of air on every keydown below 0 dB, and a
+ * longer wait on every lost answer, for nothing.  The setters stay, for a
+ * station that warns third parties. */
 static uint32_t g_nav_ms;
 void car_set_nav_ms(uint32_t ms) { g_nav_ms = ms; }
-/* Does my next keydown need a NAV header?  Only where the peer may not sense
- * it otherwise: below this SNR (as I hear it -- the path is reciprocal), or
- * where frames are being lost at a good SNR (NVIS: ISI, not noise): a decoder
- * that loses frames loses sync on them too. */
 static float g_nav_below_db = 99.0f;
 static double g_nav_loss = 0.3;
 void car_set_nav_below_db(float db) { g_nav_below_db = db; }
 void car_set_nav_loss(double loss) { g_nav_loss = loss; }
-bool car_wants_nav(const car_t *c)
-{
-    return g_nav_ms && (!c->snr_valid || c->snr_ema < g_nav_below_db || c->loss_est >= g_nav_loss);
-}
-static uint32_t nav_lead(const car_t *c) { return car_wants_nav(c) ? g_nav_ms : 0; }
-/* Both ends decide from the same reciprocal evidence, so a keydown's lead is
- * mostly the same whichever end predicts it -- not on an asymmetric link,
- * where one end hears the other below 0 dB and is heard above it. */
+bool car_wants_nav(const car_t *c) { (void)c; return false; }
+static uint32_t nav_lead(const car_t *c) { (void)c; return 0; }
 #define HEAD_MS          (110 + nav_lead(c))
 #define TAIL_MS          200
 #define GUARD_MS         ARQ_CHANNEL_GUARD_MS_DEFAULT
@@ -1150,14 +1143,13 @@ static void take_pieces(car_t *c, const msg_t *m)
  * loss, with no carrier sense.  Hearing S only changes what M sends, and lets
  * it reuse a slot it heard S finish in.
  *
- * Every bound counts the longest lead a keydown may carry (LEAD_MAX_MS: a NAV
- * header), so the two ends agree whether or not either sends one. */
+ * Every bound counts the longest lead a keydown may carry (LEAD_MAX_MS). */
 #define TG_MS        ISS_GUARD_MS     /* S's slot opens this long after the end */
 #define TURN_G_MS    GUARD_MS         /* M's guard either side of a slot */
 #define D_OFDM_MS    1000             /* the latest S decodes an M keydown: OFDM, */
 #define D_MFSK_MS    4500             /* MFSK (on air ~3.7 s after the unkey), */
 #define D_PAT_MS     800              /* a pattern (detected ~0.24 s after it) */
-#define LEAD_MAX_MS  (110 + 1000)     /* tx delay and head silence, a NAV header */
+#define LEAD_MAX_MS  (110 + 300)      /* tx delay and head silence, with a margin */
 #define K_FLOOR      2                /* continuations of a floor stream */
 #define K_ABOVE      0                /* ...above the floor none: M re-polls */
 /* S hears M only on the mode its payload decoder is bound to (the control
