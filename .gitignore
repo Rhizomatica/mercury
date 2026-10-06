@@ -60,6 +60,7 @@ utils/broadcast_test
 # Test binaries
 tests/test_*
 tests/carousel_bench
+tests/carousel_bound
 tests/ab_bench
 
 # Bench/scratch artifacts (never commit)

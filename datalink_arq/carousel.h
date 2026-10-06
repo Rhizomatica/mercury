@@ -237,6 +237,10 @@ void car_set_nav_ms(uint32_t ms);
 void car_set_nav_below_db(float db);
 void car_set_nav_loss(double loss);   /* ...or at this loss estimate (default 0.3) */
 bool car_wants_nav(const car_t *c);
+/* A rung's geometry (bytes of data per frame, frames per full keydown, its
+ * airtime, a round's fixed overhead): for computing bounds. */
+void car_rung_geometry(int lv, bool floor_patterns, int *bytes_per_frame, int *frames,
+                       uint64_t *round_air_ms, uint64_t *overhead_ms);
 
 /* How long delivering what is left may take on the rung the session is on:
  * a few exchanges -- my round, the peer's control answer -- there.  Seconds

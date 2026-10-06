@@ -920,6 +920,22 @@ static uint64_t round_overhead(const car_t *c, int lv)
 {
     return lv == 0 && c->io.pattern ? FLOOR_OVERHEAD_MS : ROUND_OVERHEAD_MS;
 }
+static int keydown_cap(int lv);
+/* For bounds (tests/sim/carousel_bound.c): a rung's geometry as the carousel
+ * itself sees it -- data bytes per frame, frames per full keydown, that
+ * keydown's airtime and the fixed cost of a round around it. */
+void car_rung_geometry(int lv, bool floor_patterns, int *bytes_per_frame, int *frames,
+                       uint64_t *round_air_ms, uint64_t *overhead_ms)
+{
+    static const car_t z;   /* the overhead macros read c: no session, no NAV lead */
+    const car_t *c = &z;
+    int n = keydown_cap(lv);
+    if (bytes_per_frame) *bytes_per_frame = pieces_per_frame(lv) * CAR_PIECE;
+    if (frames) *frames = n;
+    if (round_air_ms) *round_air_ms = round_air(lv, n);
+    if (overhead_ms) *overhead_ms = lv == 0 && floor_patterns ? FLOOR_OVERHEAD_MS : ROUND_OVERHEAD_MS;
+}
+
 static int keydown_cap(int lv)
 {
     int cap = (int)(MAX_KEYDOWN_MS / level_air(lv));

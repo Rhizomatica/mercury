@@ -48,4 +48,8 @@ void carousel_sim_force_corrupt(const int *frame_idx, int n);
  * ab_bench (clean | awgn:<per> | cliff:<snr> | nvis | fade:<snr>:<hz>). */
 void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limit_ms, car_sim_result_t *res);
 
+/* The channel such a run uses (fresh, seeded): for bounds. */
+struct sim_channel;
+struct sim_channel *carousel_sim_channel(uint64_t seed, const char *chan, double *snr_out);
+
 #endif

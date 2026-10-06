@@ -59,4 +59,7 @@ double         sim_channel_next_rand(sim_channel_t *ch);
 double         sim_channel_frame_snr(const sim_channel_t *ch, uint64_t t0_ms, int dir, int freedv_mode);
 bool           sim_channel_syncable(const sim_channel_t *ch, uint64_t now_ms,
                                     int dir, int freedv_mode);
+/* The erasure probability sim_channel_schedule() would draw against for such
+ * a frame starting now (no random number drawn): for bounds. */
+double         sim_channel_frame_per(const sim_channel_t *ch, uint64_t now_ms, int dir, int freedv_mode);
 #endif
