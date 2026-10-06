@@ -1,0 +1,228 @@
+---- MODULE CarouselTurns_TTrace_1791317341 ----
+EXTENDS Sequences, TLCExt, Toolbox, CarouselTurns, Naturals, TLC
+
+_expression ==
+    LET CarouselTurns_TEExpression == INSTANCE CarouselTurns_TEExpression
+    IN CarouselTurns_TEExpression!expression
+----
+
+_trace ==
+    LET CarouselTurns_TETrace == INSTANCE CarouselTurns_TETrace
+    IN CarouselTurns_TETrace!trace
+----
+
+_inv ==
+    ~(
+        TLCGet("level") = Len(_TETrace)
+        /\
+        sOn = (FALSE)
+        /\
+        t = (40)
+        /\
+        mLog = ({[r |-> 1, e |-> 3]})
+        /\
+        mR = (1)
+        /\
+        anchor = ([eh |-> 0, r |-> 0, i |-> -1])
+        /\
+        mEnd = (3)
+        /\
+        sEnd = (0)
+        /\
+        mOn = (FALSE)
+        /\
+        inflight = ({})
+    )
+----
+
+_init ==
+    /\ sOn = _TETrace[1].sOn
+    /\ mLog = _TETrace[1].mLog
+    /\ inflight = _TETrace[1].inflight
+    /\ mR = _TETrace[1].mR
+    /\ sEnd = _TETrace[1].sEnd
+    /\ t = _TETrace[1].t
+    /\ mEnd = _TETrace[1].mEnd
+    /\ mOn = _TETrace[1].mOn
+    /\ anchor = _TETrace[1].anchor
+----
+
+_next ==
+    /\ \E i,j \in DOMAIN _TETrace:
+        /\ \/ /\ j = i + 1
+              /\ i = TLCGet("level")
+        /\ sOn  = _TETrace[i].sOn
+        /\ sOn' = _TETrace[j].sOn
+        /\ mLog  = _TETrace[i].mLog
+        /\ mLog' = _TETrace[j].mLog
+        /\ inflight  = _TETrace[i].inflight
+        /\ inflight' = _TETrace[j].inflight
+        /\ mR  = _TETrace[i].mR
+        /\ mR' = _TETrace[j].mR
+        /\ sEnd  = _TETrace[i].sEnd
+        /\ sEnd' = _TETrace[j].sEnd
+        /\ t  = _TETrace[i].t
+        /\ t' = _TETrace[j].t
+        /\ mEnd  = _TETrace[i].mEnd
+        /\ mEnd' = _TETrace[j].mEnd
+        /\ mOn  = _TETrace[i].mOn
+        /\ mOn' = _TETrace[j].mOn
+        /\ anchor  = _TETrace[i].anchor
+        /\ anchor' = _TETrace[j].anchor
+
+\* Uncomment the ASSUME below to write the states of the error trace
+\* to the given file in Json format. Note that you can pass any tuple
+\* to `JsonSerialize`. For example, a sub-sequence of _TETrace.
+    \* ASSUME
+    \*     LET J == INSTANCE Json
+    \*         IN J!JsonSerialize("CarouselTurns_TTrace_1791317341.json", _TETrace)
+
+=============================================================================
+
+ Note that you can extract this module `CarouselTurns_TEExpression`
+  to a dedicated file to reuse `expression` (the module in the 
+  dedicated `CarouselTurns_TEExpression.tla` file takes precedence 
+  over the module `CarouselTurns_TEExpression` below).
+
+---- MODULE CarouselTurns_TEExpression ----
+EXTENDS Sequences, TLCExt, Toolbox, CarouselTurns, Naturals, TLC
+
+expression == 
+    [
+        \* To hide variables of the `CarouselTurns` spec from the error trace,
+        \* remove the variables below.  The trace will be written in the order
+        \* of the fields of this record.
+        sOn |-> sOn
+        ,mLog |-> mLog
+        ,inflight |-> inflight
+        ,mR |-> mR
+        ,sEnd |-> sEnd
+        ,t |-> t
+        ,mEnd |-> mEnd
+        ,mOn |-> mOn
+        ,anchor |-> anchor
+        
+        \* Put additional constant-, state-, and action-level expressions here:
+        \* ,_stateNumber |-> _TEPosition
+        \* ,_sOnUnchanged |-> sOn = sOn'
+        
+        \* Format the `sOn` variable as Json value.
+        \* ,_sOnJson |->
+        \*     LET J == INSTANCE Json
+        \*     IN J!ToJson(sOn)
+        
+        \* Lastly, you may build expressions over arbitrary sets of states by
+        \* leveraging the _TETrace operator.  For example, this is how to
+        \* count the number of times a spec variable changed up to the current
+        \* state in the trace.
+        \* ,_sOnModCount |->
+        \*     LET F[s \in DOMAIN _TETrace] ==
+        \*         IF s = 1 THEN 0
+        \*         ELSE IF _TETrace[s].sOn # _TETrace[s-1].sOn
+        \*             THEN 1 + F[s-1] ELSE F[s-1]
+        \*     IN F[_TEPosition - 1]
+    ]
+
+=============================================================================
+
+
+
+Parsing and semantic processing can take forever if the trace below is long.
+ In this case, it is advised to uncomment the module below to deserialize the
+ trace from a generated binary file.
+
+\*
+\*---- MODULE CarouselTurns_TETrace ----
+\*EXTENDS IOUtils, CarouselTurns, TLC
+\*
+\*trace == IODeserialize("CarouselTurns_TTrace_1791317341.bin", TRUE)
+\*
+\*=============================================================================
+\*
+
+---- MODULE CarouselTurns_TETrace ----
+EXTENDS CarouselTurns, TLC
+
+trace == 
+    <<
+    ([sOn |-> FALSE,t |-> 0,mLog |-> {},mR |-> 0,anchor |-> [eh |-> 0, r |-> 0, i |-> -1],mEnd |-> 0,sEnd |-> 0,mOn |-> FALSE,inflight |-> {}]),
+    ([sOn |-> FALSE,t |-> 0,mLog |-> {},mR |-> 1,anchor |-> [eh |-> 0, r |-> 0, i |-> -1],mEnd |-> 3,sEnd |-> 0,mOn |-> TRUE,inflight |-> {}]),
+    ([sOn |-> FALSE,t |-> 1,mLog |-> {},mR |-> 1,anchor |-> [eh |-> 0, r |-> 0, i |-> -1],mEnd |-> 3,sEnd |-> 0,mOn |-> TRUE,inflight |-> {}]),
+    ([sOn |-> FALSE,t |-> 2,mLog |-> {},mR |-> 1,anchor |-> [eh |-> 0, r |-> 0, i |-> -1],mEnd |-> 3,sEnd |-> 0,mOn |-> TRUE,inflight |-> {}]),
+    ([sOn |-> FALSE,t |-> 3,mLog |-> {},mR |-> 1,anchor |-> [eh |-> 0, r |-> 0, i |-> -1],mEnd |-> 3,sEnd |-> 0,mOn |-> TRUE,inflight |-> {}]),
+    ([sOn |-> FALSE,t |-> 3,mLog |-> {[r |-> 1, e |-> 3]},mR |-> 1,anchor |-> [eh |-> 0, r |-> 0, i |-> -1],mEnd |-> 3,sEnd |-> 0,mOn |-> FALSE,inflight |-> {[r |-> 1, e |-> 3]}]),
+    ([sOn |-> FALSE,t |-> 4,mLog |-> {[r |-> 1, e |-> 3]},mR |-> 1,anchor |-> [eh |-> 0, r |-> 0, i |-> -1],mEnd |-> 3,sEnd |-> 0,mOn |-> FALSE,inflight |-> {[r |-> 1, e |-> 3]}]),
+    ([sOn |-> FALSE,t |-> 5,mLog |-> {[r |-> 1, e |-> 3]},mR |-> 1,anchor |-> [eh |-> 0, r |-> 0, i |-> -1],mEnd |-> 3,sEnd |-> 0,mOn |-> FALSE,inflight |-> {[r |-> 1, e |-> 3]}]),
+    ([sOn |-> FALSE,t |-> 5,mLog |-> {[r |-> 1, e |-> 3]},mR |-> 1,anchor |-> [eh |-> 0, r |-> 0, i |-> -1],mEnd |-> 3,sEnd |-> 0,mOn |-> FALSE,inflight |-> {}]),
+    ([sOn |-> FALSE,t |-> 6,mLog |-> {[r |-> 1, e |-> 3]},mR |-> 1,anchor |-> [eh |-> 0, r |-> 0, i |-> -1],mEnd |-> 3,sEnd |-> 0,mOn |-> FALSE,inflight |-> {}]),
+    ([sOn |-> FALSE,t |-> 7,mLog |-> {[r |-> 1, e |-> 3]},mR |-> 1,anchor |-> [eh |-> 0, r |-> 0, i |-> -1],mEnd |-> 3,sEnd |-> 0,mOn |-> FALSE,inflight |-> {}]),
+    ([sOn |-> FALSE,t |-> 8,mLog |-> {[r |-> 1, e |-> 3]},mR |-> 1,anchor |-> [eh |-> 0, r |-> 0, i |-> -1],mEnd |-> 3,sEnd |-> 0,mOn |-> FALSE,inflight |-> {}]),
+    ([sOn |-> FALSE,t |-> 9,mLog |-> {[r |-> 1, e |-> 3]},mR |-> 1,anchor |-> [eh |-> 0, r |-> 0, i |-> -1],mEnd |-> 3,sEnd |-> 0,mOn |-> FALSE,inflight |-> {}]),
+    ([sOn |-> FALSE,t |-> 10,mLog |-> {[r |-> 1, e |-> 3]},mR |-> 1,anchor |-> [eh |-> 0, r |-> 0, i |-> -1],mEnd |-> 3,sEnd |-> 0,mOn |-> FALSE,inflight |-> {}]),
+    ([sOn |-> FALSE,t |-> 11,mLog |-> {[r |-> 1, e |-> 3]},mR |-> 1,anchor |-> [eh |-> 0, r |-> 0, i |-> -1],mEnd |-> 3,sEnd |-> 0,mOn |-> FALSE,inflight |-> {}]),
+    ([sOn |-> FALSE,t |-> 12,mLog |-> {[r |-> 1, e |-> 3]},mR |-> 1,anchor |-> [eh |-> 0, r |-> 0, i |-> -1],mEnd |-> 3,sEnd |-> 0,mOn |-> FALSE,inflight |-> {}]),
+    ([sOn |-> FALSE,t |-> 13,mLog |-> {[r |-> 1, e |-> 3]},mR |-> 1,anchor |-> [eh |-> 0, r |-> 0, i |-> -1],mEnd |-> 3,sEnd |-> 0,mOn |-> FALSE,inflight |-> {}]),
+    ([sOn |-> FALSE,t |-> 14,mLog |-> {[r |-> 1, e |-> 3]},mR |-> 1,anchor |-> [eh |-> 0, r |-> 0, i |-> -1],mEnd |-> 3,sEnd |-> 0,mOn |-> FALSE,inflight |-> {}]),
+    ([sOn |-> FALSE,t |-> 15,mLog |-> {[r |-> 1, e |-> 3]},mR |-> 1,anchor |-> [eh |-> 0, r |-> 0, i |-> -1],mEnd |-> 3,sEnd |-> 0,mOn |-> FALSE,inflight |-> {}]),
+    ([sOn |-> FALSE,t |-> 16,mLog |-> {[r |-> 1, e |-> 3]},mR |-> 1,anchor |-> [eh |-> 0, r |-> 0, i |-> -1],mEnd |-> 3,sEnd |-> 0,mOn |-> FALSE,inflight |-> {}]),
+    ([sOn |-> FALSE,t |-> 17,mLog |-> {[r |-> 1, e |-> 3]},mR |-> 1,anchor |-> [eh |-> 0, r |-> 0, i |-> -1],mEnd |-> 3,sEnd |-> 0,mOn |-> FALSE,inflight |-> {}]),
+    ([sOn |-> FALSE,t |-> 18,mLog |-> {[r |-> 1, e |-> 3]},mR |-> 1,anchor |-> [eh |-> 0, r |-> 0, i |-> -1],mEnd |-> 3,sEnd |-> 0,mOn |-> FALSE,inflight |-> {}]),
+    ([sOn |-> FALSE,t |-> 19,mLog |-> {[r |-> 1, e |-> 3]},mR |-> 1,anchor |-> [eh |-> 0, r |-> 0, i |-> -1],mEnd |-> 3,sEnd |-> 0,mOn |-> FALSE,inflight |-> {}]),
+    ([sOn |-> FALSE,t |-> 20,mLog |-> {[r |-> 1, e |-> 3]},mR |-> 1,anchor |-> [eh |-> 0, r |-> 0, i |-> -1],mEnd |-> 3,sEnd |-> 0,mOn |-> FALSE,inflight |-> {}]),
+    ([sOn |-> FALSE,t |-> 21,mLog |-> {[r |-> 1, e |-> 3]},mR |-> 1,anchor |-> [eh |-> 0, r |-> 0, i |-> -1],mEnd |-> 3,sEnd |-> 0,mOn |-> FALSE,inflight |-> {}]),
+    ([sOn |-> FALSE,t |-> 22,mLog |-> {[r |-> 1, e |-> 3]},mR |-> 1,anchor |-> [eh |-> 0, r |-> 0, i |-> -1],mEnd |-> 3,sEnd |-> 0,mOn |-> FALSE,inflight |-> {}]),
+    ([sOn |-> FALSE,t |-> 23,mLog |-> {[r |-> 1, e |-> 3]},mR |-> 1,anchor |-> [eh |-> 0, r |-> 0, i |-> -1],mEnd |-> 3,sEnd |-> 0,mOn |-> FALSE,inflight |-> {}]),
+    ([sOn |-> FALSE,t |-> 24,mLog |-> {[r |-> 1, e |-> 3]},mR |-> 1,anchor |-> [eh |-> 0, r |-> 0, i |-> -1],mEnd |-> 3,sEnd |-> 0,mOn |-> FALSE,inflight |-> {}]),
+    ([sOn |-> FALSE,t |-> 25,mLog |-> {[r |-> 1, e |-> 3]},mR |-> 1,anchor |-> [eh |-> 0, r |-> 0, i |-> -1],mEnd |-> 3,sEnd |-> 0,mOn |-> FALSE,inflight |-> {}]),
+    ([sOn |-> FALSE,t |-> 26,mLog |-> {[r |-> 1, e |-> 3]},mR |-> 1,anchor |-> [eh |-> 0, r |-> 0, i |-> -1],mEnd |-> 3,sEnd |-> 0,mOn |-> FALSE,inflight |-> {}]),
+    ([sOn |-> FALSE,t |-> 27,mLog |-> {[r |-> 1, e |-> 3]},mR |-> 1,anchor |-> [eh |-> 0, r |-> 0, i |-> -1],mEnd |-> 3,sEnd |-> 0,mOn |-> FALSE,inflight |-> {}]),
+    ([sOn |-> FALSE,t |-> 28,mLog |-> {[r |-> 1, e |-> 3]},mR |-> 1,anchor |-> [eh |-> 0, r |-> 0, i |-> -1],mEnd |-> 3,sEnd |-> 0,mOn |-> FALSE,inflight |-> {}]),
+    ([sOn |-> FALSE,t |-> 29,mLog |-> {[r |-> 1, e |-> 3]},mR |-> 1,anchor |-> [eh |-> 0, r |-> 0, i |-> -1],mEnd |-> 3,sEnd |-> 0,mOn |-> FALSE,inflight |-> {}]),
+    ([sOn |-> FALSE,t |-> 30,mLog |-> {[r |-> 1, e |-> 3]},mR |-> 1,anchor |-> [eh |-> 0, r |-> 0, i |-> -1],mEnd |-> 3,sEnd |-> 0,mOn |-> FALSE,inflight |-> {}]),
+    ([sOn |-> FALSE,t |-> 31,mLog |-> {[r |-> 1, e |-> 3]},mR |-> 1,anchor |-> [eh |-> 0, r |-> 0, i |-> -1],mEnd |-> 3,sEnd |-> 0,mOn |-> FALSE,inflight |-> {}]),
+    ([sOn |-> FALSE,t |-> 32,mLog |-> {[r |-> 1, e |-> 3]},mR |-> 1,anchor |-> [eh |-> 0, r |-> 0, i |-> -1],mEnd |-> 3,sEnd |-> 0,mOn |-> FALSE,inflight |-> {}]),
+    ([sOn |-> FALSE,t |-> 33,mLog |-> {[r |-> 1, e |-> 3]},mR |-> 1,anchor |-> [eh |-> 0, r |-> 0, i |-> -1],mEnd |-> 3,sEnd |-> 0,mOn |-> FALSE,inflight |-> {}]),
+    ([sOn |-> FALSE,t |-> 34,mLog |-> {[r |-> 1, e |-> 3]},mR |-> 1,anchor |-> [eh |-> 0, r |-> 0, i |-> -1],mEnd |-> 3,sEnd |-> 0,mOn |-> FALSE,inflight |-> {}]),
+    ([sOn |-> FALSE,t |-> 35,mLog |-> {[r |-> 1, e |-> 3]},mR |-> 1,anchor |-> [eh |-> 0, r |-> 0, i |-> -1],mEnd |-> 3,sEnd |-> 0,mOn |-> FALSE,inflight |-> {}]),
+    ([sOn |-> FALSE,t |-> 36,mLog |-> {[r |-> 1, e |-> 3]},mR |-> 1,anchor |-> [eh |-> 0, r |-> 0, i |-> -1],mEnd |-> 3,sEnd |-> 0,mOn |-> FALSE,inflight |-> {}]),
+    ([sOn |-> FALSE,t |-> 37,mLog |-> {[r |-> 1, e |-> 3]},mR |-> 1,anchor |-> [eh |-> 0, r |-> 0, i |-> -1],mEnd |-> 3,sEnd |-> 0,mOn |-> FALSE,inflight |-> {}]),
+    ([sOn |-> FALSE,t |-> 38,mLog |-> {[r |-> 1, e |-> 3]},mR |-> 1,anchor |-> [eh |-> 0, r |-> 0, i |-> -1],mEnd |-> 3,sEnd |-> 0,mOn |-> FALSE,inflight |-> {}]),
+    ([sOn |-> FALSE,t |-> 39,mLog |-> {[r |-> 1, e |-> 3]},mR |-> 1,anchor |-> [eh |-> 0, r |-> 0, i |-> -1],mEnd |-> 3,sEnd |-> 0,mOn |-> FALSE,inflight |-> {}]),
+    ([sOn |-> FALSE,t |-> 40,mLog |-> {[r |-> 1, e |-> 3]},mR |-> 1,anchor |-> [eh |-> 0, r |-> 0, i |-> -1],mEnd |-> 3,sEnd |-> 0,mOn |-> FALSE,inflight |-> {}])
+    >>
+----
+
+
+=============================================================================
+
+---- CONFIG CarouselTurns_TTrace_1791317341 ----
+CONSTANTS
+    Tg = 1
+    D = 2
+    G = 1
+    K = 2
+    A = 5
+    ML = { 1 , 3 }
+    RL = { 1 , 3 }
+    H = 40
+
+INVARIANT
+    _inv
+
+CHECK_DEADLOCK
+    \* CHECK_DEADLOCK off because of PROPERTY or INVARIANT above.
+    FALSE
+
+INIT
+    _init
+
+NEXT
+    _next
+
+CONSTANT
+    _TETrace <- _trace
+
+ALIAS
+    _expression
+=============================================================================
+\* Generated on Tue Oct 06 21:09:05 WEST 2026
