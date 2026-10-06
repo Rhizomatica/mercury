@@ -162,6 +162,10 @@ CAROUSEL_SIM_SRC = sim/carousel_sim.c ../datalink_arq/carousel.c ../datalink_arq
 test_car_explore: sim/car_explore.c $(CAROUSEL_SIM_SRC)
 	$(CC) $(CFLAGS) -DCAR_SIM_BYTES=$${CAR_EXPLORE_BYTES:-600} -Isim -I../modem/freedv -o $@ $(filter %.c %.a %.o,$^) $(LDFLAGS)
 
+# An upper bound for carousel_bench on the same channel (sim/carousel_bound.c).
+carousel_bound: sim/carousel_bound.c $(CAROUSEL_SIM_SRC)
+	$(CC) $(CFLAGS) -Isim -I../modem/freedv -o $@ $(filter %.c %.a %.o,$^) $(LDFLAGS)
+
 carousel_bench: sim/carousel_bench.c $(CAROUSEL_SIM_SRC)
 	$(CC) $(CFLAGS) -Isim -I../modem/freedv -o $@ $(filter %.c %.a %.o,$^) $(LDFLAGS)
 

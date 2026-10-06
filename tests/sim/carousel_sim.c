@@ -334,28 +334,12 @@ static void io_deliver(void *ctx, const uint8_t *buf, size_t len)
 }
 
 /* ---- run ------------------------------------------------------------------ */
-void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limit_ms, car_sim_result_t *res)
+/* The channel a run uses, by name (see carousel_sim_run); *snr_out gets the
+ * SNR the ends are told at connect.  Also used for bounds. */
+sim_channel_t *carousel_sim_channel(uint64_t seed, const char *chan, double *snr_out)
 {
-    trace = getenv("CAR_TRACE") != NULL;
-    asym = false;
-    cs_decodable = getenv("CAR_CS_DECODABLE") != NULL;
-    nav_mode = getenv("CAR_NAV") ? (strcmp(getenv("CAR_NAV"), "perfect") ? 1 : 2) : 0;
-    nav_air = !nav_mode ? 0 : getenv("CAR_NAV_AIR") ? (uint32_t)atoi(getenv("CAR_NAV_AIR")) : 700;
-    car_set_nav_ms(nav_air);
-    car_set_nav_below_db(getenv("CAR_NAV_BELOW") ? (float)atof(getenv("CAR_NAV_BELOW")) : 99.0f);
-    car_set_nav_loss(getenv("CAR_NAV_LOSS") ? atof(getenv("CAR_NAV_LOSS")) : 0.3);
-    snr_biased = getenv("CAR_SNR_BIAS") != NULL;
-    nev = 0;
-    collisions = 0;
-    bad_frames = 0;
-    frame_no = 0;
-    keydown_no = 0;
-    kd_overlaps = 0;
-    kd_unexplained = 0;
-    memset(S, 0, sizeof(S));
-
     sim_channel_cfg_t cfg = { .seed = seed, .per = 0.02, .guard_ms = 150 };
-    ch = sim_channel_create(&cfg);
+    sim_channel_t *ch = sim_channel_create(&cfg);
     static const sim_mode_per_t NVIS[] = {
         { FREEDV_MODE_DATAC15, 0.20 }, { FREEDV_MODE_DATAC16, 0.20 },
         { FREEDV_MODE_DATAC13, 0.30 }, { FREEDV_MODE_DATAC14, 0.30 },
@@ -363,7 +347,7 @@ void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limi
         { FREEDV_MODE_DATAC1,  0.89 }, { FREEDV_MODE_DATAC17, 0.93 },
         { FREEDV_MODE_QAM16C2, 0.95 },
     };
-    double snr_db = 12.0;                  /* what the sim stamps on frames */
+    double snr_db = 12.0;
     if (!strncmp(chan, "fade:", 5)) {
         double m = 0, d = 0.5;
         sscanf(chan + 5, "%lf:%lf", &m, &d);
@@ -386,6 +370,32 @@ void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limi
         sim_channel_set_mode_per(ch, NVIS, (int)(sizeof(NVIS) / sizeof(NVIS[0])));
         snr_db = 10.0;
     }
+    if (snr_out) *snr_out = snr_db;
+    return ch;
+}
+
+void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limit_ms, car_sim_result_t *res)
+{
+    trace = getenv("CAR_TRACE") != NULL;
+    asym = false;
+    cs_decodable = getenv("CAR_CS_DECODABLE") != NULL;
+    nav_mode = getenv("CAR_NAV") ? (strcmp(getenv("CAR_NAV"), "perfect") ? 1 : 2) : 0;
+    nav_air = !nav_mode ? 0 : getenv("CAR_NAV_AIR") ? (uint32_t)atoi(getenv("CAR_NAV_AIR")) : 700;
+    car_set_nav_ms(nav_air);
+    car_set_nav_below_db(getenv("CAR_NAV_BELOW") ? (float)atof(getenv("CAR_NAV_BELOW")) : 99.0f);
+    car_set_nav_loss(getenv("CAR_NAV_LOSS") ? atof(getenv("CAR_NAV_LOSS")) : 0.3);
+    snr_biased = getenv("CAR_SNR_BIAS") != NULL;
+    nev = 0;
+    collisions = 0;
+    bad_frames = 0;
+    frame_no = 0;
+    keydown_no = 0;
+    kd_overlaps = 0;
+    kd_unexplained = 0;
+    memset(S, 0, sizeof(S));
+
+    double snr_db = 12.0;                  /* what the sim stamps on frames */
+    ch = carousel_sim_channel(seed, chan, &snr_db);
     snr_now = snr_db;
     if (getenv("CAR_NOHINT")) snr_db = -99.0;
 

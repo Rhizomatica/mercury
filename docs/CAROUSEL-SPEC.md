@@ -762,3 +762,63 @@ Measured (details in the commit messages):
 
 Open: R24 (blind timers inside a header's detection time); NAV headers are
 not yet sent or honoured outside a session (third-party listen-before-talk).
+
+## 13. Step 4: optimisation against a bound (branch carousel-optimise)
+
+`tests/carousel_bound <channel> [bidir]` gives what the carousel could do
+on a sim channel at best, using the carousel's own round geometry
+(`car_rung_geometry`: bytes per frame, frames per full keydown, its
+airtime, a round's fixed overhead).  It reports two numbers:
+
+- `bound_s`: an oracle that knows each second's frame loss on every rung
+  (`sim_channel_frame_per`, no random draw) and is always on the best rung.
+  It never probes, never loses a poll and never waits on a timer.  Below a
+  mode's cliff it counts frames as lost.  The sim's 10 % survival there is
+  an artefact. NVIS is the exception, because its loss table is measured.
+- `fixed_s`: the best single rung held throughout.  The oracle follows
+  0.5 Hz fades that no round can, so on fades the target lies between the
+  two numbers.
+
+Efficiency before this step (8 KB one way, bound / bench):
+- cliff channels: 62–93 %;
+- fades: 72–95 % of `fixed_s`;
+- flat loss (`awgn:`): 32–48 %. Its polls are lost too, which the bound
+  ignores;
+- NVIS: 29 % of an oracle that picks QAM16C2 at 5 % success. The table is
+  synthetic and was not chased.
+
+| Change | Where | Effect (sim, 20 seeds) |
+|---|---|---|
+| No pattern ACK above the floor to a sender whose window is full. Only a poll retires blocks, so until one came the sender had nothing new to open and sent one-frame repair rounds. | end of round | 64 KB cliff:20 357 → 295 s; cliff:10 674 → 612 s |
+| A probe that came whole earns a second (two-frame) round before the argmax judges it. Near its threshold, one good frame scores 1/2, below the rung beneath it. Not used below threshold − 1.5 dB. | `choose_level` | awgn:0.1 90 → 79 s one way, 179 → 154 s both ways; 64 KB 563 → 447 s |
+| The receiver keeps its blind polls off the sender's handover repeats: they are predicted from the heard handover with the sender's NAV lead. A ±`SENSE_MS` window applies around the first repeat. Every repeat is waited out only before a turn-cap handover in a turn where nothing of the peer was heard. | `clear_of_peer_handover_repeat` | car_explore cliff:−5 bidir {11,47,48} fixed; collisions over 120 seeds both ways: fade:−3 6 → 1; asym:−9:3 without NAV 28 → 0 |
+| Rounds double from a probe (earned = 1 + 2 × delivered) where the SNR has room; near the threshold they still grow by one frame. | `level_earned` | nvis 2217 → 2030 s one way, 4259 → 3506 s both ways; step both ways 579 → 484 s; cliff:20 −10 % |
+
+Rejected after measuring:
+- Waiting out every predicted repeat before any poll cost 10–20 % both ways
+  at 0..10 dB. Silence after a poll means a lost round as often as a lost
+  poll.
+- Gating the turn-cap handover on having heard the peer gained little and
+  cost 1–2 %.
+- Requiring a delivery before probing up: fades −2..−6 %, but flat loss
+  +6–8 % and NVIS +3.7 %.
+
+On air (gateway ⇄ estacao2, 7.050 MHz, against trunk de900c3, interleaved):
+- without the round doubling:
+  - 8 KB both ways at 20 %: calls of 375/315 s against 350/319 s;
+  - 2 KB at 3 %: 709/647/787 s against 714/728/685 s;
+- with it, 8 KB both ways at 20 %: 330/307 s against 307/353 s;
+- every file intact; the gateway's modem at 8–10 % of a core either way.
+
+In short, a tie.  UUCP's turns keep most rounds at 1–4 frames, and the
+station side sits near DATAC17's threshold (about 6.5 dB), where rounds
+still grow by one, so the gains the sim shows on long transfers and on
+lossy or NVIS channels have little to act on here.  The confirmation fired twice at 20 %: once QAM16C2
+delivered 2/2, once it lost both and was declared dead.  Its effect on air is
+not shown either way.
+
+Finding: on this link QAM16C2 frames read 4–5 dB below DATAC17 frames
+(10–13 against 15–17 dB).  A reading of 9.9 dB on QAM16C2 shut the rung by
+its own gate.  The per-mode lines in `freedv_snr_calib` were fitted over
+5..11 dB, and DATAC17's slope (1.6) likely over-reads above that.  The
+calibration needs points above 12 dB.

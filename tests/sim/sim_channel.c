@@ -225,6 +225,23 @@ bool sim_channel_syncable(const sim_channel_t *ch, uint64_t now_ms,
     return true;
 }
 
+double sim_channel_frame_per(const sim_channel_t *ch, uint64_t now_ms, int dir, int freedv_mode)
+{
+    double per = ch->per;
+    if (ch->fading) {
+        uint32_t air = sim_channel_airtime_ms(freedv_mode, 0);
+        double cliff = mode_cliff_db(freedv_mode);
+        if (frame_snr_db(ch, dir, now_ms, air, cliff) < cliff) per = SIM_CLIFF_PER;
+    } else if (ch->mode_per_count > 0) {
+        for (int i = 0; i < ch->mode_per_count; i++)
+            if (ch->mode_per[i].freedv_mode == freedv_mode) { per = ch->mode_per[i].per; break; }
+    } else if (ch->cliff_enabled &&
+               (ch->asym ? ch->snr_dir_db[dir & 1] : ch->snr_db) < mode_cliff_db(freedv_mode)) {
+        per = SIM_CLIFF_PER;
+    }
+    return per;
+}
+
 bool sim_channel_schedule(sim_channel_t *ch, uint64_t now_ms,
                           int dir, int freedv_mode, size_t frame_size,
                           uint64_t *deliver_at_ms)

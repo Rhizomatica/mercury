@@ -82,7 +82,8 @@ bool car_wants_nav(const car_t *c)
 }
 static uint32_t nav_lead(const car_t *c) { return car_wants_nav(c) ? g_nav_ms : 0; }
 /* Both ends decide from the same reciprocal evidence, so a keydown's lead is
- * the same whichever end predicts it. */
+ * mostly the same whichever end predicts it -- not on an asymmetric link,
+ * where one end hears the other below 0 dB and is heard above it. */
 #define HEAD_MS          (110 + nav_lead(c))
 #define TAIL_MS          200
 #define GUARD_MS         ARQ_CHANNEL_GUARD_MS_DEFAULT
@@ -920,6 +921,22 @@ static uint64_t round_overhead(const car_t *c, int lv)
 {
     return lv == 0 && c->io.pattern ? FLOOR_OVERHEAD_MS : ROUND_OVERHEAD_MS;
 }
+static int keydown_cap(int lv);
+/* For bounds (tests/sim/carousel_bound.c): a rung's geometry as the carousel
+ * itself sees it -- data bytes per frame, frames per full keydown, that
+ * keydown's airtime and the fixed cost of a round around it. */
+void car_rung_geometry(int lv, bool floor_patterns, int *bytes_per_frame, int *frames,
+                       uint64_t *round_air_ms, uint64_t *overhead_ms)
+{
+    static const car_t z;   /* the overhead macros read c: no session, no NAV lead */
+    const car_t *c = &z;
+    int n = keydown_cap(lv);
+    if (bytes_per_frame) *bytes_per_frame = pieces_per_frame(lv) * CAR_PIECE;
+    if (frames) *frames = n;
+    if (round_air_ms) *round_air_ms = round_air(lv, n);
+    if (overhead_ms) *overhead_ms = lv == 0 && floor_patterns ? FLOOR_OVERHEAD_MS : ROUND_OVERHEAD_MS;
+}
+
 static int keydown_cap(int lv)
 {
     int cap = (int)(MAX_KEYDOWN_MS / level_air(lv));
@@ -932,10 +949,20 @@ static double air_fraction(const car_t *c, int lv, int frames)
     double air = (double)round_air(lv, frames);
     return air / (air + (double)round_overhead(c, lv));
 }
+/* The round a rung has earned: one frame more than it recently delivered,
+ * twice that where the SNR has room to spare -- the round size then doubles
+ * from a probe as TCP's window does, where adding one frame took an 8 KB
+ * transfer at 20 dB four rounds (1, 2, 3, 2) and a poll's overhead each. */
+static bool level_marginal(const car_t *c, int lv);
+static int level_earned(const car_t *c, int lv)
+{
+    double got = c->lv_sent[lv] - c->lv_lost[lv];
+    return 1 + (int)(level_marginal(c, lv) || !c->snr_valid ? got : 2.0 * got);
+}
 /* What a measured rung delivers per second, in the rounds it has earned. */
 static double level_goodput(const car_t *c, int lv)
 {
-    int earned = 1 + (int)(c->lv_sent[lv] - c->lv_lost[lv]);
+    int earned = level_earned(c, lv);
     int frames = earned < keydown_cap(lv) ? earned : keydown_cap(lv);
     return level_rate(lv) * level_delivery(c, lv) * air_fraction(c, lv, frames);
 }
@@ -993,6 +1020,24 @@ static int choose_level(const car_t *c, uint64_t now)
      * a 0.7 bar stopped the climb there. */
     if (level_delivery(c, best) < PROBE_UP_DELIVERY)
         return best;
+    /* A probe that came whole is followed by a second round there before
+     * the argmax judges the rung: near its threshold one frame scores 1/2,
+     * under the rung below, and the session went straight back down.  On air
+     * (20 %, both ways, every run) DATAC17 at 6.5 dB delivered its probe and
+     * the session stayed on DATAC1 the rest of the transfer, and QAM16C2 at
+     * 13 dB went back to DATAC17 for a 4-frame round; in the sim at 12 dB a
+     * clean QAM16C2 was left after one frame.  The second round is the one
+     * the probe earned (two frames); two lost there declare a marginal rung
+     * dead.  Not in the lower half of the SNR's doubt: there a frame that
+     * came is more likely luck than the rung working (sim, cliff:10: a
+     * QAM16C2 frame at 10 dB, then two lost, +5 %). */
+    for (int up = best + 1; up < CAR_NLEVELS; up++)
+        if (c->lv_rounds[up] && c->lv_round_at[up] == c->polls && c->lv_sent[up] < 3.0 &&
+            c->lv_lost[up] < 0.05 && level_allowed(c, up) && level_potential(c, up) > best_gp &&
+            !(c->snr_valid && c->snr_ema < level_min_db(up) - SNR_GATE_DB / 2)) {
+            car_trace(c, "rx confirms lv=%d", up);
+            return up;
+        }
     for (int up = best + 1; up < CAR_NLEVELS; up++) {
         if (level_potential(c, up) <= best_gp)
             continue;                   /* cannot win even with no loss */
@@ -1023,7 +1068,7 @@ static int peer_outstanding(const car_t *c)
 static int poll_size(const car_t *c, int lv, uint64_t now)
 {
     int cap = keydown_cap(lv);
-    int earned = 1 + (int)(c->lv_sent[lv] - c->lv_lost[lv]);
+    int earned = level_earned(c, lv);
     if (cap > earned) cap = earned;
     /* With our own data waiting, the peer's turn ends at TURN_CAP_MS: ask
      * only for what fits before it.  The cap is checked between rounds, and
@@ -1288,6 +1333,64 @@ static bool clear_of_peer_nudge(car_t *c, uint64_t now)
     return true;
 }
 
+/* The same for a handover: a sender that hears no poll after its handover
+ * repeats it a control answer's time after its keydown (arm_sender_wait),
+ * and again after each repeat, for as long as it hears nothing -- times set
+ * by a keydown I heard end.  My window for its round runs on a timer of its
+ * own, and after a lost poll the two fell together: my second poll went out
+ * 0.1 s after the repeat began, before it could be sensed (car_explore,
+ * cliff:-5 both ways, frames 11, 47 and 48 lost).  Within SENSE_MS of the
+ * first repeat, wait until it would be sensed.  Only that close: silence
+ * after my poll is as likely a round I did not hear, and waiting out whole
+ * repeats cost 10-20 % both ways at 0..10 dB (sim).
+ *
+ * Except before a handover of mine that ends a turn in which I heard
+ * nothing of the peer: that keydown is a whole round long, and the likeliest
+ * reason for the silence is the peer repeating where I cannot hear it -- my
+ * handover went out 10.7 s into its second repeat (sim, fade:-5 both ways,
+ * seed 17).  Then every repeat it may be on is waited out, the next few of
+ * them (each predicted later drifts more), for both of its waits: the
+ * longer one follows a floor poll of its that I may have missed. */
+#define HO_REPEATS_PREDICTED 3
+static bool clear_of_peer_handover_repeat(car_t *c, uint64_t now)
+{
+    if (c->sending || !c->peer_ho_end) return false;
+    if (c->last_carrier_ms > c->peer_ho_end + GUARD_MS) { c->peer_ho_end = 0; return false; }
+    uint64_t ctl = ctl_on_floor(c) ? level_air(0) : mode_air(ARQ_CONTROL_MODE);
+    uint64_t head = 110;                                 /* HEAD_MS without my NAV lead */
+    uint64_t base = GUARD_MS + head + ctl + TAIL_MS + WINDOW_MARGIN_MS;
+    uint64_t floor_extra = SENSE_MS + FLOOR_SENSE_MS + head + ctl + TAIL_MS;
+    bool blind_handover = has_data(c) && now - c->drive_start >= TURN_CAP_MS && c->last_carrier_ms <= c->drive_start;
+    if (!blind_handover) {
+        /* ...longer when it was driving my floor stream (its drove_peer and
+         * poll_level 0 are my sending at the floor). */
+        bool fl = c->tx_level == 0 && c->io.pattern;
+        uint64_t rep = c->peer_ho_end + base + (fl ? floor_extra : 0);
+        /* Its heads carry its NAV lead, not mine: on an asymmetric link the
+         * ends disagree (sim, asym:-9:3 both ways: predicted 1.4 s early,
+         * and "after it" fell on the repeat). */
+        uint64_t late = rep + (fl ? 2 : 1) * g_nav_ms;
+        if (now + SENSE_MS <= rep || now >= late + SENSE_MS) return false;
+        car_trace(c, "rx: the peer's handover repeat is due -- after it");
+        c->peer_ho_end = 0;
+        arm(c, CAR_T_POLL, late + SENSE_MS);
+        return true;
+    }
+    uint64_t kd = c->peer_ho_end - c->peer_ho_start, clear = 0;
+    for (int w = 0; w < 2 && !(w == 1 && !c->io.pattern); w++) {
+        uint64_t wait = base + (w ? floor_extra : 0), lead = (w ? 2 : 1) * g_nav_ms;
+        for (int k = 0; k < HO_REPEATS_PREDICTED; k++) {
+            uint64_t rep = c->peer_ho_end + wait + (uint64_t)k * (kd + wait + lead);
+            if (now + SENSE_MS <= rep) break;
+            if (now < rep + lead + kd + GUARD_MS) { clear = rep + lead + kd + GUARD_MS; break; }
+        }
+    }
+    if (!clear) return false;
+    car_trace(c, "rx: the peer may be repeating its handover -- after it");
+    arm(c, CAR_T_POLL, clear);
+    return true;
+}
+
 /* The poll timer: the round is over (or never came).  Measure it, then poll,
  * take the turn, or go quiet. */
 static void on_poll_timer(car_t *c, uint64_t now)
@@ -1296,6 +1399,7 @@ static void on_poll_timer(car_t *c, uint64_t now)
     if ((c->floor_fallback || c->floor_hold) && peer_keyed(c, now)) c->round_heard = true;
     if (defer_if_busy(c, CAR_T_POLL, now)) return;
     if (clear_of_peer_nudge(c, now)) return;
+    if (clear_of_peer_handover_repeat(c, now)) return;
     /* My poll off a floor stream brought nothing -- no frame, no status.  If
      * it was lost, the sender carries on at the floor a floor wait after its
      * round, and my decoder, bound to the rung I asked for, cannot hear that,
@@ -1454,9 +1558,14 @@ static void on_poll_timer(car_t *c, uint64_t now)
      * frames over a DATAC16 return estacao2 could not decode, estacao2 re-sent
      * its one-frame handover every 25 s, and the UUCP hangup never completed
      * in 4 min. */
+    /* Nor to a sender whose window is full: its blocks are all in, but only
+     * a poll retires them, and until one does it has nothing new to open and
+     * sends one-frame rounds of repair nobody needs (sim, cliff:20: a third
+     * of the rounds after the first two full ones). */
     bool polls_lost = c->polls_unheard > 0;
     if (c->io.pattern && lv > 0 && lv == c->poll_level && (n == c->poll_n || polls_lost) && !c->status_seen &&
-        c->round_seen > 0 && c->round_seen >= c->round_frames && c->floor_patterns < FLOOR_POLL_EVERY) {
+        c->round_seen > 0 && c->round_seen >= c->round_frames && c->floor_patterns < FLOOR_POLL_EVERY &&
+        (!window_full || polls_lost)) {
         car_trace(c, "rx -> pattern ACK (lv=%d n=%d)%s", lv, n, polls_lost ? " for lost polls" : "");
         c->floor_patterns++;
         c->pattern_for_lost_polls = polls_lost;
@@ -1594,6 +1703,8 @@ static void on_ctl(car_t *c, uint64_t now, const msg_t *m)
         c->peer_hi = resolve16(c->rbase, m->hi);
         c->peer_hi_known = true;
         start_driving(c, m->h_id, m->h_level, m->h_n, now + CHAIN_GAP_MS - HEAD_MS, now);
+        c->peer_ho_start = now - peer_ctl_air(c) - HEAD_MS;      /* its control mode is the one I hear */
+        c->peer_ho_end = m->h_level > 0 ? now + CHAIN_GAP_MS + round_air(m->h_level, m->h_n) + TAIL_MS : 0;
         return;
     }
     /* A poll of my direction.  If I thought I was driving, the peer never

@@ -182,6 +182,10 @@ typedef struct {
      * poll repeats it SENDER_SILENCE_MS after it (see on_poll_timer). */
     uint64_t peer_round_end;
     int      peer_round_lv, peer_round_n;
+    /* The end of the peer's last handover keydown above the floor, while
+     * nothing after it has been heard: unanswered, it is repeated at a time I
+     * can work out (see clear_of_peer_handover_repeat). */
+    uint64_t peer_ho_start, peer_ho_end;
     bool     peer_has_data;         /* the peer's last poll said it has data for me */
     uint64_t send_start_ms;         /* when this sending turn of mine began */
     bool     floor_yielded;         /* silence near the peer's turn: I stopped for its handover */
@@ -237,6 +241,10 @@ void car_set_nav_ms(uint32_t ms);
 void car_set_nav_below_db(float db);
 void car_set_nav_loss(double loss);   /* ...or at this loss estimate (default 0.3) */
 bool car_wants_nav(const car_t *c);
+/* A rung's geometry (bytes of data per frame, frames per full keydown, its
+ * airtime, a round's fixed overhead): for computing bounds. */
+void car_rung_geometry(int lv, bool floor_patterns, int *bytes_per_frame, int *frames,
+                       uint64_t *round_air_ms, uint64_t *overhead_ms);
 
 /* How long delivering what is left may take on the rung the session is on:
  * a few exchanges -- my round, the peer's control answer -- there.  Seconds
