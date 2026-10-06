@@ -2503,6 +2503,35 @@ void ofdm_set_sync(struct OFDM *ofdm, int sync_cmd) {
 
 \*---------------------------------------------------------------------------*/
 
+/*
+ * Es/No in dB, decision-directed: noise is the distance from each symbol to
+ * the nearest constellation point, scaled by the symbol's own amplitude
+ * estimate (as qam16_demod() decides it); signal is the received power.
+ * For 16-QAM, where ofdm_esno_est_calc() counts the constellation's own
+ * amplitude levels as noise.  Not for QPSK: its amplitude estimates are not
+ * on the constellation's scale (qpsk_demod() never uses them), and on the ch
+ * reference this read lower than ofdm_esno_est_calc() (DATAC3: 8.5 dB at 22).
+ */
+float ofdm_esno_est_dd(int bps, complex float *rx_sym, float *rx_amp, int nsym) {
+  const complex float *pts = bps == 4 ? qam16 : qpsk;
+  int npts = bps == 4 ? 16 : 4;
+  float sig_var = 0.0f, noise_var = 0.0f;
+  for (int i = 0; i < nsym; i++) {
+    float amp = rx_amp[i] + 1E-12f;
+    complex float z = rx_sym[i] / amp;
+    float best = 1E12f;
+    for (int k = 0; k < npts; k++) {
+      float d = cnormf(z - pts[k]);
+      if (d < best) best = d;
+    }
+    sig_var += cnormf(rx_sym[i]);
+    noise_var += best * amp * amp;
+  }
+  float EsNodB = 10.0f * log10f((1E-12f + sig_var) / (1E-12f + noise_var));
+  assert(isnan(EsNodB) == 0);
+  return EsNodB;
+}
+
 void ofdm_get_demod_stats(struct OFDM *ofdm, struct MODEM_STATS *stats,
                           complex float *rx_syms, int Nsymsperpacket) {
   stats->Nc = ofdm->nc;
