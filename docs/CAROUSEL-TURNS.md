@@ -1,7 +1,8 @@
 # Carousel turns: who may key, and when
 
-Status: design, step 1 (spec and timed model). Nothing here is implemented
-yet.  The model is `specs/turns/CarouselTurns.tla`.
+Status: implemented in `datalink_arq/carousel.c` (branch carousel-turns),
+checked in the sim, by the explorer and on the real-modem harness; on-air
+validation pending.  The model is `specs/turns/CarouselTurns.tla`.
 
 ## 1. Why
 
@@ -186,7 +187,42 @@ What the model does not cover, and step 2 must:
 Liveness of the timing itself is the `MNotShutOut` invariant: M always gets
 a gap.
 
-## 8. Next (steps 2 and 3)
+## 8. The implementation (step 2)
+
+What the rules became in `carousel.c`, beyond §2-§4:
+
+- **M's log** (`mlog`): every keydown with its end, the longest answer r, the
+  lateness d, its continuations k and their period p.  `m_free_from()` is
+  FreeFor.  S's frames name the keydown they answer (poll id) and the slot
+  (3 bits in the data header, a pattern-anchor flag): M closes that slot and
+  every slot of older keydowns, which S has abandoned.
+- **S's anchor** (`anc`): on any decoded M keydown; slot 0 answers, floor
+  continuations (K = 2) carry on a stream when nothing is heard.  A frame
+  decoded later than its mode's D anchors nothing (R4, `car_on_frame`'s
+  age).
+- **Patterns** are taken only when they can be the answer: no sooner than
+  their sender could key, within the slot the keydown opened (a spurious
+  BREAK otherwise made S key into M).
+- **Lost answers**: M waits out S's slot, then asks with a REQ (it carries
+  the round's rung, so S can score a loss); a round on a rung S had not had
+  yet is first resent on the last one S answered on, where S, hearing
+  nothing, went back to listening.  S falls back to listening at the floor
+  after 90 s of nothing from M.
+- **Both ways in one exchange** above the floor on a clean link: M's poll
+  carries M's round after it, S answers with its poll and its round.  At
+  the floor, or lossy, M takes turns of at least two rounds.
+- **Teardown**: the caller's DISCONNECT is keyed clear of S's slots and its
+  reply slot logged; the callee sends its own only in a slot.
+- **NAV headers** are not sent in a session; the bounds count a 300 ms lead
+  margin.
+
+Measured (sim, 20 seeds x 22 cells x one and both ways, against mercuryv2
+0701ef1): faster in 27 of 44 cells, slower in 14 (at most +14.7 %, flat
+25 % loss both ways); 0 collisions.  120 seeds x 8 deep cells both ways,
+with and without NAV: all complete, 0 collisions (mercuryv2: 7-11 seeds
+of 120 collide at fade -5).  Harness: all tests pass.
+
+## 9. Next
 
 1. Implement behind `car_io_t`: M's slot log and FreeFor, and S's anchor and
    slots.  Remove the handover and the blind timers.  Blocks, rungs,
