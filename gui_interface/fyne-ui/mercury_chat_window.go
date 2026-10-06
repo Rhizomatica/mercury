@@ -348,26 +348,41 @@ func (cw *chatWindow) logMsg(format string, args ...any) {
 	})
 }
 
-func (cw *chatWindow) appendRichChat(box *fyne.Container, call, text string) {
+// chatTimestampLayout is the on-screen timestamp format: MM/DD/YYYY - HH:MM:SS.
+const chatTimestampLayout = "01/02/2006 - 15:04:05"
+
+// formatChatTimestamp renders a chat message timestamp in the on-screen
+// format, or "" for a zero time (history messages carry none).
+func formatChatTimestamp(t time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+	return t.Format(chatTimestampLayout)
+}
+
+func (cw *chatWindow) appendRichChat(box *fyne.Container, call, text, ts string) {
 	fyne.Do(func() {
-		var rt *widget.RichText
+		segments := make([]widget.RichTextSegment, 0, 3)
+		if ts != "" {
+			segments = append(segments, &widget.TextSegment{
+				Text: ts + "  ",
+				Style: widget.RichTextStyle{
+					TextStyle: fyne.TextStyle{Italic: true},
+				},
+			})
+		}
 		if call != "" {
-			rt = widget.NewRichText(
+			segments = append(segments,
 				&widget.TextSegment{
 					Text: call + ": ",
 					Style: widget.RichTextStyle{
 						TextStyle: fyne.TextStyle{Bold: true},
 					},
 				},
-				&widget.TextSegment{
-					Text: text,
-				},
-			)
-		} else {
-			rt = widget.NewRichText(
-				&widget.TextSegment{Text: text},
 			)
 		}
+		segments = append(segments, &widget.TextSegment{Text: text})
+		rt := widget.NewRichText(segments...)
 		rt.Wrapping = fyne.TextWrapBreak
 		box.Objects = append([]fyne.CanvasObject{rt}, box.Objects...)
 		if len(box.Objects) > maxChatMessages {
@@ -533,14 +548,14 @@ func (cw *chatWindow) populateHistory() {
 		for _, m := range cw.history {
 			if m.Plane == "bcast" {
 				call, text := splitCallText(m.Text)
-				cw.appendRichChat(cw.bcastBox, call, text)
+				cw.appendRichChat(cw.bcastBox, call, text, "")
 				continue
 			}
 			call := m.Peer
 			if m.Dir == "tx" {
 				call = cw.myCall.Text
 			}
-			cw.appendRichChat(cw.arqBox, call, m.Text)
+			cw.appendRichChat(cw.arqBox, call, m.Text, "")
 		}
 	})
 }
@@ -729,7 +744,7 @@ func (cw *chatWindow) forwardARQChat() {
 			if !ok {
 				return
 			}
-			cw.appendRichChat(cw.arqBox, m.Call, m.Text)
+			cw.appendRichChat(cw.arqBox, m.Call, m.Text, formatChatTimestamp(m.Time))
 		case <-done:
 			return
 		}
@@ -749,7 +764,7 @@ func (cw *chatWindow) forwardBroadcastChat() {
 				return
 			}
 			call, text := splitCallText(m.Text)
-			cw.appendRichChat(cw.bcastBox, call, text)
+			cw.appendRichChat(cw.bcastBox, call, text, formatChatTimestamp(m.Time))
 		case <-done:
 			return
 		}

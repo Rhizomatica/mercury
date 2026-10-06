@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	"mercury-client/modem"
 )
@@ -28,6 +29,7 @@ type ChatMessage struct {
 	Call      string
 	Text      string
 	Broadcast bool
+	Time      time.Time
 }
 
 // Client wraps a modem.ModemClient and exposes chat and session events to a
@@ -244,7 +246,7 @@ func (c *Client) SendARQMessage(msg string) error {
 		return err
 	}
 	c.LogCh <- fmt.Sprintf("ARQ Data TX: %d bytes", len(msg))
-	c.ARQChatCh <- ChatMessage{Call: c.cfg.MyCallsign, Text: msg}
+	c.ARQChatCh <- ChatMessage{Call: c.cfg.MyCallsign, Text: msg, Time: time.Now()}
 	return nil
 }
 
@@ -341,7 +343,7 @@ func (c *Client) SendBroadcast(msg string) error {
 	if err := mc.SendBroadcast([]byte(payload)); err != nil {
 		return err
 	}
-	c.BroadcastChatCh <- ChatMessage{Call: c.cfg.MyCallsign, Text: msg, Broadcast: true}
+	c.BroadcastChatCh <- ChatMessage{Call: c.cfg.MyCallsign, Text: msg, Broadcast: true, Time: time.Now()}
 	return nil
 }
 
@@ -469,7 +471,7 @@ func (c *Client) handleIncomingARQData() {
 					if call == "" {
 						call = c.cfg.TargetCallsign
 					}
-					lines = append(lines, ChatMessage{Call: call, Text: line})
+					lines = append(lines, ChatMessage{Call: call, Text: line, Time: time.Now()})
 				}
 			}
 			if len(c.chatRxBuffer) > 65536 {
@@ -525,7 +527,7 @@ func (c *Client) handleIncomingBroadcast() {
 				line := strings.TrimRight(c.broadcastRxBuffer[:idx], "\r")
 				c.broadcastRxBuffer = c.broadcastRxBuffer[idx+1:]
 				if strings.TrimSpace(line) != "" {
-					lines = append(lines, ChatMessage{Text: line, Broadcast: true})
+					lines = append(lines, ChatMessage{Text: line, Broadcast: true, Time: time.Now()})
 				}
 			}
 			if len(c.broadcastRxBuffer) > 65536 {
