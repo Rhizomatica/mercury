@@ -42,8 +42,8 @@ ARQ FSM; only the parts that touch the carousel are specified here (section 5.12
 | A2 | Two decoders during a session: the **control decoder** (DATAC16) always runs; the **payload decoder** is bound in advance to exactly one mode via `bind_rx` → `sess->peer_tx_mode` (F:1411, C:389-393). The MFSK call-listener is not fed while connected (M:2865-2873). | a burst in any other payload mode is not decoded at all, and is not even carrier (comments C:597-599, C:1217-1218) |
 | A3 | Frames are **erasure-or-correct**: each coded frame carries CRC16 XOR a 16-bit session seed (M:1192); a frame is delivered to the carousel only if it matched the seed (`seeded`, M:2409, M:2041-2047 → A:775-789 → `ARQ_EV_RX_CAROUSEL`). **[since 2c07bf4]** Each block also ends in a 4-byte check (3.1), and a failed check ends the session (R1). | |
 | A4 | Seed = CRC16(session_id ‖ nonce ‖ CALLER ‖ '/' ‖ CALLEE) (**[since 2c07bf4]** nonce: the callee's 16 bits from the ACCEPT, 3.4, little-endian), callsigns upper-cased, never 0 (0 → 0x5A5A) (F:1461-1480). Set on the callee when it sends a carousel ACCEPT (F:914-918), on the caller when it hears one (F:1758); cleared when the station enters DISCONNECTED/LISTENING (F:201-203, F:1515-1520). While set, HARQ is off and DATAC16/MFSK still accept plain-CRC frames (CALL, ACCEPT, DISCONNECT, broadcast) (M:1872-1897). | |
-| A5 | **Patterns** (ACK/BREAK, ~0.64 s Welch-Costas tone bursts, `PATTERN_AIR_MS`, C:98) carry no bits beyond the 1-bit kind and **no session binding**. The detector runs only while `car_expect_pattern()` is true (C:1730-1733 → F:1384-1388 → A:1331 → M:2966-2978). Detection is reported ~0.25 s after the pattern ends (comment C:99-101). | |
-| A6 | **Carrier sense** = `io.peer_keyed` = `peer_is_transmitting()` (F:1420, F:1245-1258): true iff (busy detector on and busy — off by default) OR `now < rx_frame_busy_until_ms` (a preamble was caught: busy for one frame duration of that decoder's mode, cleared when any frame decodes; A:1267-1283, M:2988-2995) OR `now - last_rx_sync_ms < ARQ_CHANNEL_SYNC_HOLD_MS (250)` (P:341, A:1295-1298). It cannot see a burst in a mode neither decoder is bound to, nor one too weak to sync on (hidden terminal). | |
+| A5 | **Patterns** (**[step 3]** ACK/BREAK tone lists bound to the session seed, `mfsk_session_patterns`; see section 12) (ACK/BREAK, ~0.64 s Welch-Costas tone bursts, `PATTERN_AIR_MS`, C:98) carry no bits beyond the 1-bit kind and **no session binding**. The detector runs only while `car_expect_pattern()` is true (C:1730-1733 → F:1384-1388 → A:1331 → M:2966-2978). Detection is reported ~0.25 s after the pattern ends (comment C:99-101). | |
+| A6 | **Carrier sense** (**[step 3]** also a heard NAV header: `nav_busy_until_ms`, section 12) = `io.peer_keyed` = `peer_is_transmitting()` (F:1420, F:1245-1258): true iff (busy detector on and busy — off by default) OR `now < rx_frame_busy_until_ms` (a preamble was caught: busy for one frame duration of that decoder's mode, cleared when any frame decodes; A:1267-1283, M:2988-2995) OR `now - last_rx_sync_ms < ARQ_CHANNEL_SYNC_HOLD_MS (250)` (P:341, A:1295-1298). It cannot see a burst in a mode neither decoder is bound to, nor one too weak to sync on (hidden terminal). | |
 | A7 | No reordering, no duplication on the channel; a frame is decoded at (approximately) its end. Event processing is serialized on one event-loop thread (`g_sess_lock`). | |
 | A8 | Each carousel function is pure protocol: no clock, no threads; time arrives as `now` (H:25-27). The FSM converts `car_next_deadline()` into the session deadline (F:4010-4021) and fires `ARQ_EV_TIMER_CAROUSEL` → `car_on_time()` (F:2323-2334). | |
 
@@ -284,7 +284,7 @@ RX demux (`car_on_frame`, C:1602-1626):
 
 ### 3.4 Connect frames (generic FSM, carousel-relevant fields only)
 
-- CALL: carousel marker in the last byte of the SRC slot when the callsign code leaves it free (P:661-690, F:924-927). **[since 2c07bf4]** `0xA8`; the 1.9.17/1.9.18 carousel's `0xA7` reads as unmarked (that session runs stop-and-wait), and so does `0xA8` to it.
+- CALL: carousel marker in the last byte of the SRC slot when the callsign code leaves it free (P:661-690, F:924-927). **[since 2c07bf4]** `0xA8`, **[step 3]** `0xA9`; an earlier carousel's mark (`0xA7` 1.9.17/1.9.18, `0xA8`) reads as unmarked (that session runs stop-and-wait), and this one to it.
 - **[since 2c07bf4]** Carousel ACCEPT: the callee's 16-bit session nonce in the last two bytes of its SRC slot (LE), when its callsign's code is at most 8 bytes; otherwise 0 on both ends (`arq_protocol_set_accept_nonce` / `_accept_nonce`). The same nonce on every ACCEPT of the session.
 - ACCEPT (callee → caller) **is the first POLL**: names the caller's start rung in the top 3 bits of the DST-CRC field (P:624-641); value **7 = "level 0, and I hear you below the control mode"** (`ACCEPT_LEVEL_CTL_DEAF`, F:888-892). Carousel flag 0x10 in the framer extension (P:718). Plain CRC.
 - DISCONNECT: plain CRC, session-id bound (7 bits, F:3929-3937); on MFSK to a peer the carousel last saw as control-deaf (`session_ctl_mode`, F:963-969).
@@ -673,8 +673,8 @@ which rule last set `T_POLL`. A model should carry a ghost variable
 | R7 | mod-16 ids everywhere | Block ids (4 bits) in DATA/POLL/HANDOVER/STATUS rely on I1/I2; poll ids (4 bits) rely on rounds not being heard 16 polls late. `hi` resolution (`resolve16`) assumes `hi ∈ [rbase-8, rbase+7]`. | C:333-338, 1425, 1449-1451 |
 | R8 | `rx_break` is round-scoped, not block-scoped | Set by any segment of a delivered/done block or any completion since the last poll/pattern; correct only because floor rounds carry one block (I5) and `send_poll`/`send_pattern`/`start_driving` reset it. A floor ACK/BREAK sent for a **lost** round (K14) reuses whatever `rx_break` remains. | C:1080, 1141, 1168, 1343, 1407, 1413, 1422 |
 | R9 | Caller's first round without channel guard | `car_init` zeroes `last_carrier_ms`, and S5 arms SEND at `now`; LBT then only sees the 250 ms sync hold / preamble hold after the ACCEPT decodes (decode fires ~200 ms before the callee's PTT-off). | C:1555, 1574, F:1245-1258, P:211-218 |
-| R10 | Symmetric blind handovers | Two idle ends that both get app data near-simultaneously both run K10; if keyed within carrier-sense latency they collide, and their WAIT repeats are computed by the same formula from similar tx_end → can repeat in lockstep. Escape: hearing each other (HANDOVER is accepted in any state) or E2's 240 s watchdog. The same holds between a sender's 90 s silence repeat (K8) and the receiver's handover repeat: `tests/sim/car_explore.c` finds them 0.3 s apart with four frames lost (specs/carousel/README.md). | C:1630-1640, 592-658, 1767 |
-| R11 | Hidden-terminal collisions remain possible | LBT is decoder sync; a peer below sync threshold, or in a mode not bound, is invisible (A6). Many timing heuristics (T3-T5, W3, arm_sender_wait floor branch) are collision patches tuned in sim/on-air. | F:1220-1244 |
+| R10 | Symmetric blind handovers — **reduced [step 3]**: below 0 dB a blind keydown is heard by its NAV header ~1 s after it starts; two inside that second still meet (R24) | Two idle ends that both get app data near-simultaneously both run K10; if keyed within carrier-sense latency they collide, and their WAIT repeats are computed by the same formula from similar tx_end → can repeat in lockstep. Escape: hearing each other (HANDOVER is accepted in any state) or E2's 240 s watchdog. The same holds between a sender's 90 s silence repeat (K8) and the receiver's handover repeat: `tests/sim/car_explore.c` finds them 0.3 s apart with four frames lost (specs/carousel/README.md). | C:1630-1640, 592-658, 1767 |
+| R11 | Hidden-terminal collisions remain possible — **mostly fixed [step 3]**: the NAV header is heard ~10 dB below DATAC16 and needs no decoder bound to a mode; sim overlaps 57 → 2 | LBT is decoder sync; a peer below sync threshold, or in a mode not bound, is invisible (A6). Many timing heuristics (T3-T5, W3, arm_sender_wait floor branch) are collision patches tuned in sim/on-air. | F:1220-1244 |
 | R12 | Data on an unbound rung is lost and scored | D0 drops frames on another rung; a round sent on a rung the receiver is no longer bound to (lost poll, fallback) costs a full round and is measured as loss. | C:1432, 1282-1293 |
 | R13 | SNR estimate mixes carriers | `snr_ema` averages control (DATAC16), MFSK and payload-mode estimates; per-mode estimator bias feeds `ctl_deaf`, `marginal`, `gated`, the floor-exit guard. | C:1607-1615 |
 | R14 | STATUS trust | `status_seen` alone ends a direction; it requires only a matching 4-bit poll id. | C:1469, 1039 |
@@ -686,8 +686,8 @@ which rule last set `T_POLL`. A model should carry a ghost variable
 | R20 | After FLOOR_SILENT_MAX, floor sender sends one round per 90 s until a poll/pattern; `floor_silent` never decays. | C:1785-1789 |
 | R21 | `drove_peer` never resets | After the first poll it permanently selects `poll_level` (possibly stale) for binding while sending (PL3) and the extra floor wait in `arm_sender_wait`. | C:1072, 1143, 605, 1520 |
 | R22 | Runtime clamps silently | `car_io_keydown` clamps frame count to 17 and frame length to 1280 without telling the carousel (fits today's constants). | F:1393-1409 |
-| R23 | **[found since]** Two senders after a spurious pattern | A handover keydown lost whole, and a pattern nobody sent heard just after it: the station takes it as the peer's answer (`handover_unconfirmed = false`) and streams, while the peer, which never heard the handover, keeps sending too. Each sends on a rung the other's payload decoder is not bound to, nobody polls, and the session never completes; the 240 s lost-peer watchdog (E2) ends it. Data stays intact. `test_car_explore brkreplay 1 cliff:-5 3 4`. | PA3 |
-| R24 | **[found since]** Blind timers coincide | A sender's 90 s silence repeat and the receiver's handover repeat keyed 0.3 s apart, under carrier-sense latency (four frames lost). Data intact. `test_car_explore replay 1 5 9 10 11` on cliff:-5. Generalises R10. | K8, W-repeat |
+| R23 | **[found since]** Two senders after a spurious pattern — **reduced [step 3]**: another station's patterns no longer read as the peer's; a detector false alarm (session ACK/BREAK) still could | A handover keydown lost whole, and a pattern nobody sent heard just after it: the station takes it as the peer's answer (`handover_unconfirmed = false`) and streams, while the peer, which never heard the handover, keeps sending too. Each sends on a rung the other's payload decoder is not bound to, nobody polls, and the session never completes; the 240 s lost-peer watchdog (E2) ends it. Data stays intact. `test_car_explore brkreplay 1 cliff:-5 3 4`. | PA3 |
+| R24 | **[found since]** Blind timers coincide — **open**: the 2 sim overlaps left after NAV are this (0.9 s apart, inside a header's detection time) | A sender's 90 s silence repeat and the receiver's handover repeat keyed 0.3 s apart, under carrier-sense latency (four frames lost). Data intact. `test_car_explore replay 1 5 9 10 11` on cliff:-5. Generalises R10. | K8, W-repeat |
 
 ---
 
@@ -722,10 +722,43 @@ Corrected in CAROUSEL-ARQ.md together with this spec.
 | Every block ends in a 4-byte CRC-32 keyed by the session seed; a block that fails it, or fails to decode, or two segments that disagree on its K/length, fail the session (`car_failed`); the FSM then ends it as ABORT does. The check bytes are never delivered. | 3.1, P6, A3 | R1, R3, R4 fixed |
 | The callee's 16-bit nonce in the carousel ACCEPT, hashed into the seed. | 3.4, A4 | R17, R18 fixed (to ≈2^-16) |
 | POLL `need`/`gap` range checks. | 3.2 | R19 partly |
-| CALL mark `0xA7` → `0xA8` (the block format changed). | 3.4 | — |
+| CALL mark `0xA7` → `0xA8` (the block format changed); `0xA9` in step 3 (section 12). | 3.4 | — |
 
 What the stream delivers before a block's check is in can already be wrong when
 the check fails: the session ends, so the error is never silent, but those
 bytes are with the application.  An application that cannot tolerate that needs
 its own check -- or a keyed session (#306), whose AEAD records fail closed the
 same way.
+
+---
+
+## 12. Step 3: control signals (branch carousel-signals)
+
+| Change | Where | Risks |
+|---|---|---|
+| A streaming pattern detector (`mfsk_stream_det`): one FFT per 5 ms step, per-tone energies and peak in a ring one pattern long, every list scored by lookup; bit-identical to the batch detector on the same grid. Cost 8.3 % → about 1 % of an x86 core with 14 lists; on the gateway's Pi 4 the modem used 9-13 % of a core during a 3 % session, as trunk did. | `modem/mfsk/mfsk_sync.c` | makes the rest affordable |
+| Session-bound ACK and BREAK: tone lists from a deterministic search keyed by the CRC seed, set by `modem_apply_crc_seed`, so only the session's two stations read each other's patterns. Global lists with no session. | `mfsk_session_patterns`, `mfsk_pattern_set_session` | R5's source (another station's BREAK), R23 |
+| NAV header: below 0 dB (`car_wants_nav`) a keydown opens with a 0.64 s pattern of class k = the smallest whose `mfsk_nav_class_ms(k)` (2-32 s, ×1.287) covers the keydown from the header's start, then 60 ms. A station that hears it sets `nav_busy_until_ms` = start + class, OR'd into `peer_is_transmitting`. The carousel's `HEAD_MS` carries the 700 ms lead when it heads its keydowns. `MERCURY_NAV=0` turns it off. | `modem.c` (`send_modulated_keydown`, rx loop), `arq_note_rx_nav`, `carousel.c` | R10, R11 |
+| The pattern window runs throughout a carousel session; ACK/BREAK count only while due and from bursts that began after; it is reset after the station's own keydown. Of overlapping events only the strongest is reported, after a two-symbol hold. NAV needs 9 of 16 symbols (ACK/BREAK 8). | `modem_mfsk.c`, `modem.c` | false holds |
+| CALL mark `0xA9`: `0xA8` carousels send the global ACK/BREAK. | `arq_protocol.h` | — |
+
+Measured (details in the commit messages):
+- carousel_bench, 15 channels × both ways × 20 seeds, pattern cliff at the
+  real detector's −14 dB: overlapping keydowns 57 → 2; up to 4 % slower at
+  the fringe, nothing above 0 dB.
+- pattern_probe: NAV classes and session lists detect like the global ACK
+  (NAV at 9 of 16: about 0.7 dB later at −14 dB); 0 false headers in 10 h of
+  noise and on every data mode's bursts; 0 cross-reads in 2048 clean session
+  ACK/BREAK bursts.
+- harness, two-way at −4/−7 dB `mpp`, NAV vs `MERCURY_NAV=0`: 6/6 runs
+  passed with no overlaps, against 5/6 (the failure had 2 overlaps).
+- on air, gateway ⇄ estacao2 at 3 %: the gateway heard estacao2's headers,
+  each as the class sent, about 675 ms after they began.  Threshold 8 let one
+  session ACK cross-read as a 32 s NAV (the run lost 150 s), which led to 9.
+  At 9, against trunk deab316, interleaved: 2 KB at 3 % in 693/703/740 s vs
+  689/653/718 s; 8 KB both ways at 20 % in 362/351 s vs 418/370 s; every
+  header heard, none false, no overlaps; the gateway's modem at 9 % of a
+  Pi 4 core either way.
+
+Open: R24 (blind timers inside a header's detection time); NAV headers are
+not yet sent or honoured outside a session (third-party listen-before-talk).

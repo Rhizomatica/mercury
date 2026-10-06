@@ -1,3 +1,4 @@
 states/
 *_TTrace_*
 *.out
+.tlacache/

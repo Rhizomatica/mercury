@@ -8,6 +8,8 @@
 #include "mfsk_sync.h"
 
 #include <math.h>
+#include <stdlib.h>
+#include <string.h>
 
 /* Acceptance threshold for the normalised preamble correlation.
  *
@@ -207,7 +209,7 @@ int mfsk_sync_search(const double complex *rx, int rx_len, int interp,
  * E_target/E_total is a tie-break metric. Unlike v1 we depad first (same path as
  * mfsk_demod) instead of hand-mapping raw FFT bins + carrier-image mirrors, since
  * this pipeline's LPF+depad already rejects the image. */
-#define MFSK_DETECT_MAX_LISTS 8
+#define MFSK_DETECT_MAX_LISTS 24
 
 /* Two radios are never on exactly the same frequency: an IC-7100 and an sBitx
  * at 7.050 MHz, on air, were far enough apart that no pattern between them
@@ -343,4 +345,235 @@ int mfsk_detect_pattern(const mfsk_t *m, const ofdm_frame_t *o,
     mfsk_detect_patterns(m, o, rx, rx_len, lists, 1, pattern_len, nsymb, &score, &pos);
     if (out_pos) *out_pos = pos;
     return score;
+}
+
+/* ---- streaming pattern detection ----------------------------------------- */
+
+struct mfsk_stream_det {
+    const mfsk_t       *m;
+    const ofdm_frame_t *o;
+    int    Nofdm, step, S;        /* S = steps per symbol */
+    int    pattern_len, nsymb;
+    int    ntone;                 /* nStreams * M energies per shift */
+    /* baseband ring, 2 * Nofdm samples */
+    double complex *bb;
+    int    bb_cap;
+    long long nin;                /* samples pushed since reset */
+    long long npos;               /* positions (FFTs) computed */
+    /* per position: e_total[shift] and energies [shift][stream*M + t] */
+    int    ring;                  /* positions kept: (nsymb - 1) * S + 1 */
+    double *etot;                 /* ring * SHIFTS */
+    double *e;                    /* ring * SHIFTS * ntone */
+    signed char *peak;            /* ring * SHIFTS * nStreams: the peak tone, -1 none */
+    /* lists */
+    int    tones[MFSK_STREAM_MAX_LISTS][MFSK_MAX_ACK_TONES];
+    signed char expect[MFSK_STREAM_MAX_LISTS][MFSK_MAX_ACK_TONES];   /* hopped tone per symbol */
+    int    thr[MFSK_STREAM_MAX_LISTS];
+    /* events */
+    bool   open[MFSK_STREAM_MAX_LISTS];
+    int    ev_score[MFSK_STREAM_MAX_LISTS];
+    double ev_metric[MFSK_STREAM_MAX_LISTS];
+    long long ev_pos[MFSK_STREAM_MAX_LISTS];
+    long long hold_until[MFSK_STREAM_MAX_LISTS];
+    /* best since reset */
+    int    best_score[MFSK_STREAM_MAX_LISTS];
+    double best_metric[MFSK_STREAM_MAX_LISTS];
+    long long best_pos[MFSK_STREAM_MAX_LISTS];
+};
+
+mfsk_stream_det_t *mfsk_stream_det_new(const mfsk_t *m, const ofdm_frame_t *o,
+                                       int pattern_len, int nsymb)
+{
+    int Nofdm = ofdm_frame_nofdm(o);
+    int step = Nofdm / 8;
+    if (step < 1 || Nofdm % step || nsymb < 1 || pattern_len < 1 ||
+        pattern_len > MFSK_MAX_ACK_TONES || nsymb > MFSK_MAX_ACK_TONES || Nofdm > 2048)
+        return NULL;
+    mfsk_stream_det_t *d = calloc(1, sizeof(*d));
+    if (!d) return NULL;
+    d->m = m; d->o = o;
+    d->Nofdm = Nofdm; d->step = step; d->S = Nofdm / step;
+    d->pattern_len = pattern_len; d->nsymb = nsymb;
+    d->ntone = m->nStreams * m->M;
+    d->bb_cap = 2 * Nofdm;
+    d->ring = (nsymb - 1) * d->S + 1;
+    d->bb = calloc((size_t)d->bb_cap, sizeof(double complex));
+    d->etot = calloc((size_t)d->ring * MFSK_PAT_SHIFTS, sizeof(double));
+    d->e = calloc((size_t)d->ring * MFSK_PAT_SHIFTS * (size_t)d->ntone, sizeof(double));
+    d->peak = calloc((size_t)d->ring * MFSK_PAT_SHIFTS * (size_t)m->nStreams, 1);
+    if (!d->bb || !d->etot || !d->e || !d->peak || m->M > 127) { mfsk_stream_det_free(d); return NULL; }
+    mfsk_stream_det_reset(d);
+    return d;
+}
+
+void mfsk_stream_det_free(mfsk_stream_det_t *d)
+{
+    if (!d) return;
+    free(d->bb); free(d->etot); free(d->e); free(d->peak);
+    free(d);
+}
+
+void mfsk_stream_det_set_list(mfsk_stream_det_t *d, int idx, const int *tones, int threshold)
+{
+    if (!d || idx < 0 || idx >= MFSK_STREAM_MAX_LISTS) return;
+    d->thr[idx] = tones ? threshold : 0;
+    if (tones) {
+        memcpy(d->tones[idx], tones, (size_t)d->pattern_len * sizeof(int));
+        for (int p = 0; p < d->nsymb && p < MFSK_MAX_ACK_TONES; p++)
+            d->expect[idx][p] = (signed char)((tones[p % d->pattern_len] + p * d->m->tone_hop_step) % d->m->M);
+    }
+    d->open[idx] = false;
+    d->hold_until[idx] = -1;
+    d->best_score[idx] = -1; d->best_metric[idx] = -1.0; d->best_pos[idx] = -1;
+}
+
+void mfsk_stream_det_reset(mfsk_stream_det_t *d)
+{
+    if (!d) return;
+    d->nin = 0; d->npos = 0;
+    for (int l = 0; l < MFSK_STREAM_MAX_LISTS; l++) {
+        d->open[l] = false;
+        d->hold_until[l] = -1;
+        d->best_score[l] = -1; d->best_metric[l] = -1.0; d->best_pos[l] = -1;
+    }
+}
+
+int mfsk_stream_det_span(const mfsk_stream_det_t *d) { return d ? d->nsymb * d->Nofdm : 0; }
+
+void mfsk_stream_det_best(const mfsk_stream_det_t *d, int idx, int *score, long long *pos)
+{
+    int s = -1; long long p = -1;
+    if (d && idx >= 0 && idx < MFSK_STREAM_MAX_LISTS) { s = d->best_score[idx]; p = d->best_pos[idx]; }
+    if (score) *score = s < 0 ? 0 : s;
+    if (pos) *pos = p;
+}
+
+/* The FFT at position k (samples k*step .. k*step + Nofdm - 1), read at every
+ * shift: the energies the scoring looks up.  Exactly the batch detector's
+ * per-(base, symbol) work. */
+static void stream_fft(mfsk_stream_det_t *d, long long k)
+{
+    const ofdm_frame_t *o = d->o;
+    const mfsk_t *m = d->m;
+    double complex blk[2048], rmv[2048], fftd[2048], bins[1024];
+    long long s0 = k * d->step;
+    for (int n = 0; n < d->Nofdm; n++) blk[n] = d->bb[(s0 + n) % d->bb_cap];
+    ofdm_gi_remover(o, blk, rmv);
+    ofdm_fft(o, rmv, fftd);
+    int slot = (int)(k % d->ring);
+    for (int si = 0; si < MFSK_PAT_SHIFTS; si++) {
+        depad_shifted(o, fftd, bins, si - MFSK_PAT_SHIFT_MAX);
+        double e_total = 0.0;
+        for (int c = 0; c < o->Nc; c++) {
+            double complex v = bins[c];
+            e_total += creal(v) * creal(v) + cimag(v) * cimag(v);
+        }
+        d->etot[slot * MFSK_PAT_SHIFTS + si] = e_total;
+        double *e = d->e + ((size_t)slot * MFSK_PAT_SHIFTS + (size_t)si) * (size_t)d->ntone;
+        signed char *pk = d->peak + ((size_t)slot * MFSK_PAT_SHIFTS + (size_t)si) * (size_t)m->nStreams;
+        for (int st = 0; st < m->nStreams; st++) {
+            double peak_e = -1.0; int peak_t = -1;
+            for (int t = 0; t < m->M; t++) {
+                double complex v = bins[m->stream_offsets[st] + t];
+                double et = creal(v) * creal(v) + cimag(v) * cimag(v);
+                e[st * m->M + t] = et;
+                if (et > peak_e) { peak_e = et; peak_t = t; }
+            }
+            /* the peak is the list's tone only if it carries energy */
+            pk[st] = (signed char)(peak_e > 0.0 ? peak_t : -1);
+        }
+    }
+}
+
+/* Score every list at the start whose last symbol's FFT is position k, and
+ * run the event logic.  Returns events written. */
+static int stream_score(mfsk_stream_det_t *d, long long k, mfsk_stream_event_t *ev, int maxev)
+{
+    const mfsk_t *m = d->m;
+    long long kb = k - (long long)(d->nsymb - 1) * d->S;   /* the start's position */
+    if (kb < 0) return 0;
+    long long pos = kb * d->step;
+    int nev = 0;
+    int slots[MFSK_MAX_ACK_TONES];
+    for (int p = 0; p < d->nsymb; p++) slots[p] = (int)((kb + (long long)p * d->S) % d->ring);
+    for (int l = 0; l < MFSK_STREAM_MAX_LISTS; l++) {
+        if (d->thr[l] <= 0) continue;
+        /* Matched symbols first, in integers; the E_target/E_total metric only
+         * breaks ties, so it is summed only where the count could matter --
+         * at the threshold, or at the best since the reset -- in the same
+         * order as the batch detector, so the result is the same to the bit. */
+        int matched[MFSK_PAT_SHIFTS], top = -1;
+        for (int si = 0; si < MFSK_PAT_SHIFTS; si++) {
+            int c = 0;
+            const signed char *ex = d->expect[l];
+            if (m->nStreams == 1) {
+                for (int p = 0; p < d->nsymb; p++)
+                    c += d->peak[slots[p] * MFSK_PAT_SHIFTS + si] == ex[p];
+            } else {
+                for (int p = 0; p < d->nsymb; p++) {
+                    const signed char *pk = d->peak + ((size_t)slots[p] * MFSK_PAT_SHIFTS + (size_t)si) * (size_t)m->nStreams;
+                    int streams = 0;
+                    for (int st = 0; st < m->nStreams; st++) if (pk[st] == ex[p]) streams++;
+                    if (streams == m->nStreams) c++;
+                }
+            }
+            matched[si] = c;
+            if (c > top) top = c;
+        }
+        int need = d->thr[l] < d->best_score[l] ? d->thr[l] : d->best_score[l];
+        int best_m = -1; double best_x = -1.0;
+        for (int si = 0; si < MFSK_PAT_SHIFTS; si++) {
+            if (matched[si] < top) continue;           /* a lower count never wins */
+            double metric = 0.0;
+            if (top >= need)
+                for (int p = 0; p < d->nsymb; p++) {
+                    int slot = slots[p];
+                    const double *e = d->e + ((size_t)slot * MFSK_PAT_SHIFTS + (size_t)si) * (size_t)d->ntone;
+                    double e_total = d->etot[slot * MFSK_PAT_SHIFTS + si];
+                    int actual = d->expect[l][p];
+                    double e_target = 0.0;
+                    for (int st = 0; st < m->nStreams; st++) e_target += e[st * m->M + actual];
+                    if (e_total > 0.0) metric += e_target / e_total;
+                }
+            if (matched[si] > best_m || (matched[si] == best_m && metric > best_x)) { best_m = matched[si]; best_x = metric; }
+        }
+        if (best_m > d->best_score[l] || (best_m == d->best_score[l] && best_x > d->best_metric[l])) {
+            d->best_score[l] = best_m; d->best_metric[l] = best_x; d->best_pos[l] = pos;
+        }
+        bool hit = best_m >= d->thr[l] && pos > d->hold_until[l];
+        if (hit) {
+            if (!d->open[l] || best_m > d->ev_score[l] ||
+                (best_m == d->ev_score[l] && best_x > d->ev_metric[l])) {
+                d->ev_score[l] = best_m; d->ev_metric[l] = best_x; d->ev_pos[l] = pos;
+            }
+            d->open[l] = true;
+        } else if (d->open[l]) {
+            d->open[l] = false;
+            d->hold_until[l] = d->ev_pos[l] + (long long)d->nsymb * d->Nofdm;
+            if (nev < maxev) {
+                ev[nev].list = l; ev[nev].pos = d->ev_pos[l];
+                ev[nev].score = d->ev_score[l]; ev[nev].metric = d->ev_metric[l];
+                nev++;
+            }
+        }
+    }
+    return nev;
+}
+
+int mfsk_stream_det_push(mfsk_stream_det_t *d, const double complex *bb, int n,
+                         mfsk_stream_event_t *ev, int maxev)
+{
+    if (!d || !bb || n <= 0) return 0;
+    int nev = 0;
+    for (int i = 0; i < n; i++) {
+        d->bb[d->nin % d->bb_cap] = bb[i];
+        d->nin++;
+        /* position npos is ready once its Nofdm samples are in */
+        while (d->npos * d->step + d->Nofdm <= d->nin) {
+            stream_fft(d, d->npos);
+            nev += stream_score(d, d->npos, ev ? ev + nev : NULL, ev ? maxev - nev : 0);
+            d->npos++;
+        }
+    }
+    return nev;
 }

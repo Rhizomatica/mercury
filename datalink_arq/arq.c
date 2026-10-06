@@ -1278,6 +1278,17 @@ void arq_note_rx_preamble(int mode)
     pthread_mutex_unlock(&g_sess_lock);
 }
 
+void arq_note_rx_nav(uint32_t age_ms, uint32_t hold_ms)
+{
+    if (age_ms >= hold_ms)
+        return;
+    uint64_t until = time_now_ms() + (uint64_t)(hold_ms - age_ms);
+    pthread_mutex_lock(&g_sess_lock);
+    if (g_sess.car_active && until > g_sess.nav_busy_until_ms)
+        g_sess.nav_busy_until_ms = until;
+    pthread_mutex_unlock(&g_sess_lock);
+}
+
 void arq_note_rx_frame_done(void)
 {
     pthread_mutex_lock(&g_sess_lock);
@@ -1331,6 +1342,7 @@ bool arq_get_runtime_snapshot(arq_runtime_snapshot_t *snapshot)
     snapshot->initialized      = true;
     snapshot->connected        = (g_sess.conn_state == ARQ_CONN_CONNECTED);
     snapshot->expect_pattern_ack = arq_fsm_expect_pattern(&g_sess, time_now_ms());
+    snapshot->in_carousel = g_sess.car_active;
     /* ACCEPTING too: a caller that hears none of our ACCEPTs -- a strong
      * forward path, a weak return one -- escalates to MFSK CALLs, and those
      * are what we must answer (on MFSK, #235).  With the listener off while

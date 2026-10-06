@@ -244,6 +244,7 @@ typedef struct
     /* A decoder caught a frame's preamble: the frame is on the air until
      * this, whatever its sync does meanwhile (arq_note_rx_preamble). */
     uint64_t rx_frame_busy_until_ms;
+    uint64_t nav_busy_until_ms;     /* a NAV header heard: the peer's keydown runs until then */
     uint8_t  turn_req_defer_count;     /* consecutive busy-channel deferrals   */
     uint8_t  retx_defer_count;         /* same, for DATA (first burst and
                                         * WAIT_ACK retransmission)          */

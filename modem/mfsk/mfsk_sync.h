@@ -69,4 +69,48 @@ void mfsk_detect_patterns(const mfsk_t *m, const ofdm_frame_t *o,
                           int pattern_len, int nsymb,
                           int *scores_out, int *pos_out);
 
+/* The same detector, streaming.
+ *
+ * mfsk_detect_patterns() redoes, for every candidate start, the FFT of every
+ * symbol under it -- nsymb FFTs per step -- so it can only afford to run inside
+ * short windows.  Every candidate start that lies on the step grid shares its
+ * symbols' FFTs with the starts one symbol apart, so the stream keeps each
+ * FFT's per-tone energies, once per step, in a ring one pattern long, and
+ * scores every list by lookup: one FFT per step for any number of lists.  On
+ * the same baseband and grid its scores are bit-identical to the batch
+ * detector's (same tie-break metric, summed in the same order).
+ *
+ * Feed baseband (downmixed, filtered) samples in any chunk sizes.  A list
+ * whose score reaches its threshold opens an event; the event is reported,
+ * at its best start, once the score has fallen back below the threshold, and
+ * the list then holds off for one pattern length.  Positions are absolute
+ * sample counts since the last reset. */
+#define MFSK_STREAM_MAX_LISTS 24
+
+typedef struct {
+    int       list;        /* which tone list */
+    long long pos;         /* start sample of the best alignment */
+    int       score;       /* matched symbols there */
+    double    metric;      /* summed E_target/E_total there */
+} mfsk_stream_event_t;
+
+typedef struct mfsk_stream_det mfsk_stream_det_t;
+
+mfsk_stream_det_t *mfsk_stream_det_new(const mfsk_t *m, const ofdm_frame_t *o,
+                                       int pattern_len, int nsymb);
+void mfsk_stream_det_free(mfsk_stream_det_t *d);
+/* Score list idx (0..MFSK_STREAM_MAX_LISTS-1) against tones[pattern_len];
+ * threshold <= 0 or tones NULL turns it off.  The list is copied. */
+void mfsk_stream_det_set_list(mfsk_stream_det_t *d, int idx, const int *tones, int threshold);
+/* Forget all audio and open events (after our own transmission). */
+void mfsk_stream_det_reset(mfsk_stream_det_t *d);
+/* Feed n samples; up to maxev events are written to ev.  Returns how many. */
+int  mfsk_stream_det_push(mfsk_stream_det_t *d, const double complex *bb, int n,
+                          mfsk_stream_event_t *ev, int maxev);
+/* Best (score, then metric; earliest on a tie) of list idx over every start
+ * scored since the reset, thresholds aside -- the batch detector's answer. */
+void mfsk_stream_det_best(const mfsk_stream_det_t *d, int idx, int *score, long long *pos);
+/* Samples a start needs before it is scored: nsymb symbols. */
+int  mfsk_stream_det_span(const mfsk_stream_det_t *d);
+
 #endif /* MERCURY_MFSK_SYNC_H */

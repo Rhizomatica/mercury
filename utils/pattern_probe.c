@@ -16,7 +16,13 @@
  *              MFSK) -- the peer's own frames are what the detector hears most;
  *   cpu        cost of the scan per second of audio.
  *
- * usage: pattern_probe [curve|fading|noise HOURS|signals|cpu|all]
+ *   wcurve     the curve through the streaming window the RX loop runs.
+ *   nav H N    NAV headers: false ones in H hours of noise and on data bursts,
+ *              and the curve (N trials) of three classes, with confusions.
+ *
+ * PATTERN_KEY=<seed> measures a session's lists (mfsk_pattern_set_session).
+ *
+ * usage: pattern_probe [curve|wcurve N|fading|noise HOURS|signals|cpu|all]
  */
 #include <complex.h>
 #include <math.h>
@@ -97,6 +103,47 @@ static void curve(int trials)
     free(pat); free(sh); free(bpat); free(rx);
 }
 
+/* The same curve through the streaming window, fed in the RX loop's 160-sample
+ * chunks, with noise before and after the pattern -- the detector the RX loop
+ * runs, not the batch function. */
+static void wcurve(int trials)
+{
+    int n_pat = mfsk_pattern_max_tx_samples();
+    int16_t *pat = calloc((size_t)n_pat, sizeof *pat), *sh = calloc((size_t)n_pat, sizeof *sh);
+    int n = mfsk_pattern_tx(pat, 0);
+    double ps = power(pat, n);
+    int lead = 2400, total = lead + n + 2 * n_pat;
+    int16_t *rx = calloc((size_t)total, sizeof *rx);
+    printf("# wcurve: P(detect ACK) through the window, %d trials per point\n", trials);
+    printf("# snr3k   off0    off+25  confused\n");
+    for (int snr = SNR_LO; snr <= SNR_HI; snr++) {
+        double pd[2]; int conf = 0;
+        for (int oi = 0; oi < 2; oi++) {
+            shift(pat, n, oi ? 25.0 : 0.0, sh);
+            double sigma = sigma_for(ps, snr);
+            int hit = 0;
+            for (int i = 0; i < trials; i++) {
+                for (int t = 0; t < total; t++) {
+                    double v = sigma * gauss() + ((t >= lead && t < lead + n) ? sh[t - lead] : 0);
+                    rx[t] = (int16_t)(v > 32767 ? 32767 : v < -32768 ? -32768 : v);
+                }
+                mfsk_pattern_window_t w = {0};
+                int got = 0, brk = 0;
+                for (int t = 0; t + 160 <= total; t += 160) {
+                    int isb = 0;
+                    if (mfsk_pattern_window_push(&w, rx + t, 160, &isb)) { got = 1; brk |= isb; }
+                }
+                mfsk_pattern_window_free(&w);
+                if (got && !brk) hit++; else if (got) conf++;
+            }
+            pd[oi] = (double)hit / trials;
+        }
+        printf("%6d  %6.3f  %6.3f  %d\n", snr, pd[0], pd[1], conf);
+        fflush(stdout);
+    }
+    free(pat); free(sh); free(rx);
+}
+
 static double p_detect_awgn(int oi, double snr)
 {
     if (snr <= SNR_LO) return g_curve[oi][0];
@@ -134,6 +181,138 @@ static long scan_stream(const int16_t *x, long n, long *scans)
     if (scans) *scans = n / mfsk_pattern_max_tx_samples();
     mfsk_pattern_window_free(&w);
     return hits;
+}
+
+/* NAV headers found in audio, through the window (any class). */
+static long scan_nav(const int16_t *x, long n)
+{
+    mfsk_pattern_window_t w = {0};
+    long hits = 0, chunk = 160;
+    for (long i = 0; i + chunk <= n; i += chunk) {
+        mfsk_pattern_ev_t ev[16];
+        int nev = mfsk_pattern_window_events(&w, x + i, (int)chunk, ev, 16);
+        for (int e = 0; e < nev; e++) if (ev[e].kind >= MFSK_PAT_NAV(0)) hits++;
+    }
+    mfsk_pattern_window_free(&w);
+    return hits;
+}
+
+/* NAV: false headers in noise and on data bursts, and the detection curve of
+ * three classes with any class confusion. */
+static void nav(double hours, int trials)
+{
+    long n = (long)(8000.0 * 60.0), fa = 0;
+    int16_t *x = malloc((size_t)n * sizeof *x);
+    for (long m = 0; m < (long)(hours * 60.0 + 0.5); m++) {
+        for (long t = 0; t < n; t++) x[t] = (int16_t)(3000.0 * gauss());
+        fa += scan_nav(x, n);
+    }
+    printf("# nav: %ld false headers in %.2f h of noise\n", fa, hours);
+    free(x);
+    static const int modes[] = { FREEDV_MODE_DATAC16, FREEDV_MODE_DATAC15, FREEDV_MODE_DATAC4, FREEDV_MODE_DATAC3,
+                                 FREEDV_MODE_DATAC1, FREEDV_MODE_DATAC17, FREEDV_MODE_QAM16C2 };
+    for (unsigned mi = 0; mi < sizeof modes / sizeof modes[0]; mi++) {
+        struct freedv *f = freedv_open(modes[mi]);
+        if (!f) continue;
+        int npre = freedv_get_n_tx_preamble_modem_samples(f), nmod = freedv_get_n_tx_modem_samples(f);
+        int npost = freedv_get_n_tx_postamble_modem_samples(f), nb = freedv_get_bits_per_modem_frame(f) / 8;
+        long k = 0, cap = 60L * (npre + nmod + npost + 800);
+        int16_t *y = calloc((size_t)cap, sizeof *y); uint8_t *pl = malloc((size_t)nb);
+        for (int i = 0; i < 60; i++) {
+            for (int b = 0; b < nb; b++) pl[b] = (uint8_t)(urand() * 256);
+            k += freedv_rawdatapreambletx(f, y + k); freedv_rawdatatx(f, y + k, pl); k += nmod;
+            k += freedv_rawdatapostambletx(f, y + k); k += 800;
+        }
+        printf("# nav: mode %d, 60 frames: %ld false headers\n", modes[mi], scan_nav(y, k));
+        free(y); free(pl); freedv_close(f);
+    }
+    int n_pat = mfsk_pattern_max_tx_samples();
+    int16_t *pat = calloc((size_t)n_pat, sizeof *pat), *sh = calloc((size_t)n_pat, sizeof *sh);
+    int lead = 2400, total = lead + n_pat + 2 * n_pat;
+    int16_t *rx = calloc((size_t)total, sizeof *rx);
+    static const int cls[3] = { 0, 5, 11 };
+    printf("# nav curve: P(class heard as itself), off0 and +25 Hz, %d trials; wrong = another class\n", trials);
+    int snr_lo = getenv("NAV_SNR") ? atoi(getenv("NAV_SNR")) : -17, snr_hi = getenv("NAV_SNR") ? snr_lo : -10;
+    for (int snr = snr_lo; snr <= snr_hi; snr++) {
+        printf("%4d", snr);
+        int wrong = 0;
+        for (int ci = 0; ci < 3; ci++) {
+            int n = mfsk_nav_tx(pat, cls[ci]);
+            double ps = power(pat, n);
+            for (int oi = 0; oi < 2; oi++) {
+                shift(pat, n, oi ? 25.0 : 0.0, sh);
+                double sigma = sigma_for(ps, snr);
+                int hit = 0;
+                for (int i = 0; i < trials; i++) {
+                    for (int t = 0; t < total; t++) {
+                        double v = sigma * gauss() + ((t >= lead && t < lead + n) ? sh[t - lead] : 0);
+                        rx[t] = (int16_t)(v > 32767 ? 32767 : v < -32768 ? -32768 : v);
+                    }
+                    mfsk_pattern_window_t w = {0};
+                    int got = 0;
+                    for (int t = 0; t + 160 <= total; t += 160) {
+                        mfsk_pattern_ev_t ev[16];
+                        int nev = mfsk_pattern_window_events(&w, rx + t, 160, ev, 16);
+                        for (int e = 0; e < nev; e++) {
+                            if (ev[e].kind == MFSK_PAT_NAV(cls[ci])) got = 1;
+                            else {
+                                wrong++;
+                                if (getenv("NAV_WHY")) fprintf(stderr, "snr %d class %d: also kind %d score %d at %lld (sent at %d)\n",
+                                                               snr, cls[ci], ev[e].kind, ev[e].score, ev[e].start, lead);
+                            }
+                        }
+                    }
+                    mfsk_pattern_window_free(&w);
+                    hit += got;
+                }
+                printf("  c%d:%.3f", cls[ci], (double)hit / trials);
+            }
+        }
+        printf("  wrong=%d\n", wrong);
+        fflush(stdout);
+    }
+    free(pat); free(sh); free(rx);
+}
+
+/* Cross-reads: session keys' ACK and BREAK, clean, at 0 and +25 Hz, through
+ * the window -- any event that is not the pattern sent. */
+static void xread(int nkeys)
+{
+    int n_pat = mfsk_pattern_max_tx_samples();
+    int16_t *pat = calloc((size_t)n_pat, sizeof *pat), *sh = calloc((size_t)n_pat, sizeof *sh);
+    int total = 4 * n_pat;
+    int16_t *x = calloc((size_t)total, sizeof *x);
+    long bad = 0, runs = 0;
+    for (int i = 0; i < nkeys; i++) {
+        uint32_t key = getenv("XREAD_KEY") ? (uint32_t)strtoul(getenv("XREAD_KEY"), NULL, 0)
+                                           : 1 + (uint32_t)((uint64_t)i * 65535 / (uint64_t)nkeys);
+        mfsk_pattern_set_session(key);
+        for (int kind = 0; kind < 2; kind++) {
+            int n = mfsk_pattern_tx(pat, kind);
+            for (int oi = 0; oi < 2; oi++) {
+                shift(pat, n, oi ? 25.0 : 0.0, sh);
+                for (int t = 0; t < total; t++) x[t] = (int16_t)(30.0 * gauss() + ((t >= n_pat && t < n_pat + n) ? sh[t - n_pat] : 0));
+                mfsk_pattern_window_t w = {0};
+                mfsk_pattern_ev_t ev[16];
+                int nev = 0;
+                for (int t = 0; t + 160 <= total; t += 160) nev += mfsk_pattern_window_events(&w, x + t, 160, ev + nev, 16 - nev);
+                mfsk_pattern_window_free(&w);
+                runs++;
+                if (getenv("XREAD_ALL"))
+                    for (int e = 0; e < nev; e++)
+                        printf("  key 0x%04x %s %+d Hz: event kind %d score %d start %lld (sent at %d)\n", key,
+                               kind ? "BREAK" : "ACK", oi ? 25 : 0, ev[e].kind, ev[e].score, ev[e].start, n_pat);
+                for (int e = 0; e < nev; e++)
+                    if (ev[e].kind != kind) {
+                        bad++;
+                        printf("key 0x%04x %s %+d Hz: also kind %d score %d\n", key, kind ? "BREAK" : "ACK", oi ? 25 : 0, ev[e].kind, ev[e].score);
+                    }
+            }
+        }
+    }
+    printf("# xread: %ld stray events in %ld clean bursts\n", bad, runs);
+    mfsk_pattern_set_session(0);
+    free(pat); free(sh); free(x);
 }
 
 static void noise(double hours)
@@ -217,12 +396,25 @@ static void cpu(void)
 int main(int argc, char **argv)
 {
     const char *what = argc > 1 ? argv[1] : "all";
+    /* PATTERN_KEY: measure a session's patterns instead of the global ones */
+    /* PATTERN_LIST="t0,t1,...,t7": an explicit ACK list (experiments) */
+    if (getenv("PATTERN_LIST")) {
+        int l[48] = {0}, k = 0; char buf[256]; snprintf(buf, sizeof buf, "%s", getenv("PATTERN_LIST"));
+        for (char *t = strtok(buf, ","); t && k < 48; t = strtok(NULL, ",")) l[k++] = atoi(t);
+        mfsk_pattern_set_lists(l, NULL);
+        printf("# ACK list %s\n", getenv("PATTERN_LIST"));
+    }
+    if (getenv("PATTERN_KEY")) printf("# session key %s: %s\n", getenv("PATTERN_KEY"),
+        mfsk_pattern_set_session((uint32_t)strtoul(getenv("PATTERN_KEY"), NULL, 0)) ? "session lists" : "global lists");
     int all = !strcmp(what, "all");
     if (all || !strcmp(what, "cpu")) cpu();
     if (all || !strcmp(what, "curve") || !strcmp(what, "fading")) {
         curve(argc > 2 && strcmp(what, "curve") == 0 ? atoi(argv[2]) : 200);
         fading();
     }
+    if (!strcmp(what, "wcurve")) wcurve(argc > 2 ? atoi(argv[2]) : 200);
+    if (!strcmp(what, "xread")) xread(argc > 2 ? atoi(argv[2]) : 256);
+    if (!strcmp(what, "nav")) nav(argc > 2 ? atof(argv[2]) : 1.0, argc > 3 ? atoi(argv[3]) : 200);
     if (all || !strcmp(what, "signals")) signals();
     if (all || !strcmp(what, "noise")) noise(argc > 2 && !all ? atof(argv[2]) : 1.0);
     return 0;

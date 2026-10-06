@@ -44,24 +44,25 @@ Properties, checked as invariants:
 
 ### Results
 
-TLC (tla2tools 2026.10.04), 8 workers.  `CHECK_DEADLOCK FALSE`: a finished
+TLC (tla2tools 2026-10-05), 8 workers.  `CHECK_DEADLOCK FALSE`: a finished
 transfer has no enabled action, and that is not an error.  `NotFinished`,
 checked as an invariant, must fail: a complete transfer is reachable, so a
 pass is not the model doing nothing.
 
 The model as of the integrity work (a BREAK only stops a block, `CHECK` =
-blocks carry a check):
+blocks carry a check), with repeating pieces; state counts from the last
+run:
 
 | Config | Channel | Sizes | Result |
 |---|---|---|---|
-| `Honest_Floor` | honest, floor (BREAK) | NB 4, K 2, sent ≤ 4, MOD 4, WIN 2, 3 in flight | pass, 212 817 states |
-| `Honest_Above` | honest, polls only | same | pass, 341 673 states |
-| `Honest_Floor_W3` | honest, floor | NB 7, K 2, sent ≤ 3, MOD 6, WIN 3, 2 in flight (ids wrap) | pass, 714 830 states |
-| `Honest_Above_W3` | honest, polls only | same | pass, 4 529 446 states |
-| `Spurious_Floor` | a BREAK nobody sent | NB 3, K 2, sent ≤ 3, MOD 4, WIN 2, 2 in flight | pass, 33 908 states |
-| `Spurious_Floor_Big` | a BREAK nobody sent | NB 4, K 2, sent ≤ 4, MOD 4, WIN 2, 3 in flight | pass, 2 988 659 states |
-| `Stale_Above` | a same-seed frame of an earlier session | NB 3, K 2, sent ≤ 3, MOD 4, WIN 2, 2 in flight | pass, 415 000 states |
-| `Adversary_Floor` | both, at the floor | same | pass, 2 475 788 states |
+| `Honest_Floor` | honest, floor (BREAK) | NB 4, K 2, sent ≤ 4, MOD 4, WIN 2, 3 in flight | pass, 2 254 974 states |
+| `Honest_Above` | honest, polls only | same | pass, 3 654 644 states |
+| `Honest_Floor_W3` | honest, floor | NB 7, K 2, sent ≤ 3, MOD 6, WIN 3, 2 in flight (ids wrap) | pass, 23 827 905 states |
+| `Honest_Above_W3` | honest, polls only | same | pass, 63 416 012 states |
+| `Spurious_Floor` | a BREAK nobody sent | NB 3, K 2, sent ≤ 3, MOD 4, WIN 2, 2 in flight | pass, 259 464 states |
+| `Spurious_Floor_Big` | a BREAK nobody sent | NB 4, K 2, sent ≤ 4, MOD 4, WIN 2, 3 in flight | pass, 27 515 636 states |
+| `Stale_Above` | a same-seed frame of an earlier session | NB 3, K 2, sent ≤ 3, MOD 4, WIN 2, 2 in flight | pass, 1 482 872 states |
+| `Adversary_Floor` | both, at the floor | same | pass, 12 138 448 states |
 | `Stale_Above_NoCheck` | a stale frame, blocks without a check | same | **`Integrity` violated** |
 
 Before it (trunk 2c07bf4: a BREAK retired the block, and blocks had no
@@ -87,16 +88,98 @@ where the code streams its data pieces as they arrive.  So in the code a bad
 block's leading bytes can reach the application before its check fails; the
 session then ends (fail closed), which the explorer checks below.
 
+### Liveness
+
+Safety says nothing bad happens; `Completes` says the transfer ends: every
+block reaches the application, or the session fails closed.  It is checked
+under `LiveSpec` (`Live_*.cfg`), which adds what the code does and what a
+lossy channel can fairly be asked:
+
+- `TURNS`: a half-duplex turn.  The sender keys a round of at least one
+  piece, then listens until the answer comes or its timer runs out.  With
+  any interleaving the sender kept keying over the poll in flight, forever.
+- The sender's pieces repeat (the code's indices wrap mod 256).
+- Fairness: the sender keeps sending, the receiver keeps answering, and polls
+  infinitely often (the code's floor cadence guarantees one every 4 patterns,
+  12 deep).  Each piece *of each block* and each poll, offered again and
+  again, is eventually delivered.  Per piece index alone was not enough: TLC
+  found a channel that delivered only the duplicates the receiver already
+  held.  A frame on the air ends, received or lost.
+- `INJMAX`: at most this many spurious BREAKs or stale frames.  No protocol
+  progresses against forgeries without end: a BREAK always at the head of the
+  return channel keeps the poll behind it from ever being heard.  The safety
+  configurations leave them unbounded.
+
+| Config | Result |
+|---|---|
+| `Live_Honest_Floor` | pass (2.8 M states, 29 min) |
+| `Live_Spurious_Floor` (2 spurious BREAKs) | pass (516 k states, 2 h) |
+| `Live_Adversary_Floor`, `Live_Honest_Above` | running at the time of writing |
+
+The counterexamples on the way were the model's, not the code's: the
+unbounded adversary, a timeout that waited for the channel to empty, a sender
+ending its turn without sending.  Each is recorded where the model was fixed.
+
 ### Running it
 
 ```
-java -XX:+UseParallelGC -cp tla2tools.jar tlc2.TLC -workers 8 -cleanup \
-     -config Honest_Floor.cfg CarouselBlocks.tla
+java -XX:+UseParallelGC -cp tla2tools.jar tlc2.TLC -workers 8 \
+     -metadir /some/private/dir -config Honest_Floor.cfg CarouselBlocks.tla
 ```
 
 `tla2tools.jar` is the TLA+ tools release from
-https://github.com/tlaplus/tlaplus/releases.  A violated invariant prints the
-trace state by state.
+https://github.com/tlaplus/tlaplus/releases (these results: the Toolbox's,
+2026-10-05).  Give each run its own `-metadir`: two runs sharing `states/`
+destroy each other's state.  A violated property prints the trace state by
+state.
+
+## A proof for every size: `CarouselProof.tla`, `CarouselProofs.tla`
+
+TLC checks the model at small sizes.  `CarouselProofs.tla` proves the block
+layer safe with TLAPS for the code's window -- WIN = 8, ids mod 16 -- and any
+number of blocks, any K, and FIFO channels of any length that lose any frames:
+
+```
+THEOREM SafetyHolds == Spec => []Safety      \* RetireSafe /\ Integrity
+```
+
+823 obligations, all proved (tlapm bfa9468, Z3 and Zenon):
+`tlapm --threads 8 CarouselProofs.tla`.
+
+`CarouselProof.tla` is the block layer written for proof: sets and functions
+over block ids instead of sequences filtered with `SelectSeq`, ghost fields
+on frames in flight, and no BREAK.  The sender may send a piece of *any*
+open block at any time, which covers whatever a BREAK -- genuine, spurious,
+another station's -- makes it choose.  K does not enter: a block may decode
+on any piece.
+
+The inductive invariant (`Inv`), in words:
+- the sender's open blocks span at most WIN ids below `nxt`; every id below
+  `nxt` is open or retired;
+- the receiver's base is the first block not decoded;
+- a data frame in flight was sent from an open block (`snxt` = `nxt` then,
+  in FIFO order), so its block lies within WIN of the base either side and
+  its id mod 16 resolves to it -- or reads as behind the base;
+- a poll in flight carries a faithful snapshot (`abase`, `sd`): its base is
+  at most the receiver's, everything it reports decoded is decoded; older
+  polls come first with smaller snapshots; and its base is open, or not yet
+  opened -- so every open block is below it plus WIN.
+
+The last point is where FIFO order is needed: an older poll can only retire
+blocks it saw decoded, so it never retires a later poll's base, and the
+sender's window stays anchored to every poll in flight.  The window lemmas
+(`ResolveIn`, `ResolveBehind`) are where WIN = 8 enters: with a symbolic WIN,
+`%` is non-linear for the SMT solver.
+
+`ProofCheck.tla` runs TLC over the proof model with `Inv` as the invariant
+(13 556 states at WIN 2): it found the invariant's gaps before any proof was
+attempted.  Dropping the span check from `Open` breaks it (TLC) and the proof
+(2 obligations fail).
+
+The Isabelle backend of this tlapm build does not start (its heaps record the
+build machine's paths), so nothing here uses it: the one step that wanted it,
+the least undecoded block, is avoided by letting the base slide to *a* first
+undecoded block (one always exists).
 
 ## The explorer: `tests/sim/car_explore.c`
 

@@ -43,6 +43,7 @@
 #include "freedv_api.h"
 #include "modem_freedv.h"
 #include "modem_mfsk.h"
+#include "mfsk/mfsk.h"          /* NAV header classes */
 #include "fsk.h"
 #include "ldpc_codes.h"
 #include "ofdm_internal.h"
@@ -1534,10 +1535,30 @@ static int send_modulated_keydown(generic_modem_t *g_modem, const arq_keydown_t 
         return -1;
     }
 
+    /* The NAV header's slot: the header, then a gap, ahead of the first frame.
+     * It is synthesised once the buffer is built, when the keydown's length --
+     * which picks its class -- is known. */
+    int n_nav = kd->nav ? mfsk_pattern_max_tx_samples() : 0;
+    size_t nav_gap = kd->nav ? (size_t)FREEDV_FS_8000 * ARQ_NAV_GAP_MS / 1000 : 0;
+    if (kd->nav)
+    {
+        int32_t *nb = (int32_t *)realloc(tx_buffer, (max_samples + (size_t)n_nav + nav_gap) * sizeof(int32_t));
+        if (!nb)
+        {
+            free(tx_buffer);
+            free(mod_out_short);
+            return -1;
+        }
+        tx_buffer = nb;
+    }
+
     size_t total = 0;
     float tx_gain = atomic_load(&g_tx_gain);
     float peak_fs = 0.0f;
     for (int i = 0; i < FREEDV_FS_8000 * TX_HEAD_SILENCE_MS / 1000; i++)
+        tx_buffer[total++] = 0;
+    size_t nav_at = total;
+    for (size_t i = 0; i < (size_t)n_nav + nav_gap; i++)
         tx_buffer[total++] = 0;
     for (int i = 0; i < kd->n; i++)
     {
@@ -1553,6 +1574,18 @@ static int send_modulated_keydown(generic_modem_t *g_modem, const arq_keydown_t 
     }
     for (int i = 0; i < FREEDV_FS_8000 * TX_TAIL_SILENCE_MS / 1000; i++)
         tx_buffer[total++] = 0;
+    if (kd->nav)
+    {
+        /* "This keydown ends at most class-ms after this header starts." */
+        uint32_t ms = (uint32_t)((total - nav_at) * 1000 / FREEDV_FS_8000);
+        int cls = mfsk_nav_class_for_ms(ms);
+        int16_t *hdr = (int16_t *)malloc((size_t)n_nav * sizeof(int16_t));
+        if (hdr && mfsk_nav_tx(hdr, cls) == n_nav)
+            for (int i = 0; i < n_nav; i++)
+                tx_buffer[nav_at + (size_t)i] = tx_sample_with_gain(hdr[i], tx_gain, &peak_fs);
+        free(hdr);
+        HLOGD("modem-tx", "NAV tx class=%d (%u ms of keydown, holds %u)", cls, ms, mfsk_nav_class_ms(cls));
+    }
 
     maybe_switch_modem_mode(g_modem, kd->f[0].mode, RX, true);
     key_and_play(g_modem, tx_buffer, total, peak_fs);
@@ -1876,6 +1909,8 @@ static _Atomic bool g_crc_seed_active = false;
 static void modem_apply_crc_seed(uint16_t seed)
 {
     atomic_store(&g_crc_seed_active, seed != 0);
+    /* The session's patterns, too: only its peer's ACK/BREAK count. */
+    mfsk_pattern_set_session(seed);
     pthread_mutex_lock(&modem_pool_lock);
     for (int i = 0; i < modem_mode_pool_n; i++)
     {
@@ -2688,6 +2723,8 @@ void *rx_thread(void *g_modem)
      * (its rising edge resets the window; see the detector below). */
     mfsk_pattern_window_t pat_win = {0};
     bool pat_armed = false;
+    bool ack_was_due = false;
+    long long ack_due_from = 0;   /* window samples when the current ACK became due */
     memset(&w_ctrl, 0, sizeof(w_ctrl));
     memset(&w_pay,  0, sizeof(w_pay));
     memset(&w_listen, 0, sizeof(w_listen));
@@ -2822,6 +2859,9 @@ void *rx_thread(void *g_modem)
             atomic_store(&w_pay.flush_req, true);
             busy_holdoff_until_ms = monotonic_ms() + BUSY_TX_HOLDOFF_MS;
             atomic_store(&w_listen.flush_req, true);
+            /* the pattern ring holds audio from before the keydown */
+            mfsk_pattern_window_reset(&pat_win);
+            ack_due_from = 0;
             was_tx = false;
         }
 
@@ -2963,18 +3003,49 @@ void *rx_thread(void *g_modem)
          * Opening a new ACK window discards what the last one left behind: an
          * unmatched burst from the PREVIOUS exchange would otherwise be found
          * now and reported as this frame's ACK. */
-        if (arq_policy_ready && arq_snapshot.expect_pattern_ack && !pat_armed)
+        /* In a carousel session the detector runs throughout -- it is cheap
+         * now (mfsk_stream_det) -- for the peer's NAV headers; ACK and BREAK
+         * still count only while one is due, and only from a burst that began
+         * after it became due: an unmatched burst of the PREVIOUS exchange
+         * must not be taken for this frame's ACK. */
+        bool pat_want = arq_policy_ready &&
+                        (arq_snapshot.expect_pattern_ack || arq_snapshot.in_carousel);
+        if (pat_want && !pat_armed)
             mfsk_pattern_window_reset(&pat_win);
-        pat_armed = arq_policy_ready && arq_snapshot.expect_pattern_ack;
+        pat_armed = pat_want;
+        bool ack_due = arq_policy_ready && arq_snapshot.expect_pattern_ack;
+        if (ack_due && !ack_was_due)
+            ack_due_from = mfsk_pattern_window_samples(&pat_win);
+        ack_was_due = ack_due;
 
         if (pat_armed)
         {
-            int is_break = 0;
-            if (mfsk_pattern_window_push(&pat_win, capture_i16, chunk_samples, &is_break))
+            mfsk_pattern_ev_t pev[8];
+            int npev = mfsk_pattern_window_events(&pat_win, capture_i16, chunk_samples, pev, 8);
+            long long pat_now = mfsk_pattern_window_samples(&pat_win);
+            int best = -1, best_kind = -1;
+            for (int e = 0; e < npev; e++)
+            {
+                if (pev[e].kind >= MFSK_PAT_NAV(0))
+                {
+                    int cls = pev[e].kind - MFSK_PAT_NAV(0);
+                    uint32_t age = (uint32_t)((pat_now - pev[e].start) * 1000 / FREEDV_FS_8000);
+                    uint32_t hold = mfsk_nav_class_ms(cls);
+                    HLOGD("modem-rx", "NAV rx class=%d age=%u ms hold=%u ms", cls, age, hold);
+                    if (arq_snapshot.in_carousel)
+                        arq_note_rx_nav(age, hold);
+                    continue;
+                }
+                if (!ack_due || pev[e].start < ack_due_from)
+                    continue;
+                /* the higher score wins, as in mfsk_pattern_detect() */
+                if (pev[e].score > best) { best = pev[e].score; best_kind = pev[e].kind; }
+            }
+            if (best_kind >= 0)
             {
                 HLOGD("modem-rx", "Pattern ACK detected (%s)",
-                      is_break ? "ACK+TURN" : "ACK");
-                arq_post_pattern_ack(is_break != 0);
+                      best_kind == MFSK_PAT_BREAK ? "ACK+TURN" : "ACK");
+                arq_post_pattern_ack(best_kind == MFSK_PAT_BREAK);
             }
         }
 

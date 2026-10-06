@@ -463,14 +463,16 @@ void test_call_carousel_marker(void)
     }
 }
 
-/* The 1.9.17/1.9.18 carousel's mark is not this one: such a caller runs
- * stop-and-wait with this build. */
+/* Earlier carousels' marks are not this one: such a caller runs stop-and-wait
+ * with this build. */
 void test_call_old_carousel_mark_unmarked(void)
 {
     uint8_t frame[INT_BUFFER_SIZE];
     TEST_ASSERT_GREATER_THAN_INT(0, arq_protocol_build_call(frame, sizeof(frame), 0x21,
                                                             "PU2UIT", "PU2UIT-3", 2300));
     frame[ARQ_CONTROL_FRAME_SIZE - 1] = 0xA7;
+    TEST_ASSERT_FALSE(arq_protocol_call_is_carousel(frame, "PU2UIT"));
+    frame[ARQ_CONTROL_FRAME_SIZE - 1] = 0xA8;
     TEST_ASSERT_FALSE(arq_protocol_call_is_carousel(frame, "PU2UIT"));
 }
 

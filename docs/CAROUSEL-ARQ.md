@@ -18,7 +18,7 @@ not see the first and drop the second:
 | carousel | carousel | carousel |
 | carousel | without | stop-and-wait: the callee's plain ACCEPT says so |
 | without | carousel | stop-and-wait: the unmarked CALL gets a plain ACCEPT |
-| carousel of 1.9.17/1.9.18 | carousel | stop-and-wait, either way round: their marks differ (0xA7, 0xA8), and each reads the other's CALL as unmarked |
+| an earlier carousel (1.9.17/1.9.18, or mercuryv2 before the session-bound patterns) | carousel | stop-and-wait, either way round: the marks differ (0xA7, 0xA8, now 0xA9), and each reads the other's CALL as unmarked |
 
 Before the markers, every mixed pair "connected" and then moved nothing
 until the application gave up (harness, `MERCURY_TEST_BIN_A`/`_B`, see
@@ -82,17 +82,31 @@ mode.
 **Session.**  Carousel frames carry the session in their CRC16: the sender
 XORs the CRC with a seed (a CRC16 of the session id, the callee's nonce from
 the ACCEPT and both callsigns), and every decoder of the station checks
-against it.  Another session's frames fail like any bad frame.
+against it.  Another session's frames fail like any bad frame.  The control
+decoder also admits plain frames (CALL, ACCEPT, DISCONNECT, broadcast).  HARQ
+combining is off in a carousel session: consecutive frames are different
+codewords.
 
 **Integrity.**  A CRC16 passes about one corrupt frame in 65536, so every
 block also ends in a 4-byte CRC-32 keyed by the seed, checked when the block
 decodes.  A block that fails it, or fails to decode, or two frames that
 disagree on a block's size, end the session: the stream runs ahead of the
 check, so carrying on could deliver wrong data.  At the floor a BREAK pattern
-carries no session, and a detector can false-alarm, so it only stops the
-sender sending a block: only a poll retires one.  The control decoder also admits plain frames
-(CALL, ACCEPT, DISCONNECT, broadcast).  HARQ combining is off in a carousel
-session: consecutive frames are different codewords.
+can be another station's, or a detector false alarm, so it only stops the
+sender sending a block: only a poll retires one.  And the ACK and BREAK are
+the session's own: their tone lists are derived from the seed, so another
+station's patterns -- every station once sent the same two -- do not count.
+
+**Carrier sense and the NAV header.**  A station is "on the air" to its
+peer when one of the peer's decoders syncs on it.  In a deep fade, or on a
+rung the peer's payload decoder is not bound to, neither does, and the peer
+keyed over it.  So below 0 dB (as a station hears its peer: the path is
+reciprocal) every keydown opens with a NAV header: a 0.64 s pattern whose
+tone list says how long the keydown lasts, in 12 classes from 2 s to 32 s.
+The peer holds the channel for that long, whether or not it can decode a
+frame of it; patterns are detected about 10 dB below DATAC16.  The detector
+(one FFT per 5 ms step, all lists scored by lookup) runs throughout a
+session, for about 1 % of an x86 core.  `MERCURY_NAV=0` turns headers off.
 
 ## Wire formats
 
@@ -127,8 +141,8 @@ A station without the carousel reads that as an unknown bandwidth token and
 drops the frame.  A plain ACCEPT keeps its CRC whole.
 
 A carousel CALL sets the last byte of its 10-byte SRC slot to
-`ARQ_CALL_CAROUSEL_MARK` (0xA8; 0xA7 was the carousel of 1.9.17 and 1.9.18,
-before the block check).  The arithmetic code ends at its
+`ARQ_CALL_CAROUSEL_MARK` (0xA9; 0xA7 was the carousel of 1.9.17 and 1.9.18,
+before the block check, and 0xA8 the one before session-bound patterns).  The arithmetic code ends at its
 end-of-string symbol, and an older decoder never reads past it.  The caller
 marks only when the code leaves that byte free and the marked slot still
 decodes to the same callsign; the callee reads the marker only when the
@@ -137,6 +151,21 @@ decoded callsign's code is shorter than the slot.
 A carousel ACCEPT puts the callee's 16-bit session nonce in the last two
 bytes of its SRC slot, by the same rule (the code at most 8 bytes); with no
 room both ends use 0.
+
+Patterns are 16 MFSK symbols, 0.64 s: 32 tones, each symbol's tone the
+list's (8 tones, repeated) plus 13 per symbol, mod 32.  The detector counts
+symbols whose expected tone is the peak bin, searching +/-2 bins of offset.
+
+| pattern | tones | detected at |
+|---|---|---|
+| ACK, BREAK | the session's (`mfsk_session_patterns` of the CRC seed); global ones with no session | 8 of 16 |
+| NAV class k | `mfsk_nav_tones[k]`, k = 0..11: the keydown ends within `mfsk_nav_class_ms(k)` of the header's start | 9 of 16 |
+
+Each list agrees with every other in at most 3 symbols (NAV classes with each
+other in at most 4) at any time shift and up to 4 bins of frequency shift.  A
+strong pattern can still cross-read as another list at a lower score: of
+overlapping events only the strongest is reported.  A headed keydown: head
+silence, header, 60 ms, then its bursts.
 
 Bursts of a round are 100 ms apart (QAM16C2: 200 ms).  With no gap the
 payload decoder misses bursts after the first; the gaps were measured with
@@ -183,6 +212,10 @@ connect; one run each, so indicative):
 - `tests/test_carousel_sim`: through the real FSM on the two-FSM sim --
   connect, transfers, loss, a peer vanishing, disconnect, and a fuzz.
 - `tests/test_crc_seed`: the seeded CRC in freedv.
+- `tests/modem/test_pattern_ack_detection`: the streaming detector against
+  the batch one (bit-identical), session lists and NAV classes (separation,
+  each heard as itself and nothing else); `utils/pattern_probe` (`wcurve`,
+  `nav`, `xread`, `PATTERN_KEY`) measures curves, false alarms, cross-reads.
 - `tests/test_car_explore`: the carousel under every set of up to 3 lost
   frames and 3 unsensed keydowns, every single spurious BREAK and every
   single corrupt frame; `specs/carousel/` has the TLA+ model of the block

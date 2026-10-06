@@ -34,12 +34,19 @@ CONSTANTS NB,        \* blocks to send
           FLOOR,     \* the sender streams the floor: one block per round, BREAK accepted
           SPURIOUS,  \* allow a BREAK nobody sent
           STALE,     \* allow a stale same-seed frame with an arbitrary id
-          CHECK      \* blocks carry a check (TRUE: the code since step 2)
+          CHECK,     \* blocks carry a check (TRUE: the code since step 2)
+          INJMAX,    \* spurious/stale frames per behaviour (0: unbounded) -- no
+                     \* protocol progresses against forgeries without end, so
+                     \* liveness is checked against a bounded adversary
+          TURNS      \* half-duplex turns: the sender keys a round, then listens
+                     \* until the answer comes or times out (the code's
+                     \* schedule; FALSE: any interleaving, for safety)
 
 ASSUME MOD = 2 * WIN /\ K <= SENTMAX
 
 VARIABLES
-    sb,        \* sender: open blocks [id |-> abs id, sent |-> pieces sent, stop |-> BREAKed]
+    sb,        \* sender: open blocks [id |-> abs id, sent |-> distinct pieces sent (saturates at
+               \*   SENTMAX), nx |-> next piece index (cycles mod SENTMAX), stop |-> BREAKed]
     nxt,       \* sender: next block id to open
     floorBlk,  \* sender: the block its last floor round carried
     down,      \* frames in flight sender -> receiver, in order (a FIFO: no overtaking on air)
@@ -51,9 +58,16 @@ VARIABLES
     brk,       \* receiver: something to BREAK about since its last answer
     delivered, \* receiver: blocks handed to the application, in order
     failed,    \* receiver: a block failed its check -- the session ends
-    retired    \* ghost: blocks the sender has dropped
+    retired,   \* ghost: blocks the sender has dropped
+    inj,       \* ghost: spurious and stale frames injected so far (if INJMAX > 0)
+    turn       \* "S" the sender's turn ("S+" once it has sent a piece in it),
+               \* "R" the receiver answers, "W" the sender waits for that
+               \* answer (constant "S" unless TURNS)
 
-vars == <<sb, nxt, floorBlk, down, up, rbase, pcs, got, done, brk, delivered, failed, retired>>
+vars == <<sb, nxt, floorBlk, down, up, rbase, pcs, got, done, brk, delivered, failed, retired, inj, turn>>
+CanInject == INJMAX = 0 \/ inj < INJMAX
+Injected == inj' = IF INJMAX = 0 THEN inj ELSE inj + 1
+TurnIs(t) == ~TURNS \/ turn = t \/ (t = "S" /\ turn = "S+")
 rxv  == <<rbase, pcs, got, done, brk, delivered, failed>>
 txv  == <<sb, nxt, floorBlk, retired>>
 
@@ -65,15 +79,17 @@ Init ==
     /\ rbase = 0 /\ pcs = [b \in Ids |-> {}] /\ got = [b \in Ids |-> {}]
     /\ done = [b \in Ids |-> FALSE] /\ brk = FALSE /\ delivered = << >> /\ failed = FALSE
     /\ retired = {}
+    /\ turn = "S"
+    /\ inj = 0
 
 (* ---- sender ---- *)
 Span == IF sb = << >> THEN 0 ELSE nxt - sb[1].id
 
 Open ==
     /\ nxt < NB /\ Span < WIN
-    /\ sb' = Append(sb, [id |-> nxt, sent |-> 0, stop |-> FALSE])
+    /\ sb' = Append(sb, [id |-> nxt, sent |-> 0, nx |-> 0, stop |-> FALSE])
     /\ nxt' = nxt + 1
-    /\ UNCHANGED <<floorBlk, down, up, retired>> /\ UNCHANGED rxv
+    /\ UNCHANGED <<floorBlk, down, up, retired, turn>> /\ UNCHANGED rxv
 
 \* The block a floor round carries: the oldest not stopped by a BREAK, or the
 \* oldest of all when every one is (its repair, until a poll comes).
@@ -83,16 +99,19 @@ FloorIdx == IF Live = {} THEN 1 ELSE CHOOSE j \in Live : \A k \in Live : j <= k
 SendPiece(i) ==
     /\ i \in 1 .. Len(sb)
     /\ FLOOR => i = FloorIdx
-    /\ sb[i].sent < SENTMAX
+    /\ TurnIs("S")
     /\ Len(down) < CHAN
+    \* After SENTMAX distinct pieces the indices repeat (the code's wrap mod 256).
     /\ down' = Append(down, [t |-> "data", wire |-> sb[i].id % MOD, true |-> sb[i].id,
-                             piece |-> sb[i].sent])
-    /\ sb' = [sb EXCEPT ![i].sent = @ + 1]
+                             piece |-> sb[i].nx])
+    /\ sb' = [sb EXCEPT ![i].sent = IF @ < SENTMAX THEN @ + 1 ELSE @,
+                        ![i].nx = (@ + 1) % SENTMAX]
     /\ floorBlk' = IF FLOOR THEN sb[i].id ELSE floorBlk
     \* Half duplex: frames still on the air towards a station that keys are
     \* lost -- it cannot hear while it transmits.  (On air a frame arrives as
     \* it is sent; one the sender has not taken yet is one it keyed over.)
     /\ up' = << >>
+    /\ turn' = IF TURNS THEN "S+" ELSE turn
     /\ UNCHANGED <<nxt, retired>> /\ UNCHANGED rxv
 
 Keep(blk, m) == LET off == (blk.id + MOD - m.base) % MOD
@@ -151,18 +170,22 @@ PollMsg == [t |-> "poll", base |-> rbase % MOD,
             need |-> [o \in 0 .. WIN - 1 |-> IF done[rbase + o] THEN 0 ELSE K]]
 
 SendPoll ==
+    /\ TurnIs("R")
     /\ Len(up) < CHAN
     /\ up' = Append(up, PollMsg)
     /\ down' = << >>
     /\ brk' = FALSE                  \* send_poll clears rx_break
+    /\ turn' = IF TURNS THEN "W" ELSE turn
     /\ UNCHANGED <<rbase, pcs, got, done, delivered, failed>> /\ UNCHANGED txv
 
 SendBreak ==
     /\ FLOOR /\ brk
+    /\ TurnIs("R")
     /\ Len(up) < CHAN
     /\ up' = Append(up, [t |-> "break"])
     /\ brk' = FALSE
     /\ down' = << >>
+    /\ turn' = IF TURNS THEN "W" ELSE turn
     /\ UNCHANGED <<rbase, pcs, got, done, delivered, failed>> /\ UNCHANGED txv
 
 (* ---- channel ---- *)
@@ -170,7 +193,7 @@ SendBreak ==
 RecvDown ==
     /\ down # << >>
     /\ down' = Tail(down)
-    /\ OnData(Head(down)) /\ Slide /\ UNCHANGED up /\ UNCHANGED txv
+    /\ OnData(Head(down)) /\ Slide /\ UNCHANGED <<up, turn>> /\ UNCHANGED txv
 
 RecvUp ==
     /\ up # << >>
@@ -178,25 +201,38 @@ RecvUp ==
     /\ CASE Head(up).t = "poll"  -> OnPoll(Head(up)) /\ UNCHANGED rxv
          [] Head(up).t = "break" -> OnBreak /\ UNCHANGED rxv
     /\ UNCHANGED down
+    /\ turn' = IF TURNS THEN "S" ELSE turn
 
-LoseDown == /\ down # << >> /\ down' = Tail(down) /\ UNCHANGED up /\ UNCHANGED rxv /\ UNCHANGED txv
-LoseUp   == /\ up # << >> /\ up' = Tail(up) /\ UNCHANGED down /\ UNCHANGED rxv /\ UNCHANGED txv
+LoseDown == /\ down # << >> /\ down' = Tail(down) /\ UNCHANGED <<up, turn>> /\ UNCHANGED rxv /\ UNCHANGED txv
+LoseUp   == /\ up # << >> /\ up' = Tail(up) /\ UNCHANGED <<down, turn>> /\ UNCHANGED rxv /\ UNCHANGED txv
+
+\* With TURNS: the sender ends its round and listens; and, its answer lost,
+\* carries on (continues on silence).
+\* A polled sender sends at least one piece, unless it has nothing left.
+EndRound == /\ TURNS /\ (turn = "S+" \/ (turn = "S" /\ sb = << >> /\ nxt = NB)) /\ turn' = "R"
+            /\ UNCHANGED <<down, up>> /\ UNCHANGED rxv /\ UNCHANGED txv
+\* (A timer: frames on their way to the sender do not hold it off, and are
+\* lost if it keys.)
+TimeoutS == /\ TURNS /\ turn = "W" /\ turn' = "S"
+            /\ UNCHANGED <<down, up>> /\ UNCHANGED rxv /\ UNCHANGED txv
 
 InjectBreak ==
-    /\ SPURIOUS /\ Len(up) < CHAN
+    /\ SPURIOUS /\ CanInject /\ Len(up) < CHAN /\ Injected
     /\ up' = Append(up, [t |-> "break"])
-    /\ UNCHANGED down /\ UNCHANGED rxv /\ UNCHANGED txv
+    /\ UNCHANGED <<down, turn>> /\ UNCHANGED rxv /\ UNCHANGED txv
 
 InjectStale(w) ==
-    /\ STALE /\ Len(down) < CHAN
+    /\ STALE /\ CanInject /\ Len(down) < CHAN /\ Injected
     /\ down' = Append(down, [t |-> "data", wire |-> w, true |-> STALEID, piece |-> 0])
-    /\ UNCHANGED up /\ UNCHANGED rxv /\ UNCHANGED txv
+    /\ UNCHANGED <<up, turn>> /\ UNCHANGED rxv /\ UNCHANGED txv
 
 Next0 ==
-    \/ Open
-    \/ \E i \in 1 .. Len(sb) : SendPiece(i)
-    \/ SendPoll \/ SendBreak
-    \/ RecvDown \/ RecvUp \/ LoseDown \/ LoseUp
+    \/ /\ \/ Open
+          \/ \E i \in 1 .. Len(sb) : SendPiece(i)
+          \/ SendPoll \/ SendBreak
+          \/ RecvDown \/ RecvUp \/ LoseDown \/ LoseUp
+          \/ EndRound \/ TimeoutS
+       /\ UNCHANGED inj
     \/ InjectBreak
     \/ \E w \in 0 .. MOD - 1 : InjectStale(w)
 
@@ -215,6 +251,35 @@ Integrity == \A i \in 1 .. Len(delivered) : got[delivered[i]] \subseteq {deliver
 \* A block leaves the sender only once the receiver holds it decoded:
 \* otherwise nobody will ever send it again.
 RetireSafe == \A b \in retired : b < NB => done[b]
+
+(* ---- liveness ---- *)
+\* The sender keeps sending and opening, the receiver keeps answering, and the
+\* channel, however lossy, eventually delivers each kind of frame it is
+\* offered again and again: every piece of every block, and polls.  (Fairness
+\* on "some frame" alone would let it deliver piece 0 forever and lose 1.)
+\* Losses, spurious BREAKs and stale frames stay unconstrained.
+Fair ==
+    /\ WF_vars(~failed /\ UNCHANGED inj /\ Open)
+    /\ WF_vars(~failed /\ UNCHANGED inj /\ \E i \in 1 .. Len(sb) : SendPiece(i))
+    \* the receiver polls again and again (the code: every 4 floor patterns,
+    \* 12 deep, and whenever the sender is stuck or its window fills)
+    /\ SF_vars(~failed /\ UNCHANGED inj /\ SendPoll)
+    /\ WF_vars(~failed /\ UNCHANGED inj /\ (SendPoll \/ SendBreak))
+    /\ WF_vars(~failed /\ UNCHANGED inj /\ EndRound)
+    /\ WF_vars(~failed /\ UNCHANGED inj /\ TimeoutS)
+    \* per block and piece: delivering only the duplicates of what the
+    \* receiver holds, and losing the rest, is not fair (TLC found it)
+    /\ \A b \in 0 .. NB - 1, p \in 0 .. SENTMAX - 1 :
+          SF_vars(~failed /\ UNCHANGED inj /\ RecvDown /\ Head(down).t = "data" /\ Head(down).true = b
+                  /\ Head(down).piece = p)
+    /\ SF_vars(~failed /\ UNCHANGED inj /\ RecvUp /\ Head(up).t = "poll")
+    \* and a frame on the air ends, received or lost: it does not linger
+    /\ WF_vars(~failed /\ UNCHANGED inj /\ (RecvDown \/ LoseDown))
+    /\ WF_vars(~failed /\ UNCHANGED inj /\ (RecvUp \/ LoseUp))
+LiveSpec == Spec /\ Fair
+
+\* Every block reaches the application, or the session fails closed.
+Completes == <>(Len(delivered) = NB \/ failed)
 
 \* Not a safety property: checked as an invariant it must FAIL, which shows a
 \* complete transfer is reachable (the model is not safe by doing nothing).

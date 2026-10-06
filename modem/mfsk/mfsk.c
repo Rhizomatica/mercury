@@ -470,3 +470,131 @@ void mfsk_demod(const mfsk_t *m, const mfsk_cplx *fft_in, int total_bits,
         }
     }
 }
+
+/* --- NAV header ----------------------------------------------------------- */
+
+/* Found by search (scratch nav.py, seed 20261005): 8 distinct tones each, self
+ * agreement <= 3 off zero shift, <= 3 against ACK/BREAK/HAIL/preamble/
+ * postamble, <= 4 between classes (12 classes do not fit at 3). */
+const int mfsk_nav_tones[MFSK_NAV_CLASSES][8] = {
+    {  1,  0, 24,  8, 17, 11, 30, 28 }, { 12,  3, 18, 15, 31, 29,  0, 20 },
+    { 30, 31, 28, 27, 29, 26, 18, 12 }, { 10, 19, 14, 18,  0, 21,  5, 12 },
+    { 16,  5, 18, 22, 21,  7, 20, 14 }, { 13, 28, 18, 16, 15, 22,  9, 29 },
+    {  5,  8, 10, 16, 31,  3, 21,  6 }, {  8, 27, 22, 13,  6, 23, 24, 28 },
+    {  1, 19,  9,  0, 24, 17, 12,  4 }, { 21, 20, 30,  6, 18, 23, 16, 19 },
+    { 31, 28, 22, 29, 30, 18,  5,  4 }, {  4,  1, 23, 19, 24, 21,  0, 28 },
+};
+
+/* 2 s to 32 s, a factor of 1.287 a class: a hold overshoots by under 29 %. */
+static const uint32_t nav_class_ms[MFSK_NAV_CLASSES] = {
+    2000, 2574, 3313, 4264, 5487, 7062, 9089, 11698, 15055, 19376, 24937, 32094,
+};
+
+uint32_t mfsk_nav_class_ms(int k)
+{
+    if (k < 0) k = 0;
+    if (k >= MFSK_NAV_CLASSES) k = MFSK_NAV_CLASSES - 1;
+    return nav_class_ms[k];
+}
+
+int mfsk_nav_class_for_ms(uint32_t ms)
+{
+    for (int k = 0; k < MFSK_NAV_CLASSES; k++)
+        if (ms <= nav_class_ms[k]) return k;
+    return MFSK_NAV_CLASSES - 1;
+}
+
+/* --- session-bound patterns --------------------------------------------- */
+
+void mfsk_pattern_expand(const mfsk_t *m, const int *tones, int *out)
+{
+    for (int p = 0; p < m->ack_pattern_nsymb; p++)
+        out[p] = (tones[p % m->ack_pattern_len] + p * m->tone_hop_step) % m->M;
+}
+
+int mfsk_seq_xmatch(int M, const int *a, int na, const int *b, int nb, int dmax, bool skip0)
+{
+    int best = 0;
+    for (int tau = -(nb - 1); tau < na; tau++)
+        for (int d = -dmax; d <= dmax; d++) {
+            if (skip0 && tau == 0 && d == 0) continue;
+            int c = 0;
+            for (int i = 0; i < na; i++) {
+                int j = i - tau;
+                if (j < 0 || j >= nb) continue;
+                int t = b[j] + d;          /* a shifted tone leaves the band */
+                if (t >= 0 && t < M && a[i] == t) c++;
+            }
+            if (c > best) best = c;
+        }
+    return best;
+}
+
+static uint64_t splitmix64(uint64_t *x)
+{
+    uint64_t z = (*x += 0x9E3779B97F4A7C15ULL);
+    z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ULL;
+    z = (z ^ (z >> 27)) * 0x94D049BB133111EBULL;
+    return z ^ (z >> 31);
+}
+
+/* Agreement allowed between a session list and anything else, in symbols of
+ * ack_pattern_nsymb; frequency shifts up to SESS_DMAX bins: the detector's
+ * +/-2 search plus up to 2 bins of offset between the radios. */
+#define SESS_XMATCH 3
+#define SESS_DMAX   4
+#define SESS_TRIES  20000
+
+bool mfsk_session_patterns(const mfsk_t *m, uint32_t key,
+                           const int *const *extra, int nextra,
+                           int *ack_out, int *brk_out)
+{
+    int L = m->ack_pattern_len, NS = m->ack_pattern_nsymb;
+    for (int i = 0; i < L; i++) { ack_out[i] = m->ack_tones[i]; brk_out[i] = m->break_tones[i]; }
+    if (!key || m->M != 32 || L != 8 || NS != 16) return false;
+
+    /* everything a session list must stay clear of, hop-expanded */
+    enum { MAXREF = 8 + 24 };   /* the fixed five, then extras */
+    int ref[MAXREF][MFSK_MAX_ACK_TONES], nref = 0, rlen[MAXREF];
+    mfsk_pattern_expand(m, m->ack_tones, ref[nref]);   rlen[nref++] = NS;
+    mfsk_pattern_expand(m, m->break_tones, ref[nref]); rlen[nref++] = NS;
+    mfsk_pattern_expand(m, m->hail_tones, ref[nref]);  rlen[nref++] = NS;
+    for (int i = 0; i < NS; i++) {
+        ref[nref][i]     = m->preamble_tones[i % m->preamble_nSymb];
+        ref[nref + 1][i] = m->postamble_tones[i % m->postamble_nSymb];
+    }
+    rlen[nref++] = NS; rlen[nref++] = NS;
+    for (int e = 0; e < nextra && nref < MAXREF; e++) {
+        mfsk_pattern_expand(m, extra[e], ref[nref]); rlen[nref++] = NS;
+    }
+    /* the NAV classes, at the limit they keep among themselves */
+    int nav[MFSK_NAV_CLASSES][MFSK_MAX_ACK_TONES];
+    for (int k = 0; k < MFSK_NAV_CLASSES; k++) mfsk_pattern_expand(m, mfsk_nav_tones[k], nav[k]);
+
+    uint64_t st = 0x6D6572637572793AULL ^ (uint64_t)key;   /* "mercury:" */
+    int found = 0, cand[2][8], exp_c[2][MFSK_MAX_ACK_TONES];
+    for (int t = 0; t < SESS_TRIES && found < 2; t++) {
+        /* 8 distinct tones: a partial Fisher-Yates over 0..M-1 */
+        int pool[32];
+        for (int i = 0; i < 32; i++) pool[i] = i;
+        for (int i = 0; i < L; i++) {
+            int j = i + (int)(splitmix64(&st) % (uint64_t)(32 - i));
+            int x = pool[i]; pool[i] = pool[j]; pool[j] = x;
+            cand[found][i] = pool[i];
+        }
+        int *e = exp_c[found];
+        mfsk_pattern_expand(m, cand[found], e);
+        if (mfsk_seq_xmatch(m->M, e, NS, e, NS, SESS_DMAX, true) > SESS_XMATCH) continue;
+        bool ok = true;
+        for (int r = 0; r < nref && ok; r++)
+            ok = mfsk_seq_xmatch(m->M, e, NS, ref[r], rlen[r], SESS_DMAX, false) <= SESS_XMATCH;
+        for (int k = 0; k < MFSK_NAV_CLASSES && ok; k++)
+            ok = mfsk_seq_xmatch(m->M, e, NS, nav[k], NS, SESS_DMAX, false) <= SESS_XMATCH + 1;
+        if (ok && found == 1)
+            ok = mfsk_seq_xmatch(m->M, e, NS, exp_c[0], NS, SESS_DMAX, false) <= SESS_XMATCH;
+        if (ok) found++;
+    }
+    if (found < 2) return false;
+    for (int i = 0; i < L; i++) { ack_out[i] = cand[0][i]; brk_out[i] = cand[1][i]; }
+    return true;
+}

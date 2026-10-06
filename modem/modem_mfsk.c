@@ -24,6 +24,8 @@
 #include <stdlib.h>
 #include <time.h>
 #include <string.h>
+#include <pthread.h>
+#include <stdatomic.h>
 
 /* Passband geometry — matches the validated offline harness (docs/MFSK-PORT.md). */
 #define MFSK_FS       8000.0
@@ -1014,6 +1016,12 @@ static double       g_pat_lpf[MFSK_LPF_TAPS];
 static double       g_pat_w;
 static int          g_pat_nofdm;
 static bool         g_pat_ready = false;
+/* The ACK and BREAK lists in use: the session's while a carousel session
+ * seeds the modem (mfsk_pattern_set_session), the global ones otherwise. */
+static pthread_mutex_t g_pat_lists_mtx = PTHREAD_MUTEX_INITIALIZER;
+static int          g_pat_ack[MFSK_MAX_ACK_TONES], g_pat_brk[MFSK_MAX_ACK_TONES];
+static bool         g_pat_lists_set = false;
+static _Atomic unsigned g_pat_gen = 1;     /* bumped on every change */
 
 static void mfsk_pattern_lazy_init(void)
 {
@@ -1024,6 +1032,44 @@ static void mfsk_pattern_lazy_init(void)
     g_pat_w     = 2.0 * M_PI * MFSK_FC / MFSK_FS;
     mklpf(g_pat_lpf, MFSK_LPF_FC);
     g_pat_ready = true;
+}
+
+static void pat_lists(int *ack, int *brk)
+{
+    pthread_mutex_lock(&g_pat_lists_mtx);
+    if (!g_pat_lists_set) {
+        memcpy(g_pat_ack, g_pat_m.ack_tones, sizeof(g_pat_ack));
+        memcpy(g_pat_brk, g_pat_m.break_tones, sizeof(g_pat_brk));
+        g_pat_lists_set = true;
+    }
+    memcpy(ack, g_pat_ack, sizeof(g_pat_ack));
+    memcpy(brk, g_pat_brk, sizeof(g_pat_brk));
+    pthread_mutex_unlock(&g_pat_lists_mtx);
+}
+
+void mfsk_pattern_set_lists(const int *ack, const int *brk)
+{
+    mfsk_pattern_lazy_init();
+    pthread_mutex_lock(&g_pat_lists_mtx);
+    memcpy(g_pat_ack, ack ? ack : g_pat_m.ack_tones, sizeof(g_pat_ack));
+    memcpy(g_pat_brk, brk ? brk : g_pat_m.break_tones, sizeof(g_pat_brk));
+    g_pat_lists_set = true;
+    pthread_mutex_unlock(&g_pat_lists_mtx);
+    atomic_fetch_add(&g_pat_gen, 1);
+}
+
+bool mfsk_pattern_set_session(uint32_t key)
+{
+    mfsk_pattern_lazy_init();
+    int ack[MFSK_MAX_ACK_TONES] = {0}, brk[MFSK_MAX_ACK_TONES] = {0};
+    bool bound = mfsk_session_patterns(&g_pat_m, key, NULL, 0, ack, brk);
+    pthread_mutex_lock(&g_pat_lists_mtx);
+    memcpy(g_pat_ack, ack, sizeof(g_pat_ack));
+    memcpy(g_pat_brk, brk, sizeof(g_pat_brk));
+    g_pat_lists_set = true;
+    pthread_mutex_unlock(&g_pat_lists_mtx);
+    atomic_fetch_add(&g_pat_gen, 1);
+    return bound;
 }
 
 int mfsk_pattern_nsymb(void)
@@ -1046,11 +1092,32 @@ int mfsk_pattern_tx(int16_t *out, int pattern_kind)
 
     mfsk_cplx *bins = (mfsk_cplx *)calloc((size_t)ns * MFSK_NCAR, sizeof(mfsk_cplx));
     if (!bins) return 0;
+    mfsk_t m = g_pat_m;      /* with the lists in use */
+    pat_lists(m.ack_tones, m.break_tones);
     if (pattern_kind == 1)   /* ARQ_PATTERN_BREAK */
-        mfsk_generate_break_pattern(&g_pat_m, bins);
+        mfsk_generate_break_pattern(&m, bins);
     else
-        mfsk_generate_ack_pattern(&g_pat_m, bins);
+        mfsk_generate_ack_pattern(&m, bins);
 
+    long tx_n = 0;
+    double complex tail[MFSK_XFADE];
+    int have_tail = 0;
+    int written = mfsk_synth(&g_pat_o, g_pat_w, g_pat_nofdm, bins, ns, out, &tx_n, tail, &have_tail, 1);
+    free(bins);
+    return written;
+}
+
+int mfsk_nav_tx(int16_t *out, int cls)
+{
+    mfsk_pattern_lazy_init();
+    if (cls < 0) cls = 0;
+    if (cls >= MFSK_NAV_CLASSES) cls = MFSK_NAV_CLASSES - 1;
+    int ns = g_pat_m.ack_pattern_nsymb;
+    mfsk_cplx *bins = (mfsk_cplx *)calloc((size_t)ns * MFSK_NCAR, sizeof(mfsk_cplx));
+    if (!bins) return 0;
+    mfsk_t m = g_pat_m;
+    memcpy(m.ack_tones, mfsk_nav_tones[cls], sizeof(mfsk_nav_tones[cls]));
+    mfsk_generate_ack_pattern(&m, bins);
     long tx_n = 0;
     double complex tail[MFSK_XFADE];
     int have_tail = 0;
@@ -1094,7 +1161,9 @@ int mfsk_pattern_detect(const int16_t *pb, int n, int *is_break)
      * 3.5k samp/s against 8k arriving — the reason arq.c only runs this inside
      * bounded windows). */
     int ns  = g_pat_m.ack_pattern_nsymb;
-    const int *lists[2] = { g_pat_m.ack_tones, g_pat_m.break_tones };
+    int ack[MFSK_MAX_ACK_TONES], brk[MFSK_MAX_ACK_TONES];
+    pat_lists(ack, brk);
+    const int *lists[2] = { ack, brk };
     int scores[2] = {0, 0};
     mfsk_detect_patterns(&g_pat_m, &g_pat_o, bf, n, lists, 2,
                          g_pat_m.ack_pattern_len, ns, scores, NULL);
@@ -1175,68 +1244,145 @@ const modem_backend_t modem_backend_mfsk = {
 /* ----------------------------------------------------------------------
  * Sliding detection window -- see modem_mfsk.h for why it paces.
  * ---------------------------------------------------------------------- */
-int mfsk_pattern_window_push(mfsk_pattern_window_t *w, const int16_t *pcm, int n,
-                             int *is_break)
+/* How long an event waits for a stronger overlapping one: two symbols. */
+#define PAT_HOLD 640
+
+int mfsk_pattern_window_events(mfsk_pattern_window_t *w, const int16_t *pcm, int n,
+                               mfsk_pattern_ev_t *out, int maxev)
 {
     if (!w || !pcm || n <= 0)
         return 0;
-
-    const int burst = mfsk_pattern_max_tx_samples();
-    if (burst <= 0)
-        return 0;
-    const int need = burst * 2;   /* one burst to hold the pattern, one scan interval */
-
-    if (w->cap < need)
+    mfsk_pattern_lazy_init();
+    if (!w->det)
     {
-        int16_t *nw = (int16_t *)realloc(w->buf, (size_t)need * sizeof(int16_t));
-        if (!nw)
-            return 0;             /* no window, no detection; never a crash */
-        w->buf = nw;
-        w->cap = need;
-        if (w->len > need) w->len = need;
+        w->det = mfsk_stream_det_new(&g_pat_m, &g_pat_o, g_pat_m.ack_pattern_len,
+                                     g_pat_m.ack_pattern_nsymb);
+        if (!w->det)
+            return 0;             /* no memory, no detection; never a crash */
+        /* A NAV threshold a symbol above the ACK's: a session ACK or BREAK
+         * at a few dB can cross-read as a NAV class at the ACK's threshold
+         * (a window straddling two of its symbols matches either tone),
+         * aligned a few symbols early, before the pattern itself is
+         * complete -- and a false NAV is a hold of up to 32 s.  At 9 of 16
+         * (pattern_probe): 0 cross-reads in 2048 clean session ACK/BREAK
+         * bursts (3 at 8), 0 false headers in 10 h of noise (4 at 8), for
+         * about 0.7 dB at -14 dB; 98 % detection at -12 dB still. */
+        int nav_thr = g_pat_m.ack_match_threshold + 1;
+        for (int k = 0; k < MFSK_NAV_CLASSES; k++)
+            mfsk_stream_det_set_list(w->det, MFSK_PAT_NAV(k), mfsk_nav_tones[k], nav_thr);
+        w->gen = 0;
+    }
+    unsigned gen = atomic_load(&g_pat_gen);
+    if (w->gen != gen)
+    {
+        /* the session's lists changed (a session began or ended): what is in
+         * the ring was scored against the old ones */
+        int ack[MFSK_MAX_ACK_TONES], brk[MFSK_MAX_ACK_TONES];
+        pat_lists(ack, brk);
+        mfsk_stream_det_set_list(w->det, MFSK_PAT_ACK, ack, g_pat_m.ack_match_threshold);
+        mfsk_stream_det_set_list(w->det, MFSK_PAT_BREAK, brk, g_pat_m.break_match_threshold);
+        mfsk_stream_det_reset(w->det);
+        w->gen = gen;
     }
 
-    /* Keep the newest samples: an older burst that has slid most of the way
-     * out cannot be completed by anything arriving now. */
-    int add = n;
-    if (add > w->cap) { pcm += (n - w->cap); add = w->cap; }
-    if (w->len + add > w->cap)
+    /* Downmix by FC = FS/4 and low-pass, one sample at a time: the filter
+     * mfsk_pattern_detect() applies to a whole buffer, causal here, so the
+     * stream runs MFSK_LPF_TAPS/2 samples late.  The 1, j, -1, -j phasor puts
+     * an input sample wholly in the real part (even n) or the imaginary part
+     * (odd n), signed by n & 2: one ring of signed samples, and each tap
+     * feeds the real or the imaginary output by the parity of the sample it
+     * reads -- 63 multiply-adds a sample, not 126. */
+    int nout = 0;
+    for (int i = 0; i < n; i++)
     {
-        int drop = w->len + add - w->cap;
-        memmove(w->buf, w->buf + drop, (size_t)(w->len - drop) * sizeof(int16_t));
-        w->len -= drop;
+        double x = 2.0 * (double)pcm[i];
+        long long sn = w->n++;
+        w->hist[w->hist_pos] = (sn & 2) ? -x : x;
+        double ar = 0.0, ai = 0.0;
+        int h = w->hist_pos;
+        for (int k = 0; k < MFSK_LPF_TAPS; k++)
+        {
+            /* the sample k back is sn - k: real part if even */
+            if (((sn - k) & 1) == 0) ar += g_pat_lpf[k] * w->hist[h];
+            else                     ai += g_pat_lpf[k] * w->hist[h];
+            h = h ? h - 1 : MFSK_LPF_TAPS - 1;
+        }
+        w->hist_pos = (w->hist_pos + 1) % MFSK_LPF_TAPS;
+        double complex y = ar + I * ai;
+        mfsk_stream_event_t ev[4];
+        int nev = mfsk_stream_det_push(w->det, &y, 1, ev, 4);
+        for (int e = 0; e < nev; e++)
+        {
+            /* Overlapping events: one burst read as more than one list.  The
+             * strongest stands; a weaker one never reaches the caller. */
+            long long st = ev[e].pos - MFSK_LPF_TAPS / 2, span = (long long)mfsk_pattern_max_tx_samples();
+            if (w->last_score && llabs(st - w->last_start) < span && ev[e].score <= w->last_score)
+                continue;
+            bool drop = false;
+            for (int q = 0; q < w->npend; q++)
+            {
+                if (llabs(st - w->pend[q].start) >= span) continue;
+                if (ev[e].score <= w->pend[q].score) { drop = true; break; }
+                w->pend[q] = w->pend[--w->npend];     /* the newcomer is stronger */
+                q--;
+            }
+            if (drop || w->npend >= (int)(sizeof w->pend / sizeof w->pend[0]))
+                continue;
+            w->pend[w->npend].kind  = ev[e].list;
+            w->pend[w->npend].start = st;
+            w->pend[w->npend].score = ev[e].score;
+            w->pend_due[w->npend]   = w->n + PAT_HOLD;
+            w->npend++;
+        }
+        for (int q = 0; q < w->npend && nout < maxev; q++)
+        {
+            if (w->pend_due[q] > w->n) continue;
+            out[nout++] = w->pend[q];
+            w->last_start = w->pend[q].start;
+            w->last_score = w->pend[q].score;
+            w->pend[q] = w->pend[w->npend - 1];
+            w->pend_due[q] = w->pend_due[w->npend - 1];
+            w->npend--;
+            q--;
+        }
     }
-    memcpy(w->buf + w->len, pcm, (size_t)add * sizeof(int16_t));
-    w->len += add;
-    w->since_scan += add;
+    return nout;
+}
 
-    if (w->len < burst)
-        return 0;
-    if (w->since_scan < burst)    /* pace: once per burst of new audio */
-        return 0;
-    w->since_scan = 0;
+long long mfsk_pattern_window_samples(const mfsk_pattern_window_t *w) { return w ? w->n : 0; }
 
-    int isb = 0;
-    if (!mfsk_pattern_detect(w->buf, w->len, &isb))
-        return 0;
-
-    w->len = 0;                   /* consume: one burst, one event */
-    w->since_scan = 0;
-    if (is_break) *is_break = isb;
-    return 1;
+int mfsk_pattern_window_push(mfsk_pattern_window_t *w, const int16_t *pcm, int n,
+                             int *is_break)
+{
+    mfsk_pattern_ev_t ev[16];
+    int nev = mfsk_pattern_window_events(w, pcm, n, ev, 16);
+    int hit = 0, best = -1, brk = 0;
+    for (int e = 0; e < nev; e++)
+    {
+        if (ev[e].kind != MFSK_PAT_ACK && ev[e].kind != MFSK_PAT_BREAK) continue;
+        /* the higher score wins, as in mfsk_pattern_detect() */
+        if (ev[e].score > best) { best = ev[e].score; brk = ev[e].kind == MFSK_PAT_BREAK; }
+        hit = 1;
+    }
+    if (hit && is_break) *is_break = brk;
+    return hit;
 }
 
 void mfsk_pattern_window_reset(mfsk_pattern_window_t *w)
 {
     if (!w) return;
-    w->len        = 0;
-    w->since_scan = 0;
+    if (w->det) mfsk_stream_det_reset(w->det);
+    memset(w->hist, 0, sizeof(w->hist));
+    w->npend = 0;
+    w->last_start = 0;
+    w->last_score = 0;
+    w->hist_pos = 0;
+    w->n = 0;
 }
 
 void mfsk_pattern_window_free(mfsk_pattern_window_t *w)
 {
     if (!w) return;
-    free(w->buf);
-    w->buf = NULL;
-    w->cap = w->len = w->since_scan = 0;
+    mfsk_stream_det_free(w->det);
+    memset(w, 0, sizeof(*w));
 }
