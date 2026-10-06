@@ -121,6 +121,8 @@ type HistoryMessage struct {
 	Dir   string `json:"dir"`   // "rx" or "tx"
 	Peer  string `json:"peer"`  // remote callsign ("" when unknown)
 	Text  string `json:"text"`
+	Ts    int64  `json:"ts"` // unix seconds
+	Ms    int    `json:"ms"` // milliseconds within the second
 }
 
 // HistoryEvent carries the persisted ARQ/broadcast chat history, pushed once
