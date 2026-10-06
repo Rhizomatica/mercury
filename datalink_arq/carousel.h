@@ -88,8 +88,9 @@ typedef struct {
 
 enum { CAR_PATTERN_ACK = 0, CAR_PATTERN_BREAK = 1 };
 
-enum { CAR_T_M, CAR_T_S, CAR_T_F, CAR_NTIMERS };   /* M's next decision or keydown; S's next slot;
-                                                    * S's fallback to the floor (listening only) */
+enum { CAR_T_M, CAR_T_S, CAR_T_F, CAR_T_W, CAR_NTIMERS };   /* M's next decision or keydown; S's next slot;
+                                                    * S's fallback to the floor, and its watch
+                                                    * for the round it asked for (listening only) */
 
 typedef struct {
     uint8_t  id;
@@ -170,6 +171,10 @@ typedef struct {
     uint8_t  req_mk;
     uint8_t  rx_mk;                 /* the M round whose frames I am counting */
     uint64_t s_tx_end;              /* when my last keydown ended */
+    int      s_prev_lv;             /* the rung M's rounds last came on (-1: none) */
+    bool     s_asked_new;           /* my poll on the air asks M for another rung */
+    int      ok_lv;                 /* M: the rung of my last round S answered (-1: none) */
+    bool     fell_back;             /* M: my last round went back to it */
 
     /* as sender */
     car_sblock_t sb[CAR_WIN];

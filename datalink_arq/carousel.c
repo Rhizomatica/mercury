@@ -239,6 +239,18 @@ static uint64_t round_air(int lv, int n)
     return (uint64_t)n * level_air(lv) + (uint64_t)(n > 0 ? n - 1 : 0) * burst_gap_ms(lv);
 }
 
+/* A turn lasts TURN_QUANTUM_MS, but never less than two full rounds on the
+ * rung in use: each change of direction costs a control exchange, and at
+ * the floor, where a round alone is 28 s, a 30 s turn changed direction
+ * every round (sim, fade:-5 both ways: 132 changes, a poll each). */
+static int keydown_cap(int lv);
+static uint64_t turn_quantum(int lv)
+{
+    uint64_t two = 2 * round_air(lv, keydown_cap(lv));
+    return two > TURN_QUANTUM_MS ? two : TURN_QUANTUM_MS;
+}
+static uint64_t turn_cap(int lv) { return turn_quantum(lv) + (TURN_CAP_MS - TURN_QUANTUM_MS); }
+
 /* ---- messages ------------------------------------------------------------ */
 typedef struct {
     uint8_t block;       /* mod 16 on the wire; full id after resolution */
@@ -976,7 +988,7 @@ static int poll_size(const car_t *c, int lv, uint64_t now)
      * turns; S asks only for M's rounds.) */
     if (c->master && has_data(c)) {
         uint64_t held = now - c->phase_start;
-        int64_t left = (int64_t)TURN_CAP_MS - (int64_t)held;
+        int64_t left = (int64_t)turn_cap(lv) - (int64_t)held;
         int fit = left > 0 ? (int)(left / (int64_t)(level_air(lv) + burst_gap_ms(lv))) : 1;
         if (fit < 1) fit = 1;
         if (cap > fit) cap = fit;
@@ -1146,7 +1158,7 @@ static void take_pieces(car_t *c, const msg_t *m)
 #define D_MFSK_MS    4500             /* MFSK (on air ~3.7 s after the unkey), */
 #define D_PAT_MS     800              /* a pattern (detected ~0.24 s after it) */
 #define LEAD_MAX_MS  (110 + 1000)     /* tx delay and head silence, a NAV header */
-#define K_FLOOR      FLOOR_SILENT_MAX /* continuations of a floor stream */
+#define K_FLOOR      2                /* continuations of a floor stream */
 #define K_ABOVE      0                /* ...above the floor none: M re-polls */
 /* S hears M only on the mode its payload decoder is bound to (the control
  * decoder aside), and binds it where its own last poll asked M to send.
@@ -1404,7 +1416,7 @@ static void rx_trace(car_t *c)
             p += snprintf(gp + p, sizeof gp - (size_t)p, " %d:%.0f/%.2f%s", l, 1000.0 * level_goodput(c, l),
                           level_delivery(c, l), level_allowed(c, l) ? "" : "x");
     car_trace(c, "rx round lv=%d seen=%d/%d status=%d snr=%.1f%s gp[lv:B/s/deliv]%s",
-              c->poll_level, c->round_seen, c->round_frames, c->status_seen, c->snr_ema,
+              c->master ? c->poll_level : c->round_lv, c->round_seen, c->round_frames, c->status_seen, c->snr_ema,
               c->snr_valid ? "" : "?", gp);
 }
 
@@ -1575,22 +1587,32 @@ static void m_try(car_t *c, uint64_t now)
      * -- S re-anchors on any keydown of mine it decodes -- and its answer
      * says where S stands on my data. */
     /* First the largest round that fits the gap: S decodes it and drops its
-     * stream as surely as a REQ, and its answer sets the size again. */
+     * stream as surely as a REQ, and its answer sets the size again.  Else a
+     * REQ.  Whichever can start first: the gaps between S's slots come and
+     * go, and waiting for the full round passed by every one that fitted
+     * something shorter (sim, fade:-5 both ways: 279 s). */
     if (at > now + TURN_G_MS && c->plan == KD_ROUND) {
-        int full = c->tx_n, fit = 0;
-        for (int n = full - 1; n >= 1 && !fit; n--) {
+        int full = c->tx_n, best_n = full;
+        uint64_t best = at;
+        for (int n = full - 1; n >= 1; n--) {
             c->tx_n = n;
-            if (m_free_from(c, now, plan_len(c)) == now) fit = n;
+            uint64_t t = m_free_from(c, now, plan_len(c));
+            if (t + TURN_G_MS < best) { best = t; best_n = n; }
         }
         c->tx_n = full;
-        if (fit) {
-            car_trace(c, "tx: round blocked by the peer's slots -- %d of %d frames first", fit, full);
-            c->tx_n = fit;
-            at = now;
-        } else if (m_free_from(c, now, kind_len(c, KD_REQ)) == now) {
-            car_trace(c, "tx: round blocked by the peer's slots -- asking first");
-            c->plan = KD_REQ;
-            at = now;
+        uint64_t treq = m_free_from(c, now, kind_len(c, KD_REQ));
+        if (treq + TURN_G_MS < best) {
+            if (treq <= now) {
+                car_trace(c, "tx: round blocked by the peer's slots -- asking first");
+                c->plan = KD_REQ;
+            }
+            at = treq;
+        } else if (best_n < full) {
+            if (best <= now) {
+                car_trace(c, "tx: round blocked by the peer's slots -- %d of %d frames first", best_n, full);
+                c->tx_n = best_n;
+            }
+            at = best;
         }
     }
     if (at > now) { arm(c, CAR_T_M, at); return; }
@@ -1636,7 +1658,7 @@ static void m_decide_send(car_t *c, uint64_t now)
 {
     bool answered = c->s_answered;
     if (answered) c->reqs = 0;
-    if (c->peer_has_data && (!has_data(c) || now - c->phase_start >= TURN_QUANTUM_MS)) {
+    if (c->peer_has_data && (!has_data(c) || now - c->phase_start >= turn_quantum(c->tx_level > 0 ? c->tx_level : 0))) {
         car_trace(c, "turn: the peer's (%s)", has_data(c) ? "quantum" : "I am done");
         m_start_recv(c, now);
         return;
@@ -1647,6 +1669,16 @@ static void m_decide_send(car_t *c, uint64_t now)
          * many, ask the receiver where it stands. */
         if (c->m_kind == KD_ROUND && c->last_lv == 0 && c->io.pattern && ++c->floor_silent <= FLOOR_SILENT_MAX) {
             car_trace(c, "tx: no answer -- continuing (%d)", c->floor_silent);
+            m_plan(c, KD_ROUND, 0, 0);
+            return;
+        }
+        /* A round on a rung S had not had my rounds on yet: S, hearing
+         * nothing, went back to listening on the last one it had.  Go there
+         * once before asking. */
+        if (c->m_kind == KD_ROUND && c->ok_lv >= 0 && c->last_lv != c->ok_lv && !c->fell_back) {
+            car_trace(c, "tx: no answer on lv=%d -- back to lv=%d", c->last_lv, c->ok_lv);
+            c->fell_back = true;
+            c->tx_level = c->ok_lv; c->tx_n = 1;
             m_plan(c, KD_ROUND, 0, 0);
             return;
         }
@@ -1685,7 +1717,7 @@ static void m_decide_recv(car_t *c, uint64_t now)
     rx_trace(c);
     bool done = peer_direction_done(c);
     uint64_t held = now - c->phase_start;
-    bool quantum = (c->done_in_round && held >= TURN_QUANTUM_MS) || held >= TURN_CAP_MS;
+    bool quantum = (c->done_in_round && held >= turn_quantum(c->poll_level)) || held >= turn_cap(c->poll_level);
     if (has_data(c) && (done || quantum)) {
         car_trace(c, "turn: mine (%s)", done ? "peer done" : "quantum");
         if (c->tx_level < 0) { c->tx_level = c->peer_snr_level; c->tx_n = 1; }
@@ -1748,6 +1780,7 @@ static void m_on_ctl(car_t *c, uint64_t now, const msg_t *m)
         c->peer_has_data = m->has_data;
         c->tx_loss = m->loss16 / 15.0;
         c->floor_waiting = c->pat_waiting = false;
+        c->ok_lv = c->last_lv; c->fell_back = false;
         if (m->n) { c->tx_level = m->level; c->tx_n = m->n; }
         car_trace(c, "tx polled lv=%d n=%d loss=%.2f", m->level, m->n, c->tx_loss);
         c->s_answered = true;
@@ -1780,6 +1813,7 @@ static void s_anchor(car_t *c, int kind, uint8_t mk, uint64_t eh, uint32_t d, in
 static void s_heard_m(car_t *c, uint64_t now)
 {
     if (!c->master && c->io.pattern) arm(c, CAR_T_F, now + S_FALLBACK_MS);
+    c->deadline[CAR_T_W] = 0;
 }
 
 /* S answers M's round (or its REQ about one) as its receiver. */
@@ -1802,7 +1836,10 @@ static void s_answer(car_t *c, uint64_t now, bool req)
     case KD_DONE:          send_poll(c, 0, 0, c->anc.mk); break;    /* ack only */
     case KD_PATTERN_ACK:   send_pattern(c, CAR_PATTERN_ACK); break;
     case KD_PATTERN_BREAK: send_pattern(c, CAR_PATTERN_BREAK); break;
-    default:               send_poll(c, lv, n, c->anc.mk); break;
+    default:
+        c->s_asked_new = c->s_prev_lv >= 0 && lv != c->s_prev_lv;
+        send_poll(c, lv, n, c->anc.mk);
+        break;
     }
 }
 
@@ -1845,6 +1882,7 @@ static void s_on_data(car_t *c, uint64_t now, const msg_t *m, int lv)
         c->done_in_round = 0; c->round_fresh = false;
     }
     rx_frame(c, m, lv, true);
+    c->s_prev_lv = lv;
     s_anchor(c, ANC_ROUND, (uint8_t)m->poll_id,
              now + (uint64_t)m->left * (level_air(lv) + burst_gap_ms(lv)) + TAIL_MS, d_of_mode(LADDER[lv]), 0, 0);
 }
@@ -1914,6 +1952,7 @@ void car_init(car_t *c, const car_io_t *io, int rx_level, int tx_level)
     c->snr_level = rx_level;
     c->peer_snr_level = tx_level >= 0 ? tx_level : rx_level;
     c->tx_level = -1;
+    c->s_prev_lv = c->ok_lv = -1;
 }
 
 /* The caller: the session's timing master.  The callee's ACCEPT named the
@@ -1992,7 +2031,20 @@ void car_on_frame(car_t *c, uint64_t now, const uint8_t *bytes, size_t len, int 
 void car_on_tx_done(car_t *c, uint64_t now)
 {
     c->tx_busy = false;
-    if (!c->master) { c->s_tx_end = now; return; }   /* S: its next slot is armed */
+    if (!c->master) {                        /* S: its next slot is armed */
+        c->s_tx_end = now;
+        /* A poll moved my decoder to a rung M's rounds have not come on
+         * yet.  If that round never comes, M goes back to the last rung it
+         * came on: by then, listen there.  M waits out my answer slot first,
+         * so this is in time. */
+        if (c->s_asked_new) {
+            c->s_asked_new = false;
+            uint64_t round_end = now + D_OFDM_MS + TURN_G_MS + LEAD_MAX_MS +
+                                 round_air(c->poll_level, c->poll_n) + TAIL_MS + d_of_mode(LADDER[c->poll_level]);
+            arm(c, CAR_T_W, round_end);
+        }
+        return;
+    }
     m_log_add(c, now);
     c->m_state = MS_WAIT;
     /* Decide when S's response slot is over, or once its answer is heard. */
@@ -2029,6 +2081,7 @@ void car_on_pattern(car_t *c, uint64_t now, int kind)
     if (!tx_on_pattern(c, kind)) return;
     if (c->master) {
         c->s_answered = true;
+        c->ok_lv = c->last_lv; c->fell_back = false;
         /* the answer to my round: my latest keydown */
         m_heard_end(c, now, c->nmlog ? c->mlog[c->nmlog - 1].mk : -1, false, 0);
     } else {
@@ -2064,6 +2117,14 @@ void car_on_time(car_t *c, uint64_t now)
         c->deadline[due] = 0;
         if (due == CAR_T_M) m_timer(c, now);
         else if (due == CAR_T_S) s_slot(c, now);
+        else if (due == CAR_T_W) {
+            if (c->rx_level == c->poll_level && c->s_prev_lv >= 0 && c->poll_level != c->s_prev_lv) {
+                car_trace(c, "rx: no round on lv=%d -- back to lv=%d", c->poll_level, c->s_prev_lv);
+                c->round_seen = 0; c->round_frames = c->poll_n;
+                rx_measure(c, c->poll_level, now);
+                bind_rx(c, c->s_prev_lv);
+            }
+        }
         else if (c->rx_level != 0) {
             car_trace(c, "rx: nothing from the peer in %d s -- listening at the floor", S_FALLBACK_MS / 1000);
             bind_rx(c, 0);
