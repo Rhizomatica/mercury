@@ -1009,6 +1009,24 @@ static int choose_level(const car_t *c, uint64_t now)
      * a 0.7 bar stopped the climb there. */
     if (level_delivery(c, best) < PROBE_UP_DELIVERY)
         return best;
+    /* A probe that came whole is followed by a second round there before
+     * the argmax judges the rung: near its threshold one frame scores 1/2,
+     * under the rung below, and the session went straight back down.  On air
+     * (20 %, both ways, every run) DATAC17 at 6.5 dB delivered its probe and
+     * the session stayed on DATAC1 the rest of the transfer, and QAM16C2 at
+     * 13 dB went back to DATAC17 for a 4-frame round; in the sim at 12 dB a
+     * clean QAM16C2 was left after one frame.  The second round is the one
+     * the probe earned (two frames); two lost there declare a marginal rung
+     * dead.  Not in the lower half of the SNR's doubt: there a frame that
+     * came is more likely luck than the rung working (sim, cliff:10: a
+     * QAM16C2 frame at 10 dB, then two lost, +5 %). */
+    for (int up = best + 1; up < CAR_NLEVELS; up++)
+        if (c->lv_rounds[up] && c->lv_round_at[up] == c->polls && c->lv_sent[up] < 3.0 &&
+            c->lv_lost[up] < 0.05 && level_allowed(c, up) && level_potential(c, up) > best_gp &&
+            !(c->snr_valid && c->snr_ema < level_min_db(up) - SNR_GATE_DB / 2)) {
+            car_trace(c, "rx confirms lv=%d", up);
+            return up;
+        }
     for (int up = best + 1; up < CAR_NLEVELS; up++) {
         if (level_potential(c, up) <= best_gp)
             continue;                   /* cannot win even with no loss */
