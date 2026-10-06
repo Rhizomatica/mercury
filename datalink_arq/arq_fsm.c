@@ -170,6 +170,7 @@ int arq_fsm_timeout_ms(const arq_session_t *sess, uint64_t now)
 
 static void car_stop(arq_session_t *sess);
 static bool fsm_connected_carousel(arq_session_t *sess, const arq_event_t *ev);
+static void car_begin_disconnect(arq_session_t *sess, uint64_t now);
 
 static void sess_enter(arq_session_t *sess, arq_conn_state_t new_state,
                        uint64_t deadline_ms, arq_event_id_t deadline_event)
@@ -190,11 +191,12 @@ static void sess_enter(arq_session_t *sess, arq_conn_state_t new_state,
     }
     /* The carousel runs only in CONNECTED; its seed lasts until the station is
      * idle, so the teardown still hears its peer. */
-    if (new_state != ARQ_CONN_CONNECTED)
+    if (new_state != ARQ_CONN_CONNECTED && !(new_state == ARQ_CONN_DISCONNECTING && sess->car_ending))
     {
         /* The DISCONNECT exchange after it keeps the carousel's view of the
          * peer (session_ctl_mode): here, not in car_stop, which runs only
-         * once the station is idle. */
+         * once the station is idle.  A callee ending the session keeps the
+         * carousel running: its DISCONNECT goes in the carousel's slots. */
         if (sess->car_active)
             sess->ctl_floor_at_stop = car_peer_ctl_deaf(sess->car);
         sess->car_active = false;
@@ -1506,6 +1508,15 @@ static void car_set_seed(arq_session_t *sess, uint16_t seed)
         g_cbs.set_crc_seed(seed);
 }
 
+/* The callee's DISCONNECT, in the slot the carousel was given (car_request_end). */
+static void car_io_end(void *ctx)
+{
+    arq_session_t *sess = ctx;
+    HLOGI(LOG_COMP, "carousel: DISCONNECT in my slot");
+    send_ctrl_frame(sess, ARQ_SUBTYPE_DISCONNECT);
+    sess->disconnect_sent = true;
+}
+
 static void car_io_trace(void *ctx, const char *line)
 {
     (void)ctx;
@@ -1520,6 +1531,7 @@ static void car_start(arq_session_t *sess, bool is_caller, uint64_t now)
         .tx_confirmed = car_io_tx_confirmed, .ctx = sess,
         .pattern = g_cbs.send_pattern ? car_io_pattern : NULL,
         .trace = car_io_trace,
+        .end = car_io_end,
         .block_key = sess->crc_seed,
     };
     /* NAV headers below 0 dB (as this end hears the peer: the path is
@@ -1536,6 +1548,8 @@ static void car_start(arq_session_t *sess, bool is_caller, uint64_t now)
     car_seed_ctl_deaf(sess->car, sess->car_ctl_deaf, sess->car_peer_ctl_deaf);
     sess->ctl_floor_at_stop = false;
     sess->car_active = true;
+    sess->car_session = true;
+    sess->car_ending = false;
     sess->car_last_rx_ms = now;
     if (is_caller)
         car_start_sender(sess->car, now);
@@ -1546,6 +1560,8 @@ static void car_start(arq_session_t *sess, bool is_caller, uint64_t now)
 static void car_stop(arq_session_t *sess)
 {
     sess->car_active = false;
+    sess->car_session = false;
+    sess->car_ending = false;
     if (sess->crc_seed)
         car_set_seed(sess, 0);
 }
@@ -1560,9 +1576,47 @@ static bool car_fail_closed(arq_session_t *sess, uint64_t now)
     const char *why = car_failed(sess->car);
     if (!why) return false;
     HLOGE(LOG_COMP, "carousel: %s -- ending the session", why);
+    car_begin_disconnect(sess, now);
+    return true;
+}
+
+
+/* A carousel session ends (docs/CAROUSEL-TURNS.md).  The caller keys its
+ * DISCONNECT clear of every slot the callee could be using (see
+ * fsm_disconnecting); the callee keys nothing on timers of its own: its
+ * DISCONNECT goes in its next slot, again in the slots after any keydown of
+ * the caller's that did not hear it, and it gives up silently at the end. */
+#define ARQ_CAR_END_WAIT_MS 180000
+static void car_begin_disconnect(arq_session_t *sess, uint64_t now)
+{
     sess->pending_disconnect = false;
+    sess->disconnect_deadline_ms = 0;
     sess->tx_retries_left = ARQ_DISCONNECT_RETRY_SLOTS;
-    sess_enter(sess, ARQ_CONN_DISCONNECTING, now + ARQ_CHANNEL_GUARD_MS, ARQ_EV_TIMER_ACK);
+    if (car_is_master(sess->car))
+    {
+        sess_enter(sess, ARQ_CONN_DISCONNECTING, now + ARQ_CHANNEL_GUARD_MS, ARQ_EV_TIMER_ACK);
+        return;
+    }
+    sess->car_ending = true;
+    sess->car_end_deadline_ms = now + ARQ_CAR_END_WAIT_MS;
+    car_request_end(sess->car);
+    sess_enter(sess, ARQ_CONN_DISCONNECTING, sess->car_end_deadline_ms, ARQ_EV_TIMER_CAROUSEL);
+}
+
+/* The caller's DISCONNECT: when it would run into a slot of the callee's,
+ * later.  True when it waits. */
+static bool car_disconnect_must_wait(arq_session_t *sess, const arq_event_t *ev, uint64_t now)
+{
+    if (!sess->car_session || !car_is_master(sess->car))
+        return false;
+    const arq_mode_timing_t *tm = arq_protocol_mode_timing(session_ctl_mode(sess));
+    uint64_t len = 110 + (tm ? (uint64_t)(tm->frame_duration_s * 1000.0f) : 4400) + 200;
+    uint64_t at = car_free_at(sess->car, now, len);
+    if (at <= now)
+        return false;
+    HLOGD(LOG_COMP, "DISCONNECT waits %llu ms for the peer's slots", (unsigned long long)(at - now));
+    sess->deadline_ms    = at;
+    sess->deadline_event = ev->id;
     return true;
 }
 
@@ -2219,9 +2273,49 @@ static bool disconnect_must_wait(arq_session_t *sess)
 static void fsm_disconnecting(arq_session_t *sess, const arq_event_t *ev)
 {
     const arq_mode_timing_t *tm;
+    uint64_t now = time_now_ms();
+
+    /* The callee ending a carousel session: the carousel keeps its slots, and
+     * its next one carries our DISCONNECT (car_io_end). */
+    if (sess->car_ending && sess->car_active)
+    {
+        switch (ev->id)
+        {
+        case ARQ_EV_RX_CAROUSEL:
+            car_on_frame(sess->car, now, ev->payload, ev->payload_len, ev->mode, ev->from_control, ev->rx_snr);
+            return;
+        case ARQ_EV_RX_PATTERN:
+            car_on_pattern(sess->car, now, (ev->rx_flags & ARQ_FLAG_HAS_DATA) ? CAR_PATTERN_BREAK
+                                                                              : CAR_PATTERN_ACK);
+            return;
+        case ARQ_EV_TX_COMPLETE:
+            car_on_tx_done(sess->car, now);
+            return;
+        case ARQ_EV_TIMER_CAROUSEL:
+            if (now >= sess->car_end_deadline_ms)
+            {
+                HLOGI(LOG_COMP, "Disconnect finalized (timeout: the caller never answered)");
+                notify_session_ended(sess);
+                if (g_timing) arq_timing_record_disconnect(g_timing, "timeout");
+                enter_idle_after_call(sess);
+                return;
+            }
+            car_on_time(sess->car, now);
+            return;
+        default:
+            break;
+        }
+    }
 
     switch (ev->id)
     {
+    case ARQ_EV_TX_COMPLETE:
+        /* The caller's DISCONNECT is out: keep the callee's reply slot clear
+         * of the next one. */
+        if (sess->car_session && car_is_master(sess->car))
+            car_log_ctl(sess->car, now, ARQ_CHANNEL_GUARD_MS);
+        break;
+
     case ARQ_EV_APP_CONNECT:
         /* A new call while the previous one is still tearing down.
          *
@@ -2270,7 +2364,7 @@ static void fsm_disconnecting(arq_session_t *sess, const arq_event_t *ev)
 
     case ARQ_EV_TIMER_ACK:
         /* Initial DISCONNECT send after channel guard. */
-        if (disconnect_must_wait(sess))
+        if (car_disconnect_must_wait(sess, ev, now) || disconnect_must_wait(sess))
             break;
         send_ctrl_frame(sess, ARQ_SUBTYPE_DISCONNECT);
         sess->disconnect_sent = true;
@@ -2323,7 +2417,7 @@ static void fsm_disconnecting(arq_session_t *sess, const arq_event_t *ev)
     case ARQ_EV_TIMER_RETRY:
         if (sess->tx_retries_left > 0)
         {
-            if (disconnect_must_wait(sess))
+            if (car_disconnect_must_wait(sess, ev, now) || disconnect_must_wait(sess))
                 break;
             sess->tx_retries_left--;
             send_ctrl_frame(sess, ARQ_SUBTYPE_DISCONNECT);
@@ -2409,9 +2503,7 @@ static bool fsm_connected_carousel(arq_session_t *sess, const arq_event_t *ev)
                   (unsigned long long)(budget / 1000));
             break;
         }
-        sess->pending_disconnect = false;
-        sess->tx_retries_left    = ARQ_DISCONNECT_RETRY_SLOTS;
-        sess_enter(sess, ARQ_CONN_DISCONNECTING, now + ARQ_CHANNEL_GUARD_MS, ARQ_EV_TIMER_ACK);
+        car_begin_disconnect(sess, now);
         return true;
     case ARQ_EV_RX_ACCEPT:
     case ARQ_EV_TIMER_KEEPALIVE:
@@ -2422,12 +2514,7 @@ static bool fsm_connected_carousel(arq_session_t *sess, const arq_event_t *ev)
     }
     /* A deferred DISCONNECT goes once everything has been delivered. */
     if (sess->pending_disconnect && car_drained(sess) && !sess->tx_active)
-    {
-        sess->pending_disconnect = false;
-        sess->disconnect_deadline_ms = 0;
-        sess->tx_retries_left = ARQ_DISCONNECT_RETRY_SLOTS;
-        sess_enter(sess, ARQ_CONN_DISCONNECTING, now + ARQ_CHANNEL_GUARD_MS, ARQ_EV_TIMER_ACK);
-    }
+        car_begin_disconnect(sess, now);
     return true;
 }
 
@@ -2447,6 +2534,11 @@ static void fsm_connected(arq_session_t *sess, const arq_event_t *ev)
         HLOGW(LOG_COMP,
               "Deferred DISCONNECT drain timeout (%ds) — forcing teardown",
               ARQ_DISCONNECT_DRAIN_TIMEOUT_S);
+        if (sess->car_active)
+        {
+            car_begin_disconnect(sess, time_now_ms());
+            return;
+        }
         sess->pending_disconnect      = false;
         sess->disconnect_deadline_ms  = 0;
         sess->tx_retries_left         = ARQ_DISCONNECT_RETRY_SLOTS;
@@ -4058,6 +4150,13 @@ void arq_fsm_dispatch(arq_session_t *sess, const arq_event_t *ev)
     /* CONNECTED with the carousel has no deadline of its own: the runtime
      * fires the carousel's (and the lost-peer and drain watchdogs') through
      * the one deadline it knows. */
+    if (sess->car_active && sess->conn_state == ARQ_CONN_DISCONNECTING && sess->car_ending)
+    {
+        uint64_t d = car_next_deadline(sess->car);
+        if (sess->car_end_deadline_ms < d) d = sess->car_end_deadline_ms;
+        sess->deadline_ms    = d;
+        sess->deadline_event = ARQ_EV_TIMER_CAROUSEL;
+    }
     if (sess->car_active && sess->conn_state == ARQ_CONN_CONNECTED)
     {
         sess->tx_inflight_bytes = (int)car_tx_inflight(sess->car);

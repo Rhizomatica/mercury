@@ -151,7 +151,14 @@ static uint32_t burst_gap_ms(int lv)
     return LADDER[lv] == FREEDV_MODE_QAM16C2 || LADDER[lv] == MERCURY_MODE_MFSK ? 200 : 100;
 }
 int car_level_mode(int level) { return LADDER[level]; }
-bool car_is_idle(const car_t *c) { return c->idle; }
+static bool has_data(const car_t *c);
+static bool peer_direction_done(const car_t *c);
+/* Nothing in flight either way.  The callee: no data of its own, and the
+ * caller's all delivered -- its anchors say nothing about that. */
+bool car_is_idle(const car_t *c)
+{
+    return c->master ? c->idle : !has_data(c) && peer_direction_done(c);
+}
 
 size_t car_tx_inflight(const car_t *c)
 {
@@ -1164,10 +1171,10 @@ static void take_pieces(car_t *c, const msg_t *m)
 #define IDLE_POLL_MIN_MS 10000        /* idle, M asks whether S has data after this, */
 #define IDLE_POLL_MAX_MS 60000        /* doubling up to this */
 
-enum { KD_NONE, KD_POLL, KD_ROUND, KD_PATTERN_ACK, KD_PATTERN_BREAK, KD_REQ, KD_DONE };
+enum { KD_NONE, KD_POLL, KD_ROUND, KD_PATTERN_ACK, KD_PATTERN_BREAK, KD_REQ, KD_DONE, KD_BOTH };
 enum { PH_IDLE, PH_SEND, PH_RECV };
 enum { MS_WAIT, MS_PLAN, MS_IDLE };
-enum { ANC_POLL, ANC_DONE, ANC_ROUND, ANC_REQ, ANC_PATTERN };
+enum { ANC_POLL, ANC_DONE, ANC_ROUND, ANC_REQ, ANC_PATTERN, ANC_BOTH };
 
 static uint32_t ctl_air_max(const car_t *c)
 {
@@ -1210,7 +1217,7 @@ static uint32_t r_floor_ms(void) { return s_round_ms(0, keydown_cap(0)); }
 static uint64_t mslot_lo(const car_t *c, const car_mlog_t *l, int i)
 {
     (void)c;
-    return l->e + TG_MS + (uint64_t)i * l->p;
+    return l->e + l->tg + (uint64_t)i * l->p;
 }
 static uint64_t mslot_hi(const car_t *c, const car_mlog_t *l, int i) { return mslot_lo(c, l, i) + l->d + l->r; }
 
@@ -1225,7 +1232,7 @@ static void m_log_add(car_t *c, uint64_t e)
         c->nmlog--;
     }
     car_mlog_t *l = &c->mlog[c->nmlog++];
-    l->e = e; l->r = c->m_r; l->d = c->m_d; l->k = c->m_k; l->p = c->m_p; l->done = 0;
+    l->e = e; l->r = c->m_r; l->d = c->m_d; l->k = c->m_k; l->p = c->m_p; l->done = 0; l->tg = TG_MS;
     l->mk = c->m_id; l->pat = c->m_kind == KD_PATTERN_ACK || c->m_kind == KD_PATTERN_BREAK;
 }
 
@@ -1282,8 +1289,12 @@ static void m_close_slot(car_t *c, uint64_t te, int mk, bool pat, int slot)
 }
 
 /* ---- keydowns, either end ---- */
-/* A poll: what I still need of the peer's blocks, and its next round. */
-static void send_poll(car_t *c, int lv, int n, uint8_t id)
+/* A poll: what I still need of the peer's blocks, and its next round --
+ * with my own round after it, in the same keydown, when with_round and I have
+ * one: both directions in one exchange (the poll names the round's rung and
+ * size, so a receiver that decodes only the poll knows when the keydown
+ * ends).  Returns the frames of my round. */
+static int send_poll_ex(car_t *c, int lv, int n, uint8_t id, bool with_round)
 {
     car_frame_t *fr = c->txbuf;
     msg_t m;
@@ -1297,9 +1308,22 @@ static void send_poll(car_t *c, int lv, int n, uint8_t id)
     if (n) { c->poll_level = lv; c->poll_n = n; bind_rx(c, lv); }
     c->round_seen = 0; c->round_frames = n; c->status_seen = false;
     c->done_in_round = 0; c->round_fresh = false;
+    int nd = 0;
+    if (with_round && c->tx_level >= 0) {
+        nd = build_round(c, c->tx_level, c->tx_n, id, fr + 1);
+        if (nd) {
+            fr[1].gap_ms = CHAIN_GAP_MS;
+            c->last_lv = c->tx_level; c->last_nf = nd; c->last_mk = id;
+            m.h_level = c->tx_level; m.h_n = nd; m.h_id = id;
+            m.hi = (uint8_t)(c->next_blk_id - 1);
+            m.unopened = unopened(c);
+        }
+    }
     put_ctl(c, &fr[0], &m);
-    keydown(c, fr, 1);
+    keydown(c, fr, 1 + nd);
+    return nd;
 }
+static void send_poll(car_t *c, int lv, int n, uint8_t id) { send_poll_ex(c, lv, n, id, false); }
 
 /* A round answered with a pattern: another of the same size comes next. */
 static void send_pattern(car_t *c, int kind)
@@ -1499,6 +1523,8 @@ static uint64_t kind_len(const car_t *c, int kind)
     uint64_t head = 110 + nav_lead(c);
     switch (kind) {
     case KD_ROUND:         return head + round_air(c->tx_level, c->tx_n) + TAIL_MS;
+    case KD_BOTH:          return head + (ctl_on_floor(c) ? level_air(0) : mode_air(ARQ_CONTROL_MODE)) +
+                                  CHAIN_GAP_MS + round_air(c->tx_level, c->tx_n) + TAIL_MS;
     case KD_PATTERN_ACK:
     case KD_PATTERN_BREAK: return 110 + PATTERN_AIR_MS + TAIL_MS;
     default:               return head + (ctl_on_floor(c) ? level_air(0) : mode_air(ARQ_CONTROL_MODE)) + TAIL_MS;
@@ -1531,6 +1557,20 @@ static void m_key_plan(car_t *c)
         int k = n && lv == 0 && c->io.pattern ? K_FLOOR : 0;
         m_note(c, KD_POLL, rr > ctl ? rr : ctl, my_ctl_d(c), k, rr);
         send_poll(c, lv, n, id);
+        break;
+    }
+    case KD_BOTH: {
+        /* My poll and my round: S answers with its poll and its round, in
+         * one keydown no longer than the two (no continuations: the next
+         * exchange is mine to start). */
+        int lv = c->plan_lv, n = c->plan_n;
+        uint32_t rr = ctl + CHAIN_GAP_MS + s_round_ms(lv, n);
+        uint32_t d = my_ctl_d(c), dr = d_of_mode(LADDER[c->tx_level >= 0 ? c->tx_level : 0]);
+        m_note(c, KD_BOTH, rr, d > dr ? d : dr, 0, 0);
+        if (peer_ctl_on_floor(c) && lv > 0) bind_rx(c, 0);
+        if (!send_poll_ex(c, lv, n, id, true))            /* nothing of mine after all */
+            m_note(c, KD_POLL, s_round_ms(lv, n) > ctl ? s_round_ms(lv, n) : ctl, my_ctl_d(c),
+                   n && lv == 0 && c->io.pattern ? K_FLOOR : 0, s_round_ms(lv, n));
         break;
     }
     case KD_DONE:
@@ -1578,6 +1618,11 @@ static void m_try(car_t *c, uint64_t now)
      * the floor, sim cliff:-7 bidir).  A REQ fits the gap, stops the stream
      * -- S re-anchors on any keydown of mine it decodes -- and its answer
      * says where S stands on my data. */
+    /* Both directions do not fit before S's next slot: the poll alone. */
+    if (at > now + TURN_G_MS && c->plan == KD_BOTH && m_free_from(c, now, kind_len(c, KD_POLL)) <= now) {
+        c->plan = KD_POLL;
+        at = now;
+    }
     /* First the largest round that fits the gap: S decodes it and drops its
      * stream as surely as a REQ, and its answer sets the size again.  Else a
      * REQ.  Whichever can start first: the gaps between S's slots come and
@@ -1612,13 +1657,25 @@ static void m_try(car_t *c, uint64_t now)
     m_key_plan(c);
 }
 
+/* Both directions in one exchange only above the floor, with the control
+ * mode getting through both ways: at the floor the poll is a 13.5 s MFSK
+ * frame on every keydown, and patterns and continuations are lost (sim,
+ * cliff:-11 both ways 4900 -> 7678 s); there M takes turns instead. */
+static bool both_ok(const car_t *c, int lv)
+{
+    /* ...and on a link that loses little: a lost exchange loses both ways
+     * (sim, nvis both ways 3696 -> 4179 s). */
+    return lv > 0 && c->tx_level > 0 && !ctl_on_floor(c) && !peer_ctl_on_floor(c) &&
+           c->loss_est < 0.3 && c->tx_loss < 0.3;
+}
+
 static void m_start_recv(car_t *c, uint64_t now)
 {
     m_enter(c, PH_RECV, now);
     c->silent_polls = 0;
     int lv = choose_level(c, now);
     if (c->ctl_deaf && c->io.pattern) lv = 0;
-    m_plan(c, KD_POLL, lv, poll_size(c, lv, now));
+    m_plan(c, has_data(c) && both_ok(c, lv) ? KD_BOTH : KD_POLL, lv, poll_size(c, lv, now));
 }
 
 static void m_decide_idle(car_t *c, uint64_t now)
@@ -1709,7 +1766,8 @@ static void m_decide_recv(car_t *c, uint64_t now)
     rx_trace(c);
     bool done = peer_direction_done(c);
     uint64_t held = now - c->phase_start;
-    bool quantum = (c->done_in_round && held >= turn_quantum(c->poll_level)) || held >= turn_cap(c->poll_level);
+    bool quantum = !both_ok(c, c->poll_level) &&
+                   ((c->done_in_round && held >= turn_quantum(c->poll_level)) || held >= turn_cap(c->poll_level));
     if (has_data(c) && (done || quantum)) {
         car_trace(c, "turn: mine (%s)", done ? "peer done" : "quantum");
         if (c->tx_level < 0) { c->tx_level = c->peer_snr_level; c->tx_n = 1; }
@@ -1720,6 +1778,12 @@ static void m_decide_recv(car_t *c, uint64_t now)
     int lv = 0, n = 0;
     int kind = rx_next(c, now, &lv, &n);
     if (kind == KD_DONE) m_enter(c, PH_IDLE, now);
+    /* With data of my own, the answer carries my round: a poll, then it (a
+     * pattern carries nothing; it becomes the same poll). */
+    if (has_data(c) && kind != KD_DONE && both_ok(c, kind == KD_POLL ? lv : c->poll_level)) {
+        if (kind != KD_POLL) { lv = c->poll_level; n = c->poll_n; }
+        kind = KD_BOTH;
+    }
     m_plan(c, kind, lv, n);
 }
 
@@ -1776,6 +1840,17 @@ static void m_on_ctl(car_t *c, uint64_t now, const msg_t *m)
         if (m->n) { c->tx_level = m->level; c->tx_n = m->n; }
         car_trace(c, "tx polled lv=%d n=%d loss=%.2f", m->level, m->n, c->tx_loss);
         c->s_answered = true;
+        /* Polled for its round as well, it answered with no round: it had
+         * nothing to send, as a status says -- not frames lost. */
+        if (!m->h_n && c->m_kind == KD_BOTH && (m->poll_id & 0x0F) == (c->poll_id & 0x0F) && !m->has_data)
+            c->status_seen = true;
+        if (m->h_n) {                        /* its round follows, in this keydown */
+            c->peer_hi = resolve16(c->rbase, m->hi);
+            c->peer_hi_known = true; c->peer_unopened = m->unopened;
+            m_heard_end(c, now + CHAIN_GAP_MS + round_air(m->h_level, m->h_n) + TAIL_MS,
+                        (int)m->poll_id, false, 0);
+            return;
+        }
     } else if (m->type == M_STATUS) {        /* the peer had nothing to send */
         if (m->poll_id == c->poll_id) c->status_seen = true;
         c->peer_has_data = m->has_data;
@@ -1835,9 +1910,33 @@ static void s_answer(car_t *c, uint64_t now, bool req)
     }
 }
 
+/* S answers both ways: its poll for M's round, then its own round. */
+static void s_answer_both(car_t *c, uint64_t now)
+{
+    if (c->round_frames > 0) rx_measure(c, c->round_lv, now);
+    deliver_in_order(c);
+    rx_trace(c);
+    int lv = 0, n = 0;
+    int kind = rx_next(c, now, &lv, &n);
+    if (kind == KD_DONE) { lv = 0; n = 0; }
+    else if (kind != KD_POLL) { lv = c->poll_level; n = c->poll_n; }   /* a pattern carries no round */
+    if (n && c->ctl_deaf && c->io.pattern) lv = 0;
+    c->s_asked_new = n && c->s_prev_lv >= 0 && lv != c->s_prev_lv;
+    c->tx_slot = 0; c->tx_pat_anchor = false;
+    send_poll_ex(c, lv, n, c->anc.mk, has_data(c));
+}
+
 static void s_slot(car_t *c, uint64_t now)
 {
     if (!c->anc.on) return;
+    if (c->end_req) {
+        /* Ending: the session's DISCONNECT goes in this slot instead of an
+         * answer -- and in the next, if M keys again without hearing it. */
+        car_trace(c, "tx: ending the session in slot %d", c->anc.i);
+        c->anc.on = false;
+        if (!c->tx_busy && c->io.end) c->io.end(c->io.ctx);
+        return;
+    }
     if (!c->tx_busy) {                       /* slots are spaced past my keydowns */
         switch (c->anc.kind) {
         case ANC_POLL:
@@ -1854,6 +1953,9 @@ static void s_slot(car_t *c, uint64_t now)
         case ANC_REQ:
             if (c->anc.i == 0) s_answer(c, now, c->anc.kind == ANC_REQ);
             break;
+        case ANC_BOTH:
+            if (c->anc.i == 0) s_answer_both(c, now);
+            break;
         default:                             /* ANC_DONE */
             if (c->anc.i == 0 && has_data(c)) send_status(c, c->anc.mk);
             else if (!has_data(c)) c->idle = true;
@@ -1868,6 +1970,12 @@ static void s_on_data(car_t *c, uint64_t now, const msg_t *m, int lv)
 {
     if (lv != c->rx_level) return;           /* the payload decoder is on another mode */
     s_heard_m(c, now);
+    bool both = c->anc.on && c->anc.kind == ANC_BOTH && c->anc.mk == m->poll_id;
+    if (both) {
+        rx_frame(c, m, lv, true);
+        c->s_prev_lv = lv;
+        return;
+    }
     if (m->poll_id != c->rx_mk || !(c->anc.on && c->anc.kind == ANC_ROUND && c->anc.mk == m->poll_id)) {
         c->rx_mk = (uint8_t)m->poll_id;      /* a new round of M's */
         c->round_seen = 0; c->round_frames = 0;
@@ -1892,7 +2000,18 @@ static void s_on_ctl(car_t *c, uint64_t now, const msg_t *m, int mode)
         c->tx_loss = m->loss16 / 15.0;
         c->floor_waiting = c->pat_waiting = false;
         c->floor_silent = 0;
-        if (m->n) {
+        if (m->h_n) {
+            /* M's round follows in this keydown: both ways in one exchange. */
+            if (m->n) { c->tx_level = m->level; c->tx_n = m->n; }
+            c->rx_mk = (uint8_t)m->poll_id;
+            c->round_seen = 0; c->round_frames = m->h_n; c->round_lv = m->h_level;
+            c->done_in_round = 0; c->round_fresh = false;
+            c->peer_hi = resolve16(c->rbase, m->hi);
+            c->peer_hi_known = true; c->peer_unopened = m->unopened;
+            uint32_t dr = d_of_mode(LADDER[m->h_level]);
+            s_anchor(c, ANC_BOTH, (uint8_t)m->poll_id, eh + CHAIN_GAP_MS + round_air(m->h_level, m->h_n),
+                     d > dr ? d : dr, 0, 0);
+        } else if (m->n) {
             c->tx_level = m->level; c->tx_n = m->n;
             car_trace(c, "tx polled lv=%d n=%d loss=%.2f", m->level, m->n, c->tx_loss);
             bool fl = m->level == 0 && c->io.pattern;
@@ -2135,4 +2254,28 @@ uint64_t car_drain_budget_ms(const car_t *c)
     uint64_t exchange = (uint64_t)s_round_ms(lv, keydown_cap(lv)) + s_ctl_ms(c) + 2 * TG_MS +
                         D_MFSK_MS + 2 * TURN_G_MS;
     return 3 * exchange;
+}
+
+bool car_is_master(const car_t *c) { return c && c->master; }
+
+uint64_t car_free_at(const car_t *c, uint64_t now, uint64_t len)
+{
+    return c->master ? m_free_from(c, now, len) : now;
+}
+
+/* My control keydown that ended at end; the peer may answer it tg later, as
+ * the session's control (MFSK to a control-deaf end), up to D late. */
+void car_log_ctl(car_t *c, uint64_t end, uint32_t tg)
+{
+    if (!c->master) return;
+    m_note(c, KD_REQ, s_ctl_ms(c), my_ctl_d(c), 0, 0);
+    m_log_add(c, end);
+    c->mlog[c->nmlog - 1].tg = tg;
+}
+
+void car_request_end(car_t *c)
+{
+    if (c->master) return;
+    c->end_req = true;
+    car_trace(c, "ending: the DISCONNECT goes in my next slot");
 }

@@ -388,6 +388,9 @@ typedef struct
      * (ARQ_EV_TIMER_CAROUSEL).  crc_seed rides every carousel frame's CRC16. */
     car_t   *car;                     /* allocated by arq_fsm_init             */
     bool     car_active;
+    bool     car_session;           /* this session ran the carousel (until idle) */
+    bool     car_ending;            /* the callee ends it: DISCONNECT in its next slot */
+    uint64_t car_end_deadline_ms;   /* ...or gives up then, silently */
     uint16_t crc_seed;
     uint16_t car_nonce;             /* the callee's, in the ACCEPT: part of crc_seed */
     int      car_rx_level;            /* start rung for the peer's direction:

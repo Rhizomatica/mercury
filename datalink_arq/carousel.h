@@ -77,6 +77,9 @@ typedef struct {
      * it the floor polls in the control mode like every other rung.  The
      * runtime calls car_on_tx_done() when it has ended. */
     void   (*pattern)(void *ctx, int kind);
+    /* The callee ending the session (car_request_end): key the session's
+     * DISCONNECT now, in the slot the carousel was given. */
+    void   (*end)(void *ctx);
     /* One line on each decision (optional): what the receiver measured and
      * chose, what the sender was told.  For debug logs. */
     void   (*trace)(void *ctx, const char *line);
@@ -116,6 +119,7 @@ typedef struct {
     uint64_t e;                     /* when it ended (exact: my own keydown) */
     uint32_t r, d;                  /* the longest S keydown it allows; S's lateness */
     uint32_t p;                     /* the period of its continuation slots */
+    uint32_t tg;                    /* when its response slot opens, after it */
     uint8_t  k;                     /* continuation slots after the response slot */
     uint8_t  done;                  /* slots I heard S's keydown in, end to end */
     uint8_t  mk;                    /* its id */
@@ -167,6 +171,7 @@ typedef struct {
         uint8_t  k, i;              /* continuation slots; the next slot */
         bool     sent_round;        /* I sent a round in this anchor's slots */
     } anc;
+    bool     end_req;               /* S: my next slot carries the session's DISCONNECT */
     int      req_lv, req_n;         /* a REQ: M's round I may not have heard */
     uint8_t  req_mk;
     uint8_t  rx_mk;                 /* the M round whose frames I am counting */
@@ -272,6 +277,17 @@ bool car_wants_nav(const car_t *c);
  * airtime, a round's fixed overhead): for computing bounds. */
 void car_rung_geometry(int lv, bool floor_patterns, int *bytes_per_frame, int *frames,
                        uint64_t *round_air_ms, uint64_t *overhead_ms);
+
+/* The session's own control keydowns (its DISCONNECT) follow the turn rules
+ * too.  The caller: car_free_at() is the earliest time from now a keydown of
+ * len ms misses every slot the callee could be using; once one has gone out,
+ * car_log_ctl() keeps the callee's reply (tg ms after it) clear of the next.
+ * The callee: car_request_end() makes its next slot call io.end instead of
+ * answering -- it never keys a DISCONNECT on a timer of its own. */
+bool     car_is_master(const car_t *c);
+uint64_t car_free_at(const car_t *c, uint64_t now, uint64_t len);
+void     car_log_ctl(car_t *c, uint64_t end, uint32_t tg);
+void     car_request_end(car_t *c);
 
 /* How long delivering what is left may take on the rung the session is on:
  * a few exchanges -- my round, the peer's control answer -- there.  Seconds
