@@ -82,7 +82,8 @@ bool car_wants_nav(const car_t *c)
 }
 static uint32_t nav_lead(const car_t *c) { return car_wants_nav(c) ? g_nav_ms : 0; }
 /* Both ends decide from the same reciprocal evidence, so a keydown's lead is
- * the same whichever end predicts it. */
+ * mostly the same whichever end predicts it -- not on an asymmetric link,
+ * where one end hears the other below 0 dB and is heard above it. */
 #define HEAD_MS          (110 + nav_lead(c))
 #define TAIL_MS          200
 #define GUARD_MS         ARQ_CHANNEL_GUARD_MS_DEFAULT
@@ -1322,6 +1323,64 @@ static bool clear_of_peer_nudge(car_t *c, uint64_t now)
     return true;
 }
 
+/* The same for a handover: a sender that hears no poll after its handover
+ * repeats it a control answer's time after its keydown (arm_sender_wait),
+ * and again after each repeat, for as long as it hears nothing -- times set
+ * by a keydown I heard end.  My window for its round runs on a timer of its
+ * own, and after a lost poll the two fell together: my second poll went out
+ * 0.1 s after the repeat began, before it could be sensed (car_explore,
+ * cliff:-5 both ways, frames 11, 47 and 48 lost).  Within SENSE_MS of the
+ * first repeat, wait until it would be sensed.  Only that close: silence
+ * after my poll is as likely a round I did not hear, and waiting out whole
+ * repeats cost 10-20 % both ways at 0..10 dB (sim).
+ *
+ * Except before a handover of mine that ends a turn in which I heard
+ * nothing of the peer: that keydown is a whole round long, and the likeliest
+ * reason for the silence is the peer repeating where I cannot hear it -- my
+ * handover went out 10.7 s into its second repeat (sim, fade:-5 both ways,
+ * seed 17).  Then every repeat it may be on is waited out, the next few of
+ * them (each predicted later drifts more), for both of its waits: the
+ * longer one follows a floor poll of its that I may have missed. */
+#define HO_REPEATS_PREDICTED 3
+static bool clear_of_peer_handover_repeat(car_t *c, uint64_t now)
+{
+    if (c->sending || !c->peer_ho_end) return false;
+    if (c->last_carrier_ms > c->peer_ho_end + GUARD_MS) { c->peer_ho_end = 0; return false; }
+    uint64_t ctl = ctl_on_floor(c) ? level_air(0) : mode_air(ARQ_CONTROL_MODE);
+    uint64_t head = 110;                                 /* HEAD_MS without my NAV lead */
+    uint64_t base = GUARD_MS + head + ctl + TAIL_MS + WINDOW_MARGIN_MS;
+    uint64_t floor_extra = SENSE_MS + FLOOR_SENSE_MS + head + ctl + TAIL_MS;
+    bool blind_handover = has_data(c) && now - c->drive_start >= TURN_CAP_MS && c->last_carrier_ms <= c->drive_start;
+    if (!blind_handover) {
+        /* ...longer when it was driving my floor stream (its drove_peer and
+         * poll_level 0 are my sending at the floor). */
+        bool fl = c->tx_level == 0 && c->io.pattern;
+        uint64_t rep = c->peer_ho_end + base + (fl ? floor_extra : 0);
+        /* Its heads carry its NAV lead, not mine: on an asymmetric link the
+         * ends disagree (sim, asym:-9:3 both ways: predicted 1.4 s early,
+         * and "after it" fell on the repeat). */
+        uint64_t late = rep + (fl ? 2 : 1) * g_nav_ms;
+        if (now + SENSE_MS <= rep || now >= late + SENSE_MS) return false;
+        car_trace(c, "rx: the peer's handover repeat is due -- after it");
+        c->peer_ho_end = 0;
+        arm(c, CAR_T_POLL, late + SENSE_MS);
+        return true;
+    }
+    uint64_t kd = c->peer_ho_end - c->peer_ho_start, clear = 0;
+    for (int w = 0; w < 2 && !(w == 1 && !c->io.pattern); w++) {
+        uint64_t wait = base + (w ? floor_extra : 0), lead = (w ? 2 : 1) * g_nav_ms;
+        for (int k = 0; k < HO_REPEATS_PREDICTED; k++) {
+            uint64_t rep = c->peer_ho_end + wait + (uint64_t)k * (kd + wait + lead);
+            if (now + SENSE_MS <= rep) break;
+            if (now < rep + lead + kd + GUARD_MS) { clear = rep + lead + kd + GUARD_MS; break; }
+        }
+    }
+    if (!clear) return false;
+    car_trace(c, "rx: the peer may be repeating its handover -- after it");
+    arm(c, CAR_T_POLL, clear);
+    return true;
+}
+
 /* The poll timer: the round is over (or never came).  Measure it, then poll,
  * take the turn, or go quiet. */
 static void on_poll_timer(car_t *c, uint64_t now)
@@ -1330,6 +1389,7 @@ static void on_poll_timer(car_t *c, uint64_t now)
     if ((c->floor_fallback || c->floor_hold) && peer_keyed(c, now)) c->round_heard = true;
     if (defer_if_busy(c, CAR_T_POLL, now)) return;
     if (clear_of_peer_nudge(c, now)) return;
+    if (clear_of_peer_handover_repeat(c, now)) return;
     /* My poll off a floor stream brought nothing -- no frame, no status.  If
      * it was lost, the sender carries on at the floor a floor wait after its
      * round, and my decoder, bound to the rung I asked for, cannot hear that,
@@ -1633,6 +1693,8 @@ static void on_ctl(car_t *c, uint64_t now, const msg_t *m)
         c->peer_hi = resolve16(c->rbase, m->hi);
         c->peer_hi_known = true;
         start_driving(c, m->h_id, m->h_level, m->h_n, now + CHAIN_GAP_MS - HEAD_MS, now);
+        c->peer_ho_start = now - peer_ctl_air(c) - HEAD_MS;      /* its control mode is the one I hear */
+        c->peer_ho_end = m->h_level > 0 ? now + CHAIN_GAP_MS + round_air(m->h_level, m->h_n) + TAIL_MS : 0;
         return;
     }
     /* A poll of my direction.  If I thought I was driving, the peer never
