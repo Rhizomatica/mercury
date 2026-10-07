@@ -319,7 +319,7 @@ bool arq_handle_incoming_connect_frame(uint8_t *data, size_t frame_size, float r
  * from_control: the control decoder produced it; otherwise mode is the
  * payload decoder's. */
 void arq_handle_carousel_frame(const uint8_t *data, size_t frame_size, int mode,
-                               bool from_control, float rx_snr);
+                               bool from_control, float rx_snr, uint32_t age_ms);
 
 /**
  * @brief Handle incoming compact CQ frame and emit host-side CQFRAME notification.

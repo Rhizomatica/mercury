@@ -92,7 +92,7 @@ typedef struct {
     int      kd_no;               /* this keydown's index, for carousel_sim_force_unsensed */
     /* CAR_NAV: the keydown's header pattern, heard by the peer or not, and
      * when the peer's detector reports it. */
-    bool     nav_ok;
+    bool     nav_ok, nav_sent;
     uint64_t nav_from;
 } station_t;
 
@@ -171,6 +171,25 @@ static double step_from, step_to, step_at_s = -1.0;   /* a step:A:B:T channel */
 
 /* The detector reports a pattern this long after it ends (0.23-0.24 s on air,
  * Pi 4); a poll, by contrast, is decoded as it ends. */
+/* CAR_TRACE_OVERLAP: one line per keydown that starts while the peer is on
+ * the air -- why it was not sensed. */
+static void overlap_diag(const station_t *s, const station_t *peer, const char *what)
+{
+    if (!getenv("CAR_TRACE_OVERLAP")) return;
+    int sync = 0, ctl = 0;
+    for (int i = 0; i < peer->kd_n; i++) {
+        if (peer->kd[i].sync) sync++;
+        if (peer->kd[i].mode == ARQ_CONTROL_MODE) ctl++;
+    }
+    printf("OVERLAP t=%.1f %c keys %s %.1f s into %c's keydown (%.1f s long, %d frames, %d ctl, %d syncable)"
+           " peer_nav=%s nav_from=%+.1f listener rx_mode=%d bound=%+.1f snr=%.1f\n",
+           now_ms / 1000.0, 'A' + s->id, what, (now_ms - peer->tx_start) / 1000.0, 'A' + peer->id,
+           (peer->tx_end - peer->tx_start) / 1000.0, peer->kd_n, ctl, sync,
+           peer->nav_ok ? "heard" : peer->nav_sent ? "missed" : "none",
+           peer->nav_sent ? ((double)peer->nav_from - (double)now_ms) / 1000.0 : 0.0,
+           s->rx_mode, ((double)s->bound_at - (double)peer->tx_start) / 1000.0, frame_snr(s, now_ms, ARQ_CONTROL_MODE));
+}
+
 #ifndef SIM_PATTERN_DETECT_MS
 #define SIM_PATTERN_DETECT_MS 240
 #endif
@@ -182,6 +201,7 @@ static void io_keydown(void *ctx, const car_frame_t *fr, int n)
     bool nav = nav_mode && car_wants_nav(&s->car);
     uint64_t t = now_ms + HEAD_MS + (nav ? nav_air : 0);
     s->nav_ok = false;
+    s->nav_sent = nav;
     if (nav) {
         uint64_t th = now_ms + HEAD_MS, d;
         uint64_t hair = sim_channel_airtime_ms(SIM_MODE_PATTERN, 0);
@@ -193,6 +213,7 @@ static void io_keydown(void *ctx, const car_frame_t *fr, int n)
     if (peer->tx_end > now_ms) {                  /* keyed while the peer is on the air */
         kd_overlaps++;
         if (!unsensed(peer->kd_no)) kd_unexplained++;
+        overlap_diag(s, peer, n && fr[0].mode == ARQ_CONTROL_MODE ? "ctl" : "data");
     }
     s->tx_start = now_ms;
     s->kd_n = 0;
@@ -261,10 +282,11 @@ static void io_pattern(void *ctx, int kind)
     if (peer->tx_end > now_ms) {                  /* keyed while the peer is on the air */
         kd_overlaps++;
         if (!unsensed(peer->kd_no)) kd_unexplained++;
+        overlap_diag(s, peer, "pattern");
     }
     s->tx_start = now_ms;
     s->kd_n = 0;
-    s->nav_ok = false;
+    s->nav_ok = false; s->nav_sent = false;
     s->kd_no = keydown_no++;
     if (trace) printf("%9.1f %c keys: pattern %s\n", now_ms / 1000.0, 'A' + s->id, kind ? "BREAK" : "ACK");
     if (deliver(t, s->id, SIM_MODE_PATTERN, &d)) {
@@ -461,9 +483,9 @@ void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limi
                 if (!getenv("CAR_NOPATTERN_RX"))
                     car_on_pattern(&s->car, now_ms, (int)e.len);
             } else if (e.mode == ARQ_CONTROL_MODE) {
-                car_on_frame(&s->car, now_ms, e.bytes, e.len, e.mode, true, (float)(frame_snr(s, e.f_start, e.mode) + snr_bias(e.mode)));
+                car_on_frame(&s->car, now_ms, e.bytes, e.len, e.mode, true, (float)(frame_snr(s, e.f_start, e.mode) + snr_bias(e.mode)), 0);
             } else if (e.mode == s->rx_mode && (!cs_decodable || s->bound_at <= e.f_start)) {
-                car_on_frame(&s->car, now_ms, e.bytes, e.len, e.mode, false, (float)(frame_snr(s, e.f_start, e.mode) + snr_bias(e.mode)));
+                car_on_frame(&s->car, now_ms, e.bytes, e.len, e.mode, false, (float)(frame_snr(s, e.f_start, e.mode) + snr_bias(e.mode)), 0);
             }
             free(e.bytes);
         }

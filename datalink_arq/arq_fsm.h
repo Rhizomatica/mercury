@@ -157,6 +157,8 @@ typedef struct
      * the cross-thread arq_update_link_metrics() write, which races with the
      * event queue push in modem.c. */
     float    rx_snr;
+    /* RX_CAROUSEL: how long ago the frame ended when it was decoded. */
+    uint32_t rx_age_ms;
 
     /* APP_DISCONNECT from the host's ABORT: drop what is still in flight and
      * go at once, rather than drain it first as DISCONNECT does (#218). */
@@ -388,6 +390,9 @@ typedef struct
      * (ARQ_EV_TIMER_CAROUSEL).  crc_seed rides every carousel frame's CRC16. */
     car_t   *car;                     /* allocated by arq_fsm_init             */
     bool     car_active;
+    bool     car_session;           /* this session ran the carousel (until idle) */
+    bool     car_ending;            /* the callee ends it: DISCONNECT in its next slot */
+    uint64_t car_end_deadline_ms;   /* ...or gives up then, silently */
     uint16_t crc_seed;
     uint16_t car_nonce;             /* the callee's, in the ACCEPT: part of crc_seed */
     int      car_rx_level;            /* start rung for the peer's direction:

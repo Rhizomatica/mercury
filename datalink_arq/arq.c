@@ -772,7 +772,7 @@ static void *arq_event_loop_worker(void *arg)
 
 /* A frame that passed the session's seeded CRC: the carousel data plane's. */
 void arq_handle_carousel_frame(const uint8_t *data, size_t frame_size, int mode,
-                               bool from_control, float rx_snr)
+                               bool from_control, float rx_snr, uint32_t age_ms)
 {
     if (!data || frame_size == 0)
         return;
@@ -781,6 +781,7 @@ void arq_handle_carousel_frame(const uint8_t *data, size_t frame_size, int mode,
     ev.mode         = mode;
     ev.from_control = from_control;
     ev.rx_snr       = rx_snr;
+    ev.rx_age_ms    = age_ms;
     ev.payload_len  = frame_size < sizeof(ev.payload) ? frame_size : sizeof(ev.payload);
     memcpy(ev.payload, data, ev.payload_len);
     ARQ_TRACE(ARQ_TR_RX_FRAME, 0xCA, (uint8_t)(from_control ? 1 : 0), (uint16_t)frame_size);
