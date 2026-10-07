@@ -231,6 +231,20 @@ What the rules became in `carousel.c`, beyond §2-§4:
   awgn, cliff and step channels, 8 % on fade:0, equal at the deep end; bulk
   one way unchanged in every cell, both ways 2-14 % faster or within noise.
   The CALL mark became 0xAA.
+- **Checked from outside** (#352): M compares every keydown it sends with the
+  length its FreeFor check allowed (`car_overruns`), and the sim checks that
+  every keydown of S's lies inside a slot M's log still holds
+  (`car_slot_reserved`) -- NoOverlap, whatever either end hears.  The tests
+  and the explorer fail on either.  Frame counts a keydown on the rung
+  cannot hold mark a corrupt frame (a flipped poll size once stretched S's
+  answer 72 s past its slot).
+- **The application's answer** (carousel-next): a request/response
+  application answers a delivery within about a second (UUCP on air:
+  0.14-0.89 s).  After a delivery that completed the peer's direction, M's
+  ack-only DONE waits up to 1 s for data to carry (M keying later is always
+  within FreeFor), and S's answer may start up to min(D/2, 1 s) late in its
+  slot (which holds a start up to D late).  Both key at once when the data
+  comes.  On air every such wait caught the answer (11 of 11).
 
 Measured (sim, 20 seeds x 22 cells x one and both ways, against mercuryv2
 0701ef1): faster in 27 of 44 cells, slower in 14 (at most +14.7 %, flat
