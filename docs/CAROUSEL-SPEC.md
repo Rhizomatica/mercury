@@ -285,7 +285,7 @@ RX demux (`car_on_frame`, C:1602-1626):
 
 ### 3.4 Connect frames (generic FSM, carousel-relevant fields only)
 
-- CALL: carousel marker in the last byte of the SRC slot when the callsign code leaves it free (P:661-690, F:924-927). **[since 2c07bf4]** `0xA8`, **[step 3]** `0xA9`; an earlier carousel's mark (`0xA7` 1.9.17/1.9.18, `0xA8`) reads as unmarked (that session runs stop-and-wait), and this one to it.
+- CALL: carousel marker in the last byte of the SRC slot when the callsign code leaves it free (P:661-690, F:924-927). **[since 2c07bf4]** `0xA8`, **[step 3]** `0xA9`, **[carousel-nvis]** `0xAA` (inline polls, docs/CAROUSEL-TURNS.md §8); an earlier carousel's mark (`0xA7` 1.9.17/1.9.18, `0xA8`) reads as unmarked (that session runs stop-and-wait), and this one to it.
 - **[since 2c07bf4]** Carousel ACCEPT: the callee's 16-bit session nonce in the last two bytes of its SRC slot (LE), when its callsign's code is at most 8 bytes; otherwise 0 on both ends (`arq_protocol_set_accept_nonce` / `_accept_nonce`). The same nonce on every ACCEPT of the session.
 - ACCEPT (callee → caller) **is the first POLL**: names the caller's start rung in the top 3 bits of the DST-CRC field (P:624-641); value **7 = "level 0, and I hear you below the control mode"** (`ACCEPT_LEVEL_CTL_DEAF`, F:888-892). Carousel flag 0x10 in the framer extension (P:718). Plain CRC.
 - DISCONNECT: plain CRC, session-id bound (7 bits, F:3929-3937); on MFSK to a peer the carousel last saw as control-deaf (`session_ctl_mode`, F:963-969).

@@ -155,6 +155,7 @@ typedef struct {
     int      plan, plan_lv, plan_n; /* the keydown decided */
     bool     m_heard;               /* S keyed since my last keydown, and I heard it end */
     bool     s_answered;            /* ...with a poll or a pattern for my round */
+    bool     offered;               /* M: my round offered S its turn as well (offer_both) */
     int      last_lv, last_nf;      /* my last round, for a REQ */
     uint8_t  last_mk;
     bool     idle_poll;             /* my poll on the air only asks whether S has data */
@@ -180,7 +181,8 @@ typedef struct {
     bool     rx_late;               /* the frame being handled was decoded too late to answer */
     int      s_prev_lv;             /* the rung M's rounds last came on (-1: none) */
     bool     s_asked_new;           /* my poll on the air asks M for another rung */
-    int      ok_lv;                 /* M: the rung of my last round S answered (-1: none) */
+    int      ok_lv;                 /* the rung of my last round the peer answered (-1: none) */
+    uint64_t peer_data_ms;          /* when a frame of the peer's data last came */
     bool     fell_back;             /* M: my last round went back to it */
 
     /* as sender */

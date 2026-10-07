@@ -17,6 +17,10 @@
  *       and count pieces with consecutive indices (mod 256).  A zero count
  *       ends the frame.  (The first header is always there: a payload mode
  *       frame holds at least FRAME_HDR + SEG_HDR bytes.)
+ *     The first frame of a round both ways in one exchange may open with an
+ *     INLINE POLL instead: a segment header whose K - 1 is 127 (no block has
+ *     more than CAR_MAX_K pieces), its first-header flags as above, and then
+ *     the poll's CAR_POLL_BYTES bytes as below.
  *   POLL / REQ / STATUS, CAR_POLL_BYTES, in the control mode -- or on
  *   MFSK behind a byte CTL_FLOOR_MARK when the peer is control-deaf:
  *     b0  type (2) | has data (1) | poll id (4) | control-deaf (1)
@@ -51,6 +55,9 @@
  * lost rounds the indices wrapped and rounds delivered nothing new. */
 #define FRAME_HDR        2
 #define SEG_HDR          4
+/* An inline poll: a segment header marked by K - 1 = 127, then the poll. */
+#define CTL_SEG_K1       127
+#define INLINE_CTL       (SEG_HDR + CAR_POLL_BYTES)
 #define FB_UNSEEN        255
 #define SLOW_RUNG_FRAMES 3        /* round cap on the two slowest rungs      */
 /* With both sides holding data, a turn ends at the first round after
@@ -234,6 +241,12 @@ static uint64_t level_air(int lv) { return mode_air(LADDER[lv]); }
 static bool ctl_on_floor(const car_t *c)      { return c->io.pattern && c->peer_ctl_deaf; }
 static bool peer_ctl_on_floor(const car_t *c) { return c->io.pattern && c->ctl_deaf; }
 static int pieces_per_frame(int lv) { return (mode_payload(LADDER[lv]) - FRAME_HDR - SEG_HDR) / CAR_PIECE; }
+/* A rung whose first frame holds an inline poll and still a piece: not the
+ * floor, nor DATAC15. */
+static bool inline_ok(int lv)
+{
+    return lv > 0 && mode_payload(LADDER[lv]) - FRAME_HDR - INLINE_CTL >= SEG_HDR + CAR_PIECE;
+}
 static uint64_t round_air(int lv, int n)
 {
     return (uint64_t)n * level_air(lv) + (uint64_t)(n > 0 ? n - 1 : 0) * burst_gap_ms(lv);
@@ -246,6 +259,7 @@ static uint64_t round_air(int lv, int n)
 static int keydown_cap(int lv);
 static int round_n(const car_t *c);
 static bool both_ok(const car_t *c, int lv);
+static bool offer_both(car_t *c, uint64_t now);
 static uint64_t turn_quantum(int lv)
 {
     uint64_t two = 2 * round_air(lv, keydown_cap(lv));
@@ -279,6 +293,9 @@ typedef struct {
     bool     ctl_deaf;              /* the sender hears me below the control mode */
     int      slot;                  /* DATA: the slot it went in */
     bool     pat_anchor;            /* DATA: ...of a pattern of M's */
+    bool     has_ctl;               /* DATA: an inline poll rides in it */
+    uint8_t  ctl[CAR_POLL_BYTES];
+    uint64_t inline_end;            /* POLL: inline, its keydown ends then */
 } msg_t;
 
 static void encode_ctl(const msg_t *m, uint8_t *b)
@@ -369,6 +386,11 @@ static bool decode_data(const uint8_t *b, size_t len, msg_t *m)
         m->pat_anchor = (b[FRAME_HDR + SEG_HDR - 1] >> 1) & 1;
     }
     size_t pos = FRAME_HDR;
+    if (len >= FRAME_HDR + INLINE_CTL && ((b[pos] << 8 | b[pos + 1]) >> 5 & 0x7F) == CTL_SEG_K1) {
+        m->has_ctl = true;
+        memcpy(m->ctl, b + pos + SEG_HDR, CAR_POLL_BYTES);
+        pos += INLINE_CTL;
+    }
     while (pos + SEG_HDR <= len && m->nseg < CAR_WIN) {
         uint32_t h = (uint32_t)b[pos] << 24 | (uint32_t)b[pos + 1] << 16 | (uint32_t)b[pos + 2] << 8 | b[pos + 3];
         seg_t *g = &m->seg[m->nseg];
@@ -546,7 +568,7 @@ static void apply_need(car_t *c, const msg_t *m)
 
 /* Build a round of at most n frames on level lv, answering poll_id, into
  * fr[].  Returns the frame count (0: nothing to send). */
-static int build_round(car_t *c, int lv, int n, uint32_t poll_id, car_frame_t *fr)
+static int build_round(car_t *c, int lv, int n, uint32_t poll_id, car_frame_t *fr, int reserve0)
 {
     /* Open blocks span fewer than CAR_WIN ids from the oldest unconfirmed
      * one, not merely number fewer than CAR_WIN: ids travel mod 16, and a
@@ -607,7 +629,7 @@ static int build_round(car_t *c, int lv, int n, uint32_t poll_id, car_frame_t *f
         memset(x->bytes, 0, (size_t)room);
         x->mode = mode; x->len = (size_t)room;
         x->gap_ms = nf ? burst_gap_ms(lv) : 0;
-        int pos = FRAME_HDR, nseg = 0;
+        int pos = FRAME_HDR + (nf ? 0 : reserve0), nseg = 0;
         uint8_t last_block = 0;
         /* The piece the receiver's in-order stream waits for goes first, so
          * the stream advances every round trip instead of waiting for the
@@ -1333,16 +1355,36 @@ static int send_poll_ex(car_t *c, int lv, int n, uint8_t id, bool with_round)
     c->round_seen = 0; c->round_frames = n; c->status_seen = false;
     c->done_in_round = 0; c->round_fresh = false; c->rx_tail = false;
     int nd = 0;
+    /* My round rides after the poll -- or, where its first frame has room,
+     * the poll rides in it: 14 bytes there instead of a control frame of
+     * 3.7 s.  Losing that frame loses the poll; the peer then answers my
+     * round alone, which my slot allows.  Only on a rung my last round got
+     * an answer on: the peer listens there.  A probe's poll inline went with
+     * it to a peer that had gone back to its last rung, and it never heard
+     * that I polled -- nor told me to leave the dead rung (sim, cliff:5 both
+     * ways: 326 -> 614 s). */
+    bool inl = with_round && c->tx_level >= 0 && inline_ok(c->tx_level) && c->ok_lv == c->tx_level;
     if (with_round && c->tx_level >= 0) {
-        nd = build_round(c, c->tx_level, round_n(c), id, fr + 1);
+        nd = build_round(c, c->tx_level, round_n(c), id, inl ? fr : fr + 1, inl ? INLINE_CTL : 0);
         if (nd) {
-            fr[1].gap_ms = CHAIN_GAP_MS;
+            if (!inl) fr[1].gap_ms = CHAIN_GAP_MS;
             c->last_lv = c->tx_level; c->last_nf = nd; c->last_mk = id;
             c->traffic = true;
+            /* the peer may answer my round with a pattern, having none of its own */
+            c->pat_waiting = c->tx_level > 0 && c->io.pattern;
             m.h_level = c->tx_level; m.h_n = nd; m.h_id = id;
             m.hi = (uint8_t)(c->next_blk_id - 1);
             m.unopened = unopened(c);
         }
+    }
+    if (inl && nd) {
+        uint8_t *p = fr[0].bytes + FRAME_HDR;
+        uint8_t flags = p[SEG_HDR - 1] & 3;           /* the first header's, set by build_round */
+        uint32_t h = (uint32_t)CTL_SEG_K1 << 21 | 1u << 15;
+        p[0] = (uint8_t)(h >> 24); p[1] = (uint8_t)(h >> 16); p[2] = (uint8_t)(h >> 8); p[3] = (uint8_t)h | flags;
+        encode_ctl(&m, p + SEG_HDR);
+        keydown(c, fr, nd);
+        return nd;
     }
     put_ctl(c, &fr[0], &m);
     keydown(c, fr, 1 + nd);
@@ -1399,7 +1441,7 @@ static int round_n(const car_t *c)
 static bool send_round(car_t *c, uint8_t id)
 {
     car_frame_t *fr = c->txbuf;
-    int nf = build_round(c, c->tx_level, round_n(c), id, fr);
+    int nf = build_round(c, c->tx_level, round_n(c), id, fr, 0);
     if (!nf) { send_status(c, id); return false; }
     c->floor_waiting = c->tx_level == 0 && c->io.pattern;
     c->pat_waiting = c->tx_level > 0 && c->io.pattern;
@@ -1586,7 +1628,9 @@ static uint64_t kind_len(const car_t *c, int kind)
     uint64_t head = 110 + nav_lead(c);
     switch (kind) {
     case KD_ROUND:         return head + round_air(c->tx_level, round_n(c)) + TAIL_MS;
-    case KD_BOTH:          return head + (ctl_on_floor(c) ? level_air(0) : mode_air(ARQ_CONTROL_MODE)) +
+    case KD_BOTH:          if (c->tx_level >= 0 && inline_ok(c->tx_level))
+                               return head + round_air(c->tx_level, round_n(c)) + TAIL_MS;
+                           return head + (ctl_on_floor(c) ? level_air(0) : mode_air(ARQ_CONTROL_MODE)) +
                                   CHAIN_GAP_MS + round_air(c->tx_level, round_n(c)) + TAIL_MS;
     case KD_PATTERN_ACK:
     case KD_PATTERN_BREAK: return 110 + PATTERN_AIR_MS + TAIL_MS;
@@ -1669,6 +1713,7 @@ static void m_key_plan(car_t *c)
         send_req(c, id);
         break;
     }
+    if (c->m_kind != KD_BOTH) c->offered = false;   /* it went as something else */
 }
 
 /* Key the planned keydown now if no slot of S's is in the way; else when. */
@@ -1687,6 +1732,7 @@ static void m_try(car_t *c, uint64_t now)
         if (both_ok(c, lv)) {
             car_trace(c, "tx: data came -- the ack goes with my round");
             m_enter(c, PH_RECV, now);
+            c->offered = true;
             m_plan(c, KD_BOTH, lv, poll_size(c, lv, now));
         }
     }
@@ -1762,6 +1808,7 @@ static void m_decide_idle(car_t *c, uint64_t now)
     if (has_data(c)) {
         c->idle = false; c->idle_backoff_ms = 0;
         if (c->tx_level < 0) { c->tx_level = c->peer_snr_level; c->tx_n = 1; }
+        if (offer_both(c, now)) return;
         m_enter(c, PH_SEND, now);
         m_plan(c, KD_ROUND, 0, 0);
         return;
@@ -1780,6 +1827,33 @@ static void m_decide_idle(car_t *c, uint64_t now)
     c->plan = KD_NONE;
     c->m_state = MS_IDLE;
     arm(c, CAR_T_M, now + c->idle_backoff_ms);
+}
+
+/* My round, offering S its turn in the same exchange: on a clean link above
+ * the floor, with the poll inline (no control frame), it costs 18 bytes of my
+ * first frame -- and a request/response application's answer then comes in
+ * S's answer to my round, not after a poll of mine for it (two keydowns an
+ * exchange, not four).  S with nothing to send answers my round as before. */
+#define OFFER_RECENT_MS 120000
+static bool offer_both(car_t *c, uint64_t now)
+{
+    if (c->tx_level <= 0 || !inline_ok(c->tx_level) || c->ok_lv != c->tx_level) return false;
+    /* ...to a peer that sends: a lost answer costs the wait for the round S
+     * might have sent, and offered to a peer with nothing, every probe lost
+     * on a cliff cost it (sim, cliff:5 one way 155 -> 181 s).  And that has
+     * sent all it had: a peer with more goes by turns, as both ways in bulk
+     * -- offered every round there, a lossy link lost both ways at once
+     * (sim, nvis both ways 3743 -> 3853 s over 60 seeds). */
+    if (!peer_direction_done(c)) return false;
+    if (!c->peer_has_data && !(c->peer_data_ms && now - c->peer_data_ms < OFFER_RECENT_MS)) return false;
+    int lv = choose_level(c, now);
+    if (c->ctl_deaf && c->io.pattern) lv = 0;
+    if (!both_ok(c, lv)) return false;
+    m_enter(c, PH_RECV, now);
+    c->silent_polls = 0;
+    c->offered = true;
+    m_plan(c, KD_BOTH, lv, poll_size(c, lv, now));
+    return true;
 }
 
 static void m_decide_send(car_t *c, uint64_t now)
@@ -1803,7 +1877,7 @@ static void m_decide_send(car_t *c, uint64_t now)
         /* A round on a rung S had not had my rounds on yet: S, hearing
          * nothing, went back to listening on the last one it had.  Go there
          * once before asking. */
-        if (c->m_kind == KD_ROUND && c->ok_lv >= 0 && c->last_lv != c->ok_lv && !c->fell_back) {
+        if ((c->m_kind == KD_ROUND || c->m_kind == KD_BOTH) && c->ok_lv >= 0 && c->last_lv != c->ok_lv && !c->fell_back) {
             car_trace(c, "tx: no answer on lv=%d -- back to lv=%d", c->last_lv, c->ok_lv);
             c->fell_back = true;
             c->tx_level = c->ok_lv; c->tx_n = 1;
@@ -1816,6 +1890,7 @@ static void m_decide_send(car_t *c, uint64_t now)
         return;
     }
     c->floor_silent = 0;
+    if (offer_both(c, now)) return;
     m_plan(c, KD_ROUND, 0, 0);
 }
 
@@ -1828,6 +1903,12 @@ static void m_decide_recv(car_t *c, uint64_t now)
         c->idle = false; c->idle_backoff_ms = 0;
     }
     if (c->m_kind == KD_DONE) { m_decide_idle(c, now); return; }
+    if (c->offered) {
+        c->offered = false;
+        /* My round offered S its turn and nothing came back: my round went
+         * unanswered, as a round alone would have -- not a round of S's lost. */
+        if (!c->m_heard) { m_enter(c, PH_SEND, now); c->status_seen = true; m_decide_send(c, now); return; }
+    }
     /* Nothing at all of the round: the poll (or pattern) was lost, or the
      * rung is dead.  On a rung that has delivered, ask again once, unscored:
      * two lost polls scored in a row threw DATAC17 away at 12 dB (sim,
@@ -1848,8 +1929,9 @@ static void m_decide_recv(car_t *c, uint64_t now)
     bool quantum = !both_ok(c, c->poll_level) &&
                    ((c->done_in_round && held >= turn_quantum(c->poll_level)) || held >= turn_cap(c->poll_level));
     if (has_data(c) && (done || quantum)) {
-        car_trace(c, "turn: mine (%s)", done ? "peer done" : "quantum");
         if (c->tx_level < 0) { c->tx_level = c->peer_snr_level; c->tx_n = 1; }
+        if (done && offer_both(c, now)) return;
+        car_trace(c, "turn: mine (%s)", done ? "peer done" : "quantum");
         m_enter(c, PH_SEND, now);
         m_plan(c, KD_ROUND, 0, 0);
         return;
@@ -1903,6 +1985,7 @@ static void m_on_data(car_t *c, uint64_t now, const msg_t *m, int lv)
 {
     if (lv != c->rx_level) return;           /* the payload decoder is on another mode */
     c->traffic = true;
+    c->peer_data_ms = now;
     rx_frame(c, m, lv, m->poll_id == c->poll_id);
     m_heard_end(c, now + (uint64_t)m->left * (level_air(lv) + burst_gap_ms(lv)) + TAIL_MS,
                 (int)m->poll_id, m->pat_anchor, m->slot);
@@ -1927,7 +2010,7 @@ static void m_on_ctl(car_t *c, uint64_t now, const msg_t *m)
         if (m->h_n) {                        /* its round follows, in this keydown */
             c->peer_hi = resolve16(c->rbase, m->hi);
             c->peer_hi_known = true; c->peer_unopened = m->unopened;
-            m_heard_end(c, now + CHAIN_GAP_MS + round_air(m->h_level, m->h_n) + TAIL_MS,
+            m_heard_end(c, m->inline_end ? m->inline_end : now + CHAIN_GAP_MS + round_air(m->h_level, m->h_n) + TAIL_MS,
                         (int)m->poll_id, false, 0);
             return;
         }
@@ -1994,6 +2077,9 @@ static void s_answer(car_t *c, uint64_t now, bool req)
 /* S answers both ways: its poll for M's round, then its own round. */
 static void s_answer_both(car_t *c, uint64_t now)
 {
+    /* Nothing of mine to send: the answer to M's round alone, which may be a
+     * pattern -- M offers me its turn on every round of a clean link. */
+    if (!has_data(c)) { s_answer(c, now, false); return; }
     if (c->round_frames > 0) rx_measure(c, c->round_lv, now);
     deliver_in_order(c);
     rx_trace(c);
@@ -2075,6 +2161,7 @@ static void s_on_ctl(car_t *c, uint64_t now, const msg_t *m, int mode)
     uint32_t d = d_of_mode(mode);
     uint64_t eh = now + TAIL_MS;
     if (m->type == M_POLL) {
+        if (c->pat_waiting || c->floor_waiting) c->ok_lv = c->last_lv;   /* it answers my round */
         apply_need(c, m);
         c->peer_has_data = m->has_data;
         c->tx_poll_id = (uint8_t)m->poll_id;
@@ -2090,8 +2177,9 @@ static void s_on_ctl(car_t *c, uint64_t now, const msg_t *m, int mode)
             c->peer_hi = resolve16(c->rbase, m->hi);
             c->peer_hi_known = true; c->peer_unopened = m->unopened;
             uint32_t dr = d_of_mode(LADDER[m->h_level]);
-            s_anchor(c, ANC_BOTH, (uint8_t)m->poll_id, eh + CHAIN_GAP_MS + round_air(m->h_level, m->h_n),
-                     d > dr ? d : dr, 0, 0);
+            if (m->inline_end) s_anchor(c, ANC_BOTH, (uint8_t)m->poll_id, m->inline_end, dr, 0, 0);
+            else s_anchor(c, ANC_BOTH, (uint8_t)m->poll_id, eh + CHAIN_GAP_MS + round_air(m->h_level, m->h_n),
+                          d > dr ? d : dr, 0, 0);
         } else if (m->n) {
             c->tx_level = m->level; c->tx_n = m->n;
             car_trace(c, "tx polled lv=%d n=%d loss=%.2f", m->level, m->n, c->tx_loss);
@@ -2227,6 +2315,13 @@ void car_on_frame(car_t *c, uint64_t now, const uint8_t *bytes, size_t len, int 
     int lv = level_of_mode(mode);
     if (lv < 0 || !decode_data(bytes, len, &m)) return;
     note_peer_ctl_deaf(c, m.ctl_deaf);
+    msg_t k;
+    if (m.has_ctl && lv == c->rx_level && decode_ctl(m.ctl, CAR_POLL_BYTES, &k) && k.type == M_POLL && k.h_n) {
+        /* the poll first: it says what the round it rides in is */
+        k.inline_end = now + (uint64_t)m.left * (level_air(lv) + burst_gap_ms(lv)) + TAIL_MS;
+        if (c->master) m_on_ctl(c, now, &k);
+        else           s_on_ctl(c, now, &k, mode);
+    }
     if (c->master) m_on_data(c, now, &m, lv);
     else           s_on_data(c, now, &m, lv);
 }
@@ -2286,12 +2381,14 @@ void car_on_pattern(car_t *c, uint64_t now, int kind)
     if (c->master) {
         c->s_answered = true;
         c->ok_lv = c->last_lv; c->fell_back = false;
+        if (c->m_kind == KD_BOTH) c->status_seen = true;   /* S had no round to send, or it would have */
         /* the answer to my round: my latest keydown */
         m_heard_end(c, now, c->nmlog ? c->mlog[c->nmlog - 1].mk : -1, false, 0);
     } else {
         /* M's answer to my round: my next round is its response.  A pattern
          * names no keydown; my rounds keep the poll id they follow. */
         s_heard_m(c, now);
+        c->ok_lv = c->last_lv;
         s_anchor(c, ANC_PATTERN, 0xFF, now, D_PAT_MS, c->tx_level == 0 && c->io.pattern ? K_FLOOR : 0, r_floor_ms());
     }
 }

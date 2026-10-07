@@ -215,6 +215,22 @@ What the rules became in `carousel.c`, beyond §2-§4:
   reply slot logged; the callee sends its own only in a slot.
 - **NAV headers** are not sent in a session; the bounds count a 300 ms lead
   margin.
+- **Inline polls** (branch carousel-nvis): a poll may ride in the first frame
+  of a round, marked by a segment header with K - 1 = 127, instead of a
+  control frame (3.7 s of DATAC16 for 14 bytes).  Only on a rung the
+  sender's last round was answered on, where the peer listens.  M's round
+  then *offers* S its turn: S with data answers with its round and its poll
+  inline; S with none answers M's round as before (a poll or a pattern).  M
+  offers on a clean link (`both_ok`) to a peer that has sent all it had and
+  sent within 120 s -- request/response traffic, as UUCP's.  A peer with more
+  to send goes by turns.  The timing rules are unchanged: an offering
+  keydown allows S an answer as long as a control frame and the round M
+  asked for, like any both-ways keydown, and S keys only in its slot.
+  Request/response in the sim (`CAR_CHAT=<exchanges>:<bytes>`): two
+  keydowns an exchange instead of four; 10 x 200 bytes 16-32 % faster on
+  awgn, cliff and step channels, 8 % on fade:0, equal at the deep end; bulk
+  one way unchanged in every cell, both ways 2-14 % faster or within noise.
+  The CALL mark became 0xAA.
 
 Measured (sim, 20 seeds x 22 cells x one and both ways, against mercuryv2
 0701ef1): faster in 27 of 44 cells, slower in 14 (at most +14.7 %, flat
