@@ -726,10 +726,23 @@ static double level_delivery(const car_t *c, int lv)
 }
 
 /* Near its SNR threshold two lost frames in a row are enough: the SNR already
- * doubts the rung, and each loss costs a round. */
+ * doubts the rung, and each loss costs a round.  But never fewer than a run
+ * that would be unlikely (DEAD_P) at the delivery the rung showed while it
+ * delivered: on NVIS DATAC3 delivers ~30 % of frames, a whole 7-frame round
+ * of it is lost 6 % of the time, and each such round declared it dead and
+ * sent the session to DATAC4 and the floor (sim, nvis seed 2: 2975 s, where
+ * staying on DATAC3 takes ~1800). */
+#define DEAD_P 0.02
 static bool level_dead(const car_t *c, int lv)
 {
-    return c->lv_dead_run[lv] >= (level_marginal(c, lv) ? 2 : DEAD_RUN);
+    int run = level_marginal(c, lv) ? 2 : DEAD_RUN;
+    double p = c->lv_p_ok[lv];
+    if (p > 0.0) {
+        if (p > 0.95) p = 0.95;
+        int need = (int)ceil(log(DEAD_P) / log(1.0 - p));
+        if (need > run) run = need;
+    }
+    return c->lv_dead_run[lv] >= run;
 }
 
 static void measure_level(car_t *c, int lv, int frames, double loss, uint64_t now)
@@ -737,7 +750,10 @@ static void measure_level(car_t *c, int lv, int frames, double loss, uint64_t no
     c->lv_sent[lv] = LV_DECAY * c->lv_sent[lv] + frames;
     c->lv_lost[lv] = LV_DECAY * c->lv_lost[lv] + frames * loss;
     if (loss >= 1.0) c->lv_dead_run[lv] += frames;
-    else             c->lv_dead_run[lv] = 0;
+    else {
+        c->lv_dead_run[lv] = 0;
+        c->lv_p_ok[lv] = 1.0 - c->lv_lost[lv] / c->lv_sent[lv];   /* what it delivers */
+    }
     if (loss >= 0.5) c->lv_probe_fails[lv]++;
     else             c->lv_probe_fails[lv] = 0;
     c->lv_rounds[lv]++;
@@ -1312,7 +1328,7 @@ static int send_poll_ex(car_t *c, int lv, int n, uint8_t id, bool with_round)
     c->floor_streaming = false;
     if (n) { c->poll_level = lv; c->poll_n = n; bind_rx(c, lv); }
     c->round_seen = 0; c->round_frames = n; c->status_seen = false;
-    c->done_in_round = 0; c->round_fresh = false;
+    c->done_in_round = 0; c->round_fresh = false; c->rx_tail = false;
     int nd = 0;
     if (with_round && c->tx_level >= 0) {
         nd = build_round(c, c->tx_level, c->tx_n, id, fr + 1);
@@ -1338,7 +1354,7 @@ static void send_pattern(car_t *c, int kind)
     if (c->poll_level == 0)
         c->poll_n = keydown_cap(0);     /* what a sender streaming the floor sends */
     c->round_seen = 0; c->round_frames = c->poll_n; c->status_seen = false;
-    c->done_in_round = 0; c->round_fresh = false;
+    c->done_in_round = 0; c->round_fresh = false; c->rx_tail = false;
     c->tx_busy = true;
     c->io.pattern(c->io.ctx, kind);
 }
@@ -1443,9 +1459,15 @@ static void rx_trace(car_t *c)
               c->snr_valid ? "" : "?", gp);
 }
 
+/* A round's size is what its frames say -- but only its last frame says it
+ * all: with the tail lost, seen + left counted the lost frames as never sent,
+ * and a NVIS round of 7 that brought 3 read as "3 of 3, whole" (sim, nvis
+ * seed 3: a "same again" pattern, and the loss unscored).  Without the tail,
+ * the round is taken to be what I asked for. */
 static void rx_measure(car_t *c, int lv, uint64_t now)
 {
     int frames = c->round_frames > 0 ? c->round_frames : 1;
+    if (!c->rx_tail && c->poll_n > frames) frames = c->poll_n;
     double loss = 1.0 - (double)c->round_seen / frames;
     if (loss < 0) loss = 0;
     c->loss_est = 0.5 * c->loss_est + 0.5 * loss;
@@ -1484,8 +1506,8 @@ static int rx_next(car_t *c, uint64_t now, int *plv, int *pn)
      * again, is answered by a pattern; not to a sender whose window is full
      * (only a poll retires its blocks). */
     if (c->io.pattern && lv > 0 && lv == c->poll_level && n == c->poll_n && !c->status_seen &&
-        c->round_seen > 0 && c->round_seen >= c->round_frames && c->floor_patterns < FLOOR_POLL_EVERY &&
-        !window_full) {
+        c->round_seen > 0 && c->round_seen >= c->round_frames && c->rx_tail &&
+        c->floor_patterns < FLOOR_POLL_EVERY && !window_full) {
         car_trace(c, "rx -> pattern ACK (lv=%d n=%d)", lv, n);
         c->floor_patterns++;
         return KD_PATTERN_ACK;
@@ -1505,6 +1527,7 @@ static void rx_frame(car_t *c, const msg_t *m, int lv, bool counts)
         c->round_seen++;
         c->round_frames = c->round_seen + m->left;   /* the frames say how many there are */
         c->round_lv = lv;
+        if (!m->left) c->rx_tail = true;
     }
     deliver_in_order(c);
 }
@@ -1989,7 +2012,7 @@ static void s_on_data(car_t *c, uint64_t now, const msg_t *m, int lv)
     if (m->poll_id != c->rx_mk || !(c->anc.on && c->anc.kind == ANC_ROUND && c->anc.mk == m->poll_id)) {
         c->rx_mk = (uint8_t)m->poll_id;      /* a new round of M's */
         c->round_seen = 0; c->round_frames = 0;
-        c->done_in_round = 0; c->round_fresh = false;
+        c->done_in_round = 0; c->round_fresh = false; c->rx_tail = false;
     }
     rx_frame(c, m, lv, true);
     c->s_prev_lv = lv;
@@ -2015,7 +2038,7 @@ static void s_on_ctl(car_t *c, uint64_t now, const msg_t *m, int mode)
             if (m->n) { c->tx_level = m->level; c->tx_n = m->n; }
             c->rx_mk = (uint8_t)m->poll_id;
             c->round_seen = 0; c->round_frames = m->h_n; c->round_lv = m->h_level;
-            c->done_in_round = 0; c->round_fresh = false;
+            c->done_in_round = 0; c->round_fresh = false; c->rx_tail = false;
             c->peer_hi = resolve16(c->rbase, m->hi);
             c->peer_hi_known = true; c->peer_unopened = m->unopened;
             uint32_t dr = d_of_mode(LADDER[m->h_level]);

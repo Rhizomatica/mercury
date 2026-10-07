@@ -204,6 +204,7 @@ typedef struct {
     double   lv_sent[CAR_NLEVELS], lv_lost[CAR_NLEVELS];
     int      lv_rounds[CAR_NLEVELS], lv_dead_run[CAR_NLEVELS];
     int      lv_probe_fails[CAR_NLEVELS]; /* its rounds in a row that lost half */
+    double   lv_p_ok[CAR_NLEVELS];  /* the delivery it showed when it last delivered */
     uint32_t lv_round_at[CAR_NLEVELS];
     uint64_t lv_probe_at[CAR_NLEVELS], lv_backoff_ms[CAR_NLEVELS];
     uint32_t polls;
@@ -212,6 +213,7 @@ typedef struct {
     int      poll_level, poll_n;    /* what I asked the peer for */
     int      round_seen, round_frames;
     int      round_lv;              /* the rung the frames came on */
+    bool     rx_tail;               /* ...and its last frame among them */
     bool     status_seen;
     int      silent_polls;
     bool     peer_unopened;
