@@ -945,12 +945,19 @@ static double air_fraction(const car_t *c, int lv, int frames)
 /* The round a rung has earned: one frame more than it recently delivered,
  * twice that where the SNR has room to spare -- the round size then doubles
  * from a probe as TCP's window does, where adding one frame took an 8 KB
- * transfer at 20 dB four rounds (1, 2, 3, 2) and a poll's overhead each. */
+ * transfer at 20 dB four rounds (1, 2, 3, 2) and a poll's overhead each.
+ * Twice that, too, on a rung that has delivered PROVEN_FRAMES and lost none,
+ * whatever the SNR says: a receiver can read low (estacao2 read DATAC17 at
+ * 6.3-6.8 dB, under its 7 dB, and got every frame), and its rounds then grew
+ * 1, 2, 3 on air.  Sim, an estimate 4 dB low at cliff:12: 92 -> 80 s one
+ * way, 190 -> 172 both ways (60 seeds); elsewhere within 2 %. */
+#define PROVEN_FRAMES 2.0
 static bool level_marginal(const car_t *c, int lv);
 static int level_earned(const car_t *c, int lv)
 {
     double got = c->lv_sent[lv] - c->lv_lost[lv];
-    return 1 + (int)(level_marginal(c, lv) || !c->snr_valid ? got : 2.0 * got);
+    bool proven = c->lv_sent[lv] >= PROVEN_FRAMES && c->lv_lost[lv] < 0.05;
+    return 1 + (int)((level_marginal(c, lv) || !c->snr_valid) && !proven ? got : 2.0 * got);
 }
 /* What a measured rung delivers per second, in the rounds it has earned. */
 static double level_goodput(const car_t *c, int lv)
