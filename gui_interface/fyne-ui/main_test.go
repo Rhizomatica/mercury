@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestPTTMethodOptions(t *testing.T) {
@@ -277,5 +278,41 @@ func TestEmbeddedClientMayConnect(t *testing.T) {
 				t.Fatalf("allowed but gave a reason %q", why)
 			}
 		})
+	}
+}
+
+func TestFormatChatTimestamp(t *testing.T) {
+	cases := []struct {
+		name string
+		got  string
+		want string
+	}{
+		{"zero time", formatChatTimestamp(time.Time{}), ""},
+		{"iso 8601", formatChatTimestamp(time.Date(2026, 10, 7, 15, 4, 5, 0, time.UTC)),
+			"2026-10-07 15:04:05"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.got != tc.want {
+				t.Fatalf("got %q, want %q", tc.got, tc.want)
+			}
+		})
+	}
+}
+
+func TestHistoryTimestamp(t *testing.T) {
+	// A history line without a ts field parses to Ts == 0 and must render as
+	// no timestamp, not the epoch.
+	if got := historyTimestamp(HistoryMessage{}); got != "" {
+		t.Fatalf("zero ts: got %q, want %q", got, "")
+	}
+	// A real (unix seconds) value must render, matching what
+	// formatChatTimestamp does for the same instant.
+	sec := int64(1760000645)
+	ms := 123
+	got := historyTimestamp(HistoryMessage{Ts: sec, Ms: ms})
+	want := formatChatTimestamp(time.Unix(sec, int64(ms)*int64(time.Millisecond)))
+	if got != want {
+		t.Fatalf("got %q, want %q", got, want)
 	}
 }

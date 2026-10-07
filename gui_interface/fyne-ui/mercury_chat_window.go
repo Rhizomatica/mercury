@@ -348,11 +348,13 @@ func (cw *chatWindow) logMsg(format string, args ...any) {
 	})
 }
 
-// chatTimestampLayout is the on-screen timestamp format: MM/DD/YYYY - HH:MM:SS.
-const chatTimestampLayout = "01/02/2006 - 15:04:05"
+// chatTimestampLayout is the on-screen timestamp format: ISO 8601
+// (YYYY-MM-DD HH:MM:SS). It cannot be misread across locales the way a
+// MM/DD/YYYY prefix can, it sorts, and it matches the rest of HERMES.
+const chatTimestampLayout = "2006-01-02 15:04:05"
 
 // formatChatTimestamp renders a chat message timestamp in the on-screen
-// format, or "" for a zero time (history messages carry none).
+// format, or "" for a zero time.
 func formatChatTimestamp(t time.Time) string {
 	if t.IsZero() {
 		return ""
