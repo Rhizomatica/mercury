@@ -177,6 +177,18 @@ size_t car_tx_inflight(const car_t *c)
 const char *car_failed(const car_t *c) { return c->failed; }
 int car_overruns(const car_t *c) { return c->overruns; }
 
+static uint64_t mslot_lo(const car_t *c, const car_mlog_t *l, int i);
+static uint64_t mslot_hi(const car_t *c, const car_mlog_t *l, int i);
+bool car_slot_reserved(const car_t *m, uint64_t start, uint64_t end)
+{
+    for (int j = 0; j < m->nmlog; j++)
+        for (int i = 0; i <= m->mlog[j].k; i++)
+            if (!(m->mlog[j].done & (1u << i)) && start >= mslot_lo(m, &m->mlog[j], i) &&
+                end <= mslot_hi(m, &m->mlog[j], i))
+                return true;
+    return false;
+}
+
 /* A block's check: CRC-32 (IEEE) of the session's key, the block's id and K,
  * and its bytes, in the block's last BLOCK_CHECK bytes.  The frame CRC16
  * passes about one bad frame in 65536, and a block is rebuilt from many: one
@@ -374,6 +386,10 @@ static bool decode_ctl(const uint8_t *b, size_t len, msg_t *m)
     m->hi = b[13] >> 4;
     m->unopened = (b[13] >> 3) & 1;
     if (m->level >= CAR_NLEVELS || m->h_level >= CAR_NLEVELS || m->snr_level >= CAR_NLEVELS) return false;
+    /* ...and so do more frames than a keydown on the rung can hold: a poll
+     * read with its size flipped had S key five MFSK frames, 72 s, into a
+     * slot for one DATAC4 frame (explorer, corrupt byte 7 of an inline poll). */
+    if (m->n > keydown_cap(m->level) || m->h_n > keydown_cap(m->h_level)) return false;
     /* Out-of-range fields mean a corrupt frame that passed its CRC: drop it
      * rather than act on it (spec risk R19). */
     for (int o = 0; o < CAR_WIN; o++)
@@ -2340,6 +2356,7 @@ void car_on_frame(car_t *c, uint64_t now, const uint8_t *bytes, size_t len, int 
     }
     int lv = level_of_mode(mode);
     if (lv < 0 || !decode_data(bytes, len, &m)) return;
+    if (m.left >= keydown_cap(lv)) return;   /* corrupt: no keydown on the rung is that long */
     note_peer_ctl_deaf(c, m.ctl_deaf);
     msg_t k;
     if (m.has_ctl && lv == c->rx_level && decode_ctl(m.ctl, CAR_POLL_BYTES, &k) && k.type == M_POLL && k.h_n) {

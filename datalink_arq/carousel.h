@@ -280,6 +280,10 @@ bool car_is_idle(const car_t *c);
 const char *car_failed(const car_t *c);
 /* Keydowns of M's longer than the slot check allowed them: always 0 (tests). */
 int car_overruns(const car_t *c);
+/* For tests, the turn rules checked from outside: does M's log hold a slot,
+ * not yet over, for a keydown of S's on the air over [start, end)?  M keys
+ * clear of every such slot, so S inside one cannot meet M. */
+bool car_slot_reserved(const car_t *m, uint64_t start, uint64_t end);
 /* Every keydown of mine opens with a NAV header this long (0: none), where
  * car_wants_nav() says the peer may not sense it otherwise (car_set_nav_below_db). */
 void car_set_nav_ms(uint32_t ms);

@@ -139,6 +139,7 @@ static bool deliver(uint64_t t, int dir, int mode, uint64_t *d)
     return true;
 }
 static int bad_frames;
+static int slot_breaches;              /* S's keydowns outside the slot M's log holds */
 static uint64_t now_ms;
 static bool trace;
 static double snr_now = 12.0;          /* the SNR stamped on delivered frames */
@@ -197,6 +198,21 @@ static void overlap_diag(const station_t *s, const station_t *peer, const char *
 #ifndef SIM_PATTERN_DETECT_MS
 #define SIM_PATTERN_DETECT_MS 240
 #endif
+/* The turn rules from outside (docs/CAROUSEL-TURNS.md): the callee is on the
+ * air only inside a slot the caller's log still holds -- start and end, as
+ * the keydown really is.  The caller keys clear of every such slot, so this
+ * is NoOverlap whatever the channel lets either end hear.  Station 0 is the
+ * caller. */
+static void check_slot(const station_t *s)
+{
+    if (s->id == 0) return;
+    if (!car_slot_reserved(&S[0].car, s->tx_start, s->tx_end)) {
+        slot_breaches++;
+        if (trace) printf("%9.1f B OUT OF SLOT: %.1f-%.1f\n", now_ms / 1000.0,
+                          s->tx_start / 1000.0, s->tx_end / 1000.0);
+    }
+}
+
 static void io_keydown(void *ctx, const car_frame_t *fr, int n)
 {
     station_t *s = ctx, *peer = &S[s->id ^ 1];
@@ -263,6 +279,7 @@ static void io_keydown(void *ctx, const car_frame_t *fr, int n)
     }
     s->tx_end = t + TAIL_MS;
     if (trace) printf("  until %.1f\n", s->tx_end / 1000.0);
+    check_slot(s);
     event_t e = { .t = s->tx_end, .type = EV_TXEND, .st = s->id };
     push(e);
 }
@@ -301,6 +318,7 @@ static void io_pattern(void *ctx, int kind)
         push(e);
     }
     s->tx_end = t + air + TAIL_MS;
+    check_slot(s);
     event_t e = { .t = s->tx_end, .type = EV_TXEND, .st = s->id };
     push(e);
 }
@@ -417,6 +435,7 @@ void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limi
     nev = 0;
     collisions = 0;
     bad_frames = 0;
+    slot_breaches = 0;
     frame_no = 0;
     keydown_no = 0;
     kd_overlaps = 0;
@@ -548,7 +567,7 @@ void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limi
     res->kd_unexplained = kd_unexplained;
     res->failed = car_failed(&S[0].car) ? car_failed(&S[0].car) : car_failed(&S[1].car);
     res->bad_frames = bad_frames;
-    res->overruns = car_overruns(&S[0].car) + car_overruns(&S[1].car);
+    res->overruns = car_overruns(&S[0].car) + car_overruns(&S[1].car) + slot_breaches;
     res->stalled = !done_ms && car_next_deadline(&S[0].car) == UINT64_MAX &&
                    car_next_deadline(&S[1].car) == UINT64_MAX;
     sim_channel_destroy(ch);

@@ -19,7 +19,8 @@ typedef struct {
     uint64_t done_ms;             /* both complete (0: not within the limit) */
     int      collisions;
     int      bad_frames;   /* keydown frames the modem would refuse (length != mode payload) */
-    int      overruns;            /* M's keydowns longer than its slot check allowed (car_overruns) */
+    int      overruns;            /* keydowns the turn rules forbid: M's longer than its slot check
+                                     allowed (car_overruns), S's outside a slot M's log holds */
     bool     stalled;             /* nothing left to happen, data undelivered */
     int      frames;              /* frames and patterns keyed, both ways */
     int      keydowns;            /* keydowns, both stations */
