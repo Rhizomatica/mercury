@@ -20,7 +20,7 @@
 void setUp(void) {}
 /* Here, not at the end of a test: a failed assertion leaves the test at once,
  * and the next one would run with its sensing. */
-void tearDown(void) { unsetenv("CAR_CS_DECODABLE"); unsetenv("CAR_CHAT"); }
+void tearDown(void) { unsetenv("CAR_CS_DECODABLE"); unsetenv("CAR_CHAT"); unsetenv("CAR_CHAT_REPLY_MS"); }
 
 static void check(uint64_t seed, const char *chan, bool bidir)
 {
@@ -157,11 +157,16 @@ static void test_carousel_request_response_completes(void)
     };
     setenv("CAR_CS_DECODABLE", "1", 1);
     setenv("CAR_CHAT", "10:200", 1);
-    for (size_t i = 0; i < sizeof(RUNS) / sizeof(RUNS[0]); i++) {
+    /* A quick application, and one slow enough that both ends wait for it
+     * (APP_GRACE_MS): S's answer then starts late in its slot. */
+    for (size_t i = 0; i < 2 * sizeof(RUNS) / sizeof(RUNS[0]); i++) {
+        size_t k = i % (sizeof(RUNS) / sizeof(RUNS[0]));
+        setenv("CAR_CHAT_REPLY_MS", i < sizeof(RUNS) / sizeof(RUNS[0]) ? "200" : "1500", 1);
         car_sim_result_t r;
         char what[64];
-        carousel_sim_run(RUNS[i].seed, RUNS[i].chan, false, LIMIT_MS, &r);
-        snprintf(what, sizeof(what), "seed %llu %s chat", (unsigned long long)RUNS[i].seed, RUNS[i].chan);
+        carousel_sim_run(RUNS[k].seed, RUNS[k].chan, false, LIMIT_MS, &r);
+        snprintf(what, sizeof(what), "seed %llu %s chat %s", (unsigned long long)RUNS[k].seed, RUNS[k].chan,
+                 getenv("CAR_CHAT_REPLY_MS"));
         TEST_ASSERT_TRUE_MESSAGE(r.intact, what);
         TEST_ASSERT_EQUAL_INT_MESSAGE(0, r.collisions, what);
         TEST_ASSERT_EQUAL_INT_MESSAGE(0, r.overruns, what);

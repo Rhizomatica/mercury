@@ -1147,6 +1147,7 @@ static void deliver_in_order(car_t *c)
                 buf[n] = r->piece[off / CAR_PIECE][off % CAR_PIECE];
             if (c->io.deliver) c->io.deliver(c->io.ctx, buf, (size_t)n);
             r->delivered = upto;
+            c->deliver_seq++;
         }
         if (!r->done) break;
         memset(r, 0, sizeof(*r));
@@ -1389,6 +1390,7 @@ static int send_poll_ex(car_t *c, int lv, int n, uint8_t id, bool with_round)
     m.poll_id = id;
     m.level = lv; m.n = n;
     c->poll_id = id;
+    c->seq_at_ask = c->deliver_seq;
     c->polled_loss = m.loss16 / 15.0;
     c->rx_break = false; c->floor_patterns = 0;
     c->floor_streaming = false;
@@ -1437,6 +1439,7 @@ static void send_poll(car_t *c, int lv, int n, uint8_t id) { send_poll_ex(c, lv,
 static void send_pattern(car_t *c, int kind)
 {
     c->rx_break = false;
+    c->seq_at_ask = c->deliver_seq;
     if (c->poll_level == 0)
         c->poll_n = keydown_cap(0);     /* what a sender streaming the floor sends */
     c->round_seen = 0; c->round_frames = c->poll_n; c->status_seen = false;
@@ -1690,6 +1693,7 @@ static uint32_t my_ctl_d(const car_t *c) { return ctl_on_floor(c) ? D_MFSK_MS : 
 static void m_key_plan(car_t *c)
 {
     int kind = c->plan;
+    c->plan_not_before = 0;
     c->kd_allowed = kind_len(c, kind);
     c->plan = KD_NONE;
     c->m_state = MS_WAIT;
@@ -1758,6 +1762,22 @@ static void m_key_plan(car_t *c)
     if (c->m_kind != KD_BOTH) c->offered = false;   /* it went as something else */
 }
 
+/* A request/response application answers a delivery within a second (on
+ * air, UUCP: 0.14-0.89 s, mostly 0.6-0.9).  An ack-only DONE keyed before the
+ * answer came made it wait out S's slot after the ack, 7-11 s, four or five
+ * times a call; S's answer, keyed before it, left M to find out at its next
+ * idle poll.  So after a delivery that completed the peer's direction, the
+ * ack waits this long for an answer to carry -- and S's answer up to half
+ * its lateness allowance, which its slot already holds. */
+#define APP_GRACE_MS 1000
+/* My ack could carry data of mine that came: both ways in one exchange. */
+static bool ack_can_carry(const car_t *c, uint64_t now)
+{
+    int lv = choose_level(c, now);
+    if (c->ctl_deaf && c->io.pattern) lv = 0;
+    return both_ok(c, lv);
+}
+
 /* Key the planned keydown now if no slot of S's is in the way; else when. */
 static void m_try(car_t *c, uint64_t now)
 {
@@ -1777,6 +1797,10 @@ static void m_try(car_t *c, uint64_t now)
             c->offered = true;
             m_plan(c, KD_BOTH, lv, poll_size(c, lv, now));
         }
+    }
+    if (c->plan == KD_DONE && now < c->plan_not_before) {     /* waiting for my application */
+        arm(c, CAR_T_M, c->plan_not_before);
+        return;
     }
     uint64_t at = m_free_from(c, now, plan_len(c));
     /* My round does not fit before S's next slot: S may be streaming on in
@@ -1981,6 +2005,10 @@ static void m_decide_recv(car_t *c, uint64_t now)
     int lv = 0, n = 0;
     int kind = rx_next(c, now, &lv, &n);
     if (kind == KD_DONE) m_enter(c, PH_IDLE, now);
+    if (kind == KD_DONE && !has_data(c) && c->deliver_seq != c->seq_at_ask && ack_can_carry(c, now)) {
+        car_trace(c, "rx: done -- the ack waits %d ms for my application", APP_GRACE_MS);
+        c->plan_not_before = now + APP_GRACE_MS;
+    }
     /* With data of my own, the answer carries my round: a poll, then it (a
      * pattern carries nothing; it becomes the same poll). */
     if (has_data(c) && kind != KD_DONE && both_ok(c, kind == KD_POLL ? lv : c->poll_level)) {
@@ -2079,6 +2107,7 @@ static void s_anchor(car_t *c, int kind, uint8_t mk, uint64_t eh, uint32_t d, in
     c->anc.on = true; c->anc.kind = kind; c->anc.mk = mk; c->anc.eh = eh;
     c->anc.p = k ? slot_period(c, d, rp) : 0; c->anc.k = (uint8_t)k; c->anc.i = 0;
     c->anc.sent_round = false;
+    c->anc.d = d; c->anc.waited = false;
     c->idle = false;
     arm(c, CAR_T_S, eh + TG_MS);
 }
@@ -2144,6 +2173,18 @@ static void s_slot(car_t *c, uint64_t now)
         car_trace(c, "tx: ending the session in slot %d", c->anc.i);
         c->anc.on = false;
         if (!c->tx_busy && c->io.end) c->io.end(c->io.ctx);
+        return;
+    }
+    /* M's direction just completed and I have nothing yet: my application
+     * may be answering it.  My start may be up to the anchor's lateness
+     * allowance after the slot opens (M's slot holds it), and my answer is
+     * no longer for starting later: wait up to half of it. */
+    if (c->anc.i == 0 && !c->anc.waited && (c->anc.kind == ANC_BOTH || c->anc.kind == ANC_ROUND) &&
+        !c->tx_busy && !has_data(c) && c->deliver_seq != c->seq_at_ask && peer_direction_done(c)) {
+        uint32_t wait = c->anc.d / 2 < APP_GRACE_MS ? c->anc.d / 2 : APP_GRACE_MS;
+        c->anc.waited = true;
+        car_trace(c, "rx: done -- my answer waits %u ms for my application", wait);
+        arm(c, CAR_T_S, now + wait);
         return;
     }
     if (!c->tx_busy) {                       /* slots are spaced past my keydowns */
@@ -2444,6 +2485,9 @@ bool car_expect_pattern(const car_t *c)
 void car_on_app_data(car_t *c, uint64_t now)
 {
     c->idle = false;
+    /* An ack or an answer waiting for my application: it came. */
+    if (c->master && c->plan == KD_DONE && !c->tx_busy) { c->plan_not_before = 0; m_try(c, now); return; }
+    if (!c->master && c->anc.on && c->anc.waited && c->anc.i == 0 && !c->tx_busy) { s_slot(c, now); return; }
     if (c->master && c->m_state == MS_IDLE && !c->tx_busy) {
         c->m_state = MS_WAIT;
         arm(c, CAR_T_M, now);
