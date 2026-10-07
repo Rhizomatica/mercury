@@ -175,6 +175,7 @@ size_t car_tx_inflight(const car_t *c)
 }
 
 const char *car_failed(const car_t *c) { return c->failed; }
+int car_overruns(const car_t *c) { return c->overruns; }
 
 /* A block's check: CRC-32 (IEEE) of the session's key, the block's id and K,
  * and its bytes, in the block's last BLOCK_CHECK bytes.  The frame CRC16
@@ -246,6 +247,16 @@ static int pieces_per_frame(int lv) { return (mode_payload(LADDER[lv]) - FRAME_H
 static bool inline_ok(int lv)
 {
     return lv > 0 && mode_payload(LADDER[lv]) - FRAME_HDR - INLINE_CTL >= SEG_HDR + CAR_PIECE;
+}
+/* My next poll with a round rides in the round: on a rung that holds it,
+ * and that my last round got an answer on (the peer listens there).  The one
+ * test both for the keydown's length and for what goes out: a keydown keyed
+ * as "inline" by the length but sent with a control frame first was 3.7 s
+ * longer than the slots it was checked against, and ran into S's floor
+ * continuation (sim, fade:-5 both ways seed 20). */
+static bool inline_poll(const car_t *c)
+{
+    return c->tx_level > 0 && inline_ok(c->tx_level) && c->ok_lv == c->tx_level;
 }
 static uint64_t round_air(int lv, int n)
 {
@@ -468,6 +479,20 @@ static bool defer_if_busy(car_t *c, int t, uint64_t now)
 
 static void keydown(car_t *c, car_frame_t *fr, int n)
 {
+    /* M checked this keydown against S's slots at a length (FreeFor); one
+     * that comes out longer can run into a slot.  Never, by construction --
+     * a keydown planned with an inline poll and sent with a control frame
+     * did, once (sim, fade:-5 both ways seed 20). */
+    if (c->master && c->kd_allowed) {
+        uint64_t len = 110 + nav_lead(c) + TAIL_MS;
+        for (int i = 0; i < n; i++) len += mode_air(fr[i].mode) + (i ? fr[i].gap_ms : 0);
+        if (len > c->kd_allowed) {
+            c->overruns++;
+            car_trace(c, "BUG: keydown %llu ms, checked at %llu", (unsigned long long)len,
+                      (unsigned long long)c->kd_allowed);
+        }
+        c->kd_allowed = 0;
+    }
     c->tx_busy = true;
     c->io.keydown(c->io.ctx, fr, n);
 }
@@ -1363,7 +1388,7 @@ static int send_poll_ex(car_t *c, int lv, int n, uint8_t id, bool with_round)
      * it to a peer that had gone back to its last rung, and it never heard
      * that I polled -- nor told me to leave the dead rung (sim, cliff:5 both
      * ways: 326 -> 614 s). */
-    bool inl = with_round && c->tx_level >= 0 && inline_ok(c->tx_level) && c->ok_lv == c->tx_level;
+    bool inl = with_round && inline_poll(c);
     if (with_round && c->tx_level >= 0) {
         nd = build_round(c, c->tx_level, round_n(c), id, inl ? fr : fr + 1, inl ? INLINE_CTL : 0);
         if (nd) {
@@ -1628,7 +1653,7 @@ static uint64_t kind_len(const car_t *c, int kind)
     uint64_t head = 110 + nav_lead(c);
     switch (kind) {
     case KD_ROUND:         return head + round_air(c->tx_level, round_n(c)) + TAIL_MS;
-    case KD_BOTH:          if (c->tx_level >= 0 && inline_ok(c->tx_level))
+    case KD_BOTH:          if (inline_poll(c))
                                return head + round_air(c->tx_level, round_n(c)) + TAIL_MS;
                            return head + (ctl_on_floor(c) ? level_air(0) : mode_air(ARQ_CONTROL_MODE)) +
                                   CHAIN_GAP_MS + round_air(c->tx_level, round_n(c)) + TAIL_MS;
@@ -1649,6 +1674,7 @@ static uint32_t my_ctl_d(const car_t *c) { return ctl_on_floor(c) ? D_MFSK_MS : 
 static void m_key_plan(car_t *c)
 {
     int kind = c->plan;
+    c->kd_allowed = kind_len(c, kind);
     c->plan = KD_NONE;
     c->m_state = MS_WAIT;
     uint8_t id = c->mk;
@@ -1837,7 +1863,7 @@ static void m_decide_idle(car_t *c, uint64_t now)
 #define OFFER_RECENT_MS 120000
 static bool offer_both(car_t *c, uint64_t now)
 {
-    if (c->tx_level <= 0 || !inline_ok(c->tx_level) || c->ok_lv != c->tx_level) return false;
+    if (!inline_poll(c)) return false;
     /* ...to a peer that sends: a lost answer costs the wait for the round S
      * might have sent, and offered to a peer with nothing, every probe lost
      * on a cliff cost it (sim, cliff:5 one way 155 -> 181 s).  And that has

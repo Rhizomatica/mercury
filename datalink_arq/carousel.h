@@ -156,6 +156,8 @@ typedef struct {
     bool     m_heard;               /* S keyed since my last keydown, and I heard it end */
     bool     s_answered;            /* ...with a poll or a pattern for my round */
     bool     offered;               /* M: my round offered S its turn as well (offer_both) */
+    uint64_t kd_allowed;            /* M: the length my keydown was checked against FreeFor at */
+    int      overruns;              /* M: keydowns longer than that (a bug: see keydown()) */
     int      last_lv, last_nf;      /* my last round, for a REQ */
     uint8_t  last_mk;
     bool     idle_poll;             /* my poll on the air only asks whether S has data */
@@ -276,6 +278,8 @@ bool car_is_idle(const car_t *c);
  * decode.  What it carried may already be partly delivered (the stream runs
  * ahead of the check), so the session must end -- never carry on.  NULL: fine. */
 const char *car_failed(const car_t *c);
+/* Keydowns of M's longer than the slot check allowed them: always 0 (tests). */
+int car_overruns(const car_t *c);
 /* Every keydown of mine opens with a NAV header this long (0: none), where
  * car_wants_nav() says the peer may not sense it otherwise (car_set_nav_below_db). */
 void car_set_nav_ms(uint32_t ms);

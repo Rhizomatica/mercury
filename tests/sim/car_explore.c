@@ -45,7 +45,7 @@ static void check(bool bidir, const int *idx, int n, const char *chan)
     carousel_sim_force_losses(idx, n);
     carousel_sim_run(1, chan, bidir, LIMIT_MS, &r);
     runs++;
-    bool ok = r.intact && r.done_ms && r.collisions == 0 && r.bad_frames == 0 &&
+    bool ok = r.intact && r.done_ms && r.collisions == 0 && r.bad_frames == 0 && r.overruns == 0 &&
               sizes_ok(&r, bidir);
     if (!ok) {
         failures++;
@@ -97,7 +97,7 @@ static void explore_cs(bool bidir, int k, const char *chan)
             carousel_sim_force_unsensed(idx, size);
             carousel_sim_run(1, chan, bidir, LIMIT_MS, &r);
             nruns++; runs++;
-            bool ok = r.intact && r.done_ms && r.bad_frames == 0 &&
+            bool ok = r.intact && r.done_ms && r.bad_frames == 0 && r.overruns == 0 &&
                       sizes_ok(&r, bidir);
             if (!ok) { bad++; failures++; }
             if (r.kd_overlaps) with++;
@@ -148,7 +148,7 @@ static void explore_brk(bool bidir, int k, const char *chan)
             carousel_sim_force_spurious_break(idx, size);
             carousel_sim_run(1, chan, bidir, LIMIT_MS, &r);
             nruns++; runs++;
-            bool ok = r.intact && r.done_ms && r.collisions == 0 && r.bad_frames == 0 &&
+            bool ok = r.intact && r.done_ms && r.collisions == 0 && r.bad_frames == 0 && r.overruns == 0 &&
                       sizes_ok(&r, bidir);
             if (!ok) {
                 bad++; failures++;
@@ -193,7 +193,7 @@ static void explore_bad(bool bidir, int k, const char *chan)
             carousel_sim_force_corrupt(idx, size);
             carousel_sim_run(1, chan, bidir, LIMIT_MS, &r);
             nruns++; runs++;
-            bool complete = r.intact && r.done_ms && r.collisions == 0 && r.bad_frames == 0 &&
+            bool complete = r.intact && r.done_ms && r.collisions == 0 && r.bad_frames == 0 && r.overruns == 0 &&
                             sizes_ok(&r, bidir);
             if (r.failed) failed++;
             if (!r.failed && !complete) {

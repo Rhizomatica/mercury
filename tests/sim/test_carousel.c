@@ -32,6 +32,7 @@ static void check(uint64_t seed, const char *chan, bool bidir)
     TEST_ASSERT_FALSE_MESSAGE(r.stalled, what);
     TEST_ASSERT_EQUAL_INT_MESSAGE(0, r.collisions, what);
     TEST_ASSERT_EQUAL_INT_MESSAGE(0, r.bad_frames, what);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, r.overruns, what);
     TEST_ASSERT_EQUAL_MESSAGE(CAR_SIM_BYTES, r.a2b, what);
     TEST_ASSERT_EQUAL_MESSAGE(bidir ? CAR_SIM_BYTES : 0, r.b2a, what);
     TEST_ASSERT_NOT_EQUAL_MESSAGE(0, r.done_ms, what);
@@ -163,6 +164,7 @@ static void test_carousel_request_response_completes(void)
         snprintf(what, sizeof(what), "seed %llu %s chat", (unsigned long long)RUNS[i].seed, RUNS[i].chan);
         TEST_ASSERT_TRUE_MESSAGE(r.intact, what);
         TEST_ASSERT_EQUAL_INT_MESSAGE(0, r.collisions, what);
+        TEST_ASSERT_EQUAL_INT_MESSAGE(0, r.overruns, what);
         TEST_ASSERT_EQUAL_MESSAGE(2000, r.a2b, what);
         TEST_ASSERT_EQUAL_MESSAGE(2000, r.b2a, what);
         TEST_ASSERT_NOT_EQUAL_MESSAGE(0, r.done_ms, what);

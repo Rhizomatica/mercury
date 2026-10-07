@@ -162,10 +162,14 @@ static double frame_snr(const station_t *rx, uint64_t f_start, int mode)
     if (isnan(snr)) snr = asym ? snr_dir[rx->id ^ 1] : snr_now;
     return snr == 0.0 ? 0.001 : snr;
 }
+/* CAR_SNR_OFFSET=<dB>: every estimate reads that much off, as a receiver
+ * whose estimate reads low (on air estacao2 read 5-7 dB on every mode where
+ * DATAC17, rated 7 dB, delivered all its frames). */
+static double snr_offset;
 static double snr_bias(int mode)
 {
-    if (!snr_biased) return 0.0;
-    return mode == FREEDV_MODE_DATAC15 || mode == FREEDV_MODE_DATAC4 || mode == ARQ_CONTROL_MODE ? -3.5 : 0.0;
+    if (!snr_biased) return snr_offset;
+    return snr_offset + (mode == FREEDV_MODE_DATAC15 || mode == FREEDV_MODE_DATAC4 || mode == ARQ_CONTROL_MODE ? -3.5 : 0.0);
 }
 static double step_from, step_to, step_at_s = -1.0;   /* a step:A:B:T channel */
 
@@ -409,6 +413,7 @@ void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limi
     car_set_nav_below_db(getenv("CAR_NAV_BELOW") ? (float)atof(getenv("CAR_NAV_BELOW")) : 99.0f);
     car_set_nav_loss(getenv("CAR_NAV_LOSS") ? atof(getenv("CAR_NAV_LOSS")) : 0.3);
     snr_biased = getenv("CAR_SNR_BIAS") != NULL;
+    snr_offset = getenv("CAR_SNR_OFFSET") ? atof(getenv("CAR_SNR_OFFSET")) : 0.0;
     nev = 0;
     collisions = 0;
     bad_frames = 0;
@@ -432,6 +437,7 @@ void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limi
                         .trace = io_trace, .ctx = s };
         /* What each end hears, and what its peer hears of it. */
         double hears = asym ? snr_dir[i ^ 1] : snr_db, heard = asym ? snr_dir[i] : snr_db;
+        hears += snr_offset; heard += snr_offset;   /* the connect estimate reads off too */
         if (getenv("CAR_NOHINT")) hears = heard = -99.0;
         car_init(&s->car, &io, car_start_level((float)hears), car_start_level((float)heard));
         car_seed_ctl_deaf(&s->car, hears < ARQ_SNR_MIN_DATAC15_DB, heard < ARQ_SNR_MIN_DATAC15_DB);
@@ -542,6 +548,7 @@ void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limi
     res->kd_unexplained = kd_unexplained;
     res->failed = car_failed(&S[0].car) ? car_failed(&S[0].car) : car_failed(&S[1].car);
     res->bad_frames = bad_frames;
+    res->overruns = car_overruns(&S[0].car) + car_overruns(&S[1].car);
     res->stalled = !done_ms && car_next_deadline(&S[0].car) == UINT64_MAX &&
                    car_next_deadline(&S[1].car) == UINT64_MAX;
     sim_channel_destroy(ch);
