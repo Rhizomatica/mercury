@@ -139,6 +139,7 @@ static bool deliver(uint64_t t, int dir, int mode, uint64_t *d)
     return true;
 }
 static int bad_frames;
+static int slot_breaches;              /* S's keydowns outside the slot M's log holds */
 static uint64_t now_ms;
 static bool trace;
 static double snr_now = 12.0;          /* the SNR stamped on delivered frames */
@@ -162,10 +163,14 @@ static double frame_snr(const station_t *rx, uint64_t f_start, int mode)
     if (isnan(snr)) snr = asym ? snr_dir[rx->id ^ 1] : snr_now;
     return snr == 0.0 ? 0.001 : snr;
 }
+/* CAR_SNR_OFFSET=<dB>: every estimate reads that much off, as a receiver
+ * whose estimate reads low (on air estacao2 read 5-7 dB on every mode where
+ * DATAC17, rated 7 dB, delivered all its frames). */
+static double snr_offset;
 static double snr_bias(int mode)
 {
-    if (!snr_biased) return 0.0;
-    return mode == FREEDV_MODE_DATAC15 || mode == FREEDV_MODE_DATAC4 || mode == ARQ_CONTROL_MODE ? -3.5 : 0.0;
+    if (!snr_biased) return snr_offset;
+    return snr_offset + (mode == FREEDV_MODE_DATAC15 || mode == FREEDV_MODE_DATAC4 || mode == ARQ_CONTROL_MODE ? -3.5 : 0.0);
 }
 static double step_from, step_to, step_at_s = -1.0;   /* a step:A:B:T channel */
 
@@ -193,6 +198,21 @@ static void overlap_diag(const station_t *s, const station_t *peer, const char *
 #ifndef SIM_PATTERN_DETECT_MS
 #define SIM_PATTERN_DETECT_MS 240
 #endif
+/* The turn rules from outside (docs/CAROUSEL-TURNS.md): the callee is on the
+ * air only inside a slot the caller's log still holds -- start and end, as
+ * the keydown really is.  The caller keys clear of every such slot, so this
+ * is NoOverlap whatever the channel lets either end hear.  Station 0 is the
+ * caller. */
+static void check_slot(const station_t *s)
+{
+    if (s->id == 0) return;
+    if (!car_slot_reserved(&S[0].car, s->tx_start, s->tx_end)) {
+        slot_breaches++;
+        if (trace) printf("%9.1f B OUT OF SLOT: %.1f-%.1f\n", now_ms / 1000.0,
+                          s->tx_start / 1000.0, s->tx_end / 1000.0);
+    }
+}
+
 static void io_keydown(void *ctx, const car_frame_t *fr, int n)
 {
     station_t *s = ctx, *peer = &S[s->id ^ 1];
@@ -259,6 +279,7 @@ static void io_keydown(void *ctx, const car_frame_t *fr, int n)
     }
     s->tx_end = t + TAIL_MS;
     if (trace) printf("  until %.1f\n", s->tx_end / 1000.0);
+    check_slot(s);
     event_t e = { .t = s->tx_end, .type = EV_TXEND, .st = s->id };
     push(e);
 }
@@ -297,6 +318,7 @@ static void io_pattern(void *ctx, int kind)
         push(e);
     }
     s->tx_end = t + air + TAIL_MS;
+    check_slot(s);
     event_t e = { .t = s->tx_end, .type = EV_TXEND, .st = s->id };
     push(e);
 }
@@ -356,6 +378,8 @@ static void io_deliver(void *ctx, const uint8_t *buf, size_t len)
 }
 
 /* ---- run ------------------------------------------------------------------ */
+#define CHAT_REPLY_MS (getenv("CAR_CHAT_REPLY_MS") ? (uint64_t)atoi(getenv("CAR_CHAT_REPLY_MS")) : 200)
+
 /* The channel a run uses, by name (see carousel_sim_run); *snr_out gets the
  * SNR the ends are told at connect.  Also used for bounds. */
 sim_channel_t *carousel_sim_channel(uint64_t seed, const char *chan, double *snr_out)
@@ -407,9 +431,11 @@ void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limi
     car_set_nav_below_db(getenv("CAR_NAV_BELOW") ? (float)atof(getenv("CAR_NAV_BELOW")) : 99.0f);
     car_set_nav_loss(getenv("CAR_NAV_LOSS") ? atof(getenv("CAR_NAV_LOSS")) : 0.3);
     snr_biased = getenv("CAR_SNR_BIAS") != NULL;
+    snr_offset = getenv("CAR_SNR_OFFSET") ? atof(getenv("CAR_SNR_OFFSET")) : 0.0;
     nev = 0;
     collisions = 0;
     bad_frames = 0;
+    slot_breaches = 0;
     frame_no = 0;
     keydown_no = 0;
     kd_overlaps = 0;
@@ -430,6 +456,7 @@ void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limi
                         .trace = io_trace, .ctx = s };
         /* What each end hears, and what its peer hears of it. */
         double hears = asym ? snr_dir[i ^ 1] : snr_db, heard = asym ? snr_dir[i] : snr_db;
+        hears += snr_offset; heard += snr_offset;   /* the connect estimate reads off too */
         if (getenv("CAR_NOHINT")) hears = heard = -99.0;
         car_init(&s->car, &io, car_start_level((float)hears), car_start_level((float)heard));
         car_seed_ctl_deaf(&s->car, hears < ARQ_SNR_MIN_DATAC15_DB, heard < ARQ_SNR_MIN_DATAC15_DB);
@@ -441,6 +468,23 @@ void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limi
     }
     S[0].tx_len = CAR_SIM_BYTES;
     S[1].tx_len = bidir ? CAR_SIM_BYTES : 0;
+    /* CAR_CHAT=<exchanges>:<bytes>: request/response traffic, as UUCP's.  A
+     * writes a message; B's application answers it CHAT_REPLY_MS after the
+     * last of it is delivered, and A writes the next as long after the
+     * answer -- the applications' own turnaround, which on air lands inside
+     * the modem's. */
+    int chat_n = 0, chat_bytes = 0, chat_sent[2] = {0, 0};
+    uint64_t chat_due[2] = {0, 0};
+    if (getenv("CAR_CHAT") && sscanf(getenv("CAR_CHAT"), "%d:%d", &chat_n, &chat_bytes) == 2 &&
+        chat_n > 0 && chat_bytes > 0 && (size_t)chat_n * (size_t)chat_bytes <= CAR_SIM_BYTES) {
+        S[0].tx_len = (size_t)chat_bytes; S[1].tx_len = 0;
+        chat_sent[0] = 1;
+    } else {
+        if (getenv("CAR_CHAT"))
+            fprintf(stderr, "CAR_CHAT=%s ignored: <exchanges>:<bytes>, at most %d bytes in all\n",
+                    getenv("CAR_CHAT"), CAR_SIM_BYTES);
+        chat_n = 0;
+    }
 
     now_ms = 0;
     car_start_receiver(&S[1].car, 0);
@@ -452,6 +496,7 @@ void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limi
         for (int i = 0; i < 2; i++) {
             uint64_t d = car_next_deadline(&S[i].car);
             if (d < t) t = d;
+            if (chat_due[i] && chat_due[i] < t) t = chat_due[i];
         }
         if (t == UINT64_MAX || t > limit_ms) break;
         now_ms = t;
@@ -489,9 +534,24 @@ void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limi
             }
             free(e.bytes);
         }
+        for (int i = 0; i < 2 && chat_n; i++) {
+            if (chat_due[i] && now_ms >= chat_due[i]) {
+                chat_due[i] = 0;
+                S[i].tx_len += (size_t)chat_bytes;
+                chat_sent[i]++;
+                if (trace) printf("%9.1f %c app writes message %d\n", now_ms / 1000.0, 'A' + i, chat_sent[i]);
+                car_on_app_data(&S[i].car, now_ms);
+            }
+            /* B answers each of A's messages; A writes the next on the answer */
+            int j = 1 - i;
+            bool got = S[i].rx_len >= (size_t)chat_sent[j] * (size_t)chat_bytes && chat_sent[j] > 0;
+            bool turn = i == 1 ? chat_sent[1] < chat_sent[0] : chat_sent[0] == chat_sent[1] && chat_sent[0] < chat_n;
+            if (got && turn && !chat_due[i]) chat_due[i] = now_ms + CHAT_REPLY_MS;
+        }
         for (int i = 0; i < 2; i++) car_on_time(&S[i].car, now_ms);
         if (car_failed(&S[0].car) || car_failed(&S[1].car)) break;   /* the session ends */
-        if (S[1].rx_len >= S[0].tx_len && S[0].rx_len >= S[1].tx_len) { done_ms = now_ms; break; }
+        if (S[1].rx_len >= S[0].tx_len && S[0].rx_len >= S[1].tx_len &&
+            (!chat_n || (chat_sent[0] == chat_n && chat_sent[1] == chat_n))) { done_ms = now_ms; break; }
     }
     while (nev) { event_t e; pop(&e); free(e.bytes); }
 
@@ -507,6 +567,7 @@ void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limi
     res->kd_unexplained = kd_unexplained;
     res->failed = car_failed(&S[0].car) ? car_failed(&S[0].car) : car_failed(&S[1].car);
     res->bad_frames = bad_frames;
+    res->overruns = car_overruns(&S[0].car) + car_overruns(&S[1].car) + slot_breaches;
     res->stalled = !done_ms && car_next_deadline(&S[0].car) == UINT64_MAX &&
                    car_next_deadline(&S[1].car) == UINT64_MAX;
     sim_channel_destroy(ch);

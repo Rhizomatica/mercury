@@ -155,6 +155,9 @@ typedef struct {
     int      plan, plan_lv, plan_n; /* the keydown decided */
     bool     m_heard;               /* S keyed since my last keydown, and I heard it end */
     bool     s_answered;            /* ...with a poll or a pattern for my round */
+    bool     offered;               /* M: my round offered S its turn as well (offer_both) */
+    uint64_t kd_allowed;            /* M: the length my keydown was checked against FreeFor at */
+    int      overruns;              /* M: keydowns longer than that (a bug: see keydown()) */
     int      last_lv, last_nf;      /* my last round, for a REQ */
     uint8_t  last_mk;
     bool     idle_poll;             /* my poll on the air only asks whether S has data */
@@ -180,7 +183,8 @@ typedef struct {
     bool     rx_late;               /* the frame being handled was decoded too late to answer */
     int      s_prev_lv;             /* the rung M's rounds last came on (-1: none) */
     bool     s_asked_new;           /* my poll on the air asks M for another rung */
-    int      ok_lv;                 /* M: the rung of my last round S answered (-1: none) */
+    int      ok_lv;                 /* the rung of my last round the peer answered (-1: none) */
+    uint64_t peer_data_ms;          /* when a frame of the peer's data last came */
     bool     fell_back;             /* M: my last round went back to it */
 
     /* as sender */
@@ -204,14 +208,17 @@ typedef struct {
     double   lv_sent[CAR_NLEVELS], lv_lost[CAR_NLEVELS];
     int      lv_rounds[CAR_NLEVELS], lv_dead_run[CAR_NLEVELS];
     int      lv_probe_fails[CAR_NLEVELS]; /* its rounds in a row that lost half */
+    double   lv_p_ok[CAR_NLEVELS];  /* the delivery it showed when it last delivered */
     uint32_t lv_round_at[CAR_NLEVELS];
     uint64_t lv_probe_at[CAR_NLEVELS], lv_backoff_ms[CAR_NLEVELS];
     uint32_t polls;
     double   loss_est;
+    double   polled_loss;        /* the loss my last poll told the sender */
     uint8_t  poll_id;               /* my last poll's keydown id (M), or the one I answer (S) */
     int      poll_level, poll_n;    /* what I asked the peer for */
     int      round_seen, round_frames;
     int      round_lv;              /* the rung the frames came on */
+    bool     rx_tail;               /* ...and its last frame among them */
     bool     status_seen;
     int      silent_polls;
     bool     peer_unopened;
@@ -271,6 +278,12 @@ bool car_is_idle(const car_t *c);
  * decode.  What it carried may already be partly delivered (the stream runs
  * ahead of the check), so the session must end -- never carry on.  NULL: fine. */
 const char *car_failed(const car_t *c);
+/* Keydowns of M's longer than the slot check allowed them: always 0 (tests). */
+int car_overruns(const car_t *c);
+/* For tests, the turn rules checked from outside: does M's log hold a slot,
+ * not yet over, for a keydown of S's on the air over [start, end)?  M keys
+ * clear of every such slot, so S inside one cannot meet M. */
+bool car_slot_reserved(const car_t *m, uint64_t start, uint64_t end);
 /* Every keydown of mine opens with a NAV header this long (0: none), where
  * car_wants_nav() says the peer may not sense it otherwise (car_set_nav_below_db). */
 void car_set_nav_ms(uint32_t ms);
