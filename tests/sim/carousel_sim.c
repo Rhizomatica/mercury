@@ -454,7 +454,12 @@ void carousel_sim_run(uint64_t seed, const char *chan, bool bidir, uint64_t limi
         chat_n > 0 && chat_bytes > 0 && (size_t)chat_n * (size_t)chat_bytes <= CAR_SIM_BYTES) {
         S[0].tx_len = (size_t)chat_bytes; S[1].tx_len = 0;
         chat_sent[0] = 1;
-    } else chat_n = 0;
+    } else {
+        if (getenv("CAR_CHAT"))
+            fprintf(stderr, "CAR_CHAT=%s ignored: <exchanges>:<bytes>, at most %d bytes in all\n",
+                    getenv("CAR_CHAT"), CAR_SIM_BYTES);
+        chat_n = 0;
+    }
 
     now_ms = 0;
     car_start_receiver(&S[1].car, 0);

@@ -28,6 +28,17 @@
 
 static int failures, runs;
 
+/* What a run must deliver: the whole transfer, or with CAR_CHAT (the sim's
+ * request/response traffic) every message both ways. */
+static bool sizes_ok(const car_sim_result_t *r, bool bidir)
+{
+    int n, b;
+    const char *chat = getenv("CAR_CHAT");
+    if (chat && sscanf(chat, "%d:%d", &n, &b) == 2 && n > 0 && b > 0 && (size_t)n * (size_t)b <= CAR_SIM_BYTES)
+        return r->a2b == (size_t)n * (size_t)b && r->b2a == (size_t)n * (size_t)b;
+    return r->a2b == CAR_SIM_BYTES && r->b2a == (bidir ? CAR_SIM_BYTES : 0);
+}
+
 static void check(bool bidir, const int *idx, int n, const char *chan)
 {
     car_sim_result_t r;
@@ -35,7 +46,7 @@ static void check(bool bidir, const int *idx, int n, const char *chan)
     carousel_sim_run(1, chan, bidir, LIMIT_MS, &r);
     runs++;
     bool ok = r.intact && r.done_ms && r.collisions == 0 && r.bad_frames == 0 &&
-              r.a2b == CAR_SIM_BYTES && r.b2a == (bidir ? CAR_SIM_BYTES : 0);
+              sizes_ok(&r, bidir);
     if (!ok) {
         failures++;
         if (failures <= 20) {
@@ -87,7 +98,7 @@ static void explore_cs(bool bidir, int k, const char *chan)
             carousel_sim_run(1, chan, bidir, LIMIT_MS, &r);
             nruns++; runs++;
             bool ok = r.intact && r.done_ms && r.bad_frames == 0 &&
-                      r.a2b == CAR_SIM_BYTES && r.b2a == (bidir ? CAR_SIM_BYTES : 0);
+                      sizes_ok(&r, bidir);
             if (!ok) { bad++; failures++; }
             if (r.kd_overlaps) with++;
             if (r.kd_unexplained) {
@@ -138,7 +149,7 @@ static void explore_brk(bool bidir, int k, const char *chan)
             carousel_sim_run(1, chan, bidir, LIMIT_MS, &r);
             nruns++; runs++;
             bool ok = r.intact && r.done_ms && r.collisions == 0 && r.bad_frames == 0 &&
-                      r.a2b == CAR_SIM_BYTES && r.b2a == (bidir ? CAR_SIM_BYTES : 0);
+                      sizes_ok(&r, bidir);
             if (!ok) {
                 bad++; failures++;
                 if (bad <= 10) {
@@ -183,7 +194,7 @@ static void explore_bad(bool bidir, int k, const char *chan)
             carousel_sim_run(1, chan, bidir, LIMIT_MS, &r);
             nruns++; runs++;
             bool complete = r.intact && r.done_ms && r.collisions == 0 && r.bad_frames == 0 &&
-                            r.a2b == CAR_SIM_BYTES && r.b2a == (bidir ? CAR_SIM_BYTES : 0);
+                            sizes_ok(&r, bidir);
             if (r.failed) failed++;
             if (!r.failed && !complete) {
                 bad++; failures++;
@@ -287,6 +298,16 @@ int main(int argc, char **argv)
         for (int i = 0; i < 4; i++) {
             if (pos[i]) setenv("CAR_CORRUPT_POS", pos[i], 1); else unsetenv("CAR_CORRUPT_POS");
             explore_corrupt(1);
+        }
+        unsetenv("CAR_CORRUPT_POS");
+        /* Request/response traffic: a direction goes idle and comes back, as
+         * no bulk transfer does.  A REQ about new data after an idle spell
+         * went unanswered for ever (aa25868): before it, 880 runs failed. */
+        if (!getenv("CAR_CHAT")) {
+            setenv("CAR_CHAT", "3:200", 1);
+            explore_losses(-1, 3);
+            explore_spurious(1);
+            unsetenv("CAR_CHAT");
         }
         printf("%d runs, %d failures (%d corrupt runs failed closed)\n", runs, failures, detected);
         return failures != 0;
