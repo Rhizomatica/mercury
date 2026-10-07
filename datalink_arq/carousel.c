@@ -1994,7 +1994,17 @@ static void m_decide_recv(car_t *c, uint64_t now)
         return;
     }
     c->silent_polls = 0;
-    if (!c->status_seen) rx_measure(c, c->poll_level, now);
+    /* Still nothing: one loss, not the round's.  The poll or the whole round
+     * went, and which is not known; scored as all n frames lost, one lost
+     * poll declared a marginal rung dead (two frames) on a rung with one
+     * frame behind it (sim, cliff:5 both ways), and S's direction dropped a
+     * rung for the rest of the session.  Sim, both ways: nvis 3782 -> 3554
+     * s, awgn:0.25 301 -> 287, fade:-5 6031 -> 5879 (40-60 seeds); the rest
+     * within 1 %. */
+    if (!c->m_heard && !c->status_seen) {
+        c->loss_est = 0.5 * c->loss_est + 0.5;
+        measure_level(c, c->poll_level, 1, 1.0, now);
+    } else if (!c->status_seen) rx_measure(c, c->poll_level, now);
     deliver_in_order(c);
     rx_trace(c);
     bool done = peer_direction_done(c);
