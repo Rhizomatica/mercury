@@ -1168,7 +1168,12 @@ static void take_pieces(car_t *c, const msg_t *m)
  * listens at the floor, where M's floor rounds and MFSK control both come
  * through.  Listening only: it costs nothing to safety. */
 #define S_FALLBACK_MS 90000
-#define IDLE_POLL_MIN_MS 10000        /* idle, M asks whether S has data after this, */
+/* Idle, M asks whether S has data -- first soon after the last traffic,
+ * since the callee's application answers what it just got (UUCP's request
+ * and reply), then backing off.  At 10 s and doubling across idle spells,
+ * on air (20 %, both ways) each UUCP turnaround waited 10-20 s for the ask
+ * the callee may no longer start itself. */
+#define IDLE_POLL_MIN_MS 3000
 #define IDLE_POLL_MAX_MS 60000        /* doubling up to this */
 
 enum { KD_NONE, KD_POLL, KD_ROUND, KD_PATTERN_ACK, KD_PATTERN_BREAK, KD_REQ, KD_DONE, KD_BOTH };
@@ -1314,6 +1319,7 @@ static int send_poll_ex(car_t *c, int lv, int n, uint8_t id, bool with_round)
         if (nd) {
             fr[1].gap_ms = CHAIN_GAP_MS;
             c->last_lv = c->tx_level; c->last_nf = nd; c->last_mk = id;
+            c->traffic = true;
             m.h_level = c->tx_level; m.h_n = nd; m.h_id = id;
             m.hi = (uint8_t)(c->next_blk_id - 1);
             m.unopened = unopened(c);
@@ -1360,6 +1366,7 @@ static bool send_round(car_t *c, uint8_t id)
     c->floor_waiting = c->tx_level == 0 && c->io.pattern;
     c->pat_waiting = c->tx_level > 0 && c->io.pattern;
     c->last_lv = c->tx_level; c->last_nf = nf; c->last_mk = id;
+    c->traffic = true;
     keydown(c, fr, nf);
     return true;
 }
@@ -1695,6 +1702,7 @@ static void m_decide_idle(car_t *c, uint64_t now)
     }
     /* Nothing either way: S cannot key without me, so ask it now and then. */
     c->idle = true;
+    if (c->traffic) { c->traffic = false; c->idle_backoff_ms = 0; }
     m_enter(c, PH_IDLE, now);
     c->idle_backoff_ms = !c->idle_backoff_ms ? IDLE_POLL_MIN_MS
                        : c->idle_backoff_ms * 2 > IDLE_POLL_MAX_MS ? IDLE_POLL_MAX_MS : c->idle_backoff_ms * 2;
@@ -1823,6 +1831,7 @@ static void m_heard_end(car_t *c, uint64_t te, int mk, bool pat, int slot)
 static void m_on_data(car_t *c, uint64_t now, const msg_t *m, int lv)
 {
     if (lv != c->rx_level) return;           /* the payload decoder is on another mode */
+    c->traffic = true;
     rx_frame(c, m, lv, m->poll_id == c->poll_id);
     m_heard_end(c, now + (uint64_t)m->left * (level_air(lv) + burst_gap_ms(lv)) + TAIL_MS,
                 (int)m->poll_id, m->pat_anchor, m->slot);

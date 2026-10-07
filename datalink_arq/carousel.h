@@ -159,6 +159,7 @@ typedef struct {
     uint8_t  last_mk;
     bool     idle_poll;             /* my poll on the air only asks whether S has data */
     uint32_t idle_backoff_ms;
+    bool     traffic;               /* data moved since I was last idle */
     int      reqs;                  /* REQs in a row unanswered */
 
     /* S: the slots */
