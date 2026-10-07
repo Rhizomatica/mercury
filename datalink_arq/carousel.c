@@ -244,6 +244,7 @@ static uint64_t round_air(int lv, int n)
  * the floor, where a round alone is 28 s, a 30 s turn changed direction
  * every round (sim, fade:-5 both ways: 132 changes, a poll each). */
 static int keydown_cap(int lv);
+static int round_n(const car_t *c);
 static uint64_t turn_quantum(int lv)
 {
     uint64_t two = 2 * round_air(lv, keydown_cap(lv));
@@ -1324,6 +1325,7 @@ static int send_poll_ex(car_t *c, int lv, int n, uint8_t id, bool with_round)
     m.poll_id = id;
     m.level = lv; m.n = n;
     c->poll_id = id;
+    c->polled_loss = m.loss16 / 15.0;
     c->rx_break = false; c->floor_patterns = 0;
     c->floor_streaming = false;
     if (n) { c->poll_level = lv; c->poll_n = n; bind_rx(c, lv); }
@@ -1331,7 +1333,7 @@ static int send_poll_ex(car_t *c, int lv, int n, uint8_t id, bool with_round)
     c->done_in_round = 0; c->round_fresh = false; c->rx_tail = false;
     int nd = 0;
     if (with_round && c->tx_level >= 0) {
-        nd = build_round(c, c->tx_level, c->tx_n, id, fr + 1);
+        nd = build_round(c, c->tx_level, round_n(c), id, fr + 1);
         if (nd) {
             fr[1].gap_ms = CHAIN_GAP_MS;
             c->last_lv = c->tx_level; c->last_nf = nd; c->last_mk = id;
@@ -1374,10 +1376,29 @@ static void send_status(car_t *c, uint8_t id)
 
 /* My round as the peer last directed, its frames naming keydown id.  With
  * nothing to send, a status instead: false. */
+/* The frames my next round takes.  S's keydowns are held to what M allowed,
+ * but M's rounds are its own: when one frame more than the receiver asked
+ * for finishes what I have to send, M sends it.  Otherwise the last few
+ * bytes cost a poll and a round of their own (sim, awgn:0.1: an 8 KB
+ * transfer's last 116 bytes took 10 s of 58).  Above the floor only: a floor
+ * round carries one block. */
+static int round_n(const car_t *c)
+{
+    int n = c->tx_n;
+    if (!c->master || c->tx_level <= 0 || n >= keydown_cap(c->tx_level)) return n;
+    double margin = c->tx_loss * 1.3 + 0.05;
+    int pieces = 0;
+    for (int b = 0; b < c->nsb; b++) pieces += (int)ceil(c->sb[b].need * (1.0 + margin));
+    size_t pend = c->io.tx_pending ? c->io.tx_pending(c->io.ctx) : 0;
+    if (pend) pieces += (int)ceil((double)(pend + BLOCK_CHECK) / CAR_PIECE * (1.0 + margin)) + 1;
+    int ppf = pieces_per_frame(c->tx_level);
+    return pieces > n * ppf && pieces <= (n + 1) * ppf ? n + 1 : n;
+}
+
 static bool send_round(car_t *c, uint8_t id)
 {
     car_frame_t *fr = c->txbuf;
-    int nf = build_round(c, c->tx_level, c->tx_n, id, fr);
+    int nf = build_round(c, c->tx_level, round_n(c), id, fr);
     if (!nf) { send_status(c, id); return false; }
     c->floor_waiting = c->tx_level == 0 && c->io.pattern;
     c->pat_waiting = c->tx_level > 0 && c->io.pattern;
@@ -1409,13 +1430,16 @@ static bool tx_on_pattern(car_t *c, int kind)
     if (!(c->floor_waiting || c->pat_waiting)) return false;
     car_trace(c, "tx pattern %s on lv=%d", kind == CAR_PATTERN_BREAK ? "BREAK" : "ACK", c->tx_level);
     if (c->pat_waiting) {
-        /* Above the floor a pattern is sent only when every frame came: what
-         * I sent of each block is in.  The blocks stay open until a poll
-         * retires them -- a wrong guess costs pieces, never data. */
+        /* Above the floor an ACK says the round came whole: what I sent of
+         * each block is in.  A BREAK, that it lost no more than the
+         * receiver's last poll said: what I sent less that loss.  The blocks
+         * stay open until a poll retires them -- a wrong guess costs pieces,
+         * never data. */
         c->pat_waiting = false;
         for (int b = 0; b < c->nsb; b++) {
             car_sblock_t *sb = &c->sb[b];
-            sb->need = sb->need > sb->round_sent ? sb->need - sb->round_sent : 0;
+            int got = kind == CAR_PATTERN_ACK ? sb->round_sent : (int)floor(sb->round_sent * (1.0 - c->tx_loss));
+            sb->need = sb->need > got ? sb->need - got : 0;
             sb->round_sent = 0;
         }
         return true;
@@ -1502,15 +1526,23 @@ static int rx_next(car_t *c, uint64_t now, int *plv, int *pn)
         return c->rx_break ? KD_PATTERN_BREAK : KD_PATTERN_ACK;
     }
     int n = poll_size(c, lv, now);
-    /* Above the floor a round that came whole, to be followed by the same
-     * again, is answered by a pattern; not to a sender whose window is full
-     * (only a poll retires its blocks). */
+    /* Above the floor a round to be followed by the same again is answered
+     * by a pattern: 0.64 s that reach the sender ~10 dB below a poll, where
+     * a lost poll costs a REQ and another poll (NVIS: one poll in four, ~11 s
+     * each).  An ACK says the round came whole; a BREAK (above the floor)
+     * that it lost no more than my last poll told the sender, which credits
+     * the round with that loss -- so a worse round is polled.  Not to a
+     * sender whose window is full (only a poll retires its blocks). */
+    int frames = c->round_frames > 0 ? c->round_frames : 1;
+    if (!c->rx_tail && c->poll_n > frames) frames = c->poll_n;
+    double loss = 1.0 - (double)c->round_seen / frames;
     if (c->io.pattern && lv > 0 && lv == c->poll_level && n == c->poll_n && !c->status_seen &&
-        c->round_seen > 0 && c->round_seen >= c->round_frames && c->rx_tail &&
+        c->round_seen > 0 && loss <= c->polled_loss + 0.05 &&
         c->floor_patterns < FLOOR_POLL_EVERY && !window_full) {
-        car_trace(c, "rx -> pattern ACK (lv=%d n=%d)", lv, n);
+        bool whole = c->round_seen >= c->round_frames && c->rx_tail;
+        car_trace(c, "rx -> pattern %s (lv=%d n=%d)", whole ? "ACK" : "BREAK", lv, n);
         c->floor_patterns++;
-        return KD_PATTERN_ACK;
+        return whole ? KD_PATTERN_ACK : KD_PATTERN_BREAK;
     }
     car_trace(c, "rx -> poll lv=%d n=%d", lv, n);
     *plv = lv; *pn = n;
@@ -1552,9 +1584,9 @@ static uint64_t kind_len(const car_t *c, int kind)
 {
     uint64_t head = 110 + nav_lead(c);
     switch (kind) {
-    case KD_ROUND:         return head + round_air(c->tx_level, c->tx_n) + TAIL_MS;
+    case KD_ROUND:         return head + round_air(c->tx_level, round_n(c)) + TAIL_MS;
     case KD_BOTH:          return head + (ctl_on_floor(c) ? level_air(0) : mode_air(ARQ_CONTROL_MODE)) +
-                                  CHAIN_GAP_MS + round_air(c->tx_level, c->tx_n) + TAIL_MS;
+                                  CHAIN_GAP_MS + round_air(c->tx_level, round_n(c)) + TAIL_MS;
     case KD_PATTERN_ACK:
     case KD_PATTERN_BREAK: return 110 + PATTERN_AIR_MS + TAIL_MS;
     default:               return head + (ctl_on_floor(c) ? level_air(0) : mode_air(ARQ_CONTROL_MODE)) + TAIL_MS;

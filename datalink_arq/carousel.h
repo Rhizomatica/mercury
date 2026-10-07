@@ -209,6 +209,7 @@ typedef struct {
     uint64_t lv_probe_at[CAR_NLEVELS], lv_backoff_ms[CAR_NLEVELS];
     uint32_t polls;
     double   loss_est;
+    double   polled_loss;        /* the loss my last poll told the sender */
     uint8_t  poll_id;               /* my last poll's keydown id (M), or the one I answer (S) */
     int      poll_level, poll_n;    /* what I asked the peer for */
     int      round_seen, round_frames;

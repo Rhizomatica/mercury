@@ -281,6 +281,7 @@ RX demux (`car_on_frame`, C:1602-1626):
 | ACK (floor) | receiver, `poll_level == 0` | "keep going" (silence means the same at the floor, H:19-23) |
 | BREAK (floor) | receiver | "the block your round carried is delivered" (`rx_break`). **[since 2c07bf4]** Advisory: the sender stops sending that block but holds it until a POLL retires it; a finished direction is acknowledged by an ack-only POLL at the floor too (T11). |
 | ACK (above floor) | receiver, round came whole | "everything you sent of each block is in; the same again" (C:1347-1352, C:1689-1693) |
+| BREAK (above floor) | receiver, round lost frames | **[carousel-nvis]** "the round lost no more than my last poll said (`loss16`); the same again". The sender credits each block with what it sent less that loss. Like the ACK it retires nothing: a wrong guess costs pieces until the next poll, never data. A round that lost more is polled. |
 
 ### 3.4 Connect frames (generic FSM, carousel-relevant fields only)
 
