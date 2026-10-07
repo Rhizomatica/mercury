@@ -158,6 +158,9 @@ typedef struct {
     bool     offered;               /* M: my round offered S its turn as well (offer_both) */
     uint64_t kd_allowed;            /* M: the length my keydown was checked against FreeFor at */
     int      overruns;              /* M: keydowns longer than that (a bug: see keydown()) */
+    uint32_t deliver_seq;           /* deliveries to my application so far */
+    uint32_t seq_at_ask;            /* ...when I last asked or answered */
+    uint64_t plan_not_before;       /* M: an ack-only DONE waits for my application till then */
     int      last_lv, last_nf;      /* my last round, for a REQ */
     uint8_t  last_mk;
     bool     idle_poll;             /* my poll on the air only asks whether S has data */
@@ -174,6 +177,8 @@ typedef struct {
         uint32_t p;                 /* slot period */
         uint8_t  k, i;              /* continuation slots; the next slot */
         bool     sent_round;        /* I sent a round in this anchor's slots */
+        uint32_t d;                 /* its lateness allowance: my start may be this late */
+        bool     waited;            /* its slot 0 already waited for my application */
     } anc;
     bool     end_req;               /* S: my next slot carries the session's DISCONNECT */
     int      req_lv, req_n;         /* a REQ: M's round I may not have heard */
