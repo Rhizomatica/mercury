@@ -20,7 +20,7 @@
 void setUp(void) {}
 /* Here, not at the end of a test: a failed assertion leaves the test at once,
  * and the next one would run with its sensing. */
-void tearDown(void) { unsetenv("CAR_CS_DECODABLE"); }
+void tearDown(void) { unsetenv("CAR_CS_DECODABLE"); unsetenv("CAR_CHAT"); }
 
 static void check(uint64_t seed, const char *chan, bool bidir)
 {
@@ -142,6 +142,33 @@ static void test_carousel_sender_holds_for_peer_turn(void)
 /* A DISCONNECT waits for what is left to be delivered, for as long as a few
  * exchanges take on the rung in use.  A fixed 30 s dropped the final UUCP
  * reply at the floor (on air, car29), where one exchange is 40-50 s. */
+/* Request/response traffic, as UUCP's: each message is written only after
+ * the peer's answer to the last is delivered, so a direction goes idle and
+ * comes back many times in a session.  A REQ about a round that opened a
+ * block the callee never heard got "done" for an answer -- the callee had
+ * not taken M's block state from it -- and the session went on for ever on
+ * a rung the callee had left (these seeds, before the fix). */
+static void test_carousel_request_response_completes(void)
+{
+    static const struct { const char *chan; uint64_t seed; } RUNS[] = {
+        { "fade:5:0.5", 14 }, { "fade:0:0.5", 13 }, { "nvis", 3 }, { "nvis", 4 }, { "nvis", 8 },
+        { "awgn:0.1", 1 }, { "cliff:-5", 1 },
+    };
+    setenv("CAR_CS_DECODABLE", "1", 1);
+    setenv("CAR_CHAT", "10:200", 1);
+    for (size_t i = 0; i < sizeof(RUNS) / sizeof(RUNS[0]); i++) {
+        car_sim_result_t r;
+        char what[64];
+        carousel_sim_run(RUNS[i].seed, RUNS[i].chan, false, LIMIT_MS, &r);
+        snprintf(what, sizeof(what), "seed %llu %s chat", (unsigned long long)RUNS[i].seed, RUNS[i].chan);
+        TEST_ASSERT_TRUE_MESSAGE(r.intact, what);
+        TEST_ASSERT_EQUAL_INT_MESSAGE(0, r.collisions, what);
+        TEST_ASSERT_EQUAL_MESSAGE(2000, r.a2b, what);
+        TEST_ASSERT_EQUAL_MESSAGE(2000, r.b2a, what);
+        TEST_ASSERT_NOT_EQUAL_MESSAGE(0, r.done_ms, what);
+    }
+}
+
 static void test_carousel_drain_budget_fits_the_floor(void)
 {
     car_t *c = calloc(1, sizeof(*c));
@@ -165,5 +192,6 @@ int main(void)
     RUN_TEST(test_carousel_floor_handover_not_keyed_over);
     RUN_TEST(test_carousel_sender_holds_for_peer_turn);
     RUN_TEST(test_carousel_drain_budget_fits_the_floor);
+    RUN_TEST(test_carousel_request_response_completes);
     return UNITY_END();
 }

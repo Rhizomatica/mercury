@@ -245,6 +245,7 @@ static uint64_t round_air(int lv, int n)
  * every round (sim, fade:-5 both ways: 132 changes, a poll each). */
 static int keydown_cap(int lv);
 static int round_n(const car_t *c);
+static bool both_ok(const car_t *c, int lv);
 static uint64_t turn_quantum(int lv)
 {
     uint64_t two = 2 * round_air(lv, keydown_cap(lv));
@@ -1674,6 +1675,21 @@ static void m_key_plan(car_t *c)
 static void m_try(car_t *c, uint64_t now)
 {
     if (c->tx_busy || c->plan == KD_NONE) return;
+    /* Data of mine came after I chose to ack the peer's direction: the ack
+     * goes with my round, both ways in one exchange.  A request/response
+     * application answers within a few hundred ms of a delivery, inside the
+     * turnaround before I key: on air a UUCP reply came 0.19 s after the
+     * choice, and waited out S's slot after the ack (7 s, five times in a
+     * 330 s call). */
+    if (c->plan == KD_DONE && has_data(c)) {
+        int lv = choose_level(c, now);
+        if (c->ctl_deaf && c->io.pattern) lv = 0;
+        if (both_ok(c, lv)) {
+            car_trace(c, "tx: data came -- the ack goes with my round");
+            m_enter(c, PH_RECV, now);
+            m_plan(c, KD_BOTH, lv, poll_size(c, lv, now));
+        }
+    }
     uint64_t at = m_free_from(c, now, plan_len(c));
     /* My round does not fit before S's next slot: S may be streaming on in
      * its continuation slots, and my round would wait them all out (300 s at
@@ -2087,6 +2103,12 @@ static void s_on_ctl(car_t *c, uint64_t now, const msg_t *m, int mode)
     } else if (m->type == M_REQ) {
         c->req_lv = m->level; c->req_n = m->n; c->req_mk = (uint8_t)m->h_id;
         c->peer_has_data = m->has_data;
+        /* Where M's blocks stand, as a status says: a REQ may be about a
+         * round that opened a block I never heard.  Without it I answered
+         * "done" to a REQ about new data, on a rung M had left, for ever
+         * (sim, request/response traffic, fade:5 seed 14). */
+        c->peer_hi = resolve16(c->rbase, m->hi);
+        c->peer_hi_known = true; c->peer_unopened = m->unopened;
         s_anchor(c, ANC_REQ, (uint8_t)m->poll_id, eh, d, 0, 0);
     }
 }
