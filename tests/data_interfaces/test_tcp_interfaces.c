@@ -195,6 +195,18 @@ int modem_set_listen_mode(int mode)
 int    modem_get_listen_mode(void)          { return mock_listen_mode_cur; }
 size_t modem_get_broadcast_frame_size(void) { return 14; }
 
+/* ---- modem monitor-mode stubs ---- */
+
+static bool mock_monitor_enabled = false;
+static int  mock_monitor_set_calls = 0;
+
+void modem_set_monitor_enabled(bool enabled)
+{
+    mock_monitor_enabled = enabled;
+    mock_monitor_set_calls++;
+}
+bool modem_get_monitor_enabled(void) { return mock_monitor_enabled; }
+
 /* Use the actual ring implementation for the shutdown race; retain command
  * test stubs under their usual names. No audio/modem hardware is linked. */
 #define size_buffer real_size_buffer
@@ -375,6 +387,10 @@ void setUp(void)
     mock_listen_mode_calls = 0;
     mock_listen_mode_rc    = 0;
     mock_listen_mode_cur   = FREEDV_MODE_DATAC15;
+
+    /* Monitor mode */
+    mock_monitor_enabled    = false;
+    mock_monitor_set_calls  = 0;
 }
 
 void tearDown(void) { }
@@ -630,6 +646,60 @@ void test_cmd_mode_query_reports_index_and_name(void)
     TEST_ASSERT_EQUAL_INT(0, mock_listen_mode_calls);
 }
 
+/* ---- MONITOR: the passive all-modes decoder (VARA-monitor style) ---- */
+
+void test_cmd_monitor_on(void)
+{
+    char cmd[] = "MONITOR ON";
+    execute_control_command(cmd);
+
+    assert_ok_response();
+    TEST_ASSERT_EQUAL_INT(1, mock_monitor_set_calls);
+    TEST_ASSERT_TRUE(mock_monitor_enabled);
+}
+
+void test_cmd_monitor_off(void)
+{
+    mock_monitor_enabled = true;
+    char cmd[] = "MONITOR OFF";
+    execute_control_command(cmd);
+
+    assert_ok_response();
+    TEST_ASSERT_EQUAL_INT(1, mock_monitor_set_calls);
+    TEST_ASSERT_FALSE(mock_monitor_enabled);
+}
+
+void test_cmd_monitor_query_reports_on(void)
+{
+    mock_monitor_enabled = true;
+    char cmd[] = "MONITOR";
+    execute_control_command(cmd);
+
+    TEST_ASSERT_EQUAL(1, tcp_write_call_count);
+    TEST_ASSERT_EQUAL_STRING_LEN("MONITOR ON\r", (char *)last_tcp_write_buf, 11);
+    TEST_ASSERT_EQUAL_INT(0, mock_monitor_set_calls);
+}
+
+void test_cmd_monitor_query_reports_off(void)
+{
+    mock_monitor_enabled = false;
+    char cmd[] = "MONITOR";
+    execute_control_command(cmd);
+
+    TEST_ASSERT_EQUAL(1, tcp_write_call_count);
+    TEST_ASSERT_EQUAL_STRING_LEN("MONITOR OFF\r", (char *)last_tcp_write_buf, 12);
+    TEST_ASSERT_EQUAL_INT(0, mock_monitor_set_calls);
+}
+
+void test_cmd_monitor_invalid_argument(void)
+{
+    char cmd[] = "MONITOR MAYBE";
+    execute_control_command(cmd);
+
+    assert_wrong_response();
+    TEST_ASSERT_EQUAL_INT(0, mock_monitor_set_calls);
+}
+
 void test_cmd_chat_on(void)
 {
     char cmd[] = "CHAT ON";
@@ -803,6 +873,13 @@ void test_tnc_send_registered(void)
 {
     tnc_send_registered("TESTA");
     TEST_ASSERT_EQUAL_STRING("REGISTERED TESTA\r", last_queued_line);
+}
+
+void test_tnc_send_monitor(void)
+{
+    tnc_send_monitor("DATAC17", "DATA", "SID=1 SEQ=5 ACK=4 LEN=1180", 12.3f);
+    TEST_ASSERT_EQUAL_STRING("MONITOR DATAC17 DATA SID=1 SEQ=5 ACK=4 LEN=1180 SNR=12.3\r",
+                             last_queued_line);
 }
 
 /* ---- VARA compatibility command tests ---- */
@@ -1784,6 +1861,11 @@ int main(void)
     RUN_TEST(test_cmd_mode_busy_is_not_ok);
     RUN_TEST(test_cmd_mode_unsupported_mode_is_wrong);
     RUN_TEST(test_cmd_mode_query_reports_index_and_name);
+    RUN_TEST(test_cmd_monitor_on);
+    RUN_TEST(test_cmd_monitor_off);
+    RUN_TEST(test_cmd_monitor_query_reports_on);
+    RUN_TEST(test_cmd_monitor_query_reports_off);
+    RUN_TEST(test_cmd_monitor_invalid_argument);
     RUN_TEST(test_cmd_chat_on);
     RUN_TEST(test_cmd_bw500);
     RUN_TEST(test_cmd_bw2300);
@@ -1817,6 +1899,7 @@ int main(void)
     RUN_TEST(test_tnc_send_connected);
     RUN_TEST(test_tnc_send_cqframe);
     RUN_TEST(test_tnc_send_registered);
+    RUN_TEST(test_tnc_send_monitor);
     /* Broadcast framing helper tests */
     RUN_TEST(test_bcast_rx_cmd_data_exact_size);
     RUN_TEST(test_bcast_rx_cmd_data_0x60_is_not_special);
