@@ -130,6 +130,10 @@ static bool modem_owns_radio_buffers = false;
  * unsynchronized g_sess access behind the on-air handshake freeze. */
 static _Atomic size_t broadcast_frame_size = 0;
 static _Atomic int    modem_listen_mode    = -1;
+/* Monitor mode (passive decode of every pooled mode).  Toggled by the TNC
+ * MONITOR ON/OFF command; the RX thread starts/stops the per-mode monitor
+ * decoders on the transition. */
+static _Atomic bool   g_monitor_enabled    = false;
 
 /* --- Spectrum data for UI waterfall display --- */
 #include "freedv/modem_stats.h"
@@ -797,6 +801,16 @@ int modem_get_listen_mode(void)
 size_t modem_get_broadcast_frame_size(void)
 {
     return atomic_load(&broadcast_frame_size);
+}
+
+void modem_set_monitor_enabled(bool enabled)
+{
+    atomic_store(&g_monitor_enabled, enabled);
+}
+
+bool modem_get_monitor_enabled(void)
+{
+    return atomic_load(&g_monitor_enabled);
 }
 
 static int maybe_switch_modem_mode(generic_modem_t *g_modem,
@@ -2123,10 +2137,144 @@ static void process_received_frame(const uint8_t *data,
           payload_nbytes, frame_type, frame_bytes);
 }
 
+/* --- Passive monitor reporter --------------------------------------------
+ *
+ * Monitor mode decodes every Mercury mode in parallel and reports each
+ * CRC-valid frame to the host as a "MONITOR ..." line on the control port
+ * (VARA-monitor style).  It is read-only: the monitor decoders are separate
+ * instances that never feed the ARQ FSM, so nothing is acknowledged and the
+ * transmitter is never keyed on account of what is heard here. */
+
+/* Every mode Mercury puts on the air: control, the payload ladder, DATAC13 and
+ * the MFSK floor.  Mirrors the persistent pool (init_mode_pool_locked). */
+static const int monitor_modes[] = {
+    FREEDV_MODE_DATAC16, FREEDV_MODE_DATAC15, FREEDV_MODE_DATAC13,
+    FREEDV_MODE_DATAC4,  FREEDV_MODE_DATAC3,  FREEDV_MODE_DATAC1,
+    FREEDV_MODE_DATAC17, FREEDV_MODE_QAM16C2, MERCURY_MODE_MFSK,
+};
+#define MONITOR_MODE_COUNT (sizeof(monitor_modes) / sizeof(monitor_modes[0]))
+
+static const char *monitor_subtype_name(uint8_t subtype)
+{
+    switch (subtype)
+    {
+    case ARQ_SUBTYPE_CALL:          return "CALL";
+    case ARQ_SUBTYPE_ACCEPT:        return "ACCEPT";
+    case ARQ_SUBTYPE_ACK:           return "ACK";
+    case ARQ_SUBTYPE_DISCONNECT:    return "DISCONNECT";
+    case ARQ_SUBTYPE_DATA:          return "DATA";
+    case ARQ_SUBTYPE_KEEPALIVE:     return "KEEPALIVE";
+    case ARQ_SUBTYPE_KEEPALIVE_ACK: return "KEEPALIVE_ACK";
+    case ARQ_SUBTYPE_MODE_REQ:      return "MODE_REQ";
+    case ARQ_SUBTYPE_MODE_ACK:      return "MODE_ACK";
+    case ARQ_SUBTYPE_TURN_REQ:      return "TURN_REQ";
+    case ARQ_SUBTYPE_TURN_ACK:      return "TURN_ACK";
+    default:                        return "CONTROL";
+    }
+}
+
+static void process_monitor_frame(const uint8_t *data, size_t nbytes_out,
+                                  int mode, float snr_est)
+{
+    size_t payload_nbytes;
+    int frame_type;
+    const char *mode_name = mode_name_from_enum(mode);
+    char detail[96];
+
+    if (!data || nbytes_out < 2)
+        return;
+
+    payload_nbytes = nbytes_out - 2;
+    if (payload_nbytes == 0)
+        return;
+
+    frame_type = parse_frame_header(data, payload_nbytes, NULL);
+
+    switch (frame_type)
+    {
+    case PACKET_TYPE_ARQ_CALL:
+    {
+        bool is_accept = (data[ARQ_CONNECT_SESSION_IDX] & ARQ_CONNECT_ACCEPT_FLAG) != 0;
+        char src[CALLSIGN_MAX_SIZE] = {0};
+        char dst[CALLSIGN_MAX_SIZE] = {0};
+        uint8_t sid = 0;
+        int bw = 0;
+        int rc = is_accept
+                   ? arq_protocol_parse_accept(data, payload_nbytes, &sid, src, dst, &bw)
+                   : arq_protocol_parse_call(data, payload_nbytes, &sid, src, dst, &bw);
+        if (rc == 0)
+            snprintf(detail, sizeof(detail), "FROM=%s TO=%s BW=%d SID=%u",
+                     src, dst, bw, (unsigned)sid);
+        else
+            snprintf(detail, sizeof(detail), "FROM=? TO=?");
+        tnc_send_monitor(mode_name, is_accept ? "ACCEPT" : "CALL", detail, snr_est);
+        break;
+    }
+    case PACKET_TYPE_ARQ_CQ:
+    {
+        char src[CALLSIGN_MAX_SIZE] = {0};
+        int bw = 0;
+        if (arq_protocol_parse_cq(data, payload_nbytes, src, &bw) == 0)
+            snprintf(detail, sizeof(detail), "FROM=%s BW=%d", src, bw);
+        else
+            snprintf(detail, sizeof(detail), "FROM=?");
+        tnc_send_monitor(mode_name, "CQ", detail, snr_est);
+        break;
+    }
+    case PACKET_TYPE_ARQ_CONTROL:
+    case PACKET_TYPE_ARQ_DATA:
+    {
+        arq_frame_hdr_t hdr;
+        if (arq_protocol_decode_hdr(data, payload_nbytes, &hdr) != 0)
+        {
+            tnc_send_monitor(mode_name, "FRAME", "unparseable", snr_est);
+            break;
+        }
+        size_t user_len = (payload_nbytes > ARQ_FRAME_HDR_SIZE)
+                              ? payload_nbytes - ARQ_FRAME_HDR_SIZE : 0;
+        char hex[64] = {0};
+        if (frame_type == PACKET_TYPE_ARQ_DATA && user_len > 0)
+        {
+            size_t n = user_len < 16 ? user_len : 16;
+            for (size_t i = 0; i < n; i++)
+                snprintf(hex + 2 * i, sizeof(hex) - 2 * i, "%02X",
+                         data[ARQ_FRAME_HDR_SIZE + i]);
+        }
+        if (frame_type == PACKET_TYPE_ARQ_DATA)
+            snprintf(detail, sizeof(detail), "SID=%u SEQ=%u ACK=%u LEN=%zu%s%s",
+                     (unsigned)hdr.session_id, (unsigned)hdr.tx_seq,
+                     (unsigned)hdr.rx_ack_seq, user_len,
+                     hex[0] ? " HEX=" : "", hex);
+        else
+            snprintf(detail, sizeof(detail), "TYPE=%s SID=%u SEQ=%u ACK=%u",
+                     monitor_subtype_name(hdr.subtype),
+                     (unsigned)hdr.session_id, (unsigned)hdr.tx_seq,
+                     (unsigned)hdr.rx_ack_seq);
+        tnc_send_monitor(mode_name,
+                         frame_type == PACKET_TYPE_ARQ_DATA
+                             ? "DATA" : monitor_subtype_name(hdr.subtype),
+                         detail, snr_est);
+        break;
+    }
+    case PACKET_TYPE_BROADCAST_CONTROL:
+    case PACKET_TYPE_BROADCAST_DATA:
+        snprintf(detail, sizeof(detail), "LEN=%zu", payload_nbytes);
+        tnc_send_monitor(mode_name,
+                         frame_type == PACKET_TYPE_BROADCAST_CONTROL
+                             ? "BCAST_CTRL" : "BCAST_DATA",
+                         detail, snr_est);
+        break;
+    default:
+        tnc_send_monitor(mode_name, "FRAME", "unknown-type", snr_est);
+        break;
+    }
+}
+
 static void rx_decoder_consume_chunk(rx_decoder_state_t *state,
                                      const int16_t *samples, int sample_count,
                                      bool arq_policy_ready,
-                                     rx_metrics_accum_t *metrics);
+                                     rx_metrics_accum_t *metrics,
+                                     bool monitor);
 
 /* --- Parallel decode: one worker per plane ------------------------------
  *
@@ -2156,6 +2304,10 @@ typedef struct {
      * with atomic_exchange, so a second consumer would steal the payload
      * plane's resync. */
     bool                takes_payload_resync;
+    /* A passive monitor decoder: decoded frames go to the host (MONITOR line)
+     * instead of the ARQ FSM, and this worker never feeds link metrics or
+     * bitrate/SRN telemetry. */
+    bool                monitor;
     _Atomic bool        running;
     _Atomic bool        flush_req;    /* dispatcher asks: drop what you hold  */
     /* Metrics this plane observed since the dispatcher last drained them.
@@ -2322,7 +2474,7 @@ static void *rx_worker_thread(void *arg)
         rx_metrics_accum_t m = {0};
         rx_decoder_consume_chunk(&w->state, buf, want,
                                  atomic_load(&w->policy_ready),
-                                 &m);
+                                 &m, w->monitor);
         rx_worker_publish_metrics(w, &m);
     }
 
@@ -2335,7 +2487,8 @@ static void rx_decoder_consume_chunk(rx_decoder_state_t *state,
                                      const int16_t *samples,
                                      int sample_count,
                                      bool arq_policy_ready,
-                                     rx_metrics_accum_t *metrics)
+                                     rx_metrics_accum_t *metrics,
+                                     bool monitor)
 {
     int guard = 0;
 
@@ -2431,7 +2584,7 @@ static void rx_decoder_consume_chunk(rx_decoder_state_t *state,
                           (uint8_t)(nin & 0xff), (uint16_t)c);
         }
         nbytes_out = (size_t)be->rawdata_rx(ctx, state->bytes_out, state->demod_in);
-        if (nbytes_out > 0)
+        if (nbytes_out > 0 && !monitor)
             publish_link_bitrate(&state->codec, state->mode);
         if (nin > 0)
         {
@@ -2467,8 +2620,10 @@ static void rx_decoder_consume_chunk(rx_decoder_state_t *state,
              * same audio and may have trial-synced on it (its correlator can
              * latch a control preamble), and a stale sync makes it decode the
              * NEXT real payload burst with the wrong timing/frequency
-             * estimate.  Ask it to drop that sync -- see rx_worker_thread. */
-            if (state->mode == FREEDV_MODE_DATAC16)
+             * estimate.  Ask it to drop that sync -- see rx_worker_thread.
+             * Monitor decoders are their own instances and must not nudge the
+             * live payload plane's sync. */
+            if (state->mode == FREEDV_MODE_DATAC16 && !monitor)
                 atomic_store(&g_payload_resync_req, true);
 
             /* The audio captured after the frame's last sample and not yet
@@ -2481,14 +2636,18 @@ static void rx_decoder_consume_chunk(rx_decoder_state_t *state,
                   mode_name_from_enum(state->mode),
                   nbytes_out,
                   snr_est, age_ms);
-            process_received_frame(state->bytes_out,
-                                   nbytes_out,
-                                   state->bytes_cap,
-                                   arq_policy_ready,
-                                   snr_est,
-                                   state->mode,
-                                   seeded,
-                                   age_ms);
+            if (monitor)
+                process_monitor_frame(state->bytes_out, nbytes_out,
+                                      state->mode, snr_est);
+            else
+                process_received_frame(state->bytes_out,
+                                       nbytes_out,
+                                       state->bytes_cap,
+                                       arq_policy_ready,
+                                       snr_est,
+                                       state->mode,
+                                       seeded,
+                                       age_ms);
         }
 
         /* Whole chunk fed and freedv produced nothing and wants no input
@@ -2719,6 +2878,93 @@ void *tx_thread(void *g_modem)
 }
 
 // Function to handle RX logic for the broadcast rx path
+
+/* --- Monitor mode: per-mode passive decoders ------------------------------
+ *
+ * While monitor is on, one rx_worker_t per mode (monitor_modes[]) decodes the
+ * same audio as the control/payload planes but with its own codec instance, so
+ * it never contends with or disturbs the live planes.  Each decoded frame is
+ * reported by process_monitor_frame(); nothing feeds the ARQ FSM. */
+
+/* Open a fresh instance for every monitor mode and start its worker.  Returns
+ * how many workers were started.  A mode that fails to open is skipped -- the
+ * rest still monitor. */
+static int monitor_workers_start(rx_worker_t *mws, int max)
+{
+    int ring_bytes = rx_burst_capacity_samples() * (int)sizeof(int16_t);
+    int n = 0;
+
+    for (size_t i = 0; i < MONITOR_MODE_COUNT && n < max; i++)
+    {
+        int mode = monitor_modes[i];
+        const modem_backend_t *be = backend_for_mode(mode);
+        void *ctx = be ? be->open(mode) : NULL;
+        if (!ctx)
+        {
+            HLOGW("modem-rx", "monitor: could not open %s",
+                  mode_name_from_enum(mode));
+            continue;
+        }
+        if (be->configure)
+            be->configure(ctx, 1, 0);
+        /* Plain decode only: no cross-frame HARQ combining (a monitor watches
+         * unrelated frames of the same mode) and no session CRC seed. */
+        if (be->set_harq)
+            be->set_harq(ctx, 0);
+        if (be->set_crc_seed)
+            be->set_crc_seed(ctx, 0, 1);
+
+        rx_worker_t *w = &mws[n];
+        memset(w, 0, sizeof(*w));
+        pthread_mutex_init(&w->mlock, NULL);
+        w->ring = circular_buf_init((uint8_t *)malloc((size_t)ring_bytes),
+                                    ring_bytes);
+        if (!w->ring)
+        {
+            be->close(ctx);
+            pthread_mutex_destroy(&w->mlock);
+            continue;
+        }
+        w->own_codec.be  = be;
+        w->own_codec.ctx = ctx;
+        w->monitor = true;
+        atomic_store(&w->mode, mode);
+        atomic_store(&w->policy_ready, false);
+        atomic_store(&w->running, true);
+        if (pthread_create(&w->tid, NULL, rx_worker_thread, w) != 0)
+        {
+            atomic_store(&w->running, false);
+            be->close(ctx);
+            free(w->ring->buffer);
+            circular_buf_free(w->ring);
+            pthread_mutex_destroy(&w->mlock);
+            continue;
+        }
+        n++;
+    }
+    return n;
+}
+
+/* Stop and release the monitor workers (join before freeing what they touch). */
+static void monitor_workers_stop(rx_worker_t *mws, int n)
+{
+    for (int i = 0; i < n; i++)
+    {
+        rx_worker_t *w = &mws[i];
+        atomic_store(&w->running, false);
+        pthread_join(w->tid, NULL);
+        rx_decoder_dispose(&w->state);
+        if (modem_codec_valid(&w->own_codec))
+            w->own_codec.be->close(w->own_codec.ctx);
+        if (w->ring)
+        {
+            free(w->ring->buffer);
+            circular_buf_free(w->ring);
+        }
+        pthread_mutex_destroy(&w->mlock);
+    }
+}
+
 void *rx_thread(void *g_modem)
 {
     generic_modem_t *modem = (generic_modem_t *)g_modem;
@@ -2786,6 +3032,11 @@ void *rx_thread(void *g_modem)
                   "MFSK CALLs will be heard only during a session");
     }
     bool listen_fed = false;
+    /* Monitor mode: per-mode passive decoders, started on the MONITOR-ON
+     * transition and stopped on OFF. */
+    rx_worker_t monitor_workers[MONITOR_MODE_COUNT];
+    int monitor_count = 0;
+    bool monitor_active = false;
     int last_pref_rx_mode = -1;
     int last_pref_tx_mode = -1;
     bool was_tx = false;
@@ -2870,6 +3121,8 @@ void *rx_thread(void *g_modem)
             atomic_store(&w_pay.flush_req, true);
             busy_holdoff_until_ms = monotonic_ms() + BUSY_TX_HOLDOFF_MS;
             atomic_store(&w_listen.flush_req, true);
+            for (int t = 0; t < monitor_count; t++)
+                atomic_store(&monitor_workers[t].flush_req, true);
             /* the pattern ring holds audio from before the keydown */
             mfsk_pattern_window_reset(&pat_win);
             ack_due_from = 0;
@@ -2907,6 +3160,8 @@ void *rx_thread(void *g_modem)
             atomic_store(&w_ctrl.flush_req, true);
             atomic_store(&w_pay.flush_req, true);
             atomic_store(&w_listen.flush_req, true);
+            for (int t = 0; t < monitor_count; t++)
+                atomic_store(&monitor_workers[t].flush_req, true);
         }
 
         atomic_store(&w_pay.mode, payload_mode);
@@ -2923,6 +3178,26 @@ void *rx_thread(void *g_modem)
         if (listen_fed && !feed_listen)
             atomic_store(&w_listen.flush_req, true);
         listen_fed = feed_listen;
+
+        /* Monitor-mode transitions: start/stop the per-mode passive decoders
+         * when the host toggles MONITOR. */
+        if (modem_get_monitor_enabled() && !monitor_active)
+        {
+            monitor_count = monitor_workers_start(monitor_workers, MONITOR_MODE_COUNT);
+            monitor_active = true;
+            if (monitor_count > 0)
+                HLOGI("modem-rx", "Monitor mode ON: decoding %d modes in parallel",
+                      monitor_count);
+            else
+                HLOGW("modem-rx", "Monitor mode ON, but no monitor decoder could start");
+        }
+        else if (!modem_get_monitor_enabled() && monitor_active)
+        {
+            monitor_workers_stop(monitor_workers, monitor_count);
+            monitor_count = 0;
+            monitor_active = false;
+            HLOGI("modem-rx", "Monitor mode OFF");
+        }
 
         int chunk_samples = RX_DECODE_CHUNK_SAMPLES;
 
@@ -2991,6 +3266,23 @@ void *rx_thread(void *g_modem)
                 continue;
             }
             write_buffer(tee[t]->ring, (uint8_t *)capture_i16, tee_bytes);
+        }
+
+        /* Tee the same chunk to the monitor decoders (one per mode). */
+        for (int t = 0; t < monitor_count; t++)
+        {
+            rx_worker_t *w = &monitor_workers[t];
+            if (circular_buf_free_size(w->ring) < tee_bytes)
+            {
+                long d = atomic_fetch_add(&w->dropped_samples, chunk_samples)
+                         + chunk_samples;
+                if ((d / chunk_samples) % 64 == 1)
+                    HLOGW("modem-rx",
+                          "monitor ring full (mode=%d): dropped %ld samples so far",
+                          atomic_load(&w->mode), d);
+                continue;
+            }
+            write_buffer(w->ring, (uint8_t *)capture_i16, tee_bytes);
         }
 
         /* --- Pattern ACK detector (3rd consumer) ---
@@ -3084,6 +3376,13 @@ void *rx_thread(void *g_modem)
              * idle.  Drain its metrics so they do not accumulate. */
             rx_metrics_accum_t ignored = {0};
             rx_worker_take_metrics(&w_listen, &ignored);
+        }
+        {
+            /* The monitor decoders are also not a link-quality source: their
+             * sync/SNR must not feed ARQ adaptation, so drain their metrics. */
+            rx_metrics_accum_t ignored = {0};
+            for (int t = 0; t < monitor_count; t++)
+                rx_worker_take_metrics(&monitor_workers[t], &ignored);
         }
 
         if (arq_policy_ready)
@@ -3237,6 +3536,12 @@ void *rx_thread(void *g_modem)
     rx_decoder_dispose(&w_listen.state);
     if (modem_codec_valid(&w_listen.own_codec))
         w_listen.own_codec.be->close(w_listen.own_codec.ctx);
+    if (monitor_active)
+    {
+        monitor_workers_stop(monitor_workers, monitor_count);
+        monitor_count = 0;
+        monitor_active = false;
+    }
     if (w_ctrl.ring) { free(w_ctrl.ring->buffer); circular_buf_free(w_ctrl.ring); }
     if (w_pay.ring)  { free(w_pay.ring->buffer);  circular_buf_free(w_pay.ring);  }
     if (w_listen.ring) { free(w_listen.ring->buffer); circular_buf_free(w_listen.ring); }

@@ -139,4 +139,12 @@ bool  modem_tune_active(void);
 // Most recently requested tuning level in dBFS (what "TUNE ?" reports).
 float modem_tune_level_dbfs(void);
 
+// Monitor mode: decode EVERY Mercury mode in parallel and report each decoded
+// frame to the host as a "MONITOR ..." line on the control port.  Passive by
+// design -- the monitor decoders are separate instances that never feed the
+// ARQ FSM, so nothing is acknowledged and the transmitter is never keyed on
+// account of a monitored frame.
+void modem_set_monitor_enabled(bool enabled);
+bool modem_get_monitor_enabled(void);
+
 #endif // MODEM_H

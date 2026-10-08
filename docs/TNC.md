@@ -369,6 +369,38 @@ reception and transmission while idle.
 
 ---
 
+### MONITOR
+
+Enable or disable **monitor mode** — the VARA-monitor equivalent: decode every
+Mercury mode in parallel and report each frame that passes its CRC to the host,
+without participating in the link.
+
+```
+MONITOR ON\r
+MONITOR OFF\r
+MONITOR\r
+```
+
+**Response:** `OK\r` on success, `WRONG\r` for an unrecognised argument.  The
+bare query answers `MONITOR ON\r` or `MONITOR OFF\r`.
+
+While monitor mode is on, the RX path runs one decoder per mode
+(DATAC16, DATAC15, DATAC13, DATAC4, DATAC3, DATAC1, DATAC17, QAM16C2 and
+MFSK) so a frame is heard whatever speed the transmitting station is using.
+Each decoded frame produces an asynchronous `MONITOR ...` line on the control
+port (see [Asynchronous Responses](#asynchronous-responses)).
+
+Monitor mode is **read-only**.  The monitor decoders are separate codec
+instances that never feed the ARQ state machine, so nothing is acknowledged,
+no connect is auto-accepted, and the transmitter is never keyed on account of
+what is heard.  A station in monitor mode can sit on a frequency and watch two
+other stations exchange a file, or catch CQ/broadcast traffic, without ever
+answering.  The normal ARQ and broadcast planes keep running underneath, so
+`LISTEN ON` / `CONNECT` still work exactly as before — the monitor is purely
+additive.
+
+---
+
 ### TUNE
 
 Key the transmitter and hold a steady **1000 Hz tone**, so an antenna tuner
@@ -424,6 +456,7 @@ These are sent on the **control port** without a preceding command.
 | `CANCELPENDING\r`                           | Pending incoming connect cancelled or outgoing CQ TX completed |
 | `CONNECTED <sourcecall> <destcall> <bandwidth>\r` | ARQ session established                |
 | `CQFRAME <sourcecall> <bandwidth>\r`        | Compact CQ frame decoded                     |
+| `MONITOR <mode> <kind> <detail> SNR=<snr>\r` | A frame decoded by monitor mode (passive)    |
 | `DISCONNECTED\r`                            | ARQ session ended                            |
 | `PTT ON\r`                                  | Radio transmitter keyed                      |
 | `PTT OFF\r`                                 | Radio transmitter unkeyed                    |
@@ -467,6 +500,36 @@ the session, and `<destcall>` is always the station that was called.
 Sent when Mercury decodes a compact CQ frame on the air.
 `<sourcecall>` is the transmitting station and `<bandwidth>` is the BW token
 advertised inside that CQ frame (`500`, `2300`, or `2750`).
+
+### MONITOR
+
+Sent once per frame that monitor mode decoded, on the control port:
+
+```
+MONITOR DATAC16 CALL FROM=K7EK TO=VK2XYZ BW=2300 SID=42 SNR=18.1\r
+MONITOR DATAC17 DATA SID=42 SEQ=5 ACK=4 LEN=1180 HEX=... SNR=18.4\r
+MONITOR DATAC16 ACK TYPE=ACK SID=42 SEQ=5 ACK=5 SNR=18.4\r
+```
+
+`<mode>` is the mode the frame decoded on (`DATAC16`, `DATAC15`, `DATAC13`,
+`DATAC4`, `DATAC3`, `DATAC1`, `DATAC17`, `QAM16C2` or `MFSK`).  `<kind>`
+names the frame: `CALL`, `ACCEPT`, `CQ`, a control subtype (`ACK`,
+`DISCONNECT`, `KEEPALIVE`, `MODE_REQ`, `TURN_REQ`, …), `DATA`, `BCAST_CTRL` /
+`BCAST_DATA` for broadcast frames, or `FRAME` when the bytes would not parse.
+
+`<detail>` carries what the monitor could recover:
+
+- `CALL`/`ACCEPT`: `FROM=<src> TO=<dst> BW=<bw> SID=<n>`
+- `CQ`: `FROM=<src> BW=<bw>`
+- control frames: `TYPE=<subtype> SID=<n> SEQ=<n> ACK=<n>`
+- `DATA`: `SID=<n> SEQ=<n> ACK=<n> LEN=<n>` plus a `HEX=` prefix of the first
+  16 payload bytes (truncated)
+- broadcast: `LEN=<n>`
+
+`SNR=` is the decoder's signal-to-noise estimate in dB at the moment the frame
+was read (may be `0.0` when unknown).  These lines are display-only telemetry:
+the queue is lossy, so under a flood a line may be dropped rather than stall a
+modem thread.
 
 ### BUSY ON / BUSY OFF
 

@@ -23,7 +23,7 @@ presents the result to your application as an ordinary TCP connection.
 - **ARQ data link for point-to-point sessions** — connect/accept handshake, ACK and retry logic, and controlled disconnect, so a file either arrives intact or you are told it did not.
 - **Adaptive speed** — the link starts robust and climbs through six payload modes as conditions allow (DATAC15 → DATAC4 → DATAC3 → DATAC1 → DATAC17 → QAM16C2), stepping back down when the channel fades. Control frames always ride the most robust mode, DATAC16, so signalling survives when payload cannot.
 - **Broadcast mode** alongside ARQ, with its own framing and TCP ingress port — used for one-to-many traffic and for [Reticulum](#reticulum) mesh networking.
-- **VARA-style TCP TNC interface** on two sockets (control on the base port, data on base+1), speaking `MYCALL`, `LISTEN`, `CONNECT`, `BUFFER`, `SN`, `BITRATE` and `TUNE` (a 1 kHz ATU tuning carrier with a hard 60 s unkey timer). Existing VARA-aware software can generally talk to Mercury unchanged.
+- **VARA-style TCP TNC interface** on two sockets (control on the base port, data on base+1), speaking `MYCALL`, `LISTEN`, `CONNECT`, `BUFFER`, `SN`, `BITRATE`, `TUNE` (a 1 kHz ATU tuning carrier with a hard 60 s unkey timer) and `MONITOR` (a passive VARA-style monitor that decodes every mode). Existing VARA-aware software can generally talk to Mercury unchanged.
 - **Runs on the audio hardware you have** — `alsa`, `pulse`, `oss`, `coreaudio`, `aaudio`, `dsound`, `wasapi`, plus `shm`, `null` and `fifo` for embedded and test use.
 - **Keys the radio for you** via Hamlib, serial RTS (including DigiRig), or the HERMES shared-memory interface — or stays out of the way and lets your client do it.
 

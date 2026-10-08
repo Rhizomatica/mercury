@@ -395,6 +395,38 @@ static void execute_control_command(char *buffer)
         return;
     }
 
+    if (!strncmp(buffer, "MONITOR", strlen("MONITOR")))
+    {
+        /* VARA-style passive monitor: decode every mode and report each frame.
+         * MONITOR ON / MONITOR OFF toggle it; MONITOR alone reports the state.
+         * The mode is read-only with respect to the link -- the monitor
+         * decoders never feed the ARQ FSM, so nothing is ACKed or keyed. */
+        if (sscanf(buffer, "MONITOR %15s", temp) == 1)
+        {
+            if (temp[1] == 'N' || temp[1] == 'n')
+            {
+                modem_set_monitor_enabled(true);
+                tcp_write(CTL_TCP_PORT, (uint8_t *)"OK\r", 3);
+            }
+            else if (temp[1] == 'F' || temp[1] == 'f')
+            {
+                modem_set_monitor_enabled(false);
+                tcp_write(CTL_TCP_PORT, (uint8_t *)"OK\r", 3);
+            }
+            else
+            {
+                tcp_write(CTL_TCP_PORT, (uint8_t *)"WRONG\r", 6);
+            }
+        }
+        else
+        {
+            tcp_write(CTL_TCP_PORT,
+                      (uint8_t *)(modem_get_monitor_enabled() ? "MONITOR ON\r" : "MONITOR OFF\r"),
+                      modem_get_monitor_enabled() ? 11 : 12);
+        }
+        return;
+    }
+
     if (!strncmp(buffer, "PUBLIC", strlen("PUBLIC")))
     {
         memset(&cmd, 0, sizeof(cmd));
@@ -1724,6 +1756,23 @@ void tnc_send_bitrate(uint32_t speed_level, uint32_t bps)
     atomic_store_explicit(&last_bitrate_sl, speed_level, memory_order_relaxed);
     atomic_store_explicit(&last_bitrate_bps, bps, memory_order_relaxed);
     snprintf(buffer, sizeof(buffer), "BITRATE (%u) %u BPS\r", speed_level, bps);
+    (void)tnc_queue_line(buffer);
+}
+
+void tnc_send_monitor(const char *mode_name, const char *kind,
+                      const char *detail, float snr_db)
+{
+    char buffer[128];
+
+    if (!mode_name) mode_name = "UNKNOWN";
+    if (!kind)      kind = "FRAME";
+    if (!detail)    detail = "";
+
+    /* Display-only telemetry: lossy is fine, a dropped line is replaced by the
+     * next frame.  Keep the whole line under tnc_tx_msg_t.data so tnc_queue_line
+     * does not reject it; snprintf truncates if a long detail would overflow. */
+    snprintf(buffer, sizeof(buffer), "MONITOR %s %s %s SNR=%.1f\r",
+             mode_name, kind, detail, (double)snr_db);
     (void)tnc_queue_line(buffer);
 }
 
