@@ -161,6 +161,7 @@ typedef struct {
     uint32_t deliver_seq;           /* deliveries to my application so far */
     uint32_t seq_at_ask;            /* ...when I last asked or answered */
     uint64_t plan_not_before;       /* M: an ack-only DONE waits for my application till then */
+    uint64_t peer_end_ms;           /* M: when S's last keydown I heard ended */
     int      last_lv, last_nf;      /* my last round, for a REQ */
     uint8_t  last_mk;
     bool     idle_poll;             /* my poll on the air only asks whether S has data */

@@ -160,11 +160,22 @@ static const int LADDER[CAR_NLEVELS] = {
     FREEDV_MODE_DATAC1, FREEDV_MODE_DATAC17, FREEDV_MODE_QAM16C2,
 };
 
+/* From a frame's decode to the end of the keydown it closes: the radio's
+ * tail -- and on MFSK the burst's postamble too, which its decoder does not
+ * wait for (4 symbols of 40 ms).  Without it M took an MFSK16 round as
+ * over 0.16 s early and keyed its pattern ACK 1.31 s after S unkeyed, where
+ * S takes one only from 1.45 s: 8 of 9 patterns ignored on air (5 %). */
+#define MFSK_POSTAMBLE_MS 160
+static uint32_t frame_tail_ms(int lv);
 static uint32_t burst_gap_ms(int lv)
 {
     return LADDER[lv] == FREEDV_MODE_QAM16C2 || mercury_mode_is_mfsk(LADDER[lv]) ? 200 : 100;
 }
 int car_level_mode(int level) { return LADDER[level]; }
+static uint32_t frame_tail_ms(int lv)
+{
+    return TAIL_MS + (mercury_mode_is_mfsk(LADDER[lv]) ? MFSK_POSTAMBLE_MS : 0);
+}
 static bool has_data(const car_t *c);
 static bool peer_direction_done(const car_t *c);
 /* Nothing in flight either way.  The callee: no data of its own, and the
@@ -1816,6 +1827,13 @@ static void m_try(car_t *c, uint64_t now)
         arm(c, CAR_T_M, c->plan_not_before);
         return;
     }
+    /* A pattern is taken only TURN_G_MS and its own air after S's keydown
+     * (pattern_in_time): M heard that end, so it waits that long.  A frame
+     * says what it answers and needs no such wait. */
+    if ((c->plan == KD_PATTERN_ACK || c->plan == KD_PATTERN_BREAK) && now < c->peer_end_ms + TURN_G_MS) {
+        arm(c, CAR_T_M, c->peer_end_ms + TURN_G_MS);
+        return;
+    }
     uint64_t at = m_free_from(c, now, plan_len(c));
     /* My round does not fit before S's next slot: S may be streaming on in
      * its continuation slots, and my round would wait them all out (300 s at
@@ -2071,6 +2089,7 @@ static void m_timer(car_t *c, uint64_t now)
 static void m_heard_end(car_t *c, uint64_t te, int mk, bool pat, int slot)
 {
     c->m_heard = true;
+    c->peer_end_ms = te;
     m_close_slot(c, te, mk, pat, slot);
     if (c->m_state != MS_IDLE) arm(c, CAR_T_M, te);
 }
@@ -2081,7 +2100,7 @@ static void m_on_data(car_t *c, uint64_t now, const msg_t *m, int lv)
     c->traffic = true;
     c->peer_data_ms = now;
     rx_frame(c, m, lv, m->poll_id == c->poll_id);
-    m_heard_end(c, now + (uint64_t)m->left * (level_air(lv) + burst_gap_ms(lv)) + TAIL_MS,
+    m_heard_end(c, now + (uint64_t)m->left * (level_air(lv) + burst_gap_ms(lv)) + frame_tail_ms(lv),
                 (int)m->poll_id, m->pat_anchor, m->slot);
 }
 
@@ -2258,7 +2277,7 @@ static void s_on_data(car_t *c, uint64_t now, const msg_t *m, int lv)
     rx_frame(c, m, lv, true);
     c->s_prev_lv = lv;
     s_anchor(c, ANC_ROUND, (uint8_t)m->poll_id,
-             now + (uint64_t)m->left * (level_air(lv) + burst_gap_ms(lv)) + TAIL_MS, d_of_mode(LADDER[lv]), 0, 0);
+             now + (uint64_t)m->left * (level_air(lv) + burst_gap_ms(lv)) + frame_tail_ms(lv), d_of_mode(LADDER[lv]), 0, 0);
 }
 
 static void s_on_ctl(car_t *c, uint64_t now, const msg_t *m, int mode)
