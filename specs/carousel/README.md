@@ -112,9 +112,15 @@ lossy channel can fairly be asked:
 
 | Config | Result |
 |---|---|
-| `Live_Honest_Floor` | pass (2.8 M states, 29 min) |
+| `Live_Honest_Floor` | pass (2.8 M states, 29 min); a rerun on 2026-10-06 did not finish its temporal check in 24 h (3.1 M states) and was stopped |
 | `Live_Spurious_Floor` (2 spurious BREAKs) | pass (516 k states, 2 h) |
-| `Live_Adversary_Floor`, `Live_Honest_Above` | running at the time of writing |
+| `Live_Adversary_Floor` (spurious BREAKs and stale frames, 3 blocks) | pass (2.58 M states, 14.2 h) |
+| `Live_Honest_Above_3` (above the floor, at `Live_Adversary_Floor`'s sizes) | pass (78 k states, 9 min) |
+
+`Live_Adversary_Floor` also covers an honest channel at its sizes: its
+injections are bounded and may be none, so every honest behaviour is one of
+its fair behaviours.  `Live_Honest_Above` at 4 blocks and channel 3 has not
+been run to the end.
 
 The counterexamples on the way were the model's, not the code's: the
 unbounded adversary, a timeout that waited for the channel to empty, a sender
