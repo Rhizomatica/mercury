@@ -549,7 +549,7 @@ static bool is_supported_split_mode(int mode)
            mode == FREEDV_MODE_DATAC16 ||
            mode == FREEDV_MODE_DATAC17 ||
            mode == FREEDV_MODE_QAM16C2 ||
-           mode == MERCURY_MODE_MFSK;
+           mercury_mode_is_mfsk(mode);
 }
 
 static bool is_payload_split_mode(int mode)
@@ -560,7 +560,7 @@ static bool is_payload_split_mode(int mode)
            mode == FREEDV_MODE_DATAC15 ||
            mode == FREEDV_MODE_DATAC17 ||
            mode == FREEDV_MODE_QAM16C2 ||
-           mode == MERCURY_MODE_MFSK;
+           mercury_mode_is_mfsk(mode);
 }
 
 static const char *mode_name_from_enum(int mode)
@@ -579,6 +579,7 @@ static const char *mode_name_from_enum(int mode)
     case FREEDV_MODE_QAM16C2: return "QAM16C2";
     case FREEDV_MODE_FSK_LDPC: return "FSK_LDPC";
     case MERCURY_MODE_MFSK: return "MFSK";
+    case MERCURY_MODE_MFSK16: return "MFSK16";
     default: return "UNKNOWN";
     }
 }
@@ -587,7 +588,7 @@ static const char *mode_name_from_enum(int mode)
  * fringe mode registers its own backend here (Stage 2). */
 static const modem_backend_t *backend_for_mode(int mode)
 {
-    if (mode == MERCURY_MODE_MFSK)
+    if (mercury_mode_is_mfsk(mode))
         return &modem_backend_mfsk;
     return &modem_backend_freedv;
 }
@@ -628,6 +629,7 @@ static int init_mode_pool_locked(int frames_per_burst, int freedv_verbosity)
         FREEDV_MODE_DATAC16, FREEDV_MODE_DATAC15, FREEDV_MODE_DATAC13,
         FREEDV_MODE_DATAC4,  FREEDV_MODE_DATAC3,  FREEDV_MODE_DATAC1,
         FREEDV_MODE_DATAC17, FREEDV_MODE_QAM16C2, MERCURY_MODE_MFSK,
+        MERCURY_MODE_MFSK16,
     };
     clear_mode_pool_locked();
     for (size_t i = 0; i < sizeof(pool_modes) / sizeof(pool_modes[0]); i++)
@@ -707,6 +709,8 @@ static uint32_t bitrate_level_from_payload_mode(int mode)
         return 25;
     case MERCURY_MODE_MFSK:
         return 100;
+    case MERCURY_MODE_MFSK16:
+        return 101;
     default:
         return 15;
     }

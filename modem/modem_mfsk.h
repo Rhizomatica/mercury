@@ -21,6 +21,19 @@
  * mode enum (which currently tops out at QAM16C2=25) so it can never collide
  * with a codec2 mode; backend_for_mode() routes it to the MFSK backend. */
 #define MERCURY_MODE_MFSK 100
+/* A faster MFSK rung: the same 1 kHz of 32 bins, the same rate-1/2 code and
+ * 100-byte frame, in two streams of 16 tones (8 bits a symbol, not 5), so the
+ * burst is 8.3 s instead of 13.1 s, at the floor's peak level (modem_mfsk.c).
+ * Through codec2's ch at equal peak, against DATAC4: 50 % decode 0.7 dB
+ * lower (Watterson moderate 0.4, poor 1.3), and 12.0 B/s against 9.3; it
+ * took DATAC4's place and DATAC15's, which the floor beats (7.6 B/s against
+ * 6.8).  docs/MFSK-PORT.md has the table. */
+#define MERCURY_MODE_MFSK16 101
+/* Any of the MFSK modes (the MFSK backend serves them all). */
+static inline int mercury_mode_is_mfsk(int mode)
+{
+    return mode == MERCURY_MODE_MFSK || mode == MERCURY_MODE_MFSK16;
+}
 
 extern const modem_backend_t modem_backend_mfsk;
 

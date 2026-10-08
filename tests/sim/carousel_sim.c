@@ -345,11 +345,11 @@ static bool io_peer_keyed(void *ctx)
             bool bound = l->bound_at <= p->kd[i].start;
             if (!p->kd[i].sync) continue;
             if (m == SIM_MODE_PATTERN) {
-                if (l->rx_mode == MERCURY_MODE_MFSK && bound) from = p->kd[i].start;
+                if (mercury_mode_is_mfsk(l->rx_mode) && bound) from = p->kd[i].start;
             } else if (m == ARQ_CONTROL_MODE || (m == l->rx_mode && bound)) {
                 /* The MFSK preamble search takes longer to be sure: under a
                  * second at -7 dB (test_mfsk_modem), more near its floor. */
-                from = p->kd[i].start + (m == MERCURY_MODE_MFSK ? MFSK_CS_EXTRA_MS : 0);
+                from = p->kd[i].start + (mercury_mode_is_mfsk(m) ? MFSK_CS_EXTRA_MS : 0);
             }
         }
         if (from == UINT64_MAX) return false;
@@ -388,6 +388,9 @@ sim_channel_t *carousel_sim_channel(uint64_t seed, const char *chan, double *snr
     sim_channel_t *ch = sim_channel_create(&cfg);
     static const sim_mode_per_t NVIS[] = {
         { FREEDV_MODE_DATAC15, 0.20 }, { FREEDV_MODE_DATAC16, 0.20 },
+        /* Not measured on NVIS: MFSK16, in DATAC15's place, is charged its
+         * loss. */
+        { MERCURY_MODE_MFSK16, 0.20 },
         { FREEDV_MODE_DATAC13, 0.30 }, { FREEDV_MODE_DATAC14, 0.30 },
         { FREEDV_MODE_DATAC4,  0.45 }, { FREEDV_MODE_DATAC3,  0.67 },
         { FREEDV_MODE_DATAC1,  0.89 }, { FREEDV_MODE_DATAC17, 0.93 },

@@ -378,6 +378,10 @@ extern _Atomic int arq_startup_max_s;
                                              * downgrade catches optimistic
                                              * SNR estimates. */
 #define ARQ_SNR_MIN_DATAC3_DB        -1.0f
+/* The faster MFSK rung (modem_mfsk.h), at DATAC15's threshold, whose place
+ * it took: its codec2 ch 50 % point is 1.2 dB above DATAC15's, and the floor
+ * carries more than DATAC15 below it. */
+#define ARQ_SNR_MIN_MFSK16_DB        -7.0f
 #define ARQ_SNR_MIN_DATAC1_DB         3.0f
 #define ARQ_SNR_MIN_DATAC17_DB        7.0f  /* bench (docs/MODES.md): goodput
                                              * crossover vs DATAC1 ~ +6 dB MPP;
@@ -730,13 +734,14 @@ bool arq_protocol_accept_is_carousel(const uint8_t *buf);
  * slot still decodes to the same callsign (the decoder is the same code on
  * both sides, so that check is the old callee's).  A callsign too long for it
  * goes unmarked, and that session runs stop-and-wait. */
-#define ARQ_CALL_CAROUSEL_MARK        0xAA
+#define ARQ_CALL_CAROUSEL_MARK        0xAB
 /* Earlier carousels read this mark as no mark, and this one theirs, so the
  * session runs stop-and-wait: 0xA7 (1.9.17, 1.9.18) had no block check and no
  * callee nonce; 0xA8 (mercuryv2 deab316..) sent the global ACK/BREAK, which
  * this one, binding them to the session, does not hear; 0xA9 (mercuryv2
  * d840318..) took turns by handover, not by one timing master (#351), and
- * knew no inline poll. */
+ * knew no inline poll; 0xAA (mercuryv2 0bc383c..) numbered a ladder with
+ * DATAC15 and DATAC4 where MFSK16 stands now (levels go on the wire). */
 bool arq_protocol_mark_call_carousel(uint8_t *buf, const char *src);
 bool arq_protocol_call_is_carousel(const uint8_t *buf, const char *src);
 /* A carousel ACCEPT carries the callee's session nonce in the last two bytes

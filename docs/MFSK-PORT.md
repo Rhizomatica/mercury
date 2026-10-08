@@ -264,7 +264,46 @@ CONNECT/CQ; Welch-Costas patterns for ACK/BREAK/keepalive.** (`detect_ack_patter
 is now ported; wiring it into the ARQ FSM — pattern control below DATAC16, coded
 MFSK data below DATAC15 — is the remaining integration step, OTA-gated.)
 
+## Two streams: the MFSK16 rung (2026-10-08)
+
+The floor carries 7.6 B/s with about 6 dB of margin where the bench sits at
+3 % power (estacao2 decodes it at -6.4 dB), and the next rungs were DATAC15
+(6.8 B/s) and DATAC4 (9.3 B/s).  `mfsk_init` already takes several tone
+streams: two streams of 16 tones fill the same 32 bins (1 kHz) with 8 bits a
+symbol instead of 5, so the same 1600-bit codeword and 100-byte frame take
+8.3 s instead of 13.1 s.  Measured with `utils/mfsk_channel_sweep.sh` (the
+real backend, by file, through codec2's ch and the Watterson model; 20 bursts
+a point) and `utils/harq_snr_sweep.sh` for the FreeDV modes (40).
+
+**Peak, not power.**  At the floor's amplitude every layout had the same RMS,
+but tones add at their peaks: 15.6 k (MFSK, constant envelope), 22.0 k (two
+streams), 31.1 k (four streams of 8 tones), against DATAC4's 16.5 k.  The
+floor and the OFDM modes were matched at their peaks, which is what a
+transmitter's PEP and ALC hold; four streams went into int16's clip.  So
+MFSK16 transmits each stream at 1/sqrt(2) of the amplitude and peaks where
+the floor does.  The comparison below is at equal peak, on the floor's axis
+(SNR3k as the floor's burst would read it at the same noise).
+
+| mode | rate | AWGN 50 % | Watterson moderate | poor |
+|---|---|---|---|---|
+| MFSK (floor) | 7.6 B/s | -11.8 dB | -8.6 | -9.0 |
+| DATAC15 | 6.8 B/s | -7.9 | -4.2 | -4.4 |
+| MFSK16 | 12.0 B/s | -6.6 | -3.5 | -4.0 |
+| DATAC4 | 9.3 B/s | -5.9 | -3.1 | -2.7 |
+| four streams of 8 tones | 16.7 B/s | -0.7 | +1.8 | +1.8 |
+| DATAC3 | 33 B/s | -0.9 | +2.8 | +2.0 |
+
+(The OFDM rows are their own SNR3k shifted by the 3.6 dB their RMS sits
+below the floor's at the same peak.)  MFSK16 decodes 0.4-1.3 dB lower than
+DATAC4 and carries 29 % more; below it the floor carries more than DATAC15.
+So MFSK16 took both their places on the carousel's ladder (MFSK, MFSK16,
+DATAC3, DATAC1, DATAC17, QAM16C2); kept, DATAC4 only cost probes.  Four
+streams reach no lower than DATAC3 at half its rate (1 dB better in
+fading): not shipped.
+
 ## Reproduce
+- MFSK modes through ch / Watterson by file: `utils/mfsk_channel_sweep.sh
+  <awgn|moderate|poor> <100|101> <trials> <SNR>...` (builds utils/mfsk_burst_file).
 - Round-trip / gain unit test: `cd tests && make test_mfsk && ./test_mfsk`.
 - BER sweeps: the throwaway harness `mfsk_ber.c` (scratch) links `modem/mfsk.c`,
   adds freq-domain AWGN/Rayleigh at a target Eb/N0, and counts hard-decision bit
