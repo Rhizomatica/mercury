@@ -296,10 +296,15 @@ the floor does.  The comparison below is at equal peak, on the floor's axis
 (The OFDM rows are their own SNR3k shifted by the 3.6 dB their RMS sits
 below the floor's at the same peak.)  MFSK16 decodes 0.4-1.3 dB lower than
 DATAC4 and carries 29 % more; below it the floor carries more than DATAC15.
-So MFSK16 took both their places on the carousel's ladder (MFSK, MFSK16,
-DATAC3, DATAC1, DATAC17, QAM16C2); kept, DATAC4 only cost probes.  Four
-streams reach no lower than DATAC3 at half its rate (1 dB better in
-fading): not shipped.
+On these channels MFSK16 could take both their places.  On air it could
+not: at 5 % gateway power on the bench (-5 dB at estacao2) DATAC4 delivered
+58 frames at a -4.8 dB reading and kept the whole call there, while MFSK16
+delivered 6 of 10 at -5.3 dB, lost two rounds whole, and a ladder without
+DATAC4 fell back to the floor -- calls of 834 and 879 s against 535 and 551.
+So the ladder is MFSK, MFSK16, DATAC4, DATAC3, DATAC1, DATAC17, QAM16C2:
+MFSK16 in DATAC15's place, and the receiver's measured goodput chooses
+between it and DATAC4.  Four streams reach no lower than DATAC3 at half its
+rate (1 dB better in fading): not shipped.
 
 ## Reproduce
 - MFSK modes through ch / Watterson by file: `utils/mfsk_channel_sweep.sh

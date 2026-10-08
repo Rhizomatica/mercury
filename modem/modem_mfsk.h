@@ -25,9 +25,10 @@
  * 100-byte frame, in two streams of 16 tones (8 bits a symbol, not 5), so the
  * burst is 8.3 s instead of 13.1 s, at the floor's peak level (modem_mfsk.c).
  * Through codec2's ch at equal peak, against DATAC4: 50 % decode 0.7 dB
- * lower (Watterson moderate 0.4, poor 1.3), and 12.0 B/s against 9.3; it
- * took DATAC4's place and DATAC15's, which the floor beats (7.6 B/s against
- * 6.8).  docs/MFSK-PORT.md has the table. */
+ * lower (Watterson moderate 0.4, poor 1.3), and 12.0 B/s against 9.3 -- but
+ * on air at 5 % power DATAC4 did better, so both are rungs; it took
+ * DATAC15's place, which the floor beats (7.6 B/s against 6.8).
+ * docs/MFSK-PORT.md has the table. */
 #define MERCURY_MODE_MFSK16 101
 /* Any of the MFSK modes (the MFSK backend serves them all). */
 static inline int mercury_mode_is_mfsk(int mode)

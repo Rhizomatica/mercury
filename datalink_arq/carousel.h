@@ -42,7 +42,7 @@
 #define CAR_PIECE        24     /* bytes per piece: fits DATAC15 with the headers */
 #define CAR_MAX_K        96     /* data pieces per block (see carousel.c)        */
 #define CAR_WIN          8      /* open blocks at once                           */
-#define CAR_NLEVELS      6      /* the payload mode ladder (3 bits on the wire) */
+#define CAR_NLEVELS      7      /* the payload mode ladder (3 bits on the wire) */
 #define CAR_FRAME_MAX    1280   /* largest payload-mode frame, bytes             */
 #define CAR_POLL_BYTES   14     /* a poll fills one control-mode (DATAC16) frame */
 #define CAR_KEYDOWN_MAX  16     /* frames in one keydown (a round)               */

@@ -59,7 +59,7 @@
 #define CTL_SEG_K1       127
 #define INLINE_CTL       (SEG_HDR + CAR_POLL_BYTES)
 #define FB_UNSEEN        255
-#define SLOW_RUNG_FRAMES 3        /* round cap on MFSK16                     */
+#define SLOW_RUNG_FRAMES 3        /* round cap on MFSK16 and DATAC4          */
 /* With both sides holding data, a turn ends at the first round after
  * TURN_QUANTUM_MS that completed a block, and at TURN_CAP_MS at the latest.
  * Applications time out on silence: NNCP drops a peer after two 60 s ping
@@ -147,14 +147,16 @@ static uint32_t nav_lead(const car_t *c) { (void)c; return 0; }
 enum { M_DATA, M_POLL, M_REQ, M_STATUS };
 
 /* MFSK is the floor, at 3 pieces per 13.5 s frame; above it the same frame
- * in two tone streams, 8.7 s (modem_mfsk.h).  It took the places of DATAC15
- * and DATAC4: through codec2's ch and Watterson channels at equal peak it
- * carries more than DATAC4 at a lower SNR, and the floor more than DATAC15
- * below it.  Kept, DATAC4 only cost probes on the way to DATAC3 (sim,
- * cliff:0 one way 432 -> 462 s). */
+ * in two tone streams, 8.7 s (modem_mfsk.h), in DATAC15's place, which the
+ * floor beats below it.  Through codec2's ch and Watterson channels at equal
+ * peak MFSK16 also beat DATAC4 -- but not on air: at 5 % power on the bench
+ * DATAC4 delivered 58 frames at -4.8 dB, MFSK16 6 of 10 at -5.3 and lost
+ * whole rounds, and a ladder without DATAC4 fell to the floor (calls 535-551
+ * s against 834-879).  So both stay, and the receiver's measured goodput
+ * chooses. */
 static const int LADDER[CAR_NLEVELS] = {
     MERCURY_MODE_MFSK,
-    MERCURY_MODE_MFSK16, FREEDV_MODE_DATAC3,
+    MERCURY_MODE_MFSK16, FREEDV_MODE_DATAC4, FREEDV_MODE_DATAC3,
     FREEDV_MODE_DATAC1, FREEDV_MODE_DATAC17, FREEDV_MODE_QAM16C2,
 };
 
@@ -938,7 +940,7 @@ void car_rung_geometry(int lv, bool floor_patterns, int *bytes_per_frame, int *f
 static int keydown_cap(int lv)
 {
     int cap = (int)(MAX_KEYDOWN_MS / level_air(lv));
-    bool slow = LADDER[lv] == MERCURY_MODE_MFSK16;
+    bool slow = LADDER[lv] == MERCURY_MODE_MFSK16 || LADDER[lv] == FREEDV_MODE_DATAC4;
     if (slow && cap > SLOW_RUNG_FRAMES) cap = SLOW_RUNG_FRAMES;
     return cap > 15 ? 15 : cap < 1 ? 1 : cap;                          /* 4 bits */
 }
