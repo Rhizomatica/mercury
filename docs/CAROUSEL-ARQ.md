@@ -18,7 +18,7 @@ not see the first and drop the second:
 | carousel | carousel | carousel |
 | carousel | without | stop-and-wait: the callee's plain ACCEPT says so |
 | without | carousel | stop-and-wait: the unmarked CALL gets a plain ACCEPT |
-| an earlier carousel (1.9.17/1.9.18, or mercuryv2 before the session-bound patterns, or before one timing master and inline polls) | carousel | stop-and-wait, either way round: the marks differ (0xA7, 0xA8, 0xA9, now 0xAA), and each reads the other's CALL as unmarked |
+| an earlier carousel (1.9.17/1.9.18, or mercuryv2 before the session-bound patterns, or before one timing master and inline polls) | carousel | stop-and-wait, either way round: the marks differ (0xA7, 0xA8, 0xA9, 0xAA, now 0xAB), and each reads the other's CALL as unmarked |
 
 Before the markers, every mixed pair "connected" and then moved nothing
 until the application gave up (harness, `MERCURY_TEST_BIN_A`/`_B`, see
@@ -141,9 +141,10 @@ A station without the carousel reads that as an unknown bandwidth token and
 drops the frame.  A plain ACCEPT keeps its CRC whole.
 
 A carousel CALL sets the last byte of its 10-byte SRC slot to
-`ARQ_CALL_CAROUSEL_MARK` (0xAA; 0xA7 was the carousel of 1.9.17 and 1.9.18,
-before the block check, 0xA8 the one before session-bound patterns, and 0xA9
-the one before a single timing master (#351) and inline polls).  The arithmetic code ends at its
+`ARQ_CALL_CAROUSEL_MARK` (0xAB; 0xA7 was the carousel of 1.9.17 and 1.9.18,
+before the block check, 0xA8 the one before session-bound patterns, 0xA9
+the one before a single timing master (#351) and inline polls, and 0xAA the
+one whose ladder still had DATAC15 and DATAC4).  The arithmetic code ends at its
 end-of-string symbol, and an older decoder never reads past it.  The caller
 marks only when the code leaves that byte free and the marked slot still
 decodes to the same callsign; the callee reads the marker only when the

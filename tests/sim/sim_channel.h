@@ -4,7 +4,7 @@
 #ifndef SIM_CHANNEL_H
 #define SIM_CHANNEL_H
 /* Not a modem mode: a 0.64 s Welch-Costas pattern (ACK/BREAK). */
-#define SIM_MODE_PATTERN 101
+#define SIM_MODE_PATTERN 120   /* sim-only; clear of the modem modes (MFSK 100-102) */
 
 #include <stdint.h>
 #include <stdbool.h>

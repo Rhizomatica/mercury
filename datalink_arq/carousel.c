@@ -59,7 +59,7 @@
 #define CTL_SEG_K1       127
 #define INLINE_CTL       (SEG_HDR + CAR_POLL_BYTES)
 #define FB_UNSEEN        255
-#define SLOW_RUNG_FRAMES 3        /* round cap on the two slowest rungs      */
+#define SLOW_RUNG_FRAMES 3        /* round cap on MFSK16 and DATAC4          */
 /* With both sides holding data, a turn ends at the first round after
  * TURN_QUANTUM_MS that completed a block, and at TURN_CAP_MS at the latest.
  * Applications time out on silence: NNCP drops a peer after two 60 s ping
@@ -146,18 +146,36 @@ static uint32_t nav_lead(const car_t *c) { (void)c; return 0; }
 
 enum { M_DATA, M_POLL, M_REQ, M_STATUS };
 
-/* MFSK is the floor: ~10 dB below DATAC15, at 3 pieces per 13.5 s frame. */
+/* MFSK is the floor, at 3 pieces per 13.5 s frame; above it the same frame
+ * in two tone streams, 8.7 s (modem_mfsk.h), in DATAC15's place, which the
+ * floor beats below it.  Through codec2's ch and Watterson channels at equal
+ * peak MFSK16 also beat DATAC4 -- but not on air: at 5 % power on the bench
+ * DATAC4 delivered 58 frames at -4.8 dB, MFSK16 6 of 10 at -5.3 and lost
+ * whole rounds, and a ladder without DATAC4 fell to the floor (calls 535-551
+ * s against 834-879).  So both stay, and the receiver's measured goodput
+ * chooses. */
 static const int LADDER[CAR_NLEVELS] = {
     MERCURY_MODE_MFSK,
-    FREEDV_MODE_DATAC15, FREEDV_MODE_DATAC4, FREEDV_MODE_DATAC3,
+    MERCURY_MODE_MFSK16, FREEDV_MODE_DATAC4, FREEDV_MODE_DATAC3,
     FREEDV_MODE_DATAC1, FREEDV_MODE_DATAC17, FREEDV_MODE_QAM16C2,
 };
 
+/* From a frame's decode to the end of the keydown it closes: the radio's
+ * tail -- and on MFSK the burst's postamble too, which its decoder does not
+ * wait for (4 symbols of 40 ms).  Without it M took an MFSK16 round as
+ * over 0.16 s early and keyed its pattern ACK 1.31 s after S unkeyed, where
+ * S takes one only from 1.45 s: 8 of 9 patterns ignored on air (5 %). */
+#define MFSK_POSTAMBLE_MS 160
+static uint32_t frame_tail_ms(int lv);
 static uint32_t burst_gap_ms(int lv)
 {
-    return LADDER[lv] == FREEDV_MODE_QAM16C2 || LADDER[lv] == MERCURY_MODE_MFSK ? 200 : 100;
+    return LADDER[lv] == FREEDV_MODE_QAM16C2 || mercury_mode_is_mfsk(LADDER[lv]) ? 200 : 100;
 }
 int car_level_mode(int level) { return LADDER[level]; }
+static uint32_t frame_tail_ms(int lv)
+{
+    return TAIL_MS + (mercury_mode_is_mfsk(LADDER[lv]) ? MFSK_POSTAMBLE_MS : 0);
+}
 static bool has_data(const car_t *c);
 static bool peer_direction_done(const car_t *c);
 /* Nothing in flight either way.  The callee: no data of its own, and the
@@ -846,7 +864,7 @@ static float level_min_db(int lv)
     case FREEDV_MODE_DATAC1:  return ARQ_SNR_MIN_DATAC1_DB;
     case FREEDV_MODE_DATAC3:  return ARQ_SNR_MIN_DATAC3_DB;
     case FREEDV_MODE_DATAC4:  return ARQ_SNR_MIN_DATAC4_DB;
-    case FREEDV_MODE_DATAC15: return ARQ_SNR_MIN_DATAC15_DB;
+    case MERCURY_MODE_MFSK16: return ARQ_SNR_MIN_MFSK16_DB;
     default:                  return -99.0f;          /* the MFSK floor */
     }
 }
@@ -933,7 +951,7 @@ void car_rung_geometry(int lv, bool floor_patterns, int *bytes_per_frame, int *f
 static int keydown_cap(int lv)
 {
     int cap = (int)(MAX_KEYDOWN_MS / level_air(lv));
-    bool slow = LADDER[lv] == FREEDV_MODE_DATAC15 || LADDER[lv] == FREEDV_MODE_DATAC4;
+    bool slow = LADDER[lv] == MERCURY_MODE_MFSK16 || LADDER[lv] == FREEDV_MODE_DATAC4;
     if (slow && cap > SLOW_RUNG_FRAMES) cap = SLOW_RUNG_FRAMES;
     return cap > 15 ? 15 : cap < 1 ? 1 : cap;                          /* 4 bits */
 }
@@ -1294,7 +1312,7 @@ static uint32_t r_cap_ms(void)
         if (s_round_ms(lv, keydown_cap(lv)) > m) m = s_round_ms(lv, keydown_cap(lv));
     return m;
 }
-static uint32_t d_of_mode(int mode) { return mode == MERCURY_MODE_MFSK ? D_MFSK_MS : D_OFDM_MS; }
+static uint32_t d_of_mode(int mode) { return mercury_mode_is_mfsk(mode) ? D_MFSK_MS : D_OFDM_MS; }
 /* The slot period of an anchor S learned up to d late, whose rounds are at
  * most r: the round, then room for M to hear it end (however late it began)
  * and answer with control, guarded.  A continuation slot opens only after
@@ -1809,6 +1827,13 @@ static void m_try(car_t *c, uint64_t now)
         arm(c, CAR_T_M, c->plan_not_before);
         return;
     }
+    /* A pattern is taken only TURN_G_MS and its own air after S's keydown
+     * (pattern_in_time): M heard that end, so it waits that long.  A frame
+     * says what it answers and needs no such wait. */
+    if ((c->plan == KD_PATTERN_ACK || c->plan == KD_PATTERN_BREAK) && now < c->peer_end_ms + TURN_G_MS) {
+        arm(c, CAR_T_M, c->peer_end_ms + TURN_G_MS);
+        return;
+    }
     uint64_t at = m_free_from(c, now, plan_len(c));
     /* My round does not fit before S's next slot: S may be streaming on in
      * its continuation slots, and my round would wait them all out (300 s at
@@ -2064,6 +2089,7 @@ static void m_timer(car_t *c, uint64_t now)
 static void m_heard_end(car_t *c, uint64_t te, int mk, bool pat, int slot)
 {
     c->m_heard = true;
+    c->peer_end_ms = te;
     m_close_slot(c, te, mk, pat, slot);
     if (c->m_state != MS_IDLE) arm(c, CAR_T_M, te);
 }
@@ -2074,7 +2100,7 @@ static void m_on_data(car_t *c, uint64_t now, const msg_t *m, int lv)
     c->traffic = true;
     c->peer_data_ms = now;
     rx_frame(c, m, lv, m->poll_id == c->poll_id);
-    m_heard_end(c, now + (uint64_t)m->left * (level_air(lv) + burst_gap_ms(lv)) + TAIL_MS,
+    m_heard_end(c, now + (uint64_t)m->left * (level_air(lv) + burst_gap_ms(lv)) + frame_tail_ms(lv),
                 (int)m->poll_id, m->pat_anchor, m->slot);
 }
 
@@ -2251,7 +2277,7 @@ static void s_on_data(car_t *c, uint64_t now, const msg_t *m, int lv)
     rx_frame(c, m, lv, true);
     c->s_prev_lv = lv;
     s_anchor(c, ANC_ROUND, (uint8_t)m->poll_id,
-             now + (uint64_t)m->left * (level_air(lv) + burst_gap_ms(lv)) + TAIL_MS, d_of_mode(LADDER[lv]), 0, 0);
+             now + (uint64_t)m->left * (level_air(lv) + burst_gap_ms(lv)) + frame_tail_ms(lv), d_of_mode(LADDER[lv]), 0, 0);
 }
 
 static void s_on_ctl(car_t *c, uint64_t now, const msg_t *m, int mode)
@@ -2315,11 +2341,9 @@ static const struct { int mode; float min_db; } START[] = {
     { FREEDV_MODE_QAM16C2, ARQ_SNR_MIN_QAM16C2_DB }, { FREEDV_MODE_DATAC17, ARQ_SNR_MIN_DATAC17_DB },
     { FREEDV_MODE_DATAC1,  ARQ_SNR_MIN_DATAC1_DB },
     { FREEDV_MODE_DATAC3,  ARQ_SNR_MIN_DATAC3_DB - ARQ_SNR_HYST_DB + DATAC3_START_MARGIN_DB },
-    /* DATAC4 is slower than DATAC15 here: never a start.  Below -3 dB the
-     * floor starts faster than DATAC15 (7-9 % in the sim at -7..-5 dB, fixed
-     * and fading); above it DATAC15 still wins in fading (a DATAC4 start cost
-     * 9 % there at 0 dB). */
-    { FREEDV_MODE_DATAC15, -3.0f - ARQ_SNR_HYST_DB },
+    /* Below -3 dB the floor starts, above it MFSK16, as DATAC15 did in its
+     * place. */
+    { MERCURY_MODE_MFSK16, -3.0f - ARQ_SNR_HYST_DB },
 };
 
 int car_start_level(float snr_db)

@@ -91,6 +91,7 @@ typedef struct {
 
     double lpf[MFSK_LPF_TAPS];
     double w;                       /* carrier radians/sample */
+    double txamp;                   /* TX amplitude: MFSK_TXAMP over sqrt(streams) */
     long tx_n;                      /* TX carrier phase counter (per burst) */
     double complex tx_tail[MFSK_XFADE]; /* last symbol's faded-out suffix */
     int      tx_have_tail;          /* ...to add to the next symbol's head */
@@ -178,7 +179,16 @@ static void *mfsk_be_open(int mode)
     if (!h) return NULL;
 
     h->mode = mode;
-    mfsk_init(&h->m, MFSK_M, MFSK_NCAR, 1);
+    /* Tones per stream and streams: MFSK_M x 1, or two streams of 16 tones
+     * in the same 32 bins (MERCURY_MODE_MFSK16).  Several tones at once add
+     * at their peaks: at the floor's amplitude two streams peaked 3 dB over
+     * every other mode and four 6 dB, into int16's clip and the radio's
+     * ALC.  A transmitter is limited by its peak, so each stream gets
+     * 1/sqrt(streams) of it and the peak stays the floor's. */
+    int tones = MFSK_M, streams = 1;
+    if (mode == MERCURY_MODE_MFSK16) { tones = 16; streams = 2; }
+    mfsk_init(&h->m, tones, MFSK_NCAR, streams);
+    h->txamp = MFSK_TXAMP / sqrt((double)streams);
     ofdm_frame_init(&h->o, MFSK_NFFT, MFSK_NCAR, MFSK_GI, 0);
     /* Code rate.  All five ported codes share N=1600, so the burst is 13.5 s
      * whatever the rate -- a lower rate costs payload, not airtime.  Measured
@@ -342,7 +352,7 @@ static uint64_t mfsk_now_ms(void)
  * *tx_n is the carrier phase counter (absolute sample index in the burst);
  * tail/have_tail carry the pending fade-out across calls, so preamble, data
  * and postamble join as smoothly as symbols do. */
-static int mfsk_synth(const ofdm_frame_t *o, double w, int nofdm, const mfsk_cplx *syms, int nsym,
+static int mfsk_synth(const ofdm_frame_t *o, double w, double amp, int nofdm, const mfsk_cplx *syms, int nsym,
                       int16_t *out, long *tx_n, double complex *tail, int *have_tail, int last)
 {
     static double rise[MFSK_XFADE];
@@ -373,7 +383,7 @@ static int mfsk_synth(const ofdm_frame_t *o, double w, int nofdm, const mfsk_cpl
         for (int n = 0; n < nofdm; n++)
         {
             double ph = w * (double)(*tx_n)++;
-            double v = MFSK_TXAMP * (creal(cp[n]) * cos(ph) + cimag(cp[n]) * sin(ph));
+            double v = amp * (creal(cp[n]) * cos(ph) + cimag(cp[n]) * sin(ph));
             if (v > 32767.0) v = 32767.0; else if (v < -32768.0) v = -32768.0;
             out[written++] = (int16_t)lrint(v);
         }
@@ -383,7 +393,7 @@ static int mfsk_synth(const ofdm_frame_t *o, double w, int nofdm, const mfsk_cpl
 
 static int mfsk_emit(mfsk_modem_t *h, const mfsk_cplx *syms, int nsym, int16_t *out, int last)
 {
-    return mfsk_synth(&h->o, h->w, h->Nofdm, syms, nsym, out, &h->tx_n,
+    return mfsk_synth(&h->o, h->w, h->txamp, h->Nofdm, syms, nsym, out, &h->tx_n,
                       h->tx_tail, &h->tx_have_tail, last);
 }
 
@@ -1102,7 +1112,7 @@ int mfsk_pattern_tx(int16_t *out, int pattern_kind)
     long tx_n = 0;
     double complex tail[MFSK_XFADE];
     int have_tail = 0;
-    int written = mfsk_synth(&g_pat_o, g_pat_w, g_pat_nofdm, bins, ns, out, &tx_n, tail, &have_tail, 1);
+    int written = mfsk_synth(&g_pat_o, g_pat_w, MFSK_TXAMP, g_pat_nofdm, bins, ns, out, &tx_n, tail, &have_tail, 1);
     free(bins);
     return written;
 }
@@ -1121,7 +1131,7 @@ int mfsk_nav_tx(int16_t *out, int cls)
     long tx_n = 0;
     double complex tail[MFSK_XFADE];
     int have_tail = 0;
-    int written = mfsk_synth(&g_pat_o, g_pat_w, g_pat_nofdm, bins, ns, out, &tx_n, tail, &have_tail, 1);
+    int written = mfsk_synth(&g_pat_o, g_pat_w, MFSK_TXAMP, g_pat_nofdm, bins, ns, out, &tx_n, tail, &have_tail, 1);
     free(bins);
     return written;
 }

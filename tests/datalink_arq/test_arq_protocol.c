@@ -13,6 +13,7 @@
 #include <stdatomic.h>
 
 #include "unity.h"
+#include "modem_mfsk.h"
 #include "arq_protocol.h"
 #include "arq.h"
 #include "framer.h"
@@ -313,12 +314,21 @@ void test_mode_timing_fast_modes(void)
     TEST_ASSERT_NOT_NULL(tq);
     TEST_ASSERT_EQUAL(1213, tq->payload_bytes);
 
-    /* Frame sizes must stay pairwise unique across the whole table — the
-     * RX path infers the peer's TX mode from frame size alone. */
+    /* Frame sizes must stay pairwise unique across the table -- the old
+     * plane's RX path infers the peer's TX mode from frame size alone --
+     * except within the MFSK family, which only the carousel sends (it knows
+     * the mode from its decoder).  There the first row, MFSK, is what the
+     * inference finds. */
     for (int i = 0; i < arq_mode_table_count; i++)
         for (int j = i + 1; j < arq_mode_table_count; j++)
-            TEST_ASSERT_NOT_EQUAL(arq_mode_table[i].payload_bytes,
-                                  arq_mode_table[j].payload_bytes);
+            if (!(mercury_mode_is_mfsk(arq_mode_table[i].freedv_mode) &&
+                  mercury_mode_is_mfsk(arq_mode_table[j].freedv_mode)))
+                TEST_ASSERT_NOT_EQUAL(arq_mode_table[i].payload_bytes,
+                                      arq_mode_table[j].payload_bytes);
+    int first_mfsk = -1;
+    for (int i = 0; i < arq_mode_table_count && first_mfsk < 0; i++)
+        if (arq_mode_table[i].payload_bytes == 98) first_mfsk = arq_mode_table[i].freedv_mode;
+    TEST_ASSERT_EQUAL(MERCURY_MODE_MFSK, first_mfsk);
 }
 
 void test_mode_timing_invalid(void)
