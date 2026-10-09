@@ -20,6 +20,7 @@
  * (SSE2 on x86-64, NEON on arm64/armv7-a, scalar fallback elsewhere).
  */
 #include <math.h>
+#include <pthread.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
@@ -146,16 +147,18 @@ float ldpc_ctx_policy_scale(const char *name)
 #define PHI_B_N 1920
 #define PHI_B_STEP 128.0f
 static float phi_a[PHI_A_N + 1], phi_b[PHI_B_N + 1];
-static int phi_tab_ready = 0;
+static pthread_once_t phi_tab_once = PTHREAD_ONCE_INIT;
 
-static void phi_tab_init(void)
+static void phi_tab_fill(void)
 {
-    if (phi_tab_ready) return;
     phi_a[0] = 10.0f;
     for (int i = 1; i <= PHI_A_N; i++) phi_a[i] = (float) (-log(tanh(((double) i / PHI_A_STEP) / 2.0)));
     for (int i = 0; i <= PHI_B_N; i++) phi_b[i] = (float) (-log(tanh((1.0 + (double) i / PHI_B_STEP) / 2.0)));
-    phi_tab_ready = 1;
 }
+
+/* Contexts are created from whichever thread opens a mode; the shared tables
+ * are filled exactly once, before any reader, by pthread_once. */
+static void phi_tab_init(void) { pthread_once(&phi_tab_once, phi_tab_fill); }
 
 static inline float phi_t(float x)
 {

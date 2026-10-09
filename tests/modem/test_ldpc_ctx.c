@@ -205,6 +205,38 @@ static void test_struct_deadline_and_stats(void)
     TEST_ASSERT_EQUAL_INT(NPAR, pcc);
 }
 
+/* Contexts are created from whichever thread opens a mode; the shared phi
+ * tables must be filled exactly once (pthread_once).  Eight threads create a
+ * context and decode the shipped vector at once; every result must match the
+ * single-threaded one.  TSan in CI is the arbiter of the race itself. */
+#include <pthread.h>
+#define NTHR 8
+static uint8_t thr_out[NTHR][768];
+static int thr_it[NTHR];
+static void *thr_decode(void *arg)
+{
+    int k = (int)(intptr_t)arg;
+    struct LDPC l = ldpc; l.ctx = NULL;          /* the shipped code, set up by setUp() */
+    ldpc_ctx_t *c = ldpc_ctx_create(&l);
+    ldpc_ctx_set_alg(c, LDPC_ALG_SPT, 0.0f);
+    ldpc_stats_t st;
+    float in[768]; memcpy(in, H_256_768_22_input, sizeof in);   /* the decoder consumes its input */
+    thr_it[k] = ldpc_ctx_decode(c, in, thr_out[k], 50, 0, &st);
+    ldpc_ctx_destroy(c);
+    return NULL;
+}
+
+void test_contexts_can_be_created_concurrently(void)
+{
+    pthread_t t[NTHR];
+    for (int k = 0; k < NTHR; k++) TEST_ASSERT_EQUAL_INT(0, pthread_create(&t[k], NULL, thr_decode, (void *)(intptr_t)k));
+    for (int k = 0; k < NTHR; k++) pthread_join(t[k], NULL);
+    for (int k = 1; k < NTHR; k++) {
+        TEST_ASSERT_EQUAL_INT(thr_it[0], thr_it[k]);
+        TEST_ASSERT_EQUAL_MEMORY(thr_out[0], thr_out[k], ldpc.CodeLength);
+    }
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -215,5 +247,6 @@ int main(void)
     RUN_TEST(test_noiseless_codeword_one_iteration);
     RUN_TEST(test_past_deadline_stops_after_one_iteration);
     RUN_TEST(test_wrapper_creates_context_and_matches_legacy);
+    RUN_TEST(test_contexts_can_be_created_concurrently);
     return UNITY_END();
 }
