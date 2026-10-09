@@ -92,3 +92,12 @@ radio_io/hidapi-w64/*.o
 utils/shortframe_sweep
 utils/hail_suffix_sweep
 utils/mfsk_puncture_sweep
+
+
+# golden-test drivers and generated fixtures
+utils/golden/ldpc_export
+utils/golden/ldpc_bench
+utils/golden/llr_bench
+tests/matlab/fixtures/
+tests/matlab/results/
+utils/golden/ldpc_bench_o3
