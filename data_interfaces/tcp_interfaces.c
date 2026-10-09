@@ -395,20 +395,24 @@ static void execute_control_command(char *buffer)
         return;
     }
 
-    if (!strncmp(buffer, "MONITOR", strlen("MONITOR")))
+    /* Match "MONITOR" exactly, or "MONITOR <arg>" -- not any command whose
+     * name merely starts with it ("MONITORING" must not be caught here). */
+    if (!strncmp(buffer, "MONITOR", 7) && (buffer[7] == '\0' || buffer[7] == ' '))
     {
         /* VARA-style passive monitor: decode every mode and report each frame.
          * MONITOR ON / MONITOR OFF toggle it; MONITOR alone reports the state.
          * The mode is read-only with respect to the link -- the monitor
          * decoders never feed the ARQ FSM, so nothing is ACKed or keyed. */
-        if (sscanf(buffer, "MONITOR %15s", temp) == 1)
+        char arg[16] = {0};
+        if (sscanf(buffer + 7, " %15s", arg) == 1)
         {
-            if (temp[1] == 'N' || temp[1] == 'n')
+            /* Case-insensitive whole-word match, not the second letter. */
+            if (!strcasecmp(arg, "ON"))
             {
                 modem_set_monitor_enabled(true);
                 tcp_write(CTL_TCP_PORT, (uint8_t *)"OK\r", 3);
             }
-            else if (temp[1] == 'F' || temp[1] == 'f')
+            else if (!strcasecmp(arg, "OFF"))
             {
                 modem_set_monitor_enabled(false);
                 tcp_write(CTL_TCP_PORT, (uint8_t *)"OK\r", 3);
@@ -420,9 +424,9 @@ static void execute_control_command(char *buffer)
         }
         else
         {
-            tcp_write(CTL_TCP_PORT,
-                      (uint8_t *)(modem_get_monitor_enabled() ? "MONITOR ON\r" : "MONITOR OFF\r"),
-                      modem_get_monitor_enabled() ? 11 : 12);
+            bool on = modem_get_monitor_enabled();
+            tcp_write(CTL_TCP_PORT, (uint8_t *)(on ? "MONITOR ON\r" : "MONITOR OFF\r"),
+                      on ? 11 : 12);
         }
         return;
     }
@@ -747,6 +751,10 @@ static void close_ctl_client(int *ctl_client_fd, int *data_client_fd, bool notif
     cli_ctl_sockfd = -1;
     net_set_status(CTL_TCP_PORT, NET_LISTENING);
     atomic_store_explicit(&tnc_last_buffer_sent, -1, memory_order_relaxed);
+    /* The monitor runs nine extra decoders; a host that crashed or exited
+     * must not leave them spinning until the modem restarts.  Clear it on the
+     * same disconnect that tears down the rest of the host's state. */
+    modem_set_monitor_enabled(false);
     HLOGI("tcp-ctl", "Control client disconnected");
 
     if (notify_arq)

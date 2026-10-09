@@ -68,7 +68,8 @@ TEST_BINS = test_ring_buffer test_arq_protocol test_arq_timing test_arq_fsm \
             test_ofdm_acq test_tx_bpf test_crc_seed test_ui_status test_ui_devices test_ui_ptt_persist test_tx_pacing test_radio_port \
             test_radio_io_frequency test_mfsk test_rs_erasure test_carousel test_carousel_sim test_car_explore \
             test_mfsk_harq test_mfsk_modem test_pattern_ack_detection \
-			test_message_store test_ui_history test_ws_protocol
+            test_message_store test_ui_history test_ws_protocol \
+            test_monitor_frame
 
 .PHONY: all test clean
 
@@ -106,6 +107,13 @@ test_pcm24: audioio/test_pcm24.c $(UNITY_SRC)
 # ARQ protocol tests (frame encode/decode, utilities)
 test_arq_protocol: datalink_arq/test_arq_protocol.c $(UNITY_SRC) $(ARQ_STUBS) \
                    ../common/virtual_clock.c ../datalink_arq/arq_protocol.c ../datalink_arq/arith.c
+	$(CC) $(CFLAGS) -I../modem/freedv -o $@ $(filter %.c %.a %.o,$^) $(LDFLAGS)
+
+# Monitor-mode frame reporter: a real CALL/CQ/broadcast frame in, the MONITOR
+# line out.  Shares the protocol/framer stubs with the ARQ tests above.
+test_monitor_frame: modem/test_monitor_frame.c $(UNITY_SRC) $(ARQ_STUBS) \
+                    ../common/virtual_clock.c ../datalink_arq/arq_protocol.c ../datalink_arq/arith.c \
+                    ../modem/monitor_frame.c
 	$(CC) $(CFLAGS) -I../modem/freedv -o $@ $(filter %.c %.a %.o,$^) $(LDFLAGS)
 
 # OLLA control-loop test (closed-loop gear-shift convergence)

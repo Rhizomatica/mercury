@@ -393,11 +393,32 @@ port (see [Asynchronous Responses](#asynchronous-responses)).
 Monitor mode is **read-only**.  The monitor decoders are separate codec
 instances that never feed the ARQ state machine, so nothing is acknowledged,
 no connect is auto-accepted, and the transmitter is never keyed on account of
-what is heard.  A station in monitor mode can sit on a frequency and watch two
-other stations exchange a file, or catch CQ/broadcast traffic, without ever
-answering.  The normal ARQ and broadcast planes keep running underneath, so
-`LISTEN ON` / `CONNECT` still work exactly as before — the monitor is purely
-additive.
+what is heard.  The normal ARQ and broadcast planes keep running underneath,
+so `LISTEN ON` / `CONNECT` still work exactly as before — the monitor is
+purely additive.
+
+**What it can and cannot see.**  A monitor station hears frames that carry a
+plain CRC: `CALL`/`ACCEPT` connect exchanges, `CQ` frames, `DISCONNECT` and the
+other plain control frames, broadcast traffic, and **stop-and-wait** data
+sessions (a peer running 1.9.x, or one built with `MERCURY_CAROUSEL=0`).  It
+does **not** yet decode the **carousel** data plane — the default session type
+on `mercuryv2` — because every in-session carousel frame carries the session's
+CRC seed, which the monitor's decoders do not apply, so those frames fail CRC
+and are not reported.  Watching a pair of `mercuryv2` stations, the monitor
+therefore shows the connect, the disconnect and any CQ/broadcast, but nothing
+of the data exchange in between.  Following carousel sessions (recovering the
+seed from the `CALL`/`ACCEPT` and decoding the carousel framing) is planned as
+a follow-up.
+
+**CPU cost.**  Monitor mode trades CPU for coverage: each of the nine decoders
+is a full OFDM/MFSK demodulator.  Measured idle on x86 through the FIFO
+backend, `MONITOR ON` takes roughly four times the CPU of `MONITOR OFF`
+(~12 % of a core → ~51–56 %), and returns to ~12 % on `MONITOR OFF`.  By the
+usual Pi 4/x86 ratio that is on the order of 1.3–1.5 Raspberry Pi 4 cores, so
+a small single-board station should enable it deliberately rather than leave it
+running.  Two of the nine decoders (DATAC16 and MFSK) duplicate decoders the
+modem already runs while idle; reusing their output would claw back part of
+that cost and is a possible optimisation.
 
 ---
 
@@ -506,7 +527,7 @@ advertised inside that CQ frame (`500`, `2300`, or `2750`).
 Sent once per frame that monitor mode decoded, on the control port:
 
 ```
-MONITOR DATAC16 CALL FROM=K7EK TO=VK2XYZ BW=2300 SID=42 SNR=18.1\r
+MONITOR DATAC16 CALL FROM=K7EK BW=2300 SID=42 SNR=18.1\r
 MONITOR DATAC17 DATA SID=42 SEQ=5 ACK=4 LEN=1180 HEX=... SNR=18.4\r
 MONITOR DATAC16 ACK TYPE=ACK SID=42 SEQ=5 ACK=5 SNR=18.4\r
 ```
@@ -519,7 +540,8 @@ names the frame: `CALL`, `ACCEPT`, `CQ`, a control subtype (`ACK`,
 
 `<detail>` carries what the monitor could recover:
 
-- `CALL`/`ACCEPT`: `FROM=<src> TO=<dst> BW=<bw> SID=<n>`
+- `CALL`/`ACCEPT`: `FROM=<src> BW=<bw> SID=<n>` — the destination is not on the
+  wire as a string, only its CRC, so a passive monitor cannot name it
 - `CQ`: `FROM=<src> BW=<bw>`
 - control frames: `TYPE=<subtype> SID=<n> SEQ=<n> ACK=<n>`
 - `DATA`: `SID=<n> SEQ=<n> ACK=<n> LEN=<n>` plus a `HEX=` prefix of the first
