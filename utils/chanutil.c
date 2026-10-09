@@ -26,6 +26,11 @@ int chanutil_preset_from_name(const char *s)
     if (!strcmp(s, "mpg")  || !strcmp(s, "MPG"))  return CHAN_MPG;
     if (!strcmp(s, "mpd")  || !strcmp(s, "MPD"))  return CHAN_MPD;
     if (!strcmp(s, "awgnc"))                      return CHAN_AWGN_C;
+    {
+        int n; const watterson_preset_t *all = watterson_presets(&n);
+        for (int i = 0; i < n; i++)
+            if (!strcmp(s, all[i].name)) return CHAN_STD_BASE + i;
+    }
     return -1;
 }
 
@@ -38,7 +43,12 @@ const char *chanutil_preset_name(int preset)
     case CHAN_MPG:    return "MPG (2 path, 0.5 ms, 0.1 Hz)";
     case CHAN_MPD:    return "MPD (2 path, 2.0 ms, 2.0 Hz)";
     case CHAN_AWGN_C: return "AWGN via the complex pipeline (calibration)";
-    default:          return "?";
+    default:
+        {
+            int n; const watterson_preset_t *all = watterson_presets(&n);
+            if (preset >= CHAN_STD_BASE && preset < CHAN_STD_BASE + n) return all[preset - CHAN_STD_BASE].title;
+            return "?";
+        }
     }
 }
 
@@ -52,19 +62,27 @@ static int add_paths(watterson_t *w, int preset)
          * the AWGN and faded rows are produced by identical machinery. */
         return watterson_add_path(w, 0.0f, 0.0f, 0.0f, 1.0f) < 0 ? -1 : 0;
     case CHAN_MPG:
+        watterson_set_spectrum(w, WATTERSON_SPECTRUM_LEGACY);
         if (watterson_add_path(w, 0.0f, 0.1f, 0.0f, 0.7f) < 0) return -1;
         if (watterson_add_path(w, 0.5f, 0.1f, 0.0f, 0.7f) < 0) return -1;
         return 0;
     case CHAN_MPP:
+        watterson_set_spectrum(w, WATTERSON_SPECTRUM_LEGACY);
         if (watterson_add_path(w, 0.0f, 1.0f, 0.0f, 0.7f) < 0) return -1;
         if (watterson_add_path(w, 1.0f, 1.0f, 0.0f, 0.7f) < 0) return -1;
         return 0;
     case CHAN_MPD:
+        watterson_set_spectrum(w, WATTERSON_SPECTRUM_LEGACY);
         if (watterson_add_path(w, 0.0f, 2.0f, 0.0f, 0.7f) < 0) return -1;
         if (watterson_add_path(w, 2.0f, 2.0f, 0.0f, 0.7f) < 0) return -1;
         return 0;
     default:
-        return -1;
+        {
+            int n; const watterson_preset_t *all = watterson_presets(&n);
+            if (preset >= CHAN_STD_BASE && preset < CHAN_STD_BASE + n)
+                return watterson_apply_preset(w, &all[preset - CHAN_STD_BASE]);
+            return -1;
+        }
     }
 }
 

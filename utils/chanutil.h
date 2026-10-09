@@ -28,7 +28,10 @@ typedef enum {
      * Hilbert -> Watterson -> Re{} pipeline as the fading presets but with no
      * fading.  Compare against a harness's own direct real-domain AWGN: any
      * difference is this pipeline's calibration error, not the channel's. */
-    CHAN_AWGN_C
+    CHAN_AWGN_C,
+    /* CHAN_STD_BASE + i: the i-th entry of watterson_presets() (standard and
+     * legacy named presets; chanutil_preset_from_name accepts their names) */
+    CHAN_STD_BASE = 100
 } chan_preset_t;
 
 int chanutil_preset_from_name(const char *s);   /* -1 if unknown */

@@ -60,12 +60,22 @@ static const char *USAGE =
     "  Custom path definition (can be repeated for multiple paths):\n"
     "  --path delay_ms,doppler_hz,freq_hz,gain\n"
     "                         e.g. --path 2.0,1.0,0.0,0.5\n"
+    "                         doppler_hz is the ITU-R Doppler spread (2 sigma of the\n"
+    "                         Gaussian Doppler spectrum); with --legacy before it, the\n"
+    "                         cutoff of the pre-1.9.18 Butterworth tap filter instead\n"
+    "\n"
+    "  Standard presets (Gaussian Doppler spectrum, two equal-power paths):\n"
+    "  --preset NAME | --NAME NAME = ccir-good | ccir-moderate | ccir-poor | ccir-flutter\n"
+    "                         itur-lq | itur-lm | itur-ld | itur-mq | itur-mm | itur-md | itur-mdv\n"
+    "                         itur-hq | itur-hm | itur-hd   (--preset ? lists them)\n"
+    "  Legacy presets (Butterworth taps; the numbers in docs/MODES.md):\n"
+    "  --good --moderate --poor --flutter --mpg --mpp --mpd\n"
     "\n"
     "  --help                 Show this message\n"
     "\n"
     "Examples:\n"
     "  Basic AWGN only:  %s in.raw out.raw --No -95\n"
-    "  CCIR Poor:        %s in.raw out.raw --poor --No -95\n"
+    "  CCIR Poor:        %s in.raw out.raw --ccir-poor --No -95\n"
     "  Custom 3 paths:   %s in.raw out.raw --path 0,0.5,0,0.4 --path 2,0.5,0,0.3 --path 4,1.0,0,0.2 --No -95\n";
 
 static void helpmsg(const char *name)
@@ -140,11 +150,24 @@ int main(int argc, char *argv[])
             {"ssbfilt",     required_argument, 0, 's'},
             {"help",        no_argument,       0, 'h'},
             {"No",          required_argument, 0, 'n'},
-            {"good",        no_argument,       0, '1'},
-            {"moderate",    no_argument,       0, '2'},
-            {"poor",        no_argument,       0, '3'},
-            {"flutter",     no_argument,       0, '4'},
+            /* the pre-1.9.18 presets, now entries of the preset table with the
+             * legacy (Butterworth) spectrum so their results reproduce */
+            {"good",        no_argument,       0, 'p'},
+            {"moderate",    no_argument,       0, 'p'},
+            {"poor",        no_argument,       0, 'p'},
+            {"flutter",     no_argument,       0, 'p'},
             {"path",        required_argument, 0, 'P'},
+            {"preset",      required_argument, 0, 'p'},
+            {"legacy",      no_argument,       0, 'L'},
+            /* every named preset is also a long option, so a bench can pass
+             * MERCURY_CH_FADING=ccir-poor as --ccir-poor */
+            {"ccir-good", no_argument, 0, 'p'}, {"ccir-moderate", no_argument, 0, 'p'},
+            {"ccir-poor", no_argument, 0, 'p'}, {"ccir-flutter",  no_argument, 0, 'p'},
+            {"itur-lq", no_argument, 0, 'p'}, {"itur-lm", no_argument, 0, 'p'}, {"itur-ld", no_argument, 0, 'p'},
+            {"itur-mq", no_argument, 0, 'p'}, {"itur-mm", no_argument, 0, 'p'}, {"itur-md", no_argument, 0, 'p'},
+            {"itur-mdv", no_argument, 0, 'p'},
+            {"itur-hq", no_argument, 0, 'p'}, {"itur-hm", no_argument, 0, 'p'}, {"itur-hd", no_argument, 0, 'p'},
+            {"mpg", no_argument, 0, 'p'}, {"mpp", no_argument, 0, 'p'}, {"mpd", no_argument, 0, 'p'},
             {0, 0, 0, 0}
         };
 
@@ -173,32 +196,33 @@ int main(int argc, char *argv[])
             case 's':
                 ssbfilt_en = atoi(optarg);
                 break;
-            case '1':
-                /* ITU-R Good: 1 path, 0.1 Hz Doppler, 0.5 ms delay */
-                watterson_init(&watterson, Fs);
-                watterson_add_path(&watterson, 0.0f, 0.1f, 0.0f, 0.8f);
-                watterson_configured = 1;
+            case 'p':
+                {
+                    const char *pname = optarg ? optarg : long_opts[opt_idx].name;
+                    const watterson_preset_t *pr = watterson_preset_find(pname);
+                    if (!pr)
+                    {
+                        fprintf(stderr, "Unknown preset '%s'. Known presets:\n", pname);
+                        int n; const watterson_preset_t *all = watterson_presets(&n);
+                        for (int q = 0; q < n; q++) fprintf(stderr, "  %-14s %s\n", all[q].name, all[q].title);
+                        return 1;
+                    }
+                    watterson_init(&watterson, Fs);
+                    if (watterson_apply_preset(&watterson, pr) < 0)
+                    {
+                        fprintf(stderr, "preset '%s' failed\n", pname);
+                        return 1;
+                    }
+                    watterson_configured = 1;
+                }
                 break;
-            case '2':
-                /* ITU-R Moderate: 2 paths, 1.0 Hz Doppler, 1 ms delay */
-                watterson_init(&watterson, Fs);
-                watterson_add_path(&watterson, 0.0f, 1.0f, 0.0f, 0.7f);
-                watterson_add_path(&watterson, 1.0f, 1.0f, 0.0f, 0.7f);
-                watterson_configured = 1;
-                break;
-            case '3':
-                /* ITU-R Poor (CCIR Poor): 2 paths, 1.0 Hz Doppler, 2 ms delay */
-                watterson_init(&watterson, Fs);
-                watterson_add_path(&watterson, 0.0f, 1.0f, 0.0f, 0.7f);
-                watterson_add_path(&watterson, 2.0f, 1.0f, 0.0f, 0.7f);
-                watterson_configured = 1;
-                break;
-            case '4':
-                /* ITU-R Flutter: 2 paths, 10.0 Hz Doppler, 2 ms delay */
-                watterson_init(&watterson, Fs);
-                watterson_add_path(&watterson, 0.0f, 10.0f, 0.0f, 0.7f);
-                watterson_add_path(&watterson, 2.0f, 10.0f, 0.0f, 0.7f);
-                watterson_configured = 1;
+            case 'L':
+                if (!watterson_configured)
+                {
+                    watterson_init(&watterson, Fs);
+                    watterson_configured = 1;
+                }
+                watterson_set_spectrum(&watterson, WATTERSON_SPECTRUM_LEGACY);
                 break;
             case 'P':
                 {

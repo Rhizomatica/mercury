@@ -20,7 +20,9 @@ type ChannelParams struct {
 	No_dBHz      float64
 	FreqOffsetHz float64
 	Gain         float64
-	Fading       string // ch: "mpg"/"mpp"/"mpd"; watterson: "good"/"moderate"/"poor"/"flutter"
+	Fading       string // ch: "mpg"/"mpp"/"mpd"; watterson: a named preset, e.g. "ccir-poor",
+	//                      "itur-mm" (standard, Gaussian Doppler) or the legacy "good"/"moderate"/
+	//                      "poor"/"flutter" (Butterworth taps; see docs/CHANNEL-MODEL.md)
 	Engine       string // "" or "ch" = codec2 ch.c; "watterson" = utils/watterson_test
 
 	// Distinguishes the two directions' fading realisations.
@@ -168,7 +170,7 @@ func startChannelBridge(ctx context.Context, chBin string,
 			rev.No_dBHz = f
 		}
 	}
-	// Per-direction fading profile (watterson engine: good|moderate|poor|flutter;
+	// Per-direction fading profile (watterson engine: ccir-*|itur-* standard presets or the legacy good|moderate|poor|flutter;
 	// "none" disables fading on that direction).  Mimics the OTA: a workable
 	// forward path and a harsher-faded reverse/ACK path.
 	if v := os.Getenv("MERCURY_CH_FADING_FWD"); v != "" {

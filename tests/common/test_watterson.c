@@ -149,6 +149,8 @@ void test_a_pinned_seed_reproduces_a_fixed_realisation(void)
 
     TEST_ASSERT_EQUAL_INT(0, watterson_init(&w, fs));
     watterson_seed(&w, 1);
+    /* the golden hash is the Butterworth-shaped channel this test shipped with */
+    TEST_ASSERT_EQUAL_INT(0, watterson_set_spectrum(&w, WATTERSON_SPECTRUM_LEGACY));
     watterson_add_path(&w, 0.0f, 1.0f, 0.0f, 0.7f);
     watterson_add_path(&w, 2.0f, 1.0f, 0.0f, 0.7f);
     watterson_set_noise(&w, -20.0f);
@@ -178,11 +180,85 @@ void test_a_pinned_seed_reproduces_a_fixed_realisation(void)
     watterson_dispose(&w);
 }
 
+/* The Gaussian spectrum is the standard's model (ITU-R F.1487 / CCIR 520):
+ * for a path with spread D the tap's Doppler power spectrum is Gaussian with
+ * standard deviation D/2, so its autocorrelation is r(tau) = exp(-2 pi^2
+ * (D/2)^2 tau^2) and r at tau = 1/(pi D) is exp(-1/2).  Measure the tap
+ * through a unit DC input (the output IS the tap): unit power, the standard
+ * width, and the same answers at 8 and 48 kHz. */
+static void tap_stats(int fs, float spread_hz, double *power, double *r_half)
+{
+    watterson_t w;
+    TEST_ASSERT_EQUAL_INT(0, watterson_init(&w, fs));
+    watterson_seed(&w, 11);
+    watterson_add_path(&w, 0.0f, spread_hz, 0.0f, 1.0f);
+    int n = fs * 400;                                   /* 400 s: ~200 cycles of a 0.5 Hz process */
+    COMP *s = malloc(sizeof(COMP) * (size_t)n);
+    TEST_ASSERT_NOT_NULL(s);
+    for (int i = 0; i < n; i++) { s[i].real = 1.0f; s[i].imag = 0.0f; }
+    watterson_process(&w, s, n);
+    int lag = (int)lrint((double)fs / (M_PI * (double)spread_hz));
+    double p = 0.0, r = 0.0;
+    for (int i = 0; i < n; i++) p += (double)s[i].real * s[i].real + (double)s[i].imag * s[i].imag;
+    for (int i = 0; i + lag < n; i++) r += (double)s[i].real * s[i + lag].real + (double)s[i].imag * s[i + lag].imag;
+    *power = p / n;
+    *r_half = (r / (n - lag)) / (p / n);
+    free(s);
+    watterson_dispose(&w);
+}
+
+void test_gaussian_tap_has_unit_power_and_the_standard_width(void)
+{
+    double power, r_half;
+    tap_stats(8000, 1.0f, &power, &r_half);
+    TEST_ASSERT_FLOAT_WITHIN(0.15, 1.0, power);                 /* E[|tap|^2] = 1, one realisation */
+    TEST_ASSERT_FLOAT_WITHIN(0.08, exp(-0.5), r_half);          /* Gaussian spectrum of std D/2 */
+}
+
+void test_gaussian_tap_is_the_same_process_at_48_khz(void)
+{
+    double p8, r8, p48, r48;
+    tap_stats(8000, 1.0f, &p8, &r8);
+    tap_stats(48000, 1.0f, &p48, &r48);
+    TEST_ASSERT_FLOAT_WITHIN(0.08, exp(-0.5), r48);
+    TEST_ASSERT_FLOAT_WITHIN(0.25, p8, p48);
+}
+
+/* The delay line delivers exactly the configured delay: two static paths and
+ * an impulse in give an echo at ceil(delay * fs / 1000) samples.  Up to
+ * v1.9.17 it was one sample short; the legacy spectrum keeps that so its
+ * pinned realisation holds, and this test pins both behaviours. */
+static int echo_lag(int spectrum, float delay_ms)
+{
+    watterson_t w;
+    TEST_ASSERT_EQUAL_INT(0, watterson_init(&w, 8000));
+    TEST_ASSERT_EQUAL_INT(0, watterson_set_spectrum(&w, spectrum));
+    watterson_add_path(&w, 0.0f, 0.0f, 0.0f, 0.7071f);
+    watterson_add_path(&w, delay_ms, 0.0f, 0.0f, 0.7071f);
+    COMP s[64]; memset(s, 0, sizeof s); s[0].real = 1.0f;
+    watterson_process(&w, s, 64);
+    int lag = -1;
+    for (int i = 1; i < 64; i++) if (fabsf(s[i].real) > 0.1f) { lag = i; break; }
+    watterson_dispose(&w);
+    return lag;
+}
+
+void test_delay_line_delivers_the_configured_delay(void)
+{
+    TEST_ASSERT_EQUAL_INT(4,  echo_lag(WATTERSON_SPECTRUM_GAUSSIAN, 0.5f));    /* 0.5 ms at 8 kHz */
+    TEST_ASSERT_EQUAL_INT(16, echo_lag(WATTERSON_SPECTRUM_GAUSSIAN, 2.0f));
+    TEST_ASSERT_EQUAL_INT(1,  echo_lag(WATTERSON_SPECTRUM_GAUSSIAN, 0.1f));    /* a one-sample line is a delay of one */
+    TEST_ASSERT_EQUAL_INT(15, echo_lag(WATTERSON_SPECTRUM_LEGACY, 2.0f));      /* the old line, kept for its pinned seed */
+}
+
 int main(void)
 {
     UNITY_BEGIN();
     RUN_TEST(test_fading_is_stable_across_sample_rates);
     RUN_TEST(test_single_static_path_is_rate_invariant);
     RUN_TEST(test_a_pinned_seed_reproduces_a_fixed_realisation);
+    RUN_TEST(test_gaussian_tap_has_unit_power_and_the_standard_width);
+    RUN_TEST(test_gaussian_tap_is_the_same_process_at_48_khz);
+    RUN_TEST(test_delay_line_delivers_the_configured_delay);
     return UNITY_END();
 }

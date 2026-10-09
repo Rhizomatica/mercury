@@ -31,11 +31,41 @@
 /* Maximum number of paths supported */
 #define WATTERSON_MAX_PATHS 4
 
+/* Doppler spectrum of the tap process (watterson_set_spectrum, before the
+ * paths are added).  GAUSSIAN is the model of ITU-R F.1487 / CCIR 520 and the
+ * default; LEGACY is the 2nd-order Butterworth this file shipped with up to
+ * v1.9.17, kept so the numbers in docs/MODES.md reproduce from the same
+ * commands. */
+#define WATTERSON_SPECTRUM_GAUSSIAN 0
+#define WATTERSON_SPECTRUM_LEGACY   1
+
 typedef struct watterson_path
 {
     /* Path configuration */
     float delay_ms;      /* Path delay in milliseconds */
-    float doppler_hz;    /* Doppler spread (σ) in Hz, typically 0.1-2.0 */
+    float doppler_hz;    /* Doppler spread in Hz.  WATTERSON_SPECTRUM_GAUSSIAN
+                          * (the default): the ITU-R F.1487 / CCIR 520 "Doppler
+                          * spread", i.e. twice the standard deviation of the
+                          * Gaussian Doppler power spectrum (0.1 Hz CCIR Good ..
+                          * 30 Hz ITU-R high-latitude disturbed).
+                          * WATTERSON_SPECTRUM_LEGACY: the 3 dB cutoff of the
+                          * 2nd-order Butterworth tap filter, which measures as
+                          * the spectrum's rms width (sigma), so the legacy
+                          * "1 Hz" fades about twice as fast as CCIR Poor. */
+    int   spectrum;      /* WATTERSON_SPECTRUM_* this path was built with */
+
+    /* Gaussian spectrum: the tap is produced at a low rate fs/interp_ratio by
+     * a Gaussian FIR driven by complex white Gaussian noise (impulse response
+     * exp(-4 pi^2 sigma^2 t^2), so |H(f)|^2 is Gaussian with std sigma), then
+     * linearly interpolated to the sample rate.  Linear is enough: the process
+     * has no energy above ~3 sigma and is sampled at 64 x the spread. */
+    float *fir;          /* FIR taps, normalised so E[|tap|^2] = 1           */
+    int    fir_len;
+    COMP  *fir_hist;     /* circular history of the driving noise            */
+    int    fir_idx;
+    int    interp_ratio; /* sample-rate samples per low-rate tap sample      */
+    int    interp_phase; /* 0 .. interp_ratio-1                              */
+    COMP   tap_prev, tap_next;
     float freq_hz;       /* Frequency offset / Doppler shift in Hz */
     float gain;          /* Linear gain factor (0.0 to 1.0) */
     float tap_norm;      /* normalises the Doppler-shaped tap to unit average
@@ -107,6 +137,7 @@ typedef struct watterson
      * on another. */
     mercury_prng_t rng;
     unsigned int   seed;   /* the seed rng was last seeded with */
+    int            spectrum;  /* WATTERSON_SPECTRUM_* applied to paths added next */
 } watterson_t;
 
 /* Initialise the Watterson channel simulator.
@@ -118,6 +149,29 @@ typedef struct watterson
  * Returns 0 on success, -1 on error.
  */
 int watterson_init(watterson_t *w, int sample_rate);
+
+/* Select the Doppler spectrum for paths added after this call (default
+ * WATTERSON_SPECTRUM_GAUSSIAN).  Returns 0, or -1 for an unknown value. */
+int watterson_set_spectrum(watterson_t *w, int spectrum);
+
+/* Named channel presets.  The standard ones (CCIR 520-2 and ITU-R F.1487)
+ * use the Gaussian spectrum with doppler_hz as the standard's Doppler spread;
+ * the legacy ones reproduce the Butterworth-shaped presets this tool shipped
+ * with (watterson_test --good/--moderate/--poor/--flutter, chanutil
+ * mpg/mpp/mpd), whose numbers are the ones in docs/MODES.md. */
+typedef struct watterson_preset
+{
+    const char *name;        /* command-line / MERCURY_CH_FADING name */
+    const char *title;       /* one line for --help and logs */
+    int         spectrum;    /* WATTERSON_SPECTRUM_* */
+    int         npaths;
+    struct { float delay_ms, doppler_hz, gain; } path[WATTERSON_MAX_PATHS];
+} watterson_preset_t;
+
+const watterson_preset_t *watterson_presets(int *count);
+const watterson_preset_t *watterson_preset_find(const char *name);   /* NULL if unknown */
+/* Reset the path list and apply the preset (the AWGN setting is kept). */
+int watterson_apply_preset(watterson_t *w, const watterson_preset_t *preset);
 
 /* Pin the fading realisation to a known seed.
  *
