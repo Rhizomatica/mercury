@@ -65,6 +65,38 @@ Per-code policy and min-sum scale come from a MATLAB sweep against BP@50
 and 0.80 where min-sum still trails BP by 0.1-0.4 dB and `spt` is used).
 `LDPC_ALG=auto|sp|spt|nms|nms16|legacy` or `ldpc_set_default_alg()` select.
 
+**What the voice and 2020 modes run.** Every code the AUTO policy can choose
+for is in the policy table with a measured entry, voice included: the seven
+data-mode codes, the two voice codes HRA_112_112 (700D) and HRA_56_56
+(700E), and the 2020 codes HRAb_396_504, HRAa_1536_512 and
+H_2064_516_sparse all went through the same MATLAB sweep. The short voice
+codes favour the table sum-product (0.1 to 0.2 dB over min-sum at FER 10 %,
+and equal to the legacy loop to 0.00 and −0.02 dB); the 2020 codes are equal
+across algorithms within 0.04 dB and take the fastest. Curves in
+`ldpc-figures/data/`. A code not in the table decodes with `sp`. The legacy
+loop stays reachable process-wide (`LDPC_ALG=legacy`) for A/B until the team
+retires it.
+
+**How a decode is bounded.** A voice frame is bounded by its own frame
+period, not by an iteration count: the voice and 2020 opens set a per-decode
+budget of a quarter of the modem frame period (`LDPC_VOICE_BUDGET_FRAC`:
+700D 160 ms gives 40 ms, 700E 80 ms gives 20 ms), the rx path computes the
+deadline from it before every decode, and the iteration cap is the code
+table's limit on every build. That is hundreds of iterations of those codes
+on a PC, and on an embedded board the bound the old `__EMBEDDED__` cap of 10
+approximated, in the units that matter: a decode that outlasts its frame is
+useless. A data frame's bound is the ARQ's ACK window, which only the host
+knows: Mercury sets it per pooled instance from its timing, and the instance
+then runs to the table's limit under that deadline; an embedded host that
+sets no budget keeps codec2's cap of 10 iterations exactly as before, and
+clearing a budget restores it. FSK_LDPC keeps its cap of 15 the same way.
+`tests/modem/test_ldpc_modes.c` pins the derived budgets and both cap rules
+through the FreeDV API.
+
+**Shared state.** The two-segment phi table is filled once by `pthread_once`,
+so contexts may be created from any thread; `tests/modem/test_ldpc_ctx.c`
+creates eight concurrently and the suite runs clean under ThreadSanitizer.
+
 `run_ldpc_decoder()` is unchanged in signature: it lazily creates the context
 (new trailing `ctx` field in `struct LDPC`), honours `ldpc->deadline_ns` and
 fills `ldpc->last_stats` / `decode_count`.  `run_ldpc_decoder_ex()` takes an
