@@ -1,17 +1,55 @@
 # The carousel data plane with the MFSK floor: report
 
-Merged into `mercuryv2` on 2026-10-03 as 7b068e5 (#322, with #328 merged into it). The CALL marker for older callers came after, on branch `carousel-old-callers`. The design and wire formats are in [CAROUSEL-ARQ.md](CAROUSEL-ARQ.md). This report covers what changed, what it was measured against, what broke along the way, and what is still open.
+Merged into `mercuryv2` on 2026-10-03 as 7b068e5 (#322, with #328 merged into it). The CALL marker for older callers came after, on branch `carousel-old-callers`. The design and wire formats are in [CAROUSEL-ARQ.md](CAROUSEL-ARQ.md). This report covers what changed, what it was measured against, what broke along the way, and what is still open. It was updated on 2026-10-09 for the work merged since, #345 to #357 (see [Since the merge](#since-the-merge-345357)).
 
 ## What changed
 
 Connected sessions used to move data with a stop-and-wait sub-FSM: one frame, one ACK, a turn negotiation, and an SNR-driven gear shift. That is now a receiver-driven erasure-coded carousel:
 
-- **Coding.** Data is cut into blocks of up to 96 pieces of 24 bytes, Reed-Solomon coded so that any K pieces rebuild a block. The pieces fit every mode, so a block survives any mode change.
+- **Coding.** Data is cut into blocks of up to 96 pieces of 24 bytes (23 since #357 in a session that starts on the floor), Reed-Solomon coded so that any K pieces rebuild a block. The pieces fit every mode, so a block survives any mode change.
 - **The receiver drives.** It polls ("N frames in mode M", plus what each block still needs) and runs the link adaptation on what actually arrived: goodput per rung, probes, dead verdicts. The sender keys only when asked, sending a round of N bursts in one keydown.
 - **The ladder.** MFSK, DATAC15, DATAC4, DATAC3, DATAC1, DATAC17, QAM16C2.
 - **The floor.** At MFSK the receiver answers each 13.5 s frame with a 0.64 s pattern (ACK: keep going; BREAK: block done) instead of a DATAC16 poll. CALL and ACCEPT fall back to MFSK when DATAC16 does not get through, so a session can open there too. That puts the bottom of the link about 5 dB lower than before.
 - **Control on the floor.** Each end reports in every frame whether it hears the other below DATAC16. To a peer that says so, control goes on MFSK.
 - **Carrier sense.** A caught preamble holds the channel for its whole frame, and MFSK carrier sense searches incrementally for a burst that is still arriving.
+
+## Since the merge (#345–#357)
+
+| PR | what |
+|---|---|
+| #345 | A written spec ([CAROUSEL-SPEC.md](CAROUSEL-SPEC.md)), a TLA+ model of the block layer, and a loss/sensing explorer (`test_car_explore`) |
+| #346 | Integrity: a BREAK never retires a block, every block carries a check and fails closed, and each session has a nonce |
+| #347 | Control signals: a streaming pattern detector, ACK/BREAK bound to the session, and the NAV header (below); a TLAPS safety proof |
+| #348 | `carousel_bound`, polls when the window is full, probe confirmation, handover repeats kept apart, rounds that double |
+| #350 | SNR estimates that hold above 12 dB, and a 16-QAM estimator for QAM16C2 |
+| #351 | One timing master per session: the caller times every keydown and the callee keys only in slots it opened, collision-free without carrier sense ([CAROUSEL-TURNS.md](CAROUSEL-TURNS.md), timed TLA+) |
+| #352 | The request/response wedge fixed; polls carried inline in data frames; the turn rules checked from outside (`car_overruns`, the sim's slot oracle) |
+| #353 | An ack waits up to 1 s for the application's answer, so a reply rides the same turn |
+| #354 | A rung that delivers every frame earns doubling rounds; a round nobody answered for is one loss, not the whole round; TLA+ liveness |
+| #357 | A session that starts on the floor cuts 23-byte pieces: 4 to an MFSK frame instead of 3 |
+
+**Simulator,** the table above re-run on both builds with the same settings (20 seeds, 8 KB, `CAR_CS_DECODABLE`, the pattern cliff at the model's −17 dB). The 7b068e5 column reproduces the table above exactly. Mean time / collisions:
+
+| channel | 7b068e5 one way | now one way | 7b068e5 both ways | now both ways |
+|---|---|---|---|---|
+| AWGN, 25 % loss | 138 s / 0 | 129 s / 0 | 263 s / 0 | 293 s / 0 |
+| cliff 0 dB | 421 s / 0 | 432 s / 0 | 954 s / 0 | 938 s / 0 |
+| fade 3 dB, 0.5 Hz | 576 s / 0 | 549 s / 0 | 1261 s / 0 | 1176 s / 0 |
+| fade −5 dB, 0.5 Hz | 2614 s / 4 | 1798 s / 0 | 5711 s / 16 | 4290 s / 0 |
+| fade −9 dB, 0.5 Hz | 2309 s / 3 | 1862 s / 0 | 5305 s / 0 | 4171 s / 0 |
+| NVIS | 2291 s / 0 | 1853 s / 0 | 4130 s / 2 | 3500 s / 0 |
+| asymmetric −6 / 14 dB | 2389 s / 0 | 1748 s / 0 | 2498 s / 0 | 1816 s / 0 |
+
+The collisions are gone: 25 → 0 here, and 0 in 960 two-way runs (120 seeds × 8 deep cells, including fade −9 dB and asymmetric −9 / 3 dB). The fringe cells are 15–30 % faster. AWGN at 25 % loss, both ways, is 11 % slower; cliff 0 dB is within 3 %.
+
+**On air,** both ways, UUCP, whole call, gateway ↔ estacao2 (2026-10-09), #357 against the build before it:
+
+| gateway power | load | with #357 | before |
+|---|---|---|---|
+| 3 % (floor start) | 2 KB | 834 / 803 s | 898 / 1040 s |
+| 10 % (DATAC3 / QAM16C2) | 4 KB | 437 / 355 / 317 / 338 s | 309 / 332 / 318 / 306 s |
+
+At 10 % every session started above the floor, so both builds ran the same code: 48 of 48 simulator runs above the floor give byte-identical results. The spread there is the channel. No transmissions overlapped in any of these runs.
 
 ## Results
 
@@ -139,42 +177,15 @@ Most of these were found on air or with realistic sensing in the simulator, not 
 
 ## Open
 
-**Handover against handover in deep fades.** At fade −5 dB both ways the simulator still shows 16 overlaps in 20 runs, about one per 95-minute session. They cost airtime but never data. They have not been seen on air.
+- **AWGN with heavy loss, both ways,** is 11 % slower than at the merge (263 → 293 s at 25 % loss; 249 s just before #351). One way is unaffected (138 → 129 s). Bisected over the merges and #352's commits, it has two parts, and both are kept on purpose:
+  - **#351's turn rules** (249 → 288 s, back to 293 s by #354). The sim drops a quarter of all frames, polls included, and M then waits out the whole slot it opened for S's answer before asking again, up to 33 s for a 4-frame round. It may not reuse a slot S might be keyed in; that is what makes the turns collision-free without carrier sense. Idle air per run went from 39 to 72 s. Taking a silent slot back early would need evidence that S is not keyed, and would make the no-collision argument depend on detection again.
+  - **Inline polls** (`0bc383c`, 287 → 307 s). A one-frame round with the poll inside is the whole keydown, so when it is lost S hears nothing and M waits out the slot. A separate control frame plus the data frame gave S two chances to hear something and answer early. Without inline polls this cell takes 270 s, but request/response traffic is 13–38 % slower (sim chat, 20 × 200 bytes: clean 299 → 480 s, cliff 5 dB 377 → 544 s). Inline only on a clean link (peer-reported loss ≤ 10 %) or in rounds of two frames or more got bulk back by 3 % and cost request/response 2–8 %. UUCP is request/response traffic, so inline polls stay as they are.
+- **The NAV header** (#347): below 0 dB every keydown opens with a 0.64 s pattern saying how long it lasts, so the peer holds the channel without decoding a frame of it. Measured at #347, before #351: overlaps 57 → 2 in the simulator, at most 4 % airtime at the fringe and none above 0 dB, and every NAV heard on air with none false. Under #351 the turn rules alone keep the stations apart, so the header is now a second line of defence; its cost and benefit have not been re-measured on top of #351. `MERCURY_NAV=0` turns it off.
+- **Piece-size agreement** (spec R25): a caller decoding an ACCEPT just as it re-CALLs can pick another piece size than the callee. The size is part of the session seed, so such ends hear nothing of each other and the session dies of silence, nothing delivered. That costs a session, not data; it needs two CALLs straddling the −3 dB DATAC15 start, inside a decode's latency.
+- **A two-stream MFSK rung** (MFSK16, draft #355) beat DATAC4 through `ch` and Watterson at equal peak, but needed more SNR than DATAC4 on air. It is parked; new modes go on air pinned to their rung before any ladder change.
+- **On-air A/B at moderate power** is dominated by the channel (single runs 306–437 s for the same code). Decide on deterministic simulator results; use the air for the cases a change actually reaches.
 
-The cause: carrier sense is decoder sync, and in a deep fade neither end syncs on the other's DATAC16. So a station hands over, or repeats a handover, while the other is keyed.
-
-Ten variants were measured against the 22-cell matrix, and none was a clean win:
-
-| idea | result |
-|---|---|
-| bind a never-polled sender to its announced start rung | 16 → 22 |
-| send control on MFSK after a missed handover | 16 → 20; asymmetric −9/3 dB 5 → 95 |
-| send control on MFSK after an empty poll window | thousands of overlaps, unfinished runs |
-| report "control-deaf" after a missed handover (both ends switch) | 16 → 4, but 12 % slower, and fade −3 dB 7 → 123, NVIS 2 → 73 |
-| … gated by SNR, or cleared each turn | trades the same way |
-| random 0–3 s or 0–6 s jitter on handover repeats | totals 39 → 46 / 66 |
-
-A real fix most likely needs carrier sense from energy rather than decoder sync. That is a modem-level change, and it is risky on noisy bands; the #311 busy detector is off by default for that reason.
-
-**A fix, prototyped and parked (2026-10-03).** Every in-session keydown would open with a 0.64 s pattern header, a NAV, chosen from about 16 patterns so that it announces how long the keydown lasts. A listener that hears it would hold off for exactly that long. That gives carrier sense about 10 dB below DATAC16 and independent of the mode the listener's decoder is bound to.
-
-The real pattern detector was measured with `utils/pattern_probe`:
-- **Detection:** 50 % near −14.5 dB, and −14 dB with a +25 Hz offset.
-- **Fading:** a single header is missed 12 % of the time under Rayleigh fading at −5 dB, and 27 % at −9 dB.
-- **False alarms:** none in 3 h of noise, and none in over 30 minutes of every data mode and MFSK.
-- **CPU:** 8.9 % of an x86 core when always on, so it would need a streaming rewrite for the Pi.
-
-In the simulator (branch `carousel-nav`, with the pattern cliff set to the measured −14 dB):
-- The header, sent only when the link is weak or losing frames, cut collisions across the matrix from 41 to 2.
-- At the fringe it was within ±2 %, but its airtime cost 4–8 % at moderate SNR.
-- The 2 remaining collisions are two timers firing within the header's ~1 s detection latency.
-- Two attempts at those were rejected. Slotted blind keydowns added collisions elsewhere, and a receiver yielding to a handover repeat only moved them.
-
-The work is parked. The plan is to resume it if mode-independent carrier sense, or third-party stations honouring the header to share a frequency, become worth the modem work.
-
-Also open:
-- **Carrier sense below −9 dB** is limited by the preamble.
-- **The receiver's round size** is recomputed from every frame (seen + left), so only a lost last frame ever counts as loss. Correcting that cost 5–8 % on fading, because the margins are tuned to it; it is a retuning job.
+Closed since the first version of this report: the deep-fade handover collisions (#351: one timing master), carrier sense below −9 dB as a collision cause (the same), and the receiver's round size when a round's last frame is lost (now the size it asked for).
 
 ## Reproducing
 
