@@ -25,6 +25,7 @@
   along with this program; if not, see <http://www.gnu.org/licenses/>.
  */
 
+#include <complex.h>
 #include "interldpc.h"
 
 #include <assert.h>
@@ -141,11 +142,20 @@ void psk_modulate_frame(int bps, COMP tx_symbols[], int codeword[], int n) {
   int bits[bps];
   complex float symb;
 
-  assert((bps == 2) || (bps == 4));
+  int M = 0;
+  const COMP *table = ldpc_qam_table(bps, &M);
+  assert(table != NULL);
   for (s = 0, i = 0; i < n; s += bps, i++) {
     for (int b = 0; b < bps; b++) bits[b] = codeword[s + bps - 1 - b] & 0x1;
-    if (bps == 2) symb = qpsk_mod(bits);
-    if (bps == 4) symb = qam16_mod(bits);
+    if (bps == 2) {
+      symb = qpsk_mod(bits);
+    } else if (bps == 4) {
+      symb = qam16_mod(bits);
+    } else {
+      int label = 0;
+      for (int b = 0; b < bps; b++) label |= bits[b] << b;
+      symb = table[label].real + I * table[label].imag;
+    }
     tx_symbols[i].real = crealf(symb);
     tx_symbols[i].imag = cimagf(symb);
   }

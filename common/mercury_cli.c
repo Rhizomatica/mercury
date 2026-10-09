@@ -15,6 +15,7 @@
 #include <unistd.h>
 
 #include "mercury_cli.h"
+#include "ldpc_calib.h"
 #include "mercury_version.h"
 #include "freedv_api.h"
 #include "modem_mfsk.h"
@@ -85,6 +86,7 @@ void mercury_cli_print_usage(const char *prog)
 #endif
     printf(" -K                         List HAMLIB supported radio models.\n");
     printf(" -Q                         Test PTT: key the configured backend for one second, release it, and exit.\n");
+    printf(" -B                         Benchmark the LDPC decoder on this CPU (ns per iteration per code) and exit.\n");
     printf(" -t                         Test TX mode.\n");
     printf(" -r                         Test RX mode.\n");
     printf(" -V                         Print version information and exit.\n");
@@ -124,7 +126,7 @@ int mercury_cli_parse(int argc, char **argv,
         return -1;
 
     const int mode_count = mercury_cli_mode_count();
-    const char *optstring = "hc:s:m:f:H:k:li:o:x:p:b:zvtrL:JP:R:U:A:C:SKWGQTV";
+    const char *optstring = "hc:s:m:f:H:k:li:o:x:p:b:zvtrL:JP:R:U:A:C:SKWGQTVB";
 
     memset(out, 0, sizeof(*out));
     cfg_set_defaults(&out->cfg);
@@ -420,6 +422,9 @@ int mercury_cli_parse(int argc, char **argv,
         case 'Q':
             out->action = MERCURY_CLI_TEST_PTT;
             break;
+        case 'B':
+            out->action = MERCURY_CLI_BENCH_LDPC;
+            break;
         case 'V':
             out->action = MERCURY_CLI_PRINT_VERSION;
             break;
@@ -644,6 +649,9 @@ bool mercury_cli_run_info_action(const mercury_cli_t *cli, const char *prog)
         return true;
     case MERCURY_CLI_PRINT_VERSION:
         mercury_print_version_banner();
+        return true;
+    case MERCURY_CLI_BENCH_LDPC:
+        ldpc_calib_run(stdout);
         return true;
     case MERCURY_CLI_LIST_RADIOS:
         radio_io_list_models();
