@@ -220,6 +220,7 @@ void freedv_close(struct freedv *freedv) {
       FDV_MODE_ACTIVE(FREEDV_MODE_700E, freedv->mode)) {
     FREE(freedv->rx_syms);
     FREE(freedv->rx_amps);
+    ldpc_free_ctx(freedv->ldpc);
     FREE(freedv->ldpc);
     ofdm_destroy(freedv->ofdm);
   }
@@ -228,6 +229,7 @@ void freedv_close(struct freedv *freedv) {
       FDV_MODE_ACTIVE(FREEDV_MODE_2020B, freedv->mode)) {
     FREE(freedv->codeword_symbols);
     FREE(freedv->codeword_amps);
+    ldpc_free_ctx(freedv->ldpc);
     FREE(freedv->ldpc);
     FREE(freedv->passthrough_2020);
     ofdm_destroy(freedv->ofdm);
@@ -249,6 +251,7 @@ void freedv_close(struct freedv *freedv) {
 
   if (FDV_MODE_ACTIVE(FREEDV_MODE_FSK_LDPC, freedv->mode)) {
     fsk_destroy(freedv->fsk);
+    ldpc_free_ctx(freedv->ldpc);
     FREE(freedv->ldpc);
     FREE(freedv->frame_llr);
     FREE(freedv->twoframes_llr);
@@ -268,6 +271,7 @@ void freedv_close(struct freedv *freedv) {
       FDV_MODE_ACTIVE(FREEDV_MODE_DATA_CUSTOM, freedv->mode)) {
     FREE(freedv->rx_syms);
     FREE(freedv->rx_amps);
+    ldpc_free_ctx(freedv->ldpc);
     FREE(freedv->ldpc);
     ofdm_destroy(freedv->ofdm);
   }
@@ -1348,6 +1352,27 @@ void freedv_set_harq(struct freedv *f, int enable) {
   if (!enable) { f->harq_valid = 0; f->harq_ncopies = 0; }
 }
 void freedv_harq_reset(struct freedv *f) { f->harq_valid = 0; f->harq_ncopies = 0; }
+
+void freedv_set_llr_calibrated(struct freedv *f, int enable) { f->llr_calibrated = enable ? 1 : 0; }
+float freedv_get_llr_esno_db(struct freedv *f) { return f->llr_esno_db_used; }
+
+void freedv_set_ldpc_budget_ms(struct freedv *f, float budget_ms) {
+  f->ldpc_budget_ms = budget_ms > 0.0f ? budget_ms : 0.0f;
+}
+
+void freedv_set_ldpc_max_iter(struct freedv *f, int max_iter) {
+  if (f->ldpc && max_iter > 0) f->ldpc->max_iter = max_iter;
+}
+
+int freedv_get_ldpc_stats(struct freedv *f, int *iters, int *hit_deadline,
+                          int *parity_ok, unsigned int *decode_count) {
+  if (!f->ldpc) return 0;
+  if (iters) *iters = f->ldpc->last_stats.iters;
+  if (hit_deadline) *hit_deadline = f->ldpc->last_stats.hit_deadline;
+  if (parity_ok) *parity_ok = f->ldpc->last_stats.parity_ok;
+  if (decode_count) *decode_count = f->ldpc->decode_count;
+  return 1;
+}
 void freedv_set_crc_seed(struct freedv *f, uint16_t seed, int accept_plain) {
   f->crc_seed = seed;
   f->crc_accept_plain = accept_plain ? 1 : 0;

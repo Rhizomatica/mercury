@@ -21,6 +21,7 @@
 #include "freedv_api.h"
 #include "arq.h"
 #include "modem.h"
+#include "ldpc_ctx.h"
 #include "broadcast.h"
 #include "defines_modem.h"
 #include "audioio/audioio.h"
@@ -186,6 +187,12 @@ int mercury_engine_init(const mercury_config *cfg,
     arq_set_startup_max_s(cfg->startup_max_s);
     arq_set_retry_stagger_ms(cfg->retry_stagger_ms);
     modem_set_tx_gain(powf(10.0f, cfg->tx_gain_db / 20.0f));
+    {
+        int alg = ldpc_alg_from_name(cfg->ldpc_alg);
+        if (alg == -2) alg = LDPC_ALG_AUTO;
+        modem_set_ldpc_policy(cfg->ldpc_max_iter, cfg->ldpc_budget_ms,
+                              cfg->ldpc_budget_guard_frac, cfg->ldpc_budget_air_frac, alg);
+    }
     modem_set_tx_delay_ms(cfg->tx_delay_ms);
     modem_set_busy_cfg((float)cfg->busy_threshold_db,
                        (float)cfg->busy_hysteresis_db,

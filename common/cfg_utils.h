@@ -63,6 +63,11 @@
 #define CFG_KEY_NO_PROGRESS_TIMEOUT_S "arq:no_progress_timeout_s"
 #define CFG_KEY_DISCONNECT_DRAIN_TIMEOUT_S "arq:disconnect_drain_timeout_s"
 #define CFG_KEY_TX_GAIN_DB          "audio:tx_gain_db"
+#define CFG_KEY_LDPC_MAX_ITER       "ldpc:max_iter"
+#define CFG_KEY_LDPC_BUDGET_MS      "ldpc:budget_ms"
+#define CFG_KEY_LDPC_GUARD_FRAC     "ldpc:budget_guard_frac"
+#define CFG_KEY_LDPC_AIR_FRAC       "ldpc:budget_air_frac"
+#define CFG_KEY_LDPC_ALG            "ldpc:alg"
 #define CFG_KEY_TX_DELAY_MS         "audio:tx_delay_ms"
 #define CFG_KEY_TNC_KEEPALIVE_S     "tnc:keepalive_s"
 #define CFG_KEY_TNC_BUFFER_REPORT_MS "tnc:buffer_report_ms"
@@ -132,6 +137,11 @@ typedef struct {
     int      retry_stagger_ms;          /* ARQ: deterministic per-node retry
                                          * offset. 0 disables. Default 2000,
                                          * clamped 0..5000.                  */
+    int      ldpc_max_iter;         /* LDPC: iteration cap (default 100)    */
+    float    ldpc_budget_ms;        /* LDPC: per-decode budget, 0 = derive  */
+    float    ldpc_budget_guard_frac;/* LDPC: fraction of ARQ channel guard  */
+    float    ldpc_budget_air_frac;  /* LDPC: fraction of frame airtime      */
+    char     ldpc_alg[8];           /* LDPC: auto|sp|spt|nms16|nms|legacy   */
     float    tx_gain_db;            /* Linear-equivalent gain on the modulator
                                     * TX samples, in dB. 0.0 = no change.
                                     * Range -20.0 .. +20.0 (clamped). */

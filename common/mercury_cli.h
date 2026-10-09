@@ -19,6 +19,7 @@ typedef enum {
     MERCURY_CLI_TEST_PTT,       /* -Q : pulse configured PTT       */
     MERCURY_CLI_HELP,           /* -h : print usage                */
     MERCURY_CLI_PRINT_VERSION,  /* -V : print version and exit     */
+    MERCURY_CLI_BENCH_LDPC,     /* -B : time the LDPC decoder      */
 } mercury_cli_action_t;
 
 /* Everything main()/the bridge need out of the command line. */

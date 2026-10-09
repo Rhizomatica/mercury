@@ -137,7 +137,7 @@ void freedv_ofdm_voice_open(struct freedv *f, char *mode) {
   ldpc_codes_setup(f->ldpc, f->ofdm->codename);
   ldpc_mode_specific_setup(f->ofdm, f->ldpc);
 #ifdef __EMBEDDED__
-  f->ldpc->max_iter = 10; /* limit LDPC decoder iterations to limit CPU load */
+  f->ldpc->max_iter = LDPC_MAX_ITER_DEFAULT; /* early exit on parity; a deadline bounds slow hosts */
 #endif
   int Nsymsperpacket = ofdm_get_bits_per_packet(f->ofdm) / f->ofdm->bps;
   f->rx_syms = (COMP *)MALLOC(sizeof(COMP) * Nsymsperpacket);
@@ -219,7 +219,7 @@ void freedv_ofdm_data_open(struct freedv *f, struct freedv_advanced *adv) {
   ldpc_codes_setup(f->ldpc, f->ofdm->codename);
   ldpc_mode_specific_setup(f->ofdm, f->ldpc);
 #ifdef __EMBEDDED__
-  f->ldpc->max_iter = 10; /* limit LDPC decoder iterations to limit CPU load */
+  f->ldpc->max_iter = LDPC_MAX_ITER_DEFAULT; /* early exit on parity; a deadline bounds slow hosts */
 #endif
 
   // useful constants
@@ -265,6 +265,9 @@ void freedv_ofdm_data_open(struct freedv *f, struct freedv_advanced *adv) {
   assert(f->harq_llr != NULL);
   f->harq_llr_nbits = 0;
   f->harq_enable = 0;
+  f->ldpc_budget_ms = 0.0f;
+  f->llr_calibrated = 1;
+  f->llr_esno_db_used = f->ofdm->EsNodB;
   f->harq_valid = 0;
   f->harq_ncopies = 0;
 }
@@ -617,12 +620,35 @@ int freedv_comp_short_rx_ofdm(struct freedv *f, void *demod_in_8kHz,
       int codeword_len = ldpc->CodeLength > Npayloadbitsperpacket
                              ? ldpc->CodeLength : Npayloadbitsperpacket;
       uint8_t decoded_codeword[codeword_len];
-      symbols_to_llrs(llr, payload_syms_de, payload_amps_de, EsNo,
+      /* LLR scale.  The mode constant EsNodB (3 dB, 10 dB for the 16200-bit
+       * modes) was right at one operating point only; the sum-product decoder
+       * is scale-sensitive and the measured loss was 0.15-0.6 dB (tests/matlab
+       * TestLdpc).  Use the receiver's Es/No estimate, passed through the
+       * per-mode SNR calibration above and mapped back from SNR3k to Es/No by
+       * subtracting the bandwidth + cyclic-prefix term, clamped to a sane range. */
+      float EsNo_used = EsNo;
+      if (f->llr_calibrated) {
+        float raw_esno_db = (ofdm->bps == 4)
+                                ? ofdm_esno_est_dd(ofdm->bps, rx_syms, rx_amps, Nsymsperpacket)
+                                : ofdm_esno_est_calc(rx_syms, Nsymsperpacket);
+        float snr3k_cal = freedv_snr_calib(f->mode, ofdm_snr_from_esno(ofdm, raw_esno_db));
+        float esno_db = snr3k_cal - ofdm_snr_from_esno(ofdm, 0.0f);
+        if (esno_db < -3.0f) esno_db = -3.0f;
+        if (esno_db > 20.0f) esno_db = 20.0f;
+        f->llr_esno_db_used = esno_db;
+        EsNo_used = powf(10.0f, esno_db / 10.0f);
+      } else {
+        f->llr_esno_db_used = ofdm->EsNodB;
+      }
+      symbols_to_llrs(llr, payload_syms_de, payload_amps_de, EsNo_used,
                       ofdm->mean_amp, ofdm->bps, Npayloadsymsperpacket);
       /* Save this-transmission-only LLRs.  HARQ combining is applied BELOW only
        * as a fallback if the single-shot decode fails, so retained soft info
        * can never corrupt a frame that would have decoded on its own. */
       memcpy(llr_raw, llr, sizeof(float) * Npayloadbitsperpacket);
+      ldpc->deadline_ns = f->ldpc_budget_ms > 0.0f
+                              ? ldpc_now_ns() + (uint64_t)(f->ldpc_budget_ms * 1e6f)
+                              : 0;
       ldpc_decode_frame(ldpc, &parityCheckCount, &iter, decoded_codeword, llr);
       memcpy(f->rx_payload_bits, decoded_codeword, Ndatabitsperpacket);
 
@@ -647,9 +673,16 @@ int freedv_comp_short_rx_ofdm(struct freedv *f, void *demod_in_8kHz,
            * calibrated range while the independent per-copy noise still averages
            * down (~3 dB per doubling).  harq_llr holds the sum of harq_ncopies
            * prior copies; llr_raw is this copy, so divide by ncopies + 1. */
-          float norm = 1.0f / (float)(f->harq_ncopies + 1);
+          /* With calibrated LLRs the right combine is the SUM (independent
+           * observations of the same bit add in the log-likelihood domain);
+           * averaging was a workaround for the uncalibrated fixed-EsNo scale
+           * and is kept only for that case. */
+          float norm = f->llr_calibrated ? 1.0f : 1.0f / (float)(f->harq_ncopies + 1);
           for (int i = 0; i < Npayloadbitsperpacket; i++)
             llr_comb[i] = (llr_raw[i] + f->harq_llr[i]) * norm;
+          ldpc->deadline_ns = f->ldpc_budget_ms > 0.0f
+                                  ? ldpc_now_ns() + (uint64_t)(f->ldpc_budget_ms * 1e6f)
+                                  : 0;
           ldpc_decode_frame(ldpc, &parityCheckCount, &iter, decoded_codeword,
                             llr_comb);
           /* Integrity gate on the COMBINED decode — do NOT accept on CRC16

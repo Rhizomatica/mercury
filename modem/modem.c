@@ -34,6 +34,8 @@
 #include "ring_buffer_posix.h"
 #include "framer.h"
 #include "arq.h"
+#include "arq_protocol.h"
+#include "ldpc_ctx.h"
 #include "arq_trace.h"
 #include "../datalink_arq/arq_modem.h"
 #include "../datalink_arq/arq_protocol.h"
@@ -604,6 +606,89 @@ static void clear_mode_pool_locked(void)
     modem_mode_pool_n = 0;
 }
 
+/* ---- LDPC decoder policy and statistics ---------------------------------- */
+
+static int   g_ldpc_max_iter   = LDPC_MAX_ITER_DEFAULT;
+static float g_ldpc_budget_ms  = 0.0f;   /* 0 = derive per mode */
+static float g_ldpc_guard_frac = 0.5f;
+static float g_ldpc_air_frac   = 0.25f;
+
+typedef struct {
+    unsigned int last_count;
+    long decodes, iters_sum, deadline_hits, parity_fail;
+    int  last_iters;
+    float budget_ms;
+} ldpc_acc_t;
+static ldpc_acc_t g_ldpc_acc[MODEM_POOL_MAX];
+static _Atomic int g_ldpc_last_iters;
+
+void modem_set_ldpc_policy(int max_iter, float budget_ms, float guard_frac,
+                           float air_frac, int alg)
+{
+    if (max_iter > 0) g_ldpc_max_iter = max_iter;
+    g_ldpc_budget_ms  = budget_ms > 0.0f ? budget_ms : 0.0f;
+    if (guard_frac >= 0.0f) g_ldpc_guard_frac = guard_frac;
+    if (air_frac >= 0.0f)   g_ldpc_air_frac = air_frac;
+    ldpc_set_default_alg(alg);
+}
+
+static float ldpc_budget_for(const modem_backend_t *be, void *ctx, int frames_per_burst)
+{
+    if (g_ldpc_budget_ms > 0.0f) return g_ldpc_budget_ms;
+    int sr = be->sample_rate ? be->sample_rate(ctx) : 8000;
+    float air_ms = 1000.0f * (float)be->n_tx_samples(ctx) * (float)(frames_per_burst > 0 ? frames_per_burst : 1) / (float)(sr > 0 ? sr : 8000);
+    float guard_ms = (float)ARQ_CHANNEL_GUARD_MS;
+    float bg = g_ldpc_guard_frac * guard_ms, ba = g_ldpc_air_frac * air_ms;
+    float b = bg < ba ? bg : ba;
+    return b > 0.0f ? b : 0.0f;
+}
+
+/* Called after every rawdata_rx(): fold a fresh decode into the slot's counters. */
+static void ldpc_note_decode(const modem_backend_t *be, void *ctx)
+{
+    if (!be->get_ldpc_stats) return;
+    int slot = -1;
+    for (int i = 0; i < modem_mode_pool_n; i++)
+        if (modem_mode_pool[i].codec.ctx == ctx) { slot = i; break; }
+    if (slot < 0) return;
+    int iters = 0, hit = 0, ok = 0; unsigned int count = 0;
+    if (!be->get_ldpc_stats(ctx, &iters, &hit, &ok, &count)) return;
+    ldpc_acc_t *a = &g_ldpc_acc[slot];
+    if (count == a->last_count) return;
+    a->last_count = count;
+    a->decodes++;
+    a->iters_sum += iters;
+    a->last_iters = iters;
+    if (hit) a->deadline_hits++;
+    if (!ok) a->parity_fail++;
+    atomic_store(&g_ldpc_last_iters, iters);
+}
+
+void modem_get_ldpc_status(int *last_iters, float *mean_iters,
+                           int *deadline_hits, int *max_iter)
+{
+    long dec = 0, it = 0, hits = 0;
+    for (int i = 0; i < MODEM_POOL_MAX; i++) {
+        dec += g_ldpc_acc[i].decodes; it += g_ldpc_acc[i].iters_sum; hits += g_ldpc_acc[i].deadline_hits;
+    }
+    if (last_iters) *last_iters = atomic_load(&g_ldpc_last_iters);
+    if (mean_iters) *mean_iters = dec ? (float)it / (float)dec : 0.0f;
+    if (deadline_hits) *deadline_hits = (int)hits;
+    if (max_iter) *max_iter = g_ldpc_max_iter;
+}
+
+static void ldpc_log_summary_locked(void)
+{
+    for (int i = 0; i < modem_mode_pool_n; i++) {
+        const ldpc_acc_t *a = &g_ldpc_acc[i];
+        if (!a->decodes) continue;
+        HLOGI("ldpc", "%s: %ld decodes, mean %.1f iters, %ld deadline hits, %ld parity fails, budget %.0f ms, cap %d",
+              mode_name_from_enum(modem_mode_pool[i].mode), a->decodes,
+              (double)a->iters_sum / (double)a->decodes, a->deadline_hits, a->parity_fail,
+              (double)a->budget_ms, g_ldpc_max_iter);
+    }
+}
+
 static int pool_open_mode_locked(int mode, int frames_per_burst, int verbosity)
 {
     if (modem_mode_pool_n >= MODEM_POOL_MAX)
@@ -614,6 +699,15 @@ static int pool_open_mode_locked(int mode, int frames_per_burst, int verbosity)
         return -1;
     if (be->configure)
         be->configure(ctx, frames_per_burst, verbosity);
+    memset(&g_ldpc_acc[modem_mode_pool_n], 0, sizeof g_ldpc_acc[modem_mode_pool_n]);
+    if (be->set_ldpc_budget)
+    {
+        float b = ldpc_budget_for(be, ctx, frames_per_burst);
+        be->set_ldpc_budget(ctx, b, g_ldpc_max_iter);
+        g_ldpc_acc[modem_mode_pool_n].budget_ms = b;
+        HLOGI("ldpc", "%s: decoder %s, cap %d iterations, budget %.0f ms",
+              mode_name_from_enum(mode), ldpc_alg_name(ldpc_get_default_alg()), g_ldpc_max_iter, (double)b);
+    }
     modem_pool_slot_t *s = &modem_mode_pool[modem_mode_pool_n++];
     s->mode = mode;
     s->codec.be = be;
@@ -1095,6 +1189,7 @@ int run_tests_rx(generic_modem_t *g_modem)
 
 int shutdown_modem(generic_modem_t *g_modem)
 {
+    ldpc_log_summary_locked();
     /* Unkey and join the tuning thread first: it owns PTT and writes into the
      * playback ring, so tearing the rings down under it would both leave the
      * transmitter keyed and use freed memory. */
@@ -2431,6 +2526,7 @@ static void rx_decoder_consume_chunk(rx_decoder_state_t *state,
                           (uint8_t)(nin & 0xff), (uint16_t)c);
         }
         nbytes_out = (size_t)be->rawdata_rx(ctx, state->bytes_out, state->demod_in);
+        ldpc_note_decode(be, ctx);
         if (nbytes_out > 0)
             publish_link_bitrate(&state->codec, state->mode);
         if (nin > 0)

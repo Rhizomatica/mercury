@@ -76,6 +76,12 @@ struct modem_backend {
      * unsupported; the modem layer null-checks before calling). */
     void  (*harq_reset)(void *ctx);
     void  (*set_harq)(void *ctx, int enabled);
+    /* LDPC decoder budget and statistics (optional, NULL if the backend has
+     * no iterative decoder).  get_ldpc_stats returns 0 when unavailable;
+     * decode_count lets the caller tell a new decode from a repeated read. */
+    void  (*set_ldpc_budget)(void *ctx, float budget_ms, int max_iter);
+    int   (*get_ldpc_stats)(void *ctx, int *iters, int *hit_deadline,
+                            int *parity_ok, unsigned int *decode_count);
 
     /* Drop any sync the decoder currently holds, so the next burst is
      * acquired cold (optional; null-checked).  Used to release a sync the
