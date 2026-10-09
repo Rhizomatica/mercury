@@ -121,6 +121,34 @@ type chatWindow struct {
 	cqSending bool
 }
 
+// clearableChatBox wraps a scrollable chat pane and offers a right-click
+// "Clear messages" action that empties only this pane's on-screen messages.
+// Clearing is purely visual: the persisted history is left untouched, so the
+// messages reappear when the client window is re-opened.
+type clearableChatBox struct {
+	widget.BaseWidget
+	scroll *container.Scroll
+	canvas fyne.Canvas
+	clear  func()
+}
+
+func newClearableChatBox(scroll *container.Scroll, canvas fyne.Canvas, clear func()) *clearableChatBox {
+	c := &clearableChatBox{scroll: scroll, canvas: canvas, clear: clear}
+	c.ExtendBaseWidget(c)
+	return c
+}
+
+func (c *clearableChatBox) CreateRenderer() fyne.WidgetRenderer {
+	return widget.NewSimpleRenderer(c.scroll)
+}
+
+func (c *clearableChatBox) TappedSecondary(ev *fyne.PointEvent) {
+	menu := fyne.NewMenu("",
+		fyne.NewMenuItem("Clear messages", c.clear),
+	)
+	widget.ShowPopUpMenuAtPosition(menu, c.canvas, ev.AbsolutePosition)
+}
+
 func (cw *chatWindow) build(app fyne.App, telemetry telemetryState, arqPort, broadcastPort int, history []HistoryMessage, tcpHost string) {
 	cw.win = app.NewWindow("Mercury Client")
 	cw.history = history
@@ -254,11 +282,15 @@ func (cw *chatWindow) build(app fyne.App, telemetry telemetryState, arqPort, bro
 
 	arqChatBox := container.NewBorder(
 		widget.NewLabelWithStyle("Chat messages", fyne.TextAlignCenter, fyne.TextStyle{Bold: true}),
-		nil, nil, nil, cw.arqScroll,
+		nil, nil, nil, newClearableChatBox(cw.arqScroll, cw.win.Canvas(), func() {
+			cw.clearChatBox(cw.arqBox)
+		}),
 	)
 	bcastChatBox := container.NewBorder(
 		widget.NewLabelWithStyle("Broadcast Messages", fyne.TextAlignCenter, fyne.TextStyle{Bold: true}),
-		nil, nil, nil, cw.bcastScroll,
+		nil, nil, nil, newClearableChatBox(cw.bcastScroll, cw.win.Canvas(), func() {
+			cw.clearChatBox(cw.bcastBox)
+		}),
 	)
 	logBox := container.NewBorder(
 		widget.NewLabelWithStyle("Activity Log", fyne.TextAlignCenter, fyne.TextStyle{Bold: true}),
@@ -593,11 +625,16 @@ func (cw *chatWindow) onDisconnect() {
 // clearChat empties the ARQ and broadcast chat panes on the UI thread.
 func (cw *chatWindow) clearChat() {
 	fyne.Do(func() {
-		cw.arqBox.Objects = nil
-		cw.bcastBox.Objects = nil
-		cw.arqBox.Refresh()
-		cw.bcastBox.Refresh()
+		cw.clearChatBox(cw.arqBox)
+		cw.clearChatBox(cw.bcastBox)
 	})
+}
+
+// clearChatBox empties a single chat pane on the UI thread, leaving the
+// persisted history untouched.
+func (cw *chatWindow) clearChatBox(box *fyne.Container) {
+	box.Objects = nil
+	box.Refresh()
 }
 
 func (cw *chatWindow) onARQConnect() {
