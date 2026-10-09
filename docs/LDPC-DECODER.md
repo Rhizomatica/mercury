@@ -118,6 +118,28 @@ lifecycle, struct-path deadline and stats), `tests/modem/test_llr_qam.c`
 (tables, sign correctness, Somap agreement, high-order modulate/demap
 round trip); `tests/modem/test_freedv_harq.c` unchanged and passing.
 
+
+## Figures
+
+Generated from the committed curves in `docs/ldpc-figures/data/` by
+`tests/matlab/plot_ldpc_figures.m` (MATLAB R2026a).  Every waterfall is
+600 frames per point, BPSK over AWGN, exact LLRs unless stated.
+
+![Coding gain returned per code](ldpc-figures/gain_summary.svg)
+
+![DATAC15/16 code](ldpc-figures/fer_H_256_768_22.svg)
+![DATAC1 code](ldpc-figures/fer_H_4096_8192_3d.svg)
+![DATAC17 / QAM16C2 code](ldpc-figures/fer_H_16200_9720.svg)
+![DATAC3/4 code](ldpc-figures/fer_H_1024_2048_4f.svg)
+![DATAC13 code](ldpc-figures/fer_H_256_512_4.svg)
+![DATAC0 code](ldpc-figures/fer_H_128_256_5.svg)
+![DATAC14 code](ldpc-figures/fer_HRA_56_56.svg)
+
+![LLR scale cost at the real modulations](ldpc-figures/llr_scale_cost.svg)
+![Min-sum scaling sweep](ldpc-figures/nms_scaling_sweep.svg)
+![Decoder cost per iteration](ldpc-figures/decoder_speed.svg)
+![Working memory per code](ldpc-figures/working_memory.svg)
+
 ## Running it
 
 ```sh

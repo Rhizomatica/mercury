@@ -1,0 +1,5 @@
+code,N,K,legacy_us_per_iter,spt_us_per_iter,nms16_us_per_iter,policy,legacy_ms_per_frame_50it,policy_ms_per_frame_50it,old_transient_kb,new_persistent_kb
+H_256_768_22,768,256,29.1,11.2,3.8,nms16,0.70,0.05,68,19
+H_1024_2048_4f,2048,1024,86.2,34.7,9.7,spt,2.36,0.59,244,70
+H_4096_8192_3d,8192,4096,312.3,101.5,29.8,nms16,10.25,0.78,778,221
+H_16200_9720,16200,9720,677.7,290.1,114.1,spt,26.67,9.04,1927,554
