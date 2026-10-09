@@ -55,7 +55,9 @@ void setUp(void)
     ldpc.coded_bits_per_frame = NCODE;
     ldpc.protection_mode = 0; /* EQUAL — run_ldpc_decoder called directly */
 }
-void tearDown(void) {}
+/* run_ldpc_decoder() keeps a persistent decoder context on the struct; setUp()
+ * re-copies the code table over it, so free it between tests or it leaks. */
+void tearDown(void) { ldpc_free_ctx(&ldpc); }
 
 /* Fixed-seed PCG32 + Box-Muller so the tests are fully deterministic. */
 static uint64_t rng_s, rng_inc;
