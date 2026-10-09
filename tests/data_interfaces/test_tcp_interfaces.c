@@ -700,6 +700,48 @@ void test_cmd_monitor_invalid_argument(void)
     TEST_ASSERT_EQUAL_INT(0, mock_monitor_set_calls);
 }
 
+/* The argument must be the whole word, case-insensitive: its second letter
+ * must not decide ("MONITOR XN" must not turn the monitor on). */
+void test_cmd_monitor_second_letter_is_not_enough(void)
+{
+    char cmd[] = "MONITOR XN";
+    execute_control_command(cmd);
+
+    assert_wrong_response();
+    TEST_ASSERT_EQUAL_INT(0, mock_monitor_set_calls);
+}
+
+void test_cmd_monitor_on_is_case_insensitive(void)
+{
+    char cmd[] = "MONITOR on";
+    execute_control_command(cmd);
+
+    assert_ok_response();
+    TEST_ASSERT_EQUAL_INT(1, mock_monitor_set_calls);
+    TEST_ASSERT_TRUE(mock_monitor_enabled);
+}
+
+void test_cmd_monitor_off_is_case_insensitive(void)
+{
+    mock_monitor_enabled = true;
+    char cmd[] = "MONITOR oFf";
+    execute_control_command(cmd);
+
+    assert_ok_response();
+    TEST_ASSERT_EQUAL_INT(1, mock_monitor_set_calls);
+    TEST_ASSERT_FALSE(mock_monitor_enabled);
+}
+
+/* A command whose name merely starts with "MONITOR" must not match. */
+void test_cmd_monitor_prefix_is_not_matched(void)
+{
+    char cmd[] = "MONITORING";
+    execute_control_command(cmd);
+
+    assert_wrong_response();
+    TEST_ASSERT_EQUAL_INT(0, mock_monitor_set_calls);
+}
+
 void test_cmd_chat_on(void)
 {
     char cmd[] = "CHAT ON";
@@ -1866,6 +1908,10 @@ int main(void)
     RUN_TEST(test_cmd_monitor_query_reports_on);
     RUN_TEST(test_cmd_monitor_query_reports_off);
     RUN_TEST(test_cmd_monitor_invalid_argument);
+    RUN_TEST(test_cmd_monitor_second_letter_is_not_enough);
+    RUN_TEST(test_cmd_monitor_on_is_case_insensitive);
+    RUN_TEST(test_cmd_monitor_off_is_case_insensitive);
+    RUN_TEST(test_cmd_monitor_prefix_is_not_matched);
     RUN_TEST(test_cmd_chat_on);
     RUN_TEST(test_cmd_bw500);
     RUN_TEST(test_cmd_bw2300);
