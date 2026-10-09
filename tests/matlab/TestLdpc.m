@@ -21,7 +21,8 @@ classdef TestLdpc < matlab.unittest.TestCase
         MinErrors    = 30;     % stop a point once this many frame errors are seen
         EbNoGrid_dB  = 0:0.5:4;
         GapTol_dB    = 0.3;    % decoder budget / LLR-scale loss allowed before FAIL
-        ModemIters   = 10;     % freedv_700.c: f->ldpc->max_iter = 10
+        ModemIters   = 10;     % freedv_700.c: f->ldpc->max_iter = 10 -- ONLY under #ifdef __EMBEDDED__
+        TableIters   = 100;    % desktop builds: the code tables' *_MAX_ITER (what Mercury ships on a PC)
         GoldenIters  = 50;
     end
 
@@ -70,15 +71,18 @@ classdef TestLdpc < matlab.unittest.TestCase
 
         function decoder_budget_and_llr_scale(tc, code)
             % FER vs Es/N0 (BPSK, exact LLRs) for:
-            %   C SumProduct @10 (modem setting), C @50, MATLAB bp @50 (golden),
-            %   MATLAB norm-min-sum @50, and C @10 with the modem's fixed-EsNo
-            %   LLR scale (EsNodB = 3, or 10 for the 16200 code).
+            %   C SumProduct @10 (embedded-build cap), C @50, MATLAB bp @50 (golden),
+            %   MATLAB norm-min-sum @50, C @10 and @100 with the modem's fixed-EsNo
+            %   LLR scale (EsNodB = 3, or 10 for the 16200 code) -- @100 fixed is
+            %   what a desktop Mercury ships -- and the new decoder at its own
+            %   cap of 100 (nms16 / spt, early exit on parity).
             H = c2.read_rows(code); [M, N] = size(H); K = N - M; R = K / N;
             cfgE = ldpcEncoderConfig(H);
             cfgBP = ldpcDecoderConfig(cfgE, 'bp'); cfgNMS = ldpcDecoderConfig(cfgE, 'norm-min-sum');
             esno_dB = tc.EbNoGrid_dB + 10*log10(R);           % BPSK: Es/N0 = Eb/N0 + 10log10(R)
             if strcmp(code, 'H_16200_9720'), fixedEsNo_dB = 10; else, fixedEsNo_dB = 3; end
-            variants = {'C_leg10', 'C_leg50', 'C_sp50', 'C_nms50', 'M_bp50', 'M_nms50', 'C_leg10_fixedEsNo', 'C_nms50_fixedEsNo', 'C_nms16_50', 'C_spt50'};
+            variants = {'C_leg10', 'C_leg50', 'C_sp50', 'C_nms50', 'M_bp50', 'M_nms50', 'C_leg10_fixedEsNo', 'C_nms50_fixedEsNo', 'C_nms16_50', 'C_spt50', ...
+                        'C_leg100_fixedEsNo', 'C_nms16_100', 'C_spt100'};
             fer = nan(numel(variants), numel(esno_dB));
             rng(4);
             for ip = 1:numel(esno_dB)
@@ -103,6 +107,9 @@ classdef TestLdpc < matlab.unittest.TestCase
                     d{8} = c2.ldpc_decode(code, llr_fixed, tc.GoldenIters, 'nms');
                     d{9} = c2.ldpc_decode(code, llr, tc.GoldenIters, 'nms16');
                     d{10} = c2.ldpc_decode(code, llr, tc.GoldenIters, 'spt');
+                    d{11} = c2.ldpc_decode(code, llr_fixed, tc.TableIters, 'legacy');   % deployed on a PC
+                    d{12} = c2.ldpc_decode(code, llr, tc.TableIters, 'nms16');
+                    d{13} = c2.ldpc_decode(code, llr, tc.TableIters, 'spt');
                     for v = 1:numel(variants)
                         nerr(v) = nerr(v) + sum(any(logical(d{v}(1:K, :)) ~= logical(info), 1));
                     end
@@ -116,8 +123,8 @@ classdef TestLdpc < matlab.unittest.TestCase
             p = c2.paths(); if ~isfolder(p.results), mkdir(p.results); end
             writetable(T, fullfile(p.results, sprintf('ldpc_fer_%s.csv', code)));
             fmt = @(x) strjoin(arrayfun(@(v) sprintf('%s=%.2f', variants{v}, x(v)), 1:numel(variants), 'UniformOutput', false), ' ');
-            summary = sprintf('%s (N=%d K=%d R=%.2f) Es/N0[dB] @FER1e-1: %s | @FER1e-2: %s | legacy10 vs bp50 %.2f dB | ctx sp50 vs legacy50 %.2f dB | ctx nms50 vs M nms50 %.2f dB | nms scale sensitivity %.2f dB | nms16 vs nms %.2f dB | spt vs sp %.2f dB', ...
-                code, N, K, R, fmt(x1), fmt(x2), x1(1) - x1(5), x1(3) - x1(2), x1(4) - x1(6), x1(8) - x1(4), x1(9) - x1(4), x1(10) - x1(3));
+            summary = sprintf('%s (N=%d K=%d R=%.2f) Es/N0[dB] @FER1e-1: %s | @FER1e-2: %s | legacy10 vs bp50 %.2f dB | deployed(leg100 fixed) vs new(nms16 100) %.2f dB | ctx sp50 vs legacy50 %.2f dB | ctx nms50 vs M nms50 %.2f dB | nms scale sensitivity %.2f dB | nms16 vs nms %.2f dB | spt vs sp %.2f dB', ...
+                code, N, K, R, fmt(x1), fmt(x2), x1(1) - x1(5), x1(11) - x1(12), x1(3) - x1(2), x1(4) - x1(6), x1(8) - x1(4), x1(9) - x1(4), x1(10) - x1(3));
             tc.log(1, summary);
             fid = fopen(fullfile(p.results, 'ldpc_summary.txt'), 'a'); fprintf(fid, '%s\n', summary); fclose(fid);
             % Findings (the modem as shipped) are logged; the gates below are on the NEW decoder:

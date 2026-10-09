@@ -248,7 +248,8 @@ busy_hang_ms = 1500
 ; LDPC decoder for the OFDM data modes (DATAC*, QAM16C2).
 ; max_iter: iteration cap. Early exit on parity means a clean frame costs
 ;   2-3 iterations whatever the cap; the cap only bounds frames at the
-;   mode's SNR cliff (default 100; the old fixed value 10 cost 0.3-1.6 dB).
+;   mode's SNR cliff (default 100, the code tables' own limit; the cap of 10 that
+;   codec2 applies under __EMBEDDED__ costs 0.3-1.6 dB, see docs/LDPC-DECODER.md).
 ; budget_ms: wall-clock budget per decode. 0 derives it per mode as
 ;   min(budget_guard_frac * ARQ channel guard, budget_air_frac * frame airtime)
 ;   so a slow host returns its best decision in time for the ACK.

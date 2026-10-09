@@ -41,9 +41,10 @@ enum {
 /* int16 message fixed point: LLR units of 1/LDPC_Q16_SCALE, saturating */
 #define LDPC_Q16_SCALE 16.0f
 
-/* Iteration cap used by the data modes (was 10 in freedv_700.c; early exit on
- * parity means clean frames still cost 2-3 iterations, and a deadline bounds
- * the worst case on slow hardware). */
+/* Iteration cap used by the data modes: the code tables' own limit.  codec2
+ * caps at 10 only under __EMBEDDED__; early exit on parity means clean frames
+ * cost 2-3 iterations whatever the cap, and a deadline bounds the worst case on
+ * slow hardware instead of a cap that costs 0.3-1.6 dB at the cliff. */
 #define LDPC_MAX_ITER_DEFAULT 100
 
 ldpc_ctx_t *ldpc_ctx_create(const struct LDPC *code);
