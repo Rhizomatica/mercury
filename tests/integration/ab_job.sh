@@ -4,6 +4,8 @@
 #   sh ab_job.sh ARM NO_DBHZ SEED PAYLOAD_KB OUT_DIR
 #
 # ARM   trunk  pristine trunk binary on both stations (MERCURY_TRUNK_BIN)
+#       ladder / ladder-legacy  lowered-threshold build (MERCURY_LADDER_BIN),
+#              with the new decoder / with the deployed decoder path
 #       new    this tree's binary, defaults (per-code decoder policy,
 #              100 iterations under a deadline, calibrated LLR scale)
 #       emul   this tree's binary forced to the deployed decoder path
@@ -23,10 +25,17 @@ TAG="${ARM}_no${NO}_s${SEED}_kb${KB}"
 LD="$OUT/logs/$TAG"; mkdir -p "$LD" "$OUT/jobs"
 cd "$(dirname "$0")" || exit 1
 TRUNK=${MERCURY_TRUNK_BIN:-/Users/josephfreivald/workspace/mercury-trunk/mercury}
+# ladder = a build with lowered ARQ_SNR_MIN_* thresholds (branch ladder-thresholds);
+# ladder-legacy runs that build with the desktop deployed decoder path
+# (legacy sum-product at the table cap, fixed-EsNo LLRs) to show whether the
+# lowered thresholds are safe without the new decoder.
+LADDER=${MERCURY_LADDER_BIN:-/Users/josephfreivald/workspace/mercury-ladder/mercury}
 case "$ARM" in
   trunk) EXTRA="MERCURY_TEST_BIN_A=$TRUNK MERCURY_TEST_BIN_B=$TRUNK" ;;
   new)   EXTRA="LDPC_ALG=auto" ;;
   emul)  EXTRA="LDPC_ALG=legacy LDPC_MAX_ITER=10 LDPC_LLR_CALIBRATED=0" ;;
+  ladder)        EXTRA="MERCURY_TEST_BIN_A=$LADDER MERCURY_TEST_BIN_B=$LADDER" ;;
+  ladder-legacy) EXTRA="MERCURY_TEST_BIN_A=$LADDER MERCURY_TEST_BIN_B=$LADDER LDPC_ALG=legacy LDPC_LLR_CALIBRATED=0" ;;
   custom*) EXTRA="$AB_EXTRA" ;;      # ad-hoc arm: environment from AB_EXTRA
   *) echo "bad arm $ARM" >&2; exit 2 ;;
 esac
