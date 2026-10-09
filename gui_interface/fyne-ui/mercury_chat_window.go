@@ -630,8 +630,8 @@ func (cw *chatWindow) clearChat() {
 	})
 }
 
-// clearChatBox empties a single chat pane on the UI thread, leaving the
-// persisted history untouched.
+// clearChatBox empties a single chat pane, leaving the persisted history
+// untouched. It must be called on the UI thread.
 func (cw *chatWindow) clearChatBox(box *fyne.Container) {
 	box.Objects = nil
 	box.Refresh()
