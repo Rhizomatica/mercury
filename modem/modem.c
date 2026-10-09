@@ -621,9 +621,15 @@ static float ldpc_budget_for(const modem_backend_t *be, void *ctx, int frames_pe
 {
     if (g_ldpc_budget_ms > 0.0f) return g_ldpc_budget_ms;
     int sr = be->sample_rate ? be->sample_rate(ctx) : 8000;
-    float air_ms = 1000.0f * (float)be->n_tx_samples(ctx) * (float)(frames_per_burst > 0 ? frames_per_burst : 1) / (float)(sr > 0 ? sr : 8000);
     float guard_ms = (float)ARQ_CHANNEL_GUARD_MS;
-    float bg = g_ldpc_guard_frac * guard_ms, ba = g_ldpc_air_frac * air_ms;
+    float bg = g_ldpc_guard_frac * guard_ms;
+    /* A backend without n_tx_samples has no airtime to derive from: the guard
+     * bound alone applies. */
+    float ba = bg;
+    if (be->n_tx_samples) {
+        float air_ms = 1000.0f * (float)be->n_tx_samples(ctx) * (float)(frames_per_burst > 0 ? frames_per_burst : 1) / (float)(sr > 0 ? sr : 8000);
+        ba = g_ldpc_air_frac * air_ms;
+    }
     float b = bg < ba ? bg : ba;
     return b > 0.0f ? b : 0.0f;
 }
