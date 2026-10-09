@@ -190,7 +190,15 @@ int mercury_engine_init(const mercury_config *cfg,
     {
         int alg = ldpc_alg_from_name(cfg->ldpc_alg);
         if (alg == -2) alg = LDPC_ALG_AUTO;
-        modem_set_ldpc_policy(cfg->ldpc_max_iter, cfg->ldpc_budget_ms,
+        /* LDPC_ALG in the environment beats the INI (test knob, see ldpc_ctx.h) */
+        if (getenv("LDPC_ALG") && ldpc_alg_from_name(getenv("LDPC_ALG")) != -2)
+            alg = ldpc_alg_from_name(getenv("LDPC_ALG"));
+        int max_iter = cfg->ldpc_max_iter;
+        /* Test knobs, like LDPC_ALG: LDPC_MAX_ITER overrides the cap so a
+         * build can be run in the pre-change configuration for an A/B. */
+        const char *e = getenv("LDPC_MAX_ITER");
+        if (e && atoi(e) > 0) max_iter = atoi(e);
+        modem_set_ldpc_policy(max_iter, cfg->ldpc_budget_ms,
                               cfg->ldpc_budget_guard_frac, cfg->ldpc_budget_air_frac, alg);
     }
     modem_set_tx_delay_ms(cfg->tx_delay_ms);
