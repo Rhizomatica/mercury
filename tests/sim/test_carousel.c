@@ -188,6 +188,23 @@ static void test_carousel_drain_budget_fits_the_floor(void)
     free(c);
 }
 
+/* Both ends cut the session into the same pieces: the caller from the rung
+ * it read in the ACCEPT, the callee from the rung it put there.  23 bytes
+ * only for a floor start (4 to an MFSK frame, not 3), 24 above. */
+static void test_carousel_piece_size_agrees(void)
+{
+    car_t *a = calloc(1, sizeof(*a)), *b = calloc(1, sizeof(*b));
+    car_io_t io = {0};
+    for (int lv = 0; lv < CAR_NLEVELS; lv++) {
+        car_init(a, &io, 3, lv);   car_start_sender(a, 0);
+        car_init(b, &io, lv, -1);  car_start_receiver(b, 0);
+        TEST_ASSERT_EQUAL_INT(lv == 0 ? CAR_PIECE_FLOOR : CAR_PIECE, car_piece(a));
+        TEST_ASSERT_EQUAL_INT(car_piece(a), car_piece(b));
+        TEST_ASSERT_EQUAL_INT(car_piece_for_start(lv), car_piece(a));
+    }
+    free(a); free(b);
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -199,6 +216,7 @@ int main(void)
     RUN_TEST(test_carousel_floor_handover_not_keyed_over);
     RUN_TEST(test_carousel_sender_holds_for_peer_turn);
     RUN_TEST(test_carousel_drain_budget_fits_the_floor);
+    RUN_TEST(test_carousel_piece_size_agrees);
     RUN_TEST(test_carousel_request_response_completes);
     return UNITY_END();
 }

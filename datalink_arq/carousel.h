@@ -40,6 +40,12 @@
 #include "rs_erasure.h"
 
 #define CAR_PIECE        24     /* bytes per piece: fits DATAC15 with the headers */
+/* ...and in a session that starts on the floor: an MFSK frame (98 bytes,
+ * 6 of headers) holds 4 of 23 where it held 3 of 24 -- 92 bytes, not 72.
+ * A whole session uses one size (car_piece_for_start), so blocks
+ * stay uniform; the DATAC rungs carry 4 % less at 23, so only a session
+ * expected to live at the floor takes it. */
+#define CAR_PIECE_FLOOR  23
 #define CAR_MAX_K        96     /* data pieces per block (see carousel.c)        */
 #define CAR_WIN          8      /* open blocks at once                           */
 #define CAR_NLEVELS      7      /* the payload mode ladder (3 bits on the wire) */
@@ -158,6 +164,7 @@ typedef struct {
     bool     offered;               /* M: my round offered S its turn as well (offer_both) */
     uint64_t kd_allowed;            /* M: the length my keydown was checked against FreeFor at */
     int      overruns;              /* M: keydowns longer than that (a bug: see keydown()) */
+    int      piece;                 /* the session's piece size (0: CAR_PIECE) */
     uint32_t deliver_seq;           /* deliveries to my application so far */
     uint32_t seq_at_ask;            /* ...when I last asked or answered */
     uint64_t plan_not_before;       /* M: an ack-only DONE waits for my application till then */
@@ -278,6 +285,12 @@ void     car_on_time(car_t *c, uint64_t now);
 /* The ladder rung for an SNR, mapped the way trunk enters a mode from DATAC15. */
 int  car_start_level(float snr_db);
 int  car_level_mode(int level);
+/* The session's piece size, from the rung the callee's ACCEPT starts the
+ * caller's rounds on (both ends know it; the FSM also folds it into the
+ * session seed, so ends that disagree hear none of each other's frames). */
+int  car_piece_for_start(int caller_start_level);
+/* The piece size this session cuts its blocks into (tests). */
+int  car_piece(const car_t *c);
 bool car_is_idle(const car_t *c);
 /* The session can no longer be trusted: a block failed its check, or did not
  * decode.  What it carried may already be partly delivered (the stream runs
