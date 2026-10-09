@@ -19,7 +19,7 @@ function plot_ldpc_figures(png_dir)
     C.blue = '#2a78d6'; C.orange = '#eb6834'; C.aqua = '#1baf7a'; C.yellow = '#eda100';
     C.blue250 = '#86b6ef'; C.surface = '#fcfcfb'; C.ink = '#0b0b0b'; C.ink2 = '#52514e'; C.grid = '#e4e3df';
     % entity -> colour, held fixed across every figure
-    E.new = C.blue; E.deployed = C.orange; E.golden = C.aqua; E.legacy50 = C.yellow;
+    E.new = C.blue; E.deployed = C.orange; E.golden = C.aqua; E.embedded = C.yellow;
 
     codes = {'HRA_56_56','DATAC14', 'nms16'; 'H_128_256_5','DATAC0', 'nms16'; 'H_256_512_4','DATAC13', 'nms16'; ...
              'H_256_768_22','DATAC15 / DATAC16', 'nms16'; 'H_1024_2048_4f','DATAC3 / DATAC4', 'spt'; ...
@@ -32,11 +32,14 @@ function plot_ldpc_figures(png_dir)
     for i = 1:size(codes,1)
         code = codes{i,1}; T = readtable(fullfile(D, ['ldpc_fer_' code '.csv']));
         x = T.EsNo_dB;
-        if strcmp(codes{i,3}, 'nms16'), newcol = 'C_nms16_50'; else, newcol = 'C_spt50'; end
-        series = {T.C_leg10_fixedEsNo, 'Deployed today: 10 iterations, fixed-EsNo LLRs', E.deployed; ...
-                  T.C_leg50,           'Legacy decoder, 50 iterations',                  E.legacy50; ...
-                  T.M_bp50,            'MATLAB belief propagation, 50 (golden)',         E.golden; ...
-                  T.(newcol),          ['New: ' algname(codes{i,3}) ', 50'],              E.new};
+        if strcmp(codes{i,3}, 'nms16'), newcol = 'C_nms16_100'; else, newcol = 'C_spt100'; end
+        % Deployed = what a desktop Mercury runs: legacy SumProduct at the code
+        % table's cap (100) with the fixed-EsNo LLR scale.  The 10-iteration cap
+        % exists only under #ifdef __EMBEDDED__ (shown for embedded builds).
+        series = {T.C_leg100_fixedEsNo, 'Deployed (PC): legacy, 100 iterations, fixed-EsNo LLRs', E.deployed; ...
+                  T.C_leg10_fixedEsNo,  'Embedded build: legacy, 10 iterations, fixed-EsNo LLRs',   E.embedded; ...
+                  T.M_bp50,             'MATLAB belief propagation, 50 (golden)',                  E.golden; ...
+                  T.(newcol),           ['New: ' algname(codes{i,3}) ', 100, calibrated LLRs'],     E.new};
         f = newfig(C);
         ax = gca; hold(ax, 'on');
         yline(ax, 1e-1, '--', 'Color', C.ink2, 'LineWidth', 0.75, 'Alpha', 0.6);
@@ -54,16 +57,17 @@ function plot_ldpc_figures(png_dir)
         caponly(i) = false;
         if isnan(gain1(i)) && isnan(gain2(i))
             % the deployed curve never decodes on this grid (the 16200-bit code's
-            % 10 dB constant is ~10 dB off in a BPSK test): report the cap-only gain
-            gain1(i) = golden.esno_at_fer(x, T.C_leg10, 1e-1) - golden.esno_at_fer(x, series{4,1}, 1e-1);
-            gain2(i) = golden.esno_at_fer(x, T.C_leg10, 1e-2) - golden.esno_at_fer(x, series{4,1}, 1e-2);
+            % 10 dB constant is ~10 dB off in a BPSK test): report the gain of the
+            % new decoder over the legacy decoder given correctly scaled LLRs
+            gain1(i) = golden.esno_at_fer(x, T.C_leg50, 1e-1) - golden.esno_at_fer(x, series{4,1}, 1e-1);
+            gain2(i) = golden.esno_at_fer(x, T.C_leg50, 1e-2) - golden.esno_at_fer(x, series{4,1}, 1e-2);
             caponly(i) = true;
         end
         if isnan(gain2(i)), gtxt = sprintf('%.2f dB at FER 10%%', gain1(i)); else, gtxt = sprintf('%.2f dB at FER 1%%', gain2(i)); end
-        if caponly(i), gtxt = [gtxt ' (cap only*)']; end
+        if caponly(i), gtxt = [gtxt ' (vs legacy, exact LLRs*)']; end
         title(ax, sprintf('%s  (%s): frame error rate, BPSK over AWGN', tex(code), codes{i,2}), 'Color', C.ink, 'FontWeight', 'normal');
         if caponly(i)
-            subtitle(ax, {sprintf('deployed -> new decoder: %s recovered', gtxt), '* its 10 dB LLR constant never decodes in a BPSK test; gain vs legacy at 10 iterations, exact LLRs'}, 'Color', C.ink2);
+            subtitle(ax, {sprintf('deployed -> new decoder: %s recovered', gtxt), '* its 10 dB LLR constant never decodes in a BPSK test; gain vs legacy at 50 iterations, exact LLRs'}, 'Color', C.ink2);
         else
             subtitle(ax, sprintf('deployed -> new decoder: %s recovered', gtxt), 'Color', C.ink2);
         end
@@ -88,7 +92,7 @@ function plot_ldpc_figures(png_dir)
     set(ax, 'YDir', 'reverse'); xlim(ax, [0 2.2]);
     xlabel(ax, 'E_s/N_0 recovered, deployed decoder -> new decoder (dB)');
     title(ax, 'Coding gain returned per code', 'Color', C.ink, 'FontWeight', 'normal');
-    subtitle(ax, {'iteration cap 10 -> 50 and calibrated LLR scale, BPSK over AWGN, 600 frames per point', '* cap-only gain: that mode''s 10 dB LLR constant never decodes in a BPSK test'}, 'Color', C.ink2);
+    subtitle(ax, {'deployed: legacy sum-product, cap 100, fixed-EsNo LLRs', 'new: per-code decoder, cap 100, calibrated LLRs.  BPSK/AWGN, 600 frames per point', '* vs legacy at 50, exact LLRs: its 10 dB constant never decodes in BPSK'}, 'Color', C.ink2);
     legend(ax, b, 'Location', 'northeast', 'Box', 'off', 'TextColor', C.ink2);
     finish(ax, C); hold(ax, 'off'); save(f, O, png_dir, 'gain_summary');
 
@@ -118,7 +122,7 @@ function plot_ldpc_figures(png_dir)
     txt = fileread(fullfile(D, 'nms_tuning.txt')); lines = strsplit(strtrim(txt), newline);
     f = newfig(C, 760, 400); ax = gca; hold(ax, 'on');
     yline(ax, 0, '-', 'Color', C.ink2, 'LineWidth', 0.75, 'Alpha', 0.6);
-    cols = {E.new, E.deployed, E.golden, E.legacy50}; chosen = containers.Map({'H_256_768_22','H_1024_2048_4f','H_4096_8192_3d','H_16200_9720'}, {0.85, 0.70, 0.85, 0.80});
+    cols = {E.new, E.deployed, E.golden, E.embedded}; chosen = containers.Map({'H_256_768_22','H_1024_2048_4f','H_4096_8192_3d','H_16200_9720'}, {0.85, 0.70, 0.85, 0.80});
     hh = gobjects(numel(lines),1);
     for i = 1:numel(lines)
         code = regexp(lines{i}, '^(\S+):', 'tokens', 'once'); code = code{1};

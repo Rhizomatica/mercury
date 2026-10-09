@@ -9,22 +9,33 @@ compiles and behaves as before unless it opts in.
 ## Why
 
 Measured against MATLAB belief propagation (Communications Toolbox) on all
-seven data-mode codes, BPSK/AWGN, 600 frames per point (`tests/matlab/TestLdpc.m`):
+seven data-mode codes, BPSK/AWGN, 600 frames per point (`tests/matlab/TestLdpc.m`).
+"Deployed" is what a desktop Mercury runs: codec2's SumProduct at the code
+tables' limit of 100 iterations with LLRs scaled by the per-mode constant
+`EsNodB` (3 dB, 10 dB for the 16200-bit code).  The 10-iteration cap in
+`freedv_700.c` ("limit CPU load") is under `#ifdef __EMBEDDED__` and applies
+only to embedded builds; its extra cost is the last column.
 
-| code (modes) | 10-iteration cap loss, FER 1e-1 | fixed-EsNo LLR scale loss | both, FER 1e-2 |
-|---|---|---|---|
-| HRA_56_56 (DATAC14) | 0.30 dB | 0.14 dB | floor |
-| H_128_256_5 (DATAC0) | 0.33 | 0.29 | 0.71 |
-| H_256_512_4 (DATAC13) | 0.55 | 0.20 | 0.68 |
-| H_256_768_22 (DATAC15/16) | 0.93 | 0.58 | 1.77 |
-| H_1024_2048_4f (DATAC3/4) | 0.87 | 0.30 | 1.20 |
-| H_4096_8192_3d (DATAC1) | 1.27 | 0.38 | 1.84 |
-| H_16200_9720 (DATAC17/QAM16C2) | 1.19 | n/a | 1.60 |
+| code (modes) | deployed -> new, FER 1e-1 | FER 1e-2 | of which LLR scale | embedded build (cap 10), FER 1e-1 |
+|---|---|---|---|---|
+| HRA_56_56 (DATAC14) | 0.0 dB | 0.0 | 0.07 | 0.49 |
+| H_128_256_5 (DATAC0) | 0.15 | 0.25 | 0.16 | 0.57 |
+| H_256_512_4 (DATAC13) | 0.23 | 0.07 | 0.21 | 0.74 |
+| H_256_768_22 (DATAC15/16) | **1.00** | **1.53** | 0.99 | 1.50 |
+| H_1024_2048_4f (DATAC3/4) | 0.68 | 0.59 | 0.67 | 1.18 |
+| H_4096_8192_3d (DATAC1) | **1.12** | **1.36** | 1.07 | 1.75 |
+| H_16200_9720 (DATAC17/QAM16C2) | n/a in BPSK (its 10 dB constant never decodes; equal to legacy given exact LLRs) | | 0.42 at 16-QAM, from `llr_scale_cost` | 1.21 |
 
-The SumProduct implementation itself is correct (at 50 iterations it tracks
-MATLAB within 0.04 dB on every code).  The loss comes from `max_iter = 10`
-("limit CPU load", `freedv_700.c`) and from scaling LLRs with the per-mode
-constant `EsNodB`.  The CPU concern is real on small boards but was being paid
+The SumProduct implementation itself is correct (at 50 iterations with exact
+LLRs it tracks MATLAB within 0.04 dB on every code).  On a desktop the loss is
+the LLR scale: the fixed `EsNodB` is right at one operating point only, and a
+sum-product decoder fed over-confident LLRs converges to the wrong codeword
+rather than slowly, so more iterations do not recover it (the "of which"
+column is the whole gain on every code).  It costs 0.6-1.5 dB at FER 1e-2 on
+the four codes that carry the ARQ ladder.  On an embedded build the cap adds
+another 0.5 dB.
+
+The CPU concern behind that cap is real on small boards but was being paid
 in the wrong place: the decoder rebuilt its graph with one heap allocation per
 node on every call (about 22,700 allocations and 1.9 MB churn per 16200-bit
 decode), visited every edge through two pointer indirections, and called the
