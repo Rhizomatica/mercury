@@ -140,6 +140,66 @@ Generated from the committed curves in `docs/ldpc-figures/data/` by
 ![Decoder cost per iteration](ldpc-figures/decoder_speed.svg)
 ![Working memory per code](ldpc-figures/working_memory.svg)
 
+## End-to-end A/B against the shipped binary
+
+Two `mercury` processes over the deterministic `-x sock` bench
+(`tests/integration`, Watterson channel, AWGN only, seeded), paced in real
+time so the DSP threads see a radio's timeline.  Three arms, same seeds:
+the pristine v1.9.17 binary on both stations (`trunk`, built from the merge
+base), this tree with defaults (`new`), and this tree forced to the embedded
+build's decoder (`cap10`: `LDPC_ALG=legacy LDPC_MAX_ITER=10
+LDPC_LLR_CALIBRATED=0`).  The x axis is the bench's measured in-burst SNR3k on
+the payload direction; the y axis is virtual time of the last key-up, which
+the lockstep bench reproduces to about one 20 ms block.  Eight seeds at the
+three points where the decoders differ, two elsewhere.
+
+![End-to-end A/B](ldpc-figures/end_to_end_ab.svg)
+
+4 KB harness payload (a repeated 34-byte string, so the link compresses it to
+a few DATAC1 frames), key-ups by the sending station (5 = no retransmission)
+and link time, mean over seeds:
+
+| in-burst SNR3k | trunk | new | cap10 (embedded) |
+|---|---|---|---|
+| +5.2 .. +3.0 dB | 5 / 41-43 s | 5 / 42-43 s | 5 / 41-43 s |
+| +2.0 dB (n = 8) | 5.00 / 42.6 s | 5.00 / 42.6 s | 6.75 / 76.5 s |
+| +1.0 dB (n = 8) | 5.25 / 51.0 s | 5.25 / 46.2 s | 7.00 / 79.1 s |
+| +0.1 dB (n = 8) | 7.88 / 93.3 s | 7.25 / 88.6 s | 8.00 / 93.0 s |
+| -0.9 dB | 7 / 77.9 s | 7 / 78.0 s | 7 / 77.9 s |
+
+What this says, honestly:
+
+- Against what a desktop Mercury ships today, the decoder change is worth
+  about 10 % of link time at +1 dB and 5 % at +0.1 dB (the DATAC16 control
+  decode and the DATAC3/DATAC1 probes near their thresholds, where the
+  calibrated LLR scale lets a frame converge that the fixed scale gives up
+  on), and nothing above +2 dB, where both decode every frame.  The ladder's
+  thresholds are hard-coded, so a better decoder cannot climb earlier; it
+  can only save retries inside a rung.  Lowering the thresholds is a
+  separate change that this one makes possible.
+- Against an embedded build (codec2's `#ifdef __EMBEDDED__` cap of 10
+  iterations), the gain is large: 1.8x the link time at +2 dB and +1 dB.
+  The deadline replaces that cap, so a slow host keeps the full decoder and
+  bounds its worst case in time rather than in iterations.
+- At the ladder floor (102-byte payload) the three arms are identical down
+  to the point where every arm stops connecting (about -13 dB): below about
+  -8 dB the CALL/ACCEPT handshake rides the MFSK plane, which has its own
+  decoder and is untouched here, and at -7 .. -8 dB the DATAC16 CALL is lost
+  to acquisition before the LDPC decoder gets a vote.  The 200 Hz modes' code
+  has several dB of margin over their acquisition threshold; the decoder is
+  not what sets their floor.
+
+A first version of this comparison used `cap10` as the "deployed" arm.  The
+mixed-binary runs (trunk sender with this receiver and the reverse) showed it
+was not: trunk's receiver decoded frames the cap-10 receiver lost, which led
+to the `#ifdef __EMBEDDED__` guard around `max_iter = 10` in `freedv_700.c`.
+Desktop builds have always run the code tables' limit of 100.
+
+Reproduce: `tests/integration/ab_sweep.sh OUT PARALLEL "trunk new emul" "NO_LIST"
+"SEEDS" PAYLOAD_KB` with `MERCURY_TRUNK_BIN` pointing at a trunk build;
+`tests/matlab/plot_ab_figure.m` draws the figure from the aggregated runs in
+`docs/ldpc-figures/data/ab_runs.csv`.
+
 ## Running it
 
 ```sh

@@ -267,6 +267,11 @@ void freedv_ofdm_data_open(struct freedv *f, struct freedv_advanced *adv) {
   f->harq_enable = 0;
   f->ldpc_budget_ms = 0.0f;
   f->llr_calibrated = 1;
+  /* test knob (A/B against the pre-change scale): LDPC_LLR_CALIBRATED=0 */
+  {
+    const char *e = getenv("LDPC_LLR_CALIBRATED");
+    if (e && e[0] == '0') f->llr_calibrated = 0;
+  }
   f->llr_esno_db_used = f->ofdm->EsNodB;
   f->harq_valid = 0;
   f->harq_ncopies = 0;
