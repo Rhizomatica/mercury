@@ -155,6 +155,7 @@ void freedv_fsk_ldpc_open(struct freedv *f, struct freedv_advanced *adv) {
   assert(f->ldpc != NULL);
   ldpc_codes_setup(f->ldpc, adv->codename);
   f->ldpc->max_iter = 15;
+  f->ldpc_cap_nobudget = 15;
   // fprintf(stderr, "Using: %s\n", f->ldpc->name);
 
   f->bits_per_modem_frame = f->ldpc->data_bits_per_frame;
@@ -552,6 +553,7 @@ int freedv_rx_fsk_ldpc_data(struct freedv *f, COMP demod_in[]) {
        * LDPC decode and check the CRC */
 
       uint8_t decoded_codeword[f->ldpc->ldpc_coded_bits_per_frame];
+      f->ldpc->deadline_ns = f->ldpc_budget_ms > 0.0f ? ldpc_now_ns() + (uint64_t)(f->ldpc_budget_ms * 1e6f) : 0;
       iter = run_ldpc_decoder(
           f->ldpc, decoded_codeword,
           &f->twoframes_llr[f->fsk_ldpc_best_location + sizeof(fsk_ldpc_uw)],

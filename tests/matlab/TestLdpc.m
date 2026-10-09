@@ -12,7 +12,8 @@ classdef TestLdpc < matlab.unittest.TestCase
         % data-mode codes, smallest first (DATAC14, DATAC0, DATAC13, DATAC15/16,
         % DATAC3/4, DATAC1, DATAC17/QAM16C2)
         code = {'HRA_56_56', 'H_128_256_5', 'H_256_512_4', 'H_256_768_22', ...
-                'H_1024_2048_4f', 'H_4096_8192_3d', 'H_16200_9720'};
+                'H_1024_2048_4f', 'H_4096_8192_3d', 'H_16200_9720', ...
+                'HRA_112_112', 'HRAb_396_504', 'HRAa_1536_512', 'H_2064_516_sparse'};   % voice (700D/E) and 2020 codes: every code AUTO can touch has a curve
     end
 
     properties

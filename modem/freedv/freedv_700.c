@@ -136,9 +136,12 @@ void freedv_ofdm_voice_open(struct freedv *f, char *mode) {
 
   ldpc_codes_setup(f->ldpc, f->ofdm->codename);
   ldpc_mode_specific_setup(f->ofdm, f->ldpc);
-#ifdef __EMBEDDED__
-  f->ldpc->max_iter = LDPC_MAX_ITER_DEFAULT; /* early exit on parity; a deadline bounds slow hosts */
-#endif
+  /* A voice frame is bounded by its own frame period, not by an iteration
+   * count: the per-decode budget is set below once the frame period is known
+   * (a quarter of it; see LDPC_VOICE_BUDGET_FRAC), and the deadline in the
+   * rx path does the bounding on every build.  codec2's __EMBEDDED__ cap of
+   * 10 iterations is not applied here for that reason. */
+  f->ldpc_cap_nobudget = f->ldpc->max_iter;
   int Nsymsperpacket = ofdm_get_bits_per_packet(f->ofdm) / f->ofdm->bps;
   f->rx_syms = (COMP *)MALLOC(sizeof(COMP) * Nsymsperpacket);
   assert(f->rx_syms != NULL);
@@ -154,6 +157,9 @@ void freedv_ofdm_voice_open(struct freedv *f, char *mode) {
   f->n_nom_modem_samples = ofdm_get_samples_per_frame(f->ofdm);
   f->n_max_modem_samples = ofdm_get_max_samples_per_frame(f->ofdm);
   f->modem_sample_rate = f->ofdm->config.fs;
+  /* 700D: 160 ms frames -> 40 ms budget; 700E: 80 ms -> 20 ms.  Hundreds of
+   * iterations of these small codes on a PC, the old cap's intent on a board. */
+  f->ldpc_budget_ms = LDPC_VOICE_BUDGET_FRAC * 1000.0f * (float)f->n_nom_modem_samples / (float)f->modem_sample_rate;
   f->clip_en = false;
   f->sz_error_pattern = f->ofdm_bitsperframe;
 
@@ -219,8 +225,13 @@ void freedv_ofdm_data_open(struct freedv *f, struct freedv_advanced *adv) {
   ldpc_codes_setup(f->ldpc, f->ofdm->codename);
   ldpc_mode_specific_setup(f->ofdm, f->ldpc);
 #ifdef __EMBEDDED__
-  f->ldpc->max_iter = LDPC_MAX_ITER_DEFAULT; /* early exit on parity; a deadline bounds slow hosts */
+  /* A data frame's bound is the ARQ's ACK window, which only the host knows:
+   * Mercury sets it per instance (freedv_set_ldpc_budget_ms) and then this
+   * instance runs to the code table's limit under that deadline.  A host that
+   * sets no budget keeps codec2's cap of 10 iterations, as it always was. */
+  f->ldpc->max_iter = 10;
 #endif
+  f->ldpc_cap_nobudget = f->ldpc->max_iter;
 
   // useful constants
   f->ofdm_bitsperpacket = ofdm_get_bits_per_packet(f->ofdm);

@@ -1358,6 +1358,12 @@ float freedv_get_llr_esno_db(struct freedv *f) { return f->llr_esno_db_used; }
 
 void freedv_set_ldpc_budget_ms(struct freedv *f, float budget_ms) {
   f->ldpc_budget_ms = budget_ms > 0.0f ? budget_ms : 0.0f;
+  /* The deadline replaces the iteration cap only where a deadline exists: with
+   * a budget the decoder may run to the code table's limit (early exit on
+   * parity keeps clean frames cheap); without one the open-time cap applies,
+   * which on __EMBEDDED__ is the 10 iterations it always was. */
+  if (f->ldpc && f->ldpc_cap_nobudget > 0)
+    f->ldpc->max_iter = f->ldpc_budget_ms > 0.0f ? LDPC_MAX_ITER_DEFAULT : f->ldpc_cap_nobudget;
 }
 
 void freedv_set_ldpc_max_iter(struct freedv *f, int max_iter) {

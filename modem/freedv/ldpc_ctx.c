@@ -96,6 +96,11 @@ static const struct { const char *name; int alg; float scale; } policy_table[] =
     {"HRA_56_56",      LDPC_ALG_NMS16, 0.80f}, /* DATAC14                                           */
     {"H_1024_2048_4f", LDPC_ALG_SPT,   0.70f}, /* DATAC3/4: col weight 54, min-sum +0.1-0.2 dB; SPT gate passed */
     {"H_16200_9720",   LDPC_ALG_SPT,   0.80f}, /* DATAC17/QAM16C2: min-sum +0.3-0.45 dB; SPT gate passed */
+    /* voice and 2020 codes, measured the same way (short codes favour sum-product) */
+    {"HRA_112_112",    LDPC_ALG_SPT,   0.80f}, /* 700D: spt = legacy 0.00 dB; min-sum 0.2 dB worse        */
+    {"HRAb_396_504",   LDPC_ALG_SPT,   0.80f}, /* 2020B: spt = legacy -0.02 dB; min-sum 0.1 dB worse      */
+    {"HRAa_1536_512",  LDPC_ALG_NMS16, 0.80f}, /* 2020: nms16 = spt = legacy within 0.01 dB; fastest      */
+    {"H_2064_516_sparse", LDPC_ALG_NMS16, 0.80f}, /* 2020 (older code): within 0.04 dB of spt            */
 };
 #define NMS_SCALE_DEFAULT 0.80f
 

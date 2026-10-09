@@ -46,6 +46,11 @@ enum {
  * cost 2-3 iterations whatever the cap, and a deadline bounds the worst case on
  * slow hardware instead of a cap that costs 0.3-1.6 dB at the cliff. */
 #define LDPC_MAX_ITER_DEFAULT 100
+/* Voice modes bound a decode by a fraction of their own modem frame period
+   (700D 160 ms -> 40 ms, 700E 80 ms -> 20 ms): a decode that outlasts its frame
+   is useless anyway.  Hundreds of iterations of those codes on a PC; the bound
+   the old __EMBEDDED__ cap of 10 approximated, in the units that matter. */
+#define LDPC_VOICE_BUDGET_FRAC 0.25f
 
 ldpc_ctx_t *ldpc_ctx_create(const struct LDPC *code);
 void        ldpc_ctx_destroy(ldpc_ctx_t *ctx);

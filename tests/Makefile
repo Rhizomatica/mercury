@@ -63,7 +63,7 @@ ARQ_STUBS = datalink_arq/arq_test_stubs.c
 TEST_BINS = test_ring_buffer test_arq_protocol test_arq_timing test_arq_fsm \
             test_tcp_interfaces test_resampler test_pcm24 test_arq_sim \
             test_arq_conn test_cfg_utils test_arq_tnc test_channel_busy \
-            test_freedv_harq test_ldpc_ctx test_llr_qam test_sock_wire test_rtp_wire test_virtual_clock test_watterson \
+            test_freedv_harq test_ldpc_ctx test_llr_qam test_ldpc_modes test_sock_wire test_rtp_wire test_virtual_clock test_watterson \
             test_mercury_prng test_bcast_file \
             test_ofdm_acq test_tx_bpf test_crc_seed test_ui_status test_ui_devices test_ui_ptt_persist test_tx_pacing test_radio_port \
             test_radio_io_frequency test_mfsk test_rs_erasure test_carousel test_carousel_sim test_car_explore \
@@ -230,6 +230,9 @@ test_ldpc_ctx: modem/test_ldpc_ctx.c $(UNITY_SRC) \
                ../modem/freedv/H_256_768_22.c
 	$(CC) $(CFLAGS) -I../modem/freedv -o $@ $(filter %.c %.a %.o,$^) $(LDFLAGS) -lm
 # Generic max-log demapper + higher-order QAM tables
+test_ldpc_modes: modem/test_ldpc_modes.c $(UNITY_SRC) ../modem/freedv/libfreedvdata.a
+	$(CC) $(CFLAGS) -I../modem/freedv -o $@ $(filter %.c %.a %.o,$^) $(LDFLAGS) -lm
+
 test_llr_qam: modem/test_llr_qam.c $(UNITY_SRC) ../modem/freedv/libfreedvdata.a
 	$(CC) $(CFLAGS) -I../modem/freedv -o $@ $(filter %.c %.a %.o,$^) $(LDFLAGS) -lm
 # -x sock wire codec: byte-exact pin of the lockstep frame layout
