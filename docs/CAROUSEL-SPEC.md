@@ -70,9 +70,10 @@ Control mode: DATAC16, 14 payload bytes, 3740 ms (P:92, P:208).
 
 | Name | Value | Name | Value |
 |---|---|---|---|
-| CAR_PIECE | 24 B (H:41) | CAR_MAX_K | 96 (H:42) |
-| CAR_WIN | 8 (H:43) | CAR_NLEVELS | 7 (H:44) |
-| CAR_POLL_BYTES | 14 (H:46) | CAR_KEYDOWN_MAX | 17 (H:47); runtime cap ARQ_KEYDOWN_FRAMES 17 (A.h:90) |
+| CAR_PIECE | 24 B (H:42), the max; a session's size is `piece_of(c)` | CAR_MAX_K | 96 (H:49) |
+| CAR_PIECE_FLOOR | 23 B (H:48), when the caller's start rung is 0 (`piece_for_start`) | | |
+| CAR_WIN | 8 (H:49) | CAR_NLEVELS | 7 (H:50) |
+| CAR_POLL_BYTES | 14 (H:52) | CAR_KEYDOWN_MAX | 17 (H:53); runtime cap ARQ_KEYDOWN_FRAMES 17 (A.h:90) |
 | FRAME_HDR / SEG_HDR | 2 / 4 B | FB_UNSEEN | 255 (wire 127) |
 | RS_MAX_PIECES | 256 (rs_erasure.h:20) | SLOW_RUNG_FRAMES | 3 |
 | TURN_QUANTUM_MS | 30000 | TURN_CAP_MS | 45000 |
@@ -106,7 +107,7 @@ Derived control airtimes:
 
 ---
 
-## 2. Roles and per-station state (`car_t`, H:105-182)
+## 2. Roles and per-station state (`car_t`, H:111-189)
 
 Each station runs one `car_t`. Per direction, the **receiver drives** (polls) and
 the **sender** answers. `sending == true` means "I hold the turn (I am the
@@ -118,13 +119,13 @@ listed).
 
 | Field | Meaning | Init |
 |---|---|---|
-| `io` | callbacks (H:57-82) | copied |
+| `io` | callbacks (H:63-88) | copied |
 | `sending` | I hold the turn | false; caller → true at start (C:1570) |
 | `idle` | nothing in flight either way | false |
 | `rx_level` | rung the payload decoder is bound to (mirror of last `bind_rx`) | 0 (but runtime binding set by ACCEPT path, see 5.12) |
 | `snr_level` | start rung for the peer derived from SNR measured here (connect SNR) | `rx_level` arg |
 | `snr_ema`, `snr_valid` | EMA (0.7/0.3) of decoder SNR over **every** decoded frame from the peer, control or payload (C:1607-1609) | 0 / false |
-| `deadline[4]` | CAR_T_POLL, CAR_T_SEND, CAR_T_WAIT, CAR_T_SENSE; 0 = disarmed (H:86) | all 0 |
+| `deadline[4]` | CAR_T_POLL, CAR_T_SEND, CAR_T_WAIT, CAR_T_SENSE; 0 = disarmed (H:92) | all 0 |
 | `last_carrier_ms` | last time the peer was decoded, a pattern heard, or `peer_keyed()` returned true (C:363-368, C:1606, C:1683) | 0 |
 | `tx_busy` | my keydown/pattern is on the air | false |
 | `after_tx` | AFTER_NONE/POLL/ROUND/PATTERN: what `car_on_tx_done` arms (C:127) | NONE |
@@ -141,7 +142,7 @@ listed).
 
 | Field | Meaning | Init |
 |---|---|---|
-| `sb[8]`, `nsb` | open (unretired) blocks, oldest first; `car_sblock_t` (H:88-95): `id` (uint8), `K` (data pieces), `len` (bytes), `next` (next piece index to send, wraps mod 256), `need` (pieces receiver still needs, last report), `resend` (data piece the receiver's stream waits on, -1), `sent` (distinct pieces sent, capped at 256), `round_sent` (fresh pieces in my last round), `data[96][24]` | 0 |
+| `sb[8]`, `nsb` | open (unretired) blocks, oldest first; `car_sblock_t` (H:94-101): `id` (uint8), `K` (data pieces), `len` (bytes), `next` (next piece index to send, wraps mod 256), `need` (pieces receiver still needs, last report), `resend` (data piece the receiver's stream waits on, -1), `sent` (distinct pieces sent, capped at 256), `round_sent` (fresh pieces in my last round), `data[96][24]` (rows of the session's piece size) | 0 |
 | `next_blk_id` | uint8 id of the next block to open | 0 |
 | `tx_level`, `tx_n` | rung / frame count the last poll directed (-1: never polled) | -1, 0 → set by start (C:1572) |
 | `tx_poll_id` | 4-bit poll id my frames answer | 0 → 1 at start |
@@ -163,7 +164,7 @@ listed).
 
 | Field | Meaning | Init |
 |---|---|---|
-| `rb[8]`, `rbase` | receive window: slot `id % 8`, ids `rbase..rbase+7`; `car_rblock_t` (H:97-103): `known`, `done`, `K`, `len`, `have`, `delivered` (bytes already handed up), `got[256]`, `piece[256][24]` | 0 |
+| `rb[8]`, `rbase` | receive window: slot `id % 8`, ids `rbase..rbase+7`; `car_rblock_t` (H:103-109): `known`, `done`, `K`, `len`, `have`, `delivered` (bytes already handed up), `got[256]`, `piece[256][24]` | 0 |
 | `poll_id` | 4-bit id of my current poll (the round I expect) | 0 → 1 (callee) |
 | `my_poll_id` | id of the last poll I actually sent with n>0 | 0 |
 | `poll_level`, `poll_n` | rung/size I asked for (what I expect) | — |
@@ -192,7 +193,7 @@ listed).
 
 Per rung `lv`: `lv_sent`, `lv_lost` (decayed frame counts), `lv_rounds`,
 `lv_dead_run`, `lv_probe_fails`, `lv_round_at` (value of `polls` when last
-measured), `lv_probe_at` (ms), `lv_backoff_ms` (H:139-143). All 0 at init.
+measured), `lv_probe_at` (ms), `lv_backoff_ms` (H:145-149). All 0 at init.
 
 ---
 
@@ -273,7 +274,7 @@ RX demux (`car_on_frame`, C:1602-1626):
 ### 3.3 Patterns (no frame)
 
 `io.pattern(kind)` → `ARQ_ACTION_TX_PATTERN` (F:1413-1418, A:232-241).
-`CAR_PATTERN_ACK = 0`, `CAR_PATTERN_BREAK = 1` (H:84). RX: `arq_post_pattern_ack(is_break)` →
+`CAR_PATTERN_ACK = 0`, `CAR_PATTERN_BREAK = 1` (H:90). RX: `arq_post_pattern_ack(is_break)` →
 `ARQ_EV_RX_PATTERN` with `HAS_DATA` flag = BREAK (A:1148-1154) → `car_on_pattern` (F:2315-2319).
 
 | Pattern | Sent by | Meaning |
@@ -631,7 +632,7 @@ which rule last set `T_POLL`. A model should carry a ghost variable
 |---|---|---|
 | I1 | **Sender id span**: `(uint8)(next_blk_id - sb[0].id) ≤ 8` (a block is opened only while the span is < 8). | C:498-499, comment C:481-486 |
 | I2 | **Receiver/sender window alignment**: absent a wrong BREAK, `sb[0].id ≤ rbase ≤ sb[0].id + 8` (sender retires only what the receiver reports need 0 or behind base; rbase only slides over done blocks). With I1 every in-flight id lies in `[rbase-8, rbase+7]`, so mod-16 resolution (P7, apply_need, take_pieces) is exact. | C:457-475, 1009-1034, 1406-1407 |
-| I3 | Ids and `rbase` are uint8 and wrap at 256; 256 is a multiple of 16 and of 8, so `id mod 16` and slot `id % 8` are consistent across the wrap. | H:124, H:157, C:1013 |
+| I3 | Ids and `rbase` are uint8 and wrap at 256; 256 is a multiple of 16 and of 8, so `id mod 16` and slot `id % 8` are consistent across the wrap. | H:130, H:163, C:1013 |
 | I4 | Piece indices are mod 256; K ≤ 96 ⇒ ≥ 160 distinct repair indices before `next` wraps to already-sent indices. `sent` counts distinct pieces up to 256; resend-gap pieces are not counted (repeats). | C:563-565, C:46-50 |
 | I5 | **Floor rounds carry only `sb[0]`**, so a BREAK can only name it; the sender records `floor_blk`. | C:494-496, 507 |
 | I6 | **[since 2c07bf4]** **BREAK never retires**: it stops the block `floor_blk` if `sent ≥ K`. Retirement is by POLL/HANDOVER only, so I2 holds whatever patterns arrive. | PA4 |
@@ -689,6 +690,7 @@ which rule last set `T_POLL`. A model should carry a ghost variable
 | R22 | Runtime clamps silently | `car_io_keydown` clamps frame count to 17 and frame length to 1280 without telling the carousel (fits today's constants). | F:1393-1409 |
 | R23 | **[found since]** Two senders after a spurious pattern — **reduced [step 3]**: another station's patterns no longer read as the peer's; a detector false alarm (session ACK/BREAK) still could | A handover keydown lost whole, and a pattern nobody sent heard just after it: the station takes it as the peer's answer (`handover_unconfirmed = false`) and streams, while the peer, which never heard the handover, keeps sending too. Each sends on a rung the other's payload decoder is not bound to, nobody polls, and the session never completes; the 240 s lost-peer watchdog (E2) ends it. Data stays intact. `test_car_explore brkreplay 1 cliff:-5 3 4`. | PA3 |
 | R24 | **[found since]** Blind timers coincide — **open**: the 2 sim overlaps left after NAV are this (0.9 s apart, inside a header's detection time) | A sender's 90 s silence repeat and the receiver's handover repeat keyed 0.3 s apart, under carrier-sense latency (four frames lost). Data intact. `test_car_explore replay 1 5 9 10 11` on cliff:-5. Generalises R10. | K8, W-repeat |
+| R25 | **[found since]** Piece size disagreement — **fixed**: the size is in the session seed | Both ends take the session's piece size from the ACCEPT's start rung (rung 0 → 23 bytes, else 24). A callee re-measures on a repeated CALL, so a caller decoding ACCEPT k just as it re-CALLs can read another rung than the callee's last ACCEPT; across the -3 dB DATAC15 start that is another piece size, and the stream (delivered ahead of the block check) would hand up pieces read at the wrong size. `car_seed` hashes the size with the session id, nonce and callsigns, so such ends decode none of each other's frames and the session dies of silence. | `car_piece_for_start`, F:`car_seed` |
 
 ---
 

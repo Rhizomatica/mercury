@@ -204,13 +204,15 @@ static uint32_t crc32_step(uint32_t crc, const uint8_t *p, size_t n)
     }
     return crc;
 }
+static int piece_of(const car_t *c);
 static uint32_t block_check(const car_t *c, uint8_t id, int K, const uint8_t (*piece)[CAR_PIECE], int n)
 {
     uint8_t h[6] = { (uint8_t)c->io.block_key, (uint8_t)(c->io.block_key >> 8),
                      (uint8_t)(c->io.block_key >> 16), (uint8_t)(c->io.block_key >> 24), id, (uint8_t)K };
     uint32_t crc = crc32_step(0xFFFFFFFFu, h, sizeof h);
-    for (int i = 0; n > 0; i++, n -= CAR_PIECE)
-        crc = crc32_step(crc, piece[i], (size_t)(n < CAR_PIECE ? n : CAR_PIECE));
+    int P = piece_of(c);
+    for (int i = 0; n > 0; i++, n -= P)
+        crc = crc32_step(crc, piece[i], (size_t)(n < P ? n : P));
     return ~crc;
 }
 
@@ -253,7 +255,11 @@ static uint64_t level_air(int lv) { return mode_air(LADDER[lv]); }
 #define CTL_DEAF_OFF_DB  (ARQ_SNR_MIN_DATAC15_DB + 1.0f)
 static bool ctl_on_floor(const car_t *c)      { return c->io.pattern && c->peer_ctl_deaf; }
 static bool peer_ctl_on_floor(const car_t *c) { return c->io.pattern && c->ctl_deaf; }
-static int pieces_per_frame(int lv) { return (mode_payload(LADDER[lv]) - FRAME_HDR - SEG_HDR) / CAR_PIECE; }
+/* The session's piece size (car_t.piece): CAR_PIECE, or CAR_PIECE_FLOOR
+ * for a session that starts on the floor (car_start_sender / _receiver).
+ * Arrays keep CAR_PIECE-byte rows; a piece uses the first piece_of(c). */
+static int piece_of(const car_t *c) { return c->piece ? c->piece : CAR_PIECE; }
+static int pieces_per_frame(const car_t *c, int lv) { return (mode_payload(LADDER[lv]) - FRAME_HDR - SEG_HDR) / piece_of(c); }
 /* A rung whose first frame holds an inline poll and still a piece: not the
  * floor, nor DATAC15. */
 static bool inline_ok(int lv)
@@ -398,7 +404,7 @@ static bool decode_ctl(const uint8_t *b, size_t len, msg_t *m)
     return true;
 }
 
-static bool decode_data(const uint8_t *b, size_t len, msg_t *m)
+static bool decode_data(const uint8_t *b, size_t len, msg_t *m, int P)
 {
     if (len < FRAME_HDR) return false;
     memset(m, 0, sizeof(*m));
@@ -428,17 +434,17 @@ static bool decode_data(const uint8_t *b, size_t len, msg_t *m)
         g->pad = (int)((h >> 2) & 0x1F);
         if (!g->count) break;
         pos += SEG_HDR;
-        if (g->K > CAR_MAX_K || g->pad >= CAR_PIECE || pos + (size_t)g->count * CAR_PIECE > len) return false;
+        if (g->K > CAR_MAX_K || g->pad >= P || pos + (size_t)g->count * P > len) return false;
         g->pieces = b + pos;
-        pos += (size_t)g->count * CAR_PIECE;
+        pos += (size_t)g->count * P;
         m->nseg++;
     }
     return true;
 }
 
-static void put_seg_hdr(uint8_t *p, const car_sblock_t *s, int count, int first)
+static void put_seg_hdr(uint8_t *p, const car_sblock_t *s, int count, int first, int P)
 {
-    int pad = s->K * CAR_PIECE - s->len;
+    int pad = s->K * P - s->len;
     uint32_t h = (uint32_t)(s->id & 0x0F) << 28 | (uint32_t)(s->K - 1) << 21 |
                  (uint32_t)count << 15 | (uint32_t)(first & 0xFF) << 7 | (uint32_t)pad << 2;
     p[0] = (uint8_t)(h >> 24); p[1] = (uint8_t)(h >> 16); p[2] = (uint8_t)(h >> 8); p[3] = (uint8_t)h;
@@ -547,41 +553,42 @@ static bool unopened(const car_t *c)
 #ifndef BLOCK_AIR_MS
 #define BLOCK_AIR_MS 60000
 #endif
-static int block_k_for(int lv)
+static int block_k_for(const car_t *c, int lv)
 {
     int frames = (int)((BLOCK_AIR_MS + level_air(lv) - 1) / level_air(lv));
-    int k = frames * pieces_per_frame(lv);
+    int k = frames * pieces_per_frame(c, lv);
     return k < BLOCK_MIN_K ? BLOCK_MIN_K : k > CAR_MAX_K ? CAR_MAX_K : k;
 }
 
 static void open_block(car_t *c, int max_k)
 {
+    int P = piece_of(c);
     uint8_t buf[CAR_MAX_K * CAR_PIECE];
-    size_t len = c->io.tx_read(c->io.ctx, buf, (size_t)max_k * CAR_PIECE - BLOCK_CHECK);
+    size_t len = c->io.tx_read(c->io.ctx, buf, (size_t)max_k * P - BLOCK_CHECK);
     if (!len) return;
     car_sblock_t *s = &c->sb[c->nsb++];
     s->id = c->next_blk_id++;
     s->app_len = (int)len;
     s->len = (int)len + BLOCK_CHECK;
-    s->K = (s->len + CAR_PIECE - 1) / CAR_PIECE;
+    s->K = (s->len + P - 1) / P;
     s->next = 0;
     s->need = s->K;
     s->resend = -1;
     s->sent = 0;
     s->stopped = false;
     memset(s->data, 0, sizeof(s->data));
-    memcpy(s->data, buf, len);
+    for (size_t o = 0; o < len; o++) s->data[o / P][o % P] = buf[o];   /* rows of P */
     uint32_t chk = block_check(c, s->id, s->K, (const uint8_t (*)[CAR_PIECE])s->data, (int)len);
     for (int i = 0; i < BLOCK_CHECK; i++, len++)
-        s->data[len / CAR_PIECE][len % CAR_PIECE] = (uint8_t)(chk >> (8 * i));
+        s->data[len / P][len % P] = (uint8_t)(chk >> (8 * i));
 }
 
-static void piece_bytes(const car_sblock_t *s, int idx, uint8_t *out)
+static void piece_bytes(const car_sblock_t *s, int idx, uint8_t *out, int P)
 {
-    if (idx < s->K) { memcpy(out, s->data[idx], CAR_PIECE); return; }
+    if (idx < s->K) { memcpy(out, s->data[idx], (size_t)P); return; }
     const uint8_t *d[CAR_MAX_K];
     for (int i = 0; i < s->K; i++) d[i] = s->data[i];
-    rs_encode_repair(s->K, CAR_PIECE, d, idx - s->K, out);
+    rs_encode_repair(s->K, (size_t)P, d, idx - s->K, out);
 }
 
 /* A poll's view of my blocks: retire the delivered ones.  Ids travel mod 16;
@@ -611,6 +618,7 @@ static void apply_need(car_t *c, const msg_t *m)
  * fr[].  Returns the frame count (0: nothing to send). */
 static int build_round(car_t *c, int lv, int n, uint32_t poll_id, car_frame_t *fr, int reserve0)
 {
+    int P = piece_of(c);
     /* Open blocks span fewer than CAR_WIN ids from the oldest unconfirmed
      * one, not merely number fewer than CAR_WIN: ids travel mod 16, and a
      * block 8 or more ahead of the receiver's base reads as behind it.
@@ -622,7 +630,7 @@ static int build_round(car_t *c, int lv, int n, uint32_t poll_id, car_frame_t *f
      * eight DATAC15-sized blocks at a low-SNR start, and after the climb they
      * rode DATAC3 frames with extra segment headers (cliff 3 dB, 8 % slower). */
     double margin = c->tx_loss * 1.3 + 0.05;
-    int ppf = pieces_per_frame(lv);
+    int ppf = pieces_per_frame(c, lv);
     int queued = 0;
     /* At the floor a round carries only the oldest block, so a BREAK -- "the
      * block you are on is delivered" -- can only mean that one. */
@@ -633,7 +641,7 @@ static int build_round(car_t *c, int lv, int n, uint32_t poll_id, car_frame_t *f
     while (queued < n * ppf && c->nsb < CAR_WIN && unopened(c) && !(floor && live < c->nsb) &&
            (c->nsb == 0 || (uint8_t)(c->next_blk_id - c->sb[0].id) < CAR_WIN))
     {
-        open_block(c, block_k_for(lv));
+        open_block(c, block_k_for(c, lv));
         queued += (int)ceil(c->sb[c->nsb - 1].need * (1.0 + margin));
     }
     if (!c->nsb || n < 1) return 0;
@@ -682,18 +690,18 @@ static int build_round(car_t *c, int lv, int n, uint32_t poll_id, car_frame_t *f
             car_sblock_t *s = &c->sb[r];
             if (s->resend < 0) continue;
             int count = s->K - s->resend < RESEND_RUN ? s->K - s->resend : RESEND_RUN;
-            if (room - pos < SEG_HDR + count * CAR_PIECE) break;
-            put_seg_hdr(x->bytes + pos, s, count, s->resend);
+            if (room - pos < SEG_HDR + count * P) break;
+            put_seg_hdr(x->bytes + pos, s, count, s->resend, P);
             pos += SEG_HDR;
-            for (int i = 0; i < count; i++, pos += CAR_PIECE)
-                piece_bytes(s, s->resend + i, x->bytes + pos);
+            for (int i = 0; i < count; i++, pos += P)
+                piece_bytes(s, s->resend + i, x->bytes + pos, P);
             s->resend = -1;
             nseg++;
             break;
         }
         /* Fill the frame oldest block first; a block's pieces go on past its
          * want (as extra repair) only when nothing else is left to send. */
-        while (room - pos >= SEG_HDR + CAR_PIECE && nseg < CAR_WIN) {
+        while (room - pos >= SEG_HDR + P && nseg < CAR_WIN) {
             while (b < c->nsb && want[b] <= 0) b++;
             int bb = b;
             if (bb >= c->nsb) {
@@ -704,16 +712,16 @@ static int build_round(car_t *c, int lv, int n, uint32_t poll_id, car_frame_t *f
             car_sblock_t *s = &c->sb[bb];
             int hdr = pos, count = 0, first = s->next;
             pos += SEG_HDR;
-            while (room - pos >= CAR_PIECE && count < 63 && (bb != b || want[bb] > 0)) {
-                piece_bytes(s, s->next, x->bytes + pos);
+            while (room - pos >= P && count < 63 && (bb != b || want[bb] > 0)) {
+                piece_bytes(s, s->next, x->bytes + pos, P);
                 s->next = (s->next + 1) % RS_MAX_PIECES;   /* data, repair, then wrap */
                 if (s->sent < RS_MAX_PIECES) s->sent++;
                 s->round_sent++;                   /* not the resent gap pieces: repeats */
-                pos += CAR_PIECE;
+                pos += P;
                 count++;
                 if (bb == b) want[bb]--;
             }
-            put_seg_hdr(x->bytes + hdr, s, count, first);
+            put_seg_hdr(x->bytes + hdr, s, count, first, P);
             last_block = s->id;
             nseg++;
             if (bb != b) break;
@@ -753,9 +761,9 @@ static int keydown_cap(int lv);
 #define LV_DECAY      0.8   /* per measured round: memory of ~5 frames */
 #define DEAD_RUN      4     /* consecutive frames lost, none delivered: dead */
 
-static double level_rate(int lv)          /* raw piece bytes per ms of airtime */
+static double level_rate(const car_t *c, int lv)   /* raw piece bytes per ms of airtime */
 {
-    return (double)(pieces_per_frame(lv) * CAR_PIECE) / (double)level_air(lv);
+    return (double)(pieces_per_frame(c, lv) * piece_of(c)) / (double)level_air(lv);
 }
 
 /* Delivery estimated from frame counts, not from single rounds: at 25 % flat
@@ -924,7 +932,7 @@ void car_rung_geometry(int lv, bool floor_patterns, int *bytes_per_frame, int *f
     static const car_t z;   /* the overhead macros read c: no session, no NAV lead */
     const car_t *c = &z;
     int n = keydown_cap(lv);
-    if (bytes_per_frame) *bytes_per_frame = pieces_per_frame(lv) * CAR_PIECE;
+    if (bytes_per_frame) *bytes_per_frame = pieces_per_frame(c, lv) * CAR_PIECE;
     if (frames) *frames = n;
     if (round_air_ms) *round_air_ms = round_air(lv, n);
     if (overhead_ms) *overhead_ms = lv == 0 && floor_patterns ? FLOOR_OVERHEAD_MS : ROUND_OVERHEAD_MS;
@@ -964,10 +972,10 @@ static double level_goodput(const car_t *c, int lv)
 {
     int earned = level_earned(c, lv);
     int frames = earned < keydown_cap(lv) ? earned : keydown_cap(lv);
-    return level_rate(lv) * level_delivery(c, lv) * air_fraction(c, lv, frames);
+    return level_rate(c, lv) * level_delivery(c, lv) * air_fraction(c, lv, frames);
 }
 /* The most a rung could deliver: no loss, full rounds. */
-static double level_potential(const car_t *c, int lv) { return level_rate(lv) * air_fraction(c, lv, keydown_cap(lv)); }
+static double level_potential(const car_t *c, int lv) { return level_rate(c, lv) * air_fraction(c, lv, keydown_cap(lv)); }
 
 /* A measured rung above the best is probed again every PROBE_EVERY polls,
  * twice as long after each round in a row on it that lost half its frames
@@ -1091,7 +1099,7 @@ static int poll_size(const car_t *c, int lv, uint64_t now)
             if (!r->done) want += (int)ceil((r->K - r->have) * (1.0 + margin));
         }
         if (all_known) {
-            int ppf = pieces_per_frame(lv);
+            int ppf = pieces_per_frame(c, lv);
             int need = (want + ppf - 1) / ppf;
             if (need < cap) cap = need;
         }
@@ -1112,15 +1120,16 @@ static void decode_block(car_t *c, car_rblock_t *r)
     for (int i = 0; i < r->K; i++) out[i] = outb[i];
     r->done = true;
     c->done_in_round++;
-    if (rs_decode(r->K, CAR_PIECE, idx, pcs, out) != 0) {
+    int P = piece_of(c);
+    if (rs_decode(r->K, (size_t)P, idx, pcs, out) != 0) {
         if (!c->failed) c->failed = "a block did not decode";
         return;
     }
-    for (int i = 0; i < r->K; i++) memcpy(r->piece[i], out[i], CAR_PIECE);
+    for (int i = 0; i < r->K; i++) memcpy(r->piece[i], out[i], (size_t)P);
     int len = r->len - BLOCK_CHECK;
     uint32_t want = 0;
     for (int i = 0; i < BLOCK_CHECK; i++)
-        want |= (uint32_t)r->piece[(len + i) / CAR_PIECE][(len + i) % CAR_PIECE] << (8 * i);
+        want |= (uint32_t)r->piece[(len + i) / P][(len + i) % P] << (8 * i);
     if (len < 0 || block_check(c, r->id, r->K, (const uint8_t (*)[CAR_PIECE])r->piece, len) != want) {
         car_trace(c, "rx block %d failed its check", r->id);
         if (!c->failed) c->failed = "a block failed its check";
@@ -1137,6 +1146,7 @@ static void decode_block(car_t *c, car_rblock_t *r)
 static void deliver_in_order(car_t *c)
 {
     uint8_t buf[CAR_MAX_K * CAR_PIECE];
+    int P = piece_of(c);
     while (!c->failed) {
         car_rblock_t *r = &c->rb[c->rbase % CAR_WIN];
         if (!r->known) break;
@@ -1146,12 +1156,12 @@ static void deliver_in_order(car_t *c)
         } else {
             int j = 0;
             while (j < r->K && r->got[j]) j++;
-            upto = j * CAR_PIECE < len ? j * CAR_PIECE : len;
+            upto = j * P < len ? j * P : len;
         }
         if (upto > r->delivered) {
             int n = 0;
             for (int off = r->delivered; off < upto; off++, n++)
-                buf[n] = r->piece[off / CAR_PIECE][off % CAR_PIECE];
+                buf[n] = r->piece[off / P][off % P];
             if (c->io.deliver) c->io.deliver(c->io.ctx, buf, (size_t)n);
             r->delivered = upto;
             c->deliver_seq++;
@@ -1201,13 +1211,13 @@ static void take_pieces(car_t *c, const msg_t *m)
         if (!r->known) {
             r->known = true;
             r->id = (uint8_t)(c->rbase + off);
-            r->K = sg->K; r->len = sg->K * CAR_PIECE - sg->pad;
-        } else if (sg->K != r->K || sg->K * CAR_PIECE - sg->pad != r->len) {
+            r->K = sg->K; r->len = sg->K * piece_of(c) - sg->pad;
+        } else if (sg->K != r->K || sg->K * piece_of(c) - sg->pad != r->len) {
             /* Two frames disagree on what the block is: one was corrupt and
              * passed its CRC, or came from another session -- and the first
              * one seen may be it, so neither can be kept. */
             car_trace(c, "rx segment of block %d: K/len %d/%d against %d/%d",
-                      r->id, sg->K, sg->K * CAR_PIECE - sg->pad, r->K, r->len);
+                      r->id, sg->K, sg->K * piece_of(c) - sg->pad, r->K, r->len);
             if (!c->failed) c->failed = "two frames disagree on a block";
             continue;
         }
@@ -1217,7 +1227,7 @@ static void take_pieces(car_t *c, const msg_t *m)
             int i = (sg->first + p) % RS_MAX_PIECES;
             if (!r->got[i] && r->have < r->K) {
                 r->got[i] = true;
-                memcpy(r->piece[i], sg->pieces + p * CAR_PIECE, CAR_PIECE);
+                memcpy(r->piece[i], sg->pieces + p * piece_of(c), (size_t)piece_of(c));
                 r->have++;
             }
         }
@@ -1484,8 +1494,8 @@ static int round_n(const car_t *c)
     int pieces = 0;
     for (int b = 0; b < c->nsb; b++) pieces += (int)ceil(c->sb[b].need * (1.0 + margin));
     size_t pend = c->io.tx_pending ? c->io.tx_pending(c->io.ctx) : 0;
-    if (pend) pieces += (int)ceil((double)(pend + BLOCK_CHECK) / CAR_PIECE * (1.0 + margin)) + 1;
-    int ppf = pieces_per_frame(c->tx_level);
+    if (pend) pieces += (int)ceil((double)(pend + BLOCK_CHECK) / piece_of(c) * (1.0 + margin)) + 1;
+    int ppf = pieces_per_frame(c, c->tx_level);
     return pieces > n * ppf && pieces <= (n + 1) * ppf ? n + 1 : n;
 }
 
@@ -2341,11 +2351,30 @@ void car_init(car_t *c, const car_io_t *io, int rx_level, int tx_level)
     c->s_prev_lv = c->ok_lv = -1;
 }
 
+/* The session's piece size, as both ends know it: from the rung the callee's
+ * ACCEPT starts the caller's rounds on (0 too when it hears the caller below
+ * the control mode).  The callee takes it from the level it put in its last
+ * ACCEPT, the caller from the level it read: a session starting on the
+ * floor cuts its pieces for MFSK frames (CAR_PIECE_FLOOR).  A callee
+ * re-measures on a repeated CALL, so a caller decoding an ACCEPT just as it
+ * re-CALLs could read another level than the callee's last; the stream is
+ * delivered ahead of the block check, so pieces read at the wrong size
+ * would reach the application.  The FSM folds this size into the session
+ * seed (car_seed), and two ends that disagree decode none of each other's
+ * frames: the session dies of silence, nothing delivered. */
+int car_piece_for_start(int caller_start_level)
+{
+    return caller_start_level == 0 ? CAR_PIECE_FLOOR : CAR_PIECE;
+}
+
+int car_piece(const car_t *c) { return piece_of(c); }
+
 /* The caller: the session's timing master.  The callee's ACCEPT named the
  * rung it starts my rounds on (tx_level); I start its on what I measured. */
 void car_start_sender(car_t *c, uint64_t now)
 {
     c->master = true;
+    c->piece = car_piece_for_start(c->peer_snr_level);
     c->tx_level = c->peer_snr_level; c->tx_n = 1;
     c->poll_level = c->snr_level; c->poll_n = 1;
     c->phase = PH_IDLE;
@@ -2359,6 +2388,7 @@ void car_start_sender(car_t *c, uint64_t now)
 void car_start_receiver(car_t *c, uint64_t now)
 {
     c->master = false;
+    c->piece = car_piece_for_start(c->snr_level);
     c->poll_level = c->snr_level; c->poll_n = 1;
     bind_rx(c, c->ctl_deaf && c->io.pattern ? 0 : c->poll_level);
     s_heard_m(c, now);
@@ -2413,7 +2443,7 @@ void car_on_frame(car_t *c, uint64_t now, const uint8_t *bytes, size_t len, int 
         return;
     }
     int lv = level_of_mode(mode);
-    if (lv < 0 || !decode_data(bytes, len, &m)) return;
+    if (lv < 0 || !decode_data(bytes, len, &m, piece_of(c))) return;
     if (m.left >= keydown_cap(lv)) return;   /* corrupt: no keydown on the rung is that long */
     note_peer_ctl_deaf(c, m.ctl_deaf);
     msg_t k;

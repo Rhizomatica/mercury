@@ -1476,7 +1476,8 @@ static uint16_t session_nonce(void)
 }
 
 /* The session's CRC seed: both ends know the session id, the callee's nonce
- * (in the ACCEPT) and both callsigns once the ACCEPT has been heard.  Never
+ * and start rung for the caller (in the ACCEPT) and both callsigns once the
+ * ACCEPT has been heard.  Never
  * 0, which means "plain CRC". */
 static uint16_t car_seed(const arq_session_t *sess, bool is_caller)
 {
@@ -1487,11 +1488,15 @@ static uint16_t car_seed(const arq_session_t *sess, bool is_caller)
     const char *callee_me = sess->local_call[0] ? sess->local_call : me;
     const char *caller = is_caller ? me : sess->remote_call;
     const char *callee = is_caller ? sess->remote_call : callee_me;
-    unsigned char buf[3 + 2 * CALLSIGN_MAX_SIZE];
+    unsigned char buf[4 + 2 * CALLSIGN_MAX_SIZE];
     int n = 0;
     buf[n++] = sess->session_id;
     buf[n++] = (unsigned char)sess->car_nonce;
     buf[n++] = (unsigned char)(sess->car_nonce >> 8);
+    /* The piece size the carousel will cut this session into: two ends
+     * that would read each other's pieces at another size get different
+     * seeds, and hear nothing (car_piece_for_start). */
+    buf[n++] = (unsigned char)car_piece_for_start(is_caller ? sess->car_tx_level : sess->car_rx_level);
     for (const char *p = caller; *p && n < (int)sizeof(buf) - 1; p++)
         buf[n++] = (unsigned char)((*p >= 'a' && *p <= 'z') ? *p - 32 : *p);
     buf[n++] = '/';
