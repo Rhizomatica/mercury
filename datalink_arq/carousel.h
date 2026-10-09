@@ -214,6 +214,8 @@ typedef struct {
     int      floor_silent;          /* floor rounds in a row with no answer */
     uint8_t  floor_blk;             /* the block my last floor round carried */
     int      peer_snr_level;        /* where the SNR the peer measures starts me */
+    bool     peer_level_known;      /* ...as the peer reported it (ACCEPT, poll) */
+    int      rx_data_lv;            /* the rung of the last data frame I took; -1 none */
     bool     peer_has_data;         /* the peer said it has data for me */
 
     /* as receiver: the peer's direction, measured here */
@@ -291,6 +293,11 @@ int  car_level_mode(int level);
 int  car_piece_for_start(int caller_start_level);
 /* The piece size this session cuts its blocks into (tests). */
 int  car_piece(const car_t *c);
+/* For the UI: the mode of my last data round, of the last data frame I took,
+ * and of the rung the peer last reported hearing me on.  -1: none yet. */
+int  car_ui_tx_mode(const car_t *c);
+int  car_ui_rx_mode(const car_t *c);
+int  car_ui_peer_mode(const car_t *c);
 bool car_is_idle(const car_t *c);
 /* The session can no longer be trusted: a block failed its check, or did not
  * decode.  What it carried may already be partly delivered (the stream runs

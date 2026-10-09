@@ -41,6 +41,10 @@ typedef struct {
      * a 0.0 dB that reads as "they hear us at zero" (issue #230). */
     double peer_snr_db;
     bool   peer_snr_valid;
+    /* The carousel reports no dB value: what the peer last said it hears us
+     * on is a rung ("DATAC3"), empty when there is none.  Shown in place of
+     * peer_snr while peer_snr_valid is false. */
+    char   peer_hears_mode[16];
     char   user_callsign[CALLSIGN_MAX_SIZE];
     char   dest_callsign[CALLSIGN_MAX_SIZE];
     bool   sync;                 /* ARQ session established               */

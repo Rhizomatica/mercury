@@ -148,6 +148,25 @@ func TestParseStatusMessageMissingAudioDefaultsHealthy(t *testing.T) {
 	}
 }
 
+// A carousel session reports the rung the peer hears us on instead of a dB
+// value; an older server sends no such field and it stays empty.
+func TestParseStatusMessagePeerHearsMode(t *testing.T) {
+	status, err := parseStatusMessage([]byte(`{"type":"status","peer_snr":-99.9,"peer_snr_valid":false,"peer_hears_mode":"DATAC3"}`))
+	if err != nil {
+		t.Fatalf("parseStatusMessage returned error: %v", err)
+	}
+	if status.PeerSNRValid || status.PeerHearsMode != "DATAC3" {
+		t.Fatalf("got valid=%v hears=%q, want false and DATAC3", status.PeerSNRValid, status.PeerHearsMode)
+	}
+	status, err = parseStatusMessage([]byte(`{"type":"status","bitrate":1200}`))
+	if err != nil {
+		t.Fatalf("parseStatusMessage returned error: %v", err)
+	}
+	if status.PeerHearsMode != "" {
+		t.Fatalf("older server: got hears=%q, want empty", status.PeerHearsMode)
+	}
+}
+
 // audio_ok:false with no audio_error must parse to an empty string, so the
 // dialog's fallback message fires instead of showing the literal "<nil>".
 func TestParseStatusMessageAudioFailureWithoutErrorDefaultsEmpty(t *testing.T) {

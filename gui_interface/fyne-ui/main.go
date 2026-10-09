@@ -140,8 +140,11 @@ type telemetryState struct {
 	SNR     float64
 	// SNR the far side reports for OUR signal.  PeerSNRValid is false until
 	// a reading has actually arrived (issue #230).
-	PeerSNR            float64
-	PeerSNRValid       bool
+	PeerSNR      float64
+	PeerSNRValid bool
+	// A carousel session reports no dB value: the rung the peer last said it
+	// hears us on ("DATAC3"), shown while PeerSNRValid is false.
+	PeerHearsMode      string
 	Sync               bool
 	Direction          string
 	UserCallsign       string
@@ -217,6 +220,9 @@ func parseStatusMessage(payload []byte) (telemetryState, error) {
 	if v, ok := raw["peer_snr_valid"].(bool); ok && v {
 		status.PeerSNRValid = true
 		status.PeerSNR = toFloat64(raw["peer_snr"])
+	}
+	if v, ok := raw["peer_hears_mode"].(string); ok {
+		status.PeerHearsMode = v
 	}
 	status.Sync = toBool(raw["sync"])
 	status.Direction = strings.ToLower(fmt.Sprint(raw["direction"]))
@@ -757,6 +763,9 @@ func main() {
 				// "they hear us at zero", which is the opposite of the truth.
 				if telemetry.PeerSNRValid {
 					bindings.peerSnrText.Text = fmt.Sprintf("%.1f dB", telemetry.PeerSNR)
+					bindings.peerSnrText.Color = themeForeground()
+				} else if telemetry.PeerHearsMode != "" {
+					bindings.peerSnrText.Text = "hears " + telemetry.PeerHearsMode
 					bindings.peerSnrText.Color = themeForeground()
 				} else {
 					bindings.peerSnrText.Text = "-- dB"
