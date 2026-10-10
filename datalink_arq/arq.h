@@ -80,7 +80,7 @@ typedef enum
 {
     ARQ_PATTERN_ACK   = 0,  /* "got it"                          */
     ARQ_PATTERN_BREAK = 1   /* "got it: the block is delivered"; reaches
-                             * the FSM as an ACK with HAS_DATA set     */
+                             * the FSM as RX_PATTERN with pattern_break */
 } arq_pattern_kind_t;
 
 /* A keydown of separate bursts -- each its own preamble, frame and postamble,

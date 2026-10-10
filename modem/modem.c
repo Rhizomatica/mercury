@@ -931,8 +931,8 @@ try_shm_connect2:
      * (DATAC0/DATAC14/FSK_LDPC), so do not filter it here -- that would change
      * startup behaviour for those modes. */
     atomic_store(&modem_listen_mode, mode);
-    /* Let the ARQ FSM ask whether the channel is occupied, so a timer-driven
-     * TURN_REQ does not key over a transmission no decoder has synced on. */
+    /* Let the ARQ FSM ask whether the channel is occupied, so a deferred
+     * transmission does not key over one no decoder has synced on. */
     arq_modem_set_channel_busy_fn(modem_channel_busy);
     arq_modem_set_crc_seed_fn(modem_apply_crc_seed);
     
@@ -3047,20 +3047,15 @@ void *rx_thread(void *g_modem)
         /* --- Pattern ACK detector (3rd consumer) ---
          * A Welch-Costas pattern ACK carries no coded header, so neither freedv
          * decoder sees it.  Accumulate the 8 kHz passband chunks in a window
-         * and look for ack/break; on a match synthesize an ARQ_EV_RX_ACK
-         * (HAS_DATA = break).  In stop-and-wait only one frame is outstanding,
-         * so a heard ACK unambiguously acks it; a stale ACK outside WAIT_ACK is
-         * ignored by the FSM.
-         *
-         * Gate on expect_pattern_ack (ACCEPTING confirm window, or WAIT_ACK):
-         * running the correlation outside those states is pure overhead.
+         * and look for ack/break; on a match synthesize an ARQ_EV_RX_PATTERN
+         * (pattern_break for the BREAK kind).
          *
          * The window paces itself to one scan per burst of new audio; see
          * mfsk_pattern_window_push().  This used to correlate a three-burst
          * window on EVERY 160-sample chunk -- 4.5 s of CPU per second of audio
          * -- and the RX loop fell so far behind that a pattern ACK arriving
-         * well inside WAIT_ACK was processed after it closed.  That is how a
-         * turn handover failed about half the time with every ACK sent.
+         * well inside its window was processed after it closed.  That is how
+         * a turn handover failed about half the time with every ACK sent.
          *
          * Opening a new ACK window discards what the last one left behind: an
          * unmatched burst from the PREVIOUS exchange would otherwise be found

@@ -188,7 +188,7 @@ func TestMercuryARQLargeQueueNoWedge(t *testing.T) {
 	// blocked on g_app_tx_mtx held by the bridge worker parked in a full
 	// ring), so its signature is precise: the app TX backlog stays pegged at
 	// the ring-full level forever and the control port stops responding.  A
-	// healthy loop drains frames out of the ring into the go-back-N window,
+	// healthy loop drains bytes out of the ring into the carousel's blocks,
 	// so the backlog drops below the fill level even on a slow/lossy link.
 	//
 	// Requiring B-side delivery instead would couple this test to the

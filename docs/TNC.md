@@ -301,8 +301,10 @@ BITRATE\r
 
 ### RETRIES
 
-Override the amount of retries Mercury will try to connect or retry a transmission before giving up.
-Setting to 0 should revert to the defined values in datalink_arq/arq_protocol.h.
+Override how many times Mercury repeats a CALL or an ACCEPT before giving up
+on a connect.  Setting to 0 reverts to the defaults in
+datalink_arq/arq_protocol.h.  (A connected session's own limits are the
+carousel's; this does not change them.)
 
 ```
 RETRIES 10\r
@@ -313,11 +315,10 @@ RETRIES 10\r
 ### CALLINT
 
 Override the interval in **whole seconds** between successive CALL/ACCEPT
-frame retries during connection setup.  This has no effect on other control
-frame timing (keepalive, disconnect, turn request) or on data frame retry
-timing once a session is established.
+frame retries during connection setup.  This has no effect on the
+DISCONNECT's timing or on a session once it is established.
 
-Send `0` to restore the compiled default (7 seconds).  The minimum
+Send `0` to restore the compiled default (8 seconds).  The minimum
 enforced value is 4 seconds; values below 4 are clamped to 4 to avoid
 firing a retry before a valid ACCEPT can return over the air.
 
@@ -398,11 +399,10 @@ so `LISTEN ON` / `CONNECT` still work exactly as before — the monitor is
 purely additive.
 
 **What it can and cannot see.**  A monitor station hears frames that carry a
-plain CRC: `CALL`/`ACCEPT` connect exchanges, `CQ` frames, `DISCONNECT` and the
-other plain control frames, broadcast traffic, and **stop-and-wait** data
-sessions (a peer running 1.9.x, or one built with `MERCURY_CAROUSEL=0`).  It
-does **not** yet decode the **carousel** data plane — the default session type
-on `mercuryv2` — because every in-session carousel frame carries the session's
+plain CRC: `CALL`/`ACCEPT` connect exchanges, `CQ` frames, `DISCONNECT`, and
+broadcast traffic.  A 1.9.x station's frames are shown as from "another
+protocol version".  It does **not** yet decode the **carousel** data plane
+-- the only session type -- because every in-session carousel frame carries the session's
 CRC seed, which the monitor's decoders do not apply, so those frames fail CRC
 and are not reported.  Watching a pair of `mercuryv2` stations, the monitor
 therefore shows the connect, the disconnect and any CQ/broadcast, but nothing
@@ -528,24 +528,27 @@ Sent once per frame that monitor mode decoded, on the control port:
 
 ```
 MONITOR DATAC16 CALL FROM=K7EK BW=2300 SID=42 SNR=18.1\r
-MONITOR DATAC17 DATA SID=42 SEQ=5 ACK=4 LEN=1180 HEX=... SNR=18.4\r
-MONITOR DATAC16 ACK TYPE=ACK SID=42 SEQ=5 ACK=5 SNR=18.4\r
+MONITOR DATAC16 ACCEPT BW=2300 SID=42 START=3 SNR=17.9\r
+MONITOR DATAC16 DISCONNECT SID=42 SNR=18.4\r
 ```
 
 `<mode>` is the mode the frame decoded on (`DATAC16`, `DATAC15`, `DATAC13`,
 `DATAC4`, `DATAC3`, `DATAC1`, `DATAC17`, `QAM16C2` or `MFSK`).  `<kind>`
-names the frame: `CALL`, `ACCEPT`, `CQ`, a control subtype (`ACK`,
-`DISCONNECT`, `KEEPALIVE`, `MODE_REQ`, `TURN_REQ`, …), `DATA`, `BCAST_CTRL` /
-`BCAST_DATA` for broadcast frames, or `FRAME` when the bytes would not parse.
+names the frame: `CALL`, `ACCEPT`, `CQ`, `DISCONNECT`, `CONTROL` / `DATA`
+for another protocol version's session frames, `BCAST_CTRL` / `BCAST_DATA`
+for broadcast frames, or `FRAME` when the frame type is unknown.
 
 `<detail>` carries what the monitor could recover:
 
-- `CALL`/`ACCEPT`: `FROM=<src> BW=<bw> SID=<n>` — the destination is not on the
+- `CALL`: `FROM=<src> BW=<bw> SID=<n>` — the destination is not on the
   wire as a string, only its CRC, so a passive monitor cannot name it
+- `ACCEPT`: `BW=<bw> SID=<n> START=<rung>` — neither callsign is on the wire
+  in full
+- a `CALL`/`ACCEPT` of another protocol version: `another protocol version
+  (Mercury 1.9.x?)`
 - `CQ`: `FROM=<src> BW=<bw>`
-- control frames: `TYPE=<subtype> SID=<n> SEQ=<n> ACK=<n>`
-- `DATA`: `SID=<n> SEQ=<n> ACK=<n> LEN=<n>` plus a `HEX=` prefix of the first
-  16 payload bytes (truncated)
+- `DISCONNECT`: `SID=<n>`
+- `CONTROL` / `DATA`: `another protocol version (Mercury 1.9.x?)`
 - broadcast: `LEN=<n>`
 
 `SNR=` is the decoder's signal-to-noise estimate in dB at the moment the frame

@@ -58,7 +58,7 @@ int mfsk_pattern_detect(const int16_t *pb, int n, int *is_break);
  * per symbol under it, so its cost grows with the square of the window; run on
  * every chunk it once cost 4.5 s of CPU per second of audio, and then, paced
  * to a scan per burst, still about 7 % of real time, so it ran only inside
- * WAIT_ACK windows.  The window now downmixes and filters each sample once and
+ * ACK windows.  The window now downmixes and filters each sample once and
  * feeds mfsk_stream_det (mfsk_sync.h), which does one FFT per step and scores
  * by lookup: the same scores, found as the audio arrives.
  *

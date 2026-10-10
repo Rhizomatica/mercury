@@ -1156,9 +1156,8 @@ int arq_set_listen_mode(int mode)
 
 void arq_set_active_modem_mode(int mode, size_t frame_size)
 {
-    /* Only record payload_mode for data modes.  Control-mode TX switches
-     * (DATAC16 for ACK/TURN_REQ/etc.) must not overwrite the negotiated
-     * payload_mode that the RX decoder uses when the peer transmits data. */
+    /* Only record payload_mode for data modes: a control-mode TX switch
+     * (DATAC16) must not overwrite it. */
     pthread_mutex_lock(&g_sess_lock);
     if (mode != g_sess.control_mode)
         g_sess.payload_mode = mode;

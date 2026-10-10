@@ -3,7 +3,7 @@
  * The design was chosen on tests/sim/carousel_bench.c, which runs this module;
  * tests/sim/README.md has the measurements behind each choice.
  *
- * Wire formats (no compatibility with the stop-and-wait ARQ is kept):
+ * Wire formats:
  *
  *   DATA, in a payload mode, filling the frame:
  *     b0  frames left in the round (4) | data not yet cut into blocks (1) |
@@ -682,8 +682,8 @@ static int build_round(car_t *c, int lv, int n, uint32_t poll_id, car_frame_t *f
         uint8_t last_block = 0;
         /* The piece the receiver's in-order stream waits for goes first, so
          * the stream advances every round trip instead of waiting for the
-         * block to decode -- stop-and-wait delivered every frame at once, and
-         * waiting for whole blocks left NNCP silent past its 120 s limit on
+         * block to decode -- 1.9.x's stop-and-wait delivered every frame at
+         * once, and waiting for whole blocks left NNCP silent past its 120 s limit on
          * most low-SNR runs.  It and the next piece; duplicates cost nothing
          * but airtime. */
         for (int r = 0; nf == 0 && r < c->nsb; r++) {
@@ -845,7 +845,7 @@ static void measure_level(car_t *c, int lv, int frames, double loss, uint64_t no
  * 25 % flat loss a lightly probed DATAC4 was declared dead by chance, and the
  * ceiling then locked out a DATAC3 and a DATAC1 that were delivering.
  * Evidence of delivery beats the inference. */
-/* The SNR a rung needs (the thresholds the stop-and-wait plane enters it at). */
+/* The SNR a rung needs (ARQ_SNR_MIN_*). */
 static float level_min_db(int lv)
 {
     switch (LADDER[lv]) {

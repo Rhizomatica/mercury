@@ -834,11 +834,11 @@ void test_disconnect_drain_timeout_forces_teardown(void)
 
 
 
-/* ---- Bench run 12: a DISCONNECT right behind a TURN_ACK ----
+/* ---- Bench run 12: a DISCONNECT right behind a frame that invited a reply ----
  *
- * The host hung up while our TURN_ACK was on the air.  The DISCONNECT keyed
- * 42 ms after the TURN_ACK ended, the peer keyed its first DATA 0.9 s later
- * (it held the TURN_ACK and never listened), and both were lost. */
+ * The host hung up while a frame handing the peer the turn (1.9.x's TURN_ACK)
+ * was on the air.  The DISCONNECT keyed 42 ms after it ended, the peer keyed
+ * its reply 0.9 s later (it never listened), and both were lost. */
 
 
 

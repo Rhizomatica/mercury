@@ -1,34 +1,18 @@
 # The carousel data plane
 
 Mercury's connected sessions move data with an erasure-coded "carousel"
-driven by the receiver (`datalink_arq/carousel.[ch]`).  It replaces the
-stop-and-wait data-flow sub-FSM described in [ARQ.md](ARQ.md); CALL, ACCEPT
-and DISCONNECT are unchanged but for the ACCEPT, which is the carousel's first
-poll.  [CAROUSEL-SPEC.md](CAROUSEL-SPEC.md) specifies the protocol state by
-state, from the code; this page is the overview.
+driven by the receiver (`datalink_arq/carousel.[ch]`).  It is the only data
+plane: the stop-and-wait data-flow sub-FSM of 1.9.x (described in
+[ARQ.md](ARQ.md)) is gone.  CALL and ACCEPT open a session, the ACCEPT is the
+carousel's first poll, and a DISCONNECT ends it.
+[CAROUSEL-SPEC.md](CAROUSEL-SPEC.md) specifies the protocol state by state,
+from the code; this page is the overview.
 
-Stations without the carousel (1.9.x, earlier 2.0 builds, or
-`MERCURY_CAROUSEL=0`) are told apart in both connect frames.  A carousel
-CALL carries `ARQ_CALL_CAROUSEL_MARK` in the last byte of its callsign slot,
-and a carousel ACCEPT sets bit 4 of the framer extension.  Older stations do
-not see the first and drop the second:
-
-| caller | callee | session |
-|---|---|---|
-| carousel | carousel | carousel |
-| carousel | without | stop-and-wait: the callee's plain ACCEPT says so |
-| without | carousel | stop-and-wait: the unmarked CALL gets a plain ACCEPT |
-| an earlier carousel (1.9.17/1.9.18, or mercuryv2 before the session-bound patterns, or before one timing master and inline polls) | carousel | stop-and-wait, either way round: the marks differ (0xA7, 0xA8, 0xA9, 0xAA, now 0xAB), and each reads the other's CALL as unmarked |
-
-Before the markers, every mixed pair "connected" and then moved nothing
-until the application gave up (harness, `MERCURY_TEST_BIN_A`/`_B`, see
-Tests).  A callsign whose code fills the whole slot (about 13-14
-characters) leaves no room for the CALL's marker, and its sessions run
-stop-and-wait.  Carousel builds from before the markers (pre-release only)
-do not mix with these.
-
-`MERCURY_CAROUSEL=0` in the environment runs the stop-and-wait plane for every
-session, as a station without the carousel does.
+The connect frames carry a protocol version (1) and the carousel bit in the
+framer extension (see Wire formats).  1.9.x stations, and earlier carousel
+builds, do not connect to this one in either direction: each drops the
+other's CALL and ACCEPT.  A CALL from another version that is addressed to
+this station is logged ("from another protocol version") and not answered.
 
 ## How it works
 
@@ -67,7 +51,7 @@ the best measured goodput (raw rate times delivered fraction); probes only of
 rungs that could beat it; a rung's round is capped at one frame more than it
 recently delivered; 4 frames lost in a row is a dead verdict, re-probed after
 60 s, doubling to 8 min.  A direction starts on the rung the connect's SNR
-supports (the thresholds the stop-and-wait plane uses), as a one-frame probe.
+supports (`ARQ_SNR_MIN_*`), as a one-frame probe.
 
 **The turn.**  The receiver takes it with a HANDOVER poll that announces its
 own first round, sent in the same keydown; the peer's control decoder reads
@@ -186,7 +170,8 @@ payload decoder misses bursts after the first; the gaps were measured with
 ## Measurements
 
 The sim runs the real FSM and carousel over the same channel models as the
-stop-and-wait plane (`tests/sim/README.md`).  Both stations send 8 KB,
+stop-and-wait plane it replaced (`tests/sim/README.md`); these comparisons
+were made while both planes were still built in.  Both stations send 8 KB,
 carrier sense on, seeds 1-20 / 21-40:
 
 | channel | stop-and-wait | carousel |
@@ -232,14 +217,13 @@ connect; one run each, so indicative):
   frames and 3 unsensed keydowns, every single spurious BREAK and every
   single corrupt frame; `specs/carousel/` has the TLA+ model of the block
   layer and what both have shown.
-- `tests/integration`: two real daemons over FIFO audio; the suite runs on
-  the carousel.  `MERCURY_TEST_BIN_A` / `MERCURY_TEST_BIN_B` run one station
-  on another build (a release, trunk, or a `MERCURY_CAROUSEL=0` wrapper
-  script) for the mixed-version table above:
-  `MERCURY_TEST_BIN_B=/path/to/mercury-1.9.16 go test -run '^TestMercuryARQTransfer$' .`
-- `tests/datalink_arq/test_arq_protocol`: `test_accept_carousel_marker`, the
-  ACCEPT as a station without the carousel reads it.
+- `tests/integration`: two real daemons over FIFO audio.
+  `MERCURY_TEST_BIN_A` / `MERCURY_TEST_BIN_B` run one station on another
+  build, to compare builds of this protocol version:
+  `MERCURY_TEST_BIN_B=/path/to/mercury go test -run '^TestMercuryARQTransfer$' .`
+- `tests/datalink_arq/test_arq_protocol`: `test_connect_v1_call`,
+  `test_connect_v1_accept`, `test_connect_other_version_refused`.
 - `utils/onair_logs.py`: one on-air run from the two stations' journals --
   how rounds were answered, the rungs used, and any overlapping keydowns.
-- `tests/carousel_bench`, `tests/ab_bench` (`CAROUSEL=0` for the old plane):
-  the throughput matrix.
+- `tests/carousel_bench` (the carousel alone), `tests/ab_bench` (under the
+  full FSM): the throughput matrix.

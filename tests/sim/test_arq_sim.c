@@ -237,16 +237,9 @@ void test_sim_transfer_clean(void)
  * once and both frames still arrive.  Turn coordination is exactly the area
  * where that is the wrong model, so sim_set_half_duplex() exists and this test
  * uses it; the run above produces real collisions (6 in the single-block
- * variant) and both directions must still complete.
- *
- * What this is NOT: a reproduction of issue #278.  It was written trying to be
- * one and it is not -- it passes on the unfixed FSM.  The #278 livelock needs
- * the ISS to decode a TURN_REQ while in WAIT_ACK, and this traffic pattern
- * resolves the turn by piggyback before that happens, so the colliding path is
- * never entered.  Recorded here so the next person does not mistake a pass for
- * evidence about #278; the FSM contract for that bug is pinned by
- * test_wait_ack_turn_req_defers_the_yield_without_keying in test_arq_fsm.c,
- * and the end-to-end behaviour is unverified. */
+ * variant) and both directions must still complete.  (Written for the old
+ * stop-and-wait plane's turn handover, issue #278; it now runs the carousel's
+ * caller-timed turns.) */
 void test_sim_bidirectional_progress_under_collisions(void)
 {
     sim_channel_cfg_t chan = { .seed = 7, .per = 0.0, .guard_ms = 100 };
@@ -272,8 +265,7 @@ void test_sim_bidirectional_progress_under_collisions(void)
         arq_event_t dready = { .id = ARQ_EV_APP_DATA_READY };
         sim_inject(s, sim_b(s), &dready);
 
-        /* A speaks up occasionally, which is what lands it in WAIT_ACK while B
-         * is asking for the floor. */
+        /* A speaks up occasionally, while B keeps asking for the floor. */
         if (r % 4 == 0)
         {
             sim_endpoint_queue_tx(sim_a(s), recb, rec);

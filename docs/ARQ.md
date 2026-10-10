@@ -4,6 +4,16 @@ This document covers the ARQ (Automatic Repeat Request) datalink layer introduce
 in Mercury v2 (`datalink_arq/`).  It replaces the original monolithic `arq.c` with
 a table-driven, two-level hierarchical FSM and a clean protocol codec.
 
+> **Mostly history.**  Since the carousel-only build, connected sessions run
+> the carousel ([CAROUSEL-ARQ.md](CAROUSEL-ARQ.md),
+> [CAROUSEL-SPEC.md](CAROUSEL-SPEC.md)), and the stop-and-wait data plane
+> described below -- the data-flow sub-FSM, DATA/ACK/KEEPALIVE/TURN/MODE
+> frames, the mode ladder, OLLA, keepalives, the turn mechanism -- is gone,
+> with its configuration keys.  The CALL/ACCEPT layout changed too (protocol
+> version 1, CAROUSEL-ARQ.md "Wire formats"), so this version does not
+> connect to 1.9.x.  Still current here: the connection FSM's states, the
+> DISCONNECT and CQ frames, the CLI logging flags and the TNC interface.
+
 ---
 
 ## Table of Contents
@@ -117,6 +127,9 @@ For current `ARQ_CONTROL` and `ARQ_DATA` frames, the extension field is transmit
 as `0` and reserved for future use.
 
 ### CALL/ACCEPT compact frame (ARQ_CALL, 14 bytes)
+
+*1.9.x layout; the current one is protocol version 1, in
+[CAROUSEL-ARQ.md](CAROUSEL-ARQ.md) "Wire formats".*
 
 CALL and ACCEPT use a different layout to fit two callsigns in 14 bytes:
 
@@ -587,9 +600,6 @@ the mode timing table in `arq_protocol.c`.
 |-----------------------------------------|-------------------------------------------|----------------------------------------|
 | Spurious retries despite good SNR       | `ack_timeout_s` too short                 | Increase by 1–2 s in mode table        |
 | Link stuck at DATAC15, no mode upgrade  | SNR not high enough, or backlog too small | Check `ARQ_BACKLOG_MIN_DATAC3`         |
-| UUCP handshake fails (timeout)          | First few data frames lost in startup     | Raise `startup_max_s` in the `[arq]` INI section (no recompile) |
-| Long gaps between turns                 | `peer_payload_hold_s` too large           | Lower `peer_payload_hold_s` (e.g. 8–10) in the `[arq]` INI section |
-| Keepalive disconnects on idle link      | Propagation gap > keepalive window        | Raise `keepalive_miss_limit` in the `[arq]` INI section (no recompile) |
 
 ### Timing constants quick reference
 
@@ -617,11 +627,14 @@ All in `arq_protocol.h`:
 Several of these are runtime-overridable from the `[arq]` section of the INI
 file (`mercury.ini`) rather than fixed at compile time — they are `_Atomic`
 globals seeded from the `_DEFAULT` value above and set once at startup:
-`channel_guard_ms`, `iss_post_ack_guard_ms`, `data_retry_slots`,
-`mode_hold_after_downgrade_s`, `ladder_up_successes`, `retry_downgrade_threshold`,
-`keepalive_interval_s`, `keepalive_miss_limit`, `peer_payload_hold_s`,
-`startup_max_s`, `retry_stagger_ms` (each clamped to a safe range). See
-`mercury.ini.example` for keys, defaults, and ranges.
+`channel_guard_ms`, `iss_post_ack_guard_ms`, `retry_stagger_ms`,
+`disconnect_drain_timeout_s` (each clamped to a safe range).  The
+stop-and-wait plane's `data_retry_slots`, `mode_hold_after_downgrade_s`,
+`ladder_up_successes`, `retry_downgrade_threshold`, `keepalive_interval_s`,
+`keepalive_miss_limit`, `peer_payload_hold_s`, `startup_max_s` and
+`no_progress_timeout_s` went with it; an old `mercury.ini` that sets them is
+read without error and the keys are ignored.  See `mercury.ini.example` for
+keys, defaults, and ranges.
 
 ---
 

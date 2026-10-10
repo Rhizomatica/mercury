@@ -2,7 +2,6 @@
  *
  *   ab_bench <seed> <channel> [bidir]
  *   channel := clean | awgn:<per> | cliff:<snr_db> | nvis | fade:<snr_db>:<doppler_hz>
- * CAROUSEL=0 runs the stop-and-wait data plane instead of the carousel;
  * AB_LIMIT_MIN=<minutes> raises the bidir run's 30-minute virtual limit.
  * SIM_CS=<acq_ms> in the environment turns the sim's carrier sense on (bidir),
  * without which the FSM's listen-before-talk checks are inert.

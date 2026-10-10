@@ -30,9 +30,10 @@ one control frame (see 1.4). `round_air(lv,n) = n*A(lv) + max(n-1,0)*gap(lv)` (C
 ### 1.1 What is modeled
 
 The carousel runs only while the ARQ session is in `ARQ_CONN_CONNECTED` and
-`sess->car_active` (F:2408). It replaces the stop-and-wait data-flow sub-FSM
-(F:2591-2592). CALL/ACCEPT (connect) and DISCONNECT (teardown) are the generic
-ARQ FSM; only the parts that touch the carousel are specified here (section 5.12).
+`sess->car_active` (F:2408). It is the only data plane: since the carousel-only
+build (section 14) there is no stop-and-wait data-flow sub-FSM. CALL/ACCEPT
+(connect) and DISCONNECT (teardown) are the generic ARQ FSM; only the parts
+that touch the carousel are specified here (section 5.12).
 
 ### 1.2 Physical/link assumptions (what the code relies on)
 
@@ -286,9 +287,22 @@ RX demux (`car_on_frame`, C:1602-1626):
 
 ### 3.4 Connect frames (generic FSM, carousel-relevant fields only)
 
-- CALL: carousel marker in the last byte of the SRC slot when the callsign code leaves it free (P:661-690, F:924-927). **[since 2c07bf4]** `0xA8`, **[step 3]** `0xA9`, **[carousel-nvis]** `0xAA` (inline polls, docs/CAROUSEL-TURNS.md §8); an earlier carousel's mark (`0xA7` 1.9.17/1.9.18, `0xA8`) reads as unmarked (that session runs stop-and-wait), and this one to it.
-- **[since 2c07bf4]** Carousel ACCEPT: the callee's 16-bit session nonce in the last two bytes of its SRC slot (LE), when its callsign's code is at most 8 bytes; otherwise 0 on both ends (`arq_protocol_set_accept_nonce` / `_accept_nonce`). The same nonce on every ACCEPT of the session.
-- ACCEPT (callee → caller) **is the first POLL**: names the caller's start rung in the top 3 bits of the DST-CRC field (P:624-641); value **7 = "level 0, and I hear you below the control mode"** (`ACCEPT_LEVEL_CTL_DEAF`, F:888-892). Carousel flag 0x10 in the framer extension (P:718). Plain CRC.
+**[carousel-only]** Protocol version 1; the byte layout is in
+docs/CAROUSEL-ARQ.md, "Wire formats".
+
+- Both frames: framer extension = bandwidth token (2 bits), version (2 bits,
+  = 1), carousel bit. A frame with another version or without the bit is
+  dropped (`arq_protocol_connect_version_ok`); a CALL from another version
+  addressed to this station is logged, not answered. 1.9.x and earlier
+  carousel builds therefore do not connect to this one.
+- CALL: session id, CRC16 of the called callsign, the caller's callsign
+  (arithmetic-coded). No marker.
+- ACCEPT (callee → caller) **is the first POLL**: session id, CRC16 of the
+  caller, CRC16 of the called callsign, the callee's 16-bit session nonce,
+  and the caller's start rung (3 bits; **7 = "level 0, and I hear you below
+  the control mode"**, `ARQ_ACCEPT_LEVEL_CTL_DEAF`). Reserved bits must be
+  zero. The caller takes it only if session id, its own CRC and the called
+  CRC all match. Plain CRC.
 - DISCONNECT: plain CRC, session-id bound (7 bits, F:3929-3937); on MFSK to a peer the carousel last saw as control-deaf (`session_ctl_mode`, F:963-969).
 
 ---
@@ -415,9 +429,9 @@ If `retired > 0` → `io.tx_confirmed(retired)` (F:1450-1456 updates BUFFER).
 
 | # | Rule | Cite |
 |---|---|---|
-| S1 | Callee on CALL (LISTENING): `peer_carousel = CALL marked`; `car_rx_level = car_start_level(CALL SNR)`; `car_ctl_deaf = CALL SNR < -7`; `car_peer_ctl_deaf = false`; ACCEPT after `G`. A repeated CALL in ACCEPTING recomputes these and answers on the CALL's carrier. | F:1600-1631, F:1953-1984 |
-| S2 | Callee sending a carousel ACCEPT: ACCEPT level = `car_ctl_deaf ? 7 : car_rx_level`; **seed set now**; payload decoder bound to `LADDER[car_rx_level]`. | F:904-918 |
-| S3 | Caller on carousel ACCEPT (CALLING, matching session id): `car_peer_ctl_deaf = (level == 7)`; `car_tx_level = peer_ctl_deaf ? 0 : level`; `car_rx_level = car_start_level(ACCEPT SNR)`; `car_ctl_deaf = ACCEPT SNR < -7`; → CONNECTED; seed set; `car_start(is_caller)`. | F:1745-1760 |
+| S1 | Callee on CALL (LISTENING): new nonce; `car_rx_level = car_start_level(CALL SNR)`; `car_ctl_deaf = CALL SNR < -7`; `car_peer_ctl_deaf = false`; ACCEPT after `G`. **[carousel-only]** A repeat of the same session's CALL (same id and caller, in ACCEPTING, or in LISTENING after the ACCEPT-retry fallback) keeps the nonce, rung and deafness and gets the same ACCEPT, on the CALL's carrier; another station's CALL is ignored while ACCEPTING. | `fsm_listening`, `fsm_accepting` |
+| S2 | Callee sending the ACCEPT: ACCEPT level = `car_ctl_deaf ? 7 : car_rx_level`; **seed set now**; payload decoder bound to `LADDER[car_rx_level]`. | F:904-918 |
+| S3 | Caller on ACCEPT (CALLING, matching session id and called CRC): `car_peer_ctl_deaf = (level == 7)`; `car_tx_level = peer_ctl_deaf ? 0 : level`; `car_rx_level = car_start_level(ACCEPT SNR)`; `car_ctl_deaf = ACCEPT SNR < -7`; → CONNECTED; seed set; `car_start(is_caller)`. | F:1745-1760 |
 | S4 | `car_start`: `car_init(rx_level, tx_level)` (snr_level = rx_level; peer_snr_level = tx_level ≥ 0 ? tx_level : rx_level; tx_level = -1; loss_est = tx_loss = 0.1); seed ctl_deaf/peer_ctl_deaf; `car_last_rx_ms = now`; caller → S5, callee → S6. | F:1495-1513, C:1553-1561 |
 | S5 | `car_start_sender`: `sending = true; send_start_ms = now; tx_level = peer_snr_level; tx_n = 1; tx_poll_id = 1; handover_unconfirmed = true; T_SEND := now`. | C:1568-1575 |
 | S6 | Callee: the **first seeded frame of any kind** (ACCEPTING, or LISTENING after the ACCEPT-retry fallback with seed still set) → `car_connect_callee`: `car_tx_level = -1`, → CONNECTED, `car_start(callee)` = `start_driving(1, snr_level, 1, now, now)` (C:1578-1581), then the frame is processed by `car_on_frame`. | F:1869-1893, F:1899-1902, F:1661-1664 |
@@ -825,3 +839,14 @@ Finding: on this link QAM16C2 frames read 4–5 dB below DATAC17 frames
 its own gate.  The per-mode lines in `freedv_snr_calib` were fitted over
 5..11 dB, and DATAC17's slope (1.6) likely over-reads above that.  The
 calibration needs points above 12 dB.
+
+---
+
+## 14. Carousel only (branch carousel-only)
+
+| Change | Where | Risks |
+|---|---|---|
+| Connect frames carry protocol version 1 and the carousel bit; the ACCEPT's start rung, nonce and called CRC are explicit fields (no CALL mark, no nonce in the callsign slot, no rung in the CRC field). 1.9.x does not connect. | 3.4, `arq_protocol.[ch]` | none new; R17/R18 as before |
+| The callee answers every repeat of a session's CALL with the same ACCEPT. Before, it re-measured the rung on a repeat, which R25's seed fix made safe but costly (the session died of silence). | S1 | R25 now fixed at the source too |
+| The stop-and-wait plane, its frames, MERCURY_CAROUSEL and its tunables are gone; DISCONNECT is the one plain session frame. | `arq_fsm.c`, `arq.c` | — |
+
