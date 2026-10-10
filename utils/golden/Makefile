@@ -1,5 +1,5 @@
 # utils/golden — C-side drivers for the MATLAB golden-model tests
-# (docs/MODEM-ANALYSIS.md).  Links against the vendored codec2 library.
+# (docs/LDPC-DECODER.md).  Links against the vendored codec2 library.
 include ../../config.mk
 
 FREEDV   = ../../modem/freedv

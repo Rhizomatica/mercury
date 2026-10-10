@@ -1,6 +1,6 @@
 classdef TestLdpc < matlab.unittest.TestCase
 %TESTLDPC  Golden tests for stages T2 (LDPC encode) and R12 (LDPC decode),
-%   plus the R11 LLR-scale hypothesis.  See docs/MODEM-ANALYSIS.md.
+%   plus the R11 LLR-scale hypothesis.  See docs/LDPC-DECODER.md.
 %
 %   Golden: Communications Toolbox ldpcEncode / ldpcDecode on the parity-check
 %   matrix exported from the C tables (utils/golden/ldpc_export).  The C side

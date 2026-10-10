@@ -2,7 +2,7 @@
 
 Stage-by-stage tests of Mercury's modem against independent MATLAB standards
 (Communications / DSP / Signal Processing Toolbox).  Plan and stage inventory:
-`docs/MODEM-ANALYSIS.md`.
+`docs/LDPC-DECODER.md`.
 
 Run (MATLAB R2026a, from this directory or with it on the path):
 

@@ -7,9 +7,9 @@
 #       ladder / ladder-legacy  lowered-threshold build (MERCURY_LADDER_BIN),
 #              with the new decoder / with the deployed decoder path
 #       new    this tree's binary, defaults (per-code decoder policy,
-#              100 iterations under a deadline, calibrated LLR scale)
+#              100 iterations under a deadline, the shipped LLR scale)
 #       emul   this tree's binary forced to the deployed decoder path
-#              (LDPC_ALG=legacy LDPC_MAX_ITER=10 LDPC_LLR_CALIBRATED=0):
+#              (LDPC_ALG=legacy LDPC_MAX_ITER=10; the fixed LLR scale is the default):
 #              isolates the decoder from any other difference to trunk
 # NO_DBHZ     AWGN noise density for the Watterson channel (SNR3k ~ -No-14.82;
 #             the MEASURED SNR3k from the sock bench is what gets recorded)
@@ -24,18 +24,21 @@ ARM=$1; NO=$2; SEED=$3; KB=$4; OUT=$5
 TAG="${ARM}_no${NO}_s${SEED}_kb${KB}"
 LD="$OUT/logs/$TAG"; mkdir -p "$LD" "$OUT/jobs"
 cd "$(dirname "$0")" || exit 1
-TRUNK=${MERCURY_TRUNK_BIN:-/Users/josephfreivald/workspace/mercury-trunk/mercury}
+TRUNK=${MERCURY_TRUNK_BIN:-}      # required by the trunk arm: a mercury built from the merge base
 # ladder = a build with lowered ARQ_SNR_MIN_* thresholds (branch ladder-thresholds);
 # ladder-legacy runs that build with the desktop deployed decoder path
 # (legacy sum-product at the table cap, fixed-EsNo LLRs) to show whether the
 # lowered thresholds are safe without the new decoder.
-LADDER=${MERCURY_LADDER_BIN:-/Users/josephfreivald/workspace/mercury-ladder/mercury}
+LADDER=${MERCURY_LADDER_BIN:-}    # required by the ladder arms
 case "$ARM" in
-  trunk) EXTRA="MERCURY_TEST_BIN_A=$TRUNK MERCURY_TEST_BIN_B=$TRUNK" ;;
+  trunk) [ -x "$TRUNK" ] || { echo "arm trunk needs MERCURY_TRUNK_BIN=<mercury built from the merge base>" >&2; exit 2; }
+         EXTRA="MERCURY_TEST_BIN_A=$TRUNK MERCURY_TEST_BIN_B=$TRUNK" ;;
   new)   EXTRA="LDPC_ALG=auto" ;;
-  emul)  EXTRA="LDPC_ALG=legacy LDPC_MAX_ITER=10 LDPC_LLR_CALIBRATED=0" ;;
-  ladder)        EXTRA="MERCURY_TEST_BIN_A=$LADDER MERCURY_TEST_BIN_B=$LADDER" ;;
-  ladder-legacy) EXTRA="MERCURY_TEST_BIN_A=$LADDER MERCURY_TEST_BIN_B=$LADDER LDPC_ALG=legacy LDPC_LLR_CALIBRATED=0" ;;
+  emul)  EXTRA="LDPC_ALG=legacy LDPC_MAX_ITER=10" ;;
+  ladder)        [ -x "$LADDER" ] || { echo "arm ladder needs MERCURY_LADDER_BIN" >&2; exit 2; }
+                 EXTRA="MERCURY_TEST_BIN_A=$LADDER MERCURY_TEST_BIN_B=$LADDER" ;;
+  ladder-legacy) [ -x "$LADDER" ] || { echo "arm ladder-legacy needs MERCURY_LADDER_BIN" >&2; exit 2; }
+                 EXTRA="MERCURY_TEST_BIN_A=$LADDER MERCURY_TEST_BIN_B=$LADDER LDPC_ALG=legacy" ;;
   custom*) EXTRA="$AB_EXTRA" ;;      # ad-hoc arm: environment from AB_EXTRA
   *) echo "bad arm $ARM" >&2; exit 2 ;;
 esac
