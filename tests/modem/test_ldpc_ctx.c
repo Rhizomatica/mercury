@@ -237,6 +237,86 @@ void test_contexts_can_be_created_concurrently(void)
     }
 }
 
+/* Review of #359: the int16 path converted float LLRs with an integer cast
+ * after the scale, so a huge magnitude wrapped and could flip the sign.  The
+ * clamp is now in float and a NaN is an erasure (on every path).  A noiseless
+ * codeword with +-1e9 and +-inf LLRs plus four NaN erasures must decode on
+ * every algorithm, and the hard decisions must be the transmitted bits. */
+static void test_extreme_llrs_saturate_instead_of_wrapping(void)
+{
+    unsigned char ib[KDATA], pb[NPAR];
+    uint8_t out[NCODE];
+    float in[NCODE], work[NCODE];
+    srand(777);
+    for (int i = 0; i < KDATA; i++) ib[i] = rand() & 1;
+    encode(&ldpc, ib, pb);
+    for (int i = 0; i < KDATA; i++) in[i] = ib[i] ? -1e9f : 1e9f;
+    for (int i = 0; i < NPAR; i++) in[KDATA + i] = pb[i] ? -1e9f : 1e9f;
+    in[10] = ib[10] ? -INFINITY : INFINITY;
+    in[11] = ib[11] ? -INFINITY : INFINITY;
+    in[3] = NAN; in[100] = NAN; in[KDATA + 7] = NAN; in[NCODE - 1] = NAN;
+    ldpc_ctx_t *c = ldpc_ctx_create(&ldpc);
+    for (int alg = LDPC_ALG_SP; alg <= LDPC_ALG_SPT; alg++) {
+        memcpy(work, in, sizeof work);
+        ldpc_ctx_set_alg(c, alg, 0.0f);
+        ldpc_stats_t st;
+        int it = ldpc_ctx_decode(c, work, out, 100, 0, &st);
+        TEST_ASSERT_TRUE_MESSAGE(st.parity_ok, ldpc_alg_name(alg));
+        TEST_ASSERT_TRUE_MESSAGE(it <= 5, ldpc_alg_name(alg));
+        for (int i = 0; i < KDATA; i++) TEST_ASSERT_EQUAL_UINT8_MESSAGE(ib[i], out[i], ldpc_alg_name(alg));
+        for (int i = 0; i < NPAR; i++)  TEST_ASSERT_EQUAL_UINT8_MESSAGE(pb[i], out[KDATA + i], ldpc_alg_name(alg));
+    }
+    ldpc_ctx_destroy(c);
+}
+
+/* A min-sum scale above 1 is clamped to 1 (the Q8 factor in nms16 would wrap):
+ * the decode asked for at 1.5 is the decode at 1.0, bit for bit. */
+static void test_nms_scale_above_one_is_clamped(void)
+{
+    uint8_t out1[NCODE], out2[NCODE];
+    float in[NCODE];
+    ldpc_stats_t s1, s2;
+    ldpc_ctx_t *c = ldpc_ctx_create(&ldpc);
+    ldpc_ctx_set_alg(c, LDPC_ALG_NMS16, 1.0f);
+    memcpy(in, H_256_768_22_input, sizeof in);
+    int it1 = ldpc_ctx_decode(c, in, out1, 50, 0, &s1);
+    ldpc_ctx_set_alg(c, LDPC_ALG_NMS16, 1.5f);
+    memcpy(in, H_256_768_22_input, sizeof in);
+    int it2 = ldpc_ctx_decode(c, in, out2, 50, 0, &s2);
+    TEST_ASSERT_EQUAL_INT(it1, it2);
+    TEST_ASSERT_EQUAL_INT(s1.parity_count, s2.parity_count);
+    TEST_ASSERT_EQUAL_MEMORY(out1, out2, NCODE);
+    ldpc_ctx_destroy(c);
+}
+
+/* The process-wide default algorithm is read from LDPC_ALG exactly once
+ * (pthread_once).  Eight FIRST decodes through run_ldpc_decoder() at the same
+ * time, each on its own struct LDPC so each creates its context under the
+ * AUTO default, must all agree.  TSan is the arbiter of the race itself. */
+static struct LDPC thr_l[NTHR];
+static int thr_pcc[NTHR];
+static void *thr_wrapper(void *arg)
+{
+    int k = (int)(intptr_t)arg;
+    thr_l[k] = ldpc; thr_l[k].ctx = NULL;
+    float in[768]; memcpy(in, H_256_768_22_input, sizeof in);
+    thr_it[k] = run_ldpc_decoder(&thr_l[k], thr_out[k], in, &thr_pcc[k]);
+    ldpc_free_ctx(&thr_l[k]);
+    return NULL;
+}
+
+static void test_first_decodes_through_the_wrapper_can_race(void)
+{
+    pthread_t t[NTHR];
+    for (int k = 0; k < NTHR; k++) TEST_ASSERT_EQUAL_INT(0, pthread_create(&t[k], NULL, thr_wrapper, (void *)(intptr_t)k));
+    for (int k = 0; k < NTHR; k++) pthread_join(t[k], NULL);
+    for (int k = 1; k < NTHR; k++) {
+        TEST_ASSERT_EQUAL_INT(thr_it[0], thr_it[k]);
+        TEST_ASSERT_EQUAL_INT(thr_pcc[0], thr_pcc[k]);
+        TEST_ASSERT_EQUAL_MEMORY(thr_out[0], thr_out[k], ldpc.CodeLength);
+    }
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -248,5 +328,8 @@ int main(void)
     RUN_TEST(test_past_deadline_stops_after_one_iteration);
     RUN_TEST(test_wrapper_creates_context_and_matches_legacy);
     RUN_TEST(test_contexts_can_be_created_concurrently);
+    RUN_TEST(test_extreme_llrs_saturate_instead_of_wrapping);
+    RUN_TEST(test_nms_scale_above_one_is_clamped);
+    RUN_TEST(test_first_decodes_through_the_wrapper_can_race);
     return UNITY_END();
 }

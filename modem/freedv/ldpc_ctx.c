@@ -17,7 +17,9 @@
  * XOR over the block layout with no gather.
  *
  * NMS16 check pass uses 8-lane int16 vectors via compiler vector extensions
- * (SSE2 on x86-64, NEON on arm64/armv7-a, scalar fallback elsewhere).
+ * (SSE2 on x86-64; NEON on arm64, and on armv7-a only when built with
+ * -mfpu=neon, which config.mk does not pass, so 32-bit Pi builds lower this
+ * to scalar code: correct, just not vector).
  */
 #include <math.h>
 #include <pthread.h>
@@ -32,6 +34,7 @@
 #define V 8
 #define Q16_MAX 32767
 #define Q16_MIN (-32767)
+#define LLR_FMAX 1.0e4f   /* float-path input clamp (see ldpc_ctx_decode) */
 
 typedef int16_t v8i16 __attribute__((vector_size(16)));
 
@@ -47,6 +50,7 @@ struct ldpc_ctx {
     int32_t *col_ptr;     /* N+1                                                 */
     int32_t *col_edge;    /* E: slots of each variable                           */
     float   *R, *Q, *Qtot;
+    float   *llrf;        /* N: the channel LLRs as the float passes see them    */
     int16_t *R16, *Q16, *llr16;
     uint8_t *Qs, *hb, *hard;
     size_t   bytes;
@@ -231,8 +235,9 @@ ldpc_ctx_t *ldpc_ctx_create(const struct LDPC *code)
     c->hb       = xmalloc(S, &bytes);
     c->hard     = xmalloc(c->N, &bytes);
     c->Qtot     = xmalloc(sizeof(float) * c->N, &bytes);
+    c->llrf     = xmalloc(sizeof(float) * c->N, &bytes);
     if (!c->blk_off || !c->blk_deg || !c->blk_real || !c->slot_var || !c->col_ptr ||
-        !c->col_edge || !c->hb || !c->hard || !c->Qtot) goto fail;
+        !c->col_edge || !c->hb || !c->hard || !c->Qtot || !c->llrf) goto fail;
 
     int b = 0, off = 0;
     for (int i = 0; i < c->M;) {
@@ -282,7 +287,7 @@ void ldpc_ctx_destroy(ldpc_ctx_t *c)
     if (!c) return;
     free(c->blk_off); free(c->blk_deg); free(c->blk_real); free(c->slot_var);
     free(c->col_ptr); free(c->col_edge); free(c->hb); free(c->hard); free(c->Qtot);
-    free(c->R); free(c->Q); free(c->Qs); free(c->R16); free(c->Q16); free(c->llr16);
+    free(c->llrf); free(c->R); free(c->Q); free(c->Qs); free(c->R16); free(c->Q16); free(c->llr16);
     free(c);
 }
 
@@ -294,7 +299,7 @@ void ldpc_ctx_set_alg(ldpc_ctx_t *c, int alg, float nms_scale)
 {
     if (!c) return;
     c->alg = (alg == LDPC_ALG_NMS || alg == LDPC_ALG_NMS16 || alg == LDPC_ALG_SPT) ? alg : LDPC_ALG_SP;
-    if (nms_scale > 0.0f) c->scale = nms_scale;
+    if (nms_scale > 0.0f) c->scale = nms_scale > 1.0f ? 1.0f : nms_scale;   /* > 1 wraps the Q8 factor in nms16 */
 }
 
 /* ---- parity over the block layout: streaming XOR of hb, no gather ------- */
@@ -448,6 +453,16 @@ static void nms16_check_pass(ldpc_ctx_t *c)
 }
 
 static inline int16_t sat16(int32_t x) { return x > Q16_MAX ? Q16_MAX : x < Q16_MIN ? Q16_MIN : (int16_t) x; }
+/* float LLR -> 1/16-LLR int16: clamp in float BEFORE the integer conversion
+ * (a cast of 2e8 wraps and flips the sign), and a NaN is an erasure (0). */
+static inline int16_t llr_to_q16(float x)
+{
+    float v = x * LDPC_Q16_SCALE;
+    if (isnan(v)) return 0;
+    if (v > (float) Q16_MAX) v = (float) Q16_MAX;
+    if (v < (float) Q16_MIN) v = (float) Q16_MIN;
+    return (int16_t) lrintf(v);
+}
 
 static void nms16_var_pass(ldpc_ctx_t *c)
 {
@@ -472,13 +487,25 @@ int ldpc_ctx_decode(ldpc_ctx_t *c, const float *llr, uint8_t *bits,
 {
     const int alg = c->alg;
     if (alg == LDPC_ALG_NMS16) {
-        for (int n = 0; n < c->N; n++) c->llr16[n] = sat16((int32_t) lrintf(llr[n] * LDPC_Q16_SCALE));
+        for (int n = 0; n < c->N; n++) c->llr16[n] = llr_to_q16(llr[n]);
         for (int s = 0; s < c->S; s++) {
             int n = c->slot_var[s];
             c->Q16[s] = (n >= 0) ? c->llr16[n] : Q16_MAX;   /* padding lanes: large positive, sign 0 */
             c->R16[s] = 0;
         }
     } else {
+        /* The float passes re-read the channel LLRs every iteration, so sanitise
+         * a copy once: NaN is an erasure, and |x| is clamped below the point
+         * where codec2's phi0() (x * 65536 as int32) overflows.  phi(1e4) is 0,
+         * as is phi(10): the clamp changes no decode. */
+        for (int n = 0; n < c->N; n++) {
+            float v = llr[n];
+            if (isnan(v)) v = 0.0f;
+            else if (v > LLR_FMAX) v = LLR_FMAX;
+            else if (v < -LLR_FMAX) v = -LLR_FMAX;
+            c->llrf[n] = v;
+        }
+        llr = c->llrf;
         for (int s = 0; s < c->S; s++) {
             int n = c->slot_var[s];
             float v = (n >= 0) ? llr[n] : 1e30f;
