@@ -38,7 +38,18 @@ extern const mfsk_ldpc_code_t mfsk_ldpc_8_16;   /* K=800  100 B  (rate 1/2)  */
 void mfsk_ldpc_encode(const mfsk_ldpc_code_t *c, const int *info, int *coded);
 
 /* Min-sum decode: LLRs for the c->N coded bits -> c->K info bits.
- * Returns 1 if all parity checks were satisfied (converged), else 0. */
+ * Returns 1 if all parity checks were satisfied (converged), else 0.
+ *
+ * A decode writes a workspace (the code's graph and its edge messages, about
+ * 570 kB).  A decoder that lives long or may run beside another owns one
+ * (mfsk_ldpc_ws_new) and decodes with mfsk_ldpc_decode_ws; two decodes must
+ * never share one at the same time.  mfsk_ldpc_decode uses one per calling
+ * thread (freed when the thread exits), for tools and tests. */
+typedef struct mfsk_ldpc_ws mfsk_ldpc_ws_t;
+mfsk_ldpc_ws_t *mfsk_ldpc_ws_new(void);
+void mfsk_ldpc_ws_free(mfsk_ldpc_ws_t *ws);
+int mfsk_ldpc_decode_ws(mfsk_ldpc_ws_t *ws, const mfsk_ldpc_code_t *c, const float *llr,
+                        int *info_out, int max_iter);
 int mfsk_ldpc_decode(const mfsk_ldpc_code_t *c, const float *llr,
                      int *info_out, int max_iter);
 

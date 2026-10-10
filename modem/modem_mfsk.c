@@ -86,6 +86,7 @@ typedef struct {
     mfsk_t m;
     ofdm_frame_t o;
     const mfsk_ldpc_code_t *code;   /* rate 8/16 */
+    mfsk_ldpc_ws_t *ldpc;           /* this decoder's own LDPC workspace */
     int Nofdm, P, bps, NPAY;
     size_t frame_bytes;             /* K/8 (payload + CRC16) */
 
@@ -236,13 +237,14 @@ static void *mfsk_be_open(int mode)
     h->harq_copies = 0;
     h->harq_first_ms = 0;
     h->info  = (int *)malloc((size_t)h->code->K * sizeof(int));
+    h->ldpc  = mfsk_ldpc_ws_new();
     h->preT  = (double complex *)malloc((size_t)h->P * h->Nofdm * sizeof(double complex));
     h->pstT  = (double complex *)malloc((size_t)h->P * h->Nofdm * sizeof(double complex));
     if (!h->rxbuf || !h->bf || !h->rb || !h->llr || !h->llr_di || !h->llr_acc || !h->ilv ||
-        !h->info || !h->preT || !h->pstT)
+        !h->info || !h->ldpc || !h->preT || !h->pstT)
     {
         free(h->rxbuf); free(h->bf); free(h->rb); free(h->llr); free(h->llr_di); free(h->llr_acc);
-        free(h->ilv); free(h->info); free(h->preT); free(h->pstT); free(h);
+        free(h->ilv); free(h->info); mfsk_ldpc_ws_free(h->ldpc); free(h->preT); free(h->pstT); free(h);
         return NULL;
     }
     mfsk_interleave_init(h->ilv, h->nb);
@@ -278,7 +280,7 @@ static void mfsk_be_close(void *ctx)
     for (int hy = 0; hy < MFSK_FREQ_HYPS; hy++) free(h->preT_hyp[hy]);
     free(h->rxbuf); free(h->bf); free(h->bb); free(h->rb);
     free(h->llr); free(h->llr_di); free(h->llr_acc); free(h->ilv);
-    free(h->info); free(h->preT); free(h->pstT); free(h);
+    free(h->info); mfsk_ldpc_ws_free(h->ldpc); free(h->preT); free(h->pstT); free(h);
 }
 
 static void mfsk_be_configure(void *ctx, int frames_per_burst, int verbosity)
@@ -589,8 +591,8 @@ static int mfsk_try_payload(mfsk_modem_t *h, int payoff, uint8_t *bytes_out)
      * stale ones -- that ordering mistake once turned HARQ into a data-plane
      * outage here (issue #223 lineage), so it is deliberate.
      */
-    static int out_bits[MFSK_LDPC_MAXK];
-    int ok = mfsk_ldpc_decode(h->code, h->llr_di, out_bits, 50);
+    int out_bits[MFSK_LDPC_MAXK];   /* not static: decoders run side by side */
+    int ok = mfsk_ldpc_decode_ws(h->ldpc, h->code, h->llr_di, out_bits, 50);
 
     if (h->harq_on)
     {
@@ -628,7 +630,7 @@ static int mfsk_try_payload(mfsk_modem_t *h, int payoff, uint8_t *bytes_out)
              * so a growing magnitude changes its behaviour as copies pile up. */
             float inv = 1.0f / (float)h->harq_copies;
             for (int i = 0; i < h->code->N; i++) h->llr_di[i] = h->llr_acc[i] * inv;
-            ok = mfsk_ldpc_decode(h->code, h->llr_di, out_bits, 50);
+            ok = mfsk_ldpc_decode_ws(h->ldpc, h->code, h->llr_di, out_bits, 50);
         }
         if (ok)
         {
