@@ -23,7 +23,7 @@ function plot_ldpc_figures(png_dir)
 
     codes = {'HRA_56_56','DATAC14', 'nms16'; 'H_128_256_5','DATAC0', 'nms16'; 'H_256_512_4','DATAC13', 'nms16'; ...
              'H_256_768_22','DATAC15 / DATAC16', 'nms16'; 'H_1024_2048_4f','DATAC3 / DATAC4', 'spt'; ...
-             'H_4096_8192_3d','DATAC1', 'nms16'; 'H_16200_9720','DATAC17 / QAM16C2', 'spt'};
+             'H_4096_8192_3d','DATAC1', 'spt'; 'H_16200_9720','DATAC17 / QAM16C2', 'spt'};
     algname = containers.Map({'nms16','spt'}, {'int16 vector min-sum', 'table sum-product'});
     tex = @(t) strrep(t, '_', '\_');   % code names contain underscores; axis labels use TeX subscripts
 

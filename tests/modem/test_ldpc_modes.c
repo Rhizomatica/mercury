@@ -34,14 +34,22 @@ void test_voice_modes_are_bounded_by_their_frame_period(void)
 }
 
 /* DATAC1 (H_4096_8192_3d) is a data mode: no budget until the host sets one
- * from its ARQ timing; the policy table decides the algorithm. */
+ * from its ARQ timing; the policy table decides the algorithm, and for this
+ * code that is sum-product (min-sum is 1.4x worse above FER 10 %, review of
+ * #359).  Min-sum stays only on the short codes (DATAC13 here). */
 void test_data_mode_follows_the_policy_table(void)
 {
     struct freedv *f = freedv_open(FREEDV_MODE_DATAC1);
     TEST_ASSERT_NOT_NULL(f);
     TEST_ASSERT_EQUAL_FLOAT(0.0f, f->ldpc_budget_ms);
+    TEST_ASSERT_EQUAL_INT(LDPC_ALG_SPT, ldpc_ctx_policy_alg(f->ldpc->name));
+    freedv_close(f);
+#ifdef FREEDV_MODE_DATAC13
+    f = freedv_open(FREEDV_MODE_DATAC13);
+    TEST_ASSERT_NOT_NULL(f);
     TEST_ASSERT_EQUAL_INT(LDPC_ALG_NMS16, ldpc_ctx_policy_alg(f->ldpc->name));
     freedv_close(f);
+#endif
 }
 
 /* Review of #359 (blocker): the LLR scale must stay the shipped mode constant
