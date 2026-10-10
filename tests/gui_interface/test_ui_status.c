@@ -107,7 +107,7 @@ void test_peer_hears_mode_in_carousel(void)
     st.peer_snr_valid = false;
     snprintf(st.peer_hears_mode, sizeof(st.peer_hears_mode), "MFSK");
     TEST_ASSERT_TRUE(ui_status_to_json(&st, buf, sizeof(buf)) > 0);
-    TEST_ASSERT_NOT_NULL(strstr(buf, "\"peer_snr_valid\":false,\"peer_hears_mode\":\"MFSK\"}"));
+    TEST_ASSERT_NOT_NULL(strstr(buf, "\"peer_snr_valid\":false,\"peer_hears_mode\":\"MFSK\","));   /* the ldpc_* fields follow (PR #359) */
 }
 
 void test_peer_snr_unknown_is_flagged_not_zero(void)
@@ -151,7 +151,7 @@ void test_status_json_is_byte_exact(void)
         "\"bytes_transmitted\":4096,"
         "\"bytes_received\":128,"
         "\"tx_gain_db\":-15.0,"
-        "\"tx_peak_dbfs\":-3.5,\"ldpc_iters_last\":0,\"ldpc_iters_mean\":0.0,\"ldpc_deadline_hits\":0,\"ldpc_max_iter\":0,"
+        "\"tx_peak_dbfs\":-3.5,"
         "\"waterfall\":true,"
         "\"audio_ok\":true,"
         "\"audio_error\":\"\","
@@ -161,7 +161,8 @@ void test_status_json_is_byte_exact(void)
         "\"radio_frequency_age_ms\":750,"
         "\"peer_snr\":-3.8,"
         "\"peer_snr_valid\":true,"
-        "\"peer_hears_mode\":\"\"}";
+        "\"peer_hears_mode\":\"\","
+        "\"ldpc_iters_last\":0,\"ldpc_iters_mean\":0.0,\"ldpc_deadline_hits\":0,\"ldpc_max_iter\":0}";
 
     TEST_ASSERT_EQUAL_STRING(expect, buf);
     TEST_ASSERT_EQUAL_INT((int)strlen(expect), n);
