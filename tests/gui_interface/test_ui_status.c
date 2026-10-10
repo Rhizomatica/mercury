@@ -96,6 +96,20 @@ static ui_status_t sample(void)
  * not.  Conflating them would show a newcomer "they hear us at 0 dB" before
  * the far side has said anything at all -- the opposite of the reassurance
  * issue #230 asks for.  peer_snr_valid is what keeps them apart. */
+/* A carousel session reports no peer dB value, only the rung the peer says it
+ * hears us on: it rides beside the unknown peer_snr, appended to the wire
+ * format so remote clients that parse the older fields are unaffected. */
+void test_peer_hears_mode_in_carousel(void)
+{
+    ui_status_t st = sample();
+    char buf[2048];
+    st.peer_snr_db    = UI_SNR_UNKNOWN_DB;
+    st.peer_snr_valid = false;
+    snprintf(st.peer_hears_mode, sizeof(st.peer_hears_mode), "MFSK");
+    TEST_ASSERT_TRUE(ui_status_to_json(&st, buf, sizeof(buf)) > 0);
+    TEST_ASSERT_NOT_NULL(strstr(buf, "\"peer_snr_valid\":false,\"peer_hears_mode\":\"MFSK\"}"));
+}
+
 void test_peer_snr_unknown_is_flagged_not_zero(void)
 {
     ui_status_t st = sample();
@@ -146,7 +160,8 @@ void test_status_json_is_byte_exact(void)
         "\"radio_frequency_hz\":14074000,"
         "\"radio_frequency_age_ms\":750,"
         "\"peer_snr\":-3.8,"
-        "\"peer_snr_valid\":true}";
+        "\"peer_snr_valid\":true,"
+        "\"peer_hears_mode\":\"\"}";
 
     TEST_ASSERT_EQUAL_STRING(expect, buf);
     TEST_ASSERT_EQUAL_INT((int)strlen(expect), n);
@@ -248,6 +263,7 @@ int main(void)
     UNITY_BEGIN();
     RUN_TEST(test_status_json_is_byte_exact);
     RUN_TEST(test_peer_snr_unknown_is_flagged_not_zero);
+    RUN_TEST(test_peer_hears_mode_in_carousel);
     RUN_TEST(test_audio_failure_is_reported);
     RUN_TEST(test_unavailable_frequency_is_explicit_null);
     RUN_TEST(test_arq_payload_modes_are_independent);

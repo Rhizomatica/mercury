@@ -46,6 +46,7 @@
 #include "../modem/freedv/modem_stats.h"
 #include "ui_history.h"
 #include "../modem/freedv/freedv_api.h"
+#include "../modem/modem_mfsk.h"   /* MERCURY_MODE_MFSK */
 #include "../modem/modem.h"
 #include "../radio_io/radio_io.h"  /* RADIO_TYPE_NONE */
 #include "../radio_io/rigctl_parse.h"  /* preload_radio_list */
@@ -95,6 +96,7 @@ static const char *ui_arq_mode_name(int mode)
     case FREEDV_MODE_DATAC15: return "DATAC15";
     case FREEDV_MODE_DATAC17: return "DATAC17";
     case FREEDV_MODE_QAM16C2: return "QAM16C2";
+    case MERCURY_MODE_MFSK: return "MFSK";
     default: return "";
     }
 }
@@ -610,10 +612,16 @@ static void ui_gather_status(ui_ctx_t *ctx, ui_status_t *out)
         out->sync              = snap.connected ? true : false;
         out->bytes_transmitted = (long)snap.tx_bytes;
         out->bytes_received    = (long)snap.rx_bytes;
-        snprintf(out->arq_tx_mode, sizeof(out->arq_tx_mode), "%s",
-                 ui_arq_mode_name(snap.payload_mode));
-        snprintf(out->arq_rx_mode, sizeof(out->arq_rx_mode), "%s",
-                 ui_arq_mode_name(snap.peer_tx_mode));
+        /* A carousel session names a direction's mode only once data went
+         * that way: a station that only polls has no TX mode, whatever its
+         * modem was last switched to. */
+        int tx_mode = snap.in_carousel ? snap.car_tx_mode : snap.payload_mode;
+        int rx_mode = snap.in_carousel ? snap.car_rx_mode : snap.peer_tx_mode;
+        snprintf(out->arq_tx_mode, sizeof(out->arq_tx_mode), "%s", ui_arq_mode_name(tx_mode));
+        snprintf(out->arq_rx_mode, sizeof(out->arq_rx_mode), "%s", ui_arq_mode_name(rx_mode));
+        if (snap.in_carousel)
+            snprintf(out->peer_hears_mode, sizeof(out->peer_hears_mode), "%s",
+                     ui_arq_mode_name(snap.car_peer_mode));
     }
 
     int ctl_status  = net_get_status(CTL_TCP_PORT);

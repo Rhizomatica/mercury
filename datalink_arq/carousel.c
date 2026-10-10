@@ -1657,6 +1657,7 @@ static int rx_next(car_t *c, uint64_t now, int *plv, int *pn)
 static void rx_frame(car_t *c, const msg_t *m, int lv, bool counts)
 {
     take_pieces(c, m);
+    if (m->nseg) c->rx_data_lv = lv;
     bool floor_frame = lv == 0 && c->poll_level == 0 && c->io.pattern;
     if (floor_frame) c->floor_streaming = true;
     if (counts || floor_frame) {
@@ -2091,6 +2092,7 @@ static void m_on_data(car_t *c, uint64_t now, const msg_t *m, int lv)
 static void m_on_ctl(car_t *c, uint64_t now, const msg_t *m)
 {
     c->peer_snr_level = m->snr_level;
+    c->peer_level_known = true;
     if (m->type == M_POLL) {                 /* the peer's poll for my rounds */
         apply_need(c, m);
         c->peer_has_data = m->has_data;
@@ -2268,6 +2270,7 @@ static void s_on_ctl(car_t *c, uint64_t now, const msg_t *m, int mode)
 {
     s_heard_m(c, now);
     c->peer_snr_level = m->snr_level;
+    c->peer_level_known = true;
     uint32_t d = d_of_mode(mode);
     uint64_t eh = now + TAIL_MS;
     if (m->type == M_POLL) {
@@ -2347,8 +2350,10 @@ void car_init(car_t *c, const car_io_t *io, int rx_level, int tx_level)
     c->loss_est = c->tx_loss = 0.1;
     c->snr_level = rx_level;
     c->peer_snr_level = tx_level >= 0 ? tx_level : rx_level;
+    c->peer_level_known = tx_level >= 0;   /* the caller read it in the ACCEPT */
     c->tx_level = -1;
     c->s_prev_lv = c->ok_lv = -1;
+    c->rx_data_lv = -1;
 }
 
 /* The session's piece size, as both ends know it: from the rung the callee's
@@ -2368,6 +2373,14 @@ int car_piece_for_start(int caller_start_level)
 }
 
 int car_piece(const car_t *c) { return piece_of(c); }
+
+int car_ui_tx_mode(const car_t *c) { return c->last_nf > 0 && c->last_lv >= 0 && c->last_lv < CAR_NLEVELS ? LADDER[c->last_lv] : -1; }
+int car_ui_rx_mode(const car_t *c) { return c->rx_data_lv >= 0 ? LADDER[c->rx_data_lv] : -1; }
+int car_ui_peer_mode(const car_t *c)
+{
+    return c->peer_level_known && c->peer_snr_level >= 0 && c->peer_snr_level < CAR_NLEVELS
+           ? LADDER[c->peer_snr_level] : -1;
+}
 
 /* The caller: the session's timing master.  The callee's ACCEPT named the
  * rung it starts my rounds on (tx_level); I start its on what I measured. */

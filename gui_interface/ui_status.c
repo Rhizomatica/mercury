@@ -54,7 +54,8 @@ int ui_status_to_json(const ui_status_t *st, char *buf, size_t buflen)
         /* Appended, not inserted: the field order above is the wire format
          * that remote clients parse. */
         "\"peer_snr\":%.1f,"
-        "\"peer_snr_valid\":%s}",
+        "\"peer_snr_valid\":%s,"
+        "\"peer_hears_mode\":\"%s\"}",
         st->bitrate_bps,
         st->snr_db,
         st->user_callsign,
@@ -74,7 +75,8 @@ int ui_status_to_json(const ui_status_t *st, char *buf, size_t buflen)
         frequency,
         age,
         st->peer_snr_db,
-        st->peer_snr_valid ? "true" : "false");
+        st->peer_snr_valid ? "true" : "false",
+        st->peer_hears_mode);
 
     if (n < 0 || (size_t)n >= buflen)
         return -1;

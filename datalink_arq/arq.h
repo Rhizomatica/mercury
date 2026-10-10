@@ -146,6 +146,12 @@ typedef struct
     int preferred_tx_mode;
     uint64_t tx_bytes;
     uint64_t rx_bytes;
+    /* In a carousel session (in_carousel), for the UI: the mode of my last
+     * data round, of the last data frame I took, and of the rung the peer
+     * last reported hearing me on (carousel.h car_ui_*).  -1: none. */
+    int car_tx_mode;
+    int car_rx_mode;
+    int car_peer_mode;
 } arq_runtime_snapshot_t;
 
 extern arq_info arq_conn;

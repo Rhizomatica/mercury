@@ -14,6 +14,7 @@
 #include "arq_timing.h"
 #include "arq_modem.h"
 #include "arq_channels.h"
+#include "carousel.h"
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -1362,6 +1363,10 @@ bool arq_get_runtime_snapshot(arq_runtime_snapshot_t *snapshot)
     snapshot->preferred_tx_mode = arq_modem_preferred_tx_mode(&g_sess);
     snapshot->tx_bytes          = g_timing.tx_bytes;
     snapshot->rx_bytes          = g_timing.rx_bytes;
+    bool car_up = g_sess.car_active && g_sess.car;
+    snapshot->car_tx_mode   = car_up ? car_ui_tx_mode(g_sess.car) : -1;
+    snapshot->car_rx_mode   = car_up ? car_ui_rx_mode(g_sess.car) : -1;
+    snapshot->car_peer_mode = car_up ? car_ui_peer_mode(g_sess.car) : -1;
     pthread_mutex_unlock(&g_sess_lock);
     return true;
 }
