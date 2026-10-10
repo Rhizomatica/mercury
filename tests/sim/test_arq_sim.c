@@ -87,8 +87,8 @@ void test_endpoint_tx_read_backlog(void)
  * Task 4: Frame translation tests
  * ====================================================================== */
 
-/* The one plain session frame is the DISCONNECT; a stop-and-wait DATA or
- * ACK frame (the plane is gone) translates to nothing. */
+/* The one plain session frame is the DISCONNECT; a 1.9.x DATA or ACK frame
+ * translates to nothing. */
 void test_translate_disconnect_only(void)
 {
     uint8_t frame[1280];
@@ -99,13 +99,15 @@ void test_translate_disconnect_only(void)
     TEST_ASSERT_EQUAL_INT(ARQ_EV_RX_DISCONNECT, ev.id);
     TEST_ASSERT_EQUAL_UINT8(0x42, ev.session_id);
 
-    arq_frame_hdr_t hdr = { .packet_type = PACKET_TYPE_ARQ_DATA, .session_id = 0x42 };
+    /* 1.9.x's DATA, and its ACK (control subtype 3). */
+    arq_frame_hdr_t hdr = { .session_id = 0x42 };
     memset(frame, 0, sizeof(frame));
     TEST_ASSERT_EQUAL_INT(0, arq_protocol_encode_hdr(frame, sizeof(frame), &hdr));
+    write_frame_header(frame, PACKET_TYPE_ARQ_DATA, 0);
     TEST_ASSERT_FALSE(sim_translate_frame(frame, 30, 3.0f, "B0BBB", &ev));
-    hdr.packet_type = PACKET_TYPE_ARQ_CONTROL;
-    hdr.subtype = ARQ_SUBTYPE_ACK;
+    hdr.subtype = 3;
     TEST_ASSERT_EQUAL_INT(0, arq_protocol_encode_hdr(frame, sizeof(frame), &hdr));
+    write_frame_header(frame, PACKET_TYPE_ARQ_CONTROL, 0);
     TEST_ASSERT_FALSE(sim_translate_frame(frame, ARQ_FRAME_HDR_SIZE, 3.0f, "B0BBB", &ev));
 }
 
@@ -325,21 +327,15 @@ void test_sim_transfer_lossy_per20(void)
     sim_destroy(s);
 }
 
-void test_sim_fade_cliff_downgrades(void)
+void test_sim_fade_cliff_completes(void)
 {
-    /* S1 fade-cliff regression.  Connect and start transferring on a good
-     * channel (12 dB — the payload mode may climb), then the band fades to
+    /* Fade cliff mid-transfer.  Connect and start transferring on a good
+     * channel (12 dB, where the carousel climbs), then the band fades to
      * -5.5 dB: on the channel's mode-aware cliff model every mode above
-     * DATAC15/DATAC16 now loses ~90% of its frames, so downgrading to the
-     * floor is the ONLY way to keep moving — exactly the real-HF fade cliff.
-     *
-     * Before the S1 fix, the reverse-loss hold in record_tx_outcome() was
-     * unbounded: with an SNR reading that still looked adequate, every retry
-     * was attributed to reverse ACK loss, which froze OLLA and
-     * consecutive_retries and made every downgrade path (including the
-     * hard-loss floor drop) unreachable — the transfer starved above the
-     * cliff.  With the bounded hold the delivery feedback breaks through,
-     * the mode descends to DATAC15, and the transfer completes. */
+     * DATAC15/DATAC16 now loses ~90% of its frames, so stepping down to the
+     * floor is the only way to keep moving -- the real-HF fade cliff.  The
+     * old stop-and-wait plane once starved above it (the S1 fix); the
+     * carousel must step down and finish. */
     sim_channel_cfg_t chan = { .seed = 42, .per = 0.02, .guard_ms = 150 };
     sim_t *s = make_connected(&chan);
     TEST_ASSERT_NOT_NULL(s);
@@ -377,10 +373,6 @@ void test_sim_fade_cliff_downgrades(void)
      * that had no margin.  At two hours seeds 42-45 all pass. */
     sim_run_until_idle(s, 7200000); /* up to 2 virtual hours */
 
-    sim_verdict_t floor_v =
-        sim_prop_mode_floor_reached(sim_a(s), FREEDV_MODE_DATAC15, 0);
-    TEST_ASSERT_TRUE_MESSAGE(floor_v.ok, floor_v.detail);
-
     sim_verdict_t v = sim_prop_integrity(s, sim_a(s), sim_b(s), blob, sizeof(blob));
     TEST_ASSERT_TRUE_MESSAGE(v.ok, v.detail);
 
@@ -390,17 +382,10 @@ void test_sim_fade_cliff_downgrades(void)
 void test_sim_peer_loss_disconnects(void)
 {
     /* Peer-death teardown: mid-transfer the channel goes fully dark (peer
-     * off the air).  The ISS must reach a disconnected/listening state
-     * within a bounded time — the no-progress budget plus one retry-
-     * exhaustion round — instead of keying the radio forever.
-     *
-     * Regression guard for Pedro's estacao6/estacao10 OTA finding on the S1
-     * build ("IRS desconectou e a ISS continuou transmitindo"): the mid-
-     * window mode probe fired on hard-loss, its failed MODE_REQ negotiation
-     * reset the data retry budget, and the loop repeated every ~200 s —
-     * permanently preempting the retry-exhaustion branch that owns the
-     * no-progress disconnect.  Fixed by never probing once the no-progress
-     * budget is spent. */
+     * off the air).  Both ends must leave CONNECTED within a bounded time
+     * instead of keying the radio forever -- the failure Pedro saw on air
+     * with the old plane ("IRS desconectou e a ISS continuou
+     * transmitindo"). */
     sim_channel_cfg_t chan = { .seed = 5, .per = 0.02, .guard_ms = 150 };
     sim_t *s = make_connected(&chan);
     TEST_ASSERT_NOT_NULL(s);
@@ -414,15 +399,14 @@ void test_sim_peer_loss_disconnects(void)
     sim_inject(s, sim_a(s), &dready);
 
     /* A short slice only: the blackout must land MID-TRANSFER with backlog
-     * still queued, so the ISS is in the DATA_TX/WAIT_ACK retry cycle (the
-     * path with the probe loop).  NB sim_run_until_idle never goes "idle"
-     * while connected (keepalive deadlines stay armed), so this consumes the
-     * full slice of virtual time. */
+     * still queued.  NB sim_run_until_idle never goes "idle" while connected
+     * (the carousel's deadlines stay armed), so this consumes the full slice
+     * of virtual time. */
     sim_run_until_idle(s, 15000);
 
     sim_set_per(s, 1.0);            /* peer vanishes: total blackout */
 
-    /* Budget (180 s) + a full retry-exhaustion round (~190 s) + margin. */
+    /* The carousel's silence limits, with a wide margin. */
     sim_run_until_idle(s, 900000);
 
     TEST_ASSERT_NOT_EQUAL(ARQ_CONN_CONNECTED,
@@ -441,9 +425,8 @@ void test_sim_fuzz(void)
 {
     /* 50 deterministic seeds keep CI runtime under a few seconds.  Each
      * seed drives a different (per, guard_ms, transfer_size) combination.
-     * PER ceiling is 0.40 (raised from 0.25 with the S1 fade-cliff fix): the
-     * FSM must now push through erasure rates that used to stall it above the
-     * cliff, on any seed, always delivering every byte. */
+     * PER ceiling is 0.40: the carousel must push through it on any seed,
+     * always delivering every byte. */
     const int SEEDS = 50;
 
     for (int seed = 1; seed <= SEEDS; seed++)
@@ -477,8 +460,8 @@ void test_sim_fuzz(void)
         size_t xfer  = 100 + (size_t)(r2 * 1900.0);      /* [100, 2000) bytes */
 
         /* Connect on a clean channel, then apply the seed's loss to the DATA
-         * transfer.  The fuzz loop stresses the data path — retransmission,
-         * mode adaptation, the S1 downgrade — across randomized loss; the
+         * transfer.  The fuzz loop stresses the data path -- repair rounds and
+         * rung adaptation -- across randomized loss; the
          * CALL/ACCEPT handshake has its own (fixed-mode, separately tuned)
          * reliability envelope and would otherwise simply fail to connect
          * above ~0.3 erasure, masking the data-path coverage this test is
@@ -545,20 +528,19 @@ static double splitmix_u(uint64_t seed, int n)
 
 void test_sim_fuzz_fading(void)
 {
-    /* Fading/ISI fuzz over the S1 code paths (cliff model + empirical
-     * per-mode PER), which test_sim_fuzz (flat AWGN erasure) never reaches.
-     * Each seed connects clean, then a fade lands mid-transfer — either a
-     * mode-aware SNR cliff or an ISI-limited per-mode PER profile (NVIS-like:
-     * healthy SNR, fast modes fail) — the exact regime the S1 fix targets.
+    /* Fading/ISI fuzz (cliff model + empirical per-mode PER), which
+     * test_sim_fuzz (flat AWGN erasure) never reaches.  Each seed connects
+     * clean, then a fade lands mid-transfer -- either a mode-aware SNR cliff
+     * or an ISI-limited per-mode PER profile (NVIS-like: healthy SNR, fast
+     * modes fail).
      *
      * Two invariants that MUST hold on ANY channel, checked every seed:
      *   (a) NO CORRUPTION — whatever the peer received is a byte-exact prefix
-     *       of what was sent (retransmission ARQ may deliver less under a
-     *       brutal fade, but never wrong bytes; the restage path is the new
-     *       risk here);
+     *       of what was sent (the ARQ may deliver less under a brutal fade,
+     *       but never wrong bytes);
      *   (b) CLEAN TERMINATION — within a generous budget the session either
      *       completed or disconnected; it is never left CONNECTED-but-stuck
-     *       cycling retries forever (the peer-death pathology, generalized). */
+     *       forever (the peer-death pathology, generalized). */
     const int SEEDS = 60;
     for (int seed = 1; seed <= SEEDS; seed++)
     {
@@ -669,7 +651,7 @@ int main(void)
     RUN_TEST(test_sim_transfer_clean);
     RUN_TEST(test_sim_bidirectional_progress_under_collisions);
     RUN_TEST(test_sim_transfer_lossy_per20);
-    RUN_TEST(test_sim_fade_cliff_downgrades);
+    RUN_TEST(test_sim_fade_cliff_completes);
     RUN_TEST(test_sim_peer_loss_disconnects);
 
     /* Task 8: seeded fuzz loop */

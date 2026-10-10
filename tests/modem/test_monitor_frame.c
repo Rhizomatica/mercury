@@ -110,6 +110,24 @@ void test_monitor_broadcast_frame(void)
     TEST_ASSERT_EQUAL_STRING("LEN=10", cap_detail);
 }
 
+/* The one plain session frame this version sends; a 1.9.x session frame
+ * (here an old ACK, subtype 3) is named as another version's. */
+void test_monitor_disconnect_and_other_version(void)
+{
+    uint8_t frame[ARQ_CONTROL_FRAME_SIZE];
+    int n = arq_protocol_build_disconnect(frame, sizeof(frame), 42, 0);
+    TEST_ASSERT_TRUE(n > 0);
+    run_frame(frame, sizeof(frame), FREEDV_MODE_DATAC16, 3.0f);
+    TEST_ASSERT_EQUAL_STRING("DISCONNECT", cap_kind);
+    TEST_ASSERT_EQUAL_STRING("SID=42", cap_detail);
+
+    frame[1] = 3;
+    run_frame(frame, sizeof(frame), FREEDV_MODE_DATAC16, 3.0f);
+    TEST_ASSERT_EQUAL_STRING("CONTROL", cap_kind);
+    TEST_ASSERT_EQUAL_STRING("another protocol version (Mercury 1.9.x?)", cap_detail);
+    TEST_ASSERT_EQUAL_INT(2, cap_count);
+}
+
 void test_mode_name_from_enum(void)
 {
     TEST_ASSERT_EQUAL_STRING("DATAC16", mode_name_from_enum(FREEDV_MODE_DATAC16));
@@ -124,6 +142,7 @@ int main(void)
     RUN_TEST(test_monitor_call_frame);
     RUN_TEST(test_monitor_cq_frame);
     RUN_TEST(test_monitor_broadcast_frame);
+    RUN_TEST(test_monitor_disconnect_and_other_version);
     RUN_TEST(test_mode_name_from_enum);
     return UNITY_END();
 }

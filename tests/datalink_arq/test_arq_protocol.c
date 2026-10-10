@@ -36,8 +36,8 @@ void test_encode_decode_hdr_roundtrip(void)
     arq_frame_hdr_t hdr_in = {
         .packet_type = PACKET_TYPE_ARQ_CONTROL,
         .frame_ext   = 0,
-        .subtype     = ARQ_SUBTYPE_ACK,
-        .flags       = ARQ_FLAG_HAS_DATA,
+        .subtype     = ARQ_SUBTYPE_DISCONNECT,
+        .flags       = 0x40,
         .session_id  = 0x42,
         .tx_seq      = 5,
         .rx_ack_seq  = 3,
@@ -173,48 +173,6 @@ void test_bw_token_invalid(void)
     TEST_ASSERT_EQUAL_INT(0, hz);
 }
 
-/* ---- ACK delay encode/decode ---- */
-
-void test_ack_delay_roundtrip(void)
-{
-    uint8_t raw = arq_protocol_encode_ack_delay(500);
-    uint32_t decoded = arq_protocol_decode_ack_delay(raw);
-    /* 10ms resolution: 500ms -> raw=50, decoded=500ms */
-    TEST_ASSERT_EQUAL_UINT32(500, decoded);
-}
-
-void test_ack_delay_zero(void)
-{
-    uint8_t raw = arq_protocol_encode_ack_delay(0);
-    TEST_ASSERT_EQUAL_UINT8(0, raw);
-    uint32_t decoded = arq_protocol_decode_ack_delay(0);
-    TEST_ASSERT_EQUAL_UINT32(0, decoded);
-}
-
-/* ---- Build ACK frame ---- */
-
-void test_build_ack(void)
-{
-    uint8_t buf[64];
-    memset(buf, 0, sizeof(buf));
-
-    int size = arq_protocol_build_ack(buf, sizeof(buf),
-        0x42, /* session_id */
-        3,    /* rx_ack_seq */
-        ARQ_FLAG_HAS_DATA,
-        150,  /* snr_raw */
-        10    /* ack_delay_raw */
-    );
-    TEST_ASSERT_GREATER_THAN(0, size);
-
-    /* Decode the header and check fields */
-    arq_frame_hdr_t hdr;
-    int ret = arq_protocol_decode_hdr(buf, (size_t)size, &hdr);
-    TEST_ASSERT_EQUAL_INT(0, ret);
-    TEST_ASSERT_EQUAL_UINT8(ARQ_SUBTYPE_ACK, hdr.subtype);
-    TEST_ASSERT_EQUAL_UINT8(0x42, hdr.session_id);
-}
-
 /* ---- Build DISCONNECT frame ---- */
 
 void test_build_disconnect(void)
@@ -223,48 +181,16 @@ void test_build_disconnect(void)
     memset(buf, 0, sizeof(buf));
 
     int size = arq_protocol_build_disconnect(buf, sizeof(buf), 0x42, 128);
-    TEST_ASSERT_GREATER_THAN(0, size);
+    TEST_ASSERT_EQUAL_INT(ARQ_FRAME_HDR_SIZE, size);
+    TEST_ASSERT_EQUAL_INT(PACKET_TYPE_ARQ_CONTROL, frame_header_packet_type(buf[0]));
 
     arq_frame_hdr_t hdr;
     int ret = arq_protocol_decode_hdr(buf, (size_t)size, &hdr);
     TEST_ASSERT_EQUAL_INT(0, ret);
     TEST_ASSERT_EQUAL_UINT8(ARQ_SUBTYPE_DISCONNECT, hdr.subtype);
     TEST_ASSERT_EQUAL_UINT8(0x42, hdr.session_id);
-}
-
-/* ---- DATA frame valid-length encoding (3 flag bits + low byte) ---- */
-
-/* Encode payload_valid > 511 the way send_data_frame() does, then verify
- * the wire bytes reconstruct the exact count the way arq.c does.  1205 is
- * QAM16C2's user payload (1213 - 8 header); 0x4B5 exercises LEN_B10. */
-void test_data_valid_length_over_511(void)
-{
-    static const uint16_t lens[] = { 256, 511, 512, 1023, 1172, 1205, 2047 };
-    uint8_t payload[8] = {0xA5};
-
-    for (size_t i = 0; i < sizeof(lens) / sizeof(lens[0]); i++)
-    {
-        uint16_t len = lens[i];
-        uint8_t flags = 0;
-        if (len & 0x100) flags |= ARQ_FLAG_LEN_HI;
-        if (len & 0x200) flags |= ARQ_FLAG_LEN_B9;
-        if (len & 0x400) flags |= ARQ_FLAG_LEN_B10;
-
-        uint8_t buf[64];
-        int size = arq_protocol_build_data(buf, sizeof(buf), 0x42, 1, 0,
-                                           flags, 0, len,
-                                           payload, sizeof(payload));
-        TEST_ASSERT_GREATER_THAN(0, size);
-
-        arq_frame_hdr_t hdr;
-        TEST_ASSERT_EQUAL_INT(0, arq_protocol_decode_hdr(buf, (size_t)size, &hdr));
-
-        size_t valid = (size_t)hdr.ack_delay_raw;
-        if (hdr.flags & ARQ_FLAG_LEN_HI)  valid |= 0x100u;
-        if (hdr.flags & ARQ_FLAG_LEN_B9)  valid |= 0x200u;
-        if (hdr.flags & ARQ_FLAG_LEN_B10) valid |= 0x400u;
-        TEST_ASSERT_EQUAL_UINT(len, valid);
-    }
+    TEST_ASSERT_EQUAL_UINT8(128, hdr.snr_raw);
+    TEST_ASSERT_EQUAL_INT(-1, arq_protocol_build_disconnect(buf, ARQ_FRAME_HDR_SIZE - 1, 0x42, 128));
 }
 
 /* ---- Mode timing lookup ---- */
@@ -297,8 +223,8 @@ void test_mode_timing_datac16(void)
 void test_mode_timing_datac13_removed(void)
 {
     /* DATAC13 was replaced by DATAC16 as the control mode and intentionally
-     * has no timing row (its 14-byte payload would collide with DATAC16 in
-     * the DATA-frame mode-inference loop). */
+     * has no timing row (its 14-byte payload would collide with DATAC16's
+     * where modes are told apart by frame size). */
     const arq_mode_timing_t *t = arq_protocol_mode_timing(FREEDV_MODE_DATAC13);
     TEST_ASSERT_NULL(t);
 }
@@ -574,13 +500,8 @@ int main(void)
     RUN_TEST(test_bw_token_500hz);
     RUN_TEST(test_bw_token_2300hz);
     RUN_TEST(test_bw_token_invalid);
-    /* ACK delay */
-    RUN_TEST(test_ack_delay_roundtrip);
-    RUN_TEST(test_ack_delay_zero);
     /* Frame builders */
-    RUN_TEST(test_build_ack);
     RUN_TEST(test_build_disconnect);
-    RUN_TEST(test_data_valid_length_over_511);
     /* Mode timing */
     RUN_TEST(test_mode_timing_datac4);
     RUN_TEST(test_mode_timing_datac15);

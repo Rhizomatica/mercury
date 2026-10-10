@@ -1395,91 +1395,6 @@ int send_modulated_data(generic_modem_t *g_modem, uint8_t *bytes_in, int frames_
     return 0;
 }
 
-/* Two bursts in ONE keydown: `a` then, after `gap_ms` of silence with the
- * transmitter still keyed, `b` -- each on its own mode.  Used to send an ACK
- * that hands this station the turn together with its first data burst, rather
- * than unkeying, waiting a guard and keying again.
- *
- * The gap is not a turnaround: the peer is already receiving.  It only has to
- * cover the peer's control decoder reporting `a` and the payload decoder
- * dropping any sync it took off `a` (see g_payload_resync_req) before `b`'s
- * preamble arrives. */
-int send_modulated_chain(generic_modem_t *g_modem,
-                         int mode_a, const uint8_t *bytes_a, int frames_a,
-                         int mode_b, const uint8_t *bytes_b, int frames_b,
-                         int gap_ms)
-{
-    size_t fb_a = 0, fb_b = 0;
-    pthread_mutex_lock(&modem_pool_lock);
-    modem_codec_t fa = pooled_codec_for_mode_locked(mode_a, &fb_a);
-    modem_codec_t fb = pooled_codec_for_mode_locked(mode_b, &fb_b);
-    pthread_mutex_unlock(&modem_pool_lock);
-    if (!modem_codec_valid(&fa) || !modem_codec_valid(&fb))
-        return -1;
-
-    if (atomic_load(&g_tune_active))
-    {
-        HLOGW("modem", "TX suppressed: tuning carrier active (send TUNE OFF)");
-        return -1;
-    }
-
-    int samples_head = FREEDV_FS_8000 * TX_HEAD_SILENCE_MS / 1000;
-    int samples_gap  = FREEDV_FS_8000 * gap_ms / 1000;
-    int samples_tail = FREEDV_FS_8000 * TX_TAIL_SILENCE_MS / 1000;
-
-    pthread_mutex_t *la = modem_inst_lock_for(fa.ctx);
-    pthread_mutex_t *lb = modem_inst_lock_for(fb.ctx);
-
-    pthread_mutex_lock(la);
-    size_t max_a = burst_audio_max_samples(&fa, frames_a);
-    size_t nmo_a = burst_scratch_samples(&fa);
-    pthread_mutex_unlock(la);
-    pthread_mutex_lock(lb);
-    size_t max_b = burst_audio_max_samples(&fb, frames_b);
-    size_t nmo_b = burst_scratch_samples(&fb);
-    pthread_mutex_unlock(lb);
-
-    size_t max_samples = (size_t)samples_head + max_a + (size_t)samples_gap + max_b +
-                         (size_t)samples_tail;
-    int32_t *tx_buffer = (int32_t *)malloc(max_samples * sizeof(int32_t));
-    int16_t *mod_out_short = (int16_t *)malloc((nmo_a > nmo_b ? nmo_a : nmo_b) * sizeof(int16_t));
-    if (!tx_buffer || !mod_out_short)
-    {
-        free(tx_buffer);
-        free(mod_out_short);
-        return -1;
-    }
-
-    size_t total = 0;
-    float tx_gain = atomic_load(&g_tx_gain);
-    float peak_fs = 0.0f;
-
-    for (int i = 0; i < samples_head; i++)
-        tx_buffer[total++] = 0;
-    pthread_mutex_lock(la);
-    append_burst_audio(&fa, bytes_a, frames_a, 0, tx_buffer, &total, mod_out_short, tx_gain, &peak_fs);
-    pthread_mutex_unlock(la);
-    for (int i = 0; i < samples_gap; i++)
-        tx_buffer[total++] = 0;
-    pthread_mutex_lock(lb);
-    publish_link_bitrate(&fb, mode_b);
-    append_burst_audio(&fb, bytes_b, frames_b, 0, tx_buffer, &total, mod_out_short, tx_gain, &peak_fs);
-    pthread_mutex_unlock(lb);
-    for (int i = 0; i < samples_tail; i++)
-        tx_buffer[total++] = 0;
-
-    /* The over is reported as the first burst's (TX_STARTED carries its mode);
-     * leave the modem on the second burst's mode, as two separate sends would
-     * have. */
-    maybe_switch_modem_mode(g_modem, mode_a, RX, true);
-    key_and_play(g_modem, tx_buffer, total, peak_fs);
-    maybe_switch_modem_mode(g_modem, mode_b, RX, true);
-
-    free(tx_buffer);
-    free(mod_out_short);
-    return 0;
-}
-
 /* A keydown of separate bursts (arq_keydown_t): each frame is its own burst on
  * its own pooled instance, with its silence before it; one TX_STARTED /
  * TX_COMPLETE pair for the whole keydown.  The frames of a carousel round
@@ -1962,8 +1877,8 @@ static int rx_decoder_bind_mode(rx_decoder_state_t *state, int mode)
              * conditioned. */
             state->demod_count = 0;
 
-            /* HARQ Chase soft-combining on the RX decoder.  Every ARQ mode is
-             * burst_frames==1 (one DATA frame per preamble), so each
+            /* HARQ Chase soft-combining on the RX decoder.  Every ARQ burst
+             * is one frame per preamble, so each
              * retransmission the IRS sees is a fresh, bit-identical copy of the
              * single in-flight frame — the decoder accumulates their LLRs and
              * auto-clears the residual on CRC success.  Enabled for data modes
@@ -2541,8 +2456,6 @@ void *tx_thread(void *g_modem)
     generic_modem_t *modem = (generic_modem_t *)g_modem;
     uint8_t *data = NULL;
     size_t data_size = 0;
-    uint8_t *data2 = NULL;     /* second burst of a chained keydown */
-    size_t data2_size = 0;
 
     while (!shutdown_)
     {
@@ -2678,26 +2591,7 @@ void *tx_thread(void *g_modem)
             else if (read_action_frames(modem, &action, arq_policy_ready,
                                         &data, &data_size, &a_frames) == 0)
             {
-                /* An ACK that hands us the turn, chained to our first data
-                 * burst: both go out in this one keydown.  The FSM enqueues the
-                 * pair from one event, so the second is already queued; if it
-                 * is not, the first goes out alone, exactly as before. */
-                arq_action_t next = {0};
-                int b_frames = 0;
-                if (action.join_next && arq_try_dequeue_action(&next) &&
-                    read_action_frames(modem, &next, arq_policy_ready,
-                                       &data2, &data2_size, &b_frames) == 0)
-                {
-                    HLOGD("modem-tx", "one keydown: mode %d x%d + %d ms + mode %d x%d",
-                          action.mode, a_frames, ARQ_ACK_DATA_GAP_MS, next.mode, b_frames);
-                    if (send_modulated_chain(modem, action.mode, data, a_frames,
-                                             next.mode, data2, b_frames,
-                                             ARQ_ACK_DATA_GAP_MS) == 0)
-                        sent_from_action = true;
-                    else
-                        HLOGW("modem-tx", "Failed to send chained TX actions");
-                }
-                else if (send_modulated_data_with_cq_status(modem, data, a_frames) == 0)
+                if (send_modulated_data_with_cq_status(modem, data, a_frames) == 0)
                     sent_from_action = true;
                 else
                     HLOGW("modem-tx", "Failed to send queued TX action");
@@ -2739,7 +2633,6 @@ void *tx_thread(void *g_modem)
     }
 
     free(data);
-    free(data2);
     return NULL;
 }
 

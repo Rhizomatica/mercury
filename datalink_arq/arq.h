@@ -116,8 +116,6 @@ typedef struct
     int frame_count;     /* frames in this PTT burst (>= 1); the modem reads
                           * frame_count * frame_size bytes and modulates them
                           * behind a single preamble                          */
-    bool join_next;      /* the NEXT action goes out in this same keydown,
-                          * after a short gap, instead of in its own over    */
     arq_keydown_t *keydown; /* ARQ_ACTION_TX_KEYDOWN only                     */
     int pattern_kind;       /* arq_pattern_kind_t, ARQ_ACTION_TX_PATTERN only */
 } arq_action_t;
@@ -246,13 +244,6 @@ int arq_queue_data(const uint8_t *data, size_t len);
 int arq_get_tx_backlog_bytes(void);
 
 /**
- * @brief Set the ARQ no-progress disconnect budget.
- * @param seconds Budget in seconds.  Values <= 0 reset to the compiled
- *                default (ARQ_NO_PROGRESS_TIMEOUT_S_DEFAULT).
- */
-void arq_set_no_progress_timeout_s(int seconds);
-
-/**
  * @brief Set the absolute cap on how long an app DISCONNECT may stay deferred
  *        while draining the last TX bytes.
  * @param seconds Window in seconds.  Values <= 0 reset to the compiled
@@ -260,52 +251,13 @@ void arq_set_no_progress_timeout_s(int seconds);
  */
 void arq_set_disconnect_drain_timeout_s(int seconds);
 
-/**
- * @brief Get current ARQ speed level (gear).
- * @return Speed level index.
- */
-int arq_get_speed_level(void);
-
-/**
- * @brief Get the SNR the peer reports for OUR signal (dB * 10).
- *
- * @param snr_x10 Receives the reading; untouched meaning only when false.
- * @return false until the far side has actually reported, so a UI can show
- *         "--" rather than a 0.0 dB that reads as "they hear us at zero".
- */
-bool arq_get_peer_snr_x10(int *snr_x10);
-
-/**
- * @brief Get active ARQ payload mode.
- * @return FreeDV payload mode value.
- */
-int arq_get_payload_mode(void);
-
 /* Idle ("listen") payload mode: what the payload decoder sits on while no ARQ
  * session is up, and therefore which broadcast frames this station can hear.
  * arq_set_listen_mode() returns 0 on success, -1 if a session is up (the ARQ
- * mode ladder owns the mode then).  Does not affect any later session: every
+ * carousel owns the mode then).  Does not affect any later session: every
  * session-start path resets the mode state to DATAC15.  Read it back through
  * modem_get_listen_mode(), which owns the operator-facing value. */
 int arq_set_listen_mode(int mode);
-
-/**
- * @brief Get active ARQ control mode.
- * @return FreeDV control mode value.
- */
-int arq_get_control_mode(void);
-
-/**
- * @brief Get ARQ-preferred receive mode for modem.
- * @return FreeDV mode value.
- */
-int arq_get_preferred_rx_mode(void);
-
-/**
- * @brief Get ARQ-preferred transmit mode for modem.
- * @return FreeDV mode value.
- */
-int arq_get_preferred_tx_mode(void);
 
 /**
  * @brief Inform ARQ of modem mode/frame size actually active in modem.
@@ -426,7 +378,7 @@ void reset_arq_info(arq_info *arq_conn);
 /**
  * @brief Set runtime retry slot counts.
  *
- * Updates CALL, ACCEPT, and DATA retry counters used by the ARQ FSM.
+ * Updates the CALL and ACCEPT retry counters used by the ARQ FSM.
  * DISCONNECT retries are left at the compiled default.
  * Pass 0 to restore all counters to compiled defaults.
  *
@@ -434,21 +386,9 @@ void reset_arq_info(arq_info *arq_conn);
  */
 void arq_set_retry_slots(int slots);
 
-/* Set only the DATA-frame retry slots (leaves CALL/ACCEPT/DISCONNECT alone).
- * Used by the startup config so a large data_retry_slots does not also inflate
- * connection-setup (CALL/ACCEPT) retries. */
-void arq_set_data_retry_slots(int slots);
-
-/* Setters for the newly-atomic ARQ timing/ladder tunables. */
+/* Setters for the runtime ARQ guard tunables. */
 void arq_set_channel_guard_ms(int ms);
 void arq_set_iss_post_ack_guard_ms(int ms);
-void arq_set_keepalive_interval_s(int s);
-void arq_set_keepalive_miss_limit(int n);
-void arq_set_ladder_up_successes(int n);
-void arq_set_retry_downgrade_threshold(int n);
-void arq_set_mode_hold_after_downgrade_s(int s);
-void arq_set_peer_payload_hold_s(int s);
-void arq_set_startup_max_s(int s);
 void arq_set_retry_stagger_ms(int ms);
 
 /**

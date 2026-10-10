@@ -58,22 +58,13 @@ void cfg_set_defaults(mercury_config *cfg)
     cfg->broadcast_tcp_port = DEFAULT_BROADCAST_PORT; /* 8100  */
     cfg->verbose            = false;
     cfg->freedv_verbosity   = 0;
-    cfg->no_progress_timeout_s = ARQ_NO_PROGRESS_TIMEOUT_S_DEFAULT;
     cfg->disconnect_drain_timeout_s = ARQ_DISCONNECT_DRAIN_TIMEOUT_S_DEFAULT;
     cfg->tnc_keepalive_s = 60;
     cfg->tnc_buffer_report_ms = 1000;
     cfg->tx_gain_db            = 0.0f;
     cfg->tx_delay_ms           = 10;
-    cfg->data_retry_slots            = ARQ_DATA_RETRY_SLOTS_DEFAULT;
-    cfg->mode_hold_after_downgrade_s = ARQ_MODE_HOLD_AFTER_DOWNGRADE_S_DEFAULT;
-    cfg->ladder_up_successes         = ARQ_LADDER_UP_SUCCESSES_DEFAULT;
-    cfg->retry_downgrade_threshold   = ARQ_RETRY_DOWNGRADE_THRESHOLD_DEFAULT;
     cfg->channel_guard_ms            = ARQ_CHANNEL_GUARD_MS_DEFAULT;
     cfg->iss_post_ack_guard_ms       = ARQ_ISS_POST_ACK_GUARD_MS_DEFAULT;
-    cfg->keepalive_interval_s        = ARQ_KEEPALIVE_INTERVAL_S_DEFAULT;
-    cfg->keepalive_miss_limit        = ARQ_KEEPALIVE_MISS_LIMIT_DEFAULT;
-    cfg->peer_payload_hold_s         = ARQ_PEER_PAYLOAD_HOLD_S_DEFAULT;
-    cfg->startup_max_s               = ARQ_STARTUP_MAX_S_DEFAULT;
     cfg->retry_stagger_ms            = ARQ_RETRY_STAGGER_MS_DEFAULT;
     cfg->busy_detect                 = false;
     cfg->busy_threshold_db           = 10;
@@ -362,10 +353,6 @@ bool cfg_read(mercury_config *cfg, const char *ini_path)
     if (i >= 0 && i <= 3)
         cfg->freedv_verbosity = i;
 
-    i = iniparser_getint(ini, CFG_KEY_NO_PROGRESS_TIMEOUT_S, cfg->no_progress_timeout_s);
-    if (i > 0)
-        cfg->no_progress_timeout_s = i;
-
     i = iniparser_getint(ini, CFG_KEY_DISCONNECT_DRAIN_TIMEOUT_S, cfg->disconnect_drain_timeout_s);
     if (i > 0)
         cfg->disconnect_drain_timeout_s = i;
@@ -378,35 +365,11 @@ bool cfg_read(mercury_config *cfg, const char *ini_path)
     if (i >= 100 && i <= 10000)
         cfg->tnc_buffer_report_ms = i;
 
-    i = iniparser_getint(ini, CFG_KEY_ARQ_DATA_RETRY_SLOTS, cfg->data_retry_slots);
-    if (i >= 1 && i <= 64)   cfg->data_retry_slots = i;
-
-    i = iniparser_getint(ini, CFG_KEY_ARQ_MODE_HOLD_DOWNGRADE_S, cfg->mode_hold_after_downgrade_s);
-    if (i >= 0 && i <= 60)   cfg->mode_hold_after_downgrade_s = i;
-
-    i = iniparser_getint(ini, CFG_KEY_ARQ_LADDER_UP_SUCCESSES, cfg->ladder_up_successes);
-    if (i >= 1 && i <= 16)   cfg->ladder_up_successes = i;
-
-    i = iniparser_getint(ini, CFG_KEY_ARQ_RETRY_DOWNGRADE_THRESHOLD, cfg->retry_downgrade_threshold);
-    if (i >= 1 && i <= 16)   cfg->retry_downgrade_threshold = i;
-
     i = iniparser_getint(ini, CFG_KEY_ARQ_CHANNEL_GUARD_MS, cfg->channel_guard_ms);
     if (i >= 200 && i <= 3000) cfg->channel_guard_ms = i;
 
     i = iniparser_getint(ini, CFG_KEY_ARQ_ISS_POST_ACK_GUARD_MS, cfg->iss_post_ack_guard_ms);
     if (i >= 200 && i <= 3000) cfg->iss_post_ack_guard_ms = i;
-
-    i = iniparser_getint(ini, CFG_KEY_ARQ_KEEPALIVE_INTERVAL_S, cfg->keepalive_interval_s);
-    if (i >= 5 && i <= 120)  cfg->keepalive_interval_s = i;
-
-    i = iniparser_getint(ini, CFG_KEY_ARQ_KEEPALIVE_MISS_LIMIT, cfg->keepalive_miss_limit);
-    if (i >= 2 && i <= 20)   cfg->keepalive_miss_limit = i;
-
-    i = iniparser_getint(ini, CFG_KEY_ARQ_PEER_PAYLOAD_HOLD_S, cfg->peer_payload_hold_s);
-    if (i >= 1 && i <= 120)  cfg->peer_payload_hold_s = i;
-
-    i = iniparser_getint(ini, CFG_KEY_ARQ_STARTUP_MAX_S, cfg->startup_max_s);
-    if (i >= 2 && i <= 60)   cfg->startup_max_s = i;
 
     i = iniparser_getint(ini, CFG_KEY_ARQ_RETRY_STAGGER_MS, cfg->retry_stagger_ms);
     if (i >= 0 && i <= ARQ_RETRY_STAGGER_MS_MAX) cfg->retry_stagger_ms = i;
@@ -540,18 +503,9 @@ bool cfg_write(const mercury_config *cfg, const char *ini_path)
     fprintf(f, "hamlib_log_level = %d\n", cfg->ptt.hamlib_log_level);
 
     fprintf(f, "\n[arq]\n");
-    fprintf(f, "no_progress_timeout_s = %d\n", cfg->no_progress_timeout_s);
     fprintf(f, "disconnect_drain_timeout_s = %d\n", cfg->disconnect_drain_timeout_s);
-    fprintf(f, "data_retry_slots = %d\n", cfg->data_retry_slots);
-    fprintf(f, "mode_hold_after_downgrade_s = %d\n", cfg->mode_hold_after_downgrade_s);
-    fprintf(f, "ladder_up_successes = %d\n", cfg->ladder_up_successes);
-    fprintf(f, "retry_downgrade_threshold = %d\n", cfg->retry_downgrade_threshold);
     fprintf(f, "channel_guard_ms = %d\n", cfg->channel_guard_ms);
     fprintf(f, "iss_post_ack_guard_ms = %d\n", cfg->iss_post_ack_guard_ms);
-    fprintf(f, "keepalive_interval_s = %d\n", cfg->keepalive_interval_s);
-    fprintf(f, "keepalive_miss_limit = %d\n", cfg->keepalive_miss_limit);
-    fprintf(f, "peer_payload_hold_s = %d\n", cfg->peer_payload_hold_s);
-    fprintf(f, "startup_max_s = %d\n", cfg->startup_max_s);
     fprintf(f, "retry_stagger_ms = %d\n", cfg->retry_stagger_ms);
 
     fprintf(f, "\n[channel]\n");

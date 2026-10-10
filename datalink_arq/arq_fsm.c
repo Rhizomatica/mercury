@@ -45,29 +45,6 @@ const char *arq_conn_state_name(arq_conn_state_t s)
     return "UNKNOWN";
 }
 
-const char *arq_dflow_state_name(arq_dflow_state_t s)
-{
-    static const char *names[] = {
-        [ARQ_DFLOW_IDLE_ISS]       = "IDLE_ISS",
-        [ARQ_DFLOW_DATA_TX]        = "DATA_TX",
-        [ARQ_DFLOW_WAIT_ACK]       = "WAIT_ACK",
-        [ARQ_DFLOW_IDLE_IRS]       = "IDLE_IRS",
-        [ARQ_DFLOW_DATA_RX]        = "DATA_RX",
-        [ARQ_DFLOW_ACK_TX]         = "ACK_TX",
-        [ARQ_DFLOW_TURN_REQ_TX]    = "TURN_REQ_TX",
-        [ARQ_DFLOW_TURN_REQ_WAIT]  = "TURN_REQ_WAIT",
-        [ARQ_DFLOW_TURN_ACK_TX]    = "TURN_ACK_TX",
-        [ARQ_DFLOW_MODE_REQ_TX]    = "MODE_REQ_TX",
-        [ARQ_DFLOW_MODE_REQ_WAIT]  = "MODE_REQ_WAIT",
-        [ARQ_DFLOW_MODE_ACK_TX]    = "MODE_ACK_TX",
-        [ARQ_DFLOW_KEEPALIVE_TX]   = "KEEPALIVE_TX",
-        [ARQ_DFLOW_KEEPALIVE_WAIT] = "KEEPALIVE_WAIT",
-        [ARQ_DFLOW_KEEPALIVE_ACK_TX] = "KEEPALIVE_ACK_TX",
-    };
-    if ((unsigned)s < ARQ_DFLOW__COUNT) return names[s];
-    return "UNKNOWN";
-}
-
 const char *arq_event_name(arq_event_id_t ev)
 {
     static const char *names[] = {
@@ -122,20 +99,13 @@ void arq_fsm_init(arq_session_t *sess)
     memset(sess, 0, sizeof(*sess));
     sess->car = car ? car : calloc(1, sizeof(car_t));
     sess->conn_state     = ARQ_CONN_DISCONNECTED;
-    sess->dflow_state    = ARQ_DFLOW_IDLE_ISS;
     sess->role           = ARQ_ROLE_NONE;
     sess->deadline_ms    = UINT64_MAX;
     sess->deadline_event = ARQ_EV_TIMER_RETRY;
     sess->control_mode        = ARQ_CONTROL_MODE;
-    sess->payload_mode        = FREEDV_MODE_DATAC15;  /* my TX mode, starts at safest level */
-    sess->peer_turn_req_pending = false;  /* never inherit a stale yield */
-    sess->ack_carries_data      = false;  /* nor a stale one-keydown ACK */
-        sess->turn_req_defer_count  = 0;
-    sess->peer_tx_mode        = FREEDV_MODE_DATAC15;  /* RX decoder, starts at safest level */
+    sess->payload_mode        = FREEDV_MODE_DATAC15;
+    sess->peer_tx_mode        = FREEDV_MODE_DATAC15;
     sess->initial_payload_mode = FREEDV_MODE_DATAC15;  /* overwritten by arq_set_initial_mode */
-    sess->speed_level    = 0;
-    sess->tx_success_count = 0;
-    sess->olla_offset_db = 0.0f;
 }
 
 void arq_fsm_release(arq_session_t *sess)
@@ -169,8 +139,6 @@ static void sess_enter(arq_session_t *sess, arq_conn_state_t new_state,
     if (new_state == ARQ_CONN_CONNECTED && sess->conn_state != ARQ_CONN_CONNECTED)
     {
         sess->host_released  = false;        /* a new session: a new reader */
-        sess->peer_cap_more  = false;        /* learned afresh from this peer */
-        sess->peer_more_data = false;
     }
     if (new_state == ARQ_CONN_DISCONNECTING && sess->conn_state != ARQ_CONN_DISCONNECTING)
     {
@@ -211,30 +179,11 @@ static void sess_enter(arq_session_t *sess, arq_conn_state_t new_state,
      * survive leaving ACCEPTING. */
     if (new_state != ARQ_CONN_ACCEPTING)
         sess->accept_tx_pending = false;
-    if (new_state != ARQ_CONN_CONNECTED)
-    {
-        sess->pending_connect_confirm = false;
-        sess->need_initial_guard = false;
-    }
-    else
-    {
-        /* Seed the no-progress clock at connection establishment so the
-         * wall-clock disconnect budget always has a baseline.  Without this,
-         * a session that never lands an advancing ACK (e.g. one-way TX
-         * failure while peer keepalives still arrive) would leave
-         * last_tx_progress_ms at 0 and persist forever after retry
-         * exhaustion.  Advancing ACKs refresh this timestamp during data
-         * flow (see fsm_dflow). */
-        sess->last_tx_progress_ms = time_now_ms();
-    }
-    /* Reset data-flow and mode state when returning to idle connection states.
-     * Restore peer_tx_mode to initial_payload_mode (= broadcast mode) so the
-     * payload decoder can receive broadcast frames while LISTENING.  The
-     * session-start paths (RX_CALL, APP_CONNECT) override this to DATAC15
-     * before entering ACCEPTING/CALLING. */
+    /* Back to idle: restore peer_tx_mode to initial_payload_mode (= the
+     * broadcast mode) so the payload decoder can receive broadcast frames
+     * while LISTENING. */
     if (new_state == ARQ_CONN_DISCONNECTED || new_state == ARQ_CONN_LISTENING)
     {
-        sess->dflow_state       = ARQ_DFLOW_IDLE_ISS;
         sess->peer_tx_mode      = sess->initial_payload_mode;
         sess->tx_inflight_bytes = 0;
     }
@@ -278,53 +227,22 @@ static uint64_t retry_deadline_from_s(const arq_session_t *sess, float seconds)
 }
 
 
-/* Forward-link SNR margin (dB) above a mode's base threshold at which the
- * forward (data) link is judged to comfortably support the current mode — so a
- * retransmission is more likely a lost ACK on the (independently-faded) reverse
- * path than a forward decode failure. */
-#define ARQ_REVERSE_LOSS_MARGIN_DB   2.0f
-
-
-/* ---- Restage plumbing (S1 fade-cliff fix) ----
- * The app TX ring has no un-read; once bytes enter the go-back-N window they
- * can only leave via an ACK.  To change mode with unACKed frames stuck in a
- * fade, their bytes are pulled back into sess->restage_buf and re-framed at
- * the (new) mode by send_data_burst().  These wrappers make the restage bytes
- * part of the TX stream, ahead of the ring. */
-
+/* The application's TX stream: the bytes it has queued and not yet handed to
+ * the carousel. */
 static int session_tx_backlog(const arq_session_t *sess)
 {
-    int n = (int)(sess->restage_len - sess->restage_off);
-    if (g_cbs.tx_backlog)
-        n += g_cbs.tx_backlog();
-    return n;
+    (void)sess;
+    return g_cbs.tx_backlog ? g_cbs.tx_backlog() : 0;
 }
 
 static int session_tx_read(arq_session_t *sess, uint8_t *buf, size_t len)
 {
-    size_t n = 0;
-    while (n < len && sess->restage_off < sess->restage_len)
-        buf[n++] = sess->restage_buf[sess->restage_off++];
-    if (sess->restage_off >= sess->restage_len)
-        sess->restage_off = sess->restage_len = 0;
-    if (n < len && g_cbs.tx_read)
-    {
-        int m = g_cbs.tx_read(buf + n, len - n);
-        if (m > 0)
-            n += (size_t)m;
-    }
-    return (int)n;
+    (void)sess;
+    if (!g_cbs.tx_read)
+        return 0;
+    int n = g_cbs.tx_read(buf, len);
+    return n > 0 ? n : 0;
 }
-
-
-/** Check whether a mode upgrade/downgrade is warranted.  If yes, send
- *  MODE_REQ and enter MODE_REQ_TX.  Returns true when negotiation started. */
-
-
-/** Deliver RX payload to the application only if the sequence number matches
- *  what we expect.  Returns true if data was delivered (new frame), false if
- *  it was a duplicate that was silently dropped. */
-
 
 int arq_call_carrier(const arq_session_t *sess)
 {
@@ -451,11 +369,10 @@ static void send_disconnect_frame(arq_session_t *sess)
  * What neither covers: if the peer's signal cannot be heard at all -- a deep
  * fade, or simply too little SNR to detect -- then no amount of
  * listen-before-talk helps, and the collision happens.  That is the hidden
- * transmitter problem and it is not solvable by listening; the protocol-level
- * answer is to prefer the piggyback HAS_DATA path, which is collision-free by
- * construction because it rides a frame the peer is already waiting for, and
- * to treat an unsolicited TURN_REQ as the fallback it is.  So this check
- * reduces the collision rate; it does not eliminate it. */
+ * transmitter problem and it is not solvable by listening; the carousel's
+ * answer is turns the caller times and the callee answers in slots
+ * (docs/CAROUSEL-ARQ.md).  So this check reduces the collision rate; it does
+ * not eliminate it. */
 static bool peer_is_transmitting(const arq_session_t *sess)
 {
     if (g_cbs.channel_busy && g_cbs.channel_busy())
@@ -513,12 +430,9 @@ static void send_disconnect_reply(arq_session_t *sess)
 /* ======================================================================
  * Carousel data plane
  *
- * CONNECTED runs datalink_arq/carousel.c instead of the stop-and-wait
- * data-flow sub-FSM when the carousel is on (the default; the old plane stays
- * selectable for A/B measurement).  Connect and disconnect are unchanged but
- * for the ACCEPT, which is the carousel's first poll.  Its frames carry the
- * session in their CRC (crc_seed), so a seeded frame reaching the FSM is this
- * session's by construction.
+ * CONNECTED runs datalink_arq/carousel.c.  The ACCEPT is the carousel's first
+ * poll.  Its frames carry the session in their CRC (crc_seed), so a seeded
+ * frame reaching the FSM is this session's by construction.
  * ====================================================================== */
 
 
@@ -805,17 +719,8 @@ static void fsm_disconnected(arq_session_t *sess, const arq_event_t *ev)
         sess->call_carrier    = 0;
         sess->pending_disconnect = false;  /* clear stale deferred disconnect from prior session */
         sess->disconnect_deadline_ms = 0;
-        /* Reset mode state for new session */
         sess->payload_mode       = FREEDV_MODE_DATAC15;
-        sess->peer_turn_req_pending = false;  /* never inherit a stale yield */
-        sess->ack_carries_data      = false;  /* nor a stale one-keydown ACK */
-        sess->turn_req_defer_count  = 0;
         sess->peer_tx_mode       = FREEDV_MODE_DATAC15;
-        sess->speed_level        = 0;
-        sess->tx_success_count   = 0;
-        sess->olla_offset_db     = 0.0f;
-        sess->consecutive_retries = 0;
-        sess->mode_hold_until_ms = 0;
         send_call_accept(sess, false);
         sess_enter(sess, ARQ_CONN_CALLING,
                    deadline_from_s(arq_protocol_call_interval_s()),
@@ -858,20 +763,11 @@ static void fsm_listening(arq_session_t *sess, const arq_event_t *ev)
         sess->car_peer_ctl_deaf = false;
         sess->tx_retries_left = ARQ_ACCEPT_RETRY_SLOTS;
         sess->accept_tx_pending = true;   /* answering a CALL we just heard */
-        /* Reset mode state so the payload decoder matches the new caller's
-         * initial DATAC15.  This must happen here (not in sess_enter for
-         * DISCONNECTED/LISTENING) because LISTENING needs peer_tx_mode to
-         * stay at the broadcast mode for receiving broadcast frames. */
+        /* Off the listen mode: here, not in sess_enter, because LISTENING
+         * keeps peer_tx_mode on the broadcast mode.  The carousel binds the
+         * decoder to the peer's rung once it runs. */
         sess->payload_mode       = FREEDV_MODE_DATAC15;
-        sess->peer_turn_req_pending = false;  /* never inherit a stale yield */
-        sess->ack_carries_data      = false;  /* nor a stale one-keydown ACK */
-        sess->turn_req_defer_count  = 0;
         sess->peer_tx_mode       = FREEDV_MODE_DATAC15;
-        sess->speed_level        = 0;
-        sess->tx_success_count   = 0;
-        sess->olla_offset_db     = 0.0f;
-        sess->consecutive_retries = 0;
-        sess->mode_hold_until_ms = 0;
         /* Do NOT send ACCEPT immediately: the caller's PTT-OFF may not have
          * happened yet when we decode the last samples of their CALL frame.
          * Wait ARQ_CHANNEL_GUARD_MS so their relay is in RX before we TX. */
@@ -1221,22 +1117,22 @@ static void fire_deferred_connect(arq_session_t *sess)
 
 /* Hold a DISCONNECT back until it cannot land on a frame we invited.
  *
- * On air (bench run 12) the host hung up while our TURN_ACK was on the air.
- * The DISCONNECT, queued by the guard timer, keyed 42 ms after the TURN_ACK
- * ended -- and the peer, holding the TURN_ACK, keyed its first DATA 0.9 s
- * later; both were lost, and the DISCONNECT retry clipped the DATA's tail.
- * Listening alone cannot fix that: the invited DATA starts after the guard,
- * so at the moment we would key there is nothing yet to hear.
+ * On air (bench run 12) the host hung up while a frame handing the peer the
+ * turn was on the air.  The DISCONNECT keyed 42 ms after it ended -- and the
+ * peer keyed its reply 0.9 s later; both were lost, and the DISCONNECT retry
+ * clipped the reply's tail.  Listening alone cannot fix that: the invited
+ * frame starts after the guard, so at the moment we would key there is
+ * nothing yet to hear.
  *
  * So: never while we are still keyed; not before our last transmission's
  * reply window has passed, by which time an invited frame has started and a
  * decoder holds sync on it; and not until the peer has been quiet for one
  * reply guard, so its radio is back on receive.  Bounded like the other
- * deferrals: after ARQ_TURN_REQ_DEFER_MAX steps we key regardless. */
+ * deferrals: after ARQ_CHANNEL_DEFER_MAX steps we key regardless. */
 static bool disconnect_must_wait(arq_session_t *sess)
 {
     uint64_t now = time_now_ms();
-    if (sess->disc_defer_count >= ARQ_TURN_REQ_DEFER_MAX)
+    if (sess->disc_defer_count >= ARQ_CHANNEL_DEFER_MAX)
     {
         HLOGW(LOG_COMP, "DISCONNECT deferral cap reached (%u) - keying anyway",
               (unsigned)sess->disc_defer_count);
@@ -1259,13 +1155,13 @@ static bool disconnect_must_wait(arq_session_t *sess)
         return false;
     }
     sess->disc_defer_count++;
-    uint64_t next = now + ARQ_TURN_REQ_DEFER_MS;
+    uint64_t next = now + ARQ_CHANNEL_DEFER_MS;
     if (!sess->tx_active && !peer_is_transmitting(sess) && clear_at > now)
         next = clear_at;           /* the only thing left is the window */
     HLOGD(LOG_COMP, "DISCONNECT deferred (%s) %u/%u",
           sess->tx_active ? "still keyed" :
           peer_is_transmitting(sess) ? "peer transmitting" : "reply window",
-          (unsigned)sess->disc_defer_count, (unsigned)ARQ_TURN_REQ_DEFER_MAX);
+          (unsigned)sess->disc_defer_count, (unsigned)ARQ_CHANNEL_DEFER_MAX);
     sess->deadline_ms = next;
     return true;
 }
@@ -1286,7 +1182,7 @@ static void fsm_disconnecting(arq_session_t *sess, const arq_event_t *ev)
                      ev->rx_age_ms);
             return;
         case ARQ_EV_RX_PATTERN:
-            car_on_pattern(sess->car, now, (ev->rx_flags & ARQ_FLAG_HAS_DATA) ? CAR_PATTERN_BREAK
+            car_on_pattern(sess->car, now, ev->pattern_break ? CAR_PATTERN_BREAK
                                                                               : CAR_PATTERN_ACK);
             return;
         case ARQ_EV_TX_COMPLETE:
@@ -1461,7 +1357,7 @@ static bool fsm_connected_carousel(arq_session_t *sess, const arq_event_t *ev)
         break;
     case ARQ_EV_RX_PATTERN:
         sess->car_last_rx_ms = now;
-        car_on_pattern(sess->car, now, (ev->rx_flags & ARQ_FLAG_HAS_DATA) ? CAR_PATTERN_BREAK
+        car_on_pattern(sess->car, now, ev->pattern_break ? CAR_PATTERN_BREAK
                                                                           : CAR_PATTERN_ACK);
         break;
     case ARQ_EV_APP_DATA_READY:
@@ -1630,9 +1526,8 @@ void arq_fsm_dispatch(arq_session_t *sess, const arq_event_t *ev)
     if (ev->id == ARQ_EV_APP_DISCONNECT)
         sess->host_released = true;
 
-    HLOGD(LOG_COMP, "state=%s dflow=%s ev=%s",
+    HLOGD(LOG_COMP, "state=%s ev=%s",
           arq_conn_state_name(sess->conn_state),
-          arq_dflow_state_name(sess->dflow_state),
           arq_event_name(ev->id));
 
     /* Once a session is established, every session-bound frame must carry

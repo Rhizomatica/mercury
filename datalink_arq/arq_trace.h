@@ -16,7 +16,7 @@
 typedef enum {
     ARQ_TR_RX_FRAME = 1,   /* a frame decoded off the air: a=packet_type b=subtype */
     ARQ_TR_EV_IN,          /* event entering the FSM:      a=event id   b=conn_state */
-    ARQ_TR_EV_OUT,         /* FSM returned:                a=conn_state b=dflow_state */
+    ARQ_TR_EV_OUT,         /* FSM returned:                a=conn_state */
     ARQ_TR_TX_START,       /* we keyed up:                 a=packet_type b=mode&0xff */
     ARQ_TR_TX_END,         /* we unkeyed */
     ARQ_TR_DROP,           /* a frame was discarded:       a=reason */

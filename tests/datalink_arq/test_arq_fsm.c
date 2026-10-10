@@ -139,7 +139,6 @@ void test_init_mode_defaults(void)
     TEST_ASSERT_EQUAL_INT(FREEDV_MODE_DATAC15, sess.payload_mode);
     TEST_ASSERT_EQUAL_INT(FREEDV_MODE_DATAC15, sess.peer_tx_mode);
     TEST_ASSERT_EQUAL_INT(FREEDV_MODE_DATAC15, sess.initial_payload_mode);
-    TEST_ASSERT_EQUAL_INT(0, sess.speed_level);
 }
 
 /* APP_LISTEN transitions to LISTENING */
@@ -273,7 +272,6 @@ void test_accept_fallback_completes_on_first_frame(void)
     RESET_FAKE(fake_notify_connected);
     arq_event_t ev = make_event(ARQ_EV_RX_CAROUSEL);
     ev.session_id  = 0x42;
-    ev.data_bytes  = 8;
     ev.payload_len = 8;
     arq_fsm_dispatch(&sess, &ev);
 
@@ -295,7 +293,6 @@ void test_ended_session_is_not_resurrected_by_a_late_frame(void)
     enter_accepting();
     arq_event_t ev = make_event(ARQ_EV_RX_CAROUSEL);   /* caller's first frame */
     ev.session_id  = 0x42;
-    ev.data_bytes  = 8;
     ev.payload_len = 8;
     arq_fsm_dispatch(&sess, &ev);
     TEST_ASSERT_EQUAL_INT(ARQ_CONN_CONNECTED, sess.conn_state);
@@ -314,7 +311,6 @@ void test_ended_session_is_not_resurrected_by_a_late_frame(void)
     RESET_FAKE(fake_notify_connected);
     ev = make_event(ARQ_EV_RX_CAROUSEL);
     ev.session_id  = 0x42;
-    ev.data_bytes  = 8;
     ev.payload_len = 8;
     arq_fsm_dispatch(&sess, &ev);
 
@@ -353,13 +349,13 @@ void test_accepting_rx_call_rearms_budget(void)
     TEST_ASSERT_EQUAL_INT(ARQ_CONN_ACCEPTING, sess.conn_state);
 }
 
-/* Connection-setup slots must stay short by default (not the DATA default of
- * 10) so a failed connect and its mirror ACCEPT window give up quickly. */
+/* Connection-setup slots must stay short by default so a failed connect and
+ * its mirror ACCEPT window give up quickly. */
 void test_default_call_accept_slots_are_short(void)
 {
     TEST_ASSERT_EQUAL_INT(ARQ_CALL_RETRY_SLOTS_DEFAULT,   ARQ_CALL_RETRY_SLOTS);
     TEST_ASSERT_EQUAL_INT(ARQ_ACCEPT_RETRY_SLOTS_DEFAULT, ARQ_ACCEPT_RETRY_SLOTS);
-    TEST_ASSERT_TRUE(ARQ_ACCEPT_RETRY_SLOTS < ARQ_DATA_RETRY_SLOTS_DEFAULT);
+    TEST_ASSERT_TRUE(ARQ_ACCEPT_RETRY_SLOTS <= 4);
 }
 
 /* RX_ACCEPT from CALLING transitions to CONNECTED */
@@ -763,14 +759,6 @@ void test_connected_rejects_zero_session_id(void)
 
 
 /* ---- Disconnect teardown tests (K7EK field regressions) ---- */
-
-/* Entering CONNECTED seeds the no-progress clock so the wall-clock budget
- * always has a baseline even before the first advancing ACK. */
-void test_connected_seeds_no_progress_clock(void)
-{
-    goto_connected();
-    TEST_ASSERT_NOT_EQUAL_UINT64(0, sess.last_tx_progress_ms);
-}
 
 /* APP_DISCONNECT with unsent TX backlog is deferred (stays CONNECTED) and
  * arms the absolute drain deadline rather than tearing down immediately. */
@@ -1292,7 +1280,6 @@ int main(void)
     RUN_TEST(test_listen_off_drops_live_link_without_draining);
     RUN_TEST(test_rx_disconnect_from_connected);
     RUN_TEST(test_connected_rejects_zero_session_id);
-    RUN_TEST(test_connected_seeds_no_progress_clock);
     RUN_TEST(test_app_disconnect_defers_with_backlog);
     RUN_TEST(test_disconnect_reply_waits_one_reply_guard);
     RUN_TEST(test_disconnect_drain_timeout_forces_teardown);

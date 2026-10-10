@@ -69,7 +69,6 @@ void arq_conn_get_calls(char *my_call, char *src_addr, char *dst_addr, size_t bu
     if (src_addr) src_addr[0] = '\0';
     if (dst_addr) dst_addr[0] = '\0';
 }
-bool arq_get_peer_snr_x10(int *snr_x10) { (void)snr_x10; return false; }
 bool arq_get_runtime_snapshot(arq_runtime_snapshot_t *snapshot) { (void)snapshot; return false; }
 
 int  audioio_available_subsystems(int *subsystems, int max) { (void)subsystems; (void)max; return 0; }

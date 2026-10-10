@@ -129,18 +129,7 @@ tx_delay_ms = 10
 
 [arq]
 
-; ARQ link no-progress disconnect budget (seconds, default: 180).
-; When data-retry slots exhaust on a frame, Mercury no longer disconnects
-; immediately — it resets the retry counter and forces a payload-mode
-; downgrade.  The link only drops when wall-clock since the last ACK that
-; advanced the sequence number exceeds this budget, OR when the keepalive
-; miss limit is reached (5 * 20s = 100s by default).  180s sits just above
-; the keepalive timeout as a safety net for the asymmetric case where peer
-; keepalives still arrive but our TX direction has gone one-way.  Raise
-; this for ultra-marginal NVIS work where forward progress can take longer.
-no_progress_timeout_s = 180
-
-; Absolute cap (seconds, default: 30) on how long an application DISCONNECT
+; Absolute cap (seconds, default: 45) on how long an application DISCONNECT
 ; may stay deferred while Mercury drains the last queued TX bytes.  When the
 ; host (e.g. BPQ32) ends a BBS forwarding session, Mercury finishes sending
 ; any buffered data, then completes a clean air-side DISCONNECT handshake.
@@ -148,25 +137,10 @@ no_progress_timeout_s = 180
 ; the session is stuck ping-ponging — preventing the rig from being keyed
 ; indefinitely after the host has already disconnected.  On a healthy link
 ; the drain finishes in seconds, so this only bites on a stuck session.
-; With the carousel data plane this is the least the drain gets: on a slow
+; This is the least the drain gets: on a slow
 ; rung it is stretched to about three exchanges there (about 2 minutes at the
 ; MFSK floor, where one exchange takes 40-50 s), still bounded.
 disconnect_drain_timeout_s = 30
-
-; Number of DATA-frame retries before a downgrade cycle (default 10, range 1..64).
-; Affects the data plane only; connection-setup (CALL/ACCEPT) retries keep their
-; short defaults so a failed connect gives up quickly.  Use the RETRIES TNC
-; command at runtime to widen CALL/ACCEPT/DATA retries together.
-data_retry_slots = 10
-
-; Seconds to hold the lower mode after a forced downgrade (default 6, range 0..60).
-mode_hold_after_downgrade_s = 6
-
-; Clean ACKs required to step the speed ladder up one level (default 2, range 1..16).
-ladder_up_successes = 2
-
-; Consecutive retries that force a one-step downgrade (default 2, range 1..16).
-retry_downgrade_threshold = 2
 
 ; IRS response guard after decoding a frame, in ms (default 700, range 200..3000).
 ; Raise if your radio's TX-to-RX switch is slow and you lose ACKs.
@@ -174,22 +148,6 @@ channel_guard_ms = 700
 
 ; ISS guard before resuming DATA TX after an ACK, in ms (default 900, range 200..3000).
 iss_post_ack_guard_ms = 900
-
-; Keepalive transmit interval in seconds (default 20, range 5..120).
-keepalive_interval_s = 20
-
-; Missed keepalives before the link is dropped (default 5, range 2..20).
-keepalive_miss_limit = 5
-
-; Seconds to hold the peer's payload mode after activity before reverting
-; (default 15, range 1..120).  Reduce (e.g. 8-10) if you see long gaps between
-; turns; this also scales the IRS inactivity probe (hold x 5).
-peer_payload_hold_s = 15
-
-; Control-mode-only startup window in seconds (default 10, range 2..60).
-; Only DATAC16 is used until the link is proven stable; raise if the initial
-; handshake (e.g. UUCP) times out before the first data frames get through.
-startup_max_s = 10
 
 ; Deterministic per-node retry stagger, in ms (default 2000, range 0..5000).
 ; The two peers compare the same pair of exchanged callsigns, so exactly one of

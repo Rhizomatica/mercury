@@ -222,7 +222,6 @@ static void cb_send_tx_frame(int packet_type, int mode,
         .mode        = mode,
         .frame_size  = frame_size,
         .frame_count = g_sess.pending_burst_frames,
-        .join_next   = g_sess.tx_join_next,
     };
     g_sess.pending_burst_frames = 0;
     arq_modem_enqueue(&action);
@@ -938,21 +937,14 @@ void arq_handle_incoming_frame(uint8_t *data, size_t frame_size, float rx_snr)
 
     ARQ_TRACE(ARQ_TR_RX_FRAME, hdr.packet_type, hdr.subtype, (uint16_t)frame_size);
 
-    arq_event_t ev = {0};
-    ev.session_id    = hdr.session_id;
-    ev.seq           = hdr.tx_seq;
-    ev.ack_seq       = hdr.rx_ack_seq;
-    ev.rx_flags      = hdr.flags;
-    ev.snr_encoded   = (int8_t)hdr.snr_raw;
-    ev.ack_delay_raw = hdr.ack_delay_raw;
-
     /* The one plain session frame there is: the DISCONNECT.  Everything a
-     * session moves goes on the carousel's seeded frames (ARQ_EV_RX_CAROUSEL),
-     * and the stop-and-wait plane's DATA, ACK, MODE, TURN and KEEPALIVE frames
-     * are gone with it. */
+     * session moves goes on the carousel's seeded frames (ARQ_EV_RX_CAROUSEL);
+     * 1.9.x's DATA, ACK, MODE, TURN and KEEPALIVE frames are not read. */
     if (hdr.packet_type != PACKET_TYPE_ARQ_CONTROL || hdr.subtype != ARQ_SUBTYPE_DISCONNECT)
         return;
-    ev.id = ARQ_EV_RX_DISCONNECT;
+    arq_event_t ev = {0};
+    ev.id         = ARQ_EV_RX_DISCONNECT;
+    ev.session_id = hdr.session_id;
 
     evq_push(&ev);
 }
@@ -1090,7 +1082,7 @@ void arq_post_pattern_ack(bool is_break)
 {
     arq_event_t ev = {0};
     ev.id       = ARQ_EV_RX_PATTERN;
-    ev.rx_flags = is_break ? ARQ_FLAG_HAS_DATA : 0;
+    ev.pattern_break = is_break;
     evq_push(&ev);
 }
 
@@ -1128,37 +1120,14 @@ int arq_queue_data(const uint8_t *data, size_t len)
 
 int arq_get_tx_backlog_bytes(void)  { return cb_tx_backlog(); }
 
-#define SESS_READ(expr) do { \
-        pthread_mutex_lock(&g_sess_lock); \
-        int _v = (expr); \
-        pthread_mutex_unlock(&g_sess_lock); \
-        return _v; \
-    } while (0)
-
-bool arq_get_peer_snr_x10(int *snr_x10)
-{
-    bool valid;
-    pthread_mutex_lock(&g_sess_lock);
-    valid = g_sess.peer_snr_valid;
-    if (snr_x10) *snr_x10 = g_sess.peer_snr_x10;
-    pthread_mutex_unlock(&g_sess_lock);
-    return valid;
-}
-
-int arq_get_speed_level(void)       { SESS_READ(g_sess.speed_level); }
-int arq_get_payload_mode(void)      { SESS_READ(g_sess.payload_mode); }
-int arq_get_control_mode(void)      { SESS_READ(g_sess.control_mode); }
-int arq_get_preferred_rx_mode(void) { SESS_READ(arq_modem_preferred_rx_mode(&g_sess)); }
-int arq_get_preferred_tx_mode(void) { SESS_READ(arq_modem_preferred_tx_mode(&g_sess)); }
-
 /* Operator-selected idle ("listen") payload mode.  initial_payload_mode is
  * what sess_enter() restores peer_tx_mode to whenever the session falls back
  * to DISCONNECTED/LISTENING, so it is the single field that decides which
  * payload mode the RX decoder sits on while no ARQ session is up (and hence
  * which broadcast frames we can hear).
  *
- * Refused unless the link is actually idle: while a session is up the ARQ
- * ladder owns peer_tx_mode and would overwrite an operator setting within one
+ * Refused unless the link is actually idle: while a session is up the
+ * carousel owns peer_tx_mode and would overwrite an operator setting within one
  * RX-loop iteration, so accepting the command there would silently do nothing.
  * The state test is inside the lock deliberately -- checking it in the caller
  * would race the event loop, which is the same unsynchronized-g_sess class of
@@ -1292,7 +1261,6 @@ bool arq_get_runtime_snapshot(arq_runtime_snapshot_t *snapshot)
                                      g_sess.conn_state == ARQ_CONN_ACCEPTING);
     snapshot->trx              = trx;
     snapshot->tx_backlog_bytes = backlog + g_sess.tx_inflight_bytes;
-    snapshot->speed_level      = g_sess.speed_level;
     snapshot->payload_mode      = g_sess.payload_mode;
     snapshot->peer_tx_mode      = g_sess.peer_tx_mode;
     snapshot->control_mode      = g_sess.control_mode;
@@ -1343,16 +1311,6 @@ void clear_connection_data(void)
     clear_buffer(data_tx_buffer_arq_control);
 }
 
-void arq_set_no_progress_timeout_s(int seconds)
-{
-    if (seconds > 0)
-        atomic_store(&arq_no_progress_timeout_s, seconds);
-    else
-        atomic_store(&arq_no_progress_timeout_s, ARQ_NO_PROGRESS_TIMEOUT_S_DEFAULT);
-    HLOGI(LOG_COMP, "ARQ no-progress timeout: %ds",
-          atomic_load(&arq_no_progress_timeout_s));
-}
-
 void arq_set_disconnect_drain_timeout_s(int seconds)
 {
     if (seconds > 0)
@@ -1370,34 +1328,18 @@ void arq_set_retry_slots(int slots)
     {
         atomic_store(&arq_call_retry_slots,       ARQ_CALL_RETRY_SLOTS_DEFAULT);
         atomic_store(&arq_accept_retry_slots,     ARQ_ACCEPT_RETRY_SLOTS_DEFAULT);
-        atomic_store(&arq_data_retry_slots,       ARQ_DATA_RETRY_SLOTS_DEFAULT);
         atomic_store(&arq_disconnect_retry_slots, ARQ_DISCONNECT_RETRY_SLOTS_DEFAULT);
     }
     else
     {
         atomic_store(&arq_call_retry_slots,   slots);
         atomic_store(&arq_accept_retry_slots, slots);
-        atomic_store(&arq_data_retry_slots,   slots);
         /* Leave disconnect retries at default — no benefit to long teardown */
         atomic_store(&arq_disconnect_retry_slots, ARQ_DISCONNECT_RETRY_SLOTS_DEFAULT);
     }
-    HLOGI(LOG_COMP, "Retry slots: call=%d accept=%d data=%d disconnect=%d",
+    HLOGI(LOG_COMP, "Retry slots: call=%d accept=%d disconnect=%d",
           atomic_load(&arq_call_retry_slots), atomic_load(&arq_accept_retry_slots),
-          atomic_load(&arq_data_retry_slots), atomic_load(&arq_disconnect_retry_slots));
-}
-
-void arq_set_data_retry_slots(int slots)
-{
-    /* Data-plane only: how many times a DATA frame is retried before the
-     * mode-downgrade cycle.  Deliberately does NOT touch call/accept slots —
-     * connection setup wants to give up quickly (short CALL/ACCEPT defaults),
-     * whereas the data plane wants persistence.  The RETRIES TNC command
-     * (arq_set_retry_slots) is the explicit way to widen all three at runtime. */
-    if (slots <= 0)
-        atomic_store(&arq_data_retry_slots, ARQ_DATA_RETRY_SLOTS_DEFAULT);
-    else
-        atomic_store(&arq_data_retry_slots, slots);
-    HLOGI(LOG_COMP, "Data retry slots: %d", atomic_load(&arq_data_retry_slots));
+          atomic_load(&arq_disconnect_retry_slots));
 }
 
 void arq_set_channel_guard_ms(int ms)
@@ -1414,62 +1356,6 @@ void arq_set_iss_post_ack_guard_ms(int ms)
     if (ms > 3000) ms = 3000;
     atomic_store(&arq_iss_post_ack_guard_ms, ms);
     HLOGI(LOG_COMP, "iss_post_ack_guard_ms = %d", atomic_load(&arq_iss_post_ack_guard_ms));
-}
-
-void arq_set_keepalive_interval_s(int s)
-{
-    if (s < 5)   s = (s <= 0) ? ARQ_KEEPALIVE_INTERVAL_S_DEFAULT : 5;
-    if (s > 120) s = 120;
-    atomic_store(&arq_keepalive_interval_s, s);
-    HLOGI(LOG_COMP, "keepalive_interval_s = %d", atomic_load(&arq_keepalive_interval_s));
-}
-
-void arq_set_keepalive_miss_limit(int n)
-{
-    if (n < 2)  n = (n <= 0) ? ARQ_KEEPALIVE_MISS_LIMIT_DEFAULT : 2;
-    if (n > 20) n = 20;
-    atomic_store(&arq_keepalive_miss_limit, n);
-    HLOGI(LOG_COMP, "keepalive_miss_limit = %d", atomic_load(&arq_keepalive_miss_limit));
-}
-
-void arq_set_ladder_up_successes(int n)
-{
-    if (n < 1)  n = (n <= 0) ? ARQ_LADDER_UP_SUCCESSES_DEFAULT : 1;
-    if (n > 16) n = 16;
-    atomic_store(&arq_ladder_up_successes, n);
-    HLOGI(LOG_COMP, "ladder_up_successes = %d", atomic_load(&arq_ladder_up_successes));
-}
-
-void arq_set_retry_downgrade_threshold(int n)
-{
-    if (n < 1)  n = (n <= 0) ? ARQ_RETRY_DOWNGRADE_THRESHOLD_DEFAULT : 1;
-    if (n > 16) n = 16;
-    atomic_store(&arq_retry_downgrade_threshold, n);
-    HLOGI(LOG_COMP, "retry_downgrade_threshold = %d", atomic_load(&arq_retry_downgrade_threshold));
-}
-
-void arq_set_mode_hold_after_downgrade_s(int s)
-{
-    if (s < 0)  s = ARQ_MODE_HOLD_AFTER_DOWNGRADE_S_DEFAULT;
-    if (s > 60) s = 60;
-    atomic_store(&arq_mode_hold_after_downgrade_s, s);
-    HLOGI(LOG_COMP, "mode_hold_after_downgrade_s = %d", atomic_load(&arq_mode_hold_after_downgrade_s));
-}
-
-void arq_set_peer_payload_hold_s(int s)
-{
-    if (s < 1)   s = (s <= 0) ? ARQ_PEER_PAYLOAD_HOLD_S_DEFAULT : 1;
-    if (s > 120) s = 120;
-    atomic_store(&arq_peer_payload_hold_s, s);
-    HLOGI(LOG_COMP, "peer_payload_hold_s = %d", atomic_load(&arq_peer_payload_hold_s));
-}
-
-void arq_set_startup_max_s(int s)
-{
-    if (s < 2)  s = (s <= 0) ? ARQ_STARTUP_MAX_S_DEFAULT : 2;
-    if (s > 60) s = 60;
-    atomic_store(&arq_startup_max_s, s);
-    HLOGI(LOG_COMP, "startup_max_s = %d", atomic_load(&arq_startup_max_s));
 }
 
 void arq_set_retry_stagger_ms(int ms)

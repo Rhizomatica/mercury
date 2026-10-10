@@ -18,22 +18,13 @@
 /* Runtime-configurable retry counts, initialised from compile-time defaults */
 _Atomic int arq_call_retry_slots       = ARQ_CALL_RETRY_SLOTS_DEFAULT;
 _Atomic int arq_accept_retry_slots     = ARQ_ACCEPT_RETRY_SLOTS_DEFAULT;
-_Atomic int arq_data_retry_slots       = ARQ_DATA_RETRY_SLOTS_DEFAULT;
 _Atomic int arq_disconnect_retry_slots = ARQ_DISCONNECT_RETRY_SLOTS_DEFAULT;
 _Atomic int arq_retry_stagger_ms       = ARQ_RETRY_STAGGER_MS_DEFAULT;
-_Atomic int arq_no_progress_timeout_s  = ARQ_NO_PROGRESS_TIMEOUT_S_DEFAULT;
 _Atomic int arq_disconnect_drain_timeout_s = ARQ_DISCONNECT_DRAIN_TIMEOUT_S_DEFAULT;
 
-/* Runtime-configurable guard/keepalive/ladder constants */
+/* Runtime-configurable guards */
 _Atomic int arq_channel_guard_ms            = ARQ_CHANNEL_GUARD_MS_DEFAULT;
 _Atomic int arq_iss_post_ack_guard_ms       = ARQ_ISS_POST_ACK_GUARD_MS_DEFAULT;
-_Atomic int arq_keepalive_interval_s        = ARQ_KEEPALIVE_INTERVAL_S_DEFAULT;
-_Atomic int arq_keepalive_miss_limit        = ARQ_KEEPALIVE_MISS_LIMIT_DEFAULT;
-_Atomic int arq_ladder_up_successes         = ARQ_LADDER_UP_SUCCESSES_DEFAULT;
-_Atomic int arq_retry_downgrade_threshold   = ARQ_RETRY_DOWNGRADE_THRESHOLD_DEFAULT;
-_Atomic int arq_mode_hold_after_downgrade_s = ARQ_MODE_HOLD_AFTER_DOWNGRADE_S_DEFAULT;
-_Atomic int arq_peer_payload_hold_s         = ARQ_PEER_PAYLOAD_HOLD_S_DEFAULT;
-_Atomic int arq_startup_max_s               = ARQ_STARTUP_MAX_S_DEFAULT;
 
 /* Include FreeDV mode constants */
 #include "../modem/freedv/freedv_api.h"
@@ -53,55 +44,33 @@ extern int  arithmetic_decode(uint8_t *input, int max_len, char *output, int max
 /* ======================================================================
  * Mode timing table
  *
- * All durations measured empirically from bench and OTA tests.
- * ack_timeout_s is set at TX_COMPLETE (PTT-OFF) and must cover the worst
- * case where the peer piggybbacks a DATA frame immediately after its ACK:
+ * frame_duration_s, measured on the bench (single-frame burst incl.
+ * preamble): DATAC16 3740 ms, DATAC15 4400, DATAC4 5800, DATAC3 3820,
+ * DATAC1 4810, DATAC17 7400, QAM16C2 3700.
  *
- *   ack_timeout ≥ ACK_return + inter_frame_gap + piggybacked_DATA_dur + margin
+ * retry_interval_s: the wait before a CALL, ACCEPT or DISCONNECT sent in
+ * this mode is repeated -- the frame, the peer's answer (about 4 s back on
+ * DATAC16) and a margin.  The CALL interval on DATAC16 is the CALLINT
+ * default; MFSK's is arq_protocol_call_interval_for_mode_s().
  *
- * Measured constants (bench test, dummy loads):
- *   ACK_return:      ~3950ms (PTT-OFF → ack_rx, mode-independent — ACK always
- *                    DATAC16; old DATAC13 figure was 2848ms, DATAC16 is ~1.1s
- *                    longer on air)
- *   inter_frame_gap: ~1035ms (IRS ACK PTT-OFF → IRS DATA PTT-ON)
- *   frame_dur DATAC16: 3740ms  (single-frame burst incl. preamble, bench)
- *   frame_dur DATAC15: 4400ms  (single-frame burst incl. preamble, bench)
- *   frame_dur DATAC4:  5800ms  (tx_start → tx_end, measured)
- *   frame_dur DATAC3:  3820ms  (measured)
- *   frame_dur DATAC1:  4810ms  (measured — table previously had wrong 6500ms)
- *
- *   frame_dur DATAC17:  7400ms  (single-frame burst incl. preamble, bench)
- *   frame_dur QAM16C2:  3700ms  (single-frame burst incl. preamble, bench)
- *
- *   DATAC16: no piggybacking (control-only) → 3950 + 1500ms margin ≈ 5.5s → 7s
- *   DATAC15: 3950 + 1035 + 4400 + 1500ms margin ≈ 10.9s → 11s
- *   DATAC4:  3950 + 1035 + 5800 + 1500ms margin ≈ 12.3s → 13s
- *   DATAC3:  3950 + 1035 + 3820 + 1500ms margin ≈ 10.3s → 11s
- *   DATAC1:  3950 + 1035 + 4810 + 1500ms margin ≈ 11.3s → 12s
- *   DATAC17: 3950 + 1035 + 7400 + 1500ms margin ≈ 13.9s → 14s
- *   QAM16C2: 3950 + 1035 + 3700 + 1500ms margin ≈ 10.2s → 11s
- *
- * retry_interval_s = ack_timeout_s + ARQ_ACK_GUARD_S (1s)
- *
- * DATAC13 has no row: it is no longer an ARQ mode (DATAC16 replaced it as
- * the control mode), and a row would collide with DATAC16's 14-byte
- * payload in the DATA-frame mode-inference loop (arq.c).
+ * DATAC13 has no row: it is no longer an ARQ mode, and a row would collide
+ * with DATAC16's 14-byte payload where modes are told apart by frame size.
  * ====================================================================== */
 
 const arq_mode_timing_t arq_mode_table[] = {
-    /*  freedv_mode           frame_dur  tx_period  ack_timeout  retry_interval  payload  burst */
-    {  FREEDV_MODE_DATAC16,   3.74f,     1.0f,      7.0f,        8.0f,           14,   1 },
-    {  FREEDV_MODE_DATAC15,   4.40f,     1.0f,      11.0f,       12.0f,          30,   1 },
-    {  FREEDV_MODE_DATAC4,    5.80f,     1.0f,      13.0f,       14.0f,          54,   1 },
-    {  FREEDV_MODE_DATAC3,    3.82f,     1.0f,      11.0f,       12.0f,          126,   1 },
-    {  FREEDV_MODE_DATAC1,    4.81f,     1.0f,      12.0f,       13.0f,          510,   1 },
-    {  FREEDV_MODE_DATAC17,   7.40f,     1.0f,      14.0f,       15.0f,          1180,   1 },
-    {  FREEDV_MODE_QAM16C2,   3.70f,     1.0f,      11.0f,       12.0f,          1213,   1 },
+    /*  freedv_mode           frame_dur  retry_interval  payload */
+    {  FREEDV_MODE_DATAC16,   3.74f,     8.0f,           14   },
+    {  FREEDV_MODE_DATAC15,   4.40f,     12.0f,          30   },
+    {  FREEDV_MODE_DATAC4,    5.80f,     14.0f,          54   },
+    {  FREEDV_MODE_DATAC3,    3.82f,     12.0f,          126  },
+    {  FREEDV_MODE_DATAC1,    4.81f,     13.0f,          510  },
+    {  FREEDV_MODE_DATAC17,   7.40f,     15.0f,          1180 },
+    {  FREEDV_MODE_QAM16C2,   3.70f,     12.0f,          1213 },
     /* The MFSK fringe rung: non-coherent 32-MFSK, a ~13.5 s burst of 98
      * payload bytes, about 10 dB below DATAC15.  Its row also sets the
      * longest burst, which sizes the modem's RX backlog: shorter, and the
      * backlog cap chopped MFSK bursts in half (mfsk-margin, 7feaadb). */
-    {  MERCURY_MODE_MFSK,     13.50f,    1.0f,      17.0f,       18.0f,          98,   1 },
+    {  MERCURY_MODE_MFSK,     13.50f,    18.0f,          98   },
 };
 
 const int arq_mode_table_count =
@@ -113,8 +82,8 @@ const int arq_mode_table_count =
 
 /* Runtime-configurable CALL/ACCEPT retry interval in seconds (set via
  * CALLINT TCP command).  0.0 = use compiled default from arq_mode_table.
- * Only affects CALL/ACCEPT retry scheduling — all other DATAC16 control
- * frames (keepalive, disconnect, turn_req) use the immutable table values. */
+ * Only affects CALL/ACCEPT retry scheduling: the DISCONNECT uses the
+ * immutable table values. */
 _Atomic float arq_callint_override_s = 0.0f;
 
 const arq_mode_timing_t *arq_protocol_mode_timing(int freedv_mode)
@@ -286,172 +255,23 @@ float arq_protocol_decode_snr(uint8_t snr_raw)
     return (float)((int)snr_raw - 128);
 }
 
-float arq_olla_update(float offset_db, bool first_try_ok)
-{
-    offset_db += first_try_ok ? ARQ_OLLA_STEP_UP_DB : -ARQ_OLLA_STEP_DOWN_DB;
-    if (offset_db < ARQ_OLLA_OFFSET_MIN_DB) offset_db = ARQ_OLLA_OFFSET_MIN_DB;
-    if (offset_db > ARQ_OLLA_OFFSET_MAX_DB) offset_db = ARQ_OLLA_OFFSET_MAX_DB;
-    return offset_db;
-}
-
 /* ======================================================================
- * ACK delay codec
- *
- * Wire value is in 10ms units (uint16_t big-endian).
- * 0 = unknown.
+ * DISCONNECT: the one plain session frame -- an 8-byte header on the
+ * control mode.  A session's other frames are the carousel's.
  * ====================================================================== */
-
-uint8_t arq_protocol_encode_ack_delay(uint32_t delay_ms)
-{
-    uint32_t units = delay_ms / 10;
-    if (units == 0 && delay_ms > 0)
-        units = 1;  /* round up from sub-10ms */
-    if (units > 0xff)
-        units = 0xff;
-    return (uint8_t)units;
-}
-
-uint32_t arq_protocol_decode_ack_delay(uint8_t raw)
-{
-    return (uint32_t)raw * 10;
-}
-
-/* ======================================================================
- * Internal helpers
- * ====================================================================== */
-
-/* Write a standard 8-byte control frame header; return frame size or -1. */
-static int build_ctrl(uint8_t *buf, size_t buf_len,
-                      uint8_t subtype, uint8_t session_id,
-                      uint8_t tx_seq, uint8_t rx_ack_seq,
-                      uint8_t flags, uint8_t snr_raw, uint8_t ack_delay_raw,
-                      const uint8_t *payload, size_t payload_len)
-{
-    size_t total = ARQ_FRAME_HDR_SIZE + payload_len;
-    if (buf_len < total)
-        return -1;
-
-    memset(buf, 0, total);
-    /* byte 0 set by write_frame_header below */
-    buf[ARQ_HDR_SUBTYPE_IDX]  = subtype;
-    buf[ARQ_HDR_FLAGS_IDX]    = flags;
-    buf[ARQ_HDR_SESSION_IDX]  = session_id;
-    buf[ARQ_HDR_SEQ_IDX]      = tx_seq;
-    buf[ARQ_HDR_ACK_IDX]      = rx_ack_seq;
-    buf[ARQ_HDR_SNR_IDX]      = snr_raw;
-    buf[ARQ_HDR_DELAY_IDX]    = ack_delay_raw;
-    if (payload && payload_len > 0)
-        memcpy(buf + ARQ_FRAME_HDR_SIZE, payload, payload_len);
-    write_frame_header(buf, PACKET_TYPE_ARQ_CONTROL, 0);
-    return (int)total;
-}
-
-/* ======================================================================
- * Frame builder implementations
- * ====================================================================== */
-
-int arq_protocol_build_ack(uint8_t *buf, size_t buf_len,
-                            uint8_t session_id, uint8_t rx_ack_seq,
-                            uint8_t flags, uint8_t snr_raw,
-                            uint8_t ack_delay_raw)
-{
-    return build_ctrl(buf, buf_len,
-                      ARQ_SUBTYPE_ACK, session_id,
-                      0, rx_ack_seq, flags, snr_raw, ack_delay_raw,
-                      NULL, 0);
-}
 
 int arq_protocol_build_disconnect(uint8_t *buf, size_t buf_len,
                                    uint8_t session_id, uint8_t snr_raw)
 {
-    return build_ctrl(buf, buf_len,
-                      ARQ_SUBTYPE_DISCONNECT, session_id,
-                      0, 0, 0, snr_raw, 0,
-                      NULL, 0);
-}
-
-int arq_protocol_build_keepalive(uint8_t *buf, size_t buf_len,
-                                  uint8_t session_id, uint8_t snr_raw)
-{
-    return build_ctrl(buf, buf_len,
-                      ARQ_SUBTYPE_KEEPALIVE, session_id,
-                      0, 0, 0, snr_raw, 0,
-                      NULL, 0);
-}
-
-int arq_protocol_build_keepalive_ack(uint8_t *buf, size_t buf_len,
-                                      uint8_t session_id, uint8_t snr_raw)
-{
-    return build_ctrl(buf, buf_len,
-                      ARQ_SUBTYPE_KEEPALIVE_ACK, session_id,
-                      0, 0, 0, snr_raw, 0,
-                      NULL, 0);
-}
-
-int arq_protocol_build_turn_req(uint8_t *buf, size_t buf_len,
-                                 uint8_t session_id, uint8_t rx_ack_seq,
-                                 uint8_t snr_raw)
-{
-    return build_ctrl(buf, buf_len,
-                      ARQ_SUBTYPE_TURN_REQ, session_id,
-                      0, rx_ack_seq, 0, snr_raw, 0,
-                      NULL, 0);
-}
-
-int arq_protocol_build_turn_ack(uint8_t *buf, size_t buf_len,
-                                 uint8_t session_id, uint8_t snr_raw)
-{
-    return build_ctrl(buf, buf_len,
-                      ARQ_SUBTYPE_TURN_ACK, session_id,
-                      0, 0, 0, snr_raw, 0,
-                      NULL, 0);
-}
-
-int arq_protocol_build_mode_req(uint8_t *buf, size_t buf_len,
-                                 uint8_t session_id, uint8_t snr_raw,
-                                 int freedv_mode)
-{
-    uint8_t payload[1] = { (uint8_t)freedv_mode };
-    return build_ctrl(buf, buf_len,
-                      ARQ_SUBTYPE_MODE_REQ, session_id,
-                      0, 0, 0, snr_raw, 0,
-                      payload, 1);
-}
-
-int arq_protocol_build_mode_ack(uint8_t *buf, size_t buf_len,
-                                 uint8_t session_id, uint8_t snr_raw,
-                                 int freedv_mode, uint8_t rx_ack_seq)
-{
-    uint8_t payload[1] = { (uint8_t)freedv_mode };
-    return build_ctrl(buf, buf_len,
-                      ARQ_SUBTYPE_MODE_ACK, session_id,
-                      0, rx_ack_seq, ARQ_FLAG_CTRL_ACKSEQ, snr_raw, 0,
-                      payload, 1);
-}
-
-int arq_protocol_build_data(uint8_t *buf, size_t buf_len,
-                             uint8_t session_id, uint8_t tx_seq,
-                             uint8_t rx_ack_seq, uint8_t flags,
-                             uint8_t snr_raw, uint16_t payload_valid,
-                             const uint8_t *payload, size_t payload_len)
-{
-    size_t total = ARQ_FRAME_HDR_SIZE + payload_len;
-    if (buf_len < total || !payload || payload_len == 0)
+    if (!buf || buf_len < ARQ_FRAME_HDR_SIZE)
         return -1;
 
     memset(buf, 0, ARQ_FRAME_HDR_SIZE);
-    buf[ARQ_HDR_SUBTYPE_IDX]  = ARQ_SUBTYPE_DATA;
-    buf[ARQ_HDR_FLAGS_IDX]    = flags;
-    buf[ARQ_HDR_SESSION_IDX]  = session_id;
-    buf[ARQ_HDR_SEQ_IDX]      = tx_seq;
-    buf[ARQ_HDR_ACK_IDX]      = rx_ack_seq;
-    buf[ARQ_HDR_SNR_IDX]      = snr_raw;
-    buf[ARQ_HDR_DELAY_IDX]    = (uint8_t)(payload_valid & 0xFF);
-    /* bits 8-10 of payload_valid travel in the caller-provided flags
-     * (ARQ_FLAG_LEN_HI / LEN_B9 / LEN_B10) */
-    memcpy(buf + ARQ_FRAME_HDR_SIZE, payload, payload_len);
-    write_frame_header(buf, PACKET_TYPE_ARQ_DATA, 0);
-    return (int)total;
+    buf[ARQ_HDR_SUBTYPE_IDX] = ARQ_SUBTYPE_DISCONNECT;
+    buf[ARQ_HDR_SESSION_IDX] = session_id;
+    buf[ARQ_HDR_SNR_IDX]     = snr_raw;
+    write_frame_header(buf, PACKET_TYPE_ARQ_CONTROL, 0);
+    return ARQ_FRAME_HDR_SIZE;
 }
 
 /* ======================================================================
