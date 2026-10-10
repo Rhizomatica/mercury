@@ -290,6 +290,9 @@ chan_t *chan_init(size_t capacity)
 }
 
 void chan_dispose(chan_t *chan) { (void)chan; }
+/* How full the TX channel looks: tnc_send_monitor yields above half. */
+static int mock_chan_size = 0;
+int chan_size(chan_t *chan) { (void)chan; return mock_chan_size; }
 int chan_close(chan_t *chan) { (void)chan; return 0; }
 
 int chan_select(chan_t *recv_chans[], int recv_count, void **recv_out,
@@ -922,6 +925,22 @@ void test_tnc_send_monitor(void)
     tnc_send_monitor("DATAC17", "DATA", "SID=1 SEQ=5 ACK=4 LEN=1180", 12.3f);
     TEST_ASSERT_EQUAL_STRING("MONITOR DATAC17 DATA SID=1 SEQ=5 ACK=4 LEN=1180 SNR=12.3\r",
                              last_queued_line);
+}
+
+/* A busy band brings MONITOR lines by the dozen: they stop at half the TX
+ * channel, so the host's state lines (PTT, CONNECTED, ...) always find room. */
+void test_tnc_send_monitor_leaves_room_for_state_lines(void)
+{
+    int before = chan_select_call_count;
+    mock_chan_size = TNC_MONITOR_MAX_QUEUED;
+    tnc_send_monitor("DATAC17", "DATA", "SID=1", 10.0f);
+    TEST_ASSERT_EQUAL_INT(before, chan_select_call_count);   /* dropped, not queued */
+    tnc_send_busy(true);                                      /* a state line still goes */
+    TEST_ASSERT_EQUAL_STRING("BUSY ON\r", last_queued_line);
+    mock_chan_size = TNC_MONITOR_MAX_QUEUED - 1;
+    tnc_send_monitor("DATAC17", "DATA", "SID=1", 10.0f);
+    TEST_ASSERT_EQUAL_STRING("MONITOR DATAC17 DATA SID=1 SNR=10.0\r", last_queued_line);
+    mock_chan_size = 0;
 }
 
 /* ---- VARA compatibility command tests ---- */
@@ -1946,6 +1965,7 @@ int main(void)
     RUN_TEST(test_tnc_send_cqframe);
     RUN_TEST(test_tnc_send_registered);
     RUN_TEST(test_tnc_send_monitor);
+    RUN_TEST(test_tnc_send_monitor_leaves_room_for_state_lines);
     /* Broadcast framing helper tests */
     RUN_TEST(test_bcast_rx_cmd_data_exact_size);
     RUN_TEST(test_bcast_rx_cmd_data_0x60_is_not_special);

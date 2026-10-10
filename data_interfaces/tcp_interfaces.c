@@ -78,6 +78,11 @@ static _Atomic uint32_t last_bitrate_bps = 0;
  * notification -- for every PTT edge, and for DISCONNECTED, which is what
  * leaves a host waiting forever for a session that already ended. */
 static chan_t *_Atomic tnc_tx_chan = NULL;
+#define TNC_TX_CHAN_CAP 256
+/* MONITOR lines may fill only half the channel: a busy band brings them by
+ * the dozen, and they must never take the room the host's state lines need
+ * (tnc_queue_line_critical: PTT, CONNECTED, BUSY ...). */
+#define TNC_MONITOR_MAX_QUEUED (TNC_TX_CHAN_CAP / 2)
 static atomic_ulong tnc_tx_drop_count = 0;
 static atomic_int tnc_last_buffer_sent = -1;
 static atomic_bool bcast_client_done = false;
@@ -1777,8 +1782,16 @@ void tnc_send_monitor(const char *mode_name, const char *kind,
     if (!detail)    detail = "";
 
     /* Display-only telemetry: lossy is fine, a dropped line is replaced by the
-     * next frame.  Keep the whole line under tnc_tx_msg_t.data so tnc_queue_line
-     * does not reject it; snprintf truncates if a long detail would overflow. */
+     * next frame -- and dropped first, before it can crowd out a host state
+     * line (TNC_MONITOR_MAX_QUEUED).  Keep the whole line under
+     * tnc_tx_msg_t.data so tnc_queue_line does not reject it; snprintf
+     * truncates if a long detail would overflow. */
+    chan_t *chan = tnc_tx_chan;
+    if (!chan || chan_size(chan) >= TNC_MONITOR_MAX_QUEUED)
+    {
+        atomic_fetch_add_explicit(&tnc_tx_drop_count, 1, memory_order_relaxed);
+        return;
+    }
     snprintf(buffer, sizeof(buffer), "MONITOR %s %s %s SNR=%.1f\r",
              mode_name, kind, detail, (double)snr_db);
     (void)tnc_queue_line(buffer);
@@ -1839,7 +1852,7 @@ int interfaces_init(int arq_tcp_base_port, int broadcast_tcp_port, size_t broadc
     net_set_status(DATA_TCP_PORT, NET_NONE);
     if (!tnc_tx_chan)
     {
-        tnc_tx_chan = chan_init(256);
+        tnc_tx_chan = chan_init(TNC_TX_CHAN_CAP);
         if (!tnc_tx_chan)
         {
             HLOGE("tcp-ctl", "Failed to init control TX queue");
