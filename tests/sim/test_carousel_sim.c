@@ -24,7 +24,7 @@
 #include <stdio.h>
 #include <string.h>
 
-void setUp(void)    { arq_fsm_set_carousel(true); }
+void setUp(void)    { }
 void tearDown(void) {}
 
 static sim_t *make_sim(uint64_t seed, double per)

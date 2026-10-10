@@ -34,33 +34,31 @@ bool sim_translate_frame(const uint8_t *frame, size_t frame_size, float rx_snr,
 
         bool is_accept = (frame[ARQ_CONNECT_SESSION_IDX] & ARQ_CONNECT_ACCEPT_FLAG) != 0;
 
-        uint8_t session_id;
+        uint8_t session_id = 0;
         char src[CALLSIGN_MAX_SIZE] = {0};
-        char dst[CALLSIGN_MAX_SIZE] = {0};
         int  bw_hz = 0;
-
-        int rc = is_accept
-                 ? arq_protocol_parse_accept(frame, frame_size, &session_id, src, dst, &bw_hz)
-                 : arq_protocol_parse_call  (frame, frame_size, &session_id, src, dst, &bw_hz);
+        arq_accept_t acc;
+        int rc = !arq_protocol_connect_version_ok(frame, frame_size) ? -1
+                 : is_accept ? arq_protocol_parse_accept(frame, frame_size, &acc)
+                             : arq_protocol_parse_call(frame, frame_size, &session_id, src, &bw_hz);
         if (rc < 0)
             return false;
+        if (is_accept)
+            session_id = acc.session_id;
 
-        /* Validate DST CRC against the receiver's callsign (13 bits on an
-         * ACCEPT, which carries the carousel's start rung in the rest). */
+        /* Validate DST CRC against the receiver's callsign (all 16 bits). */
         if (receiver_call && receiver_call[0] != 0 &&
-            !arq_protocol_connect_dst_matches(frame, is_accept, receiver_call))
+            !arq_protocol_connect_dst_matches(frame, receiver_call))
             return false;
 
         out_ev->id         = is_accept ? ARQ_EV_RX_ACCEPT : ARQ_EV_RX_CALL;
         out_ev->session_id = session_id;
         out_ev->rx_snr     = rx_snr;
         if (is_accept) {
-            out_ev->car_level  = arq_protocol_accept_start_level(frame);
-            out_ev->car_accept = arq_protocol_accept_is_carousel(frame);
-            if (out_ev->car_accept)
-                out_ev->car_nonce = arq_protocol_accept_nonce(frame, src);
-        } else
-            out_ev->car_call = arq_protocol_call_is_carousel(frame, src);
+            out_ev->car_level      = acc.start_level;
+            out_ev->car_nonce      = acc.nonce;
+            out_ev->car_called_crc = acc.called_crc;
+        }
         /* src = transmitting side's callsign (the remote station for the receiver) */
         snprintf(out_ev->remote_call, CALLSIGN_MAX_SIZE, "%s", src);
         return true;
@@ -74,86 +72,11 @@ bool sim_translate_frame(const uint8_t *frame, size_t frame_size, float rx_snr,
     if (arq_protocol_decode_hdr(frame, frame_size, &hdr) < 0)
         return false;
 
-    out_ev->session_id    = hdr.session_id;
-    out_ev->seq           = hdr.tx_seq;
-    out_ev->ack_seq       = hdr.rx_ack_seq;
-    out_ev->rx_flags      = hdr.flags;
-    out_ev->snr_encoded   = (int8_t)hdr.snr_raw;
-    out_ev->ack_delay_raw = hdr.ack_delay_raw;
-
-    if (hdr.packet_type == PACKET_TYPE_ARQ_DATA)
-    {
-        out_ev->id   = ARQ_EV_RX_DATA;
-        out_ev->rx_snr = rx_snr;
-
-        /* Infer the FreeDV mode from frame_size by matching the mode table.
-         * This mirrors arq_handle_incoming_frame (arq.c:674-682). */
-        out_ev->mode = FREEDV_MODE_DATAC15;   /* safe default */
-        for (int i = 0; i < arq_mode_table_count; i++)
-        {
-            if ((int)frame_size == arq_mode_table[i].payload_bytes)
-            {
-                out_ev->mode = arq_mode_table[i].freedv_mode;
-                break;
-            }
-        }
-
-        size_t slot_bytes = (frame_size > ARQ_FRAME_HDR_SIZE)
-                            ? (frame_size - ARQ_FRAME_HDR_SIZE) : 0;
-
-        /* ack_delay_raw is repurposed in DATA frames: 0 = full frame;
-         * else = bits [7:0] of the valid byte count.  Bits 8-10 travel in
-         * the flags byte (ARQ_FLAG_LEN_HI / LEN_B9 / LEN_B10). */
-        const uint8_t len_flags = ARQ_FLAG_LEN_HI | ARQ_FLAG_LEN_B9 | ARQ_FLAG_LEN_B10;
-        size_t valid_bytes;
-        if (hdr.ack_delay_raw == ARQ_DATA_LEN_FULL && !(hdr.flags & len_flags))
-        {
-            valid_bytes = slot_bytes;
-        }
-        else
-        {
-            valid_bytes = (size_t)hdr.ack_delay_raw;
-            if (hdr.flags & ARQ_FLAG_LEN_HI) valid_bytes |= 0x100u;
-            if (hdr.flags & ARQ_FLAG_LEN_B9)  valid_bytes |= 0x200u;
-            if (hdr.flags & ARQ_FLAG_LEN_B10) valid_bytes |= 0x400u;
-        }
-        if (valid_bytes > slot_bytes)
-            valid_bytes = slot_bytes;   /* sanity cap */
-
-        out_ev->data_bytes = valid_bytes;
-        if (valid_bytes > 0 && valid_bytes <= sizeof(out_ev->payload))
-        {
-            memcpy(out_ev->payload, frame + ARQ_FRAME_HDR_SIZE, valid_bytes);
-            out_ev->payload_len = valid_bytes;
-        }
-        return true;
-    }
-
-    if (hdr.packet_type == PACKET_TYPE_ARQ_CONTROL)
-    {
-        switch (hdr.subtype)
-        {
-        case ARQ_SUBTYPE_ACK:           out_ev->id = ARQ_EV_RX_ACK;           break;
-        case ARQ_SUBTYPE_DISCONNECT:    out_ev->id = ARQ_EV_RX_DISCONNECT;    break;
-        case ARQ_SUBTYPE_TURN_REQ:      out_ev->id = ARQ_EV_RX_TURN_REQ;      break;
-        case ARQ_SUBTYPE_TURN_ACK:      out_ev->id = ARQ_EV_RX_TURN_ACK;      break;
-        case ARQ_SUBTYPE_KEEPALIVE:     out_ev->id = ARQ_EV_RX_KEEPALIVE;     break;
-        case ARQ_SUBTYPE_KEEPALIVE_ACK: out_ev->id = ARQ_EV_RX_KEEPALIVE_ACK; break;
-        case ARQ_SUBTYPE_MODE_REQ:
-            out_ev->id   = ARQ_EV_RX_MODE_REQ;
-            out_ev->mode = (frame_size > ARQ_FRAME_HDR_SIZE)
-                           ? (int)frame[ARQ_FRAME_HDR_SIZE] : 0;
-            break;
-        case ARQ_SUBTYPE_MODE_ACK:
-            out_ev->id   = ARQ_EV_RX_MODE_ACK;
-            out_ev->mode = (frame_size > ARQ_FRAME_HDR_SIZE)
-                           ? (int)frame[ARQ_FRAME_HDR_SIZE] : 0;
-            break;
-        default:
-            return false;
-        }
-        return true;
-    }
-
-    return false;
+    /* The one plain session frame: the DISCONNECT (as arq_handle_incoming_frame). */
+    if (hdr.packet_type != PACKET_TYPE_ARQ_CONTROL || hdr.subtype != ARQ_SUBTYPE_DISCONNECT)
+        return false;
+    out_ev->id         = ARQ_EV_RX_DISCONNECT;
+    out_ev->session_id = hdr.session_id;
+    out_ev->rx_snr     = rx_snr;
+    return true;
 }

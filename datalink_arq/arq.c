@@ -794,14 +794,22 @@ bool arq_handle_incoming_connect_frame(uint8_t *data, size_t frame_size, float r
     if (!data || frame_size < 2) return false;
 
     bool is_accept = (data[ARQ_CONNECT_SESSION_IDX] & ARQ_CONNECT_ACCEPT_FLAG) != 0;
-    uint8_t session_id;
-    char src[CALLSIGN_MAX_SIZE] = {0};
-    char dst[CALLSIGN_MAX_SIZE] = {0};
+    uint8_t session_id = 0;
+    char caller[CALLSIGN_MAX_SIZE] = {0};
+    arq_accept_t acc;
     int bw_hz = 0;
+    int rc;
 
-    int rc = is_accept
-             ? arq_protocol_parse_accept(data, frame_size, &session_id, src, dst, &bw_hz)
-             : arq_protocol_parse_call  (data, frame_size, &session_id, src, dst, &bw_hz);
+    if (!arq_protocol_connect_version_ok(data, frame_size))
+        rc = -2;   /* another protocol version: below, once we know it is for us */
+    else if (is_accept)
+    {
+        rc = arq_protocol_parse_accept(data, frame_size, &acc);
+        session_id = acc.session_id;
+        bw_hz = acc.bw_hz;
+    }
+    else
+        rc = arq_protocol_parse_call(data, frame_size, &session_id, caller, &bw_hz);
 
     /* CALL/ACCEPT do not pass through arq_handle_incoming_frame, so without
      * this the connect exchange is invisible to the trace -- which is exactly
@@ -809,7 +817,7 @@ bool arq_handle_incoming_connect_frame(uint8_t *data, size_t frame_size, float r
     ARQ_TRACE(ARQ_TR_RX_FRAME, is_accept ? 2 : 1, (uint8_t)(rc < 0 ? 0xff : 0),
               (uint16_t)frame_size);
 
-    if (rc < 0)
+    if (rc == -1)
     {
         HLOGD(LOG_COMP, "CALL/ACCEPT parse failed");
         return false;
@@ -832,10 +840,10 @@ bool arq_handle_incoming_connect_frame(uint8_t *data, size_t frame_size, float r
     const char *dialed_call = my_call;
     if (my_call[0] != 0)
     {
-        bool match = arq_protocol_connect_dst_matches(data, is_accept, my_call);
+        bool match = arq_protocol_connect_dst_matches(data, my_call);
         for (int i = 0; !match && i < sec_count; i++)
         {
-            if (arq_protocol_connect_dst_matches(data, is_accept, sec[i]))
+            if (arq_protocol_connect_dst_matches(data, sec[i]))
             {
                 match       = true;
                 dialed_call = sec[i];
@@ -847,6 +855,16 @@ bool arq_handle_incoming_connect_frame(uint8_t *data, size_t frame_size, float r
             return false;
         }
     }
+    if (rc == -2)
+    {
+        /* Bytes 2-3 are the called CRC in every version, so this is a call
+         * for us from a 1.9.x station or another protocol version: the
+         * versions do not connect (docs/CAROUSEL-ARQ.md, "Wire formats"). */
+        if (!is_accept)
+            HLOGW(LOG_COMP, "CALL for %s from another protocol version (Mercury 1.9.x?): not answered",
+                  dialed_call);
+        return false;
+    }
 
     arq_event_t ev = {0};
     ev.id         = is_accept ? ARQ_EV_RX_ACCEPT : ARQ_EV_RX_CALL;
@@ -855,15 +873,14 @@ bool arq_handle_incoming_connect_frame(uint8_t *data, size_t frame_size, float r
     ev.mode       = mode;          /* the carrier: an answer goes back on it */
     if (is_accept)
     {
-        ev.car_level  = arq_protocol_accept_start_level(data);
-        ev.car_accept = arq_protocol_accept_is_carousel(data);
-        if (ev.car_accept)
-            ev.car_nonce = arq_protocol_accept_nonce(data, src);
+        /* The callee's callsign is not on the air, only its CRC: the FSM
+         * checks it against the station it called. */
+        ev.car_level      = acc.start_level;
+        ev.car_nonce      = acc.nonce;
+        ev.car_called_crc = acc.called_crc;
     }
     else
-        ev.car_call = arq_protocol_call_is_carousel(data, src);
-    /* src = transmitting side's callsign */
-    snprintf(ev.remote_call, CALLSIGN_MAX_SIZE, "%s", src);
+        snprintf(ev.remote_call, CALLSIGN_MAX_SIZE, "%s", caller);
     /* local = the one of our callsigns the caller dialed (primary or secondary) */
     snprintf(ev.local_call, CALLSIGN_MAX_SIZE, "%s", dialed_call);
     pthread_mutex_lock(&g_conn_lock);
@@ -929,84 +946,13 @@ void arq_handle_incoming_frame(uint8_t *data, size_t frame_size, float rx_snr)
     ev.snr_encoded   = (int8_t)hdr.snr_raw;
     ev.ack_delay_raw = hdr.ack_delay_raw;
 
-    if (hdr.packet_type == PACKET_TYPE_ARQ_DATA)
-    {
-        ev.id = ARQ_EV_RX_DATA;
-        /* Infer the FreeDV mode from frame_size by matching the mode table.
-         * This lets the FSM track what mode the peer was actually transmitting
-         * in (for decoder-sync enforcement on role switch). */
-        ev.mode = FREEDV_MODE_DATAC15;   /* safe default */
-        for (int i = 0; i < arq_mode_table_count; i++)
-        {
-            if ((int)frame_size == arq_mode_table[i].payload_bytes)
-            {
-                ev.mode = arq_mode_table[i].freedv_mode;
-                break;
-            }
-        }
-        size_t slot_bytes = (frame_size > ARQ_FRAME_HDR_SIZE)
-                            ? (frame_size - ARQ_FRAME_HDR_SIZE) : 0;
-        /* ack_delay_raw is repurposed in DATA frames: 0 = full frame (all
-         * slot_bytes are valid), else = bits [7:0] of the valid byte count.
-         * Bits 8-10 travel in the flags byte (ARQ_FLAG_LEN_HI / LEN_B9 /
-         * LEN_B10), allowing counts up to 2047 (QAM16C2 carries 1205 user
-         * bytes).  See ARQ_DATA_LEN_FULL in arq_protocol.h. */
-        const uint8_t len_flags =
-            ARQ_FLAG_LEN_HI | ARQ_FLAG_LEN_B9 | ARQ_FLAG_LEN_B10;
-        size_t valid_bytes;
-        if (hdr.ack_delay_raw == ARQ_DATA_LEN_FULL &&
-            !(hdr.flags & len_flags))
-        {
-            valid_bytes = slot_bytes;
-        }
-        else
-        {
-            valid_bytes = (size_t)hdr.ack_delay_raw;
-            if (hdr.flags & ARQ_FLAG_LEN_HI)
-                valid_bytes |= 0x100u;
-            if (hdr.flags & ARQ_FLAG_LEN_B9)
-                valid_bytes |= 0x200u;
-            if (hdr.flags & ARQ_FLAG_LEN_B10)
-                valid_bytes |= 0x400u;
-        }
-        if (valid_bytes > slot_bytes)
-            valid_bytes = slot_bytes;   /* sanity cap */
-        ev.data_bytes = valid_bytes;
-        ev.rx_snr     = rx_snr;
-        if (valid_bytes > 0 && valid_bytes <= sizeof(ev.payload))
-        {
-            memcpy(ev.payload, data + ARQ_FRAME_HDR_SIZE, valid_bytes);
-            ev.payload_len = valid_bytes;
-        }
-    }
-    else if (hdr.packet_type == PACKET_TYPE_ARQ_CONTROL)
-    {
-        switch (hdr.subtype)
-        {
-        case ARQ_SUBTYPE_ACK:          ev.id = ARQ_EV_RX_ACK;           break;
-        case ARQ_SUBTYPE_DISCONNECT:   ev.id = ARQ_EV_RX_DISCONNECT;    break;
-        case ARQ_SUBTYPE_TURN_REQ:     ev.id = ARQ_EV_RX_TURN_REQ;      break;
-        case ARQ_SUBTYPE_TURN_ACK:     ev.id = ARQ_EV_RX_TURN_ACK;      break;
-        case ARQ_SUBTYPE_KEEPALIVE:    ev.id = ARQ_EV_RX_KEEPALIVE;     break;
-        case ARQ_SUBTYPE_KEEPALIVE_ACK: ev.id = ARQ_EV_RX_KEEPALIVE_ACK; break;
-        case ARQ_SUBTYPE_MODE_REQ:
-            ev.id   = ARQ_EV_RX_MODE_REQ;
-            ev.mode = (frame_size > ARQ_FRAME_HDR_SIZE)
-                      ? (int)data[ARQ_FRAME_HDR_SIZE] : 0;
-            break;
-        case ARQ_SUBTYPE_MODE_ACK:
-            ev.id   = ARQ_EV_RX_MODE_ACK;
-            ev.mode = (frame_size > ARQ_FRAME_HDR_SIZE)
-                      ? (int)data[ARQ_FRAME_HDR_SIZE] : 0;
-            break;
-        default:
-            return;
-        }
-    }
-    else
-    {
+    /* The one plain session frame there is: the DISCONNECT.  Everything a
+     * session moves goes on the carousel's seeded frames (ARQ_EV_RX_CAROUSEL),
+     * and the stop-and-wait plane's DATA, ACK, MODE, TURN and KEEPALIVE frames
+     * are gone with it. */
+    if (hdr.packet_type != PACKET_TYPE_ARQ_CONTROL || hdr.subtype != ARQ_SUBTYPE_DISCONNECT)
         return;
-    }
+    ev.id = ARQ_EV_RX_DISCONNECT;
 
     evq_push(&ev);
 }
@@ -1021,15 +967,6 @@ int arq_init(size_t frame_size, int mode)
     {
         HLOGE(LOG_COMP, "Init failed: bad frame_size=%zu", frame_size);
         return -1;
-    }
-
-    /* MERCURY_CAROUSEL=0: the stop-and-wait data plane, kept for A/B
-     * measurement until the carousel is validated on air.  Both ends of a
-     * session must run the same one. */
-    {
-        const char *e = getenv("MERCURY_CAROUSEL");
-        arq_fsm_set_carousel(!(e && e[0] == '0'));
-        HLOGI(LOG_COMP, "data plane: %s", arq_fsm_carousel() ? "carousel" : "stop-and-wait");
     }
 
     /* single-threaded: before worker threads start -- no lock needed */

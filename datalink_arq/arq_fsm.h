@@ -75,41 +75,30 @@ typedef enum
 typedef enum
 {
     /* Application events (from TCP interface via channel bus) */
-    ARQ_EV_APP_LISTEN         =  0,  /* LISTEN ON received            */
-    ARQ_EV_APP_STOP_LISTEN    =  1,  /* LISTEN OFF received           */
-    ARQ_EV_APP_CONNECT        =  2,  /* CONNECT <dst> received        */
-    ARQ_EV_APP_DISCONNECT     =  3,  /* DISCONNECT received           */
-    ARQ_EV_APP_DATA_READY     =  4,  /* TX data available in buffer   */
+    ARQ_EV_APP_LISTEN = 0,          /* LISTEN ON received            */
+    ARQ_EV_APP_STOP_LISTEN,         /* LISTEN OFF received           */
+    ARQ_EV_APP_CONNECT,             /* CONNECT <dst> received        */
+    ARQ_EV_APP_DISCONNECT,          /* DISCONNECT received           */
+    ARQ_EV_APP_DATA_READY,          /* TX data available in buffer   */
 
     /* Radio RX events (from modem worker) */
-    ARQ_EV_RX_CALL            =  5,  /* CALL frame decoded            */
-    ARQ_EV_RX_ACCEPT          =  6,  /* ACCEPT frame decoded          */
-    ARQ_EV_RX_ACK             =  7,  /* ACK frame decoded             */
-    ARQ_EV_RX_DATA            =  8,  /* DATA frame decoded            */
-    ARQ_EV_RX_DISCONNECT      =  9,  /* DISCONNECT frame decoded      */
-    ARQ_EV_RX_TURN_REQ        = 10,  /* TURN_REQ frame decoded        */
-    ARQ_EV_RX_TURN_ACK        = 11,  /* TURN_ACK frame decoded        */
-    ARQ_EV_RX_MODE_REQ        = 12,  /* MODE_REQ frame decoded        */
-    ARQ_EV_RX_MODE_ACK        = 13,  /* MODE_ACK frame decoded        */
-    ARQ_EV_RX_KEEPALIVE       = 14,  /* KEEPALIVE frame decoded       */
-    ARQ_EV_RX_KEEPALIVE_ACK   = 15,  /* KEEPALIVE_ACK frame decoded   */
+    ARQ_EV_RX_CALL,                 /* CALL frame decoded            */
+    ARQ_EV_RX_ACCEPT,               /* ACCEPT frame decoded          */
+    ARQ_EV_RX_DISCONNECT,           /* DISCONNECT frame decoded      */
 
     /* Timer events */
-    ARQ_EV_TIMER_RETRY        = 16,  /* retry deadline expired        */
-    ARQ_EV_TIMER_TIMEOUT      = 17,  /* session/call timeout expired  */
-    ARQ_EV_TIMER_ACK          = 18,  /* ACK wait deadline expired     */
-    ARQ_EV_TIMER_PEER_BACKLOG = 19,  /* peer-backlog hold expired     */
-    ARQ_EV_TIMER_KEEPALIVE    = 20,  /* keepalive interval expired    */
+    ARQ_EV_TIMER_RETRY,             /* CALL/ACCEPT retry, teardown waits */
+    ARQ_EV_TIMER_ACK,               /* a reply guard, a DISCONNECT's wait */
 
     /* Modem events */
-    ARQ_EV_TX_STARTED         = 21,  /* PTT ON (frame on air)         */
-    ARQ_EV_TX_COMPLETE        = 22,  /* PTT OFF (TX finished)         */
+    ARQ_EV_TX_STARTED,              /* PTT ON (frame on air)         */
+    ARQ_EV_TX_COMPLETE,             /* PTT OFF (TX finished)         */
 
     /* Carousel data plane */
-    ARQ_EV_RX_CAROUSEL        = 23,  /* a frame with the session's CRC seed */
-    ARQ_EV_TIMER_CAROUSEL     = 24,  /* the carousel's next deadline  */
-    ARQ_EV_RX_PATTERN         = 25,  /* a pattern heard; rx_flags HAS_DATA
-                                      * for the BREAK kind             */
+    ARQ_EV_RX_CAROUSEL,             /* a frame with the session's CRC seed */
+    ARQ_EV_TIMER_CAROUSEL,          /* the carousel's next deadline  */
+    ARQ_EV_RX_PATTERN,              /* a pattern heard; rx_flags HAS_DATA
+                                     * for the BREAK kind             */
 
     ARQ_EV__COUNT
 } arq_event_id_t;
@@ -143,14 +132,13 @@ typedef struct
     size_t   payload_len;
 
     /* RX_CAROUSEL: the control decoder (DATAC16) produced it; otherwise the
-     * payload decoder, in `mode`.  RX_ACCEPT: the carousel rung the callee
-     * starts us on (arq_protocol_accept_start_level), and whether the
-     * callee runs the carousel at all (car_accept). */
+     * payload decoder, in `mode`.  RX_ACCEPT: the rung the callee starts our
+     * rounds on (0..6, or ARQ_ACCEPT_LEVEL_CTL_DEAF), its session nonce, and
+     * the CRC16 of the callsign we called, which the FSM checks. */
     bool     from_control;
     int      car_level;
-    bool     car_accept;
-    bool     car_call;                /* RX_CALL: the caller runs the carousel */
-    uint16_t car_nonce;               /* RX_ACCEPT: the callee's session nonce */
+    uint16_t car_nonce;
+    uint16_t car_called_crc;
 
     /* Local receive SNR at the time the frame was decoded (dB, 0 = unknown).
      * Carried in-band so the FSM can update local_snr_x10 without relying on
@@ -295,7 +283,7 @@ typedef struct
                                         * call always returns to where it was   */
 
     /* --- Connect handshake --- */
-    bool     peer_carousel;            /* the caller's CALL said it runs the
+            /* the caller's CALL said it runs the
                                         * carousel: our ACCEPT and the session
                                         * follow it, else stop-and-wait        */
     bool     accept_fallback;          /* LISTENING was entered because our ACCEPT
@@ -516,12 +504,6 @@ void arq_fsm_dispatch(arq_session_t *sess, const arq_event_t *event);
  */
 int arq_fsm_timeout_ms(const arq_session_t *sess, uint64_t now);
 
-/**
- * @brief Run CONNECTED on the carousel data plane (default) or on the
- *        stop-and-wait data-flow sub-FSM.  Both ends must agree.
- */
-void arq_fsm_set_carousel(bool on);
-bool arq_fsm_carousel(void);
 /** The carrier the next CALL goes out on: the control mode for the first
  *  ARQ_CALL_FAST_SLOTS, then MFSK and the control mode alternately. */
 int arq_call_carrier(const arq_session_t *sess);

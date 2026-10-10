@@ -672,109 +672,69 @@ int arq_protocol_build_data(uint8_t *buf, size_t buf_len,
                              uint8_t snr_raw, uint16_t payload_valid,
                              const uint8_t *payload, size_t payload_len);
 
-/* --- CALL/ACCEPT compact frames (PACKET_TYPE_ARQ_CALL) --- */
-
-/**
- * Build a CALL frame.
- * @param buf          Output buffer (caller-provided).
- * @param buf_len      Size of buf in bytes.
- * @param session_id   ARQ session identifier.
- * @param src  Local callsign.
- * @param dst  Remote callsign.
- * @param bw_hz        Requested bandwidth in Hz.
- * @return Total frame bytes (ARQ_CONTROL_FRAME_SIZE = 14) on success, -1 on error.
- */
-int arq_protocol_build_call(uint8_t *buf, size_t buf_len,
-                              uint8_t session_id,
-                              const char *src, const char *dst,
-                              int bw_hz);
-
-/**
- * Build an ACCEPT frame.
- * @param buf          Output buffer (caller-provided).
- * @param buf_len      Size of buf in bytes.
- * @param session_id   ARQ session identifier.
- * @param src  Local callsign.
- * @param dst  Remote callsign.
- * @param bw_hz        Accepted bandwidth in Hz.
- */
-int arq_protocol_build_accept(uint8_t *buf, size_t buf_len,
-                                uint8_t session_id,
-                                const char *src, const char *dst,
-                                int bw_hz, int start_level);
-
-/* The ACCEPT is also the carousel's first poll: it names the ladder rung the
- * caller's first round goes out on (car_start_level of the SNR the callee
- * measured on the CALL), in the top 3 bits of its DST CRC -- which an ACCEPT
- * checks on 13 bits, alongside its 7-bit session id.  A start_level below 0
- * builds a plain ACCEPT, for the stop-and-wait plane.
+/* --- CALL/ACCEPT, protocol version 1 (PACKET_TYPE_ARQ_CALL) ---
  *
- * A carousel ACCEPT sets ARQ_CONNECT_EXT_CAROUSEL in the framer extension.
- * Stations without the carousel (1.9.x, MERCURY_CAROUSEL=0) read the
- * extension as an unknown bandwidth token and drop the frame: their call goes
- * unanswered rather than "connecting" to a session that cannot move data.
- * A plain ACCEPT tells a carousel caller that the callee runs stop-and-wait,
- * and the session runs on it. */
+ * 14 bytes (a DATAC16 frame), padded to the frame on MFSK.  Byte 0 is the
+ * framer: type CALL, and in its extension the bandwidth token (2 bits), the
+ * protocol version (2 bits) and the carousel bit.  A station takes a frame
+ * only with this version and the carousel bit; a 1.9.x station reads that
+ * extension as an unknown bandwidth token and drops it, so the versions do
+ * not connect (docs/CAROUSEL-ARQ.md, "Wire formats").
+ *
+ *   CALL    1: 0 | session id   2-3: CRC16 of the called callsign
+ *           4-13: the caller's callsign, arithmetic-coded
+ *   ACCEPT  1: 1 | session id   2-3: CRC16 of the caller's callsign
+ *           4-5: CRC16 of the called callsign   6-7: the callee's nonce
+ *           8: the caller's start rung (3 bits; 7 = ARQ_ACCEPT_LEVEL_CTL_DEAF),
+ *              5 bits zero      9-13: zero */
+#define ARQ_CONNECT_VERSION           1
+#define ARQ_CONNECT_EXT_BW_MASK       0x03
+#define ARQ_CONNECT_EXT_VERSION_SHIFT 2
+#define ARQ_CONNECT_EXT_VERSION_MASK  0x0C
 #define ARQ_CONNECT_EXT_CAROUSEL      0x10
-int  arq_protocol_accept_start_level(const uint8_t *buf);
-bool arq_protocol_accept_is_carousel(const uint8_t *buf);
+#define ARQ_ACCEPT_CALLED_CRC_IDX     4
+#define ARQ_ACCEPT_NONCE_IDX          6
+#define ARQ_ACCEPT_LEVEL_IDX          8
+#define ARQ_ACCEPT_LEVEL_CTL_DEAF     7   /* the callee hears the caller below
+                                             the control mode: start at the floor */
 
-/* A carousel caller says so in its CALL, so that a callee can answer a
- * station without the carousel (1.9.x, MERCURY_CAROUSEL=0) with a plain
- * ACCEPT and run that session on stop-and-wait.  Nothing in a CALL is free --
- * an old callee checks the bandwidth token exactly and the DST CRC on all 16
- * bits -- except the SRC slot's tail: the arithmetic code ends at its
- * end-of-string symbol and an old decoder never reads past it, while an old
- * caller zeroes what it leaves.  So the slot's last byte carries
- * ARQ_CALL_CAROUSEL_MARK, when the callsign leaves it free and the marked
- * slot still decodes to the same callsign (the decoder is the same code on
- * both sides, so that check is the old callee's).  A callsign too long for it
- * goes unmarked, and that session runs stop-and-wait. */
-#define ARQ_CALL_CAROUSEL_MARK        0xAB
-/* Earlier carousels read this mark as no mark, and this one theirs, so the
- * session runs stop-and-wait: 0xA7 (1.9.17, 1.9.18) had no block check and no
- * callee nonce; 0xA8 (mercuryv2 deab316..) sent the global ACK/BREAK, which
- * this one, binding them to the session, does not hear; 0xA9 (mercuryv2
- * d840318..) took turns by handover, not by one timing master (#351), and
- * knew no inline poll; 0xAA (mercuryv2 0bc383c..) cut every session into
- * 24-byte pieces, where one starting on the floor now uses 23. */
-bool arq_protocol_mark_call_carousel(uint8_t *buf, const char *src);
-bool arq_protocol_call_is_carousel(const uint8_t *buf, const char *src);
-/* A carousel ACCEPT carries the callee's session nonce in the last two bytes
- * of its SRC slot, when its callsign's code leaves them free (the same rule as
- * the CALL's mark): both ends hash it into the session's CRC seed, so frames of
- * an earlier session between the same two stations -- whose 7-bit session id
- * repeats one time in 64 -- fail their CRC.  set: false when the callsign
- * leaves no room (the nonce is then 0 on both ends).  get: 0 when it could not
- * have been sent. */
-bool     arq_protocol_set_accept_nonce(uint8_t *buf, const char *src, uint16_t nonce);
-uint16_t arq_protocol_accept_nonce(const uint8_t *buf, const char *src);
+/** Build a CALL.  @return ARQ_CONTROL_FRAME_SIZE (14), or -1. */
+int arq_protocol_build_call(uint8_t *buf, size_t buf_len,
+                            uint8_t session_id,
+                            const char *caller, const char *called,
+                            int bw_hz);
 
-/* Is a CALL (16-bit DST CRC) or an ACCEPT (13-bit) addressed to callsign? */
-bool arq_protocol_connect_dst_matches(const uint8_t *buf, bool is_accept, const char *callsign);
+/** Build an ACCEPT.  called: the callsign the CALL was addressed to (the
+ *  callee's primary or a secondary); start_level 0..6, or
+ *  ARQ_ACCEPT_LEVEL_CTL_DEAF.  @return ARQ_CONTROL_FRAME_SIZE (14), or -1. */
+int arq_protocol_build_accept(uint8_t *buf, size_t buf_len,
+                              uint8_t session_id,
+                              const char *called, const char *caller,
+                              int bw_hz, int start_level, uint16_t nonce);
 
-/**
- * Parse a CALL frame; extract callsigns.
- * @param buf            Input frame buffer.
- * @param buf_len        Size of buf in bytes.
- * @param session_id_out  Receives the session_id byte.
- * @param src_out         Buffer for local (transmitting) callsign, CALLSIGN_MAX_SIZE bytes.
- * @param dst_out         Buffer for remote callsign, CALLSIGN_MAX_SIZE bytes.
- * @param bw_hz_out       Receives the requested bandwidth in Hz.
- * @return 0 on success, -1 on parse error.
- */
+/** Is buf a CALL or ACCEPT of this protocol version? */
+bool arq_protocol_connect_version_ok(const uint8_t *buf, size_t buf_len);
+
+/** Is a CALL or ACCEPT addressed to callsign (bytes 2-3, all 16 bits)? */
+bool arq_protocol_connect_dst_matches(const uint8_t *buf, const char *callsign);
+
+/** Parse a CALL: session id, the caller's callsign, the bandwidth.
+ *  @return 0, or -1 (wrong version, bad bandwidth token, undecodable call). */
 int arq_protocol_parse_call(const uint8_t *buf, size_t buf_len,
-                              uint8_t *session_id_out,
-                              char *src_out, char *dst_out,
-                              int *bw_hz_out);
+                            uint8_t *session_id_out, char *caller_out,
+                            int *bw_hz_out);
 
-/**
- * Parse an ACCEPT frame; same layout as CALL.
- */
-int arq_protocol_parse_accept(const uint8_t *buf, size_t buf_len,
-                                uint8_t *session_id_out,
-                                char *src_out, char *dst_out,
-                                int *bw_hz_out);
+typedef struct {
+    uint8_t  session_id;
+    int      bw_hz;
+    uint16_t called_crc;     /* CRC16 of the callsign the caller called */
+    uint16_t nonce;          /* the callee's session nonce */
+    int      start_level;    /* 0..6, or ARQ_ACCEPT_LEVEL_CTL_DEAF */
+} arq_accept_t;
+
+/** Parse an ACCEPT.  @return 0, or -1 (wrong version, bad bandwidth token,
+ *  a reserved bit set, a start rung off the ladder). */
+int arq_protocol_parse_accept(const uint8_t *buf, size_t buf_len, arq_accept_t *out);
 
 /**
  * Build a compact DATAC16 CQ frame carrying source callsign and BW token.

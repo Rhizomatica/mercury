@@ -139,25 +139,30 @@ POLL / HANDOVER / STATUS, in DATAC16 (14 bytes):
 | 12 | handover round's frames (4), its id (4) |
 | 13 | highest block opened (4), data not yet cut (1) |
 
-The ACCEPT carries the caller's start rung in the top 3 bits of its DST CRC,
-which an ACCEPT checks on 13 bits alongside its 7-bit session id.  A carousel
-ACCEPT also sets bit 4 of the framer extension (`ARQ_CONNECT_EXT_CAROUSEL`).
-A station without the carousel reads that as an unknown bandwidth token and
-drops the frame.  A plain ACCEPT keeps its CRC whole.
+CALL and ACCEPT, protocol version 1: 14 bytes (a DATAC16 frame), padded to
+the frame on MFSK.
 
-A carousel CALL sets the last byte of its 10-byte SRC slot to
-`ARQ_CALL_CAROUSEL_MARK` (0xAB; 0xA7 was the carousel of 1.9.17 and 1.9.18,
-before the block check, 0xA8 the one before session-bound patterns, 0xA9
-the one before a single timing master (#351) and inline polls, and 0xAA the
-one with 24-byte pieces in every session).  The arithmetic code ends at its
-end-of-string symbol, and an older decoder never reads past it.  The caller
-marks only when the code leaves that byte free and the marked slot still
-decodes to the same callsign; the callee reads the marker only when the
-decoded callsign's code is shorter than the slot.
+| byte | CALL | ACCEPT |
+|---|---|---|
+| 0 | framer: type CALL (3 bits); extension: bandwidth token (2), protocol version (2, = 1), carousel (1) | the same |
+| 1 | 0, session id (7) | 1, session id (7) |
+| 2-3 | CRC16 of the callsign it calls | CRC16 of the caller's callsign |
+| 4-5 | the caller's callsign, arithmetic-coded, to byte 13 | CRC16 of the callsign the caller called (the callee's, primary or secondary) |
+| 6-7 | | the callee's session nonce |
+| 8 | | the caller's start rung (3 bits; 7: the callee hears it below the control mode, so the floor), 5 bits zero |
+| 9-13 | | zero |
 
-A carousel ACCEPT puts the callee's 16-bit session nonce in the last two
-bytes of its SRC slot, by the same rule (the code at most 8 bytes); with no
-room both ends use 0.
+- A station takes a CALL or ACCEPT only with version 1 and the carousel bit
+  set; a 1.9.x station reads that extension as an unknown bandwidth token
+  and drops the frame.  The versions do not connect to each other.
+- An ACCEPT with a reserved bit set is dropped.  The caller takes an ACCEPT
+  only if its session id, its own CRC and the called station's CRC all
+  match: 39 bits, and every one of them full.
+- The callee answers every repeat of a session's CALL with the same ACCEPT
+  (rung, nonce): the caller may have decoded any of them, so they must not
+  differ.  Both ends then cut the same pieces (spec R25).
+- The callee's callsign is not on the air in full: the caller knows whom it
+  called, and the CRC confirms it.
 
 Patterns are 16 MFSK symbols, 0.64 s: 32 tones, each symbol's tone the
 list's (8 tones, repeated) plus 13 per symbol, mod 32.  The detector counts

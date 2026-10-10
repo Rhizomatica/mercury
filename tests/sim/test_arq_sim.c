@@ -14,6 +14,7 @@
 
 #include "arq_fsm.h"
 #include "arq_protocol.h"
+#include "framer.h"
 #include "arq.h"
 #include "freedv_api.h"
 
@@ -86,56 +87,26 @@ void test_endpoint_tx_read_backlog(void)
  * Task 4: Frame translation tests
  * ====================================================================== */
 
-void test_translate_data_roundtrip(void)
-{
-    /* DATAC15 user bytes = payload_bytes - ARQ_FRAME_HDR_SIZE = 30 - 8 = 22.
-     * Build a properly-sized frame so frame_size==30 matches DATAC15 in the
-     * mode table and sim_translate_frame infers FREEDV_MODE_DATAC15. */
-    const size_t USER_BYTES = 22;
-    uint8_t payload[22];
-    for (int i = 0; i < (int)USER_BYTES; i++) payload[i] = (uint8_t)(0xA0 + i);
-
-    uint8_t frame[1280];
-    int fs = arq_protocol_build_data(frame, sizeof(frame),
-                                     /*session_id*/  0x42,
-                                     /*tx_seq*/      5,
-                                     /*rx_ack_seq*/  3,
-                                     /*flags*/       0,
-                                     /*snr_raw*/     0,
-                                     /*payload_valid*/ 0,   /* 0 = full frame */
-                                     payload, USER_BYTES);
-    TEST_ASSERT_TRUE(fs > 0);
-    TEST_ASSERT_EQUAL_INT(ARQ_FRAME_HDR_SIZE + (int)USER_BYTES, fs);
-
-    arq_event_t ev = {0};
-    bool ok = sim_translate_frame(frame, (size_t)fs, 12.0f, "B0BBB", &ev);
-    TEST_ASSERT_TRUE(ok);
-    TEST_ASSERT_EQUAL_INT(ARQ_EV_RX_DATA, ev.id);
-    TEST_ASSERT_EQUAL_UINT8(0x42, ev.session_id);
-    TEST_ASSERT_EQUAL_UINT8(5, ev.seq);
-    TEST_ASSERT_EQUAL_UINT8(3, ev.ack_seq);
-    TEST_ASSERT_EQUAL_INT((int)USER_BYTES, (int)ev.payload_len);
-    TEST_ASSERT_EQUAL_UINT8_ARRAY(payload, ev.payload, USER_BYTES);
-    TEST_ASSERT_EQUAL_INT(FREEDV_MODE_DATAC15, ev.mode);
-}
-
-void test_translate_ack(void)
+/* The one plain session frame is the DISCONNECT; a stop-and-wait DATA or
+ * ACK frame (the plane is gone) translates to nothing. */
+void test_translate_disconnect_only(void)
 {
     uint8_t frame[1280];
-    int fs = arq_protocol_build_ack(frame, sizeof(frame),
-                                     /*session_id*/  0x42,
-                                     /*rx_ack_seq*/  6,
-                                     /*flags*/       0,
-                                     /*snr_raw*/     0,
-                                     /*ack_delay*/   0);
+    int fs = arq_protocol_build_disconnect(frame, sizeof(frame), 0x42, 0);
     TEST_ASSERT_TRUE(fs > 0);
-
     arq_event_t ev = {0};
-    bool ok = sim_translate_frame(frame, (size_t)fs, 0.0f, "B0BBB", &ev);
-    TEST_ASSERT_TRUE(ok);
-    TEST_ASSERT_EQUAL_INT(ARQ_EV_RX_ACK, ev.id);
+    TEST_ASSERT_TRUE(sim_translate_frame(frame, (size_t)fs, 3.0f, "B0BBB", &ev));
+    TEST_ASSERT_EQUAL_INT(ARQ_EV_RX_DISCONNECT, ev.id);
     TEST_ASSERT_EQUAL_UINT8(0x42, ev.session_id);
-    TEST_ASSERT_EQUAL_UINT8(6, ev.ack_seq);
+
+    arq_frame_hdr_t hdr = { .packet_type = PACKET_TYPE_ARQ_DATA, .session_id = 0x42 };
+    memset(frame, 0, sizeof(frame));
+    TEST_ASSERT_EQUAL_INT(0, arq_protocol_encode_hdr(frame, sizeof(frame), &hdr));
+    TEST_ASSERT_FALSE(sim_translate_frame(frame, 30, 3.0f, "B0BBB", &ev));
+    hdr.packet_type = PACKET_TYPE_ARQ_CONTROL;
+    hdr.subtype = ARQ_SUBTYPE_ACK;
+    TEST_ASSERT_EQUAL_INT(0, arq_protocol_encode_hdr(frame, sizeof(frame), &hdr));
+    TEST_ASSERT_FALSE(sim_translate_frame(frame, ARQ_FRAME_HDR_SIZE, 3.0f, "B0BBB", &ev));
 }
 
 /* ======================================================================
@@ -327,101 +298,7 @@ void test_sim_bidirectional_progress_under_collisions(void)
     sim_destroy(s);
 }
 
-/* Bench run 12, end of the call, replayed with carrier sense on.  B asks for
- * the floor; A's host hangs up while A's TURN_ACK is on the air.  On air the
- * DISCONNECT keyed 42 ms after the TURN_ACK and B, holding the TURN_ACK,
- * keyed its first DATA 0.9 s later without listening: both were lost, and the
- * DISCONNECT retry clipped the DATA.  The teardown must now complete with
- * nothing keyed over anything. */
-void test_sim_disconnect_behind_turn_ack_does_not_collide(void)
-{
-    sim_channel_cfg_t chan = { .seed = 3, .per = 0.0, .guard_ms = 100 };
-    sim_t *s = make_connected(&chan);
-    TEST_ASSERT_NOT_NULL(s);
-    sim_set_half_duplex(s, true);
-    sim_set_carrier_sense(s, true, 400);
-    sim_run_until_idle(s, 30000);                 /* settle after connect */
 
-    uint8_t rec[64];
-    memset(rec, 0x5a, sizeof(rec));
-    sim_endpoint_queue_tx(sim_b(s), rec, sizeof(rec));
-    arq_event_t dready = { .id = ARQ_EV_APP_DATA_READY };
-    sim_inject(s, sim_b(s), &dready);
-
-    arq_session_t *a = sim_endpoint_session(sim_a(s));
-    for (int i = 0; i < 600 && !(a->dflow_state == ARQ_DFLOW_TURN_ACK_TX &&
-                                 sim_keyed(s, sim_a(s))); i++)
-        sim_run_until_idle(s, 50);
-    TEST_ASSERT_TRUE_MESSAGE(a->dflow_state == ARQ_DFLOW_TURN_ACK_TX &&
-                             sim_keyed(s, sim_a(s)),
-        "never got A keying a TURN_ACK");
-
-    int before = sim_collisions(s);
-    arq_event_t bye = { .id = ARQ_EV_APP_DISCONNECT };
-    sim_inject(s, sim_a(s), &bye);
-    sim_run_until_idle(s, 180000);
-
-    TEST_ASSERT_EQUAL_INT_MESSAGE(before, sim_collisions(s),
-        "the teardown behind the TURN_ACK collided");
-    TEST_ASSERT_NOT_EQUAL_INT(ARQ_CONN_CONNECTED, a->conn_state);
-    TEST_ASSERT_NOT_EQUAL_INT(ARQ_CONN_CONNECTED,
-                              sim_endpoint_session(sim_b(s))->conn_state);
-    sim_destroy(s);
-}
-
-/* Fix 2 on the whole path.  A is mid-transfer and its DATA says more is
- * queued; B's host then writes, and A's next DATA is lost.  B must not answer
- * with a TURN_REQ -- that is the frame that raced A's retransmission on air
- * (bench run 8) -- but wait for the retransmission and ask for the floor in
- * its ACK.  B's data must still get through, with nothing colliding. */
-void test_sim_irs_asks_in_its_ack_while_the_iss_has_more(void)
-{
-    sim_channel_cfg_t chan = { .seed = 5, .per = 0.0, .guard_ms = 100 };
-    sim_t *s = make_connected(&chan);
-    TEST_ASSERT_NOT_NULL(s);
-    sim_set_half_duplex(s, true);
-    sim_set_carrier_sense(s, true, 400);
-    sim_run_until_idle(s, 30000);
-
-    static uint8_t blob[6000];
-    for (size_t i = 0; i < sizeof(blob); i++) blob[i] = (uint8_t)(i * 13 + 1);
-    sim_endpoint_queue_tx(sim_a(s), blob, sizeof(blob));
-    arq_event_t dready = { .id = ARQ_EV_APP_DATA_READY };
-    sim_inject(s, sim_a(s), &dready);
-
-    arq_session_t *a = sim_endpoint_session(sim_a(s));
-    arq_session_t *b = sim_endpoint_session(sim_b(s));
-    /* Until B has taken an announcing DATA and ACKed it. */
-    for (int i = 0; i < 2000 && !(b->peer_more_data && b->dflow_state == ARQ_DFLOW_IDLE_IRS); i++)
-        sim_run_until_idle(s, 50);
-    TEST_ASSERT_TRUE_MESSAGE(b->peer_more_data, "A never announced more");
-
-    uint8_t rec[40];
-    memset(rec, 0x77, sizeof(rec));
-    sim_endpoint_queue_tx(sim_b(s), rec, sizeof(rec));
-    sim_inject(s, sim_b(s), &dready);
-
-    /* Lose A's next DATA. */
-    sim_set_per(s, 1.0);
-    for (int i = 0; i < 2000 && !(a->dflow_state == ARQ_DFLOW_WAIT_ACK); i++)
-        sim_run_until_idle(s, 50);
-    sim_set_per(s, 0.0);
-
-    bool b_turn_req = false;
-    for (int i = 0; i < 6000; i++)
-    {
-        sim_run_until_idle(s, 50);
-        if (b->dflow_state == ARQ_DFLOW_TURN_REQ_TX)
-            b_turn_req = true;
-    }
-    static uint8_t got[8192];
-    TEST_ASSERT_EQUAL_size_t_MESSAGE(sizeof(rec), sim_endpoint_delivered(sim_a(s), got, sizeof(got)),
-        "B's data never reached A");
-    TEST_ASSERT_EQUAL_size_t(sizeof(blob), sim_endpoint_delivered(sim_b(s), got, sizeof(got)));
-    TEST_ASSERT_FALSE_MESSAGE(b_turn_req, "B competed with a TURN_REQ");
-    TEST_ASSERT_EQUAL_INT(0, sim_collisions(s));
-    sim_destroy(s);
-}
 
 void test_sim_transfer_lossy_per20(void)
 {
@@ -765,10 +642,7 @@ void test_sim_fuzz_fading(void)
  * Unity main
  * ====================================================================== */
 
-/* These cover the stop-and-wait data plane, kept selectable for A/B until
- * the carousel has been validated on air; test_carousel_sim covers the
- * carousel through the same FSM. */
-void setUp(void)    { arq_fsm_set_carousel(false); /* each test creates its own sim_t */ }
+void setUp(void)    { /* each test creates its own sim_t */ }
 void tearDown(void) { /* each test destroys its own sim_t */ }
 
 int main(void)
@@ -783,8 +657,7 @@ int main(void)
     RUN_TEST(test_endpoint_tx_read_backlog);
 
     /* Task 4: frame translation */
-    RUN_TEST(test_translate_data_roundtrip);
-    RUN_TEST(test_translate_ack);
+    RUN_TEST(test_translate_disconnect_only);
 
     /* Task 5: connect handshake */
     RUN_TEST(test_sim_connect_handshake);
@@ -795,8 +668,6 @@ int main(void)
     /* Task 7: scenario tests */
     RUN_TEST(test_sim_transfer_clean);
     RUN_TEST(test_sim_bidirectional_progress_under_collisions);
-    RUN_TEST(test_sim_disconnect_behind_turn_ack_does_not_collide);
-    RUN_TEST(test_sim_irs_asks_in_its_ack_while_the_iss_has_more);
     RUN_TEST(test_sim_transfer_lossy_per20);
     RUN_TEST(test_sim_fade_cliff_downgrades);
     RUN_TEST(test_sim_peer_loss_disconnects);

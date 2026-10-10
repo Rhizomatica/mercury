@@ -84,18 +84,28 @@ void process_monitor_frame(const uint8_t *data, size_t nbytes_out,
     case PACKET_TYPE_ARQ_CALL:
     {
         bool is_accept = (data[ARQ_CONNECT_SESSION_IDX] & ARQ_CONNECT_ACCEPT_FLAG) != 0;
-        char src[CALLSIGN_MAX_SIZE] = {0};
-        char dst[CALLSIGN_MAX_SIZE] = {0};   /* not recoverable: only its CRC is on the wire */
-        uint8_t sid = 0;
-        int bw = 0;
-        int rc = is_accept
-                   ? arq_protocol_parse_accept(data, payload_nbytes, &sid, src, dst, &bw)
-                   : arq_protocol_parse_call(data, payload_nbytes, &sid, src, dst, &bw);
-        if (rc == 0)
-            snprintf(detail, sizeof(detail), "FROM=%s BW=%d SID=%u",
-                     src, bw, (unsigned)sid);
+        if (!arq_protocol_connect_version_ok(data, payload_nbytes))
+            snprintf(detail, sizeof(detail), "another protocol version (Mercury 1.9.x?)");
+        else if (is_accept)
+        {
+            /* An ACCEPT names neither callsign in full: both are CRCs. */
+            arq_accept_t acc;
+            if (arq_protocol_parse_accept(data, payload_nbytes, &acc) == 0)
+                snprintf(detail, sizeof(detail), "BW=%d SID=%u START=%d",
+                         acc.bw_hz, (unsigned)acc.session_id, acc.start_level);
+            else
+                snprintf(detail, sizeof(detail), "unparseable");
+        }
         else
-            snprintf(detail, sizeof(detail), "FROM=?");
+        {
+            char src[CALLSIGN_MAX_SIZE] = {0};
+            uint8_t sid = 0;
+            int bw = 0;
+            if (arq_protocol_parse_call(data, payload_nbytes, &sid, src, &bw) == 0)
+                snprintf(detail, sizeof(detail), "FROM=%s BW=%d SID=%u", src, bw, (unsigned)sid);
+            else
+                snprintf(detail, sizeof(detail), "FROM=?");
+        }
         tnc_send_monitor(mode_name, is_accept ? "ACCEPT" : "CALL", detail, snr_est);
         break;
     }

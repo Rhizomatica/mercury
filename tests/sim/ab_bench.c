@@ -57,8 +57,6 @@ int main(int argc, char **argv)
     bool bidir = argc > 3 && strcmp(argv[3], "bidir") == 0;
 
     sim_channel_cfg_t chan = { .seed = seed, .per = 0.02, .guard_ms = 150 };
-    /* CAROUSEL=0: the stop-and-wait data plane; default the carousel. */
-    arq_fsm_set_carousel(!(getenv("CAROUSEL") && getenv("CAROUSEL")[0] == '0'));
     sim_t *s = sim_create(&chan, "A0AAA", "B0BBB");
     if (!s) { fprintf(stderr, "sim_create failed\n"); return 1; }
 

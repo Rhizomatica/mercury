@@ -473,7 +473,8 @@ uint16_t arq_protocol_callsign_crc16(const char *callsign)
     return freedv_gen_crc16((unsigned char *)upper, n);
 }
 
-/* CALL/ACCEPT payload layout (frame bytes 2-13, i.e. 12 payload bytes):
+/* CALL payload layout (frame bytes 2-13, i.e. 12 payload bytes; the ACCEPT's
+ * is in arq_protocol.h):
  *   Frame bytes 2-3  (payload [0..1]):  CRC16-CCITT of DST callsign, LE  (ARQ_CONNECT_DST_CRC_SIZE)
  *   Frame bytes 4-13 (payload [2..11]): arithmetic_encode(SRC only)       (ARQ_CONNECT_SRC_MAX_ENCODED = 10)
  *
@@ -583,189 +584,117 @@ static int decode_callsign_only_payload(const uint8_t *in, size_t in_len, char *
     return 0;
 }
 
-static int build_call_accept(uint8_t *buf, size_t buf_len, bool is_accept,
-                              uint8_t session_id,
-                              const char *src, const char *dst,
-                              int bw_hz)
+static uint8_t connect_ext(uint8_t bw_token)
 {
-    uint8_t encoded[ARQ_CONNECT_MAX_ENCODED];
-    int enc_len;
-    uint8_t bw_token;
+    return (uint8_t)(bw_token | (ARQ_CONNECT_VERSION << ARQ_CONNECT_EXT_VERSION_SHIFT) |
+                     ARQ_CONNECT_EXT_CAROUSEL);
+}
 
-    if (!buf || !src || !dst || buf_len < ARQ_CONTROL_FRAME_SIZE)
-        return -1;
+static void put_crc16(uint8_t *p, uint16_t crc) { p[0] = (uint8_t)crc; p[1] = (uint8_t)(crc >> 8); }
+static uint16_t get_crc16(const uint8_t *p) { return (uint16_t)(p[0] | p[1] << 8); }
 
-    bw_token = arq_protocol_bw_token_from_hz(bw_hz);
-    if (bw_token == ARQ_BW_TOKEN_NONE)
-        return -1;
+bool arq_protocol_connect_version_ok(const uint8_t *buf, size_t buf_len)
+{
+    if (!buf || buf_len < ARQ_CONTROL_FRAME_SIZE ||
+        frame_header_packet_type(buf[0]) != PACKET_TYPE_ARQ_CALL)
+        return false;
+    uint8_t ext = frame_header_extension(buf[0]);
+    return (ext & ARQ_CONNECT_EXT_CAROUSEL) &&
+           ((ext & ARQ_CONNECT_EXT_VERSION_MASK) >> ARQ_CONNECT_EXT_VERSION_SHIFT) == ARQ_CONNECT_VERSION;
+}
 
-    enc_len = encode_callsign_payload(src, dst, encoded, sizeof(encoded));
-    if (enc_len <= 0)
-        return -1;
-
-    memset(buf, 0, ARQ_CONTROL_FRAME_SIZE);
-    buf[ARQ_CONNECT_SESSION_IDX] =
-        (uint8_t)((session_id & ARQ_CONNECT_SESSION_MASK) |
-                  (is_accept ? ARQ_CONNECT_ACCEPT_FLAG : 0));
-    memcpy(buf + ARQ_CONNECT_PAYLOAD_IDX, encoded, (size_t)enc_len);
-    write_frame_header(buf, PACKET_TYPE_ARQ_CALL, bw_token);
-    return ARQ_CONTROL_FRAME_SIZE;
+static int connect_bw_hz(const uint8_t *buf)
+{
+    return arq_protocol_bw_hz_from_token(frame_header_extension(buf[0]) & ARQ_CONNECT_EXT_BW_MASK);
 }
 
 int arq_protocol_build_call(uint8_t *buf, size_t buf_len,
-                             uint8_t session_id,
-                             const char *src, const char *dst,
-                             int bw_hz)
+                            uint8_t session_id,
+                            const char *caller, const char *called,
+                            int bw_hz)
 {
-    return build_call_accept(buf, buf_len, false, session_id, src, dst, bw_hz);
+    uint8_t encoded[ARQ_CONNECT_MAX_ENCODED];
+    if (!buf || !caller || !called || buf_len < ARQ_CONTROL_FRAME_SIZE)
+        return -1;
+    uint8_t bw_token = arq_protocol_bw_token_from_hz(bw_hz);
+    if (bw_token == ARQ_BW_TOKEN_NONE)
+        return -1;
+    /* [CRC16 of called][caller's callsign, arithmetic-coded] */
+    int enc_len = encode_callsign_payload(caller, called, encoded, sizeof(encoded));
+    if (enc_len <= 0)
+        return -1;
+    memset(buf, 0, ARQ_CONTROL_FRAME_SIZE);
+    buf[ARQ_CONNECT_SESSION_IDX] = (uint8_t)(session_id & ARQ_CONNECT_SESSION_MASK);
+    memcpy(buf + ARQ_CONNECT_PAYLOAD_IDX, encoded, (size_t)enc_len);
+    write_frame_header(buf, PACKET_TYPE_ARQ_CALL, connect_ext(bw_token));
+    return ARQ_CONTROL_FRAME_SIZE;
 }
 
 int arq_protocol_build_accept(uint8_t *buf, size_t buf_len,
-                               uint8_t session_id,
-                               const char *src, const char *dst,
-                               int bw_hz, int start_level)
+                              uint8_t session_id,
+                              const char *called, const char *caller,
+                              int bw_hz, int start_level, uint16_t nonce)
 {
-    int n = build_call_accept(buf, buf_len, true, session_id, src, dst, bw_hz);
-    if (n > 0 && start_level >= 0)
-    {
-        buf[ARQ_CONNECT_PAYLOAD_IDX + 1] =
-            (uint8_t)((buf[ARQ_CONNECT_PAYLOAD_IDX + 1] & 0x1F) | ((start_level & 7) << 5));
-        buf[0] |= ARQ_CONNECT_EXT_CAROUSEL;
-    }
-    return n;
-}
-
-int arq_protocol_accept_start_level(const uint8_t *buf)
-{
-    return (buf[ARQ_CONNECT_PAYLOAD_IDX + 1] >> 5) & 7;
-}
-
-bool arq_protocol_accept_is_carousel(const uint8_t *buf)
-{
-    return (frame_header_extension(buf[0]) & ARQ_CONNECT_EXT_CAROUSEL) != 0;
-}
-
-#define CALL_MARK_IDX (ARQ_CONTROL_FRAME_SIZE - 1)   /* the SRC slot's last byte */
-
-/* Bytes the arithmetic code of src takes, or -1. */
-static int src_code_len(const char *src, char *upper, size_t upper_cap)
-{
-    size_t n = 0;
-    for (; src[n] && n < upper_cap - 1; n++)
-        upper[n] = (char)(src[n] >= 'a' && src[n] <= 'z' ? src[n] - ('a' - 'A') : src[n]);
-    upper[n] = 0;
-    uint8_t tmp[4096];
-    init_model();
-    return arithmetic_encode(upper, tmp);
-}
-
-bool arq_protocol_mark_call_carousel(uint8_t *buf, const char *src)
-{
-    char upper[CALLSIGN_MAX_SIZE];
-    int len = src_code_len(src, upper, sizeof(upper));
-    if (len <= 0 || len > ARQ_CONNECT_SRC_MAX_ENCODED - 1)
-        return false;
-    uint8_t was = buf[CALL_MARK_IDX];
-    buf[CALL_MARK_IDX] = ARQ_CALL_CAROUSEL_MARK;
-    uint8_t slot[ARQ_CONNECT_SRC_MAX_ENCODED];
-    memcpy(slot, buf + ARQ_CONNECT_PAYLOAD_IDX + ARQ_CONNECT_DST_CRC_SIZE, sizeof(slot));
-    char out[CALLSIGN_MAX_SIZE] = {0};
-    init_model();
-    if (arithmetic_decode(slot, (int)sizeof(slot), out, (int)sizeof(out)) < 0 || strcmp(out, upper) != 0)
-    {
-        buf[CALL_MARK_IDX] = was;
-        return false;
-    }
-    return true;
-}
-
-bool arq_protocol_call_is_carousel(const uint8_t *buf, const char *src)
-{
-    if (buf[CALL_MARK_IDX] != ARQ_CALL_CAROUSEL_MARK)
-        return false;
-    /* An old caller's code may run into the last byte: then it is the code. */
-    char upper[CALLSIGN_MAX_SIZE];
-    int len = src_code_len(src, upper, sizeof(upper));
-    return len > 0 && len <= ARQ_CONNECT_SRC_MAX_ENCODED - 1;
-}
-
-#define ACCEPT_NONCE_IDX (ARQ_CONTROL_FRAME_SIZE - 2)   /* the SRC slot's last two bytes */
-
-bool arq_protocol_set_accept_nonce(uint8_t *buf, const char *src, uint16_t nonce)
-{
-    char upper[CALLSIGN_MAX_SIZE];
-    int len = src_code_len(src, upper, sizeof(upper));
-    if (len <= 0 || len > ARQ_CONNECT_SRC_MAX_ENCODED - 2)
-        return false;
-    uint8_t was[2] = { buf[ACCEPT_NONCE_IDX], buf[ACCEPT_NONCE_IDX + 1] };
-    buf[ACCEPT_NONCE_IDX] = (uint8_t)nonce;
-    buf[ACCEPT_NONCE_IDX + 1] = (uint8_t)(nonce >> 8);
-    uint8_t slot[ARQ_CONNECT_SRC_MAX_ENCODED];
-    memcpy(slot, buf + ARQ_CONNECT_PAYLOAD_IDX + ARQ_CONNECT_DST_CRC_SIZE, sizeof(slot));
-    char out[CALLSIGN_MAX_SIZE] = {0};
-    init_model();
-    if (arithmetic_decode(slot, (int)sizeof(slot), out, (int)sizeof(out)) < 0 || strcmp(out, upper) != 0)
-    {
-        buf[ACCEPT_NONCE_IDX] = was[0];
-        buf[ACCEPT_NONCE_IDX + 1] = was[1];
-        return false;
-    }
-    return true;
-}
-
-uint16_t arq_protocol_accept_nonce(const uint8_t *buf, const char *src)
-{
-    char upper[CALLSIGN_MAX_SIZE];
-    int len = src_code_len(src, upper, sizeof(upper));
-    if (len <= 0 || len > ARQ_CONNECT_SRC_MAX_ENCODED - 2)
-        return 0;
-    return (uint16_t)(buf[ACCEPT_NONCE_IDX] | buf[ACCEPT_NONCE_IDX + 1] << 8);
-}
-
-bool arq_protocol_connect_dst_matches(const uint8_t *buf, bool is_accept, const char *callsign)
-{
-    uint16_t frame_crc = (uint16_t)buf[ARQ_CONNECT_PAYLOAD_IDX]
-                       | ((uint16_t)buf[ARQ_CONNECT_PAYLOAD_IDX + 1] << 8);
-    uint16_t mask = is_accept ? 0x1FFF : 0xFFFF;
-    return (frame_crc & mask) == (arq_protocol_callsign_crc16(callsign) & mask);
-}
-
-static int parse_call_accept(const uint8_t *buf, size_t buf_len,
-                               uint8_t *session_id_out,
-                               char *src_out, char *dst_out,
-                               int *bw_hz_out)
-{
-    if (!buf || buf_len < ARQ_CONTROL_FRAME_SIZE ||
-        !session_id_out || !src_out || !dst_out || !bw_hz_out)
+    if (!buf || !called || !caller || buf_len < ARQ_CONTROL_FRAME_SIZE ||
+        start_level < 0 || start_level > ARQ_ACCEPT_LEVEL_CTL_DEAF)
         return -1;
-
-    *bw_hz_out = arq_protocol_bw_hz_from_token(frame_header_extension(buf[0]) &
-                                               (uint8_t)~ARQ_CONNECT_EXT_CAROUSEL);
-    if (*bw_hz_out == 0)
+    uint8_t bw_token = arq_protocol_bw_token_from_hz(bw_hz);
+    if (bw_token == ARQ_BW_TOKEN_NONE)
         return -1;
+    memset(buf, 0, ARQ_CONTROL_FRAME_SIZE);
+    buf[ARQ_CONNECT_SESSION_IDX] = (uint8_t)((session_id & ARQ_CONNECT_SESSION_MASK) |
+                                             ARQ_CONNECT_ACCEPT_FLAG);
+    put_crc16(buf + ARQ_CONNECT_PAYLOAD_IDX, arq_protocol_callsign_crc16(caller));
+    put_crc16(buf + ARQ_ACCEPT_CALLED_CRC_IDX, arq_protocol_callsign_crc16(called));
+    put_crc16(buf + ARQ_ACCEPT_NONCE_IDX, nonce);
+    buf[ARQ_ACCEPT_LEVEL_IDX] = (uint8_t)start_level;
+    write_frame_header(buf, PACKET_TYPE_ARQ_CALL, connect_ext(bw_token));
+    return ARQ_CONTROL_FRAME_SIZE;
+}
 
-    *session_id_out = buf[ARQ_CONNECT_SESSION_IDX] & ARQ_CONNECT_SESSION_MASK;
-    return decode_callsign_payload(buf + ARQ_CONNECT_PAYLOAD_IDX,
-                                   ARQ_CONNECT_MAX_ENCODED,
-                                   src_out, dst_out);
+bool arq_protocol_connect_dst_matches(const uint8_t *buf, const char *callsign)
+{
+    return get_crc16(buf + ARQ_CONNECT_PAYLOAD_IDX) == arq_protocol_callsign_crc16(callsign);
 }
 
 int arq_protocol_parse_call(const uint8_t *buf, size_t buf_len,
-                              uint8_t *session_id_out,
-                              char *src_out, char *dst_out,
-                              int *bw_hz_out)
+                            uint8_t *session_id_out, char *caller_out,
+                            int *bw_hz_out)
 {
-    return parse_call_accept(buf, buf_len, session_id_out, src_out, dst_out,
-                             bw_hz_out);
+    char unused[CALLSIGN_MAX_SIZE];
+    if (!session_id_out || !caller_out || !bw_hz_out ||
+        !arq_protocol_connect_version_ok(buf, buf_len) ||
+        (buf[ARQ_CONNECT_SESSION_IDX] & ARQ_CONNECT_ACCEPT_FLAG))
+        return -1;
+    *bw_hz_out = connect_bw_hz(buf);
+    if (*bw_hz_out == 0)
+        return -1;
+    *session_id_out = buf[ARQ_CONNECT_SESSION_IDX] & ARQ_CONNECT_SESSION_MASK;
+    return decode_callsign_payload(buf + ARQ_CONNECT_PAYLOAD_IDX, ARQ_CONNECT_MAX_ENCODED,
+                                   caller_out, unused);
 }
 
-int arq_protocol_parse_accept(const uint8_t *buf, size_t buf_len,
-                                uint8_t *session_id_out,
-                                char *src_out, char *dst_out,
-                                int *bw_hz_out)
+int arq_protocol_parse_accept(const uint8_t *buf, size_t buf_len, arq_accept_t *out)
 {
-    return parse_call_accept(buf, buf_len, session_id_out, src_out, dst_out,
-                             bw_hz_out);
+    if (!out || !arq_protocol_connect_version_ok(buf, buf_len) ||
+        !(buf[ARQ_CONNECT_SESSION_IDX] & ARQ_CONNECT_ACCEPT_FLAG))
+        return -1;
+    /* The rung is 3 bits, the rest of byte 8 and bytes 9-13 are zero: a
+     * frame that passed its CRC with any of them set is not an ACCEPT. */
+    if (buf[ARQ_ACCEPT_LEVEL_IDX] > ARQ_ACCEPT_LEVEL_CTL_DEAF)
+        return -1;
+    for (int i = ARQ_ACCEPT_LEVEL_IDX + 1; i < ARQ_CONTROL_FRAME_SIZE; i++)
+        if (buf[i])
+            return -1;
+    memset(out, 0, sizeof(*out));
+    out->bw_hz = connect_bw_hz(buf);
+    if (out->bw_hz == 0)
+        return -1;
+    out->session_id  = buf[ARQ_CONNECT_SESSION_IDX] & ARQ_CONNECT_SESSION_MASK;
+    out->called_crc  = get_crc16(buf + ARQ_ACCEPT_CALLED_CRC_IDX);
+    out->nonce       = get_crc16(buf + ARQ_ACCEPT_NONCE_IDX);
+    out->start_level = buf[ARQ_ACCEPT_LEVEL_IDX];
+    return 0;
 }
 
 int arq_protocol_build_cq(uint8_t *buf, size_t buf_len,
