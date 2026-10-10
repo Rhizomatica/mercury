@@ -1,0 +1,49 @@
+set,arm,No_dBHz,payload_kb,seed,result,wall_s,snr_ab,snr_ba,vtime_s,keys_a,keys_b,iters
+defaults-1918,new,-16.82,4,1,pass,71,2.0,2.7,42.77,5,4,DATAC3: 1 decodes  mean 1.0 iters  0 deadline hits  0 parity fails  budget 350 ms  cap 100
+defaults-1918,new,-16.82,4,2,pass,71,2.0,2.7,42.7,5,4,DATAC3: 1 decodes  mean 2.0 iters  0 deadline hits  0 parity fails  budget 350 ms  cap 100
+defaults-1918,new,-16.82,4,3,pass,71,2.0,2.6,42.49,5,4,DATAC3: 1 decodes  mean 2.0 iters  0 deadline hits  0 parity fails  budget 350 ms  cap 100
+defaults-1918,new,-16.82,4,4,pass,70,2.0,2.7,42.47,5,4,DATAC3: 1 decodes  mean 2.0 iters  0 deadline hits  0 parity fails  budget 350 ms  cap 100
+defaults-1918,new,-16.82,4,5,pass,71,2.0,2.7,42.77,5,4,DATAC3: 1 decodes  mean 2.0 iters  0 deadline hits  0 parity fails  budget 350 ms  cap 100
+defaults-1918,new,-16.82,4,6,pass,70,2.0,2.7,42.49,5,4,DATAC3: 1 decodes  mean 2.0 iters  0 deadline hits  0 parity fails  budget 350 ms  cap 100
+defaults-1918,new,-16.82,4,7,pass,70,2.0,2.7,42.48,5,4,DATAC3: 1 decodes  mean 1.0 iters  0 deadline hits  0 parity fails  budget 350 ms  cap 100
+defaults-1918,new,-16.82,4,8,pass,71,2.0,2.6,42.49,5,4,DATAC3: 1 decodes  mean 1.0 iters  0 deadline hits  0 parity fails  budget 350 ms  cap 100
+defaults-1918,trunk,-16.82,4,1,pass,70,2.0,2.7,42.5,5,4,
+defaults-1918,trunk,-16.82,4,2,pass,71,2.0,2.6,42.51,5,4,
+defaults-1918,trunk,-16.82,4,3,pass,71,2.0,2.6,42.7,5,4,
+defaults-1918,trunk,-16.82,4,4,pass,71,2.0,2.7,42.77,5,4,
+defaults-1918,trunk,-16.82,4,5,pass,70,2.0,2.7,42.6,5,4,
+defaults-1918,trunk,-16.82,4,6,pass,70,2.0,2.6,42.57,5,4,
+defaults-1918,trunk,-16.82,4,7,pass,70,2.0,2.6,42.67,5,4,
+defaults-1918,trunk,-16.82,4,8,pass,71,2.0,2.6,42.78,5,4,
+defaults-1918,new,-15.82,4,1,pass,70,1.0,1.7,42.49,5,4,DATAC3: 1 decodes  mean 1.0 iters  0 deadline hits  0 parity fails  budget 350 ms  cap 100
+defaults-1918,new,-15.82,4,2,pass,71,1.0,1.7,42.8,5,4,DATAC3: 1 decodes  mean 2.0 iters  0 deadline hits  0 parity fails  budget 350 ms  cap 100
+defaults-1918,new,-15.82,4,3,pass,70,1.0,1.6,42.69,5,4,DATAC3: 1 decodes  mean 2.0 iters  0 deadline hits  0 parity fails  budget 350 ms  cap 100
+defaults-1918,new,-15.82,4,4,pass,71,1.0,1.7,42.73,5,4,DATAC3: 1 decodes  mean 2.0 iters  0 deadline hits  0 parity fails  budget 350 ms  cap 100
+defaults-1918,new,-15.82,4,5,pass,183,1.1,1.9,161.09,10,8,DATAC3: 38 decodes  mean 2.1 iters  0 deadline hits  0 parity fails  budget 350 ms  cap 100
+defaults-1918,new,-15.82,4,6,pass,70,1.0,1.6,42.58,5,4,DATAC3: 1 decodes  mean 2.0 iters  0 deadline hits  0 parity fails  budget 350 ms  cap 100
+defaults-1918,new,-15.82,4,7,pass,70,1.0,1.6,42.6,5,4,DATAC3: 1 decodes  mean 2.0 iters  0 deadline hits  0 parity fails  budget 350 ms  cap 100
+defaults-1918,new,-15.82,4,8,pass,70,1.0,1.6,42.5,5,4,DATAC3: 1 decodes  mean 2.0 iters  0 deadline hits  0 parity fails  budget 350 ms  cap 100
+defaults-1918,trunk,-15.82,4,1,pass,71,1.0,1.6,42.49,5,4,
+defaults-1918,trunk,-15.82,4,2,pass,78,1.0,1.7,54.63,6,5,
+defaults-1918,trunk,-15.82,4,3,pass,70,1.0,1.7,42.69,5,4,
+defaults-1918,trunk,-15.82,4,4,pass,78,1.0,1.7,54.53,6,5,
+defaults-1918,trunk,-15.82,4,5,pass,183,1.1,1.9,161.04,10,8,
+defaults-1918,trunk,-15.82,4,6,pass,81,1.0,1.6,75.29,6,5,
+defaults-1918,trunk,-15.82,4,7,pass,71,1.0,1.6,42.67,5,4,
+defaults-1918,trunk,-15.82,4,8,pass,81,1.0,1.7,75.69,6,5,
+defaults-1918,new,-14.82,4,1,pass,165,0.2,0.9,139.49,8,7,DATAC3: 37 decodes  mean 2.4 iters  0 deadline hits  0 parity fails  budget 350 ms  cap 100
+defaults-1918,new,-14.82,4,2,pass,165,0.2,0.9,139.69,8,7,DATAC3: 37 decodes  mean 2.5 iters  0 deadline hits  0 parity fails  budget 350 ms  cap 100
+defaults-1918,new,-14.82,4,3,pass,201,0.2,0.8,196.77,12,11,DATAC15: 1 decodes  mean 1.0 iters  0 deadline hits  0 parity fails  budget 350 ms  cap 100
+defaults-1918,new,-14.82,4,4,pass,203,0.1,0.8,187.88,12,9,DATAC3: 37 decodes  mean 2.3 iters  0 deadline hits  0 parity fails  budget 350 ms  cap 100
+defaults-1918,new,-14.82,4,5,pass,165,0.1,0.9,139.39,8,7,DATAC3: 37 decodes  mean 2.5 iters  0 deadline hits  0 parity fails  budget 350 ms  cap 100
+defaults-1918,new,-14.82,4,6,pass,165,0.2,0.9,139.53,8,7,DATAC3: 37 decodes  mean 2.4 iters  0 deadline hits  0 parity fails  budget 350 ms  cap 100
+defaults-1918,new,-14.82,4,7,pass,165,0.2,0.9,139.68,8,7,DATAC3: 37 decodes  mean 2.5 iters  0 deadline hits  0 parity fails  budget 350 ms  cap 100
+defaults-1918,new,-14.82,4,8,pass,165,0.2,0.9,139.87,8,7,DATAC3: 37 decodes  mean 2.6 iters  0 deadline hits  0 parity fails  budget 350 ms  cap 100
+defaults-1918,trunk,-14.82,4,1,pass,165,0.2,0.9,139.43,8,7,
+defaults-1918,trunk,-14.82,4,2,pass,165,0.2,0.9,139.49,8,7,
+defaults-1918,trunk,-14.82,4,3,pass,201,0.2,0.8,196.75,12,11,
+defaults-1918,trunk,-14.82,4,4,pass,165,0.2,0.9,139.49,8,7,
+defaults-1918,trunk,-14.82,4,5,pass,165,0.1,0.9,139.77,8,7,
+defaults-1918,trunk,-14.82,4,6,pass,230,0.1,0.7,208.32,14,11,
+defaults-1918,trunk,-14.82,4,7,pass,165,0.2,0.9,139.61,8,7,
+defaults-1918,trunk,-14.82,4,8,pass,165,0.1,0.9,139.76,8,7,
