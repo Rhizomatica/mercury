@@ -277,11 +277,19 @@ void freedv_ofdm_data_open(struct freedv *f, struct freedv_advanced *adv) {
   f->harq_llr_nbits = 0;
   f->harq_enable = 0;
   f->ldpc_budget_ms = 0.0f;
-  f->llr_calibrated = 1;
-  /* test knob (A/B against the pre-change scale): LDPC_LLR_CALIBRATED=0 */
+  /* LLR scale: the mode constant EsNodB, as shipped.  Scaling from the
+   * receiver's Es/No estimate instead is right in principle and measured
+   * 0.6-1.5 dB at the code level with the TRUE Es/No, but the estimate
+   * behind freedv_snr_calib() is a display calibration that extrapolates
+   * below its first knot, and at the 16200-bit modes' cliffs it reads
+   * several dB low: under-confident LLRs cost DATAC17 and QAM16C2 about 1 dB
+   * in fading end to end (review of PR #359, reproduced).  Off by default
+   * until the estimate -> Es/No mapping is validated per mode;
+   * LDPC_LLR_CALIBRATED=1 or freedv_set_llr_calibrated() enables it. */
+  f->llr_calibrated = 0;
   {
     const char *e = getenv("LDPC_LLR_CALIBRATED");
-    if (e && e[0] == '0') f->llr_calibrated = 0;
+    if (e && e[0] == '1') f->llr_calibrated = 1;
   }
   f->llr_esno_db_used = f->ofdm->EsNodB;
   f->harq_valid = 0;
@@ -636,12 +644,13 @@ int freedv_comp_short_rx_ofdm(struct freedv *f, void *demod_in_8kHz,
       int codeword_len = ldpc->CodeLength > Npayloadbitsperpacket
                              ? ldpc->CodeLength : Npayloadbitsperpacket;
       uint8_t decoded_codeword[codeword_len];
-      /* LLR scale.  The mode constant EsNodB (3 dB, 10 dB for the 16200-bit
-       * modes) was right at one operating point only; the sum-product decoder
-       * is scale-sensitive and the measured loss was 0.15-0.6 dB (tests/matlab
-       * TestLdpc).  Use the receiver's Es/No estimate, passed through the
-       * per-mode SNR calibration above and mapped back from SNR3k to Es/No by
-       * subtracting the bandwidth + cyclic-prefix term, clamped to a sane range. */
+      /* LLR scale.  Default: the mode constant EsNodB (3 dB, 10 dB for the
+       * 16200-bit modes), as shipped.  Opt-in (llr_calibrated): the receiver's
+       * Es/No estimate, passed through the per-mode SNR calibration and mapped
+       * back from SNR3k to Es/No by subtracting the bandwidth + cyclic-prefix
+       * term, clamped to a sane range.  The sum-product decoder is scale
+       * sensitive, so this is worth 0.6-1.5 dB with the TRUE Es/No, and costs
+       * about 1 dB when the estimate reads low (see freedv_700_open_data). */
       float EsNo_used = EsNo;
       if (f->llr_calibrated) {
         float raw_esno_db = (ofdm->bps == 4)

@@ -223,8 +223,9 @@ struct freedv {
   int harq_ncopies; /* number of copies summed into harq_llr (for LLR averaging) */
   float ldpc_budget_ms; /* per-decode wall-clock budget for the LDPC decoder, 0 = none */
   int   ldpc_cap_nobudget; /* iteration cap when no budget is set (10 on __EMBEDDED__, else the table's) */
-  int   llr_calibrated;   /* 1: LLR scale from the per-mode calibrated SNR estimate;
-                             0: the fixed EsNodB mode constant (legacy) */
+  int   llr_calibrated;   /* 0 (default): LLR scale is the fixed EsNodB mode constant;
+                             1: from the per-mode calibrated SNR estimate (opt-in:
+                             LDPC_LLR_CALIBRATED=1 / freedv_set_llr_calibrated) */
   float llr_esno_db_used; /* Es/No (dB) used to scale the last packet's LLRs */
 
   /* Data-frame CRC16 seed (Mercury): a sender XORs its CRC with the seed, so

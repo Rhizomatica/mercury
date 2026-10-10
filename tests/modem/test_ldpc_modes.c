@@ -2,8 +2,10 @@
  * runs under the AUTO default, and how the iteration cap and the per-decode
  * budget interact.  Review items on PR #359: voice/2020 modes must keep a
  * legacy-equivalent result; on __EMBEDDED__ the 10-iteration cap must stay
- * unless a deadline replaces it. */
+ * unless a deadline replaces it; the LLR scale stays the shipped constant
+ * unless enabled; LDPC_ALG is read once. */
 #include "unity.h"
+#include <stdlib.h>
 #include "freedv_api.h"
 #include "freedv_api_internal.h"
 #include "mpdecode_core.h"
@@ -42,6 +44,45 @@ void test_data_mode_follows_the_policy_table(void)
     freedv_close(f);
 }
 
+/* Review of #359 (blocker): the LLR scale must stay the shipped mode constant
+ * until the Es/No estimate behind the calibration is validated per mode.
+ * Default off; LDPC_LLR_CALIBRATED=1 or the API enables it. */
+void test_llr_scale_is_the_shipped_constant_unless_enabled(void)
+{
+    unsetenv("LDPC_LLR_CALIBRATED");
+    struct freedv *f = freedv_open(FREEDV_MODE_DATAC17);
+    TEST_ASSERT_NOT_NULL(f);
+    TEST_ASSERT_EQUAL_INT(0, f->llr_calibrated);
+    freedv_set_llr_calibrated(f, 1);
+    TEST_ASSERT_EQUAL_INT(1, f->llr_calibrated);
+    freedv_close(f);
+    setenv("LDPC_LLR_CALIBRATED", "1", 1);
+    f = freedv_open(FREEDV_MODE_DATAC17);
+    TEST_ASSERT_NOT_NULL(f);
+    TEST_ASSERT_EQUAL_INT(1, f->llr_calibrated);
+    freedv_close(f);
+    setenv("LDPC_LLR_CALIBRATED", "0", 1);
+    f = freedv_open(FREEDV_MODE_DATAC1);
+    TEST_ASSERT_NOT_NULL(f);
+    TEST_ASSERT_EQUAL_INT(0, f->llr_calibrated);
+    freedv_close(f);
+    unsetenv("LDPC_LLR_CALIBRATED");
+}
+
+/* LDPC_ALG is read exactly once, by the first caller (pthread_once); a later
+ * change to the environment is ignored and ldpc_set_default_alg() wins.
+ * Runs first in this process so it IS the first caller. */
+void test_default_alg_env_is_read_once(void)
+{
+    setenv("LDPC_ALG", "nms16", 1);
+    TEST_ASSERT_EQUAL_INT(LDPC_ALG_NMS16, ldpc_get_default_alg());
+    setenv("LDPC_ALG", "sp", 1);
+    TEST_ASSERT_EQUAL_INT(LDPC_ALG_NMS16, ldpc_get_default_alg());
+    ldpc_set_default_alg(LDPC_ALG_AUTO);
+    TEST_ASSERT_EQUAL_INT(LDPC_ALG_AUTO, ldpc_get_default_alg());
+    unsetenv("LDPC_ALG");
+}
+
 /* For a DATA mode the deadline replaces the cap only while a budget is
  * configured.  On a desktop build the open-time cap is the code table's
  * limit already; on __EMBEDDED__ it is 10, and clearing the budget restores
@@ -67,6 +108,8 @@ void test_budget_raises_the_cap_and_clearing_it_restores_the_open_time_cap(void)
 int main(void)
 {
     UNITY_BEGIN();
+    RUN_TEST(test_default_alg_env_is_read_once);
+    RUN_TEST(test_llr_scale_is_the_shipped_constant_unless_enabled);
     RUN_TEST(test_voice_modes_are_bounded_by_their_frame_period);
     RUN_TEST(test_data_mode_follows_the_policy_table);
     RUN_TEST(test_budget_raises_the_cap_and_clearing_it_restores_the_open_time_cap);
