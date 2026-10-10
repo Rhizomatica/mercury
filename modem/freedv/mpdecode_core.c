@@ -464,27 +464,33 @@ int SumProduct(int *parityCheckCount, char DecodedBits[],
 
 #include <stdlib.h>
 #include <string.h>
+#include <stdatomic.h>
+#include <pthread.h>
 
-static int ldpc_default_alg_v = LDPC_ALG_AUTO;
-static int ldpc_default_alg_env_read = 0;
+/* The process-wide default: an explicit ldpc_set_default_alg() wins; otherwise
+ * LDPC_ALG from the environment is read once, by whichever thread decodes
+ * first (pthread_once), so concurrent first decodes cannot race on the flag
+ * and the value. */
+static _Atomic int ldpc_default_alg_v = LDPC_ALG_AUTO;
+static _Atomic int ldpc_default_alg_explicit = 0;
+static pthread_once_t ldpc_env_once = PTHREAD_ONCE_INIT;
 
 static void ldpc_read_env_alg(void) {
-  if (ldpc_default_alg_env_read) return;
-  ldpc_default_alg_env_read = 1;
+  if (atomic_load(&ldpc_default_alg_explicit)) return;
   const char *e = getenv("LDPC_ALG");
   if (!e) return;
   int a = ldpc_alg_from_name(e);
-  if (a != -2) ldpc_default_alg_v = a;
+  if (a != -2) atomic_store(&ldpc_default_alg_v, a);
 }
 
 void ldpc_set_default_alg(int alg) {
-  ldpc_default_alg_env_read = 1;
-  ldpc_default_alg_v = alg;
+  atomic_store(&ldpc_default_alg_v, alg);
+  atomic_store(&ldpc_default_alg_explicit, 1);
 }
 
 int ldpc_get_default_alg(void) {
-  ldpc_read_env_alg();
-  return ldpc_default_alg_v;
+  pthread_once(&ldpc_env_once, ldpc_read_env_alg);
+  return atomic_load(&ldpc_default_alg_v);
 }
 
 void ldpc_free_ctx(struct LDPC *ldpc) {
@@ -510,7 +516,17 @@ int run_ldpc_decoder_ex(struct LDPC *ldpc, uint8_t out_char[], float input[],
   }
   if (!ldpc->ctx) {
     ldpc->ctx = ldpc_ctx_create(ldpc);
-    assert(ldpc->ctx);
+    if (!ldpc->ctx) {
+      /* out of memory: the legacy loop needs no context; decode anyway */
+      int it = run_ldpc_decoder_legacy(ldpc, out_char, input, parityCheckCount);
+      ldpc->last_stats.iters = it;
+      ldpc->last_stats.parity_count = *parityCheckCount;
+      ldpc->last_stats.parity_ok = (*parityCheckCount == ldpc->NumberParityBits);
+      ldpc->last_stats.hit_deadline = 0;
+      ldpc->decode_count++;
+      if (stats) *stats = ldpc->last_stats;
+      return it;
+    }
   }
   ldpc_ctx_t *c = (ldpc_ctx_t *)ldpc->ctx;
   if (alg == LDPC_ALG_AUTO) alg = ldpc_ctx_policy_alg(ldpc->name);
