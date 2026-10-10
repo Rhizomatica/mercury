@@ -360,6 +360,7 @@ reliable_text_t reliable_text_create() {
 }
 
 void reliable_text_destroy(reliable_text_t ptr) {
+  ldpc_free_ctx(&((reliable_text_impl_t *) ptr)->ldpc);
   assert(ptr != NULL);
 
   reliable_text_unlink_from_freedv(ptr);
