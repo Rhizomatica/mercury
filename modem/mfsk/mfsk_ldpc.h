@@ -44,7 +44,7 @@ void mfsk_ldpc_encode(const mfsk_ldpc_code_t *c, const int *info, int *coded);
  * 570 kB).  A decoder that lives long or may run beside another owns one
  * (mfsk_ldpc_ws_new) and decodes with mfsk_ldpc_decode_ws; two decodes must
  * never share one at the same time.  mfsk_ldpc_decode uses one per calling
- * thread, for tools and tests. */
+ * thread (freed when the thread exits), for tools and tests. */
 typedef struct mfsk_ldpc_ws mfsk_ldpc_ws_t;
 mfsk_ldpc_ws_t *mfsk_ldpc_ws_new(void);
 void mfsk_ldpc_ws_free(mfsk_ldpc_ws_t *ws);

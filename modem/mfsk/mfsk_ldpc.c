@@ -10,6 +10,7 @@
 #include <math.h>
 #include <string.h>
 #include <stdlib.h>
+#include <pthread.h>
 
 /* --- encoder: systematic IRA (v1 cl_ldpc::encode) ----------------------- */
 void mfsk_ldpc_encode(const mfsk_ldpc_code_t *c, const int *info, int *coded)
@@ -142,12 +143,23 @@ int mfsk_ldpc_decode_ws(mfsk_ldpc_ws_t *ws, const mfsk_ldpc_code_t *c, const flo
     return converged;
 }
 
-/* For tools and tests: a workspace per calling thread, made on first use.
- * A long-lived decoder (the modem's) owns its own instead. */
+/* For tools and tests: a workspace per calling thread, made on first use and
+ * freed when the thread exits.  A long-lived decoder (the modem's) owns its
+ * own instead. */
+static pthread_key_t  ws_key;
+static pthread_once_t ws_key_once = PTHREAD_ONCE_INIT;
+static void ws_key_free(void *ws) { mfsk_ldpc_ws_free((mfsk_ldpc_ws_t *)ws); }
+static void ws_key_make(void) { pthread_key_create(&ws_key, ws_key_free); }
+
 int mfsk_ldpc_decode(const mfsk_ldpc_code_t *c, const float *llr,
                      int *info_out, int max_iter)
 {
-    static _Thread_local mfsk_ldpc_ws_t *ws;
-    if (!ws && !(ws = mfsk_ldpc_ws_new())) return 0;
+    pthread_once(&ws_key_once, ws_key_make);
+    mfsk_ldpc_ws_t *ws = (mfsk_ldpc_ws_t *)pthread_getspecific(ws_key);
+    if (!ws)
+    {
+        if (!(ws = mfsk_ldpc_ws_new())) return 0;
+        pthread_setspecific(ws_key, ws);
+    }
     return mfsk_ldpc_decode_ws(ws, c, llr, info_out, max_iter);
 }
