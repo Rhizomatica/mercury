@@ -90,6 +90,13 @@ float modem_get_tx_gain(void) { return 1.0f; }
 float modem_get_tx_peak_dbfs(void) { return -100.0f; }
 void  modem_set_spectrum_enabled(bool enabled) { (void)enabled; }
 void  modem_set_tx_gain(float linear) { (void)linear; }
+void  modem_get_ldpc_status(int *last_iters, float *mean_iters, int *deadline_hits, int *max_iter)
+{
+    if (last_iters) *last_iters = 0;
+    if (mean_iters) *mean_iters = 0.0f;
+    if (deadline_hits) *deadline_hits = 0;
+    if (max_iter) *max_iter = 0;
+}
 
 char *msg_store_snapshot(size_t *count_out, size_t *len_out)
 { if (count_out) *count_out = 0; if (len_out) *len_out = 0; return NULL; }

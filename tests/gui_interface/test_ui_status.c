@@ -122,7 +122,7 @@ void test_peer_snr_unknown_is_flagged_not_zero(void)
 void test_status_json_is_byte_exact(void)
 {
     ui_status_t st = sample();
-    char buf[512];
+    char buf[1024];
     int n = ui_status_to_json(&st, buf, sizeof(buf));
 
     const char *expect =
@@ -137,7 +137,7 @@ void test_status_json_is_byte_exact(void)
         "\"bytes_transmitted\":4096,"
         "\"bytes_received\":128,"
         "\"tx_gain_db\":-15.0,"
-        "\"tx_peak_dbfs\":-3.5,"
+        "\"tx_peak_dbfs\":-3.5,\"ldpc_iters_last\":0,\"ldpc_iters_mean\":0.0,\"ldpc_deadline_hits\":0,\"ldpc_max_iter\":0,"
         "\"waterfall\":true,"
         "\"audio_ok\":true,"
         "\"audio_error\":\"\","
@@ -156,7 +156,7 @@ void test_status_json_is_byte_exact(void)
 void test_direction_follows_ptt(void)
 {
     ui_status_t st = sample();
-    char buf[512];
+    char buf[1024];
 
     st.transmitting = true;
     TEST_ASSERT_TRUE(ui_status_to_json(&st, buf, sizeof(buf)) > 0);
@@ -175,7 +175,7 @@ void test_booleans_render_as_json_literals(void)
     st.client_tcp_connected = false;
     st.waterfall_enabled    = false;
 
-    char buf[512];
+    char buf[1024];
     TEST_ASSERT_TRUE(ui_status_to_json(&st, buf, sizeof(buf)) > 0);
     TEST_ASSERT_NOT_NULL(strstr(buf, "\"sync\":false"));
     TEST_ASSERT_NOT_NULL(strstr(buf, "\"client_tcp_connected\":false"));
@@ -194,7 +194,7 @@ void test_truncation_is_reported_not_emitted(void)
 void test_null_arguments_are_rejected(void)
 {
     ui_status_t st = sample();
-    char buf[512];
+    char buf[1024];
     TEST_ASSERT_EQUAL_INT(-1, ui_status_to_json(NULL, buf, sizeof(buf)));
     TEST_ASSERT_EQUAL_INT(-1, ui_status_to_json(&st, NULL, sizeof(buf)));
     TEST_ASSERT_EQUAL_INT(-1, ui_status_to_json(&st, buf, 0));
@@ -209,7 +209,7 @@ void test_null_arguments_are_rejected(void)
 void test_audio_failure_is_reported(void)
 {
     ui_status_t st = sample();
-    char buf[512];
+    char buf[1024];
 
     st.audio_ok = false;
     snprintf(st.audio_error, sizeof(st.audio_error),
@@ -223,7 +223,7 @@ void test_audio_failure_is_reported(void)
 void test_unavailable_frequency_is_explicit_null(void)
 {
     ui_status_t st = sample();
-    char buf[512];
+    char buf[1024];
 
     st.radio_frequency_valid = false;
     TEST_ASSERT_TRUE(ui_status_to_json(&st, buf, sizeof(buf)) > 0);
@@ -234,7 +234,7 @@ void test_unavailable_frequency_is_explicit_null(void)
 void test_arq_payload_modes_are_independent(void)
 {
     ui_status_t st = sample();
-    char buf[512];
+    char buf[1024];
 
     snprintf(st.arq_tx_mode, sizeof(st.arq_tx_mode), "DATAC1");
     snprintf(st.arq_rx_mode, sizeof(st.arq_rx_mode), "DATAC15");

@@ -459,10 +459,81 @@ int SumProduct(int *parityCheckCount, char DecodedBits[],
   return (result);
 }
 
-/* Convenience function to call LDPC decoder from C programs */
+
+/* ---- persistent-context decoder front end (ldpc_ctx.c) ------------------- */
+
+#include <stdlib.h>
+#include <string.h>
+
+static int ldpc_default_alg_v = LDPC_ALG_AUTO;
+static int ldpc_default_alg_env_read = 0;
+
+static void ldpc_read_env_alg(void) {
+  if (ldpc_default_alg_env_read) return;
+  ldpc_default_alg_env_read = 1;
+  const char *e = getenv("LDPC_ALG");
+  if (!e) return;
+  int a = ldpc_alg_from_name(e);
+  if (a != -2) ldpc_default_alg_v = a;
+}
+
+void ldpc_set_default_alg(int alg) {
+  ldpc_default_alg_env_read = 1;
+  ldpc_default_alg_v = alg;
+}
+
+int ldpc_get_default_alg(void) {
+  ldpc_read_env_alg();
+  return ldpc_default_alg_v;
+}
+
+void ldpc_free_ctx(struct LDPC *ldpc) {
+  if (ldpc && ldpc->ctx) {
+    ldpc_ctx_destroy((ldpc_ctx_t *)ldpc->ctx);
+    ldpc->ctx = NULL;
+  }
+}
+
+int run_ldpc_decoder_ex(struct LDPC *ldpc, uint8_t out_char[], float input[],
+                        int *parityCheckCount, uint64_t deadline_ns,
+                        ldpc_stats_t *stats) {
+  int alg = ldpc_get_default_alg();
+  if (alg == LDPC_ALG_LEGACY) {
+    int it = run_ldpc_decoder_legacy(ldpc, out_char, input, parityCheckCount);
+    ldpc->last_stats.iters = it;
+    ldpc->last_stats.parity_count = *parityCheckCount;
+    ldpc->last_stats.parity_ok = (*parityCheckCount == ldpc->NumberParityBits);
+    ldpc->last_stats.hit_deadline = 0;
+    ldpc->decode_count++;
+    if (stats) *stats = ldpc->last_stats;
+    return it;
+  }
+  if (!ldpc->ctx) {
+    ldpc->ctx = ldpc_ctx_create(ldpc);
+    assert(ldpc->ctx);
+  }
+  ldpc_ctx_t *c = (ldpc_ctx_t *)ldpc->ctx;
+  if (alg == LDPC_ALG_AUTO) alg = ldpc_ctx_policy_alg(ldpc->name);
+  if (ldpc_ctx_alg(c) != alg) ldpc_ctx_set_alg(c, alg, 0.0f);
+  ldpc_stats_t st;
+  int it = ldpc_ctx_decode(c, input, out_char, ldpc->max_iter, deadline_ns, &st);
+  if (parityCheckCount) *parityCheckCount = st.parity_count;
+  if (stats) *stats = st;
+  ldpc->last_stats = st;
+  ldpc->decode_count++;
+  return it;
+}
 
 int run_ldpc_decoder(struct LDPC *ldpc, uint8_t out_char[], float input[],
                      int *parityCheckCount) {
+  return run_ldpc_decoder_ex(ldpc, out_char, input, parityCheckCount,
+                             ldpc->deadline_ns, NULL);
+}
+
+/* Convenience function to call LDPC decoder from C programs */
+
+int run_ldpc_decoder_legacy(struct LDPC *ldpc, uint8_t out_char[], float input[],
+                            int *parityCheckCount) {
   int max_iter, dec_type;
   float q_scale_factor, r_scale_factor;
   int max_row_weight, max_col_weight;
@@ -637,9 +708,57 @@ void Somap(float bit_likelihood[],    /* number_bits, bps*number_symbols */
   }
 }
 
+#include "qam_constellations.h"
+
+const COMP *ldpc_qam_table(int bps, int *M) {
+  const COMP *t = NULL;
+  switch (bps) {
+    case 2: t = S_matrix_qpsk; break;
+    case 4: t = S_matrix_qam16; break;
+    case 5: t = S_matrix_qam32; break;
+    case 6: t = S_matrix_qam64; break;
+    case 7: t = S_matrix_qam128; break;
+    case 8: t = S_matrix_qam256; break;
+    default: break;
+  }
+  if (M) *M = t ? (1 << bps) : 0;
+  return t;
+}
+
+void llr_from_qam(float llr[], const COMP sym[], const float amps[], float mean_amp,
+                  float EsNo, int bps, int nsym) {
+  int M;
+  const COMP *S = ldpc_qam_table(bps, &M);
+  assert(S != NULL);
+  const float inv = 1.0f / (mean_amp + 1e-12f);
+  float d[256];
+  for (int i = 0; i < nsym; i++) {
+    const float a = (amps ? amps[i] : mean_amp) * inv;
+    const float rr = sym[i].real * inv, ri = sym[i].imag * inv;
+    for (int j = 0; j < M; j++) {
+      float er = rr - a * S[j].real, ei = ri - a * S[j].imag;
+      d[j] = er * er + ei * ei;
+    }
+    for (int k = 0; k < bps; k++) {
+      const int bit = 1 << (bps - 1 - k);   /* k = 0 is the label MSB */
+      float m0 = 1e30f, m1 = 1e30f;
+      for (int j = 0; j < M; j++) {
+        if (j & bit) { if (d[j] < m1) m1 = d[j]; }
+        else         { if (d[j] < m0) m0 = d[j]; }
+      }
+      llr[bps * i + k] = EsNo * (m1 - m0);
+    }
+  }
+}
+
 void symbols_to_llrs(float llr[], COMP rx_psk_symbols[], float rx_amps[],
                      float EsNo, float mean_amp, int bps, int nsyms) {
   int i;
+  if (bps != 2 && bps != 4) {
+    /* higher orders: generic max-log on the generated tables */
+    llr_from_qam(llr, rx_psk_symbols, rx_amps, mean_amp, EsNo, bps, nsyms);
+    return;
+  }
   int constellation_points = 1 << bps;
   size_t symbol_likelihood_size = (size_t)nsyms * constellation_points;
   size_t bit_likelihood_size = (size_t)nsyms * bps;
@@ -649,7 +768,6 @@ void symbols_to_llrs(float llr[], COMP rx_psk_symbols[], float rx_amps[],
   COMP *S_matrix;
   assert(symbol_likelihood != NULL);
   assert(bit_likelihood != NULL);
-  assert((bps == 2) || (bps == 4));
   if (bps == 2) S_matrix = S_matrix_qpsk;
   if (bps == 4) S_matrix = S_matrix_qam16;
 

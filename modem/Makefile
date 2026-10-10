@@ -4,7 +4,7 @@ CFLAGS = $(COMMON_CFLAGS) -Wno-strict-overflow -fPIC -I. -I../common -I../modem 
 
 .PHONY: all freedv 
 
-all: freedv modem.o framer.o channel_busy.o
+all: freedv modem.o framer.o channel_busy.o ldpc_calib.o
 
 freedv:
 	$(MAKE) -C freedv
@@ -17,6 +17,9 @@ channel_busy.o: channel_busy.c channel_busy.h
 
 framer.o: framer.c framer.h
 	$(CC) $(CFLAGS) -c framer.c
+
+ldpc_calib.o: ldpc_calib.c ldpc_calib.h
+	$(CC) $(CFLAGS) -c ldpc_calib.c
 
 clean:
 	$(MAKE) -C freedv clean

@@ -63,6 +63,11 @@ void cfg_set_defaults(mercury_config *cfg)
     cfg->tnc_keepalive_s = 60;
     cfg->tnc_buffer_report_ms = 1000;
     cfg->tx_gain_db            = 0.0f;
+    cfg->ldpc_max_iter         = 100;
+    cfg->ldpc_budget_ms        = 0.0f;
+    cfg->ldpc_budget_guard_frac = 0.5f;
+    cfg->ldpc_budget_air_frac  = 0.25f;
+    snprintf(cfg->ldpc_alg, sizeof cfg->ldpc_alg, "auto");
     cfg->tx_delay_ms           = 10;
     cfg->data_retry_slots            = ARQ_DATA_RETRY_SLOTS_DEFAULT;
     cfg->mode_hold_after_downgrade_s = ARQ_MODE_HOLD_AFTER_DOWNGRADE_S_DEFAULT;
@@ -432,6 +437,19 @@ bool cfg_read(mercury_config *cfg, const char *ini_path)
     if (d >  20.0) d =  20.0;
     cfg->tx_gain_db = (float)d;
 
+    i = iniparser_getint(ini, CFG_KEY_LDPC_MAX_ITER, cfg->ldpc_max_iter);
+    if (i >= 1 && i <= 1000) cfg->ldpc_max_iter = i;
+    d = iniparser_getdouble(ini, CFG_KEY_LDPC_BUDGET_MS, (double)cfg->ldpc_budget_ms);
+    if (isfinite(d) && d >= 0.0 && d <= 60000.0) cfg->ldpc_budget_ms = (float)d;
+    d = iniparser_getdouble(ini, CFG_KEY_LDPC_GUARD_FRAC, (double)cfg->ldpc_budget_guard_frac);
+    if (isfinite(d) && d >= 0.0 && d <= 1.0) cfg->ldpc_budget_guard_frac = (float)d;
+    d = iniparser_getdouble(ini, CFG_KEY_LDPC_AIR_FRAC, (double)cfg->ldpc_budget_air_frac);
+    if (isfinite(d) && d >= 0.0 && d <= 1.0) cfg->ldpc_budget_air_frac = (float)d;
+    {
+        const char *a = iniparser_getstring(ini, CFG_KEY_LDPC_ALG, cfg->ldpc_alg);
+        if (a && *a) snprintf(cfg->ldpc_alg, sizeof cfg->ldpc_alg, "%s", a);
+    }
+
     i = iniparser_getint(ini, CFG_KEY_TX_DELAY_MS, cfg->tx_delay_ms);
     if (i >= 0 && i <= 2000) cfg->tx_delay_ms = i;
 
@@ -564,6 +582,13 @@ bool cfg_write(const mercury_config *cfg, const char *ini_path)
     fprintf(f, "\n[audio]\n");
     fprintf(f, "tx_gain_db = %.2f\n", cfg->tx_gain_db);
     fprintf(f, "tx_delay_ms = %d\n", cfg->tx_delay_ms);
+
+    fprintf(f, "\n[ldpc]\n");
+    fprintf(f, "max_iter = %d\n", cfg->ldpc_max_iter);
+    fprintf(f, "budget_ms = %.0f\n", cfg->ldpc_budget_ms);
+    fprintf(f, "budget_guard_frac = %.2f\n", cfg->ldpc_budget_guard_frac);
+    fprintf(f, "budget_air_frac = %.2f\n", cfg->ldpc_budget_air_frac);
+    fprintf(f, "alg = %s\n", cfg->ldpc_alg);
 
     fprintf(f, "\n[tnc]\n");
     fprintf(f, "keepalive_s = %d\n", cfg->tnc_keepalive_s);

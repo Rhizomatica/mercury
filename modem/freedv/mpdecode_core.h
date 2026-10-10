@@ -14,6 +14,7 @@
 #include <stdint.h>
 
 #include "comp.h"
+#include "ldpc_ctx.h"
 
 struct LDPC {
   char name[32];
@@ -39,10 +40,36 @@ struct LDPC {
   int protection_mode;
   int data_bits_per_frame;
   int coded_bits_per_frame;
+
+  /* persistent decoder context (ldpc_ctx.h), created lazily by
+     run_ldpc_decoder(); positional table initialisers leave it NULL */
+  void *ctx;
+  /* decode deadline (ldpc_now_ns() scale, 0 = none) applied by
+     run_ldpc_decoder(); the caller sets it before each decode */
+  uint64_t deadline_ns;
+  /* statistics of the most recent decode and a running count of decodes,
+     so a consumer can tell a fresh decode from a repeated read */
+  ldpc_stats_t last_stats;
+  uint32_t decode_count;
 };
 
 void encode(struct LDPC *ldpc, unsigned char ibits[], unsigned char pbits[]);
 
+/* Decode with the persistent context: iteration cap from ldpc->max_iter,
+   optional monotonic deadline (ldpc_now_ns() scale, 0 = none), stats out
+   (may be NULL).  Returns iterations used. */
+int run_ldpc_decoder_ex(struct LDPC *ldpc, uint8_t out_char[], float input[],
+                        int *parityCheckCount, uint64_t deadline_ns,
+                        ldpc_stats_t *stats);
+/* Original array-of-structs SumProduct, kept for A/B comparison. */
+int run_ldpc_decoder_legacy(struct LDPC *ldpc, uint8_t out_char[], float input[],
+                            int *parityCheckCount);
+/* Process-wide default algorithm for run_ldpc_decoder(): LDPC_ALG_SP (default,
+   result-equivalent to legacy), LDPC_ALG_NMS, or LDPC_ALG_LEGACY.  The
+   environment variable LDPC_ALG=sp|nms|legacy overrides at first use. */
+void ldpc_set_default_alg(int alg);
+int  ldpc_get_default_alg(void);
+void ldpc_free_ctx(struct LDPC *ldpc);
 int run_ldpc_decoder(struct LDPC *ldpc, uint8_t out_char[], float input[],
                      int *parityCheckCount);
 
@@ -51,6 +78,16 @@ void Demod2D(float symbol_likelihood[], COMP r[], COMP S_matrix[], int M,
              float EsNo, float fading[], float mean_amp, int number_symbols);
 void Somap(float bit_likelihood[], float symbol_likelihood[], int M, int bps,
            int number_symbols);
+/* Gray/quasi-Gray constellation table for bps = 2 (QPSK), 4 (the rotated
+   16-QAM in use), 5, 6, 7, 8 (qam_constellations.h); NULL otherwise. */
+const COMP *ldpc_qam_table(int bps, int *M);
+/* Max-log soft demapper for any supported bps: llr[bps*i + k] is the LLR of
+   codeword bit k of symbol i (k = 0 is the MSB of the label, as Somap and
+   psk_modulate_frame order them), positive = bit 0.  Symbols and the
+   constellation are normalised by mean_amp; amps[i] scales the constellation
+   per symbol (fading), as Demod2D does; EsNo (linear) is the LLR scale. */
+void llr_from_qam(float llr[], const COMP sym[], const float amps[], float mean_amp,
+                  float EsNo, int bps, int nsym);
 void symbols_to_llrs(float llr[], COMP rx_qpsk_symbols[], float rx_amps[],
                      float EsNo, float mean_amp, int bps, int nsyms);
 void fsk_rx_filt_to_llrs(float llr[], float rx_filt[], float v_est,

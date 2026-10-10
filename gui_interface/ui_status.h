@@ -50,6 +50,10 @@ typedef struct {
     long   bytes_received;
     float  tx_gain_db;
     float  tx_peak_dbfs;
+    int    ldpc_iters_last;     /* LDPC decoder: iterations of the last decode */
+    float  ldpc_iters_mean;     /* mean iterations this session               */
+    int    ldpc_deadline_hits;  /* decodes cut short by the time budget       */
+    int    ldpc_max_iter;       /* configured cap                              */
     bool   waterfall_enabled;
     /* Audio path health.  A bad device choice does not stop mercury -- the
      * operator needs it alive to pick another card -- so the only way they

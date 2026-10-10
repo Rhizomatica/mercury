@@ -624,6 +624,8 @@ static void ui_gather_status(ui_ctx_t *ctx, ui_status_t *out)
     float tx_gain_linear = modem_get_tx_gain();
     out->tx_gain_db   = (tx_gain_linear > 0.0f) ? 20.0f * log10f(tx_gain_linear) : -120.0f;
     out->tx_peak_dbfs = modem_get_tx_peak_dbfs();
+    modem_get_ldpc_status(&out->ldpc_iters_last, &out->ldpc_iters_mean,
+                          &out->ldpc_deadline_hits, &out->ldpc_max_iter);
 
     out->waterfall_enabled = ctx->waterfall_enabled ? true : false;
 

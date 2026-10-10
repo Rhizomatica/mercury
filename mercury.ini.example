@@ -244,6 +244,24 @@ busy_on_debounce_ms = 300
 ; (hang time; default 1500, range 0..10000).
 busy_hang_ms = 1500
 
+[ldpc]
+; LDPC decoder for the OFDM data modes (DATAC*, QAM16C2).
+; max_iter: iteration cap. Early exit on parity means a clean frame costs
+;   2-3 iterations whatever the cap; the cap only bounds frames at the
+;   mode's SNR cliff (default 100, the code tables' own limit; the cap of 10 that
+;   codec2 applies under __EMBEDDED__ costs 0.3-1.6 dB, see docs/LDPC-DECODER.md).
+; budget_ms: wall-clock budget per decode. 0 derives it per mode as
+;   min(budget_guard_frac * ARQ channel guard, budget_air_frac * frame airtime)
+;   so a slow host returns its best decision in time for the ACK.
+; alg: auto (per-code choice from the MATLAB sweep), spt (table sum-product),
+;   sp (exact sum-product), nms16 (int16 min-sum), nms, legacy.
+; Run `mercury -B` to measure iterations per millisecond on this CPU.
+max_iter = 100
+budget_ms = 0
+budget_guard_frac = 0.50
+budget_air_frac = 0.25
+alg = auto
+
 [tnc]
 ; IAMALIVE interval sent on the TNC control port to tell connected clients
 ; the TNC is still alive. Valid range: 5..600 seconds. (default: 60)
