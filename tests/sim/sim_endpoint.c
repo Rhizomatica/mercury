@@ -128,12 +128,10 @@ static void cb_send_tx_frame(int packet_type, int mode, size_t frame_size,
                               const uint8_t *frame, int burst_remaining)
 {
     sim_endpoint_t *ep = s_active;
-    /* Stop-and-wait: one outframe per keydown.  The core drains the outbox
-     * before the next dispatch that can emit a frame, so a second frame is
-     * legal only when the first opened a shared keydown; anything else means
-     * the burst machinery has changed. */
-    assert((ep->outbox_n == 0 ||
-            (ep->outbox_n == 1 && ep->outbox[0].join_next)) &&
+    /* One plain frame per keydown (CALL/ACCEPT/DISCONNECT).  The core drains
+     * the outbox before the next dispatch that can emit a frame, so a second
+     * one means the burst machinery has changed. */
+    assert(ep->outbox_n == 0 &&
            "send_tx_frame fired with outbox full: multi-frame burst detected");
     sim_outframe_t *of = &ep->outbox[ep->outbox_n];
     assert(frame_size <= sizeof(of->buf));
@@ -143,7 +141,6 @@ static void cb_send_tx_frame(int packet_type, int mode, size_t frame_size,
     of->mode            = mode;
     of->burst_remaining = burst_remaining;
     of->present         = true;
-    of->join_next       = ep->sess.tx_join_next;
     ep->outbox_n++;
 }
 

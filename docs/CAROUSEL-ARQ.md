@@ -1,34 +1,18 @@
 # The carousel data plane
 
 Mercury's connected sessions move data with an erasure-coded "carousel"
-driven by the receiver (`datalink_arq/carousel.[ch]`).  It replaces the
-stop-and-wait data-flow sub-FSM described in [ARQ.md](ARQ.md); CALL, ACCEPT
-and DISCONNECT are unchanged but for the ACCEPT, which is the carousel's first
-poll.  [CAROUSEL-SPEC.md](CAROUSEL-SPEC.md) specifies the protocol state by
-state, from the code; this page is the overview.
+driven by the receiver (`datalink_arq/carousel.[ch]`).  It is the only data
+plane: the stop-and-wait data-flow sub-FSM of 1.9.x (described in
+[ARQ.md](ARQ.md)) is gone.  CALL and ACCEPT open a session, the ACCEPT is the
+carousel's first poll, and a DISCONNECT ends it.
+[CAROUSEL-SPEC.md](CAROUSEL-SPEC.md) specifies the protocol state by state,
+from the code; this page is the overview.
 
-Stations without the carousel (1.9.x, earlier 2.0 builds, or
-`MERCURY_CAROUSEL=0`) are told apart in both connect frames.  A carousel
-CALL carries `ARQ_CALL_CAROUSEL_MARK` in the last byte of its callsign slot,
-and a carousel ACCEPT sets bit 4 of the framer extension.  Older stations do
-not see the first and drop the second:
-
-| caller | callee | session |
-|---|---|---|
-| carousel | carousel | carousel |
-| carousel | without | stop-and-wait: the callee's plain ACCEPT says so |
-| without | carousel | stop-and-wait: the unmarked CALL gets a plain ACCEPT |
-| an earlier carousel (1.9.17/1.9.18, or mercuryv2 before the session-bound patterns, or before one timing master and inline polls) | carousel | stop-and-wait, either way round: the marks differ (0xA7, 0xA8, 0xA9, 0xAA, now 0xAB), and each reads the other's CALL as unmarked |
-
-Before the markers, every mixed pair "connected" and then moved nothing
-until the application gave up (harness, `MERCURY_TEST_BIN_A`/`_B`, see
-Tests).  A callsign whose code fills the whole slot (about 13-14
-characters) leaves no room for the CALL's marker, and its sessions run
-stop-and-wait.  Carousel builds from before the markers (pre-release only)
-do not mix with these.
-
-`MERCURY_CAROUSEL=0` in the environment runs the stop-and-wait plane for every
-session, as a station without the carousel does.
+The connect frames carry a protocol version (1) and the carousel bit in the
+framer extension (see Wire formats).  1.9.x stations, and earlier carousel
+builds, do not connect to this one in either direction: each drops the
+other's CALL and ACCEPT.  A CALL from another version that is addressed to
+this station is logged ("from another protocol version") and not answered.
 
 ## How it works
 
@@ -67,7 +51,7 @@ the best measured goodput (raw rate times delivered fraction); probes only of
 rungs that could beat it; a rung's round is capped at one frame more than it
 recently delivered; 4 frames lost in a row is a dead verdict, re-probed after
 60 s, doubling to 8 min.  A direction starts on the rung the connect's SNR
-supports (the thresholds the stop-and-wait plane uses), as a one-frame probe.
+supports (`ARQ_SNR_MIN_*`), as a one-frame probe.
 
 **The turn.**  The receiver takes it with a HANDOVER poll that announces its
 own first round, sent in the same keydown; the peer's control decoder reads
@@ -139,25 +123,30 @@ POLL / HANDOVER / STATUS, in DATAC16 (14 bytes):
 | 12 | handover round's frames (4), its id (4) |
 | 13 | highest block opened (4), data not yet cut (1) |
 
-The ACCEPT carries the caller's start rung in the top 3 bits of its DST CRC,
-which an ACCEPT checks on 13 bits alongside its 7-bit session id.  A carousel
-ACCEPT also sets bit 4 of the framer extension (`ARQ_CONNECT_EXT_CAROUSEL`).
-A station without the carousel reads that as an unknown bandwidth token and
-drops the frame.  A plain ACCEPT keeps its CRC whole.
+CALL and ACCEPT, protocol version 1: 14 bytes (a DATAC16 frame), padded to
+the frame on MFSK.
 
-A carousel CALL sets the last byte of its 10-byte SRC slot to
-`ARQ_CALL_CAROUSEL_MARK` (0xAB; 0xA7 was the carousel of 1.9.17 and 1.9.18,
-before the block check, 0xA8 the one before session-bound patterns, 0xA9
-the one before a single timing master (#351) and inline polls, and 0xAA the
-one with 24-byte pieces in every session).  The arithmetic code ends at its
-end-of-string symbol, and an older decoder never reads past it.  The caller
-marks only when the code leaves that byte free and the marked slot still
-decodes to the same callsign; the callee reads the marker only when the
-decoded callsign's code is shorter than the slot.
+| byte | CALL | ACCEPT |
+|---|---|---|
+| 0 | framer: type CALL (3 bits); extension: bandwidth token (2), protocol version (2, = 1), carousel (1) | the same |
+| 1 | 0, session id (7) | 1, session id (7) |
+| 2-3 | CRC16 of the callsign it calls | CRC16 of the caller's callsign |
+| 4-5 | the caller's callsign, arithmetic-coded, to byte 13 | CRC16 of the callsign the caller called (the callee's, primary or secondary) |
+| 6-7 | | the callee's session nonce |
+| 8 | | the caller's start rung (3 bits; 7: the callee hears it below the control mode, so the floor), 5 bits zero |
+| 9-13 | | zero |
 
-A carousel ACCEPT puts the callee's 16-bit session nonce in the last two
-bytes of its SRC slot, by the same rule (the code at most 8 bytes); with no
-room both ends use 0.
+- A station takes a CALL or ACCEPT only with version 1 and the carousel bit
+  set; a 1.9.x station reads that extension as an unknown bandwidth token
+  and drops the frame.  The versions do not connect to each other.
+- An ACCEPT with a reserved bit set is dropped.  The caller takes an ACCEPT
+  only if its session id, its own CRC and the called station's CRC all
+  match: 39 bits, and every one of them full.
+- The callee answers every repeat of a session's CALL with the same ACCEPT
+  (rung, nonce): the caller may have decoded any of them, so they must not
+  differ.  Both ends then cut the same pieces (spec R25).
+- The callee's callsign is not on the air in full: the caller knows whom it
+  called, and the CRC confirms it.
 
 Patterns are 16 MFSK symbols, 0.64 s: 32 tones, each symbol's tone the
 list's (8 tones, repeated) plus 13 per symbol, mod 32.  The detector counts
@@ -181,7 +170,8 @@ payload decoder misses bursts after the first; the gaps were measured with
 ## Measurements
 
 The sim runs the real FSM and carousel over the same channel models as the
-stop-and-wait plane (`tests/sim/README.md`).  Both stations send 8 KB,
+stop-and-wait plane it replaced (`tests/sim/README.md`); these comparisons
+were made while both planes were still built in.  Both stations send 8 KB,
 carrier sense on, seeds 1-20 / 21-40:
 
 | channel | stop-and-wait | carousel |
@@ -227,14 +217,13 @@ connect; one run each, so indicative):
   frames and 3 unsensed keydowns, every single spurious BREAK and every
   single corrupt frame; `specs/carousel/` has the TLA+ model of the block
   layer and what both have shown.
-- `tests/integration`: two real daemons over FIFO audio; the suite runs on
-  the carousel.  `MERCURY_TEST_BIN_A` / `MERCURY_TEST_BIN_B` run one station
-  on another build (a release, trunk, or a `MERCURY_CAROUSEL=0` wrapper
-  script) for the mixed-version table above:
-  `MERCURY_TEST_BIN_B=/path/to/mercury-1.9.16 go test -run '^TestMercuryARQTransfer$' .`
-- `tests/datalink_arq/test_arq_protocol`: `test_accept_carousel_marker`, the
-  ACCEPT as a station without the carousel reads it.
+- `tests/integration`: two real daemons over FIFO audio.
+  `MERCURY_TEST_BIN_A` / `MERCURY_TEST_BIN_B` run one station on another
+  build, to compare builds of this protocol version:
+  `MERCURY_TEST_BIN_B=/path/to/mercury go test -run '^TestMercuryARQTransfer$' .`
+- `tests/datalink_arq/test_arq_protocol`: `test_connect_v1_call`,
+  `test_connect_v1_accept`, `test_connect_other_version_refused`.
 - `utils/onair_logs.py`: one on-air run from the two stations' journals --
   how rounds were answered, the rungs used, and any overlapping keydowns.
-- `tests/carousel_bench`, `tests/ab_bench` (`CAROUSEL=0` for the old plane):
-  the throughput matrix.
+- `tests/carousel_bench` (the carousel alone), `tests/ab_bench` (under the
+  full FSM): the throughput matrix.

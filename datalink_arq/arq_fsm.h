@@ -15,7 +15,7 @@
 
 #include "arq.h"  /* CALLSIGN_MAX_SIZE, arq_action_t/type, arq_info */
 #include "arq_timing.h"  /* arq_timing_ctx_t */
-#include "arq_protocol.h"  /* ARQ_BURST_MAX */
+#include "arq_protocol.h"
 #include "carousel.h"      /* car_t: the carousel data plane */
 
 /* ======================================================================
@@ -27,46 +27,11 @@ typedef enum
     ARQ_CONN_DISCONNECTED  = 0, /* no session; idle                              */
     ARQ_CONN_LISTENING     = 1, /* waiting for incoming CALL frame               */
     ARQ_CONN_CALLING       = 2, /* outgoing CALL sent; awaiting ACCEPT           */
-    ARQ_CONN_ACCEPTING     = 3, /* ACCEPT sent; awaiting first data/ACK          */
-    ARQ_CONN_CONNECTED     = 4, /* data-flow sub-FSM is active                   */
+    ARQ_CONN_ACCEPTING     = 3, /* ACCEPT sent; awaiting the caller's first frame */
+    ARQ_CONN_CONNECTED     = 4, /* the carousel runs the session                 */
     ARQ_CONN_DISCONNECTING = 5, /* DISCONNECT frame being exchanged              */
     ARQ_CONN__COUNT
 } arq_conn_state_t;
-
-/* ======================================================================
- * Level 2 — Data-flow sub-FSM states (active only in ARQ_CONN_CONNECTED)
- * ====================================================================== */
-
-typedef enum
-{
-    ARQ_DFLOW_IDLE_ISS        =  0, /* ISS: no pending frame; waiting for data   */
-    ARQ_DFLOW_DATA_TX         =  1, /* ISS: frame queued/transmitting            */
-    ARQ_DFLOW_WAIT_ACK        =  2, /* ISS: PTT-OFF; waiting for peer ACK        */
-    ARQ_DFLOW_IDLE_IRS        =  3, /* IRS: waiting for peer data frame          */
-    ARQ_DFLOW_DATA_RX         =  4, /* IRS: data frame decoded; ACK pending      */
-    ARQ_DFLOW_ACK_TX          =  5, /* IRS: ACK frame being transmitted          */
-    ARQ_DFLOW_TURN_REQ_TX     =  6, /* IRS→ISS: TURN_REQ being transmitted       */
-    ARQ_DFLOW_TURN_REQ_WAIT   =  7, /* IRS→ISS: waiting for TURN_ACK            */
-    ARQ_DFLOW_TURN_ACK_TX     =  8, /* ISS→IRS: TURN_ACK being transmitted       */
-    ARQ_DFLOW_MODE_REQ_TX     =  9, /* mode upgrade: MODE_REQ being transmitted  */
-    ARQ_DFLOW_MODE_REQ_WAIT   = 10, /* mode upgrade: waiting for MODE_ACK        */
-    ARQ_DFLOW_MODE_ACK_TX     = 11, /* mode upgrade: MODE_ACK being transmitted  */
-    ARQ_DFLOW_KEEPALIVE_TX    = 12, /* KEEPALIVE being transmitted               */
-    ARQ_DFLOW_KEEPALIVE_WAIT  = 13, /* waiting for KEEPALIVE_ACK                 */
-    ARQ_DFLOW_KEEPALIVE_ACK_TX = 14, /* sending KEEPALIVE_ACK (with guard)        */
-    ARQ_DFLOW__COUNT
-} arq_dflow_state_t;
-
-/* ======================================================================
- * Caller/callee role (set at connect time, stays for session lifetime)
- * ====================================================================== */
-
-typedef enum
-{
-    ARQ_ROLE_NONE   = 0,
-    ARQ_ROLE_CALLER = 1,  /* originated the call (starts as ISS) */
-    ARQ_ROLE_CALLEE = 2   /* received the call   (starts as IRS) */
-} arq_role_t;
 
 /* ======================================================================
  * Events
@@ -75,41 +40,29 @@ typedef enum
 typedef enum
 {
     /* Application events (from TCP interface via channel bus) */
-    ARQ_EV_APP_LISTEN         =  0,  /* LISTEN ON received            */
-    ARQ_EV_APP_STOP_LISTEN    =  1,  /* LISTEN OFF received           */
-    ARQ_EV_APP_CONNECT        =  2,  /* CONNECT <dst> received        */
-    ARQ_EV_APP_DISCONNECT     =  3,  /* DISCONNECT received           */
-    ARQ_EV_APP_DATA_READY     =  4,  /* TX data available in buffer   */
+    ARQ_EV_APP_LISTEN = 0,          /* LISTEN ON received            */
+    ARQ_EV_APP_STOP_LISTEN,         /* LISTEN OFF received           */
+    ARQ_EV_APP_CONNECT,             /* CONNECT <dst> received        */
+    ARQ_EV_APP_DISCONNECT,          /* DISCONNECT received           */
+    ARQ_EV_APP_DATA_READY,          /* TX data available in buffer   */
 
     /* Radio RX events (from modem worker) */
-    ARQ_EV_RX_CALL            =  5,  /* CALL frame decoded            */
-    ARQ_EV_RX_ACCEPT          =  6,  /* ACCEPT frame decoded          */
-    ARQ_EV_RX_ACK             =  7,  /* ACK frame decoded             */
-    ARQ_EV_RX_DATA            =  8,  /* DATA frame decoded            */
-    ARQ_EV_RX_DISCONNECT      =  9,  /* DISCONNECT frame decoded      */
-    ARQ_EV_RX_TURN_REQ        = 10,  /* TURN_REQ frame decoded        */
-    ARQ_EV_RX_TURN_ACK        = 11,  /* TURN_ACK frame decoded        */
-    ARQ_EV_RX_MODE_REQ        = 12,  /* MODE_REQ frame decoded        */
-    ARQ_EV_RX_MODE_ACK        = 13,  /* MODE_ACK frame decoded        */
-    ARQ_EV_RX_KEEPALIVE       = 14,  /* KEEPALIVE frame decoded       */
-    ARQ_EV_RX_KEEPALIVE_ACK   = 15,  /* KEEPALIVE_ACK frame decoded   */
+    ARQ_EV_RX_CALL,                 /* CALL frame decoded            */
+    ARQ_EV_RX_ACCEPT,               /* ACCEPT frame decoded          */
+    ARQ_EV_RX_DISCONNECT,           /* DISCONNECT frame decoded      */
 
     /* Timer events */
-    ARQ_EV_TIMER_RETRY        = 16,  /* retry deadline expired        */
-    ARQ_EV_TIMER_TIMEOUT      = 17,  /* session/call timeout expired  */
-    ARQ_EV_TIMER_ACK          = 18,  /* ACK wait deadline expired     */
-    ARQ_EV_TIMER_PEER_BACKLOG = 19,  /* peer-backlog hold expired     */
-    ARQ_EV_TIMER_KEEPALIVE    = 20,  /* keepalive interval expired    */
+    ARQ_EV_TIMER_RETRY,             /* CALL/ACCEPT retry, teardown waits */
+    ARQ_EV_TIMER_ACK,               /* a reply guard, a DISCONNECT's wait */
 
     /* Modem events */
-    ARQ_EV_TX_STARTED         = 21,  /* PTT ON (frame on air)         */
-    ARQ_EV_TX_COMPLETE        = 22,  /* PTT OFF (TX finished)         */
+    ARQ_EV_TX_STARTED,              /* PTT ON (frame on air)         */
+    ARQ_EV_TX_COMPLETE,             /* PTT OFF (TX finished)         */
 
     /* Carousel data plane */
-    ARQ_EV_RX_CAROUSEL        = 23,  /* a frame with the session's CRC seed */
-    ARQ_EV_TIMER_CAROUSEL     = 24,  /* the carousel's next deadline  */
-    ARQ_EV_RX_PATTERN         = 25,  /* a pattern heard; rx_flags HAS_DATA
-                                      * for the BREAK kind             */
+    ARQ_EV_RX_CAROUSEL,             /* a frame with the session's CRC seed */
+    ARQ_EV_TIMER_CAROUSEL,          /* the carousel's next deadline  */
+    ARQ_EV_RX_PATTERN,              /* a pattern heard (pattern_break) */
 
     ARQ_EV__COUNT
 } arq_event_id_t;
@@ -124,41 +77,31 @@ typedef struct
 {
     arq_event_id_t id;
 
-    /* Frame-derived fields (set on RX events) */
+    /* RX events: the session id, the carrier the frame came on, and the
+     * frame itself (RX_CAROUSEL). */
     uint8_t  session_id;
-    uint8_t  seq;
-    uint8_t  ack_seq;
-    uint8_t  rx_flags;        /* ARQ_FLAG_TURN_REQ / HAS_DATA / HAS_SNR bits  */
-    int8_t   snr_encoded;     /* as received from frame header                */
-    uint16_t ack_delay_raw;   /* as received (10ms units, 0=unknown)          */
-
-    /* Mode negotiation */
-    int      mode;            /* requested/applied FreeDV mode                */
-    size_t   data_bytes;      /* payload byte count (DATA frames)             */
-
-    /* Received data payload — carried through event queue so the FSM can
-     * validate sequence numbers before delivering to the application. */
+    int      mode;
     uint8_t  payload[1280];           /* >= largest user payload: QAM16C2
                                        * carries 1213 - 8 = 1205 bytes      */
     size_t   payload_len;
 
     /* RX_CAROUSEL: the control decoder (DATAC16) produced it; otherwise the
-     * payload decoder, in `mode`.  RX_ACCEPT: the carousel rung the callee
-     * starts us on (arq_protocol_accept_start_level), and whether the
-     * callee runs the carousel at all (car_accept). */
+     * payload decoder, in `mode`.  RX_ACCEPT: the rung the callee starts our
+     * rounds on (0..6, or ARQ_ACCEPT_LEVEL_CTL_DEAF), its session nonce, and
+     * the CRC16 of the callsign we called, which the FSM checks. */
     bool     from_control;
     int      car_level;
-    bool     car_accept;
-    bool     car_call;                /* RX_CALL: the caller runs the carousel */
-    uint16_t car_nonce;               /* RX_ACCEPT: the callee's session nonce */
+    uint16_t car_nonce;
+    uint16_t car_called_crc;
 
-    /* Local receive SNR at the time the frame was decoded (dB, 0 = unknown).
-     * Carried in-band so the FSM can update local_snr_x10 without relying on
-     * the cross-thread arq_update_link_metrics() write, which races with the
-     * event queue push in modem.c. */
+    /* Local receive SNR at the time the frame was decoded (dB, 0 = unknown):
+     * a CALL's sets the start rung the ACCEPT names. */
     float    rx_snr;
     /* RX_CAROUSEL: how long ago the frame ended when it was decoded. */
     uint32_t rx_age_ms;
+
+    /* RX_PATTERN: the BREAK kind, else the session ACK. */
+    bool     pattern_break;
 
     /* APP_DISCONNECT from the host's ABORT: drop what is still in flight and
      * go at once, rather than drain it first as DISCONNECT does (#218). */
@@ -183,9 +126,7 @@ typedef struct
 typedef struct
 {
     /* --- State machine fields --- */
-    arq_conn_state_t  conn_state;      /* Level 1 connection state             */
-    arq_dflow_state_t dflow_state;     /* Level 2 data-flow state              */
-    arq_role_t        role;            /* CALLER or CALLEE                     */
+    arq_conn_state_t  conn_state;      /* connection state                     */
 
     /* --- Identifiers --- */
     uint8_t  session_id;               /* random byte chosen by caller         */
@@ -197,10 +138,6 @@ typedef struct
                                               * accepted incoming CALL (empty =>
                                               * fall back to the primary)        */
 
-    /* --- Sequence numbers --- */
-    uint8_t  tx_seq;                   /* next seq we will send                */
-    uint8_t  rx_expected;              /* next seq we expect from peer         */
-
     /* --- Mode / speed --- */
     int      payload_mode;             /* MY data TX mode (ISS); per-direction,
                                         * independent of peer's TX mode        */
@@ -208,15 +145,9 @@ typedef struct
     int      initial_payload_mode;     /* startup payload mode (= broadcast RX
                                         * mode); restored on disconnect so the
                                         * payload decoder matches broadcast    */
-    int      speed_level;              /* reliability ladder: 0=DATAC15,
-                                        * 1=DATAC4, 2=DATAC3, 3=DATAC1        */
-    int      tx_success_count;         /* consecutive clean ACKs (no retry)
-                                        * towards ladder step-up               */
-    int      mode_upgrade_count;       /* SNR hysteresis counter for upgrade   */
-    int      pending_tx_mode;          /* mode requested in MODE_REQ (retry)   */
-    int      peer_tx_mode;             /* mode peer last TX'd in = my payload
-                                        * RX decoder mode when IRS; updated
-                                        * from ev->mode on every DATA frame    */
+    int      peer_tx_mode;             /* my payload RX decoder's mode: the
+                                        * carousel binds it to the peer's
+                                        * rung, idle restores the listen mode */
 
     /* --- Retry/timeout bookkeeping --- */
     int      tx_retries_left;          /* retries remaining for current frame.
@@ -225,36 +156,21 @@ typedef struct
                                         * spent silently when the RX window closes
                                         * without a CALL (see fsm_accepting).    */
     uint64_t state_enter_ms;          /* when current conn_state was entered   */
-    uint64_t startup_deadline_ms;     /* end of control-mode-only startup      */
-
-    /* --- Peer state observed from frames --- */
-    bool     peer_has_data;            /* peer's HAS_DATA flag in last frame   */
-    bool     peer_cap_more;            /* peer sets/understands HAS_DATA on
-                                        * DATA frames (ARQ_FLAG_CAP_MORE)    */
-    bool     peer_more_data;           /* the peer's last DATA said more is
-                                        * queued behind it                   */
-    uint64_t peer_more_data_ms;        /* when that DATA was received       */
-    bool     peer_turn_req_pending;    /* peer asked for the floor while we were
-                                        * in WAIT_ACK; honoured when the ACK
-                                        * lands, never by keying into it        */
 
     /* When a decoder was last holding sync on an incoming burst, i.e. when the
      * peer was last observed transmitting.  Written by the modem RX thread via
      * arq_update_link_metrics() under g_sess_lock, read by the FSM; used to
-     * avoid keying a TURN_REQ into the peer's frame. */
+     * avoid keying into the peer's frame. */
     uint64_t last_rx_sync_ms;
     /* A decoder caught a frame's preamble: the frame is on the air until
      * this, whatever its sync does meanwhile (arq_note_rx_preamble). */
     uint64_t rx_frame_busy_until_ms;
     uint64_t nav_busy_until_ms;     /* a NAV header heard: the peer's keydown runs until then */
-    uint8_t  turn_req_defer_count;     /* consecutive busy-channel deferrals   */
-    uint8_t  retx_defer_count;         /* same, for DATA (first burst and
-                                        * WAIT_ACK retransmission)          */
-    uint8_t  disc_defer_count;         /* same, for DISCONNECT              */
+    uint8_t  disc_defer_count;         /* consecutive busy-channel deferrals
+                                        * of our DISCONNECT                 */
     bool     tx_active;                /* we are keyed (TX_STARTED seen, no
                                         * TX_COMPLETE yet)                   */
     uint64_t last_tx_end_ms;           /* when our last transmission ended  */
-    bool     acktx_had_has_data;       /* HAS_DATA was set in the last ACK sent */
     bool     host_released;            /* the application ended this session
                                         * (DISCONNECT/ABORT): nothing more is
                                         * delivered to it until a new one.
@@ -266,22 +182,10 @@ typedef struct
                                         * Peer DISCONNECT, timeouts and LISTEN
                                         * OFF leave CONNECTED at once, so
                                         * nothing is delivered after them. */
-    bool     tx_join_next;             /* the frame being sent opens a keydown the
-                                        * NEXT send joins (ACK + first data burst) */
-    bool     ack_carries_data;         /* the ACK over in flight also carries our
-                                        * first data burst (one keydown)        */
-    int      peer_snr_x10;            /* peer-reported SNR * 10 (integer)     */
-    bool     peer_snr_valid;          /* a peer SNR reading has been received; *
-                                       * distinguishes a genuine 0 dB report   *
-                                       * (snr_raw=128) from "no reading yet" so *
-                                       * mode-climbing isn't stalled at ~0 dB   */
     int      local_snr_x10;           /* local SNR EMA * 10                   */
-    float    olla_offset_db;          /* OLLA per-link SNR offset (dB); added  *
-                                       * to peer_snr before mode thresholding  */
-    uint64_t peer_busy_until_ms;      /* remote TX busy guard expiry          */
 
     /* --- Data bookkeeping --- */
-    int      tx_backlog_bytes;         /* bytes pending in TX buffer           */
+    int      tx_inflight_bytes;        /* bytes the carousel holds unconfirmed */
     int      pending_burst_frames;     /* frames accumulated for current PTT burst;
                                         * written by cb_send_tx_frame under g_sess_lock
                                         * (replaces the former function-static so that
@@ -295,13 +199,11 @@ typedef struct
                                         * call always returns to where it was   */
 
     /* --- Connect handshake --- */
-    bool     peer_carousel;            /* the caller's CALL said it runs the
-                                        * carousel: our ACCEPT and the session
-                                        * follow it, else stop-and-wait        */
     bool     accept_fallback;          /* LISTENING was entered because our ACCEPT
                                         * retries ran out: the caller may still
-                                        * have heard it, so its first DATA/ACK
-                                        * may complete this session.  Only then. */
+                                        * have heard it, so its first carousel
+                                        * frame may complete this session.  Only
+                                        * then. */
     bool     accept_tx_pending;        /* the pending TIMER_RETRY is an ACCEPT
                                         * answering a CALL we actually heard,
                                         * not the RX-window timer.  Only the
@@ -323,71 +225,11 @@ typedef struct
                                         * APP_DISCONNECT must resolve into a
                                         * clean teardown. 0 = none armed. */
 
-    /* --- Initial connect guard --- */
-    bool     pending_connect_confirm;  /* caller must ACK ACCEPT when no initial
-                                        * DATA is queued, otherwise callee stays
-                                        * in ACCEPTING waiting for first traffic */
-    bool     need_initial_guard;       /* ISS must apply channel guard before
-                                        * first DATA after connect (prevents
-                                        * transmitting before IRS resets its
-                                        * decoders from TX→RX)               */
-
-    /* --- Delivery-feedback safety net --- */
-    int      consecutive_retries;      /* consecutive non-clean TX outcomes     */
-    int      reverse_hold_streak;      /* consecutive retries attributed to
-                                        * reverse-path ACK loss (mode held);
-                                        * capped at ARQ_REVERSE_HOLD_MAX so a
-                                        * fade cluster with healthy-looking SNR
-                                        * cannot freeze the downgrade paths
-                                        * (S1 fade-cliff fix); reset on clean  */
-    uint64_t mode_hold_until_ms;       /* after forced downgrade: don't upgrade
-                                        * until this uptime (prevents oscillation
-                                        * when stale SNR says "upgrade" but the
-                                        * channel can't support it)            */
-
-    /* --- Retransmit buffer --- */
-    /* --- TX window (go-back-N, one PTT burst) ---
-     * Slot buffers must hold the largest frame: QAM16C2 is 1213 bytes
-     * (8 hdr + 1205 payload). */
-    struct
-    {
-        uint8_t buf[1280];
-        int     len;            /* frame bytes (hdr + payload slot)       */
-        int     payload_len;    /* valid user bytes carried               */
-        uint8_t seq;
-    }        tx_window[ARQ_BURST_MAX];
-    int      tx_window_count;          /* unACKed frames in the window      */
-    bool     tx_window_retx;           /* window needed >=1 retransmission  */
-    int      tx_inflight_bytes;       /* payload bytes across the window    */
-
-    /* --- Restage buffer (S1 fade-cliff fix) ---
-     * When a mode change is needed but the window holds unACKed frames, the
-     * MODE_ACK probe resolves their fate; bytes confirmed UNdelivered are
-     * pulled back here (tx_seq rewound to the window base) and re-framed by
-     * send_data_burst() at the new mode.  Sized for a full window of the
-     * largest frames. */
-    uint8_t  restage_buf[ARQ_BURST_MAX * 1280];
-    size_t   restage_len;              /* valid bytes in restage_buf        */
-    size_t   restage_off;              /* next unread offset                */
-    bool     mode_probe;               /* one-shot: allow MODE_REQ with a
-                                        * non-empty window (set by the retry-
-                                        * exhaustion path; consumed by
-                                        * maybe_upgrade_mode)               */
-
-    /* --- Keepalive tracking --- */
-    int      keepalive_miss_count;
-    bool     keepalive_from_irs;       /* true when keepalive was initiated from IRS idle state */
-    bool     keepalive_ack_from_irs;   /* true when KEEPALIVE_ACK is in response to KEEPALIVE
-                                        * received while in IDLE_IRS state           */
-    uint64_t last_rx_ms;              /* last successful frame decode time     */
-    uint64_t last_tx_progress_ms;     /* baseline for the no-progress budget:
-                                       * seeded on CONNECTED entry and refreshed
-                                       * whenever tx_seq advances.             */
+    uint64_t last_rx_ms;              /* last frame decoded from the peer      */
 
     /* --- Carousel data plane (carousel.h) --- *
-     * When car_active, CONNECTED runs the carousel instead of the data-flow
-     * sub-FSM, and deadline_ms mirrors the carousel's next deadline
-     * (ARQ_EV_TIMER_CAROUSEL).  crc_seed rides every carousel frame's CRC16. */
+     * car_active while CONNECTED (and through a callee's ending); deadline_ms
+     * then mirrors the carousel's next deadline (ARQ_EV_TIMER_CAROUSEL).  crc_seed rides every carousel frame's CRC16. */
     car_t   *car;                     /* allocated by arq_fsm_init             */
     bool     car_active;
     bool     car_session;           /* this session ran the carousel (until idle) */
@@ -516,12 +358,6 @@ void arq_fsm_dispatch(arq_session_t *sess, const arq_event_t *event);
  */
 int arq_fsm_timeout_ms(const arq_session_t *sess, uint64_t now);
 
-/**
- * @brief Run CONNECTED on the carousel data plane (default) or on the
- *        stop-and-wait data-flow sub-FSM.  Both ends must agree.
- */
-void arq_fsm_set_carousel(bool on);
-bool arq_fsm_carousel(void);
 /** The carrier the next CALL goes out on: the control mode for the first
  *  ARQ_CALL_FAST_SLOTS, then MFSK and the control mode alternately. */
 int arq_call_carrier(const arq_session_t *sess);
@@ -532,11 +368,6 @@ bool arq_fsm_expect_pattern(const arq_session_t *sess, uint64_t now);
  * @brief Human-readable name for a connection state (for log output).
  */
 const char *arq_conn_state_name(arq_conn_state_t s);
-
-/**
- * @brief Human-readable name for a data-flow state (for log output).
- */
-const char *arq_dflow_state_name(arq_dflow_state_t s);
 
 /**
  * @brief Human-readable name for an event (for log output).

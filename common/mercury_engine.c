@@ -169,21 +169,7 @@ int mercury_engine_init(const mercury_config *cfg,
     int rx_input_channel = cfg->capture_channel;
 
     /* ---- ARQ tuning ---- */
-    arq_set_no_progress_timeout_s(cfg->no_progress_timeout_s);
     arq_set_disconnect_drain_timeout_s(cfg->disconnect_drain_timeout_s);
-    /* Data-plane retries only: must NOT inflate CALL/ACCEPT (see arq.c). Using
-     * the all-slots setter here regressed connection setup — the IRS lingered
-     * ~90 s in ACCEPTING after the caller gave up. */
-    arq_set_data_retry_slots(cfg->data_retry_slots);
-    arq_set_mode_hold_after_downgrade_s(cfg->mode_hold_after_downgrade_s);
-    arq_set_ladder_up_successes(cfg->ladder_up_successes);
-    arq_set_retry_downgrade_threshold(cfg->retry_downgrade_threshold);
-    arq_set_channel_guard_ms(cfg->channel_guard_ms);
-    arq_set_iss_post_ack_guard_ms(cfg->iss_post_ack_guard_ms);
-    arq_set_keepalive_interval_s(cfg->keepalive_interval_s);
-    arq_set_keepalive_miss_limit(cfg->keepalive_miss_limit);
-    arq_set_peer_payload_hold_s(cfg->peer_payload_hold_s);
-    arq_set_startup_max_s(cfg->startup_max_s);
     arq_set_retry_stagger_ms(cfg->retry_stagger_ms);
     modem_set_tx_gain(powf(10.0f, cfg->tx_gain_db / 20.0f));
     modem_set_tx_delay_ms(cfg->tx_delay_ms);
@@ -228,6 +214,11 @@ int mercury_engine_init(const mercury_config *cfg,
             HLOGW("engine", "broadcast_tcp_port %d is unusable (need 1..65535); "
                             "using %d instead",
                   requested_broadcast_port, broadcast_port);
+        /* Keys an older mercury.ini may still set, which do nothing now. */
+        for (int k = 0; cfg_removed_key_name(k); k++)
+            if (cfg->removed_keys & (1u << k))
+                HLOGW("engine", "[arq] %s in the configuration file is no longer "
+                                "used and is ignored; delete it", cfg_removed_key_name(k));
     }
     else
     {

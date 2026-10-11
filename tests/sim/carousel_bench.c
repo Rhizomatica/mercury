@@ -1,5 +1,5 @@
-/* tests/sim/carousel_bench.c -- the carousel data plane on the sim's channel,
- * to compare with the stop-and-wait ARQ (ab_bench).
+/* tests/sim/carousel_bench.c -- the carousel data plane alone on the sim's
+ * channel (ab_bench runs it under the full FSM).
  *
  *   carousel_bench <seed> <channel> [bidir]      (channel as in ab_bench)
  *

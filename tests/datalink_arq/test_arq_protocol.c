@@ -36,8 +36,8 @@ void test_encode_decode_hdr_roundtrip(void)
     arq_frame_hdr_t hdr_in = {
         .packet_type = PACKET_TYPE_ARQ_CONTROL,
         .frame_ext   = 0,
-        .subtype     = ARQ_SUBTYPE_ACK,
-        .flags       = ARQ_FLAG_HAS_DATA,
+        .subtype     = ARQ_SUBTYPE_DISCONNECT,
+        .flags       = 0x40,
         .session_id  = 0x42,
         .tx_seq      = 5,
         .rx_ack_seq  = 3,
@@ -173,48 +173,6 @@ void test_bw_token_invalid(void)
     TEST_ASSERT_EQUAL_INT(0, hz);
 }
 
-/* ---- ACK delay encode/decode ---- */
-
-void test_ack_delay_roundtrip(void)
-{
-    uint8_t raw = arq_protocol_encode_ack_delay(500);
-    uint32_t decoded = arq_protocol_decode_ack_delay(raw);
-    /* 10ms resolution: 500ms -> raw=50, decoded=500ms */
-    TEST_ASSERT_EQUAL_UINT32(500, decoded);
-}
-
-void test_ack_delay_zero(void)
-{
-    uint8_t raw = arq_protocol_encode_ack_delay(0);
-    TEST_ASSERT_EQUAL_UINT8(0, raw);
-    uint32_t decoded = arq_protocol_decode_ack_delay(0);
-    TEST_ASSERT_EQUAL_UINT32(0, decoded);
-}
-
-/* ---- Build ACK frame ---- */
-
-void test_build_ack(void)
-{
-    uint8_t buf[64];
-    memset(buf, 0, sizeof(buf));
-
-    int size = arq_protocol_build_ack(buf, sizeof(buf),
-        0x42, /* session_id */
-        3,    /* rx_ack_seq */
-        ARQ_FLAG_HAS_DATA,
-        150,  /* snr_raw */
-        10    /* ack_delay_raw */
-    );
-    TEST_ASSERT_GREATER_THAN(0, size);
-
-    /* Decode the header and check fields */
-    arq_frame_hdr_t hdr;
-    int ret = arq_protocol_decode_hdr(buf, (size_t)size, &hdr);
-    TEST_ASSERT_EQUAL_INT(0, ret);
-    TEST_ASSERT_EQUAL_UINT8(ARQ_SUBTYPE_ACK, hdr.subtype);
-    TEST_ASSERT_EQUAL_UINT8(0x42, hdr.session_id);
-}
-
 /* ---- Build DISCONNECT frame ---- */
 
 void test_build_disconnect(void)
@@ -223,48 +181,16 @@ void test_build_disconnect(void)
     memset(buf, 0, sizeof(buf));
 
     int size = arq_protocol_build_disconnect(buf, sizeof(buf), 0x42, 128);
-    TEST_ASSERT_GREATER_THAN(0, size);
+    TEST_ASSERT_EQUAL_INT(ARQ_FRAME_HDR_SIZE, size);
+    TEST_ASSERT_EQUAL_INT(PACKET_TYPE_ARQ_CONTROL, frame_header_packet_type(buf[0]));
 
     arq_frame_hdr_t hdr;
     int ret = arq_protocol_decode_hdr(buf, (size_t)size, &hdr);
     TEST_ASSERT_EQUAL_INT(0, ret);
     TEST_ASSERT_EQUAL_UINT8(ARQ_SUBTYPE_DISCONNECT, hdr.subtype);
     TEST_ASSERT_EQUAL_UINT8(0x42, hdr.session_id);
-}
-
-/* ---- DATA frame valid-length encoding (3 flag bits + low byte) ---- */
-
-/* Encode payload_valid > 511 the way send_data_frame() does, then verify
- * the wire bytes reconstruct the exact count the way arq.c does.  1205 is
- * QAM16C2's user payload (1213 - 8 header); 0x4B5 exercises LEN_B10. */
-void test_data_valid_length_over_511(void)
-{
-    static const uint16_t lens[] = { 256, 511, 512, 1023, 1172, 1205, 2047 };
-    uint8_t payload[8] = {0xA5};
-
-    for (size_t i = 0; i < sizeof(lens) / sizeof(lens[0]); i++)
-    {
-        uint16_t len = lens[i];
-        uint8_t flags = 0;
-        if (len & 0x100) flags |= ARQ_FLAG_LEN_HI;
-        if (len & 0x200) flags |= ARQ_FLAG_LEN_B9;
-        if (len & 0x400) flags |= ARQ_FLAG_LEN_B10;
-
-        uint8_t buf[64];
-        int size = arq_protocol_build_data(buf, sizeof(buf), 0x42, 1, 0,
-                                           flags, 0, len,
-                                           payload, sizeof(payload));
-        TEST_ASSERT_GREATER_THAN(0, size);
-
-        arq_frame_hdr_t hdr;
-        TEST_ASSERT_EQUAL_INT(0, arq_protocol_decode_hdr(buf, (size_t)size, &hdr));
-
-        size_t valid = (size_t)hdr.ack_delay_raw;
-        if (hdr.flags & ARQ_FLAG_LEN_HI)  valid |= 0x100u;
-        if (hdr.flags & ARQ_FLAG_LEN_B9)  valid |= 0x200u;
-        if (hdr.flags & ARQ_FLAG_LEN_B10) valid |= 0x400u;
-        TEST_ASSERT_EQUAL_UINT(len, valid);
-    }
+    TEST_ASSERT_EQUAL_UINT8(128, hdr.snr_raw);
+    TEST_ASSERT_EQUAL_INT(-1, arq_protocol_build_disconnect(buf, ARQ_FRAME_HDR_SIZE - 1, 0x42, 128));
 }
 
 /* ---- Mode timing lookup ---- */
@@ -297,8 +223,8 @@ void test_mode_timing_datac16(void)
 void test_mode_timing_datac13_removed(void)
 {
     /* DATAC13 was replaced by DATAC16 as the control mode and intentionally
-     * has no timing row (its 14-byte payload would collide with DATAC16 in
-     * the DATA-frame mode-inference loop). */
+     * has no timing row (its 14-byte payload would collide with DATAC16's
+     * where modes are told apart by frame size). */
     const arq_mode_timing_t *t = arq_protocol_mode_timing(FREEDV_MODE_DATAC13);
     TEST_ASSERT_NULL(t);
 }
@@ -374,8 +300,8 @@ void test_mode_timing_datac16_unaffected_by_override(void)
  * not exist or drops one that does.  Refusing makes the misconfiguration
  * visible instead.
  *
- * Guards both encoders: the CALL/ACCEPT payload (SRC + DST CRC16) and the CQ
- * payload (SRC only). */
+ * Guards both encoders that carry a callsign in full: the CALL payload (SRC +
+ * DST CRC16) and the CQ payload (SRC only). */
 void test_callsign_too_long_is_refused_not_truncated(void)
 {
     uint8_t frame[INT_BUFFER_SIZE];
@@ -390,9 +316,10 @@ void test_callsign_too_long_is_refused_not_truncated(void)
     TEST_ASSERT_LESS_THAN_INT(0, arq_protocol_build_call(frame, sizeof(frame),
                                                          0x42, too_long,
                                                          "PU2UIT-3", 2300));
-    TEST_ASSERT_LESS_THAN_INT(0, arq_protocol_build_accept(frame, sizeof(frame),
-                                                           0x42, too_long,
-                                                           "PU2UIT-3", 2300, 0));
+    /* The ACCEPT carries both callsigns as CRCs, so any callsign answers. */
+    TEST_ASSERT_GREATER_THAN_INT(0, arq_protocol_build_accept(frame, sizeof(frame),
+                                                              0x42, too_long,
+                                                              "PU2UIT-3", 2300, 0, 0));
     /* Not asserted for CQ: its SRC slot is 13 bytes (ARQ_CQ_SRC_MAX_ENCODED)
      * against CALL/ACCEPT's 10, and the longest callsign that fits
      * CALLSIGN_MAX_SIZE encodes to about 10 bytes -- so the CQ encoder cannot
@@ -400,112 +327,94 @@ void test_callsign_too_long_is_refused_not_truncated(void)
      * defensive, and asserting it would only pin an unreachable branch. */
 }
 
-/* Mixed versions.  A station without the carousel (1.9.x, trunk before it)
- * checks an ACCEPT's DST CRC on all 16 bits and its bandwidth token exactly.
- * A carousel ACCEPT must fail that check -- or the old caller "connects" to a
- * session neither side can move data on (harness: CONNECTED, then nothing for
- * 10 minutes) -- and a plain one must pass it, untouched. */
-void test_accept_carousel_marker(void)
+/* CALL and ACCEPT, protocol version 1 (docs/CAROUSEL-ARQ.md, "Wire
+ * formats"): every field reads back as written, a 1.9.x station reads the
+ * extension as an unknown bandwidth token (and drops the frame), and a frame
+ * of another version, or with a reserved bit set, is refused. */
+void test_connect_v1_call(void)
 {
-    uint8_t car[INT_BUFFER_SIZE], plain[INT_BUFFER_SIZE];
-    for (int lv = 0; lv <= 7; lv++)
-    {
-        TEST_ASSERT_GREATER_THAN_INT(0, arq_protocol_build_accept(car, sizeof(car), 0x21,
-                                                                  "PU2UIT-3", "PU2UIT", 2300, lv));
-        TEST_ASSERT_TRUE(arq_protocol_accept_is_carousel(car));
-        TEST_ASSERT_EQUAL_INT(lv, arq_protocol_accept_start_level(car));
-        /* What a 1.9.x caller does with it: an unknown token, dropped. */
-        TEST_ASSERT_EQUAL_INT(0, arq_protocol_bw_hz_from_token(frame_header_extension(car[0])));
-        /* Ours still parses it. */
-        uint8_t sid = 0; char src[CALLSIGN_MAX_SIZE] = {0}, dst[CALLSIGN_MAX_SIZE] = {0}; int bw = 0;
-        TEST_ASSERT_GREATER_OR_EQUAL_INT(0, arq_protocol_parse_accept(car, sizeof(car), &sid, src, dst, &bw));
-        TEST_ASSERT_EQUAL_INT(2300, bw);
-        TEST_ASSERT_EQUAL_STRING("PU2UIT-3", src);
-        TEST_ASSERT_TRUE(arq_protocol_connect_dst_matches(car, true, "PU2UIT"));
-    }
-
-    TEST_ASSERT_GREATER_THAN_INT(0, arq_protocol_build_accept(plain, sizeof(plain), 0x21,
-                                                              "PU2UIT-3", "PU2UIT", 2300, -1));
-    TEST_ASSERT_FALSE(arq_protocol_accept_is_carousel(plain));
-    TEST_ASSERT_EQUAL_INT(2300, arq_protocol_bw_hz_from_token(frame_header_extension(plain[0])));
-    TEST_ASSERT_TRUE(arq_protocol_connect_dst_matches(plain, false, "PU2UIT"));   /* all 16 bits */
-}
-
-/* The CALL's marker: in the SRC slot's tail, where an old callee's decoder
- * never reads -- so a marked CALL still parses there to the same callsign --
- * and never mistaken for a callsign whose code runs into that byte. */
-void test_call_carousel_marker(void)
-{
-    static const char *calls[] = { "PU2UIT", "PU2UIT-6", "DL9ABC-15", "W1AW", "KO0OOO-2", "HB9ABCD-15" };
+    /* the last one fills the 10-byte slot: it had no room for the old mark */
+    static const char *calls[] = { "PU2UIT", "PU2UIT-6", "DL9ABC-15", "W1AW", "KO0OOO-2", "QZXJW98765432" };
     for (unsigned i = 0; i < sizeof(calls) / sizeof(calls[0]); i++)
     {
         uint8_t frame[INT_BUFFER_SIZE];
         TEST_ASSERT_GREATER_THAN_INT(0, arq_protocol_build_call(frame, sizeof(frame), 0x21,
                                                                 calls[i], "PU2UIT-3", 2300));
-        TEST_ASSERT_FALSE(arq_protocol_call_is_carousel(frame, calls[i]));   /* an old caller's */
-        TEST_ASSERT_TRUE(arq_protocol_mark_call_carousel(frame, calls[i]));
-        uint8_t sid = 0; char src[CALLSIGN_MAX_SIZE] = {0}, dst[CALLSIGN_MAX_SIZE] = {0}; int bw = 0;
-        TEST_ASSERT_GREATER_OR_EQUAL_INT(0, arq_protocol_parse_call(frame, sizeof(frame), &sid, src, dst, &bw));
-        TEST_ASSERT_EQUAL_STRING(calls[i], src);                              /* as 1.9.x parses it */
-        TEST_ASSERT_TRUE(arq_protocol_connect_dst_matches(frame, false, "PU2UIT-3"));
-        TEST_ASSERT_TRUE(arq_protocol_call_is_carousel(frame, src));
-    }
-    /* A callsign whose code fills the slot: no room, so no marker -- and its
-     * last code byte, whatever it is, never reads as one. */
-    const char *full = "QZXJW98765432";
-    uint8_t frame[INT_BUFFER_SIZE];
-    if (arq_protocol_build_call(frame, sizeof(frame), 0x21, full, "PU2UIT-3", 2300) > 0)
-    {
-        frame[ARQ_CONTROL_FRAME_SIZE - 1] = ARQ_CALL_CAROUSEL_MARK;
-        char src[CALLSIGN_MAX_SIZE] = {0}, dst[CALLSIGN_MAX_SIZE] = {0}; uint8_t sid; int bw;
-        if (arq_protocol_parse_call(frame, sizeof(frame), &sid, src, dst, &bw) >= 0 && !strcmp(src, full))
-            TEST_ASSERT_FALSE(arq_protocol_call_is_carousel(frame, src));
+        TEST_ASSERT_TRUE(arq_protocol_connect_version_ok(frame, ARQ_CONTROL_FRAME_SIZE));
+        TEST_ASSERT_EQUAL_INT(0, arq_protocol_bw_hz_from_token(frame_header_extension(frame[0])));
+        uint8_t sid = 0; char src[CALLSIGN_MAX_SIZE] = {0}; int bw = 0;
+        TEST_ASSERT_EQUAL_INT(0, arq_protocol_parse_call(frame, sizeof(frame), &sid, src, &bw));
+        TEST_ASSERT_EQUAL_UINT8(0x21, sid);
+        TEST_ASSERT_EQUAL_STRING(calls[i], src);
+        TEST_ASSERT_EQUAL_INT(2300, bw);
+        TEST_ASSERT_TRUE(arq_protocol_connect_dst_matches(frame, "PU2UIT-3"));
+        TEST_ASSERT_TRUE(arq_protocol_connect_dst_matches(frame, "pu2uit-3"));
+        TEST_ASSERT_FALSE(arq_protocol_connect_dst_matches(frame, "PU2UIT-2"));
+        arq_accept_t acc;
+        TEST_ASSERT_LESS_THAN_INT(0, arq_protocol_parse_accept(frame, sizeof(frame), &acc));
     }
 }
 
-/* Earlier carousels' marks are not this one: such a caller runs stop-and-wait
- * with this build. */
-void test_call_old_carousel_mark_unmarked(void)
+void test_connect_v1_accept(void)
+{
+    for (int lv = 0; lv <= ARQ_ACCEPT_LEVEL_CTL_DEAF; lv++)
+    {
+        uint8_t frame[INT_BUFFER_SIZE];
+        uint16_t nonce = (uint16_t)(0x1234 * (lv + 1) + 7);
+        TEST_ASSERT_EQUAL_INT(ARQ_CONTROL_FRAME_SIZE,
+                              arq_protocol_build_accept(frame, sizeof(frame), 0x21,
+                                                        "PU2UIT-3", "PU2UIT", 2300, lv, nonce));
+        TEST_ASSERT_EQUAL_INT(0, arq_protocol_bw_hz_from_token(frame_header_extension(frame[0])));
+        arq_accept_t acc;
+        TEST_ASSERT_EQUAL_INT(0, arq_protocol_parse_accept(frame, sizeof(frame), &acc));
+        TEST_ASSERT_EQUAL_UINT8(0x21, acc.session_id);
+        TEST_ASSERT_EQUAL_INT(2300, acc.bw_hz);
+        TEST_ASSERT_EQUAL_INT(lv, acc.start_level);
+        TEST_ASSERT_EQUAL_HEX16(nonce, acc.nonce);
+        TEST_ASSERT_EQUAL_HEX16(arq_protocol_callsign_crc16("PU2UIT-3"), acc.called_crc);
+        TEST_ASSERT_TRUE(arq_protocol_connect_dst_matches(frame, "PU2UIT"));   /* all 16 bits */
+        uint8_t sid; char src[CALLSIGN_MAX_SIZE]; int bw;
+        TEST_ASSERT_LESS_THAN_INT(0, arq_protocol_parse_call(frame, sizeof(frame), &sid, src, &bw));
+        /* every reserved bit refuses it */
+        for (int byte = ARQ_ACCEPT_LEVEL_IDX; byte < ARQ_CONTROL_FRAME_SIZE; byte++)
+            for (int bit = (byte == ARQ_ACCEPT_LEVEL_IDX ? 3 : 0); bit < 8; bit++)
+            {
+                uint8_t bad[INT_BUFFER_SIZE];
+                memcpy(bad, frame, ARQ_CONTROL_FRAME_SIZE);
+                bad[byte] ^= (uint8_t)(1u << bit);
+                TEST_ASSERT_LESS_THAN_INT(0, arq_protocol_parse_accept(bad, sizeof(bad), &acc));
+            }
+    }
+    uint8_t frame[INT_BUFFER_SIZE];
+    TEST_ASSERT_LESS_THAN_INT(0, arq_protocol_build_accept(frame, sizeof(frame), 0x21,
+                                                           "PU2UIT-3", "PU2UIT", 2300, 8, 0));
+    TEST_ASSERT_LESS_THAN_INT(0, arq_protocol_build_accept(frame, sizeof(frame), 0x21,
+                                                           "PU2UIT-3", "PU2UIT", 2300, -1, 0));
+}
+
+/* A 1.9.x CALL (bandwidth token alone in the extension), or another version:
+ * not ours -- the versions do not connect. */
+void test_connect_other_version_refused(void)
 {
     uint8_t frame[INT_BUFFER_SIZE];
     TEST_ASSERT_GREATER_THAN_INT(0, arq_protocol_build_call(frame, sizeof(frame), 0x21,
                                                             "PU2UIT", "PU2UIT-3", 2300));
-    frame[ARQ_CONTROL_FRAME_SIZE - 1] = 0xA7;
-    TEST_ASSERT_FALSE(arq_protocol_call_is_carousel(frame, "PU2UIT"));
-    frame[ARQ_CONTROL_FRAME_SIZE - 1] = 0xA8;
-    TEST_ASSERT_FALSE(arq_protocol_call_is_carousel(frame, "PU2UIT"));
-}
-
-/* The callee's nonce rides the ACCEPT's SRC tail: the ACCEPT still parses to
- * the same callsign, the caller reads back what was written, and a callsign
- * with no room for it reads 0 on both ends. */
-void test_accept_nonce(void)
-{
-    static const char *calls[] = { "PU2UIT", "PU2UIT-6", "DL9ABC-15", "W1AW", "KO0OOO-2" };
-    for (unsigned i = 0; i < sizeof(calls) / sizeof(calls[0]); i++)
+    uint8_t ext = frame_header_extension(frame[0]);
+    uint8_t versions[] = { 0, 2, 3 };
+    for (unsigned v = 0; v < sizeof(versions); v++)
     {
-        uint8_t frame[INT_BUFFER_SIZE];
-        TEST_ASSERT_GREATER_THAN_INT(0, arq_protocol_build_accept(frame, sizeof(frame), 0x21,
-                                                                  calls[i], "PU2UIT-3", 2300, 2));
-        for (unsigned v = 0; v < 4; v++)
-        {
-            uint16_t nonce = (uint16_t)(0x1234 * (v + 1) + i);
-            TEST_ASSERT_TRUE(arq_protocol_set_accept_nonce(frame, calls[i], nonce));
-            uint8_t sid = 0; char src[CALLSIGN_MAX_SIZE] = {0}, dst[CALLSIGN_MAX_SIZE] = {0}; int bw = 0;
-            TEST_ASSERT_GREATER_OR_EQUAL_INT(0, arq_protocol_parse_accept(frame, sizeof(frame), &sid, src, dst, &bw));
-            TEST_ASSERT_EQUAL_STRING(calls[i], src);
-            TEST_ASSERT_EQUAL_HEX16(nonce, arq_protocol_accept_nonce(frame, src));
-            TEST_ASSERT_EQUAL_INT(2, arq_protocol_accept_start_level(frame));
-            TEST_ASSERT_TRUE(arq_protocol_accept_is_carousel(frame));
-        }
+        uint8_t other[INT_BUFFER_SIZE];
+        memcpy(other, frame, ARQ_CONTROL_FRAME_SIZE);
+        write_frame_header(other, PACKET_TYPE_ARQ_CALL,
+                           (uint8_t)((ext & ~ARQ_CONNECT_EXT_VERSION_MASK) |
+                                     (versions[v] << ARQ_CONNECT_EXT_VERSION_SHIFT)));
+        TEST_ASSERT_FALSE(arq_protocol_connect_version_ok(other, ARQ_CONTROL_FRAME_SIZE));
+        uint8_t sid; char src[CALLSIGN_MAX_SIZE]; int bw;
+        TEST_ASSERT_LESS_THAN_INT(0, arq_protocol_parse_call(other, sizeof(other), &sid, src, &bw));
     }
-    const char *full = "QZXJW98765432";
-    uint8_t frame[INT_BUFFER_SIZE];
-    if (arq_protocol_build_accept(frame, sizeof(frame), 0x21, full, "PU2UIT-3", 2300, 2) > 0)
-    {
-        TEST_ASSERT_FALSE(arq_protocol_set_accept_nonce(frame, full, 0xBEEF));
-        TEST_ASSERT_EQUAL_HEX16(0, arq_protocol_accept_nonce(frame, full));
-    }
+    /* a 1.9.x CALL: the bare bandwidth token */
+    write_frame_header(frame, PACKET_TYPE_ARQ_CALL, ARQ_BW_TOKEN_2300);
+    TEST_ASSERT_FALSE(arq_protocol_connect_version_ok(frame, ARQ_CONTROL_FRAME_SIZE));
 }
 
 /* Realistic callsigns must still round-trip exactly -- the refusal above must
@@ -523,10 +432,10 @@ void test_callsign_roundtrip_realistic(void)
         TEST_ASSERT_GREATER_THAN_INT(0, n);
 
         uint8_t sid = 0;
-        char src[CALLSIGN_MAX_SIZE] = {0}, dst[CALLSIGN_MAX_SIZE] = {0};
+        char src[CALLSIGN_MAX_SIZE] = {0};
         int bw = 0;
         TEST_ASSERT_GREATER_OR_EQUAL_INT(0,
-            arq_protocol_parse_call(frame, (size_t)n, &sid, src, dst, &bw));
+            arq_protocol_parse_call(frame, (size_t)n, &sid, src, &bw));
         TEST_ASSERT_EQUAL_UINT8(0x21, sid);
         TEST_ASSERT_EQUAL_STRING(calls[i], src);
     }
@@ -591,13 +500,8 @@ int main(void)
     RUN_TEST(test_bw_token_500hz);
     RUN_TEST(test_bw_token_2300hz);
     RUN_TEST(test_bw_token_invalid);
-    /* ACK delay */
-    RUN_TEST(test_ack_delay_roundtrip);
-    RUN_TEST(test_ack_delay_zero);
     /* Frame builders */
-    RUN_TEST(test_build_ack);
     RUN_TEST(test_build_disconnect);
-    RUN_TEST(test_data_valid_length_over_511);
     /* Mode timing */
     RUN_TEST(test_mode_timing_datac4);
     RUN_TEST(test_mode_timing_datac15);
@@ -615,9 +519,8 @@ int main(void)
 
     RUN_TEST(test_callsign_too_long_is_refused_not_truncated);
     RUN_TEST(test_callsign_roundtrip_realistic);
-    RUN_TEST(test_accept_carousel_marker);
-    RUN_TEST(test_call_carousel_marker);
-    RUN_TEST(test_call_old_carousel_mark_unmarked);
-    RUN_TEST(test_accept_nonce);
+    RUN_TEST(test_connect_v1_call);
+    RUN_TEST(test_connect_v1_accept);
+    RUN_TEST(test_connect_other_version_refused);
     return UNITY_END();
 }

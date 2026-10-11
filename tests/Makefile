@@ -61,7 +61,7 @@ ARQ_STUBS = datalink_arq/arq_test_stubs.c
 
 # Test executables
 TEST_BINS = test_ring_buffer test_arq_protocol test_arq_timing test_arq_fsm \
-            test_tcp_interfaces test_resampler test_pcm24 test_arq_olla test_arq_sim \
+            test_tcp_interfaces test_resampler test_pcm24 test_arq_sim \
             test_arq_conn test_cfg_utils test_arq_tnc test_channel_busy \
             test_freedv_harq test_sock_wire test_rtp_wire test_virtual_clock test_watterson \
             test_mercury_prng test_bcast_file \
@@ -115,11 +115,6 @@ test_monitor_frame: modem/test_monitor_frame.c $(UNITY_SRC) $(ARQ_STUBS) \
                     ../common/virtual_clock.c ../datalink_arq/arq_protocol.c ../datalink_arq/arith.c \
                     ../modem/monitor_frame.c
 	$(CC) $(CFLAGS) -I../modem/freedv -o $@ $(filter %.c %.a %.o,$^) $(LDFLAGS)
-
-# OLLA control-loop test (closed-loop gear-shift convergence)
-test_arq_olla: datalink_arq/test_arq_olla.c $(UNITY_SRC) $(ARQ_STUBS) \
-               ../common/virtual_clock.c ../datalink_arq/arq_protocol.c ../datalink_arq/arith.c
-	$(CC) $(CFLAGS) -I../modem/freedv -o $@ $(filter %.c %.a %.o,$^) $(LDFLAGS) -lm
 
 # ARQ timing tests (instrumentation recording)
 test_arq_timing: datalink_arq/test_arq_timing.c $(UNITY_SRC) $(ARQ_STUBS) \

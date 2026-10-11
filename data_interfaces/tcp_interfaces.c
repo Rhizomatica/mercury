@@ -511,10 +511,10 @@ static void execute_control_command(char *buffer)
     /* MODE <index>  -- set the idle ("listen") payload mode, same index space
      * as -m (use -l to list).  MODE alone reports the current one.
      *
-     * Only accepted while the ARQ link is idle: during a session the ARQ mode
-     * ladder owns the payload mode and would overwrite this within one RX-loop
+     * Only accepted while the ARQ link is idle: during a session the carousel
+     * owns the payload mode and would overwrite this within one RX-loop
      * iteration.  Note this does NOT give a later ARQ connection a head start
-     * -- every session starts at DATAC15 and climbs via OLLA regardless. */
+     * -- every session's start rung comes from the connect. */
     if (!strncmp(buffer, "MODE", strlen("MODE")))
     {
         int idx = -1;

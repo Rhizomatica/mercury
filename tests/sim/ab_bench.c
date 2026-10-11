@@ -2,7 +2,6 @@
  *
  *   ab_bench <seed> <channel> [bidir]
  *   channel := clean | awgn:<per> | cliff:<snr_db> | nvis | fade:<snr_db>:<doppler_hz>
- * CAROUSEL=0 runs the stop-and-wait data plane instead of the carousel;
  * AB_LIMIT_MIN=<minutes> raises the bidir run's 30-minute virtual limit.
  * SIM_CS=<acq_ms> in the environment turns the sim's carrier sense on (bidir),
  * without which the FSM's listen-before-talk checks are inert.
@@ -57,8 +56,6 @@ int main(int argc, char **argv)
     bool bidir = argc > 3 && strcmp(argv[3], "bidir") == 0;
 
     sim_channel_cfg_t chan = { .seed = seed, .per = 0.02, .guard_ms = 150 };
-    /* CAROUSEL=0: the stop-and-wait data plane; default the carousel. */
-    arq_fsm_set_carousel(!(getenv("CAROUSEL") && getenv("CAROUSEL")[0] == '0'));
     sim_t *s = sim_create(&chan, "A0AAA", "B0BBB");
     if (!s) { fprintf(stderr, "sim_create failed\n"); return 1; }
 

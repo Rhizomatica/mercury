@@ -20,11 +20,9 @@ import (
 // queue application data at the same time, so the receiver (IRS) must gain the
 // floor to deliver its own payload while the initiator (ISS) is mid-transfer.
 //
-// That is the WAIT_ACK + RX_TURN_REQ contention that deadlocked the link before
-// commit 11a6a9f: the ISS, awaiting the ACK of its last burst, ignored the
-// peer's TURN_REQ, sat out the ack-timeout and retransmitted while the peer
-// kept re-requesting the floor — a mutual stall.  Pre-fix this test times out
-// (neither payload completes); post-fix both directions deliver.
+// Written for the old stop-and-wait plane, whose WAIT_ACK + RX_TURN_REQ
+// contention deadlocked the link before commit 11a6a9f; it now runs the
+// carousel's turns, and both directions must deliver.
 //
 // The channel is clean (default No=-100) so a failure is unambiguously the turn
 // logic, not the link.  MERCURY_CH_NO may be set to add noise.

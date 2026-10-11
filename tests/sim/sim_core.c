@@ -92,7 +92,7 @@ struct sim {
  * ====================================================================== */
 
 /* Add a pending event. Asserts on queue overflow (shouldn't happen for
- * stop-and-wait sessions, but catches bugs early). */
+ * a session, but catches bugs early). */
 static void enqueue(sim_t *s, const sim_pending_t *p)
 {
     assert(s->pending_count < SIM_PENDING_MAX && "pending queue overflow");
@@ -104,13 +104,13 @@ static void enqueue(sim_t *s, const sim_pending_t *p)
 static void drain_outframes_from(sim_t *s, sim_endpoint_t *sender,
                                  sim_endpoint_t *peer, uint64_t now_ms)
 {
-    sim_outframe_t of, chained;
+    sim_outframe_t of;
     int dir = (sender == s->a) ? 0 : 1;
     while (sim_endpoint_take_outframe(sender, &of))
     {
         /* A station plays its frames one after another: one queued while it
          * is still keyed goes out when the current one ends (on air the modem
-         * keyed a DISCONNECT 42 ms after the TURN_ACK it was queued behind),
+         * keyed a DISCONNECT 42 ms after the frame it was queued behind),
          * not on top of it.  Only on the half-duplex medium, the model where
          * that timing decides whether frames collide. */
         uint64_t start_ms = now_ms;
@@ -131,14 +131,7 @@ static void drain_outframes_from(sim_t *s, sim_endpoint_t *sender,
             enqueue(s, &tx_go);
         }
 
-        /* A shared keydown: the chained frame follows after the gap, in the
-         * same over, so the sender's TX_COMPLETE and the medium's busy window
-         * both run to the end of the second frame. */
-        bool     has_chained  = of.join_next && sim_endpoint_take_outframe(sender, &chained);
-        uint64_t chained_start = tx_end + ARQ_ACK_DATA_GAP_MS;
-        uint64_t over_end      = has_chained
-                                 ? chained_start + sim_channel_airtime_ms(chained.mode, chained.len)
-                                 : tx_end;
+        uint64_t over_end = tx_end;
 
         /* TX_COMPLETE back to sender at TX-end time. */
         sim_pending_t tx_done = {
@@ -199,25 +192,6 @@ static void drain_outframes_from(sim_t *s, sim_endpoint_t *sender,
                 .tx_end_ms   = tx_end,
             };
             memcpy(frame_ev.frame, of.buf, of.len);
-            enqueue(s, &frame_ev);
-        }
-
-        /* The chained frame takes its own channel draw -- the channel may
-         * keep one and lose the other, as a real fade could. */
-        if (has_chained && !collided &&
-            sim_channel_schedule(s->ch, chained_start, dir, chained.mode, chained.len,
-                                 &deliver_at))
-        {
-            sim_pending_t frame_ev = {
-                .fire_at_ms  = deliver_at,
-                .target      = peer,
-                .kind        = SIM_PENDING_FRAME,
-                .frame_len   = chained.len,
-                .rx_snr      = s->rx_snr_db,
-                .tx_start_ms = chained_start,
-                .tx_end_ms   = over_end,
-            };
-            memcpy(frame_ev.frame, chained.buf, chained.len);
             enqueue(s, &frame_ev);
         }
     }

@@ -57,7 +57,7 @@ At 10 % every session started above the floor, so both builds ran the same code:
 
 The bench is the gateway (sBitx), estacao2 (sBitx) and estacao8 (IC-7100), on 7.050 MHz into dummy loads. The gateway's TX power sets the SNR; 2 % is about −10 dB at estacao2. Times run from the start of the application's call to the file's arrival, so the connect and the application handshake are included. Every file arrived intact (md5).
 
-**Against stop-and-wait** (same binary, `MERCURY_CAROUSEL=1|0`, runs interleaved):
+**Against stop-and-wait** (same binary, `MERCURY_CAROUSEL=1|0` -- a switch these builds had -- runs interleaved):
 
 | when | application, load | carousel | stop-and-wait |
 |---|---|---|---|
@@ -115,6 +115,11 @@ Every run completes and delivers exactly what was sent. In `ab_bench`, which run
 At −9 dB the floor delivered 432 B in about 90 s. With DATAC16 unusable both ways (No = −1), the session opened through MFSK CALL/ACCEPT and delivered 216 B without decoding a single DATAC16 frame.
 
 ## Compatibility
+
+*Superseded: the carousel-only build removed the stop-and-wait plane and the
+markers below.  Its connect frames carry a protocol version, and it does not
+connect to 1.9.x or to the builds in this report (CAROUSEL-ARQ.md, "Wire
+formats").  What follows is how these builds mixed.*
 
 A carousel ACCEPT is marked (framer extension bit 4), and a carousel CALL is marked in the unused tail of its callsign slot. Both are invisible to older decoders. A station picks the plane per session:
 
@@ -190,6 +195,6 @@ Closed since the first version of this report: the deep-fade handover collisions
 ## Reproducing
 
 - **Simulator matrix.** `make -C tests carousel_bench`, then `CAR_CS_DECODABLE=1 CAR_LIMIT_S=28800 tests/carousel_bench <seed> <channel> [bidir]`. Channels: `awgn:L`, `cliff:dB`, `fade:dB:Hz`, `nvis`, `asym:A:B`, `step:A:B:T`. `CAR_TRACE=1` prints every decision.
-- **Mixed versions.** `MERCURY_TEST_BIN_A=<build> MERCURY_TEST_BIN_B=<build> go test -run '^TestMercuryARQTransfer$' ./tests/integration`. A wrapper script that exports `MERCURY_CAROUSEL=0` works as a build.
+- **Two builds.** `MERCURY_TEST_BIN_A=<build> MERCURY_TEST_BIN_B=<build> go test -run '^TestMercuryARQTransfer$' ./tests/integration`.
 - **Pattern detector.** `make -C utils pattern_probe`, then `utils/pattern_probe [curve N|fading|noise HOURS|signals|cpu]`. It measures the AWGN detection curve with offset, the Rayleigh miss rate, false alarms on noise and on every mode's bursts, and the CPU cost. `SIM_PATTERN_CLIFF` sets the simulator's pattern cliff to match; the default is still −17 dB.
 - **On air.** Run `utils/onair_logs.py <sender journal> <receiver journal>` on the two stations' Mercury journals for one transfer. It shows how each round was answered, the rungs used, and any keydowns that overlapped.

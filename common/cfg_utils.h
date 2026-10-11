@@ -60,22 +60,11 @@
 #define CFG_KEY_PTT_HAMLIB_SPEED    "ptt:hamlib_serial_speed"
 #define CFG_KEY_PTT_HAMLIB_CONF     "ptt:hamlib_conf"
 #define CFG_KEY_PTT_HAMLIB_LOG      "ptt:hamlib_log_level"
-#define CFG_KEY_NO_PROGRESS_TIMEOUT_S "arq:no_progress_timeout_s"
 #define CFG_KEY_DISCONNECT_DRAIN_TIMEOUT_S "arq:disconnect_drain_timeout_s"
 #define CFG_KEY_TX_GAIN_DB          "audio:tx_gain_db"
 #define CFG_KEY_TX_DELAY_MS         "audio:tx_delay_ms"
 #define CFG_KEY_TNC_KEEPALIVE_S     "tnc:keepalive_s"
 #define CFG_KEY_TNC_BUFFER_REPORT_MS "tnc:buffer_report_ms"
-#define CFG_KEY_ARQ_DATA_RETRY_SLOTS          "arq:data_retry_slots"
-#define CFG_KEY_ARQ_MODE_HOLD_DOWNGRADE_S     "arq:mode_hold_after_downgrade_s"
-#define CFG_KEY_ARQ_LADDER_UP_SUCCESSES       "arq:ladder_up_successes"
-#define CFG_KEY_ARQ_RETRY_DOWNGRADE_THRESHOLD "arq:retry_downgrade_threshold"
-#define CFG_KEY_ARQ_CHANNEL_GUARD_MS          "arq:channel_guard_ms"
-#define CFG_KEY_ARQ_ISS_POST_ACK_GUARD_MS     "arq:iss_post_ack_guard_ms"
-#define CFG_KEY_ARQ_KEEPALIVE_INTERVAL_S      "arq:keepalive_interval_s"
-#define CFG_KEY_ARQ_KEEPALIVE_MISS_LIMIT      "arq:keepalive_miss_limit"
-#define CFG_KEY_ARQ_PEER_PAYLOAD_HOLD_S       "arq:peer_payload_hold_s"
-#define CFG_KEY_ARQ_STARTUP_MAX_S             "arq:startup_max_s"
 #define CFG_KEY_ARQ_RETRY_STAGGER_MS          "arq:retry_stagger_ms"
 #define CFG_KEY_BUSY_DETECT                   "channel:busy_detect"
 #define CFG_KEY_BUSY_THRESHOLD_DB             "channel:busy_threshold_db"
@@ -103,32 +92,12 @@ typedef struct {
     int      broadcast_tcp_port;
     bool     verbose;
     int      freedv_verbosity;      /* 0..3 */
-    int      no_progress_timeout_s;/* ARQ: disconnect when no forward progress
-                                    * (no advancing ACK) for this many seconds
-                                    * after data-retry exhaustion. Default 180. */
     int      disconnect_drain_timeout_s;/* ARQ: absolute cap (s) on how long an
                                     * app DISCONNECT stays deferred while
-                                    * draining the last TX bytes. Default 30. */
-    int      data_retry_slots;          /* ARQ: DATA retries before a downgrade
-                                         * cycle. Default 10, clamped 1..64.   */
-    int      mode_hold_after_downgrade_s;/* ARQ: hold lower mode after a forced
-                                         * downgrade. Default 6, clamped 0..60. */
-    int      ladder_up_successes;       /* ARQ: clean ACKs to step the mode
-                                         * ladder up. Default 2, clamped 1..16. */
-    int      retry_downgrade_threshold; /* ARQ: consecutive retries that force a
-                                         * downgrade. Default 2, clamped 1..16. */
-    int      channel_guard_ms;          /* ARQ: IRS response guard after decode.
-                                         * Default 700, clamped 200..3000.      */
-    int      iss_post_ack_guard_ms;     /* ARQ: ISS guard before resuming DATA
-                                         * TX after ACK. Default 900, 200..3000.*/
-    int      keepalive_interval_s;      /* ARQ: keepalive TX interval. Default
-                                         * 20, clamped 5..120.                  */
-    int      keepalive_miss_limit;      /* ARQ: missed keepalives before drop.
-                                         * Default 5, clamped 2..20.            */
-    int      peer_payload_hold_s;       /* ARQ: hold peer payload mode after
-                                         * activity. Default 15, clamped 1..120.*/
-    int      startup_max_s;             /* ARQ: control-mode-only startup
-                                         * window. Default 10, clamped 2..60.   */
+                                    * draining the last TX bytes. Default 45. */
+    uint32_t removed_keys;              /* bit k: the file sets
+                                         * cfg_removed_key_name(k), which this
+                                         * version ignores (cfg_read)        */
     int      retry_stagger_ms;          /* ARQ: deterministic per-node retry
                                          * offset. 0 disables. Default 2000,
                                          * clamped 0..5000.                  */
@@ -170,6 +139,10 @@ typedef struct {
  * defaults installed by cfg_set_defaults()).
  * Returns true on success, false if the file cannot be parsed. */
 bool cfg_read(mercury_config *cfg, const char *ini_path);
+
+/* The name of the k-th [arq] key this version no longer reads (bit k of
+ * mercury_config.removed_keys), or NULL past the last one. */
+const char *cfg_removed_key_name(int k);
 
 /* Write |cfg| to an INI file at |ini_path|.
  * Returns true on success, false if the file cannot be written. */

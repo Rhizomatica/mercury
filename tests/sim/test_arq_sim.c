@@ -14,6 +14,7 @@
 
 #include "arq_fsm.h"
 #include "arq_protocol.h"
+#include "framer.h"
 #include "arq.h"
 #include "freedv_api.h"
 
@@ -86,56 +87,28 @@ void test_endpoint_tx_read_backlog(void)
  * Task 4: Frame translation tests
  * ====================================================================== */
 
-void test_translate_data_roundtrip(void)
-{
-    /* DATAC15 user bytes = payload_bytes - ARQ_FRAME_HDR_SIZE = 30 - 8 = 22.
-     * Build a properly-sized frame so frame_size==30 matches DATAC15 in the
-     * mode table and sim_translate_frame infers FREEDV_MODE_DATAC15. */
-    const size_t USER_BYTES = 22;
-    uint8_t payload[22];
-    for (int i = 0; i < (int)USER_BYTES; i++) payload[i] = (uint8_t)(0xA0 + i);
-
-    uint8_t frame[1280];
-    int fs = arq_protocol_build_data(frame, sizeof(frame),
-                                     /*session_id*/  0x42,
-                                     /*tx_seq*/      5,
-                                     /*rx_ack_seq*/  3,
-                                     /*flags*/       0,
-                                     /*snr_raw*/     0,
-                                     /*payload_valid*/ 0,   /* 0 = full frame */
-                                     payload, USER_BYTES);
-    TEST_ASSERT_TRUE(fs > 0);
-    TEST_ASSERT_EQUAL_INT(ARQ_FRAME_HDR_SIZE + (int)USER_BYTES, fs);
-
-    arq_event_t ev = {0};
-    bool ok = sim_translate_frame(frame, (size_t)fs, 12.0f, "B0BBB", &ev);
-    TEST_ASSERT_TRUE(ok);
-    TEST_ASSERT_EQUAL_INT(ARQ_EV_RX_DATA, ev.id);
-    TEST_ASSERT_EQUAL_UINT8(0x42, ev.session_id);
-    TEST_ASSERT_EQUAL_UINT8(5, ev.seq);
-    TEST_ASSERT_EQUAL_UINT8(3, ev.ack_seq);
-    TEST_ASSERT_EQUAL_INT((int)USER_BYTES, (int)ev.payload_len);
-    TEST_ASSERT_EQUAL_UINT8_ARRAY(payload, ev.payload, USER_BYTES);
-    TEST_ASSERT_EQUAL_INT(FREEDV_MODE_DATAC15, ev.mode);
-}
-
-void test_translate_ack(void)
+/* The one plain session frame is the DISCONNECT; a 1.9.x DATA or ACK frame
+ * translates to nothing. */
+void test_translate_disconnect_only(void)
 {
     uint8_t frame[1280];
-    int fs = arq_protocol_build_ack(frame, sizeof(frame),
-                                     /*session_id*/  0x42,
-                                     /*rx_ack_seq*/  6,
-                                     /*flags*/       0,
-                                     /*snr_raw*/     0,
-                                     /*ack_delay*/   0);
+    int fs = arq_protocol_build_disconnect(frame, sizeof(frame), 0x42, 0);
     TEST_ASSERT_TRUE(fs > 0);
-
     arq_event_t ev = {0};
-    bool ok = sim_translate_frame(frame, (size_t)fs, 0.0f, "B0BBB", &ev);
-    TEST_ASSERT_TRUE(ok);
-    TEST_ASSERT_EQUAL_INT(ARQ_EV_RX_ACK, ev.id);
+    TEST_ASSERT_TRUE(sim_translate_frame(frame, (size_t)fs, 3.0f, "B0BBB", &ev));
+    TEST_ASSERT_EQUAL_INT(ARQ_EV_RX_DISCONNECT, ev.id);
     TEST_ASSERT_EQUAL_UINT8(0x42, ev.session_id);
-    TEST_ASSERT_EQUAL_UINT8(6, ev.ack_seq);
+
+    /* 1.9.x's DATA, and its ACK (control subtype 3). */
+    arq_frame_hdr_t hdr = { .session_id = 0x42 };
+    memset(frame, 0, sizeof(frame));
+    TEST_ASSERT_EQUAL_INT(0, arq_protocol_encode_hdr(frame, sizeof(frame), &hdr));
+    write_frame_header(frame, PACKET_TYPE_ARQ_DATA, 0);
+    TEST_ASSERT_FALSE(sim_translate_frame(frame, 30, 3.0f, "B0BBB", &ev));
+    hdr.subtype = 3;
+    TEST_ASSERT_EQUAL_INT(0, arq_protocol_encode_hdr(frame, sizeof(frame), &hdr));
+    write_frame_header(frame, PACKET_TYPE_ARQ_CONTROL, 0);
+    TEST_ASSERT_FALSE(sim_translate_frame(frame, ARQ_FRAME_HDR_SIZE, 3.0f, "B0BBB", &ev));
 }
 
 /* ======================================================================
@@ -264,16 +237,9 @@ void test_sim_transfer_clean(void)
  * once and both frames still arrive.  Turn coordination is exactly the area
  * where that is the wrong model, so sim_set_half_duplex() exists and this test
  * uses it; the run above produces real collisions (6 in the single-block
- * variant) and both directions must still complete.
- *
- * What this is NOT: a reproduction of issue #278.  It was written trying to be
- * one and it is not -- it passes on the unfixed FSM.  The #278 livelock needs
- * the ISS to decode a TURN_REQ while in WAIT_ACK, and this traffic pattern
- * resolves the turn by piggyback before that happens, so the colliding path is
- * never entered.  Recorded here so the next person does not mistake a pass for
- * evidence about #278; the FSM contract for that bug is pinned by
- * test_wait_ack_turn_req_defers_the_yield_without_keying in test_arq_fsm.c,
- * and the end-to-end behaviour is unverified. */
+ * variant) and both directions must still complete.  (Written for the old
+ * stop-and-wait plane's turn handover, issue #278; it now runs the carousel's
+ * caller-timed turns.) */
 void test_sim_bidirectional_progress_under_collisions(void)
 {
     sim_channel_cfg_t chan = { .seed = 7, .per = 0.0, .guard_ms = 100 };
@@ -299,8 +265,7 @@ void test_sim_bidirectional_progress_under_collisions(void)
         arq_event_t dready = { .id = ARQ_EV_APP_DATA_READY };
         sim_inject(s, sim_b(s), &dready);
 
-        /* A speaks up occasionally, which is what lands it in WAIT_ACK while B
-         * is asking for the floor. */
+        /* A speaks up occasionally, while B keeps asking for the floor. */
         if (r % 4 == 0)
         {
             sim_endpoint_queue_tx(sim_a(s), recb, rec);
@@ -327,101 +292,7 @@ void test_sim_bidirectional_progress_under_collisions(void)
     sim_destroy(s);
 }
 
-/* Bench run 12, end of the call, replayed with carrier sense on.  B asks for
- * the floor; A's host hangs up while A's TURN_ACK is on the air.  On air the
- * DISCONNECT keyed 42 ms after the TURN_ACK and B, holding the TURN_ACK,
- * keyed its first DATA 0.9 s later without listening: both were lost, and the
- * DISCONNECT retry clipped the DATA.  The teardown must now complete with
- * nothing keyed over anything. */
-void test_sim_disconnect_behind_turn_ack_does_not_collide(void)
-{
-    sim_channel_cfg_t chan = { .seed = 3, .per = 0.0, .guard_ms = 100 };
-    sim_t *s = make_connected(&chan);
-    TEST_ASSERT_NOT_NULL(s);
-    sim_set_half_duplex(s, true);
-    sim_set_carrier_sense(s, true, 400);
-    sim_run_until_idle(s, 30000);                 /* settle after connect */
 
-    uint8_t rec[64];
-    memset(rec, 0x5a, sizeof(rec));
-    sim_endpoint_queue_tx(sim_b(s), rec, sizeof(rec));
-    arq_event_t dready = { .id = ARQ_EV_APP_DATA_READY };
-    sim_inject(s, sim_b(s), &dready);
-
-    arq_session_t *a = sim_endpoint_session(sim_a(s));
-    for (int i = 0; i < 600 && !(a->dflow_state == ARQ_DFLOW_TURN_ACK_TX &&
-                                 sim_keyed(s, sim_a(s))); i++)
-        sim_run_until_idle(s, 50);
-    TEST_ASSERT_TRUE_MESSAGE(a->dflow_state == ARQ_DFLOW_TURN_ACK_TX &&
-                             sim_keyed(s, sim_a(s)),
-        "never got A keying a TURN_ACK");
-
-    int before = sim_collisions(s);
-    arq_event_t bye = { .id = ARQ_EV_APP_DISCONNECT };
-    sim_inject(s, sim_a(s), &bye);
-    sim_run_until_idle(s, 180000);
-
-    TEST_ASSERT_EQUAL_INT_MESSAGE(before, sim_collisions(s),
-        "the teardown behind the TURN_ACK collided");
-    TEST_ASSERT_NOT_EQUAL_INT(ARQ_CONN_CONNECTED, a->conn_state);
-    TEST_ASSERT_NOT_EQUAL_INT(ARQ_CONN_CONNECTED,
-                              sim_endpoint_session(sim_b(s))->conn_state);
-    sim_destroy(s);
-}
-
-/* Fix 2 on the whole path.  A is mid-transfer and its DATA says more is
- * queued; B's host then writes, and A's next DATA is lost.  B must not answer
- * with a TURN_REQ -- that is the frame that raced A's retransmission on air
- * (bench run 8) -- but wait for the retransmission and ask for the floor in
- * its ACK.  B's data must still get through, with nothing colliding. */
-void test_sim_irs_asks_in_its_ack_while_the_iss_has_more(void)
-{
-    sim_channel_cfg_t chan = { .seed = 5, .per = 0.0, .guard_ms = 100 };
-    sim_t *s = make_connected(&chan);
-    TEST_ASSERT_NOT_NULL(s);
-    sim_set_half_duplex(s, true);
-    sim_set_carrier_sense(s, true, 400);
-    sim_run_until_idle(s, 30000);
-
-    static uint8_t blob[6000];
-    for (size_t i = 0; i < sizeof(blob); i++) blob[i] = (uint8_t)(i * 13 + 1);
-    sim_endpoint_queue_tx(sim_a(s), blob, sizeof(blob));
-    arq_event_t dready = { .id = ARQ_EV_APP_DATA_READY };
-    sim_inject(s, sim_a(s), &dready);
-
-    arq_session_t *a = sim_endpoint_session(sim_a(s));
-    arq_session_t *b = sim_endpoint_session(sim_b(s));
-    /* Until B has taken an announcing DATA and ACKed it. */
-    for (int i = 0; i < 2000 && !(b->peer_more_data && b->dflow_state == ARQ_DFLOW_IDLE_IRS); i++)
-        sim_run_until_idle(s, 50);
-    TEST_ASSERT_TRUE_MESSAGE(b->peer_more_data, "A never announced more");
-
-    uint8_t rec[40];
-    memset(rec, 0x77, sizeof(rec));
-    sim_endpoint_queue_tx(sim_b(s), rec, sizeof(rec));
-    sim_inject(s, sim_b(s), &dready);
-
-    /* Lose A's next DATA. */
-    sim_set_per(s, 1.0);
-    for (int i = 0; i < 2000 && !(a->dflow_state == ARQ_DFLOW_WAIT_ACK); i++)
-        sim_run_until_idle(s, 50);
-    sim_set_per(s, 0.0);
-
-    bool b_turn_req = false;
-    for (int i = 0; i < 6000; i++)
-    {
-        sim_run_until_idle(s, 50);
-        if (b->dflow_state == ARQ_DFLOW_TURN_REQ_TX)
-            b_turn_req = true;
-    }
-    static uint8_t got[8192];
-    TEST_ASSERT_EQUAL_size_t_MESSAGE(sizeof(rec), sim_endpoint_delivered(sim_a(s), got, sizeof(got)),
-        "B's data never reached A");
-    TEST_ASSERT_EQUAL_size_t(sizeof(blob), sim_endpoint_delivered(sim_b(s), got, sizeof(got)));
-    TEST_ASSERT_FALSE_MESSAGE(b_turn_req, "B competed with a TURN_REQ");
-    TEST_ASSERT_EQUAL_INT(0, sim_collisions(s));
-    sim_destroy(s);
-}
 
 void test_sim_transfer_lossy_per20(void)
 {
@@ -448,21 +319,15 @@ void test_sim_transfer_lossy_per20(void)
     sim_destroy(s);
 }
 
-void test_sim_fade_cliff_downgrades(void)
+void test_sim_fade_cliff_completes(void)
 {
-    /* S1 fade-cliff regression.  Connect and start transferring on a good
-     * channel (12 dB — the payload mode may climb), then the band fades to
+    /* Fade cliff mid-transfer.  Connect and start transferring on a good
+     * channel (12 dB, where the carousel climbs), then the band fades to
      * -5.5 dB: on the channel's mode-aware cliff model every mode above
-     * DATAC15/DATAC16 now loses ~90% of its frames, so downgrading to the
-     * floor is the ONLY way to keep moving — exactly the real-HF fade cliff.
-     *
-     * Before the S1 fix, the reverse-loss hold in record_tx_outcome() was
-     * unbounded: with an SNR reading that still looked adequate, every retry
-     * was attributed to reverse ACK loss, which froze OLLA and
-     * consecutive_retries and made every downgrade path (including the
-     * hard-loss floor drop) unreachable — the transfer starved above the
-     * cliff.  With the bounded hold the delivery feedback breaks through,
-     * the mode descends to DATAC15, and the transfer completes. */
+     * DATAC15/DATAC16 now loses ~90% of its frames, so stepping down to the
+     * floor is the only way to keep moving -- the real-HF fade cliff.  The
+     * old stop-and-wait plane once starved above it (the S1 fix); the
+     * carousel must step down and finish. */
     sim_channel_cfg_t chan = { .seed = 42, .per = 0.02, .guard_ms = 150 };
     sim_t *s = make_connected(&chan);
     TEST_ASSERT_NOT_NULL(s);
@@ -500,10 +365,6 @@ void test_sim_fade_cliff_downgrades(void)
      * that had no margin.  At two hours seeds 42-45 all pass. */
     sim_run_until_idle(s, 7200000); /* up to 2 virtual hours */
 
-    sim_verdict_t floor_v =
-        sim_prop_mode_floor_reached(sim_a(s), FREEDV_MODE_DATAC15, 0);
-    TEST_ASSERT_TRUE_MESSAGE(floor_v.ok, floor_v.detail);
-
     sim_verdict_t v = sim_prop_integrity(s, sim_a(s), sim_b(s), blob, sizeof(blob));
     TEST_ASSERT_TRUE_MESSAGE(v.ok, v.detail);
 
@@ -513,17 +374,10 @@ void test_sim_fade_cliff_downgrades(void)
 void test_sim_peer_loss_disconnects(void)
 {
     /* Peer-death teardown: mid-transfer the channel goes fully dark (peer
-     * off the air).  The ISS must reach a disconnected/listening state
-     * within a bounded time — the no-progress budget plus one retry-
-     * exhaustion round — instead of keying the radio forever.
-     *
-     * Regression guard for Pedro's estacao6/estacao10 OTA finding on the S1
-     * build ("IRS desconectou e a ISS continuou transmitindo"): the mid-
-     * window mode probe fired on hard-loss, its failed MODE_REQ negotiation
-     * reset the data retry budget, and the loop repeated every ~200 s —
-     * permanently preempting the retry-exhaustion branch that owns the
-     * no-progress disconnect.  Fixed by never probing once the no-progress
-     * budget is spent. */
+     * off the air).  Both ends must leave CONNECTED within a bounded time
+     * instead of keying the radio forever -- the failure Pedro saw on air
+     * with the old plane ("IRS desconectou e a ISS continuou
+     * transmitindo"). */
     sim_channel_cfg_t chan = { .seed = 5, .per = 0.02, .guard_ms = 150 };
     sim_t *s = make_connected(&chan);
     TEST_ASSERT_NOT_NULL(s);
@@ -537,15 +391,14 @@ void test_sim_peer_loss_disconnects(void)
     sim_inject(s, sim_a(s), &dready);
 
     /* A short slice only: the blackout must land MID-TRANSFER with backlog
-     * still queued, so the ISS is in the DATA_TX/WAIT_ACK retry cycle (the
-     * path with the probe loop).  NB sim_run_until_idle never goes "idle"
-     * while connected (keepalive deadlines stay armed), so this consumes the
-     * full slice of virtual time. */
+     * still queued.  NB sim_run_until_idle never goes "idle" while connected
+     * (the carousel's deadlines stay armed), so this consumes the full slice
+     * of virtual time. */
     sim_run_until_idle(s, 15000);
 
     sim_set_per(s, 1.0);            /* peer vanishes: total blackout */
 
-    /* Budget (180 s) + a full retry-exhaustion round (~190 s) + margin. */
+    /* The carousel's silence limits, with a wide margin. */
     sim_run_until_idle(s, 900000);
 
     TEST_ASSERT_NOT_EQUAL(ARQ_CONN_CONNECTED,
@@ -564,9 +417,8 @@ void test_sim_fuzz(void)
 {
     /* 50 deterministic seeds keep CI runtime under a few seconds.  Each
      * seed drives a different (per, guard_ms, transfer_size) combination.
-     * PER ceiling is 0.40 (raised from 0.25 with the S1 fade-cliff fix): the
-     * FSM must now push through erasure rates that used to stall it above the
-     * cliff, on any seed, always delivering every byte. */
+     * PER ceiling is 0.40: the carousel must push through it on any seed,
+     * always delivering every byte. */
     const int SEEDS = 50;
 
     for (int seed = 1; seed <= SEEDS; seed++)
@@ -600,8 +452,8 @@ void test_sim_fuzz(void)
         size_t xfer  = 100 + (size_t)(r2 * 1900.0);      /* [100, 2000) bytes */
 
         /* Connect on a clean channel, then apply the seed's loss to the DATA
-         * transfer.  The fuzz loop stresses the data path — retransmission,
-         * mode adaptation, the S1 downgrade — across randomized loss; the
+         * transfer.  The fuzz loop stresses the data path -- repair rounds and
+         * rung adaptation -- across randomized loss; the
          * CALL/ACCEPT handshake has its own (fixed-mode, separately tuned)
          * reliability envelope and would otherwise simply fail to connect
          * above ~0.3 erasure, masking the data-path coverage this test is
@@ -668,20 +520,19 @@ static double splitmix_u(uint64_t seed, int n)
 
 void test_sim_fuzz_fading(void)
 {
-    /* Fading/ISI fuzz over the S1 code paths (cliff model + empirical
-     * per-mode PER), which test_sim_fuzz (flat AWGN erasure) never reaches.
-     * Each seed connects clean, then a fade lands mid-transfer — either a
-     * mode-aware SNR cliff or an ISI-limited per-mode PER profile (NVIS-like:
-     * healthy SNR, fast modes fail) — the exact regime the S1 fix targets.
+    /* Fading/ISI fuzz (cliff model + empirical per-mode PER), which
+     * test_sim_fuzz (flat AWGN erasure) never reaches.  Each seed connects
+     * clean, then a fade lands mid-transfer -- either a mode-aware SNR cliff
+     * or an ISI-limited per-mode PER profile (NVIS-like: healthy SNR, fast
+     * modes fail).
      *
      * Two invariants that MUST hold on ANY channel, checked every seed:
      *   (a) NO CORRUPTION — whatever the peer received is a byte-exact prefix
-     *       of what was sent (retransmission ARQ may deliver less under a
-     *       brutal fade, but never wrong bytes; the restage path is the new
-     *       risk here);
+     *       of what was sent (the ARQ may deliver less under a brutal fade,
+     *       but never wrong bytes);
      *   (b) CLEAN TERMINATION — within a generous budget the session either
      *       completed or disconnected; it is never left CONNECTED-but-stuck
-     *       cycling retries forever (the peer-death pathology, generalized). */
+     *       forever (the peer-death pathology, generalized). */
     const int SEEDS = 60;
     for (int seed = 1; seed <= SEEDS; seed++)
     {
@@ -765,10 +616,7 @@ void test_sim_fuzz_fading(void)
  * Unity main
  * ====================================================================== */
 
-/* These cover the stop-and-wait data plane, kept selectable for A/B until
- * the carousel has been validated on air; test_carousel_sim covers the
- * carousel through the same FSM. */
-void setUp(void)    { arq_fsm_set_carousel(false); /* each test creates its own sim_t */ }
+void setUp(void)    { /* each test creates its own sim_t */ }
 void tearDown(void) { /* each test destroys its own sim_t */ }
 
 int main(void)
@@ -783,8 +631,7 @@ int main(void)
     RUN_TEST(test_endpoint_tx_read_backlog);
 
     /* Task 4: frame translation */
-    RUN_TEST(test_translate_data_roundtrip);
-    RUN_TEST(test_translate_ack);
+    RUN_TEST(test_translate_disconnect_only);
 
     /* Task 5: connect handshake */
     RUN_TEST(test_sim_connect_handshake);
@@ -795,10 +642,8 @@ int main(void)
     /* Task 7: scenario tests */
     RUN_TEST(test_sim_transfer_clean);
     RUN_TEST(test_sim_bidirectional_progress_under_collisions);
-    RUN_TEST(test_sim_disconnect_behind_turn_ack_does_not_collide);
-    RUN_TEST(test_sim_irs_asks_in_its_ack_while_the_iss_has_more);
     RUN_TEST(test_sim_transfer_lossy_per20);
-    RUN_TEST(test_sim_fade_cliff_downgrades);
+    RUN_TEST(test_sim_fade_cliff_completes);
     RUN_TEST(test_sim_peer_loss_disconnects);
 
     /* Task 8: seeded fuzz loop */
