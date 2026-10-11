@@ -223,16 +223,24 @@ func TestMercuryARQTransfer(t *testing.T) {
 	rwA := bufio.NewReadWriter(bufio.NewReader(connA), bufio.NewWriter(connA))
 	rwB := bufio.NewReadWriter(bufio.NewReader(connB), bufio.NewWriter(connB))
 
-	for _, c := range []struct {
+	type setupCmd struct {
 		conn       net.Conn
 		rw         *bufio.ReadWriter
 		cmd        string
 		drainAfter string
-	}{
+	}
+	setup := []setupCmd{
 		{connA, rwA, "MYCALL TESTA", "REGISTERED TESTA"},
 		{connB, rwB, "MYCALL TESTB", "REGISTERED TESTB"},
-		{connB, rwB, "LISTEN ON", ""},
-	} {
+	}
+	// MERCURY_TEST_BW=500|2300|2750: both stations' bandwidth (the TNC BW
+	// command), so the session negotiates it -- e.g. to check that a BW500
+	// session never keys a wideband rung.
+	if bw := os.Getenv("MERCURY_TEST_BW"); bw != "" {
+		setup = append(setup, setupCmd{connA, rwA, "BW" + bw, ""}, setupCmd{connB, rwB, "BW" + bw, ""})
+	}
+	setup = append(setup, setupCmd{connB, rwB, "LISTEN ON", ""})
+	for _, c := range setup {
 		if got := sendControlCommand(t, c.conn, c.rw, c.cmd); !strings.HasPrefix(got, "OK") {
 			failWithLogs("%q -> %q, want OK", c.cmd, got)
 		}
