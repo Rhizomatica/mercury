@@ -1,4 +1,5 @@
 var searchData=
 [
-  ['hermes_20modem_20—_20arq_20subsystem_0',['HERMES Modem — ARQ Subsystem',['../index.html',1,'']]]
+  ['mercury_20modem_20—_20arq_20subsystem_0',['Mercury Modem — ARQ Subsystem',['../index.html',1,'']]],
+  ['modem_20—_20arq_20subsystem_1',['Mercury Modem — ARQ Subsystem',['../index.html',1,'']]]
 ];

@@ -5,7 +5,7 @@
 <meta http-equiv="X-UA-Compatible" content="IE=11"/>
 <meta name="generator" content="Doxygen 1.9.8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
-<title>HERMES Modem: arq_fsm.h File Reference</title>
+<title>Mercury Modem: arq_fsm.h File Reference</title>
 <link href="tabs.css" rel="stylesheet" type="text/css"/>
 <script type="text/javascript" src="jquery.js"></script>
 <script type="text/javascript" src="dynsections.js"></script>
@@ -21,9 +21,9 @@
  <tbody>
  <tr id="projectrow">
   <td id="projectalign">
-   <div id="projectname">HERMES Modem
+   <div id="projectname">Mercury Modem
    </div>
-   <div id="projectbrief">Hermes ARQ/Broadcast modem</div>
+   <div id="projectbrief">Mercury ARQ/Broadcast modem</div>
   </td>
  </tr>
  </tbody>
@@ -86,38 +86,51 @@ $(function() {
 <code>#include &lt;stdint.h&gt;</code><br />
 <code>#include &quot;<a class="el" href="arq_8h_source.html">arq.h</a>&quot;</code><br />
 <code>#include &quot;<a class="el" href="arq__timing_8h_source.html">arq_timing.h</a>&quot;</code><br />
+<code>#include &quot;<a class="el" href="arq__protocol_8h_source.html">arq_protocol.h</a>&quot;</code><br />
+<code>#include &quot;<a class="el" href="carousel_8h_source.html">carousel.h</a>&quot;</code><br />
 </div><div class="textblock"><div class="dynheader">
 Include dependency graph for arq_fsm.h:</div>
 <div class="dyncontent">
 <div class="center"><img src="arq__fsm_8h__incl.png" border="0" usemap="#aarq__fsm_8h" alt=""/></div>
 <map name="aarq__fsm_8h" id="aarq__fsm_8h">
-<area shape="rect" title=" " alt="" coords="347,5,427,31"/>
-<area shape="rect" title=" " alt="" coords="349,225,424,251"/>
-<area shape="poly" title=" " alt="" coords="389,31,389,211,384,211,384,31"/>
-<area shape="rect" title=" " alt="" coords="5,225,75,251"/>
-<area shape="poly" title=" " alt="" coords="347,29,288,44,217,68,144,105,110,127,79,154,60,182,48,213,43,211,55,180,75,150,107,123,141,100,215,64,287,39,346,24"/>
-<area shape="rect" title=" " alt="" coords="485,225,550,251"/>
-<area shape="poly" title=" " alt="" coords="413,28,448,47,487,74,525,108,554,151,558,168,555,185,539,216,535,213,550,184,553,168,550,153,521,112,484,78,445,51,411,33"/>
-<area shape="rect" href="arq_8h.html" title=" " alt="" coords="261,79,312,104"/>
-<area shape="poly" title=" " alt="" coords="372,33,316,73,313,68,369,29"/>
-<area shape="rect" href="arq__timing_8h.html" title=" " alt="" coords="424,152,517,177"/>
-<area shape="poly" title=" " alt="" coords="396,30,459,139,455,141,391,32"/>
-<area shape="poly" title=" " alt="" coords="297,103,373,213,369,216,293,106"/>
-<area shape="poly" title=" " alt="" coords="262,99,190,117,149,133,111,154,79,183,56,215,52,212,75,180,108,150,147,128,189,112,261,94"/>
-<area shape="poly" title=" " alt="" coords="312,92,367,99,433,110,493,127,516,138,531,150,539,165,540,182,532,213,527,212,535,181,533,167,527,154,513,142,491,132,431,115,366,104,312,98"/>
-<area shape="rect" href="fsm_8h.html" title=" " alt="" coords="122,152,177,177"/>
-<area shape="poly" title=" " alt="" coords="266,106,185,148,183,143,263,102"/>
-<area shape="rect" href="arq__events_8h.html" title=" " alt="" coords="201,152,298,177"/>
-<area shape="poly" title=" " alt="" coords="283,106,264,141,259,139,278,103"/>
-<area shape="rect" title=" " alt="" coords="99,225,175,251"/>
-<area shape="poly" title=" " alt="" coords="150,178,144,212,139,211,145,177"/>
-<area shape="poly" title=" " alt="" coords="273,175,353,217,351,221,270,180"/>
-<area shape="poly" title=" " alt="" coords="217,180,88,223,86,218,215,175"/>
-<area shape="poly" title=" " alt="" coords="293,175,472,222,471,227,292,180"/>
-<area shape="rect" title=" " alt="" coords="200,225,325,251"/>
-<area shape="poly" title=" " alt="" coords="254,177,261,211,255,212,249,178"/>
-<area shape="poly" title=" " alt="" coords="459,179,413,218,409,214,455,175"/>
-<area shape="poly" title=" " alt="" coords="481,176,504,212,500,215,476,179"/>
+<area shape="rect" title=" " alt="" coords="372,5,452,31"/>
+<area shape="rect" title=" " alt="" coords="5,225,80,251"/>
+<area shape="poly" title=" " alt="" coords="372,22,295,28,249,35,200,47,151,63,104,86,63,116,29,153,23,167,23,182,32,212,27,213,17,182,18,166,24,151,60,112,102,82,149,58,198,41,247,30,294,22,371,17"/>
+<area shape="rect" title=" " alt="" coords="373,225,443,251"/>
+<area shape="poly" title=" " alt="" coords="414,31,411,211,406,211,409,31"/>
+<area shape="rect" title=" " alt="" coords="566,225,631,251"/>
+<area shape="poly" title=" " alt="" coords="453,23,508,36,572,60,603,77,633,97,660,122,681,151,685,172,676,191,658,207,637,221,635,217,655,203,671,188,680,171,676,153,656,125,630,102,601,82,569,65,506,42,452,28"/>
+<area shape="rect" href="arq_8h.html" title=" " alt="" coords="324,79,375,104"/>
+<area shape="poly" title=" " alt="" coords="404,33,371,70,367,66,400,29"/>
+<area shape="rect" href="arq__timing_8h.html" title=" " alt="" coords="772,79,865,104"/>
+<area shape="poly" title=" " alt="" coords="453,24,758,77,758,82,452,29"/>
+<area shape="rect" href="arq__protocol_8h.html" title=" " alt="" coords="97,152,201,177"/>
+<area shape="poly" title=" " alt="" coords="392,33,183,148,181,143,390,29"/>
+<area shape="rect" href="carousel_8h.html" title=" " alt="" coords="449,79,532,104"/>
+<area shape="poly" title=" " alt="" coords="426,29,470,68,466,71,423,33"/>
+<area shape="poly" title=" " alt="" coords="324,96,257,101,171,110,92,128,62,139,43,154,36,167,34,181,37,212,32,212,28,181,31,165,39,150,60,135,90,122,170,105,256,95,324,91"/>
+<area shape="poly" title=" " alt="" coords="357,103,401,211,396,213,352,105"/>
+<area shape="poly" title=" " alt="" coords="371,102,568,216,565,221,368,107"/>
+<area shape="rect" href="arq__events_8h.html" title=" " alt="" coords="226,152,323,177"/>
+<area shape="poly" title=" " alt="" coords="339,106,299,144,295,141,336,102"/>
+<area shape="poly" title=" " alt="" coords="238,180,94,224,92,219,237,175"/>
+<area shape="poly" title=" " alt="" coords="297,175,375,216,373,221,295,180"/>
+<area shape="poly" title=" " alt="" coords="324,174,553,224,552,229,323,179"/>
+<area shape="rect" title=" " alt="" coords="219,225,344,251"/>
+<area shape="poly" title=" " alt="" coords="278,177,282,212,276,212,273,178"/>
+<area shape="poly" title=" " alt="" coords="815,106,792,141,775,162,755,179,729,196,700,210,646,229,644,224,698,205,726,192,752,175,771,158,787,138,810,103"/>
+<area shape="poly" title=" " alt="" coords="134,180,73,220,70,215,131,175"/>
+<area shape="poly" title=" " alt="" coords="192,175,361,221,360,226,190,180"/>
+<area shape="poly" title=" " alt="" coords="202,173,214,175,553,227,552,232,213,180,201,178"/>
+<area shape="rect" title=" " alt="" coords="104,225,195,251"/>
+<area shape="poly" title=" " alt="" coords="152,178,152,212,147,212,147,178"/>
+<area shape="poly" title=" " alt="" coords="449,100,235,128,135,143,87,154,74,166,64,181,51,213,46,211,59,179,70,163,84,150,134,138,235,123,449,95"/>
+<area shape="poly" title=" " alt="" coords="486,106,424,215,419,212,482,103"/>
+<area shape="poly" title=" " alt="" coords="533,92,565,97,601,107,634,124,661,151,666,169,660,188,647,205,630,219,627,215,643,201,655,185,661,169,656,153,631,129,599,112,564,102,532,97"/>
+<area shape="rect" href="rs__erasure_8h.html" title=" " alt="" coords="551,152,646,177"/>
+<area shape="poly" title=" " alt="" coords="509,102,571,142,568,147,507,106"/>
+<area shape="poly" title=" " alt="" coords="569,180,453,223,451,218,567,175"/>
+<area shape="poly" title=" " alt="" coords="601,178,601,212,596,212,596,178"/>
 </map>
 </div>
 </div><div class="textblock"><div class="dynheader">
@@ -164,62 +177,25 @@ Enumerations</h2></td></tr>
 <br />
  }</td></tr>
 <tr class="separator:a6bbb8ea99f0ecd4d61510e943c890c32"><td class="memSeparator" colspan="2">&#160;</td></tr>
-<tr class="memitem:a30aebdbcfa878d56632a50f4a96d3369" id="r_a30aebdbcfa878d56632a50f4a96d3369"><td class="memItemLeft" align="right" valign="top">enum &#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq__fsm_8h.html#a30aebdbcfa878d56632a50f4a96d3369">arq_dflow_state_t</a> { <br />
-&#160;&#160;<a class="el" href="arq__fsm_8h.html#a30aebdbcfa878d56632a50f4a96d3369afdb6617e8296f91107be57f90f7b0b2b">ARQ_DFLOW_IDLE_ISS</a> = 0
-, <a class="el" href="arq__fsm_8h.html#a30aebdbcfa878d56632a50f4a96d3369a3879325595903b5e915fbf2f4475d7a6">ARQ_DFLOW_DATA_TX</a> = 1
-, <a class="el" href="arq__fsm_8h.html#a30aebdbcfa878d56632a50f4a96d3369ad47b728a1f6e17de6663a8d1e6397053">ARQ_DFLOW_WAIT_ACK</a> = 2
-, <a class="el" href="arq__fsm_8h.html#a30aebdbcfa878d56632a50f4a96d3369ac48075b598cc9456454a7a91f6d1aac0">ARQ_DFLOW_IDLE_IRS</a> = 3
-, <br />
-&#160;&#160;<a class="el" href="arq__fsm_8h.html#a30aebdbcfa878d56632a50f4a96d3369acb186c725187f1b71a7901e7ae4070e9">ARQ_DFLOW_DATA_RX</a> = 4
-, <a class="el" href="arq__fsm_8h.html#a30aebdbcfa878d56632a50f4a96d3369a7163213d5c8e4f67ae4cb9f5e99b28e7">ARQ_DFLOW_ACK_TX</a> = 5
-, <a class="el" href="arq__fsm_8h.html#a30aebdbcfa878d56632a50f4a96d3369a1d1e8e9ca813bad47850b4c42ee9d382">ARQ_DFLOW_TURN_REQ_TX</a> = 6
-, <a class="el" href="arq__fsm_8h.html#a30aebdbcfa878d56632a50f4a96d3369a0aaf84010bde88dc63313311d82dc293">ARQ_DFLOW_TURN_REQ_WAIT</a> = 7
-, <br />
-&#160;&#160;<a class="el" href="arq__fsm_8h.html#a30aebdbcfa878d56632a50f4a96d3369a88b473eb74fc978b252ff2644b20e6e1">ARQ_DFLOW_TURN_ACK_TX</a> = 8
-, <a class="el" href="arq__fsm_8h.html#a30aebdbcfa878d56632a50f4a96d3369adf399750a20d930ba24ee0a7c37cf3ff">ARQ_DFLOW_MODE_REQ_TX</a> = 9
-, <a class="el" href="arq__fsm_8h.html#a30aebdbcfa878d56632a50f4a96d3369a0e3974cbddfa8c44ab5c6954911b695b">ARQ_DFLOW_MODE_REQ_WAIT</a> = 10
-, <a class="el" href="arq__fsm_8h.html#a30aebdbcfa878d56632a50f4a96d3369a2ac8200f631b91faecab2850acc7d860">ARQ_DFLOW_MODE_ACK_TX</a> = 11
-, <br />
-&#160;&#160;<a class="el" href="arq__fsm_8h.html#a30aebdbcfa878d56632a50f4a96d3369a40697511c02519a021f9579eaf45ac7b">ARQ_DFLOW_KEEPALIVE_TX</a> = 12
-, <a class="el" href="arq__fsm_8h.html#a30aebdbcfa878d56632a50f4a96d3369a9dbea1f67f2bd69d85e34311980aa129">ARQ_DFLOW_KEEPALIVE_WAIT</a> = 13
-, <a class="el" href="arq__fsm_8h.html#a30aebdbcfa878d56632a50f4a96d3369a3f582cb880e89910a3b4874d4f6b3a1c">ARQ_DFLOW__COUNT</a>
-<br />
- }</td></tr>
-<tr class="separator:a30aebdbcfa878d56632a50f4a96d3369"><td class="memSeparator" colspan="2">&#160;</td></tr>
-<tr class="memitem:a76b62fc9a1836f9cb168cdf2b2bda9cc" id="r_a76b62fc9a1836f9cb168cdf2b2bda9cc"><td class="memItemLeft" align="right" valign="top">enum &#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq__fsm_8h.html#a76b62fc9a1836f9cb168cdf2b2bda9cc">arq_role_t</a> { <a class="el" href="arq__fsm_8h.html#a76b62fc9a1836f9cb168cdf2b2bda9ccab9158925d7617be3ca8e29a85e40d438">ARQ_ROLE_NONE</a> = 0
-, <a class="el" href="arq__fsm_8h.html#a76b62fc9a1836f9cb168cdf2b2bda9cca7c50807f4a6758f1fb5dd76d4dffb542">ARQ_ROLE_CALLER</a> = 1
-, <a class="el" href="arq__fsm_8h.html#a76b62fc9a1836f9cb168cdf2b2bda9cca60d8cdf41b4f3b0d82b3dac4137453ed">ARQ_ROLE_CALLEE</a> = 2
- }</td></tr>
-<tr class="separator:a76b62fc9a1836f9cb168cdf2b2bda9cc"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a02a9b78e1abd4197b7f990aa12670d64" id="r_a02a9b78e1abd4197b7f990aa12670d64"><td class="memItemLeft" align="right" valign="top">enum &#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq__fsm_8h.html#a02a9b78e1abd4197b7f990aa12670d64">arq_event_id_t</a> { <br />
 &#160;&#160;<a class="el" href="arq__fsm_8h.html#a02a9b78e1abd4197b7f990aa12670d64af202468cc0ee6c452dca34ecfdfa19f2">ARQ_EV_APP_LISTEN</a> = 0
-, <a class="el" href="arq__fsm_8h.html#a02a9b78e1abd4197b7f990aa12670d64a91ebb10b9fd2853121d4808815e77381">ARQ_EV_APP_STOP_LISTEN</a> = 1
-, <a class="el" href="arq__fsm_8h.html#a02a9b78e1abd4197b7f990aa12670d64ad2b8beed40d4872a4f9940f6e256daf1">ARQ_EV_APP_CONNECT</a> = 2
-, <a class="el" href="arq__fsm_8h.html#a02a9b78e1abd4197b7f990aa12670d64a6e1ba2ba7abfd4b706342e1308c6c751">ARQ_EV_APP_DISCONNECT</a> = 3
+, <a class="el" href="arq__fsm_8h.html#a02a9b78e1abd4197b7f990aa12670d64a91ebb10b9fd2853121d4808815e77381">ARQ_EV_APP_STOP_LISTEN</a>
+, <a class="el" href="arq__fsm_8h.html#a02a9b78e1abd4197b7f990aa12670d64ad2b8beed40d4872a4f9940f6e256daf1">ARQ_EV_APP_CONNECT</a>
+, <a class="el" href="arq__fsm_8h.html#a02a9b78e1abd4197b7f990aa12670d64a6e1ba2ba7abfd4b706342e1308c6c751">ARQ_EV_APP_DISCONNECT</a>
 , <br />
-&#160;&#160;<a class="el" href="arq__fsm_8h.html#a02a9b78e1abd4197b7f990aa12670d64a562c4179e6dd5c51836c563854bbcf2f">ARQ_EV_APP_DATA_READY</a> = 4
-, <a class="el" href="arq__fsm_8h.html#a02a9b78e1abd4197b7f990aa12670d64a7d39c221149b55ebe290e23ac4aaeb8d">ARQ_EV_RX_CALL</a> = 5
-, <a class="el" href="arq__fsm_8h.html#a02a9b78e1abd4197b7f990aa12670d64a5a75c2330c6271950592d9c92242270b">ARQ_EV_RX_ACCEPT</a> = 6
-, <a class="el" href="arq__fsm_8h.html#a02a9b78e1abd4197b7f990aa12670d64af6e49b73ed0fc74050588d492216a8d0">ARQ_EV_RX_ACK</a> = 7
+&#160;&#160;<a class="el" href="arq__fsm_8h.html#a02a9b78e1abd4197b7f990aa12670d64a562c4179e6dd5c51836c563854bbcf2f">ARQ_EV_APP_DATA_READY</a>
+, <a class="el" href="arq__fsm_8h.html#a02a9b78e1abd4197b7f990aa12670d64a7d39c221149b55ebe290e23ac4aaeb8d">ARQ_EV_RX_CALL</a>
+, <a class="el" href="arq__fsm_8h.html#a02a9b78e1abd4197b7f990aa12670d64a5a75c2330c6271950592d9c92242270b">ARQ_EV_RX_ACCEPT</a>
+, <a class="el" href="arq__fsm_8h.html#a02a9b78e1abd4197b7f990aa12670d64a7f41fed0dc7cec30ebf156b15bff344f">ARQ_EV_RX_DISCONNECT</a>
 , <br />
-&#160;&#160;<a class="el" href="arq__fsm_8h.html#a02a9b78e1abd4197b7f990aa12670d64ad9a1528ab8f490adda4a21fd610dd6f6">ARQ_EV_RX_DATA</a> = 8
-, <a class="el" href="arq__fsm_8h.html#a02a9b78e1abd4197b7f990aa12670d64a7f41fed0dc7cec30ebf156b15bff344f">ARQ_EV_RX_DISCONNECT</a> = 9
-, <a class="el" href="arq__fsm_8h.html#a02a9b78e1abd4197b7f990aa12670d64a3d88c713f7805eae51bb997d6406637d">ARQ_EV_RX_TURN_REQ</a> = 10
-, <a class="el" href="arq__fsm_8h.html#a02a9b78e1abd4197b7f990aa12670d64ade1b911e726abb47c1276c83495c7949">ARQ_EV_RX_TURN_ACK</a> = 11
+&#160;&#160;<a class="el" href="arq__fsm_8h.html#a02a9b78e1abd4197b7f990aa12670d64a4ab7aff18e66a669d034bfcd45e699af">ARQ_EV_TIMER_RETRY</a>
+, <a class="el" href="arq__fsm_8h.html#a02a9b78e1abd4197b7f990aa12670d64a13197977b27738ec5e1d58d9df3e2449">ARQ_EV_TIMER_ACK</a>
+, <a class="el" href="arq__fsm_8h.html#a02a9b78e1abd4197b7f990aa12670d64a0073e72c46dea6c607353192f7c91055">ARQ_EV_TX_STARTED</a>
+, <a class="el" href="arq__fsm_8h.html#a02a9b78e1abd4197b7f990aa12670d64a2ce3edee99c185da782d0e09ec72e652">ARQ_EV_TX_COMPLETE</a>
 , <br />
-&#160;&#160;<a class="el" href="arq__fsm_8h.html#a02a9b78e1abd4197b7f990aa12670d64a7586e33111032825f73162d9cb8bc783">ARQ_EV_RX_MODE_REQ</a> = 12
-, <a class="el" href="arq__fsm_8h.html#a02a9b78e1abd4197b7f990aa12670d64a0ac262a5b809e446f60e5369cccfa892">ARQ_EV_RX_MODE_ACK</a> = 13
-, <a class="el" href="arq__fsm_8h.html#a02a9b78e1abd4197b7f990aa12670d64abd9f307ce898d2cb2300ffd175161afd">ARQ_EV_RX_KEEPALIVE</a> = 14
-, <a class="el" href="arq__fsm_8h.html#a02a9b78e1abd4197b7f990aa12670d64a60e4d4cb27b8a0050e4dc37f7a629c18">ARQ_EV_RX_KEEPALIVE_ACK</a> = 15
-, <br />
-&#160;&#160;<a class="el" href="arq__fsm_8h.html#a02a9b78e1abd4197b7f990aa12670d64a4ab7aff18e66a669d034bfcd45e699af">ARQ_EV_TIMER_RETRY</a> = 16
-, <a class="el" href="arq__fsm_8h.html#a02a9b78e1abd4197b7f990aa12670d64aadf0211874e4fa62da9e9b61edbe22fe">ARQ_EV_TIMER_TIMEOUT</a> = 17
-, <a class="el" href="arq__fsm_8h.html#a02a9b78e1abd4197b7f990aa12670d64a13197977b27738ec5e1d58d9df3e2449">ARQ_EV_TIMER_ACK</a> = 18
-, <a class="el" href="arq__fsm_8h.html#a02a9b78e1abd4197b7f990aa12670d64a760264539dae88d44c324f6322bc971d">ARQ_EV_TIMER_PEER_BACKLOG</a> = 19
-, <br />
-&#160;&#160;<a class="el" href="arq__fsm_8h.html#a02a9b78e1abd4197b7f990aa12670d64a88399f4f9cf067a9658b52ffede14555">ARQ_EV_TIMER_KEEPALIVE</a> = 20
-, <a class="el" href="arq__fsm_8h.html#a02a9b78e1abd4197b7f990aa12670d64a0073e72c46dea6c607353192f7c91055">ARQ_EV_TX_STARTED</a> = 21
-, <a class="el" href="arq__fsm_8h.html#a02a9b78e1abd4197b7f990aa12670d64a2ce3edee99c185da782d0e09ec72e652">ARQ_EV_TX_COMPLETE</a> = 22
+&#160;&#160;<a class="el" href="arq__fsm_8h.html#a02a9b78e1abd4197b7f990aa12670d64abacd0dfcd387d06020f7a874fe883cca">ARQ_EV_RX_CAROUSEL</a>
+, <a class="el" href="arq__fsm_8h.html#a02a9b78e1abd4197b7f990aa12670d64abba723a784baf6ed4920a7aab72c8c06">ARQ_EV_TIMER_CAROUSEL</a>
+, <a class="el" href="arq__fsm_8h.html#a02a9b78e1abd4197b7f990aa12670d64a51cef310be5843ac76b8c4f880f550f9">ARQ_EV_RX_PATTERN</a>
 , <a class="el" href="arq__fsm_8h.html#a02a9b78e1abd4197b7f990aa12670d64af1c15c1626f322b603ce765c158e31b2">ARQ_EV__COUNT</a>
 <br />
  }</td></tr>
@@ -236,18 +212,23 @@ Functions</h2></td></tr>
 <tr class="memitem:a2c2e9793980423e39a889925ecdbea0b" id="r_a2c2e9793980423e39a889925ecdbea0b"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq__fsm_8h.html#a2c2e9793980423e39a889925ecdbea0b">arq_fsm_init</a> (<a class="el" href="structarq__session__t.html">arq_session_t</a> *sess)</td></tr>
 <tr class="memdesc:a2c2e9793980423e39a889925ecdbea0b"><td class="mdescLeft">&#160;</td><td class="mdescRight">Initialise a session structure to DISCONNECTED state.  <br /></td></tr>
 <tr class="separator:a2c2e9793980423e39a889925ecdbea0b"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a2465cc5577c64a123d1e741accf5debc" id="r_a2465cc5577c64a123d1e741accf5debc"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq__fsm_8h.html#a2465cc5577c64a123d1e741accf5debc">arq_fsm_release</a> (<a class="el" href="structarq__session__t.html">arq_session_t</a> *sess)</td></tr>
+<tr class="separator:a2465cc5577c64a123d1e741accf5debc"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:aa8a39e4480edd0bb7ace7a11177397fb" id="r_aa8a39e4480edd0bb7ace7a11177397fb"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq__fsm_8h.html#aa8a39e4480edd0bb7ace7a11177397fb">arq_fsm_dispatch</a> (<a class="el" href="structarq__session__t.html">arq_session_t</a> *sess, const <a class="el" href="structarq__event__t.html">arq_event_t</a> *event)</td></tr>
 <tr class="memdesc:aa8a39e4480edd0bb7ace7a11177397fb"><td class="mdescLeft">&#160;</td><td class="mdescRight">Dispatch an event through both FSM levels.  <br /></td></tr>
 <tr class="separator:aa8a39e4480edd0bb7ace7a11177397fb"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a71ae0bec573cab0a4dd3a9be1df15a14" id="r_a71ae0bec573cab0a4dd3a9be1df15a14"><td class="memItemLeft" align="right" valign="top">int&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq__fsm_8h.html#a71ae0bec573cab0a4dd3a9be1df15a14">arq_fsm_timeout_ms</a> (const <a class="el" href="structarq__session__t.html">arq_session_t</a> *sess, uint64_t now)</td></tr>
 <tr class="memdesc:a71ae0bec573cab0a4dd3a9be1df15a14"><td class="mdescLeft">&#160;</td><td class="mdescRight">Return milliseconds until the next deadline, or INT_MAX if idle.  <br /></td></tr>
 <tr class="separator:a71ae0bec573cab0a4dd3a9be1df15a14"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:aa7a344841c1d324b1992f438b7d0ac6f" id="r_aa7a344841c1d324b1992f438b7d0ac6f"><td class="memItemLeft" align="right" valign="top">int&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq__fsm_8h.html#aa7a344841c1d324b1992f438b7d0ac6f">arq_call_carrier</a> (const <a class="el" href="structarq__session__t.html">arq_session_t</a> *sess)</td></tr>
+<tr class="memdesc:aa7a344841c1d324b1992f438b7d0ac6f"><td class="mdescLeft">&#160;</td><td class="mdescRight">The carrier the next CALL goes out on: the control mode for the first ARQ_CALL_FAST_SLOTS, then MFSK and the control mode alternately.  <br /></td></tr>
+<tr class="separator:aa7a344841c1d324b1992f438b7d0ac6f"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a0c049f25bdfda3cc5435c41036ae1113" id="r_a0c049f25bdfda3cc5435c41036ae1113"><td class="memItemLeft" align="right" valign="top">bool&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq__fsm_8h.html#a0c049f25bdfda3cc5435c41036ae1113">arq_fsm_expect_pattern</a> (const <a class="el" href="structarq__session__t.html">arq_session_t</a> *sess, uint64_t now)</td></tr>
+<tr class="memdesc:a0c049f25bdfda3cc5435c41036ae1113"><td class="mdescLeft">&#160;</td><td class="mdescRight">Whether a pattern can arrive now (the modem's detector runs only then).  <br /></td></tr>
+<tr class="separator:a0c049f25bdfda3cc5435c41036ae1113"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a3edd3ffe6bb5f0eddd1e0939ef47b3ca" id="r_a3edd3ffe6bb5f0eddd1e0939ef47b3ca"><td class="memItemLeft" align="right" valign="top">const char *&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq__fsm_8h.html#a3edd3ffe6bb5f0eddd1e0939ef47b3ca">arq_conn_state_name</a> (<a class="el" href="arq__fsm_8h.html#a6bbb8ea99f0ecd4d61510e943c890c32">arq_conn_state_t</a> s)</td></tr>
 <tr class="memdesc:a3edd3ffe6bb5f0eddd1e0939ef47b3ca"><td class="mdescLeft">&#160;</td><td class="mdescRight">Human-readable name for a connection state (for log output).  <br /></td></tr>
 <tr class="separator:a3edd3ffe6bb5f0eddd1e0939ef47b3ca"><td class="memSeparator" colspan="2">&#160;</td></tr>
-<tr class="memitem:a5bceb6434f61ebdd403767e06789c863" id="r_a5bceb6434f61ebdd403767e06789c863"><td class="memItemLeft" align="right" valign="top">const char *&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq__fsm_8h.html#a5bceb6434f61ebdd403767e06789c863">arq_dflow_state_name</a> (<a class="el" href="arq__fsm_8h.html#a30aebdbcfa878d56632a50f4a96d3369">arq_dflow_state_t</a> s)</td></tr>
-<tr class="memdesc:a5bceb6434f61ebdd403767e06789c863"><td class="mdescLeft">&#160;</td><td class="mdescRight">Human-readable name for a data-flow state (for log output).  <br /></td></tr>
-<tr class="separator:a5bceb6434f61ebdd403767e06789c863"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:ad395f9caf0eb20b3bac052ed0aae664d" id="r_ad395f9caf0eb20b3bac052ed0aae664d"><td class="memItemLeft" align="right" valign="top">const char *&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq__fsm_8h.html#ad395f9caf0eb20b3bac052ed0aae664d">arq_event_name</a> (<a class="el" href="arq__fsm_8h.html#a02a9b78e1abd4197b7f990aa12670d64">arq_event_id_t</a> ev)</td></tr>
 <tr class="memdesc:ad395f9caf0eb20b3bac052ed0aae664d"><td class="mdescLeft">&#160;</td><td class="mdescRight">Human-readable name for an event (for log output).  <br /></td></tr>
 <tr class="separator:ad395f9caf0eb20b3bac052ed0aae664d"><td class="memSeparator" colspan="2">&#160;</td></tr>
@@ -276,37 +257,6 @@ Functions</h2></td></tr>
 
 </div>
 </div>
-<a id="a30aebdbcfa878d56632a50f4a96d3369" name="a30aebdbcfa878d56632a50f4a96d3369"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#a30aebdbcfa878d56632a50f4a96d3369">&#9670;&#160;</a></span>arq_dflow_state_t</h2>
-
-<div class="memitem">
-<div class="memproto">
-      <table class="memname">
-        <tr>
-          <td class="memname">enum <a class="el" href="arq__fsm_8h.html#a30aebdbcfa878d56632a50f4a96d3369">arq_dflow_state_t</a></td>
-        </tr>
-      </table>
-</div><div class="memdoc">
-<table class="fieldtable">
-<tr><th colspan="2">Enumerator</th></tr><tr><td class="fieldname"><a id="a30aebdbcfa878d56632a50f4a96d3369afdb6617e8296f91107be57f90f7b0b2b" name="a30aebdbcfa878d56632a50f4a96d3369afdb6617e8296f91107be57f90f7b0b2b"></a>ARQ_DFLOW_IDLE_ISS&#160;</td><td class="fielddoc"></td></tr>
-<tr><td class="fieldname"><a id="a30aebdbcfa878d56632a50f4a96d3369a3879325595903b5e915fbf2f4475d7a6" name="a30aebdbcfa878d56632a50f4a96d3369a3879325595903b5e915fbf2f4475d7a6"></a>ARQ_DFLOW_DATA_TX&#160;</td><td class="fielddoc"></td></tr>
-<tr><td class="fieldname"><a id="a30aebdbcfa878d56632a50f4a96d3369ad47b728a1f6e17de6663a8d1e6397053" name="a30aebdbcfa878d56632a50f4a96d3369ad47b728a1f6e17de6663a8d1e6397053"></a>ARQ_DFLOW_WAIT_ACK&#160;</td><td class="fielddoc"></td></tr>
-<tr><td class="fieldname"><a id="a30aebdbcfa878d56632a50f4a96d3369ac48075b598cc9456454a7a91f6d1aac0" name="a30aebdbcfa878d56632a50f4a96d3369ac48075b598cc9456454a7a91f6d1aac0"></a>ARQ_DFLOW_IDLE_IRS&#160;</td><td class="fielddoc"></td></tr>
-<tr><td class="fieldname"><a id="a30aebdbcfa878d56632a50f4a96d3369acb186c725187f1b71a7901e7ae4070e9" name="a30aebdbcfa878d56632a50f4a96d3369acb186c725187f1b71a7901e7ae4070e9"></a>ARQ_DFLOW_DATA_RX&#160;</td><td class="fielddoc"></td></tr>
-<tr><td class="fieldname"><a id="a30aebdbcfa878d56632a50f4a96d3369a7163213d5c8e4f67ae4cb9f5e99b28e7" name="a30aebdbcfa878d56632a50f4a96d3369a7163213d5c8e4f67ae4cb9f5e99b28e7"></a>ARQ_DFLOW_ACK_TX&#160;</td><td class="fielddoc"></td></tr>
-<tr><td class="fieldname"><a id="a30aebdbcfa878d56632a50f4a96d3369a1d1e8e9ca813bad47850b4c42ee9d382" name="a30aebdbcfa878d56632a50f4a96d3369a1d1e8e9ca813bad47850b4c42ee9d382"></a>ARQ_DFLOW_TURN_REQ_TX&#160;</td><td class="fielddoc"></td></tr>
-<tr><td class="fieldname"><a id="a30aebdbcfa878d56632a50f4a96d3369a0aaf84010bde88dc63313311d82dc293" name="a30aebdbcfa878d56632a50f4a96d3369a0aaf84010bde88dc63313311d82dc293"></a>ARQ_DFLOW_TURN_REQ_WAIT&#160;</td><td class="fielddoc"></td></tr>
-<tr><td class="fieldname"><a id="a30aebdbcfa878d56632a50f4a96d3369a88b473eb74fc978b252ff2644b20e6e1" name="a30aebdbcfa878d56632a50f4a96d3369a88b473eb74fc978b252ff2644b20e6e1"></a>ARQ_DFLOW_TURN_ACK_TX&#160;</td><td class="fielddoc"></td></tr>
-<tr><td class="fieldname"><a id="a30aebdbcfa878d56632a50f4a96d3369adf399750a20d930ba24ee0a7c37cf3ff" name="a30aebdbcfa878d56632a50f4a96d3369adf399750a20d930ba24ee0a7c37cf3ff"></a>ARQ_DFLOW_MODE_REQ_TX&#160;</td><td class="fielddoc"></td></tr>
-<tr><td class="fieldname"><a id="a30aebdbcfa878d56632a50f4a96d3369a0e3974cbddfa8c44ab5c6954911b695b" name="a30aebdbcfa878d56632a50f4a96d3369a0e3974cbddfa8c44ab5c6954911b695b"></a>ARQ_DFLOW_MODE_REQ_WAIT&#160;</td><td class="fielddoc"></td></tr>
-<tr><td class="fieldname"><a id="a30aebdbcfa878d56632a50f4a96d3369a2ac8200f631b91faecab2850acc7d860" name="a30aebdbcfa878d56632a50f4a96d3369a2ac8200f631b91faecab2850acc7d860"></a>ARQ_DFLOW_MODE_ACK_TX&#160;</td><td class="fielddoc"></td></tr>
-<tr><td class="fieldname"><a id="a30aebdbcfa878d56632a50f4a96d3369a40697511c02519a021f9579eaf45ac7b" name="a30aebdbcfa878d56632a50f4a96d3369a40697511c02519a021f9579eaf45ac7b"></a>ARQ_DFLOW_KEEPALIVE_TX&#160;</td><td class="fielddoc"></td></tr>
-<tr><td class="fieldname"><a id="a30aebdbcfa878d56632a50f4a96d3369a9dbea1f67f2bd69d85e34311980aa129" name="a30aebdbcfa878d56632a50f4a96d3369a9dbea1f67f2bd69d85e34311980aa129"></a>ARQ_DFLOW_KEEPALIVE_WAIT&#160;</td><td class="fielddoc"></td></tr>
-<tr><td class="fieldname"><a id="a30aebdbcfa878d56632a50f4a96d3369a3f582cb880e89910a3b4874d4f6b3a1c" name="a30aebdbcfa878d56632a50f4a96d3369a3f582cb880e89910a3b4874d4f6b3a1c"></a>ARQ_DFLOW__COUNT&#160;</td><td class="fielddoc"></td></tr>
-</table>
-
-</div>
-</div>
 <a id="a02a9b78e1abd4197b7f990aa12670d64" name="a02a9b78e1abd4197b7f990aa12670d64"></a>
 <h2 class="memtitle"><span class="permalink"><a href="#a02a9b78e1abd4197b7f990aa12670d64">&#9670;&#160;</a></span>arq_event_id_t</h2>
 
@@ -326,47 +276,40 @@ Functions</h2></td></tr>
 <tr><td class="fieldname"><a id="a02a9b78e1abd4197b7f990aa12670d64a562c4179e6dd5c51836c563854bbcf2f" name="a02a9b78e1abd4197b7f990aa12670d64a562c4179e6dd5c51836c563854bbcf2f"></a>ARQ_EV_APP_DATA_READY&#160;</td><td class="fielddoc"></td></tr>
 <tr><td class="fieldname"><a id="a02a9b78e1abd4197b7f990aa12670d64a7d39c221149b55ebe290e23ac4aaeb8d" name="a02a9b78e1abd4197b7f990aa12670d64a7d39c221149b55ebe290e23ac4aaeb8d"></a>ARQ_EV_RX_CALL&#160;</td><td class="fielddoc"></td></tr>
 <tr><td class="fieldname"><a id="a02a9b78e1abd4197b7f990aa12670d64a5a75c2330c6271950592d9c92242270b" name="a02a9b78e1abd4197b7f990aa12670d64a5a75c2330c6271950592d9c92242270b"></a>ARQ_EV_RX_ACCEPT&#160;</td><td class="fielddoc"></td></tr>
-<tr><td class="fieldname"><a id="a02a9b78e1abd4197b7f990aa12670d64af6e49b73ed0fc74050588d492216a8d0" name="a02a9b78e1abd4197b7f990aa12670d64af6e49b73ed0fc74050588d492216a8d0"></a>ARQ_EV_RX_ACK&#160;</td><td class="fielddoc"></td></tr>
-<tr><td class="fieldname"><a id="a02a9b78e1abd4197b7f990aa12670d64ad9a1528ab8f490adda4a21fd610dd6f6" name="a02a9b78e1abd4197b7f990aa12670d64ad9a1528ab8f490adda4a21fd610dd6f6"></a>ARQ_EV_RX_DATA&#160;</td><td class="fielddoc"></td></tr>
 <tr><td class="fieldname"><a id="a02a9b78e1abd4197b7f990aa12670d64a7f41fed0dc7cec30ebf156b15bff344f" name="a02a9b78e1abd4197b7f990aa12670d64a7f41fed0dc7cec30ebf156b15bff344f"></a>ARQ_EV_RX_DISCONNECT&#160;</td><td class="fielddoc"></td></tr>
-<tr><td class="fieldname"><a id="a02a9b78e1abd4197b7f990aa12670d64a3d88c713f7805eae51bb997d6406637d" name="a02a9b78e1abd4197b7f990aa12670d64a3d88c713f7805eae51bb997d6406637d"></a>ARQ_EV_RX_TURN_REQ&#160;</td><td class="fielddoc"></td></tr>
-<tr><td class="fieldname"><a id="a02a9b78e1abd4197b7f990aa12670d64ade1b911e726abb47c1276c83495c7949" name="a02a9b78e1abd4197b7f990aa12670d64ade1b911e726abb47c1276c83495c7949"></a>ARQ_EV_RX_TURN_ACK&#160;</td><td class="fielddoc"></td></tr>
-<tr><td class="fieldname"><a id="a02a9b78e1abd4197b7f990aa12670d64a7586e33111032825f73162d9cb8bc783" name="a02a9b78e1abd4197b7f990aa12670d64a7586e33111032825f73162d9cb8bc783"></a>ARQ_EV_RX_MODE_REQ&#160;</td><td class="fielddoc"></td></tr>
-<tr><td class="fieldname"><a id="a02a9b78e1abd4197b7f990aa12670d64a0ac262a5b809e446f60e5369cccfa892" name="a02a9b78e1abd4197b7f990aa12670d64a0ac262a5b809e446f60e5369cccfa892"></a>ARQ_EV_RX_MODE_ACK&#160;</td><td class="fielddoc"></td></tr>
-<tr><td class="fieldname"><a id="a02a9b78e1abd4197b7f990aa12670d64abd9f307ce898d2cb2300ffd175161afd" name="a02a9b78e1abd4197b7f990aa12670d64abd9f307ce898d2cb2300ffd175161afd"></a>ARQ_EV_RX_KEEPALIVE&#160;</td><td class="fielddoc"></td></tr>
-<tr><td class="fieldname"><a id="a02a9b78e1abd4197b7f990aa12670d64a60e4d4cb27b8a0050e4dc37f7a629c18" name="a02a9b78e1abd4197b7f990aa12670d64a60e4d4cb27b8a0050e4dc37f7a629c18"></a>ARQ_EV_RX_KEEPALIVE_ACK&#160;</td><td class="fielddoc"></td></tr>
 <tr><td class="fieldname"><a id="a02a9b78e1abd4197b7f990aa12670d64a4ab7aff18e66a669d034bfcd45e699af" name="a02a9b78e1abd4197b7f990aa12670d64a4ab7aff18e66a669d034bfcd45e699af"></a>ARQ_EV_TIMER_RETRY&#160;</td><td class="fielddoc"></td></tr>
-<tr><td class="fieldname"><a id="a02a9b78e1abd4197b7f990aa12670d64aadf0211874e4fa62da9e9b61edbe22fe" name="a02a9b78e1abd4197b7f990aa12670d64aadf0211874e4fa62da9e9b61edbe22fe"></a>ARQ_EV_TIMER_TIMEOUT&#160;</td><td class="fielddoc"></td></tr>
 <tr><td class="fieldname"><a id="a02a9b78e1abd4197b7f990aa12670d64a13197977b27738ec5e1d58d9df3e2449" name="a02a9b78e1abd4197b7f990aa12670d64a13197977b27738ec5e1d58d9df3e2449"></a>ARQ_EV_TIMER_ACK&#160;</td><td class="fielddoc"></td></tr>
-<tr><td class="fieldname"><a id="a02a9b78e1abd4197b7f990aa12670d64a760264539dae88d44c324f6322bc971d" name="a02a9b78e1abd4197b7f990aa12670d64a760264539dae88d44c324f6322bc971d"></a>ARQ_EV_TIMER_PEER_BACKLOG&#160;</td><td class="fielddoc"></td></tr>
-<tr><td class="fieldname"><a id="a02a9b78e1abd4197b7f990aa12670d64a88399f4f9cf067a9658b52ffede14555" name="a02a9b78e1abd4197b7f990aa12670d64a88399f4f9cf067a9658b52ffede14555"></a>ARQ_EV_TIMER_KEEPALIVE&#160;</td><td class="fielddoc"></td></tr>
 <tr><td class="fieldname"><a id="a02a9b78e1abd4197b7f990aa12670d64a0073e72c46dea6c607353192f7c91055" name="a02a9b78e1abd4197b7f990aa12670d64a0073e72c46dea6c607353192f7c91055"></a>ARQ_EV_TX_STARTED&#160;</td><td class="fielddoc"></td></tr>
 <tr><td class="fieldname"><a id="a02a9b78e1abd4197b7f990aa12670d64a2ce3edee99c185da782d0e09ec72e652" name="a02a9b78e1abd4197b7f990aa12670d64a2ce3edee99c185da782d0e09ec72e652"></a>ARQ_EV_TX_COMPLETE&#160;</td><td class="fielddoc"></td></tr>
+<tr><td class="fieldname"><a id="a02a9b78e1abd4197b7f990aa12670d64abacd0dfcd387d06020f7a874fe883cca" name="a02a9b78e1abd4197b7f990aa12670d64abacd0dfcd387d06020f7a874fe883cca"></a>ARQ_EV_RX_CAROUSEL&#160;</td><td class="fielddoc"></td></tr>
+<tr><td class="fieldname"><a id="a02a9b78e1abd4197b7f990aa12670d64abba723a784baf6ed4920a7aab72c8c06" name="a02a9b78e1abd4197b7f990aa12670d64abba723a784baf6ed4920a7aab72c8c06"></a>ARQ_EV_TIMER_CAROUSEL&#160;</td><td class="fielddoc"></td></tr>
+<tr><td class="fieldname"><a id="a02a9b78e1abd4197b7f990aa12670d64a51cef310be5843ac76b8c4f880f550f9" name="a02a9b78e1abd4197b7f990aa12670d64a51cef310be5843ac76b8c4f880f550f9"></a>ARQ_EV_RX_PATTERN&#160;</td><td class="fielddoc"></td></tr>
 <tr><td class="fieldname"><a id="a02a9b78e1abd4197b7f990aa12670d64af1c15c1626f322b603ce765c158e31b2" name="a02a9b78e1abd4197b7f990aa12670d64af1c15c1626f322b603ce765c158e31b2"></a>ARQ_EV__COUNT&#160;</td><td class="fielddoc"></td></tr>
 </table>
 
 </div>
 </div>
-<a id="a76b62fc9a1836f9cb168cdf2b2bda9cc" name="a76b62fc9a1836f9cb168cdf2b2bda9cc"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#a76b62fc9a1836f9cb168cdf2b2bda9cc">&#9670;&#160;</a></span>arq_role_t</h2>
+<h2 class="groupheader">Function Documentation</h2>
+<a id="aa7a344841c1d324b1992f438b7d0ac6f" name="aa7a344841c1d324b1992f438b7d0ac6f"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#aa7a344841c1d324b1992f438b7d0ac6f">&#9670;&#160;</a></span>arq_call_carrier()</h2>
 
 <div class="memitem">
 <div class="memproto">
       <table class="memname">
         <tr>
-          <td class="memname">enum <a class="el" href="arq__fsm_8h.html#a76b62fc9a1836f9cb168cdf2b2bda9cc">arq_role_t</a></td>
+          <td class="memname">int arq_call_carrier </td>
+          <td>(</td>
+          <td class="paramtype">const <a class="el" href="structarq__session__t.html">arq_session_t</a> *&#160;</td>
+          <td class="paramname"><em>sess</em></td><td>)</td>
+          <td></td>
         </tr>
       </table>
 </div><div class="memdoc">
-<table class="fieldtable">
-<tr><th colspan="2">Enumerator</th></tr><tr><td class="fieldname"><a id="a76b62fc9a1836f9cb168cdf2b2bda9ccab9158925d7617be3ca8e29a85e40d438" name="a76b62fc9a1836f9cb168cdf2b2bda9ccab9158925d7617be3ca8e29a85e40d438"></a>ARQ_ROLE_NONE&#160;</td><td class="fielddoc"></td></tr>
-<tr><td class="fieldname"><a id="a76b62fc9a1836f9cb168cdf2b2bda9cca7c50807f4a6758f1fb5dd76d4dffb542" name="a76b62fc9a1836f9cb168cdf2b2bda9cca7c50807f4a6758f1fb5dd76d4dffb542"></a>ARQ_ROLE_CALLER&#160;</td><td class="fielddoc"></td></tr>
-<tr><td class="fieldname"><a id="a76b62fc9a1836f9cb168cdf2b2bda9cca60d8cdf41b4f3b0d82b3dac4137453ed" name="a76b62fc9a1836f9cb168cdf2b2bda9cca60d8cdf41b4f3b0d82b3dac4137453ed"></a>ARQ_ROLE_CALLEE&#160;</td><td class="fielddoc"></td></tr>
-</table>
+
+<p>The carrier the next CALL goes out on: the control mode for the first ARQ_CALL_FAST_SLOTS, then MFSK and the control mode alternately. </p>
 
 </div>
 </div>
-<h2 class="groupheader">Function Documentation</h2>
 <a id="a3edd3ffe6bb5f0eddd1e0939ef47b3ca" name="a3edd3ffe6bb5f0eddd1e0939ef47b3ca"></a>
 <h2 class="memtitle"><span class="permalink"><a href="#a3edd3ffe6bb5f0eddd1e0939ef47b3ca">&#9670;&#160;</a></span>arq_conn_state_name()</h2>
 
@@ -384,26 +327,6 @@ Functions</h2></td></tr>
 </div><div class="memdoc">
 
 <p>Human-readable name for a connection state (for log output). </p>
-
-</div>
-</div>
-<a id="a5bceb6434f61ebdd403767e06789c863" name="a5bceb6434f61ebdd403767e06789c863"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#a5bceb6434f61ebdd403767e06789c863">&#9670;&#160;</a></span>arq_dflow_state_name()</h2>
-
-<div class="memitem">
-<div class="memproto">
-      <table class="memname">
-        <tr>
-          <td class="memname">const char * arq_dflow_state_name </td>
-          <td>(</td>
-          <td class="paramtype"><a class="el" href="arq__fsm_8h.html#a30aebdbcfa878d56632a50f4a96d3369">arq_dflow_state_t</a>&#160;</td>
-          <td class="paramname"><em>s</em></td><td>)</td>
-          <td></td>
-        </tr>
-      </table>
-</div><div class="memdoc">
-
-<p>Human-readable name for a data-flow state (for log output). </p>
 
 </div>
 </div>
@@ -465,6 +388,36 @@ Functions</h2></td></tr>
 
 </div>
 </div>
+<a id="a0c049f25bdfda3cc5435c41036ae1113" name="a0c049f25bdfda3cc5435c41036ae1113"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a0c049f25bdfda3cc5435c41036ae1113">&#9670;&#160;</a></span>arq_fsm_expect_pattern()</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">bool arq_fsm_expect_pattern </td>
+          <td>(</td>
+          <td class="paramtype">const <a class="el" href="structarq__session__t.html">arq_session_t</a> *&#160;</td>
+          <td class="paramname"><em>sess</em>, </td>
+        </tr>
+        <tr>
+          <td class="paramkey"></td>
+          <td></td>
+          <td class="paramtype">uint64_t&#160;</td>
+          <td class="paramname"><em>now</em>&#160;</td>
+        </tr>
+        <tr>
+          <td></td>
+          <td>)</td>
+          <td></td><td></td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+<p>Whether a pattern can arrive now (the modem's detector runs only then). </p>
+
+</div>
+</div>
 <a id="a2c2e9793980423e39a889925ecdbea0b" name="a2c2e9793980423e39a889925ecdbea0b"></a>
 <h2 class="memtitle"><span class="permalink"><a href="#a2c2e9793980423e39a889925ecdbea0b">&#9670;&#160;</a></span>arq_fsm_init()</h2>
 
@@ -488,6 +441,24 @@ Functions</h2></td></tr>
   </table>
   </dd>
 </dl>
+
+</div>
+</div>
+<a id="a2465cc5577c64a123d1e741accf5debc" name="a2465cc5577c64a123d1e741accf5debc"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a2465cc5577c64a123d1e741accf5debc">&#9670;&#160;</a></span>arq_fsm_release()</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">void arq_fsm_release </td>
+          <td>(</td>
+          <td class="paramtype"><a class="el" href="structarq__session__t.html">arq_session_t</a> *&#160;</td>
+          <td class="paramname"><em>sess</em></td><td>)</td>
+          <td></td>
+        </tr>
+      </table>
+</div><div class="memdoc">
 
 </div>
 </div>

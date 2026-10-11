@@ -254,9 +254,11 @@ int arq_set_listen_mode(int mode);
 void arq_set_active_modem_mode(int mode, size_t frame_size);
 
 /**
- * @brief Handle incoming compressed CALL/ACCEPT frame.
+ * @brief Handle an incoming CALL/ACCEPT frame (protocol version 1).
  * @param data Frame bytes.
  * @param frame_size Frame length in bytes.
+ * @param rx_snr SNR the frame was decoded at (dB); sets the start rung.
+ * @param mode The carrier it came on (DATAC16 or MFSK); the answer goes on it.
  * @return true if frame was handled by ARQ connect path.
  */
 bool arq_handle_incoming_connect_frame(uint8_t *data, size_t frame_size, float rx_snr, int mode);

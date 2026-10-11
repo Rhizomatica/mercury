@@ -13,5 +13,9 @@ var searchData=
   ['arq_5fprotocol_2ec_10',['arq_protocol.c',['../arq__protocol_8c.html',1,'']]],
   ['arq_5fprotocol_2eh_11',['arq_protocol.h',['../arq__protocol_8h.html',1,'']]],
   ['arq_5ftiming_2ec_12',['arq_timing.c',['../arq__timing_8c.html',1,'']]],
-  ['arq_5ftiming_2eh_13',['arq_timing.h',['../arq__timing_8h.html',1,'']]]
+  ['arq_5ftiming_2eh_13',['arq_timing.h',['../arq__timing_8h.html',1,'']]],
+  ['arq_5ftnc_2ec_14',['arq_tnc.c',['../arq__tnc_8c.html',1,'']]],
+  ['arq_5ftnc_2eh_15',['arq_tnc.h',['../arq__tnc_8h.html',1,'']]],
+  ['arq_5ftrace_2ec_16',['arq_trace.c',['../arq__trace_8c.html',1,'']]],
+  ['arq_5ftrace_2eh_17',['arq_trace.h',['../arq__trace_8h.html',1,'']]]
 ];

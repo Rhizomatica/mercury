@@ -5,7 +5,7 @@
 <meta http-equiv="X-UA-Compatible" content="IE=11"/>
 <meta name="generator" content="Doxygen 1.9.8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
-<title>HERMES Modem: arq_session_t Struct Reference</title>
+<title>Mercury Modem: arq_session_t Struct Reference</title>
 <link href="tabs.css" rel="stylesheet" type="text/css"/>
 <script type="text/javascript" src="jquery.js"></script>
 <script type="text/javascript" src="dynsections.js"></script>
@@ -21,9 +21,9 @@
  <tbody>
  <tr id="projectrow">
   <td id="projectalign">
-   <div id="projectname">HERMES Modem
+   <div id="projectname">Mercury Modem
    </div>
-   <div id="projectbrief">Hermes ARQ/Broadcast modem</div>
+   <div id="projectbrief">Mercury ARQ/Broadcast modem</div>
   </td>
  </tr>
  </tbody>
@@ -77,97 +77,349 @@ $(function() {
 <div class="contents">
 
 <p><code>#include &lt;<a class="el" href="arq__fsm_8h_source.html">arq_fsm.h</a>&gt;</code></p>
+<div class="dynheader">
+Collaboration diagram for arq_session_t:</div>
+<div class="dyncontent">
+<div class="center"><img src="structarq__session__t__coll__graph.png" border="0" usemap="#aarq__session__t_coll__map" alt="Collaboration graph"/></div>
+<map name="aarq__session__t_coll__map" id="aarq__session__t_coll__map">
+<area shape="rect" title=" " alt="" coords="205,181,308,207"/>
+<area shape="rect" href="structcar__t.html" title=" " alt="" coords="231,93,282,119"/>
+<area shape="poly" title=" " alt="" coords="259,133,259,181,254,181,254,133"/>
+<area shape="rect" href="structcar__io__t.html" title=" " alt="" coords="5,5,73,31"/>
+<area shape="poly" title=" " alt="" coords="83,33,232,92,230,97,81,38"/>
+<area shape="rect" href="structcar__mlog__t.html" title=" " alt="" coords="97,5,184,31"/>
+<area shape="poly" title=" " alt="" coords="169,37,242,91,239,95,166,41"/>
+<area shape="rect" href="structcar__sblock__t.html" title=" " alt="" coords="209,5,305,31"/>
+<area shape="poly" title=" " alt="" coords="259,45,259,93,254,93,254,45"/>
+<area shape="rect" href="structcar__rblock__t.html" title=" " alt="" coords="329,5,422,31"/>
+<area shape="poly" title=" " alt="" coords="350,41,274,95,271,91,347,37"/>
+<area shape="rect" href="structcar__frame__t.html" title=" " alt="" coords="446,5,537,31"/>
+<area shape="poly" title=" " alt="" coords="448,38,283,98,281,93,446,33"/>
+</map>
+<center><span class="legend">[<a href="graph_legend.html">legend</a>]</span></center></div>
 <table class="memberdecls">
 <tr class="heading"><td colspan="2"><h2 class="groupheader"><a id="pub-attribs" name="pub-attribs"></a>
 Data Fields</h2></td></tr>
 <tr class="memitem:ada6c5d9ada31d647378e9552d4b03483" id="r_ada6c5d9ada31d647378e9552d4b03483"><td class="memItemLeft" align="right" valign="top"><a class="el" href="arq__fsm_8h.html#a6bbb8ea99f0ecd4d61510e943c890c32">arq_conn_state_t</a>&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__session__t.html#ada6c5d9ada31d647378e9552d4b03483">conn_state</a></td></tr>
 <tr class="separator:ada6c5d9ada31d647378e9552d4b03483"><td class="memSeparator" colspan="2">&#160;</td></tr>
-<tr class="memitem:a991fe3f262daac29c89145b7600ca690" id="r_a991fe3f262daac29c89145b7600ca690"><td class="memItemLeft" align="right" valign="top"><a class="el" href="arq__fsm_8h.html#a30aebdbcfa878d56632a50f4a96d3369">arq_dflow_state_t</a>&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__session__t.html#a991fe3f262daac29c89145b7600ca690">dflow_state</a></td></tr>
-<tr class="separator:a991fe3f262daac29c89145b7600ca690"><td class="memSeparator" colspan="2">&#160;</td></tr>
-<tr class="memitem:a9a1f19cfddaa0de35c62132cbcce1a5e" id="r_a9a1f19cfddaa0de35c62132cbcce1a5e"><td class="memItemLeft" align="right" valign="top"><a class="el" href="arq__fsm_8h.html#a76b62fc9a1836f9cb168cdf2b2bda9cc">arq_role_t</a>&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__session__t.html#a9a1f19cfddaa0de35c62132cbcce1a5e">role</a></td></tr>
-<tr class="separator:a9a1f19cfddaa0de35c62132cbcce1a5e"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a26a779eac94ebe47574774a5f1a1f8fc" id="r_a26a779eac94ebe47574774a5f1a1f8fc"><td class="memItemLeft" align="right" valign="top">uint8_t&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__session__t.html#a26a779eac94ebe47574774a5f1a1f8fc">session_id</a></td></tr>
 <tr class="separator:a26a779eac94ebe47574774a5f1a1f8fc"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a9f966419b809361ba83a4fd810481ce5" id="r_a9f966419b809361ba83a4fd810481ce5"><td class="memItemLeft" align="right" valign="top">int&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__session__t.html#a9f966419b809361ba83a4fd810481ce5">call_sends_done</a></td></tr>
+<tr class="separator:a9f966419b809361ba83a4fd810481ce5"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a72d643bdac614da07251e4964a99e80f" id="r_a72d643bdac614da07251e4964a99e80f"><td class="memItemLeft" align="right" valign="top">int&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__session__t.html#a72d643bdac614da07251e4964a99e80f">call_carrier</a></td></tr>
+<tr class="separator:a72d643bdac614da07251e4964a99e80f"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a3dfb4a4f3c9f987bb6d0b6677d9d3be5" id="r_a3dfb4a4f3c9f987bb6d0b6677d9d3be5"><td class="memItemLeft" align="right" valign="top">int&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__session__t.html#a3dfb4a4f3c9f987bb6d0b6677d9d3be5">call_rx_mode</a></td></tr>
+<tr class="separator:a3dfb4a4f3c9f987bb6d0b6677d9d3be5"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a24539298f617558299874cc27670a818" id="r_a24539298f617558299874cc27670a818"><td class="memItemLeft" align="right" valign="top">char&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__session__t.html#a24539298f617558299874cc27670a818">remote_call</a> [<a class="el" href="arq_8h.html#a01d4ea46dedb2f6aa8c9b57631164f79">CALLSIGN_MAX_SIZE</a>]</td></tr>
 <tr class="separator:a24539298f617558299874cc27670a818"><td class="memSeparator" colspan="2">&#160;</td></tr>
-<tr class="memitem:a9f72fa6cf1bf3fd981ab55d8515c1bee" id="r_a9f72fa6cf1bf3fd981ab55d8515c1bee"><td class="memItemLeft" align="right" valign="top">uint8_t&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__session__t.html#a9f72fa6cf1bf3fd981ab55d8515c1bee">tx_seq</a></td></tr>
-<tr class="separator:a9f72fa6cf1bf3fd981ab55d8515c1bee"><td class="memSeparator" colspan="2">&#160;</td></tr>
-<tr class="memitem:afaad3025e202bf2a4f8bac28788f3cb5" id="r_afaad3025e202bf2a4f8bac28788f3cb5"><td class="memItemLeft" align="right" valign="top">uint8_t&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__session__t.html#afaad3025e202bf2a4f8bac28788f3cb5">rx_expected</a></td></tr>
-<tr class="separator:afaad3025e202bf2a4f8bac28788f3cb5"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a58168628b2d6f39c974391bd2608e9e5" id="r_a58168628b2d6f39c974391bd2608e9e5"><td class="memItemLeft" align="right" valign="top">char&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__session__t.html#a58168628b2d6f39c974391bd2608e9e5">local_call</a> [<a class="el" href="arq_8h.html#a01d4ea46dedb2f6aa8c9b57631164f79">CALLSIGN_MAX_SIZE</a>]</td></tr>
+<tr class="separator:a58168628b2d6f39c974391bd2608e9e5"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:ab8cefecd9fbc930f47b72c23d70e5376" id="r_ab8cefecd9fbc930f47b72c23d70e5376"><td class="memItemLeft" align="right" valign="top">int&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__session__t.html#ab8cefecd9fbc930f47b72c23d70e5376">payload_mode</a></td></tr>
 <tr class="separator:ab8cefecd9fbc930f47b72c23d70e5376"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:adab0b36c48a6e11ca4e394727a8790cd" id="r_adab0b36c48a6e11ca4e394727a8790cd"><td class="memItemLeft" align="right" valign="top">int&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__session__t.html#adab0b36c48a6e11ca4e394727a8790cd">control_mode</a></td></tr>
 <tr class="separator:adab0b36c48a6e11ca4e394727a8790cd"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:ac26768b9452356f70cbc908663a6be52" id="r_ac26768b9452356f70cbc908663a6be52"><td class="memItemLeft" align="right" valign="top">int&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__session__t.html#ac26768b9452356f70cbc908663a6be52">initial_payload_mode</a></td></tr>
 <tr class="separator:ac26768b9452356f70cbc908663a6be52"><td class="memSeparator" colspan="2">&#160;</td></tr>
-<tr class="memitem:a93d27edb8296a0cf41be51d93a9a246c" id="r_a93d27edb8296a0cf41be51d93a9a246c"><td class="memItemLeft" align="right" valign="top">int&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__session__t.html#a93d27edb8296a0cf41be51d93a9a246c">speed_level</a></td></tr>
-<tr class="separator:a93d27edb8296a0cf41be51d93a9a246c"><td class="memSeparator" colspan="2">&#160;</td></tr>
-<tr class="memitem:aae3068a0a3f04167790cae428a622704" id="r_aae3068a0a3f04167790cae428a622704"><td class="memItemLeft" align="right" valign="top">int&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__session__t.html#aae3068a0a3f04167790cae428a622704">tx_success_count</a></td></tr>
-<tr class="separator:aae3068a0a3f04167790cae428a622704"><td class="memSeparator" colspan="2">&#160;</td></tr>
-<tr class="memitem:a52ef6c0a5884cbb7b2e1d0580cde154e" id="r_a52ef6c0a5884cbb7b2e1d0580cde154e"><td class="memItemLeft" align="right" valign="top">int&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__session__t.html#a52ef6c0a5884cbb7b2e1d0580cde154e">mode_upgrade_count</a></td></tr>
-<tr class="separator:a52ef6c0a5884cbb7b2e1d0580cde154e"><td class="memSeparator" colspan="2">&#160;</td></tr>
-<tr class="memitem:ad8bd6a0bcbfcccad26a824fc0b30d3ba" id="r_ad8bd6a0bcbfcccad26a824fc0b30d3ba"><td class="memItemLeft" align="right" valign="top">int&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__session__t.html#ad8bd6a0bcbfcccad26a824fc0b30d3ba">pending_tx_mode</a></td></tr>
-<tr class="separator:ad8bd6a0bcbfcccad26a824fc0b30d3ba"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:aa6fbeea1f86549d2063c80c0399a8021" id="r_aa6fbeea1f86549d2063c80c0399a8021"><td class="memItemLeft" align="right" valign="top">int&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__session__t.html#aa6fbeea1f86549d2063c80c0399a8021">peer_tx_mode</a></td></tr>
 <tr class="separator:aa6fbeea1f86549d2063c80c0399a8021"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a6b351b2f52e3c31a0aeb56edb10e6d0f" id="r_a6b351b2f52e3c31a0aeb56edb10e6d0f"><td class="memItemLeft" align="right" valign="top">int&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__session__t.html#a6b351b2f52e3c31a0aeb56edb10e6d0f">tx_retries_left</a></td></tr>
 <tr class="separator:a6b351b2f52e3c31a0aeb56edb10e6d0f"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a989ef9519dd838c58a823fcd59c0a186" id="r_a989ef9519dd838c58a823fcd59c0a186"><td class="memItemLeft" align="right" valign="top">uint64_t&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__session__t.html#a989ef9519dd838c58a823fcd59c0a186">state_enter_ms</a></td></tr>
 <tr class="separator:a989ef9519dd838c58a823fcd59c0a186"><td class="memSeparator" colspan="2">&#160;</td></tr>
-<tr class="memitem:afe12812f1033e6addbead61a164f0c32" id="r_afe12812f1033e6addbead61a164f0c32"><td class="memItemLeft" align="right" valign="top">uint64_t&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__session__t.html#afe12812f1033e6addbead61a164f0c32">startup_deadline_ms</a></td></tr>
-<tr class="separator:afe12812f1033e6addbead61a164f0c32"><td class="memSeparator" colspan="2">&#160;</td></tr>
-<tr class="memitem:a027799fb526eef075e47b395dba7dd2d" id="r_a027799fb526eef075e47b395dba7dd2d"><td class="memItemLeft" align="right" valign="top">bool&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__session__t.html#a027799fb526eef075e47b395dba7dd2d">peer_has_data</a></td></tr>
-<tr class="separator:a027799fb526eef075e47b395dba7dd2d"><td class="memSeparator" colspan="2">&#160;</td></tr>
-<tr class="memitem:a1bd3125d7676e1c785139d9eeeaf4c4c" id="r_a1bd3125d7676e1c785139d9eeeaf4c4c"><td class="memItemLeft" align="right" valign="top">bool&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__session__t.html#a1bd3125d7676e1c785139d9eeeaf4c4c">acktx_had_has_data</a></td></tr>
-<tr class="separator:a1bd3125d7676e1c785139d9eeeaf4c4c"><td class="memSeparator" colspan="2">&#160;</td></tr>
-<tr class="memitem:afaadb99e3c9273cd06b12c1ddc730225" id="r_afaadb99e3c9273cd06b12c1ddc730225"><td class="memItemLeft" align="right" valign="top">int&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__session__t.html#afaadb99e3c9273cd06b12c1ddc730225">peer_snr_x10</a></td></tr>
-<tr class="separator:afaadb99e3c9273cd06b12c1ddc730225"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a1a7190ad47cfc47d59522ef18c776765" id="r_a1a7190ad47cfc47d59522ef18c776765"><td class="memItemLeft" align="right" valign="top">uint64_t&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__session__t.html#a1a7190ad47cfc47d59522ef18c776765">last_rx_sync_ms</a></td></tr>
+<tr class="separator:a1a7190ad47cfc47d59522ef18c776765"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:ad55b521c3719df2b5499050750cda398" id="r_ad55b521c3719df2b5499050750cda398"><td class="memItemLeft" align="right" valign="top">uint64_t&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__session__t.html#ad55b521c3719df2b5499050750cda398">rx_frame_busy_until_ms</a></td></tr>
+<tr class="separator:ad55b521c3719df2b5499050750cda398"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a03eebd2ee3971c9e7d9daddad4aeab8e" id="r_a03eebd2ee3971c9e7d9daddad4aeab8e"><td class="memItemLeft" align="right" valign="top">uint64_t&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__session__t.html#a03eebd2ee3971c9e7d9daddad4aeab8e">nav_busy_until_ms</a></td></tr>
+<tr class="separator:a03eebd2ee3971c9e7d9daddad4aeab8e"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a26a22ab1297d77c29954ff69d5a5670b" id="r_a26a22ab1297d77c29954ff69d5a5670b"><td class="memItemLeft" align="right" valign="top">uint8_t&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__session__t.html#a26a22ab1297d77c29954ff69d5a5670b">disc_defer_count</a></td></tr>
+<tr class="separator:a26a22ab1297d77c29954ff69d5a5670b"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a62dfcdcdfde17e01fca1ae78a705d038" id="r_a62dfcdcdfde17e01fca1ae78a705d038"><td class="memItemLeft" align="right" valign="top">bool&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__session__t.html#a62dfcdcdfde17e01fca1ae78a705d038">tx_active</a></td></tr>
+<tr class="separator:a62dfcdcdfde17e01fca1ae78a705d038"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a96eae4a24e97ebaf59c8559fa480c5c5" id="r_a96eae4a24e97ebaf59c8559fa480c5c5"><td class="memItemLeft" align="right" valign="top">uint64_t&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__session__t.html#a96eae4a24e97ebaf59c8559fa480c5c5">last_tx_end_ms</a></td></tr>
+<tr class="separator:a96eae4a24e97ebaf59c8559fa480c5c5"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a48217838e6b14a0e51fd312591c3ae82" id="r_a48217838e6b14a0e51fd312591c3ae82"><td class="memItemLeft" align="right" valign="top">bool&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__session__t.html#a48217838e6b14a0e51fd312591c3ae82">host_released</a></td></tr>
+<tr class="separator:a48217838e6b14a0e51fd312591c3ae82"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a78bf273569eb0552386d7dc2cc403db4" id="r_a78bf273569eb0552386d7dc2cc403db4"><td class="memItemLeft" align="right" valign="top">int&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__session__t.html#a78bf273569eb0552386d7dc2cc403db4">local_snr_x10</a></td></tr>
 <tr class="separator:a78bf273569eb0552386d7dc2cc403db4"><td class="memSeparator" colspan="2">&#160;</td></tr>
-<tr class="memitem:a6214d2ed6e9fbf1e1e191c3c9a30cda5" id="r_a6214d2ed6e9fbf1e1e191c3c9a30cda5"><td class="memItemLeft" align="right" valign="top">uint64_t&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__session__t.html#a6214d2ed6e9fbf1e1e191c3c9a30cda5">peer_busy_until_ms</a></td></tr>
-<tr class="separator:a6214d2ed6e9fbf1e1e191c3c9a30cda5"><td class="memSeparator" colspan="2">&#160;</td></tr>
-<tr class="memitem:a9110070fe7482c9a82a3b1b6b89b31c7" id="r_a9110070fe7482c9a82a3b1b6b89b31c7"><td class="memItemLeft" align="right" valign="top">int&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__session__t.html#a9110070fe7482c9a82a3b1b6b89b31c7">tx_backlog_bytes</a></td></tr>
-<tr class="separator:a9110070fe7482c9a82a3b1b6b89b31c7"><td class="memSeparator" colspan="2">&#160;</td></tr>
-<tr class="memitem:a4e6a3d49c47d99860b35efdea27f0574" id="r_a4e6a3d49c47d99860b35efdea27f0574"><td class="memItemLeft" align="right" valign="top">bool&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__session__t.html#a4e6a3d49c47d99860b35efdea27f0574">disconnect_to_no_client</a></td></tr>
-<tr class="separator:a4e6a3d49c47d99860b35efdea27f0574"><td class="memSeparator" colspan="2">&#160;</td></tr>
-<tr class="memitem:a2c4e3cc0cc093fec1f7187a1946127cc" id="r_a2c4e3cc0cc093fec1f7187a1946127cc"><td class="memItemLeft" align="right" valign="top">bool&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__session__t.html#a2c4e3cc0cc093fec1f7187a1946127cc">pending_disconnect_notify</a></td></tr>
-<tr class="separator:a2c4e3cc0cc093fec1f7187a1946127cc"><td class="memSeparator" colspan="2">&#160;</td></tr>
-<tr class="memitem:ade0a93c712b7330bf8bd9bd64b305727" id="r_ade0a93c712b7330bf8bd9bd64b305727"><td class="memItemLeft" align="right" valign="top">bool&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__session__t.html#ade0a93c712b7330bf8bd9bd64b305727">pending_disconnect</a></td></tr>
-<tr class="separator:ade0a93c712b7330bf8bd9bd64b305727"><td class="memSeparator" colspan="2">&#160;</td></tr>
-<tr class="memitem:a7edbac6867d0134d2995d6e9fcf7ad31" id="r_a7edbac6867d0134d2995d6e9fcf7ad31"><td class="memItemLeft" align="right" valign="top">bool&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__session__t.html#a7edbac6867d0134d2995d6e9fcf7ad31">pending_connect_confirm</a></td></tr>
-<tr class="separator:a7edbac6867d0134d2995d6e9fcf7ad31"><td class="memSeparator" colspan="2">&#160;</td></tr>
-<tr class="memitem:a7e42bb0d35b055768c6f6813b7e458a2" id="r_a7e42bb0d35b055768c6f6813b7e458a2"><td class="memItemLeft" align="right" valign="top">bool&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__session__t.html#a7e42bb0d35b055768c6f6813b7e458a2">need_initial_guard</a></td></tr>
-<tr class="separator:a7e42bb0d35b055768c6f6813b7e458a2"><td class="memSeparator" colspan="2">&#160;</td></tr>
-<tr class="memitem:a811bdc10a3789f6c7a8f978c21596063" id="r_a811bdc10a3789f6c7a8f978c21596063"><td class="memItemLeft" align="right" valign="top">int&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__session__t.html#a811bdc10a3789f6c7a8f978c21596063">consecutive_retries</a></td></tr>
-<tr class="separator:a811bdc10a3789f6c7a8f978c21596063"><td class="memSeparator" colspan="2">&#160;</td></tr>
-<tr class="memitem:a0666cc1fc4797bb14df73b75bad9ad55" id="r_a0666cc1fc4797bb14df73b75bad9ad55"><td class="memItemLeft" align="right" valign="top">uint64_t&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__session__t.html#a0666cc1fc4797bb14df73b75bad9ad55">mode_hold_until_ms</a></td></tr>
-<tr class="separator:a0666cc1fc4797bb14df73b75bad9ad55"><td class="memSeparator" colspan="2">&#160;</td></tr>
-<tr class="memitem:ad67a6e837b5d4582c42f98a43a41ba88" id="r_ad67a6e837b5d4582c42f98a43a41ba88"><td class="memItemLeft" align="right" valign="top">uint8_t&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__session__t.html#ad67a6e837b5d4582c42f98a43a41ba88">tx_retransmit_buf</a> [1024]</td></tr>
-<tr class="separator:ad67a6e837b5d4582c42f98a43a41ba88"><td class="memSeparator" colspan="2">&#160;</td></tr>
-<tr class="memitem:a180fbb1e331dabb7b1531ea5f38d7441" id="r_a180fbb1e331dabb7b1531ea5f38d7441"><td class="memItemLeft" align="right" valign="top">int&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__session__t.html#a180fbb1e331dabb7b1531ea5f38d7441">tx_retransmit_len</a></td></tr>
-<tr class="separator:a180fbb1e331dabb7b1531ea5f38d7441"><td class="memSeparator" colspan="2">&#160;</td></tr>
-<tr class="memitem:a4ddb3b77099bed8a5c69cb2e41f991e0" id="r_a4ddb3b77099bed8a5c69cb2e41f991e0"><td class="memItemLeft" align="right" valign="top">uint8_t&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__session__t.html#a4ddb3b77099bed8a5c69cb2e41f991e0">tx_retransmit_seq</a></td></tr>
-<tr class="separator:a4ddb3b77099bed8a5c69cb2e41f991e0"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:ae769e6a1d0f633f9d90b3ddd33972cf9" id="r_ae769e6a1d0f633f9d90b3ddd33972cf9"><td class="memItemLeft" align="right" valign="top">int&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__session__t.html#ae769e6a1d0f633f9d90b3ddd33972cf9">tx_inflight_bytes</a></td></tr>
 <tr class="separator:ae769e6a1d0f633f9d90b3ddd33972cf9"><td class="memSeparator" colspan="2">&#160;</td></tr>
-<tr class="memitem:a2428420bd7032d8d4fa98e7d64e32ae2" id="r_a2428420bd7032d8d4fa98e7d64e32ae2"><td class="memItemLeft" align="right" valign="top">int&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__session__t.html#a2428420bd7032d8d4fa98e7d64e32ae2">keepalive_miss_count</a></td></tr>
-<tr class="separator:a2428420bd7032d8d4fa98e7d64e32ae2"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:adf03ca5e136efa4f7c4e1c8f9be0931c" id="r_adf03ca5e136efa4f7c4e1c8f9be0931c"><td class="memItemLeft" align="right" valign="top">int&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__session__t.html#adf03ca5e136efa4f7c4e1c8f9be0931c">pending_burst_frames</a></td></tr>
+<tr class="separator:adf03ca5e136efa4f7c4e1c8f9be0931c"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a8aace6029f8eb615b83073da42e2e987" id="r_a8aace6029f8eb615b83073da42e2e987"><td class="memItemLeft" align="right" valign="top">bool&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__session__t.html#a8aace6029f8eb615b83073da42e2e987">listen_enabled</a></td></tr>
+<tr class="separator:a8aace6029f8eb615b83073da42e2e987"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a0795ced440c4dac3a968364e0ed8c7ff" id="r_a0795ced440c4dac3a968364e0ed8c7ff"><td class="memItemLeft" align="right" valign="top">bool&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__session__t.html#a0795ced440c4dac3a968364e0ed8c7ff">accept_fallback</a></td></tr>
+<tr class="separator:a0795ced440c4dac3a968364e0ed8c7ff"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a5f18d72de820a2d7c45560f7e2ee5410" id="r_a5f18d72de820a2d7c45560f7e2ee5410"><td class="memItemLeft" align="right" valign="top">bool&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__session__t.html#a5f18d72de820a2d7c45560f7e2ee5410">accept_tx_pending</a></td></tr>
+<tr class="separator:a5f18d72de820a2d7c45560f7e2ee5410"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a499c4b05f025bbb145600a019fb57c35" id="r_a499c4b05f025bbb145600a019fb57c35"><td class="memItemLeft" align="right" valign="top">bool&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__session__t.html#a499c4b05f025bbb145600a019fb57c35">deferred_listen_off</a></td></tr>
+<tr class="separator:a499c4b05f025bbb145600a019fb57c35"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a2c4e3cc0cc093fec1f7187a1946127cc" id="r_a2c4e3cc0cc093fec1f7187a1946127cc"><td class="memItemLeft" align="right" valign="top">bool&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__session__t.html#a2c4e3cc0cc093fec1f7187a1946127cc">pending_disconnect_notify</a></td></tr>
+<tr class="separator:a2c4e3cc0cc093fec1f7187a1946127cc"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a9db7537e4c4408896eb20bf33e68643f" id="r_a9db7537e4c4408896eb20bf33e68643f"><td class="memItemLeft" align="right" valign="top">bool&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__session__t.html#a9db7537e4c4408896eb20bf33e68643f">disconnect_sent</a></td></tr>
+<tr class="separator:a9db7537e4c4408896eb20bf33e68643f"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:af30ffb19df562f9b8b036851c2c6bba4" id="r_af30ffb19df562f9b8b036851c2c6bba4"><td class="memItemLeft" align="right" valign="top">bool&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__session__t.html#af30ffb19df562f9b8b036851c2c6bba4">pending_disconnect_reply</a></td></tr>
+<tr class="separator:af30ffb19df562f9b8b036851c2c6bba4"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:ade0a93c712b7330bf8bd9bd64b305727" id="r_ade0a93c712b7330bf8bd9bd64b305727"><td class="memItemLeft" align="right" valign="top">bool&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__session__t.html#ade0a93c712b7330bf8bd9bd64b305727">pending_disconnect</a></td></tr>
+<tr class="separator:ade0a93c712b7330bf8bd9bd64b305727"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a28eba5669b44aabb498748ee3e240005" id="r_a28eba5669b44aabb498748ee3e240005"><td class="memItemLeft" align="right" valign="top">bool&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__session__t.html#a28eba5669b44aabb498748ee3e240005">pending_connect</a></td></tr>
+<tr class="separator:a28eba5669b44aabb498748ee3e240005"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:aafcac5d1f15a39999f4f45391ff177c5" id="r_aafcac5d1f15a39999f4f45391ff177c5"><td class="memItemLeft" align="right" valign="top">char&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__session__t.html#aafcac5d1f15a39999f4f45391ff177c5">pending_connect_call</a> [<a class="el" href="arq_8h.html#a01d4ea46dedb2f6aa8c9b57631164f79">CALLSIGN_MAX_SIZE</a>]</td></tr>
+<tr class="separator:aafcac5d1f15a39999f4f45391ff177c5"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:abf96238a46c7d061810b74bbeb5e2945" id="r_abf96238a46c7d061810b74bbeb5e2945"><td class="memItemLeft" align="right" valign="top">uint64_t&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__session__t.html#abf96238a46c7d061810b74bbeb5e2945">disconnect_deadline_ms</a></td></tr>
+<tr class="separator:abf96238a46c7d061810b74bbeb5e2945"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a359aabbd8838b6d6a895ba3a146aa2a2" id="r_a359aabbd8838b6d6a895ba3a146aa2a2"><td class="memItemLeft" align="right" valign="top">uint64_t&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__session__t.html#a359aabbd8838b6d6a895ba3a146aa2a2">last_rx_ms</a></td></tr>
 <tr class="separator:a359aabbd8838b6d6a895ba3a146aa2a2"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a022d0896248eb9fe151c45ee918c425d" id="r_a022d0896248eb9fe151c45ee918c425d"><td class="memItemLeft" align="right" valign="top"><a class="el" href="structcar__t.html">car_t</a> *&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__session__t.html#a022d0896248eb9fe151c45ee918c425d">car</a></td></tr>
+<tr class="separator:a022d0896248eb9fe151c45ee918c425d"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a2050a4187f46e7cd7f9b5a40c3139fe1" id="r_a2050a4187f46e7cd7f9b5a40c3139fe1"><td class="memItemLeft" align="right" valign="top">bool&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__session__t.html#a2050a4187f46e7cd7f9b5a40c3139fe1">car_active</a></td></tr>
+<tr class="separator:a2050a4187f46e7cd7f9b5a40c3139fe1"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a473bb3d58de514e86288f3a4b8536013" id="r_a473bb3d58de514e86288f3a4b8536013"><td class="memItemLeft" align="right" valign="top">bool&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__session__t.html#a473bb3d58de514e86288f3a4b8536013">car_session</a></td></tr>
+<tr class="separator:a473bb3d58de514e86288f3a4b8536013"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:ac92c928b73b3c8e0975874cf766e4021" id="r_ac92c928b73b3c8e0975874cf766e4021"><td class="memItemLeft" align="right" valign="top">bool&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__session__t.html#ac92c928b73b3c8e0975874cf766e4021">car_ending</a></td></tr>
+<tr class="separator:ac92c928b73b3c8e0975874cf766e4021"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:afebdaac2b7ee764d7789a7c75c11ec5a" id="r_afebdaac2b7ee764d7789a7c75c11ec5a"><td class="memItemLeft" align="right" valign="top">uint64_t&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__session__t.html#afebdaac2b7ee764d7789a7c75c11ec5a">car_end_deadline_ms</a></td></tr>
+<tr class="separator:afebdaac2b7ee764d7789a7c75c11ec5a"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a64aeb5f5caf0baa3f10379869be99e69" id="r_a64aeb5f5caf0baa3f10379869be99e69"><td class="memItemLeft" align="right" valign="top">uint16_t&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__session__t.html#a64aeb5f5caf0baa3f10379869be99e69">crc_seed</a></td></tr>
+<tr class="separator:a64aeb5f5caf0baa3f10379869be99e69"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a3b01ab72c30e1a813869125ac6c04071" id="r_a3b01ab72c30e1a813869125ac6c04071"><td class="memItemLeft" align="right" valign="top">uint16_t&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__session__t.html#a3b01ab72c30e1a813869125ac6c04071">car_nonce</a></td></tr>
+<tr class="separator:a3b01ab72c30e1a813869125ac6c04071"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:ab505dd8fa9f98c48e95aab6182082866" id="r_ab505dd8fa9f98c48e95aab6182082866"><td class="memItemLeft" align="right" valign="top">int&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__session__t.html#ab505dd8fa9f98c48e95aab6182082866">car_rx_level</a></td></tr>
+<tr class="separator:ab505dd8fa9f98c48e95aab6182082866"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a870fc5e0b3a5410a3ff7d80bc809c8e1" id="r_a870fc5e0b3a5410a3ff7d80bc809c8e1"><td class="memItemLeft" align="right" valign="top">int&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__session__t.html#a870fc5e0b3a5410a3ff7d80bc809c8e1">car_tx_level</a></td></tr>
+<tr class="separator:a870fc5e0b3a5410a3ff7d80bc809c8e1"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:ac9868c95190af5462fe3a0030fed481d" id="r_ac9868c95190af5462fe3a0030fed481d"><td class="memItemLeft" align="right" valign="top">bool&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__session__t.html#ac9868c95190af5462fe3a0030fed481d">car_ctl_deaf</a></td></tr>
+<tr class="separator:ac9868c95190af5462fe3a0030fed481d"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:ae541da5390b1b1fe267846d5b614dc6b" id="r_ae541da5390b1b1fe267846d5b614dc6b"><td class="memItemLeft" align="right" valign="top">bool&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__session__t.html#ae541da5390b1b1fe267846d5b614dc6b">car_peer_ctl_deaf</a></td></tr>
+<tr class="separator:ae541da5390b1b1fe267846d5b614dc6b"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a1469cb13d48af6f7b661fdbf2bf0f3a1" id="r_a1469cb13d48af6f7b661fdbf2bf0f3a1"><td class="memItemLeft" align="right" valign="top">bool&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__session__t.html#a1469cb13d48af6f7b661fdbf2bf0f3a1">ctl_floor_at_stop</a></td></tr>
+<tr class="separator:a1469cb13d48af6f7b661fdbf2bf0f3a1"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a961357b152b70e4396f700fdbee8eb3e" id="r_a961357b152b70e4396f700fdbee8eb3e"><td class="memItemLeft" align="right" valign="top">uint64_t&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__session__t.html#a961357b152b70e4396f700fdbee8eb3e">car_last_rx_ms</a></td></tr>
+<tr class="separator:a961357b152b70e4396f700fdbee8eb3e"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:ae5427c7247e38025eda04f4500651dd8" id="r_ae5427c7247e38025eda04f4500651dd8"><td class="memItemLeft" align="right" valign="top">uint64_t&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__session__t.html#ae5427c7247e38025eda04f4500651dd8">deadline_ms</a></td></tr>
 <tr class="separator:ae5427c7247e38025eda04f4500651dd8"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:ac4af3c9a7025182b1ee25999ab15a129" id="r_ac4af3c9a7025182b1ee25999ab15a129"><td class="memItemLeft" align="right" valign="top"><a class="el" href="arq__fsm_8h.html#a02a9b78e1abd4197b7f990aa12670d64">arq_event_id_t</a>&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__session__t.html#ac4af3c9a7025182b1ee25999ab15a129">deadline_event</a></td></tr>
 <tr class="separator:ac4af3c9a7025182b1ee25999ab15a129"><td class="memSeparator" colspan="2">&#160;</td></tr>
 </table>
 <h2 class="groupheader">Field Documentation</h2>
-<a id="a1bd3125d7676e1c785139d9eeeaf4c4c" name="a1bd3125d7676e1c785139d9eeeaf4c4c"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#a1bd3125d7676e1c785139d9eeeaf4c4c">&#9670;&#160;</a></span>acktx_had_has_data</h2>
+<a id="a0795ced440c4dac3a968364e0ed8c7ff" name="a0795ced440c4dac3a968364e0ed8c7ff"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a0795ced440c4dac3a968364e0ed8c7ff">&#9670;&#160;</a></span>accept_fallback</h2>
 
 <div class="memitem">
 <div class="memproto">
       <table class="memname">
         <tr>
-          <td class="memname">bool arq_session_t::acktx_had_has_data</td>
+          <td class="memname">bool arq_session_t::accept_fallback</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+</div>
+</div>
+<a id="a5f18d72de820a2d7c45560f7e2ee5410" name="a5f18d72de820a2d7c45560f7e2ee5410"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a5f18d72de820a2d7c45560f7e2ee5410">&#9670;&#160;</a></span>accept_tx_pending</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">bool arq_session_t::accept_tx_pending</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+</div>
+</div>
+<a id="a72d643bdac614da07251e4964a99e80f" name="a72d643bdac614da07251e4964a99e80f"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a72d643bdac614da07251e4964a99e80f">&#9670;&#160;</a></span>call_carrier</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">int arq_session_t::call_carrier</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+</div>
+</div>
+<a id="a3dfb4a4f3c9f987bb6d0b6677d9d3be5" name="a3dfb4a4f3c9f987bb6d0b6677d9d3be5"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a3dfb4a4f3c9f987bb6d0b6677d9d3be5">&#9670;&#160;</a></span>call_rx_mode</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">int arq_session_t::call_rx_mode</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+</div>
+</div>
+<a id="a9f966419b809361ba83a4fd810481ce5" name="a9f966419b809361ba83a4fd810481ce5"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a9f966419b809361ba83a4fd810481ce5">&#9670;&#160;</a></span>call_sends_done</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">int arq_session_t::call_sends_done</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+</div>
+</div>
+<a id="a022d0896248eb9fe151c45ee918c425d" name="a022d0896248eb9fe151c45ee918c425d"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a022d0896248eb9fe151c45ee918c425d">&#9670;&#160;</a></span>car</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname"><a class="el" href="structcar__t.html">car_t</a>* arq_session_t::car</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+</div>
+</div>
+<a id="a2050a4187f46e7cd7f9b5a40c3139fe1" name="a2050a4187f46e7cd7f9b5a40c3139fe1"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a2050a4187f46e7cd7f9b5a40c3139fe1">&#9670;&#160;</a></span>car_active</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">bool arq_session_t::car_active</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+</div>
+</div>
+<a id="ac9868c95190af5462fe3a0030fed481d" name="ac9868c95190af5462fe3a0030fed481d"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#ac9868c95190af5462fe3a0030fed481d">&#9670;&#160;</a></span>car_ctl_deaf</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">bool arq_session_t::car_ctl_deaf</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+</div>
+</div>
+<a id="afebdaac2b7ee764d7789a7c75c11ec5a" name="afebdaac2b7ee764d7789a7c75c11ec5a"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#afebdaac2b7ee764d7789a7c75c11ec5a">&#9670;&#160;</a></span>car_end_deadline_ms</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">uint64_t arq_session_t::car_end_deadline_ms</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+</div>
+</div>
+<a id="ac92c928b73b3c8e0975874cf766e4021" name="ac92c928b73b3c8e0975874cf766e4021"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#ac92c928b73b3c8e0975874cf766e4021">&#9670;&#160;</a></span>car_ending</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">bool arq_session_t::car_ending</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+</div>
+</div>
+<a id="a961357b152b70e4396f700fdbee8eb3e" name="a961357b152b70e4396f700fdbee8eb3e"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a961357b152b70e4396f700fdbee8eb3e">&#9670;&#160;</a></span>car_last_rx_ms</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">uint64_t arq_session_t::car_last_rx_ms</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+</div>
+</div>
+<a id="a3b01ab72c30e1a813869125ac6c04071" name="a3b01ab72c30e1a813869125ac6c04071"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a3b01ab72c30e1a813869125ac6c04071">&#9670;&#160;</a></span>car_nonce</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">uint16_t arq_session_t::car_nonce</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+</div>
+</div>
+<a id="ae541da5390b1b1fe267846d5b614dc6b" name="ae541da5390b1b1fe267846d5b614dc6b"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#ae541da5390b1b1fe267846d5b614dc6b">&#9670;&#160;</a></span>car_peer_ctl_deaf</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">bool arq_session_t::car_peer_ctl_deaf</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+</div>
+</div>
+<a id="ab505dd8fa9f98c48e95aab6182082866" name="ab505dd8fa9f98c48e95aab6182082866"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#ab505dd8fa9f98c48e95aab6182082866">&#9670;&#160;</a></span>car_rx_level</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">int arq_session_t::car_rx_level</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+</div>
+</div>
+<a id="a473bb3d58de514e86288f3a4b8536013" name="a473bb3d58de514e86288f3a4b8536013"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a473bb3d58de514e86288f3a4b8536013">&#9670;&#160;</a></span>car_session</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">bool arq_session_t::car_session</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+</div>
+</div>
+<a id="a870fc5e0b3a5410a3ff7d80bc809c8e1" name="a870fc5e0b3a5410a3ff7d80bc809c8e1"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a870fc5e0b3a5410a3ff7d80bc809c8e1">&#9670;&#160;</a></span>car_tx_level</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">int arq_session_t::car_tx_level</td>
         </tr>
       </table>
 </div><div class="memdoc">
@@ -188,20 +440,6 @@ Data Fields</h2></td></tr>
 
 </div>
 </div>
-<a id="a811bdc10a3789f6c7a8f978c21596063" name="a811bdc10a3789f6c7a8f978c21596063"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#a811bdc10a3789f6c7a8f978c21596063">&#9670;&#160;</a></span>consecutive_retries</h2>
-
-<div class="memitem">
-<div class="memproto">
-      <table class="memname">
-        <tr>
-          <td class="memname">int arq_session_t::consecutive_retries</td>
-        </tr>
-      </table>
-</div><div class="memdoc">
-
-</div>
-</div>
 <a id="adab0b36c48a6e11ca4e394727a8790cd" name="adab0b36c48a6e11ca4e394727a8790cd"></a>
 <h2 class="memtitle"><span class="permalink"><a href="#adab0b36c48a6e11ca4e394727a8790cd">&#9670;&#160;</a></span>control_mode</h2>
 
@@ -210,6 +448,34 @@ Data Fields</h2></td></tr>
       <table class="memname">
         <tr>
           <td class="memname">int arq_session_t::control_mode</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+</div>
+</div>
+<a id="a64aeb5f5caf0baa3f10379869be99e69" name="a64aeb5f5caf0baa3f10379869be99e69"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a64aeb5f5caf0baa3f10379869be99e69">&#9670;&#160;</a></span>crc_seed</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">uint16_t arq_session_t::crc_seed</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+</div>
+</div>
+<a id="a1469cb13d48af6f7b661fdbf2bf0f3a1" name="a1469cb13d48af6f7b661fdbf2bf0f3a1"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a1469cb13d48af6f7b661fdbf2bf0f3a1">&#9670;&#160;</a></span>ctl_floor_at_stop</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">bool arq_session_t::ctl_floor_at_stop</td>
         </tr>
       </table>
 </div><div class="memdoc">
@@ -244,28 +510,70 @@ Data Fields</h2></td></tr>
 
 </div>
 </div>
-<a id="a991fe3f262daac29c89145b7600ca690" name="a991fe3f262daac29c89145b7600ca690"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#a991fe3f262daac29c89145b7600ca690">&#9670;&#160;</a></span>dflow_state</h2>
+<a id="a499c4b05f025bbb145600a019fb57c35" name="a499c4b05f025bbb145600a019fb57c35"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a499c4b05f025bbb145600a019fb57c35">&#9670;&#160;</a></span>deferred_listen_off</h2>
 
 <div class="memitem">
 <div class="memproto">
       <table class="memname">
         <tr>
-          <td class="memname"><a class="el" href="arq__fsm_8h.html#a30aebdbcfa878d56632a50f4a96d3369">arq_dflow_state_t</a> arq_session_t::dflow_state</td>
+          <td class="memname">bool arq_session_t::deferred_listen_off</td>
         </tr>
       </table>
 </div><div class="memdoc">
 
 </div>
 </div>
-<a id="a4e6a3d49c47d99860b35efdea27f0574" name="a4e6a3d49c47d99860b35efdea27f0574"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#a4e6a3d49c47d99860b35efdea27f0574">&#9670;&#160;</a></span>disconnect_to_no_client</h2>
+<a id="a26a22ab1297d77c29954ff69d5a5670b" name="a26a22ab1297d77c29954ff69d5a5670b"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a26a22ab1297d77c29954ff69d5a5670b">&#9670;&#160;</a></span>disc_defer_count</h2>
 
 <div class="memitem">
 <div class="memproto">
       <table class="memname">
         <tr>
-          <td class="memname">bool arq_session_t::disconnect_to_no_client</td>
+          <td class="memname">uint8_t arq_session_t::disc_defer_count</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+</div>
+</div>
+<a id="abf96238a46c7d061810b74bbeb5e2945" name="abf96238a46c7d061810b74bbeb5e2945"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#abf96238a46c7d061810b74bbeb5e2945">&#9670;&#160;</a></span>disconnect_deadline_ms</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">uint64_t arq_session_t::disconnect_deadline_ms</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+</div>
+</div>
+<a id="a9db7537e4c4408896eb20bf33e68643f" name="a9db7537e4c4408896eb20bf33e68643f"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a9db7537e4c4408896eb20bf33e68643f">&#9670;&#160;</a></span>disconnect_sent</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">bool arq_session_t::disconnect_sent</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+</div>
+</div>
+<a id="a48217838e6b14a0e51fd312591c3ae82" name="a48217838e6b14a0e51fd312591c3ae82"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a48217838e6b14a0e51fd312591c3ae82">&#9670;&#160;</a></span>host_released</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">bool arq_session_t::host_released</td>
         </tr>
       </table>
 </div><div class="memdoc">
@@ -286,20 +594,6 @@ Data Fields</h2></td></tr>
 
 </div>
 </div>
-<a id="a2428420bd7032d8d4fa98e7d64e32ae2" name="a2428420bd7032d8d4fa98e7d64e32ae2"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#a2428420bd7032d8d4fa98e7d64e32ae2">&#9670;&#160;</a></span>keepalive_miss_count</h2>
-
-<div class="memitem">
-<div class="memproto">
-      <table class="memname">
-        <tr>
-          <td class="memname">int arq_session_t::keepalive_miss_count</td>
-        </tr>
-      </table>
-</div><div class="memdoc">
-
-</div>
-</div>
 <a id="a359aabbd8838b6d6a895ba3a146aa2a2" name="a359aabbd8838b6d6a895ba3a146aa2a2"></a>
 <h2 class="memtitle"><span class="permalink"><a href="#a359aabbd8838b6d6a895ba3a146aa2a2">&#9670;&#160;</a></span>last_rx_ms</h2>
 
@@ -308,6 +602,62 @@ Data Fields</h2></td></tr>
       <table class="memname">
         <tr>
           <td class="memname">uint64_t arq_session_t::last_rx_ms</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+</div>
+</div>
+<a id="a1a7190ad47cfc47d59522ef18c776765" name="a1a7190ad47cfc47d59522ef18c776765"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a1a7190ad47cfc47d59522ef18c776765">&#9670;&#160;</a></span>last_rx_sync_ms</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">uint64_t arq_session_t::last_rx_sync_ms</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+</div>
+</div>
+<a id="a96eae4a24e97ebaf59c8559fa480c5c5" name="a96eae4a24e97ebaf59c8559fa480c5c5"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a96eae4a24e97ebaf59c8559fa480c5c5">&#9670;&#160;</a></span>last_tx_end_ms</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">uint64_t arq_session_t::last_tx_end_ms</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+</div>
+</div>
+<a id="a8aace6029f8eb615b83073da42e2e987" name="a8aace6029f8eb615b83073da42e2e987"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a8aace6029f8eb615b83073da42e2e987">&#9670;&#160;</a></span>listen_enabled</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">bool arq_session_t::listen_enabled</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+</div>
+</div>
+<a id="a58168628b2d6f39c974391bd2608e9e5" name="a58168628b2d6f39c974391bd2608e9e5"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a58168628b2d6f39c974391bd2608e9e5">&#9670;&#160;</a></span>local_call</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">char arq_session_t::local_call[<a class="el" href="arq_8h.html#a01d4ea46dedb2f6aa8c9b57631164f79">CALLSIGN_MAX_SIZE</a>]</td>
         </tr>
       </table>
 </div><div class="memdoc">
@@ -328,42 +678,14 @@ Data Fields</h2></td></tr>
 
 </div>
 </div>
-<a id="a0666cc1fc4797bb14df73b75bad9ad55" name="a0666cc1fc4797bb14df73b75bad9ad55"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#a0666cc1fc4797bb14df73b75bad9ad55">&#9670;&#160;</a></span>mode_hold_until_ms</h2>
+<a id="a03eebd2ee3971c9e7d9daddad4aeab8e" name="a03eebd2ee3971c9e7d9daddad4aeab8e"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a03eebd2ee3971c9e7d9daddad4aeab8e">&#9670;&#160;</a></span>nav_busy_until_ms</h2>
 
 <div class="memitem">
 <div class="memproto">
       <table class="memname">
         <tr>
-          <td class="memname">uint64_t arq_session_t::mode_hold_until_ms</td>
-        </tr>
-      </table>
-</div><div class="memdoc">
-
-</div>
-</div>
-<a id="a52ef6c0a5884cbb7b2e1d0580cde154e" name="a52ef6c0a5884cbb7b2e1d0580cde154e"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#a52ef6c0a5884cbb7b2e1d0580cde154e">&#9670;&#160;</a></span>mode_upgrade_count</h2>
-
-<div class="memitem">
-<div class="memproto">
-      <table class="memname">
-        <tr>
-          <td class="memname">int arq_session_t::mode_upgrade_count</td>
-        </tr>
-      </table>
-</div><div class="memdoc">
-
-</div>
-</div>
-<a id="a7e42bb0d35b055768c6f6813b7e458a2" name="a7e42bb0d35b055768c6f6813b7e458a2"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#a7e42bb0d35b055768c6f6813b7e458a2">&#9670;&#160;</a></span>need_initial_guard</h2>
-
-<div class="memitem">
-<div class="memproto">
-      <table class="memname">
-        <tr>
-          <td class="memname">bool arq_session_t::need_initial_guard</td>
+          <td class="memname">uint64_t arq_session_t::nav_busy_until_ms</td>
         </tr>
       </table>
 </div><div class="memdoc">
@@ -384,48 +706,6 @@ Data Fields</h2></td></tr>
 
 </div>
 </div>
-<a id="a6214d2ed6e9fbf1e1e191c3c9a30cda5" name="a6214d2ed6e9fbf1e1e191c3c9a30cda5"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#a6214d2ed6e9fbf1e1e191c3c9a30cda5">&#9670;&#160;</a></span>peer_busy_until_ms</h2>
-
-<div class="memitem">
-<div class="memproto">
-      <table class="memname">
-        <tr>
-          <td class="memname">uint64_t arq_session_t::peer_busy_until_ms</td>
-        </tr>
-      </table>
-</div><div class="memdoc">
-
-</div>
-</div>
-<a id="a027799fb526eef075e47b395dba7dd2d" name="a027799fb526eef075e47b395dba7dd2d"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#a027799fb526eef075e47b395dba7dd2d">&#9670;&#160;</a></span>peer_has_data</h2>
-
-<div class="memitem">
-<div class="memproto">
-      <table class="memname">
-        <tr>
-          <td class="memname">bool arq_session_t::peer_has_data</td>
-        </tr>
-      </table>
-</div><div class="memdoc">
-
-</div>
-</div>
-<a id="afaadb99e3c9273cd06b12c1ddc730225" name="afaadb99e3c9273cd06b12c1ddc730225"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#afaadb99e3c9273cd06b12c1ddc730225">&#9670;&#160;</a></span>peer_snr_x10</h2>
-
-<div class="memitem">
-<div class="memproto">
-      <table class="memname">
-        <tr>
-          <td class="memname">int arq_session_t::peer_snr_x10</td>
-        </tr>
-      </table>
-</div><div class="memdoc">
-
-</div>
-</div>
 <a id="aa6fbeea1f86549d2063c80c0399a8021" name="aa6fbeea1f86549d2063c80c0399a8021"></a>
 <h2 class="memtitle"><span class="permalink"><a href="#aa6fbeea1f86549d2063c80c0399a8021">&#9670;&#160;</a></span>peer_tx_mode</h2>
 
@@ -440,14 +720,42 @@ Data Fields</h2></td></tr>
 
 </div>
 </div>
-<a id="a7edbac6867d0134d2995d6e9fcf7ad31" name="a7edbac6867d0134d2995d6e9fcf7ad31"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#a7edbac6867d0134d2995d6e9fcf7ad31">&#9670;&#160;</a></span>pending_connect_confirm</h2>
+<a id="adf03ca5e136efa4f7c4e1c8f9be0931c" name="adf03ca5e136efa4f7c4e1c8f9be0931c"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#adf03ca5e136efa4f7c4e1c8f9be0931c">&#9670;&#160;</a></span>pending_burst_frames</h2>
 
 <div class="memitem">
 <div class="memproto">
       <table class="memname">
         <tr>
-          <td class="memname">bool arq_session_t::pending_connect_confirm</td>
+          <td class="memname">int arq_session_t::pending_burst_frames</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+</div>
+</div>
+<a id="a28eba5669b44aabb498748ee3e240005" name="a28eba5669b44aabb498748ee3e240005"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a28eba5669b44aabb498748ee3e240005">&#9670;&#160;</a></span>pending_connect</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">bool arq_session_t::pending_connect</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+</div>
+</div>
+<a id="aafcac5d1f15a39999f4f45391ff177c5" name="aafcac5d1f15a39999f4f45391ff177c5"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#aafcac5d1f15a39999f4f45391ff177c5">&#9670;&#160;</a></span>pending_connect_call</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">char arq_session_t::pending_connect_call[<a class="el" href="arq_8h.html#a01d4ea46dedb2f6aa8c9b57631164f79">CALLSIGN_MAX_SIZE</a>]</td>
         </tr>
       </table>
 </div><div class="memdoc">
@@ -482,14 +790,14 @@ Data Fields</h2></td></tr>
 
 </div>
 </div>
-<a id="ad8bd6a0bcbfcccad26a824fc0b30d3ba" name="ad8bd6a0bcbfcccad26a824fc0b30d3ba"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#ad8bd6a0bcbfcccad26a824fc0b30d3ba">&#9670;&#160;</a></span>pending_tx_mode</h2>
+<a id="af30ffb19df562f9b8b036851c2c6bba4" name="af30ffb19df562f9b8b036851c2c6bba4"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#af30ffb19df562f9b8b036851c2c6bba4">&#9670;&#160;</a></span>pending_disconnect_reply</h2>
 
 <div class="memitem">
 <div class="memproto">
       <table class="memname">
         <tr>
-          <td class="memname">int arq_session_t::pending_tx_mode</td>
+          <td class="memname">bool arq_session_t::pending_disconnect_reply</td>
         </tr>
       </table>
 </div><div class="memdoc">
@@ -510,28 +818,14 @@ Data Fields</h2></td></tr>
 
 </div>
 </div>
-<a id="a9a1f19cfddaa0de35c62132cbcce1a5e" name="a9a1f19cfddaa0de35c62132cbcce1a5e"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#a9a1f19cfddaa0de35c62132cbcce1a5e">&#9670;&#160;</a></span>role</h2>
+<a id="ad55b521c3719df2b5499050750cda398" name="ad55b521c3719df2b5499050750cda398"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#ad55b521c3719df2b5499050750cda398">&#9670;&#160;</a></span>rx_frame_busy_until_ms</h2>
 
 <div class="memitem">
 <div class="memproto">
       <table class="memname">
         <tr>
-          <td class="memname"><a class="el" href="arq__fsm_8h.html#a76b62fc9a1836f9cb168cdf2b2bda9cc">arq_role_t</a> arq_session_t::role</td>
-        </tr>
-      </table>
-</div><div class="memdoc">
-
-</div>
-</div>
-<a id="afaad3025e202bf2a4f8bac28788f3cb5" name="afaad3025e202bf2a4f8bac28788f3cb5"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#afaad3025e202bf2a4f8bac28788f3cb5">&#9670;&#160;</a></span>rx_expected</h2>
-
-<div class="memitem">
-<div class="memproto">
-      <table class="memname">
-        <tr>
-          <td class="memname">uint8_t arq_session_t::rx_expected</td>
+          <td class="memname">uint64_t arq_session_t::rx_frame_busy_until_ms</td>
         </tr>
       </table>
 </div><div class="memdoc">
@@ -552,34 +846,6 @@ Data Fields</h2></td></tr>
 
 </div>
 </div>
-<a id="a93d27edb8296a0cf41be51d93a9a246c" name="a93d27edb8296a0cf41be51d93a9a246c"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#a93d27edb8296a0cf41be51d93a9a246c">&#9670;&#160;</a></span>speed_level</h2>
-
-<div class="memitem">
-<div class="memproto">
-      <table class="memname">
-        <tr>
-          <td class="memname">int arq_session_t::speed_level</td>
-        </tr>
-      </table>
-</div><div class="memdoc">
-
-</div>
-</div>
-<a id="afe12812f1033e6addbead61a164f0c32" name="afe12812f1033e6addbead61a164f0c32"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#afe12812f1033e6addbead61a164f0c32">&#9670;&#160;</a></span>startup_deadline_ms</h2>
-
-<div class="memitem">
-<div class="memproto">
-      <table class="memname">
-        <tr>
-          <td class="memname">uint64_t arq_session_t::startup_deadline_ms</td>
-        </tr>
-      </table>
-</div><div class="memdoc">
-
-</div>
-</div>
 <a id="a989ef9519dd838c58a823fcd59c0a186" name="a989ef9519dd838c58a823fcd59c0a186"></a>
 <h2 class="memtitle"><span class="permalink"><a href="#a989ef9519dd838c58a823fcd59c0a186">&#9670;&#160;</a></span>state_enter_ms</h2>
 
@@ -594,14 +860,14 @@ Data Fields</h2></td></tr>
 
 </div>
 </div>
-<a id="a9110070fe7482c9a82a3b1b6b89b31c7" name="a9110070fe7482c9a82a3b1b6b89b31c7"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#a9110070fe7482c9a82a3b1b6b89b31c7">&#9670;&#160;</a></span>tx_backlog_bytes</h2>
+<a id="a62dfcdcdfde17e01fca1ae78a705d038" name="a62dfcdcdfde17e01fca1ae78a705d038"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a62dfcdcdfde17e01fca1ae78a705d038">&#9670;&#160;</a></span>tx_active</h2>
 
 <div class="memitem">
 <div class="memproto">
       <table class="memname">
         <tr>
-          <td class="memname">int arq_session_t::tx_backlog_bytes</td>
+          <td class="memname">bool arq_session_t::tx_active</td>
         </tr>
       </table>
 </div><div class="memdoc">
@@ -622,48 +888,6 @@ Data Fields</h2></td></tr>
 
 </div>
 </div>
-<a id="ad67a6e837b5d4582c42f98a43a41ba88" name="ad67a6e837b5d4582c42f98a43a41ba88"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#ad67a6e837b5d4582c42f98a43a41ba88">&#9670;&#160;</a></span>tx_retransmit_buf</h2>
-
-<div class="memitem">
-<div class="memproto">
-      <table class="memname">
-        <tr>
-          <td class="memname">uint8_t arq_session_t::tx_retransmit_buf[1024]</td>
-        </tr>
-      </table>
-</div><div class="memdoc">
-
-</div>
-</div>
-<a id="a180fbb1e331dabb7b1531ea5f38d7441" name="a180fbb1e331dabb7b1531ea5f38d7441"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#a180fbb1e331dabb7b1531ea5f38d7441">&#9670;&#160;</a></span>tx_retransmit_len</h2>
-
-<div class="memitem">
-<div class="memproto">
-      <table class="memname">
-        <tr>
-          <td class="memname">int arq_session_t::tx_retransmit_len</td>
-        </tr>
-      </table>
-</div><div class="memdoc">
-
-</div>
-</div>
-<a id="a4ddb3b77099bed8a5c69cb2e41f991e0" name="a4ddb3b77099bed8a5c69cb2e41f991e0"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#a4ddb3b77099bed8a5c69cb2e41f991e0">&#9670;&#160;</a></span>tx_retransmit_seq</h2>
-
-<div class="memitem">
-<div class="memproto">
-      <table class="memname">
-        <tr>
-          <td class="memname">uint8_t arq_session_t::tx_retransmit_seq</td>
-        </tr>
-      </table>
-</div><div class="memdoc">
-
-</div>
-</div>
 <a id="a6b351b2f52e3c31a0aeb56edb10e6d0f" name="a6b351b2f52e3c31a0aeb56edb10e6d0f"></a>
 <h2 class="memtitle"><span class="permalink"><a href="#a6b351b2f52e3c31a0aeb56edb10e6d0f">&#9670;&#160;</a></span>tx_retries_left</h2>
 
@@ -672,34 +896,6 @@ Data Fields</h2></td></tr>
       <table class="memname">
         <tr>
           <td class="memname">int arq_session_t::tx_retries_left</td>
-        </tr>
-      </table>
-</div><div class="memdoc">
-
-</div>
-</div>
-<a id="a9f72fa6cf1bf3fd981ab55d8515c1bee" name="a9f72fa6cf1bf3fd981ab55d8515c1bee"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#a9f72fa6cf1bf3fd981ab55d8515c1bee">&#9670;&#160;</a></span>tx_seq</h2>
-
-<div class="memitem">
-<div class="memproto">
-      <table class="memname">
-        <tr>
-          <td class="memname">uint8_t arq_session_t::tx_seq</td>
-        </tr>
-      </table>
-</div><div class="memdoc">
-
-</div>
-</div>
-<a id="aae3068a0a3f04167790cae428a622704" name="aae3068a0a3f04167790cae428a622704"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#aae3068a0a3f04167790cae428a622704">&#9670;&#160;</a></span>tx_success_count</h2>
-
-<div class="memitem">
-<div class="memproto">
-      <table class="memname">
-        <tr>
-          <td class="memname">int arq_session_t::tx_success_count</td>
         </tr>
       </table>
 </div><div class="memdoc">

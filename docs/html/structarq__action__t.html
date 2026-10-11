@@ -5,7 +5,7 @@
 <meta http-equiv="X-UA-Compatible" content="IE=11"/>
 <meta name="generator" content="Doxygen 1.9.8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
-<title>HERMES Modem: arq_action_t Struct Reference</title>
+<title>Mercury Modem: arq_action_t Struct Reference</title>
 <link href="tabs.css" rel="stylesheet" type="text/css"/>
 <script type="text/javascript" src="jquery.js"></script>
 <script type="text/javascript" src="dynsections.js"></script>
@@ -21,9 +21,9 @@
  <tbody>
  <tr id="projectrow">
   <td id="projectalign">
-   <div id="projectname">HERMES Modem
+   <div id="projectname">Mercury Modem
    </div>
-   <div id="projectbrief">Hermes ARQ/Broadcast modem</div>
+   <div id="projectbrief">Mercury ARQ/Broadcast modem</div>
   </td>
  </tr>
  </tbody>
@@ -80,6 +80,16 @@ $(function() {
  <a href="structarq__action__t.html#details">More...</a></p>
 
 <p><code>#include &lt;<a class="el" href="arq_8h_source.html">arq.h</a>&gt;</code></p>
+<div class="dynheader">
+Collaboration diagram for arq_action_t:</div>
+<div class="dyncontent">
+<div class="center"><img src="structarq__action__t__coll__graph.png" border="0" usemap="#aarq__action__t_coll__map" alt="Collaboration graph"/></div>
+<map name="aarq__action__t_coll__map" id="aarq__action__t_coll__map">
+<area shape="rect" title="Single modem action item popped by modem TX worker." alt="" coords="14,93,107,119"/>
+<area shape="rect" href="structarq__keydown__t.html" title=" " alt="" coords="5,5,116,31"/>
+<area shape="poly" title=" " alt="" coords="63,45,63,93,58,93,58,45"/>
+</map>
+<center><span class="legend">[<a href="graph_legend.html">legend</a>]</span></center></div>
 <table class="memberdecls">
 <tr class="heading"><td colspan="2"><h2 class="groupheader"><a id="pub-attribs" name="pub-attribs"></a>
 Data Fields</h2></td></tr>
@@ -89,10 +99,30 @@ Data Fields</h2></td></tr>
 <tr class="separator:a3fd93a73f8cea7d034f58eea0cc84a6d"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a03f83b92f0a7bc380306cdff8d739986" id="r_a03f83b92f0a7bc380306cdff8d739986"><td class="memItemLeft" align="right" valign="top">size_t&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__action__t.html#a03f83b92f0a7bc380306cdff8d739986">frame_size</a></td></tr>
 <tr class="separator:a03f83b92f0a7bc380306cdff8d739986"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a9ffe1eee9ae3fc7111dc603b7a05f76d" id="r_a9ffe1eee9ae3fc7111dc603b7a05f76d"><td class="memItemLeft" align="right" valign="top">int&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__action__t.html#a9ffe1eee9ae3fc7111dc603b7a05f76d">frame_count</a></td></tr>
+<tr class="separator:a9ffe1eee9ae3fc7111dc603b7a05f76d"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:af11d3def8384b4516d7ede62d2873e36" id="r_af11d3def8384b4516d7ede62d2873e36"><td class="memItemLeft" align="right" valign="top"><a class="el" href="structarq__keydown__t.html">arq_keydown_t</a> *&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__action__t.html#af11d3def8384b4516d7ede62d2873e36">keydown</a></td></tr>
+<tr class="separator:af11d3def8384b4516d7ede62d2873e36"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a3f3ed57ff98bfc9be087c51bc36410fb" id="r_a3f3ed57ff98bfc9be087c51bc36410fb"><td class="memItemLeft" align="right" valign="top">int&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__action__t.html#a3f3ed57ff98bfc9be087c51bc36410fb">pattern_kind</a></td></tr>
+<tr class="separator:a3f3ed57ff98bfc9be087c51bc36410fb"><td class="memSeparator" colspan="2">&#160;</td></tr>
 </table>
 <a name="details" id="details"></a><h2 class="groupheader">Detailed Description</h2>
 <div class="textblock"><p>Single modem action item popped by modem TX worker. </p>
 </div><h2 class="groupheader">Field Documentation</h2>
+<a id="a9ffe1eee9ae3fc7111dc603b7a05f76d" name="a9ffe1eee9ae3fc7111dc603b7a05f76d"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a9ffe1eee9ae3fc7111dc603b7a05f76d">&#9670;&#160;</a></span>frame_count</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">int arq_action_t::frame_count</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+</div>
+</div>
 <a id="a03f83b92f0a7bc380306cdff8d739986" name="a03f83b92f0a7bc380306cdff8d739986"></a>
 <h2 class="memtitle"><span class="permalink"><a href="#a03f83b92f0a7bc380306cdff8d739986">&#9670;&#160;</a></span>frame_size</h2>
 
@@ -107,6 +137,20 @@ Data Fields</h2></td></tr>
 
 </div>
 </div>
+<a id="af11d3def8384b4516d7ede62d2873e36" name="af11d3def8384b4516d7ede62d2873e36"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#af11d3def8384b4516d7ede62d2873e36">&#9670;&#160;</a></span>keydown</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname"><a class="el" href="structarq__keydown__t.html">arq_keydown_t</a>* arq_action_t::keydown</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+</div>
+</div>
 <a id="a3fd93a73f8cea7d034f58eea0cc84a6d" name="a3fd93a73f8cea7d034f58eea0cc84a6d"></a>
 <h2 class="memtitle"><span class="permalink"><a href="#a3fd93a73f8cea7d034f58eea0cc84a6d">&#9670;&#160;</a></span>mode</h2>
 
@@ -115,6 +159,20 @@ Data Fields</h2></td></tr>
       <table class="memname">
         <tr>
           <td class="memname">int arq_action_t::mode</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+</div>
+</div>
+<a id="a3f3ed57ff98bfc9be087c51bc36410fb" name="a3f3ed57ff98bfc9be087c51bc36410fb"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a3f3ed57ff98bfc9be087c51bc36410fb">&#9670;&#160;</a></span>pattern_kind</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">int arq_action_t::pattern_kind</td>
         </tr>
       </table>
 </div><div class="memdoc">

@@ -5,7 +5,7 @@
 <meta http-equiv="X-UA-Compatible" content="IE=11"/>
 <meta name="generator" content="Doxygen 1.9.8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
-<title>HERMES Modem: arq_fsm_callbacks_t Struct Reference</title>
+<title>Mercury Modem: arq_fsm_callbacks_t Struct Reference</title>
 <link href="tabs.css" rel="stylesheet" type="text/css"/>
 <script type="text/javascript" src="jquery.js"></script>
 <script type="text/javascript" src="dynsections.js"></script>
@@ -21,9 +21,9 @@
  <tbody>
  <tr id="projectrow">
   <td id="projectalign">
-   <div id="projectname">HERMES Modem
+   <div id="projectname">Mercury Modem
    </div>
-   <div id="projectbrief">Hermes ARQ/Broadcast modem</div>
+   <div id="projectbrief">Mercury ARQ/Broadcast modem</div>
   </td>
  </tr>
  </tbody>
@@ -80,15 +80,15 @@ $(function() {
 <table class="memberdecls">
 <tr class="heading"><td colspan="2"><h2 class="groupheader"><a id="pub-attribs" name="pub-attribs"></a>
 Data Fields</h2></td></tr>
-<tr class="memitem:ab80a6e809eab72c2d918fa8f131d2e6c" id="r_ab80a6e809eab72c2d918fa8f131d2e6c"><td class="memItemLeft" align="right" valign="top">void(*&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__fsm__callbacks__t.html#ab80a6e809eab72c2d918fa8f131d2e6c">send_tx_frame</a> )(int packet_type, int mode, size_t frame_size, const uint8_t *frame)</td></tr>
-<tr class="memdesc:ab80a6e809eab72c2d918fa8f131d2e6c"><td class="mdescLeft">&#160;</td><td class="mdescRight">Enqueue a complete TX frame to the modem action queue.  <br /></td></tr>
-<tr class="separator:ab80a6e809eab72c2d918fa8f131d2e6c"><td class="memSeparator" colspan="2">&#160;</td></tr>
-<tr class="memitem:a4f6a5764a9c69efb176f87016b09ea7b" id="r_a4f6a5764a9c69efb176f87016b09ea7b"><td class="memItemLeft" align="right" valign="top">void(*&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__fsm__callbacks__t.html#a4f6a5764a9c69efb176f87016b09ea7b">notify_connected</a> )(const char *remote_call)</td></tr>
-<tr class="memdesc:a4f6a5764a9c69efb176f87016b09ea7b"><td class="mdescLeft">&#160;</td><td class="mdescRight">Notify TCP interface that a connection is established.  <br /></td></tr>
-<tr class="separator:a4f6a5764a9c69efb176f87016b09ea7b"><td class="memSeparator" colspan="2">&#160;</td></tr>
-<tr class="memitem:a992131b6c1abd20bbd8f3d27ef95ef78" id="r_a992131b6c1abd20bbd8f3d27ef95ef78"><td class="memItemLeft" align="right" valign="top">void(*&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__fsm__callbacks__t.html#a992131b6c1abd20bbd8f3d27ef95ef78">notify_pending</a> )(const char *remote_call)</td></tr>
-<tr class="memdesc:a992131b6c1abd20bbd8f3d27ef95ef78"><td class="mdescLeft">&#160;</td><td class="mdescRight">Notify TCP interface of an incoming call that is pending acceptance.  <br /></td></tr>
-<tr class="separator:a992131b6c1abd20bbd8f3d27ef95ef78"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:af7e700fbf4a22aa24f8e58c8225b0608" id="r_af7e700fbf4a22aa24f8e58c8225b0608"><td class="memItemLeft" align="right" valign="top">void(*&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__fsm__callbacks__t.html#af7e700fbf4a22aa24f8e58c8225b0608">send_tx_frame</a> )(int packet_type, int <a class="el" href="carousel_8c.html#a1ea5d0cb93f22f7d0fdf804bd68c3326">mode</a>, size_t frame_size, const uint8_t *frame, int burst_remaining)</td></tr>
+<tr class="memdesc:af7e700fbf4a22aa24f8e58c8225b0608"><td class="mdescLeft">&#160;</td><td class="mdescRight">Enqueue a complete TX frame to the modem action queue.  <br /></td></tr>
+<tr class="separator:af7e700fbf4a22aa24f8e58c8225b0608"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:ab25f6b751e0897f30d139a27dfb8b110" id="r_ab25f6b751e0897f30d139a27dfb8b110"><td class="memItemLeft" align="right" valign="top">void(*&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__fsm__callbacks__t.html#ab25f6b751e0897f30d139a27dfb8b110">notify_connected</a> )(const char *remote_call, const char *local_call)</td></tr>
+<tr class="memdesc:ab25f6b751e0897f30d139a27dfb8b110"><td class="mdescLeft">&#160;</td><td class="mdescRight">Notify TCP interface that a connection is established.  <br /></td></tr>
+<tr class="separator:ab25f6b751e0897f30d139a27dfb8b110"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a40578e49703a388b2d77e2095fc1b1cb" id="r_a40578e49703a388b2d77e2095fc1b1cb"><td class="memItemLeft" align="right" valign="top">void(*&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__fsm__callbacks__t.html#a40578e49703a388b2d77e2095fc1b1cb">notify_pending</a> )(const char *remote_call, const char *local_call)</td></tr>
+<tr class="memdesc:a40578e49703a388b2d77e2095fc1b1cb"><td class="mdescLeft">&#160;</td><td class="mdescRight">Notify TCP interface of an incoming call that is pending acceptance.  <br /></td></tr>
+<tr class="separator:a40578e49703a388b2d77e2095fc1b1cb"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a3862caf333e5001120cfd807db8e1dc0" id="r_a3862caf333e5001120cfd807db8e1dc0"><td class="memItemLeft" align="right" valign="top">void(*&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__fsm__callbacks__t.html#a3862caf333e5001120cfd807db8e1dc0">notify_cancelpending</a> )(void)</td></tr>
 <tr class="memdesc:a3862caf333e5001120cfd807db8e1dc0"><td class="mdescLeft">&#160;</td><td class="mdescRight">Notify TCP interface that a pending incoming call did not complete.  <br /></td></tr>
 <tr class="separator:a3862caf333e5001120cfd807db8e1dc0"><td class="memSeparator" colspan="2">&#160;</td></tr>
@@ -107,8 +107,36 @@ Data Fields</h2></td></tr>
 <tr class="memitem:ab677b725c4d280efefedb228592cb53b" id="r_ab677b725c4d280efefedb228592cb53b"><td class="memItemLeft" align="right" valign="top">void(*&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__fsm__callbacks__t.html#ab677b725c4d280efefedb228592cb53b">send_buffer_status</a> )(int backlog_bytes)</td></tr>
 <tr class="memdesc:ab677b725c4d280efefedb228592cb53b"><td class="mdescLeft">&#160;</td><td class="mdescRight">Send BUFFER status (bytes remaining) to TCP interface.  <br /></td></tr>
 <tr class="separator:ab677b725c4d280efefedb228592cb53b"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:aefa3dd3ff7429f40df503dfce25df2aa" id="r_aefa3dd3ff7429f40df503dfce25df2aa"><td class="memItemLeft" align="right" valign="top">bool(*&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__fsm__callbacks__t.html#aefa3dd3ff7429f40df503dfce25df2aa">channel_busy</a> )(void)</td></tr>
+<tr class="memdesc:aefa3dd3ff7429f40df503dfce25df2aa"><td class="mdescLeft">&#160;</td><td class="mdescRight">Is there energy on the channel right now? Optional (NULL when the station has no busy detector, which is the default) &ndash; used to avoid keying over a transmission we cannot decode, which decoder sync alone cannot see.  <br /></td></tr>
+<tr class="separator:aefa3dd3ff7429f40df503dfce25df2aa"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a01882e0232338ce6de4e92f2b525801c" id="r_a01882e0232338ce6de4e92f2b525801c"><td class="memItemLeft" align="right" valign="top">void(*&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__fsm__callbacks__t.html#a01882e0232338ce6de4e92f2b525801c">send_keydown</a> )(const <a class="el" href="structarq__keydown__t.html">arq_keydown_t</a> *kd)</td></tr>
+<tr class="memdesc:a01882e0232338ce6de4e92f2b525801c"><td class="mdescLeft">&#160;</td><td class="mdescRight">Carousel: key the radio for a keydown of separate bursts (copied by the callee), and set the CRC seed the modem's decoders accept (0: plain frames only, outside a carousel session).  <br /></td></tr>
+<tr class="separator:a01882e0232338ce6de4e92f2b525801c"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a4995d7c96168b5cdec94c7465ec6536c" id="r_a4995d7c96168b5cdec94c7465ec6536c"><td class="memItemLeft" align="right" valign="top">void(*&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__fsm__callbacks__t.html#a4995d7c96168b5cdec94c7465ec6536c">send_pattern</a> )(int pattern_kind)</td></tr>
+<tr class="memdesc:a4995d7c96168b5cdec94c7465ec6536c"><td class="mdescLeft">&#160;</td><td class="mdescRight">Key a pattern (arq_pattern_kind_t) on the air.  <br /></td></tr>
+<tr class="separator:a4995d7c96168b5cdec94c7465ec6536c"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:aca02422fc50a73fc736ff9a6e8b96cca" id="r_aca02422fc50a73fc736ff9a6e8b96cca"><td class="memItemLeft" align="right" valign="top">void(*&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="structarq__fsm__callbacks__t.html#aca02422fc50a73fc736ff9a6e8b96cca">set_crc_seed</a> )(uint16_t seed)</td></tr>
+<tr class="separator:aca02422fc50a73fc736ff9a6e8b96cca"><td class="memSeparator" colspan="2">&#160;</td></tr>
 </table>
 <h2 class="groupheader">Field Documentation</h2>
+<a id="aefa3dd3ff7429f40df503dfce25df2aa" name="aefa3dd3ff7429f40df503dfce25df2aa"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#aefa3dd3ff7429f40df503dfce25df2aa">&#9670;&#160;</a></span>channel_busy</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">bool(* arq_fsm_callbacks_t::channel_busy) (void)</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+<p>Is there energy on the channel right now? Optional (NULL when the station has no busy detector, which is the default) &ndash; used to avoid keying over a transmission we cannot decode, which decoder sync alone cannot see. </p>
+<p>See <a class="el" href="arq__fsm_8c.html#af77417ceb0456f097a23a6d9d3476dc4">peer_is_transmitting()</a> in <a class="el" href="arq__fsm_8c.html">arq_fsm.c</a>. </p>
+
+</div>
+</div>
 <a id="ac9fcbea66140772ba5f409c77c6d4537" name="ac9fcbea66140772ba5f409c77c6d4537"></a>
 <h2 class="memtitle"><span class="permalink"><a href="#ac9fcbea66140772ba5f409c77c6d4537">&#9670;&#160;</a></span>deliver_rx_data</h2>
 
@@ -141,19 +169,26 @@ Data Fields</h2></td></tr>
 
 </div>
 </div>
-<a id="a4f6a5764a9c69efb176f87016b09ea7b" name="a4f6a5764a9c69efb176f87016b09ea7b"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#a4f6a5764a9c69efb176f87016b09ea7b">&#9670;&#160;</a></span>notify_connected</h2>
+<a id="ab25f6b751e0897f30d139a27dfb8b110" name="ab25f6b751e0897f30d139a27dfb8b110"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#ab25f6b751e0897f30d139a27dfb8b110">&#9670;&#160;</a></span>notify_connected</h2>
 
 <div class="memitem">
 <div class="memproto">
       <table class="memname">
         <tr>
-          <td class="memname">void(* arq_fsm_callbacks_t::notify_connected) (const char *remote_call)</td>
+          <td class="memname">void(* arq_fsm_callbacks_t::notify_connected) (const char *remote_call, const char *local_call)</td>
         </tr>
       </table>
 </div><div class="memdoc">
 
 <p>Notify TCP interface that a connection is established. </p>
+<dl class="params"><dt>Parameters</dt><dd>
+  <table class="params">
+    <tr><td class="paramname">remote_call</td><td>the peer (caller) callsign </td></tr>
+    <tr><td class="paramname">local_call</td><td>our dialed callsign/SSID (empty =&gt; use primary) </td></tr>
+  </table>
+  </dd>
+</dl>
 
 </div>
 </div>
@@ -179,19 +214,26 @@ Data Fields</h2></td></tr>
 
 </div>
 </div>
-<a id="a992131b6c1abd20bbd8f3d27ef95ef78" name="a992131b6c1abd20bbd8f3d27ef95ef78"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#a992131b6c1abd20bbd8f3d27ef95ef78">&#9670;&#160;</a></span>notify_pending</h2>
+<a id="a40578e49703a388b2d77e2095fc1b1cb" name="a40578e49703a388b2d77e2095fc1b1cb"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a40578e49703a388b2d77e2095fc1b1cb">&#9670;&#160;</a></span>notify_pending</h2>
 
 <div class="memitem">
 <div class="memproto">
       <table class="memname">
         <tr>
-          <td class="memname">void(* arq_fsm_callbacks_t::notify_pending) (const char *remote_call)</td>
+          <td class="memname">void(* arq_fsm_callbacks_t::notify_pending) (const char *remote_call, const char *local_call)</td>
         </tr>
       </table>
 </div><div class="memdoc">
 
 <p>Notify TCP interface of an incoming call that is pending acceptance. </p>
+<dl class="params"><dt>Parameters</dt><dd>
+  <table class="params">
+    <tr><td class="paramname">remote_call</td><td>the peer (caller) callsign </td></tr>
+    <tr><td class="paramname">local_call</td><td>our dialed callsign/SSID (empty =&gt; use primary) </td></tr>
+  </table>
+  </dd>
+</dl>
 
 </div>
 </div>
@@ -211,19 +253,66 @@ Data Fields</h2></td></tr>
 
 </div>
 </div>
-<a id="ab80a6e809eab72c2d918fa8f131d2e6c" name="ab80a6e809eab72c2d918fa8f131d2e6c"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#ab80a6e809eab72c2d918fa8f131d2e6c">&#9670;&#160;</a></span>send_tx_frame</h2>
+<a id="a01882e0232338ce6de4e92f2b525801c" name="a01882e0232338ce6de4e92f2b525801c"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a01882e0232338ce6de4e92f2b525801c">&#9670;&#160;</a></span>send_keydown</h2>
 
 <div class="memitem">
 <div class="memproto">
       <table class="memname">
         <tr>
-          <td class="memname">void(* arq_fsm_callbacks_t::send_tx_frame) (int packet_type, int mode, size_t frame_size, const uint8_t *frame)</td>
+          <td class="memname">void(* arq_fsm_callbacks_t::send_keydown) (const <a class="el" href="structarq__keydown__t.html">arq_keydown_t</a> *kd)</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+<p>Carousel: key the radio for a keydown of separate bursts (copied by the callee), and set the CRC seed the modem's decoders accept (0: plain frames only, outside a carousel session). </p>
+
+</div>
+</div>
+<a id="a4995d7c96168b5cdec94c7465ec6536c" name="a4995d7c96168b5cdec94c7465ec6536c"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a4995d7c96168b5cdec94c7465ec6536c">&#9670;&#160;</a></span>send_pattern</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">void(* arq_fsm_callbacks_t::send_pattern) (int pattern_kind)</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
+
+<p>Key a pattern (arq_pattern_kind_t) on the air. </p>
+<p>Optional. </p>
+
+</div>
+</div>
+<a id="af7e700fbf4a22aa24f8e58c8225b0608" name="af7e700fbf4a22aa24f8e58c8225b0608"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#af7e700fbf4a22aa24f8e58c8225b0608">&#9670;&#160;</a></span>send_tx_frame</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">void(* arq_fsm_callbacks_t::send_tx_frame) (int packet_type, int <a class="el" href="carousel_8c.html#a1ea5d0cb93f22f7d0fdf804bd68c3326">mode</a>, size_t frame_size, const uint8_t *frame, int burst_remaining)</td>
         </tr>
       </table>
 </div><div class="memdoc">
 
 <p>Enqueue a complete TX frame to the modem action queue. </p>
+
+</div>
+</div>
+<a id="aca02422fc50a73fc736ff9a6e8b96cca" name="aca02422fc50a73fc736ff9a6e8b96cca"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#aca02422fc50a73fc736ff9a6e8b96cca">&#9670;&#160;</a></span>set_crc_seed</h2>
+
+<div class="memitem">
+<div class="memproto">
+      <table class="memname">
+        <tr>
+          <td class="memname">void(* arq_fsm_callbacks_t::set_crc_seed) (uint16_t seed)</td>
+        </tr>
+      </table>
+</div><div class="memdoc">
 
 </div>
 </div>

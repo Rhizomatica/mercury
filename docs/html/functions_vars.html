@@ -5,7 +5,7 @@
 <meta http-equiv="X-UA-Compatible" content="IE=11"/>
 <meta name="generator" content="Doxygen 1.9.8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
-<title>HERMES Modem: Data Fields - Variables</title>
+<title>Mercury Modem: Data Fields - Variables</title>
 <link href="tabs.css" rel="stylesheet" type="text/css"/>
 <script type="text/javascript" src="jquery.js"></script>
 <script type="text/javascript" src="dynsections.js"></script>
@@ -21,9 +21,9 @@
  <tbody>
  <tr id="projectrow">
   <td id="projectalign">
-   <div id="projectname">HERMES Modem
+   <div id="projectname">Mercury Modem
    </div>
-   <div id="projectbrief">Hermes ARQ/Broadcast modem</div>
+   <div id="projectbrief">Mercury ARQ/Broadcast modem</div>
   </td>
  </tr>
  </tbody>
@@ -73,206 +73,15 @@ $(function() {
 <div class="textblock">Here is a list of all variables with links to the structures/unions they belong to:</div>
 
 <h3><a id="index_a" name="index_a"></a>- a -</h3><ul>
-<li>ack_delay_ms&#160;:&#160;<a class="el" href="structarq__timing__ctx__t.html#a6b25a2862f54074f876deedd9bb87f9b">arq_timing_ctx_t</a></li>
-<li>ack_delay_raw&#160;:&#160;<a class="el" href="structarq__event__t.html#a8c9f5c1150bdebd3ef768bd6288cae57">arq_event_t</a>, <a class="el" href="structarq__frame__hdr__t.html#ae618cf5048c160d5e9b4a628fbe0f9ac">arq_frame_hdr_t</a></li>
-<li>ack_rx_ms&#160;:&#160;<a class="el" href="structarq__timing__ctx__t.html#a45ba5eaf4ac737641b9b9c6799f292bf">arq_timing_ctx_t</a></li>
-<li>ack_seq&#160;:&#160;<a class="el" href="structarq__event__t.html#a7688b51a3e25edb83b2437227f525647">arq_event_t</a></li>
-<li>ack_timeout_s&#160;:&#160;<a class="el" href="structarq__mode__timing__t.html#a48b3c5286509eadcb7cc7ae92e3ca603">arq_mode_timing_t</a></li>
-<li>ack_tx_start_ms&#160;:&#160;<a class="el" href="structarq__timing__ctx__t.html#a785080bfbb4450abd3595208c422ccf1">arq_timing_ctx_t</a></li>
-<li>acktx_had_has_data&#160;:&#160;<a class="el" href="structarq__session__t.html#a1bd3125d7676e1c785139d9eeeaf4c4c">arq_session_t</a></li>
+<li>abort&#160;:&#160;<a class="el" href="structarq__event__t.html#a36615d85fe33bcc38aff71bf2a006f46">arq_event_t</a></li>
+<li>accept_fallback&#160;:&#160;<a class="el" href="structarq__session__t.html#a0795ced440c4dac3a968364e0ed8c7ff">arq_session_t</a></li>
+<li>accept_tx_pending&#160;:&#160;<a class="el" href="structarq__session__t.html#a5f18d72de820a2d7c45560f7e2ee5410">arq_session_t</a></li>
+<li>ack_delay_raw&#160;:&#160;<a class="el" href="structarq__frame__hdr__t.html#ae618cf5048c160d5e9b4a628fbe0f9ac">arq_frame_hdr_t</a></li>
+<li>anc&#160;:&#160;<a class="el" href="structcar__t.html#ab151ffa3a49fc804e9d8ebd2f7e649c6">car_t</a></li>
+<li>app_len&#160;:&#160;<a class="el" href="structcar__sblock__t.html#a5c548822a0135d156fa84d0cfe418a45">car_sblock_t</a></li>
 <li>arg0&#160;:&#160;<a class="el" href="structarq__cmd__msg__t.html#a5407287f4eea15a699c141f13dca31bc">arq_cmd_msg_t</a></li>
 <li>arg1&#160;:&#160;<a class="el" href="structarq__cmd__msg__t.html#af85760b727de68e70e2822ff97f54eff">arq_cmd_msg_t</a></li>
 <li>aux_u32&#160;:&#160;<a class="el" href="structarq__status__msg__t.html#a23ca29cf21f7770f8c905a89c5458903">arq_status_msg_t</a></li>
-</ul>
-
-
-<h3><a id="index_b" name="index_b"></a>- b -</h3><ul>
-<li>bw&#160;:&#160;<a class="el" href="structarq__info.html#a0a8c69735a3c0253cf6432697a3a60c9">arq_info</a></li>
-<li>bytes&#160;:&#160;<a class="el" href="structarq__bus__msg__t.html#a4ff33ad3e497c3b36de2a199c5daafab">arq_bus_msg_t</a></li>
-</ul>
-
-
-<h3><a id="index_c" name="index_c"></a>- c -</h3><ul>
-<li>call_burst_size&#160;:&#160;<a class="el" href="structarq__info.html#abff0596d6f4f527a22b08b5d8e302d1d">arq_info</a></li>
-<li>cmd&#160;:&#160;<a class="el" href="structarq__bus__msg__t.html#a33ca872ac48aac5ce8098c05e7637856">arq_bus_msg_t</a></li>
-<li>conn_state&#160;:&#160;<a class="el" href="structarq__session__t.html#ada6c5d9ada31d647378e9552d4b03483">arq_session_t</a></li>
-<li>connected&#160;:&#160;<a class="el" href="structarq__runtime__snapshot__t.html#af9a982572ba7d1b69d5779d1bf78b2cc">arq_runtime_snapshot_t</a></li>
-<li>consecutive_retries&#160;:&#160;<a class="el" href="structarq__session__t.html#a811bdc10a3789f6c7a8f978c21596063">arq_session_t</a></li>
-<li>control_mode&#160;:&#160;<a class="el" href="structarq__runtime__snapshot__t.html#a6fc71531ac3f3a49899a4f010e9814b3">arq_runtime_snapshot_t</a>, <a class="el" href="structarq__session__t.html#adab0b36c48a6e11ca4e394727a8790cd">arq_session_t</a></li>
-<li>current&#160;:&#160;<a class="el" href="structfsm__handle.html#ade3d47e9163a1ae39740e94d0f111950">fsm_handle</a></li>
-</ul>
-
-
-<h3><a id="index_d" name="index_d"></a>- d -</h3><ul>
-<li>data&#160;:&#160;<a class="el" href="structarq__bytes__msg__t.html#ad71650ffad62d11445d405b45ad35811">arq_bytes_msg_t</a></li>
-<li>data_bytes&#160;:&#160;<a class="el" href="structarq__event__t.html#a4b6c48f8e019c4d77276bad6cad98d11">arq_event_t</a></li>
-<li>data_rx_ms&#160;:&#160;<a class="el" href="structarq__timing__ctx__t.html#a4c9300e64fab5c1bfdbf65a2a911bbbb">arq_timing_ctx_t</a></li>
-<li>deadline_event&#160;:&#160;<a class="el" href="structarq__session__t.html#ac4af3c9a7025182b1ee25999ab15a129">arq_session_t</a></li>
-<li>deadline_ms&#160;:&#160;<a class="el" href="structarq__session__t.html#ae5427c7247e38025eda04f4500651dd8">arq_session_t</a></li>
-<li>decoder_mode&#160;:&#160;<a class="el" href="structarq__frame__msg__t.html#a773f96483b0f2db2baf94a7548cb109d">arq_frame_msg_t</a></li>
-<li>deliver_rx_data&#160;:&#160;<a class="el" href="structarq__fsm__callbacks__t.html#ac9fcbea66140772ba5f409c77c6d4537">arq_fsm_callbacks_t</a></li>
-<li>dflow_state&#160;:&#160;<a class="el" href="structarq__session__t.html#a991fe3f262daac29c89145b7600ca690">arq_session_t</a></li>
-<li>disconnect_to_no_client&#160;:&#160;<a class="el" href="structarq__session__t.html#a4e6a3d49c47d99860b35efdea27f0574">arq_session_t</a></li>
-<li>dst_addr&#160;:&#160;<a class="el" href="structarq__info.html#abd24ecb208a254859229cf631962fe90">arq_info</a></li>
-</ul>
-
-
-<h3><a id="index_e" name="index_e"></a>- e -</h3><ul>
-<li>encryption&#160;:&#160;<a class="el" href="structarq__info.html#a1d9de61f76fbf3c350feefcd5d04df57">arq_info</a></li>
-</ul>
-
-
-<h3><a id="index_f" name="index_f"></a>- f -</h3><ul>
-<li>flag&#160;:&#160;<a class="el" href="structarq__cmd__msg__t.html#a0b270a410515b99b4c391e69cc7a514c">arq_cmd_msg_t</a></li>
-<li>flags&#160;:&#160;<a class="el" href="structarq__frame__hdr__t.html#aa24bef2b6c09c26e0acafc6b4f71f4d7">arq_frame_hdr_t</a></li>
-<li>frame&#160;:&#160;<a class="el" href="structarq__bus__msg__t.html#a12f337d4c8b1f4988056b9a081ecfac0">arq_bus_msg_t</a>, <a class="el" href="structarq__frame__msg__t.html#a6e166fbcc25189bfae8906588db48f56">arq_frame_msg_t</a>, <a class="el" href="structarq__tx__frame__msg__t.html#af411bdc891ab79bf5f45875d138f1787">arq_tx_frame_msg_t</a></li>
-<li>frame_decoded&#160;:&#160;<a class="el" href="structarq__modem__metrics__msg__t.html#a3e04fc46203ed108abe740d9287e0cf8">arq_modem_metrics_msg_t</a></li>
-<li>frame_duration_s&#160;:&#160;<a class="el" href="structarq__mode__timing__t.html#a5cdbd399685a864de4e131ce1c187853">arq_mode_timing_t</a></li>
-<li>frame_ext&#160;:&#160;<a class="el" href="structarq__frame__hdr__t.html#a92e7967fee6bcaff71bd9b4e1e07d840">arq_frame_hdr_t</a></li>
-<li>frame_size&#160;:&#160;<a class="el" href="structarq__action__t.html#a03f83b92f0a7bc380306cdff8d739986">arq_action_t</a>, <a class="el" href="structarq__frame__msg__t.html#a737ac76863a01fd37707c0f701efd129">arq_frame_msg_t</a>, <a class="el" href="structarq__info.html#a355a22a3ccdb662942e4f562b480ba25">arq_info</a>, <a class="el" href="structarq__tx__frame__msg__t.html#a303b5032372fab951b6986267414b7e6">arq_tx_frame_msg_t</a></li>
-<li>frames_rx&#160;:&#160;<a class="el" href="structarq__timing__ctx__t.html#a31f001f60d087be4d34ba9caafd80da2">arq_timing_ctx_t</a></li>
-<li>frames_tx&#160;:&#160;<a class="el" href="structarq__timing__ctx__t.html#a0f6441b4bac27e33661449dc11bfa93a">arq_timing_ctx_t</a></li>
-<li>freedv_mode&#160;:&#160;<a class="el" href="structarq__mode__timing__t.html#aae854aae356e4b70828e32e35704b343">arq_mode_timing_t</a></li>
-<li>from_control_decoder&#160;:&#160;<a class="el" href="structarq__frame__msg__t.html#a5aa51ccc2df5137f2e21335854b44917">arq_frame_msg_t</a></li>
-</ul>
-
-
-<h3><a id="index_i" name="index_i"></a>- i -</h3><ul>
-<li>id&#160;:&#160;<a class="el" href="structarq__event__t.html#af0aa6838e1995194b70cb9a40e9979a4">arq_event_t</a></li>
-<li>initial_payload_mode&#160;:&#160;<a class="el" href="structarq__session__t.html#ac26768b9452356f70cbc908663a6be52">arq_session_t</a></li>
-<li>initialized&#160;:&#160;<a class="el" href="structarq__runtime__snapshot__t.html#a227e49bb9501804cc0ae75c1f0753865">arq_runtime_snapshot_t</a></li>
-</ul>
-
-
-<h3><a id="index_k" name="index_k"></a>- k -</h3><ul>
-<li>keepalive_miss_count&#160;:&#160;<a class="el" href="structarq__session__t.html#a2428420bd7032d8d4fa98e7d64e32ae2">arq_session_t</a></li>
-</ul>
-
-
-<h3><a id="index_l" name="index_l"></a>- l -</h3><ul>
-<li>last_rx_ms&#160;:&#160;<a class="el" href="structarq__session__t.html#a359aabbd8838b6d6a895ba3a146aa2a2">arq_session_t</a></li>
-<li>last_snr_local_x10&#160;:&#160;<a class="el" href="structarq__timing__ctx__t.html#a6ef17be892999edad888ee80331b395c">arq_timing_ctx_t</a></li>
-<li>last_snr_peer_x10&#160;:&#160;<a class="el" href="structarq__timing__ctx__t.html#a77d6ff28e2fcd8808b6a9c73f79e8df2">arq_timing_ctx_t</a></li>
-<li>len&#160;:&#160;<a class="el" href="structarq__bytes__msg__t.html#a1773846a897e50573bcd3d7183f3d353">arq_bytes_msg_t</a></li>
-<li>listen&#160;:&#160;<a class="el" href="structarq__info.html#a8085c3afdd01d7c8b460b5b50dc5d865">arq_info</a></li>
-<li>local_snr_x10&#160;:&#160;<a class="el" href="structarq__session__t.html#a78bf273569eb0552386d7dc2cc403db4">arq_session_t</a></li>
-<li>lock&#160;:&#160;<a class="el" href="structfsm__handle.html#a68895e98c3ed3cea35e3b10acad1e840">fsm_handle</a></li>
-</ul>
-
-
-<h3><a id="index_m" name="index_m"></a>- m -</h3><ul>
-<li>metrics&#160;:&#160;<a class="el" href="structarq__bus__msg__t.html#a4f59cbd98f86e41588e352687c097497">arq_bus_msg_t</a></li>
-<li>mode&#160;:&#160;<a class="el" href="structarq__action__t.html#a3fd93a73f8cea7d034f58eea0cc84a6d">arq_action_t</a>, <a class="el" href="structarq__event__t.html#a876fc8e75064e0b29b92c4de6144d978">arq_event_t</a>, <a class="el" href="structarq__info.html#a8e7ddab6db3177efdd069ba04a49eb18">arq_info</a>, <a class="el" href="structarq__tx__frame__msg__t.html#aa17c3e1c80e4d18304fd97bbcaed1ce0">arq_tx_frame_msg_t</a></li>
-<li>mode_hold_until_ms&#160;:&#160;<a class="el" href="structarq__session__t.html#a0666cc1fc4797bb14df73b75bad9ad55">arq_session_t</a></li>
-<li>mode_upgrade_count&#160;:&#160;<a class="el" href="structarq__session__t.html#a52ef6c0a5884cbb7b2e1d0580cde154e">arq_session_t</a></li>
-<li>modem_frame&#160;:&#160;<a class="el" href="structarq__channel__bus__t.html#ac150a1c079e9862ddf15604c348005d3">arq_channel_bus_t</a></li>
-<li>modem_metrics&#160;:&#160;<a class="el" href="structarq__channel__bus__t.html#a8424ed5c7291fae7ffeecbd012accb13">arq_channel_bus_t</a></li>
-<li>modem_tx&#160;:&#160;<a class="el" href="structarq__channel__bus__t.html#a1322b8246ff54d3db455765e03f554d1">arq_channel_bus_t</a></li>
-<li>my_call_sign&#160;:&#160;<a class="el" href="structarq__info.html#a234df707beef09a8fe41abae8a5e8370">arq_info</a></li>
-</ul>
-
-
-<h3><a id="index_n" name="index_n"></a>- n -</h3><ul>
-<li>need_initial_guard&#160;:&#160;<a class="el" href="structarq__session__t.html#a7e42bb0d35b055768c6f6813b7e458a2">arq_session_t</a></li>
-<li>notify_cancelpending&#160;:&#160;<a class="el" href="structarq__fsm__callbacks__t.html#a3862caf333e5001120cfd807db8e1dc0">arq_fsm_callbacks_t</a></li>
-<li>notify_connected&#160;:&#160;<a class="el" href="structarq__fsm__callbacks__t.html#a4f6a5764a9c69efb176f87016b09ea7b">arq_fsm_callbacks_t</a></li>
-<li>notify_disconnected&#160;:&#160;<a class="el" href="structarq__fsm__callbacks__t.html#ae765d5f60bb23e4d4a09bb1f5694b85b">arq_fsm_callbacks_t</a></li>
-<li>notify_pending&#160;:&#160;<a class="el" href="structarq__fsm__callbacks__t.html#a992131b6c1abd20bbd8f3d27ef95ef78">arq_fsm_callbacks_t</a></li>
-</ul>
-
-
-<h3><a id="index_p" name="index_p"></a>- p -</h3><ul>
-<li>packet_type&#160;:&#160;<a class="el" href="structarq__frame__hdr__t.html#a10b543730ef705e41fc8d9f82e121c82">arq_frame_hdr_t</a>, <a class="el" href="structarq__frame__msg__t.html#a7391ad1eb9a76bee9efdcc1443a1f644">arq_frame_msg_t</a></li>
-<li>payload&#160;:&#160;<a class="el" href="structarq__event__t.html#a119fe553977f20d0dd5801d97affbfa3">arq_event_t</a></li>
-<li>payload_bytes&#160;:&#160;<a class="el" href="structarq__mode__timing__t.html#a5784cc58b0c3aae6672cfb35eee093cb">arq_mode_timing_t</a></li>
-<li>payload_len&#160;:&#160;<a class="el" href="structarq__event__t.html#a25c0e8600a5f4be1284adfde663dc2ac">arq_event_t</a></li>
-<li>payload_mode&#160;:&#160;<a class="el" href="structarq__runtime__snapshot__t.html#a5ac045927514f07d471892cd84c60a32">arq_runtime_snapshot_t</a>, <a class="el" href="structarq__session__t.html#ab8cefecd9fbc930f47b72c23d70e5376">arq_session_t</a></li>
-<li>peer_busy_until_ms&#160;:&#160;<a class="el" href="structarq__session__t.html#a6214d2ed6e9fbf1e1e191c3c9a30cda5">arq_session_t</a></li>
-<li>peer_has_data&#160;:&#160;<a class="el" href="structarq__session__t.html#a027799fb526eef075e47b395dba7dd2d">arq_session_t</a></li>
-<li>peer_snr_x10&#160;:&#160;<a class="el" href="structarq__session__t.html#afaadb99e3c9273cd06b12c1ddc730225">arq_session_t</a></li>
-<li>peer_tx_mode&#160;:&#160;<a class="el" href="structarq__runtime__snapshot__t.html#a53d93bdcf017cc9dbbf1088311cf4ca8">arq_runtime_snapshot_t</a>, <a class="el" href="structarq__session__t.html#aa6fbeea1f86549d2063c80c0399a8021">arq_session_t</a></li>
-<li>pending_connect_confirm&#160;:&#160;<a class="el" href="structarq__session__t.html#a7edbac6867d0134d2995d6e9fcf7ad31">arq_session_t</a></li>
-<li>pending_disconnect&#160;:&#160;<a class="el" href="structarq__session__t.html#ade0a93c712b7330bf8bd9bd64b305727">arq_session_t</a></li>
-<li>pending_disconnect_notify&#160;:&#160;<a class="el" href="structarq__session__t.html#a2c4e3cc0cc093fec1f7187a1946127cc">arq_session_t</a></li>
-<li>pending_tx_mode&#160;:&#160;<a class="el" href="structarq__session__t.html#ad8bd6a0bcbfcccad26a824fc0b30d3ba">arq_session_t</a></li>
-<li>preferred_rx_mode&#160;:&#160;<a class="el" href="structarq__runtime__snapshot__t.html#a586b625b0103620c48ab8395d87a1e12">arq_runtime_snapshot_t</a></li>
-<li>preferred_tx_mode&#160;:&#160;<a class="el" href="structarq__runtime__snapshot__t.html#a75112d21532bea7f3be15253ae5af568">arq_runtime_snapshot_t</a></li>
-</ul>
-
-
-<h3><a id="index_r" name="index_r"></a>- r -</h3><ul>
-<li>remote_call&#160;:&#160;<a class="el" href="structarq__event__t.html#a24059e21f23cc1c102eb8f9744f00280">arq_event_t</a>, <a class="el" href="structarq__session__t.html#a24539298f617558299874cc27670a818">arq_session_t</a></li>
-<li>retries_total&#160;:&#160;<a class="el" href="structarq__timing__ctx__t.html#a7fd4a6e54d6c81b4696fa5db81778a7f">arq_timing_ctx_t</a></li>
-<li>retry_count&#160;:&#160;<a class="el" href="structarq__timing__ctx__t.html#a442d143ede2ba7654e65a25db3304290">arq_timing_ctx_t</a></li>
-<li>retry_interval_s&#160;:&#160;<a class="el" href="structarq__mode__timing__t.html#a3d391846e59e574f729edc45fb625627">arq_mode_timing_t</a></li>
-<li>retry_slots&#160;:&#160;<a class="el" href="structarq__info.html#a405bf844794d1662910672fdf226be56">arq_info</a></li>
-<li>role&#160;:&#160;<a class="el" href="structarq__session__t.html#a9a1f19cfddaa0de35c62132cbcce1a5e">arq_session_t</a></li>
-<li>rtt_ms&#160;:&#160;<a class="el" href="structarq__timing__ctx__t.html#a8d927cdfdb8901ebe12f7bb1b433e45b">arq_timing_ctx_t</a></li>
-<li>rx_ack_seq&#160;:&#160;<a class="el" href="structarq__frame__hdr__t.html#af485355c8c8bc2fbdd15bbdd6281c07a">arq_frame_hdr_t</a></li>
-<li>rx_bytes&#160;:&#160;<a class="el" href="structarq__runtime__snapshot__t.html#ab1ebcd0929486e105473c3131fdeaed9">arq_runtime_snapshot_t</a>, <a class="el" href="structarq__timing__ctx__t.html#ab4bd89e1a8170e732d244e68110c2089">arq_timing_ctx_t</a></li>
-<li>rx_expected&#160;:&#160;<a class="el" href="structarq__session__t.html#afaad3025e202bf2a4f8bac28788f3cb5">arq_session_t</a></li>
-<li>rx_flags&#160;:&#160;<a class="el" href="structarq__event__t.html#ab26526ba6664544c46badc1dd684fd88">arq_event_t</a></li>
-<li>rx_snr&#160;:&#160;<a class="el" href="structarq__event__t.html#ae16b2a97a9ae4116f8b501b2439e3306">arq_event_t</a></li>
-<li>rx_status&#160;:&#160;<a class="el" href="structarq__modem__metrics__msg__t.html#a8528b20bdd08f2cda382170baee8b016">arq_modem_metrics_msg_t</a></li>
-</ul>
-
-
-<h3><a id="index_s" name="index_s"></a>- s -</h3><ul>
-<li>send_buffer_status&#160;:&#160;<a class="el" href="structarq__fsm__callbacks__t.html#ab677b725c4d280efefedb228592cb53b">arq_fsm_callbacks_t</a></li>
-<li>send_tx_frame&#160;:&#160;<a class="el" href="structarq__fsm__callbacks__t.html#ab80a6e809eab72c2d918fa8f131d2e6c">arq_fsm_callbacks_t</a></li>
-<li>seq&#160;:&#160;<a class="el" href="structarq__event__t.html#aff75e012a4eb10c53630ac9b996c38fa">arq_event_t</a></li>
-<li>session_bw&#160;:&#160;<a class="el" href="structarq__info.html#a226d3e4eea50e9ed000a89be81d741bb">arq_info</a></li>
-<li>session_id&#160;:&#160;<a class="el" href="structarq__event__t.html#a631d0f2080a92b135a83534caf3341d7">arq_event_t</a>, <a class="el" href="structarq__frame__hdr__t.html#a49a8e714fc28da4ee966a1668b553b2c">arq_frame_hdr_t</a>, <a class="el" href="structarq__session__t.html#a26a779eac94ebe47574774a5f1a1f8fc">arq_session_t</a></li>
-<li>shutdown&#160;:&#160;<a class="el" href="structarq__channel__bus__t.html#a34bf344013c0cbe1d374b8a5e6fb1e37">arq_channel_bus_t</a></li>
-<li>snr&#160;:&#160;<a class="el" href="structarq__modem__metrics__msg__t.html#a149a8602f623a6d60e28d94b327b843b">arq_modem_metrics_msg_t</a></li>
-<li>snr_encoded&#160;:&#160;<a class="el" href="structarq__event__t.html#af09fae76742456a240a88f665c977a01">arq_event_t</a></li>
-<li>snr_raw&#160;:&#160;<a class="el" href="structarq__frame__hdr__t.html#ae8e4fbdcebf78323b02256b780682d8c">arq_frame_hdr_t</a></li>
-<li>speed_level&#160;:&#160;<a class="el" href="structarq__runtime__snapshot__t.html#a24d5a6bacc55ac100dcbae3d9390abb4">arq_runtime_snapshot_t</a>, <a class="el" href="structarq__session__t.html#a93d27edb8296a0cf41be51d93a9a246c">arq_session_t</a></li>
-<li>src_addr&#160;:&#160;<a class="el" href="structarq__info.html#a6f9f09bddc7c3e7fee25b1b93e400f78">arq_info</a></li>
-<li>startup_deadline_ms&#160;:&#160;<a class="el" href="structarq__session__t.html#afe12812f1033e6addbead61a164f0c32">arq_session_t</a></li>
-<li>state_enter_ms&#160;:&#160;<a class="el" href="structarq__session__t.html#a989ef9519dd838c58a823fcd59c0a186">arq_session_t</a></li>
-<li>status&#160;:&#160;<a class="el" href="structarq__bus__msg__t.html#a4bcc7dc6a6963a5203ff5f84e57c9ce8">arq_bus_msg_t</a></li>
-<li>subtype&#160;:&#160;<a class="el" href="structarq__frame__hdr__t.html#ab3306926edeac15f15006958f4c9c78a">arq_frame_hdr_t</a></li>
-<li>sync&#160;:&#160;<a class="el" href="structarq__modem__metrics__msg__t.html#a6b3faa76c5ae60c5290bde694dbb08b4">arq_modem_metrics_msg_t</a></li>
-</ul>
-
-
-<h3><a id="index_t" name="index_t"></a>- t -</h3><ul>
-<li>tcp_cmd&#160;:&#160;<a class="el" href="structarq__channel__bus__t.html#a8b45c5fe6f6f816df5cfff71a9f82de3">arq_channel_bus_t</a></li>
-<li>tcp_payload&#160;:&#160;<a class="el" href="structarq__channel__bus__t.html#ac8641d44da7a22b4d64abb0dfc4be487">arq_channel_bus_t</a></li>
-<li>tcp_status&#160;:&#160;<a class="el" href="structarq__channel__bus__t.html#a69e7138c63ab5502ce39ae9e03b8b29e">arq_channel_bus_t</a></li>
-<li>text&#160;:&#160;<a class="el" href="structarq__status__msg__t.html#ab656b83d8a4119f67856da5229d35730">arq_status_msg_t</a></li>
-<li>TRX&#160;:&#160;<a class="el" href="structarq__info.html#ab28afe1230ca491b2b7ccdb66f83f85f">arq_info</a></li>
-<li>trx&#160;:&#160;<a class="el" href="structarq__runtime__snapshot__t.html#a3a72c48d2b6103cf461ab53210362b03">arq_runtime_snapshot_t</a></li>
-<li>tx&#160;:&#160;<a class="el" href="structarq__bus__msg__t.html#a0acf3580ae82daeed573576ee57648b7">arq_bus_msg_t</a></li>
-<li>tx_backlog&#160;:&#160;<a class="el" href="structarq__fsm__callbacks__t.html#aff2e3444c2698a190e460a1b59b0b117">arq_fsm_callbacks_t</a></li>
-<li>tx_backlog_bytes&#160;:&#160;<a class="el" href="structarq__runtime__snapshot__t.html#a225fbaa70bf5859c6aa03e5dcbc79fb5">arq_runtime_snapshot_t</a>, <a class="el" href="structarq__session__t.html#a9110070fe7482c9a82a3b1b6b89b31c7">arq_session_t</a></li>
-<li>tx_bytes&#160;:&#160;<a class="el" href="structarq__runtime__snapshot__t.html#a7e431179cb313573ad0e09e5a16f86a5">arq_runtime_snapshot_t</a>, <a class="el" href="structarq__timing__ctx__t.html#a45e23deb12784d445ab28378b51d1b2a">arq_timing_ctx_t</a></li>
-<li>tx_end_ms&#160;:&#160;<a class="el" href="structarq__timing__ctx__t.html#aace6b3fe308d74a76bfd35a6de4bae77">arq_timing_ctx_t</a></li>
-<li>tx_inflight_bytes&#160;:&#160;<a class="el" href="structarq__session__t.html#ae769e6a1d0f633f9d90b3ddd33972cf9">arq_session_t</a></li>
-<li>tx_period_s&#160;:&#160;<a class="el" href="structarq__mode__timing__t.html#a05ca0d81a4b0b0b042d55ae772def516">arq_mode_timing_t</a></li>
-<li>tx_queue_ms&#160;:&#160;<a class="el" href="structarq__timing__ctx__t.html#a0dda487fc80ca0d8bce41b12fbdf44ab">arq_timing_ctx_t</a></li>
-<li>tx_read&#160;:&#160;<a class="el" href="structarq__fsm__callbacks__t.html#ac602264c8713a76c2c45a08faa50203e">arq_fsm_callbacks_t</a></li>
-<li>tx_retransmit_buf&#160;:&#160;<a class="el" href="structarq__session__t.html#ad67a6e837b5d4582c42f98a43a41ba88">arq_session_t</a></li>
-<li>tx_retransmit_len&#160;:&#160;<a class="el" href="structarq__session__t.html#a180fbb1e331dabb7b1531ea5f38d7441">arq_session_t</a></li>
-<li>tx_retransmit_seq&#160;:&#160;<a class="el" href="structarq__session__t.html#a4ddb3b77099bed8a5c69cb2e41f991e0">arq_session_t</a></li>
-<li>tx_retries_left&#160;:&#160;<a class="el" href="structarq__session__t.html#a6b351b2f52e3c31a0aeb56edb10e6d0f">arq_session_t</a></li>
-<li>tx_seq&#160;:&#160;<a class="el" href="structarq__frame__hdr__t.html#ab07648d2bd031c82d97b5af36005a290">arq_frame_hdr_t</a>, <a class="el" href="structarq__session__t.html#a9f72fa6cf1bf3fd981ab55d8515c1bee">arq_session_t</a></li>
-<li>tx_start_ms&#160;:&#160;<a class="el" href="structarq__timing__ctx__t.html#aa0b107d1e034dba2f3bea85063d96ac6">arq_timing_ctx_t</a></li>
-<li>tx_success_count&#160;:&#160;<a class="el" href="structarq__session__t.html#aae3068a0a3f04167790cae428a622704">arq_session_t</a></li>
-<li>type&#160;:&#160;<a class="el" href="structarq__action__t.html#ad3c2bee1373d9a65ca732c7601af7d86">arq_action_t</a>, <a class="el" href="structarq__bus__msg__t.html#a5e0513ce3f74ef18fbd8eb7dff551e54">arq_bus_msg_t</a>, <a class="el" href="structarq__cmd__msg__t.html#a99811dec7ab0112c973001aacde56129">arq_cmd_msg_t</a>, <a class="el" href="structarq__status__msg__t.html#afabcb34b93a3b5bc125ac573f9d5a7a7">arq_status_msg_t</a></li>
-</ul>
-
-
-<h3><a id="index_u" name="index_u"></a>- u -</h3><ul>
-<li>u&#160;:&#160;<a class="el" href="structarq__bus__msg__t.html#a63456f4012ba3e6965c7f7ef832a75f1">arq_bus_msg_t</a></li>
-</ul>
-
-
-<h3><a id="index_v" name="index_v"></a>- v -</h3><ul>
-<li>value&#160;:&#160;<a class="el" href="structarq__cmd__msg__t.html#a9fd9e8e0bcaaf7af6d2979d62954afbf">arq_cmd_msg_t</a></li>
-<li>value_f32&#160;:&#160;<a class="el" href="structarq__status__msg__t.html#aa15c25f95dd1fa77bfa64ac2edf7539d">arq_status_msg_t</a></li>
-<li>value_u32&#160;:&#160;<a class="el" href="structarq__status__msg__t.html#a5b785b39b0199614938a107d1c4c0b9e">arq_status_msg_t</a></li>
 </ul>
 </div><!-- contents -->
 <!-- start footer part -->

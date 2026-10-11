@@ -5,7 +5,7 @@
 <meta http-equiv="X-UA-Compatible" content="IE=11"/>
 <meta name="generator" content="Doxygen 1.9.8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
-<title>HERMES Modem: arq_timing.c File Reference</title>
+<title>Mercury Modem: arq_timing.c File Reference</title>
 <link href="tabs.css" rel="stylesheet" type="text/css"/>
 <script type="text/javascript" src="jquery.js"></script>
 <script type="text/javascript" src="dynsections.js"></script>
@@ -21,9 +21,9 @@
  <tbody>
  <tr id="projectrow">
   <td id="projectalign">
-   <div id="projectname">HERMES Modem
+   <div id="projectname">Mercury Modem
    </div>
-   <div id="projectbrief">Hermes ARQ/Broadcast modem</div>
+   <div id="projectbrief">Mercury ARQ/Broadcast modem</div>
   </td>
  </tr>
  </tbody>
@@ -83,31 +83,23 @@ $(function() {
 <div class="textblock"><code>#include &quot;<a class="el" href="arq__timing_8h_source.html">arq_timing.h</a>&quot;</code><br />
 <code>#include &lt;string.h&gt;</code><br />
 <code>#include &quot;../common/hermes_log.h&quot;</code><br />
-<code>#include &quot;<a class="el" href="arq__protocol_8h_source.html">arq_protocol.h</a>&quot;</code><br />
+<code>#include &quot;../common/virtual_clock.h&quot;</code><br />
 </div><div class="textblock"><div class="dynheader">
 Include dependency graph for arq_timing.c:</div>
 <div class="dyncontent">
 <div class="center"><img src="arq__timing_8c__incl.png" border="0" usemap="#aarq__timing_8c" alt=""/></div>
 <map name="aarq__timing_8c" id="aarq__timing_8c">
-<area shape="rect" title=" " alt="" coords="205,5,299,31"/>
-<area shape="rect" href="arq__timing_8h.html" title=" " alt="" coords="28,79,121,104"/>
-<area shape="poly" title=" " alt="" coords="224,33,117,76,115,71,223,28"/>
-<area shape="rect" title=" " alt="" coords="274,79,339,104"/>
-<area shape="poly" title=" " alt="" coords="263,29,292,66,287,69,259,33"/>
-<area shape="rect" title=" " alt="" coords="363,79,530,104"/>
-<area shape="poly" title=" " alt="" coords="284,28,403,71,401,76,282,33"/>
-<area shape="rect" href="arq__protocol_8h.html" title=" " alt="" coords="145,79,249,104"/>
-<area shape="poly" title=" " alt="" coords="245,33,217,69,212,66,241,29"/>
-<area shape="rect" title=" " alt="" coords="5,152,80,177"/>
-<area shape="poly" title=" " alt="" coords="72,105,56,141,51,139,67,103"/>
-<area shape="rect" title=" " alt="" coords="105,152,170,177"/>
-<area shape="poly" title=" " alt="" coords="87,103,120,140,116,143,83,106"/>
-<area shape="poly" title=" " alt="" coords="174,106,81,149,79,144,171,102"/>
-<area shape="poly" title=" " alt="" coords="189,106,158,143,154,140,185,103"/>
-<area shape="rect" title=" " alt="" coords="195,152,264,177"/>
-<area shape="poly" title=" " alt="" coords="205,103,221,139,216,141,200,105"/>
-<area shape="rect" title=" " alt="" coords="288,152,379,177"/>
-<area shape="poly" title=" " alt="" coords="220,102,300,143,298,148,218,106"/>
+<area shape="rect" title=" " alt="" coords="179,5,272,31"/>
+<area shape="rect" href="arq__timing_8h.html" title=" " alt="" coords="5,79,99,104"/>
+<area shape="poly" title=" " alt="" coords="198,33,94,76,92,71,196,28"/>
+<area shape="rect" title=" " alt="" coords="123,79,189,104"/>
+<area shape="poly" title=" " alt="" coords="216,33,179,71,175,67,212,29"/>
+<area shape="rect" title=" " alt="" coords="213,79,379,104"/>
+<area shape="poly" title=" " alt="" coords="239,29,277,67,273,71,235,33"/>
+<area shape="rect" title=" " alt="" coords="403,79,575,104"/>
+<area shape="poly" title=" " alt="" coords="268,28,434,72,433,78,267,33"/>
+<area shape="rect" title=" " alt="" coords="19,152,85,177"/>
+<area shape="poly" title=" " alt="" coords="55,104,55,138,49,138,49,104"/>
 </map>
 </div>
 </div><table class="memberdecls">
@@ -118,36 +110,17 @@ Macros</h2></td></tr>
 </table><table class="memberdecls">
 <tr class="heading"><td colspan="2"><h2 class="groupheader"><a id="func-members" name="func-members"></a>
 Functions</h2></td></tr>
-<tr class="memitem:a1f8b20257a6f3497ccd67aa218f9dc98" id="r_a1f8b20257a6f3497ccd67aa218f9dc98"><td class="memItemLeft" align="right" valign="top">static const char *&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq__timing_8c.html#a1f8b20257a6f3497ccd67aa218f9dc98">mode_name</a> (int mode)</td></tr>
+<tr class="memitem:a1f8b20257a6f3497ccd67aa218f9dc98" id="r_a1f8b20257a6f3497ccd67aa218f9dc98"><td class="memItemLeft" align="right" valign="top">static const char *&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq__timing_8c.html#a1f8b20257a6f3497ccd67aa218f9dc98">mode_name</a> (int <a class="el" href="carousel_8c.html#a1ea5d0cb93f22f7d0fdf804bd68c3326">mode</a>)</td></tr>
 <tr class="separator:a1f8b20257a6f3497ccd67aa218f9dc98"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:a018d278606000328f0a8af6dd778cd14" id="r_a018d278606000328f0a8af6dd778cd14"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq__timing_8c.html#a018d278606000328f0a8af6dd778cd14">arq_timing_init</a> (<a class="el" href="structarq__timing__ctx__t.html">arq_timing_ctx_t</a> *ctx)</td></tr>
 <tr class="memdesc:a018d278606000328f0a8af6dd778cd14"><td class="mdescLeft">&#160;</td><td class="mdescRight">Zero-initialise a timing context at session start.  <br /></td></tr>
 <tr class="separator:a018d278606000328f0a8af6dd778cd14"><td class="memSeparator" colspan="2">&#160;</td></tr>
-<tr class="memitem:a5cd86c212892e88d8052db702d3cad24" id="r_a5cd86c212892e88d8052db702d3cad24"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq__timing_8c.html#a5cd86c212892e88d8052db702d3cad24">arq_timing_record_tx_queue</a> (<a class="el" href="structarq__timing__ctx__t.html">arq_timing_ctx_t</a> *ctx, int seq, int mode, int backlog_bytes, int payload_bytes)</td></tr>
-<tr class="memdesc:a5cd86c212892e88d8052db702d3cad24"><td class="mdescLeft">&#160;</td><td class="mdescRight">Record frame queued for TX; logs [TMG] tx_queue.  <br /></td></tr>
-<tr class="separator:a5cd86c212892e88d8052db702d3cad24"><td class="memSeparator" colspan="2">&#160;</td></tr>
-<tr class="memitem:aed1cb0a0a268caabf3979846cda260b2" id="r_aed1cb0a0a268caabf3979846cda260b2"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq__timing_8c.html#aed1cb0a0a268caabf3979846cda260b2">arq_timing_record_tx_start</a> (<a class="el" href="structarq__timing__ctx__t.html">arq_timing_ctx_t</a> *ctx, int seq, int mode, int backlog_bytes)</td></tr>
-<tr class="memdesc:aed1cb0a0a268caabf3979846cda260b2"><td class="mdescLeft">&#160;</td><td class="mdescRight">Record PTT ON; logs [TMG] tx_start.  <br /></td></tr>
-<tr class="separator:aed1cb0a0a268caabf3979846cda260b2"><td class="memSeparator" colspan="2">&#160;</td></tr>
-<tr class="memitem:a8f0d04e6f43c37242f3146d66ecb5d28" id="r_a8f0d04e6f43c37242f3146d66ecb5d28"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq__timing_8c.html#a8f0d04e6f43c37242f3146d66ecb5d28">arq_timing_record_tx_end</a> (<a class="el" href="structarq__timing__ctx__t.html">arq_timing_ctx_t</a> *ctx, int seq)</td></tr>
-<tr class="memdesc:a8f0d04e6f43c37242f3146d66ecb5d28"><td class="mdescLeft">&#160;</td><td class="mdescRight">Record PTT OFF; logs [TMG] tx_end with duration.  <br /></td></tr>
-<tr class="separator:a8f0d04e6f43c37242f3146d66ecb5d28"><td class="memSeparator" colspan="2">&#160;</td></tr>
-<tr class="memitem:a6ab2269708da7a23274ad8d0949eaada" id="r_a6ab2269708da7a23274ad8d0949eaada"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq__timing_8c.html#a6ab2269708da7a23274ad8d0949eaada">arq_timing_record_ack_rx</a> (<a class="el" href="structarq__timing__ctx__t.html">arq_timing_ctx_t</a> *ctx, int seq, uint8_t ack_delay_raw, int peer_snr_x10)</td></tr>
-<tr class="memdesc:a6ab2269708da7a23274ad8d0949eaada"><td class="mdescLeft">&#160;</td><td class="mdescRight">Record ACK received; computes and logs OTA RTT.  <br /></td></tr>
-<tr class="separator:a6ab2269708da7a23274ad8d0949eaada"><td class="memSeparator" colspan="2">&#160;</td></tr>
-<tr class="memitem:aaddaff83b4c7b370ad89a511cfdd33aa" id="r_aaddaff83b4c7b370ad89a511cfdd33aa"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq__timing_8c.html#aaddaff83b4c7b370ad89a511cfdd33aa">arq_timing_record_data_rx</a> (<a class="el" href="structarq__timing__ctx__t.html">arq_timing_ctx_t</a> *ctx, int seq, int bytes, int snr_x10)</td></tr>
-<tr class="memdesc:aaddaff83b4c7b370ad89a511cfdd33aa"><td class="mdescLeft">&#160;</td><td class="mdescRight">Record data frame decoded (IRS side); logs [TMG] data_rx.  <br /></td></tr>
-<tr class="separator:aaddaff83b4c7b370ad89a511cfdd33aa"><td class="memSeparator" colspan="2">&#160;</td></tr>
-<tr class="memitem:aa3ccea751e8c65ebe2ffd8ece5fc081f" id="r_aa3ccea751e8c65ebe2ffd8ece5fc081f"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq__timing_8c.html#aa3ccea751e8c65ebe2ffd8ece5fc081f">arq_timing_record_ack_tx</a> (<a class="el" href="structarq__timing__ctx__t.html">arq_timing_ctx_t</a> *ctx, int seq)</td></tr>
-<tr class="memdesc:aa3ccea751e8c65ebe2ffd8ece5fc081f"><td class="mdescLeft">&#160;</td><td class="mdescRight">Record ACK TX started (IRS side); logs [TMG] ack_tx.  <br /></td></tr>
-<tr class="separator:aa3ccea751e8c65ebe2ffd8ece5fc081f"><td class="memSeparator" colspan="2">&#160;</td></tr>
-<tr class="memitem:a98c95512df6d1250a6c863460c20d775" id="r_a98c95512df6d1250a6c863460c20d775"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq__timing_8c.html#a98c95512df6d1250a6c863460c20d775">arq_timing_record_retry</a> (<a class="el" href="structarq__timing__ctx__t.html">arq_timing_ctx_t</a> *ctx, int seq, int attempt, const char *reason)</td></tr>
-<tr class="memdesc:a98c95512df6d1250a6c863460c20d775"><td class="mdescLeft">&#160;</td><td class="mdescRight">Record a retry event; logs [TMG] retry.  <br /></td></tr>
-<tr class="separator:a98c95512df6d1250a6c863460c20d775"><td class="memSeparator" colspan="2">&#160;</td></tr>
-<tr class="memitem:a8c5a42064a738a4615c629effc2f4399" id="r_a8c5a42064a738a4615c629effc2f4399"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq__timing_8c.html#a8c5a42064a738a4615c629effc2f4399">arq_timing_record_turn</a> (<a class="el" href="structarq__timing__ctx__t.html">arq_timing_ctx_t</a> *ctx, bool to_iss, const char *reason)</td></tr>
-<tr class="memdesc:a8c5a42064a738a4615c629effc2f4399"><td class="mdescLeft">&#160;</td><td class="mdescRight">Record turn direction change; logs [TMG] turn.  <br /></td></tr>
-<tr class="separator:a8c5a42064a738a4615c629effc2f4399"><td class="memSeparator" colspan="2">&#160;</td></tr>
-<tr class="memitem:a1018512eb9ddc6de73bb7fd5a81daf8f" id="r_a1018512eb9ddc6de73bb7fd5a81daf8f"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq__timing_8c.html#a1018512eb9ddc6de73bb7fd5a81daf8f">arq_timing_record_connect</a> (<a class="el" href="structarq__timing__ctx__t.html">arq_timing_ctx_t</a> *ctx, int mode)</td></tr>
+<tr class="memitem:af665b1a68bc7db26cb22611eec89713a" id="r_af665b1a68bc7db26cb22611eec89713a"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq__timing_8c.html#af665b1a68bc7db26cb22611eec89713a">arq_timing_record_car_tx</a> (<a class="el" href="structarq__timing__ctx__t.html">arq_timing_ctx_t</a> *ctx, int bytes)</td></tr>
+<tr class="memdesc:af665b1a68bc7db26cb22611eec89713a"><td class="mdescLeft">&#160;</td><td class="mdescRight">Bytes the carousel took from the application to send, or delivered to it; logs [TMG] car_tx / car_rx.  <br /></td></tr>
+<tr class="separator:af665b1a68bc7db26cb22611eec89713a"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a7669417ad408ea9c6d2f0e0f8680fdf2" id="r_a7669417ad408ea9c6d2f0e0f8680fdf2"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq__timing_8c.html#a7669417ad408ea9c6d2f0e0f8680fdf2">arq_timing_record_car_rx</a> (<a class="el" href="structarq__timing__ctx__t.html">arq_timing_ctx_t</a> *ctx, int bytes)</td></tr>
+<tr class="separator:a7669417ad408ea9c6d2f0e0f8680fdf2"><td class="memSeparator" colspan="2">&#160;</td></tr>
+<tr class="memitem:a1018512eb9ddc6de73bb7fd5a81daf8f" id="r_a1018512eb9ddc6de73bb7fd5a81daf8f"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq__timing_8c.html#a1018512eb9ddc6de73bb7fd5a81daf8f">arq_timing_record_connect</a> (<a class="el" href="structarq__timing__ctx__t.html">arq_timing_ctx_t</a> *ctx, int <a class="el" href="carousel_8c.html#a1ea5d0cb93f22f7d0fdf804bd68c3326">mode</a>)</td></tr>
 <tr class="memdesc:a1018512eb9ddc6de73bb7fd5a81daf8f"><td class="mdescLeft">&#160;</td><td class="mdescRight">Record session connected; logs [TMG] connect.  <br /></td></tr>
 <tr class="separator:a1018512eb9ddc6de73bb7fd5a81daf8f"><td class="memSeparator" colspan="2">&#160;</td></tr>
 <tr class="memitem:ab6d43ccb2c9be64caf14364abca6f7b5" id="r_ab6d43ccb2c9be64caf14364abca6f7b5"><td class="memItemLeft" align="right" valign="top">void&#160;</td><td class="memItemRight" valign="bottom"><a class="el" href="arq__timing_8c.html#ab6d43ccb2c9be64caf14364abca6f7b5">arq_timing_record_disconnect</a> (<a class="el" href="structarq__timing__ctx__t.html">arq_timing_ctx_t</a> *ctx, const char *reason)</td></tr>
@@ -190,14 +163,14 @@ Functions</h2></td></tr>
 
 </div>
 </div>
-<a id="a6ab2269708da7a23274ad8d0949eaada" name="a6ab2269708da7a23274ad8d0949eaada"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#a6ab2269708da7a23274ad8d0949eaada">&#9670;&#160;</a></span>arq_timing_record_ack_rx()</h2>
+<a id="a7669417ad408ea9c6d2f0e0f8680fdf2" name="a7669417ad408ea9c6d2f0e0f8680fdf2"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#a7669417ad408ea9c6d2f0e0f8680fdf2">&#9670;&#160;</a></span>arq_timing_record_car_rx()</h2>
 
 <div class="memitem">
 <div class="memproto">
       <table class="memname">
         <tr>
-          <td class="memname">void arq_timing_record_ack_rx </td>
+          <td class="memname">void arq_timing_record_car_rx </td>
           <td>(</td>
           <td class="paramtype"><a class="el" href="structarq__timing__ctx__t.html">arq_timing_ctx_t</a> *&#160;</td>
           <td class="paramname"><em>ctx</em>, </td>
@@ -206,19 +179,7 @@ Functions</h2></td></tr>
           <td class="paramkey"></td>
           <td></td>
           <td class="paramtype">int&#160;</td>
-          <td class="paramname"><em>seq</em>, </td>
-        </tr>
-        <tr>
-          <td class="paramkey"></td>
-          <td></td>
-          <td class="paramtype">uint8_t&#160;</td>
-          <td class="paramname"><em>ack_delay_raw</em>, </td>
-        </tr>
-        <tr>
-          <td class="paramkey"></td>
-          <td></td>
-          <td class="paramtype">int&#160;</td>
-          <td class="paramname"><em>peer_snr_x10</em>&#160;</td>
+          <td class="paramname"><em>bytes</em>&#160;</td>
         </tr>
         <tr>
           <td></td>
@@ -228,27 +189,16 @@ Functions</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
-<p>Record ACK received; computes and logs OTA RTT. </p>
-<dl class="params"><dt>Parameters</dt><dd>
-  <table class="params">
-    <tr><td class="paramname">ctx</td><td>Timing context. </td></tr>
-    <tr><td class="paramname">seq</td><td>TX sequence number being ACKed. </td></tr>
-    <tr><td class="paramname">ack_delay_raw</td><td>Wire-encoded ack_delay (10ms units, 0=unknown). </td></tr>
-    <tr><td class="paramname">peer_snr_x10</td><td>Peer-reported SNR * 10. </td></tr>
-  </table>
-  </dd>
-</dl>
-
 </div>
 </div>
-<a id="aa3ccea751e8c65ebe2ffd8ece5fc081f" name="aa3ccea751e8c65ebe2ffd8ece5fc081f"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#aa3ccea751e8c65ebe2ffd8ece5fc081f">&#9670;&#160;</a></span>arq_timing_record_ack_tx()</h2>
+<a id="af665b1a68bc7db26cb22611eec89713a" name="af665b1a68bc7db26cb22611eec89713a"></a>
+<h2 class="memtitle"><span class="permalink"><a href="#af665b1a68bc7db26cb22611eec89713a">&#9670;&#160;</a></span>arq_timing_record_car_tx()</h2>
 
 <div class="memitem">
 <div class="memproto">
       <table class="memname">
         <tr>
-          <td class="memname">void arq_timing_record_ack_tx </td>
+          <td class="memname">void arq_timing_record_car_tx </td>
           <td>(</td>
           <td class="paramtype"><a class="el" href="structarq__timing__ctx__t.html">arq_timing_ctx_t</a> *&#160;</td>
           <td class="paramname"><em>ctx</em>, </td>
@@ -257,7 +207,7 @@ Functions</h2></td></tr>
           <td class="paramkey"></td>
           <td></td>
           <td class="paramtype">int&#160;</td>
-          <td class="paramname"><em>seq</em>&#160;</td>
+          <td class="paramname"><em>bytes</em>&#160;</td>
         </tr>
         <tr>
           <td></td>
@@ -267,7 +217,7 @@ Functions</h2></td></tr>
       </table>
 </div><div class="memdoc">
 
-<p>Record ACK TX started (IRS side); logs [TMG] ack_tx. </p>
+<p>Bytes the carousel took from the application to send, or delivered to it; logs [TMG] car_tx / car_rx. </p>
 
 </div>
 </div>
@@ -301,48 +251,6 @@ Functions</h2></td></tr>
 
 </div>
 </div>
-<a id="aaddaff83b4c7b370ad89a511cfdd33aa" name="aaddaff83b4c7b370ad89a511cfdd33aa"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#aaddaff83b4c7b370ad89a511cfdd33aa">&#9670;&#160;</a></span>arq_timing_record_data_rx()</h2>
-
-<div class="memitem">
-<div class="memproto">
-      <table class="memname">
-        <tr>
-          <td class="memname">void arq_timing_record_data_rx </td>
-          <td>(</td>
-          <td class="paramtype"><a class="el" href="structarq__timing__ctx__t.html">arq_timing_ctx_t</a> *&#160;</td>
-          <td class="paramname"><em>ctx</em>, </td>
-        </tr>
-        <tr>
-          <td class="paramkey"></td>
-          <td></td>
-          <td class="paramtype">int&#160;</td>
-          <td class="paramname"><em>seq</em>, </td>
-        </tr>
-        <tr>
-          <td class="paramkey"></td>
-          <td></td>
-          <td class="paramtype">int&#160;</td>
-          <td class="paramname"><em>bytes</em>, </td>
-        </tr>
-        <tr>
-          <td class="paramkey"></td>
-          <td></td>
-          <td class="paramtype">int&#160;</td>
-          <td class="paramname"><em>snr_x10</em>&#160;</td>
-        </tr>
-        <tr>
-          <td></td>
-          <td>)</td>
-          <td></td><td></td>
-        </tr>
-      </table>
-</div><div class="memdoc">
-
-<p>Record data frame decoded (IRS side); logs [TMG] data_rx. </p>
-
-</div>
-</div>
 <a id="ab6d43ccb2c9be64caf14364abca6f7b5" name="ab6d43ccb2c9be64caf14364abca6f7b5"></a>
 <h2 class="memtitle"><span class="permalink"><a href="#ab6d43ccb2c9be64caf14364abca6f7b5">&#9670;&#160;</a></span>arq_timing_record_disconnect()</h2>
 
@@ -370,231 +278,6 @@ Functions</h2></td></tr>
 </div><div class="memdoc">
 
 <p>Record session disconnected; logs [TMG] disconnect and session totals. </p>
-
-</div>
-</div>
-<a id="a98c95512df6d1250a6c863460c20d775" name="a98c95512df6d1250a6c863460c20d775"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#a98c95512df6d1250a6c863460c20d775">&#9670;&#160;</a></span>arq_timing_record_retry()</h2>
-
-<div class="memitem">
-<div class="memproto">
-      <table class="memname">
-        <tr>
-          <td class="memname">void arq_timing_record_retry </td>
-          <td>(</td>
-          <td class="paramtype"><a class="el" href="structarq__timing__ctx__t.html">arq_timing_ctx_t</a> *&#160;</td>
-          <td class="paramname"><em>ctx</em>, </td>
-        </tr>
-        <tr>
-          <td class="paramkey"></td>
-          <td></td>
-          <td class="paramtype">int&#160;</td>
-          <td class="paramname"><em>seq</em>, </td>
-        </tr>
-        <tr>
-          <td class="paramkey"></td>
-          <td></td>
-          <td class="paramtype">int&#160;</td>
-          <td class="paramname"><em>attempt</em>, </td>
-        </tr>
-        <tr>
-          <td class="paramkey"></td>
-          <td></td>
-          <td class="paramtype">const char *&#160;</td>
-          <td class="paramname"><em>reason</em>&#160;</td>
-        </tr>
-        <tr>
-          <td></td>
-          <td>)</td>
-          <td></td><td></td>
-        </tr>
-      </table>
-</div><div class="memdoc">
-
-<p>Record a retry event; logs [TMG] retry. </p>
-<dl class="params"><dt>Parameters</dt><dd>
-  <table class="params">
-    <tr><td class="paramname">ctx</td><td>Timing context. </td></tr>
-    <tr><td class="paramname">seq</td><td>TX sequence number. </td></tr>
-    <tr><td class="paramname">attempt</td><td>1-based retry number. </td></tr>
-    <tr><td class="paramname">reason</td><td>Short reason string (e.g. "timeout", "nack"). </td></tr>
-  </table>
-  </dd>
-</dl>
-
-</div>
-</div>
-<a id="a8c5a42064a738a4615c629effc2f4399" name="a8c5a42064a738a4615c629effc2f4399"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#a8c5a42064a738a4615c629effc2f4399">&#9670;&#160;</a></span>arq_timing_record_turn()</h2>
-
-<div class="memitem">
-<div class="memproto">
-      <table class="memname">
-        <tr>
-          <td class="memname">void arq_timing_record_turn </td>
-          <td>(</td>
-          <td class="paramtype"><a class="el" href="structarq__timing__ctx__t.html">arq_timing_ctx_t</a> *&#160;</td>
-          <td class="paramname"><em>ctx</em>, </td>
-        </tr>
-        <tr>
-          <td class="paramkey"></td>
-          <td></td>
-          <td class="paramtype">bool&#160;</td>
-          <td class="paramname"><em>to_iss</em>, </td>
-        </tr>
-        <tr>
-          <td class="paramkey"></td>
-          <td></td>
-          <td class="paramtype">const char *&#160;</td>
-          <td class="paramname"><em>reason</em>&#160;</td>
-        </tr>
-        <tr>
-          <td></td>
-          <td>)</td>
-          <td></td><td></td>
-        </tr>
-      </table>
-</div><div class="memdoc">
-
-<p>Record turn direction change; logs [TMG] turn. </p>
-<dl class="params"><dt>Parameters</dt><dd>
-  <table class="params">
-    <tr><td class="paramname">ctx</td><td>Timing context. </td></tr>
-    <tr><td class="paramname">to_iss</td><td>true = becoming ISS, false = becoming IRS. </td></tr>
-    <tr><td class="paramname">reason</td><td>"piggyback", "turn_req", "startup" etc. </td></tr>
-  </table>
-  </dd>
-</dl>
-
-</div>
-</div>
-<a id="a8f0d04e6f43c37242f3146d66ecb5d28" name="a8f0d04e6f43c37242f3146d66ecb5d28"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#a8f0d04e6f43c37242f3146d66ecb5d28">&#9670;&#160;</a></span>arq_timing_record_tx_end()</h2>
-
-<div class="memitem">
-<div class="memproto">
-      <table class="memname">
-        <tr>
-          <td class="memname">void arq_timing_record_tx_end </td>
-          <td>(</td>
-          <td class="paramtype"><a class="el" href="structarq__timing__ctx__t.html">arq_timing_ctx_t</a> *&#160;</td>
-          <td class="paramname"><em>ctx</em>, </td>
-        </tr>
-        <tr>
-          <td class="paramkey"></td>
-          <td></td>
-          <td class="paramtype">int&#160;</td>
-          <td class="paramname"><em>seq</em>&#160;</td>
-        </tr>
-        <tr>
-          <td></td>
-          <td>)</td>
-          <td></td><td></td>
-        </tr>
-      </table>
-</div><div class="memdoc">
-
-<p>Record PTT OFF; logs [TMG] tx_end with duration. </p>
-
-</div>
-</div>
-<a id="a5cd86c212892e88d8052db702d3cad24" name="a5cd86c212892e88d8052db702d3cad24"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#a5cd86c212892e88d8052db702d3cad24">&#9670;&#160;</a></span>arq_timing_record_tx_queue()</h2>
-
-<div class="memitem">
-<div class="memproto">
-      <table class="memname">
-        <tr>
-          <td class="memname">void arq_timing_record_tx_queue </td>
-          <td>(</td>
-          <td class="paramtype"><a class="el" href="structarq__timing__ctx__t.html">arq_timing_ctx_t</a> *&#160;</td>
-          <td class="paramname"><em>ctx</em>, </td>
-        </tr>
-        <tr>
-          <td class="paramkey"></td>
-          <td></td>
-          <td class="paramtype">int&#160;</td>
-          <td class="paramname"><em>seq</em>, </td>
-        </tr>
-        <tr>
-          <td class="paramkey"></td>
-          <td></td>
-          <td class="paramtype">int&#160;</td>
-          <td class="paramname"><em>mode</em>, </td>
-        </tr>
-        <tr>
-          <td class="paramkey"></td>
-          <td></td>
-          <td class="paramtype">int&#160;</td>
-          <td class="paramname"><em>backlog_bytes</em>, </td>
-        </tr>
-        <tr>
-          <td class="paramkey"></td>
-          <td></td>
-          <td class="paramtype">int&#160;</td>
-          <td class="paramname"><em>payload_bytes</em>&#160;</td>
-        </tr>
-        <tr>
-          <td></td>
-          <td>)</td>
-          <td></td><td></td>
-        </tr>
-      </table>
-</div><div class="memdoc">
-
-<p>Record frame queued for TX; logs [TMG] tx_queue. </p>
-<dl class="params"><dt>Parameters</dt><dd>
-  <table class="params">
-    <tr><td class="paramname">ctx</td><td>Timing context. </td></tr>
-    <tr><td class="paramname">seq</td><td>TX sequence number. </td></tr>
-    <tr><td class="paramname">mode</td><td>FreeDV mode used for TX. </td></tr>
-    <tr><td class="paramname">backlog_bytes</td><td>Application bytes remaining in TX queue. </td></tr>
-    <tr><td class="paramname">payload_bytes</td><td>Actual application bytes in this frame (0 for retransmits). </td></tr>
-  </table>
-  </dd>
-</dl>
-
-</div>
-</div>
-<a id="aed1cb0a0a268caabf3979846cda260b2" name="aed1cb0a0a268caabf3979846cda260b2"></a>
-<h2 class="memtitle"><span class="permalink"><a href="#aed1cb0a0a268caabf3979846cda260b2">&#9670;&#160;</a></span>arq_timing_record_tx_start()</h2>
-
-<div class="memitem">
-<div class="memproto">
-      <table class="memname">
-        <tr>
-          <td class="memname">void arq_timing_record_tx_start </td>
-          <td>(</td>
-          <td class="paramtype"><a class="el" href="structarq__timing__ctx__t.html">arq_timing_ctx_t</a> *&#160;</td>
-          <td class="paramname"><em>ctx</em>, </td>
-        </tr>
-        <tr>
-          <td class="paramkey"></td>
-          <td></td>
-          <td class="paramtype">int&#160;</td>
-          <td class="paramname"><em>seq</em>, </td>
-        </tr>
-        <tr>
-          <td class="paramkey"></td>
-          <td></td>
-          <td class="paramtype">int&#160;</td>
-          <td class="paramname"><em>mode</em>, </td>
-        </tr>
-        <tr>
-          <td class="paramkey"></td>
-          <td></td>
-          <td class="paramtype">int&#160;</td>
-          <td class="paramname"><em>backlog_bytes</em>&#160;</td>
-        </tr>
-        <tr>
-          <td></td>
-          <td>)</td>
-          <td></td><td></td>
-        </tr>
-      </table>
-</div><div class="memdoc">
-
-<p>Record PTT ON; logs [TMG] tx_start. </p>
 
 </div>
 </div>

@@ -1,4 +1,5 @@
 var searchData=
 [
-  ['num_5fsymbols_0',['NUM_SYMBOLS',['../arith_8c.html#af64260d4171a8e4b9020403dc9b4972c',1,'arith.c']]]
+  ['k_5fabove_0',['K_ABOVE',['../carousel_8c.html#a80a8370d7ff334e6e53e34e7b0870b0d',1,'carousel.c']]],
+  ['k_5ffloor_1',['K_FLOOR',['../carousel_8c.html#a10125a4750a1e94c72d1cf3a72948a83',1,'carousel.c']]]
 ];
