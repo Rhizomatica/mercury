@@ -359,10 +359,10 @@ jobs:
       github.event.inputs.build_fyne_ui_linux == 'true'
     timeout-minutes: 30
     # trixie ships golang-go 1.24, but gui_interface/fyne-ui/go.mod requires
-    # go 1.26.8.  Pin the toolchain so the newer-Go fetch is a deliberate,
+    # go 1.26.9.  Pin the toolchain so the newer-Go fetch is a deliberate,
     # visible step rather than a silent GOTOOLCHAIN=auto download mid-build.
     env:
-      GOTOOLCHAIN: go1.26.8
+      GOTOOLCHAIN: go1.26.9
 
     steps:
       - name: Install build dependencies
@@ -419,9 +419,9 @@ jobs:
       github.event_name == 'push' ||
       github.event.inputs.build_fyne_ui_windows == 'true'
     timeout-minutes: 30
-    # Same toolchain pin as the native job: the Fyne module needs go 1.26.8.
+    # Same toolchain pin as the native job: the Fyne module needs go 1.26.9.
     env:
-      GOTOOLCHAIN: go1.26.8
+      GOTOOLCHAIN: go1.26.9
 
     steps:
       - name: Install build dependencies

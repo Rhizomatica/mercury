@@ -197,6 +197,10 @@ make windows-installer
 
 ### GUI build prerequisites (Go + fyne)
 
+The GUI modules require **Go 1.26.9**.  Debian 13's `golang-go` is 1.24; with
+it, `go` fetches the 1.26.9 toolchain on first use (`GOTOOLCHAIN=auto`, the
+default), or set `GOTOOLCHAIN=go1.26.9` to make that explicit, as CI does.
+
 Every `fyne-ui*` target builds a Go program, so **Go is required** — the CLI
 `mercury` binary needs none of this. The macOS packaging targets additionally
 need the `fyne` command-line tool:

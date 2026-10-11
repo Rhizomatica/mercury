@@ -41,7 +41,7 @@ jobs:
           fetch-depth: 1
 
       - uses: actions/setup-go@v5
-        with: { go-version: 'stable' }
+        with: { go-version: '1.26.9' }
 
       # Fail before spending 40 minutes on a build we could not ship.  An
       # unsigned .dmg on a release page is worse than no .dmg: it teaches
