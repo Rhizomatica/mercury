@@ -138,6 +138,8 @@ typedef struct {
     bool     idle;                  /* nothing in flight either way */
     int      rx_level;              /* what the payload decoder is bound to */
     int      snr_level;             /* where the SNR measured here starts the peer */
+    int      max_level;             /* the highest rung the session's bandwidth
+                                     * allows (car_set_max_level) */
     bool     ctl_deaf;              /* I hear the peer below the control mode: its
                                      * control must reach me on MFSK (reported) */
     bool     peer_ctl_deaf;         /* ...and the peer, of me, as it reports */
@@ -256,6 +258,13 @@ typedef struct {
  * then rx_level until the peer's frames say).  car_start_sender() on the
  * caller, the session's timing master; car_start_receiver() on the callee. */
 void car_init(car_t *c, const car_io_t *io, int rx_level, int tx_level);
+/* Cap both directions at rung lv: a BW500 session stays below the wideband
+ * modes (DATAC1, DATAC17, QAM16C2).  Both ends set the same cap, from the
+ * bandwidth the connect negotiated, after car_init and before starting. */
+void car_set_max_level(car_t *c, int lv);
+/* The highest rung a session bandwidth (Hz, VARA's BW500/BW2300/BW2750)
+ * allows. */
+int  car_max_level_for_bw(int bw_hz);
 /* Seed, from the connect exchange, whether each end hears the other below the
  * control mode (see ctl_on_floor in carousel.c).  Frames keep both current. */
 void car_seed_ctl_deaf(car_t *c, bool mine, bool peers);

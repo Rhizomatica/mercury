@@ -576,6 +576,20 @@ static void car_io_trace(void *ctx, const char *line)
     HLOGD("carousel", "%s", line);
 }
 
+/* The top rung this session's negotiated bandwidth allows (BW500 stops at
+ * DATAC3).  Both ends hold the same bandwidth once the ACCEPT is through:
+ * the callee answers with min(its own, the CALL's), the caller takes it. */
+static int session_max_level(void)
+{
+    return car_max_level_for_bw(arq_reported_bandwidth_hz());
+}
+
+static int session_start_level(float snr_db)
+{
+    int lv = car_start_level(snr_db), top = session_max_level();
+    return lv > top ? top : lv;
+}
+
 static void car_start(arq_session_t *sess, bool is_caller, uint64_t now)
 {
     car_io_t io = {
@@ -598,6 +612,7 @@ static void car_start(arq_session_t *sess, bool is_caller, uint64_t now)
     car_set_nav_loss(2.0);
     sess->nav_busy_until_ms = 0;
     car_init(sess->car, &io, sess->car_rx_level, sess->car_tx_level);
+    car_set_max_level(sess->car, session_max_level());
     car_seed_ctl_deaf(sess->car, sess->car_ctl_deaf, sess->car_peer_ctl_deaf);
     sess->ctl_floor_at_stop = false;
     sess->car_active = true;
@@ -752,7 +767,7 @@ static void fsm_listening(arq_session_t *sess, const arq_event_t *ev)
         if (!same_session)
         {
             sess->car_nonce    = session_nonce();
-            sess->car_rx_level = car_start_level(ev->rx_snr);   /* the ACCEPT names it */
+            sess->car_rx_level = session_start_level(ev->rx_snr);   /* the ACCEPT names it */
             /* How the caller hears us it reports in its first frame, which
              * comes before we send any control.  (Not "an MFSK CALL means it
              * cannot hear us": the caller escalates just the same when it is
@@ -833,7 +848,9 @@ static void fsm_calling(arq_session_t *sess, const arq_event_t *ev)
         sess->pending_disconnect = false;
         sess->car_peer_ctl_deaf = ev->car_level == ARQ_ACCEPT_LEVEL_CTL_DEAF;
         sess->car_tx_level = sess->car_peer_ctl_deaf ? 0 : ev->car_level;
-        sess->car_rx_level = car_start_level(ev->rx_snr);
+        if (sess->car_tx_level > session_max_level())
+            sess->car_tx_level = session_max_level();
+        sess->car_rx_level = session_start_level(ev->rx_snr);
         sess->car_ctl_deaf = ev->rx_snr < ARQ_SNR_MIN_DATAC15_DB;
         if (g_cbs.notify_connected)
             g_cbs.notify_connected(sess->remote_call, sess->local_call);

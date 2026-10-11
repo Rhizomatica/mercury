@@ -405,14 +405,6 @@ static int active_session_bandwidth_hz(void)
     return normalize_bandwidth_hz(bw);
 }
 
-int arq_effective_bandwidth_hz(void)
-{
-    if (active_session_bandwidth_hz() == ARQ_BANDWIDTH_NARROW_HZ)
-        return ARQ_BANDWIDTH_NARROW_HZ;
-
-    return ARQ_BANDWIDTH_FULL_HZ;
-}
-
 int arq_reported_bandwidth_hz(void)
 {
     return active_session_bandwidth_hz();
@@ -449,18 +441,6 @@ int arq_get_bw(void)
     int bw = arq_conn.bw;
     pthread_mutex_unlock(&g_conn_lock);
     return bw;
-}
-
-bool arq_bandwidth_allows_mode(int mode)
-{
-    /* Wideband payload modes (~1.7-2.2 kHz) need more than the narrow
-     * session bandwidth. */
-    if (mode == FREEDV_MODE_DATAC1 ||
-        mode == FREEDV_MODE_DATAC17 ||
-        mode == FREEDV_MODE_QAM16C2)
-        return arq_effective_bandwidth_hz() > ARQ_BANDWIDTH_NARROW_HZ;
-
-    return true;
 }
 
 /* ======================================================================

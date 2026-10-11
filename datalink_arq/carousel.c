@@ -38,6 +38,7 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 #include "carousel.h"
+#include "arq.h"                   /* ARQ_BANDWIDTH_* */
 #include "arq_protocol.h"
 #include "freedv_api.h"
 #include "modem_mfsk.h"            /* MERCURY_MODE_MFSK */
@@ -997,11 +998,13 @@ static int probe_every(const car_t *c, int lv)
     return PROBE_EVERY << f;
 }
 
+static int cap_level(const car_t *c, int lv) { return lv > c->max_level ? c->max_level : lv; }
+
 static int choose_level(const car_t *c, uint64_t now)
 {
     int best = -1;
     double best_gp = -1.0;
-    for (int lv = 0; lv < CAR_NLEVELS; lv++) {
+    for (int lv = 0; lv <= c->max_level; lv++) {
         if (!c->lv_rounds[lv] || !level_allowed(c, lv)) continue;
         double gp = level_goodput(c, lv);
         if (gp > best_gp) { best_gp = gp; best = lv; }
@@ -1039,14 +1042,14 @@ static int choose_level(const car_t *c, uint64_t now)
      * dead.  Not in the lower half of the SNR's doubt: there a frame that
      * came is more likely luck than the rung working (sim, cliff:10: a
      * QAM16C2 frame at 10 dB, then two lost, +5 %). */
-    for (int up = best + 1; up < CAR_NLEVELS; up++)
+    for (int up = best + 1; up <= c->max_level; up++)
         if (c->lv_rounds[up] && c->lv_round_at[up] == c->polls && c->lv_sent[up] < 3.0 &&
             c->lv_lost[up] < 0.05 && level_allowed(c, up) && level_potential(c, up) > best_gp &&
             !(c->snr_valid && c->snr_ema < level_min_db(up) - SNR_GATE_DB / 2)) {
             car_trace(c, "rx confirms lv=%d", up);
             return up;
         }
-    for (int up = best + 1; up < CAR_NLEVELS; up++) {
+    for (int up = best + 1; up <= c->max_level; up++) {
         if (level_potential(c, up) <= best_gp)
             continue;                   /* cannot win even with no loss */
         if (!level_allowed(c, up)) {
@@ -2091,7 +2094,7 @@ static void m_on_data(car_t *c, uint64_t now, const msg_t *m, int lv)
 
 static void m_on_ctl(car_t *c, uint64_t now, const msg_t *m)
 {
-    c->peer_snr_level = m->snr_level;
+    c->peer_snr_level = cap_level(c, m->snr_level);
     c->peer_level_known = true;
     if (m->type == M_POLL) {                 /* the peer's poll for my rounds */
         apply_need(c, m);
@@ -2099,7 +2102,7 @@ static void m_on_ctl(car_t *c, uint64_t now, const msg_t *m)
         c->tx_loss = m->loss16 / 15.0;
         c->floor_waiting = c->pat_waiting = false;
         c->ok_lv = c->last_lv; c->fell_back = false;
-        if (m->n) { c->tx_level = m->level; c->tx_n = m->n; }
+        if (m->n) { c->tx_level = cap_level(c, m->level); c->tx_n = m->n; }
         car_trace(c, "tx polled lv=%d n=%d loss=%.2f", m->level, m->n, c->tx_loss);
         c->s_answered = true;
         /* Polled for its round as well, it answered with no round: it had
@@ -2269,7 +2272,7 @@ static void s_on_data(car_t *c, uint64_t now, const msg_t *m, int lv)
 static void s_on_ctl(car_t *c, uint64_t now, const msg_t *m, int mode)
 {
     s_heard_m(c, now);
-    c->peer_snr_level = m->snr_level;
+    c->peer_snr_level = cap_level(c, m->snr_level);
     c->peer_level_known = true;
     uint32_t d = d_of_mode(mode);
     uint64_t eh = now + TAIL_MS;
@@ -2283,7 +2286,7 @@ static void s_on_ctl(car_t *c, uint64_t now, const msg_t *m, int mode)
         c->floor_silent = 0;
         if (m->h_n) {
             /* M's round follows in this keydown: both ways in one exchange. */
-            if (m->n) { c->tx_level = m->level; c->tx_n = m->n; }
+            if (m->n) { c->tx_level = cap_level(c, m->level); c->tx_n = m->n; }
             c->rx_mk = (uint8_t)m->poll_id;
             c->round_seen = 0; c->round_frames = m->h_n; c->round_lv = m->h_level;
             c->done_in_round = 0; c->round_fresh = false; c->rx_tail = false;
@@ -2294,7 +2297,7 @@ static void s_on_ctl(car_t *c, uint64_t now, const msg_t *m, int mode)
             else s_anchor(c, ANC_BOTH, (uint8_t)m->poll_id, eh + CHAIN_GAP_MS + round_air(m->h_level, m->h_n),
                           d > dr ? d : dr, 0, 0);
         } else if (m->n) {
-            c->tx_level = m->level; c->tx_n = m->n;
+            c->tx_level = cap_level(c, m->level); c->tx_n = m->n;
             car_trace(c, "tx polled lv=%d n=%d loss=%.2f", m->level, m->n, c->tx_loss);
             bool fl = m->level == 0 && c->io.pattern;
             s_anchor(c, ANC_POLL, (uint8_t)m->poll_id, eh, d, fl ? K_FLOOR : 0, s_round_ms(m->level, m->n));
@@ -2354,6 +2357,34 @@ void car_init(car_t *c, const car_io_t *io, int rx_level, int tx_level)
     c->tx_level = -1;
     c->s_prev_lv = c->ok_lv = -1;
     c->rx_data_lv = -1;
+    c->max_level = CAR_NLEVELS - 1;
+}
+
+/* The top rung of each session bandwidth.  A BW500 session keeps everything
+ * but the wideband modes (DATAC1, DATAC17, QAM16C2, 1.7-2.1 kHz): DATAC3
+ * occupies 562 Hz and the MFSK floor 1000 Hz, kept for its reach.  Nothing
+ * on the ladder is wider than 2.1 kHz yet, so BW2750 has BW2300's ladder;
+ * a wider rung joins it here.  An unknown bandwidth gets the full ladder,
+ * as before. */
+static const struct { int bw_hz; int top_mode; } BW_TOP[] = {
+    { ARQ_BANDWIDTH_NARROW_HZ,   FREEDV_MODE_DATAC3  },
+    { ARQ_BANDWIDTH_FULL_HZ,     FREEDV_MODE_QAM16C2 },
+    { ARQ_BANDWIDTH_TACTICAL_HZ, FREEDV_MODE_QAM16C2 },
+};
+
+int car_max_level_for_bw(int bw_hz)
+{
+    for (size_t i = 0; i < sizeof(BW_TOP) / sizeof(BW_TOP[0]); i++)
+        if (BW_TOP[i].bw_hz == bw_hz)
+            return level_of_mode(BW_TOP[i].top_mode);
+    return CAR_NLEVELS - 1;
+}
+
+void car_set_max_level(car_t *c, int lv)
+{
+    c->max_level = lv < 0 ? 0 : lv >= CAR_NLEVELS ? CAR_NLEVELS - 1 : lv;
+    c->snr_level = cap_level(c, c->snr_level);
+    c->peer_snr_level = cap_level(c, c->peer_snr_level);
 }
 
 /* The session's piece size, as both ends know it: from the rung the callee's

@@ -11,6 +11,7 @@
 #include "unity.h"
 #include "carousel_sim.h"
 #include "carousel.h"
+#include "freedv_api.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -205,6 +206,27 @@ static void test_carousel_piece_size_agrees(void)
     free(a); free(b);
 }
 
+/* The bandwidth table, and the cap clamping the start rungs both ways. */
+static void test_carousel_bandwidth_max_level(void)
+{
+    TEST_ASSERT_EQUAL_INT(3, car_max_level_for_bw(500));          /* DATAC3 */
+    TEST_ASSERT_EQUAL_INT(CAR_NLEVELS - 1, car_max_level_for_bw(2300));
+    TEST_ASSERT_EQUAL_INT(CAR_NLEVELS - 1, car_max_level_for_bw(2750));
+    TEST_ASSERT_EQUAL_INT(CAR_NLEVELS - 1, car_max_level_for_bw(0));
+    TEST_ASSERT_EQUAL_INT(FREEDV_MODE_DATAC3, car_level_mode(car_max_level_for_bw(500)));
+
+    car_t *c = calloc(1, sizeof(*c));
+    car_io_t io = {0};
+    car_init(c, &io, 6, 5);
+    car_set_max_level(c, car_max_level_for_bw(500));
+    car_start_sender(c, 0);
+    TEST_ASSERT_EQUAL_INT(3, c->snr_level);
+    TEST_ASSERT_EQUAL_INT(3, c->peer_snr_level);
+    TEST_ASSERT_EQUAL_INT(3, c->tx_level);
+    TEST_ASSERT_EQUAL_INT(3, c->poll_level);
+    free(c);
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -217,6 +239,7 @@ int main(void)
     RUN_TEST(test_carousel_sender_holds_for_peer_turn);
     RUN_TEST(test_carousel_drain_budget_fits_the_floor);
     RUN_TEST(test_carousel_piece_size_agrees);
+    RUN_TEST(test_carousel_bandwidth_max_level);
     RUN_TEST(test_carousel_request_response_completes);
     return UNITY_END();
 }

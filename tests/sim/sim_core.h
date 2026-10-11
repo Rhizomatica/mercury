@@ -34,6 +34,10 @@ int             sim_frames_in_flight(sim_t *s);
  * it on for anything about turn coordination, where a collision IS the bug. */
 void            sim_set_half_duplex(sim_t *s, bool on);
 int             sim_collisions(sim_t *s);
+/* Carousel frames keyed in this mode so far, both stations (FreeDV mode or
+ * MERCURY_MODE_MFSK). */
+#define SIM_MODES 128
+int             sim_mode_frames(sim_t *s, int mode);
 /* The timing context both FSMs share (session byte/frame counters). */
 const void     *sim_timing(sim_t *s);
 

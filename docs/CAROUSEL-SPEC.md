@@ -67,6 +67,12 @@ read via `mode_payload`/`mode_air`, C:157-167). `ppf = (payload - 6) / 24`
 
 Control mode: DATAC16, 14 payload bytes, 3740 ms (P:92, P:208).
 
+**[bw500-cap]** The session's bandwidth caps the ladder at `max_level`
+(`car_max_level_for_bw`): BW500 → 3 (DATAC3), BW2300 and BW2750 → 6.  Both
+ends derive it from the bandwidth the connect negotiated (the ACCEPT carries
+min(caller, callee)), so they agree.  No rung above `max_level` is chosen,
+started on or sent (invariant I-BW, section 7).
+
 ### 1.4 Global constants (C:51-124 unless noted)
 
 | Name | Value | Name | Value |
@@ -429,9 +435,9 @@ If `retired > 0` → `io.tx_confirmed(retired)` (F:1450-1456 updates BUFFER).
 
 | # | Rule | Cite |
 |---|---|---|
-| S1 | Callee on CALL (LISTENING): new nonce; `car_rx_level = car_start_level(CALL SNR)`; `car_ctl_deaf = CALL SNR < -7`; `car_peer_ctl_deaf = false`; ACCEPT after `G`. **[carousel-only]** A repeat of the same session's CALL (same id and caller, in ACCEPTING, or in LISTENING after the ACCEPT-retry fallback) keeps the nonce, rung and deafness and gets the same ACCEPT, on the CALL's carrier; another station's CALL is ignored while ACCEPTING. | `fsm_listening`, `fsm_accepting` |
+| S1 | Callee on CALL (LISTENING): new nonce; `car_rx_level = min(car_start_level(CALL SNR), max_level)`; `car_ctl_deaf = CALL SNR < -7`; `car_peer_ctl_deaf = false`; ACCEPT after `G`. **[carousel-only]** A repeat of the same session's CALL (same id and caller, in ACCEPTING, or in LISTENING after the ACCEPT-retry fallback) keeps the nonce, rung and deafness and gets the same ACCEPT, on the CALL's carrier; another station's CALL is ignored while ACCEPTING. | `fsm_listening`, `fsm_accepting` |
 | S2 | Callee sending the ACCEPT: ACCEPT level = `car_ctl_deaf ? 7 : car_rx_level`; **seed set now**; payload decoder bound to `LADDER[car_rx_level]`. | F:904-918 |
-| S3 | Caller on ACCEPT (CALLING, matching session id and called CRC): `car_peer_ctl_deaf = (level == 7)`; `car_tx_level = peer_ctl_deaf ? 0 : level`; `car_rx_level = car_start_level(ACCEPT SNR)`; `car_ctl_deaf = ACCEPT SNR < -7`; → CONNECTED; seed set; `car_start(is_caller)`. | F:1745-1760 |
+| S3 | Caller on ACCEPT (CALLING, matching session id and called CRC): `car_peer_ctl_deaf = (level == 7)`; `car_tx_level = min(peer_ctl_deaf ? 0 : level, max_level)`; `car_rx_level = min(car_start_level(ACCEPT SNR), max_level)`; `car_ctl_deaf = ACCEPT SNR < -7`; → CONNECTED; seed set; `car_start(is_caller)`. | F:1745-1760 |
 | S4 | `car_start`: `car_init(rx_level, tx_level)` (snr_level = rx_level; peer_snr_level = tx_level ≥ 0 ? tx_level : rx_level; tx_level = -1; loss_est = tx_loss = 0.1); seed ctl_deaf/peer_ctl_deaf; `car_last_rx_ms = now`; caller → S5, callee → S6. | F:1495-1513, C:1553-1561 |
 | S5 | `car_start_sender`: `sending = true; send_start_ms = now; tx_level = peer_snr_level; tx_n = 1; tx_poll_id = 1; handover_unconfirmed = true; T_SEND := now`. | C:1568-1575 |
 | S6 | Callee: the **first seeded frame of any kind** (ACCEPTING, or LISTENING after the ACCEPT-retry fallback with seed still set) → `car_connect_callee`: `car_tx_level = -1`, → CONNECTED, `car_start(callee)` = `start_driving(1, snr_level, 1, now, now)` (C:1578-1581), then the frame is processed by `car_on_frame`. | F:1869-1893, F:1899-1902, F:1661-1664 |
@@ -659,6 +665,7 @@ which rule last set `T_POLL`. A model should carry a ghost variable
 | I13 | A poll repeat keeps its id, so frames of a round answering the first ask still count. | C:1127-1131 |
 | I14 | At the floor a sender continues on silence at most `FLOOR_SILENT_MAX` rounds, then only every 90 s; a receiver polls at least every 4 (12 deep) floor rounds. | C:1785-1789, C:1157-1164 |
 | I15 | Control frames go on MFSK iff the peer reports `ctl_deaf` (both ends act on the same reported bit). | C:169-192 |
+| I-BW | **[bw500-cap]** No rung above `max_level` (the session bandwidth's cap, 1.3) is chosen (`choose_level` searches only up to it), started on (`snr_level`, `peer_snr_level`, the ACCEPT's level) or keyed (`tx_level` from a peer's poll is clamped).  Both ends hold the same cap. | `car_set_max_level`, `cap_level`; tested by `test_car_bandwidth_caps_the_rungs` |
 
 ### 7.2 Where correctness/liveness depends on timing
 
@@ -849,4 +856,12 @@ calibration needs points above 12 dB.
 | Connect frames carry protocol version 1 and the carousel bit; the ACCEPT's start rung, nonce and called CRC are explicit fields (no CALL mark, no nonce in the callsign slot, no rung in the CRC field). 1.9.x does not connect. | 3.4, `arq_protocol.[ch]` | none new; R17/R18 as before |
 | The callee answers every repeat of a session's CALL with the same ACCEPT. Before, it re-measured the rung on a repeat, which R25's seed fix made safe but costly (the session died of silence). | S1 | R25 now fixed at the source too |
 | The stop-and-wait plane, its frames, MERCURY_CAROUSEL and its tunables are gone; DISCONNECT is the one plain session frame. | `arq_fsm.c`, `arq.c` | — |
+
+---
+
+## 15. Bandwidth caps the ladder (branch bw500-cap)
+
+| Change | Rules | Risks |
+|---|---|---|
+| The session's negotiated bandwidth caps both directions' rungs: BW500 at DATAC3 (MFSK, DATAC15, DATAC4, DATAC3), BW2300 and BW2750 at QAM16C2.  Since the stop-and-wait plane's mode ladder went, nothing enforced BW500, and a narrow session climbed to DATAC1, DATAC17 and QAM16C2. | 1.3, S1, S3, I-BW | none to the TLA+ models: `CarouselBlocks` abstracts rungs away, and `CarouselTurns` proves no overlap for every keydown length, which a cap only restricts |
 

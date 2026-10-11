@@ -51,7 +51,9 @@ the best measured goodput (raw rate times delivered fraction); probes only of
 rungs that could beat it; a rung's round is capped at one frame more than it
 recently delivered; 4 frames lost in a row is a dead verdict, re-probed after
 60 s, doubling to 8 min.  A direction starts on the rung the connect's SNR
-supports (`ARQ_SNR_MIN_*`), as a one-frame probe.
+supports (`ARQ_SNR_MIN_*`), as a one-frame probe.  The session's bandwidth caps the
+ladder in both directions: BW500 uses MFSK, DATAC15, DATAC4 and DATAC3;
+BW2300 and BW2750 use every rung (nothing is wider than 2.1 kHz yet).
 
 **The turn.**  The receiver takes it with a HANDOVER poll that announces its
 own first round, sent in the same keydown; the peer's control decoder reads

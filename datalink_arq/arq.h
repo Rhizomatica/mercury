@@ -211,23 +211,10 @@ bool arq_is_link_connected(void);
 void arq_discard_stale_rx(void);
 
 /**
- * @brief Get the effective ARQ bandwidth cap in Hz used for mode gating.
- * @return 500 for narrow-band mode, otherwise 2300.
- */
-int arq_effective_bandwidth_hz(void);
-
-/**
  * @brief Get the configured ARQ bandwidth token to report to VARA clients.
  * @return 500, 2300, or 2750 when configured; otherwise 2300.
  */
 int arq_reported_bandwidth_hz(void);
-
-/**
- * @brief Check whether the current ARQ bandwidth cap allows a modem mode.
- * @param mode FreeDV mode value.
- * @return true if the mode is allowed under the active BW setting.
- */
-bool arq_bandwidth_allows_mode(int mode);
 
 /**
  * @brief Queue outbound payload bytes for ARQ transmission.
