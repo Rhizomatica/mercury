@@ -65,8 +65,6 @@
 #define CFG_KEY_TX_DELAY_MS         "audio:tx_delay_ms"
 #define CFG_KEY_TNC_KEEPALIVE_S     "tnc:keepalive_s"
 #define CFG_KEY_TNC_BUFFER_REPORT_MS "tnc:buffer_report_ms"
-#define CFG_KEY_ARQ_CHANNEL_GUARD_MS          "arq:channel_guard_ms"
-#define CFG_KEY_ARQ_ISS_POST_ACK_GUARD_MS     "arq:iss_post_ack_guard_ms"
 #define CFG_KEY_ARQ_RETRY_STAGGER_MS          "arq:retry_stagger_ms"
 #define CFG_KEY_BUSY_DETECT                   "channel:busy_detect"
 #define CFG_KEY_BUSY_THRESHOLD_DB             "channel:busy_threshold_db"
@@ -97,10 +95,9 @@ typedef struct {
     int      disconnect_drain_timeout_s;/* ARQ: absolute cap (s) on how long an
                                     * app DISCONNECT stays deferred while
                                     * draining the last TX bytes. Default 45. */
-    int      channel_guard_ms;          /* ARQ: IRS response guard after decode.
-                                         * Default 700, clamped 200..3000.      */
-    int      iss_post_ack_guard_ms;     /* ARQ: ISS guard before resuming DATA
-                                         * TX after ACK. Default 900, 200..3000.*/
+    uint32_t removed_keys;              /* bit k: the file sets
+                                         * cfg_removed_key_name(k), which this
+                                         * version ignores (cfg_read)        */
     int      retry_stagger_ms;          /* ARQ: deterministic per-node retry
                                          * offset. 0 disables. Default 2000,
                                          * clamped 0..5000.                  */
@@ -142,6 +139,10 @@ typedef struct {
  * defaults installed by cfg_set_defaults()).
  * Returns true on success, false if the file cannot be parsed. */
 bool cfg_read(mercury_config *cfg, const char *ini_path);
+
+/* The name of the k-th [arq] key this version no longer reads (bit k of
+ * mercury_config.removed_keys), or NULL past the last one. */
+const char *cfg_removed_key_name(int k);
 
 /* Write |cfg| to an INI file at |ini_path|.
  * Returns true on success, false if the file cannot be written. */

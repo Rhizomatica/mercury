@@ -39,8 +39,6 @@ void test_defaults_match_constants(void)
     TEST_ASSERT_EQUAL_INT(PTT_METHOD_NONE, c.ptt.method);
     TEST_ASSERT_EQUAL_INT(RADIO_TYPE_NONE, c.ptt.hamlib_model);
     TEST_ASSERT_EQUAL_STRING("", c.ptt.device);
-    TEST_ASSERT_EQUAL_INT(700, c.channel_guard_ms);
-    TEST_ASSERT_EQUAL_INT(900, c.iss_post_ack_guard_ms);
     TEST_ASSERT_EQUAL_INT(2000, c.retry_stagger_ms);
     /* Opt-in: hosts hold transmissions while BUSY is asserted, so this must
      * never switch on under a station that did not ask for it. */
@@ -56,8 +54,6 @@ void test_arq_tunables_roundtrip(void)
 {
     mercury_config w;
     cfg_set_defaults(&w);
-    w.channel_guard_ms            = 800;
-    w.iss_post_ack_guard_ms       = 1000;
     w.retry_stagger_ms            = 0;      /* off-switch must round-trip */
     w.ptt.method                  = PTT_METHOD_HAMLIB;
     snprintf(w.ptt.device, sizeof(w.ptt.device), "COM7");
@@ -74,8 +70,6 @@ void test_arq_tunables_roundtrip(void)
     mercury_config r;
     cfg_set_defaults(&r);
     TEST_ASSERT_TRUE(cfg_read(&r, TMP));
-    TEST_ASSERT_EQUAL_INT(800,  r.channel_guard_ms);
-    TEST_ASSERT_EQUAL_INT(1000, r.iss_post_ack_guard_ms);
     TEST_ASSERT_EQUAL_INT(0,    r.retry_stagger_ms);   /* 0 (off) preserved */
     TEST_ASSERT_EQUAL_INT(PTT_METHOD_HAMLIB, r.ptt.method);
     TEST_ASSERT_EQUAL_STRING("COM7", r.ptt.device);
@@ -309,15 +303,43 @@ void test_arq_tunables_clamp_rejects_garbage(void)
 {
     FILE *f = fopen(TMP, "w");
     TEST_ASSERT_NOT_NULL(f);
-    fputs("[arq]\nchannel_guard_ms = 999999\n"
-          "retry_stagger_ms = 999999\n", f);
+    fputs("[arq]\nretry_stagger_ms = 999999\n", f);
     fclose(f);
 
     mercury_config r;
     cfg_set_defaults(&r);
     TEST_ASSERT_TRUE(cfg_read(&r, TMP));
-    TEST_ASSERT_EQUAL_INT(700, r.channel_guard_ms);   /* out of 200..3000 -> default kept */
     TEST_ASSERT_EQUAL_INT(2000, r.retry_stagger_ms);    /* out of 0..5000 -> default kept  */
+}
+
+/* An older mercury.ini that still sets removed [arq] keys loads, keeps its
+ * other values, and has each removed key noted for the startup warning. */
+void test_removed_arq_keys_are_flagged_not_fatal(void)
+{
+    FILE *f = fopen(TMP, "w");
+    TEST_ASSERT_NOT_NULL(f);
+    fputs("[arq]\nkeepalive_interval_s = 20\nchannel_guard_ms = 700\n"
+          "retry_stagger_ms = 1000\n", f);
+    fclose(f);
+
+    mercury_config r;
+    cfg_set_defaults(&r);
+    TEST_ASSERT_EQUAL_UINT32(0, r.removed_keys);
+    TEST_ASSERT_TRUE(cfg_read(&r, TMP));
+    TEST_ASSERT_EQUAL_INT(1000, r.retry_stagger_ms);
+
+    int n = 0;
+    bool keepalive = false, guard = false;
+    for (int k = 0; cfg_removed_key_name(k); k++)
+    {
+        if (!(r.removed_keys & (1u << k)))
+            continue;
+        n++;
+        keepalive |= strcmp(cfg_removed_key_name(k), "keepalive_interval_s") == 0;
+        guard     |= strcmp(cfg_removed_key_name(k), "channel_guard_ms") == 0;
+    }
+    TEST_ASSERT_EQUAL_INT(2, n);
+    TEST_ASSERT_TRUE(keepalive && guard);
 }
 
 /* The wss:// certificate paths must be configurable.  They used to be
@@ -382,6 +404,7 @@ int main(void)
     RUN_TEST(test_config_without_tls_keys_keeps_the_defaults);
     RUN_TEST(test_arq_tunables_roundtrip);
     RUN_TEST(test_arq_tunables_clamp_rejects_garbage);
+    RUN_TEST(test_removed_arq_keys_are_flagged_not_fatal);
     RUN_TEST(test_legacy_radio_config_maps_to_hamlib_ptt);
     RUN_TEST(test_explicit_ptt_method_overrides_legacy_backend);
     RUN_TEST(test_invalid_ptt_method_rejects_config);

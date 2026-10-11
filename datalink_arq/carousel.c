@@ -87,8 +87,8 @@ bool car_wants_nav(const car_t *c) { (void)c; return false; }
 static uint32_t nav_lead(const car_t *c) { (void)c; return 0; }
 #define HEAD_MS          (110 + nav_lead(c))
 #define TAIL_MS          200
-#define GUARD_MS         ARQ_CHANNEL_GUARD_MS_DEFAULT
-#define ISS_GUARD_MS     ARQ_ISS_POST_ACK_GUARD_MS_DEFAULT
+#define GUARD_MS         ARQ_CHANNEL_GUARD_MS
+#define ISS_GUARD_MS     ARQ_ISS_POST_ACK_GUARD_MS
 #define CHAIN_GAP_MS     ARQ_ACK_DATA_GAP_MS   /* poll -> first burst, one keydown */
 /* Between the bursts of a round (utils/burst_train_probe).  With no gap the
  * payload decoder misses bursts after the first: DATAC15 decoded 72/120 at

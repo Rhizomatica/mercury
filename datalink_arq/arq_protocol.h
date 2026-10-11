@@ -122,8 +122,10 @@ typedef struct
  * only mode with that frame size in arq_mode_table. */
 #define ARQ_CONTROL_MODE  FREEDV_MODE_DATAC16
 
-/* Timing constants shared across modules */
-#define ARQ_CHANNEL_GUARD_MS_DEFAULT      700   /* IRS response guard after frame decode.
+/* Timing constants shared across modules.  The two guards are measured, not
+ * tuned, and are no longer configuration: they bundle the radio's TX->RX
+ * switch with the audio backend's buffering, which nobody can tune blind. */
+#define ARQ_CHANNEL_GUARD_MS              700   /* IRS response guard after frame decode.
                                                 * OFDM decode fires ~200ms before sender
                                                 * PTT-OFF, so effective gap at sender is
                                                 * (guard - 200ms) ~= 500ms.  Radio needs
@@ -131,10 +133,8 @@ typedef struct
                                                 * for preamble detection.  At 500ms the
                                                 * effective gap was ~300ms, causing ~50%
                                                 * ACK loss on DATAC1 (< 340ms switch).  */
-extern _Atomic int arq_channel_guard_ms;
-#define ARQ_CHANNEL_GUARD_MS  atomic_load(&arq_channel_guard_ms)
 
-#define ARQ_ISS_POST_ACK_GUARD_MS_DEFAULT 900   /* ISS guard before resuming DATA TX
+#define ARQ_ISS_POST_ACK_GUARD_MS         900   /* ISS guard before resuming DATA TX
                                                 * after receiving an ACK from the IRS.
                                                 * Larger than ARQ_CHANNEL_GUARD_MS:
                                                 * ack_rx fires ~168ms before IRS PTT-OFF,
@@ -144,8 +144,6 @@ extern _Atomic int arq_channel_guard_ms;
                                                 * DATAC1 re-sync after IRS ACK TX.
                                                 * At 900ms: gap=832ms -- 492ms of clear
                                                 * air before the DATAC1 preamble. */
-extern _Atomic int arq_iss_post_ack_guard_ms;
-#define ARQ_ISS_POST_ACK_GUARD_MS  atomic_load(&arq_iss_post_ack_guard_ms)
 #define ARQ_ACCEPT_RX_WINDOW_MS      9000  /* ACCEPTING RX window after ACCEPT TX:
                                             * ISS_guard(900)+DATAC15(4400)+margin(3700)
                                             * Old value 7000 left only ~300ms margin

@@ -22,9 +22,6 @@ _Atomic int arq_disconnect_retry_slots = ARQ_DISCONNECT_RETRY_SLOTS_DEFAULT;
 _Atomic int arq_retry_stagger_ms       = ARQ_RETRY_STAGGER_MS_DEFAULT;
 _Atomic int arq_disconnect_drain_timeout_s = ARQ_DISCONNECT_DRAIN_TIMEOUT_S_DEFAULT;
 
-/* Runtime-configurable guards */
-_Atomic int arq_channel_guard_ms            = ARQ_CHANNEL_GUARD_MS_DEFAULT;
-_Atomic int arq_iss_post_ack_guard_ms       = ARQ_ISS_POST_ACK_GUARD_MS_DEFAULT;
 
 /* Include FreeDV mode constants */
 #include "../modem/freedv/freedv_api.h"

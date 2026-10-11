@@ -1341,22 +1341,6 @@ void arq_set_retry_slots(int slots)
           atomic_load(&arq_disconnect_retry_slots));
 }
 
-void arq_set_channel_guard_ms(int ms)
-{
-    if (ms < 200)  ms = (ms <= 0) ? ARQ_CHANNEL_GUARD_MS_DEFAULT : 200;
-    if (ms > 3000) ms = 3000;
-    atomic_store(&arq_channel_guard_ms, ms);
-    HLOGI(LOG_COMP, "channel_guard_ms = %d", atomic_load(&arq_channel_guard_ms));
-}
-
-void arq_set_iss_post_ack_guard_ms(int ms)
-{
-    if (ms < 200)  ms = (ms <= 0) ? ARQ_ISS_POST_ACK_GUARD_MS_DEFAULT : 200;
-    if (ms > 3000) ms = 3000;
-    atomic_store(&arq_iss_post_ack_guard_ms, ms);
-    HLOGI(LOG_COMP, "iss_post_ack_guard_ms = %d", atomic_load(&arq_iss_post_ack_guard_ms));
-}
-
 void arq_set_retry_stagger_ms(int ms)
 {
     /* 0 is a valid (and useful) value: it disables the retry stagger entirely. */

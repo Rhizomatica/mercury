@@ -63,9 +63,8 @@ void cfg_set_defaults(mercury_config *cfg)
     cfg->tnc_buffer_report_ms = 1000;
     cfg->tx_gain_db            = 0.0f;
     cfg->tx_delay_ms           = 10;
-    cfg->channel_guard_ms            = ARQ_CHANNEL_GUARD_MS_DEFAULT;
-    cfg->iss_post_ack_guard_ms       = ARQ_ISS_POST_ACK_GUARD_MS_DEFAULT;
     cfg->retry_stagger_ms            = ARQ_RETRY_STAGGER_MS_DEFAULT;
+    cfg->removed_keys                = 0;
     cfg->busy_detect                 = false;
     cfg->busy_threshold_db           = 10;
     cfg->busy_hysteresis_db          = 3;
@@ -190,6 +189,27 @@ bool cfg_ptt_invert_parse(const char *name, bool *invert_rts, bool *invert_dtr)
     return true;
 }
 
+/* [arq] keys this version no longer reads: the stop-and-wait plane's, and
+ * the two guard intervals, which are fixed now.  A file that still sets one
+ * loads as before; cfg_read notes which (removed_keys) and the engine warns
+ * once the logger is up.  Saving the configuration from the UI drops them. */
+static const char *const cfg_removed_keys[] = {
+    "arq:no_progress_timeout_s",  "arq:data_retry_slots",
+    "arq:mode_hold_after_downgrade_s", "arq:ladder_up_successes",
+    "arq:retry_downgrade_threshold", "arq:keepalive_interval_s",
+    "arq:keepalive_miss_limit",   "arq:peer_payload_hold_s",
+    "arq:startup_max_s",          "arq:channel_guard_ms",
+    "arq:iss_post_ack_guard_ms",
+};
+#define CFG_REMOVED_KEYS ((int)(sizeof(cfg_removed_keys) / sizeof(cfg_removed_keys[0])))
+
+const char *cfg_removed_key_name(int k)
+{
+    if (k < 0 || k >= CFG_REMOVED_KEYS)
+        return NULL;
+    return cfg_removed_keys[k] + strlen("arq:");
+}
+
 bool cfg_read(mercury_config *cfg, const char *ini_path)
 {
     dictionary *ini = iniparser_load(ini_path);
@@ -197,6 +217,10 @@ bool cfg_read(mercury_config *cfg, const char *ini_path)
         fprintf(stderr, "cfg_read: cannot parse file: %s\n", ini_path);
         return false;
     }
+    cfg->removed_keys = 0;
+    for (int k = 0; k < CFG_REMOVED_KEYS; k++)
+        if (iniparser_find_entry(ini, cfg_removed_keys[k]))
+            cfg->removed_keys |= 1u << k;
 
     int b;
     int i;
@@ -365,12 +389,6 @@ bool cfg_read(mercury_config *cfg, const char *ini_path)
     if (i >= 100 && i <= 10000)
         cfg->tnc_buffer_report_ms = i;
 
-    i = iniparser_getint(ini, CFG_KEY_ARQ_CHANNEL_GUARD_MS, cfg->channel_guard_ms);
-    if (i >= 200 && i <= 3000) cfg->channel_guard_ms = i;
-
-    i = iniparser_getint(ini, CFG_KEY_ARQ_ISS_POST_ACK_GUARD_MS, cfg->iss_post_ack_guard_ms);
-    if (i >= 200 && i <= 3000) cfg->iss_post_ack_guard_ms = i;
-
     i = iniparser_getint(ini, CFG_KEY_ARQ_RETRY_STAGGER_MS, cfg->retry_stagger_ms);
     if (i >= 0 && i <= ARQ_RETRY_STAGGER_MS_MAX) cfg->retry_stagger_ms = i;
 
@@ -504,8 +522,6 @@ bool cfg_write(const mercury_config *cfg, const char *ini_path)
 
     fprintf(f, "\n[arq]\n");
     fprintf(f, "disconnect_drain_timeout_s = %d\n", cfg->disconnect_drain_timeout_s);
-    fprintf(f, "channel_guard_ms = %d\n", cfg->channel_guard_ms);
-    fprintf(f, "iss_post_ack_guard_ms = %d\n", cfg->iss_post_ack_guard_ms);
     fprintf(f, "retry_stagger_ms = %d\n", cfg->retry_stagger_ms);
 
     fprintf(f, "\n[channel]\n");

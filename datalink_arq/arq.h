@@ -386,9 +386,6 @@ void reset_arq_info(arq_info *arq_conn);
  */
 void arq_set_retry_slots(int slots);
 
-/* Setters for the runtime ARQ guard tunables. */
-void arq_set_channel_guard_ms(int ms);
-void arq_set_iss_post_ack_guard_ms(int ms);
 void arq_set_retry_stagger_ms(int ms);
 
 /**
