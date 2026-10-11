@@ -78,9 +78,12 @@ arq_info arq_conn = {0};
 
 /* ---- arq.c function stubs ---- */
 
+/* The session bandwidth the FSM sees; tests set it (default 2300 Hz). */
+int arq_test_session_bw_hz = ARQ_BANDWIDTH_FULL_HZ;
+
 int arq_reported_bandwidth_hz(void)
 {
-    return ARQ_BANDWIDTH_FULL_HZ; /* default to 2300 Hz for tests */
+    return arq_test_session_bw_hz;
 }
 
 /* Single-threaded test doubles: read straight from the arq_conn global so
@@ -98,11 +101,6 @@ int arq_get_bw(void)
     return arq_conn.bw;
 }
 
-bool arq_bandwidth_allows_mode(int mode)
-{
-    (void)mode;
-    return true; /* allow all modes in tests */
-}
 
 /* ---- freedv_gen_crc16 stub (CRC16-CCITT) ---- */
 

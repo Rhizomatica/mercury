@@ -24,8 +24,10 @@
 #include <stdio.h>
 #include <string.h>
 
+extern int arq_test_session_bw_hz;   /* arq_test_stubs.c: the negotiated BW */
+
 void setUp(void)    { }
-void tearDown(void) {}
+void tearDown(void) { arq_test_session_bw_hz = ARQ_BANDWIDTH_FULL_HZ; }
 
 static sim_t *make_sim(uint64_t seed, double per)
 {
@@ -299,6 +301,56 @@ void test_car_fuzz(void)
         }
 }
 
+/* The session bandwidth caps the rungs.  On a clean 20 dB channel a full
+ * band session climbs onto the wideband modes; a BW500 one must stay at or
+ * below DATAC3 both ways -- MFSK..DATAC3 -- and still deliver, and BW2750
+ * has BW2300's ladder (no wider rung yet).  The full-band run shows the
+ * channel lets the climb happen, so a pass at 500 is the cap, not the
+ * channel. */
+static int wideband_frames(sim_t *s)
+{
+    return sim_mode_frames(s, FREEDV_MODE_DATAC1) + sim_mode_frames(s, FREEDV_MODE_DATAC17) +
+           sim_mode_frames(s, FREEDV_MODE_QAM16C2);
+}
+
+static sim_t *bw_transfer(int bw_hz, const uint8_t *blob, size_t len)
+{
+    arq_test_session_bw_hz = bw_hz;
+    sim_t *s = make_sim(7, 0.0);
+    sim_set_snr(s, 20.0);
+    connect_ab(s);
+    sim_run_until_idle(s, 120000);
+    TEST_ASSERT_EQUAL_INT(ARQ_CONN_CONNECTED, state(sim_a(s)));
+    queue(s, sim_a(s), blob, len);
+    queue(s, sim_b(s), blob, len);
+    sim_run_until_idle(s, 3600000);
+    size_t got;
+    TEST_ASSERT_TRUE(intact_prefix(sim_b(s), blob, len, &got));
+    TEST_ASSERT_EQUAL_size_t(len, got);
+    TEST_ASSERT_TRUE(intact_prefix(sim_a(s), blob, len, &got));
+    TEST_ASSERT_EQUAL_size_t(len, got);
+    return s;
+}
+
+void test_car_bandwidth_caps_the_rungs(void)
+{
+    static uint8_t blob[8192];
+    fill(blob, sizeof(blob), 29);
+
+    sim_t *s = bw_transfer(ARQ_BANDWIDTH_FULL_HZ, blob, sizeof(blob));
+    TEST_ASSERT_TRUE_MESSAGE(wideband_frames(s) > 0, "BW2300 never climbed past DATAC3");
+    sim_destroy(s);
+
+    s = bw_transfer(ARQ_BANDWIDTH_TACTICAL_HZ, blob, sizeof(blob));
+    TEST_ASSERT_TRUE_MESSAGE(wideband_frames(s) > 0, "BW2750 never climbed past DATAC3");
+    sim_destroy(s);
+
+    s = bw_transfer(ARQ_BANDWIDTH_NARROW_HZ, blob, sizeof(blob));
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, wideband_frames(s), "BW500 keyed a wideband mode");
+    TEST_ASSERT_TRUE_MESSAGE(sim_mode_frames(s, FREEDV_MODE_DATAC3) > 0, "BW500 never reached DATAC3");
+    sim_destroy(s);
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -312,5 +364,6 @@ int main(void)
     RUN_TEST(test_car_abort_skips_the_drain);
     RUN_TEST(test_car_reply_during_final_poll);
     RUN_TEST(test_car_fuzz);
+    RUN_TEST(test_car_bandwidth_caps_the_rungs);
     return UNITY_END();
 }

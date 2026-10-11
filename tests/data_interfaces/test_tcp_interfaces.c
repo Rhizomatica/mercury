@@ -89,7 +89,6 @@ int arq_reported_bandwidth_hz(void)
     return mock_bandwidth_hz;
 }
 
-bool arq_bandwidth_allows_mode(int mode) { (void)mode; return true; }
 bool arq_is_link_connected(void) { return false; }
 static atomic_int discard_stale_rx_calls;
 void arq_discard_stale_rx(void) { discard_stale_rx_calls++; }

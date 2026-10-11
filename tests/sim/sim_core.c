@@ -74,6 +74,7 @@ struct sim {
     uint64_t         tx_end_ms[2];   /* [0] = a, [1] = b */
     uint64_t         tx_start_ms[2];
     int              collisions;     /* frames destroyed by overlap */
+    int              mode_frames[SIM_MODES]; /* frames keyed, by mode (both ways) */
 
     /* Carrier sense.  A real station knows the peer is on the air once a
      * decoder holds sync on its frame, which takes the preamble to arrive --
@@ -213,6 +214,8 @@ static void drain_keydown_from(sim_t *s, sim_endpoint_t *sender,
     uint64_t start[ARQ_KEYDOWN_FRAMES], end[ARQ_KEYDOWN_FRAMES], t = now_ms;
     for (int i = 0; i < kd.n; i++)
     {
+        if (kd.f[i].mode >= 0 && kd.f[i].mode < SIM_MODES)
+            s->mode_frames[kd.f[i].mode]++;
         if (i) t += kd.f[i].gap_ms;
         start[i] = t;
         t += sim_channel_airtime_ms(kd.f[i].mode, kd.f[i].len);
@@ -393,6 +396,10 @@ void sim_set_carrier_sense(sim_t *s, bool on, uint32_t acq_ms)
     s->acq_ms        = acq_ms;
 }
 int  sim_collisions(sim_t *s)               { return s->collisions; }
+int  sim_mode_frames(sim_t *s, int mode)
+{
+    return mode >= 0 && mode < SIM_MODES ? s->mode_frames[mode] : 0;
+}
 bool sim_keyed(sim_t *s, sim_endpoint_t *ep)
 {
     int me = (ep == s->a) ? 0 : 1;

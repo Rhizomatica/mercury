@@ -100,11 +100,19 @@ BW2750\r
 
 **Response:** `OK\r` on success, `WRONG\r` on error.
 
-- **BW2300** — Full bandwidth.  Allows gear-shifting up to DATAC1 (510 bytes/frame).
-- **BW500** — Narrow bandwidth.  Restricts the maximum payload mode to DATAC3/DATAC4.
-- **BW2750** — Tactical mode token accepted for VARA compatibility. Mercury
-  currently uses the same payload-mode ceiling as **BW2300**, but preserves
-  `2750` as a negotiated/reporting token.
+- **BW2300** — Full bandwidth: the whole rung ladder, MFSK, DATAC15, DATAC4,
+  DATAC3, DATAC1, DATAC17 and QAM16C2.
+- **BW500** — Narrow bandwidth: MFSK, DATAC15, DATAC4 and DATAC3.  The
+  wideband rungs (DATAC1, DATAC17, QAM16C2, 1.7–2.1 kHz) are not used.
+  DATAC3 occupies 562 Hz and the MFSK floor 1000 Hz; both are kept, the
+  floor for its reach.
+- **BW2750** — Accepted for VARA compatibility, negotiated and reported as
+  `2750`.  No rung is wider than 2.1 kHz yet, so it has the same ladder as
+  **BW2300**.
+
+The cap holds in both directions for the whole session, from the start rung
+the ACCEPT names onward (`car_max_level_for_bw` in `datalink_arq/carousel.c`).
+A `BW` command during a session applies to the next one.
 
 During connection setup, Mercury advertises the local BW token in `CALL` and
 returns the negotiated token in `ACCEPT`. If either side is `BW500`, the session
