@@ -7,7 +7,9 @@ channels, it is faster everywhere, and the difference grows as the link gets
 worse (tables below).
 
 **It does not connect to 1.9.17 or any older version, in either direction.**
-Plan the upgrade for every station you talk to at once (below).
+Plan the upgrade for every station you talk to at once: read
+[UPGRADING-TO-1.9.18.md](UPGRADING-TO-1.9.18.md) first, which says what an
+operator sees with mixed versions, how to upgrade, and what was tested.
 
 The design is in [CAROUSEL-ARQ.md](CAROUSEL-ARQ.md), the rules in
 [CAROUSEL-SPEC.md](CAROUSEL-SPEC.md), and the development record in
@@ -38,10 +40,11 @@ The design is in [CAROUSEL-ARQ.md](CAROUSEL-ARQ.md), the rules in
   stations uuport and uucico allow 180 s (hermes-net #30, uucp 1.07-39).
   Other hosts (Winlink clients, BPQ) may need their connect timeout raised to
   use the deepest connects.
-- **Idle CPU.** A listening station also listens for MFSK CALLs, with a third
-  decoder costing about 1 % of a Raspberry Pi 4 core. Idle LISTENING on a
-  Pi 4 (estacao8, 60 s, two rounds, measured 2026-10-03): 1.9.17 30-31 % of
-  one core, 1.9.18 33-34 %.
+- **Idle CPU is unchanged.** A listening station also listens for MFSK
+  CALLs, with a third decoder. Idle LISTENING on a Raspberry Pi 4 (the HERMES
+  gateway, sBitx, audio over RTP, 60 s per reading, interleaved,
+  2026-10-11): 1.9.17 26.1 % and 27.5 % of one core, 1.9.18 25.5 % and
+  28.4 %.
 - **Building the GUI from source needs Go 1.26.9** (`fyne-ui`,
   `mercury-client`). Debian 13's `golang-go` 1.24 fetches it on first use
   (`GOTOOLCHAIN`); see the README.
